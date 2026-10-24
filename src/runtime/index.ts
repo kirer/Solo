@@ -75,3 +75,5 @@ export {
 	type TaskDefinition,
 	type TaskRuntime,
 } from "./registry.ts";
+
+export * from "./instance-lock.ts";

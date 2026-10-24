@@ -17,6 +17,7 @@
 | [design/PLAN](design/PLAN.md) | 技术选型：为什么是 pi-durable 而不是 Pi 本体或 SDK；架构怎么定；15 个必踩的坑 |
 | [design/ANSWERS](design/ANSWERS.md) | 七个设计问题的详细回答：各层是什么、项目建不建文件夹、skill/MCP 谁给、决策权、分支对话、token 分账、沟通追踪 |
 | [design/DECISIONS](design/DECISIONS.md) | **24 条架构决策记录**，每条都写了背景、替代方案、为什么这么选 |
+| [design/OWNER-AUTHORITY-DECISION](design/OWNER-AUTHORITY-DECISION.md) | **项目负责人权限改造的规格裁定与 v2**：原稿哪里要收窄、哪里要加项，可直接转交改造方 |
 | [`openspec/specs/`](../openspec/specs/) | **规格库**：9 个能力、54 条需求。改代码前先看这里「什么行为不能变」 |
 
 ## 我想了解底层

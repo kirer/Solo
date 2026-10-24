@@ -586,3 +586,26 @@
 
 ---
 
+## ADR-027：项目负责人用字符串引用，权限靠能力包，终止换只读包
+
+**日期**：2026-10-25
+**状态**：生效
+
+**背景**：`ops-defect-loop` 暴露的问题——员工名册里的 `manager` 只能是七个管理层岗位，项目负责人（许砚舟）无法被引用；负责人拿不到执行工具、接不了员工上报；项目状态从立项起一直停在 `planning`。
+
+**决策**：
+
+1. `StaffEntry.manager` 的类型是 `ManagementRole | \`leader:<slug>\``，**持久化仍是字符串标量**。不新建「负责人实体」：`project.leader` + `leaderName` 已经是稳定身份，缺的只是可引用性。
+2. 权限继续等于「能力包里的工具」：负责人能力包加 `read/write/edit/bash` 与 `pending_list`/`answer_pending`；员工能力包加 `escalate`；不引入权限矩阵。
+3. 终止项目时把负责人的能力包换成 `role-leader-readonly`（启动修复也按项目状态选包），让「终止后没权限」成为结构事实。
+4. 状态推进只接受显式边（`planning→active`、`active↔paused`、`active/paused→done`），同状态幂等，`terminated` 仍走两步终止流程。
+
+**为什么不用对象**：升级链把层级原样存进待决文档并用 `===` 比较。对象经 JSON 落盘/恢复后引用必然不等，升级任务会永远等不到答复（表现为 30s 超时而不是报错）；同一对象进 `ROLE_LABELS[...]` 得到 `undefined`，进 `ROLE_LABELS[x] ?? x.toUpperCase()` 直接 TypeError。字符串方案不动升级状态机、不升 `CompanyDoc` 版本（升版本必须写 `migrate`，否则底层启动即抛「requires migration」）。
+
+**为什么是 `leader:<slug>` 而不是 `leader:<conversationId>`**：负责人换人时员工引用自动跟随，不需要迁移员工记录；项目删除后解析失败，回落 CEO 并告警。
+
+**代价**：每个展示点都必须走 `managerLabelOf`，不能再直接查 `ROLE_LABELS`；跨项目负责人由 `isValidManagerRef` 在写库前拒绝。
+
+**已知残留（不在本决策内解决）**：`bash` 没有沙箱，项目目录在主仓 worktree 内，负责人拿到 bash 等于能写整仓。收紧需要路径围栏，且会破坏运维项目跨目录读 `workspace/company.sqlite` 的现有用法，留待单独设计。
+
+**补充（同日）**：上线后负责人被问「能不能改代码/重启」时，凭旧记忆与旧台账答「不能」，实际工具都在。根因是工具在会话中途变化，而模型没有自查手段。因此加了两件事：①`my_capabilities` 工具返回**当前会话真实**的工具清单与工作目录；②`org_tree` / `staff_list` 显示每个成员的工具名；③通用准则与负责人职责里写死「回答能不能之前先自查或实测，不得引用旧台账」。可用性不靠提示词保证，但至少让「事实」可被当场查到。

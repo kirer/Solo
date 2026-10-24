@@ -5,7 +5,13 @@
  * 工具定义本身保持纯粹（只有参数与调用逻辑）。
  */
 import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../runtime/index.ts";
-import { MANAGEMENT_ROLES, ROLE_LABELS, type ManagementRole, type ModelRef } from "./docs.ts";
+import {
+	MANAGEMENT_ROLES,
+	ROLE_LABELS,
+	managerLabelOf,
+	type ManagementRole,
+	type ModelRef,
+} from "./docs.ts";
 import { createRoundtableTools } from "./roundtable-tools.ts";
 import {
 	archiveStaff,
@@ -14,6 +20,8 @@ import {
 	listModels,
 	listStaff,
 	readCompany,
+	reassignStaff,
+	setProjectStatus,
 	terminateProject,
 	deleteProject,
 } from "./org.ts";
@@ -80,6 +88,21 @@ export type ToolDependencies = {
 		readonly fromConversationId: number;
 		readonly context: Context;
 	}) => Promise<string>;
+	/** 变更员工直属上级（由组织操作实现）。 */
+	readonly reassignStaff?: (input: {
+		readonly project: string;
+		readonly name: string;
+		readonly manager: string;
+		readonly by: string;
+		readonly fromConversationId: number;
+	}) => Promise<string>;
+	/** 推进项目状态（由组织操作实现）。 */
+	readonly setProjectStatus?: (input: {
+		readonly project: string;
+		readonly status: string;
+		readonly by: string;
+		readonly fromConversationId: number;
+	}) => Promise<string>;
 };
 
 /** 构造全部管理层工具。 */
@@ -113,18 +136,51 @@ export function createManagementTools(deps: ToolDependencies) {
 				const staff = Object.values(state.staff).filter(
 					(staff) => staff.project === project.slug && !staff.archived,
 				);
-				lines.push(`  ${project.name} [${project.status}] 负责人会话 ${project.leader}`);
+				lines.push(
+					`  ${project.name} [${project.status}] 负责人 ${project.leaderName}（会话 ${project.leader}，工具：${await toolNamesOf(runtime, project.leader)}）`,
+				);
 				for (const person of staff) {
-					lines.push(`    - ${person.name}（${person.role}，${person.model.modelId}）`);
+					lines.push(
+						`    - ${person.name}（${person.role}，${person.model.modelId}，工具：${await toolNamesOf(runtime, person.conversationId)}）`,
+					);
 				}
 			}
 			return text(lines.join("\n"));
 		},
 	});
 
+	/**
+	 * 能力自查：返回本会话**真实**的工具清单。
+	 *
+	 * 为什么必须有：模型对自己「能不能做某件事」的判断经常来自旧记忆或旧台账。
+	 * 工具是在会话中途变化的（例如负责人新增了执行工具），只靠 system 增量消息
+	 * 不够；给一个能当场查的工具，比反复在提示词里强调更可靠。
+	 */
+	const myCapabilities = defineTool({
+		name: "my_capabilities",
+		description:
+			"查看你自己当前实际可用的工具清单与工作目录。回答「我能不能做某事 / 有没有权限」之前先调用它，或实际试一次；不要凭记忆或旧台账回答。",
+		parameters: Type.Object({}),
+		execute: async (_args, api) => {
+			const conversation = await runtime.harness.conversation(Number(api.conversationId) as never, BACKGROUND_CONTEXT);
+			const agent = await conversation?.agent(BACKGROUND_CONTEXT);
+			if (agent === undefined) return text("找不到当前会话的配置。");
+			const names = agent.tools.map((tool) => tool.name);
+			return text(
+				[
+					`工作目录：${agent.cwd ?? "（无）"}`,
+					`可用工具（${names.length} 个）：${names.join("、")}`,
+					"判断能否做某件事，以这份清单为准；清单里没有的能力，如实说「没有」并上报，不要猜。",
+					"提醒：平台是单进程单库。不要启动第二个平台实例或重启服务，那会让当前服务崩溃。",
+				].join("\n"),
+			);
+		},
+	});
+
 	const escalate = defineTool({
 		name: "escalate",
-		description: "把超出你授权范围的问题向上转交（转给 CEO，必要时由 CEO 转给老板）。",
+		description:
+			"把超出你授权范围的问题向上转交：员工转给直属上级（岗位或项目负责人），管理层转给 CEO；确实该老板定的由 CEO 再往上递。",
 		parameters: Type.Object({
 			question: Type.String({ description: "要上报的问题，包含必要背景" }),
 			reason: Type.Optional(Type.String({ description: "为什么你无法自行决断" })),
@@ -135,7 +191,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			}
 			const answer = await deps.escalate({
 				question: args.reason === undefined ? args.question : `${args.question}\n\n（无法自行决断的原因：${args.reason}）`,
-				from: "manager",
+				from: "上报",
 				conversationId: Number(api.conversationId),
 			});
 			void context;
@@ -356,13 +412,17 @@ export function createManagementTools(deps: ToolDependencies) {
 
 	const staffHire = defineTool({
 		name: "staff_hire",
-		description: "为项目招聘一名员工，可指定模型。",
+		description:
+			"为项目招聘一名员工，可指定模型与直属上级。不指定上级时，默认归本项目负责人。",
 		parameters: Type.Object({
 			project: Type.String({ description: "项目 slug" }),
 			name: Type.String({ description: "员工名（项目内唯一）" }),
 			role: Type.String({ description: "员工角色：产品 / 设计 / 开发 / 测试 / 运营" }),
 			manager: Type.Optional(
-				Type.String({ description: "直属上级岗位（ceo/cto/cfo/cpo/coo/cmo/chro），默认 cto" }),
+				Type.String({
+					description:
+						"直属上级：管理层岗位（ceo/cto/cfo/cpo/coo/cmo/chro），或 leader:<项目slug> 指向项目负责人。默认本项目负责人",
+				}),
 			),
 			modelId: Type.Optional(Type.String({ description: "指定模型；不传用公司默认模型" })),
 		}),
@@ -377,30 +437,81 @@ export function createManagementTools(deps: ToolDependencies) {
 				model = { provider: option.provider, modelId: option.modelId };
 			}
 
-			const manager = (args.manager ?? "cto") as ManagementRole;
-			if (!MANAGEMENT_ROLES.includes(manager)) return text(`未知岗位：${manager}`);
+			let hired;
+			try {
+				hired = await hireStaff(
+					runtime,
+					{
+						project: args.project,
+						name: args.name,
+						role: args.role,
+						...(args.manager === undefined ? {} : { manager: args.manager }),
+						...(model === undefined ? {} : { model }),
+						...(deps.registry === undefined ? {} : { registry: deps.registry }),
+						...(deps.employeeTools === undefined ? {} : { employeeTools: deps.employeeTools }),
+					},
+					BACKGROUND_CONTEXT,
+				);
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error));
+			}
 
-			const hired = await hireStaff(
-				runtime,
-				{
-					project: args.project,
-					name: args.name,
-					role: args.role,
-					manager,
-					...(model === undefined ? {} : { model }),
-					...(deps.registry === undefined ? {} : { registry: deps.registry }),
-					...(deps.employeeTools === undefined ? {} : { employeeTools: deps.employeeTools }),
-				},
-				BACKGROUND_CONTEXT,
-			);
-
+			const state = await readCompany(runtime, BACKGROUND_CONTEXT);
 			return text(
 				[
 					`已招聘：${hired.staff.name}（${hired.staff.role}）`,
 					`会话：${hired.conversationId}`,
 					`模型：${hired.staff.model.modelId}`,
-					`直属上级：${ROLE_LABELS[hired.staff.manager]}`,
+					`直属上级：${managerLabelOf(state, hired.staff.manager)}`,
 				].join("\n"),
+			);
+		},
+	});
+
+	/** 变更已招员工的直属上级（事后调整汇报线）。 */
+	const staffReassign = defineTool({
+		name: "staff_reassign",
+		description:
+			"变更一名在职员工的直属上级。manager 填管理层岗位（ceo/cto/.../chro）或 leader:<本项目的slug>（表示项目负责人）。",
+		parameters: Type.Object({
+			project: Type.String({ description: "员工所属项目 slug" }),
+			name: Type.String({ description: "员工名，与 staff_list 显示的一致" }),
+			manager: Type.String({
+				description: "新上级：岗位名，或 leader:<本项目slug>；不允许指向别的项目的负责人",
+			}),
+		}),
+		execute: async (args, api) => {
+			if (deps.reassignStaff === undefined) return text("变更上级通道未启用。");
+			return text(
+				await deps.reassignStaff({
+					project: args.project,
+					name: args.name,
+					manager: args.manager,
+					by: String(api.conversationId),
+					fromConversationId: Number(api.conversationId),
+				}),
+			);
+		},
+	});
+
+	/** 推进项目状态（planning → active → paused/done）。 */
+	const projectStatusSet = defineTool({
+		name: "project_status",
+		description:
+			"推进项目状态。允许：planning→active；active↔paused；active/paused→done。终止项目用 project_terminate，不在这里。",
+		parameters: Type.Object({
+			project: Type.String({ description: "项目 slug" }),
+			status: Type.String({ description: "目标状态：active / paused / done" }),
+		}),
+		execute: async (args, api) => {
+			if (deps.setProjectStatus === undefined) return text("项目状态通道未启用。");
+			return text(
+				await deps.setProjectStatus({
+					project: args.project,
+					status: args.status,
+					by: String(api.conversationId),
+					fromConversationId: Number(api.conversationId),
+				}),
 			);
 		},
 	});
@@ -415,11 +526,12 @@ export function createManagementTools(deps: ToolDependencies) {
 			const staff = await listStaff(runtime, args.project, BACKGROUND_CONTEXT);
 			if (staff.length === 0) return text(`项目 ${args.project} 暂无员工。`);
 
+			const state = await readCompany(runtime, BACKGROUND_CONTEXT);
 			const lines = [`项目 ${args.project} 的员工（派活时 employee 参数要原样填「员工名」这一列）：`];
 			for (const person of staff) {
 				const busy = await isBusy(runtime, person.conversationId);
 				lines.push(
-					`  - 员工名：${person.name}｜角色：${person.role}｜模型：${person.model.modelId}｜状态：${busy ? "忙碌" : "空闲"}｜上级：${ROLE_LABELS[person.manager]}`,
+					`  - 员工名：${person.name}｜角色：${person.role}｜模型：${person.model.modelId}｜状态：${busy ? "忙碌" : "空闲"}｜上级：${managerLabelOf(state, person.manager)}｜工具：${await toolNamesOf(runtime, person.conversationId)}`,
 				);
 			}
 			return text(lines.join("\n"));
@@ -616,6 +728,7 @@ export function createManagementTools(deps: ToolDependencies) {
 		roundtable: roundtableTools.roundtable,
 		roundtableMinutes: roundtableTools.roundtableMinutes,
 		orgTree,
+		myCapabilities,
 		escalate,
 		pendingList,
 		answerPending,
@@ -627,9 +740,11 @@ export function createManagementTools(deps: ToolDependencies) {
 		projectCreate,
 		projectPlan,
 		projectList,
+		projectStatusSet,
 		projectTerminate,
 		projectDelete,
 		staffHire,
+		staffReassign,
 		staffList,
 		staffAssign,
 		staffArchive,
@@ -644,6 +759,14 @@ async function isBusy(runtime: CompanyRuntime, conversationId: number): Promise<
 	return inspection.tasks.some(
 		(task) => Number(task.record.conversationId) === conversationId && task.state.kind !== "blocked",
 	);
+}
+
+/** 某个会话当前真实可用的工具名（用 / 连接）。 */
+async function toolNamesOf(runtime: CompanyRuntime, conversationId: number): Promise<string> {
+	const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
+	const agent = await conversation?.agent(BACKGROUND_CONTEXT);
+	const names = (agent?.tools ?? []).map((tool) => tool.name);
+	return names.length === 0 ? "（无）" : names.join("/");
 }
 
 /** 包成模型可读的文本结果。 */

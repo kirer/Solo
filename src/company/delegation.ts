@@ -17,7 +17,7 @@ import {
 	reportRequestId,
 	type CompanyRuntime,
 } from "../runtime/index.ts";
-import { AuditDoc, CompanyDoc, ROLE_LABELS, type StaffEntry } from "./docs.ts";
+import { AuditDoc, CompanyDoc, ROLE_LABELS, managerLabelOf, type StaffEntry } from "./docs.ts";
 import { beginLiveTrail, recordMessage } from "./trail.ts";
 import {
 	DEFAULT_DELEGATION_TIMEOUT_MS,
@@ -505,12 +505,13 @@ export async function describeStaff(
 	staff: readonly StaffEntry[],
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<Array<StaffEntry & { readonly busy: boolean; readonly managerLabel: string }>> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
 	const result = [];
 	for (const person of staff) {
 		result.push({
 			...person,
 			busy: await isEmployeeBusy(runtime, person, context),
-			managerLabel: ROLE_LABELS[person.manager],
+			managerLabel: managerLabelOf(state, person.manager),
 		});
 	}
 	return result;

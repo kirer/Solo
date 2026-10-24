@@ -10,7 +10,7 @@ import {
 	type CompanyRuntime,
 	type Context,
 } from "../runtime/index.ts";
-import { MANAGEMENT_ROLES, ROLE_LABELS, type ManagementRole, type TrailKind } from "../company/docs.ts";
+import { MANAGEMENT_ROLES, ROLE_LABELS, managerLabelOf, type ManagementRole, type TrailKind } from "../company/docs.ts";
 import { listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
@@ -238,7 +238,7 @@ export async function buildOrgView(
 					model: modelOf(person.model) ?? "?",
 					role: person.role,
 					project: person.project,
-					parent: ROLE_LABELS[person.manager],
+					parent: managerLabelOf(state, person.manager),
 				}),
 			);
 		}

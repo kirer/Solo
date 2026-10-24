@@ -8,13 +8,29 @@
  * 不是给程序用的结构化数据。
  */
 import { defineExtension, defineTool, Type, type Extension } from "../runtime/index.ts";
+import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../runtime/index.ts";
 import type { ManagementRole } from "./docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "./roles.ts";
+
+/**
+ * 项目负责人的执行类工具：让负责人能真正动手（读写项目文件、在项目目录跑命令）。
+ *
+ * 与员工的执行工具同源（runtime/capabilities），区别只是负责人永远用它、
+ * 员工按角色裁剪。负责人拿到这些工具后，「项目全部资源面」才有实际所指。
+ */
+export const LEADER_EXECUTION_TOOLS: readonly ReturnType<typeof defineTool>[] = [
+	createReadTool(),
+	createWriteTool(),
+	createEditTool(),
+	createBashTool(),
+];
 
 /** 工具集合：由装配层注入实际实现，避免业务模块之间循环依赖。 */
 export type ManagementToolset = {
 	/** 查看组织架构。 */
 	readonly orgTree: ReturnType<typeof defineTool>;
+	/** 查看本会话真实可用的工具清单。 */
+	readonly myCapabilities: ReturnType<typeof defineTool>;
 	/** 向上转一个问题。 */
 	readonly escalate: ReturnType<typeof defineTool>;
 	/** 列出等着自己拍板的问题。 */
@@ -31,10 +47,14 @@ export type ManagementToolset = {
 	readonly projectList: ReturnType<typeof defineTool>;
 	/** 终止项目。 */
 	readonly projectTerminate: ReturnType<typeof defineTool>;
+	/** 变更项目状态（planning → active → paused/done）。 */
+	readonly projectStatusSet: ReturnType<typeof defineTool>;
 	/** 彻底删除项目。 */
 	readonly projectDelete: ReturnType<typeof defineTool>;
 	/** 招聘员工。 */
 	readonly staffHire: ReturnType<typeof defineTool>;
+	/** 变更员工直属上级。 */
+	readonly staffReassign: ReturnType<typeof defineTool>;
 	/** 列出员工。 */
 	readonly staffList: ReturnType<typeof defineTool>;
 	/** 给员工派活。 */
@@ -65,6 +85,7 @@ export type ToolName = keyof ManagementToolset;
 /** 把角色声明里的能力名映射到实际工具。 */
 const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	org_tree: "orgTree",
+	my_capabilities: "myCapabilities",
 	escalate: "escalate",
 	pending_list: "pendingList",
 	answer_pending: "answerPending",
@@ -78,7 +99,9 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	project_list: "projectList",
 	project_terminate: "projectTerminate",
 	project_delete: "projectDelete",
+	project_status: "projectStatusSet",
 	staff_hire: "staffHire",
+	staff_reassign: "staffReassign",
 	staff_list: "staffList",
 	staff_assign: "staffAssign",
 	staff_archive: "staffArchive",
@@ -128,16 +151,22 @@ export function createRoleExtensionWithTools(role: ManagementRole, tools: Manage
  * 这样整个公司只需要注册一个 `role-leader`，不必按项目重建。
  */
 export const PROJECT_LEADER_CHARTER = [
-	"你是某个项目的负责人，处在「员工」与「管理层」之间的那一层。",
-	"你的职责：把项目目标拆成可执行的任务，派给项目内员工，跟踪进度，向上汇报。",
+	"你是某个项目的负责人，处在一个有实权的岗位上：对项目内的人、文件、运行环境负责。",
+	"你的职责：把项目目标拆成可执行的任务，派给项目内员工，跟踪进度，向上汇报；需要时自己动手改文件、跑命令验证。",
+	"你能直接读写本项目工作空间里的文件，并在项目目录执行命令（read / write / edit / bash）——项目里的实际工作与验收证据由你自己确认。",
 	"派活用 staff_assign（先 staff_list 看名册和忙碌状态）；写计划用 project_plan；决定要留痕用 decide。",
+	"项目状态用 project_status 推进：立项后由你把 planning 改成 active；暂停/恢复用 paused/active；做完改 done。终止项目不归你，要上报。",
+	"员工上报给你的问题会出现在 pending_list 里，用 answer_pending 在授权范围内直接拍板；确实超出项目的再 escalate。",
 	"你只与你的上级和项目内员工沟通，不越级：",
 	"- 需求不明确、验收标准有争议 → escalate，或 delegate_to_role 找 cpo",
 	"- 技术选型、架构、执行环境/工具链故障 → escalate，或 delegate_to_role 找 cto",
 	"- 成本与预算 → escalate，或 delegate_to_role 找 cfo",
 	"- 排期与跨项目协调 → delegate_to_role 找 coo",
 	"- 缺人、要调配人手 → delegate_to_role 找 chro",
-	"你不要直接向老板汇报，也不要替管理层做公司级决定（立项、终止项目、招人都不在你手上）。",
+	"你不替管理层做公司级决定：立项、终止项目、招聘、改别人项目都不在你手上。",
+	"回答「我能不能改代码 / 能不能执行命令」这类问题之前，先调用 my_capabilities 看真实工具清单，或实际试一次；不要凭记忆或旧台账下结论，工具可能已经变了。",
+	"不要启动、停止或重启平台服务，也不要另起一个平台实例：平台是单进程单库，第二个实例会与正在跑的服务抢同一个库并把服务弄崩。要验证执行能力，用项目内的无害命令（不要碰平台进程与端口）。",
+	"权限只到本项目：不要写项目目录之外的文件，不要动其他项目与平台源码。",
 	"员工交付后由你验收：看不到证据就退回重做，不要替员工宣称「已验证」。",
 ].join("\n");
 
@@ -149,17 +178,29 @@ export const PROJECT_LEADER_EXTENSION_NAME = "role-leader";
  *
  * 旧版本立项时没有给负责人装任何能力包，导致他连 staff_assign 都没有，
  * 只能空转、被管理层绕过——这是「负责人不参与」的结构性原因。
- * 这里只装项目内需要的几个工具，公司级的立项/终止/招聘都不给。
+ *
+ * 现在他同时拿两类能力：
+ * - 管理类：派活、写计划、看名册、接员工上报、推进项目状态；
+ * - 执行类：读写项目文件、在项目目录跑命令（由 executionTools 注入）。
+ *
+ * 公司级的立项/终止/招聘仍然不给——权限只到项目边界。
  */
-export function createProjectLeaderExtension(tools: ManagementToolset): Extension {
+export function createProjectLeaderExtension(
+	tools: ManagementToolset,
+	executionTools: readonly ReturnType<typeof defineTool>[] = LEADER_EXECUTION_TOOLS,
+): Extension {
 	const capabilityNames = [
 		"org_tree",
+		"my_capabilities",
 		"escalate",
 		"decide",
+		"pending_list",
+		"answer_pending",
 		"delegate_to_staff",
 		"delegate_to_role",
 		"project_plan",
 		"project_list",
+		"project_status",
 		"staff_list",
 		"staff_assign",
 	];
@@ -181,7 +222,7 @@ export function createProjectLeaderExtension(tools: ManagementToolset): Extensio
 				return { key: "guide", tag: false, render: () => guide };
 			})(),
 		],
-		tools: selected,
+		tools: [...selected, ...executionTools],
 	});
 }
 
@@ -190,6 +231,53 @@ export function createAllRoleExtensionsWithTools(tools: ManagementToolset): Exte
 	return (Object.keys(ROLE_DEFINITIONS) as ManagementRole[]).map((role) =>
 		createRoleExtensionWithTools(role, tools),
 	);
+}
+
+/** 已终止项目的负责人能力包名：只读，不能派活、不能执行。 */
+export const PROJECT_LEADER_READONLY_EXTENSION_NAME = "role-leader-readonly";
+
+/** 终止后的负责人职责描述（纯函数）。 */
+export const PROJECT_LEADER_READONLY_CHARTER = [
+	"你负责的项目已经终止，你不再推进任何工作。",
+	"你只能查看项目名册与历史、向上汇报；不能派活、不能写文件、不能执行命令。",
+	"如果老板要求恢复项目，请上报 CEO——恢复项目不归你决定。",
+].join("\n");
+
+/**
+ * 已终止项目负责人的能力包：只读。
+ *
+ * 终止时用它替换 role-leader，让「权限随状态回收」成为结构事实，
+ * 而不是只写在提示词里（ADR-004 / ADR-010：工具不在即无权限）。
+ */
+export function createProjectLeaderReadOnlyExtension(tools: ManagementToolset): Extension {
+	const capabilityNames = [
+		"org_tree",
+		"my_capabilities",
+		"escalate",
+		"decide",
+		"pending_list",
+		"project_list",
+		"staff_list",
+	];
+	const selected = capabilityNames
+		.map((name) => CAPABILITY_TO_TOOL[name])
+		.filter((name): name is ToolName => name !== undefined)
+		.map((name) => tools[name]);
+
+	return defineExtension({
+		name: PROJECT_LEADER_READONLY_EXTENSION_NAME,
+		sections: [
+			(() => {
+				const charter = PROJECT_LEADER_READONLY_CHARTER;
+				return { key: "role", tag: false, render: () => charter };
+			})(),
+			(() => {
+				const guide = COMMON_GUIDE;
+				return { key: "guide", tag: false, render: () => guide };
+			})(),
+		],
+		tools: selected,
+	});
 }
 
 /**
@@ -212,7 +300,12 @@ export function createEmployeeExtension(
 			{
 				key: "employee",
 				tag: false,
-				render: () => "你是项目员工。只做被指派的工作，遇到不确定的事上报直属上级，不越级。",
+				render: () =>
+					[
+						"你是项目员工。只做被指派的工作，遇到不确定的事上报直属上级，不越级。",
+						"回答「我能不能做某事」之前，先用 my_capabilities 看自己真实的工具清单，或实际调用一次；不要凭记忆。",
+						"不要启动、停止或重启平台服务，也不要另起平台实例（单进程单库，会弄崩正在跑的服务）。",
+					].join("\n"),
 			},
 		],
 		tools: employeeTools,

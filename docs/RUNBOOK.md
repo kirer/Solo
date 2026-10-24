@@ -206,3 +206,38 @@ mv workspace workspace-archive-$(date +%Y%m%d)
 # 彻底重来（会丢全部历史）
 rm -rf workspace/
 ```
+
+## 迁移：把员工直属上级迁到项目负责人
+
+**适用**：从「员工只能向管理层岗位汇报」的版本升级到支持 `leader:<slug>` 的版本之后，把存量员工迁到项目负责人名下。
+
+**前提**：单进程单库——执行迁移前必须先停掉网页服务，否则两个进程会抢同一个库。
+
+```bash
+cd /Users/kirer/projects/ai-company
+
+# 1. 停服
+kill -TERM $(lsof -t -nP -iTCP:7788 -sTCP:LISTEN) 2>/dev/null || true
+while lsof -t -nP -iTCP:7788 -sTCP:LISTEN >/dev/null 2>&1; do sleep 0.2; done
+
+# 2. 备份（库 + 项目产物）
+cp workspace/company.sqlite "workspace/company.sqlite.bak-$(date +%Y%m%d-%H%M%S)"
+
+# 3. 预演（不写库，只看会改什么）
+node --experimental-strip-types scripts/migrate-staff-manager.ts \
+  --db workspace/company.sqlite --project ops-defect-loop --dry-run
+
+# 4. 执行（幂等，重复执行第二次为 migrated=0）
+node --experimental-strip-types scripts/migrate-staff-manager.ts \
+  --db workspace/company.sqlite --project ops-defect-loop
+
+# 5. 校验（只读探针，0 FAIL 即通过）
+node scripts/acceptance/reorg-probe.mjs --db workspace/company.sqlite --expect after
+
+# 6. 起服
+npm start
+```
+
+**回滚**：数据形状仍是字符串，旧版本代码能正常启动（只是把 `leader:<slug>` 显示成 `undefined`），所以回滚通常只需要回代码；要彻底复原再用备份覆盖 `workspace/company.sqlite`。
+
+**注意**：迁移会重渲染员工提示词（把「直属上级是 COO」改成负责人姓名）。迁移期间不要同时跑真实任务；已归档员工不会被迁移。

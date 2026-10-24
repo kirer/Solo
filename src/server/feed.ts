@@ -15,7 +15,7 @@ import {
 	type CompanyRuntime,
 	type Context,
 } from "../runtime/index.ts";
-import { CompanyDoc, ROLE_LABELS, type CompanyState, type ManagementRole } from "../company/docs.ts";
+import { CompanyDoc, ROLE_LABELS, managerLabelOf, type CompanyState, type ManagementRole } from "../company/docs.ts";
 import { listPending } from "../company/escalation.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { actorRefOf, OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
@@ -278,7 +278,7 @@ export async function decorateFeed(
 		if (staff.conversationId === feed.conversationId) {
 			title = staff.name;
 			kind = "staff";
-			role = `${staff.role} · ${staff.project} 项目 · 向 ${ROLE_LABELS[staff.manager]} 汇报`;
+			role = `${staff.role} · ${staff.project} 项目 · 向 ${managerLabelOf(state, staff.manager)} 汇报`;
 			actor = { conversationId: feed.conversationId, label: staff.name, kind: "staff" };
 		}
 	}

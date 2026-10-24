@@ -16,6 +16,7 @@ import { join, resolve } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	createRegistry,
+	acquireInstanceLock,
 	openCompany,
 	recover,
 	setupModels,
@@ -117,6 +118,8 @@ async function openAndBoot(): Promise<{
 	};
 }
 
+const instanceLock = await acquireInstanceLock(args.db);
+
 const started = await openAndBoot();
 let runtime = started.runtime;
 let ownerConversationId = started.ownerConversationId;
@@ -154,6 +157,12 @@ const app = await createApp({
 });
 
 // 退出时保留未完成的工作
-process.on("SIGINT", () => {
-	void app.stop().then(() => process.exit(0));
-});
+const shutdown = () => {
+	void app
+		.stop()
+		.then(() => instanceLock.release())
+		.catch(() => undefined)
+		.finally(() => process.exit(0));
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

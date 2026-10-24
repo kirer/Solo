@@ -11,6 +11,7 @@ import { execFile } from "node:child_process";
 import { join, resolve } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
+	acquireInstanceLock,
 	createRegistry,
 	openCompany,
 	recover,
@@ -117,6 +118,9 @@ async function openAndBoot(): Promise<{ runtime: CompanyRuntime; parked: readonl
 	return { runtime, parked: recovery.parkedTasks.map((task) => task.taskId) };
 }
 
+// 单进程单库：先抢独占锁，再打开库。第二个实例（包括 agent 用 bash 起的）会被拒绝。
+const instanceLock = await acquireInstanceLock(args.db);
+
 const booted = await openAndBoot();
 let runtime = booted.runtime;
 
@@ -158,9 +162,15 @@ if (args.open && process.platform === "darwin") {
 	});
 }
 
-process.on("SIGINT", () => {
-	void server.close().then(() => {
-		process.stderr.write("\n已退出。\n");
-		process.exit(0);
-	});
-});
+const shutdown = () => {
+	void server
+		.close()
+		.then(() => instanceLock.release())
+		.catch(() => undefined)
+		.finally(() => {
+			process.stderr.write("\n已退出。\n");
+			process.exit(0);
+		});
+};
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

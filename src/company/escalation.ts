@@ -22,15 +22,30 @@ import {
 	type CompanyRuntime,
 } from "../runtime/index.ts";
 import type { Task } from "../runtime/index.ts";
-import { AuditDoc, CompanyDoc, ROLE_LABELS, TrailDoc, type ManagementRole } from "./docs.ts";
+import {
+	AuditDoc,
+	CompanyDoc,
+	type CompanyState,
+	LEADER_REF_PREFIX,
+	ROLE_LABELS,
+	TrailDoc,
+	isLeaderManagerRef,
+	leaderSlugOf,
+	managerLabelOf,
+	type ManagerRef,
+	type ManagementRole,
+} from "./docs.ts";
 
 /** 升级流程的输入。 */
 export type EscalationInput = {
 	readonly question: string;
 	readonly from: string;
 	readonly fromConversationId: number;
-	/** 直属管理层岗位；不传则从 CEO 开始。 */
-	readonly manager?: ManagementRole;
+	/**
+	 * 直属上级：管理层岗位（cto/...）或项目负责人（leader:<slug>）。
+	 * 不传则从 CEO 开始（管理层与负责人本来就直接向 CEO 汇报）。
+	 */
+	readonly manager?: ManagerRef;
 	readonly project?: string;
 	/** 升级标识，用于关联审计与留痕。 */
 	readonly escalationKey: string;
@@ -484,7 +499,7 @@ async function finish(
 	// 若先提交终态，随后写的时间线可能还没落盘（竞态）。
 	const companyAtDecision = await runtime.harness.snapshot(CompanyDoc, context);
 	const deciderConversation =
-		roleConversationOf(companyAtDecision, decidedBy) ?? input.fromConversationId;
+		conversationOfLevelOrName(companyAtDecision, decidedBy) ?? input.fromConversationId;
 
 	await runtime.harness.commit(async (tx) => {
 		const audit = await tx.doc(AuditDoc, input.fromConversationId as never);
@@ -503,7 +518,7 @@ async function finish(
 			kind: "decide",
 			fromConversation: deciderConversation,
 			toConversation: input.fromConversationId,
-			from: decidedBy,
+			from: displayLevel(companyAtDecision, decidedBy),
 			to: input.from,
 			ref: input.escalationKey,
 		};
@@ -523,8 +538,10 @@ async function recordHop(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<void> {
 	const company = await runtime.harness.snapshot(CompanyDoc, context);
-	const fromConversation = roleConversationOf(company, from) ?? input.fromConversationId;
-	const toConversation = roleConversationOf(company, to) ?? input.fromConversationId;
+	const fromConversation = conversationOfLevelOrName(company, from) ?? input.fromConversationId;
+	const toConversation = conversationOfLevelOrName(company, to) ?? input.fromConversationId;
+	const fromLabel = displayLevel(company, from);
+	const toLabel = displayLevel(company, to);
 
 	await runtime.harness.commit(async (tx) => {
 		const trail = await tx.doc(TrailDoc);
@@ -533,8 +550,8 @@ async function recordHop(
 			kind: "escalate",
 			fromConversation,
 			toConversation,
-			from,
-			to,
+			from: fromLabel,
+			to: toLabel,
 			ref: input.escalationKey,
 		};
 		if (input.project !== undefined) edge.project = input.project;
@@ -552,19 +569,97 @@ async function recordHop(
 	}, context);
 }
 
-/** 把岗位名（cto/ceo/owner）解析成会话标识；解析不到返回 undefined。 */
-function roleConversationOf(
-	state: { readonly roles: Record<string, number> } | undefined,
-	label: string,
-): number | undefined {
+/**
+ * 把「层级」解析成会话标识。
+ *
+ * 层级可能是岗位名（cto/ceo/owner）、项目负责人引用（leader:<slug>），
+ * 或答复人显示名（许砚舟 / 员工名）。三种都要认，否则审计与留痕会把
+ * 归属记到提问者自己头上（图谱出现自环）。
+ */
+function conversationOfLevelOrName(state: CompanyState | undefined, level: string): number | undefined {
 	if (state === undefined) return undefined;
-	const direct = state.roles[label];
+
+	const direct = state.roles[level];
 	if (direct !== undefined) return Number(direct);
-	if (label === "owner") {
+	if (level === "owner") {
 		const ceo = state.roles.ceo;
 		if (ceo !== undefined) return Number(ceo);
 	}
+	const slug = leaderSlugOf(level);
+	if (slug !== undefined) return state.projects[slug]?.leader;
+
+	// 显示名反查：负责人名字、员工名、岗位中文名
+	for (const project of Object.values(state.projects)) {
+		if (project.leaderName === level) return project.leader;
+	}
+	for (const person of Object.values(state.staff)) {
+		if (person.name === level) return person.conversationId;
+	}
+	for (const [role, id] of Object.entries(state.roles)) {
+		if (ROLE_LABELS[role as ManagementRole] === level) return Number(id);
+	}
 	return undefined;
+}
+
+/** 层级在审计/留痕里的显示名：负责人引用翻成负责人名字，岗位保持原样。 */
+function displayLevel(state: CompanyState | undefined, level: string): string {
+	return isLeaderManagerRef(level) ? managerLabelOf(state, level) : level;
+}
+
+/**
+ * 会话在升级链里对应哪一级。
+ *
+ * CEO → "ceo"，其他管理层 → 岗位名，项目负责人 → "leader:<slug>"，员工 → undefined。
+ * pending_list / answer_pending 用它判断「这条问题是不是到我这一级」，
+ * 不能再写死 level === "ceo"。
+ */
+export function levelOfConversation(
+	state: CompanyState | undefined,
+	conversationId: number,
+): string | undefined {
+	if (state === undefined) return undefined;
+	for (const [role, id] of Object.entries(state.roles)) {
+		if (Number(id) === conversationId) return role;
+	}
+	for (const [slug, project] of Object.entries(state.projects)) {
+		if (project.leader === conversationId) return `${LEADER_REF_PREFIX}${slug}`;
+	}
+	return undefined;
+}
+
+/**
+ * 按层级拍板：只允许回答「到自己这一级」的待决问题。
+ *
+ * 与 answerPendingAsCeo 的区别是层级不再写死 ceo：项目负责人答 leader:<slug> 级，
+ * 管理层答本岗位级。越权一律返回 false，由工具层给出可读原因。
+ */
+export async function answerPendingAtLevel(
+	runtime: CompanyRuntime,
+	input: {
+		readonly key: string;
+		readonly answer: string;
+		readonly level: string;
+		readonly answeredBy: string;
+		readonly escalate?: boolean;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<boolean> {
+	const state = await runtime.harness.snapshot(PendingDoc, context);
+	const item = state?.items.find((entry) => entry.key === input.key);
+	if (item === undefined) return false;
+	if (item.level !== input.level) return false;
+	if (item.answer !== undefined) return false;
+
+	return answerPending(
+		runtime,
+		{
+			key: input.key,
+			answer: input.answer,
+			answeredBy: input.answeredBy,
+			...(input.escalate === true ? { escalate: true } : {}),
+		},
+		context,
+	);
 }
 
 export { escalationId };

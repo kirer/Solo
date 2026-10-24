@@ -26,20 +26,29 @@ import {
 	type CompanyState,
 	CompanyDoc,
 	TrailDoc,
+	LEADER_REF_PREFIX,
+	type ManagerRef,
+	managerLabelOf,
+	isLeaderManagerRef,
+	isValidManagerRef,
 	type ManagementRole,
 	MANAGEMENT_ROLES,
 	type ModelOption,
 	type ModelRef,
 	type ProjectEntry,
+	type ProjectStatus,
 	ProfileDoc,
 	ROLE_LABELS,
 	type StaffEntry,
 } from "./docs.ts";
 import { createRoleExtension, ROLE_DEFINITIONS } from "./roles.ts";
-import { PendingDoc, listPending, answerPendingAsCeo } from "./escalation.ts";
+import { PendingDoc, levelOfConversation, listPending, answerPendingAtLevel, answerPendingAsCeo } from "./escalation.ts";
 import {
 	PROJECT_LEADER_CHARTER,
+	PROJECT_LEADER_READONLY_CHARTER,
+	LEADER_EXECUTION_TOOLS,
 	createProjectLeaderExtension,
+	createProjectLeaderReadOnlyExtension,
 	createRoleExtensionWithTools,
 	type ManagementToolset,
 } from "./tools.ts";
@@ -73,6 +82,30 @@ import { isAbsolute, resolve as resolvePath } from "node:path";
  * 「谁都能建项目，但负责人一定有工具」不依赖调用方是否记得传参数。
  */
 const LEADER_TOOLSETS = new WeakMap<CompanyRuntime, ManagementToolset>();
+
+/**
+ * 每个运行时对应的「上报」工具。
+ *
+ * 员工要能把问题报给直属上级，就必须有 escalate。它由装配层从管理层工具集里
+ * 取出来，招聘/重建员工能力包时追加到执行工具后面——这样全体员工共用同一个
+ * 工具实现，上报时按 `staff.manager` 决定落到谁那里。
+ */
+const EMPLOYEE_EXTRA_TOOLS = new WeakMap<CompanyRuntime, readonly ReturnType<typeof defineTool>[]>();
+
+/**
+ * 员工实际可用的工具：按角色裁剪的执行工具 + 向直属上级上报。
+ *
+ * 单独导出：招聘、重启自愈、职工档案三处必须用同一份，否则「档案里写的工具」
+ * 与「真正拿到的工具」又会不一致。
+ */
+export function employeeToolsFor(
+	runtime: CompanyRuntime,
+	role: string,
+): ReturnType<typeof defineTool>[] {
+	const tools: ReturnType<typeof defineTool>[] = [...toolsForRole(role)];
+	tools.push(...(EMPLOYEE_EXTRA_TOOLS.get(runtime) ?? []));
+	return tools;
+}
 
 /** 默认模型清单（价格单位为美元 / 百万 token）。 */
 /**
@@ -197,10 +230,17 @@ export async function bootstrapCompany(
 				await recordPendingDirectly(runtime, input, context);
 				return "已记录上报，等待上层答复。";
 			}
-			// 只有 CEO 的问题会落在老板桌上。CEO 发起时直接进入「问老板」，
-			// 不再绕一圈问自己；其他人发起的，最高只到 CEO。
 			const company = await runtime.harness.snapshot(CompanyDoc, context);
 			const isCeo = company?.roles.ceo === input.conversationId;
+
+			// 员工按自己的直属上级走：岗位 → 对应管理层，leader:<slug> → 本项目负责人。
+			// 管理层/负责人自己没有 staff 记录，仍从 CEO 开始（他们本来就向 CEO 汇报）。
+			const staffOfCaller = Object.values(company?.staff ?? {}).find(
+				(person) => person.conversationId === input.conversationId && !person.archived,
+			);
+			const manager = staffOfCaller?.manager;
+			const targetLabel = manager === undefined ? "CEO" : managerLabelOf(company, manager);
+
 			const key = escalationId(input.conversationId, nextEscalationSeq());
 			const taskId = await startEscalation(
 				runtime,
@@ -212,18 +252,27 @@ export async function bootstrapCompany(
 					from: isCeo ? "CEO" : (labelOfConversation(company, input.conversationId) ?? input.from),
 					fromConversationId: input.conversationId,
 					...(input.project === undefined ? {} : { project: input.project }),
+					...(manager === undefined ? {} : { manager }),
 					escalationKey: key,
 					...(isCeo ? { startAtOwner: true } : {}),
 				},
 				context,
 			);
-			return isCeo
-				? `已上报老板（编号 ${key}，任务 ${taskId}），等待老板拍板。`
-				: `已上报 CEO（编号 ${key}，任务 ${taskId}），等 CEO 答复；老板只会收到 CEO 确认过的问题。`;
+			if (isCeo) {
+				return `已上报老板（编号 ${key}，任务 ${taskId}），等待老板拍板。`;
+			}
+			if (manager === undefined) {
+				return `已上报 CEO（编号 ${key}，任务 ${taskId}），等 CEO 答复；老板只会收到 CEO 确认过的问题。`;
+			}
+			return `已上报 ${targetLabel}（编号 ${key}，任务 ${taskId}），等它答复；它解决不了会继续往上走。`;
 		},
 		pendingList: async (input) => {
 			const pending = await listPending(runtime, BACKGROUND_CONTEXT);
-			const mine = pending.filter((item) => item.level === "ceo");
+			const state = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+			const myLevel = levelOfConversation(state, input.conversationId);
+			// 只看「到自己这一级」的：CEO 看 ceo 级，项目负责人看 leader:<本项目> 级，
+			// 其他管理层看本岗位级。用层级反查会话，而不是写死 level === "ceo"。
+			const mine = pending.filter((item) => item.level === myLevel);
 			if (mine.length === 0) return "没有等你拍板的问题。";
 			return [
 				"等着你拍板的问题（用 answer_pending 回答，key 原样填）：",
@@ -238,14 +287,19 @@ export async function bootstrapCompany(
 			const item = state?.items.find((entry) => entry.key === input.key);
 			if (item === undefined) return `没有编号为 ${input.key} 的待决问题。先用 pending_list 看队列。`;
 			if (item.answer !== undefined) return `这条已经答复过了（${item.answeredBy ?? "?"}）。`;
-			if (item.level !== "ceo") {
+
+			const company = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+			const myLevel = levelOfConversation(company, input.conversationId);
+			if (item.level !== myLevel) {
 				return `编号 ${input.key} 不是到你这一级的（level=${item.level}），你不能替它拍板。`;
 			}
-			const ok = await answerPendingAsCeo(
+			const ok = await answerPendingAtLevel(
 				runtime,
 				{
 					key: input.key,
 					answer: input.answer,
+					level: myLevel,
+					answeredBy: labelOfConversation(company, input.conversationId) ?? myLevel,
 					...(input.escalate === true ? { escalate: true } : {}),
 				},
 				BACKGROUND_CONTEXT,
@@ -490,7 +544,25 @@ export async function bootstrapCompany(
 				release();
 			}
 		},
+		reassignStaff: async (input) => (await reassignStaff(runtime, input, context)).message,
+		setProjectStatus: async (input) =>
+			(
+				await setProjectStatus(
+					runtime,
+					{
+						project: input.project,
+						to: input.status,
+						by: input.by,
+						fromConversationId: input.fromConversationId,
+					},
+					context,
+				)
+			).message,
 	});
+
+	// 员工额外工具：上报（落到 staff.manager 指定的上级）+ 能力自查。
+	// 能力自查不是锦上添花：员工经常被问「你能不能做 X」，没有它只能凭记忆答。
+	EMPLOYEE_EXTRA_TOOLS.set(runtime, [managementTools.escalate, managementTools.myCapabilities]);
 
 	// 注册全部角色能力包（带工具）。底层按名字解析能力包，未注册的取不到。
 	if (options.registry !== undefined) {
@@ -506,6 +578,8 @@ export async function bootstrapCompany(
 		// 项目名由会话 instructions 注入。启动时装一次，负责人会话选中它即可。
 		const leaderExtension = createProjectLeaderExtension(managementTools);
 		options.registry.install(leaderExtension);
+		// 已终止项目的负责人切到只读能力包：重启后 repairLeaderAgents 也会按状态选它
+		options.registry.install(createProjectLeaderReadOnlyExtension(managementTools));
 		LEADER_TOOLSETS.set(runtime, managementTools);
 	}
 
@@ -531,6 +605,8 @@ export async function bootstrapCompany(
 			await ensureStaffAgents(runtime, existing, options.registry, context);
 			// 负责人同理：早期版本立项时没给负责人装任何能力包，他只能空转
 			await repairLeaderAgents(runtime, { taskset: managementTools, registry: options.registry }, context);
+			// 上级引用收敛：指向已删除项目/未知岗位的引用回落到本项目负责人
+			await repairStaffManagers(runtime, existing, context);
 		}
 		return {
 			ownerConversationId: roleConversations.ceo,
@@ -779,15 +855,21 @@ export async function repairLeaderAgents(
 		const conversation = await runtime.harness.conversation(project.leader as never, context);
 		if (conversation === undefined) continue;
 
-		// 负责人能力包是全局唯一的一个（role-leader），启动时已注册。
-		const extension = createProjectLeaderExtension(options.taskset);
+		// 负责人能力包是全局唯一的：active 用 role-leader，terminated 用只读版。
+		// 只读版必须在启动修复时也生效，否则重启一次就把终止项目的执行权限还回去了。
+		const terminated = project.status === "terminated";
+		const extension = terminated
+			? createProjectLeaderReadOnlyExtension(options.taskset)
+			: createProjectLeaderExtension(options.taskset);
 		const agent = await conversation.agent(context);
 
 		// 注意不能只判「列表里有 role-leader」：负责人会话过去没显式选过能力包，
 		// 底层的默认语义是「选中全部已注册能力包」，那样列表里也有 role-leader，
 		// 但他同时还带着 CHRO 的招聘、CPO 的立项——看起来修好了，其实越权还在。
 		const selectedOnly = agent.extensions.length === 1 && agent.extensions[0]?.name === extension.name;
-		const expectedInstructions = projectLeaderCharter(project.name);
+		const expectedInstructions = terminated
+			? [`你是「${project.name}」项目的负责人（项目已终止）。`, PROJECT_LEADER_READONLY_CHARTER].join("\n")
+			: projectLeaderCharter(project.name);
 		const instructionsStale = agent.instructions !== expectedInstructions;
 		if (selectedOnly && !instructionsStale) continue;
 
@@ -868,8 +950,8 @@ export type HireStaffOptions = {
 	readonly role: string;
 	/** 指定模型；不传则用公司默认模型。 */
 	readonly model?: ModelRef;
-	/** 直属上级岗位。 */
-	readonly manager: ManagementRole;
+	/** 直属上级：管理层岗位，或 `leader:<本项目slug>`。不传默认本项目负责人。 */
+	readonly manager?: string;
 	/** 额外职责描述，追加到角色模板之后。 */
 	readonly instructions?: string;
 };
@@ -921,8 +1003,17 @@ export async function hireStaff(
 	const leader = await runtime.harness.conversation(project.leader as never, context);
 	if (leader === undefined) throw new Error(`项目负责人会话不存在：${project.leader}`);
 
-	// 未显式指定时按角色自动分配：员工干不了活往往就是这里给空了
-	const employeeTools = options.employeeTools ?? toolsForRole(options.role);
+	// 直属上级：默认本项目负责人。校验放在写库之前，避免留下半个非法名册。
+	const manager = (options.manager ?? `${LEADER_REF_PREFIX}${options.project}`) as ManagerRef;
+	if (!isValidManagerRef(state, manager, options.project)) {
+		throw new Error(
+			`非法直属上级：${manager}。只能是管理层岗位（${MANAGEMENT_ROLES.join(" / ")}）或本项目负责人 leader:${options.project}`,
+		);
+	}
+
+	// 未显式指定时按角色自动分配：员工干不了活往往就是这里给空了。
+	// 同时追加「向直属上级上报」的能力——没有它，员工只能干等。
+	const employeeTools = options.employeeTools ?? employeeToolsFor(runtime, options.role);
 
 	const employeeExtension = createEmployeeExtension(`${options.project}/${options.name}`, employeeTools);
 
@@ -947,11 +1038,12 @@ export async function hireStaff(
 		// 那样员工会拿到管理工具，等于越级（ADR-004）。
 		await configure(tx, conversation.id, { extensions: [employeeExtension] });
 
+		// 上级关系只存一处：CompanyDoc 的 staff.manager。
+		// ProfileDoc 以前也写过一份 parent，但它没有任何读取者，只会制造第二真相源。
 		const profile = await tx.doc(ProfileDoc, conversation.id);
 		profile.title = options.name;
 		profile.kind = "staff";
 		profile.project = options.project;
-		profile.parent = project.leader;
 		profile.workspace = project.workspace;
 		profile.role = options.role;
 
@@ -961,7 +1053,7 @@ export async function hireStaff(
 			role: options.role,
 			conversationId: Number(conversation.id),
 			project: options.project,
-			manager: options.manager,
+			manager,
 			model,
 			hiredAt: Date.now(),
 			archived: false,
@@ -977,7 +1069,7 @@ export async function hireStaff(
 			conversation?.configure(
 				{
 					model,
-					instructions: buildStaffInstructions(options),
+					instructions: buildStaffInstructions(state, options, manager),
 					// 老库里的 workspace 可能是相对路径，统一解析成绝对路径再下发
 					cwd: resolveProfileWorkspace(project.workspace),
 				},
@@ -1008,6 +1100,287 @@ export async function archiveStaff(
 		company.archived.push(staff.conversationId);
 		return true;
 	}, context);
+}
+
+// ── 员工上级变更 / 项目状态 / 迁移 ──────────────────────────────────────────
+
+/** 上级变更结果。 */
+export type ReassignStaffResult = { readonly ok: boolean; readonly message: string };
+
+/**
+ * 变更已招员工的直属上级。
+ *
+ * 两件事必须一起做，否则会出现「索引改了、提示词没改」：
+ * 1. 改公司索引里的 staff.manager（唯一真相源）；
+ * 2. 重新渲染该员工的职责描述（提示词里写着「直属上级是 XXX」）。
+ *
+ * 索引写是单事务；提示词重渲染是第二段，失败时下次启动由 repairStaffInstructions 收敛。
+ */
+export async function reassignStaff(
+	runtime: CompanyRuntime,
+	input: {
+		readonly project: string;
+		readonly name: string;
+		readonly manager: string;
+		readonly by: string;
+		readonly fromConversationId: number;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<ReassignStaffResult> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) return { ok: false, message: "公司尚未初始化。" };
+
+	const key = `${input.project}/${input.name}`;
+	const person = state.staff[key];
+	if (person === undefined) {
+		return { ok: false, message: `项目 ${input.project} 里没有名为「${input.name}」的员工。` };
+	}
+	if (person.archived) {
+		return { ok: false, message: `员工「${input.name}」已归档，不能再改直属上级。` };
+	}
+
+	const manager = input.manager.trim();
+	if (!isValidManagerRef(state, manager, input.project)) {
+		return {
+			ok: false,
+			message: `非法直属上级：${manager}。只能是管理层岗位（${MANAGEMENT_ROLES.join(" / ")}）或本项目负责人 ${LEADER_REF_PREFIX}${input.project}。`,
+		};
+	}
+	if (person.manager === manager) {
+		return { ok: true, message: `${input.name} 的直属上级已经是 ${managerLabelOf(state, person.manager)}，未做改动。` };
+	}
+
+	const before = managerLabelOf(state, person.manager);
+	const after = managerLabelOf(state, manager as ManagerRef);
+	const actor = labelOfConversation(state, input.fromConversationId) ?? input.by;
+
+	await runtime.harness.commit(async (tx) => {
+		const company = await tx.doc(CompanyDoc);
+		const entry = company.staff[key];
+		if (entry === undefined) return;
+		company.staff[key] = { ...entry, manager: manager as ManagerRef };
+
+		const audit = await tx.doc(AuditDoc, input.fromConversationId as never);
+		audit.events.push({
+			at: Date.now(),
+			type: "staff-manager-change",
+			from: before,
+			to: after,
+			note: `${input.name}（${input.project}）的直属上级：${before} → ${after}；执行者：${actor}`.slice(0, 200),
+			ref: `staff:${key}`,
+		});
+	}, context);
+
+	await syncStaffInstructions(runtime, key, context);
+
+	return { ok: true, message: `已把 ${input.name} 的直属上级改为 ${after}（原：${before}）。` };
+}
+
+/** 项目状态的合法迁移边。终止走 terminateProject，不在这里。 */
+const PROJECT_STATUS_EDGES: Record<ProjectStatus, readonly ProjectStatus[]> = {
+	planning: ["active"],
+	active: ["paused", "done"],
+	paused: ["active", "done"],
+	done: [],
+	terminated: [],
+	archived: [],
+};
+
+/**
+ * 推进项目状态（planning → active → paused/done）。
+ *
+ * 幂等：目标与当前相同直接成功、不写事件。
+ * 越权：只有本项目负责人可以推进自己项目，管理层可推进任意项目；其他会话一律拒绝。
+ * 终止是单独的两步流程（terminateProject），这里不接受 terminated。
+ */
+export async function setProjectStatus(
+	runtime: CompanyRuntime,
+	input: {
+		readonly project: string;
+		readonly to: string;
+		readonly by: string;
+		readonly fromConversationId: number;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ ok: boolean; message: string; error?: string }> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) return { ok: false, error: "E_NOT_READY", message: "公司尚未初始化。" };
+
+	const project = state.projects[input.project];
+	if (project === undefined) {
+		return { ok: false, error: "E_NOT_FOUND", message: `项目不存在：${input.project}` };
+	}
+
+	const to = input.to as ProjectStatus;
+	if (to === "terminated") {
+		return { ok: false, error: "E_USE_TERMINATE", message: "终止项目请用 project_terminate（它还会停活在跑的任务、归档员工）。" };
+	}
+	if (!(to in PROJECT_STATUS_EDGES)) {
+		return { ok: false, error: "E_INVALID_TRANSITION", message: `未知项目状态：${input.to}` };
+	}
+	if (project.status === to) {
+		return { ok: true, message: `项目「${project.name}」已经是 ${to}，未做改动。` };
+	}
+
+	const allowed = PROJECT_STATUS_EDGES[project.status] ?? [];
+	if (!allowed.includes(to)) {
+		return {
+			ok: false,
+			error: "E_INVALID_TRANSITION",
+			message: `不允许的状态迁移：${project.status} → ${to}。允许：${allowed.length === 0 ? "（终态，不能变更）" : allowed.join(" / ")}`,
+		};
+	}
+
+	const managementIds = Object.values(state.roles).map(Number);
+	const isLeader = project.leader === input.fromConversationId;
+	const isManagement = managementIds.includes(input.fromConversationId);
+	if (!isLeader && !isManagement) {
+		return {
+			ok: false,
+			error: "E_FORBIDDEN",
+			message: "只有本项目负责人或管理层能把项目推进到该状态。",
+		};
+	}
+
+	const before = project.status;
+	await runtime.harness.commit(async (tx) => {
+		const company = await tx.doc(CompanyDoc);
+		const current = company.projects[input.project];
+		if (current === undefined) return;
+		company.projects[input.project] = { ...current, status: to };
+
+		const audit = await tx.doc(AuditDoc, input.fromConversationId as never);
+		audit.events.push({
+			at: Date.now(),
+			type: "project-status",
+			from: before,
+			to,
+			note: `项目「${current.name}」状态：${before} → ${to}`,
+			ref: `project:${input.project}`,
+		});
+	}, context);
+
+	return { ok: true, message: `项目「${project.name}」状态已从 ${before} 改为 ${to}。` };
+}
+
+/**
+ * 把指定项目里「上级还是岗位」的员工迁到「本项目负责人」名下。
+ *
+ * 迁移不升 CompanyDoc 版本（形状仍是字符串），可重复执行：已经是负责人引用的
+ * 员工会被跳过，第二次返回 migrated = 0。dry-run 只报告、不写库。
+ */
+export async function migrateStaffManagers(
+	runtime: CompanyRuntime,
+	options: {
+		readonly project: string;
+		/** 只迁这些员工；不传则迁该项目全部未归档员工。 */
+		readonly staff?: readonly string[];
+		readonly dryRun?: boolean;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ migrated: number; skipped: number; details: string[] }> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) throw new Error("公司尚未初始化。");
+	const project = state.projects[options.project];
+	if (project === undefined) throw new Error(`项目不存在：${options.project}`);
+
+	const wanted = options.staff === undefined ? undefined : new Set(options.staff);
+	const details: string[] = [];
+	const targets: { key: string; name: string; from: string }[] = [];
+
+	for (const [key, person] of Object.entries(state.staff)) {
+		if (person.project !== options.project) continue;
+		if (person.archived) continue;
+		if (wanted !== undefined && !wanted.has(person.name)) continue;
+		if (isLeaderManagerRef(person.manager)) continue;
+		targets.push({ key, name: person.name, from: person.manager });
+	}
+
+	const target: ManagerRef = `${LEADER_REF_PREFIX}${options.project}`;
+	for (const item of targets) {
+		details.push(`${item.name}：${item.from} → ${target}`);
+	}
+
+	if (options.dryRun === true) {
+		return { migrated: 0, skipped: targets.length, details };
+	}
+
+	if (targets.length > 0) {
+		await runtime.harness.commit(async (tx) => {
+			const company = await tx.doc(CompanyDoc);
+			for (const item of targets) {
+				const entry = company.staff[item.key];
+				if (entry === undefined) continue;
+				company.staff[item.key] = { ...entry, manager: target };
+			}
+		}, context);
+		for (const item of targets) await syncStaffInstructions(runtime, item.key, context);
+	}
+
+	return { migrated: targets.length, skipped: 0, details };
+}
+
+/** 重渲染某个员工的职责描述（上级变了以后必须做）。 */
+export async function syncStaffInstructions(
+	runtime: CompanyRuntime,
+	staffKey: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<boolean> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	const person = state?.staff[staffKey];
+	if (state === undefined || person === undefined) return false;
+
+	const conversation = await runtime.harness.conversation(person.conversationId as never, context);
+	if (conversation === undefined) return false;
+
+	await conversation.configure(
+		{
+			instructions: staffInstructionsFor(state, {
+				role: person.role,
+				projectName: person.project,
+				manager: person.manager,
+			}),
+		},
+		context,
+	);
+	return true;
+}
+
+/**
+ * 启动时的收敛修复：上级引用失效（指向已删除项目、未知岗位）的员工，
+ * 回落到本项目负责人（项目不存在则回落 CEO），并留审计。
+ *
+ * 只修补「非法引用」，不改变合法的人工配置——迁移是显式动作，不在启动时偷偷做。
+ */
+async function repairStaffManagers(
+	runtime: CompanyRuntime,
+	state: CompanyState,
+	context: Context,
+): Promise<number> {
+	const broken = Object.entries(state.staff).filter(
+		([, person]) => !person.archived && !isValidManagerRef(state, person.manager, person.project),
+	);
+	if (broken.length === 0) return 0;
+
+	const fallbackOf = (projectSlug: string): ManagerRef => {
+		const project = state.projects[projectSlug];
+		return project === undefined ? "ceo" : `${LEADER_REF_PREFIX}${projectSlug}`;
+	};
+
+	await runtime.harness.commit(async (tx) => {
+		const company = await tx.doc(CompanyDoc);
+		for (const [key, person] of broken) {
+			const entry = company.staff[key];
+			if (entry === undefined) continue;
+			company.staff[key] = { ...entry, manager: fallbackOf(entry.project) };
+		}
+	}, context);
+
+	for (const [key, person] of broken) {
+		await syncStaffInstructions(runtime, key, context);
+		void person;
+	}
+	return broken.length;
 }
 
 /**
@@ -1119,6 +1492,25 @@ export async function terminateProject(
 			};
 		}
 	}, context);
+
+	// 权限随状态回收：终止后负责人换成只读能力包，只剩「看与上报」。
+	// 只靠提示词约束不可靠（ADR-004/010：权限=工具在不在），所以换能力包。
+	const taskset = LEADER_TOOLSETS.get(runtime);
+	const leaderConversation = await runtime.harness.conversation(project.leader as never, context);
+	if (taskset !== undefined && leaderConversation !== undefined) {
+		await leaderConversation
+			.configure(
+				{
+					extensions: [createProjectLeaderReadOnlyExtension(taskset)],
+					instructions: [
+						`你是「${project.name}」项目的负责人（项目已终止）。`,
+						PROJECT_LEADER_READONLY_CHARTER,
+					].join("\n"),
+				},
+				context,
+			)
+			.catch(() => undefined);
+	}
 
 	return {
 		ok: true,
@@ -1599,22 +1991,49 @@ async function ensureStaffAgents(
 		if (agent.tools.length > 0) continue;
 
 		// 没有工具 → 重建能力包并重设
-		const extension = createEmployeeExtension(`${staff.project}/${staff.name}`, toolsForRole(staff.role));
+		const extension = createEmployeeExtension(`${staff.project}/${staff.name}`, employeeToolsFor(runtime, staff.role));
 		registry.install(extension);
 		await conversation.configure({ extensions: [extension] }, context);
 	}
 }
 
 /** 生成员工职责描述。 */
-function buildStaffInstructions(options: HireStaffOptions): string {
+function buildStaffInstructions(
+	state: CompanyState | undefined,
+	options: HireStaffOptions,
+	manager: ManagerRef,
+): string {
+	return staffInstructionsFor(state, {
+		role: options.role,
+		projectName: options.project,
+		manager,
+		...(options.instructions === undefined ? {} : { extra: options.instructions }),
+	});
+}
+
+/**
+ * 员工职责描述的唯一生成入口。
+ *
+ * 招聘、变更上级、迁移三处都走这里：提示词里写着「直属上级是 XXX」，
+ * 只改索引不改提示词，员工会继续以为自己在向旧上级汇报。
+ */
+export function staffInstructionsFor(
+	state: CompanyState | undefined,
+	input: {
+		readonly role: string;
+		readonly projectName: string;
+		readonly manager: ManagerRef;
+		readonly extra?: string;
+	},
+): string {
 	const lines = [
 		staffCharterOf({
-			role: options.role,
-			projectName: options.project,
-			managerLabel: ROLE_LABELS[options.manager],
+			role: input.role,
+			projectName: input.projectName,
+			managerLabel: managerLabelOf(state, input.manager),
 		}),
 	];
-	if (options.instructions !== undefined && options.instructions !== "") lines.push(options.instructions);
+	if (input.extra !== undefined && input.extra !== "") lines.push(input.extra);
 	return lines.join("\n");
 }
 

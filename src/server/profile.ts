@@ -8,9 +8,9 @@
  */
 import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import { staffCharterOf } from "../company/org.ts";
-import { CompanyDoc, ROLE_LABELS, type ManagementRole } from "../company/docs.ts";
+import { CompanyDoc, ROLE_LABELS, managerLabelOf, type ManagementRole } from "../company/docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "../company/roles.ts";
-import { toolsForRole } from "../company/staff-tools.ts";
+import { employeeToolsFor } from "../company/org.ts";
 import {
 	createEmployeeExtension,
 	createProjectLeaderExtension,
@@ -109,7 +109,7 @@ export async function readProfile(
 	for (const person of Object.values(state.staff ?? {})) {
 		if (person.conversationId !== conversationId) continue;
 		const project = state.projects[person.project];
-		const tools = toolsForRole(person.role);
+		const tools = employeeToolsFor(runtime, person.role);
 		return {
 			profile: {
 				conversationId,
@@ -118,13 +118,13 @@ export async function readProfile(
 				subtitle: `${person.role} · ${project?.name ?? person.project}`,
 				role: person.role,
 				project: project?.name ?? person.project,
-				parent: ROLE_LABELS[person.manager],
+				parent: managerLabelOf(state, person.manager),
 				model: modelOf(person.model),
 				// 员工实际收到的提示词 = 员工能力包那段职责 + 角色模板 + 汇报关系
 				charter: staffCharterOf({
 					role: person.role,
 					projectName: project?.name ?? person.project,
-					managerLabel: ROLE_LABELS[person.manager],
+					managerLabel: managerLabelOf(state, person.manager),
 				}),
 				guide: COMMON_GUIDE,
 				tools: describeTools(createEmployeeExtension(`${person.project}/${person.name}`, tools).tools),
