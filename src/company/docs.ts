@@ -221,6 +221,7 @@ export type AuditEventType =
 	| "project-create"
 	| "project-status"
 	| "staff-manager-change"
+	| "staff-rename"
 	| "escalate"
 	| "decide"
 	| "owner-decision"

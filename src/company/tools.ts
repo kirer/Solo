@@ -61,6 +61,8 @@ export type ManagementToolset = {
 	readonly staffAssign: ReturnType<typeof defineTool>;
 	/** 归档员工。 */
 	readonly staffArchive: ReturnType<typeof defineTool>;
+	/** 给员工改名。 */
+	readonly staffRename: ReturnType<typeof defineTool>;
 	/** 查预算。 */
 	readonly budgetCheck: ReturnType<typeof defineTool>;
 	/** 成本报告。 */
@@ -105,6 +107,7 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	staff_list: "staffList",
 	staff_assign: "staffAssign",
 	staff_archive: "staffArchive",
+	staff_rename: "staffRename",
 	budget_check: "budgetCheck",
 	cost_report: "costReport",
 	roundtable: "roundtable",

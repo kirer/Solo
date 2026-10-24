@@ -1176,6 +1176,120 @@ export async function reassignStaff(
 	return { ok: true, message: `已把 ${input.name} 的直属上级改为 ${after}（原：${before}）。` };
 }
 
+// ── 员工改名 ────────────────────────────────────────────────────────────────
+
+/** 改名结果。 */
+export type RenameStaffResult = { readonly ok: boolean; readonly message: string };
+
+/** 员工名允许的最大长度（中文名按字符算，卡片与名册都要放得下）。 */
+const STAFF_NAME_MAX_CHARS = 32;
+
+/**
+ * 给在职员工改名。
+ *
+ * 名字在这个系统里**不是展示字段，是身份的一部分**：
+ * - 名册键 `${project}/${name}`（`CompanyDoc.staff`）
+ * - 员工能力包名 `role-employee:${project}/${name}`（底层注册表按名字解析）
+ * - `ProfileDoc.title`（界面与职工档案显示名）
+ *
+ * 所以必须三处一起改，并重建能力包。只改名册会造成「能力包按旧名字解析不到」，
+ * 员工下一轮就没有任何工具——这就是 ADR-009 记录过的老坑（员工能力包重名/丢失）。
+ *
+ * 历史对话、审计记录里的旧名字一律保留：那是当时的事实，改了才是伪造。
+ */
+export async function renameStaff(
+	runtime: CompanyRuntime,
+	input: {
+		readonly project: string;
+		readonly name: string;
+		readonly newName: string;
+		/** 执行者名字（审计用；取不到时落会话标识）。 */
+		readonly by: string;
+		/** 发起改名的会话：审计写进它的审计文档。 */
+		readonly fromConversationId: number;
+		/** 能力注册表：传入才能把重建后的员工能力包装进去。 */
+		readonly registry?: Registry;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<RenameStaffResult> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) return { ok: false, message: "公司尚未初始化。" };
+
+	const project = state.projects[input.project];
+	if (project === undefined) return { ok: false, message: `项目不存在：${input.project}` };
+
+	const oldName = input.name.trim();
+	const newName = input.newName.trim();
+	const key = `${input.project}/${oldName}`;
+	const person = state.staff[key];
+	if (person === undefined) {
+		const names = Object.values(state.staff)
+			.filter((entry) => entry.project === input.project && !entry.archived)
+			.map((entry) => entry.name);
+		return {
+			ok: false,
+			message: `项目 ${input.project} 里没有名为「${oldName}」的员工。${names.length === 0 ? "" : `现有员工：${names.join("、")}`}`,
+		};
+	}
+	if (person.archived) return { ok: false, message: `员工「${oldName}」已归档，不能改名。` };
+
+	// 名字要拼进名册键，带 / 会把键拆错；空白与控制字符会弄乱提示词与卡片。
+	if (newName === "") return { ok: false, message: "新名字不能为空。" };
+	if (/[/\\\s\u0000-\u001f]/.test(newName)) {
+		return { ok: false, message: `新名字「${newName}」不合法：不能包含 / 、反斜杠、空白或控制字符。` };
+	}
+	if ([...newName].length > STAFF_NAME_MAX_CHARS) {
+		return { ok: false, message: `新名字太长（最多 ${STAFF_NAME_MAX_CHARS} 个字符）。` };
+	}
+	if (newName === oldName) return { ok: true, message: `员工已经叫「${oldName}」，未做改动。` };
+
+	const newKey = `${input.project}/${newName}`;
+	if (state.staff[newKey] !== undefined) {
+		return {
+			ok: false,
+			message: `项目 ${input.project} 里已经有叫「${newName}」的员工（含已归档），换一个名字。`,
+		};
+	}
+
+	const actor = labelOfConversation(state, input.fromConversationId) ?? input.by;
+
+	// 第一段：名册键 + 档案标题 + 审计，单事务。
+	await runtime.harness.commit(async (tx) => {
+		const company = await tx.doc(CompanyDoc);
+		const entry = company.staff[key];
+		if (entry === undefined) return;
+		delete company.staff[key];
+		company.staff[newKey] = { ...entry, name: newName };
+
+		const profile = await tx.doc(ProfileDoc, entry.conversationId as never);
+		profile.title = newName;
+
+		const audit = await tx.doc(AuditDoc, input.fromConversationId as never);
+		audit.events.push({
+			at: Date.now(),
+			type: "staff-rename",
+			from: oldName,
+			to: newName,
+			note: `${oldName} → ${newName}（${input.project}）；执行者：${actor}`.slice(0, 200),
+			ref: `staff:${newKey}`,
+		});
+	}, context);
+
+	// 第二段：重建能力包并让会话选中它。
+	// 失败不回滚名册（名册是真相源），下次启动由 ensureStaffAgents 按新名字重建。
+	const conversation = await runtime.harness.conversation(person.conversationId as never, context);
+	if (conversation !== undefined) {
+		const extension = createEmployeeExtension(newKey, employeeToolsFor(runtime, person.role));
+		input.registry?.install(extension);
+		await conversation.configure({ extensions: [extension] }, context);
+	}
+
+	return {
+		ok: true,
+		message: `已把 ${oldName} 改名为 ${newName}（项目 ${project.name}）。名册、职工档案与工具能力包已同步，历史记录保留原名。`,
+	};
+}
+
 /** 项目状态的合法迁移边。终止走 terminateProject，不在这里。 */
 const PROJECT_STATUS_EDGES: Record<ProjectStatus, readonly ProjectStatus[]> = {
 	planning: ["active"],

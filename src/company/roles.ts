@@ -173,9 +173,10 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"招聘时你要判断：这个项目需要哪些角色、每个角色该用什么模型。",
 			"选模型的原则：简单重复的工作用便宜模型，需要判断力的工作用强模型。",
 			"你能自己拍板的：项目内的人员配置、模型分配、员工归档。",
+			"老板或上级已经拟好名字时，直接用 staff_rename 改：名册、档案、工具能力包会一起同步，不用重招人。",
 			"你必须上报的：需要大幅增加人力的项目、跨项目的资源冲突。",
 		].join("\n"),
-		capabilityNames: ["escalate", "my_capabilities", "decide", "project_list", "staff_hire", "staff_reassign", "staff_list", "staff_archive"],
+		capabilityNames: ["escalate", "my_capabilities", "decide", "project_list", "staff_hire", "staff_reassign", "staff_rename", "staff_list", "staff_archive"],
 	},
 };
 

@@ -21,6 +21,7 @@ import {
 	listStaff,
 	readCompany,
 	reassignStaff,
+	renameStaff,
 	setProjectStatus,
 	terminateProject,
 	deleteProject,
@@ -595,6 +596,38 @@ export function createManagementTools(deps: ToolDependencies) {
 		},
 	});
 
+	/**
+	 * 给在职员工改名。
+	 *
+	 * 不只是显示名：名册键与员工能力包名都由员工名派生，所以工具会同时重建能力包，
+	 * 让员工改名后立刻拥有和新名字匹配的工具（否则下一轮会「没有任何工具」）。
+	 */
+	const staffRename = defineTool({
+		name: "staff_rename",
+		description:
+			"给一名在职员工改名。名字是公司内显示名，也是名册键与能力包名的一部分；改名后该员工的工具、历史对话与汇报关系都保留。",
+		parameters: Type.Object({
+			project: Type.String({ description: "员工所属项目 slug" }),
+			name: Type.String({ description: "现在的名字，与 staff_list 显示的一致" }),
+			newName: Type.String({ description: "新名字（项目内唯一，不能含 / 、空格）" }),
+		}),
+		execute: async (args, api) => {
+			const result = await renameStaff(
+				runtime,
+				{
+					project: args.project,
+					name: args.name,
+					newName: args.newName,
+					by: String(api.conversationId),
+					fromConversationId: Number(api.conversationId),
+					...(deps.registry === undefined ? {} : { registry: deps.registry }),
+				},
+				BACKGROUND_CONTEXT,
+			);
+			return text(result.message);
+		},
+	});
+
 	const budgetCheck = defineTool({
 		name: "budget_check",
 		description: "查询预算与已花成本。",
@@ -748,6 +781,7 @@ export function createManagementTools(deps: ToolDependencies) {
 		staffList,
 		staffAssign,
 		staffArchive,
+		staffRename,
 		budgetCheck,
 		costReport,
 	};
