@@ -1,7 +1,12 @@
 /* ============================================================================
    组织图 · 精密工作台
-   CEO → 高管层 → 项目组。结构靠留白与 1px 实线分层，颜色只用来标状态。
-   只有两处动效：在跑卡片边框上的一段低速流光、连线方向上的一段移动短划。
+   CEO → 高管层 → 项目组。结构靠留白与 1px 实线分层。
+   颜色只表示状态，且只有四态：
+     绿 --run    在跑 / 在思考 / 工具调用中（唯一带荧光与流动的状态）
+     黄 --warn   等你拍板 / 等上级裁定（流动更慢）
+     红 --danger 故障 / 失败 / 已终止（静止）
+     中性        空闲
+   荧光克制：1px 边框 + 0 0 0 1px 同色 55 + 0 0 18px -6px 同色 88，无大面积 blur、无脉冲。
    ========================================================================== */
 
 /* ── 容器与连线层 ──────────────────────────────────────────────────────── */
@@ -106,7 +111,9 @@
 	isolation: isolate;
 	appearance: none;
 	-webkit-appearance: none;
-	transition: background-color var(--dur) var(--ease-out);
+	transition:
+		background-color var(--dur) var(--ease-out),
+		box-shadow var(--dur) var(--ease-out);
 }
 
 .card-face {
@@ -131,17 +138,33 @@
 	outline-offset: 2px;
 }
 
-/* 状态：只改边框颜色 */
+/* ── 状态四态：1px 边框 + 一层克制的荧光外圈 ───────────────────────────── */
+/* 在跑 / 在思考 / 工具调用中：绿边框 + 绿荧光（唯一允许流动的状态） */
 .card[data-status="busy"] {
-	background: color-mix(in oklab, var(--accent) 55%, var(--line-strong));
+	background: color-mix(in oklab, var(--run) 62%, var(--line-strong));
+	box-shadow:
+		0 0 0 1px var(--run-halo),
+		0 0 18px -6px var(--run-glow);
 }
 
+/* 等你拍板 / 等上级裁定：黄边框 + 黄荧光（同样克制，只是更慢） */
 .card[data-status="waiting"] {
-	background: color-mix(in oklab, var(--warn) 55%, var(--line-strong));
+	background: color-mix(in oklab, var(--warn) 58%, var(--line-strong));
+	box-shadow:
+		0 0 0 1px var(--warn-halo),
+		0 0 18px -6px var(--warn-glow);
 }
 
+/* 故障 / 失败 / 已终止：红边框 1px，无荧光、无动画（红色只提示，不吸引注意力） */
 .card[data-status="error"] {
-	background: color-mix(in oklab, var(--danger) 55%, var(--line-strong));
+	background: color-mix(in oklab, var(--danger) 72%, var(--line-strong));
+	box-shadow: none;
+}
+
+/* 空闲：中性 1px 边框，无荧光、无动画 */
+.card[data-status="idle"] {
+	background: var(--line-strong);
+	box-shadow: none;
 }
 
 /* 选中：只把面板提亮一档，不额外加边框——边框继续只表示状态 */
@@ -153,7 +176,7 @@
 	background: color-mix(in oklab, var(--ink) 8%, var(--surface));
 }
 
-/* ── 在跑：一段低亮度光沿 1px 边框低速走一圈（无模糊、无外发光）────────── */
+/* ── 在跑：一段光沿 1px 边框低速走一圈（无模糊、无外发光、无脉冲）───────── */
 .card-beam {
 	position: absolute;
 	left: 50%;
@@ -167,11 +190,11 @@
 	background: conic-gradient(
 		from 0deg,
 		transparent 0turn 0.54turn,
-		color-mix(in oklab, var(--accent) 48%, transparent) 0.70turn,
-		var(--accent) 0.82turn,
-		var(--ink) 0.865turn,
-		var(--accent) 0.91turn,
-		color-mix(in oklab, var(--accent) 38%, transparent) 0.98turn,
+		color-mix(in oklab, var(--run) 48%, transparent) 0.70turn,
+		var(--run) 0.82turn,
+		var(--run-strong) 0.865turn,
+		var(--run) 0.91turn,
+		color-mix(in oklab, var(--run) 38%, transparent) 0.98turn,
 		transparent 1turn
 	);
 }
@@ -179,19 +202,6 @@
 .card[data-status="busy"].is-live .card-beam {
 	opacity: 1;
 	animation: beam-travel 2.8s linear infinite;
-}
-
-/* 状态光边：在卡片外圈补一层很薄的同色光，让「在跑 / 待你」一眼能看出来 */
-.card[data-status="busy"].is-live {
-	box-shadow:
-		0 0 0 1px color-mix(in oklab, var(--accent) 58%, transparent),
-		0 0 20px -7px color-mix(in oklab, var(--accent) 65%, transparent);
-}
-
-.card[data-status="waiting"].is-live {
-	box-shadow:
-		0 0 0 1px color-mix(in oklab, var(--warn) 50%, transparent),
-		0 0 18px -8px color-mix(in oklab, var(--warn) 55%, transparent);
 }
 
 /* 待你拍板也走一段更慢的琥珀光，让「有状态」不只靠一个小方点 */
@@ -213,6 +223,11 @@
 	animation: beam-travel 6s linear infinite;
 }
 
+/* 故障态：光带不出现（红色只做静态提示） */
+.card[data-status="error"] .card-beam {
+	display: none;
+}
+
 @keyframes beam-travel {
 	from {
 		transform: translate(-50%, -50%) rotate(0deg);
@@ -232,7 +247,7 @@
 }
 
 .dot[data-status="busy"] {
-	background: var(--accent);
+	background: var(--run);
 }
 
 .dot[data-status="waiting"] {
@@ -252,7 +267,7 @@
 }
 
 .sq[data-status="busy"] {
-	background: var(--accent);
+	background: var(--run);
 }
 
 .sq[data-status="waiting"] {
@@ -332,6 +347,11 @@
 
 .node[data-status="idle"] .node-act {
 	color: var(--faint);
+}
+
+/* 故障节点的活动行用红字：一眼看到「哪里坏了」，而不只是边框变色 */
+.node[data-status="error"] .node-act {
+	color: var(--danger);
 }
 
 /* ── CEO：与其它人卡同构，只多一行待办提示 ─────────────────────────────── */
@@ -499,9 +519,17 @@
 	white-space: nowrap;
 }
 
-.member[data-status="busy"],
+/* 成员：名字跟着方块走一点色，但只染字，不加边框、不发光 */
+.member[data-status="busy"] {
+	color: var(--run);
+}
+
 .member[data-status="waiting"] {
-	color: var(--ink-2);
+	color: var(--warn);
+}
+
+.member[data-status="error"] {
+	color: var(--danger);
 }
 
 .member--more {
@@ -552,8 +580,16 @@
 	font-weight: 500;
 }
 
+.prj-count--run {
+	color: var(--run);
+}
+
 .prj-count--ask {
 	color: var(--warn);
+}
+
+.prj-count--err {
+	color: var(--danger);
 }
 
 .prj-sep {
@@ -665,6 +701,19 @@
 
 .prj-row--lead {
 	background: color-mix(in oklab, var(--ink) 3%, transparent);
+}
+
+/* 团队行：状态只染名字，不加边框、不加荧光（一张卡里不要出现第二套光边） */
+.prj-row[data-status="busy"] .prj-row-name {
+	color: var(--run);
+}
+
+.prj-row[data-status="waiting"] .prj-row-name {
+	color: var(--warn);
+}
+
+.prj-row[data-status="error"] .prj-row-name {
+	color: var(--danger);
 }
 
 .prj-rows .prj-row + .prj-row {
@@ -817,10 +866,12 @@
 	outline-offset: 2px;
 }
 
-/* ── 连线：实线底 + 一段沿路径移动的短划表示方向 ────────────────────────── */
+/* ── 连线：实线底 + 一段沿路径移动的短划表示方向 ──────────────────────────
+   连线表示「沟通」，不是状态，所以底色是中性墨；只有升级（等你裁定）用黄、
+   回报用 info。绿 / 红只属于卡片状态，不再借给连线。 */
 .edge-line {
 	fill: none;
-	stroke: var(--accent);
+	stroke: var(--muted);
 	stroke-width: 1.8;
 	stroke-linecap: round;
 }
@@ -844,28 +895,29 @@
 
 .edge-spark {
 	fill: none;
-	stroke: var(--accent-strong);
+	stroke: var(--ink-2);
 	stroke-width: 4.2;
 	stroke-linecap: round;
 	stroke-dasharray: 6 94;
 	opacity: 0.95;
-	filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent) 70%, transparent));
+	filter: drop-shadow(0 0 3px color-mix(in oklab, var(--ink) 34%, transparent));
 	animation: edge-travel 3.2s linear infinite;
 }
 
 .edge[data-kind="report"] .edge-spark {
 	stroke: var(--info);
-	filter: drop-shadow(0 0 4px color-mix(in oklab, var(--info) 70%, transparent));
+	filter: drop-shadow(0 0 3px color-mix(in oklab, var(--info) 55%, transparent));
 }
 
 .edge[data-kind="escalate"] .edge-spark {
 	stroke: var(--warn);
-	filter: drop-shadow(0 0 4px color-mix(in oklab, var(--warn) 70%, transparent));
+	filter: drop-shadow(0 0 3px color-mix(in oklab, var(--warn) 55%, transparent));
 }
 
 .edge[data-kind="archive"] .edge-spark,
 .edge[data-kind="archieve"] .edge-spark {
 	stroke: var(--muted);
+	filter: none;
 }
 
 /* 最近 60 秒的沟通：短划更实一点 */
@@ -961,9 +1013,13 @@
 
 /* ── 动效降级：静止，但信息完整 ────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
-	.card[data-status="busy"].is-live .card-beam {
+	/* 光带整段关掉：状态仍由 1px 边框 + 荧光外圈 + 状态点表达 */
+	.card-beam,
+	.card[data-status="busy"].is-live .card-beam,
+	.card[data-status="waiting"].is-live .card-beam {
 		animation: none;
-		opacity: 0.45;
+		opacity: 0;
+		display: none;
 	}
 
 	.edge-spark {
@@ -971,8 +1027,12 @@
 		opacity: 0.5;
 	}
 
+	.card,
 	.project,
-	.project__inner {
+	.project__inner,
+	.prj-row,
+	.prj-hint,
+	.prj-return {
 		transition: none;
 	}
 }

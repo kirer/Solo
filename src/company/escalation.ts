@@ -86,8 +86,44 @@ export const PendingDoc = defineDoc<PendingState>({
 	checkpointWhen: () => false,
 });
 
-/** 轮询间隔（毫秒）。 */
+/**
+ * 轮询间隔（毫秒）。
+ *
+ * 升级任务不是同步阻塞，而是「睡一会儿、醒来看看有没有答复」。
+ * 200ms 是为了让**人在界面里拍板**之后几乎立刻有反应——老板的感知上限是「一眨眼」。
+ */
 export const POLL_MS = 200;
+
+/**
+ * 退避后的轮询间隔（毫秒）。
+ *
+ * 为什么需要退避：等老板拍板可能跨天（规格明确要求「不占执行名额、可跨天」）。
+ * 如果一直 200ms 轮询，一天就是 43 万次唤醒，每次都要读文档、判断、再睡回去——
+ * 白白占着 CPU，还让运行时永远「有活可干」，进程没法真正安静下来。
+ *
+ * 30 秒的理由：老板真回来了，最多等 30 秒就有反应，比 200ms 差得远但可以接受；
+ * 而唤醒次数降到原来的 1/150。等 CEO 的层级同理——它是人（模型）在另一轮里回答，
+ * 一分钟内给答复是常态，超过一分钟就是「不在当前这一轮里」，慢轮询足够。
+ */
+export const SLOW_POLL_MS = 30_000;
+
+/**
+ * 快轮询窗口（毫秒）：提问后的头一分钟用 {@link POLL_MS}，之后降到 {@link SLOW_POLL_MS}。
+ *
+ * 一分钟的理由：模型一轮生成通常在 10–60 秒内完成，同层级管理层的答复几乎总在这个窗口里。
+ * 窗口内用快轮询能保证「答复一落盘，任务立刻继续」；窗口外用慢轮询省资源。
+ */
+export const FAST_POLL_WINDOW_MS = 60_000;
+
+/**
+ * 计算下一次轮询该睡多久。
+ *
+ * 纯函数，便于测试与解释：等得越久，问得越稀。
+ */
+export function pollDelay(askedAt: number, now: number): number {
+	if (askedAt <= 0) return POLL_MS;
+	return now - askedAt < FAST_POLL_WINDOW_MS ? POLL_MS : SLOW_POLL_MS;
+}
 
 /**
  * 创建升级任务定义。
@@ -134,8 +170,9 @@ export function createEscalationTask(
 				const outcome = await readOutcome(runtime, task.input.escalationKey, level, context);
 
 				if (outcome === undefined) {
+					const now = taskRuntime.now();
 					await taskRuntime.sleepUntil(
-						taskRuntime.now() + POLL_MS,
+						now + pollDelay(askedAt, now),
 						{ phase: "ask-manager", level, askedAt, path: state.path },
 						context,
 					);
@@ -173,8 +210,9 @@ export function createEscalationTask(
 				const outcome = await readOutcome(runtime, task.input.escalationKey, "ceo", context);
 
 				if (outcome === undefined) {
+					const now = taskRuntime.now();
 					await taskRuntime.sleepUntil(
-						taskRuntime.now() + POLL_MS,
+						now + pollDelay(askedAt, now),
 						{ phase: "ask-ceo", askedAt, path: state.path },
 						context,
 					);
@@ -212,9 +250,11 @@ export function createEscalationTask(
 				const outcome = await readOutcome(runtime, task.input.escalationKey, "owner", context);
 
 				if (outcome === undefined) {
-					// 老板拍板可能跨天：休眠不占执行名额，进程重启后仍然有效
+					// 老板拍板可能跨天：休眠不占执行名额，进程重启后仍然有效。
+					// 但轮询要退避，否则一天 43 万次唤醒（见 pollDelay 的说明）。
+					const now = taskRuntime.now();
 					await taskRuntime.sleepUntil(
-						taskRuntime.now() + POLL_MS,
+						now + pollDelay(askedAt, now),
 						{ phase: "ask-owner", askedAt, path: state.path },
 						context,
 					);

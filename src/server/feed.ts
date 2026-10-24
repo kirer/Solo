@@ -5,19 +5,40 @@
  * - 只读已提交状态（符合底层「只有已提交状态可观察」的保证）
  * - 每条条目自带类型与时间，界面不需要理解底层结构
  * - 思考、工具调用、工具输出分开呈现，让老板看得见「它在干什么」
+ * - **每条消息都能回答「这是谁说的」**（契约第 3 节）：
+ *   user 条目带 `from`，assistant/thinking/tool 的发言人由 `Feed.actor` 统一给出。
  */
-import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import type { CompanyRuntime } from "../runtime/index.ts";
+import {
+	BACKGROUND_CONTEXT,
+	inspectLiveness,
+	isConversationBusy,
+	type CompanyRuntime,
+	type Context,
+} from "../runtime/index.ts";
+import { CompanyDoc, ROLE_LABELS, type CompanyState, type ManagementRole } from "../company/docs.ts";
+import { listPending } from "../company/escalation.ts";
+import { ROLE_DEFINITIONS } from "../company/roles.ts";
+import { actorRefOf, OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
+
+/** 一个发言人（契约第 3 节）。 */
+export type { ActorRef } from "./actors.ts";
 
 /** 流里的一条内容。 */
 export type FeedItem =
-	/** 老板说的话。 */
-	| { readonly id: number; readonly kind: "user"; readonly text: string; readonly at: number }
-	/** 角色的回复正文。 */
+	/** 老板或别的 agent 说的话。`from` 说明是谁说的。 */
+	| {
+			readonly id: number;
+			readonly kind: "user";
+			readonly text: string;
+			readonly at: number;
+			/** 谁说的：老板自己 → {label:"老板",kind:"owner"}；派活 → 派活方。 */
+			readonly from: ActorRef;
+	  }
+	/** 角色的回复正文。发言人见 {@link Feed.actor}。 */
 	| { readonly id: number; readonly kind: "assistant"; readonly text: string; readonly at: number }
-	/** 思考过程（模型有 reasoning 能力时才有）。 */
+	/** 思考过程（模型有 reasoning 能力时才有）。发言人见 {@link Feed.actor}。 */
 	| { readonly id: number; readonly kind: "thinking"; readonly text: string; readonly at: number }
-	/** 工具调用与它的结果。 */
+	/** 工具调用与它的结果。发言人见 {@link Feed.actor}。 */
 	| {
 			readonly id: number;
 			readonly kind: "tool";
@@ -34,16 +55,36 @@ export type FeedItem =
 			readonly callId?: string;
 			readonly at: number;
 	  }
-	/** 系统留痕（派活、回报、升级等）。 */
-	| { readonly id: number; readonly kind: "note"; readonly text: string; readonly at: number }
+	/** 系统留痕（派活、回报、升级等）。`from`/`to` 说明谁对谁做。 */
+	| {
+			readonly id: number;
+			readonly kind: "note";
+			readonly text: string;
+			readonly at: number;
+			readonly from?: ActorRef;
+			readonly to?: ActorRef;
+	  }
 	/** 一次运行失败或被截断。 */
-	| { readonly id: number; readonly kind: "alert"; readonly text: string; readonly at: number };
+	| {
+			readonly id: number;
+			readonly kind: "alert";
+			readonly text: string;
+			readonly at: number;
+			/** 谁报的警（看门狗等）；没有就是系统。 */
+			readonly from?: ActorRef;
+	  };
 
 /** 会话流的完整视图。 */
 export type Feed = {
 	readonly conversationId: number;
 	readonly title: string;
 	readonly role: string;
+	/**
+	 * 这个会话的主人：assistant / thinking / tool 的发言人。
+	 *
+	 * 老板通道里它是 CEO，员工会话里是那位员工——界面不用再猜。
+	 */
+	readonly actor: ActorRef;
 	/** 已提交的条目，按时间正序。 */
 	readonly items: readonly FeedItem[];
 	/** 正在生成的内容（未提交的部分）。 */
@@ -76,18 +117,21 @@ export type Feed = {
 export async function readFeed(
 	runtime: CompanyRuntime,
 	conversationId: number,
-	options: { readonly limit?: number } = {},
+	options: { readonly limit?: number; readonly state?: CompanyState } = {},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<Feed | undefined> {
 	const conversation = await runtime.harness.conversation(conversationId as never, context);
 	if (conversation === undefined) return undefined;
+
+	// 组织索引：用来把「派活方」「留痕双方」解析成人，一次读，feed 与档案共用
+	const state = options.state ?? (await runtime.harness.snapshot(CompanyDoc, context));
 
 	const limit = options.limit ?? 400;
 	const page = await conversation.entries({ order: "ascending" }, limit, undefined, context);
 
 	// 已提交的工具调用：用来给实时卡片补参数、判断哪些调用真的拿到了结果
 	const committed = collectCommittedTools(page.items);
-	const items = buildItems(page.items);
+	const items = buildItems(page.items, state);
 
 	// 实时状态：正在生成、正在思考、正在跑的工具
 	const view = await conversation.watch(context);
@@ -113,13 +157,10 @@ export async function readFeed(
 		}));
 
 	// 是否真的在忙：不能只看有没有流式文本——模型思考阶段没有正文，
-	// 但确实在跑。以任务状态为准，再看流式内容兜底。
-	const inspection = await runtime.harness.inspect(context);
-	const hasLiveTask = inspection.tasks.some(
-		(task) =>
-			Number(task.record.conversationId) === conversationId &&
-			(task.state.kind === "running" || task.state.kind === "ready" || task.state.kind === "waiting"),
-	);
+	// 但确实在跑。以存活判定为准（僵住的 waiting 不算忙，见契约 §5.3），
+	// 再用流式内容兜底。
+	const liveness = await inspectLiveness(runtime, {}, context);
+	const hasLiveTask = isConversationBusy(liveness, conversationId);
 
 	// 中断过的工具调用：assistant 里提交了 toolCall，但永远没有 tool-result，
 	// 也没有实时工具在跑。以前它会永远显示「运行中 / 等待输出…」。
@@ -171,6 +212,8 @@ export async function readFeed(
 		conversationId,
 		title: "",
 		role: "",
+		// 先按组织索引给一个发言人；decorateFeed 会按会话种类再校正一次
+		actor: actorRefOf(state, conversationId) ?? { label: "", kind: "system" },
 		items,
 		...(streaming === "" ? {} : { streaming }),
 		...(thinking === "" ? {} : { thinking }),
@@ -181,6 +224,66 @@ export async function readFeed(
 		kind: "branch",
 		awaitingOwner: false,
 	};
+}
+
+/**
+ * 给 feed 补上标题、角色、种类、发言人、待拍板状态。
+ *
+ * 从 http.ts 移到 feed.ts：发言人（`actor`）与条目里的 `from`/`to` 必须用
+ * 同一套口径解析，分在两个文件里早晚会不一致。
+ */
+export async function decorateFeed(
+	runtime: CompanyRuntime,
+	feed: Feed,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<Feed> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	const pending = await listPending(runtime, context);
+	// 只有 owner 级的问题才是「等老板拍板」；CEO 自己队列里的问题不算。
+	const awaitingOwner = pending.some(
+		(item) => item.level === "owner" && item.fromConversationId === feed.conversationId,
+	);
+
+	let title = "会话";
+	let kind: Feed["kind"] = "branch";
+	let role = "";
+	let actor: ActorRef = { label: "", kind: "system" };
+
+	const roleEntry = Object.entries(state?.roles ?? {}).find(([, id]) => id === feed.conversationId);
+	if (roleEntry !== undefined) {
+		const roleKey = roleEntry[0] as ManagementRole;
+		title = ROLE_LABELS[roleKey] ?? roleKey.toUpperCase();
+		kind = roleKey === "ceo" ? "owner" : "role";
+		role =
+			roleKey === "ceo"
+				? "唯一真人 · 直接向你汇报"
+				: `${ROLE_DEFINITIONS[roleKey]?.summary ?? ""} · 向 CEO 汇报`;
+		// CEO 通道的助手是 CEO；其他岗位就是它自己
+		actor = { conversationId: feed.conversationId, label: title, kind: roleKey === "ceo" ? "owner" : "role" };
+	}
+
+	for (const project of Object.values(state?.projects ?? {})) {
+		if (project.leader === feed.conversationId) {
+			title = project.name;
+			kind = "project";
+			role = "项目负责人";
+			actor = {
+				conversationId: feed.conversationId,
+				label: project.leaderName ?? project.name,
+				kind: "project",
+			};
+		}
+	}
+	for (const staff of Object.values(state?.staff ?? {})) {
+		if (staff.conversationId === feed.conversationId) {
+			title = staff.name;
+			kind = "staff";
+			role = `${staff.role} · ${staff.project} 项目 · 向 ${ROLE_LABELS[staff.manager]} 汇报`;
+			actor = { conversationId: feed.conversationId, label: staff.name, kind: "staff" };
+		}
+	}
+
+	return { ...feed, title, kind, role, actor, awaitingOwner };
 }
 
 /** 底层 pi.live 的结构（只声明用到的字段）。 */
@@ -254,6 +357,7 @@ function buildItems(
 		readonly model?: readonly unknown[];
 		readonly data?: unknown;
 	}[],
+	state: CompanyState | undefined,
 ): FeedItem[] {
 	const items: FeedItem[] = [];
 	// 工具调用先记下来，等它的结果到了再合并成一条
@@ -264,7 +368,8 @@ function buildItems(
 			case "pi.user": {
 				const message = entry.model?.[0] as { content?: unknown; timestamp?: number } | undefined;
 				const text = typeof message?.content === "string" ? message.content : extractText(message?.content);
-				items.push({ id: entry.id, kind: "user", text, at: message?.timestamp ?? 0 });
+				// pi.user 没有来源标记：走 HTTP 进来的只有老板（agent 派活会写成 app.delegate 条目）
+				items.push({ id: entry.id, kind: "user", text, at: message?.timestamp ?? 0, from: OWNER_REF });
 				break;
 			}
 			case "pi.assistant": {
@@ -358,18 +463,40 @@ function buildItems(
 			case "pi.compaction":
 				items.push({ id: entry.id, kind: "note", text: "较早的对话已被压缩以节省上下文", at: 0 });
 				break;
+			// 看门狗写的告警（backend-core）：会话内 app.alert 条目
+			case "app.alert": {
+				const data = entry.data as
+					| { readonly text?: string; readonly message?: string; readonly from?: string }
+					| undefined;
+				const body = (data?.text ?? data?.message ?? "").trim();
+				if (body === "") break;
+				items.push({
+					id: entry.id,
+					kind: "alert",
+					text: data?.from === undefined ? body : `${data.from}：${body}`,
+					at: 0,
+					...(data?.from === undefined ? {} : { from: refOfLabel(state, data.from) }),
+				});
+				break;
+			}
 			default: {
-				// 自定义条目：沟通留痕
+				// 自定义条目：沟通留痕（派活 / 回报 / 升级 / 决定）
 				const data = entry.data as
 					| { readonly from?: string; readonly to?: string; readonly kind?: string; readonly text?: string }
 					| undefined;
 				if (data !== undefined && typeof data === "object" && data.from !== undefined) {
-					const verb = data.kind === "delegate" ? "派活" : data.kind === "report" ? "回报" : data.kind ?? "";
+					const verb = verbOf(entry.kind, data.kind);
+					const from = refOfLabel(state, data.from);
+					const to = data.to === undefined ? undefined : refOfLabel(state, data.to);
+					// from/to 已经由界面渲染成 chip，正文里不再重复「谁 → 谁」
+					const body = data.text ?? "";
 					items.push({
 						id: entry.id,
 						kind: "note",
-						text: `${verb} · ${data.from} → ${data.to}${data.text === undefined ? "" : `：${data.text}`}`,
+						text: body === "" ? verb : verb === "" ? body : `${verb}：${body}`,
 						at: 0,
+						from,
+						...(to === undefined ? {} : { to }),
 					});
 				}
 				break;
@@ -378,6 +505,18 @@ function buildItems(
 	}
 
 	return items;
+}
+
+/** 留痕动词：条目种类优先，其次是 data.kind。 */
+function verbOf(entryKind: string, dataKind: string | undefined): string {
+	const kind = dataKind ?? entryKind;
+	if (kind === "app.delegate" || kind === "delegate") return "派活";
+	if (kind === "report") return "回报";
+	if (kind === "escalate") return "升级";
+	if (kind === "decide") return "决定";
+	if (kind === "hire") return "招聘";
+	if (kind === "archive") return "归档";
+	return "";
 }
 
 /** 从内容块抽文本。 */

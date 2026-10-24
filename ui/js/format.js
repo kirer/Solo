@@ -33,14 +33,30 @@ export function formatCost(value) {
 	return `$${usd.toFixed(2)}`;
 }
 
+/**
+ * 状态四态的中文标签。
+ *
+ * 与 data-status 一一对应：busy=在跑、waiting=待你、error=故障、idle=空闲。
+ */
 export function statusLabel(status) {
-	return status === "busy" ? "在跑" : status === "waiting" ? "待你" : "空闲";
+	if (status === "busy") return "在跑";
+	if (status === "waiting") return "待你";
+	if (status === "error") return "故障";
+	return "空闲";
 }
 
-/** 节点的边框状态：忙优先，其次待你，最后空闲。 */
+/**
+ * 节点的边框状态，全站唯一判定入口（契约第 2 节）。
+ *
+ * 优先级：busy（在跑 / 在思考）> waiting（等你拍板 / 等裁定）> error（故障）> idle。
+ * 「在跑」优先是因为它是最强的实时信号；故障是持续状态，不会被一次排队盖掉。
+ * 返回值必定是四态之一，CSS 只认这四个值。
+ */
 export function statusOf(actor) {
-	if (actor?.status === "busy") return "busy";
-	if ((actor?.awaitingYou ?? 0) > 0 || actor?.status === "waiting") return "waiting";
+	const status = actor?.status;
+	if (status === "busy") return "busy";
+	if ((actor?.awaitingYou ?? 0) > 0 || status === "waiting") return "waiting";
+	if (status === "error" || status === "failed" || status === "terminated") return "error";
 	return "idle";
 }
 

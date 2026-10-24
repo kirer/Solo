@@ -66,29 +66,49 @@ export function initOrg({ onSelect } = {}) {
 		if (element !== null && element.getAttribute(name) !== value) element.setAttribute(name, value);
 	};
 
-	/** 卡片状态色：忙 → 待你 → 空闲（与 format.statusOf 对齐）。 */
+	/**
+	 * 卡片状态色：busy → waiting → error → idle（与 format.statusOf 同一优先级）。
+	 *
+	 * 已终止的项目直接走 error 分支（red，无动画）；
+	 * 项目里任何一个人故障，整张项目卡也标红，避免「有问题但看起来正常」。
+	 */
 	function projectStatus(project) {
 		if (project?.status === "terminated") return "error";
 		const people = [project?.lead, ...(project?.staff ?? [])];
-		if (people.some((person) => person?.status === "busy")) return "busy";
-		if (people.some((person) => (person?.awaitingYou ?? 0) > 0 || person?.status === "waiting")) {
-			return "waiting";
-		}
+		if (people.some((person) => statusOf(person) === "busy")) return "busy";
+		if (people.some((person) => statusOf(person) === "waiting")) return "waiting";
+		if (people.some((person) => statusOf(person) === "error")) return "error";
 		return "idle";
+	}
+
+	/** CEO 卡的状态：自身在跑最优先，其次是等你拍板，再次故障。 */
+	function ceoStatus(actor, askCount) {
+		if (actor?.status === "busy") return "busy";
+		if (askCount > 0) return "waiting";
+		return statusOf(actor);
 	}
 
 	function teamStats(project) {
 		const all = project?.staff ?? [];
 		const staff = all.filter((person) => person.archived !== true);
-		const busy = staff.filter((person) => person.status === "busy").length;
-		const waiting = staff.filter(
-			(person) => (person.awaitingYou ?? 0) > 0 || person.status === "waiting",
+		const busy = staff.filter((person) => statusOf(person) === "busy").length;
+		const waiting = staff.filter((person) => statusOf(person) === "waiting").length;
+		const errors = [project?.lead, ...staff].filter(
+			(person) => statusOf(person) === "error",
 		).length;
 		const ask = [project?.lead, ...staff].reduce(
 			(total, person) => total + Number(person?.awaitingYou ?? 0),
 			0,
 		);
-		return { staff, busy, waiting, ask, total: staff.length, archived: all.length - staff.length };
+		return {
+			staff,
+			busy,
+			waiting,
+			errors,
+			ask,
+			total: staff.length,
+			archived: all.length - staff.length,
+		};
 	}
 
 	function activityOf(actor) {
@@ -115,6 +135,7 @@ export function initOrg({ onSelect } = {}) {
 		const parts = [project.name, `${stats.total} 名员工`];
 		if (stats.busy > 0) parts.push(`${stats.busy} 人在跑`);
 		if (stats.ask > 0) parts.push(`${stats.ask} 件等你拍板`);
+		if (stats.errors > 0) parts.push(`${stats.errors} 人故障`);
 		if (project.status === "terminated") parts.push("已终止");
 		else parts.push("点击展开团队");
 		return parts.join("，");
@@ -227,10 +248,13 @@ export function initOrg({ onSelect } = {}) {
 	function countsHtml(stats) {
 		const parts = [];
 		if (stats.busy > 0) {
-			parts.push(`<span class="prj-count"><span class="num">${stats.busy}</span> 在跑</span>`);
+			parts.push(`<span class="prj-count prj-count--run"><span class="num">${stats.busy}</span> 在跑</span>`);
 		}
 		if (stats.ask > 0) {
 			parts.push(`<span class="prj-count prj-count--ask"><span class="num">${stats.ask}</span> 等你</span>`);
+		}
+		if (stats.errors > 0) {
+			parts.push(`<span class="prj-count prj-count--err"><span class="num">${stats.errors}</span> 故障</span>`);
 		}
 		return parts.join(`<span class="prj-sep" aria-hidden="true">·</span>`);
 	}
@@ -241,11 +265,13 @@ export function initOrg({ onSelect } = {}) {
 		return parts.join(" · ");
 	}
 
-	/** 团队行里只放真实活动，没有就留白（状态由方块表示）。 */
+	/** 团队行里只放真实活动；没有活动时，故障要明说，其它状态交给方块表示。 */
 	function rowActivityOf(actor) {
 		const text = String(actor?.activity ?? "").trim();
 		if (text !== "") return text;
-		return actor?.archived === true ? "已归档" : "";
+		if (actor?.archived === true) return "已归档";
+		if (statusOf(actor) === "error") return "故障";
+		return "";
 	}
 
 	/** 人物卡（CEO 以外的高管）。 */
@@ -272,7 +298,7 @@ export function initOrg({ onSelect } = {}) {
 
 	/** CEO 卡：和别的卡一样，只是多一行小号待办提示。 */
 	function ceoHtml(actor, askCount) {
-		const status = org?.ceo?.status === "busy" ? "busy" : askCount > 0 ? "waiting" : statusOf(actor);
+		const status = ceoStatus(actor, askCount);
 		return `
 			<button class="card node node--ceo" type="button"
 				data-conv="${actor.conversationId}" data-focus="${actor.conversationId}"
@@ -600,6 +626,7 @@ export function initOrg({ onSelect } = {}) {
 			stats.total,
 			stats.busy,
 			stats.waiting,
+			stats.errors,
 			stats.ask,
 			stats.archived,
 			...(project.staff ?? []).map((person) => `${person.conversationId}:${statusOf(person)}`),
@@ -654,8 +681,7 @@ export function initOrg({ onSelect } = {}) {
 		const ceoQueue = Number(org.ceoQueue ?? 0);
 
 		if (ceoRefs !== null) {
-			const status =
-				org.ceo?.status === "busy" ? "busy" : askCount > 0 ? "waiting" : statusOf(org.ceo);
+			const status = ceoStatus(org.ceo, askCount);
 			patchActor(ceoRefs, org.ceo, { status, ask: askCount });
 			if (ceoRefs.pending !== null) {
 				const empty = askCount > 0 || ceoQueue > 0 ? "0" : "1";

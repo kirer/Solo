@@ -6,6 +6,7 @@
  */
 import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import { MANAGEMENT_ROLES, ROLE_LABELS, type ManagementRole, type ModelRef } from "./docs.ts";
+import { createRoundtableTools } from "./roundtable-tools.ts";
 import {
 	archiveStaff,
 	createProject,
@@ -69,6 +70,8 @@ export type ToolDependencies = {
 		readonly fromConversationId: number;
 		readonly context: Context;
 	}) => Promise<string>;
+	/** 圆桌讨论的默认参与者超时（毫秒）；不传用 120s。 */
+	readonly roundtableTimeoutMs?: number;
 	/** 转交给另一位管理层。 */
 	readonly delegateToRole?: (input: {
 		readonly role: string;
@@ -82,6 +85,14 @@ export type ToolDependencies = {
 /** 构造全部管理层工具。 */
 export function createManagementTools(deps: ToolDependencies) {
 	const { runtime } = deps;
+
+	// 圆桌讨论：机制在 roundtable.ts，这里只取两个工具入口。
+	// 装配层不需要额外接线——注册表已在 deps 里，任务能力包首次调用时自动补装。
+	const roundtableTools = createRoundtableTools({
+		runtime,
+		...(deps.registry === undefined ? {} : { registry: deps.registry }),
+		...(deps.roundtableTimeoutMs === undefined ? {} : { timeoutMs: deps.roundtableTimeoutMs }),
+	});
 
 	const orgTree = defineTool({
 		name: "org_tree",
@@ -602,6 +613,8 @@ export function createManagementTools(deps: ToolDependencies) {
 	});
 
 	return {
+		roundtable: roundtableTools.roundtable,
+		roundtableMinutes: roundtableTools.roundtableMinutes,
 		orgTree,
 		escalate,
 		pendingList,

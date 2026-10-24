@@ -53,6 +53,10 @@ export type ManagementToolset = {
 	readonly delegateToLeader: ReturnType<typeof defineTool>;
 	/** 转交另一位管理层。 */
 	readonly delegateToRole: ReturnType<typeof defineTool>;
+	/** 开一次圆桌讨论。 */
+	readonly roundtable: ReturnType<typeof defineTool>;
+	/** 查圆桌讨论纪要。 */
+	readonly roundtableMinutes: ReturnType<typeof defineTool>;
 };
 
 /** 工具名 → 工具实例。 */
@@ -80,6 +84,8 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	staff_archive: "staffArchive",
 	budget_check: "budgetCheck",
 	cost_report: "costReport",
+	roundtable: "roundtable",
+	roundtable_minutes: "roundtableMinutes",
 };
 
 /**

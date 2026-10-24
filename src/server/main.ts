@@ -98,6 +98,10 @@ async function openAndBoot(): Promise<{ runtime: CompanyRuntime; parked: readonl
 			defaultModel,
 			modelCatalog: [...catalog],
 			escalationTask,
+			// 看门狗**不在这里开**：网页入口唯一的那一个由 serve() 启动
+			// （它同时负责在 server.close() 时停掉，并推进 SSE 让告警立刻上屏）。
+			// 这里再开一个就会出现两个看门狗同时 abort / 投递，动作翻倍。
+			watchdog: false,
 		},
 		BACKGROUND_CONTEXT,
 	);

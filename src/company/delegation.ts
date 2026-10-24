@@ -12,11 +12,20 @@ import {
 	BACKGROUND_CONTEXT,
 	type Context,
 	delegationRequestId,
+	inspectLivenessFrom,
+	isConversationBusy,
 	reportRequestId,
 	type CompanyRuntime,
 } from "../runtime/index.ts";
 import { AuditDoc, CompanyDoc, ROLE_LABELS, type StaffEntry } from "./docs.ts";
 import { beginLiveTrail, recordMessage } from "./trail.ts";
+import {
+	DEFAULT_DELEGATION_TIMEOUT_MS,
+	DelegationCycleError,
+	DelegationTimeoutError,
+	enterDelegation,
+	waitWithTimeout,
+} from "./delegation-guard.ts";
 
 /** 派活选项。 */
 export type DelegateOptions = {
@@ -48,6 +57,17 @@ export type DelegateOptions = {
 	 * - `reject`：直接拒绝并抛错
 	 */
 	readonly whenBusy?: "followUp" | "steer" | "reject";
+	/**
+	 * 同步等待的硬上限（毫秒），默认 {@link DEFAULT_DELEGATION_TIMEOUT_MS}（180 秒）。
+	 *
+	 * 没有上限就是这次事故的成因：员工那轮工具报错后 `pi.generation` 停在
+	 * `waiting`，`submission.wait()` 永不返回，派活方的工具任务永远 `running`，
+	 * 会话永远「正在忙」，后续派活全部排队。超时后返回
+	 * `{ ok:false, reason:"timeout" }` 并释放等待图，让模型能换条路走。
+	 *
+	 * 传 `0` 或 `Infinity` 表示不设上限（只建议测试用）。
+	 */
+	readonly timeoutMs?: number;
 };
 
 /** 派活结果。 */
@@ -56,7 +76,7 @@ export type DelegateResult = {
 	/** 员工答复文本；失败时是失败原因。 */
 	readonly text: string;
 	/** 失败原因分类。 */
-	readonly reason?: "no-employee" | "archived" | "busy" | "failed" | "cross-project";
+	readonly reason?: "no-employee" | "archived" | "busy" | "failed" | "cross-project" | "cycle" | "timeout";
 	readonly conversationId?: number;
 };
 
@@ -90,135 +110,194 @@ export async function delegate(
 		return { ok: false, text: `员工 ${options.employee} 的会话不存在。`, reason: "no-employee" };
 	}
 
-	// 未给派活标识时，按该员工已发生的派活次数推导，保证连续派活各自独立。
-	const delegationId = options.delegationId ?? (await nextDelegationId(runtime, key, context));
-	const requestId = delegationRequestId(delegationId, options.employee);
-
-	// 投递。whenBusy: "reject" 时忙碌会抛 ConversationBusy，转成明确的失败结果。
-	let submission: Awaited<ReturnType<typeof employee.submit>>;
+	// 环检测：派活也是同步等待，同样会形成 A→B→A 的闭环。
+	// 以前只有 delegate_to_role / delegate_to_leader 走了这道防线，员工这条路径漏了。
+	let releaseGuard: () => void;
 	try {
-		submission = await employee.submit(
-			{
-				type: "input",
-				content: options.task,
-				requestId,
-				// 标记来源：员工会话里这条消息不是老板发的，界面要能区分，
-				// 排队时也不能显示成「你需要处理」。
-				entry: {
-					kind: "app.delegate",
-					data: {
-						from: options.from,
-						to: options.employee,
-						project: options.project,
-						text: options.task.slice(0, 280),
+		releaseGuard = enterDelegation(options.fromConversationId, staff.conversationId);
+	} catch (error) {
+		if (error instanceof DelegationCycleError) {
+			return {
+				ok: false,
+				text: [
+					`不能派活给 ${options.employee}：${error.message}。`,
+					"对方正在直接或间接等你这一侧的结果，派过去会互相卡死。",
+					"请先处理完手上的结论并回复它，或改用 escalate。",
+				].join(""),
+				reason: "cycle",
+				conversationId: staff.conversationId,
+			};
+		}
+		throw error;
+	}
+
+	try {
+		// 未给派活标识时，按该员工已发生的派活次数推导，保证连续派活各自独立。
+		const delegationId = options.delegationId ?? (await nextDelegationId(runtime, key, context));
+		const requestId = delegationRequestId(delegationId, options.employee);
+
+		// 投递。whenBusy: "reject" 时忙碌会抛 ConversationBusy，转成明确的失败结果。
+		let submission: Awaited<ReturnType<typeof employee.submit>>;
+		try {
+			submission = await employee.submit(
+				{
+					type: "input",
+					content: options.task,
+					requestId,
+					// 标记来源：员工会话里这条消息不是老板发的，界面要能区分，
+					// 排队时也不能显示成「你需要处理」。
+					entry: {
+						kind: "app.delegate",
+						data: {
+							from: options.from,
+							to: options.employee,
+							project: options.project,
+							text: options.task.slice(0, 280),
+						},
 					},
+					...(options.whenBusy === undefined ? {} : { whenBusy: options.whenBusy }),
 				},
-				...(options.whenBusy === undefined ? {} : { whenBusy: options.whenBusy }),
-			},
-			context,
-		);
-	} catch {
-		return {
-			ok: false,
-			text: `员工 ${options.employee} 正在忙碌，已拒绝本次派活。`,
-			reason: "busy",
-			conversationId: staff.conversationId,
-		};
-	}
+				context,
+			);
+		} catch {
+			return {
+				ok: false,
+				text: `员工 ${options.employee} 正在忙碌，已拒绝本次派活。`,
+				reason: "busy",
+				conversationId: staff.conversationId,
+			};
+		}
 
-	// 实时连线：派活在等待期间就挂一条临时边，界面能立刻看到「谁在跟谁说话」。
-	const releaseLive = beginLiveTrail({
-		kind: "delegate",
-		from: options.from,
-		to: options.employee,
-		fromConversation: options.fromConversationId,
-		toConversation: staff.conversationId,
-		project: options.project,
-	});
-	let settled: Awaited<ReturnType<typeof submission.wait>>;
-	try {
-		settled = await submission.wait(context);
+		// 实时连线：派活在等待期间就挂一条临时边，界面能立刻看到「谁在跟谁说话」。
+		const releaseLive = beginLiveTrail({
+			kind: "delegate",
+			from: options.from,
+			to: options.employee,
+			fromConversation: options.fromConversationId,
+			toConversation: staff.conversationId,
+			project: options.project,
+		});
+		let settled: Awaited<ReturnType<typeof submission.wait>>;
+		try {
+			settled = await waitWithTimeout(
+				submission.wait(context),
+				options.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS,
+				context.abortSignal === undefined ? {} : { signal: context.abortSignal },
+			);
+		} catch (error) {
+			if (error instanceof DelegationTimeoutError) {
+				// 超时不撤销已经投出去的工作（ADR-005）：员工照旧会做完，
+				// 只是这一侧不再等它。留一条痕，让「它后来做完了」可追溯。
+				await recordMessage(
+					runtime,
+					{
+						kind: "report",
+						from: options.employee,
+						to: options.from,
+						fromConversationId: staff.conversationId,
+						toConversationId: options.fromConversationId,
+						ref: reportRequestId(delegationId, options.employee),
+						project: options.project,
+						text: `派活等待超时（${Math.round((options.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS) / 1000)} 秒），员工仍在后台继续；结果不会再回到本次调用。`,
+					},
+					context,
+				);
+				return {
+					ok: false,
+					text: [
+						`等待员工 ${options.employee} 超过 ${Math.round((options.timeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS) / 1000)} 秒，本次派活不再等待。`,
+						"它可能仍在后台干活，也可能卡住了。",
+						"不要反复重派同一件事：先做你能做的部分，或把这件事上报（escalate）让上层协调。",
+					].join(""),
+					reason: "timeout",
+					conversationId: staff.conversationId,
+				};
+			}
+			throw error;
+		} finally {
+			releaseLive();
+		}
+
+		if (settled.status === "unanswered") {
+			const reason = `未能回答（${settled.reason}）`;
+			await recordMessage(runtime, {
+				kind: "report",
+				from: options.employee,
+				to: options.from,
+				fromConversationId: staff.conversationId,
+				toConversationId: options.fromConversationId,
+				ref: reportRequestId(delegationId, options.employee),
+				project: options.project,
+				text: `派活失败：${reason}`,
+			}, context);
+			return {
+				ok: false,
+				text: `员工 ${options.employee} 未能完成：${reason}`,
+				reason: "failed",
+				conversationId: staff.conversationId,
+			};
+		}
+
+		const answer = await readAnswer(runtime, settled.answer, context);
+
+		// 员工跑完了，但工具失败意味着「活没干成」。
+		// 这种情况不能当作成功答复回报——否则派活方会以为任务完成了。
+		const toolFailure = await detectRunFailure(runtime, staff.conversationId, context);
+		if (toolFailure !== undefined) {
+			await recordMessage(runtime, {
+				kind: "report",
+				from: options.employee,
+				to: options.from,
+				fromConversationId: staff.conversationId,
+				toConversationId: options.fromConversationId,
+				ref: reportRequestId(delegationId, options.employee),
+				project: options.project,
+				text: `工具失败：${toolFailure}`,
+			}, context);
+			return {
+				ok: false,
+				text: `员工 ${options.employee} 执行失败：${toolFailure}`,
+				reason: "failed",
+				conversationId: staff.conversationId,
+			};
+		}
+
+		// 双向留痕：派活方一条「我派给谁」，员工一条「谁派给我」
+		await recordMessage(runtime, {
+			kind: "delegate",
+			from: options.from,
+			to: options.employee,
+			fromConversationId: options.fromConversationId,
+			toConversationId: staff.conversationId,
+			ref: requestId,
+			project: options.project,
+			text: options.task,
+		}, context);
+		await recordMessage(runtime, {
+			kind: "report",
+			from: options.employee,
+			to: options.from,
+			fromConversationId: staff.conversationId,
+			toConversationId: options.fromConversationId,
+			ref: reportRequestId(delegationId, options.employee),
+			project: options.project,
+			text: answer,
+		}, context);
+
+		// 审计
+		await appendAudit(runtime, options.fromConversationId, {
+			at: Date.now(),
+			type: "delegate",
+			from: options.from,
+			to: options.employee,
+			note: options.task.slice(0, 200),
+			ref: delegationId,
+		}, context);
+
+		return { ok: true, text: answer, conversationId: staff.conversationId };
 	} finally {
-		releaseLive();
+		releaseGuard();
 	}
-
-	if (settled.status === "unanswered") {
-		const reason = `未能回答（${settled.reason}）`;
-		await recordMessage(runtime, {
-			kind: "report",
-			from: options.employee,
-			to: options.from,
-			fromConversationId: staff.conversationId,
-			toConversationId: options.fromConversationId,
-			ref: reportRequestId(delegationId, options.employee),
-			project: options.project,
-			text: `派活失败：${reason}`,
-		}, context);
-		return {
-			ok: false,
-			text: `员工 ${options.employee} 未能完成：${reason}`,
-			reason: "failed",
-			conversationId: staff.conversationId,
-		};
-	}
-
-	const answer = await readAnswer(runtime, settled.answer, context);
-
-	// 员工跑完了，但工具失败意味着「活没干成」。
-	// 这种情况不能当作成功答复回报——否则派活方会以为任务完成了。
-	const toolFailure = await detectRunFailure(runtime, staff.conversationId, context);
-	if (toolFailure !== undefined) {
-		await recordMessage(runtime, {
-			kind: "report",
-			from: options.employee,
-			to: options.from,
-			fromConversationId: staff.conversationId,
-			toConversationId: options.fromConversationId,
-			ref: reportRequestId(delegationId, options.employee),
-			project: options.project,
-			text: `工具失败：${toolFailure}`,
-		}, context);
-		return {
-			ok: false,
-			text: `员工 ${options.employee} 执行失败：${toolFailure}`,
-			reason: "failed",
-			conversationId: staff.conversationId,
-		};
-	}
-
-	// 双向留痕：派活方一条「我派给谁」，员工一条「谁派给我」
-	await recordMessage(runtime, {
-		kind: "delegate",
-		from: options.from,
-		to: options.employee,
-		fromConversationId: options.fromConversationId,
-		toConversationId: staff.conversationId,
-		ref: requestId,
-		project: options.project,
-		text: options.task,
-	}, context);
-	await recordMessage(runtime, {
-		kind: "report",
-		from: options.employee,
-		to: options.from,
-		fromConversationId: staff.conversationId,
-		toConversationId: options.fromConversationId,
-		ref: reportRequestId(delegationId, options.employee),
-		project: options.project,
-		text: answer,
-	}, context);
-
-	// 审计
-	await appendAudit(runtime, options.fromConversationId, {
-		at: Date.now(),
-		type: "delegate",
-		from: options.from,
-		to: options.employee,
-		note: options.task.slice(0, 200),
-		ref: delegationId,
-	}, context);
-
-	return { ok: true, text: answer, conversationId: staff.conversationId };
 }
 
 /**
@@ -401,18 +480,23 @@ async function detectToolFailure(
 	return text.replace(/<\/?harness>/g, "").trim().slice(0, 200);
 }
 
-/** 员工当前是否忙碌。 */
+/**
+ * 员工当前是否忙碌。
+ *
+ * 注意：这里**不再**把「waiting」一律算作忙。真实事故里，员工那轮的工具报错后
+ * `pi.generation` 停在 `waiting(on:[已结束的 toolId])`，于是这个函数永远返回 true，
+ * 后续派活全部被判定「员工在忙」而排队，界面也永远显示「正在忙」。
+ *
+ * 现在走统一的存活判定（`inspectLivenessFrom`）：等的东西已经全部结束的 waiting
+ * 是**僵住**，不算忙；它由看门狗负责收尾。
+ */
 export async function isEmployeeBusy(
 	runtime: CompanyRuntime,
 	staff: StaffEntry,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<boolean> {
 	const inspection = await runtime.harness.inspect(context);
-	return inspection.tasks.some(
-		(task) =>
-			Number(task.record.conversationId) === staff.conversationId &&
-			(task.state.kind === "running" || task.state.kind === "ready" || task.state.kind === "waiting"),
-	);
+	return isConversationBusy(inspectLivenessFrom(inspection), staff.conversationId);
 }
 
 /** 列出项目员工及其忙碌状态。 */

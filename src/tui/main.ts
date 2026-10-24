@@ -103,6 +103,8 @@ async function openAndBoot(): Promise<{
 			modelCatalog: [...DEFAULT_MODEL_CATALOG, ...catalog],
 
 			escalationTask,
+			// 与网页入口一致：终端版同样要有人收尾僵住的任务、排空队列。
+			watchdog: true,
 		},
 		BACKGROUND_CONTEXT,
 	);

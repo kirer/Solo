@@ -21,6 +21,7 @@ import { beginLiveTrail } from "../../src/company/trail.ts";
 import { serve, type Server } from "../../src/server/http.ts";
 import type { OrgView } from "../../src/server/org-view.ts";
 import type { Feed } from "../../src/server/feed.ts";
+import type { ActorProfile } from "../../src/server/profile.ts";
 import { answer, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, toolCall, type TestContext } from "../support.ts";
 
 let contexts: TestContext[] = [];
@@ -100,6 +101,43 @@ describe("组织快照接口", () => {
 		expect(org.projects.length).toBe(1);
 		expect(org.projects[0]?.slug).toBe("tank-battle");
 		expect(typeof org.costs.totalTokens).toBe("number");
+	});
+
+	test("节点带档案需要的最小信息（模型/上级/项目/角色）", async () => {
+		const { server, runtime, dir } = await setup();
+		await createProject(
+			runtime,
+			{ name: "A", slug: "a", brief: "b", workspaceRoot: join(dir, "projects"), leaderName: "陆沉" },
+			BACKGROUND_CONTEXT,
+		);
+		const registryMod = await import("../../src/runtime/index.ts");
+		await hireStaff(
+			runtime,
+			{ project: "a", name: "林越", role: "开发", manager: "cto", registry: registryMod.createRegistry() },
+			BACKGROUND_CONTEXT,
+		);
+
+		const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		expect(org.ceo.parent).toBe("老板");
+		expect(org.ceo.model, "模型要能显示成 provider/modelId").toMatch(/\//);
+		expect(org.roles.every((role) => role.parent === "CEO")).toBe(true);
+
+		const projectView = org.projects.find((item) => item.slug === "a");
+		expect(projectView?.lead.project).toBe("a");
+		const person = projectView?.staff.find((staff) => staff.label === "林越");
+		expect(person?.role).toBe("开发");
+		expect(person?.project).toBe("a");
+		expect(person?.parent).toBe("CTO");
+		expect(person?.model).toMatch(/\//);
+	});
+
+	test("节点状态只可能是四态之一（含故障态）", async () => {
+		const { server } = await setup();
+		const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		const all = [org.ceo, ...org.roles, ...org.projects.flatMap((p) => [p.lead, ...p.staff])];
+		for (const node of all) {
+			expect(["busy", "waiting", "error", "idle"]).toContain(node.status);
+		}
 	});
 
 	test("组织快照带沟通连线字段", async () => {
@@ -297,6 +335,223 @@ describe("会话流接口", () => {
 		const { server } = await setup();
 		const response = await fetch(`${server.url}api/feed/999999`);
 		expect(response.status).toBe(404);
+	});
+
+	/* ── 契约第 3 节：每条消息都要能显示发送者 ── */
+
+	test("feed 带 actor（会话主人），老板通道是 CEO", async () => {
+		const { server, boot } = await setup();
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+
+		expect(feed.actor).toBeDefined();
+		expect(feed.actor.label, "老板通道的助手是 CEO").toBe("CEO");
+		expect(feed.actor.kind).toBe("owner");
+		expect(feed.actor.conversationId).toBe(boot.ownerConversationId);
+	});
+
+	test("高管会话的 actor 是自己，不是老板", async () => {
+		const { server, boot } = await setup();
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.roleConversations.cto}`)).json()) as Feed;
+
+		expect(feed.actor.label).toBe("CTO");
+		expect(feed.actor.kind).toBe("role");
+	});
+
+	test("老板发的消息带 from = 老板", async () => {
+		const { server, runtime, boot, ctx } = await setup();
+
+		ctx.faux.setResponses([answer("收到")]);
+		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+		await (await ceo?.submit({ type: "input", content: "你能做什么" }, BACKGROUND_CONTEXT))?.wait(BACKGROUND_CONTEXT);
+
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+		const mine = feed.items.find((item) => item.kind === "user" && item.text === "你能做什么");
+
+		expect(mine).toBeDefined();
+		if (mine?.kind !== "user") throw new Error("应为 user 条目");
+		expect(mine.from.label).toBe("老板");
+		expect(mine.from.kind).toBe("owner");
+	});
+
+	test("别的 agent 派来的消息带 from = 派活方，note 带 from/to", async () => {
+		const { server, runtime, boot, dir } = await setup();
+		const { project } = await createProject(
+			runtime,
+			{ name: "Alpha", slug: "alpha", brief: "b", workspaceRoot: join(dir, "projects"), leaderName: "周牧" },
+			BACKGROUND_CONTEXT,
+		);
+
+		// 模拟一次派活：条目是 app.delegate，发送方是 CEO
+		const leader = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
+		await leader?.submit(
+			{
+				type: "input",
+				content: "把登录页做出来",
+				entry: {
+					kind: "app.delegate",
+					data: { from: "CEO", to: "周牧", text: "把登录页做出来" },
+				},
+				whenBusy: "reject",
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		const feed = (await (await fetch(`${server.url}api/feed/${project.leader}`)).json()) as Feed;
+
+		// 负责人会话的 actor 是这位负责人本人
+		expect(feed.actor.label).toBe("周牧");
+		expect(feed.actor.kind).toBe("project");
+
+		const note = feed.items.find((item) => item.kind === "note");
+		expect(note, "派活应留一条 note").toBeDefined();
+		if (note?.kind !== "note") throw new Error("应为 note 条目");
+		expect(note.from?.label).toBe("CEO");
+		expect(note.from?.kind).toBe("role");
+		expect(note.to?.label).toBe("周牧");
+		expect(note.to?.kind).toBe("project");
+		// 正文里不再重复「谁 → 谁」，只留动词与内容
+		expect(note.text).toContain("登录页");
+		void boot;
+	});
+
+	test("看门狗写的告警在会话流里是 alert 条目，带发送者", async () => {
+		const { server, runtime, boot } = await setup();
+
+		// 模拟看门狗落一条留痕（与 watchdog.writeAlert 同形状）
+		await runtime.harness.commit(async (tx) => {
+			await tx.appendEntry(boot.ownerConversationId as never, {
+				kind: "app.alert",
+				data: {
+					text: "这一轮卡了 10 分钟没有进展，已中断并重试。",
+					from: "看门狗",
+					action: "abort",
+					reason: "overdue",
+					taskId: "42",
+					taskKind: "pi.generation",
+					attempt: 1,
+					giveUp: false,
+				},
+			});
+		}, BACKGROUND_CONTEXT);
+
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+		const alert = feed.items.find((item) => item.kind === "alert" && item.text.includes("卡了 10 分钟"));
+
+		expect(alert, "看门狗告警不能退化成 note").toBeDefined();
+		if (alert?.kind !== "alert") throw new Error("应为 alert 条目");
+		expect(alert.from?.label).toBe("看门狗");
+	});
+});
+
+describe("职工档案接口", () => {
+	test("CEO 的档案带角色预制提示词与技能", async () => {
+		const { server, boot } = await setup();
+		const response = await fetch(`${server.url}api/profile/${boot.ownerConversationId}`);
+		expect(response.status).toBe(200);
+
+		const profile = (await response.json()) as ActorProfile;
+		expect(profile.conversationId).toBe(boot.ownerConversationId);
+		expect(profile.label).toBe("CEO");
+		expect(profile.kind).toBe("owner");
+		expect(profile.subtitle.length).toBeGreaterThan(0);
+		// charter 是角色预制提示词：必须真的有内容，不能是占位
+		expect(profile.charter).toContain("CEO");
+		expect(profile.guide, "通用工作准则要有").toBeTruthy();
+		expect(profile.model).toMatch(/\//);
+		expect(profile.parent).toBe("老板");
+		// 工具是这台会话实际装的能力包，不是「全部工具」
+		const names = profile.tools.map((tool) => tool.name);
+		expect(names).toContain("org_tree");
+		expect(names).toContain("delegate_to_role");
+		expect(names).not.toContain("staff_hire");
+		expect(profile.tools.every((tool) => tool.description.length > 0)).toBe(true);
+	});
+
+	test("高管的档案说明向 CEO 汇报，且没有招聘权限", async () => {
+		const { server, boot } = await setup();
+		const profile = (await (await fetch(`${server.url}api/profile/${boot.roleConversations.cto}`)).json()) as ActorProfile;
+
+		expect(profile.label).toBe("CTO");
+		expect(profile.kind).toBe("role");
+		expect(profile.parent).toBe("CEO");
+		expect(profile.charter).toContain("CTO");
+		expect(profile.tools.map((tool) => tool.name)).not.toContain("staff_hire");
+	});
+
+	test("员工的档案带角色、项目、上级与按角色分配的工具", async () => {
+		const { server, runtime, dir } = await setup();
+		const { project } = await createProject(
+			runtime,
+			{ name: "Alpha", slug: "alpha", brief: "b", workspaceRoot: join(dir, "projects"), leaderName: "周牧" },
+			BACKGROUND_CONTEXT,
+		);
+		const registryMod = await import("../../src/runtime/index.ts");
+		const hired = await hireStaff(
+			runtime,
+			{
+				project: "alpha",
+				name: "林越",
+				role: "开发",
+				manager: "cto",
+				registry: registryMod.createRegistry(),
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		const profile = (await (await fetch(`${server.url}api/profile/${hired.conversationId}`)).json()) as ActorProfile;
+
+		expect(profile.label).toBe("林越");
+		expect(profile.kind).toBe("staff");
+		expect(profile.role).toBe("开发");
+		expect(profile.project).toBe("Alpha");
+		expect(profile.parent).toBe("CTO");
+		// 员工的实际提示词 = 角色模板 + 汇报关系，必须是真内容
+		expect(profile.charter).toContain("开发");
+		expect(profile.charter).toContain("Alpha");
+		// 开发有 bash/读写，没有管理工具（ADR-004）
+		const names = profile.tools.map((tool) => tool.name);
+		expect(names).toContain("bash");
+		expect(names).toContain("read");
+		expect(names).not.toContain("delegate_to_role");
+		expect(names).not.toContain("project_create");
+		void project;
+	});
+
+	test("项目负责人的档案带负责人章程与项目名", async () => {
+		const { server, runtime, dir } = await setup();
+		const { project } = await createProject(
+			runtime,
+			{ name: "Beta", slug: "beta", brief: "b", workspaceRoot: join(dir, "projects"), leaderName: "陆沉" },
+			BACKGROUND_CONTEXT,
+		);
+
+		const profile = (await (await fetch(`${server.url}api/profile/${project.leader}`)).json()) as ActorProfile;
+
+		expect(profile.label).toBe("陆沉");
+		expect(profile.kind).toBe("project");
+		expect(profile.project).toBe("Beta");
+		expect(profile.charter).toContain("Beta");
+		expect(profile.charter).toContain("负责人");
+		// 负责人有派活能力，但没有公司级立项/招聘
+		const names = profile.tools.map((tool) => tool.name);
+		expect(names).toContain("staff_assign");
+		expect(names).not.toContain("staff_hire");
+		expect(names).not.toContain("project_create");
+	});
+
+	test("不在组织里的会话返回 404 与 error", async () => {
+		const { server } = await setup();
+		const response = await fetch(`${server.url}api/profile/999999`);
+		expect(response.status).toBe(404);
+		const body = (await response.json()) as { error: string };
+		expect(typeof body.error).toBe("string");
+		expect(body.error.length).toBeGreaterThan(0);
+	});
+
+	test("会话标识不合法返回 400", async () => {
+		const { server } = await setup();
+		const response = await fetch(`${server.url}api/profile/abc`);
+		expect(response.status).toBe(400);
 	});
 });
 

@@ -395,3 +395,34 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 		expect(result.text).toContain("CHRO");
 	});
 });
+
+describe("圆桌讨论的能力只给该给的人", () => {
+	test("项目负责人与员工都没有 roundtable", async () => {
+		const { ctx, runtime, registry } = await setup();
+		await boot(ctx, runtime, registry);
+		const { project } = await createProject(
+			runtime,
+			{ name: "Alpha", brief: "测试项目", workspaceRoot: join(ctx.dir, "projects") },
+			BACKGROUND_CONTEXT,
+		);
+		const hired = await hireStaff(
+			runtime,
+			{ project: "alpha", name: "dev-1", role: "开发", manager: "cto" },
+			BACKGROUND_CONTEXT,
+		);
+
+		const leaderTools =
+			(await (await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT))?.agent(
+				BACKGROUND_CONTEXT,
+			))?.tools.map((tool) => tool.name) ?? [];
+		const staffTools =
+			(await (await runtime.harness.conversation(hired.conversationId as never, BACKGROUND_CONTEXT))?.agent(
+				BACKGROUND_CONTEXT,
+			))?.tools.map((tool) => tool.name) ?? [];
+
+		// 圆桌是管理层拍板用的：负责人与员工都不能自己召集管理层开会（ADR-004）
+		expect(leaderTools).not.toContain("roundtable");
+		expect(staffTools).not.toContain("roundtable");
+		expect(staffTools).toEqual([]);
+	});
+});

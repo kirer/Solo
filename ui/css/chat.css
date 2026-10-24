@@ -134,11 +134,19 @@ body[data-chat="closed"] .chat > * {
 }
 
 #chat-status[data-state="busy"] i {
-	background: var(--accent);
+	background: var(--run);
 }
 
 #chat-status[data-state="busy"] #chat-status-text {
-	color: var(--ink-2);
+	color: var(--run);
+}
+
+#chat-status[data-state="error"] i {
+	background: var(--danger);
+}
+
+#chat-status[data-state="error"] #chat-status-text {
+	color: var(--danger);
 }
 
 #chat-status[data-state="waiting"] i {
@@ -264,7 +272,8 @@ body[data-chat="closed"] .chat-resizer {
 	flex-direction: column;
 	overflow-y: auto;
 	overflow-x: hidden;
-	padding: 16px var(--sp-4) 18px;
+	/* 底部留白：滚到底时最后一条消息与输入框之间要明显分开，不贴着输入框 */
+	padding: 16px var(--sp-4) 56px;
 	overscroll-behavior: contain;
 	scrollbar-gutter: stable;
 	mask-image: linear-gradient(to bottom, transparent 0, #000 14px);
@@ -272,7 +281,9 @@ body[data-chat="closed"] .chat-resizer {
 }
 
 .chat-stream {
-	flex: 1;
+	/* flex-basis:auto + 不收缩：内容比面板高时让 .chat-body 真的滚动，
+	   否则 flex 会把 stream 压扁、内容溢出到 padding 之外，底部留白就白写了 */
+	flex: 1 0 auto;
 	min-height: 0;
 	display: flex;
 	flex-direction: column;
@@ -370,7 +381,9 @@ body[data-chat="closed"] .chat-resizer {
 	align-self: flex-end;
 	max-width: 82%;
 	display: flex;
-	justify-content: flex-end;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 4px;
 }
 
 .msg--user .bubble {
@@ -388,27 +401,57 @@ body[data-chat="closed"] .chat-resizer {
 .msg--assistant {
 	display: flex;
 	flex-direction: column;
-	gap: 5px;
+	gap: 6px;
 }
 
 .msg-head {
 	display: flex;
 	align-items: center;
+	gap: 8px;
+	min-height: 20px;
+}
+
+.msg-head--user {
+	justify-content: flex-end;
+}
+
+/* ── 名字 chip：一条消息只有这一个边框，名字与时间都在里面 ───────────── */
+.who-chip {
+	display: inline-flex;
+	align-items: center;
 	gap: 6px;
-	min-height: 18px;
-}
-
-.msg-who {
+	flex: none;
+	max-width: 100%;
+	height: 20px;
+	padding: 0 7px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	background: transparent;
+	color: var(--ink-2);
 	font-size: var(--fs-xs);
-	font-weight: 500;
-	color: var(--ink);
+	line-height: 1;
+	white-space: nowrap;
+	overflow: hidden;
 }
 
-.msg-time {
-	font-family: var(--sans);
-	font-size: 11px;
+.who-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	font-weight: 500;
+}
+
+.who-time {
+	flex: none;
 	color: var(--faint);
+	font-size: var(--fs-2xs);
 	font-variant-numeric: tabular-nums;
+}
+
+/* 老板自己：chip 用 --ink 的边，区分「我说的话」与「同事说的话」 */
+.who-chip[data-kind="owner"] {
+	border-color: var(--line-strong);
+	color: var(--ink);
 }
 
 .msg-live {
@@ -417,7 +460,7 @@ body[data-chat="closed"] .chat-resizer {
 	gap: 5px;
 	font-family: var(--sans);
 	font-size: 11px;
-	color: var(--muted);
+	color: var(--run);
 }
 
 .msg-live i {
@@ -425,7 +468,7 @@ body[data-chat="closed"] .chat-resizer {
 	height: 4px;
 	flex: none;
 	border-radius: 0;
-	background: var(--accent);
+	background: var(--run);
 }
 
 /* 复制：默认不占位，hover / 聚焦才出现，只是一行文字 */
@@ -713,18 +756,18 @@ body[data-chat="closed"] .chat-resizer {
 }
 
 /* ── 思考 ─────────────────────────────────────────────────────────────── */
+/* 外框去掉：只有一行 summary + 右侧箭头；展开后的内容才有一条边框。 */
 .think {
-	border: 1px solid var(--line);
-	border-radius: 2px;
-	background: var(--surface);
+	border: 0;
+	background: none;
 }
 
 .think > summary {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	min-height: 29px;
-	padding: 0 9px;
+	min-height: 26px;
+	padding: 0;
 	font-size: var(--fs-xs);
 	color: var(--muted);
 	transition: color 120ms var(--ease-out);
@@ -736,6 +779,27 @@ body[data-chat="closed"] .chat-resizer {
 
 .think > summary .ico {
 	color: var(--faint);
+	transition: color 120ms var(--ease-out);
+}
+
+.think > summary:hover .ico {
+	color: var(--muted);
+}
+
+/* 发言人：工作过程里只用文字，不再叠一个边框 */
+.work-who {
+	flex: none;
+	max-width: 30%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	color: var(--faint);
+	font-size: var(--fs-2xs);
+	letter-spacing: 0.01em;
+}
+
+.think > summary:hover .work-who {
+	color: var(--muted);
 }
 
 .think-meta {
@@ -748,27 +812,38 @@ body[data-chat="closed"] .chat-resizer {
 	margin-left: auto;
 	display: flex;
 	color: var(--ghost);
-	transition: transform 160ms var(--ease-out);
+	transition: transform 160ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.think > summary:hover .think-chev {
+	color: var(--faint);
 }
 
 .think[open] > summary .think-chev {
 	transform: rotate(180deg);
 }
 
+/* 展开后的正文：保留边框，和没有边框的 summary 形成层次 */
 .think-body {
-	padding: 0 10px 9px 28px;
+	margin-top: 6px;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	background: var(--surface);
 	color: var(--muted);
 	font-size: var(--fs-sm);
 	line-height: 1.7;
 	overflow-wrap: anywhere;
 }
 
+/* 思考中：绿色（--run），旧的 --accent 不再表示运行 */
 .think[data-live="true"] > summary {
-	color: var(--ink-2);
+	color: var(--run);
 }
 
-.think[data-live="true"] > summary .ico {
-	color: var(--ink-2);
+.think[data-live="true"] > summary .ico,
+.think[data-live="true"] > summary .work-who {
+	color: var(--run);
 }
 
 .think[data-live="true"] .think-kicker::after {
@@ -777,44 +852,52 @@ body[data-chat="closed"] .chat-resizer {
 	width: 5px;
 	height: 5px;
 	margin-left: 6px;
-	background: var(--accent);
+	background: var(--run);
 	vertical-align: 1px;
 }
 
 .think[data-live="true"] .think-body {
+	border-color: var(--run-line);
 	color: var(--ink-2);
 }
 
 /* ── 工具调用：一行紧凑条，点开看参数与输出 ───────────────────────────── */
+/* 外框同样去掉：summary 一行 + 箭头，展开的 .tool-pane 才有边框。 */
 .tool {
-	border: 1px solid var(--line);
-	border-radius: 2px;
-	background: var(--surface);
-	transition: border-color 120ms var(--ease-out);
-}
-
-.tool[open] {
-	border-color: var(--line-strong);
+	border: 0;
+	background: none;
 }
 
 .tool > summary {
 	display: flex;
 	align-items: center;
 	gap: 7px;
-	min-height: 30px;
-	padding: 0 9px;
+	min-height: 26px;
+	padding: 0;
 	font-size: var(--fs-xs);
 	color: var(--muted);
+	transition: color 120ms var(--ease-out);
+}
+
+.tool > summary:hover {
+	color: var(--ink-2);
 }
 
 .tool-icon {
 	display: flex;
 	flex: none;
 	color: var(--faint);
+	transition: color 120ms var(--ease-out);
 }
 
-.tool[data-state="running"] .tool-icon {
-	color: var(--ink-2);
+.tool > summary:hover .tool-icon {
+	color: var(--muted);
+}
+
+/* 运行中：绿色（--run） */
+.tool[data-state="running"] .tool-icon,
+.tool[data-state="running"] .tool-label {
+	color: var(--run);
 }
 
 .tool-label {
@@ -823,7 +906,8 @@ body[data-chat="closed"] .chat-resizer {
 	font-weight: 500;
 }
 
-.tool[data-state="error"] .tool-label {
+.tool[data-state="error"] .tool-label,
+.tool[data-state="error"] .tool-icon {
 	color: var(--danger);
 }
 
@@ -868,11 +952,11 @@ body[data-chat="closed"] .chat-resizer {
 }
 
 .tool-state[data-state="running"] {
-	color: var(--ink-2);
+	color: var(--run);
 }
 
 .tool-state[data-state="running"]::before {
-	background: var(--accent);
+	background: var(--run);
 }
 
 .tool-state[data-state="error"] {
@@ -895,18 +979,28 @@ body[data-chat="closed"] .chat-resizer {
 	display: flex;
 	flex: none;
 	color: var(--ghost);
-	transition: transform 160ms var(--ease-out);
+	transition: transform 160ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.tool > summary:hover .tool-chev {
+	color: var(--faint);
 }
 
 .tool[open] > summary .tool-chev {
 	transform: rotate(180deg);
 }
 
+/* 展开后的内容才带边框：上下两条 1px 的 pane */
 .tool-body {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-	padding: 0 9px 9px;
+	margin-top: 6px;
+	padding: 0;
+}
+
+.tool[data-state="running"] .tool-pane {
+	border-color: var(--run-line);
 }
 
 .tool-pane {
@@ -954,8 +1048,8 @@ body[data-chat="closed"] .chat-resizer {
 /* ── 留痕 / 提示条 ────────────────────────────────────────────────────── */
 .note {
 	display: flex;
-	align-items: flex-start;
-	gap: 8px;
+	flex-direction: column;
+	gap: 2px;
 	padding: 0 2px;
 	font-size: 11px;
 	line-height: 1.6;
@@ -963,13 +1057,20 @@ body[data-chat="closed"] .chat-resizer {
 	font-variant-numeric: tabular-nums;
 }
 
-.note::before {
-	content: "";
-	flex: none;
-	width: 1px;
-	height: 13px;
-	margin-top: 3px;
-	background: var(--line-strong);
+.note-from {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--muted);
+	font-size: var(--fs-2xs);
+}
+
+.note-who {
+	color: var(--ink-2);
+}
+
+.note-arrow {
+	color: var(--faint);
 }
 
 .note-text {
@@ -1389,7 +1490,8 @@ body[data-chat="closed"] .chat-resizer {
 	}
 
 	.chat-body {
-		padding: 12px var(--sp-3) 14px;
+		/* 手机：底部留白同样成立（比桌面略小，屏幕本来就矮） */
+		padding: 12px var(--sp-3) 48px;
 	}
 
 	.chat-empty {
@@ -1479,4 +1581,342 @@ body[data-chat="closed"] .chat-resizer {
 
 .md-code pre::-webkit-scrollbar-thumb {
 	background: var(--line-strong);
+}
+
+/* ============================================================================
+   角色档案浮层（#profile-layer 由 index.html 提供挂载点，内部全部由
+   ui/js/profile.js 动态创建；样式归 chat.css）
+   ========================================================================== */
+
+.profile-layer {
+	position: fixed;
+	inset: 0;
+	z-index: 95;
+	display: flex;
+	align-items: flex-start;
+	justify-content: flex-end;
+}
+
+.profile-layer[hidden] {
+	display: none;
+}
+
+.profile-scrim {
+	position: absolute;
+	inset: 0;
+	background: transparent;
+}
+
+.profile {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: min(430px, calc(100vw - 32px));
+	max-height: min(76dvh, calc(100dvh - var(--topbar-h) - 24px));
+	margin: calc(var(--topbar-h) + 8px) 12px 0 0;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius);
+	background: var(--surface);
+	box-shadow: var(--shadow-pop);
+	overflow: hidden;
+	animation: profile-in 140ms var(--ease-out);
+}
+
+@keyframes profile-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.profile-head {
+	flex: none;
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	padding: var(--sp-3) var(--sp-3) var(--sp-2);
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.profile-ident {
+	flex: 1;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.profile-name {
+	font-size: var(--fs-md);
+	font-weight: 600;
+	letter-spacing: -0.006em;
+	color: var(--ink);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.profile-sub {
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 浮层不在 .chat 里，.chat .icon-btn 的尺寸管不到，这里补一份 */
+.profile .icon-btn {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	display: grid;
+	place-items: center;
+	border: 1px solid transparent;
+	border-radius: var(--radius);
+	color: var(--faint);
+	transition: color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+}
+
+.profile .icon-btn:hover {
+	color: var(--ink);
+	border-color: var(--line);
+}
+
+.profile .icon-btn svg {
+	width: 15px;
+	height: 15px;
+}
+
+.profile-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: var(--sp-3);
+}
+
+/* 元信息：两列，键弱值强 */
+.profile-meta {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 1px;
+	margin: 0 0 var(--sp-3);
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--line);
+	overflow: hidden;
+}
+
+.profile-meta-row {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 6px 9px;
+	background: var(--surface);
+	min-width: 0;
+}
+
+/* 奇数个字段的最后一行、以及模型这种长串，占满整行 */
+.profile-meta-row--wide {
+	grid-column: 1 / -1;
+}
+
+.profile-meta-row dt {
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.profile-meta-row dd {
+	margin: 0;
+	font-size: var(--fs-sm);
+	color: var(--ink-2);
+	overflow-wrap: anywhere;
+}
+
+/* 分区：默认收起，第一段展开 */
+.profile-sec {
+	border-top: 1px solid var(--line-soft);
+}
+
+.profile-sec:first-of-type {
+	border-top: 0;
+}
+
+.profile-sec > summary {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 30px;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	transition: color 120ms var(--ease-out);
+}
+
+.profile-sec > summary:hover {
+	color: var(--ink-2);
+}
+
+.profile-sec-title {
+	font-weight: 500;
+}
+
+.profile-chev {
+	margin-left: auto;
+	display: flex;
+	color: var(--ghost);
+	transition: transform 160ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.profile-sec > summary:hover .profile-chev {
+	color: var(--faint);
+}
+
+.profile-sec[open] > summary .profile-chev {
+	transform: rotate(180deg);
+}
+
+.profile-sec-body {
+	padding: 0 0 var(--sp-3);
+}
+
+/* 提示词：保留换行，等宽留给「预制提示词」这种半代码内容 */
+.profile-text {
+	margin: 0;
+	padding: 9px 11px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg-2);
+	color: var(--ink-2);
+	font-size: var(--fs-sm);
+	line-height: 1.72;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 320px;
+	overflow-y: auto;
+}
+
+.profile-muted {
+	margin: 0;
+	font-size: var(--fs-sm);
+	color: var(--faint);
+	line-height: 1.6;
+}
+
+.profile-tools {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--line);
+	overflow: hidden;
+}
+
+.profile-tools li {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	padding: 6px 9px;
+	background: var(--surface);
+	min-width: 0;
+}
+
+.profile-tools b {
+	font-family: var(--mono);
+	font-size: var(--fs-xs);
+	font-weight: 500;
+	color: var(--ink);
+	overflow-wrap: anywhere;
+}
+
+.profile-tools span {
+	font-size: var(--fs-2xs);
+	line-height: 1.55;
+	color: var(--muted);
+	overflow-wrap: anywhere;
+}
+
+/* 加载中 / 失败 / 无档案 */
+.profile-state {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: var(--sp-2) 0 var(--sp-3);
+}
+
+.profile-state b {
+	font-size: var(--fs-base);
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.profile-state p {
+	margin: 0;
+	font-size: var(--fs-sm);
+	line-height: 1.65;
+	color: var(--muted);
+}
+
+.profile-state-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.profile-retry {
+	align-self: flex-start;
+	height: 26px;
+	margin-top: 2px;
+	padding: 0 10px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius);
+	color: var(--ink-2);
+	font-size: var(--fs-xs);
+	transition: color 120ms var(--ease-out), border-color 120ms var(--ease-out);
+}
+
+.profile-retry:hover {
+	border-color: var(--ink-2);
+	color: var(--ink);
+}
+
+/* 手机：浮层铺满抽屉宽度，贴着底部，避免超出屏幕 */
+@media (max-width: 860px) {
+	.profile-layer {
+		align-items: flex-end;
+	}
+
+	.profile {
+		width: 100%;
+		max-height: 78dvh;
+		margin: 0;
+		border-left: 0;
+		border-right: 0;
+		border-bottom: 0;
+		border-radius: var(--radius) var(--radius) 0 0;
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	.profile-meta {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.profile-text {
+		max-height: 240px;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.profile {
+		animation: none;
+	}
 }

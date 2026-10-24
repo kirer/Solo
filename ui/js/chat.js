@@ -20,6 +20,7 @@ import {
 } from "./format.js";
 import { icon } from "./icons.js";
 import { renderMarkdown } from "./markdown.js";
+import { initProfile } from "./profile.js";
 
 /**
  * 面板宽度变化后，组织图要重算连线。app.js 没有把 org 句柄传进来，
@@ -48,8 +49,30 @@ const TOAST_MS = 3500;
 
 const plainText = (value) => escapeHtml(String(value ?? "")).replace(/\n/g, "<br>");
 
-const avatarHtml = (label, extraClass = "") =>
-	`<span class="avatar ${extraClass}" aria-hidden="true">${escapeHtml(initials(label))}</span>`;
+/**
+ * 发言人：后端给 ActorRef（{ label, kind, conversationId }），没给就按契约降级。
+ * 名字永远不空着——空字符串会让一条消息看起来没有主人。
+ */
+function actorRefOf(ref, fallbackLabel, fallbackKind = "system") {
+	const label = String(ref?.label ?? "").trim();
+	const kind = String(ref?.kind ?? "").trim();
+	return {
+		label: label === "" ? fallbackLabel : label,
+		kind: kind === "" ? fallbackKind : kind,
+	};
+}
+
+/** 名字 chip：整条消息唯一的边框标识，不再额外放头像方块。 */
+const whoChipHtml = (who, time) => {
+	const timeHtml = time === "" ? "" : `<span class="who-time mono">${escapeHtml(time)}</span>`;
+	return `<span class="who-chip" data-kind="${escapeAttr(who.kind)}"><span class="who-name">${escapeHtml(
+		who.label,
+	)}</span>${timeHtml}</span>`;
+};
+
+/** 工作过程（思考 / 工具）里的发言人：纯文字，不再加第二个边框。 */
+const workWhoHtml = (who) =>
+	`<span class="work-who" title="发言人">${escapeHtml(who.label)}</span>`;
 
 const copyButtonHtml = (label) =>
 	`<button class="copy-btn" type="button" data-copy="pane" aria-label="${label}" title="${label}"><span>复制</span></button>`;
@@ -104,9 +127,11 @@ function signatureOf(item) {
 		case "tool":
 			return `tool|${item.name}|${item.args}|${item.output}|${item.state}`;
 		case "user":
+			return `user|${item.text}|${item.from?.label ?? ""}|${item.from?.kind ?? ""}`;
+		case "note":
+			return `note|${item.text}|${item.from?.label ?? ""}|${item.to?.label ?? ""}`;
 		case "assistant":
 		case "thinking":
-		case "note":
 		case "alert":
 			return `${item.kind}|${item.text}`;
 		default:
@@ -116,7 +141,7 @@ function signatureOf(item) {
 
 /* ── 面板 ───────────────────────────────────────────────────────────────── */
 
-export function initChat({ onSend, onInterrupt } = {}) {
+export function initChat({ onSend, onInterrupt, fetchProfile } = {}) {
 	const els = {
 		chat: $("chat"),
 		body: $("chat-body"),
@@ -378,33 +403,35 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		els.send.disabled = actor === null || els.input.value.trim() === "";
 	}
 
-	/* ── 工作过程折叠 ── */
+	/* ── 头部按钮：角色档案（不再做「全部展开 / 收起」） ── */
+	const profile = initProfile({
+		fetchProfile: typeof fetchProfile === "function" ? fetchProfile : undefined,
+		onToggle: (open) => {
+			els.fold.dataset.state = open ? "open" : "closed";
+			els.fold.setAttribute("aria-expanded", String(open));
+		},
+	});
+
 	function updateFold() {
-		const details = [...stream.querySelectorAll("details")];
-		const visible = actor !== null && details.length > 0;
+		const visible = actor !== null;
 		els.fold.hidden = !visible;
 		if (!visible) {
 			els.fold.dataset.state = "closed";
 			els.fold.setAttribute("aria-expanded", "false");
+			els.fold.title = "角色档案";
+			els.fold.setAttribute("aria-label", "角色档案");
 			return;
 		}
-		const allOpen = details.every((element) => element.open);
-		els.fold.dataset.state = allOpen ? "open" : "closed";
-		els.fold.setAttribute("aria-expanded", String(allOpen));
-		els.fold.title = allOpen ? "收起全部工作过程" : "展开全部工作过程";
-		els.fold.setAttribute("aria-label", els.fold.title);
+		const label = `查看 ${actor.label} 的角色档案`;
+		els.fold.title = label;
+		els.fold.setAttribute("aria-label", label);
+		if (!profile.isOpen()) els.fold.dataset.state = "closed";
 	}
 
 	els.fold.addEventListener("click", () => {
-		const details = [...stream.querySelectorAll("details")];
-		if (details.length === 0) return;
-		const open = !details.every((element) => element.open);
-		for (const element of details) {
-			element.open = open;
-			if (element.dataset.key !== undefined) openStates.set(element.dataset.key, open);
-		}
-		updateFold();
-		if (isNearBottom()) scrollToBottom();
+		if (actor === null) return;
+		if (profile.isOpen()) profile.close();
+		else profile.open(actor.conversationId, actor);
 	});
 
 	/* ── 新消息 / 轻提示 ── */
@@ -521,9 +548,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		let el;
 		switch (item.kind) {
 			case "user":
-				el = elFromHtml(
-					`<div class="msg msg--user"><div class="bubble" title="${escapeAttr(timeOf(item.at))}">${plainText(item.text)}</div></div>`,
-				);
+				el = renderUser(item);
 				break;
 			case "assistant":
 				el = renderAssistant(item);
@@ -535,13 +560,18 @@ export function initChat({ onSend, onInterrupt } = {}) {
 				el = renderTool(item);
 				break;
 			case "note":
-				el = elFromHtml(`<div class="note"><span class="note-text">${plainText(item.text)}</span></div>`);
+				el = renderNote(item);
 				break;
-			case "alert":
+			case "alert": {
+				const who =
+					item.from === undefined || item.from === null ? null : actorRefOf(item.from, "系统", "system");
 				el = elFromHtml(
-					`<div class="alert" role="note">${icon("alert", 13)}<span class="alert-text">${plainText(item.text)}</span></div>`,
+					`<div class="alert" role="note">${icon("alert", 13)}<span class="alert-body">${
+						who === null ? "" : `<span class="alert-who">${escapeHtml(who.label)}</span>`
+					}<span class="alert-text">${plainText(item.text)}</span></span></div>`,
 				);
 				break;
+			}
 			case "queued":
 			case "localqueued":
 				el = renderQueued(item);
@@ -558,15 +588,43 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		return el;
 	}
 
+	/** 会话主人：assistant / thinking / tool 的发言人，优先用后端 Feed.actor。 */
+	function speakerOf(feedValue) {
+		return actorRefOf(feedValue?.actor, actor?.label ?? "助手", actor?.kind ?? "role");
+	}
+
+	function renderUser(item) {
+		// user 条目的发言人：后端 item.from（老板 / 派活的 agent）；没有就降级成「老板」。
+		const who = actorRefOf(item.from, "老板", "owner");
+		const time = timeOf(item.at);
+		return elFromHtml(`
+			<div class="msg msg--user">
+				<div class="msg-head msg-head--user">
+					${whoChipHtml(who, time)}
+				</div>
+				<div class="bubble" title="${escapeAttr(clockTime(item.at))}">${plainText(item.text)}</div>
+			</div>`);
+	}
+
+	function renderNote(item) {
+		const from = item.from === undefined || item.from === null ? null : actorRefOf(item.from, "系统", "system");
+		const to = item.to === undefined || item.to === null ? null : actorRefOf(item.to, "", "system");
+		const who = from === null ? null : `<span class="note-who">${escapeHtml(from.label)}</span>`;
+		const arrow = to === null ? "" : `<span class="note-arrow">→ ${escapeHtml(to.label)}</span>`;
+		return elFromHtml(
+			`<div class="note">${
+				who === null ? "" : `<span class="note-from">${who}${arrow}</span>`
+			}<span class="note-text">${plainText(item.text)}</span></div>`,
+		);
+	}
+
 	function renderAssistant(item) {
 		const live = item.live === true;
-		const who = actor?.label ?? "助手";
+		const who = speakerOf(feed);
 		const el = elFromHtml(`
 			<div class="msg msg--assistant${live ? " is-streaming" : ""}">
 				<div class="msg-head">
-					${avatarHtml(who, "avatar--sm")}
-					<span class="msg-who">${escapeHtml(who)}</span>
-					<span class="msg-time mono" title="${escapeAttr(clockTime(item.at))}">${escapeHtml(live ? "刚刚" : timeOf(item.at))}</span>
+					${whoChipHtml(who, live ? "刚刚" : timeOf(item.at))}
 					${live ? '<span class="msg-live"><i></i>正在输出</span>' : ""}
 					<button class="msg-copy" type="button" data-copy="message" aria-label="复制回答" title="复制回答"><span>复制</span></button>
 				</div>
@@ -581,6 +639,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		return elFromHtml(`
 			<details class="think"${live ? ' data-live="true"' : ""}>
 				<summary>
+					${workWhoHtml(speakerOf(feed))}
 					${icon("brain", 13)}
 					<span class="think-kicker">${live ? "正在思考" : "思考"}</span>
 					<span class="think-meta">· ${item.text.length} 字</span>
@@ -597,6 +656,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		const el = elFromHtml(`
 			<details class="tool" data-state="${state}">
 				<summary>
+					${workWhoHtml(speakerOf(feed))}
 					<span class="tool-icon">${icon(meta.icon, 13)}</span>
 					<span class="tool-label">${escapeHtml(meta.label)}</span>
 					<span class="tool-detail mono" title="${escapeAttr(detail)}">${escapeHtml(detail)}</span>
@@ -676,6 +736,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 			case "user": {
 				const bubble = el.querySelector(".bubble");
 				if (bubble !== null) bubble.innerHTML = plainText(item.text);
+				patchWhoChip(el, actorRefOf(item.from, "老板", "owner"), timeOf(item.at));
 				break;
 			}
 			case "note": {
@@ -703,14 +764,30 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		}
 	}
 
+	/** 只改 chip 里的名字与时间，不动 chip 本身（避免每次 feed 都重建边框）。 */
+	function patchWhoChip(el, who, time) {
+		const chip = el.querySelector(".who-chip");
+		if (chip === null) return;
+		chip.dataset.kind = who.kind;
+		const name = chip.querySelector(".who-name");
+		if (name !== null) name.textContent = who.label;
+		const timeEl = chip.querySelector(".who-time");
+		if (timeEl !== null) timeEl.textContent = time;
+	}
+
+	/** 工作过程行的发言人（思考 / 工具）。 */
+	function patchWorkWho(el) {
+		const who = el.querySelector(".work-who");
+		if (who !== null) who.textContent = speakerOf(feed).label;
+	}
+
 	function patchAssistant(el, item) {
 		const live = item.live === true;
 		el.classList.toggle("is-streaming", live);
 		el.dataset.raw = String(item.text ?? "");
 		const md = el.querySelector(".md");
 		const head = el.querySelector(".msg-head");
-		const time = el.querySelector(".msg-time");
-		if (time !== null) time.textContent = live ? "刚刚" : timeOf(item.at);
+		patchWhoChip(el, speakerOf(feed), live ? "刚刚" : timeOf(item.at));
 		let marker = el.querySelector(".msg-live");
 		if (live && marker === null) {
 			marker = elFromHtml('<span class="msg-live"><i></i>正在输出</span>');
@@ -732,6 +809,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		const kicker = el.querySelector(".think-kicker");
 		const meta = el.querySelector(".think-meta");
 		const body = el.querySelector(".think-body");
+		patchWorkWho(el);
 		if (kicker !== null) kicker.textContent = live ? "正在思考" : "思考";
 		if (meta !== null) meta.textContent = `· ${item.text.length} 字`;
 		if (body !== null) body.innerHTML = plainText(item.text);
@@ -746,6 +824,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		const detail = el.querySelector(".tool-detail");
 		const stateEl = el.querySelector(".tool-state");
 		const summary = argsSummary(item);
+		patchWorkWho(el);
 		if (iconBox !== null) iconBox.innerHTML = icon(meta.icon, 13);
 		if (label !== null) label.textContent = meta.label;
 		if (detail !== null) {
@@ -910,6 +989,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 			actor.kind !== value.kind;
 		actor = value;
 		if (changed) {
+			profile.close();
 			resetConversation();
 			if (actor !== null) showPlaceholder();
 		}
@@ -952,6 +1032,7 @@ export function initChat({ onSend, onInterrupt } = {}) {
 		localQueue = [];
 		mode = "none";
 		resetStream();
+		profile.close();
 		stream.innerHTML = "";
 		hideJump();
 		els.body.scrollTop = 0;

@@ -28,7 +28,27 @@ const state = {
 
 const ask = initAsk({ onAnswer: submitAnswer });
 const orgView = initOrg({ onSelect: (id) => selectConversation(id) });
-const chat = initChat({ onSend: sendMessage, onInterrupt: interrupt });
+const chat = initChat({ onSend: sendMessage, onInterrupt: interrupt, fetchProfile });
+
+/**
+ * 取一位职工的角色档案（角色预制提示词 / 技能清单）。
+ *
+ * 档案是「点开才看」的次要信息，所以失败一律返回 null，
+ * 由 chat 面板降级成「暂无档案」，不弹错误、不阻塞对话。
+ */
+async function fetchProfile(conversationId) {
+	const id = Number(conversationId);
+	if (!Number.isFinite(id)) return null;
+	try {
+		const response = await fetch(`/api/profile/${id}`);
+		if (!response.ok) return null;
+		const data = await response.json();
+		if (data === null || typeof data !== "object" || data.error !== undefined) return null;
+		return data;
+	} catch {
+		return null;
+	}
+}
 
 // ── 组织快照 ──────────────────────────────────────────────────────────────
 

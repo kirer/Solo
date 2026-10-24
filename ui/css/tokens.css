@@ -1,8 +1,15 @@
 /* ============================================================================
-   一人公司 · 视觉基座（v3：双主题）
-   深色：冷石墨 + 骨白墨 + 电光蓝 / 琥珀 / 珊瑚的状态墨。
-   浅色：纸白 + 墨黑 + 同一组状态墨（加深以保证对比度）。
-   形状：2px 直角、1px 精确边框；颜色只表示状态，不做霓虹光与渐变。
+   一人公司 · 视觉基座（v4：状态四态）
+   深色：冷石墨 + 骨白墨。
+   浅色：纸白 + 墨黑。
+   形状：2px 直角、1px 精确边框。
+   颜色预算（严格）：
+     绿 --run     在跑 / 在思考 / 工具调用中（唯一允许带荧光与流动的状态色）
+     黄 --warn    等你拍板 / 等上级裁定
+     红 --danger  故障 / 失败 / 已终止
+     蓝 --accent  **只用于焦点与选中**，不再表示「在跑」
+   荧光克制：1px 边框 + 0 0 0 1px color55 + 0 0 18px -6px color88。
+   不做大面积 blur、不做脉冲呼吸、不做霓虹暗色堆叠。
    等宽字体只留给代码 / 命令 / 型号。
    ========================================================================== */
 
@@ -25,18 +32,29 @@
 	--faint: #7b8490;
 	--ghost: #4b525d;
 
+	/* 状态四态：绿=在跑，黄=等你，红=故障，蓝=只给焦点与选中 */
+	--run: #3ddc84;
+	--run-strong: #6cf2a8;
+	--run-soft: rgba(61, 220, 132, 0.12);
+	--run-line: rgba(61, 220, 132, 0.42);
+	/* 荧光只有两层：1px 同色描边 + 18px 收窄的柔和外圈 */
+	--run-halo: rgba(61, 220, 132, 0.33);
+	--run-glow: rgba(61, 220, 132, 0.53);
+
 	--accent: #5b9cff;
 	--accent-strong: #8bbcff;
 	--accent-soft: rgba(91, 156, 255, 0.12);
 	--accent-line: rgba(91, 156, 255, 0.42);
 
-	--warn: #f2b24c;
-	--warn-soft: rgba(242, 178, 76, 0.1);
-	--warn-line: rgba(242, 178, 76, 0.4);
+	--warn: #f5c518;
+	--warn-soft: rgba(245, 197, 24, 0.1);
+	--warn-line: rgba(245, 197, 24, 0.4);
+	--warn-halo: rgba(245, 197, 24, 0.3);
+	--warn-glow: rgba(245, 197, 24, 0.45);
 
-	--danger: #f27272;
-	--danger-soft: rgba(242, 114, 114, 0.1);
-	--danger-line: rgba(242, 114, 114, 0.4);
+	--danger: #ff5f56;
+	--danger-soft: rgba(255, 95, 86, 0.1);
+	--danger-line: rgba(255, 95, 86, 0.42);
 
 	--info: #8fb8e8;
 	--info-soft: rgba(143, 184, 232, 0.1);
@@ -70,18 +88,27 @@
 	--faint: #6a707a;
 	--ghost: #a3a8b0;
 
+	--run: #0e7a4a;
+	--run-strong: #0a5c37;
+	--run-soft: rgba(14, 122, 74, 0.08);
+	--run-line: rgba(14, 122, 74, 0.36);
+	--run-halo: rgba(14, 122, 74, 0.3);
+	--run-glow: rgba(14, 122, 74, 0.26);
+
 	--accent: #2563eb;
 	--accent-strong: #1d4fd0;
 	--accent-soft: rgba(37, 99, 235, 0.08);
 	--accent-line: rgba(37, 99, 235, 0.35);
 
-	--warn: #8a5200;
-	--warn-soft: rgba(138, 82, 0, 0.08);
-	--warn-line: rgba(138, 82, 0, 0.35);
+	--warn: #8a6a00;
+	--warn-soft: rgba(138, 106, 0, 0.08);
+	--warn-line: rgba(138, 106, 0, 0.35);
+	--warn-halo: rgba(138, 106, 0, 0.24);
+	--warn-glow: rgba(138, 106, 0, 0.2);
 
-	--danger: #c24141;
-	--danger-soft: rgba(194, 65, 65, 0.08);
-	--danger-line: rgba(194, 65, 65, 0.35);
+	--danger: #c0392b;
+	--danger-soft: rgba(192, 57, 43, 0.08);
+	--danger-line: rgba(192, 57, 43, 0.35);
 
 	--info: #2a6f97;
 	--info-soft: rgba(42, 111, 151, 0.08);
@@ -190,14 +217,16 @@ button:disabled {
 	cursor: default;
 }
 
+/* 链接不用状态色：accent 只留给焦点与选中 */
 a {
-	color: var(--accent);
-	text-decoration: none;
+	color: var(--ink);
+	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
 	text-underline-offset: 2px;
 }
 
 a:hover {
-	text-decoration: underline;
+	text-decoration-color: var(--ink-2);
 }
 
 i,

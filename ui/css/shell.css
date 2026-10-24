@@ -306,7 +306,7 @@
 .graph-loading i {
 	width: 5px;
 	height: 5px;
-	background: var(--accent);
+	background: var(--run);
 }
 
 /* ── 设置浮层 ─────────────────────────────────────────────────────────── */

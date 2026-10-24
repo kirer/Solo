@@ -28,6 +28,86 @@ export class DelegationCycleError extends Error {
 	}
 }
 
+/**
+ * 一次同步转交的默认等待上限（毫秒）。
+ *
+ * 为什么是 180 秒：一次转交里对方要跑完一轮完整生成（思考 + 若干工具调用）。
+ * 真实库里 95 分位的单轮生成在 60–120 秒之间（含一次工具往返），180 秒给到 1.5–3 倍余量；
+ * 再长就等于「界面卡住但什么都没发生」，而看门狗的 tool 阈值是 300 秒——
+ * 转交的等待必须**短于**看门狗收尾的阈值，否则永远是看门狗先动手，
+ * 模型拿不到「超时了，换条路」这个明确信号，只会看到工具被中断。
+ */
+export const DEFAULT_DELEGATION_TIMEOUT_MS = 180_000;
+
+/** 同步转交等待超时。 */
+export class DelegationTimeoutError extends Error {
+	readonly timeoutMs: number;
+
+	constructor(timeoutMs: number) {
+		super(`等待对方答复超过 ${Math.round(timeoutMs / 1000)} 秒，已放弃等待`);
+		this.name = "DelegationTimeoutError";
+		this.timeoutMs = timeoutMs;
+	}
+}
+
+/**
+ * 给一次同步等待加硬上限。
+ *
+ * 为什么必须有：ADR-025 只堵住了「环」和「目标正忙」两种死锁，还有第三种——
+ * 目标接受了请求、但它的那一轮永远跑不完（工具中断后 `pi.generation` 停在
+ * `waiting`）。这种情况下 `submission.wait()` 永不返回，调用方的工具任务
+ * 就永远 `running`，整个会话看起来「正在忙」，后续派活全部排队。
+ *
+ * 超时只放弃**这一次等待**：已经投递出去的工作照旧在后台跑（ADR-005），
+ * 不会因为调用方不等了而被撤销。调用方必须保证在 finally 里释放等待图。
+ */
+export async function waitWithTimeout<T>(
+	promise: Promise<T>,
+	timeoutMs: number = DEFAULT_DELEGATION_TIMEOUT_MS,
+	options: { readonly signal?: AbortSignal } = {},
+): Promise<T> {
+	// 超时后底层 Promise 仍在跑：挂一个空 catch，避免「未处理的拒绝」把进程带崩。
+	promise.catch(() => undefined);
+
+	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return promise;
+
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let onAbort: (() => void) | undefined;
+
+	try {
+		return await new Promise<T>((resolve, reject) => {
+			timer = setTimeout(() => reject(new DelegationTimeoutError(timeoutMs)), timeoutMs);
+			// 超时定时器不该拖住进程退出（服务被 Ctrl+C 时能立刻走）
+			(timer as { unref?: () => void }).unref?.();
+
+			const signal = options.signal;
+			if (signal !== undefined) {
+				if (signal.aborted) {
+					reject(signal.reason);
+					return;
+				}
+				onAbort = () => reject(signal.reason);
+				signal.addEventListener("abort", onAbort, { once: true });
+			}
+
+			promise.then(resolve, reject);
+		});
+	} finally {
+		if (timer !== undefined) clearTimeout(timer);
+		if (onAbort !== undefined) options.signal?.removeEventListener("abort", onAbort);
+	}
+}
+
+/**
+ * 强制释放某个调用方的等待边（诊断 / 超时兜底用）。
+ *
+ * 正常路径靠 `enterDelegation()` 返回的释放函数在 finally 里清；这里是
+ * 「调用方已经不在等了，但边还挂着」的兜底，避免下一次转交被假环挡住。
+ */
+export function releaseDelegation(caller: number): void {
+	waiting.delete(caller);
+}
+
 /** waiter 会话 → 它正在同步等待的会话。 */
 const waiting = new Map<number, number>();
 

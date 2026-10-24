@@ -134,8 +134,17 @@ export function mockFeed(conversationId = 20) {
 		{
 			id: 1,
 			kind: "user",
+			// 派活方：老板自己发的是 owner，别的 agent 派来的是对应岗位。
+			from: { label: "老板", kind: "owner" },
 			text: "把坦克大战的渲染层拆出来，先跑一遍冒烟测试。",
 			at: t - 8 * 60_000,
+		},
+		{
+			id: 11,
+			kind: "user",
+			from: { conversationId: 30, label: "陆沉", kind: "project" },
+			text: "补一条：拆的时候 draw 接口不能变，测试在等这个。",
+			at: t - 7 * 60_000,
 		},
 		{
 			id: 2,
@@ -215,6 +224,8 @@ export function fit(canvas, game) {
 		{
 			id: 8,
 			kind: "note",
+			from: { conversationId: 30, label: "陆沉", kind: "project" },
+			to: { conversationId: 20, label: "林越", kind: "staff" },
 			text: "派活 · 陆沉 → 林越：拆分渲染层，保持 draw 接口不变",
 			at: t - 3 * 60_000,
 		},
@@ -237,6 +248,8 @@ export function fit(canvas, game) {
 		title: "林越",
 		role: "开发 · 坦克大战 项目 · 向 CTO 汇报",
 		kind: "staff",
+		// 会话主人：assistant / thinking / tool 条目的发言人都是它
+		actor: { conversationId, label: "林越", kind: "staff" },
 		items,
 		streaming: "现在补 HUD 的响应式：768px 以下把雷达挪到右上角，血条压成两行，",
 		thinking: "看看 768px 下 HUD 会不会压住画布，顺便确认触摸屏的按钮尺寸…",

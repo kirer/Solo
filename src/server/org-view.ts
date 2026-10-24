@@ -4,8 +4,12 @@
  * 一次请求拿到整块数据，界面不需要拼多次调用。
  * 状态判定：忙（有活跃任务）/ 待办（有你该拍板的事）/ 空闲。
  */
-import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import type { CompanyRuntime } from "../runtime/index.ts";
+import {
+	BACKGROUND_CONTEXT,
+	inspectLiveness,
+	type CompanyRuntime,
+	type Context,
+} from "../runtime/index.ts";
 import { MANAGEMENT_ROLES, ROLE_LABELS, type ManagementRole, type TrailKind } from "../company/docs.ts";
 import { listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
@@ -13,8 +17,8 @@ import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { readLiveTrail, readTrail } from "../company/trail.ts";
 
-/** 节点状态。 */
-export type NodeStatus = "busy" | "waiting" | "idle";
+/** 节点状态（契约第 2 节：四态，全站统一）。 */
+export type NodeStatus = "busy" | "waiting" | "error" | "idle";
 
 /** 一个可点开的角色节点。 */
 export type ActorView = {
@@ -34,6 +38,16 @@ export type ActorView = {
 	readonly activity: string;
 	/** 是否已归档（项目终止后员工会被归档）。 */
 	readonly archived?: boolean;
+	/** 生效模型（provider/modelId）；档案浮层与卡片提示用。 */
+	readonly model?: string;
+	/** 员工角色（产品 / 设计 / 开发 / 测试 / 运营）。 */
+	readonly role?: string;
+	/** 所属项目 slug（项目会话与员工会话有）。 */
+	readonly project?: string;
+	/** 上级显示名。 */
+	readonly parent?: string;
+	/** 故障原因（status 为 error 时给界面一句话说明）。 */
+	readonly error?: string;
 };
 
 /** 项目视图。 */
@@ -101,13 +115,21 @@ export async function buildOrgView(
 	const state = await readCompany(runtime, context);
 	const pending = await listPending(runtime, context);
 
-	// 活跃任务 → 哪些会话在忙
-	const inspection = await runtime.harness.inspect(context);
-	const busyIds = new Set(
-		inspection.tasks
-			.filter((task) => task.state.kind === "running" || task.state.kind === "ready")
-			.map((task) => Number(task.record.conversationId)),
-	);
+	// 活跃任务 → 哪些会话在忙。
+	// 用统一存活判定：僵住的 waiting（等的东西早就结束了）不算忙，否则
+	// 一个卡死的会话会永远顶着绿灯——这正是这次要修的「永远正在忙」。
+	const liveness = await inspectLiveness(runtime, {}, context);
+	const busyIds = new Set(liveness.busyConversations);
+	// 故障会话：被永久挂起（blocked，反复崩溃触到上限 / 任务定义缺失）或已经僵住。
+	// 这类会话不会自己好起来，界面必须如实标红，而不是显示成「空闲」。
+	const errorIds = new Set<number>();
+	const errorReasons = new Map<number, string>();
+	for (const task of liveness.tasks) {
+		const reason = failureReasonOf(task);
+		if (reason === undefined) continue;
+		errorIds.add(task.conversationId);
+		if (!errorReasons.has(task.conversationId)) errorReasons.set(task.conversationId, reason);
+	}
 	// 两组计数语义不同，不能混用：
 	// - pendingByConversation：这个人身上挂着未答复的问题 → 状态「等待中」
 	// - awaitingYou：**只有老板才需要拍板的**（owner 级，且按新规则记在 CEO 名下）
@@ -127,6 +149,9 @@ export async function buildOrgView(
 	}
 
 	const statusOf = (conversationId: number): NodeStatus => {
+		// 故障优先于其它两态：一个被永久挂起的会话不能显示成「空闲」或「在跑」，
+		// 否则老板会以为它在干活，而实际上没有任何东西会去收尾。
+		if (errorIds.has(conversationId)) return "error";
 		if (busyIds.has(conversationId)) return "busy";
 		if ((pendingByConversation.get(conversationId) ?? 0) > 0) return "waiting";
 		return "idle";
@@ -135,12 +160,23 @@ export async function buildOrgView(
 	const roleIds = state?.roles ?? {};
 	const ceoId = roleIds.ceo ?? 1;
 
+	const errorField = (conversationId: number): { readonly error?: string } => {
+		const reason = errorReasons.get(conversationId);
+		return reason === undefined ? {} : { error: reason };
+	};
+
 	const actor = async (
 		conversationId: number,
 		label: string,
 		subtitle: string,
 		kind: ActorView["kind"],
 		archived = false,
+		extra: {
+			readonly model?: string;
+			readonly role?: string;
+			readonly project?: string;
+			readonly parent?: string;
+		} = {},
 	): Promise<ActorView> => {
 		const base: ActorView = {
 			conversationId,
@@ -151,18 +187,36 @@ export async function buildOrgView(
 			tokens: await tokensOf(runtime, conversationId, context),
 			awaitingYou: awaitingYouByConversation.get(conversationId) ?? 0,
 			activity: await describeActivity(runtime, conversationId, context),
+			...(extra.model === undefined ? {} : { model: extra.model }),
+			...(extra.role === undefined ? {} : { role: extra.role }),
+			...(extra.project === undefined ? {} : { project: extra.project }),
+			...(extra.parent === undefined ? {} : { parent: extra.parent }),
+			...errorField(conversationId),
 		};
 		return archived ? { ...base, archived: true } : base;
 	};
 
-	const ceo = await actor(ceoId, "CEO", "唯一真人 · 主 Agent 代你调度", "owner");
+	const defaultModel = modelOf(state?.defaultModel) ?? "?";
+	const ceo = await actor(ceoId, "CEO", "唯一真人 · 主 Agent 代你调度", "owner", false, {
+		model: defaultModel,
+		parent: "老板",
+	});
 
 	const roles: ActorView[] = [];
 	for (const role of MANAGEMENT_ROLES) {
 		if (role === "ceo") continue;
 		const id = roleIds[role];
 		if (id === undefined) continue;
-		roles.push(await actor(id, ROLE_LABELS[role], ROLE_DEFINITIONS[role as ManagementRole]?.summary ?? "", "role"));
+		roles.push(
+			await actor(
+				id,
+				ROLE_LABELS[role],
+				ROLE_DEFINITIONS[role as ManagementRole]?.summary ?? "",
+				"role",
+				false,
+				{ model: defaultModel, parent: "CEO" },
+			),
+		);
 	}
 
 	const projects: ProjectView[] = [];
@@ -172,13 +226,20 @@ export async function buildOrgView(
 			project.leaderName,
 			`${project.name} 项目负责人`,
 			"project",
+			false,
+			{ model: defaultModel, project: project.slug, parent: "CEO" },
 		);
 		// 终止后员工会被归档：仍然列出来，标成已归档，让老板看得见「曾经有谁」
 		const staff: ActorView[] = [];
 		for (const person of Object.values(state?.staff ?? {})) {
 			if (person.project !== project.slug) continue;
 			staff.push(
-				await actor(person.conversationId, person.name, person.role, "staff", person.archived),
+				await actor(person.conversationId, person.name, person.role, "staff", person.archived, {
+					model: modelOf(person.model) ?? "?",
+					role: person.role,
+					project: person.project,
+					parent: ROLE_LABELS[person.manager],
+				}),
 			);
 		}
 
@@ -254,6 +315,39 @@ async function tokensOf(runtime: CompanyRuntime, conversationId: number, context
 	const models = (state as { models?: Record<string, { totalTokens?: number }> } | undefined)?.models ?? {};
 	return Object.values(models).reduce((total, model) => total + (model.totalTokens ?? 0), 0);
 }
+
+/**
+ * 这个任务是不是「已经坏了、不会自己好」。
+ *
+ * 两种：
+ * - `blocked`：反复崩溃触到重启上限、任务定义缺失、迁移失败——没有东西会收尾
+ * - `stuck`：等的东西早就结束了 / 超期，看门狗可能还在重试，但当前确实卡着
+ * 都要在界面上标红，否则老板看到的是「空闲」或「在跑」。
+ */
+function failureReasonOf(task: {
+	readonly status: string;
+	readonly stuck: boolean;
+	readonly reason?: string;
+	readonly blockedReason?: string;
+}): string | undefined {
+	if (task.status === "blocked") {
+		if (task.blockedReason === "restart_limit") return "反复崩溃已暂停";
+		if (task.blockedReason === "migration_failed") return "任务升级失败，无法恢复";
+		return `任务受阻（${task.blockedReason ?? "未知原因"}）`;
+	}
+	if (task.reason === "waiting-on-dead") return "等待的对象已结束，任务卡住";
+	if (task.reason === "waiting-on-blocked") return "等待的对象已受阻";
+	// 注意：超期（overdue）不算故障——它可能只是活很长。看门狗会去收尾，
+	// 收不掉之后才是真的坏，那时任务会变成 blocked。提前标红会误伤正常的慢活。
+	return undefined;
+}
+
+/** provider/modelId。 */
+function modelOf(model: { readonly provider: string; readonly modelId: string } | undefined): string | undefined {
+	if (model === undefined) return undefined;
+	return `${model.provider}/${model.modelId}`;
+}
+
 
 /**
  * 一句话描述「它最近在做什么」。

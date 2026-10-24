@@ -14,11 +14,10 @@ import { extname, join, normalize } from "node:path";
 import { BACKGROUND_CONTEXT, InboxDoc } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
 import { answerPending, listPending } from "../company/escalation.ts";
-import { readCompany } from "../company/org.ts";
-import { ROLE_LABELS, type ManagementRole } from "../company/docs.ts";
-import { ROLE_DEFINITIONS } from "../company/roles.ts";
+import { readCompany, startCompanyWatchdog } from "../company/org.ts";
 import { buildOrgView } from "./org-view.ts";
-import { readFeed } from "./feed.ts";
+import { decorateFeed, readFeed } from "./feed.ts";
+import { readProfile } from "./profile.ts";
 
 /** 服务选项。 */
 export type ServeOptions = {
@@ -27,6 +26,13 @@ export type ServeOptions = {
 	readonly host?: string;
 	/** 静态资源目录（默认仓库根的 ui/）。 */
 	readonly uiDir?: string;
+	/**
+	 * 是否启动看门狗（契约 §5.2）。默认启动。
+	 *
+	 * 放在这里而不是 `bootstrapCompany`：看门狗会主动 abort 任务、投递排队消息，
+	 * 只应该由「真的在跑服务」的入口拥有。测试想完全掌控调度时传 `false`。
+	 */
+	readonly watchdog?: boolean;
 };
 
 /** 服务句柄。 */
@@ -93,6 +99,19 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		scheduleOrgPush();
 	});
 
+	// 看门狗：定期收尾僵住的任务、排空被压住的队列（契约 §5.2）。
+	// 传 getter 而不是实例：崩溃自愈会重开运行时，传实例会盯着已关闭的对象。
+	const stopWatchdog =
+		options.watchdog === false
+			? () => undefined
+			: startCompanyWatchdog(runtime, {
+					onAlert: (alert) => {
+						process.stderr.write(`[看门狗] ${alert.message}\n`);
+						// 告警要立刻出现在界面：留痕条目已经落库，这里顺手推一帧
+						scheduleOrgPush();
+					},
+				});
+
 	const server = createServer((request, response) => {
 		void handle(request, response);
 	});
@@ -114,7 +133,15 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
 				const feed = await readFeed(runtime, conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return fail(response, 404, "会话不存在");
-				return json(response, await decorateFeed(runtime, feed));
+				return json(response, await decorateFeed(runtime, feed, BACKGROUND_CONTEXT));
+			}
+			// 职工档案：顶部按钮展示这位职工的角色预制提示词 / 技能（用户 2.5）
+			if (path.startsWith("/api/profile/")) {
+				const conversationId = Number(path.slice("/api/profile/".length));
+				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
+				const result = await readProfile(runtime, conversationId, BACKGROUND_CONTEXT);
+				if ("error" in result) return fail(response, 404, result.error);
+				return json(response, result.profile);
 			}
 			if (path.startsWith("/api/stream/org")) return streamOrg(response);
 			if (path.startsWith("/api/stream/feed/")) {
@@ -131,49 +158,6 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		} catch (error) {
 			return fail(response, 500, error instanceof Error ? error.message : String(error));
 		}
-	}
-
-	/** 给 feed 补上标题、角色、种类、待拍板状态。 */
-	async function decorateFeed(runtime: CompanyRuntime, feed: Awaited<ReturnType<typeof readFeed>>) {
-		if (feed === undefined) return feed;
-		const state = await readCompany(runtime, BACKGROUND_CONTEXT);
-		const pending = await listPending(runtime, BACKGROUND_CONTEXT);
-		// 只有 owner 级的问题才是「等老板拍板」；CEO 自己队列里的问题不算。
-		const awaitingOwner = pending.some(
-			(item) => item.level === "owner" && item.fromConversationId === feed.conversationId,
-		);
-
-		let title = "会话";
-		let kind: "owner" | "role" | "project" | "staff" | "branch" = "branch";
-		let role = "";
-
-		const roleEntry = Object.entries(state?.roles ?? {}).find(([, id]) => id === feed.conversationId);
-		if (roleEntry !== undefined) {
-			const roleKey = roleEntry[0] as ManagementRole;
-			title = ROLE_LABELS[roleKey] ?? roleKey.toUpperCase();
-			kind = roleKey === "ceo" ? "owner" : "role";
-			role =
-				roleKey === "ceo"
-					? "唯一真人 · 直接向你汇报"
-					: `${ROLE_DEFINITIONS[roleKey]?.summary ?? ""} · 向 CEO 汇报`;
-		}
-
-		for (const project of Object.values(state?.projects ?? {})) {
-			if (project.leader === feed.conversationId) {
-				title = project.name;
-				kind = "project";
-				role = "项目负责人";
-			}
-		}
-		for (const staff of Object.values(state?.staff ?? {})) {
-			if (staff.conversationId === feed.conversationId) {
-				title = staff.name;
-				kind = "staff";
-				role = `${staff.role} · ${staff.project} 项目 · 向 ${ROLE_LABELS[staff.manager]} 汇报`;
-			}
-		}
-
-		return { ...feed, title, kind, role, awaitingOwner };
 	}
 
 	/** 组织快照的 SSE。 */
@@ -232,7 +216,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			try {
 				const feed = await readFeed(runtime, conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return;
-				const decorated = await decorateFeed(runtime, feed);
+				const decorated = await decorateFeed(runtime, feed, BACKGROUND_CONTEXT);
 				response.write(`event: feed\ndata: ${JSON.stringify(decorated)}\n\n`);
 			} catch {
 				// 单次失败不关闭连接，等下一次
@@ -396,6 +380,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		url: `http://${listenHost}:${actualPort}/`,
 		async close() {
 			unsubscribe();
+			stopWatchdog();
 			if (orgTimer !== undefined) clearTimeout(orgTimer);
 			for (const client of orgClients) {
 				try {

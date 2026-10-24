@@ -89,7 +89,7 @@
 					</div>
 					<div class="chat-actions">
 						<span class="chat-token-count" id="chat-tokens" title="本会话 token"></span>
-						<button class="icon-btn" type="button" id="chat-fold" aria-label="展开或收起工作过程" title="展开 / 收起工作过程" hidden>
+						<button class="icon-btn" type="button" id="chat-fold" aria-label="查看角色档案" title="查看角色档案（提示词与技能）" aria-haspopup="dialog" aria-expanded="false" hidden>
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 								<path d="m6 9 6 6 6-6"/>
 							</svg>
@@ -125,6 +125,8 @@
 			</aside>
 		</div>
 	</div>
+
+	<div class="profile-layer" id="profile-layer" hidden></div>
 
 	<div class="settings" id="settings" role="dialog" aria-modal="false" aria-label="设置" hidden>
 		<header class="settings-head">

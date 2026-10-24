@@ -33,15 +33,25 @@ export { InboxDoc, type InboxItem, type InboxState } from "./inbox.ts";
 export { UsageDoc, type UsageState } from "./usage.ts";
 export { openCompany, type CompanyRuntime, type OpenCompanyOptions, type RuntimeReport } from "./open.ts";
 export {
+	GENERATION_OVERDUE_MS,
 	hasFailed,
 	inspect,
+	inspectLiveness,
+	inspectLivenessFrom,
+	isConversationBusy,
 	recover,
 	retryParked,
+	TOOL_OVERDUE_MS,
 	waitForIdle,
 	watchForFailure,
+	type Liveness,
+	type LivenessOptions,
 	type ParkedTask,
+	type RecoveryOptions,
 	type RecoveryResult,
 	type SelfHealingOptions,
+	type StuckReason,
+	type TaskLiveness,
 } from "./recover.ts";
 export {
 	configure,
