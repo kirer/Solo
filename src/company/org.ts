@@ -281,11 +281,10 @@ export async function bootstrapCompany(
 			const release = guard;
 
 			try {
-				// 目标正忙时直接失败，而不是排队等它——排队会让调用方无限期挂住，
-				// 一旦两边互相转交就是死锁（真实事故：CEO/CTO/负责人三方互等）。
-				const busy = await busyReason(runtime, targetId, toolContext);
-				if (busy !== undefined) return `岗位 ${input.role} ${busy}，本次转交未执行。请稍后再转，或改用上报（escalate）。`;
-
+				// ADR-026 落地第一步：链上上级的指令一律受理，不再因「正在忙」拒收。
+				// 旧实现先查忙碌再拒收，属明文抗命（老板要求：指令到达即生效）。
+				// 死锁防护仍在：tryEnterDelegation 的环检测 + 同步等待的硬上限
+				// （waitWithTimeout）负责，不靠「忙就拒」来避免互等。
 				// 用请求标识去重：同一条转交重复调用不会让岗位重复干活
 				const requestId = messageRequestId(`role-${input.role}`, caller, hashToInt(input.task));
 				const submission = await target.submit(
@@ -301,7 +300,8 @@ export async function bootstrapCompany(
 								text: input.task.slice(0, 280),
 							},
 						},
-						whenBusy: "reject",
+						// ADR-026 决策 3：默认 now（立刻停、并入），不再用 reject 抗命
+						whenBusy: "steer",
 					},
 					toolContext,
 				);
@@ -393,10 +393,8 @@ export async function bootstrapCompany(
 			const release = guard;
 
 			try {
-				const busy = await busyReason(runtime, project.leader, toolContext);
-				if (busy !== undefined) {
-					return `项目负责人 ${project.leaderName} ${busy}，本次下达未执行。请稍后再下达，或先看它卡在哪。`;
-				}
+				// ADR-026 落地第一步：对负责人的下达同样不得因「正在忙」拒收。
+				// 环检测（tryEnterDelegation）与等待硬上限（waitWithTimeout）仍是死锁防线。
 
 				// 请求标识按「发起方 + 任务内容」去重：重复下达同一件事不会让负责人重复干活
 				const requestId = messageRequestId(
@@ -418,7 +416,8 @@ export async function bootstrapCompany(
 								text: input.task.slice(0, 280),
 							},
 						},
-						whenBusy: "reject",
+						// ADR-026 决策 3：默认 now（立刻停、并入），不再用 reject 抗命
+						whenBusy: "steer",
 					},
 					toolContext,
 				);
@@ -623,11 +622,15 @@ export async function bootstrapCompany(
  * @returns 停止函数（幂等）；不启动时返回空操作
  */
 export function startCompanyWatchdog(
-	runtime: CompanyRuntime,
+	source: CompanyRuntime | (() => CompanyRuntime),
 	options: boolean | WatchdogOptions = true,
 ): () => void {
 	if (options === false) return () => undefined;
-	return startWatchdog(() => runtime, options === true ? {} : options);
+	// 必须接受 getter：崩溃自愈（watchForFailure）会 openCompany() 出一个**新对象**，
+	// 把实例钉死会让看门狗自愈后每轮都对已关闭的 runtime 巡检 → 抛错 → 被吞掉 →
+	// 看门狗从此静默失效，界面又开始「永远正在忙」。
+	const current = typeof source === "function" ? source : () => source;
+	return startWatchdog(current, options === true ? {} : options);
 }
 
 /** 项目创建选项。 */

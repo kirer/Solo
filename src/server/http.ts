@@ -21,7 +21,14 @@ import { readProfile } from "./profile.ts";
 
 /** 服务选项。 */
 export type ServeOptions = {
-	readonly runtime: CompanyRuntime;
+	/**
+	 * 运行时，或返回当前运行时的 getter。
+	 *
+	 * **长跑的服务请传 getter**：崩溃自愈（`watchForFailure`）会 `openCompany()`
+	 * 打开一个**新对象**，把实例钉死在闭包里会让看门狗、SSE 推送、所有请求
+	 * 在自愈之后继续对着已关闭的运行时干活（表现为「自愈后整个界面不动了」）。
+	 */
+	readonly runtime: CompanyRuntime | (() => CompanyRuntime);
 	readonly port?: number;
 	readonly host?: string;
 	/** 静态资源目录（默认仓库根的 ui/）。 */
@@ -57,7 +64,9 @@ const MIME: Record<string, string> = {
 
 /** 启动服务。 */
 export async function serve(options: ServeOptions): Promise<Server> {
-	const { runtime } = options;
+	// 每次取最新的运行时：自愈会换对象，闭包里不能存实例
+	const current = (): CompanyRuntime =>
+		typeof options.runtime === "function" ? options.runtime() : options.runtime;
 	const port = options.port ?? 7788;
 	const host = options.host ?? "127.0.0.1";
 	const uiDir = options.uiDir ?? join(process.cwd(), "ui");
@@ -81,7 +90,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		orgDirty = false;
 		let payload: string;
 		try {
-			payload = JSON.stringify(await buildOrgView(runtime, BACKGROUND_CONTEXT));
+			payload = JSON.stringify(await buildOrgView(current(), BACKGROUND_CONTEXT));
 		} catch (error) {
 			payload = JSON.stringify({ error: String(error) });
 		}
@@ -94,17 +103,35 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		}
 	};
 
-	// 任何提交都可能改变组织状态：订阅一次，全客户端共享
-	const unsubscribe = runtime.harness.subscribeCommits(() => {
-		scheduleOrgPush();
-	});
+	// 任何提交都可能改变组织状态：订阅一次，全客户端共享。
+	// 崩溃自愈会换运行时对象，所以要跟着换订阅——否则自愈之后新运行时上的提交
+	// 推不动界面，看起来像「服务卡住了」。
+	let subscribed: CompanyRuntime | undefined;
+	let unsubscribeCommits: (() => void) | undefined;
+	const ensureSubscribed = (): void => {
+		const next = current();
+		if (next === subscribed) return;
+		unsubscribeCommits?.();
+		subscribed = next;
+		try {
+			unsubscribeCommits = next.harness.subscribeCommits(() => {
+				scheduleOrgPush();
+			});
+		} catch {
+			// 运行时可能正处在关闭/重开之间：下一帧再试
+			subscribed = undefined;
+			unsubscribeCommits = undefined;
+		}
+	};
+	ensureSubscribed();
 
 	// 看门狗：定期收尾僵住的任务、排空被压住的队列（契约 §5.2）。
-	// 传 getter 而不是实例：崩溃自愈会重开运行时，传实例会盯着已关闭的对象。
+	// **传 getter 而不是实例**：崩溃自愈会重开运行时，传实例会让看门狗
+	// 每轮都对已关闭的对象巡检 → 抛错 → 被吞掉 → 看门狗静默失效。
 	const stopWatchdog =
 		options.watchdog === false
 			? () => undefined
-			: startCompanyWatchdog(runtime, {
+			: startCompanyWatchdog(current, {
 					onAlert: (alert) => {
 						process.stderr.write(`[看门狗] ${alert.message}\n`);
 						// 告警要立刻出现在界面：留痕条目已经落库，这里顺手推一帧
@@ -122,24 +149,24 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		const path = url.pathname;
 
 		try {
-			if (path === "/api/org") return json(response, await buildOrgView(runtime, BACKGROUND_CONTEXT));
+			if (path === "/api/org") return json(response, await buildOrgView(current(), BACKGROUND_CONTEXT));
 			if (path === "/api/pending") {
-				const state = await readCompany(runtime, BACKGROUND_CONTEXT);
+				const state = await readCompany(current(), BACKGROUND_CONTEXT);
 				void state;
-				return json(response, await listPending(runtime, BACKGROUND_CONTEXT));
+				return json(response, await listPending(current(), BACKGROUND_CONTEXT));
 			}
 			if (path.startsWith("/api/feed/")) {
 				const conversationId = Number(path.slice("/api/feed/".length));
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
-				const feed = await readFeed(runtime, conversationId, {}, BACKGROUND_CONTEXT);
+				const feed = await readFeed(current(), conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return fail(response, 404, "会话不存在");
-				return json(response, await decorateFeed(runtime, feed, BACKGROUND_CONTEXT));
+				return json(response, await decorateFeed(current(), feed, BACKGROUND_CONTEXT));
 			}
 			// 职工档案：顶部按钮展示这位职工的角色预制提示词 / 技能（用户 2.5）
 			if (path.startsWith("/api/profile/")) {
 				const conversationId = Number(path.slice("/api/profile/".length));
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
-				const result = await readProfile(runtime, conversationId, BACKGROUND_CONTEXT);
+				const result = await readProfile(current(), conversationId, BACKGROUND_CONTEXT);
 				if ("error" in result) return fail(response, 404, result.error);
 				return json(response, result.profile);
 			}
@@ -172,7 +199,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		orgClients.add(response);
 
 		// 首帧：立刻给一份，避免白屏等待
-		void buildOrgView(runtime, BACKGROUND_CONTEXT).then((view) => {
+		void buildOrgView(current(), BACKGROUND_CONTEXT).then((view) => {
 			try {
 				response.write(`event: org\ndata: ${JSON.stringify(view)}\n\n`);
 			} catch {
@@ -196,7 +223,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 	/** 单个会话流的 SSE。 */
 	async function streamFeed(response: ServerResponse, conversationId: number): Promise<void> {
-		const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
+		const conversation = await current().harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
 		if (conversation === undefined) return fail(response, 404, "会话不存在");
 
 		response.writeHead(200, {
@@ -214,9 +241,9 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		const push = async (): Promise<void> => {
 			if (closed) return;
 			try {
-				const feed = await readFeed(runtime, conversationId, {}, BACKGROUND_CONTEXT);
+				const feed = await readFeed(current(), conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return;
-				const decorated = await decorateFeed(runtime, feed, BACKGROUND_CONTEXT);
+				const decorated = await decorateFeed(current(), feed, BACKGROUND_CONTEXT);
 				response.write(`event: feed\ndata: ${JSON.stringify(decorated)}\n\n`);
 			} catch {
 				// 单次失败不关闭连接，等下一次
@@ -259,17 +286,105 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			return fail(response, 400, "需要 conversationId 与 text");
 		}
 
+		const runtime = current();
 		const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
 		if (conversation === undefined) return fail(response, 404, "会话不存在");
 
-		// 默认 steer：会话忙时排在本轮工具之后，比 followUp（等整轮答完）早得多。
-		// 老板的话不该排在最后。
-		await conversation.submit(
-			{ type: "input", content: text, whenBusy: body.mode ?? "steer" },
-			BACKGROUND_CONTEXT,
-		);
+		// ADR-026 决策 3：老板通道默认 now —— 指令到达即生效，立刻停、丢当前轮。
+		// 旧默认 steer（排在本轮工具之后）会把「要不要现在听」推回给老板，与老板的硬要求冲突。
+		// 仍保留 step/turn 作为显式档位（对应 steer/followUp），只是不再是默认值。
+		const whenBusy = body.mode ?? "now";
+
+		// ADR-026 决策 7.1：回执不经过模型。受理成功即写一条 app.receipt，
+		// 模型失败/超时也必须看得见「收到了」——这条是系统写的，与生成结果无关。
+		await writeReceipt(runtime, conversationId, text);
+
+		// now 档：先打断当前轮，再把消息投进去（abort 会撤掉队列，所以中断后再 submit）。
+		// step/turn 走原有的 whenBusy 语义。
+		if (whenBusy === "now") {
+			await interruptThenDeliver(runtime, conversation, conversationId, text);
+		} else {
+			await conversation.submit({ type: "input", content: text, whenBusy }, BACKGROUND_CONTEXT);
+		}
 		scheduleOrgPush();
-		return json(response, { ok: true });
+		return json(response, { ok: true, receipt: true });
+	}
+
+	/**
+	 * 写一条受理回执（ADR-026 决策 7.1）。
+	 *
+	 * 刻意不走模型：只要 HTTP 受理成功就必须有回执，模型挂了、超时了、
+	 * 被更高层指令覆盖了，老板也应当看得见「这条话被收到了」。
+	 * 留痕失败不影响受理本身（与 watchdog.writeAlert 同一取舍）。
+	 */
+	async function writeReceipt(
+		runtime: CompanyRuntime,
+		conversationId: number,
+		text: string,
+	): Promise<void> {
+		try {
+			await runtime.harness.commit(async (tx) => {
+				await tx.appendEntry(conversationId as never, {
+					kind: "app.receipt",
+					data: {
+						text: text.slice(0, 280),
+						from: "老板",
+						timing: "now",
+						at: Date.now(),
+					},
+				});
+			}, BACKGROUND_CONTEXT);
+		} catch {
+			// 回执失败不影响受理
+		}
+	}
+
+	/**
+	 * now 档投递：先中断当前轮，再把消息投进去（ADR-026 落地第一步）。
+	 *
+	 * 复用 postInterrupt 的两个安全约束（都是真实事故）：
+	 * 1. 不能无限等 abort，最多 {@link INTERRUPT_TIMEOUT_MS}；
+	 * 2. abort 会撤掉整个队列，所以必须把「这条 + 其它排队消息」全部补回去，不能顺手吞掉。
+	 */
+	async function interruptThenDeliver(
+		runtime: CompanyRuntime,
+		conversation: NonNullable<Awaited<ReturnType<CompanyRuntime["harness"]["conversation"]>>>,
+		conversationId: number,
+		text: string,
+	): Promise<void> {
+		const inbox = (await runtime.harness.snapshot(InboxDoc, conversationId as never, BACKGROUND_CONTEXT)) as
+			| { items?: readonly { mode: string; content: unknown }[] }
+			| undefined;
+		const queued = (inbox?.items ?? [])
+			.filter((item) => item.mode !== "write")
+			.map((item) => queueText(item.content))
+			.filter((item) => item !== "");
+
+		// 已经不在队列里 = 没有正在跑的活要打断，直接投
+		if (!queued.includes(text)) {
+			await conversation.submit({ type: "input", content: text, whenBusy: "steer" }, BACKGROUND_CONTEXT);
+			return;
+		}
+
+		const rest = queued.filter((item) => item !== text);
+
+		let timer: NodeJS.Timeout | undefined;
+		await Promise.race([
+			conversation.abort(BACKGROUND_CONTEXT).then(
+				() => true,
+				() => false,
+			),
+			new Promise<boolean>((resolve) => {
+				timer = setTimeout(() => resolve(false), INTERRUPT_TIMEOUT_MS);
+			}),
+		]).finally(() => {
+			if (timer !== undefined) clearTimeout(timer);
+		});
+
+		// 这条优先；被 abort 撤掉的其它排队消息也补回去
+		for (const item of [text, ...rest]) {
+			await conversation.submit({ type: "input", content: item, whenBusy: "steer" }, BACKGROUND_CONTEXT);
+		}
 	}
 
 	/**
@@ -293,10 +408,10 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			return fail(response, 400, "需要 conversationId 与 text");
 		}
 
-		const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
+		const conversation = await current().harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
 		if (conversation === undefined) return fail(response, 404, "会话不存在");
 
-		const inbox = (await runtime.harness.snapshot(InboxDoc, conversationId as never, BACKGROUND_CONTEXT)) as
+		const inbox = (await current().harness.snapshot(InboxDoc, conversationId as never, BACKGROUND_CONTEXT)) as
 			| { items?: readonly { mode: string; content: unknown }[] }
 			| undefined;
 		const queued = (inbox?.items ?? [])
@@ -347,7 +462,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 		// 老板只回答「CEO 报上来」的问题：owner 级以外的条目属于管理层授权范围，
 		// 老板替他们拍板等于把决策责任揽到自己身上（也正是「待拍板太多」的根源）。
-		const pending = await listPending(runtime, BACKGROUND_CONTEXT);
+		const pending = await listPending(current(), BACKGROUND_CONTEXT);
 		const item = pending.find((entry) => entry.key === key);
 		if (item === undefined) return fail(response, 404, "没有这条待决问题（可能已被处理）");
 		if (item.level !== "owner") {
@@ -355,7 +470,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		}
 
 		const ok = await answerPending(
-			runtime,
+			current(),
 			{ key, answer: text, answeredBy: "owner" },
 			BACKGROUND_CONTEXT,
 		);
@@ -379,7 +494,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	return {
 		url: `http://${listenHost}:${actualPort}/`,
 		async close() {
-			unsubscribe();
+			unsubscribeCommits?.();
 			stopWatchdog();
 			if (orgTimer !== undefined) clearTimeout(orgTimer);
 			for (const client of orgClients) {

@@ -132,8 +132,9 @@ function signatureOf(item) {
 			return `note|${item.text}|${item.from?.label ?? ""}|${item.to?.label ?? ""}`;
 		case "assistant":
 		case "thinking":
-		case "alert":
 			return `${item.kind}|${item.text}`;
+		case "alert":
+			return `alert|${item.text}|${item.from?.label ?? ""}`;
 		default:
 			return `${item.kind}`;
 	}

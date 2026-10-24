@@ -20,8 +20,9 @@ import { createEscalationTask, listPending, startEscalation } from "../../src/co
 import { beginLiveTrail } from "../../src/company/trail.ts";
 import { serve, type Server } from "../../src/server/http.ts";
 import type { OrgView } from "../../src/server/org-view.ts";
-import type { Feed } from "../../src/server/feed.ts";
+import type { Feed, FeedItem } from "../../src/server/feed.ts";
 import type { ActorProfile } from "../../src/server/profile.ts";
+import { delegationWaits } from "../../src/company/delegation-guard.ts";
 import { answer, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, toolCall, type TestContext } from "../support.ts";
 
 let contexts: TestContext[] = [];
@@ -57,6 +58,8 @@ async function setup() {
 			registry,
 			workspaceRoot: join(dir, "projects"),
 			escalationTask,
+			// 同步转交的等待上限调到 300ms：默认 180s 没法在测试里验证超时路径
+			delegationTimeoutMs: 300,
 		},
 		BACKGROUND_CONTEXT,
 	);
@@ -565,7 +568,17 @@ describe("发消息与拍板", () => {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "做个坦克大战" }),
 		});
-		expect((await response.json()) as { ok: boolean }).toEqual({ ok: true });
+		expect((await response.json()) as { ok: boolean }).toMatchObject({ ok: true });
+
+		// ADR-026 决策 7.1：受理即写 app.receipt，且回执不经模型——
+		// 哪怕生成还没开始，界面上也必须能立刻看到「收到了」。
+		{
+			const conversation = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+			const receiptPage = await conversation?.entries({ order: "ascending" }, 20, undefined, BACKGROUND_CONTEXT);
+			expect(
+				(receiptPage?.items ?? []).some((item) => (item as { kind?: string }).kind === "app.receipt"),
+			).toBe(true);
+		}
 
 		await eventually(
 			async () => {
@@ -818,6 +831,49 @@ describe("忙碌时发消息", () => {
 			body: JSON.stringify({ conversationId: 999999, text: "x" }),
 		});
 		expect(response.status).toBe(404);
+	});
+});
+
+describe("同步转交必须有等待上限（契约 §5.1）", () => {
+	test("岗位接受了请求但一直不答，转交会超时返回而不是永远挂住", async () => {
+		const { server, runtime, boot, ctx } = await setup();
+
+		// CEO 先调转交工具；CTO 那一轮要 5 秒，而等待上限只有 300ms。
+		// 顺序很关键：第一条响应必须是 CEO 的工具调用，否则 CEO 自己就去慢跑了。
+		ctx.faux.setResponses([
+			toolCall("delegate_to_role", { role: "cto", task: "做点慢活" }),
+			slowAnswer(5_000, "CTO 很晚才答"),
+			answer("CEO 收尾"),
+		]);
+
+		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+		const started = Date.now();
+		void ceo?.submit({ type: "input", content: "转给 CTO 做点慢活" }, BACKGROUND_CONTEXT);
+
+		// 只等「工具卡片拿到结果」，不等整轮结束——CTO 那 5 秒的慢活还在后台跑（ADR-005）
+		let tool: FeedItem | undefined;
+		await eventually(
+			async () => {
+				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+				tool = feed.items.find((item) => item.kind === "tool" && item.name === "delegate_to_role");
+				return tool !== undefined && tool.kind === "tool" && tool.state !== "running";
+			},
+			{ label: "转交工具拿到结果", timeoutMs: 3_000 },
+		);
+
+		const elapsed = Date.now() - started;
+		expect(elapsed, "必须在超时量级返回，不能陪着一起挂死").toBeLessThan(2_500);
+
+		// 关键：等待图必须释放，否则下一次反向转交会被当成环挡住
+		expect(delegationWaits().has(boot.ownerConversationId), "超时后必须释放等待边").toBe(false);
+
+		// 模型拿到的是一条「超时了换条路」的可读结果，而不是异常
+		expect(tool).toBeDefined();
+		if (tool?.kind === "tool") {
+			expect(tool.state, "超时是业务结果，不是工具崩溃").toBe("ok");
+			expect(tool.output).toContain("放弃等待");
+			expect(tool.output).toContain("不要原样重试");
+		}
 	});
 });
 

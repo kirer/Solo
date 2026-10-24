@@ -23,6 +23,7 @@ import {
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION } from "../company/org.ts";
 import { CompanyDoc } from "../company/docs.ts";
 import { createEscalationTask } from "../company/escalation.ts";
+import { configureEventLog, defaultEventLogPath, describeReport, writeEvent } from "./event-log.ts";
 import { serve } from "./http.ts";
 
 /** 解析命令行参数。 */
@@ -32,12 +33,14 @@ function parseArgs(argv: readonly string[]): {
 	company: string;
 	workspace: string;
 	open: boolean;
+	eventLog: string;
 } {
 	let port = Number(process.env.PORT ?? 7788);
 	let db = join(process.cwd(), "workspace", "company.sqlite");
 	let company = "一人公司";
 	let workspace = join(process.cwd(), "workspace");
 	let open = true;
+	let eventLog = ""; // 空串 = 按 cwd 推导默认位置
 
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
@@ -59,23 +62,28 @@ function parseArgs(argv: readonly string[]): {
 			index += 1;
 		} else if (arg === "--no-open") {
 			open = false;
+		} else if (arg === "--log" && next !== undefined) {
+			eventLog = resolve(next);
+			index += 1;
 		}
 	}
 
-	return { port, db, company, workspace, open };
+	return { port, db, company, workspace, open, eventLog };
 }
 
 const args = parseArgs(process.argv.slice(2));
 setupSignalHandlers();
 
+// 运行时关键事件落盘：不配的话这些事件跨重启就没了（见 event-log.ts 注释）。
+configureEventLog({ path: args.eventLog !== "" ? args.eventLog : defaultEventLogPath() });
+
 const { models, defaultModel, catalog } = setupModels();
 const registry = createRegistry();
 
 const onReport = (report: RuntimeReport): void => {
-	if (report.kind === "runtime-failed") process.stderr.write(`[运行时失效] ${String(report.error)}\n`);
-	else if (report.kind === "task-parked") process.stderr.write(`[任务受阻] ${report.taskId} (${report.taskKind})\n`);
-	else if (report.kind === "task-failed") process.stderr.write(`[任务出错] ${report.taskId}: ${String(report.error)}\n`);
-	else if (report.kind === "extension-failed") process.stderr.write(`[能力包出错] ${report.extension}\n`);
+	// 映射写在 event-log.ts 的 describeReport 里，便于单测（main.ts 一旦被 import 就会起服务）
+	const event = describeReport(report);
+	if (event !== undefined) writeEvent(event.tag, event.rest);
 };
 
 /** 打开并初始化一次公司。 */
@@ -113,7 +121,7 @@ const booted = await openAndBoot();
 let runtime = booted.runtime;
 
 if (booted.parked.length > 0) {
-	process.stderr.write(`检测到 ${booted.parked.length} 个受阻任务：${booted.parked.join(", ")}\n`);
+	writeEvent("[任务受阻]", `启动时检测到 ${booted.parked.length} 个受阻任务：${booted.parked.join(", ")}`);
 }
 
 // 崩溃自愈
@@ -126,14 +134,16 @@ watchForFailure(
 	},
 	{
 		retryDelayMs: 1_000,
-		onReport: (report) => process.stderr.write(`[自愈] ${JSON.stringify(report)}\n`),
+		onReport: (report) => writeEvent("[自愈]", JSON.stringify(report)),
 		onReopen: () => {
-			process.stderr.write("[自愈] 运行时已重新打开\n");
+			writeEvent("[自愈]", "运行时已重新打开");
 		},
 	},
 );
 
-const server = await serve({ runtime, port: args.port });
+// 传 getter 而不是实例：崩溃自愈会重新赋值 `runtime`（见下面的 watchForFailure），
+// 传实例会让服务在自愈之后继续用那个已关闭的对象。
+const server = await serve({ runtime: () => runtime, port: args.port });
 
 process.stdout.write(`\n  一人公司 · 网页界面\n`);
 process.stdout.write(`  ${server.url}\n`);
