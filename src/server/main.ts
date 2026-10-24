@@ -168,9 +168,15 @@ const shutdown = () => {
 		.then(() => instanceLock.release())
 		.catch(() => undefined)
 		.finally(() => {
+			// 关停也要落盘：进程退出后终端里那行就没了，而「上次是什么时候退出的」
+			// 正是重启后排查「日志为什么断了」的第一个线索。
+			writeEvent("[退出]", "进程正常退出");
 			process.stderr.write("\n已退出。\n");
 			process.exit(0);
 		});
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// SIGHUP 原先只有 signals.ts 那个「同步退出」在管；那里不再退出进程后，
+// 必须由入口自己接住，否则挂断终端的场景会跳过 server.close / 实例锁释放 / 关停留痕。
+process.on("SIGHUP", shutdown);

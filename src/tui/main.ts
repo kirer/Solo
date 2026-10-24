@@ -166,3 +166,5 @@ const shutdown = () => {
 };
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+// 同上：SIGHUP 需要入口自己收尾（见 src/runtime/signals.ts 的说明）
+process.on("SIGHUP", shutdown);
