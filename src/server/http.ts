@@ -14,6 +14,7 @@ import { extname, join, normalize } from "node:path";
 import { BACKGROUND_CONTEXT, InboxDoc } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
 import { answerPending, listPending } from "../company/escalation.ts";
+import { captureInterruptedWork, createDispositionPending, settleDisposition } from "../company/disposition.ts";
 import { readCompany, startCompanyWatchdog } from "../company/org.ts";
 import { buildOrgView } from "./org-view.ts";
 import { decorateFeed, readFeed } from "./feed.ts";
@@ -368,6 +369,13 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 		const rest = queued.filter((item) => item !== text);
 
+		// ADR-026 决策 4：打断前先把「正在跑什么、进度几/几」机械推导出来。
+		// 必须在 abort **之前**采集——abort 之后任务就没了，什么都读不到。
+		// 采集失败不影响打断（处置信息是附加价值，不能反过来卡住受理）。
+		const interrupted = await captureInterruptedWork(runtime, conversationId, BACKGROUND_CONTEXT).catch(
+			() => undefined,
+		);
+
 		let timer: NodeJS.Timeout | undefined;
 		await Promise.race([
 			conversation.abort(BACKGROUND_CONTEXT).then(
@@ -380,6 +388,13 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		]).finally(() => {
 			if (timer !== undefined) clearTimeout(timer);
 		});
+
+		// 打断完成后再落处置待办（ADR-026 决策 4/5）：
+		// 默认暂搁、5 分钟期限、恢复条件默认 30 分钟后提醒下达人。
+		// 同样不能因为落待办失败而丢掉消息，所以先记结果、最后统一处理。
+		if (interrupted !== undefined) {
+			await createDispositionPending(runtime, interrupted).catch(() => undefined);
+		}
 
 		// 这条优先；被 abort 撤掉的其它排队消息也补回去
 		for (const item of [text, ...rest]) {
@@ -427,6 +442,11 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 		const rest = queued.filter((item) => item !== text);
 
+		// ADR-026 决策 4：打断前机械采集「正在跑什么、进度几/几」（必须在 abort 之前）。
+		const interrupted = await captureInterruptedWork(current(), conversationId, BACKGROUND_CONTEXT).catch(
+			() => undefined,
+		);
+
 		// abort 的提交会先把队列撤掉；等它完成（或超时）再把消息补回去
 		let timer: NodeJS.Timeout | undefined;
 		const aborted = await Promise.race([
@@ -440,6 +460,11 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		]).finally(() => {
 			if (timer !== undefined) clearTimeout(timer);
 		});
+
+		// 打断完成后落处置待办（ADR-026 决策 4/5）
+		if (interrupted !== undefined) {
+			await createDispositionPending(current(), interrupted).catch(() => undefined);
+		}
 
 		// 这条消息优先；其它被 abort 撤掉的排队消息也补回去，不能顺手吞掉
 		for (const item of [text, ...rest]) {
@@ -465,6 +490,20 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		const pending = await listPending(current(), BACKGROUND_CONTEXT);
 		const item = pending.find((entry) => entry.key === key);
 		if (item === undefined) return fail(response, 404, "没有这条待决问题（可能已被处理）");
+
+		// 处置类待办（ADR-026 决策 4/5）走专门的校验：必须明确选「暂搁/放弃」，
+		// 且暂搁必须带恢复条件；不能当普通升级答案自由文本吞下去。
+		if (item.disposition !== undefined) {
+			const settled = await settleDisposition(
+				current(),
+				{ key, answer: text, answeredBy: "owner" },
+				BACKGROUND_CONTEXT,
+			);
+			if (!settled.ok) return fail(response, 400, settled.reason);
+			scheduleOrgPush();
+			return json(response, { ok: true, disposition: settled.disposition });
+		}
+
 		if (item.level !== "owner") {
 			return fail(response, 409, "这条问题不在老板这一级，应由 CEO 或对应管理层拍板");
 		}
