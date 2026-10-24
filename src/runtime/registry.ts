@@ -54,7 +54,7 @@ export { configure } from "@earendil-works/pi-durable";
 export { Type } from "@earendil-works/pi-ai";
 
 // Context：工具执行时由底层传入；业务层偶尔需要构造一个后台 context。
-export { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+export { awaitWithContext, BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 
 // 任务类型：业务层需要声明任务句柄的类型。
 export type { Task, TaskDefinition, TaskRuntime } from "@earendil-works/pi-durable";

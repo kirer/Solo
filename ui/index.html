@@ -3,9 +3,27 @@
 <head>
 	<meta charset="utf-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-	<meta name="theme-color" content="#08090c">
-	<meta name="color-scheme" content="dark">
-	<title>一人公司 · 指挥台</title>
+	<meta name="theme-color" content="#0b0c0e">
+	<meta name="color-scheme" content="dark light">
+	<title>一人公司</title>
+	<script>
+		(function () {
+			try {
+				var params = new URLSearchParams(location.search);
+				var stored = localStorage.getItem("ai-company.theme");
+				var mode = params.get("theme") || stored || "system";
+				if (mode !== "dark" && mode !== "light" && mode !== "system") mode = "system";
+				var resolved = mode === "system"
+					? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")
+					: mode;
+				var root = document.documentElement;
+				root.dataset.theme = mode;
+				root.dataset.resolved = resolved;
+				var meta = document.querySelector('meta[name="theme-color"]');
+				if (meta) meta.setAttribute("content", resolved === "light" ? "#f5f5f2" : "#0b0c0e");
+			} catch (error) {}
+		})();
+	</script>
 	<link rel="stylesheet" href="css/tokens.css">
 	<link rel="stylesheet" href="css/shell.css">
 	<link rel="stylesheet" href="css/graph.css">
@@ -24,83 +42,34 @@
 						<circle cx="15.9" cy="13.4" r="1.55" fill="currentColor"/>
 					</svg>
 				</span>
-				<span class="brand-name" id="company-name">一人公司</span>
-				<span class="brand-chip mono" id="company-model"></span>
 			</div>
 
-			<div class="topbar-stats">
-				<span class="conn" id="conn" data-state="on" title="实时连接状态">
-					<i></i><span class="conn-text">实时</span>
-				</span>
-				<span class="topstat">
-					<span class="topstat-k">全公司</span>
-					<b id="total-tokens">0</b>
-					<span class="topstat-u">tokens</span>
-				</span>
-				<span class="topstat topstat--ask" id="topstat-ask" data-zero="1">
-					<span class="topstat-k">待你拍板</span>
-					<b id="ask-count">0</b>
-				</span>
+			<span class="topbar-summary" id="stage-sub"></span>
+
+			<div class="topbar-actions">
+				<span class="topbar-conn" id="conn" data-state="on" hidden><i></i>重连中</span>
+				<button class="topbar-btn" type="button" id="chat-toggle" aria-label="对话面板" aria-pressed="true" title="对话面板（⌘J）">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M20 12.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-2.6-.4L4 21l1.4-4.1A7.3 7.3 0 0 1 4 12.5 7.6 7.6 0 0 1 12 5a7.6 7.6 0 0 1 8 7.5Z"/>
+					</svg>
+				</button>
+				<button class="topbar-btn" type="button" id="settings-toggle" aria-label="设置" aria-haspopup="dialog" aria-expanded="false" title="设置">
+					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<circle cx="12" cy="12" r="3"/>
+						<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>
+					</svg>
+				</button>
 			</div>
 		</header>
 
 		<div class="workspace">
-			<nav class="rail" aria-label="导航">
-				<div class="rail-main">
-					<button class="rail-btn is-active" type="button" data-rail="top" aria-label="组织架构" title="组织架构">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<rect x="9.5" y="3" width="5" height="4" rx="1"/>
-							<rect x="3" y="16.5" width="5" height="4" rx="1"/>
-							<rect x="16" y="16.5" width="5" height="4" rx="1"/>
-							<path d="M12 7v5M12 12H5.5v4.5M12 12h6.5v4.5"/>
-						</svg>
-						<span class="rail-label">组织</span>
-					</button>
-					<button class="rail-btn" type="button" data-rail="ask" aria-label="待你拍板" title="待你拍板">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<path d="M4 13.5V19a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-5.5"/>
-							<path d="M4 13.5 6.2 5.6A1 1 0 0 1 7.2 5h9.6a1 1 0 0 1 1 .6L20 13.5"/>
-							<path d="M4 13.5h4.5l1 2h5l1-2H20"/>
-						</svg>
-						<span class="rail-label">待办</span>
-						<span class="rail-badge" id="rail-ask" hidden>0</span>
-					</button>
-					<button class="rail-btn" type="button" data-rail="chat" aria-label="对话面板" title="对话面板（⌘J）">
-						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-							<path d="M20 12.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-2.6-.4L4 21l1.4-4.1A7.3 7.3 0 0 1 4 12.5 7.6 7.6 0 0 1 12 5a7.6 7.6 0 0 1 8 7.5Z"/>
-							<path d="M8.5 11.5h7M8.5 14.5h4.5"/>
-						</svg>
-						<span class="rail-label">对话</span>
-					</button>
-				</div>
-				<div class="rail-foot">
-					<span class="rail-live" id="rail-live" data-state="on" title="实时连接"></span>
-					<span class="rail-running mono" id="rail-running" data-busy="0" title="正在工作的人数">0</span>
-				</div>
-			</nav>
-
 			<main class="stage" id="stage">
 				<div class="stage-inner">
-					<header class="stage-head">
-						<div>
-							<h1 class="stage-title">组织架构</h1>
-							<p class="stage-sub" id="stage-sub"><span class="skeleton-text">正在连接…</span></p>
-						</div>
-						<div class="legend" id="legend" aria-label="状态图例"></div>
-					</header>
-
-					<div class="ask-area" id="ask-area"></div>
-
 					<section class="org" aria-label="组织架构">
 						<div class="graph" id="graph">
 							<div class="graph-loading"><i></i>正在连接公司…</div>
 						</div>
 					</section>
-
-					<footer class="stage-foot">
-						<span id="stage-foot-cost">全公司 0 tokens</span>
-						<span class="stage-foot-hint">点卡片对话 · 点项目翻面看团队</span>
-					</footer>
 				</div>
 			</main>
 
@@ -115,10 +84,11 @@
 								<b class="chat-title" id="chat-title">选择一位同事</b>
 								<span class="pill" id="chat-status" data-state="idle"><i></i><span id="chat-status-text">空闲</span></span>
 							</div>
-							<div class="chat-role" id="chat-role">组织图里点任意卡片，对话就在这里</div>
+							<div class="chat-role" id="chat-role">点组织图里的任意卡片</div>
 						</div>
 					</div>
 					<div class="chat-actions">
+						<span class="chat-token-count" id="chat-tokens" title="本会话 token"></span>
 						<button class="icon-btn" type="button" id="chat-fold" aria-label="展开或收起工作过程" title="展开 / 收起工作过程" hidden>
 							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 								<path d="m6 9 6 6 6-6"/>
@@ -137,6 +107,8 @@
 					</div>
 				</header>
 
+				<div class="chat-pending" id="ask-area"></div>
+
 				<div class="chat-body" id="chat-body" role="log" aria-live="polite" aria-label="对话内容" tabindex="0"></div>
 
 				<footer class="chat-foot">
@@ -149,14 +121,45 @@
 							</svg>
 						</button>
 					</form>
-					<div class="chat-hints">
-						<span><kbd>Enter</kbd> 发送</span>
-						<span><kbd>⇧</kbd><kbd>Enter</kbd> 换行</span>
-						<span class="chat-tokens mono" id="chat-tokens"></span>
-					</div>
 				</footer>
 			</aside>
 		</div>
+	</div>
+
+	<div class="settings" id="settings" role="dialog" aria-modal="false" aria-label="设置" hidden>
+		<header class="settings-head">
+			<b>设置</b>
+			<button class="icon-btn" type="button" id="settings-close" aria-label="关闭设置">
+				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<path d="M6 6l12 12M18 6 6 18"/>
+				</svg>
+			</button>
+		</header>
+
+		<section class="settings-sec">
+			<h3>外观</h3>
+			<div class="settings-theme" role="radiogroup" aria-label="外观">
+				<button type="button" role="radio" data-theme-option="dark" aria-checked="false">深色</button>
+				<button type="button" role="radio" data-theme-option="light" aria-checked="false">浅色</button>
+				<button type="button" role="radio" data-theme-option="system" aria-checked="false">跟随系统</button>
+			</div>
+		</section>
+
+		<section class="settings-sec">
+			<h3>模型</h3>
+			<p class="settings-row">
+				<span>默认模型</span>
+				<span class="mono settings-value" id="company-model">—</span>
+			</p>
+		</section>
+
+		<section class="settings-sec">
+			<h3>成本</h3>
+			<p class="settings-row">
+				<span>全公司</span>
+				<span class="settings-value" id="settings-cost">—</span>
+			</p>
+		</section>
 	</div>
 
 	<div class="scrim" id="scrim" hidden></div>

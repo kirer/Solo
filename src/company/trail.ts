@@ -108,6 +108,50 @@ export async function recordMessage(
 	}, context);
 }
 
+
+/**
+ * 实时沟通边：派活/转交正在发生时，先挂一条临时边，让界面能立刻画线。
+ *
+ * 历史边只在答完后由 recordMessage 落库，所以如果只读 TrailDoc，
+ * 「正在干活」的那段时间是没有任何连线的。这个注册表补上这一段。
+ * 进程内存在，不持久化；释放时删除；超过 TTL 自动清理（防调用方异常）。
+ */
+export type LiveTrailEdge = {
+	readonly from: string;
+	readonly to: string;
+	readonly fromConversation: number;
+	readonly toConversation: number;
+	readonly kind: TrailKind;
+	readonly project?: string;
+	readonly startedAt: number;
+};
+
+const LIVE_TTL_MS = 30 * 60_000;
+let liveSeq = 0;
+const liveEdges = new Map<string, LiveTrailEdge>();
+
+/** 挂一条实时边，返回释放函数（幂等）。 */
+export function beginLiveTrail(input: Omit<LiveTrailEdge, "startedAt">): () => void {
+	liveSeq += 1;
+	const edge: LiveTrailEdge = { ...input, startedAt: Date.now() };
+	const key = `${edge.kind}:${edge.fromConversation}:${edge.toConversation}:${liveSeq}`;
+	liveEdges.set(key, edge);
+	let released = false;
+	return () => {
+		if (released) return;
+		released = true;
+		liveEdges.delete(key);
+	};
+}
+
+/** 读当前仍有效的实时边。 */
+export function readLiveTrail(now = Date.now()): readonly LiveTrailEdge[] {
+	for (const [key, edge] of liveEdges) {
+		if (now - edge.startedAt > LIVE_TTL_MS) liveEdges.delete(key);
+	}
+	return [...liveEdges.values()].sort((a, b) => a.startedAt - b.startedAt);
+}
+
 /** 读公司时间线，按时间排序。 */
 export async function readTrail(
 	runtime: CompanyRuntime,

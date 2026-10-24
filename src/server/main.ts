@@ -8,7 +8,7 @@
  * 启动流程与终端版一致：打开 → 巡检 → 初始化 → 起服务。
  */
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	createRegistry,
@@ -46,13 +46,16 @@ function parseArgs(argv: readonly string[]): {
 			port = Number(next);
 			index += 1;
 		} else if (arg === "--db" && next !== undefined) {
-			db = next;
+			// 命令行给相对路径时立刻转绝对：会话的 cwd 会原样进执行环境，
+			// 相对路径会被再拼一次进程目录，导致目录不存在、所有命令失败。
+			db = resolve(next);
 			index += 1;
 		} else if (arg === "--company" && next !== undefined) {
 			company = next;
 			index += 1;
 		} else if (arg === "--workspace" && next !== undefined) {
-			workspace = next;
+			// 关键：workspaceRoot 从这里派生，必须是绝对路径（见上一条说明）。
+			workspace = resolve(next);
 			index += 1;
 		} else if (arg === "--no-open") {
 			open = false;

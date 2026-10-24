@@ -11,7 +11,7 @@ import { listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
-import { readTrail } from "../company/trail.ts";
+import { readLiveTrail, readTrail } from "../company/trail.ts";
 
 /** 节点状态。 */
 export type NodeStatus = "busy" | "waiting" | "idle";
@@ -82,6 +82,8 @@ export type OrgView = {
 	readonly roles: readonly ActorView[];
 	readonly projects: readonly ProjectView[];
 	readonly pending: readonly PendingView[];
+	/** CEO 自己队列里还没拍板的问题数（不占老板的注意力，仅供参考）。 */
+	readonly ceoQueue: number;
 	readonly costs: {
 		readonly totalTokens: number;
 		readonly totalCostUsd: number;
@@ -106,14 +108,27 @@ export async function buildOrgView(
 			.filter((task) => task.state.kind === "running" || task.state.kind === "ready")
 			.map((task) => Number(task.record.conversationId)),
 	);
-	const awaitingByConversation = new Map<number, number>();
+	// 两组计数语义不同，不能混用：
+	// - pendingByConversation：这个人身上挂着未答复的问题 → 状态「等待中」
+	// - awaitingYou：**只有老板才需要拍板的**（owner 级，且按新规则记在 CEO 名下）
+	//   其他角色的待办是等 CEO 拍板，不是等老板——顶个「待你 N」的徽章只会误导老板。
+	const pendingByConversation = new Map<number, number>();
+	const awaitingYouByConversation = new Map<number, number>();
 	for (const item of pending) {
-		awaitingByConversation.set(item.fromConversationId, (awaitingByConversation.get(item.fromConversationId) ?? 0) + 1);
+		pendingByConversation.set(
+			item.fromConversationId,
+			(pendingByConversation.get(item.fromConversationId) ?? 0) + 1,
+		);
+		if (item.level !== "owner") continue;
+		awaitingYouByConversation.set(
+			item.fromConversationId,
+			(awaitingYouByConversation.get(item.fromConversationId) ?? 0) + 1,
+		);
 	}
 
 	const statusOf = (conversationId: number): NodeStatus => {
 		if (busyIds.has(conversationId)) return "busy";
-		if ((awaitingByConversation.get(conversationId) ?? 0) > 0) return "waiting";
+		if ((pendingByConversation.get(conversationId) ?? 0) > 0) return "waiting";
 		return "idle";
 	};
 
@@ -134,7 +149,7 @@ export async function buildOrgView(
 			kind,
 			status: statusOf(conversationId),
 			tokens: await tokensOf(runtime, conversationId, context),
-			awaitingYou: awaitingByConversation.get(conversationId) ?? 0,
+			awaitingYou: awaitingYouByConversation.get(conversationId) ?? 0,
 			activity: await describeActivity(runtime, conversationId, context),
 		};
 		return archived ? { ...base, archived: true } : base;
@@ -185,14 +200,26 @@ export async function buildOrgView(
 	// 最近的沟通连线：界面据此在节点之间画流动的光线。
 	// 只取尾部一小段，避免界面拿到整个历史；具体时间窗由界面判断。
 	const trail = await readTrail(runtime, {}, context);
-	const links: LinkView[] = trail.slice(-200).map((edge) => ({
+	// 正在发生的派活/转交：TrailDoc 里要等答完才落历史边，这里补上实时边。
+	const liveLinks: LinkView[] = readLiveTrail().map((edge) => ({
 		from: edge.fromConversation,
 		to: edge.toConversation,
 		kind: edge.kind,
-		at: edge.at,
+		at: edge.startedAt,
 		label: `${edge.from} → ${edge.to}`,
 		...(edge.project === undefined ? {} : { project: edge.project }),
 	}));
+	const links: LinkView[] = [
+		...liveLinks,
+		...trail.slice(-200).map((edge) => ({
+			from: edge.fromConversation,
+			to: edge.toConversation,
+			kind: edge.kind,
+			at: edge.at,
+			label: `${edge.from} → ${edge.to}`,
+			...(edge.project === undefined ? {} : { project: edge.project }),
+		})),
+	];
 
 	return {
 		company: {
@@ -202,6 +229,7 @@ export async function buildOrgView(
 		ceo,
 		roles,
 		projects,
+		ceoQueue: pending.filter((item) => item.level === "ceo").length,
 		pending: pending.map((item) => ({
 			key: item.key,
 			question: item.question,

@@ -1,1 +1,978 @@
-/* 组织图（占位，由 graph-dev 替换）。 */
+/* ============================================================================
+   组织图 · 精密工作台
+   CEO → 高管层 → 项目组。结构靠留白与 1px 实线分层，颜色只用来标状态。
+   只有两处动效：在跑卡片边框上的一段低速流光、连线方向上的一段移动短划。
+   ========================================================================== */
+
+/* ── 容器与连线层 ──────────────────────────────────────────────────────── */
+.graph {
+	position: relative;
+}
+
+.links {
+	position: absolute;
+	inset: 0;
+	z-index: 0;
+	width: 100%;
+	height: 100%;
+	overflow: visible;
+	pointer-events: none;
+}
+
+.org-graph {
+	position: relative;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+}
+
+/* ── 脊柱：1px 实线，无端头装饰 ────────────────────────────────────────── */
+.org-ceo {
+	display: flex;
+	justify-content: center;
+}
+
+/* 层级之间只留呼吸空间，不画连接线 */
+.org-spine {
+	width: 1px;
+	height: 24px;
+	margin: 0 auto;
+	background: transparent;
+}
+
+.org-spine--mid {
+	height: 34px;
+	margin-top: var(--sp-4);
+}
+
+/* ── 层标题：一句话，不画通栏分割线 ────────────────────────────────────── */
+.tier-head {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	margin: 0 0 12px;
+	font-size: var(--fs-xs);
+	font-weight: 400;
+	color: var(--muted);
+}
+
+.tier-name {
+	flex: none;
+	color: var(--ink-2);
+}
+
+.tier-meta {
+	flex: none;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.tier-grid {
+	display: grid;
+	gap: var(--sp-3);
+}
+
+.tier-grid--roles {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tier-grid--projects {
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	align-items: start;
+}
+
+.tier-empty {
+	margin: 0;
+	padding: 8px 0 var(--sp-2);
+	font-size: var(--fs-sm);
+	color: var(--faint);
+}
+
+/* ── 卡片基座：1px 边框由底色透出，内部一层实心面板 ────────────────────── */
+.card {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+	padding: 0;
+	border: 0;
+	border-radius: var(--radius);
+	background: var(--line-strong);
+	color: var(--ink);
+	font: inherit;
+	text-align: left;
+	overflow: hidden;
+	isolation: isolate;
+	appearance: none;
+	-webkit-appearance: none;
+	transition: background-color var(--dur) var(--ease-out);
+}
+
+.card-face {
+	position: relative;
+	z-index: 1;
+	display: block;
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 1px;
+	padding: 13px 14px;
+	border-radius: var(--radius);
+	background: var(--surface);
+}
+
+/* hover 只做极轻的底色变化，不位移、不抬升 */
+.card:hover .card-face {
+	background: color-mix(in oklab, var(--ink) 3%, var(--surface));
+}
+
+.card:focus-visible {
+	outline: 1px solid var(--ink);
+	outline-offset: 2px;
+}
+
+/* 状态：只改边框颜色 */
+.card[data-status="busy"] {
+	background: color-mix(in oklab, var(--accent) 55%, var(--line-strong));
+}
+
+.card[data-status="waiting"] {
+	background: color-mix(in oklab, var(--warn) 55%, var(--line-strong));
+}
+
+.card[data-status="error"] {
+	background: color-mix(in oklab, var(--danger) 55%, var(--line-strong));
+}
+
+/* 选中：只把面板提亮一档，不额外加边框——边框继续只表示状态 */
+.card.is-selected .card-face {
+	background: color-mix(in oklab, var(--ink) 6%, var(--surface));
+}
+
+.card.is-selected:hover .card-face {
+	background: color-mix(in oklab, var(--ink) 8%, var(--surface));
+}
+
+/* ── 在跑：一段低亮度光沿 1px 边框低速走一圈（无模糊、无外发光）────────── */
+.card-beam {
+	position: absolute;
+	left: 50%;
+	top: 50%;
+	z-index: 0;
+	width: 260%;
+	aspect-ratio: 1 / 1;
+	opacity: 0;
+	pointer-events: none;
+	transform: translate(-50%, -50%) rotate(0deg);
+	background: conic-gradient(
+		from 0deg,
+		transparent 0turn 0.54turn,
+		color-mix(in oklab, var(--accent) 48%, transparent) 0.70turn,
+		var(--accent) 0.82turn,
+		var(--ink) 0.865turn,
+		var(--accent) 0.91turn,
+		color-mix(in oklab, var(--accent) 38%, transparent) 0.98turn,
+		transparent 1turn
+	);
+}
+
+.card[data-status="busy"].is-live .card-beam {
+	opacity: 1;
+	animation: beam-travel 2.8s linear infinite;
+}
+
+/* 状态光边：在卡片外圈补一层很薄的同色光，让「在跑 / 待你」一眼能看出来 */
+.card[data-status="busy"].is-live {
+	box-shadow:
+		0 0 0 1px color-mix(in oklab, var(--accent) 58%, transparent),
+		0 0 20px -7px color-mix(in oklab, var(--accent) 65%, transparent);
+}
+
+.card[data-status="waiting"].is-live {
+	box-shadow:
+		0 0 0 1px color-mix(in oklab, var(--warn) 50%, transparent),
+		0 0 18px -8px color-mix(in oklab, var(--warn) 55%, transparent);
+}
+
+/* 待你拍板也走一段更慢的琥珀光，让「有状态」不只靠一个小方点 */
+.card[data-status="waiting"] .card-beam {
+	background: conic-gradient(
+		from 0deg,
+		transparent 0turn 0.60turn,
+		color-mix(in oklab, var(--warn) 42%, transparent) 0.74turn,
+		var(--warn) 0.84turn,
+		color-mix(in oklab, var(--warn) 92%, white) 0.88turn,
+		var(--warn) 0.92turn,
+		color-mix(in oklab, var(--warn) 35%, transparent) 0.98turn,
+		transparent 1turn
+	);
+}
+
+.card[data-status="waiting"].is-live .card-beam {
+	opacity: 0.85;
+	animation: beam-travel 6s linear infinite;
+}
+
+@keyframes beam-travel {
+	from {
+		transform: translate(-50%, -50%) rotate(0deg);
+	}
+	to {
+		transform: translate(-50%, -50%) rotate(360deg);
+	}
+}
+
+/* ── 状态标记：5px 静态圆点 / 4px 静态方块，都不发光 ───────────────────── */
+.dot {
+	flex: none;
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--idle);
+}
+
+.dot[data-status="busy"] {
+	background: var(--accent);
+}
+
+.dot[data-status="waiting"] {
+	background: var(--warn);
+}
+
+.dot[data-status="error"] {
+	background: var(--danger);
+}
+
+.sq {
+	flex: none;
+	width: 4px;
+	height: 4px;
+	border-radius: 1px;
+	background: var(--idle);
+}
+
+.sq[data-status="busy"] {
+	background: var(--accent);
+}
+
+.sq[data-status="waiting"] {
+	background: var(--warn);
+}
+
+.sq[data-status="error"] {
+	background: var(--danger);
+}
+
+/* ── 人物节点 ──────────────────────────────────────────────────────────── */
+.num {
+	font-variant-numeric: tabular-nums;
+}
+
+.node {
+	min-height: 104px;
+	cursor: pointer;
+}
+
+.node-face {
+	display: flex;
+	flex-direction: column;
+}
+
+.node-top {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+}
+
+.node-name {
+	font-size: var(--fs-base);
+	font-weight: 550;
+	letter-spacing: -0.006em;
+	white-space: nowrap;
+}
+
+.node-ask {
+	flex: none;
+	padding: 0 5px;
+	border: 1px solid color-mix(in oklab, var(--warn) 40%, transparent);
+	border-radius: var(--radius);
+	color: var(--warn);
+	font-size: var(--fs-2xs);
+	line-height: 1.6;
+}
+
+.node-tok {
+	margin-left: auto;
+	flex: none;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+.node-sub {
+	flex: none;
+	margin-top: 4px;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+}
+
+.node-act {
+	flex: none;
+	margin-top: auto;
+	padding-top: 12px;
+	font-size: var(--fs-sm);
+	color: var(--ink-2);
+}
+
+/* 活动为空时不留空行（右侧已经有「待你 N」徽标） */
+.node-act:empty,
+.prj-row-act:empty {
+	display: none;
+}
+
+.node[data-status="idle"] .node-act {
+	color: var(--faint);
+}
+
+/* ── CEO：与其它人卡同构，只多一行待办提示 ─────────────────────────────── */
+.node--ceo {
+	max-width: 560px;
+	min-height: 0;
+}
+
+.ceo-main {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--sp-4);
+}
+
+.ceo-ident {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	flex: 1 1 auto;
+}
+
+.ceo-ident .node-act {
+	padding-top: 10px;
+}
+
+.ceo-pending {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 3px;
+	color: var(--warn);
+	font-size: var(--fs-xs);
+	white-space: nowrap;
+}
+
+.ceo-pending[data-empty="1"] {
+	display: none;
+}
+
+.ceo-pending .sq {
+	background: var(--warn);
+}
+
+/* ── 项目卡：3D 翻面 ───────────────────────────────────────────────────── */
+.project {
+	position: relative;
+	perspective: 1400px;
+	transition: height var(--dur-flip) var(--ease-out);
+}
+
+.project__inner {
+	position: absolute;
+	inset: 0;
+	transform-style: preserve-3d;
+	transition: transform var(--dur-flip) var(--ease-out);
+}
+
+.project.is-flipped .project__inner {
+	transform: rotateX(180deg);
+}
+
+.project.is-flipping {
+	z-index: 2;
+}
+
+.project-face {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: 100%;
+	backface-visibility: hidden;
+	-webkit-backface-visibility: hidden;
+}
+
+.project-face--back {
+	transform: rotateX(180deg);
+}
+
+.project--terminated {
+	perspective: none;
+	height: auto;
+}
+
+.project-front {
+	min-height: 128px;
+	cursor: pointer;
+}
+
+.project-front--static {
+	cursor: default;
+}
+
+/* 正面：标题行 */
+.prj-head {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+}
+
+.prj-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	font-size: var(--fs-base);
+	font-weight: 550;
+	letter-spacing: -0.006em;
+}
+
+.prj-slug {
+	flex: none;
+	font-family: var(--mono);
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+.prj-tok {
+	margin-left: auto;
+	flex: none;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+/* 负责人：一行纯文字 */
+.prj-lead {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	margin-top: 11px;
+	min-width: 0;
+	font-size: var(--fs-xs);
+}
+
+.prj-lead-k {
+	flex: none;
+	color: var(--faint);
+}
+
+.prj-lead-name {
+	flex: 0 1 auto;
+	min-width: 0;
+	color: var(--ink-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 成员：一行名字 + 4px 状态方块 */
+.prj-members {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 12px;
+	margin-top: 10px;
+	min-height: 17px;
+}
+
+.member {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	white-space: nowrap;
+}
+
+.member[data-status="busy"],
+.member[data-status="waiting"] {
+	color: var(--ink-2);
+}
+
+.member--more {
+	color: var(--faint);
+}
+
+.members-empty {
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+/* 底栏：左侧统计，右下角一行朴素文字 */
+.prj-foot {
+	display: flex;
+	align-items: center;
+	gap: var(--sp-2);
+	margin-top: var(--sp-3);
+	padding-top: 10px;
+	border-top: 1px solid var(--line-soft);
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+.prj-meta {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	min-width: 0;
+	font-variant-numeric: tabular-nums;
+}
+
+.prj-counts {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.prj-counts:not(:empty)::before {
+	content: "·";
+	color: var(--ghost);
+}
+
+.prj-count {
+	color: var(--muted);
+}
+
+.prj-count .num {
+	font-weight: 500;
+}
+
+.prj-count--ask {
+	color: var(--warn);
+}
+
+.prj-sep {
+	color: var(--ghost);
+}
+
+.prj-hint {
+	margin-left: auto;
+	flex: none;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	white-space: nowrap;
+	transition: color var(--dur) var(--ease-out);
+}
+
+.project-front:hover .prj-hint,
+.project-front:focus-visible .prj-hint {
+	color: var(--ink);
+}
+
+/* ── 项目卡背面：负责人 + 员工 ─────────────────────────────────────────── */
+.project-back {
+	background: var(--line-strong);
+}
+
+.project-back-face {
+	display: flex;
+	flex-direction: column;
+}
+
+.prj-back-head {
+	display: flex;
+	align-items: baseline;
+	gap: var(--sp-2);
+	margin-bottom: 8px;
+	min-width: 0;
+}
+
+.prj-back-title {
+	font-size: var(--fs-sm);
+	font-weight: 550;
+	color: var(--ink-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.prj-back-count {
+	flex: none;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.prj-return {
+	margin-left: auto;
+	flex: none;
+	height: 22px;
+	padding: 0 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--muted);
+	font-size: var(--fs-2xs);
+	transition:
+		border-color var(--dur) var(--ease-out),
+		color var(--dur) var(--ease-out);
+}
+
+.prj-return:hover {
+	border-color: var(--line-strong);
+	color: var(--ink);
+}
+
+.prj-return:focus-visible {
+	outline: 1px solid var(--ink);
+	outline-offset: 1px;
+}
+
+.prj-rows {
+	display: flex;
+	flex-direction: column;
+}
+
+.prj-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	width: 100%;
+	min-height: 42px;
+	padding: 8px;
+	border-radius: var(--radius);
+	text-align: left;
+	transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.prj-row > .sq {
+	margin-top: 7px;
+}
+
+.prj-row:hover {
+	background: color-mix(in oklab, var(--ink) 4%, transparent);
+}
+
+.prj-row:focus-visible {
+	outline: 1px solid var(--ink);
+	outline-offset: -1px;
+}
+
+.prj-row--lead {
+	background: color-mix(in oklab, var(--ink) 3%, transparent);
+}
+
+.prj-rows .prj-row + .prj-row {
+	border-top: 1px solid var(--line-soft);
+}
+
+.prj-row.is-selected {
+	background: color-mix(in oklab, var(--ink) 6%, transparent);
+	outline: 1px solid color-mix(in oklab, var(--ink) 26%, transparent);
+	outline-offset: -1px;
+}
+
+.prj-row.is-archived {
+	opacity: 0.5;
+}
+
+.prj-row-main {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+}
+
+.prj-row-top {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+}
+
+.prj-row-name {
+	font-size: var(--fs-sm);
+	font-weight: 500;
+	color: var(--ink);
+	white-space: nowrap;
+}
+
+.prj-row-role {
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+.prj-row-ask {
+	flex: none;
+	font-size: var(--fs-2xs);
+	color: var(--warn);
+}
+
+.prj-row-tok {
+	margin-left: auto;
+	flex: none;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+.prj-row-act {
+	font-size: var(--fs-xs);
+	color: var(--muted);
+}
+
+.prj-empty {
+	margin: 0;
+	padding: 10px 8px;
+	font-size: var(--fs-xs);
+	line-height: 1.7;
+	color: var(--faint);
+}
+
+/* ── 已终止项目 ────────────────────────────────────────────────────────── */
+.prj-term-reason {
+	display: block;
+	margin-top: 11px;
+	font-size: var(--fs-sm);
+	line-height: 1.65;
+	color: var(--ink-2);
+}
+
+.prj-term-meta {
+	display: block;
+	margin-top: 6px;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.prj-term-hint {
+	display: block;
+	margin-top: 10px;
+	padding-top: 9px;
+	border-top: 1px solid var(--line-soft);
+	font-size: var(--fs-2xs);
+	line-height: 1.6;
+	color: var(--faint);
+}
+
+/* ── 空状态：朴素引导 ──────────────────────────────────────────────────── */
+.org-empty {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	max-width: 520px;
+	padding: 2px 0 var(--sp-2);
+}
+
+.org-empty-lead {
+	font-size: var(--fs-md);
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.org-empty-example {
+	font-size: var(--fs-sm);
+	line-height: 1.8;
+	color: var(--muted);
+}
+
+.org-empty-eg {
+	color: var(--ink-2);
+}
+
+.org-empty-cta {
+	display: inline-flex;
+	align-items: center;
+	min-height: 38px;
+	margin-top: var(--sp-2);
+	padding: 0 var(--sp-3);
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--ink);
+	font-size: var(--fs-sm);
+	transition:
+		border-color var(--dur) var(--ease-out),
+		background-color var(--dur) var(--ease-out);
+}
+
+.org-empty-cta:hover {
+	border-color: var(--ink-2);
+	background: color-mix(in oklab, var(--ink) 4%, transparent);
+}
+
+.org-empty-cta:active {
+	translate: 0 1px;
+}
+
+.org-empty-cta:focus-visible {
+	outline: 1px solid var(--ink);
+	outline-offset: 2px;
+}
+
+/* ── 连线：实线底 + 一段沿路径移动的短划表示方向 ────────────────────────── */
+.edge-line {
+	fill: none;
+	stroke: var(--accent);
+	stroke-width: 1.8;
+	stroke-linecap: round;
+}
+
+.edge.is-recent .edge-line {
+	stroke-width: 2.2;
+}
+
+.edge[data-kind="report"] .edge-line {
+	stroke: var(--info);
+}
+
+.edge[data-kind="escalate"] .edge-line {
+	stroke: var(--warn);
+}
+
+.edge[data-kind="archive"] .edge-line,
+.edge[data-kind="archieve"] .edge-line {
+	stroke: var(--line-strong);
+}
+
+.edge-spark {
+	fill: none;
+	stroke: var(--accent-strong);
+	stroke-width: 4.2;
+	stroke-linecap: round;
+	stroke-dasharray: 6 94;
+	opacity: 0.95;
+	filter: drop-shadow(0 0 4px color-mix(in oklab, var(--accent) 70%, transparent));
+	animation: edge-travel 3.2s linear infinite;
+}
+
+.edge[data-kind="report"] .edge-spark {
+	stroke: var(--info);
+	filter: drop-shadow(0 0 4px color-mix(in oklab, var(--info) 70%, transparent));
+}
+
+.edge[data-kind="escalate"] .edge-spark {
+	stroke: var(--warn);
+	filter: drop-shadow(0 0 4px color-mix(in oklab, var(--warn) 70%, transparent));
+}
+
+.edge[data-kind="archive"] .edge-spark,
+.edge[data-kind="archieve"] .edge-spark {
+	stroke: var(--muted);
+}
+
+/* 最近 60 秒的沟通：短划更实一点 */
+.edge.is-recent .edge-spark {
+	opacity: 1;
+	stroke-width: 5;
+}
+
+/* 错开相位，几条线不会同时走到同一个位置 */
+.edge:nth-child(2n) .edge-spark {
+	animation-delay: -2.8s;
+}
+
+.edge:nth-child(3n) .edge-spark {
+	animation-delay: -4.4s;
+}
+
+@keyframes edge-travel {
+	from {
+		stroke-dashoffset: 6;
+	}
+	to {
+		stroke-dashoffset: -94;
+	}
+}
+
+/* 有焦点时：相关边实一点，非相关边退到 0.18（不消失） */
+.links.has-focus .edge {
+	opacity: 0.18;
+}
+
+.links.has-focus .edge.is-related {
+	opacity: 1;
+}
+
+.links.has-focus .edge.is-related .edge-line {
+	stroke-width: 2.6;
+}
+
+.links.has-focus .edge.is-related .edge-line {
+	stroke-width: 1.75;
+}
+
+/* ── 图内响应式（.stage 是 inline-size 容器）───────────────────────────── */
+@container (max-width: 719px) {
+	.tier-grid--roles {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.tier-grid--projects {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.node--ceo {
+		max-width: none;
+	}
+
+	.prj-row {
+		min-height: 46px;
+	}
+
+	.links {
+		opacity: 0.72;
+	}
+}
+
+@container (max-width: 479px) {
+	.tier-grid--roles,
+	.tier-grid--projects {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.card-face {
+		padding: 12px 13px;
+	}
+
+	.node {
+		min-height: 96px;
+	}
+
+	.ceo-main {
+		gap: var(--sp-3);
+	}
+
+	.prj-row {
+		min-height: 48px;
+	}
+
+	.prj-hint {
+		font-size: var(--fs-2xs);
+	}
+}
+
+/* ── 动效降级：静止，但信息完整 ────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+	.card[data-status="busy"].is-live .card-beam {
+		animation: none;
+		opacity: 0.45;
+	}
+
+	.edge-spark {
+		animation: none;
+		opacity: 0.5;
+	}
+
+	.project,
+	.project__inner {
+		transition: none;
+	}
+}

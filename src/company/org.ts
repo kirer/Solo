@@ -8,6 +8,7 @@
  * （会死锁，而且是间歇性的）。
  */
 import {
+	awaitWithContext,
 	BACKGROUND_CONTEXT,
 	type Context,
 	configure,
@@ -33,8 +34,16 @@ import {
 	type StaffEntry,
 } from "./docs.ts";
 import { createRoleExtension, ROLE_DEFINITIONS } from "./roles.ts";
-import { createRoleExtensionWithTools } from "./tools.ts";
+import { PendingDoc, listPending, answerPendingAsCeo } from "./escalation.ts";
+import {
+	PROJECT_LEADER_CHARTER,
+	createProjectLeaderExtension,
+	createRoleExtensionWithTools,
+	type ManagementToolset,
+} from "./tools.ts";
 import { delegate } from "./delegation.ts";
+import { beginLiveTrail, recordMessage } from "./trail.ts";
+import { DelegationCycleError, enterDelegation } from "./delegation-guard.ts";
 import {
 	type EscalationInput,
 	type EscalationResult,
@@ -45,6 +54,15 @@ import { escalationId, messageRequestId } from "../runtime/ids.ts";
 import { toolsForRole } from "./staff-tools.ts";
 import { createManagementTools } from "./management-tools.ts";
 import { createAllRoleExtensionsWithTools, createEmployeeExtension } from "./tools.ts";
+import { isAbsolute, resolve as resolvePath } from "node:path";
+
+/**
+ * 每个运行时对应的管理层工具集。
+ *
+ * `bootstrapCompany` 在装配时登记，`createProject` 立项时取用——这样
+ * 「谁都能建项目，但负责人一定有工具」不依赖调用方是否记得传参数。
+ */
+const LEADER_TOOLSETS = new WeakMap<CompanyRuntime, ManagementToolset>();
 
 /** 默认模型清单（价格单位为美元 / 百万 token）。 */
 /**
@@ -105,20 +123,27 @@ export async function bootstrapCompany(
 ): Promise<BootstrapResult> {
 	// 管理层工具集合：由公司运行时闭包而成。
 	// 派活与转交给需要先有会话标识，所以用惰性引用（阶段二再解析）。
-	const managementTools = createManagementTools({
+		const managementTools = createManagementTools({
 		runtime,
 		workspaceRoot: options.workspaceRoot ?? process.cwd(),
 		...(options.registry === undefined ? {} : { registry: options.registry }),
 		...(options.costReport === undefined ? {} : { costReport: options.costReport }),
 		...(options.employeeTools === undefined ? {} : { employeeTools: options.employeeTools }),
 		delegate: async (input) => {
-			const result = await delegate(runtime, {
-				project: input.project,
-				employee: input.employee,
-				task: input.task,
-				fromConversationId: input.fromConversationId,
-				from: input.from,
-			});
+			const toolContext = input.context ?? BACKGROUND_CONTEXT;
+			const state = await runtime.harness.snapshot(CompanyDoc, toolContext);
+			const result = await delegate(
+				runtime,
+				{
+					project: input.project,
+					employee: input.employee,
+					task: input.task,
+					fromConversationId: input.fromConversationId,
+					// 显示名从会话反查，避免所有派活都记成「管理层」
+					from: labelOfConversation(state, input.fromConversationId) ?? input.from,
+				},
+				toolContext,
+			);
 			return result.ok ? `员工回复：${result.text}` : `派活失败：${result.text}`;
 		},
 		escalate: async (input) => {
@@ -129,20 +154,63 @@ export async function bootstrapCompany(
 				await recordPendingDirectly(runtime, input, context);
 				return "已记录上报，等待上层答复。";
 			}
+			// 只有 CEO 的问题会落在老板桌上。CEO 发起时直接进入「问老板」，
+			// 不再绕一圈问自己；其他人发起的，最高只到 CEO。
+			const company = await runtime.harness.snapshot(CompanyDoc, context);
+			const isCeo = company?.roles.ceo === input.conversationId;
 			const key = escalationId(input.conversationId, nextEscalationSeq());
 			const taskId = await startEscalation(
 				runtime,
 				task,
 				{
 					question: input.question,
-					from: input.from,
+					// CEO 直接问老板时，发起人就是 CEO 本人；
+					// 其他人用真实岗位/姓名，而不是写死的「manager」
+					from: isCeo ? "CEO" : (labelOfConversation(company, input.conversationId) ?? input.from),
 					fromConversationId: input.conversationId,
 					...(input.project === undefined ? {} : { project: input.project }),
 					escalationKey: key,
+					...(isCeo ? { startAtOwner: true } : {}),
 				},
 				context,
 			);
-			return `已上报（升级编号 ${key}，任务 ${taskId}），等待上层答复。`;
+			return isCeo
+				? `已上报老板（编号 ${key}，任务 ${taskId}），等待老板拍板。`
+				: `已上报 CEO（编号 ${key}，任务 ${taskId}），等 CEO 答复；老板只会收到 CEO 确认过的问题。`;
+		},
+		pendingList: async (input) => {
+			const pending = await listPending(runtime, BACKGROUND_CONTEXT);
+			const mine = pending.filter((item) => item.level === "ceo");
+			if (mine.length === 0) return "没有等你拍板的问题。";
+			return [
+				"等着你拍板的问题（用 answer_pending 回答，key 原样填）：",
+				...mine.map(
+					(item, index) =>
+						`${index + 1}. [${item.key}] 来自 ${item.from}：${item.question.replace(/\s+/g, " ").slice(0, 300)}`,
+				),
+			].join("\n");
+		},
+		answerPending: async (input) => {
+			const state = await runtime.harness.snapshot(PendingDoc, BACKGROUND_CONTEXT);
+			const item = state?.items.find((entry) => entry.key === input.key);
+			if (item === undefined) return `没有编号为 ${input.key} 的待决问题。先用 pending_list 看队列。`;
+			if (item.answer !== undefined) return `这条已经答复过了（${item.answeredBy ?? "?"}）。`;
+			if (item.level !== "ceo") {
+				return `编号 ${input.key} 不是到你这一级的（level=${item.level}），你不能替它拍板。`;
+			}
+			const ok = await answerPendingAsCeo(
+				runtime,
+				{
+					key: input.key,
+					answer: input.answer,
+					...(input.escalate === true ? { escalate: true } : {}),
+				},
+				BACKGROUND_CONTEXT,
+			);
+			if (!ok) return `答复失败：编号 ${input.key} 可能已被处理。`;
+			return input.escalate === true
+				? "已转为老板待办，等老板拍板。"
+				: "已拍板并记录在案。";
 		},
 		decide: async (input) => {
 			// 记录决定到审计，使「谁在什么时候定了什么」可追溯
@@ -157,24 +225,200 @@ export async function bootstrapCompany(
 			}, context);
 		},
 		delegateToRole: async (input) => {
-			const state = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+			const toolContext = input.context ?? BACKGROUND_CONTEXT;
+			const state = await runtime.harness.snapshot(CompanyDoc, toolContext);
 			const targetId = state?.roles[input.role];
 			if (targetId === undefined) return `没有岗位 ${input.role}。`;
-			const target = await runtime.harness.conversation(targetId as never, BACKGROUND_CONTEXT);
+			const target = await runtime.harness.conversation(targetId as never, toolContext);
 			if (target === undefined) return `岗位 ${input.role} 的会话不存在。`;
 
-			// 用请求标识去重：同一条转交重复调用不会让岗位重复干活
-			const requestId = messageRequestId(`role-${input.role}`, input.fromConversationId, hashToInt(input.task));
-			const submission = await target.submit(
-				{ type: "input", content: input.task, requestId },
-				BACKGROUND_CONTEXT,
-			);
-			const settled = await submission.wait(BACKGROUND_CONTEXT);
-			if (settled.status !== "done") return `岗位 ${input.role} 未能处理（${settled.status}）。`;
+			const caller = input.fromConversationId;
+			const guard = tryEnterDelegation(caller, targetId, `岗位 ${input.role}`);
+			if (typeof guard === "string") return guard;
+			const release = guard;
 
-			// 把岗位的答复摘要带回去：调用方据此判断要不要接着安排下一步
-			const summary = await readAssistantText(runtime, targetId, BACKGROUND_CONTEXT);
-			return `岗位 ${input.role} 已处理。它的回复摘要：\n${summary}`;
+			try {
+				// 目标正忙时直接失败，而不是排队等它——排队会让调用方无限期挂住，
+				// 一旦两边互相转交就是死锁（真实事故：CEO/CTO/负责人三方互等）。
+				const busy = await busyReason(runtime, targetId, toolContext);
+				if (busy !== undefined) return `岗位 ${input.role} ${busy}，本次转交未执行。请稍后再转，或改用上报（escalate）。`;
+
+				// 用请求标识去重：同一条转交重复调用不会让岗位重复干活
+				const requestId = messageRequestId(`role-${input.role}`, caller, hashToInt(input.task));
+				const submission = await target.submit(
+					{
+						type: "input",
+						content: input.task,
+						requestId,
+						entry: {
+							kind: "app.delegate",
+							data: {
+								from: labelOfConversation(state, caller) ?? "管理层",
+								to: ROLE_LABELS[input.role as ManagementRole] ?? input.role,
+								text: input.task.slice(0, 280),
+							},
+						},
+						whenBusy: "reject",
+					},
+					toolContext,
+				);
+				const releaseLive = beginLiveTrail({
+					kind: "delegate",
+					from: labelOfConversation(state, caller) ?? "管理层",
+					to: ROLE_LABELS[input.role as ManagementRole] ?? input.role,
+					fromConversation: caller,
+					toConversation: targetId,
+				});
+				let settled: Awaited<ReturnType<typeof submission.wait>>;
+				try {
+					settled = await awaitWithContext(submission.wait(toolContext), toolContext);
+				} finally {
+					releaseLive();
+				}
+				if (settled.status !== "done") return `岗位 ${input.role} 未能处理（${settled.status}）。`;
+
+				// 把岗位的答复摘要带回去：调用方据此判断要不要接着安排下一步
+				const summary = await readAssistantText(runtime, targetId, toolContext);
+				const fromLabel = labelOfConversation(state, caller) ?? "管理层";
+				const toLabel = ROLE_LABELS[input.role as ManagementRole] ?? input.role;
+				await recordMessage(
+					runtime,
+					{
+						kind: "delegate",
+						from: fromLabel,
+						to: toLabel,
+						fromConversationId: caller,
+						toConversationId: targetId,
+						ref: requestId,
+						text: input.task.slice(0, 280),
+					},
+					toolContext,
+				);
+				await recordMessage(
+					runtime,
+					{
+						kind: "report",
+						from: toLabel,
+						to: fromLabel,
+						fromConversationId: targetId,
+						toConversationId: caller,
+						ref: `${requestId}:report`,
+						text: summary.slice(0, 280),
+					},
+					toolContext,
+				);
+				return `岗位 ${input.role} 已处理。它的回复摘要：\n${summary}`;
+			} catch (error) {
+				// 老板点「立即处理」时工具上下文会被 abort；这个错误必须继续往上抛，
+				// 否则 abort 永远等不到任务结束。
+				if (toolContext.abortSignal?.aborted === true) throw error;
+				return `转交给岗位 ${input.role} 失败：${error instanceof Error ? error.message : String(error)}`;
+			} finally {
+				release();
+			}
+		},
+		delegateToLeader: async (input) => {
+			const toolContext = input.context ?? BACKGROUND_CONTEXT;
+			const state = await runtime.harness.snapshot(CompanyDoc, toolContext);
+			const project = state?.projects[input.project];
+			if (project === undefined) {
+				const slugs = Object.keys(state?.projects ?? {});
+				return `没有项目 ${input.project}。现有项目：${slugs.length === 0 ? "（无）" : slugs.join("、")}`;
+			}
+
+			const leader = await runtime.harness.conversation(project.leader as never, toolContext);
+			if (leader === undefined) return `项目 ${input.project} 的负责人会话不存在（${project.leader}）。`;
+
+			const caller = input.fromConversationId;
+			const guard = tryEnterDelegation(caller, project.leader, `项目负责人 ${project.leaderName}`);
+			if (typeof guard === "string") return guard;
+			const release = guard;
+
+			try {
+				const busy = await busyReason(runtime, project.leader, toolContext);
+				if (busy !== undefined) {
+					return `项目负责人 ${project.leaderName} ${busy}，本次下达未执行。请稍后再下达，或先看它卡在哪。`;
+				}
+
+				// 请求标识按「发起方 + 任务内容」去重：重复下达同一件事不会让负责人重复干活
+				const requestId = messageRequestId(
+					`leader-${input.project}`,
+					caller,
+					hashToInt(input.task),
+				);
+				const submission = await leader.submit(
+					{
+						type: "input",
+						content: input.task,
+						requestId,
+						entry: {
+							kind: "app.delegate",
+							data: {
+								from: labelOfConversation(state, caller) ?? "管理层",
+								to: project.leaderName ?? "项目负责人",
+								project: project.slug,
+								text: input.task.slice(0, 280),
+							},
+						},
+						whenBusy: "reject",
+					},
+					toolContext,
+				);
+				const releaseLive = beginLiveTrail({
+					kind: "delegate",
+					from: labelOfConversation(state, caller) ?? "管理层",
+					to: project.leaderName,
+					fromConversation: caller,
+					toConversation: project.leader,
+					project: project.slug,
+				});
+				let settled: Awaited<ReturnType<typeof submission.wait>>;
+				try {
+					settled = await awaitWithContext(submission.wait(toolContext), toolContext);
+				} finally {
+					releaseLive();
+				}
+				if (settled.status !== "done") {
+					return `项目负责人 ${project.leaderName} 未能处理（${settled.status}）。`;
+				}
+
+				const summary = await readAssistantText(runtime, project.leader, toolContext);
+				const fromLabel = labelOfConversation(state, caller) ?? "管理层";
+				await recordMessage(
+					runtime,
+					{
+						kind: "delegate",
+						from: fromLabel,
+						to: project.leaderName,
+						fromConversationId: caller,
+						toConversationId: project.leader,
+						ref: requestId,
+						project: project.slug,
+						text: input.task.slice(0, 280),
+					},
+					toolContext,
+				);
+				await recordMessage(
+					runtime,
+					{
+						kind: "report",
+						from: project.leaderName,
+						to: fromLabel,
+						fromConversationId: project.leader,
+						toConversationId: caller,
+						ref: `${requestId}:report`,
+						project: project.slug,
+						text: summary.slice(0, 280),
+					},
+					toolContext,
+				);
+				return `项目「${project.name}」负责人 ${project.leaderName} 已处理。它的回复摘要：\n${summary}`;
+			} catch (error) {
+				if (toolContext.abortSignal?.aborted === true) throw error;
+				return `下达给项目负责人 ${project.leaderName} 失败：${error instanceof Error ? error.message : String(error)}`;
+			} finally {
+				release();
+			}
 		},
 	});
 
@@ -185,6 +429,11 @@ export async function bootstrapCompany(
 		for (const extension of createAllRoleExtensionsWithTools(managementTools)) {
 			options.registry.install(extension);
 		}
+		// 项目负责人能力包：整个公司只有一个 role-leader（职责描述与项目无关），
+		// 项目名由会话 instructions 注入。启动时装一次，负责人会话选中它即可。
+		const leaderExtension = createProjectLeaderExtension(managementTools);
+		options.registry.install(leaderExtension);
+		LEADER_TOOLSETS.set(runtime, managementTools);
 	}
 
 	// 幂等：已初始化则直接返回。
@@ -195,11 +444,20 @@ export async function bootstrapCompany(
 	const existing = await runtime.harness.snapshot(CompanyDoc, context);
 	if (existing !== undefined && existing.company.name !== "") {
 		const roleConversations = toRoleRecord(existing.roles);
+		// 路径迁移与装配层无关，必须最先做：老库里的相对 cwd 会让所有会话的
+		// bash 全部报「目录不存在」（连 echo 都跑不了），这是独立于角色配置的 bug。
+		await migrateWorkspacePaths(runtime, context);
+		// 工作空间根是**运行参数**（这次用 --workspace 启动就以这次为准），
+		// 但只在建库时写过一次。换了启动目录后不刷新，就会与项目记录对不上：
+		// project_delete 的路径校验拿它当基准，会以「不在工作空间内」为由拒绝删除。
+		await refreshWorkspaceRoot(runtime, options.workspaceRoot ?? process.cwd(), context);
 		if (options.registry !== undefined) {
 			// 能力包已注册；这里确保已存在的会话仍指向新装的对象
 			await ensureRoleAgents(runtime, roleConversations, context);
 			// 员工同理：早期版本可能因能力包名冲突而丢失工具
 			await ensureStaffAgents(runtime, existing, options.registry, context);
+			// 负责人同理：早期版本立项时没给负责人装任何能力包，他只能空转
+			await repairLeaderAgents(runtime, { taskset: managementTools, registry: options.registry }, context);
 		}
 		return { ownerConversationId: roleConversations.ceo, roleConversations, created: false };
 	}
@@ -247,7 +505,7 @@ export async function bootstrapCompany(
 		state.company.createdAt = Date.now();
 		state.defaultModel = defaultModel;
 		state.modelCatalog = [...catalog];
-		state.workspaceRoot = options.workspaceRoot ?? process.cwd();
+		state.workspaceRoot = resolveProfileWorkspace(options.workspaceRoot ?? process.cwd());
 		for (const role of MANAGEMENT_ROLES) {
 			state.roles[role] = roleConversations[role];
 		}
@@ -290,6 +548,14 @@ export type CreateProjectOptions = {
 	readonly leaderInstructions?: string;
 	/** 项目负责人的名字（不传则用「负责人」）。 */
 	readonly leaderName?: string;
+	/**
+	 * 项目负责人可用的管理工具集合。
+	 *
+	 * 一般不传：`bootstrapCompany` 装配时会把工具集登记到 runtime 上
+	 * （见 `LEADER_TOOLSETS`），这里只给「绕过 bootstrap 直接建项目」的场景兜底。
+	 * 两个来源都拿不到时，负责人不会被装能力包——那会让他没有工具、只能空转。
+	 */
+	readonly leaderTaskset?: ManagementToolset;
 };
 
 /** 项目创建结果。 */
@@ -308,11 +574,15 @@ export async function createProject(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<CreateProjectResult> {
 	const { mkdir, writeFile, rm } = await import("node:fs/promises");
-	const { join } = await import("node:path");
+	const { join, resolve } = await import("node:path");
 	const { projectSlug } = await import("../runtime/ids.ts");
 
 	const slug = projectSlug(options.slug ?? options.name);
-	const workspace = join(options.workspaceRoot, slug);
+	// 必须是绝对路径：会话的 cwd 会原样交给执行环境，而执行环境会把相对 cwd
+	// 与进程目录再拼一次（NodeExecutionEnv.exec 的 resolvePath），
+	// 结果是 `<进程目录>/<相对 cwd>/<相对 cwd>` —— 目录不存在，bash 全部报
+	// 「Working directory does not exist」，员工连 echo 都跑不了。
+	const workspace = resolve(options.workspaceRoot, slug);
 
 	// 1) 建目录（已存在则复用）
 	await mkdir(workspace, { recursive: true });
@@ -325,20 +595,19 @@ export async function createProject(
 	try {
 		const state = await runtime.harness.snapshot(CompanyDoc, context);
 		const leaderModel = options.leaderModel ?? state?.defaultModel ?? firstModel(DEFAULT_MODEL_CATALOG);
+		// 负责人能力包：优先用调用方显式给的，否则用装配时登记的全局工具集。
+		const taskset = options.leaderTaskset ?? LEADER_TOOLSETS.get(runtime);
+		const leaderExtension = taskset === undefined ? undefined : createProjectLeaderExtension(taskset);
 
 		const leader = await runtime.harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
 				agent: {
 					model: leaderModel,
-					instructions:
-						options.leaderInstructions ??
-						[
-							`你是「${options.name}」项目的负责人。`,
-							"你的职责：把项目目标拆成可执行的任务，派给项目内员工，跟踪进度，向上汇报。",
-							"遇到技术选型问题上报 CTO；需求不明确上报 CPO；成本问题上报 CFO。",
-							"你不亲自写代码，你安排员工去写并验收结果。",
-						].join("\n"),
+					instructions: options.leaderInstructions ?? projectLeaderCharter(options.name),
+					// 负责人必须有管理能力，否则他无法派活、无法上报、无法写计划，
+					// 项目实际就由管理层越级直管了（见 createProjectLeaderExtension）。
+					...(leaderExtension === undefined ? {} : { extensions: [leaderExtension] }),
 					cwd: workspace,
 				},
 			},
@@ -373,6 +642,112 @@ export async function createProject(
 		await rm(workspace, { recursive: true, force: true }).catch(() => undefined);
 		throw error;
 	}
+}
+
+/** 项目负责人的管理工具集：由装配层传入，也可在运行时按项目临时解析。 */
+export type ProjectLeaderTaskset = import("./tools.ts").ManagementToolset;
+
+/**
+ * 给已存在的项目负责人补装管理能力包。
+ *
+ * 老版本立项时没有给负责人装任何能力包，他没有任何工具，只能空转
+ * （真实事故里负责人全程 0 token，活全被管理层越过他直接派给员工）。
+ * 这里按项目名重建 `role-leader` 能力包并让负责人会话选中它，幂等。
+ *
+ * 路径问题由 `migrateWorkspacePaths` 处理，与本函数无关。
+ *
+ * @returns 补装能力包的负责人会话数
+ */
+export async function repairLeaderAgents(
+	runtime: CompanyRuntime,
+	options: { readonly taskset?: ProjectLeaderTaskset; readonly registry?: Registry } = {},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	if (options.taskset === undefined) return 0;
+
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) return 0;
+
+	let repaired = 0;
+	for (const project of Object.values(state.projects)) {
+		const conversation = await runtime.harness.conversation(project.leader as never, context);
+		if (conversation === undefined) continue;
+
+		// 负责人能力包是全局唯一的一个（role-leader），启动时已注册。
+		const extension = createProjectLeaderExtension(options.taskset);
+		const agent = await conversation.agent(context);
+
+		// 注意不能只判「列表里有 role-leader」：负责人会话过去没显式选过能力包，
+		// 底层的默认语义是「选中全部已注册能力包」，那样列表里也有 role-leader，
+		// 但他同时还带着 CHRO 的招聘、CPO 的立项——看起来修好了，其实越权还在。
+		const selectedOnly = agent.extensions.length === 1 && agent.extensions[0]?.name === extension.name;
+		const expectedInstructions = projectLeaderCharter(project.name);
+		const instructionsStale = agent.instructions !== expectedInstructions;
+		if (selectedOnly && !instructionsStale) continue;
+
+		await conversation.configure(
+			{
+				extensions: [extension],
+				instructions: expectedInstructions,
+			},
+			context,
+		);
+		repaired += 1;
+	}
+	return repaired;
+}
+
+/**
+ * 把已存在会话的工作目录从相对路径迁移成绝对路径。
+ *
+ * 与 `repairLeaderAgents` 分开：这个不需要装配层（不需要工具集），
+ * 只要库里有项目就能跑，所以任何入口（网页、终端、测试）都可以调。
+ * 不修的话，历史项目里的负责人和员工 bash 全部报「目录不存在」。
+ *
+ * @returns 迁移的会话数
+ */
+export async function migrateWorkspacePaths(
+	runtime: CompanyRuntime,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) return 0;
+
+	const workspaceOf = new Map<string, string>();
+	for (const project of Object.values(state.projects)) {
+		workspaceOf.set(project.slug, resolveProfileWorkspace(project.workspace));
+	}
+	if (workspaceOf.size === 0) return 0;
+
+	// ① 索引：相对路径写回绝对路径
+	const dirty = Object.values(state.projects).some((project) => !isAbsolute(project.workspace));
+	if (dirty) {
+		await runtime.harness.commit(async (tx) => {
+			const company = await tx.doc(CompanyDoc);
+			for (const [slug, workspace] of workspaceOf) {
+				const entry = company.projects[slug];
+				if (entry === undefined || isAbsolute(entry.workspace)) continue;
+				company.projects[slug] = { ...entry, workspace };
+			}
+		}, context);
+	}
+
+	const targets: number[] = [];
+	for (const project of Object.values(state.projects)) targets.push(project.leader);
+	// 归档员工也要修：项目恢复时他们还会被启用，留着相对路径就是留一颗雷。
+	for (const person of Object.values(state.staff)) targets.push(person.conversationId);
+
+	let migrated = 0;
+	for (const id of new Set(targets)) {
+		const conversation = await runtime.harness.conversation(id as never, context);
+		if (conversation === undefined) continue;
+		const agent = await conversation.agent(context);
+		const cwd = agent.cwd;
+		if (cwd === undefined || isAbsolute(cwd)) continue;
+		await conversation.configure({ cwd: resolveProfileWorkspace(cwd) }, context);
+		migrated += 1;
+	}
+	return migrated;
 }
 
 /** 招聘选项。 */
@@ -497,7 +872,8 @@ export async function hireStaff(
 				{
 					model,
 					instructions: buildStaffInstructions(options),
-					cwd: project.workspace,
+					// 老库里的 workspace 可能是相对路径，统一解析成绝对路径再下发
+					cwd: resolveProfileWorkspace(project.workspace),
 				},
 				context,
 			),
@@ -772,6 +1148,42 @@ export async function deleteProject(
 }
 
 /** 数一个目录下的文件数（递归），用于告诉老板删掉了多少东西。 */
+/**
+ * 用本次启动的工作空间根刷新公司索引。
+ *
+ * 根目录是运行参数：同一份库可以从不同 `--workspace` 启动。老实现只在
+ * 建库时写一次，之后换目录启动就会与项目记录脱节——`project_delete` 用
+ * 这条根做「目录必须在我管辖范围内」的校验，于是永久拒绝删除，只能人工处理。
+ * 只刷新根，不动已有项目记录（它们各自记录自己的绝对路径）。
+ */
+async function refreshWorkspaceRoot(
+	runtime: CompanyRuntime,
+	workspaceRoot: string,
+	context: Context,
+): Promise<boolean> {
+	const next = resolveProfileWorkspace(workspaceRoot);
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	if (state === undefined) return false;
+	if (state.workspaceRoot === next) return false;
+
+	await runtime.harness.commit(async (tx) => {
+		const company = await tx.doc(CompanyDoc);
+		company.workspaceRoot = next;
+	}, context);
+	return true;
+}
+
+/**
+ * 把登记表里的工作空间路径规整成绝对路径。
+ *
+ * 必须做：执行环境拿到相对路径会再拼一次进程目录（见 runtime/env.ts 的说明），
+ * 结果是目录不存在、员工所有命令报错。历史数据里确实存过相对路径。
+ */
+function resolveProfileWorkspace(workspace: string): string {
+	if (workspace === "") return workspace;
+	return isAbsolute(workspace) ? workspace : resolvePath(process.cwd(), workspace);
+}
+
 async function countFiles(
 	directory: string,
 	readdir: (path: string, options: { withFileTypes: true }) => Promise<{ isDirectory(): boolean; name: string }[]>,
@@ -880,6 +1292,76 @@ function nextEscalationSeq(): number {
 }
 
 /**
+ * 会话标识 → 可读名字。
+ *
+ * 以前所有上报的 from 都写死成 "manager"，老板只看到「来自 manager」，
+ * 分不清是 CTO 还是某个项目负责人在问。这里按公司索引反查真实岗位/姓名。
+ */
+function labelOfConversation(state: CompanyState | undefined, conversationId: number): string | undefined {
+	if (state === undefined) return undefined;
+
+	for (const [role, id] of Object.entries(state.roles ?? {})) {
+		if (id === conversationId) return ROLE_LABELS[role as ManagementRole] ?? role.toUpperCase();
+	}
+	for (const project of Object.values(state.projects ?? {})) {
+		if (project.leader === conversationId) return project.leaderName ?? project.name;
+	}
+	for (const person of Object.values(state.staff ?? {})) {
+		if (person.conversationId === conversationId) return person.name;
+	}
+	return undefined;
+}
+
+/**
+ * 登记一次同步转交；发现循环等待时返回给模型看的说明。
+ *
+ * 为什么要有这道防线：转交工具是同步的（等对方答复）。A 等 B、B 又等 A 时，
+ * 两边都会永远等下去，而且 abort 也要等任务结束——老板点「立即处理」也救不回来。
+ */
+function tryEnterDelegation(
+	caller: number,
+	target: number,
+	label: string,
+): (() => void) | string {
+	try {
+		return enterDelegation(caller, target);
+	} catch (error) {
+		if (error instanceof DelegationCycleError) {
+			return [
+				`不能转交给${label}：${error.message}。`,
+				"对方正在直接或间接等你这一侧的结果，转过去会互相卡死。",
+				"请先把手上的结论处理完并回复它，或用 escalate 让 CEO 协调；不要用同步转交绕圈。",
+			].join("");
+		}
+		throw error;
+	}
+}
+
+/** 目标会话是否正忙；忙则返回给模型看的原因，避免同步等待挂死。 */
+async function busyReason(
+	runtime: CompanyRuntime,
+	conversationId: number,
+	context: Context,
+): Promise<string | undefined> {
+	const inspection = await runtime.harness.inspect(context);
+	const hasLiveTask = inspection.tasks.some(
+		(task) =>
+			Number(task.record.conversationId) === conversationId &&
+			(task.state.kind === "running" || task.state.kind === "ready" || task.state.kind === "waiting"),
+	);
+	if (hasLiveTask) return "正在忙（还有没结束的任务）";
+
+	const hasQueued = inspection.submissions.some(
+		(submission) =>
+			Number(submission.conversationId) === conversationId &&
+			(submission.status === "queued" || submission.status === "placed"),
+	);
+	if (hasQueued) return "还有排队中的消息没处理";
+
+	return undefined;
+}
+
+/**
  * 没有升级任务定义时的退路：直接写一条待决问题。
  *
  * 保证上报不会静默丢失——宁可退化也不能吞掉管理层的请假。
@@ -890,6 +1372,7 @@ async function recordPendingDirectly(
 	context: Context,
 ): Promise<void> {
 	const { PendingDoc } = await import("./escalation.ts");
+	// 没有升级任务时，问题只能落在 CEO 这一级——老板永远不是兜底接收人。
 	await runtime.harness.commit(async (tx) => {
 		const pending = await tx.doc(PendingDoc);
 		pending.items.push({
@@ -1007,6 +1490,16 @@ function buildStaffInstructions(options: HireStaffOptions): string {
 }
 
 /** 生成立项文档内容。 */
+/**
+ * 负责人的会话级职责描述：在通用负责人章程前面加一行项目名。
+ *
+ * 项目名放 instructions 而不是能力包，是为了让能力包保持全局唯一、纯函数，
+ * 不必按项目重建（重建会牵动注册表与会话选择，容易漏）。
+ */
+function projectLeaderCharter(projectName: string): string {
+	return [`你是「${projectName}」项目的负责人。`, PROJECT_LEADER_CHARTER].join("\n");
+}
+
 function renderProjectBrief(options: CreateProjectOptions): string {
 	return [
 		`# ${options.name}`,

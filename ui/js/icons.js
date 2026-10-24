@@ -56,6 +56,9 @@ const PATHS = {
 	pulse: `<path d="M3 12h3.5L9 5.5l4 13 2.5-6.5H21"/>`,
 	key: `<circle cx="8" cy="12" r="3.5"/><path d="M11.5 12H21M17 12v3M20 12v2.5"/>`,
 	palette: `<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.3 0 1.8-.8 1.8-1.7 0-1.2-1-1.5-1-2.6 0-.9.8-1.6 1.8-1.6h1.6a3.3 3.3 0 0 0 3.3-3.3C19.5 6.6 16.2 3.5 12 3.5Z"/><circle cx="8" cy="9" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="7" cy="13.5" r="1"/>`,
+	sun: `<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>`,
+	moon: `<path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.2 8.2 0 1 0 10.2 10.2Z"/>`,
+	monitor: `<rect x="3" y="4.5" width="18" height="12" rx="1"/><path d="M9 20h6M12 16.5V20"/>`,
 };
 
 export function icon(name, size = 16, className = "") {

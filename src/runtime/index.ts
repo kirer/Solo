@@ -4,7 +4,7 @@
  * 该库标注为 experimental，minor 版本间会有破坏性变更（见 ADR-001、ADR-002）。
  * 业务层（src/company）与界面层（src/tui）只能通过本模块间接使用它。
  */
-export { BACKGROUND_CONTEXT, type Context } from "./registry.ts";
+export { awaitWithContext, BACKGROUND_CONTEXT, type Context } from "./registry.ts";
 export { createEnvironmentRegistry, type EnvironmentRegistry, type CwdResolver } from "./env.ts";
 export {
 	delegationRequestId,

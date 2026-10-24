@@ -4,7 +4,7 @@
  * 这些函数需要访问公司运行时与组织操作，所以在装配时注入，
  * 工具定义本身保持纯粹（只有参数与调用逻辑）。
  */
-import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime } from "../runtime/index.ts";
+import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import { MANAGEMENT_ROLES, ROLE_LABELS, type ManagementRole, type ModelRef } from "./docs.ts";
 import {
 	archiveStaff,
@@ -29,6 +29,17 @@ export type ToolDependencies = {
 		readonly conversationId: number;
 		readonly project?: string;
 	}) => Promise<string>;
+	/** 列出等着本会话拍板的问题。 */
+	readonly pendingList?: (input: {
+		readonly conversationId: number;
+	}) => Promise<string>;
+	/** 回答一条等本会话拍板的问题（CEO 专用）。 */
+	readonly answerPending?: (input: {
+		readonly key: string;
+		readonly answer: string;
+		readonly escalate?: boolean;
+		readonly conversationId: number;
+	}) => Promise<string>;
 	/** 拍板记录函数。 */
 	readonly decide?: (input: {
 		readonly decision: string;
@@ -48,6 +59,15 @@ export type ToolDependencies = {
 		readonly task: string;
 		readonly fromConversationId: number;
 		readonly from: string;
+		/** 工具调用上下文：把 abortSignal 传下去，老板「立即处理」时能中断等待。 */
+		readonly context: Context;
+	}) => Promise<string>;
+	/** 给项目负责人下达任务（管理层推进项目工作的正道）。 */
+	readonly delegateToLeader?: (input: {
+		readonly project: string;
+		readonly task: string;
+		readonly fromConversationId: number;
+		readonly context: Context;
 	}) => Promise<string>;
 	/** 转交给另一位管理层。 */
 	readonly delegateToRole?: (input: {
@@ -55,6 +75,7 @@ export type ToolDependencies = {
 		readonly task: string;
 		/** 发起转交的会话，用于请求标识去重。 */
 		readonly fromConversationId: number;
+		readonly context: Context;
 	}) => Promise<string>;
 };
 
@@ -111,6 +132,47 @@ export function createManagementTools(deps: ToolDependencies) {
 		},
 	});
 
+	/** 老板只该被 CEO 打扰：CEO 的待决队列在这里看、在这里答。 */
+	const pendingList = defineTool({
+		name: "pending_list",
+		description:
+			"列出等着你拍板的待决问题（其他管理层与项目负责人上报上来的）。只有在这里的条目才是到你这一级的；老板那级的问题不在这里。",
+		parameters: Type.Object({
+			includeAnswered: Type.Optional(Type.Boolean({ description: "是否连已答复的一起列出，默认只看未答复" })),
+		}),
+		execute: async (_args, api) => {
+			if (deps.pendingList === undefined) return text("待决队列未启用。");
+			return text(await deps.pendingList({ conversationId: Number(api.conversationId) }));
+		},
+	});
+
+	const answerPending = defineTool({
+		name: "answer_pending",
+		description: [
+			"回答一条待决问题（先用 pending_list 拿 key）。",
+			"授权范围内能定的，直接给决定；确实只有老板能定的，把 escalate 设为 true，它会转成给老板的问题。",
+			"不要滥用 escalate：每多问老板一次，就多占一次老板的注意力。",
+		].join(""),
+		parameters: Type.Object({
+			key: Type.String({ description: "待决问题编号，如 esc:7:2" }),
+			decision: Type.String({ description: "你的决定或结论" }),
+			escalate: Type.Optional(
+				Type.Boolean({ description: "你拍不了、必须老板定时才设为 true（会升级为老板待办）" }),
+			),
+		}),
+		execute: async (args, api) => {
+			if (deps.answerPending === undefined) return text("拍板通道未启用。");
+			return text(
+				await deps.answerPending({
+					key: args.key,
+					answer: args.decision,
+					...(args.escalate === true ? { escalate: true } : {}),
+					conversationId: Number(api.conversationId),
+				}),
+			);
+		},
+	});
+
 	const decide = defineTool({
 		name: "decide",
 		description: "在授权范围内自己拍板，并把决定记录在案。",
@@ -159,6 +221,8 @@ export function createManagementTools(deps: ToolDependencies) {
 				);
 			}
 
+			// 负责人能力包由 createProject 从装配层登记的工具集里解析，
+			// 这里不需要传（见 org.ts 的 LEADER_TOOLSETS）。
 			const { project } = await createProject(
 				runtime,
 				{
@@ -177,7 +241,8 @@ export function createManagementTools(deps: ToolDependencies) {
 					`slug：${project.slug}（请让 CHRO 用这个值招人）`,
 					`目录：${project.workspace}`,
 					`项目负责人会话：${project.leader}`,
-					"下一步：让 CHRO 为项目配置员工。",
+					"下一步：让 CHRO 为项目配置员工；之后所有派活都交给项目负责人，",
+					"管理层不要直接指挥项目内员工（那是负责人的事）。",
 				].join("\n"),
 			);
 		},
@@ -353,14 +418,16 @@ export function createManagementTools(deps: ToolDependencies) {
 	/** 给员工派活（与 delegate_to_staff 等价，但参数命名更直白）。 */
 	const staffAssign = defineTool({
 		name: "staff_assign",
-		description:
+		description: [
 			"给项目的某名员工派一个任务，等它做完并返回结果。employee 必须与 staff_list 里「员工名」完全一致。",
+			"管理层注意：项目内员工的日常派活应该交给该项目的负责人，你只在负责人缺位或老板直接要求时亲自下场。",
+		].join(""),
 		parameters: Type.Object({
 			project: Type.String({ description: "项目 slug，与 staff_list 里的项目一致" }),
 			employee: Type.String({ description: "员工名，必须与 staff_list 显示的完全一致" }),
 			task: Type.String({ description: "要它做的事：越具体越好，说明交付物" }),
 		}),
-		execute: async (args, api) => {
+		execute: async (args, api, context) => {
 			if (deps.delegate === undefined) return text("派活通道未启用。");
 
 			// 先校验员工存在，给出可操作的错误，避免模型反复试错
@@ -386,6 +453,7 @@ export function createManagementTools(deps: ToolDependencies) {
 					task: args.task,
 					fromConversationId: Number(api.conversationId),
 					from: "管理层",
+					context,
 				}),
 			);
 		},
@@ -469,7 +537,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			employee: Type.String({ description: "员工名" }),
 			task: Type.String({ description: "要它做的事，越具体越好" }),
 		}),
-		execute: async (args, api) => {
+		execute: async (args, api, context) => {
 			if (deps.delegate === undefined) return text("派活通道未启用。");
 			return text(
 				await deps.delegate({
@@ -478,6 +546,34 @@ export function createManagementTools(deps: ToolDependencies) {
 					task: args.task,
 					fromConversationId: Number(api.conversationId),
 					from: "管理层",
+					context,
+				}),
+			);
+		},
+	});
+
+	/** 给项目负责人下达任务（管理层 → 负责人，负责人再往下派给员工）。 */
+	const delegateToLeader = defineTool({
+		name: "delegate_to_leader",
+		description: [
+			"把一项工作下达给某个项目的负责人，等它安排并汇报结果。",
+			"**管理层推进项目工作的默认方式**：你给负责人目标与约束，负责人拆任务、派给员工、验收后回报。",
+			"不要绕过负责人直接指挥项目内员工——那样负责人会被架空，进度与责任都没人兜。",
+		].join(""),
+		parameters: Type.Object({
+			project: Type.String({ description: "项目 slug，先用 project_list 确认" }),
+			task: Type.String({
+				description: "要交付什么、验收口径、硬性约束。负责人据此拆活，越具体越少返工",
+			}),
+		}),
+		execute: async (args, api, context) => {
+			if (deps.delegateToLeader === undefined) return text("下达通道未启用。");
+			return text(
+				await deps.delegateToLeader({
+					project: args.project,
+					task: args.task,
+					fromConversationId: Number(api.conversationId),
+					context,
 				}),
 			);
 		},
@@ -492,13 +588,14 @@ export function createManagementTools(deps: ToolDependencies) {
 			role: Type.String({ description: "目标岗位：cto/cfo/cpo/coo/cmo/chro" }),
 			task: Type.String({ description: "要它做的事" }),
 		}),
-		execute: async (args, api) => {
+		execute: async (args, api, context) => {
 			if (deps.delegateToRole === undefined) return text("转交通道未启用。");
 			return text(
 				await deps.delegateToRole({
 					role: args.role,
 					task: args.task,
 					fromConversationId: Number(api.conversationId),
+					context,
 				}),
 			);
 		},
@@ -507,8 +604,11 @@ export function createManagementTools(deps: ToolDependencies) {
 	return {
 		orgTree,
 		escalate,
+		pendingList,
+		answerPending,
 		reviewArchitecture,
 		delegateToStaff,
+		delegateToLeader,
 		delegateToRole,
 		decide,
 		projectCreate,

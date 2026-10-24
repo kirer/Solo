@@ -24,6 +24,7 @@
  *   --eval <js>         可重复，加载后执行
  *   --full              整页截图
  *   --mobile            触摸 + mobile 视口模拟
+ *   --color-scheme      模拟系统配色：light / dark（测「跟随系统」）
  *   --console           打印页面 console.error 与未捕获异常（默认只打印错误）
  *   --keep-open         不关闭 Chrome 调试端口（调试用）
  */
@@ -53,6 +54,7 @@ const options = {
 	evals: [],
 	full: false,
 	mobile: false,
+	colorScheme: "",
 	console: false,
 	keepOpen: false,
 };
@@ -97,6 +99,9 @@ for (let index = 0; index < args.length; index += 1) {
 			break;
 		case "--mobile":
 			options.mobile = true;
+			break;
+		case "--color-scheme":
+			options.colorScheme = take();
 			break;
 		case "--console":
 			options.console = true;
@@ -348,6 +353,11 @@ try {
 		});
 		if (options.mobile) {
 			await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
+		}
+		if (options.colorScheme !== "") {
+			await cdp.send("Emulation.setEmulatedMedia", {
+				features: [{ name: "prefers-color-scheme", value: options.colorScheme }],
+			});
 		}
 		await cdp.send("Page.navigate", { url: options.url });
 		await sleep(500);

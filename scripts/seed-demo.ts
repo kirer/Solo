@@ -17,6 +17,7 @@ import {
 } from "../src/runtime/index.ts";
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff } from "../src/company/org.ts";
 import { createEscalationTask, startEscalation } from "../src/company/escalation.ts";
+import { recordMessage } from "../src/company/trail.ts";
 
 /** 解析参数。 */
 function parseArgs(argv: readonly string[]) {
@@ -46,7 +47,7 @@ registry.install(COMPANY_TASKS_EXTENSION);
 const escalationTask = createEscalationTask(runtime);
 registry.install({ name: "escalation", tasks: [escalationTask] } as never);
 
-await bootstrapCompany(
+const boot = await bootstrapCompany(
 	runtime,
 	{
 		companyName: "晨光科技",
@@ -73,13 +74,15 @@ const alpha = await createProject(
 	BACKGROUND_CONTEXT,
 );
 
+const alphaStaff = new Map<string, number>();
 for (const [name, role, manager] of [
 	["林越", "开发", "cto"],
 	["周牧", "开发", "cto"],
 	["何晓", "设计", "cpo"],
 	["沈舟", "测试", "cto"],
 ] as const) {
-	await hireStaff(runtime, { project: "tank-battle", name, role, manager, registry }, BACKGROUND_CONTEXT);
+	const hired = await hireStaff(runtime, { project: "tank-battle", name, role, manager, registry }, BACKGROUND_CONTEXT);
+	alphaStaff.set(name, hired.conversationId);
 }
 
 const beta = await createProject(
@@ -95,13 +98,88 @@ const beta = await createProject(
 	BACKGROUND_CONTEXT,
 );
 
+const betaStaff = new Map<string, number>();
 for (const [name, role, manager] of [
 	["阿舟", "开发", "cto"],
 	["阿禾", "开发", "cto"],
 	["阿宁", "测试", "cto"],
 ] as const) {
-	await hireStaff(runtime, { project: "customer-portal", name, role, manager, registry }, BACKGROUND_CONTEXT);
+	const hired = await hireStaff(runtime, { project: "customer-portal", name, role, manager, registry }, BACKGROUND_CONTEXT);
+	betaStaff.set(name, hired.conversationId);
 }
+
+// 演示用的沟通连线：让界面一打开就能看到「谁在跟谁说话」。
+// 这些是真实写入 TrailDoc 的记录，不是界面假数据；连线可在项目翻面后看到更细的归属。
+const talk = async (input: {
+	kind: "delegate" | "report" | "escalate" | "decide";
+	from: string;
+	to: string;
+	fromConversationId: number;
+	toConversationId: number;
+	ref: string;
+	project?: string;
+	text?: string;
+}) => recordMessage(runtime, input, BACKGROUND_CONTEXT);
+
+await talk({
+	kind: "delegate",
+	from: "CEO",
+	to: "CTO",
+	fromConversationId: boot.roleConversations.ceo,
+	toConversationId: boot.roleConversations.cto,
+	ref: "demo-talk-1",
+	text: "推进坦克大战与客户门户。",
+});
+await talk({
+	kind: "delegate",
+	from: "CTO",
+	to: "陆沉",
+	fromConversationId: boot.roleConversations.cto,
+	toConversationId: alpha.project.leader,
+	ref: "demo-talk-2",
+	project: "tank-battle",
+	text: "先拆渲染层，再跑冒烟测试。",
+});
+await talk({
+	kind: "delegate",
+	from: "陆沉",
+	to: "林越",
+	fromConversationId: alpha.project.leader,
+	toConversationId: alphaStaff.get("林越") ?? alpha.project.leader,
+	ref: "demo-talk-3",
+	project: "tank-battle",
+	text: "渲染层拆出来，保持 draw 接口不变。",
+});
+await talk({
+	kind: "report",
+	from: "林越",
+	to: "陆沉",
+	fromConversationId: alphaStaff.get("林越") ?? alpha.project.leader,
+	toConversationId: alpha.project.leader,
+	ref: "demo-talk-3:report",
+	project: "tank-battle",
+	text: "已拆完，冒烟测试 32/32 通过。",
+});
+await talk({
+	kind: "delegate",
+	from: "CPO",
+	to: "苏晚",
+	fromConversationId: boot.roleConversations.cpo,
+	toConversationId: beta.project.leader,
+	ref: "demo-talk-4",
+	project: "customer-portal",
+	text: "客户门户二期需求先出个提纲。",
+});
+await talk({
+	kind: "delegate",
+	from: "苏晚",
+	to: "阿舟",
+	fromConversationId: beta.project.leader,
+	toConversationId: betaStaff.get("阿舟") ?? beta.project.leader,
+	ref: "demo-talk-5",
+	project: "customer-portal",
+	text: "把登录页先搭起来。",
+});
 
 // 全部数据写完再退出：不调用模型，避免生成演示数据要等几分钟
 // 一条等你拍板的升级（先由 CTO 上报，再升到 CEO，最后到你）

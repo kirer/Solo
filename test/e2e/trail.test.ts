@@ -10,8 +10,8 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject, hireStaff } from "../../src/company/org.ts";
 import { delegate } from "../../src/company/delegation.ts";
-import { recordMessage, activeTasks, organizationGraph, readTrail, trailForConversation, trailForRef } from "../../src/company/trail.ts";
-import { answer, createTestContext, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { activeTasks, beginLiveTrail, organizationGraph, readLiveTrail, readTrail, recordMessage, trailForConversation, trailForRef } from "../../src/company/trail.ts";
+import { answer, createTestContext, eventually, slowAnswer, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -228,6 +228,47 @@ describe("跨会话追溯", () => {
 		const kinds = trail.map((edge) => edge.kind);
 		expect(kinds).toContain("delegate");
 		expect(kinds).toContain("report");
+	});
+});
+
+describe("实时沟通边", () => {
+	test("派活进行中会挂一条实时边，答完释放", async () => {
+		const { ctx, runtime, project, hired } = await setup();
+
+		ctx.faux.setResponses([slowAnswer(900, "做完了")]);
+		const running = delegate(
+			runtime,
+			{ project: "alpha", employee: "dev-1", task: "慢慢做", fromConversationId: project.leader, from: "负责人" },
+			BACKGROUND_CONTEXT,
+		);
+
+		await eventually(async () => readLiveTrail().length > 0, { label: "实时边出现" });
+		const live = readLiveTrail();
+		expect(live.length).toBe(1);
+		expect(live[0]?.fromConversation).toBe(project.leader);
+		expect(live[0]?.toConversation).toBe(hired.conversationId);
+		expect(live[0]?.kind).toBe("delegate");
+
+		await running;
+		expect(readLiveTrail().length).toBe(0);
+
+		// 答完后仍然有历史边，连线不会断档
+		const trail = await readTrail(runtime, {}, BACKGROUND_CONTEXT);
+		expect(trail.some((edge) => edge.kind === "delegate" && edge.fromConversation === project.leader)).toBe(true);
+	});
+
+	test("释放函数幂等", () => {
+		const release = beginLiveTrail({
+			from: "A",
+			to: "B",
+			fromConversation: 1,
+			toConversation: 2,
+			kind: "delegate",
+		});
+		expect(readLiveTrail().length).toBe(1);
+		release();
+		release();
+		expect(readLiveTrail().length).toBe(0);
 	});
 });
 

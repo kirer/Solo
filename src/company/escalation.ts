@@ -34,6 +34,13 @@ export type EscalationInput = {
 	readonly project?: string;
 	/** 升级标识，用于关联审计与留痕。 */
 	readonly escalationKey: string;
+	/**
+	 * 直接从「问老板」开始（跳过管理层与 CEO 两级）。
+	 *
+	 * 只允许 CEO 发起时置为 true：**只有 CEO 能把问题递到老板面前**，
+	 * 其他任何人的上报都只会停在自己这条链的最高一层（CEO）。
+	 */
+	readonly startAtOwner?: boolean;
 };
 
 /** 阶段状态。 */
@@ -94,12 +101,15 @@ export function createEscalationTask(
 		name: "app.escalation",
 		version: 1,
 
-		initial: (input) => ({
-			phase: "ask-manager",
-			level: input.manager ?? "ceo",
-			askedAt: 0,
-			path: [input.from],
-		}),
+		initial: (input) =>
+			input.startAtOwner === true
+				? { phase: "ask-owner", askedAt: 0, path: [input.from, "ceo"] }
+				: {
+						phase: "ask-manager",
+						level: input.manager ?? "ceo",
+						askedAt: 0,
+						path: [input.from],
+					},
 
 		phases: {
 			"ask-manager": async (task, taskRuntime, context) => {
@@ -144,7 +154,15 @@ export function createEscalationTask(
 					return;
 				}
 
-				await finish(taskRuntime, runtime, context, task.input, level, outcome.answer, [...state.path, level]);
+				await finish(
+					 taskRuntime,
+					 runtime,
+					 context,
+					 task.input,
+					 outcome.answeredBy ?? level,
+					 outcome.answer,
+					 [...state.path, level],
+				 );
 			},
 
 			"ask-ceo": async (task, taskRuntime, context) => {
@@ -175,7 +193,15 @@ export function createEscalationTask(
 					return;
 				}
 
-				await finish(taskRuntime, runtime, context, task.input, "ceo", outcome.answer, [...state.path, "ceo"]);
+				await finish(
+					 taskRuntime,
+					 runtime,
+					 context,
+					 task.input,
+					 outcome.answeredBy ?? "ceo",
+					 outcome.answer,
+					 [...state.path, "ceo"],
+				 );
 			},
 
 			"ask-owner": async (task, taskRuntime, context) => {
@@ -195,7 +221,15 @@ export function createEscalationTask(
 					return;
 				}
 
-				await finish(taskRuntime, runtime, context, task.input, "owner", outcome.answer, [...state.path, "owner"]);
+				await finish(
+					 taskRuntime,
+					 runtime,
+					 context,
+					 task.input,
+					 outcome.answeredBy ?? "owner",
+					 outcome.answer,
+					 [...state.path, "owner"],
+				 );
 			},
 		},
 
@@ -267,6 +301,35 @@ export async function answerPending(
 	}, context);
 }
 
+/**
+ * CEO 拍板：只允许回答「到自己这一级」的待决问题。
+ *
+ * 越权防线：CEO 无法替老板拍板（owner 级），也无法替下属拍板。
+ * 每条会校验层级并返回 false，由工具层给出可读原因。
+ */
+export async function answerPendingAsCeo(
+	runtime: CompanyRuntime,
+	input: { readonly key: string; readonly answer: string; readonly escalate?: boolean },
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<boolean> {
+	const state = await runtime.harness.snapshot(PendingDoc, context);
+	const item = state?.items.find((entry) => entry.key === input.key);
+	if (item === undefined) return false;
+	if (item.level !== "ceo") return false;
+	if (item.answer !== undefined) return false;
+
+	return answerPending(
+		runtime,
+		{
+			key: input.key,
+			answer: input.answer,
+			answeredBy: "ceo",
+			...(input.escalate === true ? { escalate: true } : {}),
+		},
+		context,
+	);
+}
+
 /** 列出当前未答复的待决问题。 */
 export async function listPending(
 	runtime: CompanyRuntime,
@@ -306,12 +369,25 @@ async function ensurePending(
 		);
 		if (existing !== undefined) return;
 
+		// 老板只看得到「CEO 报上来的问题」：owner 级待办一律记在 CEO 名下，
+		// 哪怕最初是某个项目负责人发起的（中间已由 CEO 背书过一层）。
+		let from = input.from;
+		let fromConversationId = input.fromConversationId;
+		if (level === "owner") {
+			const company = await runtime.harness.snapshot(CompanyDoc, context);
+			const ceoId = company?.roles.ceo;
+			if (ceoId !== undefined) {
+				from = "CEO";
+				fromConversationId = ceoId;
+			}
+		}
+
 		const item: PendingItem = {
 			key: input.escalationKey,
 			question: input.question,
 			level,
-			from: input.from,
-			fromConversationId: input.fromConversationId,
+			from,
+			fromConversationId,
 			askedAt,
 		};
 		if (input.project !== undefined) item.project = input.project;
@@ -330,13 +406,17 @@ async function readOutcome(
 	escalationKey: string,
 	level: string,
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<{ answer: string; escalate: boolean } | undefined> {
+): Promise<{ answer: string; escalate: boolean; answeredBy?: string } | undefined> {
 	const state = await runtime.harness.snapshot(PendingDoc, context);
 	const item = state?.items.find(
 		(entry) => entry.key === escalationKey && entry.level === level && entry.answer !== undefined,
 	);
 	if (item?.answer === undefined) return undefined;
-	return { answer: item.answer, escalate: item.escalate === true };
+	return {
+		answer: item.answer,
+		escalate: item.escalate === true,
+		...(item.answeredBy === undefined ? {} : { answeredBy: item.answeredBy }),
+	};
 }
 
 /** 结束升级，写终态。 */
@@ -362,6 +442,10 @@ async function finish(
 	// 先写审计与留痕，再提交终态。
 	// 顺序很重要：调用方 waitEscalation() 在终态提交后立刻返回，
 	// 若先提交终态，随后写的时间线可能还没落盘（竞态）。
+	const companyAtDecision = await runtime.harness.snapshot(CompanyDoc, context);
+	const deciderConversation =
+		roleConversationOf(companyAtDecision, decidedBy) ?? input.fromConversationId;
+
 	await runtime.harness.commit(async (tx) => {
 		const audit = await tx.doc(AuditDoc, input.fromConversationId as never);
 		audit.events.push({
@@ -377,7 +461,7 @@ async function finish(
 		const edge: (typeof trail.edges)[number] = {
 			at: Date.now(),
 			kind: "decide",
-			fromConversation: input.fromConversationId,
+			fromConversation: deciderConversation,
 			toConversation: input.fromConversationId,
 			from: decidedBy,
 			to: input.from,
@@ -398,13 +482,17 @@ async function recordHop(
 	to: string,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<void> {
+	const company = await runtime.harness.snapshot(CompanyDoc, context);
+	const fromConversation = roleConversationOf(company, from) ?? input.fromConversationId;
+	const toConversation = roleConversationOf(company, to) ?? input.fromConversationId;
+
 	await runtime.harness.commit(async (tx) => {
 		const trail = await tx.doc(TrailDoc);
 		const edge: (typeof trail.edges)[number] = {
 			at: Date.now(),
 			kind: "escalate",
-			fromConversation: input.fromConversationId,
-			toConversation: input.fromConversationId,
+			fromConversation,
+			toConversation,
 			from,
 			to,
 			ref: input.escalationKey,
@@ -422,6 +510,21 @@ async function recordHop(
 			ref: input.escalationKey,
 		});
 	}, context);
+}
+
+/** 把岗位名（cto/ceo/owner）解析成会话标识；解析不到返回 undefined。 */
+function roleConversationOf(
+	state: { readonly roles: Record<string, number> } | undefined,
+	label: string,
+): number | undefined {
+	if (state === undefined) return undefined;
+	const direct = state.roles[label];
+	if (direct !== undefined) return Number(direct);
+	if (label === "owner") {
+		const ceo = state.roles.ceo;
+		if (ceo !== undefined) return Number(ceo);
+	}
+	return undefined;
 }
 
 export { escalationId };

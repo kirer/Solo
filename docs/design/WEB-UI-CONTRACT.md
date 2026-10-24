@@ -16,33 +16,48 @@
 
 - 简洁：没有仪表盘式的 KPI 堆叠、没有图标色块、没有第二套字体。
 - 炫酷：只把「动」花在有信息的地方——运行中的节点、正在说话的连线、翻面的项目卡。
-- 颜色预算：界面本身是单色的；彩色只出现在状态（在跑 / 待你 / 失败）和人物身份点上。
+- 颜色预算：界面本身是单色的；彩色只出现在状态（在跑 / 待你 / 失败）上。
 
 ## 2. 视觉令牌（`ui/css/tokens.css` 已定义，禁止另起一套）
 
+方向：**精密工作台**。冷石墨底 / 纸白底、骨白 / 墨黑、2px 直角、1px 精确边框；颜色只作为状态墨，
+不做霓虹光、不做渐变、不做毛玻璃。等宽字体只留给代码 / 命令 / 型号。
+
+**双主题**：`tokens.css` 用 `[data-resolved="light"]` 覆盖浅色令牌；深色是 `:root` 默认。
+`<html data-theme="dark|light|system" data-resolved="dark|light">` 由 `index.html` 的内联脚本在首屏前设置，
+`app.js` 负责菜单、持久化（`localStorage: ai-company.theme`）与系统配色变化监听。
+组件 CSS 一律只用 `var(--token)`，禁止写死颜色 / 圆角 / 阴影，保证两个主题都成立。
+
 | 角色 | 值 |
 | --- | --- |
-| 地 | `--bg #08090c`，面板 `--surface #0e1116`，抬起 `--surface-3 #171c23` |
-| 线 | `--line #20262f`，弱线 `--line-soft #191e26`，强线 `--line-strong #2c3440` |
-| 墨 | `--ink #e8ecf2`，次级 `--ink-2 #c5ccd6`，弱 `--muted #8b94a1`，更弱 `--faint #5d6672` |
-| 强调 | `--accent #3fe0c4`（在跑 / 实时）；`--warn #ffb340`（待你拍板）；`--danger #ff6577`（失败 / 已终止）；`--info #79b8ff`（回报） |
-| 圆角 | 卡片 `--radius 14px`、控件 `--radius-sm 10px`、小标签 `--radius-xs 7px`、圆点 `999px` |
+| 地 | 深色 `--bg #0b0c0e` / 浅色 `#f5f5f2`；面板 `#14161a` / `#ffffff`；抬起 `#20232a` / `#eeeEE9` |
+| 线 | 深色 `#272b32` / 浅色 `#e2e1db`；弱线 `#1d2026` / `#ecebe6`；强线 `#363b44` / `#96958d` |
+| 墨 | 深色 `--ink #e8ebf0` / 浅色 `#1b1d21`；弱 `#9098a4` / `#4f555f`；更弱 `#7b8490` / `#6a707a` |
+| 状态 | 在跑 `--accent #5b9cff` / `#2563eb`；待你 `--warn #f2b24c` / `#8a5200`；失败/终止 `--danger #f27272` / `#c24141`；回报 `--info #8fb8e8` / `#2a6f97` |
+| 圆角 | **统一 2px**（`--radius` / `--radius-sm` / `--radius-md`）；只有状态点是圆的 |
 | 间距 | `--sp-1 4 · --sp-2 8 · --sp-3 13 · --sp-4 21 · --sp-5 34 · --sp-6 55` |
-| 字号 | `--fs-2xs 10.5 · --fs-xs 11.5 · --fs-sm 12.5 · --fs-base 13.5 · --fs-md 15 · --fs-lg 20 · --fs-xl 28` |
-| 动效 | `--dur-fast 120ms · --dur 200ms · --dur-slow 420ms · --ease-out`、`--ease-spring` |
+| 字号 | `--fs-2xs 10.5 · --fs-xs 11.5 · --fs-sm 12.5 · --fs-base 13.5 · --fs-md 15 · --fs-lg 19 · --fs-xl 26` |
+| 动效 | `--dur-fast 110ms · --dur 180ms · --dur-slow 360ms · --dur-flip 460ms` |
 
-字体：系统字体（SF Pro / PingFang SC），数字与代码用 `--mono`。**不加载外部字体**。
-唯一允许的渐变：背景的一层极弱径向光晕；除此之外不用渐变、不用毛玻璃、不用投影（浮层除外）。
+字体：系统字体（SF Pro / PingFang SC），**不加载外部字体**。数字用 `font-variant-numeric: tabular-nums`；
+`--mono` 只用于代码块、命令、工具参数、模型型号。禁止用 mono 当界面装饰。
+
+**去 AI 味的硬规则**：
+- 没有 glow / 外发光 / drop-shadow / blur / 渐变 / 毛玻璃；阴影只给真正浮起的层。
+- 没有脉冲圆点、呼吸边框、彩虹头像、L1/L2 编号、贯穿全宽的细分割线、虚线装饰。
+- 没有 KPI 大数字块；CEO 卡不放大数字，待办数用一行小字。
+- 颜色预算：界面本身是骨白 + 石墨灰；彩色只出现在状态（在跑/待你/失败/回报）。
 
 ## 3. 状态语义（全站统一）
 
-- `data-status="busy"`：在跑 → 青色边框 + 缓慢流动的光边 + 呼吸圆点。
-- `data-status="waiting"`：等你拍板 → 琥珀边框 + 更慢的呼吸；顶部待办卡也是琥珀。
-- `data-status="idle"`：空闲 → 中性细边，无动画。
-- `data-status="error"` / 已终止项目：玫红。
+- `data-status="busy"`：在跑 → 1px 蓝色边框 + 2.8s 一圈亮光 + 很薄的外圈同色光；5px 静态方点。
+- `data-status="waiting"`：待你 → 1px 琥珀边框 + 6s 一圈较慢的琥珀光 + 很薄外光；5px 方点。
+- `data-status="idle"`：空闲 → 1px 中性亮边，无动画。
+- `data-status="error"` / 已终止项目：1px 哑玫红。
+- 选中态：中性 1px outline（不是 accent），避免空闲卡看起来像在跑。
 
-**性能**：只让「在跑」的卡片跑光边动画；一屏最多 8 个动画节点。`prefers-reduced-motion`
-下关掉光边、连线流动、入场动画，保留全部信息。
+**性能**：只让「在跑」的卡片跑边框光；一屏最多 8 个动画节点。`prefers-reduced-motion`
+下关掉流动、翻面过渡、淡入，保留全部信息。
 
 ## 4. 文件所有权（并行开发时只改自己的文件）
 
@@ -50,10 +65,10 @@
 | --- | --- | --- |
 | `ui/index.html` | Lead | 外壳 DOM、静态图标、CSS/JS 入口 |
 | `ui/css/tokens.css` | Lead | 变量、reset、滚动条、焦点、reduced motion |
-| `ui/css/shell.css` | Lead | 顶栏、左侧栏、舞台、待办卡、移动端外壳 |
+| `ui/css/shell.css` | Lead | 顶栏、舞台、对话内待办卡、设置浮层、移动端外壳 |
 | `ui/css/graph.css` | graph-dev | 组织图、卡片、状态光边、连线、翻转、图内响应式 |
 | `ui/css/chat.css` | chat-dev | 对话面板、消息、Markdown、工具折叠、输入区、拖宽、手机抽屉 |
-| `ui/js/app.js` | Lead | SSE、选中、发送、拍板、顶栏、左侧栏、dev 钩子 |
+| `ui/js/app.js` | Lead | SSE、选中、发送、拍板、顶栏、设置/主题、dev 钩子 |
 | `ui/js/ask.js` | Lead | 待办卡渲染 |
 | `ui/js/format.js` | Lead | 转义、token、状态、工具名、人物色相 |
 | `ui/js/icons.js` | Lead | 内联 SVG 图标 |
@@ -68,23 +83,25 @@
 
 ## 5. DOM 契约（`ui/index.html` 已就位）
 
+单页面，没有侧边导航；待办卡住在对话面板内。
+
 ```
 body[data-chat="open|closed"][data-sheet="open|closed"]
   .app
-    header.topbar  #company-name #company-model #conn #total-tokens #ask-count
+    header.topbar  #stage-sub #conn #chat-toggle #settings-toggle
     .workspace
-      nav.rail          [data-rail="top|ask|chat"] #rail-ask #rail-live #rail-running
-      main.stage        #stage > .stage-inner
-        .stage-head     .stage-title #stage-sub #legend
-        #ask-area
-        section.org     #graph
-        footer.stage-foot #stage-foot-cost
-      .chat-resizer     #chat-resizer（role=separator, tabindex=0）
-      aside.chat        #chat > .chat-head #chat-body .chat-foot
-        .chat-head      #chat-avatar #chat-title #chat-status #chat-status-text #chat-role
-                        #chat-fold #chat-collapse
-        .chat-body      #chat-body（role=log, aria-live=polite）
-        .chat-foot      #composer #input #send #chat-tokens
+      main.stage   #stage > .stage-inner > section.org > #graph
+      .chat-resizer #chat-resizer（role=separator, tabindex=0）
+      aside.chat   #chat
+        .chat-head #chat-avatar #chat-title #chat-status #chat-status-text #chat-role
+                   #chat-tokens #chat-fold #chat-collapse #chat-close
+        .chat-pending #ask-area      ← 待办卡渲染在这里
+        .chat-body #chat-body
+        .chat-foot #composer #input #send
+  .settings #settings（role=dialog）
+      #settings-close
+      [data-theme-option="dark|light|system"]
+      #company-model  #settings-cost
   .scrim #scrim
 ```
 
@@ -121,8 +138,10 @@ export function initChat({ onSend, onInterrupt }) -> {
   setFeed(feed),     // 增量渲染；保留滚动位置与折叠状态
   setLoading(),
   clear(),
-  addLocalQueued(text),
-  toggle(),          // 桌面：收起 / 展开；手机：开 / 关抽屉
+  addLocalQueued(text),   // 乐观显示「已排队」，下一次 feed 到达后由服务端队列接管
+  notify(text, tone),     // 轻提示：tone = "info" | "warn" | "error"
+  toggle(),               // 桌面：收起 / 展开；手机：开 / 关抽屉
+  openSheet(), closeSheet(), expand(),
   updateOrg(org),
 }
 
@@ -151,38 +170,53 @@ LinkView { from:number, to:number, kind:"delegate"|"report"|"escalate"|"decide"|
            at:number, label:string, project?:string }
 
 Feed { conversationId, title, role, kind, items[], streaming?, thinking?, running[], busy,
-       queued[{id,text,mode}], tokens, awaitingOwner }
+       queued[{id,text,mode,origin:"owner"|"agent",from?}], tokens, awaitingOwner }
 FeedItem =
   | { kind:"user", id, text, at }
   | { kind:"assistant", id, text, at }
   | { kind:"thinking", id, text, at }
-  | { kind:"tool", id, name, args, output, state:"running"|"ok"|"error", collapsible, at }
+  | { kind:"tool", id, name, args, output,
+      state:"running"|"ok"|"error"|"interrupted", collapsible, callId?, at }
   | { kind:"note", id, text, at }
   | { kind:"alert", id, text, at }
 ```
 
-**连线规则**：`links` 只保留最近约 2 小时的沟通；界面只画 20 分钟内、首尾都能在图上
-找到锚点的边；自己到自己的边（升级链）跳过。边按 `at` 越新越亮，超过 20 分钟不画。
+`running[]` 只包含**尚未提交**的实时工具调用；已提交的 toolCall 由 `items` 里的卡片展示，
+并用 `callId` 对齐，避免同一调用出现两张卡。`state:"interrupted"` 表示工具调用提交了但
+永远没有结果（中断/进程退出），界面显示「已中断」而不是永远「运行中」。
+`queued[].origin:"agent"` 是别的 agent 派来的任务：界面显示「由 X 派来」，不提供「立即处理」。
+
+**连线规则**：
+- 服务端把「历史沟通」（TrailDoc）与「正在进行的派活/转交」（进程内 live registry）合并进 `links`；
+  后者在答完后立即转成历史边，所以连线不会在完成的瞬间断掉。
+- 界面画 24 小时内、最多 16 条边；按 `at` 越新越亮。自环（旧升级链）跳过。
+- 历史边可能指向已经换过/归档的员工会话；这类端点如果带 `project`，聚合到项目卡上，
+  不再因为「找不到锚点」整条丢弃。
 
 ## 8. 动效规则
 
-- 入场：卡片只在首次出现时 stagger 上浮 8px + 淡入，延迟 `index * 22ms`，最多 12 个。
+- 不做卡片入场：组织图是工作台，不是落地页。唯一的一次编排是项目翻面。
 - 状态变化：只过渡边框色 / 背景 / 透明度 180ms，不做缩放弹跳。
-- 连线：`stroke-dasharray` 流动，方向 from → to；最近 60 秒的边加一个沿路径移动的光点。
-- 翻转：520ms，`transform: rotateX(180deg)`，透视 1400px；高度由 JS 过渡，翻完重算连线。
-- 对话切换：旧内容 100ms 淡出，新内容 160ms 淡入上移 4px；**不改变面板宽度**。
+- 连线：底层实线 1.8px（按年龄 0.4–0.85 透明度），方向靠一段 4.2–5px 亮色短划沿路径移动，短划带很轻的同色光。
+- 翻转：460ms，`transform: rotateX(180deg)`，透视 1400px；高度由 JS 过渡，翻完重算连线。
+- 对话切换：120ms 淡入；**不改变面板宽度**。
 - 全部动效在 `prefers-reduced-motion: reduce` 下禁用。
 
 ## 9. 布局与移动端
 
-- 桌面（≥ 861px）：顶栏 56px；左侧栏 56px；中间舞台自适应；右侧对话常驻，默认 480px，
+- **单页面**：顶栏 + 组织图 + 常驻对话；没有左侧栏、没有独立待办页、没有底部提示条。
+- 桌面（≥ 861px）：顶栏 54px；组织图自适应；右侧对话常驻，默认 480px，
   可拖动 `#chat-resizer` 调整（360–760px，双击复位，宽度存 localStorage）。
-- 平板（861–1100px）：对话 420px，高管层两列，项目一列或两列。
-- 手机（≤ 860px）：左侧栏变成底部三个图标；对话变成底部抽屉（高 82dvh，可下拉关闭）；
-  组织图单列；卡片点击区域 ≥ 44px；输入区避开安全区。
+- 平板（861–1100px）：对话 430px，高管层两列，项目一列。
+- 手机（≤ 860px）：顶栏只留品牌图标 / 对话 / 设置；对话变成底部抽屉
+  （高 82dvh，可下拉关闭）；组织图单列；卡片点击区域 ≥ 44px；输入区避开安全区。
 - **点击卡片不得让主视图跳动**：对话宽度不因选中而改变；组织图不整块重绘。
 - 所有交互有可见焦点；`Esc` 关手机抽屉；`Enter` 发送，`Shift+Enter` 换行。
 - 页面禁止横向滚动。
+- 待办（forYou 的 pending）渲染在 `#ask-area`（对话面板顶部），不进入组织图舞台；
+  待办数量只出现在 CEO 卡上（不再在顶栏重复一个入口），点 CEO 卡即可在对话顶部处理。
+- 成本不在页脚常驻，放在设置里的「成本」；会话 token 在对话头部。
+- 主题：深色 / 浅色 / 跟随系统，右上角设置里切换；`?theme=light|dark` 可临时预览。
 
 ## 10. 验收（必须执行）
 
@@ -193,6 +227,10 @@ node scripts/ui-shot.mjs --url http://127.0.0.1:7789/ --out .taste-skill/shots -
   --sizes 390x844 --mobile
 node scripts/ui-shot.mjs --url http://127.0.0.1:7789/ --out .taste-skill/shots --name states \
   --do "click:.project-front" --do "wait:800" --do "shot:flipped" --do "click:[data-conv='7']" --do "wait:900"
+
+# 假数据：在跑 / 待你 / 连线 / 思考 / 工具失败 / Markdown / 排队 / 流式
+node scripts/ui-shot.mjs --url "http://127.0.0.1:7789/?dev" --out .taste-skill/shots \
+  --name mock --sizes 1440x900 --eval "__company.useMock()" --wait 900
 ```
 
 - 截图必须自己打开看（`read_image`），只看代码不算验收。

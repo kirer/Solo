@@ -135,6 +135,36 @@ await rt.close();
 sqlite3 workspace/company.sqlite "PRAGMA integrity_check;"
 ```
 
+如果是**同时开了两个进程**导致的 `ID ... already belongs to entry`，先确认只剩一个进程：
+
+```bash
+lsof -nP -iTCP:7788 -sTCP:LISTEN
+```
+
+另一个进程写坏的通常是 `pi.live`（实时生成状态，短暂且可重建）。停掉所有进程后可以删掉它再启动：
+
+```bash
+sqlite3 workspace/company.sqlite <<'EOF'
+DELETE FROM document_revisions WHERE document_id IN (SELECT id FROM documents WHERE kind='"pi.live"');
+DELETE FROM documents WHERE kind='"pi.live"';
+EOF
+```
+
+不要让两个进程同时打开同一个 `--db`：底层没有跨进程锁，除了 ID 冲突，还可能把文档 delta 写坏
+（表现为 `PathError: unresolvable path: ["generation","message","content",...]`）。
+
+### 员工一直卡在「运行中 / 等待输出…」
+
+先看 `curl -s http://127.0.0.1:7788/api/org` 里谁在忙。如果工具卡在 `delegate_to_role` /
+`delegate_to_leader`，说明发生了跨会话同步等待。新版本已经：
+
+- 在进入同步转交前做环检测（`src/company/delegation-guard.ts`），有环直接拒绝；
+- 目标会话忙碌时快速失败，不再排队等；
+- 转交等待绑定工具 `Context`，老板点「立即处理」可以打断。
+
+如果升级前留下了卡死进程，重启一次即可（重启会把挂起的工具标成中断）；仍卡住时按上面的
+`restart_limit` 或 `pi.live` 清理处理。
+
 ### 成本数字对不上
 
 按顺序检查：

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>一人公司</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="app">
+	<main class="stage" id="stage">
+		<div class="topbar">
+			<span class="brand" id="company-name">一人公司</span>
+			<span class="meta mono" id="company-model"></span>
+			<span class="right">
+				<span>全公司 <b class="mono" id="total-tokens">0</b> tokens</span>
+				<span>待你拍板 <b class="mono" id="ask-count">0</b></span>
+			</span>
+		</div>
+
+		<div id="ask-area"></div>
+
+		<div class="graph" id="graph">
+			<div class="empty"><b>正在连接…</b><p>如果一直这样，检查终端里服务是否还在运行</p></div>
+		</div>
+	</main>
+
+	<aside class="panel" id="panel" aria-label="对话">
+		<header class="panel-head">
+			<span class="dot" data-state="idle" id="panel-dot"></span>
+			<span class="t">
+				<b id="panel-title">—</b>
+				<em id="panel-role"></em>
+			</span>
+			<button class="close" id="panel-close" aria-label="关闭">✕</button>
+		</header>
+
+		<div class="panel-body" id="panel-body"></div>
+
+		<footer class="panel-foot">
+			<div class="composer">
+				<textarea id="input" rows="1" placeholder="说点什么…（Enter 发送，Shift+Enter 换行）"></textarea>
+				<button class="send" id="send" aria-label="发送">↑</button>
+			</div>
+			<div class="hint">
+				<span><kbd>Enter</kbd> 发送</span>
+				<span><kbd>Esc</kbd> 关闭</span>
+				<span id="panel-tokens"></span>
+			</div>
+		</footer>
+	</aside>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

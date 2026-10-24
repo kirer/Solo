@@ -1,10 +1,10 @@
 /**
- * 一人公司 · 网页界面入口。
+ * 一人公司 · 网页界面入口（单页面）。
  *
- * 只做四件事：订阅数据、切换会话、发消息、把状态分发给三个视图模块。
- * 视图不直接读 SSE，也不互相调用；所有跨模块动作都从这里走。
+ * 一屏之内：顶栏（设置 / 待办 / 对话开关）+ 组织图 + 常驻对话。
+ * 只做四件事：订阅数据、切换会话、发消息、把状态分发给视图模块。
  */
-import { escapeHtml, formatCost, formatTokens, relTime, statusOf } from "./format.js";
+import { escapeHtml, formatCost, formatTokens } from "./format.js";
 import { initAsk } from "./ask.js";
 import { initOrg } from "./org.js";
 import { initChat } from "./chat.js";
@@ -14,15 +14,16 @@ const MOBILE_QUERY = window.matchMedia("(max-width: 860px)");
 
 const state = {
 	org: null,
-	/** 当前打开的会话标识。 */
 	openId: null,
 	orgSource: null,
 	feedSource: null,
 	/** 开发钩子：冻结 SSE，用于注入假数据做视觉验收。 */
 	freeze: false,
 	connected: true,
-	/** 已经自动选过一次 CEO，避免每次组织更新都抢焦点。 */
 	autoSelected: false,
+	chromeSignature: "",
+	actorSignature: "",
+	lastFeedNoticeAt: 0,
 };
 
 const ask = initAsk({ onAnswer: submitAnswer });
@@ -57,9 +58,13 @@ function applyOrg(next) {
 	orgView.update(next);
 
 	const actor = state.openId === null ? null : findActor(next, state.openId);
-	if (actor !== null) chat.setActor(actor);
-	else if (state.openId !== null && actor === null) {
-		// 会话所属的项目/员工没了（删项目）：清空对话，停在空状态
+	if (actor !== null) {
+		const signature = `${actor.conversationId}:${actor.status}:${actor.tokens}:${actor.activity}:${actor.awaitingYou}:${actor.label}`;
+		if (signature !== state.actorSignature) {
+			state.actorSignature = signature;
+			chat.updateOrg(next);
+		}
+	} else if (state.openId !== null) {
 		state.openId = null;
 		closeFeed();
 		chat.clear();
@@ -75,59 +80,37 @@ function applyOrg(next) {
 }
 
 function renderChrome(org) {
-	$("company-name").textContent = org.company?.name || "一人公司";
-	$("company-model").textContent = org.company?.model ?? "";
+	const companyName = $("company-name");
+	if (companyName !== null) companyName.textContent = org.company?.name || "一人公司";
+	$("company-model").textContent = org.company?.model ?? "—";
 	$("company-model").title = org.company?.model ?? "";
-	$("total-tokens").textContent = formatTokens(org.costs?.totalTokens ?? 0);
-	$("total-tokens").title = `${org.costs?.totalTokens ?? 0} tokens`;
 
 	const forYou = (org.pending ?? []).filter((item) => item.forYou);
-	$("ask-count").textContent = String(forYou.length);
-	$("topstat-ask").dataset.zero = forYou.length === 0 ? "1" : "0";
-	const railAsk = $("rail-ask");
-	railAsk.textContent = String(forYou.length);
-	railAsk.hidden = forYou.length === 0;
 
 	const actors = allActors(org);
 	const busy = actors.filter((actor) => actor.status === "busy").length;
-	const waiting = actors.filter((actor) => statusOf(actor) === "waiting").length;
-	const idle = actors.length - busy - waiting;
 	const activeProjects = (org.projects ?? []).filter((project) => project.status !== "terminated");
 	const staffCount = (org.projects ?? []).reduce(
 		(total, project) => total + (project.staff ?? []).filter((person) => !person.archived).length,
 		0,
 	);
 
-	$("stage-sub").innerHTML = `${activeProjects.length} 个项目 · ${staffCount} 名员工 · ${
-		forYou.length === 0
-			? "没有待你拍板的事"
-			: `<b>${forYou.length}</b> 件等你拍板`
-	}`;
+	const signature = `${activeProjects.length}:${staffCount}:${forYou.length}:${busy}`;
+	if (signature !== state.chromeSignature) {
+		state.chromeSignature = signature;
+		const parts = [
+			`${activeProjects.length} 个项目`,
+			`${staffCount} 名员工`,
+			busy > 0 ? `${busy} 人在跑` : null,
+		].filter((part) => part !== null);
+		$("stage-sub").innerHTML = parts.join(" · ");
+	}
 
-	$("legend").innerHTML = [
-		["busy", "在跑", busy],
-		["waiting", "待你", waiting],
-		["idle", "空闲", idle],
-	]
-		.map(
-			([status, label, count]) => `
-			<span class="legend-item">
-				<i class="legend-dot" data-status="${status}"></i>${label}
-				<b>${count}</b>
-			</span>`,
-		)
-		.join("");
-
-	$("rail-running").textContent = String(busy);
-	$("rail-running").dataset.busy = busy > 0 ? "1" : "0";
-	$("rail-running").title = `${busy} 人正在工作`;
-
+	const tokens = formatTokens(org.costs?.totalTokens ?? 0);
 	const cost = formatCost(org.costs?.totalCostUsd ?? 0);
-	$("stage-foot-cost").textContent = `全公司 ${formatTokens(org.costs?.totalTokens ?? 0)} tokens · ${cost}`;
+	$("settings-cost").textContent = `${tokens} tokens · ${cost}`;
 
-	document.title =
-		forYou.length > 0 ? `(${forYou.length}) 一人公司 · 指挥台` : "一人公司 · 指挥台";
-	updateRail();
+	document.title = forYou.length > 0 ? `(${forYou.length}) 一人公司` : "一人公司";
 }
 
 function allActors(org) {
@@ -153,7 +136,6 @@ function selectConversation(conversationId, options = {}) {
 	const openSheet = options.openSheet ?? true;
 
 	if (state.openId === id) {
-		// 再点同一个人：不重载，只把对话拉到眼前
 		chat.setActor(actor);
 		if (mobile && openSheet) openMobileSheet();
 		else chat.expand?.();
@@ -161,9 +143,11 @@ function selectConversation(conversationId, options = {}) {
 	}
 
 	state.openId = id;
+	state.actorSignature = `${actor.conversationId}:${actor.status}:${actor.tokens}:${actor.activity}:${actor.awaitingYou}:${actor.label}`;
 	orgView.setSelected(id);
 	chat.setActor(actor);
 	chat.setLoading();
+	if (!mobile) chat.expand?.();
 	openFeed(id);
 
 	if (mobile && openSheet) openMobileSheet();
@@ -172,17 +156,16 @@ function selectConversation(conversationId, options = {}) {
 	try {
 		history.replaceState(null, "", `#/c/${id}`);
 	} catch {
-		/* file:// 下 replaceState 可能被拒，不影响使用 */
+		/* file:// 下 replaceState 可能被拒 */
 	}
-	updateRail();
 }
 
 function openFeed(conversationId) {
 	closeFeed();
+	// 开发钩子灌假数据时不要连真实会话流：假会话在库里不存在，会一直重连。
+	if (state.freeze) return;
 	const source = new EventSource(`/api/stream/feed/${conversationId}`);
-	source.addEventListener("open", () => {
-		setConnected(true);
-	});
+	source.addEventListener("open", () => setConnected(true));
 	source.addEventListener("feed", (event) => {
 		setConnected(true);
 		if (state.freeze) return;
@@ -195,8 +178,11 @@ function openFeed(conversationId) {
 		chat.setFeed(feed);
 	});
 	source.onerror = () => {
-		// 不断开 EventSource：浏览器会自动重连。界面只提示一下，别让对话消失。
-		chat.notify?.("连接有点慢，正在重连…", "warn");
+		const now = Date.now();
+		if (now - state.lastFeedNoticeAt > 12_000) {
+			state.lastFeedNoticeAt = now;
+			chat.notify?.("连接有点慢，正在重连…", "warn");
+		}
 	};
 	state.feedSource = source;
 }
@@ -211,28 +197,138 @@ function conversationFromHash() {
 	return match === null ? null : Number(match[1]);
 }
 
-// ── 手机抽屉 ──────────────────────────────────────────────────────────────
+// ── 手机抽屉 / 对话开关 ───────────────────────────────────────────────────
 
 function openMobileSheet() {
+	document.body.dataset.chat = "open";
 	document.body.dataset.sheet = "open";
 	chat.openSheet?.();
-	updateRail();
+	syncChatButton();
 }
 
 function closeMobileSheet() {
 	document.body.dataset.sheet = "closed";
 	chat.closeSheet?.();
-	updateRail();
+	syncChatButton();
 }
 
-function updateRail() {
-	const mobile = MOBILE_QUERY.matches;
-	const chatOpen = mobile && document.body.dataset.sheet === "open";
-	for (const button of document.querySelectorAll(".rail-btn")) {
-		const action = button.dataset.rail;
-		const active = chatOpen ? action === "chat" : action === "top";
-		button.classList.toggle("is-active", active);
+function toggleChat() {
+	if (MOBILE_QUERY.matches) {
+		if (document.body.dataset.sheet === "open") {
+			closeMobileSheet();
+			return;
+		}
+		if (state.openId !== null) {
+			openMobileSheet();
+			return;
+		}
+		if (state.org?.ceo !== undefined) {
+			selectConversation(state.org.ceo.conversationId, { openSheet: true });
+		}
+		return;
 	}
+	chat.toggle();
+	syncChatButton();
+}
+
+function syncChatButton() {
+	const mobile = MOBILE_QUERY.matches;
+	const open = mobile
+		? document.body.dataset.sheet === "open"
+		: document.body.dataset.chat === "open";
+	const button = $("chat-toggle");
+	if (button !== null) button.setAttribute("aria-pressed", open ? "true" : "false");
+}
+
+// ── 设置 ──────────────────────────────────────────────────────────────────
+
+const THEME_KEY = "ai-company.theme";
+const THEME_LABEL = { dark: "深色", light: "浅色", system: "跟随系统" };
+const THEME_BG = { dark: "#0b0c0e", light: "#f5f5f2" };
+const systemLight = window.matchMedia("(prefers-color-scheme: light)");
+let themeMode = document.documentElement.dataset.theme || "system";
+
+function resolvedTheme(mode) {
+	if (mode === "system") return systemLight.matches ? "light" : "dark";
+	return mode === "light" ? "light" : "dark";
+}
+
+function applyTheme(mode, { persist = true } = {}) {
+	themeMode = THEME_LABEL[mode] === undefined ? "system" : mode;
+	const resolved = resolvedTheme(themeMode);
+	document.documentElement.dataset.theme = themeMode;
+	document.documentElement.dataset.resolved = resolved;
+	if (persist) {
+		try {
+			localStorage.setItem(THEME_KEY, themeMode);
+		} catch {
+			/* 隐私模式下 localStorage 可能不可写 */
+		}
+	}
+	const meta = document.querySelector('meta[name="theme-color"]');
+	if (meta !== null) meta.setAttribute("content", THEME_BG[resolved]);
+
+	for (const option of document.querySelectorAll("[data-theme-option]")) {
+		const checked = option.dataset.themeOption === themeMode;
+		option.setAttribute("aria-checked", checked ? "true" : "false");
+		option.classList.toggle("is-active", checked);
+	}
+}
+
+function setupSettings() {
+	const panel = $("settings");
+	const toggle = $("settings-toggle");
+	const close = $("settings-close");
+	if (panel === null || toggle === null) return;
+	applyTheme(themeMode, { persist: false });
+
+	const closePanel = ({ focus = true } = {}) => {
+		panel.hidden = true;
+		toggle.setAttribute("aria-expanded", "false");
+		if (focus) toggle.focus({ preventScroll: true });
+	};
+	const openPanel = () => {
+		panel.hidden = false;
+		toggle.setAttribute("aria-expanded", "true");
+		panel.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
+	};
+
+	toggle.addEventListener("click", (event) => {
+		event.stopPropagation();
+		if (panel.hidden) openPanel();
+		else closePanel();
+	});
+	close?.addEventListener("click", () => closePanel());
+	const themeOptions = [...panel.querySelectorAll("[data-theme-option]")];
+	for (const option of themeOptions) {
+		option.addEventListener("click", () => applyTheme(option.dataset.themeOption));
+	}
+	// APG radiogroup：方向键切换并移动焦点
+	panel.querySelector(".settings-theme")?.addEventListener("keydown", (event) => {
+		const steps = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
+		const step = steps[event.key];
+		if (step === undefined) return;
+		const index = themeOptions.indexOf(document.activeElement);
+		if (index === -1) return;
+		event.preventDefault();
+		const next = themeOptions[(index + step + themeOptions.length) % themeOptions.length];
+		next.focus();
+		applyTheme(next.dataset.themeOption);
+	});
+	document.addEventListener("click", (event) => {
+		if (panel.hidden) return;
+		if (panel.contains(event.target) || toggle.contains(event.target)) return;
+		closePanel({ focus: false });
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key === "Escape" && !panel.hidden) {
+			event.preventDefault();
+			closePanel();
+		}
+	});
+	systemLight.addEventListener("change", () => {
+		if (themeMode === "system") applyTheme("system", { persist: false });
+	});
 }
 
 // ── 动作 ──────────────────────────────────────────────────────────────────
@@ -309,7 +405,6 @@ function connectOrg() {
 	source.onerror = () => setConnected(false);
 	state.orgSource = source;
 
-	// 兜底：连接一直没成功时给出人话，不留白屏
 	setTimeout(() => {
 		if (state.org === null && !state.freeze) {
 			showFatal("连不上服务。检查终端里 npm start 是否还在运行。");
@@ -319,42 +414,21 @@ function connectOrg() {
 
 function setConnected(on) {
 	state.connected = on;
-	$("conn").dataset.state = on ? "on" : "off";
-	$("conn").title = on ? "实时连接正常" : "连接断开，正在自动重连";
-	$("conn").querySelector(".conn-text").textContent = on ? "实时" : "重连中";
-	$("rail-live").dataset.state = on ? "on" : "off";
+	const conn = $("conn");
+	if (conn === null) return;
+	conn.dataset.state = on ? "on" : "off";
+	conn.hidden = on;
+	conn.title = on ? "实时连接正常" : "连接断开，正在自动重连";
 }
 
 function showFatal(message) {
 	$("graph").innerHTML = `<div class="graph-loading">${escapeHtml(message)}</div>`;
 	$("stage-sub").textContent = "服务未连接";
-	$("legend").innerHTML = "";
 }
 
 // ── 交互绑定 ──────────────────────────────────────────────────────────────
 
-document.querySelector(".rail").addEventListener("click", (event) => {
-	const button = event.target.closest("[data-rail]");
-	if (button === null) return;
-	const action = button.dataset.rail;
-	if (action === "top") {
-		$("stage").scrollTo({ top: 0, behavior: "smooth" });
-	} else if (action === "ask") {
-		const card = document.querySelector(".ask");
-		if (card !== null) card.scrollIntoView({ behavior: "smooth", block: "center" });
-		else $("stage").scrollTo({ top: 0, behavior: "smooth" });
-	} else if (action === "chat") {
-		if (MOBILE_QUERY.matches) {
-			if (document.body.dataset.sheet === "open") closeMobileSheet();
-			else if (state.openId !== null) openMobileSheet();
-			else if (state.org?.ceo !== undefined) {
-				selectConversation(state.org.ceo.conversationId, { openSheet: true });
-			}
-		} else {
-			chat.toggle();
-		}
-	}
-});
+$("chat-toggle").addEventListener("click", toggleChat);
 
 $("scrim").addEventListener("click", () => {
 	if (state.openId !== null) closeMobileSheet();
@@ -363,25 +437,26 @@ $("scrim").addEventListener("click", () => {
 document.addEventListener("keydown", (event) => {
 	if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
 		event.preventDefault();
-		if (MOBILE_QUERY.matches) {
-			if (document.body.dataset.sheet === "open") closeMobileSheet();
-			else if (state.openId !== null) openMobileSheet();
-		} else {
-			chat.toggle();
-		}
+		toggleChat();
 	}
 });
 
 MOBILE_QUERY.addEventListener("change", () => {
 	if (MOBILE_QUERY.matches) {
-		if (document.body.dataset.chat === "closed") chat.expand?.();
+		document.body.dataset.sheet = "closed";
 	} else {
 		document.body.dataset.sheet = "closed";
 		chat.closeSheet?.();
 	}
-	updateRail();
+	syncChatButton();
 	orgView.refreshLayout();
 });
+
+// 对话面板自己的收起/展开（按钮点击、拖宽）也会改变按钮状态
+if (typeof MutationObserver === "function") {
+	const observer = new MutationObserver(syncChatButton);
+	observer.observe(document.body, { attributes: true, attributeFilter: ["data-chat", "data-sheet"] });
+}
 
 window.addEventListener("resize", () => orgView.refreshLayout());
 window.addEventListener("hashchange", () => {
@@ -414,11 +489,17 @@ if (new URLSearchParams(location.search).has("dev")) {
 		org: orgView,
 		chat,
 	};
+	import("./dev-fixtures.js").then((fixtures) => {
+		window.__company.useMock = () => fixtures.useMock();
+		window.__company.mockOrg = () => fixtures.mockOrg();
+		window.__company.mockFeed = (conversationId) => fixtures.mockFeed(conversationId);
+	});
 }
 
 // ── 启动 ──────────────────────────────────────────────────────────────────
 
 $("scrim").hidden = false;
 chat.clear();
+setupSettings();
+syncChatButton();
 connectOrg();
-void relTime;

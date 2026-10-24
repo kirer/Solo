@@ -223,10 +223,12 @@ export async function createApp(options: AppOptions): Promise<App> {
 		await refresh();
 	};
 
-	/** 进入拍板模式：答复最早的一条等老板决的问题。 */
+	/** 进入拍板模式：只答「CEO 报上来、等老板决」的问题。 */
 	const startAnswering = async (): Promise<void> => {
 		const pending = await listPending(runtime, BACKGROUND_CONTEXT);
-		const target = pending.find((item) => item.level === "owner") ?? pending[0];
+		// 只有 owner 级才是等老板的。CEO 队列里的问题由 CEO 自己答，
+		// 老板不该被拉到别人的授权范围里做决定。
+		const target = pending.find((item) => item.level === "owner");
 		if (target === undefined) return;
 
 		answering = { key: target.key, question: target.question };

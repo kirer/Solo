@@ -12,7 +12,7 @@
  * 4. 挂上崩溃自愈
  * 5. 启动界面
  */
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	createRegistry,
@@ -38,13 +38,15 @@ function parseArgs(argv: readonly string[]): { db: string; company: string; work
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
 		if (arg === "--db" && argv[index + 1] !== undefined) {
-			db = argv[index + 1] as string;
+			db = resolve(argv[index + 1] as string);
 			index += 1;
 		} else if (arg === "--company" && argv[index + 1] !== undefined) {
 			company = argv[index + 1] as string;
 			index += 1;
 		} else if (arg === "--workspace" && argv[index + 1] !== undefined) {
-			workspace = argv[index + 1] as string;
+			// 关键：workspaceRoot 从这里派生，必须是绝对路径，否则会话 cwd 会被
+			// 执行环境再拼一次进程目录，目录不存在、员工所有命令失败。
+			workspace = resolve(argv[index + 1] as string);
 			index += 1;
 		}
 	}

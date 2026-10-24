@@ -26,9 +26,12 @@ export type FeedItem =
 			readonly args: string;
 			/** 结果正文；未完成时为空。 */
 			readonly output: string;
-			readonly state: "running" | "ok" | "error";
+			/** running：正在执行；interrupted：中断后再也没拿到结果。 */
+			readonly state: "running" | "ok" | "error" | "interrupted";
 			/** 输出过长时折叠。 */
 			readonly collapsible: boolean;
+			/** 底层工具调用 ID，用于和实时状态对齐。 */
+			readonly callId?: string;
 			readonly at: number;
 	  }
 	/** 系统留痕（派活、回报、升级等）。 */
@@ -56,6 +59,10 @@ export type Feed = {
 		readonly id: number;
 		readonly text: string;
 		readonly mode: "steer" | "followUp";
+		/** owner：老板自己发的；agent：别的 agent 派来的任务。 */
+		readonly origin: "owner" | "agent";
+		/** agent 来源时，是谁派来的。 */
+		readonly from?: string;
 	}[];
 	/** 该会话的用量。 */
 	readonly tokens: number;
@@ -78,19 +85,32 @@ export async function readFeed(
 	const limit = options.limit ?? 400;
 	const page = await conversation.entries({ order: "ascending" }, limit, undefined, context);
 
+	// 已提交的工具调用：用来给实时卡片补参数、判断哪些调用真的拿到了结果
+	const committed = collectCommittedTools(page.items);
 	const items = buildItems(page.items);
 
-	// 实时状态：正在生成、正在思考、正在跑的工龄
+	// 实时状态：正在生成、正在思考、正在跑的工具
 	const view = await conversation.watch(context);
 	const live = view.value.docs["pi.live"] as LiveShape | undefined;
 	await view.stop();
 
 	const streaming = collectLiveText(live, "text");
 	const thinking = collectLiveText(live, "thinking");
-	const running = Object.entries(live?.tools ?? {}).map(([name, tool]) => ({
-		name: tool.name ?? name,
-		args: summarize(tool.args ?? tool.details ?? ""),
-	}));
+
+	// pi.live 只存 callId / name / taskId / status，不存参数。
+	// 已经提交过的调用交给 buildItems 的卡片展示，避免同一调用出现两张卡片；
+	// 其余实时调用从已提交的 assistant 工具参数里回填，不再显示「（无参数）」。
+	// pi.live 的 tools 以内部键索引，优先用值里的 callId 对齐已提交调用
+	const liveEntries = Object.entries(live?.tools ?? {}).map(
+		([key, tool]) => [tool.callId ?? key, tool] as const,
+	);
+	const liveCallIds = new Set(liveEntries.map(([callId]) => callId));
+	const running = liveEntries
+		.filter(([callId]) => !committed.has(callId))
+		.map(([callId, tool]) => ({
+			name: tool.name ?? callId,
+			args: summarize(tool.args ?? tool.details ?? committed.get(callId)?.arguments ?? ""),
+		}));
 
 	// 是否真的在忙：不能只看有没有流式文本——模型思考阶段没有正文，
 	// 但确实在跑。以任务状态为准，再看流式内容兜底。
@@ -101,13 +121,44 @@ export async function readFeed(
 			(task.state.kind === "running" || task.state.kind === "ready" || task.state.kind === "waiting"),
 	);
 
+	// 中断过的工具调用：assistant 里提交了 toolCall，但永远没有 tool-result，
+	// 也没有实时工具在跑。以前它会永远显示「运行中 / 等待输出…」。
+	if (!hasLiveTask && running.length === 0) {
+		for (let index = 0; index < items.length; index += 1) {
+			const item = items[index];
+			if (item?.kind !== "tool" || item.state !== "running" || item.callId === undefined) continue;
+			if (liveCallIds.has(item.callId)) continue;
+			if (committed.get(item.callId)?.hasResult === true) continue;
+			items[index] = {
+				...item,
+				state: "interrupted",
+				output: "（已中断：这次工具调用没有返回结果）",
+			};
+		}
+	}
+
 	// 排队的消息：已经提交但还没进入对话。
 	// 不显示的话，老板会以为「消息没发出去」——它其实在等当前这轮结束。
 	const inbox = await runtime.harness.snapshot(await inboxToken(), conversationId as never, context);
 	const queued = (inbox?.items ?? []).flatMap((item) => {
 		if (item.mode === "write") return [];
 		const text = inboxText(item.content);
-		return text === "" ? [] : [{ id: Number(item.id), text, mode: item.mode }];
+		if (text === "") return [];
+		// 别的 agent 派来的任务会带 app.delegate 标记；老板自己发的没有 entry。
+		// 不区分的话，员工会话里的派活会显示成「你的排队消息 / 立即处理」。
+		const entry = item.entry as
+			| { readonly kind?: string; readonly data?: { readonly from?: string } }
+			| undefined;
+		const delegated = entry?.kind === "app.delegate";
+		return [
+			{
+				id: Number(item.id),
+				text,
+				mode: item.mode,
+				origin: delegated ? ("agent" as const) : ("owner" as const),
+				...(delegated ? { from: entry?.data?.from ?? "协作方" } : {}),
+			},
+		];
 	});
 
 	const usage = await runtime.harness.snapshot(await usageToken(), conversationId as never, context);
@@ -137,8 +188,51 @@ type LiveShape = {
 	readonly generation?: {
 		readonly partial?: { readonly content?: readonly { readonly type: string; readonly text?: string; readonly thinking?: string }[] };
 	};
-	readonly tools?: Record<string, { readonly name?: string; readonly args?: unknown; readonly details?: unknown }>;
+	readonly tools?: Record<
+		string,
+		{
+			readonly name?: string;
+			readonly callId?: string;
+			readonly status?: string;
+			readonly args?: unknown;
+			readonly details?: unknown;
+		}
+	>;
 };
+
+/** 已提交的工具调用：参数 + 是否已有结果。 */
+type CommittedTool = {
+	readonly arguments: unknown;
+	readonly hasResult: boolean;
+};
+
+/** 扫描已提交条目，整理出 callId → 工具调用信息。 */
+function collectCommittedTools(
+	entries: readonly {
+		readonly kind: string;
+		readonly model?: readonly unknown[];
+	}[],
+): Map<string, CommittedTool> {
+	const calls = new Map<string, { arguments: unknown; hasResult: boolean }>();
+
+	for (const entry of entries) {
+		if (entry.kind === "pi.assistant") {
+			const message = entry.model?.[0] as
+				| { readonly content?: readonly { readonly type: string; readonly id?: string; readonly arguments?: unknown }[] }
+				| undefined;
+			for (const part of message?.content ?? []) {
+				if (part.type !== "toolCall" || part.id === undefined) continue;
+				calls.set(part.id, { arguments: part.arguments, hasResult: false });
+			}
+		} else if (entry.kind === "pi.tool-result") {
+			const message = entry.model?.[0] as { readonly toolCallId?: string } | undefined;
+			const existing = message?.toolCallId === undefined ? undefined : calls.get(message.toolCallId);
+			if (existing !== undefined) existing.hasResult = true;
+		}
+	}
+
+	return calls;
+}
 
 /** 从实时生成里取某类文本。 */
 function collectLiveText(live: LiveShape | undefined, type: "text" | "thinking"): string {
@@ -205,6 +299,7 @@ function buildItems(
 							output: "",
 							state: "running",
 							collapsible: false,
+							...(part.id === undefined ? {} : { callId: part.id }),
 							at,
 						});
 						if (part.id !== undefined) pendingTools.set(part.id, index);

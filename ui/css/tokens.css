@@ -1,57 +1,109 @@
 /* ============================================================================
-   一人公司 · 视觉基座
-   令牌、reset、排版、焦点、滚动条、动效降级。
-   组件样式在 shell.css / graph.css / chat.css，不要在这里堆组件。
+   一人公司 · 视觉基座（v3：双主题）
+   深色：冷石墨 + 骨白墨 + 电光蓝 / 琥珀 / 珊瑚的状态墨。
+   浅色：纸白 + 墨黑 + 同一组状态墨（加深以保证对比度）。
+   形状：2px 直角、1px 精确边框；颜色只表示状态，不做霓虹光与渐变。
+   等宽字体只留给代码 / 命令 / 型号。
    ========================================================================== */
 
+/* ── 深色（默认） ─────────────────────────────────────────────────────── */
 :root {
-	/* 明度层级：地 → 面板 → 抬起 */
-	--bg: #08090c;
-	--bg-2: #0a0c10;
-	--surface: #0e1116;
-	--surface-2: #12161c;
-	--surface-3: #171c23;
-	--surface-4: #1d232b;
+	--bg: #0b0c0e;
+	--bg-2: #0f1013;
+	--surface: #14161a;
+	--surface-2: #1a1d22;
+	--surface-3: #20232a;
+	--surface-4: #262a32;
 
-	/* 线 */
-	--line: #20262f;
-	--line-soft: #191e26;
-	--line-strong: #2c3440;
+	--line: #272b32;
+	--line-soft: #1d2026;
+	--line-strong: #363b44;
 
-	/* 墨 */
-	--ink: #e8ecf2;
-	--ink-2: #c5ccd6;
-	--muted: #8b94a1;
-	--faint: #5d6672;
-	--ghost: #414954;
+	--ink: #e8ebf0;
+	--ink-2: #c4cad4;
+	--muted: #9098a4;
+	--faint: #7b8490;
+	--ghost: #4b525d;
 
-	/* 状态色：只用在状态、身份点和关键数字上 */
-	--accent: #3fe0c4;
-	--accent-strong: #6ff3dc;
-	--accent-soft: rgba(63, 224, 196, 0.12);
-	--accent-line: rgba(63, 224, 196, 0.42);
+	--accent: #5b9cff;
+	--accent-strong: #8bbcff;
+	--accent-soft: rgba(91, 156, 255, 0.12);
+	--accent-line: rgba(91, 156, 255, 0.42);
 
-	--warn: #ffb340;
-	--warn-soft: rgba(255, 179, 64, 0.1);
-	--warn-line: rgba(255, 179, 64, 0.4);
+	--warn: #f2b24c;
+	--warn-soft: rgba(242, 178, 76, 0.1);
+	--warn-line: rgba(242, 178, 76, 0.4);
 
-	--danger: #ff6577;
-	--danger-soft: rgba(255, 101, 119, 0.1);
-	--danger-line: rgba(255, 101, 119, 0.4);
+	--danger: #f27272;
+	--danger-soft: rgba(242, 114, 114, 0.1);
+	--danger-line: rgba(242, 114, 114, 0.4);
 
-	--info: #79b8ff;
-	--info-soft: rgba(121, 184, 255, 0.1);
+	--info: #8fb8e8;
+	--info-soft: rgba(143, 184, 232, 0.1);
 
-	--idle: #3a424d;
+	--idle: #5a626d;
 
-	/* 圆角 */
-	--radius: 14px;
-	--radius-md: 12px;
-	--radius-sm: 10px;
-	--radius-xs: 7px;
+	--selection: rgba(91, 156, 255, 0.24);
+	--scroll-thumb: #2b2f37;
+	--scroll-thumb-hover: #3b404a;
+	--shadow-pop: 0 18px 48px -20px rgba(0, 0, 0, 0.8);
+
+	color-scheme: dark;
+}
+
+/* ── 浅色 ─────────────────────────────────────────────────────────────── */
+[data-resolved="light"] {
+	--bg: #f5f5f2;
+	--bg-2: #fafaf8;
+	--surface: #ffffff;
+	--surface-2: #f6f6f3;
+	--surface-3: #eeeEE9;
+	--surface-4: #e5e5df;
+
+	--line: #e2e1db;
+	--line-soft: #ecebe6;
+	--line-strong: #96958d;
+
+	--ink: #1b1d21;
+	--ink-2: #41454c;
+	--muted: #4f555f;
+	--faint: #6a707a;
+	--ghost: #a3a8b0;
+
+	--accent: #2563eb;
+	--accent-strong: #1d4fd0;
+	--accent-soft: rgba(37, 99, 235, 0.08);
+	--accent-line: rgba(37, 99, 235, 0.35);
+
+	--warn: #8a5200;
+	--warn-soft: rgba(138, 82, 0, 0.08);
+	--warn-line: rgba(138, 82, 0, 0.35);
+
+	--danger: #c24141;
+	--danger-soft: rgba(194, 65, 65, 0.08);
+	--danger-line: rgba(194, 65, 65, 0.35);
+
+	--info: #2a6f97;
+	--info-soft: rgba(42, 111, 151, 0.08);
+
+	--idle: #6f747c;
+
+	--selection: rgba(37, 99, 235, 0.18);
+	--scroll-thumb: #d3d2cc;
+	--scroll-thumb-hover: #bdbcb5;
+	--shadow-pop: 0 18px 48px -20px rgba(20, 22, 26, 0.18);
+
+	color-scheme: light;
+}
+
+/* ── 形状与节奏（两个主题共用） ───────────────────────────────────────── */
+:root {
+	--radius: 2px;
+	--radius-md: 2px;
+	--radius-sm: 2px;
+	--radius-xs: 2px;
 	--radius-pill: 999px;
 
-	/* 间距：延续项目的 8 / 13 / 21 / 34 */
 	--sp-1: 4px;
 	--sp-2: 8px;
 	--sp-3: 13px;
@@ -59,42 +111,31 @@
 	--sp-5: 34px;
 	--sp-6: 55px;
 
-	/* 字号 */
 	--fs-2xs: 10.5px;
 	--fs-xs: 11.5px;
 	--fs-sm: 12.5px;
 	--fs-base: 13.5px;
 	--fs-md: 15px;
-	--fs-lg: 20px;
-	--fs-xl: 28px;
+	--fs-lg: 19px;
+	--fs-xl: 26px;
 
-	/* 字体 */
 	--sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
 		"Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", sans-serif;
 	--mono: "SF Mono", ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo,
 		"Cascadia Code", Consolas, monospace;
 
-	/* 动效 */
-	--dur-fast: 120ms;
-	--dur: 200ms;
-	--dur-slow: 420ms;
-	--dur-flip: 520ms;
-	--ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-	--ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+	--dur-fast: 110ms;
+	--dur: 180ms;
+	--dur-slow: 360ms;
+	--dur-flip: 460ms;
+	--ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+	--ease-spring: cubic-bezier(0.3, 1.1, 0.5, 1);
 
-	/* 结构 */
-	--topbar-h: 56px;
-	--rail-w: 56px;
+	--topbar-h: 54px;
+	--rail-w: 52px;
 	--chat-w: 480px;
 	--chat-min: 360px;
 	--chat-max: 760px;
-
-	/* 阴影：只有浮层与运行中的卡片 */
-	--shadow-pop: 0 18px 48px -18px rgba(0, 0, 0, 0.8);
-	--glow-accent: 0 0 0 1px rgba(63, 224, 196, 0.18), 0 14px 40px -22px rgba(63, 224, 196, 0.55);
-	--glow-warn: 0 0 0 1px rgba(255, 179, 64, 0.16), 0 14px 40px -22px rgba(255, 179, 64, 0.45);
-
-	color-scheme: dark;
 }
 
 *,
@@ -122,26 +163,9 @@ body {
 	text-rendering: optimizeLegibility;
 	overflow: hidden;
 	overscroll-behavior: none;
+	transition: background-color var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
 }
 
-/* 环境光：左上一点冷光，右上一点暖光，加一层极细点阵。极弱，不抢内容。 */
-body::before {
-	content: "";
-	position: fixed;
-	inset: 0;
-	z-index: 0;
-	pointer-events: none;
-	background-image:
-		radial-gradient(1100px 620px at 14% -12%, rgba(63, 224, 196, 0.07), transparent 62%),
-		radial-gradient(900px 520px at 96% -6%, rgba(255, 179, 64, 0.035), transparent 60%),
-		radial-gradient(rgba(255, 255, 255, 0.05) 0.5px, transparent 0.5px);
-	background-size: auto, auto, 22px 22px;
-	opacity: 0.55;
-	mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 42%, transparent 88%);
-	-webkit-mask-image: linear-gradient(to bottom, #000 0%, rgba(0, 0, 0, 0.55) 42%, transparent 88%);
-}
-
-/* 文字与控件 */
 h1, h2, h3, h4, p, figure, blockquote {
 	margin: 0;
 }
@@ -169,11 +193,11 @@ button:disabled {
 a {
 	color: var(--accent);
 	text-decoration: none;
+	text-underline-offset: 2px;
 }
 
 a:hover {
 	text-decoration: underline;
-	text-underline-offset: 2px;
 }
 
 i,
@@ -187,17 +211,25 @@ svg {
 }
 
 ::selection {
-	background: rgba(63, 224, 196, 0.24);
+	background: var(--selection);
 	color: var(--ink);
 }
 
 :focus-visible {
-	outline: 1.5px solid var(--accent);
+	outline: 1px solid var(--accent);
 	outline-offset: 2px;
-	border-radius: 4px;
 }
 
-/* 屏幕阅读器专用 */
+.tnum,
+.mono {
+	font-variant-numeric: tabular-nums;
+}
+
+.mono {
+	font-family: var(--mono);
+	letter-spacing: -0.01em;
+}
+
 .sr-only {
 	position: absolute;
 	width: 1px;
@@ -208,12 +240,6 @@ svg {
 	clip: rect(0, 0, 0, 0);
 	white-space: nowrap;
 	border: 0;
-}
-
-.mono {
-	font-family: var(--mono);
-	font-variant-numeric: tabular-nums;
-	letter-spacing: -0.01em;
 }
 
 .truncate {
@@ -227,10 +253,9 @@ svg {
 	display: none !important;
 }
 
-/* 滚动条 */
 * {
 	scrollbar-width: thin;
-	scrollbar-color: #29313c transparent;
+	scrollbar-color: var(--scroll-thumb) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -243,27 +268,15 @@ svg {
 }
 
 ::-webkit-scrollbar-thumb {
-	background: #262e38;
-	border-radius: var(--radius-pill);
+	background: var(--scroll-thumb);
+	border-radius: var(--radius);
 	border: 2px solid transparent;
 	background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-	background: #39434f;
+	background: var(--scroll-thumb-hover);
 	background-clip: padding-box;
-}
-
-/* 入场：新节点用，由组件按需加 .enter / --i 序号 */
-@keyframes rise-in {
-	from {
-		opacity: 0;
-		transform: translateY(8px);
-	}
-	to {
-		opacity: 1;
-		transform: translateY(0);
-	}
 }
 
 @keyframes fade-in {
@@ -271,7 +284,6 @@ svg {
 	to { opacity: 1; }
 }
 
-/* 动效降级：保留全部信息，去掉位移、流动、呼吸 */
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,

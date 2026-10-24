@@ -16,7 +16,7 @@ import {
 	type CompanyRuntime,
 } from "../runtime/index.ts";
 import { AuditDoc, CompanyDoc, ROLE_LABELS, type StaffEntry } from "./docs.ts";
-import { recordMessage } from "./trail.ts";
+import { beginLiveTrail, recordMessage } from "./trail.ts";
 
 /** 派活选项。 */
 export type DelegateOptions = {
@@ -56,7 +56,7 @@ export type DelegateResult = {
 	/** 员工答复文本；失败时是失败原因。 */
 	readonly text: string;
 	/** 失败原因分类。 */
-	readonly reason?: "no-employee" | "archived" | "busy" | "failed";
+	readonly reason?: "no-employee" | "archived" | "busy" | "failed" | "cross-project";
 	readonly conversationId?: number;
 };
 
@@ -80,6 +80,11 @@ export async function delegate(
 		return { ok: false, text: `员工 ${options.employee} 已归档，不能派活。`, reason: "archived" };
 	}
 
+	// 越级校验：项目负责人只能给本项目员工派活。
+	// 组织规则是「员工只对项目负责人负责」，负责人跨项目指挥会让汇报线彻底失效。
+	const denied = await checkLeaderScope(runtime, options, state, context);
+	if (denied !== undefined) return denied;
+
 	const employee = await runtime.harness.conversation(staff.conversationId as never, context);
 	if (employee === undefined) {
 		return { ok: false, text: `员工 ${options.employee} 的会话不存在。`, reason: "no-employee" };
@@ -97,6 +102,17 @@ export async function delegate(
 				type: "input",
 				content: options.task,
 				requestId,
+				// 标记来源：员工会话里这条消息不是老板发的，界面要能区分，
+				// 排队时也不能显示成「你需要处理」。
+				entry: {
+					kind: "app.delegate",
+					data: {
+						from: options.from,
+						to: options.employee,
+						project: options.project,
+						text: options.task.slice(0, 280),
+					},
+				},
 				...(options.whenBusy === undefined ? {} : { whenBusy: options.whenBusy }),
 			},
 			context,
@@ -110,7 +126,21 @@ export async function delegate(
 		};
 	}
 
-	const settled = await submission.wait(context);
+	// 实时连线：派活在等待期间就挂一条临时边，界面能立刻看到「谁在跟谁说话」。
+	const releaseLive = beginLiveTrail({
+		kind: "delegate",
+		from: options.from,
+		to: options.employee,
+		fromConversation: options.fromConversationId,
+		toConversation: staff.conversationId,
+		project: options.project,
+	});
+	let settled: Awaited<ReturnType<typeof submission.wait>>;
+	try {
+		settled = await submission.wait(context);
+	} finally {
+		releaseLive();
+	}
 
 	if (settled.status === "unanswered") {
 		const reason = `未能回答（${settled.reason}）`;
@@ -192,6 +222,48 @@ export async function delegate(
 }
 
 /**
+ * 越级校验：发起派活的会话是不是「别的项目」的项目负责人。
+ *
+ * 规则只有一条：项目负责人只能指挥自己项目的人。
+ * 管理层（CEO/CTO/CHRO…）不受限——他们的会话不在项目索引里。
+ * 员工没有派活工具，走不到这里。
+ *
+ * 注意：真实事故里 CTO 直接给项目员工派活、项目负责人全程 0 token，
+ * 提示词里写「让项目负责人去派」挡不住模型，所以要在这里硬拦。
+ */
+async function checkLeaderScope(
+	runtime: CompanyRuntime,
+	options: DelegateOptions,
+	state: { readonly projects: Record<string, { readonly slug: string; readonly leader: number }> } | undefined,
+	context: Context,
+): Promise<DelegateResult | undefined> {
+	if (state === undefined) return undefined;
+
+	// 发起方是否某个项目的负责人？
+	let leaderOf: string | undefined;
+	for (const project of Object.values(state.projects)) {
+		if (project.leader === options.fromConversationId) {
+			leaderOf = project.slug;
+			break;
+		}
+	}
+	if (leaderOf === undefined || leaderOf === options.project) return undefined;
+
+	const owner = Object.values(state.projects).find((project) => project.slug === options.project);
+	return {
+		ok: false,
+		text: [
+			`不能跨项目派活：你是项目「${leaderOf}」的负责人，${options.employee} 属于项目「${options.project}」`,
+			owner === undefined ? "" : `（该项目负责人会话 ${owner.leader}）`,
+			"要跨项目调配人手，请找 CHRO：delegate_to_role(chro)。",
+		]
+			.filter((line) => line !== "")
+			.join(""),
+		reason: "cross-project",
+	};
+}
+
+/**
  * 推导下一次派活的标识。
  *
  * 依据：该员工会话里已投递的用户输入条数。用它做序号，
@@ -204,8 +276,11 @@ async function nextDelegationId(runtime: CompanyRuntime, key: string, context: C
 
 	const conversation = await runtime.harness.conversation(staff.conversationId as never, context);
 	const entries = await conversation?.entries({ order: "ascending" }, 1000, undefined, context);
-	const userCount = entries?.items.filter((entry) => entry.kind === "pi.user").length ?? 0;
-	return `${key}/${userCount}`;
+	// 派活现在写成 app.delegate 条目而不是 pi.user；两种都要算，否则序号不变，
+	// 同一员工的第二次派活会被请求标识去重成第一次的提交。
+	const delivered =
+		entries?.items.filter((entry) => entry.kind === "pi.user" || entry.kind === "app.delegate").length ?? 0;
+	return `${key}/${delivered}`;
 }
 
 /**

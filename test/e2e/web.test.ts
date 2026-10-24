@@ -17,10 +17,11 @@ import {
 } from "../../src/runtime/index.ts";
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff } from "../../src/company/org.ts";
 import { createEscalationTask, listPending, startEscalation } from "../../src/company/escalation.ts";
+import { beginLiveTrail } from "../../src/company/trail.ts";
 import { serve, type Server } from "../../src/server/http.ts";
 import type { OrgView } from "../../src/server/org-view.ts";
 import type { Feed } from "../../src/server/feed.ts";
-import { answer, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, type TestContext } from "../support.ts";
+import { answer, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, toolCall, type TestContext } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -99,6 +100,33 @@ describe("组织快照接口", () => {
 		expect(org.projects.length).toBe(1);
 		expect(org.projects[0]?.slug).toBe("tank-battle");
 		expect(typeof org.costs.totalTokens).toBe("number");
+	});
+
+	test("组织快照带沟通连线字段", async () => {
+		const { server } = await setup();
+		const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		expect(Array.isArray(org.links)).toBe(true);
+	});
+
+	test("正在进行的沟通会出现在 links 里", async () => {
+		const { server, boot } = await setup();
+		const release = beginLiveTrail({
+			kind: "delegate",
+			from: "CEO",
+			to: "CTO",
+			fromConversation: boot.ownerConversationId,
+			toConversation: boot.roleConversations.cto,
+		});
+		try {
+			const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+			const live = org.links.find(
+				(link) => link.from === boot.ownerConversationId && link.to === boot.roleConversations.cto,
+			);
+			expect(live).toBeDefined();
+			expect(live?.kind).toBe("delegate");
+		} finally {
+			release();
+		}
 	});
 
 	test("员工出现在项目的 staff 里，且带角色", async () => {
@@ -229,6 +257,42 @@ describe("会话流接口", () => {
 		}
 	});
 
+	test("运行中的工具不重复出卡，参数从已提交调用回填", async () => {
+		const { server, runtime, boot, ctx } = await setup();
+
+		ctx.faux.setResponses([
+			toolCall("delegate_to_role", { role: "cto", task: "看看首页" }),
+			slowAnswer(700, "CTO 已收到"),
+			answer("已转交 CTO"),
+		]);
+
+		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+		void ceo?.submit({ type: "input", content: "转给 CTO" }, BACKGROUND_CONTEXT);
+
+		await eventually(
+			async () => {
+				const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
+				return inspection.tasks.some(
+					(task) => task.record.kind === "pi.tool" && task.state.kind === "running",
+				);
+			},
+			{ label: "工具开始跑" },
+		);
+
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+		const calls = feed.items.filter((item) => item.kind === "tool" && item.name === "delegate_to_role");
+
+		expect(calls.length, "同一工具调用只应出现一张卡").toBe(1);
+		if (calls[0]?.kind === "tool") {
+			expect(calls[0].args).toContain("看看首页");
+			expect(calls[0].state).toBe("running");
+		}
+		expect(
+			feed.running.some((tool) => tool.name === "delegate_to_role"),
+			"已提交的调用不应再出现在 running 里",
+		).toBe(false);
+	});
+
 	test("不存在的会话返回 404", async () => {
 		const { server } = await setup();
 		const response = await fetch(`${server.url}api/feed/999999`);
@@ -357,6 +421,36 @@ describe("忙碌时发消息", () => {
 		const queued = feed.queued?.find((item) => item.text === "终止这个项目");
 		expect(queued).toBeDefined();
 		expect(queued?.mode, "老板的话应排成 steer，早于 followUp 处理").toBe("steer");
+		expect(queued?.origin, "老板自己发的消息标记为 owner").toBe("owner");
+	}, 30_000);
+
+	test("agent 派来的排队任务标出来源，不会伪装成老板的消息", async () => {
+		const { server, runtime, boot, ctx } = await setup();
+		await makeBusy(server, runtime, boot, ctx);
+
+		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+		await ceo?.submit(
+			{
+				type: "input",
+				content: "这是 CTO 派来的任务",
+				whenBusy: "followUp",
+				entry: { kind: "app.delegate", data: { from: "CTO", to: "CEO" } },
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		await eventually(
+			async () => {
+				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+				return (feed.queued ?? []).some((item) => item.text === "这是 CTO 派来的任务");
+			},
+			{ label: "代理任务排队可见" },
+		);
+
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+		const queued = feed.queued?.find((item) => item.text === "这是 CTO 派来的任务");
+		expect(queued?.origin).toBe("agent");
+		expect(queued?.from).toBe("CTO");
 	}, 30_000);
 
 	test("立即处理会打断当前工作并让消息生效", async () => {
@@ -381,7 +475,9 @@ describe("忙碌时发消息", () => {
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：立刻停下" }),
 		});
-		expect((await response.json()) as { ok: boolean }).toEqual({ ok: true });
+		const result = (await response.json()) as { ok: boolean; interrupted?: boolean };
+		expect(result.ok).toBe(true);
+		expect(result.interrupted, "模型慢调用可以被中断，abort 应当完成").toBe(true);
 
 		// 队列清空，消息进入对话
 		await eventually(
@@ -395,6 +491,69 @@ describe("忙碌时发消息", () => {
 			{ label: "打断后生效" },
 		);
 	}, 30_000);
+
+	test("CEO 卡在同步转交里时，立即处理也能返回并把消息补回去", async () => {
+		const { server, runtime, boot, ctx } = await setup();
+
+		// CEO 转交 CTO，CTO 的模型慢 8 秒：CEO 的工具 await 会一直挂着
+		ctx.faux.setResponses([
+			toolCall("delegate_to_role", { role: "cto", task: "慢慢做" }),
+			slowAnswer(8_000, "CTO 很慢"),
+			answer("CEO 收尾"),
+		]);
+
+		await fetch(`${server.url}api/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "转给 CTO" }),
+		});
+		await eventually(
+			async () => {
+				const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
+				return inspection.tasks.some(
+					(task) =>
+						task.record.kind === "pi.tool" &&
+						Number(task.record.conversationId) === boot.ownerConversationId &&
+						task.state.kind === "running",
+				);
+			},
+			{ label: "CEO 卡在转交工具里" },
+		);
+
+		// 再排一条老板消息，然后点「立即处理」
+		await fetch(`${server.url}api/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：先处理我" }),
+		});
+		await eventually(
+			async () => {
+				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+				return (feed.queued ?? []).some((item) => item.text === "急事：先处理我");
+			},
+			{ label: "急事已排队" },
+		);
+
+		const started = Date.now();
+		const response = await fetch(`${server.url}api/interrupt`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：先处理我" }),
+		});
+		const elapsed = Date.now() - started;
+
+		expect(response.status).toBe(200);
+		expect(elapsed, "abort 不能无限等同步转交结束").toBeLessThan(5_000);
+
+		// 消息不能像以前那样被 abort 撤掉后消失
+		await eventually(
+			async () => {
+				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+				return feed.items.some((item) => item.kind === "user" && item.text === "急事：先处理我");
+			},
+			{ label: "中断后消息进入对话", timeoutMs: 10_000 },
+		);
+	}, 40_000);
 
 	test("打断不存在的会话返回 404", async () => {
 		const { server } = await setup();

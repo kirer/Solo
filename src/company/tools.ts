@@ -17,6 +17,10 @@ export type ManagementToolset = {
 	readonly orgTree: ReturnType<typeof defineTool>;
 	/** 向上转一个问题。 */
 	readonly escalate: ReturnType<typeof defineTool>;
+	/** 列出等着自己拍板的问题。 */
+	readonly pendingList: ReturnType<typeof defineTool>;
+	/** 回答一条等自己拍板的问题。 */
+	readonly answerPending: ReturnType<typeof defineTool>;
 	/** 自己拍板。 */
 	readonly decide: ReturnType<typeof defineTool>;
 	/** 立项。 */
@@ -45,6 +49,8 @@ export type ManagementToolset = {
 	readonly reviewArchitecture: ReturnType<typeof defineTool>;
 	/** 给员工派活。 */
 	readonly delegateToStaff: ReturnType<typeof defineTool>;
+	/** 给项目负责人下达任务。 */
+	readonly delegateToLeader: ReturnType<typeof defineTool>;
 	/** 转交另一位管理层。 */
 	readonly delegateToRole: ReturnType<typeof defineTool>;
 };
@@ -56,9 +62,12 @@ export type ToolName = keyof ManagementToolset;
 const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	org_tree: "orgTree",
 	escalate: "escalate",
+	pending_list: "pendingList",
+	answer_pending: "answerPending",
 	decide: "decide",
 	review_architecture: "reviewArchitecture",
 	delegate_to_staff: "delegateToStaff",
+	delegate_to_leader: "delegateToLeader",
 	delegate_to_role: "delegateToRole",
 	project_create: "projectCreate",
 	project_plan: "projectPlan",
@@ -93,6 +102,72 @@ export function createRoleExtensionWithTools(role: ManagementRole, tools: Manage
 			// 纯函数：不含时间戳（ADR-007）
 			(() => {
 				const charter = definition.charter;
+				return { key: "role", tag: false, render: () => charter };
+			})(),
+			(() => {
+				const guide = COMMON_GUIDE;
+				return { key: "guide", tag: false, render: () => guide };
+			})(),
+		],
+		tools: selected,
+	});
+}
+
+/**
+ * 项目负责人的职责描述（纯函数，ADR-007）。
+ *
+ * 负责人是「项目这一层的管理者」：他向下派活给项目内员工，向上找对应的管理层，
+ * **绝不越级**——需求找 CPO、技术找 CTO、成本找 CFO、排期找 COO、招人找 CHRO。
+ * 具体项目名由会话的 instructions 注入，能力包本身保持与项目无关（纯函数），
+ * 这样整个公司只需要注册一个 `role-leader`，不必按项目重建。
+ */
+export const PROJECT_LEADER_CHARTER = [
+	"你是某个项目的负责人，处在「员工」与「管理层」之间的那一层。",
+	"你的职责：把项目目标拆成可执行的任务，派给项目内员工，跟踪进度，向上汇报。",
+	"派活用 staff_assign（先 staff_list 看名册和忙碌状态）；写计划用 project_plan；决定要留痕用 decide。",
+	"你只与你的上级和项目内员工沟通，不越级：",
+	"- 需求不明确、验收标准有争议 → escalate，或 delegate_to_role 找 cpo",
+	"- 技术选型、架构、执行环境/工具链故障 → escalate，或 delegate_to_role 找 cto",
+	"- 成本与预算 → escalate，或 delegate_to_role 找 cfo",
+	"- 排期与跨项目协调 → delegate_to_role 找 coo",
+	"- 缺人、要调配人手 → delegate_to_role 找 chro",
+	"你不要直接向老板汇报，也不要替管理层做公司级决定（立项、终止项目、招人都不在你手上）。",
+	"员工交付后由你验收：看不到证据就退回重做，不要替员工宣称「已验证」。",
+].join("\n");
+
+/** 项目负责人能力包的名字。 */
+export const PROJECT_LEADER_EXTENSION_NAME = "role-leader";
+
+/**
+ * 项目负责人的能力包。
+ *
+ * 旧版本立项时没有给负责人装任何能力包，导致他连 staff_assign 都没有，
+ * 只能空转、被管理层绕过——这是「负责人不参与」的结构性原因。
+ * 这里只装项目内需要的几个工具，公司级的立项/终止/招聘都不给。
+ */
+export function createProjectLeaderExtension(tools: ManagementToolset): Extension {
+	const capabilityNames = [
+		"org_tree",
+		"escalate",
+		"decide",
+		"delegate_to_staff",
+		"delegate_to_role",
+		"project_plan",
+		"project_list",
+		"staff_list",
+		"staff_assign",
+	];
+
+	const selected = capabilityNames
+		.map((name) => CAPABILITY_TO_TOOL[name])
+		.filter((name): name is ToolName => name !== undefined)
+		.map((name) => tools[name]);
+
+	return defineExtension({
+		name: PROJECT_LEADER_EXTENSION_NAME,
+		sections: [
+			(() => {
+				const charter = PROJECT_LEADER_CHARTER;
 				return { key: "role", tag: false, render: () => charter };
 			})(),
 			(() => {

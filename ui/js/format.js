@@ -106,6 +106,7 @@ const TOOL_LABELS = {
 	project_terminate: ["终止项目", "stop"],
 	project_delete: ["删除项目", "trash"],
 	delegate_to_staff: ["派活", "send"],
+	delegate_to_leader: ["下达任务", "send"],
 	delegate_to_role: ["转交", "send"],
 	escalate: ["上报", "arrowUp"],
 	decide: ["拍板", "check"],

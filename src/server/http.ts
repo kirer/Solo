@@ -11,7 +11,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
-import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
+import { BACKGROUND_CONTEXT, InboxDoc } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
 import { answerPending, listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
@@ -34,6 +34,9 @@ export type Server = {
 	readonly url: string;
 	close(): Promise<void>;
 };
+
+/** 中断最多等 abort 多久；超时也必须先把消息排进去，不能把 HTTP 挂死。 */
+const INTERRUPT_TIMEOUT_MS = 5_000;
 
 /** MIME 表。 */
 const MIME: Record<string, string> = {
@@ -135,6 +138,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		if (feed === undefined) return feed;
 		const state = await readCompany(runtime, BACKGROUND_CONTEXT);
 		const pending = await listPending(runtime, BACKGROUND_CONTEXT);
+		// 只有 owner 级的问题才是「等老板拍板」；CEO 自己队列里的问题不算。
 		const awaitingOwner = pending.some(
 			(item) => item.level === "owner" && item.fromConversationId === feed.conversationId,
 		);
@@ -288,9 +292,14 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	 * 打断当前工作，立刻处理这条消息。
 	 *
 	 * 场景：CEO 正在等一个很慢的下属回复，老板发了一句急话。
-	 * 光排队要等很久，所以这里先中断当前运行、清掉队列，再把消息重新投进去。
+	 * 光排队要等很久，所以先中断当前运行，再把消息投进去。
 	 *
-	 * 注意：中断会丢弃队列里的其它消息（底层语义如此）。只重投这一条。
+	 * 两个必须守住的点（都是真实事故）：
+	 * 1. **不能无限等 abort**：abort 要等会话 idle；如果某个工具永远不返回
+	 *    （以前的跨会话死锁），HTTP 请求会永远挂住，界面只显示「处理中…」。
+	 *    这里最多等 {@link INTERRUPT_TIMEOUT_MS}，等不到也先把消息排进去。
+	 * 2. **消息不能丢**：abort 会撤掉队列里的全部输入。所以先记下队列，
+	 *    abort 之后把「这条 + 其它排队消息」重新投递，而不是只投一条。
 	 */
 	async function postInterrupt(request: IncomingMessage, response: ServerResponse): Promise<void> {
 		const body = await readJson<{ conversationId?: number; text?: string }>(request);
@@ -303,10 +312,46 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
 		if (conversation === undefined) return fail(response, 404, "会话不存在");
 
-		await conversation.abort(BACKGROUND_CONTEXT);
-		await conversation.submit({ type: "input", content: text }, BACKGROUND_CONTEXT);
+		const inbox = (await runtime.harness.snapshot(InboxDoc, conversationId as never, BACKGROUND_CONTEXT)) as
+			| { items?: readonly { mode: string; content: unknown }[] }
+			| undefined;
+		const queued = (inbox?.items ?? [])
+			.filter((item) => item.mode !== "write")
+			.map((item) => queueText(item.content))
+			.filter((item) => item !== "");
+
+		// 消息已经被放进了对话（不再排队）：不需要中断，也不再重复投递
+		if (!queued.includes(text)) {
+			scheduleOrgPush();
+			return json(response, { ok: true, alreadyPlaced: true });
+		}
+
+		const rest = queued.filter((item) => item !== text);
+
+		// abort 的提交会先把队列撤掉；等它完成（或超时）再把消息补回去
+		let timer: NodeJS.Timeout | undefined;
+		const aborted = await Promise.race([
+			conversation.abort(BACKGROUND_CONTEXT).then(
+				() => true,
+				() => false,
+			),
+			new Promise<boolean>((resolve) => {
+				timer = setTimeout(() => resolve(false), INTERRUPT_TIMEOUT_MS);
+			}),
+		]).finally(() => {
+			if (timer !== undefined) clearTimeout(timer);
+		});
+
+		// 这条消息优先；其它被 abort 撤掉的排队消息也补回去，不能顺手吞掉
+		for (const item of [text, ...rest]) {
+			await conversation.submit(
+				{ type: "input", content: item, whenBusy: "steer" },
+				BACKGROUND_CONTEXT,
+			);
+		}
+
 		scheduleOrgPush();
-		return json(response, { ok: true });
+		return json(response, { ok: true, interrupted: aborted });
 	}
 
 	/** 拍板：回答一条待决问题。 */
@@ -315,6 +360,15 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		const key = (body.key ?? "").trim();
 		const text = (body.text ?? "").trim();
 		if (key === "" || text === "") return fail(response, 400, "需要 key 与 text");
+
+		// 老板只回答「CEO 报上来」的问题：owner 级以外的条目属于管理层授权范围，
+		// 老板替他们拍板等于把决策责任揽到自己身上（也正是「待拍板太多」的根源）。
+		const pending = await listPending(runtime, BACKGROUND_CONTEXT);
+		const item = pending.find((entry) => entry.key === key);
+		if (item === undefined) return fail(response, 404, "没有这条待决问题（可能已被处理）");
+		if (item.level !== "owner") {
+			return fail(response, 409, "这条问题不在老板这一级，应由 CEO 或对应管理层拍板");
+		}
 
 		const ok = await answerPending(
 			runtime,
@@ -382,6 +436,25 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 	const text = Buffer.concat(chunks).toString("utf8");
 	if (text === "") return {} as T;
 	return JSON.parse(text) as T;
+}
+
+/** 从排队项内容里取文本（与 feed 的 queued 展示保持一致）。 */
+function queueText(content: unknown): string {
+	if (typeof content === "string") return content;
+	if (Array.isArray(content)) {
+		return content
+			.flatMap((part) => {
+				if (typeof part === "string") return [part];
+				if (typeof part !== "object" || part === null) return [];
+				const record = part as { readonly type?: string; readonly text?: string };
+				return record.type === "text" && record.text !== undefined ? [record.text] : [];
+			})
+			.join("");
+	}
+	if (typeof content === "object" && content !== null) {
+		return (content as { readonly text?: string }).text ?? "";
+	}
+	return "";
 }
 
 /** 静态资源：限制在 uiDir 内，防目录穿越。 */
