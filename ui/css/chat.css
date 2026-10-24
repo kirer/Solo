@@ -1164,24 +1164,7 @@ body[data-chat="closed"] .chat-resizer {
 	margin-top: 6px;
 }
 
-.queued-act {
-	height: 22px;
-	padding: 0 8px;
-	border: 1px solid var(--warn-line);
-	border-radius: 2px;
-	background: transparent;
-	color: var(--warn);
-	font-size: 11px;
-	transition: color 120ms var(--ease-out), border-color 120ms var(--ease-out);
-}
-
-.queued-act:hover {
-	border-color: var(--warn);
-}
-
-.queued-act:disabled {
-	opacity: 0.55;
-}
+/* ADR-026 决策 7：原 .queued-act（「立即处理」按钮）样式已随按钮移除。 */
 
 /* ── 输入区 ───────────────────────────────────────────────────────────── */
 .chat-foot {

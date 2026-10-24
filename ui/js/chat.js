@@ -142,7 +142,8 @@ function signatureOf(item) {
 
 /* ── 面板 ───────────────────────────────────────────────────────────────── */
 
-export function initChat({ onSend, onInterrupt, fetchProfile } = {}) {
+// ADR-026 决策 7：界面不再提供二次点击确认（原 onInterrupt 已废，受理无条件）。
+export function initChat({ onSend, fetchProfile } = {}) {
 	const els = {
 		chat: $("chat"),
 		body: $("chat-body"),
@@ -702,10 +703,13 @@ export function initChat({ onSend, onInterrupt, fetchProfile } = {}) {
 			? "已发出，等待进入对话"
 			: delegated
 				? `由 ${item.from ?? "协作方"} 派来`
-				: "排队中";
+				: "正在受理";
+		// ADR-026 决策 7：老板通道不再出现「立即处理」按钮。
+		// 受理本身已无条件（默认档位 now，到达即生效），再让人点一下等于把
+		// 「要不要现在听」推回给老板。agent 来源也不给按钮（重投会替 agent 发言）。
 		const actions = delegated
 			? '<span class="queued-hint">当前这轮结束后自动处理</span>'
-			: '<button class="queued-act" type="button" data-interrupt>立即处理</button>';
+			: '<span class="queued-hint">已受理，正在切换</span>';
 		const el = elFromHtml(`
 			<div class="queued${local ? " queued--local" : ""}${delegated ? " queued--agent" : ""}">
 				<div class="queued-head">
@@ -1166,7 +1170,7 @@ export function initChat({ onSend, onInterrupt, fetchProfile } = {}) {
 		}
 	});
 
-	/* ── 复制 / 立即处理 ── */
+	/* ── 复制 ── */
 	async function copyText(text) {
 		try {
 			if (navigator.clipboard?.writeText !== undefined) {
@@ -1224,39 +1228,9 @@ export function initChat({ onSend, onInterrupt, fetchProfile } = {}) {
 		flashCopied(button);
 	}
 
-	async function handleInterrupt(button) {
-		const row = button.closest(".queued");
-		if (row === null || actor === null) return;
-		// 只处理老板自己的排队消息；agent 派来的任务不能当成老板的话重投
-		if (row.dataset.origin === "agent") return;
-		const text = row.dataset.text ?? row.querySelector(".queued-text")?.textContent ?? "";
-		if (text.trim() === "") return;
-		button.disabled = true;
-		button.textContent = "处理中…";
-		let ok = false;
-		try {
-			if (typeof onInterrupt === "function") {
-				ok = (await onInterrupt(actor.conversationId, text)) === true;
-			}
-		} catch {
-			ok = false;
-		}
-		if (ok) {
-			notify("已插话，等它收尾就处理这条。", "info");
-			if (row.classList.contains("queued--local")) removeLocalQueuedByText(text);
-		} else {
-			button.disabled = false;
-			button.textContent = "立即处理";
-		}
-	}
-
 	els.body.addEventListener("click", (event) => {
 		const button = event.target.closest("button");
 		if (button === null) return;
-		if (button.hasAttribute("data-interrupt")) {
-			void handleInterrupt(button);
-			return;
-		}
 		if (button.hasAttribute("data-copy")) void handleCopy(button);
 	});
 

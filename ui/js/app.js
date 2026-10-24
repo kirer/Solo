@@ -28,7 +28,7 @@ const state = {
 
 const ask = initAsk({ onAnswer: submitAnswer });
 const orgView = initOrg({ onSelect: (id) => selectConversation(id) });
-const chat = initChat({ onSend: sendMessage, onInterrupt: interrupt, fetchProfile });
+const chat = initChat({ onSend: sendMessage, fetchProfile });
 
 /**
  * 取一位职工的角色档案（角色预制提示词 / 技能清单）。
@@ -367,21 +367,6 @@ async function sendMessage(text) {
 		return true;
 	} catch {
 		chat.notify?.("消息没发出去，检查服务是否还在运行。", "error");
-		return false;
-	}
-}
-
-async function interrupt(conversationId, text) {
-	try {
-		const response = await fetch("/api/interrupt", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId, text }),
-		});
-		if (!response.ok) throw new Error(`HTTP ${response.status}`);
-		return true;
-	} catch {
-		chat.notify?.("没打断成功，再试一次。", "error");
 		return false;
 	}
 }

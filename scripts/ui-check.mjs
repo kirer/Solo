@@ -363,6 +363,7 @@ try {
 		tools: document.querySelectorAll('#chat-body .tool').length,
 		thinking: document.querySelectorAll('#chat-body .think, #chat-body .thinking').length,
 		queued: document.querySelectorAll('#chat-body .queued, #chat-body .queue').length,
+		interruptBtns: document.querySelectorAll('#chat-body [data-interrupt]').length,
 		overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
 	}))()`);
 	check("有状态色边框节点", mock.live >= 3, `${mock.live} 个`);
@@ -373,6 +374,9 @@ try {
 	check("工具调用可折叠", mock.tools >= 2, `${mock.tools} 个`);
 	check("思考过程存在", mock.thinking >= 1, `${mock.thinking} 个`);
 	check("排队消息存在", mock.queued >= 1, `${mock.queued} 个`);
+	// ADR-026 决策 7：老板通道不得再出现「立即处理」这类需要二次点击的按钮，
+	// 受理本身已无条件（默认档位 now）。
+	check("没有「立即处理」按钮", mock.interruptBtns === 0, `${mock.interruptBtns} 个`);
 	check("桌面无横向溢出", mock.overflow === false);
 
 	const openedTool = await cdp.eval(`(() => { const t = document.querySelector('#chat-body .tool'); if (!t) return null; const summary = t.querySelector('summary'); summary?.click(); return { open: t.open === true || t.hasAttribute('open'), name: t.querySelector('.tool-name, .tname')?.textContent ?? '' }; })()`);
