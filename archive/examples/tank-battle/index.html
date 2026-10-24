@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>坦克大战 · Tank Battle</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- HUD：始终可见的操作入口与分数信息 -->
+    <header id="hud">
+      <div class="hud-left">
+        <span class="title">坦克大战</span>
+        <span class="sep">|</span>
+        <span>关卡 <b id="hud-level">1</b>/3</span>
+        <span class="sep">|</span>
+        <span>命数 <b id="hud-lives">3</b></span>
+        <span class="sep">|</span>
+        <span>得分 <b id="hud-score">0</b></span>
+        <span class="sep">|</span>
+        <span>最高 <b id="hud-highscore">0</b></span>
+      </div>
+      <div class="hud-right">
+        <!-- 暂停/重开入口必须在 UI 上可见（需求第 8 条） -->
+        <button id="btn-pause" type="button">暂停 (Esc)</button>
+        <button id="btn-restart" type="button">重开 (R)</button>
+      </div>
+    </header>
+
+    <main id="stage">
+      <!-- 渲染用 canvas，内部分辨率由 renderer 按整数倍设置 -->
+      <canvas id="game" width="624" height="624"></canvas>
+    </main>
+
+    <footer id="tips">
+      <span>P1：方向键移动 / 空格·J 射击</span>
+      <span>P2：WASD 移动 / F 射击</span>
+      <span>Esc 暂停 · R 重开</span>
+    </footer>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

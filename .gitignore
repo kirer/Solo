@@ -1,0 +1,35 @@
+# 依赖
+node_modules/
+archive/spikes/node_modules/
+
+# 构建产物
+dist/
+*.tsbuildinfo
+
+# 运行时数据（数据库与项目工作空间）
+workspace/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# 第三方只读参考（Pi 官方 monorepo 的完整 clone，自带独立 .git，约 118MB）
+# 调研结论已沉淀在 docs/research/，需要时按 archive/README.md 重新 clone
+archive/reference/
+
+# 设计 skill 本地工作目录（改动前快照、截图、方向缓存），不入库
+.taste-skill/
+
+# 环境变量与本地密钥
+.env
+.env.*
+!.env.example
+
+# 测试/构建缓存
+coverage/
+.vite/
+
+# 编辑器与系统垃圾
+.DS_Store
+*.log
+.idea/
+.vscode/
