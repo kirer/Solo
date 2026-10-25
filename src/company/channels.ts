@@ -350,7 +350,10 @@ export async function ensureAllChannels(
 	for (const [slug, project] of Object.entries(company.projects)) {
 		if (project.status === "terminated" || project.status === "archived") continue;
 		const leaderId = org.projectLeaders[slug];
-		const staff = org.people.filter((person) => person.project === slug && person.archived !== true);
+		// 负责人自身的 project 也是本 slug，必须排除，否则会被下面那行覆盖成 staff
+		const staff = org.people.filter(
+			(person) => person.project === slug && person.archived !== true && person.conversationId !== leaderId,
+		);
 		await ensureChannel(
 			runtime,
 			{

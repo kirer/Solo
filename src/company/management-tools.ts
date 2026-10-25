@@ -14,6 +14,7 @@ import {
 	type ModelRef,
 } from "./docs.ts";
 import { createRoundtableTools } from "./roundtable-tools.ts";
+import { createUniversalTools } from "./tools/universal.ts";
 import {
 	archiveStaff,
 	createProject,
@@ -138,6 +139,10 @@ export function createManagementTools(deps: ToolDependencies) {
 		...(deps.registry === undefined ? {} : { registry: deps.registry }),
 		...(deps.roundtableTimeoutMs === undefined ? {} : { timeoutMs: deps.roundtableTimeoutMs }),
 	});
+
+	// 通用工具（say / ask / read_channel / inbox / task_* / whoami）：
+	// 每个 agent 都该有，所以在这里统一构造，随 ManagementToolset 一起下发。
+	const universal = createUniversalTools({ runtime });
 
 	const orgTree = defineTool({
 		name: "org_tree",
@@ -861,6 +866,15 @@ export function createManagementTools(deps: ToolDependencies) {
 	});
 
 	return {
+		// 通用
+		whoami: universal.whoami,
+		say: universal.say,
+		ask: universal.ask,
+		readChannel: universal.readChannel,
+		inbox: universal.inbox,
+		taskList: universal.taskList,
+		taskUpdate: universal.taskUpdate,
+		taskCreate: universal.taskCreate,
 		roundtable: roundtableTools.roundtable,
 		roundtableMinutes: roundtableTools.roundtableMinutes,
 		orgTree,

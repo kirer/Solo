@@ -104,6 +104,20 @@ const LEADER_TOOLSETS = new WeakMap<CompanyRuntime, ManagementToolset>();
 const EMPLOYEE_EXTRA_TOOLS = new WeakMap<CompanyRuntime, readonly ReturnType<typeof defineTool>[]>();
 
 /**
+ * 员工要拿到的「通用工具」（say / ask / read_channel / inbox / task_* / whoami）。
+ *
+ * 与 `EMPLOYEE_EXTRA_TOOLS`（escalate + my_capabilities）分开存：那两个是
+ * 「员工专属的额外能力」，这些是「每个 agent 都该有的通信能力」。
+ * 合并会让「谁有什么」变得难以审计。
+ */
+const EMPLOYEE_UNIVERSAL_TOOLS = new WeakMap<CompanyRuntime, readonly ReturnType<typeof defineTool>[]>();
+
+/** 员工可用的通用工具（招聘、改名、自愈三处共用同一份）。 */
+export function employeeUniversalTools(runtime: CompanyRuntime): readonly ReturnType<typeof defineTool>[] {
+	return EMPLOYEE_UNIVERSAL_TOOLS.get(runtime) ?? [];
+}
+
+/**
  * 员工实际可用的工具：按角色裁剪的执行工具 + 向直属上级上报。
  *
  * 单独导出：招聘、重启自愈、职工档案三处必须用同一份，否则「档案里写的工具」
@@ -605,6 +619,17 @@ export async function bootstrapCompany(
 	// 员工额外工具：上报（落到 staff.manager 指定的上级）+ 能力自查。
 	// 能力自查不是锦上添花：员工经常被问「你能不能做 X」，没有它只能凭记忆答。
 	EMPLOYEE_EXTRA_TOOLS.set(runtime, [managementTools.escalate, managementTools.myCapabilities]);
+	// 通用通信能力：员工也要能在项目群里 ask / say / 看任务。
+	// 没有这组工具，员工只能「干等」——这正是「员工有问题不问上级」的结构性原因。
+	EMPLOYEE_UNIVERSAL_TOOLS.set(runtime, [
+		managementTools.whoami,
+		managementTools.say,
+		managementTools.ask,
+		managementTools.readChannel,
+		managementTools.inbox,
+		managementTools.taskList,
+		managementTools.taskUpdate,
+	]);
 
 	// 注册全部角色能力包（带工具）。底层按名字解析能力包，未注册的取不到。
 	if (options.registry !== undefined) {
@@ -1057,7 +1082,11 @@ export async function hireStaff(
 	// 同时追加「向直属上级上报」的能力——没有它，员工只能干等。
 	const employeeTools = options.employeeTools ?? employeeToolsFor(runtime, options.role);
 
-	const employeeExtension = createEmployeeExtension(`${options.project}/${options.name}`, employeeTools);
+	const employeeExtension = createEmployeeExtension(
+		`${options.project}/${options.name}`,
+		employeeTools,
+		employeeUniversalTools(runtime),
+	);
 
 	// 能力包必须注册进 registry：底层按名字存选择，未注册的解析不到，
 	// 表现为「员工没有任何工具」（这正是 ADR-009 的另一个侧面）。
@@ -1321,7 +1350,7 @@ export async function renameStaff(
 	// 失败不回滚名册（名册是真相源），下次启动由 ensureStaffAgents 按新名字重建。
 	const conversation = await runtime.harness.conversation(person.conversationId as never, context);
 	if (conversation !== undefined) {
-		const extension = createEmployeeExtension(newKey, employeeToolsFor(runtime, person.role));
+		const extension = createEmployeeExtension(newKey, employeeToolsFor(runtime, person.role), employeeUniversalTools(runtime));
 		input.registry?.install(extension);
 		await conversation.configure({ extensions: [extension] }, context);
 	}
@@ -2179,7 +2208,11 @@ async function ensureStaffAgents(
 		if (agent.tools.length > 0) continue;
 
 		// 没有工具 → 重建能力包并重设
-		const extension = createEmployeeExtension(`${staff.project}/${staff.name}`, employeeToolsFor(runtime, staff.role));
+		const extension = createEmployeeExtension(
+			`${staff.project}/${staff.name}`,
+			employeeToolsFor(runtime, staff.role),
+			employeeUniversalTools(runtime),
+		);
 		registry.install(extension);
 		await conversation.configure({ extensions: [extension] }, context);
 	}

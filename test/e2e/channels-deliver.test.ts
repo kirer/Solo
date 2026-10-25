@@ -54,8 +54,9 @@ async function setup() {
 		{ name: "Alpha", slug: "alpha", brief: "测试项目", workspaceRoot: join(ctx.dir, "projects") },
 		BACKGROUND_CONTEXT,
 	);
-	await hireStaff(runtime, { project: "alpha", name: "林越", role: "开发" }, BACKGROUND_CONTEXT);
-	await hireStaff(runtime, { project: "alpha", name: "周野", role: "测试" }, BACKGROUND_CONTEXT);
+	// 必须传 registry：员工能力包要注册进去才能按名解析（ADR-009）
+	await hireStaff(runtime, { project: "alpha", name: "林越", role: "开发", registry }, BACKGROUND_CONTEXT);
+	await hireStaff(runtime, { project: "alpha", name: "周野", role: "测试", registry }, BACKGROUND_CONTEXT);
 	await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
 
 	return { ctx, runtime, registry, booted, project };
@@ -386,5 +387,36 @@ describe("员工提问（不阻塞，且进频道）", () => {
 		const question = channel?.messages.at(-1);
 		expect(question?.kind).toBe("question");
 		expect(question?.mentions).toContain(project.leader);
+	});
+});
+
+describe("员工拿到了通用通信工具（问题 3 的结构性修法）", () => {
+	test("员工的生效工具集合包含 say / ask / read_channel / task_update", async () => {
+		const { runtime } = await setup();
+		const state = await readChannels(runtime, BACKGROUND_CONTEXT);
+		const projectChannel = state.channels["proj:alpha"];
+		const staff = Object.values(projectChannel?.members ?? {}).find((entry) => entry.role === "staff");
+		expect(staff).toBeDefined();
+
+		const conversation = await runtime.harness.conversation(staff?.conversationId as never, BACKGROUND_CONTEXT);
+		const agent = await conversation?.agent(BACKGROUND_CONTEXT);
+		const names = (agent?.tools ?? []).map((tool) => tool.name);
+		for (const required of ["say", "ask", "read_channel", "inbox", "task_list", "task_update", "whoami", "escalate"]) {
+			expect(names, `员工缺 ${required}`).toContain(required);
+		}
+		// 员工仍然没有管理工具（ADR-004 的边界不能破）
+		expect(names).not.toContain("task_create");
+		expect(names).not.toContain("staff_hire");
+		expect(names).not.toContain("project_create");
+	});
+
+	test("负责人拿到了 task_create（能下派任务）", async () => {
+		const { runtime, project } = await setup();
+		const conversation = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
+		const agent = await conversation?.agent(BACKGROUND_CONTEXT);
+		const names = (agent?.tools ?? []).map((tool) => tool.name);
+		expect(names).toContain("task_create");
+		expect(names).toContain("ask");
+		expect(names).toContain("bash");
 	});
 });

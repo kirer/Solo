@@ -27,6 +27,23 @@ export const LEADER_EXECUTION_TOOLS: readonly ReturnType<typeof defineTool>[] = 
 
 /** 工具集合：由装配层注入实际实现，避免业务模块之间循环依赖。 */
 export type ManagementToolset = {
+	// ── 通用（每个 agent 都有，见 tools/universal.ts）──
+	/** 我是谁。 */
+	readonly whoami: ReturnType<typeof defineTool>;
+	/** 频道发言（不 @）。 */
+	readonly say: ReturnType<typeof defineTool>;
+	/** 频道提问（@ 某人）。 */
+	readonly ask: ReturnType<typeof defineTool>;
+	/** 读频道历史。 */
+	readonly readChannel: ReturnType<typeof defineTool>;
+	/** 未读汇总。 */
+	readonly inbox: ReturnType<typeof defineTool>;
+	/** 我的任务。 */
+	readonly taskList: ReturnType<typeof defineTool>;
+	/** 更新任务状态 / 记进度。 */
+	readonly taskUpdate: ReturnType<typeof defineTool>;
+	/** 创建任务（必须有验收标准）。 */
+	readonly taskCreate: ReturnType<typeof defineTool>;
 	/** 查看组织架构。 */
 	readonly orgTree: ReturnType<typeof defineTool>;
 	/** 查看本会话真实可用的工具清单。 */
@@ -90,6 +107,15 @@ export type ToolName = keyof ManagementToolset;
 
 /** 把角色声明里的能力名映射到实际工具。 */
 const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
+	// 通用能力（每个 agent 都该有）
+	whoami: "whoami",
+	say: "say",
+	ask: "ask",
+	read_channel: "readChannel",
+	inbox: "inbox",
+	task_list: "taskList",
+	task_update: "taskUpdate",
+	task_create: "taskCreate",
 	org_tree: "orgTree",
 	my_capabilities: "myCapabilities",
 	escalate: "escalate",
@@ -199,6 +225,15 @@ export function createProjectLeaderExtension(
 	executionTools: readonly ReturnType<typeof defineTool>[] = LEADER_EXECUTION_TOOLS,
 ): Extension {
 	const capabilityNames = [
+		// 通用通信能力：负责人要在项目群里统筹、@ 人、看任务
+		"whoami",
+		"say",
+		"ask",
+		"read_channel",
+		"inbox",
+		"task_list",
+		"task_update",
+		"task_create",
 		"org_tree",
 		"my_capabilities",
 		"escalate",
@@ -305,6 +340,7 @@ export function createProjectLeaderReadOnlyExtension(tools: ManagementToolset): 
 export function createEmployeeExtension(
 	employeeId: string,
 	employeeTools: readonly ReturnType<typeof defineTool>[],
+	universalTools: readonly ReturnType<typeof defineTool>[] = [],
 ): Extension {
 	return defineExtension({
 		name: `role-employee:${employeeId}`,
@@ -314,13 +350,24 @@ export function createEmployeeExtension(
 				tag: false,
 				render: () =>
 					[
-						"你是项目员工。只做被指派的工作，遇到不确定的事上报直属上级，不越级。",
-						"回答「我能不能做某事」之前，先用 my_capabilities 看自己真实的工具清单，或实际调用一次；不要凭记忆。",
+						"你是项目员工。只做被指派的工作。",
+						"",
+						"## 沟通（重要）",
+						"你在项目群里工作：项目负责人和同事都在群里。",
+						"- 有问题就在项目群里 ask（会 @ 到人并唤醒它），**不要自己猜**。",
+						"- 需求没说清、字段名/格式/边界不确定、要别人拍板、你不确定自己有没有权限 —— 一律先 ask。",
+						"- 猜错的代价由你承担；问一句的代价只是等几分钟。",
+						"- 做完一件事在群里 say 一句结论，让负责人知道。",
+						"- 有任务时用 task_update 报进度；报 done 必须带 evidence（文件路径/测试输出/提交号）。",
+						"",
+						"## 边界",
+						"你只对项目负责人负责，不越级；确实超出项目范围的用 escalate。",
+						"回答「我能不能做某事」之前，先用 my_capabilities 看真实工具清单，或实际调用一次；不要凭记忆。",
 						"不要启动、停止或重启平台服务，也不要另起平台实例（单进程单库，会弄崩正在跑的服务）。",
 					].join("\n"),
 			},
 		],
-		tools: employeeTools,
+		tools: [...universalTools, ...employeeTools],
 	});
 }
 
