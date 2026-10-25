@@ -19,6 +19,7 @@ import {
 	member,
 	OWNER_ID,
 	parseChannelId,
+	previewLine,
 	projectChannelId,
 	recipientsOf,
 	renderForModel,
@@ -326,5 +327,38 @@ describe("成员管理", () => {
 		// 老板移除无效
 		channel = removeMember(channel, OWNER_ID);
 		expect(hasMember(channel, OWNER_ID)).toBe(true);
+	});
+});
+
+describe("previewLine：列表预览剥掉 Markdown 记号", () => {
+	test("标题、列表、粗体都去掉，只留文字", () => {
+		expect(previewLine("## 验收报告\n\n- 第一项通过\n- 第二项通过")).toBe(
+			"验收报告 第一项通过 第二项通过",
+		);
+		expect(previewLine("**改动清单**：三个文件")).toBe("改动清单：三个文件");
+		expect(previewLine("> 引用的话")).toBe("引用的话");
+	});
+
+	test("行内代码保留内容、去掉反引号", () => {
+		expect(previewLine("改的是 `src/a.ts` 里的函数")).toBe("改的是 src/a.ts 里的函数");
+	});
+
+	test("代码块整体丢弃（列表里显示一大段代码没有意义）", () => {
+		expect(previewLine("看这个：\n```ts\nconst a = 1;\n```\n就这样")).toBe("看这个： 就这样");
+	});
+
+	test("链接只留文字，不留地址", () => {
+		expect(previewLine("见 [设计文档](https://example.com/x)")).toBe("见 设计文档");
+	});
+
+	test("超长截断并加省略号", () => {
+		const text = "字".repeat(200);
+		const preview = previewLine(text, 20);
+		expect(preview.length).toBe(21);
+		expect(preview.endsWith("…")).toBe(true);
+	});
+
+	test("斜体不误伤乘法/强调星号", () => {
+		expect(previewLine("*强调* 和 a*b 都保留")).toBe("强调 和 a*b 都保留");
 	});
 });

@@ -121,11 +121,28 @@ function resolveMentions(
 	return { ids: [...new Set(ids)], unknown };
 }
 
-/** 渲染一条消息（给 read_channel 与 inbox）。 */
-function renderMessage(org: Org, message: ChannelMessage): string {
+/**
+ * 渲染一条消息（给 read_channel 与 inbox）。
+ *
+ * `maxText` 是**正文截断上限**，默认不截断。
+ *
+ * 曾经这里硬编码 `oneLine(text, 300)`，后果很严重：负责人在群里发了一份 1069 字的
+ * 「N5 采样规范」共 9 条，QA 用 read_channel 只读到前 4 条就被截断，于是它按自己猜的
+ * 口径开始跑测试，还在群里说「我这边被截断了，请补一下」。整条验收链因此建立在
+ * 一份残缺的规范上。
+ *
+ * 教训：`read_channel` 是 agent **主动**要求看历史的动作，它明确知道自己在花上下文。
+ * 工具不该替它决定「这段不重要」——尤其不能用一个 300 字的固定阈值去截断
+ * 「规范/契约/验收标准」这类必须逐字执行的文本。
+ * 需要短的地方（inbox 的 @ 提醒）自己传 `maxText`。
+ */
+function renderMessage(org: Org, message: ChannelMessage, maxText?: number): string {
 	const time = new Date(message.at).toISOString().slice(11, 16);
 	const mentions = message.mentions.length === 0 ? "" : ` @${message.mentions.map((id) => labelOf(org, id)).join("、")}`;
-	return `#${message.seq} ${time} ${message.fromLabel}${mentions}：${oneLine(message.text, 300)}`;
+	const body = maxText === undefined ? message.text : oneLine(message.text, maxText);
+	const truncated = maxText !== undefined && message.text.length > maxText ? `
+（以上为节选，原文 ${message.text.length} 字，用 read_channel 看全文）` : "";
+	return `#${message.seq} ${time} ${message.fromLabel}${mentions}：${body}${truncated}`;
 }
 
 /** 渲染任务一行。 */
@@ -310,13 +327,37 @@ export function createUniversalTools(deps: UniversalDeps) {
 				return text(`「${channel.title}」里${since > 0 ? ` #${since} 之后` : ""}没有消息。`);
 			}
 
-			await markAllRead(runtime, channel.id, conversationId, ctx);
+			// 正文不截断（见 renderMessage 的说明），但整个返回值要有预算上限，
+			// 否则一个刷了几百条的群会把上下文一次打满。超预算时**从最旧的开始丢**，
+			// 并明确说「这几条没显示」，让模型自己决定要不要 since= 往前翻。
+			const BUDGET = 24_000;
+			const rendered = messages.map((message) => renderMessage(org, message));
+			let start = 0;
+			let total = rendered.reduce((sum, line) => sum + line.length, 0);
+			while (total > BUDGET && start < rendered.length - 1) {
+				total -= rendered[start]!.length;
+				start += 1;
+			}
+			const shown = messages.slice(start);
+			const shownLines = rendered.slice(start);
+			const dropped = start;
+
+			// **只把读位置推到真正看到的最后一条**。
+			// 曾经的写法是 markAllRead（推到 channel.lastSeq）——只读 1 条也会把
+			// 后面所有消息标记成已读，未读摘要里就再也不出现，等于静默丢消息。
+			const lastShown = shown[shown.length - 1];
+			if (lastShown !== undefined) {
+				await markChannelRead(runtime, channel.id, conversationId, lastShown.seq, ctx);
+			}
+
 			return text(
 				[
-					`「${channel.title}」最近 ${messages.length} 条（共 ${channel.lastSeq} 条）：`,
-					...messages.map((message) => renderMessage(org, message)),
+					dropped > 0
+						? `「${channel.title}」最近 ${shown.length} 条（共 ${channel.lastSeq} 条；因篇幅省略了更早的 ${dropped} 条，用 since= 往前翻）：`
+						: `「${channel.title}」最近 ${shown.length} 条（共 ${channel.lastSeq} 条）：`,
+					...shownLines,
 					"",
-					`（已标记为已读。继续读更早的用 since=${messages[0]?.seq}）`,
+					`（已标记到 #${lastShown?.seq} 为已读。继续读更早的用 since=${shown[0]?.seq}）`,
 				].join("\n"),
 			);
 		},
@@ -341,7 +382,8 @@ export function createUniversalTools(deps: UniversalDeps) {
 					if (message.seq <= read) continue;
 					if (!message.mentions.includes(conversationId)) continue;
 					if (message.from === conversationId) continue;
-					mentions.push(`「${channel.title}」${renderMessage(org, message)}`);
+					// inbox 是「扫一眼有哪些 @ 我」，不需要全文；要看全文它自己 read_channel
+					mentions.push(`「${channel.title}」${renderMessage(org, message, 400)}`);
 				}
 			}
 

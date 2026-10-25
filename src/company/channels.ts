@@ -16,6 +16,7 @@
 import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import {
 	appendMessage,
+	MAX_MESSAGES_PER_CHANNEL,
 	dmChannelId,
 	OWNER_ID,
 	createChannel,
@@ -37,7 +38,7 @@ import { CompanyDoc, type CompanyState } from "./docs.ts";
 import { ChannelDoc } from "./channels-doc.ts";
 import { deliver, type DeliverOutcome } from "./deliver.ts";
 import { buildOrg, type Org } from "./org-model.ts";
-import { labelOf } from "../domain/membership.ts";
+import { labelOf, ownerOfChannel } from "../domain/membership.ts";
 
 export { ChannelDoc } from "./channels-doc.ts";
 
@@ -141,15 +142,15 @@ export async function postToChannel(
 	}
 	const result = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
-		const next = appendMessage(doc as ChannelState, channelId, input);
-		// **只写变化的那个频道 + nextSeq**。
+		const state = doc as ChannelState;
+		const next = appendMessage(state, channelId, input);
+		// **按路径写，不整频道替换。**
 		//
-		// 曾经的写法是「清空所有键再 Object.assign 整个 state」，结果是每追加一条消息
-		// 都把整个 ChannelDoc（21 个频道、几百条消息，实测 130KB）当成一次 delta 写盘。
-		// 公司群里每说一句话写 130KB，几轮就把库撑爆。
-		//
-		// 底层文档是可写的 overlay：只给变化的路径赋值，产生的 delta 就只有那一条路径。
-		writeChannel(doc as ChannelState, channelId, next.state);
+		// 演进过三版：①清空所有键再 Object.assign 整个 state（130KB/条）；
+		// ②只赋值 `doc.channels[id] = nextChannel`（实测 49.6KB/条，因为 chord 的
+		// `["s", path, value]` 是整值替换，频道里有 800 条消息就重写 800 条）；
+		// ③现在这样，push 一条 + 改两个数字（实测 141 字节，350 倍差距）。
+		appendMessageInPlace(state, channelId, next.message);
 		return next.message;
 	}, context);
 
@@ -172,40 +173,33 @@ export async function postToChannel(
 }
 
 /**
- * 把纯函数算出的新状态写回文档 overlay —— **只写变化的那一个频道**。
+ * 把一条新消息写进 overlay —— **只碰这条消息和两个数字**。
  *
  * `pi-durable` 的 `tx.doc()` 返回可写 overlay，底层按「路径」生成 delta。
- * 整体替换 `doc.channels` 会让每条消息的 delta 等于整个文档大小（实测 130KB/条）；
- * 只赋值 `doc.channels[id]` 则 delta 只含那一个频道。
+ * `doc.channels[id] = nextChannel` 是整值替换：频道里有 800 条消息就重写 800 条
+ * （实测 49.6KB/条）；`messages.push()` + 改 `lastSeq`/`nextSeq` 只产生 3 个 op
+ * （实测 141 字节）。
  */
-function writeChannel(doc: ChannelState, channelId: string, next: ChannelState): void {
-	doc.nextSeq = next.nextSeq;
-	const channel = next.channels[channelId];
-	if (channel !== undefined) doc.channels[channelId] = channel;
+function appendMessageInPlace(state: ChannelState, channelId: string, message: ChannelMessage): void {
+	const channel = state.channels[channelId];
+	if (channel === undefined) return;
+	channel.messages.push(message);
+	// 裁剪与 `domain/channels.ts` 的 appendMessage 保持一致：只保留最近 N 条。
+	const excess = channel.messages.length - MAX_MESSAGES_PER_CHANNEL;
+	if (excess > 0) channel.messages.splice(0, excess);
+	channel.lastSeq = message.seq;
+	state.nextSeq = message.seq + 1;
 }
 
 /**
  * 算唤醒对象：委托给 `domain/channels.ts` 的纯函数，注入「频道 owner」解析。
  *
- * owner 是「老板发言没 @ 时该叫醒谁」：公司群/领导层 → CEO，项目群 → 该项目负责人。
- * 这个映射依赖组织结构（org），而 domain 层只认频道本身，所以在这里注入。
+ * owner 的映射**不在本文件里重写**——`src/domain/membership.ts` 的
+ * `ownerOfChannel(org, channel)` 是唯一真相源（它以前零生产调用，于是这里
+ * 和 `src/server/http.ts` 各写了一份 switch，三份实现迟早会分叉）。
  */
 function wakeTargets(org: Org, channel: Channel, message: ChannelMessage): readonly number[] {
-	const ownerOf = (target: Channel): number | undefined => {
-		switch (target.kind) {
-			case "company":
-			case "leadership":
-				return org.ceoId;
-			case "project":
-				return target.project === undefined ? undefined : org.projectLeaders[target.project];
-			case "dm":
-			case "log": {
-				const id = Number(target.id.slice(target.id.indexOf(":") + 1));
-				return Number.isFinite(id) ? id : undefined;
-			}
-		}
-	};
-	return recipientsOf(channel, message, ownerOf);
+	return recipientsOf(channel, message, (target) => ownerOfChannel(org, target));
 }
 
 // ── 已读 ────────────────────────────────────────────────────────────────────
@@ -222,9 +216,12 @@ export async function markChannelRead(
 		const doc = await tx.doc(ChannelDoc);
 		const channel = (doc as ChannelState).channels[channelId];
 		if (channel === undefined) return;
-		const next = advanceRead(channel, conversationId, seq);
-		if (next === channel) return;
-		(doc as ChannelState).channels[channelId] = next;
+		// 只写 `members[cid].lastReadSeq` 这一个路径（实测 62 字节）。
+		// 以前是整频道替换（49.6KB），而 GET /api/channels/:id 每次都调这里。
+		const member = channel.members[String(conversationId)];
+		if (member === undefined) return;
+		if (seq <= member.lastReadSeq) return;
+		member.lastReadSeq = seq;
 	}, context);
 }
 
@@ -253,9 +250,12 @@ export async function markMentionSeen(
 		const state = doc as ChannelState;
 		const channel = state.channels[channelId];
 		if (channel === undefined) return;
-		const next = markMentionRead(channel, seq, conversationId);
-		if (next === channel) return;
-		(doc as ChannelState).channels[channelId] = next;
+		// 只 push 一个已读者 id，不重写整条消息列表。
+		const message = channel.messages.find((entry) => entry.seq === seq);
+		if (message === undefined) return;
+		if (!message.mentions.includes(conversationId)) return;
+		if (message.readBy.includes(conversationId)) return;
+		message.readBy.push(conversationId);
 	}, context);
 }
 

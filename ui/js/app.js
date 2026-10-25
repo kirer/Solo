@@ -35,7 +35,7 @@ const orgView = initOrg({ onSelect: (id) => selectConversation(id) });
 const chat = initChat({ onSend: sendMessage, uploadFile, fetchProfile, onAnswer: submitAnswer });
 const settingsPanel = initSettings({ onToast: (text, tone) => chat.notify?.(text, tone) });
 // 频道视图（通信重构）：左侧频道列表 + 消息流 + 成员/任务
-const channels = initChannels({});
+const channels = initChannels({ onToast: (text, tone) => chat.notify?.(text, tone) });
 
 /**
  * 取一位职工的角色档案（角色预制提示词 / 技能清单）。
@@ -440,6 +440,8 @@ function applyView(name, { persist = true } = {}) {
 	}
 	// 切到频道视图时才拉数据（省掉启动时的两个请求）
 	if (view === "channels") void channels.refresh();
+	// 通知各模块「当前是哪个视图」：看板据此起停轮询，别再后台白烧请求
+	window.dispatchEvent(new CustomEvent("aic:view", { detail: { view } }));
 	if (persist) {
 		try {
 			localStorage.setItem(VIEW_KEY, view);
@@ -449,8 +451,10 @@ function applyView(name, { persist = true } = {}) {
 	}
 }
 
+/** 三个视图轮转：组织 → 看板 → 频道 → 组织。 */
 function toggleView() {
-	applyView(state.view === "board" ? "org" : "board");
+	const next = state.view === "org" ? "board" : state.view === "board" ? "channels" : "org";
+	applyView(next);
 }
 
 function setupViewSwitch() {
@@ -633,7 +637,7 @@ document.addEventListener("keydown", (event) => {
 	}
 });
 
-// ⌘K / Ctrl+K 切换主视图（组织图 ↔ 看板）
+// ⌘K / Ctrl+K 切换主视图（组织图 → 看板 → 频道）
 document.addEventListener("keydown", (event) => {
 	if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
 		event.preventDefault();

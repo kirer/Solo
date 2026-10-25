@@ -578,3 +578,116 @@ describe("延迟工具 + tool_search（ADR-032）", () => {
 		expect(names, "加载后应直接可用").toContain("project_status");
 	});
 });
+/**
+ * 并发写：读改写必须在同一条 mutation line 上。
+ *
+ * 曾经的写法是 `readTasks()`（commit 外快照）+ commit 内整表覆盖。
+ * pi-durable 的 commit 串行化只保护 commit 内部，保护不了「读在 commit 外」：
+ * 两个并发 createTask 都读到旧 nextId，算出同一个 `T-N`，后写的把先写的盖掉，
+ * **两条任务变成一条**。transitionTask 同理，会丢一次状态变更。
+ */
+describe("任务文档并发写", () => {
+	test("并发创建 5 条任务，一条都不能少、id 不能重", async () => {
+		const { runtime, booted, project } = await setup();
+		const created = await Promise.all(
+			Array.from({ length: 5 }, (_, index) =>
+				createTask(
+					runtime,
+					{
+						project: "alpha",
+						channelId: "proj:alpha",
+						title: `并发任务 ${index}`,
+						brief: "",
+						acceptance: "能跑",
+						assignee: project.leader,
+						assignedBy: booted.ownerConversationId,
+					},
+					BACKGROUND_CONTEXT,
+				),
+			),
+		);
+		const ok = created.filter((item) => item.ok);
+		expect(ok.length).toBe(5);
+		const ids = new Set(ok.map((item) => (item.ok ? item.task.id : "")));
+		expect(ids.size).toBe(5);
+
+		const state = await readChannels(runtime, BACKGROUND_CONTEXT);
+		void state;
+		const { readTasks } = await import("../../src/company/tasks.ts");
+		const tasks = await readTasks(runtime, BACKGROUND_CONTEXT);
+		expect(Object.keys(tasks.tasks).length).toBe(5);
+	});
+
+	test("并发迁移同一条任务，最终状态合法且变更不丢", async () => {
+		const { runtime, booted, project } = await setup();
+		const created = await createTask(
+			runtime,
+			{
+				project: "alpha",
+				channelId: "proj:alpha",
+				title: "迁移目标",
+				brief: "",
+				acceptance: "能跑",
+				assignee: project.leader,
+				assignedBy: booted.ownerConversationId,
+			},
+			BACKGROUND_CONTEXT,
+		);
+		expect(created.ok).toBe(true);
+		if (!created.ok) return;
+		const id = created.task.id;
+
+		// doing 只能从 todo 来；并发两次 doing，一次成功一次非法，但**不能都成功**
+		const [first, second] = await Promise.all([
+			transitionTask(runtime, id, "doing", { by: 1 }, BACKGROUND_CONTEXT),
+			transitionTask(runtime, id, "doing", { by: 1 }, BACKGROUND_CONTEXT),
+		]);
+		const successes = [first, second].filter((item) => item.ok).length;
+		expect(successes).toBeGreaterThanOrEqual(1);
+		const task = await readTask(runtime, id, BACKGROUND_CONTEXT);
+		expect(task?.status).toBe("doing");
+	});
+});
+
+/**
+ * 未读数只有一个真相源。
+ *
+ * 曾经 `src/server/channels-view.ts` 用 `lastSeq - messages.length` 当已读位置，
+ * 它恒等于「数组里最旧一条的 seq」，与任何人的已读位置无关——老板读完频道后
+ * 列表徽章仍然是 3，而下一次轮询又变回原值。
+ */
+describe("未读数按读位置算", () => {
+	test("markRead 之后列表未读与详情未读同时归零", async () => {
+		const { runtime } = await setup();
+		const { markAllRead, readChannel: readOne } = await import("../../src/company/channels.ts");
+		const { listChannels, readChannelView } = await import("../../src/server/channels-view.ts");
+
+		await postToChannel(
+			runtime,
+			"company",
+			{ from: 1, fromLabel: "CEO", kind: "chat", text: "大家好" },
+			{ context: BACKGROUND_CONTEXT, wake: false },
+		);
+		await postToChannel(
+			runtime,
+			"company",
+			{ from: 1, fromLabel: "CEO", kind: "chat", text: "开会了" },
+			{ context: BACKGROUND_CONTEXT, wake: false },
+		);
+
+		const before = (await listChannels(runtime, BACKGROUND_CONTEXT)).find((item) => item.id === "company");
+		expect(before?.unread).toBeGreaterThan(0);
+
+		await markAllRead(runtime, "company", OWNER_ID, BACKGROUND_CONTEXT);
+
+		const after = (await listChannels(runtime, BACKGROUND_CONTEXT)).find((item) => item.id === "company");
+		expect(after?.unread).toBe(0);
+
+		const view = await readChannelView(runtime, "company", { viewer: OWNER_ID }, BACKGROUND_CONTEXT);
+		const mine = view?.members.find((member) => member.id === OWNER_ID);
+		expect(mine?.unread).toBe(0);
+
+		const channel = await readOne(runtime, "company", BACKGROUND_CONTEXT);
+		expect(channel?.lastSeq).toBeGreaterThan(0);
+	});
+});

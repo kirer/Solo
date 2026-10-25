@@ -25,8 +25,20 @@ const state = {
 	mentionCandidates: [],
 	mentionQuery: "",
 	mentionStart: -1,
+	/** @ 候选当前高亮项（上下键移动，回车/Tab 选中）。 */
+	mentionActive: 0,
+	/** 当前候选列表（与 DOM 顺序一致）。 */
+	mentionItems: [],
 	loading: false,
 	lastFetchAt: 0,
+	/** 请求令牌：只让「最后一次点击的那个频道」的响应落地。 */
+	reqToken: 0,
+	/** 发送锁：连按两次 Enter 不会发两条。 */
+	sending: false,
+	/** 翻页锁：连点「加载更早」不会重复请求同一页。 */
+	loadingEarlier: false,
+	/** 已展开全文的消息（按 seq）。轮询全量重渲染后要靠它恢复，否则一点就白点。 */
+	expanded: new Set(),
 };
 
 const el = {
@@ -56,7 +68,17 @@ const GROUPS = [
 
 async function fetchJson(path, options) {
 	const response = await fetch(path, { headers: { accept: "application/json" }, ...options });
-	if (!response.ok) throw new Error(`HTTP ${response.status}`);
+	if (!response.ok) {
+		// 服务端的错误体是中文可读的（"频道不存在"），丢掉它前端就只剩 "HTTP 404"。
+		let detail = "";
+		try {
+			const body = await response.json();
+			if (typeof body?.error === "string") detail = body.error;
+		} catch {
+			/* 非 JSON 错误体：退回状态码 */
+		}
+		throw new Error(detail === "" ? `HTTP ${response.status}` : detail);
+	}
 	const contentType = response.headers.get("content-type") ?? "";
 	if (!contentType.includes("application/json")) throw new Error("接口未就绪");
 	return response.json();
@@ -82,22 +104,63 @@ async function loadChannels() {
 	}
 }
 
-async function openChannel(id) {
-	if (state.loading) return;
-	state.loading = true;
+/**
+ * 打开（或刷新）一个频道。
+ *
+ * 三个必须守住的约束，都是踩过的坑：
+ *
+ * 1. **请求令牌**：以前用 `if (state.loading) return;` 直接丢弃并发请求——用户在
+ *    加载中点另一个频道，那一下点击就静默消失了。现在用 reqToken：只有最后
+ *    一次点击的响应能落地，早到的直接丢。
+ * 2. **不抢用户的屏**：手机上是「列表页 / 会话页」两屏。只有用户**主动点频道**
+ *    才切到 main；轮询刷新不能把人从列表页踢进会话页。
+ * 3. **保住滚动位置与展开状态**：轮询会全量重渲染消息流，无条件
+ *    `scrollToBottom()` 会把正在翻历史的用户拽回底部。
+ */
+async function openChannel(id, { userInitiated = true } = {}) {
+	const token = ++state.reqToken;
 	state.activeId = id;
-	// 手机上是「列表页 → 会话页」两屏，进会话就切到 main
-	if (el.layout !== null) el.layout.dataset.pane = "main";
+	// 切频道必须重拉 @ 候选：候选是「本频道成员」，否则会 @ 到不在群里的人
+	if (userInitiated) void loadMentionCandidates();
+	// 手机上是「列表页 → 会话页」两屏，用户主动进会话才切到 main
+	if (userInitiated && el.layout !== null) el.layout.dataset.pane = "main";
 	updateActiveRow();
+	const keepScroll = userInitiated ? null : captureScroll();
 	try {
 		const view = await fetchJson(`/api/channels/${encodeURIComponent(id)}?limit=60`);
-		state.view = view;
+		if (token !== state.reqToken) return; // 用户已经切到别的频道了
+		// 轮询刷新时，如果用户已经往前翻过页，把更早的那些消息保住——
+		// 否则每 4 秒一次刷新就把翻页结果冲掉，用户永远读不到历史。
+		if (!userInitiated && state.view !== null && state.view.channel.id === id) {
+			const firstFetched = view.messages[0]?.seq ?? Number.POSITIVE_INFINITY;
+			const older = state.view.messages.filter((message) => message.seq < firstFetched);
+			if (older.length > 0) {
+				state.view = { ...view, messages: [...older, ...view.messages] };
+			} else {
+				state.view = view;
+			}
+		} else {
+			state.view = view;
+		}
 		renderHeader();
 		renderMessages();
 		renderMembers();
 		renderTasks();
-		scrollToBottom();
-		// 打开即已读：服务端已在 GET 时推了读位置，这里同步列表徽章
+		if (keepScroll === null) scrollToBottom();
+		else restoreScroll(keepScroll);
+		// 已读要前端**显式**上报：GET 不再有副作用（否则轮询/手机列表页也会清未读）。
+		// 只报到真正渲染出来的最后一条，中间的未读不会被吞。
+		const lastSeq = view.messages.at(-1)?.seq;
+		if (lastSeq !== undefined) {
+			void fetchJson(`/api/channels/${encodeURIComponent(id)}/read`, {
+				method: "POST",
+				headers: { "content-type": "application/json", accept: "application/json" },
+				body: JSON.stringify({ seq: lastSeq }),
+			}).catch(() => {
+				/* 已读上报失败不打扰用户：下一轮会再报 */
+			});
+		}
+		// 同步列表徽章
 		const row = state.channels.find((channel) => channel.id === id);
 		if (row !== undefined) {
 			row.unread = 0;
@@ -105,32 +168,93 @@ async function openChannel(id) {
 			renderList();
 		}
 	} catch (error) {
+		if (token !== state.reqToken) return;
 		renderBodyError(error instanceof Error ? error.message : "加载失败");
-	} finally {
-		state.loading = false;
 	}
+}
+
+/**
+ * 往前翻一页。
+ *
+ * 只把结果**插到前面**（`state.view.messages` 合并），不整段重拉——否则用户
+ * 翻到第 5 页时一次轮询又回到最近 60 条。滚动位置按「新增高度」补偿，
+ * 视觉上停在原来看的那条上。
+ */
+async function loadEarlier(before) {
+	const channelId = state.activeId;
+	if (channelId === null || !Number.isFinite(before) || before <= 0) return;
+	if (state.loadingEarlier) return;
+	state.loadingEarlier = true;
+	const heightBefore = el.body?.scrollHeight ?? 0;
+	const topBefore = el.body?.scrollTop ?? 0;
+	try {
+		const page = await fetchJson(`/api/channels/${encodeURIComponent(channelId)}?limit=60&before=${before}`);
+		if (state.activeId !== channelId || state.view === null) return;
+		const known = new Set(state.view.messages.map((message) => message.seq));
+		const older = page.messages.filter((message) => !known.has(message.seq));
+		state.view = {
+			...state.view,
+			messages: [...older, ...state.view.messages],
+			hasMore: page.hasMore,
+		};
+		renderMessages();
+		if (el.body !== null) {
+			// 内容变高了，补偿差值让视口停在原来的位置
+			el.body.scrollTop = topBefore + (el.body.scrollHeight - heightBefore);
+		}
+	} catch (error) {
+		notify(error instanceof Error ? error.message : "加载更早的消息失败", "error");
+	} finally {
+		state.loadingEarlier = false;
+	}
+}
+
+/** 记下消息区的滚动位置（是否贴底 + 距底距离）。 */
+function captureScroll() {
+	if (el.body === null) return null;
+	const distance = el.body.scrollHeight - el.body.scrollTop - el.body.clientHeight;
+	return { distance, atBottom: distance < 48 };
+}
+
+function restoreScroll(saved) {
+	if (el.body === null || saved === null) return;
+	if (saved.atBottom) {
+		el.body.scrollTop = el.body.scrollHeight;
+		return;
+	}
+	// 内容可能变高了（新消息进来），按「距底距离」还原比按绝对 scrollTop 稳
+	el.body.scrollTop = el.body.scrollHeight - el.body.clientHeight - saved.distance;
 }
 
 async function sendMessage(text) {
 	const channelId = state.activeId;
 	if (channelId === null || text.trim() === "") return;
+	// 连按两次 Enter 不该发两条
+	if (state.sending) return;
+	state.sending = true;
+	const sentText = text;
 	const mentions = extractMentions(text);
 	try {
 		el.send?.setAttribute("disabled", "");
 		await fetchJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
-			body: JSON.stringify({ text, mentions }),
+			body: JSON.stringify({ text: sentText, mentions }),
 		});
-		if (el.input !== null) {
+		// 只有输入框里还是刚发出去的那段文字才清空。
+		// 曾经无条件 `el.input.value = ""`：发送途中用户切频道并开始打新草稿，
+		// 草稿被这条旧响应抹掉。
+		if (el.input !== null && el.input.value === sentText) {
 			el.input.value = "";
 			autoSize();
 		}
-		await openChannel(channelId);
+		// 同理：发送途中用户已经切走，就不要把人拽回旧频道
+		if (state.activeId === channelId) await openChannel(channelId, { userInitiated: false });
 		await loadChannels();
 	} catch (error) {
 		notify(error instanceof Error ? error.message : "发送失败", "error");
 	} finally {
+		state.sending = false;
 		el.send?.removeAttribute("disabled");
 	}
 }
@@ -154,7 +278,12 @@ function extractMentions(text) {
  */
 function avatar(label, size = 32, extraClass = "") {
 	const src = `/api/avatar/${encodeURIComponent(label)}?size=${size * 2}`;
-	return `<img class="ch-av ${extraClass}" src="${escapeAttr(src)}" alt="" width="${size}" height="${size}" loading="lazy" decoding="async">`;
+	// onerror 兜底：头像接口挂了（或离线）时显示首字，而不是一个破图标
+	const initial = escapeAttr(label.slice(0, 1));
+	return (
+		`<img class="ch-av ${extraClass}" src="${escapeAttr(src)}" alt="" width="${size}" height="${size}" loading="lazy" decoding="async"` +
+		` onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'ch-av ch-av--fallback ${extraClass}',textContent:'${initial}'}))">`
+	);
 }
 
 /** 工作记录不是人，给它一个「文档」图标而不是人脸。 */
@@ -225,8 +354,12 @@ function renderList(unread) {
 		if (button.dataset.id === undefined) continue;
 		button.addEventListener("click", () => openChannel(button.dataset.id));
 	}
-	// 顶栏徽章
-	const total = unread?.mentions ?? 0;
+	// 顶栏徽章：**从 state.channels 自己算**。
+	// 以前用 `unread?.mentions ?? 0`——renderList() 无参调用时 unread 是 undefined，
+	// 顶栏 @ 徽章就被清空了（openChannel / 展开全文 后都会调一次）。
+	const total =
+		unread?.mentions ??
+		state.channels.reduce((sum, channel) => sum + (channel.mentions ?? 0), 0);
 	const badge = $("ch-unread");
 	if (badge !== null) {
 		badge.textContent = total > 0 ? String(total) : "";
@@ -274,6 +407,12 @@ function renderMessages() {
 	}
 
 	const html = [];
+	// 更早的消息：服务端有 before 游标（每频道保留 800 条），前端以前硬编码
+	// `?limit=60` 且从不翻页，用户只能看到最近 60 条，更早的等于不存在。
+	if (view.hasMore) {
+		const firstSeq = view.messages[0]?.seq ?? 0;
+		html.push(`<button class="ch-load-more" type="button" data-before="${firstSeq}">加载更早的消息</button>`);
+	}
 	let lastFrom = null;
 	let lastAt = 0;
 	let lastDay = "";
@@ -304,7 +443,7 @@ function renderMessages() {
 				renderAvatar(message),
 				`<div class="ch-msg-main">`,
 				grouped ? "" : renderMsgHead(message),
-				renderBubble(message.text),
+				renderBubble(message.text, message.seq),
 				renderMentions(message),
 				`</div>`,
 				`</div>`,
@@ -312,12 +451,16 @@ function renderMessages() {
 		);
 	}
 	el.body.innerHTML = html.join("");
+	for (const button of el.body.querySelectorAll(".ch-load-more")) {
+		button.addEventListener("click", () => loadEarlier(Number(button.dataset.before)));
+	}
 	// 展开全文（事件委托：消息流每次全量重渲染，逐个绑定会漏）
 	for (const button of el.body.querySelectorAll(".ch-expand")) {
 		button.addEventListener("click", () => {
+			const seq = Number(button.dataset.seq);
+			if (Number.isFinite(seq)) state.expanded.add(seq);
 			const bubble = button.previousElementSibling;
-			if (bubble === null) return;
-			bubble.dataset.collapsed = "false";
+			if (bubble !== null) bubble.dataset.collapsed = "false";
 			button.remove();
 		});
 	}
@@ -329,14 +472,17 @@ function renderMessages() {
  * 长报告（agent 经常一次输出几百行）在聊天流里会把别的消息全挤出屏幕。
  * 超过 ~28 行就折叠，点「展开全文」再看——和飞书/Slack 的长消息处理一致。
  */
-function renderBubble(text) {
+function renderBubble(text, seq) {
 	const html = renderMarkdown(text);
 	const lines = (text.match(/\n/g) ?? []).length + 1;
 	const long = lines > 28 || text.length > 1600;
 	if (!long) return `<div class="ch-bubble">${html}</div>`;
+	// 展开状态存在 state 里而不是 DOM 上：消息流每次轮询全量重渲染，
+	// 只改 DOM 的 dataset 等于「点了展开，下一轮又收回去」。
+	const open = state.expanded.has(seq);
 	return [
-		`<div class="ch-bubble" data-collapsed="true">${html}</div>`,
-		`<button class="ch-expand" type="button">展开全文（${lines} 行）</button>`,
+		`<div class="ch-bubble" data-collapsed="${open ? "false" : "true"}">${html}</div>`,
+		open ? "" : `<button class="ch-expand" type="button" data-seq="${seq}">展开全文（${lines} 行）</button>`,
 	].join("");
 }
 
@@ -408,19 +554,38 @@ function renderMembers() {
 	if (view === null || el.members === null) return;
 	const html = view.members
 		.map(
+			// 成员可点：点一下直接进和 TA 的私聊频道（dm:<id>）。
+			// 以前是纯文本，看到「林越」想问一句却没法开私聊。
 			(member) => [
 				`<li class="ch-member" data-role="${escapeAttr(member.role)}">`,
+				`<button class="ch-member-btn" type="button" data-dm="${member.id}" title="和 ${escapeAttr(member.label)} 私聊">`,
 				avatar(member.label, 22, "ch-av--sm"),
 				`<span class="ch-member-main">`,
 				`<b>${escapeHtml(member.label)}</b>`,
 				`<span class="ch-member-role">${escapeHtml(roleLabel(member.role))}</span>`,
 				`</span>`,
 				member.unread > 0 ? `<b class="ch-badge">${member.unread}</b>` : "",
+				`</button>`,
 				`</li>`,
 			].join(""),
 		)
 		.join("");
 	el.members.innerHTML = html;
+	for (const button of el.members.querySelectorAll(".ch-member-btn")) {
+		button.addEventListener("click", () => {
+			const id = Number(button.dataset.dm);
+			if (!Number.isFinite(id)) return;
+			// 私聊频道由 ensureAllChannels 建好，命名固定 `dm:<conversationId>`
+			const dmId = `dm:${id}`;
+			const exists = state.channels.some((channel) => channel.id === dmId);
+			if (!exists) {
+				notify("还没有和这个人的私聊频道", "error");
+				return;
+			}
+			state.expanded.clear();
+			openChannel(dmId);
+		});
+	}
 }
 
 function renderTasks() {
@@ -492,6 +657,8 @@ function detectMention(value, caret) {
 	const before = value.slice(0, caret);
 	const at = before.lastIndexOf("@");
 	if (at < 0) return null;
+	// `@` 前一个字符必须是空白或行首：否则 `a@b.com`、`foo@bar` 也会弹候选
+	if (at > 0 && !/[\s(（【\[]/.test(before[at - 1])) return null;
 	// @ 后面不能有空格（否则已经不是在选人）
 	const query = before.slice(at + 1);
 	if (/\s/.test(query)) return null;
@@ -504,6 +671,7 @@ function updateMentionPopup() {
 	if (detected === null) {
 		el.mention.hidden = true;
 		state.mentionStart = -1;
+		state.mentionItems = [];
 		return;
 	}
 	state.mentionStart = detected.start;
@@ -512,14 +680,19 @@ function updateMentionPopup() {
 	const list = state.mentionCandidates.filter((candidate) => candidate.label.toLowerCase().includes(query));
 	if (list.length === 0) {
 		el.mention.hidden = true;
+		state.mentionItems = [];
 		return;
 	}
+	const items = list.slice(0, 8);
+	state.mentionItems = items;
+	// 高亮项越界就夹回来（用户打字把候选从 8 个筛到 2 个时）
+	if (state.mentionActive >= items.length) state.mentionActive = 0;
 	el.mention.hidden = false;
-	el.mention.innerHTML = list
-		.slice(0, 8)
+	el.mention.innerHTML = items
 		.map(
-			(candidate) =>
-				`<button type="button" class="ch-mention-item" data-label="${escapeAttr(candidate.label)}">` +
+			(candidate, index) =>
+				`<button type="button" class="ch-mention-item" data-label="${escapeAttr(candidate.label)}"` +
+				` data-active="${index === state.mentionActive ? "true" : "false"}">` +
 				avatar(candidate.label, 18, "ch-av--xs") +
 				`<b>${escapeHtml(candidate.label)}</b>` +
 				`<span>${escapeHtml(roleLabel(candidate.role))}</span>` +
@@ -527,8 +700,42 @@ function updateMentionPopup() {
 		)
 		.join("");
 	for (const button of el.mention.querySelectorAll(".ch-mention-item")) {
-		button.addEventListener("click", () => insertMention(button.dataset.label));
+		// mousedown 里 preventDefault：否则 input 先 blur，弹层被关掉，click 永远到不了
+		button.addEventListener("mousedown", (event) => {
+			event.preventDefault();
+			insertMention(button.dataset.label);
+		});
 	}
+	el.mention.querySelectorAll(".ch-mention-item").forEach((button, index) => {
+		button.addEventListener("mousemove", () => {
+			if (state.mentionActive === index) return;
+			state.mentionActive = index;
+			el.mention.querySelectorAll(".ch-mention-item").forEach((other, otherIndex) => {
+				other.dataset.active = otherIndex === index ? "true" : "false";
+			});
+		});
+	});
+}
+
+/** 上下键移动高亮（不重渲染整段：只改 data-active，避免闪烁与丢焦点）。 */
+function moveMentionActive(step) {
+	const count = state.mentionItems.length;
+	if (count === 0) return;
+	state.mentionActive = (state.mentionActive + step + count) % count;
+	if (el.mention === null) return;
+	const buttons = el.mention.querySelectorAll(".ch-mention-item");
+	buttons.forEach((button, index) => {
+		button.dataset.active = index === state.mentionActive ? "true" : "false";
+	});
+	buttons[state.mentionActive]?.scrollIntoView({ block: "nearest" });
+}
+
+/** 选中当前高亮的候选。 */
+function pickMentionActive() {
+	const item = state.mentionItems[state.mentionActive];
+	if (item === undefined) return false;
+	insertMention(item.label);
+	return true;
 }
 
 function insertMention(label) {
@@ -548,12 +755,21 @@ function insertMention(label) {
 
 // ── 交互 ──────────────────────────────────────────────────────────────────
 
+/**
+ * 提示。
+ *
+ * 曾经只 dispatch 一个 `aic:toast` CustomEvent —— 全前端**零监听器**，
+ * 所以「发送失败」是彻底静默的。现在由 app.js 注入真正的 toast。
+ */
+let toast = null;
 function notify(text, tone = "info") {
-	window.dispatchEvent(new CustomEvent("aic:toast", { detail: { text, tone } }));
+	if (toast !== null) toast(text, tone);
+	else if (tone === "error") console.error("[频道]", text);
 }
 
 /** 挂载到 #channels 容器（由 app.js 在切到频道视图时调用）。 */
-export function initChannels({ onSend } = {}) {
+export function initChannels({ onToast } = {}) {
+	toast = typeof onToast === "function" ? onToast : null;
 	el.root = $("channels");
 	if (el.root === null) return { refresh: () => {}, open: () => {} };
 	el.layout = el.root.querySelector(".ch-layout");
@@ -575,13 +791,32 @@ export function initChannels({ onSend } = {}) {
 	el.send?.addEventListener("click", () => sendMessage(el.input?.value ?? ""));
 	el.input?.addEventListener("input", onInput);
 	el.input?.addEventListener("keydown", (event) => {
+		// **中文输入法**：选候选词时按 Enter 也会触发 keydown，key 同样是 "Enter"。
+		// 不挡住就会把拼音/半截中文直接发出去（chat.js 早就有这个判断，频道漏了）。
+		if (event.isComposing || event.keyCode === 229) return;
+
+		const popupOpen = el.mention !== null && !el.mention.hidden;
+		if (popupOpen) {
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				moveMentionActive(event.key === "ArrowDown" ? 1 : -1);
+				return;
+			}
+			if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+				event.preventDefault();
+				if (pickMentionActive()) return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				el.mention.hidden = true;
+				state.mentionItems = [];
+				return;
+			}
+		}
+
 		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
-			if (el.mention !== null && !el.mention.hidden) return;
 			sendMessage(el.input?.value ?? "");
-		}
-		if (event.key === "Escape") {
-			if (el.mention !== null) el.mention.hidden = true;
 		}
 	});
 
@@ -590,7 +825,12 @@ export function initChannels({ onSend } = {}) {
 	const ensureLoaded = async () => {
 		if (loaded) return;
 		loaded = true;
-		await loadChannels();
+		try {
+			await loadChannels();
+		} catch {
+			// 失败要允许重试：以前 loaded 在 await 前就置 true，一次失败就永久空白
+			loaded = false;
+		}
 	};
 
 	// org SSE 推送 → 刷新（节流）
@@ -601,7 +841,12 @@ export function initChannels({ onSend } = {}) {
 		pending = window.setTimeout(async () => {
 			pending = null;
 			await loadChannels();
-			if (state.activeId !== null) await openChannel(state.activeId);
+			// 手机停在列表页时不要自动进会话（会把人踢离列表并顺手标已读）
+			const onListPane = el.layout === null || el.layout.dataset.pane !== "main";
+			const narrow = window.matchMedia("(max-width: 860px)").matches;
+			if (state.activeId !== null && !(narrow && onListPane)) {
+				await openChannel(state.activeId, { userInitiated: false });
+			}
 		}, 400);
 	});
 
@@ -612,6 +857,8 @@ export function initChannels({ onSend } = {}) {
 				await loadMentionCandidates();
 			}
 		},
+		/** 切换频道后必须重拉候选：@ 列表是「本频道成员」，不然会 @ 到不在群里的人。 */
+		reloadCandidates: loadMentionCandidates,
 		open: openChannel,
 		loadMentionCandidates,
 	};

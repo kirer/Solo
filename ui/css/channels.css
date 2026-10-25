@@ -28,6 +28,10 @@
 .ch-layout {
 	display: grid;
 	grid-template-columns: 268px minmax(0, 1fr) 232px;
+	/* 行也必须约束成 1fr：只写 min-height:0 时行高仍是 auto（= 内容高），
+	   消息一多三栏就整体撑出容器，输入框被挤到屏幕外看不见。 */
+	grid-template-rows: minmax(0, 1fr);
+	flex: 1;
 	width: 100%;
 	min-height: 0;
 	border: 1px solid var(--line);
@@ -111,6 +115,10 @@
 }
 
 /* 有 @ 没读的会话：左侧一根竖线，扫视时第一眼看到 */
+.ch-row {
+	position: relative;
+}
+
 .ch-row[data-mention="true"]::before {
 	content: "";
 	position: absolute;
@@ -278,6 +286,13 @@
 	flex-direction: column;
 	gap: 2px;
 	scroll-behavior: smooth;
+	/* 键盘用户可以 Tab 进消息区上下翻（读屏软件也靠它定位） */
+	outline: none;
+}
+
+.ch-body:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
 }
 
 /* 日期分隔：长历史切成「今天 / 昨天 / 8月3日」 */
@@ -568,7 +583,7 @@
 .ch-compose textarea {
 	flex: 1;
 	min-height: 38px;
-	max-height: 180px;
+	max-height: 160px;
 	padding: 9px 11px;
 	border: 1px solid var(--line);
 	border-radius: var(--radius-md);
@@ -578,7 +593,6 @@
 	font-size: 13px;
 	line-height: 1.55;
 	resize: none;
-	outline: none;
 	transition: border-color 120ms ease;
 }
 
@@ -589,6 +603,13 @@
 .ch-compose textarea:focus {
 	border-color: var(--line-strong);
 	background: var(--surface-3);
+}
+
+/* 全局 focus-visible 被上面的 `outline: none` 关掉了，这里补回来：
+   键盘用户必须能看出焦点在输入框上。 */
+.ch-compose textarea:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 1px;
 }
 
 .ch-send {
@@ -850,4 +871,61 @@
 .ch-back svg {
 	width: 14px;
 	height: 14px;
+}
+
+/* ── 加载更早 ──────────────────────────────────────────────────────── */
+
+.ch-load-more {
+	align-self: center;
+	margin: 4px 0 10px;
+	padding: 5px 12px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--surface-2);
+	color: var(--muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.ch-load-more:hover {
+	border-color: var(--line-strong);
+	color: var(--ink);
+}
+
+/* ── 成员可点（开私聊） ─────────────────────────────────────────────── */
+
+.ch-member-btn {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 3px 6px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ch-member-btn:hover {
+	background: var(--surface-3);
+}
+
+.ch-member-btn:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.ch-av--fallback {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: 50%;
+	background: var(--surface-3);
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 600;
 }

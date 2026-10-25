@@ -10,7 +10,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
-import { extname, join, normalize } from "node:path";
+import { extname, join, normalize, sep } from "node:path";
 import { BACKGROUND_CONTEXT, InboxDoc, inspectLiveness, isConversationBusy } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
 import type { ModelSetup } from "../runtime/models.ts";
@@ -35,8 +35,9 @@ import { createUploadStore, MAX_UPLOAD_BYTES, UploadTooLargeError, type UploadSt
 import { composeInboundText, createImOutboundRelay, inboundAllowed } from "./im.ts";
 import { browserUrlOf, lanUrlsOf } from "./network.ts";
 import { listChannels, mentionCandidates, readChannelView, unreadSummary } from "./channels-view.ts";
-import { markAllRead, markMentionSeen, parseMentions, postToChannel, readChannel, readChannels } from "../company/channels.ts";
-import { OWNER_ID } from "../domain/channels.ts";
+import { markAllRead, markChannelRead, markMentionSeen, parseMentions, postToChannel, readChannel, readChannels } from "../company/channels.ts";
+import { OWNER_ID, type Channel } from "../domain/channels.ts";
+import { ownerOfChannel } from "../domain/membership.ts";
 import { buildOrg } from "../company/org-model.ts";
 import { avatarEtag, avatarSvg } from "./avatars.ts";
 
@@ -187,11 +188,10 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			payload = JSON.stringify({ error: String(error) });
 		}
 		for (const client of orgClients) {
-			try {
-				client.write(`event: org\ndata: ${payload}\n\n`);
-			} catch {
-				orgClients.delete(client);
-			}
+			// 逐条 await 背压：慢客户端会让这一轮推送变慢，但不会让进程内存涨上去。
+			// 这里刻意**串行**——并发写同一批连接只会让缓冲更乱。
+			const ok = await writeSse(client, `event: org\ndata: ${payload}\n\n`);
+			if (!ok) orgClients.delete(client);
 		}
 	};
 
@@ -235,13 +235,41 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				});
 
 	const server = createServer((request, response) => {
-		void handle(request, response);
+		// 兜底：handle 内部已 try/catch，但 URL 解析等发生在更外层的位置仍可能抛。
+		// 以前这里是裸 `void handle(...)`，一个畸形 Host 头就变成 unhandledRejection，
+		// 而 src/runtime/signals.ts 对 unhandledRejection 直接 process.exit(1)——
+		// 同网段任何人发一个 `Host: a b` 就能把整个多 agent 运行时打死。
+		void handle(request, response).catch((error: unknown) => {
+			try {
+				fail(response, 500, error instanceof Error ? error.message : String(error));
+			} catch {
+				response.destroy();
+			}
+		});
 	});
+
+	// 连接级超时：以前一个都没设。
+	//
+	// 没有 `headersTimeout` 时，slowloris 用几百个「只发一半头」的连接就能耗尽
+	// Node 的并发名额；没有 `requestTimeout` 时，一个只发了个 body 开头的 POST
+	// 能永久占住一条连接。SSE 走的是 `response`，不受 `requestTimeout` 影响
+	// （它限制的是「请求体收完」的时间），所以不用担心把长连接掐掉。
+	server.headersTimeout = 15_000;
+	server.requestTimeout = 60_000;
+	server.keepAliveTimeout = 65_000;
 
 	/** 路由。 */
 	async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-		const url = new URL(request.url ?? "/", `http://${request.headers.host ?? host}`);
-		const path = url.pathname;
+		let path: string;
+		let url: URL;
+		try {
+			// `new URL()` 必须在 try 内：`Host: a b` / `Host: [::1` / `Host: x%zz`
+			// 都会抛 `Invalid URL`，而它以前写在 try 之前。
+			url = new URL(request.url ?? "/", `http://${request.headers.host ?? host}`);
+			path = url.pathname;
+		} catch {
+			return fail(response, 400, "请求地址不合法");
+		}
 
 		try {
 			if (path === "/api/org") return json(response, await buildOrgView(current(), BACKGROUND_CONTEXT));
@@ -280,7 +308,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				if ("error" in result) return fail(response, 404, result.error);
 				return json(response, result.profile);
 			}
-			if (path.startsWith("/api/stream/org")) return streamOrg(response);
+			if (path === "/api/stream/org" && request.method === "GET") return streamOrg(response);
 			if (path.startsWith("/api/stream/feed/")) {
 				const conversationId = Number(path.slice("/api/stream/feed/".length));
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
@@ -366,8 +394,9 @@ export async function serve(options: ServeOptions): Promise<Server> {
 					BACKGROUND_CONTEXT,
 				);
 				if (view === undefined) return fail(response, 404, "频道不存在或无权查看");
-				// 老板打开频道即标记已读（灰点变绿点靠 markMentionSeen，这里只推读位置）
-				await markAllRead(current(), id, OWNER_ID, BACKGROUND_CONTEXT);
+				// **GET 不写状态**：读接口有副作用会让「轮询」「预取」「手机列表页」
+				// 这些不该算已读的动作也把未读清掉（曾经就是这样，用户在列表页
+				// 还没看内容，徽章就没了）。已读由前端渲染完消息后显式 POST /read。
 				return json(response, view);
 			}
 			if (path.startsWith("/api/channels/") && path.endsWith("/messages") && request.method === "POST") {
@@ -379,8 +408,12 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				const body = await readJson<{ seq?: number }>(request);
 				if (typeof body.seq === "number") {
 					await markMentionSeen(current(), id, body.seq, OWNER_ID, BACKGROUND_CONTEXT);
+					// 只推到**真正渲染出来的最后一条**，不是频道末尾。
+					// 否则用户只看了最近 60 条，中间的未读也被吞了。
+					await markChannelRead(current(), id, OWNER_ID, body.seq, BACKGROUND_CONTEXT);
+				} else {
+					await markAllRead(current(), id, OWNER_ID, BACKGROUND_CONTEXT);
 				}
-				await markAllRead(current(), id, OWNER_ID, BACKGROUND_CONTEXT);
 				scheduleOrgPush();
 				return json(response, { ok: true });
 			}
@@ -402,6 +435,41 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		}
 	}
 
+	/**
+	 * 往 SSE 连接写一段，**尊重背压**。
+	 *
+	 * `response.write()` 返回 false 表示内核缓冲已满。以前所有 SSE 都忽略返回值：
+	 * 一个慢消费的客户端（或干脆不再读的僵尸标签页）会让 Node 的内部缓冲无限增长，
+	 * 最后整个进程 OOM——而 SSE 是本服务最长的连接，最容易积累。
+	 * 这里等 `drain` 再继续；连接已关闭则立即返回 false 让调用方停止。
+	 */
+	async function writeSse(response: ServerResponse, chunk: string): Promise<boolean> {
+		if (response.writableEnded || response.destroyed) return false;
+		try {
+			if (response.write(chunk)) return true;
+			// 缓冲满了：等到可以继续写、或连接断开（超时兜底，避免永久挂住）
+			return await new Promise<boolean>((resolve) => {
+				let done = false;
+				const finish = (ok: boolean): void => {
+					if (done) return;
+					done = true;
+					clearTimeout(timer);
+					response.off("drain", onDrain);
+					response.off("close", onClose);
+					resolve(ok);
+				};
+				const onDrain = (): void => finish(true);
+				const onClose = (): void => finish(false);
+				// 60 秒还排不空 → 认为客户端已经死了，断开它
+				const timer = setTimeout(() => finish(false), 60_000);
+				response.on("drain", onDrain);
+				response.on("close", onClose);
+			});
+		} catch {
+			return false;
+		}
+	}
+
 	/** 组织快照的 SSE。 */
 	function streamOrg(response: ServerResponse): void {
 		response.writeHead(200, {
@@ -414,20 +482,19 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		orgClients.add(response);
 
 		// 首帧：立刻给一份，避免白屏等待
-		void buildOrgView(current(), BACKGROUND_CONTEXT).then((view) => {
-			try {
-				response.write(`event: org\ndata: ${JSON.stringify(view)}\n\n`);
-			} catch {
-				orgClients.delete(response);
-			}
+		void buildOrgView(current(), BACKGROUND_CONTEXT).then(async (view) => {
+			const ok = await writeSse(response, `event: org\ndata: ${JSON.stringify(view)}\n\n`);
+			if (!ok) orgClients.delete(response);
 		});
 
 		const keepAlive = setInterval(() => {
-			try {
-				response.write(": ping\n\n");
-			} catch {
-				clearInterval(keepAlive);
-			}
+			// 心跳也走背压路径：如果连心跳都写不进去，说明这条连接已经废了。
+			void writeSse(response, ": ping\n\n").then((ok) => {
+				if (!ok) {
+					clearInterval(keepAlive);
+					orgClients.delete(response);
+				}
+			});
 		}, 15_000);
 
 		response.on("close", () => {
@@ -452,6 +519,9 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		let closed = false;
 		/** 合并高频提交，避免 100ms 一次的重绘把浏览器压垮。 */
 		let pendingTimer: NodeJS.Timeout | undefined;
+		// 先声明再赋值：`push()` 在 `watch` 建好之前就会跑一次（首帧），
+		// 里面「写不进去就停 watch」的分支必须能安全访问它，否则命中 TDZ。
+		let watch: Awaited<ReturnType<typeof conversation.watch>> | undefined;
 
 		const push = async (): Promise<void> => {
 			if (closed) return;
@@ -459,7 +529,12 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				const feed = await readFeed(current(), conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return;
 				const decorated = await decorateFeed(current(), feed, BACKGROUND_CONTEXT);
-				response.write(`event: feed\ndata: ${JSON.stringify(decorated)}\n\n`);
+				const ok = await writeSse(response, `event: feed\ndata: ${JSON.stringify(decorated)}\n\n`);
+				// 写不进去说明这条连接已经废了：关掉，别让 watch 继续跑
+				if (!ok) {
+					closed = true;
+					void watch?.stop();
+				}
 			} catch {
 				// 单次失败不关闭连接，等下一次
 			}
@@ -467,7 +542,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 		await push();
 
-		const watch = await conversation.watch(BACKGROUND_CONTEXT);
+		watch = await conversation.watch(BACKGROUND_CONTEXT);
 		watch.start(async () => {
 			if (pendingTimer !== undefined) return;
 			pendingTimer = setTimeout(() => {
@@ -477,18 +552,20 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		});
 
 		const keepAlive = setInterval(() => {
-			try {
-				response.write(": ping\n\n");
-			} catch {
-				/* 连接已断 */
-			}
+			void writeSse(response, ": ping\n\n").then((ok) => {
+				if (!ok) {
+					closed = true;
+					clearInterval(keepAlive);
+					void watch?.stop();
+				}
+			});
 		}, 15_000);
 
 		response.on("close", () => {
 			closed = true;
 			clearInterval(keepAlive);
 			if (pendingTimer !== undefined) clearTimeout(pendingTimer);
-			void watch.stop();
+			void watch?.stop();
 		});
 	}
 
@@ -964,7 +1041,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		);
 
 		// 老板发言：先写 ack（ADR-026 决策 7.1 的延续——必回）
-		const targets = mentions.length > 0 ? mentions : defaultTargets(channelId, org);
+		const targets = mentions.length > 0 ? mentions : defaultTargets(channel, org);
 		await writeAck(runtime, channelId, content, targets);
 
 		const posted = await postToChannel(
@@ -991,18 +1068,17 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	}
 
 	/** 老板发言没 @ 时该通知谁：频道 owner。 */
-	function defaultTargets(channelId: string, org: ReturnType<typeof buildOrg>): readonly number[] {
-		if (channelId === "company" || channelId === "leadership") return org.ceoId > 0 ? [org.ceoId] : [];
-		const colon = channelId.indexOf(":");
-		if (colon > 0 && channelId.startsWith("proj:")) {
-			const leader = org.projectLeaders[channelId.slice(colon + 1)];
-			return leader === undefined ? [] : [leader];
-		}
-		if (colon > 0 && (channelId.startsWith("dm:") || channelId.startsWith("log:"))) {
-			const id = Number(channelId.slice(colon + 1));
-			return Number.isFinite(id) ? [id] : [];
-		}
-		return [];
+	/**
+	 * 老板没 @ 时，回执该发给谁。
+	 *
+	 * 映射**委托给 `domain/membership.ts` 的 `ownerOfChannel`**——这里以前自己
+	 * 写了一版 switch（company/leadership→CEO、proj:x→负责人、dm:/log:→对方），
+	 * 与 `src/company/channels.ts` 的 `wakeTargets` 是同一逻辑的第三份拷贝。
+	 * 三份拷贝里任何一份漏了新增的频道类型，回执就会发错人。
+	 */
+	function defaultTargets(channel: Channel, org: ReturnType<typeof buildOrg>): readonly number[] {
+		const owner = ownerOfChannel(org, channel);
+		return owner === undefined || owner === OWNER_ID ? [] : [owner];
 	}
 
 	/**
@@ -1170,9 +1246,15 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		const key = (body.key ?? "").trim();
 		if (key === "") return fail(response, 400, "需要 key");
 
-		// 操作者层级：等价于 postAnswer 的 answeredBy 口径。
-		// `asLevel` 允许测试/未来多端显式声明操作者身份；不传时按网页端（CEO 面板）视为 ceo。
+		// 操作者层级：网页端是**老板的 CEO 面板**，唯一操作者就是 CEO，
+		// 所以默认 ceo。但**不接受调用方随便声明别的层级**——以前 `body.asLevel`
+		// 原样透传给 `takeOverPendingAtCeo`，等于把权限判定交给请求体。
+		// 服务本身没有鉴权（见 src/server/main.ts 顶部注释），真正的边界是「只听 127.0.0.1」，
+		// 所以这里能做的是：不允许通过参数伪造比自己更高的层级。
 		const operatorLevel = (body.asLevel ?? "ceo").trim();
+		if (operatorLevel !== "ceo") {
+			return fail(response, 403, `接管待办只能由 CEO 发起（收到 asLevel=${operatorLevel}）`);
+		}
 
 		const outcome = await takeOverPendingAtCeo(
 			current(),
@@ -1498,9 +1580,27 @@ function fail(response: ServerResponse, status: number, message: string): void {
 	response.end(JSON.stringify({ error: message }));
 }
 
+/** JSON 请求体上限。1 MiB 足够所有端点（消息正文、待办答复都远小于此）。 */
+const MAX_JSON_BYTES = 1024 * 1024;
+
 async function readJson<T>(request: IncomingMessage): Promise<T> {
+	const declared = Number(request.headers["content-length"] ?? "0");
+	if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) {
+		request.destroy();
+		throw new Error(`请求体过大（${declared} 字节，上限 ${MAX_JSON_BYTES}）`);
+	}
 	const chunks: Buffer[] = [];
-	for await (const chunk of request) chunks.push(chunk as Buffer);
+	let total = 0;
+	for await (const chunk of request) {
+		const buffer = chunk as Buffer;
+		total += buffer.length;
+		// 不信任 content-length（可以是 chunked、可以撒谎），按实际字节数兜底。
+		if (total > MAX_JSON_BYTES) {
+			request.destroy();
+			throw new Error(`请求体过大（上限 ${MAX_JSON_BYTES} 字节）`);
+		}
+		chunks.push(buffer);
+	}
 	const text = Buffer.concat(chunks).toString("utf8");
 	if (text === "") return {} as T;
 	return JSON.parse(text) as T;
@@ -1529,7 +1629,10 @@ function queueText(content: unknown): string {
 async function serveStatic(response: ServerResponse, uiDir: string, path: string): Promise<void> {
 	const relative = path === "/" ? "index.html" : path.replace(/^\/+/, "");
 	const target = normalize(join(uiDir, relative));
-	if (!target.startsWith(normalize(uiDir))) {
+	// 必须带分隔符比较：`"/x/ui-backup".startsWith("/x/ui")` 是 true，
+	// 所以以前 `/../ui-backup/secret.txt` 会被放行。同级目录带 `ui` 前缀就能读。
+	const root = normalize(uiDir);
+	if (target !== root && !target.startsWith(root + sep)) {
 		return fail(response, 403, "禁止访问");
 	}
 
@@ -1541,7 +1644,16 @@ async function serveStatic(response: ServerResponse, uiDir: string, path: string
 		});
 		response.end(content);
 	} catch {
-		// SPA 回退：未知路径一律返回入口页
+		// SPA 回退只对「页面路径」生效。
+		//
+		// 以前任何读文件失败都回退成 200 + index.html：`/api/typo`、`/api/channelsX`
+		// 也拿到 HTML，前端 `JSON.parse` 抛 `Unexpected token '<'`，错误信息完全误导；
+		// 目录穿越被拒（403）之外的真实越界路径也会退化成「看起来正常」。
+		// 带扩展名的资源请求（.js/.css/.png）找不到就是 404，不能返回 HTML——
+		// 否则浏览器把 HTML 当 JS 解析，报一堆莫名其妙的语法错误。
+		if (path.startsWith("/api/") || path.startsWith("/uploads/") || extname(path) !== "") {
+			return fail(response, 404, "未找到");
+		}
 		try {
 			const index = await readFile(join(uiDir, "index.html"));
 			response.writeHead(200, { "Content-Type": MIME[".html"], "Cache-Control": "no-cache" });

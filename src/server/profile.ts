@@ -8,9 +8,10 @@
  */
 import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import { staffCharterOf } from "../company/org.ts";
-import { CompanyDoc, ROLE_LABELS, managerLabelOf, type ManagementRole } from "../company/docs.ts";
+import { ROLE_LABELS, managerLabelOf, type ManagementRole } from "../company/docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "../company/roles.ts";
-import { employeeToolsFor } from "../company/org.ts";
+import { employeeToolsFor, employeeUniversalTools, readCompany } from "../company/org.ts";
+import { buildOrg, managerLabelInOrg } from "../company/org-model.ts";
 import {
 	createEmployeeExtension,
 	createProjectLeaderExtension,
@@ -56,7 +57,7 @@ export async function readProfile(
 	conversationId: number,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<ProfileResult> {
-	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	const state = await readCompany(runtime, context);
 	if (state === undefined) return { error: "公司尚未初始化，没有档案" };
 
 	// 工具集只用来读「这个能力包实际装了什么」，不触发任何业务动作
@@ -96,7 +97,8 @@ export async function readProfile(
 				kind: "project",
 				subtitle: `${project.name} 项目负责人`,
 				project: project.name,
-				parent: "CEO",
+				// 从 buildOrg 取，不要硬编码 "CEO"（负责人的上级可能是 CTO）
+				parent: managerLabelInOrg(buildOrg(state), project.leader) || "CEO",
 				model: modelOf(state.defaultModel),
 				charter: [`你是「${project.name}」项目的负责人。`, PROJECT_LEADER_CHARTER].join("\n"),
 				guide: COMMON_GUIDE,
@@ -127,7 +129,12 @@ export async function readProfile(
 					managerLabel: managerLabelOf(state, person.manager),
 				}),
 				guide: COMMON_GUIDE,
-				tools: describeTools(createEmployeeExtension(`${person.project}/${person.name}`, tools).tools),
+				// 第三参不能漏：漏了档案页展示的工具清单就比员工实际拿到的少 7 个
+				// （whoami/say/ask/read_channel/inbox/task_list/task_update）。
+				// 招聘、重启自愈、改名三处都传了，只有这里曾漏掉。
+				tools: describeTools(
+					createEmployeeExtension(`${person.project}/${person.name}`, tools, employeeUniversalTools(runtime)).tools,
+				),
 			},
 		};
 	}

@@ -19,7 +19,12 @@ import { stream, streamSimple } from "@earendil-works/pi-ai/api/openai-responses
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
-import type { ModelOption, ModelRef } from "../company/docs.ts";
+// 从 domain 取类型，**不要从 `../company/docs.ts` 取**。
+// `company/docs.ts` 静态 import `../runtime/index.ts`（为了 `defineDoc`），
+// 而 `runtime/index.ts` 又导出本文件 → 真实循环依赖 `runtime → company → runtime`。
+// `ModelOption` / `ModelRef` 本来就是纯类型，真相源在 `src/domain/org-types.ts`，
+// `company/docs.ts` 只是 re-export 它们。
+import type { ModelOption, ModelRef } from "../domain/org-types.ts";
 
 /** 本地网关的默认配置。 */
 export const LOCAL_GATEWAY = {

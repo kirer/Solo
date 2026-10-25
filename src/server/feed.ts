@@ -16,7 +16,6 @@ import {
 	type Context,
 } from "../runtime/index.ts";
 import {
-	CompanyDoc,
 	ROLE_LABELS,
 	isLeaderManagerRef,
 	managerLabelOf,
@@ -24,6 +23,7 @@ import {
 	type ManagementRole,
 	type ManagerRef,
 } from "../company/docs.ts";
+import { readCompany } from "../company/org.ts";
 import { canDisposePending, decisionOwnerOfItem, levelOfConversation, listPending } from "../company/escalation.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { actorRefOf, OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
@@ -205,7 +205,7 @@ export async function readFeed(
 	if (conversation === undefined) return undefined;
 
 	// 组织索引：用来把「派活方」「留痕双方」解析成人，一次读，feed 与档案共用
-	const state = options.state ?? (await runtime.harness.snapshot(CompanyDoc, context));
+	const state = options.state ?? (await readCompany(runtime, context));
 
 	const limit = options.limit ?? 400;
 	// **必须取最新的一页**：`entries({order:"ascending"}, limit)` 返回的是最旧 limit 条，
@@ -326,7 +326,7 @@ export async function decorateFeed(
 	feed: Feed,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<Feed> {
-	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	const state = await readCompany(runtime, context);
 	const pending = await listPending(runtime, context);
 	// 只有 owner 级的问题才是「等老板拍板」；CEO 自己队列里的问题不算。
 	//

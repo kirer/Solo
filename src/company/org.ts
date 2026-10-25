@@ -82,7 +82,12 @@ import { escalationId, messageRequestId } from "../runtime/ids.ts";
 import { toolsForRole } from "./staff-tools.ts";
 import { startWatchdog, type WatchdogOptions } from "./watchdog.ts";
 import { roundtableExtension } from "./roundtable.ts";
-import { createManagementTools } from "./management-tools.ts";
+// **不能静态 import**：`management-tools.ts` 静态 import 本文件的 11 个函数，
+// 静态互引会形成真实的 ESM 循环依赖（DFS 实测确认）。当前恰好没有模块顶层求值，
+// 所以还没炸；但任何一侧在顶层算一个值就会拿到 `undefined`。
+// 这里改成动态 import（`bootstrapCompany` 本来就是 async），依赖方向变成单向：
+// management-tools → org。同仓 `escalation.ts:684` 对 `disposition.ts` 用的是同一手法。
+type ManagementToolsModule = typeof import("./management-tools.ts");
 import { createAllRoleExtensionsWithTools, createEmployeeExtension } from "./tools.ts";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 
@@ -224,7 +229,8 @@ export async function bootstrapCompany(
 
 	// 管理层工具集合：由公司运行时闭包而成。
 	// 派活与转交给需要先有会话标识，所以用惰性引用（阶段二再解析）。
-		const managementTools = createManagementTools({
+	const { createManagementTools }: ManagementToolsModule = await import("./management-tools.ts");
+	const managementTools = createManagementTools({
 		runtime,
 		workspaceRoot: options.workspaceRoot ?? process.cwd(),
 		...(options.registry === undefined ? {} : { registry: options.registry }),
@@ -1987,14 +1993,27 @@ async function readAssistantText(
  * 契约由 `test/unit/escalation-seq.test.ts` 锁住：编号量级必须与时间戳同阶，
  * 改回小整数自增会让测试失败。
  */
-let escalationSeq = 0;
 let escalationStamp = 0;
+/** 当前这一「时间刻度」内已用掉多少个后缀。 */
+let escalationTick = 0;
+
 export function nextEscalationSeq(): number {
 	const now = Date.now();
-	// 同一毫秒内多次上报：在时间戳上递增，保证严格单调且不与历史撞车
-	escalationStamp = now > escalationStamp ? now : escalationStamp + 1;
-	escalationSeq += 1;
-	return escalationStamp * 1000 + (escalationSeq % 1000);
+	if (now > escalationStamp) {
+		escalationStamp = now;
+		escalationTick = 0;
+	} else {
+		escalationTick += 1;
+	}
+	// 同一刻度内用完 1000 个后缀：把刻度往后借一格，**不取模回绕**。
+	// 旧实现是 `escalationStamp * 1000 + (escalationSeq % 1000)`——进程内计数器
+	// 一旦超过 1000 就开始回绕，同一毫秒内第 1001 次上报会拿到比第 1 次更小的编号，
+	// 「严格单调」这条契约只在 1000 次以内成立。升级项的排序依赖它单调。
+	if (escalationTick >= 1000) {
+		escalationStamp += 1;
+		escalationTick = 0;
+	}
+	return escalationStamp * 1000 + escalationTick;
 }
 
 /**

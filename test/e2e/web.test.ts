@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, test } from "vitest";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import {
 	BACKGROUND_CONTEXT,
@@ -1182,5 +1183,87 @@ describe("静态资源", () => {
 		// 被拦或回退到 index.html，都不能返回 package.json 的内容
 		const text = await response.text();
 		expect(text).not.toContain('"name": "ai-company"');
+	});
+});
+
+/**
+ * 服务健壮性：畸形输入不能让进程倒下。
+ *
+ * 这一组钉的是三个真实缺陷（架构审查发现，都有最小复现）：
+ * ① `new URL()` 写在 try 之外 + `unhandledRejection → process.exit(1)`，
+ *    一个 `Host: a b` 就能打死整个运行时；
+ * ② `readJson` 没有字节上限，一个 2GB body 吃满内存；
+ * ③ 静态目录用 `startsWith` 比较，`/../ui-backup/x` 会被放行。
+ */
+/** 用裸 socket 发一个 GET，返回状态码与正文（`fetch` 会归一化 `..`，测不了穿越）。 */
+async function rawGet(port: number, path: string): Promise<{ status: number; body: string }> {
+	const socket = connect({ host: "127.0.0.1", port });
+	let buffer = "";
+	await new Promise<void>((resolve) => {
+		socket.on("connect", () => {
+			socket.write(`GET ${path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+		});
+		socket.on("data", (chunk) => {
+			buffer += chunk.toString("utf8");
+		});
+		socket.on("close", () => resolve());
+		socket.on("error", () => resolve());
+	});
+	const status = Number(buffer.split(" ")[1] ?? 0);
+	return { status, body: buffer };
+}
+
+describe("服务健壮性", () => {
+	test("畸形 Host 头不会打挂服务，返回 400 后仍能正常服务", async () => {
+		const { server } = await setup();
+
+		const raw = await new Promise<string>((resolve, reject) => {
+			const socket = connect({ host: "127.0.0.1", port: server.port }, () => {
+				socket.write("GET /api/org HTTP/1.1\r\nHost: a b\r\nConnection: close\r\n\r\n");
+			});
+			let text = "";
+			socket.on("data", (chunk) => {
+				text += chunk.toString("utf8");
+			});
+			socket.on("end", () => resolve(text));
+			socket.on("error", reject);
+			setTimeout(() => resolve(text), 2000);
+		});
+		expect(raw).toMatch(/^HTTP\/1\.1 400/);
+
+		// 服务还活着
+		const after = await fetch(`${server.url}api/org`);
+		expect(after.status).toBe(200);
+	});
+
+	test("超大 JSON 请求体被拒，不会吃满内存", async () => {
+		const { server } = await setup();
+		const big = "x".repeat(2 * 1024 * 1024);
+		const response = await fetch(`${server.url}api/message`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ text: big }),
+		}).catch(() => undefined);
+		// 连接被 destroy 或返回 4xx/5xx 都算拒绝；关键是没有 200
+		if (response !== undefined) expect(response.status).not.toBe(200);
+
+		const after = await fetch(`${server.url}api/org`);
+		expect(after.status).toBe(200);
+	});
+
+	test("静态目录不能用 ui 前缀的同级目录穿越", async () => {
+		const { server } = await setup();
+		// **必须用裸 socket 发**：`fetch()` 会在客户端就把 `..` 归一化掉，
+		// 请求到不了服务端，这条测试会永远是绿的（一开始就写成 fetch，测了个寂寞）。
+		// 编码过的点号能绕过 `new URL()` 的归一化，真正走到 join/normalize 那条路径。
+		const paths = ["/../ui-backup/secret.txt", "/%2e%2e/ui-backup/secret.txt", "/./../ui-other/f", "/../ui2/a"];
+		for (const path of paths) {
+			const { status, body } = await rawGet(server.port, path);
+			// 判据只有一条：**读不到同级目录的文件内容**。
+			// 200 只允许是 index.html（SPA 回退），不允许是兄弟目录里的文件。
+			expect(body.includes("secret")).toBe(false);
+			if (status === 200) expect(body.includes("<html")).toBe(true);
+			else expect([403, 404]).toContain(status);
+		}
 	});
 });

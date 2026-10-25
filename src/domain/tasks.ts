@@ -254,7 +254,12 @@ export function transitionTask(
 		};
 	}
 	if (current.status === to && patch.note === undefined) {
-		return { ok: true, state, task: current }; // 幂等：同状态且无新内容
+		// 幂等：同状态且无新内容。
+		//
+		// 返回**浅拷贝**而不是 `current` 本身：调用方可能把 `state` 来自底层文档的
+		// 可写 overlay（`tx.doc()` 的 Draft），而 overlay 在 commit 结束后会被 settle，
+		// 之后任何属性访问都抛「Cannot use a settled overlay」。拷贝是纯函数该有的行为。
+		return { ok: true, state, task: { ...current } };
 	}
 
 	const at = patch.at ?? Date.now();

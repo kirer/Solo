@@ -170,6 +170,29 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 };
 
 /**
+ * 把能力名映射成工具实现。**未映射的名字直接报错，不静默丢弃。**
+ *
+ * 以前三处调用点（岗位 / 项目负责人 / 只读负责人）各写一遍
+ * `.map(...).filter(name => name !== undefined).map(...)`，写错一个能力名那个工具
+ * 就凭空消失，模型只表现为「不会用」，没有任何告警。34 条目录里只要一条对不上
+ * 就发生，而目录比对的单测恰好覆盖不到这些内联数组。
+ */
+function selectTools(
+	capabilityNames: readonly string[],
+	tools: ManagementToolset,
+	ownerLabel: string,
+): ReturnType<typeof defineTool>[] {
+	const unknown = capabilityNames.filter((name) => CAPABILITY_TO_TOOL[name] === undefined);
+	if (unknown.length > 0) {
+		throw new Error(
+			`${ownerLabel} 声明了能力目录里不存在的能力：${unknown.join(", ")}。` +
+				"请先在 src/company/capabilities.ts 的 CAPABILITIES / CAPABILITY_TO_TOOL 里登记。",
+		);
+	}
+	return capabilityNames.map((name) => tools[CAPABILITY_TO_TOOL[name] as ToolName]);
+}
+
+/**
  * 为某个岗位创建能力包，注入它的工具集合。
  *
  * 只装该岗位声明里列出的工具，其余一律不装。
@@ -178,10 +201,7 @@ export function createRoleExtensionWithTools(role: ManagementRole, tools: Manage
 	const definition = ROLE_DEFINITIONS[role];
 	if (definition === undefined) throw new Error(`未知岗位：${role}`);
 
-	const selected = definition.capabilityNames
-		.map((name) => CAPABILITY_TO_TOOL[name])
-		.filter((name): name is ToolName => name !== undefined)
-		.map((name) => tools[name]);
+	const selected = selectTools(definition.capabilityNames, tools, `岗位 ${role}`);
 
 	return defineExtension({
 		name: definition.extensionName,
@@ -273,10 +293,7 @@ export function createProjectLeaderExtension(
 
 	];
 
-	const selected = capabilityNames
-		.map((name) => CAPABILITY_TO_TOOL[name])
-		.filter((name): name is ToolName => name !== undefined)
-		.map((name) => tools[name]);
+	const selected = selectTools(capabilityNames, tools, "项目负责人");
 
 	return defineExtension({
 		name: PROJECT_LEADER_EXTENSION_NAME,
@@ -329,10 +346,7 @@ export function createProjectLeaderReadOnlyExtension(tools: ManagementToolset): 
 		"project_list",
 		"staff_list",
 	];
-	const selected = capabilityNames
-		.map((name) => CAPABILITY_TO_TOOL[name])
-		.filter((name): name is ToolName => name !== undefined)
-		.map((name) => tools[name]);
+	const selected = selectTools(capabilityNames, tools, "只读项目负责人");
 
 	return defineExtension({
 		name: PROJECT_LEADER_READONLY_EXTENSION_NAME,

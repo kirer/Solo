@@ -55,13 +55,17 @@ export type DeliverOptions = {
 	/** 要唤醒谁（`recipientsOf` 的结果）。 */
 	readonly targets: readonly number[];
 	/**
-	 * 紧迫度：
-	 * - `steer`（默认）：本轮工具结束后并入，适合普通协作
-	 * - `now`：立刻停当前轮（老板的指令、任务被撤销）
+	 * 投递档位，默认 `steer`：本轮工具结束后并入。
 	 *
 	 * 刻意不用 `followUp`：那要等整轮答完，群里一条问题可能要等十几分钟才被看见。
+	 *
+	 * **不存在 `now` 档**。以前这里声明了 `urgency?: "steer" | "now"`，但实现是
+	 * `options.urgency === "now" ? "steer" : "steer"`——两个分支一模一样，全仓也没有
+	 * 一处传参。类型签名让人以为「紧急消息能插队」，实际从来没有。真要打断当前轮
+	 * 是 `src/server/http.ts` 的 `interruptThenDeliver`（它会先 abort、再投），
+	 * 那是有状态的破坏性操作，不适合藏在「投递」这个原语里。
 	 */
-	readonly urgency?: "steer" | "now";
+	readonly urgency?: "steer";
 };
 
 /**
@@ -114,7 +118,7 @@ export async function deliver(
 							mentions: [...options.message.mentions],
 						},
 					},
-					whenBusy: options.urgency === "now" ? "steer" : "steer",
+					whenBusy: "steer",
 				},
 				context,
 			);

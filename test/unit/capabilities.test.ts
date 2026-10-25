@@ -123,3 +123,42 @@ describe("分层统计", () => {
 		expect(text).toContain("延迟");
 	});
 });
+
+/**
+ * 岗位声明与目录必须一致。
+ *
+ * 这是 `profile.ts:130` 那个真实 bug 的机制性防线：员工档案页曾经漏传
+ * `universalTools` 第三参，展示的工具清单比员工实际拿到的少 7 个，而
+ * 34==34==34 的目录比对恰好通过，测试抓不到。
+ *
+ * 这里不比对「数量」，比对的是**声明名 → 映射 → 工具实现**这条链每一环都通。
+ */
+describe("岗位声明必须能全部映射成真实工具", () => {
+	test("roles.ts 里每个岗位的每个 capabilityNames 都在映射表里", async () => {
+		const { ROLE_DEFINITIONS, MANAGEMENT_ROLES } = await import("../../src/company/roles.ts");
+		void MANAGEMENT_ROLES;
+		const mapped = mappedCapabilities();
+		const problems: string[] = [];
+		for (const [role, definition] of Object.entries(ROLE_DEFINITIONS)) {
+			for (const name of definition.capabilityNames) {
+				if (!mapped.has(name)) problems.push(`${role} → ${name}`);
+			}
+		}
+		expect(problems, `这些声明无法映射成工具：${problems.join("、")}`).toEqual([]);
+	});
+
+	test("tools.ts 里内联的负责人能力数组也全部在映射表里", () => {
+		const source = readFileSync(join(ROOT, "src/company/tools.ts"), "utf8");
+		const mapped = mappedCapabilities();
+		const catalog = new Set(CAPABILITIES.map((capability) => capability.name));
+		// 抽出所有 `const capabilityNames = [ ... ]` 块里的字符串字面量
+		const problems: string[] = [];
+		for (const match of source.matchAll(/const capabilityNames = \[([\s\S]*?)\];/g)) {
+			for (const name of match[1]?.matchAll(/"([a-z_]+)"/g) ?? []) {
+				const value = name[1] as string;
+				if (!catalog.has(value) || !mapped.has(value)) problems.push(value);
+			}
+		}
+		expect(problems, `负责人能力数组里有目录外或映射不上的名字：${problems.join("、")}`).toEqual([]);
+	});
+});

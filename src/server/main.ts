@@ -21,13 +21,13 @@ import {
 	recover,
 	setupModels,
 	setupSignalHandlers,
+	onShutdown,
 	watchForFailure,
 	type CompanyRuntime,
 	type RuntimeReport,
 } from "../runtime/index.ts";
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION } from "../company/org.ts";
 import { ensureAllChannels } from "../company/channels.ts";
-import { CompanyDoc } from "../company/docs.ts";
 import { createEscalationTask } from "../company/escalation.ts";
 import { configureEventLog, defaultEventLogPath, describeReport, writeEvent } from "./event-log.ts";
 import { serve } from "./http.ts";
@@ -209,6 +209,16 @@ if (args.open && process.platform === "darwin") {
 		// 打开失败无所谓，用户手点也行
 	});
 }
+
+// 致命错误（未捕获异常 / 未处理拒绝）也要走这里：`signals.ts` 现在会把
+// `onShutdown` 注册的收尾跑完再退出，而不是裸 `process.exit(1)`。
+// 不注册的话，实例锁不会释放——下次启动会被「已有进程在跑」拦住，
+// 而用户看到的是「上次明明崩了，现在又说在跑」。
+onShutdown(async () => {
+	writeEvent("[退出]", "进程异常退出（收尾中）");
+	await server.close();
+	instanceLock.release();
+});
 
 const shutdown = () => {
 	void server

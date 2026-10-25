@@ -139,3 +139,19 @@ export function memberRoleOf(org: Org, conversationId: number): MemberRole {
 export function managementLabel(role: ManagementRole): string {
 	return ROLE_LABELS[role];
 }
+
+/**
+ * 某人在组织里的上级展示名（组织图 / 档案页用）。
+ *
+ * 为什么需要它：`org-view.ts` 和 `profile.ts` 曾经把项目负责人的 `parent`
+ * 硬编码成 `"CEO"`，而 `buildOrg()` 允许负责人的上级是 CTO（由本项目员工的
+ * manager 推导）——同一家公司，组织图和档案页给出两条不同的汇报线。
+ *
+ * 老板返回空串（他没有上级，界面不显示）。
+ */
+export function managerLabelInOrg(org: Org, conversationId: number): string {
+	const person = org.people.find((entry) => entry.conversationId === conversationId);
+	if (person === undefined || person.managerId === undefined) return "";
+	if (person.managerId === OWNER_ID) return "老板";
+	return org.people.find((entry) => entry.conversationId === person.managerId)?.label ?? "";
+}

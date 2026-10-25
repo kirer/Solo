@@ -13,6 +13,7 @@ import {
 import { MANAGEMENT_ROLES, ROLE_LABELS, managerLabelOf, type ManagementRole, type TrailKind } from "../company/docs.ts";
 import { canDisposePending, decisionOwnerOfItem, listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
+import { buildOrg, managerLabelInOrg } from "../company/org-model.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { readLiveTrail, readTrail } from "../company/trail.ts";
@@ -218,6 +219,10 @@ export async function buildOrgView(
 	};
 
 	const defaultModel = modelOf(state?.defaultModel) ?? "?";
+	// 汇报线必须从 `buildOrg()` 取，不能硬编码 "CEO"：
+	// 项目负责人的上级可能是 CTO（由本项目员工的 manager 推导），
+	// 硬编码会让组织图和档案页对同一家公司给出两条不同的汇报线。
+	const org = buildOrg(state);
 	const ceo = await actor(ceoId, "CEO", "唯一真人 · 主 Agent 代你调度", "owner", false, {
 		model: defaultModel,
 		parent: "老板",
@@ -248,7 +253,7 @@ export async function buildOrgView(
 			`${project.name} 项目负责人`,
 			"project",
 			false,
-			{ model: defaultModel, project: project.slug, parent: "CEO" },
+			{ model: defaultModel, project: project.slug, parent: managerLabelInOrg(org, project.leader) },
 		);
 		// 终止后员工会被归档：仍然列出来，标成已归档，让老板看得见「曾经有谁」
 		const staff: ActorView[] = [];

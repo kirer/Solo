@@ -13,12 +13,13 @@ import {
 	digestFor,
 	hasMember,
 	previewLine,
+	unreadOf,
 	type Channel,
 	type ChannelMessage,
 	type ChannelState,
 	type MemberRole,
 } from "../domain/channels.ts";
-import { labelOf, canView, personOf, type Org } from "../domain/membership.ts";
+import { labelOf, canView, mentionable, personOf, type Org } from "../domain/membership.ts";
 import { isTerminal, type TaskEntry } from "../domain/tasks.ts";
 import { readChannels, readOrg } from "../company/channels.ts";
 import { readTasks } from "../company/tasks.ts";
@@ -86,7 +87,10 @@ export async function listChannels(
 		if (channel.archived === true) continue;
 		// 老板能看全部；这里固定按老板视角（0）
 		if (!canView(org, 0, channel)) continue;
-		const unread = channel.messages.filter((message) => message.seq > channel.lastSeq - channel.messages.length && message.from !== 0).length;
+		// 未读必须按**读位置**算（`lastReadSeq`），不能拿 lastSeq 减消息条数糊。
+		// 旧写法 `seq > channel.lastSeq - channel.messages.length` 恒等于「全部消息」，
+		// 所以列表徽章永远清不掉——打开频道后下一次轮询又变回原值。
+		const unread = unreadOfChannel(channels, channel.id, 0);
 		const mentions = channel.messages.filter(
 			(message) => message.mentions.includes(0) && message.from !== 0 && !message.readBy.includes(0),
 		).length;
@@ -169,9 +173,8 @@ export async function readChannelView(
 				id: member.conversationId,
 				label: labelOf(org, member.conversationId),
 				role: member.role,
-				unread: channel.messages.filter(
-					(message) => message.seq > member.lastReadSeq && message.from !== member.conversationId,
-				).length,
+				// 统一走 domain 的 `unreadOf`（唯一真相源），不要在这里再写一遍公式。
+				unread: unreadOf(channel, member.conversationId).length,
 			})),
 		messages: page.map((message) => messageView(org, channel, message, viewer)),
 		hasMore,
@@ -204,17 +207,20 @@ export async function unreadSummary(
 	runtime: CompanyRuntime,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<{ readonly channels: number; readonly mentions: number; readonly total: number }> {
-	const { org } = await readOrg(runtime, context);
+	// 顶栏徽章只关心两件事：@ 我的总条数、有未读的频道数。
+	// 以前这里多读一次 `CompanyDoc`（`const { org } = await readOrg(...)` 之后
+	// `void org;`）——白读一次全量组织快照，每次推送都发生。
 	const channels = await readChannels(runtime, context);
 	const digests = digestFor(channels, 0, 50);
 	let total = 0;
 	let mentions = 0;
+	let withUnread = 0;
 	for (const item of digests) {
 		total += item.unread;
 		mentions += item.mentions;
+		if (item.unread > 0) withUnread += 1;
 	}
-	void org;
-	return { channels: digests.length, mentions, total };
+	return { channels: withUnread, mentions, total };
 }
 
 /** 某人能 @ 的人（前端 @ 选择器用）。 */
@@ -228,14 +234,14 @@ export async function mentionCandidates(
 	const channels = await readChannels(runtime, context);
 	const channel = channels.channels[channelId];
 	if (channel === undefined) return [];
-	return Object.values(channel.members)
-		.filter((member) => member.conversationId !== viewer)
-		.map((member) => ({
-			id: member.conversationId,
-			label: labelOf(org, member.conversationId),
-			role: member.role,
-		}))
-		.filter((entry) => personOf(org, entry.id) !== undefined || entry.id === 0);
+	// **走 `mentionable`**：它是「谁能被 @」的唯一真相源，会过滤掉已归档的人
+	// 和看不到这个频道的人。以前这里自己过滤（只排除自己 + `personOf` 存在），
+	// 于是候选人里会出现已离职的员工——老板 @ 了他，消息投给一个不会回话的会话。
+	return mentionable(org, viewer, channel).flatMap((person) => {
+		const member = channel.members[String(person.conversationId)];
+		if (member === undefined) return [];
+		return [{ id: person.conversationId, label: person.label, role: member.role }];
+	});
 }
 
 /** 频道里的任务（项目看板用）。 */
@@ -250,11 +256,15 @@ export async function channelTasks(
 		.sort((left, right) => left.createdAt - right.createdAt);
 }
 
-/** 供 server 复用：从 ChannelState 取某人未读。 */
+/**
+ * 供 server 复用：从 ChannelState 取某人未读。
+ *
+ * 只是 `domain/channels.ts` 的 `unreadOf` 的取频道包装——**不要再写第二套公式**。
+ * 历史上这里和 `listChannels` 各自发明过一份（一份拿 `lastSeq - messages.length`
+ * 当已读位置，恒等于「全部消息」，列表徽章永远清不掉）。
+ */
 export function unreadOfChannel(state: ChannelState, channelId: string, conversationId: number): number {
 	const channel = state.channels[channelId];
 	if (channel === undefined || !hasMember(channel, conversationId)) return 0;
-	return channel.messages.filter(
-		(message) => message.seq > (channel.members[String(conversationId)]?.lastReadSeq ?? 0) && message.from !== conversationId,
-	).length;
+	return unreadOf(channel, conversationId).length;
 }

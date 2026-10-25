@@ -28,7 +28,7 @@ export {
 	createReadTool,
 	createWriteTool,
 } from "./capabilities.ts";
-export { setupSignalHandlers } from "./signals.ts";
+export { setupSignalHandlers, onShutdown } from "./signals.ts";
 export { InboxDoc, type InboxItem, type InboxState } from "./inbox.ts";
 export { UsageDoc, type UsageState } from "./usage.ts";
 export { openCompany, type CompanyRuntime, type OpenCompanyOptions, type RuntimeReport } from "./open.ts";

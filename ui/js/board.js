@@ -512,11 +512,24 @@ function mount() {
 	// 这里只负责往里画内容，避免两个模块抢同一个属性。
 	renderShell();
 	renderSkeleton();
-	startPolling();
-	refresh();
+	// 只在看板视图里轮询：切到组织图/频道后还每 9s 打一次 /api/board 是白烧。
+	// app.js 的 applyView 会派发 aic:view，这里据此起停。
+	if (document.body.dataset.view === "board") {
+		startPolling();
+		refresh();
+	}
 }
 
 window.addEventListener("aic:org", scheduleRefresh);
+window.addEventListener("aic:view", (event) => {
+	const view = event.detail?.view;
+	if (view === "board") {
+		startPolling();
+		refresh();
+	} else {
+		stopPolling();
+	}
+});
 window.addEventListener("hashchange", syncCurrent);
 document.addEventListener("visibilitychange", () => {
 	if (document.hidden) {

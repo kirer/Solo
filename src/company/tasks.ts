@@ -146,10 +146,6 @@ export async function createTask(
 	input: CreateInput,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<CreateTaskResult> {
-	const state = await readTasks(runtime, context);
-	const check = validateCreate(input, state.tasks);
-	if (!check.ok) return { ok: false, code: check.code, message: check.message };
-
 	const company = await runtime.harness.snapshot(CompanyDoc, context);
 	const org = buildOrg(company);
 	const assignee = personOf(org, input.assignee);
@@ -157,12 +153,26 @@ export async function createTask(
 		return { ok: false, code: "unknown-assignee", message: `找不到负责人（会话 ${input.assignee}）。先用 whoami 或 org_tree 确认。` };
 	}
 
-	const { state: next, task } = createTaskPure(state, input);
-	await runtime.harness.commit(async (tx) => {
+	// **读必须在 commit 内**（`tx.doc` 拿到的是同一条 mutation line 上的可写 overlay）。
+	//
+	// 以前是 `readTasks()` 在 commit 之外先快照、commit 内整表覆盖。pi-durable 的
+	// commit 是串行化的，但串行化只保护 commit 内部——两个并发 createTask 各自读到
+	// 旧的 nextId，都算出 `T-7`，后写的把先写的覆盖掉，**两条任务变成一条**。
+	// transitionTask 同理，并发迁移会丢掉其中一次的变更。
+	const outcome = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(TaskDoc);
-		doc.tasks = next.tasks;
-		doc.nextId = next.nextId;
+		const state = doc as TaskState;
+		const check = validateCreate(input, state.tasks);
+		if (!check.ok) return { ok: false as const, code: check.code, message: check.message };
+
+		const { state: next, task } = createTaskPure(state, input);
+		// 按路径写：只写新增的那一条 + nextId。整表赋值会让每条 delta 都带全部任务。
+		state.nextId = next.nextId;
+		state.tasks[task.id] = task;
+		return { ok: true as const, task };
 	}, context);
+	if (!outcome.ok) return outcome;
+	const task = outcome.task;
 
 	const channelId = input.channelId === "" ? projectChannelId(input.project) : input.channelId;
 	await postToChannel(
@@ -209,17 +219,20 @@ export async function transitionTask(
 	patch: TransitionPatch & { readonly by?: number } = {},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<UpdateTaskResult> {
-	const state = await readTasks(runtime, context);
-	const result = transitionTaskPure(state, id, to, patch);
-	if (!result.ok) return { ok: false, code: result.code, message: result.message };
-
-	await runtime.harness.commit(async (tx) => {
+	// 同 createTask：读改写全部落在同一条 mutation line 上，避免丢失更新。
+	const outcome = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(TaskDoc);
-		doc.tasks = result.state.tasks;
-		doc.nextId = result.state.nextId;
+		const state = doc as TaskState;
+		const result = transitionTaskPure(state, id, to, patch);
+		if (!result.ok) return { ok: false as const, code: result.code, message: result.message };
+		// 按路径写：只写被改的那一条任务。
+		state.nextId = result.state.nextId;
+		state.tasks[id] = result.task;
+		return { ok: true as const, task: result.task };
 	}, context);
+	if (!outcome.ok) return outcome;
 
-	const task = result.task;
+	const task = outcome.task;
 	const company = await runtime.harness.snapshot(CompanyDoc, context);
 	const org = buildOrg(company);
 

@@ -10,9 +10,10 @@
  * 出站失败的唯一处理是「静默」：IM 是附加通道，不能因为它挂了而拖慢
  * 或阻塞老板通道的对话（契约要求「失败静默不阻塞」）。
  */
+import { createHash, timingSafeEqual } from "node:crypto";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
-import { CompanyDoc } from "../company/docs.ts";
+import { readCompany } from "../company/org.ts";
 import type { ImSettings, SettingsStore } from "./settings.ts";
 
 /** 出站推送体。 */
@@ -36,7 +37,7 @@ const OUTBOUND_DEBOUNCE_MS = 300;
 export function inboundAllowed(im: ImSettings, token: string): boolean {
 	if (!im.enabled) return false;
 	if (im.inboundToken === "") return false;
-	return timingSafeEqual(token, im.inboundToken);
+	return safeEqual(token, im.inboundToken);
 }
 
 /** 入站文本加上来源标记，让 CEO 知道这句话不是老板在网页里打的。 */
@@ -93,7 +94,7 @@ export function createImOutboundRelay(options: {
 			const settings = await options.settings.read();
 			if (!settings.im.enabled || settings.im.outboundWebhook === "") return;
 			const runtime = options.runtime();
-			const state = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+			const state = await readCompany(runtime, BACKGROUND_CONTEXT);
 			const conversationId = Number(state?.roles?.ceo);
 			if (!Number.isFinite(conversationId)) return;
 			const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
@@ -152,12 +153,16 @@ export function createImOutboundRelay(options: {
 	};
 }
 
-/** 常量时间字符串比较（长度不同直接 false）。 */
-function timingSafeEqual(left: string, right: string): boolean {
-	if (left.length !== right.length) return false;
-	let diff = 0;
-	for (let index = 0; index < left.length; index += 1) {
-		diff |= left.charCodeAt(index) ^ right.charCodeAt(index);
-	}
-	return diff === 0;
+/**
+ * 常量时间字符串比较。
+ *
+ * 旧实现先比长度、长度不同立刻 return（泄露长度），再按 UTF-16 code unit
+ * 逐位异或——JS 的 `charCodeAt` 只覆盖低 16 位，且字符串长度是字符数不是字节数，
+ * 「常量时间」并不成立。用 `node:crypto` 的实现：两侧先 SHA-256 成定长摘要，
+ * 再 `timingSafeEqual`，长度差异被哈希抹平，不泄露任何前缀信息。
+ */
+function safeEqual(left: string, right: string): boolean {
+	const a = createHash("sha256").update(left, "utf8").digest();
+	const b = createHash("sha256").update(right, "utf8").digest();
+	return timingSafeEqual(a, b);
 }
