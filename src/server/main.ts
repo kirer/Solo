@@ -26,6 +26,7 @@ import {
 	type RuntimeReport,
 } from "../runtime/index.ts";
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION } from "../company/org.ts";
+import { ensureAllChannels } from "../company/channels.ts";
 import { CompanyDoc } from "../company/docs.ts";
 import { createEscalationTask } from "../company/escalation.ts";
 import { configureEventLog, defaultEventLogPath, describeReport, writeEvent } from "./event-log.ts";
@@ -141,6 +142,10 @@ async function openAndBoot(): Promise<{ runtime: CompanyRuntime; parked: readonl
 		},
 		BACKGROUND_CONTEXT,
 	);
+
+	// 频道自愈：公司大群 / 领导层群 / 项目群 / 个人记录。
+	// 幂等，每次启动跑一遍——新招的员工、新立的项目都要补进对应的群。
+	await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
 
 	return { runtime, parked: recovery.parkedTasks.map((task) => task.taskId) };
 }

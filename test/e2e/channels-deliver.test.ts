@@ -420,3 +420,105 @@ describe("员工拿到了通用通信工具（问题 3 的结构性修法）", (
 		expect(names).toContain("bash");
 	});
 });
+
+describe("看门狗三项检查（问题 3 / 6 的兜底）", () => {
+	test("群里 @ 的问题超时没人回 → 升级给上一级", async () => {
+		const { runtime, project } = await setup();
+		const state = await readChannels(runtime, BACKGROUND_CONTEXT);
+		const projectChannel = state.channels["proj:alpha"];
+		const staff = Object.values(projectChannel?.members ?? {}).find(
+			(entry) => entry.role === "staff" && entry.conversationId !== project.leader,
+		);
+		expect(staff).toBeDefined();
+
+		// 员工问负责人，然后「时间过去 15 分钟」
+		const posted = await postToChannel(
+			runtime,
+			"proj:alpha",
+			{
+				from: staff?.conversationId ?? 0,
+				fromLabel: "林越",
+				kind: "question",
+				text: "T-3 的接口 token 过期返回 401 还是 403？",
+				mentions: [project.leader],
+				at: Date.now() - 15 * 60_000,
+			},
+			{ context: BACKGROUND_CONTEXT, wake: false },
+		);
+
+		const { runWatchdogPass } = await import("../../src/company/watchdog.ts");
+		const result = await runWatchdogPass(runtime, {
+			context: BACKGROUND_CONTEXT,
+			immediate: false,
+			questionUnansweredMs: 10 * 60_000,
+		});
+		const escalated = result.alerts.filter((alert) => alert.action === "escalate-question");
+		expect(escalated.length).toBeGreaterThan(0);
+
+		// 频道里出现一条系统升级消息
+		const after = await readChannel(runtime, "proj:alpha", BACKGROUND_CONTEXT);
+		const system = after?.messages.filter((message) => message.from === -1).at(-1);
+		expect(system?.text).toContain("超时升级");
+		expect(system?.text).toContain(posted.message.text.slice(0, 10));
+	});
+
+	test("老板消息长时间无回应 → 告警（不允许静默结束）", async () => {
+		const { runtime } = await setup();
+		await postToChannel(
+			runtime,
+			"proj:alpha",
+			{
+				from: OWNER_ID,
+				fromLabel: "老板",
+				kind: "chat",
+				text: "这个项目进度怎么样了？",
+				at: Date.now() - 10 * 60_000,
+			},
+			{ context: BACKGROUND_CONTEXT, wake: false },
+		);
+
+		const { runWatchdogPass } = await import("../../src/company/watchdog.ts");
+		const result = await runWatchdogPass(runtime, {
+			context: BACKGROUND_CONTEXT,
+			immediate: false,
+			ownerSilentMs: 5 * 60_000,
+		});
+		const silent = result.alerts.filter((alert) => alert.reason === "owner-message-silent");
+		expect(silent.length).toBeGreaterThan(0);
+	});
+
+	test("任务阻塞太久 → 提醒负责人（不自动改状态）", async () => {
+		const { runtime, project, booted } = await setup();
+		const created = await createTask(
+			runtime,
+			{
+				project: "alpha",
+				channelId: "proj:alpha",
+				title: "接入支付",
+				brief: "",
+				acceptance: "能下单",
+				assignee: project.leader,
+				assignedBy: booted.ownerConversationId,
+			},
+			BACKGROUND_CONTEXT,
+		);
+		if (!created.ok) throw new Error(created.message);
+		await transitionTask(runtime, created.task.id, "doing", {}, BACKGROUND_CONTEXT);
+		await transitionTask(runtime, created.task.id, "blocked", { blockedReason: "等密钥" }, BACKGROUND_CONTEXT);
+
+		const { runWatchdogPass } = await import("../../src/company/watchdog.ts");
+		// 时间往后推 2 小时
+		const result = await runWatchdogPass(runtime, {
+			context: BACKGROUND_CONTEXT,
+			immediate: false,
+			taskBlockedMs: 0,
+		});
+		const nudges = result.alerts.filter((alert) => alert.action === "nudge-task");
+		expect(nudges.length).toBeGreaterThan(0);
+
+		// 状态没被看门狗改掉（只提醒，不改状态）
+		const { readTask } = await import("../../src/company/tasks.ts");
+		const task = await readTask(runtime, created.task.id, BACKGROUND_CONTEXT);
+		expect(task?.status).toBe("blocked");
+	});
+});

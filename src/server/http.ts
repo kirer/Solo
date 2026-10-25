@@ -34,6 +34,10 @@ import {
 import { createUploadStore, MAX_UPLOAD_BYTES, UploadTooLargeError, type UploadStore } from "./uploads.ts";
 import { composeInboundText, createImOutboundRelay, inboundAllowed } from "./im.ts";
 import { browserUrlOf, lanUrlsOf } from "./network.ts";
+import { listChannels, mentionCandidates, readChannelView, unreadSummary } from "./channels-view.ts";
+import { markAllRead, markMentionSeen, postToChannel, readChannel, readChannels } from "../company/channels.ts";
+import { OWNER_ID } from "../domain/channels.ts";
+import { buildOrg } from "../company/org-model.ts";
 
 /** 服务选项。 */
 export type ServeOptions = {
@@ -308,6 +312,53 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			// ── 附件 ──
 			if (path === "/api/upload" && request.method === "POST") return await postUpload(request, response);
 			if (path.startsWith("/uploads/")) return await serveUpload(path, response);
+
+			// ── 频道（通信重构） ──
+			if (path === "/api/channels" && request.method === "GET") {
+				return json(response, {
+					channels: await listChannels(current(), BACKGROUND_CONTEXT),
+					unread: await unreadSummary(current(), BACKGROUND_CONTEXT),
+				});
+			}
+			if (path.startsWith("/api/channels/") && request.method === "GET") {
+				const rest = path.slice("/api/channels/".length);
+				// /api/channels/:id/mentionable
+				if (rest.endsWith("/mentionable")) {
+					const id = decodeURIComponent(rest.slice(0, -"/mentionable".length));
+					return json(response, { candidates: await mentionCandidates(current(), id, OWNER_ID, BACKGROUND_CONTEXT) });
+				}
+				const id = decodeURIComponent(rest);
+				const limitParam = Number(url.searchParams.get("limit") ?? "");
+				const beforeParam = Number(url.searchParams.get("before") ?? "");
+				const view = await readChannelView(
+					current(),
+					id,
+					{
+						...(Number.isFinite(limitParam) && limitParam > 0 ? { limit: limitParam } : {}),
+						...(Number.isFinite(beforeParam) && beforeParam > 0 ? { before: beforeParam } : {}),
+						viewer: OWNER_ID,
+					},
+					BACKGROUND_CONTEXT,
+				);
+				if (view === undefined) return fail(response, 404, "频道不存在或无权查看");
+				// 老板打开频道即标记已读（灰点变绿点靠 markMentionSeen，这里只推读位置）
+				await markAllRead(current(), id, OWNER_ID, BACKGROUND_CONTEXT);
+				return json(response, view);
+			}
+			if (path.startsWith("/api/channels/") && path.endsWith("/messages") && request.method === "POST") {
+				const id = decodeURIComponent(path.slice("/api/channels/".length, -"/messages".length));
+				return await postChannelMessage(id, request, response);
+			}
+			if (path.startsWith("/api/channels/") && path.endsWith("/read") && request.method === "POST") {
+				const id = decodeURIComponent(path.slice("/api/channels/".length, -"/read".length));
+				const body = await readJson<{ seq?: number }>(request);
+				if (typeof body.seq === "number") {
+					await markMentionSeen(current(), id, body.seq, OWNER_ID, BACKGROUND_CONTEXT);
+				}
+				await markAllRead(current(), id, OWNER_ID, BACKGROUND_CONTEXT);
+				scheduleOrgPush();
+				return json(response, { ok: true });
+			}
 
 			// ── 看板 ──
 			if (path === "/api/board" && request.method === "GET") {
@@ -842,6 +893,133 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			return fail(response, 503, "这条没投进去，请重发。");
 		}
 		return json(response, { ok: true, interrupted: aborted });
+	}
+
+	/**
+	 * 老板在频道里发言（通信重构的主入口）。
+	 *
+	 * 与 `/api/message` 的区别：`/api/message` 是「对某个会话说话」，
+	 * 这里是「在频道里说话」——消息落频道，按 @ 唤醒该唤醒的人。
+	 * 老板可以 @ 任何人（他在所有频道里）。
+	 */
+	async function postChannelMessage(
+		channelId: string,
+		request: IncomingMessage,
+		response: ServerResponse,
+	): Promise<void> {
+		const body = await readJson<{
+			text?: string;
+			mentions?: readonly number[];
+			kind?: string;
+			attachments?: readonly { readonly id?: unknown; readonly name?: unknown }[];
+		}>(request);
+		const text = (body.text ?? "").trim();
+		const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+		if (text === "" && attachments.length === 0) return fail(response, 400, "需要 text（可只带附件）");
+
+		const runtime = current();
+		const channel = await readChannel(runtime, channelId, BACKGROUND_CONTEXT);
+		if (channel === undefined) return fail(response, 404, "频道不存在");
+
+		// 附件转成文本引用（与 /api/message 同一套）
+		const attachmentResult = await messageContent(text, attachments);
+		if (attachmentResult.error !== undefined) return fail(response, 400, attachmentResult.error);
+		const content = attachmentResult.content;
+
+		// 只保留频道成员作为 @ 目标（@ 一个不在频道里的人没有意义）
+		const mentions = (body.mentions ?? []).filter((id) => channel.members[String(id)] !== undefined);
+
+		const company = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+		const org = buildOrg(company);
+
+		// 老板发言：先写 ack（ADR-026 决策 7.1 的延续——必回）
+		const targets = mentions.length > 0 ? mentions : defaultTargets(channelId, org);
+		await writeAck(runtime, channelId, content, targets);
+
+		const posted = await postToChannel(
+			runtime,
+			channelId,
+			{
+				from: OWNER_ID,
+				fromLabel: "老板",
+				kind: body.kind === "question" ? "question" : "chat",
+				text: content,
+				mentions,
+			},
+			{ context: BACKGROUND_CONTEXT },
+		);
+
+		// 老板的消息必须最终有人回应：看门狗会扫「无响应的老板消息」
+		scheduleOrgPush();
+		return json(response, {
+			ok: true,
+			seq: posted.message.seq,
+			delivered: posted.delivery?.delivered ?? [],
+			failed: posted.delivery?.failed ?? [],
+		});
+	}
+
+	/** 老板发言没 @ 时该通知谁：频道 owner。 */
+	function defaultTargets(channelId: string, org: ReturnType<typeof buildOrg>): readonly number[] {
+		if (channelId === "company" || channelId === "leadership") return org.ceoId > 0 ? [org.ceoId] : [];
+		const colon = channelId.indexOf(":");
+		if (colon > 0 && channelId.startsWith("proj:")) {
+			const leader = org.projectLeaders[channelId.slice(colon + 1)];
+			return leader === undefined ? [] : [leader];
+		}
+		if (colon > 0 && (channelId.startsWith("dm:") || channelId.startsWith("log:"))) {
+			const id = Number(channelId.slice(colon + 1));
+			return Number.isFinite(id) ? [id] : [];
+		}
+		return [];
+	}
+
+	/**
+	 * 写受理回执（老板消息必回）。
+	 *
+	 * 内容比旧版 `app.receipt` 多两样：**在忙什么**、**大概什么时候处理**。
+	 * 这两样正是老板要的（「即使对方在忙，也要回复我告知在忙什么」）。
+	 */
+	async function writeAck(
+		runtime: CompanyRuntime,
+		channelId: string,
+		text: string,
+		targets: readonly number[],
+	): Promise<void> {
+		for (const target of targets) {
+			try {
+				const conversation = await runtime.harness.conversation(target as never, BACKGROUND_CONTEXT);
+				if (conversation === undefined) continue;
+				const busy = await isStillBusy(runtime, target);
+				const view = await conversation.watch(BACKGROUND_CONTEXT);
+				const live = view.value.docs["pi.live"] as
+					| { readonly tools?: Record<string, { readonly name?: string; readonly status?: string }> }
+					| undefined;
+				await view.stop();
+				const runningTool = Object.values(live?.tools ?? {}).find(
+					(tool) => tool.status !== "done" && tool.status !== "error" && tool.status !== "cancelled",
+				)?.name;
+				await conversation.submit(
+					{
+						type: "write",
+						entry: {
+							kind: "app.ack",
+							data: {
+								text: text.slice(0, 280),
+								channelId,
+								busy: busy,
+								busyWith: runningTool ?? null,
+								plan: busy ? "当前工具结束后处理" : "立即处理",
+								at: Date.now(),
+							} as never,
+						},
+					},
+					BACKGROUND_CONTEXT,
+				);
+			} catch {
+				// 回执失败不影响受理
+			}
+		}
 	}
 
 	/** 拍板：回答一条待决问题。 */

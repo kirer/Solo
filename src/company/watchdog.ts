@@ -46,7 +46,13 @@ export type WatchdogAction =
 	/** 把空闲会话里压着的排队消息投出去。 */
 	| "drain"
 	/** 自动动手次数用尽，只报告不再动手。 */
-	| "report";
+	| "report"
+	/** 群里 @ 某人的问题长时间没人回：升级给上一级。 */
+	| "escalate-question"
+	/** 任务卡住太久：提醒负责人 / 下达人。 */
+	| "nudge-task"
+	/** 老板的消息长时间没有任何回应：告警并重投。 */
+	| "resurface";
 
 /** 一条看门狗事件。 */
 export type WatchdogAlert = {
@@ -55,8 +61,14 @@ export type WatchdogAlert = {
 	readonly taskId: string;
 	readonly taskKind: string;
 	readonly action: WatchdogAction;
-	/** 触发原因；排空队列时是 `inbox-queued`。 */
-	readonly reason: StuckReason | "inbox-queued";
+	/** 触发原因。 */
+	readonly reason:
+		| StuckReason
+		| "inbox-queued"
+		| "question-unanswered"
+		| "task-blocked-too-long"
+		| "task-no-progress"
+		| "owner-message-silent";
 	/** 给老板看的一句话。 */
 	readonly message: string;
 	/** 这是第几次自动动手（从 1 开始；`report` 时为上限 + 1）。 */
@@ -81,6 +93,14 @@ export type WatchdogOptions = {
 	readonly drainInbox?: boolean;
 	/** 启动时是否立刻巡检一次。默认 true。 */
 	readonly immediate?: boolean;
+	/** 群里 @ 的问题多久没人回就升级。 */
+	readonly questionUnansweredMs?: number;
+	/** 任务阻塞多久提醒。 */
+	readonly taskBlockedMs?: number;
+	/** 任务在做但多久没进度提醒。 */
+	readonly taskStaleMs?: number;
+	/** 老板消息多久没回应就告警。 */
+	readonly ownerSilentMs?: number;
 	/** 事件回调（打日志、推 SSE 等）；留痕本身不依赖它。 */
 	readonly onAlert?: (alert: WatchdogAlert) => void;
 	readonly context?: Context;
@@ -94,6 +114,14 @@ export const WATCHDOG_DEFAULTS = {
 	maxAttempts: 2,
 	drainInbox: true,
 	immediate: true,
+	/** 群里 @ 某人的问题多久没人回就升级（老板要求：项目负责人不该长时间不回）。 */
+	questionUnansweredMs: 10 * 60_000,
+	/** 任务阻塞多久提醒。 */
+	taskBlockedMs: 60 * 60_000,
+	/** 任务在做但多久没进度提醒。 */
+	taskStaleMs: 60 * 60_000,
+	/** 老板消息多久没有任何回应就告警（ADR-026 决策 7.2 的兜底）。 */
+	ownerSilentMs: 5 * 60_000,
 } as const;
 
 /** 一次巡检的结果。 */
@@ -327,7 +355,243 @@ export async function runWatchdogPass(
 		process.stderr.write(`[恢复提醒失败] ${error instanceof Error ? error.message : String(error)}\n`);
 	}
 
+	// ⑤ 群里 @ 的问题长时间没人回 → 升级给上一级（老板要求：负责人不该长时间不回）。
+	// 这是「员工问了没人理」的结构性修法：问一句不会白问。
+	try {
+		const escalated = await escalateUnansweredQuestions(
+			runtime,
+			now,
+			options.questionUnansweredMs ?? WATCHDOG_DEFAULTS.questionUnansweredMs,
+			context,
+		);
+		for (const alert of escalated) await push(alert);
+	} catch (error) {
+		process.stderr.write(`[问题升级失败] ${error instanceof Error ? error.message : String(error)}\n`);
+	}
+
+	// ⑥ 任务卡住太久 → 提醒负责人（不自动改状态，改状态是人的决定）。
+	try {
+		const nudges = await nudgeStaleTasks(
+			runtime,
+			now,
+			{
+				blockedMs: options.taskBlockedMs ?? WATCHDOG_DEFAULTS.taskBlockedMs,
+				staleMs: options.taskStaleMs ?? WATCHDOG_DEFAULTS.taskStaleMs,
+			},
+			context,
+		);
+		for (const alert of nudges) await push(alert);
+	} catch (error) {
+		process.stderr.write(`[任务提醒失败] ${error instanceof Error ? error.message : String(error)}\n`);
+	}
+
+	// ⑦ 老板的消息长时间没有任何回应 → 告警并重投（ADR-026 决策 7.2「不允许静默结束」）。
+	try {
+		const resurfaced = await resurfaceSilentOwnerMessages(
+			runtime,
+			now,
+			options.ownerSilentMs ?? WATCHDOG_DEFAULTS.ownerSilentMs,
+			context,
+		);
+		for (const alert of resurfaced) await push(alert);
+	} catch (error) {
+		process.stderr.write(`[老板消息兜底失败] ${error instanceof Error ? error.message : String(error)}\n`);
+	}
+
 	return { liveness, alerts };
+}
+
+/**
+ * 群里 @ 某人、且超过 `thresholdMs` 没有任何回复的问题 → 升级给上一级。
+ *
+ * 「有回复」的判定：同频道里有比它更晚的、来自被 @ 者的消息。
+ * 这个判据刻意宽松（被 @ 的人只要在群里说过话就算回过），因为
+ * 精确判定「它有没有认真回答」需要语义理解，看门狗不做语义。
+ *
+ * 升级目标：被 @ 者的直属上级；找不到就告警不升级（不能凭空造人）。
+ */
+async function escalateUnansweredQuestions(
+	runtime: CompanyRuntime,
+	now: number,
+	thresholdMs: number,
+	context: Context,
+): Promise<readonly WatchdogAlert[]> {
+	const { org } = await import("./channels.ts").then((module) => module.readOrg(runtime, context));
+	const state = await import("./channels.ts").then((module) => module.readChannels(runtime, context));
+	const alerts: WatchdogAlert[] = [];
+
+	for (const channel of Object.values(state.channels)) {
+		if (channel.archived === true) continue;
+		for (const message of channel.messages) {
+			if (message.kind !== "question") continue;
+			if (message.mentions.length === 0) continue;
+			if (now - message.at < thresholdMs) continue;
+
+			// 有回复吗？同频道里更晚的、来自任一被 @ 者的消息
+			const replied = channel.messages.some(
+				(entry) => entry.seq > message.seq && message.mentions.includes(entry.from),
+			);
+			if (replied) continue;
+
+			// 已经升级过吗？同频道里更晚的、带同样 mentions 的 question 就是升级记录
+			const escalated = channel.messages.some(
+				(entry) =>
+					entry.seq > message.seq &&
+					entry.kind === "question" &&
+					message.mentions.every((id) => entry.mentions.includes(id) === false),
+			);
+			if (escalated) continue;
+
+			// 升级给被 @ 者的上级
+			const target = message.mentions[0];
+			if (target === undefined) continue;
+			const person = org.people.find((entry) => entry.conversationId === target);
+			const manager = person?.managerId;
+			if (manager === undefined) {
+				alerts.push({
+					at: now,
+					conversationId: target,
+					taskId: `ch:${channel.id}:${message.seq}`,
+					taskKind: "app.question",
+					action: "escalate-question",
+					reason: "question-unanswered",
+					message: `「${channel.title}」里有一条问题 ${Math.round((now - message.at) / 60_000)} 分钟没人回，但它没有上级可升级：${message.text.slice(0, 80)}`,
+					attempt: 1,
+					giveUp: true,
+				});
+				continue;
+			}
+
+			const { postToChannel } = await import("./channels.ts");
+			await postToChannel(
+				runtime,
+				channel.id,
+				{
+					from: -1,
+					fromLabel: "系统",
+					kind: "system",
+					text: [
+						`【超时升级】${Math.round((now - message.at) / 60_000)} 分钟没人回这条问题：`,
+						message.text,
+						`原 @ ${message.mentions.map((id) => org.people.find((p) => p.conversationId === id)?.label ?? id).join("、")}，已升级给其上级。`,
+					].join("\n"),
+					mentions: [manager],
+					refs: { ...(message.refs ?? {}) },
+				},
+				{ context },
+			);
+
+			alerts.push({
+				at: now,
+				conversationId: manager,
+				taskId: `ch:${channel.id}:${message.seq}`,
+				taskKind: "app.question",
+				action: "escalate-question",
+				reason: "question-unanswered",
+				message: `「${channel.title}」里的问题超过 ${Math.round(thresholdMs / 60_000)} 分钟没人回，已升级给上一级。`,
+				attempt: 1,
+				giveUp: false,
+			});
+		}
+	}
+	return alerts;
+}
+
+/**
+ * 任务卡住太久 → 提醒负责人。
+ *
+ * 只提醒，**不自动改状态**：把任务从 doing 改成 blocked 是人的判断，
+ * 看门狗替人做这个决定会让看板失真。
+ */
+async function nudgeStaleTasks(
+	runtime: CompanyRuntime,
+	now: number,
+	options: { readonly blockedMs: number; readonly staleMs: number },
+	context: Context,
+): Promise<readonly WatchdogAlert[]> {
+	const { tasksNeedingAttention } = await import("./tasks.ts");
+	const { postToChannel } = await import("./channels.ts");
+	const stale = await tasksNeedingAttention(runtime, now, options, context);
+	const alerts: WatchdogAlert[] = [];
+
+	for (const { task, reason } of stale) {
+		const minutes = Math.round((now - (task.progress.at(-1)?.at ?? task.startedAt ?? task.createdAt)) / 60_000);
+		const label = reason === "blocked-too-long" ? "阻塞" : "没有进度";
+		await postToChannel(
+			runtime,
+			task.channelId,
+			{
+				from: -1,
+				fromLabel: "系统",
+				kind: "system",
+				text: [
+					`【提醒】任务 ${task.id}「${task.title}」已经${label} ${minutes} 分钟。`,
+					task.blockedReason === undefined ? "" : `阻塞原因：${task.blockedReason}`,
+					"负责人请更新状态或说明情况；确实做不下去就报 blocked 并写清卡在哪。",
+				]
+					.filter((line) => line !== "")
+					.join("\n"),
+				mentions: [task.assignee],
+				refs: { taskId: task.id, projectSlug: task.project },
+			},
+			{ context },
+		);
+		alerts.push({
+			at: now,
+			conversationId: task.assignee,
+			taskId: task.id,
+			taskKind: "app.task",
+			action: "nudge-task",
+			reason: reason === "blocked-too-long" ? "task-blocked-too-long" : "task-no-progress",
+			message: `任务 ${task.id}「${task.title}」${label} ${minutes} 分钟，已提醒负责人。`,
+			attempt: 1,
+			giveUp: false,
+		});
+	}
+	return alerts;
+}
+
+/**
+ * 老板在频道里发言后，长时间没有任何回应 → 告警并重投。
+ *
+ * ADR-026 决策 7.2 的兜底：每条老板消息最终要么有 assistant 答复，
+ * 要么有一条 alert。不允许静默结束。
+ *
+ * 「有回应」的判定：频道里有更晚的、来自被 @ 者（或频道 owner）的消息。
+ */
+async function resurfaceSilentOwnerMessages(
+	runtime: CompanyRuntime,
+	now: number,
+	thresholdMs: number,
+	context: Context,
+): Promise<readonly WatchdogAlert[]> {
+	const { readChannels } = await import("./channels.ts");
+	const state = await readChannels(runtime, context);
+	const alerts: WatchdogAlert[] = [];
+
+	for (const channel of Object.values(state.channels)) {
+		if (channel.archived === true) continue;
+		for (const message of channel.messages) {
+			if (message.from !== 0) continue; // 只看老板
+			if (now - message.at < thresholdMs) continue;
+			// 已经有更晚的消息（任何人）就算有回应——群里有人在说话
+			const replied = channel.messages.some((entry) => entry.seq > message.seq);
+			if (replied) continue;
+
+			alerts.push({
+				at: now,
+				conversationId: channel.members["0"]?.conversationId ?? 0,
+				taskId: `ch:${channel.id}:${message.seq}`,
+				taskKind: "app.channel",
+				action: "resurface",
+				reason: "owner-message-silent",
+				message: `老板在「${channel.title}」发的消息 ${Math.round((now - message.at) / 60_000)} 分钟没有任何回应：${message.text.slice(0, 80)}`,
+				attempt: 1,
+				giveUp: false,
+			});
+		}
+	}
+	return alerts;
 }
 
 /**

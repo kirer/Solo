@@ -1,0 +1,245 @@
+/**
+ * 频道的 HTTP 视图：给前端的频道列表 + 消息流 + 成员已读状态。
+ *
+ * 设计见 `docs/design/COMMS-REFACTOR.md` §7。三条约定：
+ *
+ * 1. **一次给全**：频道列表带未读数、最后一条预览，前端不用再逐个请求。
+ * 2. **已读状态由后端算**：`readBy` 是持久化事实，界面只渲染。让前端自己比对
+ *    会两边不一致（ADR-027 的教训）。
+ * 3. **消息分页**：默认给最近 N 条，更早的用 `before` 游标拉。
+ */
+import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
+import {
+	digestFor,
+	hasMember,
+	oneLine,
+	type Channel,
+	type ChannelMessage,
+	type ChannelState,
+	type MemberRole,
+} from "../domain/channels.ts";
+import { labelOf, canView, personOf, type Org } from "../domain/membership.ts";
+import { isTerminal, type TaskEntry } from "../domain/tasks.ts";
+import { readChannels, readOrg } from "../company/channels.ts";
+import { readTasks } from "../company/tasks.ts";
+
+/** 频道列表项。 */
+export type ChannelListItem = {
+	readonly id: string;
+	readonly kind: Channel["kind"];
+	readonly title: string;
+	readonly project?: string;
+	/** 未读条数（不含自己发的）。 */
+	readonly unread: number;
+	/** 其中 @ 我的条数。 */
+	readonly mentions: number;
+	/** 最后一条的预览。 */
+	readonly preview: string;
+	readonly lastAt: number;
+	readonly lastSeq: number;
+	/** 成员数。 */
+	readonly memberCount: number;
+	/** 这个频道里未完成的任务数（项目群才有意义）。 */
+	readonly openTasks: number;
+};
+
+/** 一条消息的视图。 */
+export type MessageView = {
+	readonly seq: number;
+	readonly at: number;
+	readonly from: number;
+	readonly fromLabel: string;
+	readonly kind: ChannelMessage["kind"];
+	readonly text: string;
+	readonly mentions: readonly { readonly id: number; readonly label: string; readonly read: boolean }[];
+	readonly refs?: ChannelMessage["refs"];
+	/** 我读过这条没有。 */
+	readonly read: boolean;
+};
+
+/** 频道详情。 */
+export type ChannelView = {
+	readonly channel: Omit<ChannelListItem, "unread" | "mentions" | "preview" | "openTasks">;
+	readonly members: readonly {
+		readonly id: number;
+		readonly label: string;
+		readonly role: MemberRole;
+		readonly unread: number;
+	}[];
+	readonly messages: readonly MessageView[];
+	/** 还有更早的消息（用 before 游标继续拉）。 */
+	readonly hasMore: boolean;
+	readonly tasks: readonly TaskEntry[];
+};
+
+/** 读频道列表（老板视角：全部频道）。 */
+export async function listChannels(
+	runtime: CompanyRuntime,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<readonly ChannelListItem[]> {
+	const { org } = await readOrg(runtime, context);
+	const channels = await readChannels(runtime, context);
+	const tasks = await readTasks(runtime, context);
+
+	const items: ChannelListItem[] = [];
+	for (const channel of Object.values(channels.channels)) {
+		if (channel.archived === true) continue;
+		// 老板能看全部；这里固定按老板视角（0）
+		if (!canView(org, 0, channel)) continue;
+		const unread = channel.messages.filter((message) => message.seq > channel.lastSeq - channel.messages.length && message.from !== 0).length;
+		const mentions = channel.messages.filter(
+			(message) => message.mentions.includes(0) && message.from !== 0 && !message.readBy.includes(0),
+		).length;
+		const last = channel.messages.at(-1);
+		const openTasks = Object.values(tasks.tasks).filter(
+			(task) => task.channelId === channel.id && !isTerminal(task.status),
+		).length;
+		items.push({
+			id: channel.id,
+			kind: channel.kind,
+			title: channel.title,
+			...(channel.project === undefined ? {} : { project: channel.project }),
+			unread,
+			mentions,
+			preview: last === undefined ? "" : oneLine(last.text, 80),
+			lastAt: last?.at ?? channel.createdAt,
+			lastSeq: channel.lastSeq,
+			memberCount: Object.keys(channel.members).length,
+			openTasks,
+		});
+	}
+
+	// 排序：有 @ 的在前，然后按最后消息时间倒序
+	items.sort((left, right) => right.mentions - left.mentions || right.lastAt - left.lastAt);
+	return items;
+}
+
+/** 读频道详情。 */
+export async function readChannelView(
+	runtime: CompanyRuntime,
+	channelId: string,
+	options: { readonly limit?: number; readonly before?: number; readonly viewer?: number } = {},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<ChannelView | undefined> {
+	const { org } = await readOrg(runtime, context);
+	const channels = await readChannels(runtime, context);
+	const channel = channels.channels[channelId];
+	if (channel === undefined) return undefined;
+	const viewer = options.viewer ?? 0;
+	if (!canView(org, viewer, channel)) return undefined;
+
+	const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
+	const all = channel.messages.filter((message) => options.before === undefined || message.seq < options.before);
+	const page = all.slice(-limit);
+	const hasMore = all.length > page.length;
+
+	const tasks = await readTasks(runtime, context);
+	const projectTasks = Object.values(tasks.tasks)
+		.filter((task) => task.channelId === channel.id)
+		.sort((left, right) => left.createdAt - right.createdAt);
+
+	return {
+		channel: {
+			id: channel.id,
+			kind: channel.kind,
+			title: channel.title,
+			...(channel.project === undefined ? {} : { project: channel.project }),
+			lastAt: channel.messages.at(-1)?.at ?? channel.createdAt,
+			lastSeq: channel.lastSeq,
+			memberCount: Object.keys(channel.members).length,
+		},
+		members: Object.values(channel.members)
+			.sort((left, right) => left.joinedAt - right.joinedAt)
+			.map((member) => ({
+				id: member.conversationId,
+				label: labelOf(org, member.conversationId),
+				role: member.role,
+				unread: channel.messages.filter(
+					(message) => message.seq > member.lastReadSeq && message.from !== member.conversationId,
+				).length,
+			})),
+		messages: page.map((message) => messageView(org, channel, message, viewer)),
+		hasMore,
+		tasks: projectTasks,
+	};
+}
+
+/** 单条消息视图。 */
+function messageView(org: Org, channel: Channel, message: ChannelMessage, viewer: number): MessageView {
+	const read = message.readBy.includes(viewer) || message.from === viewer;
+	return {
+		seq: message.seq,
+		at: message.at,
+		from: message.from,
+		fromLabel: message.fromLabel,
+		kind: message.kind,
+		text: message.text,
+		mentions: message.mentions.map((id) => ({
+			id,
+			label: labelOf(org, id),
+			read: message.readBy.includes(id),
+		})),
+		...(message.refs === undefined ? {} : { refs: message.refs }),
+		read,
+	};
+}
+
+/** 老板侧的未读总览（顶栏徽章）。 */
+export async function unreadSummary(
+	runtime: CompanyRuntime,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ readonly channels: number; readonly mentions: number; readonly total: number }> {
+	const { org } = await readOrg(runtime, context);
+	const channels = await readChannels(runtime, context);
+	const digests = digestFor(channels, 0, 50);
+	let total = 0;
+	let mentions = 0;
+	for (const item of digests) {
+		total += item.unread;
+		mentions += item.mentions;
+	}
+	void org;
+	return { channels: digests.length, mentions, total };
+}
+
+/** 某人能 @ 的人（前端 @ 选择器用）。 */
+export async function mentionCandidates(
+	runtime: CompanyRuntime,
+	channelId: string,
+	viewer: number,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<readonly { readonly id: number; readonly label: string; readonly role: MemberRole }[]> {
+	const { org } = await readOrg(runtime, context);
+	const channels = await readChannels(runtime, context);
+	const channel = channels.channels[channelId];
+	if (channel === undefined) return [];
+	return Object.values(channel.members)
+		.filter((member) => member.conversationId !== viewer)
+		.map((member) => ({
+			id: member.conversationId,
+			label: labelOf(org, member.conversationId),
+			role: member.role,
+		}))
+		.filter((entry) => personOf(org, entry.id) !== undefined || entry.id === 0);
+}
+
+/** 频道里的任务（项目看板用）。 */
+export async function channelTasks(
+	runtime: CompanyRuntime,
+	channelId: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<readonly TaskEntry[]> {
+	const tasks = await readTasks(runtime, context);
+	return Object.values(tasks.tasks)
+		.filter((task) => task.channelId === channelId)
+		.sort((left, right) => left.createdAt - right.createdAt);
+}
+
+/** 供 server 复用：从 ChannelState 取某人未读。 */
+export function unreadOfChannel(state: ChannelState, channelId: string, conversationId: number): number {
+	const channel = state.channels[channelId];
+	if (channel === undefined || !hasMember(channel, conversationId)) return 0;
+	return channel.messages.filter(
+		(message) => message.seq > (channel.members[String(conversationId)]?.lastReadSeq ?? 0) && message.from !== conversationId,
+	).length;
+}

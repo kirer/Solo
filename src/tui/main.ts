@@ -26,6 +26,7 @@ import {
 	type RuntimeReport,
 } from "../runtime/index.ts";
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, DEFAULT_MODEL_CATALOG } from "../company/org.ts";
+import { ensureAllChannels } from "../company/channels.ts";
 import { CompanyDoc } from "../company/docs.ts";
 import { createEscalationTask } from "../company/escalation.ts";
 // OPS-20261025-04（审计 R-05）：TUI 原先只打 stderr，关掉终端就查不到。
@@ -122,6 +123,9 @@ async function openAndBoot(): Promise<{
 		},
 		BACKGROUND_CONTEXT,
 	);
+
+	// 频道自愈：与网页入口一致
+	await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
 
 	const state = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
 	return {
