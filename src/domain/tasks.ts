@@ -25,44 +25,50 @@ export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 
 /** 一条进度记录。 */
 export type TaskProgressNote = {
-	readonly at: number;
-	readonly text: string;
+	at: number;
+	text: string;
 	/** 记这条的会话（0 = 老板，-1 = 系统）。 */
-	readonly by: number;
+	by: number;
 };
 
 /** 一个任务。 */
+/**
+ * 一个任务。
+ *
+ * 字段不用 `readonly`：底层 `JsonObject` 要求可变结构（见 `domain/channels.ts`
+ * 的同款说明）。不可变性由纯函数「每次返回新对象」保证。
+ */
 export type TaskEntry = {
-	readonly id: string;
-	readonly project: string;
+	id: string;
+	project: string;
 	/** 讨论在哪个频道进行。 */
-	readonly channelId: string;
-	readonly title: string;
-	readonly brief: string;
+	channelId: string;
+	title: string;
+	brief: string;
 	/** 验收标准。**必填**，空的不是任务。 */
-	readonly acceptance: string;
+	acceptance: string;
 	/** 唯一负责人。 */
-	readonly assignee: number;
+	assignee: number;
 	/** 下达人（0 = 老板，-1 = 系统）。 */
-	readonly assignedBy: number;
-	readonly status: TaskStatus;
-	readonly priority: TaskPriority;
-	readonly createdAt: number;
-	readonly startedAt?: number;
-	readonly doneAt?: number;
+	assignedBy: number;
+	status: TaskStatus;
+	priority: TaskPriority;
+	createdAt: number;
+	startedAt?: number;
+	doneAt?: number;
 	/** 完成证据：文件路径 / 测试输出 / 提交号。 */
-	readonly evidence?: string;
-	readonly blockedReason?: string;
+	evidence?: string;
+	blockedReason?: string;
 	/** 依赖的任务标识（用于看板显示阻塞关系，不参与调度）。 */
-	readonly dependsOn: readonly string[];
-	readonly progress: readonly TaskProgressNote[];
+	dependsOn: string[];
+	progress: TaskProgressNote[];
 };
 
 /** 任务文档。 */
 export type TaskState = {
-	readonly tasks: Readonly<Record<string, TaskEntry>>;
+	tasks: Record<string, TaskEntry>;
 	/** 下一个任务号（单调递增，不复用）。 */
-	readonly nextId: number;
+	nextId: number;
 };
 
 /** 空文档。 */

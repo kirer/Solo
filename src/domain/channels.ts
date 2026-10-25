@@ -50,61 +50,67 @@ export const MAX_MESSAGES_PER_CHANNEL = 800;
 /** 一条频道消息。 */
 export type ChannelMessage = {
 	/** 频道内单调递增；同时也是「已读到哪」的游标。 */
-	readonly seq: number;
-	readonly at: number;
+	seq: number;
+	at: number;
 	/** 发送方会话标识；`OWNER_ID` 表示老板。 */
-	readonly from: number;
-	readonly fromLabel: string;
-	readonly kind: MessageKind;
-	readonly text: string;
+	from: number;
+	fromLabel: string;
+	kind: MessageKind;
+	text: string;
 	/** 被 @ 的会话标识（去重、按传入顺序）。 */
-	readonly mentions: readonly number[];
+	mentions: number[];
 	/** 被 @ 的人里谁已经读过 —— 界面上的灰点/绿点靠它。 */
-	readonly readBy: readonly number[];
+	readBy: number[];
 	/** 关联标识：任务、待办、项目。 */
-	readonly refs?: {
-		readonly taskId?: string;
-		readonly pendingKey?: string;
-		readonly projectSlug?: string;
+	refs?: {
+		taskId?: string;
+		pendingKey?: string;
+		projectSlug?: string;
 	};
 };
 
 /** 一个频道成员。 */
 export type Member = {
-	readonly conversationId: number;
-	readonly role: MemberRole;
-	readonly joinedAt: number;
+	conversationId: number;
+	role: MemberRole;
+	joinedAt: number;
 	/** 已读到第几条。未读数由它推导，不单独存（避免两个真相源）。 */
-	readonly lastReadSeq: number;
+	lastReadSeq: number;
 	/**
 	 * 频道里没有 @ 他的消息是否也唤醒他。
 	 *
 	 * 默认 false：群是广播存储，不是广播唤醒。老板恒为 true（他要看全部）。
 	 * 项目负责人对自己的项目群可以开 true（他要统筹）。
 	 */
-	readonly wakeOnAll?: boolean;
+	wakeOnAll?: boolean;
 };
 
 /** 一个频道。 */
 export type Channel = {
-	readonly id: string;
-	readonly kind: ChannelKind;
-	readonly title: string;
-	readonly project?: string;
+	id: string;
+	kind: ChannelKind;
+	title: string;
+	project?: string;
 	/** key = String(conversationId)。 */
-	readonly members: Readonly<Record<string, Member>>;
-	readonly createdAt: number;
-	readonly archived?: boolean;
-	readonly messages: readonly ChannelMessage[];
+	members: Record<string, Member>;
+	createdAt: number;
+	archived?: boolean;
+	messages: ChannelMessage[];
 	/** 频道内最后一条消息的 seq；空频道为 0。 */
-	readonly lastSeq: number;
+	lastSeq: number;
 };
 
-/** 频道文档。 */
+/**
+ * 频道文档。
+ *
+ * 字段刻意**不用 `readonly` / `Readonly<Record>`**：底层的 `JsonObject` 约束
+ * 要求可变结构（`Readonly<Record<string, Channel>>` 不满足 `JsonValue`）。
+ * 不可变性由「每次返回新对象」的纯函数保证，不由类型修饰符保证。
+ */
 export type ChannelState = {
-	readonly channels: Readonly<Record<string, Channel>>;
+	channels: Record<string, Channel>;
 	/** 全局单调序号：跨频道排序与游标用，保证「先发生的一定更小」。 */
-	readonly nextSeq: number;
+	nextSeq: number;
 };
 
 /** 空文档。 */
