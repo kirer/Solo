@@ -443,6 +443,8 @@ export async function settleDueDispositions(
 			(item) =>
 				item.disposition !== undefined &&
 				item.answer === undefined &&
+				// 已被人驳回/标记已解决的，不该再被超时兜底「答」一遍。
+				item.disposed === undefined &&
 				shouldApplyTimeoutDefault(item.disposition, now).apply,
 		);
 		if (!hasDue) return 0;
@@ -634,6 +636,8 @@ export async function applyDueDispositionDefaults(
 	const due = (state?.items ?? []).filter((item) => {
 		if (item.disposition === undefined) return false;
 		if (item.answer !== undefined) return false;
+		// 已处置的跳过（同上，避免把人的决定覆盖成机器默认值）。
+		if (item.disposed !== undefined) return false;
 		const check = shouldApplyTimeoutDefault(item.disposition, now);
 		return check.apply;
 	});

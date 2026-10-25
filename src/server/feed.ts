@@ -24,7 +24,7 @@ import {
 	type ManagementRole,
 	type ManagerRef,
 } from "../company/docs.ts";
-import { decisionOwnerOfItem, levelOfConversation, listPending } from "../company/escalation.ts";
+import { canDisposePending, decisionOwnerOfItem, levelOfConversation, listPending } from "../company/escalation.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { actorRefOf, OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
 
@@ -158,6 +158,18 @@ export type FeedPending = {
 	readonly disposition: boolean;
 	/** 结构化选项；没有就为空数组（界面自行降级成自由输入）。 */
 	readonly options: readonly { readonly id: string; readonly label: string; readonly recommended: boolean }[];
+	/**
+	 * 当前这个会话（界面里正在看的这个人）能不能对它做「驳回 / 标记已解决」。
+	 *
+	 * 由后端算好下发，而不是让界面用 decisionOwner 自己比：
+	 * 权限口径（canDisposePending）只该有一处定义，界面再算一遍早晚会两边不一致。
+	 * 注意：这只是**显示依据**；真正的拦截在 disposePending 里（HTTP/工具都走它）。
+	 */
+	readonly canDispose: boolean;
+	/** CEO 能否把它从老板层接管回来（只有 CEO + owner 级条目为 true）。 */
+	readonly canTakeOver: boolean;
+	/** 来源说明（Defect B 要求 4）：谁声明了什么类别、是否经 CEO 复核。 */
+	readonly trace?: { readonly declaredTopic?: string; readonly ceoReviewed?: boolean; readonly note: string };
 };
 
 /**
@@ -335,9 +347,21 @@ export async function decorateFeed(
 	// 非处置项（处置是「被打断工作的下达人」的事，不该计进「等拍板」的角标），
 	// 但 feed.pending 要全给，否则处置待办在聊天里就彻底没有入口了。
 	const allMine = pending.filter(
-		(item) => myLevel !== undefined && decisionOwnerOfItem(item) === myLevel,
+		(item) =>
+			myLevel !== undefined &&
+			// 自己的待办
+			(decisionOwnerOfItem(item) === myLevel ||
+				// 缺陷 B：CEO 还要能看到**老板级**待办，否则「接管」这个动作在
+				// CEO 的界面上根本没有入口（它 decisionOwner 是 owner，不会进 CEO 队列）。
+				// 只给 CEO，且只给 owner 级；其他层级看不到别人的活。
+				(myLevel === "ceo" && item.level === "owner")),
 	);
-	const mine = allMine.filter((item) => item.disposition === undefined);
+	// 注意：`mine` 决定 `awaitingDecision.count`（角标）。
+	// 老板级条目是「给 CEO 看的接管入口」，**不算** CEO 自己的待拍板数——
+	// 否则 CEO 会以为自己有活没干，其实那是在等老板。
+	const mine = allMine.filter(
+		(item) => item.disposition === undefined && decisionOwnerOfItem(item) === myLevel,
+	);
 
 	const decider: AwaitingDecision["decider"] =
 		mine.length === 0
@@ -419,6 +443,9 @@ export async function decorateFeed(
 			label: option.label,
 			recommended: option.recommended === true,
 		})),
+		canDispose: canDisposePending(item, myLevel),
+		canTakeOver: myLevel === "ceo" && item.level === "owner" && item.answer === undefined && item.disposed === undefined,
+		...(item.trace === undefined ? {} : { trace: item.trace }),
 	}));
 
 	return { ...feed, title, kind, role, actor, awaitingOwner, awaitingDecision, pending: pendingView };

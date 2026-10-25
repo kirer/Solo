@@ -237,6 +237,82 @@ describe("组织快照接口", () => {
 		expect(mine?.question).toContain("联机");
 		void boot;
 	});
+
+	/**
+	 * 缺陷 B 的 HTTP 面：CEO 接管老板级待办。
+	 *
+	 * 断言三件事：① 接管前老板队列有它、feed 里 canTakeOver=true 且带 trace；
+	 * ② 调 /api/pending/take-over 后老板队列消失；③ 无权限（asLevel=cto）被 403 拒。
+	 */
+	test("CEO 接管老板级待办：接口成功、老板队列消失、feed 带 canTakeOver 与 trace", async () => {
+		const { server, runtime, boot, escalationTask, dir } = await setup();
+		const { project } = await createProject(
+			runtime,
+			{ name: "D", slug: "d", brief: "b", workspaceRoot: join(dir, "projects") },
+			BACKGROUND_CONTEXT,
+		);
+		const { answerPending } = await import("../../src/company/escalation.ts");
+
+		await startEscalation(
+			runtime,
+			escalationTask,
+			{
+				question: "要不要砍掉 D 项目？",
+				from: "林越",
+				fromConversationId: project.leader,
+				manager: "ceo",
+				topic: "company-level",
+				escalationKey: "web-takeover-1",
+			},
+			BACKGROUND_CONTEXT,
+		);
+		// 缺陷 B：先经 CEO 复核，再递老板
+		await eventually(
+			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.key === "web-takeover-1"),
+			{ label: "CEO 站出现" },
+		);
+		await answerPending(
+			runtime,
+			{ key: "web-takeover-1", answer: "确实只有老板能定。", answeredBy: "ceo", escalate: true },
+			BACKGROUND_CONTEXT,
+		);
+		await eventually(
+			async () => {
+				const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+				return org.pending.some((item) => item.key === "web-takeover-1" && item.forYou);
+			},
+			{ label: "升到老板层" },
+		);
+
+		// feed（CEO 会话视角）应带 canTakeOver=true 与 trace
+		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as {
+			pending: { key: string; canTakeOver: boolean; trace?: { note: string } }[];
+		};
+		const feedItem = feed.pending.find((item) => item.key === "web-takeover-1");
+		expect(feedItem?.canTakeOver).toBe(true);
+		expect(feedItem?.trace?.note).toContain("CEO");
+
+		// 无权限：CTO 不能接管
+		const denied = await fetch(`${server.url}api/pending/take-over`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "web-takeover-1", asLevel: "cto" }),
+		});
+		expect(denied.status).toBe(403);
+
+		// CEO 接管
+		const response = await fetch(`${server.url}api/pending/take-over`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "web-takeover-1", reason: "这在我授权范围内" }),
+		});
+		expect(response.status).toBe(200);
+		expect(((await response.json()) as { changed: boolean }).changed).toBe(true);
+
+		// 老板队列消失
+		const orgAfter = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		expect(orgAfter.pending.filter((item) => item.key === "web-takeover-1" && item.forYou)).toEqual([]);
+	});
 });
 
 describe("会话流接口", () => {
@@ -641,6 +717,159 @@ describe("发消息与拍板", () => {
 
 		const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
 		expect(org.pending.filter((item) => item.forYou)).toEqual([]);
+	});
+
+	/**
+	 * 老板级待办的处置入口（驳回 / 标记已解决）。
+	 *
+	 * 走 HTTP，因为老板真正点的就是这条路径；直接调内部 API 证明不了接线对。
+	 */
+	test("老板驳回一条待办：接口成功、从 /api/pending 消失、归档可查、审计有记录", async () => {
+		const { server, runtime, escalationTask, dir } = await setup();
+		const { project } = await createProject(
+			runtime,
+			{ name: "B", slug: "b", brief: "b", workspaceRoot: join(dir, "projects") },
+			BACKGROUND_CONTEXT,
+		);
+
+		await startEscalation(
+			runtime,
+			escalationTask,
+			{
+				question: "要不要做付费版？",
+				from: "林越",
+				fromConversationId: project.leader,
+				manager: "ceo",
+				escalationKey: "web-dispose-1",
+			},
+			BACKGROUND_CONTEXT,
+		);
+		// 先等这条待决项真的落库：startEscalation 是异步任务，
+		// 抢在它写库之前 answerPending 会因找不到 key 而静默返回 false（级联失败）。
+		await eventually(
+			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.key === "web-dispose-1"),
+			{ label: "待决出现" },
+		);
+		// CEO 答不了 → 升到老板
+		const { answerPending } = await import("../../src/company/escalation.ts");
+		await answerPending(
+			runtime,
+			{ key: "web-dispose-1", answer: "老板定。", answeredBy: "ceo", escalate: true },
+			BACKGROUND_CONTEXT,
+		);
+		await eventually(
+			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.level === "owner"),
+			{ label: "升到老板层" },
+		);
+
+		const before = (await (await fetch(`${server.url}api/pending`)).json()) as { key: string }[];
+		expect(before.map((item) => item.key)).toContain("web-dispose-1");
+
+		const response = await fetch(`${server.url}api/pending/dispose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "web-dispose-1", status: "rejected", reason: "今年不做商业化" }),
+		});
+		expect(response.status).toBe(200);
+		const body = (await response.json()) as { ok: boolean; changed: boolean; disposal?: { status: string } };
+		expect(body.ok).toBe(true);
+		expect(body.changed).toBe(true);
+		expect(body.disposal?.status).toBe("rejected");
+
+		// 从默认列表消失
+		const after = (await (await fetch(`${server.url}api/pending`)).json()) as { key: string }[];
+		expect(after.map((item) => item.key)).not.toContain("web-dispose-1");
+
+		// 归档可查
+		const archive = (await (await fetch(`${server.url}api/pending?archive=1&kind=rejected`)).json()) as {
+			key: string;
+			disposed?: { status: string; reason: string };
+		}[];
+		const archived = archive.find((item) => item.key === "web-dispose-1");
+		expect(archived?.disposed).toMatchObject({ status: "rejected", reason: "今年不做商业化" });
+
+		// 审计有记录：处置事件写在**该条待办的 fromConversationId** 那个会话的审计文档里。
+		// owner 级待办一律记在 CEO 名下（见 ensurePending 的注释），所以这里读 CEO 会话，
+		// 不是最初提问的 project.leader。
+		const { AuditDoc, CompanyDoc } = await import("../../src/company/docs.ts");
+		const { BACKGROUND_CONTEXT: CTX } = await import("../../src/runtime/index.ts");
+		const company = await runtime.harness.snapshot(CompanyDoc, CTX);
+		const ceoConversationId = company?.roles.ceo;
+		expect(ceoConversationId).toBeTypeOf("number");
+		const audit = await runtime.harness.snapshot(AuditDoc, ceoConversationId as never, CTX);
+		const event = audit?.events.find(
+			(entry) => entry.type === "dispose" && entry.ref === "web-dispose-1@owner",
+		);
+		expect(event).toMatchObject({ type: "dispose", from: "owner" });
+		expect(event?.note).toBe("rejected: 今年不做商业化");
+	});
+
+	test("标记已解决走同一条接口；重复提交幂等", async () => {
+		const { server, runtime, escalationTask, dir } = await setup();
+		const { project } = await createProject(
+			runtime,
+			{ name: "C", slug: "c", brief: "b", workspaceRoot: join(dir, "projects") },
+			BACKGROUND_CONTEXT,
+		);
+		await startEscalation(
+			runtime,
+			escalationTask,
+			{
+				question: "文档放哪？",
+				from: "林越",
+				fromConversationId: project.leader,
+				manager: "ceo",
+				escalationKey: "web-dispose-2",
+			},
+			BACKGROUND_CONTEXT,
+		);
+		await eventually(
+			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.key === "web-dispose-2"),
+			{ label: "待决出现" },
+		);
+		const { answerPending } = await import("../../src/company/escalation.ts");
+		await answerPending(
+			runtime,
+			{ key: "web-dispose-2", answer: "老板定。", answeredBy: "ceo", escalate: true },
+			BACKGROUND_CONTEXT,
+		);
+		await eventually(
+			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.level === "owner"),
+			{ label: "升到老板层" },
+		);
+
+		const first = await fetch(`${server.url}api/pending/dispose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "web-dispose-2", status: "resolved" }),
+		});
+		expect(first.status).toBe(200);
+		expect(((await first.json()) as { changed: boolean }).changed).toBe(true);
+
+		const second = await fetch(`${server.url}api/pending/dispose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "web-dispose-2", status: "resolved" }),
+		});
+		expect(second.status).toBe(200);
+		expect(((await second.json()) as { changed: boolean }).changed).toBe(false);
+	});
+
+	test("参数不合法：缺 key / status 非法一律 400", async () => {
+		const { server } = await setup();
+		const noKey = await fetch(`${server.url}api/pending/dispose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ status: "rejected" }),
+		});
+		expect(noKey.status).toBe(400);
+
+		const badStatus = await fetch(`${server.url}api/pending/dispose`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ key: "x", status: "whatever" }),
+		});
+		expect(badStatus.status).toBe(400);
 	});
 });
 

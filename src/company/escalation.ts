@@ -55,8 +55,9 @@ export type EscalationInput = {
 	/**
 	 * 直接从「问老板」开始（跳过管理层与 CEO 两级）。
 	 *
-	 * 只允许 CEO 发起时置为 true：**只有 CEO 能把问题递到老板面前**，
-	 * 其他任何人的上报都只会停在自己这条链的最高一层（CEO）。
+	 * **只允许 CEO 发起时置为 true**：只有 CEO 能把问题递到老板面前。
+	 * 其他人的上报永远不会因为它而直达老板（`startEscalation` 会把它降级成
+	 * 先问 CEO 复核，见 Defect B 的修法）。
 	 */
 	readonly startAtOwner?: boolean;
 	/**
@@ -71,7 +72,19 @@ export type EscalationInput = {
 /** 阶段状态。 */
 export type EscalationState =
 	| { readonly phase: "ask-manager"; readonly level: string; readonly askedAt: number; readonly path: string[] }
-	| { readonly phase: "ask-ceo"; readonly askedAt: number; readonly path: string[] }
+	/**
+	 * 问 CEO。
+	 *
+	 * `review` = true 表示这一站是**公司级复核**（不是普通的「下级报上来」）：
+	 * 上报方声明了 `company-level`，但声明是自证的，不能据此直接给老板。
+	 * 所以先停 CEO，由 CEO 复核「是不是真的只有老板能定」：
+	 * - 确认 → escalate=true，递到老板（`path` 真实记下 ceo）；
+	 * - 不确认 → 直接答掉（CEO 自己有权定），或改判后自己处理。
+	 *
+	 * 这个字段只在 checkpoint 里用于展示/追溯（待办条目的提示语），
+	 * 阶段机本身对 review 与非 review 走同一套流转。
+	 */
+	| { readonly phase: "ask-ceo"; readonly askedAt: number; readonly path: string[]; readonly review?: boolean }
 	| { readonly phase: "ask-owner"; readonly askedAt: number; readonly path: string[] };
 
 /** 升级结果。 */
@@ -109,6 +122,45 @@ export type PendingItem = {
 	/** 表示「我也拍不了，继续往上」。 */
 	escalate?: boolean;
 	/**
+	 * 处置结果（驳回 / 标记已解决）。
+	 *
+	 * 与 `answer` 的区别：`answer` 是「给出决定，工作继续往前走」，处置是「这条待办到此为止」。
+	 * 两者语义相反且互斥：一条待办要么被答复、要么被处置。
+	 *
+	 * 旧数据没有这个字段：读到时就是 `undefined`（未处置），**无需迁移**。
+	 * 所有判定务必用 `item.disposed === undefined` 而不是 truthiness——
+	 * 未来若加了「处置中」之类的新状态，`if (!item.disposed)` 依旧成立。
+	 */
+	disposed?: PendingDisposal;
+	/**
+	 * 被 CEO 从老板层接管回来的记录（Defect B 要求 3）。
+	 *
+	 * 只在该条曾经是 owner 级、且被 CEO 拉回 ceo 级时存在。
+	 * 旧数据没有这个字段：读到时就是 `undefined`。
+	 */
+	takenOver?: {
+		readonly by: string;
+		readonly at: number;
+		readonly reason: string;
+		/** 接管前停在哪一级（目前恒为 owner）。 */
+		readonly fromLevel: string;
+	};
+	/**
+	 * 这条待办「为什么该由这一级拍」的说明（Defect B 要求 4「来源可追溯」）。
+	 *
+	 * `company-level` 直落老板时最有价值：写清「上报方声明公司级 → 该声明为自证，
+	 * 已由 CEO 复核确认」。界面直接展示，不必再猜。
+	 * 旧数据没有这个字段。
+	 */
+	trace?: {
+		/** 上报方声明的类别（company-level / project / domain / unclassified）。 */
+		readonly declaredTopic?: string;
+		/** 是否经过 CEO 复核（company-level 才有意义）。 */
+		readonly ceoReviewed?: boolean;
+		/** 人类可读的判定说明。 */
+		readonly note: string;
+	};
+	/**
 	 * **真实提问方**的会话（原始发起人）。
 	 *
 	 * 为什么和 `fromConversationId` 分开存：owner 级待办一律记在 CEO 名下
@@ -128,6 +180,28 @@ export type PendingItem = {
 	 */
 	disposition?: DispositionPayload;
 };
+
+/**
+ * 待办的处置结果。
+ *
+ * 为什么不用 `answer: ""` 或删掉条目来「关闭待办」：
+ * - 删条目会丢掉「曾经有过这个问题、是谁关的、为什么」——而那正是审计要的；
+ * - 用空 `answer` 会让 `readOutcome()` 把空字符串当成一句答复，升级链会把空决定交付给提问方；
+ * - 显式状态而不是布尔位：以后若要加「已失效」「重开」，这里加一个取值即可。
+ */
+export type PendingDisposal = {
+	/** `rejected` = 驳回（不认可/不需要），`resolved` = 标记已解决。 */
+	readonly status: "rejected" | "resolved";
+	/** 处置人（与 `answeredBy` 同口径：`owner` / 岗位名 / `leader:<slug>`）。 */
+	readonly disposedBy: string;
+	/** 处置时间（毫秒时间戳）。 */
+	readonly disposedAt: number;
+	/** 理由 / 备注，可为空字符串（「标记已解决」允许不写理由）。 */
+	readonly reason: string;
+};
+
+/** 处置类型。 */
+export type DisposalKind = PendingDisposal["status"];
 
 /** 待决问题文档（公司级）。任务与角色之间的唯一通道。 */
 export type PendingState = {
@@ -193,19 +267,35 @@ export function createEscalationTask(
 		name: "app.escalation",
 		version: 1,
 
-		initial: (input) =>
-			// ADR-026 决策 2：公司级事项只能老板定，起点直接就是老板，
-			// 不必先绕到直属上级/CEO（绕一层只会多一次无意义的睡眠与唤醒）。
-			// 注意：`project` / `domain` 的**具体落点**要读公司结构（负责人引用、汇报线），
-			// `initial` 是纯同步函数拿不到，所以由调用方算好后用 `startAtOwner` / `manager` 传入。
-			input.startAtOwner === true || input.topic === "company-level"
-				? { phase: "ask-owner", askedAt: 0, path: [input.from, "ceo"] }
-				: {
-						phase: "ask-manager",
-						level: input.manager ?? "ceo",
-						askedAt: 0,
-						path: [input.from],
-					},
+		initial: (input) => {
+			// ── Defect B 修复：公司级不再直达老板 ──
+			//
+			// 旧实现：`input.startAtOwner === true || input.topic === "company-level"`
+			// → 直接 `ask-owner`，**完全跳过 ask-manager 与 ask-ceo**；且 path 写死
+			// `[input.from, "ceo"]` —— 路径里写了 ceo 却从没问过 CEO，
+			// 造成「看起来经过了、实际没经过」的假象（老板报警的就是这个现象）。
+			//
+			// 现在分三种情形，只有**真的够格**的才进老板站：
+			// 1) `startAtOwner`：CEO 自己就是发起人（CEO 判断「只能老板定」）→ 老板站。
+			//    `startEscalation` 已保证只有 CEO 能置 true；
+			//    非 CEO 的 `topic=company-level` **不再**被译成 startAtOwner。
+			// 2) 非 CEO 声明 company-level → 先落 ask-ceo 复核（review=true）。
+			// 3) 其余 → 照旧从直属管理层开始。
+			if (input.startAtOwner === true) {
+				// CEO 自己发起：path 只包含发起人（CEO），不伪造中间层。
+				return { phase: "ask-owner", askedAt: 0, path: [input.from] };
+			}
+			if (input.topic === "company-level") {
+				// 非 CEO 声明 company-level：必须先过 CEO 复核（由 CEO 判断是否真的只能老板定）。
+				return { phase: "ask-ceo", askedAt: 0, path: [input.from], review: true };
+			}
+			return {
+				phase: "ask-manager",
+				level: input.manager ?? "ceo",
+				askedAt: 0,
+				path: [input.from],
+			};
+		},
 
 		phases: {
 			"ask-manager": async (task, taskRuntime, context) => {
@@ -265,6 +355,9 @@ export function createEscalationTask(
 			"ask-ceo": async (task, taskRuntime, context) => {
 				const state = task.state.checkpoint as Extract<EscalationState, { phase: "ask-ceo" }>;
 				const askedAt = state.askedAt === 0 ? taskRuntime.now() : state.askedAt;
+				// review=true 表示这是「公司级复核」站（非 CEO 声明 company-level 时的第一站）。
+				// 它让 CEO 的待办条目能显示「请复核：真的只有老板能定吗」，
+				// 也让 CEO 知道自己的答复有三种走向（自己定 / 递老板 / 驳回）。
 				await ensurePending(runtime, task.input, "ceo", askedAt, context);
 
 				const outcome = await readOutcome(runtime, task.input.escalationKey, "ceo", context);
@@ -273,13 +366,16 @@ export function createEscalationTask(
 					const now = taskRuntime.now();
 					await taskRuntime.sleepUntil(
 						now + pollDelay(askedAt, now),
-						{ phase: "ask-ceo", askedAt, path: state.path },
+						{ phase: "ask-ceo", askedAt, path: state.path, ...(state.review === true ? { review: true } : {}) },
 						context,
 					);
 					return;
 				}
 
 				if (outcome.escalate) {
+					// Defect B：CEO 确认「确实只能老板定」才递老板。
+					// 此时 path 追加真实的 "ceo" —— 这一步是真的问过 CEO 的，
+					// 所以写进 path 名实相符（旧代码没问却写 ceo，才是假象）。
 					await recordHop(runtime, task.input, "ceo", "owner", context);
 					await taskRuntime.commit(
 						() => ({
@@ -369,10 +465,25 @@ export async function startEscalation(
 				}),
 			);
 
-	// 起点层级：owner 走 `startAtOwner`（`initial` 直接进 ask-owner），
-	// 其余把 ownerLevel 当作 `manager`（`initial` 的 ask-manager 就从它开始）。
-	const startAtOwner = ownerLevel === "owner";
-	const manager = startAtOwner ? (input.manager ?? "ceo") : (ownerLevel as ManagerRef);
+	// ── Defect B 修复（第二个短路点）──
+	//
+	// 旧实现：`const startAtOwner = ownerLevel === "owner"`。
+	// 因为 `decideOwner(company-level)` 恒返回 owner，**任何**声明 company-level 的
+	// 上报都会被译成 `startAtOwner: true` → 直接进 ask-owner，绕过我改过的 initial 分支。
+	// 这里必须区分「谁在发起」：
+	// - 发起人就是 CEO → CEO 的判断可信，直接递老板（`startAtOwner`）；
+	// - 发起人不是 CEO → **不允许**因为它声明 company-level 就直落老板，
+	//   交给 initial 走 ask-ceo 复核（`startAtOwner` 保持 false）。
+	//
+	// 判据用 `fromLevel === "ceo"`（身份反查），而不是信任 `input.startAtOwner`
+	// ——后者是调用方可控的入参，信任它等于把「谁都能自称 CEO」写进路由。
+	// 只认身份，不认入参：`input.startAtOwner` 是调用方可控的值，
+	// 信任它等于允许任何人自称 CEO 直达老板。发起人确实是 CEO 才放行。
+	const callerIsCeo = fromLevel === "ceo";
+	const startAtOwner = ownerLevel === "owner" && callerIsCeo;
+	// 非 CEO 声明 company-level：ownerLevel 仍是 owner，但起点交给 ask-ceo 复核，
+	// 所以 manager 要落在 ceo（ask-ceo 不读 manager，这里只保证语义正确）。
+	const manager = startAtOwner ? (input.manager ?? "ceo") : (ownerLevel === "owner" ? "ceo" : (ownerLevel as ManagerRef));
 
 	const taskId = await runtime.harness.commit(
 		(tx) =>
@@ -383,7 +494,9 @@ export async function startEscalation(
 		context,
 	);
 
-	await recordHop(runtime, input, input.from, startAtOwner ? "owner" : ownerLevel, context);
+	// 真实留痕：只有真的直达老板才记 from → owner；
+	// 非 CEO 的 company-level 记 from → ceo（它确实先到 CEO 复核）。
+	await recordHop(runtime, input, input.from, startAtOwner ? "owner" : "ceo", context);
 	return Number(taskId);
 }
 
@@ -410,7 +523,11 @@ export async function answerPending(
 
 	const ok = await runtime.harness.commit(async (tx) => {
 		const pending = await tx.doc(PendingDoc);
-		const index = pending.items.findIndex((item) => item.key === input.key && item.answer === undefined);
+		// 已处置（驳回/标记已解决）的待办不能再被答复：处置 = 这条问题到此为止，
+		// 允许再答会把它「复活」成待办，也会在审计里留下「关了又答」的矛盾记录。
+		const index = pending.items.findIndex(
+			(item) => item.key === input.key && item.answer === undefined && item.disposed === undefined,
+		);
 		if (index < 0) return false;
 
 		const item = pending.items[index];
@@ -477,6 +594,8 @@ export async function answerPendingAsCeo(
 	if (item === undefined) return false;
 	if (item.level !== "ceo") return false;
 	if (item.answer !== undefined) return false;
+	// 已处置的不再接受答复（防止旧路径把驳回过的待办「复活」）。
+	if (item.disposed !== undefined) return false;
 
 	return answerPending(
 		runtime,
@@ -520,7 +639,288 @@ export async function listPending(
 	await settleDueDispositions(runtime, Date.now(), context);
 
 	const state = await runtime.harness.snapshot(PendingDoc, context);
-	return state?.items.filter((item) => item.answer === undefined) ?? [];
+	return state?.items.filter((item) => item.answer === undefined && item.disposed === undefined) ?? [];
+}
+
+/**
+ * 归档查询：含已处置（驳回 / 已解决）的条目。
+ *
+ * 满足「处置后从默认列表消失，但归档区可查」。刻意不做分页：待办总量远小于会话条目，
+ * 一次全给最简单；真要大了再加游标，现在加是过度设计。
+ *
+ * @param options.kind 只看某种处置（`rejected` / `resolved`）；不传则两种都给。
+ * @param options.disposedOnly 为 true 时只要已处置的（纯归档视图）；默认 false 返回全部。
+ */
+export async function listPendingArchive(
+	runtime: CompanyRuntime,
+	options: { readonly kind?: DisposalKind; readonly disposedOnly?: boolean } = {},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<PendingItem[]> {
+	const state = await runtime.harness.snapshot(PendingDoc, context);
+	const items = state?.items ?? [];
+	return items.filter((item) => {
+		if (options.disposedOnly === true && item.disposed === undefined) return false;
+		if (options.kind !== undefined) return item.disposed?.status === options.kind;
+		return true;
+	});
+}
+
+/**
+ * 一条待办该不该由「这个操作者」处置。（硬性验收项：无权限者不能操作他人待办）
+ *
+ * 判据与现有答复路径**同一口径**（`decisionOwnerOfItem`）：
+ * - 普通待办：操作者的层级 == `decisionOwner`（缺省回退到 `level`）；
+ * - 处置类待办（`item.disposition !== undefined`）：归属是「被打断工作的下达人」，
+ *   其权限位已由 `disposition.ts` 写进 `level`，所以改用 `level`。
+ *
+ * 为什不用「操作者是不是老板」这种简判：老板只能处置**自己这一级**的待办。
+ * 老板能驳回 CTO 该拍的问题，就等于把管理层的决策责任又掳回自己身上，
+ * 而那正是「待拍板太多」的起因（参见 http.ts postAnswer 的同一道防线）。
+ */
+export function canDisposePending(item: PendingItem, operatorLevel: string | undefined): boolean {
+	if (operatorLevel === undefined) return false;
+	const required = item.disposition !== undefined ? item.level : decisionOwnerOfItem(item);
+	return operatorLevel === required;
+}
+
+/** 处置被拒 / 幂等命中的可读原因（工具层与 HTTP 层共用，避免两边文案不一致）。 */
+export type DisposeFailure =
+	| { readonly ok: false; readonly code: "not-found"; readonly reason: string }
+	| { readonly ok: false; readonly code: "forbidden"; readonly reason: string }
+	| { readonly ok: false; readonly code: "answered"; readonly reason: string }
+	| { readonly ok: false; readonly code: "archived"; readonly reason: string };
+
+/**
+ * 处置结果。`changed=false` 表示幂等命中（已经处置过，且状态一致）。
+ *
+ * `item` 是**普通快照**（结构化克隆过的），不是 commit 事务里的 overlay 代理。
+ * 这个区别很关键：overlay 在 `commit()` 返回后就「结算」了，
+ * 此时再读它的字段会抛 `Cannot use a settled overlay`（实测踩到过）。
+ * 所以这里只回传一份脱离事务的副本。
+ */
+export type DisposeOutcome =
+	| { readonly ok: true; readonly changed: boolean; readonly item: PendingItem }
+	| DisposeFailure;
+
+/**
+ * 处置一条待办：驳回（`rejected`）或标记已解决（`resolved`）。
+ *
+ * 职责（四条硬要求一次写完）：写入状态 + 记录理由 + 写审计留痕 + **幂等**。
+ * 幂等的具体含义：同一个人对同一条待办重复提交**同一种**处置 → 返回 `changed=false`、
+ * 不重复写审计、不报错。重复提交**不同**处置（先驳回再标已解决）→ 拒绝，
+ * 因为那会让审计里出现两个互相矛盾的结论。
+ *
+ * 权限校验在此处**再算一遍**（不依赖调用方传对）：操作者只能处置 `decisionOwnerOfItem`
+ * （处置类看 `level`）等于自己层级的那条。这样 HTTP 层 / 工具层漏检查也不会越权。
+ */
+export async function disposePending(
+	runtime: CompanyRuntime,
+	input: {
+		readonly key: string;
+		readonly status: DisposalKind;
+		readonly reason?: string;
+		/** 处置人（写入 `disposedBy` 与审计 `from`）。 */
+		readonly disposedBy: string;
+		/** 操作者的层级，用于权限判定（= levelOfConversation(会话)）。 */
+		readonly operatorLevel: string | undefined;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<DisposeOutcome> {
+	const reason = (input.reason ?? "").trim();
+	let outcome: DisposeOutcome | undefined;
+
+	await runtime.harness.commit(async (tx) => {
+		const pending = await tx.doc(PendingDoc);
+		// 同一个 `key` 会在多个层级各有一条（升级链每升一级 ensurePending 就新写一条，
+		// 实测同一升级同时在 ceo 与 owner 各有一条）。所以不能只按 key 找：
+		// 只按 key 会命中下层那条（它通常已经有 answer），
+		// 于是老板要处置的 owner 级条目永远匹配不到，反而报「已经答复过了」。
+		//
+		// 定位口径（三层优先级）：
+		// 1) 「该由操作者处置、且还没处置」的那条 —— 正常首次处置走这条；
+		// 2) 「该由操作者处置、已处置」的那条 —— **幂等重试**走这条
+		//    （不能因为「已处置」就跳到下层那条，否则重试会报「已经答复过了」）；
+		// 3) 否则 key 相同的第一条 —— 为了给出准确的可读原因（越权 / 已答复）。
+		const sameKey = pending.items
+			.map((item, index) => ({ item, index }))
+			.filter((entry) => entry.item.key === input.key);
+		const mine = sameKey.filter((entry) => canDisposePending(entry.item, input.operatorLevel));
+		const target =
+			mine.find((entry) => entry.item.disposed === undefined) ?? mine[0] ?? sameKey[0];
+		const item = target?.item;
+		const index = target?.index ?? -1;
+		if (item === undefined || index < 0) {
+			outcome = { ok: false, code: "not-found", reason: "没有这条待办（可能已被处理）" };
+			return;
+		}
+
+		// ① 已答复的不允许再处置：答复意味着工作已继续，再驳会让已交付的决定变成孤儿。
+		if (item.answer !== undefined && item.disposed === undefined) {
+			outcome = { ok: false, code: "answered", reason: "这条待办已经答复过了，不能再驳回/标记已解决" };
+			return;
+		}
+
+		// ② 幂等：已处置且状态一致 → 不重写、不重留痕，直接成功。
+		if (item.disposed !== undefined) {
+			if (item.disposed.status === input.status) {
+				outcome = { ok: true, changed: false, item: snapshotOf(item) };
+				return;
+			}
+			outcome = {
+				ok: false,
+				code: "archived",
+				reason: `这条待办已于 ${new Date(item.disposed.disposedAt).toISOString()} 被 ${item.disposed.disposedBy} 处置为「${disposeLabel(item.disposed.status)}」，不能改成「${disposeLabel(input.status)}」`,
+			};
+			return;
+		}
+
+		// ③ 权限：只能处置「该由自己拍」的那一条。
+		if (!canDisposePending(item, input.operatorLevel)) {
+			const required = item.disposition !== undefined ? item.level : decisionOwnerOfItem(item);
+			outcome = {
+				ok: false,
+				code: "forbidden",
+				reason: `这条待办该由「${required}」处置，你（${input.operatorLevel ?? "未知"}）无权操作`,
+			};
+			return;
+		}
+
+		const disposal: PendingDisposal = {
+			status: input.status,
+			disposedBy: input.disposedBy,
+			disposedAt: Date.now(),
+			reason,
+		};
+		const next: PendingItem = { ...item, disposed: disposal };
+		pending.items[index] = next;
+
+		// ④ 审计留痕：写在**提问方**的会话审计文档里（与 answerPending 同一位置），
+		// 这样「谁问的」那条会话能回答「我这个问题最后怎么没了」。
+		const audit = await tx.doc(AuditDoc, item.fromConversationId as never);
+		audit.events.push({
+			at: disposal.disposedAt,
+			type: "dispose",
+			from: input.disposedBy,
+			to: item.from,
+			// note 前缀固定为 `rejected`/`resolved` 便于机器检索；后面跟理由。
+			note: `${disposal.status}${reason === "" ? "" : `: ${reason}`}`.slice(0, 200),
+			// ref 带上 level：同一个升级在多层各有一条待办，只写 key 事后分不清
+			// 「老板驳回的」与「CTO 驳回的」是哪一条。
+			ref: `${item.key}@${item.level}`,
+		});
+
+		outcome = { ok: true, changed: true, item: snapshotOf(next) };
+	}, context);
+
+	// commit 保证回调已执行；这里仅收窄类型。
+	return outcome ?? { ok: false, code: "not-found", reason: "没有这条待办（可能已被处理）" };
+}
+
+/**
+ * 把一个（可能来自 commit overlay 的）待办条目拍成普通快照。
+ *
+ * 为什么必须做：`commit(tx => ...)` 里的 `tx.doc()` 返回的是 overlay 代理，
+ * commit 一返回它就结算了，**事务外再读它的字段会抛 `Cannot use a settled overlay`**。
+ * 处置结果要交给 HTTP/工具层在事务外使用（JSON.stringify、拼文案），
+ * 所以这里先 JSON 往返一次，拿到一份纯数据。
+ */
+function snapshotOf(item: PendingItem): PendingItem {
+	return JSON.parse(JSON.stringify(item)) as PendingItem;
+}
+
+/** 处置类型的中文名（界面与错误文案共用）。 */
+export function disposeLabel(status: DisposalKind): string {
+	return status === "rejected" ? "驳回" : "标记已解决";
+}
+
+/**
+ * CEO 接管一条**老板级**待办：把它拉回自己层处理，不必等老板拍板。
+ *
+ * Defect B 要求 3「CEO 对老板级待办的处置权」的落地。
+ * 场景：某条问题因上报方声明 company-level 而落到老板那儿，CEO 复核后认为
+ * 「这在我授权范围内」（例如技术选型被误标成公司级）——CEO 应当能直接把它拉回来定，
+ * 而不是只能干等着老板。
+ *
+ * 实现方式：**不删条目、不改其中的 answer**，而是把 `level` 与 `decisionOwner`
+ * 改写为 `ceo`，并留下 `takenOver` 痕迹。这样：
+ * - 它立刻从老板队列消失（forYou 要求 decisionOwner === owner）；
+ * - 它出现在 CEO 队列（decisionOwner === ceo）；
+ * - 审计里有据可查（谁在什么时候因为什么把老板的活拉走了）。
+ *
+ * 权限：只有 CEO 能接管（`operatorLevel === "ceo"`），且目标必须是 owner 级。
+ * 老板自己不能「接管」——老板就是终点，他要么答、要么驳回（disposePending）。
+ */
+export async function takeOverPendingAtCeo(
+	runtime: CompanyRuntime,
+	input: { readonly key: string; readonly reason?: string; readonly operatorLevel: string | undefined },
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ readonly ok: true; readonly changed: boolean; readonly item: PendingItem } | DisposeFailure> {
+	const reason = (input.reason ?? "").trim();
+	let outcome: Awaited<ReturnType<typeof takeOverPendingAtCeo>> | undefined;
+
+	await runtime.harness.commit(async (tx) => {
+		if (input.operatorLevel !== "ceo") {
+			outcome = {
+				ok: false,
+				code: "forbidden",
+				reason: `只有 CEO 能接管老板级待办，你（${input.operatorLevel ?? "未知"}）无权操作`,
+			};
+			return;
+		}
+
+		const pending = await tx.doc(PendingDoc);
+		// 同一 key 可能有多层条目（升级链在每层各写一条）。
+		// 这里要认两种形态：
+		// ① 仍是 owner 级、未处置 → 正常接管；
+		// ② 已经被接管过（有 takenOver 痕迹、现在是 ceo 级）→ 幂等命中。
+		const sameKey = pending.items.map((item, index) => ({ item, index })).filter((e) => e.item.key === input.key);
+		const already = sameKey.filter((e) => e.item.takenOver !== undefined).at(-1);
+		if (already !== undefined) {
+			outcome = { ok: true, changed: false, item: snapshotOf(already.item) };
+			return;
+		}
+		const target = sameKey.filter((e) => e.item.level === "owner").at(-1);
+		const item = target?.item;
+		const index = target?.index ?? -1;
+		if (item === undefined || index < 0) {
+			outcome = { ok: false, code: "not-found", reason: "没有这条老板级待办（可能已被处理）" };
+			return;
+		}
+		if (item.answer !== undefined || item.disposed !== undefined) {
+			outcome = { ok: false, code: "answered", reason: "这条已经答复或处置过了，不能再接管" };
+			return;
+		}
+
+		const next: PendingItem = {
+			...item,
+			// 拉到 CEO 层：level 与 decisionOwner 一起改，两者必须同步——
+			// 只改一个会出现「不在老板队列、也不在 CEO 队列」的消失状态。
+			level: "ceo",
+			decisionOwner: "ceo",
+			takenOver: {
+				by: "ceo",
+				at: Date.now(),
+				reason,
+				// 记下原本停在哪一级，事后能回答「这条本来该老板定，CEO 给拉回来了」。
+				fromLevel: "owner",
+			},
+		};
+		pending.items[index] = next;
+
+		const audit = await tx.doc(AuditDoc, item.fromConversationId as never);
+		audit.events.push({
+			at: next.takenOver?.at ?? Date.now(),
+			type: "dispose",
+			from: "ceo",
+			to: item.from,
+			note: `taken-over${reason === "" ? "" : `: ${reason}`}`.slice(0, 200),
+			ref: `${item.key}@owner`,
+		});
+
+		outcome = { ok: true, changed: true, item: snapshotOf(next) };
+	}, context);
+
+	return outcome ?? { ok: false, code: "not-found", reason: "没有这条老板级待办（可能已被处理）" };
 }
 
 /** 等待一次升级结束。 */
@@ -580,6 +980,31 @@ async function ensurePending(
 			originConversationId: input.fromConversationId,
 		};
 		if (input.project !== undefined) item.project = input.project;
+		// ── Defect B 要求 4：来源可追溯 ──
+		// 记下「上报方声明了什么类别、为什么到了这一级」，界面直接展示。
+		// 重点是 company-level 落到 owner 时：说明它经过/待过 CEO 复核，
+		// 而不是「模型说它是公司级，所以就给老板」。
+		if (level === "owner") {
+			item.trace = {
+				...(input.topic === undefined ? {} : { declaredTopic: input.topic }),
+				// owner 站的条目：若是 CEO 站转场过来的，说明 CEO 已复核；
+				// 若是 CEO 自己发起（startAtOwner），CEO 本人即复核人。
+				ceoReviewed: true,
+				note:
+					input.startAtOwner === true
+						? "CEO 判断：只有老板能定（CEO 主动上报）"
+						: "上报方声明公司级 → CEO 已复核确认，转老板",
+			};
+		} else if (level === "ceo" && input.topic === "company-level") {
+			// CEO 复核站的条目：明确告诉 CEO「这是自证的声明，请你判断」。
+			item.trace = {
+				declaredTopic: "company-level",
+				ceoReviewed: false,
+				note: "上报方声明公司级（自证）→ 请 CEO 复核：是否真的只有老板能定",
+			};
+		} else if (input.topic !== undefined) {
+			item.trace = { declaredTopic: input.topic, note: `上报方声明类别：${input.topic}` };
+		}
 		// ADR-026 决策 2（落地第 3 步）：在写入时就定下「该由谁拍」。
 		// 用持久化而非每次读取时现算：规则以后调整时，历史待办不会被改写，
 		// 事后才能回答「当时为什么到了老板那儿」（决策 8 的留痕要求）。
@@ -810,6 +1235,8 @@ export async function answerPendingAtLevel(
 	if (item === undefined) return false;
 	if (item.level !== input.level) return false;
 	if (item.answer !== undefined) return false;
+	// 已处置的不再接受答复（同上，防「复活」）。
+	if (item.disposed !== undefined) return false;
 
 	return answerPending(
 		runtime,

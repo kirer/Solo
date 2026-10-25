@@ -15,7 +15,7 @@ import { BACKGROUND_CONTEXT, InboxDoc, inspectLiveness, isConversationBusy } fro
 import type { CompanyRuntime } from "../runtime/index.ts";
 import type { ModelSetup } from "../runtime/models.ts";
 import { CompanyDoc } from "../company/docs.ts";
-import { answerPending, listPending, PendingDoc } from "../company/escalation.ts";
+import { answerPending, disposePending, listPending, listPendingArchive, PendingDoc, takeOverPendingAtCeo } from "../company/escalation.ts";
 import { captureInterruptedWork, createDispositionPending, settleDisposition } from "../company/disposition.ts";
 import { readCompany, startCompanyWatchdog } from "../company/org.ts";
 import { buildOrgView } from "./org-view.ts";
@@ -243,6 +243,21 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			if (path === "/api/pending") {
 				const state = await readCompany(current(), BACKGROUND_CONTEXT);
 				void state;
+				// 归档查询：`/api/pending?archive=1[&kind=rejected|resolved]`
+				// 默认只给未答复且未处置的（有处置就从看板消失）；archive 才是「归档区可查」。
+				const archive = url.searchParams.get("archive");
+				if (archive === "1" || archive === "true") {
+					const kindParam = url.searchParams.get("kind");
+					const kind = kindParam === "rejected" || kindParam === "resolved" ? kindParam : undefined;
+					return json(
+						response,
+						await listPendingArchive(
+							current(),
+							{ disposedOnly: true, ...(kind === undefined ? {} : { kind }) },
+							BACKGROUND_CONTEXT,
+						),
+					);
+				}
 				return json(response, await listPending(current(), BACKGROUND_CONTEXT));
 			}
 			if (path.startsWith("/api/feed/")) {
@@ -268,6 +283,14 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			}
 			if (path === "/api/message" && request.method === "POST") return await postMessage(request, response);
 			if (path === "/api/answer" && request.method === "POST") return await postAnswer(request, response);
+			// 处置待办（驳回 / 标记已解决）。与 /api/answer 同一风格：POST + {key, text}。
+			if (path === "/api/pending/dispose" && request.method === "POST") {
+				return await postDispose(request, response);
+			}
+			// CEO 把老板级待办接管回自己层（Defect B 要求 3）。
+			if (path === "/api/pending/take-over" && request.method === "POST") {
+				return await postTakeOver(request, response);
+			}
 			if (path === "/api/interrupt" && request.method === "POST") return await postInterrupt(request, response);
 
 			// ── 设置 / 模型 ──
@@ -878,6 +901,82 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		);
 		scheduleOrgPush();
 		return json(response, { ok });
+	}
+
+	/**
+	 * 处置待办：驳回 / 标记已解决。
+	 *
+	 * 与 `postAnswer` 同一风格：POST + JSON body。但**不是**「给定答复」，
+	 * 而是「这条待办到此为止」——差别见 escalation.ts 的 PendingDisposal。
+	 *
+	 * 权限：这个 HTTP 入口是老板的网页客户端，所以操作者层级固定为 `owner`。
+	 * 真正是否能处置，由 `disposePending()` 里的 `canDisposePending()` 判定
+	 * （老板只能处置 decisionOwner 为 owner 的），越权返回 403 并带可读原因。
+	 * 不在这一层做「是老板就放行」的短路：那会让同一道防线只写在界面里，
+	 * 而界面本来就是最容易被绕开的地方。
+	 */
+	async function postDispose(request: IncomingMessage, response: ServerResponse): Promise<void> {
+		const body = await readJson<{ key?: string; status?: string; reason?: string }>(request);
+		const key = (body.key ?? "").trim();
+		const status = (body.status ?? "").trim();
+		if (key === "") return fail(response, 400, "需要 key");
+		if (status !== "rejected" && status !== "resolved") {
+			return fail(response, 400, "status 只能是 rejected（驳回）或 resolved（标记已解决）");
+		}
+
+		const outcome = await disposePending(
+			current(),
+			{
+				key,
+				status,
+				reason: body.reason ?? "",
+				disposedBy: "owner",
+				operatorLevel: "owner",
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		if (!outcome.ok) {
+			const code = outcome.code === "not-found" ? 404 : outcome.code === "forbidden" ? 403 : 409;
+			return fail(response, code, outcome.reason);
+		}
+		scheduleOrgPush();
+		return json(response, {
+			ok: true,
+			changed: outcome.changed,
+			disposal: outcome.item.disposed,
+		});
+	}
+
+	/**
+	 * CEO 接管一条老板级待办：把它拉回 CEO 层处理（Defect B 要求 3）。
+	 *
+	 * 与 `/api/pending/dispose` 分开是因为语义不同：
+	 * - dispose = 这条到此为止（驳回/已解决）；
+	 * - take-over = 这条不用老板了，CEO 自己定。
+	 * 两者的权限主体也不同（dispose 由该级决策人做，take-over 只有 CEO 能做）。
+	 */
+	async function postTakeOver(request: IncomingMessage, response: ServerResponse): Promise<void> {
+		const body = await readJson<{ key?: string; reason?: string; asLevel?: string }>(request);
+		const key = (body.key ?? "").trim();
+		if (key === "") return fail(response, 400, "需要 key");
+
+		// 操作者层级：等价于 postAnswer 的 answeredBy 口径。
+		// `asLevel` 允许测试/未来多端显式声明操作者身份；不传时按网页端（CEO 面板）视为 ceo。
+		const operatorLevel = (body.asLevel ?? "ceo").trim();
+
+		const outcome = await takeOverPendingAtCeo(
+			current(),
+			{ key, reason: body.reason ?? "", operatorLevel },
+			BACKGROUND_CONTEXT,
+		);
+
+		if (!outcome.ok) {
+			const code = outcome.code === "not-found" ? 404 : outcome.code === "forbidden" ? 403 : 409;
+			return fail(response, code, outcome.reason);
+		}
+		scheduleOrgPush();
+		return json(response, { ok: true, changed: outcome.changed, pending: outcome.item });
 	}
 
 	// ── 设置 / 模型 / 附件 / 看板 / IM ──────────────────────────────────────

@@ -53,6 +53,24 @@ export type ToolDependencies = {
 		readonly escalate?: boolean;
 		readonly conversationId: number;
 	}) => Promise<string>;
+	/**
+	 * 处置一条等本会话拍板的问题：驳回 / 标记已解决。
+	 *
+	 * 与 answerPending 并列而不是合并：答复是「给决定、工作继续」，
+	 * 处置是「这条到此为止」。合并会让模型分不清「我拍了个板」与「我关掉它」。
+	 */
+	readonly disposePending?: (input: {
+		readonly key: string;
+		readonly status: "rejected" | "resolved";
+		readonly reason?: string;
+		readonly conversationId: number;
+	}) => Promise<string>;
+	/** CEO 把老板级待办接管回自己层（Defect B 要求 3）。 */
+	readonly takeOverPending?: (input: {
+		readonly key: string;
+		readonly reason?: string;
+		readonly conversationId: number;
+	}) => Promise<string>;
 	/** 拍板记录函数。 */
 	readonly decide?: (input: {
 		readonly decision: string;
@@ -241,14 +259,18 @@ export function createManagementTools(deps: ToolDependencies) {
 		name: "answer_pending",
 		description: [
 			"回答一条待决问题（先用 pending_list 拿 key）。",
-			"授权范围内能定的，直接给决定；确实只有老板能定的，把 escalate 设为 true，它会转成给老板的问题。",
+			"授权范围内能定的，直接给决定。",
+			"确实只有老板能定的，把 escalate 设为 true：它会先沿升级链往上一级交付，不会跳过 CEO 直达老板。",
+			"（例外：CEO 本人设为 true 时，就是 CEO 判断「只能老板定」，会直接递老板——这正是 CEO 的职责。）",
 			"不要滥用 escalate：每多问老板一次，就多占一次老板的注意力。",
 		].join(""),
 		parameters: Type.Object({
 			key: Type.String({ description: "待决问题编号，如 esc:7:2" }),
 			decision: Type.String({ description: "你的决定或结论" }),
 			escalate: Type.Optional(
-				Type.Boolean({ description: "你拍不了、必须老板定时才设为 true（会升级为老板待办）" }),
+				Type.Boolean({
+					description: "你拍不了、必须往上交付时设为 true。会沿升级链上一级，不会跳过 CEO 直达老板",
+				}),
 			),
 		}),
 		execute: async (args, api) => {
@@ -258,6 +280,64 @@ export function createManagementTools(deps: ToolDependencies) {
 					key: args.key,
 					answer: args.decision,
 					...(args.escalate === true ? { escalate: true } : {}),
+					conversationId: Number(api.conversationId),
+				}),
+			);
+		},
+	});
+
+	const disposePending = defineTool({
+		name: "dispose_pending",
+		description: [
+			"处置一条待决问题：驳回（rejected）或标记已解决（resolved）。",
+			"用在这条问题其实已经有结论、或根本不需要你拍的时候——把它从待办列表清掉，别再占着看板。",
+			"驳回必须给 reason（为什么不认可它）；标记已解决可省略理由。",
+			"不要用它代替 answer_pending：要给决定、让工作继续走，用 answer_pending。",
+		].join(""),
+		parameters: Type.Object({
+			key: Type.String({ description: "待决问题编号，如 esc:7:2（先用 pending_list 拿）" }),
+			status: Type.Union([Type.Literal("rejected"), Type.Literal("resolved")], {
+				description: "rejected=驳回，resolved=标记已解决",
+			}),
+			reason: Type.Optional(Type.String({ description: "理由（驳回必填）" })),
+		}),
+		execute: async (args, api) => {
+			if (deps.disposePending === undefined) return text("待办处置通道未启用。");
+			return text(
+				await deps.disposePending({
+					key: args.key,
+					status: args.status,
+					...(args.reason === undefined ? {} : { reason: args.reason }),
+					conversationId: Number(api.conversationId),
+				}),
+			);
+		},
+	});
+
+	/**
+	 * CEO 专用：把一条老板级待办接管回自己层。
+	 *
+	 * 用途：上报方声明 company-level，但 CEO 复核认为「这在我授权范围内」
+	 * （例如技术选型/排期被误标成公司级）——直接拉回来定，不必等老板。
+	 */
+	const takeOverPending = defineTool({
+		name: "take_over_pending",
+		description: [
+			"（CEO 专用）把一条老板级待办接管回你这一层，自己定，不必等老板。",
+			"用在你复核后认为「这条其实在我授权范围内」的时候——比如技术选型被误标成公司级。",
+			"接管后它会从老板的待办里消失、出现在你的待办里；然后你照常 answer_pending 回答。",
+			"只对 level=owner 且还没人答过的条目有效。",
+		].join(""),
+		parameters: Type.Object({
+			key: Type.String({ description: "老板级待办的编号（先用 pending_list 拿）" }),
+			reason: Type.Optional(Type.String({ description: "为什么你认为该由你定（会写进审计）" })),
+		}),
+		execute: async (args, api) => {
+			if (deps.takeOverPending === undefined) return text("接管通道未启用。");
+			return text(
+				await deps.takeOverPending({
+					key: args.key,
+					...(args.reason === undefined ? {} : { reason: args.reason }),
 					conversationId: Number(api.conversationId),
 				}),
 			);
@@ -787,6 +867,8 @@ export function createManagementTools(deps: ToolDependencies) {
 		myCapabilities,
 		escalate,
 		pendingList,
+		disposePending,
+		takeOverPending,
 		answerPending,
 		reviewArchitecture,
 		delegateToStaff,
