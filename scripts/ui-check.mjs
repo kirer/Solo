@@ -685,9 +685,16 @@ try {
 			hasBody: body !== null,
 			hasInput: input !== null && input.getBoundingClientRect().height > 10,
 			members: document.querySelectorAll('.ch-member').length,
+			avatars: document.querySelectorAll('.ch-av[src*="/api/avatar/"]').length,
+			// 头像必须是 <img> 且指向 SVG 接口（不是首字母方块）
+			avatarSvg: [...document.querySelectorAll('.ch-av[src*="/api/avatar/"]')].every(
+				(img) => img.tagName === 'IMG' && img.getAttribute('src').includes('/api/avatar/'),
+			),
 		};
 	})()`);
 	check("切到公司群并渲染消息区", channelDetail.hasBody && channelDetail.hasInput, channelDetail.title);
+	check("头像用真实插画（不是首字母）", channelDetail.avatars > 0, `${channelDetail.avatars} 张头像`);
+	check("头像接口返回 SVG", channelDetail.avatarSvg === true);
 	check("右侧成员列表非空", channelDetail.members > 0, `${channelDetail.members} 人`);
 
 	// @ 选择器：先确保候选表加载完（它跟着频道详情一起拉）

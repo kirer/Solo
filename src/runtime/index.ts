@@ -77,3 +77,6 @@ export {
 } from "./registry.ts";
 
 export * from "./instance-lock.ts";
+
+// 工具搜索：延迟工具按需加载（见 ADR-032）
+export type { ToolRegistration } from "./registry.ts";

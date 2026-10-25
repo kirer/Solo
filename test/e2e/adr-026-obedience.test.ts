@@ -61,35 +61,43 @@ afterEach(async () => {
 });
 
 describe("ADR-026：链上上级的指令不得被「正在忙」拒收", () => {
-	test("CTO 正忙时，CEO 转交给 CTO 必须被受理而不是返回『本次转交未执行』", async () => {
+	/**
+	 * 通信重构后，派活不再有「忙碌拒收」这个概念——因为**根本不等**。
+	 * 这条测试保留原意（指令到达即生效），但断言换成新语义：
+	 * 对方正忙时，派活工具仍然立刻成功返回。
+	 */
+	test("CTO 正忙时，CEO 派活给 CTO 仍然立刻成功（不拒收、不等待）", async () => {
 		const { ctx, runtime, ceoId, ctoId } = await setup();
 
 		const tools = createManagementTools({ runtime });
-		const delegateToRole = tools.delegateToRole;
+		const askRole = tools.askRole;
 
 		// 先让 CTO 忙起来：一个慢活占住它的会话
 		const ctoConversation = await runtime.harness.conversation(ctoId as never, BACKGROUND_CONTEXT);
-		ctx.faux.setResponses([slowAnswer(600, "慢活"), answer("转交的活")]);
+		ctx.faux.setResponses([slowAnswer(600, "慢活"), answer("后来的活")]);
 		void ctoConversation?.submit({ type: "input", content: "先干这个慢活" }, BACKGROUND_CONTEXT);
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
-		// 断言：transcripts 里不得出现抗命文案
-		const result = await delegateToRole.execute(
-			{ role: "cto", task: "帮我看个技术选型", fromConversationId: ceoId },
+		const started = Date.now();
+		const result = await askRole.execute(
+			{ to: "CTO", text: "帮我看个技术选型" },
+			{ conversationId: ceoId } as never,
 			BACKGROUND_CONTEXT,
 		);
-		const text_ = typeof result === "string" ? result : JSON.stringify(result);
+		const elapsed = Date.now() - started;
+		const body = typeof result === "string" ? result : JSON.stringify(result);
 
-		// ADR-026 落地第一步的核心断言
-		expect(text_).not.toContain("本次转交未执行");
-		expect(text_).not.toMatch(/正在忙.*未执行/);
+		// 核心断言：不拒收、不等待
+		expect(body).not.toContain("本次转交未执行");
+		expect(body).not.toMatch(/正在忙.*未执行/);
+		expect(elapsed, `对方正忙时派活也必须立刻返回（实测 ${elapsed}ms）`).toBeLessThan(1500);
 	}, 20_000);
 
-	test("负责人正忙时，管理层下达不得返回『本次下达未执行』", async () => {
+	test("负责人正忙时，管理层派任务仍然立刻成功（不拒收、不等待）", async () => {
 		const { ctx, runtime, ceoId } = await setup();
 
 		const tools = createManagementTools({ runtime });
-		const delegateToLeader = tools.delegateToLeader;
+		const assignTask = tools.assignTask;
 
 		// 让项目负责人忙：给它派一个慢活
 		const { readCompany } = await import("../../src/company/org.ts");
@@ -102,13 +110,22 @@ describe("ADR-026：链上上级的指令不得被「正在忙」拒收", () => 
 		void leaderConversation?.submit({ type: "input", content: "先干这个慢活" }, BACKGROUND_CONTEXT);
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
-		const result = await delegateToLeader.execute(
-			{ project: "alpha", task: "推进一下首期交付", fromConversationId: ceoId },
+		const started = Date.now();
+		const result = await assignTask.execute(
+			{
+				assignee: "负责人",
+				project: "alpha",
+				title: "推进首期交付",
+				acceptance: "首期功能在浏览器里能跑通，有验收记录",
+			},
+			{ conversationId: ceoId } as never,
 			BACKGROUND_CONTEXT,
 		);
-		const text_ = typeof result === "string" ? result : JSON.stringify(result);
+		const elapsed = Date.now() - started;
+		const body = typeof result === "string" ? result : JSON.stringify(result);
 
-		expect(text_).not.toContain("本次下达未执行");
-		expect(text_).not.toMatch(/正在忙.*未执行/);
+		expect(body).not.toContain("本次下达未执行");
+		expect(body).not.toMatch(/正在忙.*未执行/);
+		expect(elapsed, `负责人正忙时派任务也必须立刻返回（实测 ${elapsed}ms）`).toBeLessThan(1500);
 	}, 20_000);
 });

@@ -58,3 +58,10 @@ export { awaitWithContext, BACKGROUND_CONTEXT, type Context } from "@earendil-wo
 
 // 任务类型：业务层需要声明任务句柄的类型。
 export type { Task, TaskDefinition, TaskRuntime } from "@earendil-works/pi-durable";
+
+/**
+ * 工具搜索：延迟工具（`deferred: true`）不直接给模型，靠它按需加载。
+ *
+ * 为什么走转发：它在 pi-durable 包里，业务层不能直接 import（ADR-001）。
+ */
+export type { ToolRegistration } from "@earendil-works/pi-durable";

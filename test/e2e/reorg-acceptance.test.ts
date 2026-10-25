@@ -46,7 +46,7 @@ import {
 import { createManagementTools } from "../../src/company/management-tools.ts";
 import { buildOrgView } from "../../src/server/org-view.ts";
 import { readProfile } from "../../src/server/profile.ts";
-import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG, agentTools } from "../support.ts";
 
 const PROJECT = "ops-defect-loop";
 const LEADER_NAME = "许砚舟";
@@ -358,7 +358,7 @@ describe("改造验收", () => {
 	test("负责人能力面：有项目执行工具与接报工具，但没有任何公司级动作", async () => {
 		const { runtime, project } = await fixture();
 		const agent = await agentOf(runtime, project.leader);
-		const names = (agent?.tools ?? []).map((tool) => tool.name);
+		const names = (agentTools(agent)).map((tool) => tool.name);
 
 		// 「项目全部权限」= 读写项目文件 + 在项目目录跑命令 + 推进项目状态。
 		for (const required of [
@@ -553,7 +553,7 @@ describe("改造验收", () => {
 	test("能力自查：my_capabilities 返回真实工具清单，可用于回答「能不能」", async () => {
 		const { runtime, project } = await fixture();
 		const agent = await agentOf(runtime, project.leader);
-		const tool = (agent?.tools ?? []).find((entry) => entry.name === "my_capabilities");
+		const tool = (agentTools(agent)).find((entry) => entry.name === "my_capabilities");
 		expect(tool, "负责人必须有 my_capabilities").toBeDefined();
 
 		const result = await tool!.execute({}, { conversationId: project.leader } as never, BACKGROUND_CONTEXT);

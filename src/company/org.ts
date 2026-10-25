@@ -638,6 +638,9 @@ export async function bootstrapCompany(
 		// 圆桌讨论的任务（父任务 + 参与者子任务）同样必须注册：
 		// 工具会兜底自愈式注册，但「启动就装好」能避免第一次开会撞上 missing_task。
 		options.registry.install(roundtableExtension());
+		// 工具搜索随每个角色的能力包一起装（见 src/company/tools/tool-search.ts）：
+		// 它必须是**核心**工具，且必须支持中文查询——库里自带的那个只认 [a-z0-9]，
+		// 中文查询会被切空（实测「推进项目状态」→ 一个都搜不到）。
 		for (const extension of createAllRoleExtensionsWithTools(managementTools)) {
 			options.registry.install(extension);
 		}

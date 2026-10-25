@@ -23,6 +23,8 @@
     "ui:check": "node scripts/ui-check.mjs"
   },
   "dependencies": {
+    "@dicebear/collection": "^9.4.3",
+    "@dicebear/core": "^9.4.3",
     "@earendil-works/chord": "1.4.0",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-durable": "1.4.0",

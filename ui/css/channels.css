@@ -1,8 +1,21 @@
 /**
  * 频道视图样式（通信重构 §7）。
  *
- * 三栏：频道列表 / 消息流 / 成员+任务。
- * 已读点是本文件里唯一的「状态色」：灰 = 未读，绿 = 已读。
+ * ── 参照物 ──
+ *
+ * 这是一个「工作群聊」，不是论坛也不是邮件列表。所以照着 Slack / 飞书 / 微信的
+ * 共同结论来做：
+ *
+ * - 左边一列会话，**每一行都有头像**（认人靠脸，不靠名字首字）
+ * - 中间消息流：头像 + 名字 + 时间一行，正文在下面，连续同一人**折叠头像**
+ * - 日期分隔线把长历史切成「今天 / 昨天 / 更早」
+ * - 右侧成员栏是「谁在这个群」的常驻答案
+ *
+ * ── 视觉规则（沿用 tokens.css） ──
+ *
+ * - 2px 直角 / 1px 精确边框，不做大圆角药丸、不做大阴影堆叠
+ * - 唯一的状态色是 @ 已读点：灰 = 未读，绿 = 已读
+ * - 头像带 1px 描边，和界面同一种「印刷感」
  */
 
 .channels {
@@ -14,41 +27,70 @@
 
 .ch-layout {
 	display: grid;
-	grid-template-columns: 232px minmax(0, 1fr) 216px;
+	grid-template-columns: 268px minmax(0, 1fr) 232px;
 	width: 100%;
 	min-height: 0;
-	gap: 0;
 	border: 1px solid var(--line);
 	border-radius: var(--radius);
 	overflow: hidden;
 	background: var(--surface);
 }
 
-/* ── 频道列表 ── */
+/* ── 左列：会话列表 ─────────────────────────────────────────────────── */
 
 .ch-list {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
-	padding: 10px 8px;
 	overflow-y: auto;
 	border-right: 1px solid var(--line);
 	background: var(--surface-2);
+	padding-bottom: 8px;
 }
 
-.ch-group {
-	padding: 10px 8px 4px;
-	font-size: 11px;
-	letter-spacing: 0.06em;
-	text-transform: uppercase;
+.ch-list-head {
+	position: sticky;
+	top: 0;
+	z-index: 2;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px 9px;
+	background: var(--surface-2);
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.ch-list-head b {
+	font-size: 12.5px;
+	font-weight: 650;
+	letter-spacing: 0.01em;
+}
+
+.ch-list-head span {
+	margin-left: auto;
+	font-size: 10.5px;
 	color: var(--faint);
 }
 
+.ch-group {
+	position: sticky;
+	top: 39px;
+	z-index: 1;
+	padding: 12px 12px 4px;
+	font-size: 10px;
+	letter-spacing: 0.09em;
+	text-transform: uppercase;
+	color: var(--faint);
+	background: linear-gradient(var(--surface-2) 78%, transparent);
+	pointer-events: none;
+}
+
 .ch-row {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-	width: 100%;
+	display: grid;
+	grid-template-columns: 32px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 9px;
+	width: calc(100% - 12px);
+	margin: 1px 6px;
 	padding: 7px 8px;
 	border: 0;
 	border-radius: var(--radius-sm);
@@ -57,45 +99,56 @@
 	text-align: left;
 	cursor: pointer;
 	font: inherit;
-	transition: background 120ms ease;
+	transition: background 110ms ease;
 }
 
 .ch-row:hover {
 	background: var(--surface-3);
 }
 
+.ch-row[data-active="true"] {
+	background: var(--surface-4);
+}
+
+/* 有 @ 没读的会话：左侧一根竖线，扫视时第一眼看到 */
+.ch-row[data-mention="true"]::before {
+	content: "";
+	position: absolute;
+}
+
 .ch-row--muted {
 	color: var(--faint);
 	cursor: default;
 	font-size: 11.5px;
+	grid-template-columns: minmax(0, 1fr);
 }
 
 .ch-row--muted:hover {
 	background: transparent;
 }
 
-.ch-row[data-active="true"] {
-	background: var(--surface-4);
-}
-
 .ch-row-main {
 	display: flex;
 	flex-direction: column;
-	gap: 2px;
+	gap: 1px;
 	min-width: 0;
-	flex: 1;
 }
 
 .ch-row-title {
-	font-size: 13px;
+	font-size: 12.5px;
 	font-weight: 600;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
+.ch-row[data-mention="true"] .ch-row-title {
+	color: var(--ink);
+}
+
 .ch-row-preview {
 	font-size: 11.5px;
+	line-height: 1.45;
 	color: var(--muted);
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -106,131 +159,190 @@
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
-	gap: 3px;
+	gap: 4px;
 	flex-shrink: 0;
 }
 
 .ch-row-time {
-	font-size: 10.5px;
+	font-size: 10px;
 	color: var(--faint);
+	font-variant-numeric: tabular-nums;
 }
 
 .ch-badge {
-	min-width: 16px;
-	height: 16px;
+	min-width: 17px;
+	height: 17px;
 	padding: 0 5px;
-	border-radius: 8px;
-	background: var(--accent-soft);
-	color: var(--accent);
-	font-size: 10.5px;
+	border-radius: 9px;
+	background: var(--surface-3);
+	color: var(--ink-2);
+	font-size: 10px;
 	font-weight: 700;
-	line-height: 16px;
+	line-height: 17px;
 	text-align: center;
+	font-variant-numeric: tabular-nums;
 }
 
 .ch-badge--mention {
 	background: var(--warn-soft);
 	color: var(--warn);
+	box-shadow: inset 0 0 0 1px var(--warn-line);
 }
 
-/* ── 中间：头部 / 消息 / 输入 ── */
+/* ── 头像：真实插画（/api/avatar/:name） ─────────────────────────────── */
+
+.ch-av {
+	flex-shrink: 0;
+	display: block;
+	width: 32px;
+	height: 32px;
+	border-radius: var(--radius);
+	border: 1px solid var(--line);
+	background: var(--surface-3);
+	object-fit: cover;
+}
+
+.ch-av--sm {
+	width: 22px;
+	height: 22px;
+}
+
+.ch-av--xs {
+	width: 18px;
+	height: 18px;
+}
+
+/* 非人的频道（工作记录）用图标，不占人脸 */
+.ch-av--icon {
+	display: grid;
+	place-items: center;
+	color: var(--faint);
+	background: var(--surface-3);
+}
+
+.ch-av--icon svg {
+	width: 60%;
+	height: 60%;
+}
+
+/* ── 中间：头部 / 消息 / 输入 ───────────────────────────────────────── */
 
 .ch-main {
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
+	background: var(--surface);
 }
 
 .ch-head {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-	padding: 12px 16px;
+	gap: 10px;
+	padding: 9px 16px;
 	border-bottom: 1px solid var(--line);
+	background: var(--surface);
 }
 
 .ch-ident {
 	display: flex;
-	align-items: baseline;
-	gap: 8px;
+	flex-direction: column;
+	gap: 1px;
 	min-width: 0;
 }
 
 .ch-title {
-	font-size: 14px;
+	font-size: 13.5px;
 	font-weight: 650;
+	letter-spacing: 0.005em;
 }
 
 .ch-sub {
-	font-size: 11.5px;
+	font-size: 11px;
 	color: var(--muted);
+}
+
+.ch-head-side {
+	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 6px;
 }
 
 .ch-body {
 	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 14px 16px;
+	padding: 16px 16px 10px;
 	display: flex;
 	flex-direction: column;
+	gap: 2px;
+	scroll-behavior: smooth;
+}
+
+/* 日期分隔：长历史切成「今天 / 昨天 / 8月3日」 */
+.ch-day {
+	display: flex;
+	align-items: center;
 	gap: 10px;
+	margin: 14px 0 8px;
+	font-size: 10.5px;
+	color: var(--faint);
+	letter-spacing: 0.04em;
+}
+
+.ch-day::before,
+.ch-day::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--line-soft);
+}
+
+.ch-day:first-child {
+	margin-top: 0;
 }
 
 .ch-msg {
-	display: flex;
+	display: grid;
+	grid-template-columns: 32px minmax(0, 1fr);
 	gap: 9px;
-	align-items: flex-start;
+	padding: 3px 6px;
+	margin: 0 -6px;
+	border-radius: var(--radius-sm);
+	transition: background 100ms ease;
+}
+
+.ch-msg:hover {
+	background: var(--surface-2);
 }
 
 .ch-msg[data-grouped="true"] {
-	margin-top: -6px;
+	padding-top: 1px;
+	padding-bottom: 1px;
 }
 
-.ch-msg[data-grouped="true"] .ch-avatar {
+/* 连续同一人的消息折叠头像：**保留占位**（visibility），不能用 display:none，
+   否则 grid 自动排布会把正文塞进 32px 的头像列，变成一行一个字。 */
+.ch-msg[data-grouped="true"] .ch-av {
 	visibility: hidden;
 }
 
-.ch-avatar,
-.ch-member .avatar,
-.ch-mention-item .avatar {
-	border-color: hsl(var(--h, 210) 40% 40% / 0.5);
+.ch-msg > .ch-av {
+	grid-column: 1;
+	grid-row: 1;
 }
 
-.ch-avatar {
-	position: relative;
-	flex-shrink: 0;
-	width: 26px;
-	height: 26px;
-	display: grid;
-	place-items: center;
-	border: 1px solid var(--line);
-	border-radius: var(--radius);
-	background: var(--surface-2);
-	color: var(--ink);
-	font-size: var(--fs-2xs);
-	font-weight: 500;
-	letter-spacing: 0.02em;
-}
-
-.ch-owner-dot {
-	position: absolute;
-	right: -2px;
-	bottom: -2px;
-	width: 7px;
-	height: 7px;
-	border-radius: 50%;
-	background: var(--accent);
-	box-shadow: 0 0 0 2px var(--surface);
+.ch-msg > .ch-msg-main {
+	grid-column: 2;
+	grid-row: 1;
 }
 
 .ch-msg-main {
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
+	gap: 2px;
 	min-width: 0;
-	flex: 1;
 }
 
 .ch-msg-head {
@@ -238,6 +350,7 @@
 	align-items: baseline;
 	gap: 6px;
 	font-size: 12px;
+	line-height: 1.4;
 }
 
 .ch-msg-head b {
@@ -249,21 +362,24 @@
 	padding: 0 4px;
 	border-radius: 3px;
 	line-height: 14px;
+	font-weight: 600;
 }
 
 .ch-tag--owner {
 	background: var(--accent-soft);
 	color: var(--accent);
+	box-shadow: inset 0 0 0 1px var(--accent-line);
 }
 
 .ch-time {
-	font-size: 10.5px;
+	font-size: 10px;
 	color: var(--faint);
+	font-variant-numeric: tabular-nums;
 }
 
 .ch-bubble {
 	font-size: 13px;
-	line-height: 1.6;
+	line-height: 1.62;
 	color: var(--ink);
 	word-break: break-word;
 }
@@ -276,22 +392,85 @@
 	margin-bottom: 0;
 }
 
-/* ── @ 的已读点（唯一的状态色） ── */
+.ch-bubble a {
+	color: var(--accent);
+}
+
+.ch-bubble code {
+	font-size: 11.5px;
+	padding: 1px 4px;
+	border-radius: 3px;
+	background: var(--surface-3);
+}
+
+.ch-bubble pre {
+	margin: 6px 0;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--bg-2);
+	overflow-x: auto;
+}
+
+.ch-bubble pre code {
+	padding: 0;
+	background: transparent;
+}
+
+/* 长消息折叠：渐隐到「展开全文」按钮 */
+.ch-bubble[data-collapsed="true"] {
+	position: relative;
+	max-height: 26em;
+	overflow: hidden;
+}
+
+.ch-bubble[data-collapsed="true"]::after {
+	content: "";
+	position: absolute;
+	inset: auto 0 0 0;
+	height: 4em;
+	background: linear-gradient(transparent, var(--surface));
+	pointer-events: none;
+}
+
+.ch-msg:hover .ch-bubble[data-collapsed="true"]::after {
+	background: linear-gradient(transparent, var(--surface-2));
+}
+
+.ch-expand {
+	align-self: flex-start;
+	margin-top: 2px;
+	padding: 2px 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface-2);
+	color: var(--muted);
+	font: inherit;
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.ch-expand:hover {
+	color: var(--ink);
+	border-color: var(--line-strong);
+}
+
+/* ── @ 的已读点（本视图唯一的状态色） ──────────────────────────────── */
 
 .ch-mentions {
 	display: flex;
 	flex-wrap: wrap;
-	gap: 6px;
-	margin-top: 2px;
+	gap: 5px;
+	margin-top: 3px;
 }
 
 .ch-mention {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
+	gap: 5px;
 	font-size: 10.5px;
 	color: var(--muted);
-	padding: 1px 6px 1px 4px;
+	padding: 1px 7px 1px 5px;
 	border-radius: 9px;
 	background: var(--surface-2);
 	border: 1px solid var(--line);
@@ -307,25 +486,29 @@
 
 .ch-mention i[data-read="true"] {
 	background: var(--run);
+	box-shadow: 0 0 6px -1px var(--run-glow);
 }
 
-/* ── 系统消息 / 任务卡片 ── */
+/* ── 系统消息 / 任务卡片 ────────────────────────────────────────────── */
 
 .ch-system {
 	align-self: center;
-	max-width: 80%;
-	padding: 4px 10px;
+	max-width: 82%;
+	margin: 6px 0;
+	padding: 3px 10px;
 	border-radius: 10px;
 	background: var(--surface-2);
-	border: 1px dashed var(--line);
-	font-size: 11.5px;
+	border: 1px solid var(--line-soft);
+	font-size: 11px;
 	color: var(--muted);
 	white-space: pre-wrap;
+	text-align: center;
 }
 
 .ch-card {
+	margin: 4px 0;
 	border: 1px solid var(--line);
-	border-radius: var(--radius-md);
+	border-radius: var(--radius-sm);
 	background: var(--surface-2);
 	padding: 9px 12px;
 	display: flex;
@@ -348,12 +531,13 @@
 }
 
 .ch-card-id {
-	font-size: 10.5px;
+	font-size: 10px;
 	padding: 1px 5px;
-	border-radius: 4px;
+	border-radius: 3px;
 	background: var(--accent-soft);
 	color: var(--accent);
 	font-weight: 700;
+	font-family: var(--mono, ui-monospace, monospace);
 }
 
 .ch-card-title {
@@ -369,64 +553,80 @@
 	white-space: pre-wrap;
 }
 
-/* ── 输入区 ── */
+/* ── 输入区 ────────────────────────────────────────────────────────── */
 
 .ch-compose {
 	position: relative;
 	display: flex;
 	gap: 8px;
 	align-items: flex-end;
-	padding: 10px 12px 12px;
+	padding: 10px 14px 14px;
 	border-top: 1px solid var(--line);
+	background: var(--surface);
 }
 
 .ch-compose textarea {
 	flex: 1;
-	min-height: 36px;
-	max-height: 160px;
-	padding: 8px 10px;
+	min-height: 38px;
+	max-height: 180px;
+	padding: 9px 11px;
 	border: 1px solid var(--line);
 	border-radius: var(--radius-md);
 	background: var(--surface-2);
 	color: var(--ink);
 	font: inherit;
 	font-size: 13px;
+	line-height: 1.55;
 	resize: none;
 	outline: none;
+	transition: border-color 120ms ease;
+}
+
+.ch-compose textarea::placeholder {
+	color: var(--faint);
 }
 
 .ch-compose textarea:focus {
-	border-color: var(--accent);
+	border-color: var(--line-strong);
+	background: var(--surface-3);
 }
 
 .ch-send {
-	padding: 8px 14px;
-	border: 0;
+	padding: 9px 16px;
+	border: 1px solid var(--accent-line);
 	border-radius: var(--radius-md);
-	background: var(--accent);
-	color: var(--bg);
+	background: var(--accent-soft);
+	color: var(--accent);
 	font: inherit;
 	font-size: 12.5px;
 	font-weight: 600;
 	cursor: pointer;
+	transition:
+		background 120ms ease,
+		color 120ms ease;
+}
+
+.ch-send:hover {
+	background: var(--accent);
+	color: var(--bg);
 }
 
 .ch-send[disabled] {
-	opacity: 0.5;
+	opacity: 0.45;
 	cursor: default;
 }
 
-/* ── @ 选择器 ── */
+/* ── @ 选择器 ──────────────────────────────────────────────────────── */
 
 .ch-mention-popup {
 	position: absolute;
-	bottom: calc(100% - 2px);
-	left: 12px;
-	right: 12px;
-	max-height: 220px;
+	bottom: calc(100% - 4px);
+	left: 14px;
+	right: 14px;
+	max-height: 232px;
 	overflow-y: auto;
 	background: var(--surface);
-	border: 1px solid var(--line);
+	border: 1px solid var(--line-strong);
 	border-radius: var(--radius-md);
 	box-shadow: var(--shadow-pop);
 	padding: 4px;
@@ -438,7 +638,7 @@
 	align-items: center;
 	gap: 8px;
 	width: 100%;
-	padding: 6px 8px;
+	padding: 5px 7px;
 	border: 0;
 	border-radius: var(--radius-sm);
 	background: transparent;
@@ -449,20 +649,9 @@
 	text-align: left;
 }
 
+.ch-mention-item[data-active="true"],
 .ch-mention-item:hover {
 	background: var(--surface-3);
-}
-
-.ch-mention-item .avatar {
-	width: 20px;
-	height: 20px;
-	display: grid;
-	place-items: center;
-	border: 1px solid var(--line);
-	border-radius: var(--radius);
-	background: var(--surface-2);
-	font-size: 9.5px;
-	flex-shrink: 0;
 }
 
 .ch-mention-item span:last-child {
@@ -471,26 +660,25 @@
 	color: var(--faint);
 }
 
-/* ── 右侧：成员 + 任务 ── */
+/* ── 右侧：成员 + 任务 ─────────────────────────────────────────────── */
 
 .ch-side {
 	display: flex;
 	flex-direction: column;
-	gap: 4px;
 	border-left: 1px solid var(--line);
 	background: var(--surface-2);
 	overflow-y: auto;
-	padding: 10px 0;
+	padding: 4px 0 12px;
 }
 
 .ch-side-block {
-	padding: 0 12px 8px;
+	padding: 0 12px;
 }
 
 .ch-side-block h3 {
-	margin: 8px 0 6px;
-	font-size: 11px;
-	letter-spacing: 0.06em;
+	margin: 12px 0 6px;
+	font-size: 10px;
+	letter-spacing: 0.09em;
 	text-transform: uppercase;
 	color: var(--faint);
 	font-weight: 600;
@@ -503,27 +691,21 @@
 	padding: 0;
 	display: flex;
 	flex-direction: column;
-	gap: 3px;
-}
-
-.ch-member .avatar {
-	width: 22px;
-	height: 22px;
-	display: grid;
-	place-items: center;
-	border: 1px solid var(--line);
-	border-radius: var(--radius);
-	background: var(--surface-2);
-	font-size: var(--fs-2xs);
-	flex-shrink: 0;
+	gap: 1px;
 }
 
 .ch-member {
 	display: flex;
 	align-items: center;
 	gap: 7px;
-	padding: 3px 0;
+	padding: 4px 4px;
+	margin: 0 -4px;
+	border-radius: var(--radius-sm);
 	font-size: 12px;
+}
+
+.ch-member:hover {
+	background: var(--surface-3);
 }
 
 .ch-member-main {
@@ -535,6 +717,7 @@
 
 .ch-member-main b {
 	font-weight: 600;
+	font-size: 12px;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
@@ -558,9 +741,10 @@
 }
 
 .ch-task-id {
-	font-size: 10px;
+	font-size: 9.5px;
 	color: var(--accent);
 	font-weight: 700;
+	font-family: var(--mono, ui-monospace, monospace);
 }
 
 .ch-task-title {
@@ -584,10 +768,10 @@
 	color: var(--run);
 }
 
-/* ── 空状态 ── */
+/* ── 空状态 ────────────────────────────────────────────────────────── */
 
 .ch-empty {
-	padding: 24px 12px;
+	padding: 28px 12px;
 	text-align: center;
 	font-size: 12px;
 	color: var(--faint);
@@ -598,7 +782,7 @@
 	text-align: left;
 }
 
-/* ── 顶栏徽章 ── */
+/* ── 顶栏徽章 ──────────────────────────────────────────────────────── */
 
 .view-badge {
 	display: inline-block;
@@ -616,17 +800,19 @@
 	vertical-align: 1px;
 }
 
-/* ── 响应式：窄屏收成单列（列表可折叠） ── */
+/* ── 响应式：窄屏收成单列（列表可折叠） ───────────────────────────── */
 
-@media (max-width: 1100px) {
+@media (max-width: 1180px) {
 	.ch-layout {
-		grid-template-columns: 200px minmax(0, 1fr);
+		grid-template-columns: 236px minmax(0, 1fr);
 	}
 	.ch-side {
 		display: none;
 	}
 }
 
+/* 手机：单列 + 列表/会话两个「页」，靠 .ch-back 返回。
+   默认停在列表页（打开频道视图时先选会话），进会话后 data-pane="main"。 */
 @media (max-width: 860px) {
 	.ch-layout {
 		grid-template-columns: minmax(0, 1fr);
@@ -640,4 +826,28 @@
 	.ch-layout[data-pane="list"] .ch-main {
 		display: none;
 	}
+	.ch-back {
+		display: inline-flex !important;
+	}
+}
+
+/* 桌面不需要返回按钮（列表常驻） */
+.ch-back {
+	display: none;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 8px 4px 6px;
+	margin-right: 2px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	background: var(--surface-2);
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.ch-back svg {
+	width: 14px;
+	height: 14px;
 }

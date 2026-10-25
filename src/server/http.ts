@@ -38,6 +38,7 @@ import { listChannels, mentionCandidates, readChannelView, unreadSummary } from 
 import { markAllRead, markMentionSeen, parseMentions, postToChannel, readChannel, readChannels } from "../company/channels.ts";
 import { OWNER_ID } from "../domain/channels.ts";
 import { buildOrg } from "../company/org-model.ts";
+import { avatarEtag, avatarSvg } from "./avatars.ts";
 
 /** 服务选项。 */
 export type ServeOptions = {
@@ -312,6 +313,30 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			// ── 附件 ──
 			if (path === "/api/upload" && request.method === "POST") return await postUpload(request, response);
 			if (path.startsWith("/uploads/")) return await serveUpload(path, response);
+
+			// ── 头像 ──
+			// 真实插画头像，按名字稳定生成（同一人永远同一张脸）。
+			// 长缓存：内容由名字决定，永不变。
+			if (path.startsWith("/api/avatar/") && request.method === "GET") {
+				const seed = decodeURIComponent(path.slice("/api/avatar/".length));
+				if (seed === "") return fail(response, 400, "缺少名字");
+				const sizeParam = Number(url.searchParams.get("size") ?? 96);
+				const size = Number.isFinite(sizeParam) ? Math.min(256, Math.max(24, Math.round(sizeParam))) : 96;
+				const etag = avatarEtag(seed, size);
+				if (request.headers["if-none-match"] === etag) {
+					response.writeHead(304, { etag });
+					response.end();
+					return;
+				}
+				const svg = avatarSvg(seed, size);
+				response.writeHead(200, {
+					"content-type": "image/svg+xml; charset=utf-8",
+					"cache-control": "public, max-age=31536000, immutable",
+					etag,
+				});
+				response.end(svg);
+				return;
+			}
 
 			// ── 频道（通信重构） ──
 			if (path === "/api/channels" && request.method === "GET") {

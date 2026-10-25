@@ -275,7 +275,7 @@ export function appendMessage(
 	if (channel === undefined) throw new Error(`频道不存在：${channelId}`);
 
 	const seq = state.nextSeq;
-	const mentions = [...new Set(input.mentions ?? [])].filter((id) => id !== input.from);
+	const mentions = resolveMentions(channel, input.from, input.mentions);
 	const message: ChannelMessage = {
 		seq,
 		at: input.at ?? Date.now(),
@@ -300,6 +300,33 @@ export function appendMessage(
 		},
 		message,
 	};
+}
+
+/**
+ * 算一条消息的 @ 对象。
+ *
+ * **私聊不需要 @**：私聊只有两个人，说「帮我看看这个」显然就是说给对方听的。
+ * 如果要求老板手打「@许砚舟」，那这个功能在实际使用中等于不可用——
+ * 老板不会为了跟一个人说话先打一个 @。
+ *
+ * 所以私聊里「没写 @」= 对方全收（除自己）。显式写了 @ 也照办（可以 @ 自己以外的人，
+ * 虽然私聊里没别人，写错也不会出错）。
+ *
+ * 群聊/频道**不做这个兜底**：公司群 15 个人，没 @ 就是「说给大家听」，
+ * 按 `recipientsOf` 的规则只唤醒 wakeOnAll 的人（老板发言则唤醒 owner）。
+ * 如果群聊也兜底成「全员」，一条闲聊就会唤醒 15 个 agent，成本直接爆炸。
+ */
+export function resolveMentions(
+	channel: Channel,
+	from: number,
+	explicit: readonly number[] | undefined,
+): number[] {
+	const declared = [...new Set(explicit ?? [])].filter((id) => id !== from);
+	if (declared.length > 0) return declared;
+	if (channel.kind !== "dm") return declared;
+	return Object.values(channel.members)
+		.map((member) => member.conversationId)
+		.filter((id) => id !== from);
 }
 
 /** 建一个频道（已存在则返回原状态）。 */
@@ -418,6 +445,31 @@ export function digestFor(state: ChannelState, conversationId: number, limit = 5
 export function oneLine(text: string, max = 60): string {
 	const flat = text.replace(/\s+/g, " ").trim();
 	return flat.length <= max ? flat : `${flat.slice(0, max)}…`;
+}
+
+/**
+ * 频道列表用的预览：把 Markdown 记号去掉再截断。
+ *
+ * 列表里显示 `**改动清单**`、`### 进度` 这样的原始记号很刺眼——预览是「一句话
+ * 说明这个群在说什么」，不是渲染后的正文。所以先剥掉标记符号，再压平截断。
+ */
+export function previewLine(text: string, max = 80): string {
+	const plain = text
+		// 代码块围栏、行内代码的反引号
+		.replace(/```[\s\S]*?```/g, " ")
+		.replace(/`([^`]*)`/g, "$1")
+		// 标题、引用、列表符号
+		.replace(/^\s{0,3}#{1,6}\s+/gm, "")
+		.replace(/^\s{0,3}>\s?/gm, "")
+		.replace(/^\s{0,3}[-*+]\s+/gm, "")
+		// 粗体 / 斜体 / 删除线
+		.replace(/\*\*([^*]+)\*\*/g, "$1")
+		.replace(/__([^_]+)__/g, "$1")
+		.replace(/(?<![*\w])\*([^*]+)\*(?![*\w])/g, "$1")
+		.replace(/~~([^~]+)~~/g, "$1")
+		// 链接 [文字](地址) → 文字
+		.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+	return oneLine(plain, max);
 }
 
 /**

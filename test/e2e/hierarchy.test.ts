@@ -34,7 +34,7 @@ import {
 } from "../../src/company/org.ts";
 import { CompanyDoc } from "../../src/company/docs.ts";
 import { delegate } from "../../src/company/delegation.ts";
-import { answer, createTestContext, toolCall, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { answer, createTestContext, toolCall, type TestContext, TEST_MODEL_CATALOG, allToolNames } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -263,12 +263,13 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 
 		const leader = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
 		const agent = await leader?.agent(BACKGROUND_CONTEXT);
-		const tools = agent?.tools.map((tool) => tool.name) ?? [];
+		const tools = allToolNames(agent);
 
-		expect(tools).toContain("staff_assign");
+		// 通信重构后：派活是 assign_task（异步建任务），协作提问是 ask_role
+		expect(tools).toContain("assign_task");
+		expect(tools).toContain("ask_role");
 		expect(tools).toContain("staff_list");
 		expect(tools).toContain("escalate");
-		expect(tools).toContain("delegate_to_role");
 		expect(tools).toContain("project_plan");
 		// 公司级动作不在负责人手上
 		expect(tools).not.toContain("project_create");
@@ -311,7 +312,7 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 	test("管理层通过负责人推进工作，不直接指挥员工", async () => {
 		const { ctx, runtime, registry } = await setup();
 		await boot(ctx, runtime, registry);
-		await createProject(
+		const { project } = await createProject(
 			runtime,
 			{ name: "Alpha", brief: "测试项目", workspaceRoot: join(ctx.dir, "projects") },
 			BACKGROUND_CONTEXT,
@@ -325,40 +326,50 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 		const ctoId = state?.roles.cto ?? 0;
 		expect(ctoId).toBeGreaterThan(0);
 
-		// CTO 收到「推进项目」→ 调 delegate_to_leader；负责人拆活派给 dev-1。
+		// 通信重构后：CTO 用 assign_task 派给负责人（异步，不等）。
+		// 负责人会收到频道消息，再由它自己拆活派给 dev-1。
 		ctx.faux.setResponses([
-			toolCall("delegate_to_leader", { project: "alpha", task: "把首页做出来" }),
-			toolCall("staff_assign", { project: "alpha", employee: "dev-1", task: "写 index.html" }),
-			answer("首页已完成"),
-			answer("负责人回报：首页已完成"),
-			answer("CTO 汇报：项目已推进"),
+			toolCall("assign_task", {
+				assignee: "负责人",
+				project: "alpha",
+				title: "把首页做出来",
+				acceptance: "index.html 存在且浏览器打开无报错",
+				brief: "拆成子任务派给 dev-1",
+			}),
+			answer("已派给负责人，等它完成"),
 		]);
 
 		const cto = await runtime.harness.conversation(ctoId as never, BACKGROUND_CONTEXT);
-		const settled = await (
-			await cto?.submit({ type: "input", content: "推进 Alpha 项目" }, BACKGROUND_CONTEXT)
-		)?.wait(BACKGROUND_CONTEXT);
-		expect(settled?.status).toBe("done");
+		await cto?.submit({ type: "input", content: "推进 Alpha 项目" }, BACKGROUND_CONTEXT);
 
-		// 员工确实被负责人派到了活
-		const employee = await runtime.harness.conversation(hired.conversationId as never, BACKGROUND_CONTEXT);
-		const entries = await employee?.entries({ order: "ascending" }, 100, undefined, BACKGROUND_CONTEXT);
-		const userTexts = (entries?.items ?? [])
-			.filter((entry) => entry.kind === "pi.user" || entry.kind === "app.delegate")
-			.map((entry) => JSON.stringify(entry.model))
-			.join("\n");
-		expect(userTexts).toContain("写 index.html");
+		// 不等整轮结束（异步派活后，负责人的一轮可能是 unanswered），
+		// 只等「任务真的建出来」——这才是要断言的事实。
+		const { readTasks } = await import("../../src/company/tasks.ts");
+		let task: Awaited<ReturnType<typeof readTasks>>["tasks"][string] | undefined;
+		for (let attempt = 0; attempt < 100; attempt += 1) {
+			const tasks = await readTasks(runtime, BACKGROUND_CONTEXT);
+			task = Object.values(tasks.tasks).find((entry) => entry.title === "把首页做出来");
+			if (task !== undefined) break;
+			await new Promise((resolve) => setTimeout(resolve, 50));
+		}
+		expect(task, "应该建出任务").toBeDefined();
+		expect(task?.assignee).toBe(project.leader);
+		expect(task?.acceptance).toContain("index.html");
+		void hired;
 	});
 
-	test("CTO 的能力里不再有 staff_assign 这个直连员工的工具", async () => {
+	test("CTO 的能力里只有统一的 assign_task，没有 staff_assign 这种重复工具", async () => {
 		const { ctx, runtime, registry } = await setup();
 		await boot(ctx, runtime, registry);
 
 		const state = await readCompany(runtime, BACKGROUND_CONTEXT);
 		const cto = await runtime.harness.conversation((state?.roles.cto ?? 0) as never, BACKGROUND_CONTEXT);
-		const tools = (await cto?.agent(BACKGROUND_CONTEXT))?.tools.map((tool) => tool.name) ?? [];
-		expect(tools).toContain("delegate_to_leader");
+		const tools = allToolNames(await cto?.agent(BACKGROUND_CONTEXT));
+		// 现在只有 assign_task / ask_role，不再有 staff_assign / delegate_to_staff
+		expect(tools).toContain("assign_task");
+		expect(tools).toContain("ask_role");
 		expect(tools).not.toContain("staff_assign");
+		expect(tools).not.toContain("delegate_to_staff");
 	});
 
 	test("负责人不能给别的项目派活", async () => {

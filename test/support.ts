@@ -91,3 +91,20 @@ export const TEST_MODEL_CATALOG = [
 	{ id: "cheap-1", provider: "faux", modelId: "cheap-1", label: "测试便宜", inputPerMTok: 0.5, outputPerMTok: 1.5 },
 	{ id: "strong-1", provider: "faux", modelId: "strong-1", label: "测试强", inputPerMTok: 15, outputPerMTok: 75 },
 ] as const;
+
+/**
+ * 一个 agent 的**全部**工具名：默认给的 + 延迟加载的。
+ *
+ * 为什么要分开：`deferred: true` 的工具不直接出现在模型面前（见 ADR-032），
+ * 但它在 `agent.deferred` 里、模型能用 `tool_search` 找到。
+ * 断言「这个角色有什么能力」时必须两边都算，否则会把「按需加载」误判成「没有」。
+ */
+export function agentTools(agent: { tools?: readonly unknown[]; deferred?: readonly unknown[] } | undefined): readonly { name: string }[] {
+	if (agent === undefined) return [];
+	return [...(agent.tools ?? []), ...(agent.deferred ?? [])] as { name: string }[];
+}
+
+/** 只要工具名的版本。 */
+export function allToolNames(agent: { tools?: readonly unknown[]; deferred?: readonly unknown[] } | undefined): string[] {
+	return agentTools(agent).map((tool) => tool.name);
+}

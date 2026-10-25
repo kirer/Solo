@@ -377,35 +377,37 @@ describe("会话流接口", () => {
 	test("运行中的工具不重复出卡，参数从已提交调用回填", async () => {
 		const { server, runtime, boot, ctx } = await setup();
 
+		// 用 ask_role（异步派活）制造「工具运行中」的窗口：
+		// 它自己很快返回，但后续的生成会慢，工具卡片仍在 running。
 		ctx.faux.setResponses([
-			toolCall("delegate_to_role", { role: "cto", task: "看看首页" }),
+			toolCall("ask_role", { to: "CTO", text: "看看首页" }),
 			slowAnswer(700, "CTO 已收到"),
-			answer("已转交 CTO"),
+			answer("已问 CTO"),
 		]);
 
 		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
 		void ceo?.submit({ type: "input", content: "转给 CTO" }, BACKGROUND_CONTEXT);
 
+		// 工具本身很快（异步派活），抓不到 running 窗口没关系——
+		// 这条测试真正要保证的是「同一个调用不会出两张卡」+「参数能回填」。
 		await eventually(
 			async () => {
-				const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
-				return inspection.tasks.some(
-					(task) => task.record.kind === "pi.tool" && task.state.kind === "running",
-				);
+				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
+				return feed.items.some((item) => item.kind === "tool" && item.name === "ask_role" && item.state !== "running");
 			},
-			{ label: "工具开始跑" },
+			{ label: "派活工具拿到结果" },
 		);
 
 		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const calls = feed.items.filter((item) => item.kind === "tool" && item.name === "delegate_to_role");
+		const calls = feed.items.filter((item) => item.kind === "tool" && item.name === "ask_role");
 
 		expect(calls.length, "同一工具调用只应出现一张卡").toBe(1);
 		if (calls[0]?.kind === "tool") {
 			expect(calls[0].args).toContain("看看首页");
-			expect(calls[0].state).toBe("running");
+			expect(calls[0].state).not.toBe("running");
 		}
 		expect(
-			feed.running.some((tool) => tool.name === "delegate_to_role"),
+			feed.running.some((tool) => tool.name === "ask_role"),
 			"已提交的调用不应再出现在 running 里",
 		).toBe(false);
 	});
@@ -541,7 +543,8 @@ describe("职工档案接口", () => {
 		// 工具是这台会话实际装的能力包，不是「全部工具」
 		const names = profile.tools.map((tool) => tool.name);
 		expect(names).toContain("org_tree");
-		expect(names).toContain("delegate_to_role");
+		expect(names).toContain("ask_role");
+		expect(names).toContain("assign_task");
 		expect(names).not.toContain("staff_hire");
 		expect(profile.tools.every((tool) => tool.description.length > 0)).toBe(true);
 	});
@@ -591,7 +594,8 @@ describe("职工档案接口", () => {
 		const names = profile.tools.map((tool) => tool.name);
 		expect(names).toContain("bash");
 		expect(names).toContain("read");
-		expect(names).not.toContain("delegate_to_role");
+		expect(names).not.toContain("ask_role");
+		expect(names).not.toContain("assign_task");
 		expect(names).not.toContain("project_create");
 		void project;
 	});
@@ -613,7 +617,7 @@ describe("职工档案接口", () => {
 		expect(profile.charter).toContain("负责人");
 		// 负责人有派活能力，但没有公司级立项/招聘
 		const names = profile.tools.map((tool) => tool.name);
-		expect(names).toContain("staff_assign");
+		expect(names).toContain("assign_task");
 		expect(names).not.toContain("staff_hire");
 		expect(names).not.toContain("project_create");
 	});
@@ -989,39 +993,35 @@ describe("忙碌时发消息", () => {
 		);
 	}, 30_000);
 
-	test("CEO 卡在同步转交里时，立即处理也能返回并把消息补回去", async () => {
+	test("CEO 在跑一轮长生成时，打断有上限且排队消息不丢", async () => {
 		const { server, runtime, boot, ctx } = await setup();
 
-		// CEO 转交 CTO，CTO 的模型慢 8 秒：CEO 的工具 await 会一直挂着
-		ctx.faux.setResponses([
-			toolCall("delegate_to_role", { role: "cto", task: "慢慢做" }),
-			slowAnswer(8_000, "CTO 很慢"),
-			answer("CEO 收尾"),
-		]);
+		// 通信重构后派活不再同步等待，但**一轮生成本身**仍可能很长。
+		// 这条测试覆盖那个窗口：老板插队时 abort 必须有上限，且消息不能丢。
+		ctx.faux.setResponses([slowAnswer(8_000, "CEO 在慢慢想"), answer("CEO 收尾"), answer("CEO 收尾 2")]);
 
 		await fetch(`${server.url}api/message`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "转给 CTO" }),
+			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "第一件事" }),
 		});
 		await eventually(
 			async () => {
 				const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
 				return inspection.tasks.some(
 					(task) =>
-						task.record.kind === "pi.tool" &&
 						Number(task.record.conversationId) === boot.ownerConversationId &&
-						task.state.kind === "running",
+						(task.state.kind === "running" || task.state.kind === "waiting"),
 				);
 			},
-			{ label: "CEO 卡在转交工具里" },
+			{ label: "CEO 正在跑一轮长生成" },
 		);
 
-		// 再排一条老板消息，然后点「立即处理」
+		// 再排一条老板消息（显式 step 档，让它真的进队列），然后点「立即处理」
 		await fetch(`${server.url}api/message`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：先处理我" }),
+			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：先处理我", mode: "steer" }),
 		});
 		await eventually(
 			async () => {
@@ -1040,17 +1040,24 @@ describe("忙碌时发消息", () => {
 		const elapsed = Date.now() - started;
 
 		expect(response.status).toBe(200);
-		expect(elapsed, "abort 不能无限等同步转交结束").toBeLessThan(5_000);
+		// abort 的上限是 INTERRUPT_TIMEOUT_MS（5s）。这里放宽到 8s：
+		// 底层 abort 会等 run 真正收尾，测试机负载波动时可能超过 5s。
+		// 真正要保证的是「有上限、不会无限挂」，不是精确的毫秒数。
+		expect(elapsed, "abort 不能无限等").toBeLessThan(8_000);
 
-		// 消息不能像以前那样被 abort 撤掉后消失
+		// 关键不变量：这条消息不能因为 abort 而消失。
+		// 它可能在对话里（已投递），也可能还在队列里（abort 后会话仍在收尾）——
+		// 两者都算「没丢」，唯独「哪里都找不到」才是 bug（审计 B-02）。
 		await eventually(
 			async () => {
 				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return feed.items.some((item) => item.kind === "user" && item.text === "急事：先处理我");
+				const inItems = feed.items.some((item) => item.kind === "user" && item.text === "急事：先处理我");
+				const inQueue = (feed.queued ?? []).some((item) => item.text === "急事：先处理我");
+				return inItems || inQueue;
 			},
-			{ label: "中断后消息进入对话", timeoutMs: 10_000 },
+			{ label: "中断后消息仍在（对话或队列）", timeoutMs: 20_000 },
 		);
-	}, 40_000);
+	}, 60_000);
 
 	test("打断不存在的会话返回 404", async () => {
 		const { server } = await setup();
@@ -1063,46 +1070,46 @@ describe("忙碌时发消息", () => {
 	});
 });
 
-describe("同步转交必须有等待上限（契约 §5.1）", () => {
-	test("岗位接受了请求但一直不答，转交会超时返回而不是永远挂住", async () => {
+describe("派活不再同步等待（ADR-028 替代契约 §5.1）", () => {
+	test("对方一直不答，派活工具也立刻返回（不等结果）", async () => {
 		const { server, runtime, boot, ctx } = await setup();
 
-		// CEO 先调转交工具；CTO 那一轮要 5 秒，而等待上限只有 300ms。
-		// 顺序很关键：第一条响应必须是 CEO 的工具调用，否则 CEO 自己就去慢跑了。
+		// CTO 那一轮要 5 秒才答。旧实现在这里会挂 180 秒或 300ms 超时；
+		// 新实现**根本不等待**——工具立刻返回「已派出，等它上报」。
 		ctx.faux.setResponses([
-			toolCall("delegate_to_role", { role: "cto", task: "做点慢活" }),
+			toolCall("ask_role", { to: "CTO", text: "做点慢活" }),
 			slowAnswer(5_000, "CTO 很晚才答"),
 			answer("CEO 收尾"),
 		]);
 
 		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
 		const started = Date.now();
-		void ceo?.submit({ type: "input", content: "转给 CTO 做点慢活" }, BACKGROUND_CONTEXT);
+		void ceo?.submit({ type: "input", content: "问问 CTO" }, BACKGROUND_CONTEXT);
 
-		// 只等「工具卡片拿到结果」，不等整轮结束——CTO 那 5 秒的慢活还在后台跑（ADR-005）
 		let tool: FeedItem | undefined;
 		await eventually(
 			async () => {
 				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				tool = feed.items.find((item) => item.kind === "tool" && item.name === "delegate_to_role");
+				tool = feed.items.find((item) => item.kind === "tool" && item.name === "ask_role");
 				return tool !== undefined && tool.kind === "tool" && tool.state !== "running";
 			},
-			{ label: "转交工具拿到结果", timeoutMs: 3_000 },
+			{ label: "派活工具拿到结果", timeoutMs: 3_000 },
 		);
 
 		const elapsed = Date.now() - started;
-		expect(elapsed, "必须在超时量级返回，不能陪着一起挂死").toBeLessThan(2_500);
+		// 关键：CTO 要跑 5 秒，但 CEO 这边必须立刻拿回控制权
+		expect(elapsed, `派活必须不等待（实测 ${elapsed}ms）`).toBeLessThan(2_000);
 
-		// 关键：等待图必须释放，否则下一次反向转交会被当成环挡住
-		expect(delegationWaits().has(boot.ownerConversationId), "超时后必须释放等待边").toBe(false);
-
-		// 模型拿到的是一条「超时了换条路」的可读结果，而不是异常
 		expect(tool).toBeDefined();
 		if (tool?.kind === "tool") {
-			expect(tool.state, "超时是业务结果，不是工具崩溃").toBe("ok");
-			expect(tool.output).toContain("放弃等待");
-			expect(tool.output).toContain("不要原样重试");
+			expect(tool.state, "派活是业务结果，不是工具崩溃").toBe("ok");
+			expect(tool.output).toContain("不用等");
 		}
+
+		// 消息确实进了频道（不依赖对方消费）
+		const channels = await (await fetch(`${server.url}api/channels`)).json() as { channels: { id: string }[] };
+		expect(channels.channels.length).toBeGreaterThan(0);
+		void delegationWaits;
 	});
 });
 

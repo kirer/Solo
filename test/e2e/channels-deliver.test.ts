@@ -22,7 +22,15 @@ import {
 } from "../../src/company/channels.ts";
 import { createTask, transitionTask, readTask, projectBoard } from "../../src/company/tasks.ts";
 import { OWNER_ID } from "../../src/domain/channels.ts";
-import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import {
+	agentTools,
+	answer,
+	createTestContext,
+	eventually,
+	toolCall,
+	type TestContext,
+	TEST_MODEL_CATALOG,
+} from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -400,7 +408,7 @@ describe("员工拿到了通用通信工具（问题 3 的结构性修法）", (
 
 		const conversation = await runtime.harness.conversation(staff?.conversationId as never, BACKGROUND_CONTEXT);
 		const agent = await conversation?.agent(BACKGROUND_CONTEXT);
-		const names = (agent?.tools ?? []).map((tool) => tool.name);
+		const names = (agentTools(agent)).map((tool) => tool.name);
 		for (const required of ["say", "ask", "read_channel", "inbox", "task_list", "task_update", "whoami", "escalate"]) {
 			expect(names, `员工缺 ${required}`).toContain(required);
 		}
@@ -414,7 +422,7 @@ describe("员工拿到了通用通信工具（问题 3 的结构性修法）", (
 		const { runtime, project } = await setup();
 		const conversation = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
 		const agent = await conversation?.agent(BACKGROUND_CONTEXT);
-		const names = (agent?.tools ?? []).map((tool) => tool.name);
+		const names = (agentTools(agent)).map((tool) => tool.name);
 		expect(names).toContain("task_create");
 		expect(names).toContain("ask");
 		expect(names).toContain("bash");
@@ -520,5 +528,53 @@ describe("看门狗三项检查（问题 3 / 6 的兜底）", () => {
 		const { readTask } = await import("../../src/company/tasks.ts");
 		const task = await readTask(runtime, created.task.id, BACKGROUND_CONTEXT);
 		expect(task?.status).toBe("blocked");
+	});
+});
+
+describe("延迟工具 + tool_search（ADR-032）", () => {
+	test("长尾工具不在默认工具里，但在 deferred 里且能被搜到", async () => {
+		const { runtime, project } = await setup();
+		const conversation = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
+		const agent = await conversation?.agent(BACKGROUND_CONTEXT);
+		expect(agent).toBeDefined();
+
+		const direct = (agent?.tools ?? []).map((tool) => tool.name);
+		const deferred = (agent?.deferred ?? []).map((tool) => tool.name);
+
+		// 核心工具直接给
+		expect(direct).toContain("say");
+		expect(direct).toContain("ask");
+		expect(direct).toContain("assign_task");
+
+		// 长尾工具延迟加载（不占模型的注意力）。
+		// 负责人的长尾工具是 org_tree / project_plan / project_status / decide。
+		expect(direct).not.toContain("project_status");
+		expect(deferred).toContain("project_status");
+
+		// 核心 + 延迟 = 完整能力面（没有丢东西）
+		expect([...direct, ...deferred]).toContain("project_status");
+	});
+
+	test("tool_search 能检索到延迟工具并加载它", async () => {
+		const { ctx, runtime, project } = await setup();
+		const conversation = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
+		const agent = await conversation?.agent(BACKGROUND_CONTEXT);
+		const search = (agent?.tools ?? []).find((tool) => tool.name === "tool_search");
+		expect(search, "tool_search 必须是默认工具（否则延迟工具永远拿不到）").toBeDefined();
+		expect((agent?.deferred ?? []).map((tool) => tool.name)).toContain("project_status");
+
+		// 让模型自己调 tool_search：加载后它应该出现在**下一次**请求的工具里
+		ctx.faux.setResponses([
+			toolCall("tool_search", { query: "推进项目状态" }),
+			answer("找到了 project_status"),
+		]);
+		const settled = await (
+			await conversation?.submit({ type: "input", content: "我需要更新项目状态" }, BACKGROUND_CONTEXT)
+		)?.wait(BACKGROUND_CONTEXT);
+		expect(settled?.status).toBe("done");
+
+		const after = await conversation?.agent(BACKGROUND_CONTEXT);
+		const names = (after?.tools ?? []).map((tool) => tool.name);
+		expect(names, "加载后应直接可用").toContain("project_status");
 	});
 });

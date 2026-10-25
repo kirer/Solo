@@ -11,7 +11,7 @@
  * 数据全部来自 `/api/channels*`。SSE 的 org 事件只是「该刷新了」的信号，
  * 不做增量合并——频道消息量远小于会话流，全量拉最不容易出错。
  */
-import { escapeAttr, escapeHtml, relTime, clockTime, initials, hueFor } from "./format.js";
+import { escapeAttr, escapeHtml, relTime, clockTime } from "./format.js";
 import { icon } from "./icons.js";
 import { renderMarkdown } from "./markdown.js";
 
@@ -31,6 +31,7 @@ const state = {
 
 const el = {
 	root: null,
+	layout: null,
 	list: null,
 	title: null,
 	sub: null,
@@ -67,8 +68,10 @@ async function loadChannels() {
 		state.channels = Array.isArray(data.channels) ? data.channels : [];
 		state.lastFetchAt = Date.now();
 		renderList(data.unread);
-		// 没有选中频道时自动选第一个（有 @ 的优先）
-		if (state.activeId === null && state.channels.length > 0) {
+		// 没有选中频道时自动选第一个（有 @ 的优先）。
+		// 手机上是两屏布局：先给列表，别把用户直接推进某个会话。
+		const narrow = window.matchMedia("(max-width: 860px)").matches;
+		if (state.activeId === null && state.channels.length > 0 && !narrow) {
 			await openChannel(state.channels[0].id);
 		} else if (state.activeId !== null) {
 			// 保持当前选中；只更新列表徽章
@@ -83,6 +86,8 @@ async function openChannel(id) {
 	if (state.loading) return;
 	state.loading = true;
 	state.activeId = id;
+	// 手机上是「列表页 → 会话页」两屏，进会话就切到 main
+	if (el.layout !== null) el.layout.dataset.pane = "main";
 	updateActiveRow();
 	try {
 		const view = await fetchJson(`/api/channels/${encodeURIComponent(id)}?limit=60`);
@@ -141,6 +146,28 @@ function extractMentions(text) {
 
 // ── 渲染：频道列表 ─────────────────────────────────────────────────────────
 
+/**
+ * 头像：走服务端 `/api/avatar/:name`。
+ *
+ * 为什么不用首字母：中文名的第一个字区分度极低（「林越」「林墨」都是「林」），
+ * 而头像的作用是扫视时快速认人。服务端按名字稳定生成同一张脸，重启不变。
+ */
+function avatar(label, size = 32, extraClass = "") {
+	const src = `/api/avatar/${encodeURIComponent(label)}?size=${size * 2}`;
+	return `<img class="ch-av ${extraClass}" src="${escapeAttr(src)}" alt="" width="${size}" height="${size}" loading="lazy" decoding="async">`;
+}
+
+/** 工作记录不是人，给它一个「文档」图标而不是人脸。 */
+function logAvatar(size = 32) {
+	return [
+		`<span class="ch-av ch-av--icon" style="width:${size}px;height:${size}px" aria-hidden="true">`,
+		`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">`,
+		`<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M9.5 2.5V5H12"/><path d="M6 8h4M6 10.5h3"/>`,
+		`</svg>`,
+		`</span>`,
+	].join("");
+}
+
 function renderList(unread) {
 	if (el.list === null) return;
 	const grouped = new Map();
@@ -150,7 +177,7 @@ function renderList(unread) {
 		grouped.set(channel.kind, list);
 	}
 
-	const html = [];
+	const html = [`<div class="ch-list-head"><b>频道</b><span>${state.channels.length}</span></div>`];
 	for (const group of GROUPS) {
 		let items = grouped.get(group.kind) ?? [];
 		if (items.length === 0) continue;
@@ -170,10 +197,16 @@ function renderList(unread) {
 					: channel.unread > 0
 						? `<b class="ch-badge">${channel.unread}</b>`
 						: "";
+			if (channel.id === "__more-logs") {
+				html.push(`<button class="ch-row ch-row--muted" type="button" disabled>${escapeHtml(channel.title)}</button>`);
+				continue;
+			}
 			html.push(
 				[
 					`<button class="ch-row" type="button" data-id="${escapeAttr(channel.id)}"`,
-					` data-active="${active ? "true" : "false"}">`,
+					` data-active="${active ? "true" : "false"}"`,
+					` data-mention="${channel.mentions > 0 ? "true" : "false"}">`,
+					channel.kind === "log" ? logAvatar(32) : avatar(channel.title, 32),
 					`<span class="ch-row-main">`,
 					`<span class="ch-row-title">${escapeHtml(channel.title)}</span>`,
 					channel.preview === "" ? "" : `<span class="ch-row-preview">${escapeHtml(channel.preview)}</span>`,
@@ -189,11 +222,7 @@ function renderList(unread) {
 	}
 	el.list.innerHTML = html.join("") || `<div class="ch-empty">还没有频道</div>`;
 	for (const button of el.list.querySelectorAll(".ch-row")) {
-		if (button.dataset.id === "__more-logs") {
-			button.disabled = true;
-			button.classList.add("ch-row--muted");
-			continue;
-		}
+		if (button.dataset.id === undefined) continue;
 		button.addEventListener("click", () => openChannel(button.dataset.id));
 	}
 	// 顶栏徽章
@@ -224,13 +253,16 @@ function renderHeader() {
 	if (view === null || el.title === null) return;
 	el.title.textContent = view.channel.title;
 	const kindLabel = {
-		company: "公司大群",
-		leadership: "领导层",
+		company: "全员",
+		leadership: "管理层",
 		project: "项目群",
 		dm: "私聊",
 		log: "工作记录",
 	}[view.channel.kind];
-	el.sub.textContent = `${kindLabel} · ${view.channel.memberCount} 人`;
+	// 公司群的标题就叫「公司大群」，别再重复一遍类型
+	const parts = view.channel.kind === "company" ? [] : [kindLabel];
+	parts.push(`${view.channel.memberCount} 人`);
+	el.sub.textContent = parts.join(" · ");
 }
 
 function renderMessages() {
@@ -244,10 +276,17 @@ function renderMessages() {
 	const html = [];
 	let lastFrom = null;
 	let lastAt = 0;
+	let lastDay = "";
 	for (const message of view.messages) {
 		const grouped = message.from === lastFrom && message.at - lastAt < 5 * 60_000 && message.kind === "chat";
 		lastFrom = message.from;
 		lastAt = message.at;
+
+		const day = dayKey(message.at);
+		if (day !== lastDay) {
+			html.push(`<div class="ch-day">${escapeHtml(dayLabel(message.at))}</div>`);
+			lastDay = day;
+		}
 
 		if (message.kind === "system") {
 			html.push(`<div class="ch-system">${escapeHtml(message.text)}</div>`);
@@ -261,10 +300,11 @@ function renderMessages() {
 		html.push(
 			[
 				`<div class="ch-msg" data-from="${message.from}" data-grouped="${grouped ? "true" : "false"}">`,
-				grouped ? "" : renderAvatar(message),
+				// 头像始终渲染（折叠时 CSS 隐藏）：留空会让 grid 把正文挤进 32px 列
+				renderAvatar(message),
 				`<div class="ch-msg-main">`,
 				grouped ? "" : renderMsgHead(message),
-				`<div class="ch-bubble">${renderMarkdown(message.text)}</div>`,
+				renderBubble(message.text),
 				renderMentions(message),
 				`</div>`,
 				`</div>`,
@@ -272,16 +312,53 @@ function renderMessages() {
 		);
 	}
 	el.body.innerHTML = html.join("");
+	// 展开全文（事件委托：消息流每次全量重渲染，逐个绑定会漏）
+	for (const button of el.body.querySelectorAll(".ch-expand")) {
+		button.addEventListener("click", () => {
+			const bubble = button.previousElementSibling;
+			if (bubble === null) return;
+			bubble.dataset.collapsed = "false";
+			button.remove();
+		});
+	}
+}
+
+/**
+ * 正文气泡。
+ *
+ * 长报告（agent 经常一次输出几百行）在聊天流里会把别的消息全挤出屏幕。
+ * 超过 ~28 行就折叠，点「展开全文」再看——和飞书/Slack 的长消息处理一致。
+ */
+function renderBubble(text) {
+	const html = renderMarkdown(text);
+	const lines = (text.match(/\n/g) ?? []).length + 1;
+	const long = lines > 28 || text.length > 1600;
+	if (!long) return `<div class="ch-bubble">${html}</div>`;
+	return [
+		`<div class="ch-bubble" data-collapsed="true">${html}</div>`,
+		`<button class="ch-expand" type="button">展开全文（${lines} 行）</button>`,
+	].join("");
 }
 
 function renderAvatar(message) {
-	const owner = message.from === 0;
-	return [
-		`<span class="avatar ch-avatar" style="--h:${hueFor(message.fromLabel)}" title="${escapeAttr(message.fromLabel)}">`,
-		escapeHtml(initials(message.fromLabel)),
-		owner ? `<i class="ch-owner-dot" title="老板"></i>` : "",
-		`</span>`,
-	].join("");
+	return avatar(message.fromLabel, 32);
+}
+
+/** 日期键：用于插入「今天 / 昨天 / 8月3日」分隔线。 */
+function dayKey(at) {
+	const date = new Date(at);
+	return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+function dayLabel(at) {
+	const date = new Date(at);
+	const today = new Date();
+	const sameDay = (a, b) =>
+		a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+	if (sameDay(date, today)) return "今天";
+	const yesterday = new Date(today.getTime() - 86_400_000);
+	if (sameDay(date, yesterday)) return "昨天";
+	return `${date.getMonth() + 1} 月 ${date.getDate()} 日`;
 }
 
 function renderMsgHead(message) {
@@ -333,7 +410,7 @@ function renderMembers() {
 		.map(
 			(member) => [
 				`<li class="ch-member" data-role="${escapeAttr(member.role)}">`,
-				`<span class="avatar" style="--h:${hueFor(member.label)}">${escapeHtml(initials(member.label))}</span>`,
+				avatar(member.label, 22, "ch-av--sm"),
 				`<span class="ch-member-main">`,
 				`<b>${escapeHtml(member.label)}</b>`,
 				`<span class="ch-member-role">${escapeHtml(roleLabel(member.role))}</span>`,
@@ -443,7 +520,7 @@ function updateMentionPopup() {
 		.map(
 			(candidate) =>
 				`<button type="button" class="ch-mention-item" data-label="${escapeAttr(candidate.label)}">` +
-				`<span class="avatar" style="--h:${hueFor(candidate.label)}">${escapeHtml(initials(candidate.label))}</span>` +
+				avatar(candidate.label, 18, "ch-av--xs") +
 				`<b>${escapeHtml(candidate.label)}</b>` +
 				`<span>${escapeHtml(roleLabel(candidate.role))}</span>` +
 				`</button>`,
@@ -479,6 +556,8 @@ function notify(text, tone = "info") {
 export function initChannels({ onSend } = {}) {
 	el.root = $("channels");
 	if (el.root === null) return { refresh: () => {}, open: () => {} };
+	el.layout = el.root.querySelector(".ch-layout");
+	if (el.layout !== null) el.layout.dataset.pane = "list";
 	el.list = $("ch-list");
 	el.title = $("ch-title");
 	el.sub = $("ch-sub");
@@ -488,6 +567,10 @@ export function initChannels({ onSend } = {}) {
 	el.members = $("ch-members");
 	el.tasks = $("ch-tasks");
 	el.mention = $("ch-mention-popup");
+
+	$("ch-back")?.addEventListener("click", () => {
+		if (el.layout !== null) el.layout.dataset.pane = "list";
+	});
 
 	el.send?.addEventListener("click", () => sendMessage(el.input?.value ?? ""));
 	el.input?.addEventListener("input", onInput);

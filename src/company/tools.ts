@@ -11,6 +11,35 @@ import { defineExtension, defineTool, Type, type Extension } from "../runtime/in
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../runtime/index.ts";
 import type { ManagementRole } from "./docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "./roles.ts";
+import { splitCore } from "./capabilities.ts";
+import { createToolSearchTool } from "./tools/tool-search.ts";
+
+/**
+ * 把非核心工具标成 `deferred: true`。
+ *
+ * 延迟工具**不直接出现在模型面前**，模型需要时用 `tool_search` 找到它
+ * （BM25 检索 → `control.addTools` → 从下一次请求起就长在会话上）。
+ *
+ * 为什么要做：CEO 现在有 25 个工具，每轮真正用的只有 5–6 个。
+ * 工具越多，选错概率越高。分层后核心 12 个、其余按需加载。
+ *
+ * 注意 `deferred` 是**注册属性**，不是在能力包里过滤：
+ * 过滤掉就真的没了，deferred 则「看不见但找得到」。
+ */
+function deferNonCore(tools: readonly ReturnType<typeof defineTool>[]): ReturnType<typeof defineTool>[] {
+	const names = tools.map((tool) => tool.name);
+	const { core } = splitCore(names);
+	const coreSet = new Set(core);
+	const mapped = tools.map((tool) =>
+		coreSet.has(tool.name) ? tool : ({ ...tool, deferred: true } as ReturnType<typeof defineTool>),
+	);
+	// tool_search 必须是核心：没有它，deferred 的工具模型永远拿不到。
+	// 只在确实有延迟工具时才加（否则是个永远搜不到东西的空工具）。
+	if (mapped.some((tool) => tool.deferred === true) && !mapped.some((tool) => tool.name === "tool_search")) {
+		mapped.push(createToolSearchTool() as ReturnType<typeof defineTool>);
+	}
+	return mapped;
+}
 
 /**
  * 项目负责人的执行类工具：让负责人能真正动手（读写项目文件、在项目目录跑命令）。
@@ -78,8 +107,8 @@ export type ManagementToolset = {
 	readonly staffReassign: ReturnType<typeof defineTool>;
 	/** 列出员工。 */
 	readonly staffList: ReturnType<typeof defineTool>;
-	/** 给员工派活。 */
-	readonly staffAssign: ReturnType<typeof defineTool>;
+	/** 建任务并派出去（异步，不等结果）。 */
+	readonly assignTask: ReturnType<typeof defineTool>;
 	/** 归档员工。 */
 	readonly staffArchive: ReturnType<typeof defineTool>;
 	/** 给员工改名。 */
@@ -90,12 +119,8 @@ export type ManagementToolset = {
 	readonly costReport: ReturnType<typeof defineTool>;
 	/** 技术评审。 */
 	readonly reviewArchitecture: ReturnType<typeof defineTool>;
-	/** 给员工派活。 */
-	readonly delegateToStaff: ReturnType<typeof defineTool>;
-	/** 给项目负责人下达任务。 */
-	readonly delegateToLeader: ReturnType<typeof defineTool>;
-	/** 转交另一位管理层。 */
-	readonly delegateToRole: ReturnType<typeof defineTool>;
+	/** 找某人问一句（异步，不等结果）。 */
+	readonly askRole: ReturnType<typeof defineTool>;
 	/** 开一次圆桌讨论。 */
 	readonly roundtable: ReturnType<typeof defineTool>;
 	/** 查圆桌讨论纪要。 */
@@ -125,9 +150,8 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	take_over_pending: "takeOverPending",
 	decide: "decide",
 	review_architecture: "reviewArchitecture",
-	delegate_to_staff: "delegateToStaff",
-	delegate_to_leader: "delegateToLeader",
-	delegate_to_role: "delegateToRole",
+	assign_task: "assignTask",
+	ask_role: "askRole",
 	project_create: "projectCreate",
 	project_plan: "projectPlan",
 	project_list: "projectList",
@@ -137,7 +161,6 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	staff_hire: "staffHire",
 	staff_reassign: "staffReassign",
 	staff_list: "staffList",
-	staff_assign: "staffAssign",
 	staff_archive: "staffArchive",
 	staff_rename: "staffRename",
 	budget_check: "budgetCheck",
@@ -189,15 +212,15 @@ export const PROJECT_LEADER_CHARTER = [
 	"你是某个项目的负责人，处在一个有实权的岗位上：对项目内的人、文件、运行环境负责。",
 	"你的职责：把项目目标拆成可执行的任务，派给项目内员工，跟踪进度，向上汇报；需要时自己动手改文件、跑命令验证。",
 	"你能直接读写本项目工作空间里的文件，并在项目目录执行命令（read / write / edit / bash）——项目里的实际工作与验收证据由你自己确认。",
-	"派活用 staff_assign（先 staff_list 看名册和忙碌状态）；写计划用 project_plan；决定要留痕用 decide。",
+	"派活用 assign_task（必须先 staff_list 看名册）；写计划用 project_plan；决定要留痕用 decide。",
 	"项目状态用 project_status 推进：立项后由你把 planning 改成 active；暂停/恢复用 paused/active；做完改 done。终止项目不归你，要上报。",
 	"员工上报给你的问题会出现在 pending_list 里，用 answer_pending 在授权范围内直接拍板；确实超出项目的再 escalate。",
 	"你只与你的上级和项目内员工沟通，不越级：",
-	"- 需求不明确、验收标准有争议 → escalate，或 delegate_to_role 找 cpo",
-	"- 技术选型、架构、执行环境/工具链故障 → escalate，或 delegate_to_role 找 cto",
-	"- 成本与预算 → escalate，或 delegate_to_role 找 cfo",
-	"- 排期与跨项目协调 → delegate_to_role 找 coo",
-	"- 缺人、要调配人手 → delegate_to_role 找 chro",
+	"- 需求不明确、验收标准有争议 → escalate，或 ask_role 找 cpo",
+	"- 技术选型、架构、执行环境/工具链故障 → escalate，或 ask_role 找 cto",
+	"- 成本与预算 → escalate，或 ask_role 找 cfo",
+	"- 排期与跨项目协调 → ask_role 找 coo",
+	"- 缺人、要调配人手 → ask_role 找 chro",
 	"你不替管理层做公司级决定：立项、终止项目、招聘、改别人项目都不在你手上。",
 	"回答「我能不能改代码 / 能不能执行命令」这类问题之前，先调用 my_capabilities 看真实工具清单，或实际试一次；不要凭记忆或旧台账下结论，工具可能已经变了。",
 	"不要启动、停止或重启平台服务，也不要另起一个平台实例：平台是单进程单库，第二个实例会与正在跑的服务抢同一个库并把服务弄崩。要验证执行能力，用项目内的无害命令（不要碰平台进程与端口）。",
@@ -211,7 +234,7 @@ export const PROJECT_LEADER_EXTENSION_NAME = "role-leader";
 /**
  * 项目负责人的能力包。
  *
- * 旧版本立项时没有给负责人装任何能力包，导致他连 staff_assign 都没有，
+ * 旧版本立项时没有给负责人装任何能力包，导致他连 assign_task 都没有，
  * 只能空转、被管理层绕过——这是「负责人不参与」的结构性原因。
  *
  * 现在他同时拿两类能力：
@@ -241,13 +264,13 @@ export function createProjectLeaderExtension(
 		"pending_list",
 		"answer_pending",
 		"dispose_pending",
-		"delegate_to_staff",
-		"delegate_to_role",
+		"assign_task",
+		"ask_role",
 		"project_plan",
 		"project_list",
 		"project_status",
 		"staff_list",
-		"staff_assign",
+
 	];
 
 	const selected = capabilityNames
@@ -267,7 +290,7 @@ export function createProjectLeaderExtension(
 				return { key: "guide", tag: false, render: () => guide };
 			})(),
 		],
-		tools: [...selected, ...executionTools],
+		tools: deferNonCore([...selected, ...executionTools]),
 	});
 }
 
@@ -323,7 +346,7 @@ export function createProjectLeaderReadOnlyExtension(tools: ManagementToolset): 
 				return { key: "guide", tag: false, render: () => guide };
 			})(),
 		],
-		tools: selected,
+		tools: deferNonCore(selected),
 	});
 }
 
@@ -369,7 +392,7 @@ export function createEmployeeExtension(
 					].join("\n"),
 			},
 		],
-		tools: [...universalTools, ...employeeTools],
+		tools: deferNonCore([...universalTools, ...employeeTools]),
 	});
 }
 

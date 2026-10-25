@@ -12,7 +12,7 @@ import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtim
 import {
 	digestFor,
 	hasMember,
-	oneLine,
+	previewLine,
 	type Channel,
 	type ChannelMessage,
 	type ChannelState,
@@ -101,7 +101,7 @@ export async function listChannels(
 			...(channel.project === undefined ? {} : { project: channel.project }),
 			unread,
 			mentions,
-			preview: last === undefined ? "" : oneLine(last.text, 80),
+			preview: last === undefined ? "" : previewLine(last.text, 80),
 			// 空频道给 0：界面显示「—」而不是「60 分钟前」（createdAt 是启动时刻，没有意义）
 			lastAt: last?.at ?? 0,
 			lastSeq: channel.lastSeq,
@@ -110,8 +110,22 @@ export async function listChannels(
 		});
 	}
 
-	// 排序：有 @ 的在前，然后按最后消息时间倒序
-	items.sort((left, right) => right.mentions - left.mentions || right.lastAt - left.lastAt);
+	// 排序：先按频道类型的固定次序（公司 → 领导层 → 项目 → 私聊 → 记录），
+	// 同类型里「有 @ 的在前，然后按最后消息时间倒序」。
+	// 固定类型次序很重要：用户找「公司大群」永远在最上面，不会因为别人说了句话就跳走。
+	const kindRank: Record<Channel["kind"], number> = {
+		company: 0,
+		leadership: 1,
+		project: 2,
+		dm: 3,
+		log: 4,
+	};
+	items.sort(
+		(left, right) =>
+			kindRank[left.kind] - kindRank[right.kind] ||
+			right.mentions - left.mentions ||
+			right.lastAt - left.lastAt,
+	);
 	return items;
 }
 

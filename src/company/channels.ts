@@ -16,6 +16,8 @@
 import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import {
 	appendMessage,
+	dmChannelId,
+	OWNER_ID,
 	createChannel,
 	emptyChannelState,
 	hasMember,
@@ -129,6 +131,14 @@ export async function postToChannel(
 	const context = options.context ?? BACKGROUND_CONTEXT;
 
 	const { org } = await readOrg(runtime, context);
+	// 频道不存在时先补齐（旧库 / 测试直接 boot 没跑 ensureAllChannels）：
+	// 静默失败比抛错更糟——消息会凭空消失。所以先自愈，还不行才抛。
+	{
+		const existing = await readChannels(runtime, context);
+		if (existing.channels[channelId] === undefined) {
+			await ensureAllChannels(runtime, context);
+		}
+	}
 	const result = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const next = appendMessage(doc as ChannelState, channelId, input);
@@ -330,7 +340,11 @@ export async function joinChannel(
 	}, context);
 }
 
-/** 归档一个频道（项目删除时用）。 */
+/**
+ * 归档一个频道（项目删除、脏数据清理时用）。
+ *
+ * 不再出现在列表里，但历史保留——删了就没了，而频道里可能已经有真实对话。
+ */
 export async function archiveChannel(
 	runtime: CompanyRuntime,
 	channelId: string,
@@ -418,8 +432,35 @@ export async function ensureAllChannels(
 		);
 	}
 
-	// 4) 个人工作记录：每个会话一个
+	// 4) 私聊：老板 ↔ 每个人一条（老板 + 对方两人）
+	//
+	// 为什么必须有：老板要能在**任何地方**派任务（ADR-030 决策 4）。
+	// 私聊是最直接的那个「任何地方」——不用先想「这事该在哪个群说」。
+	// 而且私聊里**不用 @**（见 domain/channels.ts 的 resolveMentions）：
+	// 两个人说话，说给谁听是显然的。
 	for (const person of org.people) {
+		// 老板自己不是「和老板的私聊」——那会多出一个跟自己说话的频道。
+		if (person.archived === true || person.conversationId === OWNER_ID) continue;
+		await ensureChannel(
+			runtime,
+			{
+				id: dmChannelId(person.conversationId),
+				kind: "dm",
+				title: person.label,
+				// 老板也必须在成员里：否则对方在私聊里回话时，老板不算「频道成员」，
+				// 未读数/@ 都会漏掉（老板要能在这个会话里看到回应）。
+				members: [
+					{ conversationId: OWNER_ID, role: "owner", wakeOnAll: true },
+					{ conversationId: person.conversationId, role: person.role, wakeOnAll: true },
+				],
+			},
+			context,
+		);
+	}
+
+	// 5) 个人工作记录：每个会话一个（老板不是 agent，没有工作记录）
+	for (const person of org.people) {
+		if (person.conversationId === OWNER_ID) continue;
 		await ensureChannel(
 			runtime,
 			{
@@ -430,6 +471,11 @@ export async function ensureAllChannels(
 			},
 			context,
 		);
+	}
+
+	// 6) 清理：老板和自己的私聊是旧版本留下的脏数据，归档掉
+	if (before.channels[dmChannelId(OWNER_ID)] !== undefined) {
+		await archiveChannel(runtime, dmChannelId(OWNER_ID), context);
 	}
 
 	const after = await readChannels(runtime, context);

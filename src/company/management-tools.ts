@@ -15,6 +15,7 @@ import {
 } from "./docs.ts";
 import { createRoundtableTools } from "./roundtable-tools.ts";
 import { createUniversalTools } from "./tools/universal.ts";
+import { createDispatchTools } from "./tools/dispatch.ts";
 import {
 	archiveStaff,
 	createProject,
@@ -143,6 +144,8 @@ export function createManagementTools(deps: ToolDependencies) {
 	// 通用工具（say / ask / read_channel / inbox / task_* / whoami）：
 	// 每个 agent 都该有，所以在这里统一构造，随 ManagementToolset 一起下发。
 	const universal = createUniversalTools({ runtime });
+	// 派活工具（异步版）：assign_task / ask_role / project_create
+	const dispatch = createDispatchTools({ runtime });
 
 	const orgTree = defineTool({
 		name: "org_tree",
@@ -192,11 +195,18 @@ export function createManagementTools(deps: ToolDependencies) {
 			const conversation = await runtime.harness.conversation(Number(api.conversationId) as never, BACKGROUND_CONTEXT);
 			const agent = await conversation?.agent(BACKGROUND_CONTEXT);
 			if (agent === undefined) return text("找不到当前会话的配置。");
-			const names = agent.tools.map((tool) => tool.name);
+			// 直接可用的 + 延迟加载的都要算：延迟工具虽然当前没出现在面前，
+			// 但用 tool_search 能找到，属于「能做」。漏掉它们会让模型误报「没有这个能力」。
+			const direct = agent.tools.map((tool) => tool.name);
+			const deferred = agent.deferred.map((tool) => tool.name);
+			const names = [...direct, ...deferred];
 			return text(
 				[
 					`工作目录：${agent.cwd ?? "（无）"}`,
 					`可用工具（${names.length} 个）：${names.join("、")}`,
+					deferred.length === 0
+						? ""
+						: `其中 ${deferred.length} 个按需加载（用 tool_search 搜索后即可调用）：${deferred.join("、")}`,
 					"判断能否做某件事，以这份清单为准；清单里没有的能力，如实说「没有」并上报，不要猜。",
 					"提醒：平台是单进程单库。不要启动第二个平台实例或重启服务，那会让当前服务崩溃。",
 				].join("\n"),
@@ -368,61 +378,6 @@ export function createManagementTools(deps: ToolDependencies) {
 		},
 	});
 
-	const projectCreate = defineTool({
-		name: "project_create",
-		description: "立项：创建工作空间目录、写立项文档、建立项目负责人。",
-		parameters: Type.Object({
-			name: Type.String({ description: "项目显示名，可以是中文" }),
-			slug: Type.String({
-				description: "目录标识，必须是小写英文字母/数字/连字符，例如 tank-battle",
-			}),
-			brief: Type.String({ description: "需求摘要：要做什么、给谁用" }),
-			acceptance: Type.Optional(Type.String({ description: "验收标准" })),
-			leaderName: Type.Optional(
-				Type.String({ description: "项目负责人的名字，起一个具体的人名比「负责人」更好辨认" }),
-			),
-		}),
-		execute: async (args) => {
-			// 幂等：同名项目已存在时复用，不重复建目录、不重新立项
-			const existing = await readCompany(runtime, BACKGROUND_CONTEXT);
-			const already = existing?.projects[args.slug];
-			if (already !== undefined) {
-				return text(
-					[
-						`项目已存在，无需重复立项：${already.name}（slug: ${already.slug}）`,
-						`目录：${already.workspace}`,
-						`项目负责人会话：${already.leader}`,
-						"下一步：让 CHRO 用这个 slug 为项目配置员工。",
-					].join("\n"),
-				);
-			}
-
-			// 负责人能力包由 createProject 从装配层登记的工具集里解析，
-			// 这里不需要传（见 org.ts 的 LEADER_TOOLSETS）。
-			const { project } = await createProject(
-				runtime,
-				{
-					name: args.name,
-					slug: args.slug,
-					brief: args.brief,
-					workspaceRoot: deps.workspaceRoot,
-					...(args.acceptance === undefined ? {} : { acceptance: args.acceptance }),
-					...(args.leaderName === undefined ? {} : { leaderName: args.leaderName }),
-				},
-				BACKGROUND_CONTEXT,
-			);
-			return text(
-				[
-					`项目已立项：${project.name}`,
-					`slug：${project.slug}（请让 CHRO 用这个值招人）`,
-					`目录：${project.workspace}`,
-					`项目负责人会话：${project.leader}`,
-					"下一步：让 CHRO 为项目配置员工；之后所有派活都交给项目负责人，",
-					"管理层不要直接指挥项目内员工（那是负责人的事）。",
-				].join("\n"),
-			);
-		},
-	});
 
 	/** 终止项目：停掉全部在跑的活，归档员工，标记项目结束。 */
 	const projectTerminate = defineTool({
@@ -647,49 +602,6 @@ export function createManagementTools(deps: ToolDependencies) {
 		},
 	});
 
-	/** 给员工派活（与 delegate_to_staff 等价，但参数命名更直白）。 */
-	const staffAssign = defineTool({
-		name: "staff_assign",
-		description: [
-			"给项目的某名员工派一个任务，等它做完并返回结果。employee 必须与 staff_list 里「员工名」完全一致。",
-			"管理层注意：项目内员工的日常派活应该交给该项目的负责人，你只在负责人缺位或老板直接要求时亲自下场。",
-		].join(""),
-		parameters: Type.Object({
-			project: Type.String({ description: "项目 slug，与 staff_list 里的项目一致" }),
-			employee: Type.String({ description: "员工名，必须与 staff_list 显示的完全一致" }),
-			task: Type.String({ description: "要它做的事：越具体越好，说明交付物" }),
-		}),
-		execute: async (args, api, context) => {
-			if (deps.delegate === undefined) return text("派活通道未启用。");
-
-			// 先校验员工存在，给出可操作的错误，避免模型反复试错
-			const staff = await listStaff(runtime, args.project, BACKGROUND_CONTEXT);
-			if (staff.length === 0) {
-				return text(`项目 ${args.project} 里没有任何员工。请先用 staff_list 确认项目 slug，或让 CHRO 配人。`);
-			}
-			const target = staff.find((person) => person.name === args.employee);
-			if (target === undefined) {
-				return text(
-					[
-						`项目 ${args.project} 里没有名为「${args.employee}」的员工。`,
-						`现有员工：${staff.map((person) => person.name).join("、")}`,
-						"请用上面列出的名字重新派活。",
-					].join("\n"),
-				);
-			}
-
-			return text(
-				await deps.delegate({
-					project: args.project,
-					employee: target.name,
-					task: args.task,
-					fromConversationId: Number(api.conversationId),
-					from: "管理层",
-					context,
-				}),
-			);
-		},
-	});
 
 	const staffArchive = defineTool({
 		name: "staff_archive",
@@ -792,78 +704,8 @@ export function createManagementTools(deps: ToolDependencies) {
 		},
 	});
 
-	/** 给项目内某个员工派活。 */
-	const delegateToStaff = defineTool({
-		name: "delegate_to_staff",
-		description: "给某个项目的员工派一个任务并等它答复。",
-		parameters: Type.Object({
-			project: Type.String({ description: "项目 slug" }),
-			employee: Type.String({ description: "员工名" }),
-			task: Type.String({ description: "要它做的事，越具体越好" }),
-		}),
-		execute: async (args, api, context) => {
-			if (deps.delegate === undefined) return text("派活通道未启用。");
-			return text(
-				await deps.delegate({
-					project: args.project,
-					employee: args.employee,
-					task: args.task,
-					fromConversationId: Number(api.conversationId),
-					from: "管理层",
-					context,
-				}),
-			);
-		},
-	});
 
-	/** 给项目负责人下达任务（管理层 → 负责人，负责人再往下派给员工）。 */
-	const delegateToLeader = defineTool({
-		name: "delegate_to_leader",
-		description: [
-			"把一项工作下达给某个项目的负责人，等它安排并汇报结果。",
-			"**管理层推进项目工作的默认方式**：你给负责人目标与约束，负责人拆任务、派给员工、验收后回报。",
-			"不要绕过负责人直接指挥项目内员工——那样负责人会被架空，进度与责任都没人兜。",
-		].join(""),
-		parameters: Type.Object({
-			project: Type.String({ description: "项目 slug，先用 project_list 确认" }),
-			task: Type.String({
-				description: "要交付什么、验收口径、硬性约束。负责人据此拆活，越具体越少返工",
-			}),
-		}),
-		execute: async (args, api, context) => {
-			if (deps.delegateToLeader === undefined) return text("下达通道未启用。");
-			return text(
-				await deps.delegateToLeader({
-					project: args.project,
-					task: args.task,
-					fromConversationId: Number(api.conversationId),
-					context,
-				}),
-			);
-		},
-	});
 
-	/** 给另一位管理层同级转交。 */
-	const delegateToRole = defineTool({
-		name: "delegate_to_role",
-		description:
-			"把一件事转交给另一位管理层（同级协作，不是上报）。会等它处理完并返回它的回复摘要。有先后依赖时必须一次只转交一个，拿到结果再决定下一步。",
-		parameters: Type.Object({
-			role: Type.String({ description: "目标岗位：cto/cfo/cpo/coo/cmo/chro" }),
-			task: Type.String({ description: "要它做的事" }),
-		}),
-		execute: async (args, api, context) => {
-			if (deps.delegateToRole === undefined) return text("转交通道未启用。");
-			return text(
-				await deps.delegateToRole({
-					role: args.role,
-					task: args.task,
-					fromConversationId: Number(api.conversationId),
-					context,
-				}),
-			);
-		},
-	});
 
 	return {
 		// 通用
@@ -885,11 +727,10 @@ export function createManagementTools(deps: ToolDependencies) {
 		takeOverPending,
 		answerPending,
 		reviewArchitecture,
-		delegateToStaff,
-		delegateToLeader,
-		delegateToRole,
+		assignTask: dispatch.assignTask,
+		askRole: dispatch.askRole,
+		projectCreate: dispatch.projectCreate,
 		decide,
-		projectCreate,
 		projectPlan,
 		projectList,
 		projectStatusSet,
@@ -898,7 +739,6 @@ export function createManagementTools(deps: ToolDependencies) {
 		staffHire,
 		staffReassign,
 		staffList,
-		staffAssign,
 		staffArchive,
 		staffRename,
 		budgetCheck,
