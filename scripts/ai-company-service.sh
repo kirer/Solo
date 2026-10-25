@@ -13,6 +13,7 @@
 #   ./scripts/ai-company-service.sh restart    # 重启（保留数据与在途任务）
 #   ./scripts/ai-company-service.sh status     # 看进程 / 端口 / 健康 / 待你拍板数量
 #   ./scripts/ai-company-service.sh logs       # 跟踪日志（Ctrl+C 退出跟踪，不影响服务）
+#   ./scripts/ai-company-service.sh rotate-logs # 轮转 server.log / server.err.log（copytruncate，不重启服务）
 #   ./scripts/ai-company-service.sh open       # 只打开页面
 #
 # 安装成全局命令（已装好之后就不需要这一步）：
@@ -413,6 +414,36 @@ do_logs() {
     tail -n 40 -f "$OUT_LOG" "$ERR_LOG" 2>/dev/null
 }
 
+# 日志轮转（D-03）：server.log / server.err.log 由 launchd 直接持有 fd 写入，
+# 我们拿不到写入点，所以不能用「改名」的方式轮转（改名后 launchd 仍往被改名的
+# inode 写，新的 server.err.log 永远是空的）。这里用 copytruncate：
+#   先 cp 成 .1（保留一份历史），再 : > 原文件清空。fd 不变，写入不丢。
+# app.log 不在这里处理：它由 event-log.ts 自管（按 5MB 滚 .1），两边不要互相踩。
+MAX_LOG_BYTES=$(( 5 * 1024 * 1024 ))
+
+do_rotate_logs() {
+    mkdir -p "$LOG_DIR"
+    local f size rotated=0
+    for f in "$OUT_LOG" "$ERR_LOG"; do
+        [ -f "$f" ] || continue
+        size=$(wc -c < "$f" 2>/dev/null | tr -d ' ')
+        [ -n "$size" ] || continue
+        if [ "$size" -lt "$MAX_LOG_BYTES" ]; then
+            continue
+        fi
+        if cp -p "$f" "$f.1" 2>/dev/null && : > "$f" 2>/dev/null; then
+            ok "已轮转 $(basename "$f")（${size} 字节 → $(basename "$f").1）"
+            rotated=1
+        else
+            warn "轮转 $(basename "$f") 失败（跳过，不影响服务）"
+        fi
+    done
+    if [ "$rotated" -eq 0 ]; then
+        say "  无需轮转（阈值 $MAX_LOG_BYTES 字节）"
+    fi
+    return 0
+}
+
 case "$(basename "$0")" in
     ai-company-start) CMD=start ;;
     ai-company-stop)  CMD=stop ;;
@@ -424,9 +455,10 @@ case "$CMD" in
     restart|r) do_restart ;;
     status|s) show_status ;;
     logs|log) do_logs ;;
+    rotate-logs) do_rotate_logs ;;
     open)     open_page ;;
     *)
-        say "用法：$(basename "$0") {start|stop|restart|status|logs|open}"
+        say "用法：$(basename "$0") {start|stop|restart|status|logs|rotate-logs|open}"
         exit 2
         ;;
 esac

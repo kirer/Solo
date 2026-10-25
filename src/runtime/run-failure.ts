@@ -47,6 +47,16 @@ export type TaskFailure = {
 	readonly message: string;
 	/** 结构化原因（`outcome.error.detail.reason`，模型失败时是 `model_error`）。 */
 	readonly reason?: string;
+	/**
+	 * 工具失败的真实原因（`entry.data.diagnostics[].message`）。
+	 *
+	 * 为什么需要它（D-03/D-04）：工具抛错时底层把 `outcome.error.message` 固定写成
+	 * `Tool ${name} threw`（`pi-durable/dist/harness/tool.js:328`），真正的异常文本
+	 * 被放进了**工具结果条目**的 diagnostics。实测 task 271 的日志只有
+	 * `271: Tool read threw`，而 diagnostics 里明明白白是
+	 * `EISDIR: illegal operation on a directory, read`——不把它取出来，日志永远等于没说。
+	 */
+	readonly diagnostic?: string;
 };
 
 /** 单页最多读多少条终态任务。 */
@@ -93,13 +103,58 @@ export function taskFailureOf(record: {
 	};
 }
 
+/**
+ * 从工具结果条目里抽出第一条 error 级诊断的正文。
+ *
+ * 条目形状（实测 task 271 → entry 273）：
+ * `{ kind: "pi.tool-result", data: { diagnostics: [{ severity, code, message }] } }`。
+ * 任何形状不符都返回 undefined（尽力而为，不能因为它把巡检搞挂）。
+ */
+export function diagnosticOf(entry: unknown): string | undefined {
+	const data = (entry as { data?: { diagnostics?: unknown } } | undefined)?.data;
+	const diagnostics = data?.diagnostics;
+	if (!Array.isArray(diagnostics)) return undefined;
+	for (const item of diagnostics) {
+		const message = (item as { message?: unknown } | undefined)?.message;
+		if (typeof message === "string" && message !== "") return message;
+	}
+	return undefined;
+}
+
+/**
+ * 取出一次失败任务的工具诊断正文（仅在任务带 `result.entryId` 时才去读条目）。
+ *
+ * 为什么单独一步而不是并到 `taskFailureOf` 里：`taskFailureOf` 是**纯函数**、只看 record，
+ * 测试好写；而这一步要读另一个表。拆开后纯函数不变，只有需要时才付一次读取代价。
+ */
+export async function toolDiagnosticOf(
+	record: { readonly state?: { readonly outcome?: unknown } },
+	read: (entryId: number) => Promise<unknown>,
+): Promise<string | undefined> {
+	const outcome = (record.state as { outcome?: { status?: string; result?: { entryId?: unknown } } } | undefined)?.outcome;
+	if (outcome?.status !== "failed") return undefined;
+	const entryId = outcome.result?.entryId;
+	if (typeof entryId !== "number") return undefined;
+	try {
+		return diagnosticOf(await read(entryId));
+	} catch {
+		return undefined;
+	}
+}
+
 /** 把一次任务失败翻成落盘报告。用真实 taskId，与既有 `[任务出错] <id>: <err>` 口径一致。 */
 export function reportForTaskFailure(failure: TaskFailure): RuntimeReport {
+	// 有工具诊断时拼在后面：`Tool read threw` 本身不含任何可行动信息，
+	// `EISDIR: illegal operation on a directory, read` 才是要修的。
+	const error =
+		failure.diagnostic === undefined || failure.diagnostic === failure.message
+			? failure.message
+			: `${failure.message}（原因：${failure.diagnostic}）`;
 	return {
 		kind: "task-failed",
 		taskId: String(failure.taskId),
 		taskKind: failure.taskKind,
-		error: failure.message,
+		error,
 	};
 }
 
@@ -121,7 +176,8 @@ export type FailureScanner = {
  * 正好漏掉我们要的终态 failed。所以走 `Storage.scanTasks`。
  */
 export function createFailureScanner(
-	storage: Pick<Storage, "scanTasks">,
+	// `entry` 可选：只有需要取工具诊断时才读条目（见 toolDiagnosticOf）。
+	storage: Pick<Storage, "scanTasks" | "entry">,
 	onReport: ((report: RuntimeReport) => void) | undefined,
 ): FailureScanner {
 	let watermark = 0;
@@ -158,7 +214,14 @@ export function createFailureScanner(
 					if (entry.id <= watermark) continue;
 					const failure = taskFailureOf(entry.record as never);
 					if (failure !== undefined) {
-						onReport(reportForTaskFailure(failure));
+						// 尽力补一条工具诊断（真实原因），失败就当没有，不影响上报。
+						const diagnostic = await toolDiagnosticOf(entry.record as never, async (entryId) => {
+							// storage 没有 entry（老 fake / 未来接口变动）时当作取不到，不抛。
+							if (typeof storage.entry !== "function") return undefined;
+							const found = await storage.entry(entryId as never, context);
+							return found?.entry;
+						});
+						onReport(reportForTaskFailure({ ...failure, ...(diagnostic === undefined ? {} : { diagnostic }) }));
 						reported += 1;
 					}
 					// 不是失败也要推进水位：否则每轮都会重扫同一批终态任务。

@@ -21,6 +21,9 @@ import { dirname, join } from "node:path";
 /** 轮转阈值：单文件超过 5MB 就滚一份历史。 */
 const DEFAULT_MAX_BYTES = 5 * 1024 * 1024;
 
+/** 错误日志携带的堆栈帧数。3 帧辐到错在哪一行；再多是噪音（且会把单行拉得很长）。 */
+const DEFAULT_STACK_FRAMES = 3;
+
 let configuredPath: string | null = null;
 let maxBytes = DEFAULT_MAX_BYTES;
 
@@ -58,27 +61,76 @@ function rotateIfNeeded(path: string): void {
 /**
  * 追加一条事件。
  *
+ * **落盘与 stderr 各管一摊**（D-03）：
+ * - 已配置落盘时：只写 app.log（应用事件的正本）。
+ * - 未配置落盘时：才写 stderr，保证信息不丢。
+ *
+ * 为什么不再双写：launchd 的 `StandardErrorPath` 就是 `server.err.log`（见
+ * scripts/ai-company-service.sh 的 write_plist）。旧实现把**同一行**又写 app.log
+ * 又写 stderr，结果两个文件逐字节相同（实测 md5 都是 70ec0a1d…），
+ * 既浪费一倍磁盘，也让「err.log 应该只有异常」这个预期失效——
+ * 巡检时无法从 err.log 里分辨哪些是异常、哪些只是普通事件。
+ * 现在：app.log = 应用事件，server.err.log = 真正的 stderr（启动讯息、未捕获异常、落盘失败）。
+ *
  * @param tag  事件前缀，例如 `[任务受阻]`。保持与 stderr 文案一致，便于比对。
  * @param rest 其余文本（可为空）。
  */
 export function writeEvent(tag: string, rest = ""): void {
 	const line = `${new Date().toISOString()} ${tag}${rest === "" ? "" : ` ${rest}`}\n`;
-	// 先落盘（可能失败），再写 stderr（几乎不会失败）——顺序无关，但两者都独立。
 	if (configuredPath !== null) {
 		const path = configuredPath;
 		try {
 			rotateIfNeeded(path);
 			appendFileSync(path, line, "utf8");
+			return; // 已入正本，不再重复写 stderr
 		} catch (error) {
-			// 落盘失败：把原因也告诉终端，同时让业务继续。
-			process.stderr.write(`${tag}${rest === "" ? "" : ` ${rest}`}\n`);
-			process.stderr.write(`[日志落盘失败] ${String(error)}\n`);
+			// 落盘失败：事件只能去 stderr（此时它是唯一的出口），并附上失败原因。
+			process.stderr.write(line);
+			process.stderr.write(`[日志落盘失败] ${formatError(error)}\n`);
 			return;
 		}
 	}
+	// 未配置落盘（测试 / 嵌入式使用）：退化为 stderr，保持旧行为。
 	process.stderr.write(line);
 }
 
+
+/**
+ * 把任意 `error: unknown` 摊成「一行有信息量的文本」。
+ *
+ * 背景（D-03/D-04）：`String(report.error)` 对 `Error` 只会得到 `"Error: <message>"`，
+ * 对**字符串**（`run-failure.ts` 传的就是 `outcome.error.message`）原样回显。
+ * 实测 app.log 13 行全是 `[任务出错] 271: Tool read threw`——连真正的失败原因都没有。
+ *
+ * 真正的原因在库里是**有的**（实测 task 271 的工具结果带
+ * `diagnostics[0].message = "EISDIR: illegal operation on a directory, read"`），
+ * 只是 `tool.js` 把 `outcome.error.message` 固定写成了 `Tool ${name} threw`。
+ * 所以这里：字符串照旧可用，`Error` 带上 message + 前几帧堆栈。
+ */
+export function formatError(error: unknown, stackFrames = DEFAULT_STACK_FRAMES): string {
+	if (error instanceof Error) {
+		const head = `${error.name}: ${error.message}`;
+		const frames = topStackFrames(error.stack, stackFrames);
+		return frames.length === 0 ? head : `${head} @ ${frames.join(" <- ")}`;
+	}
+	if (typeof error === "string") return error;
+	try {
+		return JSON.stringify(error);
+	} catch {
+		return String(error);
+	}
+}
+
+/** 堆栈里 `at ...` 的前 N 帧，压成一行（落盘是单行格式，多行会打乱 grep）。 */
+export function topStackFrames(stack: string | undefined, limit = DEFAULT_STACK_FRAMES): string[] {
+	if (stack === undefined || stack === "") return [];
+	return stack
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.startsWith("at "))
+		.slice(0, limit)
+		.map((line) => line.slice(3)); // 去掉 `at ` 前缀，省点宽度
+}
 
 /**
  * 把运行时上报翻译成「事件前缀 + 正文」。
@@ -96,13 +148,14 @@ export function describeReport(report: {
 }): { readonly tag: string; readonly rest: string } | undefined {
 	switch (report.kind) {
 		case "runtime-failed":
-			return { tag: "[运行时失效]", rest: String(report.error) };
+			return { tag: "[运行时失效]", rest: formatError(report.error) };
 		case "task-parked":
 			return { tag: "[任务受阻]", rest: `${report.taskId} (${report.taskKind})` };
 		case "task-failed":
-			return { tag: "[任务出错]", rest: `${report.taskId}: ${String(report.error)}` };
+			// 带上 taskKind：光看 taskId 分不清是模型失败还是工具失败。
+			return { tag: "[任务出错]", rest: `${report.taskId} (${report.taskKind}): ${formatError(report.error)}` };
 		case "extension-failed":
-			return { tag: "[能力包出错]", rest: String(report.extension) };
+			return { tag: "[能力包出错]", rest: `${report.extension}: ${formatError(report.error)}` };
 		default:
 			// other / 未知：原实现就没有输出，这里保持一致——不落盘也不打屏。
 			return undefined;

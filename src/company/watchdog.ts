@@ -175,6 +175,11 @@ export async function runWatchdogPass(
 	// 幂等（水位去重），重启后也不丢。扫表失败不影响巡检。
 	await runtime.scanTaskFailures(context).catch(() => 0);
 
+	// ①'' D-01：顺带把 WAL 收一次（TRUNCATE），否则常驻进程永远等不到 close() 里那次 checkpoint，
+	// -wal 会一直停在 autocheckpoint 上限（实测 4.16MB）。见 src/runtime/wal.ts。
+	// 失败不影响巡检：它只是维护动作，结果不进 alerts。
+	await runtime.checkpoint().catch(() => undefined);
+
 	const inspection = await runtime.harness.inspect(context);
 	// 观察起点：任务的 startedAt 可能来自上一次进程，超期只从「我们真正开始看它」算。
 	const observedAt = new Map<string, number>();

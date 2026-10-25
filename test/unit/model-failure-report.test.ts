@@ -19,7 +19,13 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { BACKGROUND_CONTEXT, createRegistry, openCompany, recover, type CompanyRuntime, type RuntimeReport } from "../../src/runtime/index.ts";
-import { createFailureScanner, reportForTaskFailure, taskFailureOf } from "../../src/runtime/run-failure.ts";
+import {
+	createFailureScanner,
+	diagnosticOf,
+	reportForTaskFailure,
+	taskFailureOf,
+	toolDiagnosticOf,
+} from "../../src/runtime/run-failure.ts";
 import { bootstrapCompany } from "../../src/company/org.ts";
 import { serve } from "../../src/server/http.ts";
 import { configureEventLog, describeReport, eventLogPath, writeEvent } from "../../src/server/event-log.ts";
@@ -86,14 +92,16 @@ describe("reportForTaskFailure：用真实 taskId（审计 R-03）", () => {
 		});
 	});
 
-	test("经 describeReport 变成 [任务出错] <id>: <err>", () => {
+	test("经 describeReport 变成 [任务出错] <id> (<kind>): <err>", () => {
+		// D-03：正文加了 taskKind——光看 taskId 分不清是模型失败还是工具失败，
+		// 而巡检最常问的正是这一句（实测 13 行 `Tool read threw` 全是工具失败）。
 		const event = describeReport({
 			kind: "task-failed",
 			taskId: "53",
 			taskKind: "pi.generation",
 			error: "OpenAI API error (401) invalid_api_key",
 		});
-		expect(event).toEqual({ tag: "[任务出错]", rest: "53: OpenAI API error (401) invalid_api_key" });
+		expect(event).toEqual({ tag: "[任务出错]", rest: "53 (pi.generation): OpenAI API error (401) invalid_api_key" });
 	});
 });
 
@@ -186,7 +194,8 @@ describe("端到端：老板发消息（now 档主路径）撞 401", () => {
 		expect(content).toContain("OpenAI API error (401) invalid_api_key");
 		// 真实任务号（数字），不是伪造的 submission#N
 		expect(content).not.toContain("submission#");
-		expect(content).toMatch(/\[任务出错\] \d+: OpenAI API error \(401\)/);
+		// D-03：现在带上 taskKind，格式是 `[任务出错] <id> (<kind>): <err>`
+		expect(content).toMatch(/\[任务出错\] \d+ \(pi\.generation\): OpenAI API error \(401\)/);
 	}, 40_000);
 
 	test("不挂悬空 Promise：提交后运行时能干净关闭（审计 R-01 护栏）", async () => {
@@ -278,5 +287,108 @@ describe("扫描分页：终态任务多于一页时，新失败仍必须被报�
 		expect(reported.map((report) => (report as { taskId?: string }).taskId).sort()).toEqual(["3", "449"]);
 		// 水位已推进到最新：再扫不重报
 		expect(await scanner.scan(BACKGROUND_CONTEXT)).toBe(0);
+	});
+});
+
+/**
+ * D-03/D-04 回归：工具抛错时，日志必须给出**真实原因**，而不只是 `Tool read threw`。
+ *
+ * 真实现象（workspace/logs/app.log，13 行全是这样）：
+ *   `[任务出错] 271: Tool read threw`
+ * 底层 `pi-durable/dist/harness/tool.js:328` 把 `outcome.error.message` 固定写成
+ * `Tool ${name} threw`，真实异常文本被放进**工具结果条目**的
+ * `data.diagnostics[].message`（实测 task 271 → entry 273：
+ * `"EISDIR: illegal operation on a directory, read"`）。
+ */
+describe("工具失败：把 diagnostics 里的真实原因带进日志（D-03/D-04）", () => {
+	const failedToolRecord = {
+		id: 271,
+		kind: "pi.tool",
+		conversationId: 191,
+		state: {
+			status: "terminal",
+			outcome: {
+				status: "failed",
+				error: { message: "Tool read threw" },
+				result: { kind: "model", entryId: 273 },
+			},
+		},
+	};
+
+	test("diagnosticOf：从工具结果条目抽出第一条 diagnostics 正文", () => {
+		expect(
+			diagnosticOf({
+				kind: "pi.tool-result",
+				data: { diagnostics: [{ severity: "error", code: "tool_error", message: "EISDIR: illegal operation on a directory, read" }] },
+			}),
+		).toBe("EISDIR: illegal operation on a directory, read");
+	});
+
+	test("diagnosticOf：形状不符/为空时不炸，返回 undefined", () => {
+		expect(diagnosticOf(undefined)).toBeUndefined();
+		expect(diagnosticOf({})).toBeUndefined();
+		expect(diagnosticOf({ data: {} })).toBeUndefined();
+		expect(diagnosticOf({ data: { diagnostics: [] } })).toBeUndefined();
+		expect(diagnosticOf({ data: { diagnostics: [{ message: "" }] } })).toBeUndefined();
+	});
+
+	test("toolDiagnosticOf：按 outcome.result.entryId 去读条目", async () => {
+		const read = async (entryId: number) =>
+			entryId === 273
+				? { kind: "pi.tool-result", data: { diagnostics: [{ message: "EISDIR: illegal operation on a directory, read" }] } }
+				: undefined;
+		expect(await toolDiagnosticOf(failedToolRecord as never, read)).toBe(
+			"EISDIR: illegal operation on a directory, read",
+		);
+	});
+
+	test("toolDiagnosticOf：读条目抛错时不影响上报（返回 undefined）", async () => {
+		expect(
+			await toolDiagnosticOf(failedToolRecord as never, async () => {
+				throw new Error("storage boom");
+			}),
+		).toBeUndefined();
+	});
+
+	test("reportForTaskFailure：把诊断拼进 error 正文", () => {
+		const report = reportForTaskFailure({
+			taskId: 271,
+			taskKind: "pi.tool",
+			conversationId: 191,
+			message: "Tool read threw",
+			diagnostic: "EISDIR: illegal operation on a directory, read",
+		});
+		expect(report).toMatchObject({
+			kind: "task-failed",
+			taskId: "271",
+			taskKind: "pi.tool",
+			error: "Tool read threw（原因：EISDIR: illegal operation on a directory, read）",
+		});
+		// 最终落盘那一行同时含任务号、类型与真实原因
+		const event = describeReport(report)!;
+		expect(event.tag).toBe("[任务出错]");
+		expect(event.rest).toBe("271 (pi.tool): Tool read threw（原因：EISDIR: illegal operation on a directory, read）");
+	});
+
+	test("扫描器端到端：日志里出现真实原因，而不只是 `Tool read threw`", async () => {
+		const reported: RuntimeReport[] = [];
+		const scanner = createFailureScanner(
+			{
+				scanTasks: async () => ({ items: [failedToolRecord] }),
+				entry: async (id: number) =>
+					id === 273
+						? {
+								entry: {
+									kind: "pi.tool-result",
+									data: { diagnostics: [{ message: "EISDIR: illegal operation on a directory, read" }] },
+								},
+							}
+						: undefined,
+			} as never,
+			(report) => reported.push(report),
+		);
+		expect(await scanner.scan(BACKGROUND_CONTEXT)).toBe(1);
+		const error = (reported[0] as { error?: unknown }).error;
+		expect(String(error)).toContain("EISDIR: illegal operation on a directory, read");
 	});
 });

@@ -22,6 +22,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { createEnvironmentRegistry, type CwdResolver, type EnvironmentRegistry } from "./env.ts";
 import type { Registry } from "./registry.ts";
 import { createFailureScanner } from "./run-failure.ts";
+import { checkpointTruncate, WAL_PRAGMAS, type CheckpointResult } from "./wal.ts";
 
 /** 我们关心的失败类别，屏蔽底层报告类型的细节。 */
 export type RuntimeReport =
@@ -70,6 +71,17 @@ export type CompanyRuntime = {
 	 * （见 serve() 的看门狗与 TUI 的命令回显）。幂等：水位去重，重复调用不会重报。
 	 */
 	scanTaskFailures(context?: Context): Promise<number>;
+	/**
+	 * 主动做一次 WAL checkpoint（TRUNCATE），把 -wal 文件缩回 0。
+	 *
+	 * 为什么需要它：`wal_autocheckpoint` 只回绕文件、不缩小文件，而真正缩小文件的
+	 * `wal_checkpoint(TRUNCATE)` 只在底层 `close()` 里发生。服务是常驻进程，
+	 * 不重启就永远等不到那次 close，WAL 会一直停在 autocheckpoint 上限（约 4MB）。
+	 * 详见 wal.ts 顶部。
+	 *
+	 * 幂等、只读语义（不写业务数据）、失败不抛：返回结构化结果供巡检记录。
+	 */
+	checkpoint(): Promise<CheckpointResult>;
 	/** 关闭运行时：清理环境、关闭存储。未完成的工作保留至下次打开。 */
 	close(context?: Context): Promise<void>;
 };
@@ -112,7 +124,12 @@ export async function openCompany(options: OpenCompanyOptions, context: Context 
 	const environments = createEnvironmentRegistry(options.resolveCwd);
 	let failure: unknown;
 
-	const storage = await openNodeSqliteStorage(options.databasePath);
+	const storage = await openNodeSqliteStorage(options.databasePath, {
+		// D-01：显式声明 pragma 策略，不依赖底层库的默认值（默认值哪天变了，我们仍然可控）。
+		// synchronous 选 NORMAL 的理由见 wal.ts 的 WAL_PRAGMAS 注释。
+		walAutoCheckpointPages: WAL_PRAGMAS.walAutocheckpointPages,
+		busyTimeoutMs: WAL_PRAGMAS.busyTimeoutMs,
+	});
 	const harness = await DurableHarness.open(
 		storage,
 		{
@@ -141,6 +158,13 @@ export async function openCompany(options: OpenCompanyOptions, context: Context 
 	// 故意不 await——不能让扫表拖慢启动；它只读、幂等，下一轮巡检还会再扫。
 	void failures.scan(context).catch(() => 0);
 
+	// D-01：启动后做一次 checkpoint，把上次进程遗留的 -wal 收回去。
+	// 同样不 await（一条 PRAGMA，失败也不影响业务），但**必须在 storage 打开之后**——
+	// 那时库文件才确定存在，autocheckpoint 策略也已生效。
+	const checkpoint = (): Promise<CheckpointResult> =>
+		checkpointTruncate(options.databasePath);
+	void checkpoint().catch(() => undefined);
+
 	return {
 		harness,
 		environments,
@@ -148,6 +172,7 @@ export async function openCompany(options: OpenCompanyOptions, context: Context 
 		scanTaskFailures(scanContext: Context = BACKGROUND_CONTEXT) {
 			return failures.scan(scanContext);
 		},
+		checkpoint,
 		async close(closeContext: Context = BACKGROUND_CONTEXT): Promise<void> {
 			await environments.cleanup(closeContext);
 			await harness.close(closeContext);
