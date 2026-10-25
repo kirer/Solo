@@ -234,8 +234,17 @@ show_status() {
     say "  一人公司 · 服务状态"
     say "  ─────────────────────────────"
     say "  地址   $URL"
-    say "  监听   $HOST:$PORT"
-    if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "[::]" ]; then
+    # 监听地址要报**实际 bind**，不是 plist 里写的：
+    # bootout/bootstrap 没生效时两者会不一致，人看到「0.0.0.0」会以为能访问了。
+    local bound note=""
+    bound="$(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN 2>/dev/null | awk 'NR==2{print $9}' | sed 's/:'"$PORT"'$//' | sed 's/^\[//; s/\]$//')"
+    # lsof 把「所有网卡」显示成 `*`，与 plist 里的 0.0.0.0 是同一件事，归一化后再比
+    [ "$bound" = "*" ] && bound="0.0.0.0"
+    if [ -n "$bound" ] && [ -n "${HOST:-}" ] && [ "$bound" != "$HOST" ]; then
+        note="（plist 写的是 ${HOST}，需 ai-company restart 重载）"
+    fi
+    say "  监听   ${bound:-未监听}:$PORT$note"
+    if [ "$bound" = "0.0.0.0" ] || [ "$bound" = "::" ] || [ "$bound" = "[::]" ]; then
         warn "局域网可访问（无鉴权，只应在可信内网使用；不要做公网端口映射）"
     fi
 
@@ -373,9 +382,17 @@ do_restart() {
         return
     fi
     clean_stale_lock || true
+    # **必须 bootout + bootstrap，不能只 kickstart**：
+    # launchd 的 kickstart 只重启它**缓存的** ProgramArguments，不会重读 plist。
+    # 于是「改了 --host 却仍监听 127.0.0.1」「改端口不生效」这类情况会静默发生
+    # （plist 是新的、进程是旧的，连状态显示都会说假话）。
+    # 重新加载的代价只是一次几百毫秒的冷启动，远小于「以为开了局域网其实没开」。
     write_plist >/dev/null || true
-    launchctl kickstart -k "$DOMAIN/$LABEL" >/dev/null 2>&1 \
-        || { bad "kickstart 失败，改用 stop + start"; do_stop >/dev/null 2>&1; do_start; return; }
+    launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+    sleep 1
+    launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null \
+        || launchctl load -w "$PLIST" >/dev/null 2>&1 \
+        || { bad "launchctl 重新加载失败，看 $ERR_LOG"; exit 1; }
     if wait_healthy; then
         ok "已重启（pid $(job_pid)）· 数据与在途任务保留"
         open_page
