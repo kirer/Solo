@@ -225,7 +225,16 @@ export type AuditEventType =
 	| "escalate"
 	| "decide"
 	| "owner-decision"
-	| "delegate";
+	| "delegate"
+	/**
+	 * 待办被驳回 / 标记已解决（老板或对应决策人清理看板）。
+	 *
+	 * 为什么新开一个 kind 而不复用 `decide`：`decide` 是「给出了决定，工作继续往前走」，
+	 * 而驳回/已解决是「这条待办到此为止，不再等人拍」。两者语义相反（一个产出答案、
+	 * 一个终结问题），混在同一个 kind 里事后无法区分「他答了」与「他关掉了」。
+	 * 具体是驳回还是已解决，记在同一条事件的 `note` 前缀与 `ref` 上（见 disposePending）。
+	 */
+	| "dispose";
 
 /** 审计事件。 */
 export type AuditEvent = {

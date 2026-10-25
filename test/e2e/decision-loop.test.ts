@@ -68,6 +68,45 @@ async function setup(): Promise<{
 }
 
 describe("拍板结果必须回到提问方，并唤醒它继续", () => {
+
+	/**
+	 * 让一条「非 CEO 声明的 company-level」经过 CEO 复核并递到老板。
+	 *
+	 * Defect B 修复后，company-level 不再直达老板：必须先由 CEO 确认。
+	 * 本文件下面两条测试关心的是「拍板结果投递给谁」，与「谁先复核」无关，
+	 * 但它们必须先把条目推到 owner 级才谈得上老板拍板——所以统一走这个辅助。
+	 */
+	async function pushToOwnerViaCeoReview(
+		runtime: CompanyRuntime,
+		label: string,
+	): Promise<string> {
+		const { answerPending: answer } = await import("../../src/company/escalation.ts");
+		// ① 先等 CEO 复核站出现
+		let key = "";
+		await eventually(
+			async () => {
+				const items = await listPending(runtime, BACKGROUND_CONTEXT);
+				const item = items.find((entry) => entry.question.includes(label));
+				key = item?.key ?? "";
+				return key !== "" && item?.level === "ceo";
+			},
+			{ label: "CEO 复核站出现", timeoutMs: 10_000 },
+		);
+		// ② CEO 确认「确实只能老板定」→ escalate 递老板
+		expect(
+			await answer(runtime, { key, answer: "这确实只有老板能定。", answeredBy: "ceo", escalate: true }, BACKGROUND_CONTEXT),
+		).toBe(true);
+		// ③ 等它真的进到 owner 站
+		await eventually(
+			async () => {
+				const items = await listPending(runtime, BACKGROUND_CONTEXT);
+				return items.some((entry) => entry.key === key && entry.level === "owner");
+			},
+			{ label: "递到老板站", timeoutMs: 10_000 },
+		);
+		return key;
+	}
+
 	test("owner 级问题：拍板后结果落进**真实提问人**（CTO）的会话流，不是 CEO", async () => {
 		const { runtime, ctoId, escalationTask } = await setup();
 
@@ -84,16 +123,8 @@ describe("拍板结果必须回到提问方，并唤醒它继续", () => {
 			BACKGROUND_CONTEXT,
 		);
 
-		// 等它落成 owner 级待决项
-		let key = "";
-		await eventually(
-			async () => {
-				const items = await listPending(runtime, BACKGROUND_CONTEXT);
-				key = items.find((entry) => entry.question.includes("搬到杭州"))?.key ?? "";
-				return key !== "";
-			},
-			{ label: "owner 级待决项出现", timeoutMs: 10_000 },
-		);
+		// Defect B：company-level 先落 CEO 复核，CEO 确认后才到 owner 级。
+		const key = await pushToOwnerViaCeoReview(runtime, "搬到杭州");
 
 		// owner 级待办按老规矩记在 CEO 名下（老板只看到 CEO 报上来的）
 		const before = await listPending(runtime, BACKGROUND_CONTEXT);
@@ -146,15 +177,8 @@ describe("拍板结果必须回到提问方，并唤醒它继续", () => {
 			BACKGROUND_CONTEXT,
 		);
 
-		let key = "";
-		await eventually(
-			async () => {
-				const items = await listPending(runtime, BACKGROUND_CONTEXT);
-				key = items.find((entry) => entry.question.includes("测试岗"))?.key ?? "";
-				return key !== "";
-			},
-			{ label: "待决项出现", timeoutMs: 10_000 },
-		);
+		// Defect B：同样要经 CEO 复核递老板。
+		const key = await pushToOwnerViaCeoReview(runtime, "测试岗");
 
 		await answerPending(runtime, { key, answer: "加，走 CHRO。", answeredBy: "owner" }, BACKGROUND_CONTEXT);
 

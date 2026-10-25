@@ -46,6 +46,8 @@ import { decideOwner, levelOfTarget, type DecisionTopic } from "./decision-routi
 import {
 	PendingDoc,
 	decisionOwnerOfItem,
+	disposePending,
+	takeOverPendingAtCeo,
 	levelOfConversation,
 	listPending,
 	answerPendingAtLevel,
@@ -303,6 +305,51 @@ export async function bootstrapCompany(
 			return input.escalate === true
 				? "已转为老板待办，等老板拍板。"
 				: "已拍板并记录在案。";
+		},
+		disposePending: async (input) => {
+			const company = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+			const myLevel = levelOfConversation(company, input.conversationId);
+			if (myLevel === undefined) return "认不出你是哪一级，不能处置待办。";
+			// 驳回必须给理由（验收口径里的「以什么理由」）。标记已解决可以不带。
+			const reason = (input.reason ?? "").trim();
+			if (input.status === "rejected" && reason === "") {
+				return "驳回必须给理由（reason）：为什么不认可这条待办。";
+			}
+			const outcome = await disposePending(
+				runtime,
+				{
+					key: input.key,
+					status: input.status,
+					reason,
+					disposedBy: labelOfConversation(company, input.conversationId) ?? myLevel,
+					operatorLevel: myLevel,
+				},
+				BACKGROUND_CONTEXT,
+			);
+			if (!outcome.ok) {
+				if (outcome.code === "forbidden") return `无权处置：${outcome.reason}`;
+				if (outcome.code === "archived") return `处置失败：${outcome.reason}`;
+				if (outcome.code === "answered") return `处置失败：${outcome.reason}`;
+				return `处置失败：${outcome.reason}`;
+			}
+			const label = input.status === "rejected" ? "已驳回" : "已标记为已解决";
+			return outcome.changed ? `${label}，已从待办列表移除。` : `这条之前${label}过了（重复操作已忽略）。`;
+		},
+		takeOverPending: async (input) => {
+			const company = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+			const myLevel = levelOfConversation(company, input.conversationId);
+			if (myLevel !== "ceo") {
+				return `只有 CEO 能把老板级待办接管回自己层，你（${myLevel ?? "未知"}）无权操作。`;
+			}
+			const outcome = await takeOverPendingAtCeo(
+				runtime,
+				{ key: input.key, reason: input.reason ?? "", operatorLevel: myLevel },
+				BACKGROUND_CONTEXT,
+			);
+			if (!outcome.ok) return `接管失败：${outcome.reason}`;
+			return outcome.changed
+				? `已把 ${input.key} 接管回你这一层，现在用 answer_pending 回答它。`
+				: `${input.key} 之前已接管过了（重复操作已忽略）。`;
 		},
 		decide: async (input) => {
 			// 记录决定到审计，使「谁在什么时候定了什么」可追溯
@@ -2303,7 +2350,9 @@ export async function escalateUp(
 	}
 	const ownerLabel = labelOfLevel(company, ownerLevel);
 	if (ownerLevel === "owner") {
-		return `已上报老板（编号 ${key}，任务 ${taskId}）——这条属公司级事项，只能老板定。`;
+		// Defect B：非 CEO 声明 company-level 不再直达老板，回复文案必须同步改，
+		// 否则文案还在骗人（说「已上报老板」，实际停在 CEO 复核）。
+		return `已上报 CEO（编号 ${key}，任务 ${taskId}）——你声明为公司级事项，需 CEO 复核是否真的只能老板定；CEO 确认后才会转给老板。`;
 	}
 	return `已上报 ${ownerLabel}（编号 ${key}，任务 ${taskId}），等它答复；它解决不了会继续往上走。`;
 }

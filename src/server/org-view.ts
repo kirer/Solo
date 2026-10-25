@@ -11,7 +11,7 @@ import {
 	type Context,
 } from "../runtime/index.ts";
 import { MANAGEMENT_ROLES, ROLE_LABELS, managerLabelOf, type ManagementRole, type TrailKind } from "../company/docs.ts";
-import { decisionOwnerOfItem, listPending } from "../company/escalation.ts";
+import { canDisposePending, decisionOwnerOfItem, listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
@@ -79,6 +79,16 @@ export type PendingView = {
 	readonly forYou: boolean;
 	/** 是不是处置待办（ADR-026 决策 1）：界面可据此区分「等拍板」与「等人处置」。 */
 	readonly isDisposition: boolean;
+	/**
+	 * 老板能不能处置它（驳回 / 标记已解决）。
+	 *
+	 * 口径来自 `canDisposePending(item, "owner")`——老板只看得到、也只该动
+	 * `decisionOwner === "owner"` 的待办。组织面板是老板的视图，所以这里写死 owner；
+	 * 真正的越权拦截在 `disposePending()` 里，不依赖界面。
+	 */
+	readonly canDispose: boolean;
+	/** 来源说明（Defect B 要求 4）：老板级待办展示「为什么是公司级」。 */
+	readonly trace?: { readonly declaredTopic?: string; readonly ceoReviewed?: boolean; readonly note: string };
 };
 
 /**
@@ -325,6 +335,8 @@ export async function buildOrgView(
 				forYou: decisionOwner === "owner" || (item.disposition !== undefined && decisionOwner === "ceo"),
 				/** 是不是「处置待办」——界面据此区分「等拍板」与「等人处置」。 */
 				isDisposition: item.disposition !== undefined,
+				canDispose: canDisposePending(item, "owner"),
+				...(item.trace === undefined ? {} : { trace: item.trace }),
 			};
 		}),
 		costs: {

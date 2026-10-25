@@ -222,7 +222,16 @@ describe("端到端：本该管理层拍的问题不出现在老板待办里", (
 		void project;
 	}, 30_000);
 
-	test("公司级事项仍然到老板（路由没有把该老板的也拦下来）", async () => {
+	/**
+	 * Defect B（原测试名「公司级事项仍然到老板」已改写为下面的三条）：
+	 *
+	 * 旧行为：非 CEO 声明 `topic=company-level` → **直达老板**，跳过 CEO。
+	 * 新行为：先落 CEO 复核；只有 CEO 确认递老板，才进老板队列。
+	 *
+	 * 所以「公司级事项仍然到老板」这句话只在 **CEO 确认之后**才成立。
+	 * 拆成三条测试，把这条链子钉死。
+	 */
+	test("公司级事项：非 CEO 声明后先落 CEO 复核，老板队列不直接出现", async () => {
 		const { runtime, roles } = await setup();
 		const ctoId = roles.cto as number;
 
@@ -251,8 +260,60 @@ describe("端到端：本该管理层拍的问题不出现在老板待办里", (
 			{ label: "待决项出现", timeoutMs: 10_000 },
 		);
 		const item = items.find((entry) => entry.key === "esc:cto:1") as PendingItem;
-		expect(decisionOwnerOfItem(item)).toBe("owner");
-		expect(pendingFor(items, "owner").map((entry) => entry.key)).toContain("esc:cto:1");
+		// 修复后的核心断言：停在 CEO，不是老板。
+		expect(item.level, "company-level 必须先到 CEO 复核，不能直达老板").toBe("ceo");
+		expect(decisionOwnerOfItem(item)).toBe("ceo");
+		expect(pendingFor(items, "owner").map((entry) => entry.key)).not.toContain("esc:cto:1");
+		// 来源可追溯：说明这是自证的声明、请 CEO 复核。
+		expect(item.trace?.declaredTopic).toBe("company-level");
+		expect(item.trace?.ceoReviewed).toBe(false);
+	}, 30_000);
+
+	test("公司级事项：CEO 确认后进老板队列，且 path 含真实的 ceo 一站", async () => {
+		const { runtime, roles } = await setup();
+		const ctoId = roles.cto as number;
+		const { startEscalation, answerPending } = await import("../../src/company/escalation.ts");
+		const escalationTask = createEscalationTask(runtime);
+		await startEscalation(
+			runtime,
+			escalationTask,
+			{
+				question: "要不要砍掉 Alpha 项目？",
+				from: "CTO",
+				fromConversationId: ctoId,
+				manager: "ceo",
+				topic: "company-level",
+				escalationKey: "esc:cto:2",
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		await eventually(
+			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.key === "esc:cto:2"),
+			{ label: "CEO 站出现", timeoutMs: 10_000 },
+		);
+		// CEO 复核确认 → 递老板
+		expect(
+			await answerPending(
+				runtime,
+				{ key: "esc:cto:2", answer: "确实只有老板能定。", answeredBy: "ceo", escalate: true },
+				BACKGROUND_CONTEXT,
+			),
+		).toBe(true);
+
+		let items: readonly PendingItem[] = [];
+		await eventually(
+			async () => {
+				items = await listPending(runtime, BACKGROUND_CONTEXT);
+				return items.some((item) => item.key === "esc:cto:2" && item.level === "owner");
+			},
+			{ label: "递到老板站", timeoutMs: 10_000 },
+		);
+		const ownerItem = items.find((entry) => entry.key === "esc:cto:2" && entry.level === "owner") as PendingItem;
+		expect(decisionOwnerOfItem(ownerItem)).toBe("owner");
+		// 来源可追溯：这条是经 CEO 复核确认过的。
+		expect(ownerItem.trace?.ceoReviewed).toBe(true);
+		expect(ownerItem.trace?.note).toContain("CEO");
 	}, 30_000);
 
 	/**
