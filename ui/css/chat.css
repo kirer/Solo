@@ -43,7 +43,6 @@ body[data-chat="closed"] .chat > * {
 @media (min-width: 861px) {
 	body[data-chat="closed"] .chat-head,
 	body[data-chat="closed"] .chat-dock,
-	body[data-chat="closed"] .chat-pending,
 	body[data-chat="closed"] .chat-body,
 	body[data-chat="closed"] .chat-foot,
 	body[data-chat="closed"] .chat-float,
@@ -1634,10 +1633,6 @@ body[data-chat="closed"] .chat-resizer::after {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
-	.chat .chat-pending {
-		max-height: min(22dvh, 200px);
-	}
-
 	/* 手机：档案展开 + 待办卡同时占高时，正文至少露出两行，
 	   避免出现「只看得到半行字」的夹缝。 */
 	.chat .chat-body {
@@ -1661,7 +1656,7 @@ body[data-chat="closed"] .chat-resizer::after {
 	}
 
 	.msg-option,
-	.ask-opt {
+	.pend-opt {
 		min-height: 38px;
 	}
 
@@ -1701,7 +1696,7 @@ body[data-chat="closed"] .chat-resizer::after {
 	.attach-chip,
 	.mention-item,
 	.msg-option,
-	.ask-opt,
+	.pend-opt,
 	#chat-fold svg {
 		transition: none;
 	}
@@ -1741,13 +1736,6 @@ body[data-chat="closed"] .chat-resizer::after {
 
 .md-code pre::-webkit-scrollbar-thumb {
 	background: var(--line-strong);
-}
-
-/* 待办区卡片多时内部滚动：对话正文是主角，不能被待办挤成 0 高 */
-.chat-pending {
-	max-height: min(34dvh, 320px);
-	overflow-y: auto;
-	overscroll-behavior: contain;
 }
 
 /* ── 附件托盘 ─────────────────────────────────────────────────────────── */
@@ -1918,7 +1906,7 @@ body[data-chat="closed"] .chat-resizer::after {
 
 /* ── 选项卡片（DSH 风格单选） ─────────────────────────────────────────── */
 .msg-options,
-.ask-options {
+.pend-options {
 	display: flex;
 	flex-direction: column;
 	gap: 5px;
@@ -1930,7 +1918,7 @@ body[data-chat="closed"] .chat-resizer::after {
 }
 
 .msg-option,
-.ask-opt {
+.pend-opt {
 	display: flex;
 	align-items: center;
 	gap: 9px;
@@ -1947,27 +1935,27 @@ body[data-chat="closed"] .chat-resizer::after {
 }
 
 .msg-option:hover,
-.ask-opt:hover {
+.pend-opt:hover {
 	border-color: var(--line-strong);
 	background: var(--surface-2);
 	color: var(--ink);
 }
 
 .msg-option:focus-visible,
-.ask-opt:focus-visible {
+.pend-opt:focus-visible {
 	outline: none;
 	border-color: var(--accent);
 }
 
 .msg-option.is-picked,
-.ask-opt.is-picked {
+.pend-opt.is-picked {
 	border-color: var(--accent-line);
 	background: var(--accent-soft);
 	color: var(--ink);
 }
 
 .msg-option-key,
-.ask-opt-key {
+.pend-opt-key {
 	flex: none;
 	width: 20px;
 	height: 20px;
@@ -1981,7 +1969,7 @@ body[data-chat="closed"] .chat-resizer::after {
 }
 
 .msg-option-label,
-.ask-opt-label {
+.pend-opt-label {
 	flex: 1;
 	min-width: 0;
 	font-size: var(--fs-sm);
@@ -1990,7 +1978,7 @@ body[data-chat="closed"] .chat-resizer::after {
 }
 
 .msg-option-hint,
-.ask-opt-hint {
+.pend-opt-hint {
 	flex: none;
 	display: inline-flex;
 	align-items: center;
@@ -2000,31 +1988,31 @@ body[data-chat="closed"] .chat-resizer::after {
 }
 
 .msg-option--custom .msg-option-label,
-.ask-opt--custom .ask-opt-label {
+.pend-opt--custom .pend-opt-label {
 	color: var(--muted);
 }
 
 .msg-options-hint,
-.ask-options-hint {
+.pend-options-hint {
 	font-size: 10.5px;
 	color: var(--ghost);
 	font-variant-numeric: tabular-nums;
 }
 
 .msg-options-hint kbd,
-.ask-options-hint kbd {
+.pend-options-hint kbd {
 	font-family: var(--sans);
 	font-size: 10.5px;
 	color: var(--faint);
 }
 
-.ask-options {
+.pend-options {
 	margin: 8px 0 2px;
 }
 
-.ask-opt {
+.pend-opt {
 	min-height: 32px;
-	background: var(--surface);
+	background: transparent;
 }
 
 /* ── 内嵌档案 dock（#chat-dock 由 index.html 提供，紧跟 chat-head） ─────── */
@@ -2478,4 +2466,163 @@ body[data-chat="closed"] .chat-resizer::after {
 	.profile {
 		animation: none;
 	}
+}
+
+/* ── 待办事项（对话流内的一条可交互项）─────────────────────────────────
+   一条待决问题 = 「有人在等你回话」，所以它在对话流里，而不是聊天框外面单开一块。
+   视觉：左侧一道细竖线 + 顶部 kicker 说明「这是在等你」，不用黄色边框
+   （用户明确否掉了「聊天上面弹一块黄框」）。 */
+.pend {
+	margin: 2px 0 4px;
+	padding: 10px 12px 11px 13px;
+	border-left: 2px solid var(--warn-line);
+	border-radius: 0 var(--radius) var(--radius) 0;
+	background: var(--surface);
+	animation: rise-in var(--dur) var(--ease-out) both;
+}
+
+.pend--disposition {
+	border-left-color: var(--accent-line);
+}
+
+.pend-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 7px;
+	font-size: var(--fs-2xs);
+	color: var(--muted);
+	min-width: 0;
+}
+
+.pend-kicker {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--warn);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.pend--disposition .pend-kicker {
+	color: var(--accent);
+}
+
+.pend-from {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pend-time {
+	margin-left: auto;
+	flex: none;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.pend-state {
+	flex: none;
+	padding: 1px 6px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	color: var(--faint);
+}
+
+.pend-q {
+	font-size: var(--fs-sm);
+	line-height: 1.62;
+	color: var(--ink-2);
+	margin-bottom: 8px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.pend-reply {
+	display: flex;
+	align-items: flex-end;
+	gap: 6px;
+}
+
+.pend-reply textarea {
+	flex: 1;
+	min-width: 0;
+	min-height: 32px;
+	max-height: 132px;
+	resize: none;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--ink);
+	font: 400 var(--fs-sm) / 1.5 var(--sans);
+	outline: none;
+	transition: border-color var(--dur) var(--ease-out);
+}
+
+.pend-reply textarea::placeholder {
+	color: var(--faint);
+}
+
+.pend-reply textarea:focus {
+	border-color: var(--line-strong);
+}
+
+.pend-send {
+	flex: none;
+	width: 32px;
+	height: 32px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--ink-2);
+	transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+
+.pend-send:hover {
+	background: var(--surface-3);
+	color: var(--ink);
+}
+
+.pend-send:disabled {
+	opacity: 0.45;
+}
+
+.pend-err {
+	margin-top: 6px;
+	font-size: var(--fs-2xs);
+	color: var(--danger);
+}
+
+.pend-err[hidden] {
+	display: none;
+}
+
+/* 已答复：立刻在界面上给结果，不等 feed 推回来。
+   答完卡片原样不动，正是用户报的「回复完没反应」。 */
+.pend.is-answered {
+	opacity: 0.55;
+	border-left-color: var(--line);
+	transition: opacity var(--dur) var(--ease-out);
+}
+
+.pend.is-answered .pend-reply,
+.pend.is-answered .pend-options {
+	display: none;
+}
+
+.pend.is-answered .pend-kicker {
+	color: var(--faint);
+}
+
+.pend.is-answered .pend-state {
+	border-color: var(--run-line);
+	color: var(--run);
+}
+
+.pend.is-submitting {
+	opacity: 0.72;
 }

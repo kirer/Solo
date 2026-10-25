@@ -5,7 +5,6 @@
  * 只做四件事：订阅数据、切换会话、发消息、把状态分发给视图模块。
  */
 import { escapeHtml, formatCost, formatTokens } from "./format.js";
-import { initAsk } from "./ask.js";
 import { initOrg } from "./org.js";
 import { initChat } from "./chat.js";
 import { initSettings } from "./settings.js";
@@ -29,9 +28,10 @@ const state = {
 	lastFeedNoticeAt: 0,
 };
 
-const ask = initAsk({ onAnswer: submitAnswer });
 const orgView = initOrg({ onSelect: (id) => selectConversation(id) });
-const chat = initChat({ onSend: sendMessage, uploadFile, fetchProfile });
+// 待办不再是「面板顶部的一块区域」：它随 feed 进聊天流，交互也归聊天面板。
+// 这里只把「怎么提交答复」注入进去（ADR-026 的面板与流内卡片从此只有一套渲染）。
+const chat = initChat({ onSend: sendMessage, uploadFile, fetchProfile, onAnswer: submitAnswer });
 const settingsPanel = initSettings({ onToast: (text, tone) => chat.notify?.(text, tone) });
 
 /**
@@ -80,7 +80,6 @@ function applyOrg(next) {
 	// 看板等模块独立挂载，只订阅这一份组织快照（不直接依赖 app.js 内部状态）。
 	window.dispatchEvent(new CustomEvent("aic:org", { detail: next }));
 	renderChrome(next);
-	ask.render((next.pending ?? []).filter((item) => item.forYou));
 	orgView.update(next);
 
 	const actor = state.openId === null ? null : findActor(next, state.openId);

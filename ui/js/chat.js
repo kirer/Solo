@@ -187,7 +187,7 @@ function attachmentsSigOf(list) {
 /* ── 面板 ───────────────────────────────────────────────────────────────── */
 
 // ADR-026 决策 7：界面不再提供二次点击确认（原 onInterrupt 已废，受理无条件）。
-export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
+export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 	const els = {
 		chat: $("chat"),
 		body: $("chat-body"),
@@ -241,6 +241,16 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 		observer.observe(foot);
 		els.chat.style.setProperty("--foot-h", `${foot.offsetHeight}px`);
 	}
+
+	/**
+	 * 已提交过答复的待办（key）。
+	 *
+	 * 提交成功后立刻标记，卡片当场变「已答复」并禁用输入；
+	 * 下一次 feed 推来时会因为 pending 里没有它而自然消失。
+	 * 这一层是给「网络慢、feed 还没推回来」的瞬间兜底——否则用户答完
+	 * 看到卡片原样不动，会以为没生效（这正是用户报的那个问题）。
+	 */
+	const answeredPending = new Set();
 
 	/* ── 状态 ── */
 	let actor = null;
@@ -643,6 +653,25 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 				item,
 			});
 		}
+
+		// 待你拍板的事：**就在对话流里**，不另开顶部区域。
+		//
+		// 一条待决问题本质就是「有人在等你回话」，它属于这段对话，不属于一个
+		// 悬浮在聊天框外面的状态栏。原先顶部那块黄框和聊天内是两套渲染，
+		// 同一条问题出现两次、答完还没反应，用户的实际感受是「乱」。
+		// 放在流末尾（而不是插进历史位置）：没答复的事永远是「当前」的事。
+		for (const pendingItem of feed?.pending ?? []) {
+			rows.push({
+				key: `pending:${pendingItem.key}`,
+				kind: "pending",
+				sig: `pending|${pendingItem.key}|${pendingItem.question}|${pendingItem.options.length}|${
+					answeredPending.has(pendingItem.key) ? "done" : "open"
+				}`,
+				// createRow 按 `item.kind` 分发，而 feed.pending 的元素本身没有 kind 字段，
+				// 不补上就会落进 default 分支、渲染成一条普通 note（实测 pand 一个都不出现）。
+				item: { kind: "pending", ...pendingItem },
+			});
+		}
 		return rows;
 	}
 
@@ -678,6 +707,9 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 			case "queued":
 			case "localqueued":
 				el = renderQueued(item);
+				break;
+			case "pending":
+				el = renderPending(item);
 				break;
 			default:
 				el = elFromHtml(`<div class="note"><span class="note-text">${plainText(item.text ?? "")}</span></div>`);
@@ -715,6 +747,64 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 	function userBodyHtml(item) {
 		const body = item.text === "" || item.text === undefined ? "" : `<div class="bubble">${plainText(item.text)}</div>`;
 		return body + attachmentChipsHtml(item.attachments);
+	}
+
+	/**
+	 * 待你拍板 / 等你处置：渲染成对话流里的一条**可交互事项**。
+	 *
+	 * 交互与普通消息一致（在流里、跟着滚动、进历史），但视觉上有明确区分：
+	 * 左侧一道细竖线 + 顶部一行 kicker，说明「这是在等你」。
+	 * 不用黄色边框——用户明确否掉了「聊天上面弹一块黄框」的做法。
+	 *
+	 * 选项：后端给了结构化 options 就用；否则不猜（自由输入永远可用）。
+	 * 最后一项固定「自定义输入」，与 DSH 的选择框一致。
+	 */
+	function renderPending(item) {
+		const disposition = item.disposition === true;
+		const options = Array.isArray(item.options) ? item.options : [];
+		const optionHtml =
+			options.length === 0
+				? ""
+				: `<div class="pend-options" role="radiogroup" aria-label="选项">
+					${options
+						.map(
+							(option, index) => `<button class="pend-opt" type="button" role="radio" aria-checked="false"
+								data-pending-option="${index}" data-label="${escapeAttr(option.label)}">
+								<span class="pend-opt-key">${index + 1}</span>
+								<span class="pend-opt-label">${escapeHtml(option.label)}</span>
+								${option.recommended === true ? '<span class="pend-opt-hint">推荐</span>' : ""}
+							</button>`,
+						)
+						.join("")}
+					<button class="pend-opt pend-opt--custom" type="button" data-pending-option="custom">
+						<span class="pend-opt-key">${Math.min(options.length + 1, 9)}</span>
+						<span class="pend-opt-label">自定义输入</span>
+						${icon("edit", 12)}
+					</button>
+				</div>`;
+
+		const el = elFromHtml(`
+			<div class="pend${disposition ? " pend--disposition" : ""}" data-pending-key="${escapeAttr(item.key)}">
+				<div class="pend-head">
+					<span class="pend-kicker">${icon(disposition ? "alert" : "bell", 12)}<span>${
+						disposition ? "等你处置" : "需要你拍板"
+					}</span></span>
+					<span class="pend-from">来自 ${escapeHtml(item.from)}</span>
+					<span class="pend-time">${escapeHtml(relTime(item.askedAt))}</span>
+				</div>
+				<div class="pend-q">${plainText(item.question)}</div>
+				${optionHtml}
+				<form class="pend-reply">
+					<textarea rows="1" placeholder="${
+						options.length === 0 ? "写下你的决定…" : "也可以直接写…"
+					}" aria-label="你的决定"></textarea>
+					<button class="pend-send" type="submit" aria-label="提交决定">${icon("send", 14)}</button>
+				</form>
+				<p class="pend-err" hidden>没提交成功，再试一次。</p>
+			</div>`);
+		el.dataset.raw = String(item.question ?? "");
+		if (answeredPending.has(item.key)) el.classList.add("is-answered");
+		return el;
 	}
 
 	function renderNote(item) {
@@ -1920,6 +2010,116 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 		scheduleAnswerWatch();
 	}
 
+	/* ── 待办（流内事项）的提交与交互 ── */
+
+	/** 取一张待办卡片里的 key。 */
+	function pendingCardOf(node) {
+		return node instanceof HTMLElement ? node.closest("[data-pending-key]") : null;
+	}
+
+	/**
+	 * 提交一条待办的答复。
+	 *
+	 * 提交成功**立刻**在界面上给结果（卡片标记已答复、输入框禁用），不等 feed 回来：
+	 * 用户答完要马上看到「生效了」，这是这个组件唯一的存在意义。
+	 */
+	async function submitPending(card, text) {
+		const key = card?.dataset.pendingKey ?? "";
+		const value = String(text ?? "").trim();
+		if (key === "" || value === "") {
+			card?.querySelector("textarea")?.focus();
+			return;
+		}
+		if (typeof onAnswer !== "function") {
+			card?.querySelector(".pend-err")?.removeAttribute("hidden");
+			return;
+		}
+		const button = card.querySelector(".pend-send");
+		const textarea = card.querySelector("textarea");
+		if (button !== null) button.disabled = true;
+		if (textarea !== null) textarea.disabled = true;
+		card.classList.add("is-submitting");
+
+		const ok = await onAnswer(key, value).catch(() => false);
+		card.classList.remove("is-submitting");
+
+		if (ok === false) {
+			if (button !== null) button.disabled = false;
+			if (textarea !== null) textarea.disabled = false;
+			card.querySelector(".pend-err")?.removeAttribute("hidden");
+			return;
+		}
+
+		answeredPending.add(key);
+		card.classList.add("is-answered");
+		const state = card.querySelector(".pend-state");
+		if (state !== null) state.textContent = "已答复";
+		else {
+			card.querySelector(".pend-head")?.insertAdjacentHTML(
+				"beforeend",
+				'<span class="pend-state">已答复</span>',
+			);
+		}
+		// 让「已答复」这个状态在下一次 feed 到来时也能被 buildRows 的签名捕捉到，
+		// 否则 patch 路径会把它当成没变化、卡片停在半死状态。
+		feed = feed === null ? feed : { ...feed };
+		updateRows();
+		scrollToBottom();
+	}
+
+	/** 选项点击 + 提交按钮 + 回车，都在流上委托。 */
+	els.body.addEventListener("click", (event) => {
+		const optionButton = event.target.closest?.("[data-pending-option]");
+		if (optionButton !== null && optionButton !== undefined) {
+			const card = pendingCardOf(optionButton);
+			if (card === null) return;
+			const choice = optionButton.dataset.pendingOption ?? "";
+			if (choice === "custom") {
+				card.querySelector("textarea")?.focus();
+				return;
+			}
+			const label = optionButton.dataset.label ?? "";
+			for (const button of card.querySelectorAll("[data-pending-option]")) {
+				button.classList.toggle("is-picked", button === optionButton);
+				button.setAttribute("aria-checked", button === optionButton ? "true" : "false");
+			}
+			// 处置类的「暂搁」需要恢复条件（后端硬要求），先填进输入框让人补一句。
+			if (card.classList.contains("pend--disposition") && /暂搁|暂停|shelve/i.test(label)) {
+				const textarea = card.querySelector("textarea");
+				if (textarea !== null) {
+					textarea.value = `${label.replace(/（.*?）/g, "").trim()}：`;
+					textarea.dispatchEvent(new Event("input", { bubbles: true }));
+					textarea.focus();
+				}
+				return;
+			}
+			void submitPending(card, label);
+			return;
+		}
+
+		const sendButton = event.target.closest?.(".pend-send");
+		if (sendButton !== null && sendButton !== undefined) {
+			event.preventDefault();
+			void submitPending(pendingCardOf(sendButton), pendingCardOf(sendButton)?.querySelector("textarea")?.value ?? "");
+			return;
+		}
+	});
+
+	els.body.addEventListener("submit", (event) => {
+		const form = event.target.closest?.(".pend-reply");
+		if (form === null || form === undefined) return;
+		event.preventDefault();
+		void submitPending(pendingCardOf(form), form.querySelector("textarea")?.value ?? "");
+	});
+
+	els.body.addEventListener("keydown", (event) => {
+		const textarea = event.target.closest?.("[data-pending-key] textarea");
+		if (textarea === null || textarea === undefined) return;
+		if (event.key !== "Enter" || event.shiftKey) return;
+		event.preventDefault();
+		void submitPending(pendingCardOf(textarea), textarea.value);
+	});
+
 	els.body.addEventListener("click", (event) => {
 		const option = event.target.closest("[data-chat-option]");
 		if (option === null) return;
@@ -1939,7 +2139,7 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 		if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
 		if (!/^[1-9]$/.test(event.key)) return;
 		if (isEditableTarget(event.target)) return;
-		if (event.target instanceof HTMLElement && event.target.closest(".chat-pending") !== null) return;
+
 		const groups = stream.querySelectorAll(".msg-options");
 		const group = groups[groups.length - 1];
 		const index = Number(event.key) - 1;
@@ -1950,12 +2150,12 @@ export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 			button.click();
 			return;
 		}
-		// 没有聊天内选项时，数字键作用于顶部第一张带选项的待决卡片
-		const askCard = document.querySelector("#ask-area .ask-options")?.closest(".ask");
-		const askButton = askCard?.querySelectorAll(".ask-opt:not(.ask-opt--custom)")[index];
-		if (askButton === undefined) return;
+		// 没有聊天内选项时，数字键作用于流里第一张带选项的待办卡片
+		const pendCard = stream.querySelector(".pend-options")?.closest(".pend");
+		const pendButton = pendCard?.querySelectorAll(".pend-opt:not(.pend-opt--custom)")[index];
+		if (pendButton === undefined) return;
 		event.preventDefault();
-		askButton.click();
+		pendButton.click();
 	});
 
 	/* ── 发送与回复守望 ── */

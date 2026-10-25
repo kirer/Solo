@@ -293,6 +293,37 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
   只应在可信内网使用；不要做公网端口映射 / 反向代理。安全边界见
   [DEPLOY.md](../DEPLOY.md)。
 
+## 9.5 待办与拍板投递
+
+`GET /api/feed/:conversationId` 除消息条目外，还下发 `pending`——**这个会话主人要亲自拍的事**：
+
+```jsonc
+"pending": [
+  {
+    "key": "esc:7:1",
+    "question": "要不要把公司搬到杭州？",
+    "from": "CTO",
+    "decisionOwner": "owner",
+    "askedAt": 1792900000000,
+    "disposition": false,          // true = 处置类（暂搁 / 放弃）
+    "options": [{ "id": "shelve", "label": "暂搁", "recommended": true }]
+  }
+]
+```
+
+三点约定（都是踩过的坑）：
+
+1. **待办只出现在对话流里**。界面不再另开顶部区域——一条待决问题本质就是
+   「有人在等你回话」，它属于这段对话。同一条问题渲染两次、答完还没反应，
+   是用户明确报过的问题。
+2. **答复必须投递给真实提问方**。`POST /api/answer` 成功后，服务端会往
+   `pending.originConversationId`（真实发起人，不是被改写成 CEO 的
+   `fromConversationId`）的会话流写一条 `app.decision` 条目，并投一条 input
+   **唤醒它**继续干活。只写 `PendingDoc` / `AuditDoc` 会造成「拍板的人以为没生效、
+   被拍板的人永远等不到」。
+3. `options` 由服务端给（解析在服务端一处），界面不再自己猜：
+   把「1. 读文件」这种步骤渲染成可点按钮，点一下就会把步骤当答案发出去。
+
 ## 10. 已知限制
 
 - **历史消息不还原附件 chip**：附件元数据不落在 `pi.user` 条目里（不新增持久化

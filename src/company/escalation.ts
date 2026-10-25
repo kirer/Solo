@@ -24,6 +24,7 @@ import {
 import type { Task } from "../runtime/index.ts";
 import { type DecisionTopic, decideOwner, levelOfTarget } from "./decision-routing.ts";
 import type { DispositionPayload } from "./disposition.ts";
+import { deliverDecision } from "./decision-delivery.ts";
 import {
 	AuditDoc,
 	CompanyDoc,
@@ -107,6 +108,17 @@ export type PendingItem = {
 	answeredBy?: string;
 	/** 表示「我也拍不了，继续往上」。 */
 	escalate?: boolean;
+	/**
+	 * **真实提问方**的会话（原始发起人）。
+	 *
+	 * 为什么和 `fromConversationId` 分开存：owner 级待办一律记在 CEO 名下
+	 * （老板只看得到 CEO 报上来的问题），`fromConversationId` 因此被改写成 CEO。
+	 * 但「拍板结果该投递给谁」的答案是**当初提问的那个人**，不是 CEO——
+	 * 两者混用就会出现「老板拍完板，CTO 那边毫无反应，得手动再问一遍」。
+	 *
+	 * 旧数据没有这个字段：投递时回退到 `fromConversationId`（至少 CEO 能看到）。
+	 */
+	originConversationId?: number;
 	/**
 	 * 处置待办的附加载荷（ADR-026 落地第二步）。
 	 *
@@ -375,7 +387,15 @@ export async function startEscalation(
 	return Number(taskId);
 }
 
-/** 答复一条待决问题。 */
+/**
+ * 答复一条待决问题。
+ *
+ * 除了落库，还会**把决定投递给提问方**（`deliverDecision`）。原因见该模块顶部：
+ * 原先这里只写 PendingDoc / AuditDoc，两者都不进会话流，于是
+ * 「拍板的人以为没生效、被拍板的人永远等不到」——就是用户报的那个故障。
+ *
+ * 投递发生在提交**之后**：决定已成立就不能因为投递失败回滚。
+ */
 export async function answerPending(
 	runtime: CompanyRuntime,
 	input: {
@@ -386,7 +406,9 @@ export async function answerPending(
 	},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<boolean> {
-	return runtime.harness.commit(async (tx) => {
+	let delivered: { question: string; askerConversationId: number; askerLabel: string } | undefined;
+
+	const ok = await runtime.harness.commit(async (tx) => {
 		const pending = await tx.doc(PendingDoc);
 		const index = pending.items.findIndex((item) => item.key === input.key && item.answer === undefined);
 		if (index < 0) return false;
@@ -410,8 +432,33 @@ export async function answerPending(
 			note: input.answer.slice(0, 200),
 			ref: input.key,
 		});
+
+		delivered = {
+			question: item.question,
+			// 投给**真实提问方**；旧数据没有 originConversationId 时回退（至少 CEO 收得到）。
+			askerConversationId: item.originConversationId ?? item.fromConversationId,
+			askerLabel: item.from,
+		};
 		return true;
 	}, context);
+
+	// 升级（escalate=true）不在这里投递：问题还要继续往上走，真正的决定在上层。
+	// 这时投一条「已升级」的条目即可，由上层拍板时再投最终结果。
+	if (ok && delivered !== undefined && input.escalate !== true) {
+		await deliverDecision(
+			runtime,
+			{
+				key: input.key,
+				question: delivered.question,
+				answer: input.answer,
+				answeredBy: input.answeredBy,
+				askerConversationId: delivered.askerConversationId,
+				askerLabel: delivered.askerLabel,
+			},
+			context,
+		);
+	}
+	return ok;
 }
 
 /**
@@ -528,6 +575,9 @@ async function ensurePending(
 			from,
 			fromConversationId,
 			askedAt,
+			// 真实提问方：`fromConversationId` 在 owner 级会被改写成 CEO，
+			// 投递拍板结果必须回到原始发起人（见字段注释）。
+			originConversationId: input.fromConversationId,
 		};
 		if (input.project !== undefined) item.project = input.project;
 		// ADR-026 决策 2（落地第 3 步）：在写入时就定下「该由谁拍」。

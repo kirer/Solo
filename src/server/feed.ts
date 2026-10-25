@@ -128,6 +128,36 @@ export type Feed = {
 	readonly awaitingOwner: boolean;
 	/** 这个会话里有没有等**自己**拍板的事，以及到底该谁拍（ADR-026 决策 2）。 */
 	readonly awaitingDecision: AwaitingDecision;
+	/**
+	 * 这个会话主人需要亲自拍的事（未答复的待决项）。
+	 *
+	 * 为什么放在 feed 里：界面上「待办」和「聊天」本来就是同一件事——
+	 * 一条待决问题就是「有人在等你回话」。原先它在聊天面板顶部另开一块
+	 * 黄框区域渲染，于是同一条问题既在顶部出现（可点）又在聊天里出现（只是文本），
+	 * 用户的实际体验是「两边都有、答完没反应」。
+	 * 现在只保留这个数据源，由聊天流自己渲染成一条可交互的事项（见 ui/js/chat.js）。
+	 */
+	readonly pending: readonly FeedPending[];
+};
+
+/**
+ * 一条「等人拍板」的事项，随 feed 下发。
+ *
+ * 刻意带上 `options`：后端知道选项结构（处置类是结构化的，普通升级项可能从正文解析），
+ * 界面不该再猜一遍；猜错就会把「1. 读文件」这种步骤当成可点的选项发出去。
+ */
+export type FeedPending = {
+	readonly key: string;
+	readonly question: string;
+	/** 谁在问（显示名）。 */
+	readonly from: string;
+	/** 决策人（权限位）：owner / ceo / cto / leader:<slug>。 */
+	readonly decisionOwner: string;
+	readonly askedAt: number;
+	/** 是不是处置类（暂搁 / 放弃）。 */
+	readonly disposition: boolean;
+	/** 结构化选项；没有就为空数组（界面自行降级成自由输入）。 */
+	readonly options: readonly { readonly id: string; readonly label: string; readonly recommended: boolean }[];
 };
 
 /**
@@ -268,6 +298,8 @@ export async function readFeed(
 		kind: "branch",
 		awaitingOwner: false,
 		awaitingDecision: { pending: false, decider: "none", label: "", count: 0 },
+		// 由 decorateFeed 填（它才读 PendingDoc）
+		pending: [],
 	};
 }
 
@@ -298,12 +330,14 @@ export async function decorateFeed(
 	// 处置待办（item.disposition !== undefined）仍不计入：它归「被打断工作的下达人」，
 	// 不是「等这条会话的主人拍板」（审计 D-02(d) 的结论，保留）。
 	const myLevel = levelOfConversation(state, feed.conversationId);
-	const mine = pending.filter(
-		(item) =>
-			item.disposition === undefined &&
-			myLevel !== undefined &&
-			decisionOwnerOfItem(item) === myLevel,
+	// `mine`（等这个人拍的全部）含处置类：处置也是「有人在等你回话」，
+	// 界面上要和普通拍板一样出现在聊天里。`awaitingDecision.count` 只统计
+	// 非处置项（处置是「被打断工作的下达人」的事，不该计进「等拍板」的角标），
+	// 但 feed.pending 要全给，否则处置待办在聊天里就彻底没有入口了。
+	const allMine = pending.filter(
+		(item) => myLevel !== undefined && decisionOwnerOfItem(item) === myLevel,
 	);
+	const mine = allMine.filter((item) => item.disposition === undefined);
 
 	const decider: AwaitingDecision["decider"] =
 		mine.length === 0
@@ -372,7 +406,22 @@ export async function decorateFeed(
 		}
 	}
 
-	return { ...feed, title, kind, role, actor, awaitingOwner, awaitingDecision };
+	// 待办随 feed 下发：界面在聊天流里渲染成可交互事项，不再另开顶部区域。
+	const pendingView: readonly FeedPending[] = allMine.map((item) => ({
+		key: item.key,
+		question: item.question,
+		from: item.from,
+		decisionOwner: decisionOwnerOfItem(item),
+		askedAt: item.askedAt,
+		disposition: item.disposition !== undefined,
+		options: (item.disposition?.options ?? []).map((option) => ({
+			id: option.id,
+			label: option.label,
+			recommended: option.recommended === true,
+		})),
+	}));
+
+	return { ...feed, title, kind, role, actor, awaitingOwner, awaitingDecision, pending: pendingView };
 }
 
 /** 底层 pi.live 的结构（只声明用到的字段）。 */
@@ -552,6 +601,35 @@ function buildItems(
 			case "pi.compaction":
 				items.push({ id: entry.id, kind: "note", text: "较早的对话已被压缩以节省上下文", at: 0 });
 				break;
+			// 拍板结果（decision-delivery.ts）：某人回答了某条待决问题。
+			//
+			// 必须在会话流里**看得见**：原先答复只写 PendingDoc / AuditDoc，
+			// 两者都不进 feed，于是拍板的人以为没生效、被拍板的人永远等不到
+			// （用户报的「回复完没反应，还得再在聊天里发一遍」就是这个）。
+			// 渲染成 note 而不是 alert：它是正常业务留痕，不是故障告警。
+			case "app.decision": {
+				const data = entry.data as
+					| {
+							readonly from?: string;
+							readonly text?: string;
+							readonly question?: string;
+							readonly label?: string;
+					  }
+					| undefined;
+				const body = (data?.text ?? "").trim();
+				if (body === "") break;
+				const who = data?.from === undefined ? undefined : refOfLabel(state, data.from);
+				const kindLabel = data?.label ?? "拍板结果";
+				const question = (data?.question ?? "").trim();
+				items.push({
+					id: entry.id,
+					kind: "note",
+					text: `${kindLabel}：${body}${question === "" ? "" : `\n（针对：${question}）`}`,
+					at: 0,
+					...(who === undefined ? {} : { from: who }),
+				});
+				break;
+			}
 			// 受理回执（ADR-026 决策 7.1）：这条是**系统**写的「已收到」，不是用户消息。
 			//
 			// 原先它落进 default 分支被渲染成一条 note，且 `text` 就是原消息全文，

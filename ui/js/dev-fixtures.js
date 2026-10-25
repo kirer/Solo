@@ -336,6 +336,36 @@ export function fit(canvas, game) {
 		// ADR-026 决策 2（落地第 3 步）：界面现在读结构化字段。
 		// 假数据必须与后端同一形状，否则 ?dev 下的界面会走兼容分支，测不到真路径。
 		awaitingDecision: { pending: false, decider: "none", label: "", count: 0 },
+		// 待办随 feed 下发（界面在对话流里渲染成 .pend）。
+		// 假数据必须与后端同一形状，否则 ?dev 下测不到真实渲染路径。
+		pending: [
+			{
+				key: "demo-pend-1",
+				question: "坦克大战要不要加联机对战？加了要多两周工期，不加只能本地双人。",
+				from: "周牧",
+				decisionOwner: "owner",
+				askedAt: Date.now() - 9 * 60_000,
+				disposition: false,
+				options: [],
+			},
+			{
+				key: "demo-pend-2",
+				question: [
+					"被打断的工作：坦克大战 / pi.task#t_42",
+					"进度：第 3 步 / 共 5 步，已完成 2 次工具调用，已耗 1200 token",
+					"选项：① 暂搁（推荐）② 永久放弃",
+					"若暂搁：需要恢复条件（默认 30 分钟后提醒下达人）",
+				].join("\n"),
+				from: "陆沉",
+				decisionOwner: "owner",
+				askedAt: Date.now() - 4 * 60_000,
+				disposition: true,
+				options: [
+					{ id: "shelve", label: "暂搁", recommended: true },
+					{ id: "abandon", label: "永久放弃", recommended: false },
+				],
+			},
+		],
 	};
 }
 

@@ -18,6 +18,7 @@ import { AuditDoc, CompanyDoc, ROLE_LABELS } from "./docs.ts";
 // 运行时导入 PendingDoc 不会形成循环：escalation.ts 对 disposition.ts 只有 `import type`，
 // 编译后被擦除，运行时不存在「disposition → escalation → disposition」的环。
 import { PendingDoc, levelOfConversation } from "./escalation.ts";
+import { deliverDecision } from "./decision-delivery.ts";
 import type { PendingItem } from "./escalation.ts";
 
 /**
@@ -391,6 +392,8 @@ export async function createDispositionPending(
 			fromConversationId: assignedByConversationId,
 			askedAt: now,
 			disposition: payload,
+			// 真实提问方：处置归「被打断工作的下达人」，拍板结果也该投回给他。
+			originConversationId: assignedByConversationId,
 			...(work.project === null ? {} : { project: work.project }),
 		});
 		return true;
@@ -477,6 +480,15 @@ export async function settleDisposition(
 	let result:
 		| { ok: true; disposition: DispositionOption; resumeCondition: string }
 		| { ok: false; reason: string } = { ok: false, reason: "待办不存在" };
+	let delivered:
+		| {
+				question: string;
+				askerConversationId: number;
+				askerLabel: string;
+				disposition: DispositionOption;
+				resumeCondition: string;
+		  }
+		| undefined;
 
 	await runtime.harness.commit(async (tx) => {
 		const pending = await tx.doc(PendingDoc);
@@ -570,8 +582,37 @@ export async function settleDisposition(
 		}
 
 		result = { ok: true, disposition: parsed.disposition, resumeCondition: parsed.resumeCondition };
+		delivered = {
+			question: item.question,
+			askerConversationId: item.originConversationId ?? item.fromConversationId,
+			askerLabel: item.from,
+			// 在闭包里单独记一份：闭包外的 `result` 会被 TS 收窄成初始分支，
+			// 读 result.disposition 会被判成 never（实际运行时是有的）。
+			disposition: parsed.disposition,
+			resumeCondition: parsed.resumeCondition,
+		};
 	}, context);
 
+	// 处置一旦成立，必须让下达人看得见「它到底怎么了」（见 decision-delivery.ts）。
+	// 处置类额外带 disposition 标记，界面措辞是「处置已定」而不是「拍板结果」。
+	// 超时兜底（viaTimeout）也投递：那是「机器代你选了可逆的一侧」，更需要让人知道。
+	if (delivered !== undefined) {
+		const headline =
+			delivered.disposition === "shelve" ? `暂搁：${delivered.resumeCondition}` : "永久放弃";
+		await deliverDecision(
+			runtime,
+			{
+				key: input.key,
+				question: delivered.question,
+				answer: headline,
+				answeredBy: input.answeredBy,
+				askerConversationId: delivered.askerConversationId,
+				askerLabel: delivered.askerLabel,
+				disposition: true,
+			},
+			context,
+		);
+	}
 	return result;
 }
 

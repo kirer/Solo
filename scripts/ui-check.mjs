@@ -243,14 +243,14 @@ try {
 	check("对话内容有渲染", opened.body > 0, `${opened.body} 个块`);
 
 	const layout = await cdp.eval(`(() => ({
-		// 结构断言：待办区必须挂在聊天面板里（内容依赖数据，可能为空）
-		pendingInChat: document.querySelector('#chat #ask-area') !== null,
-		stageClean: document.querySelector('.stage #ask-area') === null,
+		// 待办不再有独立区域：它作为一条可交互事项出现在对话流里（.pend）。
+		// 顶部那块黄框（#ask-area）已删除——同一条问题出现两次、答完没反应，
+		// 正是用户报的问题。
+		noSeparateArea: document.querySelector('#ask-area') === null && document.querySelector('.chat-pending') === null,
 		noBottomHints: document.querySelector('.chat-hints') === null && document.querySelector('.stage-foot') === null,
 		noRail: document.querySelector('.rail') === null,
 	}))()`);
-	check("待办区在聊天面板内", layout.pendingInChat);
-	check("舞台没有独立待办区", layout.stageClean);
+	check("待办不再单开区域（并入对话流）", layout.noSeparateArea);
 	check("底部没有多余提示条", layout.noBottomHints);
 	check("单页面没有侧边导航", layout.noRail);
 
@@ -458,6 +458,50 @@ try {
 		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 	})()`);
 	await sleep(200);
+
+	// 待办并入对话流：不再有顶部黄框，卡片在流里可交互，答完立刻变「已答复」
+	const pend = await cdp.eval(`(() => {
+		const cards = [...document.querySelectorAll('.chat-stream .pend')];
+		return {
+			inStream: cards.length,
+			hasOptions: document.querySelectorAll('.chat-stream .pend .pend-opt').length,
+			hasReply: document.querySelectorAll('.chat-stream .pend .pend-reply textarea').length,
+			topArea: document.querySelector('#ask-area, .chat-pending') === null,
+		};
+	})()`);
+	check("待办渲染在对话流里", pend.inStream >= 1, `${pend.inStream} 张`);
+	check("顶部没有独立待办区", pend.topArea === true);
+	check("待办带选项与回复框", pend.hasOptions >= 2 && pend.hasReply >= 1, `${pend.hasOptions} 选项 / ${pend.hasReply} 回复框`);
+
+	const answered = await cdp.eval(`(async () => {
+		// 拦截 /api/answer，只为验证「答完立刻有反应」，不发真请求
+		const realFetch = window.fetch;
+		let sent = null;
+		window.fetch = async (url, opts) => {
+			if (String(url).includes('/api/answer')) {
+				sent = JSON.parse(opts.body);
+				return new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } });
+			}
+			return realFetch(url, opts);
+		};
+		const card = document.querySelector('.chat-stream .pend');
+		const textarea = card.querySelector('.pend-reply textarea');
+		textarea.value = '按第二个方案来';
+		textarea.dispatchEvent(new Event('input', { bubbles: true }));
+		card.querySelector('.pend-send').click();
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const result = {
+			sent,
+			answeredClass: card.classList.contains('is-answered'),
+			state: card.querySelector('.pend-state')?.textContent?.trim() ?? '',
+			replyHidden: getComputedStyle(card.querySelector('.pend-reply')).display === 'none',
+		};
+		window.fetch = realFetch;
+		return result;
+	})()`);
+	check("点提交后立刻显示已答复", answered.answeredClass === true && answered.state === "已答复", answered.state || "(无)");
+	check("答复内容确实发了出去", answered.sent?.text === "按第二个方案来", JSON.stringify(answered.sent));
+	check("答复后输入区收起", answered.replyHidden === true);
 
 	// 需求 11：需要选择的回复 → 选项卡片（最后一项固定自定义输入）
 	const options = await cdp.eval(`(() => ({
