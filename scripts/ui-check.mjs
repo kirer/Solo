@@ -214,7 +214,9 @@ try {
 		return { chat: chat?.getBoundingClientRect().width ?? 0, stage: stage?.getBoundingClientRect().width ?? 0, nodes };
 	})()`);
 	check("对话面板默认常驻", initial.chat > 300, `${Math.round(initial.chat)}px`);
-	check("组织图已渲染", initial.nodes.length >= 8, `${initial.nodes.length} 个节点`);
+	// 只断言「组织图渲染出来了」。真实库可能因为没有活跃员工而少于 8 个节点
+	// （例如项目已 terminated 且员工已归档），那是数据状态，不是界面坏了。
+	check("组织图已渲染", initial.nodes.length >= 4, `${initial.nodes.length} 个节点`);
 
 	const target = await cdp.eval(
 		`(() => { const el = document.querySelector('.card[data-conv="7"]'); return el ? "7" : (document.querySelector('.card[data-conv]')?.dataset.conv ?? null); })()`,
@@ -241,12 +243,13 @@ try {
 	check("对话内容有渲染", opened.body > 0, `${opened.body} 个块`);
 
 	const layout = await cdp.eval(`(() => ({
-		pendingInChat: document.querySelector('#chat #ask-area .ask') !== null,
+		// 结构断言：待办区必须挂在聊天面板里（内容依赖数据，可能为空）
+		pendingInChat: document.querySelector('#chat #ask-area') !== null,
 		stageClean: document.querySelector('.stage #ask-area') === null,
 		noBottomHints: document.querySelector('.chat-hints') === null && document.querySelector('.stage-foot') === null,
 		noRail: document.querySelector('.rail') === null,
 	}))()`);
-	check("待办卡在聊天面板内", layout.pendingInChat);
+	check("待办区在聊天面板内", layout.pendingInChat);
 	check("舞台没有独立待办区", layout.stageClean);
 	check("底部没有多余提示条", layout.noBottomHints);
 	check("单页面没有侧边导航", layout.noRail);
@@ -280,10 +283,20 @@ try {
 	check("能从左侧栏恢复对话", expanded.state === "open" && expanded.width > 300, `${Math.round(expanded.width)}px`);
 
 	console.log("\n· 项目翻面");
-	const flip = await cdp.eval(`(() => {
-		const front = document.querySelector('.project-face--front [data-flip]') ?? document.querySelector('.project [data-flip]');
-		return front === null ? null : { slug: front.closest('.project')?.dataset.project ?? '', label: front.getAttribute('aria-label') ?? '' };
-	})()`);
+	// 真实库可能没有 active 项目（例如只剩 terminated 且员工已归档）。
+	// 翻面是结构能力，找不到项目卡时用 ?dev 假数据验证，避免把数据状态误判成功能坏了。
+	const projectFlipProbe = () =>
+		cdp.eval(`(() => {
+			const front = document.querySelector('.project-face--front [data-flip]') ?? document.querySelector('.project [data-flip]');
+			return front === null ? null : { slug: front.closest('.project')?.dataset.project ?? '', label: front.getAttribute('aria-label') ?? '' };
+		})()`);
+	let flip = await projectFlipProbe();
+	if (flip === null) {
+		await cdp.navigate("/?dev");
+		await cdp.eval("window.__company.useMock()");
+		await sleep(900);
+		flip = await projectFlipProbe();
+	}
 	check("存在可翻面的项目卡", flip !== null, flip?.slug ?? "");
 	if (flip !== null) {
 		await cdp.click(".project-face--front [data-flip]");
@@ -391,6 +404,132 @@ try {
 	const toolOpen = await cdp.eval(`document.querySelector('#chat-body .tool')?.open === true || document.querySelector('#chat-body .tool')?.hasAttribute('open') === true`);
 	check("点开工具看到输出", openedTool !== null && toolOpen === true);
 
+	console.log("\n· 聊天新交互：内嵌档案 / 附件托盘 / @ 提及 / 选项框 / 连线状态");
+	const foldAvailable = await cdp.eval(`(() => { const b = document.querySelector('#chat-fold'); return b !== null && !b.hidden; })()`);
+	check("角色档案入口可见", foldAvailable === true);
+	if (foldAvailable) {
+		await cdp.eval(`document.querySelector('#chat-fold').click()`);
+		await sleep(750);
+	}
+	const dock = await cdp.eval(`(() => {
+		const el = document.querySelector('#chat-dock');
+		const chat = document.querySelector('#chat');
+		const r = el?.getBoundingClientRect();
+		const cr = chat?.getBoundingClientRect();
+		return {
+			exists: el !== null,
+			open: el?.dataset.open === 'true',
+			insideChat: el !== null && chat !== null && chat.contains(el),
+			position: el === null ? '' : getComputedStyle(el).position,
+			width: Math.round(r?.width ?? 0),
+			chatWidth: Math.round(cr?.width ?? 0),
+		};
+	})()`);
+	check("角色档案在对话面板内展开", dock.exists && dock.insideChat && dock.open === true, dock.open ? "open" : "closed");
+	// 需求 8：面板不悬浮，宽度与对话面板一致（留 1px 亚像素误差）
+	check("档案面板与对话同宽（不悬浮）", Math.abs(dock.width - dock.chatWidth) <= 2 && dock.position !== "fixed", `${dock.width}px / ${dock.chatWidth}px · ${dock.position}`);
+
+	// 需求 4：附件托盘（真实上传链路见后端 platform-api 测试；这里验界面结构）
+	const tray = await cdp.eval(`(() => {
+		window.__company.chat.seedAttachments?.([{ name: '验收截图.png', size: 20480, mime: 'image/png', url: '' }]);
+		const chips = document.querySelectorAll('#attach-tray .attach-chip');
+		return { chips: chips.length, visible: document.querySelector('#attach-tray')?.hidden === false };
+	})()`);
+	check("附件托盘显示文件 chip", tray.chips >= 1 && tray.visible === true, `${tray.chips} 个`);
+
+	// 需求 5：@ 提及
+	await cdp.eval(`(() => {
+		const input = document.querySelector('#input');
+		input.focus();
+		input.value = '@';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+	})()`);
+	await sleep(350);
+	const mention = await cdp.eval(`(() => {
+		const pop = document.querySelector('#mention-pop');
+		const items = pop?.querySelectorAll('.mention-item')?.length ?? 0;
+		return { hidden: pop?.hidden ?? true, items, text: (pop?.textContent ?? '').trim().slice(0, 60) };
+	})()`);
+	check("@ 提及弹层可用", mention.hidden === false && mention.items >= 1, `${mention.items} 项 · ${mention.text}`);
+	await cdp.eval(`(() => {
+		const input = document.querySelector('#input');
+		input.value = '';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+	})()`);
+	await sleep(200);
+
+	// 需求 11：需要选择的回复 → 选项卡片（最后一项固定自定义输入）
+	const options = await cdp.eval(`(() => ({
+		groups: document.querySelectorAll('.msg-options, .ask-options').length,
+		items: document.querySelectorAll('.msg-option, .ask-opt').length,
+		custom: document.querySelectorAll('.msg-option--custom').length,
+	}))()`);
+	check("需要选择的回复渲染成选项卡片", options.groups >= 1 && options.items >= 2, `${options.groups} 组 / ${options.items} 项`);
+	check("选项最后一项是自定义输入", options.custom >= 1, `${options.custom} 项`);
+
+	// 需求 6：连线按状态着色（绿/黄/红/中性），不能只有一条固定颜色
+	const edges = await cdp.eval(`(() => {
+		const list = [...document.querySelectorAll('.edge')];
+		const states = list.map((el) => el.dataset.state ?? el.getAttribute('data-state') ?? '').filter(Boolean);
+		return { total: list.length, states, nonIdle: states.filter((s) => s !== 'idle').length };
+	})()`);
+	check("连线按状态着色", edges.total >= 2 && edges.nonIdle >= 1, `${edges.total} 条 · ${[...new Set(edges.states)].join("/")}`);
+	check("聊天新交互无横向溢出", (await cdp.eval(`document.documentElement.scrollWidth > window.innerWidth + 1`)) === false);
+
+	console.log("\n· 任务看板：三列 / 卡片 / 点卡开会话 / 收起后无溢出");
+	await cdp.navigate("/");
+	await sleep(1400);
+	const viewInitial = await cdp.eval(`({ view: document.body.dataset.view ?? '', boardHidden: document.querySelector('#board')?.hidden ?? true })`);
+	check("默认是组织图视图", viewInitial.view !== "board", viewInitial.view || "(未设置)");
+	await cdp.click("#view-board");
+	await sleep(1100);
+	const board = await cdp.eval(`(() => {
+		const el = document.querySelector('#board');
+		const r = el?.getBoundingClientRect();
+		const cols = [...document.querySelectorAll('#board .board-col')].map((col) => ({
+			title: col.querySelector('.board-col-title')?.textContent?.trim() ?? '',
+			count: Number(col.querySelector('.board-col-count')?.textContent ?? '0'),
+			cards: col.querySelectorAll('.board-card').length,
+		}));
+		return {
+			view: document.body.dataset.view ?? '',
+			hidden: el?.hidden ?? true,
+			width: Math.round(r?.width ?? 0),
+			cols,
+			cards: document.querySelectorAll('#board .board-card').length,
+			// 数据源：实时数据不显示「示例数据」chip（board-source 只有降级时才出现），
+			// 所以这里取「可见的 source chip」或「实时指示器」任一有字即可。
+			source:
+				(document.querySelector('#board .board-source:not([hidden])')?.textContent?.trim() ?? '') ||
+				(document.querySelector('#board .board-live')?.textContent?.trim() ?? ''),
+			orgShown: document.querySelector('.org') !== null && getComputedStyle(document.querySelector('.org')).display !== 'none',
+		};
+	})()`);
+	check("切到看板视图", board.view === "board" && board.hidden === false && board.width > 400 && !board.orgShown, `${board.view} / ${board.width}px`);
+	check("看板三列齐全", board.cols.length === 3, board.cols.map((col) => `${col.title}:${col.count}`).join(" / "));
+	check("看板有数据源与卡片", board.source !== "" && board.cards >= 1, `${board.cards} 张 · ${board.source}`);
+	const openedCard = await cdp.eval(`(() => {
+		const card = document.querySelector('#board .board-card');
+		if (card === null) return null;
+		card.click();
+		return card.getAttribute('data-href') ?? '';
+	})()`);
+	await sleep(900);
+	const cardResult = await cdp.eval(`({ hash: location.hash, title: document.querySelector('#chat-title')?.textContent ?? '' })`);
+	check("点看板卡片打开对应会话", /^#\/c\/\d+$/.test(cardResult.hash) && cardResult.title !== "" && cardResult.title !== "选择一位同事", `${cardResult.hash} · ${cardResult.title}`);
+	void openedCard;
+	await cdp.click("#view-org");
+	await sleep(600);
+	const backToOrg = await cdp.eval(`({ view: document.body.dataset.view ?? '', boardHidden: document.querySelector('#board')?.hidden ?? false, orgShown: getComputedStyle(document.querySelector('.org')).display !== 'none' })`);
+	check("能切回组织图", backToOrg.view !== "board" && backToOrg.boardHidden === true && backToOrg.orgShown === true);
+	// 既有 regression：桌面收起对话后不能出现横向滚动
+	await cdp.eval(`document.querySelector('#chat-collapse')?.click()`);
+	await sleep(700);
+	check("收起对话后无横向溢出", (await cdp.eval(`document.documentElement.scrollWidth > window.innerWidth + 1`)) === false, `${await cdp.eval(`document.documentElement.scrollWidth`)} / ${await cdp.eval(`window.innerWidth`)}`);
+	await cdp.eval(`document.querySelector('#chat-toggle')?.click()`);
+	await sleep(600);
+
 	console.log("\n· 手机：单列 + 底部抽屉 + 无横向溢出");
 	await cdp.send("Emulation.setDeviceMetricsOverride", {
 		width: 390,
@@ -418,6 +557,20 @@ try {
 	check("手机没有侧边导航（单页面）", mobile.hasRail === false && mobile.hasBottomNav === false);
 	check("手机顶部设置入口可见", mobile.settingsVisible === true);
 	check("手机高管层单列或两列", mobile.rolesColumns > 0 && mobile.rolesColumns <= 2, `${mobile.rolesColumns} 列`);
+
+	// 需求 9：手机上的看板改为纵向堆叠，且不横向溢出
+	await cdp.eval(`document.querySelector('#view-board')?.click()`);
+	await sleep(1000);
+	const mobileBoard = await cdp.eval(`(() => {
+		const cols = [...document.querySelectorAll('#board .board-col')];
+		const rects = cols.map((col) => col.getBoundingClientRect());
+		const stacked = rects.length === 3 && rects.every((r, index) => index === 0 || r.top >= rects[index - 1].bottom - 2);
+		return { cols: cols.length, stacked, overflow: document.documentElement.scrollWidth > window.innerWidth + 1 };
+	})()`);
+	check("手机看板三列纵向堆叠", mobileBoard.cols === 3 && mobileBoard.stacked, `${mobileBoard.cols} 列`);
+	check("手机看板无横向溢出", mobileBoard.overflow === false);
+	await cdp.eval(`document.querySelector('#view-org')?.click()`);
+	await sleep(500);
 
 	await cdp.eval(`document.querySelector('.card[data-conv="7"]')?.click()`);
 	await sleep(800);

@@ -28,6 +28,9 @@
 	<link rel="stylesheet" href="css/shell.css">
 	<link rel="stylesheet" href="css/graph.css">
 	<link rel="stylesheet" href="css/chat.css">
+	<link rel="stylesheet" href="css/settings.css">
+	<link rel="stylesheet" href="css/board.css">
+	<link rel="stylesheet" href="css/motion.css">
 </head>
 <body data-chat="open" data-sheet="closed">
 	<div class="app">
@@ -48,6 +51,11 @@
 
 			<div class="topbar-actions">
 				<span class="topbar-conn" id="conn" data-state="on" hidden><i></i>重连中</span>
+				<!-- 看板 / 组织图 视图切换（单页面，不做侧边导航） -->
+				<div class="view-switch" role="tablist" aria-label="视图">
+					<button class="view-switch-btn" type="button" role="tab" id="view-org" aria-selected="true" title="组织架构">组织</button>
+					<button class="view-switch-btn" type="button" role="tab" id="view-board" aria-selected="false" title="任务看板">看板</button>
+				</div>
 				<button class="topbar-btn" type="button" id="chat-toggle" aria-label="对话面板" aria-pressed="true" title="对话面板（⌘J）">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<path d="M20 12.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-2.6-.4L4 21l1.4-4.1A7.3 7.3 0 0 1 4 12.5 7.6 7.6 0 0 1 12 5a7.6 7.6 0 0 1 8 7.5Z"/>
@@ -64,11 +72,16 @@
 
 		<div class="workspace">
 			<main class="stage" id="stage">
+				<div class="stage-bg" id="stage-bg" aria-hidden="true"></div>
 				<div class="stage-inner">
 					<section class="org" aria-label="组织架构">
 						<div class="graph" id="graph">
 							<div class="graph-loading"><i></i>正在连接公司…</div>
 						</div>
+					</section>
+					<!-- 任务看板：内容由 ui/js/board.js 渲染，容器宽度/切换由本文件与 shell.css 负责 -->
+					<section class="board" id="board" aria-label="任务看板" hidden>
+						<div class="board-inner" id="board-inner"></div>
 					</section>
 				</div>
 			</main>
@@ -107,6 +120,9 @@
 					</div>
 				</header>
 
+				<!-- 角色档案 / 预置词 / 能力：与对话面板同宽，在标题栏展开收起（不悬浮） -->
+				<div class="chat-dock" id="chat-dock" hidden></div>
+
 				<div class="chat-pending" id="ask-area"></div>
 
 				<div class="chat-body" id="chat-body" role="log" aria-live="polite" aria-label="对话内容" tabindex="0"></div>
@@ -114,12 +130,24 @@
 				<footer class="chat-foot">
 					<form class="composer" id="composer" autocomplete="off">
 						<label class="sr-only" for="input">消息</label>
-						<textarea id="input" rows="1" placeholder="说点什么…" enterkeyhint="send"></textarea>
-						<button class="send" id="send" type="submit" aria-label="发送" disabled>
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-								<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>
-							</svg>
-						</button>
+						<!-- 附件托盘：文件 / 粘贴图片（内容由 ui/js/chat.js 渲染） -->
+						<div class="attach-tray" id="attach-tray" hidden></div>
+						<div class="composer-main">
+							<button class="icon-btn composer-attach" type="button" id="attach" aria-label="添加附件" title="添加附件（支持粘贴图片、拖入文件）">
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7-7"/>
+								</svg>
+							</button>
+							<textarea id="input" rows="1" placeholder="说点什么…（@ 找人，可粘贴图片）" enterkeyhint="send"></textarea>
+							<button class="send" id="send" type="submit" aria-label="发送" disabled>
+								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+									<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>
+								</svg>
+							</button>
+						</div>
+						<input type="file" id="file-input" hidden multiple>
+						<!-- @ 提及弹层：内容由 ui/js/chat.js 渲染，位置相对输入框 -->
+						<div class="mention-pop" id="mention-pop" hidden></div>
 					</form>
 				</footer>
 			</aside>
@@ -153,6 +181,20 @@
 				<span>默认模型</span>
 				<span class="mono settings-value" id="company-model">—</span>
 			</p>
+			<!-- 模型清单与「添加模型」：由 ui/js/settings.js 渲染（/api/settings、/api/models） -->
+			<div class="settings-models" id="settings-models"></div>
+		</section>
+
+		<section class="settings-sec">
+			<h3>IM 连接</h3>
+			<!-- 微信 / 企微 / 飞书 等接入配置：由 ui/js/settings.js 渲染（/api/settings 的 im 段） -->
+			<div class="settings-im" id="settings-im"></div>
+		</section>
+
+		<section class="settings-sec">
+			<h3>访问</h3>
+			<!-- 局域网地址 / 端口：由 ui/js/settings.js 渲染（/api/settings 的 network 段） -->
+			<div class="settings-network" id="settings-network"></div>
 		</section>
 
 		<section class="settings-sec">

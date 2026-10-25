@@ -1,0 +1,21 @@
+# 构建上下文里不需要的东西
+.git
+.gitignore
+node_modules
+dist
+workspace
+archive
+.taste-skill
+.dsh
+.idea
+.vscode
+test
+docs
+coverage
+*.md
+!README.md
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+.DS_Store

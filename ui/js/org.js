@@ -8,6 +8,7 @@
  * 绝不整块 innerHTML 重绘。所以点员工、SSE 推送都不会让主视图跳一下。
  */
 import {
+	clamp,
 	escapeAttr,
 	escapeHtml,
 	formatTokens,
@@ -23,6 +24,10 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 /** 一屏最多几个带流动光边的节点。 */
 const MAX_LIVE = 8;
 const FLIP_MS = 460;
+/** 指针 3D 悬浮：倾斜上限 3.5deg（用户要的是 3-5deg 的克制感）。 */
+const TILT_MAX = 3.5;
+const FINE_POINTER_QUERY = window.matchMedia("(hover: hover) and (pointer: fine)");
+const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 export function initOrg({ onSelect } = {}) {
 	const graph = document.getElementById("graph");
@@ -773,6 +778,34 @@ export function initOrg({ onSelect } = {}) {
 		for (const card of live) card.classList.add("is-live");
 	}
 
+	/**
+	 * conversationId → 状态，交给 edges.js 判定连线颜色。
+	 *
+	 * 卡片上虽然有 data-status，但连线端点可能是被聚合过的项目卡、员工行，
+	 * 而且每次 SSE 推送都会变；在 org.js 里按同一套规则算一遍最省事，
+	 * edges 拿不到时再退回 DOM 上的 data-status。
+	 */
+	function statusMap() {
+		const map = new Map();
+		if (org === null) return map;
+		const askCount = (org.pending ?? []).filter((item) => item.forYou).length;
+		if (org.ceo !== null && org.ceo !== undefined) {
+			map.set(Number(org.ceo.conversationId), ceoStatus(org.ceo, askCount));
+		}
+		for (const role of org.roles ?? []) {
+			map.set(Number(role.conversationId), statusOf(role));
+		}
+		for (const project of org.projects ?? []) {
+			if (project.lead !== null && project.lead !== undefined) {
+				map.set(Number(project.lead.conversationId), statusOf(project.lead));
+			}
+			for (const person of project.staff ?? []) {
+				map.set(Number(person.conversationId), statusOf(person));
+			}
+		}
+		return map;
+	}
+
 	// ── 翻面 ──────────────────────────────────────────────────────────────
 
 	function measureAll() {
@@ -868,7 +901,9 @@ export function initOrg({ onSelect } = {}) {
 		applySelection();
 		applyLive();
 		// 旧服务端可能没有 links（或给的不是数组）：安全退化为空，不报错
-		edges?.render(Array.isArray(org.links) ? org.links : [], hosts, hover !== null ? hover : selected);
+		edges?.render(Array.isArray(org.links) ? org.links : [], hosts, hover !== null ? hover : selected, {
+			statusById: statusMap(),
+		});
 	}
 
 	function setSelected(conversationId) {
@@ -886,6 +921,68 @@ export function initOrg({ onSelect } = {}) {
 		refreshHosts();
 		applySelection();
 		edges?.refresh();
+	}
+
+	// ── 指针 3D 悬浮（纯 CSS transform，不碰 WebGL）─────────────────────────
+	//
+	// 卡片只做 3.5deg 以内的倾斜 + 一层抬升阴影，指针离开就归位。
+	// 项目卡翻面走的是 .project__inner 的 rotateX，倾斜挂在 .project 上，
+	// 两个变换在父子两层，翻面交互不受影响。
+
+	let tiltEl = null;
+	let tiltFrame = 0;
+	let tiltPoint = null;
+
+	function tiltEnabled() {
+		return FINE_POINTER_QUERY.matches && !REDUCED_MOTION_QUERY.matches;
+	}
+
+	/** 指针落在哪张卡上：项目卡整体倾斜（翻面在内部），人物卡各自倾斜。 */
+	function tiltTargetOf(target) {
+		if (!(target instanceof Element)) return null;
+		const project = target.closest(".project:not(.project--terminated)");
+		if (project !== null) return project;
+		return target.closest(".card.node");
+	}
+
+	function applyTilt() {
+		tiltFrame = 0;
+		if (tiltEl === null || tiltPoint === null) return;
+		const rect = tiltEl.getBoundingClientRect();
+		if (rect.width < 2 || rect.height < 2) return;
+		const px = clamp((tiltPoint.x - rect.left) / rect.width - 0.5, -0.5, 0.5);
+		const py = clamp((tiltPoint.y - rect.top) / rect.height - 0.5, -0.5, 0.5);
+		tiltEl.style.setProperty("--tilt-x", `${(-py * TILT_MAX).toFixed(2)}deg`);
+		tiltEl.style.setProperty("--tilt-y", `${(px * TILT_MAX).toFixed(2)}deg`);
+	}
+
+	function clearTilt() {
+		if (tiltFrame !== 0) {
+			cancelAnimationFrame(tiltFrame);
+			tiltFrame = 0;
+		}
+		tiltPoint = null;
+		if (tiltEl === null) return;
+		tiltEl.classList.remove("is-tilting");
+		tiltEl.style.removeProperty("--tilt-x");
+		tiltEl.style.removeProperty("--tilt-y");
+		tiltEl = null;
+	}
+
+	function syncTilt(target, point) {
+		if (!tiltEnabled()) {
+			clearTilt();
+			return;
+		}
+		const next = tiltTargetOf(target);
+		if (next !== tiltEl) {
+			clearTilt();
+			tiltEl = next;
+			if (tiltEl !== null) tiltEl.classList.add("is-tilting");
+		}
+		if (tiltEl === null) return;
+		tiltPoint = point;
+		if (tiltFrame === 0) tiltFrame = requestAnimationFrame(applyTilt);
 	}
 
 	// ── 交互 ──────────────────────────────────────────────────────────────
@@ -922,6 +1019,8 @@ export function initOrg({ onSelect } = {}) {
 			const flipTarget = event.target.closest("[data-flip]");
 			if (flipTarget !== null) {
 				event.preventDefault();
+				// 翻面时先归位：倾斜和翻转各占一层变换，同时进行会显得晃
+				clearTilt();
 				toggleFlip(flipTarget.dataset.flip);
 				return;
 			}
@@ -930,6 +1029,17 @@ export function initOrg({ onSelect } = {}) {
 			const id = Number(convTarget.dataset.conv);
 			if (Number.isFinite(id)) select(id);
 		});
+
+		// 指针悬浮：只做极轻的 3D 倾斜。触屏 / 减少动效下完全不启动。
+		graph.addEventListener("pointermove", (event) => {
+			if (event.pointerType !== "mouse" && event.pointerType !== "pen") return;
+			syncTilt(event.target, { x: event.clientX, y: event.clientY });
+		});
+		graph.addEventListener("pointerleave", clearTilt);
+		// 滚动 / 重排后旧坐标已经不对，直接让卡片归位
+		graph.closest(".stage")?.addEventListener("scroll", clearTilt, { passive: true });
+		FINE_POINTER_QUERY.addEventListener("change", clearTilt);
+		REDUCED_MOTION_QUERY.addEventListener("change", clearTilt);
 
 		// 对话面板拖宽 / 外层容器变宽时，卡片会重排：连线要跟着走。
 		if (typeof ResizeObserver === "function") {

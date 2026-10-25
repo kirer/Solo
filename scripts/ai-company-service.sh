@@ -23,6 +23,8 @@
 #
 # 可配置环境变量：
 #   AI_COMPANY_PORT=7790        换端口（默认 7788；换端口后 start 会重写 plist）
+#   AI_COMPANY_HOST=0.0.0.0    监听地址（默认 127.0.0.1；要手机/同事访问用 0.0.0.0，
+#                              注意服务无鉴权，只应在可信内网使用，见 docs/DEPLOY.md）
 #   AI_COMPANY_DB=...          换数据库（默认 <项目>/workspace/company.sqlite）
 #   AI_COMPANY_WORKSPACE=...   换工作空间根目录（默认 <项目>/workspace）
 #   AI_COMPANY_NO_OPEN=1       start / restart 后不自动开浏览器
@@ -51,20 +53,34 @@ NODE_BIN="/opt/homebrew/bin/node"
 [ -x "$NODE_BIN" ] || NODE_BIN="$(command -v node || true)"
 
 PORT="${AI_COMPANY_PORT:-7788}"
-# 从 plist 里读出实际端口，避免「上次用 7790 启动、这次忘了带环境变量」导致状态看错
-read_port_from_plist() {
+# 从 plist 里读出实际参数，避免「上次用 7790 启动、这次忘了带环境变量」导致状态看错
+read_arg_from_plist() {
+    local flag="$1"
     [ -f "$PLIST" ] || return 0
     /usr/bin/plutil -extract ProgramArguments xml1 -o - "$PLIST" 2>/dev/null \
-        | awk '/<string>--port<\/string>/{getline; gsub(/.*<string>|<\/string>.*/,""); print; exit}'
+        | awk -v f="$flag" '$0 ~ "<string>" f "</string>" {getline; gsub(/.*<string>|<\/string>.*/,""); print; exit}'
 }
 if [ -z "${AI_COMPANY_PORT:-}" ]; then
-    PLIST_PORT="$(read_port_from_plist || true)"
+    PLIST_PORT="$(read_arg_from_plist --port || true)"
     [ -n "${PLIST_PORT:-}" ] && PORT="$PLIST_PORT"
 fi
 
+# 监听地址：默认只本机；0.0.0.0 = 局域网可访问（无鉴权，只限可信内网）
+HOST="${AI_COMPANY_HOST:-}"
+if [ -z "${HOST:-}" ]; then
+    HOST="$(read_arg_from_plist --host || true)"
+fi
+HOST="${HOST:-127.0.0.1}"
+
+# 展示/打开用的地址：0.0.0.0 与 :: 不能直接给浏览器
+URL_HOST="$HOST"
+case "$HOST" in
+    0.0.0.0|::|"[::]") URL_HOST="127.0.0.1" ;;
+esac
+URL="http://$URL_HOST:$PORT/"
+
 DB_PATH="${AI_COMPANY_DB:-}"
 WS_PATH="${AI_COMPANY_WORKSPACE:-}"
-URL="http://127.0.0.1:$PORT/"
 LOG_DIR="$ROOT/workspace/logs"
 OUT_LOG="$LOG_DIR/server.log"
 ERR_LOG="$LOG_DIR/server.err.log"
@@ -127,6 +143,12 @@ write_plist() {
         extra="$extra
     <string>--workspace</string>
     <string>$WS_PATH</string>"
+    fi
+    # 监听地址显式写进 plist（默认 127.0.0.1 也写，方便状态里读回来）
+    if [ -n "$HOST" ]; then
+        extra="$extra
+    <string>--host</string>
+    <string>$HOST</string>"
     fi
 
     tmp="$(mktemp)"
@@ -212,6 +234,10 @@ show_status() {
     say "  一人公司 · 服务状态"
     say "  ─────────────────────────────"
     say "  地址   $URL"
+    say "  监听   $HOST:$PORT"
+    if [ "$HOST" = "0.0.0.0" ] || [ "$HOST" = "::" ] || [ "$HOST" = "[::]" ]; then
+        warn "局域网可访问（无鉴权，只应在可信内网使用；不要做公网端口映射）"
+    fi
 
     if job_loaded; then
         ok "launchd 已注册（${LABEL}）"

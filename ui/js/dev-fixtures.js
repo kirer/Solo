@@ -107,6 +107,26 @@ export function mockOrg() {
 				askedAt: t - 9 * 60_000,
 				forYou: true,
 			},
+			{
+				// 处置待办：options 是后端 DispositionPayload.options 的结构（id/label/recommended）。
+				// 没有这个字段时选项卡片也能从 question 的「① ②」里解析出来。
+				key: "demo-disp-1",
+				question:
+					"被打断的工作：坦克大战 / pi.task#t_42\n进度：第 3 步 / 共 5 步，已完成 2 次工具调用\n选项：① 暂搁（推荐）② 永久放弃\n若暂搁：需要恢复条件（默认 30 分钟后提醒下达人）",
+				from: "陆沉",
+				level: "owner",
+				decisionOwner: "owner",
+				askedAt: t - 4 * 60_000,
+				forYou: true,
+				isDisposition: true,
+				disposition: {
+					type: "disposition",
+					options: [
+						{ id: "shelve", label: "暂搁", recommended: true },
+						{ id: "abandon", label: "永久放弃", recommended: false },
+					],
+				},
+			},
 		],
 		costs: {
 			totalTokens: 128_400,
@@ -137,6 +157,18 @@ export function mockFeed(conversationId = 20) {
 			// 派活方：老板自己发的是 owner，别的 agent 派来的是对应岗位。
 			from: { label: "老板", kind: "owner" },
 			text: "把坦克大战的渲染层拆出来，先跑一遍冒烟测试。",
+			// 附件回显：真实后端会把附件引用拼进正文，假数据保留结构化附件字段，
+			// 让「历史消息里的附件 chip」也能被视觉验收覆盖。
+			attachments: [
+				{
+					id: "fixture-render-spec",
+					name: "render-spec.png",
+					size: 184_320,
+					mime: "image/png",
+					url: "<svg xmlns='http://www.w3.org/2000/svg' width='96' height='72'><rect width='96' height='72' fill='%23e8ebf0'/><rect x='12' y='12' width='48' height='8' fill='%239098a4'/><rect x='12' y='28' width='72' height='4' fill='%23c4cad4'/><rect x='12' y='40' width='60' height='4' fill='%23c4cad4'/><rect x='12' y='52' width='40' height='4' fill='%23c4cad4'/></svg>",
+				},
+				{ id: "fixture-notes", name: "拆分说明.md", size: 4_096, mime: "text/markdown", url: "" },
+			],
 			at: t - 8 * 60_000,
 		},
 		{
@@ -241,6 +273,43 @@ export function fit(canvas, game) {
 			text: "一次工具调用失败：没有写入权限。已自动重试。",
 			at: t - 2 * 60_000,
 		},
+		// 插话（mode=steer）复现数据：受理回执 → 插入的 user 条目 → 它的 assistant 回复。
+		// 回归点：这三条必须都出现在聊天里，且回执只有一行极小提示、不重复正文。
+		{
+			id: 11.4,
+			kind: "note",
+			// app.receipt 无 from：界面渲染成一行「已收到 · 正在切换」
+			text: "已收到 · 正在切换",
+			at: 0,
+		},
+		{
+			id: 11.5,
+			kind: "user",
+			from: { label: "老板", kind: "owner" },
+			text: "插入：先停一下，用一句话说现在项目数。",
+			at: t - 90_000,
+		},
+		{
+			id: 11.6,
+			kind: "assistant",
+			text: "已暂停手上的拆分。当前 1 个项目（坦克大战），2 个在跑。",
+			at: t - 80_000,
+		},
+		{
+			id: 12,
+			kind: "user",
+			from: { label: "老板", kind: "owner" },
+			text: "接下来先做哪一块？",
+			at: t - 60_000,
+		},
+		{
+			// 选项卡片：最后一条 assistant 的编号列表 → DSH 风格单选卡片。
+			// 普通回复里的编号清单不会触发（解析器要求「确实在问你选一个」）。
+			id: 13,
+			kind: "assistant",
+			text: "渲染层拆完、冒烟测试通过，下一步有三条路。你选一个，我马上开工：\n\n1. 先补 HUD 响应式\n2. 先接移动端虚拟摇杆\n3. 先清掉 viewport 的权限问题",
+			at: t - 40_000,
+		},
 	];
 
 	return {
@@ -270,10 +339,58 @@ export function fit(canvas, game) {
 	};
 }
 
+/** 假档案：让内嵌 dock 的「已加载」状态也能被视觉验收。 */
+export function mockProfile(conversationId = 20) {
+	const staff = conversationId === 20;
+	return {
+		conversationId,
+		label: staff ? "林越" : "陆沉",
+		subtitle: staff ? "开发 · 坦克大战 项目" : "坦克大战 项目负责人",
+		kind: staff ? "staff" : "project",
+		role: staff ? "开发" : "项目负责人",
+		project: "坦克大战",
+		parent: staff ? "陆沉" : "CTO",
+		model: "auto/deepseek-v4.1-flash",
+		charter:
+			"你是坦克大战项目的开发工程师。负责渲染层、输入层与小游戏逻辑；改动前先读代码，改完必须跑一遍冒烟测试，接口不变优先。",
+		guide:
+			"先复现再修；不确定就报给项目负责人。回答里不要用「应该没问题」这种话，给出可验证的结果。",
+		tools: [
+			{ name: "read", description: "读文件" },
+			{ name: "edit", description: "改文件" },
+			{ name: "bash", description: "跑命令与测试" },
+			{ name: "report", description: "向项目负责人回报" },
+		],
+	};
+}
+
+/** 假档案注入：只拦 /api/profile/*，其余请求原样放行。dev-only。 */
+function installProfileMock() {
+	if (window.__company.__profileMocked === true) return;
+	window.__company.__profileMocked = true;
+	const original = window.fetch.bind(window);
+	window.fetch = async (input, init) => {
+		const url = typeof input === "string" ? input : input instanceof Request ? input.url : String(input);
+		const match = /\/api\/profile\/(\d+)/.exec(url);
+		if (match !== null) {
+			try {
+				return new Response(JSON.stringify(mockProfile(Number(match[1]))), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				});
+			} catch {
+				/* 下面回退到真实请求 */
+			}
+		}
+		return original(input, init);
+	};
+}
+
 /** 在 ?dev 下把假数据灌进界面。 */
 export function useMock() {
 	const api = window.__company;
 	if (api === undefined) return false;
+	installProfileMock();
 	const org = mockOrg();
 	api.setOrg(org);
 	api.select(20, { openSheet: false, focus: false });

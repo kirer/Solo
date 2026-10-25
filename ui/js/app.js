@@ -8,6 +8,7 @@ import { escapeHtml, formatCost, formatTokens } from "./format.js";
 import { initAsk } from "./ask.js";
 import { initOrg } from "./org.js";
 import { initChat } from "./chat.js";
+import { initSettings } from "./settings.js";
 
 const $ = (id) => document.getElementById(id);
 const MOBILE_QUERY = window.matchMedia("(max-width: 860px)");
@@ -20,6 +21,8 @@ const state = {
 	/** 开发钩子：冻结 SSE，用于注入假数据做视觉验收。 */
 	freeze: false,
 	connected: true,
+	/** 当前主视图：org（组织图）/ board（任务看板）。 */
+	view: "org",
 	autoSelected: false,
 	chromeSignature: "",
 	actorSignature: "",
@@ -28,7 +31,8 @@ const state = {
 
 const ask = initAsk({ onAnswer: submitAnswer });
 const orgView = initOrg({ onSelect: (id) => selectConversation(id) });
-const chat = initChat({ onSend: sendMessage, fetchProfile });
+const chat = initChat({ onSend: sendMessage, uploadFile, fetchProfile });
+const settingsPanel = initSettings({ onToast: (text, tone) => chat.notify?.(text, tone) });
 
 /**
  * 取一位职工的角色档案（角色预制提示词 / 技能清单）。
@@ -73,6 +77,8 @@ function findActor(org, conversationId) {
 
 function applyOrg(next) {
 	state.org = next;
+	// 看板等模块独立挂载，只订阅这一份组织快照（不直接依赖 app.js 内部状态）。
+	window.dispatchEvent(new CustomEvent("aic:org", { detail: next }));
 	renderChrome(next);
 	ask.render((next.pending ?? []).filter((item) => item.forYou));
 	orgView.update(next);
@@ -102,8 +108,12 @@ function applyOrg(next) {
 function renderChrome(org) {
 	const companyName = $("company-name");
 	if (companyName !== null) companyName.textContent = org.company?.name || "一人公司";
-	$("company-model").textContent = org.company?.model ?? "—";
-	$("company-model").title = org.company?.model ?? "";
+	// 设置面板读到 /api/settings 后接管这一行（显示配置的默认模型而不是运行时快照）。
+	const modelLabel = $("company-model");
+	if (modelLabel !== null && modelLabel.dataset.settingsOwner !== "1") {
+		modelLabel.textContent = org.company?.model ?? "—";
+		modelLabel.title = org.company?.model ?? "";
+	}
 
 	const forYou = (org.pending ?? []).filter((item) => item.forYou);
 
@@ -310,6 +320,8 @@ function setupSettings() {
 	const openPanel = () => {
 		panel.hidden = false;
 		toggle.setAttribute("aria-expanded", "true");
+		// 打开时刷新一次：设置可能在别的标签页/终端里改过。
+		settingsPanel.refresh?.();
 		panel.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
 	};
 
@@ -337,6 +349,10 @@ function setupSettings() {
 	});
 	document.addEventListener("click", (event) => {
 		if (panel.hidden) return;
+		// 用 composedPath 而不是 contains(target)：设置内容会在点击后重渲染，
+		// 事件冒泡到 document 时 target 已经从 DOM 摘掉，contains 会误判成「点在外面」。
+		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
+		if (path.includes(panel) || path.includes(toggle)) return;
 		if (panel.contains(event.target) || toggle.contains(event.target)) return;
 		closePanel({ focus: false });
 	});
@@ -351,22 +367,138 @@ function setupSettings() {
 	});
 }
 
+// ── 主视图切换（组织图 / 看板） ────────────────────────────────────────────
+
+const VIEW_KEY = "ai-company.view";
+
+/**
+ * 切换主视图：org（组织图）或 board（任务看板）。
+ *
+ * 只做三件事：body[data-view] 给 CSS、#board.hidden 控制占位、按钮 aria-selected。
+ * 看板内容由 board.js 自己渲染，这里不碰。
+ */
+function applyView(name, { persist = true } = {}) {
+	const view = name === "board" ? "board" : "org";
+	state.view = view;
+	document.body.dataset.view = view;
+	const board = $("board");
+	if (board !== null) board.hidden = view !== "board";
+	for (const button of document.querySelectorAll(".view-switch-btn")) {
+		button.setAttribute("aria-selected", button.id === `view-${view}` ? "true" : "false");
+	}
+	if (persist) {
+		try {
+			localStorage.setItem(VIEW_KEY, view);
+		} catch {
+			/* 隐私模式可能不可写 */
+		}
+	}
+}
+
+function toggleView() {
+	applyView(state.view === "board" ? "org" : "board");
+}
+
+function setupViewSwitch() {
+	$("view-org")?.addEventListener("click", () => applyView("org"));
+	$("view-board")?.addEventListener("click", () => applyView("board"));
+	let stored = "org";
+	try {
+		stored = localStorage.getItem(VIEW_KEY) ?? "org";
+	} catch {
+		stored = "org";
+	}
+	applyView(stored, { persist: false });
+}
+
 // ── 动作 ──────────────────────────────────────────────────────────────────
 
-async function sendMessage(text) {
+/** 附件上限与后端一致：超过就别浪费一次上传。 */
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+
+/**
+ * 上传一个文件，返回 /api/upload 的响应对象（{id,name,size,mime,url}）。
+ *
+ * chat.js 负责托盘展示与失败 toast：这里抛出的 Error 消息要能直接给人看。
+ * 文件名走 x-file-name，必须 encodeURIComponent（HTTP 头不能放非 ASCII 字符）。
+ */
+async function uploadFile(file) {
+	if (!(file instanceof File)) throw new Error("没有可上传的文件。");
+	if (file.size > MAX_UPLOAD_BYTES) {
+		throw new Error(`文件「${file.name || "未命名"}」超过 20 MiB，请压缩后再试。`);
+	}
+	let response;
+	try {
+		response = await fetch("/api/upload", {
+			method: "POST",
+			headers: {
+				"Content-Type": file.type || "application/octet-stream",
+				"x-file-name": encodeURIComponent(file.name || "file"),
+			},
+			body: file,
+		});
+	} catch {
+		throw new Error("上传失败：连不上服务，检查 ai-company 是否还在运行。");
+	}
+	let data = null;
+	try {
+		data = await response.json();
+	} catch {
+		data = null;
+	}
+	if (!response.ok) {
+		const message = typeof data?.error === "string" && data.error.trim() !== "" ? data.error.trim() : "";
+		throw new Error(message !== "" ? message : `上传失败（HTTP ${response.status}）。`);
+	}
+	if (data === null || typeof data !== "object" || data.id === undefined) {
+		throw new Error("上传失败：服务返回的数据不完整。");
+	}
+	return data;
+}
+
+async function sendMessage(text, attachments = []) {
 	const conversationId = state.openId;
 	if (conversationId === null) return false;
-	chat.addLocalQueued(text);
+	const files = (Array.isArray(attachments) ? attachments : []).filter(
+		(item) => item !== null && typeof item === "object",
+	);
+	const message = String(text ?? "").trim();
+	if (message === "" && files.length === 0) return false;
+	chat.addLocalQueued(message !== "" ? message : files.map((item) => item.name).join("、"));
+	const payload = { conversationId, text: message };
+	if (files.length > 0) {
+		payload.attachments = files.map((item) => ({
+			id: item.id,
+			name: item.name,
+			mime: item.mime,
+			size: item.size,
+		}));
+	}
 	try {
 		const response = await fetch("/api/message", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId, text }),
+			body: JSON.stringify(payload),
 		});
-		if (!response.ok) throw new Error(`HTTP ${response.status}`);
+		if (!response.ok) {
+			let detail = "";
+			try {
+				const data = await response.json();
+				detail = typeof data?.error === "string" ? data.error : "";
+			} catch {
+				detail = "";
+			}
+			throw new Error(detail !== "" ? detail : `HTTP ${response.status}`);
+		}
 		return true;
-	} catch {
-		chat.notify?.("消息没发出去，检查服务是否还在运行。", "error");
+	} catch (error) {
+		const reason = error instanceof Error && error.message !== "" ? error.message : "";
+		chat.notify?.(
+			reason === "" || reason.startsWith("HTTP")
+				? "消息没发出去，检查服务是否还在运行。"
+				: `消息没发出去：${reason}`,
+			"error",
+		);
 		return false;
 	}
 }
@@ -446,6 +578,14 @@ document.addEventListener("keydown", (event) => {
 	}
 });
 
+// ⌘K / Ctrl+K 切换主视图（组织图 ↔ 看板）
+document.addEventListener("keydown", (event) => {
+	if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+		event.preventDefault();
+		toggleView();
+	}
+});
+
 MOBILE_QUERY.addEventListener("change", () => {
 	if (MOBILE_QUERY.matches) {
 		document.body.dataset.sheet = "closed";
@@ -493,6 +633,10 @@ if (new URLSearchParams(location.search).has("dev")) {
 		},
 		org: orgView,
 		chat,
+		settings: settingsPanel,
+		switchView(name) {
+			applyView(name);
+		},
 	};
 	import("./dev-fixtures.js").then((fixtures) => {
 		window.__company.useMock = () => fixtures.useMock();
@@ -506,5 +650,12 @@ if (new URLSearchParams(location.search).has("dev")) {
 $("scrim").hidden = false;
 chat.clear();
 setupSettings();
+setupViewSwitch();
 syncChatButton();
 connectOrg();
+
+// ── 自挂载模块（导入即初始化） ─────────────────────────────────────────────
+// 看板：自己拉 /api/board、订阅 aic:org、按 body[data-view] 显隐。
+// 星海：挂到 #stage-bg，手机 / 减少动效 / 无 WebGL 时自动降级。
+import "./board.js";
+import "./starfield.js";

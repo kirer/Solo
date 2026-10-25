@@ -521,3 +521,184 @@ body[data-sheet="open"] .scrim {
 [data-resolved="light"] .scrim {
 	background: rgba(20, 22, 26, 0.34);
 }
+
+/* ============================================================================
+   v5 增量：视图切换（组织 / 看板）、#stage-bg 层级、顶栏图标反馈。
+   显隐完全由 body[data-view] + CSS 决定：JS 只切 dataset（和可选的 hidden 兜底）。
+   ========================================================================== */
+
+/* ── 顶栏视图切换：极简 tab，选中靠中性抬升 + 1px accent 下划线 ────────── */
+.view-switch {
+	display: flex;
+	align-items: stretch;
+	gap: 2px;
+	height: 30px;
+	padding: 2px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--switch-bg);
+	flex: none;
+}
+
+.view-switch-btn {
+	position: relative;
+	min-width: 46px;
+	padding: 0 var(--sp-2);
+	display: grid;
+	place-items: center;
+	border-radius: 1px;
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	letter-spacing: 0.02em;
+	transition:
+		color var(--motion-fast) var(--ease-out),
+		background-color var(--motion-fast) var(--ease-out);
+}
+
+.view-switch-btn::after {
+	content: "";
+	position: absolute;
+	left: 8px;
+	right: 8px;
+	bottom: 2px;
+	height: 1px;
+	background: transparent;
+	transform: scaleX(0.4);
+	opacity: 0;
+	transition:
+		background-color var(--motion-fast) var(--ease-out),
+		opacity var(--motion-fast) var(--ease-out),
+		transform var(--motion-fast) var(--ease-out);
+}
+
+.view-switch-btn:hover {
+	color: var(--ink);
+	background: var(--surface-2);
+}
+
+.view-switch-btn:active {
+	background: var(--surface-3);
+	transition-duration: 90ms;
+}
+
+.view-switch-btn[aria-selected="true"] {
+	color: var(--ink);
+	background: var(--switch-active-bg);
+}
+
+.view-switch-btn[aria-selected="true"]::after {
+	background: var(--switch-underline);
+	transform: scaleX(1);
+	opacity: 1;
+}
+
+/* ── 舞台背景：只做层级与中性渐变，绝不压住 starfield 画布 ──────────────
+   层级约定（与 graph.css 的 .stage-bg 定义并存，两者不冲突）：
+     · #stage-bg 固定铺满视口、z-index -1、不吃事件 —— canvas 只能待在它里面；
+     · .stage-inner 是 z-index 1 的内容层，永远在背景之上；
+     · 遮罩用伪元素，不额外加 DOM，也不盖住 canvas 的星点。
+   背景只用 tokens 中性色渐变，深浅主题都由变量切换。 */
+.stage {
+	position: relative;
+}
+
+.stage-bg::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+	background: linear-gradient(180deg, var(--stage-wash) 0%, transparent 26%, transparent 100%);
+}
+
+.stage-inner {
+	position: relative;
+	z-index: 1;
+}
+
+/* ── 组织 / 看板：纯 CSS 视图切换 ─────────────────────────────────────── */
+.org {
+	display: block;
+	min-width: 0;
+}
+
+.board {
+	display: none;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+body[data-view="board"] .org {
+	display: none;
+}
+
+body[data-view="board"] .board {
+	display: flex;
+}
+
+/* hidden 属性是兜底：真实实现由 JS 只切 dataset；这里用更高优先级把兜底
+   覆盖掉，避免「删掉 hidden 忘了加回来」这类接线问题导致看板打不开。 */
+body[data-view="board"] .board[hidden] {
+	display: flex !important;
+}
+
+/* 看板视图吃满舞台宽度：两栏（内容 + 常驻对话）互不挤压。 */
+body[data-view="board"] .stage {
+	overflow: hidden;
+}
+
+body[data-view="board"] .stage-inner {
+	max-width: 1560px;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	padding-bottom: var(--sp-4);
+}
+
+body[data-view="board"] .board {
+	flex: 1;
+	min-height: 0;
+}
+
+/* 对话面板常驻时，看板列宽会变窄：<= 1180px 起收窄内边距，保证三列不挤。 */
+@media (max-width: 1180px) {
+	body[data-view="board"] .stage-inner {
+		padding-left: var(--sp-3);
+		padding-right: var(--sp-3);
+	}
+}
+
+/* ── 手机：看板改为纵向堆叠，舞台整体滚动（列内不再各自滚） ───────────── */
+@media (max-width: 860px) {
+	.view-switch {
+		height: 34px;
+	}
+
+	.view-switch-btn {
+		min-width: 40px;
+		padding: 0 7px;
+	}
+
+	body[data-view="board"] .stage {
+		overflow-y: auto;
+		overflow-x: hidden;
+	}
+
+	body[data-view="board"] .stage-inner {
+		height: auto;
+		min-height: 100%;
+		padding: var(--sp-2) var(--sp-3) var(--sp-4);
+	}
+}
+
+@media (max-width: 520px) {
+	.view-switch {
+		height: 32px;
+	}
+
+	.view-switch-btn {
+		min-width: 36px;
+		font-size: var(--fs-2xs);
+	}
+}

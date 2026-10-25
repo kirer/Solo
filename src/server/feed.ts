@@ -166,11 +166,16 @@ export async function readFeed(
 	const state = options.state ?? (await runtime.harness.snapshot(CompanyDoc, context));
 
 	const limit = options.limit ?? 400;
-	const page = await conversation.entries({ order: "ascending" }, limit, undefined, context);
+	// **必须取最新的一页**：`entries({order:"ascending"}, limit)` 返回的是最旧 limit 条，
+	// 会话历史一旦超过 limit（真实公司跑几轮就会超），新消息与新回复就永远进不了 feed，
+	// 界面表现为「消息发出去了，但回复一直不显示」，而且还会把旧的 400 条反复重放。
+	// 先按 descending 取最新的 limit 条，再翻回时间正序交给 buildItems（它按顺序合并工具调用）。
+	const page = await conversation.entries({ order: "descending" }, limit, undefined, context);
+	const entries = [...page.items].reverse();
 
 	// 已提交的工具调用：用来给实时卡片补参数、判断哪些调用真的拿到了结果
-	const committed = collectCommittedTools(page.items);
-	const items = buildItems(page.items, state);
+	const committed = collectCommittedTools(entries);
+	const items = buildItems(entries, state);
 
 	// 实时状态：正在生成、正在思考、正在跑的工具
 	const view = await conversation.watch(context);
@@ -547,6 +552,18 @@ function buildItems(
 			case "pi.compaction":
 				items.push({ id: entry.id, kind: "note", text: "较早的对话已被压缩以节省上下文", at: 0 });
 				break;
+			// 受理回执（ADR-026 决策 7.1）：这条是**系统**写的「已收到」，不是用户消息。
+			//
+			// 原先它落进 default 分支被渲染成一条 note，且 `text` 就是原消息全文，
+			// 于是老板每发一条消息，聊天里都会出现两遍一样的内容（回执 1 遍 + 真实 user 1 遍）。
+			// 这里显式收窄成一条短提示：回执要看得见，但绝不重复正文。
+			case "app.receipt": {
+				const data = entry.data as { readonly timing?: string } | undefined;
+				const timing =
+					data?.timing === "step" ? "本轮工具结束后处理" : data?.timing === "turn" ? "本轮结束后处理" : "正在切换";
+				items.push({ id: entry.id, kind: "note", text: `已收到 · ${timing}`, at: 0 });
+				break;
+			}
 			// 看门狗写的告警（backend-core）：会话内 app.alert 条目
 			case "app.alert": {
 				const data = entry.data as

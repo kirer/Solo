@@ -8,6 +8,7 @@
 |---|---|
 | [README](../README.md) | 安装、启动、界面操作、终止项目 |
 | [RUNBOOK](RUNBOOK.md) | 换模型、备份、升级依赖、排障、数据文件说明 |
+| [DEPLOY](DEPLOY.md) | 局域网访问、Docker 部署、安全边界、Tauri 桌面壳评估 |
 
 ## 我想知道这东西是怎么被做出来的
 
@@ -18,6 +19,7 @@
 | [design/ANSWERS](design/ANSWERS.md) | 七个设计问题的详细回答：各层是什么、项目建不建文件夹、skill/MCP 谁给、决策权、分支对话、token 分账、沟通追踪 |
 | [design/DECISIONS](design/DECISIONS.md) | **24 条架构决策记录**，每条都写了背景、替代方案、为什么这么选 |
 | [design/OWNER-AUTHORITY-DECISION](design/OWNER-AUTHORITY-DECISION.md) | **项目负责人权限改造的规格裁定与 v2**：原稿哪里要收窄、哪里要加项，可直接转交改造方 |
+| [design/WEB-API](design/WEB-API.md) | **网页 API 契约**：设置 / 模型 / 附件 / 看板 / IM / 局域网的字段与错误码，改接口先改它 |
 | [`openspec/specs/`](../openspec/specs/) | **规格库**：9 个能力、54 条需求。改代码前先看这里「什么行为不能变」 |
 
 ## 我想了解底层

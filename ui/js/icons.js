@@ -59,6 +59,20 @@ const PATHS = {
 	sun: `<circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/>`,
 	moon: `<path d="M20 14.2A8.2 8.2 0 0 1 9.8 4a8.2 8.2 0 1 0 10.2 10.2Z"/>`,
 	monitor: `<rect x="3" y="4.5" width="18" height="12" rx="1"/><path d="M9 20h6M12 16.5V20"/>`,
+	// ── 看板 / 对话 / 设置补充（统一 24 网格、1.7 描边） ────────────────────
+	paperclip: `<path d="M20.5 11.5 12 20a4.7 4.7 0 0 1-6.6-6.6l8-8a3.2 3.2 0 0 1 4.6 4.6l-8 8a1.7 1.7 0 0 1-2.4-2.4l7-7"/>`,
+	at: `<circle cx="12" cy="12" r="3.6"/><path d="M15.6 8.4V13a2.4 2.4 0 0 0 4.4 1.3A8.6 8.6 0 1 0 16.4 19"/>`,
+	grid: `<rect x="4" y="4" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1"/>`,
+	board: `<rect x="3.5" y="4.5" width="17" height="15" rx="1.6"/><path d="M9 4.5v15M15 4.5v15"/>`,
+	columns: `<rect x="3.5" y="4.5" width="5" height="15" rx="1"/><rect x="9.5" y="4.5" width="5" height="15" rx="1"/><rect x="15.5" y="4.5" width="5" height="15" rx="1"/>`,
+	sparkle: `<path d="M12 3.5c.6 4.4 3.6 7.4 8.5 8.5-4.9 1.1-7.9 4.1-8.5 8.5-.6-4.4-3.6-7.4-8.5-8.5 4.9-1.1 7.9-4.1 8.5-8.5Z"/><path d="M18.5 3.5v3M17 5h3"/>`,
+	bell: `<path d="M18 9.5a6 6 0 1 0-12 0c0 5-2 6.5-2 6.5h16s-2-1.5-2-6.5Z"/><path d="M10 19.5a2.2 2.2 0 0 0 4 0"/>`,
+	dot: `<circle cx="12" cy="12" r="2.6" fill="currentColor" stroke="none"/>`,
+	play: `<path d="M8.5 5.5 18.5 12l-10 6.5z"/>`,
+	pause: `<path d="M9 5v14M15 5v14"/>`,
+	filter: `<path d="M4 5.5h16l-6.2 7.3v5.7l-3.6 1.5v-7.2z"/>`,
+	tag: `<path d="M4 4.5h7.2a1.5 1.5 0 0 1 1 .4l7.4 7.4a1.5 1.5 0 0 1 0 2.1l-5.2 5.2a1.5 1.5 0 0 1-2.1 0L4.9 12.2a1.5 1.5 0 0 1-.4-1V4.5Z"/><circle cx="8.3" cy="8.3" r="1.3"/>`,
+	external: `<path d="M13.5 4.5H19.5V10.5"/><path d="M19.5 4.5 11 13"/><path d="M18 14v4.5a1 1 0 0 1-1 1H5.5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1H10"/>`,
 };
 
 export function icon(name, size = 16, className = "") {

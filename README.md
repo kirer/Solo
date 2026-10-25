@@ -12,6 +12,46 @@ npm start        # 打开网页界面
 默认用本地 Command Code 网关的 `auto/deepseek-v4.1-flash` 模型（`http://127.0.0.1:3425/v1`），启动后自动打开浏览器。
 数据落在 `workspace/`（首次启动自动创建，已 gitignore）。
 
+### 启动参数
+
+```bash
+node --experimental-strip-types src/server/main.ts \
+  --port 7788 --host 127.0.0.1 \
+  --db workspace/company.sqlite --workspace workspace --no-open
+```
+
+| 参数 | 环境变量 | 默认 | 说明 |
+|---|---|---|---|
+| `--port` | `PORT` | `7788` | 监听端口 |
+| `--host` | `AI_COMPANY_HOST` | `127.0.0.1` | 监听地址；`0.0.0.0` = 局域网可访问 |
+| `--db` | — | `workspace/company.sqlite` | 数据库路径 |
+| `--workspace` | — | `workspace/` | 设置 / 附件 / 项目目录的根 |
+| `--no-open` | — | 打开浏览器 | 不自动开浏览器 |
+
+launchd 托管的服务脚本同样支持（会写进 plist）：
+
+```bash
+AI_COMPANY_HOST=0.0.0.0 ./scripts/ai-company-service.sh restart
+```
+
+### 手机 / 同事访问（局域网）
+
+用 `--host 0.0.0.0`（或 `AI_COMPANY_HOST=0.0.0.0`）启动后，启动日志与设置页「访问」
+会列出全部非回环 IPv4 地址，例如 `http://192.168.1.71:7788/`。
+
+> ⚠️ 服务**没有鉴权**：能访问端口的人可以读全部对话、以老板身份发消息、改设置。
+> 只在可信内网使用，不要做公网端口映射 / 反向代理；远程访问请用 SSH 隧道或
+> Tailscale / WireGuard。完整边界见 [`docs/DEPLOY.md`](docs/DEPLOY.md)。
+
+### Docker（可选）
+
+```bash
+docker compose up -d --build     # http://127.0.0.1:7788/
+```
+
+数据在命名卷 `ai-company-workspace`；模型密钥、局域网、安全边界见
+[`docs/DEPLOY.md`](docs/DEPLOY.md)。
+
 ### 想先看看效果
 
 ```bash
@@ -122,6 +162,8 @@ workspace/     运行时数据（首次启动创建，已 gitignore）
 |---|---|
 | 网页界面的设计令牌 / 模块边界 / 并行改界面时的契约 | [`docs/design/WEB-UI-CONTRACT.md`](docs/design/WEB-UI-CONTRACT.md) |
 | 怎么启动、换模型、备份、升级、排障 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
+| 局域网访问、Docker 部署、安全边界、Tauri 评估 | [`docs/DEPLOY.md`](docs/DEPLOY.md) |
+| **网页 API 契约**（设置 / 模型 / 附件 / 看板 / IM） | [`docs/design/WEB-API.md`](docs/design/WEB-API.md) |
 | **哪些边界不能碰**（24 条架构决策） | [`docs/design/DECISIONS.md`](docs/design/DECISIONS.md) |
 | 技术选型：为什么是 pi-durable | [`docs/design/PLAN.md`](docs/design/PLAN.md) |
 | 七个设计问题的详细回答 | [`docs/design/ANSWERS.md`](docs/design/ANSWERS.md) |

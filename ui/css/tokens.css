@@ -323,3 +323,40 @@ svg {
 		scroll-behavior: auto !important;
 	}
 }
+
+/* ── v5 增量（只看板 / 微动效 / 外壳用；不改上面任何已有色值） ──────────── */
+
+/* 动效节奏：150–250ms 之间，统一 ease-out 收尾。 */
+:root {
+	--motion-fast: 150ms;
+	--motion: 200ms;
+	--ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+	/* 卡片轻微抬起：1px 贴边线 + 低透明扩散，不用大投影、不发光。 */
+	--shadow-lift: 0 0 0 1px var(--line), 0 14px 30px -26px rgba(0, 0, 0, 0.9);
+
+	/* 看板：列底、卡片底、状态软底（全部取中性/状态色的极低透明）。 */
+	--board-col-bg: color-mix(in oklab, var(--bg-2) 72%, transparent);
+	--board-card-bg: var(--surface);
+	--board-card-bg-hover: var(--surface-2);
+
+	--warn-soft-2: rgba(245, 197, 24, 0.06);
+	--danger-soft-2: rgba(255, 95, 86, 0.06);
+
+	/* 顶栏视图切换：选中只用中性抬升 + 1px accent 下划线。 */
+	--switch-bg: var(--surface);
+	--switch-active-bg: var(--surface-3);
+	--switch-underline: var(--accent-line);
+
+	/* 顶部一层极淡的中性渐隐，给 #stage-bg 用，不带彩色。 */
+	--stage-wash: color-mix(in oklab, var(--bg-2) 40%, transparent);
+}
+
+[data-resolved="light"] {
+	--shadow-lift: 0 0 0 1px var(--line), 0 14px 30px -26px rgba(20, 22, 26, 0.28);
+
+	--warn-soft-2: rgba(138, 106, 0, 0.05);
+	--danger-soft-2: rgba(192, 57, 43, 0.05);
+
+	--stage-wash: color-mix(in oklab, var(--bg-2) 50%, transparent);
+}

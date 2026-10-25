@@ -1,5 +1,15 @@
 /**
- * 沟通连线层：SVG 贝塞尔，实线底 + 一段沿路径慢速移动的短划表示方向。
+ * 沟通连线层：SVG 贝塞尔，颜色只表示「这次沟通现在是什么状态」。
+ *
+ * 设计约束（用户明确提过）：
+ * - 没有沟通就不画线。原来的 24 小时窗口 + 16 条上限等于把一周的聊天记录都摊在图上，
+ *   组织图变成蜘蛛网；现在只画最近 10 分钟、最多 8 条。
+ * - 绿 = 正在发消息 / 在跑（唯一带流动光点的状态色），黄 = 等待回复 / 等拍板，
+ *   红 = 失败 / 超时无应答，其余是已经发生完的普通沟通 —— 中性淡线。
+ * - 不发光过载：光点只在绿线上出现，且速度随新鲜度变化，不做整片 glow。
+ *
+ * 状态判定只用组织快照里已有的东西：link.kind、link.at 的新鲜度、
+ * 两端节点的 status（由 org.js 算好传进来，缺省时退回宿主元素上的 data-status）。
  *
  * 这一层只负责几何与动画，不决定「该画哪条边」：
  * org.js 传进来的 anchors 是 Map<conversationId, Element>，
@@ -11,23 +21,36 @@
 import { clamp } from "./format.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
-/** 只画 20 分钟内的沟通。 */
-const WINDOW_MS = 24 * 60 * 60_000;
-/** 最近 60 秒的边带一个沿路径移动的光点。 */
-const FRESH_MS = 6 * 60 * 60_000;
-/** 最多 20 条，避免组织图变成蜘蛛网。 */
-const MAX_EDGES = 16;
+/** 只画 10 分钟内的沟通：沟通是「现在发生的事」，不是历史。 */
+const WINDOW_MS = 10 * 60_000;
+/** 12 秒内的边：还没等状态变成 busy，也按「正在沟通」算。 */
+const LIVE_MS = 12_000;
+/** 45 秒内且有人在跑：绿线。 */
+const RUN_MS = 45_000;
+/** 升级 / 待拍板超过 2 分钟没人应答：红（超时）。 */
+const ESCALATE_TIMEOUT_MS = 2 * 60_000;
+/** 最多 8 条，再多就不是组织图了。 */
+const MAX_EDGES = 8;
 /**
  * 双向沟通时两条线的并排距离。
  * 用端点错开的方式让开，而不是把控制点整体横移，否则两条曲线中段会交叉。
  */
 const LANE_GAP = 11;
 
+/** 一条边的沟通状态。 */
+const STATE = {
+	run: "run",
+	warn: "warn",
+	danger: "danger",
+	idle: "idle",
+};
+
 export function createEdges(svg) {
 	const entries = new Map();
 	let links = [];
 	let anchors = new Map();
 	let focus = null;
+	let statusById = new Map();
 
 	const elementIds = new WeakMap();
 	let nextElementId = 0;
@@ -80,7 +103,43 @@ export function createEdges(svg) {
 		return `M ${round(x1)} ${round(y1)} C ${round(midX)} ${round(y1)}, ${round(midX)} ${round(y2)}, ${round(x2)} ${round(y2)}`;
 	}
 
-	/** 过滤 + 聚合后去重 + 取最新 20 条，同时算出各自的矩形。 */
+	/** 端点状态：优先用 org.js 算好的 map，其次退回宿主卡片上的 data-status。 */
+	function statusOf(id, element) {
+		const known = statusById.get(id);
+		if (typeof known === "string") return known;
+		const fromDom = element?.dataset?.status;
+		return typeof fromDom === "string" ? fromDom : "";
+	}
+
+	/**
+	 * 一条边此刻是什么状态。
+	 *
+	 * 判定顺序是有意为之：先坏消息（红），再正在发生（绿），
+	 * 再等待（黄），剩下就是已经发生完的普通沟通（中性）。
+	 */
+	function stateOf(item, now) {
+		const age = Math.max(0, now - item.at);
+		const fromStatus = statusOf(item.from, item.start);
+		const toStatus = statusOf(item.to, item.end);
+
+		// 故障：任一端坏了，这条沟通不可能顺畅
+		if (fromStatus === "error" || toStatus === "error") return STATE.danger;
+		// 超时无应答：升级 / 等拍板挂了 2 分钟还没落地
+		if (item.kind === "escalate" && age > ESCALATE_TIMEOUT_MS) return STATE.danger;
+
+		// 正在沟通：刚发生，或时间窗内且有人在跑
+		if (age <= LIVE_MS) return STATE.run;
+		if (age <= RUN_MS && (fromStatus === "busy" || toStatus === "busy")) return STATE.run;
+
+		// 等待回复 / 等拍板
+		if (item.kind === "escalate" || item.kind === "decide") return STATE.warn;
+		if (fromStatus === "waiting" || toStatus === "waiting") return STATE.warn;
+
+		// 其余：普通沟通，已经发生完（线还在窗口内，但只是淡淡一条）
+		return STATE.idle;
+	}
+
+	/** 过滤 + 聚合后去重 + 取最新 8 条，同时算出各自的矩形。 */
 	function collect() {
 		if (svg === null) return [];
 		const base = svg.getBoundingClientRect();
@@ -179,6 +238,7 @@ export function createEdges(svg) {
 		// from 较小的方向占一条车道：同一方向的几条边彼此平行，不会交叉
 		const forwards = items.filter((item) => item.from < item.to).map((item) => item.from);
 		const forwardLane = forwards.length === 0 ? 0 : Math.min(...forwards);
+		const now = Date.now();
 
 		for (const item of items) {
 			const key = `${item.from}:${item.to}`;
@@ -203,11 +263,33 @@ export function createEdges(svg) {
 			entry.group.dataset.from = String(item.from);
 			entry.group.dataset.to = String(item.to);
 
-			// 年龄 → 0.32 ~ 0.85 的整组透明度：越新越实
-			const age = Math.max(0, Date.now() - item.at);
+			// 状态 → 颜色 / 线宽 / 光点速度（具体颜色在 graph.css 里用 token 定义）
+			const age = Math.max(0, now - item.at);
 			const freshness = clamp(1 - age / WINDOW_MS, 0, 1);
-			entry.group.setAttribute("opacity", String(round(0.32 + freshness * 0.53)));
-			entry.group.classList.toggle("is-recent", age <= FRESH_MS);
+			const state = stateOf(item, now);
+			entry.group.dataset.state = state;
+			// 绿是唯一允许流动的状态色；保留 has-spark / is-recent 钩子给验收脚本
+			entry.group.classList.toggle("has-spark", state === STATE.run);
+			entry.group.classList.toggle("is-recent", age <= RUN_MS);
+
+			// 越新越实：运行态最亮，等待次之，普通沟通最淡（但不是不可见）
+			const opacity =
+				state === STATE.run
+					? 0.5 + freshness * 0.35
+					: state === STATE.warn
+						? 0.4 + freshness * 0.22
+						: state === STATE.danger
+							? 0.42 + freshness * 0.2
+							: 0.14 + freshness * 0.14;
+			entry.group.setAttribute("opacity", String(round(opacity)));
+
+			// 光点速度跟新鲜度走：越新越快（2.2s ~ 4.6s 一圈）
+			if (state === STATE.run) {
+				const seconds = 2.2 + (1 - freshness) * 2.4;
+				entry.group.style.setProperty("--edge-speed", `${seconds.toFixed(2)}s`);
+			} else {
+				entry.group.style.removeProperty("--edge-speed");
+			}
 		}
 
 		for (const [key, entry] of entries) {
@@ -221,10 +303,11 @@ export function createEdges(svg) {
 
 	return {
 		/** anchors: Map<conversationId, Element>（员工可能已聚合成项目卡）。 */
-		render(nextLinks, nextAnchors, focusId) {
+		render(nextLinks, nextAnchors, focusId, context = {}) {
 			links = Array.isArray(nextLinks) ? nextLinks : [];
 			anchors = nextAnchors instanceof Map ? nextAnchors : new Map();
 			focus = normalizeId(focusId);
+			statusById = context?.statusById instanceof Map ? context.statusById : new Map();
 			draw();
 		},
 		/** 用上次的数据重算（翻转结束 / resize 后）。 */
@@ -243,6 +326,7 @@ export function createEdges(svg) {
 			entries.clear();
 			links = [];
 			anchors = new Map();
+			statusById = new Map();
 			focus = null;
 			if (svg !== null) svg.classList.remove("has-focus");
 		},

@@ -13,12 +13,27 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
 import { BACKGROUND_CONTEXT, InboxDoc, inspectLiveness, isConversationBusy } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
+import type { ModelSetup } from "../runtime/models.ts";
+import { CompanyDoc } from "../company/docs.ts";
 import { answerPending, listPending, PendingDoc } from "../company/escalation.ts";
 import { captureInterruptedWork, createDispositionPending, settleDisposition } from "../company/disposition.ts";
 import { readCompany, startCompanyWatchdog } from "../company/org.ts";
 import { buildOrgView } from "./org-view.ts";
 import { decorateFeed, readFeed } from "./feed.ts";
 import { readProfile } from "./profile.ts";
+import { buildBoardView } from "./board.ts";
+import {
+	buildSettingsView,
+	openSettings,
+	SettingsConflictError,
+	SettingsInputError,
+	type ModelCatalogEntry,
+	type SettingsStore,
+	type SettingsView,
+} from "./settings.ts";
+import { createUploadStore, MAX_UPLOAD_BYTES, UploadTooLargeError, type UploadStore } from "./uploads.ts";
+import { composeInboundText, createImOutboundRelay, inboundAllowed } from "./im.ts";
+import { browserUrlOf, lanUrlsOf } from "./network.ts";
 
 /** 服务选项。 */
 export type ServeOptions = {
@@ -41,11 +56,31 @@ export type ServeOptions = {
 	 * 只应该由「真的在跑服务」的入口拥有。测试想完全掌控调度时传 `false`。
 	 */
 	readonly watchdog?: boolean;
+	/**
+	 * 工作空间根目录（默认 `<cwd>/workspace`）。
+	 *
+	 * 设置文件（settings.json）与附件（uploads/）都在这里；测试必须传临时目录，
+	 * 绝不能落到真实 workspace。
+	 */
+	readonly workspace?: string;
+	/** 启动时装配好的模型集合；设置页需要它列出内置模型与默认模型。 */
+	readonly models?: ModelSetup;
+	/** 注入设置存储（测试用）；默认按 workspace 打开。 */
+	readonly settings?: SettingsStore;
+	/** 注入附件仓库（测试用）；默认 `<workspace>/uploads`。 */
+	readonly uploads?: UploadStore;
 };
 
 /** 服务句柄。 */
 export type Server = {
+	/** 浏览器应打开的地址（监听 0.0.0.0 时是 127.0.0.1）。 */
 	readonly url: string;
+	/** 实际监听端口。 */
+	readonly port: number;
+	/** 实际监听地址。 */
+	readonly host: string;
+	/** 局域网里可访问的地址（回环监听时为空）。 */
+	readonly lanUrls: readonly string[];
 	close(): Promise<void>;
 };
 
@@ -54,6 +89,22 @@ export type Server = {
  * 依据：ADR-026 决策 5「时机 now 遇原子操作 → 最多等 30 秒 → 硬切」之外的普通路径。
  */
 const INTERRUPT_TIMEOUT_MS = 5_000;
+
+/**
+ * 文本类附件内联摘录的上限字节数。
+ *
+ * 8KB ≈ 2k token，足够模型看懂一份小文本/一段 CSV 的开头，又不至于把上下文塞满。
+ * 超过就截断并在正文里标注「前 8KB」，让模型知道后面还有内容。
+ */
+const TEXT_EXCERPT_BYTES = 8 * 1024;
+
+/**
+ * 哪些扩展名算「文本类」。
+ *
+ * 只认明确的白名单：图片、压缩包、pdf 之类塞进上下文只会变成乱码 token，
+ * 既费钱又误导模型，所以一律不做内联摘录（只给路径，交给工具/视觉模型）。
+ */
+const TEXTUAL_FILE = /\.(txt|md|markdown|json|ya?ml|csv|tsv|log|ts|tsx|js|jsx|mjs|cjs|css|html|sh|py|go|rs|java|sql|toml|ini)$/i;
 
 /**
  * 处于原子操作时，最多等多久再硬切（ADR-026 决策 3）。
@@ -98,6 +149,14 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	const port = options.port ?? 7788;
 	const host = options.host ?? "127.0.0.1";
 	const uiDir = options.uiDir ?? join(process.cwd(), "ui");
+	const workspace = options.workspace ?? join(process.cwd(), "workspace");
+	// 设置与附件都在 workspace 下：测试传临时目录，正式运行就是项目 workspace。
+	const settingsStore = options.settings ?? openSettings({ workspace });
+	const uploadStore = options.uploads ?? createUploadStore({ root: join(workspace, "uploads") });
+	const builtinModels = options.models;
+	/** 实际监听值（端口 0 时由系统分配，listen 之后才能确定）。 */
+	let actualPort = port;
+	let boundHost = host;
 
 	/** 组织快照的失效信号 + 防抖。 */
 	let orgDirty = true;
@@ -136,6 +195,8 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	// 推不动界面，看起来像「服务卡住了」。
 	let subscribed: CompanyRuntime | undefined;
 	let unsubscribeCommits: (() => void) | undefined;
+	// IM 出站：订阅提交把老板通道的新回复推到 outboundWebhook（失败静默）
+	const imRelay = createImOutboundRelay({ runtime: current, settings: settingsStore });
 	const ensureSubscribed = (): void => {
 		const next = current();
 		if (next === subscribed) return;
@@ -144,6 +205,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		try {
 			unsubscribeCommits = next.harness.subscribeCommits(() => {
 				scheduleOrgPush();
+				imRelay.notify();
 			});
 		} catch {
 			// 运行时可能正处在关闭/重开之间：下一帧再试
@@ -207,6 +269,32 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			if (path === "/api/message" && request.method === "POST") return await postMessage(request, response);
 			if (path === "/api/answer" && request.method === "POST") return await postAnswer(request, response);
 			if (path === "/api/interrupt" && request.method === "POST") return await postInterrupt(request, response);
+
+			// ── 设置 / 模型 ──
+			if (path === "/api/settings") {
+				if (request.method === "GET") return json(response, await settingsView());
+				if (request.method === "PATCH") return await patchSettings(request, response);
+				return fail(response, 405, "只支持 GET / PATCH");
+			}
+			if (path === "/api/models") {
+				if (request.method === "POST") return await postModel(request, response);
+				if (request.method === "DELETE") return await deleteModel(url, response);
+				return fail(response, 405, "只支持 POST / DELETE");
+			}
+
+			// ── 附件 ──
+			if (path === "/api/upload" && request.method === "POST") return await postUpload(request, response);
+			if (path.startsWith("/uploads/")) return await serveUpload(path, response);
+
+			// ── 看板 ──
+			if (path === "/api/board" && request.method === "GET") {
+				return json(response, await buildBoardView(current(), BACKGROUND_CONTEXT));
+			}
+
+			// ── IM 入站 ──
+			if (path === "/api/im/inbound" && request.method === "POST") {
+				return await postImInbound(url, request, response);
+			}
 
 			// 静态资源
 			return await serveStatic(response, uiDir, path);
@@ -307,12 +395,24 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 	/** 发消息。 */
 	async function postMessage(request: IncomingMessage, response: ServerResponse): Promise<void> {
-		const body = await readJson<{ conversationId?: number; text?: string; mode?: "steer" | "followUp" }>(request);
+		const body = await readJson<{
+			conversationId?: number;
+			text?: string;
+			mode?: "steer" | "followUp";
+			attachments?: readonly { readonly id?: unknown; readonly name?: unknown }[];
+		}>(request);
 		const conversationId = Number(body.conversationId);
 		const text = (body.text ?? "").trim();
-		if (!Number.isFinite(conversationId) || text === "") {
-			return fail(response, 400, "需要 conversationId 与 text");
+		const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+		if (!Number.isFinite(conversationId) || (text === "" && attachments.length === 0)) {
+			return fail(response, 400, "需要 conversationId 与 text（可只带附件）");
 		}
+
+		// 附件：把每份转成一句文本引用（[附件] name → /abs/path）注入消息。
+		// 这样任何模型都能用 read / bash 工具去读，不需要多模态支持。
+		const attachmentResult = await messageContent(text, attachments);
+		if (attachmentResult.error !== undefined) return fail(response, 400, attachmentResult.error);
+		const content = attachmentResult.content;
 
 		const runtime = current();
 		const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
@@ -329,7 +429,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 		// ADR-026 决策 7.1：回执不经过模型。受理成功即写一条 app.receipt，
 		// 模型失败/超时也必须看得见「收到了」——这条是系统写的，与生成结果无关。
-		await writeReceipt(runtime, conversationId, text, timing);
+		await writeReceipt(runtime, conversationId, content, timing);
 
 		// now 档：先打断当前轮，再把消息投进去（abort 会撤掉队列，所以中断后再 submit）。
 		// step/turn 走原有的 whenBusy 语义。
@@ -339,13 +439,13 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		// 而不是让异常穿透成 500「消息没发出去」却又不说明是哪条、其余几条怎么样。
 		let delivery: { delivered: string[]; failed: string[] } = { delivered: [], failed: [] };
 		if (whenBusy === "now") {
-			delivery = await interruptThenDeliver(runtime, conversation, conversationId, text);
+			delivery = await interruptThenDeliver(runtime, conversation, conversationId, content);
 		} else {
 			try {
-				await conversation.submit({ type: "input", content: text, whenBusy }, BACKGROUND_CONTEXT);
-				delivery = { delivered: [text], failed: [] };
+				await conversation.submit({ type: "input", content, whenBusy }, BACKGROUND_CONTEXT);
+				delivery = { delivered: [content], failed: [] };
 			} catch {
-				delivery = { delivered: [], failed: [text] };
+				delivery = { delivered: [], failed: [content] };
 			}
 		}
 
@@ -356,7 +456,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			// 界面要立刻看到那条追认：早退前先推一次组织视图（原先漏了，要等下一轮才刷新）。
 			scheduleOrgPush();
 			// 老板自己那条失败 → 明确回 503；他只是丢了这一条时也能立刻知道要重发。
-			if (delivery.failed.includes(text)) {
+			if (delivery.failed.includes(content)) {
 				return fail(response, 503, "这条没投进去，请重发。");
 			}
 			// 只丢了其它排队消息：老板这条已受理，回执与追认条目都已在，正常返回。
@@ -780,6 +880,250 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		return json(response, { ok });
 	}
 
+	// ── 设置 / 模型 / 附件 / 看板 / IM ──────────────────────────────────────
+
+	/** 设置页需要的完整视图：实际监听值 + 模型清单 + IM 配置。 */
+	async function settingsView(): Promise<SettingsView> {
+		const settings = await settingsStore.read();
+		const lanUrls = lanUrlsOf(boundHost, actualPort);
+		const restartRequired = await settingsStore.restartRequired();
+		return buildSettingsView({
+			settings,
+			bindHost: boundHost,
+			port: actualPort,
+			lanUrls,
+			url: browserUrlOf(boundHost, actualPort),
+			// 只传「内置」清单：自定义模型由 buildSettingsView 从 settings 里补，
+			// 否则重启后 catalog 里会同时出现 builtin 与 custom 两条同 id 记录
+			builtinCatalog: builtinModels?.builtinCatalog ?? builtinModels?.catalog ?? [],
+			defaultModel: builtinModels?.defaultModel ?? { provider: "unknown", modelId: "unknown" },
+			restartRequired,
+		});
+	}
+
+	/** 把设置/附件错误映射成 HTTP 状态。 */
+	function failForError(response: ServerResponse, error: unknown): void {
+		if (error instanceof SettingsInputError) return fail(response, 400, error.message);
+		if (error instanceof SettingsConflictError) return fail(response, 409, error.message);
+		if (error instanceof UploadTooLargeError) return fail(response, 413, error.message);
+		return fail(response, 500, error instanceof Error ? error.message : String(error));
+	}
+
+	/** PATCH /api/settings：按段合并并落盘，返回合并后的完整视图。 */
+	async function patchSettings(request: IncomingMessage, response: ServerResponse): Promise<void> {
+		const body = await readJson<unknown>(request);
+		try {
+			await settingsStore.patch(body);
+		} catch (error) {
+			return failForError(response, error);
+		}
+		return json(response, await settingsView());
+	}
+
+	/** POST /api/models：新增一条自定义模型（重启后生效）。 */
+	async function postModel(request: IncomingMessage, response: ServerResponse): Promise<void> {
+		const body = await readJson<Record<string, unknown>>(request);
+		const id = typeof body.id === "string" ? body.id.trim() : "";
+		if (id === "") return fail(response, 400, "需要模型 id");
+		// 与内置模型重名会让「按 id 解析默认模型」产生歧义，直接拒绝
+		const builtin = builtinModels?.builtinCatalog ?? builtinModels?.catalog ?? [];
+		const clash = builtin.some((item) => item.id === id || `${item.provider}/${item.modelId}` === id);
+		if (clash) return fail(response, 409, `模型 ${id} 与内置模型重名`);
+		try {
+			const model = await settingsStore.addModel(body);
+			const view = await settingsView();
+			const entry = view.models.catalog.find((item) => item.id === model.id);
+			// 同时返回完整设置视图：前端可一次 applySettings，不用再补一次 GET
+			return json(response, {
+				...view,
+				ok: true,
+				model: entry satisfies ModelCatalogEntry | undefined,
+				restartRequired: true,
+			});
+		} catch (error) {
+			return failForError(response, error);
+		}
+	}
+
+	/** DELETE /api/models?id=：删除一条自定义模型（重启后生效）。 */
+	async function deleteModel(url: URL, response: ServerResponse): Promise<void> {
+		const id = (url.searchParams.get("id") ?? "").trim();
+		if (id === "") return fail(response, 400, "需要 id 查询参数");
+		const removed = await settingsStore.removeModel(id);
+		if (!removed) return fail(response, 404, "没有这条自定义模型（内置模型不能删）");
+		// 同样带完整设置视图，前端删完直接重绘
+		return json(response, { ...(await settingsView()), ok: true, restartRequired: true });
+	}
+
+	/** POST /api/upload：原始字节 + content-type + x-file-name + x-file-size。 */
+	async function postUpload(request: IncomingMessage, response: ServerResponse): Promise<void> {
+		const declared = Number(headerValue(request, "x-file-size"));
+		if (Number.isFinite(declared) && declared > MAX_UPLOAD_BYTES) {
+			return fail(response, 413, `附件超过 ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))}MiB 上限`);
+		}
+
+		const chunks: Buffer[] = [];
+		let total = 0;
+		let tooLarge = false;
+		for await (const chunk of request) {
+			const buffer = chunk as Buffer;
+			total += buffer.byteLength;
+			if (total > MAX_UPLOAD_BYTES) {
+				tooLarge = true;
+				break;
+			}
+			chunks.push(buffer);
+		}
+		if (tooLarge) {
+			// 停止接收剩余字节：不然客户端会一直往一个已放弃的请求里写
+			request.destroy();
+			return fail(response, 413, `附件超过 ${Math.round(MAX_UPLOAD_BYTES / (1024 * 1024))}MiB 上限`);
+		}
+
+		const rawName = headerValue(request, "x-file-name") ?? "";
+		let name = "file";
+		if (rawName !== "") {
+			try {
+				name = decodeURIComponent(rawName);
+			} catch {
+				name = rawName;
+			}
+		}
+		const rawMime = headerValue(request, "content-type") ?? "application/octet-stream";
+		const mime = rawMime.split(";")[0]?.trim() || "application/octet-stream";
+
+		try {
+			const file = await uploadStore.save({ bytes: Buffer.concat(chunks), name, mime });
+			return json(response, {
+				id: file.id,
+				name: file.name,
+				size: file.size,
+				mime: file.mime,
+				url: `/uploads/${file.id}/${encodeURIComponent(file.name)}`,
+			});
+		} catch (error) {
+			return failForError(response, error);
+		}
+	}
+
+	/** GET /uploads/<id>/<name>：下载附件。 */
+	async function serveUpload(path: string, response: ServerResponse): Promise<void> {
+		const rest = path.slice("/uploads/".length);
+		const slash = rest.indexOf("/");
+		if (slash <= 0) return fail(response, 404, "附件不存在");
+		const id = rest.slice(0, slash);
+		let name: string;
+		try {
+			name = decodeURIComponent(rest.slice(slash + 1));
+		} catch {
+			return fail(response, 400, "文件名不合法");
+		}
+		const file = await uploadStore.resolve(id, name);
+		if (file === undefined) return fail(response, 404, "附件不存在");
+		let bytes: Buffer;
+		try {
+			bytes = await uploadStore.read(file);
+		} catch {
+			return fail(response, 404, "附件文件已丢失");
+		}
+		response.writeHead(200, {
+			"Content-Type": file.mime,
+			"Content-Length": String(bytes.byteLength),
+			"Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.name)}`,
+			"Cache-Control": "private, max-age=300",
+		});
+		response.end(bytes);
+	}
+
+	/**
+	 * 把附件清单转成注入文本；附件不存在时明确报错而不是静默丢掉。
+	 *
+	 * 除了绝对路径，还给**文本类附件**附一段内联摘录（前 8KB）：
+	 * CEO 通道没有 read/bash 工具（它的职责就是不亲自碰文件），只给路径的话
+	 * 老板发个 txt/md/csv 过去模型根本看不到内容，「支持传文件」就成了假功能。
+	 * 二进制（图片/压缩包）不摘录，只给路径——那需要工具或视觉模型才能读，属已知限制
+	 * （见 docs/design/WEB-API.md）。
+	 */
+	async function messageContent(
+		text: string,
+		attachments: readonly { readonly id?: unknown; readonly name?: unknown }[],
+	): Promise<{ content: string; error?: string }> {
+		if (attachments.length === 0) return { content: text };
+		const lines: string[] = [];
+		for (const attachment of attachments) {
+			const id = typeof attachment.id === "string" ? attachment.id : "";
+			const file = await uploadStore.resolve(id);
+			if (file === undefined) {
+				const label =
+					typeof attachment.name === "string" && attachment.name !== "" ? attachment.name : id || "未知附件";
+				return { content: "", error: `附件不存在或已清理：${label}` };
+			}
+			const label =
+				typeof attachment.name === "string" && attachment.name !== "" ? attachment.name : file.name;
+			const excerpt = await readTextExcerpt(file.path, label);
+			lines.push(
+				excerpt === undefined ? `[附件] ${label} → ${file.path}` : `[附件] ${label} → ${file.path}\n${excerpt}`,
+			);
+		}
+		return { content: [text, lines.join("\n\n")].filter((part) => part !== "").join("\n\n") };
+	}
+
+	/**
+	 * 读一小段文本附件内容用于内联展示。
+	 *
+	 * 只对明确的文本类扩展名生效：图片/压缩包塞进来只会是一堆乱码 token，
+	 * 既浪费钱又误导模型。读失败一律当作「没有摘录」，不影响消息投递。
+	 */
+	async function readTextExcerpt(path: string, name: string): Promise<string | undefined> {
+		if (!TEXTUAL_FILE.test(name)) return undefined;
+		try {
+			const raw = await readFile(path);
+			const body = raw.subarray(0, TEXT_EXCERPT_BYTES).toString("utf8").trim();
+			if (body === "") return undefined;
+			const truncated = raw.byteLength > TEXT_EXCERPT_BYTES;
+			return `内容摘录${truncated ? `（前 ${TEXT_EXCERPT_BYTES / 1024}KB）` : ""}：\n\`\`\`\n${body}\n\`\`\``;
+		} catch {
+			return undefined;
+		}
+	}
+
+	/** POST /api/im/inbound?token=：把外部 IM 消息投进老板通道。 */
+	async function postImInbound(
+		url: URL,
+		request: IncomingMessage,
+		response: ServerResponse,
+	): Promise<void> {
+		const settings = await settingsStore.read();
+		const token = url.searchParams.get("token") ?? "";
+		if (!inboundAllowed(settings.im, token)) {
+			return fail(response, 403, "IM 入站未启用或 token 不正确");
+		}
+
+		const body = await readJson<{ text?: string; from?: string }>(request);
+		const text = (body.text ?? "").trim();
+		if (text === "") return fail(response, 400, "需要 text");
+
+		const runtime = current();
+		const state = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
+		const conversationId = Number(state?.roles?.ceo);
+		if (!Number.isFinite(conversationId) || conversationId <= 0) {
+			return fail(response, 503, "公司还没有老板通道");
+		}
+		const conversation = await runtime.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
+		if (conversation === undefined) return fail(response, 404, "老板通道不存在");
+
+		const content = composeInboundText(text, body.from);
+		await writeReceipt(runtime, conversationId, content, "now");
+		const delivery = await interruptThenDeliver(runtime, conversation, conversationId, content);
+		if (delivery.failed.includes(content)) {
+			await writeUndelivered(runtime, conversationId, delivery.failed);
+			scheduleOrgPush();
+			return fail(response, 503, "这条没投进去，请重试。");
+		}
+		scheduleOrgPush();
+		return json(response, { ok: true, conversationId });
+	}
+
 	const listenHost = host;
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
@@ -791,12 +1135,18 @@ export async function serve(options: ServeOptions): Promise<Server> {
 
 	// 端口为 0 时由系统分配，必须读实际监听的端口
 	const address = server.address();
-	const actualPort = typeof address === "object" && address !== null ? address.port : port;
+	actualPort = typeof address === "object" && address !== null ? address.port : port;
+	boundHost = listenHost;
+	const lanUrls = lanUrlsOf(boundHost, actualPort);
 
 	return {
-		url: `http://${listenHost}:${actualPort}/`,
+		url: browserUrlOf(boundHost, actualPort),
+		port: actualPort,
+		host: boundHost,
+		lanUrls,
 		async close() {
 			unsubscribeCommits?.();
+			imRelay.stop();
 			stopWatchdog();
 			if (orgTimer !== undefined) clearTimeout(orgTimer);
 			for (const client of orgClients) {
@@ -817,6 +1167,14 @@ export async function serve(options: ServeOptions): Promise<Server> {
 }
 
 // ── 工具 ────────────────────────────────────────────────────────────────────
+
+/** 读取单个请求头（同名多值取第一个）。 */
+function headerValue(request: IncomingMessage, name: string): string | undefined {
+	const value = request.headers[name];
+	if (typeof value === "string") return value;
+	if (Array.isArray(value)) return value[0];
+	return undefined;
+}
 
 function json(response: ServerResponse, value: unknown): void {
 	const payload = JSON.stringify(value);

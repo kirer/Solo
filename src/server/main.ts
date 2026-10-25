@@ -3,7 +3,11 @@
  * 网页界面入口。
  *
  * 用法：
- *   node --experimental-strip-types src/server/main.ts [--port 7788] [--db path] [--no-open]
+ *   node --experimental-strip-types src/server/main.ts [--port 7788] [--host 127.0.0.1] [--db path] [--workspace path] [--no-open]
+ *
+ * 局域网访问：`--host 0.0.0.0`（或环境变量 AI_COMPANY_HOST=0.0.0.0）会监听
+ * 所有网卡，启动日志打印全部非回环 IPv4 地址。服务**没有鉴权**，只应在
+ * 可信内网使用（见 docs/DEPLOY.md 的安全边界）。
  *
  * 启动流程与终端版一致：打开 → 巡检 → 初始化 → 起服务。
  */
@@ -26,17 +30,21 @@ import { CompanyDoc } from "../company/docs.ts";
 import { createEscalationTask } from "../company/escalation.ts";
 import { configureEventLog, defaultEventLogPath, describeReport, writeEvent } from "./event-log.ts";
 import { serve } from "./http.ts";
+import { openSettings } from "./settings.ts";
 
 /** 解析命令行参数。 */
 function parseArgs(argv: readonly string[]): {
-	port: number;
+	/** undefined = 没显式指定，按 settings.json / 环境变量决定。 */
+	port: number | undefined;
+	host: string | undefined;
 	db: string;
 	company: string;
 	workspace: string;
 	open: boolean;
 	eventLog: string;
 } {
-	let port = Number(process.env.PORT ?? 7788);
+	let port: number | undefined;
+	let host: string | undefined;
 	let db = join(process.cwd(), "workspace", "company.sqlite");
 	let company = "一人公司";
 	let workspace = join(process.cwd(), "workspace");
@@ -47,7 +55,12 @@ function parseArgs(argv: readonly string[]): {
 		const arg = argv[index];
 		const next = argv[index + 1];
 		if (arg === "--port" && next !== undefined) {
-			port = Number(next);
+			const parsed = Number(next);
+			port = Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+			index += 1;
+		} else if (arg === "--host" && next !== undefined) {
+			// 局域网访问：--host 0.0.0.0（或 AI_COMPANY_HOST）
+			host = next.trim();
 			index += 1;
 		} else if (arg === "--db" && next !== undefined) {
 			// 命令行给相对路径时立刻转绝对：会话的 cwd 会原样进执行环境，
@@ -69,7 +82,7 @@ function parseArgs(argv: readonly string[]): {
 		}
 	}
 
-	return { port, db, company, workspace, open, eventLog };
+	return { port, host, db, company, workspace, open, eventLog };
 }
 
 const args = parseArgs(process.argv.slice(2));
@@ -78,7 +91,21 @@ setupSignalHandlers();
 // 运行时关键事件落盘：不配的话这些事件跨重启就没了（见 event-log.ts 注释）。
 configureEventLog({ path: args.eventLog !== "" ? args.eventLog : defaultEventLogPath() });
 
-const { models, defaultModel, catalog } = setupModels();
+// 设置文件先读：监听地址可能来自 settings.json（命令行 / 环境变量优先级更高）
+const probeSettings = openSettings({ workspace: args.workspace }).readSync();
+const port = args.port ?? probeSettings.network.port;
+const host = args.host ?? probeSettings.network.host;
+
+// 再按「实际生效的地址」打开设置存储：以后 PATCH 写回 settings.json 时，
+// network 段记的是这次真正用的值，而不是环境变量兜底值（否则换个启动参数
+// 改一次 IM 设置，就会把端口悄悄写回默认）。
+const settingsStore = openSettings({
+	workspace: args.workspace,
+	environment: { ...process.env, PORT: String(port), AI_COMPANY_HOST: host },
+});
+
+// 启动时合并 workspace/settings.json 里的自定义模型（需重启才生效）
+const { models, defaultModel, catalog, builtinCatalog } = setupModels(process.env, { workspace: args.workspace });
 const registry = createRegistry();
 
 const onReport = (report: RuntimeReport): void => {
@@ -147,10 +174,26 @@ watchForFailure(
 
 // 传 getter 而不是实例：崩溃自愈会重新赋值 `runtime`（见下面的 watchForFailure），
 // 传实例会让服务在自愈之后继续用那个已关闭的对象。
-const server = await serve({ runtime: () => runtime, port: args.port });
+const server = await serve({
+	runtime: () => runtime,
+	port,
+	host,
+	workspace: args.workspace,
+	settings: settingsStore,
+	models: { models, defaultModel, catalog, ...(builtinCatalog === undefined ? {} : { builtinCatalog }) },
+});
 
 process.stdout.write(`\n  一人公司 · 网页界面\n`);
 process.stdout.write(`  ${server.url}\n`);
+if (server.lanUrls.length > 0) {
+	process.stdout.write(`  局域网（同一内网可访问）：\n`);
+	for (const lanUrl of server.lanUrls) process.stdout.write(`    ${lanUrl}\n`);
+	// 无鉴权是产品现状（单人本机），开局域网时明确提醒，避免有人顺手做端口映射
+	process.stdout.write(`  注意：服务没有鉴权，只在可信内网使用，不要暴露到公网。\n`);
+} else {
+	process.stdout.write(`  局域网：未开启（用 --host 0.0.0.0 或 AI_COMPANY_HOST=0.0.0.0 开启）\n`);
+}
+process.stdout.write(`  监听：${server.host}:${server.port}\n`);
 process.stdout.write(`  数据：${args.db}\n`);
 process.stdout.write(`  模型：${defaultModel.provider}/${defaultModel.modelId}\n`);
 process.stdout.write(`\n  按 Ctrl+C 退出（未完成的工作会保留）\n\n`);

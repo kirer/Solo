@@ -1,0 +1,157 @@
+/* ============================================================================
+   微动效 · 克制版
+   原则：只做「状态被看见了」的提示，不做装饰性花活。
+     · 时长 150–250ms，统一 ease-out；没有弹跳、没有回弹过冲。
+     · 位移 ≤ 6px、缩放 ≥ 0.96，绝不放大画面。
+     · 只用 tokens 里的中性色与四态软色；不发光、不霓虹。
+     · prefers-reduced-motion 下全部关掉（含 tokens.css 的全局兜底）。
+   可复用 class：
+     .motion-pop    小型弹出/入场（缩放 + 淡入）
+     .motion-fade   纯淡入（视图切换、列表容器）
+     .motion-rise   自下 4px 上浮 + 淡入
+     .motion-press  可点击块：hover 抬 1px、active 压回
+     .pulse-dot     状态点呼吸（只在 busy 时用，1.8s 极轻）
+     .skeleton      骨架块 shimmer
+     .is-enter      列表项新增时的淡入（配合 --i 做 stagger）
+   ========================================================================== */
+
+/* ── 关键帧 ───────────────────────────────────────────────────────────── */
+@keyframes motion-fade-in {
+	from { opacity: 0; }
+	to { opacity: 1; }
+}
+
+@keyframes motion-pop-in {
+	from { opacity: 0; transform: scale(0.985) translateY(2px); }
+	to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes motion-rise-in {
+	from { opacity: 0; transform: translateY(4px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes motion-pulse-dot {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.45; transform: scale(0.82); }
+}
+
+@keyframes motion-shimmer {
+	from { background-position: 140% 0; }
+	to { background-position: -40% 0; }
+}
+
+@keyframes motion-spin {
+	to { transform: rotate(360deg); }
+}
+
+/* ── 可复用入场 class ─────────────────────────────────────────────────── */
+.motion-fade {
+	animation: motion-fade-in var(--motion) var(--ease-out) both;
+}
+
+.motion-pop {
+	animation: motion-pop-in var(--motion) var(--ease-out) both;
+}
+
+.motion-rise {
+	animation: motion-rise-in var(--motion) var(--ease-out) both;
+}
+
+/* 列表项新增：stagger 20–40ms，由渲染层写 style="--i:n" 控制顺序。 */
+.is-enter {
+	animation: motion-rise-in var(--motion) var(--ease-out) both;
+	animation-delay: calc(var(--i, 0) * 30ms);
+}
+
+/* ── 按压反馈：只给明确的可点击块，避免污染排版 ───────────────────────── */
+.motion-press {
+	transition:
+		background-color var(--motion-fast) var(--ease-out),
+		border-color var(--motion-fast) var(--ease-out),
+		color var(--motion-fast) var(--ease-out),
+		transform var(--motion-fast) var(--ease-out),
+		box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.motion-press:hover {
+	transform: translateY(-1px);
+}
+
+.motion-press:active {
+	transform: translateY(0) scale(0.995);
+	transition-duration: 90ms;
+}
+
+/* 顶栏图标按钮：hover 只抬色与底，按压 0.96 收一下。 */
+.topbar-btn {
+	transition:
+		color var(--motion-fast) var(--ease-out),
+		background-color var(--motion-fast) var(--ease-out),
+		border-color var(--motion-fast) var(--ease-out),
+		transform var(--motion-fast) var(--ease-out);
+}
+
+.topbar-btn:hover {
+	transform: translateY(-1px);
+}
+
+.topbar-btn:active {
+	transform: translateY(0) scale(0.94);
+	transition-duration: 90ms;
+}
+
+/* ── 状态点呼吸：只在「在跑」用；其余状态静止 ─────────────────────────── */
+.pulse-dot {
+	animation: motion-pulse-dot 1.8s var(--ease-in-out) infinite;
+}
+
+.skeleton {
+	position: relative;
+	overflow: hidden;
+	border-radius: var(--radius);
+	background-color: var(--surface-2);
+	background-image: linear-gradient(
+		90deg,
+		transparent 0%,
+		color-mix(in oklab, var(--surface-4) 70%, transparent) 50%,
+		transparent 100%
+	);
+	background-size: 220% 100%;
+	background-repeat: no-repeat;
+	animation: motion-shimmer 1.4s linear infinite;
+}
+
+/* ── 视图切换淡入（.org / #board 由 shell.css 负责显隐） ────────────────
+   动画挂在被 display:none 的那个元素上：display 从 none 变回可见时，
+   浏览器会重新起播 CSS 动画，所以来回切换都有淡入，且不需要 JS 加 class。 */
+body[data-view="board"] .board,
+body[data-view="org"] .org,
+body:not([data-view]) .org {
+	animation: motion-fade-in var(--motion) var(--ease-out) both;
+}
+
+/* ── 减少动效：全部停掉，只保留不透明度终态 ───────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+	.motion-fade,
+	.motion-pop,
+	.motion-rise,
+	.is-enter,
+	.pulse-dot,
+	.skeleton,
+	body[data-view="board"] .board,
+	body[data-view="org"] .org,
+	body:not([data-view]) .org {
+		animation: none !important;
+	}
+
+	.motion-press,
+	.motion-press:hover,
+	.motion-press:active,
+	.topbar-btn,
+	.topbar-btn:hover,
+	.topbar-btn:active {
+		transform: none !important;
+		transition: none !important;
+	}
+}

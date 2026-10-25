@@ -21,6 +21,7 @@ import {
 import { icon } from "./icons.js";
 import { renderMarkdown } from "./markdown.js";
 import { initProfile } from "./profile.js";
+import { splitOptionsFromText } from "./ask.js";
 
 /**
  * 面板宽度变化后，组织图要重算连线。app.js 没有把 org 句柄传进来，
@@ -44,6 +45,10 @@ const NEAR_BOTTOM = 90;
 /** 流式 Markdown 重绘间隔：契约要求 ≤80ms。 */
 const STREAM_INTERVAL = 70;
 const TOAST_MS = 3500;
+/** 本地留痕的兜底寿命：超过它还没有真实 user 条目，就把「没收到推送」说清楚。 */
+const LOCAL_ECHO_MS = 30_000;
+/** 附件上限与后端保持一致（20 MiB）。 */
+const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 
 /* ── 纯函数 ─────────────────────────────────────────────────────────────── */
 
@@ -122,17 +127,50 @@ function elFromHtml(html) {
 	return template.content.firstElementChild;
 }
 
+/** 文件大小：保持短，托盘里一行放得下。 */
+function formatBytes(value) {
+	const size = Number(value);
+	if (!Number.isFinite(size) || size <= 0) return "";
+	if (size < 1024) return `${size} B`;
+	if (size < 1024 * 1024) return `${(size / 1024).toFixed(size < 10 * 1024 ? 1 : 0)} KB`;
+	return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** 只读附件 chip（历史消息里回显）。 */
+function attachmentChipsHtml(list) {
+	if (!Array.isArray(list) || list.length === 0) return "";
+	const chips = list
+		.map((item) => {
+			const name = String(item?.name ?? "附件");
+			const size = formatBytes(item?.size);
+			const image = typeof item?.mime === "string" && item.mime.startsWith("image/");
+			const iconHtml =
+				image && typeof item?.url === "string" && item.url !== ""
+					? `<img class="attach-thumb" src="${escapeAttr(item.url)}" alt="">`
+					: `<span class="attach-glyph">${icon("file", 14)}</span>`;
+			return `<span class="attach-chip attach-chip--readonly" title="${escapeAttr(name)}">
+				${iconHtml}
+				<span class="attach-name">${escapeHtml(name)}</span>
+				${size === "" ? "" : `<span class="attach-size mono">${escapeHtml(size)}</span>`}
+			</span>`;
+		})
+		.join("");
+	return `<div class="attach-list">${chips}</div>`;
+}
+
 function signatureOf(item) {
 	switch (item.kind) {
 		case "tool":
 			return `tool|${item.name}|${item.args}|${item.output}|${item.state}`;
 		case "user":
-			return `user|${item.text}|${item.from?.label ?? ""}|${item.from?.kind ?? ""}`;
+			return `user|${item.text}|${item.from?.label ?? ""}|${item.from?.kind ?? ""}|${attachmentsSigOf(
+				item.attachments,
+			)}`;
 		case "note":
 			return `note|${item.text}|${item.from?.label ?? ""}|${item.to?.label ?? ""}`;
 		case "assistant":
 		case "thinking":
-			return `${item.kind}|${item.text}`;
+			return `${item.kind}|${item.text}|${item.latest === true ? "latest" : ""}`;
 		case "alert":
 			return `alert|${item.text}|${item.from?.label ?? ""}`;
 		default:
@@ -140,10 +178,16 @@ function signatureOf(item) {
 	}
 }
 
+/** 附件签名的稳定表示（只用于判断要不要 patch，不参与展示）。 */
+function attachmentsSigOf(list) {
+	if (!Array.isArray(list) || list.length === 0) return "";
+	return list.map((item) => `${item?.id ?? ""}:${item?.name ?? ""}`).join(",");
+}
+
 /* ── 面板 ───────────────────────────────────────────────────────────────── */
 
 // ADR-026 决策 7：界面不再提供二次点击确认（原 onInterrupt 已废，受理无条件）。
-export function initChat({ onSend, fetchProfile } = {}) {
+export function initChat({ onSend, uploadFile, fetchProfile } = {}) {
 	const els = {
 		chat: $("chat"),
 		body: $("chat-body"),
@@ -160,14 +204,20 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		send: $("send"),
 		form: $("composer"),
 		resizer: $("chat-resizer"),
+		dock: $("chat-dock"),
+		tray: $("attach-tray"),
+		attach: $("attach"),
+		fileInput: $("file-input"),
+		mention: $("mention-pop"),
 	};
 	if (els.chat === null || els.body === null) return {};
 
-	// 抽屉把手、浮层（新消息 / 轻提示）都由聊天自己补，不改外壳 DOM。
+	// 抽屉把手、轻提示浮层都由聊天自己补，不改外壳 DOM。
+	// 注意：档案 dock (#chat-dock) 归 index.html，这里的浮层是另一个容器。
 	const grab = elFromHtml('<div class="chat-grab" aria-hidden="true"><span></span></div>');
 	els.chat.prepend(grab);
 
-	const dock = elFromHtml('<div class="chat-dock"></div>');
+	const float = elFromHtml('<div class="chat-float"></div>');
 	const jump = document.createElement("button");
 	jump.type = "button";
 	jump.className = "chat-jump";
@@ -175,8 +225,8 @@ export function initChat({ onSend, fetchProfile } = {}) {
 	const toasts = document.createElement("div");
 	toasts.className = "chat-toasts";
 	toasts.setAttribute("aria-live", "polite");
-	dock.append(jump, toasts);
-	els.chat.append(dock);
+	float.append(jump, toasts);
+	els.chat.append(float);
 
 	const stream = document.createElement("div");
 	stream.className = "chat-stream";
@@ -204,6 +254,20 @@ export function initChat({ onSend, fetchProfile } = {}) {
 	let storedOrg = null;
 	let sending = false;
 	let newCount = 0;
+
+	/** 待发送附件：{ key, status: "uploading"|"ready", id,name,size,mime,url,thumb,error } */
+	let attachments = [];
+	let attachSeq = 0;
+	let uploading = 0;
+
+	/** @ 提及弹层状态。 */
+	const mention = { open: false, query: "", tokenStart: -1, items: [], active: 0 };
+
+	/** 最近一次 feed 变化与本地留痕的发送时刻，用来发现「有回执没推送」。 */
+	let feedPushAt = 0;
+	let feedItemCount = 0;
+	let feedHasAnswer = false;
+	let answerWatch = 0;
 
 	// 流式重绘
 	let streamTimer = 0;
@@ -420,7 +484,8 @@ export function initChat({ onSend, fetchProfile } = {}) {
 	}
 
 	function updateSendState() {
-		els.send.disabled = actor === null || els.input.value.trim() === "";
+		els.send.disabled =
+			actor === null || (els.input.value.trim() === "" && attachments.length === 0) || uploading > 0;
 	}
 
 	/* ── 头部按钮：角色档案（不再做「全部展开 / 收起」） ── */
@@ -512,8 +577,26 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		if (actor === null) return rows;
 
 		if (feed !== null) {
+			// 选项卡片只挂在「最后一条 assistant」上：历史消息里的编号清单不再出现
+			// 可点的旧选项，避免把过期的选择发给模型。
+			let lastAssistantIndex = -1;
+			let lastUserAfterAssistant = -1;
 			feed.items.forEach((item, index) => {
-				rows.push({ key: `it:${index}:${item.kind}`, kind: item.kind, sig: signatureOf(item), item });
+				if (item.kind === "assistant") lastAssistantIndex = index;
+				else if (item.kind === "user") lastUserAfterAssistant = index;
+			});
+			const assistantIsLatest = lastAssistantIndex > lastUserAfterAssistant;
+			feed.items.forEach((item, index) => {
+				const withFlag =
+					item.kind === "assistant" && assistantIsLatest && index === lastAssistantIndex
+						? { ...item, latest: true }
+						: item;
+				rows.push({
+					key: `it:${index}:${item.kind}`,
+					kind: item.kind,
+					sig: signatureOf(withFlag),
+					item: withFlag,
+				});
 			});
 			if (feed.thinking) {
 				const item = { kind: "thinking", live: true, text: feed.thinking };
@@ -617,16 +700,34 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		// user 条目的发言人：后端 item.from（老板 / 派活的 agent）；没有就降级成「老板」。
 		const who = actorRefOf(item.from, "老板", "owner");
 		const time = timeOf(item.at);
-		return elFromHtml(`
+		const el = elFromHtml(`
 			<div class="msg msg--user">
 				<div class="msg-head msg-head--user">
 					${whoChipHtml(who, time)}
 				</div>
-				<div class="bubble" title="${escapeAttr(clockTime(item.at))}">${plainText(item.text)}</div>
+				${userBodyHtml(item)}
 			</div>`);
+		el.dataset.raw = String(item.text ?? "");
+		return el;
+	}
+
+	/** 用户消息正文：气泡 + 只读附件 chip（历史消息里显示收到了什么）。 */
+	function userBodyHtml(item) {
+		const body = item.text === "" || item.text === undefined ? "" : `<div class="bubble">${plainText(item.text)}</div>`;
+		return body + attachmentChipsHtml(item.attachments);
 	}
 
 	function renderNote(item) {
+		const body = String(item.text ?? "");
+		// ADR-026 决策 7.1 的受理回执：不经过模型，只是一条「收到了」的系统提示。
+		// 它不该长得像一条聊天消息，更不该重复正文——压成一行极小的回执。
+		if (item.from === undefined && body.startsWith("已收到")) {
+			const el = elFromHtml(
+				`<div class="receipt">${icon("check", 11)}<span>${escapeHtml(body)}</span></div>`,
+			);
+			el.dataset.raw = body;
+			return el;
+		}
 		const from = item.from === undefined || item.from === null ? null : actorRefOf(item.from, "系统", "system");
 		const to = item.to === undefined || item.to === null ? null : actorRefOf(item.to, "", "system");
 		const who = from === null ? null : `<span class="note-who">${escapeHtml(from.label)}</span>`;
@@ -648,10 +749,57 @@ export function initChat({ onSend, fetchProfile } = {}) {
 					${live ? '<span class="msg-live"><i></i>正在输出</span>' : ""}
 					<button class="msg-copy" type="button" data-copy="message" aria-label="复制回答" title="复制回答"><span>复制</span></button>
 				</div>
-				<div class="md">${renderMarkdown(item.text)}</div>
+				<div class="md"></div>
+				<div class="msg-tail"></div>
 			</div>`);
 		el.dataset.raw = String(item.text ?? "");
+		applyAssistantContent(el, item, live);
 		return el;
+	}
+
+	/**
+	 * 写入助手正文与选项卡片。
+	 *
+	 * 只有「最后一条 assistant」才解析编号选项：普通回复里的编号清单不能乱加卡片，
+	 * 老消息里的选项也不能再点（会把过期选择发出去）。
+	 */
+	function applyAssistantContent(el, item, live) {
+		const md = el.querySelector(".md");
+		if (md !== null) md.innerHTML = renderMarkdown(item.text);
+		const tail = el.querySelector(".msg-tail");
+		if (tail === null) return;
+		tail.innerHTML = "";
+		if (live || item.latest !== true) return;
+		const parsed = splitOptionsFromText(item.text);
+		if (parsed === null) return;
+		if (md !== null && parsed.body !== "") md.innerHTML = renderMarkdown(parsed.body);
+		tail.innerHTML = optionGroupHtml(parsed.options);
+	}
+
+	/** 选项卡片：单选、最后一项固定「自定义输入」。 */
+	function optionGroupHtml(options) {
+		const cards = options
+			.map(
+				(option, index) => `<button class="msg-option" type="button" data-chat-option="${index}" data-label="${escapeAttr(
+					option.label,
+				)}" aria-pressed="false">
+					<span class="msg-option-key mono">${index + 1}</span>
+					<span class="msg-option-label">${escapeHtml(option.label)}</span>
+				</button>`,
+			)
+			.join("");
+		return `<div class="msg-options" role="group" aria-label="选择一项">
+			${cards}
+			<button class="msg-option msg-option--custom" type="button" data-chat-option="custom" aria-pressed="false">
+				<span class="msg-option-key mono">${options.length + 1}</span>
+				<span class="msg-option-label">自定义输入</span>
+				<span class="msg-option-hint">${icon("edit", 12)}</span>
+			</button>
+			<span class="msg-options-hint">按 <kbd>1</kbd>–<kbd>${Math.min(
+				options.length + 1,
+				9,
+			)}</kbd> 快速选择</span>
+		</div>`;
 	}
 
 	function renderThinking(item) {
@@ -711,34 +859,44 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		outputPre.classList.toggle("is-empty", output === "" || output === undefined);
 	}
 
+	/**
+	 * 插入中的消息：按普通消息形态呈现，不描黄框、不做高亮。
+	 *
+	 * ADR-026 决策 7：老板的话到达即受理，界面不能再让它看起来像「待处理的队列」。
+	 * 只保留一行极小的弱化标注（已受理 · 正在切换 / 由 X 派来）说明当前状态，
+	 * 其余与一条普通消息一致。
+	 */
 	function renderQueued(item) {
 		const local = item.kind === "localqueued";
-		// 别的 agent 派来的任务不是老板的消息：不能显示成「插话/追加」，
+		// 别的 agent 派来的任务不是老板的消息：不能显示成老板的插话，
 		// 也不能给「立即处理」——那会把别人的任务当成老板的话重投一遍。
 		const delegated = item.origin === "agent";
 		const mode = delegated ? "" : item.mode === "steer" ? "插话" : item.mode === "followUp" ? "追加" : "";
-		const head = local
-			? "已发出，等待进入对话"
-			: delegated
-				? `由 ${item.from ?? "协作方"} 派来`
-				: "正在受理";
-		// ADR-026 决策 7：老板通道不再出现「立即处理」按钮。
-		// 受理本身已无条件（默认档位 now，到达即生效），再让人点一下等于把
-		// 「要不要现在听」推回给老板。agent 来源也不给按钮（重投会替 agent 发言）。
-		const actions = delegated
-			? '<span class="queued-hint">当前这轮结束后自动处理</span>'
-			: '<span class="queued-hint">已受理，正在切换</span>';
+		if (delegated) {
+			return elFromHtml(`
+				<div class="queued queued--agent" data-origin="agent">
+					<div class="queued-head">
+						<i></i><span>由 ${escapeHtml(item.from ?? "协作方")} 派来</span>
+						<span class="queued-hint">本轮结束后处理</span>
+					</div>
+					<div class="queued-text">${plainText(item.text)}</div>
+				</div>`);
+		}
+
+		const status = local ? "已发出 · 正在进入对话" : "已受理 · 正在切换";
 		const el = elFromHtml(`
-			<div class="queued${local ? " queued--local" : ""}${delegated ? " queued--agent" : ""}">
-				<div class="queued-head">
-					<i></i><span>${head}</span>
+			<div class="queued queued--insert${local ? " queued--local" : ""}" data-origin="owner" data-mode="${escapeAttr(
+				item.mode ?? "",
+			)}">
+				<div class="queued-insert-head">
+					${whoChipHtml({ label: "老板", kind: "owner" }, "")}
+					<span class="queued-status">${status}</span>
 					${mode === "" ? "" : `<span class="queued-mode">${mode}</span>`}
 				</div>
-				<div class="queued-text">${plainText(item.text)}</div>
-				<div class="queued-actions">${actions}</div>
+				<div class="bubble queued-text">${plainText(item.text)}</div>
 			</div>`);
 		el.dataset.text = String(item.text ?? "");
-		el.dataset.origin = delegated ? "agent" : "owner";
+		el.dataset.origin = "owner";
 		return el;
 	}
 
@@ -758,13 +916,24 @@ export function initChat({ onSend, fetchProfile } = {}) {
 				break;
 			case "user": {
 				const bubble = el.querySelector(".bubble");
-				if (bubble !== null) bubble.innerHTML = plainText(item.text);
+				if (item.text === "" || item.text === undefined) {
+					bubble?.remove();
+				} else if (bubble !== null) {
+					bubble.innerHTML = plainText(item.text);
+				}
+				const list = el.querySelector(".attach-list");
+				if (list !== null) list.remove();
+				const chips = attachmentChipsHtml(item.attachments);
+				if (chips !== "") el.insertAdjacentHTML("beforeend", chips);
+				el.dataset.raw = String(item.text ?? "");
 				patchWhoChip(el, actorRefOf(item.from, "老板", "owner"), timeOf(item.at));
 				break;
 			}
 			case "note": {
 				const target = el.querySelector(".note-text");
+				const receipt = el.querySelector(".receipt span");
 				if (target !== null) target.innerHTML = plainText(item.text);
+				else if (receipt !== null) receipt.textContent = String(item.text ?? "");
 				break;
 			}
 			case "alert": {
@@ -820,8 +989,13 @@ export function initChat({ onSend, fetchProfile } = {}) {
 			marker.remove();
 		}
 		if (md !== null) {
-			if (live) scheduleStream(md, item.text);
-			else md.innerHTML = renderMarkdown(item.text);
+			if (live) {
+				scheduleStream(md, item.text);
+				const tail = el.querySelector(".msg-tail");
+				if (tail !== null) tail.innerHTML = "";
+			} else {
+				applyAssistantContent(el, item, false);
+			}
 		}
 	}
 
@@ -1013,6 +1187,9 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		actor = value;
 		if (changed) {
 			profile.close();
+			// 附件属于「这条消息的草稿」：换人就不能留着，避免发错对象。
+			clearAttachments();
+			closeMention();
 			resetConversation();
 			if (actor !== null) showPlaceholder();
 		}
@@ -1042,6 +1219,11 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		if (Number(next.conversationId) !== Number(actor.conversationId)) return;
 		feed = next;
 		loading = false;
+		feedPushAt = Date.now();
+		feedItemCount = Array.isArray(next.items) ? next.items.length : 0;
+		feedHasAnswer = Array.isArray(next.items)
+			? next.items.some((item) => item.kind === "assistant" || item.kind === "alert")
+			: feedHasAnswer;
 		reconcileLocalQueue(next);
 		updateRows();
 	}
@@ -1053,6 +1235,8 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		rendered = [];
 		openStates.clear();
 		localQueue = [];
+		clearAttachments();
+		closeMention();
 		mode = "none";
 		resetStream();
 		profile.close();
@@ -1064,25 +1248,67 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		updateFold();
 	}
 
+	/**
+	 * 本地留痕只在「真的看到对应 user 条目（或 queued 条目）」后才消失。
+	 *
+	 * 不能只靠时间：服务端如果没把新消息推下来（历史上限、流断开），
+	 * 到点就删会让人以为「发出去了但没人回」；所以还留一层 30s 兜底，
+	 * 并在兜底时明确说明「服务没有推来新内容」。
+	 */
 	function reconcileLocalQueue(source) {
 		if (localQueue.length === 0) return;
+		const items = Array.isArray(source.items) ? source.items : [];
 		const texts = new Set();
-		for (const item of source.items ?? []) {
-			if (item.kind === "user") texts.add(String(item.text ?? "").trim());
+		let newestUserAt = 0;
+		for (const item of items) {
+			if (item.kind !== "user") continue;
+			const value = String(item.text ?? "").trim();
+			if (value !== "") texts.add(value);
+			const at = Number(item.at) || 0;
+			if (at > newestUserAt) newestUserAt = at;
 		}
-		for (const queued of source.queued ?? []) texts.add(String(queued.text ?? "").trim());
-		if (texts.size === 0) return;
-		localQueue = localQueue.filter((entry) => !texts.has(entry.text.trim()));
+		const queuedTexts = new Set();
+		for (const queued of source.queued ?? []) {
+			const value = String(queued.text ?? "").trim();
+			if (value !== "") queuedTexts.add(value);
+		}
+		localQueue = localQueue.filter((entry) => {
+			const value = entry.text.trim();
+			if (texts.has(value) || queuedTexts.has(value)) return false;
+			// 带附件的消息：后端会往正文里追加 [附件] 引用，文本不再逐字相等。
+			// 用「本地发出之后确实出现了新的 user 条目」兜底，避免留痕挂 30 秒。
+			if (entry.hadAttachments === true && newestUserAt >= entry.at - 5_000) return false;
+			return true;
+		});
 	}
+
+	/** submit() 里在调用 onSend 前设置：app.js 会立即 addLocalQueued，用来标记这次带附件。 */
+	let echoWillHaveAttachments = false;
 
 	function addLocalQueued(text) {
 		const value = String(text ?? "").trim();
-		if (value === "") return;
-		const entry = { seq: (localSeq += 1), text: value, at: Date.now() };
+		if (value === "") {
+			echoWillHaveAttachments = false;
+			return;
+		}
+		const entry = {
+			seq: (localSeq += 1),
+			text: value,
+			at: Date.now(),
+			hadAttachments: echoWillHaveAttachments,
+		};
+		echoWillHaveAttachments = false;
 		localQueue.push(entry);
 		updateRows();
 		scrollToBottom();
-		window.setTimeout(() => removeLocalQueued(entry.seq), 30_000);
+		window.setTimeout(() => {
+			if (!localQueue.some((item) => item.seq === entry.seq)) return;
+			removeLocalQueued(entry.seq);
+			// 只有「服务确实没推新内容」才这么说，避免正常慢回复时惊动用户。
+			if (feedItemCount === 0 || feedPushAt < entry.at) {
+				notify("消息已发出，但没收到服务端的新对话内容。刷新页面试试。", "warn");
+			}
+		}, LOCAL_ECHO_MS);
 	}
 
 	function removeLocalQueued(seq) {
@@ -1272,56 +1498,540 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		els.input.style.height = `${height}px`;
 	}
 
-	async function submit() {
-		if (sending || actor === null) return;
-		const raw = els.input.value;
-		const text = raw.trim();
-		if (text === "") return;
-		sending = true;
-		els.input.value = "";
-		autoGrow();
+	/* ── 附件：选择 / 粘贴 / 拖入 / 托盘 ── */
+	const readyAttachments = () => attachments.filter((entry) => entry.status === "ready");
+
+	function trayChipHtml(entry) {
+		const uploadingThis = entry.status === "uploading";
+		const name = String(entry.name ?? "附件");
+		const size = entry.size === undefined ? "" : formatBytes(entry.size);
+		const image = typeof entry.mime === "string" && entry.mime.startsWith("image/");
+		const thumbSrc = entry.thumb ?? (image && typeof entry.url === "string" ? entry.url : "");
+		const glyph =
+			thumbSrc === ""
+				? `<span class="attach-glyph">${icon(image ? "image" : "file", 14)}</span>`
+				: `<img class="attach-thumb" src="${escapeAttr(thumbSrc)}" alt="">`;
+		return `<span class="attach-chip${uploadingThis ? " is-uploading" : ""}" data-attach="${escapeAttr(
+			entry.key,
+		)}" title="${escapeAttr(name)}">
+			${glyph}
+			<span class="attach-meta">
+				<span class="attach-name">${escapeHtml(name)}</span>
+				<span class="attach-size mono">${uploadingThis ? "上传中…" : escapeHtml(size)}</span>
+			</span>
+			<button class="attach-x" type="button" data-attach-remove="${escapeAttr(
+				entry.key,
+			)}" aria-label="移除附件 ${escapeAttr(name)}" title="移除">${icon("x", 12)}</button>
+		</span>`;
+	}
+
+	function renderTray() {
+		if (els.tray === null) return;
+		els.tray.innerHTML = attachments.map(trayChipHtml).join("");
+		els.tray.hidden = attachments.length === 0;
+		els.form?.classList.toggle("has-attachments", attachments.length > 0);
 		updateSendState();
-		let ok = false;
-		try {
-			if (typeof onSend === "function") ok = (await onSend(text)) === true;
-		} catch {
-			ok = false;
-		} finally {
-			sending = false;
-		}
-		if (!ok) {
-			// app.js 会先乐观排队；失败时把本地留痕和输入还原，别让用户以为发出去了
-			removeLocalQueuedByText(text);
-			if (els.input.value.trim() === "") {
-				els.input.value = raw;
-				autoGrow();
-				updateSendState();
+	}
+
+	function revokeThumb(entry) {
+		if (entry?.thumbObject === true && typeof entry.thumb === "string") {
+			try {
+				URL.revokeObjectURL(entry.thumb);
+			} catch {
+				/* 已释放 */
 			}
-		} else {
-			scrollToBottom();
+			entry.thumbObject = false;
 		}
 	}
 
-	els.form.addEventListener("submit", (event) => {
-		event.preventDefault();
-		void submit();
+	function removeAttachment(key) {
+		const entry = attachments.find((item) => item.key === key);
+		if (entry !== undefined) revokeThumb(entry);
+		attachments = attachments.filter((item) => item.key !== key);
+		renderTray();
+	}
+
+	function clearAttachments() {
+		for (const entry of attachments) revokeThumb(entry);
+		attachments = [];
+		uploading = 0;
+		renderTray();
+	}
+
+	/** 上传单个文件；失败把可读原因交给 toast，不在托盘里留一个坏 chip。 */
+	async function uploadOne(file) {
+		const key = `a${(attachSeq += 1)}`;
+		const image = typeof file.type === "string" && file.type.startsWith("image/");
+		let thumb = "";
+		let thumbObject = false;
+		if (image) {
+			try {
+				thumb = URL.createObjectURL(file);
+				thumbObject = true;
+			} catch {
+				thumb = "";
+			}
+		}
+		const entry = {
+			key,
+			status: "uploading",
+			name: file.name || "附件",
+			size: file.size,
+			mime: file.type || "",
+			url: "",
+			thumb,
+			thumbObject,
+		};
+		attachments.push(entry);
+		uploading += 1;
+		renderTray();
+
+		try {
+			if (typeof uploadFile !== "function") throw new Error("附件功能还没接通：app.js 没有注入 uploadFile。");
+			if (file.size > MAX_UPLOAD_BYTES) {
+				throw new Error(`「${entry.name}」超过 20 MiB，请压缩后再试。`);
+			}
+			const data = await uploadFile(file);
+			if (data === null || typeof data !== "object" || data.id === undefined) {
+				throw new Error(`「${entry.name}」上传失败：服务返回的数据不完整。`);
+			}
+			entry.id = data.id;
+			entry.name = String(data.name ?? entry.name);
+			entry.size = Number(data.size ?? entry.size);
+			entry.mime = String(data.mime ?? entry.mime);
+			entry.url = String(data.url ?? "");
+			entry.status = "ready";
+		} catch (error) {
+			revokeThumb(entry);
+			attachments = attachments.filter((item) => item.key !== key);
+			const reason =
+				error instanceof Error && String(error.message).trim() !== ""
+					? String(error.message).trim()
+					: "上传失败，稍后再试。";
+			notify(reason, "error");
+		} finally {
+			uploading = Math.max(0, uploading - 1);
+			renderTray();
+		}
+	}
+
+	function addFiles(files) {
+		const list = [...(files ?? [])].filter((file) => file instanceof File);
+		if (list.length === 0) return;
+		if (actor === null) {
+			notify("先选一位同事，再添加附件。", "warn");
+			return;
+		}
+		for (const file of list) void uploadOne(file);
+	}
+
+	els.attach?.addEventListener("click", () => els.fileInput?.click());
+	els.fileInput?.addEventListener("change", () => {
+		addFiles(els.fileInput.files);
+		els.fileInput.value = "";
+	});
+	els.tray?.addEventListener("click", (event) => {
+		const button = event.target.closest("[data-attach-remove]");
+		if (button === null) return;
+		removeAttachment(button.dataset.attachRemove);
 	});
 
-	els.input.addEventListener("keydown", (event) => {
+	// 拖入输入区
+	if (els.form !== null) {
+		let dragDepth = 0;
+		els.form.addEventListener("dragenter", (event) => {
+			if (!event.dataTransfer?.types?.includes("Files")) return;
+			event.preventDefault();
+			dragDepth += 1;
+			els.form.classList.add("is-dropping");
+		});
+		els.form.addEventListener("dragover", (event) => {
+			if (!event.dataTransfer?.types?.includes("Files")) return;
+			event.preventDefault();
+			event.dataTransfer.dropEffect = "copy";
+		});
+		els.form.addEventListener("dragleave", () => {
+			dragDepth = Math.max(0, dragDepth - 1);
+			if (dragDepth === 0) els.form.classList.remove("is-dropping");
+		});
+		els.form.addEventListener("drop", (event) => {
+			if (!event.dataTransfer?.files || event.dataTransfer.files.length === 0) return;
+			event.preventDefault();
+			dragDepth = 0;
+			els.form.classList.remove("is-dropping");
+			addFiles(event.dataTransfer.files);
+		});
+	}
+
+	// 粘贴图片
+	els.input?.addEventListener("paste", (event) => {
+		const files = [...(event.clipboardData?.files ?? [])];
+		const images = files.filter((file) => file instanceof File && file.type.startsWith("image/"));
+		if (images.length === 0) return;
+		event.preventDefault();
+		addFiles(images);
+	});
+
+	/* ── @ 提及 ── */
+	function orgMembers() {
+		const org = storedOrg;
+		if (org === null || org === undefined) return [];
+		const self = actor?.conversationId;
+		const all = [];
+		const push = (person, projectName) => {
+			if (person === null || person === undefined) return;
+			if (person.conversationId === self) return;
+			all.push({
+				conversationId: person.conversationId,
+				label: String(person.label ?? "").trim(),
+				subtitle: String(person.subtitle ?? "").trim(),
+				kind: String(person.kind ?? "staff"),
+				project: String(projectName ?? person.projectName ?? person.project ?? "").trim(),
+			});
+		};
+
+		// 项目内成员（负责人 / 员工）只看到本项目的人；CEO 与管理层看全公司。
+		const projectScoped = actor !== null && (actor.kind === "project" || actor.kind === "staff");
+		if (projectScoped) {
+			const project = (org.projects ?? []).find(
+				(item) =>
+					item.lead?.conversationId === self ||
+					(item.staff ?? []).some((person) => person.conversationId === self),
+			);
+			if (project !== undefined) {
+				push(project.lead, project.name);
+				for (const person of project.staff ?? []) push(person, project.name);
+			}
+		} else {
+			push(org.ceo, "");
+			for (const role of org.roles ?? []) push(role, "");
+			for (const project of org.projects ?? []) {
+				push(project.lead, project.name);
+				for (const person of project.staff ?? []) push(person, project.name);
+			}
+		}
+
+		const seen = new Set();
+		const members = [];
+		for (const member of all) {
+			if (member.label === "" || seen.has(member.conversationId)) continue;
+			seen.add(member.conversationId);
+			members.push(member);
+		}
+		return members;
+	}
+
+	/** 模糊匹配：前缀 < 包含 < 子序列；名字、岗位、项目名都参与。 */
+	function fuzzyScore(haystack, query) {
+		const value = String(haystack ?? "").toLowerCase();
+		const needle = String(query ?? "").toLowerCase();
+		if (needle === "") return 3;
+		if (value === needle) return 0;
+		if (value.startsWith(needle)) return 1;
+		const index = value.indexOf(needle);
+		if (index >= 0) return 2 + index / 100;
+		// 子序列：@lys 也能命中「林越」的拼音首字母（如果 label 有的话）
+		let cursor = 0;
+		let gaps = 0;
+		for (const char of value) {
+			if (cursor < needle.length && char === needle[cursor]) cursor += 1;
+			else if (cursor > 0) gaps += 1;
+		}
+		if (cursor === needle.length) return 4 + gaps / 100;
+		return null;
+	}
+
+	function mentionMatches(query) {
+		const scored = [];
+		for (const member of orgMembers()) {
+			const scores = [
+				fuzzyScore(member.label, query),
+				fuzzyScore(member.subtitle, query),
+				fuzzyScore(member.project, query),
+			].filter((value) => value !== null);
+			if (scores.length === 0) continue;
+			scored.push({ member, score: Math.min(...scores) });
+		}
+		scored.sort((a, b) => a.score - b.score || a.member.label.localeCompare(b.member.label, "zh-Hans-CN"));
+		// 全公司成员可能十几个：弹层内部滚动，不截断成「看不全」。
+		return scored.slice(0, 60).map((item) => item.member);
+	}
+
+	function mentionToken() {
+		const value = els.input.value;
+		const caret = els.input.selectionStart ?? value.length;
+		const before = value.slice(0, caret);
+		const match = /(^|[\s])@([^\s@]*)$/.exec(before);
+		if (match === null) return null;
+		const query = match[2];
+		return { start: caret - query.length - 1, caret, query };
+	}
+
+	function renderMention() {
+		if (els.mention === null) return;
+		if (!mention.open) {
+			els.mention.hidden = true;
+			els.mention.innerHTML = "";
+			return;
+		}
+		if (mention.items.length === 0) {
+			els.mention.innerHTML = `<div class="mention-empty">没有匹配的成员${mention.query === "" ? "" : `：@${escapeHtml(mention.query)}`}</div>`;
+			els.mention.hidden = false;
+			return;
+		}
+		els.mention.innerHTML = mention.items
+			.map(
+				(member, index) => `<button class="mention-item" type="button" role="option"
+					id="mention-${index}" aria-selected="${index === mention.active ? "true" : "false"}"
+					data-mention="${index}">
+					<span class="mention-name">@${escapeHtml(member.label)}</span>
+					<span class="mention-sub">${escapeHtml(
+						[member.subtitle, member.project].filter((part) => part !== "").join(" · ") || kindLabel(member.kind),
+					)}</span>
+				</button>`,
+			)
+			.join("");
+		els.mention.hidden = false;
+	}
+
+	function updateMentionFromInput() {
+		if (els.mention === null) return;
+		const token = mentionToken();
+		if (token === null) {
+			closeMention();
+			return;
+		}
+		const queryChanged = !mention.open || token.query !== mention.query;
+		mention.open = true;
+		mention.query = token.query;
+		mention.tokenStart = token.start;
+		mention.caret = token.caret;
+		mention.items = mentionMatches(token.query);
+		mention.active = queryChanged ? 0 : Math.min(mention.active, Math.max(0, mention.items.length - 1));
+		renderMention();
+	}
+
+	function closeMention() {
+		if (!mention.open) return;
+		mention.open = false;
+		mention.items = [];
+		mention.active = 0;
+		renderMention();
+	}
+
+	function insertMention(member) {
+		if (member === undefined) return;
+		const value = els.input.value;
+		const start = mention.tokenStart >= 0 ? mention.tokenStart : value.length;
+		const caret = Number.isFinite(mention.caret) ? mention.caret : value.length;
+		const inserted = `@${member.label} `;
+		els.input.value = value.slice(0, start) + inserted + value.slice(caret);
+		const next = start + inserted.length;
+		els.input.setSelectionRange(next, next);
+		closeMention();
+		autoGrow();
+		updateSendState();
+		els.input.focus();
+	}
+
+	els.input?.addEventListener("input", () => {
+		autoGrow();
+		updateSendState();
+		updateMentionFromInput();
+	});
+	els.input?.addEventListener("click", () => updateMentionFromInput());
+	els.input?.addEventListener("blur", () => {
+		// 延迟关闭：让点击弹层里的成员先生效。
+		window.setTimeout(() => {
+			if (document.activeElement !== els.input && !els.mention?.contains(document.activeElement)) closeMention();
+		}, 140);
+	});
+	els.input?.addEventListener("keydown", (event) => {
+		if (mention.open) {
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				if (mention.items.length > 0) {
+					const step = event.key === "ArrowDown" ? 1 : -1;
+					mention.active = (mention.active + step + mention.items.length) % mention.items.length;
+					renderMention();
+				}
+				return;
+			}
+			if ((event.key === "Enter" || event.key === "Tab") && !event.shiftKey) {
+				event.preventDefault();
+				insertMention(mention.items[mention.active]);
+				return;
+			}
+			if (event.key === "Escape") {
+				event.preventDefault();
+				closeMention();
+				return;
+			}
+		}
 		if (event.key !== "Enter" || event.shiftKey) return;
 		if (event.isComposing || event.keyCode === 229) return;
 		event.preventDefault();
 		void submit();
 	});
+	els.mention?.addEventListener("mousedown", (event) => {
+		// 防止 input 先 blur 导致点击丢失
+		event.preventDefault();
+		const button = event.target.closest("[data-mention]");
+		if (button === null) return;
+		insertMention(mention.items[Number(button.dataset.mention)]);
+	});
+	els.mention?.addEventListener("mousemove", (event) => {
+		const button = event.target.closest("[data-mention]");
+		if (button === null) return;
+		const index = Number(button.dataset.mention);
+		if (index === mention.active) return;
+		mention.active = index;
+		renderMention();
+	});
 
-	els.input.addEventListener("input", () => {
+	/* ── 选项卡片：点击 / 数字键 ── */
+	function isEditableTarget(target) {
+		return (
+			target instanceof HTMLElement &&
+			(target.tagName === "TEXTAREA" || target.tagName === "INPUT" || target.isContentEditable)
+		);
+	}
+
+	async function sendOption(label) {
+		const text = String(label ?? "").trim();
+		if (text === "" || sending || actor === null) return;
+		sending = true;
+		updateSendState();
+		echoWillHaveAttachments = false;
+		let ok = false;
+		try {
+			if (typeof onSend === "function") ok = (await onSend(text, [])) === true;
+		} catch {
+			ok = false;
+		} finally {
+			sending = false;
+			updateSendState();
+		}
+		if (!ok) {
+			notify("这个选择没发出去，再点一次。", "error");
+			return;
+		}
+		scrollToBottom();
+		scheduleAnswerWatch();
+	}
+
+	els.body.addEventListener("click", (event) => {
+		const option = event.target.closest("[data-chat-option]");
+		if (option === null) return;
+		if (option.dataset.chatOption === "custom") {
+			els.input?.focus();
+			return;
+		}
+		const group = option.closest(".msg-options");
+		for (const button of group?.querySelectorAll("[data-chat-option]") ?? []) {
+			button.classList.toggle("is-picked", button === option);
+			button.setAttribute("aria-pressed", button === option ? "true" : "false");
+		}
+		void sendOption(option.dataset.label ?? "");
+	});
+
+	document.addEventListener("keydown", (event) => {
+		if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+		if (!/^[1-9]$/.test(event.key)) return;
+		if (isEditableTarget(event.target)) return;
+		if (event.target instanceof HTMLElement && event.target.closest(".chat-pending") !== null) return;
+		const groups = stream.querySelectorAll(".msg-options");
+		const group = groups[groups.length - 1];
+		const index = Number(event.key) - 1;
+		if (group !== undefined) {
+			const button = group.querySelectorAll("[data-chat-option]")[index];
+			if (button === undefined) return;
+			event.preventDefault();
+			button.click();
+			return;
+		}
+		// 没有聊天内选项时，数字键作用于顶部第一张带选项的待决卡片
+		const askCard = document.querySelector("#ask-area .ask-options")?.closest(".ask");
+		const askButton = askCard?.querySelectorAll(".ask-opt:not(.ask-opt--custom)")[index];
+		if (askButton === undefined) return;
+		event.preventDefault();
+		askButton.click();
+	});
+
+	/* ── 发送与回复守望 ── */
+	function scheduleAnswerWatch() {
+		window.clearTimeout(answerWatch);
+		const current = feed;
+		if (current === null) return;
+		const before = current.items.filter((item) => item.kind === "assistant" || item.kind === "alert").length;
+		answerWatch = window.setTimeout(() => {
+			answerWatch = 0;
+			if (feed === null || feed.busy) return;
+			const now = feed.items.filter((item) => item.kind === "assistant" || item.kind === "alert").length;
+			if (now > before) return;
+			notify("还没收到回复。如果一直这样，刷新页面或检查服务是否还在运行。", "warn");
+		}, 20_000);
+	}
+
+	async function submit() {
+		if (sending || actor === null) return;
+		if (uploading > 0) {
+			notify("附件还在上传，稍等一下再发。", "warn");
+			return;
+		}
+		closeMention();
+		const raw = els.input.value;
+		const text = raw.trim();
+		const files = readyAttachments().map((entry) => ({
+			id: entry.id,
+			name: entry.name,
+			size: entry.size,
+			mime: entry.mime,
+			url: entry.url,
+		}));
+		if (text === "" && files.length === 0) return;
+		if (typeof onSend !== "function") return;
+
+		sending = true;
+		els.input.value = "";
 		autoGrow();
 		updateSendState();
+		echoWillHaveAttachments = files.length > 0;
+
+		let ok = false;
+		try {
+			ok = (await onSend(text, files)) === true;
+		} catch {
+			ok = false;
+		} finally {
+			sending = false;
+			echoWillHaveAttachments = false;
+		}
+		if (!ok) {
+			// app.js 会先乐观排队；失败时把本地留痕和输入还原，附件留在托盘里。
+			removeLocalQueuedByText(text);
+			if (els.input.value.trim() === "") {
+				els.input.value = raw;
+				autoGrow();
+			}
+			updateSendState();
+			return;
+		}
+		clearAttachments();
+		updateSendState();
+		scrollToBottom();
+		scheduleAnswerWatch();
+	}
+
+	els.form?.addEventListener("submit", (event) => {
+		event.preventDefault();
+		void submit();
 	});
 
 	/* ── 启动 ── */
 	setupResizer();
 	autoGrow();
+	renderTray();
 	syncHeader();
 	showPlaceholder();
 	updateFold();
@@ -1338,5 +2048,24 @@ export function initChat({ onSend, fetchProfile } = {}) {
 		closeSheet,
 		expand,
 		updateOrg,
+		/** 开发/视觉验收专用：往托盘里放几条「已上传」的附件（不真正上传）。 */
+		seedAttachments(list) {
+			const demo = Array.isArray(list) ? list : [];
+			for (const item of demo) {
+				attachments.push({
+					key: `seed${(attachSeq += 1)}`,
+					status: "ready",
+					id: item.id ?? `seed-${attachSeq}`,
+					name: String(item.name ?? "附件"),
+					size: Number(item.size ?? 0),
+					mime: String(item.mime ?? ""),
+					url: String(item.url ?? ""),
+					thumb: String(item.thumb ?? item.url ?? ""),
+					thumbObject: false,
+				});
+			}
+			renderTray();
+			return attachments.length;
+		},
 	};
 }

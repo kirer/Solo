@@ -57,6 +57,8 @@ const options = {
 	colorScheme: "",
 	console: false,
 	keepOpen: false,
+	/** 是否用 SwiftShader 打开 WebGL（验证星海等 canvas 效果时用）。 */
+	gl: false,
 };
 
 for (let index = 0; index < args.length; index += 1) {
@@ -106,6 +108,11 @@ for (let index = 0; index < args.length; index += 1) {
 		case "--console":
 			options.console = true;
 			break;
+		// 需要验证 WebGL 效果（星海背景）时加 --gl：无头 Chrome 默认没有 GPU，
+		// 不开 SwiftShader 的话页面会判定「无 WebGL」而走静态降级，截不到 canvas。
+		case "--gl":
+			options.gl = true;
+			break;
 		case "--keep-open":
 			options.keepOpen = true;
 			break;
@@ -129,7 +136,9 @@ const chrome = spawn(
 	chromePath,
 	[
 		"--headless=new",
-		"--disable-gpu",
+		// 默认软件渲染（快、稳）；--gl 用 SwiftShader 让 WebGL 可用，
+		// 这样星海背景这类效果才能被真实渲染出来验收。
+		...(options.gl ? ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] : ["--disable-gpu"]),
 		"--hide-scrollbars",
 		"--no-first-run",
 		"--no-default-browser-check",

@@ -1,17 +1,21 @@
 /**
- * 角色档案浮层。
+ * 角色档案：内嵌在对话面板里（#chat-dock），不再是悬浮层。
  *
- * 聊天头部原来的「全部展开 / 收起」按钮换成了「查看这位职工的角色档案」，
- * 数据来自 GET /api/profile/:conversationId（app.js 通过 fetchProfile 注入，
- * 这里不自己发请求，也不碰外壳 DOM——挂载点 #profile-layer 由 index.html 提供，
- * 没有时自己在 body 末尾补一个，保证这个模块单独也能跑）。
+ * 挂载点由 index.html 提供：`.chat-dock#chat-dock` 紧跟 `.chat-head`，宽度与对话面板
+ * 同宽。展开/收起由头部右侧的 #chat-fold 按钮控制，过渡用高度（grid 0fr→1fr）+
+ * 透明度，避免整块重绘；移动端 dock 高度受限，内部滚动。
  *
+ * 兜底：页面没有 #chat-dock 时（例如模块单独跑），退回旧的悬浮层 #profile-layer，
+ * 保证这个模块不依赖外壳 DOM 也能工作——但默认路径永远是内嵌。
+ *
+ * 数据来自 app.js 注入的 fetchProfile（GET /api/profile/:conversationId）。
  * 三种降级都必须有字：加载中 / 请求失败 / 没有档案。
  */
 import { escapeHtml } from "./format.js";
 import { icon } from "./icons.js";
 
 const $ = (id) => document.getElementById(id);
+const DOCK_MS = 210;
 
 const KIND_LABEL = {
 	owner: "老板",
@@ -21,19 +25,7 @@ const KIND_LABEL = {
 	system: "系统",
 };
 
-function layerNode() {
-	const existing = $("profile-layer");
-	if (existing !== null) return existing;
-	const layer = document.createElement("div");
-	layer.id = "profile-layer";
-	layer.className = "profile-layer";
-	layer.hidden = true;
-	document.body.append(layer);
-	return layer;
-}
-
 const text = (value) => String(value ?? "").trim();
-
 const kindLabel = (kind) => KIND_LABEL[text(kind)] ?? "";
 
 function metaRow(key, value, wide = false) {
@@ -119,32 +111,70 @@ function emptyHtml(detail) {
 	</div>`;
 }
 
+/** 悬浮层兜底（只在页面没有 #chat-dock 时使用）。 */
+function layerNode() {
+	const existing = $("profile-layer");
+	if (existing !== null) return existing;
+	const layer = document.createElement("div");
+	layer.id = "profile-layer";
+	layer.className = "profile-layer";
+	layer.hidden = true;
+	document.body.append(layer);
+	return layer;
+}
+
 /**
  * @param {{ fetchProfile?: (conversationId: number) => Promise<any>,
  *           onToggle?: (open: boolean) => void }} options
  * @returns {{ open: (conversationId: number, actor?: any) => void, close: () => void, isOpen: () => boolean }}
  */
 export function initProfile({ fetchProfile, onToggle } = {}) {
-	const layer = layerNode();
-	layer.innerHTML = "";
+	const dock = $("chat-dock");
+	const inline = dock !== null;
 
-	const scrim = document.createElement("div");
-	scrim.className = "profile-scrim";
-	scrim.addEventListener("click", () => close());
+	let root;
+	let clip;
+	let panel;
+	let scrim = null;
+	let layer = null;
 
-	const panel = document.createElement("section");
-	panel.className = "profile";
-	panel.setAttribute("role", "dialog");
-	panel.setAttribute("aria-modal", "true");
+	if (inline) {
+		// 内嵌：chat 面板里的 #chat-dock 由 index.html 提供，这里只往里写内容。
+		dock.innerHTML = "";
+		dock.hidden = true;
+		dock.dataset.open = "false";
+		dock.setAttribute("aria-hidden", "true");
+		root = dock;
+	} else {
+		layer = layerNode();
+		layer.innerHTML = "";
+		scrim = document.createElement("div");
+		scrim.className = "profile-scrim";
+		scrim.addEventListener("click", () => close());
+		root = document.createElement("section");
+		root.className = "profile";
+		root.setAttribute("role", "dialog");
+		root.setAttribute("aria-modal", "true");
+		root.setAttribute("aria-label", "角色档案");
+		root.tabIndex = -1;
+		layer.append(scrim, root);
+	}
+
+	clip = document.createElement("div");
+	clip.className = "chat-dock-clip";
+	panel = document.createElement("section");
+	panel.className = `chat-dock-panel${inline ? "" : " profile"}`;
+	panel.setAttribute("role", inline ? "region" : "dialog");
 	panel.setAttribute("aria-label", "角色档案");
-	panel.tabIndex = -1;
-
-	layer.append(scrim, panel);
+	if (!inline) panel.setAttribute("aria-modal", "true");
+	clip.append(panel);
+	root.append(clip);
 
 	let open = false;
 	let currentId = null;
 	let currentActor = null;
 	let token = 0;
+	let hideTimer = 0;
 
 	function onKeydown(event) {
 		if (event.key !== "Escape" || !open) return;
@@ -162,8 +192,8 @@ export function initProfile({ fetchProfile, onToggle } = {}) {
 					<b class="profile-name">${escapeHtml(label)}</b>
 					<span class="profile-sub">${escapeHtml(meta === "" ? "角色档案" : meta)}</span>
 				</div>
-				<button class="icon-btn profile-close" type="button" data-profile-close aria-label="关闭档案" title="关闭档案">${icon(
-					"x",
+				<button class="icon-btn profile-close" type="button" data-profile-close aria-label="收起档案" title="收起档案">${icon(
+					"chevronUp",
 					15,
 				)}</button>
 			</header>
@@ -192,14 +222,10 @@ export function initProfile({ fetchProfile, onToggle } = {}) {
 		const mine = (token += 1);
 
 		render(actor ?? { label: "职工", subtitle: "角色档案" }, loadingHtml());
-		focusPanel();
 
 		if (typeof fetchProfile !== "function") {
 			if (mine !== token) return;
-			render(
-				actor ?? {},
-				failedHtml("档案接口还没接通：等 app.js 把 fetchProfile 传进来。"),
-			);
+			render(actor ?? {}, failedHtml("档案接口还没接通：等 app.js 把 fetchProfile 传进来。"));
 			return;
 		}
 
@@ -228,27 +254,55 @@ export function initProfile({ fetchProfile, onToggle } = {}) {
 			kind: text(data.kind) || text(actor?.kind),
 		};
 		render(header, loadedHtml(data));
+		// 内容在打开期间才到齐：高度会变，浏览器自己会跑 grid 过渡。
+	}
+
+	function clearHideTimer() {
+		if (hideTimer !== 0) {
+			window.clearTimeout(hideTimer);
+			hideTimer = 0;
+		}
 	}
 
 	function openProfile(conversationId, actor) {
+		clearHideTimer();
 		if (!open) {
 			open = true;
-			layer.hidden = false;
+			root.hidden = false;
+			root.setAttribute("aria-hidden", inline ? "false" : "true");
+			if (!inline && layer !== null) layer.hidden = false;
 			document.body.classList.add("profile-open");
 			document.addEventListener("keydown", onKeydown);
 			onToggle?.(true);
+			// 先上屏再加 data-open，否则浏览器拿不到 0fr 的起始状态。
+			window.requestAnimationFrame(() => {
+				root.dataset.open = "true";
+			});
 		}
 		void load(conversationId, actor);
+	}
+
+	function finishClose() {
+		root.dataset.open = "false";
+		root.setAttribute("aria-hidden", "true");
+		if (inline) root.hidden = true;
+		else if (layer !== null) layer.hidden = true;
 	}
 
 	function close() {
 		if (!open) return;
 		open = false;
 		token += 1;
-		layer.hidden = true;
 		document.body.classList.remove("profile-open");
+		root.dataset.open = "false";
 		document.removeEventListener("keydown", onKeydown);
-		panel.innerHTML = "";
+		if (inline) {
+			// 收起动画结束后再 hidden：直接 hidden 会把高度过渡吞掉。
+			clearHideTimer();
+			hideTimer = window.setTimeout(finishClose, DOCK_MS);
+		} else {
+			finishClose();
+		}
 		onToggle?.(false);
 		$("chat-fold")?.focus({ preventScroll: true });
 	}
