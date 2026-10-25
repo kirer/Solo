@@ -536,6 +536,10 @@ document.addEventListener("visibilitychange", () => {
 		stopPolling();
 		return;
 	}
+	// 回到前台时**只在看板视图里**恢复轮询：以前无条件 startPolling()，
+	// 于是在组织图/频道视图里切一次标签页回来，看板又开始每 9 秒打
+	// 一次 /api/board（白烧），而它自己明明已经在 aic:view 里停过了。
+	if (document.body.dataset.view !== "board") return;
 	startPolling();
 	refresh();
 });

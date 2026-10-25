@@ -628,3 +628,28 @@ DM：只显示对方一个点
 - **ADR-030**：任务必须有验收标准，看板只读 TaskDoc
 - **ADR-031**：完成上报由系统写，不经模型
 - **ADR-032**：能力目录声明式 + `deferred` + `tool_search`
+
+### 7.7 频道成员：谁该在哪个频道
+
+**唯一真相源**是 `src/company/channels.ts` 的 `shouldBeIn(channelId, conversationId, org)`，
+`ensureAllChannels()` 按它建成员，`postToChannel()` 用它检测「缺人」并触发自愈。
+`test/unit/channel-membership.test.ts` 用真实 boot 出来的公司对拍两边，漂移立刻失败。
+
+| 频道 | 成员 |
+| --- | --- |
+| `company` | 老板 + 全部在职人员 |
+| `leadership` | 老板 + CEO + 管理层 |
+| `proj:<slug>` | 老板 + 该项目负责人 + 该项目员工（管理层不算成员，靠 `canView` 旁观） |
+| `dm:<id>` | 老板 + 本人 |
+| `log:<id>` | 只有本人（老板能看但不是成员，不该为别人的工作流水被唤醒） |
+
+**真实事故（贪吃蛇端到端实验）**：员工入职后没有加入任何频道——公司大群还是 9 人、
+项目群只有负责人一个。于是 `@开发-游戏实现` 在 `parseMentions` 里被「只保留频道成员」
+过滤掉，**一个人都没被唤醒**，任务派下去了但对方永远不知道，界面上看不出任何异常。
+
+两条硬规则（都不能等「下次有人发消息时自愈」）：
+
+1. `hireStaff()` / `createProject()` 提交后**立刻** `ensureAllChannels()`。
+2. 老板必须在每个群和每条私聊里。注释早就写着「老板 + CEO + 管理层」，
+   代码漏了——`canView` 靠「老板能看全部」兜着，界面上看不出异常，
+   但未读/@ 计数和 @ 候选都漏掉他，他在群里说话也没人知道。
