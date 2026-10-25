@@ -552,7 +552,13 @@ try {
 	})()`);
 	check("切到看板视图", board.view === "board" && board.hidden === false && board.width > 400 && !board.orgShown, `${board.view} / ${board.width}px`);
 	check("看板三列齐全", board.cols.length === 3, board.cols.map((col) => `${col.title}:${col.count}`).join(" / "));
-	check("看板有数据源与卡片", board.source !== "" && board.cards >= 1, `${board.cards} 张 · ${board.source}`);
+	// 空公司（刚清空数据）时看板合法地一张卡都没有，所以只断言「数据源可用」+
+	// 「有卡就一定是真卡」；不能要求必须有卡，否则清库后验收会假失败。
+	check(
+		"看板接上实时数据源",
+		board.source !== "" && (board.cards >= 1 || board.cols.every((col) => col.count === 0)),
+		`${board.cards} 张 · ${board.source}`,
+	);
 	const openedCard = await cdp.eval(`(() => {
 		const card = document.querySelector('#board .board-card');
 		if (card === null) return null;
