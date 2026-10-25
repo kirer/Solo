@@ -12,6 +12,11 @@ workspace/
 *.sqlite-wal
 *.sqlite-shm
 
+# workspace 打包备份：运行时产物，不应进版本库（体积大、每次都不同）。
+# 曾被误提交过一次（archive/workspace-backup-20261025-142539.tar.gz），已删除。
+# 真正的代码备份用 git bundle 放到 workspace 下（workspace/ 已被忽略）。
+archive/workspace-backup-*.tar.gz
+
 # 第三方只读参考（Pi 官方 monorepo 的完整 clone，自带独立 .git，约 118MB）
 # 调研结论已沉淀在 docs/research/，需要时按 archive/README.md 重新 clone
 archive/reference/
