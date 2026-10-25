@@ -215,7 +215,8 @@ export const PendingDoc = defineDoc<PendingState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ items: [] }),
-	checkpointWhen: () => false,
+	// 待办只增（处置后仍保留以便追溯）：每 256 条压一次基线。
+	checkpointWhen: (value) => value.items.length >= 256,
 });
 
 /**

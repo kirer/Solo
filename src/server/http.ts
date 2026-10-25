@@ -17,7 +17,7 @@ import type { ModelSetup } from "../runtime/models.ts";
 import { CompanyDoc } from "../company/docs.ts";
 import { answerPending, disposePending, listPending, listPendingArchive, PendingDoc, takeOverPendingAtCeo } from "../company/escalation.ts";
 import { captureInterruptedWork, createDispositionPending, settleDisposition } from "../company/disposition.ts";
-import { readCompany, startCompanyWatchdog } from "../company/org.ts";
+import { startCompanyWatchdog } from "../company/org.ts";
 import { buildOrgView } from "./org-view.ts";
 import { decorateFeed, readFeed } from "./feed.ts";
 import { readProfile } from "./profile.ts";
@@ -274,8 +274,6 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		try {
 			if (path === "/api/org") return json(response, await buildOrgView(current(), BACKGROUND_CONTEXT));
 			if (path === "/api/pending") {
-				const state = await readCompany(current(), BACKGROUND_CONTEXT);
-				void state;
 				// 归档查询：`/api/pending?archive=1[&kind=rejected|resolved]`
 				// 默认只给未答复且未处置的（有处置就从看板消失）；archive 才是「归档区可查」。
 				const archive = url.searchParams.get("archive");

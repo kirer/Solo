@@ -228,22 +228,25 @@ export async function buildOrgView(
 		parent: "老板",
 	});
 
-	const roles: ActorView[] = [];
-	for (const role of MANAGEMENT_ROLES) {
-		if (role === "ceo") continue;
-		const id = roleIds[role];
-		if (id === undefined) continue;
-		roles.push(
-			await actor(
-				id,
-				ROLE_LABELS[role],
-				ROLE_DEFINITIONS[role as ManagementRole]?.summary ?? "",
-				"role",
-				false,
-				{ model: defaultModel, parent: "CEO" },
-			),
-		);
-	}
+	// 并发取，不串行 await：`actor()` 内部要做 `snapshot(UsageDoc)` +
+	// `conversation.entries(...)`，串行遍历等于 O(人数) 次往返。组织图每 30 秒
+	// 被看门狗推一次、每次提交也推，串行版本在 15 人的公司上就已经明显卡。
+	const roles = (
+		await Promise.all(
+			MANAGEMENT_ROLES.filter((role) => role !== "ceo").map(async (role) => {
+				const id = roleIds[role];
+				if (id === undefined) return undefined;
+				return await actor(
+					id,
+					ROLE_LABELS[role],
+					ROLE_DEFINITIONS[role as ManagementRole]?.summary ?? "",
+					"role",
+					false,
+					{ model: defaultModel, parent: "CEO" },
+				);
+			}),
+		)
+	).filter((entry): entry is ActorView => entry !== undefined);
 
 	const projects: ProjectView[] = [];
 	for (const project of Object.values(state?.projects ?? {})) {
@@ -256,18 +259,19 @@ export async function buildOrgView(
 			{ model: defaultModel, project: project.slug, parent: managerLabelInOrg(org, project.leader) },
 		);
 		// 终止后员工会被归档：仍然列出来，标成已归档，让老板看得见「曾经有谁」
-		const staff: ActorView[] = [];
-		for (const person of Object.values(state?.staff ?? {})) {
-			if (person.project !== project.slug) continue;
-			staff.push(
-				await actor(person.conversationId, person.name, person.role, "staff", person.archived, {
-					model: modelOf(person.model) ?? "?",
-					role: person.role,
-					project: person.project,
-					parent: managerLabelOf(state, person.manager),
-				}),
-			);
-		}
+		const staff = await Promise.all(
+			Object.values(state?.staff ?? {})
+				.filter((person) => person.project === project.slug)
+				.map(
+					async (person) =>
+						await actor(person.conversationId, person.name, person.role, "staff", person.archived, {
+							model: modelOf(person.model) ?? "?",
+							role: person.role,
+							project: person.project,
+							parent: managerLabelOf(state, person.manager),
+						}),
+				),
+		);
 
 		const rollup = await rollupProject(runtime, project.slug, context);
 		const view: ProjectView = {

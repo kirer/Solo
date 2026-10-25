@@ -4,8 +4,19 @@
  * 组织关系是全局的，所以公司索引放在 session 级文档里（见 design.md 决策 2）。
  * 每个会话另有小档案记录它在组织里的位置。
  *
- * 所有 `checkpointWhen` 都返回 false：这些文档靠变更重放恢复，
- * 不需要存完整基线。注意底层要求这个字段必填。
+ * `checkpointWhen` 决定「什么时候把当前值压成一个完整基线」。
+ *
+ * 本文件里的文档**全部返回 false**：靠变更重放恢复，不存完整基线。
+ * 注意底层要求这个字段必填。
+ *
+ * 为什么不全用「每 N 条 delta 压一次」（`ChannelDoc` / `TaskDoc` 是
+ * `deltasSinceBase >= 64`）：`src/company/channels-doc.ts` 的频道文档单条 delta
+ * 就有几十 KB（一次 append 会带上整个频道数组），按计数压基等于每 64 次写就
+ * 重写一份完整文档。而这里这几个文档（公司索引、审计、留痕、待办、会议）
+ * 是**只增不改**的：压基写的是同样大小的完整快照，收益只有冷启动重放变快。
+ * 它们的增长点在 `events` / `edges` / `items` 数组上，正确做法是按**语义**
+ * 判基（数组长度超过阈值、或处置归档后），而不是按 delta 计数。
+ * 待办与审计的裁剪策略见 `docs/design/COMMS-REFACTOR.md`。
  *
  * 2026-10-26：纯类型与纯函数已拆到 `src/domain/org-types.ts`（`domain/` 层不能
  * import 运行时库）。这里 re-export，调用方的 import 路径不变。
@@ -24,6 +35,22 @@ import type {
 
 // 纯类型与纯函数：转发到 domain 层（唯一真相源在那里）
 export * from "../domain/org-types.ts";
+
+/**
+ * 只增数组的压基策略：每长 N 条压一次完整基线。
+ *
+ * 为什么不用 `deltasSinceBase >= 64`：那是**按写入次数**判基，与文档实际大小无关。
+ * 只增文档（审计、留痕、待办、会议纪要）的 delta 大小和条目数成正比，
+ * 按次数判基会让「小文档压得太勤、大文档压得太晚」。
+ * 按**条目数**判基，重放链长度就被条目数钉住：最多重放 N 条 append。
+ *
+ * N = 512：这些条目都只有几十到几百字节，压一份完整基线几 KB，
+ * 而 512 条 delta 的重放成本明显更高。频道消息不适用这条（单条 delta 几十 KB），
+ * 它有自己的策略，见 `src/company/channels-doc.ts`。
+ */
+function everyNItems<T>(count: (value: Readonly<T>) => number, n = 512) {
+	return (value: Readonly<T>, _ops: readonly unknown[]): boolean => count(value) >= n;
+}
 
 /** 公司索引文档。 */
 export const CompanyDoc = defineDoc<CompanyState>({
@@ -111,7 +138,8 @@ export const AuditDoc = defineDoc<{ events: AuditEvent[] }>({
 	history: "rewindable",
 	fork: "initial",
 	initial: () => ({ events: [] }),
-	checkpointWhen: () => false,
+	// 审计事件只增不改：每 512 条压一次基线，重放链不会无限长。
+	checkpointWhen: everyNItems<{ events: readonly unknown[] }>((value) => value.events.length),
 });
 
 /** 预算状态。 */
@@ -172,5 +200,5 @@ export const TrailDoc = defineDoc<TrailState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ edges: [] }),
-	checkpointWhen: () => false,
+	checkpointWhen: everyNItems<{ edges: readonly unknown[] }>((value) => value.edges.length),
 });

@@ -122,7 +122,8 @@ export const RoundtableDoc = defineDoc<RoundtableState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ records: [] }),
-	checkpointWhen: () => false,
+	// 会议纪要只增：每 128 条压一次基线（单条纪要比审计事件大得多）。
+	checkpointWhen: (value) => value.records.length >= 128,
 });
 
 // ── 常量与输入输出 ──────────────────────────────────────────────────────────

@@ -137,10 +137,21 @@ export async function buildBoardView(
 	});
 
 	// ── todo（二）：已经提交、还在排队的消息 ──
-	for (const node of nodes) {
-		const inbox = (await runtime.harness.snapshot(InboxDoc, node.conversationId as never, context)) as
-			| { items?: readonly { id: unknown; mode: string; content: unknown }[] }
-			| undefined;
+	//
+	// 一次 `Promise.all` 取完，不再在 for 里逐个 await：
+	// 看板每次刷新都要遍历全部会话，串行快照的耗时是 O(人数) 次往返。
+	const inboxes = await Promise.all(
+		nodes.map(
+			async (node) =>
+				[
+					node,
+					(await runtime.harness.snapshot(InboxDoc, node.conversationId as never, context)) as
+						| { items?: readonly { id: unknown; mode: string; content: unknown }[] }
+						| undefined,
+				] as const,
+		),
+	);
+	for (const [node, inbox] of inboxes) {
 		for (const item of inbox?.items ?? []) {
 			if (item.mode === "write") continue;
 			const text = queueText(item.content);
