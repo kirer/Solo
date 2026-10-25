@@ -229,6 +229,8 @@ function conversationFromHash() {
 // ── 手机抽屉 / 对话开关 ───────────────────────────────────────────────────
 
 function openMobileSheet() {
+	// 设置是全屏视图：从这里打开对话说明用户要离开设置，先回到 chat 视图。
+	showAsideView("chat", { focus: false });
 	document.body.dataset.chat = "open";
 	document.body.dataset.sheet = "open";
 	chat.openSheet?.();
@@ -254,6 +256,11 @@ function toggleChat() {
 		if (state.org?.ceo !== undefined) {
 			selectConversation(state.org.ceo.conversationId, { openSheet: true });
 		}
+		return;
+	}
+	// 桌面：设置占着槽位时，“打开对话”= 切回对话视图，而不是把被隐藏的对话展开。
+	if (document.body.dataset.viewAside === "settings") {
+		showAsideView("chat");
 		return;
 	}
 	chat.toggle();
@@ -304,6 +311,60 @@ function applyTheme(mode, { persist = true } = {}) {
 	}
 }
 
+/**
+ * 对话 ↔ 设置：互斥视图切换（设置不是浮层）。
+ *
+ * 形态：`#chat` 与 `#settings` 在 `.workspace` 里共用同一块并排槽位，
+ * `body[data-view-aside]` 决定谁在前、谁可交互（位移/透明度全交给 settings.css）。
+ *
+ * 三条硬约束（老板验收口径）：
+ *   1. 不销毁聊天 DOM —— 只切属性，滚动位置与输入框草稿天然留在原位；
+ *   2. 过渡是普通 CSS transition（transform + opacity），没有 animationend 回调，
+ *      连续快速切换由下一次状态自然接管：可中断、可反向；
+ *   3. 焦点进场 / 归还，Esc 与返回按钮都能退出。
+ */
+const ASIDE_VIEW = { chat: "chat", settings: "settings" };
+
+/** 「设置是否打开」的唯一真相：body[data-view-aside]，不看元素显隐。 */
+function asideView() {
+	return document.body.dataset.viewAside === ASIDE_VIEW.settings ? ASIDE_VIEW.settings : ASIDE_VIEW.chat;
+}
+
+/**
+ * 切到设置 / 切回对话（模块级：桌面「打开对话」按钮也要能调用）。
+ *
+ * 先落同一个 body 属性，过渡交给 CSS：中断/反向都不需要额外收拾状态。
+ * 被替换的视图用 inert 退出无障碍树与 tab 序列（不用 display:none，
+ * 否则 .chat 的滚动容器高度归零，scrollTop 会被浏览器抹掉）。
+ */
+function showAsideView(view, { focus = true } = {}) {
+	const next = view === ASIDE_VIEW.settings ? ASIDE_VIEW.settings : ASIDE_VIEW.chat;
+	if (asideView() === next) return next;
+	const panel = $("settings");
+	const toggle = $("settings-toggle");
+	const chatEl = $("chat");
+	if (panel === null || toggle === null) return next;
+
+	document.body.dataset.viewAside = next;
+	const open = next === ASIDE_VIEW.settings;
+	panel.setAttribute("aria-hidden", open ? "false" : "true");
+	toggle.setAttribute("aria-expanded", open ? "true" : "false");
+	toggle.setAttribute("aria-pressed", open ? "true" : "false");
+	if (chatEl !== null) chatEl.inert = open;
+	panel.inert = !open;
+	if (open) {
+		// 打开时刷新一次：设置可能在别的标签页/终端里改过。
+		settingsPanel.refresh?.();
+		if (focus) {
+			const target = panel.querySelector('[aria-checked="true"]') ?? panel.querySelector(".settings-head b");
+			target?.focus?.({ preventScroll: true });
+		}
+	} else if (focus) {
+		toggle.focus({ preventScroll: true });
+	}
+	return next;
+}
+
 function setupSettings() {
 	const panel = $("settings");
 	const toggle = $("settings-toggle");
@@ -311,25 +372,15 @@ function setupSettings() {
 	if (panel === null || toggle === null) return;
 	applyTheme(themeMode, { persist: false });
 
-	const closePanel = ({ focus = true } = {}) => {
-		panel.hidden = true;
-		toggle.setAttribute("aria-expanded", "false");
-		if (focus) toggle.focus({ preventScroll: true });
-	};
-	const openPanel = () => {
-		panel.hidden = false;
-		toggle.setAttribute("aria-expanded", "true");
-		// 打开时刷新一次：设置可能在别的标签页/终端里改过。
-		settingsPanel.refresh?.();
-		panel.querySelector('[aria-checked="true"]')?.focus({ preventScroll: true });
-	};
+	const closePanel = (options) => showAsideView(ASIDE_VIEW.chat, options);
+	const openPanel = (options) => showAsideView(ASIDE_VIEW.settings, options);
 
-	toggle.addEventListener("click", (event) => {
-		event.stopPropagation();
-		if (panel.hidden) openPanel();
-		else closePanel();
+	toggle.addEventListener("click", () => {
+		if (asideView() === ASIDE_VIEW.settings) closePanel();
+		else openPanel();
 	});
 	close?.addEventListener("click", () => closePanel());
+
 	const themeOptions = [...panel.querySelectorAll("[data-theme-option]")];
 	for (const option of themeOptions) {
 		option.addEventListener("click", () => applyTheme(option.dataset.themeOption));
@@ -346,24 +397,21 @@ function setupSettings() {
 		next.focus();
 		applyTheme(next.dataset.themeOption);
 	});
-	document.addEventListener("click", (event) => {
-		if (panel.hidden) return;
-		// 用 composedPath 而不是 contains(target)：设置内容会在点击后重渲染，
-		// 事件冒泡到 document 时 target 已经从 DOM 摘掉，contains 会误判成「点在外面」。
-		const path = typeof event.composedPath === "function" ? event.composedPath() : [];
-		if (path.includes(panel) || path.includes(toggle)) return;
-		if (panel.contains(event.target) || toggle.contains(event.target)) return;
-		closePanel({ focus: false });
-	});
+	// 旧的「点外面关闭」随浮层一起删掉了：设置现在是整块视图，没有「外面」可点。
 	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape" && !panel.hidden) {
-			event.preventDefault();
-			closePanel();
-		}
+		if (event.key !== "Escape") return;
+		if (asideView() !== ASIDE_VIEW.settings) return;
+		// 设置里的确认条、@ 提及弹层、抽屉等各自处理 Esc；这里只在没人消费时退出。
+		if (event.defaultPrevented) return;
+		event.preventDefault();
+		closePanel();
 	});
 	systemLight.addEventListener("change", () => {
 		if (themeMode === "system") applyTheme("system", { persist: false });
 	});
+
+	// 初始态显式落一次（index.html 不带该属性时也能工作），且不抢焦点。
+	showAsideView(ASIDE_VIEW.chat, { focus: false });
 }
 
 // ── 主视图切换（组织图 / 看板） ────────────────────────────────────────────

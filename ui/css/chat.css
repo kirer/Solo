@@ -5,24 +5,40 @@
    不发光、不投影、不用渐变；动效只保留 120–200ms 的状态过渡。
    ========================================================================== */
 
-.chat {
+/* 并排槽位：对话与设置共用（见 settings.css 的「互斥视图」）。
+   宽度仍由 --chat-w 驱动（拖宽 / 收起都作用在槽位上），两个视图各自填满槽位，
+   所以「设置占据聊天区域的位置而不是浮在它上面」在布局层面就成立。 */
+.aside-slot {
+	position: relative;
 	flex: none;
 	width: var(--chat-w);
 	min-width: 0;
-	display: flex;
-	flex-direction: column;
 	min-height: 0;
+	display: flex;
 	overflow: hidden;
 	border-left: 1px solid var(--line);
 	background: var(--bg-2);
 	transition: width 200ms var(--ease-out), visibility 0s linear;
 }
 
+.chat {
+	flex: 1 1 auto;
+	width: auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--bg-2);
+	transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out),
+		visibility 0s linear;
+}
+
 .chat > * {
 	transition: opacity 160ms var(--ease-out);
 }
 
-body[data-chat="closed"] .chat {
+body[data-chat="closed"] .aside-slot {
 	width: 0;
 	border-left-width: 0;
 	border-left-color: transparent;
@@ -817,22 +833,6 @@ body[data-chat="closed"] .chat-resizer::after {
 	color: var(--muted);
 }
 
-/* 发言人：工作过程里只用文字，不再叠一个边框 */
-.work-who {
-	flex: none;
-	max-width: 30%;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	color: var(--faint);
-	font-size: var(--fs-2xs);
-	letter-spacing: 0.01em;
-}
-
-.think > summary:hover .work-who {
-	color: var(--muted);
-}
-
 .think-meta {
 	color: var(--faint);
 	font-size: 11px;
@@ -872,8 +872,7 @@ body[data-chat="closed"] .chat-resizer::after {
 	color: var(--run);
 }
 
-.think[data-live="true"] > summary .ico,
-.think[data-live="true"] > summary .work-who {
+.think[data-live="true"] > summary .ico {
 	color: var(--run);
 }
 
@@ -1528,6 +1527,14 @@ body[data-chat="closed"] .chat-resizer::after {
 
 /* ── 手机：底部抽屉 ───────────────────────────────────────────────────── */
 @media (max-width: 860px) {
+	/* 手机上对话是 fixed 抽屉，槽位本身不占宽（否则会把舞台挤窄）。 */
+	.aside-slot {
+		width: 0;
+		border-left: 0;
+		overflow: visible;
+		background: none;
+	}
+
 	.chat {
 		position: fixed;
 		left: 0;
@@ -1543,6 +1550,15 @@ body[data-chat="closed"] .chat-resizer::after {
 		transform: translateY(100%);
 		visibility: visible;
 		transition: transform 200ms var(--ease-out);
+	}
+
+	body[data-chat="closed"] .aside-slot {
+		width: 0;
+		border-left: 0;
+		visibility: visible;
+		contain: none;
+		overflow: visible;
+		transition: none;
 	}
 
 	body[data-chat="closed"] .chat {
@@ -2625,4 +2641,136 @@ body[data-chat="closed"] .chat-resizer::after {
 
 .pend.is-submitting {
 	opacity: 0.72;
+}
+
+/* 待办处置（驳回 / 标记已解决）：老板级待办原先没有任何处置入口，
+   已有结论的待办只能一直挂在看板上。
+   轻量风格：不弹浮层，理由输入框就地展开——设置面板已改成非浮层，
+   这里再引一层遮罩式的浮层会和它打架。
+
+   只在后端下发 canDispose=true 时渲染（权限口径见 canDisposePending()）。 */
+.pend-dispose {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--line);
+}
+
+.pend-dispose-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--ink-2);
+	font: 400 var(--fs-sm) / 1.4 var(--sans);
+	cursor: pointer;
+	transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+
+.pend-dispose-btn:hover {
+	color: var(--ink);
+	border-color: var(--line-strong);
+}
+
+.pend-dispose-btn:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* 驳回是「否掉」，比「已解决」重一点；但不做成红色警报条——它不是错误。 */
+.pend-dispose-btn--reject:hover {
+	color: var(--danger);
+	border-color: var(--danger);
+}
+
+.pend-dispose-btn:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+/* 驳回理由：就地展开，不抢焦点以外的注意力。 */
+.pend-reject-form {
+	display: flex;
+	flex-basis: 100%;
+	gap: 6px;
+	align-items: flex-end;
+}
+
+.pend-reject-form[hidden] {
+	display: none;
+}
+
+.pend-reject-form textarea {
+	flex: 1;
+	min-width: 0;
+	resize: vertical;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--ink);
+	font: 400 var(--fs-sm) / 1.5 var(--sans);
+	outline: none;
+	transition: border-color var(--dur) var(--ease-out);
+}
+
+.pend-reject-form textarea::placeholder {
+	color: var(--faint);
+}
+
+.pend-reject-form textarea:focus {
+	border-color: var(--line-strong);
+}
+
+.pend-reject-send {
+	flex: none;
+	padding: 7px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--ink);
+	font: 400 var(--fs-sm) / 1.5 var(--sans);
+	cursor: pointer;
+	transition: border-color var(--dur) var(--ease-out);
+}
+
+.pend-reject-send:hover {
+	border-color: var(--line-strong);
+}
+
+.pend-reject-send:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+/* 已处置：与「已答复」同一套收敛效果，处置按钮和理由框一起收起。 */
+.pend.is-answered .pend-dispose {
+	display: none;
+}
+
+/* 来源说明（缺陷 B）：老板级待办为什么到了老板这儿。
+   一行小字，不抢主体；用 --faint 压过一层，避免和问题正文竞争注意力。 */
+.pend-trace {
+	display: flex;
+	align-items: flex-start;
+	gap: 5px;
+	margin-top: 6px;
+	color: var(--faint);
+	font: 400 var(--fs-sm) / 1.45 var(--sans);
+}
+
+.pend-trace svg {
+	flex: none;
+	margin-top: 2px;
+}
+
+/* CEO 接管：与「驳回」区分开——它不是否定，是「我来定」。 */
+.pend-dispose-btn--takeover:hover {
+	color: var(--accent);
+	border-color: var(--accent);
 }

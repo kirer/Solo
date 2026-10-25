@@ -75,10 +75,6 @@ const whoChipHtml = (who, time) => {
 	)}</span>${timeHtml}</span>`;
 };
 
-/** 工作过程（思考 / 工具）里的发言人：纯文字，不再加第二个边框。 */
-const workWhoHtml = (who) =>
-	`<span class="work-who" title="发言人">${escapeHtml(who.label)}</span>`;
-
 const copyButtonHtml = (label) =>
 	`<button class="copy-btn" type="button" data-copy="pane" aria-label="${label}" title="${label}"><span>复制</span></button>`;
 
@@ -695,12 +691,13 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 				el = renderNote(item);
 				break;
 			case "alert": {
-				const who =
-					item.from === undefined || item.from === null ? null : actorRefOf(item.from, "系统", "system");
+				// 告警行不再渲染发言人标签：后端 app.alert 已经把 `from` 拼进 text 前缀
+				//（feed.ts 的 `${data.from}：${body}`），前端再渲染一遍会变成「系统系统：…」。
+				// 去掉这一份重复后，行首只剩图标 + 正文，与思考行/工具行同一口径。
 				el = elFromHtml(
-					`<div class="alert" role="note">${icon("alert", 13)}<span class="alert-body">${
-						who === null ? "" : `<span class="alert-who">${escapeHtml(who.label)}</span>`
-					}<span class="alert-text">${plainText(item.text)}</span></span></div>`,
+					`<div class="alert" role="note">${icon("alert", 13)}<span class="alert-body"><span class="alert-text">${plainText(
+						item.text,
+					)}</span></span></div>`,
 				);
 				break;
 			}
@@ -793,6 +790,7 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 					<span class="pend-time">${escapeHtml(relTime(item.askedAt))}</span>
 				</div>
 				<div class="pend-q">${plainText(item.question)}</div>
+				${traceHtml(item)}
 				${optionHtml}
 				<form class="pend-reply">
 					<textarea rows="1" placeholder="${
@@ -800,11 +798,60 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 					}" aria-label="你的决定"></textarea>
 					<button class="pend-send" type="submit" aria-label="提交决定">${icon("send", 14)}</button>
 				</form>
+				${disposeActionsHtml(item)}
 				<p class="pend-err" hidden>没提交成功，再试一次。</p>
 			</div>`);
 		el.dataset.raw = String(item.question ?? "");
 		if (answeredPending.has(item.key)) el.classList.add("is-answered");
 		return el;
+	}
+
+	/**
+	 * 待办卡片底部的「驳回 / 标记已解决」两个操作。
+	 *
+	 * 只在后端说「这条该你处置」时渲染（`item.canDispose`）—— 权限口径只在
+	 * `canDisposePending()` 一处定义，界面不自己再算一遍（算两遍早晚不一致）。
+	 * 后端仍会在 /api/pending/dispose 再拦一次，界面隐藏按钮只是体验、不是防线。
+	 *
+	 * 交互风格：轻量。只有「驳回」需要理由，所以点驳回时把理由输入框展开（不弹浮层）；
+	 * 「标记已解决」不需要理由，一点就提交。这样就避开了设置面板刚改成的非浮层风格冲突。
+	 */
+	function disposeActionsHtml(item) {
+		// CEO 接管（缺陷 B）：CEO 复核后认为「这在我授权范围内」，拉回自己层处理。
+		// 与驳回/已解决并列但不共用权限位：takeOver 的后端口径是 canTakeOver
+		// （只有 CEO + owner 级 + 未答复未处置），dispose 的是 canDispose。
+		const takeOverHtml =
+			item.canTakeOver === true
+				? `<button class="pend-dispose-btn pend-dispose-btn--takeover" type="button" data-pending-takeover="1">
+					<span>接管到 CEO</span></button>`
+				: "";
+		if (item.canDispose !== true && takeOverHtml === "") return "";
+		const disposeHtml =
+			item.canDispose === true
+				? `<button class="pend-dispose-btn" type="button" data-pending-dispose="resolved">${icon(
+						"check",
+						12,
+					)}<span>标记已解决</span></button>
+				<button class="pend-dispose-btn pend-dispose-btn--reject" type="button" data-pending-dispose="rejected">
+					<span>驳回</span></button>
+				<form class="pend-reject-form" hidden>
+					<textarea rows="1" placeholder="驳回理由（必填）…" aria-label="驳回理由"></textarea>
+					<button class="pend-reject-send" type="submit">确认驳回</button>
+				</form>`
+				: "";
+		return `<div class="pend-dispose">${disposeHtml}${takeOverHtml}</div>`;
+	}
+
+	/**
+	 * 来源说明（缺陷 B 要求 4）：老板级待办为什么到了老板这儿。
+	 *
+	 * 后端在 `item.trace` 里给好文本，界面只负责显示，不自己推断——
+	 * 「为什么判定只有老板能定」是后端的事实，界面猜会猜错。
+	 */
+	function traceHtml(item) {
+		const note = item.trace?.note;
+		if (typeof note !== "string" || note === "") return "";
+		return `<div class="pend-trace">${icon("bell", 11)}<span>${escapeHtml(note)}</span></div>`;
 	}
 
 	function renderNote(item) {
@@ -897,7 +944,6 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 		return elFromHtml(`
 			<details class="think"${live ? ' data-live="true"' : ""}>
 				<summary>
-					${workWhoHtml(speakerOf(feed))}
 					${icon("brain", 13)}
 					<span class="think-kicker">${live ? "正在思考" : "思考"}</span>
 					<span class="think-meta">· ${item.text.length} 字</span>
@@ -914,7 +960,6 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 		const el = elFromHtml(`
 			<details class="tool" data-state="${state}">
 				<summary>
-					${workWhoHtml(speakerOf(feed))}
 					<span class="tool-icon">${icon(meta.icon, 13)}</span>
 					<span class="tool-label">${escapeHtml(meta.label)}</span>
 					<span class="tool-detail mono" title="${escapeAttr(detail)}">${escapeHtml(detail)}</span>
@@ -1057,12 +1102,6 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 		if (timeEl !== null) timeEl.textContent = time;
 	}
 
-	/** 工作过程行的发言人（思考 / 工具）。 */
-	function patchWorkWho(el) {
-		const who = el.querySelector(".work-who");
-		if (who !== null) who.textContent = speakerOf(feed).label;
-	}
-
 	function patchAssistant(el, item) {
 		const live = item.live === true;
 		el.classList.toggle("is-streaming", live);
@@ -1096,7 +1135,6 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 		const kicker = el.querySelector(".think-kicker");
 		const meta = el.querySelector(".think-meta");
 		const body = el.querySelector(".think-body");
-		patchWorkWho(el);
 		if (kicker !== null) kicker.textContent = live ? "正在思考" : "思考";
 		if (meta !== null) meta.textContent = `· ${item.text.length} 字`;
 		if (body !== null) body.innerHTML = plainText(item.text);
@@ -1111,7 +1149,6 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 		const detail = el.querySelector(".tool-detail");
 		const stateEl = el.querySelector(".tool-state");
 		const summary = argsSummary(item);
-		patchWorkWho(el);
 		if (iconBox !== null) iconBox.innerHTML = icon(meta.icon, 13);
 		if (label !== null) label.textContent = meta.label;
 		if (detail !== null) {
@@ -2067,6 +2104,126 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 		scrollToBottom();
 	}
 
+	/**
+	 * 处置一条待办：驳回（rejected）/ 标记已解决（resolved）。
+	 *
+	 * 为什么直接 fetch 而不走 onAnswer：onAnswer 的语义是「给一个答复文本」，
+	 * 处置是另一回事（带 status + 理由），硬套会让 app.js 的 submitAnswer 长出分支。
+	 * 而这个组件本来就只认chat 自己的接口，直接调 /api/pending/dispose 最小改动。
+	 *
+	 * 成功后复用 answeredPending + is-answered 的本地即时反馈机制（与答复一致）：
+	 * 卡片当场变「已处置」，下一次 feed 回来时因 pending 里没有它而自然消失。
+	 */
+	async function submitDispose(card, status, reason) {
+		const key = card?.dataset.pendingKey ?? "";
+		if (key === "") return;
+		const value = String(reason ?? "").trim();
+		if (status === "rejected" && value === "") {
+			// 驳回必须给理由（与后端同口径）：没写就展开输入框，不发请求。
+			const form = card.querySelector(".pend-reject-form");
+			if (form !== null) {
+				form.hidden = false;
+				form.querySelector("textarea")?.focus();
+			}
+			return;
+		}
+
+		const buttons = card.querySelectorAll(".pend-dispose-btn, .pend-reject-send");
+		for (const button of buttons) button.disabled = true;
+		card.classList.add("is-submitting");
+
+		let ok = false;
+		let message = "";
+		try {
+			const response = await fetch("/api/pending/dispose", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ key, status, reason: value }),
+			});
+			const data = await response.json().catch(() => null);
+			ok = response.ok && data?.ok === true;
+			// 后端会给出可读原因（越权 / 已处置 / 不存在），直接显示，不自己编。
+			if (!ok) message = String(data?.error ?? data?.reason ?? `HTTP ${response.status}`);
+		} catch (error) {
+			message = "网络异常，没提交成功。";
+		}
+		card.classList.remove("is-submitting");
+
+		if (!ok) {
+			for (const button of buttons) button.disabled = false;
+			const err = card.querySelector(".pend-err");
+			if (err !== null) {
+				err.textContent = message === "" ? "没提交成功，再试一次。" : message;
+				err.removeAttribute("hidden");
+			}
+			return;
+		}
+
+		answeredPending.add(key);
+		card.classList.add("is-answered");
+		const label = status === "rejected" ? "已驳回" : "已解决";
+		const state = card.querySelector(".pend-state");
+		if (state !== null) state.textContent = label;
+		else {
+			card.querySelector(".pend-head")?.insertAdjacentHTML(
+				"beforeend",
+				`<span class="pend-state">${label}</span>`,
+			);
+		}
+		// 同 reply 路径：让签名变化能被 patch 捕捉到。
+		feed = feed === null ? feed : { ...feed };
+		updateRows();
+		scrollToBottom();
+	}
+
+	/**
+	 * CEO 接管一条老板级待办（缺陷 B）。
+	 *
+	 * 成功后该条目从老板列表消失；用与处置同一套即时反馈（answeredPending + is-answered），
+	 * 下一次 feed 回来时因为它已不是 forYou 而自然消失。
+	 */
+	async function submitTakeOver(card) {
+		const key = card?.dataset.pendingKey ?? "";
+		if (key === "") return;
+		const buttons = card.querySelectorAll("[data-pending-takeover]");
+		for (const button of buttons) button.disabled = true;
+		card.classList.add("is-submitting");
+		let ok = false;
+		let message = "";
+		try {
+			const response = await fetch("/api/pending/take-over", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ key }),
+			});
+			const data = await response.json().catch(() => null);
+			ok = response.ok && data?.ok === true;
+			if (!ok) message = String(data?.error ?? data?.reason ?? `HTTP ${response.status}`);
+		} catch {
+			message = "网络异常，没提交成功。";
+		}
+		card.classList.remove("is-submitting");
+		if (!ok) {
+			for (const button of buttons) button.disabled = false;
+			const err = card.querySelector(".pend-err");
+			if (err !== null) {
+				err.textContent = message === "" ? "没提交成功，再试一次。" : message;
+				err.removeAttribute("hidden");
+			}
+			return;
+		}
+		answeredPending.add(key);
+		card.classList.add("is-answered");
+		const state = card.querySelector(".pend-state");
+		if (state !== null) state.textContent = "已接管";
+		else {
+			card.querySelector(".pend-head")?.insertAdjacentHTML("beforeend", '<span class="pend-state">已接管</span>');
+		}
+		feed = feed === null ? feed : { ...feed };
+		updateRows();
+		scrollToBottom();
+	}
+
 	/** 选项点击 + 提交按钮 + 回车，都在流上委托。 */
 	els.body.addEventListener("click", (event) => {
 		const optionButton = event.target.closest?.("[data-pending-option]");
@@ -2103,9 +2260,42 @@ export function initChat({ onSend, uploadFile, fetchProfile, onAnswer } = {}) {
 			void submitPending(pendingCardOf(sendButton), pendingCardOf(sendButton)?.querySelector("textarea")?.value ?? "");
 			return;
 		}
+
+		// CEO 接管（缺陷 B）：拉回自己层。
+		const takeOverButton = event.target.closest?.("[data-pending-takeover]");
+		if (takeOverButton !== null && takeOverButton !== undefined) {
+			const card = pendingCardOf(takeOverButton);
+			if (card === null) return;
+			void submitTakeOver(card);
+			return;
+		}
+
+		// 处置（驳回 / 标记已解决）：点「驳回」先展开理由输入框，不直接提交。
+		const disposeButton = event.target.closest?.("[data-pending-dispose]");
+		if (disposeButton !== null && disposeButton !== undefined) {
+			const card = pendingCardOf(disposeButton);
+			if (card === null) return;
+			const status = disposeButton.dataset.pendingDispose ?? "";
+			if (status === "rejected") {
+				const form = card.querySelector(".pend-reject-form");
+				if (form !== null) {
+					form.hidden = false;
+					form.querySelector("textarea")?.focus();
+				}
+				return;
+			}
+			if (status === "resolved") void submitDispose(card, "resolved", "");
+			return;
+		}
 	});
 
 	els.body.addEventListener("submit", (event) => {
+		const rejectForm = event.target.closest?.(".pend-reject-form");
+		if (rejectForm !== null && rejectForm !== undefined) {
+			event.preventDefault();
+			void submitDispose(pendingCardOf(rejectForm), "rejected", rejectForm.querySelector("textarea")?.value ?? "");
+			return;
+		}
 		const form = event.target.closest?.(".pend-reply");
 		if (form === null || form === undefined) return;
 		event.preventDefault();

@@ -182,120 +182,6 @@
 	background: var(--run);
 }
 
-/* ── 设置浮层 ─────────────────────────────────────────────────────────── */
-.settings {
-	position: fixed;
-	top: calc(var(--topbar-h) + 7px);
-	right: var(--sp-3);
-	z-index: 90;
-	width: min(320px, calc(100vw - 24px));
-	max-height: calc(100dvh - var(--topbar-h) - 20px);
-	overflow-y: auto;
-	background: var(--surface);
-	border: 1px solid var(--line-strong);
-	border-radius: var(--radius);
-	box-shadow: var(--shadow-pop);
-	padding: var(--sp-3) var(--sp-3) var(--sp-2);
-}
-
-.settings-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	padding: 0 0 var(--sp-2);
-	border-bottom: 1px solid var(--line-soft);
-	font-size: var(--fs-base);
-}
-
-.settings-head b {
-	font-weight: 600;
-	color: var(--ink);
-}
-
-/* .icon-btn 的基础尺寸在 chat.css 里是 .chat 后代限定；
-   设置浮层不在 .chat 内，需要在这里补一份，否则关闭按钮 0×0。 */
-.settings .icon-btn {
-	width: 28px;
-	height: 28px;
-	display: grid;
-	place-items: center;
-	border-radius: var(--radius);
-	color: var(--faint);
-	background: transparent;
-}
-
-.settings .icon-btn svg {
-	width: 16px;
-	height: 16px;
-}
-
-.settings .icon-btn:hover {
-	color: var(--ink);
-	background: var(--surface-2);
-}
-
-.settings-sec {
-	padding: var(--sp-3) 0;
-	border-bottom: 1px solid var(--line-soft);
-}
-
-.settings-sec:last-child {
-	border-bottom: 0;
-}
-
-.settings-sec h3 {
-	margin: 0 0 var(--sp-2);
-	font-size: var(--fs-2xs);
-	font-weight: 500;
-	color: var(--faint);
-}
-
-.settings-theme {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 4px;
-}
-
-.settings-theme button {
-	height: 34px;
-	border: 1px solid var(--line);
-	border-radius: var(--radius);
-	background: var(--bg);
-	color: var(--muted);
-	font-size: var(--fs-xs);
-	transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out),
-		background var(--dur) var(--ease-out);
-}
-
-.settings-theme button:hover {
-	color: var(--ink);
-	border-color: var(--line-strong);
-}
-
-.settings-theme button[aria-checked="true"] {
-	color: var(--ink);
-	border-color: var(--accent-line);
-	background: var(--surface-2);
-}
-
-.settings-row {
-	display: flex;
-	align-items: baseline;
-	justify-content: space-between;
-	gap: var(--sp-3);
-	font-size: var(--fs-xs);
-	color: var(--muted);
-}
-
-.settings-value {
-	min-width: 0;
-	color: var(--ink-2);
-	text-align: right;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 /* ── 遮罩（手机抽屉用） ───────────────────────────────────────────────── */
 .scrim {
 	position: fixed;
@@ -361,12 +247,6 @@ body[data-sheet="open"] .scrim {
 
 	.stage-inner {
 		padding: var(--sp-3) var(--sp-3) var(--sp-4);
-	}
-
-	.settings {
-		top: calc(var(--topbar-h) + 6px);
-		right: var(--sp-2);
-		width: min(320px, calc(100vw - 16px));
 	}
 
 	.settings-theme button {

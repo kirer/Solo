@@ -3,21 +3,13 @@
    只扩展 .settings 既有的极简语言：分组、行、说明、1px 边框。
    颜色预算沿用 tokens.css：--accent 只标记「默认 / 选中」，--run 标启用，
    --danger 只做文本与描边（不做实心红块），--warn 只做「需重启」提示。
-   面板仍是右上浮层；高度超限由 .settings 的 overflow-y: auto 内部滚动。
+   形态：设置不再是右上浮层，而是与 #chat 互斥的整块视图（槽位/尺寸/动画
+   见文件末尾「对话 ↔ 设置：互斥视图」一段）。高度超限由内部滚动，不撑破槽位。
    ========================================================================== */
 
-/* 模型行需要放「设为默认 / 删除」两个动作，320px 太窄会挤成三行；
-   360px 在 390px 手机视口仍有两侧安全边距。 */
+/* 面板宽度跟着槽位走（--chat-w 由对话拖宽写入），不再有自己的 360px 上限。 */
 .settings {
-	width: min(360px, calc(100vw - 24px));
 	overscroll-behavior: contain;
-}
-
-@media (max-width: 520px) {
-	.settings {
-		right: var(--sp-2);
-		width: min(360px, calc(100vw - 16px));
-	}
 }
 
 /* ── 通用结构 ───────────────────────────────────────────────────────────── */
@@ -620,4 +612,231 @@
 	margin-right: auto;
 	font-size: var(--fs-2xs);
 	color: var(--warn);
+}
+
+/* ============================================================================
+   对话 ↔ 设置：互斥视图（不是浮层）
+   ----------------------------------------------------------------------------
+   #chat 与 #settings 是 .workspace 里同一块并排槽位的两个视图：
+     · 槽位宽度由 --chat-w 决定，两视图各自 width: var(--chat-w)，叠在同一位置；
+     · body[data-view-aside="chat"] 时 #chat 在前可交互，#settings 向右滑出；
+       "settings" 时反过来。#settings 向左滑入/向右滑出。
+     · 只动 transform + opacity（合成层，不触发 layout），过渡是普通 CSS transition，
+       所以连续切换天然可中断、可反向，不靠 animationend 回调控住状态。
+   ========================================================================== */
+
+.settings {
+	position: absolute;
+	inset: 0;
+	z-index: 1;
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	border-left: 0;
+	background: var(--bg-2);
+	/* 基准态（chat 视图）：整体压到透明 + 右移；位移量在下面两段媒体查询里按槽位收窄 */
+	opacity: 0;
+	transform: translateX(24px);
+	pointer-events: none;
+	visibility: hidden;
+	/* 内容比槽位高时纵向滚动；头部 sticky 吸顶（不另加滚动容器 DOM）。
+	   横向一律裁掉：滑动过程中面板自己的宽度不会溢出槽位。 */
+	overflow-y: auto;
+	overflow-x: hidden;
+	transition:
+		transform var(--dur) var(--ease-out),
+		opacity var(--dur) var(--ease-out),
+		visibility 0s linear var(--dur);
+}
+
+body[data-view-aside="settings"] .settings {
+	opacity: 1;
+	transform: none;
+	pointer-events: auto;
+	visibility: visible;
+	transition:
+		transform var(--dur) var(--ease-out),
+		opacity var(--dur) var(--ease-out),
+		visibility 0s;
+}
+
+/* 设置占位时，对话整体左移淡出（不 display:none，DOM 与滚动位置/草稿都保留）。 */
+body[data-view-aside="settings"] .chat {
+	opacity: 0;
+	transform: translateX(-24px);
+	pointer-events: none;
+	visibility: hidden;
+	transition:
+		opacity var(--dur) var(--ease-out),
+		transform var(--dur) var(--ease-out),
+		visibility 0s linear var(--dur);
+}
+
+/* 拖宽把手在设置视图里没有意义：跟着对话一起淡出，同时让出 8px。 */
+body[data-view-aside="settings"] .chat-resizer {
+	opacity: 0;
+	pointer-events: none;
+}
+
+/* ── 窄屏（<=860px）：设置全屏，对话抽屉保持自己的 translateY 开合 ─────
+   手机上不再左右位移（全屏视图左右滑会露出下面的舞台），改成极短的纵向淡入；
+   .chat 的 transform 必须留给抽屉的 translateY，这里一个字都不碰。 */
+@media (max-width: 860px) {
+	.settings {
+		transform: translateY(6px);
+	}
+
+	body[data-view-aside="settings"] .settings {
+		transform: none;
+	}
+}
+
+/* ── 面板头部与内容：滚动区在内部，头部固定 ───────────────────────────── */
+.settings-head {
+	flex: none;
+	height: 56px;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sp-2);
+	padding: 0 10px 0 var(--sp-4);
+	border-bottom: 1px solid var(--line);
+	background: var(--bg-2);
+	font-size: var(--fs-base);
+}
+
+.settings-head b {
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.settings .icon-btn {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	display: grid;
+	place-items: center;
+	border-radius: var(--radius);
+	color: var(--faint);
+	background: transparent;
+	transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+
+.settings .icon-btn svg {
+	width: 16px;
+	height: 16px;
+}
+
+.settings .icon-btn:hover {
+	color: var(--ink);
+	background: var(--surface-2);
+}
+
+.settings > .settings-sec {
+	flex: none;
+	padding: var(--sp-3) var(--sp-4);
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.settings > .settings-sec:last-child {
+	border-bottom: 0;
+}
+
+.settings > .settings-sec h3 {
+	margin: 0 0 var(--sp-2);
+	font-size: var(--fs-2xs);
+	font-weight: 500;
+	color: var(--faint);
+}
+
+/* 内容比槽位高时滚动：面板纵向可滚、头部 sticky 吸顶（不另加滚动容器 DOM）。 */
+.settings > .settings-head {
+	position: sticky;
+	top: 0;
+	z-index: 1;
+}
+
+.settings-theme {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 4px;
+}
+
+.settings-theme button {
+	height: 34px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--muted);
+	font-size: var(--fs-xs);
+	transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out),
+		background var(--dur) var(--ease-out);
+}
+
+.settings-theme button:hover {
+	color: var(--ink);
+	border-color: var(--line-strong);
+}
+
+.settings-theme button[aria-checked="true"] {
+	color: var(--ink);
+	border-color: var(--accent-line);
+	background: var(--surface-2);
+}
+
+.settings-row {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: var(--sp-3);
+	font-size: var(--fs-xs);
+	color: var(--muted);
+}
+
+.settings-value {
+	min-width: 0;
+	color: var(--ink-2);
+	text-align: right;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* ── 窄屏：设置全屏（覆盖整个 .workspace，含对话抽屉本身） ─────────────── */
+@media (max-width: 860px) {
+	/* 窄屏：设置全屏（覆盖整个视口，含对话抽屉本身）。
+	   槽位在手机上是 fixed 抽屉，绝对定位撑不出全屏，所以这里改回 fixed。 */
+	.settings {
+		position: fixed;
+		inset: 0;
+		z-index: 80;
+	}
+
+	.settings-head {
+		height: 54px;
+		padding: 0 var(--sp-2) 0 var(--sp-3);
+		padding-top: env(safe-area-inset-top);
+	}
+
+	.settings > .settings-sec {
+		padding: var(--sp-3);
+	}
+
+	.settings > .settings-sec:last-child {
+		/* 全屏时底部留出安全区，最后一段不被 Home 条盖住 */
+		padding-bottom: calc(var(--sp-3) + env(safe-area-inset-bottom));
+	}
+}
+
+/* ── 减少动效：不做位移，只切透明度（tokens.css 已把时长压到 0.001ms） ── */
+@media (prefers-reduced-motion: reduce) {
+	.settings,
+	body[data-view-aside="settings"] .settings {
+		transform: none;
+	}
+
+	body[data-view-aside="settings"] .chat {
+		transform: none;
+	}
 }

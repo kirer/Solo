@@ -32,7 +32,7 @@
 	<link rel="stylesheet" href="css/board.css">
 	<link rel="stylesheet" href="css/motion.css">
 </head>
-<body data-chat="open" data-sheet="closed">
+<body data-chat="open" data-sheet="closed" data-view-aside="chat">
 	<div class="app">
 		<header class="topbar">
 			<div class="brand">
@@ -61,7 +61,7 @@
 						<path d="M20 12.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-2.6-.4L4 21l1.4-4.1A7.3 7.3 0 0 1 4 12.5 7.6 7.6 0 0 1 12 5a7.6 7.6 0 0 1 8 7.5Z"/>
 					</svg>
 				</button>
-				<button class="topbar-btn" type="button" id="settings-toggle" aria-label="设置" aria-haspopup="dialog" aria-expanded="false" title="设置">
+				<button class="topbar-btn" type="button" id="settings-toggle" aria-label="设置" aria-controls="chat" aria-expanded="false" title="设置">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<circle cx="12" cy="12" r="3"/>
 						<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>
@@ -88,6 +88,10 @@
 
 			<div class="chat-resizer" id="chat-resizer" role="separator" aria-orientation="vertical" aria-label="拖动调整对话面板宽度" title="拖动调整宽度 · 双击复位" tabindex="0"></div>
 
+			<!-- 对话 / 设置：同一块并排槽位（#aside-slot）里的两个互斥视图。
+			     槽位宽度仍由 --chat-w 驱动，body[data-view-aside] 决定谁是当前视图。
+			     设置不再是浮层：不覆盖、不弹窗，只是把对话换下来。 -->
+			<div class="aside-slot" id="aside-slot">
 			<aside class="chat" id="chat" aria-label="对话">
 				<header class="chat-head">
 					<div class="chat-ident">
@@ -149,60 +153,61 @@
 					</form>
 				</footer>
 			</aside>
+
+			<section class="settings" id="settings" role="region" aria-label="设置" aria-hidden="true">
+				<header class="settings-head">
+					<b>设置</b>
+					<button class="icon-btn" type="button" id="settings-close" aria-label="返回对话" title="返回对话（Esc）">
+						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M6 6l12 12M18 6 6 18"/>
+						</svg>
+					</button>
+				</header>
+
+				<section class="settings-sec">
+					<h3>外观</h3>
+					<div class="settings-theme" role="radiogroup" aria-label="外观">
+						<button type="button" role="radio" data-theme-option="dark" aria-checked="false">深色</button>
+						<button type="button" role="radio" data-theme-option="light" aria-checked="false">浅色</button>
+						<button type="button" role="radio" data-theme-option="system" aria-checked="false">跟随系统</button>
+					</div>
+				</section>
+
+				<section class="settings-sec">
+					<h3>模型</h3>
+					<p class="settings-row">
+						<span>默认模型</span>
+						<span class="mono settings-value" id="company-model">—</span>
+					</p>
+					<!-- 模型清单与「添加模型」：由 ui/js/settings.js 渲染（/api/settings、/api/models） -->
+					<div class="settings-models" id="settings-models"></div>
+				</section>
+
+				<section class="settings-sec">
+					<h3>IM 连接</h3>
+					<!-- 微信 / 企微 / 飞书 等接入配置：由 ui/js/settings.js 渲染（/api/settings 的 im 段） -->
+					<div class="settings-im" id="settings-im"></div>
+				</section>
+
+				<section class="settings-sec">
+					<h3>访问</h3>
+					<!-- 局域网地址 / 端口：由 ui/js/settings.js 渲染（/api/settings 的 network 段） -->
+					<div class="settings-network" id="settings-network"></div>
+				</section>
+
+				<section class="settings-sec">
+					<h3>成本</h3>
+					<p class="settings-row">
+						<span>全公司</span>
+						<span class="settings-value" id="settings-cost">—</span>
+					</p>
+				</section>
+			</section>
+			</div>
 		</div>
 	</div>
 
 	<div class="profile-layer" id="profile-layer" hidden></div>
-
-	<div class="settings" id="settings" role="dialog" aria-modal="false" aria-label="设置" hidden>
-		<header class="settings-head">
-			<b>设置</b>
-			<button class="icon-btn" type="button" id="settings-close" aria-label="关闭设置">
-				<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-					<path d="M6 6l12 12M18 6 6 18"/>
-				</svg>
-			</button>
-		</header>
-
-		<section class="settings-sec">
-			<h3>外观</h3>
-			<div class="settings-theme" role="radiogroup" aria-label="外观">
-				<button type="button" role="radio" data-theme-option="dark" aria-checked="false">深色</button>
-				<button type="button" role="radio" data-theme-option="light" aria-checked="false">浅色</button>
-				<button type="button" role="radio" data-theme-option="system" aria-checked="false">跟随系统</button>
-			</div>
-		</section>
-
-		<section class="settings-sec">
-			<h3>模型</h3>
-			<p class="settings-row">
-				<span>默认模型</span>
-				<span class="mono settings-value" id="company-model">—</span>
-			</p>
-			<!-- 模型清单与「添加模型」：由 ui/js/settings.js 渲染（/api/settings、/api/models） -->
-			<div class="settings-models" id="settings-models"></div>
-		</section>
-
-		<section class="settings-sec">
-			<h3>IM 连接</h3>
-			<!-- 微信 / 企微 / 飞书 等接入配置：由 ui/js/settings.js 渲染（/api/settings 的 im 段） -->
-			<div class="settings-im" id="settings-im"></div>
-		</section>
-
-		<section class="settings-sec">
-			<h3>访问</h3>
-			<!-- 局域网地址 / 端口：由 ui/js/settings.js 渲染（/api/settings 的 network 段） -->
-			<div class="settings-network" id="settings-network"></div>
-		</section>
-
-		<section class="settings-sec">
-			<h3>成本</h3>
-			<p class="settings-row">
-				<span>全公司</span>
-				<span class="settings-value" id="settings-cost">—</span>
-			</p>
-		</section>
-	</div>
 
 	<div class="scrim" id="scrim" hidden></div>
 
