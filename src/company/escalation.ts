@@ -23,6 +23,8 @@ import {
 } from "../runtime/index.ts";
 import type { Task } from "../runtime/index.ts";
 import { type DecisionTopic, decideOwner, levelOfTarget } from "./decision-routing.ts";
+import { nextLevelUp } from "../domain/membership.ts";
+import { buildOrg } from "./org-model.ts";
 import type { DispositionPayload } from "./disposition.ts";
 import { deliverDecision } from "./decision-delivery.ts";
 import {
@@ -302,12 +304,16 @@ export function createEscalationTask(
 				const state = task.state.checkpoint as Extract<EscalationState, { phase: "ask-manager" }>;
 				const level = state.level;
 
-				// 没有直属管理层（或直属就是 CEO）时直接进 CEO 阶段
+				// 没有直属管理层（或直属就是 CEO）时直接进 CEO 阶段。
+				//
+				// path **不在这里追加 "ceo"**：这一层没有真的问过任何人，
+				// 追加会让 path 出现两个连续的 "ceo"（实测 [from, ceo, ceo, owner]）。
+				// 真实的层级由各阶段结束时自己写进 path。
 				if (level === "ceo") {
 					await taskRuntime.commit(
 						() => ({
 							status: "running",
-							checkpoint: { phase: "ask-ceo", askedAt: 0, path: [...state.path, level] },
+							checkpoint: { phase: "ask-ceo", askedAt: 0, path: state.path },
 						}),
 						context,
 					);
@@ -330,11 +336,47 @@ export function createEscalationTask(
 				}
 
 				if (outcome.escalate) {
-					await recordHop(runtime, task.input, level, "ceo", context);
+					// ── 逐级上升（老板 2026-10-26 的硬要求）──
+					//
+					// 旧实现：这一层说「拍不了」就直接跳到 ask-ceo，**跳过了中间层**。
+					// 后果：项目负责人能定的排期问题被一路推到 CEO，CEO 再推给老板，
+					// 于是老板待办里堆满别人的活。
+					//
+					// 现在：按 manager 链找**上一级**。只有上一级是 CEO 时才进 ask-ceo。
+					// 也就是说 员工 → 负责人 → 管理层 → CEO → 老板，一层都不能跳。
+					const company = await runtime.harness.snapshot(CompanyDoc, context);
+					const org = buildOrg(company);
+					const up = nextLevelUp(org, level);
+
+					if (up === "owner") {
+						// 只有 CEO 这一层的 escalate 才真的递老板
+						await recordHop(runtime, task.input, level, "owner", context);
+						await taskRuntime.commit(
+							() => ({
+								status: "running",
+								checkpoint: { phase: "ask-owner", askedAt: 0, path: [...state.path, level] },
+							}),
+							context,
+						);
+						return;
+					}
+					if (up === "ceo") {
+						await recordHop(runtime, task.input, level, "ceo", context);
+						await taskRuntime.commit(
+							() => ({
+								status: "running",
+								checkpoint: { phase: "ask-ceo", askedAt: 0, path: [...state.path, level] },
+							}),
+							context,
+						);
+						return;
+					}
+					// 中间层（例如负责人 → 管理层）：留在 ask-manager，只把 level 换成上一级
+					await recordHop(runtime, task.input, level, up, context);
 					await taskRuntime.commit(
 						() => ({
 							status: "running",
-							checkpoint: { phase: "ask-ceo", askedAt: 0, path: [...state.path, level] },
+							checkpoint: { phase: "ask-manager", level: up, askedAt: 0, path: [...state.path, level] },
 						}),
 						context,
 					);
@@ -373,6 +415,10 @@ export function createEscalationTask(
 				}
 
 				if (outcome.escalate) {
+					// **老板级待办只能由 CEO 递给老板**（老板 2026-10-26 明确）。
+					// 这是整条升级链上唯一进入 ask-owner 的入口（另一个是
+					// `initial` 里 CEO 自己发起时的 startAtOwner）。见 domain/routing.ts
+					// 的 `canReachOwner()`。
 					// Defect B：CEO 确认「确实只能老板定」才递老板。
 					// 此时 path 追加真实的 "ceo" —— 这一步是真的问过 CEO 的，
 					// 所以写进 path 名实相符（旧代码没问却写 ceo，才是假象）。

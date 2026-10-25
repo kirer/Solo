@@ -194,3 +194,48 @@ export function isDecisionOwner(target: DecisionTarget, myLevel: string | undefi
 	if (myLevel === undefined) return false;
 	return levelOfTarget(target) === myLevel;
 }
+
+
+// ── 老板级待办的唯一入口 ────────────────────────────────────────────────────
+
+/**
+ * 这条待决问题能不能变成「老板级待办」。
+ *
+ * **老板 2026-10-26 的硬规则**：
+ * > 需要我（老板）拍板确认的事情，只能 CEO 给我。其他问题，他们自己找上级决定，
+ * > 如果上级决定不了，上级再交给他的上级。直到我。
+ *
+ * 两层含义，都必须成立：
+ *
+ * 1. **只有 CEO 能把问题递到老板面前**。任何非 CEO 的 agent（员工、负责人、管理层）
+ *    无论声明什么 topic、无论把 escalate 调多少次，都进不了 `ask-owner`。
+ * 2. **必须先经过中间层**。`company-level` 这种「看起来只有老板能定」的声明
+ *    是自证的，不能据此直达老板——要先由 CEO 复核。
+ *
+ * 唯一两个合法入口（都在 `escalation.ts`）：
+ * - `initial()` 里 `startAtOwner === true`（CEO 自己发起）
+ * - `ask-ceo` 阶段 CEO 明确 `escalate: true`（CEO 复核后决定递上去）
+ *
+ * 这个函数是**判定口径的唯一真相源**，测试与文档都引用它。
+ */
+export function canReachOwner(input: {
+	/** 发起人的权限位（owner / ceo / 管理层岗位名 / leader:<slug> / staff）。 */
+	readonly callerLevel: string | undefined;
+	/** 调用方显式要求「直接问老板」（`startAtOwner`）。 */
+	readonly startAtOwner?: boolean;
+}): { readonly allowed: boolean; readonly reason: string } {
+	// 只有 CEO 自己发起的、或 CEO 在 ask-ceo 阶段明确 escalate 的，才能到老板
+	if (input.callerLevel !== "ceo") {
+		return {
+			allowed: false,
+			reason: `只有 CEO 能把问题递给老板。当前发起人是 ${input.callerLevel ?? "未知层级"}，它会先沿汇报线逐级上升。`,
+		};
+	}
+	if (input.startAtOwner === true) {
+		return { allowed: true, reason: "CEO 判断：只有老板能定。" };
+	}
+	return {
+		allowed: false,
+		reason: "CEO 发起的上报默认先进入 CEO 自己的待办，由 CEO 判断是否真的需要老板拍板。",
+	};
+}

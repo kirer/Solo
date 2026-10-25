@@ -61,6 +61,19 @@ Task（任务）────── 工作容器：必须有验收标准，才有
 3. **项目负责人只负责收消息、分析判断、整理信息、拍板**，不做长时间阻塞的工作，因此不应长时间不回复。仍然保留超时升级作为兜底。
 4. **老板可以在任何地方发起任务**：任何群、任何私聊，可以 @ 任何人派任务或询问信息。
 5. **旧数据可以删除**（`TrailDoc` 不迁移）。
+6. **老板级待办只能由 CEO 递给老板**（2026-10-26 追加，硬规则）：
+
+   > 需要我（老板）拍板确认的事情，只能 CEO 给我。其他问题，他们自己找上级决定，
+   > 如果上级决定不了，上级再交给他的上级。直到我。
+
+   两层含义：
+   - **逐级上升，不许跳级**：员工 → 项目负责人 → 对应管理层 → CEO → 老板。
+   - **只有 CEO 能进老板层**：非 CEO 无论声明什么 topic、escalate 多少次，
+     都进不了 `ask-owner`。
+
+   实现：`domain/membership.ts` 的 `nextLevelUp()`（逐级上升）+
+   `domain/routing.ts` 的 `canReachOwner()`（唯一入口判定）。
+   测试：`test/e2e/owner-only-from-ceo.test.ts`（11 条）。
 
 ---
 
@@ -350,14 +363,58 @@ async function transitionTask(taskId, to, patch) {
 10 分钟未回复 → 看门狗升级给上一级 + 频道告警
 ```
 
-### 5.4 拍板（保留升级链，输出改频道）
+### 5.4 拍板：逐级上升，只有 CEO 能进老板层
 
-`escalation.ts` 多阶段任务机**不改**（ADR-013/026）。只改两点：
+`escalation.ts` 的多阶段任务机保留（ADR-013/026），但**上升路径改了**。
+
+#### 上升路径
+
+```
+员工 ──escalate──▶ 项目负责人
+                      │ 拍不了
+                      ▼
+                   对应管理层（CTO/CFO/…）
+                      │ 拍不了
+                      ▼
+                     CEO
+                      │ 拍不了（且确认只有老板能定）
+                      ▼
+                     老板
+```
+
+**旧实现的 bug**：`ask-manager` 阶段的 `escalate` 直接跳 `ask-ceo`，
+跳过了中间层。后果是一个项目负责人能定的排期问题被一路推到 CEO，
+CEO 再推给老板——「老板待办堆满别人的活」的成因之一。
+
+**现在的实现**：
+
+```ts
+// escalation.ts, ask-manager 阶段
+if (outcome.escalate) {
+  const up = nextLevelUp(org, level);   // 纯函数，沿 manager 链找上一级
+  if (up === "owner")  → ask-owner      // 只有 CEO 这一层会走到这里
+  if (up === "ceo")    → ask-ceo
+  else                 → 仍留 ask-manager，level 换成上一级
+}
+```
+
+#### 唯一入口判定
+
+`domain/routing.ts` 的 `canReachOwner()` 是「谁能产生老板级待办」的唯一真相源：
+
+| 入口 | 条件 |
+|---|---|
+| `initial()` 的 `startAtOwner: true` | 发起人**必须是 CEO**（`callerLevel === "ceo"`） |
+| `ask-ceo` 阶段的 `escalate: true` | CEO 复核后明确决定递上去 |
+
+非 CEO 声明 `company-level` 也不会直达老板：先落 `ask-ceo` 让 CEO 复核
+（`review: true`），CEO 确认后才转老板。
+
+#### 其他改动
 
 1. `ensurePending` 时同时写频道消息（kind=question, mentions=[decisionOwner]）
 2. `deliverDecision` 时写频道消息（kind=decision），并 `deliver` 给提问方
-
-`decision-routing.ts` 权限矩阵保留不动。
+3. `path` 不再出现两个连续的 `ceo`（旧代码在「直接进 CEO 阶段」时多写了一次）
 
 ### 5.5 老板指令（必回）
 

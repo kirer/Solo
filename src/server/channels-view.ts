@@ -102,7 +102,8 @@ export async function listChannels(
 			unread,
 			mentions,
 			preview: last === undefined ? "" : oneLine(last.text, 80),
-			lastAt: last?.at ?? channel.createdAt,
+			// 空频道给 0：界面显示「—」而不是「60 分钟前」（createdAt 是启动时刻，没有意义）
+			lastAt: last?.at ?? 0,
 			lastSeq: channel.lastSeq,
 			memberCount: Object.keys(channel.members).length,
 			openTasks,
@@ -144,7 +145,7 @@ export async function readChannelView(
 			kind: channel.kind,
 			title: channel.title,
 			...(channel.project === undefined ? {} : { project: channel.project }),
-			lastAt: channel.messages.at(-1)?.at ?? channel.createdAt,
+			lastAt: channel.messages.at(-1)?.at ?? 0,
 			lastSeq: channel.lastSeq,
 			memberCount: Object.keys(channel.members).length,
 		},

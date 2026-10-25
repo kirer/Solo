@@ -380,6 +380,69 @@ body[data-view="board"] .org {
 	display: none;
 }
 
+/* ── 频道视图（通信重构）：与看板同构，但三栏自己排 ─────────────────── */
+
+.channels {
+	display: none;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+body[data-view="channels"] .org {
+	display: none;
+}
+
+body[data-view="channels"] .board {
+	display: none;
+}
+
+body[data-view="channels"] .channels {
+	display: flex;
+}
+
+/* hidden 属性是兜底（与看板同一套约定） */
+body[data-view="channels"] .channels[hidden] {
+	display: flex !important;
+}
+
+body[data-view="channels"] .stage {
+	overflow: hidden;
+}
+
+body[data-view="channels"] .stage-inner {
+	max-width: 1560px;
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	padding-bottom: var(--sp-4);
+}
+
+body[data-view="channels"] .channels {
+	flex: 1;
+	min-height: 0;
+}
+
+@media (max-width: 1180px) {
+	body[data-view="channels"] .stage-inner {
+		padding-left: var(--sp-3);
+		padding-right: var(--sp-3);
+	}
+}
+
+@media (max-width: 860px) {
+	body[data-view="channels"] .stage {
+		overflow: hidden;
+	}
+
+	body[data-view="channels"] .stage-inner {
+		height: 100%;
+		min-height: 0;
+		padding: var(--sp-2) var(--sp-3) 0;
+	}
+}
+
 body[data-view="board"] .board {
 	display: flex;
 }

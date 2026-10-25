@@ -1,0 +1,643 @@
+/**
+ * 频道视图样式（通信重构 §7）。
+ *
+ * 三栏：频道列表 / 消息流 / 成员+任务。
+ * 已读点是本文件里唯一的「状态色」：灰 = 未读，绿 = 已读。
+ */
+
+.channels {
+	grid-column: 1 / -1;
+	grid-row: 1;
+	min-height: 0;
+	display: flex;
+}
+
+.ch-layout {
+	display: grid;
+	grid-template-columns: 232px minmax(0, 1fr) 216px;
+	width: 100%;
+	min-height: 0;
+	gap: 0;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	overflow: hidden;
+	background: var(--surface);
+}
+
+/* ── 频道列表 ── */
+
+.ch-list {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 10px 8px;
+	overflow-y: auto;
+	border-right: 1px solid var(--line);
+	background: var(--surface-2);
+}
+
+.ch-group {
+	padding: 10px 8px 4px;
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--faint);
+}
+
+.ch-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	width: 100%;
+	padding: 7px 8px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+	text-align: left;
+	cursor: pointer;
+	font: inherit;
+	transition: background 120ms ease;
+}
+
+.ch-row:hover {
+	background: var(--surface-3);
+}
+
+.ch-row--muted {
+	color: var(--faint);
+	cursor: default;
+	font-size: 11.5px;
+}
+
+.ch-row--muted:hover {
+	background: transparent;
+}
+
+.ch-row[data-active="true"] {
+	background: var(--surface-4);
+}
+
+.ch-row-main {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	flex: 1;
+}
+
+.ch-row-title {
+	font-size: 13px;
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ch-row-preview {
+	font-size: 11.5px;
+	color: var(--muted);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ch-row-side {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 3px;
+	flex-shrink: 0;
+}
+
+.ch-row-time {
+	font-size: 10.5px;
+	color: var(--faint);
+}
+
+.ch-badge {
+	min-width: 16px;
+	height: 16px;
+	padding: 0 5px;
+	border-radius: 8px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-size: 10.5px;
+	font-weight: 700;
+	line-height: 16px;
+	text-align: center;
+}
+
+.ch-badge--mention {
+	background: var(--warn-soft);
+	color: var(--warn);
+}
+
+/* ── 中间：头部 / 消息 / 输入 ── */
+
+.ch-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.ch-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid var(--line);
+}
+
+.ch-ident {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ch-title {
+	font-size: 14px;
+	font-weight: 650;
+}
+
+.ch-sub {
+	font-size: 11.5px;
+	color: var(--muted);
+}
+
+.ch-body {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.ch-msg {
+	display: flex;
+	gap: 9px;
+	align-items: flex-start;
+}
+
+.ch-msg[data-grouped="true"] {
+	margin-top: -6px;
+}
+
+.ch-msg[data-grouped="true"] .ch-avatar {
+	visibility: hidden;
+}
+
+.ch-avatar,
+.ch-member .avatar,
+.ch-mention-item .avatar {
+	border-color: hsl(var(--h, 210) 40% 40% / 0.5);
+}
+
+.ch-avatar {
+	position: relative;
+	flex-shrink: 0;
+	width: 26px;
+	height: 26px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface-2);
+	color: var(--ink);
+	font-size: var(--fs-2xs);
+	font-weight: 500;
+	letter-spacing: 0.02em;
+}
+
+.ch-owner-dot {
+	position: absolute;
+	right: -2px;
+	bottom: -2px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 2px var(--surface);
+}
+
+.ch-msg-main {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+	flex: 1;
+}
+
+.ch-msg-head {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 12px;
+}
+
+.ch-msg-head b {
+	font-weight: 650;
+}
+
+.ch-tag {
+	font-size: 9.5px;
+	padding: 0 4px;
+	border-radius: 3px;
+	line-height: 14px;
+}
+
+.ch-tag--owner {
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+.ch-time {
+	font-size: 10.5px;
+	color: var(--faint);
+}
+
+.ch-bubble {
+	font-size: 13px;
+	line-height: 1.6;
+	color: var(--ink);
+	word-break: break-word;
+}
+
+.ch-bubble > *:first-child {
+	margin-top: 0;
+}
+
+.ch-bubble > *:last-child {
+	margin-bottom: 0;
+}
+
+/* ── @ 的已读点（唯一的状态色） ── */
+
+.ch-mentions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 2px;
+}
+
+.ch-mention {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: 10.5px;
+	color: var(--muted);
+	padding: 1px 6px 1px 4px;
+	border-radius: 9px;
+	background: var(--surface-2);
+	border: 1px solid var(--line);
+}
+
+.ch-mention i {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--faint);
+	transition: background 160ms ease;
+}
+
+.ch-mention i[data-read="true"] {
+	background: var(--run);
+}
+
+/* ── 系统消息 / 任务卡片 ── */
+
+.ch-system {
+	align-self: center;
+	max-width: 80%;
+	padding: 4px 10px;
+	border-radius: 10px;
+	background: var(--surface-2);
+	border: 1px dashed var(--line);
+	font-size: 11.5px;
+	color: var(--muted);
+	white-space: pre-wrap;
+}
+
+.ch-card {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--surface-2);
+	padding: 9px 12px;
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+}
+
+.ch-card[data-kind="report"] {
+	border-left: 2px solid var(--run);
+}
+
+.ch-card[data-kind="task"] {
+	border-left: 2px solid var(--accent);
+}
+
+.ch-card-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+}
+
+.ch-card-id {
+	font-size: 10.5px;
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--accent-soft);
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.ch-card-title {
+	font-size: 12.5px;
+	font-weight: 600;
+	flex: 1;
+	min-width: 0;
+}
+
+.ch-card-body {
+	font-size: 12px;
+	color: var(--muted);
+	white-space: pre-wrap;
+}
+
+/* ── 输入区 ── */
+
+.ch-compose {
+	position: relative;
+	display: flex;
+	gap: 8px;
+	align-items: flex-end;
+	padding: 10px 12px 12px;
+	border-top: 1px solid var(--line);
+}
+
+.ch-compose textarea {
+	flex: 1;
+	min-height: 36px;
+	max-height: 160px;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--surface-2);
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	resize: none;
+	outline: none;
+}
+
+.ch-compose textarea:focus {
+	border-color: var(--accent);
+}
+
+.ch-send {
+	padding: 8px 14px;
+	border: 0;
+	border-radius: var(--radius-md);
+	background: var(--accent);
+	color: var(--bg);
+	font: inherit;
+	font-size: 12.5px;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.ch-send[disabled] {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* ── @ 选择器 ── */
+
+.ch-mention-popup {
+	position: absolute;
+	bottom: calc(100% - 2px);
+	left: 12px;
+	right: 12px;
+	max-height: 220px;
+	overflow-y: auto;
+	background: var(--surface);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	box-shadow: var(--shadow-pop);
+	padding: 4px;
+	z-index: 20;
+}
+
+.ch-mention-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	font-size: 12.5px;
+	cursor: pointer;
+	text-align: left;
+}
+
+.ch-mention-item:hover {
+	background: var(--surface-3);
+}
+
+.ch-mention-item .avatar {
+	width: 20px;
+	height: 20px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface-2);
+	font-size: 9.5px;
+	flex-shrink: 0;
+}
+
+.ch-mention-item span:last-child {
+	margin-left: auto;
+	font-size: 10.5px;
+	color: var(--faint);
+}
+
+/* ── 右侧：成员 + 任务 ── */
+
+.ch-side {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	border-left: 1px solid var(--line);
+	background: var(--surface-2);
+	overflow-y: auto;
+	padding: 10px 0;
+}
+
+.ch-side-block {
+	padding: 0 12px 8px;
+}
+
+.ch-side-block h3 {
+	margin: 8px 0 6px;
+	font-size: 11px;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--faint);
+	font-weight: 600;
+}
+
+.ch-members,
+.ch-tasks {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+}
+
+.ch-member .avatar {
+	width: 22px;
+	height: 22px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--surface-2);
+	font-size: var(--fs-2xs);
+	flex-shrink: 0;
+}
+
+.ch-member {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 3px 0;
+	font-size: 12px;
+}
+
+.ch-member-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	flex: 1;
+}
+
+.ch-member-main b {
+	font-weight: 600;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ch-member-role {
+	font-size: 10px;
+	color: var(--faint);
+}
+
+.ch-member[data-role="owner"] .ch-member-role {
+	color: var(--accent);
+}
+
+.ch-task {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 11.5px;
+	padding: 3px 0;
+}
+
+.ch-task-id {
+	font-size: 10px;
+	color: var(--accent);
+	font-weight: 700;
+}
+
+.ch-task-title {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ch-task-status {
+	font-size: 10px;
+	color: var(--faint);
+}
+
+.ch-task[data-status="blocked"] .ch-task-status {
+	color: var(--warn);
+}
+
+.ch-task[data-status="done"] .ch-task-status {
+	color: var(--run);
+}
+
+/* ── 空状态 ── */
+
+.ch-empty {
+	padding: 24px 12px;
+	text-align: center;
+	font-size: 12px;
+	color: var(--faint);
+}
+
+.ch-empty--inline {
+	padding: 8px 0;
+	text-align: left;
+}
+
+/* ── 顶栏徽章 ── */
+
+.view-badge {
+	display: inline-block;
+	min-width: 14px;
+	height: 14px;
+	margin-left: 4px;
+	padding: 0 4px;
+	border-radius: 7px;
+	background: var(--warn);
+	color: var(--bg);
+	font-size: 9.5px;
+	font-weight: 700;
+	line-height: 14px;
+	text-align: center;
+	vertical-align: 1px;
+}
+
+/* ── 响应式：窄屏收成单列（列表可折叠） ── */
+
+@media (max-width: 1100px) {
+	.ch-layout {
+		grid-template-columns: 200px minmax(0, 1fr);
+	}
+	.ch-side {
+		display: none;
+	}
+}
+
+@media (max-width: 860px) {
+	.ch-layout {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.ch-list {
+		display: none;
+	}
+	.ch-layout[data-pane="list"] .ch-list {
+		display: flex;
+	}
+	.ch-layout[data-pane="list"] .ch-main {
+		display: none;
+	}
+}

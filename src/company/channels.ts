@@ -35,6 +35,7 @@ import { CompanyDoc, type CompanyState } from "./docs.ts";
 import { ChannelDoc } from "./channels-doc.ts";
 import { deliver, type DeliverOutcome } from "./deliver.ts";
 import { buildOrg, type Org } from "./org-model.ts";
+import { labelOf } from "../domain/membership.ts";
 
 export { ChannelDoc } from "./channels-doc.ts";
 
@@ -69,6 +70,40 @@ export async function readOrg(
 
 // ── 写 ──────────────────────────────────────────────────────────────────────
 
+/**
+ * 从正文里解析 @ 提及（服务端兜底）。
+ *
+ * 为什么服务端也要解析：前端的 @ 选择器只是便利，老板完全可能手打
+ * 「@许砚舟」而不点候选。不解析的话这条消息不会唤醒任何人——正是
+ * 「消息发出去没人理」的老问题。
+ *
+ * 匹配策略：按频道成员的名字做**最长优先**匹配，避免「林」误匹配「林越」。
+ */
+export function parseMentions(text: string, channel: Channel, org: Org): number[] {
+	const candidates = Object.values(channel.members)
+		.map((member) => ({ id: member.conversationId, label: labelOf(org, member.conversationId) }))
+		.filter((candidate) => candidate.label !== "" && candidate.label !== `会话 ${candidate.id}`)
+		.sort((left, right) => right.label.length - left.label.length);
+
+	const found = new Set<number>();
+	for (const candidate of candidates) {
+		// 名字前后不能紧邻文字，否则「@林越」会误命中「@林越舟」
+		const pattern = new RegExp(`@${escapeRegExp(candidate.label)}(?![\\p{L}\\p{N}])`, "u");
+		if (pattern.test(text)) found.add(candidate.id);
+	}
+	// 角色别名
+	if (/@负责人(?!\p{L})/u.test(text) && channel.project !== undefined) {
+		const leader = org.projectLeaders[channel.project];
+		if (leader !== undefined) found.add(leader);
+	}
+	return [...found];
+}
+
+/** 转义正则元字符。 */
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** 追加消息的结果。 */
 export type PostResult = {
 	readonly channel: Channel;
@@ -97,11 +132,14 @@ export async function postToChannel(
 	const result = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const next = appendMessage(doc as ChannelState, channelId, input);
-		// 一次提交内替换整个文档（pi-durable 的文档是不可变的，只能整体写）
-		for (const key of Object.keys(doc as object)) {
-			delete (doc as Record<string, unknown>)[key];
-		}
-		Object.assign(doc as Record<string, unknown>, next.state);
+		// **只写变化的那个频道 + nextSeq**。
+		//
+		// 曾经的写法是「清空所有键再 Object.assign 整个 state」，结果是每追加一条消息
+		// 都把整个 ChannelDoc（21 个频道、几百条消息，实测 130KB）当成一次 delta 写盘。
+		// 公司群里每说一句话写 130KB，几轮就把库撑爆。
+		//
+		// 底层文档是可写的 overlay：只给变化的路径赋值，产生的 delta 就只有那一条路径。
+		writeChannel(doc as ChannelState, channelId, next.state);
 		return next.message;
 	}, context);
 
@@ -121,6 +159,19 @@ export async function postToChannel(
 		context,
 	);
 	return { channel, message: result, delivery };
+}
+
+/**
+ * 把纯函数算出的新状态写回文档 overlay —— **只写变化的那一个频道**。
+ *
+ * `pi-durable` 的 `tx.doc()` 返回可写 overlay，底层按「路径」生成 delta。
+ * 整体替换 `doc.channels` 会让每条消息的 delta 等于整个文档大小（实测 130KB/条）；
+ * 只赋值 `doc.channels[id]` 则 delta 只含那一个频道。
+ */
+function writeChannel(doc: ChannelState, channelId: string, next: ChannelState): void {
+	doc.nextSeq = next.nextSeq;
+	const channel = next.channels[channelId];
+	if (channel !== undefined) doc.channels[channelId] = channel;
 }
 
 /**
@@ -163,8 +214,7 @@ export async function markChannelRead(
 		if (channel === undefined) return;
 		const next = advanceRead(channel, conversationId, seq);
 		if (next === channel) return;
-		const channels = { ...(doc as ChannelState).channels, [channelId]: next };
-		(doc as { channels: unknown }).channels = channels;
+		(doc as ChannelState).channels[channelId] = next;
 	}, context);
 }
 
@@ -195,7 +245,7 @@ export async function markMentionSeen(
 		if (channel === undefined) return;
 		const next = markMentionRead(channel, seq, conversationId);
 		if (next === channel) return;
-		(doc as { channels: unknown }).channels = { ...state.channels, [channelId]: next };
+		(doc as ChannelState).channels[channelId] = next;
 	}, context);
 }
 
@@ -231,8 +281,9 @@ export async function ensureChannel(
 				members,
 				at: now,
 			});
-			(doc as { channels: unknown }).channels = next.channels;
-			return next.channels[input.id] as Channel;
+			const created = next.channels[input.id];
+			if (created !== undefined) (doc as ChannelState).channels[input.id] = created;
+			return created as Channel;
 		}
 
 		// 已存在：补齐缺失成员（新招的员工、新立项的项目）
@@ -248,7 +299,7 @@ export async function ensureChannel(
 			};
 		}
 		if (updated !== existing) {
-			(doc as { channels: unknown }).channels = { ...state.channels, [input.id]: updated };
+			(doc as ChannelState).channels[input.id] = updated;
 		}
 		return updated;
 	}, context);
@@ -275,7 +326,7 @@ export async function joinChannel(
 				[String(conversationId)]: member(conversationId, role, Date.now(), options.wakeOnAll === true),
 			},
 		};
-		(doc as { channels: unknown }).channels = { ...state.channels, [channelId]: next };
+		(doc as ChannelState).channels[channelId] = next;
 	}, context);
 }
 
@@ -290,10 +341,7 @@ export async function archiveChannel(
 		const state = doc as ChannelState;
 		const channel = state.channels[channelId];
 		if (channel === undefined) return;
-		(doc as { channels: unknown }).channels = {
-			...state.channels,
-			[channelId]: { ...channel, archived: true },
-		};
+		(doc as ChannelState).channels[channelId] = { ...channel, archived: true };
 	}, context);
 }
 

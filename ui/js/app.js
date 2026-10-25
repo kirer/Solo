@@ -8,6 +8,7 @@ import { escapeHtml, formatCost, formatTokens } from "./format.js";
 import { initOrg } from "./org.js";
 import { initChat } from "./chat.js";
 import { initSettings } from "./settings.js";
+import { initChannels } from "./channels.js";
 
 const $ = (id) => document.getElementById(id);
 const MOBILE_QUERY = window.matchMedia("(max-width: 860px)");
@@ -33,6 +34,8 @@ const orgView = initOrg({ onSelect: (id) => selectConversation(id) });
 // 这里只把「怎么提交答复」注入进去（ADR-026 的面板与流内卡片从此只有一套渲染）。
 const chat = initChat({ onSend: sendMessage, uploadFile, fetchProfile, onAnswer: submitAnswer });
 const settingsPanel = initSettings({ onToast: (text, tone) => chat.notify?.(text, tone) });
+// 频道视图（通信重构）：左侧频道列表 + 消息流 + 成员/任务
+const channels = initChannels({});
 
 /**
  * 取一位职工的角色档案（角色预制提示词 / 技能清单）。
@@ -425,14 +428,18 @@ const VIEW_KEY = "ai-company.view";
  * 看板内容由 board.js 自己渲染，这里不碰。
  */
 function applyView(name, { persist = true } = {}) {
-	const view = name === "board" ? "board" : "org";
+	const view = name === "board" ? "board" : name === "channels" ? "channels" : "org";
 	state.view = view;
 	document.body.dataset.view = view;
 	const board = $("board");
 	if (board !== null) board.hidden = view !== "board";
+	const channelsRoot = $("channels");
+	if (channelsRoot !== null) channelsRoot.hidden = view !== "channels";
 	for (const button of document.querySelectorAll(".view-switch-btn")) {
 		button.setAttribute("aria-selected", button.id === `view-${view}` ? "true" : "false");
 	}
+	// 切到频道视图时才拉数据（省掉启动时的两个请求）
+	if (view === "channels") void channels.refresh();
 	if (persist) {
 		try {
 			localStorage.setItem(VIEW_KEY, view);
@@ -447,6 +454,7 @@ function toggleView() {
 }
 
 function setupViewSwitch() {
+	$("view-channels")?.addEventListener("click", () => applyView("channels"));
 	$("view-org")?.addEventListener("click", () => applyView("org"));
 	$("view-board")?.addEventListener("click", () => applyView("board"));
 	let stored = "org";

@@ -631,6 +631,111 @@ try {
 	const closed = await cdp.eval(`(() => { const r = document.querySelector('#chat').getBoundingClientRect(); return { state: document.body.dataset.sheet, bottom: r.top }; })()`);
 	check("手机关闭抽屉", closed.state === "closed", closed.state);
 
+	// ── 频道视图（通信重构） ──
+	// 先回到桌面视口（上面刚测过手机）
+	await cdp.send("Emulation.setDeviceMetricsOverride", {
+		width: 1440,
+		height: 900,
+		deviceScaleFactor: 1,
+		mobile: false,
+		screenWidth: 1440,
+		screenHeight: 900,
+	});
+	await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+	// 上一段是 ?dev 假数据页：频道视图要走真实后端，必须重新导航
+	await cdp.navigate("/");
+	await sleep(1200);
+	await cdp.eval(`document.querySelector('#view-channels')?.click()`);
+
+	// 频道数据是两次请求（列表 + 详情）+ 渲染，等它稳定再断言
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		await sleep(250);
+		const rows = await cdp.eval(`document.querySelectorAll('.ch-row').length`);
+		if (rows > 0) break;
+	}
+
+	const channelState = await cdp.eval(`(() => {
+		const root = document.querySelector('#channels');
+		const layout = document.querySelector('.ch-layout');
+		return {
+			visible: root !== null && !root.hidden && root.getBoundingClientRect().height > 100,
+			rows: document.querySelectorAll('.ch-row').length,
+			hasCompany: [...document.querySelectorAll('.ch-row')].some((row) => row.dataset.id === 'company'),
+			hasProject: [...document.querySelectorAll('.ch-row')].some((row) => (row.dataset.id ?? '').startsWith('proj:')),
+			cols: layout === null ? 0 : getComputedStyle(layout).gridTemplateColumns.split(' ').length,
+		};
+	})()`);
+	check("频道视图可打开", channelState.visible === true);
+	check("频道列表有公司群与项目群", channelState.hasCompany && channelState.hasProject, `${channelState.rows} 个频道`);
+	check("频道三栏布局", channelState.cols === 3, `${channelState.cols} 列`);
+
+	// 切到公司群，检查消息区与输入框
+	await cdp.eval(`document.querySelector('.ch-row[data-id="company"]')?.click()`);
+	for (let attempt = 0; attempt < 20; attempt += 1) {
+		await sleep(250);
+		const members = await cdp.eval(`document.querySelectorAll('.ch-member').length`);
+		if (members > 0) break;
+	}
+	const channelDetail = await cdp.eval(`(() => {
+		const body = document.querySelector('#ch-body');
+		const input = document.querySelector('#ch-input');
+		const title = document.querySelector('#ch-title');
+		return {
+			title: title?.textContent ?? '',
+			hasBody: body !== null,
+			hasInput: input !== null && input.getBoundingClientRect().height > 10,
+			members: document.querySelectorAll('.ch-member').length,
+		};
+	})()`);
+	check("切到公司群并渲染消息区", channelDetail.hasBody && channelDetail.hasInput, channelDetail.title);
+	check("右侧成员列表非空", channelDetail.members > 0, `${channelDetail.members} 人`);
+
+	// @ 选择器：先确保候选表加载完（它跟着频道详情一起拉）
+	await cdp.eval(`document.querySelector('#ch-input')?.focus()`);
+	await sleep(400);
+	const mentionPopup = await cdp.eval(`(() => {
+		const input = document.querySelector('#ch-input');
+		if (input === null) return { ok: false };
+		input.focus();
+		input.value = '@';
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+		const popup = document.querySelector('#ch-mention-popup');
+		return { ok: popup !== null && !popup.hidden, count: popup?.querySelectorAll('.ch-mention-item').length ?? 0 };
+	})()`);
+	check("@ 选择器能弹出候选", mentionPopup.ok && mentionPopup.count > 0, `${mentionPopup.count} 人`);
+	await cdp.eval(`(() => { const input = document.querySelector('#ch-input'); if (input) { input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
+
+	// 已读点：注入一条带 @ 的假消息（不改数据，只看样式规则存在）
+	const mentionDot = await cdp.eval(`(() => {
+		const probe = document.createElement('span');
+		probe.className = 'ch-mention';
+		probe.innerHTML = '<i data-read="false"></i>@甲<i data-read="true"></i>@乙';
+		document.body.appendChild(probe);
+		const dots = [...probe.querySelectorAll('i')].map((dot) => getComputedStyle(dot).backgroundColor);
+		probe.remove();
+		return { unread: dots[0], read: dots[1], differ: dots[0] !== dots[1] };
+	})()`);
+	check("@ 已读点有灰/绿两态", mentionDot.differ === true, `${mentionDot.unread} vs ${mentionDot.read}`);
+
+	// 手机：频道视图单列
+	await cdp.send("Emulation.setDeviceMetricsOverride", {
+		width: 390,
+		height: 844,
+		deviceScaleFactor: 2,
+		mobile: true,
+		screenWidth: 390,
+		screenHeight: 844,
+	});
+	await sleep(600);
+	const mobileChannels = await cdp.eval(`(() => {
+		const layout = document.querySelector('.ch-layout');
+		const cols = layout === null ? 0 : getComputedStyle(layout).gridTemplateColumns.split(' ').length;
+		const overflow = document.documentElement.scrollWidth > window.innerWidth + 2;
+		return { cols, overflow };
+	})()`);
+	check("手机频道视图单列", mobileChannels.cols === 1, `${mobileChannels.cols} 列`);
+	check("手机频道无横向溢出", mobileChannels.overflow === false);
+
 	check("控制台 0 错误", pageErrors.length === 0, pageErrors.slice(0, 3).join(" | "));
 } catch (error) {
 	console.error("\n验收脚本出错：", error);

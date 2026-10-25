@@ -30,6 +30,7 @@
 	<link rel="stylesheet" href="css/chat.css">
 	<link rel="stylesheet" href="css/settings.css">
 	<link rel="stylesheet" href="css/board.css">
+	<link rel="stylesheet" href="css/channels.css">
 	<link rel="stylesheet" href="css/motion.css">
 </head>
 <body data-chat="open" data-sheet="closed" data-view-aside="chat">
@@ -53,6 +54,9 @@
 				<span class="topbar-conn" id="conn" data-state="on" hidden><i></i>重连中</span>
 				<!-- 看板 / 组织图 视图切换（单页面，不做侧边导航） -->
 				<div class="view-switch" role="tablist" aria-label="视图">
+					<button class="view-switch-btn" type="button" role="tab" id="view-channels" aria-selected="false" title="频道">
+						频道<span class="view-badge" id="ch-unread" hidden></span>
+					</button>
 					<button class="view-switch-btn" type="button" role="tab" id="view-org" aria-selected="true" title="组织架构">组织</button>
 					<button class="view-switch-btn" type="button" role="tab" id="view-board" aria-selected="false" title="任务看板">看板</button>
 				</div>
@@ -79,6 +83,37 @@
 							<div class="graph-loading"><i></i>正在连接公司…</div>
 						</div>
 					</section>
+					<!-- 频道：左侧频道列表 + 中间消息流 + 右侧成员/任务。内容由 ui/js/channels.js 渲染。 -->
+					<section class="channels" id="channels" aria-label="频道" hidden>
+						<div class="ch-layout">
+							<nav class="ch-list" id="ch-list" aria-label="频道列表"></nav>
+							<div class="ch-main">
+								<header class="ch-head">
+									<div class="ch-ident">
+										<b class="ch-title" id="ch-title">频道</b>
+										<span class="ch-sub" id="ch-sub"></span>
+									</div>
+								</header>
+								<div class="ch-body" id="ch-body" role="log" aria-live="polite"></div>
+								<div class="ch-compose">
+									<div class="ch-mention-popup" id="ch-mention-popup" hidden></div>
+									<textarea id="ch-input" rows="1" placeholder="发消息…（输入 @ 提及某人，Enter 发送，Shift+Enter 换行）"></textarea>
+									<button class="ch-send" type="button" id="ch-send" aria-label="发送">发送</button>
+								</div>
+							</div>
+							<aside class="ch-side">
+								<div class="ch-side-block">
+									<h3>成员</h3>
+									<ul class="ch-members" id="ch-members"></ul>
+								</div>
+								<div class="ch-side-block">
+									<h3>任务</h3>
+									<ul class="ch-tasks" id="ch-tasks"></ul>
+								</div>
+							</aside>
+						</div>
+					</section>
+
 					<!-- 任务看板：内容由 ui/js/board.js 渲染，容器宽度/切换由本文件与 shell.css 负责 -->
 					<section class="board" id="board" aria-label="任务看板" hidden>
 						<div class="board-inner" id="board-inner"></div>

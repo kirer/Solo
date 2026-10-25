@@ -126,6 +126,7 @@
    动画挂在被 display:none 的那个元素上：display 从 none 变回可见时，
    浏览器会重新起播 CSS 动画，所以来回切换都有淡入，且不需要 JS 加 class。 */
 body[data-view="board"] .board,
+body[data-view="channels"] .channels,
 body[data-view="org"] .org,
 body:not([data-view]) .org {
 	animation: motion-fade-in var(--motion) var(--ease-out) both;
@@ -140,6 +141,7 @@ body:not([data-view]) .org {
 	.pulse-dot,
 	.skeleton,
 	body[data-view="board"] .board,
+	body[data-view="channels"] .channels,
 	body[data-view="org"] .org,
 	body:not([data-view]) .org {
 		animation: none !important;

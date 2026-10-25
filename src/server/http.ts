@@ -35,7 +35,7 @@ import { createUploadStore, MAX_UPLOAD_BYTES, UploadTooLargeError, type UploadSt
 import { composeInboundText, createImOutboundRelay, inboundAllowed } from "./im.ts";
 import { browserUrlOf, lanUrlsOf } from "./network.ts";
 import { listChannels, mentionCandidates, readChannelView, unreadSummary } from "./channels-view.ts";
-import { markAllRead, markMentionSeen, postToChannel, readChannel, readChannels } from "../company/channels.ts";
+import { markAllRead, markMentionSeen, parseMentions, postToChannel, readChannel, readChannels } from "../company/channels.ts";
 import { OWNER_ID } from "../domain/channels.ts";
 import { buildOrg } from "../company/org-model.ts";
 
@@ -926,11 +926,17 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		if (attachmentResult.error !== undefined) return fail(response, 400, attachmentResult.error);
 		const content = attachmentResult.content;
 
-		// 只保留频道成员作为 @ 目标（@ 一个不在频道里的人没有意义）
-		const mentions = (body.mentions ?? []).filter((id) => channel.members[String(id)] !== undefined);
-
 		const company = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
 		const org = buildOrg(company);
+
+		// @ 目标 = 前端显式给的 ∪ 服务端从正文解析出来的。
+		// 服务端也要解析：老板可能手打「@许砚舟」而不点候选，不解析就不会唤醒任何人。
+		// 只保留频道成员（@ 一个不在频道里的人没有意义）。
+		const explicit = (body.mentions ?? []).filter((id) => channel.members[String(id)] !== undefined);
+		const parsed = parseMentions(content, channel, org);
+		const mentions = [...new Set([...explicit, ...parsed])].filter(
+			(id) => channel.members[String(id)] !== undefined && id !== OWNER_ID,
+		);
 
 		// 老板发言：先写 ack（ADR-026 决策 7.1 的延续——必回）
 		const targets = mentions.length > 0 ? mentions : defaultTargets(channelId, org);

@@ -257,3 +257,101 @@ export function ownerOfChannel(org: Org, channel: Channel): number | undefined {
 		}
 	}
 }
+
+// ── 升级链：逐级上升 ────────────────────────────────────────────────────────
+
+/**
+ * 升级链上的下一个上级。
+ *
+ * 老板的要求（2026-10-26）：
+ * > 其他问题，他们自己找上级决定，如果上级决定不了，上级再交给他的上级。直到我。
+ *
+ * 也就是**逐级上升**，不能跳级：
+ *
+ * ```
+ * 员工 → 项目负责人 → 对应管理层 → CEO → 老板
+ * ```
+ *
+ * 旧实现是「管理层的 escalate 直接跳到 CEO」，跳过了中间层——
+ * 一个项目负责人本来能定的排期问题，被一路推到 CEO，CEO 再推给老板。
+ * 这正是「老板待办堆满别人的活」的成因之一。
+ *
+ * @param level 当前层级的权限位（管理层岗位名 / `leader:<slug>`）
+ * @returns 上一级的权限位；已经在 CEO 或找不到上级时返回 `"ceo"`；
+ *          CEO 自己的上级是 `"owner"`（由调用方决定要不要真的递上去）
+ */
+export function nextLevelUp(org: Org, level: string): string {
+	// CEO 的上级是老板（但只有 CEO 主动 escalate 才真的递）
+	if (level === "ceo") return "owner";
+
+	// 项目负责人 → 该负责人自己的上级（沿 manager 链）
+	if (level.startsWith("leader:")) {
+		const slug = level.slice("leader:".length);
+		const leaderId = org.projectLeaders[slug];
+		if (leaderId === undefined) return "ceo";
+		const person = personOf(org, leaderId);
+		const managerId = person?.managerId;
+		if (managerId === undefined) return "ceo";
+		return levelOfPerson(org, managerId);
+	}
+
+	// 管理层岗位 → 它的上级（通常是 CEO，但保留扩展空间）
+	const person = org.people.find((entry) => entry.role === "management" && levelOfPerson(org, entry.conversationId) === level);
+	if (person?.managerId !== undefined) return levelOfPerson(org, person.managerId);
+	return "ceo";
+}
+
+/** 某个会话对应的权限位（与 `escalation.ts` 的 `levelOfConversation` 同口径）。 */
+export function levelOfPerson(org: Org, conversationId: number): string {
+	if (conversationId === OWNER_ID) return "owner";
+	const person = personOf(org, conversationId);
+	if (person === undefined) return "ceo";
+	if (person.role === "ceo") return "ceo";
+	if (person.role === "leader" && person.project !== undefined) return `leader:${person.project}`;
+	if (person.role === "management") {
+		// 管理层岗位名由 org 的构造保证与 CompanyDoc.roles 的键一致
+		return managementRoleNameOf(org, conversationId) ?? "ceo";
+	}
+	return "staff";
+}
+
+/**
+ * 管理层会话对应的岗位名（cto / cfo / …）。
+ *
+ * `Org` 只存 `role: "management"`，岗位名在 `CompanyDoc.roles` 里。
+ * 为了让 `domain` 层保持无 IO，这里用「按 conversationId 顺序回填」的方式：
+ * `buildOrg` 会把岗位名写进 `label`（ROLE_LABELS），所以从 label 反查。
+ */
+function managementRoleNameOf(org: Org, conversationId: number): string | undefined {
+	const person = personOf(org, conversationId);
+	if (person === undefined) return undefined;
+	const byLabel: Record<string, string> = {
+		CTO: "cto",
+		CFO: "cfo",
+		CPO: "cpo",
+		COO: "coo",
+		CMO: "cmo",
+		CHRO: "chro",
+		CEO: "ceo",
+	};
+	return byLabel[person.label];
+}
+
+/**
+ * 这条升级链的完整路径（从发起人到老板），用于「路径可追溯」。
+ *
+ * 只用于展示与审计，不参与调度。
+ */
+export function escalationPath(org: Org, from: number): readonly string[] {
+	const path: string[] = [];
+	let level = levelOfPerson(org, from);
+	const seen = new Set<string>();
+	path.push(level);
+	while (level !== "ceo" && level !== "owner" && !seen.has(level)) {
+		seen.add(level);
+		level = nextLevelUp(org, level);
+		path.push(level);
+	}
+	if (level === "ceo") path.push("owner");
+	return path;
+}
