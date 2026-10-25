@@ -100,7 +100,10 @@
 										<span class="ch-sub" id="ch-sub"></span>
 									</div>
 								</header>
-								<div class="ch-body" id="ch-body" role="log" aria-live="polite" aria-label="消息流" tabindex="0"></div>
+								<div class="ch-body" id="ch-body" role="log" aria-label="消息流" tabindex="0"></div>
+								<!-- 读屏播报只走这一小块：整个消息区挂 aria-live 的话，每次轮询
+								     全量重渲染都会把整段历史重播一遍，读屏用户会被淹没。 -->
+								<div class="sr-only" id="ch-announcer" role="status" aria-live="polite"></div>
 								<div class="ch-compose">
 									<div class="ch-mention-popup" id="ch-mention-popup" hidden></div>
 									<textarea id="ch-input" rows="1" aria-label="消息输入框" placeholder="发消息…（输入 @ 提及某人，Enter 发送，Shift+Enter 换行）"></textarea>

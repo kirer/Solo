@@ -37,6 +37,10 @@ const state = {
 	sending: false,
 	/** 翻页锁：连点「加载更早」不会重复请求同一页。 */
 	loadingEarlier: false,
+	/** 已经播报过的最大 seq（读屏只播新消息，不重播历史）。 */
+	announcedSeq: 0,
+	/** 播报基线所属的频道（切频道要重置，否则会把历史当成新消息念）。 */
+	announcedChannel: null,
 	/** 已展开全文的消息（按 seq）。轮询全量重渲染后要靠它恢复，否则一点就白点。 */
 	expanded: new Set(),
 };
@@ -53,6 +57,7 @@ const el = {
 	members: null,
 	tasks: null,
 	mention: null,
+	announcer: null,
 };
 
 /** 频道类型 → 分组标题。 */
@@ -207,6 +212,31 @@ async function loadEarlier(before) {
 	} finally {
 		state.loadingEarlier = false;
 	}
+}
+
+/**
+ * 读屏播报：只念**这一次真正新增**的消息。
+ *
+ * 为什么单独一块：消息区整段 `innerHTML` 重渲染，如果它自己挂 `aria-live`，
+ * 每 4 秒轮询一次就把全部历史重播一遍，读屏用户根本没法用。
+ */
+function announceNewMessages(view) {
+	if (el.announcer === null) return;
+	// 切频道时基线归零：新频道里的历史不该被当成「刚来了一条」
+	if (state.announcedChannel !== view.channel.id) {
+		state.announcedChannel = view.channel.id;
+		state.announcedSeq = view.messages.at(-1)?.seq ?? 0;
+		return;
+	}
+	// 老板自己发的不用念（他刚打完字），只念别人说的
+	const fresh = view.messages.filter((message) => message.seq > state.announcedSeq && message.from !== 0);
+	if (fresh.length === 0) return;
+	state.announcedSeq = fresh.at(-1).seq;
+	const last = fresh.at(-1);
+	el.announcer.textContent =
+		fresh.length === 1
+			? `${last.fromLabel}：${last.text.slice(0, 120)}`
+			: `${fresh.length} 条新消息，最新来自 ${last.fromLabel}：${last.text.slice(0, 80)}`;
 }
 
 /** 记下消息区的滚动位置（是否贴底 + 距底距离）。 */
@@ -401,6 +431,7 @@ function renderHeader() {
 function renderMessages() {
 	const view = state.view;
 	if (view === null || el.body === null) return;
+	announceNewMessages(view);
 	if (view.messages.length === 0) {
 		el.body.innerHTML = `<div class="ch-empty">还没有消息。${view.channel.kind === "project" ? "在项目群里 @ 某人开始协作。" : ""}</div>`;
 		return;
@@ -782,6 +813,7 @@ export function initChannels({ onToast } = {}) {
 	el.send = $("ch-send");
 	el.members = $("ch-members");
 	el.tasks = $("ch-tasks");
+	el.announcer = $("ch-announcer");
 	el.mention = $("ch-mention-popup");
 
 	$("ch-back")?.addEventListener("click", () => {
