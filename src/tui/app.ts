@@ -206,6 +206,9 @@ export async function createApp(options: AppOptions): Promise<App> {
 
 		const conversation = await runtime.harness.conversation(selectedConversationId as never, BACKGROUND_CONTEXT);
 		await conversation?.submit({ type: "input", content }, BACKGROUND_CONTEXT);
+		// OPS-20261025-04：模型失败落在 tasks.outcome.status = "failed"，底层不调 onReport；
+		// 发送后扫一次（幂等），让 TUI 也能看到 [任务出错]。
+		await runtime.scanTaskFailures(BACKGROUND_CONTEXT).catch(() => 0);
 		await refresh();
 	};
 

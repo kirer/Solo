@@ -21,6 +21,7 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { createEnvironmentRegistry, type CwdResolver, type EnvironmentRegistry } from "./env.ts";
 import type { Registry } from "./registry.ts";
+import { createFailureScanner } from "./run-failure.ts";
 
 /** 我们关心的失败类别，屏蔽底层报告类型的细节。 */
 export type RuntimeReport =
@@ -58,6 +59,17 @@ export type CompanyRuntime = {
 	readonly environments: EnvironmentRegistry;
 	/** 最近一次失败（若运行时已失效）。 */
 	readonly failure: () => unknown;
+	/**
+	 * 扫一轮终态失败任务，把还没报过的补一条 [任务出错] 到 onReport。返回本轮新报条数。
+	 *
+	 * 为什么不是旁路观测：模型失败的结局 `outcome.status = "failed"` 是任务实现显式提交的
+	 * 预期失败，底层不会为它调 onReport（详见 run-failure.ts）。但它**已经持久化在
+	 * tasks 表里**，所以扫表比挂监听更准、也不会留下长寿命 Promise。
+	 *
+	 * 调用时机：打开时扫一次（补上重启前遗留的），以及任何已有的巡检节奏里再扫
+	 * （见 serve() 的看门狗与 TUI 的命令回显）。幂等：水位去重，重复调用不会重报。
+	 */
+	scanTaskFailures(context?: Context): Promise<number>;
 	/** 关闭运行时：清理环境、关闭存储。未完成的工作保留至下次打开。 */
 	close(context?: Context): Promise<void>;
 };
@@ -100,8 +112,9 @@ export async function openCompany(options: OpenCompanyOptions, context: Context 
 	const environments = createEnvironmentRegistry(options.resolveCwd);
 	let failure: unknown;
 
+	const storage = await openNodeSqliteStorage(options.databasePath);
 	const harness = await DurableHarness.open(
-		await openNodeSqliteStorage(options.databasePath),
+		storage,
 		{
 			models: options.models,
 			registry: options.registry,
@@ -121,10 +134,20 @@ export async function openCompany(options: OpenCompanyOptions, context: Context 
 		if (end.reason === "failed") failure = end.error;
 	});
 
+	// 模型调用失败（outcome.status = "failed"）不会触发底层的 onReport，原因见 run-failure.ts。
+	// 但它已持久化在 tasks 表里，所以直接扫表补一条 [任务出错]——无长寿命 Promise，重启也不丢。
+	const failures = createFailureScanner(storage, options.onReport);
+	// 打开时扫一次：补上「上次进程里失败、但日志已随进程丢掉」的那些。
+	// 故意不 await——不能让扫表拖慢启动；它只读、幂等，下一轮巡检还会再扫。
+	void failures.scan(context).catch(() => 0);
+
 	return {
 		harness,
 		environments,
 		failure: () => failure,
+		scanTaskFailures(scanContext: Context = BACKGROUND_CONTEXT) {
+			return failures.scan(scanContext);
+		},
 		async close(closeContext: Context = BACKGROUND_CONTEXT): Promise<void> {
 			await environments.cleanup(closeContext);
 			await harness.close(closeContext);

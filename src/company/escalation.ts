@@ -22,6 +22,8 @@ import {
 	type CompanyRuntime,
 } from "../runtime/index.ts";
 import type { Task } from "../runtime/index.ts";
+import { type DecisionTopic, decideOwner, levelOfTarget } from "./decision-routing.ts";
+import type { DispositionPayload } from "./disposition.ts";
 import {
 	AuditDoc,
 	CompanyDoc,
@@ -56,6 +58,13 @@ export type EscalationInput = {
 	 * 其他任何人的上报都只会停在自己这条链的最高一层（CEO）。
 	 */
 	readonly startAtOwner?: boolean;
+	/**
+	 * 事项类别（ADR-026 决策 2 的权限矩阵，落地第 3 步）。
+	 *
+	 * 不传时按 `unclassified` 处理（沿汇报线上行），**不会**因此获得额外授权。
+	 * 发起方能用它声明「这是本项目的排期问题」之类，从而让问题停在该拍的人那里。
+	 */
+	readonly topic?: DecisionTopic;
 };
 
 /** 阶段状态。 */
@@ -80,12 +89,32 @@ export type PendingItem = {
 	readonly fromConversationId: number;
 	project?: string;
 	readonly askedAt: number;
+	/**
+	 * 这条问题该由谁拍（ADR-026 决策 2 / 6，落地第 3 步）。
+	 *
+	 * 取值与 `level` 同一口径：`owner` / 管理层岗位名 / `leader:<slug>`。
+	 * 为什么和 `level` 分开存：`level` 是「这条待决项在升级链上停在哪一级」，
+	 * `decisionOwner` 是「结构上该谁拍」。两者大多数时候相等，但升级链升一级后
+	 * `level` 会变、`decisionOwner` 不变——保留它才能事后回答，
+	 * 「这个问题原本该谁拍、为什么最后到了老板那儿」。
+	 *
+	 * 旧数据没有这个字段：读取时用 {@link decisionOwnerOfItem} 回退到 `level`。
+	 */
+	decisionOwner?: string;
 	/** 已给出的答复；未答复时不存在。 */
 	answer?: string;
 	/** 答复者。 */
 	answeredBy?: string;
 	/** 表示「我也拍不了，继续往上」。 */
 	escalate?: boolean;
+	/**
+	 * 处置待办的附加载荷（ADR-026 落地第二步）。
+	 *
+	 * 普通升级项没有这个字段；只有「被打断工作的处置」会带。
+	 * 用可选内联对象而不是独立文档：它必须和待决项同生同灭，
+	 * 拆成两份文档就会出现「待办已答、载荷还在」的不一致。
+	 */
+	disposition?: DispositionPayload;
 };
 
 /** 待决问题文档（公司级）。任务与角色之间的唯一通道。 */
@@ -153,7 +182,11 @@ export function createEscalationTask(
 		version: 1,
 
 		initial: (input) =>
-			input.startAtOwner === true
+			// ADR-026 决策 2：公司级事项只能老板定，起点直接就是老板，
+			// 不必先绕到直属上级/CEO（绕一层只会多一次无意义的睡眠与唤醒）。
+			// 注意：`project` / `domain` 的**具体落点**要读公司结构（负责人引用、汇报线），
+			// `initial` 是纯同步函数拿不到，所以由调用方算好后用 `startAtOwner` / `manager` 传入。
+			input.startAtOwner === true || input.topic === "company-level"
 				? { phase: "ask-owner", askedAt: 0, path: [input.from, "ceo"] }
 				: {
 						phase: "ask-manager",
@@ -303,17 +336,42 @@ export async function startEscalation(
 	input: EscalationInput,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<number> {
-	const manager = input.manager ?? "ceo";
+	// ADR-026 决策 2（落地第 3 步）：起点由**权限矩阵**决定，而不是固定 `manager ?? "ceo"`。
+	//
+	// 放在这里（唯一入口）而不是散在各个调用方：否则新增一个调用方就会忘接路由，
+	// 问题又会被一律推到 CEO/老板。`org.ts` 的 escalate 工具已把结构信息（manager/project）
+	// 备齐，这里统一算一次。
+	//
+	// `startAtOwner` 是显式的「只能老板定」声明，优先于 topic（见 org.ts 的说明）。
+	const state = await runtime.harness.snapshot(CompanyDoc, context);
+	// 发起人层级也参与路由：没有直属上级时（例如管理层自己上报），
+	// 矩阵要能按「发起人所在层级」落到对应岗位，而不是一律落到 CEO。
+	const fromLevel = levelOfConversation(state, input.fromConversationId);
+	const ownerLevel = input.startAtOwner === true
+		? "owner"
+		: levelOfTarget(
+				decideOwner(state, input.topic ?? "unclassified", {
+					...(input.manager === undefined ? {} : { manager: input.manager }),
+					...(input.project === undefined ? {} : { project: input.project }),
+					...(fromLevel === undefined ? {} : { fromLevel }),
+				}),
+			);
+
+	// 起点层级：owner 走 `startAtOwner`（`initial` 直接进 ask-owner），
+	// 其余把 ownerLevel 当作 `manager`（`initial` 的 ask-manager 就从它开始）。
+	const startAtOwner = ownerLevel === "owner";
+	const manager = startAtOwner ? (input.manager ?? "ceo") : (ownerLevel as ManagerRef);
+
 	const taskId = await runtime.harness.commit(
 		(tx) =>
-			tx.createTask(task, { ...input, manager }, {
+			tx.createTask(task, { ...input, manager, ...(startAtOwner ? { startAtOwner: true } : {}) }, {
 				ownership: { kind: "conversation" },
 				conversationId: input.fromConversationId as never,
 			}),
 		context,
 	);
 
-	await recordHop(runtime, input, input.from, manager, context);
+	await recordHop(runtime, input, input.from, startAtOwner ? "owner" : ownerLevel, context);
 	return Number(taskId);
 }
 
@@ -385,11 +443,35 @@ export async function answerPendingAsCeo(
 	);
 }
 
-/** 列出当前未答复的待决问题。 */
+/**
+ * 一条待决问题的决策人（ADR-026 决策 2）。
+ *
+ * 优先读持久化的 `decisionOwner`；旧数据（字段引入前写入的）没有它就回退到 `level`。
+ * 回退是安全的：那些数据本来就只沿汇报线上行，`level` 就是当时实际拍板的人。
+ *
+ * 处置待办（`item.disposition !== undefined`）例外：它的归属是「被打断工作的下达人」，
+ * 已经由 `disposition.ts` 写成权限位并存在 `level` 里，不能再用 `topic` 重算。
+ */
+export function decisionOwnerOfItem(item: PendingItem): string {
+	return item.decisionOwner ?? item.level;
+}
+
+/**
+ * 列出当前未答复的待决问题。
+ *
+ * 读时兜底（审计 D-01）：先让到期的处置项按默认值结算，再列出。
+ * 这里用**动态导入**是为了避免 `escalation ⇄ disposition` 的运行时环：
+ * `disposition.ts` 在模块顶层静态导入本文件的 `PendingDoc` / `levelOfConversation`，
+ * 若本文件反过来静态导入它，就会形成循环（其中一侧会拿到未初始化的绑定）。
+ * 动态导入把解析推迟到调用时，环自然不存在。
+ */
 export async function listPending(
 	runtime: CompanyRuntime,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<PendingItem[]> {
+	const { settleDueDispositions } = await import("./disposition.ts");
+	await settleDueDispositions(runtime, Date.now(), context);
+
 	const state = await runtime.harness.snapshot(PendingDoc, context);
 	return state?.items.filter((item) => item.answer === undefined) ?? [];
 }
@@ -424,12 +506,14 @@ async function ensurePending(
 		);
 		if (existing !== undefined) return;
 
+		// 公司结构：既用于「owner 级一律记在 CEO 名下」，也用于判定决策人。
+		const company = await runtime.harness.snapshot(CompanyDoc, context);
+
 		// 老板只看得到「CEO 报上来的问题」：owner 级待办一律记在 CEO 名下，
 		// 哪怕最初是某个项目负责人发起的（中间已由 CEO 背书过一层）。
 		let from = input.from;
 		let fromConversationId = input.fromConversationId;
 		if (level === "owner") {
-			const company = await runtime.harness.snapshot(CompanyDoc, context);
 			const ceoId = company?.roles.ceo;
 			if (ceoId !== undefined) {
 				from = "CEO";
@@ -446,6 +530,33 @@ async function ensurePending(
 			askedAt,
 		};
 		if (input.project !== undefined) item.project = input.project;
+		// ADR-026 决策 2（落地第 3 步）：在写入时就定下「该由谁拍」。
+		// 用持久化而非每次读取时现算：规则以后调整时，历史待办不会被改写，
+		// 事后才能回答「当时为什么到了老板那儿」（决策 8 的留痕要求）。
+		//
+		// 关键：**以当前 level 为准，而不是重新按 topic 算**。
+		// 升级链已经把它推到这一级了（例如 CEO 拍不了、escalate 到 owner），
+		// 这时「该谁拍」就是这一级本身。若重新按 topic 算，一条「项目负责人
+		// 上报 → CEO 升级」的问题在 owner 层的 decisionOwner 会算回 ceo，
+		// 于是它既不在 CEO 的待办里（level 已是 owner）、也不在老板的待办里
+		// （forYou 要求 decisionOwner === owner）—— 两边都看不到，问题凭空消失。
+		//
+		// topic 只在**第一级**（起点）决定路由；后续层级由 level 决定。
+		//
+		// 与 startEscalation 用同一份结构信息（含发起人层级），否则「起点」与
+		// 「落库时记下的决策人」会算出两个不同的答案，历史留痕就对不上。
+		const isFirstLevel = level !== "owner" && level !== "ceo";
+		const fromLevel = levelOfConversation(company, input.fromConversationId);
+		const owner = isFirstLevel
+			? decideOwner(company, input.topic ?? "unclassified", {
+					...(input.manager === undefined ? {} : { manager: input.manager }),
+					...(input.project === undefined ? {} : { project: input.project }),
+					...(fromLevel === undefined ? {} : { fromLevel }),
+				})
+			: level === "owner"
+				? ({ kind: "owner" } as const)
+				: ({ kind: "role", role: "ceo" } as const);
+		item.decisionOwner = levelOfTarget(owner);
 		pending.items.push(item);
 	}, context);
 }

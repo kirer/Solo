@@ -28,6 +28,9 @@ import {
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, DEFAULT_MODEL_CATALOG } from "../company/org.ts";
 import { CompanyDoc } from "../company/docs.ts";
 import { createEscalationTask } from "../company/escalation.ts";
+// OPS-20261025-04（审计 R-05）：TUI 原先只打 stderr，关掉终端就查不到。
+// 复用 server 侧同一套落盘工具（纯文件 IO，不依赖 HTTP），让两个入口口径一致。
+import { configureEventLog, defaultEventLogPath, describeReport, writeEvent } from "../server/event-log.ts";
 import { createApp } from "./app.ts";
 
 /** 解析命令行参数。 */
@@ -60,11 +63,21 @@ const args = parseArgs(process.argv.slice(2));
 // 必须在启动界面前接管：被 Ctrl+C 打断时要恢复光标与回显
 setupSignalHandlers();
 
+// OPS-20261025-04（审计 R-05）：TUI 也要落盘，否则关掉终端后 [任务出错] 就没了。
+configureEventLog({ path: defaultEventLogPath() });
+
 const { models, defaultModel, catalog } = setupModels();
 const registry = createRegistry();
 
 /** 报告：既打到 stderr，也留在界面里可查。 */
 const onReport = (report: RuntimeReport): void => {
+	// 与 server 侧同一张映射表（describeReport），先落盘再打 stderr；
+	// 落盘失败时 writeEvent 自己会降级到 stderr，不会把事件弄丢。
+	const event = describeReport(report);
+	if (event !== undefined) {
+		writeEvent(event.tag, event.rest);
+		return;
+	}
 	if (report.kind === "runtime-failed") {
 		process.stderr.write(`[运行时失效] ${String(report.error)}\n`);
 	} else if (report.kind === "task-parked") {

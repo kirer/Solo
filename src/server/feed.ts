@@ -15,8 +15,16 @@ import {
 	type CompanyRuntime,
 	type Context,
 } from "../runtime/index.ts";
-import { CompanyDoc, ROLE_LABELS, managerLabelOf, type CompanyState, type ManagementRole } from "../company/docs.ts";
-import { listPending } from "../company/escalation.ts";
+import {
+	CompanyDoc,
+	ROLE_LABELS,
+	isLeaderManagerRef,
+	managerLabelOf,
+	type CompanyState,
+	type ManagementRole,
+	type ManagerRef,
+} from "../company/docs.ts";
+import { decisionOwnerOfItem, levelOfConversation, listPending } from "../company/escalation.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { actorRefOf, OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
 
@@ -109,8 +117,39 @@ export type Feed = {
 	readonly tokens: number;
 	/** 会话种类：老板通道 / 管理层 / 项目 / 员工。 */
 	readonly kind: "owner" | "role" | "project" | "staff" | "branch";
-	/** 是否在等老板拍板。 */
+	/**
+	 * 是否在等老板拍板。
+	 *
+	 * @deprecated ADR-026 决策 2（落地第 3 步）已把它泛化为 {@link awaitingDecision}。
+	 * 保留为**派生字段**而不是删掉：现有界面（`ui/js/chat.js`）与设备数据
+	 * （`ui/js/dev-fixtures.js`）还在读它，改结构不能把界面搞坏。
+	 * 新代码请用 `awaitingDecision.decider === "owner"`。
+	 */
 	readonly awaitingOwner: boolean;
+	/** 这个会话里有没有等**自己**拍板的事，以及到底该谁拍（ADR-026 决策 2）。 */
+	readonly awaitingDecision: AwaitingDecision;
+};
+
+/**
+ * 「有东西在等决策」的结构化描述。
+ *
+ * ADR-026 决策 2 的推论：老板待办里应该只剩「立项 / 砍项目 / 超预算 / 对外」。
+ * 要把这句话变成可验证的事，界面就不能只知道「是不是等老板」，
+ * 还必须知道「这条到底该谁拍」——否则一个本该 CTO 拍的架构问题
+	 * 会以「等老板」的样子出现在老板的面板上。
+ */
+export type AwaitingDecision = {
+	/** 有没有未答复的待决项指向这个会话的主人。 */
+	readonly pending: boolean;
+	/**
+	 * 决策人类型。`none` = 没东西等；`owner` = 真该老板；
+	 * `role` / `project` = 该管理层 / 项目负责人（不该骚扰老板）。
+	 */
+	readonly decider: "none" | "owner" | "role" | "project";
+	/** 决策人的显示名（「老板」「CTO」「许砚舟」）；`none` 时为空串。 */
+	readonly label: string;
+	/** 等这个人拍的未决条数。 */
+	readonly count: number;
 };
 
 /** 读取一条会话的完整流。 */
@@ -223,6 +262,7 @@ export async function readFeed(
 		tokens,
 		kind: "branch",
 		awaitingOwner: false,
+		awaitingDecision: { pending: false, decider: "none", label: "", count: 0 },
 	};
 }
 
@@ -240,9 +280,53 @@ export async function decorateFeed(
 	const state = await runtime.harness.snapshot(CompanyDoc, context);
 	const pending = await listPending(runtime, context);
 	// 只有 owner 级的问题才是「等老板拍板」；CEO 自己队列里的问题不算。
-	const awaitingOwner = pending.some(
-		(item) => item.level === "owner" && item.fromConversationId === feed.conversationId,
+	//
+	// 处置待办（item.disposition !== undefined）**不计入** awaitingOwner：
+	// 它归「被打断工作的下达人」，不是「等老板拍板」。
+	// 靠 `level` 字符串猜会把它和项目终止确认混在一条布尔里（审计 D-02(d)），
+	// 所以显式排除。
+	// ── 待决策项（ADR-026 决策 2 / 6）──
+	//
+	// 一条待决项算在哪个会话头上，看的是**决策人**，不是 `level`：
+	// `level` 是「升级链停在哪一级」，升一级就变；`decisionOwner` 才是「结构上该谁拍」。
+	//
+	// 处置待办（item.disposition !== undefined）仍不计入：它归「被打断工作的下达人」，
+	// 不是「等这条会话的主人拍板」（审计 D-02(d) 的结论，保留）。
+	const myLevel = levelOfConversation(state, feed.conversationId);
+	const mine = pending.filter(
+		(item) =>
+			item.disposition === undefined &&
+			myLevel !== undefined &&
+			decisionOwnerOfItem(item) === myLevel,
 	);
+
+	const decider: AwaitingDecision["decider"] =
+		mine.length === 0
+			? "none"
+			: myLevel === "owner"
+				? "owner"
+				: myLevel !== undefined && isLeaderManagerRef(myLevel)
+					? "project"
+					: "role";
+	const deciderLabel =
+		decider === "none"
+			? ""
+			: decider === "owner"
+				? "老板"
+				: managerLabelOf(state, myLevel as ManagerRef);
+
+	const awaitingDecision: AwaitingDecision = {
+		pending: mine.length > 0,
+		decider,
+		label: deciderLabel === undefined ? "" : deciderLabel,
+		count: mine.length,
+	};
+
+	// 兼容字段：界面现在只关心「是不是等老板」。
+	// **不是** `awaitingDecision.pending` —— 这里必须收窄到 owner，否则界面又会
+	// 把「等 CTO 拍」渲染成「等老板」。`decider === "owner"` 已经蕴含
+	// `myLevel === "owner" && mine.length > 0`（mine 全部 decisionOwner === myLevel）。
+	const awaitingOwner = decider === "owner";
 
 	let title = "会话";
 	let kind: Feed["kind"] = "branch";
@@ -283,7 +367,7 @@ export async function decorateFeed(
 		}
 	}
 
-	return { ...feed, title, kind, role, actor, awaitingOwner };
+	return { ...feed, title, kind, role, actor, awaitingOwner, awaitingDecision };
 }
 
 /** 底层 pi.live 的结构（只声明用到的字段）。 */

@@ -4,6 +4,7 @@
  * 这些函数需要访问公司运行时与组织操作，所以在装配时注入，
  * 工具定义本身保持纯粹（只有参数与调用逻辑）。
  */
+import type { DecisionTopic } from "./decision-routing.ts";
 import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import {
 	MANAGEMENT_ROLES,
@@ -38,6 +39,8 @@ export type ToolDependencies = {
 		readonly from: string;
 		readonly conversationId: number;
 		readonly project?: string;
+		/** 事项类别（ADR-026 决策 2）：决定该由谁拍，不传则沿汇报线上行。 */
+		readonly topic?: DecisionTopic;
 	}) => Promise<string>;
 	/** 列出等着本会话拍板的问题。 */
 	readonly pendingList?: (input: {
@@ -185,6 +188,25 @@ export function createManagementTools(deps: ToolDependencies) {
 		parameters: Type.Object({
 			question: Type.String({ description: "要上报的问题，包含必要背景" }),
 			reason: Type.Optional(Type.String({ description: "为什么你无法自行决断" })),
+			topic: Type.Optional(
+				Type.Union(
+					[
+						Type.Literal("company-level"),
+						Type.Literal("domain"),
+						Type.Literal("project"),
+						Type.Literal("unclassified"),
+					],
+					{
+						description: [
+							"这条问题属于哪一类（决定该由谁拍，ADR-026 决策 2）。",
+							"company-level：立项/砍项目/预算上限/对外承诺/组织架构——只有老板能定。",
+							"domain：技术选型/需求优先级/预算内支出与招聘——本领域管理层定。",
+							"project：本项目排期/任务拆分/员工间调配/退回不合格产出——项目负责人定。",
+							"unclassified：说不清就沿汇报线上行（默认，不要随手用它推到老板）。",
+						].join(" "),
+					},
+				),
+			),
 		}),
 		execute: async (args, api, context) => {
 			if (deps.escalate === undefined) {
@@ -193,6 +215,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			const answer = await deps.escalate({
 				question: args.reason === undefined ? args.question : `${args.question}\n\n（无法自行决断的原因：${args.reason}）`,
 				from: "上报",
+				...(args.topic === undefined ? {} : { topic: args.topic }),
 				conversationId: Number(api.conversationId),
 			});
 			void context;

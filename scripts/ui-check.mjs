@@ -363,6 +363,9 @@ try {
 		tools: document.querySelectorAll('#chat-body .tool').length,
 		thinking: document.querySelectorAll('#chat-body .think, #chat-body .thinking').length,
 		queued: document.querySelectorAll('#chat-body .queued, #chat-body .queue').length,
+		// ADR-026 决策 7.3：老板自己的消息永不排队。排队项只可能是 agent 派来的，
+		// 所以界面上「origin=owner 的排队项」必须结构上为 0。
+		ownerQueued: document.querySelectorAll('#chat-body .queued[data-origin="owner"], #chat-body .queue[data-origin="owner"]').length,
 		interruptBtns: document.querySelectorAll('#chat-body [data-interrupt]').length,
 		overflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1,
 	}))()`);
@@ -374,6 +377,10 @@ try {
 	check("工具调用可折叠", mock.tools >= 2, `${mock.tools} 个`);
 	check("思考过程存在", mock.thinking >= 1, `${mock.thinking} 个`);
 	check("排队消息存在", mock.queued >= 1, `${mock.queued} 个`);
+	// ADR-026 决策 7.3「老板通道永不排队」：受理是无条件的（默认 now 档），
+	// 所以老板来源的消息在结构上不可能出现在 queued 里。这条断言钉住界面没有
+	// 把 agent 的排队误标成老板的（或反过来给老板通道渲染排队）。
+	check("老板通道结构上不排队", mock.ownerQueued === 0, `${mock.ownerQueued} 个 origin=owner`);
 	// ADR-026 决策 7：老板通道不得再出现「立即处理」这类需要二次点击的按钮，
 	// 受理本身已无条件（默认档位 now）。
 	check("没有「立即处理」按钮", mock.interruptBtns === 0, `${mock.interruptBtns} 个`);

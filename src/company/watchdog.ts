@@ -32,6 +32,7 @@ import {
 	type StuckReason,
 	type TaskLiveness,
 } from "../runtime/index.ts";
+import { applyDueDispositionDefaults, applyDueResumeReminders } from "./disposition.ts";
 
 /** 看门狗写进会话流的告警条目类型。 */
 export const ALERT_ENTRY_KIND = "app.alert";
@@ -169,6 +170,11 @@ export async function runWatchdogPass(
 	// ① 心跳：会话最新条目变了 = 它在推进，把它的任务全部视为「刚刚有进展」。
 	await refreshProgress(runtime, state, now, context);
 
+	// ①' OPS-20261025-04（审计 R-02/R-03）：模型失败的终态任务落在 tasks 表里，
+	// 底层不会为它调 onReport（详见 src/runtime/run-failure.ts）。每轮巡检扫一次，
+	// 幂等（水位去重），重启后也不丢。扫表失败不影响巡检。
+	await runtime.scanTaskFailures(context).catch(() => 0);
+
 	const inspection = await runtime.harness.inspect(context);
 	// 观察起点：任务的 startedAt 可能来自上一次进程，超期只从「我们真正开始看它」算。
 	const observedAt = new Map<string, number>();
@@ -291,6 +297,29 @@ export async function runWatchdogPass(
 				giveUp: false,
 			});
 		}
+	}
+
+	// ④ 处置待办到期兜底（ADR-026 决策 5）。
+	// 「到期按暂搁执行，问题留在待办可事后改」——挂在这里而不是自己起定时器：
+	// 定时器绑定进程实例，重启就丢；挂在已有巡检上，重启后自然恢复。
+	// 失败不能拖垮巡检：它只是附加动作。
+	try {
+		await applyDueDispositionDefaults(runtime, now, context);
+	} catch (error) {
+		// 吞掉是对的（处置兜底不能拖垮巡检），但**必须留痕**：
+		// 若每轮都抛而没人知道，兜底会安静地永远失败（审计 D-08，OPS-01 的教训）。
+		// 写 stderr 而不塞进 `alerts`：后者会改变 runWatchdogPass 的返回语义与现有断言。
+		// 注：由于 `listPending` 也会做读时兜底（D-01），这里失败不会再导致「到期永不生效」。
+		process.stderr.write(`[处置兜底失败] ${error instanceof Error ? error.message : String(error)}\n`);
+	}
+
+	// ④' 恢复提醒（ADR-026 决策 4）：暂搁的「恢复条件」到点必须真的提醒下达人，
+	// 否则那条条件只是一行字，暂搁的工作照样无声烂掉。
+	// 与兜底同理挂在巡检上；失败留痕但不改变巡检返回语义。
+	try {
+		await applyDueResumeReminders(runtime, now, context);
+	} catch (error) {
+		process.stderr.write(`[恢复提醒失败] ${error instanceof Error ? error.message : String(error)}\n`);
 	}
 
 	return { liveness, alerts };

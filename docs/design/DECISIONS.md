@@ -451,7 +451,7 @@
 ## ADR-026：指令无条件受理，决策按汇报线路由，等待必须有默认值与期限
 
 **日期**：2026-10-25
-**状态**：协议定稿，实现分三步落地（见文末）
+**状态**：生效（三步全部落地，验收测试全绿，2026-10-25）
 **替代**：ADR-025 决策 2 里「上级的指令也一并拒收」的部分；ADR-024 决策 2/3/4 里「老板消息默认排队 + 点『立即处理』才受理」的部分（仅限老板通道，agent 来源不变）
 
 **背景**：老板提了两条硬要求。
@@ -583,6 +583,14 @@
 - 界面：老板通道的 `feed.queued` 中 `origin === "owner"` 结构上不可能出现（`npm run ui:check` 断言）。
 
 **教训**：把「机器不够快」翻译成「让用户点一下」，是把复杂度转嫁给用户。正确做法是把「受理」和「执行」在协议上分开——受理必须瞬时且不设条件，执行可以在最近的干净断点开始；两者都不该需要用户二次确认。而任何需要人决定的待决项，都必须自带可逆的默认值和期限，否则「等一个人」就会变成「整个公司停摆」。
+
+**落地记录（2026-10-25）**：
+
+- 第 1 步：`/api/message` 老板通道默认 `now`，派活/转交去掉忙碌拒收（`adr-026-obedience.test.ts`、`owner-gate.test.ts`）。
+- 第 2 步：`src/company/disposition.ts`（零 token 推导 checkpoint、处置待办、5 分钟期限、默认暂搁、**恢复条件到点提醒下达人**）；读时兜底 + 看门狗双驱动（`disposition.test.ts`）。
+- 第 3 步：`src/company/decision-routing.ts`（权限矩阵纯函数）+ `startEscalation` 唯一路由入口 + `PendingItem.decisionOwner`；`awaitingOwner` 泛化为 `awaitingDecision`；`escalate` 自动从员工记录/项目索引补 `project`，项目内事项真的落到负责人（`decision-routing.test.ts`）。
+- 界面：老板通道不再有排队与「立即处理」；决策人不是老板时显示「待 X 拍板」（`chat.js`）。
+- 已知残留：`feed.queued` 的 agent 来源提示保留（ADR-024 决策 5 不变）；「事后改处置」目前走 `answer_pending` / `/api/answer` 同 key 重答，界面暂不渲染「已按默认暂搁」的卡片。
 
 ---
 

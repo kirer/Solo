@@ -360,10 +360,28 @@ export function initChat({ onSend, fetchProfile } = {}) {
 	function actorState() {
 		if (feed !== null) {
 			if (feed.busy) return "busy";
+			// ADR-026 决策 2：用结构化字段判断，不只看「是不是等老板」。
+			// 待决人是谁也随之带上：该 CTO 拍的不能写成「待你（老板）拍板」。
+			if (feed.awaitingDecision?.pending === true) return "waiting";
+			// 兼容旧后端（尚未返回 awaitingDecision 时）
 			if (feed.awaitingOwner) return "waiting";
 		}
 		if (actor === null) return "idle";
 		return statusOf(actor);
+	}
+
+	/**
+	 * 待决策状态的一句话（「待你拍板」/「待 CTO 拍板」）。
+	 *
+	 * ADR-026 决策 2 的界面推论：老板面板上不该把「等 CTO」显示成「等你」，
+	 * 否则他会以为这件事卡在自己身上。决策人不是老板时，改用中性措辞。
+	 */
+	function awaitingText() {
+		const decision = feed?.awaitingDecision;
+		if (decision === undefined || decision.pending !== true) return "待你拍板";
+		if (decision.decider === "owner") return "待你拍板";
+		const who = typeof decision.label === "string" && decision.label !== "" ? decision.label : "该同事";
+		return `待${who}拍板`;
 	}
 
 	function syncHeader() {
@@ -390,7 +408,7 @@ export function initChat({ onSend, fetchProfile } = {}) {
 
 		const state = actorState();
 		els.pill.dataset.state = state;
-		els.statusText.textContent = state === "waiting" ? "待你拍板" : statusLabel(state);
+		els.statusText.textContent = state === "waiting" ? awaitingText() : statusLabel(state);
 
 		const total = Number(feed?.tokens ?? actor.tokens ?? 0);
 		els.tokens.textContent = `${formatTokens(total)} tokens`;

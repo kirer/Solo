@@ -256,11 +256,17 @@ export function fit(canvas, game) {
 		running: [{ name: "bash", args: '{"command":"npm test -- --run"}' }],
 		busy: true,
 		queued: [
-			{ id: 901, text: "顺便把移动端的虚拟摇杆也看一下。", mode: "steer" },
-			{ id: 902, text: "测试通过后把截图发我。", mode: "followUp" },
+			// ADR-026 决策 7.3「老板通道永不排队」：排队的只可能是 agent 派来的任务，
+			// 老板自己的消息到达即受理（默认 now 档）。假数据必须与这条规则一致，
+			// 否则 ?dev 下会渲染出一个真实后端永远不会出现的「老板排队」状态。
+			{ id: 901, text: "顺便把移动端的虚拟摇杆也看一下。", mode: "steer", origin: "agent", from: "CTO" },
+			{ id: 902, text: "测试通过后把截图发我。", mode: "followUp", origin: "agent", from: "CTO" },
 		],
 		tokens: 12_480,
 		awaitingOwner: false,
+		// ADR-026 决策 2（落地第 3 步）：界面现在读结构化字段。
+		// 假数据必须与后端同一形状，否则 ?dev 下的界面会走兼容分支，测不到真路径。
+		awaitingDecision: { pending: false, decider: "none", label: "", count: 0 },
 	};
 }
 

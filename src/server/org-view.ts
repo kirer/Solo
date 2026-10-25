@@ -11,7 +11,7 @@ import {
 	type Context,
 } from "../runtime/index.ts";
 import { MANAGEMENT_ROLES, ROLE_LABELS, managerLabelOf, type ManagementRole, type TrailKind } from "../company/docs.ts";
-import { listPending } from "../company/escalation.ts";
+import { decisionOwnerOfItem, listPending } from "../company/escalation.ts";
 import { readCompany } from "../company/org.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
@@ -68,9 +68,17 @@ export type PendingView = {
 	readonly question: string;
 	readonly from: string;
 	readonly level: string;
+	/**
+	 * 结构上该谁拍（ADR-026 决策 2）。与 `level` 的区别：
+	 * `level` 是「升级链现在停在哪一级」，升一级就变；`decisionOwner` 是「该谁拍」。
+	 * 界面用它区分「真的等老板」与「等某位同事」。
+	 */
+	readonly decisionOwner: string;
 	readonly askedAt: number;
 	/** 是否真的在等你（已经升到你这一级）。 */
 	readonly forYou: boolean;
+	/** 是不是处置待办（ADR-026 决策 1）：界面可据此区分「等拍板」与「等人处置」。 */
+	readonly isDisposition: boolean;
 };
 
 /**
@@ -141,6 +149,9 @@ export async function buildOrgView(
 			item.fromConversationId,
 			(pendingByConversation.get(item.fromConversationId) ?? 0) + 1,
 		);
+		// 处置待办不算「等老板拍板」：它归被打断工作的下达人（ADR-026 决策 1）。
+		// 与 feed.ts 的 awaitingOwner 保持同一口径，避免界面两处数字不一致。
+		if (item.disposition !== undefined) continue;
 		if (item.level !== "owner") continue;
 		awaitingYouByConversation.set(
 			item.fromConversationId,
@@ -290,15 +301,32 @@ export async function buildOrgView(
 		ceo,
 		roles,
 		projects,
-		ceoQueue: pending.filter((item) => item.level === "ceo").length,
-		pending: pending.map((item) => ({
-			key: item.key,
-			question: item.question,
-			from: item.from,
-			level: item.level,
-			askedAt: item.askedAt,
-			forYou: item.level === "owner",
-		})),
+		// ADR-026 决策 2（落地第 3 步）：CEO 队列与「待你拍板」都按**决策人**算，不按 level。
+		// level 是「升级链停在哪」，一个本该 CTO 拍的问题在升到 CEO 之前 level 就是 cto；
+		// 而 decisionOwner 才是结构上该谁拍。用后者，老板的面板上才不会出现别人的活。
+		ceoQueue: pending.filter((item) => decisionOwnerOfItem(item) === "ceo").length,
+		pending: pending.map((item) => {
+			const decisionOwner = decisionOwnerOfItem(item);
+			return {
+				key: item.key,
+				question: item.question,
+				from: item.from,
+				level: item.level,
+				decisionOwner,
+				askedAt: item.askedAt,
+				// 老板面板的「待你拍板」= 决策人就是老板。
+				//
+				// ADR-026 决策 1 的例外（审计 D-02）：**ceo 级的处置待办也算老板的**。
+				// 系统里没有独立的老板会话，老板亲自派活写成的 `app.delegate.from` 就是 "CEO"
+				// （实测真实库 56 条全是 CEO），所以老板被自己的活打断后，处置待办的
+				// decisionOwner 是 `ceo`。若不在这里放行，这条待办就永远不会出现在
+				// 老板的界面上——他能派活、却看不到自己的活怎么处置。
+				// 只放**处置类**：普通待决问题依旧只看 decisionOwner === "owner"。
+				forYou: decisionOwner === "owner" || (item.disposition !== undefined && decisionOwner === "ceo"),
+				/** 是不是「处置待办」——界面据此区分「等拍板」与「等人处置」。 */
+				isDisposition: item.disposition !== undefined,
+			};
+		}),
 		costs: {
 			totalTokens: all.totalTokens,
 			totalCostUsd: all.costUsd,

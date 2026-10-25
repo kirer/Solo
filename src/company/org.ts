@@ -42,7 +42,16 @@ import {
 	type StaffEntry,
 } from "./docs.ts";
 import { createRoleExtension, ROLE_DEFINITIONS } from "./roles.ts";
-import { PendingDoc, levelOfConversation, listPending, answerPendingAtLevel, answerPendingAsCeo } from "./escalation.ts";
+import { decideOwner, levelOfTarget, type DecisionTopic } from "./decision-routing.ts";
+import {
+	PendingDoc,
+	decisionOwnerOfItem,
+	levelOfConversation,
+	listPending,
+	answerPendingAtLevel,
+	answerPendingAsCeo,
+} from "./escalation.ts";
+import { settleDisposition } from "./disposition.ts";
 import {
 	PROJECT_LEADER_CHARTER,
 	PROJECT_LEADER_READONLY_CHARTER,
@@ -222,57 +231,17 @@ export async function bootstrapCompany(
 			);
 			return result.ok ? `员工回复：${result.text}` : `派活失败：${result.text}`;
 		},
-		escalate: async (input) => {
-			// 升级链需要任务定义；没有注册时退化为「直接记一条待决问题」，
-			// 保证上报不会静默丢失。
-			const task = options.escalationTask;
-			if (task === undefined) {
-				await recordPendingDirectly(runtime, input, context);
-				return "已记录上报，等待上层答复。";
-			}
-			const company = await runtime.harness.snapshot(CompanyDoc, context);
-			const isCeo = company?.roles.ceo === input.conversationId;
-
-			// 员工按自己的直属上级走：岗位 → 对应管理层，leader:<slug> → 本项目负责人。
-			// 管理层/负责人自己没有 staff 记录，仍从 CEO 开始（他们本来就向 CEO 汇报）。
-			const staffOfCaller = Object.values(company?.staff ?? {}).find(
-				(person) => person.conversationId === input.conversationId && !person.archived,
-			);
-			const manager = staffOfCaller?.manager;
-			const targetLabel = manager === undefined ? "CEO" : managerLabelOf(company, manager);
-
-			const key = escalationId(input.conversationId, nextEscalationSeq());
-			const taskId = await startEscalation(
-				runtime,
-				task,
-				{
-					question: input.question,
-					// CEO 直接问老板时，发起人就是 CEO 本人；
-					// 其他人用真实岗位/姓名，而不是写死的「manager」
-					from: isCeo ? "CEO" : (labelOfConversation(company, input.conversationId) ?? input.from),
-					fromConversationId: input.conversationId,
-					...(input.project === undefined ? {} : { project: input.project }),
-					...(manager === undefined ? {} : { manager }),
-					escalationKey: key,
-					...(isCeo ? { startAtOwner: true } : {}),
-				},
-				context,
-			);
-			if (isCeo) {
-				return `已上报老板（编号 ${key}，任务 ${taskId}），等待老板拍板。`;
-			}
-			if (manager === undefined) {
-				return `已上报 CEO（编号 ${key}，任务 ${taskId}），等 CEO 答复；老板只会收到 CEO 确认过的问题。`;
-			}
-			return `已上报 ${targetLabel}（编号 ${key}，任务 ${taskId}），等它答复；它解决不了会继续往上走。`;
-		},
+		// 上报路由的全部逻辑在 `escalateUp` 里（唯一入口，可被直接测试）；
+		// 工具层只负责把参数转过去，避免「工具能用、直调 API 不能用」两套口径。
+		escalate: async (input) => escalateUp(runtime, input, options.escalationTask, context),
 		pendingList: async (input) => {
 			const pending = await listPending(runtime, BACKGROUND_CONTEXT);
 			const state = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
 			const myLevel = levelOfConversation(state, input.conversationId);
-			// 只看「到自己这一级」的：CEO 看 ceo 级，项目负责人看 leader:<本项目> 级，
-			// 其他管理层看本岗位级。用层级反查会话，而不是写死 level === "ceo"。
-			const mine = pending.filter((item) => item.level === myLevel);
+			// ADR-026 决策 2（落地第 3 步）：按**决策人**过滤，不按 level。
+			// level 是「升级链停在哪」，升一级就变；decisionOwner 才是「结构上该谁拍」。
+			// 这样该 CTO 拍的架构问题会出现在 CTO 的队列里，而不是被一路推到 CEO/老板。
+			const mine = pending.filter((item) => myLevel !== undefined && decisionOwnerOfItem(item) === myLevel);
 			if (mine.length === 0) return "没有等你拍板的问题。";
 			return [
 				"等着你拍板的问题（用 answer_pending 回答，key 原样填）：",
@@ -286,13 +255,39 @@ export async function bootstrapCompany(
 			const state = await runtime.harness.snapshot(PendingDoc, BACKGROUND_CONTEXT);
 			const item = state?.items.find((entry) => entry.key === input.key);
 			if (item === undefined) return `没有编号为 ${input.key} 的待决问题。先用 pending_list 看队列。`;
-			if (item.answer !== undefined) return `这条已经答复过了（${item.answeredBy ?? "?"}）。`;
+			// ADR-026 决策 5：「默认值可被事后推翻」。超时默认结算掉的处置项
+			// （decidedBy === "timeout-default"）仍然允许人重新回答；人自己答过的不许反复改，
+			// 否则留痕变成儿戏、网络重试也会静默改掉别人已经拍下的板。
+			const overturnable = item.disposition?.decidedBy === "timeout-default";
+			if (item.answer !== undefined && !overturnable) return `这条已经答复过了（${item.answeredBy ?? "?"}）。`;
 
 			const company = await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT);
 			const myLevel = levelOfConversation(company, input.conversationId);
-			if (item.level !== myLevel) {
-				return `编号 ${input.key} 不是到你这一级的（level=${item.level}），你不能替它拍板。`;
+			const owner = decisionOwnerOfItem(item);
+			if (myLevel === undefined || owner !== myLevel) {
+				return `编号 ${input.key} 应该由 ${labelOfLevel(company, owner)} 拍板，不是到你这一级的，你不能替它拍板。`;
 			}
+
+			// 处置类待办必须走 settleDisposition（会校验「暂搁/放弃」并强制恢复条件）。
+			// 原先这里直接落到 answerPendingAtLevel，自由文本被当成普通答复写进 answer，
+			// `disposition.disposition` 永远为空——待办从 listPending 里消失，
+			// 看起来「答过了」，实际处置从未成立（审计 D-02(b)）。
+			if (item.disposition !== undefined) {
+				const settled = await settleDisposition(
+					runtime,
+					{
+						key: input.key,
+						answer: input.answer,
+						answeredBy: labelOfConversation(company, input.conversationId) ?? myLevel,
+					},
+					BACKGROUND_CONTEXT,
+				);
+				if (!settled.ok) return `处置未生效：${settled.reason}`;
+				return settled.disposition === "shelve"
+					? `已暂搁（恢复条件：${settled.resumeCondition}）。`
+					: "已标记为永久放弃。";
+			}
+
 			const ok = await answerPendingAtLevel(
 				runtime,
 				{
@@ -1909,6 +1904,18 @@ function nextEscalationSeq(): number {
  * 以前所有上报的 from 都写死成 "manager"，老板只看到「来自 manager」，
  * 分不清是 CTO 还是某个项目负责人在问。这里按公司索引反查真实岗位/姓名。
  */
+/**
+ * 权限位（owner / 岗位名 / leader:<slug>）的显示名。
+ *
+ * ADR-027：一切身份展示走 `managerLabelOf`，不要自己切 `leader:` 前缀或用
+ * `ROLE_LABELS[key] ?? key` 的写法（后者遇到未知键会得到原样字符串，误导人）。
+ */
+function labelOfLevel(state: CompanyState | undefined, level: string): string {
+	if (level === "owner") return "老板";
+	if (level === "") return "（未指定）";
+	return managerLabelOf(state, level as ManagerRef);
+}
+
 function labelOfConversation(state: CompanyState | undefined, conversationId: number): string | undefined {
 	if (state === undefined) return undefined;
 
@@ -2193,4 +2200,110 @@ function toRoleRecord(roles: Record<string, number>): Record<ManagementRole, num
 		result[role] = id;
 	}
 	return result;
+}
+
+// ── 上报（escalate）：唯一入口 ─────────────────────────────────────────────
+
+/** 一次上报的结构化输入（工具参数之外，还要有「谁在问」这个事实）。 */
+export type EscalationRequest = {
+	readonly question: string;
+	/** 发起人自称（显示用；真实身份由 conversationId 反查，见下）。 */
+	readonly from: string;
+	readonly conversationId: number;
+	/** 调用方声明的项目；缺省时从员工记录取（一手事实优先）。 */
+	readonly project?: string;
+	/** 事项类别（ADR-026 决策 2）。不传按 unclassified 处理。 */
+	readonly topic?: DecisionTopic;
+};
+
+/**
+ * 上报并路由到该拍板的人（ADR-026 决策 2，落地第 3 步）。
+ *
+ * 为什么单独导出：原先这段逻辑包在 `bootstrapCompany` 的闭包里，
+ * 只能通过模型调工具才走得到——「项目内事项归项目负责人」这条被漏接线
+ * （工具从来不传 project）也就没法用测试钉住。抽成函数后：
+ * 工具层与直调 API 走同一份实现，测试可以直接喂真实的公司结构。
+ *
+ * 路由的权威实现是 `startEscalation`（唯一入口）；这里算一遍只为了两件事：
+ * ① 决定回复文案；② 拦住「自己上报给自己」这种会永远没人答的待办。
+ */
+export async function escalateUp(
+	runtime: CompanyRuntime,
+	input: EscalationRequest,
+	escalationTask: BootstrapOptions["escalationTask"],
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<string> {
+	// 升级链需要任务定义；没有注册时退化为「直接记一条待决问题」，
+	// 保证上报不会静默丢失。
+	if (escalationTask === undefined) {
+		await recordPendingDirectly(runtime, input, context);
+		return "已记录上报，等待上层答复。";
+	}
+
+	const company = await runtime.harness.snapshot(CompanyDoc, context);
+	const isCeo = company?.roles.ceo === input.conversationId;
+
+	// 员工按自己的直属上级走：岗位 → 对应管理层，leader:<slug> → 本项目负责人。
+	// 管理层/负责人自己没有 staff 记录，仍从 CEO 开始（他们本来就向 CEO 汇报）。
+	const staffOfCaller = Object.values(company?.staff ?? {}).find(
+		(person) => person.conversationId === input.conversationId && !person.archived,
+	);
+	const manager = staffOfCaller?.manager;
+
+	// 发起人层级与所在项目同样是路由的输入：
+	// - `project` 让「项目内事项」能落到本项目负责人（不再是只有直调 API 才走得到）；
+	// - `fromLevel` 让没有直属上级的发起人（例如管理层自己）按自己的层级兜底。
+	// 员工记录里的 project 是一手事实；负责人自己是 `project.leader`，没有 staff 记录，
+	// 所以还要按 projects 索引反查——否则负责人声明「项目内事项」会被算成 CEO。
+	const callerLevel = levelOfConversation(company, input.conversationId);
+	const leadProjectSlug = Object.entries(company?.projects ?? {}).find(
+		([, entry]) => entry.leader === input.conversationId,
+	)?.[0];
+	const callerProject = staffOfCaller?.project ?? leadProjectSlug ?? input.project;
+
+	// 与 startEscalation 用同一个决定（同一个 decideOwner、同一份结构信息），
+	// 否则「算给谁」和「落在谁那儿」会给出两个答案，回复文案就骗人。
+	const decisionOwner = isCeo
+		? ({ kind: "owner" } as const)
+		: decideOwner(company, input.topic ?? "unclassified", {
+				...(manager === undefined ? {} : { manager }),
+				...(callerProject === undefined ? {} : { project: callerProject }),
+				...(callerLevel === undefined ? {} : { fromLevel: callerLevel }),
+			});
+	const ownerLevel = levelOfTarget(decisionOwner);
+
+	// 自己上报给自己（项目负责人声明「项目内事项」）不该生成一条自己等自己的任务，
+	// 否则这条待办会一直挂在他名下、没人来答。直接告诉他「你就能定」。
+	if (!isCeo && callerLevel !== undefined && ownerLevel === callerLevel) {
+		return `这条按权限矩阵归你自己（${labelOfLevel(company, ownerLevel)}），直接定即可，不必上报。`;
+	}
+
+	const key = escalationId(input.conversationId, nextEscalationSeq());
+	const taskId = await startEscalation(
+		runtime,
+		escalationTask,
+		{
+			question: input.question,
+			// CEO 直接问老板时，发起人就是 CEO 本人；
+			// 其他人用真实岗位/姓名，而不是写死的「manager」
+			from: isCeo ? "CEO" : (labelOfConversation(company, input.conversationId) ?? input.from),
+			fromConversationId: input.conversationId,
+			...(callerProject === undefined ? {} : { project: callerProject }),
+			...(manager === undefined ? {} : { manager }),
+			...(input.topic === undefined ? {} : { topic: input.topic }),
+			// CEO 显式问老板（startAtOwner）优先于 topic：这是 CEO 对
+			// 「这个问题只能老板定」的主动判断，不能被默认 unclassified 推翻。
+			...(isCeo ? { startAtOwner: true } : {}),
+			escalationKey: key,
+		},
+		context,
+	);
+	if (isCeo && ownerLevel === "owner") {
+		return `已上报老板（编号 ${key}，任务 ${taskId}），等待老板拍板。`;
+	}
+	const ownerLabel = labelOfLevel(company, ownerLevel);
+	if (ownerLevel === "owner") {
+		return `已上报老板（编号 ${key}，任务 ${taskId}）——这条属公司级事项，只能老板定。`;
+	}
+	return `已上报 ${ownerLabel}（编号 ${key}，任务 ${taskId}），等它答复；它解决不了会继续往上走。`;
 }
