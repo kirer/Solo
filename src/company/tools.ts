@@ -37,6 +37,10 @@ export type ManagementToolset = {
 	readonly pendingList: ReturnType<typeof defineTool>;
 	/** 回答一条等自己拍板的问题。 */
 	readonly answerPending: ReturnType<typeof defineTool>;
+	/** 处置一条待办：驳回 / 标记已解决（ADR-026 缺陷 A）。 */
+	readonly disposePending: ReturnType<typeof defineTool>;
+	/** CEO 把老板级待办接管回自己层（ADR-026 缺陷 B）。 */
+	readonly takeOverPending: ReturnType<typeof defineTool>;
 	/** 自己拍板。 */
 	readonly decide: ReturnType<typeof defineTool>;
 	/** 立项。 */
@@ -91,6 +95,8 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	escalate: "escalate",
 	pending_list: "pendingList",
 	answer_pending: "answerPending",
+	dispose_pending: "disposePending",
+	take_over_pending: "takeOverPending",
 	decide: "decide",
 	review_architecture: "reviewArchitecture",
 	delegate_to_staff: "delegateToStaff",
@@ -199,6 +205,7 @@ export function createProjectLeaderExtension(
 		"decide",
 		"pending_list",
 		"answer_pending",
+		"dispose_pending",
 		"delegate_to_staff",
 		"delegate_to_role",
 		"project_plan",
@@ -259,6 +266,8 @@ export function createProjectLeaderReadOnlyExtension(tools: ManagementToolset): 
 		"escalate",
 		"decide",
 		"pending_list",
+		"answer_pending",
+		"dispose_pending",
 		"project_list",
 		"staff_list",
 	];

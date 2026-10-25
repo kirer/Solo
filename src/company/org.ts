@@ -1938,11 +1938,31 @@ async function readAssistantText(
 	return text.slice(0, 300);
 }
 
-/** 升级序号：用时间戳保证唯一（升级本身不要求幂等，每次上报都是新事件）。 */
+/**
+ * 升级序号：**必须跨重启唯一**。
+ *
+ * 旧实现是模块级内存自增（`let escalationSeq = 0`），进程重启后归零，
+ * 于是重启后的第一条上报会拿到和重启前相同的编号 `esc:<conv>:1`。
+ * 后果（实测复现）：
+ * 1. `ensurePending` 发现同 `key`+`level` 已存在 → 直接 return，**新问题不会建待办**；
+ * 2. `readOutcome` 读到**旧的已答复条目** → 升级任务把旧答复当成新问题的决定交付；
+ * 3. 结果：老板看不到新问题，提问方收到一条答非所问的「拍板结果」，且全程不报错。
+ *
+ * 修法：用时间戳。升级本来就不要求幂等（每次上报都是新事件，见 ADR-006 的
+ * 「请求标识由业务语义推导」——这里语义就是「一次新的上报」）。
+ * 同一毫秒内连续两次上报的极端情况用进程内计数器兜底，保证严格单调。
+ *
+ * 契约由 `test/unit/escalation-seq.test.ts` 锁住：编号量级必须与时间戳同阶，
+ * 改回小整数自增会让测试失败。
+ */
 let escalationSeq = 0;
-function nextEscalationSeq(): number {
+let escalationStamp = 0;
+export function nextEscalationSeq(): number {
+	const now = Date.now();
+	// 同一毫秒内多次上报：在时间戳上递增，保证严格单调且不与历史撞车
+	escalationStamp = now > escalationStamp ? now : escalationStamp + 1;
 	escalationSeq += 1;
-	return escalationSeq;
+	return escalationStamp * 1000 + (escalationSeq % 1000);
 }
 
 /**

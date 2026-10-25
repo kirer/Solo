@@ -54,6 +54,11 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"decide",
 			"pending_list",
 			"answer_pending",
+			// ADR-026 缺陷 A/B：处置（驳回/已解决）与接管是 CEO 的必备能力。
+			// 之前这两个工具实现了、也注入了，但没进 CAPABILITY_TO_TOOL 映射表，
+			// 结果任何 agent 都拿不到——只有老板的 HTTP 入口能用。
+			"dispose_pending",
+			"take_over_pending",
 			"delegate_to_role",
 			"delegate_to_leader",
 			"project_list",
@@ -86,6 +91,9 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"escalate",
 			"my_capabilities",
 			"decide",
+			"pending_list",
+			"answer_pending",
+			"dispose_pending",
 			"project_list",
 			"staff_list",
 			"delegate_to_leader",
@@ -106,7 +114,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"你必须上报的：超出预算的投入、需要追加预算的项目。",
 			"你关心三件事：这个项目花了多少、还能花多少、钱花得值不值。",
 		].join("\n"),
-		capabilityNames: ["escalate", "my_capabilities", "decide", "project_list", "budget_check", "cost_report"],
+		capabilityNames: ["escalate", "my_capabilities", "decide", "pending_list", "answer_pending", "dispose_pending", "project_list", "budget_check", "cost_report"],
 	},
 	cpo: {
 		role: "cpo",
@@ -121,7 +129,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"你必须上报的：是否要做这个项目、项目的商业价值判断。",
 			"你的输出要让开发和测试看了就知道做什么、怎么算做完。",
 		].join("\n"),
-		capabilityNames: ["escalate", "my_capabilities", "decide", "project_create", "project_plan", "project_list", "project_status", "project_terminate", "staff_list"],
+		capabilityNames: ["escalate", "my_capabilities", "decide", "pending_list", "answer_pending", "dispose_pending", "project_create", "project_plan", "project_list", "project_status", "project_terminate", "staff_list"],
 	},
 	coo: {
 		role: "coo",
@@ -141,6 +149,9 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"escalate",
 			"my_capabilities",
 			"decide",
+			"pending_list",
+			"answer_pending",
+			"dispose_pending",
 			"project_list",
 			"org_tree",
 			"delegate_to_leader",
@@ -160,7 +171,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"你必须上报的：需要投入预算的市场活动、涉及对外承诺的传播。",
 			"你的建议必须可执行：做什么、在哪做、预期什么效果。",
 		].join("\n"),
-		capabilityNames: ["escalate", "my_capabilities", "decide", "project_list"],
+		capabilityNames: ["escalate", "my_capabilities", "decide", "pending_list", "answer_pending", "dispose_pending", "project_list"],
 	},
 	chro: {
 		role: "chro",
@@ -176,7 +187,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"老板或上级已经拟好名字时，直接用 staff_rename 改：名册、档案、工具能力包会一起同步，不用重招人。",
 			"你必须上报的：需要大幅增加人力的项目、跨项目的资源冲突。",
 		].join("\n"),
-		capabilityNames: ["escalate", "my_capabilities", "decide", "project_list", "staff_hire", "staff_reassign", "staff_rename", "staff_list", "staff_archive"],
+		capabilityNames: ["escalate", "my_capabilities", "decide", "pending_list", "answer_pending", "dispose_pending", "project_list", "staff_hire", "staff_reassign", "staff_rename", "staff_list", "staff_archive"],
 	},
 };
 

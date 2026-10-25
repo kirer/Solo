@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
-import { bootstrapCompany, createProject, hireStaff } from "../../src/company/org.ts";
+import { bootstrapCompany, createProject, escalateUp, hireStaff } from "../../src/company/org.ts";
 import {
 	answerPending,
 	createEscalationTask,
@@ -359,5 +359,107 @@ describe("不重复询问已结论层级", () => {
 		await answerPending(runtime, { key: "esc-8", answer: "先做网页版。", answeredBy: "ceo" }, BACKGROUND_CONTEXT);
 		const result = await waitEscalation(runtime, taskId, BACKGROUND_CONTEXT);
 		expect(result?.decidedBy).toBe("ceo");
+	});
+});
+
+/**
+ * 回归：升级编号必须跨重启唯一。
+ *
+ * 旧实现用模块级内存自增（`let escalationSeq = 0`），进程重启后归零，
+ * 于是重启后的第一条上报拿到和重启前相同的 `esc:<conv>:1`：
+ * 1. `ensurePending` 发现同 key+level 已存在 → 直接 return，**新问题不建待办**；
+ * 2. `readOutcome` 读到**旧的已答复条目** → 旧答复被当成新问题的决定交付。
+ * 结果：老板看不到新问题，提问方收到答非所问的「拍板结果」，且全程不报错。
+ *
+ * 这条测试必须真的关掉再打开同一个库，不能用同一个进程里的两个 runtime。
+ */
+describe("升级编号跨重启唯一（回归）", () => {
+	test("重启后新上报不得撞上重启前的已答复编号", async () => {
+		const ctx = await createTestContext();
+		contexts.push(ctx);
+
+		/** 打开同一个库并完成装配。 */
+		const boot = async () => {
+			const registry = createRegistry();
+			const runtime = await openCompany(
+				{ databasePath: ctx.databasePath, models: ctx.models, registry },
+				BACKGROUND_CONTEXT,
+			);
+			runtimes.push(runtime);
+			await recover(runtime, BACKGROUND_CONTEXT);
+			const escalationTask = createEscalationTask(runtime);
+			registry.install({ name: "escalation", tasks: [escalationTask] } as never);
+			const booted = await bootstrapCompany(
+				runtime,
+				{
+					modelCatalog: [...TEST_MODEL_CATALOG],
+					companyName: "重启测试",
+					registry,
+					workspaceRoot: join(ctx.dir, "projects"),
+					escalationTask,
+				},
+				BACKGROUND_CONTEXT,
+			);
+			return { runtime, escalationTask, roles: booted.roleConversations };
+		};
+
+		// ── 第一次进程：CEO 上报一件公司级事项，并把它答掉 ──
+		const first = await boot();
+		const firstReply = await escalateUp(
+			first.runtime,
+			{
+				question: "第一问：要不要裁掉测试团队",
+				from: "CEO",
+				conversationId: first.roles.cto,
+				topic: "company-level",
+			},
+			first.escalationTask,
+			BACKGROUND_CONTEXT,
+		);
+		const firstKey = /编号 ([^，,]+)/.exec(firstReply)?.[1];
+		expect(firstKey, "第一次上报必须给出编号").toBeTruthy();
+
+		await eventually(
+			async () => (await listPending(first.runtime, BACKGROUND_CONTEXT)).some((p) => p.key === firstKey),
+			{ label: "第一问进入待办" },
+		);
+		await answerPending(
+			first.runtime,
+			{ key: firstKey as string, answer: "同意裁掉", answeredBy: "ceo" },
+			BACKGROUND_CONTEXT,
+		);
+		expect(
+			(await listPending(first.runtime, BACKGROUND_CONTEXT)).some((p) => p.key === firstKey),
+			"第一问应已被答复",
+		).toBe(false);
+
+		await first.runtime.close();
+
+		// ── 第二次进程：同一对话再上报一件完全不同的事 ──
+		const second = await boot();
+		const secondReply = await escalateUp(
+			second.runtime,
+			{
+				question: "第二问：要不要给所有人涨薪",
+				from: "CEO",
+				conversationId: second.roles.cto,
+				topic: "company-level",
+			},
+			second.escalationTask,
+			BACKGROUND_CONTEXT,
+		);
+		const secondKey = /编号 ([^，,]+)/.exec(secondReply)?.[1];
+		expect(secondKey, "第二次上报必须给出编号").toBeTruthy();
+		expect(secondKey, "重启后的编号不得与重启前撞车").not.toBe(firstKey);
+
+		// 新问题必须真的建出待办（旧实现这里会是空数组：新问题凭空消失）
+		await eventually(
+			async () => (await listPending(second.runtime, BACKGROUND_CONTEXT)).some((p) => p.key === secondKey),
+			{ label: "第二问进入待办" },
+		);
+		const pending = await listPending(second.runtime, BACKGROUND_CONTEXT);
+		const item = pending.find((p) => p.key === secondKey);
+		expect(item?.question).toContain("第二问");
+		expect(item?.answer, "新问题不能带着旧答复").toBeUndefined();
 	});
 });

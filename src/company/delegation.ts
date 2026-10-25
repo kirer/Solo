@@ -456,29 +456,6 @@ async function detectInvalidCall(
 	return undefined;
 }
 
-/**
-async function detectToolFailure(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<string | undefined> {
-	const conversation = await runtime.harness.conversation(conversationId as never, context);
-	const page = await conversation?.entries({ order: "descending" }, 20, undefined, context);
-	const last = page?.items.find((entry) => entry.kind === "pi.tool-result");
-	if (last === undefined) return undefined;
-
-	const message = last.model?.[0] as { isError?: boolean; content?: unknown } | undefined;
-	if (message?.isError !== true) return undefined;
-
-	const text = Array.isArray(message.content)
-		? message.content.flatMap((part) => {
-				const record = part as { type?: string; text?: string };
-				return record.type === "text" && record.text !== undefined ? [record.text] : [];
-			}).join("")
-		: "";
-	// 去掉 harness 包装，留可读内容
-	return text.replace(/<\/?harness>/g, "").trim().slice(0, 200);
-}
 
 /**
  * 员工当前是否忙碌。
