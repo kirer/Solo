@@ -102,6 +102,46 @@ export function parseMentions(text: string, channel: Channel, org: Org): number[
 	return [...found];
 }
 
+/**
+ * 某个人「按规则应该在这个频道里」吗。
+ *
+ * 这是 `ensureAllChannels()` 里那段成员构造的**镜像**，抽出来只为一件事：
+ * 让 `postToChannel()` 能判断「频道缺人」并触发自愈。
+ *
+ * 为什么需要它：真实事故（贪吃蛇端到端实验）——员工入职后没有加入任何频道，
+ * 公司大群还是 9 人、项目群只有负责人一个。`@开发-游戏实现` 在 `parseMentions`
+ * 里被「只保留频道成员」过滤掉，**一个人都没被唤醒**，任务派下去了但对方永远
+ * 不知道，界面上看不出任何异常。
+ *
+ * 与 `ensureAllChannels()` 的一致性由 `test/unit/channel-membership.test.ts` 守着。
+ */
+export function shouldBeIn(channelId: string, conversationId: number, org: Org): boolean {
+	// 老板在每一个「群」和每一条私聊里（他的要求：在任何地方都能派任务）。
+	//
+	// 例外是个人工作记录（`log:*`）：那是某个人自己的工作流水，不是对话。
+	// 老板**能看**（`canView` 放行），但不是成员——他不需要为别人的每条
+	// 工作记录被唤醒，也不该出现在那个频道的成员列表里。
+	if (conversationId === OWNER_ID) return !channelId.startsWith("log:");
+	const person = org.people.find((entry) => entry.conversationId === conversationId);
+	if (person === undefined || person.archived === true) return false;
+
+	if (channelId === "company") return true;
+	if (channelId === "leadership") return person.role === "ceo" || person.role === "management";
+
+	// 项目群：该项目的负责人 + 该项目员工（管理层不算成员，他们靠 canView 旁观）
+	if (channelId.startsWith("proj:")) {
+		const slug = channelId.slice("proj:".length);
+		return person.project === slug;
+	}
+
+	// 私聊与工作记录：只有本人（老板已在上面返回 true）
+	if (channelId.startsWith("dm:") || channelId.startsWith("log:")) {
+		return channelId.slice(channelId.indexOf(":") + 1) === String(conversationId);
+	}
+
+	return false;
+}
+
 /** 转义正则元字符。 */
 function escapeRegExp(value: string): string {
 	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -132,11 +172,23 @@ export async function postToChannel(
 	const context = options.context ?? BACKGROUND_CONTEXT;
 
 	const { org } = await readOrg(runtime, context);
-	// 频道不存在时先补齐（旧库 / 测试直接 boot 没跑 ensureAllChannels）：
-	// 静默失败比抛错更糟——消息会凭空消失。所以先自愈，还不行才抛。
+	// 频道自愈：**不只是「不存在」**。
+	//
+	// 真实事故（贪吃蛇端到端实验）：员工入职后没有加入任何频道——公司大群还是
+	// 9 人、项目群只有负责人一个。于是 `@开发-游戏实现` 在 `parseMentions` 里
+	// 被「只保留频道成员」过滤掉，**一个人都没被唤醒**，任务派下去了但对方永远
+	// 不知道。整条链静默停摆，界面上看不出任何异常。
+	//
+	// 所以这里检查两件事：频道存在吗、该在的人都在吗。缺任何一样就整体补齐。
 	{
 		const existing = await readChannels(runtime, context);
-		if (existing.channels[channelId] === undefined) {
+		const channel = existing.channels[channelId];
+		const missingMembers =
+			channel !== undefined &&
+			[...org.people.map((person) => person.conversationId), OWNER_ID].some(
+				(id) => id !== undefined && channel.members[String(id)] === undefined && shouldBeIn(channelId, id, org),
+			);
+		if (channel === undefined || missingMembers) {
 			await ensureAllChannels(runtime, context);
 		}
 	}
@@ -401,9 +453,15 @@ export async function ensureAllChannels(
 			id: "leadership",
 			kind: "leadership",
 			title: "领导层",
-			members: org.people
-				.filter((person) => person.archived !== true && (person.role === "ceo" || person.role === "management"))
-				.map((person) => ({ conversationId: person.conversationId, role: person.role })),
+			members: [
+				// 老板必须在领导层群里（他要在所有群里，见 ADR-030 决策 4）。
+				// 曾经漏了：`canView` 靠「老板能看全部」兜着，界面上看不出异常，
+				// 但未读/@ 计数与 @ 候选里都没有他——他在群里说话也没人知道。
+				{ conversationId: OWNER_ID, role: "owner" as const, wakeOnAll: true },
+				...org.people
+					.filter((person) => person.archived !== true && (person.role === "ceo" || person.role === "management"))
+					.map((person) => ({ conversationId: person.conversationId, role: person.role })),
+			],
 		},
 		context,
 	);
@@ -424,6 +482,10 @@ export async function ensureAllChannels(
 				title: project.name,
 				project: slug,
 				members: [
+					// 老板必须在每个项目群里：他要求「在任何地方、任何群、任何私聊派任务」，
+					// 少了他这一条，`canView` 靠「老板能看全部」兜着，但未读/@ 计数、
+					// 成员列表、@ 候选都会漏掉他（曾经就是这样，项目群显示「1 人」）。
+					{ conversationId: OWNER_ID, role: "owner" as const, wakeOnAll: true },
 					...(leaderId === undefined ? [] : [{ conversationId: leaderId, role: "leader" as const, wakeOnAll: true }]),
 					...staff.map((person) => ({ conversationId: person.conversationId, role: "staff" as const })),
 				],

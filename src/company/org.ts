@@ -879,7 +879,11 @@ export async function createProject(
 			leader: Number(leader.id),
 			leaderName: options.leaderName ?? "负责人",
 			status: "planning",
-			brief: options.brief,
+			// `brief` 在类型上是必填的 string：**不能写成 `brief: options.brief`**——
+			// 调用方不传时值是 `undefined`，chord 的 `copyJson` 会抛
+			// `Value contains a non-JSON undefined; expected strict JSON`，整个立项
+			// 在最后一步提交时失败，而目录和会话已经建好了（留下孤儿）。
+			brief: options.brief ?? "",
 			createdAt: Date.now(),
 		};
 
@@ -893,6 +897,14 @@ export async function createProject(
 			profile.project = slug;
 			profile.workspace = workspace;
 		}, context);
+
+		// 新项目立刻建项目群并让负责人就位（同 hireStaff：不能等下次发消息才自愈）
+		try {
+			const { ensureAllChannels } = await import("./channels.ts");
+			await ensureAllChannels(runtime, context);
+		} catch (error) {
+			console.warn(`[createProject] 项目群建立失败（下次启动会自愈）：${String(error)}`);
+		}
 
 		return { project };
 	} catch (error) {
@@ -1160,6 +1172,18 @@ export async function hireStaff(
 	const latest = await runtime.harness.snapshot(CompanyDoc, context);
 	const staff = latest?.staff[key];
 	if (staff === undefined) throw new Error(`招聘后未能读回员工记录：${key}`);
+
+	// 就地入群。**不能等「下次有人发消息时自愈」**：新员工加入之前，任何
+	// `@新员工` 都会在 `parseMentions` 里被「只保留频道成员」过滤掉，一个人都
+	// 不唤醒，而界面上看不出异常（真实事故见 `shouldBeIn()` 的注释）。
+	// 这里是幂等的：已存在的成员不会重复加。
+	try {
+		const { ensureAllChannels } = await import("./channels.ts");
+		await ensureAllChannels(runtime, context);
+	} catch (error) {
+		// 入群失败不能让招聘本身失败：员工已经建好了，下次启动还会自愈。
+		console.warn(`[hireStaff] 员工 ${key} 入群失败（下次启动会自愈）：${String(error)}`);
+	}
 
 	return { staff, conversationId };
 }
