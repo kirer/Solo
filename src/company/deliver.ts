@@ -36,7 +36,7 @@ import {
 import { ChannelDoc } from "./channels-doc.ts";
 import { labelOf, type Org } from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
-import { CompanyDoc } from "./docs.ts";
+import { CompanyDoc, ReplyContextDoc } from "./docs.ts";
 
 /** 一次投递的结果。 */
 export type DeliverOutcome = {
@@ -122,6 +122,10 @@ export async function deliver(
 				},
 				context,
 			);
+			// 记住「这个人是被哪条消息、在哪个频道叫醒的」。
+			// 必须写在 submit 之后：先让模型看到消息，再让工具读到上下文；
+			// 反过来会出现「上下文是新的、消息还没入队」的窗口。
+			await recordReplyContext(runtime, target, options, context);
 			delivered.push(target);
 		} catch (error) {
 			// 投递失败不抛：消息已在频道里，对方下次醒来会看到未读摘要。
@@ -136,6 +140,40 @@ export async function deliver(
 	}
 
 	return { delivered, failed };
+}
+
+/**
+ * 把「刚被谁在哪个频道叫醒」写进目标会话的 `ReplyContextDoc`。
+ *
+ * 为什么单独一个函数而不是内联：`deliver` 里已经有六件事（渲染正文、拼未读
+ * 摘要、去重、entry、错误处理），再加一块就没人看得懂了。
+ *
+ * 失败不抛：回复上下文只是「发言默认频道」的优化，丢了最坏情况是退回
+ * 按角色推断（旧行为），不该让整条投递失败。
+ */
+async function recordReplyContext(
+	runtime: CompanyRuntime,
+	target: number,
+	options: DeliverOptions,
+	context: Context,
+): Promise<void> {
+	try {
+		await runtime.harness.commit(async (tx) => {
+			const doc = await tx.doc(ReplyContextDoc, target as never);
+			doc.channelId = options.channel.id;
+			doc.seq = options.message.seq;
+			doc.from = options.message.from;
+			doc.fromLabel = options.message.fromLabel;
+			doc.mentioned = options.message.mentions.includes(target);
+			doc.at = options.message.at;
+		}, context);
+	} catch (error) {
+		process.stderr.write(
+			`[回复上下文写入失败] ${options.channel.id}#${options.message.seq} → 会话 ${target}: ${
+				error instanceof Error ? error.message : String(error)
+			}\n`,
+		);
+	}
 }
 
 /** 把未读摘要渲染成输入前缀。 */

@@ -1,0 +1,395 @@
+/* ── 待办事项（对话流里的一条可交互项）───────────────────────────────────
+   一条待决问题 = 「有人在等你回话」，所以它在对话流里，而不是在聊天框外面单开一块。
+   视觉：左侧一道细竖线 + 顶部 kicker 说明「这是在等你」，不用黄色边框
+   （用户明确否掉了「聊天上面弹一块黄框」）。
+
+   **为什么单独一个文件**：这些规则原本长在 `ui/css/chat.css` 里，属于右侧对话
+   面板。面板删掉、待办渲染搬进频道消息流之后（见 `ui/js/pending.js`），样式不能
+   继续留在那堆「对话面板」规则里——将来清理 chat.css 时会连带把待办打成裸 HTML。
+   选择器沿用原名 `.pend*`：`ui/js/chat.js` 仍在仓库里（未删），改前缀会让两边对
+   不上；等 chat.js 真正删除时再一起改名（见 docs/PLAN-16.md 收尾项）。 */
+
+.pend {
+	margin: 2px 0 4px;
+	padding: 10px 12px 11px 13px;
+	border-left: 2px solid var(--warn-line);
+	border-radius: 0 var(--radius) var(--radius) 0;
+	background: var(--surface);
+	animation: motion-rise-in var(--dur) var(--ease-out) both;
+}
+
+.pend--disposition {
+	border-left-color: var(--accent-line);
+}
+
+.pend-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 7px;
+	font-size: var(--fs-2xs);
+	color: var(--muted);
+	min-width: 0;
+}
+
+.pend-kicker {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--warn);
+	font-weight: 500;
+	white-space: nowrap;
+}
+
+.pend--disposition .pend-kicker {
+	color: var(--accent);
+}
+
+.pend-from {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pend-time {
+	margin-left: auto;
+	flex: none;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.pend-state {
+	flex: none;
+	padding: 1px 6px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	color: var(--faint);
+}
+
+.pend-q {
+	font-size: var(--fs-sm);
+	line-height: 1.62;
+	color: var(--ink-2);
+	margin-bottom: 8px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.pend-reply {
+	display: flex;
+	align-items: flex-end;
+	gap: 6px;
+}
+
+.pend-reply textarea {
+	flex: 1;
+	min-width: 0;
+	min-height: 32px;
+	max-height: 132px;
+	resize: none;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--ink);
+	font: 400 var(--fs-sm) / 1.5 var(--sans);
+	outline: none;
+	transition: border-color var(--dur) var(--ease-out);
+}
+
+.pend-reply textarea::placeholder {
+	color: var(--faint);
+}
+
+.pend-reply textarea:focus {
+	border-color: var(--line-strong);
+}
+
+.pend-send {
+	flex: none;
+	width: 32px;
+	height: 32px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--ink-2);
+	transition: background var(--dur) var(--ease-out), color var(--dur) var(--ease-out);
+}
+
+.pend-send:hover {
+	background: var(--surface-3);
+	color: var(--ink);
+}
+
+.pend-send:disabled {
+	opacity: 0.45;
+}
+
+.pend-err {
+	margin-top: 6px;
+	font-size: var(--fs-2xs);
+	color: var(--danger);
+}
+
+.pend-err[hidden] {
+	display: none;
+}
+
+/* 已答复：立刻在界面上给结果，不等 feed 推回来。
+   答完卡片原样不动，正是用户报的「回复完没反应」。 */
+.pend.is-answered {
+	opacity: 0.55;
+	border-left-color: var(--line);
+	transition: opacity var(--dur) var(--ease-out);
+}
+
+.pend.is-answered .pend-reply,
+.pend.is-answered .pend-options {
+	display: none;
+}
+
+.pend.is-answered .pend-kicker {
+	color: var(--faint);
+}
+
+.pend.is-answered .pend-state {
+	border-color: var(--run-line);
+	color: var(--run);
+}
+
+.pend.is-submitting {
+	opacity: 0.72;
+}
+
+/* ── 选项卡片（DSH 风格单选）───────────────────────────────────────────
+   与对话面板里的 `.msg-option` 是同一种卡片，原先靠 `.msg-option, .pend-opt`
+   并列选择器共享样式。对话面板删掉后只剩待办在用，所以在这里独立成文。 */
+
+.pend-options {
+	display: flex;
+	flex-direction: column;
+	gap: 5px;
+	min-width: 0;
+	margin: 8px 0 2px;
+}
+
+.pend-opt {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	width: 100%;
+	min-height: 32px;
+	padding: 6px 10px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	background: transparent;
+	color: var(--ink-2);
+	text-align: left;
+	transition: border-color 150ms var(--ease-out), background 150ms var(--ease-out),
+		color 150ms var(--ease-out);
+}
+
+.pend-opt:hover {
+	border-color: var(--line-strong);
+	background: var(--surface-2);
+	color: var(--ink);
+}
+
+.pend-opt:focus-visible {
+	outline: none;
+	border-color: var(--accent);
+}
+
+.pend-opt.is-picked {
+	border-color: var(--accent-line);
+	background: var(--accent-soft);
+	color: var(--ink);
+}
+
+.pend-opt-key {
+	flex: none;
+	width: 20px;
+	height: 20px;
+	display: grid;
+	place-items: center;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	font-size: 10.5px;
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+
+.pend-opt-label {
+	flex: 1;
+	min-width: 0;
+	font-size: var(--fs-sm);
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.pend-opt-hint {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	font-size: var(--fs-2xs);
+	color: var(--faint);
+}
+
+.pend-opt--custom .pend-opt-label {
+	color: var(--muted);
+}
+
+.pend-options-hint {
+	font-size: 10.5px;
+	color: var(--ghost);
+	font-variant-numeric: tabular-nums;
+}
+
+.pend-options-hint kbd {
+	font-family: var(--sans);
+	font-size: 10.5px;
+	color: var(--faint);
+}
+
+/* ── 待办处置（驳回 / 标记已解决 / CEO 接管）──────────────────────────────
+   老板级待办原先没有任何处置入口，已有结论的待办只能一直挂在看板上。
+   轻量风格：不弹浮层，理由输入框就地展开——设置面板已改成非浮层，这里再引一层
+   遮罩式的浮层会和它打架。
+
+   只在后端下发 canDispose=true 时渲染（权限口径见 canDisposePending()）。 */
+
+.pend-dispose {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 8px;
+	padding-top: 8px;
+	border-top: 1px dashed var(--line);
+}
+
+.pend-dispose-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 4px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--ink-2);
+	font: 400 var(--fs-sm) / 1.4 var(--sans);
+	cursor: pointer;
+	transition: color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out);
+}
+
+.pend-dispose-btn:hover {
+	color: var(--ink);
+	border-color: var(--line-strong);
+}
+
+.pend-dispose-btn:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+/* 驳回是「否掉」，比「已解决」重一点；但不做成红色警报条——它不是错误。 */
+.pend-dispose-btn--reject:hover {
+	color: var(--danger);
+	border-color: var(--danger);
+}
+
+/* CEO 接管：与「驳回」区分开——它不是否定，是「我来定」。 */
+.pend-dispose-btn--takeover:hover {
+	color: var(--accent);
+	border-color: var(--accent);
+}
+
+.pend-dispose-btn:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+/* 驳回理由：就地展开，不抢焦点以外的注意力。 */
+.pend-reject-form {
+	display: flex;
+	flex-basis: 100%;
+	gap: 6px;
+	align-items: flex-end;
+}
+
+.pend-reject-form[hidden] {
+	display: none;
+}
+
+.pend-reject-form textarea {
+	flex: 1;
+	min-width: 0;
+	resize: vertical;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: var(--bg);
+	color: var(--ink);
+	font: 400 var(--fs-sm) / 1.5 var(--sans);
+	outline: none;
+	transition: border-color var(--dur) var(--ease-out);
+}
+
+.pend-reject-form textarea::placeholder {
+	color: var(--faint);
+}
+
+.pend-reject-form textarea:focus {
+	border-color: var(--line-strong);
+}
+
+.pend-reject-send {
+	flex: none;
+	padding: 7px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius);
+	background: transparent;
+	color: var(--ink);
+	font: 400 var(--fs-sm) / 1.5 var(--sans);
+	cursor: pointer;
+	transition: border-color var(--dur) var(--ease-out);
+}
+
+.pend-reject-send:hover {
+	border-color: var(--line-strong);
+}
+
+.pend-reject-send:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+/* 已处置：与「已答复」同一套收敛效果，处置按钮和理由框一起收起。 */
+.pend.is-answered .pend-dispose {
+	display: none;
+}
+
+/* 来源说明（缺陷 B）：老板级待办为什么到了老板这儿。
+   一行小字，不抢主体；用 --faint 压过一层，避免和问题正文竞争注意力。 */
+.pend-trace {
+	display: flex;
+	align-items: flex-start;
+	gap: 5px;
+	margin-top: 6px;
+	color: var(--faint);
+	font: 400 var(--fs-sm) / 1.45 var(--sans);
+}
+
+.pend-trace svg {
+	flex: none;
+	margin-top: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.pend {
+		animation: none;
+	}
+}

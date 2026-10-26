@@ -15,6 +15,7 @@ import { bootstrapCompany, createProject, hireStaff } from "../../src/company/or
 import { createEscalationTask } from "../../src/company/escalation.ts";
 import { ensureAllChannels, postToChannel, readChannel } from "../../src/company/channels.ts";
 import { resolveMentions } from "../../src/domain/channels.ts";
+import { createUniversalTools } from "../../src/company/tools/universal.ts";
 import { dmChannelId } from "../../src/domain/channels.ts";
 import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
@@ -168,5 +169,87 @@ describe("私聊不用 @ 也能定向", () => {
 			{ context: BACKGROUND_CONTEXT },
 		);
 		expect(posted.message.mentions).toEqual([0]);
+	});
+});
+
+describe("被私聊叫醒的人在私聊里回复（不是跑去群里）", () => {
+	/**
+	 * 老板实测的严重问题：私聊 CFO，CFO 的回复跑到领导层群去了。
+	 *
+	 * 根因：`say` / `ask` 不传 `channel` 时按**角色**推断频道（管理层 → leadership），
+	 * 完全不知道叫醒自己的是哪条消息。修法是把「刚被谁在哪个频道叫醒」落进
+	 * `ReplyContextDoc`，让 `resolveChannel` 优先采用。
+	 *
+	 * 这条测试锁的就是「回复落在 dm，而不是 leadership」。
+	 */
+	test("老板在私聊里说话，对方的 say 落在同一个私聊频道", async () => {
+		const { runtime, boot, staff } = await setup();
+		const tools = createUniversalTools({ runtime });
+		const cfoId = boot.roleConversations.cfo;
+		const dmId = dmChannelId(cfoId);
+
+		// 老板在 dm 里 @CFO
+		await postToChannel(
+			runtime,
+			dmId,
+			{ from: 0, fromLabel: "老板", kind: "chat", text: "这个月成本怎么样" },
+			{ context: BACKGROUND_CONTEXT },
+		);
+
+		// CFO 不传 channel 发言——应该落回 dm:13，而不是 leadership
+		const result = await tools.say.execute(
+			{ text: "这个月比上月低 12%" },
+			{ conversationId: cfoId } as never,
+			BACKGROUND_CONTEXT,
+		);
+		const body = typeof result === "string" ? result : JSON.stringify(result);
+		// dm 频道的标题就是对方的名字（这里是 CFO）
+		expect(body).toContain("已发到「CFO」");
+
+		const dm = await readChannel(runtime, dmId, BACKGROUND_CONTEXT);
+		expect(dm?.messages.at(-1)?.text).toBe("这个月比上月低 12%");
+		expect(dm?.messages.at(-1)?.from).toBe(cfoId);
+
+		// 领导层群**不能**多出这条
+		const leadership = await readChannel(runtime, "leadership", BACKGROUND_CONTEXT);
+		expect(leadership?.messages.some((message) => message.text === "这个月比上月低 12%")).toBe(false);
+	});
+
+	test("没人叫醒过时仍然按角色推断（旧行为不回归）", async () => {
+		const { runtime, boot } = await setup();
+		const tools = createUniversalTools({ runtime });
+		const cfoId = boot.roleConversations.cfo;
+
+		const result = await tools.say.execute(
+			{ text: "主动汇报一句" },
+			{ conversationId: cfoId } as never,
+			BACKGROUND_CONTEXT,
+		);
+		const body = typeof result === "string" ? result : JSON.stringify(result);
+		expect(body).toContain("领导层");
+
+		const leadership = await readChannel(runtime, "leadership", BACKGROUND_CONTEXT);
+		expect(leadership?.messages.at(-1)?.text).toBe("主动汇报一句");
+	});
+
+	test("显式 channel 参数优先于回复上下文", async () => {
+		const { runtime, boot } = await setup();
+		const tools = createUniversalTools({ runtime });
+		const cfoId = boot.roleConversations.cfo;
+
+		await postToChannel(
+			runtime,
+			dmChannelId(cfoId),
+			{ from: 0, fromLabel: "老板", kind: "chat", text: "私聊一句" },
+			{ context: BACKGROUND_CONTEXT },
+		);
+		// 明确要求发到领导层群
+		await tools.say.execute(
+			{ text: "这条要去群里", channel: "leadership" },
+			{ conversationId: cfoId } as never,
+			BACKGROUND_CONTEXT,
+		);
+		const leadership = await readChannel(runtime, "leadership", BACKGROUND_CONTEXT);
+		expect(leadership?.messages.at(-1)?.text).toBe("这条要去群里");
 	});
 });

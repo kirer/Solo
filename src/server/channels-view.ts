@@ -21,8 +21,10 @@ import {
 } from "../domain/channels.ts";
 import { labelOf, canView, mentionable, personOf, type Org } from "../domain/membership.ts";
 import { isTerminal, type TaskEntry } from "../domain/tasks.ts";
+import { OWNER_ID } from "../domain/channels.ts";
 import { readChannels, readOrg } from "../company/channels.ts";
 import { readTasks } from "../company/tasks.ts";
+import { canDisposePending, decisionOwnerOfItem, listPending, type PendingItem } from "../company/escalation.ts";
 
 /** 频道列表项。 */
 export type ChannelListItem = {
@@ -58,6 +60,29 @@ export type MessageView = {
 	readonly read: boolean;
 };
 
+/**
+ * 一条「等老板拍板」的事项，随频道详情下发。
+ *
+ * 为什么放进频道视图而不是只留在 `/api/org` 与 `/api/feed/:id`：右侧对话面板删掉之后，
+ * 频道是老板**唯一**能回话的地方。待办不跟着频道走，老板就只能看不能答
+ * （组织图上的红点会一直亮着，却点不到任何可输入的入口）。
+ */
+export type ChannelPending = {
+	readonly key: string;
+	readonly question: string;
+	/** 谁在问（显示名）。 */
+	readonly from: string;
+	readonly askedAt: number;
+	/** 是不是处置类（暂搁 / 放弃）。 */
+	readonly disposition: boolean;
+	/** 结构化选项；没有就为空数组（界面自行降级成自由输入）。 */
+	readonly options: readonly { readonly id: string; readonly label: string; readonly recommended: boolean }[];
+	/** 老板能不能驳回 / 标记已解决。口径只在 `canDisposePending` 一处定义。 */
+	readonly canDispose: boolean;
+	/** 来源说明（Defect B 要求 4）。 */
+	readonly trace?: { readonly declaredTopic?: string; readonly ceoReviewed?: boolean; readonly note: string };
+};
+
 /** 频道详情。 */
 export type ChannelView = {
 	readonly channel: Omit<ChannelListItem, "unread" | "mentions" | "preview" | "openTasks">;
@@ -71,6 +96,11 @@ export type ChannelView = {
 	/** 还有更早的消息（用 before 游标继续拉）。 */
 	readonly hasMore: boolean;
 	readonly tasks: readonly TaskEntry[];
+	/**
+	 * 这个频道里等老板拍板的事（含 `refs.pendingKey` 指向本频道消息的条目）。
+	 * 非老板视角恒为空：待办归属是「老板这一级」，别人的视角答不了。
+	 */
+	readonly pending: readonly ChannelPending[];
 };
 
 /** 读频道列表（老板视角：全部频道）。 */
@@ -117,6 +147,9 @@ export async function listChannels(
 	// 排序：先按频道类型的固定次序（公司 → 领导层 → 项目 → 私聊 → 记录），
 	// 同类型里「有 @ 的在前，然后按最后消息时间倒序」。
 	// 固定类型次序很重要：用户找「公司大群」永远在最上面，不会因为别人说了句话就跳走。
+	//
+	// `log` 保留在表里只为老库（已归档的频道不会进这个列表）：`kind` 是持久化
+	// 枚举，删掉会让旧数据反序列化时缺键。
 	const kindRank: Record<Channel["kind"], number> = {
 		company: 0,
 		leadership: 1,
@@ -156,6 +189,7 @@ export async function readChannelView(
 	const projectTasks = Object.values(tasks.tasks)
 		.filter((task) => task.channelId === channel.id)
 		.sort((left, right) => left.createdAt - right.createdAt);
+	const pending = viewer === OWNER_ID ? await ownerPendingForChannel(runtime, channel, context) : [];
 
 	return {
 		channel: {
@@ -179,7 +213,86 @@ export async function readChannelView(
 		messages: page.map((message) => messageView(org, channel, message, viewer)),
 		hasMore,
 		tasks: projectTasks,
+		pending,
 	};
+}
+
+/**
+ * 筛出「该在这个频道里显示给老板」的待办。
+ *
+ * 两条来源：
+ * 1. **归属老板的**（`forYou` 口径，与 org-view 完全一致）——回答入口在哪个频道都行，
+ *    但只有在**有上下文**的频道里出现才不会让老板对着一条无头无尾的问题做决定；
+ *    所以这类只在「老板自己发过话 / 有人说过话」的频道里给，具体做法是：
+ *    公司群 + 提问方所在的私聊。
+ * 2. **被本频道消息引用过的**（`refs.pendingKey`）——问题本身就是在这个频道里提出来的，
+ *    回到它被问的地方去答最自然。
+ *
+ * 刻意不做的两件事：
+ * - 不去重「同一条待办出现在两个频道」：私聊里问的问题同时出现在公司群反而会制造两个
+ *   答复入口，而两处都只是提交同一份 key，谁先答谁生效，看起来像「答了没反应」。
+ *   所以只按第 2 条（引用关系）+ 提问方私聊两处给。
+ * - 不在这里算权限：`canDispose` 直接调 `canDisposePending(item, "owner")`，
+ *   真正的拦截在 disposePending 里。
+ */
+async function ownerPendingForChannel(
+	runtime: CompanyRuntime,
+	channel: Channel,
+	context: Context,
+): Promise<readonly ChannelPending[]> {
+	const items = await listPending(runtime, context);
+	if (items.length === 0) return [];
+
+	// 本频道消息引用过的 key（问题就地提出来的地方）。
+	const referenced = new Set<string>();
+	for (const message of channel.messages) {
+		const key = message.refs?.pendingKey;
+		if (typeof key === "string" && key !== "") referenced.add(key);
+	}
+
+	const mine = items.filter((item) => {
+		if (!isOwnerPending(item)) return false;
+		if (referenced.has(item.key)) return true;
+		// 其余按「提问方的私聊」归位：老板要知道是谁在问、在什么上下文里问。
+		if (channel.kind !== "dm") return false;
+		return dmPeer(channel.id) === item.fromConversationId;
+	});
+
+	return mine.map((item) => ({
+		key: item.key,
+		question: item.question,
+		from: item.from,
+		askedAt: item.askedAt,
+		disposition: item.disposition !== undefined,
+		options: (item.disposition?.options ?? []).map((option) => ({
+			id: option.id,
+			label: option.label,
+			recommended: option.recommended === true,
+		})),
+		canDispose: canDisposePending(item, "owner"),
+		...(item.trace === undefined ? {} : { trace: item.trace }),
+	}));
+}
+
+/**
+ * 这条待办是不是「老板这一级」的。
+ *
+ * 口径必须与 `src/server/org-view.ts` 的 `forYou` 逐字一致，否则会出现
+ * 「组织图上有红点、频道里却找不到」的错位。那里写的是：
+ * `decisionOwner === "owner" || (item.disposition !== undefined && decisionOwner === "ceo")`
+ * ——第二条是 ADR-026 决策 1 的例外（审计 D-02）：系统里没有独立的老板会话，
+ * 老板亲自派活写成的 from 就是 CEO，处置待办的 decisionOwner 因此是 ceo。
+ */
+function isOwnerPending(item: PendingItem): boolean {
+	const owner = decisionOwnerOfItem(item);
+	return owner === "owner" || (item.disposition !== undefined && owner === "ceo");
+}
+
+/** 从 `dm:<id>` 取对方会话标识；不是私聊频道就返回 null。 */
+function dmPeer(channelId: string): number | null {
+	if (!channelId.startsWith("dm:")) return null;
+	const id = Number(channelId.slice("dm:".length));
+	return Number.isFinite(id) ? id : null;
 }
 
 /** 单条消息视图。 */

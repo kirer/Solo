@@ -16,8 +16,15 @@ import { icon } from "./icons.js";
 import { renderMarkdown } from "./markdown.js";
 // UX-7：工作记录复用 T-22 提取的渲染函数，与组织页聊天视觉一致。
 import { renderThinking, renderTool } from "./feed-render.js";
+// #2：角色档案面板。与对话面板共用同一个渲染器（profile.js），只是换挂载点。
+import { initProfile } from "./profile.js";
+// 待办卡片：右侧对话面板删掉之后，老板拍板的唯一入口就在消息流里。
+import { initPending } from "./pending.js";
 
 const $ = (id) => document.getElementById(id);
+
+/** 待办卡片渲染器（在 initChannels 里创建）。 */
+let pendingCards = null;
 
 const state = {
 	channels: [],
@@ -48,13 +55,12 @@ const state = {
 	/** 成员栏是否展开（UX-6）。默认收起：老板要的是「点开才看」，不是「删掉」。
 	 *  切频道**保留**用户当下的意图（负责人 #79 拍板），不重置。 */
 	membersOpen: false,
-	/** UX-7：私聊的当前分区（"chat" 对话 / "activity" 工作记录）。 */
-	subTab: "chat",
-	/** UX-7：工作记录的分页状态。`null` = 未加载过。 */
+	/** #1/#4：私聊的流水（thinking / tool）分页状态。`null` = 未加载过。
+	 *  不再有 tab：流水直接混进消息流，默认折叠。 */
 	activity: null,
-	/** UX-7：工作记录请求令牌（与 reqToken 同理，防止旧响应覆盖新频道）。 */
+	/** #1/#4：流水请求令牌（防止旧响应覆盖新频道）。 */
 	activityToken: 0,
-	/** UX-7：懒加载锁。 */
+	/** #1/#4：懒加载锁。 */
 	activityLoading: false,
 };
 
@@ -75,21 +81,24 @@ const el = {
 	side: null,
 	/** 成员栏开关按钮（UX-6）。 */
 	sideToggle: null,
-	/** UX-7：私聊分区 tab 容器与两个按钮。 */
-	tabs: null,
-	tabChat: null,
-	tabActivity: null,
-	/** UX-7：工作记录容器。 */
-	activity: null,
+	/** #2：角色档案开关与面板（私聊里展开对方的档案）。 */
+	fold: null,
+	dock: null,
 };
 
-/** 频道类型 → 分组标题。 */
+/**
+ * 频道类型 → 分组标题（#3）。
+ *
+ * 老板的口径：左侧只留两个分组 —— **群组**（公司 / 领导层 / 项目）与**成员**（私聊）。
+ * 五个 kind 塌成两组是「私聊取代工作记录」的必然结果：`log:` 频道已经不建了
+ * （见 src/company/channels.ts 的 ensureAllChannels），剩下的四种 kind 天然分成
+ * 「一群人」和「一个人」。
+ *
+ * 分组的视觉排序也在这里：群组在前、成员在后。
+ */
 const GROUPS = [
-	{ kind: "company", label: "公司" },
-	{ kind: "leadership", label: "领导层" },
-	{ kind: "project", label: "项目" },
-	{ kind: "dm", label: "私聊" },
-	{ kind: "log", label: "工作记录" },
+	{ key: "groups", label: "群组", kinds: ["company", "leadership", "project"] },
+	{ key: "people", label: "成员", kinds: ["dm"] },
 ];
 
 // ── 数据 ──────────────────────────────────────────────────────────────────
@@ -176,18 +185,9 @@ async function openChannel(id, { userInitiated = true } = {}) {
 		renderTasks();
 		// 必须在 renderMembers() 之后：成员栏的可见性依赖当前频道的 kind（UX-6 / UX-8）
 		applyMembersOpen();
-		// UX-7：切频道时重置工作记录（只有私聊才有）。
-		// 非私聊频道：把 tab 与内容都藏掉，不影响原有三栏布局。
-		if (showsActivityTab()) {
-			// 切到新的私聊时回到「对话」分区（避免上一个私聊停在工作记录，换人后突然空白）
-			if (userInitiated) state.subTab = "chat";
-			applySubTab();
-			void resetActivity();
-		} else {
-			state.activity = null;
-			state.activityToken += 1;
-			applySubTab();
-		}
+		// #1 / #4：切频道时重拉流水（只有私聊有）。流水到了会再渲染一次，
+		// 先把频道消息画出来，不让老板盯着空白等。
+		void resetActivity();
 		if (keepScroll === null) scrollToBottom();
 		else restoreScroll(keepScroll);
 		// 已读要前端**显式**上报：GET 不再有副作用（否则轮询/手机列表页也会清未读）。
@@ -355,17 +355,6 @@ function avatar(label, size = 32, extraClass = "") {
 	);
 }
 
-/** 工作记录不是人，给它一个「文档」图标而不是人脸。 */
-function logAvatar(size = 32) {
-	return [
-		`<span class="ch-av ch-av--icon" style="width:${size}px;height:${size}px" aria-hidden="true">`,
-		`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round">`,
-		`<path d="M4 2.5h5.5L12 5v8.5H4z"/><path d="M9.5 2.5V5H12"/><path d="M6 8h4M6 10.5h3"/>`,
-		`</svg>`,
-		`</span>`,
-	].join("");
-}
-
 function renderList(unread) {
 	if (el.list === null) return;
 	const grouped = new Map();
@@ -377,15 +366,9 @@ function renderList(unread) {
 
 	const html = [`<div class="ch-list-head"><b>频道</b><span>${state.channels.length}</span></div>`];
 	for (const group of GROUPS) {
-		let items = grouped.get(group.kind) ?? [];
+		// 老库里残留的 log: 频道不再展示（数据不删，只是前端不给入口）。
+		const items = group.kinds.flatMap((kind) => grouped.get(kind) ?? []);
 		if (items.length === 0) continue;
-		// 工作记录太多（每个 agent 一个）：只列有内容的，其余折叠
-		if (group.kind === "log") {
-			const withContent = items.filter((channel) => channel.lastSeq > 0);
-			const rest = items.length - withContent.length;
-			items = rest > 0 ? [...withContent, { id: "__more-logs", title: `还有 ${rest} 个空的工作记录`, preview: "", kind: "log", lastAt: 0, unread: 0, mentions: 0, lastSeq: 0, memberCount: 0, openTasks: 0 }] : withContent;
-			if (items.length === 0) continue;
-		}
 		html.push(`<div class="ch-group"><span>${escapeHtml(group.label)}</span></div>`);
 		for (const channel of items) {
 			const active = channel.id === state.activeId;
@@ -395,16 +378,12 @@ function renderList(unread) {
 					: channel.unread > 0
 						? `<b class="ch-badge">${channel.unread}</b>`
 						: "";
-			if (channel.id === "__more-logs") {
-				html.push(`<button class="ch-row ch-row--muted" type="button" disabled>${escapeHtml(channel.title)}</button>`);
-				continue;
-			}
 			html.push(
 				[
 					`<button class="ch-row" type="button" data-id="${escapeAttr(channel.id)}"`,
 					` data-active="${active ? "true" : "false"}"`,
 					` data-mention="${channel.mentions > 0 ? "true" : "false"}">`,
-					channel.kind === "log" ? logAvatar(32) : avatar(channel.title, 32),
+					avatar(channel.title, 32),
 					`<span class="ch-row-main">`,
 					`<span class="ch-row-title">${escapeHtml(channel.title)}</span>`,
 					channel.preview === "" ? "" : `<span class="ch-row-preview">${escapeHtml(channel.preview)}</span>`,
@@ -441,6 +420,10 @@ function updateActiveRow() {
 	for (const row of el.list.querySelectorAll(".ch-row")) {
 		row.dataset.active = row.dataset.id === state.activeId ? "true" : "false";
 	}
+	// 当前频道变了要广播：看板据此高亮对应卡片，不必自己去猜频道状态。
+	window.dispatchEvent(
+		new CustomEvent("aic:channel", { detail: { channelId: state.activeId ?? "" } }),
+	);
 }
 
 function renderListError(message) {
@@ -508,24 +491,33 @@ function renderHeader() {
 	const parts = view.channel.kind === "company" ? [] : [kindLabel];
 	parts.push(`${view.channel.memberCount} 人`);
 	el.sub.textContent = parts.join(" · ");
+
+	// #2：档案按钮只在私聊里出现——私聊的标题就是那个人，档案有明确指向。
+	// 群聊里「这个群的档案」没有定义（成员清单已经在右侧成员栏里了）。
+	const hasPerson = activityStaffId() !== null;
+	if (el.fold !== null) {
+		el.fold.hidden = !hasPerson;
+		if (!hasPerson) {
+			el.fold.dataset.state = "closed";
+			el.fold.setAttribute("aria-expanded", "false");
+			if (profile?.isOpen() === true) profile.close();
+		}
+		const label = hasPerson ? `查看 ${view.channel.title} 的角色档案` : "角色档案";
+		el.fold.title = label;
+		el.fold.setAttribute("aria-label", label);
+	}
 }
 
-// ── UX-7：私聊的工作记录区（工具调用 + 思考过程） ───────────────────────
+// ── #1 / #4：私聊的流水（思考 + 工具调用）混进消息流 ──────────────────────
 
-/** 一页拉多少条。老板要「像正常聊天软件」，30 条接近一屏半，滚一下就能继续加载。 */
+/** 一页拉多少条流水。 */
 const ACTIVITY_PAGE = 30;
 
 /**
- * 只有私聊（`dm:<id>`）才显示「对话 / 工作记录」分区。
+ * 当前私聊对应的员工会话 id（`dm:1897` → `1897`）。
  *
- * `log` 频道不显示：它是「某人自己的工作流水」本身，再套一层工作记录就是重复。
- * 其余（company / leadership / project）也没有「这个人的工作记录」语义。
+ * 只有私聊才拉流水：群聊里「谁的流水」没有唯一答案，混进来会让群消息流噪音爆炸。
  */
-function showsActivityTab() {
-	return state.view?.channel.kind === "dm";
-}
-
-/** 当前私聊对应的员工会话 id（`dm:1897` → `1897`）。 */
 function activityStaffId() {
 	const id = state.view?.channel.id ?? "";
 	if (!id.startsWith("dm:")) return null;
@@ -533,84 +525,103 @@ function activityStaffId() {
 	return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-/** 把分区与内容显隐写到 DOM。切频道/切 tab 都走这一处。 */
-function applySubTab() {
-	const available = showsActivityTab();
-	const onActivity = available && state.subTab === "activity";
-	if (el.tabs !== null) el.tabs.hidden = !available;
-	if (el.tabChat !== null) el.tabChat.setAttribute("aria-selected", onActivity ? "false" : "true");
-	if (el.tabActivity !== null) el.tabActivity.setAttribute("aria-selected", onActivity ? "true" : "false");
-	if (el.body !== null) el.body.hidden = onActivity;
-	if (el.activity !== null) el.activity.hidden = !onActivity;
+/**
+ * 流水条目的统一时间（毫秒）。
+ *
+ * 流水来自会话 feed，消息来自频道文档，两边时钟同源但字段不同（`at` 都有）。
+ * 归并排序必须用同一个键，否则同一条消息会被排到错误的位置。
+ */
+function itemAt(item) {
+	return typeof item.at === "number" ? item.at : 0;
 }
 
 /**
- * 渲染工作记录列表。
+ * 把「频道消息」与「员工流水」归并成一条时间线。
  *
- * 只渲染 `thinking` 与 `tool`：`assistant` 不渲染——那是「对话本身」，
- * 私聊里已经有了，再渲染一遍会重复（负责人 #236 明确要求）。
+ * 为什么不合并数据源：一个是频道文档（`ChannelMessage`），一个是会话 feed
+ * （`ActivityItem`），生命周期与保留策略都不同。只在渲染层归并，两边都能独立演进。
+ *
+ * 排序用 `at`（毫秒），相同时间按「消息在前、流水在后」——老板自己说的话
+ * 应该出现在引发它的那次思考之后。
  */
-function renderActivity() {
-	if (el.activity === null) return;
+function timelineOf(view) {
+	const rows = [];
+	for (const message of view.messages) rows.push({ kind: "message", at: message.at, message });
+	const staffId = activityStaffId();
 	const page = state.activity;
-	if (page === null) {
-		el.activity.innerHTML = `<div class="ch-activity-empty">正在加载…</div>`;
-		return;
-	}
-	if (page.items.length === 0) {
-		// 老板要的是「诚实显示空」——不用骨架屏（骨架屏假装「马上就有」，实际永远没有）。
-		el.activity.innerHTML = `<div class="ch-activity-empty">暂无工作记录</div>`;
-		return;
-	}
-
-	const nodes = [];
-	// 顶部哨兵：滚到这里自动加载更早（老板：往上翻逐步加载，不点按钮）。
-	const sentinel = document.createElement("div");
-	sentinel.className = "ch-activity-more";
-	if (page.hasMore) {
-		// 按钮作为降级：IntersectionObserver 不支持时仍然能加载。
-		const btn = document.createElement("button");
-		btn.type = "button";
-		btn.className = "ch-load-more";
-		btn.textContent = state.activityLoading ? "加载中…" : "加载更早的记录";
-		btn.addEventListener("click", () => void loadMoreActivity());
-		sentinel.append(btn);
-	} else {
-		sentinel.textContent = "没有更早的记录了";
-	}
-	nodes.push(sentinel);
-
-	for (const item of page.items) {
-		const row = document.createElement("div");
-		row.className = "ch-activity-row";
-		row.dataset.kind = item.kind;
-		if (item.kind === "tool") {
-			// isError 必须可区分（负责人 #236）：renderTool 已根据 state 写 data-state，
-			// 这里再加一个显式标记，让 CSS 不依赖对 state 取值的推演。
-			if (item.isError === true) row.dataset.error = "true";
-			row.append(renderTool(item));
-		} else if (item.kind === "thinking") {
-			row.append(renderThinking(item));
+	if (staffId !== null && page !== null) {
+		for (const item of page.items) {
+			// `assistant` 跳过：它就是「这个人在私聊里说的话」，频道消息里已经有了，
+			// 再渲染一遍等于每句话出现两次。
+			if (item.kind !== "thinking" && item.kind !== "tool") continue;
+			rows.push({ kind: "trace", at: itemAt(item), item });
 		}
-		// assistant：明确跳过（不渲染）
-		if (row.childElementCount === 0) continue;
-		const time = document.createElement("time");
-		time.className = "ch-activity-time";
-		time.textContent = clockTime(item.at);
-		row.append(time);
-		nodes.push(row);
 	}
-
-	el.activity.replaceChildren(...nodes);
-	observeActivitySentinel();
+	rows.sort((a, b) => a.at - b.at || (a.kind === "message" ? -1 : 1));
+	return rows;
 }
 
-/** 用 IntersectionObserver 监听顶部哨兵（滚到顶自动加载）。 */
+/**
+ * 渲染一条流水（思考 / 工具调用）。
+ *
+ * 默认折叠（`<details>`）：老板要的是「能看见他想了什么」，不是「被每一步工具调用打断」。
+ * 复用 feed-render.js 的渲染器，与组织页对话面板视觉一致。
+ */
+function renderTrace(item) {
+	const row = document.createElement("div");
+	row.className = "ch-trace";
+	row.dataset.kind = item.kind;
+	if (item.kind === "tool") {
+		if (item.isError === true) row.dataset.error = "true";
+		row.append(renderTool(item));
+	} else {
+		row.append(renderThinking(item));
+	}
+	const time = document.createElement("time");
+	time.className = "ch-trace-time";
+	time.textContent = clockTime(item.at);
+	row.append(time);
+	return row;
+}
+
+/**
+ * 把连续的流水折成一组。
+ *
+ * 为什么必须折：实测一次任务会产生几十条 `bash` / `edit` 调用，逐条铺开会把私聊
+ * 变成工具日志——老板的原话是「太长了，最好是 1、2、3 列举，详情收缩」。
+ * 所以连续流水收进一个 `<details>`，摘要行写「12 步操作 · 12:07–12:23」，
+ * 点开才是逐条明细。失败的工具调用会破组（单独露出），因为那是要看的东西。
+ */
+function renderTraceGroup(items) {
+	const failed = items.some((item) => item.kind === "tool" && item.isError === true);
+	const box = document.createElement("details");
+	box.className = "ch-trace-group";
+	if (failed) box.open = true;
+	box.dataset.error = failed ? "true" : "false";
+
+	const summary = document.createElement("summary");
+	summary.className = "ch-trace-summary";
+	const first = items[0]?.at ?? 0;
+	const last = items.at(-1)?.at ?? first;
+	const tools = items.filter((item) => item.kind === "tool").length;
+	const thoughts = items.length - tools;
+	const parts = [];
+	if (tools > 0) parts.push(`${tools} 步操作`);
+	if (thoughts > 0) parts.push(`${thoughts} 段思考`);
+	const span = last - first < 60_000 ? clockTime(first) : `${clockTime(first)}–${clockTime(last)}`;
+	summary.textContent = `${parts.join(" · ")} · ${span}${failed ? " · 有失败" : ""}`;
+	box.append(summary);
+
+	for (const item of items) box.append(renderTrace(item));
+	return box;
+}
+
+/** 用 IntersectionObserver 监听顶部哨兵（滚到顶自动加载更早的流水）。 */
 let activityObserver = null;
 function observeActivitySentinel() {
 	if (typeof IntersectionObserver !== "function") return; // 降级：只能点按钮
 	if (activityObserver !== null) activityObserver.disconnect();
-	const target = el.activity?.querySelector(".ch-activity-more");
+	const target = el.body?.querySelector(".ch-activity-more");
 	if (target === null || target === undefined) return;
 	activityObserver = new IntersectionObserver(
 		(entries) => {
@@ -618,12 +629,12 @@ function observeActivitySentinel() {
 				if (entry.isIntersecting) void loadMoreActivity();
 			}
 		},
-		{ root: el.activity, rootMargin: "120px" },
+		{ root: el.body, rootMargin: "120px" },
 	);
 	activityObserver.observe(target);
 }
 
-/** 加载更早的一页（`before` 用 entry id，不是 seq——后端契约如此）。 */
+/** 加载更早的一页流水（`before` 用 item seq）。 */
 async function loadMoreActivity() {
 	const staffId = activityStaffId();
 	const page = state.activity;
@@ -631,10 +642,9 @@ async function loadMoreActivity() {
 	if (state.activityLoading) return;
 	state.activityLoading = true;
 	const token = state.activityToken;
-	const before = page.items[0]?.id;
-	// 保住滚动位置：往顶部插内容后，视口要停在原来看的那条上。
-	const heightBefore = el.activity?.scrollHeight ?? 0;
-	const topBefore = el.activity?.scrollTop ?? 0;
+	const before = page.items[0]?.seq;
+	const heightBefore = el.body?.scrollHeight ?? 0;
+	const topBefore = el.body?.scrollTop ?? 0;
 	try {
 		const query = before === undefined ? `limit=${ACTIVITY_PAGE}` : `limit=${ACTIVITY_PAGE}&before=${before}`;
 		const next = await fetchJson(`/api/staff/${staffId}/activity?${query}`);
@@ -643,23 +653,18 @@ async function loadMoreActivity() {
 		const older = (Array.isArray(next.items) ? next.items : []).filter((item) => !known.has(item.id));
 		state.activity = { items: [...older, ...page.items], hasMore: next.hasMore === true };
 		state.activityLoading = false;
-		renderActivity();
-		if (el.activity !== null) {
-			el.activity.scrollTop = topBefore + (el.activity.scrollHeight - heightBefore);
+		renderMessages();
+		if (el.body !== null) {
+			el.body.scrollTop = topBefore + (el.body.scrollHeight - heightBefore);
 		}
 	} catch (error) {
 		state.activityLoading = false;
 		if (token !== state.activityToken) return;
-		if (el.activity !== null && page.items.length === 0) {
-			el.activity.innerHTML = `<div class="ch-activity-empty">工作记录没拉到（${escapeHtml(
-				error instanceof Error ? error.message : "未知错误",
-			)}）</div>`;
-		}
-		notify(error instanceof Error ? error.message : "加载工作记录失败", "error");
+		notify(error instanceof Error ? error.message : "加载更早的记录失败", "error");
 	}
 }
 
-/** 切到某个私聊时重置并拉第一页。 */
+/** 切到某个私聊时重置并拉第一页流水。非私聊频道清空。 */
 async function resetActivity() {
 	state.activityToken += 1;
 	state.activity = null;
@@ -669,12 +674,8 @@ async function resetActivity() {
 		activityObserver = null;
 	}
 	const staffId = activityStaffId();
-	if (staffId === null) {
-		if (el.activity !== null) el.activity.innerHTML = "";
-		return;
-	}
+	if (staffId === null) return;
 	const token = state.activityToken;
-	if (el.activity !== null) renderActivity(); // 显示「正在加载…」
 	try {
 		const page = await fetchJson(`/api/staff/${staffId}/activity?limit=${ACTIVITY_PAGE}`);
 		if (token !== state.activityToken) return;
@@ -682,77 +683,121 @@ async function resetActivity() {
 			items: Array.isArray(page.items) ? page.items : [],
 			hasMore: page.hasMore === true,
 		};
-		renderActivity();
-	} catch (error) {
+		// 流水到了再重渲染一次：先把频道消息画出来，不让老板盯着空白等。
+		renderMessages();
+	} catch {
 		if (token !== state.activityToken) return;
+		// 流水拉不到不算错误：对话本身还在，只是看不到思考过程。
 		state.activity = { items: [], hasMore: false };
-		if (el.activity !== null) {
-			// 接口未上线（404）时要说清楚，而不是假装「暂无」——
-			// 后者会让「重启后才有数据」看起来像「这人真的没干过活」。
-			el.activity.innerHTML = `<div class="ch-activity-empty">工作记录暂时不可用（${escapeHtml(
-				error instanceof Error ? error.message : "未知错误",
-			)}）</div>`;
-		}
 	}
 }
-
 function renderMessages() {
 	const view = state.view;
 	if (view === null || el.body === null) return;
 	announceNewMessages(view);
-	if (view.messages.length === 0) {
+	const rows = timelineOf(view);
+	const pendingNodes = pendingHtml(view);
+	if (rows.length === 0) {
 		el.body.innerHTML = `<div class="ch-empty">还没有消息。${view.channel.kind === "project" ? "在项目群里 @ 某人开始协作。" : ""}</div>`;
+		el.body.append(...pendingNodes);
 		return;
 	}
 
-	const html = [];
+	const fragment = document.createDocumentFragment();
 	// 更早的消息：服务端有 before 游标（每频道保留 800 条），前端以前硬编码
 	// `?limit=60` 且从不翻页，用户只能看到最近 60 条，更早的等于不存在。
 	if (view.hasMore) {
 		const firstSeq = view.messages[0]?.seq ?? 0;
-		html.push(`<button class="ch-load-more" type="button" data-before="${firstSeq}">加载更早的消息</button>`);
+		fragment.append(htmlToNode(`<button class="ch-load-more" type="button" data-before="${firstSeq}">加载更早的消息</button>`));
 	}
+	// 流水还有更早的：哨兵放在最上面，滚到顶自动续（#1：私聊里历史要能一路往回翻）。
+	if (state.activity !== null && state.activity.hasMore) {
+		fragment.append(
+			htmlToNode(
+				`<div class="ch-activity-more"><button class="ch-load-more" type="button">加载更早的记录</button></div>`,
+			),
+		);
+	}
+
 	let lastFrom = null;
 	let lastAt = 0;
 	let lastDay = "";
-	for (const message of view.messages) {
-		const grouped = message.from === lastFrom && message.at - lastAt < 5 * 60_000 && message.kind === "chat";
-		lastFrom = message.from;
-		lastAt = message.at;
-
-		const day = dayKey(message.at);
+	for (let index = 0; index < rows.length; index += 1) {
+		const row = rows[index];
+		const at = row.at;
+		const day = dayKey(at);
 		if (day !== lastDay) {
-			html.push(`<div class="ch-day">${escapeHtml(dayLabel(message.at))}</div>`);
+			fragment.append(htmlToNode(`<div class="ch-day">${escapeHtml(dayLabel(at))}</div>`));
 			lastDay = day;
 		}
 
-		if (message.kind === "system") {
-			html.push(`<div class="ch-system">${escapeHtml(message.text)}</div>`);
-			continue;
-		}
-		if (message.kind === "task" || message.kind === "report") {
-			html.push(renderCard(message));
+		if (row.kind === "trace") {
+			// 流水不参与「同一个人连续发言折叠」：它夹在消息之间，视觉上必须独立成行。
+			lastFrom = null;
+			lastAt = 0;
+			// 连续的流水攒成一组再渲染（见 renderTraceGroup）。
+			// **失败的工具调用会破组**：它必须立刻可见，不能被折进「N 步操作」里。
+			const batch = [];
+			while (index < rows.length && rows[index].kind === "trace") {
+				const item = rows[index].item;
+				if (item.kind === "tool" && item.isError === true) {
+					if (batch.length > 0) {
+						fragment.append(renderTraceGroup(batch));
+						batch.length = 0;
+					}
+					fragment.append(renderTraceGroup([item]));
+					index += 1;
+					continue;
+				}
+				batch.push(item);
+				index += 1;
+			}
+			if (batch.length > 0) fragment.append(renderTraceGroup(batch));
 			continue;
 		}
 
-		html.push(
-			[
-				`<div class="ch-msg" data-from="${message.from}" data-grouped="${grouped ? "true" : "false"}">`,
-				// 头像始终渲染（折叠时 CSS 隐藏）：留空会让 grid 把正文挤进 32px 列
-				renderAvatar(message),
-				`<div class="ch-msg-main">`,
-				grouped ? "" : renderMsgHead(message),
-				renderBubble(message.text, message.seq),
-				renderMentions(message),
-				`</div>`,
-				`</div>`,
-			].join(""),
+		const message = row.message;
+		const grouped = message.from === lastFrom && at - lastAt < 5 * 60_000 && message.kind === "chat";
+		lastFrom = message.from;
+		lastAt = at;
+
+		if (message.kind === "system") {
+			fragment.append(htmlToNode(`<div class="ch-system">${escapeHtml(message.text)}</div>`));
+			continue;
+		}
+		if (message.kind === "task" || message.kind === "report") {
+			fragment.append(htmlToNode(renderCard(message)));
+			continue;
+		}
+
+		fragment.append(
+			htmlToNode(
+				[
+					`<div class="ch-msg" data-from="${message.from}" data-grouped="${grouped ? "true" : "false"}">`,
+					// 头像始终渲染（折叠时 CSS 隐藏）：留空会让 grid 把正文挤进 32px 列
+					renderAvatar(message),
+					`<div class="ch-msg-main">`,
+					grouped ? "" : renderMsgHead(message),
+					renderBubble(message.text, message.seq),
+					renderMentions(message),
+					`</div>`,
+					`</div>`,
+				].join(""),
+			),
 		);
 	}
-	el.body.innerHTML = html.join("");
-	for (const button of el.body.querySelectorAll(".ch-load-more")) {
+
+	el.body.replaceChildren(fragment);
+	// 待办排在最后一条消息之后：它是「有人在等你回话」，属于对话的延续，
+	// 不是另一块区域（顶部黄框那套做法用户明确否掉过）。
+	el.body.append(...pendingNodes);
+	for (const button of el.body.querySelectorAll(".ch-load-more[data-before]")) {
 		button.addEventListener("click", () => loadEarlier(Number(button.dataset.before)));
 	}
+	for (const button of el.body.querySelectorAll(".ch-activity-more .ch-load-more")) {
+		button.addEventListener("click", () => void loadMoreActivity());
+	}
+	observeActivitySentinel();
 	// 展开全文（事件委托：消息流每次全量重渲染，逐个绑定会漏）
 	for (const button of el.body.querySelectorAll(".ch-expand")) {
 		button.addEventListener("click", () => {
@@ -763,6 +808,25 @@ function renderMessages() {
 			button.remove();
 		});
 	}
+}
+
+/** 把一段 HTML 字符串变成节点（用于往 fragment 里塞，避免 innerHTML 整段重建）。 */
+function htmlToNode(html) {
+	const template = document.createElement("template");
+	template.innerHTML = html.trim();
+	return template.content.firstElementChild ?? document.createElement("div");
+}
+
+/**
+ * 当前频道里等老板拍板的卡片节点。
+ *
+ * 数据来自 `/api/channels/:id` 的 `pending`（后端算好归属与权限），这里只负责画。
+ * 没传 `pending` 字段（旧后端）时静默降级成空数组，不至于整片消息流白屏。
+ */
+function pendingHtml(view) {
+	if (pendingCards === null) return [];
+	const items = Array.isArray(view.pending) ? view.pending : [];
+	return items.map((item) => pendingCards.render(item));
 }
 
 /**
@@ -1101,13 +1165,15 @@ function insertMention(label) {
  * 所以「发送失败」是彻底静默的。现在由 app.js 注入真正的 toast。
  */
 let toast = null;
+/** #2：频道里的角色档案面板（initChannels 里赋值）。 */
+let profile = null;
 function notify(text, tone = "info") {
 	if (toast !== null) toast(text, tone);
 	else if (tone === "error") console.error("[频道]", text);
 }
 
 /** 挂载到 #channels 容器（由 app.js 在切到频道视图时调用）。 */
-export function initChannels({ onToast } = {}) {
+export function initChannels({ onToast, fetchProfile } = {}) {
 	toast = typeof onToast === "function" ? onToast : null;
 	el.root = $("channels");
 	if (el.root === null) return { refresh: () => {}, open: () => {} };
@@ -1125,23 +1191,48 @@ export function initChannels({ onToast } = {}) {
 	el.mention = $("ch-mention-popup");
 	el.side = $("ch-side");
 	el.sideToggle = $("ch-side-toggle");
-	el.tabs = $("ch-tabs");
-	el.tabChat = $("ch-tab-chat");
-	el.tabActivity = $("ch-tab-activity");
-	el.activity = $("ch-activity");
+	el.fold = $("ch-fold");
+	el.dock = $("ch-dock");
+
+	// 待办卡片：答复/处置成功后重拉一次频道，让卡片从流里消失。
+	// 不直接删 DOM——成功与否的真相在后端，重拉一次最不容易两边不一致。
+	pendingCards = initPending({
+		onSettled: () => {
+			if (state.activeId !== null) void openChannel(state.activeId, { userInitiated: false });
+		},
+	});
+	// 卡片在消息流里，每次轮询都整段重建，所以用事件委托（逐卡绑定会每轮泄漏 listener）。
+	el.body?.addEventListener("click", (event) => {
+		if (pendingCards.onClick(event)) event.preventDefault();
+	});
+	el.body?.addEventListener("submit", (event) => {
+		pendingCards.onSubmit(event);
+	});
+	el.body?.addEventListener("keydown", (event) => {
+		pendingCards.onKeydown(event);
+	});
+
+	// #2：角色档案面板。与对话面板共用 profile.js，只是挂载到 #ch-dock、
+	// 由 #ch-fold 控制。`fetchProfile` 由 initChannels 的 options 注入（app.js 提供）。
+	profile = initProfile({
+		fetchProfile: typeof fetchProfile === "function" ? fetchProfile : undefined,
+		dock: el.dock,
+		trigger: el.fold,
+		onToggle: (open) => {
+			if (el.fold === null) return;
+			el.fold.dataset.state = open ? "open" : "closed";
+			el.fold.setAttribute("aria-expanded", String(open));
+		},
+	});
+	el.fold?.addEventListener("click", () => {
+		const id = activityStaffId();
+		if (id === null) return;
+		if (profile.isOpen()) profile.close();
+		else profile.open(id, { label: state.view?.channel.title ?? "职工" });
+	});
 
 	$("ch-back")?.addEventListener("click", () => {
 		if (el.layout !== null) el.layout.dataset.pane = "list";
-	});
-
-	// UX-7：对话 / 工作记录 分区切换（仅私聊可见）。
-	el.tabChat?.addEventListener("click", () => {
-		state.subTab = "chat";
-		applySubTab();
-	});
-	el.tabActivity?.addEventListener("click", () => {
-		state.subTab = "activity";
-		applySubTab();
 	});
 
 	// 成员栏开关（UX-6）：只切 state + 重写 DOM 属性，不重拉数据、不重建 DOM。

@@ -122,48 +122,54 @@
 	animation: motion-shimmer 1.4s linear infinite;
 }
 
-/* ── 主视图切换过渡（.org / .board / .channels 由 shell.css 负责显隐） ────────
-   UX-3：与 settings.css 的「对话↔设置」同构 —— 只写 transition，不写 animation，
-   不挂 animationend 回调（app.js 的 applyView 一行不改）：连续快速切换由下一次
-   状态自然接管，可中断、可反向。
+/* ── 主视图切换入场（.org / .board / .channels 由 shell.css 负责显隐） ─────
+   #5：老板反馈「组织 / 频道 / 看板 切换缺少动画」。
 
-   ⚠️ 注意：这里把 `animation: none` 显式写上，是为了覆盖历史上那版
-   `animation: motion-fade-in` 的写法，避免 animation 与 transition 两套并存。 */
-.org,
-.board,
-.channels {
-	animation: none;
-	opacity: 0;
-	transform: translateY(4px);
-	transition:
-		opacity var(--motion) var(--ease-out),
-		transform var(--motion) var(--ease-out),
-		display var(--motion) allow-discrete;
+   曾经这里写的是 transition + @starting-style + `transition: display allow-discrete`，
+   实测**完全不生效**：`@starting-style` 里的声明处于最低优先级的层，而
+   `body[data-view="org"] .org { opacity: 1 }` 这条常规规则同时命中且优先级更高，
+   于是「起始值」被算成 1 —— 首帧就已经是终态，没有过渡可播。
+   （用 scripts/ui-shot.mjs 探针实测：切回来那一帧 opacity 就是 1。）
+
+   所以改用**动画**：由 app.js 的 applyView() 给新视图挂 `data-enter`，
+   本文件只负责那一个关键帧。动画不依赖 display 的离散过渡，也不依赖
+   @starting-style，所有支持 CSS 动画的浏览器都能播；播完由 JS 摘掉属性，
+   不残留 will-change，不干扰后续布局。 */
+.org[data-enter="true"],
+.board[data-enter="true"],
+.channels[data-enter="true"] {
+	animation: motion-view-in 200ms var(--ease-out) both;
 }
 
-/* 入场起点：从 display:none 变可见的第一帧取值（不支持的浏览器忽略此块，
-   退化为“直接出现”——功能不受影响，只是没有动效）。 */
-@starting-style {
-	body[data-view="board"] .board,
-	body[data-view="channels"] .channels,
-	body[data-view="org"] .org,
-	body:not([data-view]) .org {
+@keyframes motion-view-in {
+	from {
 		opacity: 0;
-		transform: translateY(4px);
+		transform: translateY(4px) scale(0.996);
+	}
+	to {
+		opacity: 1;
+		transform: none;
 	}
 }
 
-/* 可见态（选择器优先级高于上面的基准态，否则 opacity 会停在 0 → 页面空白）。 */
-body[data-view="board"] .board,
-body[data-view="channels"] .channels,
-body[data-view="org"] .org,
-body:not([data-view]) .org {
-	opacity: 1;
-	transform: none;
+/* 顶部视图切换按钮的选中态也做过渡（老板点下去要有反馈，不是瞬间跳色）。 */
+.view-switch-btn {
+	transition:
+		color var(--motion-fast) var(--ease-out),
+		background-color var(--motion-fast) var(--ease-out),
+		border-color var(--motion-fast) var(--ease-out);
 }
 
 /* ── 减少动效：全部停掉，只保留不透明度终态 ───────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
+	.org[data-enter="true"],
+	.board[data-enter="true"],
+	.channels[data-enter="true"],
+	.view-switch-btn {
+		animation: none !important;
+		transition: none !important;
+	}
+
 	.motion-fade,
 	.motion-pop,
 	.motion-rise,

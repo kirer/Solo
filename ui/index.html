@@ -27,13 +27,15 @@
 	<link rel="stylesheet" href="css/tokens.css">
 	<link rel="stylesheet" href="css/shell.css">
 	<link rel="stylesheet" href="css/graph.css">
-	<link rel="stylesheet" href="css/chat.css">
+	<link rel="stylesheet" href="css/profile.css">
+	<link rel="stylesheet" href="css/markdown.css">
 	<link rel="stylesheet" href="css/settings.css">
 	<link rel="stylesheet" href="css/board.css">
 	<link rel="stylesheet" href="css/channels.css">
+	<link rel="stylesheet" href="css/pending.css">
 	<link rel="stylesheet" href="css/motion.css">
 </head>
-<body data-chat="open" data-sheet="closed" data-view-aside="chat">
+<body data-settings="closed">
 	<div class="app">
 		<header class="topbar">
 			<div class="brand">
@@ -60,12 +62,7 @@
 					</button>
 					<button class="view-switch-btn" type="button" role="tab" id="view-board" aria-selected="false" title="任务看板">看板</button>
 				</div>
-				<button class="topbar-btn" type="button" id="chat-toggle" aria-label="对话面板" aria-pressed="true" title="对话面板（⌘J）">
-					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-						<path d="M20 12.5a7.6 7.6 0 0 1-8 7.5 8.8 8.8 0 0 1-2.6-.4L4 21l1.4-4.1A7.3 7.3 0 0 1 4 12.5 7.6 7.6 0 0 1 12 5a7.6 7.6 0 0 1 8 7.5Z"/>
-					</svg>
-				</button>
-				<button class="topbar-btn" type="button" id="settings-toggle" aria-label="设置" aria-controls="chat" aria-expanded="false" title="设置">
+				<button class="topbar-btn" type="button" id="settings-toggle" aria-label="设置" aria-controls="aside-slot" aria-expanded="false" title="设置">
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 						<circle cx="12" cy="12" r="3"/>
 						<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>
@@ -78,7 +75,7 @@
 			<main class="stage" id="stage">
 				<div class="stage-bg" id="stage-bg" aria-hidden="true"></div>
 				<div class="stage-inner">
-					<section class="org" aria-label="组织架构">
+					<section class="org" id="org" aria-label="组织架构">
 						<div class="graph" id="graph">
 							<div class="graph-loading"><i></i>正在连接公司…</div>
 						</div>
@@ -99,8 +96,17 @@
 										<b class="ch-title" id="ch-title">频道</b>
 										<span class="ch-sub" id="ch-sub"></span>
 									</div>
-									<!-- 成员栏开关（UX-6）：默认收起，点开才看。dm/log 频道由 channels.js 隐藏此按钮。 -->
+									<!-- 成员栏开关（UX-6）：默认收起，点开才看。dm 频道由 channels.js 隐藏此按钮。 -->
 									<div class="ch-head-side">
+										<!-- 角色档案（#2）：与对话面板的 #chat-fold 同构，展开到下方 #ch-dock。
+										     私聊里档案对象就是对方；群聊里是频道本身（成员清单）。 -->
+										<button class="ch-side-toggle" type="button" id="ch-fold"
+										        aria-label="角色档案" title="角色档案"
+										        aria-controls="ch-dock" aria-expanded="false" hidden>
+											<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+												<path d="m6 9 6 6 6-6"/>
+											</svg>
+										</button>
 										<button class="ch-side-toggle" type="button" id="ch-side-toggle"
 										        aria-label="成员" title="成员"
 										        aria-controls="ch-side" aria-expanded="false">
@@ -110,16 +116,12 @@
 										</button>
 									</div>
 								</header>
-								<!-- UX-7：私聊里「对话 / 工作记录」两个分区并列，不混流（老板：讨论不需要）。
-								     只有 dm 频道显示这两个 tab，其余频道隐藏。 -->
-								<div class="ch-tabs" id="ch-tabs" role="tablist" aria-label="私聊视图" hidden>
-									<button class="ch-tab" type="button" role="tab" id="ch-tab-chat" aria-selected="true" aria-controls="ch-body">对话</button>
-									<button class="ch-tab" type="button" role="tab" id="ch-tab-activity" aria-selected="false" aria-controls="ch-activity">工作记录</button>
-								</div>
+								<!-- 角色档案面板（#2）：从对话面板搬过来的同一个 profile 渲染器。
+								     结构与 #chat-dock 完全一致（grid 0fr→1fr），样式复用 .chat-dock 那套。 -->
+								<div class="chat-dock ch-dock" id="ch-dock" hidden></div>
+								<!-- #1 / #4：私聊不再有「对话 / 工作记录」分区。员工说过的话、想过的过程、
+								     调过的工具全部混在一条时间线里，思考与工具调用默认折叠。 -->
 								<div class="ch-body" id="ch-body" role="log" aria-label="消息流" tabindex="0"></div>
-								<!-- UX-7：工作记录区（工具调用 + 思考过程）。内容由 channels.js 渲染，
-								     复用 feed-render.js 的 renderTool / renderThinking（与组织页聊天同一套）。 -->
-								<div class="ch-activity" id="ch-activity" role="log" aria-label="工作记录" tabindex="0" hidden></div>
 								<!-- 读屏播报只走这一小块：整个消息区挂 aria-live 的话，每次轮询
 								     全量重渲染都会把整段历史重播一遍，读屏用户会被淹没。 -->
 								<div class="sr-only" id="ch-announcer" role="status" aria-live="polite"></div>
@@ -149,78 +151,14 @@
 				</div>
 			</main>
 
-			<div class="chat-resizer" id="chat-resizer" role="separator" aria-orientation="vertical" aria-label="拖动调整对话面板宽度" title="拖动调整宽度 · 双击复位" tabindex="0"></div>
+			<!-- 设置：右侧抽屉。老板拍板去掉右侧对话面板之后，这块槽位只承载设置。
+			     宽度由 --chat-w 驱动，body[data-settings="open|closed"] 控制展开。 -->
+			<div class="aside-slot settings-slot" id="aside-slot">
 
-			<!-- 对话 / 设置：同一块并排槽位（#aside-slot）里的两个互斥视图。
-			     槽位宽度仍由 --chat-w 驱动，body[data-view-aside] 决定谁是当前视图。
-			     设置不再是浮层：不覆盖、不弹窗，只是把对话换下来。 -->
-			<div class="aside-slot" id="aside-slot">
-			<aside class="chat" id="chat" aria-label="对话">
-				<header class="chat-head">
-					<div class="chat-ident">
-						<span class="avatar avatar--lg" id="chat-avatar" aria-hidden="true">·</span>
-						<div class="chat-meta">
-							<div class="chat-title-row">
-								<b class="chat-title" id="chat-title">选择一位同事</b>
-								<span class="pill" id="chat-status" data-state="idle"><i></i><span id="chat-status-text">空闲</span></span>
-							</div>
-							<div class="chat-role" id="chat-role">点组织图里的任意卡片</div>
-						</div>
-					</div>
-					<div class="chat-actions">
-						<span class="chat-token-count" id="chat-tokens" title="本会话 token"></span>
-						<button class="icon-btn" type="button" id="chat-fold" aria-label="查看角色档案" title="查看角色档案（提示词与技能）" aria-haspopup="dialog" aria-expanded="false" hidden>
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-								<path d="m6 9 6 6 6-6"/>
-							</svg>
-						</button>
-						<button class="icon-btn chat-collapse-desktop" type="button" id="chat-collapse" aria-label="收起对话" title="收起对话">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-								<path d="m9 5 7 7-7 7"/>
-							</svg>
-						</button>
-						<button class="icon-btn chat-close-mobile" type="button" id="chat-close" aria-label="关闭对话" title="关闭对话">
-							<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-								<path d="M6 6l12 12M18 6 6 18"/>
-							</svg>
-						</button>
-					</div>
-				</header>
-
-				<!-- 角色档案 / 预置词 / 能力：与对话面板同宽，在标题栏展开收起（不悬浮） -->
-				<div class="chat-dock" id="chat-dock" hidden></div>
-
-				<div class="chat-body" id="chat-body" role="log" aria-live="polite" aria-label="对话内容" tabindex="0"></div>
-
-				<footer class="chat-foot">
-					<form class="composer" id="composer" autocomplete="off">
-						<label class="sr-only" for="input">消息</label>
-						<!-- 附件托盘：文件 / 粘贴图片（内容由 ui/js/chat.js 渲染） -->
-						<div class="attach-tray" id="attach-tray" hidden></div>
-						<div class="composer-main">
-							<button class="icon-btn composer-attach" type="button" id="attach" aria-label="添加附件" title="添加附件（支持粘贴图片、拖入文件）">
-								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-									<path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7-7"/>
-								</svg>
-							</button>
-							<textarea id="input" rows="1" placeholder="说点什么…（@ 找人，可粘贴图片）" enterkeyhint="send"></textarea>
-							<button class="send" id="send" type="submit" aria-label="发送" disabled>
-								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-									<path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/>
-								</svg>
-							</button>
-						</div>
-						<input type="file" id="file-input" hidden multiple>
-						<!-- @ 提及弹层：内容由 ui/js/chat.js 渲染，位置相对输入框 -->
-						<div class="mention-pop" id="mention-pop" hidden></div>
-					</form>
-				</footer>
-			</aside>
-
-			<section class="settings" id="settings" role="region" aria-label="设置" aria-hidden="true">
+			<section class="settings" id="settings" role="region" aria-label="设置">
 				<header class="settings-head">
 					<b>设置</b>
-					<button class="icon-btn" type="button" id="settings-close" aria-label="返回对话" title="返回对话（Esc）">
+					<button class="icon-btn" type="button" id="settings-close" aria-label="关闭设置" title="关闭设置（Esc）">
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
 							<path d="M6 6l12 12M18 6 6 18"/>
 						</svg>
@@ -272,7 +210,6 @@
 
 	<div class="profile-layer" id="profile-layer" hidden></div>
 
-	<div class="scrim" id="scrim" hidden></div>
 
 	<script type="module" src="js/app.js"></script>
 </body>

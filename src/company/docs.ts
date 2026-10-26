@@ -142,6 +142,49 @@ export const AuditDoc = defineDoc<{ events: AuditEvent[] }>({
 	checkpointWhen: everyNItems<{ events: readonly unknown[] }>((value) => value.events.length),
 });
 
+/**
+ * 「我最近是被哪条频道消息叫醒的」。
+ *
+ * 为什么需要它：`say` / `ask` 不传 `channel` 时要自己推断「我在哪发言」，
+ * 而推断只按角色（员工→项目群、管理层→领导层群）——**完全不知道叫醒自己的
+ * 是哪条消息**。于是老板在 `dm:13` 私聊 CFO，CFO 一开口却跑去了领导层群
+ * （老板实测的「私聊不回复、跑到群里去了」）。
+ *
+ * 投递时（`deliver.ts`）明明把 `channelId` 写进了 `app.channel` 条目，但那是
+ * 会话流里的 entry，工具读不到。这里把同一份信息落成**会话级文档**，工具
+ * 用 `api.snapshot` 直接读，不需要翻会话历史。
+ */
+export type ReplyContextState = {
+	/** 最近一次被频道消息叫醒时所在的频道标识。 */
+	channelId?: string;
+	/** 那条消息的序号。 */
+	seq?: number;
+	/** 谁发的（会话标识）。 */
+	from?: number;
+	/** 发送者显示名。 */
+	fromLabel?: string;
+	/** 这条消息是否 @ 了我。 */
+	mentioned?: boolean;
+	/** 记录时间。 */
+	at?: number;
+};
+
+/**
+ * 会话级「回复上下文」。
+ *
+ * `history: "latest"`：只关心最新一次，不需要回溯；`fork: "initial"`：
+ * 分叉出来的会话不该继承「我刚被谁叫醒」——那是别人的对话现场。
+ */
+export const ReplyContextDoc = defineDoc<ReplyContextState>({
+	kind: "app.reply-context",
+	version: 1,
+	scope: "conversation",
+	history: "latest",
+	fork: "initial",
+	initial: () => ({}),
+	checkpointWhen: () => false,
+});
+
 /** 预算状态。 */
 export type BudgetState = {
 	/** 美元上限；0 表示不限。 */

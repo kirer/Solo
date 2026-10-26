@@ -15,7 +15,7 @@ src/server/   5006 行   HTTP + SSE + 设置 + 附件
 src/tui/      1267 行   终端界面
 scripts/                边界检查、截图、UI 检查
 test/                   unit(20) / contract(1) / e2e(28)，共约 770 个 case
-ui/                     原生 JS，25 个文件，9260 行
+ui/                     原生 JS，25 个文件，13351 行
 ```
 
 **分层是被强制的**，不是约定：
@@ -359,18 +359,26 @@ main.ts    187 行
 ### 6.3 前端 `ui/`（原生 JS，无框架）
 
 ```
-index.html      270 行
-js/app.js  board.js  channels.js  chat.js  org.js  profile.js  settings.js
-   markdown.js  icons.js  format.js  edges.js  starfield.js  dev-fixtures.js  ask.js
-css/tokens.css shell.css chat.css board.css channels.css graph.css settings.css motion.css
+index.html      216 行
+js/app.js  board.js  channels.js  org.js  profile.js  settings.js
+   pending.js  markdown.js  feed-render.js  toast.js  icons.js  format.js
+   edges.js  starfield.js  dev-fixtures.js  dom-utils.js
+css/tokens.css shell.css graph.css profile.css markdown.css settings.css
+   board.css channels.css pending.css motion.css
 ```
 
-数据只走一个流接口（ADR-021）：`/api/stream/org` + `/api/stream/feed/:id`，SSE 不是 WebSocket（ADR-019）。
+数据只走一个流接口（ADR-021）：`/api/stream/org`（SSE，不是 WebSocket，ADR-019）。
+频道消息走 `/api/channels*` 轮询 + org 事件触发刷新。
+
+**右侧对话面板已删除**（`ui/js/chat.js` / `ui/js/ask.js` / `ui/css/chat.css` 已移除）：
+聊天入口只有频道视图的私聊，待办卡片内联在消息流里（`ui/js/pending.js`）。
+拆分出来的两个样式文件是从 chat.css 里救活的公共部分：`profile.css`（角色档案浮层 +
+`#ch-dock` 内嵌面板 + `chat-spinner`）与 `markdown.css`（`.md*` 全套 + 代码块复制按钮）。
 
 ### 6.4 可选的打包层（`ui/dist/`）
 
 `ui/` 源码保持「无构建」：25 个文件直接可读可改，改完刷新即生效。
-但首屏要发 24 个请求，走 Cloudflare 隧道时成本远超字节成本（详见 `docs/TUNNEL.md`），
+但首屏要发 12 个请求，走 Cloudflare 隧道时成本远超字节成本（详见 `docs/TUNNEL.md`），
 所以提供**一层可选产物**：
 
 ```bash

@@ -1025,81 +1025,82 @@
 	}
 }
 
-/* ── UX-7：私聊「对话 / 工作记录」分区 ──────────────────────────────────
-   只有 dm 频道显示 tab；其余频道由 JS 把 #ch-tabs 与 #ch-activity 都 hidden 掉，
-   布局与改动前完全一致。 */
+/* ── #1 / #4：私聊流水（思考 + 工具调用）混在消息流里 ──────────────────
+   以前是「对话 / 工作记录」两个 tab 互斥显示；现在是一条时间线，
+   流水条目默认折叠成一行，点开才看细节。 */
 
-.ch-tabs {
-	display: flex;
-	gap: 2px;
-	padding: 0 12px;
-	border-bottom: 1px solid var(--line);
-	background: var(--surface);
-	flex: none;
+/* 一组连续流水（见 renderTraceGroup）。默认收起成一行，点开才是明细。 */
+.ch-trace-group {
+	/* 与气泡左边对齐：头像 32px + 间距 10px，再留一点缩进表示「这是附属信息」 */
+	margin: 2px 16px 2px 58px;
+	border-left: 2px solid var(--line);
+	padding-left: 8px;
 }
 
-.ch-tab {
-	padding: 7px 10px 6px;
-	border: 0;
-	border-bottom: 1px solid transparent;
-	background: transparent;
-	color: var(--muted);
-	font: inherit;
-	font-size: 12px;
+.ch-trace-group[data-error="true"] {
+	border-left-color: var(--danger, #ff5f56);
+}
+
+.ch-trace-summary {
+	list-style: none;
 	cursor: pointer;
-	transition:
-		color var(--motion-fast) var(--ease-out),
-		border-color var(--motion-fast) var(--ease-out);
+	padding: 2px 0;
+	font-size: 11.5px;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+	/* 摘要行本身不该被选中，点它就是展开/收起 */
+	user-select: none;
 }
 
-.ch-tab:hover {
-	color: var(--ink);
+.ch-trace-summary::-webkit-details-marker {
+	display: none;
 }
 
-.ch-tab[aria-selected="true"] {
-	color: var(--ink);
-	border-bottom-color: var(--accent-line, var(--accent));
+.ch-trace-summary::before {
+	content: "▸ ";
+	display: inline-block;
+	transition: transform 150ms var(--ease-out);
 }
 
-.ch-tab:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+.ch-trace-group[open] > .ch-trace-summary::before {
+	content: "▾ ";
 }
 
-/* 工作记录区：与 .ch-body 同构（同一块位置，互斥显示）。 */
-.ch-activity {
-	flex: 1;
-	min-height: 0;
-	overflow-y: auto;
-	padding: 10px 16px 14px;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	outline: none;
+.ch-trace-summary:hover {
+	color: var(--muted);
 }
 
-.ch-activity-row {
+.ch-trace {
 	display: flex;
 	align-items: flex-start;
 	gap: 8px;
+	padding: 1px 0;
 }
 
-.ch-activity-row > .tool,
-.ch-activity-row > .think {
+.ch-trace > .tool,
+.ch-trace > .think {
 	flex: 1;
 	min-width: 0;
+	/* 流水是次要信息：压低对比度，不要抢气泡的注意力 */
+	opacity: 0.78;
+}
+
+.ch-trace:hover > .tool,
+.ch-trace:hover > .think,
+.ch-trace > details[open] {
+	opacity: 1;
 }
 
 /* 失败的工具调用必须能一眼看出来（负责人 #236）。
-   renderTool 已写 data-state="error"，这里再叠一层左侧红条 —— 
+   renderTool 已写 data-state="error"，这里再叠一层左侧红条 ——
    不依赖对 state 取值的推演，也不改 chat.css 的既有样式。 */
-.ch-activity-row[data-error="true"] {
+.ch-trace[data-error="true"] {
 	border-left: 2px solid var(--danger, #ff5f56);
 	padding-left: 6px;
 	margin-left: -8px;
 }
 
-.ch-activity-time {
+.ch-trace-time {
 	flex: none;
 	padding-top: 6px;
 	font-size: 10.5px;
@@ -1107,16 +1108,30 @@
 	font-variant-numeric: tabular-nums;
 }
 
-.ch-activity-empty {
-	padding: 28px 12px;
-	text-align: center;
-	color: var(--faint);
-	font-size: 12px;
-}
-
 .ch-activity-more {
 	padding: 4px 0 10px;
 	text-align: center;
 	font-size: 11.5px;
 	color: var(--faint);
+}
+
+/* ── #2：频道里的角色档案面板（与对话面板的 #chat-dock 同构） ───────────
+   结构复用 .chat-dock 那套（grid 0fr→1fr + 透明度），这里只补频道侧的差异：
+   · 频道三栏的高度链更紧，面板上限压到 32dvh（对话面板是 36dvh）；
+   · 展开时给一条下边框，与消息流分开（对话面板那边本来就有 border-bottom）。 */
+.ch-dock {
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.ch-dock .chat-dock-panel {
+	max-height: min(32dvh, 320px);
+}
+
+/* 折叠箭头跟着 #ch-fold 的状态转（与 #chat-fold 一致）。 */
+#ch-fold svg {
+	transition: transform 180ms var(--ease-out);
+}
+
+#ch-fold[data-state="open"] svg {
+	transform: rotate(180deg);
 }

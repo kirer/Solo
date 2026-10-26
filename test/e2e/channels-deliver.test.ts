@@ -80,14 +80,16 @@ afterEach(async () => {
 });
 
 describe("频道自动创建", () => {
-	test("建出公司大群、领导层群、项目群、个人记录", async () => {
+	test("建出公司大群、领导层群、项目群、私聊", async () => {
 		const { runtime } = await setup();
 		const state = await readChannels(runtime, BACKGROUND_CONTEXT);
 		const ids = Object.keys(state.channels);
 		expect(ids).toContain("company");
 		expect(ids).toContain("leadership");
 		expect(ids).toContain("proj:alpha");
-		expect(ids.some((id) => id.startsWith("log:"))).toBe(true);
+		// #4 / #15：`log:` 频道不再创建。老板的口径是「工作记录就是他本人在说话」，
+		// 所以流水直接长在私聊里，不再有独立频道。
+		expect(ids.some((id) => id.startsWith("log:"))).toBe(false);
 	});
 
 	test("公司大群包含老板与全部员工（老板要求）", async () => {
@@ -364,6 +366,89 @@ describe("@ 已读标记（灰点变绿点）", () => {
 		const channel = await readChannel(runtime, "proj:alpha", BACKGROUND_CONTEXT);
 		const message = channel?.messages.find((entry) => entry.seq === posted.message.seq);
 		expect(message?.readBy).toContain(project.leader);
+	});
+
+	/**
+	 * 老板实测「已读状态的点不好使」。
+	 *
+	 * 前端上报的是「我渲染到的最后一条」，一次可能跨几十条。旧实现只标 `seq`
+	 * 这一条，中间的 @ 永远不更新 —— 于是除非恰好停在被 @ 的那一条，绿点永远灰着。
+	 */
+	test("读到第 N 条时，N 之前（含）的所有 @ 都标已读", async () => {
+		const { runtime, project } = await setup();
+		const first = await postToChannel(
+			runtime,
+			"proj:alpha",
+			{
+				from: OWNER_ID,
+				fromLabel: "老板",
+				kind: "question",
+				text: "@负责人 第一问",
+				mentions: [project.leader],
+			},
+			{ context: BACKGROUND_CONTEXT },
+		);
+		const middle = await postToChannel(
+			runtime,
+			"proj:alpha",
+			{
+				from: OWNER_ID,
+				fromLabel: "老板",
+				kind: "question",
+				text: "@负责人 第二问",
+				mentions: [project.leader],
+			},
+			{ context: BACKGROUND_CONTEXT },
+		);
+		const last = await postToChannel(
+			runtime,
+			"proj:alpha",
+			{ from: OWNER_ID, fromLabel: "老板", kind: "chat", text: "随便说一句（没有 @" },
+			{ context: BACKGROUND_CONTEXT },
+		);
+
+		// 用户渲染到 last，中间的 first/middle 都该算已读
+		await markMentionSeen(runtime, "proj:alpha", last.message.seq, project.leader, BACKGROUND_CONTEXT);
+
+		const channel = await readChannel(runtime, "proj:alpha", BACKGROUND_CONTEXT);
+		const bySeq = new Map(channel?.messages.map((entry) => [entry.seq, entry]) ?? []);
+		expect(bySeq.get(first.message.seq)?.readBy).toContain(project.leader);
+		expect(bySeq.get(middle.message.seq)?.readBy).toContain(project.leader);
+	});
+
+	test("只标到 seq 为止：后面的 @ 不算已读", async () => {
+		const { runtime, project } = await setup();
+		const early = await postToChannel(
+			runtime,
+			"proj:alpha",
+			{
+				from: OWNER_ID,
+				fromLabel: "老板",
+				kind: "question",
+				text: "@负责人 先问这个",
+				mentions: [project.leader],
+			},
+			{ context: BACKGROUND_CONTEXT },
+		);
+		const later = await postToChannel(
+			runtime,
+			"proj:alpha",
+			{
+				from: OWNER_ID,
+				fromLabel: "老板",
+				kind: "question",
+				text: "@负责人 后问这个",
+				mentions: [project.leader],
+			},
+			{ context: BACKGROUND_CONTEXT },
+		);
+
+		await markMentionSeen(runtime, "proj:alpha", early.message.seq, project.leader, BACKGROUND_CONTEXT);
+
+		const channel = await readChannel(runtime, "proj:alpha", BACKGROUND_CONTEXT);
+		const bySeq = new Map(channel?.messages.map((entry) => [entry.seq, entry]) ?? []);
+		expect(bySeq.get(early.message.seq)?.readBy).toContain(project.leader);
+		expect(bySeq.get(later.message.seq)?.readBy).not.toContain(project.leader);
 	});
 });
 

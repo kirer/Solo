@@ -49,7 +49,7 @@ const options = {
 	sizes: ["1440x900"],
 	scale: 2,
 	wait: 1400,
-	ready: ".org-head, .chat-head",
+	ready: ".org-head, .ch-layout",
 	actions: [],
 	evals: [],
 	full: false,
@@ -404,14 +404,14 @@ try {
 				scrollWidth: document.documentElement.scrollWidth,
 				clientWidth: document.documentElement.clientWidth,
 				scrollHeight: document.documentElement.scrollHeight,
-				chat: document.querySelector('.chat')?.getBoundingClientRect().width ?? 0,
+				dock: Math.round(document.querySelector('#ch-dock')?.getBoundingClientRect().width ?? 0),
 				nodes: document.querySelectorAll('[data-conv]').length,
 				edges: document.querySelectorAll('.edge').length,
 			})`,
 		);
 		const overflow = summary.scrollWidth > summary.clientWidth + 1;
 		console.log(
-			`[${sizeLabel}] 页面 ${summary.scrollWidth}x${summary.scrollHeight} · 聊天 ${Math.round(summary.chat)}px · 节点 ${summary.nodes} · 连线 ${summary.edges}${overflow ? " · 横向溢出" : ""}`,
+			`[${sizeLabel}] 页面 ${summary.scrollWidth}x${summary.scrollHeight} · 档案 ${summary.dock}px · 节点 ${summary.nodes} · 连线 ${summary.edges}${overflow ? " · 横向溢出" : ""}`,
 		);
 		if (overflow) console.error("  横向溢出：页面比视口宽，移动端会出现横向滚动");
 	}

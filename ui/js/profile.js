@@ -8,6 +8,10 @@
  * 兜底：页面没有 #chat-dock 时（例如模块单独跑），退回旧的悬浮层 #profile-layer，
  * 保证这个模块不依赖外壳 DOM 也能工作——但默认路径永远是内嵌。
  *
+ * 两个挂载点（老板 #2）：对话面板里的 #chat-dock，以及频道视图右上角按钮打开的
+ * #ch-dock。用 `dock` 参数指定；不传就是 #chat-dock（保持向后兼容）。
+ * 同一份渲染逻辑跑两次，互不干扰（各自一份 open/token 状态）。
+ *
  * 数据来自 app.js 注入的 fetchProfile（GET /api/profile/:conversationId）。
  * 三种降级都必须有字：加载中 / 请求失败 / 没有档案。
  */
@@ -125,12 +129,17 @@ function layerNode() {
 
 /**
  * @param {{ fetchProfile?: (conversationId: number) => Promise<any>,
- *           onToggle?: (open: boolean) => void }} options
+ *           onToggle?: (open: boolean) => void,
+ *           dock?: HTMLElement | null,
+ *           trigger?: HTMLElement | null }} options
+ *   `dock`：挂载点，默认 `#chat-dock`。
+ *   `trigger`：收起时把焦点还回去的按钮，默认 `#chat-fold`。
  * @returns {{ open: (conversationId: number, actor?: any) => void, close: () => void, isOpen: () => boolean }}
  */
-export function initProfile({ fetchProfile, onToggle } = {}) {
-	const dock = $("chat-dock");
-	const inline = dock !== null;
+export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger } = {}) {
+	const dock = dockEl ?? $("chat-dock");
+	const inline = dock !== null && dock !== undefined;
+	const focusBack = trigger ?? $("chat-fold");
 
 	let root;
 	let clip;
@@ -304,7 +313,7 @@ export function initProfile({ fetchProfile, onToggle } = {}) {
 			finishClose();
 		}
 		onToggle?.(false);
-		$("chat-fold")?.focus({ preventScroll: true });
+		focusBack?.focus?.({ preventScroll: true });
 	}
 
 	return {

@@ -182,22 +182,6 @@
 	background: var(--run);
 }
 
-/* ── 遮罩（手机抽屉用） ───────────────────────────────────────────────── */
-.scrim {
-	position: fixed;
-	inset: 0;
-	z-index: 60;
-	background: rgba(5, 5, 4, 0.66);
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity var(--dur) var(--ease-out);
-}
-
-body[data-sheet="open"] .scrim {
-	opacity: 1;
-	pointer-events: auto;
-}
-
 /* ── 平板 ─────────────────────────────────────────────────────────────── */
 @media (max-width: 1100px) {
 	:root {
@@ -263,11 +247,6 @@ body[data-sheet="open"] .scrim {
 	.stage-inner {
 		padding: var(--sp-2) var(--sp-3) var(--sp-4);
 	}
-}
-
-/* 浅色下遮罩别压得太黑 */
-[data-resolved="light"] .scrim {
-	background: rgba(20, 22, 26, 0.34);
 }
 
 /* ============================================================================

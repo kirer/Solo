@@ -121,8 +121,8 @@ export type Feed = {
 	 * 是否在等老板拍板。
 	 *
 	 * @deprecated ADR-026 决策 2（落地第 3 步）已把它泛化为 {@link awaitingDecision}。
-	 * 保留为**派生字段**而不是删掉：现有界面（`ui/js/chat.js`）与设备数据
-	 * （`ui/js/dev-fixtures.js`）还在读它，改结构不能把界面搞坏。
+	 * 保留为**派生字段**而不是删掉：设备数据（`ui/js/dev-fixtures.js`）还在读它，
+	 * 改结构不能把界面搞坏。
 	 * 新代码请用 `awaitingDecision.decider === "owner"`。
 	 */
 	readonly awaitingOwner: boolean;
@@ -135,7 +135,8 @@ export type Feed = {
 	 * 一条待决问题就是「有人在等你回话」。原先它在聊天面板顶部另开一块
 	 * 黄框区域渲染，于是同一条问题既在顶部出现（可点）又在聊天里出现（只是文本），
 	 * 用户的实际体验是「两边都有、答完没反应」。
-	 * 现在只保留这个数据源，由聊天流自己渲染成一条可交互的事项（见 ui/js/chat.js）。
+	 * 现在只保留这个数据源，由界面渲染成一条可交互的事项。右侧对话面板删除后，
+	 * 网页端的待办改由频道视图渲染（`ui/js/pending.js`）；feed 仍然带这个字段。
 	 */
 	readonly pending: readonly FeedPending[];
 };

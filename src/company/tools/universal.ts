@@ -17,6 +17,7 @@ import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context
 import {
 	advanceRead,
 	digestFor,
+	dmChannelId,
 	hasMember,
 	oneLine,
 	projectChannelId,
@@ -28,7 +29,7 @@ import { labelOf, personOf, type Org } from "../../domain/membership.ts";
 import { isTerminal, type TaskEntry } from "../../domain/tasks.ts";
 import { postToChannel, readChannels, markChannelRead, markAllRead } from "../channels.ts";
 import { buildOrg } from "../org-model.ts";
-import { CompanyDoc } from "../docs.ts";
+import { CompanyDoc, ReplyContextDoc, type ReplyContextState } from "../docs.ts";
 import { listMyTasks, transitionTask, readTasks } from "../tasks.ts";
 import { TASK_PRIORITIES, TASK_STATUSES, type TaskStatus } from "../../domain/tasks.ts";
 
@@ -42,12 +43,14 @@ function text(value: string) {
 	return { output: [{ type: "text" as const, text: value }] };
 }
 
-/** 当前会话在组织里的信息。 */
+/** 当前会话在组织里的信息 + 回复上下文。 */
 async function contextOf(runtime: CompanyRuntime, conversationId: number, context: Context) {
 	const company = await runtime.harness.snapshot(CompanyDoc, context);
 	const org = buildOrg(company);
 	const channels = await readChannels(runtime, context);
-	return { company, org, channels };
+	// 回复上下文可能还没写过（新会话、或从没被频道消息叫醒过）：那就按角色推断。
+	const replyContext = await runtime.harness.snapshot(ReplyContextDoc, conversationId as never, context);
+	return { company, org, channels, replyContext: replyContext ?? undefined };
 }
 
 /** 这个人能看到 / 所在的频道。 */
@@ -60,20 +63,35 @@ function myChannels(org: Org, channels: ChannelState, conversationId: number): r
 /**
  * 解析「在哪个频道发言」。
  *
- * 优先用显式 `channelId`；没给时按会话类型推断：
- * - 员工 / 负责人 → 本项目群（没有项目就用个人记录）
- * - 管理层 → 领导层群
- * - CEO → 公司大群
+ * 优先级（这条顺序是修「私聊不回复、跑到群里」的关键）：
+ * 1. **显式 `channel` 参数**——调用方说了算。
+ * 2. **刚被叫醒的那个频道**（`ReplyContextDoc`）——老板在 `dm:13` 私聊我，
+ *    我一开口就该回 `dm:13`，而不是按角色推断出来的领导层群。
+ * 3. 按角色推断（旧行为，只在没人叫醒过我时生效）：
+ *    - 员工 / 负责人 → 本项目群
+ *    - 管理层 → 领导层群
+ *    - CEO → 公司大群
+ *    - 都不匹配 → 自己与老板的私聊（**不再兜底到 `log:`**，见 #4/#15）
+ *
+ * 为什么第 2 条排在角色前面：角色是**长期的**，而「刚才谁在哪儿跟我说话」
+ * 是**当下的事实**。两者冲突时，当下的事实才是模型想问的。
  */
 function resolveChannel(
 	org: Org,
 	channels: ChannelState,
 	conversationId: number,
 	explicit: string | undefined,
+	replyContext?: ReplyContextState,
 ): Channel | undefined {
 	if (explicit !== undefined && explicit !== "") {
 		const channel = channels.channels[explicit];
 		return channel !== undefined && hasMember(channel, conversationId) ? channel : undefined;
+	}
+	// 刚被叫醒的频道：只在「我还是它的成员」时采用——被踢出群后不该再往里发。
+	const wokeIn = replyContext?.channelId;
+	if (wokeIn !== undefined && wokeIn !== "") {
+		const channel = channels.channels[wokeIn];
+		if (channel !== undefined && hasMember(channel, conversationId)) return channel;
 	}
 	const person = personOf(org, conversationId);
 	if (person?.project !== undefined) {
@@ -87,7 +105,9 @@ function resolveChannel(
 	}
 	const company = channels.channels.company;
 	if (company !== undefined && hasMember(company, conversationId)) return company;
-	return channels.channels[`log:${conversationId}`];
+	// 最后的兜底：自己的私聊。`log:` 频道已不再创建（#4/#15），而且「自己跟自己
+	// 说话」本来就不该是发言的默认去处——私聊至少老板能看见。
+	return channels.channels[dmChannelId(conversationId)];
 }
 
 /** 把 @ 的名字解析成会话标识。 */
@@ -207,14 +227,14 @@ export function createUniversalTools(deps: UniversalDeps) {
 		parameters: Type.Object({
 			text: Type.String({ description: "要说的内容" }),
 			channel: Type.Optional(
-				Type.String({ description: "频道标识（company / leadership / proj:slug / dm:编号 / log:编号）。不填则用你默认的频道。" }),
+				Type.String({ description: "频道标识（company / leadership / proj:slug / dm:编号）。不填则用你默认的频道（一般是刚叫醒你的那个，或你的私聊）。" }),
 			),
 		}),
 		execute: async (args, api, context) => {
 			const conversationId = Number(api.conversationId);
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const { org, channels } = await contextOf(runtime, conversationId, ctx);
-			const channel = resolveChannel(org, channels, conversationId, args.channel);
+			const { org, channels, replyContext } = await contextOf(runtime, conversationId, ctx);
+			const channel = resolveChannel(org, channels, conversationId, args.channel, replyContext);
 			if (channel === undefined) return text("找不到可用的频道。先用 whoami 看你在哪些频道里。");
 
 			const posted = await postToChannel(
@@ -258,8 +278,8 @@ export function createUniversalTools(deps: UniversalDeps) {
 		execute: async (args, api, context) => {
 			const conversationId = Number(api.conversationId);
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const { org, channels } = await contextOf(runtime, conversationId, ctx);
-			const channel = resolveChannel(org, channels, conversationId, args.channel);
+			const { org, channels, replyContext } = await contextOf(runtime, conversationId, ctx);
+			const channel = resolveChannel(org, channels, conversationId, args.channel, replyContext);
 			if (channel === undefined) return text("找不到可用的频道。先用 whoami 看你在哪些频道里。");
 
 			// 默认问直属上级
@@ -316,8 +336,8 @@ export function createUniversalTools(deps: UniversalDeps) {
 		execute: async (args, api, context) => {
 			const conversationId = Number(api.conversationId);
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const { org, channels } = await contextOf(runtime, conversationId, ctx);
-			const channel = resolveChannel(org, channels, conversationId, args.channel);
+			const { org, channels, replyContext } = await contextOf(runtime, conversationId, ctx);
+			const channel = resolveChannel(org, channels, conversationId, args.channel, replyContext);
 			if (channel === undefined) return text("找不到可用的频道。");
 
 			const limit = Math.min(Math.max(args.limit ?? 30, 1), 100);

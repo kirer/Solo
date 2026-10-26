@@ -5,7 +5,10 @@
  *   1. 拉 GET /api/board，按契约归一化；后端未就绪时降级为契约 mock（界面上明确标注）。
  *   2. 三列渲染：列头计数、项目 chip、负责人、状态点、空状态、骨架。
  *   3. 刷新：9s 轮询 + window "aic:org" 事件触发；页面隐藏时暂停。
- *   4. 点卡片走真实 hash 路由 #/c/<conversationId>（与 app.js conversationFromHash 一致）。
+ *   4. 点卡片跳到频道视图里那个人的私聊（`dm:<conversationId>`）。
+ *      历史：以前点卡片走 `#/c/<conversationId>` hash 路由打开对话面板；右侧面板
+ *      删掉之后那条路由没有任何消费者了（app.js 不再监听 hash），所以改成直接
+ *      调频道视图的 open()——看板是老板的入口之一，点了必须真的到得了地方。
  *
  * 视图显隐不在这里做：body[data-view="board"] 的 CSS 归 shell.css。
  */
@@ -88,17 +91,8 @@ function normalizeItem(raw) {
 		ownerLabel: asText(raw.ownerLabel) || asText(raw.owner),
 		status,
 		conversationId: Number.isFinite(conversationId) && conversationId > 0 ? conversationId : null,
-		href: normalizeHref(raw.href, conversationId),
 		at: Number(raw.at) > 0 ? Number(raw.at) : null,
 	};
-}
-
-/** 后端可能仍返回旧的 `#c=` 形式；统一成 app.js 认的 `#/c/`。 */
-function normalizeHref(href, conversationId) {
-	if (Number.isFinite(conversationId) && conversationId > 0) return `#/c/${conversationId}`;
-	const text = asText(href).trim();
-	if (text === "") return null;
-	return text.replace(/^#c=/, "#/c/");
 }
 
 function normalizeBoard(raw) {
@@ -254,6 +248,18 @@ function renderShell() {
 		el.refresh.setAttribute("aria-busy", "true");
 		refresh({ manual: true }).finally(() => el.refresh.removeAttribute("aria-busy"));
 	});
+
+	// 点卡片 = 「去那个人的私聊」。看板不认识频道视图，只发事件；
+	// app.js 负责切视图并把频道打开（单一入口，避免两处各写一份切换逻辑）。
+	el.cols.addEventListener("click", (event) => {
+		const card = event.target instanceof Element ? event.target.closest(".board-card") : null;
+		if (card === null || card.disabled) return;
+		const conversationId = Number(card.dataset.conversation);
+		if (!Number.isFinite(conversationId) || conversationId <= 0) return;
+		window.dispatchEvent(
+			new CustomEvent("aic:open-channel", { detail: { channelId: `dm:${conversationId}` } }),
+		);
+	});
 }
 
 function renderSkeleton() {
@@ -325,10 +331,14 @@ function cardHtml(item, index) {
 					</span>`
 		}`;
 
-	if (item.href === null) {
-		return `<li${liClass}${liStyle}><div class="board-card">${inner}</div></li>`;
-	}
-	return `<li${liClass}${liStyle}><a class="board-card" href="${escapeHtml(item.href)}">${inner}</a></li>`;
+	// 卡片一律是 button：点它是「切到频道视图 + 打开那个人」，不是导航到某个 URL。
+	// 用 button 而不是 <a href> 是为了拿回键盘/无障碍语义（Enter/Space 直接触发），
+	// 又不留下一条已经没人消费的 hash 路由。
+	const attrs =
+		item.conversationId === null
+			? ` type="button" disabled aria-disabled="true"`
+			: ` type="button" data-conversation="${item.conversationId}"`;
+	return `<li${liClass}${liStyle}><button class="board-card"${attrs}>${inner}</button></li>`;
 }
 
 function emptyHtml(meta) {
@@ -383,13 +393,20 @@ function renderColumns(board) {
 	syncCurrent();
 }
 
+/**
+ * 高亮「当前正开着的那个频道」对应的卡片。
+ *
+ * 以前读 `location.hash`（`#/c/<id>`），但那条路由是对话面板时代的产物，
+ * 面板删掉后没人再写 hash。现在真相在频道视图里（`.ch-row[data-active="true"]`
+ * 的 `dm:<id>`），这里只做一次只读映射——看板不持有频道状态，不去抢那份数据。
+ */
 function syncCurrent() {
 	if (el.cols === null) return;
-	const match = /^#\/c\/(\d+)/.exec(location.hash);
+	const active = document.querySelector('.ch-row[data-active="true"]')?.dataset.id ?? "";
+	const match = /^dm:(\d+)$/.exec(active);
 	const id = match === null ? null : match[1];
 	for (const card of el.cols.querySelectorAll(".board-card")) {
-		const href = card.getAttribute("href") ?? "";
-		const isCurrent = id !== null && href === `#/c/${id}`;
+		const isCurrent = id !== null && card.dataset.conversation === id;
 		if (isCurrent) card.setAttribute("aria-current", "true");
 		else card.removeAttribute("aria-current");
 	}
@@ -526,11 +543,13 @@ window.addEventListener("aic:view", (event) => {
 	if (view === "board") {
 		startPolling();
 		refresh();
+		// 从频道切过来时要立刻反映「现在开着哪个私聊」，不能等下一次刷新。
+		syncCurrent();
 	} else {
 		stopPolling();
 	}
 });
-window.addEventListener("hashchange", syncCurrent);
+window.addEventListener("aic:channel", syncCurrent);
 document.addEventListener("visibilitychange", () => {
 	if (document.hidden) {
 		stopPolling();

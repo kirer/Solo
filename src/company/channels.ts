@@ -317,7 +317,19 @@ export async function markAllRead(
 	await markChannelRead(runtime, channelId, conversationId, channel.lastSeq, context);
 }
 
-/** 标记「某人已读了这条消息的 @」（灰点变绿点）。 */
+/**
+ * 标记「某人已读了这个频道里**到 `seq` 为止**的所有 @」（灰点变绿点）。
+ *
+ * 为什么是「到 seq 为止」而不是「就这一条」：前端上报的是「我渲染到的最后
+ * 一条」（`openChannel` 里的 `view.messages.at(-1).seq`），而一个人一次会
+ * 看到几十条。旧实现只把 `seq` 这一条标已读，于是：
+ * - 用户翻了 60 条，中间那些 @ 的 `readBy` 永远不更新 → 绿点永远是灰的；
+ * - 只有恰好停在「被 @ 的那一条」才会变绿，实测几乎不可能。
+ * 这就是老板报的「已读状态的点不好使」。
+ *
+ * 语义对齐微信/Slack：读到第 N 条 = 第 N 条之前（含）的都读过了。
+ * 只 push 新的已读者 id，不重写整条消息列表。
+ */
 export async function markMentionSeen(
 	runtime: CompanyRuntime,
 	channelId: string,
@@ -330,12 +342,12 @@ export async function markMentionSeen(
 		const state = doc as ChannelState;
 		const channel = state.channels[channelId];
 		if (channel === undefined) return;
-		// 只 push 一个已读者 id，不重写整条消息列表。
-		const message = channel.messages.find((entry) => entry.seq === seq);
-		if (message === undefined) return;
-		if (!message.mentions.includes(conversationId)) return;
-		if (message.readBy.includes(conversationId)) return;
-		message.readBy.push(conversationId);
+		for (const message of channel.messages) {
+			if (message.seq > seq) break;
+			if (!message.mentions.includes(conversationId)) continue;
+			if (message.readBy.includes(conversationId)) continue;
+			message.readBy.push(conversationId);
+		}
 	}, context);
 }
 
@@ -548,26 +560,18 @@ export async function ensureAllChannels(
 		);
 	}
 
-	// 5) 个人工作记录：每个会话一个（老板不是 agent，没有工作记录）
+	// 5) 清理旧形态的频道（#4 / #15）：`log:<id>` 与「老板和自己的私聊」。
 	//
-	// UX-7：老板也加入（他要在这条流里插话、也要能读）。
-	// 老板侧不开 `wakeOnAll`——他要的是「看得见、想说能说」，不是「每条流水都把我拉起来」。
-	// 员工侧**保留 `wakeOnAll: true`**（原样不改）：那是他自己的流水，不是给别人的广播。
-	for (const person of org.people) {
-		if (person.conversationId === OWNER_ID) continue;
-		await ensureChannel(
-			runtime,
-			{
-				id: `log:${person.conversationId}`,
-				kind: "log",
-				title: `${person.label}的工作记录`,
-				members: [
-					{ conversationId: OWNER_ID, role: "owner" as const },
-					{ conversationId: person.conversationId, role: person.role, wakeOnAll: true },
-				],
-			},
-			context,
-		);
+	// `log:` 曾经是「每个 agent 一条工作记录频道」（UX-7）。老板的结论是它多余：
+	// 工作流水本来就长在私聊里（`/api/staff/:id/activity`），再开一条频道等于
+	// 同一件事有两个真相源。现在**不再创建**，并把老库里已有的归档——
+	// 归档而不是删除：历史消息要能翻回去，只是左侧列表不再给入口。
+	//
+	// 归档必须放在最后：`shouldBeIn` 仍然认 `log:` 前缀，万一有在途写入不会炸。
+	for (const id of Object.keys(before.channels)) {
+		if (!id.startsWith("log:")) continue;
+		if (before.channels[id]?.archived === true) continue;
+		await archiveChannel(runtime, id, context);
 	}
 
 	// 6) 清理：老板和自己的私聊是旧版本留下的脏数据，归档掉

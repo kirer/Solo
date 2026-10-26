@@ -7,6 +7,56 @@
    见文件末尾「对话 ↔ 设置：互斥视图」一段）。高度超限由内部滚动，不撑破槽位。
    ========================================================================== */
 
+/* ── 槽位（右侧抽屉） ────────────────────────────────────────────────────
+   历史：这块槽位原本由「对话 / 设置」两个互斥视图共用，宽度由 body[data-chat]
+   控制。右侧对话面板删掉之后只剩设置，开关由 body[data-settings] 控制，
+   宽度仍由 --chat-w 驱动（见 shell.css 的 --chat-w 定义）。
+
+   所以槽位样式从 chat.css 搬到本文件——它现在只为设置抽屉存在。 */
+.aside-slot {
+	position: relative;
+	flex: none;
+	width: var(--chat-w);
+	min-width: 0;
+	min-height: 0;
+	display: flex;
+	overflow: hidden;
+	border-left: 1px solid var(--line);
+	background: var(--bg-2);
+	transition: width 200ms var(--ease-out), visibility 0s linear;
+}
+
+body[data-settings="closed"] .aside-slot {
+	width: 0;
+	border-left-width: 0;
+	border-left-color: transparent;
+	visibility: hidden;
+	/* 子元素仍参与布局（收窄动画需要），但绝不能把 min-content 宽度
+	   传给文档的横向滚动：paint 级裁切 + 独立滚动区域。 */
+	overflow: clip;
+	contain: paint;
+	transition: width 200ms var(--ease-out), visibility 0s linear 200ms;
+}
+
+/* 手机：抽屉是 fixed 浮层，槽位本身不占宽（否则会把舞台挤窄）。 */
+@media (max-width: 860px) {
+	.aside-slot {
+		width: 0;
+		border-left: 0;
+		overflow: visible;
+		background: none;
+	}
+
+	body[data-settings="closed"] .aside-slot {
+		width: 0;
+		border-left: 0;
+		visibility: visible;
+		contain: none;
+		overflow: visible;
+		transition: none;
+	}
+}
+
 /* 面板宽度跟着槽位走（--chat-w 由对话拖宽写入），不再有自己的 360px 上限。 */
 .settings {
 	overscroll-behavior: contain;
@@ -615,14 +665,12 @@
 }
 
 /* ============================================================================
-   对话 ↔ 设置：互斥视图（不是浮层）
+   设置抽屉
    ----------------------------------------------------------------------------
-   #chat 与 #settings 是 .workspace 里同一块并排槽位的两个视图：
-     · 槽位宽度由 --chat-w 决定，两视图各自 width: var(--chat-w)，叠在同一位置；
-     · body[data-view-aside="chat"] 时 #chat 在前可交互，#settings 向右滑出；
-       "settings" 时反过来。#settings 向左滑入/向右滑出。
-     · 只动 transform + opacity（合成层，不触发 layout），过渡是普通 CSS transition，
-       所以连续切换天然可中断、可反向，不靠 animationend 回调控住状态。
+   历史：这里原本是「对话 ↔ 设置」互斥视图（body[data-view-aside] 决定谁在前）。
+   右侧对话面板删掉之后只剩设置一个视图，开关塌成 body[data-settings="open|closed"]。
+   · 只动 transform + opacity（合成层，不触发 layout），过渡是普通 CSS transition，
+     所以连续开关天然可中断、可反向，不靠 animationend 回调控住状态。
    ========================================================================== */
 
 .settings {
@@ -650,7 +698,7 @@
 		visibility 0s linear var(--dur);
 }
 
-body[data-view-aside="settings"] .settings {
+body[data-settings="open"] .settings {
 	opacity: 1;
 	transform: none;
 	pointer-events: auto;
@@ -662,7 +710,7 @@ body[data-view-aside="settings"] .settings {
 }
 
 /* 设置占位时，对话整体左移淡出（不 display:none，DOM 与滚动位置/草稿都保留）。 */
-body[data-view-aside="settings"] .chat {
+body[data-settings="open"] .chat {
 	opacity: 0;
 	transform: translateX(-24px);
 	pointer-events: none;
@@ -674,7 +722,7 @@ body[data-view-aside="settings"] .chat {
 }
 
 /* 拖宽把手在设置视图里没有意义：跟着对话一起淡出，同时让出 8px。 */
-body[data-view-aside="settings"] .chat-resizer {
+body[data-settings="open"] .chat-resizer {
 	opacity: 0;
 	pointer-events: none;
 }
@@ -687,7 +735,7 @@ body[data-view-aside="settings"] .chat-resizer {
 		transform: translateY(6px);
 	}
 
-	body[data-view-aside="settings"] .settings {
+	body[data-settings="open"] .settings {
 		transform: none;
 	}
 }
@@ -832,11 +880,9 @@ body[data-view-aside="settings"] .chat-resizer {
 /* ── 减少动效：不做位移，只切透明度（tokens.css 已把时长压到 0.001ms） ── */
 @media (prefers-reduced-motion: reduce) {
 	.settings,
-	body[data-view-aside="settings"] .settings {
+	body[data-settings="open"] .settings,
+	.aside-slot {
 		transform: none;
-	}
-
-	body[data-view-aside="settings"] .chat {
-		transform: none;
+		transition: none;
 	}
 }
