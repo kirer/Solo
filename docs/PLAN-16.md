@@ -376,7 +376,7 @@ tui）是干净的，边界检查脚本 `scripts/check-boundaries.mjs` 在守着
 - **删除**：`ui/js/chat.js`（2401 行）、`ui/js/ask.js`、`ui/css/chat.css`（2461 行）。
 - **拆出**：`ui/css/profile.css`（角色档案浮层 + `#ch-dock` + `chat-spinner`）、
   `ui/css/markdown.css`（`.md*` + 代码块复制）、`ui/css/pending.css`、`ui/js/toast.js`。
-- **`ui/js/app.js`** 771 → 471 行：只剩订阅组织快照 / 切视图 / 分发状态。
+- **`ui/js/app.js`** 771 → 484 行：只剩订阅组织快照 / 切视图 / 分发状态。
 - **验收脚本** `scripts/ui-check.mjs` 重写：63 项断言（原 84 项里 21 项是对话面板的），
   连跑三次 63/63 通过。
 
