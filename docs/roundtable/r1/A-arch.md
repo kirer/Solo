@@ -1,7 +1,7 @@
 # A 席（架构精简派）· 第 1 轮书面意见
 
 > 结论先行：**这个仓库不缺功能，缺的是「一个功能只有一个实现点」。**
-> 25012 行里，真正「不做系统就不成立」的不到 23%；剩下 20% 是同一个判断被写了第二遍、第三遍。
+> `src/` 25012 行（HEAD 口径）里，真正「不做系统就不成立」的不到 23%；剩下 20% 是同一个判断被写了第二遍、第三遍。
 > 老板说要「代码越少越好」，可执行的版本不是「砍功能」，而是**砍重复实现点**——
 > 因为砍功能会吵架（D 席和 C 席都会反对），砍重复点不会：功能一个没少，行数少一截。
 
@@ -25,9 +25,9 @@
    它今天只被 7 个 test 文件 import 当测试夹具。ADR-028 已经宣布它死亡，没人收尸。
 4. **升级链是全仓最贵也最该留的东西**（2547 行），但它把**同一次路由判断写了三遍**：
    `org.ts:2397 escalateUp()` 算一遍 `decideOwner` → 交给 `escalation.ts:488 startEscalation()`
-   再算一遍并再判一次 `callerIsCeo`；`settleDueDispositions`（`disposition.ts:434`）的到期规则
-   又在 `escalation.ts:685`（读侧兜底）和 `watchdog.ts:340`（定时扫描）各有一个执行点。
-   砍重复点能到 ~1500 行，功能一个不丢。
+   再算一遍并再判一次 `callerIsCeo`；到期规则又在 `escalation.ts:685`（读侧兜底）和
+   `watchdog.ts:340`（定时扫描，`.ts:434 settleDueDispositions` 的同源实现）各有一个执行点。
+   保守去重（§2.5 前三项）能到 -450 行，功能一个不丢。
 5. **「动态创建能力」的最小可行形态是「能力 = 原子工具名子集 + 一段 charter 字符串」，
    不是「新建 TS 函数」。** 这不破 ADR-032 的边界（模型仍不能写代码），
    却能让 `staff-tools.ts` 整块消失、`tools.ts` 少 90 行、`roles.ts` 少 200 行。
@@ -47,7 +47,8 @@ Q3 是关键。**「偶然」不是「不重要」，是「有第二个实现点
 
 ### 1.2 实测口径
 
-用 `glob('src/**/*.ts')` 逐文件行数求和，按模块归组（25126 行，含 3 个 2–229 行的杂项文件）：
+`glob('src/**/*.ts')` 逐文件 `wc -l` 求和，按模块归组。**25126 行 = HEAD 的 25012 + 工作区未提交的
+86 行（`org.ts:repairModelRefs`）+ 28 行（`runtime/models.ts`）**，另有 3 个杂项文件 229 行（`index.ts` 等）：
 
 | 类 | 模块（行数） | 合计 | 占比 |
 |---|---|---|---|
@@ -55,18 +56,15 @@ Q3 是关键。**「偶然」不是「不重要」，是「有第二个实现点
 | **支撑** | runtime/ 2258（持久化·恢复·WAL·实例锁·模型）<br>server/ 6258<br>tui/ 1267<br>装配 org 2478 + org-model 157 + docs 247 + cost 277 = **3159**<br>看门狗 790 + 轨迹 314 = **1104** | **14046** | **55.9%** |
 | **偶然** | 升级链 escalation 1300 + disposition 857 + decision-delivery 142 + decision-routing 7 + domain/routing 241 = **2547**<br>圆桌 roundtable 1128 + roundtable-tools 152 + wait 42 = **1322**<br>同步派活 delegation 533 + delegation-guard 165 = **698**<br>角色硬编码 roles 362 + staff-tools 64 + prompts 107 = **533** | **5100** | **20.3%** |
 
-### 1.3 三点必须澄清的口径
+### 1.3 两点必须澄清的口径
 
-**（a）「支撑」的 6258 行 `server/` 是虚高的。** `http.ts` 1923 + `feed.ts` 809 里，绝大多数 handler
-是「读一个文档 → 拼一个 JSON」，而 `org-view.ts`(425) `channels-view.ts`(409) `board.ts`(260) 已经证明
-投影函数能表驱动。但这属于 D 席地盘，我只报账不动手。
+**（a）「支撑」的 6258 行 `server/` 是虚高的。** `http.ts` 1923 + `feed.ts` 809 里绝大多数 handler 是
+「读一个文档 → 拼一个 JSON」，而 `org-view.ts`(425) `channels-view.ts`(409) `board.ts`(260) 已证明
+投影函数能表驱动。这属于 D 席地盘，我只报账。
 
-**（b）`tui/` 1267 行我判「支撑」是唯一一处把「功能取舍」当「支撑」算的例外。** 它撑的是
-「无浏览器环境」这条路径；老板若从不 headless 跑，它 100% 可删。我留在支撑里，是因为
-**我不想为了账面好看把一条真功能说成重复**。
-
-**（c）升级链 2547 行我判「偶然」，但它是全系统最不能乱动的东西。** 「偶然」= 有第二个实现点，
-不等于「简单」。§2.5 说明：这一块只砍重复，不动状态机。
+**（b）`tui/` 1267 行判「支撑」是唯一一处把功能取舍当支撑算的例外。** 它撑的是「无浏览器环境」，
+老板若从不 headless 跑，这 1267 行 100% 可删；留着是因为**我不想为了账面好看把一条真功能说成重复**。
+（升级链 2547 行判「偶然」，但它是全系统最不能乱动的地方——「偶然」= 有第二个实现点，不等于简单，见 §2.5。）
 
 ---
 
@@ -76,28 +74,25 @@ Q3 是关键。**「偶然」不是「不重要」，是「有第二个实现点
 
 **结论：删除。**
 
-- **理由**：它唯一的消费方是 `src/server/profile.ts:126`（档案页展示）。
-  员工的**行为**指令来自招聘时传的 `HireStaffOptions.instructions`（`org.ts:1039`）——
-  模板从来不是行为的来源，只是「HR 忘了写 JD 时的一行兜底文案」。
-  而兜底句已经存在：`staffCharterOf` 的 `?? "你是${role}。只做被指派的工作…"`（`prompts.ts:34`）。
-- **风险**：零。旧员工的档案页少一句定制文案，兜底句顶上。
+- **理由**：唯一消费方是 `src/server/profile.ts:126`（档案页展示）。员工**行为**指令来自招聘时
+  传的 `HireStaffOptions.instructions`（`org.ts:1039`）——模板从来不是行为来源，只是「HR 忘了写
+  JD 时的一行兜底文案」，而兜底句已经存在（`prompts.ts:34` 的 `?? "你是${role}…"`）。
+- **风险**：零。旧员工档案页少一句定制文案，兜底句顶上。
 - **行数**：-15。
 
 ### 2.2 `STAFF_TOOLSETS`（`src/company/staff-tools.ts:20`，角色→{read,write,bash}）
 
 **结论：删除，改成一个招聘参数。**
 
-- **理由**：5 个键与 `STAFF_ROLE_TEMPLATES` **完全相同**，是同一份枚举抄两遍。
-  更关键的是：`role` 是自由字符串（没有任何枚举约束），所以 `toolsForRole("前端")`
-  会落进 `DEFAULT_TOOLSET = {read:true, write:false, bash:false}` ——
-  招一个前端，得到的是**只读员工**，他连 `write` 都没有。
-  真实数据里这是「招了人但干不了活」的头号解释之一（`src/runtime/capabilities.ts:1-9` 的文件头
-  就写着「员工干不了活往往只有一个原因：能力包里没有这些工具」）。
-- **替代形态**：`staff_hire` 加一个 `tools: string[]` 参数（schema 一行），
-  招聘人（CHRO/CEO）本来就该知道招这个人是来写代码还是来写文档。
-  招聘参数从「猜角色名」变成「直接说给什么工具」，**表达能力严格变强**。
-- **风险**：`test/e2e/reliability.test.ts:22,23` 要改；`src/company/org.ts:135`
-  （`employeeToolsFor` → `toolsForRole`）要改成读 `HireStaffOptions.tools`。
+- **理由**：5 个键与 `STAFF_ROLE_TEMPLATES` **完全相同**，同一份枚举抄两遍。更关键的是
+  `role` 是自由字符串（无枚举约束），`toolsForRole("前端")` 会落进
+  `DEFAULT_TOOLSET = {read:true, write:false, bash:false}` ——招一个前端得到**只读员工**，
+  连 `write` 都没有。这是「招了人但干不了活」的头号解释（`src/runtime/capabilities.ts:1-9`
+  文件头：「员工干不了活往往只有一个原因：能力包里没有这些工具」）。
+- **替代形态**：`staff_hire` 加 `tools: string[]` 参数（schema 一行）。招聘人本来就该知道招这个人
+  来写代码还是写文档；参数从「猜角色名」变成「直接说给什么工具」，**表达能力严格变强**。
+- **风险**：`test/e2e/reliability.test.ts:22,23` 要改；`org.ts:135`（`employeeToolsFor` →
+  `toolsForRole`）改成读 `HireStaffOptions.tools`。
 - **行数**：-64（整文件）。
 
 ### 2.3 `CAPABILITIES`（`src/company/capabilities.ts`，163 行 + core/deferred + tool_search）
@@ -109,17 +104,17 @@ Q3 是关键。**「偶然」不是「不重要」，是「有第二个实现点
   它是「原子工具受 review 的白名单」（ADR-032），**删了它，任意代码执行的门就开了**。
 - **该删的是三层映射**：
   1. `src/company/tools.ts:138 CAPABILITY_TO_TOOL: Record<string, ToolName>` —— 34 条
-     「能力名 → `ManagementToolset` 字段名」的映射。可能力名本来就是工具名
-     （`capabilityOf(name)` 就是按 `tool.name` 索引的），这层是纯重复。
+     「能力名 → `ManagementToolset` 字段名」映射。能力名本来就是工具名（`capabilityOf(name)`
+     按 `tool.name` 索引），这层纯重复。
   2. `src/company/tools.ts:191 selectTools()` 的未命中抛错分支 —— 用名字过滤数组就不需要它。
   3. `src/company/tools.ts:280-303`（项目负责人 20 项内联名单）+ `:322-331`（只读负责人 9 项）
      —— 这是**第二份和第三份**能力名单，和 `roles.ts` 的 `capabilityNames` 平行维护。
-- **`tool-search.ts`（219 行）应该删或缩到 10 行**：文件头自己写明底层 tokenizer 是
-  `.toLowerCase().split(/[^a-z0-9]+/)`，**中文查询 token 数恒为 0**，这个自研 BM25 对中文等于不可用。
+- **`tool-search.ts`（219 行）该删或缩到 10 行**：文件头自述 tokenizer 是
+  `.toLowerCase().split(/[^a-z0-9]+/)`，**中文查询 token 数恒为 0**，自研 BM25 对中文完全不可用。
   ADR-032 也写明第 3 层「deferred + tool_search **未启用**」。为一个未启用且对中文失效的机制
   养 219 行不划算：要么改回「core 全给」，要么换成 `name.includes(q) || summary.includes(q)`。
-- **风险**：`test/unit/capabilities.test.ts` 14 条要改；如果要保留 deferred，就必须先修 tokenizer，
-  那就不是「少写代码」而是「多写代码」——所以我建议干脆**追加一条 ADR 记录「不采用 deferred」**。
+- **风险**：`test/unit/capabilities.test.ts` 14 条要改。要保留 deferred 就得先修 tokenizer，
+  那不是「少写代码」而是「多写代码」——建议**追加一条 ADR 记录「不采用 deferred」**。
 - **行数**：-90（tools.ts）+ -219（tool-search）= -309。
 
 ### 2.4 `src/company/roles.ts`（362 行，7 个管理层角色）
@@ -127,17 +122,16 @@ Q3 是关键。**「偶然」不是「不重要」，是「有第二个实现点
 **结论：结构保留，charter 正文砍一半以上。**
 
 - **保留的理由**：7 个 key 的 `capabilityNames`（`:53,100,138,175,216,253,289`）是 ADR-010「岗位裁剪」
-  的结构基础——「权限靠工具不存在」需要一个静态的岗位→工具清单，这不能删。
+  的结构基础——「权限靠工具不存在」需要一个静态岗位→工具清单，不能删。
 - **该砍的是 charter 里的流程教学**。227 条文案里有大量这样的句子：
   - 「用 roundtable 开一次圆桌：让他们各自独立作答，再汇总」（`:47`）
   - 「圆桌结束后用 roundtable_minutes 回看完整纪要」（`:48`）
   - 「遇到需要多方一起定的事…用 roundtable 开会」（`:213`）
-  **「怎么用工具」应该写在工具的 description 里，不是写在系统提示词里。**
-  现在的写法等于：每个管理层每轮生成都要读一遍 100 字的圆桌操作手册，
-  而支撑这段手册的是 `roundtable.ts` 1128 + `roundtable-tools.ts` 152 行。
-  一段文案拖着 1280 行代码，这是本仓最典型的「偶然」结构。
-- **风险**：短期行为会变差（模型少了一份操作手册）。缓解办法是把那几句挪进
-  对应工具的 `description`（`roundtable` 工具的 schema 描述里），成本 5 行。
+  **「怎么用工具」该写在工具的 description 里，不是系统提示词里。** 现在的写法等于每个管理层
+  每轮生成都读一遍 100 字圆桌操作手册，而支撑这段手册的是 `roundtable.ts` 1128 +
+  `roundtable-tools.ts` 152 行——一段文案拖着 1280 行代码，本仓最典型的「偶然」结构。
+- **风险**：短期行为变差（模型少一份操作手册）。缓解：把那几句挪进 `roundtable` 工具的
+  schema `description`，成本 5 行。
 - **行数**：362 → ~150，-210。
 
 ### 2.5 升级链：`escalation.ts` 1300 + `disposition.ts` 857 + `decision-delivery.ts` 142 + `decision-routing.ts` 7（+ `domain/routing.ts` 241）
@@ -171,22 +165,17 @@ ADR-026（指令无条件受理 + 按汇报线路由 + 等待有默认值与期�
 - **行数**：本轮的保守版（重复点 1 + 2 + 3 + decision-routing）= **-450 左右**，
   `escalation.ts` 1300 → ~950，`disposition.ts` 857 → ~700。加上第 4 项激进版能到 -800，但我不推荐本轮。
 
-### 2.6 `roundtable.ts`（1128 行）+ `roundtable-tools.ts`（152）
+### 2.6 `roundtable.ts`（1128）+ `roundtable-tools.ts`（152）
 
-**结论：机制保留，但从「核心」降为「一个可选的非核心能力」。**
+**结论：机制保留，但从「核心」降为「可选的非核心能力」。**
 
-- **保留的理由**：它是 ADR-028 明确**唯一保留同步等待的场景**（收齐多方意见），
-  这是 1128 行的正当性来源。ADR 的原话：保留 `submission.wait()`「只用于圆桌这类需收齐多方意见的场景」。
-- **该降级的理由**：
-  1. **前端一行都不展示它**——`grep -r roundtable ui/` 为空。`src/server/http.ts` 里也没有任何
-     roundtable 路由。会议纪要存了、能查，但除了 agent 自己用 `roundtable_minutes` 回看，
-     没有任何人在看。
-  2. 1128 行里有一类是「用启发式猜自然语言立场」：`detectStance`（`:749`）、
-     `ensureRoundComplete`（`:857`）、`roundOneDigest`（`:892`）。这类逻辑的准确率无人测量，
-     却是最脆弱的部分。
-  3. 它出现在 CEO charter 的必读段落里（`roles.ts:47-48`），意味着**每一轮 CEO 生成都在被提醒「去开会」**。
-- **建议**：能力目录里把 `roundtable` / `roundtable_minutes` 从 `core` 降为普通能力（走 tool_search 或直接不给），
-  charter 里删掉操作手册。想开会就开，不想开就不开。
+- **保留的理由**：ADR-028 明确**唯一保留同步等待的场景**，原话是保留 `submission.wait()`
+  「只用于圆桌这类需收齐多方意见的场景」。这是 1128 行的正当性来源。
+- **该降级的理由**：①**前端一行都不展示**——`grep -r roundtable ui/` 为空，`server/http.ts` 无
+  roundtable 路由，纪要存了但没人看；②`detectStance`(`:749`) `ensureRoundComplete`(`:857`)
+  `roundOneDigest`(`:892`) 是「用启发式猜自然语言立场」，准确率无人测量却是最脆弱的部分；
+  ③它出现在 CEO charter 必读段（`roles.ts:47-48`），**每一轮 CEO 生成都在被提醒「去开会」**。
+- **建议**：`roundtable`/`roundtable_minutes` 从 `core` 降为普通能力，charter 删操作手册。想开就开。
 - **风险**：`test/e2e/roundtable.test.ts` 17 条。**但这是一次功能取舍，不是架构收紧，
   应该由老板拍，不该由本席单方面执行。** 所以我把它排出「必做三件事」。
 
@@ -206,7 +195,7 @@ ADR-026（指令无条件受理 + 按汇报线路由 + 等待有默认值与期�
 | 模块 | 结论 | 一句话理由 |
 |---|---|---|
 | `trail.ts:156 readTrail` `:200 organizationGraph` `:257 activeTasks` | **保留** | 它是「谁派的活、谁接的」唯一的图查询，`server/org-view.ts:19,293` 与 `tui/state.ts:13,164` 在用 |
-| `trail.ts` 的 `trailForConversation` / `trailForRef` | **降为内部函数** | 只被 `test/e2e/trail.test.ts:106,132` 使用，是测试专用导出。约 -60 行 |
+| `trail.ts:trailForConversation/trailForRef` | **降为内部函数** | 只被 `test/e2e/trail.test.ts:106,132` 使用，测试专用导出。约 -60 行 |
 | `delegation.ts` 533 + `delegation-guard.ts` 165 | **删除** | 生产零调用（见 §0 结论 3）。`isEmployeeBusy` / `describeStaff` 里便宜的状态查询挪进 `tasks.ts`（约 30 行） |
 | `wait.ts` 42 | **保留** | `waitOrTimeout` 是圆桌收齐和 HTTP abort 共用的正确实现（注释写明了两处易犯的错：忘了清定时器、被放弃的 promise 变未处理拒绝）。42 行买这两个坑，划算 |
 
@@ -219,8 +208,8 @@ ADR-026（指令无条件受理 + 按汇报线路由 + 等待有默认值与期�
 **结论：结构保留，删 4 个测试专用导出和 1 处硬编码。**
 
 - **保留的部分是本质**：`canView`(23 处引用) `canMention`(8) `canAssign`(21) `canEscalate`(11)
-  `ownerOfChannel`(20) `nextLevelUp`(8) 都是活的，是「频道可见性 = 组织结构」
-  这条规则唯一的实现点。**不能删，删了就是权限靠提示词。**
+  `ownerOfChannel`(20) `nextLevelUp`(8) 都是活的，是「频道可见性 = 组织结构」这条规则的唯一实现点。
+  **不能删，删了就是权限靠提示词。**
 - **该删**：`companyMembers`(`:208`)、`leadershipMembers`(`:213`)、`projectMembers`(`:227`)、
   `escalationPath`(`:345`) —— 四个导出的**全部引用都在 test 里**，约 120 行。
 - **该改**：`managementRoleNameOf` 用 `byLabel` **硬编码 7 个岗位中文名**反查岗位名，
@@ -239,8 +228,8 @@ ADR-026（指令无条件受理 + 按汇报线路由 + 等待有默认值与期�
 > 工具是 TypeScript 函数，注册即任意代码执行。能力目录是静态代码（受 review），装配是动态的。
 > 这条边界不能破。
 
-**我完全同意这条边界，也认为它不能破。** 但老板要的东西和这条边界**不冲突**——
-冲突来自实现把「能力」定义成了三层：
+**我完全同意这条边界，也认为它不能破。** 但老板要的东西和它**不冲突**——冲突来自实现把
+「能力」定义成了三层：
 
 ```
 能力名 → CAPABILITY_TO_TOOL[能力名] → ManagementToolset 字段 → TS 函数
@@ -284,20 +273,12 @@ ADR-026（指令无条件受理 + 按汇报线路由 + 等待有默认值与期�
 
 ### 3.3 再往前一步（可选，我不推荐本轮做）
 
-`my_capabilities`（`src/company/management-tools.ts:194`）已经能列出 agent 现有能力
-（读 `agent.tools` + `agent.deferred` 合并）。所以「自我扩权」链路**不需要任何新文件**：
-
-```
-agent 用 ask 说「我需要 bash」→ 上层用现有 answer_pending 批准
-→ 系统改 ProfileDoc.tools + registry.install() 同名替换 → 下一轮生效
-```
-
-这需要的只是一个新的管理工具 `staff_capability`（约 60 行），
-外加 `escalation` 已有的「待办 → 拍板 → 投递」全链路。
-**这是「进化」最便宜的一条路**：它复用了 ADR-026 的拍板机制，一行新基础设施都不用加。
-
-我把它排在本轮之外，理由只有一个：**先让能力变成数据，再谈让 agent 改自己的数据。**
-顺序反了会得到一个「agent 要求加 bash → 上层同意 → 但 `STAFF_TOOLSETS` 里没有这个名字 → 静默降级」的死循环。
+`my_capabilities`（`src/company/management-tools.ts:194`）已能列出 agent 现有能力（`agent.tools` +
+`agent.deferred` 合并）。所以「自我扩权」**不需要任何新基础设施**：agent 用 `ask` 说「我需要 bash」
+→ 上层用现有 `answer_pending` 批准 → 系统改 `ProfileDoc.tools` + `registry.install()` 同名替换
+→ 下一轮生效。只需一个新管理工具 `staff_capability`（约 60 行），拍板链路白送。
+**这是「进化」最便宜的一条路**，但我排在本轮之外，理由只有一个：先让能力变成数据，再谈让 agent
+改自己的数据。顺序反了会得到死循环——「agent 要 bash → 上层同意 → `STAFF_TOOLSETS` 里没这名 → 静默降级」。
 
 ---
 
@@ -353,17 +334,16 @@ agent 用 ask 说「我需要 bash」→ 上层用现有 answer_pending 批准
 - **为什么第一**：零真实能力退化，零 ADR 冲突（ADR-028 已宣布它死亡），
   且它是**唯一一处「同一个功能有两套实现」的干净案例**。做完这一件，
   仓库里就有了一条可复制的先例：「ADR 说替代了，代码就得真的消失」。
-- **做完怎么验**：`grep -r "deps.delegate" src/` 为空（已经是），
-  然后 `grep -rn "delegation.ts" test/` 为空。
+- **怎么验**：`grep -r "deps.delegate" src/` 为空（已经是），然后 `grep -rn "delegation.ts" test/` 为空。
 
 ### 第 2 件：能力单层化（`Capability = {name, tools[], charter}`，存进 `ProfileDoc`）（-370）
 
-- **为什么第二**：这是**对老板诉求的直接回应**——「动态创建能力」在这里第一次变成真的。
-  而且它顺手修掉一个隐蔽 bug（自由字符串 role 静默退化成只读员工）。
-- **为什么不是第一**：它改招聘参数（`HireStaffOptions`），要动 `staff_hire` schema，
-  牵到 `management-tools.ts` 和 `roles.ts` 两处文案，比第 1 件脏。
-- **做完怎么验**：招一个 `role:"前端"` 的员工，`my_capabilities` 里应该出现 `write` 和 `bash`。
-  今天它是只读的——**这条可以现在就当 bug 复现**。
+- **为什么第二**：这是**对老板诉求的直接回应**——「动态创建能力」在这里第一次变成真的，
+  且顺手修掉一个隐蔽 bug（自由字符串 role 静默退化成只读员工）。
+- **为什么不是第一**：它改 `HireStaffOptions` 和 `staff_hire` schema，牵到 `management-tools.ts`
+  与 `roles.ts` 两处文案，比第 1 件脏。
+- **怎么验**：招一个 `role:"前端"` 的员工，`my_capabilities` 里应出现 `write` 和 `bash`。
+  今天它是只读的——**这条现在就能当 bug 复现**。
 
 ### 第 3 件：升级链去重（`escalateUp` 不再自己算路由；4 个 answer 入口合一）（-450）
 
@@ -402,19 +382,19 @@ agent 用 ask 说「我需要 bash」→ 上层用现有 answer_pending 批准
 
 ---
 
-## 7. 附：本席调研过程中核实的事实来源
+## 7. 附：本席核实的事实来源（命令可复跑）
 
 | 事实 | 核实命令 |
 |---|---|
-| 25126 行总量、三分类占比 | `glob('src/**/*.ts')` 逐文件行数求和，按 §1.2 归组 |
-| `delegate()` 生产零调用 | `grep -rn "deps.delegate" src/` → 空；`grep -rn "company/delegation" src/` → 只有 `org.ts:66,239` |
-| `tool_search` 中文失效 | `src/company/tools/tool-search.ts` 文件头自述 tokenizer 为 `/[^a-z0-9]+/` |
-| `role` 无枚举约束 | `src/company/management-tools.ts:487`（只有 `description`）；`src/company/org.ts:1039`（`role: string`） |
-| 4 个 membership 导出只在 test 引用 | `grep -rn "companyMembers\|leadershipMembers\|projectMembers\|escalationPath" src/` → 无结果 |
-| 2 个 trail 导出只在 test 引用 | `grep -rn "trailForConversation\|trailForRef" src/` → 无结果 |
+| 25126 行、三分类占比 | `glob('src/**/*.ts')` 逐文件行数求和，按 §1.2 归组 |
+| `delegate()` 生产零调用 | `grep -rn "deps.delegate" src/` 空；`grep -rn "company/delegation" src/` 只有 `org.ts:66,239` |
+| `tool_search` 中文失效 | `tools/tool-search.ts` 文件头自述 tokenizer `/[^a-z0-9]+/` |
+| `role` 无枚举 | `management-tools.ts:487` 只有 `description`；`org.ts:1039` 是 `role: string` |
+| membership 4 导出只在 test | `grep -rn "companyMembers\|leadershipMembers\|projectMembers\|escalationPath" src/` 无结果 |
+| trail 2 导出只在 test | `grep -rn "trailForConversation\|trailForRef" src/` 无结果 |
 | 升级链重复路由 | `org.ts:2397` 与 `escalation.ts:488` 都调 `decideOwner` |
-| 到期规则两个执行点 | `escalation.ts:685`（读侧）+ `watchdog.ts:340`（定时） |
+| 到期规则两执行点 | `escalation.ts:685`（读侧）+ `watchdog.ts:340`（定时） |
 | `deferred` 未启用 | ADR-032 表格第 3 行原文「未启用」 |
-| `tsc` 干净 | `npx tsc -p tsconfig.json --noEmit` 无输出（含工作区未提交的 `repairModelRefs`） |
+| `tsc` 干净 | `npx tsc -p tsconfig.json --noEmit` 无输出（含未提交的 `repairModelRefs`） |
 
 > 本席未修改 `src/` `ui/` `test/` 下任何文件，未 commit。
