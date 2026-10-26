@@ -25,14 +25,115 @@ import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 // `ModelOption` / `ModelRef` 本来就是纯类型，真相源在 `src/domain/org-types.ts`，
 // `company/docs.ts` 只是 re-export 它们。
 import type { ModelOption, ModelRef } from "../domain/org-types.ts";
+import { resolveModelOption } from "../domain/org-types.ts";
 
 /** 本地网关的默认配置。 */
 export const LOCAL_GATEWAY = {
 	id: "commandcode",
 	baseUrl: "http://127.0.0.1:3425/v1",
-	modelId: "auto/deepseek-v4.1-flash",
+	/**
+	 * 默认模型：`workbuddy-ai/deepseek-v4.1-flash`。
+	 *
+	 * **2026-10-26 老板拍板切换**（原 `auto/deepseek-v4.1-flash`）：原因是 command code 的
+	 * deepseek 额度即将耗尽，老板要求全部换到 workbuddy 系。原话「全部换
+	 * workbuddy-ai/deepseek-v4.1-flash」。
+	 *
+	 * 选它的依据（三件套验证，见 WORKING-AGREEMENTS 第 27 条）：
+	 * - 能调通：`POST /v1/responses` → `status: completed`；
+	 * - 回显一致：回显 `deepseek-v4.1-flash`（名字也是 deepseek）；
+	 * - 有报价：`pricing: {prompt:"0", completion:"0"}`（**声称免费**，成本报表会显示 0，
+	 *   这是网关侧的定价，不是我们漏填）。
+	 *
+	 * ⚠️ **已知保留意见**：它自述「OpenAI created me」而非 DeepSeek，存在挂名疑点
+	 * （同 kimi-k3.1-pro 那类）。但老板明确要求用这个 id，故采用并在此留痕——
+	 * **若将来发现它实际不是 deepseek，回滚只需把本字段改回 `auto/deepseek-v4.1-flash`**
+	 * （该 id 仍登记在 catalog 中）。
+	 *
+	 * 旧默认值 `auto/deepseek-v4.1-flash` 的两个代价（换回时请注意）：
+	 *
+	 * **这是老板拍板的默认值（2026-10-26 决定，覆盖此前换到 `apigoto/deepseek-flash` 的改动）。**
+	 *
+	 * 已知的两个代价，换默认值时请连同这里一起改，别再踩：
+	 * - **网关不报价**：`GET /v1/models` 里 `auto/deepseek-v4.1-flash` 的 `pricing` 是 `null`，
+	 *   所以价格只能走 `COMMANDCODE_INPUT_PRICE` / `COMMANDCODE_OUTPUT_PRICE` 环境变量兜底，
+	 *   两个都没设时是 0 → `cost_report` / `budget_check` 恒为 0，成本表存在但回答不了
+	 *   「钱花在哪」（D-006 第二层，`label` 里已注明「价格未知：网关不报价」）。
+	 *   要拿到真实成本，把这两个环境变量设成实际单价
+	 *   （网关对同族 `apigoto/deepseek-flash` 报价 prompt 0.00000015 / completion 0.0000006 每 token，
+	 *   即 0.15 / 0.6 每百万）。
+	 * - **是滚动别名**：回显带日期后缀（实测 `deepseek/deepseek-v4.1-flash-1017`），
+	 *   网关换版本时行为会悄悄变，预算里锚不住具体版本。
+	 *
+	 * 想换成固定版本时优先选 `apigoto/deepseek-flash`（同一底层模型、报价明确、回显稳定），
+	 * 它在 GATEWAY_MODEL_CATALOG 里已登记，只需改这一行 + `workspace/settings.json`。
+	 *
+	 * ⚠️ **改这里之前先看历史库**：已有公司的 `CompanyDoc.defaultModel` 和各会话的
+	 * `pi.agent.model` 都是**持久化值**，不会跟着代码默认值走（见 `bootstrapCompany` 的
+	 * 幂等早退：`options.defaultModel` 只在新建库时写入）。换默认模型必须连带迁移老库，
+	 * 否则老会话指向一个没注册进 provider 的 id，运行时表现为
+	 * `Model commandcode/<旧id> is not available`，整个公司发不出话。
+	 */
+	modelId: "workbuddy-ai/deepseek-v4.1-flash",
 	apiKey: "magpie",
 } as const;
+
+/**
+ * 本地网关可选模型清单（D-006）。
+ *
+ * **背景（成本盲区有两层，这里是第一层）**：
+ * - ① 本清单未登记时，catalog 只有 1 条且 `pricing` 来自环境变量（默认 0）
+ *   → `cost_report` / `budget_check` 的成本恒为 0，**表面省钱、实际失控**；
+ * - ② 默认模型 `auto/deepseek-v4.1-flash` 网关侧 `pricing` 为 `null`，
+ *   即网关自己就不报价（这一层本次修不了，只能在 label 里注明；也可以用
+ *   `COMMANDCODE_INPUT_PRICE` / `COMMANDCODE_OUTPUT_PRICE` 手工兜底真实单价）。
+ *
+ * **选型原则**：按「价格档」定义 3 档，每档绑一个明确 id，**每档都选网关有报价的路由**。
+ * 不按 `display_name` 分组取代表——实测同一底层模型有 4 种叫法（大小写/空格/后缀均不同），
+ * 按字符串匹配去重会出错（这与 D-001 的病因相同，不能用同一个坑修另一个坑）。
+ *
+ * **价格**来自网关 `GET /v1/models` 的 `pricing` 字段（每 token 美元） × 1e6，
+ * 换算为「美元 / 百万 token」。**不允许填 0**（除非确实免费，需在 label 注明）。
+ * 该数据为网关快照，变更需人工核对（来源：`docs/RUNBOOK.md` 的价格说明）。
+ *
+ * **模型身份验证（D-010 强制）**：网关存在**挂名模型**——id 叫 A、实际跑 B。
+ * 已知实例：`apigoto/kimi-k3.1-pro` 实际跑 `deepseek-flash`（回显 `deepseek-flash`、
+ * 自报 “GPT-family”、usage 与 deepseek 对齐），而报价是 2/10（贵 13 倍）。**禁止登记**。
+ *
+ * 因此本清单中的每个 id 都过了「身份验证三件套」：
+ * ① `model` 回显与传入一致；② 自报身份与回显一致；③ 有已知真模型的对照组。
+ * **限度**：这三条只能证到「模型层自述与回显一致」，**不能证到「供应链来源」**。
+ * 若将来要新增模型，**先跑三件套再登记**，否则可能把便宜货挂贵价卖。
+ */
+export const GATEWAY_MODEL_CATALOG: readonly ModelOption[] = [
+	{
+		// 2026-10-26 老板指定：便宜档由 `apigoto/deepseek-flash` 改为本 id，
+		// 与默认档一致（老板原话「全部换 workbuddy-ai/deepseek-v4.1-flash」）。
+		// 网关报价为 0/0（**声称免费**）——成本报表显示 0 是网关定价，不是我们漏填。
+		// 身份保留意见见 `LOCAL_GATEWAY.modelId` 的注释（自述 OpenAI，真实性未确认）。
+		id: "workbuddy-ai/deepseek-v4.1-flash",
+		provider: LOCAL_GATEWAY.id,
+		modelId: "workbuddy-ai/deepseek-v4.1-flash",
+		label: "DeepSeek V4.1 Flash（便宜档 · workbuddy-ai，网关报价 0）",
+		inputPerMTok: 0,
+		outputPerMTok: 0,
+	},
+	{
+		id: "monotoo/gpt-6.1-sol",
+		provider: LOCAL_GATEWAY.id,
+		modelId: "monotoo/gpt-6.1-sol",
+		label: "GPT-6.1 Sol（中档 · monotoo）",
+		inputPerMTok: 2,
+		outputPerMTok: 10,
+	},
+	{
+		id: "monotoo/claude-opus-5",
+		provider: LOCAL_GATEWAY.id,
+		modelId: "monotoo/claude-opus-5",
+		label: "Claude Opus 5（强档 · monotoo）",
+		inputPerMTok: 5,
+		outputPerMTok: 25,
+	},
+];
 
 /** 模型装配结果。 */
 export type ModelSetup = {
@@ -164,11 +265,21 @@ export function createLocalGatewayProvider(options?: {
 	readonly apiKey?: string;
 	readonly modelIds?: readonly string[];
 	readonly pricing?: { readonly inputPerMTok: number; readonly outputPerMTok: number };
+	/**
+	 * 按模型 id 分别给价。**优先于** `pricing`。
+	 *
+	 * 为什么必须有这个：以前所有 modelId 共用一份 `pricing`（来自环境变量，默认 0），
+	 * 而三档的真实单价差了 30 倍（0.15/0.6 到 5/25）。结果 `cost_report` 把
+	 * 「便宜档跑 100 次」和「强档跑 100 次」算成同一个数字——成本表存在，但它
+	 * 回答不了「钱花在哪」这个唯一的问题。
+	 */
+	readonly pricingById?: Readonly<Record<string, { readonly inputPerMTok: number; readonly outputPerMTok: number }>>;
 }): Provider {
 	const baseUrl = options?.baseUrl ?? LOCAL_GATEWAY.baseUrl;
 	const apiKey = options?.apiKey ?? LOCAL_GATEWAY.apiKey;
 	const modelIds = options?.modelIds ?? [LOCAL_GATEWAY.modelId];
 	const pricing = options?.pricing ?? { inputPerMTok: 0, outputPerMTok: 0 };
+	const pricingById = options?.pricingById ?? {};
 
 	// 必须用 createProvider 构造：它把 models 数组包装成 getModels() 等方法，
 	// 直接写字面量对象会导致模型注册为空（拿不到模型，报 no_model）。
@@ -182,7 +293,9 @@ export function createLocalGatewayProvider(options?: {
 				resolve: async () => ({ auth: { apiKey }, source: "COMMANDCODE_API_KEY" }),
 			},
 		},
-		models: modelIds.map((id) => ({
+		models: modelIds.map((id) => {
+			const price = pricingById[id] ?? pricing;
+			return {
 			id,
 			name: id,
 			type: "chat" as const,
@@ -193,8 +306,8 @@ export function createLocalGatewayProvider(options?: {
 			reasoning: true,
 			input: ["text", "image"] as const,
 			cost: {
-				input: pricing.inputPerMTok,
-				output: pricing.outputPerMTok,
+				input: price.inputPerMTok,
+				output: price.outputPerMTok,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
@@ -203,7 +316,8 @@ export function createLocalGatewayProvider(options?: {
 			// 工具参数来不及生成（表现为「工具调用参数为空」）。
 			contextWindow: 1_000_000,
 			maxTokens: 200_000,
-		})),
+			};
+		}),
 		api: { stream, streamSimple },
 	}) as unknown as Provider;
 }
@@ -302,32 +416,66 @@ function setupBuiltinModels(environment: NodeJS.ProcessEnv): ModelSetup {
 	}
 
 	// 默认：本地网关
+	// D-006：环境变量价格仅作为「网关无报价时」的兜底，不再作为主要价格来源。
 	const pricing = {
 		inputPerMTok: Number(environment.COMMANDCODE_INPUT_PRICE ?? 0),
 		outputPerMTok: Number(environment.COMMANDCODE_OUTPUT_PRICE ?? 0),
 	};
+	// 默认模型如果在三档清单里有明确报价，就用那份真实价格；
+	// 只有不在清单里（网关不报价的 `auto/*` 之类）才退回环境变量兜底。
+	const defaultInCatalog = GATEWAY_MODEL_CATALOG.find((item) => item.id === LOCAL_GATEWAY.modelId);
+	const defaultPricing =
+		defaultInCatalog === undefined
+			? pricing
+			: { inputPerMTok: defaultInCatalog.inputPerMTok, outputPerMTok: defaultInCatalog.outputPerMTok };
+	const defaultLabel =
+		defaultInCatalog !== undefined
+			? `${defaultInCatalog.label}（本地网关 · 默认）`
+			: defaultPricing.inputPerMTok === 0 && defaultPricing.outputPerMTok === 0
+				? "DeepSeek v4.1 Flash（本地网关 · 价格未知：网关不报价）"
+				: "DeepSeek v4.1 Flash（本地网关）";
+
+	// D-006 根因修复：之前未传 `modelIds`，导致 provider 只注册了 1 个模型。
+	// 现在把默认模型 + 三档可选模型都注册进 provider
+	// （仅加 catalog 而不注册进 provider 是不够的：选中也无法调用，会报 no_model）。
+	const modelIds = [LOCAL_GATEWAY.modelId, ...GATEWAY_MODEL_CATALOG.map((item) => item.modelId)];
 	const models = createModels();
 	models.setProvider(
 		createLocalGatewayProvider({
 			baseUrl: environment.COMMANDCODE_BASE_URL ?? LOCAL_GATEWAY.baseUrl,
 			apiKey: environment.COMMANDCODE_API_KEY ?? LOCAL_GATEWAY.apiKey,
+			modelIds,
 			pricing,
+			// 每个模型用它自己的真实单价（见 pricingById 的注释）。
+			pricingById: Object.fromEntries(
+				GATEWAY_MODEL_CATALOG.map((item) => [
+					item.modelId,
+					{ inputPerMTok: item.inputPerMTok, outputPerMTok: item.outputPerMTok },
+				]),
+			),
 		}),
 	);
+
+	// 可选清单：默认模型（价格可能未知，已在 label 标注）+ 三档（价格均为真实值）。
+	// 默认模型仍保留在清单里：它是既有名册在用的模型，移除会让现有员工解析不到模型。
+	// 默认模型可能本来就是三档之一（换默认模型时就会这样），此时不能重复登记——
+	// 同一个 id 在清单里出现两次，CHRO 配人时看到两个同名选项，成本表也会算两遍。
+	const catalog: ModelOption[] = [
+		{
+			id: LOCAL_GATEWAY.modelId,
+			provider: LOCAL_GATEWAY.id,
+			modelId: LOCAL_GATEWAY.modelId,
+			label: defaultLabel,
+			inputPerMTok: defaultPricing.inputPerMTok,
+			outputPerMTok: defaultPricing.outputPerMTok,
+		},
+		...GATEWAY_MODEL_CATALOG.filter((item) => item.id !== LOCAL_GATEWAY.modelId),
+	];
 
 	return {
 		models,
 		defaultModel: { provider: LOCAL_GATEWAY.id, modelId: LOCAL_GATEWAY.modelId },
-		catalog: [
-			{
-				id: LOCAL_GATEWAY.modelId,
-				provider: LOCAL_GATEWAY.id,
-				modelId: LOCAL_GATEWAY.modelId,
-				label: "DeepSeek v4.1 Flash（本地网关）",
-				inputPerMTok: pricing.inputPerMTok,
-				outputPerMTok: pricing.outputPerMTok,
-			},
-		],
+		catalog,
 	};
 }
 
@@ -431,30 +579,19 @@ function envApiKeyOf(kind: CustomModelProvider): string {
  * - catalog 里唯一的 id（`gpt-5`）
  * - `provider/modelId`
  * - 认不出来 → 回退到环境变量选出的默认模型（并把坏配置当成「没设置」）
+ *
+ * 识别逻辑与 `staff_hire` 共用 `resolveModelOption`（只共享识别能力）；
+ * **失败语义**则由本函数自己负责：配置层宽容，认不出就回退默认值。
+ * 这与 `staff_hire` 的「必须显式报错」是**不同的业务契约**，不要统一。
  */
 export function resolveDefaultModel(
 	reference: string | undefined,
 	catalog: readonly ModelOption[],
 	fallback: ModelRef,
 ): ModelRef {
-	const value = (reference ?? "").trim();
-	if (value === "") return fallback;
-
-	const byId = catalog.filter((item) => item.id === value);
-	if (byId.length === 1) {
-		const only = byId[0];
-		return only === undefined ? fallback : { provider: only.provider, modelId: only.modelId };
-	}
-
-	const slash = value.indexOf("/");
-	if (slash > 0) {
-		const provider = value.slice(0, slash);
-		const modelId = value.slice(slash + 1);
-		if (modelId !== "" && catalog.some((item) => item.provider === provider && item.modelId === modelId)) {
-			return { provider, modelId };
-		}
-	}
-	return fallback;
+	const resolved = resolveModelOption(reference, catalog);
+	if (!resolved.ok) return fallback;
+	return { provider: resolved.option.provider, modelId: resolved.option.modelId };
 }
 
 /** 探测本地网关是否可用。 */

@@ -16,7 +16,12 @@ import { createRegistry, openCompany, probeLocalGateway, recover, setupModels, t
 import { bootstrapCompany, listStaff, readCompany } from "../../src/company/org.ts";
 import { rollupAll } from "../../src/company/cost.ts";
 
-const probe = await probeLocalGateway({ timeoutMs: 2_000 }).catch(() => ({ ok: false, detail: "不可用" }));
+// D-008-a：探测超时必须**大于网关真实延迟**。实测该网关 /responses 响应 1.95–3.12s
+// （3 次 curl：3.117s / 1.947s / 2.988s），原来的 2_000ms 正好卡在边界上，导致探测
+// 随机失败 → `describe.skipIf(!probe.ok)` 把整个 e2e **跳过** → 而 skip 在
+// `Tests 649 passed` 里**不显示为失败**。随机红会有人看，随机 skip 没人看。
+// 取 10_000ms：约真实延迟上限的 3 倍，且仍远小于测试自身的 180s 超时。
+const probe = await probeLocalGateway({ timeoutMs: 10_000 }).catch(() => ({ ok: false, detail: "不可用" }));
 
 describe.skipIf(!probe.ok)("真实模型端到端", () => {
 	let dir: string;

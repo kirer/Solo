@@ -10,6 +10,7 @@ import {
 	MANAGEMENT_ROLES,
 	ROLE_LABELS,
 	managerLabelOf,
+	resolveModelOption,
 	type ManagementRole,
 	type ModelRef,
 } from "./docs.ts";
@@ -494,11 +495,14 @@ export function createManagementTools(deps: ToolDependencies) {
 			const catalog = await listModels(runtime, BACKGROUND_CONTEXT);
 			let model: ModelRef | undefined;
 			if (args.modelId !== undefined) {
-				const option = catalog.find((item) => item.id === args.modelId || item.modelId === args.modelId);
-				if (option === undefined) {
+				// 只借「识别能力」，不借「失败语义」：解析交给共享纯函数，
+				// 但**认不出时必须显式报错**，绝不静默回退默认模型。
+				// 理由：招聘选错模型会让员工起来 no_model 或烧错成本，必须在招聘入口拦住。
+				const resolved = resolveModelOption(args.modelId, catalog);
+				if (!resolved.ok) {
 					return text(`未知模型：${args.modelId}。可选：${catalog.map((item) => item.id).join(" / ")}`);
 				}
-				model = { provider: option.provider, modelId: option.modelId };
+				model = { provider: resolved.option.provider, modelId: resolved.option.modelId };
 			}
 
 			let hired;
