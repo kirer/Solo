@@ -339,17 +339,34 @@ function asideView() {
  * 先落同一个 body 属性，过渡交给 CSS：中断/反向都不需要额外收拾状态。
  * 被替换的视图用 inert 退出无障碍树与 tab 序列（不用 display:none，
  * 否则 .chat 的滚动容器高度归零，scrollTop 会被浏览器抹掉）。
+ *
+ * 槽位（UX-2）：`#chat` 与 `#settings` 共用 `.aside-slot`，而槽位**宽度**由
+ * `body[data-chat]` 单独控制（chat.css:41 在 `closed` 下给 width:0 +
+ * visibility:hidden）。那是对话面板的开关，不是本函数的开关，所以切到设置时
+ * 必须由这里把槽位打开——否则设置属性全对、整块却被祖先压成 0 宽不可见。
  */
 function showAsideView(view, { focus = true } = {}) {
 	const next = view === ASIDE_VIEW.settings ? ASIDE_VIEW.settings : ASIDE_VIEW.chat;
-	if (asideView() === next) return next;
+	const current = asideView();
 	const panel = $("settings");
 	const toggle = $("settings-toggle");
 	const chatEl = $("chat");
-	if (panel === null || toggle === null) return next;
+	if (panel === null || toggle === null) {
+		// 静默 return 会让「点设置没反应」变成不可诊断的哑失败（UX-2 就是这么藏了很久）。
+		console.warn("[aside] #settings / #settings-toggle 缺失，设置视图不可用");
+		return next;
+	}
+
+	const open = next === ASIDE_VIEW.settings;
+	// 设置占着对话的槽位：桌面下先把槽位展开，再切视图。窄屏下槽位宽度不参与
+	// 布局（chat.css:1555 起 media query 覆盖），动 data-chat 反而会误伤抽屉状态。
+	if (open && MOBILE_QUERY.matches === false) document.body.dataset.chat = "open";
+	// 视图已经是目标态、但槽位仍收着（例：上次停在设置、随后对话被收起），
+	// 只靠下面那句 `if (current === next) return` 会直接返回、不落 DOM 与槽位。
+	// 这种情况必须继续往下走，否则同样表现为「点了没反应」。
+	if (current === next && open === false) return next;
 
 	document.body.dataset.viewAside = next;
-	const open = next === ASIDE_VIEW.settings;
 	panel.setAttribute("aria-hidden", open ? "false" : "true");
 	toggle.setAttribute("aria-expanded", open ? "true" : "false");
 	toggle.setAttribute("aria-pressed", open ? "true" : "false");

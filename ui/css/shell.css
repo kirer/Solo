@@ -369,6 +369,17 @@ body[data-sheet="open"] .scrim {
 	min-width: 0;
 }
 
+/* UX-3：允许 display 的离散过渡，让 motion.css 里的 opacity/transform 过渡能在
+   「display:none → flex」那一刻真的播放（否则元素是凭空出现，过渡不播）。
+   不支持 transition-behavior 的浏览器忽略此声明 → 退化为「直接出现」，功能不受影响。 */
+@supports (transition-behavior: allow-discrete) {
+	.org,
+	.board,
+	.channels {
+		transition-behavior: allow-discrete;
+	}
+}
+
 .board {
 	display: none;
 	flex-direction: column;

@@ -27,7 +27,9 @@
 
 .ch-layout {
 	display: grid;
-	grid-template-columns: 268px minmax(0, 1fr) 232px;
+	/* 第三列宽度由 .ch-layout[data-side] 决定（UX-6）：
+	   收起时 0（配合 #ch-side 的 hidden，不占位、不出滚动条），展开时 232px。 */
+	grid-template-columns: 268px minmax(0, 1fr) 0;
 	/* 行也必须约束成 1fr：只写 min-height:0 时行高仍是 auto（= 内容高），
 	   消息一多三栏就整体撑出容器，输入框被挤到屏幕外看不见。 */
 	grid-template-rows: minmax(0, 1fr);
@@ -38,6 +40,14 @@
 	border-radius: var(--radius);
 	overflow: hidden;
 	background: var(--surface);
+	/* 宽度也要过渡，否则「点开」是啪一下变宽，不是动画。
+	   grid-template-columns 不支持过渡的浏览器退化为瞬时变宽（功能不受影响）。 */
+	transition: grid-template-columns var(--motion) var(--ease-out);
+}
+
+/* 展开态：恢复第三列宽度（UX-6）。 */
+.ch-layout[data-side="open"] {
+	grid-template-columns: 268px minmax(0, 1fr) 232px;
 }
 
 /* ── 左列：会话列表 ─────────────────────────────────────────────────── */
@@ -696,6 +706,18 @@
 	background: var(--surface-2);
 	overflow-y: auto;
 	padding: 4px 0 12px;
+	/* 收起态：右移 6px + 淡出（motion.css 约定位移 ≤ 6px）。
+	   hidden 属性负责不占位；这里的 opacity/transform 只负责「收回」的观感。 */
+	opacity: 0;
+	transform: translateX(6px);
+	transition:
+		opacity var(--motion) var(--ease-out),
+		transform var(--motion) var(--ease-out);
+}
+
+.ch-layout[data-side="open"] .ch-side {
+	opacity: 1;
+	transform: none;
 }
 
 .ch-side-block {
@@ -827,14 +849,25 @@
 	vertical-align: 1px;
 }
 
-/* ── 响应式：窄屏收成单列（列表可折叠） ───────────────────────────── */
+/* ── 响应式：窄屏收成两列 ────────────────────────────────────────────
+   UX-8：这里**不能**再写 `.ch-side { display: none }`。
+   改前那一行让视口 ≤1180px 的用户**永久看不到**成员栏（没有任何入口可恢复），
+   是「丢失」不是「隐藏」。现在改成：点右上角按钮时以**浮层**覆盖在消息区右侧。 */
 
 @media (max-width: 1180px) {
 	.ch-layout {
 		grid-template-columns: 236px minmax(0, 1fr);
+		position: relative; /* 浮层定位上下文（UX-8） */
 	}
-	.ch-side {
-		display: none;
+
+	.ch-layout[data-side="open"] .ch-side {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: 232px;
+		z-index: 3;
+		box-shadow: var(--shadow-lift, 0 0 0 1px var(--line));
 	}
 }
 
@@ -934,4 +967,156 @@
 	color: var(--muted);
 	font-size: 10px;
 	font-weight: 600;
+}
+
+/* ── 成员栏开关（UX-6） ───────────────────────────────────────────────
+   位置在 .ch-head 右侧（复用已有但此前未使用的 .ch-head-side 钩子）。 */
+
+.ch-side-toggle {
+	width: 28px;
+	height: 28px;
+	display: grid;
+	place-items: center;
+	border: 1px solid transparent;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--muted);
+	font: inherit;
+	cursor: pointer;
+	transition:
+		color var(--motion-fast) var(--ease-out),
+		background-color var(--motion-fast) var(--ease-out),
+		border-color var(--motion-fast) var(--ease-out);
+}
+
+.ch-side-toggle svg {
+	width: 16px;
+	height: 16px;
+}
+
+.ch-side-toggle:hover {
+	color: var(--ink);
+	background: var(--surface-2);
+	border-color: var(--line);
+}
+
+.ch-side-toggle:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.ch-side-toggle[aria-expanded="true"] {
+	color: var(--ink);
+	background: var(--switch-active-bg);
+}
+
+/* 减少动效：成员栏与栅格宽度都直接跳变（tokens.css 的全局兜底之外再显式一遍）。
+   .ch-side 在这里 opacity:1 —— 收起态靠 hidden 属性不显示，不需要用 opacity 表达，
+   否则减少动效下会有一帧「透明但占位」。 */
+@media (prefers-reduced-motion: reduce) {
+	.ch-layout,
+	.ch-side {
+		transition: none !important;
+	}
+
+	.ch-side {
+		opacity: 1 !important;
+		transform: none !important;
+	}
+}
+
+/* ── UX-7：私聊「对话 / 工作记录」分区 ──────────────────────────────────
+   只有 dm 频道显示 tab；其余频道由 JS 把 #ch-tabs 与 #ch-activity 都 hidden 掉，
+   布局与改动前完全一致。 */
+
+.ch-tabs {
+	display: flex;
+	gap: 2px;
+	padding: 0 12px;
+	border-bottom: 1px solid var(--line);
+	background: var(--surface);
+	flex: none;
+}
+
+.ch-tab {
+	padding: 7px 10px 6px;
+	border: 0;
+	border-bottom: 1px solid transparent;
+	background: transparent;
+	color: var(--muted);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition:
+		color var(--motion-fast) var(--ease-out),
+		border-color var(--motion-fast) var(--ease-out);
+}
+
+.ch-tab:hover {
+	color: var(--ink);
+}
+
+.ch-tab[aria-selected="true"] {
+	color: var(--ink);
+	border-bottom-color: var(--accent-line, var(--accent));
+}
+
+.ch-tab:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+/* 工作记录区：与 .ch-body 同构（同一块位置，互斥显示）。 */
+.ch-activity {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 10px 16px 14px;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	outline: none;
+}
+
+.ch-activity-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.ch-activity-row > .tool,
+.ch-activity-row > .think {
+	flex: 1;
+	min-width: 0;
+}
+
+/* 失败的工具调用必须能一眼看出来（负责人 #236）。
+   renderTool 已写 data-state="error"，这里再叠一层左侧红条 —— 
+   不依赖对 state 取值的推演，也不改 chat.css 的既有样式。 */
+.ch-activity-row[data-error="true"] {
+	border-left: 2px solid var(--danger, #ff5f56);
+	padding-left: 6px;
+	margin-left: -8px;
+}
+
+.ch-activity-time {
+	flex: none;
+	padding-top: 6px;
+	font-size: 10.5px;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+}
+
+.ch-activity-empty {
+	padding: 28px 12px;
+	text-align: center;
+	color: var(--faint);
+	font-size: 12px;
+}
+
+.ch-activity-more {
+	padding: 4px 0 10px;
+	text-align: center;
+	font-size: 11.5px;
+	color: var(--faint);
 }

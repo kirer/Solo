@@ -31,7 +31,14 @@ const REDUCED_MOTION_QUERY = window.matchMedia("(prefers-reduced-motion: reduce)
 
 export function initOrg({ onSelect } = {}) {
 	const graph = document.getElementById("graph");
+	// `onSelect` 的接线**保留但暂不调用**（UX-1：组织页点职员暂不加载对话）。
+	//
+	// 为什么不直接删掉：老板说的是「暂时无任何操作，我没想好」，不是「永远不要」。
+	// 保留这个入口，将来恢复只需把下面点击处理里的 `setSelected(id)` 后面加回
+	// `select(id);` 一行；删掉接线反而要重新穿一次 app.js → org.js 的参数链。
+	// 用 `void select` 显式标记「有意未使用」，避免被当成漏改或死代码清理掉。
 	const select = typeof onSelect === "function" ? onSelect : () => {};
+	void select;
 
 	let root = null;
 	let svg = null;
@@ -1026,8 +1033,30 @@ export function initOrg({ onSelect } = {}) {
 			}
 			const convTarget = event.target.closest("[data-conv]");
 			if (convTarget === null) return;
-			const id = Number(convTarget.dataset.conv);
-			if (Number.isFinite(id)) select(id);
+			// 注意 `Number("") === 0`、`Number(null) === 0`，而 0 是通过 `isFinite` 的。
+			// 只判 `isFinite` 会让空 `data-conv` 也过守卫，把高亮设成 0（= 取消全部选中）。
+			// 原代码同样有此松弛（空值会给 `select(0)`），但那时后果是「试图加载一个不存在的
+			// 会话」；改成只高亮后，后果变成「把已选中的节点清掉」——这是更直观的坏手感。
+			// 所以这里把守卫写成「非空字符串 + 有限正整数」，只加严不改语义。
+			const rawConv = convTarget.dataset.conv;
+			if (typeof rawConv !== "string" || rawConv.trim() === "") return;
+			const id = Number(rawConv);
+			if (!Number.isFinite(id) || id <= 0) return;
+			// UX-1（老板口径）：「暂时无任何操作」——点职员**不加载对话**。
+			//
+			// 只切断「加载会话」这一个动作（原 `select(id)`，它接的是 app.js 的
+			// `selectConversation`），**不动 `onSelect` 的接线**，也不动旁栏任何开关
+			// （`data-chat` / `data-view-aside` 的语义归 showAsideView，UX-2 的修复靠它）。
+			//
+			// 但**选中高亮保留**：用户点了一下必须看得见反馈，否则就退化成
+			// 「点了没反应」——那正是 UX-2 给过的体验。`setSelected` 与 `select` 无关，
+			// 它只改 selected / applySelection / applyFocus，不会发请求、不碰旁栏。
+			//
+			// 与 `app.js:179` 的关系：**并存，不是替代**。那条路径是「会话加载成功后
+			// 同步高亮」（含启动自动选中 CEO、hash 深链、聊天按钮兜底选 CEO）；
+			// 这里只负责「组织页点击自己的高亮」。两者都调同一个幂等的 setSelected，
+			// 第二句会因为 `next === selected` 早退，**不会双触发、不会抖动**。
+			setSelected(id);
 		});
 
 		// 指针悬浮：只做极轻的 3D 倾斜。触屏 / 减少动效下完全不启动。

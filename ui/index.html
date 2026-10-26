@@ -54,10 +54,10 @@
 				<span class="topbar-conn" id="conn" data-state="on" hidden><i></i>重连中</span>
 				<!-- 看板 / 组织图 视图切换（单页面，不做侧边导航） -->
 				<div class="view-switch" role="tablist" aria-label="视图">
+					<button class="view-switch-btn" type="button" role="tab" id="view-org" aria-selected="true" title="组织架构">组织</button>
 					<button class="view-switch-btn" type="button" role="tab" id="view-channels" aria-selected="false" title="频道">
 						频道<span class="view-badge" id="ch-unread" hidden></span>
 					</button>
-					<button class="view-switch-btn" type="button" role="tab" id="view-org" aria-selected="true" title="组织架构">组织</button>
 					<button class="view-switch-btn" type="button" role="tab" id="view-board" aria-selected="false" title="任务看板">看板</button>
 				</div>
 				<button class="topbar-btn" type="button" id="chat-toggle" aria-label="对话面板" aria-pressed="true" title="对话面板（⌘J）">
@@ -99,8 +99,27 @@
 										<b class="ch-title" id="ch-title">频道</b>
 										<span class="ch-sub" id="ch-sub"></span>
 									</div>
+									<!-- 成员栏开关（UX-6）：默认收起，点开才看。dm/log 频道由 channels.js 隐藏此按钮。 -->
+									<div class="ch-head-side">
+										<button class="ch-side-toggle" type="button" id="ch-side-toggle"
+										        aria-label="成员" title="成员"
+										        aria-controls="ch-side" aria-expanded="false">
+											<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+												<circle cx="9" cy="8.2" r="3.2"/><path d="M3.5 19.5a5.5 5.5 0 0 1 11 0"/><path d="M16 5.5a3 3 0 0 1 0 5.5"/><path d="M17.5 14.2a5.2 5.2 0 0 1 3 4.4"/>
+											</svg>
+										</button>
+									</div>
 								</header>
+								<!-- UX-7：私聊里「对话 / 工作记录」两个分区并列，不混流（老板：讨论不需要）。
+								     只有 dm 频道显示这两个 tab，其余频道隐藏。 -->
+								<div class="ch-tabs" id="ch-tabs" role="tablist" aria-label="私聊视图" hidden>
+									<button class="ch-tab" type="button" role="tab" id="ch-tab-chat" aria-selected="true" aria-controls="ch-body">对话</button>
+									<button class="ch-tab" type="button" role="tab" id="ch-tab-activity" aria-selected="false" aria-controls="ch-activity">工作记录</button>
+								</div>
 								<div class="ch-body" id="ch-body" role="log" aria-label="消息流" tabindex="0"></div>
+								<!-- UX-7：工作记录区（工具调用 + 思考过程）。内容由 channels.js 渲染，
+								     复用 feed-render.js 的 renderTool / renderThinking（与组织页聊天同一套）。 -->
+								<div class="ch-activity" id="ch-activity" role="log" aria-label="工作记录" tabindex="0" hidden></div>
 								<!-- 读屏播报只走这一小块：整个消息区挂 aria-live 的话，每次轮询
 								     全量重渲染都会把整段历史重播一遍，读屏用户会被淹没。 -->
 								<div class="sr-only" id="ch-announcer" role="status" aria-live="polite"></div>
@@ -110,7 +129,7 @@
 									<button class="ch-send" type="button" id="ch-send" aria-label="发送">发送</button>
 								</div>
 							</div>
-							<aside class="ch-side">
+							<aside class="ch-side" id="ch-side">
 								<div class="ch-side-block">
 									<h3>成员</h3>
 									<ul class="ch-members" id="ch-members"></ul>
