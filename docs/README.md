@@ -17,7 +17,6 @@
 | [RUNBOOK](RUNBOOK.md) | 换模型、备份、升级依赖、排障、数据文件说明 | 运维 / 出故障 |
 | [DEPLOY](DEPLOY.md) | 局域网访问、Docker 部署、安全边界、Tauri 桌面壳评估 | 要部署出去 |
 | [TUNNEL](TUNNEL.md) | **内网穿透**：cloudflared-manager、`https://oxfff.com`、Cloudflare Access 白名单、踩过的坑 | 要让外网访问 |
-| [`openspec/specs/`](../openspec/specs/) | **规格库**：10 个能力、62 条需求。改代码前先看「什么行为不能变」 | 改任何对外行为之前 |
 
 ## 历史文档（冻结，只记录「当时为什么这么决定」）
 
@@ -49,7 +48,7 @@
 
 **第一次接触** → `AGENTS.md` → SYSTEM（它怎么运转）→ README（怎么启动）
 
-**要改代码** → CODE（先找到文件）→ `openspec/specs/`（这个能力现在保证什么行为）→ DECISIONS（哪些边界不能碰）→ `src/`
+**要改代码** → CODE（先找到文件）→ DECISIONS（哪些边界不能碰）→ SYSTEM / COMMS（这块现在是什么行为）→ `src/`
 
 **要改界面** → CODE 第 6 节（`ui/` 模块边界）→ WEB-API（数据从哪来）→ COMMS §7
 
@@ -59,6 +58,6 @@
 
 ## 文档为什么这么组织
 
-- **一份事实只有一个家**：系统逻辑在 SYSTEM，代码位置在 CODE，不变量在 DECISIONS，行为保证在 `openspec/specs/`，接口字段在 WEB-API。这五份会随代码更新，其余文档都不该出现重复的事实。
+- **一份事实只有一个家**：系统逻辑在 SYSTEM，代码位置在 CODE，不变量在 DECISIONS，接口字段在 WEB-API。这四份会随代码更新，其余文档都不该出现重复的事实。
 - **历史不删、但不假装是现状**：`docs/history/` 全部冻结，文件头有「已归档」横幅。想在文档里写「为什么当初这么选」，写进 DECISIONS（那是持续有效的）；一次性的施工语境留在 history。
 - **截图不入库**：需要图就用 `npm run ui:shot`（输出到 `.taste-skill/shots/`，已 gitignore），别提交 PNG。

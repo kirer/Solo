@@ -36,7 +36,6 @@ ui/            网页界面（原生 ES module，无框架；`npm run ui:build` 
 test/          contract（钉底层行为）/ unit（纯函数）/ e2e（真 boot 一家公司）
 scripts/       验收与运维脚本
 docs/          文档（索引见 docs/README.md）
-openspec/      规格库（openspec CLI 认这个位置，别动位置）
 archive/       归档：验证脚本、Pi 源码、产出的游戏（不参与运行）
 workspace/     运行时数据：数据库、项目文件夹、日志（gitignore）
 ```
@@ -60,11 +59,11 @@ workspace/     运行时数据：数据库、项目文件夹、日志（gitignor
 
 ```bash
 cat docs/CODE.md            # 找到你要改的文件在第几节
-cat openspec/specs/*/spec.md  # 你改的这个能力，现在保证什么行为
+cat docs/DECISIONS.md       # 你改的地方碰不碰边界
 ```
 
-- 你的改动会破坏某条 `### Requirement:` → **先想清楚，在提案里写为什么**。
 - 你的改动会碰某条 ADR 的边界 → **不要偷偷改，追加一条新 ADR 说明原因**（`docs/DECISIONS.md` 的规矩：只追加，不改旧条目）。
+- 你的改动会让某条现有行为**不再成立** → 在 `docs/SYSTEM.md` / `docs/COMMS.md` 里改掉它，别让文档描述一个已经不存在的系统。
 
 ### 3.2 提交前（必须全绿，缺一不可）
 
@@ -80,13 +79,8 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 
 ### 3.3 改了行为 → 同步这几个地方（硬要求）
 
-**已知缺口**：`openspec/specs/` 覆盖的是 v1 的 10 个能力；通信重构之后的**频道 / 任务 / 记忆**
-这三块**还没有 spec**。改它们时，行为依据是 `docs/COMMS.md` 与 `docs/SYSTEM.md`；
-如果你把某条行为钉成了「不能再变」，顺手补一份 `openspec/specs/<capability>/spec.md`。
-
 | 你改了什么 | 必须同步 |
 |---|---|
-| 对外可见的行为 | `openspec/specs/<capability>/spec.md` 的 Requirement |
 | 一个不显然的取舍 | `docs/DECISIONS.md` 追加一条 ADR |
 | 文件/模块的位置、职责 | `docs/CODE.md` |
 | 系统的运转方式（流程、数据文档、唤醒规则） | `docs/SYSTEM.md` |
@@ -100,7 +94,7 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 
 ## 4. 文档的组织规矩
 
-**一份事实只有一个家。** 现状型事实只能出现在这五份里：
+**一份事实只有一个家。** 现状型事实只能出现在这四份里：
 
 | 家 | 装什么 |
 |---|---|
@@ -108,7 +102,6 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 | `docs/CODE.md` | 代码在哪、谁负责什么 |
 | `docs/DECISIONS.md` | 哪些边界不能碰、为什么 |
 | `docs/WEB-API.md` | 接口字段 |
-| `openspec/specs/` | 什么行为不能变 |
 
 **`docs/history/` 是冻结区**：只记录「当时的推理」。里面的行号、路径、数量、截图链接都可能已经失效，不要以它为准，也不要往里加新内容（要加就加一条 ADR 或新文档）。
 

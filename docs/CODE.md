@@ -516,8 +516,6 @@ test/support.ts         共用搭建（临时库 + 假模型）
 ## 10. 规格与决策记录
 
 ```
-openspec/specs/          10 个能力、62 条需求 —— 改代码前先看「什么行为不能变」
-                         （缺口：频道 / 任务 / 记忆尚无 spec，行为依据是 docs/COMMS.md）
   communication-trail  company-runtime  cost-accounting  delegation  escalation
   org-structure  project-authority  project-lifecycle  project-workspace  tui-workspace
 docs/DECISIONS.md        33 条 ADR（每条有背景、替代方案、为什么这么选）
@@ -549,7 +547,7 @@ ADR-033  老板级待办只能由 CEO 递
 
 ## 11. 改动前的检查清单
 
-1. 读 `openspec/specs/` 对应能力的「什么行为不能变」
+1. 读 `docs/DECISIONS.md`：你要动的这块碰不碰边界
 2. 读相关 ADR
 3. 确认改的是哪一层（domain 不许 import 运行时库）
 4. `npm run check`（会跑边界检查）

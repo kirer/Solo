@@ -145,7 +145,6 @@ ui/            网页界面（源码直出；`npm run ui:build` 会把 12 个文
 test/          契约 / 单元 / 端到端（54 文件 764 例）
 scripts/       验收（ui-check / ui-shot）、演示数据、边界检查、迁移探针
 docs/          文档（见下方索引）
-openspec/      规格库：10 个能力、62 条需求（openspec CLI 认这个位置，别动）
 archive/       归档：9 个验证脚本、系统产出的坦克大战、Pi 源码（不入库）
 workspace/     运行时数据（首次启动创建，已 gitignore）
 ```
@@ -175,7 +174,6 @@ workspace/     运行时数据（首次启动创建，已 gitignore）
 | 七个设计问题的详细回答 | [`docs/history/ANSWERS.md`](docs/history/ANSWERS.md)（已冻结） |
 | 做过什么、修过哪些真 bug | [`docs/history/HANDOFF.md`](docs/history/HANDOFF.md)（已冻结） |
 | 底层库调研（三份） | [`docs/research/`](docs/research/) |
-| **规格**：10 个能力、62 条需求（改代码前必看） | [`openspec/specs/`](openspec/specs/) |
 | 归档：验证脚本 / Pi 源码 / 产出的游戏 | [`archive/README.md`](archive/README.md) |
 
 ## 开发
