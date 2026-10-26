@@ -38,3 +38,6 @@ coverage/
 *.log
 .idea/
 .vscode/
+
+# 前端打包产物（可选加速层，可随时删掉回退到源码）
+ui/dist/

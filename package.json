@@ -14,6 +14,7 @@
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit && npm run check:boundaries",
     "check:boundaries": "node scripts/check-boundaries.mjs",
+    "ui:build": "node scripts/build-ui.mjs",
     "start": "node --experimental-strip-types src/server/main.ts",
     "web": "node --experimental-strip-types src/server/main.ts",
     "tui": "node --experimental-strip-types src/tui/main.ts",
@@ -32,6 +33,7 @@
   },
   "devDependencies": {
     "@types/node": "22.19.19",
+    "esbuild": "0.28.2",
     "typescript": "5.9.3",
     "vitest": "4.1.12"
   }

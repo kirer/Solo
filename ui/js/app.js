@@ -715,6 +715,22 @@ connectOrg();
 
 // ── 自挂载模块（导入即初始化） ─────────────────────────────────────────────
 // 看板：自己拉 /api/board、订阅 aic:org、按 body[data-view] 显隐。
-// 星海：挂到 #stage-bg，手机 / 减少动效 / 无 WebGL 时自动降级。
 import "./board.js";
-import "./starfield.js";
+// 星海：挂到 #stage-bg，手机 / 减少动效 / 无 WebGL 时自动降级。
+//
+// **必须延迟加载**：它 import 的是 `ui/vendor/three.module.js`（691 KB / br 158 KB）。
+// 以前用静态 `import "./starfield.js"`，等于每个人都得在首屏付这 158 KB 的
+// 下载与解析成本，只为了背景里 212 个点。现在推到首屏之后（空闲时），
+// 背景本来就要淡入，晚 1 秒完全看不出来。
+// 降级判断仍在 starfield.js 内部（手机 / reduced-motion / 无 WebGL 时它自己会退出），
+// 这里只负责不让它拖慢首屏。
+const loadStarfield = () => {
+	import("./starfield.js").catch(() => {
+		/* 星海是装饰，加载失败不影响任何功能，静默降级为静态渐变 */
+	});
+};
+if (typeof window.requestIdleCallback === "function") {
+	window.requestIdleCallback(loadStarfield, { timeout: 2500 });
+} else {
+	window.setTimeout(loadStarfield, 1200);
+}

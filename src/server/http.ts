@@ -11,6 +11,16 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
+import {
+	type AssetEntry,
+	bodyFor,
+	compressible,
+	etagFor,
+	loadAsset,
+	matchesEtag,
+	negotiateEncoding,
+	notModifiedSince,
+} from "./static-assets.ts";
 import { BACKGROUND_CONTEXT, InboxDoc, inspectLiveness, isConversationBusy } from "../runtime/index.ts";
 import type { CompanyRuntime } from "../runtime/index.ts";
 import type { ModelSetup } from "../runtime/models.ts";
@@ -32,6 +42,7 @@ import {
 	type SettingsView,
 } from "./settings.ts";
 import { createUploadStore, MAX_UPLOAD_BYTES, UploadTooLargeError, type UploadStore } from "./uploads.ts";
+import { resolveStaticRoot } from "./static-root.ts";
 import { composeInboundText, createImOutboundRelay, inboundAllowed } from "./im.ts";
 import { browserUrlOf, lanUrlsOf } from "./network.ts";
 import { listChannels, mentionCandidates, readChannelView, unreadSummary } from "./channels-view.ts";
@@ -155,6 +166,17 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	const port = options.port ?? 7788;
 	const host = options.host ?? "127.0.0.1";
 	const uiDir = options.uiDir ?? join(process.cwd(), "ui");
+	// 静态目录可能随构建/改源码切换（dist ↔ source）。
+	// 每请求走一次递归 stat 太贵，这里的取舍是「最多 2 秒后才看到切换」——
+	// 改完源码刷刷新最多多试一次，远比每请求 24 次 stat 便宜。
+	let staticRootCache: { choice: Awaited<ReturnType<typeof resolveStaticRoot>>; until: number } | undefined;
+	const staticRoot = async () => {
+		const now = Date.now();
+		if (staticRootCache !== undefined && staticRootCache.until > now) return staticRootCache.choice;
+		const choice = await resolveStaticRoot(uiDir);
+		staticRootCache = { choice, until: now + 2_000 };
+		return choice;
+	};
 	const workspace = options.workspace ?? join(process.cwd(), "workspace");
 	// 设置与附件都在 workspace 下：测试传临时目录，正式运行就是项目 workspace。
 	const settingsStore = options.settings ?? openSettings({ workspace });
@@ -426,8 +448,10 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				return await postImInbound(url, request, response);
 			}
 
-			// 静态资源
-			return await serveStatic(response, uiDir, path);
+			// 静态资源：dist 优先，找不到的文件（如 vendor/）回退到源码目录。
+			const choice = await staticRoot();
+			const dirs = choice.kind === "dist" ? [choice.dir, uiDir] : [uiDir];
+			return await serveStatic(response, request, uiDir, path, dirs);
 		} catch (error) {
 			return fail(response, 500, error instanceof Error ? error.message : String(error));
 		}
@@ -1623,41 +1647,116 @@ function queueText(content: unknown): string {
 	return "";
 }
 
-/** 静态资源：限制在 uiDir 内，防目录穿越。 */
-async function serveStatic(response: ServerResponse, uiDir: string, path: string): Promise<void> {
+/** 静态资源：限制在 rootDir（源码根 `ui/`）内，防目录穿越。 */
+async function serveStatic(
+	response: ServerResponse,
+	request: IncomingMessage,
+	rootDir: string,
+	path: string,
+	/** 按优先级尝试的目录（第一个是主目录）。 */
+	dirs: readonly string[],
+): Promise<void> {
 	const relative = path === "/" ? "index.html" : path.replace(/^\/+/, "");
-	const target = normalize(join(uiDir, relative));
-	// 必须带分隔符比较：`"/x/ui-backup".startsWith("/x/ui")` 是 true，
-	// 所以以前 `/../ui-backup/secret.txt` 会被放行。同级目录带 `ui` 前缀就能读。
-	const root = normalize(uiDir);
-	if (target !== root && !target.startsWith(root + sep)) {
+	// 越界检查的根必须是 **源码根**（`ui/`），不是当前服务目录：
+	// 产物目录 `ui/dist/` 是源码根的子目录，dist 里的 app.js 会引用
+	// `../vendor/three.module.js`，浏览器把它解析成 `/vendor/three.module.js`，
+	// 需要在 `ui/` 下能找到。只把 `ui/dist` 当根就会把这种请求 403 掉。
+	const root = normalize(rootDir);
+	const resolveIn = (dir: string) => normalize(join(dir, relative));
+
+	// 先做一次越界判断（用主目录算出来的路径就够：它们共享同一 relative）。
+	const probe = resolveIn(dirs[0] ?? rootDir);
+	if (probe !== root && !probe.startsWith(root + sep)) {
 		return fail(response, 403, "禁止访问");
 	}
 
-	try {
-		const content = await readFile(target);
-		response.writeHead(200, {
-			"Content-Type": MIME[extname(target)] ?? "application/octet-stream",
-			"Cache-Control": "no-cache",
-		});
-		response.end(content);
-	} catch {
-		// SPA 回退只对「页面路径」生效。
-		//
-		// 以前任何读文件失败都回退成 200 + index.html：`/api/typo`、`/api/channelsX`
-		// 也拿到 HTML，前端 `JSON.parse` 抛 `Unexpected token '<'`，错误信息完全误导；
-		// 目录穿越被拒（403）之外的真实越界路径也会退化成「看起来正常」。
-		// 带扩展名的资源请求（.js/.css/.png）找不到就是 404，不能返回 HTML——
-		// 否则浏览器把 HTML 当 JS 解析，报一堆莫名其妙的语法错误。
-		if (path.startsWith("/api/") || path.startsWith("/uploads/") || extname(path) !== "") {
-			return fail(response, 404, "未找到");
-		}
-		try {
-			const index = await readFile(join(uiDir, "index.html"));
-			response.writeHead(200, { "Content-Type": MIME[".html"], "Cache-Control": "no-cache" });
-			response.end(index);
-		} catch {
-			fail(response, 404, "未找到");
+	let target = probe;
+	let asset = undefined;
+	for (const dir of dirs) {
+		const candidate = resolveIn(dir);
+		if (candidate !== root && !candidate.startsWith(root + sep)) continue;
+		const found = await loadAsset(candidate);
+		if (found !== undefined) {
+			target = candidate;
+			asset = found;
+			break;
 		}
 	}
+
+	if (asset !== undefined) {
+		return await sendAsset(response, request, asset, relative, MIME[extname(target)] ?? "application/octet-stream");
+	}
+
+	// SPA 回退只对「页面路径」生效。
+	//
+	// 以前任何读文件失败都回退成 200 + index.html：`/api/typo`、`/api/channelsX`
+	// 也拿到 HTML，前端 `JSON.parse` 抛 `Unexpected token '<'`，错误信息完全误导；
+	// 目录穿越被拒（403）之外的真实越界路径也会退化成「看起来正常」。
+	// 带扩展名的资源请求（.js/.css/.png）找不到就是 404，不能返回 HTML——
+	// 否则浏览器把 HTML 当 JS 解析，报一堆莫名其妙的语法错误。
+	if (path.startsWith("/api/") || path.startsWith("/uploads/") || extname(path) !== "") {
+		return fail(response, 404, "未找到");
+	}
+	let index = undefined;
+	for (const dir of dirs) {
+		index = await loadAsset(join(dir, "index.html"));
+		if (index !== undefined) break;
+	}
+	if (index === undefined) return fail(response, 404, "未找到");
+	return await sendAsset(response, request, index, "index.html", MIME[".html"] ?? "text/html; charset=utf-8");
+}
+
+/**
+ * 发一个静态资源：压缩 + 条件请求。
+ *
+ * 三件事：
+ * - **压缩**：`ui/` 首屏 480 KB，不压缩时这段字节会原样走隧道跨境传输。
+ *   gzip 后 147 KB、brotli 后 124 KB（实测）。只在文件类型值得压时才压（png / woff2 不压）；
+ * - **ETag + Last-Modified**：以前只发 `Cache-Control: no-cache` 却没有任何验证凭据，
+ *   浏览器每次只能拿到 200 全量响应——`no-cache` 的语义是「可以存但用前要验证」，
+ *   没有凭据就等于每次重传 480 KB。命中条件现在回 304，正文 0 字节；
+ * - **Vary: Accept-Encoding**：让中间缓存不把 br 的响应发给只支持 gzip 的客户端。
+ *
+ * 缓存策略分两档：入口页 `no-cache`（保证发版能立刻生效），其余资源
+ * `max-age=300, must-revalidate`（5 分钟内不起请求，之后用 ETag 验证）。
+ * 不设长 `max-age` 是因为 `ui/` 没有内容哈希文件名，长缓存会让改动迟迟不生效。
+ */
+async function sendAsset(
+	response: ServerResponse,
+	request: IncomingMessage,
+	asset: AssetEntry,
+	relative: string,
+	contentType: string,
+): Promise<void> {
+	const canCompress = compressible(contentType);
+	const wanted = canCompress ? negotiateEncoding(request.headers["accept-encoding"]) : "identity";
+	// 先取正文再算 ETag：压缩失败时会退回 identity，ETag 必须描述**实际**发出去的表示，
+	// 否则客户端会拿着 br 的凭据去验证 identity 的响应，缓存语义就错了。
+	const { body, encoding } = await bodyFor(asset, wanted);
+	const etag = etagFor(asset, encoding);
+
+	const headers: Record<string, string> = {
+		"Content-Type": contentType,
+		"Cache-Control": relative === "index.html" ? "no-cache" : "public, max-age=300, must-revalidate",
+		ETag: etag,
+		"Last-Modified": asset.lastModified,
+	};
+	if (canCompress) headers.Vary = "Accept-Encoding";
+
+	// `If-None-Match` 优先：有它时按 RFC 9110 忽略 `If-Modified-Since`。
+	const ifNoneMatch = request.headers["if-none-match"];
+	const fresh =
+		ifNoneMatch === undefined
+			? notModifiedSince(request.headers["if-modified-since"], asset.lastModified)
+			: matchesEtag(ifNoneMatch, etag);
+	if (fresh) {
+		response.writeHead(304, headers);
+		response.end();
+		return;
+	}
+
+	if (encoding !== "identity") headers["Content-Encoding"] = encoding;
+	headers["Content-Length"] = String(body.length);
+	response.writeHead(200, headers);
+	response.end(body);
 }
