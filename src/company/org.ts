@@ -79,7 +79,7 @@ import {
 	startEscalation,
 } from "./escalation.ts";
 import { escalationId, messageRequestId } from "../runtime/ids.ts";
-import { toolsForRole } from "./staff-tools.ts";
+import { toolsForNames } from "./staff-tools.ts";
 import { startWatchdog, type WatchdogOptions } from "./watchdog.ts";
 import { roundtableExtension } from "./roundtable.ts";
 // **不能静态 import**：`management-tools.ts` 静态 import 本文件的 11 个函数，
@@ -123,16 +123,19 @@ export function employeeUniversalTools(runtime: CompanyRuntime): readonly Return
 }
 
 /**
- * 员工实际可用的工具：按角色裁剪的执行工具 + 向直属上级上报。
+ * 员工实际可用的工具：被授予的原子执行工具 + 向直属上级上报。
  *
  * 单独导出：招聘、重启自愈、职工档案三处必须用同一份，否则「档案里写的工具」
  * 与「真正拿到的工具」又会不一致。
+ *
+ * 入参是**工具名列表**而不是角色名：能力由招聘时显式声明的 tools 决定，
+ * 角色只是名册上的标签（以前按角色查表，未知角色会静默退化成只读员工）。
  */
 export function employeeToolsFor(
 	runtime: CompanyRuntime,
-	role: string,
+	toolNames: readonly string[],
 ): ReturnType<typeof defineTool>[] {
-	const tools: ReturnType<typeof defineTool>[] = [...toolsForRole(role)];
+	const tools: ReturnType<typeof defineTool>[] = [...toolsForNames(toolNames)];
 	tools.push(...(EMPLOYEE_EXTRA_TOOLS.get(runtime) ?? []));
 	return tools;
 }
@@ -1043,13 +1046,17 @@ export type HireStaffOptions = {
 	/** 能力注册表。传入后会把员工能力包注册进去，否则员工拿不到工具。 */
 	readonly registry?: Registry;
 	readonly name: string;
-	/** 员工角色（产品 / 设计 / 开发 / 测试 …）。 */
+	/** 员工角色（产品 / 设计 / 开发 / 测试 …）。名册上的标签，不决定能力。 */
 	readonly role: string;
+	/** 要授予的原子工具名（read / write / edit / bash）。不传则不授予执行工具。 */
+	readonly tools?: readonly string[];
+	/** 职责：一段自由文本，拼进员工提示词。不传则只有通用纪律。 */
+	readonly duty?: string;
 	/** 指定模型；不传则用公司默认模型。 */
 	readonly model?: ModelRef;
 	/** 直属上级：管理层岗位，或 `leader:<本项目slug>`。不传默认本项目负责人。 */
 	readonly manager?: string;
-	/** 额外职责描述，追加到角色模板之后。 */
+	/** 额外职责描述，追加到职责描述之后。 */
 	readonly instructions?: string;
 };
 
@@ -1108,9 +1115,11 @@ export async function hireStaff(
 		);
 	}
 
-	// 未显式指定时按角色自动分配：员工干不了活往往就是这里给空了。
+	// 能力由显式声明的 tools 决定；角色名不再参与推断——按角色查表正是
+	// 「招个『前端』拿到只读员工、不报错不日志」那个 bug 的来源。
 	// 同时追加「向直属上级上报」的能力——没有它，员工只能干等。
-	const employeeTools = options.employeeTools ?? employeeToolsFor(runtime, options.role);
+	const toolNames = options.tools ?? [];
+	const employeeTools = options.employeeTools ?? employeeToolsFor(runtime, toolNames);
 
 	const employeeExtension = createEmployeeExtension(
 		`${options.project}/${options.name}`,
@@ -1152,6 +1161,8 @@ export async function hireStaff(
 		company.staff[key] = {
 			name: options.name,
 			role: options.role,
+			duty: options.duty ?? "",
+			tools: [...toolNames],
 			conversationId: Number(conversation.id),
 			project: options.project,
 			manager,
@@ -1392,7 +1403,12 @@ export async function renameStaff(
 	// 失败不回滚名册（名册是真相源），下次启动由 ensureStaffAgents 按新名字重建。
 	const conversation = await runtime.harness.conversation(person.conversationId as never, context);
 	if (conversation !== undefined) {
-		const extension = createEmployeeExtension(newKey, employeeToolsFor(runtime, person.role), employeeUniversalTools(runtime));
+		const extension = createEmployeeExtension(
+			newKey,
+			// 旧记录可能没有 tools 字段（本次改动之前招的人），按「不授予执行工具」处理。
+			employeeToolsFor(runtime, person.tools ?? []),
+			employeeUniversalTools(runtime),
+		);
 		input.registry?.install(extension);
 		await conversation.configure({ extensions: [extension] }, context);
 	}
@@ -1563,7 +1579,7 @@ export async function syncStaffInstructions(
 	await conversation.configure(
 		{
 			instructions: staffInstructionsFor(state, {
-				role: person.role,
+				duty: person.duty ?? "",
 				projectName: person.project,
 				manager: person.manager,
 			}),
@@ -2315,7 +2331,7 @@ async function ensureStaffAgents(
 		// 没有工具 → 重建能力包并重设
 		const extension = createEmployeeExtension(
 			`${staff.project}/${staff.name}`,
-			employeeToolsFor(runtime, staff.role),
+			employeeToolsFor(runtime, staff.tools ?? []),
 			employeeUniversalTools(runtime),
 		);
 		registry.install(extension);
@@ -2344,7 +2360,7 @@ function buildStaffInstructions(
 	manager: ManagerRef,
 ): string {
 	return staffInstructionsFor(state, {
-		role: options.role,
+		duty: options.duty ?? "",
 		projectName: options.project,
 		manager,
 		...(options.instructions === undefined ? {} : { extra: options.instructions }),

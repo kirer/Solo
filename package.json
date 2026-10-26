@@ -20,6 +20,8 @@
     "tui": "node --experimental-strip-types src/tui/main.ts",
     "test": "vitest --run",
     "test:watch": "vitest",
+    "verify": "node scripts/verify-receipt.mjs",
+    "verify:check": "node scripts/verify-receipt.mjs --check-receipt",
     "ui:shot": "node scripts/ui-shot.mjs",
     "ui:check": "node scripts/ui-check.mjs"
   },

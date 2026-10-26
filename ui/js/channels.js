@@ -30,6 +30,14 @@ const state = {
 	channels: [],
 	activeId: null,
 	view: null,
+	/**
+	 * 服务端时钟减本地时钟的差值（毫秒）。
+	 *
+	 * 任务耗时一端是服务端写下的时间戳、另一端是「现在」。前端拿本地
+	 * `Date.now()` 当「现在」，本机时钟偏快就会算出负数（界面显示
+	 * 「-3 分钟」）。每次拉到频道视图就用它下发的 `serverNow` 重算一次。
+	 */
+	clockSkew: 0,
 	/** @ 选择器里当前候选。 */
 	mentionCandidates: [],
 	mentionQuery: "",
@@ -218,6 +226,8 @@ async function openChannel(id, { userInitiated = true } = {}) {
 	try {
 		const view = await fetchJson(`/api/channels/${encodeURIComponent(id)}?limit=60`);
 		if (token !== state.reqToken) return; // 用户已经切到别的频道了
+		// 时钟校正：视图里有 `serverNow`，用它算一次偏移（旧后端没这个字段就不动）。
+		if (Number.isFinite(view.serverNow)) state.clockSkew = view.serverNow - Date.now();
 		// 轮询刷新时，如果用户已经往前翻过页，把更早的那些消息保住——
 		// 否则每 4 秒一次刷新就把翻页结果冲掉，用户永远读不到历史。
 		if (!userInitiated && state.view !== null && state.view.channel.id === id) {
@@ -374,7 +384,10 @@ async function sendMessage(text) {
 	if (state.sending) return;
 	state.sending = true;
 	const sentText = text;
-	const mentions = extractMentions(text);
+	// `mentions` 不再由前端算（旧的 `extractMentions` 只按成员名 `includes`，
+	// 与后端的 `parseMentions` 是两套算法：后端认「@负责人」别名、要求名字
+	// 后面不紧邻文字、只保留频道成员。两边不一致时界面高亮了却没人被唤醒）。
+	// 现在只传正文 + 引用 seq，@ 谁完全由 POST /messages 的 handler 决定。
 	// #7「用回复取代 @」：引用改成**结构化字段**，不再往正文里拼 Markdown 引用块。
 	//
 	// 旧做法的两处问题：①被引用的人不会被唤醒（`mentions` 里没有他），
@@ -387,7 +400,7 @@ async function sendMessage(text) {
 		await fetchJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
-			body: JSON.stringify({ text: sentText, mentions, ...(replySeq === undefined ? {} : { replyTo: replySeq }) }),
+			body: JSON.stringify({ text: sentText, ...(replySeq === undefined ? {} : { replyTo: replySeq }) }),
 		});
 		// 只有输入框里还是刚发出去的那段文字才清空。
 		// 曾经无条件 `el.input.value = ""`：发送途中用户切频道并开始打新草稿，
@@ -408,14 +421,6 @@ async function sendMessage(text) {
 	}
 }
 
-/** 从正文里抽出 @ 到的人（按名字匹配候选表）。 */
-function extractMentions(text) {
-	const ids = new Set();
-	for (const candidate of state.mentionCandidates) {
-		if (text.includes(`@${candidate.label}`)) ids.add(candidate.id);
-	}
-	return [...ids];
-}
 
 // ── #5：消息操作浮窗（复制 / 引用回复） ──────────────────────────────────
 
@@ -524,6 +529,12 @@ function renderList(unread) {
 					: channel.unread > 0
 						? `<b class="ch-badge">${channel.unread}</b>`
 						: "";
+			// 未完成任务数是后端算好的（`listChannels` 按 `isTerminal` 过滤），
+			// 前端只负责显示。0 件时不写「0 个未完成」——「零」不是信息，是噪音。
+			const openTasks =
+				channel.openTasks > 0
+					? `<span class="ch-row-tasks">${channel.openTasks} 个未完成</span>`
+					: "";
 			html.push(
 				[
 					`<button class="ch-row" type="button" data-id="${escapeAttr(channel.id)}"`,
@@ -537,6 +548,7 @@ function renderList(unread) {
 					`<span class="ch-row-side">`,
 					channel.lastAt > 0 ? `<span class="ch-row-time">${escapeHtml(relTime(channel.lastAt))}</span>` : `<span class="ch-row-time">—</span>`,
 					badge,
+					openTasks,
 					`</span>`,
 					`</button>`,
 				].join(""),
@@ -1011,7 +1023,7 @@ function renderMessages() {
 					`<div class="ch-msg-main">`,
 					grouped ? "" : renderMsgHead(message),
 					renderQuote(message),
-					renderBubble(message.text, message.seq, message.kind),
+					renderBubble(message.text, message.seq, message.kind, message.mentions),
 					renderMentions(message),
 					`</div>`,
 					`</div>`,
@@ -1149,63 +1161,77 @@ function pendingHtml(view) {
 /**
  * 正文里的 `@名字` 加高亮（需求 #6）。
  *
- * 为什么在 **HTML 字符串**上做而不是在 Markdown 源码上：源码上的 `@` 可能落在
- * 代码块 / 链接 / 行内代码里，那些地方不该高亮。`renderMarkdown()` 出来后，
- * 代码块已经被 `<code>` / `<pre>` 包住、链接已经是 `<a>`，这时只跳过标记内部
- * 就能精确命中「真正的正文」。
+ * **为什么不再在前端猜**：以前这里在 `renderMarkdown()` 出来的 HTML 串上找
+ * `@名字`，还要维护一个 `<code>/<pre>/<a>` 的深度计数躲开代码区。两个问题：
+ * 一是脆（`**@林越**` 这种被标签拆开的就命中不了），二是**和真正被 @ 的人
+ * 可能不是一回事**——前端按「成员名是否出现在正文里」猜，后端按
+ * `parseMentions` 的正则猜，两套算法不一致时界面高亮了却没人被唤醒。
  *
- * 实现上按标签切开：`<...>` 原样输出（并且决定是否进入「跳过区」），
- * 标签之间的文本才做替换。不引入 DOM 解析——文本量很小，字符串扫一遍足够。
+ * 现在 `MessageView.mentions` 自带 `offset`（后端在原文上算好的起点），
+ * 前端只做一件事：**按偏移量切片**。高亮的人就是后端真的抽中的人。
+ *
+ * 实现上不「切段分别渲染」——那样会把跨 `@` 的 Markdown 拆碎（`**@林越**`
+ * 会变成两段半个粗体）。做法是把 mention 从**原文**里换成 `\u0001序号\u0001`
+ * 占位符，整段交给 `renderMarkdown()`（它自己转义），最后在**已转义的 HTML**
+ * 上只把占位符换回 span。占位符是控制符，`escapeHtml()` 不碰它；替换进去的
+ * 内容只有 `escapeHtml(原文切片)`——**没有 XSS 面**。
  */
-const MENTION_TAGS_SKIP = /^(code|pre|a|script|style)$/i;
-function highlightMentions(html) {
-	if (!html.includes("@")) return html;
-	const labels = (state.view?.members ?? [])
-		.map((member) => member.label)
-		.filter((label) => typeof label === "string" && label.length > 0)
-		// 长名字优先：有「前端工程」和「前端」两个人时，先匹配长的那个，
-		// 否则「@前端工程」会被拆成「@前端」+「工程」。
-		.sort((left, right) => right.length - left.length);
-	if (labels.length === 0) return html;
+const MENTION_SLOT = "\u0001";
 
-	let depth = 0;
-	let out = "";
-	let index = 0;
-	while (index < html.length) {
-		const open = html.indexOf("<", index);
-		if (open === -1) {
-			out += highlightText(html.slice(index), labels, depth > 0);
-			break;
-		}
-		out += highlightText(html.slice(index, open), labels, depth > 0);
-		const close = html.indexOf(">", open);
-		if (close === -1) {
-			out += html.slice(open);
-			break;
-		}
-		const tag = html.slice(open, close + 1);
-		out += tag;
-		const name = /^<\/?([a-z0-9-]+)/i.exec(tag)?.[1];
-		if (name !== undefined && MENTION_TAGS_SKIP.test(name)) {
-			if (tag.startsWith("</")) depth = Math.max(0, depth - 1);
-			else if (!tag.endsWith("/>")) depth += 1;
-		}
-		index = close + 1;
+function highlightMentions(text, mentions) {
+	const marks = mentionMarks(text, mentions);
+	if (marks.length === 0) return renderMarkdown(text);
+	const slots = [];
+	let source = "";
+	let cursor = 0;
+	for (const mark of marks) {
+		source += stripSlot(text.slice(cursor, mark.offset));
+		slots.push(`<span class="ch-at">${escapeHtml(text.slice(mark.offset, mark.end))}</span>`);
+		source += `${MENTION_SLOT}${slots.length - 1}${MENTION_SLOT}`;
+		cursor = mark.end;
 	}
-	return out;
+	source += stripSlot(text.slice(cursor));
+	// 占位符换回来：`renderMarkdown` 只转义 `&<>"'`，控制符原样穿过，
+	// 所以这里一定能在输出里找到它。
+	return renderMarkdown(source).replace(
+		/\u0001(\d+)\u0001/g,
+		(whole, index) => slots[Number(index)] ?? whole,
+	);
 }
 
-/** 把一段纯文本里（不含标签）的 `@名字` 包成高亮 span。`insideSkip` 时原样返回。 */
-function highlightText(text, labels, insideSkip = false) {
-	if (insideSkip || text === "" || !text.includes("@")) return text;
-	let out = text;
-	for (const label of labels) {
-		const needle = `@${label}`;
-		if (!out.includes(needle)) continue;
-		// 只替换一次出现位置也无所谓重复：同名成员本来就不该有两个。
-		out = out.split(needle).join(`<span class="ch-at">${needle}</span>`);
+/** 模型自己写出 `\u0001数字\u0001` 时不能让它冒充我们的占位符。 */
+function stripSlot(text) {
+	return text.includes(MENTION_SLOT) ? text.split(MENTION_SLOT).join("") : text;
+}
+
+/**
+ * 把 `mentions` 归一化成 `{ offset, end }` 列表：
+ *
+ * - `offset === -1`（后端没在正文里找到）直接丢——**宁可不亮也不要错位**；
+ * - 偏移量必须真的指着一个 `@该成员名`，对不上就是脏数据，丢；
+ * - 重叠的只留第一个（后端已经按顺序推进，这里只是兜底）。
+ */
+function mentionMarks(text, mentions) {
+	if (!Array.isArray(mentions)) return [];
+	const valid = [];
+	for (const mention of mentions) {
+		const offset = mention?.offset;
+		const label = mention?.label;
+		if (typeof offset !== "number" || typeof label !== "string" || offset < 0 || label === "") continue;
+		const end = offset + label.length + 1;
+		if (text.slice(offset, offset + 1) !== "@") continue;
+		if (text.slice(offset + 1, end) !== label) continue;
+		valid.push({ offset, end });
 	}
-	return out;
+	valid.sort((left, right) => left.offset - right.offset);
+	const marks = [];
+	let cursor = 0;
+	for (const mark of valid) {
+		if (mark.offset < cursor) continue;
+		marks.push(mark);
+		cursor = mark.end;
+	}
+	return marks;
 }
 
 /**
@@ -1229,8 +1255,8 @@ function highlightText(text, labels, insideSkip = false) {
  */
 const COLLAPSE_LINES = { chat: 28, question: 28, task: 12, ack: 6, report: 6, decision: 6, system: 6 };
 
-function renderBubble(text, seq, kind = "chat") {
-	const html = highlightMentions(renderMarkdown(text));
+function renderBubble(text, seq, kind = "chat", mentions = []) {
+	const html = highlightMentions(text, mentions);
 	const lines = (text.match(/\n/g) ?? []).length + 1;
 	const limit = COLLAPSE_LINES[kind] ?? 28;
 	const long = lines > limit || text.length > (limit >= 28 ? 1600 : limit * 60);
@@ -1400,7 +1426,7 @@ function renderTasks() {
 		el.tasks.innerHTML = `<li class="ch-empty ch-empty--inline">还没有任务</li>`;
 		return;
 	}
-	const now = Date.now();
+	const now = Date.now() + state.clockSkew;
 	const rows = [];
 	for (const section of TASK_SECTIONS) {
 		const items = view.tasks.filter((task) => section.statuses.includes(task.status));
@@ -1437,13 +1463,21 @@ function taskRowHtml(task, now) {
 	].join("");
 }
 
-/** 「做了 2 小时 15 分」；没有 `startedAt` 返回空串。 */
+/**
+ * 「做了 2 小时 15 分」；没有 `startedAt` 返回空串。
+ *
+ * `now` 由调用方传入，且已经过 `clockSkew` 校正：任务时间戳是服务端写的，
+ * 拿本机时钟当「现在」会把本机偏差算进耗时（本机快 3 分会显示「-3 分钟」）。
+ */
 function elapsedLabel(task, now) {
 	const start = task.startedAt;
 	if (start === undefined) return "";
 	// 终态用 `doneAt` 定格；还在跑就是「到现在为止」——所以每轮渲染都要重算（`now` 是入参）
 	const end = task.doneAt ?? now;
-	const ms = Math.max(0, end - start);
+	const ms = end - start;
+	// 校正后仍然为负：本机时钟和服务端的偏差比 `clockSkew` 捕捉到的还大
+	// （比如页面开了很久没刷新）。宁说「刚刚」，不显示一个负号让人怀疑数据坏了。
+	if (ms < 0) return "刚刚";
 	if (ms < 60_000) return "不到 1 分钟";
 	const minutes = Math.floor(ms / 60_000);
 	if (minutes < 60) return `${minutes} 分钟`;

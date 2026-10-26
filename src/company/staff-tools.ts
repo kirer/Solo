@@ -1,64 +1,98 @@
 /**
- * 员工按角色分配的执行工具。
+ * 员工的**原子执行工具表**（能力目录里的 exec 层）。
  *
  * 原则：能力最小化。测试不该改产品代码，产品不该跑 shell。
  * 这不是靠提示词约束，是靠工具不存在（ADR-004）。
+ *
+ * ── 为什么不按角色查表 ──
+ *
+ * 这里以前是 `STAFF_TOOLSETS`（5 个角色 → read/write/bash 三个布尔）
+ * 加一个 `?? DEFAULT_TOOLSET` 的静默兜底。那套东西有两个毛病，同一天暴露：
+ *
+ * 1. 角色名是自由字符串（`staff_hire` 的 `role` 从来没有 enum），
+ *    于是「前端」「backend」「Rust工程师」全部静默落进默认值 → 只读员工、
+ *    不报错、不打日志。老板以为招到了一个能干活的开发。
+ * 2. 能力被锁死在 5 个预设上，而老板要的是「为每个 agent 动态创建能力」。
+ *
+ * 现在只剩「原子工具名 → 工厂」这一张表：**给哪些工具是招聘时显式写下来的**，
+ * 不再由角色名推断。
  */
 import { createBashTool, createEditTool, createReadTool, createWriteTool, defineTool } from "../runtime/index.ts";
+import { capabilityOf } from "./capabilities.ts";
 
-/** 一个角色能用哪些执行工具。 */
-export type StaffToolset = {
-	/** 能读文件。 */
-	readonly read: boolean;
-	/** 能写/改文件。 */
-	readonly write: boolean;
-	/** 能执行命令。 */
-	readonly bash: boolean;
+/** 员工可能被授予的原子工具：工具名 → 工厂。 */
+const STAFF_ATOMIC_TOOLS: Record<string, () => ReturnType<typeof defineTool>> = {
+	read: createReadTool,
+	write: createWriteTool,
+	edit: createEditTool,
+	bash: createBashTool,
 };
 
-/** 各角色的工具集。 */
-export const STAFF_TOOLSETS: Record<string, StaffToolset> = {
-	产品: { read: true, write: true, bash: false },
-	设计: { read: true, write: true, bash: false },
-	开发: { read: true, write: true, bash: true },
-	测试: { read: true, write: true, bash: true },
-	运营: { read: true, write: false, bash: false },
-};
-
-/** 未知角色的默认值：只能读，最保守。 */
-const DEFAULT_TOOLSET: StaffToolset = { read: true, write: false, bash: false };
+/** 可授予的原子工具名（用于错误文案与档案展示）。 */
+export const STAFF_ATOMIC_TOOL_NAMES: readonly string[] = Object.keys(STAFF_ATOMIC_TOOLS);
 
 /**
- * 按角色构造执行工具列表。
+ * 员工层级能吃下的能力层。
  *
- * 测试角色的 write 是给它写测试文件用的；产品代码它不该改，
- * 但做不到在文件级别隔离，所以改成「只允许写 test/ 下的文件」太难，
- * 这里退一步给 write，靠职责描述约束（记录在 ADR-014）。
+ * 高于 staff 的层（leader / management / ceo）不能授予员工——那不是「配置」，
+ * 是越权。校验放在这里而不是提示词里，是因为**工具不给就是不存在**（ADR-004）。
  */
-export function toolsForRole(role: string): ReturnType<typeof defineTool>[] {
-	const toolset = STAFF_TOOLSETS[role] ?? DEFAULT_TOOLSET;
-	const tools: ReturnType<typeof defineTool>[] = [];
+const STAFF_LAYERS: ReadonlySet<string> = new Set(["universal", "exec", "staff"]);
 
-	// 返回类型以前标成 `ReturnType<typeof createReadTool>[]`，然后每个元素 `as never`
-	// 硬塞进去——类型标注在撒谎，`tsc` 完全拦不住「给测试角色塞了 bash」这类错误。
-	// 现在如实标成工具注册表的类型。
-	if (toolset.read) tools.push(createReadTool());
-	if (toolset.write) {
-		tools.push(createWriteTool());
-		tools.push(createEditTool());
+/**
+ * 校验一个工具名能不能授予员工。
+ *
+ * 两类失败分开报：目录里存在但层级太高（`staff_hire` 之类），与压根不存在。
+ * 分开报是因为上级要据此做不同的事——前者是「你不该给」，后者是「你写错了」。
+ */
+function assertGrantable(name: string): void {
+	const capability = capabilityOf(name);
+	if (capability !== undefined && !STAFF_LAYERS.has(capability.layer)) {
+		throw new Error(
+			`不能授予 ${name}：它属于「${capability.layer}」层，员工只吃 universal / exec / staff 层（ADR-004：权限靠工具不存在，不靠提示词）。`,
+		);
 	}
-	if (toolset.bash) tools.push(createBashTool());
+	if (STAFF_ATOMIC_TOOLS[name] === undefined) {
+		throw new Error(
+			`未知工具：${name}。可授予的原子工具：${STAFF_ATOMIC_TOOL_NAMES.join(" / ")}。`,
+		);
+	}
+}
 
-	return tools;
+/** 校验一批工具名（空数组合法：那是「不给执行工具」，不是错误）。 */
+export function assertGrantableTools(names: readonly string[]): void {
+	for (const name of names) assertGrantable(name);
 }
 
 /**
- * 供诊断：某角色的工具名列表。
+ * 招聘入口的显式性检查：`tools` 必须真的写了。
  *
- * **从 `toolsForRole()` 推导**，不再自己写一份 if 链。
- * 以前这里是第二份映射表，改一处忘另一处时，「诊断说他有 bash」与
- * 「实际给了他什么」会静默分叉。
+ * 为什么必须报错而不是兜底：静默兜底就是原来的 bug 本身。少给一个工具的
+ * 代价，老板要等到员工干不了活、任务卡住才发现；报错当场就能改。
  */
-export function toolNamesForRole(role: string): readonly string[] {
-	return toolsForRole(role).map((tool) => tool.name);
+export function assertToolsRequested(names: readonly string[] | undefined): void {
+	if (names === undefined || names.length === 0) {
+		throw new Error(
+			'未指定 tools。请显式列出要授予的原子工具，例如 ["read","write","edit"]。可用工具见 my_capabilities。',
+		);
+	}
+}
+
+/**
+ * 按工具名构造执行工具列表。
+ *
+ * 顺序即入参顺序，重复名只保留一次——重复授予不该让同一个工具装两遍。
+ */
+export function toolsForNames(names: readonly string[]): ReturnType<typeof defineTool>[] {
+	const tools: ReturnType<typeof defineTool>[] = [];
+	const seen = new Set<string>();
+	for (const name of names) {
+		if (seen.has(name)) continue;
+		assertGrantable(name);
+		seen.add(name);
+		const factory = STAFF_ATOMIC_TOOLS[name];
+		if (factory === undefined) continue;
+		tools.push(factory());
+	}
+	return tools;
 }

@@ -64,10 +64,14 @@ export const CAPABILITIES: readonly Capability[] = [
 	{ name: "my_capabilities", layer: "universal", core: true, summary: "我当前真实可用的工具清单" },
 
 	// ── 记忆（#12）──
-	// memory_search 是核心：回答「以前怎么处理的」之前都要先查，
-	// 藏起来就等于逼模型凭印象答。memory_write 是低频动作，延迟。
+	// 两个都是核心：memory_search 是回答「以前怎么处理的」之前都要先查，
+	// 藏起来就等于逼模型凭印象答。
+	// memory_write 曾经是 `core: false`（理由是「写是低频动作」），代价是它落进
+	// 延迟桶、只能靠 tool_search 加载——而生产库 2544 次工具调用里 tool_search
+	// 只被调过 2 次，memory_write 被调过 0 次。写入入口事实上不存在，
+	// 记忆层就只是个空壳。写确实低频，但「低频」不等于「可以找不到」。
 	{ name: "memory_search", layer: "universal", core: true, summary: "按关键词检索分层记忆（个人 / 项目 / 公司）" },
-	{ name: "memory_write", layer: "universal", core: false, summary: "把一条经验写进记忆（层级由角色决定）" },
+	{ name: "memory_write", layer: "universal", core: true, summary: "把一条经验写进记忆（层级由角色决定）" },
 
 	// ── 员工 ──
 	{ name: "escalate", layer: "staff", core: true, summary: "向上逐级上报" },

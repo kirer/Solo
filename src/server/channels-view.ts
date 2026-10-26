@@ -54,7 +54,20 @@ export type MessageView = {
 	readonly fromLabel: string;
 	readonly kind: ChannelMessage["kind"];
 	readonly text: string;
-	readonly mentions: readonly { readonly id: number; readonly label: string; readonly read: boolean }[];
+	readonly mentions: readonly {
+		readonly id: number;
+		readonly label: string;
+		readonly read: boolean;
+		/**
+		 * `@label` 在 `text` 里的起始下标（指向 `@`），算不出来给 `-1`。
+		 *
+		 * 为什么由后端给：前端以前自己在 Markdown 渲染出的 HTML 串上扫标签、
+		 * 猜「哪些 @ 落在代码块里」，再按频道成员名去替换——那是第二套算法，
+		 * 与 `parseMentions`（别名、长名优先、词边界）不一致就会出现
+		 * 「后端说没 @ 到人、界面上却亮着」。偏移是唯一确定的位置。
+		 */
+		readonly offset: number;
+	}[];
 	readonly refs?: ChannelMessage["refs"];
 	/**
 	 * 这条在回复哪一条（需求 #7）。只给 `seq` / 发送方 / 一行摘要。
@@ -114,6 +127,13 @@ export type ChannelView = {
 	 * 非老板视角恒为空：待办归属是「老板这一级」，别人的视角答不了。
 	 */
 	readonly pending: readonly ChannelPending[];
+	/**
+	 * 服务端生成这份视图的时刻（`Date.now()`）。
+	 *
+	 * 给前端做时钟校正用：任务耗时是「服务端时间戳 → 现在」，前端拿本地
+	 * `Date.now()` 当「现在」，本机时钟偏快就会算出负数（界面显示「-3 分钟」）。
+	 */
+	readonly serverNow: number;
 };
 
 /** 读频道列表（老板视角：全部频道）。 */
@@ -227,6 +247,7 @@ export async function readChannelView(
 		hasMore,
 		tasks: projectTasks,
 		pending,
+		serverNow: Date.now(),
 	};
 }
 
@@ -319,15 +340,29 @@ function messageView(org: Org, channel: Channel, message: ChannelMessage, viewer
 		fromLabel: message.fromLabel,
 		kind: message.kind,
 		text: message.text,
-		mentions: message.mentions.map((id) => ({
-			id,
-			label: labelOf(org, id),
-			read: message.readBy.includes(id),
-		})),
+		mentions: mentionViews(org, message),
 		...(message.refs === undefined ? {} : { refs: message.refs }),
 		...(quoted === undefined ? {} : { replyTo: quoted }),
 		read,
 	};
+}
+
+/**
+ * 提及列表 + 每处在正文里的偏移。
+ *
+ * 同名提及在一段正文里出现多次时按顺序推进游标（第 n 个同名提及对第 n 处）；
+ * 找不到给 `-1`，前端约定 `-1` 不高亮——宁可不亮，也不要高亮到错的位置。
+ */
+function mentionViews(org: Org, message: ChannelMessage): MessageView["mentions"] {
+	const cursors = new Map<string, number>();
+	return message.mentions.map((id) => {
+		const label = labelOf(org, id);
+		const needle = `@${label}`;
+		const from = cursors.get(label) ?? 0;
+		const offset = label === "" ? -1 : message.text.indexOf(needle, from);
+		if (offset >= 0) cursors.set(label, offset + needle.length);
+		return { id, label, read: message.readBy.includes(id), offset };
+	});
 }
 
 /** 把 `replyTo` 的 seq 解析成一行可直接渲染的摘要。 */

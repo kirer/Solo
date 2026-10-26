@@ -255,16 +255,21 @@ src/company/tasks.ts TaskDoc(app.tasks) + 读写 + 状态变化后写频道
 `task_update` 报 `done` 必须带 `evidence`，否则拒绝（`src/company/tools/universal.ts:460`）。
 
 任务进 `done` 时还会顺带做两件事：结算 token/成本（`usageAtStart` → `usage` 差额），
-并给它投一条 `app.memory-hint`（`wake: false`，只记录不唤醒）提醒写一条经验。
+并给它投一条 `app.memory-hint`（`wake: true`，进上下文并唤醒）提醒写一条经验。
+
+> 这条提醒曾经是 `wake: false`：`submit({type:"write"})` 没有 `model`，底层
+> `isDisplayOnly` 判定它只进会话流，`contribute()` 取 `entry.model ?? []` 得到空——
+> 提示**永远不进模型上下文**。实测生产库 `app.memory-hint` 0 条、`memory_write` 0 次。
 
 ### 4.7 记忆 `src/domain/memory.ts` + `src/company/memory.ts`（#12）
 
 ```
 src/domain/memory.ts  纯逻辑：appendMemory（正文限长 + 同任务覆盖）
-                      compactMemory（超限折叠最老 20 条成阶段总结）
+                      compactMemory（超限：只折同一 depth 层的 20 条成阶段总结，
+                                     depth 上限 MAX_DEPTH=3，到顶后丢最老原始条目）
                       rankMemory（标题 +3 / 标签 +2 / 正文 +1，无向量）
                       renderMemoryBrief（最近 3 条 + 相关 2 条）
-src/company/memory.ts MemoryDoc(app.memory) + memory_write / memory_search 两个工具
+src/company/memory.ts MemoryDoc(app.memory) + memory_write / memory_search 两个工具（都是核心能力）
                       memoryActorOf()：按角色决定写哪一层（模型不能声明归属）
 ```
 

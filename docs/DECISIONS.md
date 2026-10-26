@@ -787,3 +787,50 @@ delegate_to_role → cto.submit(...) → await submission.wait(180s) → readAss
 
 **代价**：一个本该老板快速拍板的小问题，现在要走完整条链。这是有意的——
 链上的每一级都必须先做出「我能不能定」的判断，否则层级就形同虚设。
+
+## ADR-034：投递回执——`deliver()` 不许假装「投递成功＝已读」
+
+**日期**：2026-10-27
+**状态**：生效
+
+**背景**（圆桌裁决 B4，本轮最严重的缺陷）：
+
+`deliver()` 只做 `conversation.submit(...)` 再 `delivered.push(target)`，**从不看
+settlement**。而 `watchdog.ts` 的队列扫描只认 `status === "queued"`——`unanswered`
+是 settled 状态，压根不在扫描集合里。结果是：发给某人的消息可以静默死亡，
+发现时间 = 无限。
+
+生产库实测：`submissions` 里 `done 402` / **`unanswered 69`**（`reason=no_model`），
+其中项目负责人（会话 89）**50 条**、CEO 11 条、13 号 6 条。只有两个**同步**调用方
+（`delegation.ts`、`roundtable.ts`）检查了 `unanswered`，**异步的频道投递路径一个都没检查**。
+
+**决策**：
+
+1. **`deliver()` 返回三态** `DeliverOutcome { delivered, failed, unanswered }`。
+   类型层强制：调用方不能再假设「delivered 就是成功」。
+2. **`deliver()` 仍然不等待**，所以它返回的 `unanswered` **恒为空数组**。
+   这不是偷懒，是分层：判定「被结算成 unanswered」需要回头看 submission，
+   而「回头看」只能异步。理由写在 `deliver.ts` 头注释里。
+3. **判定归看门狗**。消息上落 `deliveredTo: {conversationId, submissionId}[]`
+   （追加式，同一目标的最后一条才是当前有效 submission），
+   看门狗每轮巡检（`WATCHDOG_DEFAULTS.redeliverMs = 30_000`）用
+   `harness.submission(id).status()` 反查，命中 `unanswered` 就**重投**：
+   `requestId` 加 `:rN` 后缀（`admitSubmission` 同 requestId 会直接返回原
+   submission，甚至把 unanswered 报成 done——不换 key 的重投是假的）。
+4. **重投上限复用 `maxAttempts`（2）**，耗尽后**只告一次** `giveUp` 告警，
+   之后彻底沉默（`WatchdogState.deliveryGaveUp` 记住已经宣告过的那些）。
+   无限重投只是把「静默死亡」换成「每 30 秒一次的噪声」。
+5. **`ActorView.unanswered`** 把这件事暴露给老板：`company/watchdog.ts` 的
+   `unansweredDeliveryCounts()` 算好计数，`server/org-view.ts` 只消费
+   （`src/server` 不许直接读 doc token）。
+
+**为什么不放在 `deliver()` 里等**：`deliver()` 不等待是硬约束一（ADR-028）——
+一次投递要等模型跑完，一条消息就能把老板的输入卡住几分钟。
+「不等」和「知道结果」是两件事，前者靠 `deliver()`，后者靠回执 + 看门狗。
+
+**代价**：发现延迟 = 一轮巡检（30 秒）而不是瞬时；`no_model` 这类**永久性**
+失败重试 2 次仍然失败（模型没配就是没配），回执的价值是**让它可见并告警**，
+不是让它自愈。真正的修复仍需人配模型。
+
+**测试**：`test/e2e/delivery-receipt.test.ts`（4 条）锁住：`deliveredTo` 落库并能反查、
+unanswered 触发重投并写 `app.alert`、重投上限后只告一次。

@@ -249,6 +249,28 @@ T-3 的登录接口，token 过期后返回 401 还是 403？
 
 第 3 条必须存在（前两条会漏）。
 
+### 3.3 投递回执：投递 ≠ 被处理（ADR-034）
+
+「进了队列」和「被处理了」是两件事。`deliver()` **不等待**（ADR-028），所以它只
+能保证前者；后者可能被结算成 `unanswered`（模型不可用 / 被 abort / 会话重置）而
+投递方一无所知。生产库实测过 69 条这种静默死亡。
+
+所以：
+
+1. **消息落 `deliveredTo`**：`{conversationId, submissionId}[]`，追加式
+   （同一目标的**最后一条**才是当前有效 submission，重投次数由条数推导）。
+2. **`deliver()` 返回三态** `DeliverOutcome { delivered, failed, unanswered }`，
+   其中 `unanswered` **恒为空**——判定要过一会儿回头看，那是看门狗的活。
+3. **看门狗每 30 秒**（`WATCHDOG_DEFAULTS.redeliverMs`）反查窗口内（24 小时）
+   每条回执对应 submission 的状态，命中 `unanswered` 就重投（`requestId` 加
+   `:rN`，否则 `admitSubmission` 会去重直接返回原 submission），每次写 `app.alert`
+   （`action: "redeliver"`、`reason: "delivery-unanswered"`）。
+4. **上限 2 次**（复用 `maxAttempts`），耗尽后只告一次 `giveUp`，之后沉默。
+5. **界面**：`ActorView.unanswered` 显示「投给这个人但没被处理」的条数。
+
+注意 `no_model` 这类永久失败重投也没用——回执的价值是**让它可见并告警**，
+不是让它自愈。
+
 ---
 
 ## 4. 能力目录

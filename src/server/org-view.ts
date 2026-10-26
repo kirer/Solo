@@ -17,6 +17,7 @@ import { buildOrg, managerLabelInOrg } from "../company/org-model.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
 import { readLiveTrail, readTrail } from "../company/trail.ts";
+import { unansweredDeliveryCounts } from "../company/watchdog.ts";
 
 /** 节点状态（契约第 2 节：四态，全站统一）。 */
 export type NodeStatus = "busy" | "waiting" | "error" | "idle";
@@ -35,6 +36,8 @@ export type ActorView = {
 	readonly tokens: number;
 	/** 等你拍板的条数。 */
 	readonly awaitingYou: number;
+	/** 有多少条消息投给这位但没被处理（投递回执，裁决 B4）。 */
+	readonly unanswered: number;
 	/** 最近在做什么（一句话）。 */
 	readonly activity: string;
 	/** 是否已归档（项目终止后员工会被归档）。 */
@@ -170,6 +173,10 @@ export async function buildOrgView(
 		);
 	}
 
+	// 投递回执（裁决 B4）：每个会话有多少条投给它的消息没被处理。
+	// 与 awaitingYou 语义不同：那是「等你拍板」，这是「我们没处理掉」。
+	const unansweredByConversation = await unansweredDeliveryCounts(runtime, context);
+
 	const statusOf = (conversationId: number): NodeStatus => {
 		// 故障优先于其它两态：一个被永久挂起的会话不能显示成「空闲」或「在跑」，
 		// 否则老板会以为它在干活，而实际上没有任何东西会去收尾。
@@ -208,6 +215,7 @@ export async function buildOrgView(
 			status: statusOf(conversationId),
 			tokens: await tokensOf(runtime, conversationId, context),
 			awaitingYou: awaitingYouByConversation.get(conversationId) ?? 0,
+			unanswered: unansweredByConversation.get(conversationId) ?? 0,
 			activity: await describeActivity(runtime, conversationId, context),
 			...(extra.model === undefined ? {} : { model: extra.model }),
 			...(extra.role === undefined ? {} : { role: extra.role }),

@@ -133,8 +133,12 @@ export type ProjectEntry = {
 export type StaffEntry = {
 	/** 员工名（项目内唯一）。 */
 	readonly name: string;
-	/** 员工角色（产品 / 设计 / 开发 / 测试 …）。 */
+	/** 员工角色（产品 / 设计 / 开发 / 测试 …）。名册上的标签，不决定能力。 */
 	readonly role: string;
+	/** 职责：招聘时上级写下的一段话（拼进提示词，展示在档案页）。 */
+	readonly duty: string;
+	/** 被授予的原子执行工具名，按招聘时的声明保存，重启后据此重建能力包。 */
+	readonly tools: string[];
 	readonly conversationId: number;
 	/** 所属项目 slug。 */
 	readonly project: string;

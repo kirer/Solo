@@ -142,7 +142,7 @@ describe("员工改名", () => {
 		const { runtime, registry, boot } = await fixture();
 		const hired = await hireStaff(
 			runtime,
-			{ project: PROJECT, name: OLD_NAME, role: "开发", registry },
+			{ project: PROJECT, name: OLD_NAME, role: "开发", tools: ["read", "write", "edit", "bash"], registry },
 			BACKGROUND_CONTEXT,
 		);
 
@@ -168,7 +168,7 @@ describe("员工改名", () => {
 		expect(after?.extensions.map((extension) => extension.name)).toEqual([
 			`role-employee:${PROJECT}/${NEW_NAME}`,
 		]);
-		// 改名后仍按角色拿到执行工具
+		// 改名后仍拿到招聘时声明的执行工具（能力跟着名册记录走，不是跟着名字）
 		expect(after?.tools.map((tool) => tool.name)).toContain("bash");
 	});
 

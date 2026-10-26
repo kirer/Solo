@@ -102,12 +102,18 @@ describe("首个真实项目：网页坦克大战", () => {
 		expect(brief).toContain("HTML5 Canvas");
 		expect(brief).toContain("## 验收标准");
 
-		// ③ CHRO 按角色配员工，并按难度分配模型
+		// ③ CHRO 按职责点派员工：能力由 tools 显式声明，不再由角色名推断
 		const roles = [
-			{ name: "pm-1", role: "产品", model: "cheap-1", manager: "cpo" as const },
-			{ name: "ui-1", role: "设计", model: "cheap-1", manager: "cpo" as const },
-			{ name: "dev-1", role: "开发", model: "strong-1", manager: "cto" as const },
-			{ name: "qa-1", role: "测试", model: "cheap-1", manager: "cto" as const },
+			{ name: "pm-1", role: "产品", tools: ["read", "write"], model: "cheap-1", manager: "cpo" as const },
+			{ name: "ui-1", role: "设计", tools: ["read", "write", "edit"], model: "cheap-1", manager: "cpo" as const },
+			{
+				name: "dev-1",
+				role: "开发",
+				tools: ["read", "write", "edit", "bash"],
+				model: "strong-1",
+				manager: "cto" as const,
+			},
+			{ name: "qa-1", role: "测试", tools: ["read", "write"], model: "cheap-1", manager: "cto" as const },
 		];
 
 		for (const person of roles) {
@@ -117,6 +123,7 @@ describe("首个真实项目：网页坦克大战", () => {
 					project: "tank-battle",
 					name: person.name,
 					role: person.role,
+					tools: person.tools,
 					manager: person.manager,
 					model: { provider: "faux", modelId: person.model },
 					registry,
@@ -147,7 +154,7 @@ describe("首个真实项目：网页坦克大战", () => {
 			BACKGROUND_CONTEXT,
 		);
 
-		// 开发角色自动获得读写与命令执行能力，所以这次应当成功
+		// 开发拿到了写文件的工具，所以这次应当成功
 		expect(result.ok).toBe(true);
 		const html = await readFile(join(project.workspace, "index.html"), "utf8");
 		expect(html).toContain("canvas");
@@ -186,6 +193,7 @@ describe("首个真实项目：网页坦克大战", () => {
 				project: "tank-battle",
 				name: "dev-1",
 				role: "开发",
+				tools: ["read", "write", "edit"],
 				manager: "cto",
 				employeeTools: CodingTools.tools,
 				registry,

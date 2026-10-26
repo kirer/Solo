@@ -305,8 +305,10 @@ export async function transitionTask(
 			context,
 		);
 		// ③ 完成时把「写一条经验」的提醒送进负责人自己的会话流。
-		//    刻意走 `wake: false`：这是提示，不是任务——为了提示再唤醒一轮
-		//    就是纯烧钱。它下次因任何原因醒来时会在上下文里看到。
+		//    必须 `wake: true`：`wake: false` 走 `submit({type:"write"})`，底层
+		//    `isDisplayOnly` 判定 `entry.model === undefined`，而 `contribute()` 取的是
+		//    `entry.model ?? []`——那条提示只进会话流，**永远不进模型上下文**。
+		//    实测生产库 `app.memory-hint` 0 条、`memory_write` 0 次，就是这么来的。
 		if (to === "done") {
 			await notify(
 				runtime,
@@ -315,7 +317,7 @@ export async function transitionTask(
 					kind: "app.memory-hint",
 					data: { taskId: task.id, title: task.title },
 					text: memoryReminderFor(task.id),
-					wake: false,
+					wake: true,
 				},
 				context,
 			);
