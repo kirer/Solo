@@ -32,7 +32,7 @@ export const LOCAL_GATEWAY = {
 	id: "commandcode",
 	baseUrl: "http://127.0.0.1:3425/v1",
 	/**
-	 * 默认模型：`workbuddy-ai/deepseek-v4.1-flash`。
+	 * 默认模型：`auto/deepseek-v4.1-flash`。
 	 *
 	 * **2026-10-26 老板拍板切换**（原 `auto/deepseek-v4.1-flash`）：原因是 command code 的
 	 * deepseek 额度即将耗尽，老板要求全部换到 workbuddy 系。原话「全部换
@@ -73,7 +73,7 @@ export const LOCAL_GATEWAY = {
 	 * 否则老会话指向一个没注册进 provider 的 id，运行时表现为
 	 * `Model commandcode/<旧id> is not available`，整个公司发不出话。
 	 */
-	modelId: "workbuddy-ai/deepseek-v4.1-flash",
+	modelId: "auto/deepseek-v4.1-flash",
 	apiKey: "magpie",
 } as const;
 
@@ -105,6 +105,19 @@ export const LOCAL_GATEWAY = {
  * 若将来要新增模型，**先跑三件套再登记**，否则可能把便宜货挂贵价卖。
  */
 export const GATEWAY_MODEL_CATALOG: readonly ModelOption[] = [
+	{
+		// 2026-10-27 老板指定：默认档回到本 id（原话「换成 auto/deepseek-v4.1-flash 快速推进」）。
+		// 上一轮切到 workbuddy 系时只改了 `LOCAL_GATEWAY.modelId`，**没有迁移老库**，
+		// 导致 12 个会话的 `pi.agent.model` 指向了不再注册的 id，整个公司发不出话。
+		// 现在两个 id 都登记在册，无论老库指向哪个都能解析。
+		// 网关不报价（`pricing: null`）→ 成本报表为 0，见下方「已知的两个代价」。
+		id: "auto/deepseek-v4.1-flash",
+		provider: LOCAL_GATEWAY.id,
+		modelId: "auto/deepseek-v4.1-flash",
+		label: "DeepSeek V4.1 Flash（便宜档 · commandcode，网关不报价）",
+		inputPerMTok: 0,
+		outputPerMTok: 0,
+	},
 	{
 		// 2026-10-26 老板指定：便宜档由 `apigoto/deepseek-flash` 改为本 id，
 		// 与默认档一致（老板原话「全部换 workbuddy-ai/deepseek-v4.1-flash」）。
@@ -365,6 +378,11 @@ export function setupModels(
 	// 内置模型是代码常量：老板要「改它 / 删它」，只能靠设置里的一条**覆盖项**。
 	// 这里先把内置清单按覆盖项就地改掉（改名的改 id，`hidden` 的直接摘掉），
 	// 再走原来的「自定义模型追加」流程 —— 于是改名后的内置项就是一条普通自定义项。
+	//
+	// ⚠️ **覆盖项也是 `custom` 数组里的一条**，所以下面的 `extra` 必须把它排除，
+	// 否则同一条模型会被追一遍：改过名的内置项已经有新 id，再追加一遍就成了
+	// 「同一个 id 在 catalog 里出现两次」→ `resolveModelOption` 判 ambiguous →
+	// 默认模型回落成 `no_model`，整个公司发不出话（2026-10-27 就是这么炸的）。
 	const overrides = new Map<string, CustomModelSettings>();
 	for (const item of custom) {
 		if (item.builtin !== undefined && item.builtin !== "") overrides.set(item.builtin, item);
@@ -372,15 +390,21 @@ export function setupModels(
 	let catalog: ModelOption[] = base.catalog.map((item) => {
 		const override = overrides.get(item.id);
 		if (override === undefined) return item;
+		// 改名撞上另一条内置项时**放弃改名**（只保留 label / 单价覆盖）。
+		// 不这么做的话 catalog 里会出现两个同 id 的条目，而
+		// `resolveModelOption` 遇到同 id 多条时宁可报 `ambiguous` 也不猜——
+		// 结果就是默认模型解析不出来，回落成 `no_model`，整个公司发不出话。
+		const collides =
+			override.id !== item.id &&
+			base.catalog.some((other) => other.id !== item.id && other.id === override.id);
 		return {
 			...item,
-			id: override.id,
+			id: collides ? item.id : override.id,
 			label: override.name ?? item.label,
 			inputPerMTok: override.inputPerMTok ?? item.inputPerMTok,
 			outputPerMTok: override.outputPerMTok ?? item.outputPerMTok,
 		};
-	});
-	// `hidden` 的覆盖项 = 老板删掉了这条内置模型。
+	});	// `hidden` 的覆盖项 = 老板删掉了这条内置模型。
 	const dropped = new Set<string>();
 	for (const [builtinId, override] of overrides) {
 		if (override.hidden === true) dropped.add(builtinId);
@@ -388,7 +412,11 @@ export function setupModels(
 	if (dropped.size > 0) catalog = catalog.filter((item) => !dropped.has(item.id));
 
 	let fallback = base.defaultModel;
-	const extra = custom.filter((item) => item.builtin === undefined || item.builtin === "" || item.hidden !== true);
+	// 只追加**纯自定义**项：`builtin` 指向内置的真身已经在上面就地上改过了，
+	// 再追加一次就重复了。`hidden` 的覆盖项只用于摘除，也不该出现。
+	const extra = custom.filter(
+		(item) => (item.builtin === undefined || item.builtin === "") && item.hidden !== true,
+	);
 	if (extra.length > 0) {
 		const taken = new Set(base.models.getProviders().map((provider) => provider.id));
 		const usedIds = new Set<string>();
