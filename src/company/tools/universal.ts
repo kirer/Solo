@@ -2,7 +2,7 @@
  * 通用工具：每个 agent 都有（`say` / `ask` / `read_channel` / `inbox` /
  * `task_list` / `task_update` / `whoami`）。
  *
- * 设计见 `docs/design/COMMS-REFACTOR.md` §4.2。三条原则：
+ * 设计见 `docs/COMMS.md` §4.2。三条原则：
  *
  * 1. **`say` 与 `ask` 分开**：`ask` 是「我在等你的回答」，会触发投递与超时升级；
  *    `say` 只是「说一句」，不唤醒任何人（除非有 @）。合并成一个工具会让模型

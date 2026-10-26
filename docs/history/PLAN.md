@@ -1,8 +1,16 @@
+# 【已归档 · 不再维护】
+
+> 这份文档写于某个时间点，记录**当时**的设计推理与施工过程，**内容已冻结**。
+> 现状一律以 `docs/SYSTEM.md`、`docs/CODE.md`、`docs/DECISIONS.md`、`openspec/specs/` 为准。
+> 保留它只是为了回答「当初为什么这么决定」。里面的行号、文件路径、数量、截图链接都可能已失效。
+
+---
+
 # 技术选型与架构
 
 > 结论一句话：**能实现。地基选 `@earendil-works/pi-durable@1.4.0`，外壳自己写。**
 > 实现已完成，代码在 `src/`。本文保留「为什么这么选 + 架构怎么定」的部分；
-> 当时的逐阶段实施计划已作废，实际落地情况见 [`HANDOFF.md`](../HANDOFF.md)。
+> 当时的逐阶段实施计划已作废，实际落地情况见 [`HANDOFF.md`](HANDOFF.md)。
 > 所有关键机制都在本机实测跑通，脚本在 `archive/spikes/`（`npm run all` 可复现，无需 API key）。
 
 ---
@@ -341,7 +349,7 @@ ai-company/
 │   └── check-boundaries.mjs 边界检查（业务层不得直接 import 底层库）
 ├── docs/                    文档
 ├── openspec/                规格库（必须在根目录，否则 CLI 找不到）
-│   ├── specs/               9 个能力、54 条需求
+│   ├── specs/               当时规划的 9 个能力、54 条需求
 │   └── changes/archive/     两次变更的提案原文
 └── archive/                 归档：不参与运行，但要留作证据
     ├── spikes/              9 个可行性验证脚本
@@ -417,7 +425,7 @@ ai-company/
 
 ## 附录 B：必踩的坑（写代码前先记住）
 
-前九条是调研阶段发现的，后六条是实现阶段真实踩到的（都记在 [`DECISIONS.md`](DECISIONS.md)）：
+前九条是调研阶段发现的，后六条是实现阶段真实踩到的（都记在 [`DECISIONS.md`](../DECISIONS.md)）：
 
 1. `entries()` **默认降序**（新→旧），要正序传 `{ order: "ascending" }`。
 2. **commit 回调里不能 await 任何 Session API**（`snapshot`/`getTask`/嵌套 commit）——会死锁，而且是间歇性的。只读 `tx`。

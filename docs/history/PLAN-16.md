@@ -1,3 +1,11 @@
+# 【已归档 · 不再维护】
+
+> 这份文档写于某个时间点，记录**当时**的设计推理与施工过程，**内容已冻结**。
+> 现状一律以 `docs/SYSTEM.md`、`docs/CODE.md`、`docs/DECISIONS.md`、`openspec/specs/` 为准。
+> 保留它只是为了回答「当初为什么这么决定」。里面的行号、文件路径、数量、截图链接都可能已失效。
+
+---
+
 # 16 项问题：归并与实施方案
 
 老板在 2026-xx-xx 一次性提出 16 条体验问题。逐条核实代码后，它们其实是 **5 个主题**，
@@ -124,7 +132,7 @@ replyTo?: { seq: number; fromLabel: string; excerpt: string };
 
 现状：`renderMarkdown()` 已支持 markdown，但**不渲染图片**。
 
-改法：`ui/js/markdown.js` 支持 `![](url)` → `<img loading="lazy">`，点击放大。
+改法：`ui/js/markdown.js` 支持 `![alt](url)` → `<img loading="lazy">`，点击放大。
 附件上传接口 `/api/upload` 已有（`src/server/uploads.ts`），频道输入框接上即可。
 
 ### 3.3 @ 高亮（#6）

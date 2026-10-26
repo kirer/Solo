@@ -1,7 +1,7 @@
 /**
  * 成员关系与权限（纯函数，无 IO）。
  *
- * 设计见 `docs/design/COMMS-REFACTOR.md` §3 与 §5。这里只回答四个问题：
+ * 设计见 `docs/COMMS.md` §3 与 §5。这里只回答四个问题：
  *
  * 1. 谁能看哪个频道？（`visibleChannels`）
  * 2. 谁能 @ 谁？（`canMention`）

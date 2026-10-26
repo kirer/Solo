@@ -1,7 +1,7 @@
 /**
  * 派活工具（异步版）：`assign_task` / `ask_role`。
  *
- * 设计见 `docs/design/COMMS-REFACTOR.md` §5.1 与 ADR-028。
+ * 设计见 `docs/COMMS.md` §5.1 与 ADR-028。
  *
  * ── 为什么把四个工具合并成两个 ──
  *

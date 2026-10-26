@@ -1,7 +1,7 @@
 # 部署与访问（DEPLOY）
 
 > 面向「把它跑起来、让手机/同事也能用」的运维文档。
-> 接口细节见 [design/WEB-API.md](design/WEB-API.md)；日常排障见 [RUNBOOK.md](RUNBOOK.md)。
+> 接口细节见 [WEB-API.md](WEB-API.md)；日常排障见 [RUNBOOK.md](RUNBOOK.md)。
 
 ## 1. 运行形态
 

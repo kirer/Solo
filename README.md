@@ -141,16 +141,16 @@ src/runtime/   防腐层：唯一 import pi-durable / pi-ai / chord 的地方
 src/company/   业务层：文档、角色、工具、任务、组织操作、成本、留痕
 src/server/    网页服务：HTTP + SSE、组织快照、会话流
 src/tui/       终端界面
-ui/            网页界面（纯静态，无构建步骤）
-test/          契约 / 单元 / 端到端
-scripts/       演示数据、边界检查
+ui/            网页界面（源码直出；`npm run ui:build` 会把 12 个文件合成 3 个到 ui/dist/）
+test/          契约 / 单元 / 端到端（54 文件 764 例）
+scripts/       验收（ui-check / ui-shot）、演示数据、边界检查、迁移探针
 docs/          文档（见下方索引）
-openspec/      规格库：9 个能力、54 条需求（openspec CLI 认这个位置，别动）
-archive/       归档：验证脚本、Pi 源码、系统产出的游戏
+openspec/      规格库：10 个能力、62 条需求（openspec CLI 认这个位置，别动）
+archive/       归档：9 个验证脚本、系统产出的坦克大战、Pi 源码（不入库）
 workspace/     运行时数据（首次启动创建，已 gitignore）
 ```
 
-三条不可越过的边界，写在 [`docs/design/DECISIONS.md`](docs/design/DECISIONS.md)：
+三条不可越过的边界，写在 [`docs/DECISIONS.md`](docs/DECISIONS.md)：
 
 1. **只有 `src/runtime` 能导入底层库**（它是 experimental，每个 minor 都有破坏性变更）
 2. **员工的能力包里没有任何管理工具**（权限靠工具不存在，不靠提示词）
@@ -160,20 +160,22 @@ workspace/     运行时数据（首次启动创建，已 gitignore）
 
 ## 文档
 
+**如果你（或你的 AI agent）要改这个仓库的代码，先读 [`AGENTS.md`](AGENTS.md)。**
+它写了三条不可越过的边界、提交前必须跑的四条命令、以及「改了什么就要同步哪份文档」。
+
 完整索引在 [`docs/README.md`](docs/README.md)，常用的几个：
 
 | 想了解 | 看这里 |
 |---|---|
-| 网页界面的设计令牌 / 模块边界 / 并行改界面时的契约 | [`docs/design/WEB-UI-CONTRACT.md`](docs/design/WEB-UI-CONTRACT.md) |
 | 怎么启动、换模型、备份、升级、排障 | [`docs/RUNBOOK.md`](docs/RUNBOOK.md) |
 | 局域网访问、Docker 部署、安全边界、Tauri 评估 | [`docs/DEPLOY.md`](docs/DEPLOY.md) |
-| **网页 API 契约**（设置 / 模型 / 附件 / 看板 / IM） | [`docs/design/WEB-API.md`](docs/design/WEB-API.md) |
-| **哪些边界不能碰**（24 条架构决策） | [`docs/design/DECISIONS.md`](docs/design/DECISIONS.md) |
-| 技术选型：为什么是 pi-durable | [`docs/design/PLAN.md`](docs/design/PLAN.md) |
-| 七个设计问题的详细回答 | [`docs/design/ANSWERS.md`](docs/design/ANSWERS.md) |
-| 做了什么、修过哪些真 bug | [`docs/HANDOFF.md`](docs/HANDOFF.md) |
+| **网页 API 契约**（频道 / 看板 / 设置 / 模型 / 附件 / IM） | [`docs/WEB-API.md`](docs/WEB-API.md) |
+| **哪些边界不能碰**（33 条架构决策） | [`docs/DECISIONS.md`](docs/DECISIONS.md) |
+| 技术选型：为什么是 pi-durable | [`docs/history/PLAN.md`](docs/history/PLAN.md)（已冻结） |
+| 七个设计问题的详细回答 | [`docs/history/ANSWERS.md`](docs/history/ANSWERS.md)（已冻结） |
+| 做过什么、修过哪些真 bug | [`docs/history/HANDOFF.md`](docs/history/HANDOFF.md)（已冻结） |
 | 底层库调研（三份） | [`docs/research/`](docs/research/) |
-| **规格**：9 个能力、54 条需求（改代码前必看） | [`openspec/specs/`](openspec/specs/) |
+| **规格**：10 个能力、62 条需求（改代码前必看） | [`openspec/specs/`](openspec/specs/) |
 | 归档：验证脚本 / Pi 源码 / 产出的游戏 | [`archive/README.md`](archive/README.md) |
 
 ## 开发
@@ -186,7 +188,8 @@ npm run test:watch     # 监听模式
 
 # 界面验收（需要本机 Chrome）
 npm run ui:shot        # 真实浏览器截图到 .taste-skill/shots/
-npm run ui:check       # 点一遍关键交互，给出 PASS / FAIL
+npm run ui:check       # 点一遍关键交互（63 项断言），给出 PASS / FAIL
+                       # 注意：脚本默认连 7789，本机服务在 7788 时要加 --url http://127.0.0.1:7788/
 ```
 
 真实模型的端到端测试会自动探测本地网关，不可用时跳过。

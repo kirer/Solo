@@ -1,7 +1,7 @@
 /**
  * 任务：工作的容器（纯数据 + 纯函数，无 IO）。
  *
- * 设计见 `docs/design/COMMS-REFACTOR.md` §2.2。核心约束：
+ * 设计见 `docs/COMMS.md` §2.2。核心约束：
  *
  * **只有「真任务」才进这里。** 判据是三条硬校验（`validateCreate`）：
  * 1. 有验收标准（`acceptance` 非空）—— 没有验收标准的指派是聊天，不是任务

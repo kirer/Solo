@@ -16,7 +16,7 @@
  * 是**只增不改**的：压基写的是同样大小的完整快照，收益只有冷启动重放变快。
  * 它们的增长点在 `events` / `edges` / `items` 数组上，正确做法是按**语义**
  * 判基（数组长度超过阈值、或处置归档后），而不是按 delta 计数。
- * 待办与审计的裁剪策略见 `docs/design/COMMS-REFACTOR.md`。
+ * 待办与审计的裁剪策略见 `docs/COMMS.md`。
  *
  * 2026-10-26：纯类型与纯函数已拆到 `src/domain/org-types.ts`（`domain/` 层不能
  * import 运行时库）。这里 re-export，调用方的 import 路径不变。

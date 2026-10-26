@@ -1,7 +1,7 @@
 /**
  * 任务领域逻辑（纯函数，无数据库）。
  *
- * 覆盖 `docs/design/COMMS-REFACTOR.md` §2.2 / §5.2：
+ * 覆盖 `docs/COMMS.md` §2.2 / §5.2：
  * 「真任务」的三条硬校验、状态机、完成必上报的判定、看板视图、超期提醒。
  */
 import { describe, expect, test } from "vitest";

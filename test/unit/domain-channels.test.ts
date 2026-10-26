@@ -1,7 +1,7 @@
 /**
  * 频道领域逻辑（纯函数，无数据库）。
  *
- * 覆盖 `docs/design/COMMS-REFACTOR.md` §2.1 / §3 / §4.3：
+ * 覆盖 `docs/COMMS.md` §2.1 / §3 / §4.3：
  * 追加消息、未读推导、已读点、唤醒策略、未读摘要、上下文渲染。
  */
 import { describe, expect, test } from "vitest";

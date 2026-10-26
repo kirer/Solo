@@ -1,7 +1,7 @@
 /**
  * `deliver()`：**唯一的跨 agent 投递原语**。
  *
- * 设计见 `docs/design/COMMS-REFACTOR.md` §5.1。这一条是整个重构的核心：
+ * 设计见 `docs/COMMS.md` §5.1。这一条是整个重构的核心：
  *
  * ```
  * 改前：delegate_to_role → submit → await submission.wait(180s) → 捞回复文本

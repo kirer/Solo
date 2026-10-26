@@ -1615,7 +1615,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 	 * CEO 通道没有 read/bash 工具（它的职责就是不亲自碰文件），只给路径的话
 	 * 老板发个 txt/md/csv 过去模型根本看不到内容，「支持传文件」就成了假功能。
 	 * 二进制（图片/压缩包）不摘录，只给路径——那需要工具或视觉模型才能读，属已知限制
-	 * （见 docs/design/WEB-API.md）。
+	 * （见 docs/WEB-API.md）。
 	 */
 	async function messageContent(
 		text: string,

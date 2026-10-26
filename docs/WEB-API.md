@@ -313,7 +313,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
   `GET /api/settings.network.lanUrls` 会列出全部非回环 IPv4 地址。
 - 服务**没有鉴权**：任何能访问该端口的人都能读全部对话、发消息、改设置。
   只应在可信内网使用；不要做公网端口映射 / 反向代理。安全边界见
-  [DEPLOY.md](../DEPLOY.md)。
+  [DEPLOY.md](DEPLOY.md)。
 
 ## 10.5 待办与拍板投递
 

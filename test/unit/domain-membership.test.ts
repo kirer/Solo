@@ -1,7 +1,7 @@
 /**
  * 成员关系与权限（纯函数，无数据库）。
  *
- * 覆盖 `docs/design/COMMS-REFACTOR.md` §5 的关键区分：
+ * 覆盖 `docs/COMMS.md` §5 的关键区分：
  * **通信不限方向，派任务只能从上到下，上报只能从下到上。**
  */
 import { describe, expect, test } from "vitest";

@@ -377,7 +377,7 @@ GET    /api/board                  看板
 POST   /api/im/inbound             外部 IM 入站
 ```
 
-**契约在 `docs/design/WEB-API.md`**。改接口先改它。
+**契约在 `docs/WEB-API.md`**。改接口先改它。
 
 ### 6.2 终端 `src/tui/`
 
@@ -479,7 +479,7 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 | 任务状态机 | `src/domain/tasks.ts` `TRANSITIONS` |
 | 新增一个数据文档 | `src/company/docs.ts`（用 `defineDoc`） |
 | 新增一个 durable task | `src/company/*.ts` 用 `defineTask`，再 `registry.install({name, tasks})` |
-| HTTP 接口 | 先加一条到 `src/server/routes.ts` 的 `routes`，handler 写 `src/server/http.ts`；再改 `docs/design/WEB-API.md` |
+| HTTP 接口 | 先加一条到 `src/server/routes.ts` 的 `routes`，handler 写 `src/server/http.ts`；再改 `docs/WEB-API.md` |
 | 网页样式/交互 | `ui/` |
 | 换模型 / 读用量 | `src/runtime/models.ts`、`src/runtime/usage.ts` |
 | 升级 pi-durable | **只改 `src/runtime/`**，跑 `test/contract/` |
@@ -516,12 +516,13 @@ test/support.ts         共用搭建（临时库 + 假模型）
 ## 10. 规格与决策记录
 
 ```
-openspec/specs/          9 个能力、54 条需求 —— 改代码前先看「什么行为不能变」
+openspec/specs/          10 个能力、62 条需求 —— 改代码前先看「什么行为不能变」
+                         （缺口：频道 / 任务 / 记忆尚无 spec，行为依据是 docs/COMMS.md）
   communication-trail  company-runtime  cost-accounting  delegation  escalation
   org-structure  project-authority  project-lifecycle  project-workspace  tui-workspace
-docs/design/DECISIONS.md 24 条 ADR（每条有背景、替代方案、为什么这么选）
-docs/design/PLAN.md      技术选型 + 架构 + 附录 B「必踩的 15 个坑」
-docs/design/WEB-API.md   网页 API 契约
+docs/DECISIONS.md        33 条 ADR（每条有背景、替代方案、为什么这么选）
+docs/history/PLAN.md     技术选型 + 架构 + 附录 B「必踩的 15 个坑」（已冻结）
+docs/WEB-API.md          网页 API 契约
 ```
 
 **改代码之前必读的 ADR**：
