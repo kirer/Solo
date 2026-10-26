@@ -79,15 +79,16 @@
 | `ui/css/tokens.css` | Lead | 变量、reset、滚动条、焦点、reduced motion |
 | `ui/css/shell.css` | Lead | 顶栏、舞台、对话内待办卡、设置浮层、移动端外壳 |
 | `ui/css/graph.css` | graph-dev | 组织图、卡片、状态光边、连线、翻转、图内响应式 |
-| `ui/css/chat.css` | chat-dev | 对话面板、消息、Markdown、工具折叠、输入区、拖宽、手机抽屉 |
-| `ui/js/app.js` | Lead | SSE、选中、发送、拍板、顶栏、设置/主题、dev 钩子 |
-| `ui/js/ask.js` | Lead | 待办卡渲染 |
-| `ui/js/format.js` | Lead | 转义、token、状态、工具名、人物色相 |
-| `ui/js/icons.js` | Lead | 内联 SVG 图标 |
-| `ui/js/org.js` | graph-dev | 组织图渲染、增量更新、选中、翻转 |
-| `ui/js/edges.js` | graph-dev | SVG 连线几何与流动动画 |
-| `ui/js/chat.js` | chat-dev | 对话面板全部交互 |
-| `ui/js/markdown.js` | chat-dev | 安全 Markdown 渲染 |
+| `ui/css/channels.css` | channels-dev | 频道三栏、消息流、@ 提及、待办卡片、流水、任务面板 |
+| `ui/css/markdown.css` | shared | Markdown 正文、代码块与复制（`chat.css` 删除后救活的部分） |
+| `ui/css/profile.css` | shared | 角色档案浮层 + `#ch-dock` + `chat-spinner` |
+| `ui/css/pending.css` | shared | 待办卡片（`.` + `pend-*`），原属 `chat.css` |
+| `ui/css/trace.css` | shared | 工具调用 / 思考的折叠组（`.ch-trace*`） |
+| `ui/js/app.js` | Lead | SSE、切视图、主题、dev 钩子 |
+| `ui/js/channels.js` | channels-dev | 频道全部交互（消息流、@ 选择器、已读、待办、流水、任务） |
+| `ui/js/pending.js` | Lead | 待办卡片渲染与提交（从 `chat.js` 迁出） |
+| `ui/js/profile.js` | shared | 角色档案（悬浮层 + 频道内嵌 `#ch-dock` 两个挂载点） |
+| `ui/js/markdown.js` | shared | 安全 Markdown 渲染（含图片、引用） |
 | `scripts/ui-shot.mjs` | Lead | 真实浏览器截图 / 冒烟脚本 |
 | `src/server/org-view.ts` | Lead | 给界面补 `links`（沟通连线数据） |
 
@@ -125,9 +126,11 @@ body[data-chat="open|closed"][data-sheet="open|closed"]
 ```js
 // ui/js/app.js（Lead，唯一入口）
 import { initOrg } from './org.js';   // { update(org), setSelected(id), refreshLayout() }
-import { initChat } from './chat.js'; // { setActor(actor), setFeed(feed), setLoading(), clear(),
-                                      //   addLocalQueued(text), toggle(), updateOrg(org) }
-import { initAsk } from './ask.js';   // { render(pendingItems) }
+import { initChannels } from './channels.js';   // 见下：频道是唯一聊天入口
+import { initPending } from './pending.js';     // { render(container, items) }
+import { initProfile } from './profile.js';     // { open(id, actor?), close(), isOpen() }
+import { initLightbox } from './lightbox.js';   // 图片放大器（capture 阶段委托）
+import { notify } from './toast.js';            // 轻提示
 
 // ui/js/org.js（graph-dev 实现）
 export function initOrg({ onSelect }) -> {
@@ -144,20 +147,31 @@ export function createEdges(svgElement) -> {
   clear(),
 }
 
-// ui/js/chat.js（chat-dev 实现）
-export function initChat({ onSend, onInterrupt }) -> {
-  setActor(actor),   // actor 含 label/subtitle/status/tokens/awaitingYou/projectName
-  setFeed(feed),     // 增量渲染；保留滚动位置与折叠状态
-  setLoading(),
-  clear(),
-  addLocalQueued(text),   // 乐观显示「已排队」，下一次 feed 到达后由服务端队列接管
-  notify(text, tone),     // 轻提示：tone = "info" | "warn" | "error"
-  toggle(),               // 桌面：收起 / 展开；手机：开 / 关抽屉
-  openSheet(), closeSheet(), expand(),
-  updateOrg(org),
+// ui/js/channels.js（channels-dev 实现）
+export function initChannels({ onToast, fetchProfile }) -> {
+  refresh(),              // 重新拉 /api/channels（不改变当前打开的频道）
+  reloadCandidates(),     // 重新拉 @ 候选
+  open(channelId),        // 打开某个频道（窄屏会切到单栏）
+  loadMentionCandidates(),
 }
 
-// ui/js/markdown.js（chat-dev 实现）
+// ui/js/pending.js（Lead 实现）
+export function initPending({ onSettled }) -> {
+  render(container, items),  // 渲染待办卡片；提交走 POST /api/channels/:id/messages（带 pendingKey）
+                             // 处置走 POST /api/pending/dispose
+}
+
+// ui/js/toast.js（Lead 实现）
+export function notify(text, tone)  // 轻提示：tone = "info" | "warn" | "error"
+
+// ui/js/profile.js（shared 实现）
+export function initProfile({ fetchProfile, onToggle, dock, trigger }) -> {
+  open(conversationId, actor?),  // 传 dock 则内嵌到该容器，否则用 #profile-layer 悬浮层
+  close(),
+  isOpen(),
+}
+
+// ui/js/markdown.js（shared 实现，含图片与引用）
 export function renderMarkdown(text) -> string  // 必须先转义，再生成受控 HTML
 
 // ui/js/format.js（Lead，现成可用）
