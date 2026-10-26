@@ -55,6 +55,7 @@ import {
 	ROLE_LABELS,
 	type ManagementRole,
 } from "./docs.ts";
+import { waitOrTimeout, type Waited } from "./wait.ts";
 
 // ── 文档 ────────────────────────────────────────────────────────────────────
 
@@ -1125,29 +1126,3 @@ function errorText(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
 }
 
-type Waited<T> = { readonly timedOut: true } | { readonly timedOut: false; readonly value: T };
-
-/**
- * 等一个 promise，超时返回 `{ timedOut: true }`。
- *
- * 被放弃的 promise 已经挂在 `Promise.race` 上，之后 reject 不会变成未处理拒绝。
- */
-async function waitOrTimeout<T>(promise: Promise<T>, ms: number): Promise<Waited<T>> {
-	if (ms <= 0) {
-		promise.catch(() => undefined);
-		return { timedOut: true };
-	}
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	const timeout = new Promise<Waited<T>>((resolve) => {
-		timer = setTimeout(() => resolve({ timedOut: true }), ms);
-	});
-	try {
-		const raced = await Promise.race([
-			promise.then((value): Waited<T> => ({ timedOut: false, value })),
-			timeout,
-		]);
-		return raced;
-	} finally {
-		if (timer !== undefined) clearTimeout(timer);
-	}
-}

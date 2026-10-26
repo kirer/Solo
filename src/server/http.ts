@@ -28,7 +28,9 @@ import { CompanyDoc } from "../company/docs.ts";
 import { answerPending, disposePending, listPending, listPendingArchive, PendingDoc, takeOverPendingAtCeo } from "../company/escalation.ts";
 import { captureInterruptedWork, createDispositionPending, settleDisposition } from "../company/disposition.ts";
 import { startCompanyWatchdog } from "../company/org.ts";
+import { waitOrTimeout } from "../company/wait.ts";
 import { buildOrgView } from "./org-view.ts";
+import { matchRoute, type Route } from "./routes.ts";
 import { decorateFeed, readFeed } from "./feed.ts";
 import { readStaffActivity } from "./activity.ts";
 import { readProfile } from "./profile.ts";
@@ -295,8 +297,41 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		}
 
 		try {
-			if (path === "/api/org") return json(response, await buildOrgView(current(), BACKGROUND_CONTEXT));
-			if (path === "/api/pending") {
+			const match = matchRoute(routes, request.method ?? "GET", path);
+			if (match === undefined) return fail(response, 404, "没有这个接口");
+			return await match.route.handler({
+				request,
+				response,
+				url,
+				path,
+				method: request.method ?? "GET",
+				params: match.params,
+			});
+		} catch (error) {
+			return fail(response, 500, error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	/**
+	 * 路由表。
+	 *
+	 * 顺序即优先级：**具体路径写在通配前面**。三条兜底必须永远在最后：
+	 * `/api/settings` 与 `/api/models` 的 405（路径存在但方法不对，
+	 * 直接 404 会让调用方以为是端点拼错了），以及静态资源。
+	 *
+	 * handler 各自负责方法判断之外的一切（旧的 `if` 链里混着
+	 * `request.method === "POST"` 的判断，现在提到 `method` 字段上）。
+	 */
+	const routes: readonly Route[] = [
+		{
+			pattern: "/api/org",
+			method: "GET",
+			handler: async ({ response }) => json(response, await buildOrgView(current(), BACKGROUND_CONTEXT)),
+		},
+		{
+			pattern: "/api/pending",
+			method: "GET",
+			handler: async ({ response, url }) => {
 				// 归档查询：`/api/pending?archive=1[&kind=rejected|resolved]`
 				// 默认只给未答复且未处置的（有处置就从看板消失）；archive 才是「归档区可查」。
 				const archive = url.searchParams.get("archive");
@@ -313,28 +348,35 @@ export async function serve(options: ServeOptions): Promise<Server> {
 					);
 				}
 				return json(response, await listPending(current(), BACKGROUND_CONTEXT));
-			}
-			if (path.startsWith("/api/feed/")) {
-				const conversationId = Number(path.slice("/api/feed/".length));
+			},
+		},
+		{
+			pattern: "/api/feed/:conversationId",
+			method: "GET",
+			handler: async ({ response, params }) => {
+				const conversationId = Number(params.conversationId);
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
 				const feed = await readFeed(current(), conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return fail(response, 404, "会话不存在");
 				return json(response, await decorateFeed(current(), feed, BACKGROUND_CONTEXT));
-			}
-			// 职工「工作记录」（UX-7 的数据源）：思考 / 回复 / 工具调用混排。
-			//
-			// 老板口径（第三次，最终版）：「不是只是工具调用，还是他思考过程啊」
-			// ⇒ 保留 `thinking` / `assistant` / `tool` 三类，排除 `user`（老板自己的话）
-			//   与 `note`/`alert`（系统留痕）。
-			//
-			// 复用 `readFeed`（它已把 toolCall 与 toolResult 按 callId 合并好），
-			// 本端点只做「筛选 + 摘要截断 + 分页」三件事，不平行造第二套解析逻辑。
-			//
-			// 与 /api/channels/:id 同一套查询参数惯例（`?limit=&before=`），
-			// `before` 是 entry id，语义「严格早于」（往上翻更早的）。
-			if (path.startsWith("/api/staff/") && path.endsWith("/activity") && request.method === "GET") {
-				const raw = path.slice("/api/staff/".length, -"/activity".length).replace(/\/$/, "");
-				const conversationId = Number(decodeURIComponent(raw));
+			},
+		},
+		// 职工「工作记录」（UX-7 的数据源）：思考 / 回复 / 工具调用混排。
+		//
+		// 老板口径（第三次，最终版）：「不是只是工具调用，还是他思考过程啊」
+		// ⇒ 保留 `thinking` / `assistant` / `tool` 三类，排除 `user`（老板自己的话）
+		//   与 `note`/`alert`（系统留痕）。
+		//
+		// 复用 `readFeed`（它已把 toolCall 与 toolResult 按 callId 合并好），
+		// 本端点只做「筛选 + 摘要截断 + 分页」三件事，不平行造第二套解析逻辑。
+		//
+		// 与 /api/channels/:id 同一套查询参数惯例（`?limit=&before=`），
+		// `before` 是 entry id，语义「严格早于」（往上翻更早的）。
+		{
+			pattern: "/api/staff/:conversationId/activity",
+			method: "GET",
+			handler: async ({ response, url, params }) => {
+				const conversationId = Number(params.conversationId);
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
 				const limitParam = Number(url.searchParams.get("limit") ?? "");
 				const beforeParam = Number(url.searchParams.get("before") ?? "");
@@ -349,55 +391,68 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				);
 				if (page === undefined) return fail(response, 404, "会话不存在");
 				return json(response, page);
-			}
-			// 职工档案：顶部按钮展示这位职工的角色预制提示词 / 技能（用户 2.5）
-			if (path.startsWith("/api/profile/")) {
-				const conversationId = Number(path.slice("/api/profile/".length));
+			},
+		},
+		// 职工档案：顶部按钮展示这位职工的角色预制提示词 / 技能（用户 2.5）
+		{
+			pattern: "/api/profile/:conversationId",
+			method: "GET",
+			handler: async ({ response, params }) => {
+				const conversationId = Number(params.conversationId);
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
 				const result = await readProfile(current(), conversationId, BACKGROUND_CONTEXT);
 				if ("error" in result) return fail(response, 404, result.error);
 				return json(response, result.profile);
-			}
-			if (path === "/api/stream/org" && request.method === "GET") return streamOrg(response);
-			if (path.startsWith("/api/stream/feed/")) {
-				const conversationId = Number(path.slice("/api/stream/feed/".length));
+			},
+		},
+		{ pattern: "/api/stream/org", method: "GET", handler: ({ response }) => streamOrg(response) },
+		{
+			pattern: "/api/stream/feed/:conversationId",
+			method: "GET",
+			handler: ({ response, params }) => {
+				const conversationId = Number(params.conversationId);
 				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
 				return streamFeed(response, conversationId);
-			}
-			if (path === "/api/message" && request.method === "POST") return await postMessage(request, response);
-			if (path === "/api/answer" && request.method === "POST") return await postAnswer(request, response);
-			// 处置待办（驳回 / 标记已解决）。与 /api/answer 同一风格：POST + {key, text}。
-			if (path === "/api/pending/dispose" && request.method === "POST") {
-				return await postDispose(request, response);
-			}
-			// CEO 把老板级待办接管回自己层（Defect B 要求 3）。
-			if (path === "/api/pending/take-over" && request.method === "POST") {
-				return await postTakeOver(request, response);
-			}
-			if (path === "/api/interrupt" && request.method === "POST") return await postInterrupt(request, response);
+			},
+		},
+		{ pattern: "/api/message", method: "POST", handler: ({ request, response }) => postMessage(request, response) },
+		{ pattern: "/api/answer", method: "POST", handler: ({ request, response }) => postAnswer(request, response) },
+		// 处置待办（驳回 / 标记已解决）。与 /api/answer 同一风格：POST + {key, text}。
+		{ pattern: "/api/pending/dispose", method: "POST", handler: ({ request, response }) => postDispose(request, response) },
+		// CEO 把老板级待办接管回自己层（Defect B 要求 3）。
+		{ pattern: "/api/pending/take-over", method: "POST", handler: ({ request, response }) => postTakeOver(request, response) },
+		{ pattern: "/api/interrupt", method: "POST", handler: ({ request, response }) => postInterrupt(request, response) },
 
-			// ── 设置 / 模型 ──
-			if (path === "/api/settings") {
-				if (request.method === "GET") return json(response, await settingsView());
-				if (request.method === "PATCH") return await patchSettings(request, response);
-				return fail(response, 405, "只支持 GET / PATCH");
-			}
-			if (path === "/api/models") {
-				if (request.method === "POST") return await postModel(request, response);
-				if (request.method === "PATCH" || request.method === "PUT") return await patchModel(request, url, response);
-				if (request.method === "DELETE") return await deleteModel(url, response);
-				return fail(response, 405, "只支持 POST / DELETE");
-			}
+		// ── 设置 / 模型 ──
+		{ pattern: "/api/settings", method: "GET", handler: async ({ response }) => json(response, await settingsView()) },
+		{ pattern: "/api/settings", method: "PATCH", handler: ({ request, response }) => patchSettings(request, response) },
+		{
+			pattern: "/api/settings",
+			handler: ({ response }) => fail(response, 405, "只支持 GET / PATCH"),
+		},
+		{ pattern: "/api/models", method: "POST", handler: ({ request, response }) => postModel(request, response) },
+		{
+			pattern: "/api/models",
+			method: ["PATCH", "PUT"],
+			handler: ({ request, response, url }) => patchModel(request, url, response),
+		},
+		{ pattern: "/api/models", method: "DELETE", handler: ({ response, url }) => deleteModel(url, response) },
+		{
+			pattern: "/api/models",
+			handler: ({ response }) => fail(response, 405, "只支持 POST / PATCH / DELETE"),
+		},
 
-			// ── 附件 ──
-			if (path === "/api/upload" && request.method === "POST") return await postUpload(request, response);
-			if (path.startsWith("/uploads/")) return await serveUpload(path, response);
+		// ── 附件 ──
+		{ pattern: "/api/upload", method: "POST", handler: ({ request, response }) => postUpload(request, response) },
+		{ pattern: "/uploads/*rest", handler: ({ response, path }) => serveUpload(path, response) },
 
-			// ── 头像 ──
-			// 真实插画头像，按名字稳定生成（同一人永远同一张脸）。
-			// 长缓存：内容由名字决定，永不变。
-			if (path.startsWith("/api/avatar/") && request.method === "GET") {
-				const seed = decodeURIComponent(path.slice("/api/avatar/".length));
+		// ── 头像 ──
+		// 真实插画头像，按名字稳定生成（同一人永远同一张脸）。长缓存：内容由名字决定，永不变。
+		{
+			pattern: "/api/avatar/:seed",
+			method: "GET",
+			handler: ({ request, response, url, params }) => {
+				const seed = params.seed ?? "";
 				if (seed === "") return fail(response, 400, "缺少名字");
 				const sizeParam = Number(url.searchParams.get("size") ?? 96);
 				const size = Number.isFinite(sizeParam) ? Math.min(256, Math.max(24, Math.round(sizeParam))) : 96;
@@ -415,23 +470,31 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				});
 				response.end(svg);
 				return;
-			}
+			},
+		},
 
-			// ── 频道（通信重构） ──
-			if (path === "/api/channels" && request.method === "GET") {
-				return json(response, {
+		// ── 频道（通信重构） ──
+		{
+			pattern: "/api/channels",
+			method: "GET",
+			handler: async ({ response }) =>
+				json(response, {
 					channels: await listChannels(current(), BACKGROUND_CONTEXT),
 					unread: await unreadSummary(current(), BACKGROUND_CONTEXT),
-				});
-			}
-			if (path.startsWith("/api/channels/") && request.method === "GET") {
-				const rest = path.slice("/api/channels/".length);
-				// /api/channels/:id/mentionable
-				if (rest.endsWith("/mentionable")) {
-					const id = decodeURIComponent(rest.slice(0, -"/mentionable".length));
-					return json(response, { candidates: await mentionCandidates(current(), id, OWNER_ID, BACKGROUND_CONTEXT) });
-				}
-				const id = decodeURIComponent(rest);
+				}),
+		},
+		// `/mentionable` 必须排在 `/api/channels/:id` 之前——否则会被当成频道 id。
+		{
+			pattern: "/api/channels/:id/mentionable",
+			method: "GET",
+			handler: async ({ response, params }) =>
+				json(response, { candidates: await mentionCandidates(current(), params.id ?? "", OWNER_ID, BACKGROUND_CONTEXT) }),
+		},
+		{
+			pattern: "/api/channels/:id",
+			method: "GET",
+			handler: async ({ response, url, params }) => {
+				const id = params.id ?? "";
 				const limitParam = Number(url.searchParams.get("limit") ?? "");
 				const beforeParam = Number(url.searchParams.get("before") ?? "");
 				const view = await readChannelView(
@@ -449,13 +512,18 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				// 这些不该算已读的动作也把未读清掉（曾经就是这样，用户在列表页
 				// 还没看内容，徽章就没了）。已读由前端渲染完消息后显式 POST /read。
 				return json(response, view);
-			}
-			if (path.startsWith("/api/channels/") && path.endsWith("/messages") && request.method === "POST") {
-				const id = decodeURIComponent(path.slice("/api/channels/".length, -"/messages".length));
-				return await postChannelMessage(id, request, response);
-			}
-			if (path.startsWith("/api/channels/") && path.endsWith("/read") && request.method === "POST") {
-				const id = decodeURIComponent(path.slice("/api/channels/".length, -"/read".length));
+			},
+		},
+		{
+			pattern: "/api/channels/:id/messages",
+			method: "POST",
+			handler: ({ request, response, params }) => postChannelMessage(params.id ?? "", request, response),
+		},
+		{
+			pattern: "/api/channels/:id/read",
+			method: "POST",
+			handler: async ({ request, response, params }) => {
+				const id = params.id ?? "";
 				const body = await readJson<{ seq?: number }>(request);
 				if (typeof body.seq === "number") {
 					await markMentionSeen(current(), id, body.seq, OWNER_ID, BACKGROUND_CONTEXT);
@@ -467,26 +535,30 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				}
 				scheduleOrgPush();
 				return json(response, { ok: true });
-			}
+			},
+		},
 
-			// ── 看板 ──
-			if (path === "/api/board" && request.method === "GET") {
-				return json(response, await buildBoardView(current(), BACKGROUND_CONTEXT));
-			}
+		// ── 看板 ──
+		{ pattern: "/api/board", method: "GET", handler: async ({ response }) => json(response, await buildBoardView(current(), BACKGROUND_CONTEXT)) },
 
-			// ── IM 入站 ──
-			if (path === "/api/im/inbound" && request.method === "POST") {
-				return await postImInbound(url, request, response);
-			}
+		// ── IM 入站 ──
+		{
+			pattern: "/api/im/inbound",
+			method: "POST",
+			handler: ({ request, response, url }) => postImInbound(url, request, response),
+		},
 
-			// 静态资源：dist 优先，找不到的文件（如 vendor/）回退到源码目录。
-			const choice = await staticRoot();
-			const dirs = choice.kind === "dist" ? [choice.dir, uiDir] : [uiDir];
-			return await serveStatic(response, request, uiDir, path, dirs);
-		} catch (error) {
-			return fail(response, 500, error instanceof Error ? error.message : String(error));
-		}
-	}
+		// ── 静态资源 ──
+		// dist 优先，找不到的文件（如 vendor/）回退到源码目录。
+		{
+			pattern: "*rest",
+			handler: async ({ request, response, path }) => {
+				const choice = await staticRoot();
+				const dirs = choice.kind === "dist" ? [choice.dir, uiDir] : [uiDir];
+				return await serveStatic(response, request, uiDir, path, dirs);
+			},
+		},
+	];
 
 	/**
 	 * 往 SSE 连接写一段，**尊重背压**。
@@ -894,18 +966,13 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			return atomicDelivery;
 		}
 
-		let timer: NodeJS.Timeout | undefined;
-		await Promise.race([
+		await waitOrTimeout(
 			conversation.abort(BACKGROUND_CONTEXT).then(
 				() => true,
 				() => false,
 			),
-			new Promise<boolean>((resolve) => {
-				timer = setTimeout(() => resolve(false), INTERRUPT_TIMEOUT_MS);
-			}),
-		]).finally(() => {
-			if (timer !== undefined) clearTimeout(timer);
-		});
+			INTERRUPT_TIMEOUT_MS,
+		);
 
 		// 打断完成后再落处置待办（ADR-026 决策 4/5）：
 		// 默认暂搁、5 分钟期限、恢复条件默认 30 分钟后提醒下达人。
@@ -1018,18 +1085,14 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		);
 
 		// abort 的提交会先把队列撤掉；等它完成（或超时）再把消息补回去
-		let timer: NodeJS.Timeout | undefined;
-		const aborted = await Promise.race([
+		const abortWait = await waitOrTimeout(
 			conversation.abort(BACKGROUND_CONTEXT).then(
 				() => true,
 				() => false,
 			),
-			new Promise<boolean>((resolve) => {
-				timer = setTimeout(() => resolve(false), INTERRUPT_TIMEOUT_MS);
-			}),
-		]).finally(() => {
-			if (timer !== undefined) clearTimeout(timer);
-		});
+			INTERRUPT_TIMEOUT_MS,
+		);
+		const aborted = !abortWait.timedOut && abortWait.value;
 
 		// 打断完成后落处置待办（ADR-026 决策 4/5）
 		if (interrupted !== undefined) {

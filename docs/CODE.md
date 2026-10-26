@@ -105,9 +105,9 @@ src/tui/main.ts      （终端）
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `org.ts` | 2457 | **装配 + 组织生命周期**（见 §4.1） |
+| `org.ts` | 2392 | **装配 + 组织生命周期**（见 §4.1） |
 | `escalation.ts` | 1300 | **升级链状态机**（见 §4.4） |
-| `roundtable.ts` | 1153 | 圆桌讨论（多阶段 durable task） |
+| `roundtable.ts` | 1128 | 圆桌讨论（多阶段 durable task） |
 | `disposition.ts` | 857 | 待办处置（暂搁/放弃/恢复条件/超时默认） |
 | `watchdog.ts` | 790 | 看门狗（见 §4.5） |
 | `management-tools.ts` | 772 | 管理层工具集（`org_tree` / `my_capabilities` / `decide` / `staff_*` / `budget_check` …） |
@@ -124,6 +124,8 @@ src/tui/main.ts      （终端）
 | `org-model.ts` | 157 | `CompanyState` → `Org`（纯映射）。`buildOrg()` 到处用 |
 | `capabilities.ts` | 157 | **能力目录**（声明式：谁能用什么、哪些延迟加载） |
 | `deliver.ts` | 199 | **唯一的跨 agent 投递原语** |
+| `prompts.ts` | 107 | **职责描述/立项文档的唯一生成入口**（纯文案，`org.ts` re-export） |
+| `wait.ts` | 42 | `waitOrTimeout()` —— 圆桌等发言、HTTP 等 abort 共用 |
 | `decision-routing.ts` | 17 | re-export（真身在 `src/domain/routing.ts`） |
 | `delegation-guard.ts` | 165 | 同步等待的环检测 + 超时 |
 | `decision-delivery.ts` | 142 | 把决定投回发起方 |
@@ -325,7 +327,8 @@ src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 ### 6.1 网页 `src/server/`
 
 ```
-http.ts        1663 行  全部路由（见下表），SSE，静态文件
+http.ts        1923 行  路由 handler + SSE + 静态文件
+routes.ts       122 行  **路由表**（表驱动，见 §6.2），新增接口先动这里
 feed.ts         785 行  readFeed() 把会话已提交状态转成可渲染条目（Web UI 唯一数据源）
 settings.ts     477 行  settings.json 读写（模型、网络、IM）
 org-view.ts     425 行  buildOrgView() 组织快照（SSE 推给前端）
@@ -341,7 +344,17 @@ avatars.ts               DiceBear 头像（按名字稳定生成）
 network.ts               局域网地址枚举
 ```
 
-API 路由一览（`src/server/http.ts:275` 起）：
+### 6.2 路由是表，不是 if 链
+
+`src/server/routes.ts` 只做一件事：`matchRoute(routes, method, path)`。语义是
+「按 `/` 分段、`:name` 捕获一段、`*name` 吃剩余全部、表序即优先级」。
+`src/server/http.ts` 的 `handle()` 现在只有三步：取 path → 查表 → 调 handler，
+**没有分支**。新增接口 = 往 `routes` 加一行 + 写 handler，不用改调度逻辑。
+
+排布有唯一一条纪律：**具体写在通配前**。例如 `/api/channels/:id/mentionable`
+必须排在 `/api/channels/:id` 前面，`*rest`（静态资源兜底）永远最后。
+
+API 路由一览（声明在 `src/server/routes.ts` 的 `routes` 数组，handler 在 `src/server/http.ts`）：
 
 ```
 GET    /api/org                    组织快照
@@ -454,7 +467,7 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 | 某工具是否默认给模型 | `src/company/capabilities.ts:51` `CAPABILITIES` 的 `core` |
 | 工具的说明/参数 | `src/company/tools/universal.ts`、`dispatch.ts`、`management-tools.ts` |
 | 角色提示词 | `src/company/roles.ts` 的 charter + `COMMON_GUIDE`（**必须是常量**） |
-| 员工的职责模板 | `src/company/org.ts` 的 `STAFF_ROLE_TEMPLATES` |
+| 员工的职责模板 | `src/company/prompts.ts` 的 `STAFF_ROLE_TEMPLATES`（`org.ts` 已 re-export） |
 | 谁能派给谁 | `src/domain/membership.ts:147` `canAssign`（**会影响 e2e/hierarchy.test.ts**） |
 | 谁能看哪个频道 | `src/domain/membership.ts:84` `canView` |
 | 谁被唤醒 | `src/domain/channels.ts:379` `recipientsOf`（**成本敏感**） |
@@ -466,7 +479,7 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 | 任务状态机 | `src/domain/tasks.ts` `TRANSITIONS` |
 | 新增一个数据文档 | `src/company/docs.ts`（用 `defineDoc`） |
 | 新增一个 durable task | `src/company/*.ts` 用 `defineTask`，再 `registry.install({name, tasks})` |
-| HTTP 接口 | `src/server/http.ts` + 先改 `docs/design/WEB-API.md` |
+| HTTP 接口 | 先加一条到 `src/server/routes.ts` 的 `routes`，handler 写 `src/server/http.ts`；再改 `docs/design/WEB-API.md` |
 | 网页样式/交互 | `ui/` |
 | 换模型 / 读用量 | `src/runtime/models.ts`、`src/runtime/usage.ts` |
 | 升级 pi-durable | **只改 `src/runtime/`**，跑 `test/contract/` |

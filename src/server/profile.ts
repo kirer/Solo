@@ -7,7 +7,7 @@
  * 读它们既稳定又与模型实际收到的内容一致。
  */
 import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
-import { staffCharterOf } from "../company/org.ts";
+import { staffCharterOf } from "../company/prompts.ts";
 import { ROLE_LABELS, managerLabelOf, type ManagementRole } from "../company/docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "../company/roles.ts";
 import { employeeToolsFor, employeeUniversalTools, readCompany } from "../company/org.ts";

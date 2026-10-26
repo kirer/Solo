@@ -278,24 +278,72 @@ tui）是干净的，边界检查脚本 `scripts/check-boundaries.mjs` 在守着
 
 **真正的问题是三个巨型文件 + 编排重复：**
 
-| 文件 | 行数 | 问题 |
+| 文件 | 行数（改前） | 问题 |
 | --- | --- | --- |
 | `src/company/org.ts` | 2457 | 装配 + 招聘 + 改名 + 提示词 + 频道初始化全在一个文件 |
-| `src/company/escalation.ts` | 1300 | 升级链的状态机 + 工具 + 留痕 |
+| `src/company/escalation.ts` | 1300 | 升级链的状态机 + 工具 + 留痕（**未动**，见下） |
 | `src/company/roundtable.ts` | 1153 | 又一遍「建任务→等→醒来→写留痕」 |
-| `src/server/http.ts` | 1792 | 25 个 `if` 分支的路由表 |
+| `src/server/http.ts` | 1860 | 25 个 `if` 分支的路由链 |
 
-**同一个模式写了两遍**：escalation 和 roundtable 各自实现了
-「持久化任务 + 等待 + 醒来 + 留痕」。这是**可以收敛的**。
+**不做的硬约束**：不动持久化契约（`defineDoc` 的 kind 是公共协议，见 ADR-014），
+不动公开类型。
 
-**收敛顺序**（每步独立可回归）：
+### 5.1 实际做了什么（三步里的三步，但第三步只抽一个原语）
 
-1. `http.ts` 的路由改成表驱动（`{ method, pattern, handler }[]`），不动 handler 内部。
-2. `org.ts` 拆成 `org/assembly.ts` + `org/hiring.ts` + `org/prompts.ts`（纯搬家）。
-3. `escalation.ts` 与 `roundtable.ts` 抽出共享的 `waitFor()` 模式。
+**第 1 步：路由表驱动（`src/server/routes.ts`，新建）**
 
-**不做的**：不动持久化契约（`defineDoc` 的 kind 是公共协议，见 ADR），
-不动公开类型。这两条是硬约束。
+`handle()` 里 205 行的 `if` 链整段删掉，换成「取 path → `matchRoute` → 调 handler」。
+`matchRoute(routes, method, path)` 的语义：按 `/` 分段、`:name` 捕获一段并
+`decodeURIComponent`（非法百分号原样返回、不抛）、`*name` 吃剩余全部（含空串）、
+尾部斜杠等价、方法精确比较、**表序即优先级**。
+
+排布唯一的纪律：具体写在通配前。`/api/channels/:id/mentionable` → `/api/channels/:id/read`
+→ `/api/channels/:id/messages` → `/api/channels/:id`；三条兜底 `/api/settings`（405）、
+`/api/models`（405）、`*rest`（静态资源）永远最后。
+
+`test/unit/routes.test.ts` 16 例锁住这些语义（中文 decode、非法百分号、`*rest`
+吃斜杠与空尾巴、同路径多方法、405 兜底）。
+
+**第 2 步：`org.ts` 的提示词搬出去（`src/company/prompts.ts`，新建）**
+
+只搬纯文案，不搬装配逻辑：`STAFF_ROLE_TEMPLATES`、`staffCharterOf`、
+`staffInstructionsFor`、`projectLeaderCharter`、`renderProjectBrief`。
+`org.ts` 原样 re-export，所以既有调用点、`test/` 的导入路径都不动。
+
+为什么值得搬：这几段字是「这位员工被交代了什么」的唯一真相。
+`src/server/profile.ts` 的档案接口以前自己拼一份，拼出来的和真正 configure
+进去的一不一致，老板看到的档案就是假的。现在它 import `prompts.ts`，
+结构与「同源」这件事绑死。
+
+**第 3 步：只抽 `waitOrTimeout()`（`src/company/wait.ts`，新建）**
+
+原计划是「escalation 与 roundtable 抽出共享的 `waitFor()` 模式」，勘察后
+**判定不成立**：`escalation.ts` 用 `taskRuntime.sleepUntil(...)` 做阶段轮询
+（`pollDelay`：头 1 分钟 200ms，之后 30s，见 `src/company/escalation.ts:228-258`），
+是持久化任务状态机；`roundtable.ts` 用 `waitOrTimeout(runtime.harness.waitForTask(...), budget)`
+等一个任务**收口**。一个是「轮询持久状态」，一个是「阻塞等终态」，
+不是同一个模式——硬抽只会把两套语义压成一个含混的抽象。
+
+真正重复的是那个**更小**的东西：`Promise.race` + `setTimeout` + `clearTimeout`
++ 被放弃的 promise 要挂空 catch。它出现在 `roundtable.ts`（两处）和
+`http.ts`（两处，等 abort 收尾）。现在统一到 `src/company/wait.ts` 的
+`waitOrTimeout<T>(promise, ms): Promise<Waited<T>>`，删掉 `roundtable.ts`
+里那份私有实现（-25 行）。
+
+### 5.2 没做的（以及为什么）
+
+- **`org.ts` 拆成 `org/assembly.ts` + `org/hiring.ts`**：`org.ts` 的 20 个导出被
+  `tui/state.ts`、`tui/main.ts`、`server/main.ts`、`server/org-view.ts`、`server/http.ts`、
+  `server/im.ts`、`server/feed.ts`、`server/profile.ts`、`tools/dispatch.ts`、
+  `management-tools.ts` 十个模块引用，内部还靠三个 `WeakMap<CompanyRuntime, ...>`
+  （`LEADER_TOOLSETS` / `EMPLOYEE_EXTRA_TOOLS` / `EMPLOYEE_UNIVERSAL_TOOLS`）与
+  `escalationStamp/escalationTick` 两个模块级变量共享状态。纯搬家要拆开这三个
+  WeakMap 的作用域，风险与收益不成比例——它不是「乱」，是「一个文件的职责
+  确实就在这一屏里」。留作以后真要拆时再拆。
+- **`escalation.ts` 瘦身**：1300 行里状态机、工具、留痕确实混在一起，但它是
+  全公司最容易出事的一段（老板待办、超时、升级链），没有测试驱动的前提下
+  不动。`test/unit/escalation-seq.test.ts` + `test/e2e/escalation.test.ts` 已在，
+  但覆盖不到拆文件时的边界，收益不足。
 
 ---
 
@@ -310,7 +358,7 @@ tui）是干净的，边界检查脚本 `scripts/check-boundaries.mjs` 在守着
 | P4 ✅ | #7 | 回复功能，依赖 #1 的消息结构 |
 | P5 ✅ | #10 #11 | 模型编辑 + 任务面板 |
 | P6 ✅ | #12 | 记忆分层，新文档 + 两个工具 + 三道闸门 |
-| P7 | #16 | 架构瘦身，放最后（避免和前面冲突） |
+| P7 | #16 | ✅ 路由表驱动 + `prompts.ts` + `wait.ts`（`org.ts`/`escalation.ts` 分部不拆，理由见 §5.2） |
 
 每批都跑 `npm run check` + 相关 `vitest`，不通过不进下一批。
 
