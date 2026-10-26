@@ -2,6 +2,13 @@
 
 按「你想干什么」找。
 
+## 我想先搞懂它现在是怎么运转的
+
+| 文档 | 内容 |
+|---|---|
+| [SYSTEM](SYSTEM.md) | **系统逻辑**：不用读代码就能懂。公司长什么样、一次派活怎么走完、9 个数据文档各存什么、升级链和看门狗为什么存在、成本花在哪、哪里是坑 |
+| [CODE](CODE.md) | **代码地图**：要改某个东西该动哪个文件。分层与边界、启动顺序（含三个顺序坑）、能力包、接口清单、「我想改 X → 动这里」对照表、改动前检查清单 |
+
 ## 我要用起来
 
 | 文档 | 内容 |
@@ -9,6 +16,7 @@
 | [README](../README.md) | 安装、启动、界面操作、终止项目 |
 | [RUNBOOK](RUNBOOK.md) | 换模型、备份、升级依赖、排障、数据文件说明 |
 | [DEPLOY](DEPLOY.md) | 局域网访问、Docker 部署、安全边界、Tauri 桌面壳评估 |
+| [TUNNEL](TUNNEL.md) | **内网穿透**：cloudflared-manager 部署、`https://oxfff.com`、Cloudflare Access 白名单、日常运维与踩过的坑 |
 
 ## 我想知道这东西是怎么被做出来的
 
@@ -45,8 +53,8 @@
 
 ## 阅读顺序建议
 
-**第一次接触** → README → RUNBOOK
+**第一次接触** → SYSTEM（它怎么运转）→ README → RUNBOOK
 
-**要改代码** → `openspec/specs/`（这个能力现在保证什么行为）→ design/DECISIONS（哪些边界不能碰）→ design/PLAN 第 2 章（架构）→ `src/`
+**要改代码** → CODE（先找到文件）→ `openspec/specs/`（这个能力现在保证什么行为）→ design/DECISIONS（哪些边界不能碰）→ design/PLAN 第 2 章（架构）→ `src/`
 
 **要升级 pi-durable** → design/PLAN 附录 B（15 个坑）→ `test/contract/`（契约测试会告诉你底层行为有没有变）
