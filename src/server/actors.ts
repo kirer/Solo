@@ -57,9 +57,29 @@ export function actorRefOf(state: CompanyState | undefined, conversationId: numb
  * 派活/留痕条目里只存了 `from: "CEO"` 这样的名字，没有会话标识。
  * 按公司索引反查一次，能补上 conversationId 就补上；补不上也要给个
  * 可读的名字，绝不能把消息显示成「未知」。
+ *
+ * ⚠️ `label` 的实际类型是 `string | undefined` **但在真实数据里不总成立**：
+ * `app.channel` 条目（`deliver.ts` 投递时写的）把 `from` 存成**数字 conversationId**
+ * （例：`{"from":0,"fromLabel":"老板"}`），而调用点把它直接传进来。
+ * 原先这里直接 `(label ?? "").trim()`，于是整个 `/api/feed/:id` 对**所有会话**
+ * 报 `(label ?? "").trim is not a function`（500），单会话流水一条都看不到。
+ *
+ * 处置：把入参类型放宽成 `unknown`，按「数字 → 按 conversationId 反查」归一下降，
+ * 并把归一逻辑放在本函数入口（而不是每个调用点）——调用点有三个，漏一个就复发。
  */
-export function refOfLabel(state: CompanyState | undefined, label: string | undefined): ActorRef {
-	const name = (label ?? "").trim();
+export function refOfLabel(state: CompanyState | undefined, label: unknown): ActorRef {
+	// 数字（实测 `app.channel` 的 186 条都是这一形态）：它的语义已经是会话标识，
+	// 直接走 `actorRefOf` 反查，拿到什么算什么；反查不到就降级成可读文字。
+	if (typeof label === "number") {
+		if (!Number.isFinite(label)) return SYSTEM_REF;
+		const ref = actorRefOf(state, label);
+		if (ref !== undefined) return ref;
+		// 老板会话恒为 0（`domain/channels.ts` 的 OWNER_ID），即使 state 缺失也能定。
+		if (label === 0) return OWNER_REF;
+		return { conversationId: label, label: `会话 ${label}`, kind: "system" };
+	}
+	// 只有字符串才有「显示名」语义；对象/布尔等非法形态一律降级，不让它把整个 feed 打挂。
+	const name = typeof label === "string" ? label.trim() : "";
 	if (name === "" || name === "系统" || name === "system" || name === "self") return SYSTEM_REF;
 	if (name === "老板" || name === "owner" || name === "owner-decision") return OWNER_REF;
 	if (state === undefined) return { label: name, kind: "system" };

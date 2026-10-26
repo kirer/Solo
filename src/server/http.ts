@@ -30,6 +30,7 @@ import { captureInterruptedWork, createDispositionPending, settleDisposition } f
 import { startCompanyWatchdog } from "../company/org.ts";
 import { buildOrgView } from "./org-view.ts";
 import { decorateFeed, readFeed } from "./feed.ts";
+import { readStaffActivity } from "./activity.ts";
 import { readProfile } from "./profile.ts";
 import { buildBoardView } from "./board.ts";
 import {
@@ -319,6 +320,35 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				const feed = await readFeed(current(), conversationId, {}, BACKGROUND_CONTEXT);
 				if (feed === undefined) return fail(response, 404, "会话不存在");
 				return json(response, await decorateFeed(current(), feed, BACKGROUND_CONTEXT));
+			}
+			// 职工「工作记录」（UX-7 的数据源）：思考 / 回复 / 工具调用混排。
+			//
+			// 老板口径（第三次，最终版）：「不是只是工具调用，还是他思考过程啊」
+			// ⇒ 保留 `thinking` / `assistant` / `tool` 三类，排除 `user`（老板自己的话）
+			//   与 `note`/`alert`（系统留痕）。
+			//
+			// 复用 `readFeed`（它已把 toolCall 与 toolResult 按 callId 合并好），
+			// 本端点只做「筛选 + 摘要截断 + 分页」三件事，不平行造第二套解析逻辑。
+			//
+			// 与 /api/channels/:id 同一套查询参数惯例（`?limit=&before=`），
+			// `before` 是 entry id，语义「严格早于」（往上翻更早的）。
+			if (path.startsWith("/api/staff/") && path.endsWith("/activity") && request.method === "GET") {
+				const raw = path.slice("/api/staff/".length, -"/activity".length).replace(/\/$/, "");
+				const conversationId = Number(decodeURIComponent(raw));
+				if (!Number.isFinite(conversationId)) return fail(response, 400, "会话标识不合法");
+				const limitParam = Number(url.searchParams.get("limit") ?? "");
+				const beforeParam = Number(url.searchParams.get("before") ?? "");
+				const page = await readStaffActivity(
+					current(),
+					conversationId,
+					{
+						...(Number.isFinite(limitParam) && limitParam > 0 ? { limit: limitParam } : {}),
+						...(Number.isFinite(beforeParam) && beforeParam > 0 ? { before: beforeParam } : {}),
+					},
+					BACKGROUND_CONTEXT,
+				);
+				if (page === undefined) return fail(response, 404, "会话不存在");
+				return json(response, page);
 			}
 			// 职工档案：顶部按钮展示这位职工的角色预制提示词 / 技能（用户 2.5）
 			if (path.startsWith("/api/profile/")) {

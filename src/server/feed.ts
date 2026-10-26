@@ -198,7 +198,7 @@ export type AwaitingDecision = {
 export async function readFeed(
 	runtime: CompanyRuntime,
 	conversationId: number,
-	options: { readonly limit?: number; readonly state?: CompanyState } = {},
+	options: { readonly limit?: number; readonly state?: CompanyState; readonly before?: number } = {},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<Feed | undefined> {
 	const conversation = await runtime.harness.conversation(conversationId as never, context);
@@ -212,8 +212,31 @@ export async function readFeed(
 	// 会话历史一旦超过 limit（真实公司跑几轮就会超），新消息与新回复就永远进不了 feed，
 	// 界面表现为「消息发出去了，但回复一直不显示」，而且还会把旧的 400 条反复重放。
 	// 先按 descending 取最新的 limit 条，再翻回时间正序交给 buildItems（它按顺序合并工具调用）。
-	const page = await conversation.entries({ order: "descending" }, limit, undefined, context);
-	const entries = [...page.items].reverse();
+	//
+	// `before`：可选游标（entry id，语义「严格早于」）。给它是为了支持**往前翻历史**
+	// （UX-7 的「往上翻逐步加载」）。不给时行为与以前完全一致。
+	//
+	// ── 关键：`before` 必须交给**底层查询**（`maxEntryId`），不能在内存里过滤 ──
+	//
+	// 真实故障（会话 89，1036 条 entries）：
+	// 原实现先取「全库最新 N 条」再在内存里按 `id < before` 过滤。
+	// 翻到后段时 `before` 很小，而「最新 N 条」里 `id < before` 的所剩无几
+	// （实测 cursor=3000 时 800 条里只有 221 条命中），
+	// 调用方据此判「返回条数 < 请求条数 ⇒ 到头」，**于是静默丢掉剩下的历史**（实测丢 236 条）。
+	//
+	// `EntryQuery` 支持 `maxEntryId`（`@earendil-works/pi-durable` 的 `types.d.ts:708`：
+	// 「Newest entry ID that may be returned」），所以直接把 `before` 下推给底层，
+	// 让它直接扫「id < before」的那一段，内存里不必再过滤。
+	const before = options.before;
+	const query =
+		before === undefined
+			? { order: "descending" as const }
+			: { order: "descending" as const, maxEntryId: before - 1 };
+	const page = await conversation.entries(query as never, limit, undefined, context);
+	// 底层 `maxEntryId` 是**闭区间**（inclusive），所以传 `before - 1` 才是「严格早于」。
+	// 这里再挡一次 `>= before`，防止不同后端对边界的解释不一致。
+	const raw = before === undefined ? page.items : page.items.filter((entry) => entry.id < before);
+	const entries = [...raw].reverse();
 
 	// 已提交的工具调用：用来给实时卡片补参数、判断哪些调用真的拿到了结果
 	const committed = collectCommittedTools(entries);

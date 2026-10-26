@@ -118,10 +118,15 @@ export function parseMentions(text: string, channel: Channel, org: Org): number[
 export function shouldBeIn(channelId: string, conversationId: number, org: Org): boolean {
 	// 老板在每一个「群」和每一条私聊里（他的要求：在任何地方都能派任务）。
 	//
-	// 例外是个人工作记录（`log:*`）：那是某个人自己的工作流水，不是对话。
-	// 老板**能看**（`canView` 放行），但不是成员——他不需要为别人的每条
-	// 工作记录被唤醒，也不该出现在那个频道的成员列表里。
-	if (conversationId === OWNER_ID) return !channelId.startsWith("log:");
+	// `log:*` 在 UX-7 之后也算（原仅 `canView` 放行）：老板要能在这个人的工作记录里
+	// 「随时插话」，所以他必须是参与者——否则 `markChannelRead` 找不到成员
+	// （`markChannelRead` 里 `members[cid]` 为 undefined 就 return），他自己发的消息
+	// 会一直显示未读，成员列表与 @ 候选里也没有他。
+	//
+	// 注：老板的话**写在 `dm:`**（不是 `log:`），所以这里仅解决「可见 + 能写」；
+	// 「每句都唤醒」靠 `dm` 自身的兜底（`domain/channels.ts` 的 `resolveMentions`）
+	// 与「老板发言没 @ → 唤醒频道 owner」，与本行无关。
+	if (conversationId === OWNER_ID) return true;
 	const person = org.people.find((entry) => entry.conversationId === conversationId);
 	if (person === undefined || person.archived === true) return false;
 
@@ -544,6 +549,10 @@ export async function ensureAllChannels(
 	}
 
 	// 5) 个人工作记录：每个会话一个（老板不是 agent，没有工作记录）
+	//
+	// UX-7：老板也加入（他要在这条流里插话、也要能读）。
+	// 老板侧不开 `wakeOnAll`——他要的是「看得见、想说能说」，不是「每条流水都把我拉起来」。
+	// 员工侧**保留 `wakeOnAll: true`**（原样不改）：那是他自己的流水，不是给别人的广播。
 	for (const person of org.people) {
 		if (person.conversationId === OWNER_ID) continue;
 		await ensureChannel(
@@ -552,7 +561,10 @@ export async function ensureAllChannels(
 				id: `log:${person.conversationId}`,
 				kind: "log",
 				title: `${person.label}的工作记录`,
-				members: [{ conversationId: person.conversationId, role: person.role, wakeOnAll: true }],
+				members: [
+					{ conversationId: OWNER_ID, role: "owner" as const },
+					{ conversationId: person.conversationId, role: person.role, wakeOnAll: true },
+				],
 			},
 			context,
 		);
