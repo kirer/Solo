@@ -29,6 +29,7 @@
 	<link rel="stylesheet" href="css/graph.css">
 	<link rel="stylesheet" href="css/profile.css">
 	<link rel="stylesheet" href="css/markdown.css">
+	<link rel="stylesheet" href="css/trace.css">
 	<link rel="stylesheet" href="css/settings.css">
 	<link rel="stylesheet" href="css/board.css">
 	<link rel="stylesheet" href="css/channels.css">
@@ -116,18 +117,27 @@
 										</button>
 									</div>
 								</header>
-								<!-- 角色档案面板（#2）：从对话面板搬过来的同一个 profile 渲染器。
-								     结构与 #chat-dock 完全一致（grid 0fr→1fr），样式复用 .chat-dock 那套。 -->
-								<div class="chat-dock ch-dock" id="ch-dock" hidden></div>
+								<!-- 角色档案（#4：侧边面板）。由 ui/js/profile.js 以 variant:"side" 渲染：
+								     从右侧滑入，覆盖在会话区之上，不再把消息流顶下去。
+								     桌面宽 340px，手机铺满（与成员栏浮层同一口径）。 -->
+								<div class="ch-dock" id="ch-dock" hidden></div>
 								<!-- #1 / #4：私聊不再有「对话 / 工作记录」分区。员工说过的话、想过的过程、
 								     调过的工具全部混在一条时间线里，思考与工具调用默认折叠。 -->
 								<div class="ch-body" id="ch-body" role="log" aria-label="消息流" tabindex="0"></div>
+								<!-- #5：点消息弹出的操作浮窗（复制 / 引用回复）。定位由 channels.js 算，
+								     固定挂在会话区里，不随消息重渲染而反复创建。 -->
+								<div class="ch-msg-actions" id="ch-msg-actions" role="menu" aria-label="消息操作" hidden></div>
 								<!-- 读屏播报只走这一小块：整个消息区挂 aria-live 的话，每次轮询
 								     全量重渲染都会把整段历史重播一遍，读屏用户会被淹没。 -->
 								<div class="sr-only" id="ch-announcer" role="status" aria-live="polite"></div>
 								<div class="ch-compose">
 									<div class="ch-mention-popup" id="ch-mention-popup" hidden></div>
-									<textarea id="ch-input" rows="1" aria-label="消息输入框" placeholder="发消息…（输入 @ 提及某人，Enter 发送，Shift+Enter 换行）"></textarea>
+									<!-- #5：引用回复的预览条（带取消）。发送时作为 `> 引用` 块写进正文。 -->
+									<div class="ch-reply-bar" id="ch-reply-bar" hidden>
+										<div class="ch-reply-text" id="ch-reply-text"></div>
+										<button class="ch-reply-cancel" type="button" id="ch-reply-cancel" aria-label="取消引用">×</button>
+									</div>
+									<textarea id="ch-input" rows="1" aria-label="消息输入框" placeholder="发消息…（@ 提及，Enter 发送）"></textarea>
 									<button class="ch-send" type="button" id="ch-send" aria-label="发送">发送</button>
 								</div>
 							</div>

@@ -363,8 +363,8 @@ index.html      216 行
 js/app.js  board.js  channels.js  org.js  profile.js  settings.js
    pending.js  markdown.js  feed-render.js  toast.js  icons.js  format.js
    edges.js  starfield.js  dev-fixtures.js  dom-utils.js
-css/tokens.css shell.css graph.css profile.css markdown.css settings.css
-   board.css channels.css pending.css motion.css
+css/tokens.css shell.css graph.css profile.css markdown.css trace.css
+   settings.css board.css channels.css pending.css motion.css
 ```
 
 数据只走一个流接口（ADR-021）：`/api/stream/org`（SSE，不是 WebSocket，ADR-019）。
@@ -372,8 +372,10 @@ css/tokens.css shell.css graph.css profile.css markdown.css settings.css
 
 **右侧对话面板已删除**（`ui/js/chat.js` / `ui/js/ask.js` / `ui/css/chat.css` 已移除）：
 聊天入口只有频道视图的私聊，待办卡片内联在消息流里（`ui/js/pending.js`）。
-拆分出来的两个样式文件是从 chat.css 里救活的公共部分：`profile.css`（角色档案浮层 +
-`#ch-dock` 内嵌面板 + `chat-spinner`）与 `markdown.css`（`.md*` 全套 + 代码块复制按钮）。
+拆分出来的三个样式文件是从 chat.css 里救活的公共部分：`profile.css`（角色档案浮层 +
+`#ch-dock` 侧边面板 + `chat-spinner`）、`markdown.css`（`.md*` 全套 + 代码块复制按钮）、
+`trace.css`（`.think` / `.tool` / `.pane-*`，即 `ui/js/feed-render.js` 产出的思考与工具流水）。
+**漏搬 `trace.css` 的后果**是将私聊流水退化成裸 `<details>` + 不换行的一长串等宽文字。
 
 ### 6.4 可选的打包层（`ui/dist/`）
 

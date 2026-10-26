@@ -307,3 +307,18 @@ tui）是干净的，边界检查脚本 `scripts/check-boundaries.mjs` 在守着
 - **`ui/js/app.js`** 771 → 471 行：只剩订阅组织快照 / 切视图 / 分发状态。
 - **验收脚本** `scripts/ui-check.mjs` 重写：63 项断言（原 84 项里 21 项是对话面板的），
   连跑三次 63/63 通过。
+
+## 8. 第二轮审查（6 项，老板 2026-10 追加）
+
+频道页做完后老板又提了 6 条，全部落在 A/B 组范围内，已一并完成：
+
+| # | 问题 | 真因 | 改法 |
+| --- | --- | --- | --- |
+| 1 | 频道页未适配小屏 | 单列媒体查询只改了 `grid-template-columns`，没改 `grid-template-rows`，`#ch-side` 落进隐式第 2 行把布局撑成两行 | `ui/css/channels.css:885-925` 把所有子项钉到同一行同一列；成员栏在 ≤1180px 变右侧浮层 |
+| 2 | 私聊消息不停乱滚 | 每个 org SSE 事件都触发一次 `resetActivity()` 整段重建流水；`loadMoreActivity` 的 IntersectionObserver 哨兵重建后又进视口，**连环翻页 8~17 次** | 渲染前后用 `captureScroll/restoreScroll` 保位；哨兵只在真正滚到底时才触发；「执行操作 / 执行命令」的红色竖线删除 |
+| 3 | 视图切换没动画 | 原来用 `transition + @starting-style`，起始值被常规规则覆盖，首帧即终态 | 改用 `animation: motion-view-in 260ms`，`app.js` 给新视图挂 `data-enter`，`animationend` 摘掉 |
+| 4 | 私聊档案挤在头顶 | 档案用 `#ch-dock` 内嵌在消息流上方，切频道也不收起 | 改成右侧侧边面板（`ui/css/profile.css`，absolute 滑入）；`openChannel()` 与 `#ch-back` 都顺手收起 |
+| 5 | 点消息没有操作 | 无此功能 | 新增 `#ch-msg-actions` 浮窗（复制 / 引用回复），回复以 `replyTo` 引用块渲染 |
+| 6 | 设置里模型只能加不能改 | `/api/models` 只有 POST/DELETE，`CustomModelSettings` 没有覆盖内置项的机制 | 新增 `PATCH /api/models`；`DELETE` 内置模型改为写 `{ builtin, hidden: true }` 覆盖项；`ui/js/settings.js` 每行加「编辑 / 设为默认 / 删除」 |
+
+验收：`scripts/ui-check.mjs` **63/63** 连跑通过，`npm test` **720 passed**。

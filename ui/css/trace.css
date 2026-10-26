@@ -1,0 +1,280 @@
+/* 思考过程 / 工具调用（`.think` `.tool` `.pane-*`）的样式。
+ *
+ * 这些类名由 `ui/js/feed-render.js` 产出，频道视图的流水和角色档案都用到。
+ * 它们原来住在 `ui/css/chat.css` 里；删右侧对话面板时该文件被整份移除，
+ * 但**这批规则不是死代码**——漏搬的后果是私聊流水退化成裸 `<details>`
+ * 加一串没有换行的等宽文字（老板 2026-10 反馈的「乱成一片」）。
+ * 现按原样搬到这里，不改一行数值。 */
+
+/* ── 思考 ─────────────────────────────────────────────────────────────── */
+/* 外框去掉：只有一行 summary + 右侧箭头；展开后的内容才有一条边框。 */
+.think {
+	border: 0;
+	background: none;
+}
+
+.think > summary {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	min-height: 26px;
+	padding: 0;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	transition: color 120ms var(--ease-out);
+}
+
+.think > summary:hover {
+	color: var(--ink-2);
+}
+
+.think > summary .ico {
+	color: var(--faint);
+	transition: color 120ms var(--ease-out);
+}
+
+.think > summary:hover .ico {
+	color: var(--muted);
+}
+
+.think-meta {
+	color: var(--faint);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.think-chev {
+	margin-left: auto;
+	display: flex;
+	color: var(--ghost);
+	transition: transform 160ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.think > summary:hover .think-chev {
+	color: var(--faint);
+}
+
+.think[open] > summary .think-chev {
+	transform: rotate(180deg);
+}
+
+/* 展开后的正文：保留边框，和没有边框的 summary 形成层次 */
+.think-body {
+	margin-top: 6px;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	background: var(--surface);
+	color: var(--muted);
+	font-size: var(--fs-sm);
+	line-height: 1.7;
+	overflow-wrap: anywhere;
+}
+
+/* 思考中：绿色（--run），旧的 --accent 不再表示运行 */
+.think[data-live="true"] > summary {
+	color: var(--run);
+}
+
+.think[data-live="true"] > summary .ico {
+	color: var(--run);
+}
+
+.think[data-live="true"] .think-kicker::after {
+	content: "";
+	display: inline-block;
+	width: 5px;
+	height: 5px;
+	margin-left: 6px;
+	background: var(--run);
+	vertical-align: 1px;
+}
+
+.think[data-live="true"] .think-body {
+	border-color: var(--run-line);
+	color: var(--ink-2);
+}
+
+/* ── 工具调用：一行紧凑条，点开看参数与输出 ───────────────────────────── */
+/* 外框同样去掉：summary 一行 + 箭头，展开的 .tool-pane 才有边框。 */
+.tool {
+	border: 0;
+	background: none;
+}
+
+.tool > summary {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-height: 26px;
+	padding: 0;
+	font-size: var(--fs-xs);
+	color: var(--muted);
+	transition: color 120ms var(--ease-out);
+}
+
+.tool > summary:hover {
+	color: var(--ink-2);
+}
+
+.tool-icon {
+	display: flex;
+	flex: none;
+	color: var(--faint);
+	transition: color 120ms var(--ease-out);
+}
+
+.tool > summary:hover .tool-icon {
+	color: var(--muted);
+}
+
+/* 运行中：绿色（--run） */
+.tool[data-state="running"] .tool-icon,
+.tool[data-state="running"] .tool-label {
+	color: var(--run);
+}
+
+.tool-label {
+	flex: none;
+	color: var(--ink-2);
+	font-weight: 500;
+}
+
+.tool[data-state="error"] .tool-label,
+.tool[data-state="error"] .tool-icon {
+	color: var(--danger);
+}
+
+.tool[data-state="interrupted"] .tool-icon {
+	color: var(--faint);
+}
+
+.tool[data-state="interrupted"] .tool-label {
+	color: var(--muted);
+}
+
+.tool-detail {
+	flex: 1;
+	min-width: 0;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--faint);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.tool-state {
+	flex: none;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-family: var(--sans);
+	font-size: 11px;
+	color: var(--faint);
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
+.tool-state::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	flex: none;
+	border-radius: 0;
+	background: var(--ghost);
+}
+
+.tool-state[data-state="running"] {
+	color: var(--run);
+}
+
+.tool-state[data-state="running"]::before {
+	background: var(--run);
+}
+
+.tool-state[data-state="error"] {
+	color: var(--danger);
+}
+
+.tool-state[data-state="error"]::before {
+	background: var(--danger);
+}
+
+.tool-state[data-state="interrupted"] {
+	color: var(--muted);
+}
+
+.tool-state[data-state="interrupted"]::before {
+	background: var(--ghost);
+}
+
+.tool-chev {
+	display: flex;
+	flex: none;
+	color: var(--ghost);
+	transition: transform 160ms var(--ease-out), color 120ms var(--ease-out);
+}
+
+.tool > summary:hover .tool-chev {
+	color: var(--faint);
+}
+
+.tool[open] > summary .tool-chev {
+	transform: rotate(180deg);
+}
+
+/* 展开后的内容才带边框：上下两条 1px 的 pane */
+.tool-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 6px;
+	padding: 0;
+}
+
+.tool[data-state="running"] .tool-pane {
+	border-color: var(--run-line);
+}
+
+.tool-pane {
+	border: 1px solid var(--line);
+	border-radius: 2px;
+	background: var(--bg-2);
+	overflow: hidden;
+}
+
+.pane-head {
+	display: flex;
+	align-items: center;
+	height: 24px;
+	padding: 0 7px 0 9px;
+	border-bottom: 1px solid var(--line);
+}
+
+.pane-k {
+	font-family: var(--sans);
+	font-size: 11px;
+	color: var(--faint);
+}
+
+.pane-head .copy-btn {
+	margin-left: auto;
+}
+
+.tool-pane pre {
+	margin: 0;
+	padding: 8px 10px;
+	max-height: 220px;
+	overflow: auto;
+	font-family: var(--mono);
+	font-size: 11.5px;
+	line-height: 1.58;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.tool-pane pre.is-empty {
+	color: var(--faint);
+}

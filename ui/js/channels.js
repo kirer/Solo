@@ -11,7 +11,7 @@
  * 数据全部来自 `/api/channels*`。SSE 的 org 事件只是「该刷新了」的信号，
  * 不做增量合并——频道消息量远小于会话流，全量拉最不容易出错。
  */
-import { escapeAttr, escapeHtml, relTime, clockTime } from "./format.js";
+import { escapeAttr, escapeHtml, relTime, clockTime, copyText } from "./format.js";
 import { icon } from "./icons.js";
 import { renderMarkdown } from "./markdown.js";
 // UX-7：工作记录复用 T-22 提取的渲染函数，与组织页聊天视觉一致。
@@ -62,8 +62,17 @@ const state = {
 	activityToken: 0,
 	/** #1/#4：懒加载锁。 */
 	activityLoading: false,
+	/** #2：上一次流水对应的 staffId（同一个人的 SSE 刷新不重拉流水）。 */
+	activityChannel: null,
+	/** #2：上一次流水对应的最后一条消息 seq（消息没变就不重建流水）。 */
+	activityLastSeq: undefined,
+	/** #4：当前档案面板对应的频道 id（换频道要收起面板）。 */
+	profileChannel: null,
+	/** #5：正在引用回复的消息（`{seq, label, text}`）；null = 没在引用。 */
+	replyTo: null,
+	/** #5：当前选中的消息 seq（浮窗里的操作对象）。 */
+	actionSeq: null,
 };
-
 const el = {
 	root: null,
 	layout: null,
@@ -84,6 +93,11 @@ const el = {
 	/** #2：角色档案开关与面板（私聊里展开对方的档案）。 */
 	fold: null,
 	dock: null,
+	/** #5：消息操作浮窗、引用预览条。 */
+	actions: null,
+	replyBar: null,
+	replyText: null,
+	replyCancel: null,
 };
 
 /**
@@ -161,6 +175,11 @@ async function openChannel(id, { userInitiated = true } = {}) {
 	if (userInitiated) void loadMentionCandidates();
 	// 手机上是「列表页 → 会话页」两屏，用户主动进会话才切到 main
 	if (userInitiated && el.layout !== null) el.layout.dataset.pane = "main";
+	// #4：切频道就收起成员浮层（窄屏下它是覆盖在会话上的，不收起会挡住新会话）
+	if (userInitiated && state.membersOpen) {
+		state.membersOpen = false;
+		applyMembersOpen();
+	}
 	updateActiveRow();
 	const keepScroll = userInitiated ? null : captureScroll();
 	try {
@@ -187,12 +206,22 @@ async function openChannel(id, { userInitiated = true } = {}) {
 		applyMembersOpen();
 		// #1 / #4：切频道时重拉流水（只有私聊有）。流水到了会再渲染一次，
 		// 先把频道消息画出来，不让老板盯着空白等。
-		void resetActivity();
+		//
+		// 刷新（SSE / 轮询）时分两种情况：
+		// · 换人了 → 必须重拉；
+		// · 同一个人但消息没变（比如只是组织图变了）→ 不重拉，
+		//   否则每次 SSE 都把流水整段重建，页面就在原地抖一下（老板 #2「乱滚」）。
+		const staffId = activityStaffId();
+		const lastSeq = view.messages.at(-1)?.seq;
+		const needsActivity =
+			staffId !== null &&
+			(userInitiated || staffId !== state.activityChannel || lastSeq !== state.activityLastSeq);
+		if (needsActivity) void resetActivity({ keepScroll: !userInitiated, stickBottom: userInitiated });
+		state.activityLastSeq = lastSeq;
 		if (keepScroll === null) scrollToBottom();
 		else restoreScroll(keepScroll);
 		// 已读要前端**显式**上报：GET 不再有副作用（否则轮询/手机列表页也会清未读）。
 		// 只报到真正渲染出来的最后一条，中间的未读不会被吞。
-		const lastSeq = view.messages.at(-1)?.seq;
 		if (lastSeq !== undefined) {
 			void fetchJson(`/api/channels/${encodeURIComponent(id)}/read`, {
 				method: "POST",
@@ -303,12 +332,17 @@ async function sendMessage(text) {
 	state.sending = true;
 	const sentText = text;
 	const mentions = extractMentions(text);
+	// #5：引用回复。用 Markdown 引用块把被引用的原文带进正文，不新增后端字段。
+	// 为什么不用 `replyTo` 引用字段：@ 已经不负责「叫什么人」了（需求 #7），
+	// 引用也只是「让上下文看得见」，而 blockquote 在现有渲染器里已经能渲染。
+	const quoted = state.replyTo === null ? "" : `> ${quoteLine(state.replyTo)}\n\n`;
+	const bodyText = `${quoted}${sentText}`;
 	try {
 		el.send?.setAttribute("disabled", "");
 		await fetchJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
-			body: JSON.stringify({ text: sentText, mentions }),
+			body: JSON.stringify({ text: bodyText, mentions }),
 		});
 		// 只有输入框里还是刚发出去的那段文字才清空。
 		// 曾经无条件 `el.input.value = ""`：发送途中用户切频道并开始打新草稿，
@@ -317,6 +351,7 @@ async function sendMessage(text) {
 			el.input.value = "";
 			autoSize();
 		}
+		if (state.replyTo !== null) setReplyTo(null);
 		// 同理：发送途中用户已经切走，就不要把人拽回旧频道
 		if (state.activeId === channelId) await openChannel(channelId, { userInitiated: false });
 		await loadChannels();
@@ -335,6 +370,72 @@ function extractMentions(text) {
 		if (text.includes(`@${candidate.label}`)) ids.add(candidate.id);
 	}
 	return [...ids];
+}
+
+// ── #5：消息操作浮窗（复制 / 引用回复） ──────────────────────────────────
+
+/** 引用预览里的一行原文：压成单行、剪到 60 字。多行引用会把输入区顶得很高。 */
+function quoteLine(target) {
+	const flat = String(target.text ?? "")
+		.replace(/\s+/g, " ")
+		.trim();
+	const clipped = flat.length > 60 ? `${flat.slice(0, 60)}…` : flat;
+	return `${target.label}：${clipped}`;
+}
+
+/** 设置 / 清除引用目标（同时改预览条）。 */
+function setReplyTo(target) {
+	state.replyTo = target;
+	if (el.replyBar !== null) el.replyBar.hidden = target === null;
+	if (el.replyText !== null) el.replyText.textContent = target === null ? "" : quoteLine(target);
+	if (target !== null) el.input?.focus?.({ preventScroll: true });
+}
+
+/** 关掉消息浮窗。 */
+function closeActions() {
+	if (el.actions === null) return;
+	el.actions.hidden = true;
+	el.actions.replaceChildren();
+	state.actionSeq = null;
+}
+
+/**
+ * 在点击位置附近弹出消息操作浮窗。
+ *
+ * 为什么自己算位置而不用 popover API：`popover` 需要重写整块 DOM 的锚定逻辑，
+ * 而这里只要「贴着这条消息右上角、不超出视口」十几行就够。
+ */
+function openActions(message, anchor) {
+	if (el.actions === null || el.body === null) return;
+	const seq = Number(message.dataset.seq);
+	const found = state.view?.messages.find((item) => item.seq === seq);
+	if (found === undefined) return;
+	state.actionSeq = seq;
+	el.actions.replaceChildren();
+	const copy = document.createElement("button");
+	copy.type = "button";
+	copy.className = "ch-action";
+	copy.dataset.action = "copy";
+	copy.textContent = "复制";
+	const reply = document.createElement("button");
+	reply.type = "button";
+	reply.className = "ch-action";
+	reply.dataset.action = "reply";
+	reply.textContent = "引用回复";
+	el.actions.append(copy, reply);
+	el.actions.hidden = false;
+
+	const box = el.body.getBoundingClientRect();
+	const rect = anchor.getBoundingClientRect();
+	const own = el.actions.getBoundingClientRect();
+	// 默认放在消息右上角；右边放不下就翻到左侧，上边不够就翻到下方。
+	let left = rect.right - own.width;
+	let top = rect.top - own.height - 6;
+	if (top < box.top + 4) top = rect.bottom + 6;
+	if (left < box.left + 4) left = box.left + 4;
+	if (left + own.width > box.right - 4) left = box.right - own.width - 4;
+	el.actions.style.left = `${Math.round(left - box.left)}px`;
+	el.actions.style.top = `${Math.round(top - box.top)}px`;
 }
 
 // ── 渲染：频道列表 ─────────────────────────────────────────────────────────
@@ -479,6 +580,12 @@ function applyMembersOpen() {
 function renderHeader() {
 	const view = state.view;
 	if (view === null || el.title === null) return;
+	// #4：换了频道就收起档案面板。以前它是个一直展开的下拉，切到别的私聊
+	// 还挂着上一个人的档案——老板的原话是「展开后切换到其他聊天也还展示着」。
+	if (state.profileChannel !== view.channel.id) {
+		state.profileChannel = view.channel.id;
+		if (profile?.isOpen() === true) profile.close();
+	}
 	el.title.textContent = view.channel.title;
 	const kindLabel = {
 		company: "全员",
@@ -616,22 +723,59 @@ function renderTraceGroup(items) {
 	return box;
 }
 
-/** 用 IntersectionObserver 监听顶部哨兵（滚到顶自动加载更早的流水）。 */
+/** 顶部「加载更早的记录」哨兵：只在用户**手动往上滑到顶**时才自动续页。
+ *
+ * 为什么写得这么绕（老板 #2「消息不停乱滚」的真因）：
+ * 旧实现每次 `renderMessages()` 都无条件 `observe(sentinel)`，且 rootMargin=120px。
+ * 私聊一打开，哨兵还没进视口就已满足 120px 判定，回调立刻 `loadMoreActivity()`
+ * → 又有一页历史插到顶部 → 又一次 render → 又命中… 实测打开 `dm:161`
+ * 会一口气连拉 17 页（500+ 条流水），消息区高度从 678px 逐帧涨到 1379px，
+ * 看起来就是「一直在乱滚」。
+ *
+ * 关键认识：**「现在位于顶部」不等于「用户想往上翻」**。程序化
+ * `scrollToBottom()` 之前、首帧布局还没定稿时，`scrollTop` 也是 0，
+ * `scroll` 事件同样会触发。所以只认 `wheel` / `touchmove` / ↑ 键这类
+ * **人手动作**（见 `onUserScrollAttempt`），命中一次立刻断开，
+ * 翻完等下一次人手动作再判。
+ */
 let activityObserver = null;
-function observeActivitySentinel() {
+function disarmActivitySentinel() {
+	if (activityObserver !== null) {
+		activityObserver.disconnect();
+		activityObserver = null;
+	}
+}
+function armActivitySentinel() {
+	if (activityObserver !== null) return;
 	if (typeof IntersectionObserver !== "function") return; // 降级：只能点按钮
-	if (activityObserver !== null) activityObserver.disconnect();
-	const target = el.body?.querySelector(".ch-activity-more");
-	if (target === null || target === undefined) return;
+	const body = el.body;
+	if (body === null || body.scrollTop > 8) return; // 不在顶部就不翻历史
+	const page = state.activity;
+	if (page === null || page.hasMore !== true) return;
+	const node = body.querySelector(".ch-activity-more");
+	if (node === null) return;
 	activityObserver = new IntersectionObserver(
 		(entries) => {
 			for (const entry of entries) {
-				if (entry.isIntersecting) void loadMoreActivity();
+				if (entry.isIntersecting !== true) continue;
+				disarmActivitySentinel(); // 一次只翻一页
+				void loadMoreActivity();
 			}
 		},
-		{ root: el.body, rootMargin: "120px" },
+		{ root: body, rootMargin: "0px" },
 	);
-	activityObserver.observe(target);
+	activityObserver.observe(node);
+}
+/** 渲染后只需解绑：DOM 已重建，旧观察器指向已移除的节点。 */
+function observeActivitySentinel() {
+	disarmActivitySentinel();
+}
+
+/** 人手动作 → 若已滑到顶就武装（真正的判定在 armActivitySentinel 里）。 */
+function onUserScrollAttempt() {
+	if (el.body === null) return;
+	if (el.body.scrollTop <= 8) armActivitySentinel();
+	else disarmActivitySentinel();
 }
 
 /** 加载更早的一页流水（`before` 用 item seq）。 */
@@ -664,8 +808,21 @@ async function loadMoreActivity() {
 	}
 }
 
-/** 切到某个私聊时重置并拉第一页流水。非私聊频道清空。 */
-async function resetActivity() {
+/** 切到某个私聊时重置并拉第一页流水。非私聊频道清空。
+ *
+ * `keepScroll`：刷新（SSE / 轮询）时传 true——流水到了会二次重渲染，
+ * 消息区高度从「只有聊天」变成「聊天 + 流水」，不保滚动就会被浏览器
+ * 的 scroll-anchoring 反复纠正，看起来就是「消息不停乱滚」（老板 #2）。
+ *
+ * `stickBottom`：用户**主动点开**频道时传 true。这时 openChannel 已经先
+ * `scrollToBottom()` 画了消息，流水随后才到；若第二次重绘不管滚动，
+ * 浏览器会把 scrollTop 留在旧内容的位置上——实测打开 `dm:161` 时
+ * scrollTop 从 678（贴底）被打回 0，人看到的是这一小时的流水开头，
+ * 就是老板说的「一打开就乱滚」。#2 的修法有两条：
+ *   ① 主动打开 → 流水到了再贴一次底（stickBottom）；
+ *   ② 内容没变就不重绘（下面 `sameActivity`），SSE 抖动不再把页面推来推去。
+ */
+async function resetActivity({ keepScroll = false, stickBottom = false } = {}) {
 	state.activityToken += 1;
 	state.activity = null;
 	state.activityLoading = false;
@@ -674,22 +831,36 @@ async function resetActivity() {
 		activityObserver = null;
 	}
 	const staffId = activityStaffId();
+	state.activityChannel = staffId;
 	if (staffId === null) return;
 	const token = state.activityToken;
+	const saved = keepScroll ? captureScroll() : null;
 	try {
 		const page = await fetchJson(`/api/staff/${staffId}/activity?limit=${ACTIVITY_PAGE}`);
 		if (token !== state.activityToken) return;
-		state.activity = {
-			items: Array.isArray(page.items) ? page.items : [],
-			hasMore: page.hasMore === true,
-		};
+		const items = Array.isArray(page.items) ? page.items : [];
+		const hasMore = page.hasMore === true;
+		// 内容一模一样就不重绘：openChannel 在 SSE / 轮询里每几秒就会调到这里，
+		// 无条件重绘等于每几秒把整段流水拆了重建一次，视口必然抖。
+		if (sameActivity(state.activity, items, hasMore)) return;
+		state.activity = { items, hasMore };
 		// 流水到了再重渲染一次：先把频道消息画出来，不让老板盯着空白等。
 		renderMessages();
+		if (stickBottom) scrollToBottom();
+		else if (saved !== null) restoreScroll(saved);
 	} catch {
 		if (token !== state.activityToken) return;
 		// 流水拉不到不算错误：对话本身还在，只是看不到思考过程。
 		state.activity = { items: [], hasMore: false };
 	}
+}
+
+/** 两页流水是否「同一份」（条数、首尾 id、是否还有更早）。 */
+function sameActivity(previous, items, hasMore) {
+	if (previous === null || previous.hasMore !== hasMore) return false;
+	if (previous.items.length !== items.length) return false;
+	if (items.length === 0) return true;
+	return previous.items[0]?.id === items[0]?.id && previous.items.at(-1)?.id === items.at(-1)?.id;
 }
 function renderMessages() {
 	const view = state.view;
@@ -773,7 +944,8 @@ function renderMessages() {
 		fragment.append(
 			htmlToNode(
 				[
-					`<div class="ch-msg" data-from="${message.from}" data-grouped="${grouped ? "true" : "false"}">`,
+					// #5：带 data-seq，点消息弹「复制 / 引用回复」浮窗。
+					`<div class="ch-msg" data-from="${message.from}" data-seq="${message.seq}" data-grouped="${grouped ? "true" : "false"}">`,
 					// 头像始终渲染（折叠时 CSS 隐藏）：留空会让 grid 把正文挤进 32px 列
 					renderAvatar(message),
 					`<div class="ch-msg-main">`,
@@ -1193,6 +1365,10 @@ export function initChannels({ onToast, fetchProfile } = {}) {
 	el.sideToggle = $("ch-side-toggle");
 	el.fold = $("ch-fold");
 	el.dock = $("ch-dock");
+	el.actions = $("ch-msg-actions");
+	el.replyBar = $("ch-reply-bar");
+	el.replyText = $("ch-reply-text");
+	el.replyCancel = $("ch-reply-cancel");
 
 	// 待办卡片：答复/处置成功后重拉一次频道，让卡片从流里消失。
 	// 不直接删 DOM——成功与否的真相在后端，重拉一次最不容易两边不一致。
@@ -1202,6 +1378,13 @@ export function initChannels({ onToast, fetchProfile } = {}) {
 		},
 	});
 	// 卡片在消息流里，每次轮询都整段重建，所以用事件委托（逐卡绑定会每轮泄漏 listener）。
+	// 另外：滚动到顶才武装上翻哨兵（老板 #2「乱滚」的修法，详见 armActivitySentinel）。
+	// 「想往上翻」只认人手动作；`scroll` 事件程序化滚动也会触发，靠它判会连翻历史。
+	el.body?.addEventListener("wheel", onUserScrollAttempt, { passive: true });
+	el.body?.addEventListener("touchmove", onUserScrollAttempt, { passive: true });
+	el.body?.addEventListener("keydown", (event) => {
+		if (event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home") onUserScrollAttempt();
+	});
 	el.body?.addEventListener("click", (event) => {
 		if (pendingCards.onClick(event)) event.preventDefault();
 	});
@@ -1218,6 +1401,7 @@ export function initChannels({ onToast, fetchProfile } = {}) {
 		fetchProfile: typeof fetchProfile === "function" ? fetchProfile : undefined,
 		dock: el.dock,
 		trigger: el.fold,
+		variant: "side",
 		onToggle: (open) => {
 			if (el.fold === null) return;
 			el.fold.dataset.state = open ? "open" : "closed";
@@ -1231,8 +1415,61 @@ export function initChannels({ onToast, fetchProfile } = {}) {
 		else profile.open(id, { label: state.view?.channel.title ?? "职工" });
 	});
 
+	// #5：点消息弹浮窗（复制 / 引用回复）。
+	// 用事件委托：消息流每次刷新都全量重建，逐条绑定会漏、也会泄漏 listener。
+	el.body?.addEventListener("click", (event) => {
+		const target = event.target instanceof Element ? event.target : null;
+		if (target === null) return;
+		// 点在按钮 / 链 / 待办卡片 / 展开全文上时不弹浮窗（那些控件有自己的行为）
+		if (target.closest("button, a, .pend, .ch-card, details, summary") !== null) return;
+		const message = target.closest(".ch-msg[data-seq]");
+		if (!(message instanceof HTMLElement)) {
+			closeActions();
+			return;
+		}
+		openActions(message, message);
+	});
+	el.body?.addEventListener("scroll", () => closeActions(), { passive: true });
+
+	el.actions?.addEventListener("click", async (event) => {
+		const button = event.target instanceof Element ? event.target.closest(".ch-action") : null;
+		if (!(button instanceof HTMLElement)) return;
+		const seq = state.actionSeq;
+		const found = state.view?.messages.find((item) => item.seq === seq);
+		closeActions();
+		if (found === undefined) return;
+		if (button.dataset.action === "copy") {
+			const ok = await copyText(found.text);
+			notify(ok ? "已复制" : "复制失败，请手动选中", ok ? "info" : "error");
+			return;
+		}
+		setReplyTo({ seq: found.seq, label: found.fromLabel, text: found.text });
+	});
+
+	el.replyCancel?.addEventListener("click", () => setReplyTo(null));
+	// 点空白处 / Esc 关浮窗（用 pointerdown，这样点完立刻消失而不会先触发 click）
+	document.addEventListener(
+		"pointerdown",
+		(event) => {
+			if (el.actions === null || el.actions.hidden) return;
+			const target = event.target instanceof Node ? event.target : null;
+			if (target === null) return;
+			if (el.actions.contains(target)) return;
+			closeActions();
+		},
+		{ passive: true },
+	);
+	window.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") closeActions();
+	});
+
 	$("ch-back")?.addEventListener("click", () => {
 		if (el.layout !== null) el.layout.dataset.pane = "list";
+		// #4：手机上「返回频道列表」必须顺手收起成员浮层，否则成员栏会盖在列表上
+		if (state.membersOpen) {
+			state.membersOpen = false;
+			applyMembersOpen();
+		}
 	});
 
 	// 成员栏开关（UX-6）：只切 state + 重写 DOM 属性，不重拉数据、不重建 DOM。

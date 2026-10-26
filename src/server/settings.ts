@@ -80,6 +80,10 @@ export type ModelCatalogEntry = {
 	readonly contextWindow?: number;
 	readonly maxOutput?: number;
 	readonly source: "builtin" | "custom";
+	/** 这一行代表的内置模型 id（老板改过内置项时才有）。 */
+	readonly builtin?: string;
+	/** 内置项被改过（改名 / 改价 / 被删）。 */
+	readonly overridden?: boolean;
 };
 
 /** 默认值：端口/地址与启动参数保持一致（环境变量优先级见 main.ts）。 */
@@ -102,6 +106,14 @@ export type SettingsStore = {
 	addModel(input: unknown): Promise<CustomModelSettings>;
 	/** 删除一条自定义模型；返回是否真的删掉了。 */
 	removeModel(id: string): Promise<boolean>;
+	/**
+	 * 写入 / 更新一条模型（新增、改自定义项、或给内置项写覆盖）。
+	 *
+	 * `originalId` 是要被替换的那一条（内置项传内置 id）；`undefined` 表示新增。
+	 * 返回落盘后的条目。原 id 被改名时，`models.default` 里指向旧 id 的引用会跟着改写，
+	 * 否则「改个名字」就会让默认模型指向一个不存在的 id。
+	 */
+	putModel(originalId: string | undefined, input: unknown): Promise<CustomModelSettings>;
 	/** 该条自定义模型是否已存在（自定义清单内）。 */
 	hasCustomModel(id: string): Promise<boolean>;
 	/**
@@ -201,6 +213,44 @@ export function openSettings(options: {
 				return true;
 			});
 		},
+		async putModel(originalId: string | undefined, input: unknown): Promise<CustomModelSettings> {
+			if (typeof input !== "object" || input === null || Array.isArray(input)) {
+				throw new SettingsInputError("模型必须是 JSON 对象");
+			}
+			const record = input as Record<string, unknown>;
+			const model = normalizeCustomModel(record);
+			if (model === undefined) {
+				throw new SettingsInputError("模型缺少合法的 id（字母数字开头，可含 . _ - : @ /）");
+			}
+			return serialize(async () => {
+				const current = await read();
+				const target = (originalId ?? model.id).trim();
+				const rest = current.models.custom.filter((item) => item.id !== target);
+				if (rest.length === current.models.custom.length && originalId !== undefined) {
+					// 目标不存在：只有「给内置项写覆盖」这一种合法情况，其余当冲突
+					if (model.builtin === undefined || model.builtin === "") {
+						throw new SettingsConflictError(`没有模型 ${target}`);
+					}
+				}
+				if (rest.some((item) => item.id === model.id)) {
+					throw new SettingsConflictError(`模型 ${model.id} 已存在`);
+				}
+				const next: Settings = {
+					...current,
+					models: {
+						...current.models,
+						...(current.models.default === undefined
+							? {}
+							: current.models.default === target && model.id !== target
+								? { default: model.id }
+								: {}),
+						custom: [...rest, model],
+					},
+				};
+				await persist(path, next);
+				return model;
+			});
+		},
 		async hasCustomModel(id: string): Promise<boolean> {
 			const current = await read();
 			return current.models.custom.some((item) => item.id === id.trim());
@@ -220,6 +270,33 @@ export class SettingsInputError extends Error {}
 /** 冲突（HTTP 层映射成 409）。 */
 export class SettingsConflictError extends Error {}
 
+/**
+ * 一条模型（自定义项，或用覆盖项改写/代表的内置项）→ 设置页里的一行。
+ *
+ * `builtinId` 有值表示这一行**代表某个内置模型**（老板改过它），此时 `source`
+ * 仍是 `builtin`、额外带 `builtin` 原 id —— 前端据此显示「内置 · 已改」并提供
+ * 「恢复默认」，而不是把它当成一条新建的自定义模型。
+ */
+function entryOf(item: CustomModelSettings, builtinId: string | undefined): ModelCatalogEntry {
+	const base = {
+		id: item.id,
+		name: item.name === undefined || item.name === "" ? item.id : item.name,
+		provider: item.provider === undefined || item.provider === "" ? "openai-responses" : item.provider,
+		...(item.baseUrl === undefined ? {} : { baseUrl: item.baseUrl }),
+		...(item.inputPerMTok === undefined ? {} : { inputPerMTok: item.inputPerMTok }),
+		...(item.outputPerMTok === undefined ? {} : { outputPerMTok: item.outputPerMTok }),
+		...(item.contextWindow === undefined ? {} : { contextWindow: item.contextWindow }),
+		...(item.maxOutput === undefined ? {} : { maxOutput: item.maxOutput }),
+	};
+	if (builtinId === undefined) return { ...base, source: "custom" as const };
+	return {
+		...base,
+		source: "builtin" as const,
+		builtin: builtinId,
+		overridden: true,
+	};
+}
+
 /** 组装设置页视图：实际监听地址 + 内置/自定义模型清单 + 是否需重启。 */
 export function buildSettingsView(options: {
 	readonly settings: Settings;
@@ -238,26 +315,33 @@ export function buildSettingsView(options: {
 	readonly defaultModel: { readonly provider: string; readonly modelId: string };
 	readonly restartRequired: boolean;
 }): SettingsView {
-	const catalog: ModelCatalogEntry[] = options.builtinCatalog.map((item) => ({
-		id: item.id,
-		name: item.label,
-		provider: item.provider,
-		inputPerMTok: item.inputPerMTok,
-		outputPerMTok: item.outputPerMTok,
-		source: "builtin" as const,
-	}));
+	// 内置模型是代码常量，改不动也删不掉；老板的「改 / 删」落成一条**覆盖项**
+	// （`custom[].builtin` 指向被覆盖的内置 id，`hidden` 表示删除）。这里按同一套
+	// 规则组装目录，保证「设置页看到的」与「重启后真正装配的」是同一份清单。
+	const overrides = new Map<string, (typeof options.settings.models.custom)[number]>();
 	for (const item of options.settings.models.custom) {
-		catalog.push({
-			id: item.id,
-			name: item.name ?? item.id,
-			provider: item.provider ?? "openai-responses",
-			...(item.baseUrl === undefined ? {} : { baseUrl: item.baseUrl }),
-			...(item.inputPerMTok === undefined ? {} : { inputPerMTok: item.inputPerMTok }),
-			...(item.outputPerMTok === undefined ? {} : { outputPerMTok: item.outputPerMTok }),
-			...(item.contextWindow === undefined ? {} : { contextWindow: item.contextWindow }),
-			...(item.maxOutput === undefined ? {} : { maxOutput: item.maxOutput }),
-			source: "custom" as const,
-		});
+		if (item.builtin !== undefined && item.builtin !== "") overrides.set(item.builtin, item);
+	}
+	const catalog: ModelCatalogEntry[] = [];
+	for (const item of options.builtinCatalog) {
+		const override = overrides.get(item.id);
+		if (override === undefined) {
+			catalog.push({
+				id: item.id,
+				name: item.label,
+				provider: item.provider,
+				inputPerMTok: item.inputPerMTok,
+				outputPerMTok: item.outputPerMTok,
+				source: "builtin" as const,
+			});
+			continue;
+		}
+		if (override.hidden === true) continue;
+		catalog.push(entryOf(override, item.id));
+	}
+	for (const item of options.settings.models.custom) {
+		if (item.builtin !== undefined && item.builtin !== "") continue;
+		catalog.push(entryOf(item, undefined));
 	}
 
 	const configured = (options.settings.models.default ?? "").trim();
@@ -412,6 +496,8 @@ function normalizeCustomModel(record: Record<string, unknown>): CustomModelSetti
 	const outputPerMTok = nonNegative(record.outputPerMTok);
 	const contextWindow = positive(record.contextWindow);
 	const maxOutput = positive(record.maxOutput);
+	const builtin = typeof record.builtin === "string" ? record.builtin.trim() : "";
+	const defaultRef = typeof record.defaultRef === "string" ? record.defaultRef.trim() : "";
 	if (baseUrl !== "" && !/^https?:\/\//i.test(baseUrl)) {
 		throw new SettingsInputError("baseUrl 必须是 http(s) 地址");
 	}
@@ -426,6 +512,9 @@ function normalizeCustomModel(record: Record<string, unknown>): CustomModelSetti
 		...(outputPerMTok === undefined ? {} : { outputPerMTok }),
 		...(contextWindow === undefined ? {} : { contextWindow }),
 		...(maxOutput === undefined ? {} : { maxOutput }),
+		...(builtin === "" ? {} : { builtin }),
+		...(record.hidden === true ? { hidden: true } : {}),
+		...(defaultRef === "" ? {} : { defaultRef }),
 	};
 }
 

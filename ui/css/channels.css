@@ -872,10 +872,27 @@
 }
 
 /* 手机：单列 + 列表/会话两个「页」，靠 .ch-back 返回。
-   默认停在列表页（打开频道视图时先选会话），进会话后 data-pane="main"。 */
+   默认停在列表页（打开频道视图时先选会话），进会话后 data-pane="main"。
+
+   ⚠️ #1（老板：频道页未适配小屏）：单列时**必须把所有子项钉在同一行同一列**。
+   原来只改了 `grid-template-columns`，没改 `grid-template-rows`（仍继承
+   `minmax(0,1fr)`）。`#ch-list` 虽然 `display:none` 不占位，但群聊里
+   `#ch-side`（成员栏，hidden=false）是**可见**的——它落进隐式第 2 行，
+   把会话区挤成 13px 高（实测 390×844 下 `.ch-main` 高度 = 13px），
+   消息与输入框全部溢出到屏外。
+   所以：明确写单行 + 把三栏都钉到 1/1，让成员栏以浮层形式叠在会话区上。 */
 @media (max-width: 860px) {
 	.ch-layout {
 		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: minmax(0, 1fr);
+		position: relative;
+	}
+	.ch-list,
+	.ch-main,
+	.ch-side {
+		grid-column: 1;
+		grid-row: 1;
+		min-height: 0;
 	}
 	.ch-list {
 		display: none;
@@ -885,6 +902,21 @@
 	}
 	.ch-layout[data-pane="list"] .ch-main {
 		display: none;
+	}
+	/* 手机上成员栏永远是浮层（不参与栅格），否则它会把会话区顶到只剩一行高。
+	   浮层态下也不允许它撑高容器。 */
+	.ch-layout .ch-side {
+		position: absolute;
+		top: 0;
+		right: 0;
+		bottom: 0;
+		width: min(280px, 86%);
+		z-index: 3;
+		box-shadow: var(--shadow-lift, 0 0 0 1px var(--line));
+	}
+	.ch-layout:not([data-side="open"]) .ch-side {
+		/* 收起时由 hidden/inert 负责不占位，这里 0  opacity 只做收回的观感 */
+		pointer-events: none;
 	}
 	.ch-back {
 		display: inline-flex !important;
@@ -1037,8 +1069,11 @@
 	padding-left: 8px;
 }
 
+/* 老板（#2）明确否掉了红色竖线：「执行操作」「执行命令」右侧那道红线只是
+   失败重试的噪音，视觉上像在报警，实际不影响阅读。失败仍由
+   `.tool-state[data-state="error"]` 的红色文字表达，不再染色整条流水。 */
 .ch-trace-group[data-error="true"] {
-	border-left-color: var(--danger, #ff5f56);
+	border-left-color: var(--line);
 }
 
 .ch-trace-summary {
@@ -1091,11 +1126,9 @@
 	opacity: 1;
 }
 
-/* 失败的工具调用必须能一眼看出来（负责人 #236）。
-   renderTool 已写 data-state="error"，这里再叠一层左侧红条 ——
-   不依赖对 state 取值的推演，也不改 chat.css 的既有样式。 */
+/* 失败的工具调用不再画左侧红条（老板 #2：红线像报警，要去掉）。
+   失败状态仍可从 `.tool-state[data-state="error"]` 的红色文字读出来。 */
 .ch-trace[data-error="true"] {
-	border-left: 2px solid var(--danger, #ff5f56);
 	padding-left: 6px;
 	margin-left: -8px;
 }
@@ -1115,16 +1148,13 @@
 	color: var(--faint);
 }
 
-/* ── #2：频道里的角色档案面板（与对话面板的 #chat-dock 同构） ───────────
-   结构复用 .chat-dock 那套（grid 0fr→1fr + 透明度），这里只补频道侧的差异：
-   · 频道三栏的高度链更紧，面板上限压到 32dvh（对话面板是 36dvh）；
-   · 展开时给一条下边框，与消息流分开（对话面板那边本来就有 border-bottom）。 */
-.ch-dock {
-	border-bottom: 1px solid var(--line-soft);
-}
-
-.ch-dock .chat-dock-panel {
-	max-height: min(32dvh, 320px);
+/* ── #4：频道里的角色档案面板（右侧滑入） ───────────────
+   结构由 ui/js/profile.js 以 variant:"side" 渲染（`#ch-dock.profile-side`）。
+   定位是 `.ch-main` 的相对角落（`.ch-main { position: relative }` 见下），
+   不占布局高度，所以消息流不会因开关面板而跳动。样式主体在 profile.css，
+   这里只补频道页的定位上下文。 */
+.ch-main {
+	position: relative;
 }
 
 /* 折叠箭头跟着 #ch-fold 的状态转（与 #chat-fold 一致）。 */
@@ -1134,4 +1164,114 @@
 
 #ch-fold[data-state="open"] svg {
 	transform: rotate(180deg);
+}
+
+/* ── #5：点消息弹出的操作浮窗（复制 / 引用回复） ──────────────────────────
+   挂在 .ch-main 里（其父级 .ch-main 为 position: relative），位置由
+   channels.js 的 openActions() 按点击的那条消息算出来。
+   消息流每次刷新都整段重建，所以浮窗是**独立节点**，不塞进消息里——
+   否则一旦重渲染，浮窗就跟着没了。 */
+.ch-msg-actions {
+	position: absolute;
+	z-index: 5;
+	display: flex;
+	gap: 2px;
+	padding: 3px;
+	background: var(--surface-3);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	box-shadow: var(--shadow-lift, 0 6px 18px rgb(0 0 0 / 35%));
+	animation: ch-actions-in 120ms var(--ease-out) both;
+}
+
+.ch-msg-actions[hidden] {
+	display: none;
+}
+
+.ch-action {
+	border: 0;
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 11.5px;
+	padding: 4px 9px;
+	border-radius: 5px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.ch-action:hover {
+	background: var(--surface-4, var(--surface));
+	color: var(--ink);
+}
+
+.ch-action:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+@keyframes ch-actions-in {
+	from {
+		opacity: 0;
+		transform: translateY(3px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* 被引用的原文在正文里显示成一条竖线缩进块（markdown.js 的 blockquote）。
+   历史：聊天面板时代这块是裸的，频道里补上视觉区分。 */
+.ch-bubble blockquote {
+	margin: 6px 0;
+	padding: 2px 0 2px 10px;
+	border-left: 2px solid var(--line-strong);
+	color: var(--muted);
+	font-size: 0.95em;
+}
+
+/* ── #5：引用回复的预览条（发送前那条） ─────────────────────────────────── */
+.ch-reply-bar {
+	position: absolute;
+	left: 14px;
+	right: 14px;
+	bottom: calc(100% - 4px);
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px 6px 10px;
+	background: var(--surface-3);
+	border: 1px solid var(--line);
+	border-left: 2px solid var(--accent);
+	border-radius: var(--radius-sm);
+	font-size: 11.5px;
+	color: var(--muted);
+}
+
+.ch-reply-bar[hidden] {
+	display: none;
+}
+
+.ch-reply-text {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.ch-reply-cancel {
+	flex: none;
+	border: 0;
+	background: transparent;
+	color: var(--faint);
+	font-size: 15px;
+	line-height: 1;
+	padding: 0 4px;
+	cursor: pointer;
+}
+
+.ch-reply-cancel:hover {
+	color: var(--ink);
 }

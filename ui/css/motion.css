@@ -138,13 +138,15 @@
 .org[data-enter="true"],
 .board[data-enter="true"],
 .channels[data-enter="true"] {
-	animation: motion-view-in 200ms var(--ease-out) both;
+	/* 老板 #3 反馈「切换没有动画」：原来的 200ms / 4px 位移几乎看不出来。
+	   改成 260ms + 10px 下移 + 淡入，既看得到又不会拖慢操作。 */
+	animation: motion-view-in 260ms var(--ease-out) both;
 }
 
 @keyframes motion-view-in {
 	from {
 		opacity: 0;
-		transform: translateY(4px) scale(0.996);
+		transform: translateY(10px) scale(0.994);
 	}
 	to {
 		opacity: 1;

@@ -281,6 +281,11 @@ body[data-settings="closed"] .aside-slot {
 	color: var(--accent-strong);
 }
 
+.set-tag--edited {
+	border-color: var(--warn-line);
+	color: var(--warn);
+}
+
 .set-tag--run {
 	border-color: var(--run-line);
 	background: var(--run-soft);

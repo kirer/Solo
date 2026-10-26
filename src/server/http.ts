@@ -384,6 +384,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			}
 			if (path === "/api/models") {
 				if (request.method === "POST") return await postModel(request, response);
+				if (request.method === "PATCH" || request.method === "PUT") return await patchModel(request, url, response);
 				if (request.method === "DELETE") return await deleteModel(url, response);
 				return fail(response, 405, "只支持 POST / DELETE");
 			}
@@ -1387,14 +1388,77 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		}
 	}
 
-	/** DELETE /api/models?id=：删除一条自定义模型（重启后生效）。 */
+	/**
+	 * PATCH /api/models?id=：改一条模型（重启后生效）。
+	 *
+	 * 内置模型是代码里的常量，改不了；改它等于**写一条覆盖项**：请求体带上
+	 * `builtin: <原 id>`，落盘后装配时这条覆盖项会顶掉内置项（见 `setupModels`）。
+	 * 不带 `builtin` 就是对一条自定义模型就地改字段。
+	 */
+	async function patchModel(request: IncomingMessage, url: URL, response: ServerResponse): Promise<void> {
+		const id = (url.searchParams.get("id") ?? "").trim();
+		if (id === "") return fail(response, 400, "需要 id 查询参数");
+		const body = await readJson<Record<string, unknown>>(request);
+		const builtin = builtinModels?.builtinCatalog ?? builtinModels?.catalog ?? [];
+		const isBuiltin = builtin.some((item) => item.id === id);
+		const source = isBuiltin ? id : undefined;
+		// 改内置项必须显式带上 builtin，避免「顺手把一个自定义模型改成覆盖内置」的歧义
+		const payload: Record<string, unknown> = isBuiltin ? { ...body, builtin: id } : { ...body };
+		if (!isBuiltin && typeof payload.builtin === "string" && payload.builtin !== "") {
+			if (!builtin.some((item) => item.id === payload.builtin)) {
+				return fail(response, 400, `没有内置模型 ${String(payload.builtin)}`);
+			}
+		}
+		if (isBuiltin && typeof payload.id !== "string") payload.id = id;
+		try {
+			const model = await settingsStore.putModel(source, payload);
+			const view = await settingsView();
+			const entry = view.models.catalog.find((item) => item.id === model.id);
+			return json(response, { ...view, ok: true, model: entry satisfies ModelCatalogEntry | undefined, restartRequired: true });
+		} catch (error) {
+			return failForError(response, error);
+		}
+	}
+
+	/**
+	 * DELETE /api/models?id=：删除一条模型（重启后生效）。
+	 *
+	 * 自定义模型直接从清单里删掉；内置模型删不掉（代码常量），于是写一条
+	 * `hidden` 覆盖项把它从目录里摘掉。两种都立即从设置页与重启后的装配里消失。
+	 */
 	async function deleteModel(url: URL, response: ServerResponse): Promise<void> {
 		const id = (url.searchParams.get("id") ?? "").trim();
 		if (id === "") return fail(response, 400, "需要 id 查询参数");
+		const builtin = builtinModels?.builtinCatalog ?? builtinModels?.catalog ?? [];
+		if (builtin.some((item) => item.id === id)) {
+			try {
+				// 就地改默认：删掉的正好是默认模型时，退到第一条剩下的模型，
+				// 否则重启后「默认模型」会指向一个已不在目录里的 id。
+				const nextDefault = await fallbackDefaultAfterRemoving(id);
+				await settingsStore.putModel(id, {
+					id,
+					builtin: id,
+					hidden: true,
+					provider: "openai-responses",
+					...(nextDefault === undefined ? {} : { defaultRef: nextDefault }),
+				});
+				return json(response, { ...(await settingsView()), ok: true, restartRequired: true });
+			} catch (error) {
+				return failForError(response, error);
+			}
+		}
 		const removed = await settingsStore.removeModel(id);
-		if (!removed) return fail(response, 404, "没有这条自定义模型（内置模型不能删）");
+		if (!removed) return fail(response, 404, "没有这条模型");
 		// 同样带完整设置视图，前端删完直接重绘
 		return json(response, { ...(await settingsView()), ok: true, restartRequired: true });
+	}
+
+	/** 删掉 `id` 之后，默认模型该退到哪一条（没有候选就返回 undefined，保持原样）。 */
+	async function fallbackDefaultAfterRemoving(id: string): Promise<string | undefined> {
+		const view = await settingsView();
+		const rest = view.models.catalog.filter((item) => item.id !== id);
+		const first = rest[0];
+		return first === undefined ? undefined : first.id;
 	}
 
 	/** POST /api/upload：原始字节 + content-type + x-file-name + x-file-size。 */

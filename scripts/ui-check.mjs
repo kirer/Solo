@@ -435,7 +435,15 @@ try {
 		};
 	})()`);
 	check("角色档案在频道内展开", dock.exists && dock.insideMain && dock.open === true, dock.open ? "open" : "closed");
-	check("档案面板与频道同宽（不悬浮）", Math.abs(dock.width - dock.mainWidth) <= 2 && dock.position !== "fixed", `${dock.width}px / ${dock.mainWidth}px · ${dock.position}`);
+	// 老板 #4：档案不再把消息流顶下去，改成从右侧滑入的侧边面板（覆盖，不占位）。
+	// 所以断言反过来写：它是 absolute 定位、窄于会话区、且右边缘贴着会话区。
+	check(
+		"档案是右侧侧边面板（不占满、不悬浮居中）",
+		dock.position === "absolute" || dock.position === "fixed"
+			? dock.width < dock.mainWidth && dock.width >= 240
+			: false,
+		`${dock.width}px / ${dock.mainWidth}px · ${dock.position}`,
+	);
 	if (foldAvailable) {
 		await cdp.eval(`document.querySelector('#ch-fold').click()`);
 		await sleep(400);

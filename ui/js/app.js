@@ -320,7 +320,16 @@ function applyView(name, { persist = true } = {}) {
 		const clear = () => {
 			delete entering.dataset.enter;
 		};
-		entering.addEventListener("animationend", clear, { once: true });
+		// `animationend` 会**冒泡**：视图里任何一个子元素（组织图卡片、消息气泡、
+		// 看板卡）的入场动画一结束就会冒上来把 data-enter 提前摘掉，主视图的
+		// 动画就只播了个开头。必须确认事件源就是视图本身（老板 #3「没有动画」）。
+		entering.addEventListener(
+			"animationend",
+			(event) => {
+				if (event.target === entering) clear();
+			},
+			{ once: true },
+		);
 		// 兜底：prefers-reduced-motion 下动画被关掉，animationend 不会来。
 		window.setTimeout(clear, 320);
 	}

@@ -12,6 +12,11 @@
  * #ch-dock。用 `dock` 参数指定；不传就是 #chat-dock（保持向后兼容）。
  * 同一份渲染逻辑跑两次，互不干扰（各自一份 open/token 状态）。
  *
+ * 老板第二轮反馈（#4）：「私聊顶部右上角下拉希望改成侧边弹窗，像群聊右上角
+ * 显示成员那样」。所以频道里**不再**用贴在标题下方的 dock，而是传
+ * `variant: "side"`：同一份内容渲染成从右侧滑入的面板（手机上铺满）。
+ * 类名也从 `.chat-dock*` 换成 `.profile-side*`，不再与对话面板的遗留样式纠缠。
+ *
  * 数据来自 app.js 注入的 fetchProfile（GET /api/profile/:conversationId）。
  * 三种降级都必须有字：加载中 / 请求失败 / 没有档案。
  */
@@ -131,12 +136,15 @@ function layerNode() {
  * @param {{ fetchProfile?: (conversationId: number) => Promise<any>,
  *           onToggle?: (open: boolean) => void,
  *           dock?: HTMLElement | null,
- *           trigger?: HTMLElement | null }} options
+ *           trigger?: HTMLElement | null,
+ *           variant?: "dock" | "side" }} options
  *   `dock`：挂载点，默认 `#chat-dock`。
  *   `trigger`：收起时把焦点还回去的按钮，默认 `#chat-fold`。
+ *   `variant`：`"dock"`（贴在头部下方，默认）或 `"side"`（从右侧滑入，老板 #4）。
  * @returns {{ open: (conversationId: number, actor?: any) => void, close: () => void, isOpen: () => boolean }}
  */
-export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger } = {}) {
+export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger, variant = "dock" } = {}) {
+	const side = variant === "side";
 	const dock = dockEl ?? $("chat-dock");
 	const inline = dock !== null && dock !== undefined;
 	const focusBack = trigger ?? $("chat-fold");
@@ -148,11 +156,19 @@ export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger } = 
 	let layer = null;
 
 	if (inline) {
-		// 内嵌：chat 面板里的 #chat-dock 由 index.html 提供，这里只往里写内容。
+		// 内嵌：容器由 index.html / channels.js 提供，这里只往里写内容。
 		dock.innerHTML = "";
 		dock.hidden = true;
 		dock.dataset.open = "false";
 		dock.setAttribute("aria-hidden", "true");
+		if (side) {
+			// #4：侧边弹窗形态。inert 由 open/close 切换，收起时整块退出 tab 序列。
+			dock.classList.add("profile-side");
+			dock.setAttribute("role", "dialog");
+			dock.setAttribute("aria-modal", "false");
+			dock.setAttribute("aria-label", "角色档案");
+			dock.inert = true;
+		}
 		root = dock;
 	} else {
 		layer = layerNode();
@@ -170,9 +186,9 @@ export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger } = 
 	}
 
 	clip = document.createElement("div");
-	clip.className = "chat-dock-clip";
+	clip.className = side ? "profile-side-clip" : "chat-dock-clip";
 	panel = document.createElement("section");
-	panel.className = `chat-dock-panel${inline ? "" : " profile"}`;
+	panel.className = side ? "profile-side-panel" : `chat-dock-panel${inline ? "" : " profile"}`;
 	panel.setAttribute("role", inline ? "region" : "dialog");
 	panel.setAttribute("aria-label", "角色档案");
 	if (!inline) panel.setAttribute("aria-modal", "true");
@@ -278,6 +294,7 @@ export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger } = 
 		if (!open) {
 			open = true;
 			root.hidden = false;
+			if (side) root.inert = false;
 			root.setAttribute("aria-hidden", inline ? "false" : "true");
 			if (!inline && layer !== null) layer.hidden = false;
 			document.body.classList.add("profile-open");
@@ -294,6 +311,7 @@ export function initProfile({ fetchProfile, onToggle, dock: dockEl, trigger } = 
 	function finishClose() {
 		root.dataset.open = "false";
 		root.setAttribute("aria-hidden", "true");
+		if (side) root.inert = true;
 		if (inline) root.hidden = true;
 		else if (layer !== null) layer.hidden = true;
 	}

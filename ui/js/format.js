@@ -224,3 +224,49 @@ export function parseJsonish(raw) {
 export function isMac() {
 	return /Mac|iPhone|iPad/.test(navigator.platform ?? "") || /Mac OS X/.test(navigator.userAgent);
 }
+
+/**
+ * 把 text 写进剪贴板，返回是否成功。
+ *
+ * 调用方自己负责提示（各处措辞不同：设置里说「已复制 Token」）。
+ * 兜底用 textarea + execCommand：`navigator.clipboard` 只在 https / localhost 可用，
+ * 而一人公司的网页外壳经常是通过局域网 IP 访问的。
+ */
+export async function copyText(text) {
+	const value = String(text ?? "");
+	if (value === "") return false;
+	try {
+		if (navigator.clipboard !== undefined && typeof navigator.clipboard.writeText === "function") {
+			await navigator.clipboard.writeText(value);
+			return true;
+		}
+	} catch {
+		/* 落到下面的兜底 */
+	}
+	// textarea 挂在 body 上而不是某个面板里：面板是 overflow 容器，
+	// focus / 选中在 Safari 上会失效。
+	const area = document.createElement("textarea");
+	area.value = value;
+	area.setAttribute("readonly", "");
+	area.setAttribute("aria-hidden", "true");
+	area.style.position = "fixed";
+	area.style.top = "0";
+	area.style.left = "0";
+	area.style.width = "1px";
+	area.style.height = "1px";
+	area.style.padding = "0";
+	area.style.border = "0";
+	area.style.opacity = "0";
+	document.body.append(area);
+	area.focus({ preventScroll: true });
+	area.select();
+	area.setSelectionRange(0, value.length);
+	let copied = false;
+	try {
+		copied = document.execCommand("copy");
+	} catch {
+		copied = false;
+	}
+	area.remove();
+	return copied;
+}

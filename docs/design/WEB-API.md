@@ -20,7 +20,7 @@
 | POST | `/api/interrupt` | 打断当前工作并优先处理 |
 | POST | `/api/answer` | 拍板回答一条待决问题 |
 | **GET / PATCH** | **`/api/settings`** | **设置：网络 / 模型 / IM** |
-| **POST / DELETE** | **`/api/models`** | **新增 / 删除自定义模型** |
+| **POST / PATCH / DELETE** | **`/api/models`** | **新增 / 编辑 / 删除模型（含内置模型的改名、隐藏、设默认）** |
 | **POST** | **`/api/upload`** | **上传附件（原始字节）** |
 | **GET** | **`/uploads/:id/:name`** | **下载附件** |
 | **GET** | **`/api/board`** | **任务看板（doing / todo / done）** |
@@ -149,12 +149,34 @@
 错误：`400` 参数不合法（id 非法 / baseUrl 非 http(s) / 设置不是对象）；
 `409` id 重复或与内置模型重名。
 
-## 4. `DELETE /api/models?id=<id>`
+## 4. `PATCH /api/models?id=<id>`
 
-删除一条**自定义**模型。响应与 POST 同款：完整 GET 结构 + `{ ok, restartRequired }`。
-内置模型不能删：`404`。同样需要重启才从运行时模型集合里消失。
+**编辑**一条已存在的模型。老板 2026-10 追加（原契约只有 POST/DELETE，
+设置页里模型只能增不能改）。
 
-## 5. `POST /api/upload` + `GET /uploads/:id/:name`
+- 内置模型（`source: "builtin"`）不能改 `id` / `provider` / `baseUrl`，
+  只能改 `name`（显示名）、`inputPerMTok`、`outputPerMTok`、
+  `contextWindow`、`maxOutput`、以及 `default?: boolean`。
+- 自定义模型字段可全改；改 `id` 等价于「新建一条 + 隐藏旧的」。
+- `default: true` 会把 `models.defaultRef` 指向本模型（重启后生效）。
+- 内置条目发生覆盖时，落库的是一条 `{ builtin: <原 id>, hidden?: false, ... }`
+  的覆盖项（`CustomModelSettings.builtin`），**不改代码里的内建目录**。
+
+响应与 POST 同款：完整 GET 结构 + `{ ok, model, restartRequired }`。
+`404` 表示这个 id 不存在。
+
+## 5. `DELETE /api/models?id=<id>`
+
+- **自定义模型**：真删（`settingsStore.removeModel`），响应带完整 GET 结构。
+- **内置模型**：不能真删（它来自代码里的内建目录），改为写一条
+  `{ builtin: id, hidden: true }` 覆盖项把它**从视图里隐藏**，并就地改
+  `models.defaultRef` 退到剩下的第一条（`fallbackDefaultAfterRemoving`），
+  否则重启后默认模型会指向一个已隐藏的 id。
+- 完全不认识的 id：`404`。
+
+两者都需要重启才从运行时模型集合里消失。
+
+## 6. `POST /api/upload` + `GET /uploads/:id/:name`
 
 上传是**原始字节**，不是 multipart：
 
@@ -184,7 +206,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
   `Content-Disposition: inline`）；名字与记录不符返回 `404`（防手改 URL）。
 - 文件名会被净化（去掉路径与控制字符，只留 basename），不会写出目录外。
 
-## 6. `POST /api/message`（新增 `attachments`）
+## 7. `POST /api/message`（新增 `attachments`）
 
 原有字段不变，新增可选数组：
 
@@ -212,7 +234,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
   至少有一样。
 - 受理回执（`app.receipt`）记录的是注入后的完整正文。
 
-## 7. `GET /api/board`
+## 8. `GET /api/board`
 
 看板数据全部由现有运行时推导（不建新表），三列固定：
 
@@ -253,7 +275,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 | todo | 已提交但还在排队的消息（`InboxDoc`） | `queued` |
 | done | 最近 24 小时完成的一轮助手回复（每会话取最新一条） | `done` |
 
-## 8. `POST /api/im/inbound?token=<inboundToken>`
+## 9. `POST /api/im/inbound?token=<inboundToken>`
 
 外部 IM 桥（微信 / 企微 / 飞书 / 自建 webhook）把消息投给老板通道：
 
@@ -284,7 +306,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 - 失败（超时 3s / 连接拒绝 / 非 2xx）**静默忽略**，不影响对话与提交。
 - webhook 只接受 `http(s)`；桥要保证幂等-ish（至少不要对同一 `text+at` 重复刷屏）。
 
-## 9. 局域网访问
+## 10. 局域网访问
 
 - 默认监听 `127.0.0.1`：只有本机能访问。
 - `--host 0.0.0.0`（或 `AI_COMPANY_HOST=0.0.0.0`）监听所有网卡；启动日志与
@@ -293,7 +315,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
   只应在可信内网使用；不要做公网端口映射 / 反向代理。安全边界见
   [DEPLOY.md](../DEPLOY.md)。
 
-## 9.5 待办与拍板投递
+## 10.5 待办与拍板投递
 
 `GET /api/feed/:conversationId` 除消息条目外，还下发 `pending`——**这个会话主人要亲自拍的事**：
 
@@ -324,7 +346,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 3. `options` 由服务端给（解析在服务端一处），界面不再自己猜：
    把「1. 读文件」这种步骤渲染成可点按钮，点一下就会把步骤当答案发出去。
 
-## 10. 已知限制
+## 11. 已知限制
 
 - **历史消息不还原附件 chip**：附件元数据不落在 `pi.user` 条目里（不新增持久化
   字段），所以刷新页面后只有正文里的 `[附件] name → /abs/path` 文本引用，
@@ -339,7 +361,7 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 - `POST /api/message` 不做 OCR / 文档格式转换（不解析 docx/xlsx/pdf），
   需要时让模型在项目会话里用工具处理。
 
-## 11. 兼容性纪律
+## 12. 兼容性纪律
 
 - 字段**只增不改**：删字段 / 改语义必须同步改前端与本文档。
 - `Feed` 里被标记 `@deprecated` 的字段仍然保留（例如 `awaitingOwner`），

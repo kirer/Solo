@@ -176,6 +176,19 @@ export type CustomModelSettings = {
 	readonly outputPerMTok?: number;
 	readonly contextWindow?: number;
 	readonly maxOutput?: number;
+	/**
+	 * 老板把这条自定义模型**另存为「改过的内置模型」**时，记下内置的那条 id。
+	 *
+	 * 内置模型是代码里的常量，改不了也删不掉；老板要「改它的名字 / 单价 / 删掉它」，
+	 * 唯一的出路是**覆盖**：设置页把内置项一条条抄成自定义项来编辑，抄的时候
+	 * 把原 id 记在这里。装配时（{@link setupModels}）这类条目会顶掉同名内置项，
+	 * 于是内置模型可以改名、改价，也可以被「删除」（= 存一条 `hidden` 覆盖）。
+	 */
+	readonly builtin?: string;
+	/** 覆盖内置模型时置 true：等于把这条内置模型从目录里摘掉（内置模型不能真的从代码里删）。 */
+	readonly hidden?: boolean;
+	/** 覆盖 / 摘除内置模型时，就地改默认模型引用（内置 id 不存在了，默认不能还指着它）。 */
+	readonly defaultRef?: string;
 };
 
 /** settings.json 里与模型有关的部分（其他段由 src/server/settings.ts 负责）。 */
@@ -230,6 +243,9 @@ export function parseModelSettings(raw: unknown): ModelSettings {
 			...(outputPerMTok === undefined ? {} : { outputPerMTok }),
 			...(contextWindow === undefined ? {} : { contextWindow }),
 			...(maxOutput === undefined ? {} : { maxOutput }),
+			...(text(record.builtin) === "" ? {} : { builtin: text(record.builtin) }),
+			...(record.hidden === true ? { hidden: true } : {}),
+			...(text(record.defaultRef) === "" ? {} : { defaultRef: text(record.defaultRef) }),
 		};
 		seen.add(id);
 		custom.push(entry);
@@ -346,13 +362,37 @@ export function setupModels(
 	const settings = options.settings ?? (options.workspace === undefined ? { custom: [] } : readModelSettings(options.workspace));
 	const custom = settings.custom ?? [];
 
-	const catalog: ModelOption[] = [...base.catalog];
-	let fallback = base.defaultModel;
+	// 内置模型是代码常量：老板要「改它 / 删它」，只能靠设置里的一条**覆盖项**。
+	// 这里先把内置清单按覆盖项就地改掉（改名的改 id，`hidden` 的直接摘掉），
+	// 再走原来的「自定义模型追加」流程 —— 于是改名后的内置项就是一条普通自定义项。
+	const overrides = new Map<string, CustomModelSettings>();
+	for (const item of custom) {
+		if (item.builtin !== undefined && item.builtin !== "") overrides.set(item.builtin, item);
+	}
+	let catalog: ModelOption[] = base.catalog.map((item) => {
+		const override = overrides.get(item.id);
+		if (override === undefined) return item;
+		return {
+			...item,
+			id: override.id,
+			label: override.name ?? item.label,
+			inputPerMTok: override.inputPerMTok ?? item.inputPerMTok,
+			outputPerMTok: override.outputPerMTok ?? item.outputPerMTok,
+		};
+	});
+	// `hidden` 的覆盖项 = 老板删掉了这条内置模型。
+	const dropped = new Set<string>();
+	for (const [builtinId, override] of overrides) {
+		if (override.hidden === true) dropped.add(builtinId);
+	}
+	if (dropped.size > 0) catalog = catalog.filter((item) => !dropped.has(item.id));
 
-	if (custom.length > 0) {
+	let fallback = base.defaultModel;
+	const extra = custom.filter((item) => item.builtin === undefined || item.builtin === "" || item.hidden !== true);
+	if (extra.length > 0) {
 		const taken = new Set(base.models.getProviders().map((provider) => provider.id));
 		const usedIds = new Set<string>();
-		for (const item of custom) {
+		for (const item of extra) {
 			const kind = normalizeProvider(item.provider);
 			if (kind === undefined) continue;
 			const providerId = uniqueProviderId(kind, taken, usedIds);
@@ -367,9 +407,20 @@ export function setupModels(
 				outputPerMTok: item.outputPerMTok ?? 0,
 			});
 		}
-		fallback = resolveDefaultModel(settings.default, catalog, base.defaultModel);
 	}
 
+	// 默认模型引用：覆盖 / 摘除内置项时，老板可能在同一次保存里就地改默认
+	// （被改名的内置 id 已经不存在，默认还指着它就等于「没有默认模型」）。
+	let defaultRef = settings.default;
+	for (const override of overrides.values()) {
+		if (override.defaultRef !== undefined && override.defaultRef !== "") defaultRef = override.defaultRef;
+	}
+	if (custom.length > 0 || base.defaultModel !== fallback) {
+		fallback = resolveDefaultModel(defaultRef, catalog, base.defaultModel);
+	}
+
+	// builtinCatalog 保持**未经过覆盖**的代码常量：设置页要靠它分辨「这条原来是内置的」，
+	// 也是「恢复内置默认」的依据。
 	return { models: base.models, defaultModel: fallback, catalog, builtinCatalog: base.catalog };
 }
 

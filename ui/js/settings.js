@@ -36,6 +36,8 @@ const state = {
 	error: "",
 	/** 模型「添加」表单是否展开，以及失败后要保留的草稿 / 字段错误。 */
 	modelForm: false,
+	/** 编辑中的模型原 id（空串 = 新增）。内置项也可以编辑：落成一条覆盖项。 */
+	modelEditing: "",
 	modelDraft: null,
 	modelErrors: null,
 	confirmDelete: "",
@@ -125,6 +127,8 @@ function normalizeSettings(raw) {
 					contextWindow: toNumber(model.contextWindow),
 					maxOutput: toNumber(model.maxOutput),
 					source: model.source === "custom" ? "custom" : "builtin",
+					builtin: typeof model.builtin === "string" ? model.builtin : "",
+					overridden: model.overridden === true,
 				})),
 		},
 		im: {
@@ -357,25 +361,32 @@ function modelRow(model, defaultId) {
 	const isDefault = model.id === defaultId;
 	const custom = model.source === "custom";
 	const deleting = state.confirmDelete === model.id;
+	const editing = state.modelEditing !== "" && state.modelEditing === model.id;
 	const actions = [];
 	if (!isDefault) {
 		actions.push(
 			`<button class="set-btn" type="button" data-action="default-model" data-id="${escapeAttr(model.id)}">设为默认</button>`,
 		);
 	}
-	if (custom) {
-		actions.push(
-			deleting
-				? `<button class="set-btn set-btn--danger" type="button" data-action="delete-model" data-id="${escapeAttr(model.id)}" data-confirm="1">确认删除</button>
+	// 内置和自定义都能改：内置项的改动落成一条覆盖项（重启后生效），
+	// 所以「编辑」按钮对所有行都出现，不再是自定义项的专利。
+	actions.push(
+		editing
+			? `<button class="set-btn" type="button" data-action="cancel-edit-model">取消</button>`
+			: `<button class="set-btn" type="button" data-action="edit-model" data-id="${escapeAttr(model.id)}">编辑</button>`,
+	);
+	actions.push(
+		deleting
+			? `<button class="set-btn set-btn--danger" type="button" data-action="delete-model" data-id="${escapeAttr(model.id)}" data-confirm="1">确认删除</button>
 					<button class="set-btn" type="button" data-action="cancel-delete">取消</button>`
-				: `<button class="set-btn set-btn--danger" type="button" data-action="delete-model" data-id="${escapeAttr(model.id)}">删除</button>`,
-		);
-	}
-	return `<li class="set-item${isDefault ? " is-default" : ""}">
+			: `<button class="set-btn set-btn--danger" type="button" data-action="delete-model" data-id="${escapeAttr(model.id)}">删除</button>`,
+	);
+	return `<li class="set-item${isDefault ? " is-default" : ""}${editing ? " is-editing" : ""}">
 		<div class="set-item-body">
 			<div class="set-item-line">
 				<b class="set-item-name">${escapeHtml(model.name)}</b>
 				<span class="set-tag">${custom ? "自定义" : "内置"}</span>
+				${model.overridden === true ? '<span class="set-tag set-tag--edited">已改</span>' : ""}
 				${isDefault ? '<span class="set-tag set-tag--default">默认</span>' : ""}
 			</div>
 			<div class="set-item-id mono" title="${escapeAttr(model.id)}">${escapeHtml(model.id)}</div>
@@ -389,10 +400,15 @@ function modelRow(model, defaultId) {
 function modelFormHtml() {
 	const draft = state.modelDraft ?? { provider: "openai-responses" };
 	const errors = state.modelErrors ?? {};
-	return `<form class="set-form" id="model-form" novalidate>
+	const editing = state.modelEditing !== "" ? state.modelEditing : "";
+	// 内置项是代码常量：编辑它不修改常量，而是写一条覆盖项（重启后生效）。
+	// 这里必须说破，否则老板会以为「改了源码」。
+	const target = editing === "" ? null : (state.data?.models?.catalog ?? []).find((item) => item.id === editing);
+	const isBuiltin = target !== undefined && target.source === "builtin";
+	return `<form class="set-form" id="model-form" novalidate data-editing="${escapeAttr(editing)}">
 		<div class="set-form-head">
-			<b>添加模型</b>
-			<span class="set-hint">写入服务端配置，重启后生效</span>
+			<b>${editing === "" ? "添加模型" : `编辑 ${escapeHtml(target?.name ?? editing)}`}</b>
+			<span class="set-hint">${isBuiltin ? "内置模型：改动会存为覆盖项，重启后生效" : "写入服务端配置，重启后生效"}</span>
 		</div>
 		${errors.form ? `<p class="set-field-error" role="alert">${escapeHtml(errors.form)}</p>` : ""}
 		<div class="set-form-grid">
@@ -462,7 +478,7 @@ function modelFormHtml() {
 		</div>
 		<div class="set-form-actions">
 			<button class="set-btn" type="button" data-action="model-form-cancel">取消</button>
-			<button class="set-btn set-btn--primary" type="submit">添加模型</button>
+			<button class="set-btn set-btn--primary" type="submit">${editing === "" ? "添加模型" : "保存修改"}</button>
 		</div>
 	</form>`;
 }
@@ -482,14 +498,14 @@ function readModelDraft(form) {
 	};
 }
 
-function validateModelDraft(draft) {
+function validateModelDraft(draft, editingId = state.modelEditing) {
 	const errors = {};
 	const catalog = state.data?.models?.catalog ?? [];
 	if (draft.id === "") {
 		errors.id = "模型 ID 必填。";
 	} else if (!/^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$/.test(draft.id)) {
 		errors.id = "只能用字母、数字和 . _ : / @ + -，且以字母或数字开头。";
-	} else if (catalog.some((model) => model.id === draft.id)) {
+	} else if (catalog.some((model) => model.id === draft.id && model.id !== editingId)) {
 		errors.id = "这个 ID 已在模型清单里。";
 	}
 	if (draft.baseUrl !== "" && !/^https?:\/\/\S+$/i.test(draft.baseUrl)) {
@@ -520,6 +536,12 @@ function validateModelDraft(draft) {
 
 function modelPayload(draft) {
 	const payload = { id: draft.id, provider: draft.provider };
+	// 编辑内置项 = 给这条内置 id 写覆盖项。把被覆盖的 id 一起带上，后端才知道
+	// 这是「改内置」而不是「新建一条自定义模型」。
+	if (state.modelEditing !== "") {
+		const target = (state.data?.models?.catalog ?? []).find((item) => item.id === state.modelEditing);
+		if (target?.source === "builtin") payload.builtin = target.builtin || state.modelEditing;
+	}
 	if (draft.name !== "") payload.name = draft.name;
 	if (draft.baseUrl !== "") payload.baseUrl = draft.baseUrl;
 	if (draft.apiKey !== "") payload.apiKey = draft.apiKey;
@@ -530,31 +552,46 @@ function modelPayload(draft) {
 	return payload;
 }
 
-async function createModel(draft) {
+/**
+ * 保存模型表单：新增走 `POST /api/models`，编辑走 `PATCH /api/models?id=`。
+ *
+ * 内置项也能编辑 —— 后端把它落成一条 `builtin` 覆盖项（重启后生效）。
+ */
+async function saveModel(draft) {
 	const form = panel?.querySelector("#model-form");
 	if (form !== null) form.setAttribute("aria-busy", "true");
+	const editing = state.modelEditing;
 	try {
-		const result = await requestJson("/api/models", {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(modelPayload(draft)),
-		});
+		const result =
+			editing === ""
+				? await requestJson("/api/models", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(modelPayload(draft)),
+					})
+				: await requestJson(`/api/models?id=${encodeURIComponent(editing)}`, {
+						method: "PATCH",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(modelPayload(draft)),
+					});
 		state.modelForm = false;
+		state.modelEditing = "";
 		state.modelDraft = null;
 		state.modelErrors = null;
 		if (result?.models !== undefined) applySettings(result, { keepIm: true });
 		else await refresh({ quiet: true, keepIm: true });
 		renderAll();
+		const verb = editing === "" ? "已添加模型" : "已保存模型";
 		notify(
 			result?.restartRequired === true
-				? `已添加模型 ${draft.id}，重启服务后生效。`
-				: `已添加模型 ${draft.id}。`,
+				? `${verb} ${draft.id}，重启服务后生效。`
+				: `${verb} ${draft.id}。`,
 			"info",
 		);
 	} catch (error) {
 		state.modelErrors = { form: errorMessage(error) };
 		renderModels();
-		notify(`添加模型失败：${errorMessage(error)}`, "error");
+		notify(`${editing === "" ? "添加" : "保存"}模型失败：${errorMessage(error)}`, "error");
 	}
 }
 
@@ -1017,6 +1054,7 @@ function onClick(event) {
 			break;
 		case "model-form-open":
 			state.modelForm = true;
+			state.modelEditing = "";
 			state.modelDraft = { provider: "openai-responses" };
 			state.modelErrors = null;
 			renderModels();
@@ -1024,6 +1062,36 @@ function onClick(event) {
 			break;
 		case "model-form-cancel":
 			state.modelForm = false;
+			state.modelEditing = "";
+			state.modelDraft = null;
+			state.modelErrors = null;
+			renderModels();
+			break;
+		case "edit-model": {
+			const model = (state.data?.models?.catalog ?? []).find((item) => item.id === id);
+			if (model === undefined) break;
+			state.modelForm = true;
+			state.modelEditing = id;
+			// 回填既有值。API Key 不回显（服务端只存不读），留空表示「不修改」。
+			state.modelDraft = {
+				id: model.id,
+				name: model.name,
+				provider: model.provider === "" ? "openai-responses" : model.provider,
+				baseUrl: model.baseUrl,
+				inputPerMTok: model.inputPerMTok === null ? "" : String(model.inputPerMTok),
+				outputPerMTok: model.outputPerMTok === null ? "" : String(model.outputPerMTok),
+				contextWindow: model.contextWindow === null ? "" : String(model.contextWindow),
+				maxOutput: model.maxOutput === null ? "" : String(model.maxOutput),
+			};
+			state.modelErrors = null;
+			state.confirmDelete = "";
+			renderModels();
+			panel?.querySelector("#model-form input[name='id']")?.focus();
+			break;
+		}
+		case "cancel-edit-model":
+			state.modelForm = false;
+			state.modelEditing = "";
 			state.modelDraft = null;
 			state.modelErrors = null;
 			renderModels();
@@ -1128,7 +1196,7 @@ function submitModelForm(form) {
 		panel?.querySelector("#model-form [aria-invalid='true']")?.focus();
 		return;
 	}
-	void createModel(draft);
+	void saveModel(draft);
 }
 
 function bind() {

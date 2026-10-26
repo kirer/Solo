@@ -227,7 +227,7 @@ describe("模型接口", () => {
 		expect((await post({ id: "" })).status).toBe(400);
 	});
 
-	test("DELETE：删掉自定义模型；内置/不存在返回 404", async () => {
+	test("DELETE：自定义模型真删，内置模型软隐藏，不存在返回 404", async () => {
 		const { server } = await setup();
 		await fetch(`${server.url}api/models`, {
 			method: "POST",
@@ -240,9 +240,16 @@ describe("模型接口", () => {
 		expect((await readSettings(server)).models.catalog.some((item) => item.id === "temp-model")).toBe(false);
 
 		expect((await fetch(`${server.url}api/models?id=temp-model`, { method: "DELETE" })).status).toBe(404);
-		expect((await fetch(`${server.url}api/models?id=${encodeURIComponent("faux-1")}`, { method: "DELETE" })).status).toBe(
-			404,
-		);
+
+		// 内置模型不能真删（它来自代码里的内建目录），但老板要求「设置里能删掉
+		// 用不上的内置模型」，所以走**软隐藏**：写一条 hidden 覆盖项，视图里不再列出。
+		const hideBuiltin = await fetch(`${server.url}api/models?id=${encodeURIComponent("faux-1")}`, { method: "DELETE" });
+		expect(hideBuiltin.status).toBe(200);
+		expect((await hideBuiltin.json()) as { restartRequired: boolean }).toMatchObject({ restartRequired: true });
+		expect((await readSettings(server)).models.catalog.some((item) => item.id === "faux-1")).toBe(false);
+
+		// 完全没见过的 id 依旧是 404
+		expect((await fetch(`${server.url}api/models?id=never-existed`, { method: "DELETE" })).status).toBe(404);
 	});
 });
 
