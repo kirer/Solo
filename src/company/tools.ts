@@ -125,6 +125,10 @@ export type ManagementToolset = {
 	readonly roundtable: ReturnType<typeof defineTool>;
 	/** 查圆桌讨论纪要。 */
 	readonly roundtableMinutes: ReturnType<typeof defineTool>;
+	/** 写一条记忆（#12）。 */
+	readonly memoryWrite: ReturnType<typeof defineTool>;
+	/** 检索记忆（#12）。 */
+	readonly memorySearch: ReturnType<typeof defineTool>;
 };
 
 /** 工具名 → 工具实例。 */
@@ -167,6 +171,8 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	cost_report: "costReport",
 	roundtable: "roundtable",
 	roundtable_minutes: "roundtableMinutes",
+	memory_write: "memoryWrite",
+	memory_search: "memorySearch",
 };
 
 /**

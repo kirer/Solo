@@ -56,6 +56,19 @@ export type MessageView = {
 	readonly text: string;
 	readonly mentions: readonly { readonly id: number; readonly label: string; readonly read: boolean }[];
 	readonly refs?: ChannelMessage["refs"];
+	/**
+	 * 这条在回复哪一条（需求 #7）。只给 `seq` / 发送方 / 一行摘要。
+	 *
+	 * 摘要在这里现算、随视图下发，而不是让前端拿 `seq` 回原消息里找：
+	 * 被引用的那条可能已经被 800 条上限裁掉，或者早于当前分页（`before` 游标），
+	 * 前端手里根本没有它。查不到就不给这个字段，界面显示「回复了一条更早的消息」。
+	 */
+	readonly replyTo?: {
+		readonly seq: number;
+		readonly from: number;
+		readonly fromLabel: string;
+		readonly excerpt: string;
+	};
 	/** 我读过这条没有。 */
 	readonly read: boolean;
 };
@@ -298,6 +311,7 @@ function dmPeer(channelId: string): number | null {
 /** 单条消息视图。 */
 function messageView(org: Org, channel: Channel, message: ChannelMessage, viewer: number): MessageView {
 	const read = message.readBy.includes(viewer) || message.from === viewer;
+	const quoted = resolveQuoted(channel, message);
 	return {
 		seq: message.seq,
 		at: message.at,
@@ -311,8 +325,20 @@ function messageView(org: Org, channel: Channel, message: ChannelMessage, viewer
 			read: message.readBy.includes(id),
 		})),
 		...(message.refs === undefined ? {} : { refs: message.refs }),
+		...(quoted === undefined ? {} : { replyTo: quoted }),
 		read,
 	};
+}
+
+/** 把 `replyTo` 的 seq 解析成一行可直接渲染的摘要。 */
+const QUOTE_EXCERPT = 60;
+function resolveQuoted(channel: Channel, message: ChannelMessage): MessageView["replyTo"] | undefined {
+	const target =
+		message.replyTo === undefined ? undefined : channel.messages.find((item) => item.seq === message.replyTo);
+	if (target === undefined) return undefined;
+	const flat = target.text.replace(/\s+/g, " ").trim();
+	const excerpt = flat.length > QUOTE_EXCERPT ? `${flat.slice(0, QUOTE_EXCERPT)}…` : flat;
+	return { seq: target.seq, from: target.from, fromLabel: target.fromLabel, excerpt };
 }
 
 /** 老板侧的未读总览（顶栏徽章）。 */

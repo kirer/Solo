@@ -334,6 +334,19 @@
 	margin-top: 0;
 }
 
+/* #6：同一天内间隔 > 5 分钟的时间条。
+   比日期条轻——它不是「新的一天」，只是「隔了一会儿」，所以只给一行居中灰字，
+   不带两侧横线（带了会和 `.ch-day` 抢注意力，一天里出现十次会很吵）。 */
+.ch-time-divider {
+	display: flex;
+	justify-content: center;
+	margin: 10px 0 6px;
+	font-size: 10.5px;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.03em;
+}
+
 .ch-msg {
 	display: grid;
 	grid-template-columns: 32px minmax(0, 1fr);
@@ -781,12 +794,38 @@
 	color: var(--accent);
 }
 
+/* #11：任务区按「在做 / 待做 / 已完成」分段 */
+.ch-task-group {
+	margin: 8px 0 2px;
+	padding: 0;
+	font-size: 10px;
+	font-weight: 600;
+	letter-spacing: 0.05em;
+	color: var(--faint);
+	list-style: none;
+}
+
+.ch-task-group:first-child {
+	margin-top: 0;
+}
+
 .ch-task {
-	display: flex;
-	align-items: baseline;
-	gap: 6px;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 2px 6px;
 	font-size: 11.5px;
-	padding: 3px 0;
+	padding: 4px 0;
+}
+
+/* 元信息横跨两列，落在标题下面 */
+.ch-task-meta {
+	grid-column: 1 / -1;
+	font-size: 10px;
+	color: var(--faint);
+	font-variant-numeric: tabular-nums;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .ch-task-id {
@@ -797,11 +836,11 @@
 }
 
 .ch-task-title {
-	flex: 1;
 	min-width: 0;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	line-height: 1.35;
 }
 
 .ch-task-status {
@@ -1229,6 +1268,70 @@
 	border-left: 2px solid var(--line-strong);
 	color: var(--muted);
 	font-size: 0.95em;
+}
+
+/* #6：正文里的 @ 高亮。
+   只加底色不加粗体：@ 是「指向某人的标记」，不是强调词；加粗会让长段里
+   每个 @ 都变成视觉重音，读起来像喊。 */
+.ch-at {
+	padding: 0 2px;
+	border-radius: 2px;
+	background: var(--accent-soft);
+	color: var(--accent);
+}
+
+/* ── #7：消息里的引用块（引用的是哪一条） ──────────────────────────────── */
+/* 一条细竖线 + 一行灰字，和微信/飞书一致：引用是「附带上下文」，不是第二个气泡。
+   整块可点（跳回原消息），所以是 button 而不是 div——键盘也能到。 */
+.ch-quote {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	/* 与气泡同左边界：视觉上挂在气泡上方，不另起一列 */
+	margin: 2px 0 4px;
+	padding: 0 0 0 8px;
+	max-width: 100%;
+	border: 0;
+	border-left: 2px solid var(--line-strong);
+	background: transparent;
+	color: var(--faint);
+	font: inherit;
+	font-size: 11.5px;
+	line-height: 1.4;
+	text-align: left;
+	cursor: pointer;
+}
+
+.ch-quote:hover {
+	border-left-color: var(--accent);
+	color: var(--muted);
+}
+
+.ch-quote b {
+	flex: none;
+	font-weight: 600;
+	color: var(--muted);
+}
+
+.ch-quote span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 点引用块跳过去时闪一下，否则滚动完看不出是哪条 */
+.ch-msg[data-flash="true"] .ch-bubble {
+	animation: ch-flash 1.2s var(--ease-out);
+}
+
+@keyframes ch-flash {
+	from {
+		background: color-mix(in oklab, var(--accent) 28%, transparent);
+	}
+	to {
+		background: transparent;
+	}
 }
 
 /* ── #5：引用回复的预览条（发送前那条） ─────────────────────────────────── */

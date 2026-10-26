@@ -12,6 +12,8 @@ import { initOrg } from "./org.js";
 import { initSettings } from "./settings.js";
 import { initChannels } from "./channels.js";
 import { notify } from "./toast.js";
+// #6：正文图片点开放大。全局委托挂一次，消息流怎么重建都不用管。
+import { initLightbox } from "./lightbox.js";
 
 const $ = (id) => document.getElementById(id);
 const MOBILE_QUERY = window.matchMedia("(max-width: 860px)");
@@ -38,6 +40,8 @@ const settingsPanel = initSettings({ onToast: (text, tone) => notify(text, tone)
 // 频道视图（通信重构）：左侧频道列表 + 消息流 + 成员/任务。
 // 它是**唯一的聊天入口**——右侧对话面板已删除。
 const channels = initChannels({ onToast: (text, tone) => notify(text, tone), fetchProfile });
+// 图片放大器要在频道视图之前装好：capture 阶段，必须先于「点消息弹浮窗」。
+initLightbox();
 
 /**
  * 「打开某个频道」的单一入口。

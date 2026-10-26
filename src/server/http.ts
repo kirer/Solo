@@ -1066,6 +1066,8 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			text?: string;
 			mentions?: readonly number[];
 			kind?: string;
+			/** 需求 #7：回复哪一条（频道内 seq）。无效值由 domain 层忽略。 */
+			replyTo?: number;
 			attachments?: readonly { readonly id?: unknown; readonly name?: unknown }[];
 		}>(request);
 		const text = (body.text ?? "").trim();
@@ -1106,6 +1108,8 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				kind: body.kind === "question" ? "question" : "chat",
 				text: content,
 				mentions,
+				// 回复谁就等于 @ 谁（在 `appendMessage` 里回填），前端不用自己算。
+				...(typeof body.replyTo === "number" ? { replyTo: body.replyTo } : {}),
 			},
 			{ context: BACKGROUND_CONTEXT },
 		);

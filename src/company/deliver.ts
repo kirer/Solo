@@ -37,6 +37,8 @@ import { ChannelDoc } from "./channels-doc.ts";
 import { labelOf, type Org } from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import { CompanyDoc, ReplyContextDoc } from "./docs.ts";
+import { MemoryDoc, memoryActorFromOrg } from "./memory.ts";
+import { renderMemoryBrief, type MemoryState } from "../domain/memory.ts";
 
 /** 一次投递的结果。 */
 export type DeliverOutcome = {
@@ -85,6 +87,8 @@ export async function deliver(
 	const company = await runtime.harness.snapshot(CompanyDoc, context);
 	const org = buildOrg(company);
 	const channels = (await runtime.harness.snapshot(ChannelDoc, context)) ?? { channels: {}, nextSeq: 1 };
+	// 记忆只读一次（每个目标都要用，但不能每个目标都读一遍库）。
+	const memoryState = (await runtime.harness.snapshot(MemoryDoc, context)) as MemoryState | undefined;
 
 	for (const target of options.targets) {
 		try {
@@ -96,7 +100,20 @@ export async function deliver(
 
 			const body = renderForModel(options.channel, options.message, (id) => labelOf(org, id));
 			const digest = digestFor(channels as ChannelState, target, 5);
-			const content = [body, renderDigest(digest)].filter((part) => part !== "").join("\n\n");
+			// #12 记忆简报：只给对方**最近 3 条 + 与本条消息最相关 2 条**。
+			// 这里是唯一「必然经过」的注入点——每个被唤醒的 agent 都走这条路径。
+			const actor = memoryActorFromOrg(org, target);
+			const memory =
+				actor === undefined || memoryState === undefined
+					? ""
+					: renderMemoryBrief(memoryState, {
+							level: actor.level,
+							owner: actor.owner,
+							query: options.message.text,
+						});
+			const content = [body, renderDigest(digest), memory]
+				.filter((part) => part !== "")
+				.join("\n\n");
 
 			await conversation.submit(
 				{

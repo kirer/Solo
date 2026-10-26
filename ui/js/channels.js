@@ -11,7 +11,7 @@
  * 数据全部来自 `/api/channels*`。SSE 的 org 事件只是「该刷新了」的信号，
  * 不做增量合并——频道消息量远小于会话流，全量拉最不容易出错。
  */
-import { escapeAttr, escapeHtml, relTime, clockTime, copyText } from "./format.js";
+import { escapeAttr, escapeHtml, relTime, clockTime, copyText, formatCost, formatTokens } from "./format.js";
 import { icon } from "./icons.js";
 import { renderMarkdown } from "./markdown.js";
 // UX-7：工作记录复用 T-22 提取的渲染函数，与组织页聊天视觉一致。
@@ -72,6 +72,8 @@ const state = {
 	replyTo: null,
 	/** #5：当前选中的消息 seq（浮窗里的操作对象）。 */
 	actionSeq: null,
+	/** #6：上一次渲染用的视图签名。相同就跳过整段 DOM 重建。 */
+	viewSignature: "",
 };
 const el = {
 	root: null,
@@ -156,6 +158,37 @@ async function loadChannels() {
 }
 
 /**
+ * 一份「渲染结果会变吗」的签名（#6 性能）。
+ *
+ * 只算**影响 DOM 的东西**：频道元信息、每条消息的 seq / 已读 / 提及已读、
+ * 成员与任务的 id 集合、待办的关键字段。故意不含 `at` 以外的时序噪声，
+ * 也不含流水——流水有自己的 `activityLastSeq` 判断。
+ *
+ * 为什么用拼接字符串而不是深比较：一次频道视图最多 60 条消息，拼 60 个短串
+ * 是微秒级；深比较要递归整棵树，反而更慢，而且 `JSON.stringify` 会把
+ * `undefined` 字段吞掉，两种「不同」会算出同一个签名。
+ */
+function viewSignature() {
+	const view = state.view;
+	if (view === null) return "";
+	const parts = [view.channel.id, view.channel.title, String(view.hasMore)];
+	for (const message of view.messages) {
+		// 已读点 / @ 已读会变色，必须进签名，否则别人读完不回显绿点
+		const mentions = message.mentions.map((item) => `${item.id}${item.read ? "1" : "0"}`).join(",");
+		parts.push(`${message.seq}:${message.read ? 1 : 0}:${mentions}:${message.replyTo?.seq ?? ""}`);
+	}
+	parts.push(view.members.map((member) => `${member.id}${member.unread}`).join(","));
+	parts.push(
+		view.tasks
+			.map((task) => `${task.id}${task.status}${task.startedAt ?? ""}${task.doneAt ?? ""}${task.usage?.tokens ?? ""}`)
+			.join(","),
+	);
+	// `pending` 在旧后端上可能缺（见 renderPending 的降级），这里同样要容错
+	parts.push((view.pending ?? []).map((item) => `${item.key}${item.askedAt}`).join(","));
+	return parts.join("|");
+}
+
+/**
  * 打开（或刷新）一个频道。
  *
  * 三个必须守住的约束，都是踩过的坑：
@@ -198,12 +231,22 @@ async function openChannel(id, { userInitiated = true } = {}) {
 		} else {
 			state.view = view;
 		}
-		renderHeader();
-		renderMessages();
-		renderMembers();
-		renderTasks();
-		// 必须在 renderMembers() 之后：成员栏的可见性依赖当前频道的 kind（UX-6 / UX-8）
-		applyMembersOpen();
+		// #6 性能：内容没变就整段不重建。
+		// 以前每个 org SSE（4s 一次、有时一次来好几条）都会走完这五行，
+		// 每次都是 `el.body.replaceChildren(...)` 全量重建——正在读消息时页面
+		// 闪一下、`<details>` 的展开态被抹掉、正在播放的图片/代码复制按钮全部
+		// 复位（老板 #2「消息不停乱滚」的第二个来源）。现在比对一次签名，
+		// 没变就只更新必须更新的（列表徽章、已读上报），不动 DOM。
+		const signature = viewSignature();
+		if (signature !== state.viewSignature) {
+			state.viewSignature = signature;
+			renderHeader();
+			renderMessages();
+			renderMembers();
+			renderTasks();
+			// 必须在 renderMembers() 之后：成员栏的可见性依赖当前频道的 kind（UX-6 / UX-8）
+			applyMembersOpen();
+		}
 		// #1 / #4：切频道时重拉流水（只有私聊有）。流水到了会再渲染一次，
 		// 先把频道消息画出来，不让老板盯着空白等。
 		//
@@ -332,17 +375,19 @@ async function sendMessage(text) {
 	state.sending = true;
 	const sentText = text;
 	const mentions = extractMentions(text);
-	// #5：引用回复。用 Markdown 引用块把被引用的原文带进正文，不新增后端字段。
-	// 为什么不用 `replyTo` 引用字段：@ 已经不负责「叫什么人」了（需求 #7），
-	// 引用也只是「让上下文看得见」，而 blockquote 在现有渲染器里已经能渲染。
-	const quoted = state.replyTo === null ? "" : `> ${quoteLine(state.replyTo)}\n\n`;
-	const bodyText = `${quoted}${sentText}`;
+	// #7「用回复取代 @」：引用改成**结构化字段**，不再往正文里拼 Markdown 引用块。
+	//
+	// 旧做法的两处问题：①被引用的人不会被唤醒（`mentions` 里没有他），
+	// 「回复」变成纯装饰；②正文里多出一段 `> 某某：xxx`，复制消息会把别人的话
+	// 一起带走。现在只传 seq，服务端在 `appendMessage` 里把原消息的发送方
+	// 回填进 `mentions`，前端按 `replyTo` 渲染引用块。
+	const replySeq = state.replyTo === null ? undefined : state.replyTo.seq;
 	try {
 		el.send?.setAttribute("disabled", "");
 		await fetchJson(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
 			method: "POST",
 			headers: { "content-type": "application/json", accept: "application/json" },
-			body: JSON.stringify({ text: bodyText, mentions }),
+			body: JSON.stringify({ text: sentText, mentions, ...(replySeq === undefined ? {} : { replyTo: replySeq }) }),
 		});
 		// 只有输入框里还是刚发出去的那段文字才清空。
 		// 曾经无条件 `el.input.value = ""`：发送途中用户切频道并开始打新草稿，
@@ -766,6 +811,13 @@ function armActivitySentinel() {
 	);
 	activityObserver.observe(node);
 }
+/** 一组流水的 key：首尾 item 的 id 就足够区分（同一组只会被追加，不会被改动）。 */
+function traceKey(items) {
+	const first = items[0]?.id ?? "?";
+	const last = items.at(-1)?.id ?? "?";
+	return `t:${first}..${last}`;
+}
+
 /** 渲染后只需解绑：DOM 已重建，旧观察器指向已移除的节点。 */
 function observeActivitySentinel() {
 	disarmActivitySentinel();
@@ -879,7 +931,7 @@ function renderMessages() {
 	// `?limit=60` 且从不翻页，用户只能看到最近 60 条，更早的等于不存在。
 	if (view.hasMore) {
 		const firstSeq = view.messages[0]?.seq ?? 0;
-		fragment.append(htmlToNode(`<button class="ch-load-more" type="button" data-before="${firstSeq}">加载更早的消息</button>`));
+		fragment.append(keyed(htmlToNode(`<button class="ch-load-more" type="button" data-before="${firstSeq}">加载更早的消息</button>`), "more-messages"));
 	}
 	// 流水还有更早的：哨兵放在最上面，滚到顶自动续（#1：私聊里历史要能一路往回翻）。
 	if (state.activity !== null && state.activity.hasMore) {
@@ -898,8 +950,16 @@ function renderMessages() {
 		const at = row.at;
 		const day = dayKey(at);
 		if (day !== lastDay) {
-			fragment.append(htmlToNode(`<div class="ch-day">${escapeHtml(dayLabel(at))}</div>`));
+			fragment.append(keyed(htmlToNode(`<div class="ch-day">${escapeHtml(dayLabel(at))}</div>`), `day:${day}`));
 			lastDay = day;
+			lastAt = 0; // 换天后不再跟「上一条」比间隔
+		} else if (lastAt > 0 && at - lastAt > 5 * 60_000) {
+			// #6：同一天内间隔超过 5 分钟插一条时间条（对齐微信）。
+			// 旧实现只在换发送人时给一条时间，连着说 20 条只有第一条有——老板
+			// 看不出「这段话是上午还是下午说的」。流水（trace）也参与计时，
+			// 但时间条只在**消息**之间插：一组流水自带 `12:07–12:23` 的跨度摘要。
+			fragment.append(keyed(htmlToNode(`<div class="ch-time-divider">${escapeHtml(clockTime(at))}</div>`), `gap:${at}`));
+			lastAt = 0;
 		}
 
 		if (row.kind === "trace") {
@@ -913,17 +973,17 @@ function renderMessages() {
 				const item = rows[index].item;
 				if (item.kind === "tool" && item.isError === true) {
 					if (batch.length > 0) {
-						fragment.append(renderTraceGroup(batch));
+						fragment.append(keyed(renderTraceGroup(batch), traceKey(batch)));
 						batch.length = 0;
 					}
-					fragment.append(renderTraceGroup([item]));
+					fragment.append(keyed(renderTraceGroup([item]), traceKey([item])));
 					index += 1;
 					continue;
 				}
 				batch.push(item);
 				index += 1;
 			}
-			if (batch.length > 0) fragment.append(renderTraceGroup(batch));
+			if (batch.length > 0) fragment.append(keyed(renderTraceGroup(batch), traceKey(batch)));
 			continue;
 		}
 
@@ -933,16 +993,16 @@ function renderMessages() {
 		lastAt = at;
 
 		if (message.kind === "system") {
-			fragment.append(htmlToNode(`<div class="ch-system">${escapeHtml(message.text)}</div>`));
+			fragment.append(keyed(htmlToNode(`<div class="ch-system">${escapeHtml(message.text)}</div>`), `m:${message.seq}`));
 			continue;
 		}
 		if (message.kind === "task" || message.kind === "report") {
-			fragment.append(htmlToNode(renderCard(message)));
+			fragment.append(keyed(htmlToNode(renderCard(message)), `m:${message.seq}`));
 			continue;
 		}
 
 		fragment.append(
-			htmlToNode(
+			keyed(htmlToNode(
 				[
 					// #5：带 data-seq，点消息弹「复制 / 引用回复」浮窗。
 					`<div class="ch-msg" data-from="${message.from}" data-seq="${message.seq}" data-grouped="${grouped ? "true" : "false"}">`,
@@ -950,16 +1010,27 @@ function renderMessages() {
 					renderAvatar(message),
 					`<div class="ch-msg-main">`,
 					grouped ? "" : renderMsgHead(message),
-					renderBubble(message.text, message.seq),
+					renderQuote(message),
+					renderBubble(message.text, message.seq, message.kind),
 					renderMentions(message),
 					`</div>`,
 					`</div>`,
 				].join(""),
-			),
+			), `m:${message.seq}`),
 		);
 	}
 
-	el.body.replaceChildren(fragment);
+	// #6：**增量替换**，不再整段 `replaceChildren`。
+	//
+	// 老板的原话是「消息一直刷新」。真因不是请求多（那已经在 #2 里改成「内容没变
+	// 就不重绘」了），而是每次重绘都把整棵子树换掉：`<details>` 的展开态丢、
+	// 正在播放的图片重新解码、`scroll-anchoring` 把视口推走。
+	//
+	// 这里按 `data-key` 对齐：key 相同就保留旧节点（如果内容 signature 变了才整体
+	// 换成新的），key 不存在的才插入。一页 90 条里通常只有 1~2 条是新的，
+	// 实际 DOM 变动从「90 个节点全换」降到「1 个节点插入」。
+	patchBody(fragment);
+	// 补：新插入的节点上的「展开全文」按钮需要绑事件（见下方遍历）
 	// 待办排在最后一条消息之后：它是「有人在等你回话」，属于对话的延续，
 	// 不是另一块区域（顶部黄框那套做法用户明确否掉过）。
 	el.body.append(...pendingNodes);
@@ -982,6 +1053,80 @@ function renderMessages() {
 	}
 }
 
+/**
+ * 给节点打 key（需求 #6「一直刷新」的增量渲染基础）。
+ *
+ * key 只用来做「同一个东西还是不是它」的判断：key 一样就复用旧节点，
+ * 内层内容变了就整体替换（见 `patchBody`）。不追求真正的 DOM diff——
+ * 频道一页只有 90 条，换节点比递归比较更便宜，也不会因为状态漏同步而出错。
+ */
+let patchSeqCounter = 0;
+function keyed(node, key) {
+	if (node instanceof HTMLElement) node.dataset.key = key;
+	return node;
+}
+
+/**
+ * 按 `data-key` 把 fragment 里的节点合并进 `el.body`。
+ *
+ * - key 相同 + 内容相同 → **保留旧节点**（`<details>` 展开态、图片解码都留住）
+ * - key 相同 + 内容不同 → 用新节点替换旧的（位置不变）
+ * - key 是新的 → 插到正确位置
+ * - 旧列表里有的 key 在新列表里没有 → 删掉
+ *
+ * 「内容相同」用一个开销极低的 signature（`outerHTML` 长度 + 首尾 32 字节）判断：
+ * 真正的 `outerHTML` 全量比较在 90 条 × 每条 2KB 时反而是负担，而这个 signature
+ * 已经足够区分「多了一个已读点 / 多了一张图」这类真实变化。
+ */
+function patchBody(fragment) {
+	const body = el.body;
+	if (body === null) return;
+	const incoming = [...fragment.children];
+	// 旧节点的 key → 节点。没有 key 的旧节点（理论上不该有）一律丢弃重建。
+	const existing = new Map();
+	for (const node of body.children) {
+		const key = node instanceof HTMLElement ? node.dataset.key : undefined;
+		if (key !== undefined) existing.set(key, node);
+	}
+	const seen = new Set();
+	for (let index = 0; index < incoming.length; index += 1) {
+		const next = incoming[index];
+		const key = next instanceof HTMLElement ? next.dataset.key : undefined;
+		if (key === undefined) continue;
+		seen.add(key);
+		const previous = existing.get(key);
+		if (previous === undefined) {
+			body.insertBefore(next, body.children[index] ?? null);
+			continue;
+		}
+		if (signatureOf(previous) === signatureOf(next)) {
+			// 内容没变：保留旧节点，但要把它挪到正确位置（消息顺序可能变）
+			body.insertBefore(previous, body.children[index] ?? null);
+			continue;
+		}
+		body.replaceChild(next, previous);
+		// replaceChild 会让 next 离开 fragment，后面的 index 计算仍然按 body.children 走
+		body.insertBefore(next, body.children[index] ?? null);
+	}
+	for (const [key, node] of existing) {
+		if (seen.has(key)) continue;
+		node.remove();
+	}
+	// 干掉残留的、无 key 的旧节点（例如切频道时旧频道的空态提示）
+	for (const node of [...body.children]) {
+		const key = node instanceof HTMLElement ? node.dataset.key : undefined;
+		if (key === undefined && !incoming.includes(node)) node.remove();
+	}
+	patchSeqCounter += 1;
+}
+
+/** 节点的内容指纹：长度 + 首尾片段，够分辨「有没有变」。 */
+function signatureOf(node) {
+	const html = node.outerHTML;
+	if (html.length <= 64) return html;
+	return `${html.length}:${html.slice(0, 32)}:${html.slice(-32)}`;
+}
+
 /** 把一段 HTML 字符串变成节点（用于往 fragment 里塞，避免 innerHTML 整段重建）。 */
 function htmlToNode(html) {
 	const template = document.createElement("template");
@@ -1002,15 +1147,93 @@ function pendingHtml(view) {
 }
 
 /**
+ * 正文里的 `@名字` 加高亮（需求 #6）。
+ *
+ * 为什么在 **HTML 字符串**上做而不是在 Markdown 源码上：源码上的 `@` 可能落在
+ * 代码块 / 链接 / 行内代码里，那些地方不该高亮。`renderMarkdown()` 出来后，
+ * 代码块已经被 `<code>` / `<pre>` 包住、链接已经是 `<a>`，这时只跳过标记内部
+ * 就能精确命中「真正的正文」。
+ *
+ * 实现上按标签切开：`<...>` 原样输出（并且决定是否进入「跳过区」），
+ * 标签之间的文本才做替换。不引入 DOM 解析——文本量很小，字符串扫一遍足够。
+ */
+const MENTION_TAGS_SKIP = /^(code|pre|a|script|style)$/i;
+function highlightMentions(html) {
+	if (!html.includes("@")) return html;
+	const labels = (state.view?.members ?? [])
+		.map((member) => member.label)
+		.filter((label) => typeof label === "string" && label.length > 0)
+		// 长名字优先：有「前端工程」和「前端」两个人时，先匹配长的那个，
+		// 否则「@前端工程」会被拆成「@前端」+「工程」。
+		.sort((left, right) => right.length - left.length);
+	if (labels.length === 0) return html;
+
+	let depth = 0;
+	let out = "";
+	let index = 0;
+	while (index < html.length) {
+		const open = html.indexOf("<", index);
+		if (open === -1) {
+			out += highlightText(html.slice(index), labels, depth > 0);
+			break;
+		}
+		out += highlightText(html.slice(index, open), labels, depth > 0);
+		const close = html.indexOf(">", open);
+		if (close === -1) {
+			out += html.slice(open);
+			break;
+		}
+		const tag = html.slice(open, close + 1);
+		out += tag;
+		const name = /^<\/?([a-z0-9-]+)/i.exec(tag)?.[1];
+		if (name !== undefined && MENTION_TAGS_SKIP.test(name)) {
+			if (tag.startsWith("</")) depth = Math.max(0, depth - 1);
+			else if (!tag.endsWith("/>")) depth += 1;
+		}
+		index = close + 1;
+	}
+	return out;
+}
+
+/** 把一段纯文本里（不含标签）的 `@名字` 包成高亮 span。`insideSkip` 时原样返回。 */
+function highlightText(text, labels, insideSkip = false) {
+	if (insideSkip || text === "" || !text.includes("@")) return text;
+	let out = text;
+	for (const label of labels) {
+		const needle = `@${label}`;
+		if (!out.includes(needle)) continue;
+		// 只替换一次出现位置也无所谓重复：同名成员本来就不该有两个。
+		out = out.split(needle).join(`<span class="ch-at">${needle}</span>`);
+	}
+	return out;
+}
+
+/**
  * 正文气泡。
  *
  * 长报告（agent 经常一次输出几百行）在聊天流里会把别的消息全挤出屏幕。
  * 超过 ~28 行就折叠，点「展开全文」再看——和飞书/Slack 的长消息处理一致。
  */
-function renderBubble(text, seq) {
-	const html = renderMarkdown(text);
+/**
+ * 正文气泡。
+ *
+ * 长文折叠的阈值按 `kind` 分化（#13「上报精简」）：
+ *
+ * - `chat` / `question`：老板自己读的对话，28 行才折；
+ * - `report` / `decision` / `system`：**自动上报**——这类文本由 agent 生成，
+ *   动辄几十行把群聊刷屏，老板真正要的是「结论在哪」。所以超过 6 行就折，
+ *   只留开头几行当摘要，全文点开看。折叠不丢内容：完整 Markdown 仍然渲染，
+ *   只是视觉上收起来。
+ *
+ * 这个阈值只在**渲染层**：数据、上下文注入、审计都不受影响。
+ */
+const COLLAPSE_LINES = { chat: 28, question: 28, task: 12, ack: 6, report: 6, decision: 6, system: 6 };
+
+function renderBubble(text, seq, kind = "chat") {
+	const html = highlightMentions(renderMarkdown(text));
 	const lines = (text.match(/\n/g) ?? []).length + 1;
-	const long = lines > 28 || text.length > 1600;
+	const limit = COLLAPSE_LINES[kind] ?? 28;
+	const long = lines > limit || text.length > (limit >= 28 ? 1600 : limit * 60);
 	if (!long) return `<div class="ch-bubble">${html}</div>`;
 	// 展开状态存在 state 里而不是 DOM 上：消息流每次轮询全量重渲染，
 	// 只改 DOM 的 dataset 等于「点了展开，下一轮又收回去」。
@@ -1049,6 +1272,24 @@ function renderMsgHead(message) {
 		message.from === 0 ? `<span class="ch-tag ch-tag--owner">老板</span>` : "",
 		`<span class="ch-time">${escapeHtml(clockTime(message.at))}</span>`,
 		`</div>`,
+	].join("");
+}
+
+/**
+ * 引用块（#7）：这条消息在回复哪一条。
+ *
+ * 数据来自服务端 `replyTo`（`src/server/channels-view.ts` 现查原消息算的摘要）。
+ * 服务端查不到就不下发这个字段——被引用的消息可能已被 800 条上限裁掉，
+ * 也可能早于当前分页，这时界面上什么都不显示，比显示一个点不动的死链好。
+ */
+function renderQuote(message) {
+	const quoted = message.replyTo;
+	if (quoted === undefined || quoted === null) return "";
+	return [
+		`<button class="ch-quote" type="button" data-quote="${quoted.seq}">`,
+		`<b>${escapeHtml(quoted.fromLabel)}</b>`,
+		`<span>${escapeHtml(quoted.excerpt)}</span>`,
+		`</button>`,
 	].join("");
 }
 
@@ -1123,6 +1364,35 @@ function renderMembers() {
 	}
 }
 
+const TASK_STATUS_LABEL = {
+	todo: "待做",
+	doing: "在做",
+	blocked: "阻塞",
+	review: "待验收",
+	done: "已完成",
+	cancelled: "已取消",
+};
+
+/** 三段的顺序（#11）：在做 → 待做 → 已完成。取消的单独沉底。 */
+const TASK_SECTIONS = [
+	{ key: "active", label: "在做", statuses: ["doing", "review", "blocked"] },
+	{ key: "todo", label: "待做", statuses: ["todo"] },
+	{ key: "done", label: "已完成", statuses: ["done", "cancelled"] },
+];
+
+/**
+ * 侧栏任务区（#11 任务可追溯）。
+ *
+ * 旧实现是一条平铺列表，只显示 id / 标题 / 状态——老板从上面看不出
+ * 「谁在做、做了多久、烧了多少钱」，那正是 #11 要的。
+ *
+ * 现在按三段分组，每条补两行元信息：
+ * - 在做 / 已完成：耗时（`startedAt` → `doneAt ?? now`）
+ * - 已完成：token 与成本（`usage`，由后端在 `done` 时结算）
+ *
+ * 耗时每秒都在变，所以**不在这里自己定时重绘**——会话流本来就会周期性刷新
+ * （SSE / 轮询），`viewSignature` 会带上时间，跟着一起更新就够了。
+ */
 function renderTasks() {
 	const view = state.view;
 	if (view === null || el.tasks === null) return;
@@ -1130,25 +1400,57 @@ function renderTasks() {
 		el.tasks.innerHTML = `<li class="ch-empty ch-empty--inline">还没有任务</li>`;
 		return;
 	}
-	const statusLabel = {
-		todo: "待做",
-		doing: "在做",
-		blocked: "阻塞",
-		review: "待验收",
-		done: "已完成",
-		cancelled: "已取消",
-	};
-	el.tasks.innerHTML = view.tasks
-		.map(
-			(task) => [
-				`<li class="ch-task" data-status="${escapeAttr(task.status)}">`,
-				`<span class="ch-task-id">${escapeHtml(task.id)}</span>`,
-				`<span class="ch-task-title">${escapeHtml(task.title)}</span>`,
-				`<span class="ch-task-status">${escapeHtml(statusLabel[task.status] ?? task.status)}</span>`,
-				`</li>`,
-			].join(""),
-		)
-		.join("");
+	const now = Date.now();
+	const rows = [];
+	for (const section of TASK_SECTIONS) {
+		const items = view.tasks.filter((task) => section.statuses.includes(task.status));
+		// 「已完成」只留最近 5 条：任务多了以后侧栏会被历史撑满
+		const shown = section.key === "done" ? items.slice(-5).reverse() : items;
+		if (shown.length === 0) continue;
+		rows.push(`<li class="ch-task-group">${escapeHtml(section.label)} · ${items.length}</li>`);
+		for (const task of shown) rows.push(taskRowHtml(task, now));
+	}
+	el.tasks.innerHTML = rows.join("");
+}
+
+/** 一条任务：标题行 + 一行元信息（负责人 / 耗时 / 用量）。 */
+function taskRowHtml(task, now) {
+	const meta = [];
+	const assignee = state.view?.members.find((member) => member.id === task.assignee);
+	if (assignee !== undefined) meta.push(escapeHtml(assignee.label));
+	const elapsed = elapsedLabel(task, now);
+	if (elapsed !== "") meta.push(elapsed);
+	if (task.usage !== undefined && task.usage.tokens > 0) {
+		// 成本低于 1 分钱时不显示：`$0.00` 只会让人以为没花钱
+		const cost = task.usage.costUsd >= 0.01 ? ` · ${formatCost(task.usage.costUsd)}` : "";
+		meta.push(`${formatTokens(task.usage.tokens)}${cost}`);
+	}
+	return [
+		`<li class="ch-task" data-status="${escapeAttr(task.status)}">`,
+		`<span class="ch-task-title" title="${escapeAttr(task.title)}">`,
+		`<span class="ch-task-id">${escapeHtml(task.id)}</span>`,
+		escapeHtml(task.title),
+		`</span>`,
+		`<span class="ch-task-status">${escapeHtml(TASK_STATUS_LABEL[task.status] ?? task.status)}</span>`,
+		meta.length === 0 ? "" : `<span class="ch-task-meta">${meta.join(" · ")}</span>`,
+		`</li>`,
+	].join("");
+}
+
+/** 「做了 2 小时 15 分」；没有 `startedAt` 返回空串。 */
+function elapsedLabel(task, now) {
+	const start = task.startedAt;
+	if (start === undefined) return "";
+	// 终态用 `doneAt` 定格；还在跑就是「到现在为止」——所以每轮渲染都要重算（`now` 是入参）
+	const end = task.doneAt ?? now;
+	const ms = Math.max(0, end - start);
+	if (ms < 60_000) return "不到 1 分钟";
+	const minutes = Math.floor(ms / 60_000);
+	if (minutes < 60) return `${minutes} 分钟`;
+	const hours = Math.floor(minutes / 60);
+	const rest = minutes % 60;
+	if (hours < 24) return rest === 0 ? `${hours} 小时` : `${hours} 小时 ${rest} 分`;
+	return `${Math.floor(hours / 24)} 天`;
 }
 
 function renderBodyError(message) {
@@ -1444,6 +1746,23 @@ export function initChannels({ onToast, fetchProfile } = {}) {
 			return;
 		}
 		setReplyTo({ seq: found.seq, label: found.fromLabel, text: found.text });
+	});
+
+	// #7：点引用块跳到被引用的那条（找不到就提示，不要静默无反应）
+	el.body?.addEventListener("click", (event) => {
+		const button = event.target instanceof Element ? event.target.closest(".ch-quote") : null;
+		if (!(button instanceof HTMLElement)) return;
+		const seq = Number(button.dataset.quote);
+		const target = el.body?.querySelector(`.ch-msg[data-seq="${seq}"]`);
+		if (!(target instanceof HTMLElement)) {
+			notify("原消息已不在当前范围（可能太早，或被 800 条上限裁掉了）", "info");
+			return;
+		}
+		target.scrollIntoView({ block: "center", behavior: "smooth" });
+		target.dataset.flash = "true";
+		setTimeout(() => {
+			delete target.dataset.flash;
+		}, 1200);
 	});
 
 	el.replyCancel?.addEventListener("click", () => setReplyTo(null));

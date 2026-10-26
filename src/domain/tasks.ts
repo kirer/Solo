@@ -62,6 +62,28 @@ export type TaskEntry = {
 	/** 依赖的任务标识（用于看板显示阻塞关系，不参与调度）。 */
 	dependsOn: string[];
 	progress: TaskProgressNote[];
+	/**
+	 * 开工那一刻，负责人会话的累计用量（#11 任务成本）。
+	 *
+	 * 存**基线**而不是直接存「花了多少」：`UsageDoc` 只有累计值，没有时间轴；
+	 * 不记基线就算不出这个任务花了多少。基线在进入 `doing` 时由 IO 层
+	 * （`company/tasks.ts`）读一次写进来——纯函数不该自己去读用量文档。
+	 */
+	usageAtStart?: TaskUsage;
+	/**
+	 * 这个任务消耗的 token 与成本（#11）。
+	 *
+	 * 注意它**不是精确分摊**：同一个负责人并行做两个任务时，两人份的用量都会
+	 * 被算进先结束的那一个（会话用量是累计的，无法按任务切分）。这个字段的
+	 * 用途是「哪个任务特别烧钱」的量级判断，不是账目。
+	 */
+	usage?: TaskUsage;
+};
+
+/** 一段用量快照（token / 美元）。 */
+export type TaskUsage = {
+	tokens: number;
+	costUsd: number;
 };
 
 /** 任务文档。 */
@@ -224,6 +246,10 @@ export type TransitionPatch = {
 	/** 记这条的会话。 */
 	readonly by?: number;
 	readonly at?: number;
+	/** 开工基线（#11）：进入 `doing` 时由 IO 层读一次传进来。 */
+	readonly usageAtStart?: TaskUsage;
+	/** 结算用量（#11）：进入 `done` 时由 IO 层算好传进来。 */
+	readonly usage?: TaskUsage;
 };
 
 /** 迁移结果。 */
@@ -277,6 +303,11 @@ export function transitionTask(
 		...(to === "blocked" || current.blockedReason === undefined
 			? {}
 			: { blockedReason: undefined as never }),
+		// #11：开工基线只记第一次（重进 doing 不该把基线冲掉，否则用量从 0 重算）
+		...(patch.usageAtStart === undefined || current.usageAtStart !== undefined
+			? {}
+			: { usageAtStart: patch.usageAtStart }),
+		...(patch.usage === undefined ? {} : { usage: patch.usage }),
 		progress: note === undefined ? current.progress : [...current.progress, note],
 	};
 	// 清理 undefined 字段，保证 JSON 往返后结构稳定（底层文档要求严格 JSON）
@@ -352,6 +383,11 @@ export type BoardCard = {
 	readonly dependsOn: readonly string[];
 	/** 被依赖且未完成 → 卡片显示「等待 T-x」。 */
 	readonly waitingFor: readonly string[];
+	/** #11：开工时间（看板显示「已做 2 小时」）。 */
+	readonly startedAt?: number;
+	readonly doneAt?: number;
+	/** #11：这个任务消耗的 token / 成本。只有进入终态后才有。 */
+	readonly usage?: TaskUsage;
 };
 
 /**
@@ -383,6 +419,9 @@ export function boardOf(
 		...(task.evidence === undefined ? {} : { evidence: task.evidence }),
 		...(task.blockedReason === undefined ? {} : { blockedReason: task.blockedReason }),
 		dependsOn: task.dependsOn,
+		...(task.startedAt === undefined ? {} : { startedAt: task.startedAt }),
+		...(task.doneAt === undefined ? {} : { doneAt: task.doneAt }),
+		...(task.usage === undefined ? {} : { usage: task.usage }),
 		waitingFor: task.dependsOn.filter((id) => {
 			const dep = byId.get(id);
 			return dep !== undefined && !isTerminal(dep.status);

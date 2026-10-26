@@ -36,6 +36,7 @@ function definedTools(): Set<string> {
 		"src/company/tools/dispatch.ts",
 		"src/company/tools/universal.ts",
 		"src/company/roundtable-tools.ts",
+		"src/company/memory.ts",
 	]) {
 		const source = readFileSync(join(ROOT, file), "utf8");
 		for (const match of source.matchAll(/name: "([a-z_]+)"/g)) names.add(match[1] as string);

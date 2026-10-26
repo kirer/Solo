@@ -306,3 +306,50 @@ describe("超期提醒", () => {
 		expect(staleTasks(state, 99 * 60 * 60_000)).toEqual([]);
 	});
 });
+
+describe("#11 任务用量（usageAtStart / usage）", () => {
+	function makeTask(): TaskState {
+		return createTask(emptyTaskState(), { ...BASE, at: 1000 }).state;
+	}
+
+	test("进 doing 时写入基线；重进 doing 不覆盖已有基线", () => {
+		const state = makeTask();
+		const id = Object.keys(state.tasks)[0]!;
+		const started = transitionTask(state, id, "doing", { usageAtStart: { tokens: 500, costUsd: 0.05 }, at: 2000 });
+		expect(started.ok).toBe(true);
+		expect(started.task.usageAtStart).toEqual({ tokens: 500, costUsd: 0.05 });
+
+		// 阻塞后再开工：不能把基线冲掉，否则用量会从 0 重新算
+		const blocked = transitionTask(started.state, id, "blocked", { blockedReason: "等", at: 3000 });
+		const again = transitionTask(blocked.state, id, "doing", { usageAtStart: { tokens: 9000, costUsd: 0.9 }, at: 4000 });
+		expect(again.task.usageAtStart).toEqual({ tokens: 500, costUsd: 0.05 });
+	});
+
+	test("进 done 时结算用量", () => {
+		const state = makeTask();
+		const id = Object.keys(state.tasks)[0]!;
+		const started = transitionTask(state, id, "doing", { usageAtStart: { tokens: 500, costUsd: 0.05 }, at: 2000 });
+		const done = transitionTask(started.state, id, "done", { evidence: "测试通过", usage: { tokens: 1500, costUsd: 0.12 } });
+		expect(done.task.usage).toEqual({ tokens: 1500, costUsd: 0.12 });
+		expect(done.task.usageAtStart).toEqual({ tokens: 500, costUsd: 0.05 });
+	});
+
+	test("没传用量时不写字段（旧任务结构不受影响）", () => {
+		const state = makeTask();
+		const id = Object.keys(state.tasks)[0]!;
+		const started = transitionTask(state, id, "doing", { at: 2000 });
+		expect("usageAtStart" in started.task).toBe(false);
+	});
+
+	test("看板卡片带上 startedAt / usage", () => {
+		const state = makeTask();
+		const id = Object.keys(state.tasks)[0]!;
+		const started = transitionTask(state, id, "doing", { usageAtStart: { tokens: 1, costUsd: 0 }, at: 2000 });
+		const done = transitionTask(started.state, id, "done", { evidence: "ok", usage: { tokens: 10, costUsd: 0.001 }, at: 5000 });
+		const board = boardOf(done.state);
+		const card = board.columns.done[0]!;
+		expect(card.startedAt).toBe(2000);
+		expect(card.doneAt).toBe(5000);
+		expect(card.usage).toEqual({ tokens: 10, costUsd: 0.001 });
+	});
+});

@@ -63,6 +63,12 @@ export const CAPABILITIES: readonly Capability[] = [
 	// 如果它自己被延迟，模型就查不到自己的工具清单（自举悖论）。
 	{ name: "my_capabilities", layer: "universal", core: true, summary: "我当前真实可用的工具清单" },
 
+	// ── 记忆（#12）──
+	// memory_search 是核心：回答「以前怎么处理的」之前都要先查，
+	// 藏起来就等于逼模型凭印象答。memory_write 是低频动作，延迟。
+	{ name: "memory_search", layer: "universal", core: true, summary: "按关键词检索分层记忆（个人 / 项目 / 公司）" },
+	{ name: "memory_write", layer: "universal", core: false, summary: "把一条经验写进记忆（层级由角色决定）" },
+
 	// ── 员工 ──
 	{ name: "escalate", layer: "staff", core: true, summary: "向上逐级上报" },
 

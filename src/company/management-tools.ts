@@ -16,6 +16,7 @@ import {
 } from "./docs.ts";
 import { createRoundtableTools } from "./roundtable-tools.ts";
 import { createUniversalTools } from "./tools/universal.ts";
+import { createMemoryTools } from "./memory.ts";
 import { createDispatchTools } from "./tools/dispatch.ts";
 import {
 	archiveStaff,
@@ -145,6 +146,8 @@ export function createManagementTools(deps: ToolDependencies) {
 	// 通用工具（say / ask / read_channel / inbox / task_* / whoami）：
 	// 每个 agent 都该有，所以在这里统一构造，随 ManagementToolset 一起下发。
 	const universal = createUniversalTools({ runtime });
+	// 记忆工具（#12）：写/查分层经验。构造很轻（只包一层 IO）。
+	const memoryTools = createMemoryTools(runtime);
 	// 派活工具（异步版）：assign_task / ask_role / project_create
 	const dispatch = createDispatchTools({ runtime });
 
@@ -723,6 +726,8 @@ export function createManagementTools(deps: ToolDependencies) {
 		taskCreate: universal.taskCreate,
 		roundtable: roundtableTools.roundtable,
 		roundtableMinutes: roundtableTools.roundtableMinutes,
+		memoryWrite: memoryTools.memoryWrite,
+		memorySearch: memoryTools.memorySearch,
 		orgTree,
 		myCapabilities,
 		escalate,

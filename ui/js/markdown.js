@@ -2,7 +2,7 @@
  * 安全 Markdown 渲染。
  *
  * 原则：模型文本先全部转义，再拼接受控 HTML；不解释原始 HTML，不引入依赖。
- * 支持：h1–h3、粗体 / 斜体 / 删除线、链接、行内代码、围栏代码（语言 + 复制）、
+ * 支持：h1–h3、粗体 / 斜体 / 删除线、链接、**图片**、行内代码、围栏代码（语言 + 复制）、
  * 有序 / 无序 / 嵌套列表、任务列表、表格（可横向滚）、引用、分割线。
  *
  * 只导出 renderMarkdown(text) -> string。
@@ -45,7 +45,24 @@ function renderInline(raw) {
 		return `${SLOT}${slots.length - 1}${SLOT}`;
 	});
 
-	// 2. 链接：只允许安全协议，文本重新转义
+	// 2. 图片（需求 #6）：必须在链接**之前**处理，否则 `![alt](url)` 会被当成
+	//    `[alt](url)` 前面多一个 `!`。仍然只允许安全协议——图片是外链请求，
+	//    放行 `javascript:` 或协议相对地址等于给正文开一个任意 URL 的口子。
+	text = text.replace(/!\[([^\]\n]*)\]\(([^)\s]+)\)/g, (whole, alt, url) => {
+		const src = safeUrl(url);
+		if (src === "") {
+			slots.push(escapeHtml(whole));
+			return `${SLOT}${slots.length - 1}${SLOT}`;
+		}
+		// `loading=lazy`：一条消息里贴十张图也不会把首屏拖慢。
+		// 外层 span 承担样式与「点击放大」的落点（见 channels.js 的 deck 事件）。
+		slots.push(
+			`<span class="md-img"><img src="${escapeAttr(src)}" alt="${escapeAttr(alt)}" loading="lazy" decoding="async"></span>`,
+		);
+		return `${SLOT}${slots.length - 1}${SLOT}`;
+	});
+
+	// 3. 链接：只允许安全协议，文本重新转义
 	text = text.replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (whole, label, url) => {
 		const href = safeUrl(url);
 		if (href === "") {
@@ -58,10 +75,10 @@ function renderInline(raw) {
 		return `${SLOT}${slots.length - 1}${SLOT}`;
 	});
 
-	// 3. 其余先转义，再做强调
+	// 4. 其余先转义，再做强调
 	let html = emphasis(escapeHtml(text));
 
-	// 4. 还原占位符
+	// 5. 还原占位符
 	html = html.replace(new RegExp(`${SLOT}(\\d+)${SLOT}`, "g"), (_, index) => slots[Number(index)] ?? "");
 	return html;
 }

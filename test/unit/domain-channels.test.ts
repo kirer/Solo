@@ -362,3 +362,79 @@ describe("previewLine：列表预览剥掉 Markdown 记号", () => {
 		expect(previewLine("*强调* 和 a*b 都保留")).toBe("强调 和 a*b 都保留");
 	});
 });
+
+describe("#7 回复取代 @（replyTo）", () => {
+	/** 建两方私聊 + 一条可被回复的消息。 */
+	function dm(): { state: ChannelState; seq: number } {
+		let state = emptyChannelState();
+		state = createChannel(state, {
+			id: dmChannelId(20),
+			kind: "dm",
+			title: "林越",
+			members: [member(OWNER_ID, "owner", 1), member(20, "staff", 1)],
+			at: 1,
+		});
+		const first = appendMessage(state, dmChannelId(20), {
+			from: 20,
+			fromLabel: "林越",
+			kind: "chat",
+			text: "第一句",
+			at: 10,
+		});
+		return { state: first.state, seq: first.message.seq };
+	}
+
+	test("回复谁就等同 @ 谁（被回复的人进了 mentions，才会被唤醒）", () => {
+		const { state, seq } = dm();
+		// 老板在群聊场景回复（私聊本来就有隐式 @，所以用项目群验证回填逻辑）
+		const { message } = appendMessage(state, dmChannelId(20), {
+			from: OWNER_ID,
+			fromLabel: "老板",
+			kind: "chat",
+			text: "回复你",
+			replyTo: seq,
+			at: 20,
+		});
+		expect(message.replyTo).toBe(seq);
+		expect(message.mentions).toContain(20);
+	});
+
+	test("引用自己发的那条：引用成立，但不 @ 自己", () => {
+		const { state, seq } = dm();
+		const self = appendMessage(state, dmChannelId(20), {
+			from: 20,
+			fromLabel: "林越",
+			kind: "chat",
+			text: "接着我上面那句",
+			replyTo: seq,
+			at: 20,
+		});
+		expect(self.message.replyTo).toBe(seq);
+		expect(self.message.mentions).not.toContain(20);
+	});
+
+	test("不存在的 seq 会被忽略（不写悬空引用）", () => {
+		const { state } = dm();
+		const dangling = appendMessage(state, dmChannelId(20), {
+			from: OWNER_ID,
+			fromLabel: "老板",
+			kind: "chat",
+			text: "引用一个不存在的",
+			replyTo: 99999,
+			at: 21,
+		});
+		expect(dangling.message.replyTo).toBeUndefined();
+	});
+
+	test("未回复时不写 replyTo 字段（旧消息结构完全不受影响）", () => {
+		const { state } = dm();
+		const { message } = appendMessage(state, dmChannelId(20), {
+			from: OWNER_ID,
+			fromLabel: "老板",
+			kind: "chat",
+			text: "普通消息",
+			at: 22,
+		});
+		expect("replyTo" in message).toBe(false);
+	});
+});

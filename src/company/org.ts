@@ -635,6 +635,9 @@ export async function bootstrapCompany(
 		managementTools.inbox,
 		managementTools.taskList,
 		managementTools.taskUpdate,
+		// 记忆（#12）：员工写自己的经验层，也能检索项目层/公司层。
+		managementTools.memorySearch,
+		managementTools.memoryWrite,
 	]);
 
 	// 注册全部角色能力包（带工具）。底层按名字解析能力包，未注册的取不到。

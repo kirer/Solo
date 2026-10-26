@@ -37,6 +37,7 @@ import {
 	type TaskEntry,
 	type TaskState,
 	type TaskStatus,
+	type TaskUsage,
 	type TransitionPatch,
 } from "../domain/tasks.ts";
 import { projectChannelId, OWNER_ID } from "../domain/channels.ts";
@@ -44,7 +45,9 @@ import { labelOf, personOf } from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import { CompanyDoc } from "./docs.ts";
 import { postToChannel } from "./channels.ts";
+import { conversationUsage } from "./cost.ts";
 import { notify } from "./deliver.ts";
+import { memoryReminderFor } from "./memory.ts";
 
 /** 任务文档。 */
 export const TaskDoc = defineDoc<TaskState>({
@@ -219,11 +222,17 @@ export async function transitionTask(
 	patch: TransitionPatch & { readonly by?: number } = {},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<UpdateTaskResult> {
+	// #11：进入 doing 时记一次用量基线，进入 done 时结算差额。
+	// 必须在 commit **之前**读：用量文档和任务文档不在同一条 mutation line 上，
+	// 在 tx 里读会跨文档。读失败不阻断状态迁移（成本是附加信息，不是业务前提）。
+	const previous = await readTask(runtime, id, context);
+	const usagePatch = await usagePatchFor(runtime, previous, to, patch, context);
+
 	// 同 createTask：读改写全部落在同一条 mutation line 上，避免丢失更新。
 	const outcome = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(TaskDoc);
 		const state = doc as TaskState;
-		const result = transitionTaskPure(state, id, to, patch);
+		const result = transitionTaskPure(state, id, to, { ...patch, ...usagePatch });
 		if (!result.ok) return { ok: false as const, code: result.code, message: result.message };
 		// 按路径写：只写被改的那一条任务。
 		state.nextId = result.state.nextId;
@@ -286,6 +295,8 @@ export async function transitionTask(
 					`【任务${verb}】${task.id} ${task.title}`,
 					`负责人：${labelOf(org, task.assignee)}`,
 					detail,
+					// #12：完成时才提一句记忆。不强制写——强制的「记忆」只会是流水账。
+					...(to === "done" ? [memoryReminderFor(task.id)] : []),
 					`（讨论在频道 ${task.channelId}，用 read_channel 看上下文）`,
 				]
 					.filter((line) => line !== "")
@@ -293,9 +304,67 @@ export async function transitionTask(
 			},
 			context,
 		);
+		// ③ 完成时把「写一条经验」的提醒送进负责人自己的会话流。
+		//    刻意走 `wake: false`：这是提示，不是任务——为了提示再唤醒一轮
+		//    就是纯烧钱。它下次因任何原因醒来时会在上下文里看到。
+		if (to === "done") {
+			await notify(
+				runtime,
+				task.assignee,
+				{
+					kind: "app.memory-hint",
+					data: { taskId: task.id, title: task.title },
+					text: memoryReminderFor(task.id),
+					wake: false,
+				},
+				context,
+			);
+		}
 	}
 
 	return { ok: true, task, reported };
+}
+
+/**
+ * 算出这次迁移要顺带写入的用量字段（#11）。
+ *
+ * 只在两个时刻做：
+ * - 进 `doing`（或首次进 review/done 但还没有基线）→ 记 `usageAtStart`
+ * - 进 `done` → 用「当前累计 − 基线」结算 `usage`
+ *
+ * 读用量失败时返回空补丁：任务状态照常推进，只是没有成本数字。
+ * 宁可少一个数字，也不能因为统计问题让任务卡住。
+ */
+async function usagePatchFor(
+	runtime: CompanyRuntime,
+	previous: TaskEntry | undefined,
+	to: TaskStatus,
+	patch: TransitionPatch,
+	context: Context,
+): Promise<{ readonly usageAtStart?: TaskUsage; readonly usage?: TaskUsage }> {
+	if (previous === undefined) return {};
+	const needsBaseline = to !== "todo" && previous.usageAtStart === undefined;
+	const needsSettle = to === "done";
+	if (!needsBaseline && !needsSettle) return {};
+	if (patch.usageAtStart !== undefined || patch.usage !== undefined) return {};
+
+	try {
+		const usage = await conversationUsage(runtime, previous.assignee, context);
+		const current: TaskUsage = { tokens: usage.totalTokens, costUsd: usage.costUsd };
+		const baseline = previous.usageAtStart ?? current;
+		if (needsSettle) {
+			return {
+				...(needsBaseline ? { usageAtStart: baseline } : {}),
+				usage: {
+					tokens: Math.max(0, current.tokens - baseline.tokens),
+					costUsd: Math.max(0, Number((current.costUsd - baseline.costUsd).toFixed(6))),
+				},
+			};
+		}
+		return { usageAtStart: baseline };
+	} catch {
+		return {};
+	}
 }
 
 /** 派活：等价于「建任务」——保留旧名字让调用方平滑迁移。 */

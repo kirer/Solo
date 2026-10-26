@@ -182,7 +182,7 @@ createEmployeeExtension(employeeId, tools, univ)   // tools.ts:382   名字 role
 ### 4.3 工具：声明式能力目录 + 延迟加载（ADR-032）
 
 ```
-src/company/capabilities.ts    CAPABILITIES: 34 条，13 条 core，21 条 deferred
+src/company/capabilities.ts    CAPABILITIES: 36 条，14 条 core，22 条 deferred
                                layers: universal / exec / staff / leader / management / ceo
 src/company/tools.ts:29        deferNonCore(): 给非 core 的打 deferred:true，并补 tool_search
 src/company/tools/tool-search.ts:155  createToolSearchTool(): BM25 检索 → control.addTools
@@ -252,7 +252,24 @@ src/company/tasks.ts TaskDoc(app.tasks) + 读写 + 状态变化后写频道
 
 `task_update` 报 `done` 必须带 `evidence`，否则拒绝（`src/company/tools/universal.ts:460`）。
 
-### 4.7 看门狗 `src/company/watchdog.ts`
+任务进 `done` 时还会顺带做两件事：结算 token/成本（`usageAtStart` → `usage` 差额），
+并给它投一条 `app.memory-hint`（`wake: false`，只记录不唤醒）提醒写一条经验。
+
+### 4.7 记忆 `src/domain/memory.ts` + `src/company/memory.ts`（#12）
+
+```
+src/domain/memory.ts  纯逻辑：appendMemory（正文限长 + 同任务覆盖）
+                      compactMemory（超限折叠最老 20 条成阶段总结）
+                      rankMemory（标题 +3 / 标签 +2 / 正文 +1，无向量）
+                      renderMemoryBrief（最近 3 条 + 相关 2 条）
+src/company/memory.ts MemoryDoc(app.memory) + memory_write / memory_search 两个工具
+                      memoryActorOf()：按角色决定写哪一层（模型不能声明归属）
+```
+
+三层容量：staff 50 / project 100 / company 200。**读侧只有 `deliver()` 一个注入点**，
+项目层与公司层不进提示词，只在显式 `memory_search` 时读。
+
+### 4.8 看门狗 `src/company/watchdog.ts`
 
 ```ts
 startCompanyWatchdog(source, options)        // org.ts:776
@@ -267,7 +284,7 @@ WatchdogAction = abort|retry|drain|report|escalate-question|nudge-task|resurface
 
 每次动手写一条 `app.alert` 进会话流（`ALERT_ENTRY_KIND`）。
 
-### 4.8 决策路由的迁出
+### 4.9 决策路由的迁出
 
 `src/company/decision-routing.ts` 只有 7 行 re-export。真身在 `src/domain/routing.ts`——
 它是纯函数，本就不该和 IO 混在一起（2026-10-26 迁移，逻辑一行未改）。
@@ -286,6 +303,7 @@ src/company/channels-doc.ts:11 ChannelDoc  app.channels   deltasSinceBase >= 64
 src/company/escalation.ts:213  PendingDoc  app.pending
 src/company/roundtable.ts:121  RoundtableDoc app.roundtable
 src/company/tasks.ts:50        TaskDoc     app.tasks      deltasSinceBase >= 64
+src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 ```
 
 `src/company/docs.ts` 头注释讲了压基策略：**只增不改的文档按条目数判基（每 512 条），
@@ -298,6 +316,7 @@ src/company/tasks.ts:50        TaskDoc     app.tasks      deltasSinceBase >= 64
 `app.channel` `app.delegate` `app.task` `app.tasks` `app.task-report` `app.decision` `app.question`
 `app.receipt` `app.ack` `app.alert` `app.log` `app.trail` `app.message` `app.stop`
 `app.company` `app.profile` `app.channels` `app.pending` `app.audit` `app.budget` `app.anchor` `app.roundtable`
+`app.memory` `app.memory-hint`
 
 ---
 

@@ -67,6 +67,15 @@ export type ChannelMessage = {
 		pendingKey?: string;
 		projectSlug?: string;
 	};
+	/**
+	 * 这一条在回复哪一条（需求 #7「用回复取代 @」）。
+	 *
+	 * 只存 `seq`：`seq` 是全库单调的，永远是唯一锚点；把「对方名字 / 摘要」
+	 * 一起存进来就有两个真相源——对方改了名、或者原消息被 800 条上限裁掉，
+	 * 副本就和事实不一致了。渲染时由 `channels-view` 现查（查不到就只显示
+	 * 「回复了一条更早的消息」）。
+	 */
+	replyTo?: number;
 };
 
 /** 一个频道成员。 */
@@ -135,12 +144,18 @@ export function dmChannelId(conversationId: number): string {
 	return `dm:${conversationId}`;
 }
 
-/** 个人工作记录频道标识。 */
+/**
+ * 个人工作记录频道标识。
+ *
+ * @deprecated 需求 #4/#15 之后不再新建 `log:` 频道——工作记录改成私聊里的流水。
+ * 这个函数与 `parseChannelId` 的 `log` 分支**只为读旧库**保留：`kind` 是持久化
+ * 枚举，删掉会让老数据的频道反序列化时缺键。新代码一律用 `dmChannelId`。
+ */
 export function logChannelId(conversationId: number): string {
 	return `log:${conversationId}`;
 }
 
-/** 解析频道标识；不合法返回 undefined。 */
+/** 解析频道标识；不合法返回 undefined。（`log` 分支只为兼容旧库，见上方 `@deprecated`） */
 export function parseChannelId(id: string): { readonly kind: ChannelKind; readonly key?: string } | undefined {
 	if (id === COMPANY_CHANNEL) return { kind: "company" };
 	if (id === LEADERSHIP_CHANNEL) return { kind: "leadership" };
@@ -255,6 +270,8 @@ export type AppendInput = {
 	readonly text: string;
 	readonly mentions?: readonly number[];
 	readonly refs?: ChannelMessage["refs"];
+	/** 回复的目标消息 seq（需求 #7）。不存在或指向自己时会被忽略。 */
+	readonly replyTo?: number;
 	readonly at?: number;
 };
 
@@ -275,7 +292,14 @@ export function appendMessage(
 	if (channel === undefined) throw new Error(`频道不存在：${channelId}`);
 
 	const seq = state.nextSeq;
-	const mentions = resolveMentions(channel, input.from, input.mentions);
+	// #7：回复谁就等同于 @ 谁 —— 这是「回复取代 @」的核心语义。
+	// 不回填这一条，引用会变成纯装饰：被回复的人不会被唤醒，也就永远看不到回复。
+	const replyTarget = resolveReplyTarget(channel, input.from, input.replyTo);
+	// 引用自己发的那条是允许的（老板常要「接着我上面说的」），但**不加 @ 自己**——
+	// `resolveMentions` 本来就会剔掉发送方，这里显式跳过只是别让它白进一次集合。
+	const declared = [...(input.mentions ?? [])];
+	if (replyTarget !== undefined && replyTarget.from !== input.from) declared.push(replyTarget.from);
+	const mentions = resolveMentions(channel, input.from, declared);
 	const message: ChannelMessage = {
 		seq,
 		at: input.at ?? Date.now(),
@@ -286,6 +310,7 @@ export function appendMessage(
 		mentions,
 		readBy: [],
 		...(input.refs === undefined ? {} : { refs: input.refs }),
+		...(replyTarget === undefined ? {} : { replyTo: replyTarget.seq }),
 	};
 
 	const messages = [...channel.messages, message];
@@ -300,6 +325,26 @@ export function appendMessage(
 		},
 		message,
 	};
+}
+
+/**
+ * 校验一条回复指向哪儿。
+ *
+ * 只有「这个 seq 真的在本频道里」才算有效引用（引用自己发的那条也算——老板经常
+ * 要接着自己上面那句说）。放在 domain
+ * 而不是 HTTP 层，是因为 `appendMessage` 是唯一的落库入口——在这里校验，
+ * 任何来源（HTTP / 工具 / 系统通知）都不可能写进一条悬空引用。
+ */
+export function resolveReplyTarget(
+	channel: Channel,
+	from: number,
+	replyTo: number | undefined,
+): ChannelMessage | undefined {
+	if (replyTo === undefined) return undefined;
+	if (!Number.isFinite(replyTo)) return undefined;
+	const target = channel.messages.find((message) => message.seq === replyTo);
+	if (target === undefined) return undefined;
+	return target;
 }
 
 /**
