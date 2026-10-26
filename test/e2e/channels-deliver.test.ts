@@ -18,10 +18,12 @@ import {
 	postToChannel,
 	readChannel,
 	readChannels,
+	readOrg,
 	markMentionSeen,
 } from "../../src/company/channels.ts";
 import { createTask, transitionTask, readTask, projectBoard } from "../../src/company/tasks.ts";
 import { OWNER_ID } from "../../src/domain/channels.ts";
+import { labelOf } from "../../src/domain/membership.ts";
 import {
 	agentTools,
 	answer,
@@ -689,5 +691,40 @@ describe("未读数按读位置算", () => {
 
 		const channel = await readOne(runtime, "company", BACKGROUND_CONTEXT);
 		expect(channel?.lastSeq).toBeGreaterThan(0);
+	});
+});
+
+/**
+ * 正文里的 @ 必须在 `postToChannel` 里被解析。
+ *
+ * 真实事故（老板的「系统」项目）：CPO 用 `say` 发了一条
+ * 「@CEO「系统」项目已创建完成…」——`say` 的语义是「说一句，不唤醒任何人」，
+ * 它不解析正文，于是这条消息的 `mentions` 是空的，**CEO 从来没被唤醒**。
+ * 项目建好了、slug 报了，但整条链静默停摆：CEO 一直 idle，老板看到的是
+ * 「流程不动了」，而界面上一切正常（消息在、@ 在正文里、任务都 done）。
+ */
+describe("正文里的 @ 会唤醒人", () => {
+	test("say 只写正文 @，也会唤醒对方", async () => {
+		const { runtime } = await setup();
+		const channels = await readChannels(runtime, BACKGROUND_CONTEXT);
+		const channel = channels.channels["company"];
+		expect(channel).toBeDefined();
+		const { org } = await readOrg(runtime, BACKGROUND_CONTEXT);
+
+		// 找一个非老板、非发送者的人（发送者用 CPO = 19）
+		const target = Object.values(channel!.members)
+			.map((member) => member.conversationId)
+			.find((id) => id !== OWNER_ID && id !== 19);
+		expect(target).toBeDefined();
+		const targetLabel = labelOf(org, target!);
+
+		// 故意**不传** mentions：模拟 `say` 的行为
+		const posted = await postToChannel(
+			runtime,
+			"company",
+			{ from: 19, fromLabel: "CPO", kind: "chat", text: `@${targetLabel} 这条只说了一句话，但正文里有 @。` },
+			{ wake: false, context: BACKGROUND_CONTEXT },
+		);
+		expect(posted.message.mentions).toContain(target);
 	});
 });

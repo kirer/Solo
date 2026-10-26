@@ -200,9 +200,9 @@ export function createUniversalTools(deps: UniversalDeps) {
 	const say = defineTool({
 		name: "say",
 		description: [
-			"在当前频道发言（不 @ 任何人，不会唤醒别人）。",
+			"在当前频道发言。正文里写了 @某人 就会唤醒对方；不写 @ 就不唤醒任何人。",
 			"用于：汇报进展、陈述结论、记录决策、同步信息。",
-			"如果是要请别人回答或行动，用 ask（会 @ 并唤醒对方）。",
+			"如果是要请别人回答或行动，用 ask（语义更明确，会带上「我在等你回答」并触发超时升级）。",
 		].join(""),
 		parameters: Type.Object({
 			text: Type.String({ description: "要说的内容" }),
@@ -231,7 +231,7 @@ export function createUniversalTools(deps: UniversalDeps) {
 			return text(
 				`已发到「${channel.title}」（#${posted.message.seq}）。${
 					posted.delivery === undefined || posted.delivery.delivered.length === 0
-						? "没有唤醒任何人（没有 @）。"
+						? "没有唤醒任何人（正文里没有 @ 到本频道的人）。"
 						: `已通知：${posted.delivery.delivered.map((id) => labelOf(org, id)).join("、")}。`
 				}`,
 			);

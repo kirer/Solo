@@ -192,10 +192,33 @@ export async function postToChannel(
 			await ensureAllChannels(runtime, context);
 		}
 	}
+
+	// 解析 @ 要用**自愈之后**的成员表：刚入群的员工这一刻才第一次能被 @ 到。
+	const channelBefore = await readChannel(runtime, channelId, context);
+	if (channelBefore === undefined) throw new Error(`频道不存在：${channelId}`);
+	// **正文里的 @ 必须在这里解析**，不能只依赖调用方传 `mentions`。
+	//
+	// 真实事故（老板的「系统」项目）：CPO 用 `say` 发了一条
+	// 「@CEO「系统」项目已创建完成…」——`say` 的语义是「说一句，不唤醒任何人」，
+	// 它不解析正文，于是这条消息的 `mentions` 是空的，**CEO 从来没被唤醒**。
+	// 项目建好了、slug 报了，但整条链静默停摆：CEO 一直 idle，老板看到的是
+	// 「流程不动了」，而界面上一切正常（消息在、@ 在正文里、任务都 done）。
+	//
+	// 修在这里而不是修 `say`：这是**唯一**的发消息入口，所有工具（say / ask /
+	// assign_task / 系统通知 / HTTP 入站）都经过它。只在 `say` 里补一次，下次
+	// 新增的工具还会踩同一个坑。写了 @ 就该唤醒，这是人对「@」的唯一理解。
+	//
+	// `ask` / `assign_task` 已经自己解析过，重复解析是幂等的（Set 去重）。
+	const parsedMentions = parseMentions(input.text, channelBefore, org);
+	const input_: AppendInput =
+		parsedMentions.length === 0
+			? input
+			: { ...input, mentions: [...new Set([...(input.mentions ?? []), ...parsedMentions])] };
+
 	const result = await runtime.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const state = doc as ChannelState;
-		const next = appendMessage(state, channelId, input);
+		const next = appendMessage(state, channelId, input_);
 		// **按路径写，不整频道替换。**
 		//
 		// 演进过三版：①清空所有键再 Object.assign 整个 state（130KB/条）；
