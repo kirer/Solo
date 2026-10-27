@@ -1,9 +1,9 @@
 /**
  * 全部工具：**只有一套，人人都有。**
  *
- * 这里没有「管理层工具」「员工工具」「负责人工具」的分层。旧核心用「工具包不同」
- * 来实现「员工不能越级」（ADR-004），代价是：CEO 有 25 个工具、员工只有 6 个，
- * 想调一个人就得改代码重新部署；而「谁能做什么」本来该写在身份里。
+ * 这里没有「管理层工具」「员工工具」「负责人工具」的分层。按岗位发工具包来实现
+ * 「员工不能越级」，代价是：调一个岗位就要改代码重新部署，而「谁能做什么」
+ * 本来该写在身份里。
  *
  * 因此新核心的能力只有十来个，按「做一件事」划分，不按「谁配用」划分：
  *
@@ -30,16 +30,14 @@ import { join } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	Type,
-	defineExtension,
 	defineTool,
 	type Context,
 	type Harness,
 	type ToolRegistration,
 } from "../runtime/index.ts";
-import { OWNER_SLUG, chainUp, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
+import { OWNER_SLUG, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
 import {
 	copySkillDir,
-	listCompanySkills,
 	listSkills,
 	readSkill,
 	SKILL_FILE,
@@ -56,7 +54,6 @@ import { postMessage, type PostDeps } from "./post.ts";
 import {
 	ChannelDoc,
 	channelsOf,
-	dmId,
 	parseMentions,
 	personalId,
 	readMarkOf,
@@ -880,8 +877,4 @@ function renderLine(message: Message): string {
 	return `#${message.seq} ${time} ${message.from}${mentions}：${quoted}${message.text}`;
 }
 
-/** 把上面全部工具装成一个扩展。 */
-export function coreToolsExtension(deps: CoreToolDeps) {
-	return defineExtension({ name: "core-tools", tools: createCoreTools(deps) });
-}
 

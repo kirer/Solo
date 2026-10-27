@@ -1,13 +1,14 @@
 /**
- * 新核心的防腐层（世代 2）。
+ * 防腐层。
  *
- * 定位与 `src/runtime/` 相同：**唯一允许导入底层运行时库的地方**。
- * 与旧层的区别只有一条 —— 旧层不需要能力目录、执行环境注册表、看门狗恢复
- * 这些「公司特有」的东西，它们是业务层的错位，新层不转发它们。
+ * **唯一允许导入底层运行时库（pi-durable / pi-ai / chord）的地方**。
+ * 业务层不许直接 import 底层库，边界检查会拦。
  *
  * 这里只做两件事：
- * 1. 原样转发底层库的构造器与类型（业务层不能直接 import 底层库）；
+ * 1. 原样转发底层库的构造器与类型；
  * 2. 提供「打开一个库 + 一个 harness」这一个动作，不预置任何公司概念。
+ *
+ * 刻意不转发的：执行环境注册表、看门狗恢复、能力目录 —— 那些是业务层的错位。
  */
 export {
 	BACKGROUND_CONTEXT,
@@ -51,4 +52,4 @@ export type { JsonObject } from "@earendil-works/pi-durable";
 
 export { Type } from "@earendil-works/pi-ai";
 export { openCore, type CoreRuntime, type OpenCoreOptions } from "./open.ts";
-export { setupModels } from "../../runtime/models.ts";
+export { setupModels, type ModelSetup } from "./models.ts";

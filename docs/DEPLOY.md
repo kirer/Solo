@@ -1,208 +1,184 @@
-# 部署与访问（DEPLOY）
+# 部署与访问
 
-> 面向「把它跑起来、让手机/同事也能用」的运维文档。
-> 接口细节见 [WEB-API.md](WEB-API.md)；日常排障见 [RUNBOOK.md](RUNBOOK.md)。
+> 面向「把它跑起来、让手机/同事也能用」。接口细节见 [WEB-API](WEB-API.md)。
 
 ## 1. 运行形态
 
-只有一个进程：`src/server/main.ts`。它同时是：
+只有一个进程：`src/core/shell/main.ts`。它同时是：
 
-- HTTP 服务（静态界面 + `/api/*`）
-- agent 运行时（SQLite 数据库 + 后台任务）
+- HTTP 服务（静态界面 `ui/web/` + 8 条 `/api/*` 路由）
+- agent 运行时（SQLite + 后台任务）
 
-没有反向代理、没有独立数据库服务、没有鉴权层。数据全在 `workspace/`：
+没有反向代理、没有独立数据库服务、**没有鉴权层**、没有构建步骤。数据全在 `workspace/`：
 
 ```text
 workspace/
-  company.sqlite        # 组织、会话、任务、成本（单进程独占锁）
-  settings.json         # 设置页写的东西：network / models / im
-  logs/                 # 服务脚本的 stdout / stderr
-  uploads/<id>/<name>   # 对话附件
-  projects/<slug>/      # 各项目的工作空间
+  core.sqlite            # 频道、消息、会话、名册、沉淀游标（单进程独占锁）
+  settings.json          # 模型接入配置（可选）
+  agents/<slug>/         # 每个人：identity.md / memory.md / skills/
+  projects/<slug>/       # 每个项目：README.md / memory.md
+  skills/                # 公司层技能
 ```
+
+**`workspace/` 是唯一的真相**。删掉数据库不会丢掉「人是谁」——从 `agents/` 重建即可；
+反过来删掉 `agents/` 就没救了。备份先备份 `agents/`、`projects/`、`skills/`。
 
 ## 2. 本机启动
 
 ```bash
-# 开发 / 临时验证（推荐先这样，带临时库不污染正式数据）
-node --experimental-strip-types src/server/main.ts \
-  --port 7811 --host 127.0.0.1 \
-  --db /tmp/aic-dev.sqlite --workspace /tmp/aic-dev-ws --no-open
-
-# 正式：launchd 托管（后台常驻、崩溃自愈）
-./scripts/ai-company-service.sh start     # 等同全局命令 ai-company start
+npm start                      # = node --experimental-strip-types src/core/shell/main.ts
+npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 ```
 
-启动参数：
+参数：
 
-| 参数 | 环境变量 | 默认 | 说明 |
-| --- | --- | --- | --- |
-| `--port` | `PORT` | 7788 | 监听端口 |
-| `--host` | `AI_COMPANY_HOST` | 127.0.0.1 | 监听地址；`0.0.0.0` = 局域网可访问 |
-| `--db` | — | `workspace/company.sqlite` | 数据库路径（相对路径会转绝对） |
-| `--workspace` | — | `workspace/` | 工作空间（settings / uploads / projects） |
-| `--no-open` | — | 打开浏览器 | 不自动开浏览器 |
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `--port` | 7788 | 监听端口 |
+| `--host` | 127.0.0.1 | 监听地址；`0.0.0.0` = 局域网可访问 |
+| `--workspace` | `<cwd>/workspace` | 数据目录（数据库、agents、projects、skills 都在里面） |
+| `--no-seed` | 关 | 不播种助理。首次启动且 `agents/` 为空时会自动建一个叫「助理」的人并给两份技能 |
 
-优先级：命令行 > 环境变量 > `workspace/settings.json` 的 `network` 段 > 默认值。
-服务脚本写 plist 时会显式带上 `--port` / `--host`，`AI_COMPANY_HOST=0.0.0.0
-./scripts/ai-company-service.sh restart` 即可切到局域网模式。
+启动成功会打印监听地址和局域网地址。Ctrl-C 退出。
 
-**`start` 与 `restart` 的区别（容易踩）**：`start` 是幂等的——服务已在跑且健康时
-什么都不做，尤其不碰数据库锁；但如果这次的参数与 plist 里写的不一致，它会自动降级成
-`restart`（否则就是「带了新 `--host` 跑 `start`，它回一句『无需重启』，实际什么都没改」）。
-所以两个都可以用来改配置，不必记住哪个是哪个。`status` 会同时报「实际 bind 了什么」
-与「plist 写了什么」，两者不一致时会直接告诉你重启。
+**首次启动会做什么**：建 `workspace/` → 若 `agents/` 里一个人都没有，播种「助理」（含
+《立项》《招人》两份个人技能）→ 播种公司层技能《写技能》《找现成技能》→ 读模型配置 →
+开会话 → 建频道。这个过程不产生对外请求，模型不可用也能起来（只是 agent 不会回话）。
 
-`status` 里的「待你拍板」数是 `/api/org` 的 `pending[].forYou`（`decisionOwner === "owner"`），
-不是「所有人身上的未答复问题」——后者含管理层身上挂着的，拿它数会让老板
-以为一堆事等自己。旁边那个「CEO 攒着」是 `ceoQueue`。
+## 3. 模型接入
 
-## 3. 局域网访问（手机 / 同事）
+三种方式，优先级：环境变量 > `workspace/settings.json` > 本地网关默认值。
+
+### 本地网关（默认）
 
 ```bash
-node --experimental-strip-types src/server/main.ts --host 0.0.0.0
-# 或
-AI_COMPANY_HOST=0.0.0.0 ./scripts/ai-company-service.sh restart
+# 默认就连 http://127.0.0.1:3425/v1，模型 auto/deepseek-v4.1-flash
+npm start
 ```
 
-启动日志会打印全部非回环 IPv4 地址；设置页「访问」段与
-`GET /api/settings.network.lanUrls` 给出同样的清单，例如：
+需要本机有该网关在跑。换地址：
 
-```text
-  局域网（同一内网可访问）：
-    http://192.168.1.71:7788/
-  注意：服务没有鉴权，只在可信内网使用，不要暴露到公网。
+```bash
+COMMANDCODE_BASE_URL=http://127.0.0.1:3425/v1 npm start
 ```
 
-- macOS 首次监听非回环地址可能弹「是否允许传入连接」，选允许。
-- 手机打不开时先确认在同一 Wi-Fi、路由器没开 AP 隔离，再用
-  `curl http://<IP>:<port>/api/org` 验证。
-- 只监听回环时 `lanUrls` 为空是**有意的**：不输出连不上的地址。
+### 官方 API
 
-## 4. 安全边界（重要）
+```bash
+AI_COMPANY_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-... npm start
+AI_COMPANY_PROVIDER=openai    OPENAI_API_KEY=sk-...    npm start
+```
 
-这个服务**没有登录、没有 token、没有 CSRF 防护、没有 TLS**。任何能访问
-端口的人都可以：
+### settings.json
 
-- 读取全部对话与组织数据（`/api/channels/*`、`/api/org`）
-- 以老板身份发消息（`POST /api/channels/:id/messages`）、拍板（`/api/answer`）
-- 修改设置、增删模型
+```json
+{
+  "models": {
+    "default": "auto/deepseek-v4.1-flash",
+    "custom": [
+      { "id": "monotoo/gpt-6.1-sol", "provider": "openai-responses",
+        "baseUrl": "https://api.example.com/v1", "apiKeyEnv": "MONOTOO_KEY",
+        "contextWindow": 200000, "maxTokens": 32000, "label": "GPT-6.1 Sol" }
+    ]
+  }
+}
+```
 
-因此：
+`custom[]` 的每一项都是**新 provider**，`id` 里第一个 `/` 之前是 provider 名、之后是
+模型名（ADR-021）。`apiKeyEnv` 是环境变量名，不写明文。
 
-1. **只绑定 `127.0.0.1` 或可信内网地址**。不要在公网 VPS 上直接
-   `--host 0.0.0.0`，也不要做路由器端口映射 / 公网反向代理。
-2. 需要远程访问时，用 **SSH 隧道** 或 **Tailscale / WireGuard** 之类
-   的私有网络，而不是把端口裸露出去：
-   ```bash
-   ssh -L 7788:127.0.0.1:7788 user@mac-mini   # 本地浏览器开 http://127.0.0.1:7788
-   ```
-3. `settings.json` 里的模型 `apiKey` 是**明文**。
-   不要把这个文件提交到 git、不要丢进共享目录；换密钥时直接改设置页。
-4. 端口本身没有身份认证：能连上 7788 的人就等于老板（见上一节）。
-   一旦发现端口可能被外网触达：先 `stop` 服务，轮换模型 key，再检查 `workspace/logs/`。
+**排障第一招**：如果所有人都不回话，先看这个模型引用能不能解析。
 
-### Docker 下的额外注意
+```bash
+# 看当前生效的模型
+node --experimental-strip-types -e '
+process.env.X=1; const {setupModels}=await import("./src/core/runtime/models.ts");
+const m = setupModels(process.env, { workspace: "workspace" });
+console.log(m.defaultModel, m.models.map(x=>x.id ?? x.modelId));'
+```
 
-- `docker-compose.yml` 把端口映射为 `"7788:7788"`（所有网卡）。只想本机
-  访问时改成 `"127.0.0.1:7788:7788"`。
-- 容器里的「本机」不是宿主机的本机：本地模型网关要写
-  `http://host.docker.internal:3425/v1`（compose 已给示例）。
-- 需要把容器里的服务暴露到局域网时，`AI_COMPANY_HOST=0.0.0.0` 且端口映射
-  不能绑 `127.0.0.1`；安全边界同上，**仅在可信内网**这样做。
+错误信息 `Model <provider>/<id> is not available` = 引用对不上，改 `settings.json` 或
+环境变量。历史事故：`settings.json` 里给**内置模型**改名，导致注册表出现两条同 id 的
+provider，默认模型解析歧义后回落到 `no_model`，全公司静默不回复，界面上看不出任何错。
+V2 已经删掉「覆盖内置模型」这整套机制，`custom[]` 只能新增。
+
+## 4. 局域网访问
+
+```bash
+AI_COMPANY_HOST=0.0.0.0 npm start
+# 或 npm start -- --host 0.0.0.0
+```
+
+然后手机访问 `http://<本机局域网 IP>:7788/`（启动日志里会打印所有可用地址）。
+
+**安全边界（必读）**：
+
+- 服务**没有鉴权**，也没有 HTTPS。任何能连到这个端口的人都能以老板身份说话、看所有频道。
+- 只在可信内网用。**不要**做公网端口映射、不要在咖啡厅 WiFi 上开 `0.0.0.0`。
+- 需要公网访问就用 SSH 隧道或 WireGuard，不要直接暴露。
+- 端口上的 `*` 路由会把 `ui/web/` 之外的一切 404，没有目录穿越（越界路径会被拒），
+  但**这不是**安全边界。
 
 ## 5. Docker
-
-### 一键起
 
 ```bash
 docker compose up -d --build
 docker compose logs -f
-# 打开 http://127.0.0.1:7788/
+docker compose down
 ```
 
-镜像选择「直接跑 TypeScript」而不是 `tsc` 构建：运行时只需要源码 + 依赖，
-少一层 `dist/` 与构建产物不一致的风险（Node 22 的 `--experimental-strip-types`
-只擦除类型，不做类型检查；类型检查在 CI/开发机用 `npx tsc --noEmit`）。
+`docker-compose.yml` 里已经处理了两件容易踩的事：
 
-### 数据持久化
+- **`AI_COMPANY_HOST=0.0.0.0`**：容器内必须监听所有网卡，否则宿主机连不上。
+- **`COMMANDCODE_BASE_URL=http://host.docker.internal:3425/v1`**：容器里的
+  `127.0.0.1` 是容器自己，不是宿主机。用本地网关时必须显式指向宿主机。
 
-compose 默认用命名卷 `ai-company-workspace`。想直接看到文件：
+工作区是命名卷 `ai-company-workspace`。想直接看到文件就改成 bind mount：
 
 ```yaml
 volumes:
   - ./workspace:/app/workspace
 ```
 
-Linux 上需先把目录交给容器用户（镜像里是 uid 1000 的 `node`）：
+Linux 上需要先 `mkdir -p workspace && sudo chown -R 1000:1000 workspace`（容器以
+`uid 1000` 的 `node` 用户运行）。
+
+镜像用 `node --experimental-strip-types` 直接跑源码，**不需要 `tsc` 构建**。`test/`、
+`docs/`、`seed/` 不进镜像。
+
+## 6. 备份与恢复
 
 ```bash
-mkdir -p workspace && sudo chown -R 1000:1000 workspace
+# 备份（数据库要在停服后拷，或者用 sqlite 的在线备份）
+tar czf backup-$(date +%Y%m%d).tar.gz workspace/agents workspace/projects workspace/skills
+
+# 恢复
+tar xzf backup-20261027.tar.gz
 ```
 
-### 模型与密钥
+`workspace/agents/`、`projects/`、`skills/` 是纯文本目录，可以直接 `git init` 进版本库
+（仓库根的 `.gitignore` 忽略了 `workspace/`，如果想让它们进版本库要单独建仓库或改忽略）。
 
-- 默认走本地 Command Code 网关；容器内要用
-  `COMMANDCODE_BASE_URL=http://host.docker.internal:3425/v1`。
-- 用官方 Anthropic / OpenAI 时在 compose 里设置 `AI_COMPANY_PROVIDER` 与
-  对应 `*_API_KEY`，或启动后在设置页「添加模型」（需重启容器生效）。
-- 不要在镜像里 bake 密钥；用 compose 的 `environment` / `env_file`。
+数据库 `core.sqlite` 里存的是频道消息、会话、名册、沉淀游标。丢了它等于丢掉全部聊天
+记录，但人还在、频道会在下次启动时按 `agents/` + `projects/` 重建（消息没了）。
 
-### 健康检查与升级
+## 7. 排障
 
-```bash
-docker compose ps                     # healthcheck 打 /api/org
-docker compose pull && docker compose up -d --build   # 升级（先备份 workspace）
-```
-
-停止前尽量让它正常退出（`docker compose down` 会发 SIGTERM）：
-数据库锁、事件日志、在途任务的收尾都依赖正常退出。
-
-## 6. Tauri 桌面壳评估（只给结论，不实现）
-
-**结论：可行，但这一轮不做；推荐路径是「Tauri 壳 + Node sidecar」，不要用
-Rust 重写服务端。**
-
-评估依据：
-
-| 维度 | 结论 |
+| 症状 | 先看这个 |
 | --- | --- |
-| node:sqlite | 底层用 Node 内置 `node:sqlite`，**没有原生 npm 模块**，因此不需要为每个平台重编 SQLite，sidecar 方案最大的坑不存在 |
-| 运行时 | 需要把 Node ≥22.19 作为 sidecar 打进安装包（约 50–80MB）；Tauri 的 `externalBin` 正是为此设计 |
-| 前端 | 现有 `ui/` 是纯静态页面，Tauri WebView 直接指 `http://127.0.0.1:<port>/` 即可，不用改前端 |
-| 生命周期 | 需要 Tauri 负责 start/stop sidecar、随机端口、单实例锁（`instance-lock` 已存在）、退出时优雅关停；launchd 方案下这些由系统代管，迁到 App 内要自己写 |
-| 分发 | macOS 需要签名 + 公证；Windows 安装包、自动更新都要额外工程；Linux AppImage/deb 相对容易 |
-| 复杂度 | 真正麻烦的是「App 退出时后台任务怎么办」：老板可能期望关窗后 agent 继续跑，这需要一个常驻守护进程 + 菜单栏 App，而不是纯壳 |
+| 界面能开，但 agent 不说话 | §3 的模型解析；`tasks` 表里 `kind='pi.generation'` 的失败原因 |
+| agent 说话了，但回在别的频道 | `directory.wake` —— 他去「最后被叫到的频道」回话；老板发的消息必须先记 wake |
+| 改了 `identity.md` 没生效 | 提示词每次发送前重新读盘，所以下一条消息就该生效。没生效说明改的是别人的文件 |
+| 启动很慢 | 名册是不是每人一次 commit；`agents/` 里是不是有几百个目录 |
+| 828 端口被占 | `lsof -nP -iTCP:7788 -sTCP:LISTEN` |
 
-推荐分两步：
+日志直接打到 stderr，没有日志文件、没有轮转。要留档就
+`npm start 2>&1 | tee -a /tmp/aic.log`。
 
-1. **现在**：保持 `launchd` 常驻 + 浏览器访问（本文第 2 节）。零新增工程，
-   已经满足「点开就用」。
-2. **将来做桌面 App**：Tauri 2 + `externalBin` 打包 Node sidecar，WebView
-   指向 sidecar 的 `127.0.0.1:<随机端口>`；sidecar 用 `--no-open` 启动，
-   App 负责端口发现与优雅退出；workspace 固定在
-   `~/Library/Application Support/ai-company/`。先只做 macOS 签名版。
+## 8. 定时沉淀
 
-不推荐：Electron（体积更大、没有收益）、Rust 重写服务端（sqlite 协议、
-任务恢复、pi-durable 语义全部重来，风险极高）。
+服务每 5 分钟扫一次所有项目，把「已经有人拍板但还没人整理成记忆」的结论叫负责人去写
+（`src/core/project/settle.ts` 的 `settleProjects`）。这是正常行为，不是 bug。
 
-## 7. 备份 / 迁移
-
-```bash
-./scripts/ai-company-service.sh stop        # 先停，避免拷到写一半的库
-tar czf ai-company-$(date +%F).tar.gz workspace
-```
-
-迁移到新机器：装 Node ≥22.19 → 拷 `workspace/` → `npm ci` →
-`./scripts/ai-company-service.sh start`。`settings.json` 里的 `apiKey`
-是明文，跨越不可信介质时先删掉、到新机器再填。
-
-## 8. 排障速查
-
-| 现象 | 先看 |
-| --- | --- |
-| 端口被占用 / EADDRINUSE | `lsof -nP -iTCP:7788 -sTCP:LISTEN`；确认没有第二个实例（数据库有独占锁） |
-| 手机打不开 | 是否 `--host 0.0.0.0`、同一网段、防火墙/AP 隔离；`lanUrls` 是否为空 |
-| 加了模型不生效 | `restartRequired` 为 true 时需重启服务；重启后看启动日志里的 `模型：` |
-| 设置页保存失败 | 看响应状态：400 = 参数不合法，409 = 模型重名，500 = workspace 不可写 |
-| 服务日志 | `workspace/logs/server.log` / `server.err.log`（`ai-company logs`） |
+如果 agent 忙，这个请求会用 `whenBusy: "followUp"` 排在当前这轮之后 —— 记忆整理不该
+打断手头的事。

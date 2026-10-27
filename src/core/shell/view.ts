@@ -1,18 +1,17 @@
 /**
  * 把核心的状态翻译成**界面要的那份 JSON**。
  *
- * 这一层只有一个职责：让 `ui/js/` 不用改一行就认得出新核心。形状是照旧核心的
- * `/api/channels` + `/api/channels/:id` + `/api/stream/org` 抄的，字段名、可空性、
- * 单位都对得上（前端是既成事实，改它比改这里贵得多）。
+ * 这一层只有一个职责：把文件夹与频道翻译成 `ui/web/js/` 要吃的 JSON。
+ * 核心的真相是 slug 与文件，界面要的是排序过的列表与可点的锚点，翻译在这。
  *
- * 两个刻意保留的「旧」概念，都是界面需要、而核心不需要的：
+ * 两个「界面需要、核心不需要」的概念，是这一层存在的全部理由：
  * - **数字 id**：界面到处用 `conversationId` 做 key（成员、@ 对象、看板卡片）。
  *   核心的稳定标识是 slug，但界面上要一个能排序、能当 DOM 属性的东西。这里把
  *   slug → 会话 id 的映射拿出来当 id 用，界面对它一无所知。
  * - **`kind`**：界面按 `company/leadership/project/dm` 分组。核心没有频道类型，
  *   这里从频道 id 前缀猜（`dm:` → dm，`proj:` → project，其余 → company）。
  */
-import { readAllIdentities, OWNER_SLUG, chainUp, reportsOf, type Identity } from "../agent/identity.ts";
+import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
 import { conversationFor, type DirectoryState } from "../agent/roster.ts";
 import { unreadCount, readMarkOf, type Channel, type ChannelState, type Message } from "../channel/state.ts";
 
@@ -34,7 +33,7 @@ export type ViewChannelKind = "company" | "leadership" | "project" | "dm";
 /** `dm` 房间的两种含义。非 `dm` 频道没有这个字段。 */
 export type ViewDmKind = "personal" | "direct";
 
-/** 频道列表项（对应旧核心 `ChannelListItem`）。 */
+/** 频道列表项。 */
 export type ViewChannel = {
 	id: string;
 	kind: ViewChannelKind;
@@ -52,10 +51,9 @@ export type ViewChannel = {
 	lastAt: number;
 	lastSeq: number;
 	memberCount: number;
-	openTasks: number;
 };
 
-/** 一条消息（对应旧核心 `MessageView`）。 */
+/** 一条消息。 */
 export type ViewMessage = {
 	seq: number;
 	at: number;
@@ -69,51 +67,42 @@ export type ViewMessage = {
 	read: boolean;
 };
 
-/** 成员（对应旧核心 `ChannelView["members"]`）。 */
+/** 成员。 */
 export type ViewMember = { id: number; slug: string; label: string; role: string; unread: number };
 
-/** 频道详情（对应旧核心 `ChannelView`）。 */
+/** 频道详情。 */
 export type ViewChannelDetail = {
-	channel: Omit<ViewChannel, "unread" | "mentions" | "preview" | "openTasks">;
+	channel: Omit<ViewChannel, "unread" | "mentions" | "preview">;
 	members: ViewMember[];
 	messages: ViewMessage[];
 	hasMore: boolean;
-	tasks: never[];
-	pending: never[];
 	serverNow: number;
 };
 
-/** 组织图上的一个人（对应旧核心 `ActorView`）。 */
-export type ViewActor = {
-	conversationId: number;
-	/** 稳定标识。`conversationId` 是界面用的旧 id，slug 才是核心的真相。 */
-	slug: string;
-	label: string;
-	subtitle: string;
-	kind: "owner" | "role" | "project" | "staff";
-	status: "busy" | "waiting" | "error" | "idle";
-	tokens: number;
-	awaitingYou: number;
-	unanswered: number;
-	activity: string;
-	project?: string;
-	parent?: string;
-	parentSlug?: string;
-	model?: string;
-	/** `identity.md` 正文（档案页要显示「他是谁」，只有 slug 不够）。 */
-	body?: string;
+/**
+ * 组织快照。
+ *
+ * 只装**界面真会看**的东西。「有没有新消息」靠 SSE 这条事件本身通知（界面收到就重拉列表），
+ * 所以早先那版为旧界面凑的 `projects` / `pending` / `costs` / `links` / `ceoQueue` 全删了 ——
+ * 那些字段一个消费者也没有，留着只会让下一个人以为「这里有业务概念」。
+ */
+export type ViewOrg = {
+	company: { name: string };
+	/** 全部人，按「离老板最近」优先排序（第一项是那个直接向老板汇报的人）。 */
+	people: ViewActor[];
 };
 
-/** 组织快照（对应旧核心 `OrgView`）。 */
-export type ViewOrg = {
-	company: { name: string; model: string };
-	ceo: ViewActor;
-	roles: ViewActor[];
-	projects: never[];
-	pending: never[];
-	ceoQueue: number;
-	costs: { totalTokens: number; totalCostUsd: number; byProject: never[] };
-	links: never[];
+/** 组织图上的一个人。 */
+export type ViewActor = {
+	/** 稳定标识。核心只用这个。 */
+	slug: string;
+	label: string;
+	title: string;
+	project?: string;
+	manager?: string;
+	managerLabel?: string;
+	/** `identity.md` 正文 —— 档案页要显示「他是谁」，只有 slug 不够。 */
+	body: string;
 };
 
 /** 频道 id → 界面种类。核心没有类型这个概念，只能从命名约定反推。 */
@@ -138,11 +127,6 @@ function dmKindOf(channel: Channel): ViewDmKind {
 }
 
 /** `dm:owner-<slug>` 里那个 slug。不是个人频道时返回 undefined。 */
-function dmSubjectOf(channel: Channel): string | undefined {
-	if (kindOf(channel.id) !== "dm") return undefined;
-	const others = channel.members.filter((slug) => slug !== OWNER_SLUG);
-	return others.length === 1 ? others[0] : undefined;
-}
 
 /** 由 slug 拿界面 id（会话号）。名册里没有的给 -1，界面上会显示成一串连不上的节点。 */
 function idOf(directory: DirectoryState, slug: string): number {
@@ -210,10 +194,9 @@ export function channelList(
 			lastAt: last?.at ?? channel.createdAt,
 			lastSeq: last?.seq ?? 0,
 			memberCount: channel.members.length,
-			openTasks: 0,
 		});
 	}
-	// 界面期望「最近的在前」：旧核心按 lastAt 降序给。
+	// 界面期望「最近的在前」。
 	return out.sort((left, right) => right.lastAt - left.lastAt);
 }
 
@@ -298,8 +281,8 @@ export function channelDetail(
 			id: idOf(directory, slug),
 			slug,
 			label: labelIn(directory, slug),
-			// `role` 的价值在界面：项目频道里要一眼看出谁是负责人。旧核心用岗位枚举，
-			// 这里只用三种能从文件里读出来的事实（老板 / 项目负责人 / 成员）。
+			// `role` 的价值在界面：项目频道里要一眼看出谁是负责人。只用三种能从文件里
+			// 读出来的事实（老板 / 项目负责人 / 成员），不引岗位枚举。
 			role:
 				slug === OWNER_SLUG
 					? "owner"
@@ -310,8 +293,6 @@ export function channelDetail(
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
 		hasMore: start > 0,
-		tasks: [],
-		pending: [],
 		serverNow: Date.now(),
 	};
 }
@@ -319,59 +300,25 @@ export function channelDetail(
 /**
  * 组织快照。
  *
- * 新核心里**没有项目、没有岗位枚举、没有成本**（它们是旧核心的业务概念），所以
- * `projects` / `pending` / `costs` 一律给空。界面上表现为「组织图只有一层人、没有
- * 项目卡、没有待办红点」——这正是新核心当前的真实状态，不装样子。
+ * 只给「有谁、谁向谁汇报」这两件事。人按「离老板最近」优先排序：`manager` 是老板的
+ * 排最前，其余按报名顺序 —— 界面左侧成员列表直接用这个顺序。
  */
 export function orgView(identities: readonly Identity[], directory: DirectoryState, companyName = "一人公司"): ViewOrg {
 	const toActor = (identity: Identity): ViewActor => ({
-		conversationId: idOf(directory, identity.slug),
 		slug: identity.slug,
 		label: identity.name ?? identity.slug,
-		subtitle: identity.title ?? identity.slug,
-		kind: "role",
-		status: "idle",
-		tokens: 0,
-		awaitingYou: 0,
-		unanswered: 0,
-		activity: "",
+		title: identity.title ?? "",
 		...(identity.project === undefined ? {} : { project: identity.project }),
-		...(identity.manager === undefined
-			? {}
-			: { parent: labelIn(directory, identity.manager), parentSlug: identity.manager }),
+		...(identity.manager === undefined ? {} : { manager: identity.manager }),
+		...(identity.manager === undefined ? {} : { managerLabel: labelIn(directory, identity.manager) }),
 		body: identity.body,
 	});
 
-	// 「离老板最近的人」= manager 是 owner 的那一个。没有就退化成一个占位节点，
-	// 否则界面上的 `.org-head` 是空的（旧核心永远有 CEO）。
-	const nearest = identities.find((identity) => identity.manager === OWNER_SLUG) ?? identities[0];
-	const head: ViewActor =
-		nearest === undefined
-			? {
-					conversationId: 0,
-					slug: OWNER_SLUG,
-					label: "老板",
-					subtitle: "还没有人向你汇报",
-					kind: "owner",
-					status: "idle",
-					tokens: 0,
-					awaitingYou: 0,
-					unanswered: 0,
-					activity: "",
-				}
-			: { ...toActor(nearest), kind: "role" };
-
-	const roles = identities.filter((identity) => identity.slug !== nearest?.slug).map(toActor);
-
+	const nearest = identities.filter((identity) => identity.manager === OWNER_SLUG);
+	const rest = identities.filter((identity) => identity.manager !== OWNER_SLUG);
 	return {
-		company: { name: companyName, model: "" },
-		ceo: head,
-		roles,
-		projects: [],
-		pending: [],
-		ceoQueue: 0,
-		costs: { totalTokens: 0, totalCostUsd: 0, byProject: [] },
-		links: [],
+		company: { name: companyName },
+		people: [...nearest.map(toActor), ...rest.map(toActor)],
 	};
 }
 
@@ -386,49 +333,4 @@ export function withLabels(directory: DirectoryState, identities: readonly Ident
 	const labels: Record<string, string> = { ...(directory.labels ?? {}) };
 	for (const identity of identities) labels[identity.slug] = identity.name ?? identity.slug;
 	return { ...directory, labels };
-}
-
-/** 一位 agent 的档案（对应旧核心 `ActorProfile`，界面用 `ui/js/profile.js` 渲染）。 */
-export async function actorProfile(
-	agentsRoot: string,
-	identity: Identity,
-	all: readonly Identity[],
-	model: string,
-	registered: readonly string[],
-): Promise<{
-	conversationId: number;
-	label: string;
-	kind: "owner" | "role" | "project" | "staff";
-	subtitle: string;
-	role?: string;
-	project?: string;
-	parent?: string;
-	model: string;
-	charter: string;
-	guide?: string;
-	tools: { name: string; description: string }[];
-}> {
-	const line = chainUp(all, identity.slug);
-	const team = reportsOf(all, identity.slug);
-	const charter = [
-		identity.body.trim(),
-		"",
-		`## 汇报线\n${line.length === 0 ? "（直接向老板汇报）" : line.join(" → ")}`,
-		team.length === 0 ? "" : `## 直接向你汇报\n${team.map((item) => `- ${item.name}（${item.title ?? item.slug}）`).join("\n")}`,
-	]
-		.filter((part) => part !== "")
-		.join("\n");
-	return {
-		conversationId: -1,
-		label: identity.name ?? identity.slug,
-		kind: "role",
-		subtitle: identity.title ?? identity.slug,
-		...(identity.title === undefined ? {} : { role: identity.title }),
-		...(identity.project === undefined ? {} : { project: identity.project }),
-		...(identity.manager === undefined ? {} : { parent: identity.manager }),
-		model,
-		charter,
-		// 工具清单**从注册表实拍**，不读任何清单文件：档案页要说的是「它真能调什么」。
-		tools: registered.map((name) => ({ name, description: "" })),
-	};
 }

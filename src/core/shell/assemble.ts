@@ -14,22 +14,20 @@
  * 谁是「离老板最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
  */
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
 import {
 	BACKGROUND_CONTEXT,
-	createRegistry,
 	defineExtension,
 	type Context,
-	type JsonObject,
 } from "../runtime/index.ts";
 import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { agentSection, renderAgentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
-import { ChannelDoc, OWNER, channelsOf, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
+import { ChannelDoc, OWNER, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
 import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleProject, settleProjects } from "../project/settle.ts";
@@ -49,7 +47,7 @@ export type CoreShellOptions = {
 	 *
 	 * **必须给**：底层建会话时不带 model 就是「没有模型」，第一次生成会直接失败并报
 	 * `no_model`（实测：老板 @ 助理，助理一句话都说不出来，界面上看不出任何异常）。
-	 * 旧核心是在 `hireStaff` 里 `conversation.configure({ model })` 补的，新核心统一在这里补。
+	 * 统一在这里补：装配时给每个会话对齐一次模型，而不是在每个新建入口里各写一遍。
 	 */
 	readonly defaultModel?: { readonly provider: string; readonly modelId: string };
 };
@@ -534,11 +532,6 @@ function makeAfterPost(
 			context,
 		);
 	};
-}
-
-/** 建空的注册表（外壳自己的构造器，省得调用方记顺序）。 */
-export function createCoreRegistry(): Registry {
-	return createRegistry();
 }
 
 /**

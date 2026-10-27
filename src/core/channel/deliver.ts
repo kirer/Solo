@@ -4,14 +4,13 @@
  * 这是新核心里唯一的跨 agent 原语，只有一条硬约束：
  *
  * **不等待回复。** 消息已经落在频道文档里了，投递只负责「叫醒」。答案从频道
- * 异步回来，发送方不等。旧核心为这一点写了 400 行带回执、看门狗、重投、
- * `unanswered` 第三态的实现 —— 那些都是「不等待」的代价，在有数据库和
- * 崩溃恢复之前是必要的。这里先只保留最核心的两条：
+ * 异步回来，发送方不等。不回执、不看门狗、不重投 —— 那些都是「不等待」的代价，
+ * 等真出现「投了但没人醒」再补。现在只守两条：
  *
  * 1. 一条投递失败不影响其余（逐条 try/catch）。
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
-import type { Conversation, Harness } from "../runtime/index.ts";
+import type { Conversation } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import {
 	type Channel,
@@ -100,7 +99,6 @@ export function renderDigest(state: ChannelState, slug: string, limit = 5): stri
  * 这是崩溃恢复下的至少一次语义想要的。
  */
 export async function deliver(
-	harness: Harness,
 	options: DeliverOptions,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<DeliverResult> {

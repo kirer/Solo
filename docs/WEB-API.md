@@ -1,346 +1,226 @@
-# 网页 API 契约（WEB-API）
+# 网页 API 契约
 
-> 这份文档是 `src/server/http.ts` 暴露给 `ui/` 的**唯一契约**。
-> 前端只按这里的字段写，后端改字段必须同步这里；原则：**只增不改**。
->
-> 所有接口都在同一个端口（默认 `127.0.0.1:7788`）下，无鉴权、无 CORS
-> （同源页面直接调）。JSON 一律 UTF-8；错误统一为 `{ "error": "人话" }` 加非 2xx 状态码。
+前端只按这份写；后端改字段必须同步这里。**代码是唯一事实**，本文档与
+`src/core/shell/serve.ts` 冲突时以代码为准，并回来改这份文档。
 
-## 0. 快速索引
+## 0. 总览
+
+只有 8 条路由（按方法+路径算；按路径去重是 7 条 —— `check-boundaries.mjs` 数的是去重后的
+路径），全部在 `src/core/shell/serve.ts` 的 `routes` 表里声明。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
-| GET | `/api/org` | 组织快照（CEO/高管/项目/员工/待办/成本/连线） |
-| GET | `/api/stream/org` | 组织快照 SSE |
-| GET | `/api/profile/:conversationId` | 角色档案（章程 / 技能 / 工具） |
-| POST | `/api/answer` | 拍板回答一条待决问题 |
-| **GET / PATCH** | **`/api/settings`** | **设置：网络 / 模型** |
-| **POST / PATCH / DELETE** | **`/api/models`** | **新增 / 编辑 / 删除模型（含内置模型的改名、隐藏、设默认）** |
-| **GET** | **`/api/board`** | **任务看板（doing / todo / done）** |
-| GET | `/api/channels/:id` | 频道视图（消息 + `acks` 受理回执，见 §10.6） |
+| `GET` | `/api/stream/org` | 组织快照流（SSE） |
+| `GET` | `/api/org` | 组织快照（一次） |
+| `GET` | `/api/channels` | 频道列表 |
+| `POST` | `/api/channels` | 新建频道 |
+| `GET` | `/api/channels/:id/mentionable` | 这个频道能 @ 谁 |
+| `GET` | `/api/channels/:id` | 频道详情（含消息） |
+| `POST` | `/api/channels/:id/messages` | 发一条消息 |
+| `POST` | `/api/channels/:id/read` | 标已读到某条 |
+| `*` | 其余 | 静态文件（`ui/web/`） |
 
-加粗的是本轮新增。以下逐条写清字段、边界与错误。
+所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
+**前端必须检查 `response.ok`** —— `ui/web/js/api.js` 就是这么做的，直接 `res.json()`
+会把失败当成成功（第一代最常吞掉的正是这类失败）。
 
----
+`check-boundaries.mjs` 会检查这张表里的每条 `pattern` 都在 `ui/web/js` 里被请求过。
+白名单只有 `/api/org`（Docker 健康检查用）。
 
-## 1. `GET /api/settings`
+## 1. `GET /api/stream/org`
 
-一次拿全设置页需要的两段。**`network` 报的是实际监听值**（不是 settings.json
-里的期望值）；`models.default` 报的是当前生效 / 期望的默认模型。
+SSE。事件名 `org`，`data` 是 [§2](#2-get-api.org) 的完整快照。
 
-```jsonc
+```
+retry: 1500
+
+event: org
+data: {"company":{...},"people":[...]}
+
+: ping
+```
+
+- 任何文档提交都会触发推送，**去抖 120ms**。
+- 空闲时每 15s 一个 `: ping` 注释行保活。
+- 每帧是**完整快照**，不是增量。前端收到就重拉需要的列表。
+- 断线由 `EventSource` 自己重连。
+
+## 2. `GET /api/org`
+
+```ts
 {
-  "network": {
-    "port": 7788,
-    "host": "127.0.0.1",          // 实际监听地址；0.0.0.0 表示所有网卡
-    "lanUrls": ["http://192.168.1.71:7788/"], // 非回环 IPv4；只监听回环时为空
-    "url": "http://127.0.0.1:7788/"           // 浏览器应打开的地址
-  },
-  "models": {
-    "default": "commandcode/auto/deepseek-v4.1-flash",
-    "catalog": [
-      {
-        "id": "auto/deepseek-v4.1-flash",
-        "name": "DeepSeek v4.1 Flash（本地网关）",
-        "provider": "commandcode",
-        "inputPerMTok": 0,          // 美元 / 百万输入 token（可选）
-        "outputPerMTok": 0,         // 美元 / 百万输出 token（可选）
-        "source": "builtin"         // builtin | custom
-      },
-      {
-        "id": "gpt-5-mini",
-        "name": "GPT-5 mini",
-        "provider": "openai",
-        "baseUrl": "https://api.openai.com/v1", // 仅自定义模型有
-        "inputPerMTok": 0.25,
-        "outputPerMTok": 2,
-        "contextWindow": 400000,    // 仅自定义模型有
-        "maxOutput": 128000,        // 仅自定义模型有
-        "source": "custom"
-      }
-    ],
-    // true = settings.json 与进程启动时不一致，改动要重启服务才生效
-    "restartRequired": true
-  },
-  "im": {
-    "enabled": false,
-    "outboundWebhook": "",
-    "inboundToken": "",
-    "accounts": [
-      { "id": "a1", "channel": "wechat", "name": "老板微信", "enabled": true, "note": "可选" }
-    ]
-  }
+  company: { name: string },              // 固定 "一人公司"
+  people: ViewActor[]                     // 按「离老板最近」排序，第一项是直接向老板汇报的人
+}
+
+type ViewActor = {
+  slug: string;         // 稳定标识，核心只用这个
+  label: string;        // 显示名（identity.md 的 name）
+  title: string;
+  project?: string;     // identity.md 的 project
+  manager?: string;     // slug；undefined = 直接向老板汇报
+  managerLabel?: string;
+  body: string;         // identity.md 正文（档案页要显示「他是谁」）
 }
 ```
 
-说明：
+## 3. `GET /api/channels`
 
-- `models.default` 用 `provider/modelId` 表示；但 PATCH 时传 catalog 里的 `id`
-  （或唯一的 modelId）也可以。
-- 自定义模型只有在**重启后**才会真正出现在运行时模型集合里（`restartRequired` 的由来）。
-- `network.lanUrls` 的规则：监听 `127.0.0.1` → `[]`；监听 `0.0.0.0` / `::`
-  → 全部非回环 IPv4；监听具体网卡地址 → 只列它自己。IPv6 不列（手机输入体验差）。
-
-## 2. `PATCH /api/settings`
-
-请求体是上面的**结构子集**，按段浅合并：
-
-```jsonc
+```ts
 {
-  "network": { "host": "0.0.0.0", "port": 7788 },
-  "models": { "default": "gpt-5-mini" },
-  "im": {
-    "enabled": true,
-    "outboundWebhook": "http://127.0.0.1:9700/hook",
-    "inboundToken": "change-me",
-    "accounts": [ /* 整段替换：传什么就是什么，传 [] 清空 */ ]
-  }
+  channels: ViewChannel[],          // 按 lastAt 降序
+  unread: { total: number, mentions: number }
+}
+
+type ViewChannel = {
+  id: string;
+  kind: "company" | "leadership" | "project" | "dm";
+  dmKind?: "personal" | "direct";   // 仅 kind === "dm"
+  owner?: string;                   // 仅 kind === "project"：README.md 的 owner
+  ownerLabel?: string;
+  title: string;
+  project?: string;                 // 仅 kind === "project"
+  unread: number;
+  mentions: number;                 // 未读里点名提到我的条数
+  preview: string;                  // 最后一条的第一行，最多 60 字
+  lastAt: number;                   // 毫秒时间戳
+  lastSeq: number;
+  memberCount: number;
 }
 ```
 
-- `im.accounts` **整段替换**，不做逐项 merge。
-- `models.catalog` 只读，不参与 PATCH；增删模型用 `/api/models`。
-- `network` / `models` 的改动写入 `workspace/settings.json`，**下次启动生效**；
-  `restartRequired`。
-- 校验失败返回 `400`；成功返回**完整 GET 结构**（含 `restartRequired`），
-  前端不用再补一次 GET。
+**`kind` 是从 id 前缀反推的**（`kindOf()`），核心没有「频道类型」这个概念：
 
-## 3. `POST /api/models`
+| id 前缀 | kind |
+| --- | --- |
+| `dm:` | `dm` |
+| `proj:` | `project` |
+| `lead:` | `leadership` |
+| 其余（默认 `company`） | `company` |
 
-请求体是**扁平的模型对象**（没有包裹层）：
+**`dmKind` 的两种含义**（都是两个成员的一对一房间，收件人规则、未读、渲染完全一样）：
 
-```jsonc
-{
-  "id": "gpt-5-mini",              // 必填，字母数字开头，可含 . _ - : @ /
-  "name": "GPT-5 mini",            // 可选，默认 = id
-  "provider": "openai",            // openai-responses | anthropic | openai，默认 openai-responses
-  "baseUrl": "https://api.openai.com/v1", // 可选，必须是 http(s)
-  "apiKey": "sk-...",              // 可选，明文本机存储（见安全提醒）
-  "inputPerMTok": 0.25,
-  "outputPerMTok": 2,
-  "contextWindow": 400000,
-  "maxOutput": 128000
+- `personal` = 某人自己的频道（`dm:owner-<slug>`）。他的过程落在这里，它同时是拍板链的
+  顶端 —— 「他拍不了板就问我」问的就是这里。
+- `direct` = 老板去找某人说话。
+
+判据：成员里除老板外**恰好一个人** → `personal`；否则 `direct`（目前非老板的两人私聊
+不存在，因为只有老板能发起对话）。
+
+## 4. `POST /api/channels`
+
+```ts
+// 请求
+{ id: string, title?: string, members?: string[] }
+// 响应
+{ ok: true, id: string }
+```
+
+老板自动入列。同名频道已存在则原样返回（幂等）。`id` 为空 → 400。
+
+## 5. `GET /api/channels/:id/mentionable`
+
+```ts
+{ candidates: { id: number, label: string, slug: string }[] }
+```
+
+成员里除老板外的人。`id` 是会话号（名册里没有的人给 `-1`）。频道不存在时给
+`{ candidates: [] }` 而不是 404 —— 输入框的 @ 补全不该因为频道刚被删就报错。
+
+## 6. `GET /api/channels/:id`
+
+Query：`limit`（默认 60，夹在 1..200）、`before`（seq，往前翻页）。
+
+```ts
+type ViewChannelDetail = {
+  channel: Omit<ViewChannel, "unread" | "mentions" | "preview">;
+  members: ViewMember[];
+  messages: ViewMessage[];
+  hasMore: boolean;      // 前面还有更早的
+  serverNow: number;     // 毫秒。前端据此算相对时间，避免用本机时钟比服务端时间
+}
+
+type ViewMember = {
+  id: number;
+  slug: string;
+  label: string;
+  role: "owner" | "lead" | "member";   // 老板 / 项目负责人 / 成员
+  unread: number;
+}
+
+type ViewMessage = {
+  seq: number;
+  at: number;
+  from: number;          // 会话号；老板是 0
+  fromSlug: string;
+  fromLabel: string;
+  kind: string;          // chat | question | decision | report | ...
+  text: string;
+  mentions: { id: number, label: string, read: boolean, offset: number }[];
+  replyTo?: { seq: number, from: number, fromSlug: string, fromLabel: string, excerpt: string };
+  read: boolean;         // 从老板视角
 }
 ```
 
-响应 `200`：
+- `role` 只用三种**能从文件里读出来**的事实，不引岗位枚举：老板 / 项目负责人 / 成员。
+- `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
+- `replyTo.excerpt` 最多 60 字。
+- 频道不存在 → 404 `{ error: "频道不存在或无权查看" }`。
 
-```jsonc
+## 7. `POST /api/channels/:id/messages`
+
+```ts
+// 请求
 {
-  // 同时返回完整 GET /api/settings 结构（network / models / im），
-  // 前端可以一次 applySettings，不用再补一次 GET。
-  "network": { /* ... */ },
-  "models": { /* ... */ },
-  "im": { /* ... */ },
-  "ok": true,
-  "model": { /* 与 GET catalog 里的 custom 项同结构 */ },
-  "restartRequired": true
+  text: string,          // 必填，trim 后不能为空
+  replyTo?: number,      // 引用回复的 seq
+  from?: string,         // 发件人 slug；省略 = 老板。只有调试/脚本用，界面永不传
+  kind?: string          // 语义标签，省略 = chat
 }
+// 响应
+{ ok: true, seq: number, delivered: number, failed: number }
 ```
 
-错误：`400` 参数不合法（id 非法 / baseUrl 非 http(s) / 设置不是对象）；
-`409` id 重复或与内置模型重名。
+- `text` 为空 → 400；频道不存在 → 404。
+- `kind` 由**说话的人自己声明**。项目频道里带 `decision` / `report` 的话才会触发项目
+  记忆沉淀（`src/core/project/settle.ts`）。
+- 投递是异步的：`delivered` / `failed` 是本条消息唤醒了几个人，**不是**他们的回答。
+- 前端拿到响应后不要自己插一条消息，等 SSE 推新快照。
 
-## 4. `PATCH /api/models?id=<id>`
+## 8. `POST /api/channels/:id/read`
 
-**编辑**一条已存在的模型。老板 2026-10 追加（原契约只有 POST/DELETE，
-设置页里模型只能增不能改）。
-
-- 内置模型（`source: "builtin"`）不能改 `id` / `provider` / `baseUrl`，
-  只能改 `name`（显示名）、`inputPerMTok`、`outputPerMTok`、
-  `contextWindow`、`maxOutput`、以及 `default?: boolean`。
-- 自定义模型字段可全改；改 `id` 等价于「新建一条 + 隐藏旧的」。
-- `default: true` 会把 `models.defaultRef` 指向本模型（重启后生效）。
-- 内置条目发生覆盖时，落库的是一条 `{ builtin: <原 id>, hidden?: false, ... }`
-  的覆盖项（`CustomModelSettings.builtin`），**不改代码里的内建目录**。
-
-响应与 POST 同款：完整 GET 结构 + `{ ok, model, restartRequired }`。
-`404` 表示这个 id 不存在。
-
-## 5. `DELETE /api/models?id=<id>`
-
-- **自定义模型**：真删（`settingsStore.removeModel`），响应带完整 GET 结构。
-- **内置模型**：不能真删（它来自代码里的内建目录），改为写一条
-  `{ builtin: id, hidden: true }` 覆盖项把它**从视图里隐藏**，并就地改
-  `models.defaultRef` 退到剩下的第一条（`fallbackDefaultAfterRemoving`），
-  否则重启后默认模型会指向一个已隐藏的 id。
-- 完全不认识的 id：`404`。
-
-两者都需要重启才从运行时模型集合里消失。
-
-## 8. `GET /api/board`
-
-看板数据全部由现有运行时推导（不建新表），三列固定：
-
-```jsonc
-{
-  "generatedAt": 1792903266540,
-  "columns": [
-    { "id": "doing", "title": "进行中", "items": [ /* BoardItem */ ] },
-    { "id": "todo",  "title": "待办",   "items": [ /* BoardItem */ ] },
-    { "id": "done",  "title": "最近完成", "items": [ /* BoardItem */ ] }
-  ]
-}
+```ts
+// 请求
+{ seq: number }
+// 响应
+{ ok: true }
 ```
 
-`BoardItem`：
+把老板在这个频道里的已读位置推到 `seq`。只前进，不回退。
 
-```jsonc
-{
-  "id": "doing-12",             // 列内唯一
-  "title": "正在实现登录页",     // 一句话摘要（≤200 字）
-  "project": "tank-battle",     // 可选：项目 slug
-  "projectName": "坦克大战",     // 可选：项目显示名
-  "owner": 12,                  // 可选：负责人会话标识（与 conversationId 相同）
-  "ownerLabel": "林越",          // 显示名
-  "status": "busy",             // busy | waiting | queued | idle | done
-  "conversationId": 12,         // 前端跳转以此为准
-  "href": "#/c/12",             // 便利字段：hash 路由
-  "at": 1792900000000           // 可选：发生/提问时间（毫秒）
-}
-```
+## 9. 静态文件
 
-数据来源：
+其余所有路径都当静态文件处理，根目录是 `ui/web/`（`serve.ts` 的 `uiDir` 默认值）：
 
-| 列 | 来源 | status |
-| --- | --- | --- |
-| doing | 忙碌会话（`inspectLiveness`）+ 最近活动一句话 | `busy` |
-| todo | 未答复的待决项（`listPending`） | `waiting` |
-| todo | 已提交但还在排队的消息（`InboxDoc`） | `queued` |
-| done | 最近 24 小时完成的一轮助手回复（每会话取最新一条） | `done` |
+- 越界保护：解析后的路径必须仍在根目录下。
+- 无扩展名的路径回退到 `index.html`（SPA）。
+- 入口 `index.html` 不缓存（`no-cache`），其余 `max-age=300, must-revalidate`。
+- 带 ETag，支持 `br` / `gzip` 协商。
 
-## 10. 局域网访问
+界面**没有构建步骤** —— 改 `ui/web/` 里的文件，刷新浏览器就生效。
 
-- 默认监听 `127.0.0.1`：只有本机能访问。
-- `--host 0.0.0.0`（或 `AI_COMPANY_HOST=0.0.0.0`）监听所有网卡；启动日志与
-  `GET /api/settings.network.lanUrls` 会列出全部非回环 IPv4 地址。
-- 服务**没有鉴权**：任何能访问该端口的人都能读全部对话、发消息、改设置。
-  只应在可信内网使用；不要做公网端口映射 / 反向代理。安全边界见
-  [DEPLOY.md](DEPLOY.md)。
+## 10. 已知限制
 
-## 10.5 待办与拍板投递
+- **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
+- **没有工具调用 trace**。`ViewMessage` 只有消息正文，看不到 agent 中间调了哪些工具。
+- **没有待办 / 任务 / 成本**。第一代有，当前核心一个都没有，界面相应位置是空的
+  （ADR-016：不画后端没有的东西）。
+- **不能发图片 / 附件**。只有文本。
+- **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。
 
-待办（`pending`）由两个入口下发（`GET /api/pending` 已删除，见 ADR-040）：
+## 11. 兼容性纪律
 
-- **频道视图**（`GET /api/channels/:id` 的 `pending` 字段，见 §10.6）——界面在读的地方。
-- **组织快照**（`GET /api/org` 的 `pending[]` + `ceoQueue`）——运维脚本与看板用。
-
-处置（驳回 / 标记已解决）后条目从上面两个入口消失，只留一条审计事件在提问方
-会话的 `AuditDoc` 里（`type: "dispose"`，`note` 形如 `rejected: 理由`）。**没有归档
-查询接口**：`?archive=1` 在界面从未被读过，已按 ADR-040 删除。
-
-每条的形状：
-
-```jsonc
-{
-  "key": "esc:7:1",
-  "question": "要不要把公司搬到杭州？",
-  "from": "CTO",
-  "decisionOwner": "owner",
-  "askedAt": 1792900000000,
-  "disposition": false,          // true = 处置类（暂搁 / 放弃）
-  "options": [{ "id": "shelve", "label": "暂搁", "recommended": true }]
-}
-```
-
-三点约定（都是踩过的坑）：
-
-1. **待办和聊天是同一件事**。一条待决问题本质就是「有人在等你回话」，所以它
-   出现在频道消息流里，不另开顶部黄框区域。同一条问题渲染两次、答完还没反应，
-   是用户明确报过的问题。
-2. **答复必须投递给真实提问方**。`POST /api/answer` 成功后，`deliverDecision()`
-   会把拍板结果落成一条 **`kind: "decision"` 的频道消息**（有私聊投私聊，否则投
-   公司大群，必要时现场建那条私聊），`mentions` 指向真实发起人
-   （`pending.originConversationId`，不是被改写成 CEO 的 `fromConversationId`），
-   由频道机制唤醒它继续干活。
-   落地在频道而不是会话流，是因为拍板结果要能被翻回去、能被 @ 回、能进未读摘要
-   ——会话流里一条 note 三样都做不到（ADR-040）。
-3. `options` 由服务端给（解析在服务端一处），界面不再自己猜：
-   把「1. 读文件」这种步骤渲染成可点按钮，点一下就会把步骤当答案发出去。
-
-## 10.6 频道视图 `GET /api/channels/:id`
-
-`?limit=`（默认 50，夹在 1–200）、`?before=`（取 `seq` 更早的一页）。返回
-`{ channel, members, messages, hasMore, tasks, pending, serverNow }`，字段定义见
-`src/server/channels-view.ts` 的 `ChannelView`。这里只钉易错的那部分：`MessageView.acks`。
-
-### `MessageView.acks`：老板消息的受理回执
-
-`app.ack` 是**会话流里的 `write` 条目**（CEO/项目负责人自己的对话里），不是频道消息；
-频道视图把它投影成 `acks`，老板才能在**自己发的那条消息下面**看到「已排队 / 处理中」。
-
-```jsonc
-"messages": [
-  {
-    "seq": 12, "at": 1793046450628, "from": 0, "fromLabel": "老板",
-    "kind": "chat", "text": "看下进度", "mentions": [], "read": true,
-    "acks": [
-      {
-        "at": 1793046450700,
-        "plan": "立即处理",              // 或 "当前工具结束后处理"
-        "busy": false,                   // 写回执时对方是否正忙
-        "busyWith": null,               // busy 时它手上的工具名
-        "conversationId": 1              // 回执发给了谁（对应 members[].id）
-      }
-    ]
-  }
-]
-```
-
-约定（都是踩过的坑）：
-
-1. **关联靠 `messageSeq`，不靠时间也不靠顺序**。服务端写 `app.ack` 时把它指向的频道消息
-   `seq` 一起落库；投影只收 `data.channelId === 本频道 && data.messageSeq === 这条消息 seq`
-   的条目，所以**别的消息的回执不会串过来**。`acks` 缺省（字段不存在）= 这条消息没有回执。
-2. **不回显 `text`**。`app.ack` 的 `text` 只是老板发言的前 280 字，频道里已有全文，
-   再显示一遍就是重复；界面只显示状态（`plan` / `busy` / `busyWith`）。
-3. **不是每种消息都有 `acks`**。只有老板（`from === 0`）发言才写回执；员工报告、系统消息、
-   任务卡永远没有。
-4. **装填有上限**：`readChannelView` 只对**最新 20 条老板消息**回查回执（每个目标会话扫最新
-   60 条条目，再按 `messageSeq` 过滤）。更早的消息要靠翻页、翻页后重新装填。理由：这个
-   接口被轮询，逐条扫全库会话条目会拖慢大频道；20 / 60 足够覆盖「刚发完等反馈」这个场景。
-5. **`ack` 不是 `deliveredTo`**。`deliveredTo` 是给看门狗用的 submission 回执，语义不同，
-   两者不要混用；`acks` 只读、不影响投递与重投。
-
-## 10.7 频道列表 `GET /api/channels`
-
-频道列表项（`ChannelListItem`，`src/server/channels-view.ts`）里有两个**容易混淆**的
-计数字段，别用错：
-
-```jsonc
-{
-  "unread": [
-    {
-      "id": "proj:dino-game",
-      "kind": "project",
-      "title": "dino-game",
-      "mentions": 2,          // 未读的 @ 我 的条数 —— 需要我点开
-      "unread": 7,            // 未读消息总条数
-      "openTasks": 3,         // 本项目未完成（非终态）任务数 —— 只是背景信息
-      "preview": "…", "lastAt": 0, "lastSeq": 0, "memberCount": 2
-    }
-  ],
-  "mentions": 2,              // 全站 @ 我 的总数（顶栏徽章）
-  "total": 9
-}
-```
-
-- **`openTasks` 只在列表级有**。频道详情（`GET /api/channels/:id`）给的是
-  `tasks: TaskEntry[]`（完整对象），没有 `openTasks` 这个数字——需要计数时自己数
-  `tasks.length`。这个不对称是有意的：列表要轻，详情要全。
-- **三个数的视觉权重不一样**（`ui/css/channels.css` 的 `.ch-row-tasks` 注释）：
-  `mentions` 是最强的（要你动手指），`unread` 次之，`openTasks` 最弱
-  （`var(--surface-3)` 底、`var(--muted)` 字、10px）——任务是背景，不是待办提醒。
-- **`openTasks` 会漏掉终态任务**：口径是 `!isTerminal(status)`，即 `todo` / `doing` /
-  `blocked` / `review` 都算。`done` 与 `cancelled` 不算。
-
-## 11. 已知限制
-
-- **没有附件上传能力**（ADR-040 删掉了 `/api/upload` 与 `/uploads/*`）：
-  后端与接口文档曾经都有，但界面从来没有接上过入口，于是两边都当它不存在。
-  要重新加，先想清楚「谁在什么场景下真的会传文件」，再一起加前后端。
-
-## 12. 兼容性纪律
-
-- 字段**只增不改**：删字段 / 改语义必须同步改前端与本文档。
-- 新增错误码只用 `400 / 403 / 404 / 409 / 413 / 503`，不要发明 4xx 之外的业务码。
+1. 加字段随便加（前端忽略未知字段）。
+2. **不许改字段含义**，尤其是 `read` / `unread` / `mentions` 这种带状态的 —— 宁可加新字段。
+3. 删字段前先 grep `ui/web/js` 确认没有消费者，然后同步删这段文档。
+4. 新增路由必须在前端有消费者，否则 `npm run check` 会失败（`check-boundaries.mjs`）。

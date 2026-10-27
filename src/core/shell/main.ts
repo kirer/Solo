@@ -1,7 +1,7 @@
 /**
  * 新核心的启动入口。
  *
- * 用法：`npm run core -- --port 7790 --workspace workspace-core`
+ * 用法：`npm start`（`--port 7788 --host 127.0.0.1 --workspace workspace`）
  *
  * 它做的事按顺序只有五件，没有第六件：
  * 1. 读设置里的模型；
@@ -10,9 +10,9 @@
  * 4. 起服务（`serveCore`）；
  * 5. 等 Ctrl-C。
  *
- * 与旧入口（`src/server/main.ts`）的差别：没有执行环境注册表、没有看门狗、
- * 没有崩溃自愈、没有 IM 出站。那些是旧核心为了在长跑中活下来攒的运维设施，
- * 新核心现在的目标只有一个：**能跑，能被人看见在跑什么**。
+ * 刻意没有的东西：执行环境注册表、看门狗、崩溃自愈、IM 出站、成本核算。
+ * 目标只有一个：**能跑，能被人看见在跑什么**。加回任何一样之前先问
+ * 「不修它，公司会不会停摆」，答案是否就别加。
  */
 import { mkdir, readdir } from "node:fs/promises";
 import { join } from "node:path";
@@ -31,9 +31,9 @@ type Args = {
 };
 
 function parseArgs(argv: readonly string[]): Args {
-	let port = 7790;
+	let port = 7788;
 	let host = "127.0.0.1";
-	let workspace = join(process.cwd(), "workspace-core");
+	let workspace = join(process.cwd(), "workspace");
 	let seed = true;
 	for (let index = 0; index < argv.length; index += 1) {
 		const arg = argv[index];
@@ -147,10 +147,8 @@ async function main(): Promise<void> {
 		});
 		server = await serveCore({
 			shell,
-			models,
 			port: args.port,
 			host: args.host,
-			workspace: args.workspace,
 		});
 		console.log(`[core] ${server.url}`);
 		console.log(`[core] workspace: ${args.workspace}`);

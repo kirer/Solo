@@ -4,7 +4,7 @@
  * 这是新核心里唯一「写频道」的入口。落库与唤醒必须在同一个地方做，否则会出现
  * 两种静默失败：
  *
- * - **存了没叫**（消息在，人不知道）——旧核心踩过一次：`say` 不解析正文里的
+ * - **存了没叫**（消息在，人不知道）——踩过一次：`say` 不解析正文里的
  *   `@`，CPO 用 `say` 发了「@CEO 项目已建好」，CEO 从来没被唤醒，项目静默停摆。
  * - **叫了没存**（人醒来看不到东西）——不会报错，只会让 agent 反复「你说什么？」。
  *
@@ -45,7 +45,7 @@ export type PostDeps = {
  * 写一条消息并唤醒该唤醒的人。
  *
  * 文档写入用 `commit` + 路径式追加（推一条 + 改两个数字），**不整频道替换**：
- * 一个群频道可以有 800 条消息，整值替换会让每条消息重写整个频道（旧核心实测
+ * 一个群频道可以有 800 条消息，整值替换会让每条消息重写整个频道（实测
  * 49.6KB/条 vs 141 字节）。
  */
 export async function postMessage(
@@ -86,7 +86,6 @@ export async function postMessage(
 		return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
 	const delivery = await deliver(
-		deps.harness,
 		{
 			// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
 			state: deps.state,

@@ -52,13 +52,6 @@ export function wakeOf(state: DirectoryState, conversationId: number | string): 
 	return { channelId, seq, from, at };
 }
 
-export function bind(state: DirectoryState, slug: string, conversationId: number): DirectoryState {
-	return {
-		...state,
-		slugToConversation: { ...state.slugToConversation, [slug]: conversationId },
-		conversationToSlug: { ...state.conversationToSlug, [String(conversationId)]: slug },
-	};
-}
 
 export function conversationFor(state: DirectoryState, slug: string): number | undefined {
 	return state.slugToConversation[slug];

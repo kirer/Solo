@@ -6,7 +6,7 @@
  *
  * 为什么这样切：
  *
- * - 「哪句话是结论」是语义判断，代码判不了。旧核心写过一个自动摘要器，最后变成
+ * - 「哪句话是结论」是语义判断，代码判不了。写一个自动摘要器，最后一定会变成
  *   「把频道历史复述一遍」，项目记忆成了副本，等于没记。
  * - 「什么时候有人在项目频道里拍了板」是形状判断（`kind` 是 `decision` / `report`），
  *   代码判得准。
@@ -19,7 +19,7 @@
 import { defineDoc } from "../runtime/index.ts";
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, type ChannelState } from "../channel/state.ts";
+import { OWNER, type ChannelState } from "../channel/state.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readProject, type ProjectDoc } from "./doc.ts";
 import { renderSettlePrompt, settleCandidates, type SettleCandidate } from "./memory.ts";

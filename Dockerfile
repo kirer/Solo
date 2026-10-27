@@ -31,6 +31,6 @@ EXPOSE 7788
 # 非 root 运行。workspace 挂载目录需要对 uid 1000 可写（见 docs/DEPLOY.md）
 USER node
 
-CMD ["node", "--experimental-strip-types", "src/server/main.ts", \
-     "--port", "7788", "--host", "0.0.0.0", "--no-open", \
-     "--db", "/app/workspace/company.sqlite", "--workspace", "/app/workspace"]
+CMD ["node", "--experimental-strip-types", "src/core/shell/main.ts", \
+     "--port", "7788", "--host", "0.0.0.0", \
+     "--workspace", "/app/workspace"]

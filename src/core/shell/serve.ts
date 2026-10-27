@@ -1,20 +1,17 @@
 /**
- * 网页服务（世代 2）：HTTP + SSE。
+ * 网页服务：HTTP + SSE。
  *
  * 这是**外壳**，不是核心。核心（`src/core/**`）只有文件夹、频道、消息三样事实；
  * 这一层负责把它们翻译成浏览器能吃的 JSON，并处理一个 HTTP 服务该处理的杂事
  * （静态资源、压缩、SSE 心跳）。
  *
- * 为什么单独写一份而不是复用 `src/server/http.ts`：旧文件里有 1900 行是为了旧核心的
- * 业务概念（待办、任务、成本、升级链、看门狗、受理回执）服务的，新核心里这些东西
- * 一个都没有。硬塞进去的结果是每个路由里一半的分支都在写 `if` 兜旧字段。
- *
- * 路由表用 `src/server/routes.ts` 的匹配器 —— 那是纯函数，没有业务概念，可以直接
- * 跨世代复用。
+ * 路由只有 8 条，每条背后都是「读一份文档」或「写一条消息」。没有待办、任务、
+ * 成本、升级链、看门狗、受理回执 —— 那些东西核心里一个都没有，所以这里也不该有。
+ * 路径带 `:id` 的匹配器在 `./http/routes.ts`（纯函数，无业务概念）。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, sep } from "node:path";
-import { matchRoute, type Route } from "../../server/routes.ts";
+import { matchRoute, type Route } from "./http/routes.ts";
 import {
 	bodyFor,
 	compressible,
@@ -24,30 +21,22 @@ import {
 	negotiateEncoding,
 	notModifiedSince,
 	type AssetEntry,
-} from "../../server/static-assets.ts";
-import { avatarSvg } from "../../server/avatars.ts";
-import { browserUrlOf, lanUrlsOf } from "../../server/network.ts";
-import { resolveStaticRoot } from "../../server/static-root.ts";
-import { openSettings, type SettingsStore } from "../../server/settings.ts";
+} from "./http/static-assets.ts";
+import { browserUrlOf, lanUrlsOf } from "./http/network.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import type { ModelSetup } from "../../runtime/models.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type ChannelState } from "../channel/state.ts";
 import type { CoreShell } from "./assemble.ts";
-import { actorProfile, channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
+import { channelDetail, channelList, orgView, withLabels } from "./view.ts";
 
 /** 服务选项。 */
 export type CoreServeOptions = {
 	readonly shell: CoreShell;
-	readonly models?: ModelSetup;
 	readonly port?: number;
 	readonly host?: string;
-	/** 静态资源目录（默认 `ui/web/`，即世代 2 的频道页；旧页面仍在 `ui/`）。 */
+	/** 静态资源目录（默认 `ui/web/`）。 */
 	readonly uiDir?: string;
-	/** 工作空间根目录（`settings.json` 在这里）。 */
-	readonly workspace?: string;
-	readonly settings?: SettingsStore;
 };
 
 export type CoreServer = {
@@ -66,9 +55,6 @@ function emptyChannels(): ChannelState {
 export async function serveCore(options: CoreServeOptions): Promise<CoreServer> {
 	const shell = options.shell;
 	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
-	const settingsStore =
-		options.settings ?? openSettings({ workspace: options.workspace ?? join(process.cwd(), "workspace") });
-
 	const orgClients = new Set<ServerResponse>();
 	let orgTimer: NodeJS.Timeout | undefined;
 
@@ -254,54 +240,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				return json(response, { ok: true });
 			},
 		},
-		{
-			pattern: "/api/profile/:conversationId",
-			method: "GET",
-			handler: async ({ response, params }) => {
-				const { identities, directory } = await snapshot();
-				const slug = directory.conversationToSlug[params.conversationId ?? ""];
-				const identity = identities.find((item) => item.slug === slug);
-				if (identity === undefined) return fail(response, 404, "暂无档案");
-				const registered = shell.registry.snapshot().tools().map((item) => item.tool.name);
-				const profile = await actorProfile(shell.agentsRoot, identity, identities, "", registered);
-				return json(response, { ...profile, conversationId: conversationIdOf(directory, identity.slug) });
-			},
-		},
-		{
-			pattern: "/api/settings",
-			method: "GET",
-			handler: async ({ response }) => json(response, await settingsView()),
-		},
-		{
-			pattern: "/api/models",
-			handler: ({ response }) => fail(response, 405, "新核心的模型设置只读（改 workspace/settings.json 后重启）"),
-		},
-		{
-			pattern: "/api/avatar/:seed",
-			method: "GET",
-			handler: ({ response, url, params }) => {
-				const size = Number(url.searchParams.get("size") ?? "64");
-				const svg = avatarSvg(decodeURIComponent(params.seed ?? ""), Number.isFinite(size) ? size : 64);
-				response.writeHead(200, {
-					"Content-Type": "image/svg+xml; charset=utf-8",
-					"Cache-Control": "public, max-age=86400",
-				});
-				response.end(svg);
-			},
-		},
 		// 界面上还没有的入口，先明确 501，免得前端拿到 404 后误以为是「频道没了」。
-		{
-			pattern: "/api/board",
-			method: "GET",
-			handler: ({ response }) =>
-				json(response, { columns: [], meta: { serverNow: Date.now(), source: "core" } }),
-		},
 		{
 			pattern: "*rest",
 			handler: async ({ request, response, path }) => {
-				const choice = await resolveStaticRoot(uiDir);
-				const dirs = choice.kind === "dist" ? [choice.dir, uiDir] : [uiDir];
-				return await serveStatic(response, request, uiDir, path, dirs);
+				return await serveStatic(response, request, uiDir, path);
 			},
 		},
 	];
@@ -328,28 +271,6 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			clearInterval(keepAlive);
 			orgClients.delete(response);
 		});
-	}
-
-	async function settingsView() {
-		const settings = await settingsStore.read();
-		const lanUrls = lanUrlsOf(boundHost, actualPort);
-		const catalog = options.models?.catalog ?? [];
-		const builtin = options.models?.builtinCatalog ?? catalog;
-		const defaultId =
-			options.models === undefined ? "" : `${options.models.defaultModel.provider}/${options.models.defaultModel.modelId}`;
-		return {
-			network: { port: actualPort, host: boundHost, lanUrls, url: browserUrlOf(boundHost, actualPort) },
-			models: {
-				default: defaultId,
-				catalog: (builtin.length > 0 ? builtin : catalog).map((item) => ({
-					id: item.id,
-					name: item.label,
-					provider: item.provider,
-					source: "builtin" as const,
-				})),
-				restartRequired: settings.models.default !== "" && settings.models.default !== defaultId,
-			},
-		};
 	}
 
 	const server = createServer((request, response) => {
@@ -434,36 +355,21 @@ const MIME: Record<string, string> = {
 /**
  * 发静态资源：压缩 + 条件请求 + SPA 回退。
  *
- * 与旧服务同一套策略（缓存分两档、ETag、br/gzip 协商），因为浏览器已经在那套
- * 语义上被调好了：入口页 `no-cache` 保证发版立刻生效，其余资源 5 分钟缓存 +
- * ETag 验证。
+ * 策略：入口页 `no-cache`（改了立刻生效）、其余资源 5 分钟缓存 + ETag 验证、
+ * 文本资源按 `Accept-Encoding` 协商 br/gzip。
  */
 async function serveStatic(
 	response: ServerResponse,
 	request: IncomingMessage,
 	rootDir: string,
 	path: string,
-	dirs: readonly string[],
 ): Promise<void> {
 	const relative = path === "/" ? "index.html" : path.replace(/^\/+/, "");
 	const root = normalize(rootDir);
-	const resolveIn = (dir: string) => normalize(join(dir, relative));
+	const target = normalize(join(rootDir, relative));
+	if (target !== root && !target.startsWith(root + sep)) return fail(response, 403, "禁止访问");
 
-	const probe = resolveIn(dirs[0] ?? rootDir);
-	if (probe !== root && !probe.startsWith(root + sep)) return fail(response, 403, "禁止访问");
-
-	let target = probe;
-	let asset: AssetEntry | undefined;
-	for (const dir of dirs) {
-		const candidate = resolveIn(dir);
-		if (candidate !== root && !candidate.startsWith(root + sep)) continue;
-		const found = await loadAsset(candidate);
-		if (found !== undefined) {
-			target = candidate;
-			asset = found;
-			break;
-		}
-	}
+	const asset: AssetEntry | undefined = await loadAsset(target);
 
 	if (asset !== undefined) {
 		return await sendAsset(response, request, asset, relative, MIME[extname(target)] ?? "application/octet-stream");
@@ -472,11 +378,7 @@ async function serveStatic(
 	// SPA 回退只对页面路径生效：带扩展名的资源找不到就是 404，不能回 index.html
 	// （否则浏览器把 HTML 当 JS 解析，报一堆莫名其妙的语法错误）。
 	if (path.startsWith("/api/") || extname(path) !== "") return fail(response, 404, "未找到");
-	let index: AssetEntry | undefined;
-	for (const dir of dirs) {
-		index = await loadAsset(join(dir, "index.html"));
-		if (index !== undefined) break;
-	}
+	const index = await loadAsset(join(rootDir, "index.html"));
 	if (index === undefined) return fail(response, 404, "未找到");
 	return await sendAsset(response, request, index, "index.html", MIME[".html"] ?? "text/html; charset=utf-8");
 }

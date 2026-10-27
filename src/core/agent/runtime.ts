@@ -9,18 +9,8 @@
  * 反面做法（`instructions` 一次性写入）之所以不行：它会把身份钉死在会话创建的那一刻，
  * 之后 agent 改自己的 `identity.md` 会静默无效 —— 而它自己看不出来。
  */
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import {
-	BACKGROUND_CONTEXT,
-	type Context,
-	type Conversation,
-	type Extension,
-	type Harness,
-	type PromptSection,
-	type Registry,
-	type ToolRegistration,
-} from "../runtime/index.ts";
+import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
 import { readAllIdentities, readIdentity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
@@ -152,31 +142,3 @@ export function agentSection(
 	};
 }
 
-/**
- * 保证某个 slug 有会话，并把它的能力扩展选上。
- *
- * 会话 id 与 slug 的关系：会话 id 由底层分配（数字），slug 才是稳定标识。
- * 所以这里返回会话句柄，调用方自己记住 slug ↔ id 的映射（新核心把它写在
- * `agents/<slug>/identity.md` 的 `conversation` 字段里，见后）。
- */
-export async function ensureAgentConversation(
-	harness: Harness,
-	options: {
-		/** 要选上的扩展（身份段落所在的扩展名）。 */
-		readonly extension: Extension<ToolRegistration>;
-		/** 会话工作目录。 */
-		readonly cwd?: string;
-	},
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<Conversation> {
-	return harness.createConversation(
-		{
-			ownership: { kind: "ownerless" },
-			agent: {
-				extensions: [options.extension],
-				...(options.cwd === undefined ? {} : { cwd: options.cwd }),
-			},
-		},
-		context,
-	);
-}

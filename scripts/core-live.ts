@@ -192,7 +192,7 @@ async function main(): Promise<void> {
 	//    agent 没有被明确要求「去记一条」，它只收到「请判断这件事值不值得沉淀」。
 	const settleAsked = await shell.ownerSay({
 		channelId: `proj:自测项目`,
-		text: "定了：这个项目的验收标准是「能跑通 core:live 全部 8 项」。",
+		text: "定了：这个项目的验收标准是「能跑通 core:live 全部 12 项」。",
 		kind: "decision",
 	});
 	console.log(`项目频道已投递 #${settleAsked.seq}（kind=decision）`);

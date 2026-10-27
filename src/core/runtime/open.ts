@@ -1,9 +1,8 @@
 /**
  * 打开「一个库 + 一个 harness」的唯一入口。
  *
- * 这里刻意比 `src/runtime/open.ts` 简单：不做执行环境缓存、不做失败扫描、
- * 不做 WAL 巡检 —— 那些是旧核心在长跑中攒下来的运维复杂度，属于**外壳**，
- * 不该出现在核心的启动路径里。
+ * 这里刻意只做三件事：打开存储、建 harness、返回关闭句柄。不做执行环境缓存、
+ * 不做失败扫描、不做 WAL 巡检 —— 那是运维外壳的职责，不该出现在核心的启动路径里。
  */
 import type { Models } from "@earendil-works/pi-ai";
 import { Harness as DurableHarness, type Harness, type HarnessSettings } from "@earendil-works/pi-durable";

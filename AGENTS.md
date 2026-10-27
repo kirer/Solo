@@ -1,55 +1,65 @@
 # AGENTS.md
 
-> 这是**任何 AI agent（Claude Code / Cursor / Codex / pi / 别的）在本仓库工作时先读的那一份**。
+> **任何 AI agent（Claude Code / Codex / Cursor / pi / 别的）在本仓库工作前先读这一份。**
 > 它只写三件事：**这是什么**、**改代码前后必须做什么**、**要动某处该读哪份文档**。
-> 文档地图见 [`docs/README.md`](docs/README.md)。**改完行为请同步改本文档中相关的表**，这是硬要求，见 §4。
+> 文档地图见 [`docs/README.md`](docs/README.md)。**改完行为必须同步改本文档 §3.3 的表**，这是硬要求。
 
 ---
 
 ## 1. 这是什么
 
-「一人公司」：一个老板 + 一个 AI 公司的多 agent 运行时。
+「一人公司」：一个老板 + 一个 AI 组织的多 agent 运行时。
+
+**组织不是代码里的岗位枚举，而是磁盘上的一堆文件夹。**
 
 ```
-老板 ── 对话 ── CEO ── 领导层（CTO/CFO/CPO/COO/CMO/CHRO）── 项目负责人 ── 项目员工
+workspace/
+  agents/<slug>/identity.md   ← 一个人。YAML 头 4 个字段 + 正文
+  agents/<slug>/memory.md     ← 他的长期记忆
+  agents/<slug>/skills/<n>/   ← 他会的手艺（个人层，覆盖公司同名）
+  projects/<slug>/README.md   ← 一个项目：目标 / 验收 / 不做什么 / 当前进展 / 负责人
+  projects/<slug>/memory.md   ← 项目记忆
+  skills/<n>/SKILL.md         ← 公司层手艺，人人可读
+  core.sqlite                 ← 频道消息、会话、名册、沉淀游标
 ```
 
-- 每个 agent 是一个独立的 pi 会话，有自己的模型、提示词、能力包（工具集）。
-- agent 之间通过**频道消息**通信（不是同步函数调用），通过**任务文档**记录工作。
-- 每个项目 = 一个工作空间文件夹，员工在里面真的写代码、跑命令、跑测试。
-- 已真实产出过一个能玩的网页坦克大战（`archive/examples/tank-battle/`）。
+加一个人 = 建一个目录。改一个人的职责 = 改一个 md 文件，**下一条消息就生效**（提示词每次
+发送前重新读盘渲染）。这是整个设计的核心取舍：**语义写在文档里，代码只做机械的事**。
 
-**技术地基**：`@earendil-works/pi-durable@1.4.0`（experimental，每个 minor 都有破坏性变更）。
-外壳（网页 / TUI / 业务逻辑）全部自己写。
+技术地基：`@earendil-works/pi-durable@1.4.0`（experimental，每个 minor 都可能破坏性变更）。
+界面是 `ui/web/` 的原生 ES module，**没有构建步骤**。
 
 ---
 
-## 2. 目录与边界（30 秒版）
+## 2. 目录与三条边界
 
 ```
-src/runtime/   防腐层：唯一 import pi-durable / pi-ai / chord 的地方
-src/domain/    纯函数：频道、任务、成员、记忆的状态迁移与判定，**不做 IO**
-src/company/   业务编排：文档、角色、工具、投递、成本、看门狗
-src/server/    网页服务：HTTP 路由表 + SSE + 视图投影
-src/tui/       终端界面
-ui/            网页界面（原生 ES module，无框架；`npm run ui:build` 可打包到 ui/dist/）
-test/          contract（钉底层行为）/ unit（纯函数）/ e2e（真 boot 一家公司）
-scripts/       验收与运维脚本
-docs/          文档（索引见 docs/README.md）
-archive/       归档：验证脚本、Pi 源码、产出的游戏（不参与运行）
-workspace/     运行时数据：数据库、项目文件夹、日志（gitignore）
+src/core/runtime/   防腐层：唯一能 import pi-durable / pi-ai / chord 的地方
+src/core/agent/     一个人：身份 / 提示词 / 记忆 / 技能 / 名册
+src/core/project/   一个项目：README.md / memory.md / 自动沉淀
+src/core/channel/   说话：纯规则 / 投递 / 写一条 / 20 个工具
+src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
+ui/web/             界面（无构建）
+seed/               播种技能
+scripts/            两个脚本：check-boundaries、core-live
+test/core/          14 文件 / 137 例
+workspace/          运行时数据（gitignore）
 ```
 
-**三条不可越过的边界**（详见 [`docs/DECISIONS.md`](docs/DECISIONS.md)）：
+**三条边界**，`npm run check` 机械化检查（`scripts/check-boundaries.mjs`），违反即失败：
 
-1. **只有 `src/runtime/` 能导入底层库**。`npm run check` 会强制检查（`scripts/check-boundaries.mjs`）。
-2. **权限靠「工具不存在」，不靠提示词**。员工的能力包里没有任何管理工具（ADR-004 / ADR-010）。
-3. **成本只从用量文档取，不按历史消息求和**（分叉会话会重复计账，ADR-003）。
+1. **只有 `src/core/runtime/` 能 import 底层库**（pi-durable / pi-ai / chord）。
+2. **内核（`agent|project|channel`）不得反向 import `shell/`**。依赖方向只能是 `shell → 内核`。
+3. **`serve.ts` 的每条路由必须在前端有消费者**（白名单只有 `/api/org`，Docker 健康检查用）。
+   加路由没人用 → 要么接上界面、要么删掉、要么改白名单并写清理由。
 
-另外两条容易踩的：
+另外三条容易踩的：
 
-4. **`src/domain/` 不做 IO**。状态迁移是纯函数，写消息/投递是 `src/company/` 的职责。
-5. **新建会话必须显式指定能力包**（ADR-009）；**能力包名必须全局唯一**（ADR-014）。
+4. **`channel/state.ts` 是纯函数**，不做 IO。写消息、投递在 `post.ts` / `deliver.ts`。
+5. **提示词必须确定性**：同一份文件内容渲染出的字符串要逐字节相同，否则打穿 prompt cache
+   （ADR-005）。不许在提示词里塞时间戳、随机数、`Object.keys` 的顺序。
+6. **不画后端没有的东西**（ADR-016）。界面上每个字段都必须有真实数据来源；没有就留空，
+   不要造 `tasks: []` 这种空壳字段假装有功能。
 
 ---
 
@@ -58,76 +68,64 @@ workspace/     运行时数据：数据库、项目文件夹、日志（gitignor
 ### 3.1 开工前
 
 ```bash
-cat docs/CODE.md            # 找到你要改的文件在第几节
-cat docs/DECISIONS.md       # 你改的地方碰不碰边界
+cat docs/CODE.md          # "我想改 X → 动这里" 对照表
+cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 ```
 
-- 你的改动会碰某条 ADR 的边界 → **不要偷偷改，追加一条新 ADR 说明原因**（`docs/DECISIONS.md` 的规矩：只追加，不改旧条目）。
-- 你的改动会让某条现有行为**不再成立** → 在 `docs/SYSTEM.md` / `docs/COMMS.md` 里改掉它，别让文档描述一个已经不存在的系统。
+- 要碰某条 ADR 的边界 → **不要偷偷改**，追加一条新 ADR 写清原因（`DECISIONS.md` 只追加，
+  不改旧条目，觉得旧条错了就新增一条「取代 ADR-0xx」）。
+- 你的改动让某条现有行为不再成立 → 同步删掉文档里的那段，别让文档描述一个不存在的东西。
 
-### 3.2 提交前（必须全绿，缺一不可）
+### 3.2 提交前（缺一不可）
 
 ```bash
-npm run check                                  # tsc --noEmit + 边界检查（含「路由必须有消费者」）
-npm run verify                                 # 全量测试 + 机器可读收据；跳过 0 才算过
-npm run ui:build                               # 改了 ui/ 就必须跑
-node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须跑（66 项真浏览器断言）
+npm run check     # tsc --noEmit + 边界检查
+npm test          # 14 文件 137 例，<1s，必须全绿
+npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
-- **`npm test` 不再是验收标准，`npm run verify` 才是。** `verify` 跑完写
-  `.taste/verify-receipt.json`（`ok` / `numTotalTests` / `numPendingTests` / `commit` / `at`），
-  `numPendingTests > 0` 即失败：**跳过的测试等于没测**。想跳过真模型测试必须显式
-  `SKIP_REAL_MODEL=1`，不设就探测网关，探不到直接红。`npm run verify:check` 校验收据新鲜
-  （同一 commit ∧ 24 小时内）。
-- **`npm run check` 的边界检查会往 stderr 打「已知缺口」清单**（有消费计划但界面还没接上的
-  路由）。那是待办，不是失败；真违规才 exit 1。加新路由而没人消费，要么接上、要么删掉、
-  要么写进 `scripts/check-boundaries.mjs` 的 `NO_CONSUMER_PENDING` 并写清谁来收尾。
-- **`ui-check.mjs` 默认连 7789 端口**，本机服务通常在 7788，必须显式传 `--url`。它断言的是
-  **默认落在频道视图**；要验组织图相关行为（翻面 / 连线 / 状态光边）必须先 `#view-org`。
-- **别在生产库上跑 `ui-check`**：真实库里常常已经没有 active 项目、没有未答复的待办（项目
-  做完了、待办答完了），那么「项目卡翻面」「待办渲染」这些段落验的是一条空的链路。用演示库：
-  ```bash
-  rm -rf /tmp/demo && mkdir -p /tmp/demo && cp workspace/settings.json /tmp/demo/
-  node --experimental-strip-types scripts/seed-demo.ts --db /tmp/demo/company.sqlite --workspace /tmp/demo
-  node --experimental-strip-types src/server/main.ts --port 7793 --db /tmp/demo/company.sqlite --workspace /tmp/demo --no-open
-  node scripts/ui-check.mjs --url http://127.0.0.1:7793/
-  ```
-  `seed-demo.ts` 不调模型、不花钱，会建 2 个项目 + 7 名员工 + 1 条待拍板。
-- 换端口前先 `lsof -nP -iTCP:<port> -sTCP:LISTEN`：被杀一半的 node 进程会继续占着端口回 404，
-  症状是「服务明明起来了，所有接口 404」。
-- 改了界面**不能只读代码就交付**，要真实浏览器截图验收：`npm run ui:shot -- --url ... --out /tmp/shots`。
+- **`npm run live` 不能省。** 137 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
+  两个 bug 叠在一起（老板发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
+  症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。单测测的是纯函数和装配，
+  **只有真模型能测出「沟通会不会跑偏」**。
+- **改了界面不用跑任何构建**，但要看一眼：起服务刷新，或截图。
+- 端口被占先 `lsof -nP -iTCP:7788 -sTCP:LISTEN`：被杀的 node 进程会继续占端口回 404，
+  症状是「服务起来了但所有接口 404」。
+- 真实模型测试**不要在会话里前台跑**（几十秒到几分钟），用 `nohup ... &` 后台跑再看日志。
 
-### 3.3 改了行为 → 同步这几个地方（硬要求）
+### 3.3 改了行为 → 同步这几处（硬要求）
 
 | 你改了什么 | 必须同步 |
 |---|---|
 | 一个不显然的取舍 | `docs/DECISIONS.md` 追加一条 ADR |
-| 文件/模块的位置、职责 | `docs/CODE.md` |
-| 系统的运转方式（流程、数据文档、唤醒规则） | `docs/SYSTEM.md` |
-| 频道 / 消息 / 任务 / 投递 | `docs/COMMS.md` |
-| HTTP 接口的字段 | `docs/WEB-API.md`（**先改它，再改代码**） |
+| 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
+| 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
+| HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
+| 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
 | 本文件的表 | `AGENTS.md` |
 
-**文档里的数字和行号会漂**。写文档时优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，交付前用 `grep -n` 核一遍。
+**文档里的行号会漂。** 优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，
+交付前 `grep -n` 核一遍。
 
 ---
 
 ## 4. 文档的组织规矩
 
-**一份事实只有一个家。** 现状型事实只能出现在这四份里：
+**一份事实只有一个家。**
 
 | 家 | 装什么 |
 |---|---|
-| `docs/SYSTEM.md` | 系统怎么运转 |
+| `docs/CORE.md` | 概念：为什么这么设计 |
 | `docs/CODE.md` | 代码在哪、谁负责什么 |
-| `docs/DECISIONS.md` | 哪些边界不能碰、为什么 |
+| `docs/DECISIONS.md` | 哪些约定不能轻易碰、为什么 |
 | `docs/WEB-API.md` | 接口字段 |
+| `docs/DEPLOY.md` | 怎么跑起来、怎么排障 |
+| `docs/research/` | 底层库的原始调研（可能落后于依赖版本） |
 
-**`docs/history/` 是冻结区**：只记录「当时的推理」。里面的行号、路径、数量、截图链接都可能已经失效，不要以它为准，也不要往里加新内容（要加就加一条 ADR 或新文档）。
+**不要新增一次性文档**（「XX 轮施工说明」「临时契约」）。一次性的写提交信息；跨迭代有效的
+进 ADR。
 
-**截图不入库**：用 `npm run ui:shot`，输出到 `.taste-skill/shots/`（已 gitignore）。需要长期留证的图放 `workspace/`，不进版本库。
-
-**不要新增「临时契约」「XX 轮施工说明」这类文档**。一次性的施工语境写在 PR/提交信息里；跨迭代有效的结论进 ADR。
+**截图不入库。** 需要留证的图放 `workspace/`（已 gitignore）。
 
 ---
 
@@ -135,15 +133,17 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 
 | 我要… | 先读 | 再动 |
 |---|---|---|
-| 加一个工具（能力） | `docs/CODE.md` §4 能力包 | `src/company/capabilities.ts` + `src/company/tools/` |
-| 改 agent 的提示词 / 职责 | `docs/SYSTEM.md` §角色 | `src/company/prompts.ts`、`src/company/roles.ts` |
-| 改频道 / 唤醒规则 | `docs/COMMS.md` §3 | `src/domain/channels.ts`、`src/domain/membership.ts` |
-| 改派活 / 上报 | `docs/COMMS.md` §5 | `src/company/deliver.ts` |
-| 加一次 HTTP 接口 | `docs/WEB-API.md` | `src/server/routes.ts`（表驱动）+ `src/server/http.ts`（handler） |
-| 改网页界面 | `docs/CODE.md` §6 + `docs/WEB-API.md` | `ui/index.html`、`ui/js/*.js`、`ui/css/*.css` + 跑 `ui:build` & `ui-check` |
-| 改任务状态机 | `docs/COMMS.md` §2.2 | `src/domain/tasks.ts`（纯函数）+ `src/company/tasks.ts`（IO） |
-| 换 / 升级 pi-durable | `docs/history/PLAN.md` 附录 B（15 个坑） | `src/runtime/*` + `test/contract/` |
-| 部署 / 排障 | `docs/RUNBOOK.md`、`docs/DEPLOY.md` | — |
+| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools` |
+| 教 agent 一套做法 | `docs/DECISIONS.md` ADR-007 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
+| 改提示词 | `docs/CODE.md` §3 + ADR-005 | `src/core/agent/prompt.ts` 的 `renderAgentPrompt` |
+| 加身份字段 | `docs/CORE.md` §2 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
+| 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §5 | `src/core/channel/state.ts` 的 `recipientsOf` |
+| 改频道成员怎么来 | ADR-012 | `src/core/shell/assemble.ts` 的 `joinProjectChannel` |
+| 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/shell/serve.ts` 的 `routes` 表 + 接前端 |
+| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/web/` |
+| 改记忆沉淀 | ADR-013 | `src/core/project/settle.ts` + `project/memory.ts` |
+| 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
+| 部署 / 排障 | `docs/DEPLOY.md` | — |
 
 ---
 
@@ -151,9 +151,8 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 
 ```bash
 npm install
-npm start                        # 起网页服务，默认 http://127.0.0.1:7788
-npm run verify                   # 739 个测试，约 2 分钟（跳过 0 才算过）
+npm start                          # http://127.0.0.1:7788
+npm run check && npm test          # 改完必跑
 ```
 
-`workspace/company.sqlite` 是真实数据；做实验前先备份（`docs/RUNBOOK.md` §备份）。
-`archive/spikes/` 里的 9 个脚本可以独立复跑，验证底层机制，不需要 API key。
+`workspace/` 是真实数据，做实验前先用 `--workspace /tmp/xxx` 另起一个。
