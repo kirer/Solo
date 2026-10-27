@@ -28,9 +28,9 @@ export type Message = {
 	/** 引用的那条消息的 seq。 */
 	replyTo?: number;
 	/**
- * 消息类别。`chat` 是普通发言；`note` 是系统写的留痕（不唤醒、不计未读）；
- * `work` 是工作记录（不唤醒、不计未读 —— 是自己的执行留痕）；
- * 其余是给界面用的语义标签（`task` / `report` / `decision`）。
+	 * 消息类别。`chat` 是普通发言；`note` 是系统写的留痕（不唤醒、不计未读）；
+	 * `work` 是工作记录（不唤醒、不计未读 —— 是自己的执行留痕）；
+	 * 其余是给界面用的语义标签（`task` / `report` / `decision`）。
 	 */
 	kind: string;
 };

@@ -152,7 +152,7 @@ export function channelList(
 		out.push({
 			id: channel.id,
 			kind: kindOf(channel.id),
-				...(owner === undefined || owner === "" ? {} : { owner, ownerLabel: labelIn(directory, owner) }),
+			...(owner === undefined || owner === "" ? {} : { owner, ownerLabel: labelIn(directory, owner) }),
 			title: channel.title,
 			...(project === undefined ? {} : { project }),
 			unread,

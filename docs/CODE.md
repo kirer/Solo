@@ -32,7 +32,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `runtime/open.ts` | 46 | `openCore({databasePath, models, registry, settings?}) → {harness, close}` |
 | `runtime/models.ts` | 151 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；回落到环境变量 / 本地网关 |
 | `agent/identity.ts` | 136 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；`OWNER_SLUG = "owner"` |
-| `agent/prompt.ts` | 276 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005） |
+| `agent/prompt.ts` | 235 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005）；规则外移到技能，只留事实 |
 | `agent/runtime.ts` | 144 | `registeredTools()`（从注册表实拍工具清单）、`agentSection()`（`render` 每次重读盘）、`readProjectBrief()` |
 | `agent/memory.ts` | 91 | `readMemory` / `sectionsOf` / `appendMemory` / `writeMemory` / `memoryDigest`；`MEMORY_FILE="memory.md"`、`DIGEST_LIMIT=12` |
 | `agent/skills.ts` | 231 | 两层技能：`listSkills` / `readSkill` / `writeSkill` / `writeCompanySkill` / `copySkillDir` |

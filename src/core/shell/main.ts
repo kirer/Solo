@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 		});
 		console.log(`[core] ${server.url}`);
 		console.log(`[core] workspace: ${args.workspace}`);
-			console.log(`[core] agents: ${(await shell.identities()).map((item) => item.slug).join(", ") || "（无）"}`);
+		console.log(`[core] agents: ${(await shell.identities()).map((item) => item.slug).join(", ") || "（无）"}`);
 	} catch (error) {
 		console.error("[core] 启动失败：", error);
 		await server?.close().catch(() => undefined);

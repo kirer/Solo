@@ -86,8 +86,7 @@ function toast(text, tone = "info") {
 
 // ── 频道列表 ────────────────────────────────────────────────────────────
 
-/** 分组。新核心的频道 id 前缀决定它落在哪一组；没有岗位枚举、没有「工作记录」。 */
-/** 左侧的三个分组。分组靠频道 id 前缀决定。
+/** 左侧的三个分组。分组靠频道 id 前缀决定。 */
 const GROUPS = [
 	{ key: "company", label: "公司", match: (channel) => channel.kind === "company" || channel.kind === "leadership" },
 	{ key: "project", label: "项目", match: (channel) => channel.kind === "project" },

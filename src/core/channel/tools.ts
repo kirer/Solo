@@ -338,7 +338,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 		description: [
 			"改一个 agent 的 identity.md（正文或头部字段）。",
 			"改完下一条消息就生效 —— 不需要重启、不需要重新部署。",
-			"改完下一条消息就生效 —— 不需要重启、不需要重新部署。",
 		].join(""),
 		parameters: Type.Object({
 			slug: Type.String({ description: "改谁" }),
