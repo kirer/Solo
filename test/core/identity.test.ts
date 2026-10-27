@@ -19,7 +19,6 @@ import {
 	reportsOf,
 } from "../../src/core/agent/identity.ts";
 import { renderAgentPrompt } from "../../src/core/agent/prompt.ts";
-import { readCapabilities } from "../../src/core/agent/runtime.ts";
 
 const SAMPLE = `---
 name: 沈知远
@@ -132,12 +131,21 @@ describe("渲染提示词", () => {
 		expect(renderAgentPrompt(input)).toBe(renderAgentPrompt(input));
 	});
 
-	test("没有额外能力时，基础能力照写、并说清清单是空的", () => {
-		const text = renderAgentPrompt({ self: all[1]!, all });
-		// 基础能力人人都有，不能被渲染成「什么都不能做」（那是提示词撒谎）。
-		expect(text).toContain("`say`");
-		expect(text).toContain("`hire`");
-		expect(text).toContain("你的 `capabilities` 文件现在是空的");
+	test("工具清单从注册表实拍，不写死的清单", () => {
+		const withTools = renderAgentPrompt({
+			self: all[1]!,
+			all,
+			capabilities: [
+				{ name: "say", summary: "在频道说话" },
+				{ name: "hire", summary: "新建一个 agent" },
+			],
+		});
+		expect(withTools).toContain("`say` — 在频道说话");
+		expect(withTools).toContain("`hire` — 新建一个 agent");
+
+		// 注册表空的时候不能凭空列假工具：直接报装配故障，让故障浮出来。
+		const noTools = renderAgentPrompt({ self: all[1]!, all });
+		expect(noTools).toContain("装配故障");
 	});
 
 	test("断链时写「未设置」而不是猜一个上级", () => {
@@ -147,16 +155,3 @@ describe("渲染提示词", () => {
 	});
 });
 
-describe("capabilities 文件", () => {
-	test("一行一项，注释与空行被忽略", async () => {
-		const root = await workspace({
-			"dev/capabilities": "# 我的能力\nread_file\nrun_shell\n\n",
-		});
-		try {
-			expect(await readCapabilities(root, "dev")).toEqual(["read_file", "run_shell"]);
-			expect(await readCapabilities(root, "missing")).toEqual([]);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
-	});
-});

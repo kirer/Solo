@@ -18,8 +18,9 @@
  * | `org_chart` | 全公司现在长什么样 |
  * | `hire` | 新建一个 agent（写文件夹） |
  * | `update_identity` | 改我自己或我下属的身份 |
- * | `set_capabilities` | 改一个 agent 的能力清单 |
  * | `remember` / `recall` | 记忆 |
+ * | `list_skills` / `read_skill` / `write_skill` | 技能（怎么做一件事的说明书） |
+ * | `list_projects` / `read_project` / `write_project` | 项目（`projects/<slug>/README.md`） |
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
@@ -35,7 +36,9 @@ import {
 	type ToolRegistration,
 } from "../runtime/index.ts";
 import { OWNER_SLUG, chainUp, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
-import { CAPABILITIES_FILE, readCapabilities } from "../agent/runtime.ts";
+import { listSkills, readSkill, writeSkill } from "../agent/skills.ts";
+import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
+import { listProjects, readProject, writeProject } from "../company/project.ts";
 import { createAgent, renderIdentityFile, renderOrgChart } from "../company/org.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../company/directory.ts";
 import { postMessage, type PostDeps } from "./post.ts";
@@ -261,15 +264,13 @@ export function createCoreTools(deps: CoreToolDeps) {
 			if (slug === undefined) return text("你还不在名册里。");
 			const all = await readAllIdentities(deps.agentsRoot);
 			const self = all.find((item) => item.slug === slug);
-			const capabilities = await readCapabilities(deps.agentsRoot, slug);
 			const reports = reportsOf(all, slug);
 			return text(
 				[
 					`你是 ${self?.name ?? slug}（slug: ${slug}）${self?.title === undefined ? "" : `，岗位：${self.title}`}`,
 					`直属上级：${self?.manager ?? "（无）"}`,
 					reports.length === 0 ? "" : `直接下属：${reports.map((item) => `${item.name ?? item.slug}（${item.slug}）`).join("、")}`,
-					`你的目录：agents/${slug}/（identity.md、capabilities、memory/）`,
-					`能力：${capabilities.length === 0 ? "（capabilities 文件为空 —— 但你仍然拥有全部基础工具）" : capabilities.join("、")}`,
+					`你的目录：agents/${slug}/（identity.md、memory.md、skills/）`,
 				]
 					.filter((line) => line !== "")
 					.join("\n"),
@@ -362,54 +363,161 @@ export function createCoreTools(deps: CoreToolDeps) {
 		},
 	});
 
-	const setCapabilities = defineTool({
-		name: "set_capabilities",
-		description:
-			"改一个 agent 的 capabilities 文件（一行一个工具名，# 注释）。注意：基础工具人人都有，这个文件是给「额外能力」用的索引。",
-		parameters: Type.Object({
-			slug: Type.String({ description: "改谁" }),
-			names: Type.Array(Type.String(), { description: "工具名列表；空数组表示清空" }),
-		}),
-		execute: async (args, api, context) => {
+	/**
+	 * 我会哪些技能。
+	 *
+	 * 技能正文不进提示词，所以 agent 需要先「翻目录」再「读全文」。这两个动作分开，
+	 * 是为了让它能在一屏之内比较五门手艺该用哪一门，而不是把五篇正文全吞下去。
+	 */
+	const listSkillsTool = defineTool({
+		name: "list_skills",
+		description: "列出我自己的全部技能（名字 + 一句描述）。要看正文用 read_skill。",
+		parameters: Type.Object({}),
+		execute: async (_args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const self = await selfOf(deps, Number(api.conversationId), ctx);
-			const all = await readAllIdentities(deps.agentsRoot);
-			const target = all.find((item) => item.slug === args.slug);
-			if (target === undefined) return text(`没有这个人：${args.slug}`);
-			const isSelf = args.slug === self;
-			const isReport = reportsOf(all, self ?? "").some((item) => item.slug === args.slug);
-			if (!isSelf && !isReport) return text(`你只能改自己和自己的直接下属。`);
-			await writeFile(join(target.dir, CAPABILITIES_FILE), `${args.names.join("\n")}\n`, "utf8");
-			return text(`已把 ${target.name ?? target.slug} 的能力清单写成：${args.names.length === 0 ? "（空）" : args.names.join("、")}。`);
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			if (slug === undefined) return text("你还不在名册里。");
+			const skills = await listSkills(join(deps.agentsRoot, slug));
+			if (skills.length === 0) return text("我还没有技能。");
+			return text(skills.map((skill) => `- ${skill.name}：${skill.description}`).join("\n"));
 		},
 	});
 
-	const remember = defineTool({
-   	name: "remember",
-		description: "把一条经验写进我自己的记忆（agents/<我>/memory.md 追加一段）。",
+	const readSkillTool = defineTool({
+		name: "read_skill",
+		description: [
+			"读一门技能的正文（agents/<我>/skills/<名字>/SKILL.md）。",
+			"提示词里只有技能的名字和一句描述；要做那件事之前，先读它的正文。",
+		].join(""),
 		parameters: Type.Object({
-			text: Type.String({ description: "要记的东西。写「下次遇到 X 该怎么做」，不要写流水账。" }),
+			name: Type.String({ description: "技能名（list_skills 里看到的那个）" }),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			const path = join(deps.agentsRoot, slug, "memory.md");
-			let existing = "";
-			try {
-				existing = await readFile(path, "utf8");
-			} catch {
-				existing = `# ${slug} 的记忆\n`;
+			const skill = await readSkill(join(deps.agentsRoot, slug), args.name);
+			if (skill === undefined) {
+				const all = await listSkills(join(deps.agentsRoot, slug));
+				const names = all.map((item) => item.name).join("、");
+				return text(`没有叫「${args.name}」的技能。我有的：${names === "" ? "（一个都没有）" : names}。`);
 			}
-			const stamp = new Date().toISOString().slice(0, 10);
-			await writeFile(path, `${existing.trimEnd()}\n\n## ${stamp}\n${args.text.trim()}\n`, "utf8");
-			return text("已记下。");
+			return text(`# 技能：${skill.name}\n\n${skill.body}`);
+		},
+	});
+
+	const writeSkillTool = defineTool({
+		name: "write_skill",
+		description: [
+			"写一门技能（整篇替换 agents/<我>/skills/<名字>/SKILL.md）。",
+			"技能是「怎么做一件事」的说明书：步骤、判据、踩过的坑。写具体，别写口号。",
+			"写完下一条消息就生效 —— 不用重启。",
+		].join(""),
+		parameters: Type.Object({
+			name: Type.String({ description: "技能名，会当目录名用（不能含斜杠）" }),
+			description: Type.String({ description: "一句话说清「做什么 + 什么时候用」。这行会常驻提示词，要能当路由依据。" }),
+			body: Type.String({ description: "正文：步骤、判据、样例。写给下一次的你自己看。" }),
+		}),
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			if (slug === undefined) return text("你还不在名册里。");
+			try {
+				const written = await writeSkill(join(deps.agentsRoot, slug), args);
+				return text(`已写入技能「${written.name}」：agents/${slug}/skills/${written.name}/SKILL.md。下一条消息就生效。`);
+			} catch (error) {
+				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
+			}
+		},
+	});
+
+	/**
+	 * 项目：`projects/<slug>/README.md`。
+	 *
+	 * 项目不是代码里的一个实体，就是一份文档。代码只负责读写它、按它算成员。
+	 * 「什么时候该立项」「项目该有谁」是判断，写在技能里。
+	 */
+	const listProjectsTool = defineTool({
+		name: "list_projects",
+		description: "列出全部项目（slug、名字、负责人、状态、一句摘要）。",
+		parameters: Type.Object({}),
+		execute: async () => {
+			const projects = await listProjects(deps.projectsRoot);
+			if (projects.length === 0) return text("还没有项目。");
+			return text(
+				projects
+					.map((project) => {
+						const head = project.body.split("\n").find((line) => line.trim() !== "") ?? "";
+						return `- ${project.slug}（${project.name}）· ${project.status} · 负责人：${project.owner ?? "（没人负责）"}\n  ${head}`;
+					})
+					.join("\n"),
+			);
+		},
+	});
+
+	const readProjectTool = defineTool({
+		name: "read_project",
+		description: "读一个项目的完整说明（目标、验收标准、边界、进展）。",
+		parameters: Type.Object({ slug: Type.String({ description: "项目 slug" }) }),
+		execute: async (args) => {
+			const project = await readProject(deps.projectsRoot, args.slug);
+			if (project === undefined) return text(`没有这个项目：${args.slug}`);
+			return text(`# ${project.name}（${project.slug}）\n状态：${project.status}\n负责人：${project.owner ?? "（没人负责）"}\n\n${project.body}`);
+		},
+	});
+
+	const writeProjectTool = defineTool({
+		name: "write_project",
+		description: [
+			"写一个项目（整篇替换 projects/<slug>/README.md，不存在就建）。",
+			"写清楚：目标、验收标准、什么不做、现在进展到哪。",
+			"写完下一条消息生效 —— 项目成员的提示词里会自动出现这份说明。",
+		].join(""),
+		parameters: Type.Object({
+			slug: Type.String({ description: "项目 slug（会当目录名用）" }),
+			name: Type.Optional(Type.String({ description: "显示名" })),
+			owner: Type.Optional(Type.String({ description: "负责人的 slug" })),
+			status: Type.Optional(Type.String({ description: "active / paused / done / archived" })),
+			body: Type.String({ description: "正文：目标、验收标准、边界、进展" }),
+		}),
+		execute: async (args) => {
+			try {
+				const project = await writeProject(deps.projectsRoot, {
+					slug: args.slug,
+					body: args.body,
+					...(args.name === undefined ? {} : { name: args.name }),
+					...(args.owner === undefined ? {} : { owner: args.owner }),
+					...(args.status === undefined ? {} : { status: args.status as never }),
+				});
+				return text(`已写入项目「${project.name}」（${project.slug}）。agents 里写 \`project: ${project.slug}\` 的人会看到这份说明。`);
+			} catch (error) {
+				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
+			}
+		},
+	});
+
+	const remember = defineTool({
+		name: "remember",
+		description: [
+			"把一条经验写进我自己的记忆（agents/<我>/memory.md 追加一小节）。",
+			"写「下次遇到 X 该怎么做」这类可复用的判断，不要写流水账。",
+			"提示词里只有目录；写下来之后你自己也得 recall 才看得到全文。",
+		].join(""),
+		parameters: Type.Object({
+			text: Type.String({ description: "要记的东西。一句话说清一条，几条就调几次。" }),
+		}),
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			if (slug === undefined) return text("你还不在名册里。");
+			await appendMemory(join(deps.agentsRoot, slug), args.text);
+			return text("已记下。下一条消息的记忆目录里就会出现它。");
 		},
 	});
 
 	const recall = defineTool({
 		name: "recall",
-		description: "翻我自己的记忆（agents/<我>/memory.md）。",
+		description: "翻我自己的记忆全文，可以只筛包含某个词的段落。",
 		parameters: Type.Object({
 			contains: Type.Optional(Type.String({ description: "只看包含这个词的段落" })),
 		}),
@@ -417,15 +525,14 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			let source: string;
-			try {
-				source = await readFile(join(deps.agentsRoot, slug, "memory.md"), "utf8");
-			} catch {
-				return text("我还没记过任何东西。");
-			}
+			const source = await readMemory(join(deps.agentsRoot, slug));
+			if (source === undefined) return text("我还没记过任何东西。");
 			if (args.contains === undefined || args.contains === "") return text(source);
-			const sections = source.split(/\n(?=## )/u).filter((part) => part.includes(args.contains as string));
-			return text(sections.length === 0 ? `记忆里没有「${args.contains}」。` : sections.join("\n\n"));
+			const sections = sectionsOf(source).filter(
+				(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
+			);
+			if (sections.length === 0) return text(`记忆里没有「${args.contains}」。`);
+			return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
 		},
 	});
 
@@ -439,7 +546,12 @@ export function createCoreTools(deps: CoreToolDeps) {
 		orgChart,
 		hire,
 		updateIdentity,
-		setCapabilities,
+		listSkillsTool,
+		readSkillTool,
+		writeSkillTool,
+		listProjectsTool,
+		readProjectTool,
+		writeProjectTool,
 		remember,
 		recall,
 	] as readonly ToolRegistration[];

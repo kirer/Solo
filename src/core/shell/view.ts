@@ -13,7 +13,6 @@
  *   这里从频道 id 前缀猜（`dm:` → dm，`proj:` → project，其余 → company）。
  */
 import { readAllIdentities, OWNER_SLUG, chainUp, reportsOf, type Identity } from "../agent/identity.ts";
-import { readCapabilities } from "../agent/runtime.ts";
 import { conversationFor, type DirectoryState } from "../company/directory.ts";
 import { unreadCount, readMarkOf, type Channel, type ChannelState, type Message } from "../channel/state.ts";
 
@@ -318,7 +317,6 @@ export async function actorProfile(
 	guide?: string;
 	tools: { name: string; description: string }[];
 }> {
-	const capabilities = await readCapabilities(agentsRoot, identity.slug);
 	const line = chainUp(all, identity.slug);
 	const team = reportsOf(all, identity.slug);
 	const charter = [
@@ -339,9 +337,7 @@ export async function actorProfile(
 		...(identity.manager === undefined ? {} : { parent: identity.manager }),
 		model,
 		charter,
-		tools: capabilities.map((name) => ({
-			name,
-			description: registered.includes(name) ? "" : "（未注册：检查 capabilities 文件或安装对应能力包）",
-		})),
+		// 工具清单**从注册表实拍**，不读任何清单文件：档案页要说的是「它真能调什么」。
+		tools: registered.map((name) => ({ name, description: "" })),
 	};
 }

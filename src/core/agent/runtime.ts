@@ -22,35 +22,10 @@ import {
 	type ToolRegistration,
 } from "../runtime/index.ts";
 import { readAllIdentities, readIdentity } from "./identity.ts";
+import { listSkills } from "./skills.ts";
+import { memoryDigest, readMemory } from "./memory.ts";
+import { readProject } from "../company/project.ts";
 import { renderAgentPrompt, type CapabilityLine } from "./prompt.ts";
-
-/** 能力清单文件名。一行一项，`#` 开头是注释。 */
-export const CAPABILITIES_FILE = "capabilities";
-
-/** 项目简报文件名（项目根目录下）。 */
-export const PROJECT_BRIEF_FILE = "README.md";
-
-/** 读 agent 的能力清单。文件不存在 = 没有任何能力。 */
-export async function readCapabilities(root: string, slug: string): Promise<readonly string[]> {
-	try {
-		const source = await readFile(join(root, slug, CAPABILITIES_FILE), "utf8");
-		return source
-			.split("\n")
-			.map((line) => line.replace(/#.*$/, "").trim())
-			.filter((line) => line !== "");
-	} catch {
-		return [];
-	}
-}
-
-/** 读项目简报（`projects/<slug>/README.md`）。 */
-export async function readProjectBrief(projectsRoot: string, project: string): Promise<string | undefined> {
-	try {
-		return await readFile(join(projectsRoot, project, PROJECT_BRIEF_FILE), "utf8");
-	} catch {
-		return undefined;
-	}
-}
 
 export type AgentPaths = {
 	/** `workspace/agents`。 */
@@ -60,16 +35,25 @@ export type AgentPaths = {
 };
 
 /**
+ * 读项目简报（`projects/<slug>/README.md`）。
+ *
+ * YAML 头里的字段单独摘出来写一行「状态/负责人」，因为模型扫一眼就知道该不该
+ * 关心这件事，不用自己从正文里推。正文原样给全 —— 项目说明就是它的事实来源。
+ */
+export async function readProjectBrief(projectsRoot: string, project: string): Promise<string | undefined> {
+	const doc = await readProject(projectsRoot, project);
+	if (doc === undefined) return undefined;
+	const head = [`状态：${doc.status}`, `负责人：${doc.owner ?? "（还没人负责）"}`, `目录：projects/${doc.slug}/`];
+	return `${head.join(" · ")}\n\n${doc.body}`;
+}
+
+/**
  * 能力名 → 展示行。
  *
- * 只列注册表里**真的存在**的工具：`capabilities` 文件里写了一个拼错的名字，
- * 提示词里就不出现 —— 宁可让 agent 发现「我说要的能力没生效」，
- * 也不要让它以为有却调用失败。
+ * 直接拍注册表：注册表里有什么，就是它真能调用的全部。**不**读任何清单文件 ——
+ * 清单一旦和注册表不一致，提示词就会撒谎（写着有、调了失败，或者反过来）。
  */
-export function describeCapabilities(
-	registry: Registry,
-	names: readonly string[],
-): readonly CapabilityLine[] {
+export function registeredTools(registry: Registry): readonly CapabilityLine[] {
 	const snapshot = registry.snapshot();
 	const byName = new Map<string, CapabilityLine>();
 	for (const { tool } of snapshot.tools()) {
@@ -77,12 +61,7 @@ export function describeCapabilities(
 		if (name === undefined) continue;
 		byName.set(name, { name, summary: summaryOf(tool) });
 	}
-	const out: CapabilityLine[] = [];
-	for (const name of names) {
-		const line = byName.get(name);
-		if (line !== undefined) out.push(line);
-	}
-	return out;
+	return [...byName.values()].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 }
 
 function summaryOf(tool: unknown): string {
@@ -109,7 +88,7 @@ export function sectionKeyOf(slug: string): string {
 /**
  * 生成一个 agent 的提示词段落。
  *
- * 每次渲染都重新读盘，因此改了 `identity.md` / `capabilities` 文件后，**下一条消息**
+ * 每次渲染都重新读盘，因此改了 `identity.md` / 记忆 / 技能后，**下一条消息**
  * 就生效。这是「文档是真理」在运行时的落点，这里退化成一次文件读。
  */
 export function agentSection(
@@ -127,17 +106,21 @@ export function agentSection(
 				return `# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟老板对话。\n`;
 			}
 			const all = await readAllIdentities(paths.agents);
-			const names = await readCapabilities(paths.agents, slug);
 			const brief =
 				self.project === undefined ? undefined : await readProjectBrief(paths.projects, self.project);
 			const members =
 				self.project === undefined
 					? undefined
 					: all.filter((item) => item.project === self.project).map((item) => item.slug);
+			const skills = await listSkills(join(paths.agents, slug));
+			const memory = await readMemory(join(paths.agents, slug));
+			const digest = memory === undefined ? undefined : memoryDigest(memory);
 			return renderAgentPrompt({
 				self,
 				all,
-				capabilities: describeCapabilities(registry, names),
+				capabilities: registeredTools(registry),
+				skills: skills.map((skill) => ({ name: skill.name, description: skill.description })),
+				...(digest === undefined ? {} : { memoryDigest: digest }),
 				...(brief === undefined ? {} : { projectBrief: brief }),
 				...(members === undefined ? {} : { projectMembers: members }),
 			});

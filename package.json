@@ -18,6 +18,7 @@
 		"start": "node --experimental-strip-types src/server/main.ts",
 		"web": "node --experimental-strip-types src/server/main.ts",
 		"core": "node --experimental-strip-types src/core/shell/main.ts",
+		"core:live": "node --experimental-strip-types scripts/core-live.ts",
 		"tui": "node --experimental-strip-types src/tui/main.ts",
 		"test": "vitest --run",
 		"test:watch": "vitest",

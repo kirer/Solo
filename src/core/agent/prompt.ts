@@ -33,6 +33,20 @@ export type RenderInput = {
 	readonly projectBrief?: string;
 	/** 项目成员目录（`projects/<slug>/` 下的 agent slug）。 */
 	readonly projectMembers?: readonly string[];
+	/**
+	 * 你会的技能。只列名字 + 一句描述，正文按需用 `read_skill` 读。
+	 *
+	 * 为什么不把正文塞进来：一个 agent 攒 20 门手艺，正文全进提示词就是几万 token，
+	 * 而且大部分跟当前这件事无关。常驻的应该只是「我会什么」，不是「怎么做的全文」。
+	 */
+	readonly skills?: readonly { readonly name: string; readonly description: string }[];
+	/**
+	 * 记忆目录（每小节一行摘要）。正文不在提示词里，要用的那条自己 `recall`。
+	 *
+	 * 为什么不给全文：记忆只增不减，全塞进去等于每轮都为全部历史付费；而且太长之后
+	 * 模型对中段的注意力反而最差。
+	 */
+	readonly memoryDigest?: string;
 };
 
 const NOT_SET = "（未设置）";
@@ -95,31 +109,32 @@ function orgSection(input: RenderInput): string {
 }
 
 /**
- * 「你能做的事」。
+ * 「你的技能」一节。
  *
- * `capabilities` 是**额外能力**的索引，不是「你拥有哪些工具」的真相：基础工具
- * （收发消息、组织架构、招人、改身份、记忆）人人都有，不写进这个文件也存在。
- * 早期版本把空清单渲染成「你现在没有可调用的能力」，导致 agent 明明有 12 个工具
- * 却自称「只能传话」—— 那是在提示词里撒谎，比缺信息更糟。
+ * 只写「名字 — 什么时候该用」，不写正文。要用的时候 agent 自己 `read_skill`。
+ * 空目录时整节不出现（不写「你还没有技能」，那只是噪音）。
+ */
+function skillSection(skills: readonly { readonly name: string; readonly description: string }[]): string {
+	const lines = skills.map((skill) => `- \`${skill.name}\` — ${skill.description}`);
+	lines.push("");
+	lines.push("要用哪一门，就 \`read_skill\` 读它 —— 正文不在上下文里，读了才知道细节。");
+	return lines.join("\n");
+}
+
+/**
+ * 「你能调用的工具」。
+ *
+ * 这一段**从注册表实拍**，不手写。理由：手写的清单一定会漂 —— 加了工具忘了改文案，
+ * agent 就不知道自己有那个能力（早期版本把空清单渲染成「你现在没有可调用的能力」，
+ * 结果它明明有 12 个工具却自称「只能传话」，那是在提示词里撒谎，比缺信息更糟）。
+ *
+ * 注册表是真相：它里面有什么，就写什么；删了工具，这段话自动跟着少一行。
  */
 function capabilitySection(capabilities: readonly CapabilityLine[] | undefined): string {
-	const base = [
-		"你随时可以：在频道说话（`say`）、提问并叫醒某人（`ask`）、读频道历史（`read_channel`）、",
-		"看未读（`inbox`）、列频道（`channels`）、看自己的位置（`whoami`）、看全公司架构（`org_chart`）、",
-		"招人（`hire`）、改身份（`update_identity`）、改能力清单（`set_capabilities`）、记与翻记忆（`remember` / `recall`）。",
-	];
-	const lines = [...base];
-	if (capabilities !== undefined && capabilities.length > 0) {
-		lines.push("");
-		lines.push("此外，你的 `capabilities` 文件还给你列了这些额外能力：");
-		for (const item of capabilities) lines.push(`- \`${item.name}\` — ${item.summary}`);
-	} else {
-		lines.push("");
-		lines.push(
-			"你的 `capabilities` 文件现在是空的 —— 这只是说没有**额外**能力，上面的基础能力你都有。",
-			"想加额外能力，就往 `agents/<你>/capabilities` 里写一行（一行一个名字），下一次对话生效。",
-		);
+	if (capabilities === undefined || capabilities.length === 0) {
+		return "（工具没装上 —— 这是装配故障，不是你的问题。请向老板报告。）";
 	}
+	const lines = capabilities.map((item) => `- \`${item.name}\` — ${item.summary}`);
 	return lines.join("\n");
 }
 
@@ -149,6 +164,14 @@ export function renderAgentPrompt(input: RenderInput): string {
 	}
 
 	parts.push(section("你能做的事", capabilitySection(input.capabilities)));
+
+	if (input.memoryDigest !== undefined && input.memoryDigest.trim() !== "") {
+		parts.push(section("你的记忆", `${input.memoryDigest}\n\n要用哪条就 \`recall\` 读全文。新经验用 \`remember\` 记下。`));
+	}
+
+	if ((input.skills ?? []).length > 0) {
+		parts.push(section("你的技能", skillSection(input.skills ?? [])));
+	}
 
 	parts.push(
 		section(

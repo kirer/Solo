@@ -1,90 +1,169 @@
 /**
- * 新核心的活体验证（手工跑，不在测试套件里）：
+ * 真实调模型的端到端实测（**平时不跑**，故意不叫 `.test.ts`）。
  *
- *   npx tsx scripts/core-live.ts [工作目录]
+ * 为什么单独一份：
+ * - `npm test` 不该依赖外部网关。模型不可用时，一场「本机能不能跑通」的测试会
+ *   红一片，把真正的逻辑错埋掉；而模型错的表现恰好是「什么都没发生」，最容易
+ *   被误当成逻辑错去改代码。
+ * - 它要验的东西逻辑单测验不了：技能/项目文件改完之后，**下一条消息**是否真的
+ *   出现在提示词里；招来的人被 @ 之后是否真的回话。
  *
- * 它做一件最朴素的事：在一个空工作区里种一个人，然后老板在频道里问他一句话，
- * 等他自己回。**这一步跑通，新核心才算真的能用** —— 前面所有单测都只是零件。
+ * 用法（需要真实网关）：
+ *
+ * ```bash
+ * node --experimental-strip-types scripts/core-live.ts
+ * ```
+ *
+ * 直接跑 `main()` 会：建临时工作区 → 播种助理 → 老板 @ 助理 → 等回话 → 检查
+ * 技能与项目是否有落盘生效。全程打印到 stdout，失败不抛（输出就是判据）。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BACKGROUND_CONTEXT } from "../src/core/runtime/index.ts";
-import { createRegistry, openCore, setupModels } from "../src/core/runtime/index.ts";
-import { assembleCore, ownerSpeak, seedOwnerAssistant } from "../src/core/shell/assemble.ts";
-import { ChannelDoc, type ChannelState } from "../src/core/channel/state.ts";
 
-const root = process.argv[2] ?? "/tmp/core-live";
-const agents = join(root, "agents");
-const projects = join(root, "projects");
-await mkdir(projects, { recursive: true });
+const WAIT_MS = 240_000;
 
-const { models, defaultModel } = setupModels(process.env, { workspace: root });
-console.log("默认模型：", defaultModel ?? "（无）");
+type Phase = { readonly name: string; readonly ok: boolean; readonly detail: string };
 
-const opened = await openCore({
-	databasePath: join(root, "company.sqlite"),
-	models,
-	registry: createRegistry(),
-});
-
-const slug = await seedOwnerAssistant(agents, { name: "林越" });
-console.log("种下：", slug);
-
-const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-console.log("会话：", [...shell.conversations.keys()]);
-
-const conversation = shell.conversations.get(slug);
-if (conversation === undefined) throw new Error("没有会话");
-if (defaultModel !== undefined) {
-	await conversation.configure({ model: defaultModel }, BACKGROUND_CONTEXT);
-	console.log("模型已配置到会话");
+function log(phase: Phase): void {
+	const mark = phase.ok ? "✓" : "✗";
+	console.log(`${mark} ${phase.name}${phase.detail === "" ? "" : ` — ${phase.detail}`}`);
 }
 
-const sent = await ownerSpeak(shell, { channelId: "company", text: "@林越 你是谁？用一句话说清楚你在这个公司里负责什么。" });
-console.log("老板发出 #", sent.seq, sent.delivery);
-
-console.log("等他自己回……");
-const deadline = Date.now() + 180_000;
-let state: ChannelState = await shell.channels();
-while (Date.now() < deadline) {
-	state = await shell.channels();
-	const list = state.messages.company ?? [];
-	if (list.some((message) => message.from === slug)) break;
-	await new Promise((resolve) => setTimeout(resolve, 1000));
+/** 轮询频道，直到出现某个人发的消息（不是老板发的）。 */
+async function waitForReply(
+	shell: Awaited<ReturnType<typeof import("../src/core/shell/assemble.ts").assembleCore>>,
+	channelId: string,
+	fromSlug: string,
+	afterSeq: number,
+	timeoutMs: number,
+): Promise<{ readonly seq: number; readonly text: string } | undefined> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const state = await shell.channels();
+		const list = state.messages[channelId] ?? [];
+		const hit = list.find((message) => message.seq > afterSeq && message.from === fromSlug);
+		if (hit !== undefined) return { seq: hit.seq, text: hit.text };
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+	}
+	return undefined;
 }
 
-// 第二轮：改 identity.md，验证「下一条消息就生效」（不重启、不重开会话）。
-const identityPath = join(agents, slug, "identity.md");
-const before = await readFile(identityPath, "utf8");
-await writeFile(identityPath, `${before.trimEnd()}\n\n补充：你只跟老板一个人说话，说话风格是三个字以内的一句话。\n`, "utf8");
-console.log("\n已改 identity.md，再问一次……");
-await ownerSpeak(shell, { channelId: "company", text: "@林越 用一句话说，你现在最该干的一件事是什么。" });
-const deadline2 = Date.now() + 180_000;
-let replies = 0;
-while (Date.now() < deadline2) {
-	state = await shell.channels();
-	replies = (state.messages.company ?? []).filter((message) => message.from === slug).length;
-	if (replies >= 2) break;
-	await new Promise((resolve) => setTimeout(resolve, 1000));
+async function main(): Promise<void> {
+	const { createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
+	const { openCore } = await import("../src/core/runtime/open.ts");
+	const { assembleCore, seedOwnerAssistant } = await import("../src/core/shell/assemble.ts");
+
+	const root = await mkdtemp(join(tmpdir(), "core-live-"));
+	const agentsRoot = join(root, "agents");
+	const projectsRoot = join(root, "projects");
+	await mkdir(agentsRoot, { recursive: true });
+	await mkdir(projectsRoot, { recursive: true });
+	console.log(`工作区：${root}`);
+
+	const slug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
+	console.log(`播种：agents/${slug}`);
+
+	const configured = setupModels(process.env, { workspace: root });
+	const runtime = await openCore({
+		databasePath: join(root, "core.sqlite"),
+		models: configured.models,
+		registry: createRegistry(),
+	});
+	// `setupModels` 返回的是 {models, defaultModel, catalog}：`defaultModel` 是 `{provider, modelId}`，
+	// 已经没有模型时回落成 catalog 的第一条，两条都没有才是真的没配。
+	const picked =
+		configured.defaultModel ?? (configured.catalog[0] === undefined ? undefined : {
+			provider: configured.catalog[0].provider,
+			modelId: configured.catalog[0].modelId,
+		});
+	if (picked === undefined) throw new Error("没有可用模型：先在工作区写 settings.json");
+	console.log(`模型：${picked.provider}/${picked.modelId}`);
+
+	const shell = await assembleCore(runtime.harness, runtime.registry, {
+		agentsRoot,
+		projectsRoot,
+		defaultModel: picked,
+		ownerName: "老板",
+	});
+
+	const phases: Phase[] = [];
+
+	// 1. 老板 @ 助理，等它开口。
+	const asked = await shell.ownerSay({ channelId: "company", text: `@${slug} 你在吗？用一句话回答。` });
+	console.log(`已投递 #${asked.seq}，唤醒 ${asked.delivery.delivered.join(",") || "（没人）"}`);
+	const reply = await waitForReply(shell, "company", slug, asked.seq, WAIT_MS);
+	phases.push({ name: "被 @ 会回话", ok: reply !== undefined, detail: reply?.text.slice(0, 80) ?? "超时无回话" });
+
+	// 2. 技能是否出现在提示词里（读的是同一份 render 结果）。
+	await mkdir(join(agentsRoot, slug, "skills", "自测技能"), { recursive: true });
+	await (await import("node:fs/promises")).writeFile(
+		join(agentsRoot, slug, "skills", "自测技能", "SKILL.md"),
+		"---\nname: 自测技能\ndescription: 这是实测写入的技能\n---\n\n正文。\n",
+		"utf8",
+	);
+	const skillAsked = await shell.ownerSay({ channelId: "company", text: `@${slug} 你有哪些技能？只列名字。` });
+	const skillReply = await waitForReply(shell, "company", slug, skillAsked.seq, WAIT_MS);
+	phases.push({
+		name: "技能热更新生效（不需要重启）",
+		ok: skillReply !== undefined && skillReply.text.includes("自测技能"),
+		detail: skillReply?.text.slice(0, 120) ?? "超时无回话",
+	});
+
+	// 3. 项目说明是否进入项目成员的提示词。
+	await mkdir(join(projectsRoot, "自测项目"), { recursive: true });
+	await (await import("node:fs/promises")).writeFile(
+		join(projectsRoot, "自测项目", "README.md"),
+		"---\nname: 自测项目\nowner: " + slug + "\nstatus: active\n---\n\n目标：验证项目说明会进提示词。\n",
+		"utf8",
+	);
+	const identityPath = join(agentsRoot, slug, "identity.md");
+	const identity = await readFile(identityPath, "utf8");
+	await (await import("node:fs/promises")).writeFile(
+		identityPath,
+		identity.replace(/^---\n([\s\S]*?)\n---/, `---\n$1\nproject: 自测项目\n---`),
+		"utf8",
+	);
+	const projectAsked = await shell.ownerSay({
+		channelId: "company",
+		text: `@${slug} 你现在在哪个项目里？项目目标是什么？一句话。`,
+	});
+	const projectReply = await waitForReply(shell, "company", slug, projectAsked.seq, WAIT_MS);
+	phases.push({
+		name: "项目说明进提示词",
+		ok: projectReply !== undefined && projectReply.text.includes("自测项目"),
+		detail: projectReply?.text.slice(0, 120) ?? "超时无回话",
+	});
+
+	// 4. 记忆：让它记一条，再问它记了什么（提示词里只有目录，正文靠 recall）。
+	const rememberAsked = await shell.ownerSay({
+		channelId: "company",
+		text: `@${slug} 用 remember 记一条：「老板喜欢结论先行」。记完告诉我。`,
+	});
+	const rememberReply = await waitForReply(shell, "company", slug, rememberAsked.seq, WAIT_MS);
+	const memoryPath = join(agentsRoot, slug, "memory.md");
+	const memoryText = await readFile(memoryPath, "utf8").catch(() => "");
+	phases.push({
+		name: "记忆落盘（remember 真写了文件）",
+		ok: rememberReply !== undefined && memoryText.includes("结论先行"),
+		detail: memoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
+	});
+
+	const recallAsked = await shell.ownerSay({ channelId: "company", text: `@${slug} recall 一下你关于「结论」的记忆。` });
+	const recallReply = await waitForReply(shell, "company", slug, recallAsked.seq, WAIT_MS);
+	phases.push({
+		name: "记忆能读回（recall 真读到了）",
+		ok: recallReply !== undefined && recallReply.text.includes("结论"),
+		detail: recallReply?.text.slice(0, 100) ?? "超时无回话",
+	});
+
+	for (const phase of phases) log(phase);
+	await runtime.close().catch(() => undefined);
+	await shell.close().catch(() => undefined);
+	const failed = phases.filter((phase) => !phase.ok);
+	console.log(`\n${phases.length - failed.length}/${phases.length} 通过`);
+	await rm(root, { recursive: true, force: true }).catch(() => undefined);
+	if (failed.length > 0) process.exitCode = 1;
 }
 
-for (const message of state.messages.company ?? []) {
-	console.log(`#${message.seq} ${message.from}: ${message.text.slice(0, 400)}`);
-}
-
-const ctx = await conversation.context(BACKGROUND_CONTEXT);
-console.log("会话条目数：", ctx.entries.length, "消息数：", ctx.messages.length);
-for (const entry of ctx.entries.slice(-5)) {
-	console.log("  entry", entry.kind, JSON.stringify(entry.data ?? null).slice(0, 200));
-}
-const agent = await conversation.agent(BACKGROUND_CONTEXT);
-console.log("模型：", JSON.stringify(agent.model ?? null), "工具数：", agent.tools.length, "段落：", agent.sections.map((section) => section.key));
-console.log("指令前 200 字：", (agent.sections.map((s) => s.key).join(",")));
-
-const inspection = await opened.harness.inspect(BACKGROUND_CONTEXT);
-console.log("任务：", inspection.tasks.map((task) => {
-	const record = task.record as unknown as { definition?: { name?: string }; state?: unknown; outcome?: unknown };
-	return { kind: record.definition?.name, state: JSON.stringify(task.state).slice(0, 400) };
-}));
-
-await opened.close();
+await main();
