@@ -24,6 +24,9 @@ archive/reference/
 # 设计 skill 本地工作目录（改动前快照、截图、方向缓存），不入库
 .taste-skill/
 
+# 验证收据（`npm run verify` 的产物：跑过什么、是否全绿、跑的哪个 commit），本地产物不入库
+.taste/
+
 # 环境变量与本地密钥
 .env
 .env.*

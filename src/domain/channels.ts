@@ -76,6 +76,34 @@ export type ChannelMessage = {
 	 * 「回复了一条更早的消息」）。
 	 */
 	replyTo?: number;
+	/**
+	 * 这条消息投递到了哪些会话的哪个 submission（投递回执）。
+	 *
+	 * 为什么需要它：`deliver()` 只保证「消息进了对方队列」，它**不等待**——
+	 * 于是队列里的东西被消费成 `done` 还是被结算成 `unanswered`（模型不可用 /
+	 * 被 abort / 会话重置），投递方当场一无所知。没有这份回执，
+	 * 「投递成功」就等于「已读」，静默死亡只能靠人肉发现（B4）。
+	 *
+	 * 形状是**追加式**的：每次投递（含看门狗重投）追加一条，同一会话的最后一条
+	 * 才是当前有效的那个 submission。重投次数由条数推导，不另存计数，避免两个真相源。
+	 *
+	 * 老消息没有这个字段，读侧必须容忍 `undefined`（`exactOptionalPropertyTypes`
+	 * 下不能靠 `?? []` 之外的花招）。
+	 */
+	deliveredTo?: DeliveryReceipt[];
+};
+
+/** 一次投递的回执：投给谁、落到哪个 submission。 */
+export type DeliveryReceipt = {
+	/** 目标会话。 */
+	readonly conversationId: number;
+	/**
+	 * 底层 `submissions.id`。
+	 *
+	 * 底层是 branded number（`Id<"submission">`），JSON 里没有 brand，
+	 * 所以这里就存 number：反查用 `harness.submission(id)`，多转一次没有意义。
+	 */
+	readonly submissionId: number;
 };
 
 /** 一个频道成员。 */

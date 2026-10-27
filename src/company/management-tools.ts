@@ -18,6 +18,7 @@ import { createRoundtableTools } from "./roundtable-tools.ts";
 import { createUniversalTools } from "./tools/universal.ts";
 import { createMemoryTools } from "./memory.ts";
 import { createDispatchTools } from "./tools/dispatch.ts";
+import { assertGrantableTools, assertToolsRequested, STAFF_ATOMIC_TOOL_NAMES } from "./staff-tools.ts";
 import {
 	archiveStaff,
 	createProject,
@@ -481,11 +482,35 @@ export function createManagementTools(deps: ToolDependencies) {
 	const staffHire = defineTool({
 		name: "staff_hire",
 		description:
-			"为项目招聘一名员工，可指定模型与直属上级。不指定上级时，默认归本项目负责人。",
+			"为项目招聘一名员工，可指定模型与直属上级。不指定上级时，默认归本项目负责人。" +
+			"**必须显式写明授予哪些原子工具（tools）与职责（duty）**：能力不按角色名推断，" +
+			"只给 tools 里列的（ADR-004：权限靠工具不存在，不靠提示词）。" +
+			"工具名可带目录范围：`write:src/` 表示只能写工作空间里的 src/（见 ADR-035）。",
 		parameters: Type.Object({
 			project: Type.String({ description: "项目 slug" }),
 			name: Type.String({ description: "员工名（项目内唯一）" }),
-			role: Type.String({ description: "员工角色：产品 / 设计 / 开发 / 测试 / 运营" }),
+			role: Type.String({
+				description: "员工角色标签（写进名册、展示在档案页）。它不决定能力：能力只看 tools",
+			}),
+			tools: Type.Array(Type.String(), {
+				description:
+					// 可授予清单是代码里的常量，写进 description 避免文档与实现分叉
+					`要授予的原子工具名，可多选：${STAFF_ATOMIC_TOOL_NAMES.join(" / ")}。` +
+					"按职责最小化地给：要读文件给 read，要写代码给 write/edit，要跑命令给 bash。" +
+					"**多个 agent 在同一个文件夹里干活时，一定要加目录范围**，例如开发只给 " +
+					"[\"read\",\"write:src/\",\"edit:src/\",\"bash\"]，负责人写 index.html 时就不会被员工覆盖。" +
+					"bash 不能带范围（它等于全盘访问），真正隔离靠「不给 bash 只给 write:<目录>/」。" +
+					"员工永远自带 say/ask/inbox/task_*/memory_*/escalate/my_capabilities，不用写在这里",
+			}),
+			duty: Type.String({
+				description:
+					"职责：一段自由文本，会直接拼进员工的系统提示词。写清干什么、什么情况上报谁。" +
+					"参考写法——产品：需求分析、撰写 PRD、定义验收标准、遇到需求冲突上报 CPO；" +
+					"设计：交互方案与视觉方向、遇到技术限制上报 CTO；" +
+					"开发：编码实现与单元测试、遇到技术选型问题上报 CTO；" +
+					"测试：用例设计、执行验证、编写缺陷报告、遇到标准不清上报 CPO；" +
+					"运营：推进节奏与交付跟进、遇到排期冲突上报 COO",
+			}),
 			manager: Type.Optional(
 				Type.String({
 					description:
@@ -495,6 +520,15 @@ export function createManagementTools(deps: ToolDependencies) {
 			modelId: Type.Optional(Type.String({ description: "指定模型；不传用公司默认模型" })),
 		}),
 		execute: async (args) => {
+			// 先校验能力：tools 空着或写错，必须在写库之前就拦下去。
+			// 静默给一个「只读员工」的代价是老板等到任务卡住才发现（这正是本次修的 bug）。
+			try {
+				assertToolsRequested(args.tools);
+				assertGrantableTools(args.tools);
+			} catch (error) {
+				return text(error instanceof Error ? error.message : String(error));
+			}
+
 			const catalog = await listModels(runtime, BACKGROUND_CONTEXT);
 			let model: ModelRef | undefined;
 			if (args.modelId !== undefined) {
@@ -516,6 +550,8 @@ export function createManagementTools(deps: ToolDependencies) {
 						project: args.project,
 						name: args.name,
 						role: args.role,
+						tools: args.tools,
+						duty: args.duty,
 						...(args.manager === undefined ? {} : { manager: args.manager }),
 						...(model === undefined ? {} : { model }),
 						...(deps.registry === undefined ? {} : { registry: deps.registry }),
@@ -534,6 +570,8 @@ export function createManagementTools(deps: ToolDependencies) {
 					`会话：${hired.conversationId}`,
 					`模型：${hired.staff.model.modelId}`,
 					`直属上级：${managerLabelOf(state, hired.staff.manager)}`,
+					`职责：${hired.staff.duty === "" ? "（未填写）" : hired.staff.duty}`,
+					`授予工具：${hired.staff.tools.length === 0 ? "（无执行工具）" : hired.staff.tools.join(" / ")}`,
 				].join("\n"),
 			);
 		},

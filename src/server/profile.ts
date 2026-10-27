@@ -27,8 +27,10 @@ export type ActorProfile = {
 	readonly kind: "owner" | "role" | "project" | "staff";
 	/** 一句话职责。 */
 	readonly subtitle: string;
-	/** 员工角色（产品/设计/开发/测试/运营）。 */
+	/** 员工角色（名册上的标签；能力与提示词都不再按它推断）。 */
 	readonly role?: string;
+	/** 员工的职责（招聘时上级写下的一段话）。 */
+	readonly duty?: string;
 	/** 所属项目名。 */
 	readonly project?: string;
 	/** 上级显示名。 */
@@ -111,7 +113,7 @@ export async function readProfile(
 	for (const person of Object.values(state.staff ?? {})) {
 		if (person.conversationId !== conversationId) continue;
 		const project = state.projects[person.project];
-		const tools = employeeToolsFor(runtime, person.role);
+		const tools = employeeToolsFor(runtime, person.tools ?? []);
 		return {
 			profile: {
 				conversationId,
@@ -119,12 +121,13 @@ export async function readProfile(
 				kind: "staff",
 				subtitle: `${person.role} · ${project?.name ?? person.project}`,
 				role: person.role,
+				duty: person.duty,
 				project: project?.name ?? person.project,
 				parent: managerLabelOf(state, person.manager),
 				model: modelOf(person.model),
-				// 员工实际收到的提示词 = 员工能力包那段职责 + 角色模板 + 汇报关系
+				// 员工实际收到的提示词 = 职责（招聘时上级写的那段）+ 汇报关系
 				charter: staffCharterOf({
-					role: person.role,
+					duty: person.duty,
 					projectName: project?.name ?? person.project,
 					managerLabel: managerLabelOf(state, person.manager),
 				}),

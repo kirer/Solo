@@ -33,6 +33,7 @@ import {
 	type TaskLiveness,
 } from "../runtime/index.ts";
 import { applyDueDispositionDefaults, applyDueResumeReminders } from "./disposition.ts";
+import type { DeliveryReceipt } from "../domain/channels.ts";
 
 /** 看门狗写进会话流的告警条目类型。 */
 export const ALERT_ENTRY_KIND = "app.alert";
@@ -52,7 +53,9 @@ export type WatchdogAction =
 	/** 任务卡住太久：提醒负责人 / 下达人。 */
 	| "nudge-task"
 	/** 老板的消息长时间没有任何回应：告警并重投。 */
-	| "resurface";
+	| "resurface"
+	/** 消息进了队列但没被处理（submission 结算成 `unanswered`）：重投。 */
+	| "redeliver";
 
 /** 一条看门狗事件。 */
 export type WatchdogAlert = {
@@ -68,7 +71,9 @@ export type WatchdogAlert = {
 		| "question-unanswered"
 		| "task-blocked-too-long"
 		| "task-no-progress"
-		| "owner-message-silent";
+		| "owner-message-silent"
+		/** 投递进了队列但没被处理（裁决 B4）。 */
+		| "delivery-unanswered";
 	/** 给老板看的一句话。 */
 	readonly message: string;
 	/** 这是第几次自动动手（从 1 开始；`report` 时为上限 + 1）。 */
@@ -101,6 +106,15 @@ export type WatchdogOptions = {
 	readonly taskStaleMs?: number;
 	/** 老板消息多久没回应就告警。 */
 	readonly ownerSilentMs?: number;
+	/**
+	 * 投递回执多久没结算就去看一眼（毫秒）。
+	 *
+	 * 不能立刻查：消息刚入队时 submission 必然是 `queued`，那时候看成败只会
+	 * 把一个正在正常排队的会话误判成失败。给它足够时间跑完一轮生成。
+	 */
+	readonly redeliverMs?: number;
+	/** 投递回执往回看多远（毫秒）；更早的消息不再追究。 */
+	readonly redeliverWindowMs?: number;
 	/** 事件回调（打日志、推 SSE 等）；留痕本身不依赖它。 */
 	readonly onAlert?: (alert: WatchdogAlert) => void;
 	readonly context?: Context;
@@ -122,6 +136,15 @@ export const WATCHDOG_DEFAULTS = {
 	taskStaleMs: 60 * 60_000,
 	/** 老板消息多久没有任何回应就告警（ADR-026 决策 7.2 的兜底）。 */
 	ownerSilentMs: 5 * 60_000,
+	/**
+	 * 投递回执多久没结算去看一眼（裁决 B4）。
+	 *
+	 * 取 30 秒而不是分钟级：这里的 `unanswered` 不处理，消息就是真的死了，
+	 * 而一次查询只是一次按主键的读，很便宜。
+	 */
+	redeliverMs: 30_000,
+	/** 投递回执往回看多远：更早的消息不再追究（老消息本来就没有 `deliveredTo`）。 */
+	redeliverWindowMs: 24 * 60 * 60_000,
 } as const;
 
 /** 一次巡检的结果。 */
@@ -147,6 +170,14 @@ type WatchdogState = {
 	lastEntry: Map<number, number>;
 	/** 已写出的告警（最近的在前，供界面查询）。 */
 	alerts: WatchdogAlert[];
+	/**
+	 * 已经宣告过「放弃重投」的投递（`taskId#conversationId#submissionId`）。
+	 *
+	 * 为什么要记：`deliveredTo` 是消息上的持久事实，重投耗尽后它不会消失，
+	 * 于是每轮巡检都会重新发现同一个死掉的 submission。没有这个集合，
+	 * 「放弃了」会变成每 30 秒写一条告警——那只是把静默死亡换成噪声。
+	 */
+	deliveryGaveUp: Set<string>;
 };
 
 const STATES = new WeakMap<CompanyRuntime, WatchdogState>();
@@ -161,6 +192,7 @@ function stateOf(runtime: CompanyRuntime): WatchdogState {
 			progressAt: new Map(),
 			lastEntry: new Map(),
 			alerts: [],
+			deliveryGaveUp: new Set(),
 		};
 		STATES.set(runtime, state);
 	}
@@ -398,6 +430,26 @@ export async function runWatchdogPass(
 		process.stderr.write(`[老板消息兜底失败] ${error instanceof Error ? error.message : String(error)}\n`);
 	}
 
+	// ⑧ 投递回执：消息进了队列但没被处理 → 重投（裁决 B4，最严重的那个缺陷）。
+	// 为什么只能在这里做：`deliver()` 不等待，它当场只能知道「进队了」；
+	// 而「进队了但被结算成 unanswered」需要过一会儿回头看一次 submission。
+	try {
+		const redelivered = await redeliverUnanswered(
+			runtime,
+			now,
+			{
+				settleMs: options.redeliverMs ?? WATCHDOG_DEFAULTS.redeliverMs,
+				windowMs: options.redeliverWindowMs ?? WATCHDOG_DEFAULTS.redeliverWindowMs,
+				maxAttempts,
+				gaveUp: state.deliveryGaveUp,
+			},
+			context,
+		);
+		for (const alert of redelivered) await push(alert);
+	} catch (error) {
+		process.stderr.write(`[投递回执重投失败] ${error instanceof Error ? error.message : String(error)}\n`);
+	}
+
 	return { liveness, alerts };
 }
 
@@ -592,6 +644,166 @@ async function resurfaceSilentOwnerMessages(
 		}
 	}
 	return alerts;
+}
+
+/**
+ * 投递回执：消息进了队列但没被处理 → 重投（裁决 B4）。
+ *
+ * 为什么必须在这里做：`deliver()` 不等待（不等待是它存在的理由），所以它当场
+ * 只能知道「队列收下了」。而「队列收下了、后来却被结算成 `unanswered`」（模型不可用、
+ * 被 abort、会话重置）只有过一会儿回头看 submission 才知道。
+ *
+ * 判定看每个目标的**最后一份**回执：重投会追加新回执，只有最新的那个 submission
+ * 代表这条消息目前的命运。
+ *
+ * 上限复用 `maxAttempts`（与任务重试同一口径）。耗尽后只写一条 `giveUp` 告警，
+ * 之后彻底沉默——无限重投只是把「静默死亡」换成「每 30 秒一次的噪声」。
+ */
+async function redeliverUnanswered(
+	runtime: CompanyRuntime,
+	now: number,
+	options: {
+		readonly settleMs: number;
+		readonly windowMs: number;
+		readonly maxAttempts: number;
+		/** 已经宣告过放弃的投递；跨巡检保留，避免同一个死 submission 反复告警。 */
+		readonly gaveUp: Set<string>;
+	},
+	context: Context,
+): Promise<readonly WatchdogAlert[]> {
+	const { readChannels } = await import("./channels.ts");
+	const { deliver } = await import("./deliver.ts");
+	const state = await readChannels(runtime, context);
+	const alerts: WatchdogAlert[] = [];
+
+	for (const channel of Object.values(state.channels)) {
+		if (channel.archived === true) continue;
+		for (const message of channel.messages) {
+			const receipts = message.deliveredTo ?? [];
+			if (receipts.length === 0) continue;
+			// 太新的先别判：刚入队的 submission 必然是 `queued`，
+			// 这时候看一眼只会把一个正在正常排队的会话误判成失败。
+			if (now - message.at < options.settleMs) continue;
+			// 太老的不再追究：超出窗口的已不属于当前债。
+			if (now - message.at > options.windowMs) continue;
+
+			for (const receipt of latestReceiptPerTarget(receipts)) {
+				const settlement = await settlementOf(runtime, receipt.submissionId, context);
+				if (settlement === undefined || settlement.status !== "unanswered") continue;
+
+				// 投过几次 = 这个目标身上的回执条数（首次 + 已重投次数）。
+				const sent = receipts.filter((entry) => entry.conversationId === receipt.conversationId).length;
+				const retries = sent - 1;
+				const taskId = `ch:${channel.id}:${message.seq}`;
+				const why = settlement.reason ?? "未知原因";
+
+				if (retries >= options.maxAttempts) {
+					// 只在上限那一刻告一次；之后完全沉默（否则每轮巡检都重复写一遍）。
+					const key = `${taskId}#${receipt.conversationId}#${receipt.submissionId}`;
+					if (options.gaveUp.has(key)) continue;
+					options.gaveUp.add(key);
+					alerts.push({
+						at: now,
+						conversationId: receipt.conversationId,
+						taskId,
+						taskKind: "app.channel",
+						action: "redeliver",
+						reason: "delivery-unanswered",
+						message: `「${channel.title}」#${message.seq} 投给会话 ${receipt.conversationId} 的消息连续 ${sent} 次未被处理（${why}），已停止自动重投，请人工看一眼。`,
+						attempt: sent,
+						giveUp: true,
+					});
+					continue;
+				}
+
+				const attempt = retries + 1;
+				const outcome = await deliver(
+					runtime,
+					{ channel, message, targets: [receipt.conversationId], attempt },
+					context,
+				);
+				// `deliver()` 收下就算成功（它不等回复），所以这里只能区分「重投有没有进队」，
+				// 真正的答案在下一轮巡检。
+				const retried = outcome.delivered.includes(receipt.conversationId);
+				alerts.push({
+					at: now,
+					conversationId: receipt.conversationId,
+					taskId,
+					taskKind: "app.channel",
+					action: "redeliver",
+					reason: "delivery-unanswered",
+					message: retried
+						? `「${channel.title}」#${message.seq} 投给会话 ${receipt.conversationId} 的消息未被处理（${why}），第 ${attempt} 次重投已入队。`
+						: `「${channel.title}」#${message.seq} 投给会话 ${receipt.conversationId} 的消息未被处理（${why}），第 ${attempt} 次重投也失败了。`,
+					attempt,
+					giveUp: false,
+				});
+			}
+		}
+	}
+	return alerts;
+}
+
+/** 同一个目标只留最后一份回执：只有最新的 submission 代表这条消息目前的命运。 */
+function latestReceiptPerTarget(receipts: readonly DeliveryReceipt[]): readonly DeliveryReceipt[] {
+	const latest = new Map<number, DeliveryReceipt>();
+	for (const receipt of receipts) latest.set(receipt.conversationId, receipt);
+	return [...latest.values()];
+}
+
+/** 反查一个 submission 的结算结果；查不到 / 查出错都当 `undefined`（=不知道）。 */
+async function settlementOf(
+	runtime: CompanyRuntime,
+	submissionId: number,
+	context: Context,
+): Promise<{ readonly status: string; readonly reason?: string } | undefined> {
+	try {
+		const submission = await runtime.harness.submission(submissionId as never, context);
+		if (submission === undefined) return undefined;
+		const record = await submission.status(context);
+		if (record.status !== "unanswered") return { status: record.status };
+		return { status: "unanswered", ...(record.reason === undefined ? {} : { reason: record.reason }) };
+	} catch {
+		// submission 已被逐出 / 库刚被换掉：当不知道，下轮再看。
+		return undefined;
+	}
+}
+
+/**
+ * 每个会话有多少条投给它的消息没被处理（投递回执的可见版本）。
+ *
+ * 给界面用（`ActorView.unanswered`）。老板需要看到「我说了，但对面根本没处理」——
+ * 这正是 B4 里静默死亡的 69 条 unanswered 的可见形式。
+ *
+ * 只往回看 `windowMs`：更早的要么属于没有 `deliveredTo` 的老消息，要么早已不在
+ * 追责窗口内，翻它们只是白白多读一遍库。
+ */
+export async function unansweredDeliveryCounts(
+	runtime: CompanyRuntime,
+	context: Context = BACKGROUND_CONTEXT,
+	windowMs: number = WATCHDOG_DEFAULTS.redeliverWindowMs,
+): Promise<ReadonlyMap<number, number>> {
+	const { readChannels } = await import("./channels.ts");
+	const now = Date.now();
+	const counts = new Map<number, number>();
+	try {
+		const state = await readChannels(runtime, context);
+		for (const channel of Object.values(state.channels)) {
+			for (const message of channel.messages) {
+				const receipts = message.deliveredTo ?? [];
+				if (receipts.length === 0) continue;
+				if (now - message.at > windowMs) continue;
+				for (const receipt of latestReceiptPerTarget(receipts)) {
+					const settlement = await settlementOf(runtime, receipt.submissionId, context);
+					if (settlement === undefined || settlement.status !== "unanswered") continue;
+					counts.set(receipt.conversationId, (counts.get(receipt.conversationId) ?? 0) + 1);
+				}
+			}
+		}
+	} catch {
+		// 计数是纯展示用途，读不到就当 0——不能因为一个徽标把整个组织快照弄挂。
+	}
+	return counts;
 }
 
 /**

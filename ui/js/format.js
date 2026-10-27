@@ -163,7 +163,10 @@ function detailOf(name, args) {
 			detail = [pick("role"), pick("task")].filter(Boolean).join(" · ");
 			break;
 		case "staff_hire":
-			detail = [pick("project"), pick("name", "employee"), pick("role")].filter(Boolean).join(" · ");
+			// 招聘的关键信息是「给了什么能力」与「交代了什么」，比项目名更能看出这次招聘是否合理
+			detail = [pick("project"), pick("name", "employee"), pick("role"), Array.isArray(record.tools) ? record.tools.join("/") : "", pick("duty")]
+				.filter(Boolean)
+				.join(" · ");
 			break;
 		case "staff_assign":
 			detail = [pick("project"), pick("employee"), pick("task")].filter(Boolean).join(" · ");

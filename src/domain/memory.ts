@@ -53,6 +53,13 @@ export type MemoryEntry = {
 	source: "task" | "manual" | "distill";
 	/** 被折叠进它的条数（只有 `distill` 有）。 */
 	folded?: number;
+	/**
+	 * 折叠代数：原始条目是 0（/ 省略），每被折进一次 distill 就 +1。
+	 *
+	 * 有了它才能限定「只折同一层」——否则 distill 会被自己的下一轮折叠
+	 * 反复再折，`f(n+1) = f(f(n) 的标题)`，实测 200 条后代数到 153。
+	 */
+	readonly depth?: number;
 };
 
 /** 记忆文档状态。 */
@@ -69,6 +76,19 @@ export const MEMORY_CAPACITY: Readonly<Record<MemoryLevel, number>> = {
 
 /** 一次折叠吃掉多少条。 */
 export const FOLD_BATCH = 20;
+
+/**
+ * 折叠代数硬上限：到了这里就不再折。
+ *
+ * 折叠的意义是把「一堆细节」压成「一串标题」；第三次折叠之后剩下的只有
+ * 标题的前缀，再压一次得到的是噪音，而且每一轮都还在变长。
+ * 宁肯让条数超过 `MEMORY_CAPACITY`（靠丢最老的原始条目兜底），
+ * 也不生成无限嵌套的标题。
+ */
+export const MAX_DEPTH = 3;
+
+/** 一条 distill 的正文里最多列几条子标题（超出写「…等 N 条」）。 */
+export const DISTILL_TITLES = 8;
 
 /** 正文长度上限。记忆是提炼，不是存档。 */
 export const MEMORY_BODY_LIMIT = 300;
@@ -118,9 +138,19 @@ export function appendMemory(state: MemoryState, entry: MemoryEntry): MemoryStat
 /**
  * 按容量折叠。
  *
- * 只折叠**最老的** `FOLD_BATCH` 条，并把它们合成一条 `source: "distill"`
- * 的总结放在最前面（时间取被折叠的最后一条，这样它不会因为「最老」被立刻再折一次）。
- * 已有的 `distill` 条目也会被再次折进去——否则反复折叠会留下一堆总结。
+ * 规则只有两条，但它们必须是**同一条**规则的两半：
+ *
+ * 1. **只折同一层**：先算出分区里的最大代数 `maxDepth`，只折
+ *    `(depth ?? 0) === maxDepth` 且够一批（`FOLD_BATCH` 条）的那批，
+ *    产出 `depth: maxDepth + 1`。这样折叠是「一层一层往上垒」，
+ *    而不是「把上一轮的总结连同新条目一起再折一次」。
+ * 2. **折不动就丢最老的原始条目**：`maxDepth` 到 `MAX_DEPTH`、或最深那层
+ *    不够一批时，直接丢 `depth 0` 里最老的几条把条数压回容量。
+ *    **丢原条不丢 distill**——distill 是已经压过一轮的信息，丢了就真没了。
+ *
+ * 旧实现在这里遍历**全部**条目、取最老的 20 条，于是已有的 distill 会被
+ * 再折一次：`folded` 计数无限累加、正文变成「总结的总结的总结」，实测
+ * staff 层写 200 条后最深代数 153，最新 distill 的前 4/5 是嵌套标题。
  */
 export function compactMemory(state: MemoryState): MemoryState {
 	let entries = [...state.entries];
@@ -130,36 +160,64 @@ export function compactMemory(state: MemoryState): MemoryState {
 		for (const level of MEMORY_LEVELS) {
 			const owners = new Set(entries.filter((entry) => entry.level === level).map((entry) => entry.owner));
 			for (const owner of owners) {
-				const mine = entries.filter((entry) => entry.level === level && entry.owner === owner);
+				const isMine = (item: MemoryEntry): boolean => item.level === level && item.owner === owner;
+				const mine = entries.filter(isMine);
 				const cap = MEMORY_CAPACITY[level];
 				if (mine.length <= cap) continue;
 				mine.sort((left, right) => left.at - right.at);
-				const folded = mine.slice(0, FOLD_BATCH);
-				const rest = mine.slice(FOLD_BATCH);
-				const at = folded.at(-1)?.at ?? Date.now();
-				const summary: MemoryEntry = {
-					id: `m-distill-${level}-${owner}-${at}`,
-					at,
-					level,
-					owner,
-					title: `阶段总结（${folded.length} 条，截至 ${new Date(at).toISOString().slice(0, 10)}）`,
-					body: folded
-						.map((item) => `${item.title}：${firstLine(item.body, 60)}`)
-						.join("；")
-						.slice(0, MEMORY_BODY_LIMIT),
-					tags: [...new Set(folded.flatMap((item) => item.tags))].slice(0, 8),
-					source: "distill",
-					folded: folded.reduce((sum, item) => sum + (item.folded ?? 1), 0),
-				};
-				// 只替换**这个分区**：别的层、别的负责人一条都不能动。
-				// 曾经写成 `[summary, ...rest]`——那样每次折叠都会把其它分区整个丢掉。
-				const isMine = (item: MemoryEntry): boolean => item.level === level && item.owner === owner;
-				entries = [...entries.filter((item) => !isMine(item)), summary, ...rest];
+				const maxDepth = Math.max(...mine.map((item) => item.depth ?? 0));
+				const deepest = mine.filter((item) => (item.depth ?? 0) === maxDepth);
+
+				if (maxDepth < MAX_DEPTH && deepest.length >= FOLD_BATCH) {
+					const folded = deepest.slice(0, FOLD_BATCH);
+					const foldedIds = new Set(folded.map((item) => item.id));
+					const rest = entries.filter((item) => isMine(item) && !foldedIds.has(item.id));
+					const at = folded.at(-1)?.at ?? Date.now();
+					const summary: MemoryEntry = {
+						id: `m-distill-${level}-${owner}-${maxDepth + 1}-${at}`,
+						at,
+						level,
+						owner,
+						depth: maxDepth + 1,
+						title: `阶段总结（${folded.length} 条，截至 ${new Date(at).toISOString().slice(0, 10)}）`,
+						body: distillBody(folded),
+						tags: [...new Set(folded.flatMap((item) => item.tags))].slice(0, 8),
+						source: "distill",
+						folded: folded.reduce((sum, item) => sum + (item.folded ?? 1), 0),
+					};
+					// 只替换**这个分区**：别的层、别的负责人一条都不能动。
+					// 曾经写成 `[summary, ...rest]`——那样每次折叠都会把其它分区整个丢掉。
+					entries = [...entries.filter((item) => !isMine(item)), summary, ...rest];
+					changed = true;
+					continue;
+				}
+
+				// 折不动了：丢最老的原始条目，直到刚好回到容量。
+				// 一条原始条目都没有（整层都是 distill）时宁可超容量——
+				// 继续折只会得到更高代的标题前缀，那不叫维护，叫熵增。
+				const droppable = mine.filter((item) => (item.depth ?? 0) === 0);
+				if (droppable.length === 0) continue;
+				const doomed = new Set(droppable.slice(0, mine.length - cap).map((item) => item.id));
+				entries = entries.filter((item) => !doomed.has(item.id));
 				changed = true;
 			}
 		}
 	}
 	return { entries };
+}
+
+/**
+ * 一条 distill 的正文：**子条目的标题列表**，不取正文。
+ *
+ * 旧实现取 `firstLine(item.body, 60)`——对 distill 来说那正好是它自己的
+ * 嵌套标题行，于是第二代 distill 的正文全是标题前缀。标题才是这里唯一
+ * 有意义的信息：它同时是检索词和「我当时记过什么」的索引。
+ */
+function distillBody(folded: readonly MemoryEntry[]): string {
+	const titles = folded.slice(0, DISTILL_TITLES).map((item) => firstLine(item.title, 40));
+	const rest = folded.length - titles.length;
+	const text = [...titles, rest > 0 ? `…等 ${folded.length} 条` : ""].filter((line) => line !== "").join("；");
+	return text.length > MEMORY_BODY_LIMIT ? `${text.slice(0, MEMORY_BODY_LIMIT - 1)}…` : text;
 }
 
 /**

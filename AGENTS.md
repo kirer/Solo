@@ -68,13 +68,22 @@ cat docs/DECISIONS.md       # 你改的地方碰不碰边界
 ### 3.2 提交前（必须全绿，缺一不可）
 
 ```bash
-npm run check                                  # tsc --noEmit + 边界检查
-npm test                                       # 54 files / 764 tests
+npm run check                                  # tsc --noEmit + 边界检查（含「路由必须有消费者」）
+npm run verify                                 # 全量测试 + 机器可读收据；跳过 0 才算过
 npm run ui:build                               # 改了 ui/ 就必须跑
-node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须跑（63 项真浏览器断言）
+node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须跑（66 项真浏览器断言）
 ```
 
-- **`ui-check.mjs` 默认连 7789 端口**，本机服务通常在 7788，必须显式传 `--url`。
+- **`npm test` 不再是验收标准，`npm run verify` 才是。** `verify` 跑完写
+  `.taste/verify-receipt.json`（`ok` / `numTotalTests` / `numPendingTests` / `commit` / `at`），
+  `numPendingTests > 0` 即失败：**跳过的测试等于没测**。想跳过真模型测试必须显式
+  `SKIP_REAL_MODEL=1`，不设就探测网关，探不到直接红。`npm run verify:check` 校验收据新鲜
+  （同一 commit ∧ 24 小时内）。
+- **`npm run check` 的边界检查会往 stderr 打「已知缺口」清单**（有消费计划但界面还没接上的
+  路由）。那是待办，不是失败；真违规才 exit 1。加新路由而没人消费，要么接上、要么删掉、
+  要么写进 `scripts/check-boundaries.mjs` 的 `NO_CONSUMER_PENDING` 并写清谁来收尾。
+- **`ui-check.mjs` 默认连 7789 端口**，本机服务通常在 7788，必须显式传 `--url`。它断言的是
+  **默认落在频道视图**；要验组织图相关行为（翻面 / 连线 / 状态光边）必须先 `#view-org`。
 - 改了界面**不能只读代码就交付**，要真实浏览器截图验收：`npm run ui:shot -- --url ... --out /tmp/shots`。
 
 ### 3.3 改了行为 → 同步这几个地方（硬要求）
@@ -132,7 +141,7 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 ```bash
 npm install
 npm start                        # 起网页服务，默认 http://127.0.0.1:7788
-npm test                         # 764 个测试，约 2 分钟
+npm run verify                   # 826 个测试，约 2 分钟（跳过 0 才算过）
 ```
 
 `workspace/company.sqlite` 是真实数据；做实验前先备份（`docs/RUNBOOK.md` §备份）。

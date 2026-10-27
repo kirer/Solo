@@ -19,6 +19,21 @@
  *
  * 3. **每条投递都带未读摘要**。没被唤醒的人不会错过信息：下次因任何原因醒来，
  *    输入前缀里有「你有 N 条未读」。
+ *
+ * ── 投递回执（裁决 B4）──
+ *
+ * 约束 1（不等待）的代价是：「进了队列」不等于「被处理了」。队列里的东西可能被结算成
+ * `unanswered`（模型不可用 / 被 abort / 会话重置），而 `deliver()` 当场看不到——
+ * 生产库曾积了 69 条这样的静默死亡。所以投递结果有**第三态**：
+ *
+ * - `delivered`：已进队列（注意：**不代表已读**）
+ * - `failed`：连队列都没进
+ * - `unanswered`：进了队列但最终没被处理
+ *
+ * `unanswered` **不由这里填**：填它必须等 submission 结算，而等待正是这个函数存在的理由的
+ * 反面。这里的职责只到「把 submissionId 记进消息的 `deliveredTo`」，判定与重投交给看门狗
+ * （`watchdog.ts` 的 `redeliverUnanswered`）。类型上保留这一态，是为了让调用方
+ * **不再假设「delivered 就是成功」**——编译器会逼着你看清有第三种结局。
  */
 import {
 	BACKGROUND_CONTEXT,
@@ -31,6 +46,7 @@ import {
 	type Channel,
 	type ChannelMessage,
 	type ChannelState,
+	type DeliveryReceipt,
 	type UnreadDigest,
 } from "../domain/channels.ts";
 import { ChannelDoc } from "./channels-doc.ts";
@@ -42,10 +58,18 @@ import { renderMemoryBrief, type MemoryState } from "../domain/memory.ts";
 
 /** 一次投递的结果。 */
 export type DeliverOutcome = {
-	/** 成功进入队列的会话。 */
+	/** 成功进入队列的会话。**不代表对方已读**，只代表队列收下了。 */
 	readonly delivered: readonly number[];
 	/** 投递失败的会话（消息仍在频道里，它们下次醒来会看到未读）。 */
 	readonly failed: readonly number[];
+	/**
+	 * 进了队列、但最终没被处理的会话（submission 结算成 `unanswered`）。
+	 *
+	 * `deliver()` 自己不等待，所以这里**永远是空数组**；真正的值由看门狗延迟判定，
+	 * 它照着消息上的 `deliveredTo` 反查 submission 状态（见 `watchdog.ts`）。
+	 * 字段存在本身就是契约：调用方必须知道有第三种结局。
+	 */
+	readonly unanswered: readonly number[];
 };
 
 /** 投递选项。 */
@@ -68,6 +92,15 @@ export type DeliverOptions = {
 	 * 那是有状态的破坏性操作，不适合藏在「投递」这个原语里。
 	 */
 	readonly urgency?: "steer";
+	/**
+	 * 第几次重投（0 / 缺省 = 首次投递）。
+	 *
+	 * 为什么要它：`requestId` 是底层的去重键，同一条消息重投时若还用原来的
+	 * `ch:<channel>:<seq>:<target>`，`admitSubmission` 会**直接返回原来那个 submission**
+	 * （甚至把 `unanswered` 报成 `done`）——看起来投了，其实一条新消息都没入队。
+	 * 加上 `:rN` 后缀才能真的重投；次数由调用方（看门狗）控制，这里只负责拼进 key。
+	 */
+	readonly attempt?: number;
 };
 
 /**
@@ -83,6 +116,8 @@ export async function deliver(
 ): Promise<DeliverOutcome> {
 	const delivered: number[] = [];
 	const failed: number[] = [];
+	// 这次投递落下的回执（供写回消息上的 `deliveredTo`）。
+	const receipts: DeliveryReceipt[] = [];
 
 	const company = await runtime.harness.snapshot(CompanyDoc, context);
 	const org = buildOrg(company);
@@ -115,13 +150,14 @@ export async function deliver(
 				.filter((part) => part !== "")
 				.join("\n\n");
 
-			await conversation.submit(
+			const submission = await conversation.submit(
 				{
 					type: "input",
 					content,
 					// 请求标识由「频道 + 消息序号 + 目标」推导：同一条消息重复投递会被去重
-					// （崩溃恢复是至少一次语义，见 ADR-006）
-					requestId: `ch:${options.channel.id}:${options.message.seq}:${target}`,
+					// （崩溃恢复是至少一次语义，见 ADR-006）。
+					// 看门狗重投时带 `:rN` 后缀——去重是有意的，但重投必须真的再进一次队。
+					requestId: requestIdOf(options, target),
 					entry: {
 						kind: "app.channel",
 						data: {
@@ -143,6 +179,9 @@ export async function deliver(
 			// 必须写在 submit 之后：先让模型看到消息，再让工具读到上下文；
 			// 反过来会出现「上下文是新的、消息还没入队」的窗口。
 			await recordReplyContext(runtime, target, options, context);
+			// 回执：拿到 submissionId 才算「有据可查的投递」。
+			// 没有它，日后就无法区分「队列还没轮到他」与「已被结算成 unanswered」。
+			receipts.push({ conversationId: target, submissionId: Number(submission.id) });
 			delivered.push(target);
 		} catch (error) {
 			// 投递失败不抛：消息已在频道里，对方下次醒来会看到未读摘要。
@@ -156,7 +195,19 @@ export async function deliver(
 		}
 	}
 
-	return { delivered, failed };
+	// 回执写回消息。失败不影响投递结果：消息已经进队了，回执只是「事后可查」的附加信息，
+	// 记录失败最坏退化成老行为（看门狗看不到这条），不该让一条已投递的消息变成失败。
+	if (receipts.length > 0) await recordDeliveredTo(runtime, options, receipts, context);
+
+	// `unanswered` 恒为空：本函数不等待，判定由看门狗做（见文件头）。
+	return { delivered, failed, unanswered: [] };
+}
+
+/** 拼 requestId：重投（`attempt > 0`）时加 `:rN` 后缀，绕开底层的同 key 去重。 */
+function requestIdOf(options: DeliverOptions, target: number): string {
+	const base = `ch:${options.channel.id}:${options.message.seq}:${target}`;
+	const attempt = options.attempt ?? 0;
+	return attempt <= 0 ? base : `${base}:r${attempt + 1}`;
 }
 
 /**
@@ -187,6 +238,44 @@ async function recordReplyContext(
 	} catch (error) {
 		process.stderr.write(
 			`[回复上下文写入失败] ${options.channel.id}#${options.message.seq} → 会话 ${target}: ${
+				error instanceof Error ? error.message : String(error)
+			}\n`,
+		);
+	}
+}
+
+/**
+ * 把回执写回这条消息的 `deliveredTo`。
+ *
+ * 为什么不整频道替换：`ChannelDoc` 里一个群频道能到 50KB，整替换会把整个频道
+ * 当一个 delta 写下去；而这里只改 `messages[k].deliveredTo` 一个键——chord 的
+ * 数组 diff 是按下标逐元素的，实际落盘的只有那几个键。
+ *
+ * 找不到那条消息（被 800 条上限裁了 / 别人刚清了频道）就静默跳过：
+ * 回执的价值随消息一起没了，没什么可补救的。
+ *
+ * 失败只写 stderr：消息已经进队，回执丢了不能让一条已投递的消息变成失败。
+ */
+async function recordDeliveredTo(
+	runtime: CompanyRuntime,
+	options: DeliverOptions,
+	receipts: readonly DeliveryReceipt[],
+	context: Context,
+): Promise<void> {
+	try {
+		await runtime.harness.commit(async (tx) => {
+			const doc = await tx.doc(ChannelDoc);
+			const channel = (doc as ChannelState).channels[options.channel.id];
+			if (channel === undefined) return;
+			const message = channel.messages.find((entry) => entry.seq === options.message.seq);
+			if (message === undefined) return;
+			// 追加而非覆盖：看门狗重投时同一条消息会有多份回执，最新的那份才是当前有效的
+			// submission；覆盖就丢掉了「重投过几次」这个事实。
+			message.deliveredTo = [...(message.deliveredTo ?? []), ...receipts];
+		}, context);
+	} catch (error) {
+		process.stderr.write(
+			`[投递回执写入失败] ${options.channel.id}#${options.message.seq}: ${
 				error instanceof Error ? error.message : String(error)
 			}\n`,
 		);

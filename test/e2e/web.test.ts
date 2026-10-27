@@ -575,6 +575,8 @@ describe("职工档案接口", () => {
 				project: "alpha",
 				name: "林越",
 				role: "开发",
+				tools: ["read", "write", "edit", "bash"],
+				duty: "负责前端页面与交互实现，遇到技术选型问题上报 CTO。",
 				manager: "cto",
 				registry: registryMod.createRegistry(),
 			},
@@ -588,10 +590,11 @@ describe("职工档案接口", () => {
 		expect(profile.role).toBe("开发");
 		expect(profile.project).toBe("Alpha");
 		expect(profile.parent).toBe("CTO");
-		// 员工的实际提示词 = 角色模板 + 汇报关系，必须是真内容
-		expect(profile.charter).toContain("开发");
+		// 员工的职责是招聘时上级写的那段话，必须如实呈现到档案页
+		expect(profile.duty).toBe("负责前端页面与交互实现，遇到技术选型问题上报 CTO。");
+		expect(profile.charter).toContain("负责前端页面与交互实现");
 		expect(profile.charter).toContain("Alpha");
-		// 开发有 bash/读写，没有管理工具（ADR-004）
+		// 写了 bash/读写，就没有管理工具（ADR-004）
 		const names = profile.tools.map((tool) => tool.name);
 		expect(names).toContain("bash");
 		expect(names).toContain("read");

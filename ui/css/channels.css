@@ -193,6 +193,18 @@
 	font-variant-numeric: tabular-nums;
 }
 
+/* 「N 个未完成」：比徽章弱一级——未读数是要你点的，任务数只是背景信息。 */
+.ch-row-tasks {
+	padding: 0 5px;
+	border-radius: 9px;
+	background: var(--surface-3);
+	color: var(--muted);
+	font-size: 10px;
+	line-height: 16px;
+	white-space: nowrap;
+	font-variant-numeric: tabular-nums;
+}
+
 .ch-badge {
 	min-width: 17px;
 	height: 17px;
@@ -531,6 +543,35 @@
 .ch-mention i[data-read="true"] {
 	background: var(--run);
 	box-shadow: 0 0 6px -1px var(--run-glow);
+}
+
+/* ── 受理回执（老板消息下的进度行） ────────────────────────────────── */
+
+.ch-acks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	margin-top: 3px;
+}
+
+/* 比正文弱一级：它不是消息，是「这件事现在到哪了」 */
+.ch-ack {
+	display: inline-flex;
+	align-items: center;
+	font-size: 10px;
+	line-height: 16px;
+	color: var(--muted);
+	padding: 0 7px;
+	border-radius: 8px;
+	background: var(--surface-3);
+	white-space: nowrap;
+}
+
+/* 忙的时候给一个很轻的亮度差，不用彩色（状态色只留给 @ 已读点） */
+.ch-ack[data-busy="true"] {
+	background: var(--surface-2);
+	border: 1px solid var(--line);
+	line-height: 14px;
 }
 
 /* ── 系统消息 / 任务卡片 ────────────────────────────────────────────── */

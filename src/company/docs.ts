@@ -55,7 +55,7 @@ function everyNItems<T>(count: (value: Readonly<T>) => number, n = 512) {
 /** 公司索引文档。 */
 export const CompanyDoc = defineDoc<CompanyState>({
 	kind: "app.company",
-	version: 1,
+	version: 3,
 	scope: "session",
 	initial: () => ({
 		company: { name: "", createdAt: 0 },
@@ -67,8 +67,83 @@ export const CompanyDoc = defineDoc<CompanyState>({
 		modelCatalog: [],
 		workspaceRoot: "",
 	}),
+	/**
+	 * v1 → v2：员工从「角色名决定能力」改成「招聘时显式声明 tools / duty」。
+	 *
+	 * 老名册项没有 `tools` 与 `duty` 两个字段。不补会直接崩：
+	 * `staffCharterOf()` 里 `input.duty.trim()` 拿到 `undefined`（档案页一打开就
+	 * 500），`employeeToolsFor()` 拿到 `undefined` 会一路传到 `toolsForNames()`。
+	 *
+	 * 老员工的 tools 按**旧表**推出来，而不是一律给空：那时能力确实来自
+	 * `STAFF_TOOLSETS[role]`，照着推等于保住他们现在的行为；给空则是悄悄
+	 * 卸掉所有执行工具——正是本次要消灭的那类静默变化。旧表里没有的角色
+	 * （当年那些被静默变只读的「前端」「backend」）推出来的就是 `["read"]`，
+	 * 与它们此刻的真实能力一致。
+	 *
+	 * v2 → v3：工具名多了一段可选的目录范围（`write:src/`，见 ADR-035）。
+	 * 这一步**不需要动数据**：没有冒号的老名字就是「整个工作空间」，语义不变。
+	 * 于是老的 `tools: ["read","write","edit","bash"]` 原样留在 v3 里。
+	 * 为什么不顺手给老员工加上范围（比如把 `write` 收成 `write:src/`）：
+	 * **收紧权限会让已派出的任务突然失败**——他们昨天还在写 `ui/`、`docs/`，
+	 * 今天就会撞上「不能写」。收权是一次显式的组织决定（重新招聘或改档案），
+	 * 不该是迁移的副作用。
+	 */
+	migrate: (value, fromVersion) => {
+		if (fromVersion >= 2) return value as unknown as CompanyState;
+		const state = value as unknown as CompanyState;
+		const staff: Record<string, StaffEntry> = {};
+		for (const [key, person] of Object.entries(state.staff ?? {})) {
+			staff[key] = {
+				...person,
+				// 老记录只有 role：按当年的表反推，保证「迁移不改行为」。
+				tools: (person as { tools?: string[] }).tools ?? legacyToolsOf(person.role),
+				duty: (person as { duty?: string }).duty ?? legacyDutyOf(person.role),
+			};
+		}
+		return { ...state, staff };
+	},
 	checkpointWhen: () => false,
 });
+
+/**
+ * 迁移专用：v1 时代的「角色 → 执行工具」表，已经被删掉，只留这一份给迁移用。
+ *
+ * 为什么留在 `src/company/` 而不是删干净：删了就没法把老库迁到新语义
+ * （新语义里能力是招聘时写下的名字，老库里没写，只能从旧规则推一次）。
+ * 这份表**没有生产调用方**，只被 `CompanyDoc.migrate` 引用。
+ */
+const LEGACY_STAFF_TOOLSETS: Record<string, readonly string[]> = {
+	产品: ["read", "write", "edit"],
+	设计: ["read", "write", "edit"],
+	开发: ["read", "write", "edit", "bash"],
+	测试: ["read", "write", "edit", "bash"],
+	运营: ["read"],
+};
+
+/** v1 时代未知角色的默认值：只读。 */
+const LEGACY_DEFAULT_TOOLS: readonly string[] = ["read"];
+
+/** 迁移用：按 v1 的规则推出老员工的工具名。 */
+function legacyToolsOf(role: string): string[] {
+	return [...(LEGACY_STAFF_TOOLSETS[role] ?? LEGACY_DEFAULT_TOOLS)];
+}
+
+/**
+ * 迁移用：按 v1 的角色模板推出老员工的职责文本。
+ *
+ * 文案照抄 v1 的 `STAFF_ROLE_TEMPLATES`，这样迁移后员工收到的提示词与迁移前
+ * 逐字相同——迁移不该顺手改人的职责。
+ */
+function legacyDutyOf(role: string): string {
+	const templates: Record<string, string> = {
+		产品: "你是产品经理。负责需求分析、撰写 PRD、定义验收标准。不要写代码。遇到需求冲突上报 CPO。",
+		设计: "你是 UI/UX 设计师。负责交互方案与视觉方向。输出设计说明与原型描述。遇到技术限制上报 CTO。",
+		开发: "你是开发工程师。负责编码实现与单元测试。遇到技术选型问题上报 CTO。不要改动需求定义。",
+		测试: "你是测试工程师。负责用例设计、执行验证、编写缺陷报告。不要修改产品代码。遇到标准不清上报 CPO。",
+		运营: "你是运营。负责推进节奏与交付跟进。遇到排期冲突上报 COO。",
+	};
+	return templates[role] ?? `你是${role}。只做被指派的工作，遇到不确定的事上报。`;
+}
 
 /** 会话在组织里的类型。 */
 export type ConversationKind = "owner" | "role" | "project" | "staff" | "branch";

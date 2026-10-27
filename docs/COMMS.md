@@ -249,6 +249,50 @@ T-3 的登录接口，token 过期后返回 401 还是 403？
 
 第 3 条必须存在（前两条会漏）。
 
+### 3.3 投递回执：投递 ≠ 被处理（ADR-034）
+
+「进了队列」和「被处理了」是两件事。`deliver()` **不等待**（ADR-028），所以它只
+能保证前者；后者可能被结算成 `unanswered`（模型不可用 / 被 abort / 会话重置）而
+投递方一无所知。生产库实测过 69 条这种静默死亡。
+
+所以：
+
+1. **消息落 `deliveredTo`**：`{conversationId, submissionId}[]`，追加式
+   （同一目标的**最后一条**才是当前有效 submission，重投次数由条数推导）。
+2. **`deliver()` 返回三态** `DeliverOutcome { delivered, failed, unanswered }`，
+   其中 `unanswered` **恒为空**——判定要过一会儿回头看，那是看门狗的活。
+3. **看门狗每 30 秒**（`WATCHDOG_DEFAULTS.redeliverMs`）反查窗口内（24 小时）
+   每条回执对应 submission 的状态，命中 `unanswered` 就重投（`requestId` 加
+   `:rN`，否则 `admitSubmission` 会去重直接返回原 submission），每次写 `app.alert`
+   （`action: "redeliver"`、`reason: "delivery-unanswered"`）。
+4. **上限 2 次**（复用 `maxAttempts`），耗尽后只告一次 `giveUp`，之后沉默。
+5. **界面**：`ActorView.unanswered` 显示「投给这个人但没被处理」的条数。
+
+注意 `no_model` 这类永久失败重投也没用——回执的价值是**让它可见并告警**，
+不是让它自愈。
+
+### 3.4 回执 vs 确认：两件不同的事
+
+`deliveredTo` 是**给系统看的**（看门狗据此重投），`app.ack` 是**给老板看的**。
+
+老板在频道里发一句话，他真正想知道的是「有人接手了吗？还在处理吗？」——这件事
+曾经完全不可见：`writeAck()` 把 `app.ack` 写进**每个接收方的会话流**（那是对的，
+它是给模型看的「你刚收到一条消息」），但频道视图只投影 `app.channel`，所以老板发完
+消息界面零反馈。
+
+现在两侧都补齐：
+
+| 通道 | 谁看 | 内容 |
+|---|---|---|
+| `Message.deliveredTo[]` | 看门狗 | `{conversationId, submissionId}`，用来反查是否被处理 |
+| `app.ack` | 模型 | 写进接收方会话流：「你收到一条消息，当前忙/闲」 |
+| `MessageView.acks[]` | **老板** | 挂回原消息的「已排队 / 立即处理」，带 `busy` 与 `busyWith`（正在跑哪个工具） |
+
+实现要点（`src/server/channels-view.ts`）：`writeAck()` 拿到 `postToChannel()` 返回的
+`seq` 并落进 ack data 的 `messageSeq`；投影时扫最近条目，按 `messageSeq` 把 ack 挂回
+对应消息，**只装最新 N 条**（不回填历史，避免每帧扫全表）。ack 不进 `deliveredTo`
+——那会破坏 `redeliverUnanswered` 的遍历语义（它会去查一条压根不是投递的 submission）。
+
 ---
 
 ## 4. 能力目录
@@ -279,13 +323,24 @@ T-3 的登录接口，token 过期后返回 401 还是 403？
 | `task_update` | 报进度 / 阻塞 / 完成（完成必须带 evidence） |
 | `tool_search` | 搜能力 |
 
-**执行（按角色）**
+**执行（按招聘时显式声明，不按角色）**——ADR-035
 
-| 工具 | 产品 | 设计 | 开发 | 测试 | 运营 |
-|---|---|---|---|---|---|
-| `read` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `write` / `edit` | ✓ | ✓ | ✓ | ✓ | ✗ |
-| `bash` | ✗ | ✗ | ✓ | ✓ | ✗ |
+从前这里是一张「角色 → 工具」表（`STAFF_TOOLSETS`），已经删掉。原因是 `role` 是自由
+字符串（`staff_hire` 的 schema 里没有 enum），表外的角色会静默退化成
+`{read: true, write: false, bash: false}`——**招一个「前端」等于招一个只读员工**，
+在生产里真实发生过。
+
+现在 `staff_hire` 必须显式传 `tools`，角色名只是名册标签：
+
+| 工具名 | 含义 |
+|---|---|
+| `read` / `write` / `edit` | 无范围：整工作空间可读写 |
+| `write:src/` / `edit:docs/` / `read:notes/` | **限定目录**，越界直接报错（文案给「向上级申请」的出口） |
+| `bash` | 命令执行。**不接受 scope**——`cd ..` / `sh -c` / `$(...)` 用前缀拦不住，给了 bash 就等于给了全盘权限 |
+
+常见组合：写代码 `["read","write","edit","bash"]`；只审不改 `["read"]`；
+写文档 `["read","write:docs/"]`。授予 `staff_hire` / `project_create` 这类管理工具
+一律报错（ADR-004：权限靠工具不存在）。
 
 **员工专属**：`escalate`（正式上报，进 PendingDoc）
 

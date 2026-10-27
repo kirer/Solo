@@ -25,6 +25,7 @@
 | **GET** | **`/uploads/:id/:name`** | **下载附件** |
 | **GET** | **`/api/board`** | **任务看板（doing / todo / done）** |
 | **POST** | **`/api/im/inbound?token=`** | **IM 入站投递到老板通道** |
+| GET | `/api/channels/:id` | 频道视图（消息 + `acks` 受理回执，见 §10.6） |
 
 加粗的是本轮新增。以下逐条写清字段、边界与错误。
 
@@ -345,6 +346,82 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
    被拍板的人永远等不到」。
 3. `options` 由服务端给（解析在服务端一处），界面不再自己猜：
    把「1. 读文件」这种步骤渲染成可点按钮，点一下就会把步骤当答案发出去。
+
+## 10.6 频道视图 `GET /api/channels/:id`
+
+`?limit=`（默认 50，夹在 1–200）、`?before=`（取 `seq` 更早的一页）。返回
+`{ channel, members, messages, hasMore, tasks, pending, serverNow }`，字段定义见
+`src/server/channels-view.ts` 的 `ChannelView`。这里只钉易错的那部分：`MessageView.acks`。
+
+### `MessageView.acks`：老板消息的受理回执
+
+`app.ack` 是**会话流里的 `write` 条目**（CEO/项目负责人自己的对话里），不是频道消息；
+频道视图把它投影成 `acks`，老板才能在**自己发的那条消息下面**看到「已排队 / 处理中」。
+
+```jsonc
+"messages": [
+  {
+    "seq": 12, "at": 1793046450628, "from": 0, "fromLabel": "老板",
+    "kind": "chat", "text": "看下进度", "mentions": [], "read": true,
+    "acks": [
+      {
+        "at": 1793046450700,
+        "plan": "立即处理",              // 或 "当前工具结束后处理"
+        "busy": false,                   // 写回执时对方是否正忙
+        "busyWith": null,               // busy 时它手上的工具名
+        "conversationId": 1              // 回执发给了谁（对应 members[].id）
+      }
+    ]
+  }
+]
+```
+
+约定（都是踩过的坑）：
+
+1. **关联靠 `messageSeq`，不靠时间也不靠顺序**。服务端写 `app.ack` 时把它指向的频道消息
+   `seq` 一起落库；投影只收 `data.channelId === 本频道 && data.messageSeq === 这条消息 seq`
+   的条目，所以**别的消息的回执不会串过来**。`acks` 缺省（字段不存在）= 这条消息没有回执。
+2. **不回显 `text`**。`app.ack` 的 `text` 只是老板发言的前 280 字，频道里已有全文，
+   再显示一遍就是重复；界面只显示状态（`plan` / `busy` / `busyWith`）。
+3. **不是每种消息都有 `acks`**。只有老板（`from === 0`）发言才写回执；员工报告、系统消息、
+   任务卡永远没有。
+4. **装填有上限**：`readChannelView` 只对**最新 20 条老板消息**回查回执（每个目标会话扫最新
+   60 条条目，再按 `messageSeq` 过滤）。更早的消息要靠翻页、翻页后重新装填。理由：这个
+   接口被轮询，逐条扫全库会话条目会拖慢大频道；20 / 60 足够覆盖「刚发完等反馈」这个场景。
+5. **`ack` 不是 `deliveredTo`**。`deliveredTo` 是给看门狗用的 submission 回执，语义不同，
+   两者不要混用；`acks` 只读、不影响投递与重投。
+
+## 10.7 频道列表 `GET /api/channels`
+
+频道列表项（`ChannelListItem`，`src/server/channels-view.ts`）里有两个**容易混淆**的
+计数字段，别用错：
+
+```jsonc
+{
+  "unread": [
+    {
+      "id": "proj:dino-game",
+      "kind": "project",
+      "title": "dino-game",
+      "mentions": 2,          // 未读的 @ 我 的条数 —— 需要我点开
+      "unread": 7,            // 未读消息总条数
+      "openTasks": 3,         // 本项目未完成（非终态）任务数 —— 只是背景信息
+      "preview": "…", "lastAt": 0, "lastSeq": 0, "memberCount": 2
+    }
+  ],
+  "mentions": 2,              // 全站 @ 我 的总数（顶栏徽章）
+  "total": 9
+}
+```
+
+- **`openTasks` 只在列表级有**。频道详情（`GET /api/channels/:id`）给的是
+  `tasks: TaskEntry[]`（完整对象），没有 `openTasks` 这个数字——需要计数时自己数
+  `tasks.length`。这个不对称是有意的：列表要轻，详情要全。
+- **三个数的视觉权重不一样**（`ui/css/channels.css` 的 `.ch-row-tasks` 注释）：
+  `mentions` 是最强的（要你动手指），`unread` 次之，`openTasks` 最弱
+  （`var(--surface-3)` 底、`var(--muted)` 字、10px）——任务是背景，不是待办提醒。
+- **`openTasks` 会漏掉终态任务**：口径是 `!isTerminal(status)`，即 `todo` / `doing` /
+  `blocked` / `review` 都算。`done` 与 `cancelled` 不算。
 
 ## 11. 已知限制
 

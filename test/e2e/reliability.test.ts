@@ -19,7 +19,6 @@ import {
 	type CompanyRuntime,
 } from "../../src/runtime/index.ts";
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff } from "../../src/company/org.ts";
-import { toolsForRole, toolNamesForRole } from "../../src/company/staff-tools.ts";
 import { delegate, isEmployeeBusy } from "../../src/company/delegation.ts";
 import { listStaff } from "../../src/company/org.ts";
 import {
@@ -144,21 +143,8 @@ describe("CEO 不能越权", () => {
 	});
 });
 
-describe("员工按角色拿到执行工具", () => {
-	test("开发拿到读写与命令执行", () => {
-		expect(toolNamesForRole("开发")).toEqual(["read", "write", "edit", "bash"]);
-	});
-
-	test("产品只能读写，不能跑命令", () => {
-		expect(toolNamesForRole("产品")).toEqual(["read", "write", "edit"]);
-		expect(toolNamesForRole("产品")).not.toContain("bash");
-	});
-
-	test("未知角色最保守：只读", () => {
-		expect(toolNamesForRole("不存在的角色")).toEqual(["read"]);
-	});
-
-	test("招聘时按角色自动分配工具", async () => {
+describe("员工按招聘时显式声明的工具装配", () => {
+	test("招聘时写明 tools，员工就拿到这些执行工具", async () => {
 		const ctx = await createTestContext();
 		contexts.push(ctx);
 		const registry = createRegistry();
@@ -171,8 +157,16 @@ describe("员工按角色拿到执行工具", () => {
 		await boot(runtime, registry, ctx.dir);
 		await createProject(runtime, { name: "A", slug: "a", brief: "b", workspaceRoot: join(ctx.dir, "projects") }, BACKGROUND_CONTEXT);
 
-		const dev = await hireStaff(runtime, { project: "a", name: "dev-1", role: "开发", manager: "cto", registry }, BACKGROUND_CONTEXT);
-		const qa = await hireStaff(runtime, { project: "a", name: "qa-1", role: "测试", manager: "cto", registry }, BACKGROUND_CONTEXT);
+		const dev = await hireStaff(
+			runtime,
+			{ project: "a", name: "dev-1", role: "开发", tools: ["read", "write", "edit", "bash"], manager: "cto", registry },
+			BACKGROUND_CONTEXT,
+		);
+		const qa = await hireStaff(
+			runtime,
+			{ project: "a", name: "qa-1", role: "测试", tools: ["read", "write"], manager: "cto", registry },
+			BACKGROUND_CONTEXT,
+		);
 
 		const devConv = await runtime.harness.conversation(dev.conversationId as never, BACKGROUND_CONTEXT);
 		const devTools = (await devConv?.agent(BACKGROUND_CONTEXT))?.tools.map((tool) => tool.name) ?? [];
@@ -182,6 +176,8 @@ describe("员工按角色拿到执行工具", () => {
 		const qaConv = await runtime.harness.conversation(qa.conversationId as never, BACKGROUND_CONTEXT);
 		const qaTools = (await qaConv?.agent(BACKGROUND_CONTEXT))?.tools.map((tool) => tool.name) ?? [];
 		expect(qaTools).toContain("write");
+		// 没写 bash 就不该有 bash：能力只看 tools，不看角色名
+		expect(qaTools).not.toContain("bash");
 	});
 });
 
@@ -200,13 +196,15 @@ describe("多个员工各有独立能力包", () => {
 		await createProject(runtime, { name: "A", slug: "a", brief: "b", workspaceRoot: join(ctx.dir, "projects") }, BACKGROUND_CONTEXT);
 
 		const hired = [];
-		for (const [name, role] of [
-			["pm-1", "产品"],
-			["ui-1", "设计"],
-			["dev-1", "开发"],
-			["qa-1", "测试"],
+		for (const [name, role, tools] of [
+			["pm-1", "产品", ["read"]],
+			["ui-1", "设计", ["read", "write", "edit"]],
+			["dev-1", "开发", ["read", "write", "edit", "bash"]],
+			["qa-1", "测试", ["read", "write"]],
 		] as const) {
-			hired.push(await hireStaff(runtime, { project: "a", name, role, manager: "cto", registry }, BACKGROUND_CONTEXT));
+			hired.push(
+				await hireStaff(runtime, { project: "a", name, role, tools, manager: "cto", registry }, BACKGROUND_CONTEXT),
+			);
 		}
 
 		for (const person of hired) {

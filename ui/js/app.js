@@ -26,8 +26,8 @@ const state = {
 	/** 开发钩子：冻结 SSE，用于注入假数据做视觉验收。 */
 	freeze: false,
 	connected: true,
-	/** 当前主视图：org（组织图）/ board（任务看板）。 */
-	view: "org",
+	/** 当前主视图：channels（频道，默认）/ org（组织图）/ board（任务看板）。 */
+	view: "channels",
 	autoSelected: false,
 	chromeSignature: "",
 	actorSignature: "",
@@ -294,19 +294,22 @@ function setupSettings() {
 const VIEW_KEY = "ai-company.view";
 
 /**
- * 切换主视图：org（组织图）或 board（任务看板）。
+ * 切换主视图：channels（频道，默认）或 org（组织图）或 board（任务看板）。
  *
- * 只做三件事：body[data-view] 给 CSS、#board.hidden 控制占位、按钮 aria-selected。
- * 看板内容由 board.js 自己渲染，这里不碰。
+ * 只做三件事：body[data-view] 给 CSS、三个根节点（org / channels / board）的 hidden、按钮 aria-selected。
+ *
+ * 为什么三个都要显式设 hidden：默认视图改成频道后，index.html 里 #org 一开始就是
+ * `hidden`（否则首屏会先闪一下组织图）。如果这里只管 board 和 channels，切回组织图时
+ * #org 永远带着 hidden，CSS 的 `body[data-view="org"]` 也救不回来——组织图变成空白。
  */
 function applyView(name, { persist = true } = {}) {
 	const view = name === "board" ? "board" : name === "channels" ? "channels" : "org";
 	state.view = view;
 	document.body.dataset.view = view;
-	const board = $("board");
-	if (board !== null) board.hidden = view !== "board";
-	const channelsRoot = $("channels");
-	if (channelsRoot !== null) channelsRoot.hidden = view !== "channels";
+	const roots = { org: $("org"), channels: $("channels"), board: $("board") };
+	for (const [key, element] of Object.entries(roots)) {
+		if (element !== null && element !== undefined) element.hidden = key !== view;
+	}
 	for (const button of document.querySelectorAll(".view-switch-btn")) {
 		button.setAttribute("aria-selected", button.id === `view-${view}` ? "true" : "false");
 	}
@@ -318,7 +321,7 @@ function applyView(name, { persist = true } = {}) {
 	//
 	// 动画结束由 animationend 摘掉属性：留着会让元素一直带着 animation 声明，
 	// 后续的 transform/opacity 改动会被动画的 `both` 填充值盖住。
-	const entering = view === "board" ? $("board") : view === "channels" ? channelsRoot : $("org");
+	const entering = roots[view];
 	if (entering !== null && entering !== undefined) {
 		entering.dataset.enter = "true";
 		const clear = () => {
@@ -360,11 +363,21 @@ function setupViewSwitch() {
 	$("view-channels")?.addEventListener("click", () => applyView("channels"));
 	$("view-org")?.addEventListener("click", () => applyView("org"));
 	$("view-board")?.addEventListener("click", () => applyView("board"));
-	let stored = "org";
+	// 默认首页是**频道**，不是组织图。
+	//
+	// 两个视图回答的不是同一类问题：
+	// · 组织图回答「谁是谁的下属」——结构，一次学会几乎不变；
+	// · 频道回答「刚才发生了什么、要不要我动手」——事件，每一次都变。
+	// 老板打开界面的第一诉求是后者，他不想先学会一张图再找入口。
+	// 而且组织图是瞬时快照，多数时刻大量 agent 处于 idle/waiting，
+	// 它作为首页就是一张几乎全灰的树：看起来像整个公司都停了。
+	// 频道页在 state.activeId === null 时会自动打开第一个频道（见 channels.js
+	// 的 loadChannels），所以这里不需要额外挑频道。
+	let stored = "channels";
 	try {
-		stored = localStorage.getItem(VIEW_KEY) ?? "org";
+		stored = localStorage.getItem(VIEW_KEY) ?? "channels";
 	} catch {
-		stored = "org";
+		stored = "channels";
 	}
 	applyView(stored, { persist: false });
 }

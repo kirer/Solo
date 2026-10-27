@@ -79,7 +79,7 @@ import {
 	startEscalation,
 } from "./escalation.ts";
 import { escalationId, messageRequestId } from "../runtime/ids.ts";
-import { toolsForRole } from "./staff-tools.ts";
+import { toolsForNames } from "./staff-tools.ts";
 import { startWatchdog, type WatchdogOptions } from "./watchdog.ts";
 import { roundtableExtension } from "./roundtable.ts";
 // **不能静态 import**：`management-tools.ts` 静态 import 本文件的 11 个函数，
@@ -123,16 +123,22 @@ export function employeeUniversalTools(runtime: CompanyRuntime): readonly Return
 }
 
 /**
- * 员工实际可用的工具：按角色裁剪的执行工具 + 向直属上级上报。
+ * 员工实际可用的工具：被授予的原子执行工具 + 向直属上级上报。
  *
  * 单独导出：招聘、重启自愈、职工档案三处必须用同一份，否则「档案里写的工具」
  * 与「真正拿到的工具」又会不一致。
+ *
+ * 入参是**工具名列表**而不是角色名：能力由招聘时显式声明的 tools 决定，
+ * 角色只是名册上的标签（以前按角色查表，未知角色会静默退化成只读员工）。
+ *
+ * 工具名可带目录范围（`write:src/`），范围在这里一层就包好了（见 `scopedTools`，ADR-035）：
+ * 招聘、重启、档案三处都经过本函数，所以不存在「重启后范围丢了」这条路。
  */
 export function employeeToolsFor(
 	runtime: CompanyRuntime,
-	role: string,
+	toolNames: readonly string[],
 ): ReturnType<typeof defineTool>[] {
-	const tools: ReturnType<typeof defineTool>[] = [...toolsForRole(role)];
+	const tools: ReturnType<typeof defineTool>[] = [...toolsForNames(toolNames)];
 	tools.push(...(EMPLOYEE_EXTRA_TOOLS.get(runtime) ?? []));
 	return tools;
 }
@@ -677,6 +683,12 @@ export async function bootstrapCompany(
 		// 但只在建库时写过一次。换了启动目录后不刷新，就会与项目记录对不上：
 		// project_delete 的路径校验拿它当基准，会以「不在工作空间内」为由拒绝删除。
 		await refreshWorkspaceRoot(runtime, options.workspaceRoot ?? process.cwd(), context);
+		// 模型引用收敛：老库里的 `pi.agent.model` 是**持久化值**，不跟代码默认值走。
+		// 换了默认模型却没迁移老库，所有会话就指向一个没注册进 provider 的 id，
+		// 运行时表现为 `Model commandcode/<旧id> is not available`，
+		// 整个公司发不出话（2026-10-27 事故）。这一步必须在上面修复之后、
+		// 任何投递之前跑。
+		await repairModelRefs(runtime, options, existing, context);
 		if (options.registry !== undefined) {
 			// 能力包已注册；这里确保已存在的会话仍指向新装的对象
 			await ensureRoleAgents(runtime, roleConversations, context);
@@ -1037,13 +1049,17 @@ export type HireStaffOptions = {
 	/** 能力注册表。传入后会把员工能力包注册进去，否则员工拿不到工具。 */
 	readonly registry?: Registry;
 	readonly name: string;
-	/** 员工角色（产品 / 设计 / 开发 / 测试 …）。 */
+	/** 员工角色（产品 / 设计 / 开发 / 测试 …）。名册上的标签，不决定能力。 */
 	readonly role: string;
+	/** 要授予的原子工具名（read / write / edit / bash）。不传则不授予执行工具。 */
+	readonly tools?: readonly string[];
+	/** 职责：一段自由文本，拼进员工提示词。不传则只有通用纪律。 */
+	readonly duty?: string;
 	/** 指定模型；不传则用公司默认模型。 */
 	readonly model?: ModelRef;
 	/** 直属上级：管理层岗位，或 `leader:<本项目slug>`。不传默认本项目负责人。 */
 	readonly manager?: string;
-	/** 额外职责描述，追加到角色模板之后。 */
+	/** 额外职责描述，追加到职责描述之后。 */
 	readonly instructions?: string;
 };
 
@@ -1102,9 +1118,11 @@ export async function hireStaff(
 		);
 	}
 
-	// 未显式指定时按角色自动分配：员工干不了活往往就是这里给空了。
+	// 能力由显式声明的 tools 决定；角色名不再参与推断——按角色查表正是
+	// 「招个『前端』拿到只读员工、不报错不日志」那个 bug 的来源。
 	// 同时追加「向直属上级上报」的能力——没有它，员工只能干等。
-	const employeeTools = options.employeeTools ?? employeeToolsFor(runtime, options.role);
+	const toolNames = options.tools ?? [];
+	const employeeTools = options.employeeTools ?? employeeToolsFor(runtime, toolNames);
 
 	const employeeExtension = createEmployeeExtension(
 		`${options.project}/${options.name}`,
@@ -1146,6 +1164,8 @@ export async function hireStaff(
 		company.staff[key] = {
 			name: options.name,
 			role: options.role,
+			duty: options.duty ?? "",
+			tools: [...toolNames],
 			conversationId: Number(conversation.id),
 			project: options.project,
 			manager,
@@ -1386,7 +1406,12 @@ export async function renameStaff(
 	// 失败不回滚名册（名册是真相源），下次启动由 ensureStaffAgents 按新名字重建。
 	const conversation = await runtime.harness.conversation(person.conversationId as never, context);
 	if (conversation !== undefined) {
-		const extension = createEmployeeExtension(newKey, employeeToolsFor(runtime, person.role), employeeUniversalTools(runtime));
+		const extension = createEmployeeExtension(
+			newKey,
+			// 旧记录可能没有 tools 字段（本次改动之前招的人），按「不授予执行工具」处理。
+			employeeToolsFor(runtime, person.tools ?? []),
+			employeeUniversalTools(runtime),
+		);
 		input.registry?.install(extension);
 		await conversation.configure({ extensions: [extension] }, context);
 	}
@@ -1557,7 +1582,7 @@ export async function syncStaffInstructions(
 	await conversation.configure(
 		{
 			instructions: staffInstructionsFor(state, {
-				role: person.role,
+				duty: person.duty ?? "",
 				projectName: person.project,
 				manager: person.manager,
 			}),
@@ -2206,6 +2231,86 @@ async function ensureRoleAgents(
 }
 
 /**
+ * 把失效的会话模型引用拉回当前清单里的默认模型。
+ *
+ * **为什么需要这一步**：`pi.agent.model` 是持久化的，`bootstrapCompany` 的幂等
+ * 早退分支过去只修能力包 / cwd / 上级，从不校验模型。而代码里的默认模型换过多次
+ * （`apigoto/deepseek-flash` → `auto/deepseek-v4.1-flash` → `workbuddy-ai/...`），
+ * 老库一旦指向旧 id，provider 里没这个模型，每一轮生成都以
+ * `Model <provider>/<id> is not available` 失败——消息投递全部成功、但对端
+ * 一句话也说不出来，界面表现为「@ 了但没人理」。
+ *
+ * 同时刷新 `CompanyDoc.modelCatalog` / `defaultModel`：清单是持久化快照，
+ * 新加的模型（老板在设置页里加的）不刷新的话，`staff_hire` 按旧清单校验会拒掉。
+ *
+ * 只修**认不出**的引用：认得出的保留老板自己给某个员工指定的模型。
+ *
+ * @returns 修掉的会话数
+ */
+async function repairModelRefs(
+	runtime: CompanyRuntime,
+	options: BootstrapOptions,
+	state: CompanyState,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	const catalog = options.modelCatalog ?? [];
+	if (catalog.length === 0) return 0;
+	const fallback = options.defaultModel ?? firstModel(catalog);
+
+	// 会话清单：管理层 + 员工 + 项目负责人（负责人可能已不由 staff 记录持有）。
+	const conversations = new Set<number>();
+	for (const role of MANAGEMENT_ROLES) {
+		const id = state.roles[role];
+		if (id !== undefined) conversations.add(id);
+	}
+	for (const staff of Object.values(state.staff)) conversations.add(staff.conversationId);
+	for (const project of Object.values(state.projects)) {
+		const leader = Number(project.leader);
+		if (Number.isFinite(leader)) conversations.add(leader);
+	}
+
+	let repaired = 0;
+	for (const id of conversations) {
+		if (!Number.isFinite(id) || id <= 0) continue;
+		const conversation = await runtime.harness.conversation(id as never, context);
+		if (conversation === undefined) continue;
+
+		const agent = await conversation.agent(context);
+		const model = agent.model;
+		if (model === undefined) continue;
+		// 用 `provider/modelId` 整串去认：`resolveModelOption` 会先按 id 精确匹配，
+		// 再按首个斜杠拆开找 provider+modelId（`modelId` 自身可以再含斜杠）。
+		const known = catalog.some(
+			(item) => item.provider === model.provider && item.modelId === model.modelId,
+		);
+		if (known) continue;
+
+		await conversation.configure({ model: fallback }, context);
+		repaired += 1;
+	}
+
+	// 清单与默认值也要跟着代码走：它们是持久化快照，不刷新的话设置页新加的模型
+	// 进不了 `state.modelCatalog`，`staff_hire` 会以「模型不在清单里」拒掉。
+	const catalogStale =
+		state.modelCatalog.length !== catalog.length ||
+		state.modelCatalog.some((item, index) => {
+			const next = catalog[index];
+			return next === undefined || item.id !== next.id || item.provider !== next.provider;
+		});
+	const defaultStale =
+		state.defaultModel.provider !== fallback.provider || state.defaultModel.modelId !== fallback.modelId;
+	if (catalogStale || defaultStale) {
+		await runtime.harness.commit(async (tx) => {
+			const doc = await tx.doc(CompanyDoc);
+			doc.modelCatalog = [...catalog];
+			doc.defaultModel = fallback;
+		}, context);
+	}
+
+	return repaired;
+}
+
+/**
  * 确保已存在的员工会话选中自己的（唯一命名的）能力包。
  *
  * 早期版本所有员工共用 `role-employee` 一个名字，后招聘的会覆盖前面的，
@@ -2229,7 +2334,7 @@ async function ensureStaffAgents(
 		// 没有工具 → 重建能力包并重设
 		const extension = createEmployeeExtension(
 			`${staff.project}/${staff.name}`,
-			employeeToolsFor(runtime, staff.role),
+			employeeToolsFor(runtime, staff.tools ?? []),
 			employeeUniversalTools(runtime),
 		);
 		registry.install(extension);
@@ -2258,7 +2363,7 @@ function buildStaffInstructions(
 	manager: ManagerRef,
 ): string {
 	return staffInstructionsFor(state, {
-		role: options.role,
+		duty: options.duty ?? "",
 		projectName: options.project,
 		manager,
 		...(options.instructions === undefined ? {} : { extra: options.instructions }),

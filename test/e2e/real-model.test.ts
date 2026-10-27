@@ -1,7 +1,9 @@
 /**
  * 真实模型的端到端测试（可选执行）。
  *
- * 只有在本地网关可用时才跑，否则跳过——CI 与离线环境不应因此失败。
+ * 探测不到本地网关时**默认报红**——`describe.skipIf(!probe.ok)` 曾让整个文件静默 skip，
+ * 而 skip 在 `Tests 649 passed` 里不显示为失败，于是随机不跑没人发现。
+ * 本次不打算跑真模型（离线 / 只跑单测）必须**显式**设 SKIP_REAL_MODEL=1，跳过一次就是声明一次。
  *
  * 验证的是「用真实模型时组织机制仍然成立」：模型真的调用工具、
  * 真的走完立项与配人，而不是只有 faux provider 下能跑。
@@ -23,13 +25,31 @@ import { rollupAll } from "../../src/company/cost.ts";
 // 取 10_000ms：约真实延迟上限的 3 倍，且仍远小于测试自身的 180s 超时。
 const probe = await probeLocalGateway({ timeoutMs: 10_000 }).catch(() => ({ ok: false, detail: "不可用" }));
 
-describe.skipIf(!probe.ok)("真实模型端到端", () => {
+// skip 只由环境变量决定，**不由 probe.ok 决定**：探测失败要让测试真的跑起来并失败，
+// 而不是把失败翻译成沉默。
+const skipRealModel = process.env.SKIP_REAL_MODEL === "1" || process.env.SKIP_REAL_MODEL === "true";
+if (skipRealModel) {
+	// 不用 console.warn：vitest 4 会把它吞进自己的 reporter，终端上看不见。
+	// 直接写 stderr，并带上用例数，免得「跳过了」被读成「跑了也没事」。
+	process.stderr.write("[real-model] 已按 SKIP_REAL_MODEL 显式跳过真实模型测试（4 个用例未执行）\n");
+}
+const PROBE_FAILED = `未探测到本地模型网关（${probe.detail}）。若本次不打算跑真模型，必须显式设 SKIP_REAL_MODEL=1 再跑。`;
+
+describe.skipIf(skipRealModel)("真实模型端到端", () => {
 	let dir: string;
 	let runtime: CompanyRuntime;
 	let roleConversations: Record<string, number> = {};
 	let workspaceRoot: string;
 
+	// 单独一条用例，让「网关没起」在报告里是一个好认的失败，而不是三个诡异的失败。
+	test("网关可用", () => {
+		expect(probe.ok, PROBE_FAILED).toBe(true);
+	});
+
 	beforeAll(async () => {
+		// 探针失败必须在这里就爆：否则会跑到「CEO 没应答」这类下游症状上，
+		// 看不出真正原因是网关没起。
+		expect(probe.ok, PROBE_FAILED).toBe(true);
 		dir = await mkdtemp(join(tmpdir(), "ai-company-real-"));
 		workspaceRoot = join(dir, "projects");
 		const { models, defaultModel, catalog } = setupModels();

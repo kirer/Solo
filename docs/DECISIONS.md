@@ -787,3 +787,169 @@ delegate_to_role → cto.submit(...) → await submission.wait(180s) → readAss
 
 **代价**：一个本该老板快速拍板的小问题，现在要走完整条链。这是有意的——
 链上的每一级都必须先做出「我能不能定」的判断，否则层级就形同虚设。
+
+## ADR-034：投递回执——`deliver()` 不许假装「投递成功＝已读」
+
+**日期**：2026-10-27
+**状态**：生效
+
+**背景**（圆桌裁决 B4，本轮最严重的缺陷）：
+
+`deliver()` 只做 `conversation.submit(...)` 再 `delivered.push(target)`，**从不看
+settlement**。而 `watchdog.ts` 的队列扫描只认 `status === "queued"`——`unanswered`
+是 settled 状态，压根不在扫描集合里。结果是：发给某人的消息可以静默死亡，
+发现时间 = 无限。
+
+生产库实测：`submissions` 里 `done 402` / **`unanswered 69`**（`reason=no_model`），
+其中项目负责人（会话 89）**50 条**、CEO 11 条、13 号 6 条。只有两个**同步**调用方
+（`delegation.ts`、`roundtable.ts`）检查了 `unanswered`，**异步的频道投递路径一个都没检查**。
+
+**决策**：
+
+1. **`deliver()` 返回三态** `DeliverOutcome { delivered, failed, unanswered }`。
+   类型层强制：调用方不能再假设「delivered 就是成功」。
+2. **`deliver()` 仍然不等待**，所以它返回的 `unanswered` **恒为空数组**。
+   这不是偷懒，是分层：判定「被结算成 unanswered」需要回头看 submission，
+   而「回头看」只能异步。理由写在 `deliver.ts` 头注释里。
+3. **判定归看门狗**。消息上落 `deliveredTo: {conversationId, submissionId}[]`
+   （追加式，同一目标的最后一条才是当前有效 submission），
+   看门狗每轮巡检（`WATCHDOG_DEFAULTS.redeliverMs = 30_000`）用
+   `harness.submission(id).status()` 反查，命中 `unanswered` 就**重投**：
+   `requestId` 加 `:rN` 后缀（`admitSubmission` 同 requestId 会直接返回原
+   submission，甚至把 unanswered 报成 done——不换 key 的重投是假的）。
+4. **重投上限复用 `maxAttempts`（2）**，耗尽后**只告一次** `giveUp` 告警，
+   之后彻底沉默（`WatchdogState.deliveryGaveUp` 记住已经宣告过的那些）。
+   无限重投只是把「静默死亡」换成「每 30 秒一次的噪声」。
+5. **`ActorView.unanswered`** 把这件事暴露给老板：`company/watchdog.ts` 的
+   `unansweredDeliveryCounts()` 算好计数，`server/org-view.ts` 只消费
+   （`src/server` 不许直接读 doc token）。
+
+**为什么不放在 `deliver()` 里等**：`deliver()` 不等待是硬约束一（ADR-028）——
+一次投递要等模型跑完，一条消息就能把老板的输入卡住几分钟。
+「不等」和「知道结果」是两件事，前者靠 `deliver()`，后者靠回执 + 看门狗。
+
+**代价**：发现延迟 = 一轮巡检（30 秒）而不是瞬时；`no_model` 这类**永久性**
+失败重试 2 次仍然失败（模型没配就是没配），回执的价值是**让它可见并告警**，
+不是让它自愈。真正的修复仍需人配模型。
+
+**测试**：`test/e2e/delivery-receipt.test.ts`（4 条）锁住：`deliveredTo` 落库并能反查、
+unanswered 触发重投并写 `app.alert`、重投上限后只告一次。
+
+---
+
+## ADR-035：能力粒度——scope 写在工具名里，隔离靠工具不存在
+
+**日期**：2026-10-28
+**状态**：生效
+
+**背景**（真实验收暴露的最严重问题）：
+
+dino 项目验收时，`dino-lead` 与 `dino-dev` 都被授予了整工作空间的 `write`/`edit`
+（名册里都是 `["read","write","edit","bash"]`），又都被派了「写 index.html」。
+`dino-dev` 覆盖了 `dino-lead` 已经自测通过的版本，最后靠频道里喊话 +
+手工备份到 `/tmp/dino-backup/` 收场（`docs/roundtable/ACCEPTANCE-dino.md`
+「二、发现的问题 → 1（严重）」）。
+
+根因不是「谁不听话」，而是**声明粒度**：上一轮把「角色决定能力」改成
+「招聘时显式声明 `tools: string[]`」之后，粒度停在「有没有 `write`」，
+没说「能写哪个目录」。两个都写了 `write` 的员工在工具层面完全等价，
+所以隔离只能靠提示词和人自觉——而 ADR-004 说得很清楚：**权限靠工具不存在，
+不靠提示词**。提示词能做的只是建议。
+
+**决策**：
+
+1. 工具名里带一段可选的目录范围：`"write"` = 整个工作空间（老语义，
+   向后兼容），`"write:src/"` = 只允许写工作空间里的 `src/`。
+   `read` / `edit` 同理。范围是**相对工作空间根**（`env.cwd`）的目录。
+2. 校验在 `scopedTools()`（`src/company/staff-tools.ts`）里做：先
+   `env.absolutePath()` 归一化（相对路径、`./`、`..`、绝对路径、Windows 分隔符
+   全部统一），再用 `canonicalPath()`（realpath）拿真实落点比较（防符号链接
+   逃逸；目标不存在时对父目录 realpath 后拼回名字，与底层
+   `withFileMutationQueue` 的做法一致）。**前缀边界必须是分隔符**：
+   `/proj/src` 不匹配 `/proj/src-evil`。
+3. 越界**直接抛错**，文案指出允许目录、实际解析后的路径、授予的能力名，
+   最后一句是「如果你确实需要写这个文件，请向上级申请」——把拒绝变成一次
+   可走的流程，而不是一句「无权限」。
+4. **对模型暴露的工具名仍是基名**（`write`，不是 `write:src`）。范围只体现在
+   工具描述与拦截面。能力包里的工具名必须唯一（ADR-014），同一个人同时被授予
+   `write` 和 `write:src/` 时保留 `write` 并打 warning（范围限制不会生效），
+   两条都带范围时保留先声明的那条，同样 warning。
+5. `assertGrantable()` 支持带范围的名字：剥离 scope 后按基名走同一条层级检查
+   （`capabilityOf(base)`），并单独校验 scope 本身——不能是绝对路径、不能含
+   `..`、不能为空。
+6. `CompanyDoc` 升到 version 3，但**迁移不动 `tools`**：老员工的
+   `["read","write","edit","bash"]` 原样保留。迁移不是收权的时机。
+
+**代价**：
+
+- **`bash` 无法 scope**。命令里能做的事没法用路径前缀表达：`cd ..`、
+  `cat /etc/passwd`、`python3 -c "open('/x','w')"`、`sed -i`、`git checkout -- .`
+  ——路径只是命令串里的一段文本。`bash:src/` 会被直接拒绝（报错说明原因），
+  但**给了一个员工 `bash` 就等于给了他全盘的读写权限，`write:src/` 会被它绕过去**。
+  真正的文件级隔离只有一种写法：**不给 `bash`，只给 `write:<目录>/`
+  `edit:<目录>/`**。要给 bash 就接受它必然越界。这是写在这里的已知取舍，
+  不是待修的 bug。
+- 范围是「目录前缀」而不是 ACL：不给单文件授权、不给读权限分离的 ACL、
+  不区分 append 与 overwrite。需要更细的粒度时，先看是不是该拆项目/拆文件夹。
+- 迁移不缩权意味着**存量员工仍在全盘可写**。收紧得靠显式的组织动作
+  （重新招聘，或改档案），不是靠升级版本号。这是刻意的：迁移静默收权会让
+  已派出的任务突然失败，比留着旧权限更糟。
+- 符号链接的判定依赖 `canonicalPath()`：底层环境不支持 realpath 时
+  （`not_supported`）退化成按绝对路径比较，此时链接逃逸拦不住。悬空符号链接
+  直接拒绝（真实落点无法确认）。
+
+**测试**：`test/unit/staff-scope.test.ts`（19 条）锁住：`write:src/` 放行
+`src/a.js` 与不存在子目录；**拒绝 `../escape.js`、`/tmp/abs.js`、`src-evil/x.js`**；
+越界文案包含允许目录 / 实际路径 / 能力名；无范围的 `write` 仍能写任意路径；
+`write` + `write:src/` 同时授予时只留一个工具名；`assertGrantable("write:src/")`
+通过而 `write:/abs/`、`write:../x/`、`write:`、`bash:src/`、`bogus:x/` 全部报错。
+`test/unit/company-migration.test.ts` 补一条：v2 的 `tools: ["write"]` 迁到 v3
+仍是 `["write"]`（不被加上 scope，不缩权）。
+
+---
+
+## ADR-036：验收标准是机器可读收据，不是「测试全绿」这句话
+
+**背景**：圆桌里 E 席提的反对票（`docs/roundtable/r1/E-verify.md` §4、§6）——仓库
+**没有 CI**（`.github/workflows` 不存在），所以「加一条 CI 断言」在人这里等于「没人跑」。
+更糟的是 `test/e2e/real-model.test.ts` 原本用 `describe.skipIf(!probe.ok)`：网关连不上
+就整个文件静默 skip，而镜像里 `npm test` 依然全绿。注释里早写了「随机 skip 没人看是已知
+风险」，但风险一直在。
+
+同一次圆桌还发现一个更隐蔽的假绿：`beforeAll` 抛错时 vitest 会把整文件的用例记成
+`skipped`，而 `numFailedTests` 仍然是 0。也就是说「文件整个崩掉」在数字上长得和
+「文件全过」一样。
+
+**决策**：
+
+1. **反转默认值**。`SKIP_REAL_MODEL=1` 才跳过真模型测试；不设就探测网关，探不到
+   `expect(probe.ok).toBe(true)` 直接红，错误文案写清「若本次不打算跑真模型，必须显式设
+   `SKIP_REAL_MODEL=1`」。
+2. **`npm run verify` 产出机器可读收据**，落在 `.taste/verify-receipt.json`
+   （`{ok, numTotalTests, numPendingTests, commit, at}`）。`ok = success && exitCode === 0
+   && failed === [] && pending === [] && todo === []`。**`numPendingTests > 0` 即失败。**
+3. **文件级失败单独报**，被它连累的用例不计入 skip。这样「整个文件崩掉」不会被算成
+   一片漂亮的 skip。
+4. **新鲜度门**：`npm run verify:check` 要求收据 `commit === 当前 HEAD` 且在 24 小时内，
+   防止拿昨天的绿收据交付。
+
+**替代方案与为什么没选**：
+
+- 「加 `console.log` 提醒」——不可忽略等于机器可判定，不是人可阅读。
+- 「把 skip 改成 `test.fails()`」——语义不对（`fails` 是「期望它失败」，不是「还没实现」）。
+  E 席原建议是在**记忆折叠 bug** 上用它登记「已知未实现」，转绿那天会报红强制删标记；
+  那个具体场景我们选择直接修 bug，所以没引入 `test.fails`。
+- 「只靠 `npm test` 的退出码」——它不区分「跳过」和「通过」。
+
+**代价**：
+
+- 网关连不上时 `npm run verify` 会红。这是刻意的：那台机器上本来就跑不了完整验收。
+  在 CI 或别的机器上要显式设 `SKIP_REAL_MODEL=1`。
+- 收据是本地文件（`.taste/` 已 gitignore），不是跨机器可信凭证。它的用途是「本地交付
+  前的一道门」和「事后能查到当时跑的是哪个 commit 的多少条测试」，不是「证明别人也跑过」。
+- `verify` 比 `npm test` 慢不了多少（多的是一次 JSON reporter 落盘和一次 `git rev-parse`）。
+
+**测试**：`scripts/verify-receipt.mjs` 自身没有单元测试（它是脚本不是库），靠
+`npm run verify` 与 `npm run verify:check` 两条命令手工验收；`test/contract/runtime.test.ts`
+里保留了「`npm run check` 的 stdout 必须有『边界检查通过』」这条壳测试——因为通知/缺口
+清单都走 stderr，stdout 只留一句结论。

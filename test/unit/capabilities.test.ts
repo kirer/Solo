@@ -77,15 +77,18 @@ describe("核心 / 延迟分层", () => {
 		}
 	});
 
-	test("核心能力数量克制（<= 14）：工具越多选错越多", () => {
-		// 12 个通用/协作类 + my_capabilities（自查入口，必须核心，否则自举悖论）。
+	test("核心能力数量克制（<= 15）：工具越多选错越多", () => {
+		// 12 个通用/协作类 + my_capabilities（自查入口，必须核心，否则自举悖论）
+		// + memory_write。最后这个是 15 的唯一来源：它原本在延迟桶里，而生产库
+		// 2544 次工具调用里 tool_search 只被调过 2 次、memory_write 被调过 0 次——
+		// 「低频」不等于「可以找不到」，写入入口不可达等于整个记忆层是空壳。
 		// 上限存在的意义是「别把长尾工具塞进核心」，不是精确到个位。
 		const core = CAPABILITIES.filter((capability) => capability.core);
-		expect(core.length).toBeLessThanOrEqual(14);
+		expect(core.length).toBeLessThanOrEqual(15);
 	});
 
 	test("高频工具必须是核心", () => {
-		const mustBeCore = ["whoami", "say", "ask", "read_channel", "inbox", "task_list", "task_update"];
+		const mustBeCore = ["whoami", "say", "ask", "read_channel", "inbox", "task_list", "task_update", "memory_write"];
 		for (const name of mustBeCore) {
 			expect(capabilityOf(name)?.core, `${name} 应该默认给模型`).toBe(true);
 		}

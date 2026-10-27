@@ -1158,9 +1158,11 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			(id) => channel.members[String(id)] !== undefined && id !== OWNER_ID,
 		);
 
-		// 老板发言：先写 ack（ADR-026 决策 7.1 的延续——必回）
+		// 老板发言必回（ADR-026 决策 7.1 的延续）。
+		// 两段拆开：**采样**在投递前（投递后对方立刻开工，busy 会恒为真），
+		// **落库**在投递后（那时才知道这条消息的 `messageSeq`，频道视图靠它挂回执）。
 		const targets = mentions.length > 0 ? mentions : defaultTargets(channel, org);
-		await writeAck(runtime, channelId, content, targets);
+		const ackState = await snapshotAcks(runtime, targets);
 
 		const posted = await postToChannel(
 			runtime,
@@ -1176,6 +1178,7 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			},
 			{ context: BACKGROUND_CONTEXT },
 		);
+		await writeAck(runtime, channelId, content, ackState, posted.message.seq);
 
 		// 老板的消息必须最终有人回应：看门狗会扫「无响应的老板消息」
 		scheduleOrgPush();
@@ -1201,18 +1204,26 @@ export async function serve(options: ServeOptions): Promise<Server> {
 		return owner === undefined || owner === OWNER_ID ? [] : [owner];
 	}
 
+	/** 一张待写的受理回执：**写之前**采到的「它当时忙不忙」。 */
+	type AckSnapshot = {
+		readonly target: number;
+		readonly busy: boolean;
+		readonly busyWith: string | null;
+	};
+
 	/**
-	 * 写受理回执（老板消息必回）。
+	 * 采受理回执要用的「当下状态」（老板消息必回，ADR-026 决策 7.1 的延续）。
 	 *
-	 * 内容比旧版 `app.receipt` 多两样：**在忙什么**、**大概什么时候处理**。
-	 * 这两样正是老板要的（「即使对方在忙，也要回复我告知在忙什么」）。
+	 * 为什么必须在**投递之前**采：投递之后那个会话立刻开工（`app.channel` 进了它的
+	 * 输入），`isStillBusy` 就恒为真，每条回执都会变成「当前工具结束后处理」——那是
+	 * 假话。所以把「采样」和「落库」拆开：采样在投递前，落库在投递后（那时才拿得到
+	 * `messageSeq`，见 `writeAck`）。
 	 */
-	async function writeAck(
+	async function snapshotAcks(
 		runtime: CompanyRuntime,
-		channelId: string,
-		text: string,
 		targets: readonly number[],
-	): Promise<void> {
+	): Promise<readonly AckSnapshot[]> {
+		const snapshots: AckSnapshot[] = [];
 		for (const target of targets) {
 			try {
 				const conversation = await runtime.harness.conversation(target as never, BACKGROUND_CONTEXT);
@@ -1226,6 +1237,33 @@ export async function serve(options: ServeOptions): Promise<Server> {
 				const runningTool = Object.values(live?.tools ?? {}).find(
 					(tool) => tool.status !== "done" && tool.status !== "error" && tool.status !== "cancelled",
 				)?.name;
+				snapshots.push({ target, busy, busyWith: runningTool ?? null });
+			} catch {
+				// 采样失败不影响受理
+			}
+		}
+		return snapshots;
+	}
+
+	/**
+	 * 写受理回执（老板消息必回）。
+	 *
+	 * 内容比旧版 `app.receipt` 多三样：**在忙什么**、**大概什么时候处理**、
+	 * **对应频道里的哪条消息**（`messageSeq`，频道视图靠它把回执接回消息）。
+	 * 前两样正是老板要的（「即使对方在忙，也要回复我告知在忙什么」），
+	 * 第三样让老板在自己发的消息下面能看到「已排队 / 处理中」。
+	 */
+	async function writeAck(
+		runtime: CompanyRuntime,
+		channelId: string,
+		text: string,
+		acks: readonly AckSnapshot[],
+		messageSeq: number,
+	): Promise<void> {
+		for (const ack of acks) {
+			try {
+				const conversation = await runtime.harness.conversation(ack.target as never, BACKGROUND_CONTEXT);
+				if (conversation === undefined) continue;
 				await conversation.submit(
 					{
 						type: "write",
@@ -1234,9 +1272,11 @@ export async function serve(options: ServeOptions): Promise<Server> {
 							data: {
 								text: text.slice(0, 280),
 								channelId,
-								busy: busy,
-								busyWith: runningTool ?? null,
-								plan: busy ? "当前工具结束后处理" : "立即处理",
+								// 这条回执对应频道里的哪条消息——频道视图按它挂回执。
+								messageSeq,
+								busy: ack.busy,
+								busyWith: ack.busyWith,
+								plan: ack.busy ? "当前工具结束后处理" : "立即处理",
 								at: Date.now(),
 							} as never,
 						},

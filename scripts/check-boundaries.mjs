@@ -85,6 +85,98 @@ const DOC_IMPORT_ALLOWED = new Set(["src/server/http.ts"]);
 
 /** domain 层里允许 import 的「同层」文件（domain 内部互相依赖是合法的）。 */
 
+/**
+ * 第三类规则：HTTP 路由零消费者。
+ *
+ * 路由表里堆着没人调的接口，界面上看不见、测试也不报——只能静态查。
+ * **必须读 ui/js 源码而不是 ui/dist**：bundle 会把注释和死代码一起带进去，
+ * 查 dist 只会假绿。**也刻意不读 test/**：测试跟着实现走，删路由时测试
+ * 一起删，所以「测试里有消费者」不能证明「用户能用上」。
+ *
+ * 两类豁免，语义不同，不能混：
+ * · `NO_CONSUMER_ALLOWED`——消费者在本仓库之外，查不到是正常的，永久成立。
+ * · `NO_CONSUMER_PENDING`——界面上确实还没有消费者，但已有处置计划。
+ *   这**不是豁免**：每次 check 都会把清单打到 stderr，直到计划被执行。
+ *   写成永久豁免等于把缺口藏起来，那还不如没有这条检查。
+ */
+const NO_CONSUMER_ALLOWED = new Map([
+	["/api/im/inbound", "外部 webhook 入口：消费者在别的系统里，仓库内查不到（ui/js/settings.js:227 只生成它的地址）"],
+	[
+		"/api/org",
+		"运维探针消费：docker-compose.yml:37 健康检查与 scripts/ai-company-service.sh:107 主动探测；界面改从 /api/stream/org 首帧取快照",
+	],
+]);
+
+/**
+ * 已确认的界面缺口。**每条都必须有「谁来做、做到什么程度」**。
+ * 清单会随每次 check 打印；条目消失说明缺口已关上，那时应当来删这一行。
+ */
+const NO_CONSUMER_PENDING = new Map([
+	[
+		"/api/feed/:conversationId",
+		"已被 /api/channels/:id 取代（消息流搬进频道视图）。会话流视图与它的 SSE 一起在阶段 1 删除",
+	],
+	[
+		"/api/stream/feed/:conversationId",
+		"同上：频道视图走 /api/channels/:id 轮询，不再有会话流 SSE。阶段 1 与 /api/feed 一起删",
+	],
+	[
+		"/api/pending",
+		"界面侧已由频道视图内嵌下发（src/server/channels-view.ts 的 pending 字段），运维脚本 scripts/ai-company-service.sh:273 仍在用它数待办。要么脚本改走 /api/org，要么删路由",
+	],
+	[
+		"/api/message",
+		"旧「发消息给某个会话」入口，已被 POST /api/channels/:id/messages 取代（后者会算 mentions、写已读、带未读摘要）。阶段 1 删除",
+	],
+	[
+		"/api/interrupt",
+		"前端从未接过「打断」按钮。语义与 POST /api/channels/:id/messages 的插队重复，阶段 1 删除",
+	],
+	[
+		"/api/upload",
+		"**真缺口**：后端与文档（docs/WEB-API.md §6/§7）都齐了，但界面没有任何上传入口（ui/js/board.js:192 只有一句「附件上传联调」文案）。阶段 3 在频道输入框接上，或明确删掉这项能力",
+	],
+]);
+
+/** 零消费者检查的搜索域：界面层源码 + TUI 源码。 */
+const CONSUMER_DIRS = ["ui/js", "src/tui"];
+
+async function* walkAll(dir) {
+	let entries;
+	try {
+		entries = await readdir(dir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+	for (const entry of entries) {
+		const full = join(dir, entry.name);
+		if (entry.isDirectory()) yield* walkAll(full);
+		else if (entry.isFile()) yield full;
+	}
+}
+
+/**
+ * 路由路径 → 字面前缀。
+ * `/api/feed/:conversationId` → `/api/feed/`（取到第一个参数段之前，且保留分隔符），
+ * `/api/pending` → `/api/pending`（无参数，用整条）。
+ * 带参数时加尾斜杠，避免 `/api/pending` 误命中 `/api/pending/dispose`（那条另有消费者）。
+ */
+function routePrefix(pattern) {
+	const segments = pattern.split("/").filter(Boolean);
+	const literal = [];
+	for (const segment of segments) {
+		if (segment.startsWith(":") || segment.startsWith("*")) return `/${literal.join("/")}/`;
+		literal.push(segment);
+	}
+	return `/${literal.join("/")}`;
+}
+
+/** 前缀已是完整路径时要求右边界，否则 `/api/pending` 会命中 `/api/pending/dispose`。 */
+function consumerMatcher(prefix) {
+	const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return new RegExp(prefix.endsWith("/") ? escaped : `${escaped}(?![\\w/-])`);
+}
+
 const violations = [];
 
 for (const dir of CHECKED_DIRS) {
@@ -125,15 +217,56 @@ for (const dir of CHECKED_DIRS) {
 	}
 }
 
+// ── 第三类：HTTP 路由零消费者 ──
+const routes = [
+	...new Set(
+		[...(await readFile(join(ROOT, "src/server/http.ts"), "utf8")).matchAll(/pattern:\s*"(\/api\/[^"]*)"/g)].map(
+			(match) => match[1],
+		),
+	),
+];
+
+let consumerCorpus = "";
+for (const dir of CONSUMER_DIRS) {
+	for await (const file of walkAll(join(ROOT, dir))) {
+		if (!file.endsWith(".js") && !file.endsWith(".ts")) continue;
+		consumerCorpus += await readFile(file, "utf8");
+	}
+}
+
+const pendingGaps = [];
+for (const route of routes) {
+	if (NO_CONSUMER_ALLOWED.has(route)) continue;
+	const pending = NO_CONSUMER_PENDING.get(route);
+	if (pending !== undefined) {
+		pendingGaps.push({ route, plan: pending });
+		continue;
+	}
+	const prefix = routePrefix(route);
+	if (consumerMatcher(prefix).test(consumerCorpus)) continue;
+	violations.push({
+		file: "src/server/http.ts",
+		spec: route,
+		reason: `该路由在 ui/js 与 src/tui 里都没有消费者（查找前缀 ${prefix}）。接上、删掉，或写进 NO_CONSUMER_PENDING 并写清谁来收尾`,
+	});
+}
+
 if (violations.length > 0) {
-	console.error("边界检查失败：以下文件直接导入了底层运行时库\n");
+	console.error(`边界检查失败：${violations.length} 条违规\n`);
 	for (const v of violations) {
 		console.error(`  ${v.file}`);
-		console.error(`    导入: ${v.spec}`);
+		console.error(`    标识: ${v.spec}`);
 		console.error(`    原因: ${v.reason}\n`);
 	}
-	console.error("请改为通过 src/runtime 暴露的接口使用。");
+	console.error("第一/二类：通过 src/runtime 暴露的接口使用，并按分层方向 import。");
+	console.error("零消费者路由：在 ui/js 或 src/tui 里接上、删掉路由，或写进 NO_CONSUMER_PENDING 并注明谁来收尾。");
 	process.exit(1);
 }
 
-console.log(`边界检查通过：${CHECKED_DIRS.join(", ")} 未直接导入底层运行时库。`);
+// 缺口清单走 stderr：stdout 只留给「通过」这一句，测试里是拿它当断言的。
+if (pendingGaps.length > 0) {
+	console.error(`已知界面缺口 ${pendingGaps.length} 条（不算违规，但不许忘）：`);
+	for (const gap of pendingGaps) console.error(`  ${gap.route}\n    ${gap.plan}`);
+}
+
+console.log(`边界检查通过：${CHECKED_DIRS.join(", ")} 未直接导入底层运行时库；${routes.length} 条 HTTP 路由都有消费者。`);

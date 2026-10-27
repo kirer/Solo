@@ -19,7 +19,7 @@ import {
 	type ChannelState,
 	type MemberRole,
 } from "../domain/channels.ts";
-import { labelOf, canView, mentionable, personOf, type Org } from "../domain/membership.ts";
+import { labelOf, canView, mentionable, ownerOfChannel, personOf, type Org } from "../domain/membership.ts";
 import { isTerminal, type TaskEntry } from "../domain/tasks.ts";
 import { OWNER_ID } from "../domain/channels.ts";
 import { readChannels, readOrg } from "../company/channels.ts";
@@ -54,7 +54,20 @@ export type MessageView = {
 	readonly fromLabel: string;
 	readonly kind: ChannelMessage["kind"];
 	readonly text: string;
-	readonly mentions: readonly { readonly id: number; readonly label: string; readonly read: boolean }[];
+	readonly mentions: readonly {
+		readonly id: number;
+		readonly label: string;
+		readonly read: boolean;
+		/**
+		 * `@label` 在 `text` 里的起始下标（指向 `@`），算不出来给 `-1`。
+		 *
+		 * 为什么由后端给：前端以前自己在 Markdown 渲染出的 HTML 串上扫标签、
+		 * 猜「哪些 @ 落在代码块里」，再按频道成员名去替换——那是第二套算法，
+		 * 与 `parseMentions`（别名、长名优先、词边界）不一致就会出现
+		 * 「后端说没 @ 到人、界面上却亮着」。偏移是唯一确定的位置。
+		 */
+		readonly offset: number;
+	}[];
 	readonly refs?: ChannelMessage["refs"];
 	/**
 	 * 这条在回复哪一条（需求 #7）。只给 `seq` / 发送方 / 一行摘要。
@@ -69,6 +82,27 @@ export type MessageView = {
 		readonly fromLabel: string;
 		readonly excerpt: string;
 	};
+	/**
+	 * 老板这条消息的受理回执（`app.ack`），一条回执 = 一个被唤醒的人。
+	 *
+	 * 为什么需要它：`app.ack` 落在**对方的会话流**里，频道视图原本看不到，老板发完
+	 * 消息界面零反馈（ACCEPTANCE-dino 二.4）。这里把它按 `messageSeq` 挂回来。
+	 *
+	 * 不回显 `app.ack` 的 `text`——那只是本条消息的前 280 字，频道里已有全文。
+	 * 字段缺省 = 这条消息没有回执（员工报告、系统消息、任务卡永远没有）。
+	 */
+	readonly acks?: readonly {
+		/** 回执落库时刻。 */
+		readonly at: number;
+		/** 对方当时的计划：`立即处理` / `当前工具结束后处理`。 */
+		readonly plan: string;
+		/** 写回执时对方是否正忙。 */
+		readonly busy: boolean;
+		/** `busy` 为真时它手上的工具名。 */
+		readonly busyWith: string | null;
+		/** 回执发给了谁（对应 `ChannelView.members[].id`）。 */
+		readonly conversationId: number;
+	}[];
 	/** 我读过这条没有。 */
 	readonly read: boolean;
 };
@@ -114,6 +148,13 @@ export type ChannelView = {
 	 * 非老板视角恒为空：待办归属是「老板这一级」，别人的视角答不了。
 	 */
 	readonly pending: readonly ChannelPending[];
+	/**
+	 * 服务端生成这份视图的时刻（`Date.now()`）。
+	 *
+	 * 给前端做时钟校正用：任务耗时是「服务端时间戳 → 现在」，前端拿本地
+	 * `Date.now()` 当「现在」，本机时钟偏快就会算出负数（界面显示「-3 分钟」）。
+	 */
+	readonly serverNow: number;
 };
 
 /** 读频道列表（老板视角：全部频道）。 */
@@ -203,6 +244,7 @@ export async function readChannelView(
 		.filter((task) => task.channelId === channel.id)
 		.sort((left, right) => left.createdAt - right.createdAt);
 	const pending = viewer === OWNER_ID ? await ownerPendingForChannel(runtime, channel, context) : [];
+	const acks = await ackIndex(runtime, org, channel, page, context);
 
 	return {
 		channel: {
@@ -223,10 +265,15 @@ export async function readChannelView(
 				// 统一走 domain 的 `unreadOf`（唯一真相源），不要在这里再写一遍公式。
 				unread: unreadOf(channel, member.conversationId).length,
 			})),
-		messages: page.map((message) => messageView(org, channel, message, viewer)),
+		messages: page.map((message) => {
+			const view = messageView(org, channel, message, viewer);
+			const own = acks.get(message.seq);
+			return own === undefined ? view : { ...view, acks: own };
+		}),
 		hasMore,
 		tasks: projectTasks,
 		pending,
+		serverNow: Date.now(),
 	};
 }
 
@@ -319,15 +366,124 @@ function messageView(org: Org, channel: Channel, message: ChannelMessage, viewer
 		fromLabel: message.fromLabel,
 		kind: message.kind,
 		text: message.text,
-		mentions: message.mentions.map((id) => ({
-			id,
-			label: labelOf(org, id),
-			read: message.readBy.includes(id),
-		})),
+		mentions: mentionViews(org, message),
 		...(message.refs === undefined ? {} : { refs: message.refs }),
 		...(quoted === undefined ? {} : { replyTo: quoted }),
 		read,
 	};
+}
+
+/**
+ * 提及列表 + 每处在正文里的偏移。
+ *
+ * 同名提及在一段正文里出现多次时按顺序推进游标（第 n 个同名提及对第 n 处）；
+ * 找不到给 `-1`，前端约定 `-1` 不高亮——宁可不亮，也不要高亮到错的位置。
+ */
+function mentionViews(org: Org, message: ChannelMessage): MessageView["mentions"] {
+	const cursors = new Map<string, number>();
+	return message.mentions.map((id) => {
+		const label = labelOf(org, id);
+		const needle = `@${label}`;
+		const from = cursors.get(label) ?? 0;
+		const offset = label === "" ? -1 : message.text.indexOf(needle, from);
+		if (offset >= 0) cursors.set(label, offset + needle.length);
+		return { id, label, read: message.readBy.includes(id), offset };
+	});
+}
+
+/**
+ * 装填「这条消息的回执」——`MessageView.acks` 的唯一来源。
+ *
+ * `app.ack` 是 `src/server/http.ts` 的 `writeAck` 写进**对方会话流**的 `write` 条目，
+ * 里面带 `{ channelId, messageSeq, busy, busyWith, plan, at }`。频道视图里没有它，
+ * 老板发完消息就零反馈（ACCEPTANCE-dino 二.4）。
+ *
+ * 三个实现取舍：
+ *
+ * 1. **不复用 `readFeed`**。`src/server/activity.ts` 的注释说「不要自己解析 entries，
+ *    复用 readFeed」，但 `readFeed` 的 `buildItems` 没有 `app.ack` 分支（它被当
+ *    default 留痕吃掉），拿不到 `messageSeq`；而且它一次扫最新 400 条，只为找几条
+ *    回执太贵。所以这里直接 `conversation.entries(...)`，与 `org-view.ts` /
+ *    `board.ts` 的既有写法一致。
+ * 2. **只看最新 N 条老板消息**。`readChannelView` 被前端轮询，逐条消息 × 每个成员
+ *    会话扫库在大频道上会很贵。回执的用途就是「刚发完等反馈」，20 条足够；更早的
+ *    消息要翻页（翻页后重新装填）。
+ * 3. **只扫「实际收到消息的人」+ 频道负责人**。`deliveredTo` 给了投递成功的会话
+ *    （最准），`ownerOfChannel` 补上「没投递成功但写了回执」那一种（`writeAck` 的
+ *    targets 与 `wakeTargets` 口径不完全一致）。不做全成员扇出。
+ */
+const ACK_SCAN_MESSAGES = 20;
+const ACK_SCAN_ENTRIES = 60;
+
+/** 一条受理回执的视图形状（`MessageView["acks"]` 的元素）。 */
+type MessageAck = {
+	readonly at: number;
+	readonly plan: string;
+	readonly busy: boolean;
+	readonly busyWith: string | null;
+	readonly conversationId: number;
+};
+
+/** `app.ack` 条目里我们真正要用到的字段（`entry.data` 是 JSON，只能窄断言）。 */
+type AckData = {
+	readonly channelId?: string;
+	readonly messageSeq?: number;
+	readonly busy?: boolean;
+	readonly busyWith?: string | null;
+	readonly plan?: string;
+	readonly at?: number;
+};
+
+async function ackIndex(
+	runtime: CompanyRuntime,
+	org: Org,
+	channel: Channel,
+	page: readonly ChannelMessage[],
+	context: Context,
+): Promise<ReadonlyMap<number, readonly MessageAck[]>> {
+	const index = new Map<number, MessageAck[]>();
+
+	// 只有老板发言才有回执（`writeAck` 只在这个分支里被调）。
+	const candidates = page.filter((message) => message.from === OWNER_ID).slice(-ACK_SCAN_MESSAGES);
+	if (candidates.length === 0) return index;
+
+	// 要扫哪些会话：投递回执里的目标 ∪ 频道负责人。
+	const targets = new Set<number>();
+	for (const message of candidates) {
+		for (const receipt of message.deliveredTo ?? []) targets.add(receipt.conversationId);
+	}
+	const owner = ownerOfChannel(org, channel);
+	if (owner !== undefined && owner !== OWNER_ID) targets.add(owner);
+	if (targets.size === 0) return index;
+
+	const wanted = new Set(candidates.map((message) => message.seq));
+	for (const target of targets) {
+		const conversation = await runtime.harness.conversation(target as never, context);
+		if (conversation === undefined) continue;
+		const result = await conversation.entries({ order: "descending" }, ACK_SCAN_ENTRIES, undefined, context);
+		for (const entry of result.items) {
+			if (entry.kind !== "app.ack") continue;
+			const data = entry.data as AckData | undefined;
+			if (data === undefined || data.channelId !== channel.id) continue;
+			if (typeof data.messageSeq !== "number" || !wanted.has(data.messageSeq)) continue;
+			const list: MessageAck[] = [...(index.get(data.messageSeq) ?? [])];
+			// 同一个人对同一条消息只留最新一张回执（重发消息会写很多张）。
+			// 扫的是 `descending`，所以先看到的更新；已有一张就跳过。
+			if (list.some((ack) => ack.conversationId === target)) continue;
+			list.push({
+				at: typeof data.at === "number" ? data.at : 0,
+				plan: data.plan ?? "",
+				busy: data.busy === true,
+				busyWith: data.busyWith ?? null,
+				conversationId: target,
+			});
+			index.set(data.messageSeq, list);
+		}
+	}
+
+	// 同一个人只留一张后就不需要再排了；跨人多张按 `at` 升序（谁先接的在前）。
+	for (const [seq, list] of index) index.set(seq, [...list].sort((left, right) => left.at - right.at));
+	return index;
 }
 
 /** 把 `replyTo` 的 seq 解析成一行可直接渲染的摘要。 */

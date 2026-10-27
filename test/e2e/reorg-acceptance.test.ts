@@ -535,11 +535,15 @@ describe("改造验收", () => {
 
 	// ── 10. 员工上报能力 ───────────────────────────────────────────────────────
 
-	test("员工上报能力：按角色裁剪后仍保留 escalate，分析师拿不到写/执行", async () => {
+	test("员工上报能力：按声明裁剪后仍保留 escalate，只给 read 就拿不到写/执行", async () => {
 		const { runtime, registry } = await fixture();
-		await hireStaff(runtime, { project: PROJECT, name: "log-ops", role: "运营", registry }, BACKGROUND_CONTEXT);
+		await hireStaff(
+			runtime,
+			{ project: PROJECT, name: "log-ops", role: "运营", tools: ["read"], registry },
+			BACKGROUND_CONTEXT,
+		);
 
-		const names = employeeToolsFor(runtime, "运营").map((tool) => tool.name);
+		const names = employeeToolsFor(runtime, ["read"]).map((tool) => tool.name);
 		expect(names, "运营必须能把问题报给负责人").toContain("escalate");
 		expect(names, "员工必须能自查真实能力，而不是凭记忆").toContain("my_capabilities");
 		expect(names).toContain("read");

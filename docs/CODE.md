@@ -129,7 +129,8 @@ src/tui/main.ts      （终端）
 | `decision-routing.ts` | 17 | re-export（真身在 `src/domain/routing.ts`） |
 | `delegation-guard.ts` | 165 | 同步等待的环检测 + 超时 |
 | `decision-delivery.ts` | 142 | 把决定投回发起方 |
-| `watchdog.ts` / `channels-doc.ts` / `docs.ts` / `staff-tools.ts` / `roundtable-tools.ts` | 各自 | |
+| `staff-tools.ts` | 348 | **员工原子工具表 + 授予粒度**（`write:src/` 的路径隔离，见 §4.6） |
+| `watchdog.ts` / `channels-doc.ts` / `docs.ts` / `roundtable-tools.ts` | 各自 | |
 
 ### 4.1 `src/company/org.ts` — 装配与生命周期
 
@@ -179,6 +180,8 @@ createEmployeeExtension(employeeId, tools, univ)   // tools.ts:382   名字 role
 4. **注册表是内存态**。见 §2。
 
 改「某岗位能用哪些工具」→ `src/company/roles.ts` 每个 role 的 `capabilityNames` 数组。
+改「某员工能用哪些工具」→ 招聘时的 `tools`（名册里的 `StaffEntry.tools`），
+可带目录范围如 `write:src/`，范围包装在 `staff-tools.ts` 的 `scopedTools()`（见 §4.10）。
 改「某工具是否默认给模型」→ `src/company/capabilities.ts:51` 的 `CAPABILITIES` 的 `core` 字段。
 
 ### 4.3 工具：声明式能力目录 + 延迟加载（ADR-032）
@@ -255,16 +258,21 @@ src/company/tasks.ts TaskDoc(app.tasks) + 读写 + 状态变化后写频道
 `task_update` 报 `done` 必须带 `evidence`，否则拒绝（`src/company/tools/universal.ts:460`）。
 
 任务进 `done` 时还会顺带做两件事：结算 token/成本（`usageAtStart` → `usage` 差额），
-并给它投一条 `app.memory-hint`（`wake: false`，只记录不唤醒）提醒写一条经验。
+并给它投一条 `app.memory-hint`（`wake: true`，进上下文并唤醒）提醒写一条经验。
+
+> 这条提醒曾经是 `wake: false`：`submit({type:"write"})` 没有 `model`，底层
+> `isDisplayOnly` 判定它只进会话流，`contribute()` 取 `entry.model ?? []` 得到空——
+> 提示**永远不进模型上下文**。实测生产库 `app.memory-hint` 0 条、`memory_write` 0 次。
 
 ### 4.7 记忆 `src/domain/memory.ts` + `src/company/memory.ts`（#12）
 
 ```
 src/domain/memory.ts  纯逻辑：appendMemory（正文限长 + 同任务覆盖）
-                      compactMemory（超限折叠最老 20 条成阶段总结）
+                      compactMemory（超限：只折同一 depth 层的 20 条成阶段总结，
+                                     depth 上限 MAX_DEPTH=3，到顶后丢最老原始条目）
                       rankMemory（标题 +3 / 标签 +2 / 正文 +1，无向量）
                       renderMemoryBrief（最近 3 条 + 相关 2 条）
-src/company/memory.ts MemoryDoc(app.memory) + memory_write / memory_search 两个工具
+src/company/memory.ts MemoryDoc(app.memory) + memory_write / memory_search 两个工具（都是核心能力）
                       memoryActorOf()：按角色决定写哪一层（模型不能声明归属）
 ```
 
@@ -290,6 +298,34 @@ WatchdogAction = abort|retry|drain|report|escalate-question|nudge-task|resurface
 
 `src/company/decision-routing.ts` 只有 7 行 re-export。真身在 `src/domain/routing.ts`——
 它是纯函数，本就不该和 IO 混在一起（2026-10-26 迁移，逻辑一行未改）。
+
+### 4.10 员工能力粒度 `src/company/staff-tools.ts`（ADR-035）
+
+```ts
+STAFF_ATOMIC_TOOLS          read / write / edit / bash 四个原子工具 → 工厂
+toolsForNames(names)        工具名 → 能力包里的工具（名字可带目录范围）
+scopedTools(tool, options)  给 read/write/edit 套上「只能动这个目录」的包装
+assertGrantable(name)       层级 + 存在性 + 范围语法校验
+assertToolsRequested(names) 招聘入口的显式性检查（空就报错，绝不兜底）
+```
+
+**工具名带一段可选的目录范围**：`"write"` = 整个工作空间（老语义），
+`"write:src/"` = 只允许写工作空间里的 `src/`。`read` / `edit` 同理。
+
+三条要点：
+
+1. **对模型暴露的 `name` 仍是基名**（`write`），范围只体现在 description 与拦截面。
+   能力包里的工具名必须唯一（ADR-014），否则模型看到两个同名不同义的工具。
+   同一原子工具被声明多次时只留一个：有 `write` 优先 `write`（打 warning 说冗余）。
+2. **校验走 `env.absolutePath()` + `env.canonicalPath()`**，前缀边界必须是分隔符
+   (`.../src` 不匹配 `.../src-evil`)。底层内建工具不接受 root/scope，所以约束
+   只能在业务层包一层（`src/runtime/capabilities.ts` 转发 `ExecutionEnv` 类型）。
+3. **`bash` 不参与 scope**（`bash:src/` 直接报错）。命令里的路径只是文本，
+   前缀检查拦不住 `cd ..`——**有 bash 就等于有全盘写权限**。真正的文件级隔离
+   只有一种写法：不给 bash，只给 `write:<目录>/` / `edit:<目录>/`。
+
+`CompanyDoc` 是 version 3，但 v2 → v3 **不动 `tools`**：迁移不是收权的时机
+（收紧权限会让已派出的任务突然失败）。
 
 ---
 
@@ -320,6 +356,13 @@ src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 `app.company` `app.profile` `app.channels` `app.pending` `app.audit` `app.budget` `app.anchor` `app.roundtable`
 `app.memory` `app.memory-hint`
 
+`app.ack` 的 `data` 是 `{ text, channelId, messageSeq, busy, busyWith, plan, at }`。
+`messageSeq` 是**这条回执指向频道里的哪条消息**——`src/server/channels-view.ts` 的
+`ackIndex()` 靠它把回执接回消息（`MessageView.acks`）。写回执的是 `src/server/http.ts`
+的 `writeAck()`：落库必须在消息写入频道**之后**（那时才知道 `messageSeq`），但「对方忙不忙」
+要在投递**之前**采样（投递后对方立即开工，`busy` 会恒为真）——所以拆成
+`snapshotAcks()`（投递前采样）+ `writeAck()`（投递后落库）两步。
+
 ---
 
 ## 6. 界面层
@@ -332,7 +375,7 @@ routes.ts       122 行  **路由表**（表驱动，见 §6.2），新增接口
 feed.ts         785 行  readFeed() 把会话已提交状态转成可渲染条目（Web UI 唯一数据源）
 settings.ts     477 行  settings.json 读写（模型、网络、IM）
 org-view.ts     425 行  buildOrgView() 组织快照（SSE 推给前端）
-channels-view.ts 270 行 频道视图
+channels-view.ts 565 行  频道视图（含 `MessageView.acks`：把会话流里的 `app.ack` 接回频道消息）
 board.ts        260 行  看板（只读 TaskDoc）
 main.ts         240 行  入口
 event-log.ts    168 行  describeReport() 报告 → 日志行
@@ -489,13 +532,19 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 ## 9. 测试
 
 ```
-test/unit/        20 个：纯函数（domain 层）+ capabilities/ids/settings/wal/network 等
+test/unit/        29 个：纯函数（domain 层）+ capabilities / staff-scope / role-charter /
+                        company-migration / ids / settings / wal / routes …
 test/contract/     1 个：runtime.test.ts —— 钉住底层行为，升级 pi-durable 后必跑
-test/e2e/         28 个：acceptance hierarchy escalation decision-loop channels-deliver
-                        delegation restart-channels terminate roundtable owner-gate
-                        real-model reliability reorg-acceptance …
+test/e2e/         31 个：acceptance hierarchy escalation decision-loop channels-deliver
+                        channel-ack delivery-receipt delegation restart-channels terminate
+                        roundtable owner-gate real-model reliability org web …
 test/support.ts         共用搭建（临时库 + 假模型）
 ```
+
+**跑法（ADR-036）**：`npm run verify` 才是验收标准，不是 `npm test`。它跑完写
+`.taste/verify-receipt.json`，`numPendingTests > 0` 即失败——**跳过的测试等于没测**。
+想跳真模型测试必须显式 `SKIP_REAL_MODEL=1`。`npm run verify:check` 校验收据是同一 commit
+且 24 小时内。
 
 **关键回归测试**（改对应代码必跑）：
 
@@ -506,10 +555,16 @@ test/support.ts         共用搭建（临时库 + 假模型）
 | 升级链 | `test/e2e/escalation.test.ts`、`escalation-ceo-gate.test.ts`、`owner-only-from-ceo.test.ts` |
 | 决策路由 | `test/e2e/decision-routing.test.ts`、`decision-loop.test.ts`、`adr-026-obedience.test.ts` |
 | 能力目录 | `test/unit/capabilities.test.ts` |
+| 员工能力粒度（scope） | `test/unit/staff-scope.test.ts`、`staff-capabilities.test.ts` |
+| 岗位职责文案 | `test/unit/role-charter.test.ts` |
+| 数据文档迁移 | `test/unit/company-migration.test.ts` |
+| 投递回执 | `test/e2e/delivery-receipt.test.ts` |
+| 频道回执（老板看得见的「已排队」） | `test/e2e/channel-ack.test.ts` |
+| 派活去重 | `test/unit/domain-tasks.test.ts`（`describe("重复任务")`） |
 | 同步等待 | `test/unit/delegation-guard.test.ts`、`test/e2e/delegation.test.ts` |
 | 底层升级 | `test/contract/runtime.test.ts` |
 
-命令：`npm run check`（tsc + 边界）→ `npm test`（vitest --run）。
+命令：`npm run check`（tsc + 边界）→ `npm run verify`（vitest --run + 收据，跳过 0 才算过）。
 
 ---
 
@@ -518,7 +573,7 @@ test/support.ts         共用搭建（临时库 + 假模型）
 ```
   communication-trail  company-runtime  cost-accounting  delegation  escalation
   org-structure  project-authority  project-lifecycle  project-workspace  tui-workspace
-docs/DECISIONS.md        33 条 ADR（每条有背景、替代方案、为什么这么选）
+docs/DECISIONS.md        36 条 ADR（每条有背景、替代方案、为什么这么选）
 docs/history/PLAN.md     技术选型 + 架构 + 附录 B「必踩的 15 个坑」（已冻结）
 docs/WEB-API.md          网页 API 契约
 ```
@@ -541,6 +596,9 @@ ADR-029  频道集中存储，广播存储 + 定向唤醒
 ADR-031  完成上报由系统写，不经模型
 ADR-032  能力目录声明式 + 延迟工具 + tool_search
 ADR-033  老板级待办只能由 CEO 递
+ADR-034  投递回执——投递成功 ≠ 已读，unanswered 必须可见并告警
+ADR-035  能力粒度——scope 写在工具名里，隔离靠工具不存在
+ADR-036  验收标准是机器可读收据，不是「测试全绿」这句话
 ```
 
 ---

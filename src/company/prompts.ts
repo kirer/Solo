@@ -15,29 +15,27 @@
 import { PROJECT_LEADER_CHARTER } from "./tools.ts";
 import { type ManagerRef, managerLabelOf, type CompanyState } from "./docs.ts";
 
-/** 角色模板：员工的职责描述（由 CHRO 招聘时预设）。 */
-const STAFF_ROLE_TEMPLATES: Record<string, string> = {
-	产品: "你是产品经理。负责需求分析、撰写 PRD、定义验收标准。不要写代码。遇到需求冲突上报 CPO。",
-	设计: "你是 UI/UX 设计师。负责交互方案与视觉方向。输出设计说明与原型描述。遇到技术限制上报 CTO。",
-	开发: "你是开发工程师。负责编码实现与单元测试。遇到技术选型问题上报 CTO。不要改动需求定义。",
-	测试: "你是测试工程师。负责用例设计、执行验证、编写缺陷报告。不要修改产品代码。遇到标准不清上报 CPO。",
-	运营: "你是运营。负责推进节奏与交付跟进。遇到排期冲突上报 COO。",
-};
+/** 上级没写职责时的一句兜底：不编造业务内容，只交代纪律。 */
+const EMPTY_DUTY = "只做被指派的工作，遇到不确定的事上报。";
 
 /**
- * 员工实际收到的职责描述（角色模板 + 汇报关系）。
+ * 员工实际收到的职责描述（职责自由文本 + 汇报关系）。
+ *
+ * 这里以前按 `role` 查一张 5 条的模板表，配一个 `?? 你是${role}…` 的兜底。
+ * 现在职责是**招聘时上级写下来的一段话**（`staff_hire` 的 `duty`），
+ * 角色名只是名册上的标签，不再决定提示词内容——否则「前端」这类
+ * 表里没有的角色名会静默拿到一句通用模板，谁也不知道它是干什么的。
  *
  * 单独导出：职工档案接口（`GET /api/profile/:conversationId`）要如实展示
  * 「这位员工被交代了什么」，不能自己去拼一份文案——拼出来的文案和真实
  * 提示词一不一致，老板看到的档案就是假的。
  */
 export function staffCharterOf(input: {
-	readonly role: string;
+	readonly duty: string;
 	readonly projectName: string;
 	readonly managerLabel: string;
 }): string {
-	const base =
-		STAFF_ROLE_TEMPLATES[input.role] ?? `你是${input.role}。只做被指派的工作，遇到不确定的事上报。`;
+	const base = input.duty.trim() === "" ? EMPTY_DUTY : input.duty.trim();
 	return [
 		base,
 		`你隶属于「${input.projectName}」项目，直属上级是 ${input.managerLabel}。`,
@@ -54,7 +52,7 @@ export function staffCharterOf(input: {
 export function staffInstructionsFor(
 	state: CompanyState | undefined,
 	input: {
-		readonly role: string;
+		readonly duty: string;
 		readonly projectName: string;
 		readonly manager: ManagerRef;
 		readonly extra?: string;
@@ -62,7 +60,7 @@ export function staffInstructionsFor(
 ): string {
 	const lines = [
 		staffCharterOf({
-			role: input.role,
+			duty: input.duty,
 			projectName: input.projectName,
 			managerLabel: managerLabelOf(state, input.manager),
 		}),
