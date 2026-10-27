@@ -70,7 +70,7 @@ export function projectMemoryDigest(source: string): string | undefined {
 	return memoryDigest(source);
 }
 
-/** 按 `## ` 切段（给 `read_project_memory` 全文渲染用）。 */
+/** 按 `## ` 切段（给 `recall(scope=project)` 全文渲染用）。 */
 export function projectMemorySections(source: string): readonly MemorySection[] {
 	return sectionsOf(source);
 }
@@ -131,7 +131,7 @@ export function renderSettlePrompt(project: string, candidates: readonly SettleC
 	);
 	return [
 		`项目 \`${project}\` 的频道里出现了以下${candidates.length}条「拍板」或「交付」。`,
-		"请挑出**能长期成立**的事实写进项目记忆（用 remember_project）：",
+		"请挑出**能长期成立**的事实写进项目记忆（用 remember(scope=project)）：",
 		"",
 		...lines,
 		"",

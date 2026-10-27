@@ -75,7 +75,6 @@ type ViewActor = {
 type ViewChannel = {
   id: string;
   kind: "company" | "leadership" | "project" | "dm";
-  dmKind?: "personal" | "direct";   // 仅 kind === "dm"
   owner?: string;                   // 仅 kind === "project"：README.md 的 owner
   ownerLabel?: string;
   title: string;
@@ -98,14 +97,7 @@ type ViewChannel = {
 | `lead:` | `leadership` |
 | 其余（默认 `company`） | `company` |
 
-**`dmKind` 的两种含义**（都是两个成员的一对一房间，收件人规则、未读、渲染完全一样）：
-
-- `personal` = 某人自己的频道（`dm:owner-<slug>`）。他的过程落在这里，它同时是拍板链的
-  顶端 —— 「他拍不了板就问我」问的就是这里。
-- `direct` = 老板去找某人说话。
-
-判据：成员里除老板外**恰好一个人** → `personal`；否则 `direct`（目前非老板的两人私聊
-不存在，因为只有老板能发起对话）。
+**`dm` 频道**：一对一房间。个人频道（`dm:owner-<slug>`）= 与老板的私聊，也是工作台。
 
 ## 4. `POST /api/channels`
 

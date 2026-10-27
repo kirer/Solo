@@ -37,11 +37,11 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 | `--port` | 7788 | 监听端口 |
 | `--host` | 127.0.0.1 | 监听地址；`0.0.0.0` = 局域网可访问 |
 | `--workspace` | `<cwd>/workspace` | 数据目录（数据库、agents、projects、skills 都在里面） |
-| `--no-seed` | 关 | 不播种助理。首次启动且 `agents/` 为空时会自动建一个叫「助理」的人并给两份技能 |
+| `--no-seed` | 关 | 不播种。首次启动且 `agents/` 为空时会自动建一个叫「知言」的人并给两份技能 |
 
 启动成功会打印监听地址和局域网地址。Ctrl-C 退出。
 
-**首次启动会做什么**：建 `workspace/` → 若 `agents/` 里一个人都没有，播种「助理」（含
+**首次启动会做什么**：建 `workspace/` → 若 `agents/` 里一个人都没有，播种「知言」（含
 《立项》《招人》两份个人技能）→ 播种公司层技能《写技能》《找现成技能》→ 读模型配置 →
 开会话 → 建频道。这个过程不产生对外请求，模型不可用也能起来（只是 agent 不会回话）。
 
@@ -175,10 +175,11 @@ tar xzf backup-20261027.tar.gz
 日志直接打到 stderr，没有日志文件、没有轮转。要留档就
 `npm start 2>&1 | tee -a /tmp/aic.log`。
 
-## 8. 定时沉淀
+## 8. 自动沉淀
 
-服务每 5 分钟扫一次所有项目，把「已经有人拍板但还没人整理成记忆」的结论叫负责人去写
-（`src/core/project/settle.ts` 的 `settleProjects`）。这是正常行为，不是 bug。
+一条 `decision` / `report` 消息落在项目频道里后，立刻叫负责人去判断「这件事要不要写进
+项目记忆」（`src/core/project/settle.ts` 的 `settleProject`）。问完即推进游标，不会重复
+打扰。这是正常行为，不是 bug。
 
 如果 agent 忙，这个请求会用 `whenBusy: "followUp"` 排在当前这轮之后 —— 记忆整理不该
 打断手头的事。

@@ -64,49 +64,6 @@ async function agentCount(agentsRoot: string): Promise<number> {
 	}
 }
 
-/**
- * 补漏扫描的间隔。选 5 分钟的理由：沉淀不是实时需求（一条结论晚 5 分钟进记忆没人受损），
- * 但太稀会让「负责人当时不在」的结论迟迟不被处理。
- */
-const SETTLE_SWEEP_MS = 5 * 60 * 1000;
-
-/**
- * 定时补漏：把「该沉淀但还没等到答复」的结论再问一次。
- *
- * 为什么需要它（`afterPost` 补不了的三种漏）：
- * 1. 一条 decision 发出时，负责人还没有会话（刚被 hire，名册还没落盘）；
- * 2. 进程崩在 `afterPost` 执行到一半；
- * 3. 负责人当时忙，`whenBusy:"followUp"` 排队后进程重启，队列丢了。
- *
- * 幂等靠两样东西：`settleProject` 里「已在等答复就不再问」，以及
- * `remember_project` 落盘时才推进游标（见 `project/settle.ts`）。
- */
-function startSettleSweep(shell: CoreShell): NodeJS.Timeout {
-	let busy = false;
-	const timer = setInterval(() => {
-		if (busy) return;
-		busy = true;
-		void shell
-			.settleSweep()
-			.then((report) => {
-				for (const item of report.asked) {
-					console.log(`[core] 补漏沉淀：${item.project} → ${item.to}（${item.count} 条）`);
-				}
-				for (const item of report.stranded) {
-					console.log(`[core] 补漏沉淀：${item.project} 有 ${item.count} 条结论但没有能写的人`);
-				}
-			})
-			.catch((error: unknown) => {
-				console.error("[core] 补漏沉淀失败：", error);
-			})
-			.finally(() => {
-				busy = false;
-			});
-	}, SETTLE_SWEEP_MS);
-	// 定时器不该拖住进程退出。
-	timer.unref();
-	return timer;
-}
 
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
@@ -117,7 +74,7 @@ async function main(): Promise<void> {
 	await mkdir(projectsRoot, { recursive: true });
 
 	if (args.seed && (await agentCount(agentsRoot)) === 0) {
-		const slug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
+		const slug = await seedOwnerAssistant(agentsRoot, { name: "知言" });
 		console.log(`[core] 播种了「离老板最近的人」：agents/${slug}/identity.md`);
 	}
 
@@ -153,7 +110,6 @@ async function main(): Promise<void> {
 		console.log(`[core] ${server.url}`);
 		console.log(`[core] workspace: ${args.workspace}`);
 			console.log(`[core] agents: ${(await shell.identities()).map((item) => item.slug).join(", ") || "（无）"}`);
-		startSettleSweep(shell);
 	} catch (error) {
 		console.error("[core] 启动失败：", error);
 		await server?.close().catch(() => undefined);

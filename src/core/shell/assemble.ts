@@ -30,7 +30,7 @@ import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
 import { ChannelDoc, OWNER, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
 import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
-import { settleProject, settleProjects } from "../project/settle.ts";
+import { settleProject } from "../project/settle.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -111,10 +111,6 @@ export type CoreShell = {
 	/**
 	 * 补漏扫一遍所有项目频道，把「该沉淀但还没等到答复」的结论再问一次。
 	 *
-	 * 由外壳定时调（见 `shell/main.ts`）。`afterPost` 只处理「消息刚落地的那个项目」，
-	 * 补不了三种漏：负责人当时不在、进程崩在 afterPost 中途、`followUp` 排队后重启。
-	 */
-	readonly settleSweep: () => Promise<import("../project/settle.ts").SettleReport>;
 	/** 按项目文件重建它的频道成员（幂等）。`write_project` 里用过，界面也用它。 */
 	readonly syncProject: (project: string, context?: Context) => Promise<void>;
 	/**
@@ -403,36 +399,12 @@ export async function assembleCore(
 		}
 	}, context);
 
-	// 补漏扫描用的依赖：与 `afterPost` 同一套（内存会话表优先，名册兜底）。
-	const settleDeps = {
-		harness,
-		agentsRoot: options.agentsRoot,
-		projectsRoot: options.projectsRoot,
-		channelState: async (): Promise<ChannelState> =>
-			(await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? {
-				channels: {},
-				messages: {},
-				nextSeq: {},
-				readMarks: {},
-			},
-		conversationOf: async (slug: string) => {
-			const known = conversations.get(slug);
-			if (known !== undefined) return known;
-			const dir = (await harness.snapshot(DirectoryDoc, BACKGROUND_CONTEXT)) ?? emptyDirectory();
-			const id = conversationFor(dir, slug);
-			if (id === undefined) return undefined;
-			return harness.conversation(id as never, BACKGROUND_CONTEXT);
-		},
-	};
 
 	const shell: CoreShell = {
 		harness,
 		registry,
 		conversations,
 		directory,
-		async settleSweep() {
-			return settleProjects(settleDeps);
-		},
 		async syncProject(project: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
 			await syncProjectChannel(project, ctx);
 		},
@@ -499,7 +471,7 @@ export async function assembleCore(
  * 造「一条消息落地之后」的钩子：项目记忆自动沉淀。
  *
  * 只在**项目频道** + **decision/report** 时才动 —— 这两个条件是形状判据，代码判得准。
- * 写什么由模型（`remember_project`）决定，代码不猜语义。
+ * 写什么由模型（`remember(scope=project)`）决定，代码不猜语义。
  */
 function makeAfterPost(
 	harness: Harness,
@@ -690,11 +662,11 @@ export async function seedOwnerAssistant(
 				"你是老板唯一直接对话的人。老板不直接管别人，只跟你说话。",
 				"",
 				"## 你做什么",
-				"老板说一件事，你判断它需要谁，就用 `hire` 建人，把职责、边界、汇报关系写进它的身份。",
-				"你不必请示：招人、分工、定边界都是你的活。做完在频道里向老板说清楚。",
+				"老板说一件事，你判断它需要谁，用 `hire` 建人，用 `write_project` 立项目。",
+				"招人、分工、定边界都是你的活，不必请示。做完在频道里向老板说清楚。",
 				"",
 				"## 你的边界",
-				"你不写代码、不做设计。你只决定「谁来做、做什么、做到什么程度」，然后验收。",
+				"你不写代码、不做设计。你决定「谁来做、做什么、做到什么程度」，然后验收。",
 				"一个任务需要三个人时，就建三个人；需要一个人时，就一个人做到底。",
 				"",
 				"## 怎么说话",

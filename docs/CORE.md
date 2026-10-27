@@ -28,7 +28,7 @@ workspace/agents/<slug>/
 ---
 name: 林越
 title: 技术负责人
-manager: 助理
+manager: 知言
 project: demo
 ---
 
@@ -74,18 +74,17 @@ project: demo
 
 | 工具 | 作用 |
 | --- | --- |
-| `say` | 在频道里说一句（不唤醒） |
-| `ask` | 说一句并唤醒被 @ 的人 |
-| `read_channel` / `inbox` / `channels` | 读频道 / 未读 / 我能说话的地方 |
-| `whoami` / `org_chart` | 我是谁 / 公司现在长什么样 |
+| `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方 |
+| `read_channel` | 不传频道=未读摘要+频道列表；传频道=读历史消息 |
+| `org` | 我是谁、上级下属、全公司架构 |
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进公司频道与项目频道） |
 | `update_identity` | 改自己或直接下属的 `identity.md` |
-| `remember` / `recall` | 写/读我自己的 `memory.md` |
-| `remember_project` / `read_project_memory` | 写/读 `projects/<slug>/memory.md` |
-| `list_skills` / `read_skill` / `write_skill` / `find_skill` | 技能：两层 + 去开放市场找 |
+| `remember` / `recall` | 写/读记忆；`scope=project` 切到项目记忆 |
+| `list_skills` / `read_skill` / `write_skill` | 技能：两层（公司 + 个人）+ 按需读正文 |
+| `run` / `write_file` / `read_file` | 执行：跑命令 / 写文件 / 读文件（`run` 结果自动记个人频道） |
 | `list_projects` / `read_project` / `write_project` | 项目：`projects/<slug>/README.md` |
 
-「层级」不在代码里，在提示词里：某个人的 `identity.md` 写着「你向助理汇报」，他自己
+「层级」不在代码里，在提示词里：某个人的 `identity.md` 写着「你向知言汇报」，他自己
 就知道该找谁。代码只保证事实（谁能收到消息、谁的目录归谁），不保证纪律。
 
 **拍板是逐级往上的，不是直达老板。** `renderAgentPrompt` 的「你在组织里的位置」一节
@@ -115,7 +114,7 @@ workspace/
   agents/<slug>/
     identity.md                 他是谁
     memory.md                   他自己的记忆
-    skills/<名字>/SKILL.md      个人层技能：同名覆盖公司层（助理的立项 / 招人）
+    skills/<名字>/SKILL.md      个人层技能：同名覆盖公司层（知言的立项 / 招人）
   projects/<slug>/
     README.md                   要做什么、谁负责、什么不做
     memory.md                   这个项目发生过什么（项目里的人写，全公司能读）
@@ -145,10 +144,10 @@ workspace/
   常驻的是 20 行描述，不是 20 篇正文 —— 成本上最要紧的一条。
 - agent 自己就能 `write_skill` 长出新技能。`scope=personal`（默认）写自己目录，
   `scope=company` 写工作区根的 `skills/`。同名时个人层覆盖公司层。
-- **不必自己造技能市场**：`find_skill` 调 `npx skills find` / `npx skills add`，生态在
+- **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
 - 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 公司层，
-  `seed/assistant/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次，
+  `seed/assistant/` → 知言个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次，
   之后正文归 agent 自己迭代。
 
 判断边界：「做什么」是身份（`identity.md`），「怎么做」是技能（`skills/`），
@@ -162,30 +161,22 @@ workspace/
 
 **一个项目必须有负责人**（`owner`）。项目频道的成员是这份文档的投影：老板 + 负责人 +
 所有 `project:` 指向它的人。负责人靠 `write_project` 改，改完立刻重投影 —— 否则员工在
-项目频道里 @ 不到刚任命的负责人。「什么时候该立项」是判断，写在助理的 `立项` 技能里。
+项目频道里 @ 不到刚任命的负责人。「什么时候该立项」是判断，写在知言的 `立项` 技能里。
 
 ## 8. 记忆怎么沉淀
 
 两条路，都要有：
 
-1. **主动**：agent 用 `remember_project` 写 `projects/<slug>/memory.md`。
+1. **主动**：agent 用 `remember(scope=project)` 写 `projects/<slug>/memory.md`。
 2. **自动**：一条消息落地后 `settle.ts` 检查两件事 —— 落在 `proj:<slug>` 频道里、
    `kind` 是 `decision` 或 `report`。命中就把这条发给项目负责人，请它判断「这件事长期
-   成立吗」，成立就 `remember_project`。找不到负责人时记进 `stranded`，不阻塞别人。
+   成立吗」，成立就 `remember(scope=project)`。找不到负责人时游标照常推进，不阻塞别人。
 
-**游标分两个，不能合并成一个**：
+**单游标**：`cursors[项目]` = 已处理到第几条 seq。`settleProject` 问完一批后即推进到
+这批最后一条 —— 负责人说「没有需要沉淀的」也算处理过，不会重复打扰。`remember(scope=project)`
+落盘后 `confirmedBy()` 做兜底推进。
 
-- `awaiting[项目]` = 已经问过、还没等到答复，问到第几条。作用只是**别重复打扰**。
-- `cursors[项目]` = 这些结论**已经写进记忆了**。只由 `remember_project` 落盘成功后
-  推进（`confirmedBy()`）。
 
-为什么必须分开：如果把「问过」当成「写完」，模型只要回一句「没有需要沉淀的」，这批
-decision 就永远不会再被检查 —— 静默丢数据。分开之后，模型不回话 / 写错地方 / 什么都
-没写，游标都不动，下一轮会再问。
-
-**补漏定时器**：`main.ts` 的 `startSettleSweep()` 每 5 分钟跑一次 `settleSweep()`
-（遍历所有 `proj:` 频道）。`afterPost` 只处理「消息刚落地那个项目」，补不了三种漏：
-①负责人当时不在 ②进程崩在 `afterPost` 中途 ③`followUp` 排队后重启丢了队列。
 
 分工原则：**形状用代码判，语义用模型判**。代码判得准「这条消息带 decision 标签吗」，
 判不准「这句话是不是真的结论」；后者交给模型。
@@ -213,16 +204,18 @@ ui/web/
 3. **`[hidden]` 必须真的藏住**（`app.css` 里有一条 `display: none !important`）。
    类选择器里的 `display: flex` 会顶掉浏览器默认的 `[hidden]`。
 
-频道分四组：公司（`company` / `lead` 前缀）、项目（`proj:`）、个人（`dm:owner-<slug>`）、
-私聊（其余 `dm:`）。`kind` 由 `serve.ts` 的 `kindOf(id)` 从 id 前缀反推 —— 核心没有
-「频道类型」这个概念，它是界面的事。
+频道分三组：公司（`company` / `lead` 前缀）、项目（`proj:`）、个人（`dm:`）。
+消息按 `kind` 区分显示：`chat` 普通发言、`work` 执行记录（折叠等宽字体块）、
+`note` 系统留痕（灰色淡显）、`decision`/`report` 带标签（触发项目记忆沉淀）。
+`kind` 由 `view.ts` 的 `kindOf(id)` 从 id 前缀反推频道种类 —— 核心没有「频道类型」
+这个概念，它是界面的事。
 
 ## 10. 目录
 
 ```
 src/core/
   runtime/   openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
-             models / model-ref / settings 也在这里
+             models / settings 也在这里
   agent/     identity（他是谁）/ prompt（投影）/ runtime（接进会话）
              memory / skills / create（新建一个人）/ roster（slug ↔ 会话）
   project/   doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
@@ -243,12 +236,12 @@ src/core/
 3. `assembleCore()` —— 扫 `agents/` → 每人开一个会话 → 绑名册 → 建公司频道 →
    按 `identity.md` 的 `project:` 拉进项目频道 → 每人建个人频道；
 4. `serveCore()` 起 HTTP + SSE；
-5. 等 Ctrl-C（顺带每 5 分钟跑一次沉淀补漏）。
+5. 等 Ctrl-C。
 
 `agents/` 为空时播种一个「离老板最近的人」（`seedOwnerAssistant()`）—— 这是**唯一**
 一处预置身份的地方，而且只写文件、不写代码。之后它自己 `hire` 别人。
 
-**刻意没有的东西**：执行环境注册表、看门狗、崩溃自愈、IM 出站、成本核算。
+**刻意没有的东西**：看门狗、崩溃自愈、IM 出站、成本核算。
 加回任何一样之前先问「不修它，公司会不会停摆」，答案是否就别加。
 
 ## 12. 还没做的
@@ -257,6 +250,4 @@ src/core/
 - **待办拍板 / 任务 / 成本**：一个都没有（界面相应位置是空的）。
 - **看门狗 / 崩溃自愈 / IM 出站**：不为长跑兜底。
 - **发图片 / 附件**：输入框只有文本。
-- **`bash` 能力**：模型说要起服务、要写文件时，现在只有 `write_skill` /
-  `write_project` 这类落盘工具，没有真正的执行环境 —— 所以「写一个游戏」这类任务
-  它只能交出文本，交不出文件。
+

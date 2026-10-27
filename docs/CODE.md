@@ -13,7 +13,7 @@ src/core/
   shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
     http/    路由表 / 静态资源 / 网卡探测
 ui/web/      纯静态界面，无构建步骤
-seed/        播种技能（公司层 + 助理个人层）
+seed/        播种技能（公司层 + 知言个人层）
 scripts/     两个脚本：边界检查、真实模型自测
 ```
 
@@ -30,8 +30,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | --- | --- | --- |
 | `runtime/index.ts` | 54 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `Type` |
 | `runtime/open.ts` | 46 | `openCore({databasePath, models, registry, settings?}) → {harness, close}` |
-| `runtime/models.ts` | 562 | `setupModels()`（环境变量选 provider + 本地网关 + `settings.json` 自定义模型）、`LOCAL_GATEWAY`、`GATEWAY_MODEL_CATALOG` |
-| `runtime/model-ref.ts` | 74 | `ModelRef` / `ModelOption` / `resolveModelOption()`（按**第一个** `/` 拆，ADR-021） |
+| `runtime/models.ts` | 151 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；回落到环境变量 / 本地网关 |
 | `agent/identity.ts` | 136 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；`OWNER_SLUG = "owner"` |
 | `agent/prompt.ts` | 276 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005） |
 | `agent/runtime.ts` | 144 | `registeredTools()`（从注册表实拍工具清单）、`agentSection()`（`render` 每次重读盘）、`readProjectBrief()` |
@@ -41,15 +40,15 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `agent/roster.ts` | 62 | `DirectoryDoc`、`conversationFor` / `slugFor` / `wakeOf` —— 名册是缓存，不是真相 |
 | `project/doc.ts` | 164 | `projects/<slug>/README.md` 的读写；`ProjectDoc{slug,name,owner,status,body}` |
 | `project/memory.ts` | 146 | `projects/<slug>/memory.md` + `settleCandidates()` / `renderSettlePrompt()`；`SETTLE_KINDS=["decision","report"]` |
-| `project/settle.ts` | 222 | 自动沉淀：`settleProject` / `settleProjects` / `confirmedBy`；两个游标（ADR-013） |
-| `channel/state.ts` | 268 | 纯规则：`ChannelDoc` / `appendMessage` / `recipientsOf` / `parseMentions` / `unreadCount` / `markRead` / `ensureChannel` |
+| `project/settle.ts` | 140 | 自动沉淀：`settleProject` / `confirmedBy`；单游标（问完即推进） |
+| `channel/state.ts` | 269 | 纯规则：`ChannelDoc`（单频道 256 条 checkpoint）/ `appendMessage` / `recipientsOf` / `parseMentions` / `unreadCount` / `markRead` / `ensureChannel` |
 | `channel/deliver.ts` | 174 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery` / `renderDigest` |
 | `channel/post.ts` | 102 | `postMessage()` —— 写一条 + 解析 @ + 投递 |
-| `channel/tools.ts` | 880 | 20 个工具 + `adoptSkills`（`npx skills add` 后收编） |
+| `channel/tools.ts` | 777 | 16 个工具（say/read_channel/org/hire/update_identity/remember/recall/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file） |
 | `shell/assemble.ts` | 723 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 播技能；`ownerSpeak` |
 | `shell/serve.ts` | 454 | `serveCore()` —— 8 条路由 + SSE + 静态文件 |
-| `shell/view.ts` | 336 | 视图投影：`channelList` / `channelDetail` / `messageView` / `orgView` |
-| `shell/main.ts` | 166 | 启动：读模型 → `openCore` → `assembleCore` → `serveCore` → 等 Ctrl-C + 沉淀补漏定时器 |
+| `shell/view.ts` | 302 | 视图投影：`channelList` / `channelDetail` / `messageView` / `orgView`（无 `dmKind`，dm 统一为一类） |
+| `shell/main.ts` | 122 | 启动：读模型 → `openCore` → `assembleCore` → `serveCore` → 等 Ctrl-C |
 | `shell/http/routes.ts` | 122 | `matchRoute()` 表驱动路由（`:name` 捕获 / `*name` 吃余量） |
 | `shell/http/static-assets.ts` | 201 | ETag / br+gzip 协商 / `loadAsset` |
 | `shell/http/network.ts` | 78 | 网卡探测（启动时打印局域网地址） |
@@ -80,7 +79,6 @@ scripts/     两个脚本：边界检查、真实模型自测
 2. `openCore({ databasePath, models, registry })`。
 3. `assembleCore(...)` —— 见下。
 4. `serveCore({ shell, ... })`。
-5. `startSettleSweep(shell)`（5 分钟一次）。
 
 `assembleCore` 内部顺序也不能乱：
 
@@ -99,14 +97,14 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 14 文件 / 137 例，应该 <1s
+npm test           # 14 文件 / 133 例，应该 <1s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
 改行为时**必须**同步三处：代码、`test/core/` 里的用例、`docs/`（`CORE` 概念 / `WEB-API`
 字段 / `DECISIONS` 若碰了不可轻易改的约定）。
 
-真实模型自测是保底：137 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
+真实模型自测是保底：133 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
 那一次是两个 bug 叠在一起（`ownerSpeak` 漏传 wake + wake 在 `submit` 之后才落盘），
 症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。
 
@@ -121,7 +119,7 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `skills.test.ts` | 两层覆盖、拷贝不覆盖、frontmatter |
 | `org.test.ts` | slug、建人、组织架构投影 |
 | `project.test.ts` / `project-memory.test.ts` | README 读写、memory 追加、候选筛选 |
-| `settle.test.ts` / `settle-e2e.test.ts` | 沉淀纯函数 + 装配层端到端（两个游标语义） |
+| `settle.test.ts` / `settle-e2e.test.ts` | 沉淀纯函数 + 装配层端到端（单游标语义） |
 | `shell.test.ts` / `shell-e2e.test.ts` | 装配、重启幂等、wake 记录位置 |
 | `assemble.test.ts` | 播种、多 agent、频道成员 |
-| `view.test.ts` | 视图投影（`kind` / `dmKind` / `role` / 未读） |
+| `view.test.ts` | 视图投影（`kind` / `role` / 未读） |

@@ -5,28 +5,24 @@
  * 「员工不能越级」，代价是：调一个岗位就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
- * 因此新核心的能力只有十来个，按「做一件事」划分，不按「谁配用」划分：
+ * 十六个工具，按「做一件事」划分，不按「谁配用」划分：
  *
  * | 工具 | 用途 |
  * |---|---|
- * | `say` | 在频道说一句（不主动叫醒） |
- * | `ask` | 在频道提问并 @ 某人（叫醒） |
- * | `read_channel` | 读频道历史（标记已读） |
- * | `inbox` | 我还有多少没读 |
- * | `channels` | 我能看到哪些房间 |
- * | `whoami` | 我是谁、我的上级、我的下属、我的目录 |
- * | `org_chart` | 全公司现在长什么样 |
+ * | `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方 |
+ * | `read_channel` | 不传频道=未读摘要+频道列表；传频道=读历史消息 |
+ * | `org` | 我是谁、上级下属、全公司架构 |
  * | `hire` | 新建一个 agent（写文件夹） |
  * | `update_identity` | 改我自己或我下属的身份 |
- * | `remember` / `recall` | 记忆 |
+ * | `remember` / `recall` | 写/读记忆；`scope=project` 切到项目记忆 |
  * | `list_skills` / `read_skill` / `write_skill` | 技能（怎么做一件事的说明书） |
  * | `list_projects` / `read_project` / `write_project` | 项目（`projects/<slug>/README.md`） |
+ * | `run` / `write_file` / `read_file` | 执行命令 / 写文件 / 读文件 |
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	Type,
@@ -37,11 +33,8 @@ import {
 } from "../runtime/index.ts";
 import { OWNER_SLUG, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
 import {
-	copySkillDir,
 	listSkills,
 	readSkill,
-	SKILL_FILE,
-	SKILLS_DIR,
 	type SkillRoots,
 	writeCompanySkill,
 	writeSkill,
@@ -110,44 +103,6 @@ function skillRoots(deps: CoreToolDeps): SkillRoots {
 	return { workspace: deps.workspaceRoot, agents: deps.agentsRoot };
 }
 
-/**
- * 把 `npx skills add` 装出来的技能收进我们的公司层。
- *
- * `npx skills add` 不认我们的目录约定：它把技能放进 `<cwd>/.agents/skills/<名字>/`，
- * 再给「它认识的」agent 目录做符号链接。而公司层就是 `<workspace>/skills/` —— 直接
- * 在工作区里跑，装完文件在别处，`list_skills` 看不见，等于白装。
- *
- * 所以：装进临时目录 → 把每个技能**真身**（不是符号链接）拷进公司层 → 删临时目录。
- * 同名已存在时不覆盖（`copySkillDir` 的既有约定）：用户改过的技能不该被一次安装冲掉。
- */
-export async function adoptSkills(stagingRoot: string, skillsRoot: string): Promise<string[]> {
-	const candidates: string[] = [];
-	// 新版本装进 `.agents/skills/`，老版本装进 `skills/`：两处都看。
-	for (const relative of [".agents/skills", "skills"]) {
-		const dir = join(stagingRoot, relative);
-		let entries: import("node:fs").Dirent[];
-		try {
-			entries = await readdir(dir, { withFileTypes: true });
-		} catch {
-			continue;
-		}
-		for (const entry of entries) {
-			if (entry.isDirectory()) candidates.push(join(dir, entry.name));
-		}
-	}
-	const installed: string[] = [];
-	for (const dir of candidates) {
-		// 只收「有 SKILL.md 的目录」：没有正文的目录是缓存或脚本，不是技能。
-		try {
-			await readFile(join(dir, SKILL_FILE), "utf8");
-		} catch {
-			continue;
-		}
-		const skill = await copySkillDir(dir, skillsRoot);
-		installed.push(skill.name);
-	}
-	return installed;
-}
 
 function text(value: string) {
 	return { output: [{ type: "text" as const, text: value }] };
@@ -197,9 +152,10 @@ export function createCoreTools(deps: CoreToolDeps) {
 	const say = defineTool({
 		name: "say",
 		description:
-			"在当前频道说一句话。不主动叫醒任何人（正文里写 @某人 才会叫醒他）。用于汇报进度、说明结论、回应别人。",
+			"在当前频道说话。不传 mention 就是一句普通发言（正文里写 @某人 才会叫醒他）；传 mention 就是提问或 @ 某人（会叫醒他）。用于汇报进度、说明结论、回应别人、提问。",
 		parameters: Type.Object({
 			text: Type.String({ description: "要说的话" }),
+			mention: Type.Optional(Type.String({ description: "@ 谁，写 slug（例如 zhiyan、林越）。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
 			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道" })),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
 			kind: Type.Optional(
@@ -212,22 +168,34 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。先用 whoami 看看情况，或请上级重新登记你。");
+			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
 			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
+
+			// 带 mention：验证成员、补 @ 前缀、默认 kind=question
+			let messageText = args.text;
+			let kind: string | undefined = args.kind;
+			if (args.mention !== undefined && args.mention !== "") {
+				const channel = state.channels[target.channelId];
+				const who = args.mention.replace(/^@/, "");
+				if (channel === undefined || !channel.members.includes(who)) {
+					const available = channel?.members.join("、") ?? "";
+					return text(`「${channel?.title ?? target.channelId}」里没有「${who}」。可以 @：${available}`);
+				}
+				messageText = parseMentions(args.text).includes(who) ? args.text : `@${who} ${args.text}`;
+				kind = args.kind ?? "question";
+			}
 
 			const result = await postMessage(
 				postDeps(deps, state, ctx),
 				{
 					channelId: target.channelId,
 					from: slug,
-					text: args.text,
+					text: messageText,
 					at: Date.now(),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
-					// 拍板与交付是**可沉淀**的语义标签，告诉项目记忆「这两类值得记」。
-					// 由说话的人自己声明，代码不去猜哪句话是结论（见 project/settle.ts）。
-					...(args.kind === undefined ? {} : { kind: args.kind }),
+					...(kind === undefined ? {} : { kind }),
 				},
 				ctx,
 			);
@@ -241,53 +209,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 		},
 	});
 
-	const ask = defineTool({
-		name: "ask",
-		description:
-			"在当前频道提问并唤醒某人。用于：不清楚需求、需要别人拍板、要别人提供信息。不确定就问，别猜。",
-		parameters: Type.Object({
-			text: Type.String({ description: "问题，包含必要背景" }),
-			mention: Type.String({ description: "@ 谁，写 slug（例如 cto、林越）。不知道写谁就用上级的 slug。" }),
-			channel: Type.Optional(Type.String({ description: "频道 id" })),
-		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
-			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
-			if ("error" in target) return text(target.error);
-			const channel = state.channels[target.channelId];
-			const who = args.mention.replace(/^@/, "");
-			if (channel === undefined || !channel.members.includes(who)) {
-				const available = channel?.members.join("、") ?? "";
-				return text(`「${channel?.title ?? target.channelId}」里没有「${who}」。可以 @：${available}`);
-			}
-			const result = await postMessage(
-				postDeps(deps, state, ctx),
-				{
-					channelId: target.channelId,
-					from: slug,
-					// 正文里如果已经写了 `@who`（模型很常这么干），就不要再拼一遍。
-					// 以前无条件拼，界面上就会看到「@前端工程师 @前端工程师」两遍同一个名字。
-					text: parseMentions(args.text).includes(who) ? args.text : `@${who} ${args.text}`,
-					at: Date.now(),
-					kind: "question",
-				},
-				ctx,
-			);
-			if (deps.afterPost !== undefined) await deps.afterPost(result.message, target.channelId, ctx);
-			return text(
-				`已问 ${who}（「${result.channel.title}」#${result.message.seq}）。对方已被唤醒。你可以继续做别的，不要在这里等。`,
-			);
-		},
-	});
-
 	const readChannel = defineTool({
 		name: "read_channel",
-		description: "读一个频道的历史消息。投递给你的只有一条消息 + 未读摘要，需要完整上下文时用这个。读到会自动标记已读。",
+		description: "读频道。不传 channel 时显示摘要：你能看到哪些频道、各有多少未读。传 channel 时读那个频道的历史消息（自动标记已读）。",
 		parameters: Type.Object({
-			channel: Type.Optional(Type.String({ description: "频道 id" })),
+			channel: Type.Optional(Type.String({ description: "频道 id。不传则显示未读摘要 + 频道列表" })),
 			limit: Type.Optional(Type.Number({ description: "最多几条，默认 30，上限 100" })),
 		}),
 		execute: async (args, api, context) => {
@@ -295,6 +221,22 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
 			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+
+			// 无 channel：返回未读摘要 + 频道列表（原 inbox + channels 合并）
+			if (args.channel === undefined || args.channel === "") {
+				const digest = renderDigest(state, slug, 20);
+				const rows = channelsOf(state, slug).map((channel) => {
+					const unread = unreadCount(state, channel.id, slug);
+					return `- ${channel.id}「${channel.title}」${unread === 0 ? "" : ` ${unread} 条未读`}（${channel.members.length} 人）`;
+				});
+				const parts = [
+					...(digest === "" ? [] : ["未读消息：", digest]),
+					...(rows.length === 0 ? ["你不在任何频道里。"] : ["", "你的频道：", ...rows]),
+				];
+				return text(parts.join("\n"));
+			}
+
+			// 有 channel：读历史消息
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
 			const channel = state.channels[target.channelId];
@@ -325,70 +267,23 @@ export function createCoreTools(deps: CoreToolDeps) {
 		},
 	});
 
-	const inbox = defineTool({
-		name: "inbox",
-		description: "我有多少没读的消息，按频道汇总。",
+	const org = defineTool({
+		name: "org",
+		description: "你是谁、你的上级和下属、全公司组织架构。从文件夹实时渲染，永远是最新的。",
 		parameters: Type.Object({}),
 		execute: async (_args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
-			const digest = renderDigest(state, slug, 20);
-			return text(digest === "" ? "没有未读消息。" : digest);
-		},
-	});
-
-	const listChannels = defineTool({
-		name: "channels",
-		description: "我能看到哪些频道，各自有多少未读。",
-		parameters: Type.Object({}),
-		execute: async (_args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
-			const rows = channelsOf(state, slug).map((channel) => {
-				const unread = unreadCount(state, channel.id, slug);
-				return `- ${channel.id}「${channel.title}」${unread === 0 ? "" : ` ${unread} 条未读`}（${channel.members.length} 人）`;
-			});
-			return text(rows.length === 0 ? "你不在任何频道里。" : rows.join("\n"));
-		},
-	});
-
-	const whoami = defineTool({
-		name: "whoami",
-		description: "我是谁：我的 slug、岗位、上级、下属、我的目录、我的能力清单。",
-		parameters: Type.Object({}),
-		execute: async (_args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
 			const all = await readAllIdentities(deps.agentsRoot);
 			const self = all.find((item) => item.slug === slug);
-			const reports = reportsOf(all, slug);
-			return text(
-				[
-					`你是 ${self?.name ?? slug}（slug: ${slug}）${self?.title === undefined ? "" : `，岗位：${self.title}`}`,
-					`直属上级：${self?.manager ?? "（无）"}`,
-					reports.length === 0 ? "" : `直接下属：${reports.map((item) => `${item.name ?? item.slug}（${item.slug}）`).join("、")}`,
-					`你的目录：agents/${slug}/（identity.md、memory.md、skills/）`,
-				]
-					.filter((line) => line !== "")
-					.join("\n"),
-			);
-		},
-	});
-
-	const orgChart = defineTool({
-		name: "org_chart",
-		description: "公司现在的组织架构（谁向谁汇报）。这是从文件夹实时渲染的，永远是最新的。",
-		parameters: Type.Object({}),
-		execute: async (_args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			const all = await readAllIdentities(deps.agentsRoot);
-			return text(renderOrgChart(all, slug));
+			const reports = reportsOf(all, slug ?? "");
+			const personal = [
+				`你是 ${self?.name ?? slug ?? "（未登记）"}（slug: ${slug ?? "?"}）${self?.title === undefined ? "" : `，岗位：${self.title}`}`,
+				`直属上级：${self?.manager ?? "（无）"}`,
+				reports.length === 0 ? "" : `直接下属：${reports.map((item) => `${item.name ?? item.slug}（${item.slug}）`).join("、")}`,
+				slug === undefined ? "" : `你的目录：agents/${slug}/（identity.md、memory.md、skills/）`,
+			].filter((line) => line !== "").join("\n");
+			return text(`${personal}\n\n--- 全公司架构 ---\n${renderOrgChart(all, slug)}`);
 		},
 	});
 
@@ -443,7 +338,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		description: [
 			"改一个 agent 的 identity.md（正文或头部字段）。",
 			"改完下一条消息就生效 —— 不需要重启、不需要重新部署。",
-			"你可以改自己，也可以改你的直接下属。改别人的上级等于重组架构，请确认你真的要这么做。",
+			"改完下一条消息就生效 —— 不需要重启、不需要重新部署。",
 		].join(""),
 		parameters: Type.Object({
 			slug: Type.String({ description: "改谁" }),
@@ -451,15 +346,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 			title: Type.Optional(Type.String({ description: "新的岗位标签" })),
 			manager: Type.Optional(Type.String({ description: "新的上级 slug" })),
 		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const self = await selfOf(deps, Number(api.conversationId), ctx);
-			const all = await readAllIdentities(deps.agentsRoot);
-			const target = all.find((item) => item.slug === args.slug);
+		execute: async (args) => {
+			const target = (await readAllIdentities(deps.agentsRoot)).find((item) => item.slug === args.slug);
 			if (target === undefined) return text(`没有这个人：${args.slug}`);
-			const isSelf = args.slug === self;
-			const isReport = reportsOf(all, self ?? "").some((item) => item.slug === args.slug);
-			if (!isSelf && !isReport) return text(`你只能改自己和自己的直接下属。${args.slug} 不是你的人。`);
 
 			const header = {
 				name: target.name,
@@ -557,84 +446,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 	});
 
 	/**
-	 * 去外面的技能市场找现成的。
-	 *
-	 * 这里面**没有代码逻辑**，只有两条命令：`npx skills find` 搜、`npx skills add` 装。
-	 * 生态是公开的（skills.sh / GitHub），所以「技能从哪来」不需要我们自己造一个市场 ——
-	 * 我们只需要让它能调用、把装好的东西收进 skills/ 目录，然后照自己的话重写一遍。
-	 */
-	const findSkillTool = defineTool({
-		name: "find_skill",
-		description: [
-			"去开放技能市场（skills.sh / GitHub）搜或装现成的技能。",
-			"`action=find` 搜关键词；`action=add` 按 package 名安装（例如 `anthropics/skills@pdf`）。",
-			"装完之后**不要直接用**：读一遍、按我们公司的话重写成自己的（`write_skill`），别人的说明书不可能知道我们的规矩。",
-		].join(""),
-		parameters: Type.Object({
-			action: Type.String({ description: "find 或 add" }),
-			query: Type.String({ description: "find 时是关键词；add 时是 package 名" }),
-		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-			const { execFile } = await import("node:child_process");
-			const { promisify } = await import("node:util");
-			const run = promisify(execFile);
-			const command = args.action === "add" ? ["skills", "add", args.query, "--yes"] : ["skills", "find", args.query];
-			if (args.action !== "add") {
-				// `find` 只是搜索，不需要落盘，在工作区里跑就行。
-				try {
-					const { stdout, stderr } = await run("npx", command, {
-						cwd: deps.workspaceRoot,
-						timeout: 120_000,
-						maxBuffer: 4 * 1024 * 1024,
-						env: { ...process.env, CI: "1" },
-					});
-					const output = `${stdout}\n${stderr}`.trim();
-					return text(output === "" ? "命令跑完了，没有输出。" : output.slice(0, 8_000));
-				} catch (error) {
-					const detail = error instanceof Error ? error.message : String(error);
-					return text(`搜不动（可能是没网，或者 npx 不可用）：${detail.slice(0, 2_000)}`);
-				}
-			}
-			try {
-				// `npx skills add` 不认我们的目录约定：它把技能放进 `<cwd>/.agents/skills/`
-				// 并只符号链接给「它认识的」agent 目录。而我们的公司层就是 <workspace>/skills/
-				// —— 直接在工作区里跑，装完等于白装：文件在那儿，但 `list_skills` 看不见。
-				//
-				// 所以先装到临时目录，再把每个技能的**真身**拷进公司层。这样：
-				// 拷进来的是普通文件（不是符号链接，临时目录删掉也不会断），
-				// 而且 `copySkillDir` 已经处理了「同名不覆盖」—— 用户改过的技能不会被下次安装冲掉。
-				const staging = await mkdtemp(join(tmpdir(), "skills-add-"));
-				try {
-					const { stdout, stderr } = await run("npx", command, {
-						cwd: staging,
-						timeout: 180_000,
-						maxBuffer: 8 * 1024 * 1024,
-						env: { ...process.env, CI: "1" },
-					});
-					const installed = await adoptSkills(staging, join(deps.workspaceRoot, SKILLS_DIR));
-					const output = `${stdout}\n${stderr}`.trim().slice(0, 6_000);
-					if (installed.length === 0) {
-						return text(
-							`装是装完了，但没找到技能文件（多半是包名不对）。\n\n${output}\n\n用 \`find_skill action=find\` 先确认包名。`,
-						);
-					}
-					return text(
-						`已装进公司层：${installed.join("、")}。用 \`read_skill\` 读一遍再决定要不要改。\n\n${output}`,
-					);
-				} finally {
-					await rm(staging, { recursive: true, force: true });
-				}
-			} catch (error) {
-				const detail = error instanceof Error ? error.message : String(error);
-				return text(`跑不动（可能是没网，或者 npx 不可用）：${detail.slice(0, 2_000)}`);
-			}
-		},
-	});
-
-	/**
 	 * 项目：`projects/<slug>/README.md`。
 	 *
 	 * 项目不是代码里的一个实体，就是一份文档。代码只负责读写它、按它算成员。
@@ -710,17 +521,28 @@ export function createCoreTools(deps: CoreToolDeps) {
 	const remember = defineTool({
 		name: "remember",
 		description: [
-			"把一条经验写进我自己的记忆（agents/<我>/memory.md 追加一小节）。",
+			"记一条经验。",
+			"scope=personal（默认）写进你自己的记忆（agents/<我>/memory.md）；scope=project 写进所在项目的记忆（projects/<项目>/memory.md，带日期和你的名字）。",
 			"写「下次遇到 X 该怎么做」这类可复用的判断，不要写流水账。",
-			"提示词里只有目录；写下来之后你自己也得 recall 才看得到全文。",
 		].join(""),
 		parameters: Type.Object({
 			text: Type.String({ description: "要记的东西。一句话说清一条，几条就调几次。" }),
+			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 project（项目记忆）" })),
+			project: Type.Optional(Type.String({ description: "项目 slug；scope=project 时用。默认是我所在的项目" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
+			if (args.scope === "project") {
+				const self = await readIdentity(deps.agentsRoot, slug);
+				const project = args.project ?? self?.project;
+				if (project === undefined) return text("我不在任何项目里。要记项目的事，先说清是哪个项目。");
+				await appendProjectMemory(deps.projectsRoot, project, { text: args.text, by: slug });
+				const confirmed = await confirmedBy(deps.harness, project, ctx);
+				const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
+				return text(`已记进项目「${project}」的记忆${tail}。下一条消息就会出现在这个项目的记忆目录里。`);
+			}
 			await appendMemory(join(deps.agentsRoot, slug), args.text);
 			return text("已记下。下一条消息的记忆目录里就会出现它。");
 		},
@@ -728,14 +550,34 @@ export function createCoreTools(deps: CoreToolDeps) {
 
 	const recall = defineTool({
 		name: "recall",
-		description: "翻我自己的记忆全文，可以只筛包含某个词的段落。",
+		description: [
+			"翻记忆全文。scope=personal（默认）翻你自己的记忆；scope=project 翻项目记忆。",
+			"可以只筛包含某个词的段落。",
+		].join(""),
 		parameters: Type.Object({
+			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 project（项目记忆）" })),
+			project: Type.Optional(Type.String({ description: "项目 slug；scope=project 时用。默认是我所在的项目" })),
 			contains: Type.Optional(Type.String({ description: "只看包含这个词的段落" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
+
+			if (args.scope === "project") {
+				const self = await readIdentity(deps.agentsRoot, slug);
+				const project = args.project ?? self?.project;
+				if (project === undefined) return text("我不在任何项目里。要看项目记忆，请说是哪个项目。");
+				const source = await readProjectMemory(deps.projectsRoot, project);
+				if (source === undefined) return text(`项目「${project}」还没有记忆。`);
+				if (args.contains === undefined || args.contains === "") return text(source);
+				const sections = projectMemorySections(source).filter(
+					(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
+				);
+				if (sections.length === 0) return text(`项目「${project}」的记忆里没有「${args.contains}」。`);
+				return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
+			}
+
 			const source = await readMemory(join(deps.agentsRoot, slug));
 			if (source === undefined) return text("我还没记过任何东西。");
 			if (args.contains === undefined || args.contains === "") return text(source);
@@ -747,98 +589,137 @@ export function createCoreTools(deps: CoreToolDeps) {
 		},
 	});
 
-	/**
-	 * 项目记忆：`projects/<slug>/memory.md`。
-	 *
-	 * 与个人记忆的区别只有归属：个人记忆是「我学到什么」，项目记忆是「这个摊子上发生过
-	 * 什么」。为什么必须分开：项目换人很正常，事实只写在某个人的记忆里，人一走就带走了。
-	 *
-	 * 写权限按**归属**判，不按职位判：只有 `identity.md` 里写着 `project: <slug>` 的人
-	 * 能写。全公司都能读 —— 记忆是资产，藏起来只会重复踩坑。
-	 */
-	const rememberProjectTool = defineTool({
-		name: "remember_project",
+	const run = defineTool({
+		name: "run",
 		description: [
-			"把一条经验写进所在项目的记忆（projects/<项目>/memory.md，追加一小节，带日期和你的名字）。",
-			"写项目级的判断：这个项目的坑、约定、走过的弯路。个人的事用 remember。",
-			"只有这个项目里的人能写。",
+			"执行一条 shell 命令，返回 stdout / stderr / 退出码。",
+			"用于：写代码文件、起服务、跑测试、装依赖。",
+			"命令以 & 结尾或以 nohup 开头时，后台运行并立即返回 PID（用于起服务）。",
+			"执行过程会记录到你的个人频道（老板能看到你在做什么）。",
+			"不确定能不能跑某条命令时，先看你的技能（`read_skill`）。",
 		].join(""),
 		parameters: Type.Object({
-			text: Type.String({ description: "要记的东西。一句话说清一条。" }),
-			project: Type.Optional(Type.String({ description: "项目 slug；默认是我所在的项目" })),
+			command: Type.String({ description: "要执行的命令" }),
+			cwd: Type.Optional(Type.String({ description: "工作目录，默认工作区根" })),
+			timeout: Type.Optional(Type.Number({ description: "超时秒数，默认 60" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			const self = await readIdentity(deps.agentsRoot, slug);
-			const project = args.project ?? self?.project;
-			if (project === undefined) return text("我不在任何项目里。要记项目的事，先说清是哪个项目。");
-			// 写权限按归属：不在这个项目里就不许写（读是全公司都能读）。
-			if (self?.project !== project) {
-				return text(`我不在项目 \`${project}\` 里，写不了它的记忆。我的项目是 ${self?.project ?? "（没有）"}。`);
+			const cwd = args.cwd ?? deps.workspaceRoot;
+			const seconds = Math.min(Math.max(args.timeout ?? 60, 1), 300);
+			const command = args.command;
+
+			// 后台命令：以 & 结尾或以 nohup 开头 → detached spawn，立即返回 PID。
+			const isBackground = command.trim().endsWith("&") || /^\s*nohup\b/.test(command);
+
+			if (isBackground) {
+				const { spawn } = await import("node:child_process");
+				const child = spawn(command.replace(/\s*&\s*$/, ""), {
+					shell: true,
+					cwd,
+					detached: true,
+					stdio: "ignore",
+				});
+				child.unref();
+				const pid = child.pid ?? -1;
+				const report = [`$ ${command}`, `(后台运行，PID ${pid}）`].join("\n");
+				await logWork(deps, slug, report, ctx);
+				return text(report);
 			}
-			await appendProjectMemory(deps.projectsRoot, project, { text: args.text, by: slug });
-			// 沉淀确认：游标只在这里前进。模型不回话 / 写错地方时游标不动，
-			// 下一轮 `settleProjects` 会把同一批 decision 再问一次（见 project/settle.ts）。
-			const confirmed = await confirmedBy(deps.harness, project, ctx);
-			const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
-			return text(`已记进项目「${project}」的记忆${tail}。下一条消息就会出现在这个项目的记忆目录里。`);
+
+			// 前台命令：等它跑完。
+			const { exec } = await import("node:child_process");
+			const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+				exec(command, { cwd, timeout: seconds * 1000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
+					resolve({
+						stdout: stdout.toString(),
+						stderr: stderr.toString(),
+						code: error === null ? 0 : error.code ?? -1,
+					});
+				});
+			});
+
+			const output = [
+				`$ ${command}`,
+				...(result.stdout.trim() === "" ? [] : [result.stdout.trim()]),
+				...(result.stderr.trim() === "" ? [] : [`[stderr] ${result.stderr.trim()}`]),
+				`(退出码 ${result.code})`,
+			].join("\n");
+			const report = output.length > 4000 ? `${output.slice(0, 4000)}\n…（输出已截断，完整结果用 read_file 看对应文件）` : output;
+			await logWork(deps, slug, report, ctx);
+			return text(report);
 		},
 	});
 
-	const readProjectMemoryTool = defineTool({
-		name: "read_project_memory",
+	/**
+	 * 写一个文件。
+	 *
+	 * 与 `run` 写文件的差别：这个工具不经过 shell，路径可控、内容不经过转义。
+	 * 适合写大段代码、配置、文档。
+	 */
+	const writeFileTool = defineTool({
+		name: "write_file",
 		description: [
-			"读某个项目的记忆全文（全公司都能读）。可以只筛包含某个词的段落。",
-			"换手接一个项目之前先读它 —— 坑都写在这里。",
+			"把一段内容写进一个文件（UTF-8）。路径相对于工作区根。",
+			"用于写代码、配置、文档。写完文件存在了，不会自动起服务或跑测试。",
 		].join(""),
 		parameters: Type.Object({
-			project: Type.Optional(Type.String({ description: "项目 slug；默认是我所在的项目" })),
-			contains: Type.Optional(Type.String({ description: "只看包含这个词的段落" })),
+			path: Type.String({ description: "文件路径（相对工作区根）" }),
+			content: Type.String({ description: "文件内容" }),
 		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			const self = slug === undefined ? undefined : await readIdentity(deps.agentsRoot, slug);
-			const project = args.project ?? self?.project;
-			if (project === undefined) return text("我不在任何项目里。要看项目记忆，请说是哪个项目。");
-			const source = await readProjectMemory(deps.projectsRoot, project);
-			if (source === undefined) return text(`项目「${project}」还没有记忆。`);
-			if (args.contains === undefined || args.contains === "") return text(source);
-			const sections = projectMemorySections(source).filter(
-				(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
-			);
-			if (sections.length === 0) return text(`项目「${project}」的记忆里没有「${args.contains}」。`);
-			return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
+		execute: async (args) => {
+			const target = join(deps.workspaceRoot, args.path);
+			await mkdir(dirname(target), { recursive: true });
+			await writeFile(target, args.content, "utf8");
+			return text(`已写入 ${args.path}（${args.content.length} 字）`);
+		},
+	});
+
+	/**
+	 * 读一个文件。
+	 *
+	 * 与 `read_channel` / `recall` 的差别：读的是文件系统上的任意文件，
+	 * 不是频道消息或记忆。用于查看代码、配置、输出。
+	 */
+	const readFileTool = defineTool({
+		name: "read_file",
+		description: "读一个文件的内容（UTF-8，最多 8000 字）。路径相对于工作区根。",
+		parameters: Type.Object({
+			path: Type.String({ description: "文件路径（相对工作区根）" }),
+		}),
+		execute: async (args) => {
+			const target = join(deps.workspaceRoot, args.path);
+			const source = await readFile(target, "utf8").catch(() => undefined);
+			if (source === undefined) return text(`文件不存在：${args.path}`);
+			const trimmed = source.length > 8000 ? `${source.slice(0, 8000)}\n…（已截断，共 ${source.length} 字）` : source;
+			return text(trimmed);
 		},
 	});
 
 	return [
 		say,
-		ask,
 		readChannel,
-		inbox,
-		listChannels,
-		whoami,
-		orgChart,
+		org,
 		hire,
 		updateIdentity,
-		rememberProjectTool,
-		readProjectMemoryTool,
+		remember,
+		recall,
 		listSkillsTool,
 		readSkillTool,
 		writeSkillTool,
-		findSkillTool,
 		listProjectsTool,
 		readProjectTool,
 		writeProjectTool,
-		remember,
-		recall,
+		run,
+		writeFileTool,
+		readFileTool,
 	] as readonly ToolRegistration[];
 }
 
-/** 组装一次投递的全部依赖（`say` / `ask` 共用）。 */
+
+/** 组装一次投递的全部依赖（`say` 共用）。 */
 function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): PostDeps {
 	return {
 		harness: deps.harness,
@@ -855,6 +736,19 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
 			);
 		},
 	};
+}
+
+/** 把执行结果记到个人频道（`kind:"work"`，不唤醒任何人）。 */
+async function logWork(deps: CoreToolDeps, slug: string, report: string, ctx: Context): Promise<void> {
+	try {
+		const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+		const channelId = personalId(slug);
+		await postMessage(
+			postDeps(deps, state, ctx),
+			{ channelId, from: slug, text: report, at: Date.now(), kind: "work", wake: false },
+			ctx,
+		);
+	} catch { /* 记录失败不影响返回结果 */ }
 }
 
 /**

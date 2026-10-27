@@ -128,7 +128,7 @@ export async function listProjects(projectsRoot: string): Promise<readonly Proje
  *
  * **不检查负责人是不是真的存在** —— 那是判断，不是这里该管的事。写错了人的名字，
  * `renderAgentPrompt` 会原样告诉项目成员「负责人是 X」，而 X 不存在这件事，
- * 由 agent 自己 `org_chart` 发现。代码不替它兜。
+ * 由 agent 自己 `org` 发现。代码不替它兜。
  */
 export async function writeProject(
 	projectsRoot: string,

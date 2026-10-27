@@ -52,4 +52,4 @@ export type { JsonObject } from "@earendil-works/pi-durable";
 
 export { Type } from "@earendil-works/pi-ai";
 export { openCore, type CoreRuntime, type OpenCoreOptions } from "./open.ts";
-export { setupModels, type ModelSetup } from "./models.ts";
+export { setupModels, type ModelSetup, type ModelRef } from "./models.ts";

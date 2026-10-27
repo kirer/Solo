@@ -11,7 +11,6 @@
  * 2. **不哄人**：宁可写「未设置」，也不替 agent 编造一个听起来合理的职责。
  */
 import { OWNER_SLUG, chainUp, managerOf, reportsOf, type Identity } from "./identity.ts";
-import { personalId } from "../channel/state.ts";
 
 /** 一项能力的展示信息。能力本身在注册表里，这里只管「怎么写成一行」。 */
 export type CapabilityLine = {
@@ -37,7 +36,7 @@ export type RenderInput = {
 	/**
 	 * 项目记忆目录（`projects/<slug>/memory.md` 的小节标题）。
 	 *
-	 * 只给目录，条文靠 `read_project_memory` 读。项目换人时，接手的人看目录就知道
+	 * 只给目录，条文靠 `recall(scope=project)` 读。项目换人时，接手的人看目录就知道
 	 * 有哪些坑，再决定读哪几条 —— 这比把整本翻一遍便宜得多。
 	 */
 	readonly projectMemoryDigest?: string;
@@ -107,31 +106,6 @@ function orgSection(input: RenderInput): string {
 		lines.push(`- 往上的整条汇报线：${chain.map((slug) => labelOf(all, slug)).join(" → ")}`);
 	}
 
-	// 拍板链。
-	//
-	// 写成一整段规则而不是「你的上级是谁」的重复，是因为它是这套制度里最容易漏的一环：
-	// 每个人都以为自己拍不了板就该直接找老板，于是老板成了唯一的决策者，中间那些
-	// 招来的人形同虚设。所以这里把每一级的职责写清楚：能拍就拍，拍不了才往上。
-	if (self.slug !== OWNER_SLUG) {
-		const escalateTo =
-			manager === undefined
-				? `${input.ownerName ?? "老板"}（\`${OWNER_SLUG}\`）`
-				: manager === OWNER_SLUG
-					? `${input.ownerName ?? "老板"}（\`${OWNER_SLUG}\`）`
-					: `${labelOf(all, manager)}（\`${manager}\`）`;
-		const up: string[] = [];
-		if (manager !== undefined && manager !== OWNER_SLUG) {
-			const grand = chain[2];
-			up.push(`你的上级（${labelOf(all, manager)}）也拍不了，就是${grand === undefined ? "老板" : labelOf(all, grand)}`);
-		}
-		lines.push(
-			`- 拍不了板怎么办：先自己拍 —— 归你职责范围的事，你定，不用问人。` +
-				`确实超出你的职责（涉及别人的活、要改别人的东西、要对外承诺），就问${escalateTo}。` +
-				`${up.length === 0 ? "" : `${up.join("、")}。`}` +
-				"**不要跳级**：越过你的上级直接找老板，等于告诉老板你上面的人没用。",
-		);
-	}
-
 	if (self.project !== undefined) {
 		const peers = all.filter(
 			(item) => item.project === self.project && item.slug !== self.slug,
@@ -142,21 +116,6 @@ function orgSection(input: RenderInput): string {
 				: `- 你在项目 \`${self.project}\` 里，同项目的人：${peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、")}`,
 		);
 	}
-
-	// 频道分工。
-	//
-	// 不写清楚的话，agent 会把所有东西都发到公司频道（那里人多，看起来「大家都该知道」），
-	// 于是公司频道被日常琐事淹没，真正需要别人看见的事反而没人看。
-	//
-	// 但「回话」不是「写日志」：谁在哪儿问你，就在哪儿答。第一版把这两件事写成一件事，
-	// 结果 agent 在项目频道被 @ 之后把答案发到自己的个人频道 —— 问的人在项目频道里
-	// 只看到沉默（`core:live` 12 项里 9 项因此超时，实测抓到）。
-	lines.push(
-		`- 在哪儿说话：` +
-			`**别人在哪个频道问你，就在那个频道回话**（默认不填 channel 就回到最近叫你的那个频道）。` +
-			`自己发起的事、过程、念头，写在个人频道（\`${personalId(self.slug)}\`）—— 那是你和老板的私聊，落在这里不干扰别人。` +
-			`需要别人做事的，去对应的项目频道或公司频道，@ 具体的人。`,
-	);
 
 	lines.push("");
 	lines.push(`当前全公司有 ${all.length} 个 agent：${all.map((item) => item.name ?? item.slug).join("、")}，加上老板。`);
@@ -192,7 +151,7 @@ function skillSection(
 	lines.push(
 		"要用哪一门，就 \`read_skill\` 读它 —— 正文不在上下文里，读了才知道细节。",
 		"缺什么手艺就 \`write_skill\` 自己写一份；\`scope=company\` 写进公司层，所有人都立刻看得见。",
-		"外面的技能市场有现成的：\`find_skill\` 能搜、能装。装完别直接用，按我们的话重写一遍。",
+		"外面的技能市场有现成的：\`run\` 跑 \`npx skills find\` / \`npx skills add\` 能搜、能装。装完别直接用，按我们的话重写一遍。",
 	);
 	return lines.join("\n");
 }
@@ -239,8 +198,8 @@ export function renderAgentPrompt(input: RenderInput): string {
 		const memory = input.projectMemoryDigest;
 		const memoryLine =
 			memory === undefined
-				? "\n\n这个项目还没有记忆。你踩到的坑记得用 `remember_project` 写下来。"
-				: `\n\n项目记忆（目录，正文用 \`read_project_memory\` 读）：\n${memory}`;
+				? "\n\n这个项目还没有记忆。你踩到的坑记得用 `remember(scope=project)` 写下来。"
+				: `\n\n项目记忆（目录，正文用 \`recall(scope=project)\` 读）：\n${memory}`;
 		parts.push(section(`你的项目：${input.self.project ?? ""}`, `${input.projectBrief}${memberLine}${memoryLine}`));
 	}
 

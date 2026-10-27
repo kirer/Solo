@@ -535,6 +535,34 @@ textarea {
 	color: var(--warn);
 }
 
+.msg-work summary {
+	cursor: pointer;
+	color: var(--ink-3);
+	font-size: 12px;
+}
+.msg-work summary code {
+	font-family: var(--mono, ui-monospace, monospace);
+	font-size: 12px;
+}
+.msg-text-mono {
+	font-family: var(--mono, ui-monospace, monospace);
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--ink-3);
+	background: var(--surface-2, var(--surface));
+	border-radius: 4px;
+	padding: 8px;
+	overflow-x: auto;
+	white-space: pre-wrap;
+}
+.msg-note {
+	opacity: 0.55;
+}
+.msg-text-dim {
+	font-size: 12px;
+	color: var(--ink-3);
+}
+
 .msg-text {
 	color: var(--ink);
 	font-size: 13px;

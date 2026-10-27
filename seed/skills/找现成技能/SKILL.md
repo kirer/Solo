@@ -19,17 +19,23 @@ description: 缺一门手艺、或者不确定该怎么做一件事时，先去�
 2. 没有就搜：
 
    ```
-   find_skill action=find query=<这件事的名字>
+   run command="npx skills find <关键词>"
    ```
 
-   它背后是 `npx skills find`，会去 skills.sh 的市场里搜，返回一串 `owner/名字`。
-3. 看到合适的就装：
+   它会去 skills.sh 的市场里搜，返回一串 `owner/名字`。
+3. 看到合适的就装到一个临时目录：
 
    ```
-   find_skill action=add package=<owner/名字>
+   run command="npx skills add <owner/名字> --yes" cwd="/tmp/skills-staging"
    ```
 
-   装进的是**公司层** `<workspace>/skills/`，所有人立刻看得见、下一条消息就生效。
+   装完把技能目录拷进公司层 `<workspace>/skills/`：
+
+   ```
+   run command="cp -r /tmp/skills-staging/.agents/skills/<名字> <workspace>/skills/"
+   ```
+
+   装进的是**公司层**，所有人立刻看得见、下一条消息就生效。
 
 ## 装完别直接用
 

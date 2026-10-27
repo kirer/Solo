@@ -3,7 +3,8 @@
  *
  * 这一层最容易出的错不是崩溃，而是「显示得像真的、其实不是」：
  * - 项目频道显示成「3 人」，但负责人不在成员表里 → 员工在项目里 @ 不到拍板的人；
- * - 个人频道和个人私聊混成一组 → 看不出「有人在向我汇报」和「我在找人说话」的区别。
+''
+
  *
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
@@ -45,16 +46,14 @@ describe("频道列表的投影", () => {
 		const directory = directoryOf({ lin: "林越" });
 		const [channel] = channelList(state, directory);
 		expect(channel.kind).toBe("dm");
-		// 靠成员表判断而不是靠 id 里的位置：`dmId` 会把成员排序，位置不可信。
-		expect(channel.dmKind).toBe("personal");
 		expect(channel.title).toBe("林越");
 	});
 
-	it("两人以上的 dm 是私聊，不是谁的个人频道", () => {
+	it("两人以上的 dm 仍然是 dm 类型", () => {
 		const group = { id: "dm:a-b-c", title: "小群", members: ["owner", "lin", "shen"], wakeOnAll: [], createdAt: AT };
 		const state = stateOf([group]);
 		const [channel] = channelList(state, directoryOf({ lin: "林越", shen: "沈舟" }));
-		expect(channel.dmKind).toBe("direct");
+		expect(channel.kind).toBe("dm");
 	});
 
 	it("项目频道带上负责人（来自项目文件，不是频道文档）", () => {

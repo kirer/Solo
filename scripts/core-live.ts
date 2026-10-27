@@ -70,13 +70,7 @@ async function main(): Promise<void> {
 		models: configured.models,
 		registry: createRegistry(),
 	});
-	// `setupModels` 返回的是 {models, defaultModel, catalog}：`defaultModel` 是 `{provider, modelId}`，
-	// 已经没有模型时回落成 catalog 的第一条，两条都没有才是真的没配。
-	const picked =
-		configured.defaultModel ?? (configured.catalog[0] === undefined ? undefined : {
-			provider: configured.catalog[0].provider,
-			modelId: configured.catalog[0].modelId,
-		});
+	const picked = configured.defaultModel;
 	if (picked === undefined) throw new Error("没有可用模型：先在工作区写 settings.json");
 	console.log(`模型：${picked.provider}/${picked.modelId}`);
 
@@ -177,7 +171,7 @@ async function main(): Promise<void> {
 	// 6. 项目记忆：让它记一条项目级的事，检查是否落到 projects/<slug>/memory.md。
 	const projectMemoryAsked = await shell.ownerSay({
 		channelId: "company",
-		text: `@${slug} 用 remember_project 记一条项目级的事：「这个项目第一次跑通了」。记完告诉我。`,
+		text: `@${slug} 用 remember(scope=project) 记一条项目级的事：「这个项目第一次跑通了」。记完告诉我。`,
 	});
 	const projectMemoryReply = await waitForReply(shell, "company", slug, projectMemoryAsked.seq, WAIT_MS);
 	const projectMemoryText = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");

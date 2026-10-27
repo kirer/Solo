@@ -37,12 +37,12 @@ workspace/
 src/core/runtime/   防腐层：唯一能 import pi-durable / pi-ai / chord 的地方
 src/core/agent/     一个人：身份 / 提示词 / 记忆 / 技能 / 名册
 src/core/project/   一个项目：README.md / memory.md / 自动沉淀
-src/core/channel/   说话：纯规则 / 投递 / 写一条 / 20 个工具
+src/core/channel/   说话：纯规则 / 投递 / 写一条 / 16 个工具
 src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
 ui/web/             界面（无构建）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
-test/core/          14 文件 / 137 例
+test/core/          14 文件 / 133 例
 workspace/          运行时数据（gitignore）
 ```
 
@@ -80,11 +80,11 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 14 文件 137 例，<1s，必须全绿
+npm test          # 14 文件 133 例，<1s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
-- **`npm run live` 不能省。** 137 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
+- **`npm run live` 不能省。** 133 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
   两个 bug 叠在一起（老板发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
   症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。单测测的是纯函数和装配，
   **只有真模型能测出「沟通会不会跑偏」**。

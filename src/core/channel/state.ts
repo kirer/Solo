@@ -28,8 +28,9 @@ export type Message = {
 	/** 引用的那条消息的 seq。 */
 	replyTo?: number;
 	/**
-	 * 消息类别。`chat` 是普通发言；`note` 是系统写的留痕（不唤醒任何人、不计入未读）；
-	 * 其余是给界面用的语义标签（`task` / `report` / `decision`）。
+ * 消息类别。`chat` 是普通发言；`note` 是系统写的留痕（不唤醒、不计未读）；
+ * `work` 是工作记录（不唤醒、不计未读 —— 是自己的执行留痕）；
+ * 其余是给界面用的语义标签（`task` / `report` / `decision`）。
 	 */
 	kind: string;
 };
@@ -64,9 +65,9 @@ export const ChannelDoc = defineDoc<ChannelState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {} }),
-	// 消息是只增的；总量超过 4096 条时压一次基线。
+	// 消息是只增的；单频道超过 256 条时压一次基线（崩溃后最多重放 256 条）。
 	checkpointWhen: (value) =>
-		Object.values(value.messages).reduce((sum, list) => sum + list.length, 0) >= 4096,
+		Object.values(value.messages).some((list) => list.length >= 256),
 });
 
 /** 老板的 slug。不是 agent，但出现在成员表里。 */
@@ -155,7 +156,7 @@ export function unreadCount(state: ChannelState, channelId: string, slug: string
 	const list = state.messages[channelId] ?? [];
 	let count = 0;
 	for (const message of list) {
-		if (message.seq > mark && message.from !== slug && message.kind !== "note") count += 1;
+		if (message.seq > mark && message.from !== slug && message.kind !== "note" && message.kind !== "work") count += 1;
 	}
 	return count;
 }

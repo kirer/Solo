@@ -87,24 +87,11 @@ function toast(text, tone = "info") {
 // ── 频道列表 ────────────────────────────────────────────────────────────
 
 /** 分组。新核心的频道 id 前缀决定它落在哪一组；没有岗位枚举、没有「工作记录」。 */
-/**
- * 左侧的五个分组。
- *
- * 分组不是「频道的某个属性」，是**它意味着什么**：
- * - 公司 / 项目：公共房间，谁在里面就都看得见；
- * - 项目频道的副标题写负责人，因为项目里谁拍板是那件事最重要的一行；
- * - 个人 = 某人的自己的频道（`dmKind === "personal"`，他与老板的私聊）——
- *   他的过程、念头落在这里，也是「他拍不了板就问我」的那扇门；
- * - 私聊 = 两个人之间的对话（`dmKind === "direct"`）。
- *
- * 「个人」与「私聊」在数据上是同一种房间（只有两个成员），所以这里靠 `dmKind` 而不是
- * `kind` 分。把两者混成一组，界面上就看不出「有人在向我汇报」和「我在找人说话」的区别。
- */
+/** 左侧的三个分组。分组靠频道 id 前缀决定。
 const GROUPS = [
 	{ key: "company", label: "公司", match: (channel) => channel.kind === "company" || channel.kind === "leadership" },
 	{ key: "project", label: "项目", match: (channel) => channel.kind === "project" },
-	{ key: "personal", label: "个人", match: (channel) => channel.kind === "dm" && channel.dmKind === "personal" },
-	{ key: "direct", label: "私聊", match: (channel) => channel.kind === "dm" && channel.dmKind !== "personal" },
+	{ key: "personal", label: "个人", match: (channel) => channel.kind === "dm" },
 ];
 
 function avatarHtml(label, size) {
@@ -123,7 +110,7 @@ function rowHtml(channel) {
 		${avatarHtml(channel.title)}
 		<span class="row-main">
 			<span class="row-title"><span>${escapeHtml(channel.title)}</span>${
-				channel.kind === "dm" && channel.dmKind === "personal" ? `<span class="row-tag">个人</span>` : ""
+				channel.kind === "dm" ? `<span class="row-tag">个人</span>` : ""
 			}</span>
 			<span class="row-preview">${
 				channel.ownerLabel === undefined
@@ -171,6 +158,27 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 	const grouped = previous !== undefined && previous.fromSlug === message.fromSlug && !beforeUnreadFrom;
 	const quotes = quoteHtml(message);
 	const kind = kindHtml(message);
+
+	// work = 执行命令的记录：折叠成等宽字体块，默认收起。
+	// note = 系统留痕：灰色淡显。
+	if (message.kind === "work") {
+		const firstLine = message.text.split("\n")[0] ?? "";
+		return `<div class="msg msg-work" data-seq="${message.seq}">
+			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
+			<div class="msg-main">
+				<details><summary><code>${escapeHtml(firstLine)}</code></summary>
+				<div class="msg-text msg-text-mono">${renderMarkdown(message.text)}</div></details>
+			</div>
+		</div>`;
+	}
+
+	if (message.kind === "note") {
+		return `<div class="msg msg-note" data-seq="${message.seq}">
+			<div class="msg-gutter"></div>
+			<div class="msg-main"><div class="msg-text msg-text-dim">${escapeHtml(message.text)}</div></div>
+		</div>`;
+	}
+
 	const heading = grouped
 		? ""
 		: `<div class="msg-head"><span class="msg-from">${escapeHtml(message.fromLabel)}</span><span class="msg-time">${clockTime(
@@ -312,8 +320,7 @@ function renderHead() {
 	const bits = [];
 	if (channel.ownerLabel !== undefined) bits.push(`负责人 ${channel.ownerLabel}`);
 	if (channel.project !== undefined) bits.push(`项目 ${channel.project}`);
-	if (channel.dmKind === "personal") bits.push("他的个人频道");
-	else if (channel.dmKind === "direct") bits.push("私聊");
+	if (channel.kind === "dm") bits.push("个人频道");
 	if (bits.length === 0) bits.push(`${detail.members.filter((member) => member.slug !== "owner").length} 人`);
 	el.paneSub.textContent = bits.join(" · ");
 	el.composer.hidden = false;
