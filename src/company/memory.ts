@@ -18,7 +18,6 @@ import {
 	emptyMemoryState,
 	entriesOf,
 	MEMORY_LEVELS,
-	renderMemoryBrief,
 	rankMemory,
 	type MemoryEntry,
 	type MemoryLevel,
@@ -282,23 +281,6 @@ export function createMemoryTools(runtime: CompanyRuntime): {
 	} as unknown as ReturnType<typeof defineTool>;
 
 	return { memoryWrite, memorySearch };
-}
-
-/** 注入到提示词里的一段记忆简报（没有记忆时返回空串）。 */
-export async function memoryBriefFor(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	query: string | undefined,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<string> {
-	const actor = await memoryActorOf(runtime, conversationId, context);
-	if (actor === undefined) return "";
-	const state = await readMemory(runtime, context);
-	return renderMemoryBrief(state, {
-		level: actor.level,
-		owner: actor.owner,
-		...(query === undefined ? {} : { query }),
-	});
 }
 
 function levelLabel(level: MemoryLevel): string {

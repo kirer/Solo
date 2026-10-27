@@ -20,7 +20,7 @@ import {
 } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject } from "../../src/company/org.ts";
 import { createEscalationTask, answerPending, listPending, startEscalation } from "../../src/company/escalation.ts";
-import { readFeed } from "../../src/server/feed.ts";
+import { readChannels } from "../../src/company/channels.ts";
 import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
 const contexts: TestContext[] = [];
@@ -68,6 +68,31 @@ async function setup(): Promise<{
 }
 
 describe("拍板结果必须回到提问方，并唤醒它继续", () => {
+	/**
+	 * 拍板结果现在是**一条频道消息**（`kind: "decision"`，@ 提问方），
+	 * 不是会话流里的一条 `app.decision` 记录。
+	 *
+	 * 这个变化是 ADR-037 的一部分：`decision-delivery.ts` 那 142 行做的
+	 * 「往一个会话投一条输入并落一条条目」和 `postToChannel` 是同一件事，
+	 * 只是少做了未读摘要 / 记忆简报 / ReplyContextDoc。同一个事实有两条实现，
+	 * 正是 ADR-028 要消灭的。合并后拍板落进频道——于是它能被翻回去、能被 @
+	 * 回、能出现在未读摘要里，这是会话流里一条 note 做不到的。
+	 */
+	async function decisionMessagesMentioning(
+		runtime: CompanyRuntime,
+		conversationId: number,
+	): Promise<{ channelId: string; text: string }[]> {
+		const state = await readChannels(runtime, BACKGROUND_CONTEXT);
+		const found: { channelId: string; text: string }[] = [];
+		for (const [channelId, channel] of Object.entries(state.channels)) {
+			for (const message of channel.messages) {
+				if (message.kind !== "decision") continue;
+				if (!message.mentions.includes(conversationId)) continue;
+				found.push({ channelId, text: message.text });
+			}
+		}
+		return found;
+	}
 
 	/**
 	 * 让一条「非 CEO 声明的 company-level」经过 CEO 复核并递到老板。
@@ -140,13 +165,11 @@ describe("拍板结果必须回到提问方，并唤醒它继续", () => {
 		);
 		expect(answered).toBe(true);
 
-		// 关键断言：CTO 的会话流里出现「拍板结果」，且只有一条
-		const feed = await readFeed(runtime, ctoId, {}, BACKGROUND_CONTEXT);
-		const decisions = (feed?.items ?? []).filter(
-			(entry) => entry.kind === "note" && entry.text.startsWith("拍板结果"),
-		);
+		// 关键断言：CTO 被 @ 到的那条拍板消息存在，且只有一条
+		const decisions = await decisionMessagesMentioning(runtime, ctoId);
 		expect(decisions, "提问方必须看得到拍板结果").toHaveLength(1);
-		expect(decisions[0]?.kind === "note" ? decisions[0].text : "").toContain("搬到杭州");
+		expect(decisions[0]?.text).toContain("搬到杭州");
+		expect(decisions[0]?.channelId, "有私聊就投私聊——那是「对你拍板」最直接的落点").toBe(`dm:${ctoId}`);
 
 		// 还要**唤醒**它：光看得到通知没用，得让它拿着决定继续干活
 		await eventually(
@@ -182,10 +205,7 @@ describe("拍板结果必须回到提问方，并唤醒它继续", () => {
 
 		await answerPending(runtime, { key, answer: "加，走 CHRO。", answeredBy: "owner" }, BACKGROUND_CONTEXT);
 
-		const feed = await readFeed(runtime, ctoId, {}, BACKGROUND_CONTEXT);
-		const decisions = (feed?.items ?? []).filter(
-			(entry) => entry.kind === "note" && entry.text.startsWith("拍板结果"),
-		);
+		const decisions = await decisionMessagesMentioning(runtime, ctoId);
 		expect(decisions, "同一次拍板只能留下一条记录").toHaveLength(1);
 	}, 40_000);
 });

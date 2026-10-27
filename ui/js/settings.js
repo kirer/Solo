@@ -13,17 +13,6 @@
  */
 import { escapeAttr, escapeHtml } from "./format.js";
 
-const CHANNELS = [
-	{ value: "wechat", label: "微信" },
-	{ value: "wecom", label: "企业微信" },
-	{ value: "feishu", label: "飞书" },
-	{ value: "qq", label: "QQ" },
-	{ value: "telegram", label: "Telegram" },
-	{ value: "discord", label: "Discord" },
-	{ value: "slack", label: "Slack" },
-	{ value: "webhook", label: "自定义 Webhook" },
-];
-
 const PROVIDERS = [
 	{ value: "openai-responses", label: "OpenAI Responses" },
 	{ value: "anthropic", label: "Anthropic" },
@@ -41,17 +30,11 @@ const state = {
 	modelDraft: null,
 	modelErrors: null,
 	confirmDelete: "",
-	/** IM 草稿：改完点保存才 PATCH，避免每敲一个字符就写盘。 */
-	imDraft: null,
-	imDirty: false,
-	accountDraft: null,
-	accountErrors: null,
-	confirmAccountDelete: "",
 };
 
 let notify = () => {};
 let panel = null;
-const containers = { models: null, im: null, network: null };
+const containers = { models: null, network: null };
 
 /* ── API ─────────────────────────────────────────────────────────────────── */
 
@@ -99,7 +82,6 @@ function jsonBody(value) {
 
 function normalizeSettings(raw) {
 	const models = raw?.models ?? {};
-	const im = raw?.im ?? {};
 	const network = raw?.network ?? {};
 	const catalog = Array.isArray(models.catalog) ? models.catalog : [];
 	const lanUrls = Array.isArray(network.lanUrls) ? network.lanUrls : [];
@@ -131,23 +113,6 @@ function normalizeSettings(raw) {
 					overridden: model.overridden === true,
 				})),
 		},
-		im: {
-			enabled: Boolean(im.enabled),
-			outboundWebhook: typeof im.outboundWebhook === "string" ? im.outboundWebhook : "",
-			inboundToken: typeof im.inboundToken === "string" ? im.inboundToken : "",
-			accounts: (Array.isArray(im.accounts) ? im.accounts : [])
-				.filter((account) => account !== null && typeof account === "object")
-				.map((account, index) => ({
-					id:
-						typeof account.id === "string" && account.id !== ""
-							? account.id
-							: `acct_${index + 1}`,
-					channel: typeof account.channel === "string" ? account.channel : "webhook",
-					name: typeof account.name === "string" ? account.name : "",
-					enabled: account.enabled !== false,
-					note: typeof account.note === "string" ? account.note : "",
-				})),
-		},
 	};
 }
 
@@ -157,18 +122,10 @@ function toNumber(value) {
 	return Number.isFinite(number) ? number : null;
 }
 
-function cloneAccounts(accounts) {
-	return accounts.map((account) => ({ ...account }));
-}
-
 /* ── 格式化 ──────────────────────────────────────────────────────────────── */
 
 function providerLabel(provider) {
 	return PROVIDERS.find((item) => item.value === provider)?.label ?? provider ?? "";
-}
-
-function channelLabel(channel) {
-	return CHANNELS.find((item) => item.value === channel)?.label ?? channel ?? "未知渠道";
 }
 
 function compactNumber(value) {
@@ -217,14 +174,6 @@ function resolveDefaultId(models) {
 	const tail = raw.slice(raw.lastIndexOf("/") + 1);
 	const byTail = catalog.find((model) => model.id === tail);
 	return byTail?.id ?? raw;
-}
-
-function inboundUrl() {
-	const network = state.data?.network;
-	const lanUrl = network?.lanUrls?.[0] ?? "";
-	const base = (lanUrl || network?.url || location.origin).replace(/\/+$/, "");
-	const token = state.imDraft?.inboundToken?.trim() ?? "";
-	return `${base}/api/im/inbound?token=${encodeURIComponent(token)}`;
 }
 
 /* ── 渲染：通用 ──────────────────────────────────────────────────────────── */
@@ -578,8 +527,8 @@ async function saveModel(draft) {
 		state.modelEditing = "";
 		state.modelDraft = null;
 		state.modelErrors = null;
-		if (result?.models !== undefined) applySettings(result, { keepIm: true });
-		else await refresh({ quiet: true, keepIm: true });
+		if (result?.models !== undefined) applySettings(result);
+		else await refresh({ quiet: true });
 		renderAll();
 		const verb = editing === "" ? "已添加模型" : "已保存模型";
 		notify(
@@ -601,7 +550,7 @@ async function setDefaultModel(id) {
 			"/api/settings",
 			jsonBody({ models: { default: id } }),
 		);
-		applySettings(result, { keepIm: true });
+		applySettings(result);
 		renderAll();
 		const restart = result?.models?.restartRequired === true;
 		notify(restart ? `默认模型已设为 ${id}，重启服务后生效。` : `默认模型已设为 ${id}。`, "info");
@@ -614,256 +563,14 @@ async function deleteModel(id) {
 	try {
 		const result = await requestJson(`/api/models?id=${encodeURIComponent(id)}`, { method: "DELETE" });
 		state.confirmDelete = "";
-		if (result?.models !== undefined) applySettings(result, { keepIm: true });
-		else await refresh({ quiet: true, keepIm: true });
+		if (result?.models !== undefined) applySettings(result);
+		else await refresh({ quiet: true });
 		renderAll();
 		notify(`已删除模型 ${id}${result?.restartRequired === true ? "，重启服务后生效。" : "。"}`, "info");
 	} catch (error) {
 		state.confirmDelete = "";
 		renderAll();
 		notify(`删除模型失败：${errorMessage(error)}`, "error");
-	}
-}
-
-/* ── 渲染：IM ────────────────────────────────────────────────────────────── */
-
-function renderIm() {
-	if (containers.im === null) return;
-	containers.im.innerHTML = imHtml();
-}
-
-function imHtml() {
-	const parts = [];
-	if (state.error !== "") parts.push(errorBlock({ compact: true }));
-	if (state.data === null) {
-		if (state.error === "") parts.push(loadingHint());
-		return parts.join("");
-	}
-	const draft = state.imDraft;
-	if (draft === null) return parts.join("") + loadingHint();
-	const url = inboundUrl();
-	const accounts = draft.accounts;
-	const rows =
-		accounts.length === 0
-			? '<li class="set-empty">还没有账号。添加账号后，外部桥接服务才知道消息来自哪个渠道。</li>'
-			: accounts.map(accountRow).join("");
-	parts.push(`<div class="set-stack">
-		<div class="set-switch-row">
-			<div class="set-switch-copy">
-				<b class="set-switch-title">启用 IM 入站</b>
-				<span class="set-hint">关闭后入站地址直接拒绝外部消息。</span>
-			</div>
-			<label class="set-switch">
-				<input type="checkbox" data-im="enabled"${draft.enabled ? " checked" : ""}>
-				<span class="set-switch-track" aria-hidden="true"></span>
-			</label>
-		</div>
-		<div class="set-field">
-			<span class="set-field-label">入站地址</span>
-			<div class="set-copy">
-				<code class="set-copy-text mono" data-inbound-url>${escapeHtml(url)}</code>
-				<button class="set-btn" type="button" data-copy="${escapeAttr(url)}" data-copy-label="入站地址">复制</button>
-			</div>
-			<span class="set-hint">外部桥把用户消息转发到这里；token 等同于密码，别贴到公开地方。</span>
-		</div>
-		<div class="set-field">
-			<span class="set-field-label">入站 Token</span>
-			<div class="set-input-row">
-				<input class="set-input mono" type="text" data-im="inboundToken" value="${escapeAttr(draft.inboundToken)}" autocomplete="off" spellcheck="false" placeholder="点右侧生成">
-				<button class="set-btn" type="button" data-action="generate-token">生成</button>
-				<button class="set-btn" type="button" data-copy-token data-copy-label="Token">复制</button>
-			</div>
-		</div>
-		<label class="set-field">
-			<span class="set-field-label">出站 Webhook</span>
-			<input class="set-input" type="url" data-im="outboundWebhook" value="${escapeAttr(draft.outboundWebhook)}" placeholder="https://...（可选）" autocomplete="off" spellcheck="false">
-			<span class="set-hint">员工回复会 POST 到这个地址（群机器人或你自己的桥）。</span>
-		</label>
-		<div class="set-sub-head">
-			<span>账号 <b class="tnum">${accounts.length}</b></span>
-			<button class="set-btn" type="button" data-action="add-account">添加账号</button>
-		</div>
-		${state.accountDraft === null ? "" : accountFormHtml()}
-		<ul class="set-list" aria-label="IM 账号">${rows}</ul>
-		<p class="set-hint">IM 不是内置聊天窗口：需要一个外部桥接服务（微信 / 企微 / 飞书 / QQ 等）把消息转发到上面的入站地址。</p>
-		<div class="set-save">
-			<span class="set-dirty" data-im-dirty${state.imDirty ? "" : " hidden"}>有未保存的修改</span>
-			<button class="set-btn set-btn--primary" type="button" data-action="save-im">保存 IM 设置</button>
-		</div>
-	</div>`);
-	return parts.join("");
-}
-
-function accountRow(account) {
-	const deleting = state.confirmAccountDelete === account.id;
-	return `<li class="set-item${account.enabled ? "" : " is-off"}">
-		<div class="set-item-body">
-			<div class="set-item-line">
-				<b class="set-item-name">${escapeHtml(account.name === "" ? "未命名账号" : account.name)}</b>
-				<span class="set-tag">${escapeHtml(channelLabel(account.channel))}</span>
-				<span class="set-tag ${account.enabled ? "set-tag--run" : ""}">${account.enabled ? "已启用" : "已停用"}</span>
-			</div>
-			${account.note === "" ? "" : `<div class="set-item-meta">${escapeHtml(account.note)}</div>`}
-		</div>
-		<div class="set-item-actions">
-			<button class="set-btn" type="button" data-action="edit-account" data-id="${escapeAttr(account.id)}">编辑</button>
-			${deleting
-				? `<button class="set-btn set-btn--danger" type="button" data-action="delete-account" data-id="${escapeAttr(account.id)}" data-confirm="1">确认删除</button>
-					<button class="set-btn" type="button" data-action="cancel-account-delete">取消</button>`
-				: `<button class="set-btn set-btn--danger" type="button" data-action="delete-account" data-id="${escapeAttr(account.id)}">删除</button>`}
-		</div>
-	</li>`;
-}
-
-function accountFormHtml() {
-	const draft = state.accountDraft;
-	if (draft === null) return "";
-	const errors = state.accountErrors ?? {};
-	return `<form class="set-form" id="account-form" novalidate>
-		<div class="set-form-head">
-			<b>${draft.id === "" ? "添加账号" : "编辑账号"}</b>
-			<span class="set-hint">保存后点「保存 IM 设置」写入服务端</span>
-		</div>
-		<div class="set-form-grid">
-			${inputField("name", "名称", {
-				value: draft.name,
-				required: true,
-				wide: true,
-				placeholder: "例如 公司大群",
-				error: errors.name,
-			})}
-			${selectField("channel", "渠道", CHANNELS, {
-				value: draft.channel,
-				error: errors.channel,
-			})}
-			${inputField("note", "备注", {
-				value: draft.note,
-				wide: true,
-				placeholder: "可选，一句话说明这个账号接哪里",
-				error: errors.note,
-			})}
-		</div>
-		<label class="set-check">
-			<input type="checkbox" name="enabled"${draft.enabled ? " checked" : ""}>
-			<span>启用这个账号</span>
-		</label>
-		<div class="set-form-actions">
-			<button class="set-btn" type="button" data-action="cancel-account">取消</button>
-			<button class="set-btn set-btn--primary" type="submit">${draft.id === "" ? "添加" : "保存"}</button>
-		</div>
-	</form>`;
-}
-
-function readAccountDraft(form) {
-	const read = (name) => String(form.elements.namedItem(name)?.value ?? "").trim();
-	return {
-		id: state.accountDraft?.id ?? "",
-		name: read("name"),
-		channel: read("channel") || "wechat",
-		note: read("note"),
-		enabled: Boolean(form.elements.namedItem("enabled")?.checked),
-	};
-}
-
-function submitAccountForm(form) {
-	const draft = readAccountDraft(form);
-	state.accountDraft = draft;
-	const errors = {};
-	if (draft.name === "") errors.name = "账号名称必填，方便在对话里区分来消息的人。";
-	state.accountErrors = errors;
-	if (Object.keys(errors).length > 0) {
-		renderIm();
-		panel?.querySelector("#account-form [aria-invalid='true']")?.focus();
-		return;
-	}
-	if (state.imDraft === null) return;
-	const accounts = state.imDraft.accounts;
-	if (draft.id === "") {
-		const id = `acct_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-		accounts.push({ ...draft, id });
-	} else {
-		const index = accounts.findIndex((account) => account.id === draft.id);
-		if (index === -1) accounts.push({ ...draft });
-		else accounts[index] = { ...draft };
-	}
-	state.accountDraft = null;
-	state.accountErrors = null;
-	markImDirty();
-	renderIm();
-}
-
-function markImDirty() {
-	state.imDirty = true;
-	const indicator = panel?.querySelector("[data-im-dirty]");
-	if (indicator !== null && indicator !== undefined) indicator.hidden = false;
-}
-
-function updateInboundUrl() {
-	const url = inboundUrl();
-	const code = panel?.querySelector("[data-inbound-url]");
-	if (code !== null && code !== undefined) code.textContent = url;
-	const copy = panel?.querySelector("[data-copy-label='入站地址']");
-	if (copy !== null && copy !== undefined) copy.dataset.copy = url;
-}
-
-function generateToken() {
-	if (state.imDraft === null) return;
-	const bytes = new Uint8Array(24);
-	crypto.getRandomValues(bytes);
-	let binary = "";
-	for (const byte of bytes) binary += String.fromCharCode(byte);
-	const token = btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-	state.imDraft.inboundToken = token;
-	const input = panel?.querySelector('[data-im="inboundToken"]');
-	if (input !== null && input !== undefined) input.value = token;
-	markImDirty();
-	updateInboundUrl();
-	notify("已生成新的入站 token，保存后生效。", "info");
-}
-
-function validateIm() {
-	const draft = state.imDraft;
-	if (draft === null) return "";
-	if (draft.enabled && draft.inboundToken.trim() === "") {
-		return "启用 IM 前要先生成或填写入站 token。";
-	}
-	if (draft.outboundWebhook !== "" && !/^https?:\/\/\S+$/i.test(draft.outboundWebhook)) {
-		return "出站 Webhook 要以 http:// 或 https:// 开头。";
-	}
-	if (draft.accounts.some((account) => account.name.trim() === "")) {
-		return "每个账号都要有名称。";
-	}
-	return "";
-}
-
-async function saveIm() {
-	const draft = state.imDraft;
-	if (draft === null || state.data === null) return;
-	const problem = validateIm();
-	if (problem !== "") {
-		notify(problem, "error");
-		return;
-	}
-	const body = {
-		enabled: draft.enabled,
-		inboundToken: draft.inboundToken,
-		outboundWebhook: draft.outboundWebhook,
-		accounts: cloneAccounts(draft.accounts),
-	};
-	try {
-		const result = await requestJson("/api/settings", jsonBody({ im: body }));
-		if (result?.im !== undefined) {
-			state.imDirty = false;
-			state.accountDraft = null;
-			state.accountErrors = null;
-			applySettings(result, { keepIm: false });
-			renderAll();
-		} else {
-			await refresh({ quiet: true, keepIm: false });
-		}
-		notify("IM 设置已保存。", "info");
-	} catch (error) {
-		notify(`保存 IM 设置失败：${errorMessage(error)}`, "error");
 	}
 }
 
@@ -954,21 +661,10 @@ async function copyText(text, label) {
 
 /* ── 数据流 ──────────────────────────────────────────────────────────────── */
 
-function applySettings(raw, { keepIm = false } = {}) {
+function applySettings(raw) {
 	const next = normalizeSettings(raw);
 	state.data = next;
 	state.error = "";
-	if (!keepIm) {
-		state.imDraft = {
-			enabled: next.im.enabled,
-			inboundToken: next.im.inboundToken,
-			outboundWebhook: next.im.outboundWebhook,
-			accounts: cloneAccounts(next.im.accounts),
-		};
-		state.imDirty = false;
-		state.accountDraft = null;
-		state.accountErrors = null;
-	}
 }
 
 /**
@@ -980,13 +676,9 @@ function applySettings(raw, { keepIm = false } = {}) {
 function captureOpenDrafts() {
 	const modelForm = panel?.querySelector("#model-form");
 	if (modelForm instanceof HTMLFormElement) state.modelDraft = readModelDraft(modelForm);
-	const accountForm = panel?.querySelector("#account-form");
-	if (accountForm instanceof HTMLFormElement && state.accountDraft !== null) {
-		state.accountDraft = readAccountDraft(accountForm);
-	}
 }
 
-async function refresh({ quiet = false, keepIm = state.imDirty } = {}) {
+async function refresh({ quiet = false } = {}) {
 	if (state.loading) return;
 	captureOpenDrafts();
 	state.loading = true;
@@ -994,7 +686,7 @@ async function refresh({ quiet = false, keepIm = state.imDirty } = {}) {
 	try {
 		const raw = await requestJson("/api/settings");
 		state.loading = false;
-		applySettings(raw, { keepIm });
+		applySettings(raw);
 		renderAll();
 	} catch (error) {
 		state.loading = false;
@@ -1010,7 +702,6 @@ function errorMessage(error) {
 function renderAll() {
 	syncDefaultLabel();
 	renderModels();
-	renderIm();
 	renderNetwork();
 }
 
@@ -1042,15 +733,10 @@ function onClick(event) {
 		void copyText(target.dataset.copy ?? "", target.dataset.copyLabel ?? "内容");
 		return;
 	}
-	if (target.hasAttribute("data-copy-token")) {
-		const input = panel?.querySelector('[data-im="inboundToken"]');
-		void copyText(input?.value ?? "", "Token");
-		return;
-	}
 	const id = target.dataset.id ?? "";
 	switch (target.dataset.action) {
 		case "retry":
-			void refresh({ quiet: false, keepIm: state.imDirty });
+			void refresh({ quiet: false });
 			break;
 		case "model-form-open":
 			state.modelForm = true;
@@ -1111,67 +797,9 @@ function onClick(event) {
 			state.confirmDelete = "";
 			renderModels();
 			break;
-		case "add-account":
-			state.accountDraft = { id: "", channel: "wechat", name: "", enabled: true, note: "" };
-			state.accountErrors = null;
-			state.confirmAccountDelete = "";
-			renderIm();
-			panel?.querySelector("#account-form input[name='name']")?.focus();
-			break;
-		case "edit-account": {
-			const account = state.imDraft?.accounts.find((item) => item.id === id);
-			if (account !== undefined) {
-				state.accountDraft = { ...account };
-				state.accountErrors = null;
-				state.confirmAccountDelete = "";
-				renderIm();
-				panel?.querySelector("#account-form input[name='name']")?.focus();
-			}
-			break;
-		}
-		case "delete-account":
-			if (target.dataset.confirm === "1") {
-				if (state.imDraft !== null) {
-					state.imDraft.accounts = state.imDraft.accounts.filter((account) => account.id !== id);
-					state.confirmAccountDelete = "";
-					markImDirty();
-					renderIm();
-				}
-			} else {
-				state.confirmAccountDelete = id;
-				renderIm();
-			}
-			break;
-		case "cancel-account":
-			state.accountDraft = null;
-			state.accountErrors = null;
-			renderIm();
-			break;
-		case "cancel-account-delete":
-			state.confirmAccountDelete = "";
-			renderIm();
-			break;
-		case "generate-token":
-			generateToken();
-			break;
-		case "save-im":
-			void saveIm();
-			break;
 		default:
 			break;
 	}
-}
-
-function onFieldChange(event) {
-	const field = event.target instanceof HTMLElement ? event.target.dataset.im : undefined;
-	if (field === undefined || field === "" || state.imDraft === null) return;
-	if (event.target instanceof HTMLInputElement && event.target.type === "checkbox") {
-		state.imDraft[field] = event.target.checked;
-	} else if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) {
-		state.imDraft[field] = event.target.value;
-	}
-	markImDirty();
-	if (field === "inboundToken") updateInboundUrl();
 }
 
 function onSubmit(event) {
@@ -1203,8 +831,6 @@ function bind() {
 	if (panel === null || panel.dataset.settingsBound === "1") return;
 	panel.dataset.settingsBound = "1";
 	panel.addEventListener("click", onClick);
-	panel.addEventListener("input", onFieldChange);
-	panel.addEventListener("change", onFieldChange);
 	panel.addEventListener("submit", onSubmit);
 }
 
@@ -1217,7 +843,6 @@ export function initSettings(options = {}) {
 	if (typeof options.onToast === "function") notify = options.onToast;
 	panel = document.getElementById("settings");
 	containers.models = document.getElementById("settings-models");
-	containers.im = document.getElementById("settings-im");
 	containers.network = document.getElementById("settings-network");
 	if (panel === null) {
 		return { refresh: async () => {}, apply: () => {} };
@@ -1231,7 +856,7 @@ export function initSettings(options = {}) {
 		},
 		/** 开发 / 视觉验收用：直接渲染一份契约数据，不发请求。 */
 		apply(payload) {
-			applySettings(payload, { keepIm: false });
+			applySettings(payload);
 			state.loading = false;
 			renderAll();
 		},

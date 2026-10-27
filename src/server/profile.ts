@@ -8,7 +8,7 @@
  */
 import { BACKGROUND_CONTEXT, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import { staffCharterOf } from "../company/prompts.ts";
-import { ROLE_LABELS, managerLabelOf, type ManagementRole } from "../company/docs.ts";
+import { managerLabelOf, type ManagementRole } from "../company/docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "../company/roles.ts";
 import { employeeToolsFor, employeeUniversalTools, readCompany } from "../company/org.ts";
 import { buildOrg, managerLabelInOrg } from "../company/org-model.ts";

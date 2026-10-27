@@ -32,7 +32,7 @@
  * 层级是 我→CEO→管理层→负责人→职员，任务派发只能从上到下，
  * 也就是说上层可以给任何下层派，不必逐层转手）。
  */
-import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../../runtime/index.ts";
+import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime} from "../../runtime/index.ts";
 import { projectChannelId, OWNER_ID } from "../../domain/channels.ts";
 import { canAssign, labelOf, personOf, type Org } from "../../domain/membership.ts";
 import { TASK_PRIORITIES, type TaskPriority } from "../../domain/tasks.ts";

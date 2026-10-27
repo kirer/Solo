@@ -155,13 +155,16 @@ EOF
 
 ### 员工一直卡在「运行中 / 等待输出…」
 
-先看 `curl -s http://127.0.0.1:7788/api/org` 里谁在忙。如果工具卡在 `delegate_to_role` /
-`delegate_to_leader`，说明发生了跨会话同步等待。新版本已经：
+先看 `curl -s http://127.0.0.1:7788/api/org` 里谁在忙，再看会话流（`/api/conversations/:id/feed`）
+里最后一条是什么。常见的两种：
 
-- 在进入同步转交前做环检测（`src/company/delegation-guard.ts`），有环直接拒绝；
-- 目标会话忙碌时快速失败，不再排队等；
-- 转交等待绑定工具 `Context`，老板点「立即处理」可以打断。
+- 工具真的跑很久（真模型 + 大文件写入）：看门狗会在超期后中断或重试，**同一条任务最多自动动手
+  2 次**，之后如实标 error 并写一条 `app.alert` 进会话流（见 `docs/SYSTEM.md` §8）。
+- 会话停在 `waiting`（工具中断后的僵住）：看门狗判定后中断一轮，下一条消息就能进去。
 
+现在派活是 `assign_task`：建任务 + 发频道消息 + `deliver()` 投递，**投完立刻返回，不存在
+跨会话同步等待**。工具卡在 `delegate_to_role` / `delegate_to_leader` 的情形是旧版本才会出现的
+——那套同步派活（`delegation.ts` / `delegation-guard.ts`）已经整块删除，见 ADR-037。
 如果升级前留下了卡死进程，重启一次即可（重启会把挂起的工具标成中断）；仍卡住时按上面的
 `restart_limit` 或 `pi.live` 清理处理。
 

@@ -11,12 +11,11 @@ import { afterEach, describe, expect, test } from "vitest";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
-import { bootstrapCompany, createProject, hireStaff } from "../../src/company/org.ts";
-import { delegate } from "../../src/company/delegation.ts";
+import { bootstrapCompany, createProject, hireStaff, listStaff } from "../../src/company/org.ts";
 import { answerPending, createEscalationTask, listPending, startEscalation } from "../../src/company/escalation.ts";
 import { buildStream, buildUiState } from "../../src/tui/state.ts";
 import { computeLayout, formatTokens, renderLayout, renderOrgTree, renderPanel, renderStream } from "../../src/tui/render.ts";
-import { answer, createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { answer, askAndWait, createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -113,9 +112,10 @@ describe("组织树导航", () => {
 		const { ctx, runtime, boot, project } = await setup();
 
 		ctx.faux.setResponses([answer("完成")]);
-		await delegate(
+		const staff = (await listStaff(runtime, "alpha", BACKGROUND_CONTEXT))[0];
+		await askAndWait(
 			runtime,
-			{ project: "alpha", employee: "dev-1", task: "干活", fromConversationId: project.leader, from: "负责人" },
+			{ conversationId: staff?.conversationId as number, text: "干活", from: "负责人" },
 			BACKGROUND_CONTEXT,
 		);
 

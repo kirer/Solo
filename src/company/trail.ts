@@ -11,38 +11,10 @@
 import { BACKGROUND_CONTEXT, type Context, type CompanyRuntime } from "../runtime/index.ts";
 import {
 	AuditDoc,
-	CompanyDoc,
 	TrailDoc,
 	type TrailEdge,
 	type TrailKind,
-	ROLE_LABELS,
-	type ManagementRole,
 } from "./docs.ts";
-
-/** 关系图节点。 */
-export type GraphNode = {
-	readonly id: number;
-	readonly label: string;
-	readonly kind: "owner" | "role" | "project" | "staff";
-	readonly parent?: number;
-	readonly project?: string;
-};
-
-/** 关系图边。 */
-export type GraphEdge = {
-	readonly from: number;
-	readonly to: number;
-	readonly kind: TrailKind;
-	readonly at: number;
-	readonly ref: string;
-	readonly text?: string;
-};
-
-/** 组织关系图。 */
-export type OrganizationGraph = {
-	readonly nodes: readonly GraphNode[];
-	readonly edges: readonly GraphEdge[];
-};
 
 /** 活跃任务（当前协作结构）。 */
 export type ActiveTask = {
@@ -110,6 +82,45 @@ export async function recordMessage(
 
 
 /**
+ * 按会话追溯：某个会话参与过的全部沟通。
+ *
+ * 从**双方各自的审计日志**（`AuditDoc`，`scope: "conversation"`）读，不读 `TrailDoc`。
+ * 理由：`TrailDoc` 是一张跨会话索引，它的写入者是 `recordMessage`——同步派活删除后
+ * 生产路径上已经没有调用者了。而审计日志是 `recordMessage` 真正落「双向留痕」的地方，
+ * 也是这个能力当年承诺的东西（「任一端都能追溯」）。读审计日志，追溯就不依赖那张
+ * 越来越空的索引表。
+ */
+export async function trailForConversation(
+	runtime: CompanyRuntime,
+	conversationId: number,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<readonly TrailEdge[]> {
+	const state = await runtime.harness.snapshot(AuditDoc, conversationId as never, context);
+	const events = state?.events ?? [];
+	return events
+		.filter((event) => event.ref !== undefined)
+		.map((event) => ({
+			at: event.at,
+			kind: auditTypeToTrailKind(event.type),
+			fromConversation: conversationId,
+			toConversation: conversationId,
+			from: event.from ?? "",
+			to: event.to ?? "",
+			ref: event.ref as string,
+		}));
+}
+
+/** 重建某次升级/派活的完整链条：按 `ref` 从公司时间线取。 */
+export async function trailForRef(
+	runtime: CompanyRuntime,
+	ref: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<readonly TrailEdge[]> {
+	const edges = await readTrail(runtime, {}, context);
+	return edges.filter((edge) => edge.ref === ref);
+}
+
+/**
  * 实时沟通边：派活/转交正在发生时，先挂一条临时边，让界面能立刻画线。
  *
  * 历史边只在答完后由 recordMessage 落库，所以如果只读 TrailDoc，
@@ -170,85 +181,6 @@ export async function readTrail(
 	return [...edges].sort((a, b) => a.at - b.at);
 }
 
-/** 按会话追溯：某个会话参与过的全部沟通。 */
-export async function trailForConversation(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<readonly TrailEdge[]> {
-	const edges = await readTrail(runtime, {}, context);
-	return edges.filter(
-		(edge) => edge.fromConversation === conversationId || edge.toConversation === conversationId,
-	);
-}
-
-/** 重建某次升级/派活的完整链条。 */
-export async function trailForRef(
-	runtime: CompanyRuntime,
-	ref: string,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<readonly TrailEdge[]> {
-	const edges = await readTrail(runtime, {}, context);
-	return edges.filter((edge) => edge.ref === ref);
-}
-
-/**
- * 组织关系图：节点是角色/项目/员工，边是沟通记录。
- *
- * 这是给图形界面用的数据形态——直接可渲染成力导向图。
- */
-export async function organizationGraph(
-	runtime: CompanyRuntime,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<OrganizationGraph> {
-	const state = await runtime.harness.snapshot(CompanyDoc, context);
-	const nodes: GraphNode[] = [];
-
-	if (state !== undefined) {
-		for (const [role, conversationId] of Object.entries(state.roles)) {
-			nodes.push({
-				id: conversationId,
-				label: ROLE_LABELS[role as ManagementRole] ?? role,
-				kind: role === "ceo" ? "owner" : "role",
-			});
-		}
-
-		for (const project of Object.values(state.projects)) {
-			nodes.push({
-				id: project.leader,
-				label: project.name,
-				kind: "project",
-				project: project.slug,
-			});
-		}
-
-		for (const staff of Object.values(state.staff)) {
-			const node: GraphNode = {
-				id: staff.conversationId,
-				label: staff.name,
-				kind: "staff",
-				project: staff.project,
-				parent: state.projects[staff.project]?.leader ?? 0,
-			};
-			nodes.push(node);
-		}
-	}
-
-	const trail = await readTrail(runtime, {}, context);
-	const edges: GraphEdge[] = trail.map((edge) => {
-		const result: GraphEdge = {
-			from: edge.fromConversation,
-			to: edge.toConversation,
-			kind: edge.kind,
-			at: edge.at,
-			ref: edge.ref,
-		};
-		return result;
-	});
-
-	return { nodes, edges };
-}
-
 /**
  * 当前协作结构：全部活跃任务及归属。
  *
@@ -294,6 +226,22 @@ export async function activeTasks(
 }
 
 // ── 内部 ────────────────────────────────────────────────────────────────────
+
+/** 审计类型 → 沟通类型（`trailForConversation` 用）。 */
+function auditTypeToTrailKind(type: string): TrailKind {
+	switch (type) {
+		case "delegate":
+			return "delegate";
+		case "escalate":
+			return "escalate";
+		case "hire":
+			return "hire";
+		case "archive":
+			return "archive";
+		default:
+			return "decide";
+	}
+}
 
 /** 沟通类型 → 审计类型。 */
 function mapAuditType(kind: TrailKind): "hire" | "archive" | "escalate" | "decide" | "delegate" | "owner-decision" {

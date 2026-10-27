@@ -18,8 +18,8 @@ import { AuditDoc, CompanyDoc, ROLE_LABELS } from "./docs.ts";
 // 运行时导入 PendingDoc 不会形成循环：escalation.ts 对 disposition.ts 只有 `import type`，
 // 编译后被擦除，运行时不存在「disposition → escalation → disposition」的环。
 import { PendingDoc, levelOfConversation } from "./escalation.ts";
-import { deliverDecision } from "./decision-delivery.ts";
-import type { PendingItem } from "./escalation.ts";
+import { deliverDecision } from "./channels.ts";
+import type { PendingItem, PendingState } from "./escalation.ts";
 
 /**
  * 一个任务在会话流里的进度事实。
@@ -252,7 +252,8 @@ export type DispositionAnswerResult =
 
 export function parseDispositionAnswer(
 	answer: string,
-	payload: DispositionPayload,
+	/** 这条待办自己的处置选项。判定本身不看它，但签名里留着：调用方传它是「这是哪条待办」的自证，将来若要按选项差异判（例如「永久放弃」必须写明替代方案）不用改调用点。 */
+	_payload: DispositionPayload,
 ): DispositionAnswerResult {
 	const text = answer.trim();
 	if (text === "") return { ok: false, reason: "答复为空：请明确选「暂搁」或「永久放弃」" };
@@ -405,10 +406,8 @@ export async function createDispositionPending(
 /**
  * 读一条处置待办（含是否已被答复）。
  *
- * 读时兜底（审计 D-01 建议①）：先把已到期的处置项就地按默认值结算，再返回。
- * 为什么放在读点而不是只靠看门狗：看门狗只在「有进程在跑」时驱动，
- * 而 ADR-026 决策 5 的「到期按暂搁执行」是协议条款，不该依赖服务常驻。
- * 读点兜底是幂等的（settleDisposition 内部会判「已有结论」）。
+ * 读点顺手兜底一次（见 `settleDueDispositions`），这样「到期按暂搁执行」这条
+ * 协议条款不依赖服务是否常驻。
  */
 export async function readDisposition(
 	runtime: CompanyRuntime,
@@ -424,9 +423,30 @@ export async function readDisposition(
 }
 
 /**
- * 读时兜底入口：把**已到期且未定处置**的处置项按默认值结算。
+ * 挑出「到期了、该按默认值结算」的处置项。**唯一的到期判据**。
  *
- * 由任何「读待办」的路径顺手调用（readDisposition / listPendingForDisplay）。
+ * 以前有两份：读侧兜底（`settleDueDispositions`）与巡检（`applyDueDispositionDefaults`）
+ * 各写一遍同样的 `disposition !== undefined && answer === undefined && disposed === undefined
+ * && shouldApplyTimeoutDefault(...).apply`。两份判据迟早会漂——一处改了另一处没改，
+ * 就会出现「界面看着到期了、巡检说没到期」这种没法查的状态。
+ */
+function dueDispositionItems(state: PendingState | undefined, now: number): readonly PendingItem[] {
+	return (state?.items ?? []).filter((item) => {
+		if (item.disposition === undefined) return false;
+		// 已经答复或已被处置的，不该再被超时兜底「答」一遍（会覆盖人的决定）。
+		if (item.answer !== undefined) return false;
+		if (item.disposed !== undefined) return false;
+		return shouldApplyTimeoutDefault(item.disposition, now).apply;
+	});
+}
+
+/**
+ * 把**已到期且未定处置**的处置项按默认值结算。**唯一的结算入口**。
+ *
+ * 两个调用点：读待办的路径顺手调一次（`readDisposition`），以及看门狗每轮巡检。
+ * 读侧要有是因为「到期按暂搁执行」是协议条款（ADR-026 决策 5），不该依赖服务常驻；
+ * 巡检要有是因为服务在跑时不该等到有人来看才结算。
+ *
  * 幂等、静默：结算失败只影响那一条，不抛出、不影响读取本身。
  *
  * @returns 本次结算掉的条数
@@ -439,16 +459,31 @@ export async function settleDueDispositions(
 	try {
 		// 快速短路：没有到期项就不进 commit，避免每次读都写库。
 		const state = await runtime.harness.snapshot(PendingDoc, context);
-		const hasDue = (state?.items ?? []).some(
-			(item) =>
-				item.disposition !== undefined &&
-				item.answer === undefined &&
-				// 已被人驳回/标记已解决的，不该再被超时兜底「答」一遍。
-				item.disposed === undefined &&
-				shouldApplyTimeoutDefault(item.disposition, now).apply,
-		);
-		if (!hasDue) return 0;
-		return await applyDueDispositionDefaults(runtime, now, context);
+		const due = dueDispositionItems(state, now);
+		if (due.length === 0) return 0;
+
+		let applied = 0;
+		for (const item of due) {
+			const payload = item.disposition;
+			if (payload === undefined) continue;
+			// 超时兜底必须**自带**恢复条件：人没写，机器就用协议规定的默认值
+			// （30 分钟后提醒下达人）。注意不能只传 "暂搁"——恢复条件现在是必填项，
+			// 空条件会被 parseDispositionAnswer 拒绝，兜底就永远不成立。
+			const resumeCondition = `默认：${Math.round(payload.resumeAfterMs / 60_000)} 分钟后提醒下达人`;
+			const result = await settleDisposition(
+				runtime,
+				{
+					key: item.key,
+					answer: `暂搁：${resumeCondition}`,
+					answeredBy: "系统（超时默认）",
+					viaTimeout: true,
+					now,
+				},
+				context,
+			);
+			if (result.ok) applied += 1;
+		}
+		return applied;
 	} catch {
 		// 兜底失败不能连累读取方（界面/工具仍需拿到待办）
 		return 0;
@@ -619,54 +654,6 @@ export async function settleDisposition(
 }
 
 /**
- * 扫描到期的处置待办并按默认值兜底执行。
- *
- * 这是决策 5「到期行为：按暂搁执行，问题留在待办事后可改」的落地。
- * 由调用方定期驱动（看门狗或 HTTP 侧），本函数不自己起定时器——
- * 定时器会绑定到某个进程实例，重启后丢失，反而不如「每次巡检顺手扫一遍」可靠。
- *
- * @returns 本轮兜底执行的条数
- */
-export async function applyDueDispositionDefaults(
-	runtime: CompanyRuntime,
-	now: number = Date.now(),
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<number> {
-	const state = await runtime.harness.snapshot(PendingDoc, context);
-	const due = (state?.items ?? []).filter((item) => {
-		if (item.disposition === undefined) return false;
-		if (item.answer !== undefined) return false;
-		// 已处置的跳过（同上，避免把人的决定覆盖成机器默认值）。
-		if (item.disposed !== undefined) return false;
-		const check = shouldApplyTimeoutDefault(item.disposition, now);
-		return check.apply;
-	});
-
-	let applied = 0;
-	for (const item of due) {
-		const payload = item.disposition;
-		if (payload === undefined) continue;
-		// 超时兜底必须**自带**恢复条件：人没写，机器就用协议规定的默认值
-		// （30 分钟后提醒下达人）。注意不能只传 "暂搁"——恢复条件现在是必填项，
-		// 空条件会被 parseDispositionAnswer 拒绝，兜底就永远不成立。
-		const resumeCondition = `默认：${Math.round(payload.resumeAfterMs / 60_000)} 分钟后提醒下达人`;
-		const result = await settleDisposition(
-			runtime,
-			{
-				key: item.key,
-				answer: `暂搁：${resumeCondition}`,
-				answeredBy: "系统（超时默认）",
-				viaTimeout: true,
-				now,
-			},
-			context,
-		);
-		if (result.ok) applied += 1;
-	}
-	return applied;
-}
-
-/**
  * 提醒「暂搁」到期：恢复条件一到点，就给下达人写一条 alert（ADR-026 决策 4/5）。
  *
  * 为什么必须做：决策 4 的原话是「没有恢复条件的暂搁不是暂停，是让工作无声烂掉」。
@@ -674,7 +661,7 @@ export async function applyDueDispositionDefaults(
  * 等于根本没有恢复条件，暂搁的工作照样会无声烂掉。
  *
  * 由巡检驱动（不是定时器）：定时器绑定进程实例，重启就丢；挂在已有的巡检上，
- * 重启后自然恢复（与 applyDueDispositionDefaults 同一取舍）。
+ * 重启后自然恢复（与 settleDueDispositions 同一取舍）。
  *
  * 幂等：提醒成功才写 `resumeRemindedAt`，下一轮不再提醒；写失败不推进标记，
  * 下一轮重试（会话可能刚被删掉）。

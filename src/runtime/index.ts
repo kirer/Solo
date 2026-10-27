@@ -80,3 +80,7 @@ export * from "./instance-lock.ts";
 
 // 工具搜索：延迟工具按需加载（见 ADR-032）
 export type { ToolRegistration } from "./registry.ts";
+
+// 会话条目的 data 载荷类型（chord 的 JSON 值）。业务层写 `entry.data` 时需要它：
+// 直接 import @earendil-works/chord 会越界（ADR-001），所以在这里转出去。
+export type { JsonValue } from "@earendil-works/chord";

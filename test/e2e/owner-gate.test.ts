@@ -16,7 +16,7 @@ import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject, readCompany } from "../../src/company/org.ts";
 import {
-	answerPendingAsCeo,
+	answerPending,
 	createEscalationTask,
 	listPending,
 	startEscalation,
@@ -150,7 +150,11 @@ describe("CEO 的授权边界", () => {
 			{ label: "老板待办出现" },
 		);
 
-		const ok = await answerPendingAsCeo(runtime, { key: "gate-3", answer: "我替他定" }, BACKGROUND_CONTEXT);
+		const ok = await answerPending(
+			runtime,
+			{ key: "gate-3", answer: "我替他定", answeredBy: "ceo", level: "ceo" },
+			BACKGROUND_CONTEXT,
+		);
 		expect(ok, "owner 级只能老板答").toBe(false);
 		expect((await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.key === "gate-3")).toBe(true);
 	});
@@ -174,7 +178,7 @@ describe("CEO 的授权边界", () => {
 			{ label: "CTO 待办出现" },
 		);
 
-		const ok = await answerPendingAsCeo(runtime, { key: "gate-4", answer: "用 Zustand" }, BACKGROUND_CONTEXT);
+		const ok = await answerPending(runtime, { key: "gate-4", answer: "用 Zustand", answeredBy: "ceo", level: "ceo" }, BACKGROUND_CONTEXT);
 		expect(ok, "cto 级的问题 CEO 不该越俎代庖").toBe(false);
 	});
 
@@ -195,7 +199,7 @@ describe("CEO 的授权边界", () => {
 			label: "待办出现",
 		});
 
-		const ok = await answerPendingAsCeo(runtime, { key: "gate-5", answer: "不加，先用现有机器" }, BACKGROUND_CONTEXT);
+		const ok = await answerPending(runtime, { key: "gate-5", answer: "不加，先用现有机器", answeredBy: "ceo", level: "ceo" }, BACKGROUND_CONTEXT);
 		expect(ok).toBe(true);
 		expect(await listPending(runtime, BACKGROUND_CONTEXT)).toEqual([]);
 	});

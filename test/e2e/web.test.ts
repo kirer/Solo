@@ -19,11 +19,11 @@ import {
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff } from "../../src/company/org.ts";
 import { createEscalationTask, listPending, startEscalation } from "../../src/company/escalation.ts";
 import { beginLiveTrail } from "../../src/company/trail.ts";
+import { ensureAllChannels, postToChannel } from "../../src/company/channels.ts";
 import { serve, type Server } from "../../src/server/http.ts";
 import type { OrgView } from "../../src/server/org-view.ts";
 import type { Feed, FeedItem } from "../../src/server/feed.ts";
 import type { ActorProfile } from "../../src/server/profile.ts";
-import { delegationWaits } from "../../src/company/delegation-guard.ts";
 import { answer, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, toolCall, type TestContext } from "../support.ts";
 
 let contexts: TestContext[] = [];
@@ -59,8 +59,6 @@ async function setup() {
 			registry,
 			workspaceRoot: join(dir, "projects"),
 			escalationTask,
-			// 同步转交的等待上限调到 300ms：默认 180s 没法在测试里验证超时路径
-			delegationTimeoutMs: 300,
 		},
 		BACKGROUND_CONTEXT,
 	);
@@ -150,7 +148,33 @@ describe("组织快照接口", () => {
 		expect(Array.isArray(org.links)).toBe(true);
 	});
 
-	test("正在进行的沟通会出现在 links 里", async () => {
+	test("频道里的 @ 会变成组织图上的连线", async () => {
+		const { server, runtime, boot } = await setup();
+		// 连线现在从频道消息算（同步派活删除后，`TrailDoc` 不再增长）。
+		await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
+		await postToChannel(
+			runtime,
+			"leadership",
+			{
+				from: boot.ownerConversationId,
+				fromLabel: "CEO",
+				kind: "task",
+				text: "@CTO 看一下架构",
+				mentions: [boot.roleConversations.cto],
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		const link = org.links.find(
+			(item) => item.from === boot.ownerConversationId && item.to === boot.roleConversations.cto,
+		);
+		expect(link, "频道里的 @ 应当出现在 links 里").toBeDefined();
+		expect(link?.kind).toBe("delegate");
+		expect(link?.label).toBe("CEO → CTO");
+	});
+
+	test("正在进行的沟通（实时边）也会出现在 links 里", async () => {
 		const { server, boot } = await setup();
 		const release = beginLiveTrail({
 			kind: "delegate",
@@ -285,13 +309,13 @@ describe("组织快照接口", () => {
 			{ label: "升到老板层" },
 		);
 
-		// feed（CEO 会话视角）应带 canTakeOver=true 与 trace
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as {
-			pending: { key: string; canTakeOver: boolean; trace?: { note: string } }[];
-		};
-		const feedItem = feed.pending.find((item) => item.key === "web-takeover-1");
-		expect(feedItem?.canTakeOver).toBe(true);
-		expect(feedItem?.trace?.note).toContain("CEO");
+		// 组织快照（老板视角）应带 trace。
+		// 注：这一样原先在 /api/feed 的 pending 里，会话流视图删除后统一由 /api/org 下发。
+		// `canTakeOver` 字段随会话流视图一起消失——它只服务那个视图；「能不能接管」
+		// 现在由下面 `/api/pending/take-over` 的 403 / 200 行为直接验。
+		const before = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		const pendingItem = before.pending.find((item) => item.key === "web-takeover-1");
+		expect(pendingItem?.trace?.note).toContain("CEO");
 
 		// 无权限：CTO 不能接管
 		const denied = await fetch(`${server.url}api/pending/take-over`, {
@@ -313,215 +337,6 @@ describe("组织快照接口", () => {
 		// 老板队列消失
 		const orgAfter = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
 		expect(orgAfter.pending.filter((item) => item.key === "web-takeover-1" && item.forYou)).toEqual([]);
-	});
-});
-
-describe("会话流接口", () => {
-	test("返回老板与助手的消息", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-
-		ctx.faux.setResponses([answer("我能帮你安排事情。")]);
-		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-		await (
-			await ceo?.submit({ type: "input", content: "你能做什么" }, BACKGROUND_CONTEXT)
-		)?.wait(BACKGROUND_CONTEXT);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-
-		expect(feed.title).toBe("CEO");
-		expect(feed.kind).toBe("owner");
-		expect(feed.items.some((item) => item.kind === "user" && item.text === "你能做什么")).toBe(true);
-		expect(feed.items.some((item) => item.kind === "assistant" && item.text.includes("安排"))).toBe(true);
-	});
-
-	test("工具调用被合并成一条，含参数与结果", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-
-		ctx.faux.setResponses([
-			{
-				role: "assistant",
-				content: [
-					{
-						type: "toolCall",
-						id: "call-1",
-						name: "org_tree",
-						arguments: {},
-					},
-				],
-				api: "faux",
-				provider: "faux",
-				model: "faux-1",
-				usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 15 },
-				stopReason: "toolUse",
-				timestamp: Date.now(),
-			} as never,
-			answer("组织里有七个岗位。"),
-		]);
-
-		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-		await (
-			await ceo?.submit({ type: "input", content: "看看组织" }, BACKGROUND_CONTEXT)
-		)?.wait(BACKGROUND_CONTEXT);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const tools = feed.items.filter((item) => item.kind === "tool");
-
-		expect(tools.length).toBeGreaterThan(0);
-		const tree = tools.find((item) => item.kind === "tool" && item.name === "org_tree");
-		expect(tree).toBeDefined();
-		if (tree?.kind === "tool") {
-			expect(tree.state).toBe("ok");
-			expect(tree.output.length).toBeGreaterThan(0);
-		}
-	});
-
-	test("运行中的工具不重复出卡，参数从已提交调用回填", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-
-		// 用 ask_role（异步派活）制造「工具运行中」的窗口：
-		// 它自己很快返回，但后续的生成会慢，工具卡片仍在 running。
-		ctx.faux.setResponses([
-			toolCall("ask_role", { to: "CTO", text: "看看首页" }),
-			slowAnswer(700, "CTO 已收到"),
-			answer("已问 CTO"),
-		]);
-
-		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-		void ceo?.submit({ type: "input", content: "转给 CTO" }, BACKGROUND_CONTEXT);
-
-		// 工具本身很快（异步派活），抓不到 running 窗口没关系——
-		// 这条测试真正要保证的是「同一个调用不会出两张卡」+「参数能回填」。
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return feed.items.some((item) => item.kind === "tool" && item.name === "ask_role" && item.state !== "running");
-			},
-			{ label: "派活工具拿到结果" },
-		);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const calls = feed.items.filter((item) => item.kind === "tool" && item.name === "ask_role");
-
-		expect(calls.length, "同一工具调用只应出现一张卡").toBe(1);
-		if (calls[0]?.kind === "tool") {
-			expect(calls[0].args).toContain("看看首页");
-			expect(calls[0].state).not.toBe("running");
-		}
-		expect(
-			feed.running.some((tool) => tool.name === "ask_role"),
-			"已提交的调用不应再出现在 running 里",
-		).toBe(false);
-	});
-
-	test("不存在的会话返回 404", async () => {
-		const { server } = await setup();
-		const response = await fetch(`${server.url}api/feed/999999`);
-		expect(response.status).toBe(404);
-	});
-
-	/* ── 契约第 3 节：每条消息都要能显示发送者 ── */
-
-	test("feed 带 actor（会话主人），老板通道是 CEO", async () => {
-		const { server, boot } = await setup();
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-
-		expect(feed.actor).toBeDefined();
-		expect(feed.actor.label, "老板通道的助手是 CEO").toBe("CEO");
-		expect(feed.actor.kind).toBe("owner");
-		expect(feed.actor.conversationId).toBe(boot.ownerConversationId);
-	});
-
-	test("高管会话的 actor 是自己，不是老板", async () => {
-		const { server, boot } = await setup();
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.roleConversations.cto}`)).json()) as Feed;
-
-		expect(feed.actor.label).toBe("CTO");
-		expect(feed.actor.kind).toBe("role");
-	});
-
-	test("老板发的消息带 from = 老板", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-
-		ctx.faux.setResponses([answer("收到")]);
-		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-		await (await ceo?.submit({ type: "input", content: "你能做什么" }, BACKGROUND_CONTEXT))?.wait(BACKGROUND_CONTEXT);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const mine = feed.items.find((item) => item.kind === "user" && item.text === "你能做什么");
-
-		expect(mine).toBeDefined();
-		if (mine?.kind !== "user") throw new Error("应为 user 条目");
-		expect(mine.from.label).toBe("老板");
-		expect(mine.from.kind).toBe("owner");
-	});
-
-	test("别的 agent 派来的消息带 from = 派活方，note 带 from/to", async () => {
-		const { server, runtime, boot, dir } = await setup();
-		const { project } = await createProject(
-			runtime,
-			{ name: "Alpha", slug: "alpha", brief: "b", workspaceRoot: join(dir, "projects"), leaderName: "周牧" },
-			BACKGROUND_CONTEXT,
-		);
-
-		// 模拟一次派活：条目是 app.delegate，发送方是 CEO
-		const leader = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
-		await leader?.submit(
-			{
-				type: "input",
-				content: "把登录页做出来",
-				entry: {
-					kind: "app.delegate",
-					data: { from: "CEO", to: "周牧", text: "把登录页做出来" },
-				},
-				whenBusy: "reject",
-			},
-			BACKGROUND_CONTEXT,
-		);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${project.leader}`)).json()) as Feed;
-
-		// 负责人会话的 actor 是这位负责人本人
-		expect(feed.actor.label).toBe("周牧");
-		expect(feed.actor.kind).toBe("project");
-
-		const note = feed.items.find((item) => item.kind === "note");
-		expect(note, "派活应留一条 note").toBeDefined();
-		if (note?.kind !== "note") throw new Error("应为 note 条目");
-		expect(note.from?.label).toBe("CEO");
-		expect(note.from?.kind).toBe("role");
-		expect(note.to?.label).toBe("周牧");
-		expect(note.to?.kind).toBe("project");
-		// 正文里不再重复「谁 → 谁」，只留动词与内容
-		expect(note.text).toContain("登录页");
-		void boot;
-	});
-
-	test("看门狗写的告警在会话流里是 alert 条目，带发送者", async () => {
-		const { server, runtime, boot } = await setup();
-
-		// 模拟看门狗落一条留痕（与 watchdog.writeAlert 同形状）
-		await runtime.harness.commit(async (tx) => {
-			await tx.appendEntry(boot.ownerConversationId as never, {
-				kind: "app.alert",
-				data: {
-					text: "这一轮卡了 10 分钟没有进展，已中断并重试。",
-					from: "看门狗",
-					action: "abort",
-					reason: "overdue",
-					taskId: "42",
-					taskKind: "pi.generation",
-					attempt: 1,
-					giveUp: false,
-				},
-			});
-		}, BACKGROUND_CONTEXT);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const alert = feed.items.find((item) => item.kind === "alert" && item.text.includes("卡了 10 分钟"));
-
-		expect(alert, "看门狗告警不能退化成 note").toBeDefined();
-		if (alert?.kind !== "alert") throw new Error("应为 alert 条目");
-		expect(alert.from?.label).toBe("看门狗");
 	});
 });
 
@@ -643,46 +458,44 @@ describe("职工档案接口", () => {
 });
 
 describe("发消息与拍板", () => {
-	test("发消息后会话流里出现该输入", async () => {
+	test("发消息后频道里出现该输入", async () => {
 		const { server, runtime, boot, ctx } = await setup();
 
+		// setup() 只 boot 公司、不建频道（`ensureAllChannels` 平时在 server/main.ts 里跑）
+		await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
 		ctx.faux.setResponses([answer("收到")]);
-		const response = await fetch(`${server.url}api/message`, {
+		const response = await fetch(`${server.url}api/channels/company/messages`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "做个坦克大战" }),
+			body: JSON.stringify({ text: "做个坦克大战" }),
 		});
 		expect((await response.json()) as { ok: boolean }).toMatchObject({ ok: true });
 
-		// ADR-026 决策 7.1：受理即写 app.receipt，且回执不经模型——
-		// 哪怕生成还没开始，界面上也必须能立刻看到「收到了」。
-		{
-			const conversation = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-			const receiptPage = await conversation?.entries({ order: "ascending" }, 20, undefined, BACKGROUND_CONTEXT);
-			expect(
-				(receiptPage?.items ?? []).some((item) => (item as { kind?: string }).kind === "app.receipt"),
-			).toBe(true);
-		}
+		// 发完立刻能从频道视图读回来（老板发完必须马上看见自己那句话）
+		const view = (await (await fetch(`${server.url}api/channels/company`)).json()) as {
+			messages: { text: string; from: number }[];
+		};
+		expect(view.messages.some((message) => message.text === "做个坦克大战" && message.from === 0)).toBe(true);
 
+		// 受理回执（ADR-026 决策 7.1）：回执不经模型，界面上必须能立刻看到
 		await eventually(
 			async () => {
-				const conversation = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-				const page = await conversation?.entries({ order: "ascending" }, 20, undefined, BACKGROUND_CONTEXT);
-				return (page?.items.length ?? 0) > 0;
+				const again = (await (await fetch(`${server.url}api/channels/company`)).json()) as {
+					messages: { seq: number; acks?: readonly { plan: string }[] }[];
+				};
+				return again.messages.some((message) => (message.acks ?? []).length > 0);
 			},
-			{ label: "消息落库" },
+			{ label: "受理回执挂到频道消息上" },
 		);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		expect(feed.items.some((item) => item.kind === "user" && item.text === "做个坦克大战")).toBe(true);
 	});
 
 	test("空消息被拒绝", async () => {
-		const { server, boot } = await setup();
-		const response = await fetch(`${server.url}api/message`, {
+		const { server, runtime } = await setup();
+		await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
+		const response = await fetch(`${server.url}api/channels/company/messages`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "   " }),
+			body: JSON.stringify({ text: "   " }),
 		});
 		expect(response.status).toBe(400);
 	});
@@ -881,199 +694,6 @@ describe("发消息与拍板", () => {
 	});
 });
 
-describe("忙碌时发消息", () => {
-	/** 让 CEO 忙起来：跑一个慢活。 */
-	async function makeBusy(
-		server: Server,
-		runtime: CompanyRuntime,
-		boot: { ownerConversationId: number },
-		ctx: TestContext,
-	) {
-		ctx.faux.setResponses([slowAnswer(2_500, "慢慢做")]);
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "干个长活" }),
-		});
-		await eventually(
-			async () => {
-				const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
-				return inspection.tasks.some((task) => task.state.kind === "running");
-			},
-			{ label: "开始干活" },
-		);
-	}
-
-	test("忙碌时发的消息出现在 queued 里，不会凭空消失", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-		await makeBusy(server, runtime, boot, ctx);
-
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "终止这个项目" }),
-		});
-
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return (feed.queued ?? []).some((item) => item.text === "终止这个项目");
-			},
-			{ label: "排队可见" },
-		);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const queued = feed.queued?.find((item) => item.text === "终止这个项目");
-		expect(queued).toBeDefined();
-		expect(queued?.mode, "老板的话应排成 steer，早于 followUp 处理").toBe("steer");
-		expect(queued?.origin, "老板自己发的消息标记为 owner").toBe("owner");
-	}, 30_000);
-
-	test("agent 派来的排队任务标出来源，不会伪装成老板的消息", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-		await makeBusy(server, runtime, boot, ctx);
-
-		const ceo = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
-		await ceo?.submit(
-			{
-				type: "input",
-				content: "这是 CTO 派来的任务",
-				whenBusy: "followUp",
-				entry: { kind: "app.delegate", data: { from: "CTO", to: "CEO" } },
-			},
-			BACKGROUND_CONTEXT,
-		);
-
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return (feed.queued ?? []).some((item) => item.text === "这是 CTO 派来的任务");
-			},
-			{ label: "代理任务排队可见" },
-		);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const queued = feed.queued?.find((item) => item.text === "这是 CTO 派来的任务");
-		expect(queued?.origin).toBe("agent");
-		expect(queued?.from).toBe("CTO");
-	}, 30_000);
-
-	test("立即处理会打断当前工作并让消息生效", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-		await makeBusy(server, runtime, boot, ctx);
-
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：立刻停下" }),
-		});
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return (feed.queued ?? []).length > 0;
-			},
-			{ label: "已排队" },
-		);
-
-		const response = await fetch(`${server.url}api/interrupt`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：立刻停下" }),
-		});
-		const result = (await response.json()) as { ok: boolean; interrupted?: boolean };
-		expect(result.ok).toBe(true);
-		expect(result.interrupted, "模型慢调用可以被中断，abort 应当完成").toBe(true);
-
-		// 队列清空，消息进入对话
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return (
-					(feed.queued ?? []).length === 0 &&
-					feed.items.some((item) => item.kind === "user" && item.text === "急事：立刻停下")
-				);
-			},
-			{ label: "打断后生效" },
-		);
-	}, 30_000);
-
-	test("CEO 在跑一轮长生成时，打断有上限且排队消息不丢", async () => {
-		const { server, runtime, boot, ctx } = await setup();
-
-		// 通信重构后派活不再同步等待，但**一轮生成本身**仍可能很长。
-		// 这条测试覆盖那个窗口：老板插队时 abort 必须有上限，且消息不能丢。
-		ctx.faux.setResponses([slowAnswer(8_000, "CEO 在慢慢想"), answer("CEO 收尾"), answer("CEO 收尾 2")]);
-
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "第一件事" }),
-		});
-		await eventually(
-			async () => {
-				const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
-				return inspection.tasks.some(
-					(task) =>
-						Number(task.record.conversationId) === boot.ownerConversationId &&
-						(task.state.kind === "running" || task.state.kind === "waiting"),
-				);
-			},
-			{ label: "CEO 正在跑一轮长生成" },
-		);
-
-		// 再排一条老板消息（显式 step 档，让它真的进队列），然后点「立即处理」
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：先处理我", mode: "steer" }),
-		});
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return (feed.queued ?? []).some((item) => item.text === "急事：先处理我");
-			},
-			{ label: "急事已排队" },
-		);
-
-		const started = Date.now();
-		const response = await fetch(`${server.url}api/interrupt`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "急事：先处理我" }),
-		});
-		const elapsed = Date.now() - started;
-
-		expect(response.status).toBe(200);
-		// abort 的上限是 INTERRUPT_TIMEOUT_MS（5s）。这里放宽到 8s：
-		// 底层 abort 会等 run 真正收尾，测试机负载波动时可能超过 5s。
-		// 真正要保证的是「有上限、不会无限挂」，不是精确的毫秒数。
-		expect(elapsed, "abort 不能无限等").toBeLessThan(8_000);
-
-		// 关键不变量：这条消息不能因为 abort 而消失。
-		// 它可能在对话里（已投递），也可能还在队列里（abort 后会话仍在收尾）——
-		// 两者都算「没丢」，唯独「哪里都找不到」才是 bug（审计 B-02）。
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				const inItems = feed.items.some((item) => item.kind === "user" && item.text === "急事：先处理我");
-				const inQueue = (feed.queued ?? []).some((item) => item.text === "急事：先处理我");
-				return inItems || inQueue;
-			},
-			{ label: "中断后消息仍在（对话或队列）", timeoutMs: 20_000 },
-		);
-	}, 60_000);
-
-	test("打断不存在的会话返回 404", async () => {
-		const { server } = await setup();
-		const response = await fetch(`${server.url}api/interrupt`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: 999999, text: "x" }),
-		});
-		expect(response.status).toBe(404);
-	});
-});
-
 describe("派活不再同步等待（ADR-028 替代契约 §5.1）", () => {
 	test("对方一直不答，派活工具也立刻返回（不等结果）", async () => {
 		const { server, runtime, boot, ctx } = await setup();
@@ -1090,12 +710,16 @@ describe("派活不再同步等待（ADR-028 替代契约 §5.1）", () => {
 		const started = Date.now();
 		void ceo?.submit({ type: "input", content: "问问 CTO" }, BACKGROUND_CONTEXT);
 
-		let tool: FeedItem | undefined;
+		// 会话流视图删除后，工具调用从「工作记录」接口读（同一份 readFeed 投影）。
+		let tool: { name: string; state: string; output: string } | undefined;
 		await eventually(
 			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				tool = feed.items.find((item) => item.kind === "tool" && item.name === "ask_role");
-				return tool !== undefined && tool.kind === "tool" && tool.state !== "running";
+				const page = (await (
+					await fetch(`${server.url}api/staff/${boot.ownerConversationId}/activity?limit=200`)
+				).json()) as { items: { kind: string; name?: string; state?: string; outputSummary?: string }[] };
+				const found = page.items.find((item) => item.kind === "tool" && item.name === "ask_role");
+				tool = found === undefined ? undefined : { name: found.name ?? "", state: found.state ?? "", output: found.outputSummary ?? "" };
+				return tool !== undefined && tool.state !== "running";
 			},
 			{ label: "派活工具拿到结果", timeoutMs: 3_000 },
 		);
@@ -1105,7 +729,7 @@ describe("派活不再同步等待（ADR-028 替代契约 §5.1）", () => {
 		expect(elapsed, `派活必须不等待（实测 ${elapsed}ms）`).toBeLessThan(2_000);
 
 		expect(tool).toBeDefined();
-		if (tool?.kind === "tool") {
+		if (tool !== undefined) {
 			expect(tool.state, "派活是业务结果，不是工具崩溃").toBe("ok");
 			expect(tool.output).toContain("不用等");
 		}
@@ -1113,7 +737,6 @@ describe("派活不再同步等待（ADR-028 替代契约 §5.1）", () => {
 		// 消息确实进了频道（不依赖对方消费）
 		const channels = await (await fetch(`${server.url}api/channels`)).json() as { channels: { id: string }[] };
 		expect(channels.channels.length).toBeGreaterThan(0);
-		void delegationWaits;
 	});
 });
 
@@ -1143,30 +766,6 @@ describe("SSE 推送", () => {
 		expect(dataLine).toBeDefined();
 		const org = JSON.parse(dataLine!.slice(6)) as OrgView;
 		expect(org.ceo.label).toBe("CEO");
-	});
-
-	test("会话流会立刻推送一帧", async () => {
-		const { server, boot } = await setup();
-
-		const response = await fetch(`${server.url}api/stream/feed/${boot.ownerConversationId}`);
-		expect(response.headers.get("content-type")).toContain("text/event-stream");
-
-		const reader = response.body?.getReader();
-		const chunks: string[] = [];
-		const deadline = Date.now() + 5_000;
-		while (Date.now() < deadline) {
-			const { value, done } = await reader!.read();
-			if (done) break;
-			chunks.push(new TextDecoder().decode(value));
-			if (chunks.join("").includes("event: feed")) break;
-		}
-		await reader!.cancel();
-
-		const payload = chunks.join("");
-		expect(payload).toContain("event: feed");
-		const dataLine = payload.split("\n").find((line) => line.startsWith("data: "));
-		const feed = JSON.parse(dataLine!.slice(6)) as Feed;
-		expect(feed.conversationId).toBe(boot.ownerConversationId);
 	});
 });
 
@@ -1242,7 +841,7 @@ describe("服务健壮性", () => {
 	test("超大 JSON 请求体被拒，不会吃满内存", async () => {
 		const { server } = await setup();
 		const big = "x".repeat(2 * 1024 * 1024);
-		const response = await fetch(`${server.url}api/message`, {
+		const response = await fetch(`${server.url}api/channels/company/messages`, {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify({ text: big }),

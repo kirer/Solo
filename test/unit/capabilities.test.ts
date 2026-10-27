@@ -35,7 +35,6 @@ function definedTools(): Set<string> {
 		"src/company/management-tools.ts",
 		"src/company/tools/dispatch.ts",
 		"src/company/tools/universal.ts",
-		"src/company/roundtable-tools.ts",
 		"src/company/memory.ts",
 	]) {
 		const source = readFileSync(join(ROOT, file), "utf8");
@@ -95,7 +94,7 @@ describe("核心 / 延迟分层", () => {
 	});
 
 	test("低频危险工具必须延迟加载", () => {
-		const mustBeDeferred = ["project_delete", "staff_hire", "project_create", "roundtable"];
+		const mustBeDeferred = ["project_delete", "staff_hire", "project_create"];
 		for (const name of mustBeDeferred) {
 			expect(capabilityOf(name)?.core, `${name} 应该延迟加载`).toBe(false);
 		}

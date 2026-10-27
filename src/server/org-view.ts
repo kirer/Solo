@@ -12,11 +12,14 @@ import {
 } from "../runtime/index.ts";
 import { MANAGEMENT_ROLES, ROLE_LABELS, managerLabelOf, type ManagementRole, type TrailKind } from "../company/docs.ts";
 import { canDisposePending, decisionOwnerOfItem, listPending } from "../company/escalation.ts";
+import { readChannels } from "../company/channels.ts";
+import { readLiveTrail } from "../company/trail.ts";
+import type { ChannelMessage } from "../domain/channels.ts";
 import { readCompany } from "../company/org.ts";
 import { buildOrg, managerLabelInOrg } from "../company/org-model.ts";
+import { labelOf } from "../domain/membership.ts";
 import { rollupAll, rollupProject } from "../company/cost.ts";
 import { ROLE_DEFINITIONS } from "../company/roles.ts";
-import { readLiveTrail, readTrail } from "../company/trail.ts";
 import { unansweredDeliveryCounts } from "../company/watchdog.ts";
 
 /** 节点状态（契约第 2 节：四态，全站统一）。 */
@@ -298,8 +301,11 @@ export async function buildOrgView(
 
 	// 最近的沟通连线：界面据此在节点之间画流动的光线。
 	// 只取尾部一小段，避免界面拿到整个历史；具体时间窗由界面判断。
-	const trail = await readTrail(runtime, {}, context);
-	// 正在发生的派活/转交：TrailDoc 里要等答完才落历史边，这里补上实时边。
+	//
+	// 这里读的是**频道消息**，不是 `TrailDoc`。同步派活（`delegation.ts`）删除后，
+	// 生产路径上已经没有任何代码往 `TrailDoc` 写历史边了——真实发生的沟通全都在
+	// 频道里。继续读一张不再增长的文档，会让组织图上的连线随时间永久消失。
+	// 正在发生的沟通：`TrailDoc` 里要等答完才落历史边，这里补上进程内的实时边。
 	const liveLinks: LinkView[] = readLiveTrail().map((edge) => ({
 		from: edge.fromConversation,
 		to: edge.toConversation,
@@ -308,17 +314,27 @@ export async function buildOrgView(
 		label: `${edge.from} → ${edge.to}`,
 		...(edge.project === undefined ? {} : { project: edge.project }),
 	}));
-	const links: LinkView[] = [
-		...liveLinks,
-		...trail.slice(-200).map((edge) => ({
-			from: edge.fromConversation,
-			to: edge.toConversation,
-			kind: edge.kind,
-			at: edge.at,
-			label: `${edge.from} → ${edge.to}`,
-			...(edge.project === undefined ? {} : { project: edge.project }),
-		})),
-	];
+	const channels = await readChannels(runtime, context);
+	const links: LinkView[] = [...liveLinks];
+	for (const channel of Object.values(channels.channels)) {
+		for (const message of channel.messages) {
+			const from = message.from;
+			const to = message.mentions;
+			if (to.length === 0) continue;
+			for (const target of to) {
+				links.push({
+					from,
+					to: target,
+					kind: linkKindOf(message.kind),
+					at: message.at,
+					label: `${message.fromLabel} → ${labelOf(org, target)}`,
+					...(channel.project === undefined ? {} : { project: channel.project }),
+				});
+			}
+		}
+	}
+	links.sort((a, b) => a.at - b.at);
+	links.splice(0, Math.max(0, links.length - 200));
 
 	return {
 		company: {
@@ -430,4 +446,25 @@ async function describeActivity(
 		return firstLine.replace(/^#+\s*/, "").slice(0, 60);
 	}
 	return "";
+}
+
+/**
+ * 频道消息类型 → 组织图上的连线类型。
+ *
+ * 两套词汇表不完全重合（消息有 `chat/task/report/question/decision/system/ack`，
+ * 连线有 `delegate/report/escalate/decide/hire/archive`），这里只做语义映射：
+ * 派活是 delegate、汇报是 report、提问是 escalate（往上要东西）、拍板是 decide。
+ * `chat` 与 `system` 都当 delegate 画——它们是「有人在对某人说话」，不是结论。
+ */
+function linkKindOf(kind: ChannelMessage["kind"]): TrailKind {
+	switch (kind) {
+		case "report":
+			return "report";
+		case "question":
+			return "escalate";
+		case "decision":
+			return "decide";
+		default:
+			return "delegate";
+	}
 }

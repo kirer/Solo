@@ -22,11 +22,9 @@ import {
 	createChannel,
 	emptyChannelState,
 	hasMember,
-	markMentionRead,
 	member,
 	parseChannelId,
 	recipientsOf,
-	advanceRead,
 	type AppendInput,
 	type Channel,
 	type ChannelMessage,
@@ -588,3 +586,121 @@ export async function ensureAllChannels(
 
 /** 频道标识的解析（转发，便于 server 层使用）。 */
 export { parseChannelId };
+
+// ── 拍板投递 ────────────────────────────────────────────────────────────────
+
+/** 一条已完成的拍板。 */
+export type DecisionDelivery = {
+	/** 待决项编号（`esc:1277:2` / `disp:...`）。 */
+	readonly key: string;
+	/** 问题正文（会截断，只用于界面上让人认出是哪一件）。 */
+	readonly question: string;
+	/** 决定内容。 */
+	readonly answer: string;
+	/** 拍板人（显示名或权限位）。 */
+	readonly answeredBy: string;
+	/** 提问方会话（决定投递到这里）。 */
+	readonly askerConversationId: number;
+	/** 提问方的显示名（喂给 `to` 字段）。 */
+	readonly askerLabel: string;
+	/** 是不是处置类（暂搁 / 放弃），界面上措辞不同。 */
+	readonly disposition?: boolean;
+};
+
+/**
+ * 把拍板结果投给提问方。
+ *
+ * 以前这是一个独立模块（`decision-delivery.ts`，142 行），理由是躲开
+ * `escalation → disposition` 的动态导入环。但它做的是「往一个会话投一条唤醒
+ * 输入并落一条条目」——和 `postToChannel` 完全同一件事，只是少做了三样：
+ *
+ * - 不查未读摘要 → 提问方醒来时不知道频道里还有别人说过什么
+ * - 不带记忆简报 → 同一条唤醒里少了上下文
+ * - 不写 `ReplyContextDoc` → 它在这个频道里回复时，默认频道会错
+ *
+ * 于是同一个事实有了两条实现（ADR-028 要消灭的正是这个）。合并后只有一条：
+ * 拍板结果本身就是一条**频道消息**（`kind: "decision"`），它走
+ * `postToChannel` 的落库 + `deliver` 的唤醒，不多不少。
+ *
+ * 投到哪个频道：提问方有私聊就用私聊（`dm:<id>`，一对一，最贴合「对你拍板」
+ * 的语义），否则退到公司大群。
+ */
+export async function deliverDecision(
+	runtime: CompanyRuntime,
+	decision: DecisionDelivery,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<void> {
+	const decider = decision.answeredBy === "owner" ? "老板" : decision.answeredBy;
+	const kindLabel = decision.disposition === true ? "处置已定" : "拍板结果";
+	const body = [
+		`【${kindLabel}】${decider} 对「${summarize(decision.question)}」的答复：`,
+		decision.answer,
+		`（编号 ${decision.key}，已记录在案，无需再确认）`,
+	].join("\n");
+
+	try {
+		// 频道自愈：拍板不能因为「这个库还没建过频道」就静默消失。
+		//
+		// 以前不建频道也能投——它直接往会话流里塞一条 `app.decision`，不需要
+		// 频道存在。合并进频道之后，这个前提消失了：刚 bootstrap 的库、跑测试
+		// 临时目录、被清过频道的老库，都可能一条频道都没有。此时静默 return
+		// 会让拍板结果彻底丢掉（提问方永远等不到），比抛错更坏。
+		let channels = await readChannels(runtime, context);
+		if (Object.keys(channels.channels).length === 0) {
+			await ensureAllChannels(runtime, context);
+			channels = await readChannels(runtime, context);
+		}
+		const dmId = `dm:${decision.askerConversationId}`;
+		const channelId =
+			channels.channels[dmId] !== undefined
+				? dmId
+				: channels.channels.company !== undefined
+					? "company"
+					: dmId;
+		// 一条频道都没有（`ensureAllChannels` 在没 bootstrap 的库上是空操作）时，
+		// 直接把这条私聊建出来。拍板结果必须送到提问方手上，没有「没地方投」这个结局。
+		if (channels.channels[channelId] === undefined) {
+			await ensureChannel(
+				runtime,
+				{
+					id: dmId,
+					kind: "dm",
+					title: `与 ${decision.askerConversationId} 的私聊`,
+					members: [
+						{ conversationId: OWNER_ID, role: "owner", wakeOnAll: true },
+						{ conversationId: decision.askerConversationId, role: "staff", wakeOnAll: true },
+					],
+				},
+				context,
+			);
+			channels = await readChannels(runtime, context);
+		}
+		// 提问方必须在这个频道里，否则它既看不到也回不了话。
+		if (channels.channels[channelId]?.members[String(decision.askerConversationId)] === undefined) {
+			await joinChannel(runtime, channelId, decision.askerConversationId, "staff", { context });
+		}
+		await postToChannel(
+			runtime,
+			channelId,
+			{
+				from: OWNER_ID,
+				fromLabel: "系统",
+				kind: "decision",
+				text: body,
+				mentions: [decision.askerConversationId],
+				refs: { pendingKey: decision.key },
+			},
+			{ context },
+		);
+	} catch (error) {
+		process.stderr.write(
+			`[拍板投递失败] ${decision.key}: ${error instanceof Error ? error.message : String(error)}\n`,
+		);
+	}
+}
+
+/** 问题压成一行，用于「对『…』的答复」这种引用。 */
+function summarize(question: string): string {
+	const flat = question.replace(/\s+/g, " ").trim();
+	return flat.length <= 60 ? flat : `${flat.slice(0, 60)}…`;
+}

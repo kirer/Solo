@@ -19,7 +19,7 @@ import {
 	type ChannelState,
 	type MemberRole,
 } from "../domain/channels.ts";
-import { labelOf, canView, mentionable, ownerOfChannel, personOf, type Org } from "../domain/membership.ts";
+import { labelOf, canView, mentionable, ownerOfChannel, type Org } from "../domain/membership.ts";
 import { isTerminal, type TaskEntry } from "../domain/tasks.ts";
 import { OWNER_ID } from "../domain/channels.ts";
 import { readChannels, readOrg } from "../company/channels.ts";
@@ -537,18 +537,6 @@ export async function mentionCandidates(
 		if (member === undefined) return [];
 		return [{ id: person.conversationId, label: person.label, role: member.role }];
 	});
-}
-
-/** 频道里的任务（项目看板用）。 */
-export async function channelTasks(
-	runtime: CompanyRuntime,
-	channelId: string,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<readonly TaskEntry[]> {
-	const tasks = await readTasks(runtime, context);
-	return Object.values(tasks.tasks)
-		.filter((task) => task.channelId === channelId)
-		.sort((left, right) => left.createdAt - right.createdAt);
 }
 
 /**

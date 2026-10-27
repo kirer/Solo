@@ -84,9 +84,9 @@ AI_COMPANY_HOST=0.0.0.0 ./scripts/ai-company-service.sh restart
 这个服务**没有登录、没有 token、没有 CSRF 防护、没有 TLS**。任何能访问
 端口的人都可以：
 
-- 读取全部对话与组织数据（`/api/feed/*`、`/api/org`）
-- 以老板身份发消息（`/api/message`）、拍板（`/api/answer`）、打断任务
-- 修改设置、增删模型、读取**全部上传附件**、配置 IM webhook
+- 读取全部对话与组织数据（`/api/channels/*`、`/api/org`）
+- 以老板身份发消息（`POST /api/channels/:id/messages`）、拍板（`/api/answer`）
+- 修改设置、增删模型
 
 因此：
 
@@ -97,12 +97,10 @@ AI_COMPANY_HOST=0.0.0.0 ./scripts/ai-company-service.sh restart
    ```bash
    ssh -L 7788:127.0.0.1:7788 user@mac-mini   # 本地浏览器开 http://127.0.0.1:7788
    ```
-3. `settings.json` 里的模型 `apiKey`、`im.inboundToken` 都是**明文**。
+3. `settings.json` 里的模型 `apiKey` 是**明文**。
    不要把这个文件提交到 git、不要丢进共享目录；换密钥时直接改设置页。
-4. IM 入站 token 只是「防止误投」的最低门槛，不是身份认证：token 泄露
-   等于任何人都能以老板身份说话。webhook 建议只指向本机 / 内网的桥。
-5. 一旦发现端口可能被外网触达：先 `stop` 服务，轮换模型 key 与
-   `inboundToken`，再检查 `workspace/logs/`。
+4. 端口本身没有身份认证：能连上 7788 的人就等于老板（见上一节）。
+   一旦发现端口可能被外网触达：先 `stop` 服务，轮换模型 key，再检查 `workspace/logs/`。
 
 ### Docker 下的额外注意
 
@@ -207,7 +205,4 @@ tar czf ai-company-$(date +%F).tar.gz workspace
 | 手机打不开 | 是否 `--host 0.0.0.0`、同一网段、防火墙/AP 隔离；`lanUrls` 是否为空 |
 | 加了模型不生效 | `restartRequired` 为 true 时需重启服务；重启后看启动日志里的 `模型：` |
 | 设置页保存失败 | 看响应状态：400 = 参数不合法，409 = 模型重名，500 = workspace 不可写 |
-| 附件上传 413 | 单文件上限 20MiB；`x-file-size` 预检也会拦 |
-| IM 入站 403 | `im.enabled`、`inboundToken` 是否已保存；token 要与 URL 完全一致 |
-| IM 出站没反应 | webhook 只接受 http(s)、超时 3s、失败静默；先手动 `curl -X POST` 验证桥 |
 | 服务日志 | `workspace/logs/server.log` / `server.err.log`（`ai-company logs`） |

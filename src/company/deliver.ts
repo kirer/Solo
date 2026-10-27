@@ -39,6 +39,7 @@ import {
 	BACKGROUND_CONTEXT,
 	type CompanyRuntime,
 	type Context,
+	type JsonValue,
 } from "../runtime/index.ts";
 import {
 	digestFor,
@@ -50,7 +51,7 @@ import {
 	type UnreadDigest,
 } from "../domain/channels.ts";
 import { ChannelDoc } from "./channels-doc.ts";
-import { labelOf, type Org } from "../domain/membership.ts";
+import { labelOf} from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import { CompanyDoc, ReplyContextDoc } from "./docs.ts";
 import { MemoryDoc, memoryActorFromOrg } from "./memory.ts";
@@ -101,6 +102,28 @@ export type DeliverOptions = {
 	 * 加上 `:rN` 后缀才能真的重投；次数由调用方（看门狗）控制，这里只负责拼进 key。
 	 */
 	readonly attempt?: number;
+	/**
+	 * 覆盖交给模型的正文（缺省用 `renderForModel` 渲染频道消息）。
+	 *
+	 * 用于「这条消息不是普通的频道发言」的场合：拍板结果（`app.decision`）要
+	 * 说清「谁对什么拍了什么板」，处置结果还要说「暂搁 / 放弃」。渲染频道消息
+	 * 得不出这些——它只知道有个人在某个频道说了句话。
+	 */
+	readonly body?: string;
+	/**
+	 * 覆盖落进会话流的条目标签（缺省 `app.channel` + 频道数据）。
+	 *
+	 * 界面靠 `kind` 区分「频道消息 / 拍板结果 / 处置结果」，靠 `data` 决定怎么画。
+	 * 缺省时是频道消息的那套字段。
+	 */
+	readonly entry?: { readonly kind: string; readonly data: JsonValue };
+	/**
+	 * 覆盖 `requestId` 的基础部分（缺省 `ch:<channel>:<seq>`，之后自动接 `:<target>`）。
+	 *
+	 * 拍板结果的天然去重键是「哪一件待办」，而不是「哪一条频道消息」——同一个 key
+	 * 只该投一次。重投后缀 `:rN` 仍然照常拼接。
+	 */
+	readonly requestKey?: string;
 };
 
 /**
@@ -133,7 +156,8 @@ export async function deliver(
 				continue;
 			}
 
-			const body = renderForModel(options.channel, options.message, (id) => labelOf(org, id));
+			const body =
+				options.body ?? renderForModel(options.channel, options.message, (id) => labelOf(org, id));
 			const digest = digestFor(channels as ChannelState, target, 5);
 			// #12 记忆简报：只给对方**最近 3 条 + 与本条消息最相关 2 条**。
 			// 这里是唯一「必然经过」的注入点——每个被唤醒的 agent 都走这条路径。
@@ -158,7 +182,7 @@ export async function deliver(
 					// （崩溃恢复是至少一次语义，见 ADR-006）。
 					// 看门狗重投时带 `:rN` 后缀——去重是有意的，但重投必须真的再进一次队。
 					requestId: requestIdOf(options, target),
-					entry: {
+					entry: options.entry ?? {
 						kind: "app.channel",
 						data: {
 							channelId: options.channel.id,
@@ -205,7 +229,7 @@ export async function deliver(
 
 /** 拼 requestId：重投（`attempt > 0`）时加 `:rN` 后缀，绕开底层的同 key 去重。 */
 function requestIdOf(options: DeliverOptions, target: number): string {
-	const base = `ch:${options.channel.id}:${options.message.seq}:${target}`;
+	const base = `${options.requestKey ?? `ch:${options.channel.id}:${options.message.seq}`}:${target}`;
 	const attempt = options.attempt ?? 0;
 	return attempt <= 0 ? base : `${base}:r${attempt + 1}`;
 }
@@ -337,7 +361,3 @@ export async function notify(
 	}
 }
 
-/** 组织（供调用方复用，避免重复读 CompanyDoc）。 */
-export async function orgOf(runtime: CompanyRuntime, context: Context = BACKGROUND_CONTEXT): Promise<Org> {
-	return buildOrg(await runtime.harness.snapshot(CompanyDoc, context));
-}

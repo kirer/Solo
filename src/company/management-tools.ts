@@ -4,31 +4,26 @@
  * 这些函数需要访问公司运行时与组织操作，所以在装配时注入，
  * 工具定义本身保持纯粹（只有参数与调用逻辑）。
  */
-import type { DecisionTopic } from "./decision-routing.ts";
-import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../runtime/index.ts";
+import type { DecisionTopic } from "../domain/routing.ts";
+import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime} from "../runtime/index.ts";
 import {
 	MANAGEMENT_ROLES,
 	ROLE_LABELS,
 	managerLabelOf,
 	resolveModelOption,
-	type ManagementRole,
 	type ModelRef,
 } from "./docs.ts";
-import { createRoundtableTools } from "./roundtable-tools.ts";
 import { createUniversalTools } from "./tools/universal.ts";
 import { createMemoryTools } from "./memory.ts";
 import { createDispatchTools } from "./tools/dispatch.ts";
 import { assertGrantableTools, assertToolsRequested, STAFF_ATOMIC_TOOL_NAMES } from "./staff-tools.ts";
 import {
 	archiveStaff,
-	createProject,
 	hireStaff,
 	listModels,
 	listStaff,
 	readCompany,
-	reassignStaff,
 	renameStaff,
-	setProjectStatus,
 	terminateProject,
 	deleteProject,
 } from "./org.ts";
@@ -88,33 +83,7 @@ export type ToolDependencies = {
 	readonly registry?: import("../runtime/index.ts").Registry;
 	/** 员工可用的执行类工具。 */
 	readonly employeeTools?: readonly ReturnType<typeof defineTool>[];
-	/** 给员工派活。 */
-	readonly delegate?: (input: {
-		readonly project: string;
-		readonly employee: string;
-		readonly task: string;
-		readonly fromConversationId: number;
-		readonly from: string;
-		/** 工具调用上下文：把 abortSignal 传下去，老板「立即处理」时能中断等待。 */
-		readonly context: Context;
-	}) => Promise<string>;
-	/** 给项目负责人下达任务（管理层推进项目工作的正道）。 */
-	readonly delegateToLeader?: (input: {
-		readonly project: string;
-		readonly task: string;
-		readonly fromConversationId: number;
-		readonly context: Context;
-	}) => Promise<string>;
 	/** 圆桌讨论的默认参与者超时（毫秒）；不传用 120s。 */
-	readonly roundtableTimeoutMs?: number;
-	/** 转交给另一位管理层。 */
-	readonly delegateToRole?: (input: {
-		readonly role: string;
-		readonly task: string;
-		/** 发起转交的会话，用于请求标识去重。 */
-		readonly fromConversationId: number;
-		readonly context: Context;
-	}) => Promise<string>;
 	/** 变更员工直属上级（由组织操作实现）。 */
 	readonly reassignStaff?: (input: {
 		readonly project: string;
@@ -135,14 +104,6 @@ export type ToolDependencies = {
 /** 构造全部管理层工具。 */
 export function createManagementTools(deps: ToolDependencies) {
 	const { runtime } = deps;
-
-	// 圆桌讨论：机制在 roundtable.ts，这里只取两个工具入口。
-	// 装配层不需要额外接线——注册表已在 deps 里，任务能力包首次调用时自动补装。
-	const roundtableTools = createRoundtableTools({
-		runtime,
-		...(deps.registry === undefined ? {} : { registry: deps.registry }),
-		...(deps.roundtableTimeoutMs === undefined ? {} : { timeoutMs: deps.roundtableTimeoutMs }),
-	});
 
 	// 通用工具（say / ask / read_channel / inbox / task_* / whoami）：
 	// 每个 agent 都该有，所以在这里统一构造，随 ManagementToolset 一起下发。
@@ -247,9 +208,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			),
 		}),
 		execute: async (args, api, context) => {
-			if (deps.escalate === undefined) {
-				return text("升级通道未启用。");
-			}
+			if (deps.escalate === undefined) return text("通道未启用。");
 			const answer = await deps.escalate({
 				question: args.reason === undefined ? args.question : `${args.question}\n\n（无法自行决断的原因：${args.reason}）`,
 				from: "上报",
@@ -270,7 +229,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			includeAnswered: Type.Optional(Type.Boolean({ description: "是否连已答复的一起列出，默认只看未答复" })),
 		}),
 		execute: async (_args, api) => {
-			if (deps.pendingList === undefined) return text("待决队列未启用。");
+			if (deps.pendingList === undefined) return text("通道未启用。");
 			return text(await deps.pendingList({ conversationId: Number(api.conversationId) }));
 		},
 	});
@@ -294,7 +253,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			),
 		}),
 		execute: async (args, api) => {
-			if (deps.answerPending === undefined) return text("拍板通道未启用。");
+			if (deps.answerPending === undefined) return text("通道未启用。");
 			return text(
 				await deps.answerPending({
 					key: args.key,
@@ -322,7 +281,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			reason: Type.Optional(Type.String({ description: "理由（驳回必填）" })),
 		}),
 		execute: async (args, api) => {
-			if (deps.disposePending === undefined) return text("待办处置通道未启用。");
+			if (deps.disposePending === undefined) return text("通道未启用。");
 			return text(
 				await deps.disposePending({
 					key: args.key,
@@ -353,7 +312,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			reason: Type.Optional(Type.String({ description: "为什么你认为该由你定（会写进审计）" })),
 		}),
 		execute: async (args, api) => {
-			if (deps.takeOverPending === undefined) return text("接管通道未启用。");
+			if (deps.takeOverPending === undefined) return text("通道未启用。");
 			return text(
 				await deps.takeOverPending({
 					key: args.key,
@@ -590,7 +549,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			}),
 		}),
 		execute: async (args, api) => {
-			if (deps.reassignStaff === undefined) return text("变更上级通道未启用。");
+			if (deps.reassignStaff === undefined) return text("通道未启用。");
 			return text(
 				await deps.reassignStaff({
 					project: args.project,
@@ -613,7 +572,7 @@ export function createManagementTools(deps: ToolDependencies) {
 			status: Type.String({ description: "目标状态：active / paused / done" }),
 		}),
 		execute: async (args, api) => {
-			if (deps.setProjectStatus === undefined) return text("项目状态通道未启用。");
+			if (deps.setProjectStatus === undefined) return text("通道未启用。");
 			return text(
 				await deps.setProjectStatus({
 					project: args.project,
@@ -762,8 +721,6 @@ export function createManagementTools(deps: ToolDependencies) {
 		taskList: universal.taskList,
 		taskUpdate: universal.taskUpdate,
 		taskCreate: universal.taskCreate,
-		roundtable: roundtableTools.roundtable,
-		roundtableMinutes: roundtableTools.roundtableMinutes,
 		memoryWrite: memoryTools.memoryWrite,
 		memorySearch: memoryTools.memorySearch,
 		orgTree,

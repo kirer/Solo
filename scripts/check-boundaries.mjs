@@ -74,7 +74,6 @@ const DOC_TOKENS = [
 	"UsageDoc",
 	"AuditDoc",
 	"TrailDoc",
-	"RoundtableDoc",
 	"TaskDoc",
 	"BudgetDoc",
 	"ProfileDoc",

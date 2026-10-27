@@ -24,11 +24,8 @@ import {
 	emptyTaskState,
 	isTerminal,
 	needsReport,
-	openTasks,
 	staleTasks,
 	tasksOfAssignee,
-	tasksOfAssigner,
-	tasksOfProject,
 	transitionTask as transitionTaskPure,
 	validateCreate,
 	type BoardCard,
@@ -40,7 +37,7 @@ import {
 	type TaskUsage,
 	type TransitionPatch,
 } from "../domain/tasks.ts";
-import { projectChannelId, OWNER_ID } from "../domain/channels.ts";
+import { projectChannelId  } from "../domain/channels.ts";
 import { labelOf, personOf } from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import { CompanyDoc } from "./docs.ts";
@@ -80,15 +77,6 @@ export async function readTask(
 	return (await readTasks(runtime, context)).tasks[id];
 }
 
-/** 某项目的任务（看板用）。 */
-export async function listProjectTasks(
-	runtime: CompanyRuntime,
-	project: string,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<readonly TaskEntry[]> {
-	return tasksOfProject(await readTasks(runtime, context), project);
-}
-
 /** 某人的任务。 */
 export async function listMyTasks(
 	runtime: CompanyRuntime,
@@ -96,23 +84,6 @@ export async function listMyTasks(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<readonly TaskEntry[]> {
 	return tasksOfAssignee(await readTasks(runtime, context), conversationId);
-}
-
-/** 某人下达的任务。 */
-export async function listAssignedTasks(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<readonly TaskEntry[]> {
-	return tasksOfAssigner(await readTasks(runtime, context), conversationId);
-}
-
-/** 全部未完成任务。 */
-export async function listOpenTasks(
-	runtime: CompanyRuntime,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<readonly TaskEntry[]> {
-	return openTasks(await readTasks(runtime, context));
 }
 
 /** 项目看板。 */
@@ -391,7 +362,3 @@ export async function tasksNeedingAttention(
 /** 任务终态判定（转发）。 */
 export { isTerminal };
 
-/** 老板是 0，系统是 -1：两者都不是「真实的会话」。 */
-export function isHumanActor(conversationId: number): boolean {
-	return conversationId !== SYSTEM_ID && conversationId !== OWNER_ID;
-}

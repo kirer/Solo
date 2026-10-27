@@ -812,8 +812,12 @@
 }
 
 .ch-member-main {
+	/* 老板口径（T-34 第 2 项）：名字与职位**同一行**，形如「陈墨(开发)」。
+	   以前是 column 两行；改成 row 后职位紧跟在名字右侧。 */
 	display: flex;
-	flex-direction: column;
+	flex-direction: row;
+	align-items: baseline;
+	gap: 2px;
 	min-width: 0;
 	flex: 1;
 }

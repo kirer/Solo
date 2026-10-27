@@ -11,7 +11,7 @@ import {
 	DEFAULT_DISPOSITION,
 	DEFAULT_RESUME_AFTER_MS,
 	DISPOSITION_DEADLINE_MS,
-	applyDueDispositionDefaults,
+	settleDueDispositions,
 	buildDispositionQuestion,
 	countToolCalls,
 	createDispositionPending,
@@ -356,10 +356,10 @@ describe("落库：处置待办", () => {
 		const now = 1_000_000;
 		const { key } = await createDispositionPending(runtime, work(), { now });
 
-		const beforeDue = await applyDueDispositionDefaults(runtime, now + 1000);
+		const beforeDue = await settleDueDispositions(runtime, now + 1000);
 		expect(beforeDue).toBe(0);
 
-		const afterDue = await applyDueDispositionDefaults(runtime, now + DISPOSITION_DEADLINE_MS + 1);
+		const afterDue = await settleDueDispositions(runtime, now + DISPOSITION_DEADLINE_MS + 1);
 		expect(afterDue).toBe(1);
 
 		const read = await readDisposition(runtime, key, {});
@@ -451,7 +451,7 @@ describe("D-01 读时兜底：不依赖看门狗也要到期生效", () => {
 		const dueAt = createdAt + DISPOSITION_DEADLINE_MS + 1;
 		const { key } = await createDispositionPending(runtime, work(), { now: createdAt });
 
-		await applyDueDispositionDefaults(runtime, dueAt);
+		await settleDueDispositions(runtime, dueAt);
 		const read = await readDisposition(runtime, key, { now: dueAt });
 		expect(read?.payload.appliedAt).toBe(dueAt);
 		expect(read?.payload.appliedDefault).toBe("shelve");

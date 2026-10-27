@@ -106,7 +106,3 @@ export function refOfLabel(state: CompanyState | undefined, label: unknown): Act
 	return { label: name, kind: "system" };
 }
 
-/** 会话种类 → 发言人种类。 */
-export function actorKindOf(kind: "owner" | "role" | "project" | "staff" | "branch"): ActorRef["kind"] {
-	return kind === "branch" ? "system" : kind;
-}

@@ -9,9 +9,8 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject, hireStaff } from "../../src/company/org.ts";
-import { delegate } from "../../src/company/delegation.ts";
-import { activeTasks, beginLiveTrail, organizationGraph, readLiveTrail, readTrail, recordMessage, trailForConversation, trailForRef } from "../../src/company/trail.ts";
-import { answer, createTestContext, eventually, slowAnswer, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { activeTasks, beginLiveTrail, readLiveTrail, readTrail, recordMessage, trailForConversation, trailForRef } from "../../src/company/trail.ts";
+import { answer, askAndWait, createTestContext, eventually, slowAnswer, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -54,12 +53,22 @@ afterEach(async () => {
 
 describe("每条沟通落成不可变记录", () => {
 	test("派活被记录，包含时间、发送方、接收方与类型", async () => {
-		const { ctx, runtime, project } = await setup();
+		const { ctx, runtime, project, hired } = await setup();
 
-		ctx.faux.setResponses([answer("做完了")]);
-		await delegate(
+		// 派活现在是 assign_task（不等）+ 频道消息；留痕由 recordMessage 显式写。
+		// 这里只验留痕形态，所以直接写一条再读回来。
+		await recordMessage(
 			runtime,
-			{ project: "alpha", employee: "dev-1", task: "实现登录", fromConversationId: project.leader, from: "负责人" },
+			{
+				kind: "delegate",
+				from: "负责人",
+				to: "dev-1",
+				fromConversationId: project.leader,
+				toConversationId: hired.conversationId,
+				ref: "delegate-1",
+				project: "alpha",
+				text: "实现登录",
+			},
 			BACKGROUND_CONTEXT,
 		);
 
@@ -73,12 +82,20 @@ describe("每条沟通落成不可变记录", () => {
 	});
 
 	test("答复被记录", async () => {
-		const { ctx, runtime, project } = await setup();
+		const { ctx, runtime, project, hired } = await setup();
 
-		ctx.faux.setResponses([answer("登录做完了")]);
-		await delegate(
+		await recordMessage(
 			runtime,
-			{ project: "alpha", employee: "dev-1", task: "实现登录", fromConversationId: project.leader, from: "负责人" },
+			{
+				kind: "report",
+				from: "dev-1",
+				to: "负责人",
+				fromConversationId: hired.conversationId,
+				toConversationId: project.leader,
+				ref: "report-1",
+				project: "alpha",
+				text: "登录做完了",
+			},
 			BACKGROUND_CONTEXT,
 		);
 
@@ -215,12 +232,34 @@ describe("跨会话追溯", () => {
 	});
 
 	test("追溯链条完整：派活到回报可串起来", async () => {
-		const { ctx, runtime, project } = await setup();
+		const { ctx, runtime, project, hired } = await setup();
 
-		ctx.faux.setResponses([answer("完成")]);
-		await delegate(
+		await recordMessage(
 			runtime,
-			{ project: "alpha", employee: "dev-1", task: "任务", fromConversationId: project.leader, from: "负责人" },
+			{
+				kind: "delegate",
+				from: "负责人",
+				to: "dev-1",
+				fromConversationId: project.leader,
+				toConversationId: hired.conversationId,
+				ref: "chain-1",
+				project: "alpha",
+				text: "任务",
+			},
+			BACKGROUND_CONTEXT,
+		);
+		await recordMessage(
+			runtime,
+			{
+				kind: "report",
+				from: "dev-1",
+				to: "负责人",
+				fromConversationId: hired.conversationId,
+				toConversationId: project.leader,
+				ref: "chain-1",
+				project: "alpha",
+				text: "完成",
+			},
 			BACKGROUND_CONTEXT,
 		);
 
@@ -235,12 +274,18 @@ describe("实时沟通边", () => {
 	test("派活进行中会挂一条实时边，答完释放", async () => {
 		const { ctx, runtime, project, hired } = await setup();
 
-		ctx.faux.setResponses([slowAnswer(900, "做完了")]);
-		const running = delegate(
-			runtime,
-			{ project: "alpha", employee: "dev-1", task: "慢慢做", fromConversationId: project.leader, from: "负责人" },
-			BACKGROUND_CONTEXT,
-		);
+		// 同步派活（`delegation.ts`）删掉后，实时边不再由它自动挂/摘。
+		// 现在实时边的唯一生产者是装配层显式调用 `beginLiveTrail`（例如看板要在
+		// 一次长任务期间画出「谁在跟谁说话」）。这条测试钉的是**这个原语的语义**：
+		// 挂上去立刻可见，释放后消失，历史边不受影响。
+		const release = beginLiveTrail({
+			kind: "delegate",
+			from: "负责人",
+			to: "dev-1",
+			fromConversation: project.leader,
+			toConversation: hired.conversationId,
+			project: "alpha",
+		});
 
 		await eventually(async () => readLiveTrail().length > 0, { label: "实时边出现" });
 		const live = readLiveTrail();
@@ -249,10 +294,23 @@ describe("实时沟通边", () => {
 		expect(live[0]?.toConversation).toBe(hired.conversationId);
 		expect(live[0]?.kind).toBe("delegate");
 
-		await running;
+		release();
 		expect(readLiveTrail().length).toBe(0);
 
-		// 答完后仍然有历史边，连线不会断档
+		// 历史边由 recordMessage 落库，与实时边互不影响
+		await recordMessage(
+			runtime,
+			{
+				kind: "delegate",
+				from: "负责人",
+				to: "dev-1",
+				fromConversationId: project.leader,
+				toConversationId: hired.conversationId,
+				ref: "live-1",
+				project: "alpha",
+			},
+			BACKGROUND_CONTEXT,
+		);
 		const trail = await readTrail(runtime, {}, BACKGROUND_CONTEXT);
 		expect(trail.some((edge) => edge.kind === "delegate" && edge.fromConversation === project.leader)).toBe(true);
 	});
@@ -301,60 +359,25 @@ describe("沟通类型可区分", () => {
 });
 
 describe("为图形界面预留的数据形态", () => {
-	test("返回节点与边", async () => {
-		const { ctx, runtime, project } = await setup();
-
-		ctx.faux.setResponses([answer("完成")]);
-		await delegate(
-			runtime,
-			{ project: "alpha", employee: "dev-1", task: "任务", fromConversationId: project.leader, from: "负责人" },
-			BACKGROUND_CONTEXT,
-		);
-
-		const graph = await organizationGraph(runtime, BACKGROUND_CONTEXT);
-
-		// 节点：七个角色 + 项目 + 员工
-		expect(graph.nodes.length).toBeGreaterThanOrEqual(9);
-		const kinds = new Set(graph.nodes.map((node) => node.kind));
-		expect(kinds.has("role")).toBe(true);
-		expect(kinds.has("project")).toBe(true);
-		expect(kinds.has("staff")).toBe(true);
-
-		// 边：每条标明起止会话、类型、时间
-		expect(graph.edges.length).toBeGreaterThan(0);
-		for (const edge of graph.edges) {
-			expect(typeof edge.from).toBe("number");
-			expect(typeof edge.to).toBe("number");
-			expect(typeof edge.kind).toBe("string");
-			expect(edge.at).toBeGreaterThan(0);
-		}
-	});
-
-	test("员工节点关联到项目负责人", async () => {
-		const { runtime, project, hired } = await setup();
-		const graph = await organizationGraph(runtime, BACKGROUND_CONTEXT);
-
-		const staffNode = graph.nodes.find((node) => node.id === hired.conversationId);
-		expect(staffNode?.kind).toBe("staff");
-		expect(staffNode?.parent, "员工节点应指向项目负责人").toBe(project.leader);
-	});
+	// 组织关系图（节点 + 边）的测试已迁到 `test/e2e/web.test.ts`：`/api/org` 的
+	// `links` 才是界面真正消费的形态，而它现在从频道消息算，不从 `TrailDoc` 算。
 
 	test("活跃任务结构随工作推进更新", async () => {
-		const { ctx, runtime, project } = await setup();
+		const { ctx, runtime, project, hired } = await setup();
 
 		// 没有工作时
 		const before = await activeTasks(runtime, BACKGROUND_CONTEXT);
 		expect(Array.isArray(before)).toBe(true);
 
-		// 派活期间应有活跃任务
+		// 让员工真跑一轮，期间应有活跃任务
 		ctx.faux.setResponses([answer("完成")]);
-		await delegate(
+		await askAndWait(
 			runtime,
-			{ project: "alpha", employee: "dev-1", task: "任务", fromConversationId: project.leader, from: "负责人" },
+			{ conversationId: hired.conversationId, text: "任务", from: "负责人" },
 			BACKGROUND_CONTEXT,
 		);
 
-		// 派活结束后任务应为终态（不在活跃列表里）
+		// 跑完后任务应为终态（不在活跃列表里）
 		const after = await activeTasks(runtime, BACKGROUND_CONTEXT);
 		for (const task of after) {
 			expect(["running", "waiting", "sleeping", "ready", "blocked"]).toContain(task.status);

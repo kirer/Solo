@@ -7,7 +7,7 @@
  * 3. 因存储故障关闭后自动重开，并依靠语义化请求标识去重重复投递。
  */
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
-import type { Harness, HarnessInspection } from "@earendil-works/pi-durable";
+import type { HarnessInspection } from "@earendil-works/pi-durable";
 import type { CompanyRuntime, RuntimeReport } from "./open.ts";
 
 /** 一个被暂停（受阻）的任务。 */
@@ -423,7 +423,3 @@ export function hasFailed(runtime: CompanyRuntime): boolean {
 	return runtime.failure() !== undefined;
 }
 
-/** 供内部模块使用：取底层 harness（业务层不应调用）。 */
-export function rawHarness(runtime: CompanyRuntime): Harness {
-	return runtime.harness;
-}

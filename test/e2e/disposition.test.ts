@@ -17,7 +17,7 @@ import { createEscalationTask, listPending } from "../../src/company/escalation.
 import {
 	DEFAULT_RESUME_AFTER_MS,
 	DISPOSITION_DEADLINE_MS,
-	applyDueDispositionDefaults,
+	settleDueDispositions,
 	applyDueResumeReminders,
 	createDispositionPending,
 	readDisposition,
@@ -97,35 +97,13 @@ describe("打断 → 处置待办", () => {
 			{ label: "任务进入 running" },
 		);
 
-		// 打断的真实前置条件：消息必须**已经在 inbox 队列里**（见 /api/interrupt 的语义）。
-		// 所以先发一条让它排队，再用同一条文本触发打断。
-		const text = "急事：立刻停下";
-		await fetch(new URL("/api/message", server.url), {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ conversationId: rootId, text, mode: "turn" }),
-		});
-		await eventually(
-			async () => {
-				const inbox = (await runtime.harness.snapshot(
-					(await import("../../src/runtime/index.ts")).InboxDoc,
-					rootId as never,
-					BACKGROUND_CONTEXT,
-				)) as { items?: readonly unknown[] } | undefined;
-				return (inbox?.items ?? []).length > 0;
-			},
-			{ label: "消息进入 inbox 队列" },
-		);
-
-		// 触发打断 → 应生成处置待办
-		const response = await fetch(new URL("/api/interrupt", server.url), {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ conversationId: rootId, text }),
-		});
-		// 不把断言压在 interrupted 上：abort 是否在 5s 内收干净取决于模型，
-		// 与「处置待办是否生成」无关——我们采集在 abort **之前**。
-		expect(response.status).toBe(200);
+		// 打断入口（`POST /api/interrupt`）随会话流视图一起删除（ADR-040）。
+		// 这里直接走它背后的两个函数：采集「正在跑的工作」→ 生成处置待办。
+		// 采集是纯机械推导（inspect + 条目配对 + 用量），不调模型。
+		const { captureInterruptedWork, createDispositionPending } = await import("../../src/company/disposition.ts");
+		const work = await captureInterruptedWork(runtime, rootId, BACKGROUND_CONTEXT);
+		expect(work, "有正在跑的任务才采集得到").toBeDefined();
+		if (work !== undefined) await createDispositionPending(runtime, work);
 
 		await eventually(
 			async () => (await listPending(runtime, BACKGROUND_CONTEXT)).some((item) => item.disposition !== undefined),
@@ -220,10 +198,10 @@ describe("打断 → 处置待办", () => {
 		);
 
 		// 未到期：不兜底
-		expect(await applyDueDispositionDefaults(runtime, now + 1_000)).toBe(0);
+		expect(await settleDueDispositions(runtime, now + 1_000)).toBe(0);
 
 		// 到期：按暂搁执行
-		expect(await applyDueDispositionDefaults(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
+		expect(await settleDueDispositions(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
 
 		const read = await readDisposition(runtime, key, {});
 		expect(read?.payload.disposition).toBe("shelve");
@@ -302,7 +280,7 @@ describe("恢复提醒：暂搁到点必须提醒下达人", () => {
 		const { key } = await createDispositionPending(runtime, workOf(rootId), { now }, BACKGROUND_CONTEXT);
 
 		// 到期没人答 → 机器按可逆的一侧（暂搁）结算
-		expect(await applyDueDispositionDefaults(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
+		expect(await settleDueDispositions(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
 		const afterDefault = await readDisposition(runtime, key, {});
 		expect(afterDefault?.payload.decidedBy).toBe("timeout-default");
 

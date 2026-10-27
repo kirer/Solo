@@ -18,15 +18,14 @@ import {
 	type Context,
 	defineDoc,
 	defineTask,
-	escalationId,
 	type CompanyRuntime,
 } from "../runtime/index.ts";
 import type { Task } from "../runtime/index.ts";
-import { type DecisionTopic, decideOwner, levelOfTarget } from "./decision-routing.ts";
+import { type DecisionTopic, decideOwner, levelOfTarget } from "../domain/routing.ts";
 import { nextLevelUp } from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import type { DispositionPayload } from "./disposition.ts";
-import { deliverDecision } from "./decision-delivery.ts";
+import { deliverDecision } from "./channels.ts";
 import {
 	AuditDoc,
 	CompanyDoc,
@@ -71,23 +70,36 @@ export type EscalationInput = {
 	readonly topic?: DecisionTopic;
 };
 
-/** 阶段状态。 */
-export type EscalationState =
-	| { readonly phase: "ask-manager"; readonly level: string; readonly askedAt: number; readonly path: string[] }
+/**
+ * 阶段状态。
+ *
+ * 只有**一个**阶段：`ask`。它回答的问题只有一个——「现在停在谁那儿」。
+ *
+ * 以前是三个阶段（`ask-manager` / `ask-ceo` / `ask-owner`），三份处理函数逐行
+ * 相同：算 askedAt → `ensurePending` → `readOutcome` → 没有答案就 sleep 后重来 →
+ * 有答案就「继续往上」或「收口」。差别只有「上一级算谁」和「path 里追加什么」，
+ * 而这两件事本来就该由 `nextLevelUp()` 与 `level` 自己决定，不需要三个函数各写一遍。
+ *
+ * 合并之后「谁能到老板那儿」这条硬规则只剩一处可读：`nextLevelUp(org, level)`
+ * 只有对 `level === "ceo"` 才返回 `"owner"`（ADR-033）。
+ */
+export type EscalationState = {
+	readonly phase: "ask";
+	/** 现在停在谁那儿：`ceo` / `owner` / 管理岗（`cto`…）/ `leader:<slug>`。 */
+	readonly level: string;
+	/** 这一级第一次被问到的时刻；0 表示「本轮刚进来，还没问过」。 */
+	readonly askedAt: number;
+	/** 已经真实问过、并且明确说了「拍不了」的那些层级，按顺序。 */
+	readonly path: string[];
 	/**
-	 * 问 CEO。
+	 * 这一站是**公司级复核**（不是普通的「下级报上来」）。
 	 *
-	 * `review` = true 表示这一站是**公司级复核**（不是普通的「下级报上来」）：
-	 * 上报方声明了 `company-level`，但声明是自证的，不能据此直接给老板。
-	 * 所以先停 CEO，由 CEO 复核「是不是真的只有老板能定」：
-	 * - 确认 → escalate=true，递到老板（`path` 真实记下 ceo）；
-	 * - 不确认 → 直接答掉（CEO 自己有权定），或改判后自己处理。
-	 *
-	 * 这个字段只在 checkpoint 里用于展示/追溯（待办条目的提示语），
-	 * 阶段机本身对 review 与非 review 走同一套流转。
+	 * 上报方声明了 `company-level`，但声明是自证的，不能据此直接给老板，
+	 * 所以先停 CEO 复核：确认 → 递老板；不确认 → CEO 自己答掉。
+	 * 只用于待办条目的提示语与追溯，流转规则与非复核站完全一样。
 	 */
-	| { readonly phase: "ask-ceo"; readonly askedAt: number; readonly path: string[]; readonly review?: boolean }
-	| { readonly phase: "ask-owner"; readonly askedAt: number; readonly path: string[] };
+	readonly review?: boolean;
+};
 
 /** 升级结果。 */
 export type EscalationResult = {
@@ -268,7 +280,36 @@ export function createEscalationTask(
 ): Task<EscalationInput, EscalationState, EscalationResult, object> {
 	return defineTask<EscalationInput, EscalationState, EscalationResult>({
 		name: "app.escalation",
-		version: 1,
+		version: 2,
+
+		/**
+		 * v1 的三阶段 checkpoint 搬到 v2 的单阶段。
+		 *
+		 * 老库里还挂着 `ask-manager` / `ask-ceo` / `ask-owner` 的任务记录，
+		 * 进程重启后 `recover()` 会按 v1 的形状恢复它们——不认识就崩。
+		 * 映射是机械的：阶段名就决定了当时停在哪一级。
+		 */
+		migrate: (input, checkpoint) => {
+			const old = checkpoint as {
+				phase?: string;
+				level?: string;
+				askedAt?: number;
+				path?: string[];
+				review?: boolean;
+			};
+			const level =
+				old.phase === "ask-owner" ? "owner" : old.phase === "ask-ceo" ? "ceo" : (old.level ?? "ceo");
+			return {
+				input: input as EscalationInput,
+				checkpoint: {
+					phase: "ask" as const,
+					level,
+					askedAt: old.askedAt ?? 0,
+					path: old.path ?? [],
+					...(old.review === true ? { review: true } : {}),
+				},
+			};
+		},
 
 		initial: (input) => {
 			// ── Defect B 修复：公司级不再直达老板 ──
@@ -286,14 +327,14 @@ export function createEscalationTask(
 			// 3) 其余 → 照旧从直属管理层开始。
 			if (input.startAtOwner === true) {
 				// CEO 自己发起：path 只包含发起人（CEO），不伪造中间层。
-				return { phase: "ask-owner", askedAt: 0, path: [input.from] };
+				return { phase: "ask", level: "owner", askedAt: 0, path: [input.from] };
 			}
 			if (input.topic === "company-level") {
 				// 非 CEO 声明 company-level：必须先过 CEO 复核（由 CEO 判断是否真的只能老板定）。
-				return { phase: "ask-ceo", askedAt: 0, path: [input.from], review: true };
+				return { phase: "ask", level: "ceo", askedAt: 0, path: [input.from], review: true };
 			}
 			return {
-				phase: "ask-manager",
+				phase: "ask",
 				level: input.manager ?? "ceo",
 				askedAt: 0,
 				path: [input.from],
@@ -301,156 +342,21 @@ export function createEscalationTask(
 		},
 
 		phases: {
-			"ask-manager": async (task, taskRuntime, context) => {
-				const state = task.state.checkpoint as Extract<EscalationState, { phase: "ask-manager" }>;
+			/**
+			 * 停在某一级等答复；拿到答复就收口，拿到「拍不了」就往上走一级。
+			 *
+			 * 往上走一级永远经由 `nextLevelUp(org, level)`，**不自己判断**——
+			 * 「员工 → 负责人 → 管理层 → CEO → 老板，一层都不能跳」这条规则
+			 * 只存在于那个纯函数里（`src/domain/membership.ts`）。以前三个阶段各自
+			 * 拼路径，跳级与假路径的 bug 都在那儿（见 ADR-033）。
+			 */
+			ask: async (task, taskRuntime, context) => {
+				const state = task.state.checkpoint;
 				const level = state.level;
-
-				// 没有直属管理层（或直属就是 CEO）时直接进 CEO 阶段。
-				//
-				// path **不在这里追加 "ceo"**：这一层没有真的问过任何人，
-				// 追加会让 path 出现两个连续的 "ceo"（实测 [from, ceo, ceo, owner]）。
-				// 真实的层级由各阶段结束时自己写进 path。
-				if (level === "ceo") {
-					await taskRuntime.commit(
-						() => ({
-							status: "running",
-							checkpoint: { phase: "ask-ceo", askedAt: 0, path: state.path },
-						}),
-						context,
-					);
-					return;
-				}
-
 				const askedAt = state.askedAt === 0 ? taskRuntime.now() : state.askedAt;
+
 				await ensurePending(runtime, task.input, level, askedAt, context);
-
 				const outcome = await readOutcome(runtime, task.input.escalationKey, level, context);
-
-				if (outcome === undefined) {
-					const now = taskRuntime.now();
-					await taskRuntime.sleepUntil(
-						now + pollDelay(askedAt, now),
-						{ phase: "ask-manager", level, askedAt, path: state.path },
-						context,
-					);
-					return;
-				}
-
-				if (outcome.escalate) {
-					// ── 逐级上升（老板 2026-10-26 的硬要求）──
-					//
-					// 旧实现：这一层说「拍不了」就直接跳到 ask-ceo，**跳过了中间层**。
-					// 后果：项目负责人能定的排期问题被一路推到 CEO，CEO 再推给老板，
-					// 于是老板待办里堆满别人的活。
-					//
-					// 现在：按 manager 链找**上一级**。只有上一级是 CEO 时才进 ask-ceo。
-					// 也就是说 员工 → 负责人 → 管理层 → CEO → 老板，一层都不能跳。
-					const company = await runtime.harness.snapshot(CompanyDoc, context);
-					const org = buildOrg(company);
-					const up = nextLevelUp(org, level);
-
-					if (up === "owner") {
-						// 只有 CEO 这一层的 escalate 才真的递老板
-						await recordHop(runtime, task.input, level, "owner", context);
-						await taskRuntime.commit(
-							() => ({
-								status: "running",
-								checkpoint: { phase: "ask-owner", askedAt: 0, path: [...state.path, level] },
-							}),
-							context,
-						);
-						return;
-					}
-					if (up === "ceo") {
-						await recordHop(runtime, task.input, level, "ceo", context);
-						await taskRuntime.commit(
-							() => ({
-								status: "running",
-								checkpoint: { phase: "ask-ceo", askedAt: 0, path: [...state.path, level] },
-							}),
-							context,
-						);
-						return;
-					}
-					// 中间层（例如负责人 → 管理层）：留在 ask-manager，只把 level 换成上一级
-					await recordHop(runtime, task.input, level, up, context);
-					await taskRuntime.commit(
-						() => ({
-							status: "running",
-							checkpoint: { phase: "ask-manager", level: up, askedAt: 0, path: [...state.path, level] },
-						}),
-						context,
-					);
-					return;
-				}
-
-				await finish(
-					 taskRuntime,
-					 runtime,
-					 context,
-					 task.input,
-					 outcome.answeredBy ?? level,
-					 outcome.answer,
-					 [...state.path, level],
-				 );
-			},
-
-			"ask-ceo": async (task, taskRuntime, context) => {
-				const state = task.state.checkpoint as Extract<EscalationState, { phase: "ask-ceo" }>;
-				const askedAt = state.askedAt === 0 ? taskRuntime.now() : state.askedAt;
-				// review=true 表示这是「公司级复核」站（非 CEO 声明 company-level 时的第一站）。
-				// 它让 CEO 的待办条目能显示「请复核：真的只有老板能定吗」，
-				// 也让 CEO 知道自己的答复有三种走向（自己定 / 递老板 / 驳回）。
-				await ensurePending(runtime, task.input, "ceo", askedAt, context);
-
-				const outcome = await readOutcome(runtime, task.input.escalationKey, "ceo", context);
-
-				if (outcome === undefined) {
-					const now = taskRuntime.now();
-					await taskRuntime.sleepUntil(
-						now + pollDelay(askedAt, now),
-						{ phase: "ask-ceo", askedAt, path: state.path, ...(state.review === true ? { review: true } : {}) },
-						context,
-					);
-					return;
-				}
-
-				if (outcome.escalate) {
-					// **老板级待办只能由 CEO 递给老板**（老板 2026-10-26 明确）。
-					// 这是整条升级链上唯一进入 ask-owner 的入口（另一个是
-					// `initial` 里 CEO 自己发起时的 startAtOwner）。见 domain/routing.ts
-					// 的 `canReachOwner()`。
-					// Defect B：CEO 确认「确实只能老板定」才递老板。
-					// 此时 path 追加真实的 "ceo" —— 这一步是真的问过 CEO 的，
-					// 所以写进 path 名实相符（旧代码没问却写 ceo，才是假象）。
-					await recordHop(runtime, task.input, "ceo", "owner", context);
-					await taskRuntime.commit(
-						() => ({
-							status: "running",
-							checkpoint: { phase: "ask-owner", askedAt: 0, path: [...state.path, "ceo"] },
-						}),
-						context,
-					);
-					return;
-				}
-
-				await finish(
-					 taskRuntime,
-					 runtime,
-					 context,
-					 task.input,
-					 outcome.answeredBy ?? "ceo",
-					 outcome.answer,
-					 [...state.path, "ceo"],
-				 );
-			},
-
-			"ask-owner": async (task, taskRuntime, context) => {
-				const state = task.state.checkpoint as Extract<EscalationState, { phase: "ask-owner" }>;
-				const askedAt = state.askedAt === 0 ? taskRuntime.now() : state.askedAt;
-				await ensurePending(runtime, task.input, "owner", askedAt, context);
-
-				const outcome = await readOutcome(runtime, task.input.escalationKey, "owner", context);
 
 				if (outcome === undefined) {
 					// 老板拍板可能跨天：休眠不占执行名额，进程重启后仍然有效。
@@ -458,21 +364,63 @@ export function createEscalationTask(
 					const now = taskRuntime.now();
 					await taskRuntime.sleepUntil(
 						now + pollDelay(askedAt, now),
-						{ phase: "ask-owner", askedAt, path: state.path },
+						{
+							phase: "ask",
+							level,
+							askedAt,
+							path: state.path,
+							...(state.review === true ? { review: true } : {}),
+						},
 						context,
 					);
 					return;
 				}
 
-				await finish(
-					 taskRuntime,
-					 runtime,
-					 context,
-					 task.input,
-					 outcome.answeredBy ?? "owner",
-					 outcome.answer,
-					 [...state.path, "owner"],
-				 );
+				// 老板那一级的答复就是终点：`escalate` 在这儿没有意义，
+				// 硬要往上走会算出「老板的上级是 CEO」这种回环。
+				if (outcome.escalate !== true || level === "owner") {
+					await finish(
+						taskRuntime,
+						runtime,
+						context,
+						task.input,
+						outcome.answeredBy ?? level,
+						outcome.answer,
+						[...state.path, level],
+					);
+					return;
+				}
+
+				const company = await runtime.harness.snapshot(CompanyDoc, context);
+				const up = nextLevelUp(buildOrg(company), level);
+				// 结构上 `nextLevelUp` 只对 ceo 返回 owner；这里再挡一道，
+				// 免得以后有人改了那个纯函数就悄悄把某层的问题递给老板（ADR-033）。
+				if (up === "owner" && level !== "ceo") {
+					await finish(
+						taskRuntime,
+						runtime,
+						context,
+						task.input,
+						outcome.answeredBy ?? level,
+						outcome.answer,
+						[...state.path, level],
+					);
+					return;
+				}
+
+				await recordHop(runtime, task.input, level, up, context);
+				await taskRuntime.commit(
+					() => ({
+						status: "running",
+						checkpoint: {
+							phase: "ask",
+							level: up,
+							askedAt: 0,
+							path: [...state.path, level],
+						},
+					}),
+					context,
+				);
 			},
 		},
 
@@ -562,11 +510,30 @@ export async function answerPending(
 		readonly key: string;
 		readonly answer: string;
 		readonly answeredBy: string;
+		/**
+		 * 只允许答复「停在这一级」的待决项。
+		 *
+		 * 传了就做层级闸门（`item.level !== level` → 拒绝），不传就不校验——两条
+		 * 路径原本是三个几乎逐字相同的函数（`answerPendingAsCeo` /
+		 * `answerPendingAtLevel`），差别只有这一行判断和 `answeredBy` 的取值。
+		 * 合并成一个参数后，「谁能拍板」只剩一处代码可读。
+		 */
+		readonly level?: string;
 		readonly escalate?: boolean;
 	},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<boolean> {
 	let delivered: { question: string; askerConversationId: number; askerLabel: string } | undefined;
+
+	if (input.level !== undefined) {
+		const state = await runtime.harness.snapshot(PendingDoc, context);
+		const item = state?.items.find((entry) => entry.key === input.key);
+		if (item === undefined) return false;
+		if (item.level !== input.level) return false;
+		if (item.answer !== undefined) return false;
+		// 已处置的不再接受答复（防「复活」）。
+		if (item.disposed !== undefined) return false;
+	}
 
 	const ok = await runtime.harness.commit(async (tx) => {
 		const pending = await tx.doc(PendingDoc);
@@ -623,37 +590,6 @@ export async function answerPending(
 		);
 	}
 	return ok;
-}
-
-/**
- * CEO 拍板：只允许回答「到自己这一级」的待决问题。
- *
- * 越权防线：CEO 无法替老板拍板（owner 级），也无法替下属拍板。
- * 每条会校验层级并返回 false，由工具层给出可读原因。
- */
-export async function answerPendingAsCeo(
-	runtime: CompanyRuntime,
-	input: { readonly key: string; readonly answer: string; readonly escalate?: boolean },
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<boolean> {
-	const state = await runtime.harness.snapshot(PendingDoc, context);
-	const item = state?.items.find((entry) => entry.key === input.key);
-	if (item === undefined) return false;
-	if (item.level !== "ceo") return false;
-	if (item.answer !== undefined) return false;
-	// 已处置的不再接受答复（防止旧路径把驳回过的待办「复活」）。
-	if (item.disposed !== undefined) return false;
-
-	return answerPending(
-		runtime,
-		{
-			key: input.key,
-			answer: input.answer,
-			answeredBy: "ceo",
-			...(input.escalate === true ? { escalate: true } : {}),
-		},
-		context,
-	);
 }
 
 /**
@@ -970,19 +906,6 @@ export async function takeOverPendingAtCeo(
 	return outcome ?? { ok: false, code: "not-found", reason: "没有这条老板级待办（可能已被处理）" };
 }
 
-/** 等待一次升级结束。 */
-export async function waitEscalation(
-	runtime: CompanyRuntime,
-	taskId: number,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<EscalationResult | undefined> {
-	const settled = await runtime.harness.waitForTask(taskId as never, context);
-	if (settled.state.status !== "terminal") return undefined;
-	const outcome = settled.state.outcome;
-	if (outcome.status !== "completed") return undefined;
-	return outcome.result as EscalationResult;
-}
-
 // ── 内部 ────────────────────────────────────────────────────────────────────
 
 /** 确保问题出现在待决列表里（幂等）。 */
@@ -1259,42 +1182,3 @@ export function levelOfConversation(
 	}
 	return undefined;
 }
-
-/**
- * 按层级拍板：只允许回答「到自己这一级」的待决问题。
- *
- * 与 answerPendingAsCeo 的区别是层级不再写死 ceo：项目负责人答 leader:<slug> 级，
- * 管理层答本岗位级。越权一律返回 false，由工具层给出可读原因。
- */
-export async function answerPendingAtLevel(
-	runtime: CompanyRuntime,
-	input: {
-		readonly key: string;
-		readonly answer: string;
-		readonly level: string;
-		readonly answeredBy: string;
-		readonly escalate?: boolean;
-	},
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<boolean> {
-	const state = await runtime.harness.snapshot(PendingDoc, context);
-	const item = state?.items.find((entry) => entry.key === input.key);
-	if (item === undefined) return false;
-	if (item.level !== input.level) return false;
-	if (item.answer !== undefined) return false;
-	// 已处置的不再接受答复（同上，防「复活」）。
-	if (item.disposed !== undefined) return false;
-
-	return answerPending(
-		runtime,
-		{
-			key: input.key,
-			answer: input.answer,
-			answeredBy: input.answeredBy,
-			...(input.escalate === true ? { escalate: true } : {}),
-		},
-		context,
-	);
-}
-
-export { escalationId };

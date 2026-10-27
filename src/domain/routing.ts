@@ -30,8 +30,6 @@ import {
 	isLeaderManagerRef,
 	isValidManagerRef,
 	leaderSlugOf,
-	managerConversationOf,
-	managerLabelOf,
 } from "./org-types.ts";
 
 /**
@@ -158,43 +156,6 @@ export function levelOfTarget(target: DecisionTarget): string {
 			return target.ref;
 	}
 }
-
-/** 决策归属的显示名（审计/留痕用）。走 ADR-027 的统一入口。 */
-export function labelOfTarget(state: CompanyState | undefined, target: DecisionTarget): string {
-	switch (target.kind) {
-		case "owner":
-			return "老板";
-		case "role":
-			return managerLabelOf(state, target.role);
-		case "leader":
-			return managerLabelOf(state, target.ref);
-	}
-}
-
-/** 决策归属对应的会话；解析不到返回 undefined（此时只能公示、不能授权拍板）。 */
-export function conversationOfTarget(state: CompanyState | undefined, target: DecisionTarget): number | undefined {
-	switch (target.kind) {
-		case "owner":
-			return state?.roles.ceo;
-		case "role":
-			return managerConversationOf(state, target.role);
-		case "leader":
-			return managerConversationOf(state, target.ref);
-	}
-}
-
-/**
- * 这个会话是不是这条问题的决策人。
- *
- * `conversationId` 是提问者的会话；`myLevel` 是 `levelOfConversation()` 的结果。
- * 用 level 精确比对（与既有 `pending_list` / `answer_pending` 口径一致），
- * 而不是靠显示名——ADR-027 的教训。
- */
-export function isDecisionOwner(target: DecisionTarget, myLevel: string | undefined): boolean {
-	if (myLevel === undefined) return false;
-	return levelOfTarget(target) === myLevel;
-}
-
 
 // ── 老板级待办的唯一入口 ────────────────────────────────────────────────────
 

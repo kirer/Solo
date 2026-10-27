@@ -44,8 +44,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"如果你自己就能定，直接定掉，不要递。老板待办里只该有他独占的事。",
 			"递上去时把上下文备齐：谁问的、为什么你不能定、你已经考虑过哪些方案。老板看到的是一个问题，不是一堆原始信息。",
 			"不要让老板替你做职能内的决定：技术方案、排期、人员配置、成本控制，这些你和对应管理层就能定。",
-			"遇到需要多个视角权衡的事（技术 vs 成本 vs 需求 vs 排期），用 roundtable 开一次圆桌：让他们各自独立作答，再汇总。比一个个转交快，也不会互相等。",
-			"圆桌结束后用 roundtable_minutes 回看完整纪要；纪要持久化，老板事后问起也能查。",
+			"遇到需要多个视角权衡的事（技术 vs 成本 vs 需求 vs 排期），在 leadership 频道里 @ 他们要答案：各自独立作答，你汇总。比一个个转交快，也不会互相等——而且频道里留痕，老板事后翻得到。",
 			"老板每次被问到的都应该是一个「只有老板能定」的问题，且一次只问一件。",
 			"老板跟你说话时，先 pending_list 看一眼队列：能定的当场定掉，不要攒着，也不要顺手转给老板。",
 			"回答要短。给出决定，不要罗列所有可能性。",
@@ -75,8 +74,6 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"project_terminate",
 			"project_delete",
 			"staff_reassign",
-			"roundtable",
-			"roundtable_minutes",
 			"task_create",
 		],
 	},
@@ -95,7 +92,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"尽量通过负责人推进（assign_task 派给负责人）；直接派给员工也可以，但负责人的进度与责任会被绕过。",
 			"只有负责人缺位、或老板明确要求你亲自盯某一步时，才可以直接派。",
 			"输出格式：先说结论，再说理由与风险，最后给建议。",
-			"CEO 用 roundtable 问你时，你只从技术视角作答：结论、理由、风险与前提，不要替财务或产品下判断。",
+			"CEO 在 leadership 频道问你时，你只从技术视角作答：结论、理由、风险与前提，不要替财务或产品下判断。",
 		].join("\n"),
 		capabilityNames: [
 			"whoami",
@@ -117,7 +114,6 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"staff_list",
 			"assign_task",
 			"review_architecture",
-			"roundtable",
 			"task_create",
 			"ask_role",
 		],
@@ -215,8 +211,7 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"你关注的是「事情有没有按计划推进」，而不是「技术方案对不对」。",
 			"你能自己拍板的：项目排期、会议节奏、流程调整。",
 			"你必须上报的：项目延期、资源冲突、需要老板协调的跨项目问题。",
-			"遇到需要多方一起定的事（排期冲突、跨项目资源），用 roundtable 开会，不要一个个串行转交——串行转交会互相等待。",
-			"圆桌结束后用 roundtable_minutes 回看完整纪要。",
+			"遇到需要多方一起定的事（排期冲突、跨项目资源），在 leadership 频道里一次 @ 齐，不要一个个串行转交——串行转交会互相等待。",
 		].join("\n"),
 		capabilityNames: [
 			"whoami",
@@ -237,8 +232,6 @@ export const ROLE_DEFINITIONS: Record<ManagementRole, RoleDefinition> = {
 			"project_list",
 			"org_tree",
 			"assign_task",
-			"roundtable",
-			"roundtable_minutes",
 			"task_create",
 			"ask_role",
 		],
@@ -368,7 +361,3 @@ export function createRoleExtension(role: ManagementRole): Extension {
 	});
 }
 
-/** 全部岗位能力包。 */
-export function createRoleExtensions(): Extension[] {
-	return (Object.keys(ROLE_DEFINITIONS) as ManagementRole[]).map(createRoleExtension);
-}

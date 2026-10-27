@@ -32,7 +32,7 @@ import {
 	type StuckReason,
 	type TaskLiveness,
 } from "../runtime/index.ts";
-import { applyDueDispositionDefaults, applyDueResumeReminders } from "./disposition.ts";
+import { applyDueResumeReminders, settleDueDispositions } from "./disposition.ts";
 import type { DeliveryReceipt } from "../domain/channels.ts";
 
 /** 看门狗写进会话流的告警条目类型。 */
@@ -199,11 +199,6 @@ function stateOf(runtime: CompanyRuntime): WatchdogState {
 	return state;
 }
 
-/** 读出这个运行时最近的看门狗告警（最近的在前）。 */
-export function readWatchdogAlerts(runtime: CompanyRuntime): readonly WatchdogAlert[] {
-	return [...(STATES.get(runtime)?.alerts ?? [])];
-}
-
 /**
  * 跑一轮巡检。
  *
@@ -347,7 +342,7 @@ export async function runWatchdogPass(
 
 	// ③ 队列排空：会话已经空闲，但队列里还压着消息。
 	if (options.drainInbox ?? WATCHDOG_DEFAULTS.drainInbox) {
-		for (const conversationId of await idleConversationsWithQueue(runtime, liveness, context)) {
+		for (const conversationId of await idleConversationsWithQueue(liveness)) {
 			const drained = await drainOne(runtime, conversationId, context);
 			if (drained === undefined) continue;
 			await push({
@@ -369,7 +364,7 @@ export async function runWatchdogPass(
 	// 定时器绑定进程实例，重启就丢；挂在已有巡检上，重启后自然恢复。
 	// 失败不能拖垮巡检：它只是附加动作。
 	try {
-		await applyDueDispositionDefaults(runtime, now, context);
+		await settleDueDispositions(runtime, now, context);
 	} catch (error) {
 		// 吞掉是对的（处置兜底不能拖垮巡检），但**必须留痕**：
 		// 若每轮都抛而没人知道，兜底会安静地永远失败（审计 D-08，OPS-01 的教训）。
@@ -886,11 +881,7 @@ async function refreshProgress(
 }
 
 /** 空闲但队列里还有输入消息的会话。 */
-async function idleConversationsWithQueue(
-	runtime: CompanyRuntime,
-	liveness: Liveness,
-	context: Context,
-): Promise<readonly number[]> {
+async function idleConversationsWithQueue(liveness: Liveness): Promise<readonly number[]> {
 	const queued = new Set<number>();
 	for (const submission of liveness.inspection.submissions) {
 		if (submission.type !== "input") continue;

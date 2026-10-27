@@ -8,14 +8,14 @@
 ## 1. 全局：规模、分层、边界
 
 ```
-src/domain/   1753 行   纯数据 + 纯函数。无 IO、无依赖、可在没有数据库时单测
-src/runtime/  2103 行   防腐层。唯一允许 import @earendil-works/* 的地方
-src/company/ 12565 行   业务：装配、工具、频道、任务、升级链、看门狗
-src/server/   5006 行   HTTP + SSE + 设置 + 附件
+src/domain/   2204 行   纯数据 + 纯函数。无 IO、无依赖、可在没有数据库时单测
+src/runtime/  2268 行   防腐层。唯一允许 import @earendil-works/* 的地方
+src/company/ 11264 行   业务：装配、工具、频道、任务、升级链、看门狗
+src/server/   5093 行   HTTP + SSE + 设置 + 频道视图
 src/tui/      1267 行   终端界面
 scripts/                边界检查、截图、UI 检查
-test/                   unit(20) / contract(1) / e2e(28)，共约 770 个 case
-ui/                     原生 JS，25 个文件，13351 行
+test/                   unit(27) / contract(1) / e2e(28)，56 个文件 / 741 个 case
+ui/                     原生 JS，31 个文件，14313 行
 ```
 
 **分层是被强制的**，不是约定：
@@ -105,32 +105,27 @@ src/tui/main.ts      （终端）
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `org.ts` | 2392 | **装配 + 组织生命周期**（见 §4.1） |
-| `escalation.ts` | 1300 | **升级链状态机**（见 §4.4） |
-| `roundtable.ts` | 1128 | 圆桌讨论（多阶段 durable task） |
-| `disposition.ts` | 857 | 待办处置（暂搁/放弃/恢复条件/超时默认） |
-| `watchdog.ts` | 790 | 看门狗（见 §4.5） |
+| `org.ts` | 2152 | **装配 + 组织生命周期**（见 §4.1） |
+| `escalation.ts` | 1185 | **升级链状态机**（单阶段 `ask`，见 §4.4） |
+| `disposition.ts` | 843 | 待办处置（暂搁/放弃/恢复条件/超时默认；到期只有一个判据） |
+| `watchdog.ts` | 997 | 看门狗（七件事：含投递回执重投，见 §4.5） |
 | `management-tools.ts` | 772 | 管理层工具集（`org_tree` / `my_capabilities` / `decide` / `staff_*` / `budget_check` …） |
-| `tools/universal.ts` | 601 | 通用工具（`whoami`/`say`/`ask`/`read_channel`/`inbox`/`task_*`） |
-| `channels.ts` | 586 | 频道 IO + 投递 + 已读（纯逻辑在 `src/domain/channels.ts`） |
-| `delegation.ts` | 533 | 同步转交（老路径，仍在用） |
-| `tools.ts` | 416 | **能力包工厂**（见 §4.2） |
-| `roles.ts` | 348 | 7 个岗位的定义与职责提示词 |
+| `tools/universal.ts` | 621 | 通用工具（`whoami`/`say`/`ask`/`read_channel`/`inbox`/`task_*`） |
+| `channels.ts` | 708 | 频道 IO + 投递 + 已读 + `deliverDecision()`（纯逻辑在 `src/domain/channels.ts`） |
+| `tools.ts` | 422 | **能力包工厂**（见 §4.2） |
+| `roles.ts` | 374 | 7 个岗位的定义与职责提示词 |
 | `tools/dispatch.ts` | 346 | 派活工具（`assign_task` / `ask_role` / `project_create`） |
-| `tasks.ts` | 326 | 任务 IO（纯状态机在 `src/domain/tasks.ts`） |
-| `trail.ts` | 314 | 沟通图 / 组织图数据 |
+| `tasks.ts` | 397 | 任务 IO（纯状态机在 `src/domain/tasks.ts`） |
+| `trail.ts` | 265 | 沟通留痕（`TrailDoc`）/ 实时边 / 活跃任务 |
 | `cost.ts` | 277 | 成本汇总 |
 | `tools/tool-search.ts` | 219 | 自研 `tool_search`（见 §4.3） |
 | `org-model.ts` | 157 | `CompanyState` → `Org`（纯映射）。`buildOrg()` 到处用 |
-| `capabilities.ts` | 157 | **能力目录**（声明式：谁能用什么、哪些延迟加载） |
-| `deliver.ts` | 199 | **唯一的跨 agent 投递原语** |
-| `prompts.ts` | 107 | **职责描述/立项文档的唯一生成入口**（纯文案，`org.ts` re-export） |
-| `wait.ts` | 42 | `waitOrTimeout()` —— 圆桌等发言、HTTP 等 abort 共用 |
-| `decision-routing.ts` | 17 | re-export（真身在 `src/domain/routing.ts`） |
-| `delegation-guard.ts` | 165 | 同步等待的环检测 + 超时 |
-| `decision-delivery.ts` | 142 | 把决定投回发起方 |
+| `capabilities.ts` | 167 | **能力目录**（声明式：谁能用什么、哪些延迟加载） |
+| `deliver.ts` | 367 | **唯一的跨 agent 投递原语**（三态回执，见 ADR-034） |
+| `prompts.ts` | 105 | **职责描述/立项文档的唯一生成入口**（纯文案，`org.ts` re-export） |
+| `wait.ts` | 42 | `waitOrTimeout()` —— HTTP 等 abort 用 |
 | `staff-tools.ts` | 348 | **员工原子工具表 + 授予粒度**（`write:src/` 的路径隔离，见 §4.6） |
-| `watchdog.ts` / `channels-doc.ts` / `docs.ts` / `roundtable-tools.ts` | 各自 | |
+| `channels-doc.ts` / `docs.ts` | 各自 | |
 
 ### 4.1 `src/company/org.ts` — 装配与生命周期
 
@@ -221,25 +216,32 @@ src/domain/channels.ts:423    digestFor()      纯函数：未读摘要
 请求标识 `requestId = "ch:{channelId}:{seq}:{target}"`：同一条消息重复投递会被去重
 （崩溃恢复是至少一次语义，ADR-006）。
 
-### 4.5 升级链 `src/company/escalation.ts`（1300 行，最复杂的业务）
+### 4.5 升级链 `src/company/escalation.ts`（1185 行，最复杂的业务）
 
 ```ts
 createEscalationTask(runtime)      // :266  工厂函数（要闭包 CompanyRuntime）
 PendingDoc                         // :213  app.pending
-EscalationState 三个阶段：          // :76-90
-  { phase: "ask-manager", level, askedAt, path }
-  { phase: "ask-ceo",     askedAt, path, review? }
-  { phase: "ask-owner",   askedAt, path }
+EscalationState 只有一态（ADR-038）：   // :87
+  { phase: "ask", level, askedAt, path, review? }
 ```
+
+`level` 是「现在停在谁那儿」——`"ceo"` / `"owner"` / 管理岗名 / `"leader:<slug>"`。
+阶段机**不判层级**：往上一级永远经由 `nextLevelUp(org, level)`，它只对 `level === "ceo"`
+返回 `"owner"`，所以「老板级待办只能由 CEO 递」（ADR-033）只有一处实现。
+v1 的三阶段 checkpoint 由 `EscalationTask.migrate` 机械映射到 v2。
 
 每级跃迁提交检查点 → 崩溃重开从当前级继续，不重复询问。
 「问询」不是同步阻塞：写 `PendingDoc` 然后休眠；答复后任务醒来读答复推进。
+
+答复入口只有一个：`answerPending(runtime, { key, answer, answeredBy, level? }, ctx)`。
+传 `level` 就做层级闸门（`item.level !== level` → 拒绝），不传就不校验
+（老板从网页答复走不传的那条）。
 
 配套：
 ```
 src/domain/routing.ts:81        decideOwner()      纯函数，只按 topic + 汇报线判定
 src/company/disposition.ts      settleDisposition() 暂搁/放弃/恢复条件/超时默认值
-src/company/decision-delivery.ts deliverDecision() 把决定投回发起方
+src/company/channels.ts          deliverDecision() 把决定投回发起方（是一条 kind:"decision" 的频道消息）
 src/domain/membership.ts:283    nextLevelUp()      沿 manager 链算上一级
 src/domain/membership.ts:345    escalationPath()   完整上报路径（界面展示用）
 ```
@@ -339,7 +341,6 @@ src/company/docs.ts:154       BudgetDoc    app.budget
 src/company/docs.ts:198       TrailDoc     app.trail
 src/company/channels-doc.ts:11 ChannelDoc  app.channels   deltasSinceBase >= 64
 src/company/escalation.ts:213  PendingDoc  app.pending
-src/company/roundtable.ts:121  RoundtableDoc app.roundtable
 src/company/tasks.ts:50        TaskDoc     app.tasks      deltasSinceBase >= 64
 src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 ```
@@ -353,7 +354,7 @@ src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 **会话流里出现的 entry kind**（`app.*`）：
 `app.channel` `app.delegate` `app.task` `app.tasks` `app.task-report` `app.decision` `app.question`
 `app.receipt` `app.ack` `app.alert` `app.log` `app.trail` `app.message` `app.stop`
-`app.company` `app.profile` `app.channels` `app.pending` `app.audit` `app.budget` `app.anchor` `app.roundtable`
+`app.company` `app.profile` `app.channels` `app.pending` `app.audit` `app.budget` `app.anchor`
 `app.memory` `app.memory-hint`
 
 `app.ack` 的 `data` 是 `{ text, channelId, messageSeq, busy, busyWith, plan, at }`。
@@ -373,15 +374,13 @@ src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 http.ts        1923 行  路由 handler + SSE + 静态文件
 routes.ts       122 行  **路由表**（表驱动，见 §6.2），新增接口先动这里
 feed.ts         785 行  readFeed() 把会话已提交状态转成可渲染条目（Web UI 唯一数据源）
-settings.ts     477 行  settings.json 读写（模型、网络、IM）
-org-view.ts     425 行  buildOrgView() 组织快照（SSE 推给前端）
-channels-view.ts 565 行  频道视图（含 `MessageView.acks`：把会话流里的 `app.ack` 接回频道消息）
+settings.ts     484 行  settings.json 读写（模型、网络）
+org-view.ts     470 行  buildOrgView() 组织快照（SSE 推给前端）
+channels-view.ts 553 行  频道视图（含 `MessageView.acks`：把会话流里的 `app.ack` 接回频道消息）
 board.ts        260 行  看板（只读 TaskDoc）
 main.ts         240 行  入口
 event-log.ts    168 行  describeReport() 报告 → 日志行
-im.ts           168 行  外部 IM 接入
 profile.ts      156 行  员工档案（如实展示真实提示词）
-uploads.ts      152 行  附件
 actors.ts                发言人解析（「这是谁说的」）
 avatars.ts               DiceBear 头像（按名字稳定生成）
 network.ts               局域网地址枚举
@@ -402,22 +401,17 @@ API 路由一览（声明在 `src/server/routes.ts` 的 `routes` 数组，handle
 ```
 GET    /api/org                    组织快照
 GET    /api/pending                待决问题
-GET    /api/feed/:conversationId   会话流
 GET    /api/profile/:conversationId 员工档案
 GET    /api/stream/org              SSE 组织
 GET    /api/stream/feed/:id         SSE 会话流
-POST   /api/message                老板发言（带附件、忙时排队）
 POST   /api/answer                 回答待决问题
 POST   /api/pending/dispose        处置待办
 POST   /api/pending/take-over      CEO 接管老板级待办
-POST   /api/interrupt              「立即处理」
 GET/PATCH /api/settings
 POST/DELETE /api/models
-POST   /api/upload   GET /uploads/*
 GET    /api/avatar/:seed
 GET    /api/channels   GET /api/channels/:id   POST .../messages   POST .../read
 GET    /api/board                  看板
-POST   /api/im/inbound             外部 IM 入站
 ```
 
 **契约在 `docs/WEB-API.md`**。改接口先改它。
@@ -516,8 +510,8 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 | 谁被唤醒 | `src/domain/channels.ts:379` `recipientsOf`（**成本敏感**） |
 | 频道成员构成 | `src/company/channels.ts:453` `ensureAllChannels` |
 | 决策路由规则 | `src/domain/routing.ts:81` `decideOwner` |
-| 升级链阶段 | `src/company/escalation.ts` 的 `EscalationState` + phases |
-| 待办处置规则 | `src/company/disposition.ts` |
+| 升级链阶段 | `src/company/escalation.ts` 的 `EscalationState`（单阶段 `ask`）+ 唯一的 `ask` handler |
+| 待办处置规则 | `src/company/disposition.ts` 的 `dueDispositionItems()` + `settleDueDispositions()` |
 | 看门狗阈值/动作 | `src/company/watchdog.ts:81` `WatchdogOptions` |
 | 任务状态机 | `src/domain/tasks.ts` `TRANSITIONS` |
 | 新增一个数据文档 | `src/company/docs.ts`（用 `defineDoc`） |
@@ -532,12 +526,12 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 ## 9. 测试
 
 ```
-test/unit/        29 个：纯函数（domain 层）+ capabilities / staff-scope / role-charter /
+test/unit/        28 个：纯函数（domain 层）+ capabilities / staff-scope / role-charter /
                         company-migration / ids / settings / wal / routes …
 test/contract/     1 个：runtime.test.ts —— 钉住底层行为，升级 pi-durable 后必跑
-test/e2e/         31 个：acceptance hierarchy escalation decision-loop channels-deliver
-                        channel-ack delivery-receipt delegation restart-channels terminate
-                        roundtable owner-gate real-model reliability org web …
+test/e2e/         30 个：acceptance hierarchy escalation decision-loop channels-deliver
+                        channel-ack delivery-receipt restart-channels terminate
+                        owner-gate real-model reliability org web …
 test/support.ts         共用搭建（临时库 + 假模型）
 ```
 
@@ -561,7 +555,8 @@ test/support.ts         共用搭建（临时库 + 假模型）
 | 投递回执 | `test/e2e/delivery-receipt.test.ts` |
 | 频道回执（老板看得见的「已排队」） | `test/e2e/channel-ack.test.ts` |
 | 派活去重 | `test/unit/domain-tasks.test.ts`（`describe("重复任务")`） |
-| 同步等待 | `test/unit/delegation-guard.test.ts`、`test/e2e/delegation.test.ts` |
+| 同步派活（已删除，见 ADR-037） | `grep -rn "delegation" src/` 只应剩 `runtime/ids.ts` 的 ID 生成 |
+| 圆桌 / IM / 会话流视图（已删除，见 ADR-040） | `npm run check:boundaries`（零消费者检查只应剩 `/api/pending` 归档区一条）、`grep -rn "roundtable\|/api/im\|/api/feed\|/api/message\|/api/interrupt\|/api/upload" src/ ui/js/` |
 | 底层升级 | `test/contract/runtime.test.ts` |
 
 命令：`npm run check`（tsc + 边界）→ `npm run verify`（vitest --run + 收据，跳过 0 才算过）。
@@ -571,9 +566,9 @@ test/support.ts         共用搭建（临时库 + 假模型）
 ## 10. 规格与决策记录
 
 ```
-  communication-trail  company-runtime  cost-accounting  delegation  escalation
+  communication-trail  company-runtime  cost-accounting  escalation
   org-structure  project-authority  project-lifecycle  project-workspace  tui-workspace
-docs/DECISIONS.md        36 条 ADR（每条有背景、替代方案、为什么这么选）
+docs/DECISIONS.md        40 条 ADR（每条有背景、替代方案、为什么这么选）
 docs/history/PLAN.md     技术选型 + 架构 + 附录 B「必踩的 15 个坑」（已冻结）
 docs/WEB-API.md          网页 API 契约
 ```
@@ -598,7 +593,11 @@ ADR-032  能力目录声明式 + 延迟工具 + tool_search
 ADR-033  老板级待办只能由 CEO 递
 ADR-034  投递回执——投递成功 ≠ 已读，unanswered 必须可见并告警
 ADR-035  能力粒度——scope 写在工具名里，隔离靠工具不存在
+ADR-037  同步派活彻底删除——投递只有一条路
+ADR-038  升级链只剩一个阶段——「现在停在谁那儿」
+ADR-039  处置待办的到期只有一个判据、一个结算入口
 ADR-036  验收标准是机器可读收据，不是「测试全绿」这句话
+ADR-040  能删的都删——圆桌、IM、会话流视图、零消费者路由
 ```
 
 ---

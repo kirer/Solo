@@ -13,10 +13,9 @@ import {
 	createEscalationTask,
 	listPending,
 	startEscalation,
-	waitEscalation,
 } from "../../src/company/escalation.ts";
 import { AuditDoc, CompanyDoc } from "../../src/company/docs.ts";
-import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG, waitEscalation } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
