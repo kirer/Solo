@@ -400,7 +400,6 @@ API 路由一览（声明在 `src/server/routes.ts` 的 `routes` 数组，handle
 
 ```
 GET    /api/org                    组织快照
-GET    /api/pending                待决问题
 GET    /api/profile/:conversationId 员工档案
 GET    /api/stream/org              SSE 组织
 GET    /api/stream/feed/:id         SSE 会话流
@@ -556,7 +555,7 @@ test/support.ts         共用搭建（临时库 + 假模型）
 | 频道回执（老板看得见的「已排队」） | `test/e2e/channel-ack.test.ts` |
 | 派活去重 | `test/unit/domain-tasks.test.ts`（`describe("重复任务")`） |
 | 同步派活（已删除，见 ADR-037） | `grep -rn "delegation" src/` 只应剩 `runtime/ids.ts` 的 ID 生成 |
-| 圆桌 / IM / 会话流视图（已删除，见 ADR-040） | `npm run check:boundaries`（零消费者检查只应剩 `/api/pending` 归档区一条）、`grep -rn "roundtable\|/api/im\|/api/feed\|/api/message\|/api/interrupt\|/api/upload" src/ ui/js/` |
+| 圆桌 / IM / 会话流视图 / 待办归档（已删除，见 ADR-040） | `npm run check:boundaries`（零消费者检查应零缺口）、`grep -rn "roundtable\|/api/im\|/api/feed\|/api/message\|/api/interrupt\|/api/upload\|archive=1" src/ ui/js/` |
 | 底层升级 | `test/contract/runtime.test.ts` |
 
 命令：`npm run check`（tsc + 边界）→ `npm run verify`（vitest --run + 收据，跳过 0 才算过）。

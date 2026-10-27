@@ -25,7 +25,7 @@ import { BACKGROUND_CONTEXT, inspectLiveness, isConversationBusy } from "../runt
 import type { CompanyRuntime } from "../runtime/index.ts";
 import type { ModelSetup } from "../runtime/models.ts";
 import { CompanyDoc } from "../company/docs.ts";
-import { answerPending, disposePending, listPending, listPendingArchive, PendingDoc, takeOverPendingAtCeo } from "../company/escalation.ts";
+import { answerPending, disposePending, listPending, PendingDoc, takeOverPendingAtCeo } from "../company/escalation.ts";
 import { settleDisposition } from "../company/disposition.ts";
 import { startCompanyWatchdog } from "../company/org.ts";
 import {  } from "../company/wait.ts";
@@ -287,28 +287,6 @@ export async function serve(options: ServeOptions): Promise<Server> {
 			pattern: "/api/org",
 			method: "GET",
 			handler: async ({ response }) => json(response, await buildOrgView(current(), BACKGROUND_CONTEXT)),
-		},
-		{
-			pattern: "/api/pending",
-			method: "GET",
-			handler: async ({ response, url }) => {
-				// 归档查询：`/api/pending?archive=1[&kind=rejected|resolved]`
-				// 默认只给未答复且未处置的（有处置就从看板消失）；archive 才是「归档区可查」。
-				const archive = url.searchParams.get("archive");
-				if (archive === "1" || archive === "true") {
-					const kindParam = url.searchParams.get("kind");
-					const kind = kindParam === "rejected" || kindParam === "resolved" ? kindParam : undefined;
-					return json(
-						response,
-						await listPendingArchive(
-							current(),
-							{ disposedOnly: true, ...(kind === undefined ? {} : { kind }) },
-							BACKGROUND_CONTEXT,
-						),
-					);
-				}
-				return json(response, await listPending(current(), BACKGROUND_CONTEXT));
-			},
 		},
 		// 职工「工作记录」（UX-7 的数据源）：思考 / 回复 / 工具调用混排。
 		//

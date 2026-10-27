@@ -545,7 +545,7 @@ describe("发消息与拍板", () => {
 	 *
 	 * 走 HTTP，因为老板真正点的就是这条路径；直接调内部 API 证明不了接线对。
 	 */
-	test("老板驳回一条待办：接口成功、从 /api/pending 消失、归档可查、审计有记录", async () => {
+	test("老板驳回一条待办：接口成功、从待办列表消失、审计有记录", async () => {
 		const { server, runtime, escalationTask, dir } = await setup();
 		const { project } = await createProject(
 			runtime,
@@ -583,7 +583,7 @@ describe("发消息与拍板", () => {
 			{ label: "升到老板层" },
 		);
 
-		const before = (await (await fetch(`${server.url}api/pending`)).json()) as { key: string }[];
+		const before = await listPending(runtime, BACKGROUND_CONTEXT);
 		expect(before.map((item) => item.key)).toContain("web-dispose-1");
 
 		const response = await fetch(`${server.url}api/pending/dispose`, {
@@ -597,17 +597,9 @@ describe("发消息与拍板", () => {
 		expect(body.changed).toBe(true);
 		expect(body.disposal?.status).toBe("rejected");
 
-		// 从默认列表消失
-		const after = (await (await fetch(`${server.url}api/pending`)).json()) as { key: string }[];
+		// 从待办列表消失（处置过的条目不再出现在 listPending 里）
+		const after = await listPending(runtime, BACKGROUND_CONTEXT);
 		expect(after.map((item) => item.key)).not.toContain("web-dispose-1");
-
-		// 归档可查
-		const archive = (await (await fetch(`${server.url}api/pending?archive=1&kind=rejected`)).json()) as {
-			key: string;
-			disposed?: { status: string; reason: string };
-		}[];
-		const archived = archive.find((item) => item.key === "web-dispose-1");
-		expect(archived?.disposed).toMatchObject({ status: "rejected", reason: "今年不做商业化" });
 
 		// 审计有记录：处置事件写在**该条待办的 fromConversationId** 那个会话的审计文档里。
 		// owner 级待办一律记在 CEO 名下（见 ensurePending 的注释），所以这里读 CEO 会话，

@@ -1231,3 +1231,52 @@ disposed === undefined && shouldApplyTimeoutDefault(...).apply`），结算动�
 
 **测试**：`npx vitest --run` = 56 files / 741 tests 全绿；`npm run check` exit 0；
 `npm run ui:build` 成功。`src/` 从 25029 行降到 **22099 行（−2930）**。
+
+---
+
+## ADR-041 待办的归档区删掉——处置完就只剩审计事件
+
+**背景**：`GET /api/pending` 曾有两个分支：默认列表（未答复且未处置）与
+`?archive=1`（已处置的「归档区」）。界面用两个按钮往里写——「标记已解决」与
+「驳回（必填理由）」——但**从来没有界面读过归档区**。结果是老板点「驳回」并
+写下理由之后，那条待办从看板消失，理由写进库，然后谁也看不到它了。
+
+这不是「少做了一点」，而是「写进去再无人读」，比没有这个功能更坏：老板会以为
+自己留下了一条记录。
+
+**决策**：
+
+1. **删 `GET /api/pending` 整条路由**，包括两个分支。默认列表的消费者早已迁走：
+   - 界面读的是**频道视图内嵌的 `pending` 字段**（`GET /api/channels/:id`）；
+   - 运维脚本与看板读的是 **`GET /api/org` 的 `pending[]` + `ceoQueue`**
+     （`scripts/ai-company-service.sh` 上一轮已改走这条路）。
+2. **删 `listPendingArchive()`**（26 行）。它的唯一调用者就是刚删的 archive 分支。
+3. **`POST /api/pending/dispose` 保留**。写入处置仍然是有效的动作，只是「事后
+   去哪看」换了地方：审计事件写在**提问方会话**的 `AuditDoc`
+   （`type: "dispose"`、`note: "rejected: 理由"`、`ref: "key@level"`）。这是
+   `disposePending()` 的第 ④ 步，本来就有，只是此前没人指过它。
+4. **不做「已处置」界面**。理由与 ADR-040 同一条判据：这个能力生产上被调用
+   0 次（`GET /api/pending?archive=1` 返回 `[]`，`PendingDoc` 里没有任何条目
+   带 `disposed` 字段）。先让它变成可读的审计事件，等真有人驳回三次以上再谈
+   要不要做界面。
+
+**替代方案**：
+
+- **补界面**（在 `ui/js/pending.js` 加一个「已处置」折叠区，约 40 行）。它解决
+  「理由写进库没人看」，但凭据是 0 次使用——先补界面等于照着想象的需求做产品。
+- **只删 archive 分支、保留默认列表**。留一个界面不读的接口继续维护它，等于把
+  同一个问题往后推一轮。
+
+**代价**：
+
+- **审计事件没有检索入口**。`AuditDoc` 目前只被 TUI 的 `trailForConversation`
+  与 `src/company/trail.ts` 读，没有 HTTP 接口。所以严格说：现在驳回一条待办，
+  界面上仍然彻底消失——只是它**确实**留下了一条可被程序读到的记录，而不是
+  一条写进去再无人读的 `disposed` 字段。要让老板真看到，需要给 `AuditDoc`
+  开一个查询接口；那是一个独立决定，不该塞进这次删除。
+- **`test/e2e/web.test.ts` 那条用例的取证方式变了**：从「再 GET `?archive=1`
+  查得到」改成「`listPending()` 里没有了」+ 保留原有审计断言。后者才是这个
+  功能真正的不变量。
+
+**测试**：`npx vitest --run test/e2e/web.test.ts` = 28 passed；`npm run check`
+exit 0 且零缺口（`NO_CONSUMER_PENDING` 现在是空 Map，`16 条 HTTP 路由都有消费者`）。

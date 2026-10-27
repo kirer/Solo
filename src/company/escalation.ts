@@ -626,29 +626,6 @@ export async function listPending(
 }
 
 /**
- * 归档查询：含已处置（驳回 / 已解决）的条目。
- *
- * 满足「处置后从默认列表消失，但归档区可查」。刻意不做分页：待办总量远小于会话条目，
- * 一次全给最简单；真要大了再加游标，现在加是过度设计。
- *
- * @param options.kind 只看某种处置（`rejected` / `resolved`）；不传则两种都给。
- * @param options.disposedOnly 为 true 时只要已处置的（纯归档视图）；默认 false 返回全部。
- */
-export async function listPendingArchive(
-	runtime: CompanyRuntime,
-	options: { readonly kind?: DisposalKind; readonly disposedOnly?: boolean } = {},
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<PendingItem[]> {
-	const state = await runtime.harness.snapshot(PendingDoc, context);
-	const items = state?.items ?? [];
-	return items.filter((item) => {
-		if (options.disposedOnly === true && item.disposed === undefined) return false;
-		if (options.kind !== undefined) return item.disposed?.status === options.kind;
-		return true;
-	});
-}
-
-/**
  * 一条待办该不该由「这个操作者」处置。（硬性验收项：无权限者不能操作他人待办）
  *
  * 判据与现有答复路径**同一口径**（`decisionOwnerOfItem`）：

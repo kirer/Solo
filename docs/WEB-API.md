@@ -13,7 +13,6 @@
 | GET | `/api/org` | 组织快照（CEO/高管/项目/员工/待办/成本/连线） |
 | GET | `/api/stream/org` | 组织快照 SSE |
 | GET | `/api/profile/:conversationId` | 角色档案（章程 / 技能 / 工具） |
-| GET | `/api/pending` | 待决问题列表 |
 | POST | `/api/answer` | 拍板回答一条待决问题 |
 | **GET / PATCH** | **`/api/settings`** | **设置：网络 / 模型** |
 | **POST / PATCH / DELETE** | **`/api/models`** | **新增 / 编辑 / 删除模型（含内置模型的改名、隐藏、设默认）** |
@@ -221,10 +220,14 @@
 
 ## 10.5 待办与拍板投递
 
-待办（`pending`）现在由两个入口下发：
+待办（`pending`）由两个入口下发（`GET /api/pending` 已删除，见 ADR-040）：
 
 - **频道视图**（`GET /api/channels/:id` 的 `pending` 字段，见 §10.6）——界面在读的地方。
 - **组织快照**（`GET /api/org` 的 `pending[]` + `ceoQueue`）——运维脚本与看板用。
+
+处置（驳回 / 标记已解决）后条目从上面两个入口消失，只留一条审计事件在提问方
+会话的 `AuditDoc` 里（`type: "dispose"`，`note` 形如 `rejected: 理由`）。**没有归档
+查询接口**：`?archive=1` 在界面从未被读过，已按 ADR-040 删除。
 
 每条的形状：
 

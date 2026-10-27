@@ -54,7 +54,7 @@ node --experimental-strip-types src/server/main.ts \
 与「plist 写了什么」，两者不一致时会直接告诉你重启。
 
 `status` 里的「待你拍板」数是 `/api/org` 的 `pending[].forYou`（`decisionOwner === "owner"`），
-不是 `/api/pending` 的全部条数——后者含所有人身上挂着的未答复问题，拿它数会让老板
+不是「所有人身上的未答复问题」——后者含管理层身上挂着的，拿它数会让老板
 以为一堆事等自己。旁边那个「CEO 攒着」是 `ceoQueue`。
 
 ## 3. 局域网访问（手机 / 同事）

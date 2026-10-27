@@ -111,30 +111,8 @@ const NO_CONSUMER_ALLOWED = new Map([
  * 清单会随每次 check 打印；条目消失说明缺口已关上，那时应当来删这一行。
  */
 const NO_CONSUMER_PENDING = new Map([
-	[
-		"/api/feed/:conversationId",
-		"已被 /api/channels/:id 取代（消息流搬进频道视图）。会话流视图与它的 SSE 一起在阶段 1 删除",
-	],
-	[
-		"/api/stream/feed/:conversationId",
-		"同上：频道视图走 /api/channels/:id 轮询，不再有会话流 SSE。阶段 1 与 /api/feed 一起删",
-	],
-	[
-		"/api/pending",
-		"`?archive=1`（归档区）界面从未接过：驳回/已解决只能写（POST /api/pending/dispose），看不到历史。默认列表已被频道视图内嵌的 pending 字段与 /api/org 的 pending[] 取代（运维脚本也已改走 /api/org）。下一步二选一：把归档区做成界面，或删掉 archive 分支",
-	],
-	[
-		"/api/message",
-		"旧「发消息给某个会话」入口，已被 POST /api/channels/:id/messages 取代（后者会算 mentions、写已读、带未读摘要）。阶段 1 删除",
-	],
-	[
-		"/api/interrupt",
-		"前端从未接过「打断」按钮。语义与 POST /api/channels/:id/messages 的插队重复，阶段 1 删除",
-	],
-	[
-		"/api/upload",
-		"**真缺口**：后端与文档（docs/WEB-API.md §6/§7）都齐了，但界面没有任何上传入口（ui/js/board.js:192 只有一句「附件上传联调」文案）。阶段 3 在频道输入框接上，或明确删掉这项能力",
-	],
+	// 现在是空的：上一轮的六条缺口都已按 ADR-040 处置完（删路由或删归档分支）。
+	// 将来再发现界面接不上但暂时不删的路由，往这里加一行，并写清「谁来做、做到什么程度」。
 ]);
 
 /** 零消费者检查的搜索域：界面层源码 + TUI 源码。 */
