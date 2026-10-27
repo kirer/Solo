@@ -202,8 +202,25 @@ await cdp.send("Emulation.setDeviceMetricsOverride", {
 });
 
 try {
-	console.log("\n· 桌面：组织图渲染 / 右侧对话面板已移除");
+	console.log("\n· 桌面：默认落在频道视图（不是组织图）");
 	await cdp.navigate("/");
+	// F1（ACCEPTANCE-dino §5）：默认视图从组织图改成频道。组织图回答「谁是谁的下属」，
+	// 首页要回答「刚才发生了什么」；而且组织图是瞬时快照，多数时刻全灰。
+	// 这条断言钉的是「首屏不是组织图」，不是「频道长什么样」（频道由下面整段覆盖）。
+	const landing = await cdp.eval(`(() => ({
+		view: document.body.dataset.view ?? '',
+		orgVisible: getComputedStyle(document.querySelector('.org')).display !== 'none',
+		channelsVisible: getComputedStyle(document.querySelector('#channels')).display !== 'none',
+		selected: [...document.querySelectorAll('.view-switch-btn')].find((b) => b.getAttribute('aria-selected') === 'true')?.id ?? '',
+	}))()`);
+	check("默认落在频道视图", landing.view === "channels" && landing.selected === "view-channels", `${landing.view || "(未设置)"} / ${landing.selected}`);
+	check("首屏不显示组织图", landing.orgVisible === false, landing.orgVisible ? "组织图可见（会先闪一下）" : "");
+	check("首屏静态 HTML 就是频道（不靠 JS 补救）", landing.channelsVisible === true);
+
+	console.log("\n· 桌面：组织图渲染 / 右侧对话面板已移除");
+	// 组织图不再是默认视图，下面的断言必须先切过去。
+	await cdp.click("#view-org");
+	await sleep(600);
 	const initial = await cdp.eval(`(() => {
 		const stage = document.querySelector('.stage-inner');
 		const nodes = [...document.querySelectorAll('.card[data-conv]')].map((el) => {
@@ -365,6 +382,9 @@ try {
 	await cdp.navigate("/?dev");
 	await cdp.eval("window.__company.useMock()");
 	await sleep(1000);
+	// 连线和状态光边只有组织图才画；默认视图已经是频道，这里必须切过去。
+	await cdp.click("#view-org");
+	await sleep(900);
 	const mock = await cdp.eval(`(() => ({
 		live: document.querySelectorAll('.card[data-status="busy"], .card[data-status="waiting"]').length,
 		edges: document.querySelectorAll('.edge').length,
@@ -600,7 +620,9 @@ try {
 	await cdp.navigate("/");
 	await sleep(1400);
 	const viewInitial = await cdp.eval(`({ view: document.body.dataset.view ?? '', boardHidden: document.querySelector('#board')?.hidden ?? true })`);
-	check("默认是组织图视图", viewInitial.view !== "board", viewInitial.view || "(未设置)");
+	// 默认视图是频道（F1）。这里只钉「进来不是看板」——看板是老板偶尔才看的一页，
+	// 不该是落地页；至于落地页到底是频道还是组织图，由上面第一条断言管。
+	check("默认不是看板视图", viewInitial.view !== "board", viewInitial.view || "(未设置)");
 	await cdp.click("#view-board");
 	await sleep(1100);
 	const board = await cdp.eval(`(() => {
