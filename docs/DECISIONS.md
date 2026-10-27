@@ -1278,5 +1278,6 @@ disposed === undefined && shouldApplyTimeoutDefault(...).apply`），结算动�
   查得到」改成「`listPending()` 里没有了」+ 保留原有审计断言。后者才是这个
   功能真正的不变量。
 
-**测试**：`npx vitest --run test/e2e/web.test.ts` = 28 passed；`npm run check`
-exit 0 且零缺口（`NO_CONSUMER_PENDING` 现在是空 Map，`16 条 HTTP 路由都有消费者`）。
+**测试**：`npm run verify` = 739 个测试 0 跳过（删掉两条归档查询用例）；
+`npm run check` exit 0 且零缺口（`NO_CONSUMER_PENDING` 现在是空 Map，
+`16 条 HTTP 路由都有消费者`）。

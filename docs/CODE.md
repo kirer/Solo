@@ -14,7 +14,7 @@ src/company/ 11264 行   业务：装配、工具、频道、任务、升级链�
 src/server/   5093 行   HTTP + SSE + 设置 + 频道视图
 src/tui/      1267 行   终端界面
 scripts/                边界检查、截图、UI 检查
-test/                   unit(27) / contract(1) / e2e(28)，56 个文件 / 741 个 case
+test/                   unit(27) / contract(1) / e2e(28)，56 个文件 / 739 个 case
 ui/                     原生 JS，31 个文件，14313 行
 ```
 

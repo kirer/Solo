@@ -10,7 +10,7 @@
  * 3. 审计有记录（AuditDoc.events 里 type="dispose"）
  * 4. **无权限者不能操作他人待办**（硬性项）
  * 5. 重复操作幂等（不报错、不重复留痕）
- * 6. 归档查询能查到已处置的
+ * 6. 已处置的条目不再出现在 listPending 里（没有归档查询接口，见 ADR-041）
  *
  * 全部用临时库（createTestContext），绝不碰真实 workspace/company.sqlite。
  */
@@ -23,7 +23,6 @@ import {
 	canDisposePending,
 	disposePending,
 	listPending,
-	listPendingArchive,
 	PendingDoc,
 	type PendingItem,
 } from "../../src/company/escalation.ts";
@@ -232,9 +231,11 @@ describe("disposePending：驳回 / 已解决", () => {
 		if (conflict.ok) throw new Error("unreachable");
 		expect(conflict.code).toBe("archived");
 
-		const archive = await listPendingArchive(runtime, { disposedOnly: true }, BACKGROUND_CONTEXT);
-		expect(archive).toHaveLength(1);
-		expect(archive[0]?.disposed?.status).toBe("rejected");
+		// 处置结论不变（没有归档查询接口了，直接读文档；ADR-041）
+		const state = await runtime.harness.snapshot(PendingDoc, BACKGROUND_CONTEXT);
+		const kept = state?.items.filter((entry) => entry.disposed !== undefined) ?? [];
+		expect(kept).toHaveLength(1);
+		expect(kept[0]?.disposed?.status).toBe("rejected");
 	});
 
 	test("无权限（CEO 去处置 owner 的待办）被拒，给出可读原因，且状态未变", async () => {
@@ -332,45 +333,6 @@ describe("审计留痕", () => {
 
 		const events = await auditEvents(runtime, ceoConversationId);
 		expect(events.find((event) => event.type === "dispose")?.note).toBe("resolved");
-	});
-});
-
-describe("归档查询", () => {
-	test("listPendingArchive 能查到已处置的；默认 listPending 查不到", async () => {
-		const { runtime, ceoConversationId } = await boot();
-		await seedPending(runtime, { key: "esc:i", level: "owner", decisionOwner: "owner", fromConversationId: ceoConversationId });
-		await seedPending(runtime, { key: "esc:j", level: "owner", decisionOwner: "owner", fromConversationId: ceoConversationId });
-		await disposePending(
-			runtime,
-			{ key: "esc:i", status: "rejected", reason: "重复需求", disposedBy: "owner", operatorLevel: "owner" },
-			BACKGROUND_CONTEXT,
-		);
-
-		const active = await listPending(runtime, BACKGROUND_CONTEXT);
-		expect(active.map((item) => item.key)).toEqual(["esc:j"]);
-
-		const archived = await listPendingArchive(runtime, { disposedOnly: true }, BACKGROUND_CONTEXT);
-		expect(archived.map((item) => item.key)).toEqual(["esc:i"]);
-		expect(archived[0]?.disposed?.reason).toBe("重复需求");
-	});
-
-	test("按 kind 过滤：只要 resolved", async () => {
-		const { runtime, ceoConversationId } = await boot();
-		await seedPending(runtime, { key: "esc:k", level: "owner", decisionOwner: "owner", fromConversationId: ceoConversationId });
-		await seedPending(runtime, { key: "esc:l", level: "owner", decisionOwner: "owner", fromConversationId: ceoConversationId });
-		await disposePending(
-			runtime,
-			{ key: "esc:k", status: "rejected", reason: "不要", disposedBy: "owner", operatorLevel: "owner" },
-			BACKGROUND_CONTEXT,
-		);
-		await disposePending(
-			runtime,
-			{ key: "esc:l", status: "resolved", disposedBy: "owner", operatorLevel: "owner" },
-			BACKGROUND_CONTEXT,
-		);
-
-		const resolved = await listPendingArchive(runtime, { kind: "resolved", disposedOnly: true }, BACKGROUND_CONTEXT);
-		expect(resolved.map((item) => item.key)).toEqual(["esc:l"]);
 	});
 });
 

@@ -141,7 +141,7 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
 ```bash
 npm install
 npm start                        # 起网页服务，默认 http://127.0.0.1:7788
-npm run verify                   # 741 个测试，约 2 分钟（跳过 0 才算过）
+npm run verify                   # 739 个测试，约 2 分钟（跳过 0 才算过）
 ```
 
 `workspace/company.sqlite` 是真实数据；做实验前先备份（`docs/RUNBOOK.md` §备份）。
