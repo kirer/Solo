@@ -24,7 +24,8 @@
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
@@ -37,9 +38,12 @@ import {
 } from "../runtime/index.ts";
 import { OWNER_SLUG, chainUp, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
 import {
+	copySkillDir,
 	listCompanySkills,
 	listSkills,
 	readSkill,
+	SKILL_FILE,
+	SKILLS_DIR,
 	type SkillRoots,
 	writeCompanySkill,
 	writeSkill,
@@ -53,6 +57,8 @@ import {
 	ChannelDoc,
 	channelsOf,
 	dmId,
+	parseMentions,
+	personalId,
 	readMarkOf,
 	unreadCount,
 	type ChannelState,
@@ -93,11 +99,57 @@ export type CoreToolDeps = {
 	 * 视野；`channel/post.ts` 只认识频道文档，不该知道项目记忆存在。
 	 */
 	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
+	/**
+	 * 按项目文件重建它的频道成员（幂等）。
+	 *
+	 * `write_project` 改了 `owner` 之后必须调一次：项目频道里的人是文档的投影，
+	 * 不刷新的话，刚任命的负责人在项目频道里不存在，员工 @ 不到他。
+	 */
+	readonly syncProject?: (project: string, context: Context) => Promise<void>;
 };
 
 /** 技能的两级根目录。工具里每次都从 deps 现算，避免多存一份会漂的副本。 */
 function skillRoots(deps: CoreToolDeps): SkillRoots {
 	return { workspace: deps.workspaceRoot, agents: deps.agentsRoot };
+}
+
+/**
+ * 把 `npx skills add` 装出来的技能收进我们的公司层。
+ *
+ * `npx skills add` 不认我们的目录约定：它把技能放进 `<cwd>/.agents/skills/<名字>/`，
+ * 再给「它认识的」agent 目录做符号链接。而公司层就是 `<workspace>/skills/` —— 直接
+ * 在工作区里跑，装完文件在别处，`list_skills` 看不见，等于白装。
+ *
+ * 所以：装进临时目录 → 把每个技能**真身**（不是符号链接）拷进公司层 → 删临时目录。
+ * 同名已存在时不覆盖（`copySkillDir` 的既有约定）：用户改过的技能不该被一次安装冲掉。
+ */
+export async function adoptSkills(stagingRoot: string, skillsRoot: string): Promise<string[]> {
+	const candidates: string[] = [];
+	// 新版本装进 `.agents/skills/`，老版本装进 `skills/`：两处都看。
+	for (const relative of [".agents/skills", "skills"]) {
+		const dir = join(stagingRoot, relative);
+		let entries: import("node:fs").Dirent[];
+		try {
+			entries = await readdir(dir, { withFileTypes: true });
+		} catch {
+			continue;
+		}
+		for (const entry of entries) {
+			if (entry.isDirectory()) candidates.push(join(dir, entry.name));
+		}
+	}
+	const installed: string[] = [];
+	for (const dir of candidates) {
+		// 只收「有 SKILL.md 的目录」：没有正文的目录是缓存或脚本，不是技能。
+		try {
+			await readFile(join(dir, SKILL_FILE), "utf8");
+		} catch {
+			continue;
+		}
+		const skill = await copySkillDir(dir, skillsRoot);
+		installed.push(skill.name);
+	}
+	return installed;
 }
 
 function text(value: string) {
@@ -138,7 +190,9 @@ async function defaultChannel(
 	const mine = channelsOf(state, slug);
 	const first = mine[0];
 	if (first !== undefined) return { channelId: first.id };
-	return { channelId: dmId(OWNER_SLUG, slug) };
+	// 一个人至少有他的个人频道（与老板的私聊）。外壳在开会话时就建好了，所以这里
+	// 兜底也应该是它 —— 以前兜到同一个 id 但频道可能根本不存在，工具会报「频道不存在」。
+	return { channelId: personalId(slug) };
 }
 
 /** 建工具。返回一个扩展，装进所有 agent 的会话里。 */
@@ -214,7 +268,15 @@ export function createCoreTools(deps: CoreToolDeps) {
 			}
 			const result = await postMessage(
 				postDeps(deps, state, ctx),
-				{ channelId: target.channelId, from: slug, text: `@${who} ${args.text}`, at: Date.now(), kind: "question" },
+				{
+					channelId: target.channelId,
+					from: slug,
+					// 正文里如果已经写了 `@who`（模型很常这么干），就不要再拼一遍。
+					// 以前无条件拼，界面上就会看到「@前端工程师 @前端工程师」两遍同一个名字。
+					text: parseMentions(args.text).includes(who) ? args.text : `@${who} ${args.text}`,
+					at: Date.now(),
+					kind: "question",
+				},
 				ctx,
 			);
 			if (deps.afterPost !== undefined) await deps.afterPost(result.message, target.channelId, ctx);
@@ -515,17 +577,51 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const { promisify } = await import("node:util");
 			const run = promisify(execFile);
 			const command = args.action === "add" ? ["skills", "add", args.query, "--yes"] : ["skills", "find", args.query];
+			if (args.action !== "add") {
+				// `find` 只是搜索，不需要落盘，在工作区里跑就行。
+				try {
+					const { stdout, stderr } = await run("npx", command, {
+						cwd: deps.workspaceRoot,
+						timeout: 120_000,
+						maxBuffer: 4 * 1024 * 1024,
+						env: { ...process.env, CI: "1" },
+					});
+					const output = `${stdout}\n${stderr}`.trim();
+					return text(output === "" ? "命令跑完了，没有输出。" : output.slice(0, 8_000));
+				} catch (error) {
+					const detail = error instanceof Error ? error.message : String(error);
+					return text(`搜不动（可能是没网，或者 npx 不可用）：${detail.slice(0, 2_000)}`);
+				}
+			}
 			try {
-				// 在**工作区**里跑：`npx skills add` 会把技能装到当前目录下的 skills/，
-				// 正好就是公司层。装之前把 cwd 设成工作区根，个人层的事让它自己拷。
-				const { stdout, stderr } = await run("npx", command, {
-					cwd: deps.workspaceRoot,
-					timeout: 120_000,
-					maxBuffer: 4 * 1024 * 1024,
-					env: { ...process.env, CI: "1" },
-				});
-				const output = `${stdout}\n${stderr}`.trim();
-				return text(output === "" ? "命令跑完了，没有输出。" : output.slice(0, 8_000));
+				// `npx skills add` 不认我们的目录约定：它把技能放进 `<cwd>/.agents/skills/`
+				// 并只符号链接给「它认识的」agent 目录。而我们的公司层就是 <workspace>/skills/
+				// —— 直接在工作区里跑，装完等于白装：文件在那儿，但 `list_skills` 看不见。
+				//
+				// 所以先装到临时目录，再把每个技能的**真身**拷进公司层。这样：
+				// 拷进来的是普通文件（不是符号链接，临时目录删掉也不会断），
+				// 而且 `copySkillDir` 已经处理了「同名不覆盖」—— 用户改过的技能不会被下次安装冲掉。
+				const staging = await mkdtemp(join(tmpdir(), "skills-add-"));
+				try {
+					const { stdout, stderr } = await run("npx", command, {
+						cwd: staging,
+						timeout: 180_000,
+						maxBuffer: 8 * 1024 * 1024,
+						env: { ...process.env, CI: "1" },
+					});
+					const installed = await adoptSkills(staging, join(deps.workspaceRoot, SKILLS_DIR));
+					const output = `${stdout}\n${stderr}`.trim().slice(0, 6_000);
+					if (installed.length === 0) {
+						return text(
+							`装是装完了，但没找到技能文件（多半是包名不对）。\n\n${output}\n\n用 \`find_skill action=find\` 先确认包名。`,
+						);
+					}
+					return text(
+						`已装进公司层：${installed.join("、")}。用 \`read_skill\` 读一遍再决定要不要改。\n\n${output}`,
+					);
+				} finally {
+					await rm(staging, { recursive: true, force: true });
+				}
 			} catch (error) {
 				const detail = error instanceof Error ? error.message : String(error);
 				return text(`跑不动（可能是没网，或者 npx 不可用）：${detail.slice(0, 2_000)}`);
@@ -582,7 +678,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 			status: Type.Optional(Type.String({ description: "active / paused / done / archived" })),
 			body: Type.String({ description: "正文：目标、验收标准、边界、进展" }),
 		}),
-		execute: async (args) => {
+		execute: async (args, _api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
 			try {
 				const project = await writeProject(deps.projectsRoot, {
 					slug: args.slug,
@@ -591,7 +688,14 @@ export function createCoreTools(deps: CoreToolDeps) {
 					...(args.owner === undefined ? {} : { owner: args.owner }),
 					...(args.status === undefined ? {} : { status: args.status as never }),
 				});
-				return text(`已写入项目「${project.name}」（${project.slug}）。agents 里写 \`project: ${project.slug}\` 的人会看到这份说明。`);
+				// 负责人写进文件之后，项目频道要立刻把他拉进来：频道成员是文档的投影，
+				// 文档改了投影不改，员工在项目里就 @ 不到刚任命的负责人。
+				if (deps.syncProject !== undefined) await deps.syncProject(project.slug, ctx);
+				const ownerNote =
+					project.owner === undefined
+						? "\n\n注意：这份项目还没有负责人（`owner`）。项目里出问题时没人能拍板 —— 现在就把负责人定下来。"
+						: "";
+				return text(`已写入项目「${project.name}」（${project.slug}），负责人：${project.owner ?? "（没人负责）"}。agents 里写 \`project: ${project.slug}\` 的人会看到这份说明。${ownerNote}`);
 			} catch (error) {
 				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
 			}

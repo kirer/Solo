@@ -1,4 +1,4 @@
-import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -10,6 +10,7 @@ import {
 	writeSkill,
 	type SkillRoots,
 } from "../../src/core/agent/skills.ts";
+import { adoptSkills } from "../../src/core/channel/tools.ts";
 
 /** 工作区根：`agents/` 与 `skills/` 都在它下面。 */
 let root = "";
@@ -26,6 +27,17 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	await rm(root, { recursive: true, force: true });
+});
+
+/** 装技能用的临时目录（每个用例一个，用例结束统一删）。 */
+const extraRoots: string[] = [];
+async function adoptRoot(): Promise<string> {
+	const dir = await mkdtemp(join(tmpdir(), "skills-adopt-"));
+	extraRoots.push(dir);
+	return dir;
+}
+afterEach(async () => {
+	await Promise.all(extraRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe("技能：目录即事实", () => {
@@ -122,5 +134,72 @@ describe("技能：公司层与个人层", () => {
 		await writeCompanySkill(root, { name: "a", description: "公司", body: "x" });
 		await writeSkill(roots, "me", { name: "b", description: "个人", body: "y" });
 		expect((await listCompanySkills(root)).map((skill) => skill.name)).toEqual(["a"]);
+	});
+});
+
+describe("从技能市场装进来的技能", () => {
+	it("把 npx 装出来的技能真身拷进公司层，跳过没有 SKILL.md 的目录", async () => {
+		const root = await adoptRoot();
+		const staging = join(root, "staging");
+		const skillsRoot = join(root, "workspace", "skills");
+
+		// `npx skills add` 的真实布局：技能在 `.agents/skills/<名字>/SKILL.md`，
+		// 同目录下还有它自己的缓存/脚本目录（那些没有 SKILL.md）。
+		await mkdir(join(staging, ".agents", "skills", "skill-creator", "scripts"), { recursive: true });
+		await writeFile(
+			join(staging, ".agents", "skills", "skill-creator", "SKILL.md"),
+			"---\nname: skill-creator\ndescription: 造技能用的\n---\n\n# 正文\n",
+			"utf8",
+		);
+		await writeFile(join(staging, ".agents", "skills", "skill-creator", "scripts", "run.py"), "print(1)", "utf8");
+		// 老版本布局：直接放 `skills/`。
+		await mkdir(join(staging, "skills", "find-skills"), { recursive: true });
+		await writeFile(
+			join(staging, "skills", "find-skills", "SKILL.md"),
+			"---\nname: find-skills\ndescription: 找技能用的\n---\n\n# 正文\n",
+			"utf8",
+		);
+		// 一个没有 SKILL.md 的目录：不是技能，不该被收。
+		await mkdir(join(staging, ".agents", "skills", "cache"), { recursive: true });
+
+		const adopted = await adoptSkills(staging, skillsRoot);
+		expect(adopted.sort()).toEqual(["find-skills", "skill-creator"]);
+
+		const skills = await listCompanySkills(join(root, "workspace"));
+		expect(skills.map((skill) => skill.name).sort()).toEqual(["find-skills", "skill-creator"]);
+
+		// 连带文件也拷过来了（技能正文里常引用相对路径的脚本）。
+		const script = await readFile(join(skillsRoot, "skill-creator", "scripts", "run.py"), "utf8");
+		expect(script).toBe("print(1)");
+	});
+
+	it("已经是普通文件而不是符号链接", async () => {
+		const root = await adoptRoot();
+		const staging = join(root, "staging");
+		const skillsRoot = join(root, "workspace", "skills");
+		await mkdir(join(staging, ".agents", "skills", "pdf"), { recursive: true });
+		await writeFile(join(staging, ".agents", "skills", "pdf", "SKILL.md"), "---\nname: pdf\n---\n\n# 正文\n", "utf8");
+		await adoptSkills(staging, skillsRoot);
+
+		// 拷完就删临时目录。如果拷进来的是符号链接，这里会断 —— 所以必须是实体文件。
+		await rm(staging, { recursive: true, force: true });
+		const body = await readSkill({ workspace: join(root, "workspace"), agents: join(root, "agents") }, "owner", "pdf");
+		expect(body?.body).toContain("# 正文");
+	});
+
+	it("用户改过的同名技能不会被再次安装冲掉", async () => {
+		const root = await adoptRoot();
+		const staging = join(root, "staging");
+		const workspace = join(root, "workspace");
+		await mkdir(join(staging, ".agents", "skills", "pdf"), { recursive: true });
+		await writeFile(join(staging, ".agents", "skills", "pdf", "SKILL.md"), "---\nname: pdf\n---\n\n# 原版\n", "utf8");
+		await adoptSkills(staging, join(workspace, "skills"));
+
+		await writeCompanySkill(workspace, { name: "pdf", description: "改过", body: "# 我改的" });
+		await writeFile(join(staging, ".agents", "skills", "pdf", "SKILL.md"), "---\nname: pdf\n---\n\n# 新版\n", "utf8");
+		await adoptSkills(staging, join(workspace, "skills"));
+
+		const body = await readSkill({ workspace, agents: join(root, "agents") }, "owner", "pdf");
+		expect(body?.body).toContain("我改的");
 	});
 });

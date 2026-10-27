@@ -11,6 +11,7 @@
  * 2. **不哄人**：宁可写「未设置」，也不替 agent 编造一个听起来合理的职责。
  */
 import { OWNER_SLUG, chainUp, managerOf, reportsOf, type Identity } from "./identity.ts";
+import { personalId } from "../channel/state.ts";
 
 /** 一项能力的展示信息。能力本身在注册表里，这里只管「怎么写成一行」。 */
 export type CapabilityLine = {
@@ -106,6 +107,31 @@ function orgSection(input: RenderInput): string {
 		lines.push(`- 往上的整条汇报线：${chain.map((slug) => labelOf(all, slug)).join(" → ")}`);
 	}
 
+	// 拍板链。
+	//
+	// 写成一整段规则而不是「你的上级是谁」的重复，是因为它是这套制度里最容易漏的一环：
+	// 每个人都以为自己拍不了板就该直接找老板，于是老板成了唯一的决策者，中间那些
+	// 招来的人形同虚设。所以这里把每一级的职责写清楚：能拍就拍，拍不了才往上。
+	if (self.slug !== OWNER_SLUG) {
+		const escalateTo =
+			manager === undefined
+				? `${input.ownerName ?? "老板"}（\`${OWNER_SLUG}\`）`
+				: manager === OWNER_SLUG
+					? `${input.ownerName ?? "老板"}（\`${OWNER_SLUG}\`）`
+					: `${labelOf(all, manager)}（\`${manager}\`）`;
+		const up: string[] = [];
+		if (manager !== undefined && manager !== OWNER_SLUG) {
+			const grand = chain[2];
+			up.push(`你的上级（${labelOf(all, manager)}）也拍不了，就是${grand === undefined ? "老板" : labelOf(all, grand)}`);
+		}
+		lines.push(
+			`- 拍不了板怎么办：先自己拍 —— 归你职责范围的事，你定，不用问人。` +
+				`确实超出你的职责（涉及别人的活、要改别人的东西、要对外承诺），就问${escalateTo}。` +
+				`${up.length === 0 ? "" : `${up.join("、")}。`}` +
+				"**不要跳级**：越过你的上级直接找老板，等于告诉老板你上面的人没用。",
+		);
+	}
+
 	if (self.project !== undefined) {
 		const peers = all.filter(
 			(item) => item.project === self.project && item.slug !== self.slug,
@@ -116,6 +142,16 @@ function orgSection(input: RenderInput): string {
 				: `- 你在项目 \`${self.project}\` 里，同项目的人：${peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、")}`,
 		);
 	}
+
+	// 频道分工。
+	//
+	// 不写清楚的话，agent 会把所有东西都发到公司频道（那里人多，看起来「大家都该知道」），
+	// 于是公司频道被日常琐事淹没，真正需要别人看见的事反而没人看。
+	lines.push(
+		`- 在哪儿说话：` +
+			`自己的事、过程、念头，写在个人频道（\`${personalId(self.slug)}\`）—— 那是你和老板的私聊，落在这里就不会干扰别人。` +
+			`需要别人做事的，去对应的项目频道或公司频道，@ 具体的人。`,
+	);
 
 	lines.push("");
 	lines.push(`当前全公司有 ${all.length} 个 agent：${all.map((item) => item.name ?? item.slug).join("、")}，加上老板。`);

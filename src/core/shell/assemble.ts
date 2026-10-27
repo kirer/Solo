@@ -29,7 +29,8 @@ import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.t
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { agentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
-import { ChannelDoc, OWNER, channelsOf, ensureChannel, type ChannelState, type Message } from "../channel/state.ts";
+import { ChannelDoc, OWNER, channelsOf, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
+import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleProject, settleProjects } from "../project/settle.ts";
 
@@ -116,6 +117,8 @@ export type CoreShell = {
 	 * 补不了三种漏：负责人当时不在、进程崩在 afterPost 中途、`followUp` 排队后重启。
 	 */
 	readonly settleSweep: () => Promise<import("../project/settle.ts").SettleReport>;
+	/** 按项目文件重建它的频道成员（幂等）。`write_project` 里用过，界面也用它。 */
+	readonly syncProject: (project: string, context?: Context) => Promise<void>;
 	readonly agentsRoot: string;
 	readonly projectsRoot: string;
 	readonly companyChannel: string;
@@ -157,7 +160,14 @@ export async function assembleCore(
 	// 项目频道里，就叫这个项目里该负责的人把它沉淀进 `projects/<slug>/memory.md`。
 	// 条件是「形状」（kind），判断是「语义」（模型写什么），分工见 project/settle.ts。
 	const afterPost = makeAfterPost(harness, options.agentsRoot, options.projectsRoot, () => conversations);
-	const toolDeps: CoreToolDeps = { ...baseDeps, afterPost };
+	const toolDeps: CoreToolDeps = {
+		...baseDeps,
+		afterPost,
+		// 项目文件是事实，频道成员是投影。改了 `owner` 就得重投影一次。
+		syncProject: async (project, ctx) => {
+			await syncProjectChannel(project, ctx);
+		},
+	};
 	const tools = createCoreTools(toolDeps);
 	const toolsExtension = defineExtension({ name: "core-tools", tools });
 
@@ -209,7 +219,9 @@ export async function assembleCore(
 				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
 				installIdentity(slug);
 				conversations.set(slug, found);
-				// 已有会话也要补一次项目频道：老工作区里的人在 `proj:` 频道出现之前建的。
+				// 已有会话也要补一次个人频道与项目频道：老工作区里的人在个人频道/项目频道
+				// 出现之前建的，或者 `identity.md` 里刚补上 `project:`。两个都是幂等的。
+				await ensurePersonalChannel(slug, ctx);
 				await joinProjectChannel(slug, ctx);
 				return found;
 			}
@@ -232,15 +244,16 @@ export async function assembleCore(
 		const id = created.id as unknown as number;
 		directory.slugToConversation[slug] = id;
 		directory.conversationToSlug[String(id)] = slug;
-		// 一建出来就进公司频道。
+		// 一建出来就进公司频道、个人频道、项目频道。
 		//
 		// 踩过的坑：`hire` 会立刻开会话，但公司频道的成员是**启动时**按当时的
 		// `agents/` 目录写死的。结果新人存在、会话也存在，却不在频道里 —— 别人
 		// @ 他，`recipientsOf` 第一规则「@ 的必须是成员」把他过滤掉，消息静默不投递，
 		// 界面上看起来就是「招了个人但叫不动」。
 		await addToCompanyChannel(slug, ctx);
-		// 拉进它的项目频道（幂等）。项目频道是项目记忆沉淀的落点：没有它，agent 在
-		// 项目里说的话就没有「项目」这个上下文，`decision` 也只是群里的一句话。
+		// 个人频道 = 他与老板的私聊。每个人从出生就该有一个：他的日常记录落在这里，
+		// 需要别人看见的才去公司/项目频道。没有它，「向上汇报」连个落点都没有。
+		await ensurePersonalChannel(slug, ctx);
 		await joinProjectChannel(slug, ctx);
 		return created;
 	}
@@ -258,28 +271,77 @@ export async function assembleCore(
 	}
 
 	/**
+	 * 给这个人建个人频道（幂等）。
+	 *
+	 * 个人频道就是他与老板的私聊（`personalId` = `dm:owner-<slug>`）。它同时承担两件事：
+	 * 他的日常记录落在这里；以及拍板链的顶端 —— 他（或他的上级）拍不了板时，就在这个
+	 * 频道里问老板。所以它必须从出生就存在，而不是等到第一次私聊才被顺手建出来。
+	 */
+	async function ensurePersonalChannel(slug: string, ctx: Context): Promise<void> {
+		if (slug === OWNER) return;
+		await harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const identity = await readIdentity(options.agentsRoot, slug);
+			Object.assign(
+				doc,
+				upsertChannel(doc, {
+					id: personalId(slug),
+					title: identity?.name ?? slug,
+					members: [OWNER, slug],
+					wakeOnAll: [],
+					at: Date.now(),
+				}),
+			);
+		}, ctx);
+	}
+
+	/**
 	 * 把这个人拉进它所属项目的频道（幂等）。项目频道不存在就建。
 	 *
 	 * 频道 id 用 `proj:<slug>`（与 `src/core/channel/state.ts` 的 `projectId()` 一致），
 	 * 因为沉淀逻辑靠这个前缀认出「这是项目频道」。
+	 *
+	 * 成员不只是「进来的人」：项目 `README.md` 里写了谁负责（`owner`），那个人就必须在
+	 * 频道里 —— 否则项目里出了问题，员工连派活的人都 @ 不到。老板也始终在里面，
+	 * 因为拍板链的最后一环是他。
 	 */
 	async function joinProjectChannel(slug: string, ctx: Context): Promise<void> {
 		const identity = await readIdentity(options.agentsRoot, slug);
 		const project = identity?.project;
 		if (project === undefined || project === "") return;
-		const id = `proj:${project}`;
+		await syncProjectChannel(project, ctx);
+	}
+
+	/**
+	 * 按「项目文件写的事实」重建一个项目频道的成员表（幂等）。
+	 *
+	 * 成员 = 老板 + 项目负责人 + 所有 `identity.md` 里 `project:` 指向它的人。
+	 * 负责人在 `projects/<slug>/README.md` 的 `owner` 里 —— 那是文档的事实，代码照抄，
+	 * 不猜「谁该负责」。负责人还没定就只少那一个人，频道照样建。
+	 */
+	async function syncProjectChannel(project: string, ctx: Context): Promise<void> {
+		const [doc, all] = await Promise.all([
+			readProject(options.projectsRoot, project),
+			readAllIdentities(options.agentsRoot),
+		]);
+		const owner = doc?.owner;
+		const members = [
+			OWNER,
+			...(owner === undefined || owner === "" ? [] : [owner]),
+			...membersOfProject(all, project),
+		];
 		await harness.commit(async (tx) => {
-			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-			const channel = doc.channels[id];
-			if (channel === undefined) {
-				Object.assign(
-					doc,
-					ensureChannel(doc, { id, title: project, members: [OWNER, slug], wakeOnAll: [], at: Date.now() }),
-				);
-				return;
-			}
-			if (channel.members.includes(slug)) return;
-			doc.channels[id] = { ...channel, members: [...channel.members, slug] };
+			const state = (await tx.doc(ChannelDoc)) as ChannelState;
+			Object.assign(
+				state,
+				upsertChannel(state, {
+					id: projectId(project),
+					title: doc?.name ?? project,
+					members,
+					wakeOnAll: [],
+					at: Date.now(),
+				}),
+			);
 		}, ctx);
 	}
 
@@ -365,6 +427,9 @@ export async function assembleCore(
 		directory,
 		async settleSweep() {
 			return settleProjects(settleDeps);
+		},
+		async syncProject(project: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
+			await syncProjectChannel(project, ctx);
 		},
 		async rescan(ctx: Context = BACKGROUND_CONTEXT): Promise<readonly string[]> {
 			const all = await readAllIdentities(options.agentsRoot);
@@ -532,39 +597,53 @@ export async function ownerSpeak(
  * 缺几份起手技能不该让服务起不来。
  */
 export async function seedCompanySkills(agentsRoot: string): Promise<readonly string[]> {
-	const workspace = dirname(agentsRoot);
-	const skillsRoot = join(workspace, SKILLS_DIR);
+	return copySeedSkills(seedRoot("skills"), join(dirname(agentsRoot), SKILLS_DIR));
+}
+
+/**
+ * 给某一个人的个人层播种技能（`agents/<slug>/skills/`）。
+ *
+ * 为什么有些技能属于个人而不是公司：一份技能属于谁，取决于「谁该为这条做法负责」。
+ * 「怎么立项」「怎么招人」是助理的判断，它自己会迭代 —— 写在公司层就等于宣布全公司
+ * 都得按助理那一套招人，而实际上别人不该招人。`写技能` / `找现成技能` 反过来是
+ * 所有人都该会的手艺，所以它们在公司层。
+ */
+export async function seedPersonalSkills(agentsRoot: string, slug: string, folder: string): Promise<readonly string[]> {
+	return copySeedSkills(seedRoot(folder), join(agentsRoot, slug, SKILLS_DIR));
+}
+
+async function copySeedSkills(from: string, skillsRoot: string): Promise<readonly string[]> {
 	let entries: import("node:fs").Dirent[];
 	try {
-		entries = await readdir(seedSkillsRoot(), { withFileTypes: true });
+		entries = await readdir(from, { withFileTypes: true });
 	} catch {
 		return [];
 	}
 	const copied: string[] = [];
 	for (const entry of entries) {
 		if (!entry.isDirectory()) continue;
-		const written = await copySkillDir(join(seedSkillsRoot(), entry.name), skillsRoot);
+		const written = await copySkillDir(join(from, entry.name), skillsRoot);
 		copied.push(written.name);
 	}
 	return copied;
 }
 
 /**
- * 仓库自带的技能目录。
+ * 仓库自带的播种目录（`seed/<folder>`）。
  *
- * 用「从本文件往上找 `seed/`」而不是写死绝对路径：`src/core/shell/` 到仓库根是
- * 固定深度，但源码（`src/`）与构建产物（`dist/`）深度不同，所以往上找而不是数层级。
+ * 用「从本文件往上找」而不是写死绝对路径：`src/core/shell/` 到仓库根是固定深度，
+ * 但源码（`src/`）与构建产物（`dist/`）深度不同，所以往上找而不是数层级。
  */
-function seedSkillsRoot(): string {
+function seedRoot(folder: string): string {
 	let dir = dirname(fileURLToPath(import.meta.url));
 	for (let index = 0; index < 6; index += 1) {
-		const candidate = join(dir, "seed", "skills");
+		const candidate = join(dir, "seed", folder);
 		if (existsSync(candidate)) return candidate;
 		const parent = dirname(dir);
 		if (parent === dir) break;
 		dir = parent;
 	}
-	return join(dirname(fileURLToPath(import.meta.url)), "seed", "skills");
+	return join(dirname(fileURLToPath(import.meta.url)), "seed", folder);
 }
 
 /**
@@ -609,10 +688,15 @@ export async function seedOwnerAssistant(
 
 	// 技能：和身份一样，是文件，不是代码。
 	//
-	// 正文在 `seed/skills/<名字>/SKILL.md`，这里只负责把它们拷进工作区的公司层。
-	// 以前这两份 markdown 是写在本函数里的字符串字面量 —— 那等于把「做法」硬编码进
-	// 代码：改一句话要改 TS、要重新编译、要重启。现在它们和 agent 自己写的技能
-	// 是同一种东西（同一个文件夹结构），改完下一条消息就生效。
+	// 两层，各自管各自的事：
+	// - 公司层 `seed/skills/`（`写技能`、`找现成技能`）—— 所有人都该会的手艺。
+	// - 助理自己的 `seed/assistant/`（`立项`、`招人`）—— 它的判断，不属于别人。
+	//   招人、立项是助理的职权，别人本来就不该招人；写进公司层等于宣布全公司都这么干。
+	//
+	// 正文以前是写在本函数里的字符串字面量 —— 那等于把「做法」硬编码进代码：改一句话
+	// 要改 TS、要重新编译、要重启。现在它们和 agent 自己写的技能是同一种东西
+	// （同一个文件夹结构），改完下一条消息就生效。
 	await seedCompanySkills(agentsRoot);
+	await seedPersonalSkills(agentsRoot, identity.slug, "assistant");
 	return identity.slug;
 }

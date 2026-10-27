@@ -79,6 +79,17 @@ export function dmId(a: string, b: string): string {
 	return `dm:${left}-${right}`;
 }
 
+/**
+ * 一个人的**个人频道**：他和老板的私聊。
+ *
+ * 为什么个人频道就是「和老板的私聊」而不是另建一个房间：升到顶只能是一个人 —— 老板。
+ * 于是这条链的顶端（「助理拍不了板就问我」）和每个人的「记录落在自己频道」是同一个
+ * 房间，不需要第二套命名。员工在个人频道里记自己的过程，项目里只放需要别人看见的。
+ */
+export function personalId(slug: string): string {
+	return dmId(OWNER, slug);
+}
+
 /** 项目频道的命名规则。 */
 export function projectId(project: string): string {
 	return `proj:${project}`;
@@ -219,6 +230,27 @@ export function ensureChannel(
 		createdAt: input.at,
 	};
 	return { ...state, channels: { ...state.channels, [input.id]: channel } };
+}
+
+/**
+ * 建频道，或者把缺的人补进去（幂等）。
+ *
+ * 与 `ensureChannel` 的区别：后者见到已存在的频道就直接返回，于是「项目负责人后来才
+ * 定下来」「新招的人进了项目」都不会反映到成员表里 —— 那些人明明在项目里却收不到项目
+ * 频道的话。这里两个动作合成一个，调用点不用自己判「建还是补」。
+ */
+export function upsertChannel(
+	state: ChannelState,
+	input: { readonly id: string; readonly title: string; readonly members: string[]; readonly wakeOnAll?: string[]; readonly at: number },
+): ChannelState {
+	const chann = state.channels[input.id];
+	if (chann === undefined) return ensureChannel(state, input);
+	const missing = input.members.filter((slug) => !chann.members.includes(slug));
+	if (missing.length === 0) return state;
+	return {
+		...state,
+		channels: { ...state.channels, [input.id]: { ...chann, members: [...chann.members, ...missing] } },
+	};
 }
 
 /** 把某个 slug 在某个频道的已读位置推到 `seq`。回退不生效（已读不会变未读）。 */

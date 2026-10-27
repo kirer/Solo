@@ -79,8 +79,12 @@ project: demo
 | `list_projects` / `read_project` / `write_project` | 项目：`projects/<slug>/README.md` |
 
 「层级」不在代码里，在提示词里：某个人的 `identity.md` 写着「你向助理汇报」，他自己
-就知道该找谁；写「有问题只能向项目负责人汇报」，他就不会越过负责人去找老板。代码只
-保证事实（谁能收到消息、谁的目录归谁），不保证纪律。
+就知道该找谁。代码只保证事实（谁能收到消息、谁的目录归谁），不保证纪律。
+
+**拍板是逐级往上的，不是直达老板**。`renderAgentPrompt` 的「你在组织里的位置」一节
+会按 `manager` 链给每个人写下这句：能自己定的就自己定；确实超出职责才问上级；
+上级也拍不了才往上一级。跳级就是「告诉老板你上面的人没用」。这条规则来自组织事实
+（谁的上级是谁），不是某个人的性格设定。
 
 频道是 `core.channels` 一份文档：`Message{seq, from, at, text, mentions[], replyTo?, kind}`
 + `Channel{id, title, members[], wakeOnAll[]}`。收件人四条规则：显式 @ 且是成员 /
@@ -90,11 +94,11 @@ project: demo
 
 ```
 workspace/
-  skills/<名字>/SKILL.md        公司层技能：全公司通用
+  skills/<名字>/SKILL.md        公司层技能：全公司通用（写技能 / 找现成技能）
   agents/<slug>/
     identity.md                 他是谁：名字、岗位、上级、所在项目、正文
     memory.md                   他自己的记忆（可改，不是只增）
-    skills/<名字>/SKILL.md      个人层技能：只有他看得见，同名覆盖公司层
+    skills/<名字>/SKILL.md      个人层技能：只有他看得见，同名覆盖公司层（助理的立项 / 招人）
   projects/<slug>/
     README.md                   这个项目要做什么、谁负责、什么不做
     memory.md                   这个项目发生过什么（项目里的人写，全公司能读）
@@ -177,12 +181,16 @@ description: 需要一个人来做某件事时，怎么决定招谁、写什么�
 - **`name` + `description` 常驻提示词**，正文按需 `read_skill` 读。一个人攒 20 门手艺，
   常驻的是 20 行描述，不是 20 篇正文 —— 这是成本上最要紧的一条。
 - 改文件 → **下一条消息生效**，不重启、不重新部署。
-- agent 自己就能 `write_skill` 长出新技能。播种时写两份**公司层**技能：`立项`、`招人`。
+- agent 自己就能 `write_skill` 长出新技能。播种时写**两份公司层**技能（`写技能`、
+  `找现成技能`）和**两份助理个人层**技能（`立项`、`招人`）。
 - `write_skill` 的 `scope=personal`（默认）写进自己的目录；`scope=company` 写进工作区根的
   `skills/`，所有人立刻看得见。同名时个人层覆盖公司层 —— 这是「我这个人跟公司不一样」
   的唯一机制，没有别的开关。
 - **不必自己造技能市场**：`find_skill` 直接调 `npx skills find` / `npx skills add`，
   生态在 skills.sh 和 GitHub 上。装完别直接用，按我们的话重写一遍。
+- `npx skills add` 不认我们的目录约定（它装进 `<cwd>/.agents/skills/` 再符号链接给
+  它认识的 agent 目录）。所以 `find_skill action=add` 先装进临时目录，再把每个技能的
+  真身拷进公司层，然后删临时目录 —— 拷进来的是实体文件，同名已存在则不覆盖。
 
 判断边界：「做什么」是身份（`identity.md`），「怎么做」是技能（`skills/`），「发生过什么」
 是记忆（`memory.md`）。三条都不在代码里。
@@ -194,6 +202,10 @@ description: 需要一个人来做某件事时，怎么决定招谁、写什么�
 这份说明 + 项目成员名单。
 
 「什么时候该立项」不在代码里 —— 那是判断，写在助理的 `立项` 技能里。
+
+**一个项目必须有负责人**（`owner`）。项目频道的成员是这份文档的投影：老板 + 负责人 +
+所有 `identity.md` 里 `project:` 指向它的人。负责人靠 `write_project` 改，改完
+`syncProject()` 立刻重投影 —— 否则员工在项目频道里 @ 不到刚任命的负责人。
 
 ## 目录
 
@@ -245,8 +257,17 @@ src/core/
 
 ## 技能从哪来
 
-技能的正文**不在代码里**。仓库自带 `seed/skills/<名字>/SKILL.md`，`seedCompanySkills()`
-把它们拷进工作区的 `skills/`（公司层），已存在的不覆盖 —— 播种只该发生一次。
+技能的正文**不在代码里**。仓库自带两个播种目录：
+
+- `seed/skills/<名字>/SKILL.md` → 拷进 `workspace/skills/`（公司层，`seedCompanySkills()`）
+- `seed/assistant/<名字>/SKILL.md` → 拷进 `workspace/agents/<助理>/skills/`（个人层，
+  `seedPersonalSkills()`）
+
+两份入口都**已存在的不覆盖** —— 播种只该发生一次，之后正文归 agent 自己迭代。
+
+哪份技能放哪一层，判据是「谁该为这条做法负责」：`立项` / `招人` 是助理的判断，别人
+本来就不该招人，所以写进它的个人目录；`写技能` / `找现成技能` 是所有人都该会的手艺，
+所以写进公司层。
 
 改动技能 = 改一个 markdown 文件，下一条消息就生效（`agentSection` 的 `render`
 每次重读盘）。写代码等于把「做法」硬编码进 TS，改一句话要重编译、重启。
