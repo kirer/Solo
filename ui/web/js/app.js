@@ -1,0 +1,657 @@
+/**
+ * 世代 2 频道页。一个文件，没有框架，没有状态库。
+ *
+ * 与旧前端（`ui/js/channels.js` 1952 行）的差别只有一条原则：
+ * **界面只显示后端真的有的东西。** 旧页面为了填满布局，画了「谁读了」「待办卡」
+ * 「任务区」「展开成员」「查看提示词」这些新核心根本没有的块，于是要么恒空、
+ * 要么显示错数。这里没有的就不画。
+ *
+ * 结构：`state` 是唯一真相 → 任何改动都走 `render*()` 重画对应区域。
+ * 三个区域各自整体替换（列表 / 消息流 / 顶栏），不做增量 patch —— 一个频道
+ * 几百条消息时 `replaceChildren` 比 diff 更快，也更难写错。
+ */
+import { getJSON, postJSON, streamOrg } from "./api.js";
+import {
+	copyText,
+	dayLabel,
+	escapeAttr,
+	escapeHtml,
+	clockTime,
+	hueFor,
+	initials,
+	relTime,
+	sameDay,
+} from "./format.js";
+import { renderMarkdown } from "./markdown.js";
+
+/** 一页多少条。后端上限 200，这里取 40：一屏多一点，翻页不明显。 */
+const PAGE = 40;
+/** 列表里的相对时间每隔这么久重算一次（「3 分钟前」→「4 分钟前」）。 */
+const TICK_MS = 30_000;
+
+const state = {
+	/** @type {{id:string,kind:string,title:string,project?:string,unread:number,mentions:number,preview:string,lastAt:number,lastSeq:number,memberCount:number}[]} */
+	channels: [],
+	unreadTotal: 0,
+	mentionTotal: 0,
+	/** 当前打开的频道 id。 */
+	current: "",
+	/** @type {{channel:object,members:object[],messages:object[],hasMore:boolean,serverNow:number}|null} */
+	detail: null,
+	/** 引用中的消息（`{seq,fromLabel,excerpt}`）。 */
+	reply: null,
+	/** 浮在消息上的操作条对应的 seq；`0` 表示没有。 */
+	actionsFor: 0,
+	/** @ 候选：`{items,index,start,end}`，`start` 是 `@` 在输入框里的位置。 */
+	mention: null,
+	/** 已读上报节流用。 */
+	readSeqs: new Map(),
+};
+
+const el = {
+	meta: document.querySelector("#company-meta"),
+	refresh: document.querySelector("#refresh"),
+	unreadTotal: document.querySelector("#unread-total"),
+	rows: document.querySelector("#rows"),
+	paneTitle: document.querySelector("#pane-title"),
+	paneSub: document.querySelector("#pane-sub"),
+	back: document.querySelector("#back"),
+	flow: document.querySelector("#flow"),
+	flowInner: document.querySelector("#flow-inner"),
+	composer: document.querySelector("#composer"),
+	input: document.querySelector("#input"),
+	send: document.querySelector("#send"),
+	replyBar: document.querySelector("#reply-bar"),
+	replyText: document.querySelector("#reply-text"),
+	replyCancel: document.querySelector("#reply-cancel"),
+	mentionPop: document.querySelector("#mention-pop"),
+	toastRoot: document.querySelector("#toast-root"),
+};
+
+// ── 提示 ────────────────────────────────────────────────────────────────
+
+let toastTimer;
+
+function toast(text, tone = "info") {
+	if (el.toastRoot === null) return;
+	el.toastRoot.replaceChildren();
+	const node = document.createElement("div");
+	node.className = "toast";
+	node.dataset.tone = tone;
+	node.textContent = text;
+	el.toastRoot.append(node);
+	clearTimeout(toastTimer);
+	toastTimer = setTimeout(() => node.remove(), 3_600);
+}
+
+// ── 频道列表 ────────────────────────────────────────────────────────────
+
+/** 分组。新核心的频道 id 前缀决定它落在哪一组；没有岗位枚举、没有「工作记录」。 */
+const GROUPS = [
+	{ key: "company", label: "公司", kinds: ["company", "leadership"] },
+	{ key: "project", label: "项目", kinds: ["project"] },
+	{ key: "dm", label: "人", kinds: ["dm"] },
+];
+
+function avatarHtml(label, size) {
+	const hue = hueFor(label);
+	return `<span class="avatar"${size === "lg" ? ' data-size="lg"' : ""} style="--hue:${hue}" aria-hidden="true">${escapeHtml(initials(label))}</span>`;
+}
+
+function rowHtml(channel) {
+	const badge =
+		channel.unread > 0
+			? `<span class="badge"${channel.mentions > 0 ? ' data-mention="true"' : ""}>${channel.mentions > 0 ? channel.mentions : channel.unread}</span>`
+			: "";
+	return `<button class="row" type="button" data-channel="${escapeAttr(channel.id)}"${
+		channel.id === state.current ? ' aria-current="true"' : ""
+	}>
+		${avatarHtml(channel.title)}
+		<span class="row-main">
+			<span class="row-title"><span>${escapeHtml(channel.title)}</span></span>
+			<span class="row-preview">${escapeHtml(channel.preview || "还没有消息")}</span>
+		</span>
+		<span class="row-meta">
+			<span>${escapeHtml(relTime(channel.lastAt))}</span>
+			${badge}
+		</span>
+	</button>`;
+}
+
+function renderList() {
+	const parts = [];
+	for (const group of GROUPS) {
+		const rows = state.channels.filter((channel) => group.kinds.includes(channel.kind));
+		if (rows.length === 0) continue;
+		parts.push(`<div class="group-title">${group.label}</div>`);
+		parts.push(rows.map(rowHtml).join(""));
+	}
+	el.rows.innerHTML = parts.join("") || `<div class="empty">还没有频道</div>`;
+	el.unreadTotal.textContent =
+		state.mentionTotal > 0 ? `${state.mentionTotal} 处点名` : state.unreadTotal > 0 ? `${state.unreadTotal} 条未读` : "";
+}
+
+// ── 消息流 ──────────────────────────────────────────────────────────────
+
+function quoteHtml(message) {
+	if (message.replyTo === undefined) return "";
+	return `<div class="msg-quote" role="button" tabindex="0" data-jump="${message.replyTo.seq}">
+		<b>${escapeHtml(message.replyTo.fromLabel)}</b>：${escapeHtml(message.replyTo.excerpt || "（一条消息）")}
+	</div>`;
+}
+
+function kindHtml(message) {
+	if (message.kind === "chat" || message.kind === "note" || message.kind === "") return "";
+	const label = { decision: "拍板", report: "汇报", task: "任务" }[message.kind] ?? message.kind;
+	return `<span class="msg-kind" data-kind="${escapeAttr(message.kind)}">${escapeHtml(label)}</span>`;
+}
+
+function messageHtml(message, previous, beforeUnreadFrom) {
+	// 同一个人连续发言：只第一行显示头像和名字，后面缩进对齐（时间是唯一的隔断）。
+	const grouped = previous !== undefined && previous.fromSlug === message.fromSlug && !beforeUnreadFrom;
+	const quotes = quoteHtml(message);
+	const kind = kindHtml(message);
+	const heading = grouped
+		? ""
+		: `<div class="msg-head"><span class="msg-from">${escapeHtml(message.fromLabel)}</span><span class="msg-time">${clockTime(
+				message.at,
+			)}</span>${kind}</div>`;
+	const body = `${quotes}<div class="msg-text">${renderMarkdown(message.text)}</div>`;
+	return `<div class="msg" data-seq="${message.seq}" data-owner="${message.fromSlug === "owner"}"${
+		grouped ? ' data-grouped="true"' : ""
+	}>
+		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel, "lg")}</div>
+		<div class="msg-main">${heading}${body}</div>
+	</div>`;
+}
+
+/**
+ * Markdown 里没有 @ 高亮（`renderMarkdown` 是纯函数，不认人）。
+ * 所以正文先走 markdown，再把渲染结果里**文本节点**中的 `@名字` 包成 `.mention`。
+ * 用 DOMParser 而不是正则改 HTML 字符串：后者会命中 `<a href="@x">` 这类属性值。
+ */
+function decorateMentions(root, mentions) {
+	if (mentions.length === 0) return;
+	const known = new Set(mentions.map((item) => item.label));
+	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+	const targets = [];
+	while (walker.nextNode()) {
+		const node = walker.currentNode;
+		if (node.nodeValue?.includes("@") !== true) continue;
+		// 代码块里的 @ 不是提及。
+		if (node.parentElement?.closest("pre, code, a") !== null) continue;
+		targets.push(node);
+	}
+	for (const node of targets) {
+		const text = node.nodeValue ?? "";
+		const fragment = document.createDocumentFragment();
+		let index = 0;
+		for (const match of text.matchAll(/@([\p{L}\p{N}_-]+)/gu)) {
+			if (!known.has(match[1])) continue;
+			if (match.index > index) fragment.append(text.slice(index, match.index));
+			const span = document.createElement("span");
+			span.className = "mention";
+			span.textContent = match[0];
+			fragment.append(span);
+			index = match.index + match[0].length;
+		}
+		if (index === 0) continue;
+		if (index < text.length) fragment.append(text.slice(index));
+		node.replaceWith(fragment);
+	}
+}
+
+/** 给当前 DOM 里的每条消息做 @ 高亮。渲染完以后统一跑一遍。 */
+function decorateAll() {
+	const detail = state.detail;
+	if (detail === null) return;
+	const bySeq = new Map(detail.messages.map((message) => [message.seq, message]));
+	for (const item of el.flowInner.querySelectorAll(".msg")) {
+		const message = bySeq.get(Number(item.dataset.seq));
+		const target = item.querySelector(".msg-text");
+		if (message === undefined || target === null) continue;
+		decorateMentions(target, message.mentions);
+	}
+}
+
+function dividerHtml(label) {
+	return `<div class="divider">${escapeHtml(label)}</div>`;
+}
+
+function renderFlow(options = {}) {
+	const detail = state.detail;
+	if (detail === null) {
+		el.flowInner.innerHTML = `<div class="empty">左边选一个频道开始</div>`;
+		return;
+	}
+
+	const fragment = document.createDocumentFragment();
+	if (detail.hasMore) {
+		const more = document.createElement("div");
+		more.className = "more";
+		more.innerHTML = `<button type="button" id="load-more">加载更早的消息</button>`;
+		fragment.append(more);
+	}
+
+	// 已读位置：后端给的是「读到这条为止」，这里找第一条未读，画一条分界线。
+	// 「新消息」只标别人发来的未读：老板自己刚发的消息当然也「未读」，但它不是新消息。
+	const firstUnread = detail.messages.find((message) => !message.read && message.fromSlug !== "owner");
+
+	if (detail.messages.length === 0) {
+		fragment.append(node(`<div class="empty">这里还没有消息，说点什么</div>`));
+	}
+
+	let previous;
+	let lastDay = 0;
+	for (const message of detail.messages) {
+		if (lastDay === 0 || !sameDay(lastDay, message.at)) {
+			fragment.append(node(dividerHtml(sameDay(message.at, Date.now()) ? `今天 ${clockTime(message.at)}` : dayLabel(message.at))));
+			previous = undefined;
+		} else if (message.at - lastDay > 5 * 60_000) {
+			fragment.append(node(dividerHtml(clockTime(message.at))));
+		}
+		lastDay = message.at;
+
+		const isFirstUnread = message === firstUnread;
+		if (isFirstUnread) fragment.append(node(`<div class="unread-line">新消息</div>`));
+		fragment.append(node(messageHtml(message, previous, isFirstUnread)));
+		previous = message;
+	}
+
+	el.flowInner.replaceChildren(fragment);
+	// 换频道才播一次入场：同频道刷新（发完消息重取）不该整段重新淡入。
+	if (options.fresh === true) {
+		el.flowInner.dataset.fresh = "true";
+		el.flowInner.addEventListener("animationend", () => delete el.flowInner.dataset.fresh, { once: true });
+	}
+	decorateAll();
+
+	if (options.toBottom === true) el.flow.scrollTop = el.flow.scrollHeight;
+}
+
+/** HTML 字符串 → 节点。`template` 是唯一不引入解析器又能信任的方式（内容都经过转义）。 */
+function node(html) {
+	const template = document.createElement("template");
+	template.innerHTML = html.trim();
+	return template.content.firstElementChild ?? document.createTextNode("");
+}
+
+// ── 顶栏 / 输入区 ───────────────────────────────────────────────────────
+
+function renderHead() {
+	const detail = state.detail;
+	if (detail === null) {
+		el.paneTitle.textContent = "选择一个频道";
+		el.paneSub.textContent = "";
+		el.composer.hidden = true;
+		return;
+	}
+	el.paneTitle.textContent = detail.channel.title;
+	const others = detail.members.filter((member) => member.slug !== "owner").length;
+	el.paneSub.textContent = `${others} 人${detail.channel.project === undefined ? "" : ` · 项目 ${detail.channel.project}`}`;
+	el.composer.hidden = false;
+}
+
+function renderReply() {
+	const reply = state.reply;
+	el.replyBar.hidden = reply === null;
+	if (reply === null) return;
+	el.replyText.textContent = `回复 ${reply.fromLabel}：${reply.excerpt}`;
+}
+
+// ── 数据 ────────────────────────────────────────────────────────────────
+
+async function loadChannels() {
+	const data = await getJSON("/api/channels");
+	state.channels = data.channels ?? [];
+	state.unreadTotal = data.unread?.total ?? 0;
+	state.mentionTotal = data.unread?.mentions ?? 0;
+	renderList();
+}
+
+async function openChannel(id, options = {}) {
+	if (state.current !== id) state.detail = null;
+	state.current = id;
+	state.actionsFor = 0;
+	state.reply = null;
+	renderReply();
+	renderList();
+	document.body.dataset.pane = "chat";
+
+	const limit = options.limit ?? PAGE;
+	const before = options.before;
+	const query = `?limit=${limit}${before === undefined ? "" : `&before=${before}`}`;
+	const detail = await getJSON(`/api/channels/${encodeURIComponent(id)}${query}`);
+	state.detail = detail;
+
+	if (before === undefined) {
+		renderHead();
+		renderFlow({ toBottom: true, fresh: options.fresh === true });
+	} else {
+		// 上滑加载：把新拿到的一段**插到前面**，并把视口按新内容高度下移，
+		// 否则正在看的那条会被推走（旧前端「滚动条乱跳」就是这里没补偿）。
+		const heightBefore = el.flow.scrollHeight;
+		const fragment = document.createDocumentFragment();
+		for (const message of detail.messages) fragment.append(node(messageHtml(message, undefined, false)));
+		const existing = el.flowInner.querySelector(".more");
+		existing?.remove();
+		el.flowInner.prepend(fragment);
+		if (detail.hasMore) el.flowInner.prepend(node(`<div class="more"><button type="button" id="load-more">加载更早的消息</button></div>`));
+		el.flow.scrollTop += el.flow.scrollHeight - heightBefore;
+		decorateAll();
+	}
+	await markRead();
+}
+
+/** 上报已读：只报「看到的最新一条」，后端只前进不后退。 */
+async function markRead() {
+	const detail = state.detail;
+	if (detail === null || detail.messages.length === 0) return;
+	const seq = detail.messages[detail.messages.length - 1].seq;
+	if (state.readSeqs.get(detail.channel.id) === seq) return;
+	state.readSeqs.set(detail.channel.id, seq);
+	try {
+		await postJSON(`/api/channels/${encodeURIComponent(detail.channel.id)}/read`, { seq });
+		// 本地先落账，避免列表红点等到下一次 SSE 才消失。
+		for (const message of detail.messages) message.read = true;
+		const row = state.channels.find((channel) => channel.id === detail.channel.id);
+		if (row !== undefined) {
+			state.unreadTotal = Math.max(0, state.unreadTotal - row.unread);
+			state.mentionTotal = Math.max(0, state.mentionTotal - row.mentions);
+			row.unread = 0;
+			row.mentions = 0;
+			renderList();
+		}
+	} catch (error) {
+		state.readSeqs.delete(detail.channel.id);
+		toast(error.message, "error");
+	}
+}
+
+async function send() {
+	const text = el.input.value.trim();
+	if (text === "" || state.detail === null) return;
+	const reply = state.reply;
+	el.send.disabled = true;
+	try {
+		await postJSON(`/api/channels/${encodeURIComponent(state.detail.channel.id)}/messages`, {
+			text,
+			...(reply === null ? {} : { replyTo: reply.seq }),
+		});
+		el.input.value = "";
+		state.reply = null;
+		renderReply();
+		resizeInput();
+		// 不等 SSE：立刻把这一段重取一遍，否则要等推送才有自己的消息。
+		await openChannel(state.detail.channel.id);
+	} catch (error) {
+		toast(error.message, "error");
+	} finally {
+		el.send.disabled = false;
+		el.input.focus();
+	}
+}
+
+// ── @ 候选 ──────────────────────────────────────────────────────────────
+
+let mentionTimer;
+
+function hideMention() {
+	state.mention = null;
+	el.mentionPop.hidden = true;
+}
+
+function renderMention() {
+	const mention = state.mention;
+	if (mention === null || mention.items.length === 0) {
+		el.mentionPop.hidden = true;
+		return;
+	}
+	el.mentionPop.innerHTML = mention.items
+		.map(
+			(item, index) =>
+				`<button class="mention-item" type="button" data-index="${index}"${
+					index === mention.index ? ' aria-selected="true"' : ""
+				}><span>${escapeHtml(item.label)}</span><small>@${escapeHtml(item.slug)}</small></button>`,
+		)
+		.join("");
+	const rect = el.input.getBoundingClientRect();
+	el.mentionPop.style.left = `${rect.left + 8}px`;
+	el.mentionPop.style.bottom = `${window.innerHeight - rect.top + 6}px`;
+	el.mentionPop.hidden = false;
+}
+
+async function refreshMention() {
+	const input = el.input;
+	const caret = input.selectionStart ?? 0;
+	const before = input.value.slice(0, caret);
+	const match = /(^|[\s（(])@([\p{L}\p{N}_-]*)$/u.exec(before);
+	if (match === null) {
+		hideMention();
+		return;
+	}
+	const keyword = match[2] ?? "";
+	const start = caret - keyword.length - 1;
+	if (state.detail === null) {
+		hideMention();
+		return;
+	}
+	const data = await getJSON(`/api/channels/${encodeURIComponent(state.detail.channel.id)}/mentionable`);
+	const items = (data.candidates ?? []).filter(
+		(item) => keyword === "" || item.label.includes(keyword) || item.slug.includes(keyword),
+	);
+	if (items.length === 0) {
+		hideMention();
+		return;
+	}
+	state.mention = { items: items.slice(0, 8), index: 0, start, end: caret };
+	renderMention();
+}
+
+function acceptMention(index) {
+	const mention = state.mention;
+	if (mention === null) return;
+	const item = mention.items[index];
+	if (item === undefined) return;
+	const value = el.input.value;
+	const label = item.label;
+	el.input.value = `${value.slice(0, mention.start)}@${label} ${value.slice(mention.end)}`;
+	const caret = mention.start + label.length + 2;
+	el.input.setSelectionRange(caret, caret);
+	hideMention();
+	el.input.focus();
+}
+
+// ── 消息浮窗（复制 / 引用） ─────────────────────────────────────────────
+
+function showActions(seq, container) {
+	document.querySelector(".msg-actions")?.remove();
+	state.actionsFor = seq;
+	const message = state.detail?.messages.find((entry) => entry.seq === seq);
+	if (message === undefined) return;
+	const bar = document.createElement("div");
+	bar.className = "msg-actions";
+	bar.dataset.for = String(seq);
+	bar.innerHTML = `<button type="button" data-act="copy">复制</button><button type="button" data-act="reply">引用</button>`;
+	container.append(bar);
+}
+
+function clearActions() {
+	document.querySelector(".msg-actions")?.remove();
+	state.actionsFor = 0;
+}
+
+// ── 事件 ────────────────────────────────────────────────────────────────
+
+function resizeInput() {
+	el.input.style.height = "auto";
+	el.input.style.height = `${Math.min(el.input.scrollHeight, 200)}px`;
+}
+
+function setupEvents() {
+	// 列表：一个委托监听，频道行整体重画不影响。
+	el.rows.addEventListener("click", (event) => {
+		const row = event.target.closest("[data-channel]");
+		if (row === null) return;
+		void openChannel(row.dataset.channel, { fresh: true }).catch((error) => toast(error.message, "error"));
+	});
+
+	// 消息流：加载更早 / 点引用跳过去 / 点消息浮窗。
+	el.flow.addEventListener("click", (event) => {
+		const loadMore = event.target.closest("#load-more");
+		if (loadMore !== null) {
+			if (state.detail === null || state.detail.messages.length === 0) return;
+			loadMore.disabled = true;
+			void openChannel(state.detail.channel.id, { before: state.detail.messages[0].seq }).catch((error) => {
+				loadMore.disabled = false;
+				toast(error.message, "error");
+			});
+			return;
+		}
+		const jump = event.target.closest("[data-jump]");
+		if (jump !== null) {
+			const target = el.flowInner.querySelector(`[data-seq="${jump.dataset.jump}"]`);
+			if (target === null) {
+				toast("那条消息已经不在这一页里了", "error");
+				return;
+			}
+			target.scrollIntoView({ block: "center", behavior: "smooth" });
+			target.animate?.([{ background: "color-mix(in srgb, var(--accent) 22%, transparent)" }, { background: "transparent" }], {
+				duration: 900,
+			});
+			return;
+		}
+		const act = event.target.closest("[data-act]");
+		if (act !== null) {
+			const seq = Number(act.closest(".msg-actions")?.dataset.for);
+			const message = state.detail?.messages.find((entry) => entry.seq === seq);
+			if (message === undefined) return;
+			if (act.dataset.act === "copy") {
+				void copyText(message.text).then((ok) => toast(ok ? "已复制" : "复制失败，请手动选择", ok ? "info" : "error"));
+			} else {
+				const first = message.text.split("\n").find((line) => line.trim() !== "") ?? "";
+				state.reply = {
+					seq: message.seq,
+					fromLabel: message.fromLabel,
+					excerpt: first.length > 60 ? `${first.slice(0, 60)}…` : first,
+				};
+				renderReply();
+				el.input.focus();
+			}
+			clearActions();
+			return;
+		}
+		const bubble = event.target.closest(".msg");
+		if (bubble === null) {
+			clearActions();
+			return;
+		}
+		const seq = Number(bubble.dataset.seq);
+		if (state.actionsFor === seq) {
+			clearActions();
+			return;
+		}
+		// 浮窗贴着这条消息的右上角，而不是跟着鼠标 —— 后者滚动时会漂。
+		showActions(seq, bubble);
+	});
+
+	// 滚动时收浮窗：绝对定位的元素跟着滚动会很怪。
+	el.flow.addEventListener("scroll", () => {
+		if (state.actionsFor !== 0) clearActions();
+	}, { passive: true });
+
+	el.refresh.addEventListener("click", () => {
+		void loadChannels().catch((error) => toast(error.message, "error"));
+		if (state.current !== "") void openChannel(state.current).catch((error) => toast(error.message, "error"));
+	});
+
+	el.back.addEventListener("click", () => {
+		document.body.dataset.pane = "list";
+	});
+
+	el.replyCancel.addEventListener("click", () => {
+		state.reply = null;
+		renderReply();
+	});
+
+	el.composer.addEventListener("submit", (event) => {
+		event.preventDefault();
+		void send();
+	});
+
+	el.input.addEventListener("input", () => {
+		resizeInput();
+		clearTimeout(mentionTimer);
+		mentionTimer = setTimeout(() => void refreshMention(), 120);
+	});
+
+	el.input.addEventListener("keydown", (event) => {
+		const mention = state.mention;
+		if (mention !== null) {
+			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+				event.preventDefault();
+				const step = event.key === "ArrowDown" ? 1 : -1;
+				mention.index = (mention.index + step + mention.items.length) % mention.items.length;
+				renderMention();
+				return;
+			}
+			if (event.key === "Enter" || event.key === "Tab") {
+				event.preventDefault();
+				acceptMention(mention.index);
+				return;
+			}
+			if (event.key === "Escape") {
+				hideMention();
+				return;
+			}
+		}
+		// 输入法组字期间的 Enter 是选词，不是发送。`keyCode === 229` 兼容 Safari。
+		if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+			event.preventDefault();
+			void send();
+		}
+	});
+
+	el.mentionPop.addEventListener("mousedown", (event) => {
+		const item = event.target.closest("[data-index]");
+		if (item === null) return;
+		event.preventDefault();
+		acceptMention(Number(item.dataset.index));
+	});
+
+	document.addEventListener("click", (event) => {
+		if (el.mentionPop.contains(event.target)) return;
+		if (event.target === el.input) return;
+		hideMention();
+	});
+}
+
+// ── 启动 ────────────────────────────────────────────────────────────────
+
+/** 组织变了（有人入职、改了身份、有人在别的频道说话）→ 静默刷新列表。 */
+function onOrg() {
+	void loadChannels().catch(() => {});
+}
+
+async function main() {
+	setupEvents();
+	resizeInput();
+	try {
+		await loadChannels();
+	} catch (error) {
+		toast(error.message, "error");
+	}
+	streamOrg(onOrg, () => {});
+	setInterval(() => {
+		renderList();
+	}, TICK_MS);
+
+	// 深链：`#/c/<频道 id>` 直接开那个频道（看板与外部链接都靠它）。
+	const fromHash = /^#\/c\/(.+)$/u.exec(window.location.hash);
+	const first = fromHash?.[1] ?? (window.innerWidth > 760 ? state.channels[0]?.id : undefined);
+	if (first !== undefined) {
+		void openChannel(decodeURIComponent(first), { fresh: true }).catch((error) => toast(error.message, "error"));
+	}
+}
+
+void main();

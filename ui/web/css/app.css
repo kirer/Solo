@@ -1,0 +1,946 @@
+/* 世代 2 频道页的样式。
+ *
+ * 这是一个 **Operate** 界面：人在这里读一轮对话、说一句话，然后离开。
+ * 所以设计目标是「小、密、稳」，不是「抢眼」：信息密度优先，装饰一律不画。
+ *
+ * 三条硬规矩：
+ * 1. 颜色只从 `:root` 的变量取，别处不写字面量。深浅只有一档，不跟随系统 ——
+ *    这个界面基本在室内暗光下用（晚上看公司),
+ * 2. 尺寸走 4px 栅格，行高走 1.5/1.6，没有第三个节奏。
+ * 3. 浏览器自己的东西（滚动条、选区、光标、焦点环）也要上色：
+ *    它们不属于任何设计系统，是最便宜也最常被漏掉的「做过」的信号。
+ */
+
+:root {
+	--bg: #101114;
+	--panel: #15171a;
+	--panel-2: #1b1e22;
+	--panel-3: #22262b;
+	--line: #262a30;
+	--line-soft: #1e2126;
+	--ink: #e8eaec;
+	--ink-2: #a2a9b1;
+	--ink-3: #7d848c;
+	--accent: #7aa2f7;
+	--warn: #d7a05a;
+	--danger: #d9695f;
+
+	--r-xs: 4px;
+	--r-sm: 6px;
+	--r-md: 9px;
+
+	--col-list: 236px;
+	--pane-max: 720px;
+
+	/* 唯一的动效曲线：指数减速。收起比展开快，人会觉得「利落」。 */
+	--ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+	color-scheme: dark;
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html,
+body {
+	height: 100%;
+	margin: 0;
+}
+
+body {
+	overflow: hidden;
+	background: var(--bg);
+	color: var(--ink);
+	font:
+		13px/1.55 -apple-system,
+		system-ui,
+		"PingFang SC",
+		"Microsoft YaHei",
+		sans-serif;
+	font-feature-settings: "tnum" 1;
+	-webkit-font-smoothing: antialiased;
+	text-rendering: optimizeLegibility;
+}
+
+button {
+	padding: 0;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+/* `hidden` 必须真的藏住：类选择器里的 display 会顶掉浏览器默认的 `[hidden]`。 */
+[hidden] {
+	display: none !important;
+}
+
+/* 浏览器自带的表面。 */
+::selection {
+	background: color-mix(in srgb, var(--accent) 32%, transparent);
+	color: var(--ink);
+}
+
+:focus-visible {
+	border-radius: var(--r-xs);
+	outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+	outline-offset: 1px;
+}
+
+input,
+textarea {
+	caret-color: var(--accent);
+}
+
+/* 细滚动条：默认的 15px 宽滚动条在暗色下是一条亮灰，比正文还显眼。 */
+* {
+	scrollbar-width: thin;
+	scrollbar-color: var(--panel-3) transparent;
+}
+
+*::-webkit-scrollbar {
+	width: 9px;
+	height: 9px;
+}
+
+*::-webkit-scrollbar-thumb {
+	border: 2px solid transparent;
+	border-radius: 999px;
+	background: var(--panel-3) content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+	background: color-mix(in srgb, var(--ink-3) 60%, transparent) content-box;
+}
+
+*::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+/* ── 顶栏 ───────────────────────────────────────────────────────────── */
+
+.top {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 44px;
+	padding: 0 12px 0 14px;
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.brand {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	font-size: 12.5px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.brand small {
+	color: var(--ink-3);
+	font-weight: 400;
+	font-size: 11.5px;
+}
+
+.top-spacer {
+	flex: 1;
+}
+
+.icon-btn {
+	display: grid;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	border-radius: var(--r-sm);
+	color: var(--ink-3);
+	transition:
+		color 120ms var(--ease),
+		background-color 120ms var(--ease);
+}
+
+.icon-btn:hover {
+	background: var(--panel-2);
+	color: var(--ink);
+}
+
+/* ── 布局 ───────────────────────────────────────────────────────────── */
+
+.layout {
+	display: grid;
+	grid-template-columns: var(--col-list) minmax(0, 1fr);
+	height: calc(100% - 44px);
+}
+
+/* ── 左栏 ───────────────────────────────────────────────────────────── */
+
+.list {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	border-right: 1px solid var(--line-soft);
+	background: var(--panel);
+}
+
+.list-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 12px 12px 6px;
+	color: var(--ink-3);
+	font-size: 11px;
+}
+
+.list-head b {
+	color: var(--ink-2);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
+}
+
+.rows {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 2px 6px 12px;
+}
+
+.group-title {
+	padding: 10px 6px 3px;
+	color: var(--ink-3);
+	font-size: 10.5px;
+	letter-spacing: 0.06em;
+}
+
+.row {
+	display: grid;
+	grid-template-columns: 22px minmax(0, 1fr) auto;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 6px 7px;
+	border-radius: var(--r-sm);
+	text-align: left;
+	transition: background-color 100ms var(--ease);
+}
+
+.row:hover {
+	background: var(--panel-2);
+}
+
+.row[aria-current="true"] {
+	background: color-mix(in srgb, var(--accent) 11%, var(--panel-2));
+}
+
+/* 选中行的左侧不画竖条（那是卡片式的做法），改用文字提亮 + 淡底。 */
+.row[aria-current="true"] .row-title > span:first-child {
+	color: var(--ink);
+}
+
+.row-main {
+	min-width: 0;
+}
+
+.row-title {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--ink-2);
+	font-size: 12.5px;
+	font-weight: 500;
+}
+
+.row-title span {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.row-preview {
+	display: block;
+	overflow: hidden;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	line-height: 1.45;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.row-meta {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	gap: 2px;
+	color: var(--ink-3);
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.badge {
+	min-width: 15px;
+	padding: 0 4px;
+	border-radius: 999px;
+	background: var(--ink-3);
+	color: var(--bg);
+	font-size: 10px;
+	font-weight: 700;
+	line-height: 15px;
+	text-align: center;
+}
+
+.badge[data-mention="true"] {
+	background: var(--accent);
+	color: #0b0c0e;
+}
+
+/* ── 头像 ───────────────────────────────────────────────────────────── */
+
+.avatar {
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: hsl(var(--hue, 210) 34% 62%);
+	color: #0b0c0e;
+	font-size: 10.5px;
+	font-weight: 700;
+	line-height: 1;
+	user-select: none;
+}
+
+/* 气泡里也用小尺寸：头像不是主角，说话的人名才是。 */
+.avatar[data-size="lg"] {
+	width: 24px;
+	height: 24px;
+	font-size: 11px;
+}
+
+/* ── 右栏 ───────────────────────────────────────────────────────────── */
+
+.pane {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+}
+
+.pane-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 9px 14px;
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.pane-head h1 {
+	margin: 0;
+	color: var(--ink);
+	font-size: 13.5px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.pane-sub {
+	margin-top: 1px;
+	color: var(--ink-3);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+#back {
+	display: none;
+}
+
+.flow {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	/* 上滑加载更早时要自己补偿滚动位置，所以关掉浏览器的锚定。 */
+	overflow-anchor: none;
+	padding: 14px 16px 6px;
+	scroll-behavior: smooth;
+}
+
+.flow-inner {
+	width: min(100%, var(--pane-max));
+	margin: 0 auto;
+}
+
+/* 换频道时唯一的一个入场动作：整列消息微微升起并淡入。
+   只在容器上跑一次，不是每条消息各跑一遍 —— 后者是「AI 生成」的典型手法。 */
+.flow-inner[data-fresh="true"] {
+	animation: flow-in 220ms var(--ease);
+}
+
+@keyframes flow-in {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+}
+
+/* 加载更早 */
+.more {
+	display: flex;
+	justify-content: center;
+	padding: 2px 0 12px;
+}
+
+.more button {
+	padding: 4px 12px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	transition:
+		color 120ms var(--ease),
+		border-color 120ms var(--ease);
+}
+
+.more button:hover:not(:disabled) {
+	border-color: color-mix(in srgb, var(--ink-3) 70%, var(--line));
+	color: var(--ink-2);
+}
+
+.more button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* 时刻分隔：一根极淡的线 + 居中的灰字。 */
+.divider {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 16px 0 10px;
+	color: var(--ink-3);
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+.divider::before,
+.divider::after {
+	flex: 1;
+	height: 1px;
+	background: var(--line-soft);
+	content: "";
+}
+
+/* ── 一条消息 ───────────────────────────────────────────────────────── */
+
+.msg {
+	position: relative;
+	display: grid;
+	grid-template-columns: 24px minmax(0, 1fr);
+	gap: 9px;
+	padding: 6px 0;
+	border-radius: var(--r-sm);
+}
+
+/* 同一人连发：头像留白、行更紧。 */
+.msg[data-grouped="true"] {
+	padding-top: 1px;
+}
+
+/* 悬停时整个消息块轻微提亮，提示「这块可以点」。 */
+.msg:hover {
+	background: color-mix(in srgb, var(--panel-2) 55%, transparent);
+}
+
+.msg-gutter {
+	padding-top: 1px;
+}
+
+.msg-head {
+	display: flex;
+	align-items: baseline;
+	gap: 7px;
+	margin-bottom: 1px;
+}
+
+.msg-from {
+	color: var(--ink-2);
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.msg[data-owner="true"] .msg-from {
+	color: var(--accent);
+}
+
+.msg-time {
+	color: var(--ink-3);
+	font-size: 10.5px;
+	font-variant-numeric: tabular-nums;
+	/* 隐藏到悬停：时间不参与阅读，但想问「这是几点说的」时要立刻能找到。 */
+	opacity: 0;
+	transition: opacity 120ms var(--ease);
+}
+
+.msg:hover .msg-time,
+.msg-head:hover .msg-time {
+	opacity: 1;
+}
+
+.msg-kind {
+	padding: 0 5px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	color: var(--ink-3);
+	font-size: 10px;
+	line-height: 15px;
+}
+
+.msg-kind[data-kind="decision"] {
+	border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+	color: var(--accent);
+}
+
+.msg-kind[data-kind="report"] {
+	border-color: color-mix(in srgb, var(--warn) 40%, var(--line));
+	color: var(--warn);
+}
+
+.msg-text {
+	color: var(--ink);
+	font-size: 13px;
+	line-height: 1.62;
+	overflow-wrap: anywhere;
+}
+
+/* 正文里被 @ 到的人 */
+.mention {
+	border-radius: var(--r-xs);
+	padding: 0 2px;
+	background: color-mix(in srgb, var(--accent) 14%, transparent);
+	color: var(--accent);
+	font-weight: 500;
+}
+
+/* 引用：不画竖线（border-left 的卡片腔），改用一个小折角符号 + 灰字。 */
+.msg-quote {
+	margin-bottom: 3px;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	line-height: 1.5;
+	cursor: pointer;
+}
+
+.msg-quote::before {
+	margin-right: 4px;
+	content: "↳";
+	opacity: 0.7;
+}
+
+.msg-quote b {
+	color: var(--ink-2);
+	font-weight: 500;
+}
+
+.msg-quote:hover {
+	color: var(--ink-2);
+}
+
+/* 点消息后的操作条：贴这条消息的右上角，滚动时收起（见 app.js）。 */
+.msg-actions {
+	position: absolute;
+	top: -1px;
+	right: 2px;
+	display: flex;
+	gap: 1px;
+	padding: 2px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	background: var(--panel-2);
+	box-shadow: 0 4px 14px rgb(0 0 0 / 40%);
+	animation: pop 110ms var(--ease);
+}
+
+@keyframes pop {
+	from {
+		opacity: 0;
+		transform: scale(0.96);
+	}
+}
+
+.msg-actions button {
+	padding: 2px 7px;
+	border-radius: var(--r-xs);
+	color: var(--ink-2);
+	font-size: 11.5px;
+}
+
+.msg-actions button:hover {
+	background: var(--panel-3);
+	color: var(--ink);
+}
+
+/* 「新消息」分界：只有淡色小字，不画整条横幅。 */
+.unread-line {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 12px 0 4px;
+	color: var(--accent);
+	font-size: 10.5px;
+}
+
+.unread-line::before,
+.unread-line::after {
+	flex: 1;
+	height: 1px;
+	background: color-mix(in srgb, var(--accent) 26%, transparent);
+	content: "";
+}
+
+/* ── 引用条 + 输入 ──────────────────────────────────────────────────── */
+
+.reply-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: min(100% - 32px, var(--pane-max));
+	margin: 0 auto;
+	padding: 4px 8px;
+	border-radius: var(--r-sm);
+	background: var(--panel-2);
+	color: var(--ink-3);
+	font-size: 11.5px;
+}
+
+.reply-bar span {
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.reply-bar .icon-btn {
+	width: 20px;
+	height: 20px;
+	font-size: 11px;
+}
+
+.composer {
+	padding: 6px 16px 12px;
+}
+
+.composer-inner {
+	display: flex;
+	align-items: flex-end;
+	gap: 8px;
+	width: min(100%, var(--pane-max));
+	margin: 0 auto;
+}
+
+.composer textarea {
+	flex: 1;
+	min-height: 34px;
+	max-height: 180px;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-md);
+	background: var(--panel);
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	line-height: 1.5;
+	outline: none;
+	resize: none;
+	transition: border-color 120ms var(--ease);
+}
+
+.composer textarea::placeholder {
+	color: var(--ink-3);
+}
+
+.composer textarea:focus {
+	border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+
+.send {
+	height: 34px;
+	padding: 0 14px;
+	border-radius: var(--r-md);
+	background: color-mix(in srgb, var(--accent) 88%, #000);
+	color: #0b0c0e;
+	font-size: 12.5px;
+	font-weight: 600;
+	transition:
+		background-color 120ms var(--ease),
+		opacity 120ms var(--ease);
+}
+
+.send:hover:not(:disabled) {
+	background: var(--accent);
+}
+
+.send:disabled {
+	background: var(--panel-2);
+	color: var(--ink-3);
+	cursor: default;
+}
+
+/* ── @ 候选 ─────────────────────────────────────────────────────────── */
+
+.mention-pop {
+	position: fixed;
+	z-index: 40;
+	min-width: 168px;
+	max-height: 220px;
+	overflow-y: auto;
+	padding: 3px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-md);
+	background: var(--panel-2);
+	box-shadow: 0 10px 26px rgb(0 0 0 / 45%);
+}
+
+.mention-item {
+	display: flex;
+	align-items: baseline;
+	gap: 7px;
+	width: 100%;
+	padding: 5px 7px;
+	border-radius: var(--r-xs);
+	text-align: left;
+}
+
+.mention-item:hover,
+.mention-item[aria-selected="true"] {
+	background: color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.mention-item small {
+	color: var(--ink-3);
+	font-size: 10.5px;
+}
+
+/* ── 空态 / 提示 ────────────────────────────────────────────────────── */
+
+.empty {
+	display: grid;
+	place-items: center;
+	height: 100%;
+	padding: 40px;
+	color: var(--ink-3);
+	font-size: 12px;
+	text-align: center;
+}
+
+.list .empty {
+	height: auto;
+	padding: 24px 10px;
+}
+
+.toast {
+	position: fixed;
+	bottom: 22px;
+	left: 50%;
+	z-index: 60;
+	padding: 6px 14px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--panel-2);
+	color: var(--ink);
+	font-size: 12px;
+	box-shadow: 0 8px 22px rgb(0 0 0 / 45%);
+	transform: translateX(-50%);
+	animation: toast-in 180ms var(--ease);
+}
+
+@keyframes toast-in {
+	from {
+		opacity: 0;
+		transform: translate(-50%, 6px);
+	}
+}
+
+.toast[data-tone="error"] {
+	border-color: color-mix(in srgb, var(--danger) 50%, var(--line));
+	color: color-mix(in srgb, var(--danger) 82%, var(--ink));
+}
+
+/* ── Markdown 正文 ──────────────────────────────────────────────────── */
+
+.msg-text > :first-child {
+	margin-top: 0;
+}
+
+.msg-text > :last-child {
+	margin-bottom: 0;
+}
+
+.msg-text p {
+	margin: 0 0 6px;
+}
+
+.msg-text h1,
+.msg-text h2,
+.msg-text h3 {
+	margin: 12px 0 4px;
+	font-size: 13.5px;
+	line-height: 1.4;
+}
+
+.msg-text ul,
+.msg-text ol {
+	margin: 0 0 6px;
+	padding-left: 18px;
+}
+
+.msg-text li {
+	margin: 2px 0;
+}
+
+.msg-text li::marker {
+	color: var(--ink-3);
+}
+
+.msg-text code {
+	padding: 1px 4px;
+	border-radius: var(--r-xs);
+	background: var(--panel-2);
+	color: color-mix(in srgb, var(--ink) 88%, var(--accent));
+	font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+	font-size: 11.5px;
+}
+
+.msg-text pre {
+	position: relative;
+	margin: 6px 0;
+	padding: 9px 11px;
+	overflow-x: auto;
+	border: 1px solid var(--line-soft);
+	border-radius: var(--r-sm);
+	background: #0c0d0f;
+	line-height: 1.55;
+}
+
+.msg-text pre code {
+	padding: 0;
+	background: none;
+	color: var(--ink-2);
+	font-size: 11.5px;
+}
+
+.msg-text a {
+	color: var(--accent);
+	text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+	text-underline-offset: 2px;
+}
+
+.msg-text a:hover {
+	text-decoration-color: var(--accent);
+}
+
+.msg-text blockquote {
+	margin: 6px 0;
+	padding-left: 10px;
+	border-left: 2px solid var(--line);
+	color: var(--ink-2);
+}
+
+.msg-text table {
+	width: 100%;
+	margin: 6px 0;
+	border-collapse: collapse;
+	font-size: 12px;
+}
+
+.msg-text th,
+.msg-text td {
+	padding: 4px 8px;
+	border-bottom: 1px solid var(--line-soft);
+	text-align: left;
+}
+
+.msg-text th {
+	color: var(--ink-2);
+	font-weight: 600;
+}
+
+.msg-text img {
+	max-width: 100%;
+	border-radius: var(--r-sm);
+}
+
+.msg-text hr {
+	margin: 10px 0;
+	border: 0;
+	border-top: 1px solid var(--line-soft);
+}
+
+.msg-text .copy-btn {
+	position: absolute;
+	top: 5px;
+	right: 5px;
+	padding: 1px 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-xs);
+	background: var(--panel-2);
+	color: var(--ink-3);
+	font-size: 10.5px;
+	opacity: 0;
+	transition: opacity 120ms var(--ease);
+}
+
+.msg-text pre:hover .copy-btn {
+	opacity: 1;
+}
+
+/* ── 窄屏 ───────────────────────────────────────────────────────────── */
+
+@media (max-width: 760px) {
+	.layout {
+		grid-template-columns: 1fr;
+	}
+
+	.list {
+		border-right: 0;
+	}
+
+	/* 窄屏只显示一栏：`data-pane="chat"` 时藏列表，反之藏对话。 */
+	body[data-pane="chat"] .list,
+	body[data-pane="list"] .pane {
+		display: none;
+	}
+
+	#back {
+		display: grid;
+	}
+
+	.flow {
+		padding: 10px 12px 4px;
+	}
+
+	.composer {
+		padding: 6px 12px 10px;
+	}
+
+	.reply-bar {
+		width: calc(100% - 24px);
+	}
+
+	/* 触屏没有 hover：时间永远显示。 */
+	.msg-time {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.flow-inner[data-fresh="true"],
+	.msg-actions,
+	.toast {
+		animation: none;
+	}
+
+	.flow {
+		scroll-behavior: auto;
+	}
+}

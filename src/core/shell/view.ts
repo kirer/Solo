@@ -39,16 +39,17 @@ export type ViewMessage = {
 	seq: number;
 	at: number;
 	from: number;
+	fromSlug: string;
 	fromLabel: string;
 	kind: string;
 	text: string;
 	mentions: { id: number; label: string; read: boolean; offset: number }[];
-	replyTo?: { seq: number; from: number; fromLabel: string; excerpt: string };
+	replyTo?: { seq: number; from: number; fromSlug: string; fromLabel: string; excerpt: string };
 	read: boolean;
 };
 
 /** 成员（对应旧核心 `ChannelView["members"]`）。 */
-export type ViewMember = { id: number; label: string; role: string; unread: number };
+export type ViewMember = { id: number; slug: string; label: string; role: string; unread: number };
 
 /** 频道详情（对应旧核心 `ChannelView`）。 */
 export type ViewChannelDetail = {
@@ -64,6 +65,8 @@ export type ViewChannelDetail = {
 /** 组织图上的一个人（对应旧核心 `ActorView`）。 */
 export type ViewActor = {
 	conversationId: number;
+	/** 稳定标识。`conversationId` 是界面用的旧 id，slug 才是核心的真相。 */
+	slug: string;
 	label: string;
 	subtitle: string;
 	kind: "owner" | "role" | "project" | "staff";
@@ -74,7 +77,10 @@ export type ViewActor = {
 	activity: string;
 	project?: string;
 	parent?: string;
+	parentSlug?: string;
 	model?: string;
+	/** `identity.md` 正文（档案页要显示「他是谁」，只有 slug 不够）。 */
+	body?: string;
 };
 
 /** 组织快照（对应旧核心 `OrgView`）。 */
@@ -168,6 +174,7 @@ export function messageView(
 		seq: message.seq,
 		at: message.at,
 		from: idOf(directory, message.from),
+		fromSlug: message.from,
 		fromLabel: labelOf(message.from),
 		kind: message.kind,
 		text: message.text,
@@ -183,6 +190,7 @@ export function messageView(
 					replyTo: {
 						seq: quoted.seq,
 						from: idOf(directory, quoted.from),
+						fromSlug: quoted.from,
 						fromLabel: labelOf(quoted.from),
 						excerpt: excerptSource.length > 60 ? `${excerptSource.slice(0, 60)}…` : excerptSource,
 					},
@@ -218,6 +226,7 @@ export function channelDetail(
 		},
 		members: channel.members.map((slug) => ({
 			id: idOf(directory, slug),
+			slug,
 			label: labelIn(directory, slug),
 			role: slug === OWNER_SLUG ? "owner" : "member",
 			unread: unreadCount(state, channel.id, slug),
@@ -240,6 +249,7 @@ export function channelDetail(
 export function orgView(identities: readonly Identity[], directory: DirectoryState, companyName = "一人公司"): ViewOrg {
 	const toActor = (identity: Identity): ViewActor => ({
 		conversationId: idOf(directory, identity.slug),
+		slug: identity.slug,
 		label: identity.name ?? identity.slug,
 		subtitle: identity.title ?? identity.slug,
 		kind: "role",
@@ -249,7 +259,10 @@ export function orgView(identities: readonly Identity[], directory: DirectorySta
 		unanswered: 0,
 		activity: "",
 		...(identity.project === undefined ? {} : { project: identity.project }),
-		...(identity.manager === undefined ? {} : { parent: labelIn(directory, identity.manager) }),
+		...(identity.manager === undefined
+			? {}
+			: { parent: labelIn(directory, identity.manager), parentSlug: identity.manager }),
+		body: identity.body,
 	});
 
 	// 「离老板最近的人」= manager 是 owner 的那一个。没有就退化成一个占位节点，
@@ -259,6 +272,7 @@ export function orgView(identities: readonly Identity[], directory: DirectorySta
 		nearest === undefined
 			? {
 					conversationId: 0,
+					slug: OWNER_SLUG,
 					label: "老板",
 					subtitle: "还没有人向你汇报",
 					kind: "owner",

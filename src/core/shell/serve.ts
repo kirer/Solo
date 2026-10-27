@@ -42,7 +42,7 @@ export type CoreServeOptions = {
 	readonly models?: ModelSetup;
 	readonly port?: number;
 	readonly host?: string;
-	/** 静态资源目录（默认仓库根的 `ui/`）。 */
+	/** 静态资源目录（默认 `ui/web/`，即世代 2 的频道页；旧页面仍在 `ui/`）。 */
 	readonly uiDir?: string;
 	/** 工作空间根目录（`settings.json` 在这里）。 */
 	readonly workspace?: string;
@@ -64,7 +64,7 @@ function emptyChannels(): ChannelState {
 
 export async function serveCore(options: CoreServeOptions): Promise<CoreServer> {
 	const shell = options.shell;
-	const uiDir = options.uiDir ?? new URL("../../../ui", import.meta.url).pathname;
+	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
 	const settingsStore =
 		options.settings ?? openSettings({ workspace: options.workspace ?? join(process.cwd(), "workspace") });
 
