@@ -132,7 +132,7 @@ export async function projectBoard(
 /** 创建结果。 */
 export type CreateTaskResult =
 	| { readonly ok: true; readonly task: TaskEntry }
-	| { readonly ok: false; readonly code: string; readonly message: string };
+	| { readonly ok: false; readonly code: string; readonly message: string; readonly duplicateOf?: string };
 
 /**
  * 创建任务。

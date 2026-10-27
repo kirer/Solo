@@ -129,7 +129,8 @@ src/tui/main.ts      （终端）
 | `decision-routing.ts` | 17 | re-export（真身在 `src/domain/routing.ts`） |
 | `delegation-guard.ts` | 165 | 同步等待的环检测 + 超时 |
 | `decision-delivery.ts` | 142 | 把决定投回发起方 |
-| `watchdog.ts` / `channels-doc.ts` / `docs.ts` / `staff-tools.ts` / `roundtable-tools.ts` | 各自 | |
+| `staff-tools.ts` | 348 | **员工原子工具表 + 授予粒度**（`write:src/` 的路径隔离，见 §4.6） |
+| `watchdog.ts` / `channels-doc.ts` / `docs.ts` / `roundtable-tools.ts` | 各自 | |
 
 ### 4.1 `src/company/org.ts` — 装配与生命周期
 
@@ -179,6 +180,8 @@ createEmployeeExtension(employeeId, tools, univ)   // tools.ts:382   名字 role
 4. **注册表是内存态**。见 §2。
 
 改「某岗位能用哪些工具」→ `src/company/roles.ts` 每个 role 的 `capabilityNames` 数组。
+改「某员工能用哪些工具」→ 招聘时的 `tools`（名册里的 `StaffEntry.tools`），
+可带目录范围如 `write:src/`，范围包装在 `staff-tools.ts` 的 `scopedTools()`（见 §4.10）。
 改「某工具是否默认给模型」→ `src/company/capabilities.ts:51` 的 `CAPABILITIES` 的 `core` 字段。
 
 ### 4.3 工具：声明式能力目录 + 延迟加载（ADR-032）
@@ -296,6 +299,34 @@ WatchdogAction = abort|retry|drain|report|escalate-question|nudge-task|resurface
 `src/company/decision-routing.ts` 只有 7 行 re-export。真身在 `src/domain/routing.ts`——
 它是纯函数，本就不该和 IO 混在一起（2026-10-26 迁移，逻辑一行未改）。
 
+### 4.10 员工能力粒度 `src/company/staff-tools.ts`（ADR-035）
+
+```ts
+STAFF_ATOMIC_TOOLS          read / write / edit / bash 四个原子工具 → 工厂
+toolsForNames(names)        工具名 → 能力包里的工具（名字可带目录范围）
+scopedTools(tool, options)  给 read/write/edit 套上「只能动这个目录」的包装
+assertGrantable(name)       层级 + 存在性 + 范围语法校验
+assertToolsRequested(names) 招聘入口的显式性检查（空就报错，绝不兜底）
+```
+
+**工具名带一段可选的目录范围**：`"write"` = 整个工作空间（老语义），
+`"write:src/"` = 只允许写工作空间里的 `src/`。`read` / `edit` 同理。
+
+三条要点：
+
+1. **对模型暴露的 `name` 仍是基名**（`write`），范围只体现在 description 与拦截面。
+   能力包里的工具名必须唯一（ADR-014），否则模型看到两个同名不同义的工具。
+   同一原子工具被声明多次时只留一个：有 `write` 优先 `write`（打 warning 说冗余）。
+2. **校验走 `env.absolutePath()` + `env.canonicalPath()`**，前缀边界必须是分隔符
+   (`.../src` 不匹配 `.../src-evil`)。底层内建工具不接受 root/scope，所以约束
+   只能在业务层包一层（`src/runtime/capabilities.ts` 转发 `ExecutionEnv` 类型）。
+3. **`bash` 不参与 scope**（`bash:src/` 直接报错）。命令里的路径只是文本，
+   前缀检查拦不住 `cd ..`——**有 bash 就等于有全盘写权限**。真正的文件级隔离
+   只有一种写法：不给 bash，只给 `write:<目录>/` / `edit:<目录>/`。
+
+`CompanyDoc` 是 version 3，但 v2 → v3 **不动 `tools`**：迁移不是收权的时机
+（收紧权限会让已派出的任务突然失败）。
+
 ---
 
 ## 5. 数据文档一览
@@ -325,6 +356,13 @@ src/company/memory.ts:34       MemoryDoc   app.memory     deltasSinceBase >= 64
 `app.company` `app.profile` `app.channels` `app.pending` `app.audit` `app.budget` `app.anchor` `app.roundtable`
 `app.memory` `app.memory-hint`
 
+`app.ack` 的 `data` 是 `{ text, channelId, messageSeq, busy, busyWith, plan, at }`。
+`messageSeq` 是**这条回执指向频道里的哪条消息**——`src/server/channels-view.ts` 的
+`ackIndex()` 靠它把回执接回消息（`MessageView.acks`）。写回执的是 `src/server/http.ts`
+的 `writeAck()`：落库必须在消息写入频道**之后**（那时才知道 `messageSeq`），但「对方忙不忙」
+要在投递**之前**采样（投递后对方立即开工，`busy` 会恒为真）——所以拆成
+`snapshotAcks()`（投递前采样）+ `writeAck()`（投递后落库）两步。
+
 ---
 
 ## 6. 界面层
@@ -337,7 +375,7 @@ routes.ts       122 行  **路由表**（表驱动，见 §6.2），新增接口
 feed.ts         785 行  readFeed() 把会话已提交状态转成可渲染条目（Web UI 唯一数据源）
 settings.ts     477 行  settings.json 读写（模型、网络、IM）
 org-view.ts     425 行  buildOrgView() 组织快照（SSE 推给前端）
-channels-view.ts 270 行 频道视图
+channels-view.ts 565 行  频道视图（含 `MessageView.acks`：把会话流里的 `app.ack` 接回频道消息）
 board.ts        260 行  看板（只读 TaskDoc）
 main.ts         240 行  入口
 event-log.ts    168 行  describeReport() 报告 → 日志行

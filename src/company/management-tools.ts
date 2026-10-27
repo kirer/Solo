@@ -484,7 +484,8 @@ export function createManagementTools(deps: ToolDependencies) {
 		description:
 			"为项目招聘一名员工，可指定模型与直属上级。不指定上级时，默认归本项目负责人。" +
 			"**必须显式写明授予哪些原子工具（tools）与职责（duty）**：能力不按角色名推断，" +
-			"只给 tools 里列的（ADR-004：权限靠工具不存在，不靠提示词）。",
+			"只给 tools 里列的（ADR-004：权限靠工具不存在，不靠提示词）。" +
+			"工具名可带目录范围：`write:src/` 表示只能写工作空间里的 src/（见 ADR-035）。",
 		parameters: Type.Object({
 			project: Type.String({ description: "项目 slug" }),
 			name: Type.String({ description: "员工名（项目内唯一）" }),
@@ -496,6 +497,9 @@ export function createManagementTools(deps: ToolDependencies) {
 					// 可授予清单是代码里的常量，写进 description 避免文档与实现分叉
 					`要授予的原子工具名，可多选：${STAFF_ATOMIC_TOOL_NAMES.join(" / ")}。` +
 					"按职责最小化地给：要读文件给 read，要写代码给 write/edit，要跑命令给 bash。" +
+					"**多个 agent 在同一个文件夹里干活时，一定要加目录范围**，例如开发只给 " +
+					"[\"read\",\"write:src/\",\"edit:src/\",\"bash\"]，负责人写 index.html 时就不会被员工覆盖。" +
+					"bash 不能带范围（它等于全盘访问），真正隔离靠「不给 bash 只给 write:<目录>/」。" +
 					"员工永远自带 say/ask/inbox/task_*/memory_*/escalate/my_capabilities，不用写在这里",
 			}),
 			duty: Type.String({

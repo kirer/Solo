@@ -545,6 +545,35 @@
 	box-shadow: 0 0 6px -1px var(--run-glow);
 }
 
+/* ── 受理回执（老板消息下的进度行） ────────────────────────────────── */
+
+.ch-acks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 5px;
+	margin-top: 3px;
+}
+
+/* 比正文弱一级：它不是消息，是「这件事现在到哪了」 */
+.ch-ack {
+	display: inline-flex;
+	align-items: center;
+	font-size: 10px;
+	line-height: 16px;
+	color: var(--muted);
+	padding: 0 7px;
+	border-radius: 8px;
+	background: var(--surface-3);
+	white-space: nowrap;
+}
+
+/* 忙的时候给一个很轻的亮度差，不用彩色（状态色只留给 @ 已读点） */
+.ch-ack[data-busy="true"] {
+	background: var(--surface-2);
+	border: 1px solid var(--line);
+	line-height: 14px;
+}
+
 /* ── 系统消息 / 任务卡片 ────────────────────────────────────────────── */
 
 .ch-system {

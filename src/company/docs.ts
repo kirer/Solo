@@ -55,7 +55,7 @@ function everyNItems<T>(count: (value: Readonly<T>) => number, n = 512) {
 /** 公司索引文档。 */
 export const CompanyDoc = defineDoc<CompanyState>({
 	kind: "app.company",
-	version: 2,
+	version: 3,
 	scope: "session",
 	initial: () => ({
 		company: { name: "", createdAt: 0 },
@@ -79,6 +79,14 @@ export const CompanyDoc = defineDoc<CompanyState>({
 	 * 卸掉所有执行工具——正是本次要消灭的那类静默变化。旧表里没有的角色
 	 * （当年那些被静默变只读的「前端」「backend」）推出来的就是 `["read"]`，
 	 * 与它们此刻的真实能力一致。
+	 *
+	 * v2 → v3：工具名多了一段可选的目录范围（`write:src/`，见 ADR-035）。
+	 * 这一步**不需要动数据**：没有冒号的老名字就是「整个工作空间」，语义不变。
+	 * 于是老的 `tools: ["read","write","edit","bash"]` 原样留在 v3 里。
+	 * 为什么不顺手给老员工加上范围（比如把 `write` 收成 `write:src/`）：
+	 * **收紧权限会让已派出的任务突然失败**——他们昨天还在写 `ui/`、`docs/`，
+	 * 今天就会撞上「不能写」。收权是一次显式的组织决定（重新招聘或改档案），
+	 * 不该是迁移的副作用。
 	 */
 	migrate: (value, fromVersion) => {
 		if (fromVersion >= 2) return value as unknown as CompanyState;

@@ -85,7 +85,9 @@ describe("创建", () => {
 	test("编号从 T-1 开始单调递增", () => {
 		const first = createTask(emptyTaskState(), { ...BASE, at: 1 });
 		expect(first.task.id).toBe("T-1");
-		const second = createTask(first.state, { ...BASE, at: 2 });
+		// 标题故意不同：同名同项目的第二单现在会被 `findDuplicate` 拦下来
+		// （见「重复任务」那一组测试）。这里只验编号，不验去重。
+		const second = createTask(first.state, { ...BASE, title: "登录接口加 token 刷新", at: 2 });
 		expect(second.task.id).toBe("T-2");
 	});
 
@@ -351,5 +353,60 @@ describe("#11 任务用量（usageAtStart / usage）", () => {
 		expect(card.startedAt).toBe(2000);
 		expect(card.doneAt).toBe(5000);
 		expect(card.usage).toEqual({ tokens: 10, costUsd: 0.001 });
+	});
+});
+
+// ── 重复任务（小恐龙验收暴露的「同一件事三张单」） ────────────────────────────
+
+describe("重复任务", () => {
+	test("同项目里标题相同的第二单被拦下，并指出撞车的是哪一单", async () => {
+		const { findDuplicate, createTask, emptyTaskState } = await import("../../src/domain/tasks.ts");
+		const first = createTask(emptyTaskState(), { ...BASE, at: 1 });
+		const dup = findDuplicate({ title: BASE.title, project: BASE.project }, first.state.tasks);
+		expect(dup?.id).toBe("T-1");
+
+		const check = validateCreate({ ...BASE, at: 2 }, first.state.tasks);
+		expect(check.ok).toBe(false);
+		if (!check.ok) {
+			expect(check.code).toBe("duplicate");
+			expect(check.duplicateOf).toBe("T-1");
+			// 文案要能告诉调用方下一步做什么，不只是报错
+			expect(check.message).toContain("T-1");
+			expect(check.message).toContain("task_update");
+		}
+	});
+
+	test("子串包含也算重复（「小恐龙游戏」vs「小恐龙游戏：跳跃音效」）", async () => {
+		const { findDuplicate, createTask, emptyTaskState } = await import("../../src/domain/tasks.ts");
+		const first = createTask(emptyTaskState(), { ...BASE, title: "小恐龙游戏", at: 1 });
+		expect(findDuplicate({ title: "小恐龙游戏：跳跃音效", project: BASE.project }, first.state.tasks)?.id).toBe("T-1");
+		expect(findDuplicate({ title: "小恐龙", project: BASE.project }, first.state.tasks)?.id).toBe("T-1");
+	});
+
+	test("前缀、空格、标点、大小写差异不影响判重", async () => {
+		const { findDuplicate, createTask, emptyTaskState } = await import("../../src/domain/tasks.ts");
+		const first = createTask(emptyTaskState(), { ...BASE, title: "登录接口加 token 过期处理", at: 1 });
+		expect(findDuplicate({ title: "【新任务 T-1】登录接口加 Token 过期处理", project: BASE.project }, first.state.tasks)?.id).toBe(
+			"T-1",
+		);
+	});
+
+	test("不同项目不受影响（同名任务在另一个项目里是合法的）", async () => {
+		const { findDuplicate, createTask, emptyTaskState } = await import("../../src/domain/tasks.ts");
+		const first = createTask(emptyTaskState(), { ...BASE, at: 1 });
+		expect(findDuplicate({ title: BASE.title, project: "beta" }, first.state.tasks)).toBeUndefined();
+	});
+
+	test("已终态（done/cancelled）的任务不再参与判重 —— 否则项目做完一轮就再也建不了同名任务", async () => {
+		const { createTask, findDuplicate, emptyTaskState, transitionTask } = await import("../../src/domain/tasks.ts");
+		const first = createTask(emptyTaskState(), { ...BASE, at: 1 });
+		const cancelled = transitionTask(first.state, "T-1", "cancelled", { at: 2 });
+		expect(findDuplicate({ title: BASE.title, project: BASE.project }, cancelled.state.tasks)).toBeUndefined();
+	});
+
+	test("标题只差空白与标点、脱干净后为空时不判重（不误拦）", async () => {
+		const { findDuplicate, createTask, emptyTaskState } = await import("../../src/domain/tasks.ts");
+		const first = createTask(emptyTaskState(), { ...BASE, at: 1 });
+		expect(findDuplicate({ title: "···", project: BASE.project }, first.state.tasks)).toBeUndefined();
 	});
 });

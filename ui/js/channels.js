@@ -183,7 +183,9 @@ function viewSignature() {
 	for (const message of view.messages) {
 		// 已读点 / @ 已读会变色，必须进签名，否则别人读完不回显绿点
 		const mentions = message.mentions.map((item) => `${item.id}${item.read ? "1" : "0"}`).join(",");
-		parts.push(`${message.seq}:${message.read ? 1 : 0}:${mentions}:${message.replyTo?.seq ?? ""}`);
+		// 受理回执也会变（对方从「忙」变「立即处理」），不进签名就永远不重绘。
+		const acks = (message.acks ?? []).map((ack) => `${ack.conversationId}${ack.plan}${ack.at}`).join(",");
+		parts.push(`${message.seq}:${message.read ? 1 : 0}:${mentions}:${message.replyTo?.seq ?? ""}:${acks}`);
 	}
 	parts.push(view.members.map((member) => `${member.id}${member.unread}`).join(","));
 	parts.push(
@@ -1025,6 +1027,7 @@ function renderMessages() {
 					renderQuote(message),
 					renderBubble(message.text, message.seq, message.kind, message.mentions),
 					renderMentions(message),
+					renderAcks(message),
 					`</div>`,
 					`</div>`,
 				].join(""),
@@ -1330,6 +1333,33 @@ function renderMentions(message) {
 		)
 		.join("");
 	return `<div class="ch-mentions">${dots}</div>`;
+}
+
+/**
+ * 老板这条消息的受理回执（`MessageView.acks`）。
+ *
+ * 只渲染状态，**不回显 ack 的 text**：那只是本条消息的前 280 字，上面气泡里已有全文。
+ * 样式比正文弱一级（muted 小字），它不是消息，是「事件进度」。
+ * 后端不给 `acks` 时返回空串（旧后端 / 非老板消息 / 超出装填上限）。
+ */
+function renderAcks(message) {
+	const acks = message.acks ?? [];
+	if (acks.length === 0) return "";
+	const chips = acks
+		.map((ack) => {
+			const member = state.view?.members.find((item) => item.id === ack.conversationId);
+			const who = member?.label ?? `#${ack.conversationId}`;
+			// 后端的 plan 是「立即处理 / 当前工具结束后处理」，从对方视角看就是「它」。
+			const plan = ack.plan === "立即处理" ? "立即处理" : ack.plan.replace(/^当前/, "它当前");
+			const doing = ack.busyWith === null ? "" : `（${ack.busyWith}）`;
+			const title = `${who} · ${plan}${doing} · ${clockTime(ack.at)}`;
+			return (
+				`<span class="ch-ack" data-busy="${ack.busy ? "true" : "false"}" title="${escapeAttr(title)}">` +
+				`已投递给 ${escapeHtml(who)} · ${escapeHtml(plan)}${escapeHtml(doing)}</span>`
+			);
+		})
+		.join("");
+	return `<div class="ch-acks">${chips}</div>`;
 }
 
 /** 任务 / 回报卡片。 */

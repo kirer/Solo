@@ -137,7 +137,14 @@ export type StaffEntry = {
 	readonly role: string;
 	/** 职责：招聘时上级写下的一段话（拼进提示词，展示在档案页）。 */
 	readonly duty: string;
-	/** 被授予的原子执行工具名，按招聘时的声明保存，重启后据此重建能力包。 */
+	/**
+	 * 被授予的原子执行工具名，按招聘时的声明保存，重启后据此重建能力包。
+	 *
+	 * 名字可带一段可选的目录范围：`"write"` 是整个工作空间，
+	 * `"write:src/"` 是只允许写工作空间里的 `src/`（ADR-035）。
+	 * 范围只对 `read` / `write` / `edit` 有意义；`bash` 无法用路径前缀约束，
+	 * 它本身就是全盘访问，所以隔离靠「不给 bash」。
+	 */
 	readonly tools: string[];
 	readonly conversationId: number;
 	/** 所属项目 slug。 */

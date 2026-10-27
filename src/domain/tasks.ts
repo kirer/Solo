@@ -158,7 +158,56 @@ export type CreateInput = {
 /** 校验结果。 */
 export type Validation =
 	| { readonly ok: true }
-	| { readonly ok: false; readonly code: "no-acceptance" | "no-assignee" | "no-project" | "empty-title" | "unknown-dependency"; readonly message: string };
+	| {
+			readonly ok: false;
+			readonly code: "no-acceptance" | "no-assignee" | "no-project" | "empty-title" | "unknown-dependency" | "duplicate";
+			readonly message: string;
+			/** `duplicate` 时给出撞车那一单的 id，调用方可以据此决定「并进它」还是「另立新单」。 */
+			readonly duplicateOf?: string;
+	};
+
+/**
+ * 标题归一化，只用来做「是不是同一件事」的比较。
+ *
+ * 去掉空白、标点、大小写差异，再截掉 `【新任务 T-3】` 这种前缀——
+ * 比较的是「要做的事」，不是「谁用什么格式写的」。
+ */
+function titleKey(title: string): string {
+	return title
+		.replace(/^【[^】]*】/, "")
+		.toLowerCase()
+		.replace(/[\s\p{P}\p{S}]+/gu, "");
+}
+
+/**
+ * 同项目里「还活着、而且看着像同一件事」的任务。
+ *
+ * ── 为什么要这条校验 ──
+ *
+ * 小恐龙验收时 CEO 派了 T-2、CHRO 派了 T-3、负责人又拆出 T-4，**同一件事三张单**
+ * （`docs/roundtable/ACCEPTANCE-dino.md` §2.1）。三张单各自有人认领、各自报 done，
+ * 看板上于是出现三条完成记录，而实际上只有一份交付物。事后负责人在记忆里写下
+ * 「CEO 派活先立项再派单」——但**记忆拦不住下一次**，只有校验能拦。
+ *
+ * 判据故意宽（子串包含即算重复），因为这道闸门的目的是「让人抬头看一眼」而不是
+ * 「精确判重」：误拦了，调用方补一句说明就能过；漏拦了，三张单就散出去了。
+ * 所以报错文案的重点是**告诉它下一步怎么做**，不是指责。
+ */
+export function findDuplicate(
+	input: { readonly title: string; readonly project: string },
+	known: Readonly<Record<string, TaskEntry>>,
+): TaskEntry | undefined {
+	const mine = titleKey(input.title);
+	if (mine === "") return undefined;
+	for (const task of Object.values(known)) {
+		if (task.project !== input.project) continue;
+		if (isTerminal(task.status)) continue;
+		const theirs = titleKey(task.title);
+		if (theirs === "") continue;
+		if (theirs === mine || theirs.includes(mine) || mine.includes(theirs)) return task;
+	}
+	return undefined;
+}
 
 /**
  * 校验「这是不是一个真任务」。
@@ -199,6 +248,21 @@ export function validateCreate(input: CreateInput, known: Readonly<Record<string
 		if (known[id] === undefined) {
 			return { ok: false, code: "unknown-dependency", message: `依赖的任务不存在：${id}` };
 		}
+	}
+	// 重复校验放最后：前三道是「这根本不是任务」，这一道是「这是任务，但可能已经有了」。
+	// 顺序影响报错文案——先让调用方把任务写得像个任务，再提醒它看看看板。
+	const duplicate = findDuplicate(input, known);
+	if (duplicate !== undefined) {
+		return {
+			ok: false,
+			code: "duplicate",
+			duplicateOf: duplicate.id,
+			message: [
+				`项目「${input.project}」里已经有一件看着一样的事：${duplicate.id}「${duplicate.title}」（${duplicate.status}，负责人会话 ${duplicate.assignee}）。`,
+				"如果就是这件事：不要新建，用 task_update 给它补进度、或换负责人（task_reassign），在原任务上继续。",
+				"如果确实不是同一件事：把标题写得更具体一点，让两件事的区别直接出现在标题里（例如「小恐龙游戏：跳跃音效」而不是「音效」）。",
+			].join("\n"),
+		};
 	}
 	return { ok: true };
 }

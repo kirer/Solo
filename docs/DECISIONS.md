@@ -834,3 +834,74 @@ settlement**。而 `watchdog.ts` 的队列扫描只认 `status === "queued"`—�
 
 **测试**：`test/e2e/delivery-receipt.test.ts`（4 条）锁住：`deliveredTo` 落库并能反查、
 unanswered 触发重投并写 `app.alert`、重投上限后只告一次。
+
+---
+
+## ADR-035：能力粒度——scope 写在工具名里，隔离靠工具不存在
+
+**日期**：2026-10-28
+**状态**：生效
+
+**背景**（真实验收暴露的最严重问题）：
+
+dino 项目验收时，`dino-lead` 与 `dino-dev` 都被授予了整工作空间的 `write`/`edit`
+（名册里都是 `["read","write","edit","bash"]`），又都被派了「写 index.html」。
+`dino-dev` 覆盖了 `dino-lead` 已经自测通过的版本，最后靠频道里喊话 +
+手工备份到 `/tmp/dino-backup/` 收场（`docs/roundtable/ACCEPTANCE-dino.md`
+「二、发现的问题 → 1（严重）」）。
+
+根因不是「谁不听话」，而是**声明粒度**：上一轮把「角色决定能力」改成
+「招聘时显式声明 `tools: string[]`」之后，粒度停在「有没有 `write`」，
+没说「能写哪个目录」。两个都写了 `write` 的员工在工具层面完全等价，
+所以隔离只能靠提示词和人自觉——而 ADR-004 说得很清楚：**权限靠工具不存在，
+不靠提示词**。提示词能做的只是建议。
+
+**决策**：
+
+1. 工具名里带一段可选的目录范围：`"write"` = 整个工作空间（老语义，
+   向后兼容），`"write:src/"` = 只允许写工作空间里的 `src/`。
+   `read` / `edit` 同理。范围是**相对工作空间根**（`env.cwd`）的目录。
+2. 校验在 `scopedTools()`（`src/company/staff-tools.ts`）里做：先
+   `env.absolutePath()` 归一化（相对路径、`./`、`..`、绝对路径、Windows 分隔符
+   全部统一），再用 `canonicalPath()`（realpath）拿真实落点比较（防符号链接
+   逃逸；目标不存在时对父目录 realpath 后拼回名字，与底层
+   `withFileMutationQueue` 的做法一致）。**前缀边界必须是分隔符**：
+   `/proj/src` 不匹配 `/proj/src-evil`。
+3. 越界**直接抛错**，文案指出允许目录、实际解析后的路径、授予的能力名，
+   最后一句是「如果你确实需要写这个文件，请向上级申请」——把拒绝变成一次
+   可走的流程，而不是一句「无权限」。
+4. **对模型暴露的工具名仍是基名**（`write`，不是 `write:src`）。范围只体现在
+   工具描述与拦截面。能力包里的工具名必须唯一（ADR-014），同一个人同时被授予
+   `write` 和 `write:src/` 时保留 `write` 并打 warning（范围限制不会生效），
+   两条都带范围时保留先声明的那条，同样 warning。
+5. `assertGrantable()` 支持带范围的名字：剥离 scope 后按基名走同一条层级检查
+   （`capabilityOf(base)`），并单独校验 scope 本身——不能是绝对路径、不能含
+   `..`、不能为空。
+6. `CompanyDoc` 升到 version 3，但**迁移不动 `tools`**：老员工的
+   `["read","write","edit","bash"]` 原样保留。迁移不是收权的时机。
+
+**代价**：
+
+- **`bash` 无法 scope**。命令里能做的事没法用路径前缀表达：`cd ..`、
+  `cat /etc/passwd`、`python3 -c "open('/x','w')"`、`sed -i`、`git checkout -- .`
+  ——路径只是命令串里的一段文本。`bash:src/` 会被直接拒绝（报错说明原因），
+  但**给了一个员工 `bash` 就等于给了他全盘的读写权限，`write:src/` 会被它绕过去**。
+  真正的文件级隔离只有一种写法：**不给 `bash`，只给 `write:<目录>/`
+  `edit:<目录>/`**。要给 bash 就接受它必然越界。这是写在这里的已知取舍，
+  不是待修的 bug。
+- 范围是「目录前缀」而不是 ACL：不给单文件授权、不给读权限分离的 ACL、
+  不区分 append 与 overwrite。需要更细的粒度时，先看是不是该拆项目/拆文件夹。
+- 迁移不缩权意味着**存量员工仍在全盘可写**。收紧得靠显式的组织动作
+  （重新招聘，或改档案），不是靠升级版本号。这是刻意的：迁移静默收权会让
+  已派出的任务突然失败，比留着旧权限更糟。
+- 符号链接的判定依赖 `canonicalPath()`：底层环境不支持 realpath 时
+  （`not_supported`）退化成按绝对路径比较，此时链接逃逸拦不住。悬空符号链接
+  直接拒绝（真实落点无法确认）。
+
+**测试**：`test/unit/staff-scope.test.ts`（19 条）锁住：`write:src/` 放行
+`src/a.js` 与不存在子目录；**拒绝 `../escape.js`、`/tmp/abs.js`、`src-evil/x.js`**；
+越界文案包含允许目录 / 实际路径 / 能力名；无范围的 `write` 仍能写任意路径；
+`write` + `write:src/` 同时授予时只留一个工具名；`assertGrantable("write:src/")`
+通过而 `write:/abs/`、`write:../x/`、`write:`、`bash:src/`、`bogus:x/` 全部报错。
+`test/unit/company-migration.test.ts` 补一条：v2 的 `tools: ["write"]` 迁到 v3
+仍是 `["write"]`（不被加上 scope，不缩权）。

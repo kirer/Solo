@@ -130,6 +130,9 @@ export function employeeUniversalTools(runtime: CompanyRuntime): readonly Return
  *
  * 入参是**工具名列表**而不是角色名：能力由招聘时显式声明的 tools 决定，
  * 角色只是名册上的标签（以前按角色查表，未知角色会静默退化成只读员工）。
+ *
+ * 工具名可带目录范围（`write:src/`），范围在这里一层就包好了（见 `scopedTools`，ADR-035）：
+ * 招聘、重启、档案三处都经过本函数，所以不存在「重启后范围丢了」这条路。
  */
 export function employeeToolsFor(
 	runtime: CompanyRuntime,
