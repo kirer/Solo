@@ -532,13 +532,19 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 ## 9. 测试
 
 ```
-test/unit/        20 个：纯函数（domain 层）+ capabilities/ids/settings/wal/network 等
+test/unit/        29 个：纯函数（domain 层）+ capabilities / staff-scope / role-charter /
+                        company-migration / ids / settings / wal / routes …
 test/contract/     1 个：runtime.test.ts —— 钉住底层行为，升级 pi-durable 后必跑
-test/e2e/         28 个：acceptance hierarchy escalation decision-loop channels-deliver
-                        delegation restart-channels terminate roundtable owner-gate
-                        real-model reliability reorg-acceptance …
+test/e2e/         31 个：acceptance hierarchy escalation decision-loop channels-deliver
+                        channel-ack delivery-receipt delegation restart-channels terminate
+                        roundtable owner-gate real-model reliability org web …
 test/support.ts         共用搭建（临时库 + 假模型）
 ```
+
+**跑法（ADR-036）**：`npm run verify` 才是验收标准，不是 `npm test`。它跑完写
+`.taste/verify-receipt.json`，`numPendingTests > 0` 即失败——**跳过的测试等于没测**。
+想跳真模型测试必须显式 `SKIP_REAL_MODEL=1`。`npm run verify:check` 校验收据是同一 commit
+且 24 小时内。
 
 **关键回归测试**（改对应代码必跑）：
 
@@ -549,10 +555,16 @@ test/support.ts         共用搭建（临时库 + 假模型）
 | 升级链 | `test/e2e/escalation.test.ts`、`escalation-ceo-gate.test.ts`、`owner-only-from-ceo.test.ts` |
 | 决策路由 | `test/e2e/decision-routing.test.ts`、`decision-loop.test.ts`、`adr-026-obedience.test.ts` |
 | 能力目录 | `test/unit/capabilities.test.ts` |
+| 员工能力粒度（scope） | `test/unit/staff-scope.test.ts`、`staff-capabilities.test.ts` |
+| 岗位职责文案 | `test/unit/role-charter.test.ts` |
+| 数据文档迁移 | `test/unit/company-migration.test.ts` |
+| 投递回执 | `test/e2e/delivery-receipt.test.ts` |
+| 频道回执（老板看得见的「已排队」） | `test/e2e/channel-ack.test.ts` |
+| 派活去重 | `test/unit/domain-tasks.test.ts`（`describe("重复任务")`） |
 | 同步等待 | `test/unit/delegation-guard.test.ts`、`test/e2e/delegation.test.ts` |
 | 底层升级 | `test/contract/runtime.test.ts` |
 
-命令：`npm run check`（tsc + 边界）→ `npm test`（vitest --run）。
+命令：`npm run check`（tsc + 边界）→ `npm run verify`（vitest --run + 收据，跳过 0 才算过）。
 
 ---
 
@@ -561,7 +573,7 @@ test/support.ts         共用搭建（临时库 + 假模型）
 ```
   communication-trail  company-runtime  cost-accounting  delegation  escalation
   org-structure  project-authority  project-lifecycle  project-workspace  tui-workspace
-docs/DECISIONS.md        33 条 ADR（每条有背景、替代方案、为什么这么选）
+docs/DECISIONS.md        36 条 ADR（每条有背景、替代方案、为什么这么选）
 docs/history/PLAN.md     技术选型 + 架构 + 附录 B「必踩的 15 个坑」（已冻结）
 docs/WEB-API.md          网页 API 契约
 ```
@@ -584,6 +596,9 @@ ADR-029  频道集中存储，广播存储 + 定向唤醒
 ADR-031  完成上报由系统写，不经模型
 ADR-032  能力目录声明式 + 延迟工具 + tool_search
 ADR-033  老板级待办只能由 CEO 递
+ADR-034  投递回执——投递成功 ≠ 已读，unanswered 必须可见并告警
+ADR-035  能力粒度——scope 写在工具名里，隔离靠工具不存在
+ADR-036  验收标准是机器可读收据，不是「测试全绿」这句话
 ```
 
 ---

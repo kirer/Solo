@@ -905,3 +905,51 @@ dino 项目验收时，`dino-lead` 与 `dino-dev` 都被授予了整工作空间
 通过而 `write:/abs/`、`write:../x/`、`write:`、`bash:src/`、`bogus:x/` 全部报错。
 `test/unit/company-migration.test.ts` 补一条：v2 的 `tools: ["write"]` 迁到 v3
 仍是 `["write"]`（不被加上 scope，不缩权）。
+
+---
+
+## ADR-036：验收标准是机器可读收据，不是「测试全绿」这句话
+
+**背景**：圆桌里 E 席提的反对票（`docs/roundtable/r1/E-verify.md` §4、§6）——仓库
+**没有 CI**（`.github/workflows` 不存在），所以「加一条 CI 断言」在人这里等于「没人跑」。
+更糟的是 `test/e2e/real-model.test.ts` 原本用 `describe.skipIf(!probe.ok)`：网关连不上
+就整个文件静默 skip，而镜像里 `npm test` 依然全绿。注释里早写了「随机 skip 没人看是已知
+风险」，但风险一直在。
+
+同一次圆桌还发现一个更隐蔽的假绿：`beforeAll` 抛错时 vitest 会把整文件的用例记成
+`skipped`，而 `numFailedTests` 仍然是 0。也就是说「文件整个崩掉」在数字上长得和
+「文件全过」一样。
+
+**决策**：
+
+1. **反转默认值**。`SKIP_REAL_MODEL=1` 才跳过真模型测试；不设就探测网关，探不到
+   `expect(probe.ok).toBe(true)` 直接红，错误文案写清「若本次不打算跑真模型，必须显式设
+   `SKIP_REAL_MODEL=1`」。
+2. **`npm run verify` 产出机器可读收据**，落在 `.taste/verify-receipt.json`
+   （`{ok, numTotalTests, numPendingTests, commit, at}`）。`ok = success && exitCode === 0
+   && failed === [] && pending === [] && todo === []`。**`numPendingTests > 0` 即失败。**
+3. **文件级失败单独报**，被它连累的用例不计入 skip。这样「整个文件崩掉」不会被算成
+   一片漂亮的 skip。
+4. **新鲜度门**：`npm run verify:check` 要求收据 `commit === 当前 HEAD` 且在 24 小时内，
+   防止拿昨天的绿收据交付。
+
+**替代方案与为什么没选**：
+
+- 「加 `console.log` 提醒」——不可忽略等于机器可判定，不是人可阅读。
+- 「把 skip 改成 `test.fails()`」——语义不对（`fails` 是「期望它失败」，不是「还没实现」）。
+  E 席原建议是在**记忆折叠 bug** 上用它登记「已知未实现」，转绿那天会报红强制删标记；
+  那个具体场景我们选择直接修 bug，所以没引入 `test.fails`。
+- 「只靠 `npm test` 的退出码」——它不区分「跳过」和「通过」。
+
+**代价**：
+
+- 网关连不上时 `npm run verify` 会红。这是刻意的：那台机器上本来就跑不了完整验收。
+  在 CI 或别的机器上要显式设 `SKIP_REAL_MODEL=1`。
+- 收据是本地文件（`.taste/` 已 gitignore），不是跨机器可信凭证。它的用途是「本地交付
+  前的一道门」和「事后能查到当时跑的是哪个 commit 的多少条测试」，不是「证明别人也跑过」。
+- `verify` 比 `npm test` 慢不了多少（多的是一次 JSON reporter 落盘和一次 `git rev-parse`）。
+
+**测试**：`scripts/verify-receipt.mjs` 自身没有单元测试（它是脚本不是库），靠
+`npm run verify` 与 `npm run verify:check` 两条命令手工验收；`test/contract/runtime.test.ts`
+里保留了「`npm run check` 的 stdout 必须有『边界检查通过』」这条壳测试——因为通知/缺口
+清单都走 stderr，stdout 只留一句结论。

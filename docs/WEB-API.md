@@ -391,6 +391,38 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 5. **`ack` 不是 `deliveredTo`**。`deliveredTo` 是给看门狗用的 submission 回执，语义不同，
    两者不要混用；`acks` 只读、不影响投递与重投。
 
+## 10.7 频道列表 `GET /api/channels`
+
+频道列表项（`ChannelListItem`，`src/server/channels-view.ts`）里有两个**容易混淆**的
+计数字段，别用错：
+
+```jsonc
+{
+  "unread": [
+    {
+      "id": "proj:dino-game",
+      "kind": "project",
+      "title": "dino-game",
+      "mentions": 2,          // 未读的 @ 我 的条数 —— 需要我点开
+      "unread": 7,            // 未读消息总条数
+      "openTasks": 3,         // 本项目未完成（非终态）任务数 —— 只是背景信息
+      "preview": "…", "lastAt": 0, "lastSeq": 0, "memberCount": 2
+    }
+  ],
+  "mentions": 2,              // 全站 @ 我 的总数（顶栏徽章）
+  "total": 9
+}
+```
+
+- **`openTasks` 只在列表级有**。频道详情（`GET /api/channels/:id`）给的是
+  `tasks: TaskEntry[]`（完整对象），没有 `openTasks` 这个数字——需要计数时自己数
+  `tasks.length`。这个不对称是有意的：列表要轻，详情要全。
+- **三个数的视觉权重不一样**（`ui/css/channels.css` 的 `.ch-row-tasks` 注释）：
+  `mentions` 是最强的（要你动手指），`unread` 次之，`openTasks` 最弱
+  （`var(--surface-3)` 底、`var(--muted)` 字、10px）——任务是背景，不是待办提醒。
+- **`openTasks` 会漏掉终态任务**：口径是 `!isTerminal(status)`，即 `todo` / `doing` /
+  `blocked` / `review` 都算。`done` 与 `cancelled` 不算。
+
 ## 11. 已知限制
 
 - **历史消息不还原附件 chip**：附件元数据不落在 `pi.user` 条目里（不新增持久化
