@@ -75,4 +75,72 @@ export function projectMemorySections(source: string): readonly MemorySection[] 
 	return sectionsOf(source);
 }
 
+// ── 自动沉淀 ────────────────────────────────────────────────────────────
+
+/**
+ * 哪些消息值得进项目记忆。
+ *
+ * 判据只有两条，都是**形状**判据，不含语义判断：
+ * 1. 消息在项目频道里（调用方保证）。
+ * 2. `kind` 是 `decision` 或 `report` —— 也就是「拍板了」和「交付了」两类。
+ *
+ * 为什么不在代码里判语义（比如「这句话是不是结论」）：那是模型该干的事，代码判
+ * 只会判错。代码能可靠判的只有「这本来就被标成了结论」。所以真正的沉淀动作由
+ * 一个**周期任务**在模型侧完成：把新出现的 decision/report 交给它，它决定写什么。
+ * 这里的函数只负责回答「有哪些还没沉淀」。
+ */
+export const SETTLE_KINDS: readonly string[] = ["decision", "report"];
+
+/** 沉淀游标的键：`项目 slug` → 已经沉淀到第几条 seq。 */
+export function settleKey(project: string): string {
+	return `settle:${project}`;
+}
+
+/** 一条待沉淀的消息（已经过 `kind` 过滤）。 */
+export type SettleCandidate = {
+	readonly seq: number;
+	readonly from: string;
+	readonly text: string;
+	readonly kind: string;
+};
+
+/**
+ * 挑出还没沉淀的消息。纯函数，方便单测。
+ *
+ * `since` 是上次沉淀到的 seq；缺省 0 表示这个项目一条都没沉淀过。
+ * 备注：**发件人是 `owner` 的也留着**——老板在项目频道拍板是最该进记忆的东西。
+ */
+export function settleCandidates(
+	messages: readonly { readonly seq: number; readonly from: string; readonly text: string; readonly kind: string }[],
+	since: number,
+): readonly SettleCandidate[] {
+	return messages
+		.filter((message) => message.seq > since && SETTLE_KINDS.includes(message.kind))
+		.map((message) => ({ seq: message.seq, from: message.from, text: message.text, kind: message.kind }));
+}
+
+/**
+ * 给模型的沉淀指令。
+ *
+ * 明确要求「只写你确认的、能长期成立的事」，并给出反例 —— 否则模型会把每条消息
+ * 都复述一遍，项目记忆立刻变成频道历史的副本（那等于没记）。
+ */
+export function renderSettlePrompt(project: string, candidates: readonly SettleCandidate[]): string {
+	const lines = candidates.map(
+		(item) => `- #${item.seq} [${item.kind}] ${item.from}：${item.text.replace(/\s+/g, " ").trim()}`,
+	);
+	return [
+		`项目 \`${project}\` 的频道里出现了以下${candidates.length}条「拍板」或「交付」。`,
+		"请挑出**能长期成立**的事实写进项目记忆（用 remember_project）：",
+		"",
+		...lines,
+		"",
+		"要求：",
+		"1. 只写结论与约定，不写过程、不写谁在几点说了什么。",
+		"2. 一条一句，能脱离上下文单独读懂。",
+		"3. 过几天就失效的东西不要写（比如「今天先这样」）。",
+		"4. 没有值得写的就不写，直接说「没有需要沉淀的」。",
+	].join("\n");
+}
+
 export { DIGEST_LIMIT };

@@ -124,6 +124,9 @@ async function main(): Promise<void> {
 		identity.replace(/^---\n([\s\S]*?)\n---/, `---\n$1\nproject: 自测项目\n---`),
 		"utf8",
 	);
+	// 改了 identity.md 之后必须重扫一次：项目频道是在「开会话」时按 `project:` 建的，
+	// 不重扫的话这个人永远不在项目频道里（实测踩过：`频道不存在：proj:自测项目`）。
+	await shell.rescan();
 	const projectAsked = await shell.ownerSay({
 		channelId: "company",
 		text: `@${slug} 你现在在哪个项目里？项目目标是什么？一句话。`,
@@ -182,6 +185,29 @@ async function main(): Promise<void> {
 		name: "项目记忆落盘（projects/<slug>/memory.md）",
 		ok: projectMemoryReply !== undefined && projectMemoryText.includes("第一次跑通"),
 		detail: projectMemoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
+	});
+
+	// 7. 项目记忆的自动沉淀：让助理在项目频道里拍一次板（kind=decision），
+	//    检查 `projects/自测项目/memory.md` 是否被自动写入了内容 —— 这条路上
+	//    agent 没有被明确要求「去记一条」，它只收到「请判断这件事值不值得沉淀」。
+	const settleAsked = await shell.ownerSay({
+		channelId: `proj:自测项目`,
+		text: "定了：这个项目的验收标准是「能跑通 core:live 全部 8 项」。",
+		kind: "decision",
+	});
+	console.log(`项目频道已投递 #${settleAsked.seq}（kind=decision）`);
+	const memoryBefore = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");
+	let settled = "";
+	const deadline = Date.now() + WAIT_MS;
+	while (Date.now() < deadline && settled === "") {
+		const now = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");
+		if (now !== memoryBefore) settled = now;
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+	}
+	phases.push({
+		name: "项目记忆自动沉淀（拍板后被叫去沉淀并落盘）",
+		ok: settled.includes("验收标准"),
+		detail: settled === "" ? "memory.md 没变化（没人去沉淀，或沉淀了但没写这一条）" : settled.split("\n").filter(Boolean).slice(-1)[0] ?? "",
 	});
 
 	for (const phase of phases) log(phase);

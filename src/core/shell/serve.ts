@@ -112,7 +112,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 
 	/** 老板在频道里说话。 */
 	async function postChannelMessage(channelId: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
-		const body = await readJson<{ text?: string; replyTo?: number; from?: string }>(request);
+		const body = await readJson<{ text?: string; replyTo?: number; from?: string; kind?: string }>(request);
 		const text = (body.text ?? "").trim();
 		if (text === "") return fail(response, 400, "需要 text");
 		const channels = (await shell.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannels();
@@ -125,6 +125,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				from,
 				text,
 				...(typeof body.replyTo === "number" ? { replyTo: body.replyTo } : {}),
+				// 语义标签由说话的人自己声明：项目频道里带 `decision` 的话才会进项目记忆。
+				...(typeof body.kind === "string" && body.kind !== "" ? { kind: body.kind } : {}),
 			});
 			scheduleOrg();
 			return json(response, {

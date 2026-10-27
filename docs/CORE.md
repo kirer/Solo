@@ -177,16 +177,33 @@ src/core/
   runtime/   openCore + 防腐层
   agent/     identity（他是谁）/ prompt（投影）/ runtime（接进会话）/ memory / skills
              create（新建一个人）/ roster（slug ↔ 会话）
-  project/   doc（README.md）/ memory（memory.md）
-  channel/   state（纯规则）/ deliver（唤醒）/ post（写一条）/ tools（12+ 个工具）
+  project/   doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
+  channel/   state（纯规则）/ deliver（唤醒）/ post（写一条）/ tools（15+ 个工具）
   shell/     assemble（扫文件夹 → 开会话 → 建频道）/ serve（HTTP+SSE）/ view / main
 ```
 
 `project/` 与 `agent/`、`channel/` **平级**：项目不是公司的一个子概念，它是与「人」
 并列的另一种归属。
 
+## 项目记忆怎么沉淀
+
+两条路，都要有：
+
+1. **主动**：agent 用 `remember_project` 写 `projects/<slug>/memory.md`
+   （归属判据是 `identity.md` 里的 `project: <slug>`，不是职位）。
+2. **自动**：`src/core/project/settle.ts` 在一条消息落地后检查两件事 ——
+   落在 `proj:<slug>` 频道里、`kind` 是 `decision` 或 `report`。命中就把这条
+   发给项目负责人，请它判断「这件事长期成立吗」，成立就 `remember_project`。
+   游标（`SettleDoc.cursors`）保证同一条不会重复提；找不到负责人时记进
+   `stranded`，不阻塞其他项目。
+
+分工的原则：**形状用代码判，语义用模型判**。代码判得准「这条消息带 decision
+标签吗」，判不准「这句话是不是真的结论」；后者交给模型，写不写、写什么由它决定。
+
+`say` / `ask` 的 `kind` 参数由说话的人自己声明（`decision` / `report` /
+`question` / `chat`），老板在项目频道里拍板时也要带 `kind: "decision"`。
+
 ## 还没做的
 - **待办拍板 / 任务 / 成本**：旧核心有，新核心一个都没有（界面相应位置是空的）。
 - **看门狗 / 崩溃自愈 / IM 出站**：旧核心为长跑攒的运维设施，新核心还没搬。
-- **项目记忆的自动沉淀**：现在靠 agent 主动 `remember_project`。频道里的结论还不会
-  自动汇总进去。
+

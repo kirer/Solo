@@ -23,11 +23,12 @@ import {
 	type Context,
 	type JsonObject,
 } from "../runtime/index.ts";
-import { OWNER_SLUG, readAllIdentities } from "../agent/identity.ts";
+import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { agentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
-import { ChannelDoc, OWNER, channelsOf, ensureChannel, type ChannelState } from "../channel/state.ts";
-import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
+import { ChannelDoc, OWNER, channelsOf, ensureChannel, type ChannelState, type Message } from "../channel/state.ts";
+import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
+import { settleProject } from "../project/settle.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -75,7 +76,12 @@ export type CoreShell = {
 	readonly channels: (context?: Context) => Promise<ChannelState>;
 	/** 老板说话。宿主入口，语义与 agent 的 `say` 完全一致。 */
 	readonly ownerSay: (
-		options: { readonly channelId: string; readonly text: string; readonly replyTo?: number },
+		options: {
+			readonly channelId: string;
+			readonly text: string;
+			readonly replyTo?: number;
+			readonly kind?: string;
+		},
 		context?: Context,
 	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
 	/**
@@ -85,7 +91,13 @@ export type CoreShell = {
 	 * （`ownerSay = postAs(OWNER, ...)`），不写第二份语义。
 	 */
 	readonly postAs: (
-		options: { readonly channelId: string; readonly from: string; readonly text: string; readonly replyTo?: number },
+		options: {
+			readonly channelId: string;
+			readonly from: string;
+			readonly text: string;
+			readonly replyTo?: number;
+			readonly kind?: string;
+		},
 		context?: Context,
 	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
 	/** 名册：slug ↔ 会话 id 的当前快照（界面拿它把 slug 翻成数字 id）。 */
@@ -117,7 +129,7 @@ export async function assembleCore(
 	const workspaceRoot = dirname(options.agentsRoot);
 
 	// ── 1. 装能力包 ────────────────────────────────────────────────
-	const toolDeps: CoreToolDeps = {
+	const baseDeps: CoreToolDeps = {
 		harness,
 		workspaceRoot,
 		agentsRoot: options.agentsRoot,
@@ -131,6 +143,11 @@ export async function assembleCore(
 		},
 		openAgent: async (slug, ctx) => (await openOne(slug, ctx)).id as unknown as number,
 	};
+	// 项目记忆的自动沉淀：一条消息落地后，若它带着 `decision` / `report` 标签且落在
+	// 项目频道里，就叫这个项目里该负责的人把它沉淀进 `projects/<slug>/memory.md`。
+	// 条件是「形状」（kind），判断是「语义」（模型写什么），分工见 project/settle.ts。
+	const afterPost = makeAfterPost(harness, options.agentsRoot, options.projectsRoot, () => conversations);
+	const toolDeps: CoreToolDeps = { ...baseDeps, afterPost };
 	const tools = createCoreTools(toolDeps);
 	const toolsExtension = defineExtension({ name: "core-tools", tools });
 
@@ -182,6 +199,8 @@ export async function assembleCore(
 				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
 				installIdentity(slug);
 				conversations.set(slug, found);
+				// 已有会话也要补一次项目频道：老工作区里的人在 `proj:` 频道出现之前建的。
+				await joinProjectChannel(slug, ctx);
 				return found;
 			}
 		}
@@ -210,6 +229,9 @@ export async function assembleCore(
 		// @ 他，`recipientsOf` 第一规则「@ 的必须是成员」把他过滤掉，消息静默不投递，
 		// 界面上看起来就是「招了个人但叫不动」。
 		await addToCompanyChannel(slug, ctx);
+		// 拉进它的项目频道（幂等）。项目频道是项目记忆沉淀的落点：没有它，agent 在
+		// 项目里说的话就没有「项目」这个上下文，`decision` 也只是群里的一句话。
+		await joinProjectChannel(slug, ctx);
 		return created;
 	}
 
@@ -222,6 +244,32 @@ export async function assembleCore(
 			if (channel.members.includes(slug)) return;
 			// 整体替换，不就地 push：读出来的是副本，就地改不产生 op。
 			doc.channels[companyChannel] = { ...channel, members: [...channel.members, slug] };
+		}, ctx);
+	}
+
+	/**
+	 * 把这个人拉进它所属项目的频道（幂等）。项目频道不存在就建。
+	 *
+	 * 频道 id 用 `proj:<slug>`（与 `src/core/channel/state.ts` 的 `projectId()` 一致），
+	 * 因为沉淀逻辑靠这个前缀认出「这是项目频道」。
+	 */
+	async function joinProjectChannel(slug: string, ctx: Context): Promise<void> {
+		const identity = await readIdentity(options.agentsRoot, slug);
+		const project = identity?.project;
+		if (project === undefined || project === "") return;
+		const id = `proj:${project}`;
+		await harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const channel = doc.channels[id];
+			if (channel === undefined) {
+				Object.assign(
+					doc,
+					ensureChannel(doc, { id, title: project, members: [OWNER, slug], wakeOnAll: [], at: Date.now() }),
+				);
+				return;
+			}
+			if (channel.members.includes(slug)) return;
+			doc.channels[id] = { ...channel, members: [...channel.members, slug] };
 		}, ctx);
 	}
 
@@ -287,7 +335,12 @@ export async function assembleCore(
 			const all = await readAllIdentities(options.agentsRoot);
 			const added: string[] = [];
 			for (const identity of all) {
-				if (conversations.has(identity.slug)) continue;
+				if (conversations.has(identity.slug)) {
+					// 已经开着会话的人也要补一次项目频道：`identity.md` 里刚加上
+					// `project:` 的人，不重扫就永远进不了那个项目的频道（幂等）。
+					await joinProjectChannel(identity.slug, ctx);
+					continue;
+				}
 				await openOne(identity.slug, ctx);
 				added.push(identity.slug);
 			}
@@ -330,6 +383,45 @@ export async function assembleCore(
 	return shell;
 }
 
+/**
+ * 造「一条消息落地之后」的钩子：项目记忆自动沉淀。
+ *
+ * 只在**项目频道** + **decision/report** 时才动 —— 这两个条件是形状判据，代码判得准。
+ * 写什么由模型（`remember_project`）决定，代码不猜语义。
+ */
+function makeAfterPost(
+	harness: Harness,
+	agentsRoot: string,
+	projectsRoot: string,
+	live: () => ReadonlyMap<string, Conversation>,
+): (message: Message, channelId: string, context: Context) => Promise<void> {
+	return async (message, channelId, context) => {
+		if (!channelId.startsWith("proj:")) return;
+		if (message.kind !== "decision" && message.kind !== "report") return;
+		await settleProject(
+			{
+				harness,
+				agentsRoot,
+				projectsRoot,
+				channelState: async () =>
+					(await harness.snapshot(ChannelDoc, context)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} },
+				// 先查内存里的会话表：名册是异步落盘的，刚 `hire` 出来的人可能还没写进去
+				// （实测：新招的人被静默算成「没有人能写」）。名册只作为兜底。
+				conversationOf: async (slug) => {
+					const known = live().get(slug);
+					if (known !== undefined) return known;
+					const dir = (await harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
+					const id = conversationFor(dir, slug);
+					if (id === undefined) return undefined;
+					return harness.conversation(id as never, context);
+				},
+			},
+			channelId.slice("proj:".length),
+			context,
+		);
+	};
+}
+
 /** 建空的注册表（外壳自己的构造器，省得调用方记顺序）。 */
 export function createCoreRegistry(): Registry {
 	return createRegistry();
@@ -349,6 +441,11 @@ export async function ownerSpeak(
 		/** 谁说这句话。缺省是老板。 */
 		readonly from?: string;
 		readonly replyTo?: number;
+		/**
+		 * 消息语义标签。`decision` / `report` 会被项目记忆自动沉淀（见 `project/settle.ts`）。
+		 * 老板在项目频道里拍板时要带上 —— 那是最该进记忆的东西。
+		 */
+		readonly kind?: string;
 	},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }> {
@@ -377,7 +474,14 @@ export async function ownerSpeak(
 			text: options.text,
 			at: Date.now(),
 			...(options.replyTo === undefined ? {} : { replyTo: options.replyTo }),
+			...(options.kind === undefined ? {} : { kind: options.kind }),
 		},
+		context,
+	);
+	// 老板在项目频道里拍板也要沉淀：它不是 agent，不会走工具层，这条路径得自己调。
+	await makeAfterPost(shell.harness, shell.agentsRoot, shell.projectsRoot, () => shell.conversations)(
+		result.message,
+		options.channelId,
 		context,
 	);
 	return { seq: result.message.seq, delivery: result.delivery };

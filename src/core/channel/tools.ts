@@ -85,6 +85,13 @@ export type CoreToolDeps = {
 	readonly saveDirectory: (change: (state: DirectoryState) => DirectoryState, context: Context) => Promise<void>;
 	/** 为某个 slug 建会话并绑定。缺省表示不支持热建（测试里可以不提供）。 */
 	readonly openAgent?: (slug: string, context: Context) => Promise<number>;
+	/**
+	 * 一条消息落地之后的钩子。外壳用它接「项目记忆自动沉淀」。
+	 *
+	 * 为什么挂在工具层而不是频道层：沉淀要读 `agents/` 与 `projects/`，那是外壳的
+	 * 视野；`channel/post.ts` 只认识频道文档，不该知道项目记忆存在。
+	 */
+	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 };
 
 /** 技能的两级根目录。工具里每次都从 deps 现算，避免多存一份会漂的副本。 */
@@ -143,6 +150,12 @@ export function createCoreTools(deps: CoreToolDeps) {
 			text: Type.String({ description: "要说的话" }),
 			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道" })),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
+			kind: Type.Optional(
+				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
+					description:
+						"给这条消息打标签：decision = 拍了板（结论、约定、定了怎么做）；report = 交付了什么。只在项目频道里打标签才有意义——项目记忆靠这两个标签自动沉淀。普通发言不要传。",
+				}),
+			),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
@@ -160,9 +173,13 @@ export function createCoreTools(deps: CoreToolDeps) {
 					text: args.text,
 					at: Date.now(),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
+					// 拍板与交付是**可沉淀**的语义标签，告诉项目记忆「这两类值得记」。
+					// 由说话的人自己声明，代码不去猜哪句话是结论（见 project/settle.ts）。
+					...(args.kind === undefined ? {} : { kind: args.kind }),
 				},
 				ctx,
 			);
+			if (deps.afterPost !== undefined) await deps.afterPost(result.message, target.channelId, ctx);
 			const woke = result.delivery.delivered;
 			return text(
 				`已发到「${result.channel.title}」#${result.message.seq}。${
@@ -199,6 +216,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				{ channelId: target.channelId, from: slug, text: `@${who} ${args.text}`, at: Date.now(), kind: "question" },
 				ctx,
 			);
+			if (deps.afterPost !== undefined) await deps.afterPost(result.message, target.channelId, ctx);
 			return text(
 				`已问 ${who}（「${result.channel.title}」#${result.message.seq}）。对方已被唤醒。你可以继续做别的，不要在这里等。`,
 			);
