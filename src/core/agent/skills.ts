@@ -15,8 +15,8 @@
  *
  * 这一条对成本很要紧：一个人攒 20 门手艺，常驻的是 20 行描述，不是 20 篇正文。
  */
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 /** 技能子目录名（公司层根目录与个人目录下都用它）。 */
 export const SKILLS_DIR = "skills";
@@ -203,4 +203,29 @@ export async function writeCompanySkill(
 ): Promise<Skill> {
 	const written = await writeSkillTo(join(workspaceRoot, SKILLS_DIR), input);
 	return { ...written, scope: "company" };
+}
+
+/**
+ * 把一个技能目录整个拷过来（通常来自仓库里的 `seed/skills/`）。
+ *
+ * 为什么不复用 `writeSkillTo`：一个技能可以带别的文件（模板、脚本、示例）。
+ * 播种时原样拷贝，才让「技能是一个文件夹」这件事真的成立 —— 只写 SKILL.md
+ * 的话，技能里放的那些附带文件就丢了。
+ *
+ * 目标已存在时不覆盖：播种只该发生一次，之后所有修改都属于用户。
+ */
+export async function copySkillDir(fromDir: string, skillsRoot: string): Promise<Skill> {
+	const name = basename(fromDir);
+	const dir = join(skillsRoot, name);
+	try {
+		await readdir(dir);
+		// 已经存在：读回来报告，不覆盖。
+		return { name, description: "", dir, scope: "company" };
+	} catch {
+		// 不存在，继续拷。
+	}
+	await mkdir(skillsRoot, { recursive: true });
+	await cp(fromDir, dir, { recursive: true });
+	const source = await readFile(join(dir, SKILL_FILE), "utf8").catch(() => "");
+	return { name, description: parseFrontmatter(source).description ?? "", dir, scope: "company" };
 }

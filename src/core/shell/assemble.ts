@@ -13,8 +13,10 @@
  * 这里没有「CEO」「CTO」这些字。谁是谁的上级，全在 `identity.md` 的 `manager` 字段里；
  * 谁是「离老板最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
 import {
 	BACKGROUND_CONTEXT,
@@ -24,11 +26,12 @@ import {
 	type JsonObject,
 } from "../runtime/index.ts";
 import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
+import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { agentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
 import { ChannelDoc, OWNER, channelsOf, ensureChannel, type ChannelState, type Message } from "../channel/state.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
-import { settleProject } from "../project/settle.ts";
+import { settleProject, settleProjects } from "../project/settle.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -106,6 +109,13 @@ export type CoreShell = {
 	readonly labelOf: (slug: string) => string;
 	/** 当前所有身份（每次都重读盘：改 `identity.md` 立刻反映到档案页）。 */
 	readonly identities: () => Promise<readonly import("../agent/identity.ts").Identity[]>;
+	/**
+	 * 补漏扫一遍所有项目频道，把「该沉淀但还没等到答复」的结论再问一次。
+	 *
+	 * 由外壳定时调（见 `shell/main.ts`）。`afterPost` 只处理「消息刚落地的那个项目」，
+	 * 补不了三种漏：负责人当时不在、进程崩在 afterPost 中途、`followUp` 排队后重启。
+	 */
+	readonly settleSweep: () => Promise<import("../project/settle.ts").SettleReport>;
 	readonly agentsRoot: string;
 	readonly projectsRoot: string;
 	readonly companyChannel: string;
@@ -326,11 +336,36 @@ export async function assembleCore(
 		}
 	}, context);
 
+	// 补漏扫描用的依赖：与 `afterPost` 同一套（内存会话表优先，名册兜底）。
+	const settleDeps = {
+		harness,
+		agentsRoot: options.agentsRoot,
+		projectsRoot: options.projectsRoot,
+		channelState: async (): Promise<ChannelState> =>
+			(await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? {
+				channels: {},
+				messages: {},
+				nextSeq: {},
+				readMarks: {},
+			},
+		conversationOf: async (slug: string) => {
+			const known = conversations.get(slug);
+			if (known !== undefined) return known;
+			const dir = (await harness.snapshot(DirectoryDoc, BACKGROUND_CONTEXT)) ?? emptyDirectory();
+			const id = conversationFor(dir, slug);
+			if (id === undefined) return undefined;
+			return harness.conversation(id as never, BACKGROUND_CONTEXT);
+		},
+	};
+
 	const shell: CoreShell = {
 		harness,
 		registry,
 		conversations,
 		directory,
+		async settleSweep() {
+			return settleProjects(settleDeps);
+		},
 		async rescan(ctx: Context = BACKGROUND_CONTEXT): Promise<readonly string[]> {
 			const all = await readAllIdentities(options.agentsRoot);
 			const added: string[] = [];
@@ -488,6 +523,51 @@ export async function ownerSpeak(
 }
 
 /**
+ * 把仓库自带的技能拷进工作区的公司层（`<workspace>/skills/`）。
+ *
+ * 只拷 `seed/skills/` 下真有的目录，且**不覆盖已存在的**：播种只该发生一次，
+ * 之后 `skills/` 里的内容属于用户，代码没有权力改。
+ *
+ * 找不到 `seed/skills/` 时静默跳过 —— 打包/部署方式可能不带这个目录，
+ * 缺几份起手技能不该让服务起不来。
+ */
+export async function seedCompanySkills(agentsRoot: string): Promise<readonly string[]> {
+	const workspace = dirname(agentsRoot);
+	const skillsRoot = join(workspace, SKILLS_DIR);
+	let entries: import("node:fs").Dirent[];
+	try {
+		entries = await readdir(seedSkillsRoot(), { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	const copied: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory()) continue;
+		const written = await copySkillDir(join(seedSkillsRoot(), entry.name), skillsRoot);
+		copied.push(written.name);
+	}
+	return copied;
+}
+
+/**
+ * 仓库自带的技能目录。
+ *
+ * 用「从本文件往上找 `seed/`」而不是写死绝对路径：`src/core/shell/` 到仓库根是
+ * 固定深度，但源码（`src/`）与构建产物（`dist/`）深度不同，所以往上找而不是数层级。
+ */
+function seedSkillsRoot(): string {
+	let dir = dirname(fileURLToPath(import.meta.url));
+	for (let index = 0; index < 6; index += 1) {
+		const candidate = join(dir, "seed", "skills");
+		if (existsSync(candidate)) return candidate;
+		const parent = dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return join(dirname(fileURLToPath(import.meta.url)), "seed", "skills");
+}
+
+/**
  * 给一个工作区播种「老板身边的人」。
  *
  * 这是**唯一**一处预置身份的地方，而且只写文件、不写代码：一个 `manager: owner` 的
@@ -529,58 +609,10 @@ export async function seedOwnerAssistant(
 
 	// 技能：和身份一样，是文件，不是代码。
 	//
-	// 这两份写进**公司层**（`skills/`），不是某个人的目录：立项和招人是这家公司
-	// 的通用做法，不该只有「离老板最近的那个人」会。之后谁想有自己的一套，用
-	// `write_skill` 写个人层同名技能就覆盖掉了。
-	const { writeCompanySkill } = await import("../agent/skills.ts");
-	await writeCompanySkill(agentsRoot, {
-		name: "立项",
-		description: "老板给了一个新需求，要判断该不该单独立一个项目、怎么立。用在「这事要开个新摊子吗」的时候。",
-		body: [
-			"# 立项",
-			"",
-			"## 什么时候立",
-			"满足任意两条就立：①会持续多天 ②需要两个人以上同时推进 ③有独立的验收标准 ④会有自己的代码/文档目录。",
-			"只满足一条、或者今天就能收口的，别立项 —— 直接找一个人做完，写进频道就够了。",
-			"",
-			"## 怎么立",
-			"1. `write_project` 写 `projects/<slug>/README.md`，正文四段：目标（做成什么样）、验收标准（怎么算做完）、不做的是什么、现在进展到哪。",
-			"2. `owner` 填负责人的 slug。负责人是这个项目里唯一能被你追问「进度如何」的人，别填自己。",
-			"3. 用 `hire` 建人时带上 `project: <slug>` —— 他们才会在提示词里看到项目说明。",
-			"4. 在公司频道 `say` 一句：立了什么项目、谁负责、验收标准是什么。",
-			"",
-			"## 判断质量的标准",
-			"验收标准写成「能跑通 X，输入 Y 得到 Z」这种可验证的句子。写成「做好了」「优化了」就等于没写 —— 到时候没人能说清做没做完。",
-			"",
-			"## 踩过的坑",
-			"项目立了没人负责，就会一直挂着。立完立刻确认 owner 存在。",
-		].join("\n"),
-	});
-	await writeCompanySkill(agentsRoot, {
-		name: "招人",
-		description: "需要一个人来做某件事时，怎么决定招谁、写什么身份、给什么边界。用在「这事得有人干」的时候。",
-		body: [
-			"# 招人",
-			"",
-			"## 先问三个问题",
-			"1. 这件事需要的是**判断**还是**执行**？需要判断的人，身份里要写「什么情况该停下来问我」；需要执行的人，身份里要写清验收标准。",
-			"2. 他归谁管？归你，还是归某个项目负责人。归项目负责人的，`manager` 填那个负责人的 slug，并在身份里写「只向 X 汇报」。",
-			"3. 他能不能再造人？一般情况下不能 —— 身份里明确写「你不招人」。",
-			"",
-			"## 身份怎么写（`hire` 的 body）",
-			"四段，缺一不可：",
-			"- **你负责什么**：一件事，说清产出物是什么。别写「负责技术」这种没有边界的话。",
-			"- **你不做什么**：明确排除。没有这一条的人会把活越揽越多，最后什么都做不深。",
-			"- **你怎么汇报**：只向谁汇报、什么情况下必须停下来问、什么问题可以自己拍板。",
-			"- **做得好是什么样**：验收标准。",
-			"",
-			"## 招完立刻做两件事",
-			"1. 在频道里 @ 他，把第一件事和验收标准说清楚（`ask`）。",
-			"2. 如果他属于某个项目，确认它的 `identity.md` 里 `project` 字段填对了。",
-			"",
-			"## 踩过的坑",
-			"身份写得太抽象（「你是技术专家」），他会自己发明工作内容。宁可写窄，不够再加。",
-		].join("\n"),
-	});
+	// 正文在 `seed/skills/<名字>/SKILL.md`，这里只负责把它们拷进工作区的公司层。
+	// 以前这两份 markdown 是写在本函数里的字符串字面量 —— 那等于把「做法」硬编码进
+	// 代码：改一句话要改 TS、要重新编译、要重启。现在它们和 agent 自己写的技能
+	// 是同一种东西（同一个文件夹结构），改完下一条消息就生效。
+	await seedCompanySkills(agentsRoot);
 	return identity.slug;
 }

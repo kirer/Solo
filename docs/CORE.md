@@ -194,14 +194,37 @@ src/core/
 2. **自动**：`src/core/project/settle.ts` 在一条消息落地后检查两件事 ——
    落在 `proj:<slug>` 频道里、`kind` 是 `decision` 或 `report`。命中就把这条
    发给项目负责人，请它判断「这件事长期成立吗」，成立就 `remember_project`。
-   游标（`SettleDoc.cursors`）保证同一条不会重复提；找不到负责人时记进
-   `stranded`，不阻塞其他项目。
+   找不到负责人时记进 `stranded`，不阻塞其他项目。
+
+**游标分两个，不能合并成一个**：
+
+- `SettleDoc.awaiting[项目]` = 已经问过、但还没等到答复，问到第几条。它的作用只是
+  **别重复打扰**。
+- `SettleDoc.cursors[项目]` = 这些结论**已经写进记忆了**。它只由
+  `remember_project` 落盘成功后推进（`confirmedBy()`）。
+
+为什么必须分开：如果把「问过」当成「写完」，模型只要回一句「没有需要沉淀的」，
+这批 decision 就永远不会再被检查 —— 静默丢数据。分开之后，模型不回话 / 写错地方
+（用 `remember` 而不是 `remember_project`）/ 什么都没写，游标都不动，下一轮会再问。
+
+**补漏定时器**：`shell/main.ts` 的 `startSettleSweep()` 每 5 分钟跑一次
+`shell.settleSweep()`（遍历所有 `proj:` 频道）。`afterPost` 只处理「消息刚落地
+的那个项目」，补不了三种漏：①负责人当时不在 ②进程崩在 `afterPost` 中途
+③`followUp` 排队后重启丢了队列。
 
 分工的原则：**形状用代码判，语义用模型判**。代码判得准「这条消息带 decision
 标签吗」，判不准「这句话是不是真的结论」；后者交给模型，写不写、写什么由它决定。
 
 `say` / `ask` 的 `kind` 参数由说话的人自己声明（`decision` / `report` /
 `question` / `chat`），老板在项目频道里拍板时也要带 `kind: "decision"`。
+
+## 技能从哪来
+
+技能的正文**不在代码里**。仓库自带 `seed/skills/<名字>/SKILL.md`，`seedCompanySkills()`
+把它们拷进工作区的 `skills/`（公司层），已存在的不覆盖 —— 播种只该发生一次。
+
+改动技能 = 改一个 markdown 文件，下一条消息就生效（`agentSection` 的 `render`
+每次重读盘）。写代码等于把「做法」硬编码进 TS，改一句话要重编译、重启。
 
 ## 还没做的
 - **待办拍板 / 任务 / 成本**：旧核心有，新核心一个都没有（界面相应位置是空的）。

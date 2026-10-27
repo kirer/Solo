@@ -24,16 +24,29 @@ import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readProject, type ProjectDoc } from "./doc.ts";
 import { renderSettlePrompt, settleCandidates, type SettleCandidate } from "./memory.ts";
 
-/** 游标：`项目 slug` → 已经沉淀到第几条 seq。 */
+/**
+ * 游标：`项目 slug` → 已经沉淀到第几条 seq。
+ *
+ * 语义是「这些 seq 的结论**已经写进记忆了**」，不是「已经问过了」。所以它只在
+ * `remember_project` 真的落盘之后才前进 —— 见 `confirmedBy()`。
+ */
 export type SettleState = {
 	cursors: Record<string, number>;
+	/**
+	 * 已经问过但还没等到答复的项目：`项目 slug` → 问到第几条 seq。
+	 *
+	 * 为什么需要它：如果把游标当成「问过就算」，模型只要回一句「没有需要沉淀的」
+	 * 这几条 decision 就永远不会再被检查 —— 静默丢数据。所以「问过」与「写完」
+	 * 必须分开记：问过只阻止重复打扰，写完才推进游标。
+	 */
+	awaiting: Record<string, number>;
 };
 
 export const SettleDoc = defineDoc<SettleState>({
 	kind: "core.settle",
 	version: 1,
 	scope: "session",
-	initial: () => ({ cursors: {} }),
+	initial: () => ({ cursors: {}, awaiting: {} }),
 	// 一个项目一条数字，永远不会长大。
 	checkpointWhen: () => false,
 });
@@ -98,9 +111,14 @@ export async function settleProject(
 	const channel = state.channels[channelId];
 	if (channel === undefined) return {};
 
-	const cursors = ((await deps.harness.snapshot(SettleDoc, context)) ?? { cursors: {} }).cursors;
+	const settle = (await deps.harness.snapshot(SettleDoc, context)) ?? { cursors: {}, awaiting: {} };
+	const cursors = settle.cursors;
+	const awaiting = settle.awaiting?.[project];
 	const candidates = settleCandidates(state.messages[channelId] ?? [], cursors[project] ?? 0);
 	if (candidates.length === 0) return {};
+	const latest = candidates[candidates.length - 1]?.seq ?? 0;
+	// 上一批还没等到答复：不重复问，也不重复打扰。答复落盘时游标才前进。
+	if (awaiting !== undefined && awaiting >= latest) return {};
 
 	try {
 		const [doc, identities] = await Promise.all([
@@ -113,7 +131,7 @@ export async function settleProject(
 		if (conversation === undefined) return { stranded: { project, count: candidates.length } };
 
 		await askToSettle(conversation, project, candidates, context);
-		await advance(deps, project, candidates[candidates.length - 1]?.seq ?? 0, context);
+		await markAsked(deps, project, latest, context);
 		return { asked: { project, to, count: candidates.length } };
 	} catch (error) {
 		process.stderr.write(
@@ -167,10 +185,38 @@ async function askToSettle(
 	);
 }
 
-async function advance(deps: SettleDeps, project: string, seq: number, context: Context): Promise<void> {
+/** 记下「问过了，等到第 seq 条为止」。不推进游标。 */
+async function markAsked(deps: SettleDeps, project: string, seq: number, context: Context): Promise<void> {
 	await deps.harness.commit(async (tx) => {
 		const doc = (await tx.doc(SettleDoc)) as SettleState;
 		// 整体赋值，不就地改：文档读出来的是副本，就地改不产生 op。
-		doc.cursors = { ...doc.cursors, [project]: seq };
+		doc.awaiting = { ...(doc.awaiting ?? {}), [project]: seq };
 	}, context);
+}
+
+/**
+ * 某个人刚刚为某个项目写了记忆：把游标推进到「上次问到的位置」。
+ *
+ * 由 `remember_project` 工具在落盘成功后调用。这是「沉淀真的发生了」的唯一证据：
+ * 模型不回话、写错地方、什么都没写，游标都不动，下一轮 `settleProjects` 会再问一次。
+ *
+ * 返回推进后的 seq（0 表示没有在等的批次，什么也没做）。
+ */
+export async function confirmedBy(
+	harness: Harness,
+	project: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	let advanced = 0;
+	await harness.commit(async (tx) => {
+		const doc = (await tx.doc(SettleDoc)) as SettleState;
+		const waiting = doc.awaiting?.[project];
+		if (waiting === undefined) return;
+		// 整体赋值：读出来的是副本，就地改不产生 op。
+		doc.cursors = { ...doc.cursors, [project]: Math.max(doc.cursors[project] ?? 0, waiting) };
+		const { [project]: _done, ...rest } = doc.awaiting ?? {};
+		doc.awaiting = rest;
+		advanced = waiting;
+	}, context);
+	return advanced;
 }

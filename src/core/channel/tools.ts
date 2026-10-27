@@ -59,6 +59,7 @@ import {
 	type Message,
 } from "./state.ts";
 import { renderDigest } from "./deliver.ts";
+import { confirmedBy } from "../project/settle.ts";
 import {
 	appendProjectMemory,
 	projectMemorySections,
@@ -669,7 +670,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 				return text(`我不在项目 \`${project}\` 里，写不了它的记忆。我的项目是 ${self?.project ?? "（没有）"}。`);
 			}
 			await appendProjectMemory(deps.projectsRoot, project, { text: args.text, by: slug });
-			return text(`已记进项目「${project}」的记忆。下一条消息就会出现在这个项目的记忆目录里。`);
+			// 沉淀确认：游标只在这里前进。模型不回话 / 写错地方时游标不动，
+			// 下一轮 `settleProjects` 会把同一批 decision 再问一次（见 project/settle.ts）。
+			const confirmed = await confirmedBy(deps.harness, project, ctx);
+			const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
+			return text(`已记进项目「${project}」的记忆${tail}。下一条消息就会出现在这个项目的记忆目录里。`);
 		},
 	});
 
