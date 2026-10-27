@@ -22,6 +22,19 @@ npm start -- --db workspace/demo.sqlite --workspace workspace/demo
 
 生成一家有 2 个项目、7 名员工、1 条待拍板的公司（不调用模型，不花钱）。
 
+**演示库还有个用途：跑界面验收。** 真实库跑久了，项目做完、待办答完，`ui-check.mjs` 里
+「项目卡翻面」「待办渲染在频道消息流里」这些段落验的就是一条空链路。用演示库：
+
+```bash
+rm -rf /tmp/demo && mkdir -p /tmp/demo && cp workspace/settings.json /tmp/demo/
+node --experimental-strip-types scripts/seed-demo.ts --db /tmp/demo/company.sqlite --workspace /tmp/demo
+node --experimental-strip-types src/server/main.ts --port 7793 --db /tmp/demo/company.sqlite --workspace /tmp/demo --no-open
+node scripts/ui-check.mjs --url http://127.0.0.1:7793/
+```
+
+换端口前先 `lsof -nP -iTCP:<port> -sTCP:LISTEN`：被杀一半的 node 进程会继续占着端口回 404，
+症状是「服务明明起来了，所有接口 404」。
+
 ### 网页界面打不开
 
 1. 看终端里打印的地址，端口可能被占用后自动变了

@@ -84,6 +84,17 @@ node scripts/ui-check.mjs --url http://127.0.0.1:7788/   # 改了界面就必须
   要么写进 `scripts/check-boundaries.mjs` 的 `NO_CONSUMER_PENDING` 并写清谁来收尾。
 - **`ui-check.mjs` 默认连 7789 端口**，本机服务通常在 7788，必须显式传 `--url`。它断言的是
   **默认落在频道视图**；要验组织图相关行为（翻面 / 连线 / 状态光边）必须先 `#view-org`。
+- **别在生产库上跑 `ui-check`**：真实库里常常已经没有 active 项目、没有未答复的待办（项目
+  做完了、待办答完了），那么「项目卡翻面」「待办渲染」这些段落验的是一条空的链路。用演示库：
+  ```bash
+  rm -rf /tmp/demo && mkdir -p /tmp/demo && cp workspace/settings.json /tmp/demo/
+  node --experimental-strip-types scripts/seed-demo.ts --db /tmp/demo/company.sqlite --workspace /tmp/demo
+  node --experimental-strip-types src/server/main.ts --port 7793 --db /tmp/demo/company.sqlite --workspace /tmp/demo --no-open
+  node scripts/ui-check.mjs --url http://127.0.0.1:7793/
+  ```
+  `seed-demo.ts` 不调模型、不花钱，会建 2 个项目 + 7 名员工 + 1 条待拍板。
+- 换端口前先 `lsof -nP -iTCP:<port> -sTCP:LISTEN`：被杀一半的 node 进程会继续占着端口回 404，
+  症状是「服务明明起来了，所有接口 404」。
 - 改了界面**不能只读代码就交付**，要真实浏览器截图验收：`npm run ui:shot -- --url ... --out /tmp/shots`。
 
 ### 3.3 改了行为 → 同步这几个地方（硬要求）

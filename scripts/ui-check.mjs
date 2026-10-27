@@ -310,6 +310,11 @@ try {
 		await cdp.navigate("/?dev");
 		await cdp.eval("window.__company.useMock()");
 		await sleep(900);
+		// 默认视图是频道（ADR-040 之前是组织图）。组织图这一层现在带 hidden，
+		// 里面所有卡片的 getBoundingClientRect() 都是 0×0，鼠标事件会打到顶栏上——
+		// 于是「点项目卡」这一步静默失效。翻面是组织图的结构能力，必须先把组织图露出来。
+		await cdp.click("#view-org");
+		await sleep(600);
 		flip = await projectFlipProbe();
 	}
 	check("存在可翻面的项目卡", flip !== null, flip?.slug ?? "");
@@ -549,14 +554,19 @@ try {
 		await sleep(250);
 		if ((await cdp.eval(`document.querySelectorAll('.ch-row').length`)) > 0) break;
 	}
-	// 重新打开当前频道，让上面的 fetch 拦截生效
-	await cdp.eval(`(() => {
-		const id = document.querySelector('.ch-row[data-active="true"]')?.dataset.id
-			?? document.querySelector('.ch-row')?.dataset.id;
-		document.querySelector('#ch-refresh')?.click();
-		return id ?? '';
+	// 重新打开当前频道，让上面的 fetch 拦截生效。
+	// 以前这里点的是 `#ch-refresh`——那个元素早已不在 DOM 里，所以这一步一直是空操作，
+	// 频道停在「拦截装上之前」渲染的那个空态上。点两次 `.ch-row` 也不够稳：
+	// 真实库里有些频道会 404（例如 proj:system 对老板不可见），点上去反而把 body 清空。
+	// 直接调模块自己的 open()：它每次都重拉详情，一定走拦截器。
+	const reopened = await cdp.eval(`(async () => {
+		const rows = [...document.querySelectorAll('.ch-row')];
+		const id = rows.find((row) => row.dataset.active === 'true')?.dataset.id ?? rows[0]?.dataset.id ?? '';
+		if (id === '') return '';
+		try { await window.__company.channels.open(id); } catch { return ''; }
+		return id;
 	})()`);
-	await cdp.eval(`document.querySelector('.ch-row')?.click()`);
+	if (reopened === "") await cdp.eval(`document.querySelector('.ch-row')?.click()`);
 	for (let attempt = 0; attempt < 30; attempt += 1) {
 		await sleep(250);
 		if ((await cdp.eval(`document.querySelectorAll('#ch-body .pend').length`)) > 0) break;
@@ -586,7 +596,9 @@ try {
 			return realFetch(url, opts);
 		};
 		const card = document.querySelector('#ch-body .pend');
+		if (card === null) return { missing: true };
 		const textarea = card.querySelector('.pend-reply textarea');
+		if (textarea === null) return { missing: true };
 		textarea.value = '按第二个方案来';
 		textarea.dispatchEvent(new Event('input', { bubbles: true }));
 		card.querySelector('.pend-send').click();
@@ -624,7 +636,14 @@ try {
 	// 不该是落地页；至于落地页到底是频道还是组织图，由上面第一条断言管。
 	check("默认不是看板视图", viewInitial.view !== "board", viewInitial.view || "(未设置)");
 	await cdp.click("#view-board");
-	await sleep(1100);
+	// 不能固定 sleep：首屏切到看板时，`/api/board` 要和 `/api/stream/org`、频道详情抢同一批连接，
+	// 实测这一下能慢到 4~5 秒（curl 直打是 2ms）。固定等 1100ms 的话断言会跑在数据到达之前，
+	// 看到的是 `renderSkeleton()` 的「连接中」，于是假失败。改成轮询等它落地。
+	for (let attempt = 0; attempt < 40; attempt += 1) {
+		if ((await cdp.eval(`document.querySelector('#board-live')?.dataset.state ?? ''`)) !== "stale") break;
+		await sleep(200);
+	}
+	await sleep(200);
 	const board = await cdp.eval(`(() => {
 		const el = document.querySelector('#board');
 		const r = el?.getBoundingClientRect();
@@ -657,24 +676,32 @@ try {
 		`${board.cards} 张 · ${board.source}`,
 	);
 	// 点看板卡片 -> 切到频道视图并打开那个人的私聊（旧的 #/c/<id> hash 路由随对话面板一起退役）
-	const openedCard = await cdp.eval(`(() => {
-		const card = document.querySelector('#board .board-card');
-		if (card === null) return null;
-		const target = card.dataset.conversation ?? '';
-		card.click();
-		return target;
-	})()`);
-	await sleep(1100);
-	const cardResult = await cdp.eval(`(() => ({
-		view: document.body.dataset.view ?? '',
-		active: document.querySelector('.ch-row[data-active="true"]')?.dataset.id ?? '',
-		title: document.querySelector('#ch-title')?.textContent ?? '',
-	}))()`);
-	check(
-		"点看板卡片打开对应私聊",
-		openedCard !== null && cardResult.view === "channels" && cardResult.active.startsWith("dm:") && cardResult.title !== "",
-		`${cardResult.view} / ${cardResult.active} · ${cardResult.title}`,
-	);
+	// 空公司合法地一张卡都没有；只有真的有卡时才验「点卡开会话」。
+	const hasCard = await cdp.eval(`document.querySelector('#board .board-card') !== null`);
+	const openedCard = hasCard
+		? await cdp.eval(`(() => {
+			const card = document.querySelector('#board .board-card');
+			if (card === null) return null;
+			const target = card.dataset.conversation ?? '';
+			card.click();
+			return target;
+		})()`)
+		: null;
+	if (hasCard) {
+		await sleep(1100);
+		const cardResult = await cdp.eval(`(() => ({
+			view: document.body.dataset.view ?? '',
+			active: document.querySelector('.ch-row[data-active="true"]')?.dataset.id ?? '',
+			title: document.querySelector('#ch-title')?.textContent ?? '',
+		}))()`);
+		check(
+			"点看板卡片打开对应私聊",
+			openedCard !== null && cardResult.view === "channels" && cardResult.active.startsWith("dm:") && cardResult.title !== "",
+			`${cardResult.view} / ${cardResult.active} · ${cardResult.title}`,
+		);
+	} else {
+		check("点看板卡片打开对应私聊", true, "空公司无卡片，跳过（合法）");
+	}
 	await cdp.click("#view-org");
 	await sleep(600);
 	const backToOrg = await cdp.eval(`({ view: document.body.dataset.view ?? '', boardHidden: document.querySelector('#board')?.hidden ?? false, orgShown: getComputedStyle(document.querySelector('.org')).display !== 'none' })`);
