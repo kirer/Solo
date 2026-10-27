@@ -17,7 +17,7 @@ import { createEscalationTask, listPending } from "../../src/company/escalation.
 import {
 	DEFAULT_RESUME_AFTER_MS,
 	DISPOSITION_DEADLINE_MS,
-	applyDueDispositionDefaults,
+	settleDueDispositions,
 	applyDueResumeReminders,
 	createDispositionPending,
 	readDisposition,
@@ -220,10 +220,10 @@ describe("打断 → 处置待办", () => {
 		);
 
 		// 未到期：不兜底
-		expect(await applyDueDispositionDefaults(runtime, now + 1_000)).toBe(0);
+		expect(await settleDueDispositions(runtime, now + 1_000)).toBe(0);
 
 		// 到期：按暂搁执行
-		expect(await applyDueDispositionDefaults(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
+		expect(await settleDueDispositions(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
 
 		const read = await readDisposition(runtime, key, {});
 		expect(read?.payload.disposition).toBe("shelve");
@@ -302,7 +302,7 @@ describe("恢复提醒：暂搁到点必须提醒下达人", () => {
 		const { key } = await createDispositionPending(runtime, workOf(rootId), { now }, BACKGROUND_CONTEXT);
 
 		// 到期没人答 → 机器按可逆的一侧（暂搁）结算
-		expect(await applyDueDispositionDefaults(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
+		expect(await settleDueDispositions(runtime, now + DISPOSITION_DEADLINE_MS + 1)).toBe(1);
 		const afterDefault = await readDisposition(runtime, key, {});
 		expect(afterDefault?.payload.decidedBy).toBe("timeout-default");
 

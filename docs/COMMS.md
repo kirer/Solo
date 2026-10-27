@@ -60,7 +60,7 @@ Task（任务）────── 工作容器：必须有验收标准，才有
 ## 1. 老板拍板的五条（2026-10-26）
 
 1. **公司大群包含所有员工**（老板 + CEO + 6 管理层 + 全部负责人 + 全部员工）。
-2. **「真任务」必须带验收标准**。下达任务时就要留意这点——`task_create` 强制校验 `acceptance` 非空，空的不是任务。
+2. **「真任务」必须带验收标准**。下达任务时就要留意这点——`assign_task` / `task_create` 强制校验 `acceptance` 非空，空的不是任务。
 3. **项目负责人只负责收消息、分析判断、整理信息、拍板**，不做长时间阻塞的工作，因此不应长时间不回复。仍然保留超时升级作为兜底。
 4. **老板可以在任何地方发起任务**：任何群、任何私聊，可以 @ 任何人派任务或询问信息。
 5. **旧数据可以删除**（`TrailDoc` 不迁移）。
@@ -72,7 +72,7 @@ Task（任务）────── 工作容器：必须有验收标准，才有
    两层含义：
    - **逐级上升，不许跳级**：员工 → 项目负责人 → 对应管理层 → CEO → 老板。
    - **只有 CEO 能进老板层**：非 CEO 无论声明什么 topic、escalate 多少次，
-     都进不了 `ask-owner`。
+     都进不了 `level: "owner"`。
 
    实现：`domain/membership.ts` 的 `nextLevelUp()`（逐级上升）+
    `domain/routing.ts` 的 `canReachOwner()`（唯一入口判定）。
@@ -166,7 +166,7 @@ type TaskEntry = {
 };
 ```
 
-**「真算得上任务」的判据**（`task_create` 强制校验）：
+**「真算得上任务」的判据**（`assign_task` / `task_create` 强制校验）：
 
 1. `acceptance` 非空
 2. `assignee` 是唯一一个人
@@ -344,20 +344,20 @@ T-3 的登录接口，token 过期后返回 401 还是 403？
 
 **员工专属**：`escalate`（正式上报，进 PendingDoc）
 
-**项目负责人**：`task_create`、`task_reassign`、`answer_question`、`decide`、`project_status`、`project_plan`、`staff_list`、`org_tree`
+**项目负责人**：`assign_task`、`task_create`、`task_reassign`、`answer_question`、`decide`、`project_status`、`project_plan`、`staff_list`、`org_tree`
 
 **管理层（按岗位裁剪）**
 
 | 通用 | 工具 |
 |---|---|
-| 所有管理层 | `task_create`、`answer_question`、`decide`、`delegate_to_role` |
+| 所有管理层 | `assign_task`、`task_create`、`ask_role`、`answer_question`、`decide` |
 | CTO | `review_architecture` |
 | CFO | `budget_check`、`cost_report` |
 | CPO | `project_create`、`project_plan` |
 | CHRO | `staff_hire`、`staff_rename`、`staff_reassign`、`staff_archive` |
 | COO | `roundtable`、`roundtable_minutes`、`project_list` |
 
-**CEO**：`task_create`、`answer_question`、`take_over_pending`、`project_terminate`、`project_delete`、`roundtable`、`roundtable_minutes`、`company_overview`
+**CEO**：`assign_task`、`task_create`、`ask_role`、`answer_question`、`take_over_pending`、`project_terminate`、`project_delete`、`roundtable`、`roundtable_minutes`、`company_overview`
 
 **老板（不是 agent，走 HTTP）**：任意频道发言、任意 DM、回答/驳回 owner 级待办、**直接给任何人建任务**、终止/删除项目
 
@@ -381,16 +381,18 @@ type Capability = {
 ### 5.1 任务下达（替代同步派活）
 
 ```
-CEO 调 task_create({ project, title, acceptance, assignee })
+CEO 调 assign_task({ assignee, project, title, acceptance, brief })
   ↓
-1. 校验：acceptance 非空、assignee 属于该项目、调用方有权下达
+1. 校验：acceptance 非空、调用方有权下达（canAssign：只能从上到下）
 2. 写 TaskDoc（status=todo）
 3. 写频道消息（kind=task, mentions=[assignee]）
 4. deliver(assignee, 紧凑消息)     ← 不 await
-5. 立即返回："已创建 T-7，已通知负责人"
+5. 立即返回：“已创建 T-7「…」并派给负责人。验收标准：… **不用等**”
 
-总耗时 ~20ms（现在 180s 起）
+总耗时 ~20ms（改前：同步派活 180s 起，一个活就卡这么久）
 ```
+
+`task_create` 是同一个 `createTask()` 的直白版（参数更严，acceptance 必填）。
 
 ### 5.2 完成上报（系统保证，不靠模型）
 
@@ -444,17 +446,18 @@ async function transitionTask(taskId, to, patch) {
 跳过了中间层。后果是一个项目负责人能定的排期问题被一路推到 CEO，
 CEO 再推给老板——「老板待办堆满别人的活」的成因之一。
 
-**现在的实现**：
+**现在的实现**（只有一个阶段，`level` 说「现在停在谁那儿」）：
 
 ```ts
-// escalation.ts, ask-manager 阶段
-if (outcome.escalate) {
-  const up = nextLevelUp(org, level);   // 纯函数，沿 manager 链找上一级
-  if (up === "owner")  → ask-owner      // 只有 CEO 这一层会走到这里
-  if (up === "ceo")    → ask-ceo
-  else                 → 仍留 ask-manager，level 换成上一级
-}
+// escalation.ts, 唯一的 ask handler
+if (outcome.escalate !== true || level === "owner")  → finish
+const up = nextLevelUp(org, level);   // 纯函数，沿 manager 链找上一级
+if (up === "owner" && level !== "ceo") → finish     // 冗余闸门，守 ADR-033
+else                                   → level = up，重新问（path 追加本层）
 ```
+
+以前这是三个阶段、三份逐行相同的 handler（`ask-manager` / `ask-ceo` / `ask-owner`），
+合并后「上一级算谁」只有 `nextLevelUp()` 一处（ADR-038）。
 
 #### 唯一入口判定
 
@@ -463,15 +466,17 @@ if (outcome.escalate) {
 | 入口 | 条件 |
 |---|---|
 | `initial()` 的 `startAtOwner: true` | 发起人**必须是 CEO**（`callerLevel === "ceo"`） |
-| `ask-ceo` 阶段的 `escalate: true` | CEO 复核后明确决定递上去 |
+| 停在 `level === "ceo"` 时 `escalate: true` | CEO 复核后明确决定递上去 |
 
-非 CEO 声明 `company-level` 也不会直达老板：先落 `ask-ceo` 让 CEO 复核
+非 CEO 声明 `company-level` 也不会直达老板：先落 `level: "ceo"` 让 CEO 复核
 （`review: true`），CEO 确认后才转老板。
 
 #### 其他改动
 
 1. `ensurePending` 时同时写频道消息（kind=question, mentions=[decisionOwner]）
-2. `deliverDecision` 时写频道消息（kind=decision），并 `deliver` 给提问方
+2. 拍板结果落成一条 **kind=decision 的频道消息**（`deliverDecision()`，现在在
+   `src/company/channels.ts` 里，走 `postToChannel`）——有私聊投私聊，没有就投公司大群；
+   它不再是一条只出现在会话流里的 note，所以能被翻回去、能被 @ 回、能进未读摘要
 3. `path` 不再出现两个连续的 `ceo`（旧代码在「直接进 CEO 阶段」时多写了一次）
 
 ### 5.5 老板指令（必回）
@@ -526,8 +531,8 @@ src/company/
   tools/
     universal.ts                whoami/say/ask/read_channel/inbox/task_list/task_update
     exec.ts                     沿用 staff-tools.ts
-    leader.ts                   task_create/answer_question/decide/project_*
-    management.ts               task_create/answer_question/delegate_to_role/领域工具
+    leader.ts                   assign_task/task_create/ask_role/answer_question/decide/project_*
+    management.ts               assign_task/task_create/answer_question/领域工具
     ceo.ts                      task_create/take_over_pending/project_terminate/roundtable
 
 src/server/
@@ -539,7 +544,7 @@ src/server/
 
 | 文件 | 改动 |
 |---|---|
-| `company/delegation.ts` | **删除**。拆到 `tasks.ts` + `deliver.ts` |
+| `company/delegation.ts` | **已删除**（ADR-037）。职责早已拆到 `tasks.ts` + `deliver.ts` |
 | `company/trail.ts` | **删除**。`recordMessage` → `postToChannel`；`beginLiveTrail` 保留 |
 | `company/management-tools.ts` | 拆到 `tools/*` |
 | `company/tools.ts` | 只保留装配函数，能力清单移到 `capabilities.ts` |
@@ -548,13 +553,13 @@ src/server/
 | `server/feed.ts` | 保留为「个人工作记录」视图 |
 | `server/org-view.ts` | 加频道成员、未读数、任务数 |
 | `company/watchdog.ts` | 加三个检查：未读扫描、未回复 question、任务超期 |
-| `company/escalation.ts` | 只改 `ensurePending` / `deliverDecision` |
+| `company/escalation.ts` | 只改 `ensurePending` / `deliverDecision`（单阶段 `ask`） |
 | `company/disposition.ts` | 输出改频道消息，逻辑不动 |
 | `ui/js/*` | 重做：左侧频道列表 + 中间消息流 + 右侧详情 |
 
 ### 6.3 保留不动
 
-`src/runtime/*`、`company/docs.ts`（删 `TrailDoc`）、`company/cost.ts`、`company/roundtable.ts`（只改发言方式）、`decision-routing.ts` → `domain/routing.ts`、`decision-delivery.ts`（改调 `postToChannel`）、`instance-lock` / `wal` / `run-failure` / `models` / `env`
+`src/runtime/*`、`company/docs.ts`（删 `TrailDoc`）、`company/cost.ts`、`company/roundtable.ts`（只改发言方式）、`decision-routing.ts` → `domain/routing.ts`、`deliverDecision()`（已搬进 `company/channels.ts`，走 `postToChannel`）、`instance-lock` / `wal` / `run-failure` / `models` / `env`
 
 ---
 
@@ -637,7 +642,7 @@ DM：只显示对方一个点
 | **2** | `deliver.ts` + `tasks.ts`：异步派活替代同步等待 | 3d | CEO 连发 3 条 < 3 秒；每条完成必有 report |
 | **3** | `channels.ts` + 能力目录 + 工具重组 | 4d | 员工能在项目群 @ 负责人提问并收到回复 |
 | **4** | 前端重做：频道列表 + 群聊 + 已读点 + 项目看板 | 5d | 界面能跑完整流程 |
-| **5** | 旧路径下线（删 `delegation.ts` / `trail.ts`）+ 迁移收尾 | 2d | 全测试 + ui:check |
+| **5** | 旧路径下线（`delegation.ts` / `delegation-guard.ts` 已删，见 ADR-037）+ 迁移收尾 | 2d | 全测试 + ui:check |
 | | | **约 17.5d** | |
 
 **阶段 2 是分水岭**：单独就能解决「阻塞」和「不上报」。

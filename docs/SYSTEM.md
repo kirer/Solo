@@ -211,17 +211,23 @@ id, 项目, 标题, 需求说明, 验收标准（必填）, 指派人, 负责人
 
 ```
 员工 escalate
-  → 创建一条持久化任务（durable task）
-  → 把问题写进 app.pending，标记「等负责人答」
-  → 任务休眠（不占执行名额、可跨天、进程重启后从当前阶段继续）
-  → 负责人 answer_pending
-  → 任务醒来，读答复，判断是否需要继续上行
-  → 若上级也拍不了，扣一级阶段，继续休眠
+  → 创建一条持久化任务（durable task），checkpoint = { phase: "ask", level: 谁 }
+  → 把问题写进 app.pending，标记「等这一级答」
+  → 任务休眠（不占执行名额、可跨天、进程重启后从当前 checkpoint 继续）
+  → 这一级 answer_pending
+  → 任务醒来，读答复：答了 → 收口；说「拍不了」→ level = nextLevelUp(level)，继续休眠
   → ...
   → 到老板：等人类在网页上答
 ```
 
+**只有一个阶段**（`phase: "ask"`），`level` 字段说「现在停在谁那儿」。
+上一级算谁由纯函数 `nextLevelUp(org, level)`（`src/domain/membership.ts`）决定，
+它只对 `level === "ceo"` 返回 `"owner"`——所以「老板级待办只能由 CEO 递」这条硬规则
+只有一处实现（ADR-033），阶段机自己不判层级。
+
 每一级跃迁都写检查点，所以崩溃重开从当前级继续，不会从头再问一遍。
+老库里 v1 的三阶段 checkpoint（`ask-manager` / `ask-ceo` / `ask-owner`）
+由 `EscalationTask.migrate` 机械映射到 v2 的单阶段（ADR-038）。
 
 ---
 

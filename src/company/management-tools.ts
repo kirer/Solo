@@ -4,7 +4,7 @@
  * 这些函数需要访问公司运行时与组织操作，所以在装配时注入，
  * 工具定义本身保持纯粹（只有参数与调用逻辑）。
  */
-import type { DecisionTopic } from "./decision-routing.ts";
+import type { DecisionTopic } from "../domain/routing.ts";
 import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../runtime/index.ts";
 import {
 	MANAGEMENT_ROLES,

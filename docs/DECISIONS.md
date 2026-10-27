@@ -953,3 +953,199 @@ dino 项目验收时，`dino-lead` 与 `dino-dev` 都被授予了整工作空间
 `npm run verify` 与 `npm run verify:check` 两条命令手工验收；`test/contract/runtime.test.ts`
 里保留了「`npm run check` 的 stdout 必须有『边界检查通过』」这条壳测试——因为通知/缺口
 清单都走 stderr，stdout 只留一句结论。
+
+---
+
+## ADR-037：同步派活彻底删除——投递只有一条路
+
+**日期**：2026-10-27
+**状态**：生效
+
+**背景**：
+
+ADR-028 已经把跨 agent 通信收敛到一个原语：`deliver()` 投完立刻返回，答案通过频道
+异步回来。但旧的同步派活链路一直躺在仓库里没删：`src/company/delegation.ts`（533 行）
+负责「投 `submit` → `await submission.wait(180s)` → 从对方会话里捞回复文本」，
+`src/company/delegation-guard.ts`（165 行）给它配进程内等待图做环检测、配 180 秒硬上限。
+
+生产库跑了好几个月，`delegate()` 一次都没有被模型调用过。原因很简单：它根本没有
+暴露在能力目录里——`assign_task` 的真路径是 `tools/dispatch.ts` 的 `assignTask`，
+跟 `delegate()` 毫无关系。`org.ts` 里那三段 `delegate:` / `delegateToRole:` /
+`delegateToLeader:` 闭包（242 行）把 `delegate()` 塞进 `createManagementTools` 的
+deps，而这三个字段在 `management-tools.ts` 里**被读 0 次**
+（`grep -c "deps.delegate" src/company/management-tools.ts` = 0）。写了、传了、
+从没被读过——纯死代码。
+
+同一时期还留下四个「因为同步等待才存在」的东西：环检测、超时释放、越级校验、
+双向留痕。它们各自其实都已有新归属：越级校验在 `canAssign()`，超时在看门狗，
+留痕在频道消息（`postToChannel` 就是留痕）。旧的同步路径只是这四件事的第二份实现，
+而 ADR-028 的整条论证就是「同一事实不能有两份实现」。
+
+**决策**：
+
+1. **删 `src/company/delegation.ts`（533 行）与 `src/company/delegation-guard.ts`
+   （165 行）**，不留兼容层。`isEmployeeBusy()` / `describeStaff()` 这两个辅助函数
+   在 `src/`、`ui/` 里都没有活着的调用方，一并删除；测试侧要判「员工是否在忙」
+   改用 `src/runtime/recover.ts` 的 `inspectLivenessFrom()` + `isConversationBusy()`
+   （`test/support.ts` 的 `staffBusy()` 就是这么写的）。
+2. **删 `org.ts` 里那三段死闭包**（`delegate:` / `delegateToRole:` / `delegateToLeader:`，
+   242 行），以及随之成为死代码的 `tryEnterDelegation()`、`hashToInt()`、
+   `readAssistantText()`、`busyReason()`，和 `BootstrapOptions.delegationTimeoutMs`
+   这个只为同步等待存在的开关。`assignTask: dispatch.assignTask` 原样保留——
+   那才是当前的真路径。
+3. **删 `management-tools.ts` 里三个可选 deps 字段的类型声明**（`delegate?` /
+   `delegateToLeader?` / `delegateToRole?`）连同它们的 JSDoc。字段没人读，
+   留着只会诱导下一个人再往里塞东西。
+
+**替代方案与为什么没选**：
+
+- 「保留 `delegate()`，只是不从 deps 里传」——文件还在、导出还在，就会有人再接线回来。
+  一个从没被调用的函数在仓库里存在一天，就有一天会被当成可用能力。
+- 「把它改成异步版（投递后不等）再留作公共 API」——那正是 `deliver()` 已经做的事，
+  等于再造一份实现（ADR-028 明确反对）。
+- 「保留 `delegation-guard.ts` 的环检测，以防未来有人再写同步等待」——没有同步等待
+  就没有环。守住「不能同步等另一个 agent」这条规则的正确位置是文档与评审，
+  不是一段没有调用方的代码。
+
+**代价**：
+
+- **「立刻拿到答复」这个语义没有了**。需要答复就发频道消息 / 用 `ask_role`，
+  答复异步回来（`ask` 有 10 分钟未回自动升级兜底）。这是 ADR-028 已经接受的取舍，
+  本 ADR 只是把它落实到「旧路径不再存在」。
+- **两个测试文件删除**：`test/e2e/delegation.test.ts`（268 行，测 no-employee /
+  archived / busy / cross-project 四个分支）与 `test/unit/delegation-guard.test.ts`
+  （139 行，测环检测与超时）。它们测的函数已经不存在，保留等于测一个空壳；
+  里面唯一有通用价值的断言（员工工具集不含管理能力、管理层有管理能力）在
+  `test/e2e/org.test.ts`、`hierarchy.test.ts`、`web.test.ts`、
+  `channels-deliver.test.ts`、`reliability.test.ts` 里都已存在。
+- 8 个原先用 `delegate()` 当夹具的测试文件改成直接用新原语
+  （`test/support.ts` 新增 `askAndWait()` / `staffBusy()`，或者直接
+  `recordMessage()` / `postToChannel()`）。`reliability.test.ts` 里
+  「输出被截断时判失败」改写为「截断必须在会话流里留下 alert」
+  （`src/server/feed.ts` 渲染 `stopReason === "length"` 的告警）——
+  行为要求不变，只是判据从「派活返回值」换成「老板看得见的那条告警」。
+
+**测试**：`npm run check` / `npm run verify` 全绿；`grep -rn "delegation" src/`
+只剩 `src/runtime/ids.ts` 的 `delegationRequestId` / `reportRequestId`
+（标识生成器，另有消费者与单测，不属于派活机制）。
+
+---
+
+## ADR-038：升级链只剩一个阶段——「现在停在谁那儿」
+
+**日期**：2026-10-27
+**状态**：生效
+
+**背景**：
+
+`src/company/escalation.ts` 里有三个 phase handler（`ask-manager` / `ask-ceo` /
+`ask-owner`），三份代码逐行相同：算 `askedAt` → `ensurePending` → `readOutcome`
+→ 没有答案就 `sleepUntil(now + pollDelay(...))` → 有答案就「继续往上」或「收口」。
+差别只有两处：「上一级算谁」和「`path` 里追加什么」。而这两件事本来就该由
+`nextLevelUp(org, level)` 与 `level` 自己决定。
+
+同源的问题还有四个回答入口（`answerPending` / `answerPendingAsCeo` /
+`answerPendingAtLevel` / `takeOverPendingAtCeo`）。前三个的差别只有一行层级校验
+和 `answeredBy` 的取值。
+
+这类「同一段逻辑抄三遍、只改一个字面量」的代码，危险不在于行数，在于**改一处忘两处**：
+ADR-033 要求「老板级待办只能由 CEO 递」，实现它的地方如果散在三个 handler 里，
+下一次有人加一级就得改三处，漏一处就是越权。
+
+**决策**：
+
+1. **`EscalationState` 从三态 union 塌成单一对象**：
+   `{ phase: "ask"; level: string; askedAt: number; path: string[]; review?: boolean }`。
+   `level` 直接是 `"ceo"` / `"owner"` / 管理岗名 / `"leader:<slug>"`，
+   阶段机不再按 phase 名分派。
+2. **三个 handler 合成一个 `ask`**。往上走一级永远经由 `nextLevelUp(org, level)`，
+   handler 自己不判层级；再加一道冗余闸门（`up === "owner" && level !== "ceo"` → 就地收口），
+   让 ADR-033 的不变量在「纯函数被改坏」时仍然成立。
+3. **`EscalationTask` 版本 1 → 2，新增 `migrate`**：v1 的 `ask-owner` → `level: "owner"`、
+   `ask-ceo` → `level: "ceo"`、`ask-manager` → 沿用原 `level` 字段。老库里还挂着 v1 记录，
+   进程重启时 `recover()` 会按 v1 形状恢复，不认识就崩。
+4. **`answerPendingAsCeo` 与 `answerPendingAtLevel` 删除**，能力并入 `answerPending`
+   的可选入参 `level?: string`：传了就做层级闸门（`item.level !== level` → 拒绝），
+   不传就不校验。调用方（`src/company/org.ts:279`、HTTP、工具层）按需传。
+5. **`takeOverPendingAtCeo` 保留原样**。它是唯一能把老板级待办拉回 CEO 层的路径，
+   `src/server/http.ts` 与 `src/company/org.ts` 都有真实调用。圆桌 C 席判它「删功能」，
+   本 ADR 不采纳：删了 CEO 就只能干等老板，而「CEO 有权在自己授权范围内直接定」
+   是 ADR-026 决策 3 的明文条款。
+
+**替代方案与为什么没选**：
+
+- 「保留三个 phase，只把公共部分抽成 helper」——三个 handler 就只剩三行壳，
+  但它们仍然各自持有「上一级是谁」的判断入口。抽 helper 保住了重复的**形状**，
+  没保住唯一性。
+- 「用 `switch (phase)` 的单 handler」——phase 名会变成数据里的一等概念，
+  而它其实只是 `level` 的冗余投影。一个字段能表达的事不要两个。
+- 「不写 `migrate`，让老记录自然过期」——`recover()` 会按 v1 checkpoint 调 v2 handler，
+  读到 `state.level === undefined` 就直接算错层级，问题会被递给错误的人。
+
+**代价**：
+
+- **`path` 的语义更依赖调用顺序**：以前每个 phase 自己 `[...path, "ceo"]`，
+  现在统一 `[...state.path, level]`。好处是只有一处拼路径，坏处是「谁进过 path」
+  完全由 handler 走到哪一步决定——所以 handler 里两个 `finish` 分支都必须传
+  `[...state.path, level]`，漏一个 path 就少一站。`test/e2e/escalation.test.ts` 与
+  `test/e2e/owner-only-from-ceo.test.ts` 断言 `path` 内容，能抓住这个。
+- **`review` 字段变成了一个普通布尔**：它以前只出现在 `ask-ceo` 这一态，
+  类型上不可能出现在 `ask-owner`；现在任何 `level` 都能带 `review: true`。
+  约束从类型降级为约定——由 `initial()` 只在 `topic === "company-level"` 时设置它来保证。
+
+**测试**：`npm run check` / `npm run verify` 全绿（798 tests，0 skipped）；
+`npx vitest --run test/e2e/escalation.test.ts test/e2e/owner-gate.test.ts
+test/e2e/owner-only-from-ceo.test.ts test/e2e/reorg-acceptance.test.ts` 全绿。
+`grep -rn "ask-manager\|ask-ceo\|ask-owner" src/` 只剩 `migrate` 里的字符串匹配。
+
+---
+
+## ADR-039：处置待办的「到期」只有一个判据、一个结算入口
+
+**日期**：2026-10-27
+**状态**：生效
+
+**背景**：
+
+`src/company/disposition.ts` 里「这条处置待办到期了没有」被写了两遍：
+
+- `settleDueDispositions()`（读侧兜底，任何读待办的路径顺手调一次）
+- `applyDueDispositionDefaults()`（看门狗每轮巡检调一次）
+
+两份的过滤条件逐字相同（`disposition !== undefined && answer === undefined &&
+disposed === undefined && shouldApplyTimeoutDefault(...).apply`），结算动作也逐字相同
+（拼 `暂搁：默认：N 分钟后提醒下达人` → `settleDisposition({viaTimeout: true})`）。
+
+两份判据迟早会漂：一处改了另一处没改，就会出现「界面看着到期了、巡检说没到期」
+或者反过来「巡检结算了、界面还在催」这种查不出来的状态。
+
+**决策**：
+
+1. 抽出 `dueDispositionItems(state, now)` 作为**唯一到期判据**。
+2. `settleDueDispositions(runtime, now, context)` 作为**唯一结算入口**，
+   内部用上面的判据；保留原有的「快速短路（没有到期项就不进 commit）」与
+   「静默失败（不连累读取方）」两条性质。
+3. 删 `applyDueDispositionDefaults`。看门狗巡检改为调 `settleDueDispositions`——
+   语义不变（服务在跑时每轮扫一遍），实现只有一份。
+4. 读侧（`readDisposition`）继续调它：ADR-026 决策 5 的「到期按暂搁执行」是协议条款，
+   不该依赖服务常驻。
+
+**替代方案与为什么没选**：
+
+- 「保留两个函数，让 `applyDueDispositionDefaults` 内部调 `settleDueDispositions`」——
+  那就只剩一层薄壳，壳里没有任何自己的判断，纯粹是「历史名字」。留着它等于告诉
+  下一个读代码的人「这里有两件事」，实际上只有一件。
+- 「只保留巡检，去掉读侧兜底」——服务停着的时候到期项永远不结算，
+  「到期按暂搁执行」变成「到期且服务在跑才执行」，与 ADR-026 的协议不符。
+
+**代价**：
+
+- 读待办的路径现在可能触发写库（原本 `readDisposition` 已经这样，本次只是把
+  判据收拢，范围没变）。快速短路保证「没有到期项时不写库」，所以常规读取
+  仍然只读。
+- 测试里 `applyDueDispositionDefaults` 这个名字被替换成 `settleDueDispositions`，
+  `test/unit/disposition.test.ts` 与 `test/e2e/disposition.test.ts` 各改 3–4 处。
+  断言的**行为**（到期 0 条 / 到期 1 条 / 重复调用幂等）一字未改。
+
+**测试**：`npx vitest --run test/unit/disposition.test.ts test/e2e/disposition.test.ts`
+= 41 passed。

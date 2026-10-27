@@ -174,6 +174,25 @@ export async function askAndWait(
 	return { ok: true, text: text === undefined || text === "" ? "（员工未给出文本内容）" : text, status: "done" };
 }
 
+/**
+ * 等一次升级跑完，取回结果。
+ *
+ * 从 `src/company/escalation.ts` 搬来的：它只是 `harness.waitForTask` 的一层
+ * 薄包装（等终态 → 取 outcome.result），没有任何业务规则，唯一消费者是测试。
+ * 放在 `src/` 里会让「等一个任务结束」看起来像是升级链的公共 API。
+ */
+export async function waitEscalation(
+	runtime: CompanyRuntime,
+	taskId: number,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ readonly decidedBy: string; readonly decision: string; readonly path: string[] } | undefined> {
+	const settled = await runtime.harness.waitForTask(taskId as never, context);
+	if (settled.state.status !== "terminal") return undefined;
+	const outcome = settled.state.outcome;
+	if (outcome.status !== "completed") return undefined;
+	return outcome.result as { readonly decidedBy: string; readonly decision: string; readonly path: string[] };
+}
+
 /** 员工当前是否忙碌（原 `delegation.ts` 的 `isEmployeeBusy`，无派活依赖）。 */
 export async function staffBusy(
 	runtime: CompanyRuntime,

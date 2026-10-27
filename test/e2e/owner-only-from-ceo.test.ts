@@ -14,12 +14,12 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject, escalateUp, hireStaff } from "../../src/company/org.ts";
-import { answerPending, createEscalationTask, listPending, waitEscalation } from "../../src/company/escalation.ts";
+import { answerPending, createEscalationTask, listPending } from "../../src/company/escalation.ts";
 import { canReachOwner, decideOwner, levelOfTarget } from "../../src/domain/routing.ts";
 import { escalationPath, nextLevelUp, type Org } from "../../src/domain/membership.ts";
 import { CompanyDoc } from "../../src/company/docs.ts";
 import { buildOrg } from "../../src/company/org-model.ts";
-import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG, waitEscalation } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];

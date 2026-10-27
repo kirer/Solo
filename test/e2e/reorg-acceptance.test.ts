@@ -36,17 +36,15 @@ import {
 	type CompanyState,
 } from "../../src/company/docs.ts";
 import {
-	answerPendingAsCeo,
-	answerPendingAtLevel,
+	answerPending,
 	createEscalationTask,
 	listPending,
 	startEscalation,
-	waitEscalation,
 } from "../../src/company/escalation.ts";
 import { createManagementTools } from "../../src/company/management-tools.ts";
 import { buildOrgView } from "../../src/server/org-view.ts";
 import { readProfile } from "../../src/server/profile.ts";
-import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG, agentTools } from "../support.ts";
+import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG, agentTools, waitEscalation } from "../support.ts";
 
 const PROJECT = "ops-defect-loop";
 const LEADER_NAME = "许砚舟";
@@ -463,12 +461,16 @@ describe("改造验收", () => {
 		expect(mine[0]?.fromConversationId).toBe(employee.conversationId);
 
 		// CEO 不能替负责人拍板（层级守卫），否则「只有负责人能定」是假的。
-		expect(await answerPendingAsCeo(runtime, { key: "accept-route", answer: "CEO 代答" }, BACKGROUND_CONTEXT)).toBe(
-			false,
-		);
+		expect(
+			await answerPending(
+				runtime,
+				{ key: "accept-route", answer: "CEO 代答", answeredBy: "ceo", level: "ceo" },
+				BACKGROUND_CONTEXT,
+			),
+		).toBe(false);
 
 		// 负责人按自己这一级答复，流程收口在负责人，不往上走。
-		const answered = await answerPendingAtLevel(
+		const answered = await answerPending(
 			runtime,
 			{
 				key: "accept-route",

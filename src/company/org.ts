@@ -39,16 +39,15 @@ import {
 	type StaffEntry,
 } from "./docs.ts";
 import { createRoleExtension, ROLE_DEFINITIONS } from "./roles.ts";
-import { decideOwner, levelOfTarget, type DecisionTopic } from "./decision-routing.ts";
+import { decideOwner, levelOfTarget, type DecisionTopic } from "../domain/routing.ts";
 import {
 	PendingDoc,
+	answerPending,
 	decisionOwnerOfItem,
 	disposePending,
 	takeOverPendingAtCeo,
 	levelOfConversation,
 	listPending,
-	answerPendingAtLevel,
-	answerPendingAsCeo,
 } from "./escalation.ts";
 import { settleDisposition } from "./disposition.ts";
 import {
@@ -257,7 +256,7 @@ export async function bootstrapCompany(
 			}
 
 			// 处置类待办必须走 settleDisposition（会校验「暂搁/放弃」并强制恢复条件）。
-			// 原先这里直接落到 answerPendingAtLevel，自由文本被当成普通答复写进 answer，
+			// 原先这里直接落到按层级答复的那条路径，自由文本被当成普通答复写进 answer，
 			// `disposition.disposition` 永远为空——待办从 listPending 里消失，
 			// 看起来「答过了」，实际处置从未成立（审计 D-02(b)）。
 			if (item.disposition !== undefined) {
@@ -276,7 +275,7 @@ export async function bootstrapCompany(
 					: "已标记为永久放弃。";
 			}
 
-			const ok = await answerPendingAtLevel(
+			const ok = await answerPending(
 				runtime,
 				{
 					key: input.key,

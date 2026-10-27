@@ -20,7 +20,7 @@ import {
 } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject, escalateUp, hireStaff } from "../../src/company/org.ts";
 import { createEscalationTask, decisionOwnerOfItem, listPending, type PendingItem } from "../../src/company/escalation.ts";
-import { decideOwner, levelOfTarget } from "../../src/company/decision-routing.ts";
+import { decideOwner, levelOfTarget } from "../../src/domain/routing.ts";
 import { CompanyDoc, type CompanyState } from "../../src/company/docs.ts";
 import { createTestContext, eventually, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 

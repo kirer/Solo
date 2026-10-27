@@ -17,13 +17,21 @@ import {
 	createEscalationTask,
 	listPending,
 	startEscalation,
-	waitEscalation,
 } from "../../src/company/escalation.ts";
 import { rollupProject } from "../../src/company/cost.ts";
 import { buildUiState } from "../../src/tui/state.ts";
 import { computeLayout, renderLayout } from "../../src/tui/render.ts";
 import { ensureAllChannels, postToChannel, readChannels } from "../../src/company/channels.ts";
-import { answer, askAndWait, createTestContext, eventually, toolCall, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import {
+	answer,
+	askAndWait,
+	createTestContext,
+	eventually,
+	toolCall,
+	type TestContext,
+	TEST_MODEL_CATALOG,
+	waitEscalation,
+} from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];

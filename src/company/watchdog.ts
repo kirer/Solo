@@ -32,7 +32,7 @@ import {
 	type StuckReason,
 	type TaskLiveness,
 } from "../runtime/index.ts";
-import { applyDueDispositionDefaults, applyDueResumeReminders } from "./disposition.ts";
+import { applyDueResumeReminders, settleDueDispositions } from "./disposition.ts";
 import type { DeliveryReceipt } from "../domain/channels.ts";
 
 /** 看门狗写进会话流的告警条目类型。 */
@@ -369,7 +369,7 @@ export async function runWatchdogPass(
 	// 定时器绑定进程实例，重启就丢；挂在已有巡检上，重启后自然恢复。
 	// 失败不能拖垮巡检：它只是附加动作。
 	try {
-		await applyDueDispositionDefaults(runtime, now, context);
+		await settleDueDispositions(runtime, now, context);
 	} catch (error) {
 		// 吞掉是对的（处置兜底不能拖垮巡检），但**必须留痕**：
 		// 若每轮都抛而没人知道，兜底会安静地永远失败（审计 D-08，OPS-01 的教训）。
