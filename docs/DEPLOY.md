@@ -47,6 +47,16 @@ node --experimental-strip-types src/server/main.ts \
 服务脚本写 plist 时会显式带上 `--port` / `--host`，`AI_COMPANY_HOST=0.0.0.0
 ./scripts/ai-company-service.sh restart` 即可切到局域网模式。
 
+**`start` 与 `restart` 的区别（容易踩）**：`start` 是幂等的——服务已在跑且健康时
+什么都不做，尤其不碰数据库锁；但如果这次的参数与 plist 里写的不一致，它会自动降级成
+`restart`（否则就是「带了新 `--host` 跑 `start`，它回一句『无需重启』，实际什么都没改」）。
+所以两个都可以用来改配置，不必记住哪个是哪个。`status` 会同时报「实际 bind 了什么」
+与「plist 写了什么」，两者不一致时会直接告诉你重启。
+
+`status` 里的「待你拍板」数是 `/api/org` 的 `pending[].forYou`（`decisionOwner === "owner"`），
+不是 `/api/pending` 的全部条数——后者含所有人身上挂着的未答复问题，拿它数会让老板
+以为一堆事等自己。旁边那个「CEO 攒着」是 `ceoQueue`。
+
 ## 3. 局域网访问（手机 / 同事）
 
 ```bash

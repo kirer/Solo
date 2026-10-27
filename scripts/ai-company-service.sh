@@ -111,6 +111,10 @@ uptime_of() {
     ps -p "$1" -o etime= 2>/dev/null | tr -d ' '
 }
 
+# 健康的判据是「/api/org」——它在 `NO_CONSUMER_ALLOWED` 里（`scripts/check-boundaries.mjs`）：
+# 界面改走 `/api/stream/org` 的首帧，但 launchd 探活与运维脚本仍用它，因为它是一次性快照，
+# 比开一条 SSE 更适合「活着吗」这个问题。别因为「界面不调它了」就删掉这条路由。
+
 # 数据库锁：pid 已死的残留锁删掉。
 # 锁被活进程持有时分两种：就是本服务自己的 pid（正常，静默放过）；
 # 或者是别的实例（真冲突，必须让调用方停下，否则两个写者会把在跑的服务搞崩）。
@@ -213,6 +217,24 @@ PLIST_EOF
     return 1
 }
 
+# plist 里已经写着的参数值（可能为空）。
+# 为什么不直接用上面的 $HOST：$HOST 会被**环境变量**覆盖，于是 status 会拿
+# 「本次命令行想用的值」去跟「当前进程实际 bind 的值」比，得出「plist 写的是 X，需 restart」
+# 这种话——而 plist 里可能根本不是 X。展示不一致就要说清是哪两个值不一致。
+plist_arg() { read_arg_from_plist "$1" 2>/dev/null || true; }
+
+# plist 是否与「本次 shell 想用的参数」不一致。用于：
+# start 在服务健康时本来是幂等的直接返回，但若 plist 里的参数跟本次请求不一样，
+# 就会造成「带着新 --host 跑 start，它说『无需重启』，然后什么都没变」——静默忽略。
+plist_differs() {
+    [ -f "$PLIST" ] || return 1
+    [ "$(plist_arg --port)" = "$PORT" ] || return 0
+    [ "$(plist_arg --host)" = "$HOST" ] || return 0
+    if [ -n "$DB_PATH" ] && [ "$(plist_arg --db)" != "$DB_PATH" ]; then return 0; fi
+    if [ -n "$WS_PATH" ] && [ "$(plist_arg --workspace)" != "$WS_PATH" ]; then return 0; fi
+    return 1
+}
+
 wait_healthy() {
     local i=0
     while [ "$i" -lt 60 ]; do
@@ -242,7 +264,9 @@ show_status() {
     # lsof 把「所有网卡」显示成 `*`，与 plist 里的 0.0.0.0 是同一件事，归一化后再比
     [ "$bound" = "*" ] && bound="0.0.0.0"
     if [ -n "$bound" ] && [ -n "${HOST:-}" ] && [ "$bound" != "$HOST" ]; then
-        note="（plist 写的是 ${HOST}，需 ai-company restart 重载）"
+        local want
+        want="$(plist_arg --host)"
+        note="（plist 写的是 ${want:-未设置}，本次想用 ${HOST}；跑 ai-company restart 生效）"
     fi
     say "  监听   ${bound:-未监听}:$PORT$note"
     if [ "$bound" = "0.0.0.0" ] || [ "$bound" = "::" ] || [ "$bound" = "[::]" ]; then
@@ -267,12 +291,24 @@ show_status() {
         bad "健康   端口 $PORT 无响应"
     fi
 
-    # 待你拍板数量：只在健康时取，失败不影响状态展示
+    # 待你拍板数量：只在健康时取，失败不影响状态展示。
+    #
+    # 数的是「老板要拍的事」，不是「全部待决项」：
+    # `/api/pending` 返回的是**所有人**身上挂着的未答复问题（CTO 手上的问题也在里面），
+    # 用它数会让老板以为有十几件要自己看。真正的口径在 `/api/org` 的 `pending[].forYou`
+    # （见 `src/server/org-view.ts`：`decisionOwner === "owner"`），`ceoQueue` 是「CEO 攒着还没递的」。
+    #
+    # 另外 `PendingItem` 的键叫 `key` 不叫 `id`（`src/company/escalation.ts:101`），
+    # 早先这里 `grep -o '"id"'` 恒为 0——数是「0 条」，实际可能一堆。
     if healthy; then
-        local pending
-        pending="$(curl -fsS -m 2 "http://127.0.0.1:$PORT/api/pending" 2>/dev/null \
-            | grep -o '"id"' | wc -l | tr -d ' ')"
-        say "  待办   ${pending:-0} 条待你拍板"
+        local counts
+        counts="$(curl -fsS -m 2 "http://127.0.0.1:$PORT/api/org" 2>/dev/null \
+            | /usr/bin/python3 -c "import json,sys;d=json.load(sys.stdin);p=d.get('pending') or [];print(sum(1 for x in p if x.get('forYou')),d.get('ceoQueue') or 0)" 2>/dev/null)"
+        if [ -n "${counts:-}" ]; then
+            say "  待办   ${counts%% *} 条待你拍板 · ${counts##* } 条 CEO 攒着"
+        else
+            warn "待办   取不到（/api/org 解析失败）"
+        fi
     fi
 
     holder="$(listener_pid)"
@@ -297,8 +333,15 @@ do_start() {
     say ""
     say "启动一人公司 · $URL"
 
-    # 已经在跑且健康：什么都不动（幂等），尤其不要碰数据库锁
+    # 已经在跑且健康：什么都不动（幂等），尤其不要碰数据库锁。
+    # 例外：plist 里的参数跟本次请求不一致时不能装没看见——那会变成
+    # 「带了新的 --host 跑 start，它说『无需重启』，实际什么都没改」。
     if job_loaded && healthy; then
+        if plist_differs; then
+            warn "服务在跑，但启动参数与本次请求不一致（plist 里是 --host $(plist_arg --host) --port $(plist_arg --port)）；走 restart 生效"
+            do_restart
+            return 0
+        fi
         ok "服务已在运行（pid $(job_pid)），无需重启"
         open_page
         show_status
@@ -321,9 +364,21 @@ do_start() {
     write_plist || changed=1
 
     if job_loaded; then
-        [ "$changed" = "1" ] && { launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true; sleep 1; }
-        ok "配置有变化或进程僵住，重启服务"
-        launchctl kickstart -k "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+        if [ "$changed" = "1" ]; then
+            # plist 变了：必须先 bootout 再 bootstrap。
+            # 早先这里 bootout 之后还调 kickstart -k，而 kickstart 只能重启**已注册**的 job，
+            # bootout 之后 job 已经不在 launchd 里了 → kickstart 静默失败（还带着 || true），
+            # 于是 start 在「配置有变化」这条路上必定超时失败。
+            ok "配置有变化，重新注册并启动"
+            launchctl bootout "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+            sleep 1
+            launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null \
+                || launchctl load -w "$PLIST" >/dev/null 2>&1 \
+                || { bad "launchctl 重新注册失败，看 $ERR_LOG"; exit 1; }
+        else
+            ok "进程没在健康地跑，重启服务"
+            launchctl kickstart -k "$DOMAIN/$LABEL" >/dev/null 2>&1 || true
+        fi
     else
         launchctl bootstrap "$DOMAIN" "$PLIST" 2>/dev/null \
             || launchctl load -w "$PLIST" >/dev/null 2>&1 \
@@ -378,6 +433,8 @@ do_stop() {
 do_restart() {
     say ""
     say "重启一人公司 · $URL"
+    # 先把目标参数算出来：`plist_differs` 与 `write_plist` 都用 $PORT/$HOST/$DB_PATH/$WS_PATH，
+    # 而 do_start 在「在跑但不一致」的分支里直接调 do_restart——两处参数必须同源。
     if ! job_loaded; then
         do_start
         return

@@ -122,7 +122,7 @@ const NO_CONSUMER_PENDING = new Map([
 	],
 	[
 		"/api/pending",
-		"界面侧已由频道视图内嵌下发（src/server/channels-view.ts 的 pending 字段），运维脚本 scripts/ai-company-service.sh:273 仍在用它数待办。要么脚本改走 /api/org，要么删路由",
+		"`?archive=1`（归档区）界面从未接过：驳回/已解决只能写（POST /api/pending/dispose），看不到历史。默认列表已被频道视图内嵌的 pending 字段与 /api/org 的 pending[] 取代（运维脚本也已改走 /api/org）。下一步二选一：把归档区做成界面，或删掉 archive 分支",
 	],
 	[
 		"/api/message",
