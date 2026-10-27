@@ -126,6 +126,16 @@ describe("渲染提示词", () => {
 		expect(text).toContain("agents/dev/");
 	});
 
+	test("目录说明不谎报文件：说到的文件必须真的会读", () => {
+		const text = renderAgentPrompt({ self: all[2]!, all });
+		// 曾经这里写的是 `capabilities` 与 `memory/` —— 两个都不存在的路径，
+		// 等于在提示词里告诉 agent「去改一个不存在的文件」，它改完毫无效果。
+		expect(text).not.toContain("`capabilities`");
+		expect(text).toContain("`identity.md`");
+		expect(text).toContain("`memory.md`");
+		expect(text).toContain("skills/<名字>/SKILL.md");
+	});
+
 	test("确定性：同样输入逐字节相同", () => {
 		const input = { self: all[1]!, all, projectBrief: "b" } as const;
 		expect(renderAgentPrompt(input)).toBe(renderAgentPrompt(input));
