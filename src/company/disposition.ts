@@ -18,7 +18,7 @@ import { AuditDoc, CompanyDoc, ROLE_LABELS } from "./docs.ts";
 // 运行时导入 PendingDoc 不会形成循环：escalation.ts 对 disposition.ts 只有 `import type`，
 // 编译后被擦除，运行时不存在「disposition → escalation → disposition」的环。
 import { PendingDoc, levelOfConversation } from "./escalation.ts";
-import { deliverDecision } from "./decision-delivery.ts";
+import { deliverDecision } from "./channels.ts";
 import type { PendingItem } from "./escalation.ts";
 
 /**

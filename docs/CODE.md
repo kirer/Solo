@@ -105,20 +105,19 @@ src/tui/main.ts      （终端）
 
 | 文件 | 行数 | 职责 |
 |---|---|---|
-| `org.ts` | 2392 | **装配 + 组织生命周期**（见 §4.1） |
+| `org.ts` | 2157 | **装配 + 组织生命周期**（见 §4.1） |
 | `escalation.ts` | 1300 | **升级链状态机**（见 §4.4） |
 | `roundtable.ts` | 1128 | 圆桌讨论（多阶段 durable task） |
 | `disposition.ts` | 857 | 待办处置（暂搁/放弃/恢复条件/超时默认） |
 | `watchdog.ts` | 790 | 看门狗（见 §4.5） |
-| `management-tools.ts` | 772 | 管理层工具集（`org_tree` / `my_capabilities` / `decide` / `staff_*` / `budget_check` …） |
+| `management-tools.ts` | 790 | 管理层工具集（`org_tree` / `my_capabilities` / `decide` / `staff_*` / `budget_check` …） |
 | `tools/universal.ts` | 601 | 通用工具（`whoami`/`say`/`ask`/`read_channel`/`inbox`/`task_*`） |
 | `channels.ts` | 586 | 频道 IO + 投递 + 已读（纯逻辑在 `src/domain/channels.ts`） |
-| `delegation.ts` | 533 | 同步转交（老路径，仍在用） |
 | `tools.ts` | 416 | **能力包工厂**（见 §4.2） |
 | `roles.ts` | 348 | 7 个岗位的定义与职责提示词 |
 | `tools/dispatch.ts` | 346 | 派活工具（`assign_task` / `ask_role` / `project_create`） |
 | `tasks.ts` | 326 | 任务 IO（纯状态机在 `src/domain/tasks.ts`） |
-| `trail.ts` | 314 | 沟通图 / 组织图数据 |
+| `trail.ts` | 265 | 沟通留痕（`TrailDoc`）/ 实时边 / 活跃任务 |
 | `cost.ts` | 277 | 成本汇总 |
 | `tools/tool-search.ts` | 219 | 自研 `tool_search`（见 §4.3） |
 | `org-model.ts` | 157 | `CompanyState` → `Org`（纯映射）。`buildOrg()` 到处用 |
@@ -127,7 +126,6 @@ src/tui/main.ts      （终端）
 | `prompts.ts` | 107 | **职责描述/立项文档的唯一生成入口**（纯文案，`org.ts` re-export） |
 | `wait.ts` | 42 | `waitOrTimeout()` —— 圆桌等发言、HTTP 等 abort 共用 |
 | `decision-routing.ts` | 17 | re-export（真身在 `src/domain/routing.ts`） |
-| `delegation-guard.ts` | 165 | 同步等待的环检测 + 超时 |
 | `decision-delivery.ts` | 142 | 把决定投回发起方 |
 | `staff-tools.ts` | 348 | **员工原子工具表 + 授予粒度**（`write:src/` 的路径隔离，见 §4.6） |
 | `watchdog.ts` / `channels-doc.ts` / `docs.ts` / `roundtable-tools.ts` | 各自 | |
@@ -532,11 +530,11 @@ routing.ts     241   决策路由：decideOwner routeUpLine levelOfTarget conver
 ## 9. 测试
 
 ```
-test/unit/        29 个：纯函数（domain 层）+ capabilities / staff-scope / role-charter /
+test/unit/        28 个：纯函数（domain 层）+ capabilities / staff-scope / role-charter /
                         company-migration / ids / settings / wal / routes …
 test/contract/     1 个：runtime.test.ts —— 钉住底层行为，升级 pi-durable 后必跑
-test/e2e/         31 个：acceptance hierarchy escalation decision-loop channels-deliver
-                        channel-ack delivery-receipt delegation restart-channels terminate
+test/e2e/         30 个：acceptance hierarchy escalation decision-loop channels-deliver
+                        channel-ack delivery-receipt restart-channels terminate
                         roundtable owner-gate real-model reliability org web …
 test/support.ts         共用搭建（临时库 + 假模型）
 ```
@@ -561,7 +559,7 @@ test/support.ts         共用搭建（临时库 + 假模型）
 | 投递回执 | `test/e2e/delivery-receipt.test.ts` |
 | 频道回执（老板看得见的「已排队」） | `test/e2e/channel-ack.test.ts` |
 | 派活去重 | `test/unit/domain-tasks.test.ts`（`describe("重复任务")`） |
-| 同步等待 | `test/unit/delegation-guard.test.ts`、`test/e2e/delegation.test.ts` |
+| 同步派活（已删除，见 ADR-037） | `grep -rn "delegation" src/` 只应剩 `runtime/ids.ts` 的 ID 生成 |
 | 底层升级 | `test/contract/runtime.test.ts` |
 
 命令：`npm run check`（tsc + 边界）→ `npm run verify`（vitest --run + 收据，跳过 0 才算过）。
@@ -571,9 +569,9 @@ test/support.ts         共用搭建（临时库 + 假模型）
 ## 10. 规格与决策记录
 
 ```
-  communication-trail  company-runtime  cost-accounting  delegation  escalation
+  communication-trail  company-runtime  cost-accounting  escalation
   org-structure  project-authority  project-lifecycle  project-workspace  tui-workspace
-docs/DECISIONS.md        36 条 ADR（每条有背景、替代方案、为什么这么选）
+docs/DECISIONS.md        37 条 ADR（每条有背景、替代方案、为什么这么选）
 docs/history/PLAN.md     技术选型 + 架构 + 附录 B「必踩的 15 个坑」（已冻结）
 docs/WEB-API.md          网页 API 契约
 ```
@@ -598,6 +596,7 @@ ADR-032  能力目录声明式 + 延迟工具 + tool_search
 ADR-033  老板级待办只能由 CEO 递
 ADR-034  投递回执——投递成功 ≠ 已读，unanswered 必须可见并告警
 ADR-035  能力粒度——scope 写在工具名里，隔离靠工具不存在
+ADR-037  同步派活彻底删除——投递只有一条路
 ADR-036  验收标准是机器可读收据，不是「测试全绿」这句话
 ```
 

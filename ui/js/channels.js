@@ -176,26 +176,38 @@ async function loadChannels() {
  * 是微秒级；深比较要递归整棵树，反而更慢，而且 `JSON.stringify` 会把
  * `undefined` 字段吞掉，两种「不同」会算出同一个签名。
  */
+/**
+ * 「要不要重渲染」的判据。
+ *
+ * ⚠️ **规则（WORKING-AGREEMENTS 第 51 条）**：签名必须覆盖**所有影响渲染的输入**。
+ * 漏一个字段 = 那个字段变了也不会重绘 = 「改了不生效」的静默 bug。
+ *
+ * **踩过的坑（两次，同一类）**：
+ * 1. 2026-10-27 改名后成员列表仍显示旧名 —— 原签名只取 `member.id` + `member.unread`，
+ *    **漏了 `member.label` 和 `member.role`**。改名后 id/unread 都没变 → 签名不变 →
+ *    前端认为「没变化」→ 不重绘 → 列表永远停在旧名。
+ * 2. 同日 T-33 的 `dataset.view !== "channels"` 前置条件让「不在频道视图时收到新消息」
+ *    也不刷新 —— 同类：判断条件没覆盖所有该覆盖的情况。
+ *
+ * **所以这里不再手工列举字段**：直接对「渲染所需的整份数据」做稳定序列化再哈希。
+ * 好处：以后任何渲染函数新增字段，**自动被覆盖**，不用记得回来同步这里。
+ * 代价：任何字段变动都会触发重绘（略多几次渲染，可忽略）。
+ *
+ * 序列化必须**稳定**（键顺序固定），否则同一份数据会算出不同哈希、导致每次都重绘。
+ */
+function stableStringify(value) {
+	if (value === null || typeof value !== "object") return JSON.stringify(value);
+	if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+	const keys = Object.keys(value).sort();
+	return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
+}
+
 function viewSignature() {
 	const view = state.view;
 	if (view === null) return "";
-	const parts = [view.channel.id, view.channel.title, String(view.hasMore)];
-	for (const message of view.messages) {
-		// 已读点 / @ 已读会变色，必须进签名，否则别人读完不回显绿点
-		const mentions = message.mentions.map((item) => `${item.id}${item.read ? "1" : "0"}`).join(",");
-		// 受理回执也会变（对方从「忙」变「立即处理」），不进签名就永远不重绘。
-		const acks = (message.acks ?? []).map((ack) => `${ack.conversationId}${ack.plan}${ack.at}`).join(",");
-		parts.push(`${message.seq}:${message.read ? 1 : 0}:${mentions}:${message.replyTo?.seq ?? ""}:${acks}`);
-	}
-	parts.push(view.members.map((member) => `${member.id}${member.unread}`).join(","));
-	parts.push(
-		view.tasks
-			.map((task) => `${task.id}${task.status}${task.startedAt ?? ""}${task.doneAt ?? ""}${task.usage?.tokens ?? ""}`)
-			.join(","),
-	);
-	// `pending` 在旧后端上可能缺（见 renderPending 的降级），这里同样要容错
-	parts.push((view.pending ?? []).map((item) => `${item.key}${item.askedAt}`).join(","));
-	return parts.join("|");
+	// 整份视图数据（channel / messages / members / tasks / pending / hasMore）
+	// 全部参与签名——见上面的规则与两次踩坑记录。
+	return stableStringify(view);
 }
 
 /**
@@ -1393,8 +1405,10 @@ function renderMembers() {
 				`<button class="ch-member-btn" type="button" data-dm="${member.id}" title="和 ${escapeAttr(member.label)} 私聊">`,
 				avatar(member.label, 22, "ch-av--sm"),
 				`<span class="ch-member-main">`,
+				// 老板口径（T-34 第 2 项）：显示为「名字(职位)」，职位小字淡色。
+				// 以前是上下两行（名字一行、职位一行），老板要求改成同行括号形式。
 				`<b>${escapeHtml(member.label)}</b>`,
-				`<span class="ch-member-role">${escapeHtml(roleLabel(member.role))}</span>`,
+				`<span class="ch-member-role">(${escapeHtml(roleLabel(member.role))})</span>`,
 				`</span>`,
 				member.unread > 0 ? `<b class="ch-badge">${member.unread}</b>` : "",
 				`</button>`,

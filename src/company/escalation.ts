@@ -26,7 +26,7 @@ import { type DecisionTopic, decideOwner, levelOfTarget } from "./decision-routi
 import { nextLevelUp } from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import type { DispositionPayload } from "./disposition.ts";
-import { deliverDecision } from "./decision-delivery.ts";
+import { deliverDecision } from "./channels.ts";
 import {
 	AuditDoc,
 	CompanyDoc,

@@ -20,8 +20,7 @@ import {
 	rollupProject,
 	rollupRole,
 } from "../../src/company/cost.ts";
-import { delegate } from "../../src/company/delegation.ts";
-import { answer, createTestContext, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { answer, askAndWait, createTestContext, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -89,11 +88,7 @@ describe("按会话取得用量", () => {
 
 		// 员工用 cheap-1
 		ctx.faux.setResponses([answer("员工回答")]);
-		await delegate(
-			runtime,
-			{ project: "alpha", employee: "dev-1", task: "干活", fromConversationId: boot.ownerConversationId, from: "CEO" },
-			BACKGROUND_CONTEXT,
-		);
+		await askAndWait(runtime, { conversationId: hired.conversationId, text: "干活", from: "CEO" }, BACKGROUND_CONTEXT);
 
 		const usage = await conversationUsage(runtime, hired.conversationId, BACKGROUND_CONTEXT);
 		const keys = Object.keys(usage.byModel);
@@ -167,11 +162,7 @@ describe("按项目与角色聚合", () => {
 		const { ctx, runtime, boot, project, hired } = await setup();
 
 		ctx.faux.setResponses([answer("员工回答")]);
-		await delegate(
-			runtime,
-			{ project: "alpha", employee: "dev-1", task: "干活", fromConversationId: project.leader, from: "负责人" },
-			BACKGROUND_CONTEXT,
-		);
+		await askAndWait(runtime, { conversationId: hired.conversationId, text: "干活", from: "负责人" }, BACKGROUND_CONTEXT);
 		ctx.faux.setResponses([answer("负责人回答")]);
 		const leader = await runtime.harness.conversation(project.leader as never, BACKGROUND_CONTEXT);
 		await (await leader?.submit({ type: "input", content: "进度" }, BACKGROUND_CONTEXT))?.wait(BACKGROUND_CONTEXT);

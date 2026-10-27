@@ -19,11 +19,11 @@ import {
 import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff } from "../../src/company/org.ts";
 import { createEscalationTask, listPending, startEscalation } from "../../src/company/escalation.ts";
 import { beginLiveTrail } from "../../src/company/trail.ts";
+import { ensureAllChannels, postToChannel } from "../../src/company/channels.ts";
 import { serve, type Server } from "../../src/server/http.ts";
 import type { OrgView } from "../../src/server/org-view.ts";
 import type { Feed, FeedItem } from "../../src/server/feed.ts";
 import type { ActorProfile } from "../../src/server/profile.ts";
-import { delegationWaits } from "../../src/company/delegation-guard.ts";
 import { answer, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, toolCall, type TestContext } from "../support.ts";
 
 let contexts: TestContext[] = [];
@@ -59,8 +59,6 @@ async function setup() {
 			registry,
 			workspaceRoot: join(dir, "projects"),
 			escalationTask,
-			// 同步转交的等待上限调到 300ms：默认 180s 没法在测试里验证超时路径
-			delegationTimeoutMs: 300,
 		},
 		BACKGROUND_CONTEXT,
 	);
@@ -150,7 +148,33 @@ describe("组织快照接口", () => {
 		expect(Array.isArray(org.links)).toBe(true);
 	});
 
-	test("正在进行的沟通会出现在 links 里", async () => {
+	test("频道里的 @ 会变成组织图上的连线", async () => {
+		const { server, runtime, boot } = await setup();
+		// 连线现在从频道消息算（同步派活删除后，`TrailDoc` 不再增长）。
+		await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
+		await postToChannel(
+			runtime,
+			"leadership",
+			{
+				from: boot.ownerConversationId,
+				fromLabel: "CEO",
+				kind: "task",
+				text: "@CTO 看一下架构",
+				mentions: [boot.roleConversations.cto],
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		const org = (await (await fetch(`${server.url}api/org`)).json()) as OrgView;
+		const link = org.links.find(
+			(item) => item.from === boot.ownerConversationId && item.to === boot.roleConversations.cto,
+		);
+		expect(link, "频道里的 @ 应当出现在 links 里").toBeDefined();
+		expect(link?.kind).toBe("delegate");
+		expect(link?.label).toBe("CEO → CTO");
+	});
+
+	test("正在进行的沟通（实时边）也会出现在 links 里", async () => {
 		const { server, boot } = await setup();
 		const release = beginLiveTrail({
 			kind: "delegate",
@@ -1113,7 +1137,6 @@ describe("派活不再同步等待（ADR-028 替代契约 §5.1）", () => {
 		// 消息确实进了频道（不依赖对方消费）
 		const channels = await (await fetch(`${server.url}api/channels`)).json() as { channels: { id: string }[] };
 		expect(channels.channels.length).toBeGreaterThan(0);
-		void delegationWaits;
 	});
 });
 

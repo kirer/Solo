@@ -12,7 +12,6 @@ import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@earendil-works/chord/context";
 import { createRegistry, openCompany, recover, type CompanyRuntime } from "../../src/runtime/index.ts";
 import { bootstrapCompany, createProject, hireStaff, listStaff, readCompany } from "../../src/company/org.ts";
-import { delegate } from "../../src/company/delegation.ts";
 import {
 	answerPending,
 	createEscalationTask,
@@ -21,10 +20,10 @@ import {
 	waitEscalation,
 } from "../../src/company/escalation.ts";
 import { rollupProject } from "../../src/company/cost.ts";
-import { readTrail } from "../../src/company/trail.ts";
 import { buildUiState } from "../../src/tui/state.ts";
 import { computeLayout, renderLayout } from "../../src/tui/render.ts";
-import { answer, createTestContext, eventually, toolCall, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
+import { ensureAllChannels, postToChannel, readChannels } from "../../src/company/channels.ts";
+import { answer, askAndWait, createTestContext, eventually, toolCall, type TestContext, TEST_MODEL_CATALOG } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -142,20 +141,31 @@ describe("首个真实项目：网页坦克大战", () => {
 			toolCall("write", { path: "index.html", content: '<canvas id="game"></canvas>' }),
 			answer("入口文件已创建，包含 canvas 容器。"),
 		]);
-		const result = await delegate(
+		const dev = staff.find((person) => person.name === "dev-1");
+		const result = await askAndWait(
 			runtime,
-			{
-				project: "tank-battle",
-				employee: "dev-1",
-				task: "创建游戏入口 index.html",
-				fromConversationId: project.leader,
-				from: "坦克大战负责人",
-			},
+			{ conversationId: dev?.conversationId as number, text: "创建游戏入口 index.html", from: "坦克大战负责人" },
 			BACKGROUND_CONTEXT,
 		);
 
 		// 开发拿到了写文件的工具，所以这次应当成功
 		expect(result.ok).toBe(true);
+
+		// 派活的真路径：频道里 @ 一句（唤醒）+ assign_task 建任务（不等）。
+		// 同步派活（delegation.ts）已删，沟通与留痕都落在频道里。
+		await ensureAllChannels(runtime, BACKGROUND_CONTEXT);
+		await postToChannel(
+			runtime,
+			"proj:tank-battle",
+			{
+				from: project.leader,
+				fromLabel: "坦克大战负责人",
+				kind: "task",
+				text: "@dev-1 创建游戏入口 index.html",
+				mentions: [dev?.conversationId as number],
+			},
+			BACKGROUND_CONTEXT,
+		);
 		const html = await readFile(join(project.workspace, "index.html"), "utf8");
 		expect(html).toContain("canvas");
 
@@ -164,8 +174,11 @@ describe("首个真实项目：网页坦克大战", () => {
 		expect(projectCost.totalTokens).toBeGreaterThan(0);
 
 		// ⑥ 验证沟通留痕完整
-		const trail = await readTrail(runtime, { project: "tank-battle" }, BACKGROUND_CONTEXT);
-		expect(trail.length).toBeGreaterThan(0);
+		// 同步派活删除后，真实沟通都落在频道里；`TrailDoc` 只在显式 recordMessage 时写。
+		const channels = await readChannels(runtime, BACKGROUND_CONTEXT);
+		const messages = Object.values(channels.channels).flatMap((channel) => channel.messages);
+		expect(messages.length, "沟通应当落在频道里").toBeGreaterThan(0);
+		expect(messages.some((message) => message.mentions.length > 0), "应当有 @ 到人的消息").toBe(true);
 
 		// ⑦ 验证界面能渲染出这个组织
 		const state = await buildUiState(runtime, { selectedConversationId: boot.ownerConversationId });
@@ -206,15 +219,10 @@ describe("首个真实项目：网页坦克大战", () => {
 			answer("入口文件已创建。"),
 		]);
 
-		const result = await delegate(
+		const staff = await listStaff(runtime, "tank-battle", BACKGROUND_CONTEXT);
+		const result = await askAndWait(
 			runtime,
-			{
-				project: "tank-battle",
-				employee: "dev-1",
-				task: "创建游戏入口",
-				fromConversationId: project.leader,
-				from: "负责人",
-			},
+			{ conversationId: staff[0]?.conversationId as number, text: "创建游戏入口", from: "负责人" },
 			BACKGROUND_CONTEXT,
 		);
 
@@ -289,11 +297,14 @@ describe("首个真实项目：网页坦克大战", () => {
 		expect(result?.path).toContain("ceo");
 		expect(result?.path).toContain("owner");
 
-		// 留痕：完整升级链可在时间线里查到
-		const trail = await readTrail(runtime, { project: "tank-battle" }, BACKGROUND_CONTEXT);
-		const kinds = trail.map((edge) => edge.kind);
-		expect(kinds).toContain("escalate");
-		expect(kinds).toContain("decide");
+		// 留痕：完整升级链可在频道里查到（拍板结果现在是一条 `kind: "decision"` 的频道消息）
+		const channels = await readChannels(runtime, BACKGROUND_CONTEXT);
+		const messages = Object.values(channels.channels).flatMap((channel) => channel.messages);
+		expect(messages.some((message) => message.kind === "decision"), "拍板结果应落在频道里").toBe(true);
+		// 拍板结果要能追回原问题：`refs.pendingKey` 指向那条待决项。
+		const decision = messages.find((message) => message.kind === "decision");
+		expect(decision?.refs?.pendingKey, "拍板结果应带上待决项编号").toBeDefined();
+		expect(decision?.text).toContain("Canvas 2D");
 
 		void ctx;
 		void boot;

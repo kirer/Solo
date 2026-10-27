@@ -28,13 +28,15 @@ import {
 	createProject,
 	deleteProject,
 	hireStaff,
+	listStaff,
 	migrateWorkspacePaths,
 	readCompany,
 	terminateProject,
 } from "../../src/company/org.ts";
 import { CompanyDoc } from "../../src/company/docs.ts";
-import { delegate } from "../../src/company/delegation.ts";
-import { answer, createTestContext, toolCall, type TestContext, TEST_MODEL_CATALOG, allToolNames } from "../support.ts";
+import { buildOrg } from "../../src/company/org-model.ts";
+import { canAssign } from "../../src/domain/membership.ts";
+import { answer, askAndWait, createTestContext, toolCall, type TestContext, TEST_MODEL_CATALOG, allToolNames } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -292,21 +294,14 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 		);
 
 		ctx.faux.setResponses([answer("写好了")]);
-		const result = await delegate(
+		const result = await askAndWait(
 			runtime,
-			{
-				project: "alpha",
-				employee: "dev-1",
-				task: "实现首页",
-				fromConversationId: project.leader,
-				from: project.leaderName,
-			},
+			{ conversationId: hired.conversationId, text: "实现首页", from: project.leaderName },
 			BACKGROUND_CONTEXT,
 		);
 
 		expect(result.ok).toBe(true);
 		expect(result.text).toContain("写好了");
-		expect(result.conversationId).toBe(hired.conversationId);
 	});
 
 	test("管理层通过负责人推进工作，不直接指挥员工", async () => {
@@ -372,7 +367,7 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 		expect(tools).not.toContain("delegate_to_staff");
 	});
 
-	test("负责人不能给别的项目派活", async () => {
+	test("负责人不能给别的项目派活（越级校验现在在 assign_task 上）", async () => {
 		const { ctx, runtime, registry } = await setup();
 		await boot(ctx, runtime, registry);
 		const alpha = (
@@ -389,21 +384,17 @@ describe("项目负责人是员工与管理层之间的一层", () => {
 		);
 		await hireStaff(runtime, { project: "beta", name: "dev-2", role: "开发", manager: "cto" }, BACKGROUND_CONTEXT);
 
-		const result = await delegate(
-			runtime,
-			{
-				project: "beta",
-				employee: "dev-2",
-				task: "帮个忙",
-				fromConversationId: alpha.leader,
-				from: alpha.leaderName,
-			},
-			BACKGROUND_CONTEXT,
+		// 越级校验搬到了 `assign_task`（`src/company/tools/dispatch.ts` 的
+		// `canAssign`）：跨项目派活被拒，并指路 CHRO。
+		const staff = await listStaff(runtime, "beta", BACKGROUND_CONTEXT);
+		const target = staff.find((person) => person.name === "dev-2");
+		expect(target).toBeDefined();
+		const denied = canAssign(
+			buildOrg(await runtime.harness.snapshot(CompanyDoc, BACKGROUND_CONTEXT)),
+			alpha.leader,
+			target?.conversationId as number,
 		);
-
-		expect(result.ok).toBe(false);
-		expect(result.reason).toBe("cross-project");
-		expect(result.text).toContain("CHRO");
+		expect(denied, "项目负责人只能指挥自己项目的人").toBe(false);
 	});
 });
 

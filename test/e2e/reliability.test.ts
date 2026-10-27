@@ -5,7 +5,11 @@
  * - 重启后角色能力是否还在（registry 是内存态）
  * - CEO 是否被误给了全部工具
  * - 员工是否按角色拿到工具（没有工具就干不了活）
- * - 输出被截断时派活是否判失败（不能当成做完了）
+ * - 输出被截断时，会话流里必须有显式告警（不能看起来像做完了）
+ *
+ * 注：同步派活（`delegation.ts` / `delegation-guard.ts`）已按 ADR-037 删除，
+ * 因此「派活超时」「派活环检测」两类测试随之删除——它们测的是那条已经不存在的
+ * 路径。截断告警保留：新架构下它由 `src/server/feed.ts` 渲染成 alert。
  */
 import { afterEach, describe, expect, test } from "vitest";
 import { join } from "node:path";
@@ -18,9 +22,8 @@ import {
 	recover,
 	type CompanyRuntime,
 } from "../../src/runtime/index.ts";
-import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff } from "../../src/company/org.ts";
-import { delegate, isEmployeeBusy } from "../../src/company/delegation.ts";
-import { listStaff } from "../../src/company/org.ts";
+import { bootstrapCompany, COMPANY_TASKS_EXTENSION, createProject, hireStaff, listStaff } from "../../src/company/org.ts";
+import { readFeed } from "../../src/server/feed.ts";
 import {
 	ALERT_ENTRY_KIND,
 	runWatchdogPass,
@@ -28,12 +31,8 @@ import {
 	type WatchdogAlert,
 } from "../../src/company/watchdog.ts";
 import {
-	delegationWaits,
-	enterDelegation,
-	resetDelegationWaits,
-} from "../../src/company/delegation-guard.ts";
-import {
 	answer,
+	askAndWait,
 	createTestContext,
 	eventually,
 	slowAnswer,
@@ -227,7 +226,11 @@ describe("多个员工各有独立能力包", () => {
 });
 
 describe("截断不能被当成完成", () => {
-	test("助手消息以 length 结束时派活判失败", async () => {
+	// 同步派活删除后，「派活返回 ok=false」这个断言没有对应物了：新架构里派活
+	// 本来就不等结果。截断这件事现在的落点是**会话流里的显式告警**
+	// （`src/server/feed.ts` 在 `stopReason === "length"` 时插一条 alert），
+	// 所以这里钉住的是那条告警必须真的出现——否则老板看到的就是「像是做完了」。
+	test("助手消息以 length 结束时，会话流里出现显式截断告警", async () => {
 		const ctx = await createTestContext();
 		contexts.push(ctx);
 		const registry = createRegistry();
@@ -238,12 +241,15 @@ describe("截断不能被当成完成", () => {
 		runtimes.push(runtime);
 		await recover(runtime, BACKGROUND_CONTEXT);
 		await boot(runtime, registry, ctx.dir);
-		const { project } = await createProject(
+		await createProject(
 			runtime,
 			{ name: "A", slug: "a", brief: "b", workspaceRoot: join(ctx.dir, "projects") },
 			BACKGROUND_CONTEXT,
 		);
 		await hireStaff(runtime, { project: "a", name: "dev-1", role: "开发", manager: "cto", registry }, BACKGROUND_CONTEXT);
+		const staff = await listStaff(runtime, "a", BACKGROUND_CONTEXT);
+		const employee = staff[0];
+		expect(employee).toBeDefined();
 
 		// 模拟输出被长度截断
 		ctx.faux.setResponses([
@@ -259,21 +265,19 @@ describe("截断不能被当成完成", () => {
 			} as never,
 		]);
 
-		const result = await delegate(
+		const conversationId = employee?.conversationId as number;
+		await askAndWait(
 			runtime,
-			{
-				project: "a",
-				employee: "dev-1",
-				task: "写一个长文件",
-				fromConversationId: project.leader,
-				from: "负责人",
-			},
+			{ conversationId, text: "写一个长文件", from: "负责人" },
 			BACKGROUND_CONTEXT,
 		);
 
-		expect(result.ok, "截断不得当作成功").toBe(false);
-		expect(result.reason).toBe("failed");
-		expect(result.text).toContain("截断");
+		const feed = await readFeed(runtime, conversationId, BACKGROUND_CONTEXT);
+		const alerts = (feed?.items ?? []).filter((item) => item.kind === "alert");
+		expect(
+			alerts.some((item) => item.text?.includes("截断")),
+			"截断必须留下看得见的告警，不能看起来像做完了",
+		).toBe(true);
 	});
 });
 
@@ -399,107 +403,6 @@ describe("存活判定：区分真的在跑和僵住的 waiting", () => {
 		);
 
 		expect(live.stuckTasks.map((task) => task.taskKind)).toEqual(["pi.tool"]);
-	});
-});
-
-describe("派活必须有等待上限", () => {
-	test("员工迟迟不答复时超时返回，不再永远挂住", async () => {
-		const ctx = await createTestContext();
-		contexts.push(ctx);
-		const registry = createRegistry();
-		const runtime = await openCompany(
-			{ databasePath: ctx.databasePath, models: ctx.models, registry },
-			BACKGROUND_CONTEXT,
-		);
-		runtimes.push(runtime);
-		await recover(runtime, BACKGROUND_CONTEXT);
-		await boot(runtime, registry, ctx.dir);
-		const { project } = await createProject(
-			runtime,
-			{ name: "A", slug: "a", brief: "b", workspaceRoot: join(ctx.dir, "projects") },
-			BACKGROUND_CONTEXT,
-		);
-		await hireStaff(runtime, { project: "a", name: "dev-1", role: "开发", manager: "cto", registry }, BACKGROUND_CONTEXT);
-
-		// 员工这一轮要 2 秒，派活方只等 100ms
-		ctx.faux.setResponses([slowAnswer(2_000, "很晚才答")]);
-		const started = Date.now();
-		const result = await delegate(
-			runtime,
-			{
-				project: "a",
-				employee: "dev-1",
-				task: "慢活",
-				fromConversationId: project.leader,
-				from: "负责人",
-				timeoutMs: 100,
-			},
-			BACKGROUND_CONTEXT,
-		);
-
-		expect(result.ok).toBe(false);
-		expect(result.reason).toBe("timeout");
-		expect(result.text).toContain("秒");
-		expect(Date.now() - started, "必须在超时量级返回").toBeLessThan(1_500);
-
-		// 等待图必须释放：否则下一次反向派活会被假环挡住
-		expect(delegationWaits().has(project.leader)).toBe(false);
-
-		// 员工仍在后台继续（ADR-005）：超时只放弃等待，不撤销工作
-		await eventually(
-			async () => {
-				const staff = await listStaff(runtime, "a", BACKGROUND_CONTEXT);
-				const person = staff[0];
-				if (person === undefined) return false;
-				return !(await isEmployeeBusy(runtime, person, BACKGROUND_CONTEXT));
-			},
-			{ label: "员工自己跑完", timeoutMs: 6_000 },
-		);
-	});
-
-	test("派活给正在等自己的会话被环检测拒绝", async () => {
-		const ctx = await createTestContext();
-		contexts.push(ctx);
-		const registry = createRegistry();
-		const runtime = await openCompany(
-			{ databasePath: ctx.databasePath, models: ctx.models, registry },
-			BACKGROUND_CONTEXT,
-		);
-		runtimes.push(runtime);
-		await recover(runtime, BACKGROUND_CONTEXT);
-		await boot(runtime, registry, ctx.dir);
-		await createProject(
-			runtime,
-			{ name: "A", slug: "a", brief: "b", workspaceRoot: join(ctx.dir, "projects") },
-			BACKGROUND_CONTEXT,
-		);
-		await hireStaff(runtime, { project: "a", name: "dev-1", role: "开发", manager: "cto", registry }, BACKGROUND_CONTEXT);
-
-		const staff = await listStaff(runtime, "a", BACKGROUND_CONTEXT);
-		const person = staff[0];
-		expect(person).toBeDefined();
-
-		// 员工正在同步等负责人 → 负责人再派活给它就是闭环
-		const release = enterDelegation(person?.conversationId as number, 999);
-		try {
-			const result = await delegate(
-				runtime,
-				{
-					project: "a",
-					employee: "dev-1",
-					task: "干活",
-					fromConversationId: 999,
-					from: "负责人",
-					timeoutMs: 50,
-				},
-				BACKGROUND_CONTEXT,
-			);
-			expect(result.ok).toBe(false);
-			expect(result.reason).toBe("cycle");
-		} finally {
-			release();
-			resetDelegationWaits();
-		}
 	});
 });
 

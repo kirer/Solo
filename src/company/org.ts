@@ -8,15 +8,12 @@
  * （会死锁，而且是间歇性的）。
  */
 import {
-	awaitWithContext,
 	BACKGROUND_CONTEXT,
 	type Context,
 	configure,
 	defineExtension,
 	defineTask,
 	defineTool,
-	inspectLiveness,
-	isConversationBusy,
 	type CompanyRuntime,
 	type Registry,
 	type Task,
@@ -63,22 +60,13 @@ import {
 	createRoleExtensionWithTools,
 	type ManagementToolset,
 } from "./tools.ts";
-import { delegate } from "./delegation.ts";
-import { beginLiveTrail, recordMessage } from "./trail.ts";
-import {
-	DelegationCycleError,
-	DEFAULT_DELEGATION_TIMEOUT_MS,
-	DelegationTimeoutError,
-	enterDelegation,
-	waitWithTimeout,
-} from "./delegation-guard.ts";
 import {
 	type EscalationInput,
 	type EscalationResult,
 	type EscalationState,
 	startEscalation,
 } from "./escalation.ts";
-import { escalationId, messageRequestId } from "../runtime/ids.ts";
+import { escalationId } from "../runtime/ids.ts";
 import { toolsForNames } from "./staff-tools.ts";
 import { startWatchdog, type WatchdogOptions } from "./watchdog.ts";
 import { roundtableExtension } from "./roundtable.ts";
@@ -180,14 +168,6 @@ export type BootstrapOptions = {
 	/** 升级任务定义；装入后管理层的 escalate 会真的创建升级流程。 */
 	readonly escalationTask?: Task<EscalationInput, EscalationState, EscalationResult, object>;
 	/**
-	 * 同步转交/下达的等待上限（毫秒，契约 §5.1）。默认 180s。
-	 *
-	 * 只影响「调用方等多久」，不影响对方的工作：超时后对方的活照旧在后台跑完，
-	 * 只是调用方拿回控制权、可以换条路走。做成可注入是为了能用小值写回归测试
-	 * （否则要等 3 分钟才能验证超时路径）。
-	 */
-	readonly delegationTimeoutMs?: number;
-	/**
 	 * 看门狗（契约 §5.2）：定期收尾僵住的任务、排空队列。
 	 *
 	 * **默认不启动**：`bootstrapCompany` 是装配函数，被测试、终端、网页三种
@@ -230,11 +210,8 @@ export async function bootstrapCompany(
 ): Promise<BootstrapResult> {
 	// 看门狗：默认不启动，由入口（serve / TUI）显式打开，见 BootstrapOptions.watchdog
 	const watchdogOption: boolean | WatchdogOptions = options.watchdog ?? false;
-	// 同步等待上限（契约 §5.1）：不设上限时，对方那一轮跑不完会把调用方一起挂死
-	const delegationTimeoutMs = options.delegationTimeoutMs ?? DEFAULT_DELEGATION_TIMEOUT_MS;
 
 	// 管理层工具集合：由公司运行时闭包而成。
-	// 派活与转交给需要先有会话标识，所以用惰性引用（阶段二再解析）。
 	const { createManagementTools }: ManagementToolsModule = await import("./management-tools.ts");
 	const managementTools = createManagementTools({
 		runtime,
@@ -242,23 +219,6 @@ export async function bootstrapCompany(
 		...(options.registry === undefined ? {} : { registry: options.registry }),
 		...(options.costReport === undefined ? {} : { costReport: options.costReport }),
 		...(options.employeeTools === undefined ? {} : { employeeTools: options.employeeTools }),
-		delegate: async (input) => {
-			const toolContext = input.context ?? BACKGROUND_CONTEXT;
-			const state = await runtime.harness.snapshot(CompanyDoc, toolContext);
-			const result = await delegate(
-				runtime,
-				{
-					project: input.project,
-					employee: input.employee,
-					task: input.task,
-					fromConversationId: input.fromConversationId,
-					// 显示名从会话反查，避免所有派活都记成「管理层」
-					from: labelOfConversation(state, input.fromConversationId) ?? input.from,
-				},
-				toolContext,
-			);
-			return result.ok ? `员工回复：${result.text}` : `派活失败：${result.text}`;
-		},
 		// 上报路由的全部逻辑在 `escalateUp` 里（唯一入口，可被直接测试）；
 		// 工具层只负责把参数转过去，避免「工具能用、直调 API 不能用」两套口径。
 		escalate: async (input) => escalateUp(runtime, input, options.escalationTask, context),
@@ -388,229 +348,6 @@ export async function bootstrapCompany(
 					note: input.decision.slice(0, 200),
 				});
 			}, context);
-		},
-		delegateToRole: async (input) => {
-			const toolContext = input.context ?? BACKGROUND_CONTEXT;
-			const state = await runtime.harness.snapshot(CompanyDoc, toolContext);
-			const targetId = state?.roles[input.role];
-			if (targetId === undefined) return `没有岗位 ${input.role}。`;
-			const target = await runtime.harness.conversation(targetId as never, toolContext);
-			if (target === undefined) return `岗位 ${input.role} 的会话不存在。`;
-
-			const caller = input.fromConversationId;
-			const guard = tryEnterDelegation(caller, targetId, `岗位 ${input.role}`);
-			if (typeof guard === "string") return guard;
-			const release = guard;
-
-			try {
-				// ADR-026 落地第一步：链上上级的指令一律受理，不再因「正在忙」拒收。
-				// 旧实现先查忙碌再拒收，属明文抗命（老板要求：指令到达即生效）。
-				// 死锁防护仍在：tryEnterDelegation 的环检测 + 同步等待的硬上限
-				// （waitWithTimeout）负责，不靠「忙就拒」来避免互等。
-				// 用请求标识去重：同一条转交重复调用不会让岗位重复干活
-				const requestId = messageRequestId(`role-${input.role}`, caller, hashToInt(input.task));
-				const submission = await target.submit(
-					{
-						type: "input",
-						content: input.task,
-						requestId,
-						entry: {
-							kind: "app.delegate",
-							data: {
-								from: labelOfConversation(state, caller) ?? "管理层",
-								to: ROLE_LABELS[input.role as ManagementRole] ?? input.role,
-								text: input.task.slice(0, 280),
-							},
-						},
-						// ADR-026 决策 3：默认 now（立刻停、并入），不再用 reject 抗命
-						whenBusy: "steer",
-					},
-					toolContext,
-				);
-				const releaseLive = beginLiveTrail({
-					kind: "delegate",
-					from: labelOfConversation(state, caller) ?? "管理层",
-					to: ROLE_LABELS[input.role as ManagementRole] ?? input.role,
-					fromConversation: caller,
-					toConversation: targetId,
-				});
-				let settled: Awaited<ReturnType<typeof submission.wait>>;
-				try {
-					// 同步等待必须有上限：对方那一轮如果真的跑不完（工具中断后
-					// generation 停在 waiting），不设上限就会把调用方一起挂死。
-					// 超时只放弃「这次等待」，已经投递出去的工作照旧在后台跑完。
-					settled = await waitWithTimeout(
-						awaitWithContext(submission.wait(toolContext), toolContext),
-						delegationTimeoutMs,
-						toolContext.abortSignal === undefined ? {} : { signal: toolContext.abortSignal },
-					);
-				} finally {
-					releaseLive();
-				}
-				if (settled.status !== "done") return `岗位 ${input.role} 未能处理（${settled.status}）。`;
-
-				// 把岗位的答复摘要带回去：调用方据此判断要不要接着安排下一步
-				const summary = await readAssistantText(runtime, targetId, toolContext);
-				const fromLabel = labelOfConversation(state, caller) ?? "管理层";
-				const toLabel = ROLE_LABELS[input.role as ManagementRole] ?? input.role;
-				await recordMessage(
-					runtime,
-					{
-						kind: "delegate",
-						from: fromLabel,
-						to: toLabel,
-						fromConversationId: caller,
-						toConversationId: targetId,
-						ref: requestId,
-						text: input.task.slice(0, 280),
-					},
-					toolContext,
-				);
-				await recordMessage(
-					runtime,
-					{
-						kind: "report",
-						from: toLabel,
-						to: fromLabel,
-						fromConversationId: targetId,
-						toConversationId: caller,
-						ref: `${requestId}:report`,
-						text: summary.slice(0, 280),
-					},
-					toolContext,
-				);
-				return `岗位 ${input.role} 已处理。它的回复摘要：\n${summary}`;
-			} catch (error) {
-				// 老板点「立即处理」时工具上下文会被 abort；这个错误必须继续往上抛，
-				// 否则 abort 永远等不到任务结束。
-				if (toolContext.abortSignal?.aborted === true) throw error;
-				if (error instanceof DelegationTimeoutError) {
-					return [
-						`岗位 ${input.role} 在 ${Math.round(error.timeoutMs / 1000)} 秒内没有答复，本次转交已放弃等待。`,
-						"它不是失败，只是慢——活还在它那边继续跑。",
-						"现在只有两条路：(1) 先用 escalate 把问题抛上去，别在这里等；",
-						"(2) 换一件不依赖它的下一步先做，回头再问结果。不要原样重试。",
-					].join("");
-				}
-				return `转交给岗位 ${input.role} 失败：${error instanceof Error ? error.message : String(error)}`;
-			} finally {
-				release();
-			}
-		},
-		delegateToLeader: async (input) => {
-			const toolContext = input.context ?? BACKGROUND_CONTEXT;
-			const state = await runtime.harness.snapshot(CompanyDoc, toolContext);
-			const project = state?.projects[input.project];
-			if (project === undefined) {
-				const slugs = Object.keys(state?.projects ?? {});
-				return `没有项目 ${input.project}。现有项目：${slugs.length === 0 ? "（无）" : slugs.join("、")}`;
-			}
-
-			const leader = await runtime.harness.conversation(project.leader as never, toolContext);
-			if (leader === undefined) return `项目 ${input.project} 的负责人会话不存在（${project.leader}）。`;
-
-			const caller = input.fromConversationId;
-			const guard = tryEnterDelegation(caller, project.leader, `项目负责人 ${project.leaderName}`);
-			if (typeof guard === "string") return guard;
-			const release = guard;
-
-			try {
-				// ADR-026 落地第一步：对负责人的下达同样不得因「正在忙」拒收。
-				// 环检测（tryEnterDelegation）与等待硬上限（waitWithTimeout）仍是死锁防线。
-
-				// 请求标识按「发起方 + 任务内容」去重：重复下达同一件事不会让负责人重复干活
-				const requestId = messageRequestId(
-					`leader-${input.project}`,
-					caller,
-					hashToInt(input.task),
-				);
-				const submission = await leader.submit(
-					{
-						type: "input",
-						content: input.task,
-						requestId,
-						entry: {
-							kind: "app.delegate",
-							data: {
-								from: labelOfConversation(state, caller) ?? "管理层",
-								to: project.leaderName ?? "项目负责人",
-								project: project.slug,
-								text: input.task.slice(0, 280),
-							},
-						},
-						// ADR-026 决策 3：默认 now（立刻停、并入），不再用 reject 抗命
-						whenBusy: "steer",
-					},
-					toolContext,
-				);
-				const releaseLive = beginLiveTrail({
-					kind: "delegate",
-					from: labelOfConversation(state, caller) ?? "管理层",
-					to: project.leaderName,
-					fromConversation: caller,
-					toConversation: project.leader,
-					project: project.slug,
-				});
-				let settled: Awaited<ReturnType<typeof submission.wait>>;
-				try {
-					// 与岗位转交同一条硬上限：负责人那一轮跑不完时，
-					// 调用方（管理层）不能陪着一起挂住。
-					settled = await waitWithTimeout(
-						awaitWithContext(submission.wait(toolContext), toolContext),
-						delegationTimeoutMs,
-						toolContext.abortSignal === undefined ? {} : { signal: toolContext.abortSignal },
-					);
-				} finally {
-					releaseLive();
-				}
-				if (settled.status !== "done") {
-					return `项目负责人 ${project.leaderName} 未能处理（${settled.status}）。`;
-				}
-
-				const summary = await readAssistantText(runtime, project.leader, toolContext);
-				const fromLabel = labelOfConversation(state, caller) ?? "管理层";
-				await recordMessage(
-					runtime,
-					{
-						kind: "delegate",
-						from: fromLabel,
-						to: project.leaderName,
-						fromConversationId: caller,
-						toConversationId: project.leader,
-						ref: requestId,
-						project: project.slug,
-						text: input.task.slice(0, 280),
-					},
-					toolContext,
-				);
-				await recordMessage(
-					runtime,
-					{
-						kind: "report",
-						from: project.leaderName,
-						to: fromLabel,
-						fromConversationId: project.leader,
-						toConversationId: caller,
-						ref: `${requestId}:report`,
-						project: project.slug,
-						text: summary.slice(0, 280),
-					},
-					toolContext,
-				);
-				return `项目「${project.name}」负责人 ${project.leaderName} 已处理。它的回复摘要：\n${summary}`;
-			} catch (error) {
-				if (toolContext.abortSignal?.aborted === true) throw error;
-				if (error instanceof DelegationTimeoutError) {
-					return [
-						`项目负责人 ${project.leaderName} 在 ${Math.round(error.timeoutMs / 1000)} 秒内没有回报，本次下达已放弃等待。`,
-						"负责人那边的工作没有被取消，它跑完仍会留下回报。",
-						"现在不要再连发同一条指令（会重复派活）：先做别的，或让 COO 去盯进度。",
-					].join("");
-				}
-				return `下达给项目负责人 ${project.leaderName} 失败：${error instanceof Error ? error.message : String(error)}`;
-			} finally {
-				release();
-			}
 		},
 		reassignStaff: async (input) => (await reassignStaff(runtime, input, context)).message,
 		setProjectStatus: async (input) =>
@@ -2002,32 +1739,6 @@ export async function setDefaultModel(
 
 // ── 内部 ────────────────────────────────────────────────────────────────────
 
-/** 字符串的稳定整数哈希，用于请求标识去重。 */
-function hashToInt(text: string): number {
-	let hash = 0;
-	for (let index = 0; index < text.length; index += 1) {
-		hash = (hash * 31 + text.charCodeAt(index)) | 0;
-	}
-	return Math.abs(hash);
-}
-
-/** 读某会话最近一条助手消息的文本。 */
-async function readAssistantText(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	context: Context,
-): Promise<string> {
-	const conversation = await runtime.harness.conversation(conversationId as never, context);
-	const page = await conversation?.entries({ order: "descending" }, 10, undefined, context);
-	const last = page?.items.find((entry) => entry.kind === "pi.assistant");
-	const message = last?.model?.[0] as { content?: readonly { type: string; text?: string }[] } | undefined;
-	const text = (message?.content ?? [])
-		.flatMap((part) => (part.type === "text" && part.text !== undefined ? [part.text] : []))
-		.join("")
-		.trim();
-	return text.slice(0, 300);
-}
-
 /**
  * 升级序号：**必须跨重启唯一**。
  *
@@ -2098,57 +1809,6 @@ function labelOfConversation(state: CompanyState | undefined, conversationId: nu
 	for (const person of Object.values(state.staff ?? {})) {
 		if (person.conversationId === conversationId) return person.name;
 	}
-	return undefined;
-}
-
-/**
- * 登记一次同步转交；发现循环等待时返回给模型看的说明。
- *
- * 为什么要有这道防线：转交工具是同步的（等对方答复）。A 等 B、B 又等 A 时，
- * 两边都会永远等下去，而且 abort 也要等任务结束——老板点「立即处理」也救不回来。
- */
-function tryEnterDelegation(
-	caller: number,
-	target: number,
-	label: string,
-): (() => void) | string {
-	try {
-		return enterDelegation(caller, target);
-	} catch (error) {
-		if (error instanceof DelegationCycleError) {
-			return [
-				`不能转交给${label}：${error.message}。`,
-				"对方正在直接或间接等你这一侧的结果，转过去会互相卡死。",
-				"请先把手上的结论处理完并回复它，或用 escalate 让 CEO 协调；不要用同步转交绕圈。",
-			].join("");
-		}
-		throw error;
-	}
-}
-
-/**
- * 目标会话是否正忙；忙则返回给模型看的原因，避免同步等待挂死。
- *
- * 用统一存活判定（契约 §5.3）：`waiting` 但等的东西早已结束的任务是**僵住**，
- * 不是「在跑」。以前这里手写 state.kind 判定，于是卡死的会话永远显示在忙，
- * 派活全部排队——这正是这次要修的死锁链路。
- */
-async function busyReason(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	context: Context,
-): Promise<string | undefined> {
-	const liveness = await inspectLiveness(runtime, {}, context);
-	if (isConversationBusy(liveness, conversationId)) return "正在忙（还有没结束的任务）";
-
-	const inspection = liveness.inspection;
-	const hasQueued = inspection.submissions.some(
-		(submission) =>
-			Number(submission.conversationId) === conversationId &&
-			(submission.status === "queued" || submission.status === "placed"),
-	);
-	if (hasQueued) return "还有排队中的消息没处理";
-
 	return undefined;
 }
 

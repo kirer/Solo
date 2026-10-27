@@ -18,9 +18,8 @@ import {
 	terminateProject,
 } from "../../src/company/org.ts";
 import { createEscalationTask, listPending, startEscalation } from "../../src/company/escalation.ts";
-import { delegate } from "../../src/company/delegation.ts";
 import { buildOrgView } from "../../src/server/org-view.ts";
-import { createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, type TestContext } from "../support.ts";
+import { askAndWait, createTestContext, eventually, slowAnswer, TEST_MODEL_CATALOG, type TestContext } from "../support.ts";
 
 let contexts: TestContext[] = [];
 let runtimes: CompanyRuntime[] = [];
@@ -118,15 +117,10 @@ describe("终止项目", () => {
 		// 注：faux 的慢响应不理会中断信号，所以要等它自然结束；
 		// 真实 provider 会立刻中断（实测 7ms）。
 		ctx.faux.setResponses([slowAnswer(1_200, "慢慢做")]);
-		const pending = delegate(
+		const staff = (await listStaff(runtime, "tank-battle", BACKGROUND_CONTEXT)).find((person) => person.name === "林越");
+		const pending = askAndWait(
 			runtime,
-			{
-				project: "tank-battle",
-				employee: "林越",
-				task: "写个很长的东西",
-				fromConversationId: project.leader,
-				from: "负责人",
-			},
+			{ conversationId: staff?.conversationId as number, text: "写个很长的东西", from: "负责人" },
 			BACKGROUND_CONTEXT,
 		);
 
@@ -146,9 +140,9 @@ describe("终止项目", () => {
 		);
 		expect(result.stoppedConversations).toBeGreaterThanOrEqual(2);
 
-		// 派活应当以失败收场
+		// 这一轮应当以失败收场（被中断的不该算做完）
 		const outcome = await pending;
-		expect(outcome.ok, "被中断的派活不应算成功").toBe(false);
+		expect(outcome.ok, "被中断的一轮不应算成功").toBe(false);
 	}, 20_000);
 
 	test("该项目挂着的待办自动关闭", async () => {

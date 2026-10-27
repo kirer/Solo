@@ -88,33 +88,8 @@ export type ToolDependencies = {
 	readonly registry?: import("../runtime/index.ts").Registry;
 	/** 员工可用的执行类工具。 */
 	readonly employeeTools?: readonly ReturnType<typeof defineTool>[];
-	/** 给员工派活。 */
-	readonly delegate?: (input: {
-		readonly project: string;
-		readonly employee: string;
-		readonly task: string;
-		readonly fromConversationId: number;
-		readonly from: string;
-		/** 工具调用上下文：把 abortSignal 传下去，老板「立即处理」时能中断等待。 */
-		readonly context: Context;
-	}) => Promise<string>;
-	/** 给项目负责人下达任务（管理层推进项目工作的正道）。 */
-	readonly delegateToLeader?: (input: {
-		readonly project: string;
-		readonly task: string;
-		readonly fromConversationId: number;
-		readonly context: Context;
-	}) => Promise<string>;
 	/** 圆桌讨论的默认参与者超时（毫秒）；不传用 120s。 */
 	readonly roundtableTimeoutMs?: number;
-	/** 转交给另一位管理层。 */
-	readonly delegateToRole?: (input: {
-		readonly role: string;
-		readonly task: string;
-		/** 发起转交的会话，用于请求标识去重。 */
-		readonly fromConversationId: number;
-		readonly context: Context;
-	}) => Promise<string>;
 	/** 变更员工直属上级（由组织操作实现）。 */
 	readonly reassignStaff?: (input: {
 		readonly project: string;

@@ -16,6 +16,13 @@ import {
 	fauxToolCall,
 } from "@earendil-works/pi-ai/providers/faux";
 import type { Models } from "@earendil-works/pi-ai";
+import {
+	BACKGROUND_CONTEXT,
+	type CompanyRuntime,
+	type Context,
+	inspectLivenessFrom,
+	isConversationBusy,
+} from "../src/runtime/index.ts";
 
 export type TestContext = {
 	readonly dir: string;
@@ -107,4 +114,72 @@ export function agentTools(agent: { tools?: readonly unknown[]; deferred?: reado
 /** 只要工具名的版本。 */
 export function allToolNames(agent: { tools?: readonly unknown[]; deferred?: readonly unknown[] } | undefined): string[] {
 	return agentTools(agent).map((tool) => tool.name);
+}
+
+// ── 派活夹具（delegation.ts 删除后的替代） ────────────────────────────────────
+
+/**
+ * 「派一件活并等它做完」——测试用的同步派活夹具。
+ *
+ * 生产路径已经没有同步派活了（`delegation.ts` 533 行 + `delegation-guard.ts`
+ * 165 行已删）：派活是 `assign_task`（建任务，**不等**）+ 频道消息（唤醒）。
+ * 但一批老测试写的是「派活 → 断言员工答了话」，它们验证的是**任务/成本/轨迹/
+ * 终止/看门狗**这些行为，不是同步派活本身。
+ *
+ * 所以这里提供一个等价的测试原语：投一条输入进员工会话、等它 settle、
+ * 把结果读出来。**它不做** delegation.ts 做过的那四件事（越级校验、环检测、
+ * 超时释放、双向留痕），因为这些现在是 `assign_task` + 频道 + 看门狗的职责，
+ * 该由各自的测试去钉，而不是靠一个「什么都会一点」的同步原语顺带覆盖。
+ *
+ * 需要超时/环检测语义的测试应当直接断言新路径（见
+ * `test/e2e/reliability.test.ts` 里改写后的两条）。
+ */
+export async function askAndWait(
+	runtime: CompanyRuntime,
+	input: {
+		readonly conversationId: number;
+		readonly text: string;
+		readonly from?: string;
+		readonly fromLabel?: string;
+		readonly requestId?: string;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ readonly ok: boolean; readonly text: string; readonly status: string }> {
+	const conversation = await runtime.harness.conversation(input.conversationId as never, context);
+	if (conversation === undefined) return { ok: false, text: "会话不存在", status: "missing" };
+	const submission = await conversation.submit(
+		{
+			type: "input",
+			content: input.text,
+			...(input.requestId === undefined ? {} : { requestId: input.requestId }),
+			...(input.from === undefined
+				? {}
+				: {
+						entry: {
+							kind: "app.delegate",
+							data: { from: input.from, fromLabel: input.fromLabel ?? input.from, text: input.text.slice(0, 280) },
+						},
+					}),
+		},
+		context,
+	);
+	const settled = await submission.wait(context);
+	if (settled.status !== "done") return { ok: false, text: `未能回答（${settled.reason}）`, status: settled.status };
+	const entry = await runtime.harness.commit(
+		(tx) => tx.entry({ kind: "pi.assistant", is: () => true } as never, settled.answer as never),
+		context,
+	);
+	const message = (entry as { model?: readonly { content?: readonly { type: string; text?: string }[] }[] })?.model?.[0];
+	const text = message?.content?.flatMap((part) => (part.type === "text" && part.text !== undefined ? [part.text] : [])).join("");
+	return { ok: true, text: text === undefined || text === "" ? "（员工未给出文本内容）" : text, status: "done" };
+}
+
+/** 员工当前是否忙碌（原 `delegation.ts` 的 `isEmployeeBusy`，无派活依赖）。 */
+export async function staffBusy(
+	runtime: CompanyRuntime,
+	staff: { readonly conversationId: number },
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<boolean> {
+	const inspection = await runtime.harness.inspect(context);
+	return isConversationBusy(inspectLivenessFrom(inspection), staff.conversationId);
 }
