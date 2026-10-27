@@ -11,15 +11,16 @@
  */
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type {
-	Conversation,
-	Extension,
-	Harness,
-	PromptSection,
-	Registry,
-	ToolRegistration,
-} from "@earendil-works/pi-durable";
-import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
+import {
+	BACKGROUND_CONTEXT,
+	type Context,
+	type Conversation,
+	type Extension,
+	type Harness,
+	type PromptSection,
+	type Registry,
+	type ToolRegistration,
+} from "../runtime/index.ts";
 import { readAllIdentities, readIdentity } from "./identity.ts";
 import { renderAgentPrompt, type CapabilityLine } from "./prompt.ts";
 

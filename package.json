@@ -1,42 +1,43 @@
 {
-  "name": "ai-company",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "description": "一人公司：用持久化 agent 运行时搭建的多角色组织",
-  "engines": {
-    "node": ">=22.19.0"
-  },
-  "bin": {
-    "ai-company": "./dist/tui/main.js"
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit && npm run check:boundaries",
-    "check:boundaries": "node scripts/check-boundaries.mjs",
-    "ui:build": "node scripts/build-ui.mjs",
-    "start": "node --experimental-strip-types src/server/main.ts",
-    "web": "node --experimental-strip-types src/server/main.ts",
-    "tui": "node --experimental-strip-types src/tui/main.ts",
-    "test": "vitest --run",
-    "test:watch": "vitest",
-    "verify": "node scripts/verify-receipt.mjs",
-    "verify:check": "node scripts/verify-receipt.mjs --check-receipt",
-    "ui:shot": "node scripts/ui-shot.mjs",
-    "ui:check": "node scripts/ui-check.mjs"
-  },
-  "dependencies": {
-    "@dicebear/collection": "^9.4.3",
-    "@dicebear/core": "^9.4.3",
-    "@earendil-works/chord": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-durable": "1.4.0",
-    "@earendil-works/pi-tui": "1.4.0"
-  },
-  "devDependencies": {
-    "@types/node": "22.19.19",
-    "esbuild": "0.28.2",
-    "typescript": "5.9.3",
-    "vitest": "4.1.12"
-  }
+	"name": "ai-company",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"description": "一人公司：用持久化 agent 运行时搭建的多角色组织",
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"bin": {
+		"ai-company": "./dist/tui/main.js"
+	},
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"check": "tsc -p tsconfig.json --noEmit && npm run check:boundaries",
+		"check:boundaries": "node scripts/check-boundaries.mjs",
+		"ui:build": "node scripts/build-ui.mjs",
+		"start": "node --experimental-strip-types src/server/main.ts",
+		"web": "node --experimental-strip-types src/server/main.ts",
+		"core": "node --experimental-strip-types src/core/shell/main.ts",
+		"tui": "node --experimental-strip-types src/tui/main.ts",
+		"test": "vitest --run",
+		"test:watch": "vitest",
+		"verify": "node scripts/verify-receipt.mjs",
+		"verify:check": "node scripts/verify-receipt.mjs --check-receipt",
+		"ui:shot": "node scripts/ui-shot.mjs",
+		"ui:check": "node scripts/ui-check.mjs"
+	},
+	"dependencies": {
+		"@dicebear/collection": "^9.4.3",
+		"@dicebear/core": "^9.4.3",
+		"@earendil-works/chord": "1.4.0",
+		"@earendil-works/pi-ai": "1.4.0",
+		"@earendil-works/pi-durable": "1.4.0",
+		"@earendil-works/pi-tui": "1.4.0"
+	},
+	"devDependencies": {
+		"@types/node": "22.19.19",
+		"esbuild": "0.28.2",
+		"typescript": "5.9.3",
+		"vitest": "4.1.12"
+	}
 }

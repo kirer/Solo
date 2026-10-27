@@ -15,7 +15,7 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { Conversation, Harness, Registry, Extension } from "@earendil-works/pi-durable";
+import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
 import {
 	BACKGROUND_CONTEXT,
 	createRegistry,
@@ -39,7 +39,22 @@ export type CoreShellOptions = {
 	readonly companyChannel?: string;
 	/** 老板显示名。只用于渲染。 */
 	readonly ownerName?: string;
+	/**
+	 * 会话默认模型。
+	 *
+	 * **必须给**：底层建会话时不带 model 就是「没有模型」，第一次生成会直接失败并报
+	 * `no_model`（实测：老板 @ 助理，助理一句话都说不出来，界面上看不出任何异常）。
+	 * 旧核心是在 `hireStaff` 里 `conversation.configure({ model })` 补的，新核心统一在这里补。
+	 */
+	readonly defaultModel?: { readonly provider: string; readonly modelId: string };
 };
+
+/** `identity.md` → 名册里的显示名投影。 */
+function labelsOf(identities: readonly { readonly slug: string; readonly name?: string }[]): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const identity of identities) out[identity.slug] = identity.name ?? identity.slug;
+	return out;
+}
 
 export type CoreShell = {
 	readonly harness: Harness;
@@ -50,6 +65,12 @@ export type CoreShell = {
 	readonly directory: DirectoryState;
 	/** 重新扫描文件夹，给新出现的人开会话。返回新建的 slug。 */
 	readonly rescan: (context?: Context) => Promise<readonly string[]>;
+	/**
+	 * 给某个人开会话（已存在就直接返回）。`hire` 内部就用它，外壳/测试也用同一个入口。
+	 *
+	 * 返回会话的数字 id（界面拿它当 `conversationId`）。
+	 */
+	readonly openAgent: (slug: string, context?: Context) => Promise<number>;
 	/** 读一次频道状态（工具内部已自带，这个是给外壳/API 用的）。 */
 	readonly channels: (context?: Context) => Promise<ChannelState>;
 	/** 老板说话。宿主入口，语义与 agent 的 `say` 完全一致。 */
@@ -57,6 +78,25 @@ export type CoreShell = {
 		options: { readonly channelId: string; readonly text: string; readonly replyTo?: number },
 		context?: Context,
 	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
+	/**
+	 * **任何**一方在频道里说话（老板走 `OWNER`，agent 走自己的 slug）。
+	 *
+	 * 与 `ownerSay` 是同一个动作，只差发件人是谁 —— 所以它排在 `ownerSay` 里面
+	 * （`ownerSay = postAs(OWNER, ...)`），不写第二份语义。
+	 */
+	readonly postAs: (
+		options: { readonly channelId: string; readonly from: string; readonly text: string; readonly replyTo?: number },
+		context?: Context,
+	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
+	/** 名册：slug ↔ 会话 id 的当前快照（界面拿它把 slug 翻成数字 id）。 */
+	readonly bindings: () => DirectoryState;
+	/** 显示名：slug → `identity.md` 里的 name。 */
+	readonly labelOf: (slug: string) => string;
+	/** 当前所有身份（每次都重读盘：改 `identity.md` 立刻反映到档案页）。 */
+	readonly identities: () => Promise<readonly import("../agent/identity.ts").Identity[]>;
+	readonly agentsRoot: string;
+	readonly projectsRoot: string;
+	readonly companyChannel: string;
 	readonly close: (context?: Context) => Promise<void>;
 };
 
@@ -126,6 +166,12 @@ export async function assembleCore(
 		if (known !== undefined) {
 			const found = await harness.conversation(known as never, ctx);
 			if (found !== undefined) {
+				// 已有会话也要补一次模型：老库里可能存着 `no_model`，或者建它的时候
+				// 还没配模型。`configure` 不改已有对话历史，只改这次选用的模型。
+				await applyModel(found, ctx);
+				// 也补一次身份扩展（幂等）：`hire` 时会立刻开会话，那时还没重启，
+				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
+				installIdentity(slug);
 				conversations.set(slug, found);
 				return found;
 			}
@@ -133,8 +179,14 @@ export async function assembleCore(
 		const created = await harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
-				// 扩展是**按名字选的**：漏了 `core-tools` 这个人就一个工具都没有（实测踩过）。
-				agent: { extensions: [toolsExtension, installIdentity(slug)] },
+				agent: {
+					// 扩展是**按名字选的**：漏了 `core-tools` 这个人就一个工具都没有（实测踩过）。
+					extensions: [toolsExtension, installIdentity(slug)],
+					// 模型在建会话时一次给全，不要等第一次生成才发现没有模型。
+					...(options.defaultModel === undefined
+						? {}
+						: { model: { provider: options.defaultModel.provider, modelId: options.defaultModel.modelId } }),
+				},
 			},
 			ctx,
 		);
@@ -142,7 +194,44 @@ export async function assembleCore(
 		const id = created.id as unknown as number;
 		directory.slugToConversation[slug] = id;
 		directory.conversationToSlug[String(id)] = slug;
+		// 一建出来就进公司频道。
+		//
+		// 踩过的坑：`hire` 会立刻开会话，但公司频道的成员是**启动时**按当时的
+		// `agents/` 目录写死的。结果新人存在、会话也存在，却不在频道里 —— 别人
+		// @ 他，`recipientsOf` 第一规则「@ 的必须是成员」把他过滤掉，消息静默不投递，
+		// 界面上看起来就是「招了个人但叫不动」。
+		await addToCompanyChannel(slug, ctx);
 		return created;
+	}
+
+	/** 把人加进公司频道（幂等）。 */
+	async function addToCompanyChannel(slug: string, ctx: Context): Promise<void> {
+		await harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const channel = doc.channels[companyChannel];
+			if (channel === undefined) return;
+			if (channel.members.includes(slug)) return;
+			// 整体替换，不就地 push：读出来的是副本，就地改不产生 op。
+			doc.channels[companyChannel] = { ...channel, members: [...channel.members, slug] };
+		}, ctx);
+	}
+
+	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
+	async function applyModel(conversation: Conversation, ctx: Context): Promise<void> {
+		if (options.defaultModel === undefined) return;
+		const agent = await conversation.agent(ctx);
+		const current = agent.model;
+		if (
+			current !== undefined &&
+			current.provider === options.defaultModel.provider &&
+			current.modelId === options.defaultModel.modelId
+		) {
+			return;
+		}
+		await conversation.configure(
+			{ model: { provider: options.defaultModel.provider, modelId: options.defaultModel.modelId } },
+			ctx,
+		);
 	}
 
 	for (const identity of identities) {
@@ -155,7 +244,9 @@ export async function assembleCore(
 		Object.assign(doc, {
 			slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
 			conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
+			labels: { ...doc.labels, ...labelsOf(identities) },
 		});
+		directory.labels = { ...doc.labels };
 	}, context);
 
 	// ── 4. 播种公司频道 ──────────────────────────────────────────
@@ -197,7 +288,10 @@ export async function assembleCore(
 					Object.assign(doc, {
 						slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
 						conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
+						// 每次 rescan 都把显示名刷新一遍：`identity.md` 改名后不用清库。
+						labels: { ...doc.labels, ...labelsOf(all) },
 					});
+					directory.labels = { ...doc.labels };
 					const channelDoc = (await tx.doc(ChannelDoc)) as ChannelState;
 					const channel = channelDoc.channels[companyChannel];
 					if (channel !== undefined) {
@@ -213,7 +307,15 @@ export async function assembleCore(
 		async channels(ctx: Context = BACKGROUND_CONTEXT): Promise<ChannelState> {
 			return (await harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
 		},
+		openAgent: async (slug: string, ctx: Context = BACKGROUND_CONTEXT) => (await openOne(slug, ctx)).id as unknown as number,
 		ownerSay: (input, ctx) => ownerSpeak(shell, input, ctx),
+		postAs: (input, ctx) => ownerSpeak(shell, input, ctx),
+		bindings: () => directory,
+		labelOf: (slug: string) => (slug === OWNER ? "老板" : (directory.labels[slug] ?? slug)),
+		identities: () => readAllIdentities(options.agentsRoot),
+		agentsRoot: options.agentsRoot,
+		projectsRoot: options.projectsRoot,
+		companyChannel,
 		close: (ctx?: Context) => harness.close(ctx ?? context),
 	};
 	return shell;
@@ -232,7 +334,13 @@ export function createCoreRegistry(): Registry {
  */
 export async function ownerSpeak(
 	shell: CoreShell,
-	options: { readonly channelId: string; readonly text: string; readonly agent?: string; readonly replyTo?: number },
+	options: {
+		readonly channelId: string;
+		readonly text: string;
+		/** 谁说这句话。缺省是老板。 */
+		readonly from?: string;
+		readonly replyTo?: number;
+	},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }> {
 	const state = await shell.channels(context);
@@ -252,11 +360,11 @@ export async function ownerSpeak(
 				}
 				return shell.conversations.get(slug);
 			},
-			labelOf: (slug: string) => slug,
+			labelOf: (slug: string) => (slug === OWNER ? "老板" : (shell.directory.labels[slug] ?? slug)),
 		},
 		{
 			channelId: options.channelId,
-			from: OWNER,
+			from: options.from ?? OWNER,
 			text: options.text,
 			at: Date.now(),
 			...(options.replyTo === undefined ? {} : { replyTo: options.replyTo }),

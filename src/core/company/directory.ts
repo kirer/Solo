@@ -19,18 +19,26 @@ export type DirectoryState = {
 	conversationToSlug: Record<string, string>;
 	/** 会话 id（字符串）→ 它最后被谁在哪个频道叫醒。工具用它决定「默认在哪儿回话」。 */
 	wake: Record<string, JsonObject>;
+	/**
+	 * slug → 显示名。**纯粹的投影**，真相是 `identity.md` 的 `name`。
+	 *
+	 * 为什么存一份：界面到处要显示名（消息发送方、成员列表、组织图），而每次
+	 * 读一眼 `identity.md` 太贵（一次频道渲染要几十次）。名册本来就在内存里，
+	 * 顺手带上；`identity.md` 改名后下一次 `rescan` 会把它刷新。
+	 */
+	labels: Record<string, string>;
 };
 
 export const DirectoryDoc = defineDoc<DirectoryState>({
 	kind: "core.directory",
 	version: 1,
 	scope: "session",
-	initial: () => ({ slugToConversation: {}, conversationToSlug: {}, wake: {} }),
+	initial: () => ({ slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} }),
 	checkpointWhen: () => false,
 });
 
 export function emptyDirectory(): DirectoryState {
-	return { slugToConversation: {}, conversationToSlug: {}, wake: {} };
+	return { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
 }
 
 /** 读一次唤醒（`wake` 的值类型是 `JsonObject`，读的时候收窄）。 */

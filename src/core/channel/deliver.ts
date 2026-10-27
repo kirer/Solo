@@ -11,7 +11,7 @@
  * 1. 一条投递失败不影响其余（逐条 try/catch）。
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
-import type { Conversation, Harness } from "@earendil-works/pi-durable";
+import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import {
 	type Channel,

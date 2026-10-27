@@ -20,7 +20,7 @@ const RUNTIME_ONLY = [
 ];
 
 /** 受检查的目录（相对仓库根）。 */
-const CHECKED_DIRS = ["src/domain", "src/company", "src/tui", "src/server"];
+const CHECKED_DIRS = ["src/domain", "src/company", "src/tui", "src/server", "src/core"];
 
 /** 允许的子路径例外：类型-only 与纯 UI 包。 */
 const ALLOWED = new Set(["@earendil-works/pi-tui"]);
@@ -163,11 +163,13 @@ for (const dir of CHECKED_DIRS) {
 		for (const spec of importSpecifiers(source)) {
 			if (ALLOWED.has(spec)) continue;
 			const offending = RUNTIME_ONLY.find((pkg) => spec === pkg || spec.startsWith(`${pkg}/`));
-			if (offending !== undefined) {
+			// 两个防腐层：旧的 `src/runtime/`、新的 `src/core/runtime/`。除此之外一律不准碰。
+			const isFacade = rel.startsWith("src/runtime/") || rel.startsWith("src/core/runtime/");
+			if (offending !== undefined && !isFacade) {
 				violations.push({
 					file: rel,
 					spec,
-					reason: `${offending} 只能由 src/runtime 导入`,
+					reason: `${offending} 只能由 src/runtime 或 src/core/runtime 导入`,
 				});
 				continue;
 			}
@@ -195,11 +197,19 @@ for (const dir of CHECKED_DIRS) {
 }
 
 // ── 第三类：HTTP 路由零消费者 ──
+// 两份路由表：旧服务 `src/server/http.ts`、新服务 `src/core/shell/serve.ts`。
+const ROUTE_FILES = ["src/server/http.ts", "src/core/shell/serve.ts"];
 const routes = [
 	...new Set(
-		[...(await readFile(join(ROOT, "src/server/http.ts"), "utf8")).matchAll(/pattern:\s*"(\/api\/[^"]*)"/g)].map(
-			(match) => match[1],
-		),
+		(
+			await Promise.all(
+				ROUTE_FILES.map(async (file) =>
+					[...(await readFile(join(ROOT, file), "utf8")).matchAll(/pattern:\s*"(\/api\/[^"]*)"/g)].map(
+						(match) => match[1],
+					),
+				),
+			)
+		).flat(),
 	),
 ];
 

@@ -10,7 +10,7 @@
  *
  * 所以 `postMessage` 里三件事固定这个顺序：解析 @ → 写文档 → 唤醒收件人。
  */
-import type { Conversation, Harness } from "@earendil-works/pi-durable";
+import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, appendMessage, recipientsOf, type Channel, type ChannelState, type Message } from "./state.ts";
 import { deliver, type DeliverResult, type WakeRecord } from "./deliver.ts";

@@ -13,8 +13,7 @@
  * 规则都放在这个文件里，且都是纯函数 —— 它们决定「谁是唤醒对象」，是整套系统里
  * 最容易写错、也最需要单测的一段。
  */
-import type { JsonValue } from "@earendil-works/chord";
-import { defineDoc } from "../../runtime/index.ts";
+import { defineDoc, type JsonValue } from "../../runtime/index.ts";
 
 /** 一条频道消息。 */
 export type Message = {
