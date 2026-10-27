@@ -1149,3 +1149,85 @@ disposed === undefined && shouldApplyTimeoutDefault(...).apply`），结算动�
 
 **测试**：`npx vitest --run test/unit/disposition.test.ts test/e2e/disposition.test.ts`
 = 41 passed。
+
+---
+
+## ADR-040：能删的都删——圆桌、IM、会话流视图、零消费者路由
+
+**背景**：老板连续三次说「后端代码量还是挺巨大的」（`m02097`、`m03124`）与
+「圆桌暂时不要了，有个 im 的功能也不要了」（`m03243`）。前一轮圆桌（`docs/roundtable/VERDICT.md`）
+已经判定「本质 : 支撑 : 偶然 ≈ 26% : 44% : 22%」，但那一轮的「阶段 1 纯删除 −1527」
+只执行了 7 行——**行数不是约束，所以删的理由必须比「省行数」更硬**。这一轮把
+「有没有真实使用者」当作唯一判据，一次删掉 2930 行。
+
+**判据（这一轮立的规矩，以后按它办）**：
+
+1. **生产数据里 0 次调用**，或 **仓库里 0 个调用点**（含测试、含脚本）。
+   前者的例子是圆桌：`workspace/company.sqlite` 的 `entries` 表 5603 行里
+   `roundtable` / `roundtable_minutes` 工具调用各 0 次（1280 行 src 代码）。
+   后者的例子是 23 个 export function（141 行）。
+2. **界面上 0 个消费者**的路由：`ui/` 与 `src/tui/` 都 grep 不到。测试里有消费者
+   不算——测试是「我钉住了这个行为」，不是「有人用这个行为」。
+3. **删掉之后哪条命令能证明行为没变**。三条命令：`npm run verify`（741 tests）、
+   `node scripts/check-boundaries.mjs`（零消费者检查）、以及针对该功能的一条 grep。
+
+**决策**：
+
+1. **删圆桌**（`src/company/roundtable.ts` 1128 + `roundtable-tools.ts` 152 +
+   `test/e2e/roundtable.test.ts` 444）。**不删「多方各自作答」这个能力**，改成
+   用频道：CEO / COO charter 里原来写「用 roundtable 开会」的地方，改成
+   「在 `leadership` 频道里一次 @ 齐，各自独立作答，你汇总」。理由：频道已经
+   有留痕、有未读、有 @ 唤醒、能被老板翻回去；圆桌是它的第二个实现点。
+   **替代掉的不只是行数，还有一条「又一个通信机制」**（ADR-028 的立场）。
+2. **删 IM 接入**（`src/server/im.ts` 168 + `test/unit/network-im.test.ts` +
+   `settings.im` 整段 + `ui/js/settings.js` 的 IM 面板 375 行）。
+   `/api/im/inbound` 的出站中继也一起删。**这条是老板明确点的**（m03243），
+   理由是「暂时不要了」——保留它需要有人维护 webhook 与 token，而它唯一的价值
+   是「老板从微信发一句话」，现在网页 + 隧道已经覆盖同一个场景（`docs/TUNNEL.md`）。
+3. **删会话流视图**：`GET /api/feed/:conversationId`、`GET /api/stream/feed/:conversationId`，
+   以及 `src/server/feed.ts` 里只为它存在的 `decorateFeed()`、`FeedPending`、
+   `AwaitingDecision`、`Feed` 的七个字段（`title`/`role`/`actor`/`kind`/
+   `awaitingOwner`/`awaitingDecision`/`pending`）。**`readFeed()` 保留**：
+   `src/server/activity.ts` 的「工作记录」接口靠它把 toolCall 与 toolResult
+   按 callId 合并（这段逻辑自己写一遍就是第二份解析器）。界面侧 0 消费者已经半年。
+4. **删 3 条零消费者 POST**：`/api/message`、`/api/interrupt`、`/api/upload`（+ `/uploads/*rest`
+   + `src/server/uploads.ts` 152）。替代品分别是 `POST /api/channels/:id/messages`
+   （它算 mentions、写已读、带未读摘要、落投递回执）、频道消息的插队语义、以及
+   什么都不做（附件从来没接上界面，能力一直留在文档里）。
+5. **删 23 个零调用 export function**（141 行）。**不删**「只在测试里被调用」的
+   另外 73 个（862 行）：它们是纯函数，测试是它们的唯一守卫；删掉等于删掉那批断言。
+6. **不做工具定义的全表驱动化**。实测 `createManagementTools` 778 行里 306 行
+   （56%）是给模型的 description 与参数 schema；把 21 个 `defineTool` 改成
+   「数据表 + 解释器」只能省掉约 40-60 行样板，换来的是「文案与 schema 从就地声明
+   变成数据表里查」——IDE 跳不了、类型不再即校验。**可读性净损失大于行数收益**。
+
+**替代方案与为什么没选**：
+
+- 「把圆桌标记成 deprecated，留着」——它已经在生产库里 0 次调用。deprecated
+  标记的用途是「有人正在用，给他时间迁」，这里没有这样的人。
+- 「IM 保留后端、只删界面」——`/api/im/inbound` 是个外部可达的写入口。
+  留着一个没人用的写入口，比留一个没人读的函数危险得多。
+- 「`/api/message` 保留作兼容」——它和 `POST /api/channels/:id/messages` 的差别是
+  后者会算 mentions、写 `app.ack` 回执、落 `deliveredTo`。保留前者等于保留一条
+  「发出去没人知道对方有没有收到」的路径，正是 ADR-034 要消灭的。
+- 「`readFeed` 也一起删」——`src/server/activity.ts` 的「工作记录」接口是界面
+  唯一在读它的地方，它给的是「工具参数 + 输出合并成一条」的投影。删了就要在
+  `activity.ts` 里再写一遍。
+
+**代价**：
+
+- **`Feed` 类型瘦了，测试里只有 `items` 一个字段还有人读**：`test/e2e/reliability.test.ts:276`
+  读 `feed?.items`，`test/e2e/feed-window.test.ts:105-107` 读 `items`。窗口与分页
+  语义的回归测试（`feed-window.test.ts`）原样保留。
+- **`canTakeOver` 字段跟着会话流视图一起消失**。它原本只服务那个视图；
+  「能不能接管」现在由 `/api/pending/take-over` 的 403/200 直接验
+  （`test/e2e/web.test.ts` 已改成这个口径）。
+- **`src/company/management-tools.ts` 里七条通道的失败文案统一成「通道未启用。」**。
+  以前是「待决队列未启用 / 拍板通道未启用 / 待办处置通道未启用…」七种措辞。
+  信息损失是「哪条通道」，但那个信息在 `deps` 的键名里，排查时看装配处比读一句
+  运行时报错更快。
+- **`--noUnusedLocals --noUnusedParameters` 现在是必须的**：这一轮删代码顺带清出
+  60+ 条未用 import/参数。以后加代码时若允许未用，这批清理会被重新污染。
+
+**测试**：`npx vitest --run` = 56 files / 741 tests 全绿；`npm run check` exit 0；
+`npm run ui:build` 成功。`src/` 从 25029 行降到 **22099 行（−2930）**。

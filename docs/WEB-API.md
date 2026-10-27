@@ -12,19 +12,12 @@
 | --- | --- | --- |
 | GET | `/api/org` | 组织快照（CEO/高管/项目/员工/待办/成本/连线） |
 | GET | `/api/stream/org` | 组织快照 SSE |
-| GET | `/api/feed/:conversationId` | 会话流 |
-| GET | `/api/stream/feed/:conversationId` | 会话流 SSE |
 | GET | `/api/profile/:conversationId` | 角色档案（章程 / 技能 / 工具） |
 | GET | `/api/pending` | 待决问题列表 |
-| POST | `/api/message` | 老板发消息（可带附件） |
-| POST | `/api/interrupt` | 打断当前工作并优先处理 |
 | POST | `/api/answer` | 拍板回答一条待决问题 |
-| **GET / PATCH** | **`/api/settings`** | **设置：网络 / 模型 / IM** |
+| **GET / PATCH** | **`/api/settings`** | **设置：网络 / 模型** |
 | **POST / PATCH / DELETE** | **`/api/models`** | **新增 / 编辑 / 删除模型（含内置模型的改名、隐藏、设默认）** |
-| **POST** | **`/api/upload`** | **上传附件（原始字节）** |
-| **GET** | **`/uploads/:id/:name`** | **下载附件** |
 | **GET** | **`/api/board`** | **任务看板（doing / todo / done）** |
-| **POST** | **`/api/im/inbound?token=`** | **IM 入站投递到老板通道** |
 | GET | `/api/channels/:id` | 频道视图（消息 + `acks` 受理回执，见 §10.6） |
 
 加粗的是本轮新增。以下逐条写清字段、边界与错误。
@@ -33,7 +26,7 @@
 
 ## 1. `GET /api/settings`
 
-一次拿全设置页需要的三段。**`network` 报的是实际监听值**（不是 settings.json
+一次拿全设置页需要的两段。**`network` 报的是实际监听值**（不是 settings.json
 里的期望值）；`models.default` 报的是当前生效 / 期望的默认模型。
 
 ```jsonc
@@ -109,7 +102,6 @@
 - `im.accounts` **整段替换**，不做逐项 merge。
 - `models.catalog` 只读，不参与 PATCH；增删模型用 `/api/models`。
 - `network` / `models` 的改动写入 `workspace/settings.json`，**下次启动生效**；
-  `im` 改动**立即生效**（入站/出站每次请求都读最新设置），因此 IM 改动不算
   `restartRequired`。
 - 校验失败返回 `400`；成功返回**完整 GET 结构**（含 `restartRequired`），
   前端不用再补一次 GET。
@@ -177,64 +169,6 @@
 
 两者都需要重启才从运行时模型集合里消失。
 
-## 6. `POST /api/upload` + `GET /uploads/:id/:name`
-
-上传是**原始字节**，不是 multipart：
-
-```http
-POST /api/upload
-Content-Type: text/plain; charset=utf-8
-x-file-name: report%202026.txt   # encodeURIComponent(file.name)，服务端 decode
-x-file-size: 12345               # 可选，只做预检；以实际读取字节数为准
-<原始字节>
-```
-
-响应 `200`：
-
-```jsonc
-{
-  "id": "7b11d6043532f55e",
-  "name": "report 2026.txt",
-  "size": 23,
-  "mime": "text/plain",
-  "url": "/uploads/7b11d6043532f55e/report%202026.txt"
-}
-```
-
-- 单文件上限 **20MiB**，超过返回 `413`（`x-file-size` 预检能提前拒绝）。
-- 文件落盘到 `workspace/uploads/<id>/<name>`，元数据在同目录 `meta.json`。
-- `GET /uploads/<id>/<name>` 返回原始字节（`Content-Type` 为上传时的 mime，
-  `Content-Disposition: inline`）；名字与记录不符返回 `404`（防手改 URL）。
-- 文件名会被净化（去掉路径与控制字符，只留 basename），不会写出目录外。
-
-## 7. `POST /api/message`（新增 `attachments`）
-
-原有字段不变，新增可选数组：
-
-```jsonc
-{
-  "conversationId": 1,
-  "text": "看看这个附件",
-  "mode": "now",                 // now（默认，老板通道立刻生效）| steer | followUp
-  "attachments": [
-    { "id": "7b11d6043532f55e", "name": "report.pdf", "mime": "application/pdf", "size": 12345 }
-  ]
-}
-```
-
-服务端把每份附件转成一句文本引用注入消息：
-
-```text
-看看这个附件
-
-[附件] report.pdf → /abs/path/workspace/uploads/7b11d6043532f55e/report.pdf
-```
-
-- 任何模型都能用 `read` / `bash` 工具读这个绝对路径，**不需要多模态支持**。
-- 附件 id 查不到时返回 `400`（明确报错，不静默丢弃）；`text` 与 `attachments`
-  至少有一样。
-- 受理回执（`app.receipt`）记录的是注入后的完整正文。
-
 ## 8. `GET /api/board`
 
 看板数据全部由现有运行时推导（不建新表），三列固定：
@@ -276,37 +210,6 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 | todo | 已提交但还在排队的消息（`InboxDoc`） | `queued` |
 | done | 最近 24 小时完成的一轮助手回复（每会话取最新一条） | `done` |
 
-## 9. `POST /api/im/inbound?token=<inboundToken>`
-
-外部 IM 桥（微信 / 企微 / 飞书 / 自建 webhook）把消息投给老板通道：
-
-```jsonc
-// 请求
-{ "text": "帮我看下部署", "from": "微信" }   // from 可选
-// 响应
-{ "ok": true, "conversationId": 1 }
-```
-
-- `im.enabled !== true`、`inboundToken` 为空、或 token 不匹配 → **`403`**。
-- 投递文本会加来源前缀：`[IM] 帮我看下部署` / `[IM · 微信] 帮我看下部署`，
-  CEO 能区分这句话不是老板在网页里打的。
-- 走老板通道的「now」语义（与 `POST /api/message` 相同）：打断当前轮、
-  写受理回执、投递失败补追认条目并返回 `503`。
-- 空 `text` → `400`；公司还没初始化出老板通道 → `503`。
-
-### 出站：`settings.im.outboundWebhook`
-
-`im.enabled = true` 且 `outboundWebhook` 非空时，老板通道**每条助手回复**
-都会 `POST` 一次：
-
-```jsonc
-{ "text": "好的，我看一下……", "conversationId": 1, "at": 1792900000000 }
-```
-
-- 只推**本进程启动之后**的回复，不会把历史消息灌给桥。
-- 失败（超时 3s / 连接拒绝 / 非 2xx）**静默忽略**，不影响对话与提交。
-- webhook 只接受 `http(s)`；桥要保证幂等-ish（至少不要对同一 `text+at` 重复刷屏）。
-
 ## 10. 局域网访问
 
 - 默认监听 `127.0.0.1`：只有本机能访问。
@@ -318,32 +221,37 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 
 ## 10.5 待办与拍板投递
 
-`GET /api/feed/:conversationId` 除消息条目外，还下发 `pending`——**这个会话主人要亲自拍的事**：
+待办（`pending`）现在由两个入口下发：
+
+- **频道视图**（`GET /api/channels/:id` 的 `pending` 字段，见 §10.6）——界面在读的地方。
+- **组织快照**（`GET /api/org` 的 `pending[]` + `ceoQueue`）——运维脚本与看板用。
+
+每条的形状：
 
 ```jsonc
-"pending": [
-  {
-    "key": "esc:7:1",
-    "question": "要不要把公司搬到杭州？",
-    "from": "CTO",
-    "decisionOwner": "owner",
-    "askedAt": 1792900000000,
-    "disposition": false,          // true = 处置类（暂搁 / 放弃）
-    "options": [{ "id": "shelve", "label": "暂搁", "recommended": true }]
-  }
-]
+{
+  "key": "esc:7:1",
+  "question": "要不要把公司搬到杭州？",
+  "from": "CTO",
+  "decisionOwner": "owner",
+  "askedAt": 1792900000000,
+  "disposition": false,          // true = 处置类（暂搁 / 放弃）
+  "options": [{ "id": "shelve", "label": "暂搁", "recommended": true }]
+}
 ```
 
 三点约定（都是踩过的坑）：
 
-1. **待办只出现在对话流里**。界面不再另开顶部区域——一条待决问题本质就是
-   「有人在等你回话」，它属于这段对话。同一条问题渲染两次、答完还没反应，
+1. **待办和聊天是同一件事**。一条待决问题本质就是「有人在等你回话」，所以它
+   出现在频道消息流里，不另开顶部黄框区域。同一条问题渲染两次、答完还没反应，
    是用户明确报过的问题。
-2. **答复必须投递给真实提问方**。`POST /api/answer` 成功后，服务端会往
-   `pending.originConversationId`（真实发起人，不是被改写成 CEO 的
-   `fromConversationId`）的会话流写一条 `app.decision` 条目，并投一条 input
-   **唤醒它**继续干活。只写 `PendingDoc` / `AuditDoc` 会造成「拍板的人以为没生效、
-   被拍板的人永远等不到」。
+2. **答复必须投递给真实提问方**。`POST /api/answer` 成功后，`deliverDecision()`
+   会把拍板结果落成一条 **`kind: "decision"` 的频道消息**（有私聊投私聊，否则投
+   公司大群，必要时现场建那条私聊），`mentions` 指向真实发起人
+   （`pending.originConversationId`，不是被改写成 CEO 的 `fromConversationId`），
+   由频道机制唤醒它继续干活。
+   落地在频道而不是会话流，是因为拍板结果要能被翻回去、能被 @ 回、能进未读摘要
+   ——会话流里一条 note 三样都做不到（ADR-040）。
 3. `options` 由服务端给（解析在服务端一处），界面不再自己猜：
    把「1. 读文件」这种步骤渲染成可点按钮，点一下就会把步骤当答案发出去。
 
@@ -425,22 +333,11 @@ x-file-size: 12345               # 可选，只做预检；以实际读取字节
 
 ## 11. 已知限制
 
-- **历史消息不还原附件 chip**：附件元数据不落在 `pi.user` 条目里（不新增持久化
-  字段），所以刷新页面后只有正文里的 `[附件] name → /abs/path` 文本引用，
-  输入区的本地附件托盘 chip 只在当次发送后保留。要补需要改 `feed.ts` 的条目
-  构建与持久化协议，收益小、风险大，本轮明确不做。
-- **二进制附件在无工具会话里读不到内容**：老板通道（CEO）只装了管理类工具
-  （组织/项目/人员），没有 `read` / `bash`。为此服务端对**文本类附件**
-  （`.txt/.md/.json/.csv/.ts/.tsx/.js/.css/.html/.sh/.py/...`，见 `TEXTUAL_FILE`）
-  自动附一段前 8KB 的内联摘录，所以 csv/md/txt 这类老板能直接给 CEO 看；
-  图片、PDF、压缩包不摘录（塞进去只会是乱码 token），仍需要员工/项目会话
-  的工具或视觉模型才能读。
-- `POST /api/message` 不做 OCR / 文档格式转换（不解析 docx/xlsx/pdf），
-  需要时让模型在项目会话里用工具处理。
+- **没有附件上传能力**（ADR-040 删掉了 `/api/upload` 与 `/uploads/*`）：
+  后端与接口文档曾经都有，但界面从来没有接上过入口，于是两边都当它不存在。
+  要重新加，先想清楚「谁在什么场景下真的会传文件」，再一起加前后端。
 
 ## 12. 兼容性纪律
 
 - 字段**只增不改**：删字段 / 改语义必须同步改前端与本文档。
-- `Feed` 里被标记 `@deprecated` 的字段仍然保留（例如 `awaitingOwner`），
-  新代码用新字段。
 - 新增错误码只用 `400 / 403 / 404 / 409 / 413 / 503`，不要发明 4xx 之外的业务码。

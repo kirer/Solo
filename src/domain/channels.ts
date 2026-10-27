@@ -216,17 +216,6 @@ export function hasMember(channel: Channel, conversationId: number): boolean {
 	return channel.members[String(conversationId)] !== undefined;
 }
 
-/** 频道成员列表（按加入顺序稳定）。 */
-export function membersOf(channel: Channel): readonly Member[] {
-	return Object.values(channel.members).sort((a, b) => a.joinedAt - b.joinedAt || a.conversationId - b.conversationId);
-}
-
-/** 加人（幂等：已在里面就返回原频道）。 */
-export function addMember(channel: Channel, next: Member): Channel {
-	if (hasMember(channel, next.conversationId)) return channel;
-	return { ...channel, members: { ...channel.members, [String(next.conversationId)]: next } };
-}
-
 /** 移除成员（老板不可移除）。 */
 export function removeMember(channel: Channel, conversationId: number): Channel {
 	if (conversationId === OWNER_ID) return channel;
@@ -322,7 +311,7 @@ export function appendMessage(
 	const seq = state.nextSeq;
 	// #7：回复谁就等同于 @ 谁 —— 这是「回复取代 @」的核心语义。
 	// 不回填这一条，引用会变成纯装饰：被回复的人不会被唤醒，也就永远看不到回复。
-	const replyTarget = resolveReplyTarget(channel, input.from, input.replyTo);
+	const replyTarget = resolveReplyTarget(channel, input.replyTo);
 	// 引用自己发的那条是允许的（老板常要「接着我上面说的」），但**不加 @ 自己**——
 	// `resolveMentions` 本来就会剔掉发送方，这里显式跳过只是别让它白进一次集合。
 	const declared = [...(input.mentions ?? [])];
@@ -363,11 +352,7 @@ export function appendMessage(
  * 而不是 HTTP 层，是因为 `appendMessage` 是唯一的落库入口——在这里校验，
  * 任何来源（HTTP / 工具 / 系统通知）都不可能写进一条悬空引用。
  */
-export function resolveReplyTarget(
-	channel: Channel,
-	from: number,
-	replyTo: number | undefined,
-): ChannelMessage | undefined {
+export function resolveReplyTarget(channel: Channel, replyTo: number | undefined): ChannelMessage | undefined {
 	if (replyTo === undefined) return undefined;
 	if (!Number.isFinite(replyTo)) return undefined;
 	const target = channel.messages.find((message) => message.seq === replyTo);

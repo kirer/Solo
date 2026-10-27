@@ -51,9 +51,7 @@ import {
 } from "./escalation.ts";
 import { settleDisposition } from "./disposition.ts";
 import {
-	PROJECT_LEADER_CHARTER,
 	PROJECT_LEADER_READONLY_CHARTER,
-	LEADER_EXECUTION_TOOLS,
 	createProjectLeaderExtension,
 	createProjectLeaderReadOnlyExtension,
 	createRoleExtensionWithTools,
@@ -68,7 +66,6 @@ import {
 import { escalationId } from "../runtime/ids.ts";
 import { toolsForNames } from "./staff-tools.ts";
 import { startWatchdog, type WatchdogOptions } from "./watchdog.ts";
-import { roundtableExtension } from "./roundtable.ts";
 // **不能静态 import**：`management-tools.ts` 静态 import 本文件的 11 个函数，
 // 静态互引会形成真实的 ESM 循环依赖（DFS 实测确认）。当前恰好没有模块顶层求值，
 // 所以还没炸；但任何一侧在顶层算一个值就会拿到 `undefined`。
@@ -386,9 +383,6 @@ export async function bootstrapCompany(
 	if (options.registry !== undefined) {
 		// 内置任务必须先注册，否则员工的后台锚点会受阻
 		options.registry.install(COMPANY_TASKS_EXTENSION);
-		// 圆桌讨论的任务（父任务 + 参与者子任务）同样必须注册：
-		// 工具会兜底自愈式注册，但「启动就装好」能避免第一次开会撞上 missing_task。
-		options.registry.install(roundtableExtension());
 		// 工具搜索随每个角色的能力包一起装（见 src/company/tools/tool-search.ts）：
 		// 它必须是**核心**工具，且必须支持中文查询——库里自带的那个只认 [a-z0-9]，
 		// 中文查询会被切空（实测「推进项目状态」→ 一个都搜不到）。
@@ -1351,16 +1345,15 @@ async function repairStaffManagers(
 
 	await runtime.harness.commit(async (tx) => {
 		const company = await tx.doc(CompanyDoc);
-		for (const [key, person] of broken) {
+		for (const [key] of broken) {
 			const entry = company.staff[key];
 			if (entry === undefined) continue;
 			company.staff[key] = { ...entry, manager: fallbackOf(entry.project) };
 		}
 	}, context);
 
-	for (const [key, person] of broken) {
+	for (const key of Object.keys(broken)) {
 		await syncStaffInstructions(runtime, key, context);
-		void person;
 	}
 	return broken.length;
 }

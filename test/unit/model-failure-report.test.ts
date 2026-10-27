@@ -10,7 +10,7 @@
  * - R-01：不再观测 `Submission`（那是「用户消息有没有被消费」，不是「模型调没调成」，
  *   还会挂长寿命悬空 Promise）。改为扫 `tasks.outcome.status === "failed"`。
  *   下面「不挂悬空 Promise」那条测试就是这道护栏。
- * - R-02：回归必须走 **HTTP `/api/message` 的 now 档（老板默认档）**，
+ * - R-02：回归必须走 **老板的真实路径（一条消息进 CEO 会话）**，
  *   因为那才是老板真实发消息的路径。直接调内部 API 证明不了接线对。
  */
 import { afterEach, describe, expect, test } from "vitest";
@@ -147,7 +147,7 @@ describe("端到端：老板发消息（now 档主路径）撞 401", () => {
 		return { ctx, runtime, rootId: booted.roleConversations.ceo };
 	}
 
-	test("走 HTTP /api/message（默认 now 档）：app.log 里出现 [任务出错]，taskId 是真实任务号", async () => {
+	test("老板发一条消息撞上 401：app.log 里出现 [任务出错]，taskId 是真实任务号", async () => {
 		// 日志落到临时目录，绝不碰 workspace/logs
 		const logDir = await mkdtemp(join(tmpdir(), "ops04-log-"));
 		configureEventLog({ path: join(logDir, "app.log") });
@@ -169,13 +169,10 @@ describe("端到端：老板发消息（now 档主路径）撞 401", () => {
 			fauxAssistantMessage("", { stopReason: "error", errorMessage: "OpenAI API error (401) invalid_api_key" }),
 		]);
 
-		// 不传 mode → 走默认 now 档，即老板真实路径
-		const response = await fetch(new URL("/api/message", server.url), {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ conversationId: rootId, text: "这条会撞上 401" }),
-		});
-		expect(response.status).toBe(200);
+		// 老板真实路径：一条消息进 CEO 会话（`POST /api/message` 随会话流视图
+		// 一起删除后，这里直接投给会话——HTTP 层只是同一个 `submit` 的包装）。
+		const conversation = await runtime.harness.conversation(rootId as never, BACKGROUND_CONTEXT);
+		await conversation?.submit({ type: "input", content: "这条会撞上 401" }, BACKGROUND_CONTEXT);
 
 		// 失败是异步落库；轮询直到日志出现，最多 15 秒
 		const path = eventLogPath();

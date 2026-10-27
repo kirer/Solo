@@ -355,9 +355,9 @@ T-3 的登录接口，token 过期后返回 401 还是 403？
 | CFO | `budget_check`、`cost_report` |
 | CPO | `project_create`、`project_plan` |
 | CHRO | `staff_hire`、`staff_rename`、`staff_reassign`、`staff_archive` |
-| COO | `roundtable`、`roundtable_minutes`、`project_list` |
+| COO | `project_list` |
 
-**CEO**：`assign_task`、`task_create`、`ask_role`、`answer_question`、`take_over_pending`、`project_terminate`、`project_delete`、`roundtable`、`roundtable_minutes`、`company_overview`
+**CEO**：`assign_task`、`task_create`、`ask_role`、`answer_question`、`take_over_pending`、`project_terminate`、`project_delete`、`company_overview`
 
 **老板（不是 agent，走 HTTP）**：任意频道发言、任意 DM、回答/驳回 owner 级待办、**直接给任何人建任务**、终止/删除项目
 
@@ -533,7 +533,7 @@ src/company/
     exec.ts                     沿用 staff-tools.ts
     leader.ts                   assign_task/task_create/ask_role/answer_question/decide/project_*
     management.ts               assign_task/task_create/answer_question/领域工具
-    ceo.ts                      task_create/take_over_pending/project_terminate/roundtable
+    ceo.ts                      task_create/take_over_pending/project_terminate/project_delete
 
 src/server/
   channels-view.ts              频道列表 + 消息 + 已读状态
@@ -559,7 +559,7 @@ src/server/
 
 ### 6.3 保留不动
 
-`src/runtime/*`、`company/docs.ts`（删 `TrailDoc`）、`company/cost.ts`、`company/roundtable.ts`（只改发言方式）、`decision-routing.ts` → `domain/routing.ts`、`deliverDecision()`（已搬进 `company/channels.ts`，走 `postToChannel`）、`instance-lock` / `wal` / `run-failure` / `models` / `env`
+`src/runtime/*`、`company/docs.ts`（删 `TrailDoc`）、`company/cost.ts`、`deliverDecision()`（已搬进 `company/channels.ts`，走 `postToChannel`）、`instance-lock` / `wal` / `run-failure` / `models` / `env`
 
 ---
 

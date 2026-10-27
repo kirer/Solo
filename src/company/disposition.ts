@@ -252,7 +252,8 @@ export type DispositionAnswerResult =
 
 export function parseDispositionAnswer(
 	answer: string,
-	payload: DispositionPayload,
+	/** 这条待办自己的处置选项。判定本身不看它，但签名里留着：调用方传它是「这是哪条待办」的自证，将来若要按选项差异判（例如「永久放弃」必须写明替代方案）不用改调用点。 */
+	_payload: DispositionPayload,
 ): DispositionAnswerResult {
 	const text = answer.trim();
 	if (text === "") return { ok: false, reason: "答复为空：请明确选「暂搁」或「永久放弃」" };

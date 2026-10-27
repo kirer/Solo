@@ -7,7 +7,7 @@
  *
  * 工具越多，模型选错的概率越高。CEO 现在有 25 个工具，其中真正每轮都要用的
  * 只有 5–6 个（whoami / say / ask / task_list / task_update）。
- * 其余（roundtable / project_delete / staff_rename …）一周用一次。
+ * 其余（project_delete / staff_rename …）一周用一次。
  *
  * `deferred: true` 的工具**不直接出现在模型面前**：
  * - 模型调 `tool_search("圆桌")` → BM25 检索 → 命中后 `control.addTools` 写进会话
@@ -101,8 +101,6 @@ export const CAPABILITIES: readonly Capability[] = [
 	{ name: "budget_check", layer: "management", core: false, summary: "查预算" },
 	{ name: "cost_report", layer: "management", core: false, summary: "成本报告" },
 	{ name: "review_architecture", layer: "management", core: false, summary: "技术评审" },
-	{ name: "roundtable", layer: "management", core: false, summary: "开圆桌讨论" },
-	{ name: "roundtable_minutes", layer: "management", core: false, summary: "查圆桌纪要" },
 
 	// ── CEO 专属 ──
 	{ name: "take_over_pending", layer: "ceo", core: false, summary: "把老板级待办接管回 CEO 层" },
@@ -136,17 +134,6 @@ export function splitCore(names: readonly string[]): {
 		else deferred.push(name);
 	}
 	return { core, deferred };
-}
-
-/**
- * 能力目录的自检：每个能力都必须能在 `ManagementToolset` 里找到实现。
- *
- * 这条检查曾经能抓到真实 bug：`dispose_pending` / `take_over_pending` 定义了、
- * 也注入了，但没进 `CAPABILITY_TO_TOOL` 映射表，于是任何 agent 都拿不到，
- * 只有老板的 HTTP 入口能用。现在由 `test/unit/capabilities.test.ts` 钉住。
- */
-export function auditCapabilities(available: ReadonlySet<string>): readonly string[] {
-	return CAPABILITIES.map((capability) => capability.name).filter((name) => !available.has(name));
 }
 
 /** 诊断用：能力目录的分层统计。 */

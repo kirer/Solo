@@ -11,12 +11,9 @@
 import { BACKGROUND_CONTEXT, type Context, type CompanyRuntime } from "../runtime/index.ts";
 import {
 	AuditDoc,
-	CompanyDoc,
 	TrailDoc,
 	type TrailEdge,
 	type TrailKind,
-	ROLE_LABELS,
-	type ManagementRole,
 } from "./docs.ts";
 
 /** 活跃任务（当前协作结构）。 */

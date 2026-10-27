@@ -34,7 +34,6 @@ describe("设置默认值", () => {
 		const settings = await store.read();
 		expect(settings.network).toEqual({ host: "127.0.0.1", port: 7788 });
 		expect(settings.models.custom).toEqual([]);
-		expect(settings.im).toEqual({ enabled: false, outboundWebhook: "", inboundToken: "", accounts: [] });
 	});
 
 	test("环境变量作为默认值（AI_COMPANY_HOST / PORT）", async () => {
@@ -52,27 +51,14 @@ describe("设置默认值", () => {
 });
 
 describe("PATCH 合并", () => {
-	test("network / im 按段合并，accounts 整段替换", async () => {
+	test("network 按段合并，未提到的段保留原值", async () => {
 		const { store } = await tempStore();
-		await store.patch({
-			network: { host: "0.0.0.0", port: 7799 },
-			im: {
-				enabled: true,
-				outboundWebhook: "http://127.0.0.1:9999/hook",
-				inboundToken: "tok",
-				accounts: [{ id: "a1", channel: "wechat", name: "老板微信", enabled: true, note: "备注" }],
-			},
-		});
+		await store.addModel({ id: "gpt-5-mini", provider: "openai-responses", name: "mini" });
+		await store.patch({ network: { host: "0.0.0.0", port: 7799 } });
 		const settings = await store.read();
 		expect(settings.network).toEqual({ host: "0.0.0.0", port: 7799 });
-		expect(settings.im.enabled).toBe(true);
-		expect(settings.im.accounts).toHaveLength(1);
-		expect(settings.im.accounts[0]).toMatchObject({ id: "a1", channel: "wechat", name: "老板微信" });
-
-		await store.patch({ im: { accounts: [] } });
-		expect((await store.read()).im.accounts).toEqual([]);
-		// 其他字段不受影响
-		expect((await store.read()).im.enabled).toBe(true);
+		// 其他段不受影响
+		expect(settings.models.custom).toHaveLength(1);
 	});
 
 	test("非法端口 / 非法 JSON 被拒绝", async () => {
@@ -83,10 +69,8 @@ describe("PATCH 合并", () => {
 		expect((await store.read()).network.port).toBe(7788);
 	});
 
-	test("只改 IM 不算需要重启；改 network / 模型才算", async () => {
+	test("改 network 算需要重启", async () => {
 		const { store } = await tempStore();
-		expect(await store.restartRequired()).toBe(false);
-		await store.patch({ im: { enabled: true } });
 		expect(await store.restartRequired()).toBe(false);
 		await store.patch({ network: { host: "0.0.0.0" } });
 		expect(await store.restartRequired()).toBe(true);

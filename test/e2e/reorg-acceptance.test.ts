@@ -381,7 +381,6 @@ describe("改造验收", () => {
 			"project_terminate",
 			"project_delete",
 			"staff_archive",
-			"roundtable",
 		]) {
 			expect(names, `负责人不得有 ${forbidden}`).not.toContain(forbidden);
 		}

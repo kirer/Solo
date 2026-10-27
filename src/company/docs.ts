@@ -24,12 +24,6 @@
 import { defineDoc } from "../runtime/index.ts";
 import type {
 	CompanyState,
-	ManagementRole,
-	ManagerRef,
-	ModelOption,
-	ModelRef,
-	ProjectEntry,
-	ProjectStatus,
 	StaffEntry,
 } from "../domain/org-types.ts";
 

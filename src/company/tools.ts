@@ -7,7 +7,7 @@
  * 每个工具都只做一件事，并且返回值是给模型看的自然语言（output），
  * 不是给程序用的结构化数据。
  */
-import { defineExtension, defineTool, Type, type Extension } from "../runtime/index.ts";
+import { defineExtension, defineTool, type Extension } from "../runtime/index.ts";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "../runtime/index.ts";
 import type { ManagementRole } from "./docs.ts";
 import { COMMON_GUIDE, ROLE_DEFINITIONS } from "./roles.ts";
@@ -122,9 +122,7 @@ export type ManagementToolset = {
 	/** 找某人问一句（异步，不等结果）。 */
 	readonly askRole: ReturnType<typeof defineTool>;
 	/** 开一次圆桌讨论。 */
-	readonly roundtable: ReturnType<typeof defineTool>;
 	/** 查圆桌讨论纪要。 */
-	readonly roundtableMinutes: ReturnType<typeof defineTool>;
 	/** 写一条记忆（#12）。 */
 	readonly memoryWrite: ReturnType<typeof defineTool>;
 	/** 检索记忆（#12）。 */
@@ -169,8 +167,6 @@ const CAPABILITY_TO_TOOL: Record<string, ToolName> = {
 	staff_rename: "staffRename",
 	budget_check: "budgetCheck",
 	cost_report: "costReport",
-	roundtable: "roundtable",
-	roundtable_minutes: "roundtableMinutes",
 	memory_write: "memoryWrite",
 	memory_search: "memorySearch",
 };

@@ -51,7 +51,7 @@ import {
 	type UnreadDigest,
 } from "../domain/channels.ts";
 import { ChannelDoc } from "./channels-doc.ts";
-import { labelOf, type Org } from "../domain/membership.ts";
+import { labelOf} from "../domain/membership.ts";
 import { buildOrg } from "./org-model.ts";
 import { CompanyDoc, ReplyContextDoc } from "./docs.ts";
 import { MemoryDoc, memoryActorFromOrg } from "./memory.ts";
@@ -361,7 +361,3 @@ export async function notify(
 	}
 }
 
-/** 组织（供调用方复用，避免重复读 CompanyDoc）。 */
-export async function orgOf(runtime: CompanyRuntime, context: Context = BACKGROUND_CONTEXT): Promise<Org> {
-	return buildOrg(await runtime.harness.snapshot(CompanyDoc, context));
-}

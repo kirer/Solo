@@ -11,7 +11,7 @@
  * 3. 项目负责人的上级 = 该项目对应的管理层（由 `staff` 里员工的 manager 推导，
  *    没有员工时回落到 CEO）；员工的上级 = `StaffEntry.manager`
  */
-import { OWNER_ID, type MemberRole } from "../domain/channels.ts";
+import { OWNER_ID} from "../domain/channels.ts";
 import type { Org, OrgPerson } from "../domain/membership.ts";
 
 export type { Org, OrgPerson } from "../domain/membership.ts";
@@ -20,7 +20,6 @@ import {
 	ROLE_LABELS,
 	managerConversationOf,
 	type CompanyState,
-	type ManagementRole,
 	type ManagerRef,
 } from "../domain/org-types.ts";
 
@@ -127,17 +126,6 @@ function isManagementConversation(state: CompanyState, conversationId: number): 
 		if (Number(state.roles[role]) === conversationId) return true;
 	}
 	return false;
-}
-
-/** 某个会话的成员层级（频道成员用）。 */
-export function memberRoleOf(org: Org, conversationId: number): MemberRole {
-	const person = org.people.find((entry) => entry.conversationId === conversationId);
-	return person?.role ?? "staff";
-}
-
-/** 管理层的显示名（审计/留痕用）。 */
-export function managementLabel(role: ManagementRole): string {
-	return ROLE_LABELS[role];
 }
 
 /**

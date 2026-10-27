@@ -6,7 +6,7 @@
  * 但它的用量文档从零开始计，按消息求和会重复计账。
  */
 import { BACKGROUND_CONTEXT, type Context, type CompanyRuntime, UsageDoc } from "../runtime/index.ts";
-import { AuditDoc, CompanyDoc, type ModelOption } from "./docs.ts";
+import { CompanyDoc, type ModelOption } from "./docs.ts";
 
 /** 一个模型分桶的用量。 */
 export type ModelUsage = {
@@ -33,16 +33,6 @@ export type UsageRollup = {
 	readonly costUsd: number;
 	/** 有 token 消耗但成本为零的模型 —— 提示宿主检查价格配置。 */
 	readonly unpricedModels: readonly string[];
-};
-
-/** 空用量。 */
-const EMPTY: ModelUsage = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	costUsd: 0,
 };
 
 /**
@@ -222,38 +212,6 @@ export function calculateCostFromCatalog(
 			(modelUsage.output / 1_000_000) * option.outputPerMTok;
 	}
 	return total;
-}
-
-/** 把成本写进项目或会话的预算文档。 */
-export async function syncBudget(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	spentUsd: number,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<void> {
-	const { BudgetDoc } = await import("./docs.ts");
-	await runtime.harness.commit(async (tx) => {
-		const budget = await tx.doc(BudgetDoc, conversationId as never);
-		budget.spentUsd = spentUsd;
-	}, context);
-}
-
-/** 记录一次成本快照到审计（供历史对比）。 */
-export async function recordCostSnapshot(
-	runtime: CompanyRuntime,
-	conversationId: number,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<void> {
-	const usage = await conversationUsage(runtime, conversationId, context);
-	await runtime.harness.commit(async (tx) => {
-		const audit = await tx.doc(AuditDoc, conversationId as never);
-		audit.events.push({
-			at: Date.now(),
-			type: "decide",
-			from: "cfo",
-			note: `成本快照：${usage.totalTokens} tokens / $${usage.costUsd.toFixed(4)}`,
-		});
-	}, context);
 }
 
 // ── 内部 ────────────────────────────────────────────────────────────────────

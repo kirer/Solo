@@ -109,7 +109,7 @@ async function readSettings(server: Server): Promise<SettingsView> {
 }
 
 describe("设置接口", () => {
-	test("GET 返回 network / models / im 三段，端口是实际监听值", async () => {
+	test("GET 返回 network / models 两段，端口是实际监听值", async () => {
 		const { server } = await setup();
 		const settings = await readSettings(server);
 
@@ -120,48 +120,24 @@ describe("设置接口", () => {
 		expect(settings.models.catalog.map((item) => item.id)).toContain("faux-1");
 		expect(settings.models.catalog.every((item) => item.source === "builtin")).toBe(true);
 		expect(settings.models.restartRequired).toBe(false);
-		expect(settings.im).toEqual({ enabled: false, outboundWebhook: "", inboundToken: "", accounts: [] });
 	});
 
-	test("PATCH 往返：im 与 network 落盘，accounts 整段替换", async () => {
+	test("PATCH 往返：network 落盘，未提到的段保留原值", async () => {
 		const { server, workspace } = await setup();
-		const patch = {
-			network: { host: "0.0.0.0" },
-			im: {
-				enabled: true,
-				outboundWebhook: "http://127.0.0.1:9/hook",
-				inboundToken: "tok",
-				accounts: [{ id: "a1", channel: "wechat", name: "老板微信", enabled: true, note: "备注" }],
-			},
-		};
 		const response = await fetch(`${server.url}api/settings`, {
 			method: "PATCH",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(patch),
+			body: JSON.stringify({ network: { host: "0.0.0.0" } }),
 		});
 		expect(response.status).toBe(200);
 		const updated = (await response.json()) as SettingsView;
-		expect(updated.im.accounts).toHaveLength(1);
-		expect(updated.im.accounts[0]).toMatchObject({ id: "a1", channel: "wechat", name: "老板微信" });
-
-		// 只改 IM 不需要重启；改了 network 才需要
+		// 改了 network 才需要重启
 		expect(updated.models.restartRequired).toBe(true);
-
-		await fetch(`${server.url}api/settings`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ im: { accounts: [] } }),
-		});
-		const again = await readSettings(server);
-		expect(again.im.accounts).toEqual([]);
-		// PATCH 不会把 enabled 顺手改掉
-		expect(again.im.enabled).toBe(true);
 
 		// 设置写进了 workspace/settings.json，不碰真实 workspace。
 		// 注意 GET network.host 报的是「实际监听值」，持久化的期望值要看文件。
 		const raw = JSON.parse(await readFile(join(workspace, "settings.json"), "utf8")) as SettingsView;
 		expect(raw.network.host).toBe("0.0.0.0");
-		expect(raw.im.accounts).toEqual([]);
 	});
 
 	test("非法 PATCH 返回 400 而不是 500", async () => {
@@ -253,164 +229,13 @@ describe("模型接口", () => {
 	});
 });
 
-describe("附件接口", () => {
-	test("上传原始字节 → 下载内容一致（中文名 URL 编码）", async () => {
-		const { server, dir } = await setup();
-		const bytes = Buffer.from("附件内容 hello", "utf8");
-		const response = await fetch(`${server.url}api/upload`, {
-			method: "POST",
-			headers: {
-				"Content-Type": "text/plain; charset=utf-8",
-				"x-file-name": encodeURIComponent("季度报告 2026.txt"),
-				"x-file-size": String(bytes.byteLength),
-			},
-			body: bytes,
-		});
-		expect(response.status).toBe(200);
-		const uploaded = (await response.json()) as { id: string; name: string; size: number; mime: string; url: string };
-		expect(uploaded.name).toBe("季度报告 2026.txt");
-		expect(uploaded.size).toBe(bytes.byteLength);
-		expect(uploaded.mime).toBe("text/plain");
-		expect(uploaded.url).toBe(`/uploads/${uploaded.id}/${encodeURIComponent("季度报告 2026.txt")}`);
-
-		const download = await fetch(`${server.url}${uploaded.url.replace(/^\//, "")}`);
-		expect(download.status).toBe(200);
-		expect(Buffer.from(await download.arrayBuffer()).toString("utf8")).toBe("附件内容 hello");
-		expect(download.headers.get("content-disposition")).toContain("UTF-8");
-		void dir;
-	});
-
-	test("超限 413、名字对不上 404、未知路径 404", async () => {
-		const { server } = await setup();
-		const tooLarge = await fetch(`${server.url}api/upload`, {
-			method: "POST",
-			headers: { "Content-Type": "application/octet-stream", "x-file-name": "big.bin", "x-file-size": String(21 * 1024 * 1024) },
-			body: Buffer.from("x"),
-		});
-		expect(tooLarge.status).toBe(413);
-
-		const uploaded = (await (
-			await fetch(`${server.url}api/upload`, {
-				method: "POST",
-				headers: { "Content-Type": "text/plain", "x-file-name": "a.txt" },
-				body: Buffer.from("x"),
-			})
-		).json()) as { id: string };
-		expect((await fetch(`${server.url}uploads/${uploaded.id}/other.txt`)).status).toBe(404);
-		expect((await fetch(`${server.url}uploads/not-an-id/a.txt`)).status).toBe(404);
-	});
-
-	test("发消息带附件：注入 [附件] 文本引用，绝对路径真实存在", async () => {
-		const { server, boot } = await setup();
-		const uploaded = (await (
-			await fetch(`${server.url}api/upload`, {
-				method: "POST",
-				headers: { "Content-Type": "text/markdown", "x-file-name": "report.md" },
-				body: Buffer.from("# 报告"),
-			})
-		).json()) as { id: string; name: string; mime: string; size: number };
-
-		const response = await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				conversationId: boot.ownerConversationId,
-				text: "看看这个附件",
-				attachments: [uploaded],
-			}),
-		});
-		expect(response.status).toBe(200);
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const message = feed.items.find(
-			(item) => item.kind === "user" && item.text.includes("[附件] report.md"),
-		);
-		expect(message).toBeDefined();
-		const match = /\[附件\] report\.md → (.+)$/m.exec(message?.kind === "user" ? message.text : "");
-		expect(match).not.toBeNull();
-		await access(match?.[1] ?? "");
-	});
-
-	test("文本附件带内联摘录：CEO 通道没有 read 工具也能看到内容", async () => {
-		const { server, boot } = await setup();
-		const uploaded = (await (
-			await fetch(`${server.url}api/upload`, {
-				method: "POST",
-				headers: { "Content-Type": "text/csv", "x-file-name": "q3.csv" },
-				body: Buffer.from("区域,收入\n华东,1200\n华南,900\n"),
-			})
-		).json()) as { id: string; name: string };
-
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				conversationId: boot.ownerConversationId,
-				text: "看一下这个季报",
-				attachments: [uploaded],
-			}),
-		});
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const message = feed.items.find((item) => item.kind === "user" && item.text.includes("[附件] q3.csv"));
-		expect(message, "附件引用必须出现在消息里").toBeDefined();
-		const text = message?.kind === "user" ? message.text : "";
-		// 内容本身也要在：只给路径的话，没有 read/bash 的 CEO 通道等于看不到文件
-		expect(text).toContain("内容摘录");
-		expect(text).toContain("华东,1200");
-	});
-
-	test("二进制附件不做摘录（只给路径，不塞乱码 token）", async () => {
-		const { server, boot } = await setup();
-		const uploaded = (await (
-			await fetch(`${server.url}api/upload`, {
-				method: "POST",
-				headers: { "Content-Type": "image/png", "x-file-name": "shot.png" },
-				body: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01]),
-			})
-		).json()) as { id: string; name: string };
-
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				conversationId: boot.ownerConversationId,
-				text: "看截图",
-				attachments: [uploaded],
-			}),
-		});
-
-		const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-		const message = feed.items.find((item) => item.kind === "user" && item.text.includes("[附件] shot.png"));
-		const text = message?.kind === "user" ? message.text : "";
-		expect(text).toContain("[附件] shot.png");
-		expect(text).not.toContain("内容摘录");
-	});
-
-	test("附件不存在时明确 400，不静默丢弃", async () => {
-		const { server, boot } = await setup();
-		const response = await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				conversationId: boot.ownerConversationId,
-				text: "看附件",
-				attachments: [{ id: "deadbeefdeadbeef", name: "gone.pdf" }],
-			}),
-		});
-		expect(response.status).toBe(400);
-	});
-});
-
 describe("看板接口", () => {
 	test("三列结构固定，最近完成的一轮回复进 done", async () => {
-		const { server, boot, ctx } = await setup();
+		const { server, boot, ctx, runtime } = await setup();
 		ctx.faux.setResponses([answer("第一件事已经做完了。")]);
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "做第一件事" }),
-		});
+		// 会话流视图与 POST /api/message 已删除（ADR-040），这里直接投给会话。
+		const conversation = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+		await conversation?.submit({ type: "input", content: "做第一件事" }, BACKGROUND_CONTEXT);
 
 		await eventually(
 			async () => {
@@ -435,13 +260,10 @@ describe("看板接口", () => {
 	});
 
 	test("忙碌会话进 doing；排队消息进 todo（status=queued）", async () => {
-		const { server, boot, ctx } = await setup();
+		const { server, boot, ctx, runtime } = await setup();
 		ctx.faux.setResponses([slowAnswer(3_000, "慢慢做")]);
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "干个长活" }),
-		});
+		const conversation = await runtime.harness.conversation(boot.ownerConversationId as never, BACKGROUND_CONTEXT);
+		await conversation?.submit({ type: "input", content: "干个长活" }, BACKGROUND_CONTEXT);
 
 		await eventually(
 			async () => {
@@ -456,11 +278,10 @@ describe("看板接口", () => {
 		expect(busy?.owner).toBe(boot.ownerConversationId);
 
 		// steer 档不会打断当前轮：消息留在队列里
-		await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "排队的第二件事", mode: "steer" }),
-		});
+		await conversation?.submit(
+			{ type: "input", content: "排队的第二件事", whenBusy: "steer" },
+			BACKGROUND_CONTEXT,
+		);
 
 		await eventually(
 			async () => {
@@ -508,140 +329,6 @@ describe("看板接口", () => {
 		expect(waiting?.projectName).toBe("A");
 		expect(typeof waiting?.at).toBe("number");
 	});
-});
-
-describe("IM 接口", () => {
-	async function startWebhook(): Promise<{
-		server: HttpServer;
-		port: number;
-		received: { text: string; conversationId: number; at: number }[];
-		close(): Promise<void>;
-	}> {
-		const received: { text: string; conversationId: number; at: number }[] = [];
-		const server = createServer((request, response) => {
-			const chunks: Buffer[] = [];
-			request.on("data", (chunk: Buffer) => chunks.push(chunk));
-			request.on("end", () => {
-				try {
-					received.push(JSON.parse(Buffer.concat(chunks).toString("utf8")) as never);
-				} catch {
-					// 忽略坏请求
-				}
-				response.writeHead(200, { "Content-Type": "text/plain" });
-				response.end("ok");
-			});
-		});
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
-		const port = (server.address() as AddressInfo).port;
-		return {
-			server,
-			port,
-			received,
-			async close() {
-				await new Promise<void>((resolve) => server.close(() => resolve()));
-			},
-		};
-	}
-
-	test("入站：未启用 / token 错 → 403；正确 token 投进老板通道", async () => {
-		const { server, boot } = await setup();
-
-		const disabled = await fetch(`${server.url}api/im/inbound?token=whatever`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ text: "在吗" }),
-		});
-		expect(disabled.status).toBe(403);
-
-		await fetch(`${server.url}api/settings`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ im: { enabled: true, inboundToken: "secret-token" } }),
-		});
-
-		const wrong = await fetch(`${server.url}api/im/inbound?token=wrong`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ text: "在吗" }),
-		});
-		expect(wrong.status).toBe(403);
-
-		const accepted = await fetch(`${server.url}api/im/inbound?token=secret-token`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ text: "从微信来的消息", from: "微信" }),
-		});
-		expect(accepted.status).toBe(200);
-		const body = (await accepted.json()) as { ok: boolean; conversationId: number };
-		expect(body.ok).toBe(true);
-		expect(body.conversationId).toBe(boot.ownerConversationId);
-
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return feed.items.some((item) => item.kind === "user" && item.text.includes("[IM · 微信] 从微信来的消息"));
-			},
-			{ label: "IM 消息进入老板通道" },
-		);
-	});
-
-	test("出站：老板通道的助手回复 POST 到 outboundWebhook", async () => {
-		const webhook = await startWebhook();
-		try {
-			const { server, boot, ctx } = await setup();
-			await fetch(`${server.url}api/settings`, {
-				method: "PATCH",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					im: { enabled: true, outboundWebhook: `http://127.0.0.1:${webhook.port}/hook`, inboundToken: "t" },
-				}),
-			});
-
-			ctx.faux.setResponses([answer("这是给老板的回复。")]);
-			await fetch(`${server.url}api/message`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "回我一句" }),
-			});
-
-			await eventually(async () => webhook.received.some((item) => item.text.includes("这是给老板的回复")), {
-				label: "webhook 收到助手回复",
-				timeoutMs: 10_000,
-			});
-			const payload = webhook.received.find((item) => item.text.includes("这是给老板的回复"));
-			expect(payload?.conversationId).toBe(boot.ownerConversationId);
-			expect(typeof payload?.at).toBe("number");
-		} finally {
-			await webhook.close();
-		}
-	}, 30_000);
-
-	test("出站失败静默：webhook 不可达时发消息仍然成功", async () => {
-		const { server, boot, ctx } = await setup();
-		await fetch(`${server.url}api/settings`, {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				// 127.0.0.1:9 基本永远连不上
-				im: { enabled: true, outboundWebhook: "http://127.0.0.1:9/hook", inboundToken: "t" },
-			}),
-		});
-		ctx.faux.setResponses([answer("正常回复")]);
-		const response = await fetch(`${server.url}api/message`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ conversationId: boot.ownerConversationId, text: "在吗" }),
-		});
-		expect(response.status).toBe(200);
-		// 会话仍然能正常结束（出站失败不阻塞提交）
-		await eventually(
-			async () => {
-				const feed = (await (await fetch(`${server.url}api/feed/${boot.ownerConversationId}`)).json()) as Feed;
-				return feed.items.some((item) => item.kind === "assistant" && item.text.includes("正常回复"));
-			},
-			{ label: "助手回复正常落库", timeoutMs: 10_000 },
-		);
-	}, 30_000);
 });
 
 describe("局域网访问", () => {

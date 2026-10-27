@@ -15,7 +15,6 @@
  */
 import { BACKGROUND_CONTEXT, defineTool, Type, type CompanyRuntime, type Context } from "../../runtime/index.ts";
 import {
-	advanceRead,
 	digestFor,
 	dmChannelId,
 	hasMember,
@@ -27,7 +26,7 @@ import {
 } from "../../domain/channels.ts";
 import { labelOf, personOf, type Org } from "../../domain/membership.ts";
 import { isTerminal, type TaskEntry } from "../../domain/tasks.ts";
-import { postToChannel, readChannels, markChannelRead, markAllRead } from "../channels.ts";
+import { postToChannel, readChannels, markChannelRead  } from "../channels.ts";
 import { buildOrg } from "../org-model.ts";
 import { CompanyDoc, ReplyContextDoc, type ReplyContextState } from "../docs.ts";
 import { listMyTasks, transitionTask, readTasks } from "../tasks.ts";
@@ -54,7 +53,7 @@ async function contextOf(runtime: CompanyRuntime, conversationId: number, contex
 }
 
 /** 这个人能看到 / 所在的频道。 */
-function myChannels(org: Org, channels: ChannelState, conversationId: number): readonly Channel[] {
+function myChannels(channels: ChannelState, conversationId: number): readonly Channel[] {
 	return Object.values(channels.channels).filter(
 		(channel) => channel.archived !== true && hasMember(channel, conversationId),
 	);
@@ -196,7 +195,7 @@ export function createUniversalTools(deps: UniversalDeps) {
 			const reports = org.people.filter((person) => person.managerId === conversationId);
 			const my = await listMyTasks(runtime, conversationId, context ?? BACKGROUND_CONTEXT);
 			const open = my.filter((task) => !isTerminal(task.status));
-			const channelsOfMine = myChannels(org, channels, conversationId);
+			const channelsOfMine = myChannels(channels, conversationId);
 			const digest = digestFor(channels, conversationId, 5);
 
 			return text(

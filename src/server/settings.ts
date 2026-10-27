@@ -4,7 +4,6 @@
  * 这是「老板在设置页里改的东西」的唯一落盘位置，包含三段：
  * - `network`：监听地址与端口（下次启动生效）
  * - `models`：默认模型与自定义模型（下次启动生效）
- * - `im`：IM 接入配置（立即生效，入站/出站钩子每次请求都读最新值）
  *
  * 设计取舍：
  * - 单文件、明文、无数据库：单人本机产品，改坏了删掉文件即可回到默认。
@@ -27,30 +26,10 @@ export type NetworkSettings = {
 };
 
 /** 一个 IM 账号配置（不实现各平台协议，仅供外部桥识别）。 */
-export type ImAccountSettings = {
-	readonly id: string;
-	/** 平台名：wechat / wecom / feishu / webhook…（自由文本，前端展示用）。 */
-	readonly channel: string;
-	readonly name: string;
-	readonly enabled: boolean;
-	readonly note?: string;
-};
-
-/** IM 接入设置。 */
-export type ImSettings = {
-	readonly enabled: boolean;
-	/** 老板通道每条助手回复 POST 到这里；空串 = 不推送。 */
-	readonly outboundWebhook: string;
-	/** 入站校验 token；空串 = 入站关闭（一律 403）。 */
-	readonly inboundToken: string;
-	readonly accounts: readonly ImAccountSettings[];
-};
-
 /** settings.json 的完整规范化结构。 */
 export type Settings = {
 	readonly network: NetworkSettings;
 	readonly models: ModelSettings;
-	readonly im: ImSettings;
 };
 
 /** 当前进程实际监听值与设置页展示所需的派生信息。 */
@@ -66,7 +45,6 @@ export type SettingsView = {
 		readonly catalog: readonly ModelCatalogEntry[];
 		readonly restartRequired: boolean;
 	};
-	readonly im: ImSettings;
 };
 
 /** 设置页里的一条模型。 */
@@ -360,7 +338,6 @@ export function buildSettingsView(options: {
 			catalog,
 			restartRequired: options.restartRequired,
 		},
-		im: normalizeIm(options.settings.im, defaultIm()),
 	};
 }
 
@@ -372,12 +349,7 @@ function defaultSettings(environment: NodeJS.ProcessEnv): Settings {
 	return {
 		network: { host, port: Number.isFinite(port) && port > 0 ? port : DEFAULT_PORT },
 		models: { custom: [] },
-		im: defaultIm(),
 	};
-}
-
-function defaultIm(): ImSettings {
-	return { enabled: false, outboundWebhook: "", inboundToken: "", accounts: [] };
 }
 
 function normalize(raw: unknown, defaults: Settings): Settings {
@@ -385,7 +357,6 @@ function normalize(raw: unknown, defaults: Settings): Settings {
 	return {
 		network: normalizeNetwork(root.network, defaults.network),
 		models: normalizeModels(root.models),
-		im: normalizeIm(root.im, defaults.im),
 	};
 }
 
@@ -404,46 +375,9 @@ function normalizeModels(raw: unknown): ModelSettings {
 	return parseModelSettings({ models: raw });
 }
 
-function normalizeIm(raw: unknown, fallback: ImSettings): ImSettings {
-	const record = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-	const accounts = Array.isArray(record.accounts)
-		? record.accounts.flatMap((item) => {
-				const account = normalizeAccount(item);
-				return account === undefined ? [] : [account];
-			})
-		: fallback.accounts;
-
-	return {
-		enabled: typeof record.enabled === "boolean" ? record.enabled : fallback.enabled,
-		outboundWebhook:
-			typeof record.outboundWebhook === "string" ? record.outboundWebhook.trim() : fallback.outboundWebhook,
-		inboundToken: typeof record.inboundToken === "string" ? record.inboundToken.trim() : fallback.inboundToken,
-		accounts,
-	};
-}
-
-function normalizeAccount(raw: unknown): ImAccountSettings | undefined {
-	if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-	const record = raw as Record<string, unknown>;
-	const channel = typeof record.channel === "string" ? record.channel.trim() : "";
-	const name = typeof record.name === "string" ? record.name.trim() : "";
-	if (channel === "" && name === "") return undefined;
-	const id = typeof record.id === "string" && record.id.trim() !== "" ? record.id.trim() : `im-${Date.now().toString(36)}`;
-	const note = typeof record.note === "string" ? record.note.trim() : "";
-	return {
-		id,
-		channel: channel === "" ? "webhook" : channel,
-		name: name === "" ? channel : name,
-		enabled: typeof record.enabled === "boolean" ? record.enabled : true,
-		...(note === "" ? {} : { note }),
-	};
-}
-
-/** PATCH 合并：network/models/im 三段浅合并，im.accounts 整段替换。 */
 function mergePatch(current: Settings, patch: Record<string, unknown>): Settings {
 	const networkRaw = isRecord(patch.network) ? patch.network : {};
 	const modelsRaw = isRecord(patch.models) ? patch.models : {};
-	const imRaw = isRecord(patch.im) ? patch.im : {};
 
 	const network: NetworkSettings = {
 		host:
@@ -463,24 +397,8 @@ function mergePatch(current: Settings, patch: Record<string, unknown>): Settings
 		custom: current.models.custom,
 	};
 
-	const im: ImSettings = {
-		enabled: typeof imRaw.enabled === "boolean" ? imRaw.enabled : current.im.enabled,
-		outboundWebhook:
-			typeof imRaw.outboundWebhook === "string"
-				? imRaw.outboundWebhook.trim()
-				: current.im.outboundWebhook,
-		inboundToken:
-			typeof imRaw.inboundToken === "string" ? imRaw.inboundToken.trim() : current.im.inboundToken,
-		accounts: Array.isArray(imRaw.accounts)
-			? imRaw.accounts.flatMap((item) => {
-					const account = normalizeAccount(item);
-					return account === undefined ? [] : [account];
-				})
-			: current.im.accounts,
-	};
-
 	// 保留未知顶层字段（例如将来新增的段），避免 PATCH 一次就丢配置
-	return { ...current, network, models, im };
+	return { ...current, network, models };
 }
 
 /** 校验并补齐一条自定义模型。 */
@@ -536,7 +454,7 @@ async function persist(path: string, settings: Settings): Promise<void> {
 	await rename(temporary, path);
 }
 
-/** network + models 的指纹；im 改了立即生效，不影响 restartRequired。 */
+/** network + models 的指纹。 */
 function signature(settings: Settings): string {
 	return JSON.stringify({
 		network: settings.network,

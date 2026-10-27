@@ -15,18 +15,9 @@ import {
 	type CompanyRuntime,
 	type Context,
 } from "../runtime/index.ts";
-import {
-	ROLE_LABELS,
-	isLeaderManagerRef,
-	managerLabelOf,
-	type CompanyState,
-	type ManagementRole,
-	type ManagerRef,
-} from "../company/docs.ts";
+import { type CompanyState } from "../company/docs.ts";
 import { readCompany } from "../company/org.ts";
-import { canDisposePending, decisionOwnerOfItem, levelOfConversation, listPending } from "../company/escalation.ts";
-import { ROLE_DEFINITIONS } from "../company/roles.ts";
-import { actorRefOf, OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
+import { OWNER_REF, refOfLabel, type ActorRef } from "./actors.ts";
 
 /** 一个发言人（契约第 3 节）。 */
 export type { ActorRef } from "./actors.ts";
@@ -85,14 +76,6 @@ export type FeedItem =
 /** 会话流的完整视图。 */
 export type Feed = {
 	readonly conversationId: number;
-	readonly title: string;
-	readonly role: string;
-	/**
-	 * 这个会话的主人：assistant / thinking / tool 的发言人。
-	 *
-	 * 老板通道里它是 CEO，员工会话里是那位员工——界面不用再猜。
-	 */
-	readonly actor: ActorRef;
 	/** 已提交的条目，按时间正序。 */
 	readonly items: readonly FeedItem[];
 	/** 正在生成的内容（未提交的部分）。 */
@@ -115,84 +98,6 @@ export type Feed = {
 	}[];
 	/** 该会话的用量。 */
 	readonly tokens: number;
-	/** 会话种类：老板通道 / 管理层 / 项目 / 员工。 */
-	readonly kind: "owner" | "role" | "project" | "staff" | "branch";
-	/**
-	 * 是否在等老板拍板。
-	 *
-	 * @deprecated ADR-026 决策 2（落地第 3 步）已把它泛化为 {@link awaitingDecision}。
-	 * 保留为**派生字段**而不是删掉：设备数据（`ui/js/dev-fixtures.js`）还在读它，
-	 * 改结构不能把界面搞坏。
-	 * 新代码请用 `awaitingDecision.decider === "owner"`。
-	 */
-	readonly awaitingOwner: boolean;
-	/** 这个会话里有没有等**自己**拍板的事，以及到底该谁拍（ADR-026 决策 2）。 */
-	readonly awaitingDecision: AwaitingDecision;
-	/**
-	 * 这个会话主人需要亲自拍的事（未答复的待决项）。
-	 *
-	 * 为什么放在 feed 里：界面上「待办」和「聊天」本来就是同一件事——
-	 * 一条待决问题就是「有人在等你回话」。原先它在聊天面板顶部另开一块
-	 * 黄框区域渲染，于是同一条问题既在顶部出现（可点）又在聊天里出现（只是文本），
-	 * 用户的实际体验是「两边都有、答完没反应」。
-	 * 现在只保留这个数据源，由界面渲染成一条可交互的事项。右侧对话面板删除后，
-	 * 网页端的待办改由频道视图渲染（`ui/js/pending.js`）；feed 仍然带这个字段。
-	 */
-	readonly pending: readonly FeedPending[];
-};
-
-/**
- * 一条「等人拍板」的事项，随 feed 下发。
- *
- * 刻意带上 `options`：后端知道选项结构（处置类是结构化的，普通升级项可能从正文解析），
- * 界面不该再猜一遍；猜错就会把「1. 读文件」这种步骤当成可点的选项发出去。
- */
-export type FeedPending = {
-	readonly key: string;
-	readonly question: string;
-	/** 谁在问（显示名）。 */
-	readonly from: string;
-	/** 决策人（权限位）：owner / ceo / cto / leader:<slug>。 */
-	readonly decisionOwner: string;
-	readonly askedAt: number;
-	/** 是不是处置类（暂搁 / 放弃）。 */
-	readonly disposition: boolean;
-	/** 结构化选项；没有就为空数组（界面自行降级成自由输入）。 */
-	readonly options: readonly { readonly id: string; readonly label: string; readonly recommended: boolean }[];
-	/**
-	 * 当前这个会话（界面里正在看的这个人）能不能对它做「驳回 / 标记已解决」。
-	 *
-	 * 由后端算好下发，而不是让界面用 decisionOwner 自己比：
-	 * 权限口径（canDisposePending）只该有一处定义，界面再算一遍早晚会两边不一致。
-	 * 注意：这只是**显示依据**；真正的拦截在 disposePending 里（HTTP/工具都走它）。
-	 */
-	readonly canDispose: boolean;
-	/** CEO 能否把它从老板层接管回来（只有 CEO + owner 级条目为 true）。 */
-	readonly canTakeOver: boolean;
-	/** 来源说明（Defect B 要求 4）：谁声明了什么类别、是否经 CEO 复核。 */
-	readonly trace?: { readonly declaredTopic?: string; readonly ceoReviewed?: boolean; readonly note: string };
-};
-
-/**
- * 「有东西在等决策」的结构化描述。
- *
- * ADR-026 决策 2 的推论：老板待办里应该只剩「立项 / 砍项目 / 超预算 / 对外」。
- * 要把这句话变成可验证的事，界面就不能只知道「是不是等老板」，
- * 还必须知道「这条到底该谁拍」——否则一个本该 CTO 拍的架构问题
-	 * 会以「等老板」的样子出现在老板的面板上。
- */
-export type AwaitingDecision = {
-	/** 有没有未答复的待决项指向这个会话的主人。 */
-	readonly pending: boolean;
-	/**
-	 * 决策人类型。`none` = 没东西等；`owner` = 真该老板；
-	 * `role` / `project` = 该管理层 / 项目负责人（不该骚扰老板）。
-	 */
-	readonly decider: "none" | "owner" | "role" | "project";
-	/** 决策人的显示名（「老板」「CTO」「许砚舟」）；`none` 时为空串。 */
-	readonly label: string;
-	/** 等这个人拍的未决条数。 */
-	readonly count: number;
 };
 
 /** 读取一条会话的完整流。 */
@@ -320,10 +225,6 @@ export async function readFeed(
 
 	return {
 		conversationId,
-		title: "",
-		role: "",
-		// 先按组织索引给一个发言人；decorateFeed 会按会话种类再校正一次
-		actor: actorRefOf(state, conversationId) ?? { label: "", kind: "system" },
 		items,
 		...(streaming === "" ? {} : { streaming }),
 		...(thinking === "" ? {} : { thinking }),
@@ -331,148 +232,7 @@ export async function readFeed(
 		queued,
 		busy: hasLiveTask || streaming !== "" || thinking !== "" || running.length > 0,
 		tokens,
-		kind: "branch",
-		awaitingOwner: false,
-		awaitingDecision: { pending: false, decider: "none", label: "", count: 0 },
-		// 由 decorateFeed 填（它才读 PendingDoc）
-		pending: [],
 	};
-}
-
-/**
- * 给 feed 补上标题、角色、种类、发言人、待拍板状态。
- *
- * 从 http.ts 移到 feed.ts：发言人（`actor`）与条目里的 `from`/`to` 必须用
- * 同一套口径解析，分在两个文件里早晚会不一致。
- */
-export async function decorateFeed(
-	runtime: CompanyRuntime,
-	feed: Feed,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<Feed> {
-	const state = await readCompany(runtime, context);
-	const pending = await listPending(runtime, context);
-	// 只有 owner 级的问题才是「等老板拍板」；CEO 自己队列里的问题不算。
-	//
-	// 处置待办（item.disposition !== undefined）**不计入** awaitingOwner：
-	// 它归「被打断工作的下达人」，不是「等老板拍板」。
-	// 靠 `level` 字符串猜会把它和项目终止确认混在一条布尔里（审计 D-02(d)），
-	// 所以显式排除。
-	// ── 待决策项（ADR-026 决策 2 / 6）──
-	//
-	// 一条待决项算在哪个会话头上，看的是**决策人**，不是 `level`：
-	// `level` 是「升级链停在哪一级」，升一级就变；`decisionOwner` 才是「结构上该谁拍」。
-	//
-	// 处置待办（item.disposition !== undefined）仍不计入：它归「被打断工作的下达人」，
-	// 不是「等这条会话的主人拍板」（审计 D-02(d) 的结论，保留）。
-	const myLevel = levelOfConversation(state, feed.conversationId);
-	// `mine`（等这个人拍的全部）含处置类：处置也是「有人在等你回话」，
-	// 界面上要和普通拍板一样出现在聊天里。`awaitingDecision.count` 只统计
-	// 非处置项（处置是「被打断工作的下达人」的事，不该计进「等拍板」的角标），
-	// 但 feed.pending 要全给，否则处置待办在聊天里就彻底没有入口了。
-	const allMine = pending.filter(
-		(item) =>
-			myLevel !== undefined &&
-			// 自己的待办
-			(decisionOwnerOfItem(item) === myLevel ||
-				// 缺陷 B：CEO 还要能看到**老板级**待办，否则「接管」这个动作在
-				// CEO 的界面上根本没有入口（它 decisionOwner 是 owner，不会进 CEO 队列）。
-				// 只给 CEO，且只给 owner 级；其他层级看不到别人的活。
-				(myLevel === "ceo" && item.level === "owner")),
-	);
-	// 注意：`mine` 决定 `awaitingDecision.count`（角标）。
-	// 老板级条目是「给 CEO 看的接管入口」，**不算** CEO 自己的待拍板数——
-	// 否则 CEO 会以为自己有活没干，其实那是在等老板。
-	const mine = allMine.filter(
-		(item) => item.disposition === undefined && decisionOwnerOfItem(item) === myLevel,
-	);
-
-	const decider: AwaitingDecision["decider"] =
-		mine.length === 0
-			? "none"
-			: myLevel === "owner"
-				? "owner"
-				: myLevel !== undefined && isLeaderManagerRef(myLevel)
-					? "project"
-					: "role";
-	const deciderLabel =
-		decider === "none"
-			? ""
-			: decider === "owner"
-				? "老板"
-				: managerLabelOf(state, myLevel as ManagerRef);
-
-	const awaitingDecision: AwaitingDecision = {
-		pending: mine.length > 0,
-		decider,
-		label: deciderLabel === undefined ? "" : deciderLabel,
-		count: mine.length,
-	};
-
-	// 兼容字段：界面现在只关心「是不是等老板」。
-	// **不是** `awaitingDecision.pending` —— 这里必须收窄到 owner，否则界面又会
-	// 把「等 CTO 拍」渲染成「等老板」。`decider === "owner"` 已经蕴含
-	// `myLevel === "owner" && mine.length > 0`（mine 全部 decisionOwner === myLevel）。
-	const awaitingOwner = decider === "owner";
-
-	let title = "会话";
-	let kind: Feed["kind"] = "branch";
-	let role = "";
-	let actor: ActorRef = { label: "", kind: "system" };
-
-	const roleEntry = Object.entries(state?.roles ?? {}).find(([, id]) => id === feed.conversationId);
-	if (roleEntry !== undefined) {
-		const roleKey = roleEntry[0] as ManagementRole;
-		title = ROLE_LABELS[roleKey] ?? roleKey.toUpperCase();
-		kind = roleKey === "ceo" ? "owner" : "role";
-		role =
-			roleKey === "ceo"
-				? "唯一真人 · 直接向你汇报"
-				: `${ROLE_DEFINITIONS[roleKey]?.summary ?? ""} · 向 CEO 汇报`;
-		// CEO 通道的助手是 CEO；其他岗位就是它自己
-		actor = { conversationId: feed.conversationId, label: title, kind: roleKey === "ceo" ? "owner" : "role" };
-	}
-
-	for (const project of Object.values(state?.projects ?? {})) {
-		if (project.leader === feed.conversationId) {
-			title = project.name;
-			kind = "project";
-			role = "项目负责人";
-			actor = {
-				conversationId: feed.conversationId,
-				label: project.leaderName ?? project.name,
-				kind: "project",
-			};
-		}
-	}
-	for (const staff of Object.values(state?.staff ?? {})) {
-		if (staff.conversationId === feed.conversationId) {
-			title = staff.name;
-			kind = "staff";
-			role = `${staff.role} · ${staff.project} 项目 · 向 ${managerLabelOf(state, staff.manager)} 汇报`;
-			actor = { conversationId: feed.conversationId, label: staff.name, kind: "staff" };
-		}
-	}
-
-	// 待办随 feed 下发：界面在聊天流里渲染成可交互事项，不再另开顶部区域。
-	const pendingView: readonly FeedPending[] = allMine.map((item) => ({
-		key: item.key,
-		question: item.question,
-		from: item.from,
-		decisionOwner: decisionOwnerOfItem(item),
-		askedAt: item.askedAt,
-		disposition: item.disposition !== undefined,
-		options: (item.disposition?.options ?? []).map((option) => ({
-			id: option.id,
-			label: option.label,
-			recommended: option.recommended === true,
-		})),
-		canDispose: canDisposePending(item, myLevel),
-		canTakeOver: myLevel === "ceo" && item.level === "owner" && item.answer === undefined && item.disposed === undefined,
-		...(item.trace === undefined ? {} : { trace: item.trace }),
-	}));
-
-	return { ...feed, title, kind, role, actor, awaitingOwner, awaitingDecision, pending: pendingView };
 }
 
 /** 底层 pi.live 的结构（只声明用到的字段）。 */
