@@ -61,7 +61,7 @@ describe("外壳装配", () => {
 		expect(created.length).toBe(0);
 
 		// 直接调用工具层的建人逻辑（与模型调 `hire` 走同一条路）。
-		const { createAgent } = await import("../../src/core/company/org.ts");
+		const { createAgent } = await import("../../src/core/agent/create.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		const id = await shell.openAgent(identity.slug);
 		expect(id).toBeGreaterThan(0);
@@ -83,7 +83,7 @@ describe("外壳装配", () => {
 
 	it("重启后再装配，不会重复建会话，名册与频道保持", async () => {
 		const { shell, agentsRoot, models } = await setup();
-		const { createAgent } = await import("../../src/core/company/org.ts");
+		const { createAgent } = await import("../../src/core/agent/create.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		await shell.openAgent(identity.slug);
 		const before = await channels(shell);

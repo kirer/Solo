@@ -14,7 +14,7 @@
  * 谁是「离老板最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
 import {
 	BACKGROUND_CONTEXT,
@@ -27,7 +27,7 @@ import { OWNER_SLUG, readAllIdentities } from "../agent/identity.ts";
 import { agentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
 import { ChannelDoc, OWNER, channelsOf, ensureChannel, type ChannelState } from "../channel/state.ts";
-import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../company/directory.ts";
+import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -113,10 +113,13 @@ export async function assembleCore(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<CoreShell> {
 	const companyChannel = options.companyChannel ?? "company";
+	// `agents/`、`projects/`、`skills/` 是同级目录，工作区根 = agentsRoot 的父目录。
+	const workspaceRoot = dirname(options.agentsRoot);
 
 	// ── 1. 装能力包 ────────────────────────────────────────────────
 	const toolDeps: CoreToolDeps = {
 		harness,
+		workspaceRoot,
 		agentsRoot: options.agentsRoot,
 		projectsRoot: options.projectsRoot,
 		directory: async (ctx) => (await harness.snapshot(DirectoryDoc, ctx)) ?? emptyDirectory(),
@@ -135,7 +138,13 @@ export async function assembleCore(
 	const identityExtension = (slug: string): Extension =>
 		defineExtension({
 			name: `core-identity:${slug}`,
-			sections: [agentSection(registry, { agents: options.agentsRoot, projects: options.projectsRoot }, slug)],
+			sections: [
+				agentSection(
+					registry,
+					{ workspace: workspaceRoot, agents: options.agentsRoot, projects: options.projectsRoot },
+					slug,
+				),
+			],
 		});
 
 	registry.install(toolsExtension);
@@ -347,7 +356,7 @@ export async function ownerSpeak(
 	const channel = state.channels[options.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${options.channelId}`);
 	const { postMessage } = await import("../channel/post.ts");
-	const { conversationFor } = await import("../company/directory.ts");
+	const { conversationFor } = await import("../agent/roster.ts");
 	const result = await postMessage(
 		{
 			harness: shell.harness,
@@ -385,7 +394,7 @@ export async function seedOwnerAssistant(
 	agentsRoot: string,
 	options: { readonly name: string; readonly body?: string },
 ): Promise<string> {
-	const { createAgent } = await import("../company/org.ts");
+	const { createAgent } = await import("../agent/create.ts");
 	const identity = await createAgent({
 		root: agentsRoot,
 		name: options.name,
@@ -414,11 +423,13 @@ export async function seedOwnerAssistant(
 			].join("\n"),
 	});
 
-	// 技能：和身份一样，是文件，不是代码。这里只播种两份最常用的「怎么做」，
-	// 之后它自己用 `write_skill` 加新的、改旧的 —— 改完下一条消息生效。
-	const { writeSkill } = await import("../agent/skills.ts");
-	const agentDir = join(agentsRoot, identity.slug);
-	await writeSkill(agentDir, {
+	// 技能：和身份一样，是文件，不是代码。
+	//
+	// 这两份写进**公司层**（`skills/`），不是某个人的目录：立项和招人是这家公司
+	// 的通用做法，不该只有「离老板最近的那个人」会。之后谁想有自己的一套，用
+	// `write_skill` 写个人层同名技能就覆盖掉了。
+	const { writeCompanySkill } = await import("../agent/skills.ts");
+	await writeCompanySkill(agentsRoot, {
 		name: "立项",
 		description: "老板给了一个新需求，要判断该不该单独立一个项目、怎么立。用在「这事要开个新摊子吗」的时候。",
 		body: [
@@ -441,7 +452,7 @@ export async function seedOwnerAssistant(
 			"项目立了没人负责，就会一直挂着。立完立刻确认 owner 存在。",
 		].join("\n"),
 	});
-	await writeSkill(agentDir, {
+	await writeCompanySkill(agentsRoot, {
 		name: "招人",
 		description: "需要一个人来做某件事时，怎么决定招谁、写什么身份、给什么边界。用在「这事得有人干」的时候。",
 		body: [

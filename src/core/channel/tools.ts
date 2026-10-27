@@ -36,11 +36,18 @@ import {
 	type ToolRegistration,
 } from "../runtime/index.ts";
 import { OWNER_SLUG, chainUp, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
-import { listSkills, readSkill, writeSkill } from "../agent/skills.ts";
+import {
+	listCompanySkills,
+	listSkills,
+	readSkill,
+	type SkillRoots,
+	writeCompanySkill,
+	writeSkill,
+} from "../agent/skills.ts";
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
-import { listProjects, readProject, writeProject } from "../company/project.ts";
-import { createAgent, renderIdentityFile, renderOrgChart } from "../company/org.ts";
-import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../company/directory.ts";
+import { listProjects, readProject, writeProject } from "../project/doc.ts";
+import { createAgent, renderIdentityFile, renderOrgChart } from "../agent/create.ts";
+import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
 import {
 	ChannelDoc,
@@ -52,10 +59,22 @@ import {
 	type Message,
 } from "./state.ts";
 import { renderDigest } from "./deliver.ts";
+import {
+	appendProjectMemory,
+	projectMemorySections,
+	readProjectMemory,
+} from "../project/memory.ts";
 
 /** 工具运行所需的一切。全部由外壳在启动时装配，工具自己不读环境变量。 */
 export type CoreToolDeps = {
 	readonly harness: Harness;
+	/**
+	 * 工作区根。`agents/` 与 `skills/` 都在它下面。
+	 *
+	 * 为什么工具需要它：`npx skills add` 会把技能装到**当前目录**下，所以在哪儿跑
+	 * 决定了装到哪儿。公司层就是工作区根下的 `skills/`。
+	 */
+	readonly workspaceRoot: string;
 	/** `workspace/agents`。 */
 	readonly agentsRoot: string;
 	/** `workspace/projects`。 */
@@ -67,6 +86,11 @@ export type CoreToolDeps = {
 	/** 为某个 slug 建会话并绑定。缺省表示不支持热建（测试里可以不提供）。 */
 	readonly openAgent?: (slug: string, context: Context) => Promise<number>;
 };
+
+/** 技能的两级根目录。工具里每次都从 deps 现算，避免多存一份会漂的副本。 */
+function skillRoots(deps: CoreToolDeps): SkillRoots {
+	return { workspace: deps.workspaceRoot, agents: deps.agentsRoot };
+}
 
 function text(value: string) {
 	return { output: [{ type: "text" as const, text: value }] };
@@ -371,22 +395,26 @@ export function createCoreTools(deps: CoreToolDeps) {
 	 */
 	const listSkillsTool = defineTool({
 		name: "list_skills",
-		description: "列出我自己的全部技能（名字 + 一句描述）。要看正文用 read_skill。",
+		description: "列出我能用的全部技能（名字 + 一句描述 + 公司教的还是我自己写的）。要看正文用 read_skill。",
 		parameters: Type.Object({}),
 		execute: async (_args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			const skills = await listSkills(join(deps.agentsRoot, slug));
+			const skills = await listSkills(skillRoots(deps), slug);
 			if (skills.length === 0) return text("我还没有技能。");
-			return text(skills.map((skill) => `- ${skill.name}：${skill.description}`).join("\n"));
+			return text(
+				skills
+					.map((skill) => `- ${skill.name}（${skill.scope === "company" ? "公司" : "我自己"}）：${skill.description}`)
+					.join("\n"),
+			);
 		},
 	});
 
 	const readSkillTool = defineTool({
 		name: "read_skill",
 		description: [
-			"读一门技能的正文（agents/<我>/skills/<名字>/SKILL.md）。",
+			"读一门技能的正文。公司层的在 skills/<名字>/SKILL.md，我自己的在 agents/<我>/skills/<名字>/SKILL.md。",
 			"提示词里只有技能的名字和一句描述；要做那件事之前，先读它的正文。",
 		].join(""),
 		parameters: Type.Object({
@@ -396,37 +424,92 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			const skill = await readSkill(join(deps.agentsRoot, slug), args.name);
+			const skill = await readSkill(skillRoots(deps), slug, args.name);
 			if (skill === undefined) {
-				const all = await listSkills(join(deps.agentsRoot, slug));
+				const all = await listSkills(skillRoots(deps), slug);
 				const names = all.map((item) => item.name).join("、");
 				return text(`没有叫「${args.name}」的技能。我有的：${names === "" ? "（一个都没有）" : names}。`);
 			}
-			return text(`# 技能：${skill.name}\n\n${skill.body}`);
+			const where = skill.scope === "company" ? "公司层" : "我自己的";
+			return text(`# 技能：${skill.name}（${where}）\n\n${skill.body}`);
 		},
 	});
 
 	const writeSkillTool = defineTool({
 		name: "write_skill",
 		description: [
-			"写一门技能（整篇替换 agents/<我>/skills/<名字>/SKILL.md）。",
+			"写一门技能（整篇替换 SKILL.md）。",
+			"`scope=personal`（默认）写进我自己的目录，只有我看得见；`scope=company` 写进公司层，所有人立刻看得见。",
 			"技能是「怎么做一件事」的说明书：步骤、判据、踩过的坑。写具体，别写口号。",
 			"写完下一条消息就生效 —— 不用重启。",
 		].join(""),
 		parameters: Type.Object({
 			name: Type.String({ description: "技能名，会当目录名用（不能含斜杠）" }),
-			description: Type.String({ description: "一句话说清「做什么 + 什么时候用」。这行会常驻提示词，要能当路由依据。" }),
+			description: Type.String({
+				description: "一句话说清「做什么 + 什么时候用」。这行会常驻提示词，要能当路由依据。",
+			}),
 			body: Type.String({ description: "正文：步骤、判据、样例。写给下一次的你自己看。" }),
+			scope: Type.Optional(
+				Type.String({ description: "personal（默认，只我看得见）或 company（全公司都看得见）" }),
+			),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
+			const company = args.scope === "company";
 			try {
-				const written = await writeSkill(join(deps.agentsRoot, slug), args);
-				return text(`已写入技能「${written.name}」：agents/${slug}/skills/${written.name}/SKILL.md。下一条消息就生效。`);
+				const written = company
+					? await writeCompanySkill(deps.workspaceRoot, args)
+					: await writeSkill(skillRoots(deps), slug, args);
+				const where = company ? `skills/${written.name}/SKILL.md（全公司）` : `agents/${slug}/skills/${written.name}/SKILL.md`;
+				return text(`已写入技能「${written.name}」：${where}。下一条消息就生效。`);
 			} catch (error) {
 				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
+			}
+		},
+	});
+
+	/**
+	 * 去外面的技能市场找现成的。
+	 *
+	 * 这里面**没有代码逻辑**，只有两条命令：`npx skills find` 搜、`npx skills add` 装。
+	 * 生态是公开的（skills.sh / GitHub），所以「技能从哪来」不需要我们自己造一个市场 ——
+	 * 我们只需要让它能调用、把装好的东西收进 skills/ 目录，然后照自己的话重写一遍。
+	 */
+	const findSkillTool = defineTool({
+		name: "find_skill",
+		description: [
+			"去开放技能市场（skills.sh / GitHub）搜或装现成的技能。",
+			"`action=find` 搜关键词；`action=add` 按 package 名安装（例如 `anthropics/skills@pdf`）。",
+			"装完之后**不要直接用**：读一遍、按我们公司的话重写成自己的（`write_skill`），别人的说明书不可能知道我们的规矩。",
+		].join(""),
+		parameters: Type.Object({
+			action: Type.String({ description: "find 或 add" }),
+			query: Type.String({ description: "find 时是关键词；add 时是 package 名" }),
+		}),
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			if (slug === undefined) return text("你还不在名册里。");
+			const { execFile } = await import("node:child_process");
+			const { promisify } = await import("node:util");
+			const run = promisify(execFile);
+			const command = args.action === "add" ? ["skills", "add", args.query, "--yes"] : ["skills", "find", args.query];
+			try {
+				// 在**工作区**里跑：`npx skills add` 会把技能装到当前目录下的 skills/，
+				// 正好就是公司层。装之前把 cwd 设成工作区根，个人层的事让它自己拷。
+				const { stdout, stderr } = await run("npx", command, {
+					cwd: deps.workspaceRoot,
+					timeout: 120_000,
+					maxBuffer: 4 * 1024 * 1024,
+					env: { ...process.env, CI: "1" },
+				});
+				const output = `${stdout}\n${stderr}`.trim();
+				return text(output === "" ? "命令跑完了，没有输出。" : output.slice(0, 8_000));
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				return text(`跑不动（可能是没网，或者 npx 不可用）：${detail.slice(0, 2_000)}`);
 			}
 		},
 	});
@@ -536,6 +619,69 @@ export function createCoreTools(deps: CoreToolDeps) {
 		},
 	});
 
+	/**
+	 * 项目记忆：`projects/<slug>/memory.md`。
+	 *
+	 * 与个人记忆的区别只有归属：个人记忆是「我学到什么」，项目记忆是「这个摊子上发生过
+	 * 什么」。为什么必须分开：项目换人很正常，事实只写在某个人的记忆里，人一走就带走了。
+	 *
+	 * 写权限按**归属**判，不按职位判：只有 `identity.md` 里写着 `project: <slug>` 的人
+	 * 能写。全公司都能读 —— 记忆是资产，藏起来只会重复踩坑。
+	 */
+	const rememberProjectTool = defineTool({
+		name: "remember_project",
+		description: [
+			"把一条经验写进所在项目的记忆（projects/<项目>/memory.md，追加一小节，带日期和你的名字）。",
+			"写项目级的判断：这个项目的坑、约定、走过的弯路。个人的事用 remember。",
+			"只有这个项目里的人能写。",
+		].join(""),
+		parameters: Type.Object({
+			text: Type.String({ description: "要记的东西。一句话说清一条。" }),
+			project: Type.Optional(Type.String({ description: "项目 slug；默认是我所在的项目" })),
+		}),
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			if (slug === undefined) return text("你还不在名册里。");
+			const self = await readIdentity(deps.agentsRoot, slug);
+			const project = args.project ?? self?.project;
+			if (project === undefined) return text("我不在任何项目里。要记项目的事，先说清是哪个项目。");
+			// 写权限按归属：不在这个项目里就不许写（读是全公司都能读）。
+			if (self?.project !== project) {
+				return text(`我不在项目 \`${project}\` 里，写不了它的记忆。我的项目是 ${self?.project ?? "（没有）"}。`);
+			}
+			await appendProjectMemory(deps.projectsRoot, project, { text: args.text, by: slug });
+			return text(`已记进项目「${project}」的记忆。下一条消息就会出现在这个项目的记忆目录里。`);
+		},
+	});
+
+	const readProjectMemoryTool = defineTool({
+		name: "read_project_memory",
+		description: [
+			"读某个项目的记忆全文（全公司都能读）。可以只筛包含某个词的段落。",
+			"换手接一个项目之前先读它 —— 坑都写在这里。",
+		].join(""),
+		parameters: Type.Object({
+			project: Type.Optional(Type.String({ description: "项目 slug；默认是我所在的项目" })),
+			contains: Type.Optional(Type.String({ description: "只看包含这个词的段落" })),
+		}),
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			const self = slug === undefined ? undefined : await readIdentity(deps.agentsRoot, slug);
+			const project = args.project ?? self?.project;
+			if (project === undefined) return text("我不在任何项目里。要看项目记忆，请说是哪个项目。");
+			const source = await readProjectMemory(deps.projectsRoot, project);
+			if (source === undefined) return text(`项目「${project}」还没有记忆。`);
+			if (args.contains === undefined || args.contains === "") return text(source);
+			const sections = projectMemorySections(source).filter(
+				(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
+			);
+			if (sections.length === 0) return text(`项目「${project}」的记忆里没有「${args.contains}」。`);
+			return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
+		},
+	});
+
 	return [
 		say,
 		ask,
@@ -546,9 +692,12 @@ export function createCoreTools(deps: CoreToolDeps) {
 		orgChart,
 		hire,
 		updateIdentity,
+		rememberProjectTool,
+		readProjectMemoryTool,
 		listSkillsTool,
 		readSkillTool,
 		writeSkillTool,
+		findSkillTool,
 		listProjectsTool,
 		readProjectTool,
 		writeProjectTool,

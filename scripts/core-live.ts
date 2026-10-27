@@ -157,6 +157,33 @@ async function main(): Promise<void> {
 		detail: recallReply?.text.slice(0, 100) ?? "超时无回话",
 	});
 
+	// 5. 公司层技能：让它写一份 scope=company 的技能，检查是否落到工作区根的 skills/。
+	const shareAsked = await shell.ownerSay({
+		channelId: "company",
+		text: `@${slug} 用 write_skill 写一份公司层技能（scope=company），名字「自测共享技能」，描述「全公司通用」，正文一句话。写完告诉我。`,
+	});
+	const shareReply = await waitForReply(shell, "company", slug, shareAsked.seq, WAIT_MS);
+	const sharedPath = join(root, "skills", "自测共享技能", "SKILL.md");
+	const sharedText = await readFile(sharedPath, "utf8").catch(() => "");
+	phases.push({
+		name: "技能共享（公司层真的写到了工作区根）",
+		ok: shareReply !== undefined && sharedText.includes("全公司通用"),
+		detail: sharedText === "" ? "工作区根没有 skills/自测共享技能/SKILL.md" : sharedText.split("\n")[2] ?? "",
+	});
+
+	// 6. 项目记忆：让它记一条项目级的事，检查是否落到 projects/<slug>/memory.md。
+	const projectMemoryAsked = await shell.ownerSay({
+		channelId: "company",
+		text: `@${slug} 用 remember_project 记一条项目级的事：「这个项目第一次跑通了」。记完告诉我。`,
+	});
+	const projectMemoryReply = await waitForReply(shell, "company", slug, projectMemoryAsked.seq, WAIT_MS);
+	const projectMemoryText = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");
+	phases.push({
+		name: "项目记忆落盘（projects/<slug>/memory.md）",
+		ok: projectMemoryReply !== undefined && projectMemoryText.includes("第一次跑通"),
+		detail: projectMemoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
+	});
+
 	for (const phase of phases) log(phase);
 	await runtime.close().catch(() => undefined);
 	await shell.close().catch(() => undefined);

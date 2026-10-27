@@ -13,7 +13,7 @@
  *   这里从频道 id 前缀猜（`dm:` → dm，`proj:` → project，其余 → company）。
  */
 import { readAllIdentities, OWNER_SLUG, chainUp, reportsOf, type Identity } from "../agent/identity.ts";
-import { conversationFor, type DirectoryState } from "../company/directory.ts";
+import { conversationFor, type DirectoryState } from "../agent/roster.ts";
 import { unreadCount, readMarkOf, type Channel, type ChannelState, type Message } from "../channel/state.ts";
 
 /** 界面用的频道种类。 */

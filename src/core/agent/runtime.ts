@@ -24,10 +24,13 @@ import {
 import { readAllIdentities, readIdentity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
-import { readProject } from "../company/project.ts";
+import { readProject } from "../project/doc.ts";
+import { projectMemoryDigest, readProjectMemory } from "../project/memory.ts";
 import { renderAgentPrompt, type CapabilityLine } from "./prompt.ts";
 
 export type AgentPaths = {
+	/** 工作区根（公司层技能在 `<workspace>/skills/`）。 */
+	readonly workspace: string;
 	/** `workspace/agents`。 */
 	readonly agents: string;
 	/** `workspace/projects`。 */
@@ -112,17 +115,26 @@ export function agentSection(
 				self.project === undefined
 					? undefined
 					: all.filter((item) => item.project === self.project).map((item) => item.slug);
-			const skills = await listSkills(join(paths.agents, slug));
+			const projectMemory =
+				self.project === undefined ? undefined : await readProjectMemory(paths.projects, self.project);
+			const projectDigest = projectMemory === undefined ? undefined : projectMemoryDigest(projectMemory);
+			const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
 			const memory = await readMemory(join(paths.agents, slug));
 			const digest = memory === undefined ? undefined : memoryDigest(memory);
 			return renderAgentPrompt({
 				self,
 				all,
 				capabilities: registeredTools(registry),
-				skills: skills.map((skill) => ({ name: skill.name, description: skill.description })),
+				skills: skills.map((skill) => ({
+					name: skill.name,
+					description: skill.description,
+					scope: skill.scope,
+					...(skill.overrides === true ? { overrides: true } : {}),
+				})),
 				...(digest === undefined ? {} : { memoryDigest: digest }),
 				...(brief === undefined ? {} : { projectBrief: brief }),
 				...(members === undefined ? {} : { projectMembers: members }),
+				...(projectDigest === undefined ? {} : { projectMemoryDigest: projectDigest }),
 			});
 		},
 	};

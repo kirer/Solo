@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { createAgent, renderOrgChart, slugify, uniqueSlug } from "../../src/core/company/org.ts";
+import { createAgent, renderOrgChart, slugify, uniqueSlug } from "../../src/core/agent/create.ts";
 import { listAgentSlugs, readAllIdentities, readIdentity } from "../../src/core/agent/identity.ts";
 
 const dirs: string[] = [];

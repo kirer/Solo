@@ -15,8 +15,8 @@ import { openCore, createRegistry, setupModels } from "../../src/core/runtime/in
 import { assembleCore, ownerSpeak, seedOwnerAssistant } from "../../src/core/shell/assemble.ts";
 import { readIdentity } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/state.ts";
-import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/company/directory.ts";
-import { createAgent } from "../../src/core/company/org.ts";
+import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
+import { createAgent } from "../../src/core/agent/create.ts";
 
 const dirs: string[] = [];
 

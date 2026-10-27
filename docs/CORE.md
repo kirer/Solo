@@ -72,9 +72,10 @@ project: demo
 | `org_chart` | 现在公司长什么样 |
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进公司频道） |
 | `update_identity` | 改自己或直接下属的 `identity.md` |
-| `set_capabilities` | 改某人的 `capabilities` |
-| `remember` / `recall` | 写/读 `memory.md` |
-| `list_skills` / `read_skill` / `write_skill` | 技能：`skills/<名字>/SKILL.md` |
+| `remember` / `recall` | 写/读我自己的 `memory.md` |
+| `remember_project` / `read_project_memory` | 写/读 `projects/<slug>/memory.md` |
+| `list_skills` / `read_skill` / `write_skill` | 技能：公司层 + 个人层，同名个人层覆盖 |
+| `find_skill` | 去开放技能市场（skills.sh / GitHub）搜或装现成的 |
 | `list_projects` / `read_project` / `write_project` | 项目：`projects/<slug>/README.md` |
 
 「层级」不在代码里，在提示词里：某个人的 `identity.md` 写着「你向助理汇报」，他自己
@@ -89,16 +90,28 @@ project: demo
 
 ```
 workspace/
+  skills/<名字>/SKILL.md        公司层技能：全公司通用
   agents/<slug>/
-    identity.md             他是谁：名字、岗位、上级、所在项目、正文
-    memory.md               他自己的记忆（可改，不是只增）
-    skills/<名字>/SKILL.md  他会怎么做一件事
-  projects/<slug>/README.md 这个项目要做什么、谁负责、什么不做
-  core.sqlite               频道消息、名册（都是可从文件夹重建的投影）
+    identity.md                 他是谁：名字、岗位、上级、所在项目、正文
+    memory.md                   他自己的记忆（可改，不是只增）
+    skills/<名字>/SKILL.md      个人层技能：只有他看得见，同名覆盖公司层
+  projects/<slug>/
+    README.md                   这个项目要做什么、谁负责、什么不做
+    memory.md                   这个项目发生过什么（项目里的人写，全公司能读）
+  core.sqlite                   频道消息、名册（都是可从文件夹重建的投影）
 ```
 
-名册（`core.directory`）只是 slug ↔ 会话 id 的缓存，删了能从文件夹重建；频道消息是真
-历史，删了就没了。
+名册（`core.agent.roster` 的 `core.directory` 文档）只是 slug ↔ 会话 id 的缓存，删了能从
+文件夹重建；频道消息是真历史，删了就没了。
+
+**三级不是设计出来的顺手分层，而是三种不同的变化频率**：公司通用做法几个月改一次、
+一个人的手艺天天加、一个项目的坑一次就踩完。混在一起，改一处就得动全部。
+
+| 归属 | 谁写 | 谁读 | 换了人还在吗 |
+| --- | --- | --- | --- |
+| `agents/<slug>/*` | 他自己 | 他自己 | ✗ 跟着人走 |
+| `projects/<slug>/memory.md` | 这个项目的人 | 全公司 | ✓ 跟着项目走 |
+| `skills/`（公司层） | 谁都能写（`scope=company`） | 全公司 | ✓ |
 
 ## 跑起来
 
@@ -118,8 +131,8 @@ npm run core -- --port 7790 --workspace workspace-core
 npm run core:live
 ```
 
-它验五件事：被 @ 会回话 / 技能热更新生效 / 项目说明进提示词 / `remember` 真落盘 /
-`recall` 真读回。
+它验七件事：被 @ 会回话 / 技能热更新生效 / 项目说明进提示词 / `remember` 真落盘 /
+`recall` 真读回 / 公司层技能真写到了工作区根 / 项目记忆真落盘。
 
 ## 技能：能写成说明书的事就不写代码
 
@@ -139,7 +152,12 @@ description: 需要一个人来做某件事时，怎么决定招谁、写什么�
 - **`name` + `description` 常驻提示词**，正文按需 `read_skill` 读。一个人攒 20 门手艺，
   常驻的是 20 行描述，不是 20 篇正文 —— 这是成本上最要紧的一条。
 - 改文件 → **下一条消息生效**，不重启、不重新部署。
-- agent 自己就能 `write_skill` 长出新技能。播种时只给「离老板最近的人」两份：`立项`、`招人`。
+- agent 自己就能 `write_skill` 长出新技能。播种时写两份**公司层**技能：`立项`、`招人`。
+- `write_skill` 的 `scope=personal`（默认）写进自己的目录；`scope=company` 写进工作区根的
+  `skills/`，所有人立刻看得见。同名时个人层覆盖公司层 —— 这是「我这个人跟公司不一样」
+  的唯一机制，没有别的开关。
+- **不必自己造技能市场**：`find_skill` 直接调 `npx skills find` / `npx skills add`，
+  生态在 skills.sh 和 GitHub 上。装完别直接用，按我们的话重写一遍。
 
 判断边界：「做什么」是身份（`identity.md`），「怎么做」是技能（`skills/`），「发生过什么」
 是记忆（`memory.md`）。三条都不在代码里。
@@ -152,11 +170,23 @@ description: 需要一个人来做某件事时，怎么决定招谁、写什么�
 
 「什么时候该立项」不在代码里 —— 那是判断，写在助理的 `立项` 技能里。
 
-## 还没做的
+## 目录
 
-- **项目记忆**：`projects/<slug>/` 现在只有 `README.md`。谁在项目里说过什么、做过什么，
-  还没有地方沉淀（现在是靠频道历史）。
+```
+src/core/
+  runtime/   openCore + 防腐层
+  agent/     identity（他是谁）/ prompt（投影）/ runtime（接进会话）/ memory / skills
+             create（新建一个人）/ roster（slug ↔ 会话）
+  project/   doc（README.md）/ memory（memory.md）
+  channel/   state（纯规则）/ deliver（唤醒）/ post（写一条）/ tools（12+ 个工具）
+  shell/     assemble（扫文件夹 → 开会话 → 建频道）/ serve（HTTP+SSE）/ view / main
+```
+
+`project/` 与 `agent/`、`channel/` **平级**：项目不是公司的一个子概念，它是与「人」
+并列的另一种归属。
+
+## 还没做的
 - **待办拍板 / 任务 / 成本**：旧核心有，新核心一个都没有（界面相应位置是空的）。
 - **看门狗 / 崩溃自愈 / IM 出站**：旧核心为长跑攒的运维设施，新核心还没搬。
-- **技能的市场/分发**：现在技能只能一个 agent 自己写自己的。跨 agent 共享（「把这门手艺
-  给全组」）还没有。
+- **项目记忆的自动沉淀**：现在靠 agent 主动 `remember_project`。频道里的结论还不会
+  自动汇总进去。

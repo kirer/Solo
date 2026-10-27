@@ -8,7 +8,7 @@ import {
 	readProject,
 	renderProjectFile,
 	writeProject,
-} from "../../src/core/company/project.ts";
+} from "../../src/core/project/doc.ts";
 
 let root = "";
 

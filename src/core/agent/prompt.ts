@@ -34,12 +34,26 @@ export type RenderInput = {
 	/** 项目成员目录（`projects/<slug>/` 下的 agent slug）。 */
 	readonly projectMembers?: readonly string[];
 	/**
+	 * 项目记忆目录（`projects/<slug>/memory.md` 的小节标题）。
+	 *
+	 * 只给目录，条文靠 `read_project_memory` 读。项目换人时，接手的人看目录就知道
+	 * 有哪些坑，再决定读哪几条 —— 这比把整本翻一遍便宜得多。
+	 */
+	readonly projectMemoryDigest?: string;
+	/**
 	 * 你会的技能。只列名字 + 一句描述，正文按需用 `read_skill` 读。
 	 *
 	 * 为什么不把正文塞进来：一个 agent 攒 20 门手艺，正文全进提示词就是几万 token，
 	 * 而且大部分跟当前这件事无关。常驻的应该只是「我会什么」，不是「怎么做的全文」。
 	 */
-	readonly skills?: readonly { readonly name: string; readonly description: string }[];
+	readonly skills?: readonly {
+		readonly name: string;
+		readonly description: string;
+		/** `company` = 公司教的；`personal` = 自己写的。 */
+		readonly scope?: "company" | "personal";
+		/** 个人层覆盖了公司同名技能。 */
+		readonly overrides?: boolean;
+	}[];
 	/**
 	 * 记忆目录（每小节一行摘要）。正文不在提示词里，要用的那条自己 `recall`。
 	 *
@@ -114,10 +128,31 @@ function orgSection(input: RenderInput): string {
  * 只写「名字 — 什么时候该用」，不写正文。要用的时候 agent 自己 `read_skill`。
  * 空目录时整节不出现（不写「你还没有技能」，那只是噪音）。
  */
-function skillSection(skills: readonly { readonly name: string; readonly description: string }[]): string {
-	const lines = skills.map((skill) => `- \`${skill.name}\` — ${skill.description}`);
+function skillSection(
+	skills: readonly {
+		readonly name: string;
+		readonly description: string;
+		readonly scope?: "company" | "personal";
+		readonly overrides?: boolean;
+	}[],
+): string {
+	const lines = skills.map((skill) => {
+		// 标出来源不是为了好看：agent 要知道「这条规矩是公司定的」还是「我自己写的」，
+		// 前者它不该随手改，后者随时可以推翻重来。
+		const source =
+			skill.scope === "personal"
+				? skill.overrides === true
+					? "（你自己改过的版本，覆盖了公司的同名技能）"
+					: "（你自己写的）"
+				: "（公司通用）";
+		return `- \`${skill.name}\` — ${skill.description}${source}`;
+	});
 	lines.push("");
-	lines.push("要用哪一门，就 \`read_skill\` 读它 —— 正文不在上下文里，读了才知道细节。");
+	lines.push(
+		"要用哪一门，就 \`read_skill\` 读它 —— 正文不在上下文里，读了才知道细节。",
+		"缺什么手艺就 \`write_skill\` 自己写一份；\`scope=company\` 写进公司层，所有人都立刻看得见。",
+		"外面的技能市场有现成的：\`find_skill\` 能搜、能装。装完别直接用，按我们的话重写一遍。",
+	);
 	return lines.join("\n");
 }
 
@@ -160,7 +195,12 @@ export function renderAgentPrompt(input: RenderInput): string {
 			members.length === 0
 				? ""
 				: `\n\n项目里的成员（目录名）：${members.map((slug) => `\`${slug}\``).join("、")}`;
-		parts.push(section(`你的项目：${input.self.project ?? ""}`, `${input.projectBrief}${memberLine}`));
+		const memory = input.projectMemoryDigest;
+		const memoryLine =
+			memory === undefined
+				? "\n\n这个项目还没有记忆。你踩到的坑记得用 `remember_project` 写下来。"
+				: `\n\n项目记忆（目录，正文用 \`read_project_memory\` 读）：\n${memory}`;
+		parts.push(section(`你的项目：${input.self.project ?? ""}`, `${input.projectBrief}${memberLine}${memoryLine}`));
 	}
 
 	parts.push(section("你能做的事", capabilitySection(input.capabilities)));
