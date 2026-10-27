@@ -94,6 +94,49 @@ export function sectionKeyOf(slug: string): string {
  * 每次渲染都重新读盘，因此改了 `identity.md` / 记忆 / 技能后，**下一条消息**
  * 就生效。这是「文档是真理」在运行时的落点，这里退化成一次文件读。
  */
+/**
+ * 渲染某人**此刻**的提示词正文。
+ *
+ * 单独导出的理由：自测要断言「规矩真的进了提示词」，而去问模型不可靠（它会背课文）。
+ * 拿同一份 `render` 的结果来断言，验的就是模型真会读到的那段字。
+ */
+export async function renderAgentSection(
+	registry: Registry,
+	paths: AgentPaths,
+	slug: string,
+): Promise<string> {
+	const self = await readIdentity(paths.agents, slug);
+	if (self === undefined) {
+		return `# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟老板对话。\n`;
+	}
+	const all = await readAllIdentities(paths.agents);
+	const brief = self.project === undefined ? undefined : await readProjectBrief(paths.projects, self.project);
+	const members =
+		self.project === undefined
+			? undefined
+			: all.filter((item) => item.project === self.project).map((item) => item.slug);
+	const projectMemory = self.project === undefined ? undefined : await readProjectMemory(paths.projects, self.project);
+	const projectDigest = projectMemory === undefined ? undefined : projectMemoryDigest(projectMemory);
+	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
+	const memory = await readMemory(join(paths.agents, slug));
+	const digest = memory === undefined ? undefined : memoryDigest(memory);
+	return renderAgentPrompt({
+		self,
+		all,
+		capabilities: registeredTools(registry),
+		skills: skills.map((skill) => ({
+			name: skill.name,
+			description: skill.description,
+			scope: skill.scope,
+			...(skill.overrides === true ? { overrides: true } : {}),
+		})),
+		...(digest === undefined ? {} : { memoryDigest: digest }),
+		...(brief === undefined ? {} : { projectBrief: brief }),
+		...(members === undefined ? {} : { projectMembers: members }),
+		...(projectDigest === undefined ? {} : { projectMemoryDigest: projectDigest }),
+	});
+}
+
 export function agentSection(
 	registry: Registry,
 	paths: AgentPaths,
@@ -104,38 +147,7 @@ export function agentSection(
 		// 不包 `<key>...</key>` 标签：这整段就是它的身份，不是一条附加信息。
 		tag: false,
 		async render(_input, _context): Promise<string | undefined> {
-			const self = await readIdentity(paths.agents, slug);
-			if (self === undefined) {
-				return `# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟老板对话。\n`;
-			}
-			const all = await readAllIdentities(paths.agents);
-			const brief =
-				self.project === undefined ? undefined : await readProjectBrief(paths.projects, self.project);
-			const members =
-				self.project === undefined
-					? undefined
-					: all.filter((item) => item.project === self.project).map((item) => item.slug);
-			const projectMemory =
-				self.project === undefined ? undefined : await readProjectMemory(paths.projects, self.project);
-			const projectDigest = projectMemory === undefined ? undefined : projectMemoryDigest(projectMemory);
-			const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
-			const memory = await readMemory(join(paths.agents, slug));
-			const digest = memory === undefined ? undefined : memoryDigest(memory);
-			return renderAgentPrompt({
-				self,
-				all,
-				capabilities: registeredTools(registry),
-				skills: skills.map((skill) => ({
-					name: skill.name,
-					description: skill.description,
-					scope: skill.scope,
-					...(skill.overrides === true ? { overrides: true } : {}),
-				})),
-				...(digest === undefined ? {} : { memoryDigest: digest }),
-				...(brief === undefined ? {} : { projectBrief: brief }),
-				...(members === undefined ? {} : { projectMembers: members }),
-				...(projectDigest === undefined ? {} : { projectMemoryDigest: projectDigest }),
-			});
+			return renderAgentSection(registry, paths, slug);
 		},
 	};
 }

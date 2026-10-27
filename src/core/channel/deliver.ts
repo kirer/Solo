@@ -121,6 +121,19 @@ export async function deliver(
 			const digest = renderDigest(options.state, slug);
 			const body = bodyOf(slug);
 			const content = digest === "" ? body : `${body}\n\n${digest}`;
+			// 先记「它在哪个频道被叫醒」，再提交。
+			//
+			// 反过来的话有竞态：`submit` 一入队对方就可能已经跑起来，而它此刻查不到
+			// wake，只能退到「我最早的那个频道」—— 那往往是个人频道，于是**答在私聊里、
+			// 问的人在原频道什么都看不到**（`core:live` 12 项里 9 项因此超时，实测抓到）。
+			if (options.rememberWake !== undefined) {
+				await options.rememberWake(slug, {
+					channelId: options.channel.id,
+					seq: options.message.seq,
+					from: options.message.from,
+					at: options.message.at,
+				});
+			}
 			await conversation.submit(
 				{
 					type: "input",
@@ -142,14 +155,6 @@ export async function deliver(
 				},
 				context,
 			);
-			if (options.rememberWake !== undefined) {
-				await options.rememberWake(slug, {
-					channelId: options.channel.id,
-					seq: options.message.seq,
-					from: options.message.from,
-					at: options.message.at,
-				});
-			}
 			delivered.push(slug);
 		} catch (error) {
 			// 不抛：消息已在频道里，对方下次醒来会看到未读摘要。

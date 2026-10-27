@@ -81,6 +81,25 @@ describe("外壳装配", () => {
 		expect(targets).toContain(identity.slug);
 	});
 
+	it("老板在哪个频道叫醒某人，就记下那个频道", async () => {
+		// 回归：`ownerSpeak` 曾经没传 `rememberWake`，于是被叫的人回话时查不到
+		// 「是在哪儿被叫的」，只能退到「我最早的那个频道」—— 那往往是个人频道。
+		// 结果老板在公司频道问、对方在私聊里答，问的人在原频道什么都看不到。
+		const { shell, agentsRoot } = await setup();
+		const { createAgent } = await import("../../src/core/agent/create.ts");
+		const { DirectoryDoc } = await import("../../src/core/agent/roster.ts");
+		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
+		const conversationId = await shell.openAgent(identity.slug);
+
+		await shell
+			.postAs({ channelId: "company", from: "owner", text: `@${identity.slug} 你好` })
+			.catch(() => undefined);
+
+		const directory = await shell.harness.snapshot(DirectoryDoc);
+		expect(conversationId).toBeGreaterThan(0);
+		expect(directory?.wake[String(conversationId)]?.channelId).toBe("company");
+	});
+
 	it("重启后再装配，不会重复建会话，名册与频道保持", async () => {
 		const { shell, agentsRoot, models } = await setup();
 		const { createAgent } = await import("../../src/core/agent/create.ts");

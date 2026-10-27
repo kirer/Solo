@@ -27,7 +27,7 @@ import {
 } from "../runtime/index.ts";
 import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
-import { agentSection } from "../agent/runtime.ts";
+import { agentSection, renderAgentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
 import { ChannelDoc, OWNER, channelsOf, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
 import { membersOfProject, readProject } from "../project/doc.ts";
@@ -119,6 +119,13 @@ export type CoreShell = {
 	readonly settleSweep: () => Promise<import("../project/settle.ts").SettleReport>;
 	/** 按项目文件重建它的频道成员（幂等）。`write_project` 里用过，界面也用它。 */
 	readonly syncProject: (project: string, context?: Context) => Promise<void>;
+	/**
+	 * 某人**此刻**会看到的提示词原文。
+	 *
+	 * 给自测与调试用：断言「规矩真的进了提示词」时不该靠猜。它调的是会话里同一个
+	 * section 的 `render`，所以拿到的就是模型下次开口时会读到的东西。
+	 */
+	readonly promptOf: (slug: string, context?: Context) => Promise<string>;
 	readonly agentsRoot: string;
 	readonly projectsRoot: string;
 	readonly companyChannel: string;
@@ -431,6 +438,13 @@ export async function assembleCore(
 		async syncProject(project: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
 			await syncProjectChannel(project, ctx);
 		},
+		async promptOf(slug: string): Promise<string> {
+			return renderAgentSection(
+				registry,
+				{ workspace: workspaceRoot, agents: options.agentsRoot, projects: options.projectsRoot },
+				slug,
+			);
+		},
 		async rescan(ctx: Context = BACKGROUND_CONTEXT): Promise<readonly string[]> {
 			const all = await readAllIdentities(options.agentsRoot);
 			const added: string[] = [];
@@ -567,6 +581,20 @@ export async function ownerSpeak(
 				return shell.conversations.get(slug);
 			},
 			labelOf: (slug: string) => (slug === OWNER ? "老板" : (shell.directory.labels[slug] ?? slug)),
+			// 老板说话也要记「谁在哪个频道被叫醒」。不传这一项，被叫的人回话时
+			// 查不到 wake，只能退到「我最早的那个频道」—— 那往往是个人频道，
+			// 于是老板在公司频道问话、对方在私聊里答，问到的人什么都看不到。
+			rememberWake: async (slug: string, wake) => {
+				const id = conversationFor(shell.directory, slug);
+				if (id === undefined) return;
+				await shell.harness.commit(async (tx) => {
+					const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+					Object.assign(doc, {
+						...doc,
+						wake: { ...doc.wake, [String(id)]: { ...wake } },
+					});
+				}, context);
+			},
 		},
 		{
 			channelId: options.channelId,

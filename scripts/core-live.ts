@@ -210,6 +210,63 @@ async function main(): Promise<void> {
 		detail: settled === "" ? "memory.md 没变化（没人去沉淀，或沉淀了但没写这一条）" : settled.split("\n").filter(Boolean).slice(-1)[0] ?? "",
 	});
 
+	// 8. 招人：名字要像真人，且新人自动有个人频道、进得了项目频道。
+	//
+	// 这是「模型有没有遵守我们写下的规矩」的唯一验证口径 —— 名字、频道、汇报线三件
+	// 事都只写在技能与提示词里，代码只负责记录结果。如果不验这一段，规矩写错了不会
+	// 有任何反馈，只会在用起来的那天变成「@前端工程师」这种叫座位的话。
+	const hireAsked = await shell.ownerSay({
+		channelId: "company",
+		text: `@${slug} 招一个人进「自测项目」做前端，负责项目频道的界面。用 hire 建，名字用真人的名字（姓+名）。建完告诉我他叫什么。`,
+	});
+	const hireReply = await waitForReply(shell, "company", slug, hireAsked.seq, WAIT_MS);
+	const { readAllIdentities } = await import("../src/core/agent/identity.ts");
+	const all = await readAllIdentities(agentsRoot);
+	const hired = all.find((identity) => identity.slug !== slug);
+	// 「像真人的名字」：长度 2–4、不含岗位词、不含英文字母。判断放宽一点，只拦明显的违规。
+	const JOB_WORDS = ["工程师", "负责人", "经理", "总监", "专员", "助理", "主管", "前端", "后端", "设计", "测试"];
+	const looksLikeName =
+		hired !== undefined &&
+		hired.name !== undefined &&
+		hired.name.length >= 2 &&
+		hired.name.length <= 4 &&
+		!/[A-Za-z0-9]/.test(hired.name) &&
+		!JOB_WORDS.some((word) => hired.name?.includes(word) === true);
+	phases.push({
+		name: "招来的人有像真人的名字",
+		ok: hireReply !== undefined && looksLikeName,
+		detail: hired === undefined ? "没有招到人" : `${hired.name}（title: ${hired.title ?? "无"}）`,
+	});
+
+	if (hired !== undefined) {
+		const state = await shell.channels();
+		// 个人频道 = 他与老板的私聊。没有它，「向上汇报」连个落点都没有。
+		const personal = state.channels[`dm:owner-${hired.slug}`];
+		phases.push({
+			name: "新人自动有个人频道",
+			ok: personal !== undefined && personal.members.includes(hired.slug) && personal.members.includes("owner"),
+			detail: personal === undefined ? "没有 dm 频道" : `成员 ${personal.members.join("、")}`,
+		});
+		// 项目频道里有负责人（README.md 的 owner）+ 新人。
+		const project = state.channels["proj:自测项目"];
+		const owner = all.find((identity) => identity.slug === slug)?.slug;
+		phases.push({
+			name: "项目频道里有负责人和新人",
+			ok:
+				project !== undefined &&
+				project.members.includes(hired.slug) &&
+				(owner === undefined || project.members.includes(owner)),
+			detail: project === undefined ? "没有项目频道" : `成员 ${project.members.join("、")}`,
+		});
+		// 拍板链写进了新人的提示词（「不要跳级」是这条规则的关键词）。
+		const prompt = await shell.promptOf(hired.slug);
+		phases.push({
+			name: "拍板链进了新人的提示词",
+			ok: prompt.includes("不要跳级"),
+			detail: prompt.includes("不要跳级") ? "有拍板链" : "提示词里没有拍板链",
+		});
+	}
+
 	for (const phase of phases) log(phase);
 	await runtime.close().catch(() => undefined);
 	await shell.close().catch(() => undefined);

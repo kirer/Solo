@@ -32,6 +32,7 @@ import { openSettings, type SettingsStore } from "../../server/settings.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import type { ModelSetup } from "../../runtime/models.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
+import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type ChannelState } from "../channel/state.ts";
 import type { CoreShell } from "./assemble.ts";
 import { actorProfile, channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
@@ -71,12 +72,19 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	const orgClients = new Set<ServerResponse>();
 	let orgTimer: NodeJS.Timeout | undefined;
 
-	/** 组织快照：名册 + 身份 + 频道。界面的组织图与顶栏都吃这一份。 */
+	/**
+	 * 组织快照：名册 + 身份 + 频道 + 项目负责人表。界面的组织图与顶栏都吃这一份。
+	 *
+	 * 项目负责人的真相在 `projects/<slug>/README.md`，不在频道文档里。所以这里把它读成
+	 * 一张 `project → owner` 的查表函数交给视图层 —— 视图层只做投影，不猜谁负责。
+	 */
 	async function snapshot(context: Context = BACKGROUND_CONTEXT) {
-		const identities = await shell.identities();
+		const [identities, projects] = await Promise.all([shell.identities(), listProjects(shell.projectsRoot)]);
 		const directory = withLabels(shell.bindings(), identities);
 		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannels();
-		return { identities, directory, channels };
+		const owners = new Map<string, string | undefined>(projects.map((project) => [project.slug, project.owner]));
+		const projectOwnerOf = (project: string) => owners.get(project);
+		return { identities, directory, channels, projectOwnerOf };
 	}
 
 	/** 向所有 SSE 连接推一份新快照（去抖：一次提交可能连带几次改动）。 */
@@ -177,8 +185,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels",
 			method: "GET",
 			handler: async ({ response }) => {
-				const { directory, channels } = await snapshot();
-				const list = channelList(channels, directory);
+				const { directory, channels, projectOwnerOf } = await snapshot();
+				const list = channelList(channels, directory, OWNER_SLUG, projectOwnerOf);
 				return json(response, {
 					channels: list,
 					unread: {
@@ -211,7 +219,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels/:id",
 			method: "GET",
 			handler: async ({ response, url, params }) => {
-				const { directory, channels } = await snapshot();
+				const { directory, channels, projectOwnerOf } = await snapshot();
 				const channel = channels.channels[params.id ?? ""];
 				if (channel === undefined) return fail(response, 404, "频道不存在或无权查看");
 				const limit = Number(url.searchParams.get("limit") ?? "");
@@ -219,6 +227,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				return json(
 					response,
 					channelDetail(channels, channel, directory, {
+						projectOwnerOf,
 						...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 						...(Number.isFinite(before) && before > 0 ? { before } : {}),
 					}),

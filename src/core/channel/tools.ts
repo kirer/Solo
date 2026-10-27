@@ -403,11 +403,19 @@ export function createCoreTools(deps: CoreToolDeps) {
 			"建完它立刻存在（下一条消息就能 @ 它），但需要外壳给它开会话才会真正醒来。",
 		].join(""),
 		parameters: Type.Object({
-			name: Type.String({ description: "显示名，例如 林越 或 技术负责人" }),
+			name: Type.String({
+				description:
+					"他的姓名，像真人一样：姓 + 名，两到三个字（例如 林越、沈舟、顾南雁）。不要用岗位当名字（「技术负责人」不是名字），也不要英文名或代号——公司里的人有名字，岗位写在 title 里。",
+			}),
 			title: Type.Optional(Type.String({ description: "岗位标签，纯展示用" })),
 			manager: Type.Optional(Type.String({ description: "上级的 slug，缺省是你自己" })),
 			project: Type.Optional(Type.String({ description: "所在项目 slug" })),
-			body: Type.Optional(Type.String({ description: "它的身份正文：职责、边界、工作方式。写具体一点。" })),
+			body: Type.Optional(
+				Type.String({
+					description:
+						"它的身份正文。四段：①你负责什么（一件有产出物的事）②你不做什么（明确排除）③你怎么汇报（向谁、什么情况必须停下来问、什么可以自己拍板）④做得好是什么样（验收标准）。",
+				}),
+			),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;

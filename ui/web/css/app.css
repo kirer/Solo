@@ -259,6 +259,35 @@ textarea {
 	white-space: nowrap;
 }
 
+/* 「个人」小标：它标的是**含义**（这个房间是他的，不是我们俩在聊天），
+   所以用等宽小字 + 描边，不用实心色块——实心会跟未读徽标抢注意力。 */
+.row-tag {
+	flex: none;
+	padding: 0 4px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-sm);
+	color: var(--ink-3);
+	font-size: 10px;
+	font-weight: 400;
+	line-height: 1.5;
+	letter-spacing: 0.02em;
+}
+
+.row[aria-current="true"] .row-tag {
+	border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+	color: var(--accent);
+}
+
+/* 项目负责人：一句话说清谁拍板。它比消息预览重要，所以放在预览前面且不淡。 */
+.row-owner {
+	color: var(--ink-2);
+	font-variant-numeric: tabular-nums;
+}
+
+.row[aria-current="true"] .row-owner {
+	color: var(--accent);
+}
+
 .row-preview {
 	display: block;
 	overflow: hidden;
