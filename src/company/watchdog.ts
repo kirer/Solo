@@ -33,7 +33,7 @@ import {
 	type TaskLiveness,
 } from "../runtime/index.ts";
 import { applyDueResumeReminders, settleDueDispositions } from "./disposition.ts";
-import type { DeliveryReceipt } from "../domain/channels.ts";
+import type { ChannelMessage, ChannelState, DeliveryReceipt } from "../domain/channels.ts";
 
 /** 看门狗写进会话流的告警条目类型。 */
 export const ALERT_ENTRY_KIND = "app.alert";
@@ -621,8 +621,23 @@ async function resurfaceSilentOwnerMessages(
 		for (const message of channel.messages) {
 			if (message.from !== 0) continue; // 只看老板
 			if (now - message.at < thresholdMs) continue;
-			// 已经有更晚的消息（任何人）就算有回应——群里有人在说话
-			const replied = channel.messages.some((entry) => entry.seq > message.seq);
+			// ── 判据修正（2026-10-27，T-33；在 main@2e71c36 基线上重做）──
+			//
+			// 旧判据「只要有更晚的消息（任何人）就算有回应」**过于宽松**：
+			// 群里后续几十条别的话题会让一条「@CEO 在吗」被误判成「已回应」，
+			// 于是永不告警、永不重投。实测 #378「@CEO 在吗」之后有 86 条消息，
+			// 但它对应的 submission 至今是 `unanswered`。
+			//
+			// 新判据：**必须有「针对这条消息」的回应**。任一成立即算：
+			//   ① 有更晚的消息 `replyTo === message.seq`（显式引用回复）；
+			//   ② 被 @ 的人自己在之后发过言（说明它醒了）。
+			// 只看「有人说话」不算——那是别人的话题。
+			const targets = message.mentions;
+			const replied = channel.messages.some((entry) => {
+				if (entry.seq <= message.seq) return false;
+				if (entry.replyTo === message.seq) return true;
+				return targets.includes(entry.from);
+			});
 			if (replied) continue;
 
 			alerts.push({
@@ -639,6 +654,42 @@ async function resurfaceSilentOwnerMessages(
 		}
 	}
 	return alerts;
+}
+
+/**
+ * 「没有投递回执」时，推断这条消息应该重投给谁。
+ *
+ * **为什么需要**：`redeliverUnanswered` 原来完全依赖 `message.deliveredTo`，
+ * 而线上 `deliveredTo` 覆盖率极低（468 条 done 里只有 11 条 revision 含该字段）。
+ * 于是 69 条 `unanswered` 全部被 `receipts.length === 0` 跳过，挂了 800+ 分钟。
+ *
+ * **推断规则（保守：宁可漏投，不误投）**：
+ * 1. 只看**被 @ 的人**——没 @ 的消息本来就不期待谁回应；
+ * 2. 排除发送者自己、排除老板（conversationId 0，不是 agent）；
+ * 3. 必须是**本频道成员**（不在频道里投也投不到）；
+ * 4. 该人**之后没开口**（开口了说明它醒了，不算没回应）。
+ *
+ * 只做**一轮**兜底；「反复重投 + 放弃」的完整状态机仍由有回执的正规路径负责。
+ */
+function inferUnansweredTargets(
+	channel: ChannelState["channels"][string],
+	message: ChannelMessage,
+	now: number,
+	settleMs: number,
+): readonly number[] {
+	if (message.mentions.length === 0) return [];
+	if (now - message.at < settleMs) return [];
+
+	const members = new Set(Object.values(channel.members ?? {}).map((member) => member.conversationId));
+	const spokeAfter = new Set(channel.messages.filter((entry) => entry.seq > message.seq).map((entry) => entry.from));
+
+	return message.mentions.filter(
+		(target) =>
+			target !== message.from &&
+			target !== 0 &&
+			members.has(target) &&
+			!spokeAfter.has(target),
+	);
 }
 
 /**
@@ -674,11 +725,47 @@ async function redeliverUnanswered(
 	for (const channel of Object.values(state.channels)) {
 		if (channel.archived === true) continue;
 		for (const message of channel.messages) {
-			const receipts = message.deliveredTo ?? [];
-			if (receipts.length === 0) continue;
 			// 太新的先别判：刚入队的 submission 必然是 `queued`，
 			// 这时候看一眼只会把一个正在正常排队的会话误判成失败。
 			if (now - message.at < options.settleMs) continue;
+
+			// ── 不依赖回执的兜底（2026-10-27，T-33 根因修复；main@2e71c36 基线上重做）──
+			//
+			// 旧实现第一句是 `if (receipts.length === 0) continue;`。
+			// 后果：**只要回执没写成功，这条消息就永远不会被重投**，哪怕它明明投给了
+			// 某人、那人也确实没处理。
+			//
+			// 实测：库里 468 条 `done` 的 submission，含 `deliveredTo` 的 revision 只有 11 条；
+			// 而 69 条 `unanswered` 对应的消息**几乎全部没有回执** → 全部被跳过 →
+			// 挂了 800+ 分钟没人管。这就是老板「发了没人理」的机制。
+			//
+			// 「为什么没写回执」是上游另一件事（另记缺陷跟踪），**不能让它拖住 P0**：
+			// 判活不该依赖一个可能缺失的旁证。所以改成：
+			//   - 有回执 → 走原来的 submission 状态判定（更准）；
+			//   - 无回执 → 用「消息 @ 了谁 + 那人之后没开口」推断该重投给谁。
+			const receipts = message.deliveredTo ?? [];
+			if (receipts.length === 0) {
+				const inferred = inferUnansweredTargets(channel, message, now, options.settleMs);
+				for (const target of inferred) {
+					const taskId = `ch:${channel.id}:${message.seq}`;
+					const outcome = await deliver(runtime, { channel, message, targets: [target], attempt: 1 }, context);
+					const retried = outcome.delivered.includes(target);
+					alerts.push({
+						at: now,
+						conversationId: target,
+						taskId,
+						taskKind: "app.channel",
+						action: "redeliver",
+						reason: "delivery-unanswered",
+						message: retried
+							? `「${channel.title}」#${message.seq} 无投递回执且 ${Math.round((now - message.at) / 60_000)} 分钟无人回应，已重投给会话 ${target}（兜底路径）。`
+							: `「${channel.title}」#${message.seq} 无投递回执且长时间无人回应，重投给会话 ${target} 失败。`,
+						attempt: 1,
+						giveUp: false,
+					});
+				}
+				continue;
+			}
 			// 太老的不再追究：超出窗口的已不属于当前债。
 			if (now - message.at > options.windowMs) continue;
 
