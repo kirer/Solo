@@ -9,6 +9,8 @@
 	<body data-pane="list">
 		<header class="top">
 			<div class="brand">频道 <small id="company-meta"></small></div>
+			<!-- 口径 A：只数「点名叫你」的未读。0 件时 CSS 让这一块不占位。 -->
+			<span class="top-count" id="unread-total"></span>
 			<div class="top-spacer"></div>
 			<button class="top-btn" id="team-btn" type="button" aria-expanded="false" aria-haspopup="dialog" title="团队：谁在哪个项目、什么职位（Esc 关闭）">团队</button>
 			<button class="icon-btn" id="refresh" type="button" title="刷新" aria-label="刷新">
@@ -22,7 +24,6 @@
 			<aside class="list">
 				<div class="list-head">
 					<b>频道</b>
-					<span id="unread-total"></span>
 				</div>
 				<div class="rows" id="rows"></div>
 			</aside>

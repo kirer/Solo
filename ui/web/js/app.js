@@ -122,7 +122,9 @@ function projectName(project) {
 }
 
 function projectTone(project) {
-	if (project === undefined || project === "") return "var(--tone-none)";
+	// 没有项目 = 人像那种石墨灰（`--tone-person`），不再另设一个色；
+	// 没登记的新项目按 slug 算一个稳定色相，不用改代码。
+	if (project === undefined || project === "") return "var(--tone-person)";
 	return PROJECT_TONES[project] ?? `hsl(${hueFor(project)} 30% 58%)`;
 }
 
@@ -213,10 +215,11 @@ function rowHtml(channel) {
 	return `<button class="row" type="button" data-channel="${escapeAttr(channel.id)}"${
 		channel.id === state.current ? ' aria-current="true"' : ""
 	}>
-		${avatarHtml(
-			channel.title,
-			channel.kind === "dm" ? {} : { shape: "room", tone: roomTone(channel) },
-		)}
+		${avatarHtml(channel.title, {
+			// 侧栏会话行按 Figma 用 48；消息与团队视图的默认尺寸是 40。
+			size: "lg",
+			...(channel.kind === "dm" ? {} : { shape: "room", tone: roomTone(channel) }),
+		})}
 		<span class="row-main">
 			<span class="row-title"><span>${escapeHtml(channel.title)}</span></span>
 			<span class="row-preview">${previewHtml(channel)}</span>
@@ -361,7 +364,7 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 	return `<div class="msg" data-seq="${message.seq}" data-owner="${message.fromSlug === "owner"}"${
 		grouped ? ' data-grouped="true"' : ""
 	}>
-		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel, { size: "lg" })}</div>
+		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
 		<div class="msg-main">${heading}${body}</div>
 	</div>`;
 }
