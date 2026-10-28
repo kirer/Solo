@@ -345,6 +345,10 @@ export async function assembleCore(
 				...membersOfProject(all, project),
 			]),
 		);
+		// 项目频道里**任何人说话都叫醒负责人**。项目频道只为这一个项目而存在，
+		// 负责人本来就要看见全部进展；不这样设，员工说「做完了」而没 @ 人，负责人
+		// 就永远收不到 —— 实测里 agent 因此用 `run sleep 120` 轮询等进度，白烧一轮。
+		const wakeOnAll = owner === undefined || owner === "" ? [] : [owner];
 		await harness.commit(async (tx) => {
 			const state = (await tx.doc(ChannelDoc)) as ChannelState;
 			const id = projectId(project);
@@ -354,11 +358,11 @@ export async function assembleCore(
 				// 频道还不存在：建。
 				Object.assign(
 					state,
-					ensureChannel(state, { id, title, members, wakeOnAll: [], at: Date.now() }),
+					ensureChannel(state, { id, title, members, wakeOnAll, at: Date.now() }),
 				);
 			} else {
-				// 已存在：成员表整体替换为事实投影（去幽灵、补统筹）。
-				state.channels[id] = { ...existing, members, title };
+				// 已存在：成员表整体替换为事实投影（去幽灵、补统筹），唤醒表同理。
+				state.channels[id] = { ...existing, members, title, wakeOnAll };
 			}
 		}, ctx);
 	}

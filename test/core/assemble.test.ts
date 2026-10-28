@@ -266,6 +266,30 @@ describe("个人频道与项目频道", () => {
 		}
 	});
 
+	test("项目频道里谁说话都叫醒负责人（员工不用 @ 上级）", async () => {
+		const root = await workspace();
+		const agents = join(root, "agents");
+		const projects = join(root, "projects");
+		await createAgent({ root: agents, name: "林越", manager: "owner" });
+		await createAgent({ root: agents, name: "沈舟", manager: "林越", project: "坦克大战" });
+		await writeProject(projects, { slug: "坦克大战", owner: "林越", body: "# 目标\n能两个人打。" });
+
+		const opened = await env(root);
+		try {
+			const shell = await assembleCore(opened.harness, opened.registry, {
+				agentsRoot: agents,
+				projectsRoot: projects,
+			});
+			const state = await shell.channels();
+			const channel = state.channels[projectId("坦克大战")];
+			// 员工在项目频道说「做完了」时通常不会 @ 人。负责人收不到 → 只能轮询
+			// （实测里 agent 用 `run sleep 120` 等进度）。所以项目频道要让负责人始终醒着。
+			expect(channel?.wakeOnAll).toEqual(["林越"]);
+		} finally {
+			await opened.close();
+		}
+	});
+
 	test("改了项目负责人，频道成员跟着变（不需要重启）", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
