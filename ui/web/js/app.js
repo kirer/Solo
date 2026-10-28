@@ -16,6 +16,7 @@ import { avatarSvg, groupAvatar } from "./avatar.js";
 import { copyText, escapeHtml, relTime } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
 import { activityPhrase, buildStream, isNeed as isNeedRow } from "./rows.js";
+import { mergeMessages } from "./messages.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
 
@@ -681,7 +682,7 @@ async function loadEarlier() {
 	// 记下最上面那条已有消息的 seq 和它的屏幕位置：补完历史后把它按回原处。
 	// 不看 scrollHeight 差多少 —— 插入的行里可能有图片、附件、代码块，它们的最终高度
 	// 只有布局稳定后才知道，用高度差会差出几百像素（实测差 300px，整屏内容往上跳了 10 行）。
-	const boundary = bottomRowOfViewport();
+	const boundary = topRowOfViewport();
 	try {
 		const earlier = await getJSON(
 			`/api/channels/${encodeURIComponent(state.currentId)}?limit=${PAGE}&before=${first}`,
@@ -710,27 +711,7 @@ async function loadEarlier() {
 }
 
 /* 视口里最上面那条**消息行**的 seq 和屏幕位置。用它当锚点，补历史前后唯一可比。 */
-function bottomRowOfViewport() {
-	const box = el.flow.getBoundingClientRect();
-	for (const row of el.feed.querySelectorAll(".row")) {
-		const rect = row.getBoundingClientRect();
-		if (rect.bottom > box.top + 4) return { seq: row.dataset.seq, top: rect.top };
-	}
-	return null;
-}
-
-/* 按 seq 合并两批消息：去重 + 升序。
-   实测补两轮历史后 DOM 里出现 20 个重复的 data-seq —— 有重复的行，`[data-seq]` 查到的
-   就不是那条消息了（高亮会亮错行、动作条会挂到另一条上）。前端自己兜住这一层，
-   不指望「每次请求都恰好不重叠」。 */
-function mergeMessages(older, newer) {
-	const bySeq = new Map();
-	for (const message of [...(older ?? []), ...(newer ?? [])]) bySeq.set(message.seq, message);
-	return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
-}
-
-/* 视口里最上面那一行的 seq 与它在屏幕上的 y（取任何一条都行，只要同一条前后可比）。 */
-function firstVisibleRow() {
+function topRowOfViewport() {
 	const box = el.flow.getBoundingClientRect();
 	for (const row of el.feed.querySelectorAll(".row")) {
 		const rect = row.getBoundingClientRect();
@@ -1182,18 +1163,6 @@ function bind() {
 			el.fileInput.click();
 			return;
 		}
-		// 便签：把自己正在输入的内容变成一条广播出去的话（老板自己说的，带 --accent-wash）。
-		const text = el.input.value.trim();
-		if (!text) {
-			toast("先写点什么，再存成便签");
-			return;
-		}
-		sendMessage(`[便签] ${text}`).then((ok) => {
-			if (ok) {
-				el.input.value = "";
-				autosize();
-			}
-		});
 	});
 
 	el.rows.addEventListener("click", (event) => {

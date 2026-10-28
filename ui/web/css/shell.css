@@ -481,6 +481,8 @@
 
 /* 「记忆」：安静地待在行尾，鼠标进这一行才显形。
    常驻显示会让 8 行名册变成 8 个按钮，抢掉「向谁汇报」那条信息的视线。 */
+/* 记忆入口常显但压暗：默认 opacity:0 的话，不悬停根本不知道有这个功能
+   （用户明确要求「每个人有记忆管理」，藏起来的入口等于没有）。 */
 .crew-mem {
 	padding: 3px 8px;
 	font-family: inherit;
@@ -491,7 +493,7 @@
 	background: transparent;
 	border: 1px solid var(--line);
 	border-radius: 999px;
-	opacity: 0;
+	opacity: 0.55;
 	transition:
 		opacity var(--dur-line) var(--ease-line),
 		background var(--dur-tap) var(--ease-tap);
