@@ -135,6 +135,8 @@ export function renderSettlePrompt(project: string, candidates: readonly SettleC
 		"",
 		...lines,
 		"",
+		`回话发生在项目频道 \`proj:${project}\` 里（say 时传 channel: "proj:${project}"）。`,
+		"",
 		"要求：",
 		"1. 只写结论与约定，不写过程、不写谁在几点说了什么。",
 		"2. 一条一句，能脱离上下文单独读懂。",

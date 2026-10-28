@@ -214,10 +214,19 @@ async function main(): Promise<void> {
 		channelId: "company",
 		text: `@${slug} 招一个人进「自测项目」做前端，负责项目频道的界面。用 hire 建，名字用真人的名字（姓+名）。建完告诉我他叫什么。`,
 	});
-	const hireReply = await waitForReply(shell, "company", slug, hireAsked.seq, WAIT_MS);
+	// 等「人真的建出来了」，不等某一条回话。回话可能串到别的频道去（它答的是上一个
+	// 问题），按消息判断会把「没招人」误判成「招了人」，再让后面的断言全部失真。
 	const { readAllIdentities } = await import("../src/core/agent/identity.ts");
-	const all = await readAllIdentities(agentsRoot);
-	const hired = all.find((identity) => identity.slug !== slug);
+	const hireDeadline = Date.now() + WAIT_MS;
+	let all = await readAllIdentities(agentsRoot);
+	let hired = all.find((identity) => identity.slug !== slug);
+	while (Date.now() < hireDeadline && hired === undefined) {
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+		all = await readAllIdentities(agentsRoot);
+		hired = all.find((identity) => identity.slug !== slug);
+	}
+	const companyAfterHire = (await shell.channels()).messages["company"] ?? [];
+	const hireReply = companyAfterHire.filter((message) => message.seq > hireAsked.seq && message.from === slug).at(-1);
 	// 「像真人的名字」：长度 2–4、不含岗位词、不含英文字母。判断放宽一点，只拦明显的违规。
 	const JOB_WORDS = ["工程师", "负责人", "经理", "总监", "专员", "助理", "主管", "前端", "后端", "设计", "测试"];
 	const looksLikeName =
@@ -227,10 +236,15 @@ async function main(): Promise<void> {
 		hired.name.length <= 4 &&
 		!/[A-Za-z0-9]/.test(hired.name) &&
 		!JOB_WORDS.some((word) => hired.name?.includes(word) === true);
+	// 「名字」只看建出来的那个人，不看它有没有回话：回话可能串到别的频道，
+	// 而这一条要验的是命名纪律，不是汇报纪律。
 	phases.push({
 		name: "招来的人有像真人的名字",
-		ok: hireReply !== undefined && looksLikeName,
-		detail: hired === undefined ? "没有招到人" : `${hired.name}（title: ${hired.title ?? "无"}）`,
+		ok: looksLikeName,
+		detail:
+			hired === undefined
+				? `没有招到人；对方回的是：${hireReply?.text.slice(0, 120) ?? "（超时没回话）"}`
+				: `${hired.name}（title: ${hired.title ?? "无"}）`,
 	});
 
 	if (hired !== undefined) {
@@ -253,12 +267,19 @@ async function main(): Promise<void> {
 				(owner === undefined || project.members.includes(owner)),
 			detail: project === undefined ? "没有项目频道" : `成员 ${project.members.join("、")}`,
 		});
-		// 拍板链写进了新人的提示词（「不要跳级」是这条规则的关键词）。
+		// 拍板链写在公司技能「工作规矩」里（规则外移到技能，不进提示词正文），
+		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文里有不跳级。
 		const prompt = await shell.promptOf(hired.slug);
+		const rules = await readFile(join(root, "skills", "工作规矩", "SKILL.md"), "utf8").catch(() => "");
+		const listed = prompt.includes("工作规矩");
 		phases.push({
-			name: "拍板链进了新人的提示词",
-			ok: prompt.includes("不要跳级"),
-			detail: prompt.includes("不要跳级") ? "有拍板链" : "提示词里没有拍板链",
+			name: "新人拿得到拍板链（公司技能「工作规矩」）",
+			ok: listed && rules.includes("绝不跳级"),
+			detail: listed
+				? rules.includes("绝不跳级")
+					? "工作规矩已列进提示词，正文含「绝不跳级」"
+					: "技能正文里没有「绝不跳级」"
+				: "提示词里没列出「工作规矩」技能",
 		});
 	}
 
