@@ -8,7 +8,8 @@
 .composer {
 	position: relative; /* 拖拽时的那层「松手就发出去」压在它上面 */
 	flex: none;
-	padding: 0 var(--pad) 20px;
+	/* 20px 是给纸的留白；手机上的手势条要额外让开，不然发送按钮压在家指示条上。 */
+	padding: 0 var(--pad) calc(20px + env(safe-area-inset-bottom));
 }
 
 .composer-card {

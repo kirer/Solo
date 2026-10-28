@@ -180,13 +180,23 @@ skill 把这一条列成「生成式仪表盘第一号特征」。
 
 - **默认是平铺**，不是气泡。名字行在上，正文在下。
 - 连续同一个人发言（同一人、间隔 < 2 分钟）：只有第一条画名字和头像，后续行缩进对齐、`margin-top: 2px`。
-- **气泡开关**：顶栏菜单里「气泡 / 平铺」，存 `localStorage["ai-company.layout"]`。
-  气泡模式下：正文包一层 `.bubble`（`--raised` 底、`--r-row` 圆角、14/24、padding 10/14），
-  **连续发言的圆角收口**用逻辑属性：
-  ```css
-  .row-say:not(:first-child) .bubble { border-start-start-radius: 6px; }
-  .row-say:not(:last-child)  .bubble { border-end-start-radius: 6px; }
-  ```
+- **气泡开关**：顶栏菜单里「气泡 / 平铺」，存 `localStorage["ai-company.layout"]`，
+  挂在 `body[data-layout]`。
+  气泡模式下：
+  - 正文包一层带 `--raised` 底的圆角块（`--r-row`、14/24、padding 8/12），并且
+    **`width: fit-content`** —— 短句就是一小块，长段落最多 68ch。「贴内容长」是气泡与
+    平铺真正的区别；只加底色不加这条，两种模式看起来一模一样（第一版就是这样）。
+  - **老板的话靠右**：行是 grid（头像列 + 正文列），所以靠右要用
+    `grid-template-columns: minmax(0,1fr) var(--av-lg)` 把两列互换、头像落到第 2 列、
+    正文 `justify-self: end`，而不是 `justify-content`。底色换 `--accent-wash`，
+    整宽出血色带只存在于平铺模式。
+  - 动作条 `left: auto; right: 100%` —— 气泡靠右时，那 82px 留白在左边。
+  - **连续发言的圆角收口**用逻辑属性：
+    ```css
+    .row-say[data-grouped="true"] .md { border-start-start-radius: var(--r-control); }
+    ```
+  - 纯附件消息的占位正文（`[图片] 宽图.png`）**不排**：图片已经画在图里、文件名已经在
+    文件卡里，再排一遍是同一件事说两次。`rows.js` 用 `/^\[(图片|文件)\]\s/` 判。
 - 正文里 `@名字` 加 `--accent` 文字（无底色）。
 - 老板自己说的话：整宽 `--accent-wash` 色带（左右各 -8px 出血），让人觉得是自己的回合。
 
@@ -289,3 +299,18 @@ node ~/.pi/agent/skills/design-taste-frontend/scripts/inspect.mjs http://127.0.0
 2. 有没有**任何一个**彩块/彩色胶囊/彩色图标底？
 3. 字号是不是只有 6 档？时间戳对比度够不够？
 4. 390px 下是不是只显示一个区域，列表行有没有被挤成两行？
+
+## 11. 移动端
+
+- 一次只显示一个区域：`.sidebar` 与 `.sheet` 同一格（`grid-area: main`），靠
+  `body[data-pane]` 切。`#back` 是第一屏唯一的回退入口。
+- **`viewport-fit=cover` 声明了就必须让安全区**：`<meta name="viewport">` 里写了
+  `viewport-fit=cover`，所以
+  - `.topbar` 加 `padding-top: env(safe-area-inset-top)`，**同时**把 frame 的那一行改成
+    `calc(var(--topbar) + env(safe-area-inset-top))` —— 否则 `border-box` 下 padding 会把
+    48px 顶栏的内容挤成 0；
+  - `.composer` 的底部 padding 加 `env(safe-area-inset-bottom)`，不然「发送」压在手势条上；
+  - 侧栏左右也加 `env(safe-area-inset-left/right)`。
+  `env()` 在无刘海设备上是 0，等价于原值。高度用 `100dvh`（不是 `100vh`），地址栏伸缩时不跳。
+- 动作条不绝对定位（桌面那套 `left: 100%` 在手机上会跑到屏幕外）：改成 `static`，
+  点一下那一行才显示（`data-tools="true"`），点空白或 Esc 收起。

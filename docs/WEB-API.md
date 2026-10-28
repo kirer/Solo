@@ -5,8 +5,8 @@
 
 ## 0. 总览
 
-只有 11 条路由（按方法+路径算；按路径去重是 10 条 —— `check-boundaries.mjs` 数的是去重后的
-路径），全部在 `src/core/shell/serve.ts` 的 `routes` 表里声明。
+只有 13 条路由（按方法+路径算；按路径去重是 12 条 —— `check-boundaries.mjs` 数的是去重后
+的路径），全部在 `src/core/shell/serve.ts` 的 `routes` 表里声明。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -21,6 +21,8 @@
 | `GET` | `/api/attention` | 「找你」：跨频道、需要老板拍板的消息 |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
+| `POST` | `/api/uploads` | 上传一个文件，拿回 id |
+| `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `*` | 其余 | 静态文件（`ui/web/`） |
 
 所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
@@ -170,13 +172,19 @@ type ViewMessage = {
   text: string,          // 必填，trim 后不能为空
   replyTo?: number,      // 引用回复的 seq
   from?: string,         // 发件人 slug；省略 = 老板。只有调试/脚本用，界面永不传
-  kind?: string          // 语义标签，省略 = chat
+  kind?: string,         // 语义标签，省略 = chat
+  attachments?: (string | { id: string })[]
+                         // 附件 id（先 POST /api/uploads 拿）。两种写法等价：
+                         // `["<id>"]` 适合脚本，`[{ id }]` 是前端写法。
 }
 // 响应
 { ok: true, seq: number, delivered: number, failed: number }
 ```
 
-- `text` 为空 → 400；频道不存在 → 404。
+- `text` 为空 → 400；**只有当消息带附件时才可以空**（服务端补一行占位正文，例如
+  `[图片] 宽图.png`）。
+- 频道不存在 → 404。附件 id 对不上（被清理过）→ 400「附件不存在（可能已经被清理），
+  重新发一次」。
 - `kind` 由**说话的人自己声明**。项目频道里带 `decision` / `report` 的话才会触发项目
   记忆沉淀（`src/core/project/settle.ts`）。
 - 投递是异步的：`delivered` / `failed` 是本条消息唤醒了几个人，**不是**他们的回答。
@@ -262,7 +270,29 @@ type ViewMessage = {
 同一道闸（`entryProblem` 拒空/超长/像密钥，`appendMemory` 串行 + 落 journal），和管理端
 没有第二条路。
 
-## 12. 静态文件
+## 12. `POST /api/uploads` / `GET /api/uploads/:id`
+
+上传是**裸二进制**，不是 multipart：请求体就是文件本身，文件名走 `x-filename` 头或
+`?name=` 查询参数。
+
+```ts
+// POST /api/uploads?name=宽图.png   body: <文件字节>
+// 响应
+{ id: string, name: string, kind: "image" | "file", bytes: number }
+```
+
+- 上限 **25MB**（`UPLOAD_MAX_BYTES`），超过 → 413。一条消息最多 **10 个**附件。
+- `kind` **由服务端按 mime 重算**，不信客户端声明 —— 一个 `.svg` 自称图片后内联执行，
+  正是这样被挡住的（`INLINE_IMAGE` 里没有 `svg`）。
+- 落盘在 `<workspace>/uploads/<id>` + `<id>.json`（`{name, mime, bytes, at}`）。一个
+  文件一份元数据，并发写不会互相覆盖。
+- `GET /api/uploads/:id` 图片内联，其余 `Content-Disposition: attachment`；带
+  `Cache-Control: immutable` 与 `X-Content-Type-Options: nosniff`（id 一旦生成内容不变）。
+
+**模型看不见图片内容**（ADR-051）：附件在投递正文里只有一行占位。agent 应该说
+「我读不了图里的内容，请用文字说一下要我做什么」，而不是猜。
+
+## 13. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`serve.ts` 的 `uiDir` 默认值）：
 
@@ -273,16 +303,15 @@ type ViewMessage = {
 
 界面**没有构建步骤** —— 改 `ui/web/` 里的文件，刷新浏览器就生效。
 
-## 13. 已知限制
+## 14. 已知限制
 
 - **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
 - **没有工具调用 trace**。`ViewMessage` 只有消息正文，看不到 agent 中间调了哪些工具。
 - **没有待办 / 任务 / 成本**。第一代有，当前核心一个都没有，界面相应位置是空的
   （ADR-016：不画后端没有的东西）。
-- **不能发图片 / 附件**。只有文本。
 - **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。
 
-## 14. 兼容性纪律
+## 15. 兼容性纪律
 
 1. 加字段随便加（前端忽略未知字段）。
 2. **不许改字段含义**，尤其是 `read` / `unread` / `mentions` 这种带状态的 —— 宁可加新字段。

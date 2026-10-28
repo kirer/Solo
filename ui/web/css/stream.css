@@ -403,10 +403,48 @@
    平铺是默认：正文直接排在纸上，没有底色。气泡只改四件事：底色、内边距、
    圆角、连续发言收口。行高、字号、宽度变量一律不变 —— 两种布局读起来是同一种密度。 */
 
+/* 气泡：贴着内容长，不是整宽色条。`fit-content` 让短句就是一小块，
+   长段落最多到 68ch —— 这一步是「气泡」与「平铺」真正的区别。 */
 body[data-layout="bubble"] .row-say .row-body > .md {
+	width: fit-content;
+	max-width: 100%;
 	background: var(--raised);
 	border-radius: var(--r-row);
 	padding: 8px 12px;
+}
+
+/* 老板的话靠右：头像换到右边，正文列换到左边，正文自己右对齐。
+   两列互换（而不是 `justify-content`），因为行是 grid，头像必须还在版心边上。 */
+body[data-layout="bubble"] .row-say[data-owner="true"] {
+	grid-template-columns: minmax(0, 1fr) var(--av-lg);
+}
+
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-av {
+	grid-column: 2;
+}
+
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-body,
+body[data-layout="bubble"] .row-say[data-owner="true"][data-grouped="true"] .row-body {
+	grid-column: 1;
+	justify-self: end;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-end;
+	max-width: min(68ch, calc(100% - 82px));
+}
+
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-head {
+	justify-content: flex-end;
+}
+
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
+	text-align: left;
+}
+
+/* 老板气泡自己带底色，动作条要落在气泡右下角外侧，别压住气泡的圆角。 */
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-tools {
+	left: auto;
+	right: 100%;
 }
 
 body[data-layout="bubble"] .row-say .row-body > .md > :last-child {
@@ -428,10 +466,6 @@ body[data-layout="bubble"]
 /* 老板自己说的话：气泡换成淡绿；整宽出血色带只在平铺里存在。 */
 body[data-layout="bubble"] .row-say[data-owner="true"]::after {
 	display: none;
-}
-
-body[data-layout="bubble"] .row-say[data-owner="true"] .row-body {
-	max-width: min(68ch, calc(100% - 82px));
 }
 
 body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {

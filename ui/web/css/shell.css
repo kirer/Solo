@@ -594,11 +594,18 @@
 @media (max-width: 640px) {
 	.frame {
 		grid-template-columns: minmax(0, 1fr);
+		/* 顶栏那行要跟着长高：`.topbar` 加了 padding-top 让刘海，行高还是 48 的话
+		   内容会被 padding 挤成 0（border-box）。 */
+		grid-template-rows: calc(var(--topbar) + env(safe-area-inset-top)) minmax(0, 1fr);
 		grid-template-areas: "bar" "main";
 	}
 
+	/* 全面屏：`viewport-fit=cover` 声明了就得让出刘海与底部手势条，否则顶栏
+	   被刘海切掉、输入卡的发送按钮压在 home 指示条上。四周边距都加上对应 inset，
+	   在无刘海设备上 env() 是 0，等价于原来的值。 */
 	.topbar {
-		padding: 0 12px;
+		padding: env(safe-area-inset-top) calc(12px + env(safe-area-inset-right)) 0
+			calc(12px + env(safe-area-inset-left));
 		gap: 6px;
 	}
 
@@ -612,7 +619,8 @@
 	}
 
 	.sidebar {
-		padding: 0 12px 4px;
+		padding: 0 calc(12px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom))
+			calc(12px + env(safe-area-inset-left));
 	}
 
 	/* 手机上标题行给到 14：拇指距离 + 一列行名，13 在黑底白字上偏小。 */

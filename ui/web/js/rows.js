@@ -181,9 +181,14 @@ function bodyHtml(message) {
 	// 放在 `.md` 外面，因为 `.md` 是排版正文的（段落间距、列表标记），不是排图片的。
 	// 纯附件消息的正文是服务端写的占位（文件名），读起来像一句正常的话，不用特判。
 	const attachments = attachmentsHtml(message.attachments);
+	// 纯附件消息的正文是服务端写的占位（「[图片] 宽图.png」）。图片已经画在图里、
+	// 文件名已经在文件卡里，再把占位当正文排一遍就是同一件事说两次。
+	const placeholderOnly = Boolean(message.attachments?.length) && /^\[(图片|文件)\]\s/.test(raw.trim());
 	const text = renderMarkdown(raw);
 	const body =
-		!FOLD_KINDS.has(message.kind ?? "say") || raw.length <= FOLD_OVER
+		placeholderOnly
+			? ""
+			: !FOLD_KINDS.has(message.kind ?? "say") || raw.length <= FOLD_OVER
 			? `<div class="md">${text}</div>`
 			: `<div class="md fold" data-folded="true">${text}</div><button class="text-btn fold-btn" type="button" data-fold-btn>展开全文（${raw.length} 字）</button>`;
 	return `${attachments}${body}`;

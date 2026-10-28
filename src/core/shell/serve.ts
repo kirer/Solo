@@ -276,7 +276,9 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		}
 		const attachments: Attachment[] = [];
 		for (const raw of requested) {
-			const id = typeof raw?.id === "string" ? raw.id : "";
+			// `["<id>"]` 和 `[{ id: "<id>" }]` 都收：前者是 curl / 脚本的自然写法，后者
+			// 是前端的写法（它顺手带着 name/kind 方便乐观渲染）。两种都只取 id。
+			const id = typeof raw === "string" ? raw : typeof raw?.id === "string" ? raw.id : "";
 			const meta = await readUploadMeta(uploadsRoot, id);
 			if (meta === undefined) return fail(response, 400, "附件不存在（可能已经被清理），重新发一次");
 			attachments.push({ id, name: meta.name, kind: kindOfMime(meta.mime), bytes: meta.bytes });
