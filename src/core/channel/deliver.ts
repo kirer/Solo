@@ -16,6 +16,9 @@ import {
 	type Channel,
 	type ChannelState,
 	type Message,
+	OWNER,
+	personalId,
+	recipientsOf,
 	unreadCount,
 	channelsOf,
 	tail,
@@ -38,6 +41,15 @@ export type DeliverResult = {
 	readonly skipped: string[];
 };
 
+/** 一个「叫了但没人会答」的收件人。拼成频道里的 `note` 用，老板才能看见系统做了什么。 */
+export type DeliverIssue = {
+	readonly slug: string;
+	/** 「还没有会话」还是「投递抛错」。两者文案不同，不能糊成一句。 */
+	readonly reason: "no-conversation" | "failed";
+	/** 抛错时的简短原因。 */
+	readonly detail?: string;
+};
+
 export type DeliverOptions = {
 	readonly state: ChannelState;
 	readonly channel: Channel;
@@ -58,7 +70,21 @@ export type DeliverOptions = {
 	 * 的中途私聊问「你是谁啊」，它答完就收工，再没回项目频道汇报。
 	 */
 	readonly busy?: ReadonlySet<number>;
+	/**
+	 * 有人没被叫醒时通报一声。不传就只听 stderr。
+	 *
+	 * 为什么需要这个：投递失败只写 stderr 的话，频道里空白一片，老板看到的
+	 * 「我说了没人回」和「系统真挂了」长得一模一样 —— 那个「@CEO 不理我」的现象
+	 * 就是这么排查了很多轮才定位到投递层的。
+	 */
+	readonly notify?: (issues: readonly DeliverIssue[]) => Promise<void> | void;
 };
+
+/** 这个频道是不是「我和老板的私聊」。`viewer` 缺省时只要求两边里有老板。 */
+function isOwnerDm(channel: Channel, viewer: string | undefined): boolean {
+	if (!channel.id.startsWith("dm:") || !channel.members.includes(OWNER)) return false;
+	return viewer === undefined || channel.id === personalId(viewer);
+}
 
 /** 一条消息交给模型时的正文。纯函数，方便单测。 */
 export function renderDelivery(options: {
@@ -78,9 +104,26 @@ export function renderDelivery(options: {
 		(slug) => slug !== message.from && slug !== options.viewer,
 	);
 	const also = others.length === 0 ? "" : `\n这条还 @ 了：${others.map(label).join("、")}`;
+	// 「这条会叫醒谁、你是第几个」和「别人也在看」必须由代码注入：模型看不到投递名单，
+	// 于是两个人被同时叫醒时各写一条重复甚至矛盾的回复，谁也不知道对方也在场。
+	const woken = recipientsOf(channel, message).filter((slug) => slug !== OWNER);
+	const line = [also];
+	if (woken.length > 0) {
+		const position =
+			options.viewer === undefined ? "" : `（你在第 ${woken.indexOf(options.viewer) + 1 || 1} 位）`;
+		line.push(`\n这条会叫醒：${woken.map(label).join("、")}${position}`);
+		if (woken.length > 1) {
+			line.push("\n别人也在看这条。动手前先说一句你接哪一块，别重复别人已经做的。");
+		}
+	}
 	return [
-		`【${channel.title}】#${message.seq}${quoted}`,
-		`${label(message.from)}：${message.text}${also}`,
+		// 第一行必须带**频道 id**：模型以前只看到标题，于是它只能用 `say` 的缺省频道回话；
+		// 一旦缺省频道猜错（例如猜成私聊），整段对话就跑到别的房间里去了。
+		`【${channel.title}】#${message.seq}（频道 ${channel.id}）${quoted}`,
+		`${label(message.from)}：${message.text}${line.join("")}`,
+		...(isOwnerDm(channel, options.viewer)
+			? ["（这是你和老板的私聊，只回这里，别去群里说）"]
+			: []),
 		`（回话用 say，channel 省略即回这个频道；要看完整历史用 read_channel）`,
 		...(options.interrupted === true
 			? [
@@ -120,6 +163,7 @@ export async function deliver(
 	const delivered: string[] = [];
 	const failed: string[] = [];
 	const skipped: string[] = [];
+	const issues: DeliverIssue[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const bodyOf = (viewer: string, interrupted: boolean): string =>
 		renderDelivery({
@@ -135,6 +179,7 @@ export async function deliver(
 			const conversation = await options.conversationOf(slug);
 			if (conversation === undefined) {
 				skipped.push(slug);
+				issues.push({ slug, reason: "no-conversation" });
 				continue;
 			}
 			const digest = renderDigest(options.state, slug);
@@ -177,12 +222,26 @@ export async function deliver(
 			delivered.push(slug);
 		} catch (error) {
 			// 不抛：消息已在频道里，对方下次醒来会看到未读摘要。
+			const detail = error instanceof Error ? error.message : String(error);
 			process.stderr.write(
-				`[投递失败] ${options.channel.id}#${options.message.seq} → ${slug}: ${
+				`[投递失败] ${options.channel.id}#${options.message.seq} → ${slug}: ${detail}\n`,
+			);
+			failed.push(slug);
+			issues.push({ slug, reason: "failed", detail });
+		}
+	}
+
+	// 通报放在最后、一次说完：逐条写 note 会让频道多出一串系统消息。
+	// 老板被 `recipientsOf` 选中是正常现象（他没有会话），所以那一条由调用方先滤掉。
+	if (issues.length > 0 && options.notify !== undefined) {
+		try {
+			await options.notify(issues);
+		} catch (error) {
+			process.stderr.write(
+				`[投递通报失败] ${options.channel.id}#${options.message.seq}: ${
 					error instanceof Error ? error.message : String(error)
 				}\n`,
 			);
-			failed.push(slug);
 		}
 	}
 

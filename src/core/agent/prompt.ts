@@ -11,6 +11,8 @@
  * 2. **不哄人**：宁可写「未设置」，也不替 agent 编造一个听起来合理的职责。
  */
 import { OWNER_SLUG, chainUp, managerOf, reportsOf, type Identity } from "./identity.ts";
+import { renderRulesSection } from "./rules.ts";
+import { redact } from "./secrets.ts";
 
 /** 一项能力的展示信息。能力本身在注册表里，这里只管「怎么写成一行」。 */
 export type CapabilityLine = {
@@ -27,6 +29,20 @@ export type RenderInput = {
 	readonly all: readonly Identity[];
 	/** 老板的显示名。老板不是 agent，没有文件夹。 */
 	readonly ownerName?: string;
+	/**
+	 * workspace 根目录。只用来找 `.secrets.json` 做脱敏；给了才脱敏。
+	 *
+	 * 为什么在出口统一脱一次：`identity.md` / 技能 / 记忆全是模型自己写得动的文件，
+	 * 只要有一处漏了，那把 key 就会**每一轮**都发给模型。逐处检查不可能不漏，出口只有一处。
+	 */
+	readonly workspaceRoot?: string;
+	/**
+	 * 规矩（`<workspace>/rules.md` 的正文）。空/缺省 = 整段不出现。
+	 *
+	 * 为什么它是一个独立入参而不是拼进 `self.body`：规矩是全公司共用的一份文件、
+	 * 每轮都要看见；拼进身份就没有「改一处、所有人下一句生效」这个性质了。
+	 */
+	readonly rules?: string;
 	/** 这个 agent 能调用的全部能力。缺省 = 没有能力（只说话）。 */
 	readonly capabilities?: readonly CapabilityLine[];
 	/** 项目简报（项目根 `README.md` 的正文），仅有项目时提供。 */
@@ -170,6 +186,9 @@ function capabilitySection(capabilities: readonly CapabilityLine[] | undefined):
 		return "（工具没装上 —— 这是装配故障，不是你的问题。请向老板报告。）";
 	}
 	const lines = capabilities.map((item) => `- \`${item.name}\` — ${item.summary}`);
+	// 压缩是 pi-durable 的默认行为，模型看不见被压掉的部分，更不知道「我不知道」。
+	// 不写这一句，它会用编出来的路径和数字把话说圆 —— 那比说「我忘了」糟得多。
+	lines.push("", "上下文被压缩过。精确的路径、数字、原话不许凭记忆补——用 `read_history` 查。");
 	return lines.join("\n");
 }
 
@@ -186,6 +205,11 @@ export function renderAgentPrompt(input: RenderInput): string {
 	parts.push(`# 你叫${heading}${title}`);
 
 	if (input.self.body !== "") parts.push(input.self.body);
+
+	// 规矩紧跟在「你是谁」后面、能力清单之前：它决定**怎么用**下面那些能力，
+	// 排在能力后面就变成脚注了。空则整段消失（不写「（没有规矩）」）。
+	const rules = renderRulesSection(input.rules);
+	if (rules !== undefined) parts.push(rules);
 
 	parts.push(section("你在组织里的位置", orgSection(input)));
 
@@ -231,5 +255,5 @@ export function renderAgentPrompt(input: RenderInput): string {
 		),
 	);
 
-	return `${parts.join("\n\n")}\n`;
+	return redact(`${parts.join("\n\n")}\n`, input.workspaceRoot);
 }

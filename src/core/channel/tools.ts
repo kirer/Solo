@@ -15,6 +15,7 @@
  * | `hire` | 新建一个 agent（写文件夹） |
  * | `update_identity` | 改我自己或我下属的身份 |
  * | `remember` / `recall` | 写/读记忆；`scope=project` 切到项目记忆 |
+ * | `read_history` | 翻自己被压缩掉的历史对话（精确原话/路径找回） |
  * | `list_skills` / `read_skill` / `write_skill` | 技能（怎么做一件事的说明书） |
  * | `list_projects` / `read_project` / `write_project` | 项目（`projects/<slug>/README.md`） |
  * | `run` / `write_file` / `read_file` | 执行命令 / 写文件 / 读文件 |
@@ -28,6 +29,8 @@ import {
 	Type,
 	defineTool,
 	type Context,
+	type Cursor,
+	type EntryRecord,
 	type Harness,
 	type ToolRegistration,
 } from "../runtime/index.ts";
@@ -40,13 +43,19 @@ import {
 	writeSkill,
 } from "../agent/skills.ts";
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
+import { redact } from "../agent/secrets.ts";
 import { listProjects, readProject, writeProject } from "../project/doc.ts";
 import { createAgent, renderIdentityFile, renderOrgChart } from "../agent/create.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
+import { mentionRosterOf, resolveMention, type MentionRoster } from "./alias.ts";
 import {
 	ChannelDoc,
+	OWNER,
 	channelsOf,
+	ensureChannel,
+	fallbackChannelId,
+	needsOwner,
 	parseMentions,
 	personalId,
 	readMarkOf,
@@ -108,6 +117,39 @@ function text(value: string) {
 	return { output: [{ type: "text" as const, text: value }] };
 }
 
+/** 历史条目里一条消息的收窄视图（结构上只用得到这几个字段）。 */
+type HistoryBlock = { readonly type?: string; readonly text?: string };
+type HistoryModel = {
+	readonly content?: string | readonly HistoryBlock[];
+	readonly timestamp?: unknown;
+};
+
+/** 只取正文块：思考块不是「说过的话」，工具调用参数是过程不是结论。 */
+function historyText(model: HistoryModel | undefined): string {
+	if (model === undefined) return "";
+	if (typeof model.content === "string") return model.content.replace(/\s+/g, " ").trim();
+	const parts: string[] = [];
+	for (const block of model.content ?? []) {
+		if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+	}
+	return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+/** 相对时间。模型要判断「这件事是刚说的还是很久以前」，绝对时间戳帮不上忙。 */
+function agoOf(timestamp: unknown, now: number): string {
+	const at =
+		typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : Number.NaN;
+	if (!Number.isFinite(at)) return "时间未知";
+	const minutes = Math.round((now - at) / 60_000);
+	if (minutes < 1) return "刚刚";
+	if (minutes < 60) return `${minutes} 分钟前`;
+	const hours = Math.round(minutes / 60);
+	if (hours < 24) return `${hours} 小时前`;
+	const days = Math.round(hours / 24);
+	if (days < 30) return `${days} 天前`;
+	return new Date(at).toISOString().slice(0, 10);
+}
+
 /** 这个工具调用属于哪个 slug。名册里找不到就给一句明确的错误。 */
 async function selfOf(deps: CoreToolDeps, conversationId: number, context: Context): Promise<string | undefined> {
 	const directory = await deps.directory(context);
@@ -115,9 +157,10 @@ async function selfOf(deps: CoreToolDeps, conversationId: number, context: Conte
 }
 
 /**
- * 「默认在哪儿说话」：刚被叫醒的那个频道 → 任意一个我所在的频道 → 与老板的私聊。
+ * 「默认在哪儿说话」：刚被叫醒的那个频道 → 我所在的非个人频道里最近活跃的那个 → 我的个人频道。
  *
  * 第一条最重要：老板在私聊里问我一句，我一开口就该回私聊，而不是群里。
+ * 最后一级**不能直接拿 `mine[0]`**：那可能正是我和老板的私聊，于是老板在群里问的话被答进私聊。
  */
 async function defaultChannel(
 	deps: CoreToolDeps,
@@ -139,12 +182,64 @@ async function defaultChannel(
 		const channel = state.channels[wake.channelId];
 		if (channel !== undefined && channel.members.includes(slug)) return { channelId: wake.channelId };
 	}
-	const mine = channelsOf(state, slug);
-	const first = mine[0];
-	if (first !== undefined) return { channelId: first.id };
-	// 一个人至少有他的个人频道（与老板的私聊）。外壳在开会话时就建好了，所以这里
-	// 兜底也应该是它 —— 以前兜到同一个 id 但频道可能根本不存在，工具会报「频道不存在」。
-	return { channelId: personalId(slug) };
+	// 兜底：非个人频道优先，个人频道最后。
+	return { channelId: fallbackChannelId(state, slug) };
+}
+
+/** 当前名册：`@` 别名解析用。每次现读盘（`say` 不是热路径，且改 `identity.md` 要立刻生效）。 */
+async function mentionRoster(deps: CoreToolDeps): Promise<MentionRoster> {
+	const all = await readAllIdentities(deps.agentsRoot);
+	return mentionRosterOf(
+		all.map((identity) => ({
+			slug: identity.slug,
+			name: identity.name,
+			title: identity.title,
+			manager: identity.manager,
+		})),
+	);
+}
+
+/**
+ * 拿到（必要时建出）两个人之间的私聊频道。
+ *
+ * 为什么要有这条：实测「员工↔员工」的发言只有全部 agent 发言的 1.2%，而组织里明明
+ * 有该对接的事（音效要问开发、平台要问负责人）。根因不是模型不想说，是**没有地方说** ——
+ * `dm:owner-X` 的成员只有老板和 X，X 想找另一个同事只能跑去群里喊，而群里的喊话又会
+ * 把不相干的人叫醒。所以给一条只装两个人的频道。
+ *
+ * 和老板的「私聊」不新建：老板的个人频道 `dm:owner-<slug>` 本来就是那条。
+ * 频道 id 用排序后的 slug 拼接，所以 A 找 B 和 B 找 A 是同一条，不会长出两条平行对话。
+ */
+async function ensureDm(
+	deps: CoreToolDeps,
+	state: ChannelState,
+	from: string,
+	to: string,
+	context: Context,
+): Promise<string> {
+	if (to === OWNER_SLUG) return personalId(from);
+	if (from === OWNER_SLUG) return personalId(to);
+	const id = `dm:${[from, to].sort().join("--")}`;
+	if (state.channels[id] !== undefined) return id;
+	const all = await readAllIdentities(deps.agentsRoot);
+	const nameOf = (slug: string): string => all.find((identity) => identity.slug === slug)?.name ?? slug;
+	await deps.harness.commit(async (tx) => {
+		const doc = await tx.doc(ChannelDoc);
+		const current = doc as ChannelState;
+		if (current.channels[id] !== undefined) return;
+		Object.assign(
+			doc,
+			ensureChannel(current, {
+				id,
+				title: `${nameOf(from)} · ${nameOf(to)}`,
+				members: [from, to],
+				// 两边互相唤醒：私聊里没有第三方，不存在「叫醒一堆人」的风险。
+				wakeOnAll: [from, to],
+				at: Date.now(),
+			}),
+		);
+	}, context);
+	return id;
 }
 
 /** 建工具。返回一个扩展，装进所有 agent 的会话里。 */
@@ -155,13 +250,14 @@ export function createCoreTools(deps: CoreToolDeps) {
 			"在当前频道说话。不传 mention 就是一句普通发言（正文里写 @某人 才会叫醒他）；传 mention 就是提问或 @ 某人（会叫醒他）。用于汇报进度、说明结论、回应别人、提问。活干完了一定要汇报，并把上级写进 mention —— 没人知道你做完了，等于没做完。",
 		parameters: Type.Object({
 			text: Type.String({ description: "要说的话" }),
-			mention: Type.Optional(Type.String({ description: "@ 谁，写 slug（例如 zhiyan、林越）。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
-			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道" })),
+			mention: Type.Optional(Type.String({ description: "@ 谁，写 slug（例如 zhiyan、林越）或名字（@老板 / @周砚 也行，系统会解析成 slug）。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
+			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的同事，或你在私聊里想找人），用 `<频道 id>` 指定，或先问老板 —— 频道成员以外的人 @ 不到。" })),
+			to: Type.Optional(Type.String({ description: "把这句话**私下**发给某个人（写名字或 slug）。系统会自动建出只有你们两人的私聊频道，别人看不到。要对接同事、找上级问一句细节、向老板单独汇报，都用这个 —— 不要为了找一个人去群里喊。" })),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
 			kind: Type.Optional(
 				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
 					description:
-						"给这条消息打标签：decision = 拍了板（结论、约定、定了怎么做）；report = 交付了什么。只在项目频道里打标签才有意义——项目记忆靠这两个标签自动沉淀。普通发言不要传。",
+						"给这条消息打标签：decision = 拍了板（结论、约定、定了怎么做）；report = 交付了什么。标签是给人的线索（谁拍板、谁交付），不影响沉淀——项目频道里所有新消息都会被送去整理。普通发言不要传。",
 				}),
 			),
 		}),
@@ -169,37 +265,78 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
-			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+			let state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
+			const roster = await mentionRoster(deps);
 
-			// 带 mention：验证成员、补 @ 前缀、默认 kind=question
+			// 「私下发给某个人」：频道换成两人的私聊（必要时现建），@ 也自动补上。
+			let channelId = target.channelId;
+			let privateTo: string | undefined;
+			if (args.to !== undefined && args.to.trim() !== "") {
+				const typed = args.to.trim().replace(/^@/, "");
+				const who = resolveMention(typed, roster) ?? typed;
+				if (who !== OWNER_SLUG) {
+					const all = await readAllIdentities(deps.agentsRoot);
+					if (!all.some((identity) => identity.slug === who)) {
+						const names = all.map((identity) => identity.slug).join("、");
+						return text(`公司里没有「${typed}」。可以发给：${names}（或 owner 给老板）。`);
+					}
+				}
+				if (who === slug) return text("不用私聊自己。");
+				channelId = await ensureDm(deps, state, slug, who, ctx);
+				privateTo = who;
+				// 频道是刚刚建出来的：`postMessage` 用的是下面这份快照，不重新取就会「频道不存在」。
+				state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? state;
+			}
+			const targetChannel = state.channels[channelId] ?? state.channels[target.channelId];
+
+			// 带 mention：验证成员、补 @ 前缀、默认 kind=question。
+			// `@老板` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。
 			let messageText = args.text;
 			let kind: string | undefined = args.kind;
 			if (args.mention !== undefined && args.mention !== "") {
-				const channel = state.channels[target.channelId];
-				const who = args.mention.replace(/^@/, "");
+				const channel = targetChannel;
+				const typed = args.mention.replace(/^@/, "");
+				const who = resolveMention(typed, roster) ?? typed;
 				if (channel === undefined || !channel.members.includes(who)) {
 					const available = channel?.members.join("、") ?? "";
-					return text(`「${channel?.title ?? target.channelId}」里没有「${who}」。可以 @：${available}`);
+					return text(`「${channel?.title ?? target.channelId}」里没有「${typed}」。可以 @：${available}`);
 				}
-				messageText = parseMentions(args.text).includes(who) ? args.text : `@${who} ${args.text}`;
+				messageText = parseMentions(args.text, roster).includes(who) ? args.text : `@${who} ${args.text}`;
 				kind = args.kind ?? "question";
 			}
+
+			// 要老板拍板的事，代码补一个 `owner`（**不改正文**）：实测含「请确认/要不要/等你定」
+			// 的消息里大量没 @ 老板，老板的回复率只有 1.06%。模型会写「要你定」，然后忘了 @ 你。
+			const wakeOwner =
+				(kind === "decision" || needsOwner(args.text)) &&
+				!parseMentions(messageText, roster).includes(OWNER);
+			// 私聊里对方一定被叫醒（wakeOnAll 已经兜住），但要确保 `mentions` 里有他 ——
+			// 界面的「@ 我」红点、未读口径都读这个字段。
+			const privateMention =
+				privateTo !== undefined && privateTo !== OWNER && !parseMentions(messageText, roster).includes(privateTo)
+					? [privateTo]
+					: [];
 
 			const result = await postMessage(
 				postDeps(deps, state, ctx),
 				{
-					channelId: target.channelId,
+					channelId,
 					from: slug,
 					text: messageText,
 					at: Date.now(),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
 					...(kind === undefined ? {} : { kind }),
+					roster,
+					...((() => {
+						const extra = [...(wakeOwner ? [OWNER] : []), ...privateMention];
+						return extra.length === 0 ? {} : { mention: extra };
+					})()),
 				},
 				ctx,
 			);
-			if (deps.afterPost !== undefined) await deps.afterPost(result.message, target.channelId, ctx);
+			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
 			const woke = result.delivery.delivered;
 			return text(
 				`已发到「${result.channel.title}」#${result.message.seq}。${
@@ -539,17 +676,109 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
+			// 密钥不能靠模型自觉：它写下来的时候并不觉得那是泄密。落盘前先把真值换掉。
+			const body = redact(args.text, deps.workspaceRoot);
 			if (args.scope === "project") {
 				const self = await readIdentity(deps.agentsRoot, slug);
 				const project = args.project ?? self?.project;
 				if (project === undefined) return text("我不在任何项目里。要记项目的事，先说清是哪个项目。");
-				await appendProjectMemory(deps.projectsRoot, project, { text: args.text, by: slug });
+				await appendProjectMemory(deps.projectsRoot, project, { text: body, by: slug });
 				const confirmed = await confirmedBy(deps.harness, project, ctx);
 				const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
 				return text(`已记进项目「${project}」的记忆${tail}。下一条消息就会出现在这个项目的记忆目录里。`);
 			}
-			await appendMemory(join(deps.agentsRoot, slug), args.text);
+			await appendMemory(join(deps.agentsRoot, slug), body, new Date(), "remember");
 			return text("已记下。下一条消息的记忆目录里就会出现它。");
+		},
+	});
+
+	/** 一行最多多少字、一次最多回多少字。与 `clip` 同一个理由：宁可多翻一次，不要一次塞爆上下文。 */
+	const HISTORY_LINE = 400;
+	const HISTORY_BUDGET = 8000;
+	const HISTORY_PAGE = 64;
+	const HISTORY_PAGES = 8;
+
+	/**
+	 * 翻自己的历史。
+	 *
+	 * 为什么必须有这个工具：上下文压缩是 pi-durable 的默认行为，压成 `pi.compaction`
+	 * 条目之后，原文还在 storage 里，但**模型再也看不见了，也没任何办法读回**。
+	 * 于是它只能凭记忆补路径、补数字、补原话 —— 看起来很像，可能是错的，而且
+	 * 错得无法被发现。这把记忆能不能查询变成了可以查询。
+	 *
+	 * 分页走 `projector.ts` 那套 cursor：一次 64 条，从新往回扇。
+	 */
+	const readHistory = defineTool({
+		name: "read_history",
+		description: [
+			"查你自己这个会话过去说过的话（上下文被压缩掉的部分也查得到）。",
+			"上下文被压缩过之后，早先的原文不在眼里了。要写精确的路径、数字、原话，先用它查，不要凭记忆补。",
+			"不给参数 = 最近 12 条；给 query 按关键词找；给 around=<行首的 #id> 从那条往前翻。",
+		].join(""),
+		parameters: Type.Object({
+			query: Type.Optional(Type.String({ description: "关键词（不区分大小写）。给了就只留包含它的条目" })),
+			around: Type.Optional(Type.Number({ description: "条目 id（输出里每行开头的 #号就是）。从这条往前取" })),
+			limit: Type.Optional(Type.Number({ description: "最多几条，默认 12，上限 50" })),
+		}),
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const wanted = Math.min(Math.max(Math.trunc(args.limit ?? 12), 1), 50);
+			const keyword = (args.query ?? "").trim().toLowerCase();
+			const conversation = await deps.harness.conversation(Number(api.conversationId) as never, ctx);
+			if (conversation === undefined) return text("这个会话还没有任何记录。");
+			const now = Date.now();
+			const found: { id: number; line: string }[] = [];
+			let cursor: Cursor | undefined;
+			let exhausted = false;
+			let enough = false;
+			// 多取一条：只有拿到「第 limit+1 条」才知道后面确实还有更早的。
+			for (let index = 0; index < HISTORY_PAGES && found.length <= wanted; index += 1) {
+				const page = await conversation.entries(
+					{
+						order: "descending",
+						...(args.around === undefined ? {} : { maxEntryId: (args.around - 1) as never }),
+					},
+					HISTORY_PAGE,
+					cursor,
+					ctx,
+				);
+				if (page === undefined || page.items.length === 0) break;
+				for (const entry of page.items as readonly EntryRecord[]) {
+					if (entry.kind !== "pi.user" && entry.kind !== "pi.assistant" && entry.kind !== "pi.compaction") continue;
+					const model = entry.model?.[0] as HistoryModel | undefined;
+					const body = historyText(model);
+					if (body === "") continue;
+					const speaker = entry.kind === "pi.compaction" ? "[压缩摘要]" : entry.kind === "pi.user" ? "对方" : "你";
+					const clipped = body.length > HISTORY_LINE ? `${body.slice(0, HISTORY_LINE)}…` : body;
+					const line = `[#${entry.id} ${agoOf(model?.timestamp, now)}] ${speaker}: ${clipped}`;
+					if (keyword !== "" && !line.toLowerCase().includes(keyword)) continue;
+					found.push({ id: Number(entry.id), line });
+					if (found.length > wanted) {
+						// 够数了：这一页没扫完，也就不能断言「没有更早的了」。
+						enough = true;
+						break;
+					}
+				}
+				if (enough || page.next === undefined) {
+					exhausted = page.next === undefined && !enough;
+					break;
+				}
+				cursor = page.next;
+			}
+			if (found.length === 0) return text("这个会话里没有匹配的记录。");
+			// 新→旧累加，超预算就停：给的是「最近的一段」，不是「全部」——
+			// 历史的价值在于能接着往前翻，不在于一次全拿出来。
+			const lines: string[] = [];
+			let used = 0;
+			for (const item of found) {
+				if (lines.length >= wanted || used + item.line.length + 1 > HISTORY_BUDGET) break;
+				lines.push(item.line);
+				used += item.line.length + 1;
+			}
+			const oldest = found[lines.length - 1];
+			const more = found.length > lines.length || (lines.length >= wanted && !exhausted);
+			const tail = more && oldest !== undefined ? `\n\n还有更早的，用 around=${oldest.id} 继续往前。` : "";
+			return text(`${lines.join("\n")}${tail}`);
 		},
 	});
 
@@ -686,9 +915,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args) => {
 			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
 			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
+			// 同上：密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
+			const content = redact(args.content, deps.workspaceRoot);
 			await mkdir(dirname(target), { recursive: true });
-			await writeFile(target, args.content, "utf8");
-			return text(`已写入 ${args.path}（${args.content.length} 字）`);
+			await writeFile(target, content, "utf8");
+			return text(`已写入 ${args.path}（${content.length} 字）`);
 		},
 	});
 
@@ -724,6 +955,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		hire,
 		updateIdentity,
 		remember,
+		readHistory,
 		recall,
 		listSkillsTool,
 		readSkillTool,

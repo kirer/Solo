@@ -12,8 +12,21 @@
  */
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, appendMessage, recipientsOf, type Channel, type ChannelState, type Message } from "./state.ts";
-import { deliver, liveConversations, type DeliverResult, type WakeRecord } from "./deliver.ts";
+import {
+	ChannelDoc,
+	OWNER,
+	appendMessage,
+	botHopsSinceOwner,
+	parseMentions,
+	recipientsOf,
+	relayLimit,
+	type Channel,
+	type ChannelState,
+	type Message,
+} from "./state.ts";
+import { EMPTY_ROSTER } from "./alias.ts";
+import type { MentionRoster } from "./alias.ts";
+import { deliver, liveConversations, type DeliverIssue, type DeliverResult, type WakeRecord } from "./deliver.ts";
 
 // T-016 v2：占位填充时的逐字增量推送钩子。由 serveCore 在启动时挂载（写进 channelClients），
 // 未挂载时为空操作 —— post.ts 不依赖 shell/serve，避免循环依赖。
@@ -44,6 +57,10 @@ export type PostInput = {
 	readonly at: number;
 	readonly kind?: string;
 	readonly replyTo?: number;
+	/** 名册：给了就按名册把 `@老板` / `@CEO` 落库成规范 slug。 */
+	readonly roster?: MentionRoster;
+	/** 正文里没写、但要记进 `mentions` 的 slug（`decision` 自动补 `owner` 走这条）。 */
+	readonly mention?: readonly string[];
 	/** 不想唤醒任何人（比如系统留痕）。缺省会唤醒。 */
 	readonly wake?: false;
 	/** T-016：占位消息生成状态（缺省 undefined → done）。 */
@@ -59,6 +76,32 @@ export type PostDeps = {
 	readonly labelOf?: (slug: string) => string;
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
 };
+
+/**
+ * 追一条系统留痕到频道。`note` 不唤醒、不计未读（见 `Message.kind`），所以这里不碰
+ * 投递层，否则「系统说一下没人被叫醒」会反过来叫醒人。
+ */
+async function appendNote(deps: PostDeps, channelId: string, text: string, at: number, context: Context): Promise<void> {
+	await deps.harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		const next = appendMessage(doc, channelId, { from: OWNER, text, at, kind: "note" });
+		const list = doc.messages[channelId];
+		if (list === undefined) doc.messages[channelId] = [next.message];
+		else (list as Message[]).push(next.message);
+		doc.nextSeq[channelId] = next.message.seq + 1;
+	}, context);
+}
+
+/** 投递没成时给老板留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
+function renderIssues(seq: number, issues: readonly DeliverIssue[], labelOf: (slug: string) => string): string {
+	return issues
+		.map((issue) =>
+			issue.reason === "failed"
+				? `#${seq} 叫了 @${labelOf(issue.slug)}，投递失败：${issue.detail ?? "未知原因"}。`
+				: `#${seq} 叫了 @${labelOf(issue.slug)}，但它还没有会话（还没被打开过）—— 这条不会有人答。`,
+		)
+		.join("\n");
+}
 
 /**
  * 写一条消息并唤醒该唤醒的人。
@@ -78,6 +121,24 @@ export async function postMessage(
 	let created: Message | undefined;
 	let filledSeq: number | undefined;
 	let filledText = "";
+	let cappedLimit = 0;
+	// 接力上限：这条落库前先数一下 agent 已经自动接了几棒。
+	// 判在 appendMessage **之前**：之后这条自己也会被算进去（第 3 棒就会被误拦）。
+	const hops = botHopsSinceOwner(deps.state, input.channelId);
+	const limit = relayLimit(channel);
+	// 显式 @ 当场突破上限：上限是为了拦「A 回 B、B 又回 A」的自动接力，
+	// 不是为了拦住一个想清楚要叫谁的人。上面那条 note 就是这么告诉模型的，
+	// 文案和代码必须一致，否则它会以为自己能 @ 人而其实叫不醒。
+	const addressed = [...parseMentions(input.text), ...parseMentions(input.text, input.roster ?? EMPTY_ROSTER)].some(
+		(slug) => slug !== input.from && channel.members.includes(slug),
+	);
+	const capped =
+		input.wake !== false &&
+		input.from !== OWNER &&
+		input.kind !== "note" &&
+		!addressed &&
+		hops >= limit;
+	if (capped) cappedLimit = limit;
 	await deps.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const state = doc as ChannelState;
@@ -88,6 +149,8 @@ export async function postMessage(
 			at: input.at,
 			...(input.kind === undefined ? {} : { kind: input.kind }),
 			...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+			...(input.roster === undefined ? {} : { roster: input.roster }),
+			...(input.mention === undefined ? {} : { mention: input.mention }),
 			...(input.status === undefined ? {} : { status: input.status }),
 			...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
 		});
@@ -138,6 +201,19 @@ export async function postMessage(
 			else (list as Message[]).push(next.message);
 			state.nextSeq[input.channelId] = next.message.seq + 1;
 		}
+		// 接力到上限：**只落消息、不投递**，再留一条 note 说清楚为什么没人被叫醒。
+		// 不投递就是暂停：消息已经在频道里任何人随时能读到，「继续」不需要按钮 ——
+		// 老板一发言 `botHopsSinceOwner` 自动归零。
+		if (capped) {
+			const noted = appendMessage(state, input.channelId, {
+				from: OWNER,
+				text: `接力到上限（${cappedLimit} 次）：这条只记下，没人被叫醒。老板说一句，或者自己 @ 人，就能接着走。`,
+				at: input.at,
+				kind: "note",
+			});
+			(doc.messages[input.channelId] as Message[]).push(noted.message);
+			state.nextSeq[input.channelId] = noted.message.seq + 1;
+		}
 		created = finalMessage;
 	}, context);
 
@@ -150,6 +226,7 @@ export async function postMessage(
 	if (input.wake === false || input.kind === "note") {
 		return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
+	if (capped) return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 
 	// 老板没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
 	const targets = recipientsOf(channel, message).filter((slug) => slug !== OWNER);
@@ -159,6 +236,7 @@ export async function postMessage(
 	// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
 	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
 	const busy = await liveConversations(deps.harness, context).catch(() => new Set<number>());
+	const labelOf = deps.labelOf ?? ((slug: string) => slug);
 	const delivery = await deliver(
 		{
 			// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
@@ -170,6 +248,11 @@ export async function postMessage(
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+			// 没人被叫醒就说一句：只写 stderr 的话，频道里一片空白，
+			// 老板看到的「我说了没人理」和「系统挂了」长得一模一样。
+			notify: async (issues) => {
+				await appendNote(deps, channel.id, renderIssues(message.seq, issues, labelOf), Date.now(), context);
+			},
 		},
 		context,
 	);

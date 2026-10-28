@@ -8,6 +8,7 @@ import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
 import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/state.ts";
 import { createAgent } from "../../src/core/agent/create.ts";
 import { SettleDoc, confirmedBy, settleProject, type SettleState } from "../../src/core/project/settle.ts";
+import { appendProjectMemory } from "../../src/core/project/memory.ts";
 import { writeProject } from "../../src/core/project/doc.ts";
 
 const roots: string[] = [];
@@ -54,17 +55,25 @@ const settleDeps = (shell: CoreShell, agentsRoot: string, projectsRoot: string, 
 });
 
 describe("项目记忆自动沉淀", () => {
-	it("decision 消息落地后游标推进（不再等 remember(scope=project)）", async () => {
+	it("消息落地后只记「问过」，游标等记忆真写进去才推进", async () => {
 		const { shell, agentsRoot, projectsRoot } = await setup();
 		const lin = await createAgent({ root: agentsRoot, name: "林越", project: "alpha" });
 		await shell.openAgent(lin.slug);
 		await writeProject(projectsRoot, { slug: "alpha", name: "alpha", owner: lin.slug, body: "目标 X" });
 		await openProject(shell, "alpha", [lin.slug]);
 
-		await shell.postAs({ channelId: "proj:alpha", from: lin.slug, text: "定了：连接池调到 20", kind: "decision" });
+		await shell.postAs({ channelId: "proj:alpha", from: "owner", text: "定了：连接池调到 20", kind: "decision" });
+		const asked = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
+		// 问完不推进：负责人被打断或写砸了，这批不能算处理过。
+		expect(asked?.cursors.alpha).toBeUndefined();
+		expect(asked?.waiting?.alpha?.seq).toBe(1);
+
+		// 记忆文件真被写了之后，下一次沉淀检查才推进游标。
+		await appendProjectMemory(projectsRoot, "alpha", { text: "连接池默认调到 20", by: lin.slug });
+		await settleProject(settleDeps(shell, agentsRoot, projectsRoot, async () => shell.conversations.get(lin.slug)), "alpha");
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
-		// settleProject 在 afterPost 里被调用过，游标应已推进到 1。
 		expect(state?.cursors.alpha).toBe(1);
+		expect(state?.waiting?.alpha).toBeUndefined();
 	});
 
 	it("游标推进后不再重复提同一条", async () => {
@@ -74,8 +83,8 @@ describe("项目记忆自动沉淀", () => {
 		await writeProject(projectsRoot, { slug: "alpha", name: "alpha", owner: lin.slug, body: "目标 X" });
 		await openProject(shell, "alpha", [lin.slug]);
 
-		await shell.postAs({ channelId: "proj:alpha", from: lin.slug, text: "定了", kind: "decision" });
-		// 游标已在 afterPost 推进，手动再调 settleProject 不应再问。
+		await shell.postAs({ channelId: "proj:alpha", from: "owner", text: "定了", kind: "decision" });
+		// 已经在等确认，手动再调 settleProject 不应重复催。
 		const result = await settleProject(settleDeps(shell, agentsRoot, projectsRoot, async () => shell.conversations.get(lin.slug)), "alpha");
 		expect(result.asked).toBeUndefined();
 	});
@@ -87,24 +96,38 @@ describe("项目记忆自动沉淀", () => {
 		await writeProject(projectsRoot, { slug: "alpha", name: "alpha", owner: lin.slug, body: "目标 X" });
 		await openProject(shell, "alpha", [lin.slug]);
 
-		await shell.postAs({ channelId: "proj:alpha", from: lin.slug, text: "定了", kind: "decision" });
-		// afterPost 已推进游标到 1，confirmedBy 应检测到游标已是最新、不重复推进。
+		await shell.postAs({ channelId: "proj:alpha", from: "owner", text: "定了", kind: "decision" });
+		// remember(scope=project) 落地：confirmedBy 兜底把游标推到最新一条。
 		const advanced = await confirmedBy(shell.harness, "alpha");
-		expect(advanced).toBe(0);
+		expect(advanced).toBe(1);
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
 		expect(state?.cursors.alpha).toBe(1);
+		expect(state?.waiting?.alpha).toBeUndefined();
 	});
 
-	it("普通 chat 不触发沉淀，游标不动", async () => {
+	it("普通 chat 也进候选：问过但不推进游标", async () => {
 		const { shell, agentsRoot, projectsRoot } = await setup();
 		const lin = await createAgent({ root: agentsRoot, name: "林越", project: "alpha" });
 		await shell.openAgent(lin.slug);
 		await writeProject(projectsRoot, { slug: "alpha", name: "alpha", owner: lin.slug, body: "目标 X" });
 		await openProject(shell, "alpha", [lin.slug]);
 
-		await shell.postAs({ channelId: "proj:alpha", from: lin.slug, text: "今天风很大" });
+		await shell.postAs({ channelId: "proj:alpha", from: "owner", text: "今天风很大" });
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
+		expect(state?.waiting?.alpha?.seq).toBe(1);
 		expect(state?.cursors.alpha).toBeUndefined();
+	});
+
+	it("负责人自己说的话不念回给他听", async () => {
+		const { shell, agentsRoot, projectsRoot } = await setup();
+		const lin = await createAgent({ root: agentsRoot, name: "林越", project: "alpha" });
+		await shell.openAgent(lin.slug);
+		await writeProject(projectsRoot, { slug: "alpha", name: "alpha", owner: lin.slug, body: "目标 X" });
+		await openProject(shell, "alpha", [lin.slug]);
+
+		await shell.postAs({ channelId: "proj:alpha", from: lin.slug, text: "我自己说的" });
+		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
+		expect(state?.waiting?.alpha).toBeUndefined();
 	});
 
 	it("项目频道之外的消息不触发沉淀", async () => {
@@ -193,6 +216,6 @@ describe("项目频道自动存在", () => {
 		await shell.openAgent(lin.slug);
 		await shell.postAs({ channelId: "proj:alpha", from: "owner", text: "定了：先做 A", kind: "decision" });
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
-		expect(state?.cursors.alpha).toBe(1);
+		expect(state?.waiting?.alpha?.seq).toBe(1);
 	});
 });

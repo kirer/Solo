@@ -1,0 +1,17 @@
+# pi-durable 底座让步总账
+
+> 这个项目跑在 `@earendil-works/pi-durable`（experimental）上。底座做不到的事，我们绕了路。
+> 绕路本身不丢人；**忘了自己绕过路**才丢人 —— 下次会重新撞一遍、重新讨论一遍，甚至再写一段
+> 绕路代码。所以这里一条一行地记下来。
+>
+> **只追加，不删。** 处理完了把「底座升级后」一列改成「已处理 + 日期」，保留原条目。
+> 新条目从 C-007 往下排；同一件事如果底座升级后仍成立，就更新「现在的做法」，别开新号。
+
+| 编号 | 日期 | 相关 | 底座限制（pi-durable 的真实约束） | 现在的做法 | 代价 | 底座升级后 |
+|---|---|---|---|---|---|---|
+| C-001 | 2026-10-28 | `channel/deliver.ts` / `channel/post.ts` | `conversation.submit()` 是「投递即忘」，**没有「回合结束」钩子** | 靠 agent 自己 `say` 汇报 | 无法实现严格的 bot→bot handoff 与串行轮次 | 若 pi-durable 提供 turn 结束事件，可做 handoff |
+| C-002 | 2026-10-28 | `channel/tools.ts` / 上下文压缩 | 上下文压缩成 `pi.compaction` 后**原文不可见** | 加了 `read_history` 工具（翻自己被压缩掉的历史） | 多一个工具、模型要记得用 | 若 harness 提供「压缩前原文可按需取回」，可删该工具 |
+| C-003 | 2026-10-28 | `agent/runtime.ts` 的 `agentSection` | **没有 session 级 system prompt 热更新 API**（只能改 conversation 的 `model`/`instructions`） | `agentSection` 用 `tag:false` 每轮重渲染整段 | 前缀缓存会被打穿（每轮 system 段变化） | 若有「section 变更通知」，可只在文件 mtime 变化时才重渲染 |
+| C-004 | 2026-10-28 | `channel/state.ts` 的 `appendMessage` | `documents` 的 state 只能是 JSON，**没有原地更新 API**，一律走 path 式 delta | 单元素追加 + 频道文档定期压基线（ADR-027）；早期用整值替换导致平方放大，库涨到 70MB | 追加逻辑必须自己保证 seq / 下标正确 | 若支持结构化 append，可删掉 splice 逻辑 |
+| C-005 | 2026-10-28 | `project/memory.ts` / `agent/memory.ts` | **没有多进程安全** | 单进程；记忆写入用模块级 Promise 串行队列 | 不能水平扩展 | 若 storage 提供锁，可去掉队列 |
+| C-006 | 2026-10-28 | `runtime/open.ts` | `tasks` 表**没有「孤儿任务」的自动回收** | `reconcileZombieTasks` 在启动时把 `LIVE` 状态强制结算成 `terminal` + `outcome:{status:"orphaned",reason:"restart"}`，并摘掉 `pi.live` 里指向已终态任务的 `run` | 重启会有一次全表扫描 | 若 harness 自带崩溃恢复，可删 |

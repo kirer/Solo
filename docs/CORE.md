@@ -74,12 +74,13 @@ project: demo
 
 | 工具 | 作用 |
 | --- | --- |
-| `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方 |
+| `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方；带 `to` 就是私下发给某一个人 |
 | `read_channel` | 不传频道=未读摘要+频道列表；传频道=读历史消息 |
 | `org` | 我是谁、上级下属、全公司架构 |
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进公司频道与项目频道） |
 | `update_identity` | 改自己或直接下属的 `identity.md` |
 | `remember` / `recall` | 写/读记忆；`scope=project` 切到项目记忆 |
+| `read_history` | 翻自己被压缩掉的历史对话（原文还在 storage 里，压缩后模型看不见） |
 | `list_skills` / `read_skill` / `write_skill` | 技能：两层（公司 + 个人）+ 按需读正文 |
 | `run` / `write_file` / `read_file` | 执行：跑命令 / 写文件 / 读文件（`run` 结果自动记个人频道） |
 | `list_projects` / `read_project` / `write_project` | 项目：`projects/<slug>/README.md` |
@@ -106,11 +107,17 @@ project: demo
 标签（`chat` / `question` / `decision` / `report`），只有项目频道里的 `decision` /
 `report` 会触发记忆沉淀。
 
+`@` 写的是**名字**，`mentions` 存的是 **slug**：`channel/alias.ts` 把「老板 / BOSS / CEO /
+真名 / title」翻成 slug（`@` 别名解析，ADR-036），解析不出来的一律丢弃（`@import` /
+`@media` 不是人）。**成员过滤不动** —— 别名只是翻译，不是放宽边界。两条说话规矩也
+写在这里而不是提示词里：要老板拍板的事由 `needsOwner` 自动补 `owner`（ADR-037）；投递
+正文第一行写清频道 id，私聊额外说一句「只回这里」，兜底频道永远先排掉个人频道。
+
 ## 5. 文件夹就是边界
 
 ```
 workspace/
-  skills/<名字>/SKILL.md        公司层技能：全公司通用（写技能 / 找现成技能）
+  skills/<名字>/SKILL.md        公司层技能：全公司通用（写技能 / 找现成技能 / 工作规矩 / 记忆整理）
   agents/<slug>/
     identity.md                 他是谁
     memory.md                   他自己的记忆
@@ -173,13 +180,17 @@ workspace/
 两条路，都要有：
 
 1. **主动**：agent 用 `remember(scope=project)` 写 `projects/<slug>/memory.md`。
-2. **自动**：一条消息落地后 `settle.ts` 检查两件事 —— 落在 `proj:<slug>` 频道里、
-   `kind` 是 `decision` 或 `report`。命中就把这条发给项目负责人，请它判断「这件事长期
-   成立吗」，成立就 `remember(scope=project)`。找不到负责人时游标照常推进，不阻塞别人。
+2. **自动**：一条消息落地后 `settle.ts` 只检查一件事 —— 落在 `proj:<slug>` 频道里。
+   命中就把**这条连同还没处理的新消息**交给项目负责人，请它按公司技能「记忆整理」判断
+   「哪些长期成立」，成立就 `remember(scope=project)`。找不到负责人时游标照常推进，不阻塞别人。
 
-**单游标**：`cursors[项目]` = 已处理到第几条 seq。`settleProject` 问完一批后即推进到
-这批最后一条 —— 负责人说「没有需要沉淀的」也算处理过，不会重复打扰。`remember(scope=project)`
-落盘后 `confirmedBy()` 做兜底推进。
+**单游标**：`cursors[项目]` = **已确认**沉淀到第几条 seq。`settleProject` 问完**不推进**，
+只记一笔 `waiting`（问到的 seq + 提问那一刻项目记忆文件的 mtime）；下次检查时记忆文件
+真的变了才推进。负责人被打断或写砸了，这批消息下次还会被看到。`remember(scope=project)`
+落盘后 `confirmedBy()` 做兜底推进。（ADR-033）
+
+**判断规则不在代码里**：什么该记、什么不该记、什么时候整理、记完怎么回话，都写在公司技能
+「记忆整理」（`seed/skills/记忆整理/SKILL.md`）里 —— 人和 agent 都能改，改它不用改代码。
 
 
 

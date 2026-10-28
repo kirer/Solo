@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	DIGEST_LIMIT,
+	MEMORY_LIMITS,
 	appendMemory,
+	entryProblem,
 	memoryDigest,
 	readMemory,
 	sectionsOf,
@@ -72,5 +74,68 @@ describe("记忆：一份可以随手改的 Markdown", () => {
 		expect(digest).toContain("还有 3 条更早的没列出");
 		expect(digest).toContain(`条${DIGEST_LIMIT + 2}`);
 		expect(digest).not.toContain("条0 —");
+	});
+});
+
+/**
+ * 机器守的三条底线。模型判断不了这三件事：一条太长会吃掉整个记忆目录的预算，
+ * 重复一条等于挤掉一条真正不同的，而密钥写进来就是**每一轮**都发给模型。
+ */
+describe("记忆的底线", () => {
+	it("空的和只有空白的都拒", () => {
+		expect(entryProblem("")).toBe("这条记忆是空的。");
+		expect(entryProblem("   \n  ")).toBe("这条记忆是空的。");
+	});
+
+	it("超长要报出具体字数，好让它自己压缩", () => {
+		const problem = entryProblem("字".repeat(MEMORY_LIMITS.entry + 1)) ?? "";
+		expect(problem).toContain(`${MEMORY_LIMITS.entry} 字上限`);
+		expect(problem).toContain(`${MEMORY_LIMITS.entry + 1} 字`);
+	});
+
+	it("密钥一律拒收（记忆会被拼进每一轮提示词）", () => {
+		expect(entryProblem("我的 key 是 sk-abcdefghijklmnopqrstuvwx")).toContain("密钥");
+		expect(entryProblem("密码：hunter2hunter2hunter2")).toContain("密钥");
+		expect(entryProblem("AKIAABCDEFGHIJKLMNOP")).toContain("密钥");
+	});
+
+	it("正常的经验照写", () => {
+		expect(entryProblem("改端口要同时改 .env 和 ui 里的常量，否则界面连不上")).toBeUndefined();
+	});
+
+	it("重复的一条不写第二遍", async () => {
+		await appendMemory(root, "先跑 check 再跑 test");
+		const again = await appendMemory(root, "  先跑 check   再跑 test  ");
+		expect(again.changed).toBe(false);
+		expect(again.message).toBe("这条记忆已经有了。");
+		const source = (await readMemory(root)) ?? "";
+		expect(source.split("先跑 check 再跑 test").length - 1).toBe(1);
+	});
+
+	it("像密钥的内容根本落不了盘", async () => {
+		const result = await appendMemory(root, "token: ghp_abcdefghijklmnopqrstuvwxyz012345");
+		expect(result.changed).toBe(false);
+		expect(await readMemory(root)).toBeUndefined();
+	});
+
+	it("并发写不丢条目（读-拼-写不是原子的）", async () => {
+		await Promise.all([
+			appendMemory(root, "第一条"),
+			appendMemory(root, "第二条"),
+			appendMemory(root, "第三条"),
+		]);
+		const source = (await readMemory(root)) ?? "";
+		expect(source).toContain("第一条");
+		expect(source).toContain("第二条");
+		expect(source).toContain("第三条");
+	});
+
+	it("同一天的第二条并进当天的小节，不再新开一个同名标题", async () => {
+		await appendMemory(root, "上午的结论", new Date("2026-10-27T01:00:00Z"));
+		await appendMemory(root, "下午的结论", new Date("2026-10-27T09:00:00Z"));
+		const source = (await readMemory(root)) ?? "";
+		expect(source.split("## 2026-10-27").length - 1).toBe(1);
+		expect(source).toContain("上午的结论");
+		expect(source).toContain("下午的结论");
 	});
 });

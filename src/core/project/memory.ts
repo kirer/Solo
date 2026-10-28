@@ -78,25 +78,24 @@ export function projectMemorySections(source: string): readonly MemorySection[] 
 // ── 自动沉淀 ────────────────────────────────────────────────────────────
 
 /**
- * 哪些消息值得进项目记忆。
+ * 哪些消息值得进项目记忆：**所有还没看过的新消息**，代码不按 `kind` 也不按语义过滤。
  *
- * 判据只有两条，都是**形状**判据，不含语义判断：
+ * 判据只剩两条**形状**判据：
  * 1. 消息在项目频道里（调用方保证）。
- * 2. `kind` 是 `decision` 或 `report` —— 也就是「拍板了」和「交付了」两类。
+ * 2. `seq > since`，且不是「即将被问的那个人」自己说的（把他的话再发回给他没意义）。
  *
- * 为什么不在代码里判语义（比如「这句话是不是结论」）：那是模型该干的事，代码判
- * 只会判错。代码能可靠判的只有「这本来就被标成了结论」。所以真正的沉淀动作由
- * 一个**周期任务**在模型侧完成：把新出现的 decision/report 交给它，它决定写什么。
+ * 为什么去掉「只看 decision/report」：项目频道里大量结论是普通发言，那些永远不会
+ * 被沉淀。什么值得写进记忆是模型的判断，代码判只会判错 —— 那条规则写在公司技能
+ * 「记忆整理」里，人和 agent 都能改、都能迭代，改它不用改代码。
  * 这里的函数只负责回答「有哪些还没沉淀」。
  */
-export const SETTLE_KINDS: readonly string[] = ["decision", "report"];
 
 /** 沉淀游标的键：`项目 slug` → 已经沉淀到第几条 seq。 */
 export function settleKey(project: string): string {
 	return `settle:${project}`;
 }
 
-/** 一条待沉淀的消息（已经过 `kind` 过滤）。 */
+/** 一条待沉淀的消息。 */
 export type SettleCandidate = {
 	readonly seq: number;
 	readonly from: string;
@@ -109,39 +108,36 @@ export type SettleCandidate = {
  *
  * `since` 是上次沉淀到的 seq；缺省 0 表示这个项目一条都没沉淀过。
  * 备注：**发件人是 `owner` 的也留着**——老板在项目频道拍板是最该进记忆的东西。
+ * `exclude` = 这次要去整理的人；他自己说的话不用再念给他听。
  */
 export function settleCandidates(
 	messages: readonly { readonly seq: number; readonly from: string; readonly text: string; readonly kind: string }[],
 	since: number,
+	exclude?: string,
 ): readonly SettleCandidate[] {
 	return messages
-		.filter((message) => message.seq > since && SETTLE_KINDS.includes(message.kind))
+		.filter((message) => message.seq > since && message.from !== exclude)
 		.map((message) => ({ seq: message.seq, from: message.from, text: message.text, kind: message.kind }));
 }
 
 /**
  * 给模型的沉淀指令。
  *
- * 明确要求「只写你确认的、能长期成立的事」，并给出反例 —— 否则模型会把每条消息
- * 都复述一遍，项目记忆立刻变成频道历史的副本（那等于没记）。
+ * 判断规则（什么该记、什么不该记、什么时候记、记完怎么回话）**不在代码里**，
+ * 写在公司技能「记忆整理」里 —— 那是给模型看的判断规则，人和 agent 都要能改。
+ * 这里只做机械的事：把候选消息排成列表、说清记到哪个文件、回哪个频道。
  */
 export function renderSettlePrompt(project: string, candidates: readonly SettleCandidate[]): string {
 	const lines = candidates.map(
 		(item) => `- #${item.seq} [${item.kind}] ${item.from}：${item.text.replace(/\s+/g, " ").trim()}`,
 	);
 	return [
-		`项目 \`${project}\` 的频道里出现了以下${candidates.length}条「拍板」或「交付」。`,
-		"请挑出**能长期成立**的事实写进项目记忆（用 remember(scope=project)）：",
+		`项目 \`${project}\` 的频道里有 ${candidates.length} 条新消息还没整理进项目记忆：`,
 		"",
 		...lines,
 		"",
-		`回话发生在项目频道 \`proj:${project}\` 里（say 时传 channel: "proj:${project}"）。`,
-		"",
-		"要求：",
-		"1. 只写结论与约定，不写过程、不写谁在几点说了什么。",
-		"2. 一条一句，能脱离上下文单独读懂。",
-		"3. 过几天就失效的东西不要写（比如「今天先这样」）。",
-		"4. 没有值得写的就不写，直接说「没有需要沉淀的」。",
+		`按公司技能「记忆整理」的规矩整理这批消息（\`read_skill\` 读那份技能：该记什么、不该记什么、记完怎么回话，都在里面），结论写进 \`projects/${project}/memory.md\`（用 remember(scope=project)）。`,
+		`一句话把「记了什么」回在项目频道 \`proj:${project}\`（say 时传 channel: "proj:${project}"）。`,
 	].join("\n");
 }
 

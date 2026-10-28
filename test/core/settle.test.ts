@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-	SETTLE_KINDS,
 	renderSettlePrompt,
 	settleCandidates,
 	settleKey,
@@ -28,19 +27,15 @@ const project = (owner?: string): ProjectDoc => ({
 });
 
 describe("项目记忆自动沉淀：哪些消息算数", () => {
-	it("只认 decision 与 report 两类", () => {
-		expect(SETTLE_KINDS).toEqual(["decision", "report"]);
-	});
-
-	it("普通 chat 不算，哪怕内容像结论", () => {
+	it("普通 chat 也算：代码不按 kind 拦", () => {
 		const picked = settleCandidates(
 			[{ seq: 1, from: "lin", text: "就这么定了，用方案 B。", kind: "chat" }],
 			0,
 		);
-		expect(picked).toEqual([]);
+		expect(picked.map((item) => item.seq)).toEqual([1]);
 	});
 
-	it("挑出 decision 与 report，保留 seq 与发件人", () => {
+	it("不按 kind 筛：所有新消息都是候选", () => {
 		const picked = settleCandidates(
 			[
 				{ seq: 1, from: "lin", text: "开工", kind: "chat" },
@@ -50,9 +45,22 @@ describe("项目记忆自动沉淀：哪些消息算数", () => {
 			0,
 		);
 		expect(picked).toEqual([
+			{ seq: 1, from: "lin", text: "开工", kind: "chat" },
 			{ seq: 2, from: "lin", text: "定了：用连接池", kind: "decision" },
 			{ seq: 3, from: "owner", text: "交付了 v1", kind: "report" },
 		]);
+	});
+
+	it("排除要整理的那个人自己说的话", () => {
+		const picked = settleCandidates(
+			[
+				{ seq: 1, from: "lin", text: "我自己说的", kind: "chat" },
+				{ seq: 2, from: "zhao", text: "别人说的", kind: "chat" },
+			],
+			0,
+			"lin",
+		);
+		expect(picked.map((item) => item.from)).toEqual(["zhao"]);
 	});
 
 	it("游标之后才算：沉淀过的不会重复提", () => {
@@ -69,7 +77,7 @@ describe("项目记忆自动沉淀：哪些消息算数", () => {
 		expect(picked.map((item) => item.from)).toEqual(["owner"]);
 	});
 
-	it("沉淀提示词列全每条，并要求只写长期成立的事", () => {
+	it("沉淀提示词列全每条，并把判断规则指向技能「记忆整理」", () => {
 		const candidates: SettleCandidate[] = [
 			{ seq: 4, from: "lin", text: "连接池默认 5，要调到 20", kind: "decision" },
 			{ seq: 5, from: "zhao", text: "v1 已上线", kind: "report" },
@@ -77,8 +85,10 @@ describe("项目记忆自动沉淀：哪些消息算数", () => {
 		const prompt = renderSettlePrompt("alpha", candidates);
 		expect(prompt).toContain("#4 [decision] lin：");
 		expect(prompt).toContain("#5 [report] zhao：");
-		expect(prompt).toContain("不写过程");
-		expect(prompt).toContain("没有需要沉淀的");
+		// 判断规则不在代码里：提示词只说「去看技能」，不复述清单。
+		expect(prompt).toContain("记忆整理");
+		expect(prompt).toContain("projects/alpha/memory.md");
+		expect(prompt).not.toContain("不写过程");
 	});
 
 	it("游标键按项目分", () => {

@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 8 条路由（按方法+路径算；按路径去重是 7 条 —— `check-boundaries.mjs` 数的是去重后的
+只有 11 条路由（按方法+路径算；按路径去重是 10 条 —— `check-boundaries.mjs` 数的是去重后的
 路径），全部在 `src/core/shell/serve.ts` 的 `routes` 表里声明。
 
 | 方法 | 路径 | 用途 |
@@ -18,6 +18,9 @@
 | `GET` | `/api/channels/:id` | 频道详情（含消息） |
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
+| `GET` | `/api/attention` | 「找你」：跨频道、需要老板拍板的消息 |
+| `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
+| `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
 | `*` | 其余 | 静态文件（`ui/web/`） |
 
 所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
@@ -208,7 +211,58 @@ type ViewMessage = {
 
 把老板在这个频道里的已读位置推到 `seq`。只前进，不回退。
 
-## 9. 静态文件
+## 9. `GET /api/attention`
+
+「找我」——全公司里**需要老板拍板**的消息，跨频道汇总，按时间倒序。
+
+```ts
+// 响应
+{
+  unread: number,
+  items: {
+    channelId: string, channelKind: string, channelTitle: string,
+    seq: number, at: number,
+    from: string, fromSlug: string, fromLabel: string,
+    excerpt: string, read: boolean
+  }[]
+}
+```
+
+判定在 `src/core/shell/view.ts` 的 `needsYou(message)`：**不是老板自己发的**，且
+（`mentions` 含 `owner`，或正文里有 `needsOwner()` 认的那几种求拍板说法）。窗口 7 天，
+最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 —— 老板要能回头看「哪些我还没理」。
+
+为什么需要它：实测老板在 4804 条消息里回了 51 条（**1.06%**）。不是不想理，是**找不到**
+—— 一条要拍板的消息埋在两小时的 think/tool 流水里，没有任何东西把它拎出来。
+
+## 10. `GET /api/people/:slug/memory`
+
+```ts
+// 响应
+{ slug: string, label: string, exists: boolean, digest: string,
+  entries: { heading: string, body: string }[], raw: string }
+```
+
+`entries` 按 Markdown 的 `##` 标题拆（标题就是记下的日期）。`raw` 是 `agents/<slug>/memory.md`
+全文。`slug` 必须是名册里存在的 agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
+老实 404。
+
+## 11. `POST /api/people/:slug/memory`
+
+```ts
+// 删一条
+{ op: "forget", heading: "2026-10-28" }
+// 加一条
+{ op: "add", text: "老板喜欢简短汇报" }
+// 响应
+{ ok: true, changed: boolean, message: string }
+```
+
+记忆是**不可信的模型写的**，所以要有人能审、能删。写入走 `src/core/agent/memory.ts` 的
+同一道闸（`entryProblem` 拒空/超长/像密钥，`appendMemory` 串行 + 落 journal），和管理端
+没有第二条路。
+
+## 12. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`serve.ts` 的 `uiDir` 默认值）：
 
@@ -219,7 +273,7 @@ type ViewMessage = {
 
 界面**没有构建步骤** —— 改 `ui/web/` 里的文件，刷新浏览器就生效。
 
-## 10. 已知限制
+## 13. 已知限制
 
 - **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
 - **没有工具调用 trace**。`ViewMessage` 只有消息正文，看不到 agent 中间调了哪些工具。
@@ -228,7 +282,7 @@ type ViewMessage = {
 - **不能发图片 / 附件**。只有文本。
 - **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。
 
-## 11. 兼容性纪律
+## 14. 兼容性纪律
 
 1. 加字段随便加（前端忽略未知字段）。
 2. **不许改字段含义**，尤其是 `read` / `unread` / `mentions` 这种带状态的 —— 宁可加新字段。

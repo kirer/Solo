@@ -15,7 +15,7 @@
  */
 import type { Cursor, EntryRecord, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, personalId, tail, type ChannelState } from "../channel/state.ts";
+import { ChannelDoc, OWNER, personalId, tail, type Channel, type ChannelState } from "../channel/state.ts";
 import { projectAssistantEntry, type Projection } from "../channel/transcript.ts";
 import type { DirectoryState } from "../agent/roster.ts";
 
@@ -56,18 +56,40 @@ async function projectEntry(
 	const projections = projectAssistantEntry(entry as never);
 	const channelId = personalId(slug);
 	const state = (await harness.snapshot(ChannelDoc, context)) as ChannelState | undefined;
-	if (state?.channels[channelId] === undefined) return;
+	const channel = state?.channels[channelId];
+	if (state === undefined || channel === undefined) return;
 	if (projections.length === 0) {
 		await saveCursor(harness, convId, Number(entry.id), context);
 		return;
 	}
-	for (const projection of projections) {
+	// **老板的私聊不落过程投影。** 个人频道 = 老板和这个人的私聊，而 think/tool/work
+	// 一次被 @ 就产出十几条：审计实测一个人半小时平均灌 76 条（最高 197 条），老板的回复率
+	// 因此掉到 1.06%（51/4804）。私聊是**对话**，不是日志垃圾桶；过程仍能在会话 feed 里看到
+	// （`pi.assistant` 条目本身没被删，只是不再复制一份到频道）。
+	for (const projection of keptProjections(channel, projections)) {
 		// 他刚在同一个频道用 `say` 说过同样的话（最常见：交付结论里带同一个链接），
 		// 再投影一次就是一条重复消息。只跳过正文，思考与工具卡片照常显示。
 		if (projection.kind === "say" && alreadySaid(state, channelId, slug, projection.text)) continue;
 		await postProjectedMessage(harness, state, channelId, slug, projection, context);
 	}
 	await saveCursor(harness, convId, Number(entry.id), context);
+}
+
+/** 老板的私聊：`dm:owner-*` 且成员里有老板。不看标题 / 归档标记 —— 那些都会漂。 */
+function isOwnerDm(channel: Channel): boolean {
+	return channel.id.startsWith("dm:") && channel.members.includes(OWNER);
+}
+
+/**
+ * 这个频道该落哪些投影。纯函数，只回答一件事：老板的私聊只留 `say`（说过的话）。
+ *
+ * 分出来是为了能被直接验：这条规则的好坏全在「哪些 kind 被挡在外面」，写在一片
+ * 需要真模型才能跑到的地方就无法回归测试。其他频道（项目频道）原样全留 ——
+ * 那里的过程投影是别人接手时要看的东西。
+ */
+export function keptProjections(channel: Channel, projections: readonly Projection[]): readonly Projection[] {
+	if (!isOwnerDm(channel)) return projections;
+	return projections.filter((item) => item.kind === "say");
 }
 
 /** 最近 5 分钟内，同一人在同一频道是否已经说过同一件事（正文相同，或带同一个链接）。 */

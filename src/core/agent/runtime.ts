@@ -14,6 +14,7 @@ import { type PromptSection, type Registry, type ToolRegistration } from "../run
 import { readAllIdentities, readIdentity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
+import { loadRules } from "./rules.ts";
 import { readProject } from "../project/doc.ts";
 import { projectMemoryDigest, readProjectMemory } from "../project/memory.ts";
 import { renderAgentPrompt, type CapabilityLine } from "./prompt.ts";
@@ -110,9 +111,14 @@ export async function renderAgentSection(
 	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
 	const memory = await readMemory(join(paths.agents, slug));
 	const digest = memory === undefined ? undefined : memoryDigest(memory);
+	// 规矩是公司层文件（`<workspace>/rules.md`），每人每轮都读一次：读不到就当没有，
+	// 不能让一次文件缺失拖垮整段提示词（那时它连自己叫什么都不会知道）。
+	const rules = await loadRules(paths.workspace);
 	return renderAgentPrompt({
 		self,
 		all,
+		// 脱敏要在拼完的整段上做：key 可能来自身份、技能、记忆里任何一处。
+		workspaceRoot: paths.workspace,
 		capabilities: registeredTools(registry),
 		skills: skills.map((skill) => ({
 			name: skill.name,
@@ -121,6 +127,7 @@ export async function renderAgentSection(
 			...(skill.overrides === true ? { overrides: true } : {}),
 		})),
 		...(digest === undefined ? {} : { memoryDigest: digest }),
+		...(rules === undefined ? {} : { rules }),
 		...(brief === undefined ? {} : { projectBrief: brief }),
 		...(members === undefined ? {} : { projectMembers: members }),
 		...(projectDigest === undefined ? {} : { projectMemoryDigest: projectDigest }),

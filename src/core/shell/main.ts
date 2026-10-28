@@ -18,12 +18,13 @@
  * 「不修它，公司会不会停摆」，答案是否就别加。
  */
 import { mkdir, readdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createRegistry } from "../runtime/index.ts";
 import { openCore, type CoreRuntime } from "../runtime/open.ts";
 import { setupModels } from "../runtime/index.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
-import { seedOwnerAssistant } from "./seed.ts";
+import { seedOwnerAssistant, seedRules, syncCompanySkills } from "./seed.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {
@@ -76,6 +77,23 @@ async function main(): Promise<void> {
 	const databasePath = join(args.workspace, "core.sqlite");
 	await mkdir(agentsRoot, { recursive: true });
 	await mkdir(projectsRoot, { recursive: true });
+
+	if (args.seed) {
+		// 规矩与公司层技能**每次启动都同步**（不是「只在空工作区」）：它们是公司发的文件，
+		// 以前只在空工作区拷一次，于是「先给结论」「不回错频道」这类修正永远进不了已在跑的
+		// 工作区。同步按 hash 判断用户改过没有，改过的不动（ADR-039）。
+		const rules = await seedRules(args.workspace);
+		if (rules === "written") console.log(`[core] 写入了工作区规矩：${join(args.workspace, "rules.md")}`);
+		const synced = await syncCompanySkills(agentsRoot);
+		const touched = [...synced.copied, ...synced.updated];
+		if (touched.length > 0) console.log(`[core] 同步了公司层技能：${touched.join("、")}`);
+	}
+
+	// 启动自检：`project/memory.ts` 的沉淀指令让负责人 `read_skill "记忆整理"`，
+	// 那份技能不在工作区，沉淀就会变成「模型凭自己想法整理」—— 静默降级，没人知道。
+	if (!existsSync(join(args.workspace, "skills", "记忆整理", "SKILL.md"))) {
+		console.warn("[core] 公司技能「记忆整理」不在工作区：项目记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
+	}
 
 	if (args.seed && (await agentCount(agentsRoot)) === 0) {
 		const slug = await seedOwnerAssistant(agentsRoot, { name: "知言" });

@@ -54,6 +54,22 @@ describe("投递正文", () => {
 		expect(text).toContain("还 @ 了：财务");
 		expect(text).not.toContain("还 @ 了：cto");
 	});
+
+	test("写清这条会叫醒谁、自己是第几个", () => {
+		// 两个人被同时叫醒时，谁都不知道对方也在场，于是各写一条重复甚至矛盾的回复。
+		// 投递名单模型看不到，只能由代码注入。
+		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto", "cfo"] });
+		const { message } = appendMessage(state, "g", { from: "owner", text: "@cto @cfo 一起看", at: 1 });
+		const forCfo = renderDelivery({ channel: state.channels.g!, message, viewer: "cfo" });
+		expect(forCfo).toContain("这条会叫醒：cto、cfo（你在第 2 位）");
+		expect(forCfo).toContain("别人也在看这条。动手前先说一句你接哪一块");
+		// 只叫醒一个人时不写「别人也在看」——那是假话。
+		const solo = stateWith({ id: "s", title: "S", members: ["owner", "cto"] });
+		const soloMessage = appendMessage(solo, "s", { from: "owner", text: "@cto 看一下", at: 1 }).message;
+		const single = renderDelivery({ channel: solo.channels.s!, message: soloMessage, viewer: "cto" });
+		expect(single).toContain("这条会叫醒：cto（你在第 1 位）");
+		expect(single).not.toContain("别人也在看这条");
+	});
 });
 
 describe("未读摘要", () => {

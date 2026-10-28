@@ -506,8 +506,8 @@ export async function assembleCore(
 /**
  * 造「一条消息落地之后」的钩子：项目记忆自动沉淀。
  *
- * 只在**项目频道** + **decision/report** 时才动 —— 这两个条件是形状判据，代码判得准。
- * 写什么由模型（`remember(scope=project)`）决定，代码不猜语义。
+ * 只看一件事：这条消息落在**项目频道**里（形状判据）。哪些消息值得进记忆、什么该记
+ * 什么不该记，都由模型按公司技能「记忆整理」判断 —— 代码不按 `kind` 也不按语义拦。
  */
 function makeAfterPost(
 	harness: Harness,
@@ -515,9 +515,8 @@ function makeAfterPost(
 	projectsRoot: string,
 	live: () => ReadonlyMap<string, Conversation>,
 ): (message: Message, channelId: string, context: Context) => Promise<void> {
-	return async (message, channelId, context) => {
+	return async (_message, channelId, context) => {
 		if (!channelId.startsWith("proj:")) return;
-		if (message.kind !== "decision" && message.kind !== "report") return;
 		await settleProject(
 			{
 				harness,

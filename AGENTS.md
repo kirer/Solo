@@ -42,7 +42,7 @@ src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
 ui/web/             界面（无构建）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
-test/core/          14 文件 / 133 例
+test/core/          29 文件 / 251 例
 workspace/          运行时数据（gitignore）
 ```
 
@@ -80,11 +80,11 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 14 文件 133 例，<1s，必须全绿
+npm test          # 29 文件 251 例，<2s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
-- **`npm run live` 不能省。** 133 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
+- **`npm run live` 不能省。** 251 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
   两个 bug 叠在一起（老板发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
   症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。单测测的是纯函数和装配，
   **只有真模型能测出「沟通会不会跑偏」**。
@@ -103,6 +103,7 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
 | 消息 `kind` 新增（`think` / `say` / `tool` 过程投影） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息 `kind` 表 |
+| 撞上 pi-durable 做不到的事、或为它写了绕路代码 | `docs/CONCESSIONS.md` 追加一行（只追加；处理完写「已处理 + 日期」） |
 | 本文件的表 | `AGENTS.md` |
 
 **文档里的行号会漂。** 优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，
@@ -119,6 +120,7 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 | `docs/CORE.md` | 概念：为什么这么设计 |
 | `docs/CODE.md` | 代码在哪、谁负责什么 |
 | `docs/DECISIONS.md` | 哪些约定不能轻易碰、为什么 |
+| `docs/CONCESSIONS.md` | 底座（pi-durable）做不到什么、我们怎么绕的、升级后能不能删 |
 | `docs/WEB-API.md` | 接口字段 |
 | `docs/DEPLOY.md` | 怎么跑起来、怎么排障 |
 | `docs/research/` | 底层库的原始调研（可能落后于依赖版本） |

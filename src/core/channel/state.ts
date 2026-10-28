@@ -13,6 +13,7 @@
  * 最容易写错、也最需要单测的一段。
  */
 import { defineDoc } from "../runtime/index.ts";
+import { EMPTY_ROSTER, resolveMention, type MentionRoster } from "./alias.ts";
 
 /** 一条频道消息。 */
 export type Message = {
@@ -129,13 +130,46 @@ export function projectId(project: string): string {
  */
 const MENTION = /(?<![\p{L}\p{N}._-])@([\p{L}\p{N}_-]+)/gu;
 
-export function parseMentions(text: string): string[] {
+/**
+ * 从正文里解析 `@` 名字，返回**解析后的 slug**（`@老板` → `owner`，`@CEO` → 那个人）。
+ *
+ * 传了 `roster` 就按名册严格解析：解析不出来的 token（`@import` / `@media` / `@x`）
+ * **丢弃**，因为它们在成员表里不存在，留着只是噪音。
+ *
+ * 不传 `roster` 时保留旧行为（字面 token 原样返回）—— 旧调用点（外壳的留痕、老数据的
+ * 重新投递）不因为这一层而改变语义；老板的叫法由 `recipientsOf` 的兜底兜住。
+ */
+export function parseMentions(text: string, roster?: MentionRoster): string[] {
 	const out: string[] = [];
 	for (const match of text.matchAll(MENTION)) {
-		const slug = match[1];
+		const raw = match[1];
+		if (raw === undefined) continue;
+		const slug = roster === undefined ? raw : resolveMention(raw, roster);
 		if (slug !== undefined && !out.includes(slug)) out.push(slug);
 	}
 	return out;
+}
+
+/**
+ * 这条消息是不是在「要老板拍板」。
+ *
+ * 为什么由代码判断而不是指望模型自觉：实测含「请确认/要不要/等你定」的消息里，大量
+ * 没有 @ 老板，老板的回复率只有 1.06%。模型会写「要你定」，然后忘了 @ 你。
+ *
+ * 只列 7 个信号，宁可多叫一次老板，也不要让一件等人拍板的事静默躺着。
+ */
+const OWNER_SIGNALS: readonly RegExp[] = [
+	/请老板/,
+	/请确认/,
+	/需(?:要)?你(?:定|确认|拍板)?/,
+	/等你定|你定|老板定/,
+	/要不要/,
+	/还是/, // 「是 A 还是 B」的唯一共同词
+	/怎么定/,
+];
+
+export function needsOwner(text: string): boolean {
+	return OWNER_SIGNALS.some((signal) => signal.test(text));
 }
 
 /**
@@ -156,8 +190,11 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	const targets = new Set<string>();
 	const members = new Set(channel.members);
 
-	for (const slug of message.mentions) {
-		if (members.has(slug)) targets.add(slug);
+	// 兜底再解析一次别名：老数据里存的是字面 token（`@老板`），而频道成员里是 `owner`。
+	// 成员过滤规则本身**不动** —— 不是这个房间的人照样 @ 不到（防止拿到别人房间的上下文）。
+	for (const mention of message.mentions) {
+		const slug = members.has(mention) ? mention : resolveMention(mention, EMPTY_ROSTER);
+		if (slug !== undefined && members.has(slug)) targets.add(slug);
 	}
 	if (message.from === OWNER && message.mentions.length === 0) {
 		const first = channel.members.find((slug) => slug !== OWNER);
@@ -168,6 +205,41 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	}
 	targets.delete(message.from);
 	return [...targets];
+}
+
+/**
+ * 一个频道里 agent 之间最多能自动接多少棒。
+ *
+ * 项目频道用 `wakeOnAll` 让「不 @ 人也能把负责人叫醒」，于是 A 回复 → 唤醒 B →
+ * B 回复 → 又唤醒 A。没有上限就是无限循环烧钱。上限按频道规模给：人多一个回合里
+ * 该说的也更多。至少 3，否则 0 个 agent 的频道一上来就锁死。
+ */
+export function relayLimit(channel: Channel): number {
+	return Math.max(3, 3 * channel.members.filter((slug) => slug !== OWNER).length);
+}
+
+/**
+ * 老板在这条频道里最后说了一句之后，agent 已经自动接了几棒。
+ *
+ * **老板从没在这个频道说过话时，从频道建立算起**。早先这里是 `return 0`（「不惩罚」），
+ * 结果项目频道里的老板一次不开口，上限就永远不触发 —— 那正是唯一真会烧钱失控的地方。
+ * 老板一开口就归零，所以「新频道」不会反而更严。
+ * `note` / `work` 不算接力：那是系统留痕和执行过程，不是 agent 在跟人说话；
+ * 它们也不能打断计数（`note` 的 from 是 `OWNER`，若当成老板发言就会把计数清零）。
+ */
+export function botHopsSinceOwner(state: ChannelState, channelId: string): number {
+	const list = state.messages[channelId] ?? [];
+	let last = -1;
+	for (let index = list.length - 1; index >= 0; index -= 1) {
+		const item = list[index]!;
+		if (item.from !== OWNER) continue;
+		if (item.kind === "note" || item.kind === "work") continue;
+		last = index;
+		break;
+	}
+	return list
+		.slice(last + 1)
+		.filter((item) => item.from !== OWNER && item.kind !== "note" && item.kind !== "work").length;
 }
 
 /** 某个 slug 在一个频道里读到了哪里。0 表示一条没读。 */
@@ -184,6 +256,29 @@ export function unreadCount(state: ChannelState, channelId: string, slug: string
 		if (message.seq > mark && message.from !== slug && message.kind !== "note" && message.kind !== "work") count += 1;
 	}
 	return count;
+}
+
+/**
+ * 没被叫醒、也没指定频道时，最后一级兜底在哪儿说话。
+ *
+ * **先排掉个人频道**：`mine[0]` 可能正是「我和老板的私聊」，于是老板在群里问的一句话
+ * 被答进私聊（实测 2598 条噪音灌进了老板私聊）。所以顺序是「我所在的非个人频道里最近
+ * 活跃的那个」→ 个人频道。
+ */
+export function fallbackChannelId(state: ChannelState, slug: string): string {
+	const personal = personalId(slug);
+	let best = personal;
+	let bestAt = Number.NEGATIVE_INFINITY;
+	for (const channel of channelsOf(state, slug)) {
+		if (channel.id === personal) continue;
+		const list = state.messages[channel.id] ?? [];
+		const at = list.length === 0 ? channel.createdAt : list[list.length - 1]!.at;
+		if (at > bestAt) {
+			best = channel.id;
+			bestAt = at;
+		}
+	}
+	return best;
 }
 
 /** 某个 slug 能看到的频道（成员表里包含它，且没归档）。 */
@@ -213,6 +308,10 @@ export function appendMessage(
 		readonly at: number;
 		readonly kind?: string;
 		readonly replyTo?: number;
+		/** 名册：给了就按名册解析 `@`（`@老板` → `owner`），不给就保留字面 token。 */
+		readonly roster?: MentionRoster;
+		/** 正文里没写、但要额外记进 `mentions` 的 slug（例如 `decision` 自动补 `owner`）。 */
+		readonly mention?: readonly string[];
 		/** T-016：占位消息的生成状态（缺省 undefined → done）。 */
 		readonly status?: "pending" | "done" | "error";
 		/** T-016：占位归属的被唤醒人 slug。 */
@@ -223,7 +322,13 @@ export function appendMessage(
 	if (channel === undefined) throw new Error(`频道不存在：${channelId}`);
 
 	const seq = state.nextSeq[channelId] ?? 1;
-	const mentions = parseMentions(input.text);
+	const mentions = parseMentions(input.text, input.roster);
+	// 代码补的 @（`decision` 自动叫老板）不改正文，只进 mentions —— 正文是模型的嘴，
+	// 不该被系统塞字；而「提醒谁」是系统的责任。
+	for (const raw of input.mention ?? []) {
+		const slug = resolveMention(raw, input.roster ?? EMPTY_ROSTER);
+		if (slug !== undefined && !mentions.includes(slug)) mentions.push(slug);
+	}
 	// 引用一条消息 = 等同于 @ 它的作者：回复本身就带有「我是在跟你说」的语义。
 	const replyTo = input.replyTo;
 	const quotedFrom =

@@ -29,7 +29,8 @@ import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type ChannelState } from "../channel/state.ts";
 import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
-import { channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
+import { appendMemory, memoryDigest, readMemory, sectionsOf, writeMemory } from "../agent/memory.ts";
+import { attentionItems, channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
 
 /** 服务选项。 */
 export type CoreServeOptions = {
@@ -261,6 +262,62 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			},
 		},
 		{
+			pattern: "/api/people/:slug/memory",
+			method: "GET",
+			handler: async ({ response, params }) => {
+				const { directory } = await snapshot();
+				const slug = params.slug ?? "";
+				// 只认名册里的 slug —— 这既挡住了路径穿越，也让「查一个不存在的人」
+				// 老实回 404，而不是先建出一个空目录。
+				if (!(slug in directory.slugToConversation) || slug === OWNER_SLUG) {
+					return fail(response, 404, "没有这个人");
+				}
+				const source = (await readMemory(join(shell.agentsRoot, slug))) ?? "";
+				return json(response, {
+					slug,
+					label: withLabels(directory, []).labels?.[slug] ?? slug,
+					exists: source !== "",
+					digest: memoryDigest(source) ?? null,
+					entries: sectionsOf(source).map((section) => ({ heading: section.heading, body: section.body })),
+					raw: source,
+				});
+			},
+		},
+		{
+			pattern: "/api/people/:slug/memory",
+			method: "POST",
+			handler: async ({ request, response, params }) => {
+				const { directory } = await snapshot();
+				const slug = params.slug ?? "";
+				if (!(slug in directory.slugToConversation) || slug === OWNER_SLUG) {
+					return fail(response, 404, "没有这个人");
+				}
+				const agentDir = join(shell.agentsRoot, slug);
+				const body = await readJson<{ op?: string; heading?: string; text?: string }>(request);
+				if (body.op === "forget") {
+					const heading = body.heading ?? "";
+					const source = (await readMemory(agentDir)) ?? "";
+					const sections = sectionsOf(source);
+					if (!sections.some((section) => section.heading === heading)) {
+						return fail(response, 404, "没有这一条记忆（可能已经被删掉）");
+					}
+					const head = source.split("\n").slice(0, source.split("\n").findIndex((line) => line === `## ${heading}`));
+					const kept = sections.filter((section) => section.heading !== heading);
+					const next = [...head, ...kept.flatMap((section) => [`## ${section.heading}`, section.body, ""])]
+						.join("\n")
+						.trimEnd();
+					const result = await writeMemory(agentDir, next, "owner");
+					return json(response, { ok: true, entries: sectionsOf(result.source).length });
+				}
+				if (body.op === "add") {
+					const result = await appendMemory(agentDir, body.text ?? "", new Date(), "owner");
+					if (!result.changed) return fail(response, 400, result.message);
+					return json(response, { ok: true, entries: sectionsOf(result.source).length });
+				}
+				return fail(response, 400, "op 只能是 forget 或 add");
+			},
+		},
+		{
 			pattern: "/api/channels",
 			method: "GET",
 			handler: async ({ response }) => {
@@ -272,6 +329,18 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 						total: list.reduce((sum, channel) => sum + channel.unread, 0),
 						mentions: list.reduce((sum, channel) => sum + channel.mentions, 0),
 					},
+				});
+			},
+		},
+		{
+			pattern: "/api/attention",
+			method: "GET",
+			handler: async ({ response }) => {
+				const { directory, channels } = await snapshot();
+				const items = attentionItems(channels, directory);
+				return json(response, {
+					items,
+					unread: items.filter((item) => !item.read).length,
 				});
 			},
 		},

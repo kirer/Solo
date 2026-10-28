@@ -13,7 +13,14 @@
  */
 import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
 import { conversationFor, type DirectoryState } from "../agent/roster.ts";
-import { unreadCount, readMarkOf, type Channel, type ChannelState, type Message } from "../channel/state.ts";
+import {
+	needsOwner,
+	readMarkOf,
+	unreadCount,
+	type Channel,
+	type ChannelState,
+	type Message,
+} from "../channel/state.ts";
 
 /** 界面用的频道种类。核心没有频道类型，从 id 前缀反推。 */
 export type ViewChannelKind = "company" | "leadership" | "project" | "dm";
@@ -52,6 +59,13 @@ export type ViewMessage = {
 	status?: "pending" | "done" | "error";
 	/** T-016：占位归属的被唤醒人 slug。 */
 	pendingFor?: string;
+	/**
+	 * 这条要不要老板本人看一眼。
+	 *
+	 * 判据在核心（`needsOwner` + 显式 @ 老板），这里只做投影 —— 界面不该自己猜关键词。
+	 * 老板自己说的话永不算「需要你」。
+	 */
+	needsYou?: true;
 };
 
 /** 成员。 */
@@ -184,6 +198,18 @@ export function channelList(
 	return out.sort((left, right) => right.lastAt - left.lastAt);
 }
 
+/**
+ * 「这条要不要老板看一眼」。
+ *
+ * 老板自己说的话不算（他不需要提醒自己）。其余看两个信号，任一命中即可：
+ * 正文显式点了老板，或正文在问「要不要 / 请确认 / 等谁定」这类只有他能定的事。
+ * 实测含这些词的消息大量没 @ 老板，所以判据必须在代码里，不能指望模型自觉。
+ */
+function needsYou(message: Message): boolean {
+	if (message.from === OWNER_SLUG) return false;
+	return message.mentions.includes(OWNER_SLUG) || needsOwner(message.text);
+}
+
 /** 一条消息的视图。 */
 export function messageView(
 	state: ChannelState,
@@ -223,6 +249,7 @@ export function messageView(
 		read: readMarkOf(state, viewer, channel.id) >= message.seq,
 		...(message.status === undefined ? {} : { status: message.status }),
 		...(message.pendingFor === undefined ? {} : { pendingFor: message.pendingFor }),
+		...(needsYou(message) ? { needsYou: true as const } : {}),
 	};
 }
 
@@ -318,4 +345,62 @@ export function withLabels(directory: DirectoryState, identities: readonly Ident
 	const labels: Record<string, string> = { ...(directory.labels ?? {}) };
 	for (const identity of identities) labels[identity.slug] = identity.name ?? identity.slug;
 	return { ...directory, labels };
+}
+
+/**
+ * 「找你的 N 件事」。
+ *
+ * 老板的抱怨是「消息太多，真正需要我的信息没有 @ 我，没法直接定位」。频道列表只能给出
+ * 每个频道一个红点，回答不了「我现在该看哪一条」。这份列表把散落在所有频道里、真正
+ * 等他开口的消息按时间倒序摊平，每条都带回到原频道的锚点。
+ *
+ * 只收 7 天内、最多 60 条：再旧的已经该由记忆处理，不该占着「待办」的位置。已读的也
+ * 收（带 `read` 标记），因为「读过了但还没作答」和「没看见」是两件事，界面可以分开显示。
+ */
+export type AttentionItem = {
+	channelId: string;
+	channelKind: ViewChannelKind;
+	channelTitle: string;
+	seq: number;
+	at: number;
+	from: number;
+	fromSlug: string;
+	fromLabel: string;
+	/** 正文第一行，最多 80 字。 */
+	excerpt: string;
+	read: boolean;
+};
+
+const ATTENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+const ATTENTION_MAX = 60;
+
+export function attentionItems(
+	state: ChannelState,
+	directory: DirectoryState,
+	viewer = OWNER_SLUG,
+	now = Date.now(),
+): AttentionItem[] {
+	const out: AttentionItem[] = [];
+	for (const channel of Object.values(state.channels)) {
+		if (channel.archived === true) continue;
+		const mark = readMarkOf(state, viewer, channel.id);
+		for (const message of state.messages[channel.id] ?? []) {
+			if (now - message.at > ATTENTION_WINDOW_MS) continue;
+			if (!needsYou(message)) continue;
+			const first = message.text.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
+			out.push({
+				channelId: channel.id,
+				channelKind: kindOf(channel.id),
+				channelTitle: channel.title,
+				seq: message.seq,
+				at: message.at,
+				from: idOf(directory, message.from),
+				fromSlug: message.from,
+				fromLabel: labelIn(directory, message.from),
+				excerpt: first.length > 80 ? `${first.slice(0, 80)}…` : first,
+				read: mark >= message.seq,
+			});
+		}
+	}
+	return out.sort((left, right) => right.at - left.at).slice(0, ATTENTION_MAX);
 }

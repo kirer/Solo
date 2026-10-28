@@ -15,6 +15,7 @@ workspace/
 .env
 .env.*
 !.env.example
+.secrets.json
 
 # 测试缓存
 coverage/
