@@ -25,6 +25,7 @@ export {
 	defineTask,
 	defineTool,
 	hook,
+	LiveDoc,
 	section,
 	type Extension,
 	type Registry,

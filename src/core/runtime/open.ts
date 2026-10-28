@@ -4,7 +4,7 @@
  * 这里只做四件事：打开存储、建 harness、自愈脏数据、返回关闭句柄。
  */
 import type { Models } from "@earendil-works/pi-ai";
-import { Harness as DurableHarness, type Harness, type HarnessSettings } from "@earendil-works/pi-durable";
+import { Harness as DurableHarness, LiveDoc, type Harness, type HarnessSettings } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
@@ -55,12 +55,19 @@ export type CoreRuntime = {
  * 就地结算成 `terminal`（`orphaned`/`restart`），并在同一次自愈里撤销所有未结的
  * 输入 submission。必须在同一个事务里一次做完：只终结父任务会级联把子任务改回
  * `pending`，它们仍然会重放、仍然会崩（实测）。走 Harness 自身连接与事务，无竞态。
+ *
+ * 还有一处必须一起清：会话的 `pi.live` 文档。它里面的 `run` 是「这个会话忙不忙」
+ * 的唯一判据（入库检查就是 `busy = live.run !== undefined`）。强杀时 `run` 留在那里，
+ * 而它指向的 generation 任务已经是 terminal —— 于是这个会话**永远被当成忙**，
+ * 之后的每一条输入都被塞进 `queued` 再也无人取（实测：私聊几十条消息全哑）。
  */
 async function reconcileZombieTasks(harness: Harness, context: Context): Promise<void> {
 	// 调度器 open 时按这些列扫描「活着」的任务。
 	const LIVE = ["pending", "running", "waiting", "sleeping", "completing"] as const;
 	let terminated = 0;
 	let settled = 0;
+	// 被解开「假忙」的会话：它们的积压输入还卡在 inbox 里，等一个人开第一轮。
+	const unblocked = new Set<number>();
 	try {
 		// 先读一遍未结的输入 submission（任务结算后它们就再也无人处理了）。
 		const pendingSubmissions = (await harness.inspect(context)).submissions.filter(
@@ -92,18 +99,52 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 				} as TaskRecord<JsonValue, JsonValue, JsonValue>);
 				count += 1;
 			}
+
+			// 清掉所有会话的「忙」标记（见函数头注释：不清就等于让这个会话永远哑掉）。
+			// 必须扫**全部会话**而不是只看上面那些残留任务所属的会话：一条活任务都没有、
+			// 只有一条陈旧 `run` 的会话正是最坏的那种（它永远不会报错，只是再也不说话）。
+			// 只清 `run` 指向的任务已经终态（或不存在）的——同一个库上可能还挂着另一个
+			// 活进程，它的 `run` 指向的任务还活着，不能动。
+			let conversationCursor: Cursor | undefined;
+			for (;;) {
+				const page = await tx.scanConversations({}, 256, conversationCursor);
+				for (const conversation of page.items) {
+					const doc = await tx.doc(LiveDoc, conversation.id);
+					const run = doc.run;
+					if (run !== undefined) {
+						const owner = await tx.task(run.taskId);
+						// 任务不存在也算陈旧（指向一个已经不存在的任务，没人会来收尾）。
+						if (owner !== undefined && owner.state?.status !== "terminal") continue;
+						// 与库内 `endRun` 同一套收尾：先结算这一轮挂着的输入，再摘掉整轮的表现。
+						for (const id of run.inputs) {
+							tx.settleSubmission(id, { status: "unanswered", reason: "restart" });
+							settled += 1;
+						}
+						delete doc.run;
+						unblocked.add(conversation.id);
+					}
+					delete doc.generation;
+					delete doc.tools;
+					delete doc.nestedTools;
+				}
+				if (page.next === undefined) break;
+				conversationCursor = page.next;
+			}
 			return count;
 		}, context);
 
-		// 排队中的输入用 abort 撤掉（它会连 inbox 项一起清）；已经 placed 的只能就地结算——
-		// 它的 entry 已经在会话里，但没有活着的任务会来回答它，留着会在下次启动时反复出现。
+		// 排队中的输入默认撤掉：它服务的那一轮已经死了，没人会再来取。
+		// 例外是被解开假忙的会话——它现在是真空闲，这些输入**能被处理**，
+		// 一律撤掉等于把老板刚说的话默默吞了（实测：私聊里几十条全被吞）。
 		for (const submission of pendingSubmissions) {
-			if (submission.status === "queued") {
+			if (submission.status === "queued" && !unblocked.has(submission.conversationId)) {
 				const result = await harness.abortSubmission(submission.id, context, submission.conversationId);
 				if (result === "aborted") settled += 1;
 			}
 		}
-		const placed = pendingSubmissions.filter((submission) => submission.status === "placed");
+		const placed = pendingSubmissions.filter(
+			(submission) => submission.status === "placed" && !unblocked.has(submission.conversationId),
+		);
 		if (placed.length > 0) {
 			await harness.commit(async (tx) => {
 				for (const submission of placed) {
@@ -111,6 +152,27 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 				}
 			}, context);
 			settled += placed.length;
+		}
+
+		// 解开假忙之后，那个会话里积压的输入仍然躺在 inbox 里：入库时 `busy` 为真，所以
+		// 它们从未触发 `startRun`，而 inbox 只在「一轮结束」的边界上被取走。没有活着
+		// 的一轮，就没人来取。这里补一句占位输入把它自己踢起来——不用猜那些积压的正文，
+		// 一次 `admitSubmission` 会把 inbox 里所有排队项一起放进这一轮。
+		const backlog = pendingSubmissions.filter(
+			(submission) => submission.status === "queued" && unblocked.has(submission.conversationId),
+		);
+		for (const conversationId of new Set(backlog.map((submission) => submission.conversationId))) {
+			const conversation = await harness.conversation(conversationId, context);
+			if (conversation === undefined) continue;
+			await conversation.submit(
+				{
+					type: "input",
+					content: "（重启前积压的消息已恢复，请处理上面还没回的消息）",
+					requestId: `reconcile:${conversationId}`,
+				},
+				context,
+			);
+			unblocked.delete(conversationId);
 		}
 	} catch (error) {
 		// 自愈失败也不要挡启动：进程能起来，人能进界面手动处理。
