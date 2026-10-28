@@ -646,7 +646,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 				...(result.stderr.trim() === "" ? [] : [`[stderr] ${result.stderr.trim()}`]),
 				`(退出码 ${result.code})`,
 			].join("\n");
-			const report = output.length > 4000 ? `${output.slice(0, 4000)}\n…（输出已截断，完整结果用 read_file 看对应文件）` : output;
+			// 完整保留输出：折叠展开后可以看全部。标题里标注「执行命令」，让老板一眼知道
+			// 这是哪种操作（仿 ChatGPT 的工具调用卡，先说清「做了什么」再给详情）。
+			const report = output;
 			await logWork(deps, slug, report, ctx);
 			return text(report);
 		},

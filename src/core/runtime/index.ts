@@ -38,6 +38,7 @@ export type {
 	ConversationCreateOptions,
 	CommitPublication,
 	EntryRecord,
+	Cursor,
 	Harness,
 	HarnessOptions,
 	PromptInput,

@@ -17,7 +17,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
+import type { Conversation, Extension, Harness, Registry, EntryRecord, Cursor } from "../runtime/index.ts";
 import {
 	BACKGROUND_CONTEXT,
 	defineExtension,
@@ -422,12 +422,15 @@ export async function assembleCore(
 
 
 	// ── 5. 投影订阅：会话里的思考/文案/工具调用 → 个人频道 ──────────
-	// 必须在名册与频道都就绪之后才开。它只读已经落库的会话记录，不阻止主流程。
-	const unsubscribeTranscript = startTranscriptSink(
-		harness,
-		directory,
-		() => shell.channels(),
-	);
+	// 必须在名册与频道都就绪之后才开。
+	// 先回填历史：把每个 agent 会话里还没投影过的 `pi.assistant` 条目补进个人频道。
+	// 只读已经落库的会话记录，不阻止主流程；失败也只在日志里丢一条，不影响启动。
+	try {
+		await backfillTranscripts(harness, directory, context);
+	} catch (error) {
+		console.error("[core] 历史投影回填失败（已忽略，不影响启动）：", error);
+	}
+	const unsubscribeTranscript = startTranscriptSink(harness, directory);
 
 	const shell: CoreShell = {
 		harness,
@@ -500,51 +503,110 @@ export async function assembleCore(
 }
 
 /**
- * 投影游标：每轮读到的最后一条 assistant 条目 id，按会话记。
+ * 投影游标：每轮读到的最后一条 `pi.assistant` 条目 id，按会话记。
  *
- * 这决定了「只投影新产出的」。重启后从头扫一遍该会话所有 `pi.assistant` 自然安全
- * （幂等：已经落过的消息不会凭空消失，只是重脏一次），但游标让稳态下每次提交
- * 最多投影一两条，而不是回放回整段历史。
+ * 从这里读、写回文档（`ChannelState.cursors`）：这样重启后能接着上次的进度，
+ * 而不是从头重扫一遍历史（否则每次重启个人频道都会长出一批重复的思考/文案卡）。
  */
-const transcriptCursor = new Map<number, number>();
+async function loadCursor(harness: Harness, convId: number, context: Context): Promise<number> {
+	const doc = (await harness.snapshot(ChannelDoc, context)) as ChannelState | undefined;
+	return doc?.cursors?.[String(convId)] ?? 0;
+}
+
+async function saveCursor(harness: Harness, convId: number, entryId: number, context: Context): Promise<void> {
+	await harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		doc.cursors = { ...(doc.cursors ?? {}), [String(convId)]: entryId };
+	}, context);
+}
 
 /**
- * 把一条 session 提交里出现的 `pi.assistant` 条目投影进对应 agent 的个人频道。
+ * 把一条 `pi.assistant` 条目投影进对应 agent 的个人频道（去重 + 持久化游标）。
  *
- * 这是整个「老板能看见员工思考」功能的唯一连线，挂在装配层而不是工具层：
- * 思考不是 agent 主动说出来的（它**不知道**自己在被围观），而是运行时把
- * 它已经写下的会话记录，读出来丢进个人频道。
+ * 这是整个「老板能看见员工思考」功能的唯一连线：思考不是 agent 主动说出来的
+ * （它不知道自己在被围观），而是运行时把会话里已经写下的记录读出来丢进个人频道。
+ * 投影前先看游标：只投影比游标新的条目，避免把历史重投一遍（重启不重复长卡）。
  */
-function makeTranscriptSink(
+async function projectEntry(
 	harness: Harness,
 	directory: DirectoryState,
-	projectState: () => Promise<ChannelState>,
-) {
+	convId: number,
+	entry: EntryRecord,
+	context: Context,
+): Promise<void> {
+	const slug = directory.conversationToSlug[String(convId)];
+	if (slug === undefined || slug === OWNER) return;
+	const projections = projectAssistantEntry(entry as never);
+	const channelId = personalId(slug);
+	const state = (await harness.snapshot(ChannelDoc, context)) as ChannelState | undefined;
+	if (state?.channels[channelId] === undefined) return;
+	if (projections.length === 0) {
+		await saveCursor(harness, convId, Number(entry.id), context);
+		return;
+	}
+	for (const projection of projections) {
+		await postProjectedMessage(harness, state, channelId, slug, projection, context);
+	}
+	await saveCursor(harness, convId, Number(entry.id), context);
+}
+
+/**
+ * 订阅会话提交：只把**比游标新**的 `pi.assistant` 条目投影进个人频道。
+ */
+function makeTranscriptSink(harness: Harness, directory: DirectoryState) {
 	return async (publication: import("../runtime/index.ts").CommitPublication, context: Context): Promise<void> => {
 		for (const change of publication.changes) {
 			if (change.type !== "entry") continue;
 			const entry = change.value;
 			if (entry.kind !== "pi.assistant") continue;
 			const convId = Number(entry.conversationId);
-			const slug = directory.conversationToSlug[String(convId)];
-			if (slug === undefined || slug === OWNER) continue;
-			const projections = projectAssistantEntry(entry as never);
-			if (projections.length === 0) {
-				transcriptCursor.set(convId, Number(entry.id));
-				continue;
-			}
-			const channelId = personalId(slug);
-			const state = await projectState();
-			if (state.channels[channelId] === undefined) {
-				transcriptCursor.set(convId, Number(entry.id));
-				continue;
-			}
-			for (const projection of projections) {
-				await postProjectedMessage(harness, state, channelId, slug, projection, context);
-			}
-			transcriptCursor.set(convId, Number(entry.id));
+			if (convId <= 0) continue;
+			const last = await loadCursor(harness, convId, context);
+			if (Number(entry.id) <= last) continue;
+			await projectEntry(harness, directory, convId, entry, context);
 		}
 	};
+}
+
+/**
+ * 启动回填：把每个 agent 会话里**还没投影过**的历史 `pi.assistant` 条目，按时间顺序
+ * 投影进它的个人频道。
+ *
+ * 为什么必须有这一步：投影订阅只在「新提交」触发，所以历史条目从没被投影过 ——
+ * 个人频道里只能看到当前这轮之后的思考/文案/工具调用，之前的全缺（症状就是
+ * 「个人频道全是工具调用、看不到他怎么想」）。回填让历史也可见，且因为游标持久化，
+ * 重启只是续接、不会重复长卡。
+ */
+async function backfillTranscripts(
+	harness: Harness,
+	directory: DirectoryState,
+	context: Context,
+): Promise<void> {
+	for (const [slug, convId] of Object.entries(directory.slugToConversation)) {
+		if (slug === OWNER) continue;
+		const cid = Number(convId);
+		if (cid <= 0) continue;
+		const last = await loadCursor(harness, cid, context);
+		let cursor: Cursor | undefined;
+		// 升序、从游标之后开始扫，逐页投影。
+		for (;;) {
+			const conv = await harness.conversation(cid as never, context);
+			if (conv === undefined) break;
+			const page = await conv.entries(
+				{ order: "ascending", minEntryId: (last + 1) as never },
+				64,
+				cursor,
+				context,
+			);
+			if (page === undefined || page.items.length === 0) break;
+			for (const item of page.items) {
+				if (item.kind !== "pi.assistant") continue;
+				await projectEntry(harness, directory, cid, item as EntryRecord, context);
+			}
+			if (page.next === undefined) break;
+			cursor = page.next;
+		}
+	}
 }
 
 /** 落一条投影消息。与 `logWork` 同一条路径，但带 `kind` 让 UI 区分显示。 */
@@ -579,12 +641,8 @@ async function postProjectedMessage(
  * 放在 `assembleCore` 末尾：此时名册已就绪，且 `subscribeCommits` 听众跑在
  * 主提交之后，能拿到稳定快照。
  */
-function startTranscriptSink(
-	harness: Harness,
-	directory: DirectoryState,
-	channels: () => Promise<ChannelState>,
-): () => void {
-	const sink = makeTranscriptSink(harness, directory, channels);
+function startTranscriptSink(harness: Harness, directory: DirectoryState): () => void {
+	const sink = makeTranscriptSink(harness, directory);
 	return harness.subscribeCommits((publication, context) => {
 		void sink(publication, context);
 	});

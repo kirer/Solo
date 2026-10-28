@@ -152,6 +152,22 @@ function kindHtml(message) {
 	return `<span class="msg-kind" data-kind="${escapeAttr(message.kind)}">${escapeHtml(label)}</span>`;
 }
 
+/**
+ * `work` 消息正文里的操作类型标签。
+ *
+ * 正文格式是 `logWork` 约定的：`$ <命令>` 开头是执行命令；`已写入 <路径>` / `已读取 <路径>`
+ * 是写/读文件（写文件工具自己写回的文本）。从这里读「做了什么操作」，而不是在正文里
+ * 再塞一行标签 —— 正文保持纯记录，界面只做投影。
+ */
+function workOp(text) {
+	const head = (text ?? "").split("\n")[0] ?? "";
+	if (head.startsWith("$ ")) return "执行命令";
+	if (head.startsWith("已写入")) return "写文件";
+	if (head.startsWith("已读取") || head.startsWith("文件不存在")) return "读文件";
+	if (head.startsWith("(后台运行")) return "后台运行";
+	return "工作记录";
+}
+
 function messageHtml(message, previous, beforeUnreadFrom) {
 	// 同一个人连续发言：只第一行显示头像和名字，后面缩进对齐（时间是唯一的隔断）。
 	const grouped = previous !== undefined && previous.fromSlug === message.fromSlug && !beforeUnreadFrom;
@@ -160,13 +176,17 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 
 	// work = 执行命令的记录：折叠成等宽字体块，默认收起。
 	// note = 系统留痕：灰色淡显。
+	// work = 执行命令/写文件/读文件的记录：完整保留输出，折叠成等宽字体块，
+	// 默认收起，标题里标注「做了什么操作」（执行命令 / 写文件 / 读文件），
+	// 让老板一眼知道这是哪种动作，而不是只看到一串命令。
 	if (message.kind === "work") {
+		const op = workOp(message.text);
 		const firstLine = message.text.split("\n")[0] ?? "";
 		return `<div class="msg msg-work" data-seq="${message.seq}">
 			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
 			<div class="msg-main">
-				<details><summary><code>${escapeHtml(firstLine)}</code></summary>
-				<div class="msg-text msg-text-mono">${renderMarkdown(message.text)}</div></details>
+				<details><summary><span class="op-label" data-op="${escapeAttr(op)}">${escapeHtml(op)}</span><code>${escapeHtml(firstLine)}</code></summary>
+				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
 			</div>
 		</div>`;
 	}
@@ -182,13 +202,13 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 		</div>`;
 	}
 
-	// tool = 工具调用：卡片式，名字 + 参数摘要，可折叠。
+	// tool = 工具调用：卡片式，标注「调用了什么工具」+ 参数摘要，可折叠。
 	if (message.kind === "tool") {
 		const firstLine = message.text.split("\n")[0] ?? "";
 		return `<div class="msg msg-tool" data-seq="${message.seq}">
 			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
 			<div class="msg-main">
-				<details><summary><span class="tool-label">🔧 ${escapeHtml(firstLine)}</span></summary>
+				<details><summary><span class="tool-label">调用 ${escapeHtml(firstLine)}</span></summary>
 				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
 			</div>
 		</div>`;

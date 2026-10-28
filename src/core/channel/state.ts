@@ -58,13 +58,22 @@ export type ChannelState = {
 	nextSeq: Record<string, number>;
 	/** `slug → 频道 id → 已读到的 seq`。只记自己读过的位置。 */
 	readMarks: Record<string, Record<string, number>>;
+	/**
+	 * 投影游标：`会话 id → 已投影的最大 `pi.assistant` 条目 id`。
+	 *
+	 * 运行时把 agent 会话里的 `pi.assistant` 条目投影成个人频道消息（think/say/tool）。
+	 * 这条游标决定「只投影新产出的」，且重启后能接着上次的进度，**不重复投影**历史
+	 * 条目（否则每次重启个人频道都会长出一批重复的思考/文案卡）。持久化在文档里，
+	 * 因为重启后内存 Map 是空的，不回灌就会重头来过。
+	 */
+	cursors?: Record<string, number>;
 };
 
 export const ChannelDoc = defineDoc<ChannelState>({
 	kind: "core.channels",
 	version: 1,
 	scope: "session",
-	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {} }),
+	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {}, cursors: {} }),
 	// 消息是只增的；单频道超过 256 条时压一次基线（崩溃后最多重放 256 条）。
 	checkpointWhen: (value) =>
 		Object.values(value.messages).some((list) => list.length >= 256),
