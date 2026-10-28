@@ -51,6 +51,8 @@ const state = {
 	teamOpen: false,
 	/** 各频道消息流滚动位置记忆（T-012）。值=scrollTop 数值；-1 表示上次在底部。 */
 	scrollPos: new Map(),
+	/** T-016：当前频道的 SSE 连接（按频道推消息增量）；切频道/离开时关闭。 */
+	stream: null,
 };
 
 const el = {
@@ -362,8 +364,16 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 		: `<div class="msg-head"><span class="msg-from">${escapeHtml(message.fromLabel)}</span>${
 				role === "" ? "" : `<span class="msg-role">${escapeHtml(role)}</span>`
 			}<span class="msg-time">${clockTime(message.at)}</span>${kind}</div>`;
-	const body = `${quotes}<div class="msg-text">${renderMarkdown(message.text)}</div>`;
-	return `<div class="msg" data-seq="${message.seq}" data-owner="${message.fromSlug === "owner"}"${
+	// T-016：占位状态渲染。pending 且空文本 = loading 光标（CSS ::after）；error 且空 = 兜底灰字。
+	const pending = message.status === "pending" && (message.text ?? "").trim() === "";
+	const errPending = message.status === "error" && (message.text ?? "").trim() === "";
+	const body = errPending
+		? `<div class="msg-text" data-error>处理中，稍候刷新</div>`
+		: pending
+			? `<div class="msg-text" data-placeholder></div>`
+			: `${quotes}<div class="msg-text">${renderMarkdown(message.text)}</div>`;
+	const statusAttr = message.status === undefined ? "" : ` data-status="${message.status}"`;
+	return `<div class="msg" data-seq="${message.seq}" data-owner="${message.fromSlug === "owner"}"${statusAttr}${
 		grouped ? ' data-grouped="true"' : ""
 	}>
 		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
@@ -492,6 +502,60 @@ async function loadEarlier() {
 	}
 }
 
+// T-016：占位气泡 + 增量 upsert。SSE 推来的 `create`（含 connect 时全量补齐、以及 A 填充占位后的 done 全文）
+// 按 seq 幂等落地：已存在则整节点重建（文本/状态覆盖），不存在则按 seq 顺序插入。
+function upsertMessage(view) {
+	const detail = state.detail;
+	if (detail === null) return;
+	const idx = detail.messages.findIndex((m) => m.seq === view.seq);
+	if (idx >= 0) detail.messages[idx] = { ...detail.messages[idx], ...view };
+	else {
+		detail.messages.push(view);
+		detail.messages.sort((a, b) => a.seq - b.seq);
+	}
+	const fresh = node(messageHtml(view, undefined, false));
+	const existing = el.flowInner.querySelector(`.msg[data-seq="${view.seq}"]`);
+	if (existing === null) {
+		const after = [...el.flowInner.querySelectorAll(".msg")].find((m) => Number(m.dataset.seq) > view.seq);
+		if (after === null) el.flowInner.append(fresh);
+		else el.flowInner.insertBefore(fresh, after);
+	} else {
+		existing.replaceWith(fresh);
+	}
+	decorateMentions(fresh.querySelector(".msg-text"), view.mentions ?? []);
+	// 靠近底部才自动贴底，避免用户在看历史时被拽下去（T-012 的浏览位置保护）。
+	const nearBottom = el.flow.scrollTop >= el.flow.scrollHeight - el.flow.clientHeight - 80;
+	if (nearBottom) el.flow.scrollTop = el.flow.scrollHeight;
+}
+
+// T-016：订阅某频道的按频道 SSE。切频道/重取时调用，内部先关闭旧连接。
+function connectStream(id) {
+	if (state.stream !== null) {
+		state.stream.close();
+		state.stream = null;
+	}
+	const es = new EventSource(`/api/channels/${encodeURIComponent(id)}/stream`);
+	state.stream = es;
+	// create 事件带完整消息视图（含 status/text），幂等 upsert —— 占位 pending 与填充后 done 都走它。
+	es.addEventListener("create", (event) => {
+		try {
+			upsertMessage(JSON.parse((event).data));
+		} catch {
+			/* 忽略坏帧 */
+		}
+	});
+	// v1 不依赖逐字（token/done 增量）：create 已含 done 全文，幂等覆盖即可。预留监听避免静默报错。
+	es.addEventListener("token", () => {});
+	es.addEventListener("done", (event) => {
+		try {
+			upsertMessage(JSON.parse((event).data));
+		} catch {
+			/* 忽略坏帧 */
+		}
+	});
+	es.addEventListener("error", () => {});
+}
+
 // ── 顶栏 / 输入区 ───────────────────────────────────────────────────────
 
 function renderHead() {
@@ -567,6 +631,8 @@ async function openChannel(id, options = {}) {
 			const saved = state.scrollPos.get(id);
 			if (saved !== undefined && saved !== -1) el.flow.scrollTop = saved;
 		}
+		// T-016：建立/重建该频道的 SSE 连接（切频道时 connectStream 内部会先关闭旧连接）。
+		connectStream(id);
 	} else {
 		// 上滑加载：把新拿到的一段**插到前面**，并把视口按新内容高度下移，
 		// 否则正在看的那条会被推走（旧前端「滚动条乱跳」就是这里没补偿）。

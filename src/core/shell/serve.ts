@@ -28,7 +28,7 @@ import { OWNER_SLUG } from "../agent/identity.ts";
 import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type ChannelState } from "../channel/state.ts";
 import type { CoreShell } from "./assemble.ts";
-import { channelDetail, channelList, orgView, withLabels } from "./view.ts";
+import { channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
 
 /** 服务选项。 */
 export type CoreServeOptions = {
@@ -57,6 +57,10 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
 	const orgClients = new Set<ServerResponse>();
 	let orgTimer: NodeJS.Timeout | undefined;
+
+	// T-016：按频道的 SSE 连接（channelId → 连接集合）。消息增量只推给订阅了该频道的浏览器。
+	const channelClients = new Map<string, Set<ServerResponse>>();
+	const channelTimers = new Map<string, NodeJS.Timeout>();
 
 	/**
 	 * 组织快照：名册 + 身份 + 频道 + 项目负责人表。界面的组织图与顶栏都吃这一份。
@@ -101,8 +105,59 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		}
 	}
 
+	/**
+	 * T-016：向某个频道的所有 SSE 连接推一次该频道消息尾巴的增量（create 事件，带 status/text）。
+	 * 前端按 seq 幂等 upsert：新 seq 插入、已有 seq 覆盖（占位 pending → 填充后 done 靠这里覆盖，无需 runtime 钩子）。
+	 * 只推「当前有连接的频道」，避免无谓扫描；连接建立时也会立即调一次做全量补齐。
+	 */
+	async function pushChannel(id: string): Promise<void> {
+		const clients = channelClients.get(id);
+		if (clients === undefined || clients.size === 0) return;
+		let payload: string;
+		try {
+			const { directory, channels } = await snapshot();
+			const channel = channels.channels[id];
+			if (channel === undefined) return;
+			const list = channels.messages[id] ?? [];
+			// 最近 60 条足够：历史靠 connect 时全量补齐，这里只管增量与占位状态变化。
+			const tailMessages = list.slice(Math.max(0, list.length - 60));
+			const events = tailMessages
+				.map((message) => {
+					const view = messageView(channels, channel, message, directory, OWNER_SLUG);
+					return `event: create\ndata: ${JSON.stringify(view)}\n\n`;
+				})
+				.join("");
+			payload = events;
+		} catch {
+			return;
+		}
+		for (const client of [...clients]) {
+			try {
+				client.write(payload);
+			} catch {
+				clients.delete(client);
+			}
+		}
+	}
+
+	/** T-016：按频道去抖推增量（一次提交可能连带几次改动）。 */
+	function scheduleChannel(id: string): void {
+		if (channelClients.get(id)?.size === 0) return;
+		const existing = channelTimers.get(id);
+		if (existing !== undefined) return;
+		const timer = setTimeout(() => {
+			channelTimers.delete(id);
+			void pushChannel(id);
+		}, 120);
+		channelTimers.set(id, timer);
+	}
+
 	// 任何文档提交都推一次：新消息、新 agent、改名，界面都会跟着变。
-	const unsubscribe = shell.harness.subscribeCommits(() => scheduleOrg());
+	const unsubscribe = shell.harness.subscribeCommits(() => {
+		scheduleOrg();
+		// T-016：任何提交都可能改变某频道的占位状态（如 A 填充占位），对活跃频道排增量。
+		for (const id of channelClients.keys()) scheduleChannel(id);
+	});
 
 	/** 老板在频道里说话。 */
 	async function postChannelMessage(channelId: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -123,6 +178,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				...(typeof body.kind === "string" && body.kind !== "" ? { kind: body.kind } : {}),
 			});
 			scheduleOrg();
+			scheduleChannel(channelId);
 			return json(response, {
 				ok: true,
 				seq: result.seq,
@@ -237,6 +293,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			handler: ({ request, response, params }) => postChannelMessage(params.id ?? "", request, response),
 		},
 		{
+			pattern: "/api/channels/:id/stream",
+			method: "GET",
+			handler: ({ response, params }) => streamChannel(response, params.id ?? ""),
+		},
+		{
 			pattern: "/api/channels/:id/read",
 			method: "POST",
 			handler: async ({ request, response, params }) => {
@@ -259,6 +320,37 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			},
 		},
 	];
+
+	function streamChannel(response: ServerResponse, id: string): void {
+		response.writeHead(200, {
+			"Content-Type": "text/event-stream; charset=utf-8",
+			"Cache-Control": "no-cache, no-transform",
+			Connection: "keep-alive",
+			"X-Accel-Buffering": "no",
+		});
+		response.write("retry: 1500\n\n");
+		let clients = channelClients.get(id);
+		if (clients === undefined) {
+			clients = new Set<ServerResponse>();
+			channelClients.set(id, clients);
+		}
+		clients.add(response);
+		// 连接建立即推全量补齐（含已落库的 pending 占位与历史 done 消息）。
+		void pushChannel(id);
+		const keepAlive = setInterval(() => {
+			try {
+				response.write(": ping\n\n");
+			} catch {
+				clearInterval(keepAlive);
+				clients?.delete(response);
+			}
+		}, 15_000);
+		response.on("close", () => {
+			clearInterval(keepAlive);
+			clients?.delete(response);
+			if (clients !== undefined && clients.size === 0) channelClients.delete(id);
+		});
+	}
 
 	function streamOrg(response: ServerResponse): void {
 		response.writeHead(200, {
@@ -333,6 +425,18 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				}
 			}
 			orgClients.clear();
+			for (const set of channelClients.values()) {
+				for (const client of set) {
+					try {
+						client.end();
+					} catch {
+						/* 已断 */
+					}
+				}
+			}
+			channelClients.clear();
+			for (const timer of channelTimers.values()) clearTimeout(timer);
+			channelTimers.clear();
 			await new Promise<void>((resolve) => {
 				server.close(() => resolve());
 				setTimeout(resolve, 300);

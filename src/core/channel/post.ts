@@ -31,6 +31,10 @@ export type PostInput = {
 	readonly replyTo?: number;
 	/** 不想唤醒任何人（比如系统留痕）。缺省会唤醒。 */
 	readonly wake?: false;
+	/** T-016：占位消息生成状态（缺省 undefined → done）。 */
+	readonly status?: "pending" | "done" | "error";
+	/** T-016：占位归属的被唤醒人 slug。 */
+	readonly pendingFor?: string;
 };
 
 export type PostDeps = {
@@ -67,6 +71,8 @@ export async function postMessage(
 			at: input.at,
 			...(input.kind === undefined ? {} : { kind: input.kind }),
 			...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+			...(input.status === undefined ? {} : { status: input.status }),
+			...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
 		});
 		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
 		// 新数组」。两者写下去的消息一样，代价差三个数量级：
@@ -80,10 +86,39 @@ export async function postMessage(
 		// 注意 `push` 必须作用在**文档代理给出的那个数组**上：`doc.messages[id] ??=` 之后
 		// 再 push 本地变量不算数（那不是代理，提交时不会有任何 op，消息静默消失）。
 		const list = doc.messages[input.channelId];
-		if (list === undefined) doc.messages[input.channelId] = [next.message];
-		else (list as Message[]).push(next.message);
-		state.nextSeq[input.channelId] = next.message.seq + 1;
-		created = next.message;
+		// T-016 占位吸收：非占位消息（真实发言）落到频道时，若本频道还有一条
+		// `status==="pending" && pendingFor===input.from && text===""` 的占位（自己之前被 @ 后留的 loading 气泡），
+		// 就**原地填充**它（把 text/mentions/kind/at 写成真实回复、status 置 done），不另开一条 —— 占位即最终消息。
+		// 占位创建时 text="" 不会命中（被吸收的是非空消息）。
+		const isFillingRealReply =
+			input.status !== "pending" &&
+			input.text.trim() !== "" &&
+			list !== undefined;
+		let finalMessage: Message = next.message;
+		if (isFillingRealReply) {
+			const arr = list as Message[];
+			const idx = arr.findIndex(
+				(m) => m.status === "pending" && m.pendingFor === input.from && (m.text ?? "").trim() === "",
+			);
+			if (idx >= 0) {
+				// 下标替换 = 数组结构性变更，文档代理稳定落盘（保留占位原 seq/from/pendingFor）。
+				arr[idx] = {
+					...arr[idx]!,
+					text: input.text,
+					mentions: next.message.mentions,
+					kind: next.message.kind,
+					at: input.at,
+					status: "done",
+				};
+				finalMessage = arr[idx]!;
+			}
+		}
+		if (finalMessage === next.message) {
+			if (list === undefined) doc.messages[input.channelId] = [next.message];
+			else (list as Message[]).push(next.message);
+			state.nextSeq[input.channelId] = next.message.seq + 1;
+		}
+		created = finalMessage;
 	}, context);
 
 	const message = created as Message;

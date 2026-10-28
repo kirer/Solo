@@ -33,6 +33,14 @@ export type Message = {
 	 * 其余是给界面用的语义标签（`task` / `report` / `decision`）。
 	 */
 	kind: string;
+	/**
+	 * T-016：生成状态。undefined/未设 = done（历史消息兼容，一律按已生成处理）。
+	 * `pending` = 占位生成的消息（@某人后其占位气泡，loading 中）；`done` = 已生成完毕；
+	 * `error` = 生成失败（占位兜底显示「处理中，稍候刷新」）。
+	 */
+	status?: "pending" | "done" | "error";
+	/** T-016：占位消息归属的「被唤醒人」slug（与 `from` 相同，仅用于前端关联 @ 动作与占位气泡）。 */
+	pendingFor?: string;
 };
 
 /** 一个频道。 */
@@ -199,7 +207,17 @@ export function channelsOf(state: ChannelState, slug: string): Channel[] {
 export function appendMessage(
 	state: ChannelState,
 	channelId: string,
-	input: { readonly from: string; readonly text: string; readonly at: number; readonly kind?: string; readonly replyTo?: number },
+	input: {
+		readonly from: string;
+		readonly text: string;
+		readonly at: number;
+		readonly kind?: string;
+		readonly replyTo?: number;
+		/** T-016：占位消息的生成状态（缺省 undefined → done）。 */
+		readonly status?: "pending" | "done" | "error";
+		/** T-016：占位归属的被唤醒人 slug。 */
+		readonly pendingFor?: string;
+	},
 ): { readonly state: ChannelState; readonly message: Message } {
 	const channel = state.channels[channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${channelId}`);
@@ -225,6 +243,8 @@ export function appendMessage(
 		mentions: mentionList,
 		kind: input.kind ?? "chat",
 		...(replyTo === undefined ? {} : { replyTo }),
+		...(input.status === undefined ? {} : { status: input.status }),
+		...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
 	};
 
 	return {

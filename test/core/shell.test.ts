@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { ChannelDoc, type ChannelState } from "../../src/core/channel/state.ts";
 import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/runtime.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
@@ -105,7 +106,90 @@ describe("装配", () => {
 			expect(JSON.stringify(entry?.data)).toContain("在吗");
 
 			const state = await shell.channels();
-			expect(state.messages.company?.map((message) => message.text)).toEqual([`@${slug} 在吗`]);
+			// T-016：@A 会创建一条 pending 占位（text=""），真实消息在前、占位在后。
+			const texts = state.messages.company?.map((message) => message.text) ?? [];
+			expect(texts).toContain(`@${slug} 在吗`);
+			const pending = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
+			expect(pending).toBeDefined();
+			expect(pending?.text).toBe("");
+		} finally {
+			await opened.close();
+		}
+	});
+});
+
+describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 done）", () => {
+	test("@A 且 A 被唤醒 → 创建 pending 占位；A 未唤醒 → 不创建", async () => {
+		const { root, agents, projects } = await workspace();
+		const { models } = setupModels(process.env, { workspace: root });
+		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		try {
+			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			const hit = await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			expect(hit.delivery.delivered).toEqual([slug]);
+			let state = await shell.channels();
+			const pending = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
+			expect(pending).toBeDefined();
+			expect(pending?.from).toBe(slug);
+			expect(pending?.text).toBe("");
+			const miss = await shell.ownerSay({ channelId: "company", text: "@nobody 你好" });
+			expect(miss.delivery.delivered).toEqual([]);
+			state = await shell.channels();
+			const pendingAfter = (state.messages.company ?? []).filter((m) => m.status === "pending" && m.pendingFor === "nobody");
+			expect(pendingAfter).toHaveLength(0);
+		} finally {
+			await opened.close();
+		}
+	});
+
+	test("A 真实回复原地填充占位（占位即最终消息，不重复气泡）", async () => {
+		const { root, agents, projects } = await workspace();
+		const { models } = setupModels(process.env, { workspace: root });
+		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		try {
+			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			let state = await shell.channels();
+			const pendingSeq = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
+			expect(pendingSeq).toBeDefined();
+			const before = (await shell.channels()).messages.company ?? [];
+			// 模拟 A 醒来回频道：用 harness.snapshot(ChannelDoc) 作为 state（与 channel-write.test 一致），
+			// 直接 postMessage 触发占位吸收（不在 commit 内、不复用已 settled 的 shell.channels 投影快照）。
+			const { postMessage } = await import("../../src/core/channel/post.ts");
+			const rawState = (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never;
+			await postMessage(
+				{ harness: opened.harness, state: rawState, conversationOf: async () => undefined },
+				{ channelId: "company", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
+				BACKGROUND_CONTEXT,
+			);
+			state = await shell.channels();
+			const after = state.messages.company ?? [];
+			expect(after.length).toBe(before.length);
+			const filled = after.find((m) => m.seq === pendingSeq);
+			expect(filled?.status).toBe("done");
+			expect(filled?.text).toBe("我在的，怎么了");
+			expect(filled?.from).toBe(slug);
+		} finally {
+			await opened.close();
+		}
+	});
+
+	test("回归：013/014 口径 A 不倒退 —— 群@A 不影响老板个人频道", async () => {
+		const { root, agents, projects } = await workspace();
+		const { models } = setupModels(process.env, { workspace: root });
+		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		try {
+			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			const state = await shell.channels();
+			const ownerDm = Object.values(state.channels).find((c) => c.id.startsWith("dm:owner-"));
+			if (ownerDm !== undefined) {
+				expect(state.messages[ownerDm.id] ?? []).toHaveLength(0);
+			}
+			expect((state.messages.company ?? []).some((m) => m.status === "pending")).toBe(true);
 		} finally {
 			await opened.close();
 		}

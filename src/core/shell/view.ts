@@ -48,6 +48,10 @@ export type ViewMessage = {
 	mentions: { id: number; label: string; read: boolean; offset: number }[];
 	replyTo?: { seq: number; from: number; fromSlug: string; fromLabel: string; excerpt: string };
 	read: boolean;
+	/** T-016：生成状态。undefined/done = 正常；pending = 占位 loading；error = 生成失败。 */
+	status?: "pending" | "done" | "error";
+	/** T-016：占位归属的被唤醒人 slug。 */
+	pendingFor?: string;
 };
 
 /** 成员。 */
@@ -217,6 +221,8 @@ export function messageView(
 					},
 				}),
 		read: readMarkOf(state, viewer, channel.id) >= message.seq,
+		...(message.status === undefined ? {} : { status: message.status }),
+		...(message.pendingFor === undefined ? {} : { pendingFor: message.pendingFor }),
 	};
 }
 
