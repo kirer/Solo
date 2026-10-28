@@ -7,6 +7,7 @@
  * 这里只产出 DOM 字符串/节点，不碰 fetch、不碰全局状态：事件全部交给 app.js 的委托。
  */
 
+import { attachmentsHtml } from "./attach.js";
 import { avatarSvg } from "./avatar.js";
 import { clockTime, dayLabel, escapeHtml, sameDay } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
@@ -176,9 +177,16 @@ function paintMentions(root, mentions) {
 
 function bodyHtml(message) {
 	const raw = String(message.text ?? "");
-	const html = renderMarkdown(raw);
-	if (!FOLD_KINDS.has(message.kind ?? "say") || raw.length <= FOLD_OVER) return `<div class="md">${html}</div>`;
-	return `<div class="md fold" data-folded="true">${html}</div><button class="text-btn fold-btn" type="button" data-fold-btn>展开全文（${raw.length} 字）</button>`;
+	// 附件画在正文**之前**：图片是这个人的第一句话，正文是补充说明。
+	// 放在 `.md` 外面，因为 `.md` 是排版正文的（段落间距、列表标记），不是排图片的。
+	// 纯附件消息的正文是服务端写的占位（文件名），读起来像一句正常的话，不用特判。
+	const attachments = attachmentsHtml(message.attachments);
+	const text = renderMarkdown(raw);
+	const body =
+		!FOLD_KINDS.has(message.kind ?? "say") || raw.length <= FOLD_OVER
+			? `<div class="md">${text}</div>`
+			: `<div class="md fold" data-folded="true">${text}</div><button class="text-btn fold-btn" type="button" data-fold-btn>展开全文（${raw.length} 字）</button>`;
+	return `${attachments}${body}`;
 }
 
 /* ── say ────────────────────────────────────────────────────────────── */

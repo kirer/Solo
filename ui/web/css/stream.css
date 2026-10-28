@@ -794,3 +794,131 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 		max-width: min(68ch, calc(100% - 34px));
 	}
 }
+
+/* ── 消息里的附件 ───────────────────────────────────────────────────── */
+
+/* 图片：最多四列，一行内等比缩放。用 grid 而不是 flex-wrap，
+   因为 flex 的最后一排会拉宽，四张图里有一张会莫名其妙变大。 */
+.attach-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
+	gap: 4px;
+	max-width: 420px;
+	margin: 0 0 6px;
+}
+
+/* 一张图：按原比例显示，**不裁剪**。
+   长截图被切成 4:3 就等于丢内容，而一张图恰恰是最需要完整看的那个。 */
+.attach-grid[data-count="1"] {
+	grid-template-columns: minmax(0, 1fr);
+	justify-items: start;
+}
+
+.attach-grid[data-count="1"] .attach-thumb {
+	aspect-ratio: auto;
+	max-width: min(420px, 100%);
+	max-height: 380px;
+}
+
+.attach-grid[data-count="1"] .attach-thumb img {
+	width: auto;
+	height: auto;
+	max-width: 100%;
+	max-height: 380px;
+	object-fit: contain;
+}
+
+.attach-grid[data-count="2"] {
+	grid-template-columns: repeat(2, minmax(0, 160px));
+}
+
+.attach-grid[data-count="3"],
+.attach-grid[data-count="4"] {
+	grid-template-columns: repeat(2, minmax(0, 160px));
+}
+
+.attach-thumb {
+	display: block;
+	overflow: hidden;
+	padding: 0;
+	cursor: zoom-in;
+	background: var(--raised);
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	aspect-ratio: 4 / 3;
+}
+
+.attach-thumb img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	transition: transform var(--dur-tap) var(--ease-tap);
+}
+
+.attach-thumb:hover img {
+	transform: scale(1.02);
+}
+
+/* 文件：一行一个，图标 + 名字 + 大小。不是卡片 —— 一条消息里有一堆附件时，
+   卡片会让消息流鼓成一片。 */
+.attach-files {
+	display: grid;
+	gap: 4px;
+	max-width: 420px;
+	margin: 0 0 6px;
+}
+
+.attach-file {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+	padding: 6px 10px 6px 8px;
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--ink);
+	text-decoration: none;
+	background: var(--raised);
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+}
+
+.attach-file:hover {
+	background: var(--hover);
+	border-color: var(--control);
+}
+
+.attach-ico {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 18px;
+	height: 18px;
+	color: var(--ink-3);
+}
+
+.attach-ico svg {
+	width: 15px;
+	height: 15px;
+}
+
+.attach-name {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.attach-size {
+	flex: none;
+	margin-left: auto;
+	font-size: 11px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 平铺布局里附件跟着正文的宽度走，不要比正文还宽。 */
+body[data-layout="bubble"] .attach-grid,
+body[data-layout="bubble"] .attach-files {
+	max-width: min(68ch, calc(100% - 82px));
+}

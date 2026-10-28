@@ -96,6 +96,8 @@
 				</div>
 
 				<form class="composer" id="composer" hidden>
+					<input class="sr-only" id="file-input" type="file" multiple tabindex="-1" aria-hidden="true" />
+					<div class="attach-tray" id="attach-tray" hidden></div>
 					<div class="composer-card">
 						<button class="plus" id="plus-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="更多" aria-label="更多">
 							<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
@@ -119,6 +121,12 @@
 		</div>
 
 		<div class="menu pop-menu" id="plus-menu" role="menu" hidden>
+			<button class="menu-item" type="button" role="menuitem" data-plus="image">
+				<span class="menu-tick">›</span>发图片
+			</button>
+			<button class="menu-item" type="button" role="menuitem" data-plus="file">
+				<span class="menu-tick">›</span>发文件
+			</button>
 			<button class="menu-item" type="button" role="menuitem" data-plus="quote">
 				<span class="menu-tick">›</span>引用一条消息
 			</button>

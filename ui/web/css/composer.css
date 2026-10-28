@@ -6,6 +6,7 @@
  */
 
 .composer {
+	position: relative; /* 拖拽时的那层「松手就发出去」压在它上面 */
 	flex: none;
 	padding: 0 var(--pad) 20px;
 }
@@ -277,5 +278,151 @@
 	.plus {
 		width: 34px;
 		height: 34px;
+	}
+}
+
+/* ── 附件 ───────────────────────────────────────────────────────────── */
+
+/* 待发送队列：横向排，超了就换行。它属于 composer 而不是消息流，
+   因为里面的东西**还没发出去**，随时可以撤。 */
+.attach-tray {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	padding: 0 0 8px;
+}
+
+.q-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 240px;
+	padding: 5px 6px 5px 5px;
+	background: var(--raised);
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+}
+
+.q-preview {
+	position: relative;
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 34px;
+	height: 34px;
+	overflow: hidden;
+	border-radius: 4px;
+	background: var(--ground);
+	color: var(--ink-3);
+}
+
+.q-preview img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+.q-preview svg {
+	width: 16px;
+	height: 16px;
+}
+
+/* 上传中的进度条：一条从左往右长出来的线。没有真实进度就用不定长，
+   不要假装知道百分比。 */
+.q-bar {
+	position: absolute;
+	inset: auto 0 0 0;
+	height: 2px;
+	background: var(--accent);
+	transform-origin: left center;
+	animation: q-bar 1.1s var(--ease-line) infinite;
+}
+
+@keyframes q-bar {
+	0% {
+		transform: scaleX(0.05);
+		opacity: 1;
+	}
+	70% {
+		transform: scaleX(1);
+		opacity: 0.5;
+	}
+	100% {
+		transform: scaleX(1);
+		opacity: 0;
+	}
+}
+
+.q-meta {
+	display: grid;
+	gap: 1px;
+	min-width: 0;
+}
+
+.q-name {
+	overflow: hidden;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.q-size {
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.q-item[data-state="error"] {
+	border-color: color-mix(in oklab, var(--danger) 45%, var(--line));
+}
+
+.q-item[data-state="error"] .q-size {
+	color: var(--danger);
+}
+
+.q-x {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	font-size: 11px;
+	color: var(--ink-3);
+	cursor: pointer;
+	background: transparent;
+	border: 0;
+	border-radius: 4px;
+}
+
+.q-x:hover {
+	color: var(--ink);
+	background: var(--active);
+}
+
+/* 拖拽到输入框上：整块描边变绿。不要放大、不要弹跳 —— 这是「接收」不是「庆祝」。 */
+.composer[data-drag="true"] .composer-card {
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+.composer[data-drag="true"]::after {
+	content: "松手就发出去";
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	font-size: 13px;
+	color: var(--accent);
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.q-bar {
+		animation: none;
+		opacity: 0.5;
+		transform: scaleX(0.5);
 	}
 }

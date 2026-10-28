@@ -442,7 +442,7 @@
 
 .crew {
 	display: grid;
-	grid-template-columns: var(--av-md) minmax(0, 1fr) auto;
+	grid-template-columns: var(--av-md) minmax(0, 1fr) auto auto;
 	column-gap: 10px;
 	align-items: center;
 	padding: 8px 12px;
@@ -473,6 +473,42 @@
 	line-height: 14px;
 	color: var(--ink-3);
 	white-space: nowrap;
+}
+
+/* 「记忆」：安静地待在行尾，鼠标进这一行才显形。
+   常驻显示会让 8 行名册变成 8 个按钮，抢掉「向谁汇报」那条信息的视线。 */
+.crew-mem {
+	padding: 3px 8px;
+	font-family: inherit;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-2);
+	cursor: pointer;
+	background: transparent;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	opacity: 0;
+	transition:
+		opacity var(--dur-line) var(--ease-line),
+		background var(--dur-tap) var(--ease-tap);
+}
+
+.crew:hover .crew-mem,
+.crew-mem:focus-visible {
+	opacity: 1;
+}
+
+.crew-mem:hover {
+	color: var(--ink);
+	background: var(--ground);
+	border-color: var(--control);
+}
+
+/* 触屏没有 hover，直接常显。 */
+@media (hover: none) {
+	.crew-mem {
+		opacity: 1;
+	}
 }
 
 .team-foot {

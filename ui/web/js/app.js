@@ -10,6 +10,8 @@
  */
 
 import { attention, getJSON, postJSON, streamOrg } from "./api.js";
+import { MAX_PER_MESSAGE, filesOf, kindOfFile, queueItemHtml, uploadOne } from "./attach.js";
+import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
 import { copyText, escapeHtml, relTime } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
@@ -52,6 +54,8 @@ const state = {
 	readMark: new Map(),
 	needIndex: -1,
 	mention: { open: false, items: [], index: 0, start: 0 },
+	/** 待发送的附件队列。每项 { id?, name, kind, bytes, preview?, state }。 */
+	attach: [],
 	attentionBroken: false,
 	conn: "open",
 	lastOk: 0,
@@ -102,6 +106,8 @@ const el = {
 	composer: $("composer"),
 	input: $("input"),
 	send: $("send"),
+	fileInput: $("file-input"),
+	tray: $("attach-tray"),
 	mentionPop: $("mention-pop"),
 	mentionList: $("mention-list"),
 	mentionThumb: $("mention-thumb"),
@@ -464,8 +470,72 @@ function autosize() {
 	el.input.style.height = `${next}px`;
 	const card = el.composer.querySelector(".composer-card");
 	if (card) card.dataset.multi = next > 36 ? "true" : "false";
-	const empty = el.input.value.trim() === "";
-	el.send.disabled = empty || !state.currentId;
+	const empty = el.input.value.trim() === "" && state.attach.length === 0;
+	el.send.disabled = empty || !state.currentId || state.attach.some((item) => item.state === "uploading");
+}
+
+/* ── 附件 ───────────────────────────────────────────────────────────── */
+
+/** 队列重画。很小的列表（≤10），整体重建比 diff 便宜。 */
+function renderAttach() {
+	el.tray.hidden = state.attach.length === 0;
+	el.tray.innerHTML = state.attach.map(queueItemHtml).join("");
+	autosize();
+}
+
+/**
+ * 把选中的文件放进队列并上传。
+ *
+ * 一进来就插入队列（`state: "uploading"`）再异步上传，而不是「先传完再显示」：
+ * 传一个 20MB 的图要几秒，这几秒里界面必须已经变过样子，否则用户会再点一次。
+ */
+async function addFiles(files) {
+	const room = MAX_PER_MESSAGE - state.attach.length;
+	if (room <= 0) {
+		toast(`一条消息最多 ${MAX_PER_MESSAGE} 个附件`, "error");
+		return;
+	}
+	const accepted = [...files].slice(0, room);
+	if (files.length > room) toast(`只加了前 ${room} 个（上限 ${MAX_PER_MESSAGE}）`, "error");
+
+	for (const file of accepted) {
+		const kind = kindOfFile(file);
+		const item = {
+			name: file.name || "附件",
+			kind,
+			bytes: file.size,
+			// 图片先给一个本地预览（不等上传）：`URL.createObjectURL` 是同步的，画面立刻有反应。
+			preview: kind === "image" ? URL.createObjectURL(file) : undefined,
+			state: "uploading",
+		};
+		state.attach.push(item);
+		renderAttach();
+		try {
+			const saved = await uploadOne(file);
+			item.id = saved.id;
+			item.name = saved.name ?? item.name;
+			item.kind = saved.kind ?? item.kind;
+			item.bytes = saved.bytes ?? item.bytes;
+			item.state = "done";
+		} catch (error) {
+			item.state = "error";
+			toast(error.message, "error");
+		}
+		renderAttach();
+	}
+}
+
+function dropAttachment(index) {
+	const [item] = state.attach.splice(index, 1);
+	if (item?.preview) URL.revokeObjectURL(item.preview);
+	renderAttach();
+}
+
+/** 发送完之后清空队列，并释放本地预览（不释放会一直占着内存）。 */
+function clearAttach() {
+	for (const item of state.attach) if (item.preview) URL.revokeObjectURL(item.preview);
+	state.attach = [];
+	renderAttach();
 }
 
 function renderAll({ veil = false } = {}) {
@@ -716,16 +786,20 @@ function renderTeam() {
 	});
 	el.teamList.innerHTML =
 		sorted
-			.map(
-				(person) => `<div class="crew"><span>${avatarSvg({
+			.map((person) => {
+				// 「记忆」放在团队表里而不是人栏：人栏那一列是**去说话**的地方，
+				// 每行再塞两个按钮就分不清点哪儿会说话了。团队表是「看这个人」的地方。
+				return `<div class="crew" data-slug="${escapeHtml(person.slug)}"><span>${avatarSvg({
 					slug: person.slug,
 					name: person.label,
 					size: 24,
 					state: presenceOf(person.slug),
 				})}</span><span><span class="crew-name">${escapeHtml(person.label ?? "")}</span><span class="crew-line">${escapeHtml(
 					[person.title, person.project].filter(Boolean).join(" · ") || "—",
-				)}</span></span><span class="crew-report">${person.managerLabel ? `向 ${escapeHtml(person.managerLabel)}` : "直接向老板"}</span></div>`,
-			)
+				)}</span></span><span class="crew-report">${person.managerLabel ? `向 ${escapeHtml(person.managerLabel)}` : "直接向老板"}</span><button class="crew-mem" type="button" data-memory="${escapeHtml(
+					person.slug,
+				)}" title="看他记住了什么">记忆</button></div>`;
+			})
 			.join("") || `<div class="empty"><span>名册是空的。</span></div>`;
 }
 
@@ -1014,6 +1088,14 @@ function bind() {
 			else toast("这个频道还没有可以引用的消息");
 			return;
 		}
+		// 发图片 / 发文件：同一个 input，只是 `accept` 不同。
+		// 分开的理由不是技术，是**默认行为**：发图片时系统相册只列图，省掉翻找；
+		// 发文件时列全部，因为「我要发个压缩包」不该被 accept 挡住。
+		if (item.dataset.plus === "image" || item.dataset.plus === "file") {
+			el.fileInput.accept = item.dataset.plus === "image" ? "image/*" : "";
+			el.fileInput.click();
+			return;
+		}
 		// 便签：把自己正在输入的内容变成一条广播出去的话（老板自己说的，带 --accent-wash）。
 		const text = el.input.value.trim();
 		if (!text) {
@@ -1109,12 +1191,20 @@ function bind() {
 			return;
 		}
 
+		const thumb = target.closest("[data-lightbox]");
+		if (thumb) {
+			el.lightboxImg.src = thumb.dataset.lightbox;
+			el.lightbox.hidden = false;
+			return;
+		}
+
 		const image = target.closest(".md-img img");
 		if (image) {
 			el.lightboxImg.src = image.currentSrc || image.src;
 			el.lightbox.hidden = false;
 			return;
 		}
+
 	});
 
 	el.flow.addEventListener(
@@ -1128,6 +1218,66 @@ function bind() {
 	el.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
 		sendMessage(el.input.value);
+	});
+
+	/* ── 附件 ─────────────────────────────────────────────────────────── */
+
+	el.fileInput.addEventListener("change", () => {
+		const files = [...(el.fileInput.files ?? [])];
+		// 必须先清空：同一个文件选第二次不会触发 change，是浏览器里最经典的「点了没反应」。
+		el.fileInput.value = "";
+		addFiles(files);
+	});
+
+	// 队列里那一项的 ✕。用事件委托而不是每项挂监听：队列每次重画 innerHTML，
+	// 挂上去的监听会随节点一起丢掉。
+	el.tray.addEventListener("click", (event) => {
+		const drop = event.target.closest("[data-drop]");
+		if (!drop) return;
+		dropAttachment(Number(drop.dataset.drop));
+	});
+
+	/**
+	 * 拖拽。
+	 *
+	 * 只在 composer 自己身上算「目标」而不是整个窗口：把整页变成投放区会让人
+	 * 拖文件经过时整页闪一下，且误投概率高。`dragleave` 会冒泡到子元素上（鼠标
+	 * 划过一个字符就触发一次），所以用计数器而不是布尔值。
+	 */
+	let dragDepth = 0;
+	const isFileDrag = (event) => [...(event.dataTransfer?.types ?? [])].includes("Files");
+
+	el.composer.addEventListener("dragenter", (event) => {
+		if (!isFileDrag(event)) return;
+		event.preventDefault();
+		dragDepth += 1;
+		el.composer.dataset.drag = "true";
+	});
+	el.composer.addEventListener("dragover", (event) => {
+		if (!isFileDrag(event)) return;
+		// 不 preventDefault 的话浏览器会以「打开这个文件」收场，页面直接跳走。
+		event.preventDefault();
+		event.dataTransfer.dropEffect = "copy";
+	});
+	el.composer.addEventListener("dragleave", (event) => {
+		if (!isFileDrag(event)) return;
+		dragDepth = Math.max(0, dragDepth - 1);
+		if (dragDepth === 0) delete el.composer.dataset.drag;
+	});
+	el.composer.addEventListener("drop", (event) => {
+		if (!isFileDrag(event)) return;
+		event.preventDefault();
+		dragDepth = 0;
+		delete el.composer.dataset.drag;
+		addFiles(filesOf(event));
+	});
+
+	// 粘贴截图。（design skill：⌘V 一张图是最短的一条输入路径。）
+	el.input.addEventListener("paste", (event) => {
+		const files = filesOf(event);
+		if (files.length === 0) return;
+		event.preventDefault();
+		addFiles(files);
 	});
 
 	el.input.addEventListener("input", () => {
@@ -1203,6 +1353,25 @@ function bind() {
 
 	el.teamBtn.addEventListener("click", openTeam);
 	el.teamClose.addEventListener("click", closeTeam);
+
+	// 团队表里的「记忆」。先关团队浮层再开记忆面板 —— 两层浮层都抢 Esc 与 inert，
+	// 叠在一起会变成「按 Esc 只关了下面那层」。
+	el.teamList.addEventListener("click", (event) => {
+		const button = event.target.closest("[data-memory]");
+		if (!button) return;
+		const slug = button.dataset.memory;
+		const label = button.closest(".crew")?.querySelector(".crew-name")?.textContent ?? slug;
+		closeTeam();
+		window.setTimeout(() => openMemory({ slug, label }), 200);
+	});
+
+	// 人栏右键：看这个人的记忆。不做成常驻按钮 —— 人栏每行只有一个动作（去说话）。
+	el.people.addEventListener("contextmenu", (event) => {
+		const person = event.target.closest("[data-slug]");
+		if (!person) return;
+		event.preventDefault();
+		openMemory({ slug: person.dataset.slug, label: person.querySelector(".p-name")?.textContent ?? person.dataset.slug });
+	});
 	el.team.addEventListener("click", (event) => {
 		if (event.target === el.team) closeTeam();
 	});
@@ -1271,7 +1440,9 @@ function bind() {
 
 async function sendMessage(raw) {
 	const text = String(raw ?? "").trim();
-	if (!text || !state.currentId) return false;
+	// 纯附件（正文空）也允许发 —— 老板拖一张图进来就想直接发，不该逼他打字。
+	const attachments = state.attach.filter((item) => item.state === "done" && item.id);
+	if ((text === "" && attachments.length === 0) || !state.currentId) return false;
 	el.send.disabled = true;
 	el.send.dataset.busy = "true";
 	const replyTo = state.replyTo?.seq;
@@ -1279,10 +1450,14 @@ async function sendMessage(raw) {
 		await postJSON(`/api/channels/${encodeURIComponent(state.currentId)}/messages`, {
 			text,
 			...(replyTo ? { replyTo } : {}),
+			...(attachments.length === 0
+				? {}
+				: { attachments: attachments.map((item) => ({ id: item.id, name: item.name, kind: item.kind, bytes: item.bytes })) }),
 		});
 		el.input.value = "";
 		state.replyTo = null;
 		renderReply();
+		clearAttach();
 		autosize();
 		return true;
 	} catch (error) {

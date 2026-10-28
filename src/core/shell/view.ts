@@ -17,6 +17,7 @@ import {
 	needsOwner,
 	readMarkOf,
 	unreadCount,
+	type Attachment,
 	type Channel,
 	type ChannelState,
 	type Message,
@@ -66,6 +67,11 @@ export type ViewMessage = {
 	 * 老板自己说的话永不算「需要你」。
 	 */
 	needsYou?: true;
+	/**
+	 * 附件（图片/文件）。没有附件时**不出现这个字段** —— 界面用 `?.length` 判一下够了，
+	 * 不用区分「空数组」与「没有」两种差不多的状态。
+	 */
+	attachments?: Attachment[];
 };
 
 /** 成员。 */
@@ -249,6 +255,18 @@ export function messageView(
 		read: readMarkOf(state, viewer, channel.id) >= message.seq,
 		...(message.status === undefined ? {} : { status: message.status }),
 		...(message.pendingFor === undefined ? {} : { pendingFor: message.pendingFor }),
+		// 附件只透传引用（id/name/kind/bytes），文件本体走 `/api/uploads/:id`。
+		// 逐字段重建是为了固定键顺序：这份 JSON 也会进 SSE 与提示词，字节要确定。
+		...(message.attachments === undefined || message.attachments.length === 0
+			? {}
+			: {
+					attachments: message.attachments.map((item) => ({
+						id: item.id,
+						name: item.name,
+						kind: item.kind,
+						bytes: item.bytes,
+					})),
+				}),
 		...(needsYou(message) ? { needsYou: true as const } : {}),
 	};
 }

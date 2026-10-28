@@ -15,6 +15,24 @@
 import { defineDoc } from "../runtime/index.ts";
 import { EMPTY_ROSTER, resolveMention, type MentionRoster } from "./alias.ts";
 
+/**
+ * 一条消息带的一个附件。**只有引用，没有内容。**
+ *
+ * 文件本体在 `<workspace>/uploads/<id>`，这里只放展示与下载要用的元数据。
+ * 为什么不在文档里存 base64：频道文档是**一条**文档，每次写入都是一条增量 op，
+ * 一条 3 MB 的图片会让这个频道的每条消息都在同一条时间线上多背 3 MB —— 这里
+ * 已经吃过一次「一条消息重写整个频道」（189 条频道涨到 27 MB），见 ADR-050。
+ */
+export type Attachment = {
+	/** 上传接口分配的 id（`crypto.randomUUID()`），同时也是磁盘上的文件名。 */
+	id: string;
+	/** 原始文件名。界面显示与下载时的默认名都取它。 */
+	name: string;
+	/** 类别。**由服务端按 mime 重算**，客户端传什么都不算数。 */
+	kind: "image" | "file";
+	bytes: number;
+};
+
 /** 一条频道消息。 */
 export type Message = {
 	/** 频道内自增序号，从 1 开始。全系统唯一的消息锚点（引用回复存的就是它）。 */
@@ -42,6 +60,13 @@ export type Message = {
 	status?: "pending" | "done" | "error";
 	/** T-016：占位消息归属的「被唤醒人」slug（与 `from` 相同，仅用于前端关联 @ 动作与占位气泡）。 */
 	pendingFor?: string;
+	/** 附件（图片/文件）。没有附件时**不写这个键**，与 `replyTo` / `status` 一个规矩。 */
+	/*
+	 * 为什么是可变数组而不是 `readonly`：文档层的 `JsonValue` 里数组是 `JsonValue[]`，
+	 * `readonly Attachment[]` 不满足它（`ChannelState` 整个就不符合 `JsonObject` 了）。
+	 * 「调用方不该改别人给的数组」这条用 `appendMessage` 入参的 `readonly` 表达就够了。
+	 */
+	attachments?: Attachment[];
 };
 
 /** 一个频道。 */
@@ -316,6 +341,8 @@ export function appendMessage(
 		readonly status?: "pending" | "done" | "error";
 		/** T-016：占位归属的被唤醒人 slug。 */
 		readonly pendingFor?: string;
+		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
+		readonly attachments?: readonly Attachment[];
 	},
 ): { readonly state: ChannelState; readonly message: Message } {
 	const channel = state.channels[channelId];
@@ -350,6 +377,18 @@ export function appendMessage(
 		...(replyTo === undefined ? {} : { replyTo }),
 		...(input.status === undefined ? {} : { status: input.status }),
 		...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
+		...(input.attachments === undefined || input.attachments.length === 0
+			? {}
+			: {
+					// 逐字段重建、顺序照抄类型声明：文档要求**字节确定**（ADR-005）。同一个附件
+					// 换个 key 顺序写进去，就是另一份字节，会让提示词与文档校验都出现假差异。
+					attachments: input.attachments.map((item) => ({
+						id: item.id,
+						name: item.name,
+						kind: item.kind,
+						bytes: item.bytes,
+					})),
+				}),
 	};
 
 	return {

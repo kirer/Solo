@@ -5,12 +5,14 @@
  * 这一层负责把它们翻译成浏览器能吃的 JSON，并处理一个 HTTP 服务该处理的杂事
  * （静态资源、压缩、SSE 心跳）。
  *
- * 路由只有 8 条，每条背后都是「读一份文档」或「写一条消息」。没有待办、任务、
+ * 路由只有一张表，每条背后都是「读一份文档」「写一条消息」或「存取一个附件」。没有待办、任务、
  * 成本、升级链、看门狗、受理回执 —— 那些东西核心里一个都没有，所以这里也不该有。
  * 路径带 `:id` 的匹配器在 `./http/routes.ts`（纯函数，无业务概念）。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createReadStream } from "node:fs";
 import { extname, join, normalize, sep } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { matchRoute, type Route } from "./http/routes.ts";
 import {
 	bodyFor,
@@ -26,11 +28,26 @@ import { browserUrlOf, lanUrlsOf } from "./http/network.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { listProjects } from "../project/doc.ts";
-import { ChannelDoc, markRead, type ChannelState } from "../channel/state.ts";
+import { ChannelDoc, markRead, type Attachment, type ChannelState, type Message } from "../channel/state.ts";
 import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
 import { appendMemory, memoryDigest, readMemory, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { attentionItems, channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
+import {
+	UPLOAD_MAX_BYTES,
+	UPLOAD_PER_MESSAGE,
+	UploadTooLargeError,
+	contentDisposition,
+	kindOfMime,
+	mimeOf,
+	nameFrom,
+	placeholderOf,
+	putUpload,
+	readBounded,
+	readUploadMeta,
+	uploadPathOf,
+	uploadsRootOf,
+} from "./uploads.ts";
 
 /** 服务选项。 */
 export type CoreServeOptions = {
@@ -57,6 +74,8 @@ function emptyChannels(): ChannelState {
 export async function serveCore(options: CoreServeOptions): Promise<CoreServer> {
 	const shell = options.shell;
 	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
+	// 附件根跟着工作区走：`<workspace>/uploads`（agentsRoot 是 `<workspace>/agents`）。
+	const uploadsRoot = uploadsRootOf(shell.agentsRoot);
 	const orgClients = new Set<ServerResponse>();
 	let orgTimer: NodeJS.Timeout | undefined;
 
@@ -197,13 +216,78 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		for (const id of channelClients.keys()) scheduleChannel(id);
 	});
 
+	/**
+	 * 把附件挂到刚落地的那条消息上。
+	 *
+	 * 为什么不从写入入口（`channel/post.ts` 的 `postMessage`）带进去：投递层与附件毫无关系，
+	 * 而那次写入已经完成、`seq` 已经定下来了。这里做的是「给同一条消息补一个字段」，
+	 * 用**下标替换**（`list[index] = {...}`）让文档代理看见一条结构化变更 —— 与
+	 * `post.ts` 填占位用的手法完全一样；写成整值替换就会重写整条频道历史（ADR-027）。
+	 *
+	 * 失败不报错：附件只是消息的装饰，消息已经发出去且已经唤醒了人，为了一个附件
+	 * 回 500 会让调用方重发整条消息（然后频道里出现两条一样的）。
+	 */
+	async function attachToMessage(
+		channelId: string,
+		seq: number,
+		attachments: readonly Attachment[],
+	): Promise<void> {
+		try {
+			await shell.harness.commit(async (tx) => {
+				const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+				const list = doc.messages[channelId];
+				if (list === undefined) return;
+				const index = list.findIndex((item) => item.seq === seq);
+				if (index < 0) return;
+				const target = list[index] as Message;
+				list[index] = {
+					...target,
+					// 固定键顺序，保证字节确定（ADR-005）。
+					attachments: attachments.map((item) => ({
+						id: item.id,
+						name: item.name,
+						kind: item.kind,
+						bytes: item.bytes,
+					})),
+				};
+			}, BACKGROUND_CONTEXT);
+		} catch (error) {
+			console.error(`[core] 附件落库失败（消息已经发出）：${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
 	/** 老板在频道里说话。 */
 	async function postChannelMessage(channelId: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
-		const body = await readJson<{ text?: string; replyTo?: number; from?: string; kind?: string }>(request);
-		const text = (body.text ?? "").trim();
-		if (text === "") return fail(response, 400, "需要 text");
+		const body = await readJson<{
+			text?: string;
+			replyTo?: number;
+			from?: string;
+			kind?: string;
+			attachments?: readonly { id?: unknown }[];
+		}>(request);
 		const channels = (await shell.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannels();
 		if (channels.channels[channelId] === undefined) return fail(response, 404, "频道不存在");
+
+		// 附件只收 id：客户端给的 `name` / `kind` 一律不用 —— 名字取磁盘上的元数据，
+		// 类别按 mime 重算。信任客户端声明的 kind，等于让一个 .svg 自称图片后内联执行。
+		const requested = Array.isArray(body.attachments) ? body.attachments : [];
+		if (requested.length > UPLOAD_PER_MESSAGE) {
+			return fail(response, 400, `一条消息最多带 ${UPLOAD_PER_MESSAGE} 个附件`);
+		}
+		const attachments: Attachment[] = [];
+		for (const raw of requested) {
+			const id = typeof raw?.id === "string" ? raw.id : "";
+			const meta = await readUploadMeta(uploadsRoot, id);
+			if (meta === undefined) return fail(response, 400, "附件不存在（可能已经被清理），重新发一次");
+			attachments.push({ id, name: meta.name, kind: kindOfMime(meta.mime), bytes: meta.bytes });
+		}
+
+		// 纯附件（没写正文）也允许发：占位文案必须是**非空**且确定的，否则下游按「正文非空」
+		// 过滤的地方（接力计数、占位吸收、未读）会把这条消息当成不存在。
+		const typed = (body.text ?? "").trim();
+		const text = typed === "" ? placeholderOf(attachments) : typed;
+		if (text === "") return fail(response, 400, "需要 text 或附件");
+
 		// 发件人：默认老板；带 `from` 时按 agent 处理（调试/脚本用，界面上永远不传）。
 		const from = (body.from ?? "").trim() === "" ? OWNER_SLUG : (body.from as string).trim();
 		try {
@@ -215,6 +299,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				// 语义标签由说话的人自己声明：项目频道里带 `decision` 的话才会进项目记忆。
 				...(typeof body.kind === "string" && body.kind !== "" ? { kind: body.kind } : {}),
 			});
+			if (attachments.length > 0) await attachToMessage(channelId, result.seq, attachments);
 			scheduleOrg();
 			scheduleChannel(channelId);
 			return json(response, {
@@ -342,6 +427,55 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 					items,
 					unread: items.filter((item) => !item.read).length,
 				});
+			},
+		},
+		// 上传：正文就是文件本身（不是 multipart）。不解析 multipart 是故意的 ——
+		// 名字走 `x-filename` 头、类型走 `content-type`，两行代码就能确定落盘的一切，
+		// 而 multipart 边界解析是几百行需要单独审的解析器。
+		{
+			pattern: "/api/uploads",
+			method: "POST",
+			handler: async ({ request, response, url }) => {
+				const headerName = request.headers["x-filename"];
+				const name = nameFrom(typeof headerName === "string" ? headerName : undefined, url.searchParams.get("name"));
+				const mime = mimeOf(request.headers["content-type"]);
+				let bytes: Buffer;
+				try {
+					bytes = await readBounded(request as AsyncIterable<Uint8Array>);
+				} catch (error) {
+					if (error instanceof UploadTooLargeError) {
+						return fail(response, 413, `单个附件最大 ${Math.round(UPLOAD_MAX_BYTES / 1024 / 1024)}MB，这个太大了`);
+					}
+					throw error;
+				}
+				if (bytes.length === 0) return fail(response, 400, "附件是空的");
+				const attachment = await putUpload(uploadsRoot, { name, mime, bytes, at: Date.now() });
+				return json(response, attachment);
+			},
+		},
+		// 取附件：图片内联（点缩略图开大图才能直接显示），其余一律下载。
+		{
+			pattern: "/api/uploads/:id",
+			method: "GET",
+			handler: async ({ response, url, params }) => {
+				const id = params.id ?? "";
+				// 白名单 id 同时挡住了路径穿越：`../core.sqlite` 在 `:id` 里捕获不到 `/`，
+				// 但 `..%2f` 能被解码回来，所以还是靠 `isUploadId` 再收一道。
+				const path = uploadPathOf(uploadsRoot, id);
+				const meta = await readUploadMeta(uploadsRoot, id);
+				if (path === undefined || meta === undefined) return fail(response, 404, "没有这个文件");
+				const inline = url.searchParams.get("download") !== "1" && kindOfMime(meta.mime) === "image";
+				response.writeHead(200, {
+					"Content-Type": meta.mime,
+					"Content-Length": String(meta.bytes),
+					// id 是新建时分配的 uuid，内容永不改，所以可以长时间缓存。
+					"Cache-Control": "public, max-age=31536000, immutable",
+					"Content-Disposition": contentDisposition(inline, meta.name),
+					// 附件是同源内容，不能让它被嗅探成 HTML：一个自称图片的文本文件
+					// 一旦当页面执行，就是自己给自己开了一个 XSS。
+					"X-Content-Type-Options": "nosniff",
+				});
+				return await pipeline(createReadStream(path), response);
 			},
 		},
 		{
