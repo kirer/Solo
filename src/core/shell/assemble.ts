@@ -23,7 +23,7 @@ import {
 	defineExtension,
 	type Context,
 } from "../runtime/index.ts";
-import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
+import { OWNER_SLUG, chainUp, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { agentSection, renderAgentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
@@ -316,9 +316,19 @@ export async function assembleCore(
 	/**
 	 * 按「项目文件写的事实」重建一个项目频道的成员表（幂等）。
 	 *
-	 * 成员 = 老板 + 项目负责人 + 所有 `identity.md` 里 `project:` 指向它的人。
+	 * 成员 = 老板 + 项目负责人 + 负责人的整条汇报线（向上到老板，含知言这类统筹者）
+	 * + 所有 `identity.md` 里 `project:` 指向它的人。
 	 * 负责人在 `projects/<slug>/README.md` 的 `owner` 里 —— 那是文档的事实，代码照抄，
 	 * 不猜「谁该负责」。负责人还没定就只少那一个人，频道照样建。
+	 *
+	 * 为什么要把负责人的上级（通常是知言）也拉进项目频道：知言要在项目频道里给
+	 * 负责人派活、负责人要向知言汇报（见 ADR-024）。缺了知言，项目频道里 @ 不到她，
+	 * 「知言 ↔ 负责人在项目频道协作」就落不下。
+	 *
+	 * 成员表是事实的投影，所以用「精确重算后整体替换」而不是「只加不删」：
+	 * 一旦某人不再在负责人汇报线里、或不再 `project:` 指向它，他就该从项目频道消失；
+	 * 只加不删会留下 `gunanyan` 这类幽灵成员（实测：改名/重建后旧 slug 残留在成员表里，
+	 * 界面上显示成一个连不上会话的人）。
 	 */
 	async function syncProjectChannel(project: string, ctx: Context): Promise<void> {
 		const [doc, all] = await Promise.all([
@@ -326,23 +336,31 @@ export async function assembleCore(
 			readAllIdentities(options.agentsRoot),
 		]);
 		const owner = doc?.owner;
-		const members = [
-			OWNER,
-			...(owner === undefined || owner === "" ? [] : [owner]),
-			...membersOfProject(all, project),
-		];
+		// 负责人的整条汇报线（向上到老板，不含自己）：让知言这类统筹者也进项目频道。
+		const chain = owner === undefined || owner === "" ? [] : chainUp(all, owner);
+		const members = Array.from(
+			new Set([
+				OWNER,
+				...(owner === undefined || owner === "" ? [] : [owner]),
+				...chain,
+				...membersOfProject(all, project),
+			]),
+		);
 		await harness.commit(async (tx) => {
 			const state = (await tx.doc(ChannelDoc)) as ChannelState;
-			Object.assign(
-				state,
-				upsertChannel(state, {
-					id: projectId(project),
-					title: doc?.name ?? project,
-					members,
-					wakeOnAll: [],
-					at: Date.now(),
-				}),
-			);
+			const id = projectId(project);
+			const existing = state.channels[id];
+			const title = doc?.name ?? project;
+			if (existing === undefined) {
+				// 频道还不存在：建。
+				Object.assign(
+					state,
+					ensureChannel(state, { id, title, members, wakeOnAll: [], at: Date.now() }),
+				);
+			} else {
+				// 已存在：成员表整体替换为事实投影（去幽灵、补统筹）。
+				state.channels[id] = { ...existing, members, title };
+			}
 		}, ctx);
 	}
 

@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { openCore, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
+import { BACKGROUND_CONTEXT, openCore, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { assembleCore, ownerSpeak, seedOwnerAssistant } from "../../src/core/shell/assemble.ts";
 import { readIdentity } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, personalId, projectId, type ChannelState } from "../../src/core/channel/state.ts";
@@ -283,6 +283,69 @@ describe("个人频道与项目频道", () => {
 			await shell.syncProject("坦克大战");
 			const state = await shell.channels();
 			expect(state.channels[projectId("坦克大战")]?.members).toContain("沈舟");
+		} finally {
+			await opened.close();
+		}
+	});
+
+	test("项目频道含负责人的整条汇报线（统筹者也进项目频道）", async () => {
+		const root = await workspace();
+		const agents = join(root, "agents");
+		const projects = join(root, "projects");
+		// 知言：老板直接下属（统筹者）；顾南雁：项目负责人，归知言；沈舟：执行员工，归顾南雁。
+		await createAgent({ root: agents, name: "知言", manager: "owner" });
+		await createAgent({ root: agents, name: "顾南雁", manager: "知言", project: "恐龙" });
+		await createAgent({ root: agents, name: "沈舟", manager: "顾南雁", project: "恐龙" });
+		await writeProject(projects, { slug: "恐龙", owner: "顾南雁", body: "# 目标\n做一只恐龙。" });
+
+		const opened = await env(root);
+		try {
+			const shell = await assembleCore(opened.harness, opened.registry, {
+				agentsRoot: agents,
+				projectsRoot: projects,
+			});
+			const state = await shell.channels();
+			// 项目的成员是事实的投影：老板 + 负责人(顾南雁) + 其汇报线(知言) + 执行员工(沈舟)。
+			expect(state.channels[projectId("恐龙")]?.members.sort()).toEqual(
+				["owner", "沈舟", "知言", "顾南雁"].sort(),
+			);
+		} finally {
+			await opened.close();
+		}
+	});
+
+	test("项目频道成员按事实精确重算，不残留幽灵成员", async () => {
+		const root = await workspace();
+		const agents = join(root, "agents");
+		const projects = join(root, "projects");
+		await createAgent({ root: agents, name: "林越", manager: "owner", project: "坦克大战" });
+		await createAgent({ root: agents, name: "沈舟", manager: "林越", project: "坦克大战" });
+		await writeProject(projects, { slug: "坦克大战", owner: "林越", body: "# 目标\n能两个人打。" });
+
+		const opened = await env(root);
+		try {
+			const shell = await assembleCore(opened.harness, opened.registry, {
+				agentsRoot: agents,
+				projectsRoot: projects,
+			});
+			// 模拟一个旧 slug 残留（改名/重建后留下的幽灵成员）。
+			const before = await shell.channels();
+			before.channels[projectId("坦克大战")] = {
+				...before.channels[projectId("坦克大战")],
+				members: [...before.channels[projectId("坦克大战")].members, "gunanyan"],
+			};
+			await opened.harness.commit(async (tx) => {
+				const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+				doc.channels[projectId("坦克大战")] = before.channels[projectId("坦克大战")];
+			}, BACKGROUND_CONTEXT);
+
+			// 重算后幽灵成员应被清除。
+			await shell.syncProject("坦克大战");
+			const after = await shell.channels();
+			expect(after.channels[projectId("坦克大战")]?.members).not.toContain("gunanyan");
+			expect(after.channels[projectId("坦克大战")]?.members.sort()).toEqual(
+				["owner", "林越", "沈舟"].sort(),
+			);
 		} finally {
 			await opened.close();
 		}
