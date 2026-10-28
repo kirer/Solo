@@ -49,6 +49,8 @@ const state = {
 	org: null,
 	/** 编制表（团队视图）是否打开。 */
 	teamOpen: false,
+	/** 各频道消息流滚动位置记忆（T-012）。值=scrollTop 数值；-1 表示上次在底部。 */
+	scrollPos: new Map(),
 };
 
 const el = {
@@ -430,12 +432,7 @@ function renderFlow(options = {}) {
 	}
 
 	const fragment = document.createDocumentFragment();
-	if (detail.hasMore) {
-		const more = document.createElement("div");
-		more.className = "more";
-		more.innerHTML = `<button type="button" id="load-more">加载更早的消息</button>`;
-		fragment.append(more);
-	}
+	// T-015：不再渲染「加载更早」按钮，改为滚动到顶自动加载（见 loadEarlier + flow 的 scroll 监听）。
 
 	// 已读位置：后端给的是「读到这条为止」，这里找第一条未读，画一条分界线。
 	// 「新消息」只标别人发来的未读：老板自己刚发的消息当然也「未读」，但它不是新消息。
@@ -478,6 +475,21 @@ function node(html) {
 	const template = document.createElement("template");
 	template.innerHTML = html.trim();
 	return template.content.firstElementChild ?? document.createTextNode("");
+}
+
+// T-015：上滑到顶自动加载更早消息（替代原「加载更早」按钮）。复用 openChannel 的 before 分支，带防重入。
+let loadingEarlier = false;
+async function loadEarlier() {
+	if (loadingEarlier) return;
+	const detail = state.detail;
+	if (detail === null || detail.messages.length === 0 || !detail.hasMore) return;
+	loadingEarlier = true;
+	try {
+		const before = detail.messages[0].seq;
+		await openChannel(detail.channel.id, { before });
+	} finally {
+		loadingEarlier = false;
+	}
 }
 
 // ── 顶栏 / 输入区 ───────────────────────────────────────────────────────
@@ -525,6 +537,14 @@ async function loadChannels() {
 }
 
 async function openChannel(id, options = {}) {
+	// T-012：是否「真的换了频道」。列表点击/初始进入 = 换频道；同频道内发消息重取 = 不换。
+	const changed = state.current !== id;
+	// 离开当前频道前，先记下它的滚动位置（贴近底部记 -1，回来时回到底部）。
+	if (changed && state.current !== "") {
+		const atBottom = el.flow.scrollTop >= el.flow.scrollHeight - el.flow.clientHeight - 2;
+		state.scrollPos.set(state.current, atBottom ? -1 : el.flow.scrollTop);
+	}
+	const playFresh = changed && options.fresh === true;
 	if (state.current !== id) state.detail = null;
 	state.current = id;
 	state.actionsFor = 0;
@@ -541,17 +561,22 @@ async function openChannel(id, options = {}) {
 
 	if (before === undefined) {
 		renderHead();
-		renderFlow({ toBottom: true, fresh: options.fresh === true });
+		renderFlow({ toBottom: true, fresh: playFresh });
+		// T-012：换频道回来时恢复到上次浏览位置；同频道重取（changed=false）始终保持底部。
+		if (changed) {
+			const saved = state.scrollPos.get(id);
+			if (saved !== undefined && saved !== -1) el.flow.scrollTop = saved;
+		}
 	} else {
 		// 上滑加载：把新拿到的一段**插到前面**，并把视口按新内容高度下移，
 		// 否则正在看的那条会被推走（旧前端「滚动条乱跳」就是这里没补偿）。
 		const heightBefore = el.flow.scrollHeight;
 		const fragment = document.createDocumentFragment();
 		for (const message of detail.messages) fragment.append(node(messageHtml(message, undefined, false)));
+		// T-015：移除「加载更早」按钮，改为上滑自动加载（见 loadEarlier + flow 的 scroll 监听）。
 		const existing = el.flowInner.querySelector(".more");
 		existing?.remove();
 		el.flowInner.prepend(fragment);
-		if (detail.hasMore) el.flowInner.prepend(node(`<div class="more"><button type="button" id="load-more">加载更早的消息</button></div>`));
 		el.flow.scrollTop += el.flow.scrollHeight - heightBefore;
 		decorateAll();
 	}
@@ -781,16 +806,6 @@ function setupEvents() {
 
 	// 消息流：加载更早 / 点引用跳过去 / 点消息浮窗。
 	el.flow.addEventListener("click", (event) => {
-		const loadMore = event.target.closest("#load-more");
-		if (loadMore !== null) {
-			if (state.detail === null || state.detail.messages.length === 0) return;
-			loadMore.disabled = true;
-			void openChannel(state.detail.channel.id, { before: state.detail.messages[0].seq }).catch((error) => {
-				loadMore.disabled = false;
-				toast(error.message, "error");
-			});
-			return;
-		}
 		const jump = event.target.closest("[data-jump]");
 		if (jump !== null) {
 			const target = el.flowInner.querySelector(`[data-seq="${jump.dataset.jump}"]`);
@@ -841,6 +856,8 @@ function setupEvents() {
 	// 滚动时收浮窗：绝对定位的元素跟着滚动会很怪。
 	el.flow.addEventListener("scroll", () => {
 		if (state.actionsFor !== 0) clearActions();
+		// T-015：距顶小于阈值时自动加载更早消息（loadEarlier 内部会判 hasMore 与防重入）。
+		if (el.flow.scrollTop < 80 && (state.detail?.hasMore ?? false)) void loadEarlier();
 	}, { passive: true });
 
 	el.refresh.addEventListener("click", () => {

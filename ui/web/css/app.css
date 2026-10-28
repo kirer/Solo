@@ -491,32 +491,11 @@ textarea {
 	}
 }
 
-/* 加载更早 */
+/* T-015：原「加载更早」按钮已移除，改为滚动到顶自动加载；.more 容器保留为空占位（prepend 历史时可能短暂存在）。 */
 .more {
 	display: flex;
 	justify-content: center;
 	padding: 4px 0 12px;
-}
-
-.more button {
-	padding: 6px 14px;
-	border: 1px solid var(--line);
-	border-radius: 999px;
-	color: var(--ink-3);
-	font-size: 12px;
-	transition:
-		color 120ms var(--ease),
-		border-color 120ms var(--ease);
-}
-
-.more button:hover:not(:disabled) {
-	border-color: var(--ink-4);
-	color: var(--ink-2);
-}
-
-.more button:disabled {
-	opacity: 0.5;
-	cursor: default;
 }
 
 /* 日期分隔：一根极淡的线 + 居中灰字（Figma：Today / Yesterday 12/18） */
@@ -554,9 +533,9 @@ textarea {
 	padding-top: 2px;
 }
 
-/* 悬停整条轻微提亮：提示「这块可以点」（浮窗操作条靠它）。 */
+/* T-011：老板 #77-1 —— 去掉悬停整条的背景提亮。消息操作浮窗由点击触发（.msg-actions），不依赖 hover 背景。 */
 .msg:hover {
-	background: color-mix(in srgb, var(--surface) 45%, transparent);
+	background: none;
 }
 
 .msg-gutter {
