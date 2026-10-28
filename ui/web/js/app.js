@@ -168,6 +168,31 @@ function workOp(text) {
 	return "工作记录";
 }
 
+/** 每种操作类型对应的图标与「已做什么」措辞（仿 ChatGPT 的过程行）。 */
+function opMeta(op) {
+	const map = {
+		"执行命令": { icon: "▸", label: "已运行" },
+		"写文件": { icon: "✎", label: "已写入文件" },
+		"读文件": { icon: "▣", label: "已读取文件" },
+		"后台运行": { icon: "▷", label: "已后台运行" },
+	};
+	return map[op] ?? { icon: "▸", label: "已工作" };
+}
+
+/** `work`/`tool` 行的短摘要：命令取到路径为止，文件取文件名，一行放得下。 */
+function opSummary(text, op) {
+	const head = (text ?? "").split("\n")[0] ?? "";
+	if (op === "执行命令") {
+		const raw = head.replace(/^\$ /, "");
+		// `cd /x && echo ... && cat y` → 只留最后一段有信息量的。
+		const parts = raw.split("&&").map((s) => s.trim()).filter(Boolean);
+		return parts[parts.length - 1] ?? raw;
+	}
+	if (op === "写文件") return head.replace(/^已写入\s*/, "");
+	if (op === "读文件") return head.replace(/^(已读取|文件不存在：?)\s*/, "");
+	return head;
+}
+
 function messageHtml(message, previous, beforeUnreadFrom) {
 	// 同一个人连续发言：只第一行显示头像和名字，后面缩进对齐（时间是唯一的隔断）。
 	const grouped = previous !== undefined && previous.fromSlug === message.fromSlug && !beforeUnreadFrom;
@@ -176,39 +201,38 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 
 	// work = 执行命令的记录：折叠成等宽字体块，默认收起。
 	// note = 系统留痕：灰色淡显。
-	// work = 执行命令/写文件/读文件的记录：完整保留输出，折叠成等宽字体块，
-	// 默认收起，标题里标注「做了什么操作」（执行命令 / 写文件 / 读文件），
-	// 让老板一眼知道这是哪种动作，而不是只看到一串命令。
 	if (message.kind === "work") {
 		const op = workOp(message.text);
-		const firstLine = message.text.split("\n")[0] ?? "";
+		const meta = opMeta(op);
+		const summary = opSummary(message.text, op);
 		return `<div class="msg msg-work" data-seq="${message.seq}">
-			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
+			<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
 			<div class="msg-main">
-				<details><summary><span class="op-label" data-op="${escapeAttr(op)}">${escapeHtml(op)}</span><code>${escapeHtml(firstLine)}</code></summary>
+				<details><summary><span class="op-icon">${meta.icon}</span><span class="op-verb">${escapeHtml(meta.label)}</span><code>${escapeHtml(summary)}</code><span class="op-chevron">⌄</span></summary>
 				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
 			</div>
 		</div>`;
 	}
 
-	// think = 思考过程：仿 ChatGPT，折叠的浅色块，点开看完整推理。
+	// think = 思考过程：仿 ChatGPT，默认收起（点开才展开），不喧宾夺主。
 	if (message.kind === "think") {
 		return `<div class="msg msg-think" data-seq="${message.seq}">
-			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
+			<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
 			<div class="msg-main">
-				<details open><summary><span class="think-label">${escapeHtml(message.fromLabel)} 的思考</span></summary>
+				<details><summary><span class="think-label">思考</span><span class="op-chevron">⌄</span></summary>
 				<div class="msg-text msg-text-think">${renderMarkdown(message.text)}</div></details>
 			</div>
 		</div>`;
 	}
 
-	// tool = 工具调用：卡片式，标注「调用了什么工具」+ 参数摘要，可折叠。
+	// tool = 工具调用：一行紧凑卡，「已调用 + 名字 + 参数摘要」，可折叠。
 	if (message.kind === "tool") {
+		// 完整首行交给 CSS 省略号：一眼能多看到参数，悬停 summary 有 title 全量。
 		const firstLine = message.text.split("\n")[0] ?? "";
 		return `<div class="msg msg-tool" data-seq="${message.seq}">
-			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
+			<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
 			<div class="msg-main">
-				<details><summary><span class="tool-label">调用 ${escapeHtml(firstLine)}</span></summary>
+				<details title="${escapeAttr(message.text)}"><summary><span class="op-icon">⚙</span><span class="op-verb">已调用</span><code>${escapeHtml(firstLine)}</code><span class="op-chevron">⌄</span></summary>
 				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
 			</div>
 		</div>`;

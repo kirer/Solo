@@ -543,20 +543,56 @@ textarea {
 	align-items: center;
 	gap: 6px;
 }
+.msg-work summary code,
+.msg-tool summary code {
+	font-family: var(--mono, ui-monospace, monospace);
+	font-size: 12px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	flex: 1 1 auto;
+	min-width: 0;
+}
+.msg-work .op-icon,
+.msg-tool .op-icon,
+.msg-think .think-label::before {
+	flex: 0 0 auto;
+	opacity: 0.55;
+}
+.msg-work .op-verb,
+.msg-tool .op-verb {
+	flex: 0 0 auto;
+	color: var(--ink-2);
+}
+.msg-work .op-chevron,
+.msg-tool .op-chevron,
+.msg-think summary .op-chevron {
+	flex: 0 0 auto;
+	margin-left: auto;
+	font-size: 10px;
+	color: var(--ink-3);
+	transition: transform 150ms var(--ease);
+}
+.msg-work details[open] .op-chevron,
+.msg-tool details[open] .op-chevron,
+.msg-think details[open] summary .op-chevron {
+	transform: rotate(180deg);
+}
+.msg-tool summary {
+	cursor: pointer;
+	color: var(--ink-3);
+	font-size: 12px;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	list-style: none;
+}
+.msg-tool summary::-webkit-details-marker {
+	display: none;
+}
 .msg-work summary code {
 	font-family: var(--mono, ui-monospace, monospace);
 	font-size: 12px;
-}
-.msg-work .op-label {
-	flex: 0 0 auto;
-	font-size: 10px;
-	font-weight: 600;
-	line-height: 15px;
-	padding: 1px 7px;
-	border-radius: 999px;
-	color: var(--ink-2);
-	background: color-mix(in srgb, var(--accent) 12%, var(--surface));
-	border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
 }
 .msg-text-mono {
 	font-family: var(--mono, ui-monospace, monospace);
@@ -584,6 +620,10 @@ textarea {
 .msg-think summary {
 	cursor: pointer;
 	list-style: none;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
 }
 .msg-think summary::-webkit-details-marker {
 	display: none;
