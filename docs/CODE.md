@@ -29,7 +29,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
 | `runtime/index.ts` | 54 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `Type` |
-| `runtime/open.ts` | 46 | `openCore({databasePath, models, registry, settings?}) → {harness, close}` |
+| `runtime/open.ts` | 135 | `openCore({databasePath, models, registry, settings?}) → {harness, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025） |
 | `runtime/models.ts` | 151 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；回落到环境变量 / 本地网关 |
 | `agent/identity.ts` | 136 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；`OWNER_SLUG = "owner"` |
 | `agent/prompt.ts` | 235 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005）；规则外移到技能，只留事实 |

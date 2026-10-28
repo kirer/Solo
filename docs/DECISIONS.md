@@ -385,3 +385,31 @@ ASCII，把中文名过滤成空串后抛错。而模型自发给员工起中文
 
 **与 ADR-012 的关系**：沿用「项目负责人是 `README.md` 的 `owner`、频道成员是它的投影」
 这一条，只是把投影扩到「负责人的整条汇报线」，并明确成员表用精确重算替换而非累加。
+
+---
+
+## ADR-025：启动时把强杀留下的半截任务树一次结算，不尝试恢复
+
+**状态**：生效
+
+**背景**：`Harness.open` 会加载所有非终态任务并尝试恢复。进程被 `kill -9` 时，一棵任务树
+可能停在半截（父任务 `waiting`、子任务 `running`、还有 `placed` 的输入 submission）。恢复
+时调度器重放这些任务，但它们背后的模型/工具调用已随进程消失，于是抛
+`Task N invocation has ended`；这是异步未处理拒绝，直接崩进程，且库一直脏，下次照样崩。
+
+**决策**：`openCore` 在 `Harness.open` 之后、`assembleCore` 之前调用
+`reconcileZombieTasks()`：
+
+1. **一次 commit** 把所有非终态任务结算成 `terminal`
+   （`outcome: {status:"orphaned", reason:"restart"}`）。必须一次做完：只结算父任务会被
+   级联把子任务改回 `pending`，仍然重放、仍然崩。terminal 状态要剥掉 `checkpoint`/`memos`。
+2. 未结输入：`queued` 用 `abortSubmission` 撤销（连 inbox 项一起清）；`placed` 的 entry
+   已在会话里、却没有活着的任务会回答它，就地 `settleSubmission` 为
+   `unanswered`/`restart`，否则每次启动都会重复出现。
+3. 自愈失败只打日志，不挡启动。
+
+**理由**：强杀后的半截调用**无法**恢复——恢复需要重放一个已经不存在的模型/工具调用。
+把它结算成 orphaned 是唯一符合持久化语义的终态。走 Harness 自己的 `commit`/`settleSubmission`，
+与调度器共用连接和事务，避免外部 SQLite 连接被页缓存覆盖的竞态（实测旧方案无效）。
+
+**代价**：强杀时正在跑的一轮工作会丢失，需要重新发起。这比进程起不来好。
