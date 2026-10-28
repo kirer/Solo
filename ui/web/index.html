@@ -88,6 +88,14 @@
 							<span class="act-time"></span>
 						</div>
 					</div>
+					<!-- 不钉在底部时才出现：告诉你有几条新的，点一下跳回去。
+					     没有它，往上翻看历史的人不知道下面来了消息，也不敢滚回去。 -->
+					<button class="to-bottom" id="to-bottom" type="button" hidden>
+						<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+							<path d="M12 5v14M6 13l6 6 6-6" />
+						</svg>
+						<span>回到最新</span>
+					</button>
 				</div>
 
 				<div class="reply" id="reply-bar" hidden>

@@ -94,6 +94,7 @@ const el = {
 	flow: $("flow"),
 	flowInner: $("flow-inner"),
 	flowTop: $("flow-top"),
+	toBottom: $("to-bottom"),
 	feed: $("feed"),
 	skel: $("skel"),
 	act: $("act"),
@@ -288,6 +289,26 @@ function isPinned() {
 
 function scrollToBottom() {
 	el.flow.scrollTop = el.flow.scrollHeight;
+	syncToBottom();
+}
+
+/* 「回到最新」：钉在底部时藏起来，离开底部时露出。
+   刻意不报「N 条新消息」——增量推送、补历史、重放都会让前端自己数出来的条数失真，
+   一个会算错的数字比没有数字更糟。要数字看顶栏的「N 件找你」。 */
+function syncToBottom() {
+	if (!el.toBottom) return;
+	const pinned = isPinned();
+	if (el.toBottom.hidden === pinned) return; // hidden=true 且 pinned=true / hidden=false 且 pinned=false
+	el.toBottom.hidden = pinned;
+}
+
+function streamCtx() {
+	const need = needSeqs();
+	return {
+		people: state.people,
+		// 两个来源取并集：后端判定的 attention，以及前端按「提问 + 点名老板」算的。
+		isNeed: (message) => message.status === "pending" || need.has(message.seq) || isNeedRow(message),
+	};
 }
 
 function needSeqs() {
@@ -309,21 +330,17 @@ function renderFlow({ veil = false, restore = true } = {}) {
 	}
 
 	const messages = detail.messages ?? [];
-	const pinned = restore ? state.scrollPos.get(state.currentId) === -1 || isPinned() : true;
+	// restore=true 时参考「上次离开这个频道时的位置」；restore=false（SSE 增量、加载更早）
+	// 只看**此刻**是否钉在底部 —— 以前这里写死 true，等于每条新消息都把正在上翻看历史的人
+	// 拽回底部（实测：滚到顶后发一条消息，scrollTop 从 0 跳到 1522）。
+	const pinned = restore ? state.scrollPos.get(state.currentId) === -1 || isPinned() : isPinned();
 	const previousTop = el.flow.scrollTop;
 
 	el.feed.replaceChildren();
 	if (messages.length === 0) {
 		el.feed.append(emptyBlock("这个频道还没有消息。", null));
 	} else {
-		const need = needSeqs();
-		el.feed.append(
-			buildStream(messages, {
-				people: state.people,
-				// 两个来源取并集：后端判定的 attention，以及前端按「提问 + 点名老板」算的。
-				isNeed: (message) => message.status === "pending" || need.has(message.seq) || isNeedRow(message),
-			}),
-		);
+		el.feed.append(buildStream(messages, streamCtx()));
 	}
 	if (state.error) el.feed.prepend(errorBlock(state.error, "重试", () => openChannel(state.currentId)));
 
@@ -605,6 +622,7 @@ async function openChannel(id, { push = true } = {}) {
 	state.error = null;
 	state.loading = true;
 	state.replyTo = null;
+	if (el.toBottom) el.toBottom.hidden = true;
 	el.skel.hidden = false;
 	renderHead();
 	renderChannels();
@@ -656,21 +674,69 @@ async function loadEarlier() {
 	const first = state.detail.messages?.[0]?.seq;
 	if (!first) return;
 	state.loadingEarlier = true;
-	const fromEnd = el.flow.scrollHeight - el.flow.scrollTop;
+	// 补的是**上面**的历史，所以只把新的行插到最前面，**不重建整列**。
+	// 插在上面会让 scrollHeight 正好增加插入的高度，把 scrollTop 加回去，
+	// 屏幕上正在看的那一条就一点不动 —— 这是唯一不会抖的做法。
+	// （整列重建每次都要重新算位置，实测补两轮后视野跳 900 多像素。）
+	// 记下最上面那条已有消息的 seq 和它的屏幕位置：补完历史后把它按回原处。
+	// 不看 scrollHeight 差多少 —— 插入的行里可能有图片、附件、代码块，它们的最终高度
+	// 只有布局稳定后才知道，用高度差会差出几百像素（实测差 300px，整屏内容往上跳了 10 行）。
+	const boundary = bottomRowOfViewport();
 	try {
 		const earlier = await getJSON(
 			`/api/channels/${encodeURIComponent(state.currentId)}?limit=${PAGE}&before=${first}`,
 		);
-		if (state.currentId !== earlier.channel.id) return;
-		const merged = [...(earlier.messages ?? []), ...(state.detail.messages ?? [])];
-		state.detail = { ...state.detail, messages: merged, hasMore: earlier.hasMore };
-		renderFlow({ restore: false });
-		el.flow.scrollTop = el.flow.scrollHeight - fromEnd;
+		if (state.currentId !== earlier.channel.id || !state.detail) return;
+		const older = (earlier.messages ?? []).filter(
+			(message) => !(state.detail.messages ?? []).some((known) => known.seq === message.seq),
+		);
+		state.detail = {
+			...state.detail,
+			messages: mergeMessages(earlier.messages, state.detail.messages),
+			hasMore: earlier.hasMore,
+		};
+		if (older.length > 0) {
+			el.feed.insertBefore(buildStream(older, streamCtx()), el.feed.firstChild);
+			if (boundary) {
+				const node = el.feed.querySelector(`.row[data-seq="${boundary.seq}"]`);
+				if (node) el.flow.scrollTop += node.getBoundingClientRect().top - boundary.top;
+			}
+		}
 	} catch (error) {
 		toast(error.message, "error");
 	} finally {
 		state.loadingEarlier = false;
 	}
+}
+
+/* 视口里最上面那条**消息行**的 seq 和屏幕位置。用它当锚点，补历史前后唯一可比。 */
+function bottomRowOfViewport() {
+	const box = el.flow.getBoundingClientRect();
+	for (const row of el.feed.querySelectorAll(".row")) {
+		const rect = row.getBoundingClientRect();
+		if (rect.bottom > box.top + 4) return { seq: row.dataset.seq, top: rect.top };
+	}
+	return null;
+}
+
+/* 按 seq 合并两批消息：去重 + 升序。
+   实测补两轮历史后 DOM 里出现 20 个重复的 data-seq —— 有重复的行，`[data-seq]` 查到的
+   就不是那条消息了（高亮会亮错行、动作条会挂到另一条上）。前端自己兜住这一层，
+   不指望「每次请求都恰好不重叠」。 */
+function mergeMessages(older, newer) {
+	const bySeq = new Map();
+	for (const message of [...(older ?? []), ...(newer ?? [])]) bySeq.set(message.seq, message);
+	return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+}
+
+/* 视口里最上面那一行的 seq 与它在屏幕上的 y（取任何一条都行，只要同一条前后可比）。 */
+function firstVisibleRow() {
+	const box = el.flow.getBoundingClientRect();
+	for (const row of el.feed.querySelectorAll(".row")) {
+		const rect = row.getBoundingClientRect();
+		if (rect.bottom > box.top + 4) return { seq: row.dataset.seq, top: rect.top };
+	}
+	return null;
 }
 
 async function reload() {
@@ -694,7 +760,9 @@ function openChannelStream(id) {
 		notePresence(message);
 		const pinned = isPinned();
 		renderFlow({ restore: false });
+		// 不钉在底部时不拽人，但要让「回到最新」知道下面又多了几条。
 		if (pinned) scrollToBottom();
+		else syncToBottom();
 		renderActivity();
 	};
 	source.addEventListener("create", (event) => {
@@ -1236,9 +1304,16 @@ function bind() {
 		"scroll",
 		() => {
 			if (state.currentId && !state.loading) state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
+			syncToBottom();
 		},
 		{ passive: true },
 	);
+
+	el.toBottom?.addEventListener("click", () => {
+		scrollToBottom();
+		// 跳回去之后把这一屏标成已读：不然回来一圈未读数还挂着。
+		if (state.detail) markRead(state.detail).then(renderChannels, () => {});
+	});
 
 	el.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
