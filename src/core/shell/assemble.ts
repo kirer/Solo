@@ -31,6 +31,7 @@ import { ChannelDoc, OWNER, ensureChannel, personalId, projectId, upsertChannel,
 import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleProject } from "../project/settle.ts";
+import { projectAssistantEntry, type Projection } from "../channel/transcript.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -123,6 +124,8 @@ export type CoreShell = {
 	readonly agentsRoot: string;
 	readonly projectsRoot: string;
 	readonly companyChannel: string;
+	/** 停止「会话记录 → 个人频道」的投影订阅。 */
+	readonly stopTranscript: () => void;
 	readonly close: (context?: Context) => Promise<void>;
 };
 
@@ -418,6 +421,14 @@ export async function assembleCore(
 	}, context);
 
 
+	// ── 5. 投影订阅：会话里的思考/文案/工具调用 → 个人频道 ──────────
+	// 必须在名册与频道都就绪之后才开。它只读已经落库的会话记录，不阻止主流程。
+	const unsubscribeTranscript = startTranscriptSink(
+		harness,
+		directory,
+		() => shell.channels(),
+	);
+
 	const shell: CoreShell = {
 		harness,
 		registry,
@@ -468,6 +479,8 @@ export async function assembleCore(
 			}
 			return added;
 		},
+		/** 停止「会话记录 → 个人频道」的投影订阅。 */
+		stopTranscript: () => unsubscribeTranscript(),
 		async channels(ctx: Context = BACKGROUND_CONTEXT): Promise<ChannelState> {
 			return (await harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
 		},
@@ -482,7 +495,99 @@ export async function assembleCore(
 		companyChannel,
 		close: (ctx?: Context) => harness.close(ctx ?? context),
 	};
+
 	return shell;
+}
+
+/**
+ * 投影游标：每轮读到的最后一条 assistant 条目 id，按会话记。
+ *
+ * 这决定了「只投影新产出的」。重启后从头扫一遍该会话所有 `pi.assistant` 自然安全
+ * （幂等：已经落过的消息不会凭空消失，只是重脏一次），但游标让稳态下每次提交
+ * 最多投影一两条，而不是回放回整段历史。
+ */
+const transcriptCursor = new Map<number, number>();
+
+/**
+ * 把一条 session 提交里出现的 `pi.assistant` 条目投影进对应 agent 的个人频道。
+ *
+ * 这是整个「老板能看见员工思考」功能的唯一连线，挂在装配层而不是工具层：
+ * 思考不是 agent 主动说出来的（它**不知道**自己在被围观），而是运行时把
+ * 它已经写下的会话记录，读出来丢进个人频道。
+ */
+function makeTranscriptSink(
+	harness: Harness,
+	directory: DirectoryState,
+	projectState: () => Promise<ChannelState>,
+) {
+	return async (publication: import("../runtime/index.ts").CommitPublication, context: Context): Promise<void> => {
+		for (const change of publication.changes) {
+			if (change.type !== "entry") continue;
+			const entry = change.value;
+			if (entry.kind !== "pi.assistant") continue;
+			const convId = Number(entry.conversationId);
+			const slug = directory.conversationToSlug[String(convId)];
+			if (slug === undefined || slug === OWNER) continue;
+			const projections = projectAssistantEntry(entry as never);
+			if (projections.length === 0) {
+				transcriptCursor.set(convId, Number(entry.id));
+				continue;
+			}
+			const channelId = personalId(slug);
+			const state = await projectState();
+			if (state.channels[channelId] === undefined) {
+				transcriptCursor.set(convId, Number(entry.id));
+				continue;
+			}
+			for (const projection of projections) {
+				await postProjectedMessage(harness, state, channelId, slug, projection, context);
+			}
+			transcriptCursor.set(convId, Number(entry.id));
+		}
+	};
+}
+
+/** 落一条投影消息。与 `logWork` 同一条路径，但带 `kind` 让 UI 区分显示。 */
+async function postProjectedMessage(
+	harness: Harness,
+	state: ChannelState,
+	channelId: string,
+	slug: string,
+	projection: Projection,
+	context: Context,
+): Promise<void> {
+	try {
+		const { postMessage } = await import("../channel/post.ts");
+		await postMessage(
+			{
+				harness,
+				state,
+				conversationOf: async () => undefined,
+				labelOf: (s: string) => s,
+			},
+			{ channelId, from: slug, text: projection.text, at: Date.now(), kind: projection.kind, wake: false },
+			context,
+		);
+	} catch {
+		/* 投影失败绝不影响主流程 */
+	}
+}
+
+/**
+ * 订阅会话提交，开启投影。返回取消订阅函数。
+ *
+ * 放在 `assembleCore` 末尾：此时名册已就绪，且 `subscribeCommits` 听众跑在
+ * 主提交之后，能拿到稳定快照。
+ */
+function startTranscriptSink(
+	harness: Harness,
+	directory: DirectoryState,
+	channels: () => Promise<ChannelState>,
+): () => void {
+	const sink = makeTranscriptSink(harness, directory, channels);
+	return harness.subscribeCommits((publication, context) => {
+		void sink(publication, context);
+	});
 }
 
 /**

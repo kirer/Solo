@@ -179,6 +179,13 @@ type ViewMessage = {
 - 投递是异步的：`delivered` / `failed` 是本条消息唤醒了几个人，**不是**他们的回答。
 - 前端拿到响应后不要自己插一条消息，等 SSE 推新快照。
 
+**过程投影的 `kind`**（仅出现在个人频道，由运行时从会话条目自动生成，不是人写的）：
+| `kind` | 含义 | 来源 |
+|---|---|---|
+| `think` | 该员工的思考过程 | `pi.assistant` 条目的 `thinking` 块 |
+| `say` | 该员工这一轮写的文案（非工具、非思考） | `pi.assistant` 条目的 `text` 块 |
+| `tool` | 该员工调了什么工具（名字 + 参数摘要） | `pi.assistant` 条目的 `toolCall` 块（不含 `say`） |
+
 ## 8. `POST /api/channels/:id/read`
 
 ```ts

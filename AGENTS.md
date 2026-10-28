@@ -102,6 +102,7 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
+| 消息 `kind` 新增（`think` / `say` / `tool` 过程投影） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息 `kind` 表 |
 | 本文件的表 | `AGENTS.md` |
 
 **文档里的行号会漂。** 优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，

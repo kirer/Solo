@@ -147,8 +147,8 @@ function quoteHtml(message) {
 }
 
 function kindHtml(message) {
-	if (message.kind === "chat" || message.kind === "note" || message.kind === "") return "";
-	const label = { decision: "拍板", report: "汇报", task: "任务" }[message.kind] ?? message.kind;
+	if (message.kind === "chat" || message.kind === "note" || message.kind === "" || message.kind === "say") return "";
+	const label = { decision: "拍板", report: "汇报", task: "任务", think: "思考", tool: "调用" }[message.kind] ?? message.kind;
 	return `<span class="msg-kind" data-kind="${escapeAttr(message.kind)}">${escapeHtml(label)}</span>`;
 }
 
@@ -167,6 +167,29 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 			<div class="msg-main">
 				<details><summary><code>${escapeHtml(firstLine)}</code></summary>
 				<div class="msg-text msg-text-mono">${renderMarkdown(message.text)}</div></details>
+			</div>
+		</div>`;
+	}
+
+	// think = 思考过程：仿 ChatGPT，折叠的浅色块，点开看完整推理。
+	if (message.kind === "think") {
+		return `<div class="msg msg-think" data-seq="${message.seq}">
+			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
+			<div class="msg-main">
+				<details open><summary><span class="think-label">${escapeHtml(message.fromLabel)} 的思考</span></summary>
+				<div class="msg-text msg-text-think">${renderMarkdown(message.text)}</div></details>
+			</div>
+		</div>`;
+	}
+
+	// tool = 工具调用：卡片式，名字 + 参数摘要，可折叠。
+	if (message.kind === "tool") {
+		const firstLine = message.text.split("\n")[0] ?? "";
+		return `<div class="msg msg-tool" data-seq="${message.seq}">
+			<div class="msg-gutter">${avatarHtml(message.fromLabel)}</div>
+			<div class="msg-main">
+				<details><summary><span class="tool-label">🔧 ${escapeHtml(firstLine)}</span></summary>
+				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
 			</div>
 		</div>`;
 	}

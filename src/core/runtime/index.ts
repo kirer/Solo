@@ -36,6 +36,7 @@ export type {
 	AgentChange,
 	Conversation,
 	ConversationCreateOptions,
+	CommitPublication,
 	EntryRecord,
 	Harness,
 	HarnessOptions,
