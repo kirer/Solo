@@ -357,21 +357,36 @@ textarea {
 	white-space: nowrap;
 }
 
+/* 徽标两种，语义靠 `data-kind` 分开（T-20261028-009，老板定口径 A）：
+ *   mention = 有人 @ 你 → 红色数字，整个列表里唯一「会叫」的东西；
+ *   quiet   = 只是有新内容 → 6px 灰点，不带数字，不进顶栏计数。
+ * 红数字用 --danger + 深字（实测 5.72:1），不用白字（白字只有 3.42:1，小字号读不清）。 */
 .badge {
+	display: inline-grid;
+	place-items: center;
 	min-width: 15px;
+	height: 15px;
 	padding: 0 4px;
 	border-radius: 999px;
-	background: var(--ink-3);
-	color: var(--bg);
 	font-size: 10px;
 	font-weight: 700;
-	line-height: 15px;
-	text-align: center;
+	line-height: 1;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
 }
 
-.badge[data-mention="true"] {
-	background: var(--accent);
+.badge[data-kind="mention"] {
+	background: var(--danger);
 	color: #0b0c0e;
+}
+
+.badge[data-kind="quiet"] {
+	width: 6px;
+	height: 6px;
+	min-width: 0;
+	padding: 0;
+	border-radius: 50%;
+	background: var(--ink-3);
 }
 
 /* ── 头像 ─────────────────────────────────────────────────────────────

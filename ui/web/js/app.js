@@ -32,7 +32,6 @@ const TICK_MS = 30_000;
 const state = {
 	/** @type {{id:string,kind:string,title:string,project?:string,unread:number,mentions:number,preview:string,lastAt:number,lastSeq:number,memberCount:number}[]} */
 	channels: [],
-	unreadTotal: 0,
 	mentionTotal: 0,
 	/** 当前打开的频道 id。 */
 	current: "",
@@ -55,6 +54,7 @@ const state = {
 const el = {
 	meta: document.querySelector("#company-meta"),
 	refresh: document.querySelector("#refresh"),
+	/** 顶栏那个「N 件需要你」。元素 id 还叫 unread-total（index.html 不改），语义已收窄到点名。 */
 	unreadTotal: document.querySelector("#unread-total"),
 	rows: document.querySelector("#rows"),
 	paneTitle: document.querySelector("#pane-title"),
@@ -190,11 +190,26 @@ function previewHtml(channel) {
 	return tail === "" ? "还没有消息" : tail;
 }
 
+/**
+ * 侧栏徽标只有两种（T-20261028-009，老板定口径 A）：
+ * - 有人 @ 你 → **红色数字**，数字就是 `mentions`（宁多勿漏由后端字段保证）；
+ * - 只是有新内容 → **灰色小点**，不带数字。
+ *
+ * 「有新内容」不等于「需要你」：员工在个人频道里的过程汇报不应该持续叫老板。
+ * 两种互斥，靠 `data-kind` 区分，别用一个 badge 改样式来表达语义。
+ */
+function badgeHtml(channel) {
+	if (channel.mentions > 0) {
+		return `<span class="badge" data-kind="mention" role="img" aria-label="${channel.mentions} 件需要你">${channel.mentions}</span>`;
+	}
+	if (channel.unread > 0) {
+		return `<span class="badge" data-kind="quiet" role="img" aria-label="${channel.unread} 条未读"></span>`;
+	}
+	return "";
+}
+
 function rowHtml(channel) {
-	const badge =
-		channel.unread > 0
-			? `<span class="badge"${channel.mentions > 0 ? ' data-mention="true"' : ""}>${channel.mentions > 0 ? channel.mentions : channel.unread}</span>`
-			: "";
+	const badge = badgeHtml(channel);
 	return `<button class="row" type="button" data-channel="${escapeAttr(channel.id)}"${
 		channel.id === state.current ? ' aria-current="true"' : ""
 	}>
@@ -222,8 +237,9 @@ function renderList() {
 		parts.push(rows.map(rowHtml).join(""));
 	}
 	el.rows.innerHTML = parts.join("") || `<div class="empty">还没有频道</div>`;
-	el.unreadTotal.textContent =
-		state.mentionTotal > 0 ? `${state.mentionTotal} 处点名` : state.unreadTotal > 0 ? `${state.unreadTotal} 条未读` : "";
+	// 顶栏只数「点名叫你」的未读（= 后端 `unread.mentions`）。灰点不进这个数，
+	// 否则老板又会看到「一直在响」（T-20261028-009）。0 的时候整块留空。
+	el.unreadTotal.textContent = state.mentionTotal > 0 ? `${state.mentionTotal} 件需要你` : "";
 }
 
 // ── 消息流 ──────────────────────────────────────────────────────────────
@@ -501,7 +517,6 @@ function renderReply() {
 async function loadChannels() {
 	const data = await getJSON("/api/channels");
 	state.channels = data.channels ?? [];
-	state.unreadTotal = data.unread?.total ?? 0;
 	state.mentionTotal = data.unread?.mentions ?? 0;
 	renderList();
 }
@@ -553,7 +568,7 @@ async function markRead() {
 		for (const message of detail.messages) message.read = true;
 		const row = state.channels.find((channel) => channel.id === detail.channel.id);
 		if (row !== undefined) {
-			state.unreadTotal = Math.max(0, state.unreadTotal - row.unread);
+			// 只减点名数：未读总数已经不显示，留着它就是没人读的状态。
 			state.mentionTotal = Math.max(0, state.mentionTotal - row.mentions);
 			row.unread = 0;
 			row.mentions = 0;
