@@ -26,3 +26,4 @@ coverage/
 *.log
 .idea/
 .vscode/
+.taste-skill/
