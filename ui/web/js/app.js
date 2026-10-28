@@ -520,6 +520,14 @@ function upsertMessage(view) {
 		if (after === null) el.flowInner.append(fresh);
 		else el.flowInner.insertBefore(fresh, after);
 	} else {
+		// T-016 v2：整节点重建前，若旧节点正在逐字流式（data-streaming），把已累积的正文续到新节点上，
+		// 避免 upsert 重建把渐显进度打断重来；最终以 done 全文或刷新全量覆盖。
+		const acc = existing.getAttribute("data-stream-accum");
+		if (acc !== null && existing.hasAttribute("data-streaming")) {
+			const target = fresh.querySelector(".msg-text");
+			if (target !== null) target.textContent = acc;
+			fresh.setAttribute("data-stream-accum", acc);
+		}
 		existing.replaceWith(fresh);
 	}
 	decorateMentions(fresh.querySelector(".msg-text"), view.mentions ?? []);
@@ -544,11 +552,36 @@ function connectStream(id) {
 			/* 忽略坏帧 */
 		}
 	});
-	// v1 不依赖逐字（token/done 增量）：create 已含 done 全文，幂等覆盖即可。预留监听避免静默报错。
-	es.addEventListener("token", () => {});
+	// T-016 v2：逐字增量。token 把分片追加进对应 seq 的 .msg-text，渐显；done 用全文兜底（防丢包/重连）。
+	es.addEventListener("token", (event) => {
+		try {
+			const { seq, delta } = JSON.parse(event.data);
+			const node = el.flowInner.querySelector(`.msg[data-seq="${seq}"] .msg-text`);
+			if (node === null) return;
+			// 占位 loading 光标退场：开始有字，去掉 data-placeholder / data-status=pending 视觉。
+			node.removeAttribute("data-placeholder");
+			node.parentElement?.parentElement?.removeAttribute("data-status");
+			node.appendChild(document.createTextNode(delta));
+			const msgEl = node.closest(".msg");
+			if (msgEl !== null) {
+				msgEl.setAttribute("data-streaming", "true");
+				msgEl.setAttribute("data-stream-accum", (msgEl.getAttribute("data-stream-accum") ?? "") + delta);
+			}
+			const nearBottom = el.flow.scrollTop >= el.flow.scrollHeight - el.flow.clientHeight - 80;
+			if (nearBottom) el.flow.scrollTop = el.flow.scrollHeight;
+		} catch {
+			/* 忽略坏帧 */
+		}
+	});
 	es.addEventListener("done", (event) => {
 		try {
-			upsertMessage(JSON.parse((event).data));
+			const view = JSON.parse(event.data);
+			upsertMessage(view);
+			const msgEl = el.flowInner.querySelector(`.msg[data-seq="${view.seq}"]`);
+			if (msgEl !== null) {
+				msgEl.removeAttribute("data-streaming");
+				msgEl.removeAttribute("data-stream-accum");
+			}
 		} catch {
 			/* 忽略坏帧 */
 		}

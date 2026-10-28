@@ -15,6 +15,21 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, appendMessage, recipientsOf, type Channel, type ChannelState, type Message } from "./state.ts";
 import { deliver, liveConversations, type DeliverResult, type WakeRecord } from "./deliver.ts";
 
+// T-016 v2：占位填充时的逐字增量推送钩子。由 serveCore 在启动时挂载（写进 channelClients），
+// 未挂载时为空操作 —— post.ts 不依赖 shell/serve，避免循环依赖。
+// 语义：某条 pending 占位被真实回复原地填充时，推 `token`（分片增量）+ `done`（全文兜底）。
+type ChannelStreamHook = (channelId: string, seq: number, fullText: string) => void;
+let channelStreamHook: ChannelStreamHook | undefined;
+export function setChannelStreamHook(hook: ChannelStreamHook | undefined): void {
+	channelStreamHook = hook;
+}
+
+/** T-016 v2：该频道是否还有前端 SSE 订阅（serveCore 注入的查询函数）。无人订阅则不产生增量事件。 */
+let channelClientsHas: (channelId: string) => boolean = () => false;
+export function setChannelClientsHas(fn: (channelId: string) => boolean): void {
+	channelClientsHas = fn;
+}
+
 export type PostResult = {
 	readonly channel: Channel;
 	readonly message: Message;
@@ -61,6 +76,8 @@ export async function postMessage(
 	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
 
 	let created: Message | undefined;
+	let filledSeq: number | undefined;
+	let filledText = "";
 	await deps.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const state = doc as ChannelState;
@@ -102,8 +119,11 @@ export async function postMessage(
 			);
 			if (idx >= 0) {
 				// 下标替换 = 数组结构性变更，文档代理稳定落盘（保留占位原 seq/from/pendingFor）。
+				const placeholder = arr[idx]!;
+				filledSeq = placeholder.seq;
+				filledText = input.text;
 				arr[idx] = {
-					...arr[idx]!,
+					...placeholder,
 					text: input.text,
 					mentions: next.message.mentions,
 					kind: next.message.kind,
@@ -122,6 +142,11 @@ export async function postMessage(
 	}, context);
 
 	const message = created as Message;
+	// T-016 v2：占位被真实回复原地填充 → 推逐字增量（token 分片 + done 全文兜底）。
+	// 后端落库层已写好最终全文，这里只负责「把全文按片推给前端做渐显」，不重复写库。
+	if (filledSeq !== undefined && channelClientsHas(channel.id) && channelStreamHook !== undefined) {
+		channelStreamHook(channel.id, filledSeq, filledText);
+	}
 	if (input.wake === false || input.kind === "note") {
 		return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}

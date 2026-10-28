@@ -862,6 +862,25 @@ textarea {
 	color: var(--ink-3);
 	font-style: italic;
 }
+/* T-016 v2：逐字流式进行中（data-streaming）的细高亮，提示「正在吐字」。
+   与 pending 的闪烁光标区别：pending 是还没收到任何字，streaming 是字已在中途。 */
+.msg[data-streaming] .msg-text {
+	background: color-mix(in srgb, var(--accent) 8%, transparent);
+	border-radius: 6px;
+}
+.msg[data-streaming] .msg-text::after {
+	content: "";
+	display: inline-block;
+	width: 1px;
+	height: 1em;
+	margin-left: 1px;
+	background: var(--accent-fill);
+	vertical-align: text-bottom;
+	animation: msg-blink 1.1s steps(2, start) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+	.msg[data-streaming] .msg-text::after { animation: none; }
+}
 @keyframes msg-blink {
 	50% {
 		opacity: 0;

@@ -176,6 +176,48 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 		}
 	});
 
+	test("v2 逐字：占位被填充时，后端把全文切成增量 token、累加等于 done 全文", async () => {
+		const { root, agents, projects } = await workspace();
+		const { models } = setupModels(process.env, { workspace: root });
+		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		try {
+			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			let state = await shell.channels();
+			const pendingSeq = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
+			expect(pendingSeq).toBeDefined();
+			const { postMessage } = await import("../../src/core/channel/post.ts");
+			const { setChannelStreamHook, setChannelClientsHas } = await import("../../src/core/channel/post.ts");
+			// 模拟 serveCore 挂载的钩子：收集 token 分片与 done 全文。
+			const tokens: string[] = [];
+			let doneText: string | undefined;
+			setChannelClientsHas(() => true);
+			setChannelStreamHook((channelId, seq, fullText) => {
+				expect(channelId).toBe("company");
+				expect(seq).toBe(pendingSeq);
+				// 把全文切成最多 24 片，累加应等于全文（逐字增量幂等）。
+				const step = Math.max(1, Math.ceil(fullText.length / 24));
+				for (let i = 0; i < fullText.length; i += step) tokens.push(fullText.slice(i, Math.min(fullText.length, i + step)));
+				doneText = fullText;
+			});
+			await postMessage(
+				{ harness: opened.harness, state: (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never, conversationOf: async () => undefined },
+				{ channelId: "company", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
+				BACKGROUND_CONTEXT,
+			);
+			setChannelStreamHook(undefined);
+			setChannelClientsHas(() => false);
+			expect(tokens.join("")).toBe(doneText);
+			expect(doneText).toBe("我在的，怎么了");
+			state = await shell.channels();
+			const filled = (state.messages.company ?? []).find((m) => m.seq === pendingSeq);
+			expect(filled?.status).toBe("done");
+		} finally {
+			await opened.close();
+		}
+	});
+
 	test("回归：013/014 口径 A 不倒退 —— 群@A 不影响老板个人频道", async () => {
 		const { root, agents, projects } = await workspace();
 		const { models } = setupModels(process.env, { workspace: root });

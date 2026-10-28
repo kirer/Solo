@@ -27,6 +27,7 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type ChannelState } from "../channel/state.ts";
+import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
 import { channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
 
@@ -61,6 +62,42 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	// T-016：按频道的 SSE 连接（channelId → 连接集合）。消息增量只推给订阅了该频道的浏览器。
 	const channelClients = new Map<string, Set<ServerResponse>>();
 	const channelTimers = new Map<string, NodeJS.Timeout>();
+
+	// T-016 v2：把「占位填充 → 逐字增量推送」接到 post.ts 的钩子上（避免循环依赖：post 不 import serve）。
+	// 前端拿到 token 分片后渐显，最终以 done 全文兜底（刷新/丢包不漏字）。
+	setChannelStreamHook((channelId, seq, fullText) => {
+		let acc = 0;
+		const step = Math.max(1, Math.ceil(fullText.length / 24));
+		const emitToken = (from: number, to: number) => {
+			const delta = fullText.slice(from, to);
+			if (delta.length === 0) return;
+			const clients = channelClients.get(channelId);
+			if (clients === undefined || clients.size === 0) return;
+			const payload = `event: token\ndata: ${JSON.stringify({ seq, delta })}\n\n`;
+			for (const client of [...clients]) {
+				try { client.write(payload); } catch { clients.delete(client); }
+			}
+		};
+		// 把全文切成最多 24 片，错峰推（每片 18ms），模拟逐字；末片后补 done 全文兜底。
+		const timer = setInterval(() => {
+			if (acc >= fullText.length) {
+				clearInterval(timer);
+				channelTimers.delete(`tok:${channelId}:${seq}`);
+				const clients = channelClients.get(channelId);
+				if (clients !== undefined && clients.size > 0) {
+					const done = `event: done\ndata: ${JSON.stringify({ seq, text: fullText, status: "done" })}\n\n`;
+					for (const client of [...clients]) {
+						try { client.write(done); } catch { clients.delete(client); }
+					}
+			}
+			return;
+		}
+		emitToken(acc, Math.min(fullText.length, acc + step));
+		acc = Math.min(fullText.length, acc + step);
+		}, 18);
+		channelTimers.set(`tok:${channelId}:${seq}`, timer);
+	});
+	setChannelClientsHas((channelId) => (channelClients.get(channelId)?.size ?? 0) > 0);
 
 	/**
 	 * 组织快照：名册 + 身份 + 频道 + 项目负责人表。界面的组织图与顶栏都吃这一份。
