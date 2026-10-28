@@ -46,6 +46,10 @@ const state = {
 	mention: null,
 	/** 已读上报节流用。 */
 	readSeqs: new Map(),
+	/** 组织快照（`/api/org` 整帧）。`null` = 还没拿到。 */
+	org: null,
+	/** 编制表（团队视图）是否打开。 */
+	teamOpen: false,
 };
 
 const el = {
@@ -66,6 +70,12 @@ const el = {
 	replyCancel: document.querySelector("#reply-cancel"),
 	mentionPop: document.querySelector("#mention-pop"),
 	toastRoot: document.querySelector("#toast-root"),
+	teamBtn: document.querySelector("#team-btn"),
+	team: document.querySelector("#team"),
+	teamPanel: document.querySelector("#team-panel"),
+	teamList: document.querySelector("#team-list"),
+	teamCount: document.querySelector("#team-count"),
+	teamClose: document.querySelector("#team-close"),
 };
 
 // ── 提示 ────────────────────────────────────────────────────────────────
@@ -90,12 +100,94 @@ function toast(text, tone = "info") {
 const GROUPS = [
 	{ key: "company", label: "公司", match: (channel) => channel.kind === "company" || channel.kind === "leadership" },
 	{ key: "project", label: "项目", match: (channel) => channel.kind === "project" },
-	{ key: "personal", label: "个人", match: (channel) => channel.kind === "dm" },
+	// 个人分组仍然排最后、dm 仍然归在这里，但不画「个人」这行字：
+	// 人名本身就说明这是个人频道（T-20261028-007 老板追加要求）。顺序不变。
+	{ key: "personal", label: "个人", hideTitle: true, match: (channel) => channel.kind === "dm" },
 ];
 
-function avatarHtml(label, size) {
-	const hue = hueFor(label);
-	return `<span class="avatar"${size === "lg" ? ' data-size="lg"' : ""} style="--hue:${hue}" aria-hidden="true">${escapeHtml(initials(label))}</span>`;
+// ── 组织信息（谁是哪个项目的、什么职位） ─────────────────────────────────
+
+/** 项目 slug → 显示名。没登记的 slug 直接显示，不编名字。 */
+const PROJECT_LABELS = { platform: "平台", dino: "小恐龙" };
+
+/**
+ * 项目色：颜色本身写在 CSS 的 `:root` 里，这里只给变量名 —— 和页面其他地方
+ * 「颜色只从变量取」是同一条规矩。没登记的项目按 slug 算一个稳定色相，
+ * 以后新开项目不改代码也不会掉成灰色。
+ */
+const PROJECT_TONES = { platform: "var(--tone-platform)", dino: "var(--tone-dino)" };
+
+function projectName(project) {
+	return PROJECT_LABELS[project] ?? project;
+}
+
+function projectTone(project) {
+	if (project === undefined || project === "") return "var(--tone-none)";
+	return PROJECT_TONES[project] ?? `hsl(${hueFor(project)} 30% 58%)`;
+}
+
+function personBySlug(slug) {
+	return state.org?.people.find((person) => person.slug === slug);
+}
+
+/** 个人频道的频道名就是人名（`dm:<x>` 的 title），所以这里按显示名找。 */
+function personByName(label) {
+	return state.org?.people.find((person) => person.label === label);
+}
+
+/** 「职位 · 项目」一句，个人频道第二行、消息头、顶栏副标题共用。 */
+function roleLine(person) {
+	if (person === undefined) return "";
+	return [person.title, person.project === undefined ? "" : projectName(person.project)].filter(Boolean).join(" · ");
+}
+
+/**
+ * 头像：**形状承担语义，颜色只是加强**（T-20261028-008）。
+ *
+ * - 圆 = 人：个人频道行、消息、团队视图。不再按名字哈希色相 —— 人不是标签，
+ *   一个名字一个颜色只会让「谁是房间」更难看出来；统一退成石墨灰。
+ * - 圆角方 = 房间：公司 / 项目频道。项目房用项目色（与左侧色条同源），
+ *   公司房用一个中性专色 `--tone-company`（不跟任何项目色撞）。
+ *
+ * 灰度下形状仍然成立：圆的半径是 50%，房间是 6px 圆角，22px 上一眼就能分开。
+ */
+function avatarHtml(label, options = {}) {
+	const { size, shape = "person", tone } = options;
+	const attrs = [
+		shape === "room" ? ' data-shape="room"' : "",
+		size === "lg" ? ' data-size="lg"' : "",
+		tone === undefined ? "" : ` style="--tone-room:${tone}"`,
+	].join("");
+	return `<span class="avatar"${attrs} aria-hidden="true">${escapeHtml(initials(label))}</span>`;
+}
+
+/** 房间头像的底色：项目房取项目色，其余（公司 / 管理层）取中性专色。 */
+function roomTone(channel) {
+	return channel.kind === "project" ? projectTone(channel.project) : "var(--tone-company)";
+}
+
+/**
+ * 列表第二行：先说是谁（职位 / 项目 / 负责人），再说最后一句。
+ *
+ * 旧版只有「负责人 X」这一种写法，于是个人频道（`dm:人名`）那一行只剩名字和
+ * 一个「个人」小标 —— 老板看不出这个人属于哪个项目、什么职位，这正是
+ * T-20261028-005 要解决的问题。项目频道与消息本身保持原样。
+ */
+function previewHtml(channel) {
+	const tail = escapeHtml(channel.preview === "" ? "" : channel.preview);
+	if (channel.kind === "dm") {
+		const person = personByName(channel.title);
+		if (person !== undefined) {
+			const role = roleLine(person) || "公司";
+			return `<span class="row-role" style="--crew:${projectTone(person.project)}">${escapeHtml(role)}</span>${
+				tail === "" ? "" : " · " + tail
+			}`;
+		}
+	}
+	if (channel.ownerLabel !== undefined) {
+		return `<span class="row-owner">负责人 ${escapeHtml(channel.ownerLabel)}</span>${tail === "" ? "" : " · " + tail}`;
+	}
+	return tail === "" ? "还没有消息" : tail;
 }
 
 function rowHtml(channel) {
@@ -106,16 +198,13 @@ function rowHtml(channel) {
 	return `<button class="row" type="button" data-channel="${escapeAttr(channel.id)}"${
 		channel.id === state.current ? ' aria-current="true"' : ""
 	}>
-		${avatarHtml(channel.title)}
+		${avatarHtml(
+			channel.title,
+			channel.kind === "dm" ? {} : { shape: "room", tone: roomTone(channel) },
+		)}
 		<span class="row-main">
-			<span class="row-title"><span>${escapeHtml(channel.title)}</span>${
-				channel.kind === "dm" ? `<span class="row-tag">个人</span>` : ""
-			}</span>
-			<span class="row-preview">${
-				channel.ownerLabel === undefined
-					? escapeHtml(channel.preview || "还没有消息")
-					: `<span class="row-owner">负责人 ${escapeHtml(channel.ownerLabel)}</span>${escapeHtml(channel.preview === "" ? "" : " · " + channel.preview)}`
-			}</span>
+			<span class="row-title"><span>${escapeHtml(channel.title)}</span></span>
+			<span class="row-preview">${previewHtml(channel)}</span>
 		</span>
 		<span class="row-meta">
 			<span>${escapeHtml(relTime(channel.lastAt))}</span>
@@ -129,7 +218,7 @@ function renderList() {
 	for (const group of GROUPS) {
 		const rows = state.channels.filter(group.match);
 		if (rows.length === 0) continue;
-		parts.push(`<div class="group-title">${group.label}</div>`);
+		if (group.hideTitle !== true) parts.push(`<div class="group-title">${group.label}</div>`);
 		parts.push(rows.map(rowHtml).join(""));
 	}
 	el.rows.innerHTML = parts.join("") || `<div class="empty">还没有频道</div>`;
@@ -198,6 +287,8 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 	const grouped = previous !== undefined && previous.fromSlug === message.fromSlug && !beforeUnreadFrom;
 	const quotes = quoteHtml(message);
 	const kind = kindHtml(message);
+	// 头像上已经写着名字了，这里补一句「他是谁」——只在轮到显示名字的那一行出现。
+	const role = grouped ? "" : roleLine(personBySlug(message.fromSlug));
 
 	// work = 执行命令的记录：折叠成等宽字体块，默认收起。
 	// note = 系统留痕：灰色淡显。
@@ -247,14 +338,14 @@ function messageHtml(message, previous, beforeUnreadFrom) {
 
 	const heading = grouped
 		? ""
-		: `<div class="msg-head"><span class="msg-from">${escapeHtml(message.fromLabel)}</span><span class="msg-time">${clockTime(
-				message.at,
-			)}</span>${kind}</div>`;
+		: `<div class="msg-head"><span class="msg-from">${escapeHtml(message.fromLabel)}</span>${
+				role === "" ? "" : `<span class="msg-role">${escapeHtml(role)}</span>`
+			}<span class="msg-time">${clockTime(message.at)}</span>${kind}</div>`;
 	const body = `${quotes}<div class="msg-text">${renderMarkdown(message.text)}</div>`;
 	return `<div class="msg" data-seq="${message.seq}" data-owner="${message.fromSlug === "owner"}"${
 		grouped ? ' data-grouped="true"' : ""
 	}>
-		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel, "lg")}</div>
+		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel, { size: "lg" })}</div>
 		<div class="msg-main">${heading}${body}</div>
 	</div>`;
 }
@@ -385,8 +476,14 @@ function renderHead() {
 	// 副标题只说「这个房间意味着什么」，不重复标题里已有的人名。
 	const bits = [];
 	if (channel.ownerLabel !== undefined) bits.push(`负责人 ${channel.ownerLabel}`);
-	if (channel.project !== undefined) bits.push(`项目 ${channel.project}`);
-	if (channel.kind === "dm") bits.push("个人频道");
+	if (channel.project !== undefined) bits.push(`项目 ${projectName(channel.project)}`);
+	if (channel.kind === "dm") {
+		// 个人频道标题就是人名，所以这里直接把这个人的职位与项目补上。
+		const person = personByName(channel.title);
+		if (person?.title !== undefined) bits.push(person.title);
+		if (person?.project !== undefined) bits.push(`项目 ${projectName(person.project)}`);
+		bits.push("个人频道");
+	}
 	if (bits.length === 0) bits.push(`${detail.members.filter((member) => member.slug !== "owner").length} 人`);
 	el.paneSub.textContent = bits.join(" · ");
 	el.composer.hidden = false;
@@ -581,6 +678,74 @@ function clearActions() {
 	state.actionsFor = 0;
 }
 
+// ── 编制表（团队视图） ──────────────────────────────────────────────────
+
+/**
+ * 「谁是哪个项目的、什么职位」—— 老板提的需求（T-20261028-005）。
+ *
+ * 数据一直在 `/api/org` 里（`streamOrg` 每帧都是完整快照），旧前端只把它当成
+ * 「该刷新频道列表了」的信号，一次都没画出来。这里把同一份快照投影成一张表：
+ * 不新开接口、不额外轮询，组织一变表就变。
+ *
+ * 为什么不塞进左侧频道列表：频道列表回答「去哪儿说话」，编制表回答「他是谁」。
+ * 两个问题挤在一列里，两边都会变难读（那正是老板说「太混乱」的原因）。
+ */
+function renderTeam() {
+	const people = state.org?.people ?? [];
+	el.teamCount.textContent = people.length === 0 ? "" : `${people.length} 人`;
+	if (people.length === 0) {
+		el.teamList.innerHTML = `<div class="empty">还没拿到组织数据，稍等一下或点刷新</div>`;
+		return;
+	}
+	el.teamList.innerHTML = people.map(crewHtml).join("");
+}
+
+/** 一行一人：左色条（项目）+ 头像 + 姓名 + 职位 + 项目 + 向谁汇报。 */
+function crewHtml(person) {
+	const tone = projectTone(person.project);
+	// `orgView` 约定：manager 为空 = 直接向老板汇报。
+	const to = person.manager === undefined ? "老板" : (person.managerLabel ?? person.manager);
+	const project =
+		person.project === undefined
+			? `<span class="crew-proj" data-kind="none">公司</span>`
+			: `<span class="crew-proj">${escapeHtml(projectName(person.project))}</span>`;
+	return `<div class="crew" style="--crew:${tone}" data-slug="${escapeAttr(person.slug)}">
+		<span class="crew-strip" aria-hidden="true"></span>
+		${avatarHtml(person.label)}
+		<span class="crew-name">${escapeHtml(person.label)}</span>
+		<span class="crew-title">${escapeHtml(person.title || "职位待填")}</span>
+		${project}
+		<span class="crew-report">向 <b>${escapeHtml(to)}</b> 汇报</span>
+	</div>`;
+}
+
+async function openTeam() {
+	state.teamOpen = true;
+	el.team.hidden = false;
+	el.teamBtn.setAttribute("aria-expanded", "true");
+	renderTeam();
+	el.teamPanel.focus();
+	// SSE 还没推过第一帧时自己拉一次；失败就留空态，等人点刷新 —— 不吞错。
+	if (state.org === null) {
+		try {
+			const snapshot = await getJSON("/api/org");
+			state.org = snapshot;
+			if (state.teamOpen) renderTeam();
+			renderList();
+			renderHead();
+		} catch (error) {
+			toast(error.message, "error");
+		}
+	}
+}
+
+function closeTeam() {
+	state.teamOpen = false;
+	el.team.hidden = true;
+	el.teamBtn.setAttribute("aria-expanded", "false");
+	el.teamBtn.focus();
+}
+
 // ── 事件 ────────────────────────────────────────────────────────────────
 
 function resizeInput() {
@@ -724,12 +889,46 @@ function setupEvents() {
 		if (event.target === el.input) return;
 		hideMention();
 	});
+
+	// 团队视图：入口开/关，点浮层外关，Esc 关（键盘可达要求见工单）。
+	el.teamBtn.addEventListener("click", () => {
+		if (state.teamOpen) closeTeam();
+		else void openTeam();
+	});
+	el.teamClose.addEventListener("click", () => closeTeam());
+	el.team.addEventListener("click", (event) => {
+		if (event.target === el.team) closeTeam();
+	});
+	// 面板里只有一个可聚焦的控件（关闭按钮）。Tab 不许跑到背后的页面上：
+	// 背后是浮层，看得见但点不到，焦点落在那里等于键盘用户迷路。
+	el.team.addEventListener("keydown", (event) => {
+		if (event.key !== "Tab") return;
+		event.preventDefault();
+		el.teamClose.focus();
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key === "Escape" && state.teamOpen) {
+			event.preventDefault();
+			closeTeam();
+		}
+	});
 }
 
 // ── 启动 ────────────────────────────────────────────────────────────────
 
-/** 组织变了（有人入职、改了身份、有人在别的频道说话）→ 静默刷新列表。 */
-function onOrg() {
+/**
+ * 组织快照变了（首帧、有人入职、有人改了 identity.md）。
+ *
+ * SSE 每帧都是完整快照，所以整份替换即可。除了刷新频道列表，还要重画编制表：
+ * 老板在别处改了一个人的职位/项目，开着的团队视图必须自己跟着变，不用刷新页面。
+ */
+function onOrg(snapshot) {
+	if (Array.isArray(snapshot?.people)) {
+		state.org = snapshot;
+		if (state.teamOpen) renderTeam();
+		renderList();
+		renderHead();
+	}
 	void loadChannels().catch(() => {});
 }
 
@@ -742,6 +941,13 @@ async function main() {
 		toast(error.message, "error");
 	}
 	streamOrg(onOrg, () => {});
+	// SSE 的第一帧可能要等一个心跳；先自己拉一份，个人频道行与消息头立刻就有
+	// 职位可显示，而不是先空一小会儿再跳出来。
+	if (state.org === null) {
+		void getJSON("/api/org")
+			.then((snapshot) => onOrg(snapshot))
+			.catch(() => {});
+	}
 	setInterval(() => {
 		renderList();
 	}, TICK_MS);

@@ -25,6 +25,17 @@
 	--warn: #d7a05a;
 	--danger: #d9695f;
 
+	/* 项目色（T-20261028-005）：只在编制表的左条、项目圆点和个人频道的小圆点上出现。
+	 * 三枚的分工是「冷 / 暖 / 无」——平台是工具（青瓷）、小恐龙是游戏（唯一的暖色）、
+	 * 没有项目就是灰的，灰色本身就是信息，不要给它编一个颜色。 */
+	--tone-platform: #4f9e94;
+	--tone-dino: #b9873f;
+	--tone-none: #737a84;
+
+	/* 公司房间（公司 / 管理层频道）的中性专色：低饱和的蓝灰，和有彩的两个项目色都不撞。
+	 * 只出现在房间头像上；人像一律 `--tone-none` 石墨灰（T-20261028-008）。 */
+	--tone-company: #7c8aa5;
+
 	--r-xs: 4px;
 	--r-sm: 6px;
 	--r-md: 9px;
@@ -166,6 +177,26 @@ textarea {
 	color: var(--ink);
 }
 
+/* 顶栏的「团队」入口：带字的按钮，因为图标画不出「编制表」这件事。 */
+.top-btn {
+	display: inline-flex;
+	align-items: center;
+	height: 26px;
+	padding: 0 9px;
+	border-radius: var(--r-sm);
+	color: var(--ink-3);
+	font-size: 12px;
+	transition:
+		color 120ms var(--ease),
+		background-color 120ms var(--ease);
+}
+
+.top-btn:hover,
+.top-btn[aria-expanded="true"] {
+	background: var(--panel-2);
+	color: var(--ink);
+}
+
 /* ── 布局 ───────────────────────────────────────────────────────────── */
 
 .layout {
@@ -284,6 +315,23 @@ textarea {
 	font-variant-numeric: tabular-nums;
 }
 
+/* 个人频道第二行的「职位 · 项目」。前面一颗项目色小圆点：不用读字就能把
+   同一项目的人从列表里挑出来（T-20261028-005 要的正是这个）。 */
+.row-role {
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	color: var(--ink-2);
+}
+
+.row-role::before {
+	content: "";
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--crew, var(--tone-none));
+}
+
 .row[aria-current="true"] .row-owner {
 	color: var(--accent);
 }
@@ -326,7 +374,16 @@ textarea {
 	color: #0b0c0e;
 }
 
-/* ── 头像 ───────────────────────────────────────────────────────────── */
+/* ── 头像 ─────────────────────────────────────────────────────────────
+ *
+ * 一个符号系统，两条线索（T-20261028-008）：
+ *   圆 = 人（个人频道行、消息、团队视图）
+ *   圆角方 = 房间（公司 / 项目频道），底色是房间的项目色
+ * 形状是第一眼就能读到的，颜色只是加强 —— 所以人在灰度里也永远不会被当成房间。
+ *
+ * 人像不再按名字算色相：一个名字一种颜色曾经让「人」看起来像另一类房间，
+ * 现在统一退成石墨灰（`--tone-none`），把颜色留给房间。
+ */
 
 .avatar {
 	display: grid;
@@ -334,12 +391,18 @@ textarea {
 	width: 22px;
 	height: 22px;
 	border-radius: 50%;
-	background: hsl(var(--hue, 210) 34% 62%);
+	background: var(--tone-none);
 	color: #0b0c0e;
 	font-size: 10.5px;
 	font-weight: 700;
 	line-height: 1;
 	user-select: none;
+}
+
+/* 房间：28% 圆角（22px 上是 6px）—— 明显是方，但不是直角卡片。 */
+.avatar[data-shape="room"] {
+	border-radius: 6px;
+	background: var(--tone-room, var(--tone-company));
 }
 
 /* 气泡里也用小尺寸：头像不是主角，说话的人名才是。 */
@@ -500,6 +563,13 @@ textarea {
 
 .msg[data-owner="true"] .msg-from {
 	color: var(--accent);
+}
+
+/* 消息头里的「职位 · 项目」：只在每段发言的第一条出现，常显但很淡 ——
+   名字是主角，身份是随行信息（同一个人在这一页里也只看得到一次）。 */
+.msg-role {
+	color: var(--ink-3);
+	font-size: 11px;
 }
 
 .msg-time {
@@ -1060,6 +1130,166 @@ textarea {
 	opacity: 1;
 }
 
+/* ── 编制表（团队视图） ───────────────────────────────────────────────
+ *
+ * 「一人公司的编制表」，不是 SaaS 的成员卡墙。参照剧组名单 / 船上编制表：
+ * 一人一行，四个位置固定（姓名 · 职位 · 项目 · 向谁汇报），眼睛竖着扫一列
+ * 就能把同一项目的人挑出来。
+ *
+ * 所以这里刻意没有的东西：圆角卡片、统一阴影、编号 01/02、大字标题、渐变。
+ * 项目色只出现在 3px 左条和项目圆点上；整块铺色会让职位那一列变得难读。
+ */
+
+.team {
+	position: fixed;
+	inset: 0;
+	z-index: 40;
+	display: grid;
+	place-items: center;
+	padding: 24px 16px;
+	background: color-mix(in srgb, #05060a 72%, transparent);
+	animation: team-in 160ms var(--ease);
+}
+
+.team-panel {
+	display: flex;
+	flex-direction: column;
+	width: min(720px, 100%);
+	max-height: 100%;
+	border: 1px solid var(--line);
+	border-radius: var(--r-md);
+	background: var(--panel);
+	box-shadow: 0 24px 60px -24px #000;
+}
+
+.team-panel:focus-visible {
+	outline-offset: 2px;
+}
+
+.team-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 14px 12px 10px 16px;
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.team-head h2 {
+	margin: 0;
+	font-size: 13.5px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+.team-count {
+	color: var(--ink-3);
+	font-size: 11.5px;
+	font-variant-numeric: tabular-nums;
+}
+
+.team-spacer {
+	flex: 1;
+}
+
+.team-list {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 4px 10px 8px 12px;
+}
+
+/* 一行一人。行与行之间只有一条发丝线：分组靠左条的颜色，不靠卡片。 */
+.crew {
+	display: grid;
+	grid-template-columns: 3px 22px 116px minmax(0, 1fr) auto auto;
+	grid-template-areas: "strip av name title proj report";
+	align-items: center;
+	gap: 0 10px;
+	padding: 7px 6px 7px 0;
+	border-bottom: 1px solid var(--line-soft);
+}
+
+.crew:last-child {
+	border-bottom: 0;
+}
+
+.crew-strip {
+	grid-area: strip;
+	align-self: stretch;
+	width: 3px;
+	border-radius: 2px;
+	background: var(--crew, var(--tone-none));
+}
+
+.crew .avatar {
+	grid-area: av;
+}
+
+.crew-name {
+	grid-area: name;
+	color: var(--ink);
+	font-size: 13.5px;
+	font-weight: 600;
+}
+
+.crew-title {
+	grid-area: title;
+	overflow: hidden;
+	color: var(--ink-2);
+	font-size: 12.5px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.crew-proj {
+	grid-area: proj;
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	color: var(--ink-2);
+	font-size: 11.5px;
+	white-space: nowrap;
+}
+
+.crew-proj::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--crew, var(--tone-none));
+}
+
+/* 没有项目的人（直接向老板汇报）：灰色、不画点，一眼就能和项目成员区分。 */
+.crew-proj[data-kind="none"] {
+	color: var(--ink-3);
+}
+
+.crew-report {
+	grid-area: report;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	white-space: nowrap;
+}
+
+.crew-report b {
+	color: var(--ink-2);
+	font-weight: 500;
+}
+
+.team-foot {
+	margin: 0;
+	padding: 8px 16px 12px;
+	border-top: 1px solid var(--line-soft);
+	color: var(--ink-3);
+	font-size: 11px;
+}
+
+@keyframes team-in {
+	from {
+		opacity: 0;
+	}
+}
+
 /* ── 窄屏 ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 760px) {
@@ -1099,10 +1329,40 @@ textarea {
 	}
 }
 
+/* 手机（≤ 480px）：编制表改成两行 —— 第一行姓名 + 项目，第二行职位 + 汇报。
+   这一档不横向滚动，也不靠缩字号：职位是这单要显示的重点，不能比名字还小。 */
+@media (max-width: 480px) {
+	.team {
+		padding: 0;
+		place-items: stretch;
+	}
+
+	.team-panel {
+		width: 100%;
+		max-height: 100%;
+		border: 0;
+		border-radius: 0;
+	}
+
+	.crew {
+		grid-template-columns: 3px 22px minmax(0, 1fr) auto;
+		grid-template-areas:
+			"strip av name proj"
+			"strip . title report";
+		row-gap: 3px;
+		padding: 9px 6px 9px 0;
+	}
+
+	.crew-title {
+		white-space: normal;
+	}
+}
+
 @media (prefers-reduced-motion: reduce) {
 	.flow-inner[data-fresh="true"],
 	.msg-actions,
-	.toast {
+	.toast,
+	.team {
 		animation: none;
 	}
 

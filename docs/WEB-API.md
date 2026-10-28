@@ -25,7 +25,7 @@
 会把失败当成成功（第一代最常吞掉的正是这类失败）。
 
 `check-boundaries.mjs` 会检查这张表里的每条 `pattern` 都在 `ui/web/js` 里被请求过。
-白名单只有 `/api/org`（Docker 健康检查用）。
+白名单只有 `/api/org`（Docker 健康检查直接打它；前端团队视图也用它，但白名单保留）。
 
 ## 1. `GET /api/stream/org`
 
