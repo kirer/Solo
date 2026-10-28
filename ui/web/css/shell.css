@@ -14,6 +14,82 @@
 	background: var(--frame);
 }
 
+/* 「找你」清单：一张窄卡，不是弹窗。每条 3 行压成 2 行（上面「频道 · 谁」，
+   下面 80 字摘要），时间靠右。已理过的整条淡到 --ink-3。 */
+.need-menu {
+	width: min(420px, calc(100vw - 24px));
+	max-height: min(60vh, 520px);
+	overflow: auto;
+	padding: 6px;
+}
+
+.need-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 2px 10px;
+	width: 100%;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: var(--r-control);
+	background: none;
+	text-align: start;
+	cursor: pointer;
+	font: inherit;
+}
+
+.need-item:hover,
+.need-item:focus-visible {
+	background: var(--active);
+}
+
+.need-item[data-read="true"] {
+	color: var(--ink-3);
+}
+
+.need-where {
+	grid-column: 1;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.need-item[data-read="false"] .need-where {
+	color: var(--accent);
+}
+
+.need-time {
+	grid-column: 2;
+	grid-row: 1;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.need-text {
+	grid-column: 1 / -1;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink);
+	overflow: hidden;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+
+.need-item[data-read="true"] .need-text {
+	color: var(--ink-3);
+}
+
+.need-empty,
+.need-more {
+	margin: 0;
+	padding: 12px;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
 /* ── 顶栏 48 ────────────────────────────────────────────────────────── */
 
 .topbar {

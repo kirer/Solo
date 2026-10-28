@@ -80,6 +80,7 @@ const el = {
 	refresh: $("refresh"),
 	conn: $("conn"),
 	unreadTotal: $("unread-total"),
+	needMenu: $("need-menu"),
 	menuBtn: $("menu-btn"),
 	layoutMenu: $("layout-menu"),
 	plusBtn: $("plus-btn"),
@@ -194,6 +195,38 @@ function needItems() {
 	return state.channels
 		.filter((channel) => (channel.mentions ?? 0) > 0)
 		.map((channel) => ({ channelId: channel.id, channelTitle: channel.title, seq: 0, mentions: channel.mentions }));
+}
+
+/* 跳到某条消息：同频道直接高亮，跨频道切过去再高亮（行是异步渲染的，highlightSeq 自己重试）。 */
+function jumpTo(channelId, seq) {
+	if (channelId !== state.currentId) {
+		openChannel(channelId).then(() => {
+			if (seq) window.setTimeout(() => highlightSeq(seq), 120);
+		});
+	} else if (seq) highlightSeq(seq);
+}
+
+/* 「找你」清单里的一行：频道名 · 谁 · 80 字摘要 · 相对时间。已理过的淡化。 */
+function renderNeedMenu() {
+	const items = needItems();
+	if (items.length === 0) {
+		el.needMenu.innerHTML = `<p class="need-empty">现在没有要你拍板的事。</p>`;
+		return;
+	}
+	const rows = items.slice(0, 12).map((item) => {
+		const who = item.fromLabel ?? item.fromSlug ?? "";
+		const excerpt = String(item.excerpt ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+		const time = item.at ? relTime(item.at) : "";
+		return `<button class="need-item" type="button" role="menuitem" data-need="${escapeHtml(
+			item.channelId
+		)}|${item.seq ?? 0}" data-read="${item.read ? "true" : "false"}"><span class="need-where">${escapeHtml(
+			item.channelTitle ?? ""
+		)}${who ? ` · ${escapeHtml(who)}` : ""}</span><span class="need-text">${escapeHtml(
+			excerpt
+		)}</span><span class="need-time num">${escapeHtml(time)}</span></button>`;
+	});
+	const more = items.length > 12 ? `<p class="need-more">还有 ${items.length - 12} 条，先处理这些。</p>` : "";
+	el.needMenu.innerHTML = rows.join("") + more;
 }
 
 function needCount() {
@@ -903,7 +936,7 @@ function placeMenu(menu, anchor, { align = "right", above = false } = {}) {
 
 function toggleMenu(menu, anchor, options) {
 	const willOpen = menu.hidden;
-	for (const other of [el.layoutMenu, el.plusMenu]) {
+	for (const other of [el.layoutMenu, el.plusMenu, el.needMenu]) {
 		if (other !== menu && !other.hidden) withLinger(other, 120);
 	}
 	if (!willOpen) {
@@ -1112,18 +1145,21 @@ function bind() {
 		reload();
 	});
 
-	el.unreadTotal.addEventListener("click", () => {
-		const items = needItems();
-		if (items.length === 0) return;
-		state.needIndex = (state.needIndex + 1) % items.length;
-		const item = items[state.needIndex];
-		if (item.channelId !== state.currentId) {
-			openChannel(item.channelId).then(() => {
-				if (item.seq) window.setTimeout(() => highlightSeq(item.seq), 120);
-			});
-		} else if (item.seq) {
-			highlightSeq(item.seq);
-		}
+	// 「N 件找你」点开是一张清单，不是盲跳：老板的原话是「消息太多，真正需要我的
+	// 信息没有 @ 我，能够让我直接定位」。盲跳只能一条一条试，清单能一眼扫完。
+	el.unreadTotal.addEventListener("click", (event) => {
+		event.stopPropagation();
+		renderNeedMenu();
+		toggleMenu(el.needMenu, el.unreadTotal);
+	});
+
+	el.needMenu.addEventListener("click", (event) => {
+		const row = event.target.closest("[data-need]");
+		if (!row) return;
+		const [channelId, seq] = row.dataset.need.split("|");
+		withLinger(el.needMenu, 120);
+		el.unreadTotal.setAttribute("aria-expanded", "false");
+		jumpTo(channelId, Number(seq) || 0);
 	});
 
 	el.menuBtn.addEventListener("click", (event) => {
@@ -1460,6 +1496,12 @@ function bind() {
 			if (!el.plusMenu.hidden) {
 				withLinger(el.plusMenu, 120);
 				el.plusBtn.setAttribute("aria-expanded", "false");
+			}
+		}
+		if (!event.target.closest("#need-menu, #unread-total")) {
+			if (!el.needMenu.hidden) {
+				withLinger(el.needMenu, 120);
+				el.unreadTotal.setAttribute("aria-expanded", "false");
 			}
 		}
 	});
