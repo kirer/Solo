@@ -938,9 +938,19 @@ async function copyRow(button, text) {
 	}, HL_MS);
 }
 
-function highlightSeq(seq) {
+/**
+ * 把某条消息滚到视野中央并闪一下。
+ *
+ * 要重试：切频道之后消息行是异步渲染出来的，`openChannel().then()` 返回时行可能还没进
+ * DOM（实测点「N 件找你」跳过去什么都没高亮）。所以按帧重试几次，找不到就放弃 ——
+ * 那条消息可能已经滚出「最近 60 条」的窗口，这种情况下放弃是对的。
+ */
+function highlightSeq(seq, attempt = 0) {
 	const row = el.feed.querySelector(`.row[data-seq="${seq}"]`);
-	if (!row) return;
+	if (!row) {
+		if (attempt < 6) window.setTimeout(() => highlightSeq(seq, attempt + 1), 120);
+		return;
+	}
 	row.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
 	row.dataset.hl = "true";
 	window.setTimeout(() => delete row.dataset.hl, HL_MS + 100);
