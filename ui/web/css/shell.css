@@ -158,9 +158,10 @@
 	background: var(--hover);
 }
 
+/* 0 件时整块隐藏：一个常驻的「0 件找你」是纯噪音 —— 没有事要你处理的时候，
+   顶栏应该安静。有数字才出现，出现就有事。 */
 .need[data-zero="true"] {
-	color: var(--ink-3);
-	font-weight: 400;
+	display: none;
 }
 
 .menu-anchor {
