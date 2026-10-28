@@ -1,6 +1,6 @@
 {
  "url": "http://127.0.0.1:7788",
- "at": "2026-10-28T19:49:36.462Z",
+ "at": "2026-10-28T21:13:19.962Z",
  "allow": [],
  "viewports": [
   {
@@ -9,11 +9,11 @@
    "load": "load",
    "screens": 1,
    "filled": [
-    0.78
+    0.8
    ],
    "motion": {
-    "elements": 0,
-    "css": 0,
+    "elements": 1,
+    "css": 1,
     "transitions": 0,
     "scripted": 0,
     "videos": 0,
@@ -27,20 +27,23 @@
     "page": {
      "height": 900,
      "screens": 1,
-     "words": 197,
-     "img": 1,
+     "words": 373,
+     "img": 3,
      "video": 0,
      "canvas": 0,
-     "svg": 58,
+     "svg": 302,
      "sections": 1,
      "horizontalOverflow": 0,
      "overflowCulprits": [],
      "uiFragments": 0,
      "uiAbuse": false,
-     "realPictures": 0,
+     "realPictures": 2,
      "videoCount": 0,
      "uiPictures": 0,
-     "pictureSamples": [],
+     "pictureSamples": [
+      "3fcabe09-8cbf-4180-abca-0507ce05a5bd",
+      "cb0615ce-5f11-4c45-ac3b-a3d3d77763e9"
+     ],
      "blendText": 0,
      "sideScrollers": 0,
      "brokenImages": [],
@@ -85,12 +88,12 @@
      "families": [
       {
        "family": "IBM Plex Sans",
-       "share": 0.91,
+       "share": 0.93,
        "mono": false
       },
       {
        "family": "IBM Plex Mono",
-       "share": 0.09,
+       "share": 0.07,
        "mono": true
       }
      ],
@@ -120,25 +123,25 @@
       "font": "IBM Plex Sans",
       "text": "公司"
      },
-     "monoShare": 0.09,
-     "monoProseShare": 0.08,
+     "monoShare": 0.07,
+     "monoProseShare": 0.07,
      "monoFamilies": [
       "IBM Plex Mono"
      ],
      "monoSamples": [
       "0 件找你",
-      "3 分钟前",
-      "1 小时前",
-      "2 小时前",
+      "7 分钟前",
+      "10 分钟前",
+      "3 小时前",
       "4 小时前",
-      "10 小时前"
+      "6 小时前"
      ],
      "microLabels": 0,
      "microLabelShare": 0,
      "microSamples": [],
-     "upperShare": 0,
-     "centerShare": 0.01,
-     "smallText": 20
+     "upperShare": 0.01,
+     "centerShare": 0,
+     "smallText": 18
     },
     "eyebrows": [],
     "numbered": [],
@@ -173,48 +176,64 @@
      "textColors": [
       {
        "color": "#1c1a16",
-       "share": 0.5
+       "share": 0.76
       },
       {
        "color": "#6b665c",
-       "share": 0.48
-      },
-      {
-       "color": "#2b5f4f",
-       "share": 0.01
+       "share": 0.24
       },
       {
        "color": "#55524b",
-       "share": 0.01
+       "share": 0
+      },
+      {
+       "color": "#2b5f4f",
+       "share": 0
       }
      ],
-     "button": null,
+     "button": {
+      "bg": "#faf9f6",
+      "hsl": {
+       "h": 45,
+       "s": 0.29,
+       "l": 0.97
+      },
+      "fg": "#1c1a16"
+     },
      "lowContrast": []
     },
     "buttons": {
-     "count": 0,
-     "inHero": 0,
-     "withShadow": 0,
+     "count": 3,
+     "inHero": 3,
+     "radius": 6,
+     "height": 32,
+     "withShadow": 1,
      "withGradient": 0,
      "mono": 0,
      "upper": 0,
-     "heroLabels": []
+     "heroLabels": [
+      "说明.txt 11 B",
+      "说明.txt 11 B",
+      "回到最新"
+     ]
     },
     "surfaces": {
-     "shadowStatic": 0,
+     "shadowStatic": 1,
      "shadowOverlay": 0,
-     "shadowSamples": [],
+     "shadowSamples": [
+      "button#to-bottom.to-bottom → rgba(0, 0, 0, 0.08) 0px 2px 10px 0px"
+     ],
      "gradients": 0,
      "scrims": 0,
      "gradientSamples": [],
      "gradientText": 0,
      "hairlines": 0,
      "hairlineSamples": [],
-     "outlinedBoxes": 1,
+     "outlinedBoxes": 3,
      "dashed": 0,
-     "blurred": 0,
-     "roundedBoxes": 1,
-     "boxRadius": 16,
+     "blurred": 1,
+     "roundedBoxes": 3,
+     "boxRadius": 8,
      "squareMedia": 0,
      "roundedMedia": 0,
      "mediaRadius": 0,
@@ -242,9 +261,48 @@
     "pageH": 900,
     "margins": {
      "left": 8,
-     "right": 40
+     "right": 52
     },
-    "sections": [],
+    "sections": [
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": 501,
+      "height": 134,
+      "words": 2,
+      "media": 1,
+      "middle": 118,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": false,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": 708,
+      "height": 134,
+      "words": 2,
+      "media": 1,
+      "middle": 118,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": true,
+      "hero": false,
+      "continues": false,
+      "pinned": false
+     }
+    ],
     "gaps": [],
     "h1s": [
      {
@@ -258,7 +316,7 @@
     "edges": [
      {
       "x": 313,
-      "n": 3
+      "n": 24
      },
      {
       "x": 42,
@@ -269,7 +327,7 @@
       "n": 1
      }
     ],
-    "leftBlocks": 5,
+    "leftBlocks": 26,
     "bodySize": 14,
     "stage": false,
     "explains": false,
@@ -292,7 +350,7 @@
     "sidebar": {
      "w": 240,
      "tag": "aside",
-     "links": 21,
+     "links": 22,
      "share": 0.17
     },
     "topbar": {
@@ -300,7 +358,7 @@
     },
     "canvas": {
      "left": 25,
-     "right": 18
+     "right": 40
     },
     "hero": {
      "text": "一人公司",
@@ -350,15 +408,15 @@
     "numbers": {
      "cells": 0,
      "leftAligned": 0,
-     "figures": 0,
-     "tabularShare": null,
-     "kpiMax": null
+     "figures": 2,
+     "tabularShare": 1,
+     "kpiMax": 11
     },
     "rows": null,
     "chartHues": 0,
     "placeholders": [],
     "type": {
-     "under13": 0.49,
+     "under13": 0.24,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -375,7 +433,7 @@
      "size": 16,
      "top": 12
     },
-    "colourShare": 0
+    "colourShare": 0.046
    },
    "consoleErrors": []
   },
@@ -385,11 +443,11 @@
    "load": "load",
    "screens": 1,
    "filled": [
-    0.74
+    0.61
    ],
    "motion": {
-    "elements": 0,
-    "css": 0,
+    "elements": 1,
+    "css": 1,
     "transitions": 0,
     "scripted": 0,
     "videos": 0,
@@ -403,20 +461,23 @@
     "page": {
      "height": 1024,
      "screens": 1,
-     "words": 197,
-     "img": 1,
+     "words": 313,
+     "img": 3,
      "video": 0,
      "canvas": 0,
-     "svg": 58,
+     "svg": 237,
      "sections": 1,
      "horizontalOverflow": 0,
      "overflowCulprits": [],
      "uiFragments": 0,
      "uiAbuse": false,
-     "realPictures": 0,
+     "realPictures": 2,
      "videoCount": 0,
      "uiPictures": 0,
-     "pictureSamples": [],
+     "pictureSamples": [
+      "3fcabe09-8cbf-4180-abca-0507ce05a5bd",
+      "cb0615ce-5f11-4c45-ac3b-a3d3d77763e9"
+     ],
      "blendText": 0,
      "sideScrollers": 1,
      "brokenImages": [],
@@ -497,24 +558,24 @@
       "text": "公司"
      },
      "monoShare": 0.09,
-     "monoProseShare": 0.08,
+     "monoProseShare": 0.09,
      "monoFamilies": [
       "IBM Plex Mono"
      ],
      "monoSamples": [
       "0 件找你",
-      "3 分钟前",
-      "1 小时前",
-      "2 小时前",
+      "7 分钟前",
+      "10 分钟前",
+      "3 小时前",
       "4 小时前",
-      "10 小时前"
+      "6 小时前"
      ],
      "microLabels": 0,
      "microLabelShare": 0,
      "microSamples": [],
      "upperShare": 0,
      "centerShare": 0.01,
-     "smallText": 20
+     "smallText": 18
     },
     "eyebrows": [],
     "numbered": [],
@@ -549,48 +610,64 @@
      "textColors": [
       {
        "color": "#1c1a16",
-       "share": 0.5
+       "share": 0.68
       },
       {
        "color": "#6b665c",
-       "share": 0.48
-      },
-      {
-       "color": "#2b5f4f",
-       "share": 0.01
+       "share": 0.32
       },
       {
        "color": "#55524b",
-       "share": 0.01
+       "share": 0
+      },
+      {
+       "color": "#2b5f4f",
+       "share": 0
       }
      ],
-     "button": null,
+     "button": {
+      "bg": "#faf9f6",
+      "hsl": {
+       "h": 45,
+       "s": 0.29,
+       "l": 0.97
+      },
+      "fg": "#1c1a16"
+     },
      "lowContrast": []
     },
     "buttons": {
-     "count": 0,
-     "inHero": 0,
-     "withShadow": 0,
+     "count": 3,
+     "inHero": 3,
+     "radius": 6,
+     "height": 32,
+     "withShadow": 1,
      "withGradient": 0,
      "mono": 0,
      "upper": 0,
-     "heroLabels": []
+     "heroLabels": [
+      "说明.txt 11 B",
+      "说明.txt 11 B",
+      "回到最新"
+     ]
     },
     "surfaces": {
-     "shadowStatic": 0,
+     "shadowStatic": 1,
      "shadowOverlay": 0,
-     "shadowSamples": [],
+     "shadowSamples": [
+      "button#to-bottom.to-bottom → rgba(0, 0, 0, 0.08) 0px 2px 10px 0px"
+     ],
      "gradients": 0,
      "scrims": 0,
      "gradientSamples": [],
      "gradientText": 0,
      "hairlines": 0,
      "hairlineSamples": [],
-     "outlinedBoxes": 1,
+     "outlinedBoxes": 3,
      "dashed": 0,
-     "blurred": 0,
-     "roundedBoxes": 1,
-     "boxRadius": 16,
+     "blurred": 1,
+     "roundedBoxes": 3,
+     "boxRadius": 8,
      "squareMedia": 0,
      "roundedMedia": 0,
      "mediaRadius": 0,
@@ -618,16 +695,16 @@
     "pageH": 1024,
     "margins": {
      "left": 8,
-     "right": 32
+     "right": 50
     },
     "sections": [
      {
       "sel": "div.row.row-say",
       "tag": "div",
-      "top": 130,
-      "height": 141,
-      "words": 34,
-      "media": 0,
+      "top": 634,
+      "height": 130,
+      "words": 2,
+      "media": 1,
       "middle": 0,
       "heading": null,
       "left": 305,
@@ -636,36 +713,17 @@
       "textRight": 59,
       "fullBleed": false,
       "footer": false,
-      "hero": true,
+      "hero": false,
       "continues": false,
       "pinned": false
      },
      {
       "sel": "div.row.row-say",
       "tag": "div",
-      "top": 285,
-      "height": 189,
-      "words": 32,
-      "media": 0,
-      "middle": 0,
-      "heading": null,
-      "left": 305,
-      "right": 59,
-      "textLeft": 305,
-      "textRight": 59,
-      "fullBleed": false,
-      "footer": false,
-      "hero": true,
-      "continues": false,
-      "pinned": false
-     },
-     {
-      "sel": "div.row.row-say",
-      "tag": "div",
-      "top": 488,
-      "height": 141,
-      "words": 25,
-      "media": 0,
+      "top": 837,
+      "height": 130,
+      "words": 2,
+      "media": 1,
       "middle": 0,
       "heading": null,
       "left": 305,
@@ -674,7 +732,7 @@
       "textRight": 59,
       "fullBleed": false,
       "footer": true,
-      "hero": true,
+      "hero": false,
       "continues": false,
       "pinned": false
      }
@@ -692,7 +750,7 @@
     "edges": [
      {
       "x": 305,
-      "n": 3
+      "n": 12
      },
      {
       "x": 42,
@@ -703,7 +761,7 @@
       "n": 1
      }
     ],
-    "leftBlocks": 5,
+    "leftBlocks": 14,
     "bodySize": 14,
     "stage": false,
     "explains": false,
@@ -721,7 +779,7 @@
     "sidebar": {
      "w": 240,
      "tag": "aside",
-     "links": 21,
+     "links": 22,
      "share": 0.31
     },
     "topbar": {
@@ -729,7 +787,7 @@
     },
     "canvas": {
      "left": 17,
-     "right": 18
+     "right": 27
     },
     "hero": {
      "text": "一人公司",
@@ -779,15 +837,15 @@
     "numbers": {
      "cells": 0,
      "leftAligned": 0,
-     "figures": 0,
-     "tabularShare": null,
-     "kpiMax": null
+     "figures": 2,
+     "tabularShare": 1,
+     "kpiMax": 11
     },
     "rows": null,
     "chartHues": 0,
     "placeholders": [],
     "type": {
-     "under13": 0.49,
+     "under13": 0.32,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -804,7 +862,7 @@
      "size": 16,
      "top": 12
     },
-    "colourShare": 0
+    "colourShare": 0.07
    },
    "consoleErrors": []
   },
@@ -814,7 +872,7 @@
    "load": "load",
    "screens": 1,
    "filled": [
-    0.28
+    0.33
    ],
    "motion": {
     "elements": 0,
@@ -832,11 +890,11 @@
     "page": {
      "height": 844,
      "screens": 1,
-     "words": 109,
+     "words": 118,
      "img": 1,
      "video": 0,
      "canvas": 0,
-     "svg": 27,
+     "svg": 30,
      "sections": 1,
      "horizontalOverflow": 0,
      "overflowCulprits": [],
@@ -890,12 +948,12 @@
      "families": [
       {
        "family": "IBM Plex Sans",
-       "share": 0.87,
+       "share": 0.88,
        "mono": false
       },
       {
        "family": "IBM Plex Mono",
-       "share": 0.13,
+       "share": 0.12,
        "mono": true
       }
      ],
@@ -917,18 +975,18 @@
       "font": "IBM Plex Sans",
       "text": "频道"
      },
-     "monoShare": 0.13,
-     "monoProseShare": 0.13,
+     "monoShare": 0.12,
+     "monoProseShare": 0.12,
      "monoFamilies": [
       "IBM Plex Mono"
      ],
      "monoSamples": [
       "0 件找你",
-      "3 分钟前",
-      "1 小时前",
-      "2 小时前",
+      "7 分钟前",
+      "10 分钟前",
+      "3 小时前",
       "4 小时前",
-      "10 小时前"
+      "6 小时前"
      ],
      "microLabels": 0,
      "microLabelShare": 0,
@@ -961,11 +1019,11 @@
      "textColors": [
       {
        "color": "#6b665c",
-       "share": 0.88
+       "share": 0.89
       },
       {
        "color": "#1c1a16",
-       "share": 0.12
+       "share": 0.11
       }
      ],
      "button": null,
@@ -1028,7 +1086,7 @@
      {
       "sel": "div#people.people",
       "tag": "div",
-      "top": 48,
+      "top": 80,
       "height": 330,
       "words": 39,
       "media": 0,
@@ -1047,19 +1105,19 @@
      {
       "sel": "div#rows.channels",
       "tag": "div",
-      "top": 378,
-      "height": 462,
-      "words": 43,
+      "top": 452,
+      "height": 388,
+      "words": 29,
       "media": 0,
       "middle": 0,
       "heading": null,
       "left": 12,
       "right": 12,
-      "textLeft": 52,
+      "textLeft": 20,
       "textRight": 20,
       "fullBleed": false,
       "footer": true,
-      "hero": true,
+      "hero": false,
       "continues": false,
       "pinned": false
      }
@@ -1154,7 +1212,7 @@
     "chartHues": 0,
     "placeholders": [],
     "type": {
-     "under13": 0.35,
+     "under13": 0.34,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -1177,10 +1235,20 @@
  ],
  "findings": [
   {
+   "level": "FAIL",
+   "id": "button-fx",
+   "width": 1440,
+   "message": "Buttons with shadow/glow.",
+   "fix": "Flat fill, one colour.",
+   "alsoAt": [
+    768
+   ]
+  },
+  {
    "level": "WARN",
    "id": "palette-cream",
    "width": 1440,
-   "message": "Yellow-cream background (page background #f7f6f2, section #f7f6f2).",
+   "message": "Yellow-cream background (page background #f7f6f2, section #f7f6f2, button #faf9f6).",
    "fix": "Use the drawn palette. If you want warmth, take a low-chroma stone or bone, not a yellow cream.",
    "alsoAt": [
     768,
@@ -1193,16 +1261,6 @@
    "width": 1440,
    "message": "28% of the first screen is one empty block (540×660px at 900,120).",
    "fix": "Place the void on purpose or fill it: move the picture, the film or one fact into it, grow the headline to meet it, or shrink the screen to its content. A void reads as placed only when something closes it on the far side and it is the screen's one rest."
-  },
-  {
-   "level": "WARN",
-   "id": "tiny-text",
-   "width": 1440,
-   "message": "49% of the text is under 13px.",
-   "fix": "Data and labels read at 13–14px; keep 11–12px for sublines and axis ticks.",
-   "alsoAt": [
-    768
-   ]
   }
  ],
  "images": [

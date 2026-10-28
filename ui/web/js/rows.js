@@ -213,11 +213,13 @@ function sayRow(message, ctx, grouped) {
 
 	const head = grouped
 		? ""
-		: `<div class="row-head">${need ? '<span class="need-tag">需要你</span>' : ""}<span class="row-name">${escapeHtml(
+		: `<div class="row-head"><span class="row-name">${escapeHtml(
 				message.fromLabel ?? "",
-			)}</span>${role ? `<span class="row-role">${escapeHtml(role)}</span>` : ""}<span class="row-time">${clockTime(
-				message.at,
-			)}</span></div>`;
+			)}</span>${role ? `<span class="row-role">${escapeHtml(role)}</span>` : ""}${
+				// 「需要你」放在名字和角色**之后**：一行的读法应该是「谁 · 什么角色 · 要我做什么」，
+				// 先喊「需要你」再说谁在说话，读起来像系统的报错。
+				need ? '<span class="need-tag">需要你</span>' : ""
+			}<span class="row-time">${clockTime(message.at)}</span></div>`;
 
 	const wrap = document.createElement("div");
 	wrap.className = "row row-say";
