@@ -993,6 +993,24 @@ function acceptMention(index) {
 
 /* ── 行内动作 ───────────────────────────────────────────────────────── */
 
+/**
+ * 触屏上「点一下这条消息」= 把它的动作条叫出来。
+ *
+ * 为什么不在触屏上常驻：一排复制/回复/定位图标挂在每条消息下面，整屏都是按钮，
+ * 正文被挤成碎片。点谁，才出谁的。
+ */
+function tapRow(row) {
+	const already = row.dataset.tools === "true";
+	clearTapRow();
+	if (!already) row.dataset.tools = "true";
+}
+
+function clearTapRow() {
+	for (const open of el.feed.querySelectorAll('[data-tools="true"]')) delete open.dataset.tools;
+}
+
+const isTouch = () => window.matchMedia("(hover: none)").matches;
+
 function rowText(row) {
 	return row.querySelector(".md")?.innerText ?? row.innerText ?? "";
 }
@@ -1142,6 +1160,13 @@ function bind() {
 	el.feed.addEventListener("click", (event) => {
 		const target = event.target;
 		const row = target.closest(".row");
+
+		// 触屏：点一条消息把它的动作条叫出来。桌面上有 hover，不需要这一步。
+		// 判断「点的是不是动作」必须放在最前面 —— 否则点「复制」也会先被当成选行。
+		if (row && isTouch() && !target.closest("[data-act], [data-jump], [data-fold-btn], .md-code-copy, [data-pending], [data-lightbox], .md-img img, .md a")) {
+			tapRow(row);
+			return;
+		}
 
 		const tool = target.closest("[data-act]");
 		if (tool && row) {
@@ -1395,8 +1420,16 @@ function bind() {
 		}
 	});
 
+	// 触屏上点开的那条动作条：点别处就收起来。
+	document.addEventListener("click", (event) => {
+		if (!isTouch()) return;
+		if (event.target.closest(".row[data-tools='true']")) return;
+		clearTapRow();
+	});
+
 	document.addEventListener("keydown", (event) => {
 		if (event.key === "Escape") {
+			clearTapRow();
 			if (!el.team.hidden) {
 				event.preventDefault();
 				closeTeam();

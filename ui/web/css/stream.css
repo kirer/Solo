@@ -583,11 +583,32 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 	color: var(--accent);
 }
 
-/* 触屏没有 hover：常驻、小一号、弱色。 */
+/* 触屏没有 hover：常驻、小一号、弱色。
+   而且必须**回到文档流**里 —— 桌面上它是 `left: 100%` 挂到正文右侧那 82px 留白里，
+   手机上正文占满宽度，绝对定位会让按钮跑出屏幕、压住别人的字（实测 390 宽时
+   复制/回复图标卡在屏幕最左边，正好盖住头像）。放到正文下面一行最省事。 */
 @media (hover: none) {
-	.row-tools {
+	/* 常驻会把每一条消息下面都挂一排图标，一整屏下来全是按钮，正文反而看不清。
+	   所以默认藏起来，**点这条消息**才出（`data-tools="true"`，见 app.js 的 tapRow）。 */
+	.row-tools,
+	.row-say[data-owner="true"] .row-tools {
+		position: static;
+		left: auto;
+		right: auto;
+		display: none;
+		justify-content: flex-end;
+		margin: 2px 0 2px;
 		opacity: 1;
 		visibility: visible;
+	}
+
+	.row[data-tools="true"] > .row-body > .row-tools {
+		display: flex;
+	}
+
+	/* 被点开的那条轻轻浮起来一点，让人知道「现在这条是选中的」。 */
+	.row[data-tools="true"] > .row-body {
+		position: relative;
 	}
 
 	.row-tools::after {
