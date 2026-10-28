@@ -828,10 +828,18 @@ function crewHtml(person) {
 	</div>`;
 }
 
+// 浮层打开时，背景内容对屏幕阅读器/键盘不可达（无障碍语义）；关闭时恢复。
+function setBackgroundInert(inert) {
+	for (const node of document.body.children) {
+		node.inert = node === el.team ? false : inert;
+	}
+}
+
 async function openTeam() {
 	state.teamOpen = true;
 	el.team.hidden = false;
 	el.teamBtn.setAttribute("aria-expanded", "true");
+	setBackgroundInert(true);
 	renderTeam();
 	el.teamPanel.focus();
 	// SSE 还没推过第一帧时自己拉一次；失败就留空态，等人点刷新 —— 不吞错。
@@ -851,6 +859,7 @@ async function openTeam() {
 function closeTeam() {
 	state.teamOpen = false;
 	el.team.hidden = true;
+	setBackgroundInert(false);
 	el.teamBtn.setAttribute("aria-expanded", "false");
 	el.teamBtn.focus();
 }
