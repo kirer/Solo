@@ -261,8 +261,14 @@ export function createCoreTools(deps: CoreToolDeps) {
 				}),
 			),
 		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
+		execute: async (args, api, context) => sayUnlocked(args, api, context ?? BACKGROUND_CONTEXT),
+	});
+
+	const sayUnlocked = async (
+		args: { text: string; mention?: string; channel?: string; to?: string; replyTo?: number; kind?: "decision" | "report" },
+		api: { conversationId: string | number },
+		ctx: Context,
+	): Promise<ReturnType<typeof text>> => {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
 			let state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
@@ -343,8 +349,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 					woke.length === 0 ? "没有人被唤醒（这只是一句话）。" : `已唤醒：${woke.join("、")}。`
 				}`,
 			);
-		},
-	});
+		};
 
 	const readChannel = defineTool({
 		name: "read_channel",

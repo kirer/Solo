@@ -374,6 +374,9 @@ export type AttentionItem = {
 const ATTENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ATTENTION_MAX = 60;
 
+/** 算「发言」的 kind。没写 kind 的老消息按发言算（历史数据里 kind 缺省就是说话）。 */
+const SPOKEN_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
+
 export function attentionItems(
 	state: ChannelState,
 	directory: DirectoryState,
@@ -386,7 +389,16 @@ export function attentionItems(
 		const mark = readMarkOf(state, viewer, channel.id);
 		for (const message of state.messages[channel.id] ?? []) {
 			if (now - message.at > ATTENTION_WINDOW_MS) continue;
+			// 只收「说出口的话」。过程投影（think / tool / work）和系统 note 不是发言，
+			// 它们里的「要不要 / 还是 / 怎么定」是模型的自言自语（实测 60 条里有 40 多条
+			// 是英文内心独白），进来就把这个列表变成噪音。
+			if (!SPOKEN_KINDS.has(message.kind)) continue;
 			if (!needsYou(message)) continue;
+			// 说给别人听的不进。`needsYou` 的判据（`要不要` / `还是` / `怎么定`）故意宽，
+			// 因为模型忘了 @ 老板的代价更高；但在「找你」这个列表里必须再收一道：
+			// 一条消息如果**明确点了别人**而没点老板，它就不是找老板的。
+			const others = message.mentions.filter((slug) => slug !== viewer);
+			if (others.length > 0 && !message.mentions.includes(viewer)) continue;
 			const first = message.text.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
 			out.push({
 				channelId: channel.id,

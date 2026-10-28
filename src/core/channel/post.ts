@@ -104,6 +104,25 @@ function renderIssues(seq: number, issues: readonly DeliverIssue[], labelOf: (sl
 }
 
 /**
+ * 频道写入的串行闸。
+ *
+ * 为什么需要：同一个进程里所有 agent 的 `say` 是**并发**的，而它们都往同一个
+ * `ChannelDoc` 上 commit。实测撞出过这个：两个 `say` 同时进来，其中一个 commit 拿到
+ * 已被释放的读覆盖层，报 `Cannot use a settled overlay` —— 而那条消息**已经写进去了**，
+ * 于是模型看到报错就重试，频道里出现两条一模一样的「在。」。
+ *
+ * 串行化的代价是频道写入排队（毫秒级，一次 commit），换来的是「一次调用 = 一条消息」
+ * 这条最基本的保证。
+ */
+let writing: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(operation: () => Promise<T>): Promise<T> {
+	const next = writing.then(operation, operation);
+	writing = next.catch(() => undefined);
+	return next;
+}
+
+/**
  * 写一条消息并唤醒该唤醒的人。
  *
  * 文档写入用 `commit` + 路径式追加（推一条 + 改两个数字），**不整频道替换**：
@@ -115,6 +134,10 @@ export async function postMessage(
 	input: PostInput,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<PostResult> {
+	return serialized(() => postMessageUnlocked(deps, input, context));
+}
+
+async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Context): Promise<PostResult> {
 	const channel = deps.state.channels[input.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
 

@@ -139,3 +139,24 @@ describe("messageView 的 needsYou", () => {
 		expect("needsYou" in view).toBe(false);
 	});
 });
+
+describe("只收说出口的话", () => {
+	it("think / tool / work / note 不进来", () => {
+		// 实测：60 条「找你」里 40 多条是模型的英文内心独白（温言 92% 的发言是英文），
+		// 它们正好含有「要不要 / 还是 / 怎么定」。投影不是发言，列进来这个页面就没用了。
+		const state = stateOf(
+			[project],
+			{
+				"proj:坦克大战": [
+					message(1, "lin", "要不要改一下？", { kind: "think" }),
+					message(2, "lin", "要不要改一下？", { kind: "tool" }),
+					message(3, "lin", "要不要改一下？", { kind: "note" }),
+					message(4, "lin", "要不要改一下？", { kind: "chat" }),
+				],
+			},
+		);
+		const items = attentionItems(state, directory, "owner", AT);
+		expect(items).toHaveLength(1);
+		expect(items[0]?.seq).toBe(4);
+	});
+});

@@ -1,0 +1,796 @@
+/**
+ * 消息流：四种行（say / event / note / pending 见 pending.css）+ 时间分隔 + 骨架
+ * + 空态 + 错误 + 活动行 + 动作条。
+ *
+ * 这一节决定「信息密度」：能一句话说清的绝不占一张卡，未登记的 kind 一个像素也不画。
+ */
+
+.flow {
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+}
+
+.flow-inner {
+	display: flex;
+	flex-direction: column;
+	padding: 4px var(--pad) 16px;
+}
+
+/* 上滑加载的哨兵：给 1px 有高度，零高元素的相交判定在部分浏览器上不稳。 */
+#flow-top {
+	height: 1px;
+	flex: none;
+}
+
+/* ── 行的共同骨架 ───────────────────────────────────────────────────── */
+
+.row {
+	position: relative;
+	z-index: 0;
+}
+
+.row-say {
+	display: grid;
+	grid-template-columns: var(--av-lg) minmax(0, 1fr);
+	column-gap: 8px;
+	align-items: start;
+	margin-top: 14px;
+}
+
+.row-say[data-grouped="true"] {
+	margin-top: 2px;
+}
+
+/* 连发时第一列不画头像，行里就只剩一个子元素 —— 明确放回正文列，
+   否则它落进 40px 的头像列，宽度塌成 0。 */
+.row-say[data-grouped="true"] .row-body {
+	grid-column: 2;
+}
+
+.row-av {
+	display: grid;
+	place-items: center;
+	padding-top: 2px;
+}
+
+/* 82px = 6 间距 + 3 个 24px 按钮 + 2 个 2px 间隔。动作条绝对定位在这条留白里，
+   永不遮正文 —— 所以正文不需要 hover 时让位。 */
+.row-body {
+	position: relative;
+	min-width: 0;
+	max-width: min(68ch, calc(100% - 82px));
+}
+
+.row-head {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	min-width: 0;
+	margin-bottom: 1px;
+}
+
+.row-name {
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink);
+	white-space: nowrap;
+}
+
+.row-role {
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.row-time {
+	margin-left: auto;
+	flex: none;
+	padding-left: 8px;
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+/* 「需要你」：左侧 2px --accent 竖线 + 12px 文字标签，没有底色。 */
+.row[data-need="true"]::before {
+	content: "";
+	position: absolute;
+	left: -12px;
+	top: 4px;
+	bottom: 4px;
+	width: 2px;
+	border-radius: 1px;
+	background: var(--accent);
+}
+
+.need-tag {
+	flex: none;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--accent);
+}
+
+/* 老板自己说的话：整宽 --accent-wash 色带，左右各 -8px 出血。
+   注意**正文仍要卡在 68ch**：色带是行的背景（`::after` 挂在 `.row` 上），
+   跟正文宽度是两件事。早先这里写了 `max-width: none`，于是老板贴一段长文，
+   正文就横贯 1094px —— 一行 110 多个字，眼睛找不到下一行的开头。 */
+
+.row-say[data-owner="true"]::after {
+	content: "";
+	position: absolute;
+	z-index: -1;
+	left: -8px;
+	right: -8px;
+	top: -2px;
+	bottom: -2px;
+	border-radius: 4px;
+	background: var(--accent-wash);
+}
+
+/* ── say 的正文 ─────────────────────────────────────────────────────── */
+
+.md {
+	font-size: 14px;
+	line-height: 24px;
+	font-weight: 400;
+	color: var(--ink);
+	overflow-wrap: anywhere;
+	text-wrap: pretty;
+	text-autospace: normal;
+}
+
+.md > :first-child {
+	margin-top: 0;
+}
+
+.md > :last-child {
+	margin-bottom: 0;
+}
+
+.md p {
+	margin: 0 0 8px;
+}
+
+.md p + p {
+	margin-top: 6px;
+}
+
+.md h1,
+.md h2,
+.md h3,
+.md h4 {
+	margin: 14px 0 6px;
+	font-size: 14px;
+	line-height: 24px;
+	font-weight: 600;
+}
+
+.md ul,
+.md ol {
+	margin: 0 0 8px;
+	padding-left: 20px;
+}
+
+.md ul {
+	list-style: disc;
+}
+
+.md ol {
+	list-style: decimal;
+}
+
+.md li {
+	margin: 2px 0;
+}
+
+.md li::marker {
+	color: var(--ink-3);
+}
+
+.md code {
+	padding: 1px 5px;
+	border-radius: 4px;
+	background: var(--raised);
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-2);
+}
+
+.md pre {
+	margin: 8px 0;
+	padding: 10px 12px;
+	overflow-x: auto;
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	background: var(--raised);
+	line-height: 20px;
+}
+
+.md pre code {
+	padding: 0;
+	background: none;
+	color: var(--ink-2);
+	font-size: 12px;
+	line-height: 20px;
+}
+
+.md a {
+	color: var(--accent);
+	text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.md a:hover {
+	text-decoration-color: var(--accent);
+}
+
+.md blockquote {
+	margin: 8px 0;
+	padding-left: 12px;
+	border-left: 1px solid var(--rule);
+	color: var(--ink-2);
+}
+
+.md hr {
+	margin: 12px 0;
+	border: 0;
+	border-top: 1px solid var(--rule);
+}
+
+.md table {
+	width: 100%;
+	margin: 8px 0;
+	border-collapse: collapse;
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.md th,
+.md td {
+	padding: 5px 8px;
+	border-bottom: 1px solid var(--rule);
+	text-align: left;
+}
+
+.md th {
+	font-weight: 500;
+	color: var(--ink-2);
+	border-bottom-color: var(--line);
+}
+
+.md-table-wrap {
+	overflow-x: auto;
+	margin: 8px 0;
+}
+
+/* 代码块：一条顶栏（语言 + 复制），下面是 pre。没有外发光，没有彩色语言标。 */
+.md-code {
+	margin: 8px 0;
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	overflow: hidden;
+}
+
+.md-code-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 0 8px 0 12px;
+	height: 28px;
+	background: var(--raised);
+	border-bottom: 1px solid var(--rule);
+}
+
+.md-code-lang {
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.md-code-copy {
+	height: 20px;
+	padding: 0 6px;
+	border-radius: 4px;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.md-code-copy:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.md-code pre {
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+}
+
+.md-img {
+	display: block;
+	margin: 8px 0;
+}
+
+.md-img img {
+	display: block;
+	max-height: 320px;
+	border-radius: var(--r-row);
+	border: 1px solid var(--line);
+	cursor: zoom-in;
+}
+
+.md-task {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+}
+
+.md-task input {
+	margin: 6px 0 0;
+	accent-color: var(--accent);
+}
+
+/* 正文里的 @ 名字：只换颜色，不加底色。 */
+.mention-name {
+	color: var(--accent);
+}
+
+/* ── 气泡布局（顶栏菜单切换，存 localStorage["ai-company.layout"]）──
+   平铺是默认：正文直接排在纸上，没有底色。气泡只改四件事：底色、内边距、
+   圆角、连续发言收口。行高、字号、宽度变量一律不变 —— 两种布局读起来是同一种密度。 */
+
+body[data-layout="bubble"] .row-say .row-body > .md {
+	background: var(--raised);
+	border-radius: var(--r-row);
+	padding: 8px 12px;
+}
+
+body[data-layout="bubble"] .row-say .row-body > .md > :last-child {
+	margin-bottom: 0;
+}
+
+/* 连续发言只缩左侧的起收角：说话像一个方块叠下来，而不是四个圆球。 */
+body[data-layout="bubble"] .row-say[data-grouped="true"] .row-body > .md {
+	border-start-start-radius: var(--r-control);
+}
+
+body[data-layout="bubble"]
+	.row-say:not([data-grouped="true"]):has(+ .row-say[data-grouped="true"])
+	.row-body
+	> .md {
+	border-end-start-radius: var(--r-control);
+}
+
+/* 老板自己说的话：气泡换成淡绿；整宽出血色带只在平铺里存在。 */
+body[data-layout="bubble"] .row-say[data-owner="true"]::after {
+	display: none;
+}
+
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-body {
+	max-width: min(68ch, calc(100% - 82px));
+}
+
+body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
+	background: var(--accent-wash);
+}
+
+/* ── 引用 ───────────────────────────────────────────────────────────── */
+
+.row-quote {
+	display: flex;
+	align-items: baseline;
+	gap: 4px;
+	max-width: 100%;
+	margin: 0 0 3px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	text-align: left;
+}
+
+.row-quote::before {
+	content: "↳";
+	flex: none;
+	opacity: 0.7;
+}
+
+.row-quote:hover {
+	color: var(--ink-2);
+}
+
+.row-quote b {
+	font-weight: 500;
+}
+
+.row-quote span {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* ── 长消息折叠 ─────────────────────────────────────────────────────── */
+
+.fold[data-folded="true"] {
+	max-height: 180px;
+	overflow: hidden;
+	-webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent);
+	mask-image: linear-gradient(to bottom, #000 72%, transparent);
+}
+
+.fold-btn {
+	margin-top: 4px;
+	height: 22px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-2);
+}
+
+.fold-btn:hover {
+	color: var(--ink);
+}
+
+/* ── event 行（think / tool / work） ───────────────────────────────── */
+
+.row-event {
+	display: flex;
+	justify-content: center;
+	margin: 3px 0;
+}
+
+.ev {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	max-width: 100%;
+}
+
+.ev b {
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+/* ── note 行 ────────────────────────────────────────────────────────── */
+
+.row-note {
+	margin: 8px 0 8px 48px;
+	padding-left: 12px;
+	border-left: 1px solid var(--rule);
+}
+
+.note-text {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	overflow-wrap: anywhere;
+	text-wrap: pretty;
+}
+
+/* ── 时间分隔 ───────────────────────────────────────────────────────── */
+
+.time-sep {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	height: 28px;
+	margin: 14px 0 2px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.new-sep {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 10px 0 2px;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.new-sep::before,
+.new-sep::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--line);
+}
+
+/* ── 动作条 ─────────────────────────────────────────────────────────── */
+
+.row-tools {
+	position: absolute;
+	left: 100%;
+	top: 2px;
+	margin-left: 6px;
+	display: flex;
+	gap: 2px;
+	opacity: 0;
+	visibility: hidden;
+	transition: opacity var(--dur-line) ease, visibility var(--dur-line) ease;
+}
+
+/* 悬停桥：只补那 6px 的缝，不盖正文 —— 没有它，鼠标移到按钮上会经过缝而闪掉。 */
+.row-tools::after {
+	content: "";
+	position: absolute;
+	inset: -8px -8px -8px 0;
+	z-index: -1;
+}
+
+.row:hover > .row-body > .row-tools,
+.row:focus-within > .row-body > .row-tools {
+	opacity: 1;
+	visibility: visible;
+}
+
+/* 老板自己的行整宽，工具条挪到左侧，不然会出屏。 */
+.row-say[data-owner="true"] .row-tools {
+	left: auto;
+	right: 100%;
+	margin-left: 0;
+	margin-right: 6px;
+}
+
+.row-say[data-owner="true"] .row-tools::after {
+	inset: -8px 0 -8px -8px;
+}
+
+.tool {
+	display: inline-grid;
+	place-items: center;
+	width: 24px;
+	height: 24px;
+	border-radius: var(--r-control);
+	color: var(--ink-3);
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.tool:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.tool:active {
+	background: var(--active);
+}
+
+.tool:focus-visible {
+	outline-offset: -2px;
+}
+
+.tool svg {
+	width: 14px;
+	height: 14px;
+}
+
+.tool[data-done="true"] {
+	color: var(--accent);
+}
+
+/* 触屏没有 hover：常驻、小一号、弱色。 */
+@media (hover: none) {
+	.row-tools {
+		opacity: 1;
+		visibility: visible;
+	}
+
+	.row-tools::after {
+		display: none;
+	}
+
+	.tool {
+		width: 20px;
+		height: 20px;
+		color: var(--ink-3);
+	}
+}
+
+/* ── 活动行：谁在干什么，永远只有一行 ──────────────────────────────── */
+
+.act {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 36px;
+	margin: 8px 0 4px 2px;
+	padding-left: 8px;
+	min-width: 0;
+	transform-origin: 0 50%;
+}
+
+.act[hidden] {
+	display: none;
+}
+
+.act-av {
+	display: grid;
+	place-items: center;
+	flex: none;
+}
+
+.act-text {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: transparent;
+	font-size: 14px;
+	line-height: 24px;
+	--shimmer-base: color-mix(in srgb, var(--ink) 40%, transparent);
+	background: linear-gradient(
+		90deg,
+		var(--shimmer-base) 0%,
+		var(--shimmer-base) 25%,
+		var(--ink) 60%,
+		var(--shimmer-base) 75%,
+		var(--shimmer-base) 100%
+	);
+	background-size: 200% 100%;
+	-webkit-background-clip: text;
+	background-clip: text;
+	animation: shimmer 2.2s steps(60) infinite;
+}
+
+.act-time {
+	flex: none;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	font-family: var(--mono);
+}
+
+/* ── 骨架：与最终行同尺寸的灰色实心条，不做 shimmer ────────────────── */
+
+.skel {
+	display: flex;
+	flex-direction: column;
+}
+
+.sk-row {
+	display: grid;
+	grid-template-columns: var(--av-lg) minmax(0, 1fr);
+	column-gap: 8px;
+	margin-top: 14px;
+}
+
+.sk-row:first-child {
+	margin-top: 6px;
+}
+
+.sk-av {
+	width: var(--av-lg);
+	height: var(--av-lg);
+	border-radius: 50%;
+	background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+
+.sk-body {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-top: 3px;
+}
+
+.sk-bar {
+	display: block;
+	height: 24px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--ink) 7%, transparent);
+	max-width: min(68ch, calc(100% - 82px));
+}
+
+.sk-body .sk-bar:nth-child(1) {
+	height: 20px;
+	width: 88px;
+}
+
+.sk-body .sk-bar:nth-child(2) {
+	width: 100%;
+}
+
+.sk-body .sk-bar:nth-child(3) {
+	width: 92%;
+}
+
+.sk-body .sk-bar:nth-child(4) {
+	width: 58%;
+}
+
+.sk-body .sk-bar:nth-child(5) {
+	width: 74%;
+}
+
+.sk-body .sk-bar:nth-child(6) {
+	width: 40%;
+}
+
+.sk-body .sk-bar:nth-child(n + 7) {
+	display: none;
+}
+
+/* ── 空态 / 错误 ────────────────────────────────────────────────────── */
+
+.empty {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	margin: 32px 0 0;
+	max-width: 42ch;
+}
+
+.empty b {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 500;
+}
+
+.empty span {
+	font-size: 14px;
+	line-height: 24px;
+	color: var(--ink-3);
+}
+
+.empty button {
+	margin-top: 2px;
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.empty button:hover {
+	color: var(--ink);
+}
+
+/* 错误只待在出错的那一块里：一句话 + 一个「重试」文字按钮，不用横幅、不用红底。 */
+.err {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 8px 0;
+	padding: 8px 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-2);
+}
+
+.err button {
+	flex: none;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.err button:hover {
+	text-decoration: underline;
+}
+
+@media (max-width: 900px) {
+	.row-body {
+		max-width: min(68ch, calc(100% - 34px));
+	}
+
+	.sk-bar {
+		max-width: min(68ch, calc(100% - 34px));
+	}
+}

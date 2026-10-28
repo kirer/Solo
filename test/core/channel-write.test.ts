@@ -114,3 +114,32 @@ describe("频道写入的字节代价", () => {
 		expect(bytes).toBeLessThan(120_000);
 	});
 });
+
+describe("并发写入", () => {
+	it("三个人同时 say，三条都落库、seq 不撞、没有重复", async () => {
+		// 线上撞出过：一次 `say` 报 `Cannot use a settled overlay`，而消息**已经写进去了**，
+		// 模型看到报错就重试，频道里于是出现两条一模一样的「在。」。
+		//
+		// 守的是「一次调用 = 一条消息」。注意：去掉 `postMessage` 里的串行闸，这个用例
+		// **仍然会过** —— 我试过。真实的并发时序（读覆盖层被别的 agent 的提交释放）在
+		// 单进程测试里复现不稳。所以串行闸是防御性的，这个用例只是把「并发调用不许
+		// 撞 seq、不许丢消息」这条底线钉住。
+		const { runtime, channelId } = await setup();
+		const send = async (from: string, text: string) => {
+			const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+			return postMessage(
+				{ harness: runtime.harness, state, conversationOf: async () => undefined },
+				{ channelId, from, text, at: 200, wake: false },
+				BACKGROUND_CONTEXT,
+			);
+		};
+		await Promise.all([send("林越", "并发一"), send("林越", "并发二"), send("林越", "并发三")]);
+
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		const messages = state.messages[channelId] ?? [];
+		const texts = messages.map((item) => item.text).sort();
+		expect(texts).toEqual(["并发一", "并发三", "并发二"]);
+		const seqs = messages.map((item) => item.seq);
+		expect(new Set(seqs).size).toBe(seqs.length);
+	});
+});

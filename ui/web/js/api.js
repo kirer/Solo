@@ -51,3 +51,30 @@ export function streamOrg(onEvent, onState) {
 	source.addEventListener("error", () => onState?.("closed"));
 	return () => source.close();
 }
+
+/**
+ * 「找你的 N 件事」：跨频道摊平的待老板开口消息。
+ *
+ * 频道列表只能给每个频道一个红点，回答不了「我现在该看哪一条」。这个接口返回
+ * `{ items: [{ channelId, seq, fromSlug, fromLabel, excerpt, at, read, ... }], unread }`，
+ * 按时间倒序。点一条 = 切到那个频道并滚到该 seq。
+ */
+export function attention() {
+	return getJSON("/api/attention");
+}
+
+/**
+ * 一个人的记忆（`agents/<slug>/memory.md`）。
+ *
+ * 老板要能看见「这个人到底记住了什么」并按条删 —— 记忆是不可信模型写的，必须有人能审。
+ * 返回 `{ slug, label, exists, digest, entries: [{ heading, body }], raw }`，
+ * `entries` 每个小节一条（小节标题就是记下的日期）。
+ */
+export function personMemory(slug) {
+	return getJSON(`/api/people/${encodeURIComponent(slug)}/memory`);
+}
+
+/** 删掉某一条（按小节标题）。或加一条：`{ op: 'add', text }`。 */
+export function editPersonMemory(slug, body) {
+	return postJSON(`/api/people/${encodeURIComponent(slug)}/memory`, body);
+}

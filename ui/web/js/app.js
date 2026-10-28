@@ -1,1106 +1,1347 @@
 /**
- * 世代 2 频道页。一个文件，没有框架，没有状态库。
+ * 装配：状态、取数、事件、渲染调度。
  *
- * 与旧前端（`ui/js/channels.js` 1952 行）的差别只有一条原则：
- * **界面只显示后端真的有的东西。** 旧页面为了填满布局，画了「谁读了」「待办卡」
- * 「任务区」「展开成员」「查看提示词」这些新核心根本没有的块，于是要么恒空、
- * 要么显示错数。这里没有的就不画。
+ * 分工是硬的：
+ *   avatar.js 画人，rows.js 决定「一行长什么样」，motion.js 管曲线，
+ *   这里只管「什么时候要画什么」以及所有 fetch。
  *
- * 结构：`state` 是唯一真相 → 任何改动都走 `render*()` 重画对应区域。
- * 三个区域各自整体替换（列表 / 消息流 / 顶栏），不做增量 patch —— 一个频道
- * 几百条消息时 `replaceChildren` 比 diff 更快，也更难写错。
+ * 所有 DOM 事件都走委托（挂在 #feed / #rows / #people / #composer 上），
+ * 因为消息流每次都是整体重建的 —— 逐条 bind 会在重建时泄漏。
  */
-import { getJSON, postJSON, streamOrg } from "./api.js";
-import {
-	copyText,
-	dayLabel,
-	escapeAttr,
-	escapeHtml,
-	clockTime,
-	hueFor,
-	initials,
-	relTime,
-	sameDay,
-} from "./format.js";
-import { renderMarkdown } from "./markdown.js";
 
-/** 一页多少条。后端上限 200，这里取 40：一屏多一点，翻页不明显。 */
+import { attention, getJSON, postJSON, streamOrg } from "./api.js";
+import { avatarSvg, groupAvatar } from "./avatar.js";
+import { copyText, escapeHtml, relTime } from "./format.js";
+import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
+import { activityPhrase, buildStream, isNeed as isNeedRow } from "./rows.js";
+
+/* ── 常量 ───────────────────────────────────────────────────────────── */
+
 const PAGE = 40;
-/** 列表里的相对时间每隔这么久重算一次（「3 分钟前」→「4 分钟前」）。 */
 const TICK_MS = 30_000;
+const LAYOUT_KEY = "ai-company.layout";
+const HOLD_MS = 800; // 活动行每句话至少停 800ms
+const HL_MS = 1200; // 定位高亮
+
+const GROUPS = [
+	{ key: "company", title: "公司", kinds: ["company", "leadership"] },
+	{ key: "project", title: "项目", kinds: ["project"] },
+	{ key: "dm", title: "", kinds: ["dm"] },
+];
+
+const STATUS_LABEL = { thinking: "在想", working: "在做", idle: "待命", asleep: "睡了" };
+
+/* ── 状态 ───────────────────────────────────────────────────────────── */
 
 const state = {
-	/** @type {{id:string,kind:string,title:string,project?:string,unread:number,mentions:number,preview:string,lastAt:number,lastSeq:number,memberCount:number}[]} */
 	channels: [],
-	mentionTotal: 0,
-	/** 当前打开的频道 id。 */
-	current: "",
-	/** @type {{channel:object,members:object[],messages:object[],hasMore:boolean,serverNow:number}|null} */
-	detail: null,
-	/** 引用中的消息（`{seq,fromLabel,excerpt}`）。 */
-	reply: null,
-	/** 浮在消息上的操作条对应的 seq；`0` 表示没有。 */
-	actionsFor: 0,
-	/** @ 候选：`{items,index,start,end}`，`start` 是 `@` 在输入框里的位置。 */
-	mention: null,
-	/** 已读上报节流用。 */
-	readSeqs: new Map(),
-	/** 组织快照（`/api/org` 整帧）。`null` = 还没拿到。 */
+	unread: { total: 0, mentions: 0 },
+	attention: { items: [], unread: 0 },
 	org: null,
-	/** 编制表（团队视图）是否打开。 */
-	teamOpen: false,
-	/** 各频道消息流滚动位置记忆（T-012）。值=scrollTop 数值；-1 表示上次在底部。 */
-	scrollPos: new Map(),
-	/** T-016：当前频道的 SSE 连接（按频道推消息增量）；切频道/离开时关闭。 */
-	stream: null,
+	people: [],
+	currentId: null,
+	detail: null,
+	error: null,
+	loading: false,
+	loadingEarlier: false,
+	layout: readLayout(),
+	replyTo: null,
+	presence: new Map(),
+	lastSeen: new Map(),
+	scrollPos: new Map(), // channelId → scrollTop（-1 = 钉在底部）
+	readMark: new Map(),
+	needIndex: -1,
+	mention: { open: false, items: [], index: 0, start: 0 },
+	attentionBroken: false,
+	conn: "open",
+	lastOk: 0,
+	closeChannelStream: null,
 };
+
+function readLayout() {
+	try {
+		return localStorage.getItem(LAYOUT_KEY) === "bubble" ? "bubble" : "flat";
+	} catch {
+		return "flat";
+	}
+}
+
+/* ── 元素 ───────────────────────────────────────────────────────────── */
+
+const $ = (id) => document.getElementById(id);
 
 const el = {
-	meta: document.querySelector("#company-meta"),
-	refresh: document.querySelector("#refresh"),
-	/** 顶栏那个「N 件需要你」。元素 id 还叫 unread-total（index.html 不改），语义已收窄到点名。 */
-	unreadTotal: document.querySelector("#unread-total"),
-	rows: document.querySelector("#rows"),
-	paneTitle: document.querySelector("#pane-title"),
-	paneSub: document.querySelector("#pane-sub"),
-	back: document.querySelector("#back"),
-	flow: document.querySelector("#flow"),
-	flowInner: document.querySelector("#flow-inner"),
-	composer: document.querySelector("#composer"),
-	input: document.querySelector("#input"),
-	send: document.querySelector("#send"),
-	replyBar: document.querySelector("#reply-bar"),
-	replyText: document.querySelector("#reply-text"),
-	replyCancel: document.querySelector("#reply-cancel"),
-	mentionPop: document.querySelector("#mention-pop"),
-	toastRoot: document.querySelector("#toast-root"),
-	teamBtn: document.querySelector("#team-btn"),
-	team: document.querySelector("#team"),
-	teamPanel: document.querySelector("#team-panel"),
-	teamList: document.querySelector("#team-list"),
-	teamCount: document.querySelector("#team-count"),
-	teamClose: document.querySelector("#team-close"),
+	companyMeta: $("company-meta"),
+	refresh: $("refresh"),
+	conn: $("conn"),
+	unreadTotal: $("unread-total"),
+	menuBtn: $("menu-btn"),
+	layoutMenu: $("layout-menu"),
+	plusBtn: $("plus-btn"),
+	plusMenu: $("plus-menu"),
+	people: $("people"),
+	rows: $("rows"),
+	sidebar: $("sidebar"),
+	sheet: $("sheet"),
+	paneTitle: $("pane-title"),
+	barTitle: $("bar-title"),
+	paneSub: $("pane-sub"),
+	back: $("back"),
+	flow: $("flow"),
+	flowInner: $("flow-inner"),
+	flowTop: $("flow-top"),
+	feed: $("feed"),
+	skel: $("skel"),
+	act: $("act"),
+	actAv: document.querySelector("#act .act-av"),
+	actText: document.querySelector("#act .act-text"),
+	actTime: document.querySelector("#act .act-time"),
+	replyBar: $("reply-bar"),
+	replyText: $("reply-text"),
+	replyCancel: $("reply-cancel"),
+	composer: $("composer"),
+	input: $("input"),
+	send: $("send"),
+	mentionPop: $("mention-pop"),
+	mentionList: $("mention-list"),
+	mentionThumb: $("mention-thumb"),
+	toastRoot: $("toast-root"),
+	teamBtn: $("team-btn"),
+	team: $("team"),
+	teamPanel: $("team-panel"),
+	teamList: $("team-list"),
+	teamCount: $("team-count"),
+	teamClose: $("team-close"),
+	lightbox: $("lightbox"),
+	lightboxImg: $("lightbox-img"),
+	frame: document.querySelector(".frame"),
 };
 
-// ── 提示 ────────────────────────────────────────────────────────────────
+/* ── 小工具 ─────────────────────────────────────────────────────────── */
 
-let toastTimer;
+function kindOf(channel) {
+	if (channel?.kind) return channel.kind;
+	const id = channel?.id ?? "";
+	if (id.startsWith("dm:")) return "dm";
+	if (id.startsWith("proj:")) return "project";
+	if (id.startsWith("lead:")) return "leadership";
+	return "company";
+}
+
+function isGroupChannel(channel) {
+	const kind = kindOf(channel);
+	return kind === "company" || kind === "leadership";
+}
+
+function channelAvatar(channel, size) {
+	if (isGroupChannel(channel)) {
+		const people = state.people.slice(0, 4);
+		return groupAvatar({ people, size });
+	}
+	// 项目频道用自己的 slug 画（同一个负责人手下的两个项目不该长得一样）；
+	// 个人频道退到人。
+	const slug = channel.project ?? channel.owner ?? channel.id;
+	const name = channel.ownerLabel ?? channel.title;
+	return avatarSvg({ slug, name, size });
+}
+
+function presenceOf(slug) {
+	const now = Date.now();
+	const live = state.presence.get(slug);
+	if (live && now - live.at < 5 * 60 * 1000) return live.state;
+	const seen = state.lastSeen.get(slug);
+	if (seen && now - seen > 6 * 60 * 60 * 1000) return "asleep";
+	return "idle";
+}
+
+function notePresence(message) {
+	if (!message || message.fromSlug === "owner") return;
+	state.lastSeen.set(message.fromSlug, message.at);
+	let next = "idle";
+	if (message.kind === "think") next = "thinking";
+	else if (message.kind === "tool" || message.kind === "work") next = "working";
+	const current = state.presence.get(message.fromSlug);
+	if (next === "idle" && current) return; // 一句话不把「在做」熄灭
+	state.presence.set(message.fromSlug, { state: next, at: message.at });
+}
 
 function toast(text, tone = "info") {
-	if (el.toastRoot === null) return;
-	el.toastRoot.replaceChildren();
 	const node = document.createElement("div");
 	node.className = "toast";
 	node.dataset.tone = tone;
 	node.textContent = text;
 	el.toastRoot.append(node);
-	clearTimeout(toastTimer);
-	toastTimer = setTimeout(() => node.remove(), 3_600);
+	window.setTimeout(() => withLinger(node, 180, () => node.remove()), 3600);
 }
 
-// ── 频道列表 ────────────────────────────────────────────────────────────
+/* ── 顶栏 ───────────────────────────────────────────────────────────── */
 
-/** 左侧的三个分组。分组靠频道 id 前缀决定。 */
-const GROUPS = [
-	{ key: "company", label: "公司", match: (channel) => channel.kind === "company" || channel.kind === "leadership" },
-	{ key: "project", label: "项目", match: (channel) => channel.kind === "project" },
-	// 个人分组仍然排最后、dm 仍然归在这里，但不画「个人」这行字：
-	// 人名本身就说明这是个人频道（T-20261028-007 老板追加要求）。顺序不变。
-	{ key: "personal", label: "个人", hideTitle: true, match: (channel) => channel.kind === "dm" },
-];
-
-// ── 组织信息（谁是哪个项目的、什么职位） ─────────────────────────────────
-
-/** 项目 slug → 显示名。没登记的 slug 直接显示，不编名字。 */
-const PROJECT_LABELS = { platform: "平台", dino: "小恐龙" };
-
-/**
- * 项目色：颜色本身写在 CSS 的 `:root` 里，这里只给变量名 —— 和页面其他地方
- * 「颜色只从变量取」是同一条规矩。没登记的项目按 slug 算一个稳定色相，
- * 以后新开项目不改代码也不会掉成灰色。
- */
-const PROJECT_TONES = { platform: "var(--tone-platform)", dino: "var(--tone-dino)" };
-
-function projectName(project) {
-	return PROJECT_LABELS[project] ?? project;
-}
-
-function projectTone(project) {
-	// 没有项目 = 人像那种石墨灰（`--tone-person`），不再另设一个色；
-	// 没登记的新项目按 slug 算一个稳定色相，不用改代码。
-	if (project === undefined || project === "") return "var(--tone-person)";
-	return PROJECT_TONES[project] ?? `hsl(${hueFor(project)} 30% 58%)`;
-}
-
-function personBySlug(slug) {
-	return state.org?.people.find((person) => person.slug === slug);
-}
-
-/** 个人频道的频道名就是人名（`dm:<x>` 的 title），所以这里按显示名找。 */
-function personByName(label) {
-	return state.org?.people.find((person) => person.label === label);
-}
-
-/** 「职位 · 项目」一句，个人频道第二行、消息头、顶栏副标题共用。 */
-function roleLine(person) {
-	if (person === undefined) return "";
-	return [person.title, person.project === undefined ? "" : projectName(person.project)].filter(Boolean).join(" · ");
-}
-
-/**
- * 头像：**形状承担语义，颜色只是加强**（T-20261028-008）。
- *
- * - 圆 = 人：个人频道行、消息、团队视图。不再按名字哈希色相 —— 人不是标签，
- *   一个名字一个颜色只会让「谁是房间」更难看出来；统一退成石墨灰。
- * - 圆角方 = 房间：公司 / 项目频道。项目房用项目色（与左侧色条同源），
- *   公司房用一个中性专色 `--tone-company`（不跟任何项目色撞）。
- *
- * 灰度下形状仍然成立：圆的半径是 50%，房间是 6px 圆角，22px 上一眼就能分开。
- */
-function avatarHtml(label, options = {}) {
-	const { size, shape = "person", tone } = options;
-	const attrs = [
-		shape === "room" ? ' data-shape="room"' : "",
-		size === "lg" ? ' data-size="lg"' : "",
-		tone === undefined ? "" : ` style="--tone-room:${tone}"`,
-	].join("");
-	return `<span class="avatar"${attrs} aria-hidden="true">${escapeHtml(initials(label))}</span>`;
-}
-
-/** 房间头像的底色：项目房取项目色，其余（公司 / 管理层）取中性专色。 */
-function roomTone(channel) {
-	return channel.kind === "project" ? projectTone(channel.project) : "var(--tone-company)";
-}
-
-/**
- * 列表第二行：先说是谁（职位 / 项目 / 负责人），再说最后一句。
- *
- * 旧版只有「负责人 X」这一种写法，于是个人频道（`dm:人名`）那一行只剩名字和
- * 一个「个人」小标 —— 老板看不出这个人属于哪个项目、什么职位，这正是
- * T-20261028-005 要解决的问题。项目频道与消息本身保持原样。
- */
-function previewHtml(channel) {
-	const tail = escapeHtml(channel.preview === "" ? "" : channel.preview);
-	if (channel.kind === "dm") {
-		const person = personByName(channel.title);
-		if (person !== undefined) {
-			const role = roleLine(person) || "公司";
-			return `<span class="row-role" style="--crew:${projectTone(person.project)}">${escapeHtml(role)}</span>${
-				tail === "" ? "" : " · " + tail
-			}`;
-		}
+/* 需要你的事：优先用 /api/attention（跨频道、带精确 seq）；
+ * 这个接口不在时退回「各频道未读提及之和」，仍然是真的数，不造假。 */
+function needItems() {
+	// 没理的排前面：点一下要跳到「下一条要你处理的」，跳到一条已经理过的不算帮忙。
+	if (state.attention.items.length > 0) {
+		return [...state.attention.items].sort((a, b) => Number(a.read) - Number(b.read));
 	}
-	if (channel.ownerLabel !== undefined) {
-		return `<span class="row-owner">负责人 ${escapeHtml(channel.ownerLabel)}</span>${tail === "" ? "" : " · " + tail}`;
-	}
-	return tail === "" ? "还没有消息" : tail;
+	return state.channels
+		.filter((channel) => (channel.mentions ?? 0) > 0)
+		.map((channel) => ({ channelId: channel.id, channelTitle: channel.title, seq: 0, mentions: channel.mentions }));
 }
 
-/**
- * 侧栏徽标只有两种（T-20261028-009，老板定口径 A）：
- * - 有人 @ 你 → **红色数字**，数字就是 `mentions`（宁多勿漏由后端字段保证）；
- * - 只是有新内容 → **灰色小点**，不带数字。
- *
- * 「有新内容」不等于「需要你」：员工在个人频道里的过程汇报不应该持续叫老板。
- * 两种互斥，靠 `data-kind` 区分，别用一个 badge 改样式来表达语义。
- */
-function badgeHtml(channel) {
-	if (channel.mentions > 0) {
-		return `<span class="badge" data-kind="mention" role="img" aria-label="${channel.mentions} 件需要你">${channel.mentions}</span>`;
-	}
-	if (channel.unread > 0) {
-		return `<span class="badge" data-kind="quiet" role="img" aria-label="${channel.unread} 条未读"></span>`;
-	}
-	return "";
+function needCount() {
+	// 顶栏显示的是**还没理**的条数，不是全部：`/api/attention` 把已读的也返回（老板要能
+	// 回头看「哪些我还没理」），直接拿 length 会把 7 天里理过的都算进来 —— 实测一上来
+	// 就是「60 件找你」，那个 60 是接口上限，不是真事。
+	if (state.attention.items.length > 0) return state.attention.unread;
+	return state.channels.reduce((sum, channel) => sum + (channel.mentions ?? 0), 0);
 }
 
-function rowHtml(channel) {
-	const badge = badgeHtml(channel);
-	return `<button class="row" type="button" data-channel="${escapeAttr(channel.id)}"${
-		channel.id === state.current ? ' aria-current="true"' : ""
-	}>
-		${avatarHtml(channel.title, {
-			// 侧栏会话行按 Figma 用 48；消息与团队视图的默认尺寸是 40。
-			size: "lg",
-			...(channel.kind === "dm" ? {} : { shape: "room", tone: roomTone(channel) }),
-		})}
-		<span class="row-main">
-			<span class="row-title"><span>${escapeHtml(channel.title)}</span></span>
-			<span class="row-preview">${previewHtml(channel)}</span>
-		</span>
-		<span class="row-meta">
-			<span>${escapeHtml(relTime(channel.lastAt))}</span>
-			${badge}
-		</span>
-	</button>`;
+function renderTop() {
+	// 顶栏左边是公司名；名字叫「一人公司」时再写一遍只是重复，改成真实的规模。
+	const people = state.org?.people?.length ?? 0;
+	const channels = state.channels.length;
+	el.companyMeta.textContent = `${people} 人 · ${channels} 个频道`;
+	const count = needCount();
+	el.unreadTotal.textContent = `${count} 件找你`;
+	el.unreadTotal.dataset.zero = count === 0 ? "true" : "false";
+	el.unreadTotal.title = count === 0 ? "现在没有需要你拍板的事" : "跳到下一条需要你的事";
+
+	if (state.conn === "closed") {
+		const at = state.lastOk ? new Date(state.lastOk) : null;
+		el.conn.textContent = at
+			? `连不上，${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")} 最后一次成功`
+			: "连不上";
+		el.conn.hidden = false;
+	} else {
+		el.conn.hidden = true;
+	}
 }
 
-function renderList() {
-	const parts = [];
+/* ── 人栏 ───────────────────────────────────────────────────────────── */
+
+function renderPeople() {
+	const people = state.org?.people ?? [];
+	if (people.length === 0) {
+		el.people.replaceChildren();
+		return;
+	}
+	el.people.innerHTML = people
+		.map((person) => {
+			const presence = presenceOf(person.slug);
+			const active = person.project && state.channels.find((c) => kindOf(c) === "dm" && c.title === person.label);
+			return `<button class="person" type="button" data-slug="${escapeHtml(person.slug)}"${
+				active && active.id === state.currentId ? ' aria-current="true"' : ""
+			}><span class="person-av">${avatarSvg({
+				slug: person.slug,
+				name: person.label,
+				size: 24,
+				state: presence,
+			})}</span><span class="p-who"><span class="p-name">${escapeHtml(person.label ?? "")}</span><span class="p-status" data-state="${presence}"><span class="p-status-t">${
+				STATUS_LABEL[presence]
+			}${person.title ? ` · ${escapeHtml(person.title)}` : ""}</span></span></span></button>`;
+		})
+		.join("");
+}
+
+/* ── 频道栏 ─────────────────────────────────────────────────────────── */
+
+function renderChannels() {
+	if (state.channels.length === 0) {
+		el.rows.innerHTML = `<div class="empty"><span>还没有频道。</span></div>`;
+		return;
+	}
+	const out = [];
 	for (const group of GROUPS) {
-		const rows = state.channels.filter(group.match);
-		if (rows.length === 0) continue;
-		if (group.hideTitle !== true) parts.push(`<div class="group-title">${group.label}</div>`);
-		parts.push(rows.map(rowHtml).join(""));
-	}
-	el.rows.innerHTML = parts.join("") || `<div class="empty">还没有频道</div>`;
-	// 顶栏只数「点名叫你」的未读（= 后端 `unread.mentions`）。灰点不进这个数，
-	// 否则老板又会看到「一直在响」（T-20261028-009）。0 的时候整块留空。
-	el.unreadTotal.textContent = state.mentionTotal > 0 ? `${state.mentionTotal} 件需要你` : "";
-}
-
-// ── 消息流 ──────────────────────────────────────────────────────────────
-
-function quoteHtml(message) {
-	if (message.replyTo === undefined) return "";
-	return `<div class="msg-quote" role="button" tabindex="0" data-jump="${message.replyTo.seq}">
-		<b>${escapeHtml(message.replyTo.fromLabel)}</b>：${escapeHtml(message.replyTo.excerpt || "（一条消息）")}
-	</div>`;
-}
-
-function kindHtml(message) {
-	if (message.kind === "chat" || message.kind === "note" || message.kind === "" || message.kind === "say") return "";
-	const label = { decision: "拍板", report: "汇报", task: "任务", think: "思考", tool: "调用" }[message.kind] ?? message.kind;
-	return `<span class="msg-kind" data-kind="${escapeAttr(message.kind)}">${escapeHtml(label)}</span>`;
-}
-
-/**
- * `work` 消息正文里的操作类型标签。
- *
- * 正文格式是 `logWork` 约定的：`$ <命令>` 开头是执行命令；`已写入 <路径>` / `已读取 <路径>`
- * 是写/读文件（写文件工具自己写回的文本）。从这里读「做了什么操作」，而不是在正文里
- * 再塞一行标签 —— 正文保持纯记录，界面只做投影。
- */
-function workOp(text) {
-	const head = (text ?? "").split("\n")[0] ?? "";
-	if (head.startsWith("$ ")) return "执行命令";
-	if (head.startsWith("已写入")) return "写文件";
-	if (head.startsWith("已读取") || head.startsWith("文件不存在")) return "读文件";
-	if (head.startsWith("(后台运行")) return "后台运行";
-	return "工作记录";
-}
-
-/** 每种操作类型对应的图标与「已做什么」措辞（仿 ChatGPT 的过程行）。 */
-function opMeta(op) {
-	const map = {
-		"执行命令": { icon: "▸", label: "已运行" },
-		"写文件": { icon: "✎", label: "已写入文件" },
-		"读文件": { icon: "▣", label: "已读取文件" },
-		"后台运行": { icon: "▷", label: "已后台运行" },
-	};
-	return map[op] ?? { icon: "▸", label: "已工作" };
-}
-
-/** `work`/`tool` 行的短摘要：命令取到路径为止，文件取文件名，一行放得下。 */
-function opSummary(text, op) {
-	const head = (text ?? "").split("\n")[0] ?? "";
-	if (op === "执行命令") {
-		const raw = head.replace(/^\$ /, "");
-		// `cd /x && echo ... && cat y` → 只留最后一段有信息量的。
-		const parts = raw.split("&&").map((s) => s.trim()).filter(Boolean);
-		return parts[parts.length - 1] ?? raw;
-	}
-	if (op === "写文件") return head.replace(/^已写入\s*/, "");
-	if (op === "读文件") return head.replace(/^(已读取|文件不存在：?)\s*/, "");
-	return head;
-}
-
-function messageHtml(message, previous, beforeUnreadFrom) {
-	// 同一个人连续发言：只第一行显示头像和名字，后面缩进对齐（时间是唯一的隔断）。
-	const grouped = previous !== undefined && previous.fromSlug === message.fromSlug && !beforeUnreadFrom;
-	const quotes = quoteHtml(message);
-	const kind = kindHtml(message);
-	// 头像上已经写着名字了，这里补一句「他是谁」——只在轮到显示名字的那一行出现。
-	const role = grouped ? "" : roleLine(personBySlug(message.fromSlug));
-
-	// work = 执行命令的记录：折叠成等宽字体块，默认收起。
-	// note = 系统留痕：灰色淡显。
-	if (message.kind === "work") {
-		const op = workOp(message.text);
-		const meta = opMeta(op);
-		const summary = opSummary(message.text, op);
-		return `<div class="msg msg-work" data-seq="${message.seq}">
-			<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
-			<div class="msg-main">
-				<details><summary><span class="op-icon">${meta.icon}</span><span class="op-verb">${escapeHtml(meta.label)}</span><code>${escapeHtml(summary)}</code><span class="op-chevron">⌄</span></summary>
-				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
-			</div>
-		</div>`;
-	}
-
-	// think = 思考过程：仿 ChatGPT，默认收起（点开才展开），不喧宾夺主。
-	if (message.kind === "think") {
-		return `<div class="msg msg-think" data-seq="${message.seq}">
-			<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
-			<div class="msg-main">
-				<details><summary><span class="think-label">思考</span><span class="op-chevron">⌄</span></summary>
-				<div class="msg-text msg-text-think">${renderMarkdown(message.text)}</div></details>
-			</div>
-		</div>`;
-	}
-
-	// tool = 工具调用：一行紧凑卡，「已调用 + 名字 + 参数摘要」，可折叠。
-	if (message.kind === "tool") {
-		// 完整首行交给 CSS 省略号：一眼能多看到参数，悬停 summary 有 title 全量。
-		const firstLine = message.text.split("\n")[0] ?? "";
-		return `<div class="msg msg-tool" data-seq="${message.seq}">
-			<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
-			<div class="msg-main">
-				<details title="${escapeAttr(message.text)}"><summary><span class="op-icon">⚙</span><span class="op-verb">已调用</span><code>${escapeHtml(firstLine)}</code><span class="op-chevron">⌄</span></summary>
-				<div class="msg-text msg-text-mono">${escapeHtml(message.text)}</div></details>
-			</div>
-		</div>`;
-	}
-
-	if (message.kind === "note") {
-		return `<div class="msg msg-note" data-seq="${message.seq}">
-			<div class="msg-gutter"></div>
-			<div class="msg-main"><div class="msg-text msg-text-dim">${escapeHtml(message.text)}</div></div>
-		</div>`;
-	}
-
-	const heading = grouped
-		? ""
-		: `<div class="msg-head"><span class="msg-from">${escapeHtml(message.fromLabel)}</span>${
-				role === "" ? "" : `<span class="msg-role">${escapeHtml(role)}</span>`
-			}<span class="msg-time">${clockTime(message.at)}</span>${kind}</div>`;
-	// T-016：占位状态渲染。pending 且空文本 = loading 光标（CSS ::after）；error 且空 = 兜底灰字。
-	const pending = message.status === "pending" && (message.text ?? "").trim() === "";
-	const errPending = message.status === "error" && (message.text ?? "").trim() === "";
-	const body = errPending
-		? `<div class="msg-text" data-error>处理中，稍候刷新</div>`
-		: pending
-			? `<div class="msg-text" data-placeholder></div>`
-			: `${quotes}<div class="msg-text">${renderMarkdown(message.text)}</div>`;
-	const statusAttr = message.status === undefined ? "" : ` data-status="${message.status}"`;
-	return `<div class="msg" data-seq="${message.seq}" data-owner="${message.fromSlug === "owner"}"${statusAttr}${
-		grouped ? ' data-grouped="true"' : ""
-	}>
-		<div class="msg-gutter">${grouped ? "" : avatarHtml(message.fromLabel)}</div>
-		<div class="msg-main">${heading}${body}</div>
-	</div>`;
-}
-
-/**
- * Markdown 里没有 @ 高亮（`renderMarkdown` 是纯函数，不认人）。
- * 所以正文先走 markdown，再把渲染结果里**文本节点**中的 `@名字` 包成 `.mention`。
- * 用 DOMParser 而不是正则改 HTML 字符串：后者会命中 `<a href="@x">` 这类属性值。
- */
-function decorateMentions(root, mentions) {
-	if (mentions.length === 0) return;
-	const known = new Set(mentions.map((item) => item.label));
-	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-	const targets = [];
-	while (walker.nextNode()) {
-		const node = walker.currentNode;
-		if (node.nodeValue?.includes("@") !== true) continue;
-		// 代码块里的 @ 不是提及。
-		if (node.parentElement?.closest("pre, code, a") !== null) continue;
-		targets.push(node);
-	}
-	for (const node of targets) {
-		const text = node.nodeValue ?? "";
-		const fragment = document.createDocumentFragment();
-		let index = 0;
-		for (const match of text.matchAll(/@([\p{L}\p{N}_-]+)/gu)) {
-			if (!known.has(match[1])) continue;
-			if (match.index > index) fragment.append(text.slice(index, match.index));
-			const span = document.createElement("span");
-			span.className = "mention";
-			span.textContent = match[0];
-			fragment.append(span);
-			index = match.index + match[0].length;
+		const items = state.channels.filter((channel) => group.kinds.includes(kindOf(channel)));
+		if (items.length === 0) continue;
+		if (group.title) out.push(`<div class="chan-head"><b>${group.title}</b></div>`);
+		for (const channel of items) {
+			const current = channel.id === state.currentId;
+			// 副标题只放人话：一句预览；没有预览才退到人数。项目 slug 不上屏。
+			const preview = (channel.preview ?? "").trim();
+			const sub = preview ? (preview.length > 48 ? `${preview.slice(0, 48)}…` : preview) : `${channel.memberCount ?? 0} 人`;
+			const dot = channel.mentions > 0 ? '<span class="dot" data-kind="mention"></span>' : channel.unread > 0 ? '<span class="dot"></span>' : "";
+			out.push(`<button class="ch" type="button" data-channel="${escapeHtml(channel.id)}"${
+				current ? ' aria-current="true"' : ""
+			}><span class="ch-av">${channelAvatar(channel, 24)}</span><span class="ch-main"><span class="ch-title">${escapeHtml(
+				channel.title ?? "",
+			)}</span><span class="ch-sub">${escapeHtml(sub)}</span></span><span class="ch-meta"><span class="ch-time">${relTime(
+				channel.lastAt ?? 0,
+			)}</span>${dot}</span></button>`);
 		}
-		if (index === 0) continue;
-		if (index < text.length) fragment.append(text.slice(index));
-		node.replaceWith(fragment);
 	}
+	el.rows.innerHTML = out.join("");
 }
 
-/** 给当前 DOM 里的每条消息做 @ 高亮。渲染完以后统一跑一遍。 */
-function decorateAll() {
-	const detail = state.detail;
-	if (detail === null) return;
-	const bySeq = new Map(detail.messages.map((message) => [message.seq, message]));
-	for (const item of el.flowInner.querySelectorAll(".msg")) {
-		const message = bySeq.get(Number(item.dataset.seq));
-		const target = item.querySelector(".msg-text");
-		if (message === undefined || target === null) continue;
-		decorateMentions(target, message.mentions);
+/* ── 消息流 ─────────────────────────────────────────────────────────── */
+
+function isPinned() {
+	const flow = el.flow;
+	return flow.scrollHeight - flow.scrollTop - flow.clientHeight < 48;
+}
+
+function scrollToBottom() {
+	el.flow.scrollTop = el.flow.scrollHeight;
+}
+
+function needSeqs() {
+	const set = new Set();
+	for (const item of state.attention.items) {
+		if (item.channelId === state.currentId) set.add(item.seq);
 	}
+	return set;
 }
-
-function dividerHtml(label) {
-	return `<div class="divider">${escapeHtml(label)}</div>`;
-}
-
-function renderFlow(options = {}) {
+function renderFlow({ veil = false, restore = true } = {}) {
 	const detail = state.detail;
-	if (detail === null) {
-		el.flowInner.innerHTML = `<div class="empty">左边选一个频道开始</div>`;
+	el.skel.hidden = true;
+
+	if (!detail) {
+		el.feed.replaceChildren();
+		if (state.error) el.feed.append(errorBlock(state.error, "重新加载", () => openChannel(state.currentId)));
+		else el.feed.append(emptyBlock(state.currentId ? "这个频道还没有消息。" : "从左边挑一个频道。", null));
 		return;
 	}
 
-	const fragment = document.createDocumentFragment();
-	// T-015：不再渲染「加载更早」按钮，改为滚动到顶自动加载（见 loadEarlier + flow 的 scroll 监听）。
+	const messages = detail.messages ?? [];
+	const pinned = restore ? state.scrollPos.get(state.currentId) === -1 || isPinned() : true;
+	const previousTop = el.flow.scrollTop;
 
-	// 已读位置：后端给的是「读到这条为止」，这里找第一条未读，画一条分界线。
-	// 「新消息」只标别人发来的未读：老板自己刚发的消息当然也「未读」，但它不是新消息。
-	const firstUnread = detail.messages.find((message) => !message.read && message.fromSlug !== "owner");
-
-	if (detail.messages.length === 0) {
-		fragment.append(node(`<div class="empty">这里还没有消息，说点什么</div>`));
-	}
-
-	let previous;
-	let lastDay = 0;
-	for (const message of detail.messages) {
-		if (lastDay === 0 || !sameDay(lastDay, message.at)) {
-			fragment.append(node(dividerHtml(sameDay(message.at, Date.now()) ? `今天 ${clockTime(message.at)}` : dayLabel(message.at))));
-			previous = undefined;
-		} else if (message.at - lastDay > 5 * 60_000) {
-			fragment.append(node(dividerHtml(clockTime(message.at))));
-		}
-		lastDay = message.at;
-
-		const isFirstUnread = message === firstUnread;
-		if (isFirstUnread) fragment.append(node(`<div class="unread-line">新消息</div>`));
-		fragment.append(node(messageHtml(message, previous, isFirstUnread)));
-		previous = message;
-	}
-
-	el.flowInner.replaceChildren(fragment);
-	// 换频道才播一次入场：同频道刷新（发完消息重取）不该整段重新淡入。
-	if (options.fresh === true) {
-		el.flowInner.dataset.fresh = "true";
-		el.flowInner.addEventListener("animationend", () => delete el.flowInner.dataset.fresh, { once: true });
-	}
-	decorateAll();
-
-	if (options.toBottom === true) el.flow.scrollTop = el.flow.scrollHeight;
-}
-
-/** HTML 字符串 → 节点。`template` 是唯一不引入解析器又能信任的方式（内容都经过转义）。 */
-function node(html) {
-	const template = document.createElement("template");
-	template.innerHTML = html.trim();
-	return template.content.firstElementChild ?? document.createTextNode("");
-}
-
-// T-015：上滑到顶自动加载更早消息（替代原「加载更早」按钮）。复用 openChannel 的 before 分支，带防重入。
-let loadingEarlier = false;
-async function loadEarlier() {
-	if (loadingEarlier) return;
-	const detail = state.detail;
-	if (detail === null || detail.messages.length === 0 || !detail.hasMore) return;
-	loadingEarlier = true;
-	try {
-		const before = detail.messages[0].seq;
-		await openChannel(detail.channel.id, { before });
-	} finally {
-		loadingEarlier = false;
-	}
-}
-
-// T-016：占位气泡 + 增量 upsert。SSE 推来的 `create`（含 connect 时全量补齐、以及 A 填充占位后的 done 全文）
-// 按 seq 幂等落地：已存在则整节点重建（文本/状态覆盖），不存在则按 seq 顺序插入。
-function upsertMessage(view) {
-	const detail = state.detail;
-	if (detail === null) return;
-	const idx = detail.messages.findIndex((m) => m.seq === view.seq);
-	if (idx >= 0) detail.messages[idx] = { ...detail.messages[idx], ...view };
-	else {
-		detail.messages.push(view);
-		detail.messages.sort((a, b) => a.seq - b.seq);
-	}
-	const fresh = node(messageHtml(view, undefined, false));
-	const existing = el.flowInner.querySelector(`.msg[data-seq="${view.seq}"]`);
-	if (existing === null) {
-		const after = [...el.flowInner.querySelectorAll(".msg")].find((m) => Number(m.dataset.seq) > view.seq);
-		if (after === null) el.flowInner.append(fresh);
-		else el.flowInner.insertBefore(fresh, after);
+	el.feed.replaceChildren();
+	if (messages.length === 0) {
+		el.feed.append(emptyBlock("这个频道还没有消息。", null));
 	} else {
-		// T-016 v2：整节点重建前，若旧节点正在逐字流式（data-streaming），把已累积的正文续到新节点上，
-		// 避免 upsert 重建把渐显进度打断重来；最终以 done 全文或刷新全量覆盖。
-		const acc = existing.getAttribute("data-stream-accum");
-		if (acc !== null && existing.hasAttribute("data-streaming")) {
-			const target = fresh.querySelector(".msg-text");
-			if (target !== null) target.textContent = acc;
-			fresh.setAttribute("data-stream-accum", acc);
-		}
-		existing.replaceWith(fresh);
+		const need = needSeqs();
+		el.feed.append(
+			buildStream(messages, {
+				people: state.people,
+				// 两个来源取并集：后端判定的 attention，以及前端按「提问 + 点名老板」算的。
+				isNeed: (message) => message.status === "pending" || need.has(message.seq) || isNeedRow(message),
+			}),
+		);
 	}
-	decorateMentions(fresh.querySelector(".msg-text"), view.mentions ?? []);
-	// 靠近底部才自动贴底，避免用户在看历史时被拽下去（T-012 的浏览位置保护）。
-	const nearBottom = el.flow.scrollTop >= el.flow.scrollHeight - el.flow.clientHeight - 80;
-	if (nearBottom) el.flow.scrollTop = el.flow.scrollHeight;
+	if (state.error) el.feed.prepend(errorBlock(state.error, "重试", () => openChannel(state.currentId)));
+
+	if (veil) {
+		el.flowInner.classList.remove("veil");
+		void el.flowInner.offsetWidth;
+		el.flowInner.classList.add("veil");
+	}
+
+	if (pinned) scrollToBottom();
+	else el.flow.scrollTop = previousTop;
 }
 
-// T-016：订阅某频道的按频道 SSE。切频道/重取时调用，内部先关闭旧连接。
-function connectStream(id) {
-	if (state.stream !== null) {
-		state.stream.close();
-		state.stream = null;
-	}
-	const es = new EventSource(`/api/channels/${encodeURIComponent(id)}/stream`);
-	state.stream = es;
-	// create 事件带完整消息视图（含 status/text），幂等 upsert —— 占位 pending 与填充后 done 都走它。
-	es.addEventListener("create", (event) => {
-		try {
-			upsertMessage(JSON.parse((event).data));
-		} catch {
-			/* 忽略坏帧 */
-		}
-	});
-	// T-016 v2：逐字增量。token 把分片追加进对应 seq 的 .msg-text，渐显；done 用全文兜底（防丢包/重连）。
-	es.addEventListener("token", (event) => {
-		try {
-			const { seq, delta } = JSON.parse(event.data);
-			const node = el.flowInner.querySelector(`.msg[data-seq="${seq}"] .msg-text`);
-			if (node === null) return;
-			// 占位 loading 光标退场：开始有字，去掉 data-placeholder / data-status=pending 视觉。
-			node.removeAttribute("data-placeholder");
-			node.parentElement?.parentElement?.removeAttribute("data-status");
-			node.appendChild(document.createTextNode(delta));
-			const msgEl = node.closest(".msg");
-			if (msgEl !== null) {
-				msgEl.setAttribute("data-streaming", "true");
-				msgEl.setAttribute("data-stream-accum", (msgEl.getAttribute("data-stream-accum") ?? "") + delta);
-			}
-			const nearBottom = el.flow.scrollTop >= el.flow.scrollHeight - el.flow.clientHeight - 80;
-			if (nearBottom) el.flow.scrollTop = el.flow.scrollHeight;
-		} catch {
-			/* 忽略坏帧 */
-		}
-	});
-	es.addEventListener("done", (event) => {
-		try {
-			const view = JSON.parse(event.data);
-			upsertMessage(view);
-			const msgEl = el.flowInner.querySelector(`.msg[data-seq="${view.seq}"]`);
-			if (msgEl !== null) {
-				msgEl.removeAttribute("data-streaming");
-				msgEl.removeAttribute("data-stream-accum");
-			}
-		} catch {
-			/* 忽略坏帧 */
-		}
-	});
-	es.addEventListener("error", () => {});
+function emptyBlock(text, actionLabel, onAction) {
+	const node = document.createElement("div");
+	node.className = "empty";
+	node.innerHTML = `<b>还没有内容</b><span>${escapeHtml(text)}</span>${actionLabel ? `<button type="button">${escapeHtml(actionLabel)}</button>` : ""}`;
+	if (actionLabel) node.querySelector("button")?.addEventListener("click", onAction);
+	return node;
 }
 
-// ── 顶栏 / 输入区 ───────────────────────────────────────────────────────
+function errorBlock(message, retryLabel, onRetry) {
+	const node = document.createElement("div");
+	node.className = "err";
+	node.innerHTML = `<span>${escapeHtml(message)}</span><button type="button">${escapeHtml(retryLabel)}</button>`;
+	node.querySelector("button")?.addEventListener("click", onRetry);
+	return node;
+}
+
+/* ── 活动行 ─────────────────────────────────────────────────────────── */
+
+const act = { text: "", changedAt: 0, timer: 0, slug: "" };
+
+function activityOf() {
+	const messages = state.detail?.messages ?? [];
+	const now = Date.now();
+	for (let index = messages.length - 1; index >= 0; index -= 1) {
+		const message = messages[index];
+		if (!message || message.fromSlug === "owner") continue;
+		if (message.kind !== "think" && message.kind !== "tool" && message.kind !== "work") continue;
+		if (now - message.at > 5 * 60 * 1000) return null;
+		return { message, phrase: activityPhrase(message) };
+	}
+	return null;
+}
+
+function renderActivity() {
+	const line = activityOf();
+	if (!line) {
+		hideActivity();
+		return;
+	}
+	if (el.act.hidden) {
+		el.act.hidden = false;
+		el.act.dataset.leaving = "";
+		el.actAv.innerHTML = avatarSvg({
+			slug: line.message.fromSlug,
+			name: line.message.fromLabel,
+			size: 22,
+			state: "working",
+		});
+		act.text = "";
+		act.changedAt = 0;
+	}
+	if (act.slug !== line.message.fromSlug) {
+		act.slug = line.message.fromSlug;
+		el.actAv.innerHTML = avatarSvg({
+			slug: line.message.fromSlug,
+			name: line.message.fromLabel,
+			size: 22,
+			state: "working",
+		});
+	}
+	el.actTime.textContent = `${Math.max(0, Math.round((Date.now() - line.message.at) / 1000))}s`;
+
+	const next = `${line.message.fromLabel ?? ""}${line.phrase}`;
+	if (next === act.text) return;
+	const wait = Math.max(0, HOLD_MS - (Date.now() - act.changedAt));
+	window.clearTimeout(act.timer);
+	act.timer = window.setTimeout(
+		() => {
+			act.text = next;
+			act.changedAt = Date.now();
+			el.actText.textContent = next;
+		},
+		act.text === "" ? 0 : wait,
+	);
+}
+
+function hideActivity() {
+	if (el.act.hidden) return;
+	const pinned = isPinned();
+	const delta = el.act.offsetHeight;
+	// 钉在底部时，这一行消失会让内容整体上移 delta —— 用 WAAPI 补一段，别让它跳。
+	if (pinned && !prefersReducedMotion()) {
+		el.feed.animate([{ transform: `translateY(${delta}px)` }, { transform: "none" }], {
+			duration: 140,
+			easing: "cubic-bezier(0.23, 1, 0.32, 1)",
+		});
+	}
+	withLinger(el.act, 140, () => {
+		el.act.hidden = true;
+		if (pinned) scrollToBottom();
+	});
+	act.text = "";
+	act.slug = "";
+}
+
+/* ── 标题 / 引用 / 输入 ─────────────────────────────────────────────── */
 
 function renderHead() {
-	const detail = state.detail;
-	if (detail === null) {
-		el.paneTitle.textContent = "选择一个频道";
-		el.paneSub.textContent = "";
-		el.composer.hidden = true;
-		return;
+	const channel =
+		state.detail?.channel ?? state.channels.find((candidate) => candidate.id === state.currentId) ?? null;
+	el.paneTitle.textContent = channel?.title ?? "频道";
+	// 顶栏那个 h1 是全页唯一的一级标题：桌面写产品名，手机写当前区域的名字。
+	el.barTitle.textContent = desktop() ? "一人公司" : (channel?.title ?? "频道");
+	const parts = [];
+	if (channel) {
+		const kind = kindOf(channel);
+		if (kind === "project" && channel.project) parts.push(channel.project);
+		if (channel.ownerLabel) parts.push(kind === "dm" ? "个人频道" : `负责人 ${channel.ownerLabel}`);
+		if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
 	}
-	el.paneTitle.textContent = detail.channel.title;
-	const channel = detail.channel;
-	// 副标题只说「这个房间意味着什么」，不重复标题里已有的人名。
-	const bits = [];
-	if (channel.ownerLabel !== undefined) bits.push(`负责人 ${channel.ownerLabel}`);
-	if (channel.project !== undefined) bits.push(`项目 ${projectName(channel.project)}`);
-	if (channel.kind === "dm") {
-		// 个人频道标题就是人名，所以这里直接把这个人的职位与项目补上。
-		const person = personByName(channel.title);
-		if (person?.title !== undefined) bits.push(person.title);
-		if (person?.project !== undefined) bits.push(`项目 ${projectName(person.project)}`);
-		bits.push("个人频道");
-	}
-	if (bits.length === 0) bits.push(`${detail.members.filter((member) => member.slug !== "owner").length} 人`);
-	el.paneSub.textContent = bits.join(" · ");
-	el.composer.hidden = false;
+	el.paneSub.textContent = parts.join(" · ");
+	el.composer.hidden = !state.currentId;
+	document.body.dataset.pane = state.currentId ? "chat" : "list";
 }
 
 function renderReply() {
-	const reply = state.reply;
-	el.replyBar.hidden = reply === null;
-	if (reply === null) return;
-	el.replyText.textContent = `回复 ${reply.fromLabel}：${reply.excerpt}`;
-}
-
-// ── 数据 ────────────────────────────────────────────────────────────────
-
-async function loadChannels() {
-	const data = await getJSON("/api/channels");
-	state.channels = data.channels ?? [];
-	state.mentionTotal = data.unread?.mentions ?? 0;
-	renderList();
-}
-
-async function openChannel(id, options = {}) {
-	// T-012：是否「真的换了频道」。列表点击/初始进入 = 换频道；同频道内发消息重取 = 不换。
-	const changed = state.current !== id;
-	// 离开当前频道前，先记下它的滚动位置（贴近底部记 -1，回来时回到底部）。
-	if (changed && state.current !== "") {
-		const atBottom = el.flow.scrollTop >= el.flow.scrollHeight - el.flow.clientHeight - 2;
-		state.scrollPos.set(state.current, atBottom ? -1 : el.flow.scrollTop);
+	if (!state.replyTo) {
+		el.replyBar.hidden = true;
+		el.replyText.textContent = "";
+		return;
 	}
-	const playFresh = changed && options.fresh === true;
-	if (state.current !== id) state.detail = null;
-	state.current = id;
-	state.actionsFor = 0;
-	state.reply = null;
+	el.replyBar.hidden = false;
+	el.replyText.innerHTML = `<b>${escapeHtml(state.replyTo.fromLabel ?? "")}</b> ${escapeHtml(
+		String(state.replyTo.excerpt ?? "").slice(0, 60),
+	)}`;
+}
+
+function autosize() {
+	el.input.style.height = "auto";
+	const next = Math.min(160, Math.max(30, el.input.scrollHeight));
+	el.input.style.height = `${next}px`;
+	const card = el.composer.querySelector(".composer-card");
+	if (card) card.dataset.multi = next > 36 ? "true" : "false";
+	const empty = el.input.value.trim() === "";
+	el.send.disabled = empty || !state.currentId;
+}
+
+function renderAll({ veil = false } = {}) {
+	renderTop();
+	renderPeople();
+	renderChannels();
+	renderHead();
 	renderReply();
-	renderList();
-	document.body.dataset.pane = "chat";
-
-	const limit = options.limit ?? PAGE;
-	const before = options.before;
-	const query = `?limit=${limit}${before === undefined ? "" : `&before=${before}`}`;
-	const detail = await getJSON(`/api/channels/${encodeURIComponent(id)}${query}`);
-	state.detail = detail;
-
-	if (before === undefined) {
-		renderHead();
-		renderFlow({ toBottom: true, fresh: playFresh });
-		// T-012：换频道回来时恢复到上次浏览位置；同频道重取（changed=false）始终保持底部。
-		if (changed) {
-			const saved = state.scrollPos.get(id);
-			if (saved !== undefined && saved !== -1) el.flow.scrollTop = saved;
-		}
-		// T-016：建立/重建该频道的 SSE 连接（切频道时 connectStream 内部会先关闭旧连接）。
-		connectStream(id);
-	} else {
-		// 上滑加载：把新拿到的一段**插到前面**，并把视口按新内容高度下移，
-		// 否则正在看的那条会被推走（旧前端「滚动条乱跳」就是这里没补偿）。
-		const heightBefore = el.flow.scrollHeight;
-		const fragment = document.createDocumentFragment();
-		for (const message of detail.messages) fragment.append(node(messageHtml(message, undefined, false)));
-		// T-015：移除「加载更早」按钮，改为上滑自动加载（见 loadEarlier + flow 的 scroll 监听）。
-		const existing = el.flowInner.querySelector(".more");
-		existing?.remove();
-		el.flowInner.prepend(fragment);
-		el.flow.scrollTop += el.flow.scrollHeight - heightBefore;
-		decorateAll();
-	}
-	await markRead();
+	renderFlow({ veil });
+	renderActivity();
+	autosize();
 }
 
-/** 上报已读：只报「看到的最新一条」，后端只前进不后退。 */
-async function markRead() {
-	const detail = state.detail;
-	if (detail === null || detail.messages.length === 0) return;
-	const seq = detail.messages[detail.messages.length - 1].seq;
-	if (state.readSeqs.get(detail.channel.id) === seq) return;
-	state.readSeqs.set(detail.channel.id, seq);
+/* ── 取数 ───────────────────────────────────────────────────────────── */
+
+async function loadOrg() {
 	try {
-		await postJSON(`/api/channels/${encodeURIComponent(detail.channel.id)}/read`, { seq });
-		// 本地先落账，避免列表红点等到下一次 SSE 才消失。
-		for (const message of detail.messages) message.read = true;
-		const row = state.channels.find((channel) => channel.id === detail.channel.id);
-		if (row !== undefined) {
-			// 只减点名数：未读总数已经不显示，留着它就是没人读的状态。
-			state.mentionTotal = Math.max(0, state.mentionTotal - row.mentions);
-			row.unread = 0;
-			row.mentions = 0;
-			renderList();
-		}
+		const org = await getJSON("/api/org");
+		state.org = org;
+		state.people = org.people ?? [];
+		state.lastOk = Date.now();
+		renderPeople();
+		renderTop();
+		if (!el.team.hidden) renderTeam();
 	} catch (error) {
-		state.readSeqs.delete(detail.channel.id);
 		toast(error.message, "error");
 	}
 }
 
-async function send() {
-	const text = el.input.value.trim();
-	if (text === "" || state.detail === null) return;
-	const reply = state.reply;
-	el.send.disabled = true;
+async function loadChannels() {
 	try {
-		await postJSON(`/api/channels/${encodeURIComponent(state.detail.channel.id)}/messages`, {
-			text,
-			...(reply === null ? {} : { replyTo: reply.seq }),
-		});
-		el.input.value = "";
-		state.reply = null;
-		renderReply();
-		resizeInput();
-		// 不等 SSE：立刻把这一段重取一遍，否则要等推送才有自己的消息。
-		await openChannel(state.detail.channel.id);
+		const payload = await getJSON("/api/channels");
+		state.channels = payload.channels ?? [];
+		state.unread = payload.unread ?? { total: 0, mentions: 0 };
+		state.lastOk = Date.now();
+		renderChannels();
+		renderTop();
+	} catch (error) {
+		state.error = error.message;
+		renderFlow();
+	}
+}
+
+async function loadAttention() {
+	if (state.attentionBroken) return;
+	try {
+		const payload = await attention();
+		state.attention = { items: payload.items ?? [], unread: payload.unread ?? 0 };
+		renderTop();
+	} catch {
+		// 接口不存在也不影响主流程：退回「未读提及之和」，标记仍靠 isNeed 在前端算。
+		// 只尝试一次，别每次推送都刷一条 404。
+		state.attentionBroken = true;
+		state.attention = { items: [], unread: 0 };
+		renderTop();
+	}
+}
+
+async function openChannel(id, { push = true } = {}) {
+	if (!id) return;
+	if (state.currentId && state.currentId !== id) {
+		state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
+	}
+	closeChannelStream();
+	state.currentId = id;
+	state.detail = null;
+	state.error = null;
+	state.loading = true;
+	state.replyTo = null;
+	el.skel.hidden = false;
+	renderHead();
+	renderChannels();
+	renderReply();
+	renderFlow({ veil: true });
+	if (push && location.hash !== `#/c/${id}`) history.replaceState(null, "", `#/c/${id}`);
+
+	try {
+		const detail = await getJSON(`/api/channels/${encodeURIComponent(id)}?limit=${PAGE}`);
+		if (state.currentId !== id) return;
+		state.detail = detail;
+		for (const message of detail.messages ?? []) notePresence(message);
+		// 注意顺序：先把游标标成已读，再画 —— 否则第一条新消息会先闪一下未读点。
+		await markRead(detail);
+		renderAll();
+		scrollToBottom();
+		openChannelStream(id);
+	} catch (error) {
+		if (state.currentId !== id) return;
+		state.error = error.message;
+		state.loading = false;
+		renderFlow({ veil: true });
+	}
+}
+
+async function markRead(detail) {
+	const channel = detail?.channel;
+	if (!channel) return;
+	const lastSeq = channel.lastSeq ?? 0;
+	if (!lastSeq) return;
+	const key = `${state.currentId}:${lastSeq}`;
+	if (state.readMark.get(key)) return;
+	state.readMark.set(key, true);
+	try {
+		await postJSON(`/api/channels/${encodeURIComponent(state.currentId)}/read`, { seq: lastSeq });
+		const row = state.channels.find((candidate) => candidate.id === state.currentId);
+		if (row) {
+			row.unread = 0;
+			row.mentions = 0;
+		}
+		renderChannels();
+	} catch {
+		state.readMark.delete(key);
+	}
+}
+
+async function loadEarlier() {
+	if (state.loadingEarlier || !state.detail?.hasMore || !state.currentId) return;
+	const first = state.detail.messages?.[0]?.seq;
+	if (!first) return;
+	state.loadingEarlier = true;
+	const fromEnd = el.flow.scrollHeight - el.flow.scrollTop;
+	try {
+		const earlier = await getJSON(
+			`/api/channels/${encodeURIComponent(state.currentId)}?limit=${PAGE}&before=${first}`,
+		);
+		if (state.currentId !== earlier.channel.id) return;
+		const merged = [...(earlier.messages ?? []), ...(state.detail.messages ?? [])];
+		state.detail = { ...state.detail, messages: merged, hasMore: earlier.hasMore };
+		renderFlow({ restore: false });
+		el.flow.scrollTop = el.flow.scrollHeight - fromEnd;
 	} catch (error) {
 		toast(error.message, "error");
 	} finally {
-		el.send.disabled = false;
-		el.input.focus();
+		state.loadingEarlier = false;
 	}
 }
 
-// ── @ 候选 ──────────────────────────────────────────────────────────────
-
-let mentionTimer;
-
-function hideMention() {
-	state.mention = null;
-	el.mentionPop.hidden = true;
+async function reload() {
+	await Promise.all([loadOrg(), loadChannels(), loadAttention()]);
+	if (state.currentId) await openChannel(state.currentId, { push: false });
 }
 
-function renderMention() {
-	const mention = state.mention;
-	if (mention === null || mention.items.length === 0) {
-		el.mentionPop.hidden = true;
-		return;
+/* ── SSE ────────────────────────────────────────────────────────────── */
+
+function openChannelStream(id) {
+	if (typeof EventSource === "undefined") return;
+	const source = new EventSource(`/api/channels/${encodeURIComponent(id)}/stream`);
+	const merge = (payload) => {
+		if (state.currentId !== id || !state.detail) return;
+		const message = payload?.message ?? payload;
+		if (!message || typeof message.seq !== "number") return;
+		const messages = state.detail.messages ?? [];
+		const index = messages.findIndex((candidate) => candidate.seq === message.seq);
+		if (index >= 0) messages[index] = { ...messages[index], ...message };
+		else messages.push(message);
+		notePresence(message);
+		const pinned = isPinned();
+		renderFlow({ restore: false });
+		if (pinned) scrollToBottom();
+		renderActivity();
+	};
+	source.addEventListener("create", (event) => {
+		try {
+			merge(JSON.parse(event.data));
+		} catch {
+			/* 半条 JSON 不该让整列错误 */
+		}
+	});
+	source.addEventListener("done", (event) => {
+		try {
+			merge(JSON.parse(event.data));
+		} catch {
+			/* 同上 */
+		}
+	});
+	source.addEventListener("token", (event) => {
+		try {
+			const payload = JSON.parse(event.data);
+			if (state.currentId !== id || typeof payload.seq !== "number") return;
+			const row = el.feed.querySelector(`.row[data-seq="${payload.seq}"] .md`);
+			if (row) row.append(document.createTextNode(payload.delta ?? ""));
+			if (isPinned()) scrollToBottom();
+		} catch {
+			/* 同上 */
+		}
+	});
+	source.addEventListener("error", () => {
+		/* EventSource 自己重连，这里只标记一次断线 */
+	});
+	state.closeChannelStream = () => source.close();
+}
+
+function closeChannelStream() {
+	if (state.closeChannelStream) {
+		state.closeChannelStream();
+		state.closeChannelStream = null;
 	}
-	el.mentionPop.innerHTML = mention.items
-		.map(
-			(item, index) =>
-				`<button class="mention-item" type="button" data-index="${index}"${
-					index === mention.index ? ' aria-selected="true"' : ""
-				}><span class="mention-name">${escapeHtml(item.label)}</span><small class="mention-title">${escapeHtml(item.title ?? "")}</small><small class="mention-slug">@${escapeHtml(item.slug)}</small></button>`,
-		)
-		.join("");
-	const rect = el.input.getBoundingClientRect();
-	el.mentionPop.style.left = `${rect.left + 8}px`;
-	el.mentionPop.style.bottom = `${window.innerHeight - rect.top + 6}px`;
-	el.mentionPop.hidden = false;
 }
 
-async function refreshMention() {
-	const input = el.input;
-	const caret = input.selectionStart ?? 0;
-	const before = input.value.slice(0, caret);
-	const match = /(^|[\s（(])@([\p{L}\p{N}_-]*)$/u.exec(before);
-	if (match === null) {
-		hideMention();
-		return;
+/* ── 待办拍板 ───────────────────────────────────────────────────────── */
+
+async function submitPending(row, action, option) {
+	const seq = Number(row.dataset.seq);
+	const article = row.querySelector(".pending");
+	if (!article || !seq) return;
+	const feedback = (text, ok) => {
+		let node = article.querySelector(".pending-msg");
+		if (!node) {
+			node = document.createElement("p");
+			node.className = "pending-msg";
+			article.append(node);
+		}
+		node.textContent = text;
+		if (!ok) node.dataset.tone = "error";
+	};
+	try {
+		if (action === "answer") {
+			await postJSON("/api/answer", { channelId: state.currentId, seq, choice: option });
+			const button = article.querySelector(`.pending-opt[data-opt="${option}"]`);
+			if (button) {
+				button.dataset.done = "true";
+				button.setAttribute("aria-pressed", "true");
+				window.setTimeout(() => {
+					feedback("已记录", true);
+				}, 1500);
+			}
+			feedback("已记录", true);
+		} else {
+			await postJSON("/api/pending/dispose", { channelId: state.currentId, seq, action });
+			feedback(action === "resolve" ? "已标记解决" : "已驳回", true);
+			article.querySelectorAll(".pending-opt").forEach((node) => node.setAttribute("disabled", ""));
+		}
+	} catch (error) {
+		feedback(`没提交上去：${error.message}`, false);
 	}
-	const keyword = match[2] ?? "";
-	const start = caret - keyword.length - 1;
-	if (state.detail === null) {
-		hideMention();
-		return;
-	}
-	const data = await getJSON(`/api/channels/${encodeURIComponent(state.detail.channel.id)}/mentionable`);
-	const items = (data.candidates ?? []).filter(
-		(item) => keyword === "" || item.label.includes(keyword) || item.slug.includes(keyword),
-	);
-	if (items.length === 0) {
-		hideMention();
-		return;
-	}
-	state.mention = { items: items.slice(0, 8), index: 0, start, end: caret };
-	renderMention();
 }
 
-function acceptMention(index) {
-	const mention = state.mention;
-	if (mention === null) return;
-	const item = mention.items[index];
-	if (item === undefined) return;
-	const value = el.input.value;
-	const label = item.label;
-	el.input.value = `${value.slice(0, mention.start)}@${label} ${value.slice(mention.end)}`;
-	const caret = mention.start + label.length + 2;
-	el.input.setSelectionRange(caret, caret);
-	hideMention();
-	el.input.focus();
-}
+/* ── 团队浮层 ───────────────────────────────────────────────────────── */
 
-// ── 消息浮窗（复制 / 引用） ─────────────────────────────────────────────
+let teamReturn = null;
 
-function showActions(seq, container) {
-	document.querySelector(".msg-actions")?.remove();
-	state.actionsFor = seq;
-	const message = state.detail?.messages.find((entry) => entry.seq === seq);
-	if (message === undefined) return;
-	const bar = document.createElement("div");
-	bar.className = "msg-actions";
-	bar.dataset.for = String(seq);
-	bar.innerHTML = `<button type="button" data-act="copy">复制</button><button type="button" data-act="reply">引用</button>`;
-	container.append(bar);
-}
-
-function clearActions() {
-	document.querySelector(".msg-actions")?.remove();
-	state.actionsFor = 0;
-}
-
-// ── 编制表（团队视图） ──────────────────────────────────────────────────
-
-/**
- * 「谁是哪个项目的、什么职位」—— 老板提的需求（T-20261028-005）。
- *
- * 数据一直在 `/api/org` 里（`streamOrg` 每帧都是完整快照），旧前端只把它当成
- * 「该刷新频道列表了」的信号，一次都没画出来。这里把同一份快照投影成一张表：
- * 不新开接口、不额外轮询，组织一变表就变。
- *
- * 为什么不塞进左侧频道列表：频道列表回答「去哪儿说话」，编制表回答「他是谁」。
- * 两个问题挤在一列里，两边都会变难读（那正是老板说「太混乱」的原因）。
- */
 function renderTeam() {
 	const people = state.org?.people ?? [];
-	el.teamCount.textContent = people.length === 0 ? "" : `${people.length} 人`;
-	if (people.length === 0) {
-		el.teamList.innerHTML = `<div class="empty">还没拿到组织数据，稍等一下或点刷新</div>`;
-		return;
-	}
-	el.teamList.innerHTML = people.map(crewHtml).join("");
+	el.teamCount.textContent = `${people.length} 人`;
+	const sorted = [...people].sort((left, right) => {
+		const depth = (person) => (person.manager ? (person.managerLabel ? 1 : 1) : 0);
+		return depth(left) - depth(right) || (left.label ?? "").localeCompare(right.label ?? "");
+	});
+	el.teamList.innerHTML =
+		sorted
+			.map(
+				(person) => `<div class="crew"><span>${avatarSvg({
+					slug: person.slug,
+					name: person.label,
+					size: 24,
+					state: presenceOf(person.slug),
+				})}</span><span><span class="crew-name">${escapeHtml(person.label ?? "")}</span><span class="crew-line">${escapeHtml(
+					[person.title, person.project].filter(Boolean).join(" · ") || "—",
+				)}</span></span><span class="crew-report">${person.managerLabel ? `向 ${escapeHtml(person.managerLabel)}` : "直接向老板"}</span></div>`,
+			)
+			.join("") || `<div class="empty"><span>名册是空的。</span></div>`;
 }
 
-/** 一行一人：左色条（项目）+ 头像 + 姓名 + 职位 + 项目 + 向谁汇报。 */
-function crewHtml(person) {
-	const tone = projectTone(person.project);
-	// `orgView` 约定：manager 为空 = 直接向老板汇报。
-	const to = person.manager === undefined ? "老板" : (person.managerLabel ?? person.manager);
-	const project =
-		person.project === undefined
-			? `<span class="crew-proj" data-kind="none">公司</span>`
-			: `<span class="crew-proj">${escapeHtml(projectName(person.project))}</span>`;
-	return `<div class="crew" style="--crew:${tone}" data-slug="${escapeAttr(person.slug)}">
-		<span class="crew-strip" aria-hidden="true"></span>
-		${avatarHtml(person.label)}
-		<span class="crew-name">${escapeHtml(person.label)}</span>
-		<span class="crew-title">${escapeHtml(person.title || "职位待填")}</span>
-		${project}
-		<span class="crew-report">向 <b>${escapeHtml(to)}</b> 汇报</span>
-	</div>`;
-}
-
-// 浮层打开时，背景内容对屏幕阅读器/键盘不可达（无障碍语义）；关闭时恢复。
-function setBackgroundInert(inert) {
-	for (const node of document.body.children) {
-		node.inert = node === el.team ? false : inert;
-	}
-}
-
-async function openTeam() {
-	state.teamOpen = true;
+function openTeam() {
+	teamReturn = document.activeElement;
+	renderTeam();
 	el.team.hidden = false;
 	el.teamBtn.setAttribute("aria-expanded", "true");
-	setBackgroundInert(true);
-	renderTeam();
+	el.frame.inert = true;
 	el.teamPanel.focus();
-	// SSE 还没推过第一帧时自己拉一次；失败就留空态，等人点刷新 —— 不吞错。
-	if (state.org === null) {
-		try {
-			const snapshot = await getJSON("/api/org");
-			state.org = snapshot;
-			if (state.teamOpen) renderTeam();
-			renderList();
-			renderHead();
-		} catch (error) {
-			toast(error.message, "error");
-		}
-	}
 }
 
 function closeTeam() {
-	state.teamOpen = false;
-	el.team.hidden = true;
-	setBackgroundInert(false);
+	if (el.team.hidden) return;
+	withLinger(el.team, 160, () => {
+		el.team.hidden = true;
+		if (teamReturn instanceof HTMLElement) teamReturn.focus();
+	});
 	el.teamBtn.setAttribute("aria-expanded", "false");
-	el.teamBtn.focus();
+	el.frame.inert = false;
 }
 
-// ── 事件 ────────────────────────────────────────────────────────────────
-
-function resizeInput() {
-	el.input.style.height = "auto";
-	el.input.style.height = `${Math.min(el.input.scrollHeight, 200)}px`;
+function trapTeamFocus(event) {
+	if (event.key !== "Tab") return;
+	const focusables = el.teamPanel.querySelectorAll(
+		'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+	);
+	if (focusables.length === 0) return;
+	const first = focusables[0];
+	const last = focusables[focusables.length - 1];
+	if (event.shiftKey && document.activeElement === first) {
+		event.preventDefault();
+		last.focus();
+	} else if (!event.shiftKey && document.activeElement === last) {
+		event.preventDefault();
+		first.focus();
+	}
 }
 
-function setupEvents() {
-	// 列表：一个委托监听，频道行整体重画不影响。
-	el.rows.addEventListener("click", (event) => {
-		const row = event.target.closest("[data-channel]");
-		if (row === null) return;
-		void openChannel(row.dataset.channel, { fresh: true }).catch((error) => toast(error.message, "error"));
-	});
+/* ── 菜单 ───────────────────────────────────────────────────────────── */
 
-	// 消息流：加载更早 / 点引用跳过去 / 点消息浮窗。
-	el.flow.addEventListener("click", (event) => {
-		const jump = event.target.closest("[data-jump]");
-		if (jump !== null) {
-			const target = el.flowInner.querySelector(`[data-seq="${jump.dataset.jump}"]`);
-			if (target === null) {
-				toast("那条消息已经不在这一页里了", "error");
-				return;
-			}
-			target.scrollIntoView({ block: "center", behavior: "smooth" });
-			target.animate?.([{ background: "color-mix(in srgb, var(--accent) 22%, transparent)" }, { background: "transparent" }], {
-				duration: 900,
-			});
-			return;
-		}
-		const act = event.target.closest("[data-act]");
-		if (act !== null) {
-			const seq = Number(act.closest(".msg-actions")?.dataset.for);
-			const message = state.detail?.messages.find((entry) => entry.seq === seq);
-			if (message === undefined) return;
-			if (act.dataset.act === "copy") {
-				void copyText(message.text).then((ok) => toast(ok ? "已复制" : "复制失败，请手动选择", ok ? "info" : "error"));
-			} else {
-				const first = message.text.split("\n").find((line) => line.trim() !== "") ?? "";
-				state.reply = {
-					seq: message.seq,
-					fromLabel: message.fromLabel,
-					excerpt: first.length > 60 ? `${first.slice(0, 60)}…` : first,
-				};
-				renderReply();
-				el.input.focus();
-			}
-			clearActions();
-			return;
-		}
-		const bubble = event.target.closest(".msg");
-		if (bubble === null) {
-			clearActions();
-			return;
-		}
-		const seq = Number(bubble.dataset.seq);
-		if (state.actionsFor === seq) {
-			clearActions();
-			return;
-		}
-		// 浮窗贴着这条消息的右上角，而不是跟着鼠标 —— 后者滚动时会漂。
-		showActions(seq, bubble);
-	});
+function placeMenu(menu, anchor, { align = "right", above = false } = {}) {
+	const rect = anchor.getBoundingClientRect();
+	menu.hidden = false;
+	const width = menu.offsetWidth;
+	const height = menu.offsetHeight;
+	const left = align === "right" ? rect.right - width : rect.left;
+	menu.style.left = `${Math.max(8, Math.min(window.innerWidth - width - 8, left))}px`;
+	menu.style.top = `${above ? rect.top - height - 6 : rect.bottom + 6}px`;
+	if (above) menu.style.transformOrigin = "6px 100%";
+}
 
-	// 滚动时收浮窗：绝对定位的元素跟着滚动会很怪。
-	el.flow.addEventListener("scroll", () => {
-		if (state.actionsFor !== 0) clearActions();
-		// T-015：距顶小于阈值时自动加载更早消息（loadEarlier 内部会判 hasMore 与防重入）。
-		if (el.flow.scrollTop < 80 && (state.detail?.hasMore ?? false)) void loadEarlier();
-	}, { passive: true });
+function toggleMenu(menu, anchor, options) {
+	const willOpen = menu.hidden;
+	for (const other of [el.layoutMenu, el.plusMenu]) {
+		if (other !== menu && !other.hidden) withLinger(other, 120);
+	}
+	if (!willOpen) {
+		withLinger(menu, 120);
+		anchor?.setAttribute("aria-expanded", "false");
+		return;
+	}
+	placeMenu(menu, anchor, options);
+	anchor?.setAttribute("aria-expanded", "true");
+}
 
+function applyLayout() {
+	document.body.dataset.layout = state.layout;
+	for (const item of el.layoutMenu.querySelectorAll("[data-layout]")) {
+		item.setAttribute("aria-checked", item.dataset.layout === state.layout ? "true" : "false");
+	}
+}
+
+function setLayout(next) {
+	state.layout = next;
+	try {
+		localStorage.setItem(LAYOUT_KEY, next);
+	} catch {
+		/* 隐私模式下写不进去就算了 */
+	}
+	applyLayout();
+	renderFlow({ restore: false });
+}
+
+/* ── @ 提及 ─────────────────────────────────────────────────────────── */
+
+let mentionCache = new Map();
+let mentionTimer = 0;
+
+function closeMention() {
+	if (!state.mention.open) return;
+	state.mention.open = false;
+	el.mentionPop.hidden = true;
+	el.mentionPop.dataset.active = "false";
+}
+
+function queryAtCaret() {
+	const value = el.input.value;
+	const caret = el.input.selectionStart ?? value.length;
+	const before = value.slice(0, caret);
+	const match = /(^|[\s（(])@([\p{L}\p{N}_-]*)$/u.exec(before);
+	if (!match) return null;
+	return { start: caret - match[2].length - 1, query: match[2].toLowerCase() };
+}
+
+async function refreshMention() {
+	const hit = queryAtCaret();
+	if (!hit || !state.currentId) return closeMention();
+	window.clearTimeout(mentionTimer);
+	const finish = (candidates) => {
+		const items = candidates
+			.filter((candidate) => {
+				if (!hit.query) return true;
+				return `${candidate.label} ${candidate.slug} ${candidate.title ?? ""}`
+					.toLowerCase()
+					.includes(hit.query);
+			})
+			.slice(0, 8);
+		if (items.length === 0) return closeMention();
+		state.mention = { open: true, items, index: 0, start: hit.start };
+		el.mentionList.innerHTML = items
+			.map(
+				(candidate) =>
+					`<button class="mention-item" type="button" data-index="${items.indexOf(candidate)}" aria-selected="false"><span>${avatarSvg(
+						{ slug: candidate.slug, name: candidate.label, size: 24 },
+					)}</span><span class="mi-main"><span class="mi-name">${escapeHtml(
+						candidate.label ?? "",
+					)}</span><span class="mi-title">${escapeHtml(candidate.title || `@${candidate.slug ?? ""}`)}</span></span></button>`,
+			)
+			.join("");
+		el.mentionPop.hidden = false;
+		el.mentionPop.dataset.active = "true";
+		positionMention();
+		selectMention(0, { instant: true });
+	};
+	if (mentionCache.has(state.currentId)) {
+		finish(mentionCache.get(state.currentId));
+		return;
+	}
+	try {
+		const payload = await getJSON(`/api/channels/${encodeURIComponent(state.currentId)}/mentionable`);
+		const candidates = payload.candidates ?? [];
+		mentionCache.set(state.currentId, candidates);
+		finish(candidates);
+	} catch {
+		closeMention();
+	}
+}
+
+function positionMention() {
+	const card = el.composer.querySelector(".composer-card") ?? el.composer;
+	const rect = card.getBoundingClientRect();
+	const height = el.mentionPop.offsetHeight || 200;
+	el.mentionPop.style.left = `${Math.max(8, Math.min(rect.left + 30, window.innerWidth - el.mentionPop.offsetWidth - 8))}px`;
+	el.mentionPop.style.top = `${Math.max(8, rect.top - height - 6)}px`;
+}
+
+function selectMention(index, { instant = false } = {}) {
+	const items = el.mentionList.querySelectorAll(".mention-item");
+	if (items.length === 0) return;
+	const next = (index + items.length) % items.length;
+	state.mention.index = next;
+	items.forEach((item, at) => item.setAttribute("aria-selected", at === next ? "true" : "false"));
+	const target = items[next];
+	const to = { x: target.offsetLeft, w: target.offsetWidth };
+	if (instant) {
+		el.mentionThumb.style.transform = `translateX(${to.x}px)`;
+		el.mentionThumb.style.width = `${to.w}px`;
+		return;
+	}
+	glide(el.mentionThumb, to);
+	el.mentionThumb.style.height = `${target.offsetHeight}px`;
+	el.mentionThumb.style.top = `${target.offsetTop}px`;
+}
+
+function acceptMention(index) {
+	const candidate = state.mention.items[index];
+	if (!candidate) return;
+	const value = el.input.value;
+	const caret = el.input.selectionStart ?? value.length;
+	const head = value.slice(0, state.mention.start);
+	const tail = value.slice(caret);
+	const insert = `@${candidate.label ?? candidate.slug} `;
+	el.input.value = `${head}${insert}${tail}`;
+	const at = head.length + insert.length;
+	el.input.setSelectionRange(at, at);
+	closeMention();
+	autosize();
+	el.input.focus();
+}
+
+/* ── 行内动作 ───────────────────────────────────────────────────────── */
+
+function rowText(row) {
+	return row.querySelector(".md")?.innerText ?? row.innerText ?? "";
+}
+
+async function copyRow(button, text) {
+	const ok = await copyText(text);
+	if (!ok) {
+		toast("复制失败", "error");
+		return;
+	}
+	const icon = button.innerHTML;
+	button.dataset.done = "true";
+	button.innerHTML = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`;
+	window.setTimeout(() => {
+		button.dataset.done = "false";
+		button.innerHTML = icon;
+	}, HL_MS);
+}
+
+function highlightSeq(seq) {
+	const row = el.feed.querySelector(`.row[data-seq="${seq}"]`);
+	if (!row) return;
+	row.scrollIntoView({ block: "center", behavior: prefersReducedMotion() ? "auto" : "smooth" });
+	row.dataset.hl = "true";
+	window.setTimeout(() => delete row.dataset.hl, HL_MS + 100);
+}
+
+function replyToRow(row) {
+	const seq = Number(row.dataset.seq);
+	if (!seq) return;
+	state.replyTo = { seq, fromLabel: row.querySelector(".row-name")?.textContent ?? "消息", excerpt: rowText(row).slice(0, 80) };
+	renderReply();
+	el.input.focus();
+}
+
+/* ── 事件绑定 ───────────────────────────────────────────────────────── */
+
+function bind() {
 	el.refresh.addEventListener("click", () => {
-		void loadChannels().catch((error) => toast(error.message, "error"));
-		if (state.current !== "") void openChannel(state.current).catch((error) => toast(error.message, "error"));
+		reload();
+	});
+
+	el.unreadTotal.addEventListener("click", () => {
+		const items = needItems();
+		if (items.length === 0) return;
+		state.needIndex = (state.needIndex + 1) % items.length;
+		const item = items[state.needIndex];
+		if (item.channelId !== state.currentId) {
+			openChannel(item.channelId).then(() => {
+				if (item.seq) window.setTimeout(() => highlightSeq(item.seq), 120);
+			});
+		} else if (item.seq) {
+			highlightSeq(item.seq);
+		}
+	});
+
+	el.menuBtn.addEventListener("click", (event) => {
+		event.stopPropagation();
+		toggleMenu(el.layoutMenu, el.menuBtn);
+	});
+
+	el.layoutMenu.addEventListener("click", (event) => {
+		const item = event.target.closest("[data-layout]");
+		if (!item) return;
+		setLayout(item.dataset.layout);
+		withLinger(el.layoutMenu, 120);
+		el.menuBtn.setAttribute("aria-expanded", "false");
+	});
+
+	el.plusBtn.addEventListener("click", (event) => {
+		event.stopPropagation();
+		toggleMenu(el.plusMenu, el.plusBtn, { align: "left", above: true });
+	});
+
+	el.plusMenu.addEventListener("click", (event) => {
+		const item = event.target.closest("[data-plus]");
+		if (!item) return;
+		withLinger(el.plusMenu, 120);
+		el.plusBtn.setAttribute("aria-expanded", "false");
+		if (item.dataset.plus === "quote") {
+			const last = [...el.feed.querySelectorAll('.row[data-seq]')].pop();
+			if (last) replyToRow(last);
+			else toast("这个频道还没有可以引用的消息");
+			return;
+		}
+		// 便签：把自己正在输入的内容变成一条广播出去的话（老板自己说的，带 --accent-wash）。
+		const text = el.input.value.trim();
+		if (!text) {
+			toast("先写点什么，再存成便签");
+			return;
+		}
+		sendMessage(`[便签] ${text}`).then((ok) => {
+			if (ok) {
+				el.input.value = "";
+				autosize();
+			}
+		});
+	});
+
+	el.rows.addEventListener("click", (event) => {
+		const button = event.target.closest("[data-channel]");
+		if (!button) return;
+		openChannel(button.dataset.channel);
+	});
+
+	el.people.addEventListener("click", (event) => {
+		const button = event.target.closest("[data-slug]");
+		if (!button) return;
+		const slug = button.dataset.slug;
+		const person = state.people.find((candidate) => candidate.slug === slug);
+		const dm = state.channels.find((channel) => kindOf(channel) === "dm" && channel.title === person?.label);
+		if (dm) openChannel(dm.id);
+		else openTeam();
 	});
 
 	el.back.addEventListener("click", () => {
-		document.body.dataset.pane = "list";
+		if (state.currentId) {
+			state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
+		}
+		state.currentId = null;
+		state.detail = null;
+		state.replyTo = null;
+		closeChannelStream();
+		history.replaceState(null, "", "#/");
+		renderAll();
 	});
 
-	el.replyCancel.addEventListener("click", () => {
-		state.reply = null;
-		renderReply();
+	/* 消息流：所有行内动作都在这里，委托一次到底。 */
+	el.feed.addEventListener("click", (event) => {
+		const target = event.target;
+		const row = target.closest(".row");
+
+		const tool = target.closest("[data-act]");
+		if (tool && row) {
+			if (tool.dataset.act === "copy") copyRow(tool, rowText(row));
+			else if (tool.dataset.act === "reply") replyToRow(row);
+			else if (tool.dataset.act === "locate") highlightSeq(Number(row.dataset.seq));
+			return;
+		}
+
+		const jump = target.closest("[data-jump]");
+		if (jump) {
+			highlightSeq(Number(jump.dataset.jump));
+			return;
+		}
+
+		const fold = target.closest("[data-fold-btn]");
+		if (fold) {
+			const body = fold.previousElementSibling;
+			if (body?.classList.contains("fold")) {
+				const folded = body.dataset.folded !== "false";
+				body.dataset.folded = folded ? "false" : "true";
+				fold.textContent = folded ? "收起" : `展开全文（${rowText(row).length} 字）`;
+			}
+			return;
+		}
+
+		const copyCode = target.closest(".md-code-copy");
+		if (copyCode) {
+			const pre = copyCode.closest(".md-code")?.querySelector("pre");
+			if (!pre) return;
+			copyText(pre.innerText).then((ok) => {
+				if (!ok) return;
+				const label = copyCode.textContent;
+				copyCode.textContent = "已复制";
+				window.setTimeout(() => {
+					copyCode.textContent = label;
+				}, HL_MS);
+			});
+			return;
+		}
+
+		const pending = target.closest("[data-pending]");
+		if (pending && row) {
+			const action = pending.dataset.pending;
+			if (action === "answer") submitPending(row, "answer", Number(pending.dataset.opt));
+			else submitPending(row, action);
+			return;
+		}
+
+		const image = target.closest(".md-img img");
+		if (image) {
+			el.lightboxImg.src = image.currentSrc || image.src;
+			el.lightbox.hidden = false;
+			return;
+		}
 	});
+
+	el.flow.addEventListener(
+		"scroll",
+		() => {
+			if (state.currentId && !state.loading) state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
+		},
+		{ passive: true },
+	);
 
 	el.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
-		void send();
+		sendMessage(el.input.value);
 	});
 
 	el.input.addEventListener("input", () => {
-		resizeInput();
-		clearTimeout(mentionTimer);
-		mentionTimer = setTimeout(() => void refreshMention(), 120);
+		autosize();
+		window.clearTimeout(mentionTimer);
+		mentionTimer = window.setTimeout(refreshMention, 60);
+	});
+
+	el.input.addEventListener("blur", () => {
+		window.setTimeout(closeMention, 120);
 	});
 
 	el.input.addEventListener("keydown", (event) => {
-		const mention = state.mention;
-		if (mention !== null) {
-			if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+		if (event.key === "Escape") {
+			if (state.mention.open) {
 				event.preventDefault();
-				const step = event.key === "ArrowDown" ? 1 : -1;
-				mention.index = (mention.index + step + mention.items.length) % mention.items.length;
-				renderMention();
+				closeMention();
+				return;
+			}
+			if (state.replyTo) {
+				event.preventDefault();
+				state.replyTo = null;
+				renderReply();
+			}
+			return;
+		}
+		if (state.mention.open) {
+			if (event.key === "ArrowDown") {
+				event.preventDefault();
+				selectMention(state.mention.index + 1);
+				return;
+			}
+			if (event.key === "ArrowUp") {
+				event.preventDefault();
+				selectMention(state.mention.index - 1);
 				return;
 			}
 			if (event.key === "Enter" || event.key === "Tab") {
-				event.preventDefault();
-				acceptMention(mention.index);
-				return;
-			}
-			if (event.key === "Escape") {
-				hideMention();
-				return;
+				if (!event.isComposing && event.keyCode !== 229) {
+					event.preventDefault();
+					acceptMention(state.mention.index);
+					return;
+				}
 			}
 		}
-		// 输入法组字期间的 Enter 是选词，不是发送。`keyCode === 229` 兼容 Safari。
-		if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+		// 输入法组字中 / Safari 的 229：回车是「上屏」，不是「发送」。
+		if (event.key === "Enter" && !event.shiftKey) {
+			if (event.isComposing || event.keyCode === 229) return;
 			event.preventDefault();
-			void send();
+			sendMessage(el.input.value);
 		}
 	});
 
-	el.mentionPop.addEventListener("mousedown", (event) => {
+	el.mentionList.addEventListener("mousedown", (event) => {
 		const item = event.target.closest("[data-index]");
-		if (item === null) return;
+		if (!item) return;
 		event.preventDefault();
 		acceptMention(Number(item.dataset.index));
 	});
 
-	document.addEventListener("click", (event) => {
-		if (el.mentionPop.contains(event.target)) return;
-		if (event.target === el.input) return;
-		hideMention();
+	el.mentionList.addEventListener("mousemove", (event) => {
+		const item = event.target.closest("[data-index]");
+		if (!item) return;
+		const index = Number(item.dataset.index);
+		if (index !== state.mention.index) selectMention(index);
 	});
 
-	// 团队视图：入口开/关，点浮层外关，Esc 关（键盘可达要求见工单）。
-	el.teamBtn.addEventListener("click", () => {
-		if (state.teamOpen) closeTeam();
-		else void openTeam();
+	el.replyCancel.addEventListener("click", () => {
+		state.replyTo = null;
+		renderReply();
+		el.input.focus();
 	});
-	el.teamClose.addEventListener("click", () => closeTeam());
+
+	el.teamBtn.addEventListener("click", openTeam);
+	el.teamClose.addEventListener("click", closeTeam);
 	el.team.addEventListener("click", (event) => {
 		if (event.target === el.team) closeTeam();
 	});
-	// 面板里只有一个可聚焦的控件（关闭按钮）。Tab 不许跑到背后的页面上：
-	// 背后是浮层，看得见但点不到，焦点落在那里等于键盘用户迷路。
-	el.team.addEventListener("keydown", (event) => {
-		if (event.key !== "Tab") return;
-		event.preventDefault();
-		el.teamClose.focus();
+	el.lightbox.addEventListener("click", () => {
+		el.lightbox.hidden = true;
+		el.lightboxImg.removeAttribute("src");
 	});
-	document.addEventListener("keydown", (event) => {
-		if (event.key === "Escape" && state.teamOpen) {
-			event.preventDefault();
-			closeTeam();
+
+	document.addEventListener("click", (event) => {
+		if (!event.target.closest("#layout-menu, #menu-btn")) {
+			if (!el.layoutMenu.hidden) {
+				withLinger(el.layoutMenu, 120);
+				el.menuBtn.setAttribute("aria-expanded", "false");
+			}
+		}
+		if (!event.target.closest("#plus-menu, #plus-btn")) {
+			if (!el.plusMenu.hidden) {
+				withLinger(el.plusMenu, 120);
+				el.plusBtn.setAttribute("aria-expanded", "false");
+			}
 		}
 	});
+
+	document.addEventListener("keydown", (event) => {
+		if (event.key === "Escape") {
+			if (!el.team.hidden) {
+				event.preventDefault();
+				closeTeam();
+				return;
+			}
+			if (!el.lightbox.hidden) {
+				event.preventDefault();
+				el.lightbox.hidden = true;
+				el.lightboxImg.removeAttribute("src");
+				return;
+			}
+			if (!el.layoutMenu.hidden) withLinger(el.layoutMenu, 120);
+			if (!el.plusMenu.hidden) withLinger(el.plusMenu, 120);
+		}
+	});
+
+	el.team.addEventListener("keydown", trapTeamFocus);
+
+	window.addEventListener("resize", () => {
+		if (!el.mentionPop.hidden) positionMention();
+		if (!el.layoutMenu.hidden) placeMenu(el.layoutMenu, el.menuBtn);
+		if (!el.plusMenu.hidden) placeMenu(el.plusMenu, el.plusBtn, { align: "left", above: true });
+	});
+
+	window.addEventListener("hashchange", () => {
+		const id = location.hash.startsWith("#/c/") ? decodeURIComponent(location.hash.slice(4)) : null;
+		if (id && id !== state.currentId) openChannel(id, { push: false });
+	});
+
+	// 上滑加载更早：只盯 #flow-top，提前 600px 触发。
+	const sentinel = new IntersectionObserver(
+		(entries) => {
+			for (const entry of entries) {
+				if (entry.isIntersecting) loadEarlier();
+			}
+		},
+		{ root: el.flow, rootMargin: "600px 0px 0px 0px", threshold: 0 },
+	);
+	sentinel.observe(el.flowTop);
 }
 
-// ── 启动 ────────────────────────────────────────────────────────────────
-
-/**
- * 组织快照变了（首帧、有人入职、有人改了 identity.md）。
- *
- * SSE 每帧都是完整快照，所以整份替换即可。除了刷新频道列表，还要重画编制表：
- * 老板在别处改了一个人的职位/项目，开着的团队视图必须自己跟着变，不用刷新页面。
- */
-function onOrg(snapshot) {
-	if (Array.isArray(snapshot?.people)) {
-		state.org = snapshot;
-		if (state.teamOpen) renderTeam();
-		renderList();
-		renderHead();
-	}
-	void loadChannels().catch(() => {});
-}
-
-async function main() {
-	setupEvents();
-	resizeInput();
+async function sendMessage(raw) {
+	const text = String(raw ?? "").trim();
+	if (!text || !state.currentId) return false;
+	el.send.disabled = true;
+	el.send.dataset.busy = "true";
+	const replyTo = state.replyTo?.seq;
 	try {
-		await loadChannels();
+		await postJSON(`/api/channels/${encodeURIComponent(state.currentId)}/messages`, {
+			text,
+			...(replyTo ? { replyTo } : {}),
+		});
+		el.input.value = "";
+		state.replyTo = null;
+		renderReply();
+		autosize();
+		return true;
 	} catch (error) {
 		toast(error.message, "error");
-	}
-	streamOrg(onOrg, () => {});
-	// SSE 的第一帧可能要等一个心跳；先自己拉一份，个人频道行与消息头立刻就有
-	// 职位可显示，而不是先空一小会儿再跳出来。
-	if (state.org === null) {
-		void getJSON("/api/org")
-			.then((snapshot) => onOrg(snapshot))
-			.catch(() => {});
-	}
-	setInterval(() => {
-		renderList();
-	}, TICK_MS);
-
-	// 深链：`#/c/<频道 id>` 直接开那个频道（看板与外部链接都靠它）。
-	const fromHash = /^#\/c\/(.+)$/u.exec(window.location.hash);
-	const first = fromHash?.[1] ?? (window.innerWidth > 760 ? state.channels[0]?.id : undefined);
-	if (first !== undefined) {
-		void openChannel(decodeURIComponent(first), { fresh: true }).catch((error) => toast(error.message, "error"));
+		return false;
+	} finally {
+		delete el.send.dataset.busy;
+		autosize();
 	}
 }
 
-void main();
+/* ── 启动 ───────────────────────────────────────────────────────────── */
+
+function desktop() {
+	return window.matchMedia("(min-width: 641px)").matches;
+}
+
+/** 第一屏打开哪个频道：先找有人点名老板的；没有就打开最近还在说话的那个（第一屏不能是一张白纸）。 */
+function firstInterestingChannel() {
+	const channels = state.channels.filter((channel) => channel.id);
+	const need = channels.find((channel) => (channel.mentions ?? 0) > 0);
+	if (need) return need;
+	const recent = [...channels].sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
+	return (
+		recent.find((channel) => kindOf(channel) !== "dm" && (channel.lastSeq ?? 0) > 0) ??
+		recent.find((channel) => kindOf(channel) === "company") ??
+		channels[0] ??
+		null
+	);
+}
+
+function boot() {
+	installMotionTokens();
+	applyLayout();
+	bind();
+	el.skel.hidden = false;
+
+	const deep = location.hash.startsWith("#/c/") ? decodeURIComponent(location.hash.slice(4)) : null;
+	if (deep) document.body.dataset.pane = "chat";
+
+	Promise.all([loadOrg(), loadChannels(), loadAttention()]).then(() => {
+		if (deep) return openChannel(deep, { push: false });
+		// 桌面第一屏不能是一张白纸：自动打开一个有事的频道。手机上停在列表（一次只给一个区域）。
+		const landing = desktop() ? firstInterestingChannel() : null;
+		if (landing) return openChannel(landing.id, { push: false });
+		renderAll();
+	});
+
+	streamOrg(
+		() => {
+			loadChannels();
+			loadAttention();
+		},
+		(status) => {
+			state.conn = status === "open" ? "open" : "closed";
+			if (status === "open") state.lastOk = Date.now();
+			renderTop();
+		},
+	);
+
+	// 相对时间、活动行秒表、断线提示：每 30s 重算一次，不做逐秒 tick。
+	window.setInterval(() => {
+		if (state.currentId) {
+			renderChannels();
+			renderActivity();
+		}
+	}, TICK_MS);
+
+	window.addEventListener("beforeunload", closeChannelStream);
+}
+
+boot();

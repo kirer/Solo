@@ -1,6 +1,6 @@
 {
  "url": "http://127.0.0.1:7788",
- "at": "2026-10-28T18:51:33.769Z",
+ "at": "2026-10-28T19:32:01.921Z",
  "allow": [],
  "viewports": [
   {
@@ -9,7 +9,7 @@
    "load": "load",
    "screens": 1,
    "filled": [
-    0.89
+    0.88
    ],
    "motion": {
     "elements": 0,
@@ -27,11 +27,11 @@
     "page": {
      "height": 900,
      "screens": 1,
-     "words": 119,
+     "words": 817,
      "img": 1,
      "video": 0,
      "canvas": 0,
-     "svg": 29,
+     "svg": 79,
      "sections": 1,
      "horizontalOverflow": 0,
      "overflowCulprits": [],
@@ -48,27 +48,27 @@
      "videosNoPoster": 0
     },
     "hero": {
-     "text": "频道",
+     "text": "一人公司",
      "words": 1,
-     "chars": 2,
+     "chars": 4,
      "lines": 1,
-     "size": 22,
-     "vw": 1.5,
+     "size": 16,
+     "vw": 1.1,
      "font": "IBM Plex Sans",
      "weight": 600,
-     "tracking": -0.02,
-     "leading": 1.27,
-     "top": 61,
+     "tracking": -0.01,
+     "leading": 1.5,
+     "top": 12,
      "tag": "h1",
      "kind": "heading",
      "align": "left",
      "position": "left"
     },
     "h1": {
-     "text": "频道",
+     "text": "一人公司",
      "words": 1,
      "lines": 1,
-     "size": 22,
+     "size": 16,
      "font": "IBM Plex Sans"
     },
     "headings": [],
@@ -85,12 +85,12 @@
      "families": [
       {
        "family": "IBM Plex Sans",
-       "share": 0.9,
+       "share": 0.8,
        "mono": false
       },
       {
        "family": "IBM Plex Mono",
-       "share": 0.1,
+       "share": 0.2,
        "mono": true
       }
      ],
@@ -107,38 +107,38 @@
      "notLoaded": [],
      "body": {
       "font": "IBM Plex Sans",
-      "size": 11,
-      "leading": 1.27,
+      "size": 14,
+      "leading": 1.71,
       "weight": 400,
       "tracking": 0,
-      "contrast": 5.3
+      "contrast": 17.4
      },
-     "measureChars": 20,
+     "measureChars": 82,
      "max": {
       "size": 22,
       "vw": 1.5,
       "font": "IBM Plex Sans",
-      "text": "频道"
+      "text": "DS-Bot 参考部署"
      },
-     "monoShare": 0.1,
-     "monoProseShare": 0.1,
+     "monoShare": 0.2,
+     "monoProseShare": 0.01,
      "monoFamilies": [
       "IBM Plex Mono"
      ],
      "monoSamples": [
-      "0 件找你",
-      "9 小时前",
-      "52 分钟前",
+      "60 件找你",
+      "10 小时前",
       "1 小时前",
-      "3 小时前",
-      "9 小时前"
+      "2 小时前",
+      "4 小时前",
+      "10 小时前"
      ],
      "microLabels": 0,
      "microLabelShare": 0,
      "microSamples": [],
-     "upperShare": 0,
-     "centerShare": 0.01,
-     "smallText": 17
+     "upperShare": 0.05,
+     "centerShare": 0,
+     "smallText": 24
     },
     "eyebrows": [],
     "numbered": [],
@@ -172,16 +172,20 @@
      ],
      "textColors": [
       {
-       "color": "#6b665c",
-       "share": 0.9
-      },
-      {
        "color": "#1c1a16",
-       "share": 0.1
+       "share": 0.72
       },
       {
        "color": "#55524b",
-       "share": 0
+       "share": 0.19
+      },
+      {
+       "color": "#6b665c",
+       "share": 0.08
+      },
+      {
+       "color": "#2b5f4f",
+       "share": 0.01
       }
      ],
      "button": null,
@@ -238,36 +242,220 @@
     "pageH": 900,
     "margins": {
      "left": 8,
-     "right": 27
+     "right": 52
     },
-    "sections": [],
+    "sections": [
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -3627,
+      "height": 221,
+      "words": 48,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -3404,
+      "height": 120,
+      "words": 32,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 562,
+      "textLeft": 313,
+      "textRight": 562,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -3282,
+      "height": 120,
+      "words": 44,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 558,
+      "textLeft": 313,
+      "textRight": 558,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -3148,
+      "height": 627,
+      "words": 121,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -2389,
+      "height": 781,
+      "words": 139,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -1606,
+      "height": 600,
+      "words": 98,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 558,
+      "textLeft": 313,
+      "textRight": 558,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -933,
+      "height": 227,
+      "words": 36,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -704,
+      "height": 690,
+      "words": 162,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 558,
+      "textLeft": 313,
+      "textRight": 558,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": 0,
+      "height": 691,
+      "words": 152,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 313,
+      "right": 556,
+      "textLeft": 313,
+      "textRight": 556,
+      "fullBleed": false,
+      "footer": true,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     }
+    ],
     "gaps": [],
     "h1s": [
      {
-      "text": "频道",
-      "size": 22,
-      "top": 61,
+      "text": "一人公司",
+      "size": 16,
+      "top": 12,
       "firstScreen": true
      }
     ],
     "edgeText": [],
     "edges": [
      {
+      "x": 313,
+      "n": 13
+     },
+     {
+      "x": 42,
+      "n": 1
+     },
+     {
       "x": 253,
+      "n": 1
+     },
+     {
+      "x": 369,
       "n": 1
      }
     ],
-    "leftBlocks": 1,
-    "bodySize": 11,
+    "leftBlocks": 16,
+    "bodySize": 14,
     "stage": false,
     "explains": false,
     "slivers": [],
-    "voidShare": 0.47,
+    "voidShare": 0.23,
     "voidBox": {
-     "x": 660,
+     "x": 900,
      "y": 120,
-     "w": 780,
-     "h": 780
+     "w": 540,
+     "h": 540
     }
    },
    "app": {
@@ -287,21 +475,21 @@
      "h": 48
     },
     "canvas": {
-     "left": 13,
-     "right": 12
+     "left": 25,
+     "right": 33
     },
     "hero": {
-     "text": "频道",
+     "text": "一人公司",
      "words": 1,
-     "chars": 2,
+     "chars": 4,
      "lines": 1,
-     "size": 22,
-     "vw": 1.5,
+     "size": 16,
+     "vw": 1.1,
      "font": "IBM Plex Sans",
      "weight": 600,
-     "tracking": -0.02,
-     "leading": 1.27,
-     "top": 61,
+     "tracking": -0.01,
+     "leading": 1.5,
+     "top": 12,
      "tag": "h1",
      "kind": "heading",
      "align": "left",
@@ -312,13 +500,7 @@
      "panels": 1,
      "firstScreen": 1,
      "ragged": [],
-     "voids": [
-      {
-       "gap": 702,
-       "at": 189,
-       "panel": "频道"
-      }
-     ]
+     "voids": []
     },
     "tiles": 0,
     "panels": {
@@ -352,7 +534,7 @@
     "chartHues": 0,
     "placeholders": [],
     "type": {
-     "under13": 0.86,
+     "under13": 0.28,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -365,9 +547,9 @@
      ]
     },
     "title": {
-     "text": "频道",
-     "size": 22,
-     "top": 61
+     "text": "一人公司",
+     "size": 16,
+     "top": 12
     },
     "colourShare": 0
    },
@@ -379,7 +561,7 @@
    "load": "load",
    "screens": 1,
    "filled": [
-    0.87
+    0.74
    ],
    "motion": {
     "elements": 0,
@@ -397,11 +579,11 @@
     "page": {
      "height": 1024,
      "screens": 1,
-     "words": 119,
+     "words": 817,
      "img": 1,
      "video": 0,
      "canvas": 0,
-     "svg": 29,
+     "svg": 79,
      "sections": 1,
      "horizontalOverflow": 0,
      "overflowCulprits": [],
@@ -412,33 +594,33 @@
      "uiPictures": 0,
      "pictureSamples": [],
      "blendText": 0,
-     "sideScrollers": 0,
+     "sideScrollers": 1,
      "brokenImages": [],
      "emoji": [],
      "videosNoPoster": 0
     },
     "hero": {
-     "text": "频道",
+     "text": "一人公司",
      "words": 1,
-     "chars": 2,
+     "chars": 4,
      "lines": 1,
-     "size": 22,
-     "vw": 2.9,
+     "size": 16,
+     "vw": 2.1,
      "font": "IBM Plex Sans",
      "weight": 600,
-     "tracking": -0.02,
-     "leading": 1.27,
-     "top": 61,
+     "tracking": -0.01,
+     "leading": 1.5,
+     "top": 12,
      "tag": "h1",
      "kind": "heading",
      "align": "left",
      "position": "left"
     },
     "h1": {
-     "text": "频道",
+     "text": "一人公司",
      "words": 1,
      "lines": 1,
-     "size": 22,
+     "size": 16,
      "font": "IBM Plex Sans"
     },
     "headings": [],
@@ -455,12 +637,12 @@
      "families": [
       {
        "family": "IBM Plex Sans",
-       "share": 0.9,
+       "share": 0.8,
        "mono": false
       },
       {
        "family": "IBM Plex Mono",
-       "share": 0.1,
+       "share": 0.2,
        "mono": true
       }
      ],
@@ -477,38 +659,38 @@
      "notLoaded": [],
      "body": {
       "font": "IBM Plex Sans",
-      "size": 11,
-      "leading": 1.27,
+      "size": 14,
+      "leading": 1.71,
       "weight": 400,
       "tracking": 0,
-      "contrast": 5.3
+      "contrast": 17.4
      },
-     "measureChars": 13,
+     "measureChars": 58,
      "max": {
       "size": 22,
       "vw": 2.9,
       "font": "IBM Plex Sans",
-      "text": "频道"
+      "text": "DS-Bot 参考部署"
      },
-     "monoShare": 0.1,
-     "monoProseShare": 0.1,
+     "monoShare": 0.2,
+     "monoProseShare": 0.01,
      "monoFamilies": [
       "IBM Plex Mono"
      ],
      "monoSamples": [
-      "0 件找你",
-      "9 小时前",
-      "52 分钟前",
+      "60 件找你",
+      "10 小时前",
       "1 小时前",
-      "3 小时前",
-      "9 小时前"
+      "2 小时前",
+      "4 小时前",
+      "10 小时前"
      ],
      "microLabels": 0,
      "microLabelShare": 0,
      "microSamples": [],
-     "upperShare": 0,
-     "centerShare": 0.01,
-     "smallText": 17
+     "upperShare": 0.05,
+     "centerShare": 0,
+     "smallText": 24
     },
     "eyebrows": [],
     "numbered": [],
@@ -542,16 +724,20 @@
      ],
      "textColors": [
       {
-       "color": "#6b665c",
-       "share": 0.9
-      },
-      {
        "color": "#1c1a16",
-       "share": 0.1
+       "share": 0.72
       },
       {
        "color": "#55524b",
-       "share": 0
+       "share": 0.19
+      },
+      {
+       "color": "#6b665c",
+       "share": 0.08
+      },
+      {
+       "color": "#2b5f4f",
+       "share": 0.01
       }
      ],
      "button": null,
@@ -608,27 +794,207 @@
     "pageH": 1024,
     "margins": {
      "left": 8,
-     "right": 27
+     "right": 44
     },
-    "sections": [],
+    "sections": [
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -4751,
+      "height": 293,
+      "words": 48,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -4456,
+      "height": 144,
+      "words": 32,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 64,
+      "textLeft": 305,
+      "textRight": 64,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -4310,
+      "height": 192,
+      "words": 44,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 60,
+      "textLeft": 305,
+      "textRight": 60,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -4104,
+      "height": 771,
+      "words": 121,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -3201,
+      "height": 949,
+      "words": 139,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -2250,
+      "height": 792,
+      "words": 98,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -1385,
+      "height": 227,
+      "words": 24,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -1156,
+      "height": 954,
+      "words": 162,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": false,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     },
+     {
+      "sel": "div.row.row-say",
+      "tag": "div",
+      "top": -188,
+      "height": 955,
+      "words": 152,
+      "media": 0,
+      "middle": 0,
+      "heading": null,
+      "left": 305,
+      "right": 59,
+      "textLeft": 305,
+      "textRight": 59,
+      "fullBleed": false,
+      "footer": true,
+      "hero": true,
+      "continues": false,
+      "pinned": false
+     }
+    ],
     "gaps": [],
     "h1s": [
      {
-      "text": "频道",
-      "size": 22,
-      "top": 61,
+      "text": "一人公司",
+      "size": 16,
+      "top": 12,
       "firstScreen": true
      }
     ],
     "edgeText": [],
     "edges": [
      {
-      "x": 213,
+      "x": 305,
+      "n": 14
+     },
+     {
+      "x": 42,
+      "n": 1
+     },
+     {
+      "x": 253,
       "n": 1
      }
     ],
-    "leftBlocks": 1,
-    "bodySize": 11,
+    "leftBlocks": 16,
+    "bodySize": 14,
     "stage": false,
     "explains": false,
     "slivers": [],
@@ -643,30 +1009,30 @@
     "dark": false,
     "ground": "#f7f6f2",
     "sidebar": {
-     "w": 200,
+     "w": 240,
      "tag": "aside",
      "links": 21,
-     "share": 0.26
+     "share": 0.31
     },
     "topbar": {
      "h": 48
     },
     "canvas": {
-     "left": 13,
-     "right": 12
+     "left": 17,
+     "right": 26
     },
     "hero": {
-     "text": "频道",
+     "text": "一人公司",
      "words": 1,
-     "chars": 2,
+     "chars": 4,
      "lines": 1,
-     "size": 22,
-     "vw": 2.9,
+     "size": 16,
+     "vw": 2.1,
      "font": "IBM Plex Sans",
      "weight": 600,
-     "tracking": -0.02,
-     "leading": 1.27,
-     "top": 61,
+     "tracking": -0.01,
+     "leading": 1.5,
+     "top": 12,
      "tag": "h1",
      "kind": "heading",
      "align": "left",
@@ -677,13 +1043,7 @@
      "panels": 1,
      "firstScreen": 1,
      "ragged": [],
-     "voids": [
-      {
-       "gap": 826,
-       "at": 189,
-       "panel": "频道"
-      }
-     ]
+     "voids": []
     },
     "tiles": 0,
     "panels": {
@@ -717,7 +1077,7 @@
     "chartHues": 0,
     "placeholders": [],
     "type": {
-     "under13": 0.86,
+     "under13": 0.28,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -730,9 +1090,9 @@
      ]
     },
     "title": {
-     "text": "频道",
-     "size": 22,
-     "top": 61
+     "text": "一人公司",
+     "size": 16,
+     "top": 12
     },
     "colourShare": 0
    },
@@ -744,7 +1104,7 @@
    "load": "load",
    "screens": 1,
    "filled": [
-    0.39
+    0.33
    ],
    "motion": {
     "elements": 0,
@@ -762,11 +1122,11 @@
     "page": {
      "height": 844,
      "screens": 1,
-     "words": 114,
+     "words": 111,
      "img": 1,
      "video": 0,
      "canvas": 0,
-     "svg": 29,
+     "svg": 27,
      "sections": 1,
      "horizontalOverflow": 0,
      "overflowCulprits": [],
@@ -783,9 +1143,9 @@
      "videosNoPoster": 0
     },
     "hero": {
-     "text": "一人公司",
+     "text": "频道",
      "words": 1,
-     "chars": 4,
+     "chars": 2,
      "lines": 1,
      "size": 16,
      "vw": 4.1,
@@ -794,12 +1154,18 @@
      "tracking": -0.01,
      "leading": 1.5,
      "top": 12,
-     "tag": "b",
+     "tag": "h1",
      "kind": "heading",
      "align": "left",
      "position": "left"
     },
-    "h1": null,
+    "h1": {
+     "text": "频道",
+     "words": 1,
+     "lines": 1,
+     "size": 16,
+     "font": "IBM Plex Sans"
+    },
     "headings": [],
     "headingSummary": {
      "count": 0,
@@ -814,12 +1180,12 @@
      "families": [
       {
        "family": "IBM Plex Sans",
-       "share": 0.9,
+       "share": 0.89,
        "mono": false
       },
       {
        "family": "IBM Plex Mono",
-       "share": 0.1,
+       "share": 0.11,
        "mono": true
       }
      ],
@@ -828,44 +1194,38 @@
       11,
       12,
       13,
+      14,
       16
      ],
-     "sizeCount": 4,
+     "sizeCount": 5,
      "notLoaded": [],
-     "body": {
-      "font": "IBM Plex Sans",
-      "size": 11,
-      "leading": 1.27,
-      "weight": 400,
-      "tracking": 0,
-      "contrast": 5.3
-     },
-     "measureChars": 51,
+     "body": null,
+     "measureChars": null,
      "max": {
       "size": 16,
       "vw": 4.1,
       "font": "IBM Plex Sans",
-      "text": "一人公司"
+      "text": "频道"
      },
-     "monoShare": 0.1,
-     "monoProseShare": 0.1,
+     "monoShare": 0.11,
+     "monoProseShare": 0.11,
      "monoFamilies": [
       "IBM Plex Mono"
      ],
      "monoSamples": [
-      "0 件找你",
-      "9 小时前",
-      "52 分钟前",
+      "60 件找你",
+      "10 小时前",
       "1 小时前",
-      "3 小时前",
-      "9 小时前"
+      "2 小时前",
+      "4 小时前",
+      "10 小时前"
      ],
      "microLabels": 0,
      "microLabelShare": 0,
      "microSamples": [],
      "upperShare": 0,
      "centerShare": 0.01,
-     "smallText": 17
+     "smallText": 6
     },
     "eyebrows": [],
     "numbered": [],
@@ -891,11 +1251,11 @@
      "textColors": [
       {
        "color": "#6b665c",
-       "share": 0.9
+       "share": 0.89
       },
       {
        "color": "#1c1a16",
-       "share": 0.1
+       "share": 0.11
       }
      ],
      "button": null,
@@ -952,7 +1312,7 @@
     "pageH": 844,
     "margins": {
      "left": 12,
-     "right": 8
+     "right": 12
     },
     "sections": [
      {
@@ -964,10 +1324,10 @@
       "media": 0,
       "middle": 0,
       "heading": null,
-      "left": 44,
-      "right": 205,
-      "textLeft": 44,
-      "textRight": 205,
+      "left": 12,
+      "right": 12,
+      "textLeft": 52,
+      "textRight": 197,
       "fullBleed": false,
       "footer": false,
       "hero": true,
@@ -977,16 +1337,16 @@
      {
       "sel": "div#rows.channels",
       "tag": "div",
-      "top": 400,
-      "height": 440,
-      "words": 46,
+      "top": 378,
+      "height": 462,
+      "words": 44,
       "media": 0,
-      "middle": 8,
+      "middle": 0,
       "heading": null,
       "left": 12,
-      "right": 8,
-      "textLeft": 12,
-      "textRight": -243,
+      "right": 12,
+      "textLeft": 52,
+      "textRight": 20,
       "fullBleed": false,
       "footer": true,
       "hero": true,
@@ -995,52 +1355,23 @@
      }
     ],
     "gaps": [],
-    "h1s": [],
-    "edgeText": [
+    "h1s": [
      {
-      "text": "9 小时前",
-      "side": "right",
-      "px": 12
-     },
-     {
-      "text": "52 分钟前",
-      "side": "right",
-      "px": 12
-     },
-     {
-      "text": "1 小时前",
-      "side": "right",
-      "px": 12
-     },
-     {
-      "text": "T-016占位→填充验证：本条应原地吸收上面的占位气泡，不另开一条",
-      "side": "right",
-      "px": 8
-     },
-     {
-      "text": "3 小时前",
-      "side": "right",
-      "px": 12
-     },
-     {
-      "text": "9 小时前",
-      "side": "right",
-      "px": 12
-     },
-     {
-      "text": "52 分钟前",
-      "side": "right",
-      "px": 12
-     },
-     {
-      "text": "1 小时前",
-      "side": "right",
-      "px": 12
+      "text": "频道",
+      "size": 16,
+      "top": 12,
+      "firstScreen": true
      }
     ],
-    "edges": [],
-    "leftBlocks": 0,
-    "bodySize": 11,
+    "edgeText": [],
+    "edges": [
+     {
+      "x": 38,
+      "n": 1
+     }
+    ],
+    "leftBlocks": 1,
+    "bodySize": 13,
     "stage": false,
     "explains": false,
     "slivers": [],
@@ -1059,13 +1390,13 @@
      "h": 48
     },
     "canvas": {
-     "left": 4,
-     "right": -187
+     "left": 12,
+     "right": 12
     },
     "hero": {
-     "text": "一人公司",
+     "text": "频道",
      "words": 1,
-     "chars": 4,
+     "chars": 2,
      "lines": 1,
      "size": 16,
      "vw": 4.1,
@@ -1074,7 +1405,7 @@
      "tracking": -0.01,
      "leading": 1.5,
      "top": 12,
-     "tag": "b",
+     "tag": "h1",
      "kind": "heading",
      "align": "left",
      "position": "left"
@@ -1113,7 +1444,7 @@
     "chartHues": 0,
     "placeholders": [],
     "type": {
-     "under13": 0.86,
+     "under13": 0.31,
      "tiny": 0,
      "tinySamples": [],
      "sizes": [
@@ -1124,7 +1455,11 @@
       16
      ]
     },
-    "title": null,
+    "title": {
+     "text": "频道",
+     "size": 16,
+     "top": 12
+    },
     "colourShare": 0
    },
    "consoleErrors": []
@@ -1141,45 +1476,6 @@
     768,
     390
    ]
-  },
-  {
-   "level": "WARN",
-   "id": "hero-void",
-   "width": 1440,
-   "message": "47% of the first screen is one empty block (780×780px at 660,120).",
-   "fix": "Place the void on purpose or fill it: move the picture, the film or one fact into it, grow the headline to meet it, or shrink the screen to its content. A void reads as placed only when something closes it on the far side and it is the screen's one rest."
-  },
-  {
-   "level": "WARN",
-   "id": "tiny-text",
-   "width": 1440,
-   "message": "86% of the text is under 13px.",
-   "fix": "Data and labels read at 13–14px; keep 11–12px for sublines and axis ticks.",
-   "alsoAt": [
-    768,
-    390
-   ]
-  },
-  {
-   "level": "WARN",
-   "id": "panel-void",
-   "width": 1440,
-   "message": "1 card(s) hold a blank band inside: 702px in \"频道\".",
-   "fix": "A card stretches to its neighbour only when it has content to fill. Keep a legend or a note directly under its chart (only an action or a total may sit at a stretched card's foot), let a short card keep its own height (align-items: start), and let a filtered block shrink to its rows."
-  },
-  {
-   "level": "FAIL",
-   "id": "edge-text",
-   "width": 390,
-   "message": "1 text block(s) sit within 12px of the screen edge: \"T-016占位→填充验证：本条应原地吸收上面的占位气泡，不另\" (8px from the right)",
-   "fix": "Keep text inside the page margin (16–20px). Only display type deliberately bled past the edge may touch it."
-  },
-  {
-   "level": "FAIL",
-   "id": "no-title",
-   "width": 390,
-   "message": "The screen has no h1.",
-   "fix": "Name the screen in an h1 at the top of the canvas (18–28px): \"Overview\", \"Payouts\", the project's name."
   }
  ],
  "images": [

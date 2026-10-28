@@ -1,0 +1,365 @@
+/**
+ * 全部 @keyframes + reduced-motion 降级。
+ *
+ * 三条纪律：
+ *   1. 入场带 blur(6px)→0，退场带 blur(2–3px) —— 模糊比位移更「贵」，也更像真的在下沉/浮起。
+ *   2. 永远不对 height 做 transition（用 max-height 或 WAAPI 的 FLIP 补偿）。
+ *   3. 时长和曲线优先取 --dur-*/--ease-*（由 js/motion.js 用弹簧采样写入），
+ *      这里只写死交互微动效的固定时长。
+ */
+
+/* ── 入场 / 退场 ────────────────────────────────────────────────────── */
+
+@keyframes veil-in {
+	from {
+		opacity: 0;
+		filter: blur(6px);
+	}
+	to {
+		opacity: 1;
+		filter: blur(0);
+	}
+}
+
+@keyframes pop-out {
+	to {
+		opacity: 0;
+		transform: scale(0.97);
+		filter: blur(2px);
+	}
+}
+
+@keyframes pop-drop {
+	from {
+		opacity: 0;
+		transform: translateY(-4px) scale(0.96);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: blur(0);
+	}
+}
+
+@keyframes pop-lift {
+	from {
+		opacity: 0;
+		transform: translateY(4px) scale(0.96);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: blur(0);
+	}
+}
+
+@keyframes dialog-rise {
+	from {
+		opacity: 0;
+		transform: translateY(12px) scale(0.96);
+		filter: blur(6px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+		filter: blur(0);
+	}
+}
+
+@keyframes dialog-sink {
+	to {
+		opacity: 0;
+		transform: translateY(6px) scale(0.975);
+		filter: blur(3px);
+	}
+}
+
+@keyframes row-in {
+	from {
+		opacity: 0;
+		transform: translateY(12px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes check-pop {
+	from {
+		opacity: 0;
+		transform: scale(0.4);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes icon-swap {
+	from {
+		opacity: 0;
+		transform: scale(0.5) rotate(-30deg);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes row-hl {
+	from {
+		background-color: var(--active);
+	}
+	to {
+		background-color: transparent;
+	}
+}
+
+/* ── 常驻动效 ───────────────────────────────────────────────────────── */
+
+/* 活动行的流光：只在文字上跑一遍背景，不占位、不抖动。 */
+@keyframes shimmer {
+	from {
+		background-position: 200% 0;
+	}
+	to {
+		background-position: -100% 0;
+	}
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes blink-caret {
+	50% {
+		opacity: 0;
+	}
+}
+
+/* ── 头像（js/avatar.js 画出 SVG，这里只给形变） ────────────────────── */
+
+.av {
+	display: block;
+	overflow: visible;
+	transform-box: view-box;
+}
+
+/* 从脚底变形：歪头、压扁、回弹都绕着下巴转，不会「飘」。 */
+.av-b {
+	transform-box: fill-box;
+	transform-origin: 50% 100%;
+}
+
+.av-eyes {
+	transform-box: fill-box;
+	transform-origin: 50% 50%;
+}
+
+.av[data-state="thinking"] .av-b {
+	animation: av-ponder 2.2s ease-in-out infinite;
+}
+
+.av[data-state="working"] .av-b {
+	animation: av-bob 1.6s ease-in-out infinite;
+}
+
+.av[data-state="working"] .av-eyes {
+	animation: av-blink 2.4s ease-in-out infinite;
+}
+
+.av[data-state="done"] .av-b {
+	animation: av-done 1.8s cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes av-bob {
+	0%,
+	100% {
+		transform: translateY(0) rotate(0);
+	}
+	30% {
+		transform: translateY(-4%) rotate(-5deg);
+	}
+	65% {
+		transform: translateY(0) rotate(4deg);
+	}
+}
+
+@keyframes av-ponder {
+	0%,
+	100% {
+		transform: translateY(0) rotate(4deg);
+	}
+	50% {
+		transform: translateY(-3%) rotate(7deg);
+	}
+}
+
+@keyframes av-done {
+	0% {
+		transform: none;
+	}
+	13.3% {
+		transform: scale(1.12, 0.88);
+	}
+	25.6% {
+		transform: scale(0.93, 1.09);
+	}
+	37.8% {
+		transform: scale(1.04, 0.97);
+	}
+	51.1%,
+	100% {
+		transform: none;
+	}
+}
+
+@keyframes av-blink {
+	0%,
+	42%,
+	50%,
+	100% {
+		transform: scaleY(1);
+	}
+	46% {
+		transform: scaleY(0.03);
+	}
+	48% {
+		transform: scaleY(1.06);
+	}
+}
+
+/* ── 群组头像：2×2，交界用 radial-gradient 挖洞（js 里算位置） ──────── */
+
+.av-g {
+	position: relative;
+	display: block;
+	flex: none;
+}
+
+.av-seat {
+	position: absolute;
+	display: block;
+}
+
+.av-seat .av {
+	width: 100%;
+	height: 100%;
+}
+
+/* ── 应用在元素上的类 ───────────────────────────────────────────────── */
+
+.veil {
+	animation: veil-in 220ms ease-out both;
+}
+
+.row-new {
+	animation: row-in 240ms var(--ease-pop) both;
+}
+
+.row[data-hl="true"] .row-body {
+	border-radius: 4px;
+	animation: row-hl 1.2s ease-out;
+}
+
+.menu:not([hidden]) {
+	animation: pop-drop var(--dur-pop) var(--ease-pop) both;
+}
+
+#plus-menu:not([hidden]) {
+	animation: pop-lift var(--dur-pop) var(--ease-pop) both;
+}
+
+.mention:not([hidden]) {
+	animation: pop-lift 200ms var(--ease-pop) both;
+}
+
+.team:not([hidden]) {
+	animation: veil-in 200ms ease-out both;
+}
+
+.team-panel {
+	animation: dialog-rise var(--dur-sheet) var(--ease-sheet) both;
+}
+
+@media (max-width: 640px) {
+	.team-panel {
+		animation: dialog-rise 240ms var(--ease-pop) both;
+	}
+}
+
+.lightbox:not([hidden]) {
+	animation: veil-in 180ms ease-out both;
+}
+
+.toast {
+	animation: pop-lift 220ms var(--ease-pop) both;
+}
+
+.toast[data-leaving="true"] {
+	animation: pop-out 180ms ease-in forwards;
+}
+
+.menu[data-leaving="true"] {
+	animation: pop-out 120ms ease-in forwards;
+}
+
+.act[data-leaving="true"] {
+	animation: pop-out 140ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.empty {
+	animation: veil-in 260ms ease-out both;
+}
+
+.tool[data-done="true"] svg {
+	animation: icon-swap 200ms var(--ease-pop) both;
+}
+
+.pending-opt[data-done="true"] .opt-t::before {
+	content: "✓ ";
+	animation: check-pop 200ms var(--ease-pop) both;
+	display: inline-block;
+}
+
+/* ── 降级 ───────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		animation-delay: 0ms !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+
+	/* 流光文字在降级下不该「看不见」：把透明字色还回去。 */
+	.act-text {
+		color: var(--ink);
+		background: none;
+		-webkit-background-clip: border-box;
+		background-clip: border-box;
+		filter: none;
+	}
+
+	.veil,
+	.row-new,
+	.toast,
+	.team,
+	.team-panel,
+	.lightbox,
+	.empty,
+	.menu,
+	.mention {
+		animation: none !important;
+	}
+
+	.row[data-hl="true"] .row-body {
+		background-color: var(--active);
+	}
+}

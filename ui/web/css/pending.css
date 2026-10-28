@@ -1,0 +1,188 @@
+/**
+ * 待办拍板卡。唯一一处「需要你」的强调：
+ *   左侧 2px --accent 竖线 是「这事要你决定」的唯一表示，卡片本身不加底色、不用彩色按钮。
+ *   选项是**行**（行间 1px --rule，hover 用 --hover），不是一排圆角胶囊。
+ *   「推荐」是 11px --ink-3 的文字，不是彩色徽章。
+ */
+
+.row-pending {
+	margin: 14px 0 6px 48px;
+}
+
+/* 卡自己带那条 2px 线；行级「需要你」竖线会多出第二条，去掉。 */
+.row-pending[data-need="true"]::before {
+	content: none;
+}
+
+.pending {
+	position: relative;
+	max-width: min(68ch, 100%);
+	padding: 14px 16px;
+	background: var(--ground);
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	overflow: hidden;
+}
+
+.pending::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 2px;
+	background: var(--accent);
+}
+
+.pending-head {
+	display: flex;
+	align-items: baseline;
+	gap: 10px;
+	margin-bottom: 6px;
+}
+
+.pending-kicker {
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--accent);
+	white-space: nowrap;
+}
+
+.pending-time {
+	margin-left: auto;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	font-family: var(--mono);
+}
+
+.pending-q {
+	font-size: 16px;
+	line-height: 24px;
+	font-weight: 500;
+	color: var(--ink);
+	text-wrap: pretty;
+}
+
+.pending-meta {
+	margin-top: 2px;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.pending-opts {
+	margin: 10px -16px 0;
+	border-top: 1px solid var(--rule);
+}
+
+.pending-opt {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr) auto;
+	column-gap: 10px;
+	align-items: baseline;
+	width: 100%;
+	min-height: 32px;
+	padding: 6px 16px;
+	border-bottom: 1px solid var(--rule);
+	text-align: left;
+	transition: background-color var(--dur-line) ease;
+}
+
+.pending-opt:last-child {
+	border-bottom: 0;
+}
+
+.pending-opt:hover {
+	background: var(--hover);
+}
+
+.pending-opt:active {
+	background: var(--active);
+}
+
+.pending-opt[aria-pressed="true"] {
+	background: var(--active);
+}
+
+.opt-n {
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.opt-t {
+	font-size: 14px;
+	line-height: 20px;
+	color: var(--ink);
+}
+
+/* 「推荐」就是一行字，颜色和旁边的 meta 一样。 */
+.opt-rec {
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	white-space: nowrap;
+}
+
+.pending-foot {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin: 10px -16px -14px;
+	padding: 8px 12px 8px 16px;
+	border-top: 1px solid var(--rule);
+}
+
+.pending-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 28px;
+	padding: 0 6px;
+	background: none;
+	border: 0;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink);
+}
+
+.pending-input::placeholder {
+	color: color-mix(in srgb, var(--ink) 36%, transparent);
+}
+
+.pending-input:focus {
+	outline: none;
+}
+
+.pending-foot .text-btn {
+	flex: none;
+	font-size: 12px;
+	line-height: 16px;
+}
+
+/* 提交后就地反馈：按钮变成「已记录」1.5s，不弹 toast。 */
+.pending-opt[data-done="true"] .opt-t,
+.pending-foot .text-btn[data-done="true"] {
+	color: var(--accent);
+}
+
+.pending-msg {
+	margin: 8px -16px -14px;
+	padding: 6px 16px 8px;
+	border-top: 1px solid var(--rule);
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+@media (max-width: 640px) {
+	.row-pending {
+		margin-left: 0;
+	}
+
+	.pending {
+		max-width: 100%;
+	}
+}

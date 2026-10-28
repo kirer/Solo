@@ -1,0 +1,281 @@
+/**
+ * 输入：输入卡 + 引用条 + @ 弹窗 + ＋ 菜单的锚。
+ *
+ * 输入卡没有阴影。焦点只让边线变 --control，不加光晕、不加外发光。
+ * 不做上传、不做语音：没有麦克风，＋ 里只有两个真能做到的项。
+ */
+
+.composer {
+	flex: none;
+	padding: 0 var(--pad) 20px;
+}
+
+.composer-card {
+	display: flex;
+	align-items: flex-end;
+	gap: 6px;
+	min-height: 44px;
+	padding: 6px 6px 6px 8px;
+	background: var(--ground);
+	border: 1px solid var(--line);
+	border-radius: 22px;
+	transition: border-color var(--dur-line) ease, border-radius var(--dur-pop) var(--ease-pop);
+}
+
+.composer-card:hover {
+	border-color: color-mix(in srgb, var(--control) 70%, var(--line));
+}
+
+/* 焦点：只动边线。没有 box-shadow，没有 outline 光晕。 */
+.composer-card:focus-within {
+	border-color: var(--control);
+}
+
+/* 多行时圆角 22 → 18，用弹簧曲线，不做 height transition。 */
+.composer-card[data-multi="true"] {
+	border-radius: 18px;
+}
+
+#input {
+	flex: 1 1 auto;
+	min-width: 0;
+	min-height: 30px;
+	max-height: 160px;
+	padding: 5px 0;
+	background: none;
+	border: 0;
+	outline: none;
+	resize: none;
+	overflow-y: auto;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 400;
+	color: var(--ink);
+	scrollbar-gutter: stable;
+}
+
+#input::placeholder {
+	color: color-mix(in srgb, var(--ink) 36%, transparent);
+}
+
+.send {
+	flex: none;
+	align-self: flex-end;
+	height: 32px;
+	padding: 0 12px;
+	border-radius: var(--r-control);
+	background: var(--ink);
+	color: var(--ground);
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.send:hover:not(:disabled) {
+	background: color-mix(in srgb, var(--ink) 86%, var(--ground));
+}
+
+.send:disabled {
+	background: var(--control);
+	color: var(--ink-3);
+	cursor: default;
+}
+
+/* 发送中转圈：唯一允许出现转圈的地方。 */
+.send[data-busy="true"] {
+	color: transparent;
+	position: relative;
+}
+
+.send[data-busy="true"]::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	margin: auto;
+	width: 12px;
+	height: 12px;
+	border-radius: 50%;
+	border: 1.5px solid color-mix(in srgb, var(--ground) 45%, transparent);
+	border-top-color: var(--ground);
+	animation: spin 0.7s linear infinite;
+}
+
+/* ＋：28px 圆底，展开时图标转 45°。 */
+.plus {
+	flex: none;
+	align-self: flex-end;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	border-radius: 50%;
+	color: var(--ink-3);
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease, transform var(--dur-tap) var(--ease-tap);
+}
+
+.plus:hover {
+	background: color-mix(in srgb, var(--ink) 10%, transparent);
+	color: var(--ink);
+}
+
+.plus:active {
+	transform: scale(0.9);
+}
+
+.plus[aria-expanded="true"] {
+	background: color-mix(in srgb, var(--ink) 10%, transparent);
+	color: var(--ink);
+}
+
+.plus[aria-expanded="true"] svg {
+	transform: rotate(45deg);
+}
+
+.plus svg {
+	transition: transform var(--dur-tap) var(--ease-tap);
+}
+
+/* ── 引用条 ─────────────────────────────────────────────────────────── */
+
+.reply {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px var(--pad);
+	border-bottom: 1px solid var(--line);
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.reply-text {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.reply-text b {
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.reply-x {
+	flex: none;
+	margin-left: auto;
+	width: 20px;
+	height: 20px;
+	font-size: 11px;
+	line-height: 14px;
+}
+
+/* ── @ 弹窗 ─────────────────────────────────────────────────────────── */
+
+.mention {
+	position: absolute;
+	z-index: 80;
+	width: 260px;
+	max-height: min(300px, 45vh);
+	padding: 4px;
+	overflow-y: auto;
+	background: var(--ground);
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	box-shadow: 0 6px 20px -6px rgba(28, 26, 22, 0.16);
+	transform-origin: 16px 100%;
+}
+
+/* 滑块：glide() 动起来是「先拉长再收回」，所以它是独立的一层，不在行上改背景。 */
+.mention-thumb {
+	position: absolute;
+	left: 4px;
+	top: 4px;
+	width: calc(100% - 8px);
+	height: 36px;
+	border-radius: var(--r-control);
+	background: var(--hover);
+	pointer-events: none;
+	opacity: 0;
+}
+
+.mention[data-active="true"] .mention-thumb {
+	opacity: 1;
+}
+
+.mention-list {
+	position: relative;
+	display: flex;
+	flex-direction: column;
+}
+
+.mention-item {
+	display: grid;
+	grid-template-columns: var(--av-md) minmax(0, 1fr);
+	column-gap: 8px;
+	align-items: center;
+	width: 100%;
+	min-height: 36px;
+	padding: 6px 8px;
+	border-radius: var(--r-control);
+	text-align: left;
+}
+
+.mi-main {
+	min-width: 0;
+}
+
+.mi-name {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+.mi-title {
+	display: block;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.mention-empty {
+	padding: 8px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+@media (max-width: 640px) {
+	.composer {
+		padding: 0 12px 12px;
+	}
+
+	.mention {
+		width: min(260px, calc(100vw - 24px));
+	}
+
+	.send {
+		height: 34px;
+		min-width: 52px;
+	}
+}
+
+/* 触屏：手指不是光标。发送键与「＋」都撑到能点到，但不变胖成圆钮。 */
+@media (hover: none) {
+	.send {
+		height: 38px;
+		min-width: 56px;
+	}
+
+	.plus {
+		width: 34px;
+		height: 34px;
+	}
+}
