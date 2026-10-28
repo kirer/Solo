@@ -93,3 +93,50 @@ describe("频道详情的投影", () => {
 		expect(detail.channel.owner).toBe("shen");
 	});
 });
+
+describe("T-013：个人频道的投影镜像不点亮 @ 红点，真实私聊 @ 仍计数", () => {
+	const AT = 1_700_000_000_000;
+	function withMessages(channelId: string, msgs: { from: string; text: string; kind?: string; at?: number; mentions?: string[] }[]) {
+		const base = { id: channelId, title: channelId, members: ["owner", "gu"], wakeOnAll: [], createdAt: AT };
+		const messages: Record<string, any[]> = {
+			[channelId]: msgs.map((m, i) => ({
+				seq: i + 1,
+				from: m.from,
+				at: m.at ?? AT + i,
+				text: m.text,
+				mentions: m.mentions ?? [],
+				kind: m.kind ?? "chat",
+			})),
+		};
+		return stateOf([base], messages);
+	}
+
+	it("群回复被投影进个人频道（kind=say）时，老板的个人频道 mentions 不计", () => {
+		const state = withMessages("dm:owner-gu", [
+			{ from: "gu", text: "@owner 我在群里回你了", kind: "say", mentions: ["owner"] },
+		]);
+		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
+		const dm = list.find((c) => c.id === "dm:owner-gu")!;
+		expect(dm.mentions).toBe(0);
+		// 但 unread 仍计入（老板确实没读这条投影）
+		expect(dm.unread).toBe(1);
+	});
+
+	it("真实在私聊里 @ 老板（kind=chat）仍计数，口径 A 不倒退", () => {
+		const state = withMessages("dm:owner-gu", [
+			{ from: "gu", text: "@owner 老板看这条", kind: "chat", mentions: ["owner"] },
+		]);
+		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
+		const dm = list.find((c) => c.id === "dm:owner-gu")!;
+		expect(dm.mentions).toBe(1);
+	});
+
+	it("群频道里的 @ 老板照常计数（与 013 无关的普通场景）", () => {
+		const state = withMessages("company", [
+			{ from: "gu", text: "@owner 群里叫你", kind: "chat", mentions: ["owner"] },
+		]);
+		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
+		const company = list.find((c) => c.id === "company")!;
+		expect(company.mentions).toBe(1);
+	});
+});

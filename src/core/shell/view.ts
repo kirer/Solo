@@ -144,8 +144,21 @@ export function channelList(
 		const last = messages[messages.length - 1];
 		const unread = unreadCount(state, channel.id, slug);
 		// 「@ 我」的条数：未读里点名提到我的那些。界面上它们比普通未读更红。
+		//
+		// 个人频道（dm:owner-<slug>）里，agent 自己的「过程投影」消息（kind 为
+		// say/think/tool，见 projector.ts）是从它所在群/项目的发言镜像过来的，
+		// 不是它主动在私聊里 @ 老板。这类镜像如果正文里带了 `@owner`（最常见就是
+		// 它在群里回老板时被解析出的 mention），会让老板的个人频道误亮红点。
+		// 因此这里把投影镜像排除出「@ 我」计数 —— 真实在私聊里 @ 老板的消息
+		// （kind 为 chat/question，由 say 工具发出）照常计数，口径 A 不倒退。
+		const isPersonalMirror = (message: Message): boolean =>
+			kindOf(channel.id) === "dm" &&
+			(message.kind === "say" || message.kind === "think" || message.kind === "tool");
 		const mentions = messages.filter(
-			(message) => message.seq > readMarkOf(state, slug, channel.id) && message.mentions.includes(slug),
+			(message) =>
+				!isPersonalMirror(message) &&
+				message.seq > readMarkOf(state, slug, channel.id) &&
+				message.mentions.includes(slug),
 		).length;
 		const project = channel.id.startsWith("proj:") ? channel.id.slice("proj:".length) : undefined;
 		const owner = project === undefined ? undefined : projectOwnerOf?.(project);

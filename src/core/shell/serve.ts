@@ -191,13 +191,24 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels/:id/mentionable",
 			method: "GET",
 			handler: async ({ response, params }) => {
-				const { directory, channels } = await snapshot();
+				const { identities, directory, channels } = await snapshot();
 				const channel = channels.channels[params.id ?? ""];
 				if (channel === undefined) return json(response, { candidates: [] });
+				// `title` 取自 `identity.md` 的 title（与团队视图同源），让 @ 浮窗显示
+				// 「名字 / 职位 / @slug」三层，老板要的职位信息就在这里。
+				const identityTitle = (slug: string): string => {
+					const found = identities.find((item) => item.slug === slug);
+					return found?.title ?? "";
+				};
 				return json(response, {
 					candidates: channel.members
 						.filter((slug) => slug !== OWNER_SLUG)
-						.map((slug) => ({ id: conversationIdOf(directory, slug), label: shell.labelOf(slug), slug })),
+						.map((slug) => ({
+							id: conversationIdOf(directory, slug),
+							label: shell.labelOf(slug),
+							slug,
+							title: identityTitle(slug),
+						})),
 				});
 			},
 		},

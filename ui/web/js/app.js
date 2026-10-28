@@ -627,7 +627,7 @@ function renderMention() {
 			(item, index) =>
 				`<button class="mention-item" type="button" data-index="${index}"${
 					index === mention.index ? ' aria-selected="true"' : ""
-				}><span>${escapeHtml(item.label)}</span><small>@${escapeHtml(item.slug)}</small></button>`,
+				}><span class="mention-name">${escapeHtml(item.label)}</span><small class="mention-title">${escapeHtml(item.title ?? "")}</small><small class="mention-slug">@${escapeHtml(item.slug)}</small></button>`,
 		)
 		.join("");
 	const rect = el.input.getBoundingClientRect();
