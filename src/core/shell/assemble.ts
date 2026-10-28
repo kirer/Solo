@@ -27,7 +27,7 @@ import { OWNER_SLUG, chainUp, readAllIdentities, readIdentity } from "../agent/i
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { agentSection, renderAgentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
-import { ChannelDoc, OWNER, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
+import { ChannelDoc, OWNER, ensureChannel, personalId, projectId, tail, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
 import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleProject } from "../project/settle.ts";
@@ -545,9 +545,23 @@ async function projectEntry(
 		return;
 	}
 	for (const projection of projections) {
+		// 他刚在同一个频道用 `say` 说过同样的话（最常见：交付结论里带同一个链接），
+		// 再投影一次就是一条重复消息。只跳过正文，思考与工具卡片照常显示。
+		if (projection.kind === "say" && alreadySaid(state, channelId, slug, projection.text)) continue;
 		await postProjectedMessage(harness, state, channelId, slug, projection, context);
 	}
 	await saveCursor(harness, convId, Number(entry.id), context);
+}
+
+/** 最近 5 分钟内，同一人在同一频道是否已经说过同一件事（正文相同，或带同一个链接）。 */
+function alreadySaid(state: ChannelState, channelId: string, slug: string, text: string): boolean {
+	const last = tail(state, channelId, 1)[0];
+	if (last === undefined || last.from !== slug || Date.now() - last.at > 5 * 60_000) return false;
+	const norm = (value: string) => value.replace(/[\s*_`#>~-]+/g, "").trim();
+	if (norm(last.text) === norm(text)) return true;
+	const links = (value: string): string[] => value.match(/https?:\/\/[^\s)）]+/g) ?? [];
+	const spoken = links(last.text);
+	return spoken.length > 0 && links(text).some((link) => spoken.includes(link));
 }
 
 /**
@@ -643,8 +657,14 @@ async function postProjectedMessage(
  */
 function startTranscriptSink(harness: Harness, directory: DirectoryState): () => void {
 	const sink = makeTranscriptSink(harness, directory);
-	return harness.subscribeCommits((publication, context) => {
-		void sink(publication, context);
+	return harness.subscribeCommits((publication) => {
+		// 必须在 BACKGROUND_CONTEXT 里跑：提交回调拿到的 context 属于刚结束的那次任务，
+		// 任务一结束它就被 abort。用它读游标/写消息会抛 `Task N invocation has ended`，
+		// 而且是 fire-and-forget 的未处理拒绝 —— 既崩进程，又让最后一条 assistant 文案
+		// （往往正是给老板的交付结论）永远投影不进个人频道。
+		void sink(publication, BACKGROUND_CONTEXT).catch((error) => {
+			console.error("[projection] 投影失败：", error instanceof Error ? error.message : String(error));
+		});
 	});
 }
 

@@ -45,8 +45,8 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `channel/deliver.ts` | 174 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery` / `renderDigest` |
 | `channel/post.ts` | 102 | `postMessage()` —— 写一条 + 解析 @ + 投递 |
 | `channel/transcript.ts` | 90 | `projectAssistantEntry()`：把会话 `pi.assistant` 条目里的 thinking/text/toolCall 投影成 `think`/`say`/`tool` 三类消息；`assemble.ts` 订阅提交后落到个人频道 |
-| `channel/tools.ts` | 777 | 16 个工具（say/read_channel/org/hire/update_identity/remember/recall/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file） |
-| `shell/assemble.ts` | 723 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 播技能；`ownerSpeak`；`startTranscriptSink()`（会话记录 → 个人频道的投影订阅） |
+| `channel/tools.ts` | 781 | 16 个工具（say/read_channel/org/hire/update_identity/remember/recall/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file） |
+| `shell/assemble.ts` | 896 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 播技能；`ownerSpeak`；`startTranscriptSink()`（会话记录 → 个人频道的投影订阅） |
 | `shell/serve.ts` | 454 | `serveCore()` —— 8 条路由 + SSE + 静态文件 |
 | `shell/view.ts` | 302 | 视图投影：`channelList` / `channelDetail` / `messageView` / `orgView`（无 `dmKind`，dm 统一为一类） |
 | `shell/main.ts` | 122 | 启动：读模型 → `openCore` → `assembleCore` → `serveCore` → 等 Ctrl-C |

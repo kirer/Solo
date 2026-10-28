@@ -300,7 +300,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 					"他的姓名，像真人一样：姓 + 名，两到三个字（例如 林越、沈舟、顾南雁）。不要用岗位当名字（「技术负责人」不是名字），也不要英文名或代号——公司里的人有名字，岗位写在 title 里。",
 			}),
 			title: Type.Optional(Type.String({ description: "岗位标签，纯展示用" })),
-			manager: Type.Optional(Type.String({ description: "上级的 slug，缺省是你自己" })),
+			manager: Type.Optional(Type.String({ description: "上级的 slug，必须是名册里已有的人；不确定就不传，缺省是你自己" })),
 			project: Type.Optional(Type.String({ description: "所在项目 slug" })),
 			body: Type.Optional(
 				Type.String({
@@ -312,11 +312,17 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const self = await selfOf(deps, Number(api.conversationId), ctx);
+			const manager = args.manager ?? self ?? OWNER_SLUG;
+			const known = new Set((await readAllIdentities(deps.agentsRoot)).map((item) => item.slug));
+			known.add(OWNER_SLUG);
+			if (!known.has(manager)) {
+				return text(`没有这个上级：${manager}。现有 slug：${[...known].join("、")}。不传 manager 就是你自己（${self ?? OWNER_SLUG}）。`);
+			}
 			const identity = await createAgent({
 				root: deps.agentsRoot,
 				name: args.name,
 				...(args.title === undefined ? {} : { title: args.title }),
-				manager: args.manager ?? self ?? OWNER_SLUG,
+				manager,
 				...(args.project === undefined ? {} : { project: args.project }),
 				...(args.body === undefined ? {} : { body: args.body }),
 			});
