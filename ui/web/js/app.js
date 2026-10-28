@@ -372,7 +372,9 @@ function renderFlow({ veil = false, restore = true } = {}) {
 
 	el.feed.replaceChildren();
 	if (messages.length === 0) {
-		el.feed.append(emptyBlock("这个频道还没有消息。", null));
+		// 空频道不是「出错」，是「还没开始」。与其只说一句「还没有消息」，不如把
+		// 可以点的人放在这里 —— 老板下一步总是「找个人说话」，不该让他自己敲 @。
+		el.feed.append(emptyBlock("这个频道还没有消息。", null, startHints()));
 	} else {
 		el.feed.append(buildStream(messages, streamCtx()));
 	}
@@ -388,11 +390,40 @@ function renderFlow({ veil = false, restore = true } = {}) {
 	else el.flow.scrollTop = previousTop;
 }
 
-function emptyBlock(text, actionLabel, onAction) {
+/* 空频道里可以「从谁开始」：点一下把人 @ 进输入框。用的是真实名册，不是示例数据。 */
+function startHints() {
+	return state.people.slice(0, 4).map((person) => ({
+		label: person.label,
+		slug: person.slug,
+	}));
+}
+
+function emptyBlock(text, actionLabel, hints) {
 	const node = document.createElement("div");
 	node.className = "empty";
 	node.innerHTML = `<b>还没有内容</b><span>${escapeHtml(text)}</span>${actionLabel ? `<button type="button">${escapeHtml(actionLabel)}</button>` : ""}`;
 	if (actionLabel) node.querySelector("button")?.addEventListener("click", onAction);
+	if (Array.isArray(hints) && hints.length > 0) {
+		const row = document.createElement("div");
+		row.className = "empty-hints";
+		row.innerHTML = `<span class="empty-hints-cap">从谁开始</span>${hints
+			.map(
+				(person) =>
+					`<button class="empty-hint" type="button" data-hint="${escapeHtml(person.slug)}"><span class="empty-hint-av">${avatarSvg({ slug: person.slug, name: person.label, size: 20 })}</span>${escapeHtml(person.label)}</button>`
+			)
+			.join("")}`;
+		row.addEventListener("click", (event) => {
+			const chip = event.target.closest("[data-hint]");
+			if (!chip) return;
+			const person = state.people.find((item) => item.slug === chip.dataset.hint);
+			if (!person) return;
+			el.input.value = `${el.input.value}@${person.label} `.trimStart();
+			el.input.focus();
+			autosize();
+			el.input.setSelectionRange(el.input.value.length, el.input.value.length);
+		});
+		node.append(row);
+	}
 	return node;
 }
 

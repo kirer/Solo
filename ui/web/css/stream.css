@@ -835,13 +835,63 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 
 /* ── 空态 / 错误 ────────────────────────────────────────────────────── */
 
+/* 空态：居中偏上一点，不要贴在左上角 —— 贴在左上角读起来像「出错了」，
+   而空频道只是「还没开始」。 */
 .empty {
 	display: flex;
 	flex-direction: column;
-	align-items: flex-start;
+	align-items: center;
 	gap: 6px;
-	margin: 32px 0 0;
-	max-width: 42ch;
+	margin: clamp(48px, 18vh, 160px) auto 0;
+	max-width: 46ch;
+	text-align: center;
+}
+
+/* 「从谁开始」：点一下把人 @ 进输入框。头像 20 与文字基线对齐。 */
+.empty-hints {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	align-items: center;
+	gap: 6px;
+	margin-top: 14px;
+}
+
+.empty-hints-cap {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	margin-inline-end: 2px;
+}
+
+.empty-hint {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 30px;
+	padding: 0 10px 0 5px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: var(--raised);
+	font: inherit;
+	font-size: 13px;
+	line-height: 30px;
+	color: var(--ink);
+	cursor: pointer;
+	transition: border-color 120ms var(--ease), background-color 120ms var(--ease);
+}
+
+.empty-hint:hover,
+.empty-hint:focus-visible {
+	border-color: var(--accent);
+	background: var(--accent-wash);
+}
+
+.empty-hint-av {
+	display: grid;
+	place-items: center;
+	width: 20px;
+	height: 20px;
 }
 
 .empty b {
