@@ -60,6 +60,30 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `shell/http/static-assets.ts` | 201 | ETag / br+gzip 协商 / `loadAsset` |
 | `shell/http/network.ts` | 78 | 网卡探测（启动时打印局域网地址） |
 
+### 2.2 `ui/web/`（纯静态，无构建，浏览器直接跑源码）
+
+| 文件 | 职责 |
+| --- | --- |
+| `index.html` | 唯一的页面骨架：顶栏 / 人栏 / 频道栏 / 纸（消息区 + 输入卡）/ 浮层。**没有第二个页面，也没有路由框架**（hash 只有 `#/c/<channelId>`） |
+| `css/base.css` | 重置、5 个 `@font-face`（IBM Plex，本地 woff2）、全部 token、6 档字号阶梯 |
+| `css/shell.css` | 取景框、顶栏、人栏、频道栏、纸张、浮层（团队 / 菜单 / 灯箱）、手机单区域 |
+| `css/stream.css` | 消息流的四种行（`say` / `event` / `note` / `decision`）、时间分隔、骨架、空态 / 错误、动作条、气泡布局、附件、`.md` 补样式 |
+| `css/composer.css` | 输入卡、附件队列、拖拽落点提示、@ 提及弹窗、引用条 |
+| `css/memory.css` | 记忆面板（抽屉） |
+| `css/pending.css` | 待办卡（`decision` 行的选项按钮 + 自定义输入 + 回执） |
+| `css/motion.css` | 18 个 `@keyframes`、头像状态动画、入场 / 退场、`prefers-reduced-motion` |
+| `js/app.js` | 全部状态与交互：拉数据、SSE、渲染、滚动、输入、附件、浮层、快捷键。**改动 90% 落在这里** |
+| `js/rows.js` | `buildStream()` 把消息数组变成 DOM；一条消息长什么样只在这里定义 |
+| `js/avatar.js` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像（座位表 + mask 挖洞） |
+| `js/messages.js` | `mergeMessages()` —— 两页消息按 `seq` 去重合并（唯一可脱离浏览器测的前端逻辑） |
+| `js/memory.js` | 记忆面板：拉取 / 筛选 / 展开 / 记一条 / 删一节 + 纯函数（`lineCount` / `linesOf` / 过滤） |
+| `js/attach.js` | 附件：判断类型、缩略图、文件 chip、上传、队列项 |
+| `js/markdown.js` | `renderMarkdown()` —— 最小的 Markdown（标题 / 列表 / 代码 / 表格 / 链接 / 图片），**先转义再拼** |
+| `js/motion.js` | 弹簧缓动、`installMotionTokens()`、`withLinger()`（退场动画的通用壳） |
+| `js/format.js` | 转义、相对时间、`copyText()` |
+| `js/api.js` | 五个 `fetch` 包装 + `streamOrg()`。**每个后端路由必须在这里有消费者**（边界检查会查） |
+| `fonts/*.woff2` | IBM Plex Sans 400/500/600 + Mono 400/500（本地字体，不许只写 `font-family` 指望系统有） |
+
 ## 3. 「我想改 X → 动这里」
 
 | 想改什么 | 动这里 | 注意 |
@@ -76,7 +100,8 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 改频道成员怎么来 | `shell/assemble.ts` 的 `joinProjectChannel` / `addToCompanyChannel` | 成员是 `identity.md` + `README.md` 的投影（ADR-012） |
 | 加一条 HTTP 路由 | `shell/serve.ts` 的 `routes` 表 | 必须在前端有消费者，否则边界检查失败 |
 | 改界面字段 | `shell/view.ts` | 字段必须有前端消费者（ADR-016） |
-| 改界面样式 / 交互 | `ui/web/` | 无构建步骤；三条规矩见 CORE §9 |
+| 改界面样式 / 交互 | `ui/web/` | 无构建步骤；文件职责见 §2.2，三条规矩见 CORE §9 |
+| 改「上翻看历史 / 回到最新」 | `ui/web/js/app.js` 的 `loadEarlier` / `syncToBottom` / `renderFlow` 的 `pinned` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建（ADR-052） |
 | 改记忆沉淀的触发条件 / 游标时机 | `project/memory.ts` 的 `settleCandidates` + `project/settle.ts` 的 `waiting` | 游标语义在 ADR-033（取代 ADR-013），改之前先读懂 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制（ADR-021） |
@@ -111,14 +136,14 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 29 文件 / 257 例，应该 <2s
+npm test           # 31 文件 / 295 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
 改行为时**必须**同步三处：代码、`test/core/` 里的用例、`docs/`（`CORE` 概念 / `WEB-API`
 字段 / `DECISIONS` 若碰了不可轻易改的约定）。
 
-真实模型自测是保底：257 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
+真实模型自测是保底：295 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
 那一次是两个 bug 叠在一起（`ownerSpeak` 漏传 wake + wake 在 `submit` 之后才落盘），
 症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。
 
@@ -146,3 +171,10 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `colleague-dm.test.ts` | 同事私聊（ADR-041）：`to` 建出只装两人的频道 / 方向对称 / `mentions` 与 `wakeOnAll` 都指着他 / `to: owner` 不新建 / 发给不存在的人老实报错 |
 | `attention.test.ts` | 「找你」（`GET /api/attention`）：只收要老板拍板的、排除老板自己发的、7 天窗口、已读带标记、跨频道按时间倒序 |
 | `reconcile.test.ts` | 僵尸任务回收：`pi.live` 指向已终态任务时摘掉 `run` 并把积压输入放回这一轮 |
+
+`test/ui/`（前端里能脱离浏览器跑的那部分）：
+
+| 文件 | 测什么 |
+| --- | --- |
+| `memory-panel.test.ts` | 记忆面板纯逻辑：`lineCount` / `linesOf`（「条」是行数不是节数）/ 筛选 / 行数版文案 / 删除确认里的条数 |
+| `merge-messages.test.ts` | `mergeMessages()`：升序、去重、重叠时后一批赢、乱序、空输入、丢掉没有 `seq` 的项（ADR-052） |

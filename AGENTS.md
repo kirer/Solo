@@ -43,6 +43,7 @@ ui/web/             界面（无构建）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
 test/core/          29 文件 / 257 例
+test/ui/            2 文件 / 38 例
 workspace/          运行时数据（gitignore）
 ```
 
@@ -80,11 +81,11 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 29 文件 257 例，<2s，必须全绿
+npm test          # 31 文件 295 例，<2s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
-- **`npm run live` 不能省。** 257 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
+- **`npm run live` 不能省。** 295 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
   两个 bug 叠在一起（老板发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
   症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。单测测的是纯函数和装配，
   **只有真模型能测出「沟通会不会跑偏」**。
