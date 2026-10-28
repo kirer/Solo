@@ -24,12 +24,12 @@ scripts/     两个脚本：边界检查、真实模型自测
 3. `serve.ts` 的每条 `pattern` 必须在 `ui/web/js` 里有消费者（白名单：`/api/org`，
    Docker 健康检查用）。
 
-## 2. 全量文件（25 个 ts，约 5.8K 行）
+## 2. 全量文件（27 个 ts，约 5.6K 行）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
-| `runtime/index.ts` | 54 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `Type` |
-| `runtime/open.ts` | 135 | `openCore({databasePath, models, registry, settings?}) → {harness, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025） |
+| `runtime/index.ts` | 57 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `Type` |
+| `runtime/open.ts` | 142 | `openCore({databasePath, models, registry, settings?}) → {harness, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025） |
 | `runtime/models.ts` | 151 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；回落到环境变量 / 本地网关 |
 | `agent/identity.ts` | 136 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；`OWNER_SLUG = "owner"` |
 | `agent/prompt.ts` | 235 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005）；规则外移到技能，只留事实 |
@@ -40,16 +40,18 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `agent/roster.ts` | 62 | `DirectoryDoc`、`conversationFor` / `slugFor` / `wakeOf` —— 名册是缓存，不是真相 |
 | `project/doc.ts` | 164 | `projects/<slug>/README.md` 的读写；`ProjectDoc{slug,name,owner,status,body}` |
 | `project/memory.ts` | 146 | `projects/<slug>/memory.md` + `settleCandidates()` / `renderSettlePrompt()`；`SETTLE_KINDS=["decision","report"]` |
-| `project/settle.ts` | 140 | 自动沉淀：`settleProject` / `confirmedBy`；单游标（问完即推进） |
-| `channel/state.ts` | 269 | 纯规则：`ChannelDoc`（单频道 256 条 checkpoint）/ `appendMessage` / `recipientsOf` / `parseMentions` / `unreadCount` / `markRead` / `ensureChannel` |
+| `project/settle.ts` | 140 | 自动沉淀：`settleProject` / `confirmedBy`；单游标（问完即推进，说「没有需要沉淀的」也算处理过） |
+| `channel/state.ts` | 291 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `unreadCount` / `markRead` / `ensureChannel` |
 | `channel/deliver.ts` | 174 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery` / `renderDigest` |
-| `channel/post.ts` | 102 | `postMessage()` —— 写一条 + 解析 @ + 投递 |
-| `channel/transcript.ts` | 90 | `projectAssistantEntry()`：把会话 `pi.assistant` 条目里的 thinking/text/toolCall 投影成 `think`/`say`/`tool` 三类消息；`assemble.ts` 订阅提交后落到个人频道 |
-| `channel/tools.ts` | 781 | 16 个工具（say/read_channel/org/hire/update_identity/remember/recall/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file） |
-| `shell/assemble.ts` | 896 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 播技能；`ownerSpeak`；`startTranscriptSink()`（会话记录 → 个人频道的投影订阅） |
+| `channel/post.ts` | 113 | `postMessage()` —— 写一条（单元素 splice，ADR-027）+ 解析 @ + 投递 |
+| `channel/transcript.ts` | 129 | `projectAssistantEntry()`：把会话 `pi.assistant` 条目里的 thinking/text/toolCall 投影成 `think`/`say`/`tool` 三类消息（纯函数，不落库） |
+| `channel/tools.ts` | 830 | 16 个工具（say/read_channel/org/hire/update_identity/remember/recall/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file） |
+| `shell/assemble.ts` | 612 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 启投影；`ownerSpeak` / `makeAfterPost` |
+| `shell/projector.ts` | 186 | 会话记录 → 个人频道的投影管道：`startTranscriptSink` / `backfillTranscripts` / `projectEntry`（游标持久化，ADR-026） |
+| `shell/seed.ts` | 126 | 播种：`seedOwnerAssistant` / `seedCompanySkills` / `seedPersonalSkills`（已存在的不覆盖） |
 | `shell/serve.ts` | 454 | `serveCore()` —— 8 条路由 + SSE + 静态文件 |
 | `shell/view.ts` | 302 | 视图投影：`channelList` / `channelDetail` / `messageView` / `orgView`（无 `dmKind`，dm 统一为一类） |
-| `shell/main.ts` | 122 | 启动：读模型 → `openCore` → `assembleCore` → `serveCore` → 等 Ctrl-C |
+| `shell/main.ts` | 126 | 启动：读模型 → `openCore` → `assembleCore` → `serveCore` → 等 Ctrl-C |
 | `shell/http/routes.ts` | 122 | `matchRoute()` 表驱动路由（`:name` 捕获 / `*name` 吃余量） |
 | `shell/http/static-assets.ts` | 201 | ETag / br+gzip 协商 / `loadAsset` |
 | `shell/http/network.ts` | 78 | 网卡探测（启动时打印局域网地址） |
@@ -69,7 +71,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 改界面样式 / 交互 | `ui/web/` | 无构建步骤；三条规矩见 CORE §9 |
 | 改记忆沉淀的触发条件 | `project/memory.ts` 的 `SETTLE_KINDS` | 游标语义在 ADR-013，改之前先读懂 |
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制（ADR-021） |
-| 播种技能 | `seed/` + `shell/assemble.ts` 的 `seedCompanySkills` / `seedPersonalSkills` | 已存在的不覆盖 |
+| 播种技能 | `seed/` + `shell/seed.ts` 的 `seedCompanySkills` / `seedPersonalSkills` | 已存在的不覆盖 |
 
 ## 4. 启动顺序（第 3 步最容易出错）
 

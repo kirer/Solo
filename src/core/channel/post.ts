@@ -68,9 +68,20 @@ export async function postMessage(
 			...(input.kind === undefined ? {} : { kind: input.kind }),
 			...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
 		});
-		// 必须**整体替换**这个键，不能用 list.push()：文档的读取给的是副本，
-		// 往里 push 不会产生任何 op，提交后消息会静默消失（实测踩过）。
-		state.messages[input.channelId] = [...(state.messages[input.channelId] ?? []), next.message];
+		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
+		// 新数组」。两者写下去的消息一样，代价差三个数量级：
+		//
+		//   原地 push → `["p",["messages",频道],N,0,[消息]]`，约等于消息本身大小；
+		//   整值替换 → `["s",["messages",频道],[…整个频道历史]]`，**每条消息重写全部历史**。
+		//
+		// 实测（`test/core/channel-write.test.ts`）：200 字的消息，append 320 字节、
+		// 整值替换 582 字节且随历史线性变长。一个 189 条消息的频道因此涨到 27 MB。
+		//
+		// 注意 `push` 必须作用在**文档代理给出的那个数组**上：`doc.messages[id] ??=` 之后
+		// 再 push 本地变量不算数（那不是代理，提交时不会有任何 op，消息静默消失）。
+		const list = doc.messages[input.channelId];
+		if (list === undefined) doc.messages[input.channelId] = [next.message];
+		else (list as Message[]).push(next.message);
 		state.nextSeq[input.channelId] = next.message.seq + 1;
 		created = next.message;
 	}, context);

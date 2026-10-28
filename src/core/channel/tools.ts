@@ -22,7 +22,7 @@
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	Type,
@@ -636,27 +636,32 @@ export function createCoreTools(deps: CoreToolDeps) {
 
 			// 前台命令：等它跑完。
 			const { exec } = await import("node:child_process");
-			const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-				exec(command, { cwd, timeout: seconds * 1000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
-					resolve({
-						stdout: stdout.toString(),
-						stderr: stderr.toString(),
-						code: error === null ? 0 : error.code ?? -1,
+			const result = await new Promise<{ stdout: string; stderr: string; code: number | null; tooMuch: boolean }>(
+				(resolve) => {
+					exec(command, { cwd, timeout: seconds * 1000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
+						resolve({
+							stdout: stdout.toString(),
+							stderr: stderr.toString(),
+							code: error === null ? 0 : error.code ?? -1,
+							tooMuch: (error as { code?: string } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+						});
 					});
-				});
-			});
+				},
+			);
 
-			const output = [
+			const buffer = [
 				`$ ${command}`,
 				...(result.stdout.trim() === "" ? [] : [result.stdout.trim()]),
 				...(result.stderr.trim() === "" ? [] : [`[stderr] ${result.stderr.trim()}`]),
+				...(result.tooMuch ? ["（输出超过 512 KB，后面的被丢弃）"] : []),
 				`(退出码 ${result.code})`,
 			].join("\n");
-			// 完整保留输出：折叠展开后可以看全部。标题里标注「执行命令」，让老板一眼知道
-			// 这是哪种操作（仿 ChatGPT 的工具调用卡，先说清「做了什么」再给详情）。
-			const report = output;
-			await logWork(deps, slug, report, ctx);
-			return text(report);
+			// 两处都要剪，但剪的尺度不同：
+			// - 落进个人频道的那一条是给人看的，留头尾、中间省掉；
+			// - 回给模型的是它继续干活要用的，给得宽一些，但**绝不能全量**：
+			//   一次跑整个测试套件就能把 512 KB 塞进上下文，后面几轮全在付费读它。
+			await logWork(deps, slug, clip(buffer, CHANNEL_LIMIT), ctx);
+			return text(clip(buffer, MODEL_LIMIT));
 		},
 	});
 
@@ -670,6 +675,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		name: "write_file",
 		description: [
 			"把一段内容写进一个文件（UTF-8）。路径相对于工作区根。",
+			"不能写工作区以外的路径（`../` 会被拒绕）。",
 			"用于写代码、配置、文档。写完文件存在了，不会自动起服务或跑测试。",
 		].join(""),
 		parameters: Type.Object({
@@ -677,7 +683,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 			content: Type.String({ description: "文件内容" }),
 		}),
 		execute: async (args) => {
-			const target = join(deps.workspaceRoot, args.path);
+			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
+			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
 			await mkdir(dirname(target), { recursive: true });
 			await writeFile(target, args.content, "utf8");
 			return text(`已写入 ${args.path}（${args.content.length} 字）`);
@@ -692,12 +699,16 @@ export function createCoreTools(deps: CoreToolDeps) {
 	 */
 	const readFileTool = defineTool({
 		name: "read_file",
-		description: "读一个文件的内容（UTF-8，最多 8000 字）。路径相对于工作区根。",
+		description: [
+			"读一个文件的内容（UTF-8，最多 8000 字）。路径相对于工作区根。",
+			"不能读工作区以外的路径。",
+		].join(""),
 		parameters: Type.Object({
 			path: Type.String({ description: "文件路径（相对工作区根）" }),
 		}),
 		execute: async (args) => {
-			const target = join(deps.workspaceRoot, args.path);
+			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
+			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
 			const source = await readFile(target, "utf8").catch(() => undefined);
 			if (source === undefined) return text(`文件不存在：${args.path}`);
 			const trimmed = source.length > 8000 ? `${source.slice(0, 8000)}\n…（已截断，共 ${source.length} 字）` : source;
@@ -743,6 +754,48 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
 			);
 		},
 	};
+}
+
+/**
+ * 一条 `run` 输出落进个人频道的长度上限。
+ *
+ * 这个数字同时是「消息存多大」与「界面上一个折叠块展开有多长」。
+ */
+const CHANNEL_LIMIT = 3_000;
+
+/** 回给模型的输出上限。比频道宽（它要继续干活），但远小于一次大测试的完整输出。 */
+const MODEL_LIMIT = 8_000;
+
+/**
+ * 把长文本剪成「头 + 省略标记 + 尾」。
+ *
+ * 为什么留尾巴而不是只留头：被剪的几乎都是命令输出，而命令输出的重点在**结尾**
+ * （测试摘要、报错栈、退出状态）。只留头会得到一段滚过去的日志和一个看不见的结论。
+ */
+export function clip(source: string, limit: number): string {
+	if (source.length <= limit) return source;
+	// 省略标记本身也占长度，所以先把它定下来再分头尾 —— 输出因此**不超过** `limit`，
+	// 于是「已经剪过的文本再剪一次」原样返回（幂等）。否则每过一层就再塌一截。
+	const marker = `\n…（原文 ${source.length} 字，中间省略）…\n`;
+	const room = Math.max(limit - marker.length, 2);
+	const head = Math.floor(room / 4);
+	const tail = room - head;
+	return `${source.slice(0, head)}${marker}${source.slice(source.length - tail)}`;
+}
+
+/**
+ * 把一个「相对工作区根」的路径解成绝对路径，越界返回 `undefined`。
+ *
+ * 为什么拦：agent 有 `run`（shell），真想做坏事拦不住 —— 这里拦的不是恶意，是
+ * **写错**。`../../agents/别人/identity.md` 这种路径通常是它对自己所在层级搞错了，
+ * 默默写到别人文件夹里比报错更难查。另外静态文件服务本来就有同样的越界判断，
+ * 两处规则一致，读代码的人不用猜「这里到底拦不拦」。
+ */
+export function resolveInWorkspace(root: string, path: string): string | undefined {
+	const base = resolve(root);
+	const target = resolve(base, path);
+	if (target === base) return target;
+	return target.startsWith(base + sep) ? target : undefined;
 }
 
 /** 把执行结果记到个人频道（`kind:"work"`，不唤醒任何人）。 */

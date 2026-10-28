@@ -8,7 +8,7 @@ import { Harness as DurableHarness, type Harness, type HarnessSettings } from "@
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
-import type { Registry, TaskRecord } from "@earendil-works/pi-durable";
+import type { Cursor, Registry, TaskRecord } from "@earendil-works/pi-durable";
 
 /**
  * `Tx.setTask` 在运行时存在（调度器 open 恢复时正是用它），但没进公开的 `Tx` 类型。
@@ -71,8 +71,15 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 		terminated = await harness.commit(async (tx) => {
 			const live = [];
 			for (const status of LIVE) {
-				const page = await tx.scanTasks({ status }, 256, undefined);
-				live.push(...page.items);
+				// 必须翻页：`scanTasks` 一次只给一页。早先只读第一页（256 条），
+				// 某个状态超过 256 条时后面的僵尸永远清不掉，每次启动都重建一次崩溃。
+				let cursor: Cursor | undefined;
+				for (;;) {
+					const page = await tx.scanTasks({ status }, 256, cursor);
+					live.push(...page.items);
+					if (page.next === undefined) break;
+					cursor = page.next;
+				}
 			}
 			let count = 0;
 			for (const task of live) {

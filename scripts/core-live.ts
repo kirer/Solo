@@ -52,7 +52,8 @@ async function waitForReply(
 async function main(): Promise<void> {
 	const { createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
-	const { assembleCore, seedOwnerAssistant } = await import("../src/core/shell/assemble.ts");
+	const { assembleCore } = await import("../src/core/shell/assemble.ts");
+	const { seedOwnerAssistant } = await import("../src/core/shell/seed.ts");
 
 	const root = await mkdtemp(join(tmpdir(), "core-live-"));
 	const agentsRoot = join(root, "agents");

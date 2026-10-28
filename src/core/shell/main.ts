@@ -5,12 +5,15 @@
  *
  * 它做的事按顺序只有五件，没有第六件：
  * 1. 读设置里的模型；
- * 2. 打开库（`openCore`）；
+ * 2. 打开库（`openCore`，它顺带做一次启动自愈）；
  * 3. 装配组织（`assembleCore`：扫 `agents/` → 开会话 → 播种公司频道）；
  * 4. 起服务（`serveCore`）；
  * 5. 等 Ctrl-C。
  *
- * 刻意没有的东西：执行环境注册表、看门狗、崩溃自愈、IM 出站、成本核算。
+ * 已经有的：执行环境（`run` 工具，就是 shell）、启动自愈（`open.ts` 把强杀留下的
+ * 半截任务树结算成 `terminal`）、过程记录（`projector.ts` 把会话条目投影进个人频道）。
+ *
+ * 刻意没有的：看门狗（定时巡检卡住的人）、崩溃后自动重跑、IM 出站、成本核算。
  * 目标只有一个：**能跑，能被人看见在跑什么**。加回任何一样之前先问
  * 「不修它，公司会不会停摆」，答案是否就别加。
  */
@@ -19,7 +22,8 @@ import { join } from "node:path";
 import { createRegistry } from "../runtime/index.ts";
 import { openCore, type CoreRuntime } from "../runtime/open.ts";
 import { setupModels } from "../runtime/index.ts";
-import { assembleCore, seedOwnerAssistant, type CoreShell } from "./assemble.ts";
+import { assembleCore, type CoreShell } from "./assemble.ts";
+import { seedOwnerAssistant } from "./seed.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {

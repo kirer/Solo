@@ -74,9 +74,17 @@ export const ChannelDoc = defineDoc<ChannelState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {}, cursors: {} }),
-	// 消息是只增的；单频道超过 256 条时压一次基线（崩溃后最多重放 256 条）。
-	checkpointWhen: (value) =>
-		Object.values(value.messages).some((list) => list.length >= 256),
+	// 什么时候把散着的增量压成一条基线。两个理由各占一半：
+	//
+	// 1. **重放成本**：基线之前的历史不用再重放，崩溃恢复只重放最多 64 条增量。
+	// 2. **磁盘空间**：这个文档是 `scope: "session"` 的，存储层写基线时会把该文档的
+	//    旧 revision 全删（`isCurrentOnly` 为真）。也就是说「压基线」在这里同时是
+	//    **唯一的回收机制** —— 不压，历史只增不减。
+	//
+	// 早先只按「单频道 ≥ 256 条消息」判断，结果一直不触发（最多 189 条），库里的
+	// 增量无限累积到 60 MB。按增量条数判断拿得到确定的回收上限，与消息分布无关。
+	checkpointWhen: (value, _ops, info) =>
+		info.deltasSinceBase >= 64 || Object.values(value.messages).some((list) => list.length >= 256),
 });
 
 /** 老板的 slug。不是 agent，但出现在成员表里。 */
@@ -182,6 +190,11 @@ export function channelsOf(state: ChannelState, slug: string): Channel[] {
  *
  * 纯函数：seq 分配、mentions 解析、readMarks 都没动（发件人自己的已读位置由
  * 调用方决定 —— 「发完自己就算读过」是 UI 的语义，不是频道的语义）。
+ *
+ * **返回的 `state` 只用来算，不要直接写回文档。** 它带着一整份新的消息数组，
+ * 写回文档就是「整值替换该频道全部历史」（一条消息重写整条时间线，见
+ * `post.ts` 里那段实测数字）。真正的落地走 `postMessage`：它只拿这里的
+ * `message`，然后往文档代理给出的那个数组上 push 一个元素。
  */
 export function appendMessage(
 	state: ChannelState,

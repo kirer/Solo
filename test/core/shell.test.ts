@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/runtime.ts";
-import { assembleCore, seedCompanySkills, seedOwnerAssistant, seedPersonalSkills } from "../../src/core/shell/assemble.ts";
+import { assembleCore } from "../../src/core/shell/assemble.ts";
+import { seedCompanySkills, seedOwnerAssistant, seedPersonalSkills } from "../../src/core/shell/seed.ts";
 import { listCompanySkills, readSkill, writeCompanySkill } from "../../src/core/agent/skills.ts";
 
 const dirs: string[] = [];
