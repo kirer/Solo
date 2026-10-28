@@ -10,7 +10,7 @@
  * 1. 一条投递失败不影响其余（逐条 try/catch）。
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
-import type { Conversation } from "../runtime/index.ts";
+import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import {
 	type Channel,
@@ -50,6 +50,14 @@ export type DeliverOptions = {
 	readonly labelOf?: (slug: string) => string;
 	/** 记住「被谁叫醒」。缺省不记。 */
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/**
+	 * 此刻手上还有活（有非后台任务在跑）的会话 id。
+	 *
+	 * 这类投递会**打断**对方正在干的事（`whenBusy: "steer"`），所以正文要多一句
+	 * 「这是插话，不是新任务」—— 否则它答完这句就把活丢了。实测：老板在沈舟加音效
+	 * 的中途私聊问「你是谁啊」，它答完就收工，再没回项目频道汇报。
+	 */
+	readonly busy?: ReadonlySet<number>;
 };
 
 /** 一条消息交给模型时的正文。纯函数，方便单测。 */
@@ -59,6 +67,8 @@ export function renderDelivery(options: {
 	/** 收件人。用来从「还 @ 了」里剔掉自己——否则每个人都会看到「还 @ 了你」。 */
 	readonly viewer?: string;
 	readonly labelOf?: (slug: string) => string;
+	/** 这句是插进一轮正在跑的工作里的。 */
+	readonly interrupted?: boolean;
 }): string {
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const { channel, message } = options;
@@ -72,6 +82,11 @@ export function renderDelivery(options: {
 		`【${channel.title}】#${message.seq}${quoted}`,
 		`${label(message.from)}：${message.text}${also}`,
 		`（回话用 say，channel 省略即回这个频道；要看完整历史用 read_channel）`,
+		...(options.interrupted === true
+			? [
+					"（这是插话，不是新任务：答完这一句就回到你手上的活，别停。手上的活干完按规矩汇报，汇报完再管这件事。）",
+				]
+			: []),
 	].join("\n");
 }
 
@@ -106,8 +121,14 @@ export async function deliver(
 	const failed: string[] = [];
 	const skipped: string[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
-	const bodyOf = (viewer: string): string =>
-		renderDelivery({ channel: options.channel, message: options.message, viewer, labelOf: label });
+	const bodyOf = (viewer: string, interrupted: boolean): string =>
+		renderDelivery({
+			channel: options.channel,
+			message: options.message,
+			viewer,
+			labelOf: label,
+			interrupted,
+		});
 
 	for (const slug of options.targets) {
 		try {
@@ -117,7 +138,7 @@ export async function deliver(
 				continue;
 			}
 			const digest = renderDigest(options.state, slug);
-			const body = bodyOf(slug);
+			const body = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
 			const content = digest === "" ? body : `${body}\n\n${digest}`;
 			// 先记「它在哪个频道被叫醒」，再提交。
 			//
@@ -166,6 +187,25 @@ export async function deliver(
 	}
 
 	return { delivered, failed, skipped };
+}
+
+/**
+ * 哪些会话此刻手上有活。
+ *
+ * 用 `harness.inspect()`（只读、不写、不跑任务）取「活着的任务」，按会话聚合，
+ * 排掉后台任务 —— 后台任务是代理自己的账本，不算「打断它正在干的事」。
+ */
+export async function liveConversations(
+	harness: Harness,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<Set<number>> {
+	const inspection = await harness.inspect(context);
+	const busy = new Set<number>();
+	for (const task of inspection.tasks) {
+		if (task.record.background === true) continue;
+		busy.add(Number(task.record.conversationId));
+	}
+	return busy;
 }
 
 function oneLine(text: string, max: number): string {

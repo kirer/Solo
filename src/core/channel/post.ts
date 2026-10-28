@@ -13,7 +13,7 @@
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, appendMessage, recipientsOf, type Channel, type ChannelState, type Message } from "./state.ts";
-import { deliver, type DeliverResult, type WakeRecord } from "./deliver.ts";
+import { deliver, liveConversations, type DeliverResult, type WakeRecord } from "./deliver.ts";
 
 export type PostResult = {
 	readonly channel: Channel;
@@ -96,6 +96,9 @@ export async function postMessage(
 	if (targets.length === 0) {
 		return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
+	// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
+	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
+	const busy = await liveConversations(deps.harness, context).catch(() => new Set<number>());
 	const delivery = await deliver(
 		{
 			// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
@@ -103,6 +106,7 @@ export async function postMessage(
 			channel,
 			message,
 			targets,
+			busy,
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),

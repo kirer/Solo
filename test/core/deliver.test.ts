@@ -27,6 +27,17 @@ describe("投递正文", () => {
 		expect(renderDelivery({ channel: state.channels.g!, message: second.message })).toContain("（回复 #1）");
 	});
 
+	test("插话要明说「不是新任务」", () => {
+		// 实测：老板在沈舟加音效的中途私聊问「你是谁啊」，它答完就收工，
+		// 再没回项目频道汇报。所以打断式的投递必须把「答完回去干活」写进正文。
+		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto"] });
+		const { message } = appendMessage(state, "g", { from: "owner", text: "你是谁", at: 1 });
+		const interrupted = renderDelivery({ channel: state.channels.g!, message, interrupted: true });
+		expect(interrupted).toContain("这是插话，不是新任务");
+		// 对方闲着时不该看到这句——那会让人以为手上还有活。
+		expect(renderDelivery({ channel: state.channels.g!, message })).not.toContain("这是插话");
+	});
+
 	test("列出同时被 @ 的其他人，且不含自己", () => {
 		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto", "cfo"] });
 		const { message } = appendMessage(state, "g", {

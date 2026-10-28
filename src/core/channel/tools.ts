@@ -152,7 +152,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 	const say = defineTool({
 		name: "say",
 		description:
-			"在当前频道说话。不传 mention 就是一句普通发言（正文里写 @某人 才会叫醒他）；传 mention 就是提问或 @ 某人（会叫醒他）。用于汇报进度、说明结论、回应别人、提问。",
+			"在当前频道说话。不传 mention 就是一句普通发言（正文里写 @某人 才会叫醒他）；传 mention 就是提问或 @ 某人（会叫醒他）。用于汇报进度、说明结论、回应别人、提问。活干完了一定要汇报，并把上级写进 mention —— 没人知道你做完了，等于没做完。",
 		parameters: Type.Object({
 			text: Type.String({ description: "要说的话" }),
 			mention: Type.Optional(Type.String({ description: "@ 谁，写 slug（例如 zhiyan、林越）。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
@@ -601,6 +601,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			"用于：写代码文件、起服务、跑测试、装依赖。",
 			"命令以 & 结尾或以 nohup 开头时，后台运行并立即返回 PID（用于起服务）。",
 			"执行过程会记录到你的个人频道（老板能看到你在做什么）。",
+			"不要用 `sleep` 等别人：别人做完会在频道里说话并叫醒你，等消息来找你，别去追消息。",
 			"不确定能不能跑某条命令时，先看你的技能（`read_skill`）。",
 		].join(""),
 		parameters: Type.Object({
