@@ -1,0 +1,1187 @@
+{
+ "url": "http://127.0.0.1:7788",
+ "at": "2026-10-28T18:26:43.336Z",
+ "allow": [],
+ "viewports": [
+  {
+   "width": 1440,
+   "height": 900,
+   "load": "load",
+   "screens": 1,
+   "filled": [
+    0.6
+   ],
+   "motion": {
+    "elements": 6,
+    "css": 6,
+    "transitions": 0,
+    "scripted": 0,
+    "videos": 0,
+    "playingVideos": 0
+   },
+   "metrics": {
+    "viewport": {
+     "w": 1440,
+     "h": 900
+    },
+    "page": {
+     "height": 900,
+     "screens": 1,
+     "words": 2738,
+     "img": 0,
+     "video": 0,
+     "canvas": 0,
+     "svg": 2,
+     "sections": 1,
+     "horizontalOverflow": 0,
+     "overflowCulprits": [],
+     "uiFragments": 0,
+     "uiAbuse": false,
+     "realPictures": 0,
+     "videoCount": 0,
+     "uiPictures": 0,
+     "pictureSamples": [],
+     "blendText": 0,
+     "sideScrollers": 1,
+     "brokenImages": [],
+     "emoji": [
+      "✓"
+     ],
+     "videosNoPoster": 0
+    },
+    "hero": {
+     "text": "顾南雁",
+     "words": 1,
+     "chars": 3,
+     "lines": 1,
+     "size": 16,
+     "vw": 1.1,
+     "font": "-apple-system",
+     "weight": 600,
+     "tracking": 0.01,
+     "leading": 1.45,
+     "top": 74,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "h1": {
+     "text": "顾南雁",
+     "words": 1,
+     "lines": 1,
+     "size": 16,
+     "font": "-apple-system"
+    },
+    "headings": [],
+    "headingSummary": {
+     "count": 0,
+     "maxLines": 0,
+     "over2Lines": 0,
+     "statements": 0,
+     "centered": 0,
+     "medianWords": null,
+     "mixedFontHeadings": 0
+    },
+    "type": {
+     "families": [
+      {
+       "family": "-apple-system",
+       "share": 0.89,
+       "mono": false
+      },
+      {
+       "family": "ui-monospace",
+       "share": 0.11,
+       "mono": false
+      }
+     ],
+     "familyCount": 2,
+     "sizes": [
+      10,
+      11,
+      12,
+      13,
+      14,
+      16
+     ],
+     "sizeCount": 6,
+     "notLoaded": [],
+     "body": {
+      "font": "-apple-system",
+      "size": 14,
+      "leading": 1.5,
+      "weight": 400,
+      "tracking": 0.005,
+      "contrast": 14.9
+     },
+     "measureChars": 3,
+     "max": {
+      "size": 16,
+      "vw": 1.1,
+      "font": "-apple-system",
+      "text": "频道"
+     },
+     "monoShare": 0.11,
+     "monoProseShare": 0,
+     "monoFamilies": [
+      "ui-monospace"
+     ],
+     "monoSamples": [],
+     "microLabels": 0,
+     "microLabelShare": 0,
+     "microSamples": [],
+     "upperShare": 0.01,
+     "centerShare": 0,
+     "smallText": 1
+    },
+    "eyebrows": [],
+    "numbered": [],
+    "color": {
+     "bodyBg": "#141416",
+     "bodyBgHsl": {
+      "h": 240,
+      "s": 0.05,
+      "l": 0.08
+     },
+     "dark": true,
+     "sectionBgs": [
+      {
+       "color": "#141416",
+       "top": 64,
+       "hsl": {
+        "h": 240,
+        "s": 0.05,
+        "l": 0.08
+       }
+      },
+      {
+       "color": "#26272d",
+       "top": -14368,
+       "hsl": {
+        "h": 231,
+        "s": 0.08,
+        "l": 0.16
+       }
+      }
+     ],
+     "textColors": [
+      {
+       "color": "#ffffff",
+       "share": 0.72
+      },
+      {
+       "color": "#c4c4c4",
+       "share": 0.13
+      },
+      {
+       "color": "#8b939d",
+       "share": 0.08
+      },
+      {
+       "color": "#f3f1ff",
+       "share": 0.06
+      },
+      {
+       "color": "#9b87ff",
+       "share": 0
+      }
+     ],
+     "button": {
+      "bg": "#2d294a",
+      "hsl": {
+       "h": 247,
+       "s": 0.29,
+       "l": 0.23
+      },
+      "fg": "#ffffff"
+     },
+     "lowContrast": [
+      {
+       "text": "· 工具仍全部不可用，会话身份门禁未恢复。老板 #16 点名问我\"着手做了吗\"，",
+       "ratio": 4.4,
+       "need": 4.5,
+       "size": 13,
+       "fg": "#8b939d",
+       "bg": "#2d294a"
+      },
+      {
+       "text": "27 分钟前",
+       "ratio": 4.4,
+       "need": 4.5,
+       "size": 11,
+       "fg": "#8b939d",
+       "bg": "#2d294a"
+      }
+     ]
+    },
+    "buttons": {
+     "count": 1,
+     "inHero": 1,
+     "radius": 6,
+     "height": 72,
+     "withShadow": 0,
+     "withGradient": 0,
+     "mono": 0,
+     "upper": 0,
+     "heroLabels": [
+      "顾 顾南雁 平台负责人 · 平台 · 工具仍全部不可用，会话身份门禁未恢复。老板"
+     ]
+    },
+    "surfaces": {
+     "shadowStatic": 0,
+     "shadowOverlay": 0,
+     "shadowSamples": [],
+     "gradients": 0,
+     "scrims": 0,
+     "gradientSamples": [],
+     "gradientText": 0,
+     "hairlines": 5,
+     "hairlineSamples": [
+      "header.top 1440px",
+      "aside.list 320px",
+      "div.pane-head 1120px",
+      "hr 524px rule",
+      "hr 524px rule"
+     ],
+     "outlinedBoxes": 0,
+     "dashed": 0,
+     "blurred": 0,
+     "roundedBoxes": 32,
+     "boxRadius": 6,
+     "squareMedia": 0,
+     "roundedMedia": 0,
+     "mediaRadius": 0,
+     "textShadow": 0,
+     "cardRows": []
+    },
+    "heroMedia": [],
+    "nav": {
+     "links": 0,
+     "fixed": false,
+     "height": 64,
+     "floatingPill": false,
+     "blur": false
+    },
+    "fontsLoaded": []
+   },
+   "layout": {
+    "viewport": {
+     "w": 1440,
+     "h": 900
+    },
+    "pageH": 900,
+    "margins": {
+     "left": 84,
+     "right": 328
+    },
+    "sections": [],
+    "gaps": [],
+    "h1s": [
+     {
+      "text": "顾南雁",
+      "size": 16,
+      "top": 74,
+      "firstScreen": true
+     }
+    ],
+    "edgeText": [],
+    "edges": [
+     {
+      "x": 588,
+      "n": 107
+     },
+     {
+      "x": 344,
+      "n": 1
+     }
+    ],
+    "leftBlocks": 108,
+    "bodySize": 14,
+    "stage": false,
+    "explains": false,
+    "slivers": [],
+    "voidShare": 0.17,
+    "voidBox": {
+     "x": 1140,
+     "y": 120,
+     "w": 300,
+     "h": 720
+    }
+   },
+   "app": {
+    "viewport": {
+     "w": 1440,
+     "h": 900
+    },
+    "dark": true,
+    "ground": "#141416",
+    "sidebar": {
+     "w": 320,
+     "tag": "aside",
+     "links": 13,
+     "share": 0.22
+    },
+    "topbar": {
+     "h": 64
+    },
+    "canvas": {
+     "left": 252,
+     "right": 328
+    },
+    "hero": {
+     "text": "顾南雁",
+     "words": 1,
+     "chars": 3,
+     "lines": 1,
+     "size": 16,
+     "vw": 1.1,
+     "font": "-apple-system",
+     "weight": 600,
+     "tracking": 0.01,
+     "leading": 1.45,
+     "top": 74,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "charts": 0,
+    "layout": {
+     "panels": 33,
+     "firstScreen": 21,
+     "ragged": [],
+     "voids": []
+    },
+    "tiles": 0,
+    "panels": {
+     "count": 34,
+     "radii": [
+      [
+       6,
+       33
+      ],
+      [
+       0,
+       1
+      ]
+     ],
+     "heavyBorders": 0,
+     "borderSamples": [],
+     "heavyShadows": 0,
+     "softShadows": 0,
+     "shadowSamples": [],
+     "glass": 0
+    },
+    "chips": {
+     "count": 0,
+     "hues": 0,
+     "samples": []
+    },
+    "numbers": {
+     "cells": 0,
+     "leftAligned": 0,
+     "figures": 1,
+     "tabularShare": 1,
+     "kpiMax": 14
+    },
+    "rows": null,
+    "chartHues": 0,
+    "placeholders": [],
+    "type": {
+     "under13": 0.02,
+     "tiny": 0,
+     "tinySamples": [],
+     "sizes": [
+      11,
+      12,
+      13,
+      14,
+      16
+     ]
+    },
+    "title": {
+     "text": "顾南雁",
+     "size": 16,
+     "top": 74
+    },
+    "colourShare": 0.003
+   },
+   "consoleErrors": []
+  },
+  {
+   "width": 768,
+   "height": 1024,
+   "load": "load",
+   "screens": 1,
+   "filled": [
+    0.89
+   ],
+   "motion": {
+    "elements": 1,
+    "css": 1,
+    "transitions": 0,
+    "scripted": 0,
+    "videos": 0,
+    "playingVideos": 0
+   },
+   "metrics": {
+    "viewport": {
+     "w": 768,
+     "h": 1024
+    },
+    "page": {
+     "height": 1024,
+     "screens": 1,
+     "words": 2737,
+     "img": 0,
+     "video": 0,
+     "canvas": 0,
+     "svg": 2,
+     "sections": 1,
+     "horizontalOverflow": 0,
+     "overflowCulprits": [],
+     "uiFragments": 0,
+     "uiAbuse": false,
+     "realPictures": 0,
+     "videoCount": 0,
+     "uiPictures": 0,
+     "pictureSamples": [],
+     "blendText": 0,
+     "sideScrollers": 1,
+     "brokenImages": [],
+     "emoji": [
+      "✓"
+     ],
+     "videosNoPoster": 0
+    },
+    "hero": {
+     "text": "顾南雁",
+     "words": 1,
+     "chars": 3,
+     "lines": 1,
+     "size": 16,
+     "vw": 2.1,
+     "font": "-apple-system",
+     "weight": 600,
+     "tracking": 0.01,
+     "leading": 1.45,
+     "top": 74,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "h1": {
+     "text": "顾南雁",
+     "words": 1,
+     "lines": 1,
+     "size": 16,
+     "font": "-apple-system"
+    },
+    "headings": [],
+    "headingSummary": {
+     "count": 0,
+     "maxLines": 0,
+     "over2Lines": 0,
+     "statements": 0,
+     "centered": 0,
+     "medianWords": null,
+     "mixedFontHeadings": 0
+    },
+    "type": {
+     "families": [
+      {
+       "family": "-apple-system",
+       "share": 0.89,
+       "mono": false
+      },
+      {
+       "family": "ui-monospace",
+       "share": 0.11,
+       "mono": false
+      }
+     ],
+     "familyCount": 2,
+     "sizes": [
+      10,
+      11,
+      12,
+      13,
+      14,
+      16
+     ],
+     "sizeCount": 6,
+     "notLoaded": [],
+     "body": {
+      "font": "-apple-system",
+      "size": 14,
+      "leading": 1.5,
+      "weight": 400,
+      "tracking": 0.005,
+      "contrast": 14.9
+     },
+     "measureChars": 3,
+     "max": {
+      "size": 16,
+      "vw": 2.1,
+      "font": "-apple-system",
+      "text": "频道"
+     },
+     "monoShare": 0.11,
+     "monoProseShare": 0,
+     "monoFamilies": [
+      "ui-monospace"
+     ],
+     "monoSamples": [],
+     "microLabels": 0,
+     "microLabelShare": 0,
+     "microSamples": [],
+     "upperShare": 0.01,
+     "centerShare": 0,
+     "smallText": 1
+    },
+    "eyebrows": [],
+    "numbered": [],
+    "color": {
+     "bodyBg": "#141416",
+     "bodyBgHsl": {
+      "h": 240,
+      "s": 0.05,
+      "l": 0.08
+     },
+     "dark": true,
+     "sectionBgs": [
+      {
+       "color": "#1c1d22",
+       "top": 64,
+       "hsl": {
+        "h": 230,
+        "s": 0.1,
+        "l": 0.12
+       }
+      },
+      {
+       "color": "#141416",
+       "top": 64,
+       "hsl": {
+        "h": 240,
+        "s": 0.05,
+        "l": 0.08
+       }
+      },
+      {
+       "color": "#26272d",
+       "top": -19146,
+       "hsl": {
+        "h": 231,
+        "s": 0.08,
+        "l": 0.16
+       }
+      }
+     ],
+     "textColors": [
+      {
+       "color": "#ffffff",
+       "share": 0.72
+      },
+      {
+       "color": "#c4c4c4",
+       "share": 0.13
+      },
+      {
+       "color": "#8b939d",
+       "share": 0.08
+      },
+      {
+       "color": "#f3f1ff",
+       "share": 0.06
+      },
+      {
+       "color": "#9b87ff",
+       "share": 0
+      }
+     ],
+     "button": {
+      "bg": "#2d294a",
+      "hsl": {
+       "h": 247,
+       "s": 0.29,
+       "l": 0.23
+      },
+      "fg": "#ffffff"
+     },
+     "lowContrast": [
+      {
+       "text": "· 工具仍全部不可用，会话身份门禁未恢复。老板 #16 点名问我\"着手做了吗\"，",
+       "ratio": 4.4,
+       "need": 4.5,
+       "size": 13,
+       "fg": "#8b939d",
+       "bg": "#2d294a"
+      },
+      {
+       "text": "27 分钟前",
+       "ratio": 4.4,
+       "need": 4.5,
+       "size": 11,
+       "fg": "#8b939d",
+       "bg": "#2d294a"
+      }
+     ]
+    },
+    "buttons": {
+     "count": 1,
+     "inHero": 1,
+     "radius": 6,
+     "height": 72,
+     "withShadow": 0,
+     "withGradient": 0,
+     "mono": 0,
+     "upper": 0,
+     "heroLabels": [
+      "顾 顾南雁 平台负责人 · 平台 · 工具仍全部不可用，会话身份门禁未恢复。老板"
+     ]
+    },
+    "surfaces": {
+     "shadowStatic": 0,
+     "shadowOverlay": 0,
+     "shadowSamples": [],
+     "gradients": 0,
+     "scrims": 0,
+     "gradientSamples": [],
+     "gradientText": 0,
+     "hairlines": 5,
+     "hairlineSamples": [
+      "header.top 768px",
+      "aside.list 280px",
+      "div.pane-head 488px",
+      "hr 356px rule",
+      "hr 356px rule"
+     ],
+     "outlinedBoxes": 0,
+     "dashed": 0,
+     "blurred": 0,
+     "roundedBoxes": 36,
+     "boxRadius": 6,
+     "squareMedia": 0,
+     "roundedMedia": 0,
+     "mediaRadius": 0,
+     "textShadow": 0,
+     "cardRows": []
+    },
+    "heroMedia": [],
+    "nav": {
+     "links": 0,
+     "fixed": false,
+     "height": 64,
+     "floatingPill": false,
+     "blur": false
+    },
+    "fontsLoaded": []
+   },
+   "layout": {
+    "viewport": {
+     "w": 768,
+     "h": 1024
+    },
+    "pageH": 1024,
+    "margins": {
+     "left": 84,
+     "right": 40
+    },
+    "sections": [],
+    "gaps": [],
+    "h1s": [
+     {
+      "text": "顾南雁",
+      "size": 16,
+      "top": 74,
+      "firstScreen": true
+     }
+    ],
+    "edgeText": [],
+    "edges": [
+     {
+      "x": 372,
+      "n": 107
+     },
+     {
+      "x": 304,
+      "n": 1
+     }
+    ],
+    "leftBlocks": 108,
+    "bodySize": 14,
+    "stage": false,
+    "explains": false,
+    "slivers": [],
+    "voidShare": 0,
+    "voidBox": null
+   },
+   "app": {
+    "viewport": {
+     "w": 768,
+     "h": 1024
+    },
+    "dark": true,
+    "ground": "#141416",
+    "sidebar": {
+     "w": 280,
+     "tag": "aside",
+     "links": 13,
+     "share": 0.36
+    },
+    "topbar": {
+     "h": 64
+    },
+    "canvas": {
+     "left": 76,
+     "right": 40
+    },
+    "hero": {
+     "text": "顾南雁",
+     "words": 1,
+     "chars": 3,
+     "lines": 1,
+     "size": 16,
+     "vw": 2.1,
+     "font": "-apple-system",
+     "weight": 600,
+     "tracking": 0.01,
+     "leading": 1.45,
+     "top": 74,
+     "tag": "h1",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "charts": 0,
+    "layout": {
+     "panels": 37,
+     "firstScreen": 24,
+     "ragged": [],
+     "voids": []
+    },
+    "tiles": 0,
+    "panels": {
+     "count": 38,
+     "radii": [
+      [
+       6,
+       37
+      ],
+      [
+       0,
+       1
+      ]
+     ],
+     "heavyBorders": 0,
+     "borderSamples": [],
+     "heavyShadows": 0,
+     "softShadows": 0,
+     "shadowSamples": [],
+     "glass": 0
+    },
+    "chips": {
+     "count": 0,
+     "hues": 0,
+     "samples": []
+    },
+    "numbers": {
+     "cells": 0,
+     "leftAligned": 0,
+     "figures": 1,
+     "tabularShare": 1,
+     "kpiMax": 14
+    },
+    "rows": null,
+    "chartHues": 0,
+    "placeholders": [],
+    "type": {
+     "under13": 0.02,
+     "tiny": 0,
+     "tinySamples": [],
+     "sizes": [
+      11,
+      12,
+      13,
+      14,
+      16
+     ]
+    },
+    "title": {
+     "text": "顾南雁",
+     "size": 16,
+     "top": 74
+    },
+    "colourShare": 0.005
+   },
+   "consoleErrors": []
+  },
+  {
+   "width": 390,
+   "height": 844,
+   "load": "load",
+   "screens": 1,
+   "filled": [
+    0.95
+   ],
+   "motion": {
+    "elements": 0,
+    "css": 0,
+    "transitions": 0,
+    "scripted": 0,
+    "videos": 0,
+    "playingVideos": 0
+   },
+   "metrics": {
+    "viewport": {
+     "w": 390,
+     "h": 844
+    },
+    "page": {
+     "height": 844,
+     "screens": 1,
+     "words": 129,
+     "img": 0,
+     "video": 0,
+     "canvas": 0,
+     "svg": 2,
+     "sections": 1,
+     "horizontalOverflow": 0,
+     "overflowCulprits": [],
+     "uiFragments": 0,
+     "uiAbuse": false,
+     "realPictures": 0,
+     "videoCount": 0,
+     "uiPictures": 0,
+     "pictureSamples": [],
+     "blendText": 0,
+     "sideScrollers": 0,
+     "brokenImages": [],
+     "emoji": [],
+     "videosNoPoster": 0
+    },
+    "hero": {
+     "text": "频道",
+     "words": 1,
+     "chars": 2,
+     "lines": 1,
+     "size": 16,
+     "vw": 4.1,
+     "font": "-apple-system",
+     "weight": 700,
+     "tracking": 0.01,
+     "leading": 1.45,
+     "top": 20,
+     "tag": "div",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "h1": null,
+    "headings": [],
+    "headingSummary": {
+     "count": 0,
+     "maxLines": 0,
+     "over2Lines": 0,
+     "statements": 0,
+     "centered": 0,
+     "medianWords": null,
+     "mixedFontHeadings": 0
+    },
+    "type": {
+     "families": [
+      {
+       "family": "-apple-system",
+       "share": 1,
+       "mono": false
+      }
+     ],
+     "familyCount": 1,
+     "sizes": [
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+     ],
+     "sizeCount": 6,
+     "notLoaded": [],
+     "body": {
+      "font": "-apple-system",
+      "size": 13,
+      "leading": 1.45,
+      "weight": 400,
+      "tracking": 0,
+      "contrast": 5.4
+     },
+     "measureChars": 37,
+     "max": {
+      "size": 16,
+      "vw": 4.1,
+      "font": "-apple-system",
+      "text": "频道"
+     },
+     "monoShare": 0,
+     "monoProseShare": 0,
+     "monoFamilies": [],
+     "monoSamples": [],
+     "microLabels": 0,
+     "microLabelShare": 0,
+     "microSamples": [],
+     "upperShare": 0,
+     "centerShare": 0,
+     "smallText": 0
+    },
+    "eyebrows": [],
+    "numbered": [],
+    "color": {
+     "bodyBg": "#141416",
+     "bodyBgHsl": {
+      "h": 240,
+      "s": 0.05,
+      "l": 0.08
+     },
+     "dark": true,
+     "sectionBgs": [
+      {
+       "color": "#1c1d22",
+       "top": 64,
+       "hsl": {
+        "h": 230,
+        "s": 0.1,
+        "l": 0.12
+       }
+      }
+     ],
+     "textColors": [
+      {
+       "color": "#8b939d",
+       "share": 0.73
+      },
+      {
+       "color": "#c4c4c4",
+       "share": 0.19
+      },
+      {
+       "color": "#ffffff",
+       "share": 0.08
+      },
+      {
+       "color": "#141416",
+       "share": 0.01
+      }
+     ],
+     "button": null,
+     "lowContrast": []
+    },
+    "buttons": {
+     "count": 0,
+     "inHero": 0,
+     "withShadow": 0,
+     "withGradient": 0,
+     "mono": 0,
+     "upper": 0,
+     "heroLabels": []
+    },
+    "surfaces": {
+     "shadowStatic": 0,
+     "shadowOverlay": 0,
+     "shadowSamples": [],
+     "gradients": 0,
+     "scrims": 0,
+     "gradientSamples": [],
+     "gradientText": 0,
+     "hairlines": 1,
+     "hairlineSamples": [
+      "header.top 390px"
+     ],
+     "outlinedBoxes": 0,
+     "dashed": 0,
+     "blurred": 0,
+     "roundedBoxes": 0,
+     "boxRadius": 0,
+     "squareMedia": 0,
+     "roundedMedia": 0,
+     "mediaRadius": 0,
+     "textShadow": 0,
+     "cardRows": []
+    },
+    "heroMedia": [],
+    "nav": {
+     "links": 0,
+     "fixed": false,
+     "height": 64,
+     "floatingPill": false,
+     "blur": false
+    },
+    "fontsLoaded": []
+   },
+   "layout": {
+    "viewport": {
+     "w": 390,
+     "h": 844
+    },
+    "pageH": 844,
+    "margins": {
+     "left": 12,
+     "right": 12
+    },
+    "sections": [],
+    "gaps": [],
+    "h1s": [],
+    "edgeText": [],
+    "edges": [],
+    "leftBlocks": 0,
+    "bodySize": 13,
+    "stage": false,
+    "explains": false,
+    "slivers": [],
+    "voidShare": 0,
+    "voidBox": null
+   },
+   "app": {
+    "viewport": {
+     "w": 390,
+     "h": 844
+    },
+    "dark": true,
+    "ground": "#141416",
+    "sidebar": null,
+    "topbar": {
+     "h": 64
+    },
+    "canvas": {
+     "left": 12,
+     "right": -485
+    },
+    "hero": {
+     "text": "频道",
+     "words": 1,
+     "chars": 2,
+     "lines": 1,
+     "size": 16,
+     "vw": 4.1,
+     "font": "-apple-system",
+     "weight": 700,
+     "tracking": 0.01,
+     "leading": 1.45,
+     "top": 20,
+     "tag": "div",
+     "kind": "heading",
+     "align": "left",
+     "position": "left"
+    },
+    "charts": 0,
+    "layout": {
+     "panels": 0,
+     "firstScreen": 0,
+     "ragged": [],
+     "voids": []
+    },
+    "tiles": 0,
+    "panels": {
+     "count": 0,
+     "radii": [],
+     "heavyBorders": 0,
+     "borderSamples": [],
+     "heavyShadows": 0,
+     "softShadows": 0,
+     "shadowSamples": [],
+     "glass": 0
+    },
+    "chips": {
+     "count": 0,
+     "hues": 0,
+     "samples": []
+    },
+    "numbers": {
+     "cells": 0,
+     "leftAligned": 0,
+     "figures": 0,
+     "tabularShare": null,
+     "kpiMax": null
+    },
+    "rows": null,
+    "chartHues": 0,
+    "placeholders": [],
+    "type": {
+     "under13": 0.15,
+     "tiny": 0,
+     "tinySamples": [],
+     "sizes": [
+      11,
+      12,
+      13,
+      15,
+      16
+     ]
+    },
+    "title": null,
+    "colourShare": 0.004
+   },
+   "consoleErrors": []
+  }
+ ],
+ "findings": [
+  {
+   "level": "FAIL",
+   "id": "emoji",
+   "width": 1440,
+   "message": "Emoji in the page: ✓",
+   "fix": "Remove. Use words or real imagery.",
+   "alsoAt": [
+    768
+   ]
+  },
+  {
+   "level": "WARN",
+   "id": "contrast",
+   "width": 1440,
+   "message": "Low-contrast text: \"· 工具仍全部不可用，会话身份门禁未恢复。老板 #16 点名问我\"着手做了吗\"，\" 4.4:1 needs 4.5:1; \"27 分钟前\" 4.4:1 needs 4.5:1",
+   "fix": "Darken or lighten the text colour.",
+   "alsoAt": [
+    768
+   ]
+  },
+  {
+   "level": "FAIL",
+   "id": "no-title",
+   "width": 390,
+   "message": "The screen has no h1.",
+   "fix": "Name the screen in an h1 at the top of the canvas (18–28px): \"Overview\", \"Payouts\", the project's name."
+  }
+ ],
+ "images": [
+  {
+   "viewport": "desktop",
+   "width": 1440,
+   "fold": "/Users/kirer/projects/ai-company/.taste-skill/before/desktop-fold.jpg",
+   "pages": [
+    "/Users/kirer/projects/ai-company/.taste-skill/before/desktop-page-01.jpg"
+   ],
+   "film": []
+  },
+  {
+   "viewport": "tablet",
+   "width": 768,
+   "fold": "/Users/kirer/projects/ai-company/.taste-skill/before/tablet-fold.jpg",
+   "pages": [
+    "/Users/kirer/projects/ai-company/.taste-skill/before/tablet-page-01.jpg"
+   ],
+   "film": []
+  },
+  {
+   "viewport": "mobile",
+   "width": 390,
+   "fold": "/Users/kirer/projects/ai-company/.taste-skill/before/mobile-fold.jpg",
+   "pages": [
+    "/Users/kirer/projects/ai-company/.taste-skill/before/mobile-page-01.jpg"
+   ],
+   "film": []
+  }
+ ]
+}

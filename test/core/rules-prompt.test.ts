@@ -77,7 +77,7 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		expect(renderRulesSection(await loadRules(root))).toContain("## 规矩");
 	});
 
-	it("仓库自带的 seed/rules.md 覆盖了六条规矩（其中三条是硬事故）", async () => {
+	it("仓库自带的 seed/rules.md 覆盖了八条规矩（其中三条是硬事故）", async () => {
 		const seed = await readFile(new URL("../../seed/rules.md", import.meta.url), "utf8");
 		// 1. 只在该回的频道回；2. 群里最多 3 句；6. 不写英文独白。
 		expect(seed).toContain("只在叫你的那个频道回话");

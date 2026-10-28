@@ -93,3 +93,32 @@ describe("项目记忆：projects/<slug>/memory.md", () => {
 		expect(raw).toContain("人可读");
 	});
 });
+
+describe("项目记忆的闸", () => {
+	it("超长条目直接拒写，不做静默截断", async () => {
+		await expect(
+			appendProjectMemory(projects, "alpha", { text: "长".repeat(301) }),
+		).rejects.toThrow(/上限/);
+		expect(await readProjectMemory(projects, "alpha")).toBeUndefined();
+	});
+
+	it("空条目拒写", async () => {
+		await expect(appendProjectMemory(projects, "alpha", { text: "   " })).rejects.toThrow(/空/);
+	});
+
+	it("像密钥的内容拒写", async () => {
+		await expect(
+			appendProjectMemory(projects, "alpha", { text: "token 是 sk-abcdefghijklmnopqrstuvwxyz123456" }),
+		).rejects.toThrow(/密钥|密码/);
+	});
+
+	it("并发追加不丢条目（串行闸）", async () => {
+		await Promise.all(
+			Array.from({ length: 8 }, (_, index) =>
+				appendProjectMemory(projects, "alpha", { text: `第 ${index} 条` }),
+			),
+		);
+		const source = (await readProjectMemory(projects, "alpha")) ?? "";
+		for (let index = 0; index < 8; index += 1) expect(source).toContain(`第 ${index} 条`);
+	});
+});

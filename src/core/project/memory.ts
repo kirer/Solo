@@ -15,7 +15,7 @@
  */
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DIGEST_LIMIT, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
+import { DIGEST_LIMIT, entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
 
 export const PROJECT_MEMORY_FILE = "memory.md";
 
@@ -37,11 +37,36 @@ export async function readProjectMemory(projectsRoot: string, project: string): 
  * 追加一条。小节标题带日期**和记录人**：
  * 「2026-10-27 林越」。看到是谁写的，后来的争议才有地方追。
  */
+/**
+ * 写项目记忆的串行闸。
+ *
+ * 与个人记忆同一个理由：`appendProjectMemory` 是「读全文 → 拼 → 写回」，两个 agent 同时
+ * 追加就会丢一条。项目频道里本来就常有两个人同时被叫醒，这条不是理论风险。
+ */
+let writing: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(operation: () => Promise<T>): Promise<T> {
+	const next = writing.then(operation, operation);
+	writing = next.catch(() => undefined);
+	return next;
+}
+
+/**
+ * 追加一条。**超长/空/像密钥的条目直接拒写并抛错**，不做静默截断。
+ *
+ * 为什么本项目要管长度：个人记忆早就有 300/4000 的两道闸，项目记忆一条都没有，实测
+ * 某个项目的 `memory.md` 涨到 7524 字符、约 37 条 —— 而提示词里的目录只放得下十几条，
+ * 后面的条目对模型形同不存在，同时又有两处半句话（写坏的截断）留在文件里。记忆没人管
+ * 就会变成垃圾场：能写、能读、读不到重点。
+ */
 export async function appendProjectMemory(
 	projectsRoot: string,
 	project: string,
 	input: { readonly text: string; readonly by?: string; readonly at?: Date },
 ): Promise<string> {
+	const problem = entryProblem(input.text);
+	if (problem !== undefined) throw new Error(problem);
+	return serialized(async () => {
 	const path = projectMemoryPath(projectsRoot, project);
 	const existing =
 		(await readProjectMemory(projectsRoot, project)) ?? `# 项目记忆：${project}\n`;
@@ -52,12 +77,17 @@ export async function appendProjectMemory(
 	await mkdir(join(projectsRoot, project), { recursive: true });
 	await writeFile(path, next, "utf8");
 	return next;
+	});
 }
 
 /** 整篇替换（谁都能改，改错了看 git / 看历史）。 */
 export async function writeProjectMemory(projectsRoot: string, project: string, source: string): Promise<void> {
-	await mkdir(join(projectsRoot, project), { recursive: true });
-	await writeFile(projectMemoryPath(projectsRoot, project), source.trimEnd() + "\n", "utf8");
+	// 整篇替换不做逐条校验（那是「把文件改小」的合法路径），但要走同一条串行闸，
+	// 否则它可能和 append 交错，把刚追加的一条覆盖掉。
+	return serialized(async () => {
+		await mkdir(join(projectsRoot, project), { recursive: true });
+		await writeFile(projectMemoryPath(projectsRoot, project), source.trimEnd() + "\n", "utf8");
+	});
 }
 
 /**
