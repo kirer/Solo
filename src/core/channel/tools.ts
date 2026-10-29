@@ -1256,8 +1256,8 @@ export function resolveInWorkspace(root: string, path: string): string | undefin
  * 不该的情况只有一个但非常要紧：**老板的私聊**。`personalId(slug)` 在老板那里就是
  * `dm:owner-<slug>` —— 同一个频道。于是 `run` 每跑一条命令就往老板的对话里塞一行
  * `$ cd /Users/kirer/projects/...`，实测一个私聊里能堆到几百条，老板回复率因此掉到 1%
- * 量级（ADR-040 的审计数字）。投影管道那条闸（`keptProjections`）只拦投影，
- * 拦不住这里直接写的一条。
+ * 量级（ADR-040 的审计数字）。投影管道管不到这里：`run` 的命令行是**直接写**进频道的，
+ * 不经过 `projector.ts` 的投影（那条路 2026-10-30 起私聊也放行了 think/tool）。
  *
  * 命令输出不丢：`run` 的返回里本来就有全文，agent 要看自己翻；老板要看用 `read_channel`。
  * 抽成纯函数是为了能被直接验 —— 这条规则错了的表现是「私聊又变成日志墙」，

@@ -15,7 +15,7 @@
  */
 import type { Cursor, EntryRecord, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, personalId, tail, type Channel, type ChannelState } from "../channel/state.ts";
+import { ChannelDoc, OWNER, personalId, tail, type ChannelState } from "../channel/state.ts";
 import { projectAssistantEntry, type Projection } from "../channel/transcript.ts";
 import type { DirectoryState } from "../agent/roster.ts";
 import { spokenResult } from "../channel/speech.ts";
@@ -63,11 +63,11 @@ async function projectEntry(
 		await saveCursor(harness, convId, Number(entry.id), context);
 		return;
 	}
-	// **老板的私聊不落过程投影。** 个人频道 = 老板和这个人的私聊，而 think/tool/work
-	// 一次被 @ 就产出十几条：审计实测一个人半小时平均灌 76 条（最高 197 条），老板的回复率
-	// 因此掉到 1.06%（51/4804）。私聊是**对话**，不是日志垃圾桶；过程仍能在会话 feed 里看到
-	// （`pi.assistant` 条目本身没被删，只是不再复制一份到频道）。
-	const posting = projectionsToPost(channel, projections, {
+	// 老板的私聊**也落过程投影**（老板 2026-10-30 要求：私聊里要看得见思考和工具过程）。
+	// ADR-071 曾经按「私聊灌了 76 条/半小时、回复率掉到 1.06%」把它关掉；现在界面上
+	// think/tool 是折叠的过程行、不是正文，噪音问题由渲染解决，所以恢复投影。
+	// 正文（`say`）的两道去重闸照旧（见 `projectionsToPost`）。
+	const posting = projectionsToPost(projections, {
 		spokeThisTurn: spokenResult(convId) !== undefined,
 		alreadySaid: (text) => alreadySaid(state, channelId, slug, text),
 	});
@@ -77,27 +77,11 @@ async function projectEntry(
 	await saveCursor(harness, convId, Number(entry.id), context);
 }
 
-/** 老板的私聊：`dm:owner-*` 且成员里有老板。不看标题 / 归档标记 —— 那些都会漂。 */
-function isOwnerDm(channel: Channel): boolean {
-	return channel.id.startsWith("dm:") && channel.members.includes(OWNER);
-}
-
-/**
- * 这个频道该落哪些投影。纯函数，只回答一件事：老板的私聊只留 `say`（说过的话）。
- *
- * 分出来是为了能被直接验：这条规则的好坏全在「哪些 kind 被挡在外面」，写在一片
- * 需要真模型才能跑到的地方就无法回归测试。其他频道（项目频道）原样全留 ——
- * 那里的过程投影是别人接手时要看的东西。
- */
-export function keptProjections(channel: Channel, projections: readonly Projection[]): readonly Projection[] {
-	if (!isOwnerDm(channel)) return projections;
-	return projections.filter((item) => item.kind === "say");
-}
-
 /**
  * 这条 `pi.assistant` 里哪些 projection 真的要落库。
  *
- * 两道闸都只针对正文（`say`），思考与工具卡片照常显示：
+ * 现在**不再按频道过滤 kind**：老板私聊与项目频道一样，think/tool/work 全落
+ * （2026-10-30 老板要求）。下面两道闸只针对正文（`say`），思考与工具卡片照常显示：
  *
  * 1. **这一轮他已经用 `say` 说过了**（`spokeThisTurn`）。最终回答里的那段正文往往是
  *    对自己刚做过的事的复述 —— 实测原文是「已回老板：在，随时待命。」，紧跟在
@@ -110,11 +94,10 @@ export function keptProjections(channel: Channel, projections: readonly Projecti
  * 而整条投影链路要真模型才跑得到。
  */
 export function projectionsToPost(
-	channel: Channel,
 	projections: readonly Projection[],
 	options: { readonly spokeThisTurn: boolean; readonly alreadySaid: (text: string) => boolean },
 ): readonly Projection[] {
-	return keptProjections(channel, projections).filter((projection) => {
+	return projections.filter((projection) => {
 		if (projection.kind !== "say") return true;
 		if (options.spokeThisTurn) return false;
 		return !options.alreadySaid(projection.text);
