@@ -145,11 +145,39 @@ describe("组头与计时", () => {
 		// 第一轮：占位 + 几条过程行 + 一句「做完了」；第二轮紧接着开跑（间隔不到 10 分钟）
 		const p1 = { seq: 1, fromSlug: "林越", kind: "say", processing: true, at: now - 5 * 60 * 1000, startedAt: now - 5 * 60 * 1000 };
 		const e1 = { seq: 2, fromSlug: "林越", kind: "think", at: now - 4 * 60 * 1000 };
-		const said = { seq: 3, fromSlug: "林越", kind: "say", at: now - 60_000 };
+		// 上一轮结束那句离这一轮首条过程行 85 秒（> 60 秒）：是分界线，不是这一轮的开头
+		const said = { seq: 3, fromSlug: "林越", kind: "say", at: now - 85_000 };
 		const e2 = { seq: 4, fromSlug: "林越", kind: "think", at: now - 5_000 };
 		const all = [p1, e1, said, e2];
 		// 这一轮刚开工：起点就是首条过程行，不许把 5 分钟前的占位算进来
 		expect(runStartAt(all, [e2])).toBe(now - 5_000);
+	});
+
+	it("跨频道被 @ 时，上一轮被填充的回复（带 startedAt）不参与计时", () => {
+		const now = 100_000_000;
+		// 上一轮在别的频道：这条被填充的回复带 startedAt，过程投影到当前频道后会排在
+		// 这一轮的过程行前面 —— 只靠「有没有 startedAt」分辨不出来，必须看距离。
+		const prevFilled = {
+			seq: 1,
+			fromSlug: "林越",
+			kind: "say",
+			text: "上一轮在 project 频道里的回复",
+			startedAt: now - 8 * 60 * 1000,
+			at: now - 8 * 60 * 1000,
+		};
+		const firstEvent = { seq: 2, fromSlug: "林越", kind: "think", at: now };
+		// 相距 8 分钟 > 60 秒：不算这一轮，起点是首条过程行
+		expect(runStartAt([prevFilled, firstEvent], [firstEvent])).toBe(now);
+	});
+
+	it("同一轮里先说话再干活（60 秒内）仍算这一轮起点", () => {
+		const now = 100_000_000;
+		const lead = { seq: 1, fromSlug: "林越", kind: "say", text: "我先看一下。", at: now - 20_000 };
+		const firstEvent = { seq: 2, fromSlug: "林越", kind: "think", at: now };
+		expect(runStartAt([lead, firstEvent], [firstEvent])).toBe(now - 20_000);
+		// 带 startedAt 的占位（同一轮开头）：用它记下的开跑时刻
+		const placeholder = { seq: 3, fromSlug: "林越", kind: "say", processing: true, at: now - 30_000, startedAt: now - 35_000 };
+		expect(runStartAt([placeholder, firstEvent], [firstEvent])).toBe(now - 35_000);
 	});
 
 	it("和首条过程行差超过 10 分钟就回退到首条 at", () => {

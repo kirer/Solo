@@ -270,6 +270,8 @@ export function groupSpan(entries) {
 
 /** 占位记下的 startedAt 与首条过程行差多远就不再算「同一轮」。 */
 export const RUN_START_MAX_GAP_MS = 10 * 60 * 1000;
+/** 说话行离首条过程行多近才算「这一轮开头那句」（而不是上一轮的结尾）。 */
+export const LEAD_SAY_GAP_MS = 60 * 1000;
 
 /**
  * 这一段活**真正**从什么时候开始（ADR-072）。
@@ -291,15 +293,18 @@ export function runStartAt(all, run) {
 		const item = list[index];
 		if (item?.fromSlug !== first.fromSlug) continue;
 		if (!isEventKind(item.kind)) {
-			// 碰到同一个人**说的一句话**就停：那是上一轮的结尾。再往前扫就会把上一轮
-			// 的占位算进来 —— 两轮挨得近（不到 10 分钟）时，这一轮刚开工就显示成
-			// 上一轮的总用时。
-			if (typeof item.startedAt !== "number") return base;
-			// 占位（带 startedAt 的说话行）就是这一轮的开跑时刻，但和首条过程行差太远
-			// 也不是同一轮：宁可退回首条 at，也别算出一个几小时的总用时。
-			if (item.startedAt > base) return base;
-			if (base - item.startedAt > RUN_START_MAX_GAP_MS) return base;
-			return item.startedAt;
+			// 碰到同一个人**说的一句话**：它可能是这一轮的开头（先说话再干活），也可能
+			// 是上一轮的结尾（含「被填充的上一轮回复」—— 那种带 startedAt，靠有没有
+			// startedAt 分辨不出来）。判据只看距离：`at` 离首条过程行 60 秒内才算
+			// 这一轮的开头，否则就是上一轮，直接退回首条过程行的 at。
+			const at = Number(item.at ?? 0);
+			const near = Number.isFinite(at) && at > 0 && base - at <= LEAD_SAY_GAP_MS;
+			if (!near) return base;
+			// 这一轮的开头是「占位」时就带上它的 startedAt（真正的开跑时刻）。
+			const started = typeof item.startedAt === "number" ? item.startedAt : at;
+			if (started > base) return base;
+			if (base - started > RUN_START_MAX_GAP_MS) return base;
+			return started;
 		}
 	}
 	return base;
