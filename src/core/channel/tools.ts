@@ -49,6 +49,7 @@ import { createAgent, renderIdentityFile, renderOrgChart } from "../agent/create
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
 import { mentionRosterOf, resolveMention, type MentionRoster } from "./alias.ts";
+import { markSpoken, spokenResult } from "./speech.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -304,6 +305,12 @@ export function createCoreTools(deps: CoreToolDeps) {
 					"要说的话。**像同事发消息：一两句，说结论** —— 不写小标题、不列清单、不总结你刚做了什么（`run` 的过程不用复述）。" +
 					"这一轮没有新东西要说就写 `[PASS]`，系统不会发出去（但如果这一轮只有你被叫醒，PASS 会被拒绝）。",
 			}),
+			step: Type.Optional(
+				Type.Boolean({
+					description:
+						"`true` = 这只是过程话（「我正在改」「找到原因了」），可以连着说几句，不算这一轮的结论；不传 = 结论，**一轮只认一句**，第二句会被拒。干活中途想让人知道进展就用这个。",
+				}),
+			),
 			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@老板` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
 			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的同事，或你在私聊里想找人），用 `<频道 id>` 指定，或先问老板 —— 频道成员以外的人 @ 不到。" })),
 			to: Type.Optional(Type.String({ description: "把这句话**私下**发给某个人（写名字或 slug）。系统会自动建出只有你们两人的私聊频道，别人看不到。要对接同事、找上级问一句细节、向老板单独汇报，都用这个 —— 不要为了找一个人去群里喊。" })),
@@ -319,7 +326,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 	});
 
 	const sayUnlocked = async (
-		args: { text: string; mention?: string; channel?: string; to?: string; replyTo?: number; kind?: "decision" | "report" },
+		args: { text: string; mention?: string; channel?: string; to?: string; replyTo?: number; kind?: "decision" | "report"; step?: boolean },
 		api: { conversationId: string | number },
 		ctx: Context,
 	): Promise<ReturnType<typeof text>> => {
@@ -367,7 +374,24 @@ export function createCoreTools(deps: CoreToolDeps) {
 				return text(`这一句不说了（这一轮还有 ${others.join("、")} 在）。`);
 			}
 
-			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
+			// 一轮只说一句结论。第二句要补的是过程，不是又一篇结论。
+			//
+			// ds-bot 靠「回合末只交一次结果」做到这件事（`turns.js:532`）；我们没有那个
+			// 钩子，就在工具层拒第二次 —— 效果一样：模型没法在一轮里堆三段结论。
+			const conversationId = Number(api.conversationId);
+			if (args.step !== true) {
+				const previous = spokenResult(conversationId);
+				if (previous !== undefined) {
+					const head = previous.length > 40 ? `${previous.slice(0, 40)}…` : previous;
+					return text(
+						`这一轮你已经说过结果了：「${head}」。\n` +
+							"要让人知道进展就再发一次、带上 step: true（「正在改，几分钟」）；" +
+							"要补新的结论，等别人说完再来 —— 一轮里堆两段结论就不是聊天了。",
+					);
+				}
+			}
+
+			const target = await defaultChannel(deps, state, slug, conversationId, args.channel, ctx);
 			if ("error" in target) return text(target.error);
 			const roster = await mentionRoster(deps);
 
@@ -439,6 +463,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				},
 				ctx,
 			);
+			if (args.step !== true) markSpoken(conversationId, args.text);
 			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
 			const woke = result.delivery.delivered;
 			return text(

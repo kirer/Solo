@@ -47,6 +47,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `channel/state.ts` | 415 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `needsOwner`（决策句式，ADR-037）/ `fallbackChannelId`（兜底频道，非个人频道优先）/ `unreadCount` / `markRead` / `ensureChannel` |
 | `channel/alias.ts` | 116 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@老板` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
 | `channel/deliver.ts` | 273 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）/ `renderDigest` |
+| `channel/speech.ts` | 40 | 「这一轮已经说过结果了」的进程内标记（`markSpoken` / `spokenResult` / `clearSpoken`）；由 `deliver()` 在新一轮清空（ADR-064） |
 | `channel/post.ts` | 238 | `postMessage()` —— 写一条（单元素 splice，ADR-027）+ 解析 @（可带 roster / 额外 mention）+ 投递 |
 | `channel/transcript.ts` | 129 | `projectAssistantEntry()`：把会话 `pi.assistant` 条目里的 thinking/text/toolCall 投影成 `think`/`say`/`tool` 三类消息（纯函数，不落库） |
 | `channel/tools.ts` | 1067 | 17 个工具（say/read_channel/org/hire/update_identity/remember/recall/read_history/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file）；`say` 负责「在哪儿回话、叫醒谁」，`defaultChannel` / `mentionRoster` / `ensureDm`（同事私聊，ADR-041） |
@@ -137,7 +138,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 34 文件 / 327 例，应该 <2s
+npm test           # 34 文件 / 333 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
@@ -154,7 +155,7 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | --- | --- |
 | `channel-state.test.ts` | @ 解析、四类收件人、`dmId` 顺序无关、未读、幂等建频道 |
 | `mention-alias.test.ts` | `@` 别名解析（ADR-036）：老板的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底 |
-| `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`（ADR-037）、`[PASS]` 与单人在场不许静音（ADR-063） |
+| `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`（ADR-037）、`[PASS]` 与单人在场不许静音（ADR-063）、一轮只说一句结论（ADR-064） |
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞 |
 | `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`、渲染确定性、不谎报文件路径 |
 | `memory.test.ts` | 分区、追加、摘要 |

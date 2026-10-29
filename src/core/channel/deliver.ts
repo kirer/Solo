@@ -13,6 +13,7 @@
 import type { Conversation, Harness, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { planAttachments } from "./attach.ts";
+import { clearSpoken } from "./speech.ts";
 import {
 	type Channel,
 	type ChannelState,
@@ -122,6 +123,7 @@ export function renderReplyRules(options: {
 	return [
 		"（回话像同事发消息：一两句、说结论。不写小标题、不列清单、不总结你刚做过什么。）",
 		"（被要求做事就现在用工具做，说完只说结果 —— 谁、做了什么、卡在哪、下一步。不要许诺「我马上处理」。）",
+		"（干活中途想让人知道进展，就发 `say` 带 `step: true`，那种可以连发几句；不带的是结论，**这一轮只认一句**，第二句会被拒。）",
 		others.length === 0
 			? "（这一轮只有你被叫醒：必须回，回的就是结果。）"
 			: `（没有新东西就不说：只把 text 写成 \`[PASS]\`，这条不会发出去 —— 这一轮还有 ${others
@@ -198,7 +200,13 @@ export function renderDigest(state: ChannelState, slug: string, limit = 5): stri
 		if (rows.length >= limit) break;
 	}
 	if (rows.length === 0) return "";
-	return [`【你有 ${total} 条未读】`, ...rows, "（用 read_channel 看内容）"].join("\n");
+	// 「未读摘要」写得太像任务，模型会把它当成要回的东西 —— 实测一次积压 39 条时，
+	// 它答的是摘要里的旧问题，而不是刚投进来的这一条。所以这里明说它是背景。
+	return [
+		`【背景：别的频道里还有 ${total} 条没看】`,
+		...rows,
+		"（这不是要你现在回的。要用 read_channel 看；先答上面那条。）",
+	].join("\n");
 }
 
 /**
@@ -247,6 +255,8 @@ export async function deliver(
 			// 反过来的话有竞态：`submit` 一入队对方就可能已经跑起来，而它此刻查不到
 			// wake，只能退到「我最早的那个频道」—— 那往往是个人频道，于是**答在私聊里、
 			// 问的人在原频道什么都看不到**（`core:live` 12 项里 9 项因此超时，实测抓到）。
+			// 新一轮开始：它又可以重新说一句结论了。
+			clearSpoken(Number(conversation.id));
 			if (options.rememberWake !== undefined) {
 				await options.rememberWake(slug, {
 					channelId: options.channel.id,

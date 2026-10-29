@@ -88,7 +88,7 @@ describe("未读摘要", () => {
 		state = appendMessage(state, "p", { from: "owner", text: "项目里的事", at: 3 }).state;
 
 		const digest = renderDigest(state, "cto");
-		expect(digest).toContain("【你有 3 条未读】");
+		expect(digest).toContain("别的频道里还有 3 条没看");
 		expect(digest).toContain("全员：2 条 — 最新一条");
 		expect(digest).toContain("项目：1 条 — 项目里的事");
 	});
