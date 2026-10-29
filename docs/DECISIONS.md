@@ -1715,11 +1715,19 @@ note 同样会触发。现在 `settleCandidates()` 跳过 `kind === "note"`，
 **为什么不改 slug。** `owner` 是 6 张表里的外键、`dm:owner-*` 频道 id 的一部分、`localStorage`
 与几十个测试的常量。改它等于重写数据；而它只是一个内部标识，界面不该被迫展示它。
 
+5. **称呼写进身份，不只写进规矩**（老板追加的要求：「写进去」）。两处：
+   - `agent/prompt.ts` 的 `orgSection` 加一行事实陈述 —— 「对老板的称呼：老大。正文里直接写「老大」，
+     要叫他写 `@老大` —— 不要写 `@owner`。」放在组织那一段（和「你的上级是谁」并列），因为它和
+     汇报线一样是**事实**；`rules.md` 是可删可改的工作约定，称呼不该跟着丢。
+   - 三个人的 `workspace/agents/<slug>/identity.md` 正文改口，并在末尾加「## 怎么称呼老大」。
+     改这一处是因为 identity 的正文原样进提示词，是他们自己读到的第一段话。
+
 **没做的。** `paintMentions` 对「解析不出人」的 `@token` 也会上色（线上实测有一条 `@你的`
 被画成了 mention）。这是既有行为、不是本次引入，且上色比裸文本更诚实地区分了「这是个 @」；
 先留着。
 
 **回归。** `test/core/mention-alias.test.ts` 新增「@老大 解析成 owner，@老板 也还认」；
+`test/core/identity.test.ts` 新增「称呼写进组织这一段」；
 `identity/rules-prompt/shell` 三处断言里的「老板」跟着改。真浏览器实测：侧栏与消息头显示
 「老大」，正文里的 `@owner` 全部渲染成 `@老大`（`document.body.innerText.includes('@owner')`
 为 `false`）。

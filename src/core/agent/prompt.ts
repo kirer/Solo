@@ -122,6 +122,10 @@ function orgSection(input: RenderInput): string {
 		lines.push(`- 往上的整条汇报线：${chain.map((slug) => labelOf(all, slug)).join(" → ")}`);
 	}
 
+	// 称呼是**事实**，和上级是谁一样属于「本来就在那儿」的东西，不是规矩。
+	// 写在组织这一段而不是 rules.md：rules.md 是可删可改的工作约定，称呼不该跟着丢。
+	lines.push(`- 对老板的称呼：老大。正文里直接写「老大」，要叫他写 \`@老大\` —— 不要写 \`@owner\`。`);
+
 	if (self.project !== undefined) {
 		const peers = all.filter(
 			(item) => item.project === self.project && item.slug !== self.slug,
