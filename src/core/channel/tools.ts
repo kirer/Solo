@@ -291,6 +291,16 @@ export function createCoreTools(deps: CoreToolDeps) {
 	): Promise<ReturnType<typeof text>> => {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
+			// 一条频道消息最多 1200 字。
+			//
+			// 线上见过 21,568 字的一条 `say` —— 那不是在说话，是把整个思考过程倒进频道。
+			// 长内容有它的地方（项目文件、记忆、审查记录），频道里只放结论和路径。
+			if (args.text.length > SAY_LIMIT) {
+				return text(
+					`太长了：${args.text.length} 字，一条消息最多 ${SAY_LIMIT} 字。频道里只放结论，` +
+						"把过程或整份内容写进项目文件，再发一句结论加路径。",
+				);
+			}
 			let state = await readState(deps);
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
@@ -1020,6 +1030,9 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
  * 这个数字同时是「消息存多大」与「界面上一个折叠块展开有多长」。
  */
 const CHANNEL_LIMIT = 3_000;
+
+/** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
+const SAY_LIMIT = 1_200;
 
 /** 回给模型的输出上限。比频道宽（它要继续干活），但远小于一次大测试的完整输出。 */
 const MODEL_LIMIT = 8_000;
