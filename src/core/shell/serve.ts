@@ -28,7 +28,7 @@ import { browserUrlOf, lanUrlsOf } from "./http/network.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { listProjects } from "../project/doc.ts";
-import { ChannelDoc, markRead, type Attachment, type ChannelState, type Message } from "../channel/state.ts";
+import { ChannelDoc, markRead, type Attachment, type ChannelState } from "../channel/state.ts";
 import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
 import { appendMemory, memoryDigest, readMemory, sectionsOf, writeMemory } from "../agent/memory.ts";
@@ -47,7 +47,7 @@ import {
 	readUploadMeta,
 	uploadPathOf,
 	uploadsRootOf,
-} from "./uploads.ts";
+} from "../channel/uploads.ts";
 
 /** 服务选项。 */
 export type CoreServeOptions = {
@@ -216,46 +216,6 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		for (const id of channelClients.keys()) scheduleChannel(id);
 	});
 
-	/**
-	 * 把附件挂到刚落地的那条消息上。
-	 *
-	 * 为什么不从写入入口（`channel/post.ts` 的 `postMessage`）带进去：投递层与附件毫无关系，
-	 * 而那次写入已经完成、`seq` 已经定下来了。这里做的是「给同一条消息补一个字段」，
-	 * 用**下标替换**（`list[index] = {...}`）让文档代理看见一条结构化变更 —— 与
-	 * `post.ts` 填占位用的手法完全一样；写成整值替换就会重写整条频道历史（ADR-027）。
-	 *
-	 * 失败不报错：附件只是消息的装饰，消息已经发出去且已经唤醒了人，为了一个附件
-	 * 回 500 会让调用方重发整条消息（然后频道里出现两条一样的）。
-	 */
-	async function attachToMessage(
-		channelId: string,
-		seq: number,
-		attachments: readonly Attachment[],
-	): Promise<void> {
-		try {
-			await shell.harness.commit(async (tx) => {
-				const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-				const list = doc.messages[channelId];
-				if (list === undefined) return;
-				const index = list.findIndex((item) => item.seq === seq);
-				if (index < 0) return;
-				const target = list[index] as Message;
-				list[index] = {
-					...target,
-					// 固定键顺序，保证字节确定（ADR-005）。
-					attachments: attachments.map((item) => ({
-						id: item.id,
-						name: item.name,
-						kind: item.kind,
-						bytes: item.bytes,
-					})),
-				};
-			}, BACKGROUND_CONTEXT);
-		} catch (error) {
-			console.error(`[core] 附件落库失败（消息已经发出）：${error instanceof Error ? error.message : String(error)}`);
-		}
-	}
-
 	/** 老板在频道里说话。 */
 	async function postChannelMessage(channelId: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
 		const body = await readJson<{
@@ -293,6 +253,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		// 发件人：默认老板；带 `from` 时按 agent 处理（调试/脚本用，界面上永远不传）。
 		const from = (body.from ?? "").trim() === "" ? OWNER_SLUG : (body.from as string).trim();
 		try {
+			// 附件必须**随消息一起**交给写入层：投递要用它把图片读成内容块交给模型。
+			// 事后补字段（旧做法）能显示，但模型看不见 —— 于是它只能回「我读不了图」。
 			const result = await shell.postAs({
 				channelId,
 				from,
@@ -300,8 +262,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				...(typeof body.replyTo === "number" ? { replyTo: body.replyTo } : {}),
 				// 语义标签由说话的人自己声明：项目频道里带 `decision` 的话才会进项目记忆。
 				...(typeof body.kind === "string" && body.kind !== "" ? { kind: body.kind } : {}),
+				...(attachments.length === 0 ? {} : { attachments }),
 			});
-			if (attachments.length > 0) await attachToMessage(channelId, result.seq, attachments);
 			scheduleOrg();
 			scheduleChannel(channelId);
 			return json(response, {

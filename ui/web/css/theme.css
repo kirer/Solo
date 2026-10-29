@@ -1,0 +1,47 @@
+/**
+ * 主题切换按钮的结构样式。
+ *
+ * 这个文件里一个色值都没有：深浅两套颜色全在 base.css 的 token 里，这里只决定
+ * 按钮多大、怎么居中、hover 时压哪一层填充。多写一个颜色，深色下就多一个
+ * 「忘了改」的角落。
+ */
+
+/* html 层也刷成框色：body 撑满时看不见它，但 iOS 橡皮筋回弹、以及首帧 CSS 还没到时，
+   露出来的就是这一层 —— 白色一闪正是从这里来的。 */
+html {
+	background: var(--frame);
+	transition: background-color 0.18s ease;
+}
+
+/* 顶栏里多一个 28px 的格子。切换动效只过渡背景 / 文字 / 边线，不缩放、不旋转：
+   主题是「环境」在变，按钮自己动起来会把注意力从内容上拽走。 */
+.theme-btn {
+	flex: none;
+	display: inline-grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	border-radius: var(--r-control);
+	color: var(--ink-2);
+	transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+}
+
+.theme-btn:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.theme-btn:active {
+	background: var(--active);
+}
+
+.theme-btn svg {
+	display: block;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	html,
+	.theme-btn {
+		transition: none;
+	}
+}

@@ -23,7 +23,18 @@ import {
 import { chainUp, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { agentSection, renderAgentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
-import { ChannelDoc, OWNER, ensureChannel, personalId, projectId, upsertChannel, type ChannelState, type Message } from "../channel/state.ts";
+import {
+	ChannelDoc,
+	OWNER,
+	ensureChannel,
+	personalId,
+	projectId,
+	upsertChannel,
+	type Attachment,
+	type ChannelState,
+	type Message,
+} from "../channel/state.ts";
+import { uploadsRootOf } from "../channel/uploads.ts";
 import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleProject } from "../project/settle.ts";
@@ -80,6 +91,8 @@ export type CoreShell = {
 			readonly text: string;
 			readonly replyTo?: number;
 			readonly kind?: string;
+			/** 附件引用。给了模型就能真的看见这些图片 / 读到这些文件。 */
+			readonly attachments?: readonly import("../channel/state.ts").Attachment[];
 		},
 		context?: Context,
 	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
@@ -560,6 +573,8 @@ export async function ownerSpeak(
 		 * 老板在项目频道里拍板时要带上 —— 那是最该进记忆的东西。
 		 */
 		readonly kind?: string;
+		/** 附件引用（图片会被读成内容块交给模型）。 */
+		readonly attachments?: readonly Attachment[];
 	},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }> {
@@ -581,6 +596,9 @@ export async function ownerSpeak(
 				return shell.conversations.get(slug);
 			},
 			labelOf: (slug: string) => (slug === OWNER ? "老板" : (shell.directory.labels[slug] ?? slug)),
+			// 附件根跟着工作区走：`<workspace>/uploads`。给了它，老板发的图片才会被读成
+			// 内容块交给模型 —— 不给的话模型只看到一行「[图片] x.png」。
+			uploadsRoot: uploadsRootOf(shell.agentsRoot),
 			// 老板说话也要记「谁在哪个频道被叫醒」。不传这一项，被叫的人回话时
 			// 查不到 wake，只能退到「我最早的那个频道」—— 那往往是个人频道，
 			// 于是老板在公司频道问话、对方在私聊里答，问到的人什么都看不到。
@@ -603,6 +621,7 @@ export async function ownerSpeak(
 			at: Date.now(),
 			...(options.replyTo === undefined ? {} : { replyTo: options.replyTo }),
 			...(options.kind === undefined ? {} : { kind: options.kind }),
+			...(options.attachments === undefined ? {} : { attachments: options.attachments }),
 		},
 		context,
 	);

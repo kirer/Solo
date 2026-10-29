@@ -1038,3 +1038,94 @@ ADR-027 的平方放大）。
 另外两条（上翻不被拽回、补历史后同一 seq 的行屏幕位置不变）没法用纯函数证明，
 V2 也没有 UI e2e 工具了 —— 它们靠真浏览器 CDP 脚本验过，见 ADR-041 同款说明：
 这类断言的价值在人工回归，不在 CI。
+
+---
+
+## ADR-053：提交之后不许再读文档代理 —— 一条消息回两遍的真因
+
+**背景**：`say` 调用在频道里发出**两条一模一样**的消息。反复复现：每条「@知言 报时」都得到
+两条「现在 10:35。」。sqlite 里会话 2 的条目序列是：
+
+```
+CALL  say {...}
+tool-result <harness>[error] Cannot use a settled overlay</harness>
+CALL  say {...}          ← 模型以为失败了，重发
+tool-result 已发到「公司」#124
+TEXT  在。
+```
+
+即**第一次调用写成功了，然后报错**。抓到的栈（`chord/dist/delta/tracker.js:361` → `:264` →
+`src/core/channel/state.ts:220` → `src/core/channel/post.ts`）：
+
+```
+TypeError: Cannot use a settled overlay
+    at nodeForTarget (chord/dist/delta/tracker.js:361:15)
+    at recipientsOf (src/core/channel/state.ts:220:32)
+```
+
+**根因**：`postMessageUnlocked` 在 commit **之后**还在读 commit 事务里的东西 ——
+`created = finalMessage` 是事务里的代理，`recipientsOf(channel, message)` 一读
+`message.mentions` 就抛；`renderDigest(deps.state, slug)` 也会读整份快照。
+chord 把「事务已结算」的读覆盖层判为不可用（`isSettledContext` = `overlayReleased` 或
+`status ∈ consumed|aborted|stale`），而这个错**抛在写入之后**，于是「消息已进频道，工具报失败」。
+
+**试过但无效的两条路**（记下来免得再走）：
+- 把工具里取快照的 ctx 换成 `BACKGROUND_CONTEXT`（4 处替换）：仍然抛。说明不是工具的 ctx 过期。
+- 提交之后重新 `snapshot(ChannelDoc, BACKGROUND_CONTEXT)` 取一份新的再读：**仍然抛**。
+
+**决定**：把「提交之后还要用的东西」全部在提交**之前**抄成纯数据。
+
+- 频道元信息：`channelMeta = { ...channel, members: [...], wakeOnAll: [...] }`，之后只用它。
+- 新的那条消息：commit 结束前置换成 `JSON.parse(JSON.stringify(finalMessage))`（几百字节，
+  和 5MB 的全量快照不是一个量级 —— `JSON.stringify(snapshot(ChannelDoc))` 实测 5,065,321 字节）。
+- 未读摘要：`digests` 在提交前算好，`deliver` 收 `ReadonlyMap<string, string>` 而不是整份
+  `state`。摘要本来就该是「这条消息之前」的样子，提前算既对又安全。
+
+**回归**：没有能钉死它的单测 —— 这个错只在「真工具调用 + 真提交 + 提交后读」的组合下出现。
+验证靠线上：连发两次「@知言 报时」，seq 140→141、142→143 各一条回复，临时栈日志零记录。
+`test/core/serialize-commit.test.ts` 只覆盖「提交串行」这一半，别拿它当这条的证明。
+
+---
+
+## ADR-054：不上前端框架 —— 卡顿的病因是渲染策略，不是「没用 React」
+
+**背景**：老板问「是不是前端要上框架了，有必要上 React 吗」，并说「切几个页面容易卡住」。
+
+**查出来的三处真因**（都在渲染策略上，换框架一条都治不了）：
+
+1. **每条 SSE 消息都整列重建**：`merge` 里无条件 `renderFlow({restore:false})` →
+   `el.feed.replaceChildren()` + 把 60 条消息全部重新构造（每行一张 SVG 头像、正文再走一遍
+   Markdown）。来一条消息重建一次全表，消息越快越卡。改成**只 append 新那一条**。
+   顺带修掉一个隐藏 bug：重建会把正在流式写入的 `.md` 节点换掉，token 增量就找不到落点。
+2. **org 推送成串**：每来一条 org 事件就 `loadChannels()` + `loadAttention()`（两次网络 +
+   整条侧栏重建）。改成 400ms 合并。
+3. **切一次频道重建三次侧栏**：改成只改 `aria-current`（`markCurrent()`）。
+
+**决定**：不加框架、不加构建。前端保持「原生 ES module，无依赖，静态直出」。
+理由：这个界面的状态是**一份快照 + 一个流**，没有需要框架来管的组件间状态同步；
+真正的成本在「一次渲染多少 DOM」，那是手写更可控的地方。加 React 会引入构建步骤，
+而本项目刻意没有构建（`ui/web/` 改完刷新就生效），换来的只是把 `replaceChildren` 换成
+`key` + 虚拟 DOM —— 该整列重建的时候它一样整列重建。
+
+**回归**：没有单测（DOM 性能测不出来）。判定标准写在 `docs/DESIGN.md` §10：
+交付前用真浏览器跑一遍「连发 5 条消息 + 切 8 个频道」，主线程不出现 > 200ms 的长任务。
+
+---
+
+## ADR-055：侧栏一列平铺、两行
+
+**背景**：老板列了四条：「左侧栏太乱，不要分组，直接平铺；名字后面跟状态；职位和项目不显示；
+私聊点开后在头部显示；私聊头部的『2 人』根本不需要。」改完之后他又指出：
+「左侧头像右边应该还是两行啊，你怎么变了。」
+
+**决定**：
+
+- **一列，无分组**。`GROUPS`（群组/成员两块）删掉，`.chan-head` 删掉，`#people` 人栏并入
+  这一列 —— 人和频道混排，按最后活跃时间倒序。理由：分组是为了把「8 个人」和「5 个频道」
+  分开，但平铺之后两者本来就有不同的头像（人脸 vs 群头像），分组标题只是重复。
+- **每行两行文字**：第一行名字 + 状态（只有私聊行有状态），第二行最后一句。
+  只留一行会变成「一堆名字 + 一堆时间」，扫不出哪个频道真的动了。
+- 不显示职位、项目、成员数。私聊打开后，那个人的状态改到频道头上（`renderHead`），侧栏不重复。
+
+**代价**：人和频道混在一起，找不到「只看人」的入口。接受 —— 人栏那 8 行在 13 行列表里
+本来就占三分之一，再单开一块只是把同样的人画两遍。

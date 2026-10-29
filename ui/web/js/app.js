@@ -15,7 +15,7 @@ import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
 import { copyText, escapeHtml, relTime } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
-import { activityPhrase, buildStream, isNeed as isNeedRow } from "./rows.js";
+import { activityPhrase, buildOne, buildStream, isNeed as isNeedRow } from "./rows.js";
 import { mergeMessages } from "./messages.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -25,12 +25,6 @@ const TICK_MS = 30_000;
 const LAYOUT_KEY = "ai-company.layout";
 const HOLD_MS = 800; // 活动行每句话至少停 800ms
 const HL_MS = 1200; // 定位高亮
-
-const GROUPS = [
-	{ key: "company", title: "公司", kinds: ["company", "leadership"] },
-	{ key: "project", title: "项目", kinds: ["project"] },
-	{ key: "dm", title: "", kinds: ["dm"] },
-];
 
 const STATUS_LABEL = { thinking: "在想", working: "在做", idle: "待命", asleep: "睡了" };
 
@@ -61,6 +55,9 @@ const state = {
 	conn: "open",
 	lastOk: 0,
 	closeChannelStream: null,
+	/** 当前列上最后画出来的那条消息的 seq。SSE 只追加比它大的。 */
+	lastRendered: 0,
+	refreshTimer: 0,
 };
 
 function readLayout() {
@@ -85,7 +82,6 @@ const el = {
 	layoutMenu: $("layout-menu"),
 	plusBtn: $("plus-btn"),
 	plusMenu: $("plus-menu"),
-	people: $("people"),
 	rows: $("rows"),
 	sidebar: $("sidebar"),
 	sheet: $("sheet"),
@@ -260,59 +256,72 @@ function renderTop() {
 
 /* ── 人栏 ───────────────────────────────────────────────────────────── */
 
-function renderPeople() {
-	const people = state.org?.people ?? [];
-	if (people.length === 0) {
-		el.people.replaceChildren();
-		return;
-	}
-	el.people.innerHTML = people
-		.map((person) => {
-			const presence = presenceOf(person.slug);
-			const active = person.project && state.channels.find((c) => kindOf(c) === "dm" && c.title === person.label);
-			return `<button class="person" type="button" data-slug="${escapeHtml(person.slug)}"${
-				active && active.id === state.currentId ? ' aria-current="true"' : ""
-			}><span class="person-av">${avatarSvg({
-				slug: person.slug,
-				name: person.label,
-				size: 24,
-				state: presence,
-			})}</span><span class="p-who"><span class="p-name">${escapeHtml(person.label ?? "")}</span><span class="p-status" data-state="${presence}"><span class="p-status-t">${
-				STATUS_LABEL[presence]
-			}${person.title ? ` · ${escapeHtml(person.title)}` : ""}</span></span></span></button>`;
-		})
-		.join("");
+/** 群频道里显示人，私聊频道里显示那个人。两者都要能取到状态。 */
+function slugOfChannel(channel) {
+	if (kindOf(channel) !== "dm") return undefined;
+	const id = String(channel.id ?? "");
+	const dash = id.lastIndexOf("-");
+	return dash < 0 ? undefined : id.slice(dash + 1);
 }
 
-/* ── 频道栏 ─────────────────────────────────────────────────────────── */
-
-function renderChannels() {
-	if (state.channels.length === 0) {
+/**
+ * 左侧会话列表：**一列平铺，不分纮**。
+ *
+ * 以前分「成员 / 群组 / 私聊」三段，同一个人在「成员」和「私聊」各出现一次，
+ * 两边状态还得自己对上；而群、项目、私聊本来就是同一件事（一个能说话的地方），
+ * 拆成两个列表只是把选择变多。现在按最后说话时间排，谁刚找过你在最上面。
+ *
+ * 每行只给三件事：脸、名字（后面跟状态）、时间（有未读就给点）。
+ * 预览、职位、项目、人数全不放 —— 那些扫一眼看不出来，只会把名字挤小。
+ */
+function renderSidebar() {
+	const channels = [...state.channels].sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
+	if (channels.length === 0) {
 		el.rows.innerHTML = `<div class="empty"><span>还没有频道。</span></div>`;
 		return;
 	}
-	const out = [];
-	for (const group of GROUPS) {
-		const items = state.channels.filter((channel) => group.kinds.includes(kindOf(channel)));
-		if (items.length === 0) continue;
-		if (group.title) out.push(`<div class="chan-head"><b>${group.title}</b></div>`);
-		for (const channel of items) {
-			const current = channel.id === state.currentId;
-			// 副标题只放人话：一句预览；没有预览才退到人数。项目 slug 不上屏。
-			const preview = (channel.preview ?? "").trim();
-			const sub = preview ? (preview.length > 48 ? `${preview.slice(0, 48)}…` : preview) : `${channel.memberCount ?? 0} 人`;
-			const dot = channel.mentions > 0 ? '<span class="dot" data-kind="mention"></span>' : channel.unread > 0 ? '<span class="dot"></span>' : "";
-			out.push(`<button class="ch" type="button" data-channel="${escapeHtml(channel.id)}"${
-				current ? ' aria-current="true"' : ""
-			}><span class="ch-av">${channelAvatar(channel, 24)}</span><span class="ch-main"><span class="ch-title">${escapeHtml(
-				channel.title ?? "",
-			)}</span><span class="ch-sub">${escapeHtml(sub)}</span></span><span class="ch-meta"><span class="ch-time">${relTime(
-				channel.lastAt ?? 0,
-			)}</span>${dot}</span></button>`);
-		}
-	}
+	const out = channels.map((channel) => {
+		const current = channel.id === state.currentId;
+		const slug = slugOfChannel(channel);
+		const dot =
+			channel.mentions > 0
+				? '<span class="dot" data-kind="mention"></span>'
+				: channel.unread > 0
+					? '<span class="dot"></span>'
+					: "";
+		// 状态只对人显示：频道没在「想」这一回事。
+		const presence = slug ? presenceOf(slug) : null;
+		const state_tag = presence
+			? `<span class="ch-state" data-state="${presence}">${STATUS_LABEL[presence] ?? ""}</span>`
+			: "";
+		// 两行：上面名字 + 状态，下面最后一句。一列平铺是为了「一眼扫完谁在等你」，
+		// 但只剩名字的话分不清哪个频道有新内容 —— 预览那一行是这份列表的主要信息。
+		const preview = channel.preview ?? "";
+		return `<button class="ch" type="button" data-channel="${escapeHtml(channel.id)}"${
+			current ? ' aria-current="true"' : ""
+		}><span class="ch-av">${channelAvatar(channel, 24)}</span><span class="ch-main"><span class="ch-top"><span class="ch-title">${escapeHtml(
+			channel.title ?? "",
+		)}</span>${state_tag}</span><span class="ch-sub">${escapeHtml(preview)}</span></span><span class="ch-meta"><span class="ch-time">${relTime(
+			channel.lastAt ?? 0,
+		)}</span>${dot}</span></button>`;
+	});
 	el.rows.innerHTML = out.join("");
 }
+
+/**
+ * 只改「哪一行是当前的」。
+ *
+ * 切频道时以前是整列重建两次（打开前一次、标已读一次）—— 15 行 × 两张 SVG 头像，
+ * 连点几下就能看出卡。现在只改属性。
+ */
+function markCurrent() {
+	for (const button of el.rows.querySelectorAll("[data-channel]")) {
+		const current = button.dataset.channel === state.currentId;
+		if (current) button.setAttribute("aria-current", "true");
+		else button.removeAttribute("aria-current");
+	}
+}
+
 
 /* ── 消息流 ─────────────────────────────────────────────────────────── */
 
@@ -378,6 +387,7 @@ function renderFlow({ veil = false, restore = true } = {}) {
 	} else {
 		el.feed.append(buildStream(messages, streamCtx()));
 	}
+	state.lastRendered = messages.length > 0 ? Number(messages[messages.length - 1].seq ?? 0) : 0;
 	if (state.error) el.feed.prepend(errorBlock(state.error, "重试", () => openChannel(state.currentId)));
 
 	if (veil) {
@@ -522,12 +532,21 @@ function renderHead() {
 	el.paneTitle.textContent = channel?.title ?? "频道";
 	// 顶栏那个 h1 是全页唯一的一级标题：桌面写产品名，手机写当前区域的名字。
 	el.barTitle.textContent = desktop() ? "一人公司" : (channel?.title ?? "频道");
+	// 标题下面那一行只放「不能从标题猜到的」信息。
+	//
+	// 私聊不写「2 人」：私聊本来就是两个人，写出来是废话，还占掉一行副标题的位置。
+	// 私聊写的是这个人在干什么（和左侧列表一致），这才是老板打开私聊想知道的第一件事。
 	const parts = [];
 	if (channel) {
 		const kind = kindOf(channel);
-		if (kind === "project" && channel.project) parts.push(channel.project);
-		if (channel.ownerLabel) parts.push(kind === "dm" ? "个人频道" : `负责人 ${channel.ownerLabel}`);
-		if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
+		if (kind === "dm") {
+			const slug = slugOfChannel(channel);
+			if (slug) parts.push(STATUS_LABEL[presenceOf(slug)] ?? "");
+		} else {
+			if (kind === "project" && channel.project) parts.push(channel.project);
+			if (channel.ownerLabel) parts.push(`负责人 ${channel.ownerLabel}`);
+			if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
+		}
 	}
 	el.paneSub.textContent = parts.join(" · ");
 	el.composer.hidden = !state.currentId;
@@ -622,8 +641,7 @@ function clearAttach() {
 
 function renderAll({ veil = false } = {}) {
 	renderTop();
-	renderPeople();
-	renderChannels();
+	renderSidebar();
 	renderHead();
 	renderReply();
 	renderFlow({ veil });
@@ -639,7 +657,7 @@ async function loadOrg() {
 		state.org = org;
 		state.people = org.people ?? [];
 		state.lastOk = Date.now();
-		renderPeople();
+		renderSidebar();
 		renderTop();
 		if (!el.team.hidden) renderTeam();
 	} catch (error) {
@@ -653,7 +671,7 @@ async function loadChannels() {
 		state.channels = payload.channels ?? [];
 		state.unread = payload.unread ?? { total: 0, mentions: 0 };
 		state.lastOk = Date.now();
-		renderChannels();
+		renderSidebar();
 		renderTop();
 	} catch (error) {
 		state.error = error.message;
@@ -690,7 +708,7 @@ async function openChannel(id, { push = true } = {}) {
 	if (el.toBottom) el.toBottom.hidden = true;
 	el.skel.hidden = false;
 	renderHead();
-	renderChannels();
+	markCurrent();
 	renderReply();
 	renderFlow({ veil: true });
 	if (push && location.hash !== `#/c/${id}`) history.replaceState(null, "", `#/c/${id}`);
@@ -727,8 +745,9 @@ async function markRead(detail) {
 		if (row) {
 			row.unread = 0;
 			row.mentions = 0;
+			const button = el.rows.querySelector(`[data-channel="${CSS.escape(row.id)}"]`);
+			button?.querySelector(".dot")?.remove();
 		}
-		renderChannels();
 	} catch {
 		state.readMark.delete(key);
 	}
@@ -800,11 +819,25 @@ function openChannelStream(id) {
 		if (!message || typeof message.seq !== "number") return;
 		const messages = state.detail.messages ?? [];
 		const index = messages.findIndex((candidate) => candidate.seq === message.seq);
+		const previous = messages.length > 0 ? messages[messages.length - 1] : null;
+		const isAppend = index < 0 && message.seq > (state.lastRendered ?? 0);
 		if (index >= 0) messages[index] = { ...messages[index], ...message };
 		else messages.push(message);
 		notePresence(message);
 		const pinned = isPinned();
-		renderFlow({ restore: false });
+		// 只画新来的那一条。
+		//
+		// 以前这里是无条件 `renderFlow()` —— 整个频道（100+ 行、每行一张 SVG 头像、
+		// 正文还要过一遍 Markdown）在**每条消息**到达时重建一次。两个 agent 同时说话、
+		// 加上 think/tool 过程投影，一秒能来好几条，主线程一直占着，点哪儿都像卡住。
+		// 重建还会把正在流式写入的那个 `.md` 节点一起换掉，token 的后续增量就找不到落点了。
+		if (isAppend) {
+			el.feed.append(buildOne(message, streamCtx(), previous));
+			state.lastRendered = message.seq;
+		} else {
+			// 编辑、占位填充、乱序到达：这几条路径很少，老老实实重画。
+			renderFlow({ restore: false });
+		}
 		// 不钉在底部时不拽人，但要让「回到最新」知道下面又多了几条。
 		if (pinned) scrollToBottom();
 		else syncToBottom();
@@ -1161,6 +1194,22 @@ function highlightSeq(seq, attempt = 0) {
 	window.setTimeout(() => delete row.dataset.hl, HL_MS + 100);
 }
 
+/**
+ * 展开/收起过程行（想了多久、跑了什么命令）。
+ *
+ * 用 `hidden` 而不是 class：隐藏的元素不参与布局也不被读屏念，语义就是这个意思。
+ * `aria-expanded` 同步，键盘用户听得到状态。
+ */
+function expandEvent(button) {
+	const row = button.closest(".row-event");
+	const body = row?.querySelector(".ev-body");
+	if (!body) return;
+	const open = body.hidden;
+	body.hidden = !open;
+	button.setAttribute("aria-expanded", open ? "true" : "false");
+	row.dataset.open = open ? "true" : "false";
+}
+
 function replyToRow(row) {
 	const seq = Number(row.dataset.seq);
 	if (!seq) return;
@@ -1238,16 +1287,6 @@ function bind() {
 		openChannel(button.dataset.channel);
 	});
 
-	el.people.addEventListener("click", (event) => {
-		const button = event.target.closest("[data-slug]");
-		if (!button) return;
-		const slug = button.dataset.slug;
-		const person = state.people.find((candidate) => candidate.slug === slug);
-		const dm = state.channels.find((channel) => kindOf(channel) === "dm" && channel.title === person?.label);
-		if (dm) openChannel(dm.id);
-		else openTeam();
-	});
-
 	el.back.addEventListener("click", () => {
 		if (state.currentId) {
 			state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
@@ -1276,7 +1315,7 @@ function bind() {
 		if (tool && row) {
 			if (tool.dataset.act === "copy") copyRow(tool, rowText(row));
 			else if (tool.dataset.act === "reply") replyToRow(row);
-			else if (tool.dataset.act === "locate") highlightSeq(Number(row.dataset.seq));
+			else if (tool.dataset.act === "expand") expandEvent(tool);
 			return;
 		}
 
@@ -1348,7 +1387,7 @@ function bind() {
 	el.toBottom?.addEventListener("click", () => {
 		scrollToBottom();
 		// 跳回去之后把这一屏标成已读：不然回来一圈未读数还挂着。
-		if (state.detail) markRead(state.detail).then(renderChannels, () => {});
+		if (state.detail) markRead(state.detail).then(markCurrent, () => {});
 	});
 
 	el.composer.addEventListener("submit", (event) => {
@@ -1501,12 +1540,13 @@ function bind() {
 		window.setTimeout(() => openMemory({ slug, label }), 200);
 	});
 
-	// 人栏右键：看这个人的记忆。不做成常驻按钮 —— 人栏每行只有一个动作（去说话）。
-	el.people.addEventListener("contextmenu", (event) => {
-		const person = event.target.closest("[data-slug]");
-		if (!person) return;
+	// 列表右键：私聊那一行能看这个人的记忆。不放进常驻按钮 —— 每行只该有一个动作（去说话）。
+	el.rows.addEventListener("contextmenu", (event) => {
+		const row = event.target.closest("[data-channel]");
+		const slug = row ? slugOfChannel({ id: row.dataset.channel, kind: "dm" }) : undefined;
+		if (!slug) return;
 		event.preventDefault();
-		openMemory({ slug: person.dataset.slug, label: person.querySelector(".p-name")?.textContent ?? person.dataset.slug });
+		openMemory({ slug, label: row.querySelector(".ch-title")?.textContent ?? slug });
 	});
 	el.team.addEventListener("click", (event) => {
 		if (event.target === el.team) closeTeam();
@@ -1658,8 +1698,14 @@ function boot() {
 
 	streamOrg(
 		() => {
-			loadChannels();
-			loadAttention();
+			// org 推送会成串到达（一个动作常常连带几个文档变更）。以前每来一条都立刻
+			// 重新拉频道列表 + 找你要的事，然后整条侧栏重建 —— 连续几下之后主线程就排满了。
+			// 合并成一次：400ms 内的所有推送只取一次数据。
+			window.clearTimeout(state.refreshTimer);
+			state.refreshTimer = window.setTimeout(() => {
+				loadChannels();
+				loadAttention();
+			}, 400);
 		},
 		(status) => {
 			state.conn = status === "open" ? "open" : "closed";
@@ -1671,7 +1717,7 @@ function boot() {
 	// 相对时间、活动行秒表、断线提示：每 30s 重算一次，不做逐秒 tick。
 	window.setInterval(() => {
 		if (state.currentId) {
-			renderChannels();
+			renderSidebar();
 			renderActivity();
 		}
 	}, TICK_MS);

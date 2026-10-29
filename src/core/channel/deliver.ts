@@ -10,8 +10,9 @@
  * 1. 一条投递失败不影响其余（逐条 try/catch）。
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
-import type { Conversation, Harness } from "../runtime/index.ts";
+import type { Conversation, Harness, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
+import { planAttachments } from "./attach.ts";
 import {
 	type Channel,
 	type ChannelState,
@@ -51,7 +52,16 @@ export type DeliverIssue = {
 };
 
 export type DeliverOptions = {
-	readonly state: ChannelState;
+	/**
+	 * 每个人各自的未读摘要，**在调用方提交之前**就算好。
+	 *
+	 * 不在这里算，是因为这些摘要要读整个频道文档，而投递发生在写入提交之后 ——
+	 * 那时候读快照可能已经被释放（chord 报 `Cannot use a settled overlay`），
+	 * 而且这个错抛在**写入之后**：消息已经进频道，工具却对外报失败，模型重发一次，
+	 * 频道里出现两条一模一样的回复。摘要本来就该是「这条消息之前」的样子，
+	 * 提前算既对又安全。
+	 */
+	readonly digests: ReadonlyMap<string, string>;
 	readonly channel: Channel;
 	readonly message: Message;
 	/** 要唤醒谁（`recipientsOf` 的结果）。 */
@@ -78,6 +88,13 @@ export type DeliverOptions = {
 	 * 就是这么排查了很多轮才定位到投递层的。
 	 */
 	readonly notify?: (issues: readonly DeliverIssue[]) => Promise<void> | void;
+	/**
+	 * 附件根目录（`<workspace>/uploads`）。
+	 *
+	 * 给了就把消息里的图片读成内容块直接交给模型（它真的看得见图），其它文件给出
+	 * `read_file` 的路径。不给就退化成正文里一行「[图片] x.png」—— 那是旧行为。
+	 */
+	readonly uploadsRoot?: string;
 };
 
 /** 这个频道是不是「我和老板的私聊」。`viewer` 缺省时只要求两边里有老板。 */
@@ -95,6 +112,8 @@ export function renderDelivery(options: {
 	readonly labelOf?: (slug: string) => string;
 	/** 这句是插进一轮正在跑的工作里的。 */
 	readonly interrupted?: boolean;
+	/** 附件说明（`planAttachments` 的 `lines`）。没有附件时为空。 */
+	readonly attachmentLines?: readonly string[];
 }): string {
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const { channel, message } = options;
@@ -124,6 +143,9 @@ export function renderDelivery(options: {
 		...(isOwnerDm(channel, options.viewer)
 			? ["（这是你和老板的私聊，只回这里，别去群里说）"]
 			: []),
+		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
+			? []
+			: ["", "附件：", ...options.attachmentLines]),
 		`（回话用 say，channel 省略即回这个频道；要看完整历史用 read_channel）`,
 		...(options.interrupted === true
 			? [
@@ -165,6 +187,8 @@ export async function deliver(
 	const skipped: string[] = [];
 	const issues: DeliverIssue[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
+	// 附件只读一次：所有收件人拿到的是同一份图片内容块。
+	const plan = await planAttachments(options.uploadsRoot, options.message.attachments);
 	const bodyOf = (viewer: string, interrupted: boolean): string =>
 		renderDelivery({
 			channel: options.channel,
@@ -172,6 +196,7 @@ export async function deliver(
 			viewer,
 			labelOf: label,
 			interrupted,
+			attachmentLines: plan.lines,
 		});
 
 	for (const slug of options.targets) {
@@ -182,9 +207,12 @@ export async function deliver(
 				issues.push({ slug, reason: "no-conversation" });
 				continue;
 			}
-			const digest = renderDigest(options.state, slug);
+			const digest = options.digests.get(slug) ?? "";
 			const body = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
-			const content = digest === "" ? body : `${body}\n\n${digest}`;
+			const text = digest === "" ? body : `${body}\n\n${digest}`;
+			// 有图就发内容块：文字在前，图片在后（多数模型要求首块是文本）。
+			const content: UserInput =
+				plan.images.length === 0 ? text : [{ type: "text", text }, ...plan.images];
 			// 先记「它在哪个频道被叫醒」，再提交。
 			//
 			// 反过来的话有竞态：`submit` 一入队对方就可能已经跑起来，而它此刻查不到

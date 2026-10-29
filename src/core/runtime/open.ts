@@ -9,6 +9,7 @@ import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
 import type { Cursor, Registry, TaskRecord } from "@earendil-works/pi-durable";
+import { serializedHarness } from "./serialize.ts";
 
 /**
  * `Tx.setTask` 在运行时存在（调度器 open 恢复时正是用它），但没进公开的 `Tx` 类型。
@@ -184,7 +185,7 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 
 export async function openCore(options: OpenCoreOptions, context: Context = BACKGROUND_CONTEXT): Promise<CoreRuntime> {
 	const storage = await openNodeSqliteStorage(options.databasePath);
-	const harness = await DurableHarness.open(
+	const raw = await DurableHarness.open(
 		storage,
 		{
 			models: options.models,
@@ -193,6 +194,10 @@ export async function openCore(options: OpenCoreOptions, context: Context = BACK
 		},
 		context,
 	);
+	// 所有写都走这一个闸：同进程并发的 commit 会让底层读覆盖层失效，而**失败的那次
+	// 其实已经写进去了** —— 模型以为没发出去于是重发，频道里出现两条一模一样的话。
+	// 详见 `runtime/serialize.ts`。
+	const harness = serializedHarness(raw);
 	// 自愈必须在 open 之后、装配之前：此时 Harness 已持有连接，用它的 commit 把
 	// 强杀留下的半截任务树一次结算掉，才能根治 `Task N invocation has ended` 崩溃。
 	await reconcileZombieTasks(harness, context);

@@ -20,13 +20,21 @@ import {
 	parseMentions,
 	recipientsOf,
 	relayLimit,
+	type Attachment,
 	type Channel,
 	type ChannelState,
 	type Message,
 } from "./state.ts";
 import { EMPTY_ROSTER } from "./alias.ts";
 import type { MentionRoster } from "./alias.ts";
-import { deliver, liveConversations, type DeliverIssue, type DeliverResult, type WakeRecord } from "./deliver.ts";
+import {
+	deliver,
+	liveConversations,
+	renderDigest,
+	type DeliverIssue,
+	type DeliverResult,
+	type WakeRecord,
+} from "./deliver.ts";
 
 // T-016 v2：占位填充时的逐字增量推送钩子。由 serveCore 在启动时挂载（写进 channelClients），
 // 未挂载时为空操作 —— post.ts 不依赖 shell/serve，避免循环依赖。
@@ -67,6 +75,8 @@ export type PostInput = {
 	readonly status?: "pending" | "done" | "error";
 	/** T-016：占位归属的被唤醒人 slug。 */
 	readonly pendingFor?: string;
+	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
+	readonly attachments?: readonly Attachment[];
 };
 
 export type PostDeps = {
@@ -75,6 +85,8 @@ export type PostDeps = {
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	readonly labelOf?: (slug: string) => string;
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/** 附件根目录。给了模型就能真的看见消息里的图片。 */
+	readonly uploadsRoot?: string;
 };
 
 /**
@@ -155,6 +167,18 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	const addressed = [...parseMentions(input.text), ...parseMentions(input.text, input.roster ?? EMPTY_ROSTER)].some(
 		(slug) => slug !== input.from && channel.members.includes(slug),
 	);
+	// 提交之前先把「后面还要读到的东西」抄成纯数据：提交一关，读覆盖层就释放了，
+	// 而成员列表、wakeOnAll、各人未读都要在提交之后才用得上（见下面的注释）。
+	const channelMeta: Channel = {
+		...channel,
+		members: [...channel.members],
+		wakeOnAll: [...channel.wakeOnAll],
+	};
+	const digests = new Map<string, string>();
+	for (const slug of channelMeta.members) {
+		if (slug === OWNER) continue;
+		digests.set(slug, renderDigest(deps.state, slug));
+	}
 	const capped =
 		input.wake !== false &&
 		input.from !== OWNER &&
@@ -176,6 +200,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(input.mention === undefined ? {} : { mention: input.mention }),
 			...(input.status === undefined ? {} : { status: input.status }),
 			...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
+			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
 		});
 		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
 		// 新数组」。两者写下去的消息一样，代价差三个数量级：
@@ -237,24 +262,27 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			(doc.messages[input.channelId] as Message[]).push(noted.message);
 			state.nextSeq[input.channelId] = noted.message.seq + 1;
 		}
-		created = finalMessage;
+		// 抄成纯对象再交出去：`finalMessage` 是这次事务里的代理，事务一关就不能再读
+		// （`Cannot use a settled overlay`），而收件人计算、投递、返回给工具都要用它。
+		created = JSON.parse(JSON.stringify(finalMessage)) as Message;
 	}, context);
 
 	const message = created as Message;
+	const liveChannel = channelMeta;
 	// T-016 v2：占位被真实回复原地填充 → 推逐字增量（token 分片 + done 全文兜底）。
 	// 后端落库层已写好最终全文，这里只负责「把全文按片推给前端做渐显」，不重复写库。
-	if (filledSeq !== undefined && channelClientsHas(channel.id) && channelStreamHook !== undefined) {
-		channelStreamHook(channel.id, filledSeq, filledText);
+	if (filledSeq !== undefined && channelClientsHas(liveChannel.id) && channelStreamHook !== undefined) {
+		channelStreamHook(liveChannel.id, filledSeq, filledText);
 	}
 	if (input.wake === false || input.kind === "note") {
-		return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
+		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
-	if (capped) return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
+	if (capped) return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 
 	// 老板没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
-	const targets = recipientsOf(channel, message).filter((slug) => slug !== OWNER);
+	const targets = recipientsOf(liveChannel, message).filter((slug) => slug !== OWNER);
 	if (targets.length === 0) {
-		return { channel, message, delivery: { delivered: [], failed: [], skipped: [] } };
+		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
 	// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
 	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
@@ -263,21 +291,22 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	const delivery = await deliver(
 		{
 			// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
-			state: deps.state,
-			channel,
+			digests,
+			channel: liveChannel,
 			message,
 			targets,
 			busy,
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
 			// 没人被叫醒就说一句：只写 stderr 的话，频道里一片空白，
 			// 老板看到的「我说了没人理」和「系统挂了」长得一模一样。
 			notify: async (issues) => {
-				await appendNote(deps, channel.id, renderIssues(message.seq, issues, labelOf), Date.now(), context);
+				await appendNote(deps, liveChannel.id, renderIssues(message.seq, issues, labelOf), Date.now(), context);
 			},
 		},
 		context,
 	);
-	return { channel, message, delivery };
+	return { channel: liveChannel, message, delivery };
 }

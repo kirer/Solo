@@ -50,7 +50,6 @@ const ICONS = {
 	copy: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="7" height="7" rx="1.6"/><path d="M10.5 3.6A1.6 1.6 0 0 0 8.9 2.5H5A1.5 1.5 0 0 0 3.5 4v3.9c0 .7.5 1.3 1.1 1.5"/></svg>`,
 	check: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`,
 	reply: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4.5 3 8l3.5 3.5"/><path d="M3 8h5a4.5 4.5 0 0 1 4.5 4.5v.5"/></svg>`,
-	locate: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5v-3h3M13.5 5.5v-3h-3M2.5 10.5v3h3M13.5 10.5v3h-3"/></svg>`,
 };
 
 /** 一条消息是不是「需要你」。这是顶栏 N 件找你与左侧 2px 竖线的唯一来源。 */
@@ -125,7 +124,7 @@ export function activityPhrase(message) {
 /* ── 小工具 ─────────────────────────────────────────────────────────── */
 
 function toolsBar() {
-	return `<div class="row-tools" role="toolbar" aria-label="消息操作"><button class="tool" type="button" data-act="copy" title="复制" aria-label="复制">${ICONS.copy}</button><button class="tool" type="button" data-act="reply" title="引用回复" aria-label="引用回复">${ICONS.reply}</button><button class="tool" type="button" data-act="locate" title="定位" aria-label="定位">${ICONS.locate}</button></div>`;
+	return `<div class="row-tools" role="toolbar" aria-label="消息操作"><button class="tool" type="button" data-act="copy" title="复制" aria-label="复制">${ICONS.copy}</button><button class="tool" type="button" data-act="reply" title="引用回复" aria-label="引用回复">${ICONS.reply}</button></div>`;
 }
 
 function quoteBlock(replyTo) {
@@ -246,12 +245,33 @@ function noteRow(message) {
 
 /* ── event（think / tool / work） ──────────────────────────────────── */
 
+const CHEVRON = `<svg class="ev-chevron" width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M4.5 2.5 8 6l-3.5 3.5"/></svg>`;
+
+/**
+ * 过程行（想了多久 / 跑了什么命令 / 做了什么）。
+ *
+ * 一整行都是一句话：句子后面挂细节。所以它是个按钮 —— 点开看原文。
+ * 以前这些细节根本看不到：界面上只剩「想了一会儿」，而模型真正在想什么、
+ * 那条命令到底跑了什么、输出了多少，全在 `message.text` 里躺着没人给出口。
+ *
+ * 细节用 `textContent` 写进 `<pre>`，不走 innerHTML：那是原始文本（可能带尖括号），
+ * 不是 Markdown，也不该被当成 HTML。
+ */
 function eventNode(message, text) {
 	const row = document.createElement("div");
 	row.className = "row row-event";
 	row.dataset.seq = String(message.seq);
 	row.dataset.kind = message.kind;
-	row.innerHTML = `<span class="ev"><b>${escapeHtml(message.fromLabel ?? "")}</b> ${escapeHtml(text)}</span>`;
+	const detail = String(message.text ?? "").trim();
+	const who = `<b>${escapeHtml(message.fromLabel ?? "")}</b>`;
+	if (detail === "") {
+		row.innerHTML = `<span class="ev">${who} <span class="ev-what">${escapeHtml(text)}</span></span>`;
+		return row;
+	}
+	row.innerHTML = `<button class="ev" type="button" data-act="expand" aria-expanded="false" title="展开看原文">${who} <span class="ev-what">${escapeHtml(
+		text,
+	)}</span>${CHEVRON}</button><div class="ev-body" hidden><pre></pre></div>`;
+	row.querySelector("pre").textContent = detail;
 	return row;
 }
 
@@ -351,8 +371,8 @@ export function buildStream(messages, ctx = {}) {
 	const now = ctx.now ?? Date.now();
 	const frag = document.createDocumentFragment();
 
-	let prevSay = null; // 上一条 say（判断是否同人连发）
-	let lastAt = 0; // 上一条被画出来的行的时间
+	let prevSay = ctx.prev ?? null; // 上一条 say（判断是否同人连发）
+	let lastAt = ctx.prev?.at ?? 0; // 上一条被画出来的行的时间
 	let thinkRun = null;
 
 	for (const message of list) {
@@ -363,9 +383,8 @@ export function buildStream(messages, ctx = {}) {
 			if (thinkRun && thinkRun.slug === message.fromSlug && message.at - thinkRun.end <= GROUP_MS) {
 				thinkRun.end = message.at;
 				const seconds = Math.max(1, Math.round((thinkRun.end - thinkRun.start) / 1000));
-				thinkRun.el.querySelector(".ev").innerHTML = `<b>${escapeHtml(
-					message.fromLabel ?? "",
-				)}</b> 想了 ${seconds}s`;
+				const what = thinkRun.el.querySelector(".ev-what");
+				if (what) what.textContent = `想了 ${seconds}s`;
 				continue;
 			}
 			const row = eventNode(message, "想了 1s");
@@ -423,7 +442,12 @@ export function buildStream(messages, ctx = {}) {
 	return frag;
 }
 
-/** 单条重画：SSE 推来一条新消息时用，避免整列重建。 */
-export function buildOne(message, ctx = {}) {
-	return buildStream([message], ctx);
+/**
+ * 只画一条（SSE 推来新消息时用）。
+ *
+ * `prev` 是这条之前最后一条消息：连发合并、30 分钟时间分隔都靠它判断，
+ * 不传的话每条新消息都会重新画一次头像和名字。
+ */
+export function buildOne(message, ctx = {}, prev = null) {
+	return buildStream([message], { ...ctx, prev });
 }

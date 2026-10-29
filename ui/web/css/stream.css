@@ -175,21 +175,20 @@
 	border-inline-start: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
 }
 
-/* 老板自己说的话：整宽 --accent-wash 色带，左右各 -8px 出血。
-   注意**正文仍要卡在 68ch**：色带是行的背景（`::after` 挂在 `.row` 上），
-   跟正文宽度是两件事。早先这里写了 `max-width: none`，于是老板贴一段长文，
-   正文就横贯 1094px —— 一行 110 多个字，眼睛找不到下一行的开头。 */
-
-.row-say[data-owner="true"]::after {
-	content: "";
-	position: absolute;
-	z-index: -1;
-	left: -8px;
-	right: -8px;
-	top: -2px;
-	bottom: -2px;
-	border-radius: 4px;
+/*
+ * 老板自己说的话：淡绿底，**贴着正文**长，不是整宽色带。
+ *
+ * 早先这里是 `::after` 画的一条左右出血的整宽色带 —— 那时老板的话靠左，色带
+ * 从左边起、右边空一截，看着像一段高亮。老板的话改成靠右之后，同一条色带
+ * 会横贯 1142px 只为了包住右边一小块字，读起来像一条分隔条而不是一句话。
+ * 所以底色回到 `.md` 自己身上（跟气泡布局同一个做法），宽度跟随内容。
+ */
+.row-say[data-owner="true"] .row-body > .md {
+	width: fit-content;
+	max-width: 100%;
 	background: var(--accent-wash);
+	border-radius: var(--r-row);
+	padding: 8px 12px;
 }
 
 /* ── say 的正文 ─────────────────────────────────────────────────────── */
@@ -418,18 +417,26 @@ body[data-layout="bubble"] .row-say .row-body > .md {
 }
 
 /* 老板的话靠右：头像换到右边，正文列换到左边，正文自己右对齐。
-   两列互换（而不是 `justify-content`），因为行是 grid，头像必须还在版心边上。 */
-body[data-layout="bubble"] .row-say[data-owner="true"] {
+   两列互换（而不是 `justify-content`），因为行是 grid，头像必须还在版心边上。
+   **平铺也要靠右** —— 刚上线时这条只在气泡布局里生效，平铺下老板的话和别人的话
+   左缘对齐、长得一模一样，一眼看不出谁说的。 */
+.row-say[data-owner="true"] {
 	grid-template-columns: minmax(0, 1fr) var(--av-lg);
 }
 
-body[data-layout="bubble"] .row-say[data-owner="true"] .row-av {
+/* `grid-row: 1` 两处都要写死。
+   头像显式落在第 2 列之后，网格的自动排布游标已经走到第 2 行，正文再显式声明
+   第 1 列就会被塞进第 2 行 —— 老板那条消息上方于是多出 42px 空白（= 头像高度），
+   实测行高 103px 而正文只有 61px。 */
+.row-say[data-owner="true"] .row-av {
 	grid-column: 2;
+	grid-row: 1;
 }
 
-body[data-layout="bubble"] .row-say[data-owner="true"] .row-body,
-body[data-layout="bubble"] .row-say[data-owner="true"][data-grouped="true"] .row-body {
+.row-say[data-owner="true"] .row-body,
+.row-say[data-owner="true"][data-grouped="true"] .row-body {
 	grid-column: 1;
+	grid-row: 1;
 	justify-self: end;
 	display: flex;
 	flex-direction: column;
@@ -437,16 +444,16 @@ body[data-layout="bubble"] .row-say[data-owner="true"][data-grouped="true"] .row
 	max-width: min(68ch, calc(100% - 82px));
 }
 
-body[data-layout="bubble"] .row-say[data-owner="true"] .row-head {
+.row-say[data-owner="true"] .row-head {
 	justify-content: flex-end;
 }
 
-body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
+.row-say[data-owner="true"] .row-body > .md {
 	text-align: left;
 }
 
 /* 老板气泡自己带底色，动作条要落在气泡右下角外侧，别压住气泡的圆角。 */
-body[data-layout="bubble"] .row-say[data-owner="true"] .row-tools {
+.row-say[data-owner="true"] .row-tools {
 	left: auto;
 	right: 100%;
 }
@@ -533,20 +540,85 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 
 /* ── event 行（think / tool / work） ───────────────────────────────── */
 
+/*
+ * 过程行（想了多久 / 跑了什么命令 / 做了什么）。
+ *
+ * 居左，且左缘和 say 行的正文对齐（48px = 40px 头像 + 8px 间距）。
+ * 以前是 `justify-content: center` —— 整列中间浮着一行灰字，读起来像系统提示，
+ * 而不是「这个人刚才干了什么」。过程属于说话的人，就排在说话的人那一列。
+ */
 .row-event {
 	display: flex;
-	justify-content: center;
-	margin: 3px 0;
+	flex-direction: column;
+	align-items: flex-start;
+	margin: 2px 0 2px 48px;
+	max-width: calc(100% - 48px);
 }
 
 .ev {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	max-width: 100%;
 	font-size: 12px;
 	line-height: 16px;
 	color: var(--ink-3);
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
+	text-align: left;
+}
+
+button.ev {
+	border: 0;
+	background: none;
+	padding: 2px 6px 2px 2px;
+	margin-left: -2px;
+	border-radius: var(--r-control);
+	cursor: pointer;
+	transition: background-color var(--dur-line) ease;
+}
+
+button.ev:hover {
+	background: var(--hover);
+}
+
+/* 剪头只在能展开的行上转，收起时朝右 */
+.ev-chevron {
+	flex: none;
+	opacity: 0.5;
+	transition: transform var(--dur-line) var(--ease-line);
+}
+
+.row-event[data-open="true"] .ev-chevron {
+	transform: rotate(90deg);
+}
+
+/*
+ * 展开后的原文：等宽、可换行、限高。
+ * 不换行会撑出一条横向滚动条盖住整列；不限高的话一条 20 行的命令输出
+ * 会把下面所有消息推出屏幕 —— 展开是「看一眼」，不是「进入另一个页面」。
+ */
+.ev-body {
+	margin: 4px 0 2px;
 	max-width: 100%;
+	width: 100%;
+}
+
+.ev-body pre {
+	margin: 0;
+	padding: 8px 10px;
+	max-height: 320px;
+	overflow: auto;
+	background: var(--raised);
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	word-break: break-word;
 }
 
 .ev b {

@@ -4,12 +4,30 @@
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<title>一人公司</title>
+		<!-- 首帧定色：这一段必须同步、必须在第一个 <link> 之前跑。module 是 defer 的，
+		     等它跑到页面已经用浅色画完一帧，刷新时就是一下白闪。这里只读盘 + matchMedia，
+		     落一个 data-theme，颜色全由 base.css 里那一组 token 决定。 -->
+		<script>
+			(function () {
+				var mode = "system";
+				try {
+					mode = localStorage.getItem("ai-company.theme") || "system";
+				} catch (e) {
+					/* 隐私模式下读不到盘，当作跟随系统 */
+				}
+				var dark =
+					mode === "dark" ||
+					(mode !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+				document.documentElement.dataset.theme = dark ? "dark" : "light";
+			})();
+		</script>
 		<link rel="stylesheet" href="css/base.css" />
 		<link rel="stylesheet" href="css/shell.css" />
 		<link rel="stylesheet" href="css/stream.css" />
 		<link rel="stylesheet" href="css/pending.css" />
 		<link rel="stylesheet" href="css/composer.css" />
 		<link rel="stylesheet" href="css/motion.css" />
+		<link rel="stylesheet" href="css/theme.css" />
 	</head>
 	<body data-pane="list" data-layout="flat">
 		<div class="frame">
@@ -41,10 +59,8 @@
 			</header>
 
 			<aside class="sidebar" id="sidebar">
-				<!-- 人栏：本产品唯一的独有元素。每人 40px 一行，24px 头像 + 名字 + 状态。 -->
-				<div class="chan-head"><span>成员</span></div>
-				<div class="people" id="people"></div>
-				<div class="chan-head"><span>频道</span></div>
+				<!-- 一个平铺的会话列表：群、项目、每个人的私聊，全在一列里，按最后说话时间排。
+				     不分「成员 / 频道」两组 —— 同一个人在两处出现两次，读起来要自己对齐。 -->
 				<div class="channels" id="rows"></div>
 			</aside>
 
@@ -166,6 +182,11 @@
 			</div>
 		</section>
 
+		<!-- 主题按钮单独一个入口：app.js 不动，主题也不进 app.js 的启动路径。 -->
+		<script type="module">
+			import { installTheme } from "./js/theme.js";
+			installTheme();
+		</script>
 		<script type="module" src="js/app.js"></script>
 	</body>
 </html>

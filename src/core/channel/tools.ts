@@ -242,6 +242,26 @@ async function ensureDm(
 	return id;
 }
 
+/**
+ * 读一份频道状态。
+ *
+ * **必须用 `BACKGROUND_CONTEXT` 读，不能用工具自己的 `ctx`。**
+ *
+ * 踩过这个坑，症状是「一条消息发两遍」：`say` 用工具 ctx 读快照，紧接着又用同一个
+ * ctx 提交；提交一结束，那份读覆盖层就被释放了，而 `postMessage` 在提交**之后**还要读
+ * `channel.members` 去算收件人 —— 于是抛 `Cannot use a settled overlay`。消息其实已经
+ * 落库，模型看到报错以为没发出去，再发一次，频道里就出现两条一模一样的话。
+ *
+ * 用背景上下文读拿到的是已提交的数据；这几个工具都是「先读、再提交」，读的时候还没有
+ * 本次写入，语义完全一样，但读到的对象不会随提交失效。
+ */
+async function readState(deps: CoreToolDeps): Promise<ChannelState> {
+	return (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? EMPTY_STATE;
+}
+
+/** 空状态常量：只读，不要改。 */
+const EMPTY_STATE: ChannelState = { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+
 /** 建工具。返回一个扩展，装进所有 agent 的会话里。 */
 export function createCoreTools(deps: CoreToolDeps) {
 	const say = defineTool({
@@ -271,7 +291,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 	): Promise<ReturnType<typeof text>> => {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
-			let state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+			let state = await readState(deps);
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
 			const roster = await mentionRoster(deps);
@@ -293,7 +313,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				channelId = await ensureDm(deps, state, slug, who, ctx);
 				privateTo = who;
 				// 频道是刚刚建出来的：`postMessage` 用的是下面这份快照，不重新取就会「频道不存在」。
-				state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? state;
+				state = await readState(deps);
 			}
 			const targetChannel = state.channels[channelId] ?? state.channels[target.channelId];
 
@@ -362,7 +382,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+			const state = await readState(deps);
 
 			// 无 channel：返回未读摘要 + 频道列表（原 inbox + channels 合并）
 			if (args.channel === undefined || args.channel === "") {
@@ -1039,7 +1059,7 @@ export function resolveInWorkspace(root: string, path: string): string | undefin
 /** 把执行结果记到个人频道（`kind:"work"`，不唤醒任何人）。 */
 async function logWork(deps: CoreToolDeps, slug: string, report: string, ctx: Context): Promise<void> {
 	try {
-		const state = (await deps.harness.snapshot(ChannelDoc, ctx)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+		const state = await readState(deps);
 		const channelId = personalId(slug);
 		await postMessage(
 			postDeps(deps, state, ctx),
@@ -1066,7 +1086,12 @@ function renderLine(message: Message): string {
 	const time = new Date(message.at).toISOString().slice(11, 16);
 	const mentions = message.mentions.length === 0 ? "" : ` @${message.mentions.join("、")}`;
 	const quoted = message.replyTo === undefined ? "" : `（回复 #${message.replyTo}）`;
-	return `#${message.seq} ${time} ${message.from}${mentions}：${quoted}${message.text}`;
+	// 附件要在历史里留下痕迹：不然补看历史的人不知道那条消息带过图，会以为对方在说空话。
+	const files = (message.attachments ?? []).map((item) =>
+		item.kind === "image" ? `[图片 ${item.name} · uploads/${item.id}]` : `[文件 ${item.name} · uploads/${item.id}]`,
+	);
+	const suffix = files.length === 0 ? "" : ` ${files.join(" ")}`;
+	return `#${message.seq} ${time} ${message.from}${mentions}：${quoted}${message.text}${suffix}`;
 }
 
 
