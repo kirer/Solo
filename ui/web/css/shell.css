@@ -488,7 +488,7 @@
 	display: grid;
 	place-items: center;
 	padding: 24px;
-	background: color-mix(in srgb, var(--ink) 20%, transparent);
+	background: var(--mask);
 }
 
 .team-panel {
@@ -496,10 +496,10 @@
 	flex-direction: column;
 	width: min(560px, 100%);
 	max-height: min(640px, 100%);
-	background: var(--ground);
-	border: 1px solid var(--line);
+	background: var(--field);
+	border: 0.5px solid var(--line);
 	border-radius: var(--r-sheet);
-	box-shadow: 0 18px 44px -18px rgba(28, 26, 22, 0.32);
+	box-shadow: var(--shadow);
 	overflow: hidden;
 }
 
@@ -656,7 +656,7 @@
 	display: grid;
 	place-items: center;
 	padding: 32px;
-	background: color-mix(in srgb, var(--ink) 76%, transparent);
+	background: var(--mask-strong);
 	cursor: zoom-out;
 }
 
@@ -1107,14 +1107,15 @@
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	background: color-mix(in srgb, var(--ink) 32%, transparent);
+	background: var(--mask);
 }
 
 .settings-panel {
 	width: min(360px, calc(100vw - 32px));
-	background: var(--ground);
-	border: 1px solid var(--line);
-	border-radius: var(--r-row);
+	background: var(--field);
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-sheet);
+	box-shadow: var(--shadow);
 	box-shadow: 0 18px 48px -12px rgba(28, 26, 22, 0.32);
 	overflow: hidden;
 }
