@@ -140,6 +140,26 @@ export type CoreShell = {
 	readonly close: (context?: Context) => Promise<void>;
 };
 
+/** 名册的顶层字段（写回去时要逐字段比，不能整份替换）。 */
+const DIRECTORY_KEYS = ["slugToConversation", "conversationToSlug", "wake", "labels"] as const;
+
+/**
+ * 把名册文档抄成纯数据。
+ *
+ * 为什么必须抄：`tx.doc()` 给的是**覆盖层代理**，它的嵌套值也是代理。把代理的值原样
+ * 写回同一个覆盖层会静默丢数据（见 `saveDirectory` 的注释）。这份文档很小（几个人 +
+ * 唤醒记录），JSON 来回一次比任何「小心地读代理」都便宜且确定。
+ */
+function plainDirectory(source: DirectoryState): DirectoryState {
+	const json = JSON.stringify({
+		slugToConversation: source.slugToConversation ?? {},
+		conversationToSlug: source.conversationToSlug ?? {},
+		wake: source.wake ?? {},
+		labels: source.labels ?? {},
+	});
+	return JSON.parse(json) as DirectoryState;
+}
+
 /**
  * 装配。
  *
@@ -166,7 +186,19 @@ export async function assembleCore(
 		saveDirectory: async (change, ctx) => {
 			await harness.commit(async (tx) => {
 				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-				Object.assign(doc, change({ ...emptyDirectory(), ...doc }));
+				// **只写变化过的字段**，并且先抄成纯数据。
+				//
+				// 旧写法是 `Object.assign(doc, change({ ...emptyDirectory(), ...doc }))`：
+				// 把「文档代理展开出来的整份状态」原样写回去。展开出来的是**覆盖层的节点**，
+				// 再写回同一个覆盖层，等于拿旧节点覆盖新值 —— 表现就是「名册里少一个人」，
+				// 而且没有任何报错（顾南雁的映射就是这么丢的）。
+				const before = plainDirectory(doc);
+				const after = change(before);
+				for (const key of DIRECTORY_KEYS) {
+					if (JSON.stringify(after[key]) === JSON.stringify(before[key])) continue;
+					// 一个字段一次写：路径式更新，不会连带重写整份名册。
+					doc[key] = after[key] as never;
+				}
 			}, ctx);
 		},
 		openAgent: async (slug, ctx) => (await openOne(slug, ctx)).id as unknown as number,
@@ -259,6 +291,16 @@ export async function assembleCore(
 		const id = created.id as unknown as number;
 		directory.slugToConversation[slug] = id;
 		directory.conversationToSlug[String(id)] = slug;
+		// **建完会话立刻把映射落盘**：旧代码只改内存，靠启动/`rescan` 的批量提交顺带写下去。
+		// `hire` 走的是 `openAgent`（会创建会话）而不是 `rescan`，中间一旦有别的提交把名册
+		// 写回旧值，这个人的映射就永久丢了 —— 重启后他会拿到一个新会话，旧会话变孤儿
+		// （顾南雁的 1861 就是这样，22 条历史留在里面没人接）。
+		await harness.commit(async (tx) => {
+			const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+			const before = plainDirectory(doc);
+			doc.slugToConversation = { ...before.slugToConversation, [slug]: id };
+			doc.conversationToSlug = { ...before.conversationToSlug, [String(id)]: slug };
+		}, ctx);
 		// 一建出来就进公司频道、个人频道、项目频道。
 		//
 		// 踩过的坑：`hire` 会立刻开会话，但公司频道的成员是**启动时**按当时的
@@ -627,10 +669,9 @@ export async function ownerSpeak(
 				if (id === undefined) return;
 				await shell.harness.commit(async (tx) => {
 					const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-					Object.assign(doc, {
-						...doc,
-						wake: { ...doc.wake, [String(id)]: { ...wake } },
-					});
+					// 只写 `wake` 这一个字段：以前是 `Object.assign(doc, { ...doc, wake })`，
+					// 把整份名册展开再写回去，任何一处覆盖层节点被顺手写回来就是一次静默丢人。
+					doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
 				}, context);
 			},
 		},
