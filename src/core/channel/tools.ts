@@ -58,6 +58,7 @@ import {
 	parseMentions,
 	personalId,
 	readMarkOf,
+	recipientsOf,
 	unreadCount,
 	type ChannelState,
 	type Message,
@@ -185,6 +186,36 @@ async function defaultChannel(
 	return { channelId: fallbackChannelId(state, slug) };
 }
 
+/**
+ * 这一轮除了我，还有哪些 agent 被**同一条**消息叫醒。
+ *
+ * 判据取自名册里的唤醒记录（`wakeOf`，由投递层在成功投递时写入），再用
+ * `recipientsOf` 重算一次收件人 —— 和投递层用的是同一个纯函数，不会两处口径不一致。
+ *
+ * 老板不算：他不是一个会接着说话的 agent。
+ */
+async function othersAwoken(
+	deps: CoreToolDeps,
+	state: ChannelState,
+	conversationId: number,
+	slug: string,
+	context: Context,
+): Promise<string[]> {
+	const directory = await deps.directory(context);
+	const wake = wakeOf(directory, conversationId);
+	if (wake === undefined) return [];
+	const channel = state.channels[wake.channelId];
+	if (channel === undefined) return [];
+	const message = (state.messages[channel.id] ?? []).find((item) => item.seq === wake.seq);
+	// 找不到那条消息时保守一点：频道里只要还有别的 agent，就当有人接得住 ——
+	// 宁可让一句无话不说的话被放过，也不要因为一次读不到而把他卡在第 1 条消息上。
+	const candidates =
+		message === undefined
+			? channel.members
+			: recipientsOf(channel, message);
+	return candidates.filter((member) => member !== slug && member !== OWNER);
+}
+
 /** 当前名册：`@` 别名解析用。每次现读盘（`say` 不是热路径，且改 `identity.md` 要立刻生效）。 */
 async function mentionRoster(deps: CoreToolDeps): Promise<MentionRoster> {
 	const all = await readAllIdentities(deps.agentsRoot);
@@ -268,7 +299,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 		description:
 			"在当前频道说话。不传 mention 就是一句普通发言（正文里写 @某人 才会叫醒他）；传 mention 就是提问或 @ 某人（会叫醒他）。用于汇报进度、说明结论、回应别人、提问。活干完了一定要汇报，并把上级写进 mention —— 没人知道你做完了，等于没做完。",
 		parameters: Type.Object({
-			text: Type.String({ description: "要说的话" }),
+			text: Type.String({
+				description:
+					"要说的话。**像同事发消息：一两句，说结论** —— 不写小标题、不列清单、不总结你刚做了什么（`run` 的过程不用复述）。" +
+					"这一轮没有新东西要说就写 `[PASS]`，系统不会发出去（但如果这一轮只有你被叫醒，PASS 会被拒绝）。",
+			}),
 			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@老板` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
 			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的同事，或你在私聊里想找人），用 `<频道 id>` 指定，或先问老板 —— 频道成员以外的人 @ 不到。" })),
 			to: Type.Optional(Type.String({ description: "把这句话**私下**发给某个人（写名字或 slug）。系统会自动建出只有你们两人的私聊频道，别人看不到。要对接同事、找上级问一句细节、向老板单独汇报，都用这个 —— 不要为了找一个人去群里喊。" })),
@@ -316,6 +351,22 @@ export function createCoreTools(deps: CoreToolDeps) {
 				);
 			}
 			let state = await readState(deps);
+
+			// 「这一轮我不说」—— 但不是随时都能不说。
+			//
+			// 独享一个频道的人 PASS 掉，等于老板问了一句什么都没收到：那不是安静，是断线。
+			// 所以 PASS 只在「这一轮还有别的 agent 被同一条消息叫醒」时成立。
+			if (isPass(args.text)) {
+				const others = await othersAwoken(deps, state, Number(api.conversationId), slug, ctx);
+				if (others.length === 0) {
+					return text(
+						"这一轮只有你被叫醒，没有别人接得住，所以不能 PASS。把结论写出来：" +
+							"谁、做了什么、卡在哪、下一步。几十个字就够，不要写报告。",
+					);
+				}
+				return text(`这一句不说了（这一轮还有 ${others.join("、")} 在）。`);
+			}
+
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
 			const roster = await mentionRoster(deps);
@@ -1049,6 +1100,20 @@ const CHANNEL_LIMIT = 3_000;
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 const SAY_LIMIT = 1_200;
+
+/**
+ * 「这一轮我不说」。
+ *
+ * 抄自 ds-bot 的 `[PASS]`（`groups.js:81` 的 `isPass`）：那里「不说话」是合法结果，
+ * 轮次照常往下走。**每轮必须产出一条消息，模型就会拿思维草稿去填空** —— 线上 46%
+ * 的英文独白、大量「收到」都是这么来的。给一个合法的静音出口，那些消息才会消失。
+ *
+ * 空正文也算 PASS：模型直接不调 `say` 本来就已经是「这一轮不说话」了，两件事应当等价。
+ */
+export function isPass(text: string): boolean {
+	if (text.trim() === "") return true;
+	return /^\s*(?:[\[【(（]\s*pass\s*[\]】)）]|pass)\s*[.。!！]?\s*$/iu.test(text);
+}
 
 /** 「这是内心独白，不是发言」的开头。模型用英文自言自语时有固定套路，抓得住。 */
 const MONOLOGUE_OPENERS = [

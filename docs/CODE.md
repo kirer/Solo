@@ -137,7 +137,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 35 文件 / 323 例，应该 <2s
+npm test           # 34 文件 / 327 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
@@ -154,7 +154,7 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | --- | --- |
 | `channel-state.test.ts` | @ 解析、四类收件人、`dmId` 顺序无关、未读、幂等建频道 |
 | `mention-alias.test.ts` | `@` 别名解析（ADR-036）：老板的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底 |
-| `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`（ADR-037） |
+| `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`（ADR-037）、`[PASS]` 与单人在场不许静音（ADR-063） |
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞 |
 | `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`、渲染确定性、不谎报文件路径 |
 | `memory.test.ts` | 分区、追加、摘要 |

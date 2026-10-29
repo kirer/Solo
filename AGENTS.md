@@ -81,7 +81,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 35 文件 323 例，<2s，必须全绿
+npm test          # 34 文件 327 例，<2s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 

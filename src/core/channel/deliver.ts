@@ -103,13 +103,41 @@ function isOwnerDm(channel: Channel, viewer: string | undefined): boolean {
 	return viewer === undefined || channel.id === personalId(viewer);
 }
 
+/**
+ * 每轮贴在投递正文末尾的「怎么回话」。
+ *
+ * 为什么不写进系统提示词：静态规矩在长上下文里会被稀释，而这一段贴着生成点，
+ * 每轮重申一次。ds-bot 就是这么干的（`groups.js:102` 的 `ROOM_REPLY`），实测比
+ * 把规矩放在系统提示里有效一个量级。
+ *
+ * 两句关键：①**长只允许出现在被点名要的场合** —— 只写「要短」会得到又短又偷工；
+ * ②只有一个人在场时不能静音（PASS 会断线）。
+ */
+export function renderReplyRules(options: {
+	readonly woken: readonly string[];
+	readonly viewer?: string | undefined;
+	readonly labelOf?: ((slug: string) => string) | undefined;
+}): string {
+	const others = options.woken.filter((slug) => slug !== options.viewer);
+	return [
+		"（回话像同事发消息：一两句、说结论。不写小标题、不列清单、不总结你刚做过什么。）",
+		"（被要求做事就现在用工具做，说完只说结果 —— 谁、做了什么、卡在哪、下一步。不要许诺「我马上处理」。）",
+		others.length === 0
+			? "（这一轮只有你被叫醒：必须回，回的就是结果。）"
+			: `（没有新东西就不说：只把 text 写成 \`[PASS]\`，这条不会发出去 —— 这一轮还有 ${others
+					.map((slug) => options.labelOf?.(slug) ?? slug)
+					.join("、")} 在。）`,
+		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 read_channel）",
+	].join("\n");
+}
+
 /** 一条消息交给模型时的正文。纯函数，方便单测。 */
 export function renderDelivery(options: {
 	readonly channel: Channel;
 	readonly message: Message;
 	/** 收件人。用来从「还 @ 了」里剔掉自己——否则每个人都会看到「还 @ 了你」。 */
-	readonly viewer?: string;
-	readonly labelOf?: (slug: string) => string;
+	readonly viewer?: string | undefined;
+	readonly labelOf?: ((slug: string) => string) | undefined;
 	/** 这句是插进一轮正在跑的工作里的。 */
 	readonly interrupted?: boolean;
 	/** 附件说明（`planAttachments` 的 `lines`）。没有附件时为空。 */
@@ -146,7 +174,8 @@ export function renderDelivery(options: {
 		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
 			? []
 			: ["", "附件：", ...options.attachmentLines]),
-		`（回话用 say，channel 省略即回这个频道；要看完整历史用 read_channel）`,
+		// 「怎么回话」每轮贴在最后：它比系统提示词里的同一句规矩有效得多。
+		renderReplyRules({ woken, viewer: options.viewer, labelOf: label }),
 		...(options.interrupted === true
 			? [
 					"（这是插话，不是新任务：答完这一句就回到你手上的活，别停。手上的活干完按规矩汇报，汇报完再管这件事。）",

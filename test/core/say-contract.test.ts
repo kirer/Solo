@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { createCoreTools } from "../../src/core/channel/tools.ts";
+import { createCoreTools, isPass } from "../../src/core/channel/tools.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -28,7 +28,7 @@ import {
 	type ChannelState,
 	type Message,
 } from "../../src/core/channel/state.ts";
-import { renderDelivery } from "../../src/core/channel/deliver.ts";
+import { renderDelivery, renderReplyRules } from "../../src/core/channel/deliver.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 
 const roots: string[] = [];
@@ -50,7 +50,12 @@ const PROJ = projectId("dino");
  * 频道：我和老板的私聊（先建，所以 `channelsOf` 的第一名就是它）+ 项目频道（后来才活跃）。
  * 名册里有意留空 `wake` —— 模拟「没刚被叫醒」的兜底分支。
  */
-async function setup(): Promise<{
+async function setup(options: {
+	/** 把「老板刚叫醒我」写进名册，`seq` 指向频道里的那条消息。 */
+	wake?: { channelId: string; seq: number };
+	/** 项目频道里多一个同事，并留下一条同时叫醒我们俩的消息。 */
+	colleague?: string;
+} = {}): Promise<{
 	say: (args: Record<string, unknown>) => Promise<string>;
 	snapshot: () => Promise<ChannelState>;
 }> {
@@ -73,15 +78,42 @@ async function setup(): Promise<{
 	});
 	runtimes.push(runtime);
 
+	const members = options.colleague === undefined ? [OWNER, ME] : [OWNER, ME, options.colleague];
+	let wokeSeq: number | undefined;
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		Object.assign(doc, ensureChannel(doc, { id: DM, title: ME, members: [OWNER, ME], at: 1 }));
-		Object.assign(doc, ensureChannel(doc, { id: PROJ, title: "小恐龙", members: [OWNER, ME], at: 2 }));
+		Object.assign(doc, ensureChannel(doc, { id: PROJ, title: "小恐龙", members, at: 2 }));
 		// 项目频道里有过消息 → 它是「最近活跃的那个」。
 		const first = appendMessage(doc, PROJ, { from: OWNER, text: "小恐龙做到哪了", at: 10 });
 		doc.messages[PROJ] = [first.message];
 		doc.nextSeq[PROJ] = first.message.seq + 1;
+		if (options.colleague !== undefined) {
+			// `@` 要写在正文里：`appendMessage` 的 `mentions` 是从正文解析出来的，
+			// 没有 `mentions` 入参（只有 `mention` 是「额外补进去的 slug」）。
+			const both = appendMessage(doc, PROJ, {
+				from: OWNER,
+				text: `@${ME} @${options.colleague} 你们俩都看一下`,
+				at: 11,
+			});
+			doc.messages[PROJ] = [...doc.messages[PROJ]!, both.message];
+			doc.nextSeq[PROJ] = both.message.seq + 1;
+			wokeSeq = both.message.seq;
+		}
 	}, BACKGROUND_CONTEXT);
+
+	const wakeSeq = options.wake?.seq ?? wokeSeq;
+	const wake =
+		options.wake !== undefined || wakeSeq !== undefined
+			? {
+					[String(CONVERSATION)]: {
+						channelId: options.wake?.channelId ?? PROJ,
+						seq: wakeSeq,
+						from: OWNER,
+						at: 1,
+					},
+				}
+			: {};
 
 	const tools = createCoreTools({
 		harness: runtime.harness,
@@ -92,6 +124,7 @@ async function setup(): Promise<{
 			...emptyDirectory(),
 			slugToConversation: { [ME]: CONVERSATION },
 			conversationToSlug: { [String(CONVERSATION)]: ME },
+			wake,
 		}),
 		saveDirectory: async () => undefined,
 	} as never);
@@ -244,5 +277,63 @@ describe("要老板拍板就 @ 老板", () => {
 		const message = lastSpoken(state, PROJ, "@owner 这个得你定");
 		expect(message?.mentions).toContain(OWNER);
 		expect(message?.text).toContain("@owner");
+	});
+});
+
+describe("这一轮不说话（[PASS]）", () => {
+	it("同一个频道里还有同事在时，PASS 不落库", async () => {
+		const { say, snapshot } = await setup({ colleague: "陆衡" });
+		const before = await snapshot();
+		const reply = await say({ text: "[PASS]" });
+		const after = await snapshot();
+		expect(reply).toContain("不说了");
+		expect(after.messages[PROJ]?.length).toBe(before.messages[PROJ]?.length);
+	});
+
+	it("只有自己被叫醒时，PASS 被拒绝，而且什么都没写进去", async () => {
+		// 老板只点名一个人：他 PASS 掉就等于老板什么都没收到 —— 那是断线，不是安静。
+		const { say, snapshot } = await setup({ wake: { channelId: PROJ, seq: 1 } });
+		const before = await snapshot();
+		const reply = await say({ text: "[PASS]" });
+		const after = await snapshot();
+		expect(reply).toContain("不能 PASS");
+		expect(after.messages[PROJ]?.length).toBe(before.messages[PROJ]?.length);
+	});
+
+	it("空正文、方括号、中文括号、pass. 都算同一件事", async () => {
+		for (const text of ["", "   ", "[PASS]", "【pass】", "（PASS）", "pass.", "PASS！"]) {
+			expect(isPass(text), JSON.stringify(text)).toBe(true);
+		}
+		for (const text of ["passport 办好了", "[PASS] 但是", "过了", "[PASS] 我改完了"]) {
+			expect(isPass(text), JSON.stringify(text)).toBe(false);
+		}
+	});
+});
+
+describe("每轮附言（怎么回话）", () => {
+	it("只有自己时：必须回，不提 PASS", () => {
+		const rules = renderReplyRules({ woken: ["沈舟"], viewer: "沈舟" });
+		expect(rules).toContain("必须回");
+		expect(rules).not.toContain("[PASS]");
+	});
+
+	it("还有别人时：允许 PASS，并且点名是谁", () => {
+		const rules = renderReplyRules({ woken: ["沈舟", "陆衡"], viewer: "沈舟" });
+		expect(rules).toContain("[PASS]");
+		expect(rules).toContain("陆衡");
+		expect(rules).not.toContain("必须回");
+	});
+
+	it("投递正文里带上了这两句（不是只在系统提示里）", async () => {
+		const { snapshot } = await setup();
+		const state = await snapshot();
+		const message = state.messages[PROJ]![0]!;
+		const body = renderDelivery({
+			channel: state.channels[PROJ]!,
+			message,
+			viewer: ME,
+		});
+		expect(body).toContain("像同事发消息");
+		expect(body).toContain("只有你被叫醒");
 	});
 });
