@@ -61,6 +61,7 @@ import {
 	readMarkOf,
 	recipientsOf,
 	unreadCount,
+	type Channel,
 	type ChannelState,
 	type Message,
 } from "./state.ts";
@@ -1238,11 +1239,30 @@ export function resolveInWorkspace(root: string, path: string): string | undefin
 	return target.startsWith(base + sep) ? target : undefined;
 }
 
-/** 把执行结果记到个人频道（`kind:"work"`，不唤醒任何人）。 */
+/**
+ * 这条命令日志该不该落到频道里。
+ *
+ * 不该的情况只有一个但非常要紧：**老板的私聊**。`personalId(slug)` 在老板那里就是
+ * `dm:owner-<slug>` —— 同一个频道。于是 `run` 每跑一条命令就往老板的对话里塞一行
+ * `$ cd /Users/kirer/projects/...`，实测一个私聊里能堆到几百条，老板回复率因此掉到 1%
+ * 量级（ADR-040 的审计数字）。投影管道那条闸（`keptProjections`）只拦投影，
+ * 拦不住这里直接写的一条。
+ *
+ * 命令输出不丢：`run` 的返回里本来就有全文，agent 要看自己翻；老板要看用 `read_channel`。
+ * 抽成纯函数是为了能被直接验 —— 这条规则错了的表现是「私聊又变成日志墙」，
+ * 需要真模型跑到才看得出来。
+ */
+export function shouldLogWork(channel: Channel | undefined): boolean {
+	if (channel === undefined) return false;
+	return !(channel.id.startsWith("dm:") && channel.members.includes(OWNER));
+}
+
+/** 把执行结果记到个人频道（`kind:"work"`，不唤醒任何人）。老板的私聊除外。 */
 async function logWork(deps: CoreToolDeps, slug: string, report: string, ctx: Context): Promise<void> {
 	try {
 		const state = await readState(deps);
 		const channelId = personalId(slug);
+		if (!shouldLogWork(state.channels[channelId])) return;
 		await postMessage(
 			postDeps(deps, state, ctx),
 			{ channelId, from: slug, text: report, at: Date.now(), kind: "work", wake: false },

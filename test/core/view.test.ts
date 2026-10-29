@@ -39,6 +39,39 @@ function stateOf(channels: Channel[], messages: Record<string, ChannelState["mes
 const lin = { id: "dm:lin-owner", title: "林越", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
 const project = { id: "proj:坦克大战", title: "坦克大战", members: ["owner", "lin", "shen"], wakeOnAll: [], createdAt: AT };
 
+describe("侧栏预览只取人说的话", () => {
+	const msg = (seq: number, from: string, kind: string, text: string) =>
+		({ seq, at: AT + seq, from, kind, text, mentions: [], read: true }) as never;
+
+	it("最新一条是命令输出时，预览仍显示前一句人话", () => {
+		// 实测现场的形态：林越说了句话，然后连着几条 `work` 记的是命令行。
+		// 拿最后一条当预览，侧栏整列变成 `$ cd /Users/kirer/projects/...`。
+		const state = stateOf([lin], {
+			[lin.id]: [
+				msg(1, "lin", "say", "前端三项改完了，正在收测试。"),
+				msg(2, "lin", "work", "$ cd /Users/kirer/projects/ai-company && npm test"),
+				msg(3, "lin", "tool", "run"),
+			],
+		});
+		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
+		expect(channel.preview).toBe("前端三项改完了，正在收测试。");
+	});
+
+	it("只有过程投影时退回最后一条 —— 预览不能空着", () => {
+		const state = stateOf([lin], { [lin.id]: [msg(1, "lin", "work", "跑测试")] });
+		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
+		expect(channel.preview).toBe("跑测试");
+	});
+
+	it("系统告警永远不当预览，哪怕它是最新的一条", () => {
+		const state = stateOf([lin], {
+			[lin.id]: [msg(1, "lin", "say", "改完了"), msg(2, "owner", "note", "接力到上限（9 次）")],
+		});
+		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
+		expect(channel.preview).toBe("改完了");
+	});
+});
+
 describe("频道列表的投影", () => {
 	it("个人频道标成 personal，且给出是谁的个人频道", () => {
 		const state = stateOf([lin]);

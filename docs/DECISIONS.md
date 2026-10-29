@@ -1635,3 +1635,26 @@ note 同样会触发。现在 `settleCandidates()` 跳过 `kind === "note"`，
 
 **回归**：`test/core/projector.test.ts` 新增 4 例（说过就不投影 / 没说过照常投影 /
 刚说过同样的也不投影 / 只挡正文不挡过程卡片）。
+
+## ADR-071 命令日志不进老板的私聊
+
+**现场**：`ui/web` 的侧栏预览里，`dm:owner-林越` 显示的是
+`$ cd /Users/kirer/projects/ai-company && sed -n 1,25p pack…`。查下去发现他那个私聊里
+根本没有一句人话 —— 全是 `run` 记的命令行。
+
+**为什么以前没拦住**：ADR-040 给投影管道加了闸（老板的私聊只留 `say`），但 `run` 的
+`logWork()` 是**直接 `postMessage`** 写一条 `kind:"work"`，不经过投影。而 `personalId(slug)`
+在老板那里恰好就是 `dm:owner-<slug>`，同一条频道。
+
+**决定**：`shouldLogWork(channel)` —— 只有 `dm:` 前缀且成员里有老板时不写。其余（员工之间
+的私聊、项目频道、公司群）照记。
+
+**代价与补救**：老板在私聊里看不到命令行过程了。命令输出本来就在 `run` 的返回里给模型，
+`read_channel` / `read_history` 也还查得到；真要复现一条命令，问一句即可，比翻几百行 `$ cd` 快。
+
+**顺带修侧栏预览**（`previewOf` 上游）：预览优先取 `SPOKEN_KINDS`（chat/say/question/decision/report），
+一层都没有才退回「最后一条非 note」。以前只排 `note`，于是 `work`/`tool` 当上了预览 —— 一列
+频道看起来像全是机器输出。
+
+**回归**：`test/core/work-log.test.ts` 4 例（老板私聊不记 / 员工私聊照记 / 项目频道照记 /
+频道不存在不写）；`test/core/view.test.ts` 新增 3 例预览。

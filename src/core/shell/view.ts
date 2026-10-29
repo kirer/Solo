@@ -133,6 +133,9 @@ function idOf(directory: DirectoryState, slug: string): number {
 }
 
 /** 一条消息的正文预览：只取第一行、最多 60 字。 */
+/** 「人说的话」的几种 kind。侧栏预览与「找你」共用 —— 过程投影与系统告警都不算。 */
+const SPOKEN_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
+
 function previewOf(message: Message | undefined): string {
 	if (message === undefined) return "";
 	const first = message.text.split("\n").find((line) => line.trim() !== "") ?? "";
@@ -176,10 +179,18 @@ export function channelList(
 		if (channel.archived === true) continue;
 		const messages = state.messages[channel.id] ?? [];
 		const last = messages[messages.length - 1];
-		// 侧栏预览只取「人说的话」。`note` 是系统留的告警（接力到上限、投递失败），
-		// 让它当预览的结果是：一个频道最新一条是告警时，整行看起来像坏掉了 ——
-		// 老板扫一眼以为这个频道只剩错误。
-		const lastSpoken = messages.findLast((item) => item.kind !== "note");
+		// 侧栏预览只取「人说的话」。两层挑：
+		//
+		// 1. 优先 `SPOKEN_KINDS`（真的在对人说话的那几种）。
+		// 2. 一层都没有时退回「最后一条非 note 的」。
+		//
+		// 为什么要分两层：`work`/`tool` 是运行时记的命令行与工具名，一条频道里
+		// 大量出现（实测侧栏整列显示 `$ cd /Users/kirer/projects/...`）。拿它当预览，
+		// 老板扫一眼会以为这个频道里没人说话，全是机器输出 —— 而其实下面就有正常对话。
+		// `note` 是系统告警（接力到上限、投递失败），同理不能当预览。
+		const lastSpoken =
+			messages.findLast((item) => SPOKEN_KINDS.has(item.kind)) ??
+			messages.findLast((item) => item.kind !== "note");
 		const unread = unreadCount(state, channel.id, slug);
 		// 「@ 我」的条数：未读里点名提到我的那些。界面上它们比普通未读更红。
 		//
@@ -424,7 +435,6 @@ const ATTENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ATTENTION_MAX = 60;
 
 /** 算「发言」的 kind。没写 kind 的老消息按发言算（历史数据里 kind 缺省就是说话）。 */
-const SPOKEN_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
 
 export function attentionItems(
 	state: ChannelState,

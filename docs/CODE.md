@@ -139,7 +139,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 40 文件 / 380 例，应该 <2s
+npm test           # 41 文件 / 404 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
@@ -177,6 +177,7 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `colleague-dm.test.ts` | 同事私聊（ADR-041）：`to` 建出只装两人的频道 / 方向对称 / `mentions` 与 `wakeOnAll` 都指着他 / `to: owner` 不新建 / 发给不存在的人老实报错 |
 | `attention.test.ts` | 「找你」（`GET /api/attention`）：只收要老板拍板的、排除老板自己发的、7 天窗口、已读带标记、跨频道按时间倒序 |
 | `reconcile.test.ts` | 僵尸任务回收：`pi.live` 指向已终态任务时摘掉 `run` 并把积压输入放回这一轮 |
+| `work-log.test.ts` | `run` 的命令日志不进老板的私聊（ADR-071） |
 
 `test/ui/`（前端里能脱离浏览器跑的那部分）：
 
