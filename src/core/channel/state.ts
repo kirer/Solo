@@ -62,6 +62,13 @@ export type Message = {
 	pendingFor?: string;
 	/** T-016：处理中指示占位（显示动画文案「X 开始处理…」），被真实回复原地覆盖后消失。 */
 	processing?: boolean;
+	/**
+	 * 这一条是「过程话」而不是结论（ADR-065）。
+	 *
+	 * 过程话可以连发，30 秒内同一个人连发的过程话会被并进上一条（读起来像一段），
+	 * 结论一轮只认一句。见 `channel/speech.ts` 与 `post.ts` 的合并逻辑。
+	 */
+	step?: boolean;
 	/** 附件（图片/文件）。没有附件时**不写这个键**，与 `replyTo` / `status` 一个规矩。 */
 	/*
 	 * 为什么是可变数组而不是 `readonly`：文档层的 `JsonValue` 里数组是 `JsonValue[]`，
@@ -348,6 +355,8 @@ export function appendMessage(
 		readonly pendingFor?: string;
 		/** T-016：处理中指示占位标记。 */
 		readonly processing?: boolean;
+		/** 过程话（可以连发、会被并进上一条）。缺省 = 结论。 */
+		readonly step?: boolean;
 		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
 		readonly attachments?: readonly Attachment[];
 	},
@@ -385,6 +394,7 @@ export function appendMessage(
 		...(input.status === undefined ? {} : { status: input.status }),
 		...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
 		...(input.processing === undefined ? {} : { processing: input.processing }),
+		...(input.step === undefined || input.step === false ? {} : { step: true }),
 		...(input.attachments === undefined || input.attachments.length === 0
 			? {}
 			: {

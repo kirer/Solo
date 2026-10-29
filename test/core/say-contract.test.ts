@@ -328,6 +328,16 @@ describe("每轮附言（怎么回话）", () => {
 		expect(rules).not.toContain("必须回");
 	});
 
+	it("群里有同事时：告诉他们「同事的事在群里说，@ 他」", () => {
+		const rules = renderReplyRules({ woken: ["沈舟"], viewer: "沈舟", colleagues: ["陆衡"] });
+		expect(rules).toContain("同事的事就在这个频道说");
+		expect(rules).toContain("陆衡");
+		// 私聊里没有第三方，不该提「去找同事」
+		expect(renderReplyRules({ woken: ["沈舟"], viewer: "沈舟", colleagues: [] })).not.toContain(
+			"同事的事就在这个频道说",
+		);
+	});
+
 	it("投递正文里带上了这两句（不是只在系统提示里）", async () => {
 		const { snapshot } = await setup();
 		const state = await snapshot();
@@ -360,8 +370,10 @@ describe("一轮只说一句结论", () => {
 		const reply = await say({ text: "改完了，根因是字符串被反复转义" });
 		const state = await snapshot();
 		expect(reply).toContain("已发到");
-		expect(lastSpoken(state, PROJ, "我先看下代码")?.text).toBe("我先看下代码");
-		expect(lastSpoken(state, PROJ, "找到原因了，正在改")?.text).toBe("找到原因了，正在改");
+		// 两句过程话并成一段（ADR-065），结论另起一条。
+		expect(lastSpoken(state, PROJ, "我先看下代码\n找到原因了，正在改")?.text).toBe(
+			"我先看下代码\n找到原因了，正在改",
+		);
 		expect(lastSpoken(state, PROJ, "改完了，根因是字符串被反复转义")).toBeDefined();
 	});
 

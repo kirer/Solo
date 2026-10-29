@@ -455,6 +455,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 					at: Date.now(),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
 					...(kind === undefined ? {} : { kind }),
+					...(args.step === true ? { step: true } : {}),
 					roster,
 					...((() => {
 						const extra = [...(wakeOwner ? [OWNER] : []), ...privateMention];
@@ -463,8 +464,14 @@ export function createCoreTools(deps: CoreToolDeps) {
 				},
 				ctx,
 			);
+			// 并进上一条时不算「这一轮说过结论」（它本来就是过程话）。
 			if (args.step !== true) markSpoken(conversationId, args.text);
 			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
+			if (result.merged === true) {
+				return text(
+					`并进了「${result.channel.title}」#${result.message.seq}（30 秒内连着说的过程话算一段，没有重复叫人）。`,
+				);
+			}
 			const woke = result.delivery.delivered;
 			return text(
 				`已发到「${result.channel.title}」#${result.message.seq}。${

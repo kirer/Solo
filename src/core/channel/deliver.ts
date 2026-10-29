@@ -118,8 +118,12 @@ export function renderReplyRules(options: {
 	readonly woken: readonly string[];
 	readonly viewer?: string | undefined;
 	readonly labelOf?: ((slug: string) => string) | undefined;
+	/** 这个频道里除自己和老板之外的同事。有他们才提「同事的事在群里说」。 */
+	readonly colleagues?: readonly string[];
 }): string {
 	const others = options.woken.filter((slug) => slug !== options.viewer);
+	const label = options.labelOf ?? ((slug: string) => slug);
+	const colleagues = (options.colleagues ?? []).filter((slug) => slug !== options.viewer);
 	return [
 		"（回话像同事发消息：一两句、说结论。不写小标题、不列清单、不总结你刚做过什么。）",
 		"（被要求做事就现在用工具做，说完只说结果 —— 谁、做了什么、卡在哪、下一步。不要许诺「我马上处理」。）",
@@ -130,7 +134,14 @@ export function renderReplyRules(options: {
 					.map((slug) => options.labelOf?.(slug) ?? slug)
 					.join("、")} 在。）`,
 		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 read_channel）",
-	].join("\n");
+		// 同事之间的事放在群里说。私聊只有老板能用（系统会拦），而「找个人问一句」如果没有
+		// 出口，agent 就会绕道群里喊一句「@所有人」或者干脆自己猜 —— 实测员工↔员工只有 1.2%。
+		colleagues.length === 0
+			? ""
+			: `（同事的事就在这个频道说：要问 ${colleagues.map(label).join("、")} 就 @ 他，他会收到、也看得到上下文。不要为了找一个人去私聊 —— 同事之间的私聊系统不允许。）`,
+	]
+		.filter((item) => item !== "")
+		.join("\n");
 }
 
 /** 一条消息交给模型时的正文。纯函数，方便单测。 */
@@ -177,7 +188,15 @@ export function renderDelivery(options: {
 			? []
 			: ["", "附件：", ...options.attachmentLines]),
 		// 「怎么回话」每轮贴在最后：它比系统提示词里的同一句规矩有效得多。
-		renderReplyRules({ woken, viewer: options.viewer, labelOf: label }),
+		renderReplyRules({
+			woken,
+			viewer: options.viewer,
+			labelOf: label,
+			// 只在群/项目频道里说「同事的事在群里说」：私聊里没有第三方，提了反而让它去找人。
+			colleagues: channel.id.startsWith("dm:")
+				? []
+				: channel.members.filter((slug) => slug !== OWNER && slug !== options.viewer),
+		}),
 		...(options.interrupted === true
 			? [
 					"（这是插话，不是新任务：答完这一句就回到你手上的活，别停。手上的活干完按规矩汇报，汇报完再管这件事。）",

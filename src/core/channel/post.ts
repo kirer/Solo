@@ -56,6 +56,8 @@ export type PostResult = {
 	readonly message: Message;
 	/** 没唤醒任何人时是空数组。 */
 	readonly delivery: DeliverResult;
+	/** 这条被并进了上一条过程话（没有新增消息，也没有新的唤醒）。 */
+	readonly merged?: boolean;
 };
 
 export type PostInput = {
@@ -79,6 +81,8 @@ export type PostInput = {
 	readonly processing?: boolean;
 	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
 	readonly attachments?: readonly Attachment[];
+	/** 过程话（ADR-065）。可以连发；30 秒内同一人的连续过程话并进上一条。 */
+	readonly step?: boolean;
 };
 
 export type PostDeps = {
@@ -90,6 +94,75 @@ export type PostDeps = {
 	/** 附件根目录。给了模型就能真的看见消息里的图片。 */
 	readonly uploadsRoot?: string;
 };
+
+/**
+ * 过程话的合并窗口。
+ *
+ * ds-bot 的 `ROOM_STEP_GAP_MS = 30_000`（`constants.js`）是这个数：30 秒内同一个人连发的
+ * 过程话算同一个动作。窗口太大 → 五分钟后的新进展被塞进旧消息，读者以为那条消息没变；
+ * 太小 → 「我先看下」和「找到了」又分成两条。
+ */
+const STEP_MERGE_MS = 30_000;
+
+/**
+ * 这条过程话能不能并进上一条：同一个人、上一条也是过程话、30 秒内、不是占位、没人被 @。
+ *
+ * 「有人被 @」不合并是一条硬规矩：`@` 意味着「这句话必须叫醒他」，把它并进一条
+ * 已经投递过的消息里，被 @ 的人就永远收不到新的那次投递。
+ */
+function stepMergeIndex(list: readonly Message[], input: PostInput): number {
+	if (input.step !== true || input.wake === false) return -1;
+	const last = list[list.length - 1];
+	if (last === undefined) return -1;
+	if (last.from !== input.from || last.step !== true) return -1;
+	if (last.status === "pending" || last.processing === true) return -1;
+	if (input.at - last.at > STEP_MERGE_MS || input.at < last.at) return -1;
+	if (parseMentions(input.text).some((slug) => slug !== input.from)) return -1;
+	return list.length - 1;
+}
+
+/**
+ * 试着把这条过程话并进上一条，成功就返回（没有新消息、没有新唤醒）。
+ *
+ * 为什么合并之后**不再投递**：并入的是同一个人同一个动作的后续几句话，读的人
+ * 下一次被叫醒时会看到完整正文。每并入一次都再叫醒一遍，一个人写三段过程就打扰
+ * 收件人三次 —— 那正是要消除的东西。
+ */
+async function mergeStep(
+	deps: PostDeps,
+	input: PostInput,
+	channelMeta: Channel,
+	context: Context,
+): Promise<PostResult | undefined> {
+	const list = deps.state.messages[input.channelId] ?? [];
+	const index = stepMergeIndex(list, input);
+	if (index < 0) return undefined;
+	const expected = list[index]!.seq;
+	let seq = 0;
+	await deps.harness.commit(async (tx) => {
+		const doc = await tx.doc(ChannelDoc);
+		const state = doc as ChannelState;
+		const arr = state.messages[input.channelId] as Message[] | undefined;
+		const prev = arr?.[index];
+		// 期间有人插了一条，位置已经变了：放弃合并，退化成一条新消息（调用方会重走正常路径）。
+		if (prev === undefined || prev.seq !== expected) return;
+		const joined = `${prev.text}\n${input.text}`.trim();
+		arr![index] = {
+			...prev,
+			text: joined,
+			at: input.at,
+			mentions: parseMentions(joined),
+		};
+		seq = prev.seq;
+	}, context);
+	if (seq === 0) return undefined;
+	return {
+		channel: channelMeta,
+		message: JSON.parse(JSON.stringify(list[index])) as Message,
+		delivery: { delivered: [], failed: [], skipped: [] },
+		merged: true,
+	};
+}
 
 /**
  * 追一条系统留痕到频道。`note` 不唤醒、不计未读（见 `Message.kind`），所以这里不碰
@@ -196,6 +269,9 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		members: [...channel.members],
 		wakeOnAll: [...channel.wakeOnAll],
 	};
+	// 过程话先看能不能并进上一条（并进去就没有新消息、没有新唤醒）。
+	const stepped = await mergeStep(deps, input, channelMeta, context);
+	if (stepped !== undefined) return stepped;
 	const digests = new Map<string, string>();
 	for (const slug of channelMeta.members) {
 		if (slug === OWNER) continue;
@@ -224,6 +300,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
 		...(input.processing === undefined ? {} : { processing: input.processing }),
 			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+			...(input.step === undefined ? {} : { step: input.step }),
 		});
 		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
 		// 新数组」。两者写下去的消息一样，代价差三个数量级：
