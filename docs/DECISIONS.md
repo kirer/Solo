@@ -1859,3 +1859,29 @@ Esc 语义；拆成两个按钮就要处理「同时开着算谁的」，而收�
 **回归。** `test/ui/right-panel.test.ts`（8 例）继续守列/动画/路径；`test/ui/detail-panel.test.ts`
 守「档案里的东西全部来自后端」。这两条行为靠真浏览器验（已验：✕ 仅 1 个、老大不可点、
 进人后返回可见、返回后回到频道、设置 400px / 5 个选项各有图标）。
+
+---
+
+## ADR-078 前端模块的具名导入必须被静态检查
+
+**背景。** `ui/web/` 没有构建步骤，浏览器直接按 ES module 链接。2026-10-30 白了一次屏：
+成员改了 `app.js`（`import { markGroupDone } from "./rows.js"`）和 `rows.js`，只补了一边。
+浏览器在**链接阶段**就抛 `Uncaught SyntaxError: The requested module './rows.js' does not
+provide an export named 'markGroupDone'` —— 整页一个功能都点不开。
+
+**为什么现有检查都漏了。** `tsc --noEmit` 不覆盖 `ui/web/*.js`（不在 tsconfig 的 include 里）；
+单测也覆盖不到，因为没有哪条测试会去 import「出错的组合」；`check-boundaries` 管的是模块
+方向，不管名字。只有真浏览器会炸，而人不会每改一行都开浏览器。
+
+**决定。** 新增 `test/ui/imports.test.ts`：扫 `ui/web/js/*.js` 里所有
+`import { … } from "./x.js"`，逐个核对 `x.js` 确实导出了那个名字（`export function|const|
+let|class` + `export { … }`），错了就列出 `调用方 → 目标：没有导出 X`。
+已验证它抓得住：把 `rows.js` 的 `export function markGroupDone` 改成非导出，这条立刻失败。
+
+**代价。** 一个 2 例的文件、~100 行、跑 114ms。它替代不了浏览器验收，但能拦住
+「改了两个文件、只补了一边」这一类把整个前端变成白屏的错。
+
+**同时落地的功能改动（成员做的，我补的那半边）。** 跑完的过程组不再显示「名字 已完成，
+用时 X 秒」，组头只剩一个展开箭头；定格由 `rows.js` 新导出 `markGroupDone(group, endAt)`
+负责（只改那一个节点，不重建 —— 重建会吃掉老板正开着的展开状态）；底部活动行跑完立刻收掉，
+不再停 4 秒显示「已完成」。
