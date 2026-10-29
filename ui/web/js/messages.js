@@ -61,3 +61,38 @@ export function mergeMessage(older, newer) {
 	}
 	return merged;
 }
+
+/**
+ * 本地先画一条自己刚发的消息（POST 成功、SSE 还没回显时用）。
+ *
+ * 老板的验收口径：发送成功之后不能只靠 SSE 回显 —— 断线重连那几秒里消息不出现，
+ * 看起来就是「没发出去」，于是他会再发一遍。POST 的返回里有 `seq`，本地先按这个
+ * seq 落一条，SSE 到达时 `merge` 按 seq 覆盖（幂等），同一条不会变成两条。
+ */
+export function localEcho({ seq, text, at = Date.now(), fromSlug = "owner", fromLabel = "老大", attachments, replyTo, kind = "say" }) {
+	return {
+		seq,
+		fromSlug,
+		fromLabel,
+		kind,
+		text: String(text ?? ""),
+		at,
+		...(typeof replyTo === "number" ? { replyTo } : {}),
+		...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
+		// 只是给界面一个「这条还没被服务端回显」的标记，SSE 覆盖后自然消失。
+		local: true,
+	};
+}
+
+/** 把本地这条按 seq 插进列表：同 seq 已存在就原地替换，最后按 seq 升序。 */
+export function insertLocalMessage(messages, message) {
+	const list = Array.isArray(messages) ? messages : [];
+	if (message == null || typeof message.seq !== "number") return list;
+	const index = list.findIndex((item) => item?.seq === message.seq);
+	if (index >= 0) {
+		const next = [...list];
+		next[index] = { ...list[index], ...message };
+		return next;
+	}
+	return [...list, message].sort((left, right) => (left?.seq ?? 0) - (right?.seq ?? 0));
+}

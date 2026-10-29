@@ -30,7 +30,7 @@ import {
 	isNeed as isNeedRow,
 	wrapEvents,
 } from "./rows.js";
-import { mergeMessage, mergeMessages, previousOf } from "./messages.js";
+import { insertLocalMessage, localEcho, mergeMessage, mergeMessages, previousOf } from "./messages.js";
 import { installJankMonitor, mark } from "./jank.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -2161,14 +2161,34 @@ async function sendMessage(raw) {
 	el.send.disabled = true;
 	el.send.dataset.busy = "true";
 	const replyTo = state.replyTo?.seq;
+	const channelId = state.currentId;
 	try {
-		await postJSON(`/api/channels/${encodeURIComponent(state.currentId)}/messages`, {
+		const result = await postJSON(`/api/channels/${encodeURIComponent(channelId)}/messages`, {
 			text,
 			...(replyTo ? { replyTo } : {}),
 			...(attachments.length === 0
 				? {}
 				: { attachments: attachments.map((item) => ({ id: item.id, name: item.name, kind: item.kind, bytes: item.bytes })) }),
 		});
+		// 发送成功后本地先落一条：SSE 断线重连的那几秒里，消息不能看起来「没发出去」。
+		// POST 返回里有 seq，SSE 到达时按同一个 seq 覆盖（merge 幂等），不会出现两条。
+		if (typeof result?.seq === "number" && state.currentId === channelId && state.detail) {
+			const messages = state.detail.messages ?? [];
+			if (!messages.some((message) => message.seq === result.seq)) {
+				state.detail.messages = insertLocalMessage(
+					messages,
+					localEcho({
+						seq: result.seq,
+						text,
+						at: Date.now(),
+						attachments: attachments.length === 0 ? undefined : attachments,
+						replyTo,
+					}),
+				);
+				state.lastRendered = Math.max(state.lastRendered ?? 0, result.seq);
+				renderFlow({ restore: false });
+			}
+		}
 		el.input.value = "";
 		state.replyTo = null;
 		renderReply();
