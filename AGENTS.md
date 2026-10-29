@@ -42,8 +42,8 @@ src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
 ui/web/             界面（无构建）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
-test/core/          37 文件 / 353 例
-test/ui/            10 文件 / 78 例
+test/core/          37 文件 / 355 例
+test/ui/            12 文件 / 94 例
 workspace/          运行时数据（gitignore）
 ```
 
@@ -81,7 +81,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 47 文件 430 例，<3s，必须全绿
+npm test          # 49 文件 449 例，<3s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
