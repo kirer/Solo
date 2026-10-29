@@ -137,7 +137,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 34 文件 / 315 例，应该 <2s
+npm test           # 35 文件 / 319 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
@@ -180,3 +180,4 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `memory-panel.test.ts` | 记忆面板纯逻辑：`lineCount` / `linesOf`（「条」是行数不是节数）/ 筛选 / 行数版文案 / 删除确认里的条数 |
 | `merge-messages.test.ts` | `mergeMessages()`：升序、去重、重叠时后一批赢、乱序、空输入、丢掉没有 `seq` 的项（ADR-052） |
 | `detail-panel.test.ts` | 详情面板：后端字段都画出来 / 没技能没记忆就明说 / 用户可控字串不变标签（ADR-056） |
+| `monologue.test.ts` | 内心独白拦截：英文计划式开场拦住、中文汇报里夹英文不拦、`docker compose` 这类标识符开头不拦、太短不判（ADR-058） |

@@ -301,6 +301,17 @@ export function createCoreTools(deps: CoreToolDeps) {
 						"把过程或整份内容写进项目文件，再发一句结论加路径。",
 				);
 			}
+			// 内心独白不是发言。
+			//
+			// 规矩里早写了「不用英文写内心独白」，但模型该写还是写（线上 46% 的发言是英文）。
+			// 这一条必须由代码拦：贴出去的每一句都会出现在老板眼前，靠自觉等于没拦。
+			const monologue = monologueOpener(args.text);
+			if (monologue !== undefined) {
+				return text(
+					`这条没发出去：它以「${monologue}」开头，英文占多数 —— 那是你的思考，不是对别人说的话。` +
+						"思考用 think；要对人说话就用中文写结论（谁、做了什么、结果、下一步）。重写一遍。",
+				);
+			}
 			let state = await readState(deps);
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
@@ -1033,6 +1044,57 @@ const CHANNEL_LIMIT = 3_000;
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 const SAY_LIMIT = 1_200;
+
+/** 「这是内心独白，不是发言」的开头。模型用英文自言自语时有固定套路，抓得住。 */
+const MONOLOGUE_OPENERS = [
+	"let me",
+	"let's",
+	"now i",
+	"now let",
+	"i'll",
+	"i will",
+	"i need to",
+	"i should",
+	"i can",
+	"i have to",
+	"i think",
+	"okay,",
+	"ok,",
+	"then i",
+	"first,",
+	"next,",
+	"hmm",
+	"looking at",
+	"so the",
+];
+
+/**
+ * 判断一段 `say` 是不是模型在把「思考」当「发言」倒出来。
+ *
+ * 证据来自线上：agent 1136 条发言里 46% 是英文（苏澄 96%、温言 92%），长度中位数 195 字
+ * 而老板是 15 字。老板的原话是「根本不像正常人之间沟通」。
+ *
+ * 判据必须两道一起过，单看哪一道都会误伤：
+ * - **以第一人称计划开头**（`Let me…` / `Now I'll…` / `I need to…`）—— 中文正文里夹英文
+ *   文件名、报错、代码不会这么开头，所以不会被打中；
+ * - **而且英文占绝对多数**（按「英文字母 vs 汉字」算比例，不看字符总数：代码块里全是 ASCII）。
+ *
+ * 返回命中的开头（给模型看，让它知道被哪句话出卖了），不认识就返回 `undefined`。
+ */
+export function monologueOpener(text: string): string | undefined {
+	const head = text.trimStart().slice(0, 40).toLowerCase();
+	const opener = MONOLOGUE_OPENERS.find((candidate) => head.startsWith(candidate));
+	if (opener === undefined) return undefined;
+	let latin = 0;
+	let han = 0;
+	for (const char of text) {
+		if (/[A-Za-z]/.test(char)) latin += 1;
+		else if (/\p{Script=Han}/u.test(char)) han += 1;
+	}
+	// 英文占「英文字母 + 汉字」的 70% 以上才算独白；中文汇报里夹几个英文词不算。
+	if (latin + han < 40) return undefined;
+	return latin / (latin + han) >= 0.7 ? opener : undefined;
+}
 
 /** 回给模型的输出上限。比频道宽（它要继续干活），但远小于一次大测试的完整输出。 */
 const MODEL_LIMIT = 8_000;
