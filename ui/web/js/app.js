@@ -838,6 +838,32 @@ async function reload() {
 
 /* ── SSE ────────────────────────────────────────────────────────────── */
 
+/**
+ * 一条消息「画出来会变吗」的指纹。
+ *
+ * 服务端每次提交都会把最近几条重推一遍（占位填充要能原地覆盖），绝大多数和上一次一模一样。
+ * 比较指纹比重新渲染便宜三个数量级：字符串拼接 vs 一张 SVG 头像 + 一遍 Markdown。
+ */
+function messageSignature(message) {
+	if (!message) return "";
+	const attachments = Array.isArray(message.attachments)
+		? message.attachments.map((item) => item?.id ?? "").join(",")
+		: "";
+	const mentions = Array.isArray(message.mentions) ? message.mentions.join(",") : "";
+	return [
+		message.seq,
+		message.kind ?? "",
+		message.status ?? "",
+		message.at ?? "",
+		message.fromSlug ?? message.from ?? "",
+		message.replyTo?.seq ?? "",
+		mentions,
+		attachments,
+		message.needsYou ? "1" : "",
+		message.text ?? "",
+	].join("\u0001");
+}
+
 function openChannelStream(id) {
 	if (typeof EventSource === "undefined") return;
 	const source = new EventSource(`/api/channels/${encodeURIComponent(id)}/stream`);
@@ -849,8 +875,16 @@ function openChannelStream(id) {
 		const index = messages.findIndex((candidate) => candidate.seq === message.seq);
 		const previous = messages.length > 0 ? messages[messages.length - 1] : null;
 		const isAppend = index < 0 && message.seq > (state.lastRendered ?? 0);
-		if (index >= 0) messages[index] = { ...messages[index], ...message };
-		else messages.push(message);
+		if (index >= 0) {
+			const merged = { ...messages[index], ...message };
+			// 一个字都没变的消息不是「新消息」。
+			//
+			// 服务端按提交推送，一次运行里同一批消息会被反复带上（提示性重推，为了占位填充）。
+			// 以前这里不管变没变都走 `renderFlow()` —— 实测一次运行 15 秒里整列重建 1616 次，
+			// 加了 5 万个节点又删掉，最长一次卡了 2.7 秒。重推不是变化，直接扔掉。
+			if (messageSignature(merged) === messageSignature(messages[index])) return;
+			messages[index] = merged;
+		} else messages.push(message);
 		notePresence(message);
 		const pinned = isPinned();
 		// 只画新来的那一条。
@@ -879,8 +913,13 @@ function openChannelStream(id) {
 				for (const event of group) el.feed.append(event);
 				state.tailEvents = [];
 			}
+		} else if (index >= 0) {
+			// 就地改一行（占位填充、编辑）。整列重画会把别的行也一起换掉，
+			// 正在流式写入的 `.md` 就丢了落点。
+			const row = el.feed.querySelector(`.row[data-seq="${message.seq}"]`);
+			if (row === null) renderFlow({ restore: false });
+			else row.replaceWith(buildOne(messages[index], streamCtx(), previous));
 		} else {
-			// 编辑、占位填充、乱序到达：这几条路径很少，老老实实重画。
 			renderFlow({ restore: false });
 		}
 		// 不钉在底部时不拽人，但要让「回到最新」知道下面又多了几条。

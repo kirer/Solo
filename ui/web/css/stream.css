@@ -1226,3 +1226,4 @@ body[data-layout="bubble"] .attach-grid,
 body[data-layout="bubble"] .attach-files {
 	max-width: min(68ch, calc(100% - 82px));
 }
+

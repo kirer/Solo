@@ -83,6 +83,24 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	// T-016：按频道的 SSE 连接（channelId → 连接集合）。消息增量只推给订阅了该频道的浏览器。
 	const channelClients = new Map<string, Set<ServerResponse>>();
 	const channelTimers = new Map<string, NodeJS.Timeout>();
+	// 每个 SSE 连接在每个频道上「已经推到第几条」。
+	//
+	// 原来的做法是每次提交都把**最后 60 条**重推一遍。实测：一次运行 15 秒里推了 1620 条
+	// create 事件、51,359 个 DOM 节点被加进去又删掉、浏览器最长一次卡 2.7 秒。
+	// 增量就该是增量：只推比这个游标新的，外加最后几条（占位填充要能原地覆盖）。
+	const channelSeqs = new WeakMap<ServerResponse, Map<string, number>>();
+	const RECENT_RESEND = 4;
+	function cursorOf(client: ServerResponse, id: string): number | undefined {
+		return channelSeqs.get(client)?.get(id);
+	}
+	function setCursorOf(client: ServerResponse, id: string, seq: number): void {
+		let map = channelSeqs.get(client);
+		if (map === undefined) {
+			map = new Map();
+			channelSeqs.set(client, map);
+		}
+		map.set(id, seq);
+	}
 
 	// T-016 v2：把「占位填充 → 逐字增量推送」接到 post.ts 的钩子上（避免循环依赖：post 不 import serve）。
 	// 前端拿到 token 分片后渐显，最终以 done 全文兜底（刷新/丢包不漏字）。
@@ -171,27 +189,29 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	async function pushChannel(id: string): Promise<void> {
 		const clients = channelClients.get(id);
 		if (clients === undefined || clients.size === 0) return;
-		let payload: string;
+		let views: { seq: number; line: string }[];
 		try {
 			const { directory, channels } = await snapshot();
 			const channel = channels.channels[id];
 			if (channel === undefined) return;
 			const list = channels.messages[id] ?? [];
-			// 最近 60 条足够：历史靠 connect 时全量补齐，这里只管增量与占位状态变化。
-			const tailMessages = list.slice(Math.max(0, list.length - 60));
-			const events = tailMessages
-				.map((message) => {
-					const view = messageView(channels, channel, message, directory, OWNER_SLUG);
-					return `event: create\ndata: ${JSON.stringify(view)}\n\n`;
-				})
-				.join("");
-			payload = events;
+			const tail = list.slice(Math.max(0, list.length - 60));
+			views = tail.map((message) => {
+				const view = messageView(channels, channel, message, directory, OWNER_SLUG);
+				return { seq: message.seq, line: `event: create\ndata: ${JSON.stringify(view)}\n\n` };
+			});
 		} catch {
 			return;
 		}
+		const newest = views.length > 0 ? views[views.length - 1]!.seq : 0;
 		for (const client of [...clients]) {
+			// 没有游标 = 刚连上来，给全量（界面上翻靠 `/api/channels/:id?before=`，这 60 条只是首屏）。
+			const since = cursorOf(client, id);
+			const wanted = since === undefined ? views : views.filter((view) => view.seq > since - RECENT_RESEND);
+			if (wanted.length === 0) continue;
 			try {
-				client.write(payload);
+				client.write(wanted.map((view) => view.line).join(""));
+				setCursorOf(client, id, newest);
 			} catch {
 				clients.delete(client);
 			}
