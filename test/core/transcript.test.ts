@@ -5,7 +5,7 @@
  * 不依赖运行时，所以纯测它。
  */
 import { describe, expect, test } from "vitest";
-import { projectAssistantEntry } from "../../src/core/channel/transcript.ts";
+import { isFillerThinking, projectAssistantEntry } from "../../src/core/channel/transcript.ts";
 import type { EntryRecord } from "../../src/core/runtime/index.ts";
 
 /** 造一条 `pi.assistant` 条目。 */
@@ -64,5 +64,28 @@ describe("projectAssistantEntry", () => {
 	test("非 pi.assistant 条目返回空", () => {
 		const entry = { id: 1 as never, conversationId: 2 as never, kind: "pi.tool-result" } as EntryRecord;
 		expect(projectAssistantEntry(entry)).toEqual([]);
+	});
+});
+
+describe("收尾噪声思考不落库（老板会误以为他还在干活）", () => {
+	test("纯收尾词或标点：不落", () => {
+		for (const text of ["End.", "done", "OK.", "完成。", "结束", "Done!", "……", "OK, done."]) {
+			expect(isFillerThinking(text)).toBe(true);
+		}
+		const entry = assistantEntry([{ type: "thinking", thinking: "End." }]);
+		expect(projectAssistantEntry(entry)).toEqual([]);
+	});
+
+	test("有意义的思考照落（一个实词就够）", () => {
+		for (const text of ["Done. 接下来我看日志", "看完了，改三处", "End of the log? 还要看第二份"]) {
+			expect(isFillerThinking(text)).toBe(false);
+		}
+		const entry = assistantEntry([{ type: "thinking", thinking: "先看日志再改" }]);
+		expect(projectAssistantEntry(entry)).toEqual([{ kind: "think", text: "先看日志再改" }]);
+	});
+
+	test("正文里的 `End.` 不受影响 —— 那是他说的话，不是过程", () => {
+		const entry = assistantEntry([{ type: "text", text: "End." }]);
+		expect(projectAssistantEntry(entry)).toEqual([{ kind: "say", text: "End." }]);
 	});
 });

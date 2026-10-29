@@ -96,6 +96,46 @@ function summarizeArguments(args: unknown): string {
 }
 
 /**
+ * 收尾用的空思考词表。
+ *
+ * 模型经常在收尾时补一句 `End.` / `Done.` / `完成` 这样的思考块。它不是过程，
+ * 是一条**噪声过程行** —— 界面上会变成「思考 End.」+ 一个「正在执行」组，看起来
+ * 像他还活着、还在干活（实测老板就是这么被误导的）。
+ *
+ * 只认「整段话就是这些词或标点」的，任何一个有意义的词都让它留下来。
+ */
+const FILLER_THINKING = new Set([
+	"end",
+	"done",
+	"ok",
+	"okay",
+	"finish",
+	"finished",
+	"complete",
+	"completed",
+	"结束",
+	"完成",
+	"已结束",
+	"已完成",
+]);
+
+/**
+ * 这段思考是不是纯收尾噪声。
+ *
+ * 判据：去掉空白与标点之后，只剩下上面那些词（全空也算）。所以
+ * `End.`、`OK, done.`、`完成。` 都算噪声；`Done. 接下来我看日志` 不算。
+ */
+export function isFillerThinking(text: string): boolean {
+	const tokens = text
+		.trim()
+		.toLowerCase()
+		.split(/[^\p{L}\p{N}]+/u)
+		.filter((token) => token !== "");
+	if (tokens.length === 0) return true;
+	return tokens.every((token) => FILLER_THINKING.has(token));
+}
+
+/**
  * 从一条 assistant 条目里抽出该给老板看的三样东西。
  *
  * 返回空数组表示这条没什么可看的（比如只有工具调用）—— 调用方就不该落消息，
@@ -111,6 +151,9 @@ export function projectAssistantEntry(entry: EntryRecord): readonly Projection[]
 		if (block.type === "thinking") {
 			const text = (block.thinking ?? "").trim();
 			if (text === "") continue;
+			// 收尾噪声（`End.` / `完成`）不落库：它会被画成一条「思考 End.」+ 过程组，
+			// 让老板以为他还在干活。正文（`text` 块）不走这条判据 —— 那是他说的话。
+			if (isFillerThinking(text)) continue;
 			out.push({ kind: "think", text });
 		} else if (block.type === "text") {
 			const text = (block.text ?? "").trim();
