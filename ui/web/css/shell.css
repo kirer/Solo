@@ -10,6 +10,19 @@
 	grid-template-columns: var(--sidebar) minmax(0, 1fr);
 	height: 100dvh;
 	background: var(--ground);
+	/* 收起/展开是整列在滑，不是把内容挤变形：DSH 用 0.3s 的 ease-in-out。 */
+	transition: grid-template-columns 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 收起成 56px 的图标条。宽度换掉之后其余规则全靠这个属性派生。 */
+.frame[data-side="rail"] {
+	--sidebar: 56px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.frame {
+		transition: none;
+	}
 }
 
 /* 分界线只有一条：侧栏右侧 0.5px。发丝线在高 DPI 上才是「高级感」的来源，
@@ -104,6 +117,24 @@
 	height: 60px;
 	padding: 8px 0 8px 8px;
 	flex: none;
+}
+
+.side-grow {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* 收起按钮：只在桌面出现（手机上侧栏本来就是整屏的一个区域，没有「收」这回事）。 */
+.side-toggle {
+	flex: none;
+	width: 28px;
+	height: 28px;
+	margin-right: 4px;
+	color: var(--ink-3);
+}
+
+.side-toggle:hover {
+	color: var(--ink);
 }
 
 .brand-mark {
@@ -374,6 +405,69 @@
 .ch-badge[data-kind="mention"] {
 	background: var(--accent);
 	color: var(--ground);
+}
+
+/* ── 收起态（56px 图标条） ───────────────────────────────────────────── */
+
+/* 只留头像：名字、状态、预览、时间全收起来，塞进 title 属性里（见 app.js）。
+   这不是「变小」，是换了一套信息密度 —— 窄栏里放不下两行字。 */
+.frame[data-side="rail"] .brand-name,
+.frame[data-side="rail"] .side-head > span,
+.frame[data-side="rail"] .side-meta,
+.frame[data-side="rail"] .ch-main,
+.frame[data-side="rail"] .ch-time {
+	display: none;
+}
+
+.frame[data-side="rail"] .side-logo {
+	padding: 8px 0;
+	justify-content: center;
+	gap: 0;
+}
+
+/* logo 行 60 高放不下 logo + 按钮：收起后 logo 让位，只留按钮（点它展开）。 */
+.frame[data-side="rail"] .side-logo .brand-mark {
+	display: none;
+}
+
+.frame[data-side="rail"] .side-head {
+	height: 8px;
+	margin: 0;
+	padding: 0;
+}
+
+.frame[data-side="rail"] .ch {
+	grid-template-columns: 1fr;
+	place-items: center;
+	width: 36px;
+	height: 36px;
+	min-height: 36px;
+	padding: 0;
+	margin: 0 auto;
+}
+
+.frame[data-side="rail"] .ch-av {
+	place-items: center;
+}
+
+/* 未读在窄栏里退化成一个点：数字放不下，但「有东西」这件事不能丢。 */
+.frame[data-side="rail"] .ch-badge {
+	position: absolute;
+	top: 3px;
+	right: 3px;
+	min-width: 7px;
+	height: 7px;
+	padding: 0;
+	font-size: 0;
+	line-height: 0;
+	color: transparent;
+	overflow: hidden;
+	border-radius: 50%;
+	background: var(--accent);
+}
+
+.frame[data-side="rail"] .ch {
+	position: relative;
 }
 
 /* ── 白纸 ───────────────────────────────────────────────────────────── */
@@ -737,6 +831,14 @@
 
 	.back {
 		display: inline-grid;
+	}
+
+	.side-toggle {
+		display: none;
+	}
+
+	.frame[data-side="rail"] {
+		--sidebar: 100%;
 	}
 
 	/* 手机上标题必须留在这一行：侧栏那句产品名在另一个区域（列表态）里，

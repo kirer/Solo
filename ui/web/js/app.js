@@ -72,7 +72,20 @@ const state = {
 	lastRendered: 0,
 	// 这一轮已经落地、还没等到那句 `say` 的过程行。见 merge()。
 	refreshTimer: 0,
+	/** 侧栏展开态："open" | "rail"。见 applySide()。 */
+	side: "open",
 };
+
+const SIDE_KEY = "ai-company.side";
+
+function readSide() {
+	try {
+		return localStorage.getItem(SIDE_KEY) === "rail" ? "rail" : "open";
+	} catch {
+		// 隐私模式读不到盘：默认展开。收起是省地方的手段，不该变成默认状态。
+		return "open";
+	}
+}
 
 function readLayout() {
 	try {
@@ -100,6 +113,8 @@ const el = {
 	plusMenu: $("plus-menu"),
 	rows: $("rows"),
 	sidebar: $("sidebar"),
+	sideToggle: $("side-toggle"),
+	frame: document.querySelector(".frame"),
 	sheet: $("sheet"),
 	paneTitle: $("pane-title"),
 	barTitle: $("bar-title"),
@@ -337,6 +352,8 @@ function renderSidebar() {
 		)}</span>${badge}</span></button>`;
 	});
 	el.rows.innerHTML = out.join("");
+	// 收起态下每行的名字要写进 title（重建之后旧的 title 跟着节点一起没了）。
+	if (state.side === "rail") applySide("rail");
 	endMark();
 }
 
@@ -768,6 +785,46 @@ function renderAll({ veil = false } = {}) {
 	renderFlow({ veil });
 	renderActivity();
 	autosize();
+}
+
+/* ── 侧栏收起 ───────────────────────────────────────────────────────── */
+
+/**
+ * 收起态只改一个属性：`.frame[data-side]`。宽度、隐藏哪些列、行变成 36×36 的方块，
+ * 全部由 shell.css 从这一个属性派生 —— JS 不碰任何尺寸。
+ *
+ * 收起之后名字看不见了，所以把「名字 · 状态」写进每行的 title：鼠标停一下能读到，
+ * 读屏也读得到（title 会进无障碍名字）。
+ */
+function applySide(side = readSide()) {
+	state.side = side;
+	const rail = side === "rail";
+	el.frame.dataset.side = side;
+	if (el.sideToggle) {
+		el.sideToggle.setAttribute("aria-expanded", rail ? "false" : "true");
+		const label = rail ? "展开侧边栏" : "收起侧边栏";
+		el.sideToggle.title = label;
+		el.sideToggle.setAttribute("aria-label", label);
+	}
+	for (const row of el.rows.querySelectorAll("[data-channel]")) {
+		if (rail) {
+			const title = row.querySelector(".ch-title")?.textContent ?? "";
+			const sub = row.querySelector(".ch-sub")?.textContent ?? "";
+			row.title = sub === "" ? title : `${title} · ${sub}`;
+		} else if (row.title !== "") {
+			row.removeAttribute("title");
+		}
+	}
+}
+
+function toggleSide() {
+	const next = state.side === "rail" ? "open" : "rail";
+	try {
+		localStorage.setItem(SIDE_KEY, next);
+	} catch {
+		// 存不下就只在这次会话里生效。
+	}
+	applySide(next);
 }
 
 /* ── 取数 ───────────────────────────────────────────────────────────── */
@@ -1539,6 +1596,8 @@ function replyToRow(row) {
 /* ── 事件绑定 ───────────────────────────────────────────────────────── */
 
 function bind() {
+	el.sideToggle?.addEventListener("click", toggleSide);
+
 	// 「N 件找你」点开是一张清单，不是盲跳：老板的原话是「消息太多，真正需要我的
 	// 信息没有 @ 我，能够让我直接定位」。盲跳只能一条一条试，清单能一眼扫完。
 	el.unreadTotal.addEventListener("click", (event) => {
@@ -2068,6 +2127,7 @@ function boot() {
 	installJankMonitor();
 	installModality();
 	applyLayout();
+	applySide();
 	bind();
 	el.skel.hidden = false;
 
