@@ -8,80 +8,102 @@
 .composer {
 	position: relative; /* 拖拽时的那层「松手就发出去」压在它上面 */
 	flex: none;
-	/* 20px 是给纸的留白；手机上的手势条要额外让开，不然发送按钮压在家指示条上。 */
-	padding: 0 var(--pad) calc(20px + env(safe-area-inset-bottom));
+	/* 底部留 16（手机再加手势条，不然发送按钮压在家指示条上）。 */
+	padding: 0 16px calc(16px + env(safe-area-inset-bottom));
 }
 
+/* 输入卡：圆角 28、边框画在阴影里（0.5px 发丝），不占布局。
+   这是「浮起来但不像 bootstrap 卡片」的全部秘密：描边是 box-shadow 的第一层，
+   另外两层是 3% 的扩散光，肉眼几乎看不出，但少了它卡片就贴在纸上。 */
 .composer-card {
 	display: flex;
 	align-items: flex-end;
 	gap: 6px;
-	min-height: 44px;
-	padding: 6px 6px 6px 8px;
-	background: var(--ground);
-	border: 1px solid var(--line);
-	border-radius: 22px;
-	transition: border-color var(--dur-line) ease, border-radius var(--dur-pop) var(--ease-pop);
+	min-height: 52px;
+	/* 输入卡跟着消息列走，宽一点到「列宽 + 32」就住 —— 否则在宽屏上它会长到
+	   1180px，和上面 755px 的正文完全不对齐。 */
+	max-width: calc(min(calc(100% - 32px), clamp(680px, 64%, 920px)) + 32px);
+	margin: 0 auto;
+	padding: 10px 8px 8px 10px;
+	background: var(--field);
+	border: 0;
+	border-radius: var(--r-panel);
+	box-shadow:
+		0 0 0 0.5px var(--line),
+		0 4px 16px rgb(0 0 0 / 3%),
+		0 0 24px rgb(0 0 0 / 3%);
+	transition: box-shadow var(--dur-line) ease;
 }
 
-.composer-card:hover {
-	border-color: color-mix(in srgb, var(--control) 70%, var(--line));
-}
-
-/* 焦点：只动边线。没有 box-shadow，没有 outline 光晕。 */
+/* 焦点不画外发光，也不改圆角：只把发丝线加深一档。 */
 .composer-card:focus-within {
-	border-color: var(--control);
+	box-shadow:
+		0 0 0 0.5px var(--control),
+		0 4px 16px rgb(0 0 0 / 3%),
+		0 0 24px rgb(0 0 0 / 3%);
 }
 
-/* 多行时圆角 22 → 18，用弹簧曲线，不做 height transition。 */
+/* 多行时高度自己长，圆角不动（28 的胶囊变长仍然成立，改了反而像换了个控件）。 */
 .composer-card[data-multi="true"] {
-	border-radius: 18px;
+	border-radius: var(--r-panel);
 }
 
 #input {
 	flex: 1 1 auto;
 	min-width: 0;
-	min-height: 30px;
-	max-height: 160px;
-	padding: 5px 0;
+	min-height: 28px;
+	max-height: 336px; /* DSH：14 行 × 24 */
+	padding: 2px 4px 2px 4px;
 	background: none;
 	border: 0;
 	outline: none;
 	resize: none;
 	overflow-y: auto;
 	font-size: 14px;
-	line-height: 20px;
+	line-height: 24px;
 	font-weight: 400;
 	color: var(--ink);
 	scrollbar-gutter: stable;
 }
 
 #input::placeholder {
-	color: color-mix(in srgb, var(--ink) 36%, transparent);
+	color: var(--ink-caption, var(--ink-3));
 }
 
+#input {
+	/* DSH 的 caret 是强调蓝，输入框本身没有任何聚焦样式。 */
+	caret-color: var(--accent);
+}
+
+/* 发送键：34px 满圆，比左边的 ＋ 大一圈 —— 视觉重心在这里。 */
 .send {
+	display: grid;
+	place-items: center;
 	flex: none;
 	align-self: flex-end;
-	height: 32px;
-	padding: 0 12px;
-	border-radius: var(--r-control);
-	background: var(--ink);
-	color: var(--ground);
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
-	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+	width: 34px;
+	height: 34px;
+	padding: 0;
+	border: 0;
+	border-radius: var(--r-pill);
+	background: var(--accent);
+	color: #fff;
+	transition: background-color var(--dur-line) ease, opacity var(--dur-line) ease;
 }
 
 .send:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--ink) 86%, var(--ground));
+	background: color-mix(in srgb, var(--accent) 84%, #fff);
 }
 
 .send:disabled {
-	background: var(--control);
-	color: var(--ink-3);
+	background: var(--accent);
+	opacity: 0.4;
 	cursor: default;
+}
+
+.send svg {
+	width: 16px;
+	height: 16px;
 }
 
 /* 发送中转圈：唯一允许出现转圈的地方。 */
@@ -104,25 +126,26 @@
 }
 
 /* ＋：28px 圆底，展开时图标转 45°。 */
+/* ＋：28px 满圆、浅底（DSH 的 specific-selector），图标 14。 */
 .plus {
 	flex: none;
 	align-self: flex-end;
 	display: grid;
 	place-items: center;
-	width: 30px;
-	height: 30px;
-	border-radius: 50%;
-	color: var(--ink-3);
-	transition: background-color var(--dur-line) ease, color var(--dur-line) ease, transform var(--dur-tap) var(--ease-tap);
+	width: 28px;
+	height: 28px;
+	border-radius: var(--r-pill);
+	background: var(--raised);
+	color: var(--ink);
+	transition: background-color var(--dur-line) ease;
 }
 
 .plus:hover {
-	background: color-mix(in srgb, var(--ink) 10%, transparent);
-	color: var(--ink);
+	background: var(--hover);
 }
 
 .plus:active {
-	transform: scale(0.9);
+	background: var(--active);
 }
 
 .plus[aria-expanded="true"] {

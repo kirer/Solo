@@ -27,7 +27,9 @@ function blocksOf(selector: string): string[] {
 const anyBlock = (selector: string, needle: string) => blocksOf(selector).some((rule) => rule.includes(needle));
 
 describe("过程行的展开态", () => {
-	it("每步一行、12–13px、行高 20–22，且不换行", () => {
+	// 行高从 20–22 放到 24：对齐 DSH 的过程行（组头 14/24、摘要 13/20），
+	// 24 是这套观感的基线，压到 20 会让一行行挤成清单。
+	it("每步一行、12–13px、行高 20–24，且不换行", () => {
 		for (const selector of [".ev", ".ev-txt"]) {
 			expect(anyBlock(selector, "white-space: nowrap")).toBe(true);
 		}
@@ -36,7 +38,7 @@ describe("过程行的展开态", () => {
 		expect(Number(size?.[1])).toBeLessThanOrEqual(13);
 		const line = /line-height:\s*([\d.]+)px/.exec(blocksOf(".ev").join("\n"));
 		expect(Number(line?.[1])).toBeGreaterThanOrEqual(20);
-		expect(Number(line?.[1])).toBeLessThanOrEqual(22);
+		expect(Number(line?.[1])).toBeLessThanOrEqual(24);
 	});
 
 	it("展开容器没有边框、没有缩进竖线", () => {

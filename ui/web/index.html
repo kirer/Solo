@@ -31,42 +31,25 @@
 	</head>
 	<body data-pane="list" data-layout="flat">
 		<div class="frame">
-			<!-- 顶栏 48：左 = 产品标记 + 名字 + 公司；右 = 断线提示 + N 件找你 + 菜单 + 刷新。与侧栏之间不画线。 -->
-			<header class="topbar">
-				<span class="brand">
-					<svg class="brand-mark" width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+			<!-- 侧栏 280：整列到底，logo 在它自己头上（DSH 的结构，不是把 logo 塞进横贯的顶栏）。
+			     一列平铺的频道，不分「群 / 人」两组 —— 同一个人在两处出现两次，读起来要自己对齐。 -->
+			<aside class="sidebar" id="sidebar">
+				<div class="side-logo">
+					<svg class="brand-mark" width="22" height="22" viewBox="0 0 18 18" aria-hidden="true">
 						<circle cx="9" cy="9" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5" />
 						<path d="M9 3.6v4.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
 					</svg>
-					<h1 class="brand-name" id="bar-title">Solo</h1>
-				</span>
-				<span class="company-meta" id="company-meta"></span>
-				<span class="topbar-grow"></span>
-				<span class="conn" id="conn" hidden></span>
-				<button class="need" id="unread-total" type="button" title="跳到下一条需要你的事"></button>
-				<button class="icon-btn" id="team-btn" type="button" aria-expanded="false" aria-haspopup="dialog" title="团队：谁在哪个项目、什么职位（Esc 关闭）" aria-label="团队">
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-						<circle cx="9" cy="8.5" r="3.2" />
-						<path d="M3.2 19.5c0-3 2.6-5 5.8-5s5.8 2 5.8 5" />
-						<path d="M16.4 6.1a3.2 3.2 0 0 1 0 6.2M17.6 14.9c1.9.4 3.2 1.7 3.2 3.6" />
-					</svg>
-				</button>
-				<div class="menu-anchor">
-					<button class="icon-btn" id="settings-btn" type="button" aria-haspopup="dialog" aria-expanded="false" title="设置">
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-							<circle cx="12" cy="12" r="3.2" />
-							<path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
-						</svg>
-					</button>
+					<h1 class="brand-name" id="bar-title">一人公司</h1>
 				</div>
-			</header>
-
-			<aside class="sidebar" id="sidebar">
-				<!-- 一个平铺的会话列表：群、项目、每个人的私聊，全在一列里，按最后说话时间排。
-				     不分「成员 / 频道」两组 —— 同一个人在两处出现两次，读起来要自己对齐。 -->
+				<!-- 小标题行：DSH 的「工作区」。它是列表的分段名，不是按钮。 -->
+				<div class="side-head">
+					<span>工作区</span>
+					<span class="side-meta" id="company-meta"></span>
+				</div>
 				<div class="channels" id="rows"></div>
 			</aside>
 
+			<!-- 主列：一条标题行 + 消息流 + 输入区。0.5px 的分界线只画在主列上，侧栏不参与。 -->
 			<main class="sheet" id="sheet">
 				<div class="sheet-head">
 					<button class="icon-btn back" id="back" type="button" title="返回" aria-label="返回频道列表">
@@ -77,6 +60,23 @@
 					<h2 class="pane-title" id="pane-title">频道</h2>
 					<span class="sheet-sub" id="pane-sub"></span>
 					<span class="sheet-grow"></span>
+					<span class="conn" id="conn" hidden></span>
+					<button class="need" id="unread-total" type="button" title="跳到下一条需要你的事"></button>
+					<button class="icon-btn" id="team-btn" type="button" aria-expanded="false" aria-haspopup="dialog" title="团队：谁在哪个项目、什么职位（Esc 关闭）" aria-label="团队">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="9" cy="8.5" r="3.2" />
+							<path d="M3.2 19.5c0-3 2.6-5 5.8-5s5.8 2 5.8 5" />
+							<path d="M16.4 6.1a3.2 3.2 0 0 1 0 6.2M17.6 14.9c1.9.4 3.2 1.7 3.2 3.6" />
+						</svg>
+					</button>
+					<div class="menu-anchor">
+						<button class="icon-btn" id="settings-btn" type="button" aria-haspopup="dialog" aria-expanded="false" title="设置">
+							<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="12" cy="12" r="3.2" />
+								<path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6" />
+							</svg>
+						</button>
+					</div>
 					<!-- 详情：私聊看这个人，群看这个群。DS-BOT 那个位置就是这个东西。 -->
 					<button class="icon-btn" id="detail-btn" type="button" title="详情" aria-label="详情">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -139,7 +139,11 @@
 							</svg>
 						</button>
 						<textarea id="input" rows="1" placeholder="发消息…（@ 提人）" aria-label="消息输入"></textarea>
-						<button class="send" id="send" type="submit" disabled>发送</button>
+						<button class="send" id="send" type="submit" disabled title="发送" aria-label="发送">
+							<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<path d="M8 13V3.4M4.2 7.2 8 3.4l3.8 3.8" />
+							</svg>
+						</button>
 					</div>
 				</form>
 			</main>

@@ -8,10 +8,14 @@
 .frame {
 	display: grid;
 	grid-template-columns: var(--sidebar) minmax(0, 1fr);
-	grid-template-rows: var(--topbar) minmax(0, 1fr);
-	grid-template-areas: "bar bar" "side main";
 	height: 100dvh;
-	background: var(--frame);
+	background: var(--ground);
+}
+
+/* 分界线只有一条：侧栏右侧 0.5px。发丝线在高 DPI 上才是「高级感」的来源，
+   1px 会显得像表格边框。 */
+.sidebar {
+	border-right: 0.5px solid var(--line);
 }
 
 /* 「找你」清单：一张窄卡，不是弹窗。每条 3 行压成 2 行（上面「频道 · 谁」，
@@ -90,45 +94,58 @@
 	color: var(--ink-3);
 }
 
-/* ── 顶栏 48 ────────────────────────────────────────────────────────── */
+/* ── 侧栏头部：logo 行 + 分段小标题 ─────────────────────────────────── */
 
-.topbar {
-	grid-area: bar;
+/* logo 行 60 高，图标 22、名字 18/600（品牌字 Montserrat，中文回落到系统栈）。 */
+.side-logo {
 	display: flex;
 	align-items: center;
-	gap: 10px;
-	min-width: 0;
-	padding: 0 12px 0 16px;
-}
-
-.brand {
-	display: inline-flex;
-	align-items: center;
 	gap: 8px;
+	height: 60px;
+	padding: 8px 0 8px 8px;
 	flex: none;
 }
 
 .brand-mark {
+	flex: none;
 	color: var(--ink);
 }
 
-/* 顶级 h1：桌面是产品名，手机列表态是这个区域的标题。始终可见，不让页面的 h1 跟着视图消失。 */
 .brand-name {
-	font-size: 16px;
+	font-family: var(--brand);
+	font-size: 18px;
 	line-height: 24px;
 	font-weight: 600;
-	letter-spacing: -0.01em;
+	letter-spacing: 0.04em;
 	white-space: nowrap;
+	color: var(--ink);
 }
 
-.company-meta {
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	font-size: 12px;
-	line-height: 16px;
+/* 「工作区」：DSH 的分段标题行，36 高、14/20、三级灰。右边补一条人数统计。 */
+.side-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 36px;
+	margin-top: 2px;
+	margin-bottom: 4px;
+	padding-left: 12px;
+	font-size: 14px;
+	line-height: 20px;
 	color: var(--ink-3);
+	flex: none;
+}
+
+.side-meta {
+	margin-left: auto;
+	padding-right: 8px;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
 }
 
 /* 断线：只在真断的时候出现一行 12px 文字，恢复后自己消失。 */
@@ -173,11 +190,11 @@
 /* ── 侧栏 ───────────────────────────────────────────────────────────── */
 
 .sidebar {
-	grid-area: side;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
-	padding: 0 8px 8px;
+	padding: 6px 8px;
+	background: var(--frame);
 }
 
 /* 人栏：每人 40px 一行。这是本产品唯一的独有元素。 */
@@ -218,9 +235,11 @@
 	column-gap: 8px;
 	align-items: center;
 	width: 100%;
-	padding: 6px 8px;
-	border-radius: var(--r-control);
+	min-height: 40px;
+	padding: 6px 9px;
+	border-radius: var(--r-row);
 	text-align: left;
+	/* DSH 只给配色做过渡，尺寸变化才用长曲线。 */
 	transition: background-color var(--dur-line) ease;
 }
 
@@ -360,32 +379,29 @@
 /* ── 白纸 ───────────────────────────────────────────────────────────── */
 
 .sheet {
-	grid-area: main;
 	display: grid;
 	grid-template-rows: auto minmax(0, 1fr) auto auto;
 	min-width: 0;
 	min-height: 0;
-	margin: 0 var(--inset) var(--inset) 0;
 	background: var(--ground);
-	border: 1px solid var(--line);
-	border-radius: var(--r-sheet);
-	overflow: hidden;
 }
 
 .sheet-head {
 	display: flex;
 	align-items: center;
-	gap: 8px;
+	gap: 10px;
 	min-width: 0;
-	padding: 0 12px;
-	height: 52px;
+	height: 56px;
+	padding: 0 16px 0 20px;
+	border-bottom: 0.5px solid var(--line);
+	flex: none;
 }
 
 .pane-title {
-	font-size: 22px;
-	line-height: 28px;
-	font-weight: 600;
-	letter-spacing: -0.015em;
+	font-size: 15px;
+	line-height: 20px;
+	font-weight: 500;
+	letter-spacing: 0;
 	white-space: nowrap;
 	overflow: hidden;
 	text-overflow: ellipsis;
@@ -664,18 +680,20 @@
 @media (max-width: 640px) {
 	.frame {
 		grid-template-columns: minmax(0, 1fr);
-		/* 顶栏那行要跟着长高：`.topbar` 加了 padding-top 让刘海，行高还是 48 的话
-		   内容会被 padding 挤成 0（border-box）。 */
-		grid-template-rows: calc(var(--topbar) + env(safe-area-inset-top)) minmax(0, 1fr);
-		grid-template-areas: "bar" "main";
 	}
 
-	/* 全面屏：`viewport-fit=cover` 声明了就得让出刘海与底部手势条，否则顶栏
+	/* 全面屏：`viewport-fit=cover` 声明了就得让出刘海与底部手势条，否则标题行
 	   被刘海切掉、输入卡的发送按钮压在 home 指示条上。四周边距都加上对应 inset，
 	   在无刘海设备上 env() 是 0，等价于原来的值。 */
-	.topbar {
+	.side-logo {
+		padding-top: calc(8px + env(safe-area-inset-top));
+		height: calc(60px + env(safe-area-inset-top));
+	}
+
+	.sheet-head {
 		padding: env(safe-area-inset-top) calc(12px + env(safe-area-inset-right)) 0
-			calc(12px + env(safe-area-inset-left));
+			calc(16px + env(safe-area-inset-left));
+		height: calc(56px + env(safe-area-inset-top));
 		gap: 6px;
 	}
 
@@ -683,14 +701,17 @@
 		display: none;
 	}
 
+	/* 手机上一次只占满那一格：两张都放在同一格，靠 body[data-pane] 决定谁可见。 */
 	.sidebar,
 	.sheet {
-		grid-area: main;
+		grid-column: 1;
+		grid-row: 1;
 	}
 
 	.sidebar {
-		padding: 0 calc(12px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom))
-			calc(12px + env(safe-area-inset-left));
+		padding: 0 calc(8px + env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom))
+			calc(8px + env(safe-area-inset-left));
+		border-right: 0;
 	}
 
 	/* 手机上标题行给到 14：拇指距离 + 一列行名，13 在黑底白字上偏小。 */
@@ -718,13 +739,15 @@
 		display: inline-grid;
 	}
 
+	/* 手机上标题必须留在这一行：侧栏那句产品名在另一个区域（列表态）里，
+	   进了会话就看不见了 —— 不留标题的话返回键旁边一片空白。 */
 	.sheet-head {
-		height: 40px;
-		padding: 0 8px;
+		height: 48px;
+		padding: 0 10px 0 8px;
 	}
 
 	.pane-title {
-		display: none;
+		display: block;
 	}
 
 	.sheet-sub {
@@ -791,8 +814,8 @@
 	justify-items: end;
 	align-items: stretch;
 	background: transparent;
-	/* 从顶栏下面开始：顶栏那几个开关（找你/团队/布局/主题）不该被自己的详情挡住。 */
-	padding-top: calc(var(--topbar) + env(safe-area-inset-top));
+	/* 从标题行下面开始：那条行里的开关（找你/团队/设置/详情）不该被自己的详情挡住。 */
+	padding-top: calc(56px + env(safe-area-inset-top));
 	/* 不挡住底下的频道：点侧栏/点消息照常生效，收起由 document 的 click 处理。 */
 	pointer-events: none;
 }
@@ -806,7 +829,7 @@
 .detail-panel {
 	width: min(420px, 100%);
 	height: 100%;
-	border-top: 1px solid var(--line);
+	border-top: 0.5px solid var(--line);
 	border-top-left-radius: var(--r-paper, 14px);
 	overflow: auto;
 	overscroll-behavior: contain;

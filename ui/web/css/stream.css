@@ -65,10 +65,16 @@
 	}
 }
 
+/* 消息列：DSH 的 clamp(680, 64%, 920)。列宽跟着窗口走，但两头都收住 ——
+   窄窗口不挤成一行五六个字，宽窗口不让一行拉成 130 字的长句。
+   窄屏时按「两边各留 16」退让，否则 clamp 的下界 680 会撑出横向滚动。 */
 .flow-inner {
 	display: flex;
 	flex-direction: column;
-	padding: 4px var(--pad) 16px;
+	width: 100%;
+	max-width: min(calc(100% - 32px), clamp(680px, 64%, 920px));
+	margin: 0 auto;
+	padding: 16px 0 24px;
 }
 
 /* 上滑加载的哨兵：给 1px 有高度，零高元素的相交判定在部分浏览器上不稳。 */
@@ -89,7 +95,7 @@
 	grid-template-columns: var(--av-lg) minmax(0, 1fr);
 	column-gap: 8px;
 	align-items: start;
-	margin-top: 14px;
+	margin-top: 16px;
 }
 
 .row-say[data-grouped="true"] {
@@ -134,12 +140,12 @@
 	padding-top: 2px;
 }
 
-/* 82px = 6 间距 + 3 个 24px 按钮 + 2 个 2px 间隔。动作条绝对定位在这条留白里，
-   永不遮正文 —— 所以正文不需要 hover 时让位。 */
+/* 76px = 6 间距 + 28 + 8 + 28（两个 28px 按钮、8px 间隔）。动作条绝对定位在这条
+   留白里，永不遮正文 —— 所以正文不需要 hover 时让位。 */
 .row-body {
 	position: relative;
 	min-width: 0;
-	max-width: min(68ch, calc(100% - 82px));
+	max-width: calc(100% - 76px);
 }
 
 .row-head {
@@ -175,9 +181,10 @@
 	flex: none;
 	padding-left: 2px;
 	font-family: var(--mono);
-	font-size: 11px;
+	font-size: 10px;
 	line-height: 14px;
 	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
 }
 
 /* 「需要你」：左侧 2px --accent 竖线 + 12px 文字标签，没有底色。 */
@@ -216,8 +223,9 @@
 	width: fit-content;
 	max-width: 100%;
 	background: var(--accent-wash);
-	border-radius: var(--r-row);
-	padding: 8px 12px;
+	border-radius: var(--r-xl);
+	padding: 10px 16px;
+	line-height: 22px;
 }
 
 /* ── say 的正文 ─────────────────────────────────────────────────────── */
@@ -493,7 +501,7 @@ body[data-layout="bubble"] .row-say .row-body > .md {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
-	max-width: min(68ch, calc(100% - 82px));
+	max-width: min(68ch, calc(100% - 76px));
 }
 
 .row-say[data-owner="true"] .row-head {
@@ -618,13 +626,14 @@ button.evs {
 	gap: 6px;
 	align-self: flex-start;
 	max-width: 100%;
-	padding: 2px 6px 2px 2px;
+	height: 24px;
+	padding: 0 6px 0 0;
 	margin-left: -2px;
 	border: 0;
 	background: transparent;
 	font: inherit;
-	font-size: 12px;
-	line-height: 20px;
+	font-size: 13px;
+	line-height: 24px;
 	color: var(--ink-3);
 	text-align: left;
 	cursor: pointer;
@@ -641,14 +650,13 @@ button.evs:hover {
 	display: grid;
 	place-items: center;
 	flex: none;
-	width: 12px;
-	height: 12px;
-	opacity: 0.7;
+	width: 16px;
+	height: 16px;
 }
 
 .evs-ico svg {
-	width: 12px;
-	height: 12px;
+	width: 14px;
+	height: 14px;
 }
 
 .evs b {
@@ -742,13 +750,13 @@ button.evs:hover {
 	gap: 6px;
 	width: 100%;
 	max-width: 100%;
-	min-height: 20px;
+	height: 24px;
 	padding: 0 2px;
 	border: 0;
 	background: none;
 	font: inherit;
-	font-size: 12.5px;
-	line-height: 20px;
+	font-size: 13px;
+	line-height: 24px;
 	color: var(--ink-3);
 	text-align: left;
 	overflow: hidden;
@@ -770,14 +778,13 @@ button.ev:hover {
 	display: grid;
 	place-items: center;
 	flex: none;
-	width: 12px;
-	height: 12px;
-	opacity: 0.6;
+	width: 16px;
+	height: 16px;
 }
 
 .ev-ico svg {
-	width: 12px;
-	height: 12px;
+	width: 14px;
+	height: 14px;
 }
 
 /* 第二段：动作。定宽不现实（「读文件」和「翻频道」字数不同），但只说一个词，
@@ -895,10 +902,11 @@ button.ev:hover {
 	top: 2px;
 	margin-left: 6px;
 	display: flex;
-	gap: 2px;
+	gap: 8px;
 	opacity: 0;
 	visibility: hidden;
-	transition: opacity var(--dur-line) ease, visibility var(--dur-line) ease;
+	/* 80ms、只动透明度：鼠标划过一条消息时不许引起任何位移。 */
+	transition: opacity 80ms ease, visibility 80ms ease;
 }
 
 /* 悬停桥：只补那 6px 的缝，不盖正文 —— 没有它，鼠标移到按钮上会经过缝而闪掉。 */
@@ -930,8 +938,8 @@ button.ev:hover {
 .tool {
 	display: inline-grid;
 	place-items: center;
-	width: 24px;
-	height: 24px;
+	width: 28px;
+	height: 28px;
 	border-radius: var(--r-control);
 	color: var(--ink-3);
 	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
@@ -951,8 +959,8 @@ button.ev:hover {
 }
 
 .tool svg {
-	width: 14px;
-	height: 14px;
+	width: 15px;
+	height: 15px;
 }
 
 .tool[data-done="true"] {
@@ -960,7 +968,7 @@ button.ev:hover {
 }
 
 /* 触屏没有 hover：常驻、小一号、弱色。
-   而且必须**回到文档流**里 —— 桌面上它是 `left: 100%` 挂到正文右侧那 82px 留白里，
+   而且必须**回到文档流**里 —— 桌面上它是 `left: 100%` 挂到正文右侧那 76px 留白里，
    手机上正文占满宽度，绝对定位会让按钮跑出屏幕、压住别人的字（实测 390 宽时
    复制/回复图标卡在屏幕最左边，正好盖住头像）。放到正文下面一行最省事。 */
 @media (hover: none) {
@@ -1119,7 +1127,7 @@ button.ev:hover {
 	height: 24px;
 	border-radius: 4px;
 	background: color-mix(in srgb, var(--ink) 7%, transparent);
-	max-width: min(68ch, calc(100% - 82px));
+	max-width: min(68ch, calc(100% - 76px));
 }
 
 .sk-body .sk-bar:nth-child(1) {
@@ -1397,7 +1405,7 @@ button.ev:hover {
 /* 平铺布局里附件跟着正文的宽度走，不要比正文还宽。 */
 body[data-layout="bubble"] .attach-grid,
 body[data-layout="bubble"] .attach-files {
-	max-width: min(68ch, calc(100% - 82px));
+	max-width: min(68ch, calc(100% - 76px));
 }
 
 

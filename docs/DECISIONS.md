@@ -1731,3 +1731,41 @@ note 同样会触发。现在 `settleCandidates()` 跳过 `kind === "note"`，
 `identity/rules-prompt/shell` 三处断言里的「老板」跟着改。真浏览器实测：侧栏与消息头显示
 「老大」，正文里的 `@owner` 全部渲染成 `@老大`（`document.body.innerText.includes('@owner')`
 为 `false`）。
+
+---
+
+## ADR-074 界面重做：骨架和配色整体对齐 DSH
+
+**背景。** v2（ADR 里那套「取景框 + 白纸 + IBM Plex + 深松绿」）`inspect.mjs` 是 0 FAIL，
+但老大看完只说了四个字：「很垃圾」。所以 0 FAIL 不等于好看 —— 那条检查器管的是**纪律**
+（对比度、字号数量、有没有 emoji），不管**骨架**。而 v2 的骨架是错的那种：一张浮在页面上的
+纸、一个横贯的顶栏、logo 挤在顶栏里，再加上给中文界面套的 webfont。
+
+**做法：不去猜，去抄。** 把 DSH 桌面端（`deepseek-harness`）clone 下来读源码，抽出
+布局 / 配色 / 字号 / 间距 / 圆角的字面值，一条一条落到我们的变量上。
+
+**五条决定：**
+
+1. **两栏到底**（侧栏 260 + 主列），logo 长在侧栏头顶，没有横贯顶栏。
+   主列的标题行 56px + 0.5px 下边线。这是「像桌面应用」的第一性结构。
+2. **正文用系统 UI 字体栈，不用 webfont。** DSH 用 `-apple-system, BlinkMacSystemFont,
+   "Segoe UI", "PingFang SC"…`，所以在 macOS 上就是原生。v2 的 IBM Plex 反而把界面
+   做成了「一个网页」。Montserrat 只留给 logo 那个 wordmark。
+3. **配色照搬 DSH 的语义层**：一个蓝（`deepseek-500` 浅 / `deepseek-400` 深），
+   三档面（侧栏 / 主区 / 输入卡），三档墨，三档线。v2 的深松绿整套废掉。
+4. **几何照搬**：消息列 `min(100% - 32px, clamp(680px, 64%, 920px))`、气泡圆角 20 +
+   padding 10/16、输入卡圆角 28 + 描边画在 `box-shadow` 里、发送键 34 满圆、`＋` 28 满圆、
+   圆角 6 档（4/8/12/16/20/28）、**线宽默认 0.5px**。
+5. **字号只剩两条主线**：14/24（正文）和 13/20（次级），其余都是 meta。
+
+**为什么敢照搬。** 这些不是审美偏好，是**结构约束**：14/24 的行高决定「呼吸感」，
+三档灰决定层次读不读得出来，0.5px 决定发丝线还是表格线。抄错这些，再多细节也救不回来。
+
+**没做的（都记着）。**
+
+- **TurnNavigator**（右侧那排 2px 刻度轨）：我们一条对话的消息数还很少，先不做。
+- **`corner-shape: superellipse`**：只有新 Chromium/Safari 支持，退化后就是普通圆角，不影响。
+- **`inspect.mjs` 的 `font-count` 会报 1 FAIL**（390px 下 3 个字体族：系统栈 + SF Mono +
+  Montserrat）。这是**故意**的：DSH 也是三个。检查器的规则是给「一套页面一个字体」准备的，
+  桌面应用有 wordmark 是常态。这条 FAIL 记在这里，不当作欠债。
+- `plex-*.woff2` 五个文件留在 `ui/web/fonts/` 但已无人引用，可随时删。

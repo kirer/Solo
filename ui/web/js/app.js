@@ -640,8 +640,8 @@ function renderHead() {
 	const channel =
 		state.detail?.channel ?? state.channels.find((candidate) => candidate.id === state.currentId) ?? null;
 	el.paneTitle.textContent = channel?.title ?? "频道";
-	// 顶栏那个 h1 是全页唯一的一级标题：桌面写产品名，手机写当前区域的名字。
-	el.barTitle.textContent = desktop() ? "Solo" : (channel?.title ?? "频道");
+	// 侧栏那个 h1 是产品名，恒定不变（页面上唯一的一级标题）。
+	// 手机列表态的字号由 shell.css 的媒体查询管，不靠改文案。
 	// 标题下面那一行只放「不能从标题猜到的」信息。
 	//
 	// 私聊不写「2 人」：私聊本来就是两个人，写出来是废话，还占掉一行副标题的位置。
@@ -2042,9 +2042,31 @@ function firstInterestingChannel() {
 	);
 }
 
+/* 焦点环只在键盘操作时出现：pointerdown 说明在用鼠标，把环关掉。
+   没有这一行，点一下按钮就留一个 2px 蓝框，看起来像没点干净。 */
+function installModality() {
+	const root = document.documentElement;
+	root.dataset.inputModality = "pointer";
+	window.addEventListener(
+		"pointerdown",
+		() => {
+			root.dataset.inputModality = "pointer";
+		},
+		true,
+	);
+	window.addEventListener(
+		"keydown",
+		() => {
+			root.dataset.inputModality = "keyboard";
+		},
+		true,
+	);
+}
+
 function boot() {
 	installMotionTokens();
 	installJankMonitor();
+	installModality();
 	applyLayout();
 	bind();
 	el.skel.hidden = false;
