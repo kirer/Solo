@@ -42,7 +42,7 @@ src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
 ui/web/             界面（无构建）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
-test/core/          37 文件 / 352 例
+test/core/          37 文件 / 353 例
 test/ui/            10 文件 / 78 例
 workspace/          运行时数据（gitignore）
 ```

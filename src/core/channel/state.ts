@@ -223,6 +223,9 @@ export function needsOwner(_text: string): boolean {
  * 注意 `@所有人`：如果正文里出现 `@owner`，老板会被列为目标。但老板没有会话，
  * 投递层会跳过它（见 `deliver.ts`）。
  */
+/** 正文里有没有「@某人」这个动作（不管叫不叫得应）。 */
+const AT_TOKEN = /@[\p{L}\p{N}._-]+/u;
+
 export function recipientsOf(channel: Channel, message: Message): string[] {
 	const targets = new Set<string>();
 	const members = new Set(channel.members);
@@ -233,7 +236,10 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 		const slug = members.has(mention) ? mention : resolveMention(mention, EMPTY_ROSTER);
 		if (slug !== undefined && members.has(slug)) targets.add(slug);
 	}
-	if (message.from === OWNER && message.mentions.length === 0) {
+	// 「老板没 @ 人」才让第一个同事接。**判据看正文里有没有 @，不看解析结果**：
+	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个
+	// 不存在的人」变成「叫了房间里第一个人」—— 老板会以为刚才那句没人理。
+	if (message.from === OWNER && message.mentions.length === 0 && !AT_TOKEN.test(message.text)) {
 		const first = channel.members.find((slug) => slug !== OWNER);
 		if (first !== undefined) targets.add(first);
 	}

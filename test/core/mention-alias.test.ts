@@ -141,3 +141,37 @@ describe("老大（老板的称呼）", () => {
 		expect(resolveMention("@老板", EMPTY_ROSTER)).toBe("owner");
 	});
 });
+
+describe("老板自己发的话也过名册", () => {
+	test("`@老大` 落库时解析成 owner，而不是留成字面 token", () => {
+		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言"], at: 1 });
+		const { message } = appendMessage(state, "g", {
+			from: OWNER,
+			text: "@老大 在吗",
+			at: 1,
+			roster: mentionRosterOf(people),
+		});
+		// 老板 @ 自己会被收件人过滤掉，但 mentions 里必须已经是 slug，界面才画得出「谁被叫了」。
+		expect(message.mentions).not.toContain("老大");
+		expect(parseMentions(message.text, mentionRosterOf(people))).toContain("owner");
+	});
+});
+
+describe("老板 @ 了一个叫不应的人", () => {
+	test("不落到「房间里第一个人」头上", () => {
+		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言", "林越"], at: 1 });
+		const { message } = appendMessage(state, "g", {
+			from: OWNER,
+			text: "@nobody 你好",
+			at: 1,
+			roster,
+		});
+		expect(recipientsOf(state.channels.g!, message)).toEqual([]);
+	});
+
+	test("没 @ 人时才让第一个同事接", () => {
+		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言", "林越"], at: 1 });
+		const { message } = appendMessage(state, "g", { from: OWNER, text: "在吗", at: 1, roster });
+		expect(recipientsOf(state.channels.g!, message)).toEqual(["知言"]);
+	});
+});

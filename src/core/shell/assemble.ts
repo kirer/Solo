@@ -23,6 +23,7 @@ import {
 import { chainUp, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { agentSection, renderAgentSection } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
+import { mentionRosterOf } from "../channel/alias.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -591,6 +592,17 @@ export async function ownerSpeak(
 	if (channel === undefined) throw new Error(`频道不存在：${options.channelId}`);
 	const { postMessage } = await import("../channel/post.ts");
 	const { conversationFor } = await import("../agent/roster.ts");
+	// 老板的话也要过一遍名册：他自己写 `@老大`（或者老消息里的 `@老板`）时，
+	// 不给名册就只能存成字面 token，界面画得出来、`recipientsOf` 却认不出人。
+	const everyone = await readAllIdentities(shell.agentsRoot);
+	const roster = mentionRosterOf(
+		everyone.map((identity) => ({
+			slug: identity.slug,
+			name: identity.name,
+			title: identity.title,
+			manager: identity.manager,
+		})),
+	);
 	const result = await postMessage(
 		{
 			harness: shell.harness,
@@ -626,6 +638,7 @@ export async function ownerSpeak(
 			channelId: options.channelId,
 			from: options.from ?? OWNER,
 			text: options.text,
+			roster,
 			at: Date.now(),
 			...(options.replyTo === undefined ? {} : { replyTo: options.replyTo }),
 			...(options.kind === undefined ? {} : { kind: options.kind }),
