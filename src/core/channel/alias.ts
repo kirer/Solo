@@ -12,7 +12,7 @@
  *    来，读盘是外壳和工具层的事。
  * 2. **只认名册里的人**。解析不出来的 token（`@import`、`@media`、`@x`）一律丢弃 ——
  *    它们不是人，留着只会让「谁被 @ 了」变成噪音。
- * 3. **老板的名字是静态表**。老数据里已经存着 `@老板`，没有名册也必须能认出来，
+ * 3. **老板的名字是静态表**。老数据里已经存着 `@老板` / `@owner`，没有名册也必须能认出来，
  *    所以 `resolveMention` 的缺省名册就能把老板的各种叫法翻成 `owner`。
  */
 
@@ -49,7 +49,7 @@ export const EMPTY_ROSTER: MentionRoster = { owner: OWNER_SLUG, agents: [] };
  * `我` / `YOU` 是模型从正文视角抄下来的（「请 @我」），它们在真实数据里出现了 27 次，
  * 全都指向老板 —— 员工不会用第三人称叫自己。
  */
-const OWNER_ALIASES: readonly string[] = ["owner", "老板", "boss", "我", "you", "你自己"];
+const OWNER_ALIASES: readonly string[] = ["owner", "老大", "老板", "boss", "我", "you", "你自己"];
 
 /** 别名归一：去 `@`、去首尾空格、全角转半角（`ＣＥＯ` → `CEO`）、转小写。 */
 export function normalizeAlias(raw: string): string {

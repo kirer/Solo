@@ -121,7 +121,7 @@ async function main(): Promise<void> {
 		shell = await assembleCore(runtime.harness, registry, {
 			agentsRoot,
 			projectsRoot,
-			ownerName: "老板",
+			ownerName: "老大",
 			defaultModel: models.defaultModel,
 		});
 		server = await serveCore({

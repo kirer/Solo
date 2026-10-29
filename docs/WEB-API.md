@@ -18,7 +18,7 @@
 | `GET` | `/api/channels/:id` | 频道详情（含消息） |
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
-| `GET` | `/api/attention` | 「找你」：跨频道、需要老板拍板的消息 |
+| `GET` | `/api/attention` | 「找你」：跨频道、需要老大拍板的消息 |
 | `GET` | `/api/people/:slug` | 一个人的档案：身份 / 技能 / 记忆概况 / 所在频道 |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
@@ -56,7 +56,7 @@ data: {"company":{...},"people":[...]}
 ```ts
 {
   company: { name: string },              // 固定 "Solo"
-  people: ViewActor[]                     // 按「离老板最近」排序，第一项是直接向老板汇报的人
+  people: ViewActor[]                     // 按「离老大最近」排序，第一项是直接向老大汇报的人
 }
 
 type ViewActor = {
@@ -64,7 +64,7 @@ type ViewActor = {
   label: string;        // 显示名（identity.md 的 name）
   title: string;
   project?: string;     // identity.md 的 project
-  manager?: string;     // slug；undefined = 直接向老板汇报
+  manager?: string;     // slug；undefined = 直接向老大汇报
   managerLabel?: string;
   body: string;         // identity.md 正文（档案页要显示「他是谁」）
 }
@@ -103,7 +103,7 @@ type ViewChannel = {
 | `lead:` | `leadership` |
 | 其余（默认 `company`） | `company` |
 
-**`dm` 频道**：一对一房间。个人频道（`dm:owner-<slug>`）= 与老板的私聊，也是工作台。
+**`dm` 频道**：一对一房间。个人频道（`dm:owner-<slug>`）= 与老大的私聊，也是工作台。
 
 ## 4. `POST /api/channels`
 
@@ -114,7 +114,7 @@ type ViewChannel = {
 { ok: true, id: string }
 ```
 
-老板自动入列。同名频道已存在则原样返回（幂等）。`id` 为空 → 400。
+老大自动入列。同名频道已存在则原样返回（幂等）。`id` 为空 → 400。
 
 ## 5. `GET /api/channels/:id/mentionable`
 
@@ -122,7 +122,7 @@ type ViewChannel = {
 { candidates: { id: number, label: string, slug: string }[] }
 ```
 
-成员里除老板外的人。`id` 是会话号（名册里没有的人给 `-1`）。频道不存在时给
+成员里除老大外的人。`id` 是会话号（名册里没有的人给 `-1`）。频道不存在时给
 `{ candidates: [] }` 而不是 404 —— 输入框的 @ 补全不该因为频道刚被删就报错。
 
 ## 6. `GET /api/channels/:id`
@@ -142,25 +142,25 @@ type ViewMember = {
   id: number;
   slug: string;
   label: string;
-  role: "owner" | "lead" | "member";   // 老板 / 项目负责人 / 成员
+  role: "owner" | "lead" | "member";   // 老大 / 项目负责人 / 成员
   unread: number;
 }
 
 type ViewMessage = {
   seq: number;
   at: number;
-  from: number;          // 会话号；老板是 0
+  from: number;          // 会话号；老大是 0
   fromSlug: string;
   fromLabel: string;
   kind: string;          // chat | question | decision | report | ...
   text: string;
   mentions: { id: number, label: string, read: boolean, offset: number }[];
   replyTo?: { seq: number, from: number, fromSlug: string, fromLabel: string, excerpt: string };
-  read: boolean;         // 从老板视角
+  read: boolean;         // 从老大视角
 }
 ```
 
-- `role` 只用三种**能从文件里读出来**的事实，不引岗位枚举：老板 / 项目负责人 / 成员。
+- `role` 只用三种**能从文件里读出来**的事实，不引岗位枚举：老大 / 项目负责人 / 成员。
 - `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
 - `replyTo.excerpt` 最多 60 字。
 - 频道不存在 → 404 `{ error: "频道不存在或无权查看" }`。
@@ -172,7 +172,7 @@ type ViewMessage = {
 {
   text: string,          // 必填，trim 后不能为空
   replyTo?: number,      // 引用回复的 seq
-  from?: string,         // 发件人 slug；省略 = 老板。只有调试/脚本用，界面永不传
+  from?: string,         // 发件人 slug；省略 = 老大。只有调试/脚本用，界面永不传
   kind?: string,         // 语义标签，省略 = chat
   attachments?: (string | { id: string })[]
                          // 附件 id（先 POST /api/uploads 拿）。两种写法等价：
@@ -218,11 +218,11 @@ type ViewMessage = {
 { ok: true }
 ```
 
-把老板在这个频道里的已读位置推到 `seq`。只前进，不回退。
+把老大在这个频道里的已读位置推到 `seq`。只前进，不回退。
 
 ## 9. `GET /api/attention`
 
-「找我」——全公司里**需要老板拍板**的消息，跨频道汇总，按时间倒序。
+「找我」——全公司里**需要老大拍板**的消息，跨频道汇总，按时间倒序。
 
 ```ts
 // 响应
@@ -237,11 +237,11 @@ type ViewMessage = {
 }
 ```
 
-判定在 `src/core/shell/view.ts` 的 `needsYou(message)`：**不是老板自己发的**，且
+判定在 `src/core/shell/view.ts` 的 `needsYou(message)`：**不是老大自己发的**，且
 （`mentions` 含 `owner`，或正文里有 `needsOwner()` 认的那几种求拍板说法）。窗口 7 天，
-最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 —— 老板要能回头看「哪些我还没理」。
+最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 —— 老大要能回头看「哪些我还没理」。
 
-为什么需要它：实测老板在 4804 条消息里回了 51 条（**1.06%**）。不是不想理，是**找不到**
+为什么需要它：实测老大在 4804 条消息里回了 51 条（**1.06%**）。不是不想理，是**找不到**
 —— 一条要拍板的消息埋在两小时的 think/tool 流水里，没有任何东西把它拎出来。
 
 ## 10. `GET /api/people/:slug`
@@ -282,7 +282,7 @@ type ViewMessage = {
 // 删一条
 { op: "forget", heading: "2026-10-28" }
 // 加一条
-{ op: "add", text: "老板喜欢简短汇报" }
+{ op: "add", text: "老大喜欢简短汇报" }
 // 响应
 { ok: true, changed: boolean, message: string }
 ```

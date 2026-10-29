@@ -507,7 +507,7 @@ export async function assembleCore(
 		ownerSay: (input, ctx) => ownerSpeak(shell, input, ctx),
 		postAs: (input, ctx) => ownerSpeak(shell, input, ctx),
 		bindings: () => directory,
-		labelOf: (slug: string) => (slug === OWNER ? "老板" : (directory.labels[slug] ?? slug)),
+		labelOf: (slug: string) => (slug === OWNER ? "老大" : (directory.labels[slug] ?? slug)),
 		identities: () => readAllIdentities(options.agentsRoot),
 		agentsRoot: options.agentsRoot,
 		projectsRoot: options.projectsRoot,
@@ -603,7 +603,7 @@ export async function ownerSpeak(
 				}
 				return shell.conversations.get(slug);
 			},
-			labelOf: (slug: string) => (slug === OWNER ? "老板" : (shell.directory.labels[slug] ?? slug)),
+			labelOf: (slug: string) => (slug === OWNER ? "老大" : (shell.directory.labels[slug] ?? slug)),
 			// 附件根跟着工作区走：`<workspace>/uploads`。给了它，老板发的图片才会被读成
 			// 内容块交给模型 —— 不给的话模型只看到一行「[图片] x.png」。
 			uploadsRoot: uploadsRootOf(shell.agentsRoot),

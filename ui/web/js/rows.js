@@ -410,11 +410,17 @@ function quoteBlock(replyTo) {
  */
 function paintMentions(root, mentions) {
 	if (!Array.isArray(mentions) || mentions.length === 0) return;
+	// 老板的 slug 是 `owner`，但没人愿意在界面上读到这个词（老板的原话：能不能改成 @老大）。
+	// 所以他的三种叫法都认，画出来统一是 `@老大`。老消息里写的 `@owner` 也一起收进来。
+	const owner = mentions.find((m) => m.id === 0);
 	const labels = [...new Set(mentions.map((m) => m.label).filter(Boolean))].sort(
 		(a, b) => b.length - a.length,
 	);
+	if (owner !== undefined) for (const alias of ["owner", "老板"]) if (!labels.includes(alias)) labels.push(alias);
 	if (labels.length === 0) return;
 	const pattern = new RegExp(`@(?:${labels.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "g");
+	const shownOf = (token) =>
+		owner !== undefined && /^@(?:owner|老板)$/i.test(token) ? "@老大" : token;
 	const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
 	const targets = [];
 	while (walker.nextNode()) {
@@ -435,7 +441,7 @@ function paintMentions(root, mentions) {
 			if (at > last) frag.append(text.slice(last, at));
 			const span = document.createElement("span");
 			span.className = "mention-name";
-			span.textContent = match[0];
+			span.textContent = shownOf(match[0]);
 			frag.append(span);
 			last = at + match[0].length;
 		}

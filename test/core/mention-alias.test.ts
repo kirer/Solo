@@ -6,7 +6,7 @@
  * 真名在 `recipientsOf` 的成员过滤里被静默丢弃。
  */
 import { describe, expect, test } from "vitest";
-import { mentionRosterOf, resolveMention, type MentionAgent } from "../../src/core/channel/alias.ts";
+import { EMPTY_ROSTER, mentionRosterOf, resolveMention, type MentionAgent } from "../../src/core/channel/alias.ts";
 import {
 	OWNER,
 	appendMessage,
@@ -131,5 +131,13 @@ describe("recipientsOf：老数据兜底", () => {
 			roster,
 		});
 		expect(recipientsOf(state.channels.all!, message)).toEqual([]);
+	});
+});
+
+describe("老大（老板的称呼）", () => {
+	test("@老大 解析成 owner，@老板 也还认", () => {
+		expect(resolveMention("@老大", EMPTY_ROSTER)).toBe("owner");
+		expect(resolveMention("老大", EMPTY_ROSTER)).toBe("owner");
+		expect(resolveMention("@老板", EMPTY_ROSTER)).toBe("owner");
 	});
 });

@@ -25,6 +25,7 @@ import {
 	groupHeader,
 	groupStatus,
 	isEventKind,
+	runStartAt,
 	isNeed as isNeedRow,
 	wrapEvents,
 } from "./rows.js";
@@ -412,7 +413,9 @@ function appendEventRow(message, node) {
 	// 明明干完了还写着「正在执行 · 300s」。
 	closeOpenGroups(undefined, undefined);
 	const [wrap] = wrapEvents(message.fromSlug, personOf(message.fromSlug)?.label ?? message.fromSlug, [node], {
-		startAt: message.startedAt ?? message.at,
+		// 过程行本身不带 startedAt（它是处理中占位记的「触发时刻」），所以和组头、
+		// 活动行走同一个函数：往前找到这一轮的 runStartAt，别从首条投影起算。
+		startAt: runStartAt(state.detail?.messages ?? [], [message]),
 		endAt: message.at,
 		now: Date.now(),
 		running: true,

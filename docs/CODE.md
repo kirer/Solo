@@ -45,7 +45,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `project/memory.ts` | 144 | `projects/<slug>/memory.md` + `settleCandidates()`（不按 `kind` 筛，只排除整理者自己）/ `renderSettlePrompt()`（规则指向公司技能「记忆整理」，不复述清单） |
 | `project/settle.ts` | 208 | 自动沉淀：`settleProject` / `confirmedBy`；单游标（问完只记 `waiting`，记忆文件 mtime 变了才推进，ADR-033）；失败时往项目频道留一条 `note`（`appendProjectNote`） |
 | `channel/state.ts` | 415 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `needsOwner`（决策句式，ADR-037）/ `fallbackChannelId`（兜底频道，非个人频道优先）/ `unreadCount` / `markRead` / `ensureChannel` |
-| `channel/alias.ts` | 116 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@老板` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
+| `channel/alias.ts` | 116 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@老大` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
 | `channel/deliver.ts` | 273 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）/ `renderDigest` |
 | `channel/unanswered.ts` | 78 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话，没见过的原样贴）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
 | `channel/speech.ts` | 40 | 「这一轮已经说过结果了」的进程内标记（`markSpoken` / `spokenResult` / `clearSpoken`）；由 `deliver()` 在新一轮清空（ADR-064） |
@@ -53,7 +53,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `channel/transcript.ts` | 129 | `projectAssistantEntry()`：把会话 `pi.assistant` 条目里的 thinking/text/toolCall 投影成 `think`/`say`/`tool` 三类消息（纯函数，不落库） |
 | `channel/tools.ts` | 1067 | 17 个工具（say/read_channel/org/hire/update_identity/remember/recall/read_history/list_skills/read_skill/write_skill/list_projects/read_project/write_project/run/write_file/read_file）；`say` 负责「在哪儿回话、叫醒谁」，`defaultChannel` / `mentionRoster` / `ensureDm`（同事私聊，ADR-041） |
 | `shell/assemble.ts` | 612 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 启投影；`ownerSpeak` / `makeAfterPost` |
-| `shell/projector.ts` | 208 | 会话记录 → 个人频道的投影管道：`startTranscriptSink` / `backfillTranscripts` / `projectEntry`（游标持久化，ADR-026）；`keptProjections()` 决定老板私聊只落 `say`（ADR-040） |
+| `shell/projector.ts` | 208 | 会话记录 → 个人频道的投影管道：`startTranscriptSink` / `backfillTranscripts` / `projectEntry`（游标持久化，ADR-026）；`keptProjections()` 决定老大私聊只落 `say`（ADR-040） |
 | `shell/seed.ts` | 298 | `seedOwnerAssistant`（身份，只建一次）/ `syncCompanySkills`（公司层技能按 hash 同步，ADR-039）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills` |
 | `shell/serve.ts` | 454 | `serveCore()` —— 8 条路由 + SSE + 静态文件 |
 | `shell/view.ts` | 302 | 视图投影：`channelList` / `channelDetail` / `messageView` / `orgView`（无 `dmKind`，dm 统一为一类） |
@@ -98,7 +98,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 改起手技能的同步行为 | `shell/seed.ts` 的 `syncCompanySkills` + `<workspace>/.seed-manifest.json` | 按 hash 判「用户改过没有」，改过的不覆盖（ADR-039） |
 | 加一个身份字段 | `agent/identity.ts` 的 `IdentityHeader` | 现在是 4 个：`name`/`title`/`manager`/`project`，加之前先问能不能推导 |
 | 改谁能被 @ 到 | `channel/state.ts` 的 `recipientsOf`（成员规则）+ `channel/alias.ts` 的 `resolveMention`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译；改前者要同步 `test/core/channel-state.test.ts`，改后者同步 `test/core/mention-alias.test.ts` |
-| 改「要老板拍板就 @ 老板」 | `channel/state.ts` 的 `needsOwner` + `channel/tools.ts` 的 `say`（ADR-037） | 补的是 `mentions`，**不改正文** |
+| 改「要老大拍板就 @ 老大」 | `channel/state.ts` 的 `needsOwner` + `channel/tools.ts` 的 `say`（ADR-037） | 补的是 `mentions`，**不改正文** |
 | 改「没明确频道时在哪儿回话」 | `channel/state.ts` 的 `fallbackChannelId` | 非个人频道优先（`mine[0]` 可能是私聊） |
 | 改频道成员怎么来 | `shell/assemble.ts` 的 `joinProjectChannel` / `addToCompanyChannel` | 成员是 `identity.md` + `README.md` 的投影（ADR-012） |
 | 加一条 HTTP 路由 | `shell/serve.ts` 的 `routes` 表 | 必须在前端有消费者，否则边界检查失败 |
@@ -148,16 +148,16 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 
 真实模型自测是保底：308 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
 那一次是两个 bug 叠在一起（`ownerSpeak` 漏传 wake + wake 在 `submit` 之后才落盘），
-症状是「老板在公司频道问，对方在个人频道答」，单测完全看不见。
+症状是「老大在公司频道问，对方在个人频道答」，单测完全看不见。
 
 ## 6. 测试布局
 
 | 文件 | 覆盖 |
 | --- | --- |
 | `channel-state.test.ts` | @ 解析、四类收件人、`dmId` 顺序无关、未读、幂等建频道 |
-| `mention-alias.test.ts` | `@` 别名解析（ADR-036）：老板的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底 |
+| `mention-alias.test.ts` | `@` 别名解析（ADR-036）：老大的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底 |
 | `rescue.test.ts` | 答了却没说出来：补发判据、占位顶替、序号自愈（ADR-067） |
-| `queue-jump.test.ts` | 老板问话插队：只撤同会话 `queued` 项、最多 5 条、老板自己排的不让路（ADR-066） |
+| `queue-jump.test.ts` | 老大问话插队：只撤同会话 `queued` 项、最多 5 条、老大自己排的不让路（ADR-066） |
 | `step-merge.test.ts` | 过程话 30 秒内合并：正文接在上一条、`seq` 不变、不重复投递；带 @ 的不合（ADR-065） |
 | `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`（ADR-037）、`[PASS]` 与单人在场不许静音（ADR-063）、一轮只说一句结论（ADR-064） |
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞 |
@@ -171,13 +171,13 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `assemble.test.ts` | 播种、多 agent、频道成员 |
 | `view.test.ts` | 视图投影（`kind` / `role` / 未读） |
 | `rules-prompt.test.ts` | 规矩进提示词（位置、空则整段消失、确定性、`seed/rules.md` 覆盖六条） |
-| `projector.test.ts` | 投影落点（ADR-040）：老板私聊只留 `say`、项目频道原样全留、判定只看 `dm:` + 成员 |
+| `projector.test.ts` | 投影落点（ADR-040）：老大私聊只留 `say`、项目频道原样全留、判定只看 `dm:` + 成员 |
 | `seed-sync.test.ts` | 公司层技能同步（缺的补上 / 未改的更新 / 改过的不动 / 幂等 / manifest / `rules.md` 只补不改） |
-| `relay.test.ts` | 接力上限（ADR-042）：`relayLimit` / `botHopsSinceOwner`（老板没说过话也从建立算起）/ 拦截时只落库并留 note / 显式 `@` 可突破 |
+| `relay.test.ts` | 接力上限（ADR-042）：`relayLimit` / `botHopsSinceOwner`（老大没说过话也从建立算起）/ 拦截时只落库并留 note / 显式 `@` 可突破 |
 | `colleague-dm.test.ts` | 同事私聊（ADR-041）：`to` 建出只装两人的频道 / 方向对称 / `mentions` 与 `wakeOnAll` 都指着他 / `to: owner` 不新建 / 发给不存在的人老实报错 |
-| `attention.test.ts` | 「找你」（`GET /api/attention`）：只收要老板拍板的、排除老板自己发的、7 天窗口、已读带标记、跨频道按时间倒序 |
+| `attention.test.ts` | 「找你」（`GET /api/attention`）：只收要老大拍板的、排除老大自己发的、7 天窗口、已读带标记、跨频道按时间倒序 |
 | `reconcile.test.ts` | 僵尸任务回收：`pi.live` 指向已终态任务时摘掉 `run` 并把积压输入放回这一轮 |
-| `work-log.test.ts` | `run` 的命令日志不进老板的私聊（ADR-071） |
+| `work-log.test.ts` | `run` 的命令日志不进老大的私聊（ADR-071） |
 
 `test/ui/`（前端里能脱离浏览器跑的那部分）：
 

@@ -121,7 +121,7 @@ describe("渲染提示词", () => {
 		expect(text).toContain("# 你叫林越");
 		expect(text).toContain("写代码。");
 		expect(text).toContain("你的上级：周牧（`cto`）");
-		expect(text).toContain("周牧 → 陆沉 → 老板");
+		expect(text).toContain("周牧 → 陆沉 → 老大");
 		expect(text).toContain("做一个坦克游戏。");
 		expect(text).toContain("agents/dev/");
 	});

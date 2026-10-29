@@ -312,8 +312,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 						"`true` = 这只是过程话（「我正在改」「找到原因了」），可以连着说几句，不算这一轮的结论；不传 = 结论，**一轮只认一句**，第二句会被拒。干活中途想让人知道进展就用这个。",
 				}),
 			),
-			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@老板` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
-			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的同事，或你在私聊里想找人），用 `<频道 id>` 指定，或先问老板 —— 频道成员以外的人 @ 不到。" })),
+			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@老大` / `@老板` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
+			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的同事，或你在私聊里想找人），用 `<频道 id>` 指定，或先问老大 —— 频道成员以外的人 @ 不到。" })),
 			to: Type.Optional(Type.String({ description: "把这句话**私下**发给某个人（写名字或 slug）。系统会自动建出只有你们两人的私聊频道，别人看不到。要对接同事、找上级问一句细节、向老板单独汇报，都用这个 —— 不要为了找一个人去群里喊。" })),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
 			kind: Type.Optional(

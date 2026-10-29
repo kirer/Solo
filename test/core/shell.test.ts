@@ -80,7 +80,7 @@ describe("装配", () => {
 				BACKGROUND_CONTEXT,
 			);
 			expect(renderedAfter).toContain("你现在只关心一件事：钱。");
-			expect(renderedAfter).not.toContain("老板唯一直接对话的人");
+			expect(renderedAfter).not.toContain("老大唯一直接对话的人");
 		} finally {
 			await opened.close();
 		}

@@ -154,7 +154,7 @@ export function renderReplyRules(options: {
 					.join("、")} 在。）`,
 		// 说完之后模型常把「我做了 X」再写成最终回答。那段正文会被投影成第二条消息
 		// （实测原文「已回老板：在，随时待命。」紧跟在自己的发言之后）。
-		"（别复述：最终回答里不要写「已回老板」「已发到频道」这类话 —— 你说过的他已经在频道里看到了。）",
+		"（别复述：最终回答里不要写「已回老大」「已发到频道」这类话 —— 你说过的他已经在频道里看到了。）",
 		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 read_channel）",
 		// 同事之间的事放在群里说。私聊只有老板能用（系统会拦），而「找个人问一句」如果没有
 		// 出口，agent 就会绕道群里喊一句「@所有人」或者干脆自己猜 —— 实测员工↔员工只有 1.2%。
@@ -204,7 +204,7 @@ export function renderDelivery(options: {
 		`【${channel.title}】#${message.seq}（频道 ${channel.id}）${quoted}`,
 		`${label(message.from)}：${message.text}${line.join("")}`,
 		...(isOwnerDm(channel, options.viewer)
-			? ["（这是你和老板的私聊，只回这里，别去群里说）"]
+			? ["（这是你和老大的私聊，只回这里，别去群里说）"]
 			: []),
 		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
 			? []

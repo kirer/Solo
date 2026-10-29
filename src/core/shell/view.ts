@@ -399,7 +399,7 @@ function othersOf(identities: readonly Identity[]): readonly Identity[] {
 
 /** slug → 显示名。名册里没有就给 slug 本身（总比空白强）。 */
 export function labelIn(directory: DirectoryState, slug: string): string {
-	if (slug === OWNER_SLUG) return "老板";
+	if (slug === OWNER_SLUG) return "老大";
 	return directory.labels?.[slug] ?? slug;
 }
 

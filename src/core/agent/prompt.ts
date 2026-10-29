@@ -82,7 +82,7 @@ export type RenderInput = {
 const NOT_SET = "（未设置）";
 
 function labelOf(all: readonly Identity[], slug: string): string {
-	if (slug === OWNER_SLUG) return "老板";
+	if (slug === OWNER_SLUG) return "老大";
 	return all.find((identity) => identity.slug === slug)?.name ?? slug;
 }
 
@@ -103,9 +103,9 @@ function orgSection(input: RenderInput): string {
 
 	const manager = managerOf(all, self.slug);
 	if (manager === undefined) {
-		lines.push(`- 你的上级：${NOT_SET}（这意味着没有人替你拍板，遇到需要决策的事要自己定，或交给老板）`);
+		lines.push(`- 你的上级：${NOT_SET}（这意味着没有人替你拍板，遇到需要决策的事要自己定，或交给老大）`);
 	} else if (manager === OWNER_SLUG) {
-		lines.push(`- 你的上级：老板（${input.ownerName ?? "老板本人"}）—— 你直接对老板负责`);
+		lines.push(`- 你的上级：老大（${input.ownerName ?? "老大本人"}）—— 你直接对老大负责`);
 	} else {
 		lines.push(`- 你的上级：${labelOf(all, manager)}（\`${manager}\`）`);
 	}
@@ -134,7 +134,7 @@ function orgSection(input: RenderInput): string {
 	}
 
 	lines.push("");
-	lines.push(`当前全公司有 ${all.length} 个 agent：${all.map((item) => item.name ?? item.slug).join("、")}，加上老板。`);
+	lines.push(`当前全公司有 ${all.length} 个 agent：${all.map((item) => item.name ?? item.slug).join("、")}，加上老大。`);
 	return lines.join("\n");
 }
 
@@ -183,7 +183,7 @@ function skillSection(
  */
 function capabilitySection(capabilities: readonly CapabilityLine[] | undefined): string {
 	if (capabilities === undefined || capabilities.length === 0) {
-		return "（工具没装上 —— 这是装配故障，不是你的问题。请向老板报告。）";
+		return "（工具没装上 —— 这是装配故障，不是你的问题。请向老大报告。）";
 	}
 	const lines = capabilities.map((item) => `- \`${item.name}\` — ${item.summary}`);
 	// 压缩是 pi-durable 的默认行为，模型看不见被压掉的部分，更不知道「我不知道」。
