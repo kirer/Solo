@@ -593,60 +593,43 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 /* ── event 行（think / tool / work） ───────────────────────────────── */
 
 /*
- * 过程行（想了多久 / 跑了什么命令 / 做了什么）。
+ * 过程行（think / tool / work）—— 按 DeepSeek 那种工整重做。
  *
- * 居左，且左缘和 say 行的正文对齐（48px = 40px 头像 + 8px 间距）。
- * 以前是 `justify-content: center` —— 整列中间浮着一行灰字，读起来像系统提示，
- * 而不是「这个人刚才干了什么」。过程属于说话的人，就排在说话的人那一列。
+ * 老板的原话是「过程行现在读起来是一团重复的废话」「多么工整啊」。所以这一块
+ * 的规则很窄：
+ *   1. 一个连续干活段 = **一个**组头（「已完成，用时 55 秒」/「正在执行 · 67s」），
+ *      组头是唯一的开合开关，左缘和正文对齐（48px = 40 头像 + 8 间距）。
+ *   2. 展开后每步一行：图标 + 动作 + 摘要，12–13px / 行高 20–22，无边框、
+ *      无缩进盒子、每行不挂自己的 chevron —— 一屏要装得下十二步。
+ *   3. 跑着和跑完一眼分开：跑着多一组跳动的小点，秒数逐秒递增；跑完点消失、
+ *      数字定格。颜色只用 --ink-3 / --live 两档，过程行是背景音，不该比正文抢眼。
  */
-.row-event {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	margin: 2px 0 2px 48px;
-	max-width: calc(100% - 48px);
-}
-
-.ev {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	max-width: 100%;
-	font-size: 12px;
-	line-height: 16px;
-	color: var(--ink-3);
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	text-align: left;
-}
-
-/* 一组过程行：一行摘要「15 步过程 · 想 3 · 跑 8」，点开才看细节。
-   左缘和正文对齐（48 = 40 头像 + 8 间距），缩进层级靠这条线，不靠颜色。 */
 .row-events {
 	display: flex;
 	flex-direction: column;
-	align-items: flex-start;
-	margin-left: 48px;
+	align-items: stretch;
+	margin: 3px 0 3px 48px;
 	max-width: calc(100% - 48px);
 }
 
 button.evs {
 	display: flex;
-	align-items: baseline;
+	align-items: center;
 	gap: 6px;
+	align-self: flex-start;
 	max-width: 100%;
 	padding: 2px 6px 2px 2px;
 	margin-left: -2px;
 	border: 0;
 	background: transparent;
-	color: var(--ink-3);
 	font: inherit;
 	font-size: 12px;
 	line-height: 20px;
+	color: var(--ink-3);
 	text-align: left;
 	cursor: pointer;
 	border-radius: var(--r-chip, 6px);
+	transition: background-color var(--dur-line) ease;
 }
 
 button.evs:hover {
@@ -654,45 +637,127 @@ button.evs:hover {
 	color: var(--ink-2);
 }
 
+.evs-ico {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 12px;
+	height: 12px;
+	opacity: 0.7;
+}
+
+.evs-ico svg {
+	width: 12px;
+	height: 12px;
+}
+
 .evs b {
+	flex: none;
 	font-weight: 500;
 	color: var(--ink-2);
 }
 
 .evs-what {
-	color: var(--ink-3);
-}
-
-.evs-mix {
-	color: var(--ink-3);
-	opacity: 0.75;
-	white-space: nowrap;
+	flex: 0 1 auto;
+	min-width: 0;
 	overflow: hidden;
+	white-space: nowrap;
 	text-overflow: ellipsis;
+	font-variant-numeric: tabular-nums;
+	color: var(--ink-3);
 }
 
-.row-events[data-open="true"] .ev-chevron {
-	transform: rotate(90deg);
+/* 跑着的三个点：只动透明度，不做位移 —— 位移会让整行在扫读时抖。 */
+.evs-live {
+	display: inline-flex;
+	flex: none;
+	gap: 2px;
+	align-items: center;
+}
+
+.evs-live i {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: var(--live);
+	opacity: 0.35;
+	animation: evs-live-pulse 1.1s ease-in-out infinite;
+}
+
+.evs-live i:nth-child(2) {
+	animation-delay: 0.18s;
+}
+
+.evs-live i:nth-child(3) {
+	animation-delay: 0.36s;
+}
+
+@keyframes evs-live-pulse {
+	0%,
+	100% {
+		opacity: 0.25;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.evs-live i {
+		animation: none;
+		opacity: 0.8;
+	}
+}
+
+/* 跑着的组头比跑完的稍微亮一点：老板一眼要能分出「这条还在动」。 */
+.row-events[data-state="running"] button.evs .evs-what {
+	color: var(--ink-2);
 }
 
 .evs-body {
-	margin: 2px 0 2px 4px;
-	padding-left: 10px;
-	border-left: 1px solid var(--line);
+	margin: 2px 0 0;
+	padding: 0;
+	/* 展开态没有盒子：没有边框、没有缩进竖线，只有一行一行的过程。 */
 }
 
 .evs-list {
 	display: flex;
 	flex-direction: column;
 	align-items: stretch;
+	gap: 0;
+}
+
+/* 单条过程行（组外的零星一条）。 */
+.row-event {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	margin: 2px 0 2px 48px;
+	max-width: calc(100% - 48px);
+}
+
+.ev {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	max-width: 100%;
+	min-height: 20px;
+	padding: 0 2px;
+	border: 0;
+	background: none;
+	font: inherit;
+	font-size: 12.5px;
+	line-height: 20px;
+	color: var(--ink-3);
+	text-align: left;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 
 button.ev {
-	border: 0;
-	background: none;
-	padding: 2px 6px 2px 2px;
-	margin-left: -2px;
-	border-radius: var(--r-control);
+	border-radius: var(--r-chip, 6px);
 	cursor: pointer;
 	transition: background-color var(--dur-line) ease;
 }
@@ -701,24 +766,56 @@ button.ev:hover {
 	background: var(--hover);
 }
 
-/* 剪头只在能展开的行上转，收起时朝右 */
+.ev-ico {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 12px;
+	height: 12px;
+	opacity: 0.6;
+}
+
+.ev-ico svg {
+	width: 12px;
+	height: 12px;
+}
+
+/* 第二段：动作。定宽不现实（「读文件」和「翻频道」字数不同），但只说一个词，
+   所以给 flex: none，让摘要去吃掉剩下的宽度。 */
+.ev-act {
+	flex: none;
+	color: var(--ink-3);
+}
+
+/* 第三段：摘要。永远一行，60 字以外由 JS 截断，这里只兜底。 */
+.ev-txt {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: var(--ink-2);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 剪头只在能展开的行上转，收起时朝右（组头是唯一挂着它的地方） */
 .ev-chevron {
 	flex: none;
 	opacity: 0.5;
 	transition: transform var(--dur-line) var(--ease-line);
 }
 
-.row-event[data-open="true"] .ev-chevron {
+.row-events[data-open="true"] .ev-chevron {
 	transform: rotate(90deg);
 }
 
 /*
- * 展开后的原文：等宽、可换行、限高。
+ * 单条过程行点开的原文：等宽、可换行、限高。
  * 不换行会撑出一条横向滚动条盖住整列；不限高的话一条 20 行的命令输出
  * 会把下面所有消息推出屏幕 —— 展开是「看一眼」，不是「进入另一个页面」。
  */
 .ev-body {
-	margin: 4px 0 2px;
+	margin: 2px 0 2px;
 	max-width: 100%;
 	width: 100%;
 }
@@ -731,7 +828,7 @@ button.ev:hover {
 	overflow-y: auto;
 	overflow-x: hidden;
 	background: var(--raised);
-	border: 1px solid var(--line);
+	border: 0;
 	border-radius: var(--r-control);
 	font-family: var(--mono);
 	font-size: 12px;
@@ -739,11 +836,6 @@ button.ev:hover {
 	color: var(--ink-2);
 	white-space: pre-wrap;
 	word-break: break-word;
-}
-
-.ev b {
-	font-weight: 500;
-	color: var(--ink-2);
 }
 
 /* ── note 行 ────────────────────────────────────────────────────────── */
@@ -929,27 +1021,51 @@ button.ev:hover {
 	flex: none;
 }
 
+/* 名字：活动行第一段。以前这里是一句会 shimmer 的「在做什么」，读不出是谁、
+   也读不出跑了多久。现在只放名字，状态和秒数交给下面两段。 */
 .act-text {
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	color: transparent;
-	font-size: 14px;
-	line-height: 24px;
-	--shimmer-base: color-mix(in srgb, var(--ink) 40%, transparent);
-	background: linear-gradient(
-		90deg,
-		var(--shimmer-base) 0%,
-		var(--shimmer-base) 25%,
-		var(--ink) 60%,
-		var(--shimmer-base) 75%,
-		var(--shimmer-base) 100%
-	);
-	background-size: 200% 100%;
-	-webkit-background-clip: text;
-	background-clip: text;
-	animation: shimmer 2.2s steps(60) infinite;
+	flex: none;
+	color: var(--ink-2);
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+/* 跑着的三个点：和过程组头同一套（透明度呼吸，不做位移）。 */
+.act-live {
+	display: inline-flex;
+	flex: none;
+	gap: 2px;
+	align-items: center;
+	margin-left: -2px;
+}
+
+.act-live[hidden] {
+	display: none;
+}
+
+.act-live i {
+	width: 3px;
+	height: 3px;
+	border-radius: 50%;
+	background: var(--live);
+	opacity: 0.35;
+	animation: evs-live-pulse 1.1s ease-in-out infinite;
+}
+
+.act-live i:nth-child(2) {
+	animation-delay: 0.18s;
+}
+
+.act-live i:nth-child(3) {
+	animation-delay: 0.36s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.act-live i {
+		animation: none;
+		opacity: 0.8;
+	}
 }
 
 .act-time {
@@ -958,6 +1074,12 @@ button.ev:hover {
 	line-height: 16px;
 	color: var(--ink-3);
 	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 跑完那一刻：状态字从「正在执行」换成「已完成」，颜色随之沉下去。 */
+.act[data-state="done"] .act-time {
+	color: var(--ink-3);
 }
 
 /* ── 骨架：与最终行同尺寸的灰色实心条，不做 shimmer ────────────────── */

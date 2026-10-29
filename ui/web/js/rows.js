@@ -51,6 +51,11 @@ const GROUP_MS = 2 * 60 * 1000;
 const CONT_MS = 30 * 1000;
 
 const ICONS = {
+	// 过程行的三个小图标：思考 / 工具 / 命令。12px 线性图标，一个颜色，
+	// 不用彩色 —— 过程行是背景音，不该比正文更抢眼。
+	think: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2v1.4M8 12.4v1.4M2.2 8h1.4M12.4 8h1.4M4 4l1 1M11 11l1 1M12 4l-1 1M5 11l-1 1"/><circle cx="8" cy="8" r="2.2"/></svg>`,
+	tool: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.4 2.6a3.4 3.4 0 0 0-3.1 5.5L3 12.4l1.6 1.6 4.3-4.3a3.4 3.4 0 0 0 5.5-3.1l-2 2-1.9-.4-.4-1.9 2-2Z"/></svg>`,
+	work: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.2 6.8 8 4 10.8M8.6 11h3.4"/></svg>`,
 	copy: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="7" height="7" rx="1.6"/><path d="M10.5 3.6A1.6 1.6 0 0 0 8.9 2.5H5A1.5 1.5 0 0 0 3.5 4v3.9c0 .7.5 1.3 1.1 1.5"/></svg>`,
 	check: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 8.5l3 3 6-6.5"/></svg>`,
 	reply: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4.5 3 8l3.5 3.5"/><path d="M3 8h5a4.5 4.5 0 0 1 4.5 4.5v.5"/></svg>`,
@@ -71,6 +76,249 @@ export function isNeed(message) {
 }
 
 /* ── event 行的人话 ─────────────────────────────────────────────────── */
+
+/** 一行最多多少字。老板的原话是「单行截断 60 字，展开看全文」。 */
+export const SUMMARY_LIMIT = 60;
+
+/**
+ * 压成一行：折叠换行与连续空白，超长截断。
+ *
+ * 摘要必须是一行 —— 一条命令带十几个参数时，屏幕上只允许它占一行，
+ * 否则「过程行」立刻变回一堵墙。
+ */
+export function clampLine(text, limit = SUMMARY_LIMIT) {
+	const flat = String(text ?? "")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (flat === "") return "";
+	if (flat.length <= limit) return flat;
+	return `${flat.slice(0, limit - 1)}…`;
+}
+
+/** 一段文字的第一句（句号/问号/叹号/换行切），再截到一行 60 字。 */
+export function firstSentence(text, limit = SUMMARY_LIMIT) {
+	const raw = String(text ?? "")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (raw === "") return "";
+	const cut = raw.split(/(?<=[。！？!?])/)[0] ?? raw;
+	return clampLine(cut, limit);
+}
+
+/**
+ * 工具参数解析。
+ *
+ * 真实投影（`src/core/channel/transcript.ts` 的 summarizeArguments）给的不是 JSON，
+ * 而是 `code 风格` 的一行：`run command=npm start · cwd=/x`、`read_file path=ui/web/js/rows.js`。
+ * 所以先按 ` · ` 拆键值对；万一哪天又回退成 JSON，也认一份，别让摘要重新变成
+ * 「执行了命令」这种什么都没说的话。
+ */
+export function toolArgs(text) {
+	const raw = String(text ?? "");
+	const space = raw.indexOf(" ");
+	if (space < 0) return {};
+	const rest = raw.slice(space + 1).trim();
+	if (rest.startsWith("{")) {
+		try {
+			const parsed = JSON.parse(rest);
+			return parsed !== null && typeof parsed === "object" ? parsed : {};
+		} catch {
+			return {};
+		}
+	}
+	const out = {};
+	for (const part of rest.split(" · ")) {
+		const eq = part.indexOf("=");
+		if (eq <= 0) continue;
+		out[part.slice(0, eq).trim()] = part.slice(eq + 1).trim();
+	}
+	return out;
+}
+
+/** 命令只留第一行：多行命令的正文是后续输出，不是「运行了什么」。 */
+export function firstLine(text) {
+	const raw = String(text ?? "");
+	const cut = raw.search(/\r?\n/);
+	return cut < 0 ? raw : raw.slice(0, cut);
+}
+
+const ACTION_LABEL = {
+	think: "思考",
+	run: "运行",
+	bash: "运行",
+	read_file: "读文件",
+	write_file: "写文件",
+	read_skill: "读技能",
+	write_skill: "写技能",
+	read_project: "读项目",
+	write_project: "写项目",
+	read_channel: "翻频道",
+	read_history: "翻历史",
+	recall: "回想",
+	remember: "记忆",
+	org: "看名册",
+	list_skills: "翻技能",
+	list_projects: "翻项目",
+	hire: "招人",
+	update_identity: "改档案",
+	say: "说话",
+};
+
+/** 过程行中间那一段「动作」：思考 / 运行 / 读文件。 */
+export function eventAction(message) {
+	if (!message) return "";
+	if (message.kind === "think") return ACTION_LABEL.think;
+	if (message.kind === "work") return ACTION_LABEL.run;
+	const tool = toolNameOf(message);
+	return ACTION_LABEL[tool] ?? ACTION_LABEL[tool?.replace(/^list_|^read_|^write_/, "") ?? ""] ?? "工具";
+}
+
+/** 过程行的图标种类：think / tool / work。 */
+export function eventIconKind(message) {
+	if (message?.kind === "think") return "think";
+	if (message?.kind === "work") return "work";
+	return "tool";
+}
+
+/**
+ * 过程行右边那段摘要 —— 这一批的核心：每行都要写出「到底做了什么」。
+ *
+ *   运行命令 → 命令本身（`$` 去掉，单行 60 字）
+ *   思考     → 那段思考的第一句（60 字，省略号收尾）
+ *   读/写文件 → 文件名（目录太长就截前面，文件名比目录有信息量）
+ *   其它工具 → TOOL_PHRASES 里那句人话
+ */
+export function eventSummary(message) {
+	if (!message) return "";
+	if (message.kind === "think") return firstSentence(message.text) || "想了一会儿";
+	if (message.kind === "work") {
+		const text = String(message.text ?? "").trim();
+		// work 的正文是「首行 `$ 命令` + 后面的输出」。摘要只要命令那一行 ——
+		// 把输出一起压进来，整行会被几十行 stdout 的空白挤满，等于没说。
+		if (text.startsWith("$")) return clampLine(text.replace(/^\$\s*/, "").split(/\r?\n/)[0]) || "执行了命令";
+		const file = /^(?:已)?(?:写入|读取)\s*(.+)$/.exec(firstLine(text));
+		if (file) return clampLine(shortPath(file[1]));
+		return clampLine(firstLine(text)) || "执行了命令";
+	}
+	const name = toolNameOf(message);
+	const args = toolArgs(message.text);
+	// 运行命令：写命令本身，别写「执行了命令」—— 十四个「执行了命令」等于什么都没说。
+	if (name === "run" || name === "bash") {
+		const cmd = args.command ?? args.cmd;
+		if (cmd) return clampLine(firstLine(cmd));
+	}
+	// 读/写文件：文件名。`path=` 是真实投影里的键；JSON 只是兜底。
+	if (/^(read|write)_(file|skill|project)$/.test(name ?? "")) {
+		const arg = args.path ?? args.name ?? firstQuote(message.text);
+		if (arg) return clampLine(shortPath(String(arg)));
+	}
+	return clampLine(TOOL_PHRASES[name] ?? "在做一件事");
+}
+
+/** 过程行展开后的原文：work 首行就是 `$ 命令`，think 是完整思考，tool 是完整参数。 */
+export function eventDetail(message) {
+	return String(message?.text ?? "").trim();
+}
+
+/** 组起点：优先消息自带的 `startedAt`，没有就用第一条过程行的 `at`。 */
+export function groupSpan(entries) {
+	const list = Array.isArray(entries) ? entries.filter(Boolean) : [];
+	if (list.length === 0) return { startAt: 0, endAt: 0, count: 0 };
+	const first = list[0];
+	const startAt = Number(first.startedAt ?? first.at ?? 0);
+	const endAt = Number(list[list.length - 1].at ?? startAt);
+	return { startAt, endAt: Math.max(startAt, endAt), count: list.length };
+}
+
+/**
+ * 把一串过程消息切成「连续干活段」：同一个人连着干，中间没人插话就是一段。
+ *
+ * 一段只画一个组头。以前是逐条画，agent 干一段活留下十四条消息，屏幕上就是
+ * 两行一模一样的「14 步过程 命令 14」—— 老板的原话是「多么工整啊」。
+ */
+export function splitRuns(messages) {
+	const runs = [];
+	for (const message of messages ?? []) {
+		const last = runs[runs.length - 1];
+		const slug = message?.fromSlug;
+		if (last !== undefined && last[0].fromSlug === slug) last.push(message);
+		else runs.push([message]);
+	}
+	return runs;
+}
+
+/** 秒数：只从 `at` 推，永远非负（时钟抖一下也不许倒着走）。 */
+export function elapsedSeconds(startAt, endAt) {
+	const span = Number(endAt) - Number(startAt);
+	if (!Number.isFinite(span) || span <= 0) return 0;
+	return Math.round(span / 1000);
+}
+
+/**
+ * 组头那一句：跑着「正在执行 · 67s」，跑完「已完成，用时 55 秒」。
+ *
+ * 以前这里是「14 步过程 命令 14」—— 内部术语，读不懂还重复。
+ * running 时终点用 now，所以每多跑一秒数字就大一点；定格之后传 endAt，数字不再动。
+ */
+export function groupStatus({ running = false, startAt = 0, endAt = 0, now = 0 } = {}) {
+	const seconds = elapsedSeconds(startAt, running ? now || endAt : endAt);
+	return running ? `正在执行 · ${seconds}s` : `已完成，用时 ${seconds} 秒`;
+}
+
+/** 底部活动行：一段活离开屏幕后还显示多久「已完成」。 */
+export const ACTIVITY_DONE_MS = 4000;
+/** 底部活动行：多久没新过程行就不再当它还在跑。 */
+export const ACTIVITY_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * 底部那条活动行要显示哪一段活（纯函数，好测）。
+ *
+ * 起点和组头用同一套：`startedAt ?? 这一段第一条过程行的 at`。
+ * 以前这里是「最后一条过程行的 at」—— 每来一条过程就清零重算，老板看到的是
+ * 一个永远停在 5s 的表，而不是这一轮真实跑了多久。
+ *
+ * 返回 `null` 表示这一行该收起来：没有过程行、刚结束超过 4 秒、或者老板自己在说话。
+ */
+export function activityRun(messages, now = Date.now()) {
+	const list = Array.isArray(messages) ? messages.filter(Boolean) : [];
+	if (list.length === 0) return null;
+	const last = list[list.length - 1];
+	if (last.fromSlug === "owner") return null;
+	let endAt = Number(last.at ?? 0);
+	let endIndex = list.length - 1;
+	let running = true;
+	if (!isEventKind(last.kind)) {
+		endIndex -= 1;
+		const tail = list[endIndex];
+		if (endIndex < 0 || tail === undefined || !isEventKind(tail.kind)) return null;
+		// 只有「这一段活的主人在说话」时，才把他开口那一刻当作结束时间。
+		// 别人说话不能算成他的结束时间 —— 群里两个人交替说话，那样会把
+		// 后一个人的发言时刻记到前一个人头上，显示错人也算错时长。
+		if (last.fromSlug !== tail.fromSlug) endAt = Number(tail.at ?? endAt);
+		// 这一段活到此为止，显示 4 秒「已完成」再收掉。
+		if (now - endAt > ACTIVITY_DONE_MS) return null;
+		running = false;
+	}
+	const tail = list[endIndex];
+	if (!isEventKind(tail.kind)) return null;
+	// 往回找同一个人的连续过程行：这一段就是这一轮活。
+	const slug = tail.fromSlug;
+	let startIndex = endIndex;
+	while (startIndex > 0) {
+		const prev = list[startIndex - 1];
+		if (!isEventKind(prev.kind) || prev.fromSlug !== slug) break;
+		startIndex -= 1;
+	}
+	const span = groupSpan(list.slice(startIndex, endIndex + 1));
+	if (running && now - span.endAt > ACTIVITY_WINDOW_MS) return null;
+	return { slug, running, startAt: span.startAt, endAt };
+}
+
+/** 完整组头：名字 + 状态。DOM 里名字单独一个节点，这里给测试和 aria 用。 */
+export function groupHeader({ name = "", ...timing } = {}) {
+	const status = groupStatus(timing);
+	return name ? `${name} ${status}` : status;
+}
 
 function firstQuote(text) {
 	const match = /"([^"]{1,64})"/.exec(text ?? "");
@@ -103,29 +351,7 @@ export function toolNameOf(message) {
  * event 行要说的话。think 的秒数由 buildStream 合并计算，这里给的是不合并时的默认。
  */
 export function eventPhrase(message) {
-	const kind = message.kind;
-	if (kind === "think") return "想了一会儿";
-	if (kind === "tool") {
-		const name = toolNameOf(message);
-		// 读/写类工具带一个文件名，信息密度立刻高一档，且仍然只有一行。
-		if (/^read_(file|skill|project)$/.test(name)) {
-			const arg = firstQuote(message.text);
-			return arg ? `读了 ${shortPath(arg)}` : "读了一个文件";
-		}
-		if (/^write_(file|skill|project)$/.test(name)) {
-			const arg = firstQuote(message.text);
-			return arg ? `写了 ${shortPath(arg)}` : "写了一个文件";
-		}
-		return TOOL_PHRASES[name] ?? "在做一件事";
-	}
-	if (kind === "work") {
-		const text = String(message.text ?? "");
-		if (text.startsWith("$")) return "执行了命令";
-		if (text.startsWith("已写入") || text.startsWith("写入")) return "写了一个文件";
-		if (text.startsWith("已读取") || text.startsWith("读取")) return "读了一个文件";
-		return "在做一件事";
-	}
-	return "";
+	return eventSummary(message);
 }
 
 /** 活动行的一句话（不含人名）。 */
@@ -272,22 +498,35 @@ const CHEVRON = `<svg class="ev-chevron" width="10" height="10" viewBox="0 0 12 
  * 细节用 `textContent` 写进 `<pre>`，不走 innerHTML：那是原始文本（可能带尖括号），
  * 不是 Markdown，也不该被当成 HTML。
  */
-function eventNode(message, text) {
+function eventNode(message) {
 	const row = document.createElement("div");
 	row.className = "row row-event";
 	row.dataset.seq = String(message.seq);
 	row.dataset.kind = message.kind;
-	// 静态工具消息只展示「做了什么」（如「执行了命令」），不暴露是谁执行的 —— 匿名化。
-	const detail = String(message.text ?? "").trim();
+	row.dataset.slug = String(message.fromSlug ?? "");
+	row.dataset.at = String(message.at ?? "");
+	// 三段：图标 + 动作 + 摘要。摘要永远一行（60 字），原文在 .ev-body 里。
+	const head = `<span class="ev-ico" aria-hidden="true">${ICONS[eventIconKind(message)]}</span><span class="ev-act">${escapeHtml(
+		eventAction(message),
+	)}</span><span class="ev-txt">${escapeHtml(eventSummary(message))}</span>`;
+	const detail = eventDetail(message);
 	if (detail === "") {
-		row.innerHTML = `<span class="ev"><span class="ev-what">${escapeHtml(text)}</span></span>`;
+		row.innerHTML = `<span class="ev">${head}</span>`;
 		return row;
 	}
-	row.innerHTML = `<button class="ev" type="button" data-act="expand" aria-expanded="false" title="展开看原文"><span class="ev-what">${escapeHtml(
-		text,
-	)}</span>${CHEVRON}</button><div class="ev-body" hidden><pre></pre></div>`;
+	row.innerHTML = `<button class="ev" type="button" data-act="expand" aria-expanded="false" title="展开看原文">${head}</button><div class="ev-body" hidden><pre></pre></div>`;
 	row.querySelector("pre").textContent = detail;
 	return row;
+}
+
+/**
+ * 单条过程行节点（增量路径用）。
+ *
+ * `buildOne` 返回的是 DocumentFragment（一条消息可能还带时间分隔条），SSE 路径
+ * 需要的是「这一行」本身：要把它塞进已经开着的组里，fragment 没有类名，判断不了。
+ */
+export function buildEventRow(message) {
+	return eventNode(message);
 }
 
 /* ── pending（待办拍板卡，结构见 pending.css 顶部注释） ─────────────── */
@@ -414,33 +653,40 @@ export function eventLabel(message) {
  * 把他真正说的那句话埋掉了 —— 老板的原话是「沟通内容太多了，根本不像正常人之间沟通」。
  * 收成一行，想看细节再点开。
  */
-export function wrapEvents(slug, name, nodes, labels = []) {
+export function wrapEvents(slug, name, nodes, timing = {}) {
 	const rows = nodes.filter((node) => node.classList?.contains("row-event"));
-	if (rows.length <= 1) return nodes;
-	const counts = new Map();
-	for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
-	const mix = [...counts]
-		.sort((left, right) => right[1] - left[1])
-		.slice(0, 3)
-		.map(([label, count]) => `${escapeHtml(label)} ${count}`)
-		.join(" · ");
+	if (rows.length === 0) return nodes;
+	const startAt = Number(timing.startAt ?? rows[0].dataset.at ?? 0);
+	const endAt = Number(timing.endAt ?? startAt);
+	const now = Number(timing.now ?? endAt);
+	const running = timing.running === true;
 	const wrap = document.createElement("div");
 	wrap.className = "row row-events";
 	wrap.dataset.slug = slug ?? "";
+	wrap.dataset.name = name ?? "";
+	wrap.dataset.state = running ? "running" : "done";
+	wrap.dataset.start = String(startAt);
+	wrap.dataset.end = String(endAt);
+	// 组头是唯一的开关：展开/收起只在这里，行自己不再挂 chevron。
 	const button = document.createElement("button");
 	button.className = "evs";
 	button.type = "button";
 	button.dataset.act = "expand";
 	button.setAttribute("aria-expanded", "false");
-	button.innerHTML = `<b>${escapeHtml(name ?? "")}</b> <span class="evs-what">${rows.length} 步过程</span>${
-		mix ? ` <span class="evs-mix">${mix}</span>` : ""
-	}<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>`;
+	button.setAttribute("aria-label", groupHeader({ name, running, startAt, endAt, now }));
+	button.innerHTML = `<span class="evs-ico" aria-hidden="true">${
+		running ? ICONS.work : ICONS.check
+	}</span><b>${escapeHtml(name ?? "")}</b><span class="evs-what">${escapeHtml(
+		groupStatus({ running, startAt, endAt, now }),
+	)}</span>${
+		running ? '<span class="evs-live" aria-hidden="true"><i></i><i></i><i></i></span>' : ""
+	}<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
 	const body = document.createElement("div");
 	body.className = "evs-body";
 	body.hidden = true;
 	const inner = document.createElement("div");
 	inner.className = "evs-list";
-	for (const node of nodes) {
+	for (const node of rows) {
 		// 组里的时间分隔线没有意义（本来就在一段连续干活里），只留过程行本身
 		if (node.classList?.contains("row-time-divider")) continue;
 		inner.append(node);
@@ -464,82 +710,83 @@ export function buildStream(messages, ctx = {}) {
 
 	let prevSay = ctx.prev ?? null; // 上一条 say（判断是否同人连发）
 	let lastAt = ctx.prev?.at ?? 0; // 上一条被画出来的行的时间
-	let thinkRun = null;
 	// 过程行先攒着，等「它产出的那句话」出现再一起放。
 	//
 	// 不攒的话：agent 先想、先执行命令、最后才说，于是「沈舟 想了 1s」出现在沈舟的**头像上方**
 	// —— 读起来像是上一句的尾巴，也确实让人认错发言人。攒到他开口之后再放，
 	// 三行过程就落在他那句话底下、和正文左缘对齐。
+	// 过程行先攒着，等「它产出的那句话」出现再一起放。攒的粒度是**消息**，
+	// 分组在 flushEvents 里按「同一个人连续干活」切，切出来的一段就是一个组。
 	const pendingEvents = [];
-	const queueEvent = (slug, nodes, label) => pendingEvents.push({ slug, nodes, label });
-	// 把「连续的同一个人的过程行」收成一组再放。注意要按**整段连续**收，不能逐条收：
-	// agent 干一段活会留下十几条独立消息，逐条 wrap 就是十几行「想了 1s」平铺。
-	const emitRun = (entries) => {
+	const queueEvent = (message, nodes) => pendingEvents.push({ message, nodes });
+	// 跑着的组：只有整列最后一段、且离现在够近才算还在跑（不然历史里的旧尾巴永远在跳秒）。
+	const RUNNING_WINDOW_MS = 5 * 60 * 1000;
+	const emitRun = (entries, { running = false, endAt } = {}) => {
 		if (entries.length === 0) return;
-		const slug = entries[0].slug;
-		const nodes = [];
-		const labels = [];
-		for (const entry of entries) {
-			nodes.push(...entry.nodes);
-			if (entry.label) labels.push(entry.label);
+		const slug = entries[0].message.fromSlug;
+		const span = groupSpan(entries.map((entry) => entry.message));
+		const lastAt = endAt ?? span.endAt;
+		for (const node of wrapEvents(
+			slug,
+			bySlug.get(slug)?.label ?? slug,
+			entries.flatMap((entry) => entry.nodes),
+			{ startAt: span.startAt, endAt: lastAt, now, running },
+		)) {
+			frag.append(node);
 		}
-		for (const node of wrapEvents(slug, bySlug.get(slug)?.label ?? slug, nodes, labels)) frag.append(node);
 	};
-	const flushEvents = (keepSlug) => {
+	/**
+	 * 把攒着的过程行按「相邻同一个人」切段，逐段画成组。
+	 * `keepSlug` 的那一份留在队列里（他就要开口了，那几句过程属于他下面那句话）。
+	 * `open` 表示这是整列的收尾：最后一段可能还在跑，交给 running 判断。
+	 */
+	const flushEvents = (keepSlug, { open = false } = {}) => {
 		if (pendingEvents.length === 0) return;
-		// 相邻的同一个人的过程行合成一段，段之间保持原来的先后顺序。
-		const runs = [];
-		const kept = [];
-		for (const entry of pendingEvents) {
-			if (keepSlug !== undefined && entry.slug === keepSlug) {
-				kept.push(entry);
-				continue;
-			}
-			const last = runs[runs.length - 1];
-			if (last !== undefined && last.slug === entry.slug) last.entries.push(entry);
-			else runs.push({ slug: entry.slug, entries: [entry] });
-		}
-		for (const run of runs) emitRun(run.entries);
+		const kept = pendingEvents.filter((entry) => keepSlug !== undefined && entry.message.fromSlug === keepSlug);
+		const rest = pendingEvents.filter((entry) => !kept.includes(entry));
+		// 分组规则和「整列重建」走同一个纯函数，两条路的组头才对得上。
+		const runs = splitRuns(rest.map((entry) => entry.message)).map((messages) =>
+			messages.map((message) => rest.find((entry) => entry.message === message)),
+		);
+		runs.forEach((run, index) => {
+			const span = groupSpan(run.map((entry) => entry.message));
+			const isLast = index === runs.length - 1;
+			const running = open && isLast && now - span.endAt <= RUNNING_WINDOW_MS;
+			emitRun(run, { running });
+		});
 		pendingEvents.length = 0;
 		pendingEvents.push(...kept);
 	};
-	const takeEvents = (slug) => {
+	/** 他开口了：这一轮攒下的过程行收成一组，落在他说的话下面，计时定格在他开口那一刻。 */
+	const takeEvents = (slug, endAt) => {
 		const taken = [];
-		const labels = [];
 		for (let i = pendingEvents.length - 1; i >= 0; i -= 1) {
-			if (pendingEvents[i].slug !== slug) continue;
-			taken.unshift(...pendingEvents[i].nodes);
-			if (pendingEvents[i].label) labels.unshift(pendingEvents[i].label);
+			if (pendingEvents[i].message.fromSlug !== slug) continue;
+			taken.unshift(pendingEvents[i]);
 			pendingEvents.splice(i, 1);
 		}
-		// 一次性收成一组：一段连续干活十几条过程行，展开的时候才看。
-		return wrapEvents(slug, bySlug.get(slug)?.label ?? slug, taken, labels);
+		if (taken.length === 0) return [];
+		const span = groupSpan(taken.map((entry) => entry.message));
+		return wrapEvents(slug, bySlug.get(slug)?.label ?? slug, taken.flatMap((entry) => entry.nodes), {
+			startAt: span.startAt,
+			endAt: endAt ?? span.endAt,
+			now,
+			running: false,
+		});
 	};
 
 	for (const message of list) {
 		if (!message) continue;
 
-		// think 合并：连续同人、间隔 < 2 分钟 → 一行带秒数
-		if (message.kind === "think") {
-			if (thinkRun && thinkRun.slug === message.fromSlug && message.at - thinkRun.end <= GROUP_MS) {
-				thinkRun.end = message.at;
-				const seconds = Math.max(1, Math.round((thinkRun.end - thinkRun.start) / 1000));
-				const what = thinkRun.el.querySelector(".ev-what");
-				if (what) what.textContent = `想了 ${seconds}s`;
-				continue;
+		if (isEventKind(message.kind)) {
+			// 跨天 / 隔了半小时的换一批时间分隔条：顺带把上一段过程收口，
+			// 不然两段隔着半小时的活会被合成一个组，用时直接翻倍。
+			const seps = timeSepNodes(message, lastAt ? { at: lastAt } : null);
+			if (seps.length > 0) {
+				flushEvents();
+				for (const sep of seps) frag.append(sep);
 			}
-			const row = eventNode(message, "想了 1s");
-			thinkRun = { slug: message.fromSlug, start: message.at, end: message.at, el: row };
-			queueEvent(message.fromSlug, [row], eventLabel(message));
-			lastAt = message.at;
-			prevSay = null;
-			continue;
-		}
-		thinkRun = null;
-
-		if (message.kind === "tool" || message.kind === "work") {
-			const nodes = [...timeSepNodes(message, lastAt ? { at: lastAt } : null), eventNode(message, eventPhrase(message))];
-			queueEvent(message.fromSlug, nodes, eventLabel(message));
+			queueEvent(message, [eventNode(message)]);
 			lastAt = message.at;
 			prevSay = null;
 			continue;
@@ -564,7 +811,7 @@ export function buildStream(messages, ctx = {}) {
 				for (const sep of timeSepNodes(message, lastAt ? { at: lastAt } : null)) frag.append(sep);
 			}
 			frag.append(processingRow(message, full, grouped, cont));
-			for (const node of takeEvents(message.fromSlug)) frag.append(node);
+			for (const node of takeEvents(message.fromSlug, message.at)) frag.append(node);
 			flushEvents();
 			prevSay = message;
 			lastAt = message.at;
@@ -601,13 +848,14 @@ export function buildStream(messages, ctx = {}) {
 
 		frag.append(sayRow(message, full, grouped, cont));
 		// 他自己的过程行跟在他这句话下面（见上面 `pendingEvents` 的注释）。
-		for (const node of takeEvents(message.fromSlug)) frag.append(node);
+		for (const node of takeEvents(message.fromSlug, message.at)) frag.append(node);
 		flushEvents();
 		prevSay = message;
 		lastAt = message.at;
 	}
 
-	flushEvents();
+	// 收尾：最后一段如果离现在够近就是「正在跑」，组头显示递增计时。
+	flushEvents(undefined, { open: true });
 	return frag;
 }
 

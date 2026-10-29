@@ -16,7 +16,18 @@ import { avatarSvg, groupAvatar } from "./avatar.js";
 import { channelDetailHtml, personDetailHtml } from "./detail.js";
 import { copyText, escapeHtml, headParts, relTime, sortChannels, unreadLabel } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
-import { activityPhrase, buildOne, buildStream, eventLabel, isEventKind, isNeed as isNeedRow, wrapEvents } from "./rows.js";
+import {
+	ACTIVITY_DONE_MS,
+	activityRun,
+	buildEventRow,
+	buildOne,
+	buildStream,
+	groupHeader,
+	groupStatus,
+	isEventKind,
+	isNeed as isNeedRow,
+	wrapEvents,
+} from "./rows.js";
 import { mergeMessages } from "./messages.js";
 import { installJankMonitor, mark } from "./jank.js";
 
@@ -25,7 +36,6 @@ import { installJankMonitor, mark } from "./jank.js";
 const PAGE = 40;
 const TICK_MS = 30_000;
 const LAYOUT_KEY = "ai-company.layout";
-const HOLD_MS = 800; // 活动行每句话至少停 800ms
 const HL_MS = 1200; // 定位高亮
 
 const STATUS_LABEL = { thinking: "在想", working: "在做", idle: "待命", asleep: "睡了" };
@@ -60,7 +70,6 @@ const state = {
 	/** 当前列上最后画出来的那条消息的 seq。SSE 只追加比它大的。 */
 	lastRendered: 0,
 	// 这一轮已经落地、还没等到那句 `say` 的过程行。见 merge()。
-	tailEvents: [],
 	refreshTimer: 0,
 };
 
@@ -105,6 +114,7 @@ const el = {
 	actAv: document.querySelector("#act .act-av"),
 	actText: document.querySelector("#act .act-text"),
 	actTime: document.querySelector("#act .act-time"),
+	actLive: document.querySelector("#act .act-live"),
 	replyBar: $("reply-bar"),
 	replyText: $("reply-text"),
 	replyCancel: $("reply-cancel"),
@@ -375,6 +385,88 @@ function streamCtx() {
 	};
 }
 
+/**
+ * 增量路径下的过程组。
+ *
+ * 整列重建（buildStream）和这里必须长出同一套东西：一个连续干活段 = 一个组头，
+ * 新的过程行往**已有**的组里追加，不许再开第二个头 —— 以前 SSE 每来一条过程就
+ * 独立画一行，结果连着两行「14 步过程 命令 14」。
+ */
+function openGroupOf(slug) {
+	const last = el.feed.lastElementChild;
+	if (!last || !last.classList?.contains("row-events")) return null;
+	if (last.dataset.state !== "running" || last.dataset.slug !== String(slug ?? "")) return null;
+	return last;
+}
+
+/** 一条过程行到了：并进正在跑的组，没有就开一个（组头立刻显示「正在执行 · 0s」）。 */
+function appendEventRow(message, node) {
+	const group = openGroupOf(message.fromSlug);
+	if (group) {
+		group.querySelector(".evs-list")?.append(node);
+		group.dataset.end = String(message.at ?? 0);
+		return group;
+	}
+	// 换人了：先把上一个人的 running 组定格到**它自己最后一条过程行**，
+	// 不然没人来收口，它会一直跳到 5 分钟超时才停 —— 屏幕上就是别人的活
+	// 明明干完了还写着「正在执行 · 300s」。
+	closeOpenGroups(undefined, undefined);
+	const [wrap] = wrapEvents(message.fromSlug, personOf(message.fromSlug)?.label ?? message.fromSlug, [node], {
+		startAt: message.startedAt ?? message.at,
+		endAt: message.at,
+		now: Date.now(),
+		running: true,
+	});
+	el.feed.append(wrap);
+	return wrap;
+}
+
+/**
+ * 收口：组头从「正在执行 · 67s」定格成「已完成，用时 55 秒」。
+ *
+ * 只收 `slug` 这个人的组 —— 别人还在跑，不能因为有人说话就把他的表停掉。
+ * `afterNode` 给的时候把组挪到那句话下面：读起来才是「先干活、再开口」。
+ */
+function closeOpenGroups(endAt, slug, afterNode = null) {
+	for (const group of el.feed.querySelectorAll('.row-events[data-state="running"]')) {
+		if (slug !== undefined && group.dataset.slug !== String(slug)) continue;
+		const startAt = Number(group.dataset.start ?? 0);
+		const end = Math.max(Number(endAt ?? group.dataset.end ?? startAt), startAt);
+		const name = group.dataset.name ?? "";
+		group.dataset.state = "done";
+		group.dataset.end = String(end);
+		const what = group.querySelector(".evs-what");
+		if (what) what.textContent = groupStatus({ running: false, startAt, endAt: end });
+		group.querySelector(".evs-live")?.remove();
+		group.querySelector(".evs")?.setAttribute("aria-label", groupHeader({ name, running: false, startAt, endAt: end }));
+		if (afterNode) afterNode.after(group);
+	}
+}
+
+/** 跑着的组每秒刷新一次秒数；只改文字，不重建 DOM（重建会吃掉展开状态）。 */
+function tickRunningGroups() {
+	const now = Date.now();
+	for (const group of el.feed.querySelectorAll('.row-events[data-state="running"]')) {
+		const startAt = Number(group.dataset.start ?? 0);
+		if (!startAt) continue;
+		const what = group.querySelector(".evs-what");
+		if (!what) continue;
+		// 五分钟没来新过程行就当这一轮结束了：否则一条历史上的尾巴会永远在跳秒，
+		// 变成「看起来一直在跑」的假象。真在跑的话，新过程行会不断刷新 data-end。
+		const lastAt = Number(group.dataset.end ?? 0);
+		if (lastAt && now - lastAt > 5 * 60 * 1000) {
+			closeOpenGroups(lastAt, group.dataset.slug ?? undefined);
+			continue;
+		}
+		const next = groupStatus({ running: true, startAt, endAt: now, now });
+		// 秒数只许变大：系统时钟被拨回时也不能让老板看到「67s 变成 55s」。
+		const before = Number(/(\d+)s/.exec(what.textContent ?? "")?.[1] ?? -1);
+		const after = Number(/(\d+)s/.exec(next)?.[1] ?? -1);
+		if (after < before) continue;
+		what.textContent = next;
+	}
+}
+
 function needSeqs() {
 	const set = new Set();
 	for (const item of state.attention.items) {
@@ -409,7 +501,6 @@ function renderFlow({ veil = false, restore = true } = {}) {
 		el.feed.append(buildStream(messages, streamCtx()));
 	}
 	state.lastRendered = messages.length > 0 ? Number(messages[messages.length - 1].seq ?? 0) : 0;
-	state.tailEvents = [];
 	if (state.error) el.feed.prepend(errorBlock(state.error, "重试", () => openChannel(state.currentId)));
 
 	if (veil) {
@@ -473,63 +564,52 @@ function errorBlock(message, retryLabel, onRetry) {
 
 /* ── 活动行 ─────────────────────────────────────────────────────────── */
 
-const act = { text: "", changedAt: 0, timer: 0, slug: "" };
+const act = { slug: "", running: null, startAt: 0, endAt: 0, hideTimer: 0 };
 
-function activityOf() {
-	const messages = state.detail?.messages ?? [];
-	const now = Date.now();
-	for (let index = messages.length - 1; index >= 0; index -= 1) {
-		const message = messages[index];
-		if (!message || message.fromSlug === "owner") continue;
-		if (message.kind !== "think" && message.kind !== "tool" && message.kind !== "work") continue;
-		if (now - message.at > 5 * 60 * 1000) return null;
-		return { message, phrase: activityPhrase(message) };
-	}
-	return null;
-}
-
+/**
+ * 底部活动行：和过程组头同一套文案与计时。
+ *
+ * 跑着是「名字 + 正在执行 · 67s + 三个动点」，他说完话那一刻换成
+ * 「已完成，用时 55 秒」，停 4 秒再收掉 —— 老板的原话就是这个。
+ * 起点用这一段活的组起点（`startedAt ?? 第一条过程行 at`），新过程行不会把表清零。
+ */
 function renderActivity() {
-	const line = activityOf();
-	if (!line) {
+	const run = activityRun(state.detail?.messages ?? [], Date.now());
+	if (!run) {
 		hideActivity();
 		return;
 	}
+	const name = personOf(run.slug)?.label ?? run.slug;
 	if (el.act.hidden) {
 		el.act.hidden = false;
 		el.act.dataset.leaving = "";
-		el.actAv.innerHTML = avatarSvg({
-			slug: line.message.fromSlug,
-			name: line.message.fromLabel,
-			size: 22,
-			state: "working",
-		});
-		act.text = "";
-		act.changedAt = 0;
+		act.slug = "";
 	}
-	if (act.slug !== line.message.fromSlug) {
-		act.slug = line.message.fromSlug;
-		el.actAv.innerHTML = avatarSvg({
-			slug: line.message.fromSlug,
-			name: line.message.fromLabel,
-			size: 22,
-			state: "working",
-		});
+	if (act.slug !== run.slug) {
+		act.slug = run.slug;
+		el.actAv.innerHTML = avatarSvg({ slug: run.slug, name, size: 22, state: "working" });
 	}
-	el.actTime.textContent = `${Math.max(0, Math.round((Date.now() - line.message.at) / 1000))}s`;
+	act.running = run.running;
+	act.startAt = run.startAt;
+	act.endAt = run.endAt;
+	el.act.dataset.state = run.running ? "running" : "done";
+	el.actText.textContent = name;
+	el.actTime.textContent = groupStatus({
+		running: run.running,
+		startAt: run.startAt,
+		endAt: run.endAt,
+		now: Date.now(),
+	});
+	if (el.actLive) el.actLive.hidden = !run.running;
+	// 跑完的那一句只停 4 秒：到点自己收，不用等下一条消息来触发。
+	window.clearTimeout(act.hideTimer);
+	if (!run.running) act.hideTimer = window.setTimeout(hideActivity, ACTIVITY_DONE_MS);
+}
 
-	// 活动行只说「在做什么」，不点名是谁（与工具消息匿名化口径一致）。
-	const next = `${line.phrase}`;
-	if (next === act.text) return;
-	const wait = Math.max(0, HOLD_MS - (Date.now() - act.changedAt));
-	window.clearTimeout(act.timer);
-	act.timer = window.setTimeout(
-		() => {
-			act.text = next;
-			act.changedAt = Date.now();
-			el.actText.textContent = next;
-		},
-		act.text === "" ? 0 : wait,
-	);
+/** 跑着时每秒重算一次秒数（只改文字）。 */
+function tickActivity() {
+	if (el.act.hidden || act.running !== true) return;
+	el.actTime.textContent = groupStatus({ running: true, startAt: act.startAt, endAt: Date.now(), now: Date.now() });
 }
 
 function hideActivity() {
@@ -547,8 +627,8 @@ function hideActivity() {
 		el.act.hidden = true;
 		if (pinned) scrollToBottom();
 	});
-	act.text = "";
 	act.slug = "";
+	act.running = null;
 }
 
 /* ── 标题 / 引用 / 输入 ─────────────────────────────────────────────── */
@@ -920,25 +1000,17 @@ function openChannelStream(id) {
 		// 加上 think/tool 过程投影，一秒能来好几条，主线程一直占着，点哪儿都像卡住。
 		// 重建还会把正在流式写入的那个 `.md` 节点一起换掉，token 的后续增量就找不到落点了。
 		if (isAppend) {
-			const node = buildOne(message, streamCtx(), previous);
-			el.feed.append(node);
-			state.lastRendered = message.seq;
-			// 过程行（想了多久、跑了什么）先到，他说的那句话后到。到达顺序反不了，
-			// 但**阅读顺序**要正过来：say 一到，就把这一轮攒下的过程行挪到它后面。
-			// `append` 一个已在文档里的节点是移动，不会复制。
 			if (isEventKind(message.kind)) {
-				state.tailEvents.push({ node, label: eventLabel(message), slug: message.fromSlug });
-			} else if (state.tailEvents.length > 0) {
-				// 攒着的过程行收成一组再挪到他这句话后面（十几条平铺会把正文埋掉）。
-				const group = wrapEvents(
-					message.fromSlug,
-					personOf(message.fromSlug)?.label ?? message.fromSlug,
-					state.tailEvents.map((entry) => entry.node),
-					state.tailEvents.map((entry) => entry.label),
-				);
-				for (const event of group) el.feed.append(event);
-				state.tailEvents = [];
+				// 过程行交给 appendEventRow：并进正在跑的组，或者开一个新组。
+				// 它拿到的必须是「这一行」这个元素（fragment 判断不了类名），
+				// 而且要在挂到 feed 之前判，否则 lastElementChild 就是它自己。
+				appendEventRow(message, buildEventRow(message));
+			} else {
+				el.feed.append(buildOne(message, streamCtx(), previous));
+				// 他开口了：这一轮的组头挪到他这句话后面（`after` 是移动，不复制），计时定格。
+				closeOpenGroups(message.at, message.fromSlug, el.feed.lastElementChild);
 			}
+			state.lastRendered = message.seq;
 		} else if (index >= 0) {
 			// 就地改一行（占位填充、编辑）。整列重画会把别的行也一起换掉，
 			// 正在流式写入的 `.md` 就丢了落点。
@@ -2010,6 +2082,12 @@ function boot() {
 			renderActivity();
 		}
 	}, TICK_MS);
+
+	// 过程组跑着时要逐秒跳：只改那一个 span 的文字，别顺手重画整列。
+	window.setInterval(() => {
+		tickRunningGroups();
+		tickActivity();
+	}, 1000);
 
 	window.addEventListener("beforeunload", closeChannelStream);
 }

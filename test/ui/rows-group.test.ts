@@ -1,0 +1,119 @@
+/**
+ * 过程行（think / tool / work）的文案与分组 —— 第二批验收的核心。
+ *
+ * 这批测试全部打在 rows.js 的纯函数上（node 环境没有 DOM）：摘要、组头、
+ * 计时、分组。DOM 只负责把这些字符串画出来，所以这里绿了，两条渲染路径
+ * （整列重建 / SSE 增量）只要用同一套函数，文案就一定一致。
+ *
+ * 盯住的四件事对应老板的五个毛病：
+ *   1. 每行写出做了什么（命令本身、思考第一句、文件名），单行 60 字；
+ *   2. 一个人连续干活只出一个组头（splitRuns 一段一组）；
+ *   4. 组头说人话：已完成，用时 55 秒 / 正在执行 · 67s；
+ *   5. 计时用 at 推、非负、跑着时随 now 递增、结束后定格。
+ */
+import { describe, expect, it } from "vitest";
+import {
+	SUMMARY_LIMIT,
+	eventSummary,
+	groupHeader,
+	groupSpan,
+	groupStatus,
+	splitRuns,
+} from "../../ui/web/js/rows.js";
+
+const think = (text, at) => ({ kind: "think", fromSlug: "林越", text, at });
+const work = (text, at) => ({ kind: "work", fromSlug: "林越", text, at });
+const tool = (text, at) => ({ kind: "tool", fromSlug: "林越", text, at });
+
+describe("eventSummary：每行写出做了什么", () => {
+	it("运行命令写命令本身，不是「执行了命令」", () => {
+		expect(eventSummary(work("$ npm test 2>&1 | tail -20", 1))).toBe("npm test 2>&1 | tail -20");
+		// tool 形态的 run 也要抠出 command
+		expect(eventSummary(tool('run {"command":"npm run check"}', 1))).toBe("npm run check");
+		// 14 条命令的摘要必须互不相同，否则又是一团重复的废话
+		const lines = Array.from({ length: 14 }, (_, i) => eventSummary(work(`$ step-${i} --flag`, i)));
+		expect(new Set(lines).size).toBe(14);
+	});
+
+	it("认真实投影格式（key=value · key=value，不是 JSON）", () => {
+		// 这两条是 src/core/channel/transcript.ts 里的真实样子，不是捏造的 JSON
+		expect(eventSummary(tool("run command=npm start · cwd=/Users/kirer/projects/ai-company", 1))).toBe("npm start");
+		expect(eventSummary(tool("read_file path=ui/web/js/rows.js", 1))).toBe("ui/web/js/rows.js");
+		expect(eventSummary(tool("write_file path=test/ui/a.test.ts · content=xxx", 1))).toBe("test/ui/a.test.ts");
+		// 多行命令只取第一行；参数里的 · 不能把值切断
+		expect(eventSummary(tool("run command=npm test\n2>&1 | tail -20 · cwd=/x", 1))).toBe("npm test");
+	});
+
+	it("work 只取 `$ ` 后第一行当命令，不把输出压进来", () => {
+		const text = "$ npm test 2>&1 | tail -20\n\n Test Files 46 passed\n      Tests 416 passed";
+		expect(eventSummary(work(text, 1))).toBe("npm test 2>&1 | tail -20");
+		expect(eventSummary(work("$ ls -la", 1))).toBe("ls -la");
+	});
+
+	it("思考取第一句，读写文件给文件名", () => {
+		expect(eventSummary(think("先看看仓库里有哪些文件。再决定改哪几个。", 1))).toBe("先看看仓库里有哪些文件。");
+		expect(eventSummary(tool('read_file {"path":"ui/web/js/rows.js"}', 1))).toBe("ui/web/js/rows.js");
+		expect(eventSummary(tool('write_file {"path":"test/ui/a.test.ts"}', 1))).toBe("test/ui/a.test.ts");
+	});
+
+	it("压成一行并截到 60 字，多出来用省略号收尾", () => {
+		const long = "x".repeat(200);
+		const summary = eventSummary(work(`$ ${long}`, 1));
+		expect(summary).toHaveLength(SUMMARY_LIMIT);
+		expect(summary.endsWith("…")).toBe(true);
+		expect(summary).not.toContain("\n");
+		// 换行也要压平：一条多行命令只许占一行
+		expect(eventSummary(think("第一行\n第二行", 1))).not.toContain("\n");
+	});
+});
+
+describe("splitRuns：一个连续干活段只出一个组头", () => {
+	it("同一个人连着 14 条过程合成一段（全屏只有一个组头）", () => {
+		const run = Array.from({ length: 14 }, (_, i) => (i % 2 === 0 ? think(`第 ${i} 步`, i) : work(`$ c${i}`, i)));
+		expect(splitRuns(run)).toHaveLength(1);
+	});
+
+	it("中间有人插话就切成两段，不会把两个人的活算成一段", () => {
+		const a = { kind: "think", fromSlug: "林越", at: 1 };
+		const b = { kind: "think", fromSlug: "沈舟", at: 2 };
+		// 林越 → 沈舟 → 林越：三段，前后两段不能被并成一段（那会把别人的时间算进去）
+		expect(splitRuns([a, b, a])).toHaveLength(3);
+		expect(splitRuns([a, a, a]).map((run) => run.length)).toEqual([3]);
+		expect(splitRuns([])).toEqual([]);
+	});
+});
+
+describe("组头与计时", () => {
+	it("跑着「正在执行 · 67s」，跑完「已完成，用时 55 秒」", () => {
+		expect(groupStatus({ running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("正在执行 · 67s");
+		expect(groupStatus({ running: false, startAt: 0, endAt: 55_000 })).toBe("已完成，用时 55 秒");
+		expect(groupHeader({ name: "知言", running: false, startAt: 0, endAt: 55_000 })).toBe("知言 已完成，用时 55 秒");
+	});
+
+	it("跑着的秒数随 now 递增，结束后定格不倒退", () => {
+		const startAt = 1_000_000;
+		const running = (now) => groupStatus({ running: true, startAt, endAt: 0, now });
+		expect(running(startAt + 55_000)).toBe("正在执行 · 55s");
+		expect(running(startAt + 67_000)).toBe("正在执行 · 67s");
+		// 定格之后传 endAt：不管 now 涨到哪都不变，也不会比跑着时小
+		const done = groupStatus({ running: false, startAt, endAt: startAt + 67_000, now: startAt + 999_000 });
+		expect(done).toBe("已完成，用时 67 秒");
+		expect(Number(/(\d+) 秒/.exec(done)[1])).toBeGreaterThanOrEqual(67);
+	});
+
+	it("组起点用第一条过程行的 at；有 startedAt 就用 startedAt", () => {
+		const span = groupSpan([{ at: 2_000 }, { at: 9_000 }, { at: 20_000 }]);
+		expect(span).toEqual({ startAt: 2_000, endAt: 20_000, count: 3 });
+		// 一轮带 startedAt 时，组起点是开跑那一刻，不是首条投影落地那一刻
+		expect(groupSpan([{ at: 9_000, startedAt: 3_000 }, { at: 20_000 }]).startAt).toBe(3_000);
+	});
+
+	it("新来一条过程行不会把起点清零，也不会算出负时间", () => {
+		const first = groupSpan([{ at: 5_000 }, { at: 6_000 }]);
+		const later = groupSpan([{ at: 5_000 }, { at: 6_000 }, { at: 60_000 }]);
+		expect(later.startAt).toBe(first.startAt);
+		expect(later.endAt).toBe(60_000);
+		// 时钟被拨回（endAt < startAt）也只算 0 秒，不出负数
+		expect(groupStatus({ running: false, startAt: 10_000, endAt: 4_000 })).toBe("已完成，用时 0 秒");
+	});
+});

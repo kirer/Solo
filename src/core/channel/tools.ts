@@ -435,11 +435,22 @@ export function createCoreTools(deps: CoreToolDeps) {
 
 			// 要老板拍板：仅两种情形把 owner 加进 mentions（**不改正文**）：
 			//  1) 消息显式 @了老板（messageText 里的 @owner/@老板 已由 parseMentions 解析命中）；
-			//  2) 消息是「决策」类（kind=decision，即明确 owner 决策）。
+			//  2) 消息是「决策」类（kind=decision），且**没有明确点别人**。
 			// 旧逻辑还用「要不要/请确认/等你定」等关键词嗅探正文，会把普通 @同事 的协作消息
 			// 误标「需要我」并塞进 owner —— 这一条关键词嗅探已在 #4 移除。
+			//
+			// `decision` 曾经无条件叫老板，于是「@知言 … 要不要做，你和老板定」这种
+			// 内部结论也被塞进「N 件找你」。老板的原话：「明明他们 at 的别人，跟我有什么关系」。
+			// 判据与「找你」列表一致：明确点了别人而没点老板的，就不是找老板的。
+			const typedMentions = parseMentions(messageText, roster);
+			const addressedOthers =
+				targetChannel === undefined
+					? []
+					: typedMentions.filter(
+							(slug) => slug !== OWNER && targetChannel.members.includes(slug),
+						);
 			const wakeOwner =
-				kind === "decision" || parseMentions(messageText, roster).includes(OWNER);
+				kind === "decision" ? addressedOthers.length === 0 : typedMentions.includes(OWNER);
 			// 私聊里对方一定被叫醒（wakeOnAll 已经兜住），但要确保 `mentions` 里有他 ——
 			// 界面的「@ 我」红点、未读口径都读这个字段。
 			const privateMention =

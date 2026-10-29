@@ -70,6 +70,15 @@ async function setup(options: {
 		"---\nname: 沈舟\ntitle: 前端开发\nmanager: owner\n---\n\n写小恐龙。\n",
 		"utf8",
 	);
+	if (options.colleague !== undefined) {
+		// 同事必须真的在名册里，`parseMentions` 才会把 `@林越` 解析成 slug。
+		await mkdir(join(agentsRoot, options.colleague), { recursive: true });
+		await writeFile(
+			join(agentsRoot, options.colleague, "identity.md"),
+			`---\nname: ${options.colleague}\ntitle: 前端开发\nmanager: owner\n---\n\n写小恐龙。\n`,
+			"utf8",
+		);
+	}
 
 	const { models } = setupModels(process.env, { workspace: root });
 	const runtime = await openCore({
@@ -230,6 +239,17 @@ describe("要老板拍板就 @ 老板", () => {
 		expect(message?.mentions).toContain(OWNER);
 		expect(message?.text).not.toContain("@owner");
 		expect(recipientsOf(state.channels[PROJ]!, message!)).toContain(OWNER);
+	});
+
+	it("kind=decision 但 @ 了同事 → 不补 owner（内部结论不叫老板）", async () => {
+		const { say, snapshot } = await setup({ colleague: "林越" });
+		const line = "@林越 计时先按 at 走，要不要加 startedAt 以后再说";
+		await say({ text: line, kind: "decision" });
+		const state = await snapshot();
+		const message = lastSpoken(state, PROJ, line);
+		expect(message?.mentions).toContain("林越");
+		expect(message?.mentions).not.toContain(OWNER);
+		expect(recipientsOf(state.channels[PROJ]!, message!)).not.toContain(OWNER);
 	});
 
 	it("正文显式 @owner 也能解析成 owner 并叫醒他（不靠关键词嗅探）", async () => {
