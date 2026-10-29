@@ -30,7 +30,7 @@ import {
 	isNeed as isNeedRow,
 	wrapEvents,
 } from "./rows.js";
-import { mergeMessages, previousOf } from "./messages.js";
+import { mergeMessage, mergeMessages, previousOf } from "./messages.js";
 import { installJankMonitor, mark } from "./jank.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -1041,7 +1041,9 @@ function openChannelStream(id) {
 		// 拿它自己当「上一条」会把头像和名字吃掉，见 messages.previousOf）。
 		const previous = previousOf(messages, index, isAppend);
 		if (index >= 0) {
-			const merged = { ...messages[index], ...message };
+			// 合并抽到 messages.mergeMessage：新消息没带 `processing` 时要显式清掉旧值，
+			// 否则占位填充完还按处理中画（老板看到的那条一直在转圈）。
+			const merged = mergeMessage(messages[index], message);
 			// 一个字都没变的消息不是「新消息」。
 			//
 			// 服务端按提交推送，一次运行里同一批消息会被反复带上（提示性重推，为了占位填充）。

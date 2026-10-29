@@ -43,3 +43,21 @@ export function previousOf(messages, index, isAppend) {
 	if (index > 0) return list[index - 1] ?? null;
 	return null;
 }
+
+/**
+ * 用同一条 seq 的新消息覆盖旧消息（SSE 占位填充走这里）。
+ *
+ * 坑在「省略的键」：服务端填充占位时不再带 `processing`（false 会被 JSON 省掉），
+ * 而 `{...旧, ...新}` 里旧对象的 `processing: true` 不会被覆盖 —— 于是界面继续
+ * 按处理中画，动画点永远停在那儿。所以这几个「只可能变没」的键，新消息没带就显式删掉。
+ * `status` 同理：它跟着新值走，新值没有就说明这条已经不是 pending 了。
+ */
+const DROP_WHEN_ABSENT = ["processing", "status"];
+
+export function mergeMessage(older, newer) {
+	const merged = { ...(older ?? {}), ...(newer ?? {}) };
+	for (const key of DROP_WHEN_ABSENT) {
+		if (newer == null || !Object.prototype.hasOwnProperty.call(newer, key)) delete merged[key];
+	}
+	return merged;
+}

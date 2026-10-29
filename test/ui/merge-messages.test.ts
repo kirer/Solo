@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeMessages, previousOf } from "../../ui/web/js/messages.js";
+import { mergeMessage, mergeMessages, previousOf } from "../../ui/web/js/messages.js";
 
 /**
  * 补历史时把一个频道的两页消息拼起来。
@@ -76,5 +76,24 @@ describe("previousOf：替换已有行时，上一条不能是自己", () => {
 		expect(previousOf(messages, 0, false)).toBeNull();
 		expect(previousOf([], -1, true)).toBeNull();
 		expect(previousOf(null, 3, false)).toBeNull();
+	});
+});
+
+describe("mergeMessage：占位填充后不许残留 processing", () => {
+	const placeholder = { seq: 7, fromSlug: "知言", kind: "say", text: "开始处理", processing: true, status: "pending", at: 1_000 };
+
+	it("旧 processing:true + 新消息没有该键 → 结果里没有 processing（也不再是 pending）", () => {
+		// 服务端填充时不带 processing（false 会被省略），spread 不会覆盖旧值 —— 必须显式删
+		const merged = mergeMessage(placeholder, { seq: 7, kind: "say", text: "做完了。", at: 9_000 });
+		expect("processing" in merged).toBe(false);
+		expect("status" in merged).toBe(false);
+		expect(merged.text).toBe("做完了。");
+		expect(merged.at).toBe(9_000);
+	});
+
+	it("新消息明确带 processing:true 时保留；别的字段照旧被覆盖", () => {
+		const merged = mergeMessage(placeholder, { seq: 7, processing: true, text: "还在跑", at: 2_000 });
+		expect(merged.processing).toBe(true);
+		expect(merged.text).toBe("还在跑");
 	});
 });
