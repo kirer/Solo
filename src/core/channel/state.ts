@@ -60,7 +60,7 @@ export type Message = {
 	status?: "pending" | "done" | "error";
 	/** T-016：占位消息归属的「被唤醒人」slug（与 `from` 相同，仅用于前端关联 @ 动作与占位气泡）。 */
 	pendingFor?: string;
-	/** T-016：处理中指示占位（显示动画文案「X 开始处理…」），被真实回复原地覆盖后消失。 */
+	/** T-016：处理中指示占位（显示动画文案「开始处理…」），被真实回复原地覆盖后消失。 */
 	processing?: boolean;
 	/**
 	 * 这一条是「过程话」而不是结论（ADR-065）。

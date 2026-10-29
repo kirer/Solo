@@ -8,7 +8,7 @@
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
 import { describe, expect, it } from "vitest";
-import { channelDetail, channelList } from "../../src/core/shell/view.ts";
+import { channelDetail, channelList, messageView } from "../../src/core/shell/view.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/state.ts";
 
@@ -130,6 +130,19 @@ describe("T-013：个人频道的投影镜像不点亮 @ 红点，真实私聊 @
 		const dm = list.find((c) => c.id === "dm:owner-gu")!;
 		expect(dm.mentions).toBe(1);
 	});
+	it("B 处理中占位：messageView 把 processing 透传给前端（私聊助理场景）", () => {
+		const channel = { id: "dm:owner-lin", title: "林越", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
+		const state = stateOf([channel], {
+			"dm:owner-lin": [
+				{ seq: 1, from: "owner", at: AT, text: "在吗", kind: "chat", mentions: [] },
+				{ seq: 2, from: "lin", at: AT + 1, text: "开始处理…", kind: "chat", status: "pending", pendingFor: "lin", processing: true, mentions: [] },
+			],
+		});
+		const view = messageView(state, channel, state.messages["dm:owner-lin"][1], directoryOf({ lin: "林越" }), "owner");
+		expect(view.processing).toBe(true);
+		expect(view.pendingFor).toBe("lin");
+	});
+
 
 	it("群频道里的 @ 老板照常计数（与 013 无关的普通场景）", () => {
 		const state = withMessages("all", [

@@ -1254,33 +1254,18 @@ body[data-layout="bubble"] .attach-files {
 }
 
 
-/* ── 处理中指示（B）：某人收到 @他 / 直接发给他的消息后出现的「X 开始处理…」动画行 ── */
-.row-processing {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	padding: 4px 0 4px 2px;
-	color: var(--ink-2, #6b7280);
-	font-size: 13px;
-	line-height: 1.5;
-	opacity: 0.9;
+/* ── 处理中指示（B）：某人收到 @他 / 直接发给他的消息后出现的「开始处理…」气泡 ──
+   它是一条正常聊天消息：行结构、头像、名字、气泡全部复用 .row-say，只是文案是「开始处理…」，
+   末尾挂三个跳动的点，气泡整体极轻地呼吸一下。被真实回复原地覆盖后就地变成普通气泡（#92/#97）。 */
+.row-processing .row-body > .md {
+	animation: proc-breathe 2.6s ease-in-out infinite;
 }
-.row-processing .proc {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-.row-processing .proc-who {
-	font-weight: 600;
-	color: var(--ink, #1f2430);
-}
-.row-processing .proc-text {
-	color: var(--ink-2, #6b7280);
-}
-/* 跳动省略号：三点依次淡入淡出，传达「正在处理」而不卡死 */
+/* 跳动省略号：三点依次起伏，传达「正在处理」而不卡死 */
 .row-processing .proc-dots {
 	display: inline-flex;
 	gap: 2px;
+	margin-left: 3px;
+	vertical-align: baseline;
 }
 .row-processing .proc-dots i {
 	width: 4px;
@@ -1296,6 +1281,11 @@ body[data-layout="bubble"] .attach-files {
 	0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
 	40% { opacity: 1; transform: translateY(-2px); }
 }
+@keyframes proc-breathe {
+	0%, 100% { opacity: 0.78; }
+	50% { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
 	.row-processing .proc-dots i { animation: none; opacity: 0.5; }
+	.row-processing .row-body > .md { animation: none; opacity: 0.9; }
 }

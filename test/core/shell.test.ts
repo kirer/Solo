@@ -106,7 +106,7 @@ describe("装配", () => {
 			expect(JSON.stringify(entry?.data)).toContain("在吗");
 
 			const state = await shell.channels();
-			// B（处理中指示）：@A 会在同频道为其创建一条 processing 占位（text="X 开始处理…"），真实消息在前、占位在后。
+			// B（处理中指示）：@A 会在同频道为其创建一条 processing 占位（text="开始处理…"），真实消息在前、占位在后。
 			const texts = state.messages.all?.map((message) => message.text) ?? [];
 			expect(texts).toContain(`@${slug} 在吗`);
 			const pending = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug);
@@ -234,6 +234,28 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 				expect(state.messages[ownerDm.id] ?? []).toHaveLength(0);
 			}
 			expect((state.messages.all ?? []).some((m) => m.status === "pending")).toBe(true);
+		} finally {
+			await opened.close();
+		}
+	});
+	test("B 私聊助理：老板私聊知言视图层透传 processing（老板能看到动画，#86）", async () => {
+		const { root, agents, projects } = await workspace();
+		const { models } = setupModels(process.env, { workspace: root });
+		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		try {
+			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			const dmId = `dm:owner-${slug}`;
+			await shell.ownerSay({ channelId: dmId, text: "在吗，帮我看下这个" });
+			const state = (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+			const channel = state.channels[dmId];
+			const placeholder = (state.messages[dmId] ?? []).find((m) => m.processing === true);
+			expect(placeholder).toBeDefined();
+			// 视图层（SSE / GET 历史都走 messageView）必须透传 processing 字段，前端才渲染动画。
+			const { messageView } = await import("../../src/core/shell/view.ts");
+			const view = messageView(state, channel, placeholder, shell.directory, "owner");
+			expect(view.processing).toBe(true);
+			expect(view.pendingFor).toBe(slug);
 		} finally {
 			await opened.close();
 		}

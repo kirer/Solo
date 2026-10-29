@@ -370,7 +370,7 @@ function streamCtx() {
 	return {
 		people: state.people,
 		// 两个来源取并集：后端判定的 attention，以及前端按「提问 + 点名老板」算的。
-		isNeed: (message) => message.status === "pending" && !message.processing || need.has(message.seq) || isNeedRow(message),
+		isNeed: (message) => message.processing !== true && ((message.status === "pending") || need.has(message.seq) || isNeedRow(message)),
 	};
 }
 

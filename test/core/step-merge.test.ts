@@ -115,7 +115,7 @@ async function setup(): Promise<{
 	};
 }
 
-/** 真正的发言：排掉系统留痕（note）和 @ 之后生成的「X 开始处理…」占位。 */
+/** 真正的发言：排掉系统留痕（note）和 @ 之后生成的「开始处理…」占位。 */
 function spoken(state: ChannelState): readonly Message[] {
 	return (state.messages[PROJ] ?? []).filter(
 		(message) => message.kind !== "note" && message.processing !== true && message.status !== "pending",

@@ -59,6 +59,8 @@ const ICONS = {
 /** 一条消息是不是「需要你」。这是顶栏 N 件找你与左侧 2px 竖线的唯一来源。 */
 export function isNeed(message) {
 	if (!message) return false;
+	// 「开始处理…」占位的 status 也是 pending，但它不是待办、不是要老板拍板的东西。
+	if (message.processing === true) return false;
 	if (message.kind === "pending" || message.status === "pending") return true;
 	if (message.fromSlug === "owner") return false;
 	// 提问，且点名了老板（owner 的 id 恒为 0）。
@@ -321,16 +323,25 @@ function parsePending(message) {
 }
 
 /**
- * 处理中指示：某人收到 @他 / 直接发给他的消息后，在他所在频道出现的「开始处理…」动画行。
- * 不是拍板卡、不是普通气泡——纯状态提示，被该人真实回复原地覆盖（processing 标记消失、status=done）后走 sayRow 渲染。
+ * 处理中指示：某人收到 @他 / 直接发给他的消息后，在他所在频道出现的「开始处理…」**气泡**。
+ *
+ * 它就是一条普通聊天消息 —— 同一个头像、同一个气泡样式，只是文案是「开始处理…」、
+ * 末尾多三个跳动的点，气泡整体极轻微呼吸。被该人真实回复原地覆盖（processing 标记消失、
+ * status=done）后，同一个 seq 就地变成普通气泡，不是一条孤立的闪烁条（#92）。
  */
-function processingRow(message) {
-	const row = document.createElement("div");
-	row.className = "row row-processing";
-	row.dataset.seq = String(message.seq);
+function processingRow(message, ctx, grouped, cont) {
+	const row = sayRow(message, ctx, grouped, cont);
+	row.classList.add("row-processing");
 	row.dataset.kind = "processing";
-	const text = escapeHtml(message.text ?? "");
-	row.innerHTML = `<span class="proc"><span class="proc-text">${text}</span><span class="proc-dots"><i></i><i></i><i></i></span></span>`;
+	const dots = document.createElement("span");
+	dots.className = "proc-dots";
+	dots.innerHTML = "<i></i><i></i><i></i>";
+	// 点跟着文案走：正文最后一段的句尾，不是另起一行。
+	const md = row.querySelector(".md");
+	const tail = md?.lastElementChild;
+	if (tail && tail.tagName === "P") tail.append(dots);
+	else if (md) md.append(dots);
+	else row.querySelector(".row-body")?.append(dots);
 	return row;
 }
 
@@ -542,11 +553,21 @@ export function buildStream(messages, ctx = {}) {
 			continue;
 		}
 
-		// B（处理中指示）：processing 占位渲染为动画状态行（非拍板卡、非气泡）。
+		// B（处理中指示）：processing 占位按一条普通聊天消息画（头像 + 气泡，见 processingRow）。
+		// 必须在 pending 分支之前拦：占位的 status 也是 pending，不拦就会被画成拍板卡。
 		if (message.processing === true) {
-			frag.append(processingRow(message));
+			const gap = prevSay === null ? Number.POSITIVE_INFINITY : message.at - prevSay.at;
+			const grouped = prevSay !== null && prevSay.fromSlug === message.fromSlug && gap < GROUP_MS && gap >= 0;
+			const cont = grouped && gap <= CONT_MS;
+			flushEvents(message.fromSlug);
+			if (!grouped) {
+				for (const sep of timeSepNodes(message, lastAt ? { at: lastAt } : null)) frag.append(sep);
+			}
+			frag.append(processingRow(message, full, grouped, cont));
+			for (const node of takeEvents(message.fromSlug)) frag.append(node);
+			flushEvents();
+			prevSay = message;
 			lastAt = message.at;
-			prevSay = null;
 			continue;
 		}
 
