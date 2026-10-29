@@ -229,9 +229,54 @@ export async function pruneTerminalTasks(databasePath: string, retentionMs = TAS
 	}
 }
 
+/** 每个会话保留多少条「已结算」的 submission 记录。 */
+const SUBMISSION_KEEP_PER_CONVERSATION = 500;
+
+/**
+ * 回收「已结算的输入记录」，每个会话只留最近 N 条。
+ *
+ * 为什么要管这个：`submissions` 是**每轮一条**的记账（实测 177 done + 2 unanswered，
+ * `conversations` 只有 4 个），只增不减。它不是待办 —— `status` 是 `done`/`unanswered`
+ * 的都已经结算过，不会再被谁处理，留着只是历史。
+ *
+ * 为什么按「条数」而不是「时间」：这张表的记录里**没有时间戳**（只有 conversationId /
+ * requestId / status / entry），没法按天筛；按每会话保留最近 N 条既能给表一个确定上界，
+ * 又不会误删刚发生的记录（合并唤醒会让最近这些记录变化很快，必须保守）。
+ *
+ * 只删终态：`queued` / `placed` 一律不碰（那是真在排队的活）。
+ */
+export async function pruneTerminalSubmissions(
+	databasePath: string,
+	keepPerConversation = SUBMISSION_KEEP_PER_CONVERSATION,
+): Promise<number> {
+	if (databasePath === ":memory:") return 0;
+	const { DatabaseSync } = await import("node:sqlite");
+	let db: InstanceType<typeof DatabaseSync> | undefined;
+	try {
+		db = new DatabaseSync(databasePath);
+		const result = db
+			.prepare(
+				`DELETE FROM submissions WHERE status IN ('done', 'unanswered') AND id NOT IN (
+					SELECT id FROM submissions AS inner_table
+					WHERE inner_table.conversation_id = submissions.conversation_id
+					  AND inner_table.status IN ('done', 'unanswered')
+					ORDER BY id DESC LIMIT ?
+				)`,
+			)
+			.run(keepPerConversation);
+		return Number(result.changes ?? 0);
+	} catch {
+		return 0;
+	} finally {
+		db?.close();
+	}
+}
+
 export async function openCore(options: OpenCoreOptions, context: Context = BACKGROUND_CONTEXT): Promise<CoreRuntime> {
 	const pruned = await pruneTerminalTasks(options.databasePath);
 	if (pruned > 0) console.error(`[core] 回收 ${pruned} 条 3 天前的已完成任务记录`);
+	const prunedSubmissions = await pruneTerminalSubmissions(options.databasePath);
+	if (prunedSubmissions > 0) console.error(`[core] 回收 ${prunedSubmissions} 条已结算的输入记录`);
 	const storage = await openNodeSqliteStorage(options.databasePath);
 	const raw = await DurableHarness.open(
 		storage,

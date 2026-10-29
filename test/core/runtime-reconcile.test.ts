@@ -12,7 +12,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRegistry, setupModels, BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
-import { openCore, pruneTerminalTasks, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import { openCore, pruneTerminalSubmissions, pruneTerminalTasks, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
 
 const roots: string[] = [];
@@ -91,6 +91,46 @@ describe("A3 回收 3 天前的已完成任务记录", () => {
 		try {
 			const ids = (check.prepare("SELECT id FROM tasks ORDER BY id").all() as { id: number }[]).map((row) => String(row.id));
 			expect(ids).toEqual(["9002", "9003"]);
+		} finally {
+			check.close();
+		}
+	});
+});
+
+describe("已结算的输入记录回收（submissions）", () => {
+	it("每个会话只留最近 N 条终态记录，排队中的一条都不动", async () => {
+		const ws = await freshWs();
+		const { models } = setupModels(process.env, { workspace: ws });
+		const first = await openCore({ databasePath: join(ws, "core.sqlite"), models, registry: createRegistry() });
+		await first.close();
+
+		const db = new DatabaseSync(join(ws, "core.sqlite"));
+		try {
+			const insert = db.prepare(
+				"INSERT INTO submissions (id, conversation_id, request_id, status, record) VALUES (?, ?, ?, ?, ?)",
+			);
+			for (let i = 1; i <= 20; i += 1) {
+				insert.run(String(i), 7, `ch:x:${i}:a`, "done", JSON.stringify({ conversationId: 7, requestId: `ch:x:${i}:a`, type: "input", status: "done", id: i }));
+			}
+			// 另一会话，只有 2 条 —— 不该被跨会话合并计数
+			insert.run("101", 8, "ch:y:1:a", "done", JSON.stringify({ conversationId: 8, requestId: "ch:y:1:a", type: "input", status: "done", id: 101 }));
+			insert.run("102", 8, "ch:y:2:a", "done", JSON.stringify({ conversationId: 8, requestId: "ch:y:2:a", type: "input", status: "done", id: 102 }));
+			// 排队中的不算终态
+			insert.run("201", 7, "ch:x:99:a", "queued", JSON.stringify({ conversationId: 7, requestId: "ch:x:99:a", type: "input", status: "queued", id: 201 }));
+		} finally {
+			db.close();
+		}
+
+		expect(await pruneTerminalSubmissions(join(ws, "core.sqlite"), 5)).toBe(15);
+		const check = new DatabaseSync(join(ws, "core.sqlite"));
+		try {
+			const rows = check.prepare("SELECT id, conversation_id FROM submissions ORDER BY id").all() as {
+				id: number;
+				conversation_id: number;
+			}[];
+			const byConv = (id: number) => rows.filter((row) => row.conversation_id === id).map((row) => String(row.id));
+			expect(byConv(7)).toEqual(["16", "17", "18", "19", "20", "201"]);
+			expect(byConv(8)).toEqual(["101", "102"]);
 		} finally {
 			check.close();
 		}
