@@ -290,12 +290,17 @@ export function runStartAt(all, run) {
 	for (let index = (stop < 0 ? 0 : stop) - 1; index >= 0; index -= 1) {
 		const item = list[index];
 		if (item?.fromSlug !== first.fromSlug) continue;
-		if (typeof item.startedAt !== "number") continue;
-		// 和首条过程行差太远就不是「这一轮」的占位：宁可退回首条 at，也别算出一个
-		// 几小时的总用时。
-		if (item.startedAt > base) return base;
-		if (base - item.startedAt > RUN_START_MAX_GAP_MS) return base;
-		return item.startedAt;
+		if (!isEventKind(item.kind)) {
+			// 碰到同一个人**说的一句话**就停：那是上一轮的结尾。再往前扫就会把上一轮
+			// 的占位算进来 —— 两轮挨得近（不到 10 分钟）时，这一轮刚开工就显示成
+			// 上一轮的总用时。
+			if (typeof item.startedAt !== "number") return base;
+			// 占位（带 startedAt 的说话行）就是这一轮的开跑时刻，但和首条过程行差太远
+			// 也不是同一轮：宁可退回首条 at，也别算出一个几小时的总用时。
+			if (item.startedAt > base) return base;
+			if (base - item.startedAt > RUN_START_MAX_GAP_MS) return base;
+			return item.startedAt;
+		}
 	}
 	return base;
 }

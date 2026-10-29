@@ -140,6 +140,18 @@ describe("组头与计时", () => {
 		expect(runStartAt([older, newer, firstEvent], [firstEvent])).toBe(now - 30_000);
 	});
 
+	it("上一轮的话是分界线：第二轮刚开工时计时不从上一轮算起", () => {
+		const now = 100_000_000;
+		// 第一轮：占位 + 几条过程行 + 一句「做完了」；第二轮紧接着开跑（间隔不到 10 分钟）
+		const p1 = { seq: 1, fromSlug: "林越", kind: "say", processing: true, at: now - 5 * 60 * 1000, startedAt: now - 5 * 60 * 1000 };
+		const e1 = { seq: 2, fromSlug: "林越", kind: "think", at: now - 4 * 60 * 1000 };
+		const said = { seq: 3, fromSlug: "林越", kind: "say", at: now - 60_000 };
+		const e2 = { seq: 4, fromSlug: "林越", kind: "think", at: now - 5_000 };
+		const all = [p1, e1, said, e2];
+		// 这一轮刚开工：起点就是首条过程行，不许把 5 分钟前的占位算进来
+		expect(runStartAt(all, [e2])).toBe(now - 5_000);
+	});
+
 	it("和首条过程行差超过 10 分钟就回退到首条 at", () => {
 		const now = 100_000_000;
 		const stale = { seq: 1, fromSlug: "林越", kind: "say", processing: true, at: now - 11 * 60 * 1000, startedAt: now - 11 * 60 * 1000 };
