@@ -29,7 +29,6 @@ import { EMPTY_ROSTER } from "./alias.ts";
 import type { MentionRoster } from "./alias.ts";
 import {
 	deliver,
-	clearQueueAhead,
 	coalesceQueue,
 	liveConversations,
 	renderDigest,
@@ -465,12 +464,10 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			message,
 			targets,
 			busy,
-			// 老板问话插队：让他排在前面的待办让路（只清排队项，不删消息、不打断正在跑的那一轮）。
-			clearQueue: (conversationId, keepRequestId) =>
-				clearQueueAhead(deps.harness, conversationId, keepRequestId, context),
-			// 合并唤醒：同一个会话最多留一个「还没开始」的排队项。agent 连发几条（过程话、
-			// 追问）时不再各自排一条，最后一条取代前面没开始的那些 —— 消息都在频道里，
-			// 少的只是重复唤醒。
+			// 合并唤醒（也负责老板插队）：同一个会话最多留一个「还没开始」的排队项。
+			// 谁连发几条（老板三句、agent 的过程话与追问）都只排一个唤醒，最后一条取代
+			// 前面没开始的那些 —— 消息都在频道里，少的只是重复唤醒。
+			// 这里只撤 `queued`，正在跑的那一轮不碰（撤它会连新消息一起吞掉，实测过）。
 			coalesceQueue: (conversationId, keepRequestId) =>
 				coalesceQueue(deps.harness, conversationId, keepRequestId, context),
 			conversationOf: deps.conversationOf,

@@ -104,17 +104,11 @@ export type DeliverOptions = {
 	 */
 	readonly uploadsRoot?: string;
 	/**
-	 * 把排在这条前面的排队项让路（见 `choresAheadOf`）。
-	 *
-	 * 只有老板说话时才调。返回让了几条。
-	 */
-	readonly clearQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
-	/**
 	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
 	 * 返回合并了几条（0 = 没合并）。不传就不合并。
 	 *
-	 * 与 `clearQueue` 的区别：`clearQueue` 是**老板插队**（只对老板的发言调，会顺带
-	 * 保住老板自己排的队），这里是**同一个人的连续唤醒去重**，对所有人的发言都生效。
+	 * 所有发言都走这一条：老板插队（撤掉排在他前面的待办）与「同一个人连发只排一个
+	 * 唤醒」是同一件事 —— 都是「这个会话最多留一个未开始的排队项」。
 	 */
 	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
 	/**
@@ -334,9 +328,6 @@ export async function deliver(
 					at: options.message.at,
 				});
 			}
-			if (options.clearQueue !== undefined && options.message.from === "owner") {
-				await options.clearQueue(Number(conversation.id), requestId).catch(() => 0);
-			}
 			const submission = await conversation.submit(
 				{
 					type: "input",
@@ -395,43 +386,6 @@ export async function deliver(
 }
 
 /**
- * 排在老板这句话前面、该让路的那些待办。
- *
- * 纯函数：吃 `harness.inspect().submissions`，吐 submission id。
- *
- * 为什么是「让路」而不是「打断」：实测过打断正在跑的那一轮（`abortTask`），
- * 结果是**老板这句话本身也被级联吞掉** —— 对方会话里连这条消息的条目都没有，
- * 老板看到的是彻底的没回应。丢他的消息是比慢更坏的错。
- *
- * 让路只碰**还没进 transcript 的排队项**（`status: "queued"`），一条都不删消息：
- * 那些消息还在频道里，对方下次被未读摘要叫醒时照样看得到。而老板这句话
- * 因此排在队头，跑完当前这一轮就轮到他。
- */
-export function choresAheadOf(
-	submissions: readonly {
-		readonly id: number | bigint | string;
-		readonly conversationId: number | bigint | string;
-		readonly status: string;
-		readonly requestId?: string | undefined;
-	}[],
-	conversationId: number,
-	keepRequestId: string,
-	max = 5,
-): (number | bigint | string)[] {
-	const out: (number | bigint | string)[] = [];
-	for (const submission of submissions) {
-		if (Number(submission.conversationId) !== conversationId) continue;
-		if (submission.status !== "queued") continue;
-		if (submission.requestId === keepRequestId) continue;
-		// 老板自己的排期不让路：他连说三句，就按顺序答三句。
-		if (submission.requestId?.includes(":owner:") === true) continue;
-		out.push(submission.id);
-		if (out.length >= max) break;
-	}
-	return out;
-}
-
-/**
  * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。
  *
  * 三条约束（知言 2026-10-30 定）：
@@ -439,7 +393,10 @@ export function choresAheadOf(
  * 2. **正在跑的那条不算**：只认 `status: "queued"`，`placed` 已经开始了，它不会被撤；
  * 3. **消息一条都不删**：撤的只是唤醒，那几条消息还在频道里，醒来读一遍就看到。
  *
- * 老板自己排的队不合并：他连说三句就该按顺序答三句（与 `choresAheadOf` 同一个理由）。
+ * 老板连发的几条**也合并**（2026-10-30 老板定）：他连说三句时，对方醒来读一遍频道就能
+ * 把三句一起答；排三个唤醒只会让它跑三趟、还各答一遍。消息一条都不删，所以「三句都看到」
+ * 不受影响。这里同时是**唯一**一份「谁该让路」的判据 —— 旧代码里老板插队另有一个
+ * `choresAheadOf`（跳过老板自己的排期），两套口径迟早分叉，已合并到这里。
  */
 export function queuedAhead(
 	submissions: readonly {
@@ -457,7 +414,6 @@ export function queuedAhead(
 		if (Number(submission.conversationId) !== conversationId) continue;
 		if (submission.status !== "queued") continue;
 		if (keepRequestId !== undefined && submission.requestId === keepRequestId) continue;
-		if (submission.requestId?.includes(":owner:") === true) continue;
 		out.push(submission.id);
 		if (out.length >= max) break;
 	}
@@ -465,7 +421,10 @@ export function queuedAhead(
 }
 
 /**
- * 合并唤醒的执行器：撤掉这个会话里还没开始的排队项，返回撤了几条。
+ * 合并唤醒的执行器（也负责老板插队）：撤掉这个会话里还没开始的排队项，返回撤了几条。
+ *
+ * 老板发消息时走的也是这里 —— 以前另有一条 `clearQueueAhead`，两个函数会去撤同一批
+ * 排队项（第二次白跑一趟），现在只有这一条路。
  *
  * 撤不掉（已经在跑、或者竞态里被别人取走）就跳过 —— 多叫醒一次只是慢，
  * 而「以为撤掉了其实没撤」会让人以为消息丢了。
@@ -492,36 +451,6 @@ export async function coalesceQueue(
 		}
 	}
 	return merged;
-}
-
-/**
- * 让路的执行器：把排在这条前面的排队项撤掉。
- *
- * 只撤 `status: "queued"`（还没进 transcript 的），撤不掉正在跑的那一轮 ——
- * 那条路我先试过 `abortTask`，它会连老板这句话一起吞掉（实测对方会话里连条目都没有）。
- */
-export async function clearQueueAhead(
-	harness: Harness,
-	conversationId: number,
-	keepRequestId: string,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<number> {
-	const inspection = await harness.inspect(context);
-	const chores = choresAheadOf(inspection.submissions, conversationId, keepRequestId);
-	let cleared = 0;
-	for (const id of chores) {
-		try {
-			await harness.abortSubmission(
-				id as Parameters<Harness["abortSubmission"]>[0],
-				context,
-				conversationId as Parameters<Harness["abortSubmission"]>[2],
-			);
-			cleared += 1;
-		} catch {
-			// 撤不掉就算了：它还是会被答，只是排在老板前面。
-		}
-	}
-	return cleared;
 }
 
 /**

@@ -109,8 +109,8 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 		{ id: 4, conversationId: 7, status: "queued", requestId: "ch:owner:proj:x:1:lin" },
 	];
 
-	test("只挑同会话、还没开始的；正在跑的不算，别的会话不算，老板排的队不算", () => {
-		expect(queuedAhead(submissions, 7)).toEqual([1]);
+	test("只挑同会话、还没开始的；正在跑的不算，别的会话不算，老板排的队也算（连发要合并）", () => {
+		expect(queuedAhead(submissions, 7)).toEqual([1, 4]);
 		expect(queuedAhead(submissions, 9)).toEqual([3]);
 	});
 
@@ -167,6 +167,58 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 		expect(submitted).toHaveLength(3);
 		// 第一、二条各撤掉前一条没开始的，第三条撤掉第二条：合并计数 0、1、1。
 		expect(bodies).toEqual(["0", "1", "1"]);
+		expect(queue.filter((item) => item.status === "queued")).toHaveLength(1);
+		expect(queue.filter((item) => item.status === "cancelled")).toHaveLength(2);
+	});
+});
+
+describe("老板连发三条也只排一个唤醒", () => {
+	test("三条消息都在频道里，未开始项只剩一个", async () => {
+		let nextId = 500;
+		const queue: { id: number; conversationId: number; status: string; requestId?: string }[] = [];
+		const harness = {
+			inspect: async () => ({ submissions: queue, tasks: [] }),
+			abortSubmission: async (id: number) => {
+				const found = queue.find((item) => item.id === id);
+				if (found !== undefined) found.status = "cancelled";
+			},
+		} as unknown as Harness;
+		const conversation = {
+			id: 7,
+			submit: async (input: { requestId?: string }) => {
+				queue.push({ id: nextId, conversationId: 7, status: "queued", requestId: input.requestId });
+				return { id: nextId++ };
+			},
+		};
+		const coalesceQueue = async (conversationId: number, keepRequestId: string) => {
+			const pending = queuedAhead((await harness.inspect()).submissions, conversationId, keepRequestId);
+			let merged = 0;
+			for (const id of pending) {
+				await harness.abortSubmission(id as number, undefined as never, undefined as never);
+				merged += 1;
+			}
+			return merged;
+		};
+
+		let state = stateWith({ id: "proj:x", title: "X", members: ["owner", "lin"] });
+		const mergedCounts: number[] = [];
+		for (const text of ["第一句", "第二句", "第三句"]) {
+			const { state: next, message } = appendMessage(state, "proj:x", { from: "owner", text, at: Date.now() });
+			state = next;
+			const result = await deliver({
+				digests: new Map(),
+				channel: state.channels["proj:x"]!,
+				message,
+				targets: ["lin"],
+				conversationOf: async () => conversation as never,
+				// 老板插队与「连发合并」现在同一条路（`coalesceQueue`）。
+				coalesceQueue,
+			});
+			mergedCounts.push(result.merged?.[0]?.count ?? 0);
+		}
+
+		expect(state.messages["proj:x"]!.map((item) => item.text)).toEqual(["第一句", "第二句", "第三句"]);
+		expect(mergedCounts).toEqual([0, 1, 1]);
 		expect(queue.filter((item) => item.status === "queued")).toHaveLength(1);
 		expect(queue.filter((item) => item.status === "cancelled")).toHaveLength(2);
 	});
