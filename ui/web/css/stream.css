@@ -717,6 +717,24 @@ button.evs:hover {
 	}
 }
 
+/*
+ * 已完成：组头只写「查看过程」+ 箭头（老板的口径：光一个空箭头「什么提示都没有」）。
+ * 名字与「已完成，用时 X 秒」不再上屏幕，只留在 aria-label 里 —— 看得见的地方干净，
+ * 又不至于让人不知道这里可以点。
+ */
+.row-events[data-state="done"] button.evs {
+	padding: 1px 4px;
+	opacity: 0.8;
+}
+
+.row-events[data-state="done"] button.evs:hover {
+	opacity: 1;
+}
+
+.row-events[data-state="done"] .evs-what {
+	color: var(--ink-3);
+}
+
 /* 跑着的组头比跑完的稍微亮一点：老板一眼要能分出「这条还在动」。 */
 .row-events[data-state="running"] button.evs .evs-what {
 	color: var(--ink-2);
@@ -733,6 +751,13 @@ button.evs:hover {
 	flex-direction: column;
 	align-items: stretch;
 	gap: 0;
+}
+
+/* 组里的过程行不再自带 48px 左缩进：它们已经在组头下面，再缩一次就歪了。
+   左缘和组头对齐，宽度吃满。 */
+.evs-list .row-event {
+	margin-left: 0;
+	max-width: 100%;
 }
 
 /* 单条过程行（组外的零星一条）。 */

@@ -13,9 +13,11 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+	DONE_HINT,
 	SUMMARY_LIMIT,
 	eventSummary,
 	groupHeader,
+	groupHeaderText,
 	groupSpan,
 	groupStatus,
 	runStartAt,
@@ -88,6 +90,15 @@ describe("组头与计时", () => {
 	it("跑着「正在执行 · 67s」，跑完「已完成，用时 55 秒」", () => {
 		expect(groupStatus({ running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("正在执行 · 67s");
 		expect(groupStatus({ running: false, startAt: 0, endAt: 55_000 })).toBe("已完成，用时 55 秒");
+		expect(groupHeader({ name: "知言", running: false, startAt: 0, endAt: 55_000 })).toBe("知言 已完成，用时 55 秒");
+	});
+
+	it("跑着写名字 + 正在执行；跑完只留一句「查看过程」，名字与用时只进 aria", () => {
+		expect(groupHeaderText({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("知言 正在执行 · 67s");
+		// 已完成：可见的是「查看过程」+ 箭头（老板说光一个空箭头什么提示都没有），
+		// 但不再显示名字和「已完成，用时 X 秒」—— 那些留在 aria-label（groupHeader）
+		expect(groupHeaderText({ name: "知言", running: false, startAt: 0, endAt: 55_000 })).toBe(DONE_HINT);
+		expect(DONE_HINT).toBe("查看过程");
 		expect(groupHeader({ name: "知言", running: false, startAt: 0, endAt: 55_000 })).toBe("知言 已完成，用时 55 秒");
 	});
 

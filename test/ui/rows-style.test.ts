@@ -49,6 +49,12 @@ describe("过程行的展开态", () => {
 		}
 	});
 
+	it("组里的过程行不再二次缩进，和组头左对齐", () => {
+		const rule = blocksOf(".evs-list .row-event").join("\n");
+		expect(rule).toContain("margin-left: 0");
+		expect(rule).toContain("max-width: 100%");
+	});
+
 	it("跑着和跑完分开：跑着有动点，且尊重减弱动效", () => {
 		expect(anyBlock(".evs-live i", "animation")).toBe(true);
 		expect(raw).toContain("prefers-reduced-motion");

@@ -18,14 +18,14 @@ import { channelDetailHtml, personDetailHtml } from "./detail.js";
 import { copyText, escapeHtml, headParts, relTime, sortChannels, unreadLabel } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
 import {
-	ACTIVITY_DONE_MS,
 	activityRun,
 	buildEventRow,
 	buildOne,
 	buildStream,
-	groupHeader,
 	groupStatus,
 	isEventKind,
+	markGroupDone,
+	mergeDoneGroups,
 	runStartAt,
 	isNeed as isNeedRow,
 	wrapEvents,
@@ -433,7 +433,14 @@ function appendEventRow(message, node) {
 	// 不然没人来收口，它会一直跳到 5 分钟超时才停 —— 屏幕上就是别人的活
 	// 明明干完了还写着「正在执行 · 300s」。
 	closeOpenGroups(undefined, undefined);
-	const [wrap] = wrapEvents(message.fromSlug, personOf(message.fromSlug)?.label ?? message.fromSlug, [node], {
+	// 相邻同名的已完成组能并就并：上一段刚收口、这一段又接着干，屏幕上只留一个箭头。
+	const prev = el.feed.lastElementChild;
+	const rows = [node];
+	if (prev?.classList?.contains("row-events") && prev.dataset.state === "done" && prev.dataset.slug === String(message.fromSlug ?? "")) {
+		for (const row of [...prev.querySelectorAll(".evs-list > .row-event")]) rows.unshift(row);
+		prev.remove();
+	}
+	const [wrap] = wrapEvents(message.fromSlug, personOf(message.fromSlug)?.label ?? message.fromSlug, rows, {
 		// 过程行本身不带 startedAt（它是处理中占位记的「触发时刻」），所以和组头、
 		// 活动行走同一个函数：往前找到这一轮的 runStartAt，别从首条投影起算。
 		startAt: runStartAt(state.detail?.messages ?? [], [message]),
@@ -454,15 +461,7 @@ function appendEventRow(message, node) {
 function closeOpenGroups(endAt, slug, afterNode = null) {
 	for (const group of el.feed.querySelectorAll('.row-events[data-state="running"]')) {
 		if (slug !== undefined && group.dataset.slug !== String(slug)) continue;
-		const startAt = Number(group.dataset.start ?? 0);
-		const end = Math.max(Number(endAt ?? group.dataset.end ?? startAt), startAt);
-		const name = group.dataset.name ?? "";
-		group.dataset.state = "done";
-		group.dataset.end = String(end);
-		const what = group.querySelector(".evs-what");
-		if (what) what.textContent = groupStatus({ running: false, startAt, endAt: end });
-		group.querySelector(".evs-live")?.remove();
-		group.querySelector(".evs")?.setAttribute("aria-label", groupHeader({ name, running: false, startAt, endAt: end }));
+		markGroupDone(group, endAt);
 		if (afterNode) afterNode.after(group);
 	}
 }
@@ -588,7 +587,7 @@ function errorBlock(message, retryLabel, onRetry) {
 
 /* ── 活动行 ─────────────────────────────────────────────────────────── */
 
-const act = { slug: "", running: null, startAt: 0, endAt: 0, hideTimer: 0 };
+const act = { slug: "", running: null, startAt: 0, endAt: 0 };
 
 /**
  * 底部活动行：和过程组头同一套文案与计时。
@@ -613,21 +612,13 @@ function renderActivity() {
 		act.slug = run.slug;
 		el.actAv.innerHTML = avatarSvg({ slug: run.slug, name, size: 22, state: "working" });
 	}
-	act.running = run.running;
+	act.running = true;
 	act.startAt = run.startAt;
 	act.endAt = run.endAt;
-	el.act.dataset.state = run.running ? "running" : "done";
+	el.act.dataset.state = "running";
 	el.actText.textContent = name;
-	el.actTime.textContent = groupStatus({
-		running: run.running,
-		startAt: run.startAt,
-		endAt: run.endAt,
-		now: Date.now(),
-	});
-	if (el.actLive) el.actLive.hidden = !run.running;
-	// 跑完的那一句只停 4 秒：到点自己收，不用等下一条消息来触发。
-	window.clearTimeout(act.hideTimer);
-	if (!run.running) act.hideTimer = window.setTimeout(hideActivity, ACTIVITY_DONE_MS);
+	el.actTime.textContent = groupStatus({ running: true, startAt: run.startAt, endAt: run.endAt, now: Date.now() });
+	if (el.actLive) el.actLive.hidden = false;
 }
 
 /** 跑着时每秒重算一次秒数（只改文字）。 */

@@ -9,7 +9,7 @@
  * 文案在 rows.js 的纯函数里，DOM 只负责画，所以这里断言文案与状态。
  */
 import { describe, expect, it } from "vitest";
-import { ACTIVITY_DONE_MS, activityRun, groupStatus } from "../../ui/web/js/rows.js";
+import { activityRun, groupStatus } from "../../ui/web/js/rows.js";
 
 const think = (at, slug = "知言") => ({ fromSlug: slug, kind: "think", text: "想一下。", at });
 const say = (at, slug = "知言") => ({ fromSlug: slug, kind: "say", text: "做完了。", at });
@@ -32,27 +32,17 @@ describe("activityRun：底部活动行的起点与状态", () => {
 		expect(groupStatus({ ...run, now: 10_000 })).toBe("正在执行 · 9s");
 	});
 
-	it("他说完话那一刻定格成「已完成，用时 X 秒」，4 秒后收掉", () => {
+	it("他一开口就收掉，不再停 4 秒显示「已完成」", () => {
 		const messages = [think(1_000), think(3_000), say(9_000)];
-		const justDone = activityRun(messages, 9_500);
-		expect(justDone?.running).toBe(false);
-		const frozen = groupStatus({ ...justDone, now: 9_500 });
-		expect(frozen).toBe("已完成，用时 8 秒");
-		// 时间往前走，文案不许变（也不许比跑着时小）
-		expect(groupStatus({ ...justDone, now: 12_000 })).toBe(frozen);
-		// 超过 4 秒就该收起来了
-		expect(activityRun(messages, 9_000 + ACTIVITY_DONE_MS + 1)).toBeNull();
+		// 老板改口径：跑完直接收掉，活动行只服务「正在跑」
+		expect(activityRun(messages, 9_001)).toBeNull();
+		expect(activityRun(messages, 9_500)).toBeNull();
 	});
 
-	it("别人说话不算这一段活的结束时间（不许把后一个人的发言记到前一个人头上）", () => {
+	it("别人说话时，前一个人的活动行直接收掉（不显示错人）", () => {
 		const messages = [think(1_000), think(3_000), say(9_000, "沈舟")];
-		// 结束时间 = 林越最后一条过程行（3s），不是沈舟说话的 9s
-		const run = activityRun(messages, 3_500);
-		expect(run?.slug).toBe("知言");
-		expect(run?.running).toBe(false);
-		expect(run?.endAt).toBe(3_000);
-		expect(groupStatus({ ...run, now: 3_500 })).toBe("已完成，用时 2 秒");
-		// 别人说话那一秒早就过了 4 秒窗口：这条不该再显示
+		// 最后一条不是过程行 → 没有「正在跑」可显示；不会把沈舟的发言算成知言的结束
+		expect(activityRun(messages, 3_500)).toBeNull();
 		expect(activityRun(messages, 9_500)).toBeNull();
 	});
 

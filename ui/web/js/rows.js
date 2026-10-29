@@ -293,61 +293,61 @@ export function groupStatus({ running = false, startAt = 0, endAt = 0, now = 0 }
 	return running ? `正在执行 · ${seconds}s` : `已完成，用时 ${seconds} 秒`;
 }
 
-/** 底部活动行：一段活离开屏幕后还显示多久「已完成」。 */
-export const ACTIVITY_DONE_MS = 4000;
 /** 底部活动行：多久没新过程行就不再当它还在跑。 */
 export const ACTIVITY_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * 底部那条活动行要显示哪一段活（纯函数，好测）。
  *
- * 起点和组头用同一套：`startedAt ?? 这一段第一条过程行的 at`。
- * 以前这里是「最后一条过程行的 at」—— 每来一条过程就清零重算，老板看到的是
- * 一个永远停在 5s 的表，而不是这一轮真实跑了多久。
+ * 起点和组头用同一套（`runStartAt`，即占位记下的 `startedAt`，没有才退回
+ * 第一条过程行的 `at`）。以前这里是「最后一条过程行的 at」—— 每来一条过程就
+ * 清零重算，老板看到的是一个永远停在 5s 的表。
  *
- * 返回 `null` 表示这一行该收起来：没有过程行、刚结束超过 4 秒、或者老板自己在说话。
+ * 老板后来的口径：跑完就直接收掉，不再停 4 秒显示「已完成」。所以最后一条不是
+ * 过程行（他开口了、或者老板自己说话）时，这一行就没有要显示的东西。
  */
 export function activityRun(messages, now = Date.now()) {
 	const list = Array.isArray(messages) ? messages.filter(Boolean) : [];
 	if (list.length === 0) return null;
 	const last = list[list.length - 1];
 	if (last.fromSlug === "owner") return null;
-	let endAt = Number(last.at ?? 0);
-	let endIndex = list.length - 1;
-	let running = true;
-	if (!isEventKind(last.kind)) {
-		endIndex -= 1;
-		const tail = list[endIndex];
-		if (endIndex < 0 || tail === undefined || !isEventKind(tail.kind)) return null;
-		// 只有「这一段活的主人在说话」时，才把他开口那一刻当作结束时间。
-		// 别人说话不能算成他的结束时间 —— 群里两个人交替说话，那样会把
-		// 后一个人的发言时刻记到前一个人头上，显示错人也算错时长。
-		if (last.fromSlug !== tail.fromSlug) endAt = Number(tail.at ?? endAt);
-		// 这一段活到此为止，显示 4 秒「已完成」再收掉。
-		if (now - endAt > ACTIVITY_DONE_MS) return null;
-		running = false;
-	}
-	const tail = list[endIndex];
-	if (!isEventKind(tail.kind)) return null;
+	if (!isEventKind(last.kind)) return null;
 	// 往回找同一个人的连续过程行：这一段就是这一轮活。
-	const slug = tail.fromSlug;
-	let startIndex = endIndex;
+	const slug = last.fromSlug;
+	let startIndex = list.length - 1;
 	while (startIndex > 0) {
 		const prev = list[startIndex - 1];
 		if (!isEventKind(prev.kind) || prev.fromSlug !== slug) break;
 		startIndex -= 1;
 	}
-	const run = list.slice(startIndex, endIndex + 1);
+	const run = list.slice(startIndex);
 	const span = groupSpan(run);
 	const startAt = runStartAt(list, run);
-	if (running && now - span.endAt > ACTIVITY_WINDOW_MS) return null;
-	return { slug, running, startAt, endAt };
+	if (now - span.endAt > ACTIVITY_WINDOW_MS) return null;
+	return { slug, running: true, startAt, endAt: span.endAt };
 }
+
+/** 已完成组的可见提示：一句人话 + 箭头，点开看过程。 */
+export const DONE_HINT = "查看过程";
 
 /** 完整组头：名字 + 状态。DOM 里名字单独一个节点，这里给测试和 aria 用。 */
 export function groupHeader({ name = "", ...timing } = {}) {
 	const status = groupStatus(timing);
 	return name ? `${name} ${status}` : status;
+}
+
+/**
+ * 组头**看得见**的那一段字。
+ *
+ * 老板的口径：跑完的过程组只留一句「查看过程」+ 展开箭头（不写名字、不写
+ * 「已完成，用时 X 秒」；他说光一个空箭头「什么提示都没有」）。只有跑着时才显示
+ * 「名字 正在执行 · 67s + 动点」。读屏和 tooltip 仍走 `groupHeader`（带名字和用时）。
+ */
+export function groupHeaderText({ name = "", running = false, startAt = 0, endAt = 0, now = 0 } = {}) {
+	// 跑完的组头只留一句「查看过程」+ 箭头：老板说光一个空箭头「什么提示都没有」，
+	// 但名字和「已完成，用时 X 秒」也不再往屏幕上放 —— 那些留在 aria-label 里。
+	if (!running) return DONE_HINT;
+	return name ? `${name} ${groupStatus({ running: true, startAt, endAt, now })}` : groupStatus({ running: true, startAt, endAt, now });
 }
 
 function firstQuote(text) {
@@ -683,6 +683,52 @@ export function eventLabel(message) {
 }
 
 /**
+ * 把 source 这个已完成组的行并进 target，只留 target 一个箭头。
+ *
+ * 老板要的是「相邻同名的已完成组能并就并」：同一段活被一句话打断、又接着干，
+ * 屏幕上不该出现两个一模一样的箭头。起点取更早的那个，终点取更晚的那个。
+ */
+export function mergeDoneGroups(target, source) {
+	if (!target || !source || target === source) return target;
+	const list = target.querySelector(".evs-list");
+	if (!list) return target;
+	for (const row of [...source.querySelectorAll(".evs-list > .row-event")]) list.append(row);
+	const start = Math.min(
+		Number(target.dataset.start ?? 0) || Number.POSITIVE_INFINITY,
+		Number(source.dataset.start ?? 0) || Number.POSITIVE_INFINITY,
+	);
+	if (Number.isFinite(start)) target.dataset.start = String(start);
+	target.dataset.end = String(Math.max(Number(target.dataset.end ?? 0), Number(source.dataset.end ?? 0)));
+	source.remove();
+	return target;
+}
+
+/**
+ * 把一个还在跑的组定格成「已完成」。
+ *
+ * 老板的口径是「跑完就收掉」：定格之后组头只剩一个箭头（`groupHeaderText` 在
+ * 不跑的时候返回空串），不再跳秒、不再有动点 —— 那种「已完成但还在闪」的样子
+ * 会让人以为它没结束。
+ *
+ * 只改这一个节点，不重建：重建会吃掉展开状态，而老板可能正开着它在看细节。
+ */
+export function markGroupDone(group, endAt) {
+	if (!group || group.dataset.state !== "running") return group;
+	const startAt = Number(group.dataset.start ?? 0);
+	const end = Number(endAt) || Date.now();
+	const name = group.dataset.name ?? "";
+	group.dataset.state = "done";
+	group.dataset.end = String(end);
+	const button = group.querySelector(".evs");
+	if (!button) return group;
+	button.setAttribute("aria-label", groupHeader({ name, running: false, startAt, endAt: end }));
+	// 定格 = 组头不再显示文字与动点，只留箭头（收起态也不变宽）。
+	button.innerHTML =
+		'<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
+	return group;
+}
+
+/**
  * 把一串过程行收成一个可展开的组。
  *
  * 一个人干一件事能留下十几条 think/tool。全都平铺出来，一屏全是「想了 1s」，
@@ -710,13 +756,11 @@ export function wrapEvents(slug, name, nodes, timing = {}) {
 	button.dataset.act = "expand";
 	button.setAttribute("aria-expanded", "false");
 	button.setAttribute("aria-label", groupHeader({ name, running, startAt, endAt, now }));
-	button.innerHTML = `<span class="evs-ico" aria-hidden="true">${
-		running ? ICONS.work : ICONS.check
-	}</span><b>${escapeHtml(name ?? "")}</b><span class="evs-what">${escapeHtml(
-		groupStatus({ running, startAt, endAt, now }),
-	)}</span>${
-		running ? '<span class="evs-live" aria-hidden="true"><i></i><i></i><i></i></span>' : ""
-	}<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+	button.innerHTML = running
+		? `<span class="evs-ico" aria-hidden="true">${ICONS.work}</span><b>${escapeHtml(name ?? "")}</b><span class="evs-what">${escapeHtml(
+				groupStatus({ running: true, startAt, endAt, now }),
+			)}</span><span class="evs-live" aria-hidden="true"><i></i><i></i><i></i></span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`
+		: `<span class="evs-what">${DONE_HINT}</span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
 	const body = document.createElement("div");
 	body.className = "evs-body";
 	body.hidden = true;
@@ -769,6 +813,17 @@ export function buildStream(messages, ctx = {}) {
 			entries.flatMap((entry) => entry.nodes),
 			{ startAt, endAt: lastAt, now, running },
 		)) {
+			// 相邻同名的已完成组并成一个箭头：中间只隔了一句话，屏幕上不该出现两个。
+			const prev = frag.lastElementChild;
+			if (
+				!running &&
+				prev?.classList?.contains("row-events") &&
+				prev.dataset.state === "done" &&
+				prev.dataset.slug === String(slug ?? "")
+			) {
+				mergeDoneGroups(prev, node);
+				continue;
+			}
 			frag.append(node);
 		}
 	};
