@@ -167,67 +167,75 @@ async function mergeStep(
 }
 
 /**
- * 一轮结束：把某人在某个频道里还没被填的处理中占位标成 `status: "error"`。
+ * 一轮结束：把这个人在这个频道里、属于这一轮的未填占位**删掉**。
  *
- * 返回收掉了几条，只用于日志/测试。**只碰还没被填的**（`processing === true`）：
- * 已经被真实回复填充的占位在填充时就把标记摘掉了，不会被这里二次改动。
+ * 为什么是删而不是标 `status: "error"`：占位是 `kind: "chat"` 的单人消息，标成 error 之后
+ * 它就是一条看得见的「他说了一句开始处理」—— 未读数、侧栏 preview、消息流全被污染。
+ * 它本来就不该算一句话，没人来填就该当没发生过。
+ *
+ * `upToAt` 是这一轮由哪条消息唤醒的：只删 `at <= upToAt` 的占位。老板中途插话会顺手
+ * 建一条**新的**占位（`at` 更大），不能被这一轮的收尾连带删掉。
  */
-export async function expirePlaceholders(
-	deps: { readonly harness: PostDeps["harness"]; readonly state?: ChannelState },
+export async function removePlaceholders(
+	deps: { readonly harness: PostDeps["harness"] },
 	channelId: string,
 	slug: string,
+	upToAt: number,
 	context: Context,
 ): Promise<number> {
-	let expired = 0;
+	let removed = 0;
 	await deps.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		const list = doc.messages[channelId] as Message[] | undefined;
 		if (list === undefined) return;
-		for (let index = 0; index < list.length; index += 1) {
+		// 从后往前删：splice 之后下标会变，倒序遍历不用重算。
+		for (let index = list.length - 1; index >= 0; index -= 1) {
 			const message = list[index];
 			if (message === undefined) continue;
 			if (message.from !== slug || message.processing !== true) continue;
-			// 下标替换 = 数组结构性变更，文档代理稳定落盘（与占位填充同一个手法）。
-			list[index] = { ...message, status: "error", processing: false };
-			expired += 1;
+			if (message.at > upToAt) continue;
+			list.splice(index, 1);
+			removed += 1;
 		}
 	}, context);
-	return expired;
+	return removed;
 }
 
 /** 占位最长活多久。与前端 `PLACEHOLDER_TTL_MS` 同一个数（10 分钟）。 */
 export const PLACEHOLDER_TTL_MS = 10 * 60_000;
 
 /**
- * 启动时收掉「早就没人管」的处理中占位。
+ * 启动时清掉「早就没人管」的处理中占位。
  *
- * A1 的兜底：`expirePlaceholders` 靠「这一轮结算」触发，但历史里已经躺着一批（实测
- * `proj:solo` 最老挂了 175 分钟），而且进程被强杀时也不会有人来结算。启动时按
- * `at` 年龄扫一遍，超过 10 分钟的直接标 `status: "error"` —— 前端本来就用同一个 TTL
- * 把它们当过期不再画，后端跟上就是了。
+ * 只清**已经不会有结果的**：占位超过 TTL，且这个人此刻没有在跑的一轮（`busySlugs`）。
+ * 老板插话后刚建的新占位属于新一轮，`at` 是「刚才」，既超不过 TTL 也不在忙碌名单外，
+ * 所以不会被误清 —— 这条判据是这次返工的重点（上一版只按年龄，会把新一轮的也扫掉）。
  */
 export async function expireStalePlaceholders(
 	harness: { commit: PostDeps["harness"]["commit"] },
-	maxAgeMs = PLACEHOLDER_TTL_MS,
+	options: { readonly maxAgeMs?: number; readonly busySlugs?: ReadonlySet<string> } = {},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<number> {
+	const maxAgeMs = options.maxAgeMs ?? PLACEHOLDER_TTL_MS;
+	const busy = options.busySlugs ?? new Set<string>();
 	const now = Date.now();
-	let expired = 0;
+	let removed = 0;
 	await harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		for (const channelId of Object.keys(doc.messages)) {
 			const list = doc.messages[channelId] as Message[] | undefined;
 			if (list === undefined) continue;
-			for (let index = 0; index < list.length; index += 1) {
+			for (let index = list.length - 1; index >= 0; index -= 1) {
 				const message = list[index];
 				if (message === undefined || message.processing !== true) continue;
+				if (busy.has(message.from)) continue;
 				if (now - message.at < maxAgeMs) continue;
-				list[index] = { ...message, status: "error", processing: false };
-				expired += 1;
+				list.splice(index, 1);
+				removed += 1;
 			}
 		}
 	}, context);
-	return expired;
+	return removed;
 }
 
 /**
@@ -540,7 +548,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
 			// 这一轮结算时收掉没被填的占位：他没在这个频道说话，占位就没人来填，
 			// 留着就是一条永远转圈的「开始处理…」（实测挂过 175 分钟）。
-			expirePlaceholders: (slug) => expirePlaceholders(deps, liveChannel.id, slug, context),
+			removePlaceholders: (slug) => removePlaceholders(deps, liveChannel.id, slug, message.at, context),
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
 			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
 			noteUnanswered: async ({ label, seq, reason }) => {

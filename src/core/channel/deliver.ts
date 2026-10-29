@@ -125,7 +125,7 @@ export type DeliverOptions = {
 	 * 实测 `proj:solo` 里挂过 175 分钟的「开始处理…」。前端 10 分钟 TTL 只是遮住显示，
 	 * 数据得有人收尾。
 	 */
-	readonly expirePlaceholders?: (slug: string) => Promise<number>;
+	readonly removePlaceholders?: (slug: string) => Promise<number>;
 	readonly noteUnanswered?: (info: {
 		readonly slug: string;
 		readonly label: string;
@@ -359,7 +359,7 @@ export async function deliver(
 				context,
 			);
 			// 这一轮结算时两件事：收掉没被填的占位（无论成败），以及「一个字都没说」时留痕。
-			const expire = options.expirePlaceholders;
+			const expire = options.removePlaceholders;
 			const report = options.noteUnanswered;
 			if (expire !== undefined || report !== undefined) {
 				watchSettled(submission, async (reason) => {

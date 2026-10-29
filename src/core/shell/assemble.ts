@@ -478,10 +478,18 @@ export async function assembleCore(
 	}, context);
 
 
-	// 启动时收掉陈旧的处理中占位（A1 的兜底：强杀/没结算的那些不会有人再来填）。
+	// 启动时清掉陈旧的处理中占位（A1 的兜底：强杀/没结算的那些不会有人再来填）。
+	// 正在跑的会话（此刻有 non-background 任务的）不在清理范围内 —— 老板插话刚建的新占位
+	// 属于新一轮，不能被「按年龄一把扫」误删。
 	{
 		const { expireStalePlaceholders: expireStale, PLACEHOLDER_TTL_MS: ttl } = await import("../channel/post.ts");
-		await expireStale(harness, ttl, context).catch(() => 0);
+		const { liveConversations } = await import("../channel/deliver.ts");
+		const busyConversations = await liveConversations(harness, context).catch(() => new Set<number>());
+		const busySlugs = new Set<string>();
+		for (const [slug, id] of Object.entries(directory.slugToConversation)) {
+			if (busyConversations.has(Number(id))) busySlugs.add(slug);
+		}
+		await expireStale(harness, { maxAgeMs: ttl, busySlugs }, context).catch(() => 0);
 	}
 
 	// ── 5. 投影订阅：会话里的思考/文案/工具调用 → 个人频道 ──────────
