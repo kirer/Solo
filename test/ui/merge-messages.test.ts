@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeMessages } from "../../ui/web/js/messages.js";
+import { mergeMessages, previousOf } from "../../ui/web/js/messages.js";
 
 /**
  * 补历史时把一个频道的两页消息拼起来。
@@ -50,5 +50,31 @@ describe("mergeMessages", () => {
 		mergeMessages(older, newer);
 		expect(older).toEqual([msg(1)]);
 		expect(newer).toEqual([msg(2)]);
+	});
+});
+
+describe("previousOf：替换已有行时，上一条不能是自己", () => {
+	const messages = [
+		{ seq: 1, fromSlug: "owner", kind: "say", at: 1_000 },
+		{ seq: 2, fromSlug: "知言", kind: "say", at: 2_000, processing: true },
+	];
+	const replaced = { seq: 2, fromSlug: "知言", kind: "say", at: 9_000 };
+
+	it("占位填充（原地替换）时取 index - 1，不是列表最后一条", () => {
+		const index = messages.findIndex((message) => message.seq === replaced.seq);
+		// 列表最后一条就是被替换的占位自己；拿它当上一条 → 同人连发合并 → 头像和名字被吃掉
+		expect(messages[messages.length - 1]).toBe(messages[index]);
+		expect(previousOf(messages, index, false)).toBe(messages[0]);
+		expect(previousOf(messages, index, false)?.fromSlug).toBe("owner");
+	});
+
+	it("追加新消息时仍取列表最后一条", () => {
+		expect(previousOf(messages, -1, true)).toBe(messages[messages.length - 1]);
+	});
+
+	it("替换第一行或空列表时没有上一条", () => {
+		expect(previousOf(messages, 0, false)).toBeNull();
+		expect(previousOf([], -1, true)).toBeNull();
+		expect(previousOf(null, 3, false)).toBeNull();
 	});
 });

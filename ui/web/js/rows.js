@@ -722,8 +722,10 @@ export function markGroupDone(group, endAt) {
 	const button = group.querySelector(".evs");
 	if (!button) return group;
 	button.setAttribute("aria-label", groupHeader({ name, running: false, startAt, endAt: end }));
-	// 定格 = 组头不再显示文字与动点，只留箭头（收起态也不变宽）。
+	// 定格 = 换成「查看过程」+ 箭头（和 wrapEvents 画完成态时同一套字）。
+	// 光留一个空箭头老板说「什么提示都没有」；名字和用时仍在 aria-label 里。
 	button.innerHTML =
+		`<span class="evs-what">${DONE_HINT}</span>` +
 		'<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>';
 	return group;
 }

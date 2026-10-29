@@ -25,3 +25,21 @@ export function mergeMessages(older, newer) {
 	}
 	return [...bySeq.values()].sort((a, b) => a.seq - b.seq);
 }
+
+/**
+ * 「这条消息之前的那一条」是谁 —— 连发合并、时间分隔都靠它判断。
+ *
+ * 两种情况必须分开：
+ *   - **追加**（新消息落在列表末尾）：上一条就是列表最后一条。
+ *   - **原地替换**（占位被真实回复覆盖）：上一条是 `index - 1`。
+ *
+ * 以前这里一律取列表最后一条 —— 而占位填充时被替换的占位**通常就是最后一条**，
+ * 等于拿「自己」当上一条：同一个人 2 分钟内必然满足「连发合并」，头像和名字被吃掉，
+ * 那条回复看起来像上一条的续写。替换时必须往前看一位。
+ */
+export function previousOf(messages, index, isAppend) {
+	const list = Array.isArray(messages) ? messages : [];
+	if (isAppend) return list[list.length - 1] ?? null;
+	if (index > 0) return list[index - 1] ?? null;
+	return null;
+}

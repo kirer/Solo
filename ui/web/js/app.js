@@ -30,7 +30,7 @@ import {
 	isNeed as isNeedRow,
 	wrapEvents,
 } from "./rows.js";
-import { mergeMessages } from "./messages.js";
+import { mergeMessages, previousOf } from "./messages.js";
 import { installJankMonitor, mark } from "./jank.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -1024,8 +1024,10 @@ function openChannelStream(id) {
 		if (!message || typeof message.seq !== "number") return;
 		const messages = state.detail.messages ?? [];
 		const index = messages.findIndex((candidate) => candidate.seq === message.seq);
-		const previous = messages.length > 0 ? messages[messages.length - 1] : null;
 		const isAppend = index < 0 && message.seq > (state.lastRendered ?? 0);
+		// 追加看最后一条；原地替换看 index - 1（占位填充时被替换的就是最后一条，
+		// 拿它自己当「上一条」会把头像和名字吃掉，见 messages.previousOf）。
+		const previous = previousOf(messages, index, isAppend);
 		if (index >= 0) {
 			const merged = { ...messages[index], ...message };
 			// 一个字都没变的消息不是「新消息」。
