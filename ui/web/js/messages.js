@@ -112,3 +112,22 @@ export function channelCursor(channel, seq, at = Date.now()) {
 		lastAt: Math.max(Number(channel.lastAt ?? 0), at),
 	};
 }
+
+/**
+ * SSE 事件入队：同一批里同一个 seq 只留最后一条。
+ *
+ * 服务端一次提交会把同一段消息重推好几遍（占位填充、提示性重推）。逐条处理时
+ * 每条都要判断「变没变」，一批几十条就把主线程啃掉了。入队时先按 seq 去重，
+ * 后面的覆盖前面的 —— 反正只有最后一次的内容是最终态。
+ */
+export function enqueueMessage(queue, message) {
+	const list = Array.isArray(queue) ? queue : [];
+	if (message == null || typeof message.seq !== "number") return list;
+	const index = list.findIndex((item) => item?.seq === message.seq);
+	if (index >= 0) {
+		const next = [...list];
+		next[index] = message;
+		return next;
+	}
+	return [...list, message];
+}

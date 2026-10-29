@@ -33,7 +33,15 @@ import {
 	isNeed as isNeedRow,
 	wrapEvents,
 } from "./rows.js";
-import { channelCursor, insertLocalMessage, localEcho, mergeMessage, mergeMessages, previousOf } from "./messages.js";
+import {
+	channelCursor,
+	enqueueMessage,
+	insertLocalMessage,
+	localEcho,
+	mergeMessage,
+	mergeMessages,
+	previousOf,
+} from "./messages.js";
 import { installJankMonitor, mark } from "./jank.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -1045,11 +1053,16 @@ function openChannelStream(id) {
 	const source = new EventSource(
 		`/api/channels/${encodeURIComponent(id)}/stream${lastSeq > 0 ? `?since=${lastSeq}` : ""}`,
 	);
-	const merge = (payload) => {
-		if (state.currentId !== id || !state.detail) return;
-		const endMark = mark("sse:merge");
-		const message = payload?.message ?? payload;
-		if (!message || typeof message.seq !== "number") return;
+	/**
+	 * 把一条 SSE 消息应用到列表（不含滚动、活动行、埋点 —— 那些按**批**做）。
+	 *
+	 * 为什么拆开：服务端一次补历史会连着推几十条，逐条 scrollToBottom 会读一次
+	 * scrollHeight（强制布局）再写 scrollTop，几十条就是几十次同步重排；主线程
+	 * 就这么被一条一条啃掉了。现在一批只做一次。
+	 */
+	const applyMessage = (message) => {
+		if (state.currentId !== id || !state.detail) return false;
+		if (!message || typeof message.seq !== "number") return false;
 		const messages = state.detail.messages ?? [];
 		const index = messages.findIndex((candidate) => candidate.seq === message.seq);
 		const isAppend = index < 0 && message.seq > (state.lastRendered ?? 0);
@@ -1065,7 +1078,7 @@ function openChannelStream(id) {
 			// 服务端按提交推送，一次运行里同一批消息会被反复带上（提示性重推，为了占位填充）。
 			// 以前这里不管变没变都走 `renderFlow()` —— 实测一次运行 15 秒里整列重建 1616 次，
 			// 加了 5 万个节点又删掉，最长一次卡了 2.7 秒。重推不是变化，直接扔掉。
-			if (messageSignature(merged) === messageSignature(messages[index])) return;
+			if (messageSignature(merged) === messageSignature(messages[index])) return false;
 			messages[index] = merged;
 		} else if (messages.length > 0 && message.seq < messages[messages.length - 1].seq) {
 			// 比已加载窗口还早的消息不该追加到末尾（会变成「最新的在上面、更早的在最下面」）。
@@ -1073,12 +1086,9 @@ function openChannelStream(id) {
 			// 万一走了，也宁可整列按 seq 重排，不要乱序。
 			messages.push(message);
 			messages.sort((left, right) => left.seq - right.seq);
-			renderFlow({ restore: false });
-			renderActivity();
-			return;
+			return "rebuild";
 		} else messages.push(message);
 		notePresence(message);
-		const pinned = isPinned();
 		// 只画新来的那一条。
 		//
 		// 以前这里是无条件 `renderFlow()` —— 整个频道（100+ 行、每行一张 SVG 头像、
@@ -1101,31 +1111,67 @@ function openChannelStream(id) {
 			state.lastRendered = message.seq;
 		} else if (index >= 0) {
 			// 就地改一行（占位填充、编辑）。整列重画会把别的行也一起换掉，
-			// 正在流式写入的 `.md` 就丢了落点。
+			// 正在写的那一行就丢了落点。
 			const row = el.feed.querySelector(`.row[data-seq="${message.seq}"]`);
-			if (row === null) renderFlow({ restore: false });
-			else row.replaceWith(buildOne(messages[index], streamCtx(), previous));
+			if (row === null) return "rebuild";
+			row.replaceWith(buildOne(messages[index], streamCtx(), previous));
 			// 占位被真实回复覆盖之后，这个人其它的残留占位也一并收掉。
 			if (message.processing !== true) dropStalePlaceholders(message.fromSlug);
 		} else {
-			renderFlow({ restore: false });
+			return "rebuild";
 		}
-		// 不钉在底部时不拽人，但要让「回到最新」知道下面又多了几条。
+		return true;
+	};
+
+	/**
+	 * 一批消息一起落。
+	 *
+	 * 服务端补历史时会连着推几十条：逐条处理意味着几十次强制布局（滚动）、几次
+	 * 整列重建的判断。这里攒到下一帧统一处理 —— 和浏览器的渲染节奏对齐，
+	 * 主线程不再被一条一条啃。一批超过阈值就直接整列重建一次，别做几十次增量。
+	 */
+	const BATCH_REBUILD_OVER = 12;
+	let pending = [];
+	let scheduled = false;
+	const flush = () => {
+		scheduled = false;
+		const batch = pending;
+		pending = [];
+		if (batch.length === 0) return;
+		const endMark = mark("sse:batch");
+		const pinned = isPinned();
+		let rebuild = batch.length > BATCH_REBUILD_OVER;
+		for (const message of rebuild ? [] : batch) {
+			if (applyMessage(message) === "rebuild") {
+				rebuild = true;
+				break;
+			}
+		}
+		if (rebuild) renderFlow({ restore: false });
 		if (pinned) scrollToBottom();
 		else syncToBottom();
 		renderActivity();
 		endMark();
 	};
+	const enqueue = (payload) => {
+		const message = payload?.message ?? payload;
+		if (!message || typeof message.seq !== "number") return;
+		// 同一批里同一个 seq 只留最后一条（服务端重推很常见）。
+		pending = enqueueMessage(pending, message);
+		if (scheduled) return;
+		scheduled = true;
+		requestAnimationFrame(flush);
+	};
 	source.addEventListener("create", (event) => {
 		try {
-			merge(JSON.parse(event.data));
+			enqueue(JSON.parse(event.data));
 		} catch {
 			/* 半条 JSON 不该让整列错误 */
 		}
 	});
 	source.addEventListener("done", (event) => {
 		try {
-			merge(JSON.parse(event.data));
+			enqueue(JSON.parse(event.data));
 		} catch {
 			/* 同上 */
 		}
