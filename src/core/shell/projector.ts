@@ -18,6 +18,7 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, personalId, tail, type Channel, type ChannelState } from "../channel/state.ts";
 import { projectAssistantEntry, type Projection } from "../channel/transcript.ts";
 import type { DirectoryState } from "../agent/roster.ts";
+import { spokenResult } from "../channel/speech.ts";
 
 /**
  * 投影游标：每轮读到的最后一条 `pi.assistant` 条目 id，按会话记。
@@ -66,10 +67,11 @@ async function projectEntry(
 	// 一次被 @ 就产出十几条：审计实测一个人半小时平均灌 76 条（最高 197 条），老板的回复率
 	// 因此掉到 1.06%（51/4804）。私聊是**对话**，不是日志垃圾桶；过程仍能在会话 feed 里看到
 	// （`pi.assistant` 条目本身没被删，只是不再复制一份到频道）。
-	for (const projection of keptProjections(channel, projections)) {
-		// 他刚在同一个频道用 `say` 说过同样的话（最常见：交付结论里带同一个链接），
-		// 再投影一次就是一条重复消息。只跳过正文，思考与工具卡片照常显示。
-		if (projection.kind === "say" && alreadySaid(state, channelId, slug, projection.text)) continue;
+	const posting = projectionsToPost(channel, projections, {
+		spokeThisTurn: spokenResult(convId) !== undefined,
+		alreadySaid: (text) => alreadySaid(state, channelId, slug, text),
+	});
+	for (const projection of posting) {
 		await postProjectedMessage(harness, state, channelId, slug, projection, context);
 	}
 	await saveCursor(harness, convId, Number(entry.id), context);
@@ -90,6 +92,33 @@ function isOwnerDm(channel: Channel): boolean {
 export function keptProjections(channel: Channel, projections: readonly Projection[]): readonly Projection[] {
 	if (!isOwnerDm(channel)) return projections;
 	return projections.filter((item) => item.kind === "say");
+}
+
+/**
+ * 这条 `pi.assistant` 里哪些 projection 真的要落库。
+ *
+ * 两道闸都只针对正文（`say`），思考与工具卡片照常显示：
+ *
+ * 1. **这一轮他已经用 `say` 说过了**（`spokeThisTurn`）。最终回答里的那段正文往往是
+ *    对自己刚做过的事的复述 —— 实测原文是「已回老板：在，随时待命。」，紧跟在
+ *    `已发到「沈岸」#247` 之后。再投影一次，老板看到的就是「一次说两句」。
+ *    `spokenResult` 是「本轮已说过」的记录，投递时（下一轮开始）才清空，所以它在这里
+ *    恰好等于「这句话已经发过了」。
+ * 2. 他刚在同一个频道说过同样的话（最常见：交付结论里带同一个链接）。
+ *
+ * 抽成纯函数是为了能被直接验：这条规则出错的表现是「老板多看到一条废话」，
+ * 而整条投影链路要真模型才跑得到。
+ */
+export function projectionsToPost(
+	channel: Channel,
+	projections: readonly Projection[],
+	options: { readonly spokeThisTurn: boolean; readonly alreadySaid: (text: string) => boolean },
+): readonly Projection[] {
+	return keptProjections(channel, projections).filter((projection) => {
+		if (projection.kind !== "say") return true;
+		if (options.spokeThisTurn) return false;
+		return !options.alreadySaid(projection.text);
+	});
 }
 
 /** 最近 5 分钟内，同一人在同一频道是否已经说过同一件事（正文相同，或带同一个链接）。 */
