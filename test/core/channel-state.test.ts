@@ -198,3 +198,21 @@ describe("可见性", () => {
 		expect(again.channels.a?.title).toBe("旧");
 	});
 });
+
+describe("这一轮从什么时候开始（ADR-072）", () => {
+	test("startedAt 原样落库；不传就不写这个键", () => {
+		const state = withChannels({ id: "g", title: "t", members: ["a"], wakeOnAll: [], at: 1 });
+		const withHint = appendMessage(state, "g", {
+			from: "a",
+			text: "开始处理…",
+			at: 5_000,
+			status: "pending",
+			processing: true,
+			startedAt: 3_000,
+		}).message;
+		expect(withHint.startedAt).toBe(3_000);
+		const plain = appendMessage(state, "g", { from: "a", text: "普通", at: 6 }).message;
+		// 「没有」和「0」是两件事：键不存在，界面才会退回第一条过程行的 at。
+		expect("startedAt" in plain).toBe(false);
+	});
+});

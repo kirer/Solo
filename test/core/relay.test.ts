@@ -46,7 +46,7 @@ describe("接力上限（纯函数）", () => {
 		expect(relayLimit({ ...channel, members: [OWNER] })).toBe(Number.POSITIVE_INFINITY);
 	});
 
-	it("按频道里的 agent 数量给，至少 3", () => {
+	it("按频道里的 agent 数量给，至少 3；项目频道按 6 倍", () => {
 		const channel = (members: string[]) => ({
 			id: "c",
 			title: "c",
@@ -57,6 +57,22 @@ describe("接力上限（纯函数）", () => {
 		// 0 个 / 1 个 agent 见上一条用例（不设上限）。
 		expect(relayLimit(channel([OWNER, "a", "b"]))).toBe(6);
 		expect(relayLimit(channel([OWNER, "a", "b", "c"]))).toBe(9);
+		// 项目频道是干活的地方：拆活、报到、来回对齐本来就多。
+		// 3 倍实测两次就撞线（proj:solo 3 人 → 9），拦掉的是协作不是循环。
+		const proj = (members: string[]) => ({ ...channel(members), id: "proj:x" });
+		expect(relayLimit(proj([OWNER, "a", "b"]))).toBe(12);
+		expect(relayLimit(proj([OWNER, "a", "b", "c"]))).toBe(18);
+	});
+
+	it("过程投影不算接力 —— think / tool 不叫醒任何人，算进来就是「干得多更容易被判失控」", () => {
+		let state = stateWithChannel();
+		state = appendMessage(state, "proj:x", { from: OWNER, text: "开始", at: 2 }).state;
+		for (let index = 0; index < 20; index += 1) {
+			state = appendMessage(state, "proj:x", { from: "a", text: "想了", at: 3 + index, kind: "think" }).state;
+		}
+		expect(botHopsSinceOwner(state, "proj:x")).toBe(0);
+		state = appendMessage(state, "proj:x", { from: "a", text: "我接前端", at: 30 }).state;
+		expect(botHopsSinceOwner(state, "proj:x")).toBe(1);
 	});
 
 	it("老板还没在这个频道说过话时，从频道建立算起", () => {
@@ -162,8 +178,9 @@ async function setup(members: string[], wakeOnAll: string[]) {
 describe("接力上限拦截", () => {
 	it("接力到上限的那条只落库、不投递，并留一条 note；老板发言后恢复", async () => {
 		const { state, post, submitted } = await setup([OWNER, "a", "b"], ["a", "b"]);
+		// 项目频道按 6 倍给：2 个 agent → 12（ADR-072）。
 		const limit = relayLimit((await state()).channels["proj:x"]!);
-		expect(limit).toBe(6);
+		expect(limit).toBe(12);
 
 		await post({ from: OWNER, text: "@a @b 开工", at: 2 });
 		expect(submitted.length).toBe(2);

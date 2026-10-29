@@ -231,6 +231,34 @@ export function groupSpan(entries) {
 }
 
 /**
+ * 这一段活**真正**从什么时候开始（ADR-072）。
+ *
+ * 过程行没有 `startedAt` —— 那是处理中占位在创建时记下的「触发消息到达时刻」。
+ * 投影落库的 `at` 比它晚一个首包（实测 1–3 秒），拿 `at` 当起点会让
+ * 「正在执行 · 67s」跑出 67s → 55s 这种倒退（一填充占位，起点就跳到后面去了）。
+ * 所以只要这个 slug 在**这段活之前**留过 `startedAt`，就用它。
+ */
+export function runStartAt(all, run) {
+	const first = Array.isArray(run) ? run[0] : undefined;
+	if (first === undefined) return 0;
+	const base = Number(first.startedAt ?? first.at ?? 0);
+	const list = Array.isArray(all) ? all : [];
+	// 只往前看。占位是**触发那条消息时就建**的，所以它（填充后仍带 `startedAt`）
+	// 在数组里排在它的过程行**前面** —— 但 `at` 反而更晚（填充时才改写）。
+	// 因此判据按位置、不按 `at`；再用 `startedAt <= base` 挡掉不属于这一轮的提示。
+	const stop = list.indexOf(first);
+	const slug = first.fromSlug;
+	let hinted = 0;
+	for (let index = 0; index < (stop < 0 ? 0 : stop); index += 1) {
+		const item = list[index];
+		if (item?.fromSlug !== slug) continue;
+		if (typeof item.startedAt !== "number") continue;
+		if (item.startedAt > hinted) hinted = item.startedAt;
+	}
+	return hinted > 0 && hinted <= base ? hinted : base;
+}
+
+/**
  * 把一串过程消息切成「连续干活段」：同一个人连着干，中间没人插话就是一段。
  *
  * 一段只画一个组头。以前是逐条画，agent 干一段活留下十四条消息，屏幕上就是
@@ -309,9 +337,11 @@ export function activityRun(messages, now = Date.now()) {
 		if (!isEventKind(prev.kind) || prev.fromSlug !== slug) break;
 		startIndex -= 1;
 	}
-	const span = groupSpan(list.slice(startIndex, endIndex + 1));
+	const run = list.slice(startIndex, endIndex + 1);
+	const span = groupSpan(run);
+	const startAt = runStartAt(list, run);
 	if (running && now - span.endAt > ACTIVITY_WINDOW_MS) return null;
-	return { slug, running, startAt: span.startAt, endAt };
+	return { slug, running, startAt, endAt };
 }
 
 /** 完整组头：名字 + 状态。DOM 里名字单独一个节点，这里给测试和 aria 用。 */
@@ -725,12 +755,13 @@ export function buildStream(messages, ctx = {}) {
 		if (entries.length === 0) return;
 		const slug = entries[0].message.fromSlug;
 		const span = groupSpan(entries.map((entry) => entry.message));
+		const startAt = runStartAt(list, entries.map((entry) => entry.message));
 		const lastAt = endAt ?? span.endAt;
 		for (const node of wrapEvents(
 			slug,
 			bySlug.get(slug)?.label ?? slug,
 			entries.flatMap((entry) => entry.nodes),
-			{ startAt: span.startAt, endAt: lastAt, now, running },
+			{ startAt, endAt: lastAt, now, running },
 		)) {
 			frag.append(node);
 		}
@@ -768,7 +799,7 @@ export function buildStream(messages, ctx = {}) {
 		if (taken.length === 0) return [];
 		const span = groupSpan(taken.map((entry) => entry.message));
 		return wrapEvents(slug, bySlug.get(slug)?.label ?? slug, taken.flatMap((entry) => entry.nodes), {
-			startAt: span.startAt,
+			startAt: runStartAt(list, taken.map((entry) => entry.message)),
 			endAt: endAt ?? span.endAt,
 			now,
 			running: false,

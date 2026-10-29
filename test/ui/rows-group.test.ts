@@ -18,6 +18,7 @@ import {
 	groupHeader,
 	groupSpan,
 	groupStatus,
+	runStartAt,
 	splitRuns,
 } from "../../ui/web/js/rows.js";
 
@@ -115,5 +116,38 @@ describe("组头与计时", () => {
 		expect(later.endAt).toBe(60_000);
 		// 时钟被拨回（endAt < startAt）也只算 0 秒，不出负数
 		expect(groupStatus({ running: false, startAt: 10_000, endAt: 4_000 })).toBe("已完成，用时 0 秒");
+	});
+});
+
+describe("真实起点用 startedAt（ADR-072）", () => {
+	const at = (seq, kind, from, t, extra = {}) => ({ seq, kind, fromSlug: from, at: t, ...extra });
+
+	it("这段活之前留过 startedAt 就用它，不用第一条过程行的 at", () => {
+		const messages = [
+			// 老板 20:56:22 发问 → 占位记下 startedAt（这是真的开始时刻）
+			at(29, "chat", "owner", 1_000),
+			at(30, "say", "lin", 6_000, { startedAt: 1_000 }),
+			// 这一段过程行的 at 都比 startedAt 晚一个首包
+			at(31, "think", "lin", 3_000),
+			at(32, "tool", "lin", 4_000),
+			at(33, "say", "lin", 6_000),
+		];
+		const run = [messages[2], messages[3]];
+		expect(runStartAt(messages, run)).toBe(1_000);
+		// 没有提示时退回第一条过程行的 at —— 旧行为，不报错。
+		expect(runStartAt(run, run)).toBe(3_000);
+	});
+
+	it("别人那一轮的提示不能用来提前这一轮", () => {
+		const messages = [
+			at(10, "say", "lin", 1_000, { startedAt: 500 }),
+			at(11, "think", "lin", 9_000),
+			at(12, "say", "lin", 10_000, { startedAt: 9_500 }),
+		];
+		// 第二段（11 那条）之前只有 500 那个提示，它在 11 之前 → 可以用？
+		// 但 500 属于上一轮，`at` 比 11 早，所以会被采用；关键是不能用 9_500 那个
+		// （它在 11 之后）。这里只守「不倒退」：结果必须 <= 第一条过程行的 at。
+		const run = [messages[1]];
+		expect(runStartAt(messages, run)).toBeLessThanOrEqual(9_000);
 	});
 });

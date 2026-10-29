@@ -66,6 +66,8 @@ export type ViewMessage = {
 	pendingFor?: string;
 	/** B（通用处理中指示）：该消息是否为「开始处理…」动画占位（前端渲染动画行）。 */
 	processing?: boolean;
+	/** 这一轮真正开始的时刻（ADR-072）。缺省时界面退回第一条过程行的 `at`。 */
+	startedAt?: number;
 	/**
 	 * 这条要不要老板本人看一眼。
 	 *
@@ -285,6 +287,7 @@ export function messageView(
 		...(message.status === undefined ? {} : { status: message.status }),
 		...(message.pendingFor === undefined ? {} : { pendingFor: message.pendingFor }),
 		...(message.processing === undefined || message.processing === false ? {} : { processing: true }),
+		...(message.startedAt === undefined ? {} : { startedAt: message.startedAt }),
 		// 附件只透传引用（id/name/kind/bytes），文件本体走 `/api/uploads/:id`。
 		// 逐字段重建是为了固定键顺序：这份 JSON 也会进 SSE 与提示词，字节要确定。
 		...(message.attachments === undefined || message.attachments.length === 0

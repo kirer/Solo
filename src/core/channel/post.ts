@@ -394,6 +394,10 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 					status: "pending",
 					pendingFor: target,
 					processing: true,
+					// 这一轮真正开始于**触发这条消息的时刻**。占位被填充时 `...placeholder`
+					// 会把 `startedAt` 带过来（ADR-072）—— 界面靠它算真实用时，
+					// 不靠投影落库的 `at`（那个晚一个首包）。
+					startedAt: input.at,
 				}).message;
 				(arrNow as Message[]).push(placeholder);
 				state.nextSeq[input.channelId] = placeholder.seq + 1;

@@ -69,6 +69,14 @@ export type Message = {
 	 * 结论一轮只认一句。见 `channel/speech.ts` 与 `post.ts` 的合并逻辑。
 	 */
 	step?: boolean;
+	/**
+	 * 这一轮什么时候**真正开始**（ADR-072）。
+	 *
+	 * `at` 是投影落库时刻，比模型开始思考晚一个首包（实测 1–3 秒），拿它当计时起点会让
+	 * 「正在执行 · 67s」跑出 67s → 55s 这种倒退。所以处理中占位在创建时把触发那条消息的
+	 * `at` 记在这里，被原地填充时**沿用**；界面起点 = `startedAt ?? 第一条过程行 at`。
+	 */
+	startedAt?: number;
 	/** 附件（图片/文件）。没有附件时**不写这个键**，与 `replyTo` / `status` 一个规矩。 */
 	/*
 	 * 为什么是可变数组而不是 `readonly`：文档层的 `JsonValue` 里数组是 `JsonValue[]`，
@@ -236,6 +244,9 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	return [...targets];
 }
 
+/** 构成「接力」的 kind：说出口、会叫醒别人的话。 */
+const RELAY_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
+
 /**
  * 一个频道里 agent 之间最多能自动接多少棒。
  *
@@ -252,7 +263,12 @@ export function relayLimit(channel: Channel): number {
 	// 那个 agent 说完话之后**没有任何人**会被再叫醒 —— 循环根本起不来，
 	// 上限只会在他汇报到第 4 条时把他嘴堵上。实测就发生过：私聊里 197 条消息
 	// 有 150 多条是「接力到上限」这条告警。
-	return agents <= 1 ? Number.POSITIVE_INFINITY : Math.max(3, 3 * agents);
+	if (agents <= 1) return Number.POSITIVE_INFINITY;
+	// 项目频道是干活的地方：拆活、报到、互相问一句本来就多。
+	// 同样 3 个人的项目频道按 3 倍给（9 条）实测两次就撞线 —— 那拦掉的不是循环，
+	// 是「两个人来回对齐一句」。闲聊频道保持 3 倍。
+	const factor = channel.id.startsWith("proj:") ? 6 : 3;
+	return Math.max(3, factor * agents);
 }
 
 /**
@@ -274,9 +290,12 @@ export function botHopsSinceOwner(state: ChannelState, channelId: string): numbe
 		last = index;
 		break;
 	}
+	// 只有**说出口的话**才算接力。`think` / `tool` 是过程投影：它们不叫醒任何人，
+	// 把它们算进来等于「干得多就更容易被判失控」—— 一个 agent 跑 14 条命令就吃掉
+	// 一整个额度，那拦的不是循环，是他干活。
 	return list
 		.slice(last + 1)
-		.filter((item) => item.from !== OWNER && item.kind !== "note" && item.kind !== "work").length;
+		.filter((item) => item.from !== OWNER && RELAY_KINDS.has(item.kind)).length;
 }
 
 /** 某个 slug 在一个频道里读到了哪里。0 表示一条没读。 */
@@ -357,6 +376,8 @@ export function appendMessage(
 		readonly processing?: boolean;
 		/** 过程话（可以连发、会被并进上一条）。缺省 = 结论。 */
 		readonly step?: boolean;
+		/** 这一轮真正开始的时刻（缺省 = 没有，界面退回第一条过程行）。 */
+		readonly startedAt?: number;
 		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
 		readonly attachments?: readonly Attachment[];
 	},
@@ -395,6 +416,7 @@ export function appendMessage(
 		...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
 		...(input.processing === undefined ? {} : { processing: input.processing }),
 		...(input.step === undefined || input.step === false ? {} : { step: true }),
+		...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
 		...(input.attachments === undefined || input.attachments.length === 0
 			? {}
 			: {
