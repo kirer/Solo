@@ -93,7 +93,7 @@ describe("装配", () => {
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			const { delivery } = await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			const { delivery } = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			expect(delivery.failed).toEqual([]);
 			expect(delivery.delivered).toEqual([slug]);
 
@@ -107,9 +107,9 @@ describe("装配", () => {
 
 			const state = await shell.channels();
 			// T-016：@A 会创建一条 pending 占位（text=""），真实消息在前、占位在后。
-			const texts = state.messages.company?.map((message) => message.text) ?? [];
+			const texts = state.messages.all?.map((message) => message.text) ?? [];
 			expect(texts).toContain(`@${slug} 在吗`);
-			const pending = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
+			const pending = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
 			expect(pending).toBeDefined();
 			expect(pending?.text).toBe("");
 		} finally {
@@ -126,17 +126,17 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			const hit = await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			const hit = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			expect(hit.delivery.delivered).toEqual([slug]);
 			let state = await shell.channels();
-			const pending = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
+			const pending = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
 			expect(pending).toBeDefined();
 			expect(pending?.from).toBe(slug);
 			expect(pending?.text).toBe("");
-			const miss = await shell.ownerSay({ channelId: "company", text: "@nobody 你好" });
+			const miss = await shell.ownerSay({ channelId: "all", text: "@nobody 你好" });
 			expect(miss.delivery.delivered).toEqual([]);
 			state = await shell.channels();
-			const pendingAfter = (state.messages.company ?? []).filter((m) => m.status === "pending" && m.pendingFor === "nobody");
+			const pendingAfter = (state.messages.all ?? []).filter((m) => m.status === "pending" && m.pendingFor === "nobody");
 			expect(pendingAfter).toHaveLength(0);
 		} finally {
 			await opened.close();
@@ -150,22 +150,22 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			let state = await shell.channels();
-			const pendingSeq = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
+			const pendingSeq = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
 			expect(pendingSeq).toBeDefined();
-			const before = (await shell.channels()).messages.company ?? [];
+			const before = (await shell.channels()).messages.all ?? [];
 			// 模拟 A 醒来回频道：用 harness.snapshot(ChannelDoc) 作为 state（与 channel-write.test 一致），
 			// 直接 postMessage 触发占位吸收（不在 commit 内、不复用已 settled 的 shell.channels 投影快照）。
 			const { postMessage } = await import("../../src/core/channel/post.ts");
 			const rawState = (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never;
 			await postMessage(
 				{ harness: opened.harness, state: rawState, conversationOf: async () => undefined },
-				{ channelId: "company", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
+				{ channelId: "all", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
 				BACKGROUND_CONTEXT,
 			);
 			state = await shell.channels();
-			const after = state.messages.company ?? [];
+			const after = state.messages.all ?? [];
 			expect(after.length).toBe(before.length);
 			const filled = after.find((m) => m.seq === pendingSeq);
 			expect(filled?.status).toBe("done");
@@ -183,9 +183,9 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			let state = await shell.channels();
-			const pendingSeq = (state.messages.company ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
+			const pendingSeq = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
 			expect(pendingSeq).toBeDefined();
 			const { postMessage } = await import("../../src/core/channel/post.ts");
 			const { setChannelStreamHook, setChannelClientsHas } = await import("../../src/core/channel/post.ts");
@@ -194,7 +194,7 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 			let doneText: string | undefined;
 			setChannelClientsHas(() => true);
 			setChannelStreamHook((channelId, seq, fullText) => {
-				expect(channelId).toBe("company");
+				expect(channelId).toBe("all");
 				expect(seq).toBe(pendingSeq);
 				// 把全文切成最多 24 片，累加应等于全文（逐字增量幂等）。
 				const step = Math.max(1, Math.ceil(fullText.length / 24));
@@ -203,7 +203,7 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 			});
 			await postMessage(
 				{ harness: opened.harness, state: (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never, conversationOf: async () => undefined },
-				{ channelId: "company", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
+				{ channelId: "all", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
 				BACKGROUND_CONTEXT,
 			);
 			setChannelStreamHook(undefined);
@@ -211,7 +211,7 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 			expect(tokens.join("")).toBe(doneText);
 			expect(doneText).toBe("我在的，怎么了");
 			state = await shell.channels();
-			const filled = (state.messages.company ?? []).find((m) => m.seq === pendingSeq);
+			const filled = (state.messages.all ?? []).find((m) => m.seq === pendingSeq);
 			expect(filled?.status).toBe("done");
 		} finally {
 			await opened.close();
@@ -225,13 +225,13 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			await shell.ownerSay({ channelId: "company", text: `@${slug} 在吗` });
+			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			const state = await shell.channels();
 			const ownerDm = Object.values(state.channels).find((c) => c.id.startsWith("dm:owner-"));
 			if (ownerDm !== undefined) {
 				expect(state.messages[ownerDm.id] ?? []).toHaveLength(0);
 			}
-			expect((state.messages.company ?? []).some((m) => m.status === "pending")).toBe(true);
+			expect((state.messages.all ?? []).some((m) => m.status === "pending")).toBe(true);
 		} finally {
 			await opened.close();
 		}

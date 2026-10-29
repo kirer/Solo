@@ -78,7 +78,7 @@ describe("装配", () => {
 				projectsRoot: join(root, "projects"),
 			});
 			const state = await shell.channels();
-			expect(state.channels.company?.members.sort()).toEqual(["owner", "林越"].sort());
+			expect(state.channels.all?.members.sort()).toEqual(["owner", "林越"].sort());
 		} finally {
 			await opened.close();
 		}
@@ -101,7 +101,7 @@ describe("装配", () => {
 			expect(added).toEqual(["沈舟"]);
 			expect(shell.conversations.size).toBe(before + 1);
 			const state = await shell.channels();
-			expect(state.channels.company?.members).toContain("沈舟");
+			expect(state.channels.all?.members).toContain("沈舟");
 		} finally {
 			await opened.close();
 		}
@@ -146,11 +146,11 @@ describe("老板说话", () => {
 				agentsRoot: agents,
 				projectsRoot: join(root, "projects"),
 			});
-			const sent = await ownerSpeak(shell, { channelId: "company", text: "@林越 停掉所有任务" });
+			const sent = await ownerSpeak(shell, { channelId: "all", text: "@林越 停掉所有任务" });
 			expect(sent.seq).toBe(1);
 
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
-			const message = state.messages.company?.[0];
+			const message = state.messages.all?.[0];
 			expect(message?.from).toBe("owner");
 			expect(message?.mentions).toEqual(["林越"]);
 
@@ -176,9 +176,9 @@ describe("老板说话", () => {
 				agentsRoot: agents,
 				projectsRoot: join(root, "projects"),
 			});
-			await ownerSpeak(shell, { channelId: "company", text: "有人吗" });
+			await ownerSpeak(shell, { channelId: "all", text: "有人吗" });
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
-			expect(state.messages.company?.[0]?.mentions).toEqual([]);
+			expect(state.messages.all?.[0]?.mentions).toEqual([]);
 			// 收件人规则在 state.ts 的单测里已覆盖；这里只确认消息落了盘。
 		} finally {
 			await opened.close();
@@ -208,7 +208,7 @@ describe("播种", () => {
 				projectsRoot: join(root, "projects"),
 			});
 			expect(shell.conversations.has("林越")).toBe(true);
-			expect((await shell.channels()).channels.company?.members).toContain("林越");
+			expect((await shell.channels()).channels.all?.members).toContain("林越");
 		} finally {
 			await opened.close();
 		}

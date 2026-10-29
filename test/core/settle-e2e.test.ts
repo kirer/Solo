@@ -135,7 +135,7 @@ describe("项目记忆自动沉淀", () => {
 		const lin = await createAgent({ root: agentsRoot, name: "林越", project: "alpha" });
 		await shell.openAgent(lin.slug);
 
-		await shell.postAs({ channelId: "company", from: lin.slug, text: "定了：用方案 B", kind: "decision" });
+		await shell.postAs({ channelId: "all", from: lin.slug, text: "定了：用方案 B", kind: "decision" });
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
 		expect(state?.cursors.alpha).toBeUndefined();
 	});

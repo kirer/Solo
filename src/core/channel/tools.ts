@@ -291,6 +291,10 @@ export function createCoreTools(deps: CoreToolDeps) {
 	): Promise<ReturnType<typeof text>> => {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
+				// 通信规则：非老板不得私聊（to），其余沟通走群聊；老板本人不受限。
+				if (slug !== OWNER && args.to !== undefined && args.to.trim() !== "") {
+					return text("仅老板可私聊；项目的事发本项目群，跨项目发公司群，其余沟通请勿私聊（去掉 to，改用 channel 或 @ 某人）。");
+				}
 			// 一条频道消息最多 1200 字。
 			//
 			// 线上见过 21,568 字的一条 `say` —— 那不是在说话，是把整个思考过程倒进频道。

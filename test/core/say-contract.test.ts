@@ -149,11 +149,11 @@ describe("投递正文带频道 id", () => {
 	it("第一行写清频道 id，模型才知道精确回哪儿", () => {
 		const state = ensureChannel(
 			{ channels: {}, messages: {}, nextSeq: {}, readMarks: {} },
-			{ id: "company", title: "公司大群", members: [OWNER, ME], at: 1 },
+			{ id: "all", title: "公司大群", members: [OWNER, ME], at: 1 },
 		);
-		const { message } = appendMessage(state, "company", { from: OWNER, text: "在吗", at: 2 });
-		const body = renderDelivery({ channel: state.channels.company!, message, viewer: ME });
-		expect(body.split("\n")[0]).toBe("【公司大群】#1（频道 company）");
+		const { message } = appendMessage(state, "all", { from: OWNER, text: "在吗", at: 2 });
+		const body = renderDelivery({ channel: state.channels.all!, message, viewer: ME });
+		expect(body.split("\n")[0]).toBe("【公司大群】#1（频道 all）");
 	});
 
 	it("私聊额外说一句「只回这里，别去群里」", () => {

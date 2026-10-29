@@ -248,7 +248,7 @@ function needCount() {
 }
 
 function renderTop() {
-	// 顶栏左边是公司名；名字叫「一人公司」时再写一遍只是重复，改成真实的规模。
+	// 顶栏左边展示公司名；产品名已固定在别处，这里不再重复，改为展示真实规模（人数 · 频道数）。
 	const people = state.org?.people?.length ?? 0;
 	const channels = state.channels.length;
 	el.companyMeta.textContent = `${people} 人 · ${channels} 个频道`;
@@ -549,7 +549,7 @@ function renderHead() {
 		state.detail?.channel ?? state.channels.find((candidate) => candidate.id === state.currentId) ?? null;
 	el.paneTitle.textContent = channel?.title ?? "频道";
 	// 顶栏那个 h1 是全页唯一的一级标题：桌面写产品名，手机写当前区域的名字。
-	el.barTitle.textContent = desktop() ? "一人公司" : (channel?.title ?? "频道");
+	el.barTitle.textContent = desktop() ? "Solo" : (channel?.title ?? "频道");
 	// 标题下面那一行只放「不能从标题猜到的」信息。
 	//
 	// 私聊不写「2 人」：私聊本来就是两个人，写出来是废话，还占掉一行副标题的位置。

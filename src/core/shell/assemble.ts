@@ -150,7 +150,7 @@ export async function assembleCore(
 	options: CoreShellOptions,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<CoreShell> {
-	const companyChannel = options.companyChannel ?? "company";
+	const companyChannel = options.companyChannel ?? "all";
 	// `agents/`、`projects/`、`skills/` 是同级目录，工作区根 = agentsRoot 的父目录。
 	const workspaceRoot = dirname(options.agentsRoot);
 
@@ -418,7 +418,7 @@ export async function assembleCore(
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		const members = [OWNER, ...identities.map((item) => item.slug)];
 		if (doc.channels[companyChannel] === undefined) {
-			Object.assign(doc, ensureChannel(doc, { id: companyChannel, title: "公司", members, wakeOnAll: [], at: Date.now() }));
+			Object.assign(doc, ensureChannel(doc, { id: companyChannel, title: "全员", members, wakeOnAll: [], at: Date.now() }));
 		} else {
 			// 频道已存在：把新出现的人加进去（老板永远在）。
 			const channel = doc.channels[companyChannel];

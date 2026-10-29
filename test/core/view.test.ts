@@ -132,11 +132,11 @@ describe("T-013：个人频道的投影镜像不点亮 @ 红点，真实私聊 @
 	});
 
 	it("群频道里的 @ 老板照常计数（与 013 无关的普通场景）", () => {
-		const state = withMessages("company", [
+		const state = withMessages("all", [
 			{ from: "gu", text: "@owner 群里叫你", kind: "chat", mentions: ["owner"] },
 		]);
 		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
-		const company = list.find((c) => c.id === "company")!;
+		const company = list.find((c) => c.id === "all")!;
 		expect(company.mentions).toBe(1);
 	});
 });

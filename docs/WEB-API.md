@@ -55,7 +55,7 @@ data: {"company":{...},"people":[...]}
 
 ```ts
 {
-  company: { name: string },              // 固定 "一人公司"
+  company: { name: string },              // 固定 "Solo"
   people: ViewActor[]                     // 按「离老板最近」排序，第一项是直接向老板汇报的人
 }
 

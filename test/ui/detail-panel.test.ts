@@ -22,7 +22,7 @@ const PERSON = {
 	skills: [{ name: "自测单文件小游戏", description: "用 vm 造假 DOM", scope: "personal", overrides: false }],
 	memory: { exists: true, entries: 3, digest: "- 喜欢朴素\n- 不要紫色" },
 	channels: [
-		{ id: "company", kind: "company", title: "公司" },
+		{ id: "all", kind: "company", title: "全员" },
 		{ id: "proj:dino", kind: "project", title: "小恐龙" },
 	],
 };
@@ -33,7 +33,7 @@ describe("personDetailHtml", () => {
 		for (const text of ["沈舟", "前端开发", "小恐龙", "知言", "自测单文件小游戏", "用 vm 造假 DOM", "在做"]) {
 			expect(html).toContain(text);
 		}
-		expect(html).toContain(">公司<");
+		expect(html).toContain(">全员<");
 		expect(html).toContain(">3 条记忆");
 		// 预置提示词走 Markdown 渲染，标题变成 <h2>
 		expect(html).toContain("你负责什么");

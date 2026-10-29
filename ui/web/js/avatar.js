@@ -131,7 +131,7 @@ export function groupAvatar({ people = [], size = 24, state = "idle" }) {
 	// 24px 那一档放不下 2×2（每张只剩 11px，四张糊成一堆点），所以小尺寸只排对角两张。
 	const shown = people.slice(0, size < 28 ? 2 : 4);
 	if (shown.length <= 1) {
-		const only = shown[0] ?? { slug: "company", label: "公司" };
+		const only = shown[0] ?? { slug: "all", label: "全员" };
 		return `<span class="av-g" style="width:${size}px;height:${size}px">${avatarSvg({
 			slug: only.slug,
 			name: only.label,

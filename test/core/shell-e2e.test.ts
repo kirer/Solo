@@ -47,9 +47,9 @@ async function channels(shell: CoreShell): Promise<ChannelState> {
 describe("外壳装配", () => {
 	it("new agent 会立刻进公司频道", async () => {
 		const { shell } = await setup();
-		await shell.postAs({ channelId: "company", from: "owner", text: "@nowhere 测试" }).catch(() => undefined);
+		await shell.postAs({ channelId: "all", from: "owner", text: "@nowhere 测试" }).catch(() => undefined);
 		const state = await channels(shell);
-		const company = state.channels.company;
+		const company = state.channels.all;
 		expect(company).toBeDefined();
 		// 新人的会话一建出来就要能收到 @：否则 `recipientsOf` 会按「@ 的必须是成员」把他过滤掉。
 		expect(company?.members).toContain("owner");
@@ -67,10 +67,10 @@ describe("外壳装配", () => {
 		expect(id).toBeGreaterThan(0);
 
 		const state = await channels(shell);
-		expect(state.channels.company?.members).toContain(identity.slug);
+		expect(state.channels.all?.members).toContain(identity.slug);
 
 		// 老板 @ 他：收件人里必须有他（这正是「招了人但叫不动」的那个 bug）。
-		const targets = recipientsOf(state.channels.company!, {
+		const targets = recipientsOf(state.channels.all!, {
 			seq: 1,
 			from: "owner",
 			at: Date.now(),
@@ -92,12 +92,12 @@ describe("外壳装配", () => {
 		const conversationId = await shell.openAgent(identity.slug);
 
 		await shell
-			.postAs({ channelId: "company", from: "owner", text: `@${identity.slug} 你好` })
+			.postAs({ channelId: "all", from: "owner", text: `@${identity.slug} 你好` })
 			.catch(() => undefined);
 
 		const directory = await shell.harness.snapshot(DirectoryDoc);
 		expect(conversationId).toBeGreaterThan(0);
-		expect(directory?.wake[String(conversationId)]?.channelId).toBe("company");
+		expect(directory?.wake[String(conversationId)]?.channelId).toBe("all");
 	});
 
 	it("重启后再装配，不会重复建会话，名册与频道保持", async () => {
@@ -124,7 +124,7 @@ describe("外壳装配", () => {
 		const identities = await readAllIdentities(agentsRoot);
 		expect(identities.map((item) => item.slug)).toContain(identity.slug);
 		const after = await channels(shell2);
-		expect(after.channels.company?.members).toEqual(before.channels.company?.members);
-		expect(after.messages.company).toEqual(before.messages.company);
+		expect(after.channels.all?.members).toEqual(before.channels.all?.members);
+		expect(after.messages.all).toEqual(before.messages.all);
 	});
 });

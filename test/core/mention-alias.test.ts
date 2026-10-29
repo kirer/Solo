@@ -31,7 +31,7 @@ function empty(): ChannelState {
 }
 
 function channelWith(members: string[]): ChannelState {
-	return ensureChannel(empty(), { id: "company", title: "公司", members, at: 1 });
+	return ensureChannel(empty(), { id: "all", title: "公司", members, at: 1 });
 }
 
 describe("resolveMention：老板", () => {
@@ -99,19 +99,19 @@ describe("parseMentions：垃圾 token 不再进 mentions", () => {
 describe("recipientsOf：老数据兜底", () => {
 	test("成员表里是 owner，老消息里存的是「老板」→ 老板被叫醒", () => {
 		const state = channelWith([OWNER, "知言"]);
-		const { message } = appendMessage(state, "company", {
+		const { message } = appendMessage(state, "all", {
 			from: "知言",
 			text: "@老板 这件事要你定",
 			at: 1,
 		});
 		// 这条模拟老数据：mentions 里存的是字面 token。
 		const legacy = { ...message, mentions: ["老板"] };
-		expect(recipientsOf(state.channels.company!, legacy)).toEqual([OWNER]);
+		expect(recipientsOf(state.channels.all!, legacy)).toEqual([OWNER]);
 	});
 
 	test("写带名册的 @ 时，落库就是规范 slug", () => {
 		const state = channelWith([OWNER, "知言"]);
-		const { message } = appendMessage(state, "company", {
+		const { message } = appendMessage(state, "all", {
 			from: "知言",
 			text: "@老板 要不要加联机",
 			at: 1,
@@ -119,17 +119,17 @@ describe("recipientsOf：老数据兜底", () => {
 		});
 		expect(message.mentions).toEqual([OWNER]);
 		expect(message.text).toContain("@老板"); // 正文原样保留：那是模型的嘴
-		expect(recipientsOf(state.channels.company!, message)).toEqual([OWNER]);
+		expect(recipientsOf(state.channels.all!, message)).toEqual([OWNER]);
 	});
 
 	test("名册里没有的人写了也不叫醒（成员过滤规则不动）", () => {
 		const state = channelWith([OWNER, "知言"]);
-		const { message } = appendMessage(state, "company", {
+		const { message } = appendMessage(state, "all", {
 			from: "知言",
 			text: "@不存在的人 你好",
 			at: 1,
 			roster,
 		});
-		expect(recipientsOf(state.channels.company!, message)).toEqual([]);
+		expect(recipientsOf(state.channels.all!, message)).toEqual([]);
 	});
 });

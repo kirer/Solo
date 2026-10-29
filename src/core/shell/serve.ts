@@ -881,7 +881,7 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 
 /** 频道 id 前缀 → 类型。文档里不存 kind，约定在 id 上（见 `channel/state.ts` 的 `channelIdOf`）。 */
 function channelKind(id: string): "company" | "leadership" | "project" | "dm" | "other" {
-	if (id === "company") return "company";
+	if (id === "all") return "company";
 	if (id === "leadership") return "leadership";
 	if (id.startsWith("proj:")) return "project";
 	if (id.startsWith("dm:")) return "dm";

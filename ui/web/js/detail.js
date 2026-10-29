@@ -10,7 +10,7 @@ import { avatarSvg } from "./avatar.js";
 import { escapeHtml, relTime } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
 
-const KIND_LABEL = { company: "公司大群", leadership: "领导层", project: "项目", dm: "私聊", other: "频道" };
+const KIND_LABEL = { company: "全员", leadership: "领导层", project: "项目", dm: "私聊", other: "频道" };
 
 function statusTag(label) {
 	if (!label) return "";

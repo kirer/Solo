@@ -337,7 +337,7 @@ export function channelDetail(
  * 只给「有谁、谁向谁汇报」这两件事。人按「离老板最近」优先排序：`manager` 是老板的
  * 排最前，其余按报名顺序 —— 界面左侧成员列表直接用这个顺序。
  */
-export function orgView(identities: readonly Identity[], directory: DirectoryState, companyName = "一人公司"): ViewOrg {
+export function orgView(identities: readonly Identity[], directory: DirectoryState, companyName = "Solo"): ViewOrg {
 	const toActor = (identity: Identity): ViewActor => ({
 		slug: identity.slug,
 		label: identity.name ?? identity.slug,
