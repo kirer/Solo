@@ -771,6 +771,17 @@ export function eventLabel(message) {
 }
 
 /**
+ * 这一组要不要默认展开。
+ *
+ * 老板要在私聊里看得见过程：过程组头现在只有「查看过程」，如果全折叠，刷新后
+ * 屏幕上就没有新东西了。所以**私聊里最后一段（还在跑的那组）**默认展开；历史组
+ * 和项目/公司频道保持折叠 —— 项目频道放的是结论，过程不该占正文。
+ */
+export function shouldOpenByDefault({ channelKind, running = false, isLast = false } = {}) {
+	return channelKind === "dm" && running === true && isLast === true;
+}
+
+/**
  * 把 source 这个已完成组的行并进 target，只留 target 一个箭头。
  *
  * 老板要的是「相邻同名的已完成组能并就并」：同一段活被一句话打断、又接着干，
@@ -838,6 +849,7 @@ export function wrapEvents(slug, name, nodes, timing = {}) {
 	wrap.dataset.slug = slug ?? "";
 	wrap.dataset.name = name ?? "";
 	wrap.dataset.state = running ? "running" : "done";
+	const open = timing.defaultOpen === true;
 	wrap.dataset.start = String(startAt);
 	wrap.dataset.end = String(endAt);
 	// 秒数的数值真相存在这里：只增不减的比较读它，不读文案。
@@ -853,9 +865,11 @@ export function wrapEvents(slug, name, nodes, timing = {}) {
 	// 老板的原话是「多条『正在执行』组头看得人晕」—— 活跃状态只保留底部那一条活动行。
 	// 名字与用时仍在 aria-label 里（groupHeader），读屏和悬停都还有信息。
 	button.innerHTML = `<span class="evs-what">${DONE_HINT}</span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+	button.setAttribute("aria-expanded", open ? "true" : "false");
+	if (open) wrap.dataset.open = "true";
 	const body = document.createElement("div");
 	body.className = "evs-body";
-	body.hidden = true;
+	body.hidden = !open;
 	const inner = document.createElement("div");
 	inner.className = "evs-list";
 	for (const node of rows) {
@@ -893,7 +907,7 @@ export function buildStream(messages, ctx = {}) {
 	const queueEvent = (message, nodes) => pendingEvents.push({ message, nodes });
 	// 跑着的组：只有整列最后一段、且离现在够近才算还在跑（不然历史里的旧尾巴永远在跳秒）。
 	const RUNNING_WINDOW_MS = 5 * 60 * 1000;
-	const emitRun = (entries, { running = false, endAt } = {}) => {
+	const emitRun = (entries, { running = false, endAt, isLast = false } = {}) => {
 		if (entries.length === 0) return;
 		const slug = entries[0].message.fromSlug;
 		const span = groupSpan(entries.map((entry) => entry.message));
@@ -903,7 +917,17 @@ export function buildStream(messages, ctx = {}) {
 			slug,
 			bySlug.get(slug)?.label ?? slug,
 			entries.flatMap((entry) => entry.nodes),
-			{ startAt, endAt: lastAt, now, running },
+			{
+				startAt,
+				endAt: lastAt,
+				now,
+				running,
+				defaultOpen: shouldOpenByDefault({
+					channelKind: ctx.channelKind,
+					running,
+					isLast,
+				}),
+			},
 		)) {
 			// 相邻同名的已完成组并成一个箭头：中间只隔了一句话，屏幕上不该出现两个。
 			const prev = frag.lastElementChild;
@@ -936,7 +960,8 @@ export function buildStream(messages, ctx = {}) {
 			const span = groupSpan(run.map((entry) => entry.message));
 			const isLast = index === runs.length - 1;
 			const running = open && isLast && now - span.endAt <= RUNNING_WINDOW_MS;
-			emitRun(run, { running });
+			// 只有整列的收尾 flush 才知道「这是不是最后一段」，所以 isLast 从那里带下来。
+			emitRun(run, { running, isLast: open && isLast });
 		});
 		pendingEvents.length = 0;
 		pendingEvents.push(...kept);

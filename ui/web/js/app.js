@@ -413,6 +413,9 @@ function streamCtx() {
 	const need = needSeqs();
 	return {
 		people: state.people,
+		// 频道类型要带下去：私聊里最后一段正在跑的过程组默认展开（老板要看得见过程），
+		// 项目/公司频道全折叠。
+		channelKind: kindOf(currentChannel()),
 		// 两个来源取并集：后端判定的 attention，以及前端按「提问 + 点名老板」算的。
 		isNeed: (message) => message.processing !== true && ((message.status === "pending") || need.has(message.seq) || isNeedRow(message)),
 	};
@@ -458,6 +461,8 @@ function appendEventRow(message, node) {
 		endAt: message.at,
 		now: Date.now(),
 		running: true,
+		// 私聊里刚开跑的这一组默认展开：刷新/增量都应该看得见过程。
+		defaultOpen: kindOf(currentChannel()) === "dm",
 	});
 	el.feed.append(wrap);
 	return wrap;
