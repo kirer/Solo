@@ -14,7 +14,7 @@ import { MAX_PER_MESSAGE, filesOf, kindOfFile, queueItemHtml, uploadOne } from "
 import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
 import { channelDetailHtml, personDetailHtml } from "./detail.js";
-import { copyText, escapeHtml, relTime, sortChannels } from "./format.js";
+import { copyText, escapeHtml, headParts, relTime, sortChannels, unreadLabel } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
 import { activityPhrase, buildOne, buildStream, eventLabel, isEventKind, isNeed as isNeedRow, wrapEvents } from "./rows.js";
 import { mergeMessages } from "./messages.js";
@@ -302,12 +302,13 @@ function renderSidebar() {
 	const out = channels.map((channel) => {
 		const current = channel.id === state.currentId;
 		const slug = slugOfChannel(channel);
-		const dot =
-			channel.mentions > 0
-				? '<span class="dot" data-kind="mention"></span>'
-				: channel.unread > 0
-					? '<span class="dot"></span>'
-					: "";
+		// 未读从「一个点」改成数字：点只能说明「有」，说不出「积了多少」。
+		// 文案交给 format.unreadLabel（99+ 也在那里截断），这里只管画。
+		const unread = unreadLabel(channel.unread);
+		const badge =
+			unread === ""
+				? ""
+				: `<span class="ch-badge"${channel.mentions > 0 ? ' data-kind="mention"' : ""}>${unread}</span>`;
 		// 状态只对人显示：频道没在「想」这一回事。
 		const presence = slug ? presenceOf(slug) : null;
 		const state_tag = presence
@@ -322,7 +323,7 @@ function renderSidebar() {
 			channel.title ?? "",
 		)}</span>${state_tag}</span><span class="ch-sub">${escapeHtml(preview)}</span></span><span class="ch-meta"><span class="ch-time">${relTime(
 			channel.lastAt ?? 0,
-		)}</span>${dot}</span></button>`;
+		)}</span>${badge}</span></button>`;
 	});
 	el.rows.innerHTML = out.join("");
 	endMark();
@@ -582,11 +583,9 @@ function renderHead() {
 			status === "" ? "" : `<span class="pane-state">${escapeHtml(status)}</span>`
 		}`;
 	} else {
-		const parts = [];
-		if (kind === "project" && channel.project) parts.push(channel.project);
-		if (channel.ownerLabel) parts.push(`负责人 ${channel.ownerLabel}`);
-		if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
-		el.paneSub.textContent = parts.join(" · ");
+		// 项目频道第一段是这个项目现在在干什么（后端 doing），后面才是项目名 / 负责人 / 人数。
+		// 没有 doing 时 parts 和以前一模一样。
+		el.paneSub.textContent = headParts(kind === "project" ? channel : { ...channel, doing: undefined }).join(" · ");
 	}
 	el.composer.hidden = !state.currentId;
 	document.body.dataset.pane = state.currentId ? "chat" : "list";
@@ -786,7 +785,7 @@ async function markRead(detail) {
 			row.unread = 0;
 			row.mentions = 0;
 			const button = el.rows.querySelector(`[data-channel="${CSS.escape(row.id)}"]`);
-			button?.querySelector(".dot")?.remove();
+			button?.querySelector(".ch-badge")?.remove();
 		}
 	} catch {
 		state.readMark.delete(key);

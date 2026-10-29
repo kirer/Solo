@@ -33,6 +33,11 @@ export type ViewChannel = {
 	owner?: string;
 	/** 仅 `kind === "project"` 时有：负责人显示名。 */
 	ownerLabel?: string;
+	/**
+	 * 仅 `kind === "project"` 且项目文档写了 `doing` 时有：一句话现状。
+	 * 界面拿它当顶栏副标题的第一段；缺了这个键就什么都不画。
+	 */
+	doing?: string;
 	title: string;
 	project?: string;
 	unread: number;
@@ -155,12 +160,16 @@ function offsetOf(text: string, label: string): number {
  */
 export type ProjectOwnerOf = (project: string) => string | undefined;
 
+/** 「这个项目的一句话现状」的查询函数。来源同上（项目文档的 `doing`）。 */
+export type ProjectDoingOf = (project: string) => string | undefined;
+
 /** 频道列表。 */
 export function channelList(
 	state: ChannelState,
 	directory: DirectoryState,
 	slug = OWNER_SLUG,
 	projectOwnerOf?: ProjectOwnerOf,
+	projectDoingOf?: ProjectDoingOf,
 ): ViewChannel[] {
 	const out: ViewChannel[] = [];
 	for (const channel of Object.values(state.channels)) {
@@ -191,10 +200,12 @@ export function channelList(
 		).length;
 		const project = channel.id.startsWith("proj:") ? channel.id.slice("proj:".length) : undefined;
 		const owner = project === undefined ? undefined : projectOwnerOf?.(project);
+		const doing = project === undefined ? undefined : projectDoingOf?.(project);
 		out.push({
 			id: channel.id,
 			kind: kindOf(channel.id),
 			...(owner === undefined || owner === "" ? {} : { owner, ownerLabel: labelIn(directory, owner) }),
+			...(doing === undefined || doing === "" ? {} : { doing }),
 			title: channel.title,
 			...(project === undefined ? {} : { project }),
 			unread,
@@ -289,6 +300,7 @@ export function channelDetail(
 		readonly before?: number;
 		readonly viewer?: string;
 		readonly projectOwnerOf?: ProjectOwnerOf;
+		readonly projectDoingOf?: ProjectDoingOf;
 	} = {},
 ): ViewChannelDetail {
 	const viewer = options.viewer ?? OWNER_SLUG;
@@ -301,6 +313,7 @@ export function channelDetail(
 	const last = page[page.length - 1];
 	const projectSlug = channel.id.startsWith("proj:") ? channel.id.slice("proj:".length) : undefined;
 	const ownerSlug = projectSlug === undefined ? undefined : options.projectOwnerOf?.(projectSlug);
+	const doing = projectSlug === undefined ? undefined : options.projectDoingOf?.(projectSlug);
 	// 个人频道显示成那个人的名字 —— 频道建立时标题就是它，这里不重复计算。
 	return {
 		channel: {
@@ -309,6 +322,7 @@ export function channelDetail(
 			...(ownerSlug === undefined || ownerSlug === ""
 				? {}
 				: { owner: ownerSlug, ownerLabel: labelIn(directory, ownerSlug) }),
+			...(doing === undefined || doing === "" ? {} : { doing }),
 			title: channel.title,
 			...(projectSlug === undefined ? {} : { project: projectSlug }),
 			lastAt: last?.at ?? channel.createdAt,

@@ -106,6 +106,33 @@ export async function copyText(text) {
 }
 
 /**
+ * 会话列表的未读数文案：0 → 空，1–99 → 数字，>99 → 「99+」。
+ *
+ * 为什么要在这里截断而不是让 CSS 去缩：徽标是定宽的，三位数一进来整行的
+ * 名字就被挤窄一档（实测 1234 会把标题压掉两个字）。数字本身对老板的价值
+ * 到「有几十条」就饱和了，99+ 既说了量级又不改变行宽。
+ */
+export function unreadLabel(count) {
+	const value = Number(count);
+	if (!Number.isFinite(value) || value <= 0) return "";
+	if (value > 99) return "99+";
+	return String(Math.floor(value));
+}
+
+/** 频道详情顶栏副标题的组成部分（非私聊）。项目频道把 doing 放最前面。 */
+export function headParts(channel) {
+	if (!channel) return [];
+	const parts = [];
+	// doing 是「这个项目现在在干什么」，比项目名更能回答「我该不该点进去」，
+	// 所以放在最前面；没有就不占位。
+	if (channel.doing) parts.push(String(channel.doing));
+	if (channel.project) parts.push(String(channel.project));
+	if (channel.ownerLabel) parts.push(`负责人 ${channel.ownerLabel}`);
+	if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
+	return parts;
+}
+
+/**
  * 会话列表的排序：**知言恒第一**，其余按最后说话时间倒序。
  *
  * 为什么要在这里排而不是靠后端顺序：列表每次刷新（含重启后重新拉

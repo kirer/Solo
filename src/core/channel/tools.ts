@@ -767,6 +767,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 			slug: Type.String({ description: "项目 slug（会当目录名用）" }),
 			name: Type.Optional(Type.String({ description: "显示名" })),
 			owner: Type.Optional(Type.String({ description: "负责人的 slug" })),
+			doing: Type.Optional(
+				Type.String({ description: "一句话现状（谁在做什么），显示在项目频道顶栏；不传 = 保留原值" }),
+			),
 			status: Type.Optional(Type.String({ description: "active / paused / done / archived" })),
 			body: Type.String({ description: "正文：目标、验收标准、边界、进展" }),
 		}),
@@ -778,6 +781,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 					body: args.body,
 					...(args.name === undefined ? {} : { name: args.name }),
 					...(args.owner === undefined ? {} : { owner: args.owner }),
+					// 不传 doing 时 doc.ts 会沿用文件里已有的 —— 这里不替它编。
+					...(args.doing === undefined ? {} : { doing: args.doing }),
 					...(args.status === undefined ? {} : { status: args.status as never }),
 				});
 				// 负责人写进文件之后，项目频道要立刻把他拉进来：频道成员是文档的投影，

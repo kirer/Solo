@@ -324,16 +324,37 @@
 	color: var(--live);
 }
 
-/* 未读只有两种：有人点你 = --accent 点；只是有新内容 = --ink-3 点。没有数字。 */
-.dot {
-	width: 5px;
-	height: 5px;
-	border-radius: 50%;
-	background: var(--ink-3);
+/*
+ * 未读徽标：数字，不再是一个点。
+ *
+ * 点只说「有新的」，说不出积了多少；但徽标一出现就是在行尾挤位置，
+ * 所以三件事必须钉死，否则一有未读整列的名字会左右跳：
+ *   flex: none            —— 不被行宽压缩；
+ *   min-width: 18px       —— 一位数和两位数同宽（99+ 也是同一档）；
+ *   tabular-nums          —— 等宽数字，1 和 8 占同样的地方。
+ * 高度/圆角走胶囊，`99+` 比 `1` 宽一点也只在行尾多 4px，且 .ch-meta 本来就是
+ * flex: none 的一列，不影响左边标题的宽度。
+ */
+.ch-badge {
+	display: inline-grid;
+	place-items: center;
+	flex: none;
+	min-width: 18px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 8px;
+	background: var(--raised);
+	font-family: var(--mono);
+	font-variant-numeric: tabular-nums;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-2);
 }
 
-.dot[data-kind="mention"] {
+/* 有人点你：唯一需要打断老板的那种未读，用强调色。其余用中性灰。 */
+.ch-badge[data-kind="mention"] {
 	background: var(--accent);
+	color: var(--ground);
 }
 
 /* ── 白纸 ───────────────────────────────────────────────────────────── */
@@ -374,7 +395,10 @@
 	display: flex;
 	align-items: center;
 	min-width: 0;
+	/* 副标题现在有一句话现状（doing），可能很长：单行省略，顶栏高度不变。 */
+	overflow: hidden;
 	white-space: nowrap;
+	text-overflow: ellipsis;
 	font-size: 12px;
 	line-height: 16px;
 	color: var(--ink-3);

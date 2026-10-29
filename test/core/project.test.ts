@@ -51,6 +51,27 @@ describe("项目：一份 README.md 就是全部事实", () => {
 		expect(second.body).toBe("v2");
 	});
 
+	it("doing：写进去能读出来，且只重复写正文时沿用原值", async () => {
+		await writeProject(root, { slug: "demo", doing: "沈舟在改 doing 链路", body: "v1" });
+		expect((await readProject(root, "demo"))?.doing).toBe("沈舟在改 doing 链路");
+		const second = await writeProject(root, { slug: "demo", body: "v2" });
+		expect(second.doing).toBe("沈舟在改 doing 链路");
+		expect(second.body).toBe("v2");
+	});
+
+	it("doing：没写的项目读出来是 undefined，空串也不落盘", async () => {
+		await writeProject(root, { slug: "demo", body: "v1" });
+		expect((await readProject(root, "demo"))?.doing).toBeUndefined();
+		await writeProject(root, { slug: "demo", doing: "", body: "v2" });
+		expect((await readProject(root, "demo"))?.doing).toBeUndefined();
+	});
+
+	it("doing：显式传入时覆盖原值（契约只把「不传」当保留）", async () => {
+		await writeProject(root, { slug: "demo", doing: "旧", body: "v1" });
+		const second = await writeProject(root, { slug: "demo", doing: "新", body: "v2" });
+		expect(second.doing).toBe("新");
+	});
+
 	it("缺 owner 时不编造负责人（写「没人负责」是渲染层的事）", async () => {
 		const written = await writeProject(root, { slug: "solo", body: "只有我一个人做" });
 		expect(written.owner).toBeUndefined();

@@ -65,6 +65,26 @@ describe("频道列表的投影", () => {
 		expect(channel.ownerLabel).toBe("沈舟");
 	});
 
+	it("项目频道带上一句话现状 doing（来自项目文件）", () => {
+		const state = stateOf([project]);
+		const [channel] = channelList(
+			state,
+			directoryOf({ lin: "林越", shen: "沈舟" }),
+			"owner",
+			() => "shen",
+			(slug) => (slug === "坦克大战" ? "沈舟在改 doing 链路" : undefined),
+		);
+		expect(channel.doing).toBe("沈舟在改 doing 链路");
+	});
+
+	it("没有 doing 时列表里不带这个键，非项目频道也不带", () => {
+		const state = stateOf([project, lin]);
+		const list = channelList(state, directoryOf({ lin: "林越" }), "owner", () => undefined, () => undefined);
+		expect("doing" in list[0]!).toBe(false);
+		const dm = list.find((channel) => channel.kind === "dm")!;
+		expect("doing" in dm).toBe(false);
+	});
+
 	it("没有负责人的项目不编造一个", () => {
 		const state = stateOf([project]);
 		const [channel] = channelList(state, directoryOf({}), "owner", () => undefined);
@@ -81,6 +101,19 @@ describe("频道详情的投影", () => {
 		});
 		const roles = Object.fromEntries(detail.members.map((member) => [member.slug, member.role]));
 		expect(roles).toEqual({ owner: "owner", lin: "member", shen: "lead" });
+	});
+
+	it("详情也带出 doing；没有就不带这个键", () => {
+		const state = stateOf([project]);
+		const withDoing = channelDetail(state, project, directoryOf({ lin: "林越", shen: "沈舟" }), {
+			projectOwnerOf: () => "shen",
+			projectDoingOf: () => "沈舟在改 doing 链路",
+		});
+		expect(withDoing.channel.doing).toBe("沈舟在改 doing 链路");
+		const withoutDoing = channelDetail(state, project, directoryOf({ lin: "林越", shen: "沈舟" }), {
+			projectOwnerOf: () => "shen",
+		});
+		expect("doing" in withoutDoing.channel).toBe(false);
 	});
 
 	it("负责人不在成员里时，没人被标成 lead", () => {

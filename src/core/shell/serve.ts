@@ -152,7 +152,10 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannels();
 		const owners = new Map<string, string | undefined>(projects.map((project) => [project.slug, project.owner]));
 		const projectOwnerOf = (project: string) => owners.get(project);
-		return { identities, directory, channels, projectOwnerOf };
+		// 一句话现状与负责人同源（同一份项目文档），所以是同一个快照里的一张表。
+		const doings = new Map<string, string | undefined>(projects.map((project) => [project.slug, project.doing]));
+		const projectDoingOf = (project: string) => doings.get(project);
+		return { identities, directory, channels, projectOwnerOf, projectDoingOf };
 	}
 
 	/** 向所有 SSE 连接推一份新快照（去抖：一次提交可能连带几次改动）。 */
@@ -438,8 +441,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels",
 			method: "GET",
 			handler: async ({ response }) => {
-				const { directory, channels, projectOwnerOf } = await snapshot();
-				const list = channelList(channels, directory, OWNER_SLUG, projectOwnerOf);
+				const { directory, channels, projectOwnerOf, projectDoingOf } = await snapshot();
+				const list = channelList(channels, directory, OWNER_SLUG, projectOwnerOf, projectDoingOf);
 				return json(response, {
 					channels: list,
 					unread: {
@@ -544,7 +547,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels/:id",
 			method: "GET",
 			handler: async ({ response, url, params }) => {
-				const { directory, channels, projectOwnerOf } = await snapshot();
+				const { directory, channels, projectOwnerOf, projectDoingOf } = await snapshot();
 				const channel = channels.channels[params.id ?? ""];
 				if (channel === undefined) return fail(response, 404, "频道不存在或无权查看");
 				const limit = Number(url.searchParams.get("limit") ?? "");
@@ -553,6 +556,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 					response,
 					channelDetail(channels, channel, directory, {
 						projectOwnerOf,
+						projectDoingOf,
 						...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 						...(Number.isFinite(before) && before > 0 ? { before } : {}),
 					}),

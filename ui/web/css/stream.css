@@ -227,7 +227,10 @@
 	line-height: 24px;
 	font-weight: 400;
 	color: var(--ink);
+	/* 长 URL / 长命令必须在这里断开，否则一行就把消息流撑出横向滚动条。 */
 	overflow-wrap: anywhere;
+	word-break: break-word;
+	min-width: 0;
 	text-wrap: pretty;
 	text-autospace: normal;
 }
@@ -290,14 +293,23 @@
 	color: var(--ink-2);
 }
 
+/*
+ * 代码块折行，不横向滚。
+ *
+ * 这是老板的验收口径：贴一条巨型命令进来，消息流不能出现横向滚动条。
+ * pre 保留换行（pre-wrap），长行由 word-break 强断；横向不再出滚动条，
+ * 纵向也不加限高 —— 这里的高度交给行本身，裁切留给 .ev-body。
+ */
 .md pre {
 	margin: 8px 0;
 	padding: 10px 12px;
-	overflow-x: auto;
 	border: 1px solid var(--line);
 	border-radius: var(--r-row);
 	background: var(--raised);
 	line-height: 20px;
+	white-space: pre-wrap;
+	word-break: break-word;
+	overflow-wrap: anywhere;
 }
 
 .md pre code {
@@ -306,6 +318,13 @@
 	color: var(--ink-2);
 	font-size: 12px;
 	line-height: 20px;
+}
+
+.md a,
+.md code {
+	/* 父级已继承，这里写死一份：a / code 是浏览器最容易整段不换的两个元素。 */
+	overflow-wrap: anywhere;
+	word-break: break-word;
 }
 
 .md a {
@@ -400,6 +419,10 @@
 	margin: 0;
 	border: 0;
 	border-radius: 0;
+	/* .md-code 自己有 overflow: hidden；这里再确认一次折行，别让长行被裁掉。 */
+	white-space: pre-wrap;
+	word-break: break-word;
+	overflow-wrap: anywhere;
 }
 
 .md-img {
@@ -704,7 +727,9 @@ button.ev:hover {
 	margin: 0;
 	padding: 8px 10px;
 	max-height: 320px;
-	overflow: auto;
+	/* 只纵向滚：pre-wrap 已经让长命令折行，横向再出条只会盖住正文。 */
+	overflow-y: auto;
+	overflow-x: hidden;
 	background: var(--raised);
 	border: 1px solid var(--line);
 	border-radius: var(--r-control);

@@ -33,6 +33,13 @@ export type ProjectDoc = {
 	readonly name: string;
 	/** 负责人（agent 的 slug）。缺省 = 没人负责。 */
 	readonly owner?: string;
+	/**
+	 * 一句话现状（「谁在做什么」）。缺省 = 没写。
+	 *
+	 * 它只给界面用（项目频道顶栏的副标题），不参与任何调度判断 —— 所以是自由文本，
+	 * 空串按「没写」处理，免得界面渲染出一段空白。
+	 */
+	readonly doing?: string;
 	readonly status: ProjectStatus;
 	/** 正文：目标、验收标准、边界、当前进展。 */
 	readonly body: string;
@@ -72,6 +79,7 @@ export function parseProject(slug: string, dir: string, source: string): Project
 		slug,
 		name: header.name ?? slug,
 		...(header.owner === undefined ? {} : { owner: header.owner }),
+		...(header.doing === undefined ? {} : { doing: header.doing }),
 		status,
 		body: stripFrontmatter(source),
 		dir,
@@ -82,11 +90,13 @@ export function parseProject(slug: string, dir: string, source: string): Project
 export function renderProjectFile(doc: {
 	readonly name: string;
 	readonly owner?: string;
+	readonly doing?: string;
 	readonly status?: ProjectStatus;
 	readonly body: string;
 }): string {
 	const lines = ["---", `name: ${doc.name}`];
 	if (doc.owner !== undefined && doc.owner !== "") lines.push(`owner: ${doc.owner}`);
+	if (doc.doing !== undefined && doc.doing !== "") lines.push(`doing: ${doc.doing}`);
 	if (doc.status !== undefined) lines.push(`status: ${doc.status}`);
 	lines.push("---", "", doc.body.trim());
 	return `${lines.join("\n")}\n`;
@@ -136,6 +146,11 @@ export async function writeProject(
 		readonly slug: string;
 		readonly name?: string;
 		readonly owner?: string;
+		/**
+		 * 一句话现状。**不传 = 沿用文件里已有的**（与 `owner` 同一口径）：
+		 * 大多数写入只改正文，调用方没必要把 `doing` 抄一遍，抄漏了就会把它抹掉。
+		 */
+		readonly doing?: string;
 		readonly status?: ProjectStatus;
 		readonly body: string;
 	},
@@ -148,6 +163,7 @@ export async function writeProject(
 	const doc = {
 		name: input.name ?? existing?.name ?? slug,
 		...(input.owner === undefined ? (existing?.owner === undefined ? {} : { owner: existing.owner }) : { owner: input.owner }),
+		...(input.doing === undefined ? (existing?.doing === undefined ? {} : { doing: existing.doing }) : { doing: input.doing }),
 		status: input.status ?? existing?.status ?? "active",
 		body: input.body,
 	};
