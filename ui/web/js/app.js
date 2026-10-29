@@ -1068,7 +1068,7 @@ function openChannelStream(id) {
 		// 以前这里是无条件 `renderFlow()` —— 整个频道（100+ 行、每行一张 SVG 头像、
 		// 正文还要过一遍 Markdown）在**每条消息**到达时重建一次。两个 agent 同时说话、
 		// 加上 think/tool 过程投影，一秒能来好几条，主线程一直占着，点哪儿都像卡住。
-		// 重建还会把正在流式写入的那个 `.md` 节点一起换掉，token 的后续增量就找不到落点了。
+		// 重建会把正在就地改的那一行（占位填充、编辑）一起换掉，正在写的正文就找不到落点了。
 		if (isAppend) {
 			if (isEventKind(message.kind)) {
 				// 过程行交给 appendEventRow：并进正在跑的组，或者开一个新组。
@@ -1114,17 +1114,8 @@ function openChannelStream(id) {
 			/* 同上 */
 		}
 	});
-	source.addEventListener("token", (event) => {
-		try {
-			const payload = JSON.parse(event.data);
-			if (state.currentId !== id || typeof payload.seq !== "number") return;
-			const row = el.feed.querySelector(`.row[data-seq="${payload.seq}"] .md`);
-			if (row) row.append(document.createTextNode(payload.delta ?? ""));
-			if (isPinned()) scrollToBottom();
-		} catch {
-			/* 同上 */
-		}
-	});
+	// 只有 create / done 两种事件：服务端已经没有假流式的 `token` 了（P1-3 删掉了），
+	// 留着监听等于一段永远不跑的「纯文本 append 进 Markdown 容器」死代码。
 	source.addEventListener("error", () => {
 		/* EventSource 自己重连，这里只标记一次断线 */
 	});
