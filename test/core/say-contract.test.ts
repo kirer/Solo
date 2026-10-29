@@ -194,6 +194,25 @@ describe("要老板拍板就 @ 老板", () => {
 		expect(lastOf(state, PROJ)?.mentions).toContain(OWNER);
 	});
 
+	it("英文内心独白不落库，返回理由并让模型重写", async () => {
+		const { say, snapshot } = await setup();
+		const before = lastOf(await snapshot(), PROJ)?.seq;
+		const reply = await say({
+			text: "Let me clone first, then read the compose before touching anything. The repo is at /Users/kirer/ds-bot.",
+		});
+		expect(reply).toContain("这条没发出去");
+		// 关键：它没有落库 —— 不然「拦」只是多了一句提示，频道里照样多一条独白。
+		expect(lastOf(await snapshot(), PROJ)?.seq).toBe(before);
+	});
+
+	it("超长正文不落库", async () => {
+		const { say, snapshot } = await setup();
+		const before = lastOf(await snapshot(), PROJ)?.seq;
+		const reply = await say({ text: "很".repeat(1_201) });
+		expect(reply).toContain("太长了");
+		expect(lastOf(await snapshot(), PROJ)?.seq).toBe(before);
+	});
+
 	it("普通闲聊不补 owner", async () => {
 		const { say, snapshot } = await setup();
 		await say({ text: "收到，我接着改" });
