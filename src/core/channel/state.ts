@@ -484,13 +484,22 @@ export function upsertChannel(
 	};
 }
 
-/** 把某个 slug 在某个频道的已读位置推到 `seq`。回退不生效（已读不会变未读）。 */
+/**
+ * 把某个 slug 在某个频道的已读位置推到 `seq`。回退不生效（已读不会变未读）。
+ *
+ * `seq` 会**夹到频道真实上界**：已读标记是「读到第几条」，写进一个比历史还大的数字
+ * 等于声明「以后所有消息都已读」，未读数从此永远 0 —— 一条越界的请求就能让老板
+ * 再也看不见红点。路由层已经夹过一次，这里是第二道（唯一写入口自己兜底）。
+ */
 export function markRead(state: ChannelState, slug: string, channelId: string, seq: number): ChannelState {
 	const current = readMarkOf(state, slug, channelId);
-	if (seq <= current) return state;
+	const list = state.messages[channelId] ?? [];
+	const lastSeq = list.length === 0 ? 0 : (list[list.length - 1]?.seq ?? 0);
+	const wanted = Math.min(Math.max(Math.floor(seq), 0), lastSeq);
+	if (!Number.isFinite(seq) || wanted <= current) return state;
 	return {
 		...state,
-		readMarks: { ...state.readMarks, [slug]: { ...(state.readMarks[slug] ?? {}), [channelId]: seq } },
+		readMarks: { ...state.readMarks, [slug]: { ...(state.readMarks[slug] ?? {}), [channelId]: wanted } },
 	};
 }
 

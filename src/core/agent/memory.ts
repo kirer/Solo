@@ -82,6 +82,29 @@ export function sectionsOf(source: string): readonly MemorySection[] {
 	return out;
 }
 
+/**
+ * 删掉一节记忆，重建整篇；没有这一节返回 undefined。
+ *
+ * 为什么不用「找到标题那一行、把它到下一节之间的行切掉」（旧做法）：那样要求调用方
+ * 自己再拼一遍剩余内容，实测把**删中间一节**写成了「后面的节被吞掉」和「同一节出现
+ * 两次」两种坏文件 —— 记忆是模型长期唯一的上下文，写坏一次就是永久丢事实。
+ *
+ * 所以这里只认一个口径：`sectionsOf` 怎么分段，就怎么重建。序言（第一个 `## ` 之前
+ * 的标题/导语）原样保留，剩下的节按原顺序拼回。标题按 `trim()` 后比较，与
+ * `sectionsOf` 一致 —— 否则「标题带尾随空格」的那节永远删不掉。
+ */
+export function removeSection(source: string, heading: string): string | undefined {
+	const wanted = heading.trim();
+	if (wanted === "") return undefined;
+	const sections = sectionsOf(source);
+	if (!sections.some((section) => section.heading === wanted)) return undefined;
+	const lines = source.split("\n");
+	const firstHeading = lines.findIndex((line) => line.startsWith("## "));
+	const preamble = (firstHeading < 0 ? lines : lines.slice(0, firstHeading)).join("\n").trimEnd();
+	const kept = sections.filter((section) => section.heading !== wanted).map((section) => `## ${section.heading}\n${section.body}`);
+	return [preamble, ...kept].filter((part) => part.trim() !== "").join("\n\n").trimEnd();
+}
+
 /** 长得像密钥的东西。宁可误报（让它换个说法），不可漏报（一条 key 写进提示词就撤不回了）。 */
 const SECRET_SHAPES = [
 	/\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|sk_live_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)/,

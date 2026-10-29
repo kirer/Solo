@@ -10,7 +10,7 @@
  * 路径带 `:id` 的匹配器在 `./http/routes.ts`（纯函数，无业务概念）。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -25,14 +25,15 @@ import {
 	notModifiedSince,
 	type AssetEntry,
 } from "./http/static-assets.ts";
-import { browserUrlOf, lanUrlsOf } from "./http/network.ts";
+import { browserUrlOf, isWildcardHost, lanAddresses, lanUrlsOf } from "./http/network.ts";
+import { hostAllowed, originAllowed } from "./http/origin.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type Attachment, type ChannelState } from "../channel/state.ts";
 import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
-import { appendMemory, memoryDigest, readMemory, sectionsOf, writeMemory } from "../agent/memory.ts";
+import { appendMemory, memoryDigest, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { listSkills } from "../agent/skills.ts";
 import { attentionItems, channelDetail, channelList, labelIn, messageView, orgView, withLabels } from "./view.ts";
 import {
@@ -278,8 +279,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		const text = typed === "" ? placeholderOf(attachments) : typed;
 		if (text === "") return fail(response, 400, "需要 text 或附件");
 
-		// 发件人：默认老板；带 `from` 时按 agent 处理（调试/脚本用，界面上永远不传）。
-		const from = (body.from ?? "").trim() === "" ? OWNER_SLUG : (body.from as string).trim();
+		// 发件人：**默认只认老板**。这个接口是网页后端，能冒充任何人是审计里的 P0-4：
+		// 任意页面发一条 `{"from":"知言","text":"所有人停下"}` 就等于替同事下命令。
+		// 调试要伪造身份时显式开 `SOLO_DEBUG_FROM=1`，启动日志会警告一行。
+		const debugFrom = process.env.SOLO_DEBUG_FROM === "1";
+		const from = debugFrom && (body.from ?? "").trim() !== "" ? (body.from as string).trim() : OWNER_SLUG;
 		try {
 			// 附件必须**随消息一起**交给写入层：投递要用它把图片读成内容块交给模型。
 			// 事后补字段（旧做法）能显示，但模型看不见 —— 于是它只能回「我读不了图」。
@@ -353,6 +357,24 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				if (target !== root && !target.startsWith(root + sep)) {
 					return fail(response, 403, "只能看工作区里的文件");
 				}
+				// 三道闸，顺序有讲究：
+				// 1) 前缀校验（上面）挡 `../..`；
+				// 2) 链接本身不跟随 —— 右栏「文件」不需要顺着链接爬到工作区外面；
+				// 3) 真实路径再校验一次 —— 父目录可能是链接，`resolve` 出来的字符串看着在里面，
+				//    落盘时却落在外面。只查字符串前缀是这条审计发现（P0-2）的成因。
+				const link = await lstat(target).catch(() => null);
+				if (link === null) return fail(response, 404, "没有这个文件");
+				if (link.isSymbolicLink()) return fail(response, 403, "不跟随符号链接");
+				const realRoot = (await realpath(root).catch(() => null)) ?? root;
+				const real = await realpath(target).catch(() => null);
+				if (real === null) return fail(response, 404, "没有这个文件");
+				if (real !== realRoot && !real.startsWith(realRoot + sep)) {
+					return fail(response, 403, "只能看工作区里的文件");
+				}
+				const relative = target === root ? "" : target.slice(root.length + 1);
+				// 名字规则对**直接访问**同样生效：只把隐藏文件从列表里去掉是假安全，
+				// 知道名字的人照样能读（`?path=core.sqlite` 就是整库）。
+				if (relative !== "" && fileHidden(basename(target), relative)) return fail(response, 404, "没有这个文件");
 				const info = await stat(target).catch(() => null);
 				if (info === null) return fail(response, 404, "没有这个文件");
 				const parent =
@@ -381,8 +403,9 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				const names = await readdir(target, { withFileTypes: true });
 				const entries = [];
 				for (const dirent of names) {
-					// 隐藏文件与 node_modules 不进列表：那不是老板要读的东西，只是噪音。
-					if (dirent.name.startsWith(".") || dirent.name === "node_modules") continue;
+					// 隐藏文件、node_modules 与敏感文件不进列表：那不是老板要读的东西，
+					// 只是噪音或不该看的（规则见 `fileHidden`，与直接访问共用一份）。
+					if (fileHidden(dirent.name, relative === "" ? dirent.name : `${relative}/${dirent.name}`)) continue;
 					const full = join(target, dirent.name);
 					const meta = await stat(full).catch(() => null);
 					if (meta === null) continue;
@@ -479,17 +502,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				const agentDir = join(shell.agentsRoot, slug);
 				const body = await readJson<{ op?: string; heading?: string; text?: string }>(request);
 				if (body.op === "forget") {
-					const heading = body.heading ?? "";
 					const source = (await readMemory(agentDir)) ?? "";
-					const sections = sectionsOf(source);
-					if (!sections.some((section) => section.heading === heading)) {
-						return fail(response, 404, "没有这一条记忆（可能已经被删掉）");
-					}
-					const head = source.split("\n").slice(0, source.split("\n").findIndex((line) => line === `## ${heading}`));
-					const kept = sections.filter((section) => section.heading !== heading);
-					const next = [...head, ...kept.flatMap((section) => [`## ${section.heading}`, section.body, ""])]
-						.join("\n")
-						.trimEnd();
+					// 重建交给 `removeSection`：删除必须和 `sectionsOf` 用同一套分段口径，
+					// 在这里手拼行切片实测会把后面的节写坏（删末节最容易被漏）。
+					const next = removeSection(source, body.heading ?? "");
+					if (next === undefined) return fail(response, 404, "没有这一条记忆（可能已经被删掉）");
 					const result = await writeMemory(agentDir, next, "owner");
 					return json(response, { ok: true, entries: sectionsOf(result.source).length });
 				}
@@ -650,10 +667,15 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			handler: async ({ request, response, params }) => {
 				const id = params.id ?? "";
 				const body = await readJson<{ seq?: number }>(request);
-				if (typeof body.seq === "number") {
+				if (typeof body.seq === "number" && Number.isFinite(body.seq)) {
+					// 已读位置夹到频道真实上界：把 `{"seq":999999}` 直接写进去等于「以后所有消息
+					// 都算已读」，未读数从此永远 0 —— 老板再也看不到新消息的红点。
+					const list = (await shell.channels()).messages[id] ?? [];
+					const lastSeq = list[list.length - 1]?.seq ?? 0;
+					const seq = Math.min(Math.max(Math.floor(body.seq), 0), lastSeq);
 					await shell.harness.commit(async (tx) => {
 						const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-						Object.assign(doc, markRead(doc, OWNER_SLUG, id, body.seq as number));
+						Object.assign(doc, markRead(doc, OWNER_SLUG, id, seq));
 					}, BACKGROUND_CONTEXT);
 				}
 				return json(response, { ok: true });
@@ -668,10 +690,16 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/diag",
 			method: "POST",
 			handler: async ({ request, response }) => {
-				const body = await readJson<{ kind?: string; entries?: unknown }>(request);
+				const body = await readJson<{ kind?: string; entries?: unknown }>(request, { requireJson: true });
 				try {
-					await mkdir(join(workspaceRoot, "logs"), { recursive: true });
-					await appendFile(join(workspaceRoot, "logs", "jank.jsonl"), `${JSON.stringify({ ...body, at: new Date().toISOString() })}\n`);
+					const logsDir = join(workspaceRoot, "logs");
+					const file = join(logsDir, "jank.jsonl");
+					await mkdir(logsDir, { recursive: true });
+					// 诊断是「卡了多久、当时在干什么」，不是数据仓库：单条 4KB、单文件 5MB 封顶，
+					// 满了就轮转一次。否则一个循环报错的页面能把工作区写爆。
+					const entry = { ...body, entries: clipEntries(body.entries), at: new Date().toISOString() };
+					await rotateIfTooBig(file, DIAG_FILE_LIMIT);
+					await appendFile(file, `${JSON.stringify(entry)}\n`);
 				} catch {
 					/* 诊断写不进去不该影响任何事 */
 				}
@@ -755,18 +783,92 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		});
 	});
 
+	/**
+	 * 允许的 Host 头。
+	 *
+	 * 由**实际监听地址**推出，不是由「用户可能用什么地址打开」猜：监听回环就只认
+	 * 回环的三种写法；监听通配地址时把本机局域网地址也算上（否则手机上打开就 403）。
+	 */
+	function allowedHostsNow(): string[] {
+		const hosts = new Set<string>([
+			`127.0.0.1:${actualPort}`,
+			`localhost:${actualPort}`,
+			`[::1]:${actualPort}`,
+			`::1:${actualPort}`,
+		]);
+		const bound = boundHost.trim();
+		if (isWildcardHost(bound)) {
+			for (const address of lanAddresses()) hosts.add(`${address}:${actualPort}`);
+			if (options.host !== undefined && options.host.trim() !== "") hosts.add(`${options.host.trim()}:${actualPort}`);
+		} else if (bound !== "") {
+			hosts.add(`${bound}:${actualPort}`);
+		}
+		// 隧道/反代域名：监听地址推不出「外面用什么域名访问」，所以留一个显式口子
+		// （逗号分隔，可带端口；不带端口时按当前端口补）。不加这个口子，以后挂个
+		// cloudflared 之类就是全站 403 —— 而那时候没人会想到是这道闸。
+		for (const raw of (process.env.SOLO_ALLOWED_HOSTS ?? "").split(",")) {
+			const item = raw.trim().toLowerCase();
+			if (item === "") continue;
+			hosts.add(item.includes(":") ? item : `${item}:${actualPort}`);
+			// 不带端口的条目还要认「裸主机名」：隧道/反代转过来的 Host 常常不带端口
+			// （https 走 443，浏览器与代理都会省掉默认端口）。
+			if (!item.includes(":")) hosts.add(item);
+		}
+		return [...hosts];
+	}
+
+	/**
+	 * 自己这一份页面的 Origin：前端所有写请求都是同源发的。
+	 *
+	 * 每个 host 同时给出 http 与 https 两种：走隧道（cloudflared 之类）时页面是 https 的，
+	 * Origin 就是 `https://<登记域名>` —— 只认 http 的话，从隧道打开的前端一个写请求都过不去。
+	 * 默认端口会被浏览器省掉（https 的 443、http 的 80），所以这里把它们归一掉再比。
+	 */
+	function selfOriginsNow(): string[] {
+		const origins = new Set<string>();
+		for (const host of allowedHostsNow()) {
+			const https = host.endsWith(":443") ? host.slice(0, -":443".length) : host;
+			const http = host.endsWith(":80") ? host.slice(0, -":80".length) : host;
+			origins.add(`http://${http}`);
+			origins.add(`https://${https}`);
+		}
+		return [...origins];
+	}
+
 	async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
 		const url = new URL(request.url ?? "/", "http://localhost");
-		const match = matchRoute(routes, request.method ?? "GET", url.pathname);
+		const method = request.method ?? "GET";
+		// 来源闸必须在**匹配路由之前**：不合法来源不该有机会碰到任何 handler（读也一样，
+		// 读能泄露整个工作区）。见 `http/origin.ts` 里对 DNS rebinding 的说明。
+		if (!hostAllowed(request.headers.host, allowedHostsNow())) return fail(response, 403, "Host 不合法");
+		if (
+			method !== "GET" &&
+			method !== "HEAD" &&
+			!originAllowed(request.headers.origin, request.headers["sec-fetch-site"] as string | undefined, selfOriginsNow())
+		) {
+			return fail(response, 403, "来源不合法");
+		}
+		const match = matchRoute(routes, method, url.pathname);
 		if (match === undefined) return fail(response, 404, "没有这个接口");
-		await match.route.handler({
-			request,
-			response,
-			url,
-			path: url.pathname,
-			method: request.method ?? "GET",
-			params: match.params,
-		});
+		try {
+			await match.route.handler({
+				request,
+				response,
+				url,
+				path: url.pathname,
+				method,
+				params: match.params,
+			});
+		} catch (error) {
+			// 正文超限 / 类型不对是**客户端的错**，不该变成 500 —— 500 会让人以为是服务挂了。
+			if (error instanceof UploadTooLargeError) return fail(response, 413, error.message);
+			if (error instanceof HttpError) return fail(response, error.status, error.message);
+			throw error;
+		}
+	}
+
+	if (process.env.SOLO_DEBUG_FROM === "1") {
+		console.warn("[core] 警告：from 可伪造（SOLO_DEBUG_FROM=1），只用于本机调试");
 	}
 
 	let actualPort = options.port ?? 7788;
@@ -935,16 +1037,87 @@ function fail(response: ServerResponse, status: number, message: string): void {
 	response.end(body);
 }
 
-async function readJson<T>(request: IncomingMessage): Promise<T> {
-	const chunks: Buffer[] = [];
-	for await (const chunk of request) chunks.push(chunk as Buffer);
-	const text = Buffer.concat(chunks).toString("utf8").trim();
+/**
+ * 带 HTTP 状态码的错误。路由里 throw，由 `handle` 翻成对应响应。
+ *
+ * 存在的理由：`readJson` 这类底层函数拿不到 `response`，而「客户端发错了」和
+ * 「服务端炸了」必须给不同的状态码 —— 都报 500 的话，前端与审计都无从判断。
+ */
+class HttpError extends Error {
+	readonly status: number;
+
+	constructor(status: number, message: string) {
+		super(message);
+		this.name = "HttpError";
+		this.status = status;
+	}
+}
+
+async function readJson<T>(request: IncomingMessage, options: { readonly requireJson?: boolean } = {}): Promise<T> {
+	// 边读边数：先读完再比上限等于没有上限（一个 4GB 的请求先把内存吃光）。
+	// 超限抛 `UploadTooLargeError`，由 `handle` 翻成 413。
+	const bytes = await readBounded(request, JSON_BODY_LIMIT);
+	const text = bytes.toString("utf8").trim();
+	// 有正文就必须声明 `application/json`：浏览器的表单能把合法 JSON 塞进 `text/plain`
+	// 正文（`<input name='{"text":"x","y":"' value='"}'>`），这是 Origin 闸之外最后一条
+	// CSRF 写法 —— 而浏览器**不会**让跨站表单发出 `application/json`（那要预检）。
+	// 没有正文的 POST（脚本点一下已读）放行：它带不动任何数据。
+	// `requireJson` 给「空正文也有副作用」的接口用（诊断落盘）：没有正文的跨站表单照样能写，
+	// 所以那两个接口连空正文也必须声明 JSON。
+	const declared = (request.headers["content-type"] ?? "").trim().toLowerCase().startsWith("application/json");
+	if ((text !== "" || options.requireJson === true) && !declared) {
+		throw new HttpError(415, "写接口只收 application/json");
+	}
 	if (text === "") return {} as T;
 	try {
 		return JSON.parse(text) as T;
 	} catch {
 		return {} as T;
 	}
+}
+
+/** 写接口的 JSON 正文上限。正常消息几千字，1MB 已经宽得离谱。 */
+const JSON_BODY_LIMIT = 1 << 20;
+
+/** 诊断日志单文件上限；超过就轮转成 `.1`（只留一代，诊断不需要历史）。 */
+const DIAG_FILE_LIMIT = 5 * 1024 * 1024;
+
+/** 诊断条目里 `entries` 的字符上限。 */
+const DIAG_ENTRY_LIMIT = 4 * 1024;
+
+/** 把诊断的 `entries` 压到 4KB 以内：超了就截断并标记，不要静默丢字段。 */
+function clipEntries(entries: unknown): unknown {
+	if (entries === undefined) return undefined;
+	const text = typeof entries === "string" ? entries : JSON.stringify(entries);
+	if (text === undefined) return undefined;
+	if (text.length <= DIAG_ENTRY_LIMIT) return entries;
+	return `${text.slice(0, DIAG_ENTRY_LIMIT)}…[截断]`;
+}
+
+/** 文件超过上限就改名成 `.1`（覆盖上一代）。 */
+async function rotateIfTooBig(file: string, limit: number): Promise<void> {
+	const info = await stat(file).catch(() => null);
+	if (info === null || info.size <= limit) return;
+	const { rename } = await import("node:fs/promises");
+	await rename(file, `${file}.1`).catch(() => undefined);
+}
+
+/** 右栏「文件」不该看见/不该读的东西：隐藏文件、node_modules、库与配置、附件与日志。 */
+const HIDDEN_FILES = new Set(["core.sqlite", "settings.json"]);
+
+/**
+ * 名字规则。列表与直接访问**共用这一份** —— 只在列表里过滤等于没过滤。
+ *
+ * `relativePath` 用 `/` 分隔、相对工作区根（与接口返回的 `path` 同一口径）。
+ */
+export function fileHidden(name: string, relativePath: string): boolean {
+	if (name.startsWith(".")) return true;
+	if (name === "node_modules") return true;
+	if (HIDDEN_FILES.has(name)) return true;
+	const path = relativePath.split(sep).join("/");
+	if (path === "uploads" || path.startsWith("uploads/")) return true;
+	if (path.startsWith("logs/") && name.endsWith(".jsonl")) return true;
+	return false;
 }
 
 /** 频道 id 前缀 → 类型。文档里不存 kind，约定在 id 上（见 `channel/state.ts` 的 `channelIdOf`）。 */

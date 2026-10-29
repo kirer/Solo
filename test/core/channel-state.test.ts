@@ -174,6 +174,16 @@ describe("未读与已读", () => {
 		expect(tail(state, "general", 10)).toEqual([]);
 	});
 
+	test("已读位置夹到频道真实上界（写 999999 不能把以后的消息都标成已读）", () => {
+		let state = withChannels({ id: "general", title: "t", members: ["owner", "cto"], wakeOnAll: [], at: 1 });
+		state = appendMessage(state, "general", { from: "owner", text: "1", at: 1 }).state;
+		state = appendMessage(state, "general", { from: "owner", text: "2", at: 2 }).state;
+		state = markRead(state, "cto", "general", 999_999);
+		// 上界 = 当前最后一条（seq 2），之后来的消息仍然算未读。
+		state = appendMessage(state, "general", { from: "owner", text: "3", at: 3 }).state;
+		expect(unreadCount(state, "general", "cto")).toBe(1);
+	});
+
 	test("tail 取最近 N 条，老的在前", () => {
 		let state = withChannels({ id: "g", title: "t", members: ["a"], wakeOnAll: [], at: 1 });
 		for (let i = 0; i < 5; i += 1) {
