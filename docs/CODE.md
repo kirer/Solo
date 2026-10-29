@@ -80,6 +80,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `js/messages.js` | `mergeMessages()` —— 两页消息按 `seq` 去重合并（唯一可脱离浏览器测的前端逻辑） |
 | `js/memory.js` | 记忆面板：拉取 / 筛选 / 展开 / 记一条 / 删一节 + 纯函数（`lineCount` / `linesOf` / 过滤） |
 | `js/detail.js` | 详情面板的内容（私聊看人 / 群看群）：纯「数据 → HTML」，不发请求。**没有的字段不画空标题** |
+| `js/files.js` | 右栏「文件」页：把 `/api/files` 的 JSON 画成可点的列表，点进去看原文 |
 | `js/attach.js` | 附件：判断类型、缩略图、文件 chip、上传、队列项 |
 | `js/markdown.js` | `renderMarkdown()` —— 最小的 Markdown（标题 / 列表 / 代码 / 表格 / 链接 / 图片），**先转义再拼** |
 | `js/motion.js` | 弹簧缓动、`installMotionTokens()`、`withLinger()`（退场动画的通用壳） |
@@ -139,7 +140,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 47 文件 / 430 例，应该 <3s
+npm test           # 49 文件 / 449 例，应该 <3s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 

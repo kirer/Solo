@@ -86,11 +86,16 @@
 							</svg>
 						</button>
 					</div>
-					<!-- 详情：私聊看这个人，群看这个群。DS-BOT 那个位置就是这个东西。 -->
-					<button class="icon-btn" id="detail-btn" type="button" title="详情" aria-label="详情">
+					<!-- 右侧栏：私聊看这个人，群看这个群；另一页是工作区文件。DS-BOT 那个位置就是这个东西。 -->
+					<button class="icon-btn" id="detail-btn" type="button" title="详情（右侧栏）" aria-label="详情">
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
 							<circle cx="12" cy="12" r="8.6" />
 							<path d="M12 10.6v6M12 7.7v.1" />
+						</svg>
+					</button>
+					<button class="icon-btn" id="files-btn" type="button" title="文件（右侧栏）" aria-label="文件">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M3.4 7.2c0-.9.7-1.6 1.6-1.6h3.6l1.7 2h7.7c.9 0 1.6.7 1.6 1.6v8.6c0 .9-.7 1.6-1.6 1.6H5c-.9 0-1.6-.7-1.6-1.6z" />
 						</svg>
 					</button>
 				</div>
@@ -156,6 +161,27 @@
 					</div>
 				</form>
 			</main>
+
+			<!-- 右侧栏：第三列。宽度由 --rightbar 决定（0 ↔ 360），所以它必须是 .frame 的孩子，
+			     否则「展开时中列让位」这件事做不出来 —— 浮层可以盖住别人，但推不开别人。 -->
+			<aside class="detail" id="detail" hidden data-tab="detail" aria-label="右侧栏">
+				<div class="detail-bar">
+					<div class="detail-tabs" role="tablist" aria-label="右侧栏内容">
+						<button class="detail-tab" type="button" role="tab" data-right-tab="detail" aria-selected="true">详情</button>
+						<button class="detail-tab" type="button" role="tab" data-right-tab="files" aria-selected="false">文件</button>
+					</div>
+					<span class="sheet-grow"></span>
+					<button class="icon-btn" id="detail-close" type="button" title="收起（Esc）" aria-label="收起右侧栏">
+						<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+							<path d="M4 4l8 8M12 4l-8 8" />
+						</svg>
+					</button>
+				</div>
+				<div class="detail-panel" id="detail-panel" tabindex="-1">
+					<div class="detail-body" id="detail-body"></div>
+					<div class="files" id="files-body" hidden></div>
+				</div>
+			</aside>
 		</div>
 
 		<div class="need-menu pop-menu" id="need-menu" role="menu" hidden></div>
@@ -218,12 +244,6 @@
 		<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="图片" hidden>
 			<img id="lightbox-img" alt="" />
 		</div>
-
-		<section class="detail" id="detail" hidden>
-			<div class="detail-panel" id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-name" tabindex="-1">
-				<div class="detail-body" id="detail-body"></div>
-			</div>
-		</section>
 
 		<section class="team" id="team" hidden>
 			<div class="team-panel" id="team-panel" role="dialog" aria-modal="true" aria-labelledby="team-title" tabindex="-1">

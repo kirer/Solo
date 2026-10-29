@@ -7,11 +7,17 @@
 
 .frame {
 	display: grid;
-	grid-template-columns: var(--sidebar) minmax(0, 1fr);
+	grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--rightbar);
 	height: 100dvh;
 	background: var(--ground);
 	/* 收起/展开是整列在滑，不是把内容挤变形：DSH 用 0.3s 的 ease-in-out。 */
 	transition: grid-template-columns 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* 右栏展开时中列让位：0 ↔ 360。用列宽过渡而不是 transform，
+   因为要真的把正文挤窄 —— 盖住的浮层在写长消息时是灾难。 */
+.frame[data-right="open"] {
+	--rightbar: 360px;
 }
 
 /* 收起成 56px 的图标条。宽度换掉之后其余规则全靠这个属性派生。 */
@@ -906,20 +912,82 @@
 	color: var(--ink-3);
 }
 
+/* 右侧栏 = 第三列。列宽由 --rightbar 过渡，内容自己滑进来（见 .detail-panel > * 的动画）。 */
 .detail {
-	position: fixed;
-	inset: 0;
-	z-index: 60;
-	/* 从右边展开：贴着右边缘的一条竖栏，不压暗背景、不居中、不是 dialog。
-	   老板要在看档案时还能看着频道，所以压在纸面上而不是盖住整屏。 */
-	display: grid;
-	justify-items: end;
+	grid-column: 3;
+	grid-row: 1;
+	min-width: 0;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	border-left: 0.5px solid var(--line);
+	background: var(--field);
+}
+
+/* 收起时 hidden 必须真的不占位：`display: flex` 会盖掉 hidden 的默认规则。
+   两个 tab 页同理 —— 它们是 flex 容器，hidden 不生效就会两页叠在一起。 */
+.detail[hidden],
+.detail-body[hidden],
+.files[hidden] {
+	display: none;
+}
+
+/* 顶栏和主列标题行同高（56），这样两条横线接得上；tab 的下划线贴着那条线。 */
+.detail-bar {
+	flex: none;
+	height: 56px;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 0 8px 0 10px;
+	border-bottom: 0.5px solid var(--line);
+}
+
+.detail-tabs {
+	display: flex;
 	align-items: stretch;
-	background: transparent;
-	/* 从标题行下面开始：那条行里的开关（找你/团队/设置/详情）不该被自己的详情挡住。 */
-	padding-top: calc(56px + env(safe-area-inset-top));
-	/* 不挡住底下的频道：点侧栏/点消息照常生效，收起由 document 的 click 处理。 */
-	pointer-events: none;
+	gap: 2px;
+	height: 100%;
+}
+
+.detail-tab {
+	position: relative;
+	appearance: none;
+	border: 0;
+	background: none;
+	padding: 0 10px;
+	font: inherit;
+	font-size: 14px;
+	color: var(--ink-3);
+	cursor: pointer;
+	transition: color 100ms ease;
+}
+
+.detail-tab:hover {
+	color: var(--ink-2);
+}
+
+.detail-tab[aria-selected="true"] {
+	color: var(--ink);
+	font-weight: 500;
+}
+
+/* 下划线是从中间长出来的，不是整段闪一下 —— 换 page 时眼睛跟着那条线走。 */
+.detail-tab::after {
+	content: "";
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: -1px;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--accent);
+	transform: scaleX(0);
+	transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.detail-tab[aria-selected="true"]::after {
+	transform: scaleX(1);
 }
 
 /* tabindex=-1 只是为了能接焦点（Esc/读屏），不是可点控件 —— 不画焦点环。 */
@@ -929,16 +997,21 @@
 }
 
 .detail-panel {
-	width: min(420px, 100%);
-	height: 100%;
-	border-top: 0.5px solid var(--line);
-	border-top-left-radius: var(--r-paper, 14px);
-	overflow: auto;
-	overscroll-behavior: contain;
-	background: var(--ground);
-	border-left: 1px solid var(--line);
-	pointer-events: auto;
-	animation: detail-in 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+	flex: 1;
+	min-height: 0;
+	width: 360px;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+/* 换 tab / 展开时内容从右边 12px 滑进来并淡入：和列宽那条 300ms 是同一条曲线，
+   60ms 的延迟让「列先让开、字后进来」，否则字会在半宽里被挤着重排。 */
+.detail-panel > .detail-body,
+.detail-panel > .files {
+	flex: 1;
+	min-height: 0;
+	animation: detail-in 240ms cubic-bezier(0.4, 0, 0.2, 1) 60ms both;
 }
 
 .detail-body {
@@ -946,6 +1019,8 @@
 	flex-direction: column;
 	gap: 18px;
 	padding: 20px 22px 24px;
+	overflow: auto;
+	overscroll-behavior: contain;
 }
 
 .detail-head {
@@ -1176,17 +1251,30 @@
 /* 从右侧滑进来 16px —— 只走「从边上推开」这个意思，不做缩放入场。 */
 @keyframes detail-in {
 	from {
-		transform: translateX(16px);
 		opacity: 0;
+		transform: translateX(12px);
 	}
 	to {
-		transform: none;
 		opacity: 1;
+		transform: none;
 	}
 }
 
 @media (max-width: 640px) {
-	/* 手机上「右边一条」只有 390px 宽，直接铺满整屏才放得下提示词。 */
+	/* 手机上「右边一条」只有 390px 宽，直接铺满整屏才放得下提示词：
+	   退回浮层，列宽不参与（--rightbar 在手机上是 0）。 */
+	.detail {
+		position: fixed;
+		inset: 0;
+		z-index: 60;
+		border-left: 0;
+	}
+
+	.detail-bar {
+		height: calc(48px + env(safe-area-inset-top));
+		padding-top: env(safe-area-inset-top);
+	}
+
 	.detail-panel {
 		width: 100%;
 		padding-bottom: env(safe-area-inset-bottom);
@@ -1298,4 +1386,212 @@
 
 .settings-options .opt[aria-checked="true"] .opt-tick {
 	opacity: 1;
+}
+
+/* ── 右栏「文件」页 ──────────────────────────────────────────────────── */
+
+.files {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* 路径行：等宽、一行、太长就横向省略（不换行 —— 换行会让下面的列表跳一下）。 */
+.file-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 12px 14px 8px;
+	border-bottom: 0.5px solid var(--line);
+}
+
+.file-path {
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-family: var(--mono);
+	font-size: 12px;
+	color: var(--ink-3);
+}
+
+.file-crumb {
+	appearance: none;
+	border: 0;
+	background: none;
+	padding: 0;
+	font: inherit;
+	color: var(--ink-3);
+	cursor: pointer;
+	border-radius: var(--r-xs);
+	transition: color 100ms ease;
+}
+
+.file-crumb:hover {
+	color: var(--ink);
+}
+
+.file-slash {
+	opacity: 0.5;
+	margin: 0 1px;
+}
+
+.file-back {
+	appearance: none;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	display: grid;
+	place-items: center;
+	border: 0;
+	border-radius: var(--r-control);
+	background: none;
+	color: var(--ink-3);
+	font-size: 13px;
+	cursor: pointer;
+	transition:
+		background-color 100ms ease,
+		color 100ms ease;
+}
+
+.file-back:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.file-list {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	overscroll-behavior: contain;
+	padding: 6px;
+}
+
+/* 每行落下时错峰 14ms：一眼看得出「这是刚加载的」，而不是突然刷新。 */
+.file-row {
+	appearance: none;
+	width: 100%;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: var(--r-control);
+	background: none;
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+	animation: file-in 180ms ease both;
+	animation-delay: calc(var(--i, 0) * 14ms);
+	transition: background-color 100ms ease;
+}
+
+.file-row:hover {
+	background: var(--hover);
+}
+
+.file-ico {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	display: grid;
+	place-items: center;
+	color: var(--ink-3);
+}
+
+.file-ico svg {
+	width: 14px;
+	height: 14px;
+}
+
+.file-ico.is-dir {
+	color: var(--ink-2);
+}
+
+/* 文本文件用强调色：DSH 就是这么标的，扫一眼知道哪个能点开看。 */
+.file-ico.is-text {
+	color: var(--accent);
+}
+
+.file-name {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.file-size {
+	flex: none;
+	font-size: 11px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.file-empty {
+	margin: 0;
+	padding: 16px 14px;
+	font-size: 13px;
+	color: var(--ink-3);
+	line-height: 1.6;
+}
+
+.file-view {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
+}
+
+.file-view-head {
+	flex: none;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 10px 14px 8px;
+	font-size: 13px;
+}
+
+.file-view-head b {
+	font-weight: 500;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.file-text {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: 0 14px 16px;
+	overflow: auto;
+	overscroll-behavior: contain;
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 1.65;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	word-break: break-word;
+	tab-size: 2;
+}
+
+.file-empty,
+.files[data-state="loading"] .file-list {
+	animation: detail-in 180ms ease both;
+}
+
+@keyframes file-in {
+	from {
+		opacity: 0;
+		transform: translateY(-3px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
 }

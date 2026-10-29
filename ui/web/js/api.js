@@ -83,3 +83,14 @@ export function editPersonMemory(slug, body) {
 export function personProfile(slug) {
 	return getJSON(`/api/people/${encodeURIComponent(slug)}`);
 }
+
+/**
+ * 工作区的只读文件树（右栏「文件」）。
+ *
+ * `path` 是相对工作区的路径，`""` 就是根。越界由后端拦（403），前端不做路径判断。
+ * 目录返回 `{ path, parent, entries: [{ name, kind, bytes, at }] }`，
+ * 文件返回 `{ path, parent, file: { name, bytes, binary, text } }`。
+ */
+export function workspaceFiles(path = "") {
+	return getJSON(`/api/files?path=${encodeURIComponent(path)}`);
+}

@@ -10,9 +10,9 @@
  * 路径带 `:id` 的匹配器在 `./http/routes.ts`（纯函数，无业务概念）。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { dirname, extname, join, normalize, sep } from "node:path";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { matchRoute, type Route } from "./http/routes.ts";
 import {
@@ -77,6 +77,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	const shell = options.shell;
 	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
 	// 附件根跟着工作区走：`<workspace>/uploads`（agentsRoot 是 `<workspace>/agents`）。
+	// 右栏「文件」预览的上限：再大就不是「看一眼」，该下载了。
+	const FILE_TEXT_LIMIT = 200_000;
 	const uploadsRoot = uploadsRootOf(shell.agentsRoot);
 	const workspaceRoot = dirname(shell.agentsRoot);
 	const orgClients = new Set<ServerResponse>();
@@ -334,6 +336,68 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			handler: async ({ response }) => {
 				const { identities, directory } = await snapshot();
 				return json(response, orgView(identities, directory));
+			},
+		},
+		{
+			// 工作区的只读文件树。右侧那一栏「文件」用。
+			//
+			// 只读、且**只能在工作区里面**：路径一律 resolve 到绝对路径再校验前缀，
+			// 这样 `../..` 和符号链接都出不去（符号链接指向外面时 readdir/readFile 会
+			// 报 ENOENT，不会顺着爬）。
+			pattern: "/api/files",
+			method: "GET",
+			handler: async ({ response, url }) => {
+				const asked = url.searchParams.get("path") ?? "";
+				const root = resolve(workspaceRoot);
+				const target = resolve(root, asked);
+				if (target !== root && !target.startsWith(root + sep)) {
+					return fail(response, 403, "只能看工作区里的文件");
+				}
+				const info = await stat(target).catch(() => null);
+				if (info === null) return fail(response, 404, "没有这个文件");
+				const parent =
+					target === root ? null : dirname(target) === root ? "" : dirname(target).slice(root.length + 1);
+				const shown = target === root ? "" : target.slice(root.length + 1);
+				if (info.isFile()) {
+					// 只把像文本的东西读出来：大于 200KB 或前 4KB 里有 NUL 就当二进制，
+					// 只报大小，不猜它的内容。
+					const size = info.size;
+					if (size > FILE_TEXT_LIMIT) {
+						return json(response, { path: shown, parent, file: { name: basename(target), bytes: size, binary: true, text: "" } });
+					}
+					const bytes = await readFile(target);
+					const binary = bytes.subarray(0, 4096).includes(0);
+					return json(response, {
+						path: shown,
+						parent,
+						file: {
+							name: basename(target),
+							bytes: size,
+							binary,
+							text: binary ? "" : bytes.toString("utf8"),
+						},
+					});
+				}
+				const names = await readdir(target, { withFileTypes: true });
+				const entries = [];
+				for (const dirent of names) {
+					// 隐藏文件与 node_modules 不进列表：那不是老板要读的东西，只是噪音。
+					if (dirent.name.startsWith(".") || dirent.name === "node_modules") continue;
+					const full = join(target, dirent.name);
+					const meta = await stat(full).catch(() => null);
+					if (meta === null) continue;
+					entries.push({
+						name: dirent.name,
+						kind: meta.isDirectory() ? "dir" : "file",
+						bytes: meta.isDirectory() ? 0 : meta.size,
+						at: Math.round(meta.mtimeMs),
+					});
+				}
+				// 目录在前、同类按名字（中文按码点，和其余排序一致）。
+				entries.sort((left, right) =>
+					left.kind === right.kind ? left.name.localeCompare(right.name, "zh") : left.kind === "dir" ? -1 : 1,
+				);
+				return json(response, { path: shown, parent, entries });
 			},
 		},
 		{

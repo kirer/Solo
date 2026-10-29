@@ -9,7 +9,8 @@
  * 因为消息流每次都是整体重建的 —— 逐条 bind 会在重建时泄漏。
  */
 
-import { attention, getJSON, personProfile, postJSON, streamOrg } from "./api.js";
+import { attention, getJSON, personProfile, postJSON, streamOrg, workspaceFiles } from "./api.js";
+import { mountFiles } from "./files.js";
 import { MAX_PER_MESSAGE, filesOf, kindOfFile, queueItemHtml, uploadOne } from "./attach.js";
 import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
@@ -145,6 +146,9 @@ const el = {
 	toastRoot: $("toast-root"),
 	teamBtn: $("team-btn"),
 	detailBtn: $("detail-btn"),
+	filesBtn: $("files-btn"),
+	detailClose: $("detail-close"),
+	filesBody: $("files-body"),
 	detail: $("detail"),
 	detailPanel: $("detail-panel"),
 	detailBody: $("detail-body"),
@@ -878,7 +882,6 @@ async function openChannel(id, { push = true } = {}) {
 		state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
 	}
 	closeChannelStream();
-	closeDetail();
 	state.currentId = id;
 	state.detail = null;
 	state.error = null;
@@ -1176,13 +1179,43 @@ function currentChannel() {
 	return state.detail?.channel ?? state.channels.find((candidate) => candidate.id === state.currentId) ?? null;
 }
 
+/**
+ * 展开右侧栏。`tab` 是 `"detail"` 或 `"files"`。
+ *
+ * 打开分两帧：先把元素放出来（`hidden=false`），下一帧才把 `data-right` 改成 opens，
+ * 这样 CSS 才有「从 0 过渡到 360」的起点 —— 同一帧改两样，浏览器会直接跳到终态。
+ */
+function openRight(tab) {
+	detailReturn ??= document.activeElement;
+	if (el.detail.hidden) {
+		el.detail.hidden = false;
+		requestAnimationFrame(() => {
+			el.frame.dataset.right = "open";
+		});
+	} else {
+		el.frame.dataset.right = "open";
+	}
+	selectRightTab(tab);
+}
+
+function selectRightTab(tab) {
+	el.detail.dataset.tab = tab;
+	for (const button of el.detail.querySelectorAll("[data-right-tab]")) {
+		button.setAttribute("aria-selected", String(button.dataset.rightTab === tab));
+	}
+	el.detailBody.hidden = tab !== "detail";
+	el.filesBody.hidden = tab !== "files";
+	if (tab === "files") files?.reload();
+}
+
+let files = null;
+
 async function openDetail() {
 	const channel = currentChannel();
 	if (!channel) return;
-	detailReturn = document.activeElement;
-	el.detail.hidden = false;
-	// 不设 `el.frame.inert`：这是从右边**展开**的一条竖栏，不是模态框。
-	// 老板可以一边看档案一边点频道 —— 点外面会顺手收起来（见 bind 里的 document click）。
+	openRight("detail");
+	// 不设 `el.frame.inert`：这是从右边**展开**的一列，不是模态框。
+	// 老板可以一边看档案一边点频道。
 	el.detailPanel.focus();
 	const kind = kindOf(channel);
 	if (kind === "dm") {
@@ -1237,11 +1270,16 @@ async function openPersonDetail(slug) {
 
 function closeDetail() {
 	if (el.detail.hidden) return;
-	withLinger(el.detail, 160, () => {
+	// 先让列宽滑回 0（300ms），滑完了再 `hidden` 掉：
+	// 直接 hidden 等于把动画剪掉，右边会「啪」地弹一下。
+	el.frame.dataset.right = "closed";
+	const wait = prefersReducedMotion() ? 0 : 300;
+	window.setTimeout(() => {
+		if (el.frame.dataset.right !== "closed") return;
 		el.detail.hidden = true;
 		if (detailReturn instanceof HTMLElement) detailReturn.focus();
-	});
-	el.frame.inert = false;
+		detailReturn = null;
+	}, wait);
 }
 
 /* ── 团队浮层 ───────────────────────────────────────────────────────── */
@@ -1909,6 +1947,14 @@ function bind() {
 	el.teamBtn.addEventListener("click", openTeam);
 	el.teamClose.addEventListener("click", closeTeam);
 	el.detailBtn.addEventListener("click", openDetail);
+	el.filesBtn.addEventListener("click", () => openRight("files"));
+	el.detailClose.addEventListener("click", closeDetail);
+
+	// 「文件」页只挂一次，切走再切回来只是 `reload()`（不重建 DOM，滚动位置还在）。
+	files = mountFiles(el.filesBody, { load: workspaceFiles, onToast: toast });
+	for (const button of el.detail.querySelectorAll("[data-right-tab]")) {
+		button.addEventListener("click", () => selectRightTab(button.dataset.rightTab ?? "detail"));
+	}
 
 	// 详情面板里的点击：关、跳到某个频道、看某个人、开记忆。
 	// 一律走委托 —— 面板内容每次是整块 innerHTML 换掉的。
@@ -1991,11 +2037,6 @@ function bind() {
 				withLinger(el.needMenu, 120);
 				el.unreadTotal.setAttribute("aria-expanded", "false");
 			}
-		}
-		// 详情是从右边展开的竖栏（`pointer-events: none` 让底下照常能点），
-		// 所以「点外面收起」只能在这里判：点在面板外、也不是那个开关按钮。
-		if (!el.detail.hidden && !el.detailPanel.contains(event.target) && !event.target.closest("#detail-btn")) {
-			closeDetail();
 		}
 	});
 
