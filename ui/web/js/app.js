@@ -25,6 +25,7 @@ import {
 	groupStatus,
 	advanceSeconds,
 	isEventKind,
+	PLACEHOLDER_TTL_MS,
 	markGroupDone,
 	runningStatus,
 	mergeDoneGroups,
@@ -477,6 +478,19 @@ function closeOpenGroups(endAt, slug, afterNode = null) {
 function dropStalePlaceholders(slug) {
 	for (const row of el.feed.querySelectorAll(".row-processing")) {
 		if (row.dataset.slug === String(slug ?? "")) row.remove();
+	}
+}
+
+/**
+ * 清掉超时的处理中占位。
+ *
+ * 只靠「本人后来有没有说话」不够：叫了一个没有会话的同事，那条占位永远不会有人接。
+ * 超过 TTL（10 分钟）就当它不存在，别在屏幕上永远转圈。
+ */
+function sweepExpiredPlaceholders(now = Date.now()) {
+	for (const row of el.feed.querySelectorAll(".row-processing")) {
+		const at = Number(row.dataset.at ?? 0);
+		if (at > 0 && now - at > PLACEHOLDER_TTL_MS) row.remove();
 	}
 }
 
@@ -2302,6 +2316,7 @@ function boot() {
 	window.setInterval(() => {
 		tickRunningGroups();
 		tickActivity();
+		sweepExpiredPlaceholders();
 	}, 1000);
 
 	window.addEventListener("beforeunload", closeChannelStream);

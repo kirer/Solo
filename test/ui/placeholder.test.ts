@@ -7,7 +7,7 @@
  * 服务端不动，这里只测纯函数（DOM 那一半由 app.js 的 dropStalePlaceholders 负责）。
  */
 import { describe, expect, it } from "vitest";
-import { PROCESSING_TEXT, isStalePlaceholder } from "../../ui/web/js/rows.js";
+import { PLACEHOLDER_TTL_MS, PROCESSING_TEXT, isExpiredPlaceholder, isStalePlaceholder } from "../../ui/web/js/rows.js";
 
 const placeholder = (seq, slug = "知言", at = 1_000) => ({
 	seq,
@@ -39,6 +39,23 @@ describe("处理中占位", () => {
 	it("别人说话不算：占位还是这个人的进行中", () => {
 		const messages = [placeholder(1), say(2, "沈舟")];
 		expect(isStalePlaceholder(messages[0], messages, 0)).toBe(false);
+	});
+
+	it("放了十分钟还没人接 → 超时（叫了没会话的同事那种）", () => {
+		const ph = placeholder(1, "顾南雁", 1_000);
+		expect(PLACEHOLDER_TTL_MS).toBe(10 * 60 * 1000);
+		// 刚发出来：不算超时
+		expect(isExpiredPlaceholder(ph, 1_000 + 60_000)).toBe(false);
+		// 刚好到 10 分钟：仍算活着（用 > 而不是 >=，边界不提前消失）
+		expect(isExpiredPlaceholder(ph, 1_000 + PLACEHOLDER_TTL_MS)).toBe(false);
+		// 超过 10 分钟：超时，界面上不画
+		expect(isExpiredPlaceholder(ph, 1_000 + PLACEHOLDER_TTL_MS + 1)).toBe(true);
+	});
+
+	it("非占位行、时间戳缺失的行不会被当成超时", () => {
+		expect(isExpiredPlaceholder(say(1), Date.now())).toBe(false);
+		expect(isExpiredPlaceholder({ ...placeholder(2), at: undefined }, Date.now())).toBe(false);
+		expect(isExpiredPlaceholder(null, Date.now())).toBe(false);
 	});
 
 	it("非占位行、后面的占位都不算残留", () => {

@@ -49,6 +49,23 @@ export const PROCESSING_TEXT = "开始处理";
  * 于是屏幕上一条「开始处理」永远转圈。判断只看顺序与发言人，不看文案：
  * 同一个 slug 在它之后有任意一条非占位的说话行，这条占位就不该再画。
  */
+/** 处理中占位的存活上限：超过它就是没人会来收的残留，不该再占着屏幕。 */
+export const PLACEHOLDER_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * 这条占位是不是放太久了。
+ *
+ * 有人会来收的占位（老板刚说完话、对方正在跑）几分钟内就会被覆盖或跟上一句话；
+ * 但像是「叫了一个没有会话的同事」这种情况，那条占位永远不会有人接 —— 它会在
+ * 屏幕上永远转圈。所以再加一条时间上限：超过 10 分钟就当它不存在。
+ */
+export function isExpiredPlaceholder(message, now = Date.now(), ttl = PLACEHOLDER_TTL_MS) {
+	if (message?.processing !== true) return false;
+	const at = Number(message.at);
+	if (!Number.isFinite(at) || at <= 0) return false;
+	return now - at > ttl;
+}
+
 export function isStalePlaceholder(message, messages, index) {
 	if (message?.processing !== true) return false;
 	const list = Array.isArray(messages) ? messages : [];
@@ -581,6 +598,8 @@ function eventNode(message) {
 	row.dataset.seq = String(message.seq);
 	row.dataset.kind = message.kind;
 	row.dataset.slug = String(message.fromSlug ?? "");
+	// 时间戳留在 DOM 上：逐秒清扫时按它判断有没有超时。
+	row.dataset.at = String(message.at ?? "");
 	row.dataset.at = String(message.at ?? "");
 	// 三段：图标 + 动作 + 摘要。摘要永远一行（60 字），原文在 .ev-body 里。
 	const head = `<span class="ev-ico" aria-hidden="true">${ICONS[eventIconKind(message)]}</span><span class="ev-act">${escapeHtml(
@@ -944,8 +963,9 @@ export function buildStream(messages, ctx = {}) {
 		// B（处理中指示）：processing 占位按一条普通聊天消息画（头像 + 气泡，见 processingRow）。
 		// 必须在 pending 分支之前拦：占位的 status 也是 pending，不拦就会被画成拍板卡。
 		if (message.processing === true) {
-			// 本人已经说过话：这条占位是残留，不画（不然永远停在「开始处理」）。
-			if (isStalePlaceholder(message, list, cursor)) continue;
+			// 本人已经说过话、或者放了十分钟没人来收：这条占位是残留，不画
+			// （不然屏幕上永远停在「开始处理」）。
+			if (isStalePlaceholder(message, list, cursor) || isExpiredPlaceholder(message, now)) continue;
 			const gap = prevSay === null ? Number.POSITIVE_INFINITY : message.at - prevSay.at;
 			const grouped = prevSay !== null && prevSay.fromSlug === message.fromSlug && gap < GROUP_MS && gap >= 0;
 			const cont = grouped && gap <= CONT_MS;
