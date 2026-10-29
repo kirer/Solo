@@ -240,7 +240,15 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
  * 该说的也更多。至少 3，否则 0 个 agent 的频道一上来就锁死。
  */
 export function relayLimit(channel: Channel): number {
-	return Math.max(3, 3 * channel.members.filter((slug) => slug !== OWNER).length);
+	const agents = channel.members.filter((slug) => slug !== OWNER).length;
+	// **只有一个人能说话时没有「接力」**。
+	//
+	// 这个上限存在的唯一理由是 A 回 → 唤醒 B → B 回 → 又唤醒 A 的无限循环。
+	// 投递时收件人一定会排除发件人自己，所以「老板 + 一个 agent」的私聊里，
+	// 那个 agent 说完话之后**没有任何人**会被再叫醒 —— 循环根本起不来，
+	// 上限只会在他汇报到第 4 条时把他嘴堵上。实测就发生过：私聊里 197 条消息
+	// 有 150 多条是「接力到上限」这条告警。
+	return agents <= 1 ? Number.POSITIVE_INFINITY : Math.max(3, 3 * agents);
 }
 
 /**

@@ -38,6 +38,14 @@ function stateWithChannel(): ChannelState {
 }
 
 describe("接力上限（纯函数）", () => {
+	it("只有老板和一个 agent 时不设上限 —— 那种频道里循环起不来", () => {
+		// 投递永远排除发件人自己，所以「老板 + a」的私聊里 a 说完话没人会被叫醒，
+		// 接力计数只会一路上涨，把 a 汇报到第 4 条时堵住他的嘴。
+		const channel = { id: "dm", title: "dm", members: [OWNER, "a"], wakeOnAll: [] as string[], createdAt: 1 };
+		expect(relayLimit(channel)).toBe(Number.POSITIVE_INFINITY);
+		expect(relayLimit({ ...channel, members: [OWNER] })).toBe(Number.POSITIVE_INFINITY);
+	});
+
 	it("按频道里的 agent 数量给，至少 3", () => {
 		const channel = (members: string[]) => ({
 			id: "c",
@@ -46,8 +54,7 @@ describe("接力上限（纯函数）", () => {
 			wakeOnAll: [] as string[],
 			createdAt: 1,
 		});
-		expect(relayLimit(channel([OWNER]))).toBe(3);
-		expect(relayLimit(channel([OWNER, "a"]))).toBe(3);
+		// 0 个 / 1 个 agent 见上一条用例（不设上限）。
 		expect(relayLimit(channel([OWNER, "a", "b"]))).toBe(6);
 		expect(relayLimit(channel([OWNER, "a", "b", "c"]))).toBe(9);
 	});

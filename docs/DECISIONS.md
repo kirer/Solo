@@ -1332,3 +1332,24 @@ skills[],memory{exists,entries,digest},channels[]}`。不复用 `/api/org`（那
 
 **自测。** 注入一次 500ms 主线程阻塞 → 6 秒后 `workspace/logs/jank.jsonl` 出现
 `{"kind":"jank","entries":[{"why":"frame","ms":483,"doing":"idle","forMs":3394}]}`。
+
+## ADR-062：「接力上限」在只有一个人的频道里不存在
+
+**背景。** 老板问「接力到上限 3 次是什么意思」—— 因为他的私聊里躺着 150 多条这条告警。
+追下去发现上限本身在私聊里是**错的**。
+
+上限存在的唯一理由是 A 回 → 唤醒 B → B 回 → 又唤醒 A 的无限循环。而投递时收件人
+一定会排除发件人自己（`recipientsOf` 的最后一步），所以「老板 + 一个 agent」的私聊里，
+那个 agent 说完话之后**没有任何人**会被再叫醒 —— 循环根本起不来。计数却还在涨
+（`botHopsSinceOwner` 数的是「老板上次说话之后 agent 说了几条」），于是 agent 汇报到第 4 条
+就被堵嘴，频道里多出一行「这条只记下，没人被叫醒」。
+
+**决定。** `relayLimit()` 在 `agents <= 1` 时返回 `Number.POSITIVE_INFINITY`；两个及以上
+agent 仍是 `max(3, 3 × agents)`。`post.ts` 的 `capped = hops >= limit` 不需要改 ——
+`Infinity` 天然永不触发。
+
+**这不是放宽风控**：能产生循环的前提是「至少两个 agent 互相唤醒」。一个人孤零零说话的
+频道里，每条消息都只花一次模型调用，且不会自己喂自己。
+
+**回归。** `test/core/relay.test.ts`：新增「只有老板和一个 agent 时不设上限」；
+原「至少 3」用例改成只验多 agent 的两档（6 / 9）。
