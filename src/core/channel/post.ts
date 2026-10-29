@@ -75,6 +75,8 @@ export type PostInput = {
 	readonly status?: "pending" | "done" | "error";
 	/** T-016：占位归属的被唤醒人 slug。 */
 	readonly pendingFor?: string;
+	/** T-016：处理中指示占位（显示动画文案「X 开始处理…」）。被真实回复原地覆盖后消失。 */
+	readonly processing?: boolean;
 	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
 	readonly attachments?: readonly Attachment[];
 };
@@ -149,6 +151,25 @@ export async function postMessage(
 	return serialized(() => postMessageUnlocked(deps, input, context));
 }
 
+/**
+ * B（通用处理中机制）：从一条落库消息推导出「需要在其所在频道生成 processing 占位的接收方」。
+ * - @某人：mention 中除发起方外的频道成员；
+ * - 直接发给某人：dm 频道的另一成员（即接收方）；
+ * - 普通无指向群消息：无接收方（不误触发）。
+ * 老板收到 @ 也按通用规则触发（由其后续回复原地覆盖），不在此处排除身份。
+ */
+function collectProcessingTargets(mentions: readonly string[], channel: Channel | undefined, from: string, channelId: string): readonly string[] {
+	const set = new Set<string>();
+	for (const mention of mentions) {
+		if (mention !== from && channel?.members.includes(mention)) set.add(mention);
+	}
+	if (channelId.startsWith("dm:") && channel !== undefined) {
+		const other = channel.members.find((member) => member !== from);
+		if (other !== undefined) set.add(other);
+	}
+	return [...set];
+}
+
 async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Context): Promise<PostResult> {
 	const channel = deps.state.channels[input.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
@@ -157,6 +178,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	let filledSeq: number | undefined;
 	let filledText = "";
 	let cappedLimit = 0;
+	let filledRealReply = false;
 	// 接力上限：这条落库前先数一下 agent 已经自动接了几棒。
 	// 判在 appendMessage **之前**：之后这条自己也会被算进去（第 3 棒就会被误拦）。
 	const hops = botHopsSinceOwner(deps.state, input.channelId);
@@ -200,6 +222,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(input.mention === undefined ? {} : { mention: input.mention }),
 			...(input.status === undefined ? {} : { status: input.status }),
 			...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
+		...(input.processing === undefined ? {} : { processing: input.processing }),
 			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
 		});
 		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
@@ -214,20 +237,35 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		// 注意 `push` 必须作用在**文档代理给出的那个数组**上：`doc.messages[id] ??=` 之后
 		// 再 push 本地变量不算数（那不是代理，提交时不会有任何 op，消息静默消失）。
 		const list = doc.messages[input.channelId];
+		// 是否「闭环回复」：这条消息会填充接收方（input.from）在频道里自己的待办占位
+		// （status=pending && pendingFor=from && processing/空）。闭环回复是上一轮待办的产出，
+		// 天然不是「待 from 响应的新待办」——由此严格绑定 processing 的触发判据，回环本不存在。
+		const fillIdx =
+			list !== undefined && input.status !== "pending" && (input.text ?? "").trim() !== ""
+				? (list as Message[]).findIndex(
+						(m) => m.status === "pending" && m.pendingFor === input.from && (m.processing === true || (m.text ?? "").trim() === ""),
+					)
+			: -1;
+		filledRealReply = fillIdx >= 0;
+		const isClosedLoopReply = filledRealReply;
+		// B（通用处理中底层机制）：主消息指向某人（@他 / 直接发给他）时，在同一 commit 内为其生成 processing 占位，
+		// 由该人本轮真实回复原地覆盖（T-016 吸收条件已放宽到 processing 即吸收）。所有入口（owner / agent say / 系统派发）
+		// 统一经此，不在 say/群聊/私聊各自硬编码。占位自身不递归（它 status=pending，吸收分支不反建）；主消息已是回复
+		// 填充或占位时（filledRealReply / status==="pending"）不新建；非 @ / 非直接发给自己的普通群消息不误触发。
+		// 仅计算接收方，实际落盘在主消息推送分支内（同一 commit、复用已兜底的文档数组）。
+		const processingTargets =
+			input.status !== "pending" && input.kind !== "note" && input.wake !== false && !isClosedLoopReply
+				? collectProcessingTargets(next.message.mentions ?? [], channel, input.from, input.channelId)
+				: [];
+
 		// T-016 占位吸收：非占位消息（真实发言）落到频道时，若本频道还有一条
 		// `status==="pending" && pendingFor===input.from && text===""` 的占位（自己之前被 @ 后留的 loading 气泡），
 		// 就**原地填充**它（把 text/mentions/kind/at 写成真实回复、status 置 done），不另开一条 —— 占位即最终消息。
 		// 占位创建时 text="" 不会命中（被吸收的是非空消息）。
-		const isFillingRealReply =
-			input.status !== "pending" &&
-			input.text.trim() !== "" &&
-			list !== undefined;
 		let finalMessage: Message = next.message;
-		if (isFillingRealReply) {
+		if (filledRealReply) {
 			const arr = list as Message[];
-			const idx = arr.findIndex(
-				(m) => m.status === "pending" && m.pendingFor === input.from && (m.text ?? "").trim() === "",
-			);
+			const idx = fillIdx;
 			if (idx >= 0) {
 				// 下标替换 = 数组结构性变更，文档代理稳定落盘（保留占位原 seq/from/pendingFor）。
 				const placeholder = arr[idx]!;
@@ -240,14 +278,32 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 					kind: next.message.kind,
 					at: input.at,
 					status: "done",
+					// 覆盖后不再是处理中占位：去掉 processing 标记，前端按普通 say 行渲染（不显示动画）。
+					processing: false,
 				};
 				finalMessage = arr[idx]!;
 			}
 		}
 		if (finalMessage === next.message) {
-			if (list === undefined) doc.messages[input.channelId] = [next.message];
-			else (list as Message[]).push(next.message);
+			const bucket = doc.messages[input.channelId];
+			if (bucket === undefined) doc.messages[input.channelId] = [next.message];
+			else (bucket as Message[]).push(next.message);
 			state.nextSeq[input.channelId] = next.message.seq + 1;
+			// B：processing 占位与主消息同一数组落盘（bucket 此时已兜底，必为数组）。
+			const arrNow = doc.messages[input.channelId] as Message[];
+			for (const target of processingTargets) {
+				const placeholder = appendMessage(state, input.channelId, {
+					from: target,
+					text: `${deps.labelOf?.(target) ?? target} 开始处理…`,
+					at: input.at,
+					kind: "chat",
+					status: "pending",
+					pendingFor: target,
+					processing: true,
+				}).message;
+				(arrNow as Message[]).push(placeholder);
+				state.nextSeq[input.channelId] = placeholder.seq + 1;
+			}
 		}
 		// 接力到上限：**只落消息、不投递**，再留一条 note 说清楚为什么没人被叫醒。
 		// 不投递就是暂停：消息已经在频道里任何人随时能读到，「继续」不需要按钮 ——
@@ -281,6 +337,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	}, context);
 
 	const message = created as Message;
+
 	const liveChannel = channelMeta;
 	// T-016 v2：占位被真实回复原地填充 → 推逐字增量（token 分片 + done 全文兜底）。
 	// 后端落库层已写好最终全文，这里只负责「把全文按片推给前端做渐显」，不重复写库。
@@ -323,3 +380,4 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	);
 	return { channel: liveChannel, message, delivery };
 }
+

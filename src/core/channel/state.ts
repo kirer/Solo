@@ -60,6 +60,8 @@ export type Message = {
 	status?: "pending" | "done" | "error";
 	/** T-016：占位消息归属的「被唤醒人」slug（与 `from` 相同，仅用于前端关联 @ 动作与占位气泡）。 */
 	pendingFor?: string;
+	/** T-016：处理中指示占位（显示动画文案「X 开始处理…」），被真实回复原地覆盖后消失。 */
+	processing?: boolean;
 	/** 附件（图片/文件）。没有附件时**不写这个键**，与 `replyTo` / `status` 一个规矩。 */
 	/*
 	 * 为什么是可变数组而不是 `readonly`：文档层的 `JsonValue` 里数组是 `JsonValue[]`，
@@ -123,6 +125,9 @@ export const ChannelDoc = defineDoc<ChannelState>({
 
 /** 老板的 slug。不是 agent，但出现在成员表里。 */
 export const OWNER = "owner";
+
+/** 老板 slug。与 `OWNER` 同值，单独的常量名便于在阅读时区分「常量」与「比较」。 */
+export const OWNER_SLUG = OWNER;
 
 /** 私聊频道的命名规则。双方 slug 排序后拼接，保证 `a-b` 与 `b-a` 是同一个频道。 */
 export function dmId(a: string, b: string): string {
@@ -349,6 +354,8 @@ export function appendMessage(
 		readonly status?: "pending" | "done" | "error";
 		/** T-016：占位归属的被唤醒人 slug。 */
 		readonly pendingFor?: string;
+		/** T-016：处理中指示占位标记。 */
+		readonly processing?: boolean;
 		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
 		readonly attachments?: readonly Attachment[];
 	},
@@ -385,6 +392,7 @@ export function appendMessage(
 		...(replyTo === undefined ? {} : { replyTo }),
 		...(input.status === undefined ? {} : { status: input.status }),
 		...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
+		...(input.processing === undefined ? {} : { processing: input.processing }),
 		...(input.attachments === undefined || input.attachments.length === 0
 			? {}
 			: {

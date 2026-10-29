@@ -31,7 +31,7 @@ export const TOOL_PHRASES = {
 	remember: "记了一笔",
 	read_history: "翻了一遍历史",
 	recall: "回想了一下",
-	run: "跑了一条命令",
+	run: "执行了命令",
 	write_file: "写了一个文件",
 	read_file: "读了一个文件",
 };
@@ -114,7 +114,7 @@ export function eventPhrase(message) {
 	}
 	if (kind === "work") {
 		const text = String(message.text ?? "");
-		if (text.startsWith("$")) return "跑了一条命令";
+		if (text.startsWith("$")) return "执行了命令";
 		if (text.startsWith("已写入") || text.startsWith("写入")) return "写了一个文件";
 		if (text.startsWith("已读取") || text.startsWith("读取")) return "读了一个文件";
 		return "在做一件事";
@@ -315,6 +315,21 @@ function parsePending(message) {
 	return { question: lines[0], asker: message.fromLabel ?? "", reviewer: "", options };
 }
 
+/**
+ * 处理中指示：某人收到 @他 / 直接发给他的消息后，在他所在频道出现的「X 开始处理…」动画行。
+ * 不是拍板卡、不是普通气泡——纯状态提示，被该人真实回复原地覆盖（processing 标记消失、status=done）后走 sayRow 渲染。
+ */
+function processingRow(message) {
+	const row = document.createElement("div");
+	row.className = "row row-processing";
+	row.dataset.seq = String(message.seq);
+	row.dataset.kind = "processing";
+	const who = escapeHtml(message.fromLabel ?? message.from ?? "");
+	const text = escapeHtml(message.text ?? "");
+	row.innerHTML = `<span class="proc"><span class="proc-who">${who}</span><span class="proc-text">${text}</span><span class="proc-dots"><i></i><i></i><i></i></span></span>`;
+	return row;
+}
+
 function pendingRow(message, at, now) {
 	const data = parsePending(message);
 	if (!data) return null;
@@ -367,13 +382,13 @@ function sepNode(label) {
 	return node;
 }
 
-/** 过程行的短标签，用来做「15 步过程 · 想 3 · 跑命令 8」这行摘要。 */
+/** 过程行的短标签，用来做「15 步过程 · 想 3 · 命令 8」这行摘要。 */
 export function eventLabel(message) {
 	if (message.kind === "think") return "想";
-	if (message.kind === "work") return "跑";
+	if (message.kind === "work") return "命令";
 	const tool = toolNameOf(message);
 	// `run` 的 stdout 会另存一条 `work`（同一次命令），两条都数就会变成「跑 6 · run 6」。
-	if (tool === "run" || tool === "bash") return "跑";
+	if (tool === "run" || tool === "bash") return "命令";
 	return tool ?? "用工具";
 }
 
@@ -437,7 +452,7 @@ export function buildStream(messages, ctx = {}) {
 	let thinkRun = null;
 	// 过程行先攒着，等「它产出的那句话」出现再一起放。
 	//
-	// 不攒的话：agent 先想、先跑命令、最后才说，于是「沈舟 想了 1s」出现在沈舟的**头像上方**
+	// 不攒的话：agent 先想、先执行命令、最后才说，于是「沈舟 想了 1s」出现在沈舟的**头像上方**
 	// —— 读起来像是上一句的尾巴，也确实让人认错发言人。攒到他开口之后再放，
 	// 三行过程就落在他那句话底下、和正文左缘对齐。
 	const pendingEvents = [];
@@ -518,6 +533,14 @@ export function buildStream(messages, ctx = {}) {
 		if (message.kind === "note") {
 			flushEvents();
 			frag.append(noteRow(message));
+			lastAt = message.at;
+			prevSay = null;
+			continue;
+		}
+
+		// B（处理中指示）：processing 占位渲染为动画状态行（非拍板卡、非气泡）。
+		if (message.processing === true) {
+			frag.append(processingRow(message));
 			lastAt = message.at;
 			prevSay = null;
 			continue;

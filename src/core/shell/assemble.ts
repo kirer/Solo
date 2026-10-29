@@ -625,33 +625,7 @@ export async function ownerSpeak(
 		},
 		context,
 	);
-	// T-016：@A 占位气泡。消息真的 @ 并唤醒了某 agent（delivery.delivered 含该 mention，
-	// 且不是老板自己）时，在同一频道创建一条 from=A、status=pending、text="" 的占位，
-	// 推 SSE create 让前端立刻画 loading 气泡；A 醒来后的真实回复会原地填充它（占位即最终消息），
-	// 若 30s 内无填充则前端按 error 兜底（不卡死）。占位 wake:false（不二次唤醒，A 已被本条消息唤醒）。
-	const awakened = result.delivery.delivered.filter((slug) => slug !== OWNER && result.message.mentions.includes(slug));
-	if (awakened.length > 0) {
-		for (const slug of awakened) {
-			await postMessage(
-				{
-					harness: shell.harness,
-					state,
-					conversationOf: async () => undefined,
-				},
-				{
-					channelId: options.channelId,
-					from: slug,
-					text: "",
-					at: Date.now(),
-					kind: "chat",
-					wake: false,
-					status: "pending",
-					pendingFor: slug,
-				},
-				context,
-			);
-		}
-	}
+
 	// 老板在项目频道里拍板也要沉淀：它不是 agent，不会走工具层，这条路径得自己调。
 	await makeAfterPost(shell.harness, shell.agentsRoot, shell.projectsRoot, () => shell.conversations)(
 		result.message,

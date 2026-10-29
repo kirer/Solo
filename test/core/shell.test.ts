@@ -106,12 +106,13 @@ describe("装配", () => {
 			expect(JSON.stringify(entry?.data)).toContain("在吗");
 
 			const state = await shell.channels();
-			// T-016：@A 会创建一条 pending 占位（text=""），真实消息在前、占位在后。
+			// B（处理中指示）：@A 会在同频道为其创建一条 processing 占位（text="X 开始处理…"），真实消息在前、占位在后。
 			const texts = state.messages.all?.map((message) => message.text) ?? [];
 			expect(texts).toContain(`@${slug} 在吗`);
-			const pending = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
+			const pending = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug);
 			expect(pending).toBeDefined();
-			expect(pending?.text).toBe("");
+			expect(pending?.text).toContain("开始处理");
+			expect(pending?.processing).toBe(true);
 		} finally {
 			await opened.close();
 		}
@@ -129,10 +130,11 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 			const hit = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			expect(hit.delivery.delivered).toEqual([slug]);
 			let state = await shell.channels();
-			const pending = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug);
+			const pending = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug);
 			expect(pending).toBeDefined();
 			expect(pending?.from).toBe(slug);
-			expect(pending?.text).toBe("");
+			expect(pending?.text).toContain("开始处理");
+			expect(pending?.processing).toBe(true);
 			const miss = await shell.ownerSay({ channelId: "all", text: "@nobody 你好" });
 			expect(miss.delivery.delivered).toEqual([]);
 			state = await shell.channels();
@@ -152,7 +154,7 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
 			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			let state = await shell.channels();
-			const pendingSeq = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
+			const pendingSeq = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug)?.seq;
 			expect(pendingSeq).toBeDefined();
 			const before = (await shell.channels()).messages.all ?? [];
 			// 模拟 A 醒来回频道：用 harness.snapshot(ChannelDoc) 作为 state（与 channel-write.test 一致），
@@ -185,7 +187,7 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
 			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			let state = await shell.channels();
-			const pendingSeq = (state.messages.all ?? []).find((m) => m.status === "pending" && m.pendingFor === slug)?.seq;
+			const pendingSeq = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug)?.seq;
 			expect(pendingSeq).toBeDefined();
 			const { postMessage } = await import("../../src/core/channel/post.ts");
 			const { setChannelStreamHook, setChannelClientsHas } = await import("../../src/core/channel/post.ts");
@@ -232,6 +234,35 @@ describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 don
 				expect(state.messages[ownerDm.id] ?? []).toHaveLength(0);
 			}
 			expect((state.messages.all ?? []).some((m) => m.status === "pending")).toBe(true);
+		} finally {
+			await opened.close();
+		}
+	});
+	test("B 闭环硬约束：A@B 后 B 回 A@A，A 不再二次进 processing（#54/#55 本质口径）", async () => {
+		const { root, agents, projects } = await workspace();
+		const { models } = setupModels(process.env, { workspace: root });
+		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		try {
+			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			// A（老板）@ B（助理），应创建 B 的 processing 占位。
+			await shell.ownerSay({ channelId: "all", text: "@" + slug + " 你处理一下这个" });
+			let state = await shell.channels();
+			const procAfterA = (state.messages.all ?? []).filter((m) => m.processing === true);
+			expect(procAfterA).toHaveLength(1);
+			expect(procAfterA[0]?.pendingFor).toBe(slug);
+			// B 闭环回复、@ 回 A（老板）：应原地填充 B 自己的占位，且**不**为 A 创建新 processing。
+			const { postMessage } = await import("../../src/core/channel/post.ts");
+			await postMessage(
+				{ harness: opened.harness, state: (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never, conversationOf: async () => undefined },
+				{ channelId: "all", from: slug, text: "收到，@owner 已处理完成", at: Date.now(), wake: false },
+				BACKGROUND_CONTEXT,
+			);
+			state = await shell.channels();
+			const procAfterB = (state.messages.all ?? []).filter((m) => m.processing === true);
+			// 占位被 B 的回复原地覆盖消失：没有任何 processing 残留（尤其 owner 不应二次出现）。
+			expect(procAfterB).toHaveLength(0);
+			expect(procAfterB.find((m) => m.pendingFor === "owner")).toBeUndefined();
 		} finally {
 			await opened.close();
 		}

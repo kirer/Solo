@@ -123,6 +123,12 @@ function lastOf(state: ChannelState, channelId: string): Message | undefined {
 	return list[list.length - 1];
 }
 
+/** 取「用户真正发出的那条」（B 的 processing 占位会追加在后面，lastOf 会抓到它）。 */
+function lastSpoken(state: ChannelState, channelId: string, text: string): Message | undefined {
+	const list = state.messages[channelId] ?? [];
+	return [...list].reverse().find((m) => m.text === text);
+}
+
 describe("兜底频道", () => {
 	it("私聊先建也不落到私聊：优先我所在的非个人频道里最近活跃的那个", async () => {
 		const { say, snapshot } = await setup();
@@ -141,7 +147,7 @@ describe("兜底频道", () => {
 		const { say, snapshot } = await setup();
 		await say({ text: "在私聊里说一句", channel: DM });
 		const after = await snapshot();
-		expect(lastOf(after, DM)?.text).toContain("在私聊里说一句");
+		expect(lastSpoken(after, DM, "在私聊里说一句")?.text).toContain("在私聊里说一句");
 	});
 });
 
@@ -168,11 +174,13 @@ describe("投递正文带频道 id", () => {
 });
 
 describe("要老板拍板就 @ 老板", () => {
-	it("needsOwner 认决策信号，不认普通闲聊", () => {
-		expect(needsOwner("要不要加联机")).toBe(true);
-		expect(needsOwner("这个是 A 还是 B？")).toBe(true);
-		expect(needsOwner("请确认一下这个方案")).toBe(true);
-		expect(needsOwner("等你定")).toBe(true);
+	it("needsOwner 不再做关键词嗅探：普通/决策措辞都返回 false（#4 已移除嗅探）", () => {
+		// 旧实现用「要不要/请确认/等你定」等正则嗅探正文，会把没点老板的 @同事 协作消息误标「需要我」。
+		// #4 改为只认显式 @owner（由 parseMentions 处理，见下方集成用例），needsOwner 恒返回 false。
+		expect(needsOwner("要不要加联机")).toBe(false);
+		expect(needsOwner("这个是 A 还是 B？")).toBe(false);
+		expect(needsOwner("请确认一下这个方案")).toBe(false);
+		expect(needsOwner("等你定")).toBe(false);
 		expect(needsOwner("好的，我继续做")).toBe(false);
 		expect(needsOwner("dino v2 已验收，46 项全绿")).toBe(false);
 	});
@@ -181,17 +189,17 @@ describe("要老板拍板就 @ 老板", () => {
 		const { say, snapshot } = await setup();
 		await say({ text: "接口先按 v1 做", kind: "decision" });
 		const state = await snapshot();
-		const message = lastOf(state, PROJ);
+		const message = lastSpoken(state, PROJ, "接口先按 v1 做");
 		expect(message?.mentions).toContain(OWNER);
 		expect(message?.text).not.toContain("@owner");
 		expect(recipientsOf(state.channels[PROJ]!, message!)).toContain(OWNER);
 	});
 
-	it("正文有决策信号也补 owner", async () => {
+	it("正文显式 @owner 也能解析成 owner 并叫醒他（不靠关键词嗅探）", async () => {
 		const { say, snapshot } = await setup();
-		await say({ text: "要不要加联机模式？" });
+		await say({ text: "@owner 要不要加联机模式？" });
 		const state = await snapshot();
-		expect(lastOf(state, PROJ)?.mentions).toContain(OWNER);
+		expect(lastSpoken(state, PROJ, "@owner 要不要加联机模式？")?.mentions).toContain(OWNER);
 	});
 
 	it("英文内心独白不落库，返回理由并让模型重写", async () => {
@@ -219,12 +227,21 @@ describe("要老板拍板就 @ 老板", () => {
 		const state = await snapshot();
 		expect(lastOf(state, PROJ)?.mentions ?? []).not.toContain(OWNER);
 	});
+	it("没 @owner 的协作消息不补 owner、不标需要我（#4 回归）", async () => {
+		// 模拟「@同事 但没 @老板」：正文含 @沈舟（频道里真实成员），无 @owner。
+		const { say, snapshot } = await setup();
+		await say({ text: "@沈舟 这块要不要拆两次上线？", mention: "沈舟" });
+		const state = await snapshot();
+		const msg = lastSpoken(state, PROJ, "@沈舟 这块要不要拆两次上线？");
+		expect(msg?.mentions ?? []).not.toContain(OWNER);
+		expect(recipientsOf(state.channels[PROJ]!, msg!)).not.toContain(OWNER);
+	});
 
 	it("mention 写「老板」也能解析成 owner 并叫醒他", async () => {
 		const { say, snapshot } = await setup();
 		await say({ text: "这个得你定", mention: "老板" });
 		const state = await snapshot();
-		const message = lastOf(state, PROJ);
+		const message = lastSpoken(state, PROJ, "@owner 这个得你定");
 		expect(message?.mentions).toContain(OWNER);
 		expect(message?.text).toContain("@owner");
 	});
