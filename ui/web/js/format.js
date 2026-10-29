@@ -104,3 +104,27 @@ export async function copyText(text) {
 		return ok;
 	}
 }
+
+/**
+ * 会话列表的排序：**知言恒第一**，其余按最后说话时间倒序。
+ *
+ * 为什么要在这里排而不是靠后端顺序：列表每次刷新（含重启后重新拉
+ * `/api/channels`）都会重画，`lastAt` 一变知言就沉下去了 —— 老板的助理
+ * 不该因为「今天没说话」掉到列表底下。所以排序时先比「是不是知言的私聊」，
+ * 再比时间，pin 与刷新顺序无关。
+ */
+export const PINNED_SLUG = "知言";
+
+export function isPinnedChannel(channel) {
+	const id = String(channel?.id ?? "");
+	return id.endsWith(`-${PINNED_SLUG}`) && String(channel?.kind ?? id.split(":")[0]) === "dm";
+}
+
+export function sortChannels(channels) {
+	return [...channels].sort((left, right) => {
+		const leftPinned = isPinnedChannel(left);
+		const rightPinned = isPinnedChannel(right);
+		if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
+		return (right.lastAt ?? 0) - (left.lastAt ?? 0);
+	});
+}

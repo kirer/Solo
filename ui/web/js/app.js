@@ -14,7 +14,7 @@ import { MAX_PER_MESSAGE, filesOf, kindOfFile, queueItemHtml, uploadOne } from "
 import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
 import { channelDetailHtml, personDetailHtml } from "./detail.js";
-import { copyText, escapeHtml, relTime } from "./format.js";
+import { copyText, escapeHtml, relTime, sortChannels } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
 import { activityPhrase, buildOne, buildStream, eventLabel, isEventKind, isNeed as isNeedRow, wrapEvents } from "./rows.js";
 import { mergeMessages } from "./messages.js";
@@ -292,7 +292,8 @@ function slugOfChannel(channel) {
  */
 function renderSidebar() {
 	const endMark = mark("render:sidebar");
-	const channels = [...state.channels].sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
+	// 知言（slug=知言）的私聊恒排第一，其余按最后说话时间 —— 重启后重新拉取也走这里。
+	const channels = sortChannels(state.channels);
 	if (channels.length === 0) {
 		el.rows.innerHTML = `<div class="empty"><span>还没有频道。</span></div>`;
 		endMark();
