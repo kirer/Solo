@@ -15,6 +15,22 @@ const FRAME_GAP_MS = 240;
 const TASK_MS = 200;
 const REPORT_EVERY_MS = 5_000;
 
+/**
+ * 给一条卡顿判断「它到底是不是真的卡」。
+ *
+ * 21.6 秒的「长帧」很可能不是主线程忙，而是页面被切到后台/系统睡眠时 rAF 被节流
+ * （额度用完、定时器降频），回到前台补一帧时算出来的间隔就是几十秒。所以每条记录
+ * 都带上可见性状态和「处于当前状态多久」，并给一个粗判：
+ *   hidden —— 记录时页面不可见，帧间隔没有意义；
+ *   resumed —— 这一帧的间隔比「切回前台后经过的时间」还长，说明跨了一次隐藏/唤醒；
+ *   foreground —— 真正在前台连着跑，这才值得去看主线程。
+ */
+export function classifyJank({ gapMs = 0, visibility = "visible", sinceVisibility = 0 } = {}) {
+	if (visibility === "hidden") return "hidden";
+	if (Number(sinceVisibility) < Number(gapMs)) return "resumed";
+	return "foreground";
+}
+
 /** 最近一次「我们正在干的那件事」。卡顿发生时把它一起记上，才知道是谁的锅。 */
 let current = "idle";
 let since = Date.now();
@@ -37,6 +53,23 @@ export function installJankMonitor() {
 	const log = [];
 	let last = performance.now();
 	let lastReport = Date.now();
+	// 可见性状态与「进入这个状态多久」：判断是不是节流伪长帧的唯一依据。
+	let visibility = typeof document === "undefined" ? "visible" : document.visibilityState;
+	let changedAt = Date.now();
+	if (typeof document !== "undefined") {
+		document.addEventListener("visibilitychange", () => {
+			visibility = document.visibilityState;
+			changedAt = Date.now();
+		});
+	}
+	const context = (gapMs = 0) => {
+		const sinceVisibility = Date.now() - changedAt;
+		return {
+			vis: visibility,
+			visForMs: sinceVisibility,
+			state: classifyJank({ gapMs, visibility, sinceVisibility }),
+		};
+	};
 
 	const push = (entry) => {
 		log.push(entry);
@@ -60,7 +93,13 @@ export function installJankMonitor() {
 		new PerformanceObserver((list) => {
 			for (const task of list.getEntries()) {
 				if (task.duration < TASK_MS) continue;
-				push({ why: "longtask", ms: Math.round(task.duration), doing: current, forMs: Date.now() - since });
+				push({
+					why: "longtask",
+					ms: Math.round(task.duration),
+					doing: current,
+					forMs: Date.now() - since,
+					...context(task.duration),
+				});
 			}
 		}).observe({ entryTypes: ["longtask"] });
 	} catch {
@@ -70,7 +109,9 @@ export function installJankMonitor() {
 	const tick = (now) => {
 		const gap = now - last;
 		last = now;
-		if (gap > FRAME_GAP_MS) push({ why: "frame", ms: Math.round(gap), doing: current, forMs: Date.now() - since });
+		if (gap > FRAME_GAP_MS) {
+			push({ why: "frame", ms: Math.round(gap), doing: current, forMs: Date.now() - since, ...context(gap) });
+		}
 		if (Date.now() - lastReport > REPORT_EVERY_MS) report();
 		requestAnimationFrame(tick);
 	};
