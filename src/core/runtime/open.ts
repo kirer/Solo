@@ -8,7 +8,7 @@ import { Harness as DurableHarness, LiveDoc, type Harness, type HarnessSettings 
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
-import type { Cursor, Registry, TaskRecord } from "@earendil-works/pi-durable";
+import type { Cursor, Registry, SubmissionId, TaskRecord } from "@earendil-works/pi-durable";
 import { serializedHarness } from "./serialize.ts";
 
 /**
@@ -77,6 +77,13 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 
 		// 一次 commit 里把整棵残留任务树全部结算成 terminal。分开做会被级联改回 pending。
 		terminated = await harness.commit(async (tx) => {
+			// **先把所有表扫完，再开始写。**
+			//
+			// 旧版本在这里踩过一个一直没人发现的坑：先 `setTask` 写任务，再 `scanConversations`
+			// 扫会话 —— pi-durable 明确禁止「写表之后再读表」，于是整个 commit 抛错、
+			// 被外层 catch 吞成一行警告，结果是**这套自愈从上线起一次都没真正跑过**
+			// （实测每次启动都打 `Tx.scanConversations() cannot read tables after the first table write`），
+			// 僵尸任务与残留输入一直挂在库里（`submissions` 里 2 条 unanswered 从 10-29 挂到现在）。
 			const live = [];
 			for (const status of LIVE) {
 				// 必须翻页：`scanTasks` 一次只给一页。早先只读第一页（256 条），
@@ -89,6 +96,32 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 					cursor = page.next;
 				}
 			}
+
+			// 会话 + 每个会话的 `pi.live`（也是读）：判断那一条 `run` 是不是已经没人收尾了。
+			const stale: { conversationId: number; runInputs: readonly SubmissionId[]; stale: boolean }[] = [];
+			let conversationCursor: Cursor | undefined;
+			for (;;) {
+				const page = await tx.scanConversations({}, 256, conversationCursor);
+				for (const conversation of page.items) {
+					const doc = await tx.doc(LiveDoc, conversation.id);
+					const run = doc.run;
+					// 任务不存在也算陈旧（指向一个已经不存在的任务，没人会来收尾）。
+					const owner = run === undefined ? undefined : await tx.task(run.taskId);
+					stale.push({
+						conversationId: conversation.id,
+						runInputs: run?.inputs ?? [],
+						stale: run !== undefined && (owner === undefined || owner.state?.status === "terminal"),
+					});
+				}
+				if (page.next === undefined) break;
+				conversationCursor = page.next;
+			}
+			for (const id of stale.filter((item) => item.stale).flatMap((item) => item.runInputs)) {
+				tx.settleSubmission(id, { status: "unanswered", reason: "restart" });
+				settled += 1;
+			}
+
+			// ── 以上全是读，从这里开始写 ──
 			let count = 0;
 			for (const task of live) {
 				if (task.state?.status === "terminal") continue;
@@ -104,32 +137,13 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 			// 清掉所有会话的「忙」标记（见函数头注释：不清就等于让这个会话永远哑掉）。
 			// 必须扫**全部会话**而不是只看上面那些残留任务所属的会话：一条活任务都没有、
 			// 只有一条陈旧 `run` 的会话正是最坏的那种（它永远不会报错，只是再也不说话）。
-			// 只清 `run` 指向的任务已经终态（或不存在）的——同一个库上可能还挂着另一个
-			// 活进程，它的 `run` 指向的任务还活着，不能动。
-			let conversationCursor: Cursor | undefined;
-			for (;;) {
-				const page = await tx.scanConversations({}, 256, conversationCursor);
-				for (const conversation of page.items) {
-					const doc = await tx.doc(LiveDoc, conversation.id);
-					const run = doc.run;
-					if (run !== undefined) {
-						const owner = await tx.task(run.taskId);
-						// 任务不存在也算陈旧（指向一个已经不存在的任务，没人会来收尾）。
-						if (owner !== undefined && owner.state?.status !== "terminal") continue;
-						// 与库内 `endRun` 同一套收尾：先结算这一轮挂着的输入，再摘掉整轮的表现。
-						for (const id of run.inputs) {
-							tx.settleSubmission(id, { status: "unanswered", reason: "restart" });
-							settled += 1;
-						}
-						delete doc.run;
-						unblocked.add(conversation.id);
-					}
-					delete doc.generation;
-					delete doc.tools;
-					delete doc.nestedTools;
-				}
-				if (page.next === undefined) break;
-				conversationCursor = page.next;
+			for (const item of stale) {
+				if (item.stale) unblocked.add(item.conversationId);
+				const doc = await tx.doc(LiveDoc, item.conversationId as never);
+				if (doc.run !== undefined) delete doc.run;
+				delete doc.generation;
+				delete doc.tools;
+				delete doc.nestedTools;
 			}
 			return count;
 		}, context);
@@ -183,7 +197,41 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 	if (settled > 0) console.error(`[reconcile] 已结算 ${settled} 条残留输入`);
 }
 
+/** 已完成（terminal）的任务记录保留多久：超过就回收。 */
+const TASK_RETENTION_MS = 3 * 24 * 60 * 60_000;
+
+/**
+ * 回收「已完成且超过 3 天」的任务记录（A3）。
+ *
+ * 为什么用直接 SQL 而不是库的 API：pi-durable 只提供 `setTask`（整条替换），**没有删任务
+ * 的口子**，而 `tasks` 是每轮一条、只增不减（实测 2079 条 terminal / 652KB，`conversations`
+ * 只有 4 个）。这里在 harness 打开**之前**删，此时没有任何内存缓存引用这些记录。
+ *
+ * 只删 `status = 'terminal'` 且 `endedAt` 早于 3 天前的：正在跑的和最近的都不动。
+ */
+export async function pruneTerminalTasks(databasePath: string, retentionMs = TASK_RETENTION_MS): Promise<number> {
+	if (databasePath === ":memory:") return 0;
+	const { DatabaseSync } = await import("node:sqlite");
+	let db: InstanceType<typeof DatabaseSync> | undefined;
+	try {
+		db = new DatabaseSync(databasePath);
+		const cutoff = Date.now() - retentionMs;
+		const statement = db.prepare(
+			"DELETE FROM tasks WHERE status = 'terminal' AND json_extract(record, '$.endedAt') < ?",
+		);
+		const result = statement.run(cutoff);
+		return Number(result.changes ?? 0);
+	} catch {
+		// 表还没建（第一次启动）、或者这版 SQLite 没开 JSON1：都不该挡启动。
+		return 0;
+	} finally {
+		db?.close();
+	}
+}
+
 export async function openCore(options: OpenCoreOptions, context: Context = BACKGROUND_CONTEXT): Promise<CoreRuntime> {
+	const pruned = await pruneTerminalTasks(options.databasePath);
+	if (pruned > 0) console.error(`[core] 回收 ${pruned} 条 3 天前的已完成任务记录`);
 	const storage = await openNodeSqliteStorage(options.databasePath);
 	const raw = await DurableHarness.open(
 		storage,

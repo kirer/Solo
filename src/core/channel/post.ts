@@ -167,6 +167,70 @@ async function mergeStep(
 }
 
 /**
+ * 一轮结束：把某人在某个频道里还没被填的处理中占位标成 `status: "error"`。
+ *
+ * 返回收掉了几条，只用于日志/测试。**只碰还没被填的**（`processing === true`）：
+ * 已经被真实回复填充的占位在填充时就把标记摘掉了，不会被这里二次改动。
+ */
+export async function expirePlaceholders(
+	deps: { readonly harness: PostDeps["harness"]; readonly state?: ChannelState },
+	channelId: string,
+	slug: string,
+	context: Context,
+): Promise<number> {
+	let expired = 0;
+	await deps.harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		const list = doc.messages[channelId] as Message[] | undefined;
+		if (list === undefined) return;
+		for (let index = 0; index < list.length; index += 1) {
+			const message = list[index];
+			if (message === undefined) continue;
+			if (message.from !== slug || message.processing !== true) continue;
+			// 下标替换 = 数组结构性变更，文档代理稳定落盘（与占位填充同一个手法）。
+			list[index] = { ...message, status: "error", processing: false };
+			expired += 1;
+		}
+	}, context);
+	return expired;
+}
+
+/** 占位最长活多久。与前端 `PLACEHOLDER_TTL_MS` 同一个数（10 分钟）。 */
+export const PLACEHOLDER_TTL_MS = 10 * 60_000;
+
+/**
+ * 启动时收掉「早就没人管」的处理中占位。
+ *
+ * A1 的兜底：`expirePlaceholders` 靠「这一轮结算」触发，但历史里已经躺着一批（实测
+ * `proj:solo` 最老挂了 175 分钟），而且进程被强杀时也不会有人来结算。启动时按
+ * `at` 年龄扫一遍，超过 10 分钟的直接标 `status: "error"` —— 前端本来就用同一个 TTL
+ * 把它们当过期不再画，后端跟上就是了。
+ */
+export async function expireStalePlaceholders(
+	harness: { commit: PostDeps["harness"]["commit"] },
+	maxAgeMs = PLACEHOLDER_TTL_MS,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	const now = Date.now();
+	let expired = 0;
+	await harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		for (const channelId of Object.keys(doc.messages)) {
+			const list = doc.messages[channelId] as Message[] | undefined;
+			if (list === undefined) continue;
+			for (let index = 0; index < list.length; index += 1) {
+				const message = list[index];
+				if (message === undefined || message.processing !== true) continue;
+				if (now - message.at < maxAgeMs) continue;
+				list[index] = { ...message, status: "error", processing: false };
+				expired += 1;
+			}
+		}
+	}, context);
+	return expired;
+}
+
+/**
  * 追一条系统留痕到频道。`note` 不唤醒、不计未读（见 `Message.kind`），所以这里不碰
  * 投递层，否则「系统说一下没人被叫醒」会反过来叫醒人。
  */
@@ -474,6 +538,9 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
+			// 这一轮结算时收掉没被填的占位：他没在这个频道说话，占位就没人来填，
+			// 留着就是一条永远转圈的「开始处理…」（实测挂过 175 分钟）。
+			expirePlaceholders: (slug) => expirePlaceholders(deps, liveChannel.id, slug, context),
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
 			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
 			noteUnanswered: async ({ label, seq, reason }) => {

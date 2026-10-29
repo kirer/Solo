@@ -478,6 +478,12 @@ export async function assembleCore(
 	}, context);
 
 
+	// 启动时收掉陈旧的处理中占位（A1 的兜底：强杀/没结算的那些不会有人再来填）。
+	{
+		const { expireStalePlaceholders: expireStale, PLACEHOLDER_TTL_MS: ttl } = await import("../channel/post.ts");
+		await expireStale(harness, ttl, context).catch(() => 0);
+	}
+
 	// ── 5. 投影订阅：会话里的思考/文案/工具调用 → 个人频道 ──────────
 	// 必须在名册与频道都就绪之后才开。
 	// 先回填历史：把每个 agent 会话里还没投影过的 `pi.assistant` 条目补进个人频道。

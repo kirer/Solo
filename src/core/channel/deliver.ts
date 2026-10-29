@@ -117,6 +117,15 @@ export type DeliverOptions = {
 	 * 不传就什么都不写（投递仍然不等回复）。传了就在后台等这次提交结算，
 	 * 结算为 `unanswered` 时回调 —— 频道里至少有人能看出「他回答了没」。
 	 */
+	/**
+	 * 这一轮结束了（提交结算）：把这个人**在这个频道**里还没被填的占位标成 error。
+	 *
+	 * 为什么必须有：占位只在「同一个人往同一个频道发言」时被原地填充。他一轮没在这个
+	 * 频道说话（结论发去私聊、被 `[PASS]` 静音、或半路被打断），占位就永远 `pending` ——
+	 * 实测 `proj:solo` 里挂过 175 分钟的「开始处理…」。前端 10 分钟 TTL 只是遮住显示，
+	 * 数据得有人收尾。
+	 */
+	readonly expirePlaceholders?: (slug: string) => Promise<number>;
 	readonly noteUnanswered?: (info: {
 		readonly slug: string;
 		readonly label: string;
@@ -349,10 +358,15 @@ export async function deliver(
 				},
 				context,
 			);
-			if (options.noteUnanswered !== undefined) {
-				const report = options.noteUnanswered;
+			// 这一轮结算时两件事：收掉没被填的占位（无论成败），以及「一个字都没说」时留痕。
+			const expire = options.expirePlaceholders;
+			const report = options.noteUnanswered;
+			if (expire !== undefined || report !== undefined) {
 				watchSettled(submission, async (reason) => {
-					await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
+					if (expire !== undefined) await expire(slug).catch(() => 0);
+					if (report !== undefined) {
+						await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
+					}
 				});
 			}
 			if (merged > 0) mergedList.push({ slug, count: merged });
