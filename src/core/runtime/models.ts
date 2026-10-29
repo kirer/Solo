@@ -90,6 +90,30 @@ function makeProvider(config: ProviderConfig): Provider {
 }
 
 /**
+ * 确认一个模型引用真的能解析到模型，解析不到就换一个能用的。
+ *
+ * **为什么必须有这一步**：这个引用会被写进每一个会话（`conversation.configure`），
+ * 一旦它指向不存在的 provider 或 modelId，每次生成都会立刻以 `no_model` 失败，
+ * 而失败发生在模型产字之前 —— 界面上只留下一条「开始处理…」，看不出任何异常。
+ * 实测踩过两次：一次是 `commandcode/auto/deepseek-v4.1-flash`（provider 改名成 magpie），
+ * 一次是 `commandcode/auto/hy3`（settings.json 的 defaultModel 手改错了 provider）。
+ * 两次表现完全一样：所有人都像在休息。
+ */
+function usableDefault(models: Models, ref: ModelRef, source: string): ModelRef {
+	if (models.getModel(ref.provider, ref.modelId) !== undefined) return ref;
+	const first = models.getModels()[0];
+	if (first === undefined) {
+		throw new Error(
+			`${source} 指向 ${ref.provider}/${ref.modelId}，而这个模型不存在，并且没有任何可用模型可回落`,
+		);
+	}
+	console.warn(
+		`[core] ${source} 指向不存在的模型 ${ref.provider}/${ref.modelId}，改用 ${first.provider}/${first.id}`,
+	);
+	return { provider: first.provider, modelId: first.id };
+}
+
+/**
  * 装配模型。
  *
  * 优先级：
@@ -120,23 +144,29 @@ export function setupModels(
 			}
 		}
 		if (defaultRef === undefined) throw new Error("settings.json 有 providers 但没有模型");
-		return { models, defaultModel: defaultRef };
+		return { models, defaultModel: usableDefault(models, defaultRef, "settings.json 的 defaultModel") };
 	}
 
 	if (environment.ANTHROPIC_API_KEY !== undefined) {
 		const models = createModels();
 		models.setProvider(anthropicProvider());
-		return { models, defaultModel: { provider: "anthropic", modelId: "claude-sonnet-4-6" } };
+		return {
+			models,
+			defaultModel: usableDefault(models, { provider: "anthropic", modelId: "claude-sonnet-4-6" }, "环境变量 ANTHROPIC_API_KEY"),
+		};
 	}
 	if (environment.OPENAI_API_KEY !== undefined) {
 		const models = createModels();
 		models.setProvider(openaiProvider());
-		return { models, defaultModel: { provider: "openai", modelId: "gpt-5" } };
+		return {
+			models,
+			defaultModel: usableDefault(models, { provider: "openai", modelId: "gpt-5" }, "环境变量 OPENAI_API_KEY"),
+		};
 	}
 
 	const models = createModels();
 	const provider = makeProvider({
-		id: "commandcode",
+		id: "magpie",
 		name: "本地网关",
 		baseUrl: environment.COMMANDCODE_BASE_URL ?? "http://127.0.0.1:3425/v1",
 		apiKey: environment.COMMANDCODE_API_KEY ?? "magpie",
@@ -146,6 +176,10 @@ export function setupModels(
 	(models as MutableModels).setProvider(provider);
 	return {
 		models,
-		defaultModel: { provider: "commandcode", modelId: environment.COMMANDCODE_MODEL_ID ?? "auto/deepseek-v4.1-flash" },
+		defaultModel: usableDefault(
+			models,
+			{ provider: "magpie", modelId: environment.COMMANDCODE_MODEL_ID ?? "auto/deepseek-v4.1-flash" },
+			"本地网关兜底模型",
+		),
 	};
 }
