@@ -10,6 +10,7 @@
  * 2. `src/core/agent`、`src/core/project`、`src/core/channel` 是纯规则与纯 IO 层，
  *    不得反向 import `src/core/shell`（外壳依赖内核，内核不依赖外壳）。
  * 3. 服务端路由必须有界面消费者（有界面看不见的接口就是死接口）。
+ *    前端源码在 `ui/app/src`（React + TS，构建到 `ui/web`），所以查那里。
  */
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -33,6 +34,13 @@ async function* walkAll(dir) {
 		const full = join(dir, entry.name);
 		if (entry.isDirectory()) yield* walkAll(full);
 		else if (entry.isFile()) yield full;
+	}
+}
+
+/** 按后缀过滤地遍历任意目录（前端是 ts/tsx，服务端是 ts）。 */
+async function* walkAny(dir, keep) {
+	for await (const file of walkAll(dir)) {
+		if (keep(file)) yield file;
 	}
 }
 
@@ -95,7 +103,7 @@ const NO_CONSUMER_ALLOWED = new Map([
 ]);
 
 let consumerCorpus = "";
-for await (const file of walkAll(join(ROOT, "ui/web/js"))) {
+for await (const file of walkAny(join(ROOT, "ui/app/src"), (name) => /\.(ts|tsx)$/.test(name))) {
 	consumerCorpus += await readFile(file, "utf8");
 }
 
@@ -123,7 +131,7 @@ for (const route of routes) {
 	violations.push({
 		file: ROUTE_FILE,
 		spec: route,
-		reason: `该路由在 ui/web/js 里没有消费者（查找前缀 ${prefix}）。接上，或删掉，或写进 NO_CONSUMER_ALLOWED 并注明谁在用`,
+		reason: `该路由在 ui/app/src 里没有消费者（查找前缀 ${prefix}）。接上，或删掉，或写进 NO_CONSUMER_ALLOWED 并注明谁在用`,
 	});
 }
 

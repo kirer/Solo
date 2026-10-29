@@ -12,7 +12,7 @@ src/core/
   channel/   说话：纯规则 / 投递 / 写一条 / 20 个工具
   shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
     http/    路由表 / 静态资源 / 网卡探测
-ui/web/      纯静态界面，无构建步骤
+ui/app/      界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/        起手技能（公司层 + 知言个人层）+ 规矩文案 `rules.md`
 scripts/     两个脚本：边界检查、真实模型自测
 ```
@@ -21,7 +21,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 1. 只有 `src/core/runtime/` 能 import pi-durable / pi-ai / chord。
 2. 内核（`agent|project|channel`）不得反向 import `shell/` —— 依赖只能 `shell → 内核`。
-3. `serve.ts` 的每条 `pattern` 必须在 `ui/web/js` 里有消费者（白名单：`/api/org`，
+3. `serve.ts` 的每条 `pattern` 必须在 `ui/app/src` 里有消费者（白名单：`/api/org`，
    Docker 健康检查用）。
 
 ## 2. 全量文件（`src/core` 下 30 余个 ts，约 7K 行；行数会漂，以表里的职责为准）
@@ -62,31 +62,35 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `shell/http/static-assets.ts` | 201 | ETag / br+gzip 协商 / `loadAsset` |
 | `shell/http/network.ts` | 78 | 网卡探测（启动时打印局域网地址） |
 
-### 2.2 `ui/web/`（纯静态，无构建，浏览器直接跑源码）
+### 2.2 `ui/app/src/`（React + TS，构建到 `ui/web/`，ADR-079）
+
+源码在这里，产物在 `ui/web/`（服务端发那个目录，**别手改产物**）。改完必须 `npm run ui:build`。
 
 | 文件 | 职责 |
 | --- | --- |
-| `index.html` | 唯一的页面骨架：顶栏 / 人栏 / 频道栏 / 纸（消息区 + 输入卡）/ 浮层。**没有第二个页面，也没有路由框架**（hash 只有 `#/c/<channelId>`） |
-| `css/base.css` | 重置、5 个 `@font-face`（IBM Plex，本地 woff2）、全部 token、6 档字号阶梯 |
-| `css/shell.css` | 取景框、顶栏、人栏、频道栏、纸张、浮层（团队 / 菜单 / 灯箱）、手机单区域 |
-| `css/stream.css` | 消息流的四种行（`say` / `event` / `note` / `decision`）、时间分隔、骨架、空态 / 错误、动作条、气泡布局、附件、`.md` 补样式 |
-| `css/composer.css` | 输入卡、附件队列、拖拽落点提示、@ 提及弹窗、引用条 |
-| `css/memory.css` | 记忆面板（抽屉） |
-| `css/pending.css` | 待办卡（`decision` 行的选项按钮 + 自定义输入 + 回执） |
-| `css/motion.css` | 18 个 `@keyframes`、头像状态动画、入场 / 退场、`prefers-reduced-motion` |
-| `js/app.js` | 全部状态与交互：拉数据、SSE、渲染、滚动、输入、附件、浮层、快捷键。**改动 90% 落在这里** |
-| `js/rows.js` | `buildStream()` 把消息数组变成 DOM；一条消息长什么样只在这里定义 |
-| `js/avatar.js` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像（座位表 + mask 挖洞） |
-| `js/messages.js` | `mergeMessages()` —— 两页消息按 `seq` 去重合并（唯一可脱离浏览器测的前端逻辑） |
-| `js/memory.js` | 记忆面板：拉取 / 筛选 / 展开 / 记一条 / 删一节 + 纯函数（`lineCount` / `linesOf` / 过滤） |
-| `js/detail.js` | 详情面板的内容（私聊看人 / 群看群）：纯「数据 → HTML」，不发请求。**没有的字段不画空标题** |
-| `js/files.js` | 右栏「文件」页：把 `/api/files` 的 JSON 画成可点的列表，点进去看原文 |
-| `js/attach.js` | 附件：判断类型、缩略图、文件 chip、上传、队列项 |
-| `js/markdown.js` | `renderMarkdown()` —— 最小的 Markdown（标题 / 列表 / 代码 / 表格 / 链接 / 图片），**先转义再拼** |
-| `js/motion.js` | 弹簧缓动、`installMotionTokens()`、`withLinger()`（退场动画的通用壳） |
-| `js/format.js` | 转义、相对时间、`copyText()` |
-| `js/api.js` | 五个 `fetch` 包装 + `streamOrg()`。**每个后端路由必须在这里有消费者**（边界检查会查） |
-| `fonts/*.woff2` | IBM Plex Sans 400/500/600 + Mono 400/500（本地字体，不许只写 `font-family` 指望系统有） |
+| `ui/app/index.html` | 页面骨架 + **首帧定色的内联脚本**（放样式之前，否则先白一下再变深） |
+| `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
+| `src/main.tsx` | 入口：装样式、`bootstrap()`、挂 `<App>` |
+| `src/App.tsx` | 外壳装配：三列网格、头部（标题 / 状态 / 找你 / 团队 / 设置 / 详情）、主题与布局落地、键盘（Esc 关浮层、⌘K 开「找你」） |
+| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、在线状态推导、localStorage 三键 |
+| `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
+| `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
+| `src/api/types.ts` | 后端视图的 TS 镜像。权威定义在 `src/core/shell/view.ts`，**不许加后端没有的字段** |
+| `src/stream/model.ts` | **消息 → 行模型，纯函数** `buildRows()`。分组、过程行归属、时间分隔、占位生死全在这里（这次重构的核心） |
+| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新。过程组的展开态是本组件 state，**不进 store** |
+| `src/rows.ts` | 从旧 `rows.js` 搬来的纯规则：工具名说人话、事件摘要、计时起点、组头文案 |
+| `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览） |
+| `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层、附件队列、拖拽、粘贴、引用条 |
+| `src/panels/RightPanel.tsx` | 右栏第三列：两个 tab（详情 / 文件）。关的时候等 300ms 过渡再卸载 |
+| `src/panels/Overlays.tsx` | 设置、找你清单、团队、灯箱、toast。**同一时刻只开一个** |
+| `src/hooks/useStreams.ts` | org 与频道两条 SSE；失败退避 1s→15s；org 推送合并成一次拉取 |
+| `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
+| `src/lib/avatar.ts` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像 |
+| `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼** |
+| `src/lib/format.ts` | 转义、相对时间、`humanBytes`、`unreadLabel`、`copyText` |
+| `src/lib/messages.ts` | `mergeMessages()` —— 两页消息按 `seq` 去重合并（后一批赢，占位填充靠它） |
+| `src/styles/*.css` | 八个样式文件，顺序见 `styles/index.css`（token 先落地） |
+| `public/fonts/*.woff2` | Montserrat 300/400/500（本地字体，只用于品牌名） |
 
 ## 3. 「我想改 X → 动这里」
 
@@ -104,8 +108,8 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 改频道成员怎么来 | `shell/assemble.ts` 的 `joinProjectChannel` / `addToCompanyChannel` | 成员是 `identity.md` + `README.md` 的投影（ADR-012） |
 | 加一条 HTTP 路由 | `shell/serve.ts` 的 `routes` 表 | 必须在前端有消费者，否则边界检查失败 |
 | 改界面字段 | `shell/view.ts` | 字段必须有前端消费者（ADR-016） |
-| 改界面样式 / 交互 | `ui/web/` | 无构建步骤；文件职责见 §2.2，三条规矩见 CORE §9 |
-| 改「上翻看历史 / 回到最新」 | `ui/web/js/app.js` 的 `loadEarlier` / `syncToBottom` / `renderFlow` 的 `pinned` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建（ADR-052） |
+| 改界面样式 / 交互 | `ui/app/` | **改完必须 `npm run ui:build`**；文件职责见 §2.2 |
+| 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建（ADR-052） |
 | 改记忆沉淀的触发条件 / 游标时机 | `project/memory.ts` 的 `settleCandidates` + `project/settle.ts` 的 `waiting` | 游标语义在 ADR-033（取代 ADR-013），改之前先读懂 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制（ADR-021） |
@@ -140,7 +144,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 50 文件 / 453 例，应该 <3s
+npm test           # 65 文件 / 536 例，应该 <3s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 

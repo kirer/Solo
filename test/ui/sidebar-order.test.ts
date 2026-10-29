@@ -6,7 +6,7 @@
  * 不管输入顺序、不管时间戳怎么变，知言那一行都在第一位。
  */
 import { describe, expect, it } from "vitest";
-import { isPinnedChannel, sortChannels } from "../../ui/web/js/format.js";
+import { isPinnedChannel, sortChannels } from "../../ui/app/src/lib/format.ts";
 
 const channel = (id, kind, lastAt, title = id) => ({ id, kind, title, lastAt });
 

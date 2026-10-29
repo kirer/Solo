@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const raw = readFileSync(fileURLToPath(new URL("../../ui/web/css/stream.css", import.meta.url)), "utf8");
+const raw = readFileSync(fileURLToPath(new URL("../../ui/app/src/styles/stream.css", import.meta.url)), "utf8");
 // 注释里也写选择器（解释规则为什么这么写），先剥掉，免得被当成规则块的前导。
 const css = raw.replace(/\/\*[\s\S]*?\*\//g, "");
 

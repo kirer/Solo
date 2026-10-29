@@ -3,13 +3,13 @@
  *
  * P1-3 把服务端的假流式删掉之后，前端的 `token` 监听就成了一段永远不跑的
  * 「纯文本 append 进 Markdown 容器」死代码 —— 它还会让人以为正文是流式写的，
- * 于是去优化一个不存在的问题。这条测试静态扫 app.js，钉住「只注册这两种事件」。
+ * 于是去优化一个不存在的问题。这条测试静态扫 `hooks/useStreams.ts`，钉住「只注册这两种事件」。
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const source = readFileSync(fileURLToPath(new URL("../../ui/web/js/app.js", import.meta.url)), "utf8");
+const source = readFileSync(fileURLToPath(new URL("../../ui/app/src/hooks/useStreams.ts", import.meta.url)), "utf8");
 
 describe("频道 EventSource 的事件", () => {
 	it("只注册 create / done / error，没有 token", () => {

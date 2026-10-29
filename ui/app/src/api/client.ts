@@ -1,0 +1,142 @@
+/**
+ * 后端接口的薄封装。
+ *
+ * 只有一件事：把 HTTP 变成带类型的 Promise，错误消息取服务端给的中文 `error`。
+ * 不做缓存、不做重试、不做状态 —— 那些属于 store 和调用方。
+ *
+ * 为什么把 `error` 抽出来：后端每个失败响应都是 `{ error: "只能看工作区里的文件" }`，
+ * 直接弹 `HTTP 403` 对老板毫无意义，而这些中文句子本来就是写给他看的。
+ */
+
+import type {
+	AttentionItem,
+	Channel,
+	ChannelDetail,
+	FilesView,
+	Org,
+	PersonMemory,
+	PersonProfile,
+	Uploaded,
+} from "./types.ts";
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+	const response = await fetch(path, {
+		...init,
+		headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+	});
+	if (response.ok) return (await response.json()) as T;
+
+	// 错误体可能不是 JSON（代理、崩溃页），这时候必须还能说人话。
+	let message = `接口 ${path} 返回 ${response.status}`;
+	try {
+		const body = (await response.json()) as { error?: unknown };
+		if (typeof body.error === "string" && body.error.trim() !== "") message = body.error;
+	} catch {
+		// 保留上面那句兜底
+	}
+	throw new Error(message);
+}
+
+/** 组织快照（人 + 公司名）。 */
+export const getOrg = (): Promise<Org> => call<Org>("/api/org");
+
+/** 频道列表（按最后活跃倒序）。 */
+export const getChannels = (): Promise<{ channels: Channel[] }> => call("/api/channels");
+
+/** 一个频道的详情（首屏一页消息 + 成员 + 是否还有更早的）。 */
+export const getChannel = (id: string, limit = 40): Promise<ChannelDetail> =>
+	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}`);
+
+/** 更早的一页（`before` 是当前最早那条的 seq）。 */
+export const getEarlier = (id: string, before: number, limit = 30): Promise<ChannelDetail> =>
+	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}&before=${before}`);
+
+/** 发一条消息（带 `replyTo` 就是引用某条）。 */
+export const sendMessage = (
+	id: string,
+	body: { text: string; replyTo?: number; attachments?: string[]; mention?: string[] },
+): Promise<{ delivered?: string[]; failed?: string[]; skipped?: string[] }> =>
+	call(`/api/channels/${encodeURIComponent(id)}/messages`, {
+		method: "POST",
+		body: JSON.stringify(body),
+	});
+
+/** 标记已读到 `seq`。 */
+export const markRead = (id: string, seq: number): Promise<unknown> =>
+	call(`/api/channels/${encodeURIComponent(id)}/read`, {
+		method: "POST",
+		body: JSON.stringify({ seq }),
+	});
+
+/** 「找你的」清单（跨频道，未读在前）。 */
+export const getAttention = (): Promise<{ items: AttentionItem[]; unread: number }> =>
+	call("/api/attention");
+
+/** 某个人的档案。 */
+export const getPerson = (slug: string): Promise<PersonProfile> =>
+	call<PersonProfile>(`/api/people/${encodeURIComponent(slug)}`);
+
+/** 某个人的记忆。 */
+export const getPersonMemory = (slug: string): Promise<PersonMemory> =>
+	call<PersonMemory>(`/api/people/${encodeURIComponent(slug)}/memory`);
+
+/** 改某个人的记忆（`forget` 按小节删、`add` 追加一条）。 */
+export const editPersonMemory = (
+	slug: string,
+	body: { op: "forget" | "add"; heading?: string; text?: string },
+): Promise<PersonMemory> =>
+	call<PersonMemory>(`/api/people/${encodeURIComponent(slug)}/memory`, {
+		method: "POST",
+		body: JSON.stringify(body),
+	});
+
+/** 工作区文件浏览器（`path` 是相对工作区根的路径，空串是根）。 */
+export const getFiles = (path = ""): Promise<FilesView> =>
+	call<FilesView>(`/api/files?path=${encodeURIComponent(path)}`);
+
+/**
+ * 这个频道里能被 @ 到的人。
+ *
+ * 只列**成员**，且不含老大 —— 后端按频道成员算，前端不要自己从名册里筛
+ * （名册里的人在不在这个频道是后端的事，筛两次迟早不一致）。
+ */
+export const getMentionable = (
+	id: string,
+): Promise<{ candidates: { id: number; label: string; slug: string; title: string }[] }> =>
+	call(`/api/channels/${encodeURIComponent(id)}/mentionable`);
+
+/**
+ * 上传一个附件。
+ *
+ * 二进制直接放 body、文件名走 `x-filename` 头 —— 不用 multipart：服务端只收一个文件，
+ * multipart 的边界解析纯属多余（见 `src/core/channel/uploads.ts` 的注释）。
+ */
+export async function uploadFile(file: File): Promise<Uploaded> {
+	const response = await fetch(`/api/uploads?name=${encodeURIComponent(file.name)}`, {
+		method: "POST",
+		headers: { "content-type": file.type || "application/octet-stream" },
+		body: file,
+	});
+	if (response.ok) return (await response.json()) as Uploaded;
+	let message = `上传 ${file.name} 失败（${response.status}）`;
+	try {
+		const body = (await response.json()) as { error?: unknown };
+		if (typeof body.error === "string") message = body.error;
+	} catch {
+		// 保留兜底
+	}
+	throw new Error(message);
+}
+
+/** 附件下载/预览地址。 */
+export const uploadUrl = (id: string): string => `/api/uploads/${encodeURIComponent(id)}`;
+
+/** 浏览器自报卡顿（`workspace/logs/jank.jsonl`）。有意在失败时静默：诊断不该打扰使用。 */
+export function reportJank(body: unknown): void {
+	void fetch("/api/diag", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify(body),
+		keepalive: true,
+	}).catch(() => undefined);
+}

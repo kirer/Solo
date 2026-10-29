@@ -7,7 +7,7 @@
  * 服务端不动，这里只测纯函数（DOM 那一半由 app.js 的 dropStalePlaceholders 负责）。
  */
 import { describe, expect, it } from "vitest";
-import { PLACEHOLDER_TTL_MS, PROCESSING_TEXT, isExpiredPlaceholder, isStalePlaceholder } from "../../ui/web/js/rows.js";
+import { PLACEHOLDER_TTL_MS, PROCESSING_TEXT, isExpiredPlaceholder, isStalePlaceholder } from "../../ui/app/src/rows.ts";
 
 const placeholder = (seq, slug = "知言", at = 1_000) => ({
 	seq,

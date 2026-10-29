@@ -23,7 +23,7 @@ import {
 	groupStatus,
 	runStartAt,
 	splitRuns,
-} from "../../ui/web/js/rows.js";
+} from "../../ui/app/src/rows.ts";
 
 const think = (text, at) => ({ kind: "think", fromSlug: "林越", text, at });
 const work = (text, at) => ({ kind: "work", fromSlug: "林越", text, at });

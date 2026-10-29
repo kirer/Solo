@@ -12,8 +12,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
-const css = read("../../ui/web/css/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
-const app = read("../../ui/web/js/app.js");
+const css = read("../../ui/app/src/styles/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
+// React 重构后：本地存储与 `data-side` 在 store.ts / App.tsx，行标题在 Sidebar.tsx。
+const app = read("../../ui/app/src/state/store.ts");
+const frame = read("../../ui/app/src/App.tsx");
+const sidebar = read("../../ui/app/src/sidebar/Sidebar.tsx");
 
 function blocksOf(selector: string): string[] {
 	const out: string[] = [];
@@ -55,8 +58,10 @@ describe("侧栏收起", () => {
 
 	it("状态存在本地，刷新后保持", () => {
 		expect(app).toContain('const SIDE_KEY = "ai-company.side"');
-		expect(app).toContain("localStorage.setItem(SIDE_KEY, next)");
+		expect(app).toContain("localStorage.setItem(SIDE_KEY, side)");
+		// `.frame[data-side]` 是这套布局唯一的开关（JS 不碰列宽）。
+		expect(frame).toContain("data-side={side}");
 		// 收起后名字看不见，必须写进 title，否则那一栏就只剩一堆脸。
-		expect(app).toContain('row.title = sub === "" ? title : `${title} · ${sub}`');
+		expect(sidebar).toContain("title={parts.join(\" · \")}");
 	});
 });

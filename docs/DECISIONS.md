@@ -1885,3 +1885,42 @@ let|class` + `export { … }`），错了就列出 `调用方 → 目标：没�
 用时 X 秒」，组头只剩一个展开箭头；定格由 `rows.js` 新导出 `markGroupDone(group, endAt)`
 负责（只改那一个节点，不重建 —— 重建会吃掉老板正开着的展开状态）；底部活动行跑完立刻收掉，
 不再停 4 秒显示「已完成」。
+
+---
+
+## ADR-079：前端换成 React + TypeScript + Vite（取代「无构建」的约定）
+
+**背景。** 旧前端是 `ui/web/` 下 11295 行手写 JS + CSS，靠字符串拼 DOM。老板的原话是
+「前端小毛病太多了，主要是消息展示的各种情况」「很有重构前端的必要了，尽量使用成熟的框架」。
+
+**病根不是「没框架」。** 复盘那批毛病，几乎全部来自同一个渲染策略：
+
+- 每条 SSE 消息到达就把整列 `replaceChildren` 重建（1316 次/15 秒，最长一帧卡 2.7 秒）；
+- 过程行「该排在哪句话下面」靠事后搬 DOM 节点；
+- 「现在展开着没有」「滚动到哪」这类视图状态散在闭包和 `dataset.*` 里，两边不同步。
+
+所以引入框架的价值不是「多一个库」，而是把「状态 → 视图」变成单向的：视图状态写进
+React state，行模型由纯函数算出来，DOM 不再被手工搬来搬去。
+
+**决定。**
+1. 源码搬到 `ui/app/`（React 18 + TypeScript strict + Vite 6），构建产物写回 `ui/web/` ——
+   服务端的 `serveStatic` 一直是「发 `ui/web`」，它不需要知道有构建这回事。
+2. `vite.config.ts` 用 `emptyOutDir: false`：清空会在构建出错时把 `index.html` 一起删掉，
+   那时连白屏都看不到，只剩 404。
+3. **消息流的关键规则抽成纯函数** `ui/app/src/stream/model.ts` 的 `buildRows()`：谁跟谁算一段、
+   过程行归谁、时间分隔插哪儿、占位怎么死，全部在这里算，可以单测（`test/ui/stream-model.test.ts`）。
+   `Stream.tsx` 只负责把它画出来。
+4. `check` 脚本加一道 `tsc -p ui/app/tsconfig.json`；`check-boundaries` 的「路由必须有消费者」
+   改成扫 `ui/app/src`（原来是扫已删除的 `ui/web/js`）。
+5. 样式沿用已经认可的 DSH 观感（`ui/app/src/styles/*.css`，类名不变），只补 React 需要的少数结构。
+
+**代价。** 仓库第一次有了构建步骤：改完界面必须 `npm run ui:build`，忘了就是「改了没生效」。
+这一点必须写进 AGENTS.md 的固定动作里，否则下一个人会踩。同时 `test/ui/` 里那些
+「读源码文本正则匹配」的测试失去意义，改成测纯函数或直接删。
+
+**顺带作废 ADR-078 的那条测试。** `test/ui/imports.test.ts` 是为了在没有编译步骤时防
+「导出名字对不上」而写的，现在 `tsc -p ui/app` + Vite 构建在任何一次 `npm run check` 里都会
+报同一类错，那个文件已删除。
+
+**没做的。** 不引入状态库（Redux/Zustand/Jotai）—— 一个 `useSyncExternalStore` 的 40 行 store
+够用；不引入 UI 组件库 —— 观感是手写的，组件库会把它拉回「生成式仪表盘」。

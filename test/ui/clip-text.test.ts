@@ -6,8 +6,8 @@
  * `clipText`，所以只要这里对了，那些地方就都对了。
  */
 import { describe, expect, it } from "vitest";
-import { clipText, clipWithEllipsis } from "../../ui/web/js/format.js";
-import { clampLine, eventSummary } from "../../ui/web/js/rows.js";
+import { clipText, clipWithEllipsis } from "../../ui/app/src/lib/format.ts";
+import { clampLine, eventSummary } from "../../ui/app/src/rows.ts";
 
 describe("clipText：按字素截断", () => {
 	it("emoji 不会被切成半个（孤立代理）", () => {

@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-const css = readFileSync(fileURLToPath(new URL("../../ui/web/css/composer.css", import.meta.url)), "utf8").replace(
+const css = readFileSync(fileURLToPath(new URL("../../ui/app/src/styles/composer.css", import.meta.url)), "utf8").replace(
 	/\/\*[\s\S]*?\*\//g,
 	"",
 );

@@ -9,7 +9,7 @@
  * 文案在 rows.js 的纯函数里，DOM 只负责画，所以这里断言文案与状态。
  */
 import { describe, expect, it } from "vitest";
-import { activityRun, groupHeader, groupHeaderText, groupStatus, shouldShowActivity } from "../../ui/web/js/rows.js";
+import { activityRun, groupHeader, groupHeaderText, groupStatus, shouldShowActivity } from "../../ui/app/src/rows.ts";
 
 const think = (at, slug = "知言") => ({ fromSlug: slug, kind: "think", text: "想一下。", at });
 const say = (at, slug = "知言") => ({ fromSlug: slug, kind: "say", text: "做完了。", at });

@@ -10,7 +10,7 @@
  * 一批超过阈值就整列重建**一次**。
  */
 import { describe, expect, it } from "vitest";
-import { enqueueMessage } from "../../ui/web/js/messages.js";
+import { enqueueMessage } from "../../ui/app/src/lib/messages.ts";
 
 const msg = (seq, text = "x") => ({ seq, fromSlug: "知言", kind: "say", text, at: seq * 1000 });
 

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+		<title>Solo</title>
+		<meta name="color-scheme" content="light dark" />
+		<script>
+			// 首帧定色：放在样式之前同步执行，否则会先白一下再变深。
+			(() => {
+				try {
+					const saved = localStorage.getItem("ai-company.theme") || "system";
+					const dark = saved === "dark" || (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+					document.documentElement.dataset.theme = dark ? "dark" : "light";
+					document.documentElement.style.colorScheme = dark ? "dark" : "light";
+					document.body.dataset.layout = localStorage.getItem("ai-company.layout") || "flat";
+				} catch {
+					document.documentElement.dataset.theme = "light";
+				}
+			})();
+		</script>
+	</head>
+	<body data-pane="list" data-layout="flat" data-side="open">
+		<div id="root"></div>
+		<script type="module" src="/src/main.tsx"></script>
+	</body>
+</html>

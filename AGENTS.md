@@ -27,7 +27,7 @@ workspace/
 发送前重新读盘渲染）。这是整个设计的核心取舍：**语义写在文档里，代码只做机械的事**。
 
 技术地基：`@earendil-works/pi-durable@1.4.0`（experimental，每个 minor 都可能破坏性变更）。
-界面是 `ui/web/` 的原生 ES module，**没有构建步骤**。
+界面是 `ui/app/` 的 React + TypeScript，Vite 构建到 `ui/web/`（**改完界面必须 `npm run ui:build`**）。
 
 ---
 
@@ -37,13 +37,15 @@ workspace/
 src/core/runtime/   防腐层：唯一能 import pi-durable / pi-ai / chord 的地方
 src/core/agent/     一个人：身份 / 提示词 / 记忆 / 技能 / 名册
 src/core/project/   一个项目：README.md / memory.md / 自动沉淀
-src/core/channel/   说话：纯规则 / 投递 / 写一条 / 16 个工具
+src/core/channel/   说话：纯规则 / 投递 / 写一条 / 17 个工具
 src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动
-ui/web/             界面（无构建）
+ui/app/             界面源码（React + TS + Vite，ADR-079）
+ui/web/             构建产物（服务端发这个目录，别手改）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
-test/core/          37 文件 / 355 例
-test/ui/            12 文件 / 94 例
+test/               65 文件 / 536 例
+  ├ test/core/      46 文件 / 414 例（纯函数 + 装配）
+  └ test/ui/        19 文件 / 122 例（界面纯函数与源码约定）
 workspace/          运行时数据（gitignore）
 ```
 
@@ -81,7 +83,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 50 文件 453 例，<3s，必须全绿
+npm test          # 65 文件 536 例，<3s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
@@ -144,7 +146,7 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §5 | `src/core/channel/state.ts` 的 `recipientsOf` |
 | 改频道成员怎么来 | ADR-012 | `src/core/shell/assemble.ts` 的 `joinProjectChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/shell/serve.ts` 的 `routes` 表 + 接前端 |
-| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/web/` |
+| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build` |
 | 改记忆沉淀 | ADR-013 | `src/core/project/settle.ts` + `project/memory.ts` |
 | 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |

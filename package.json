@@ -9,20 +9,28 @@
 	},
 	"scripts": {
 		"start": "node --experimental-strip-types src/core/shell/main.ts",
-		"check": "tsc -p tsconfig.json --noEmit && npm run check:boundaries",
+		"check": "tsc -p tsconfig.json --noEmit && tsc -p ui/app/tsconfig.json --noEmit && npm run check:boundaries",
 		"check:boundaries": "node scripts/check-boundaries.mjs",
 		"test": "vitest --run",
 		"test:watch": "vitest",
-		"live": "node --experimental-strip-types scripts/core-live.ts"
+		"live": "node --experimental-strip-types scripts/core-live.ts",
+		"ui:build": "vite build --config ui/app/vite.config.ts",
+		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit"
 	},
 	"dependencies": {
 		"@earendil-works/chord": "1.4.0",
 		"@earendil-works/pi-ai": "1.4.0",
-		"@earendil-works/pi-durable": "1.4.0"
+		"@earendil-works/pi-durable": "1.4.0",
+		"react": "^18.3.1",
+		"react-dom": "^18.3.1"
 	},
 	"devDependencies": {
 		"@types/node": "22.19.19",
+		"@types/react": "^18.3.31",
+		"@types/react-dom": "^18.3.7",
+		"@vitejs/plugin-react": "^4.7.0",
 		"typescript": "5.9.3",
+		"vite": "^6.4.5",
 		"vitest": "4.1.12"
 	}
 }

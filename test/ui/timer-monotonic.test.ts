@@ -7,7 +7,7 @@
  * 文案只负责显示，改文案不影响判断。
  */
 import { describe, expect, it } from "vitest";
-import { advanceSeconds, runningStatus } from "../../ui/web/js/rows.js";
+import { advanceSeconds, runningStatus } from "../../ui/app/src/rows.ts";
 
 describe("advanceSeconds：数值比较，与文案无关", () => {
 	it("正常走：秒数随 now 变大", () => {

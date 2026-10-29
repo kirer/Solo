@@ -28,10 +28,10 @@
 | `*` | 其余 | 静态文件（`ui/web/`） |
 
 所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
-**前端必须检查 `response.ok`** —— `ui/web/js/api.js` 就是这么做的，直接 `res.json()`
+**前端必须检查 `response.ok`** —— `ui/app/src/api/client.ts` 的 `call()` 就是这么做的，直接 `res.json()`
 会把失败当成成功（第一代最常吞掉的正是这类失败）。
 
-`check-boundaries.mjs` 会检查这张表里的每条 `pattern` 都在 `ui/web/js` 里被请求过。
+`check-boundaries.mjs` 会检查这张表里的每条 `pattern` 都在 `ui/app/src` 里被请求过。
 白名单只有 `/api/org`（Docker 健康检查直接打它；前端团队视图也用它，但白名单保留）。
 
 ## 1. `GET /api/stream/org`
@@ -350,5 +350,5 @@ type ViewMessage = {
 
 1. 加字段随便加（前端忽略未知字段）。
 2. **不许改字段含义**，尤其是 `read` / `unread` / `mentions` 这种带状态的 —— 宁可加新字段。
-3. 删字段前先 grep `ui/web/js` 确认没有消费者，然后同步删这段文档。
+3. 删字段前先 grep `ui/app/src` 确认没有消费者，然后同步删这段文档。
 4. 新增路由必须在前端有消费者，否则 `npm run check` 会失败（`check-boundaries.mjs`）。

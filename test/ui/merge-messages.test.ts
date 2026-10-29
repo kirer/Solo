@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeMessage, mergeMessages, previousOf } from "../../ui/web/js/messages.js";
+import { mergeMessage, mergeMessages, previousOf } from "../../ui/app/src/lib/messages.ts";
 
 /**
  * 补历史时把一个频道的两页消息拼起来。

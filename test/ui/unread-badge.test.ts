@@ -7,7 +7,7 @@
  * 徽标宽度才不会随数字位数跳。
  */
 import { describe, expect, it } from "vitest";
-import { unreadLabel } from "../../ui/web/js/format.js";
+import { unreadLabel } from "../../ui/app/src/lib/format.ts";
 
 describe("unreadLabel", () => {
 	it("0 / 负数 / 脏值都不显示", () => {

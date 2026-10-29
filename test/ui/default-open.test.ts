@@ -6,7 +6,7 @@
  * 历史组、项目/公司频道一律折叠（项目频道放的是结论）。
  */
 import { describe, expect, it } from "vitest";
-import { shouldOpenByDefault } from "../../ui/web/js/rows.js";
+import { shouldOpenByDefault } from "../../ui/app/src/rows.ts";
 
 describe("shouldOpenByDefault", () => {
 	it("私聊里正在跑的最后一段 → 展开", () => {
@@ -25,7 +25,9 @@ describe("shouldOpenByDefault", () => {
 	});
 
 	it("缺省参数不展开", () => {
-		expect(shouldOpenByDefault()).toBe(false);
+		// 重构后签名要求一个入参对象（不再是「全部可选参数的默认值」），所以这里传空对象。
+		expect(shouldOpenByDefault({})).toBe(false);
+		expect(shouldOpenByDefault({ channelKind: "dm", running: true })).toBe(false);
 		expect(shouldOpenByDefault({ running: true, isLast: true })).toBe(false);
 	});
 });

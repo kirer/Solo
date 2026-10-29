@@ -6,7 +6,7 @@
  * format.headParts 这个纯函数，这里钉住两件事：doing 在最前；没有就不占位。
  */
 import { describe, expect, it } from "vitest";
-import { headParts } from "../../ui/web/js/format.js";
+import { headParts } from "../../ui/app/src/lib/format.ts";
 
 const project = (extra) => ({
 	id: "proj:solo",

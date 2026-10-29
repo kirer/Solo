@@ -7,7 +7,7 @@
  * 不会变成两条。
  */
 import { describe, expect, it } from "vitest";
-import { channelCursor, insertLocalMessage, localEcho, mergeMessage, mergeMessages } from "../../ui/web/js/messages.js";
+import { channelCursor, insertLocalMessage, localEcho, mergeMessage, mergeMessages } from "../../ui/app/src/lib/messages.ts";
 
 const history = [
 	{ seq: 1, fromSlug: "owner", kind: "say", text: "开始。", at: 1_000 },

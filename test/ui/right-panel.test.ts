@@ -13,10 +13,12 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
-const shell = read("../../ui/web/css/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
-const base = read("../../ui/web/css/base.css").replace(/\/\*[\s\S]*?\*\//g, "");
-const app = read("../../ui/web/js/app.js");
-const files = read("../../ui/web/js/files.js");
+const shell = read("../../ui/app/src/styles/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
+const base = read("../../ui/app/src/styles/base.css").replace(/\/\*[\s\S]*?\*\//g, "");
+// React 重构后：`data-right` 由 App.tsx 的 `.frame` 渲染，关闭要等动画由 RightPanel.tsx 的
+// 延迟卸载负责，文件页在同一个文件里（旧前端是 app.js + files.js 两个模块）。
+const app = read("../../ui/app/src/App.tsx");
+const files = read("../../ui/app/src/panels/RightPanel.tsx");
 
 function blocksOf(css: string, selector: string): string[] {
 	const out: string[] = [];
@@ -64,13 +66,14 @@ describe("右侧栏", () => {
 	});
 
 	it("关闭要等滑完再 hidden（否则动画被剪掉）", () => {
-		expect(app).toContain('el.frame.dataset.right = "closed"');
-		expect(app).toMatch(/prefersReducedMotion\(\) \? 0 : 300/);
+		// `.frame[data-right]` 由 App.tsx 渲染；关的时候先让列宽过渡跑完，再真正卸载内容。
+		expect(app).toContain('data-right={right.open ? "open" : "closed"}');
+		expect(files).toContain("window.setTimeout(() => setMounted(false), 300)");
 	});
 
 	it("文件页不在前端拼路径：越界由后端拦", () => {
 		// 前端只把 `path` 原样交给接口，不做 `..` 判断——判断在两处就会有两套答案。
-		expect(files).toContain("load(next)");
+		expect(files).toContain("loadFiles(path)");
 		expect(files).not.toContain('".."');
 		expect(files).not.toContain("replace(/\\.\\./");
 	});
