@@ -442,26 +442,36 @@ export function buildStream(messages, ctx = {}) {
 	// 三行过程就落在他那句话底下、和正文左缘对齐。
 	const pendingEvents = [];
 	const queueEvent = (slug, nodes, label) => pendingEvents.push({ slug, nodes, label });
-	const flushEntry = (entry) => {
-		const nameOf = bySlug.get(entry.slug)?.label ?? entry.slug;
-		for (const node of wrapEvents(entry.slug, nameOf, entry.nodes, entry.label ? [entry.label] : [])) {
-			frag.append(node);
+	// 把「连续的同一个人的过程行」收成一组再放。注意要按**整段连续**收，不能逐条收：
+	// agent 干一段活会留下十几条独立消息，逐条 wrap 就是十几行「想了 1s」平铺。
+	const emitRun = (entries) => {
+		if (entries.length === 0) return;
+		const slug = entries[0].slug;
+		const nodes = [];
+		const labels = [];
+		for (const entry of entries) {
+			nodes.push(...entry.nodes);
+			if (entry.label) labels.push(entry.label);
 		}
+		for (const node of wrapEvents(slug, bySlug.get(slug)?.label ?? slug, nodes, labels)) frag.append(node);
 	};
 	const flushEvents = (keepSlug) => {
 		if (pendingEvents.length === 0) return;
-		if (keepSlug !== undefined) {
-			// 只留下这位说话人的过程行（它们要挪到他那句话后面）
-			for (let i = pendingEvents.length - 1; i >= 0; i -= 1) {
-				const entry = pendingEvents[i];
-				if (entry.slug === keepSlug) continue;
-				flushEntry(entry);
-				pendingEvents.splice(i, 1);
+		// 相邻的同一个人的过程行合成一段，段之间保持原来的先后顺序。
+		const runs = [];
+		const kept = [];
+		for (const entry of pendingEvents) {
+			if (keepSlug !== undefined && entry.slug === keepSlug) {
+				kept.push(entry);
+				continue;
 			}
-			return;
+			const last = runs[runs.length - 1];
+			if (last !== undefined && last.slug === entry.slug) last.entries.push(entry);
+			else runs.push({ slug: entry.slug, entries: [entry] });
 		}
-		for (const entry of pendingEvents) flushEntry(entry);
+		for (const run of runs) emitRun(run.entries);
 		pendingEvents.length = 0;
+		pendingEvents.push(...kept);
 	};
 	const takeEvents = (slug) => {
 		const taken = [];
