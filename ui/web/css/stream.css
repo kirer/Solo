@@ -142,9 +142,12 @@
 }
 
 .row-time {
-	margin-left: auto;
+	/* 紧跟在角色后面（不是 `margin-left: auto`）。
+	   正文宽度卡在 68ch，时间若靠右就会落在那条 68ch 的边线上 —— 短消息时
+	   它浮在半空，离名字有半个屏幕远，看着像别人的时间。 */
+	margin-left: 2px;
 	flex: none;
-	padding-left: 8px;
+	padding-left: 2px;
 	font-family: var(--mono);
 	font-size: 11px;
 	line-height: 14px;
