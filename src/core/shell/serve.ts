@@ -815,7 +815,14 @@ async function sendAsset(
 	const etag = etagFor(asset, encoding);
 	const headers: Record<string, string> = {
 		"Content-Type": contentType,
-		"Cache-Control": relative === "index.html" ? "no-cache" : "public, max-age=300, must-revalidate",
+		// 只有字体和图片敢让浏览器先用旧的：它们的文件名就是内容（`plex-sans-400`、`宽图.png`），
+		// 换内容一定换名字。`js` / `css` / `html` 全部 `no-cache` —— 有 ETag 与
+		// Last-Modified 兜底，命中就是 304（正文 0 字节），代价是一次条件请求；
+		// 但换来的是「改完刷新一定拿到新代码」。早先是 `max-age=300`，结果改完
+		// 五分钟内刷新仍然是旧 JS —— 调试时 indistinguishable，白查半小时。
+		"Cache-Control": /[.](?:js|css|html)$/i.test(relative)
+			? "no-cache"
+			: "public, max-age=31536000, immutable",
 		ETag: etag,
 		"Last-Modified": asset.lastModified,
 	};
