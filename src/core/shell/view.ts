@@ -14,7 +14,6 @@
 import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
 import { conversationFor, type DirectoryState } from "../agent/roster.ts";
 import {
-	needsOwner,
 	readMarkOf,
 	unreadCount,
 	type Attachment,
@@ -211,13 +210,15 @@ export function channelList(
 /**
  * 「这条要不要老板看一眼」。
  *
- * 老板自己说的话不算（他不需要提醒自己）。其余看两个信号，任一命中即可：
- * 正文显式点了老板，或正文在问「要不要 / 请确认 / 等谁定」这类只有他能定的事。
- * 实测含这些词的消息大量没 @ 老板，所以判据必须在代码里，不能指望模型自觉。
+ * 老板自己说的话不算（他不需要提醒自己）。判据只有一条：消息显式 @了老板。
+ *
+ * 旧逻辑用 `needsOwner` 做关键词嗅探（「要不要/请确认/等你定」），会把没点老板的
+ * 普通 @同事 协作消息误标「需要我」—— 这正是 #4 要修的误标。关键词嗅探已移除，
+ * `needsOwner` 现在恒返回 false，这里只认显式 @owner。
  */
 function needsYou(message: Message): boolean {
 	if (message.from === OWNER_SLUG) return false;
-	return message.mentions.includes(OWNER_SLUG) || needsOwner(message.text);
+	return message.mentions.includes(OWNER_SLUG);
 }
 
 /** 一条消息的视图。 */
@@ -348,12 +349,21 @@ export function orgView(identities: readonly Identity[], directory: DirectorySta
 		body: identity.body,
 	});
 
-	const nearest = identities.filter((identity) => identity.manager === OWNER_SLUG);
-	const rest = identities.filter((identity) => identity.manager !== OWNER_SLUG);
+	// 知言（老板唯一直接对话的助理）固定排第一（pin to top）：任何成员/团队列表恒首位。
+	const pinned = identities.filter((identity) => identity.slug === "知言");
+	const rest = identities.filter((identity) => identity.slug !== "知言");
 	return {
 		company: { name: companyName },
-		people: [...nearest.map(toActor), ...rest.map(toActor)],
+		people: [...pinned.map(toActor), ...nearestOf(rest).map(toActor), ...othersOf(rest).map(toActor)],
 	};
+}
+
+/** 离老板最近（manager 是老板）的排在前面，其余按原序。 */
+function nearestOf(identities: readonly Identity[]): readonly Identity[] {
+	return identities.filter((identity) => identity.manager === OWNER_SLUG);
+}
+function othersOf(identities: readonly Identity[]): readonly Identity[] {
+	return identities.filter((identity) => identity.manager !== OWNER_SLUG);
 }
 
 /** slug → 显示名。名册里没有就给 slug 本身（总比空白强）。 */

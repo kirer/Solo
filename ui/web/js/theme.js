@@ -44,26 +44,11 @@ function resolved(m) {
 }
 
 /**
- * 把按钮摆进顶栏。插在最后一个按钮之前：最右边留给「刷新」这类动作，
- * 主题是设定，放在动作左边一档。
+ * 主题不再单独占用顶栏按钮：布局与主题已合并进右上角「设置」弹窗（见 index.html）。
+ * 这里不再往顶栏插按钮，只把「当前模式 / 切换」暴露给设置面板调用，并由 sync() 同步。
  */
 function ensureButton() {
-	const existing = document.getElementById("theme-btn");
-	if (existing) return existing;
-	const topbar = document.querySelector(".topbar");
-	if (!topbar) return null;
-
-	const el = document.createElement("button");
-	el.id = "theme-btn";
-	el.type = "button";
-	el.className = "theme-btn";
-	el.addEventListener("click", () => {
-		set(ORDER[(ORDER.indexOf(mode) + 1) % ORDER.length]);
-	});
-
-	const last = [...topbar.children].filter((n) => n.matches("button, .menu-anchor")).at(-1);
-	topbar.insertBefore(el, last ?? null);
-	return el;
+	return null;
 }
 
 /** 唯一改状态的地方：写盘 → 换 data-theme → 同步按钮外观。 */
@@ -81,16 +66,8 @@ function sync() {
 	const root = document.documentElement;
 	root.dataset.theme = resolved(mode);
 	root.dataset.themeMode = mode;
-
-	const el = ensureButton();
-	if (!el) return;
-	const next = ORDER[(ORDER.indexOf(mode) + 1) % ORDER.length];
-	el.dataset.mode = mode;
-	el.innerHTML = ICON[mode];
-	// aria-label 说「现在是哪个」，title 说「按了会去哪」：循环按钮不是开关，
-	// 光有一个太阳/月亮图标，键盘和读屏用户猜不出下一次是什么。
-	el.setAttribute("aria-label", `主题：${LABEL[mode]}`);
-	el.title = `主题：${LABEL[mode]}（点击切到${LABEL[next]}）`;
+	// 暴露给设置面板：读取当前模式、按需高亮对应单选。
+	window.__themeMode = mode;
 }
 
 export function installTheme() {
@@ -101,6 +78,9 @@ export function installTheme() {
 	installed = true;
 	mode = read();
 	sync();
+
+	// 设置面板调用：切到指定模式（system/light/dark），并同步面板高亮。
+	window.__setThemeMode = (next) => set(next);
 
 	// 系统配色变了只在 system 下跟。light / dark 是用户显式钉的，系统改主意不许覆盖他。
 	media.addEventListener("change", () => {

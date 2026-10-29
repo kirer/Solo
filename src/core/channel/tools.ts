@@ -55,7 +55,6 @@ import {
 	channelsOf,
 	ensureChannel,
 	fallbackChannelId,
-	needsOwner,
 	parseMentions,
 	personalId,
 	readMarkOf,
@@ -358,11 +357,13 @@ export function createCoreTools(deps: CoreToolDeps) {
 				kind = args.kind ?? "question";
 			}
 
-			// 要老板拍板的事，代码补一个 `owner`（**不改正文**）：实测含「请确认/要不要/等你定」
-			// 的消息里大量没 @ 老板，老板的回复率只有 1.06%。模型会写「要你定」，然后忘了 @ 你。
+			// 要老板拍板：仅两种情形把 owner 加进 mentions（**不改正文**）：
+			//  1) 消息显式 @了老板（messageText 里的 @owner/@老板 已由 parseMentions 解析命中）；
+			//  2) 消息是「决策」类（kind=decision，即明确 owner 决策）。
+			// 旧逻辑还用「要不要/请确认/等你定」等关键词嗅探正文，会把普通 @同事 的协作消息
+			// 误标「需要我」并塞进 owner —— 这一条关键词嗅探已在 #4 移除。
 			const wakeOwner =
-				(kind === "decision" || needsOwner(args.text)) &&
-				!parseMentions(messageText, roster).includes(OWNER);
+				kind === "decision" || parseMentions(messageText, roster).includes(OWNER);
 			// 私聊里对方一定被叫醒（wakeOnAll 已经兜住），但要确保 `mentions` 里有他 ——
 			// 界面的「@ 我」红点、未读口径都读这个字段。
 			const privateMention =

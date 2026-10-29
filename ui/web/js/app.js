@@ -78,13 +78,15 @@ const $ = (id) => document.getElementById(id);
 
 const el = {
 	companyMeta: $("company-meta"),
-	refresh: $("refresh"),
 	conn: $("conn"),
 	unreadTotal: $("unread-total"),
 	needMenu: $("need-menu"),
-	menuBtn: $("menu-btn"),
-	layoutMenu: $("layout-menu"),
 	plusBtn: $("plus-btn"),
+	settings: $("settings"),
+	settingsBtn: $("settings-btn"),
+	settingsClose: $("settings-close"),
+	layoutOptions: $("layout-options"),
+	themeOptions: $("theme-options"),
 	plusMenu: $("plus-menu"),
 	rows: $("rows"),
 	sidebar: $("sidebar"),
@@ -420,7 +422,11 @@ function renderFlow({ veil = false, restore = true } = {}) {
 
 /* 空频道里可以「从谁开始」：点一下把人 @ 进输入框。用的是真实名册，不是示例数据。 */
 function startHints() {
-	return state.people.slice(0, 4).map((person) => ({
+	// 知言恒排第一（pin to top）：空频道「从谁开始」与 @ 候选都先看到助理。
+	const people = [...state.people].sort((left, right) =>
+		left.slug === PINNED_SLUG ? -1 : right.slug === PINNED_SLUG ? 1 : 0,
+	);
+	return people.slice(0, 4).map((person) => ({
 		label: person.label,
 		slug: person.slug,
 	}));
@@ -509,7 +515,8 @@ function renderActivity() {
 	}
 	el.actTime.textContent = `${Math.max(0, Math.round((Date.now() - line.message.at) / 1000))}s`;
 
-	const next = `${line.message.fromLabel ?? ""}${line.phrase}`;
+	// 活动行只说「在做什么」，不点名是谁（与工具消息匿名化口径一致）。
+	const next = `${line.phrase}`;
 	if (next === act.text) return;
 	const wait = Math.max(0, HOLD_MS - (Date.now() - act.changedAt));
 	window.clearTimeout(act.timer);
@@ -1062,12 +1069,15 @@ async function openDetail() {
 		}
 		return;
 	}
-	const members = (state.detail?.members ?? []).map((member) => ({
-		slug: member.slug,
-		label: member.label,
-		title: personOf(member.slug)?.title ?? "",
-		presence: presenceOf(member.slug),
-	}));
+	// 知言（slug=知言）固定排第一（pin to top）：频道成员列表恒在首位。
+	const members = [...(state.detail?.members ?? [])]
+		.sort((left, right) => (left.slug === "知言" ? -1 : right.slug === "知言" ? 1 : 0))
+		.map((member) => ({
+			slug: member.slug,
+			label: member.label,
+			title: personOf(member.slug)?.title ?? "",
+			presence: presenceOf(member.slug),
+		}));
 	el.detailBody.innerHTML = channelDetailHtml(channel, {
 		kind,
 		members,
@@ -1106,10 +1116,15 @@ function closeDetail() {
 
 let teamReturn = null;
 
+// 知言（slug=知言）固定排第一：助理位，任何列表恒在首位（pin to top）。
+const PINNED_SLUG = "知言";
+
 function renderTeam() {
 	const people = state.org?.people ?? [];
 	el.teamCount.textContent = `${people.length} 人`;
 	const sorted = [...people].sort((left, right) => {
+		if (left.slug === PINNED_SLUG) return -1;
+		if (right.slug === PINNED_SLUG) return 1;
 		const depth = (person) => (person.manager ? (person.managerLabel ? 1 : 1) : 0);
 		return depth(left) - depth(right) || (left.label ?? "").localeCompare(right.label ?? "");
 	});
@@ -1183,7 +1198,7 @@ function placeMenu(menu, anchor, { align = "right", above = false } = {}) {
 
 function toggleMenu(menu, anchor, options) {
 	const willOpen = menu.hidden;
-	for (const other of [el.layoutMenu, el.plusMenu, el.needMenu]) {
+	for (const other of [el.plusMenu, el.needMenu]) {
 		if (other !== menu && !other.hidden) withLinger(other, 120);
 	}
 	if (!willOpen) {
@@ -1197,7 +1212,7 @@ function toggleMenu(menu, anchor, options) {
 
 function applyLayout() {
 	document.body.dataset.layout = state.layout;
-	for (const item of el.layoutMenu.querySelectorAll("[data-layout]")) {
+	for (const item of el.layoutOptions.querySelectorAll("[data-layout]")) {
 		item.setAttribute("aria-checked", item.dataset.layout === state.layout ? "true" : "false");
 	}
 }
@@ -1211,6 +1226,46 @@ function setLayout(next) {
 	}
 	applyLayout();
 	renderFlow({ restore: false });
+}
+
+/* ── 设置弹窗（布局 + 主题） ─────────────────────────────────────────── */
+
+let settingsReturn = null;
+
+function syncThemeOptions() {
+	const mode = currentThemeMode();
+	for (const item of el.themeOptions.querySelectorAll("[data-theme-mode]")) {
+		item.setAttribute("aria-checked", item.dataset.themeMode === mode ? "true" : "false");
+	}
+}
+
+function openSettings() {
+	settingsReturn = document.activeElement;
+	applyLayout();
+	syncThemeOptions();
+	el.settings.hidden = false;
+	el.settingsBtn.setAttribute("aria-expanded", "true");
+	el.frame.inert = true;
+	withLinger(el.settings, 0, () => el.settings.querySelector(".settings-panel")?.focus());
+}
+
+function closeSettings() {
+	if (el.settings.hidden) return;
+	withLinger(el.settings, 140, () => {
+		el.settings.hidden = true;
+		el.frame.inert = false;
+		el.settingsBtn.setAttribute("aria-expanded", "false");
+		if (settingsReturn instanceof HTMLElement) settingsReturn.focus();
+	});
+}
+
+// 主题与设置面板的桥接：读取/写入由 theme.js 管理，这里只把它暴露给设置面板。
+function currentThemeMode() {
+	return window.__themeMode ?? "system";
+}
+function setThemeMode(mode) {
+	if (typeof window.__setThemeMode === "function") window.__setThemeMode(mode);
+	syncThemeOptions();
 }
 
 /* ── @ 提及 ─────────────────────────────────────────────────────────── */
@@ -1239,14 +1294,18 @@ async function refreshMention() {
 	if (!hit || !state.currentId) return closeMention();
 	window.clearTimeout(mentionTimer);
 	const finish = (candidates) => {
-		const items = candidates
+		// 过滤后把知言（pin to top）提到最前，其余保持相关度顺序。
+		const matched = candidates
 			.filter((candidate) => {
 				if (!hit.query) return true;
 				return `${candidate.label} ${candidate.slug} ${candidate.title ?? ""}`
 					.toLowerCase()
 					.includes(hit.query);
 			})
-			.slice(0, 8);
+			.sort((left, right) =>
+				left.slug === PINNED_SLUG ? -1 : right.slug === PINNED_SLUG ? 1 : 0,
+			);
+		const items = matched.slice(0, 8);
 		if (items.length === 0) return closeMention();
 		state.mention = { open: true, items, index: 0, start: hit.start };
 		el.mentionList.innerHTML = items
@@ -1405,10 +1464,6 @@ function replyToRow(row) {
 /* ── 事件绑定 ───────────────────────────────────────────────────────── */
 
 function bind() {
-	el.refresh.addEventListener("click", () => {
-		reload();
-	});
-
 	// 「N 件找你」点开是一张清单，不是盲跳：老板的原话是「消息太多，真正需要我的
 	// 信息没有 @ 我，能够让我直接定位」。盲跳只能一条一条试，清单能一眼扫完。
 	el.unreadTotal.addEventListener("click", (event) => {
@@ -1426,17 +1481,24 @@ function bind() {
 		jumpTo(channelId, Number(seq) || 0);
 	});
 
-	el.menuBtn.addEventListener("click", (event) => {
+	// 设置：右上角唯一的「设置」按钮，弹窗内含布局与主题。
+	el.settingsBtn.addEventListener("click", (event) => {
 		event.stopPropagation();
-		toggleMenu(el.layoutMenu, el.menuBtn);
+		openSettings();
 	});
-
-	el.layoutMenu.addEventListener("click", (event) => {
+	el.settingsClose.addEventListener("click", () => closeSettings());
+	el.settings.addEventListener("click", (event) => {
+		if (event.target === el.settings) closeSettings();
+	});
+	el.layoutOptions.addEventListener("click", (event) => {
 		const item = event.target.closest("[data-layout]");
 		if (!item) return;
 		setLayout(item.dataset.layout);
-		withLinger(el.layoutMenu, 120);
-		el.menuBtn.setAttribute("aria-expanded", "false");
+	});
+	el.themeOptions.addEventListener("click", (event) => {
+		const item = event.target.closest("[data-theme-mode]");
+		if (!item) return;
+		setThemeMode(item.dataset.themeMode);
 	});
 
 	el.plusBtn.addEventListener("click", (event) => {
@@ -1784,12 +1846,6 @@ function bind() {
 	});
 
 	document.addEventListener("click", (event) => {
-		if (!event.target.closest("#layout-menu, #menu-btn")) {
-			if (!el.layoutMenu.hidden) {
-				withLinger(el.layoutMenu, 120);
-				el.menuBtn.setAttribute("aria-expanded", "false");
-			}
-		}
 		if (!event.target.closest("#plus-menu, #plus-btn")) {
 			if (!el.plusMenu.hidden) {
 				withLinger(el.plusMenu, 120);
@@ -1830,8 +1886,8 @@ function bind() {
 				el.lightboxImg.removeAttribute("src");
 				return;
 			}
-			if (!el.layoutMenu.hidden) withLinger(el.layoutMenu, 120);
-			if (!el.plusMenu.hidden) withLinger(el.plusMenu, 120);
+				if (!el.plusMenu.hidden) withLinger(el.plusMenu, 120);
+			if (!el.settings.hidden) closeSettings();
 		}
 	});
 
@@ -1839,7 +1895,7 @@ function bind() {
 
 	window.addEventListener("resize", () => {
 		if (!el.mentionPop.hidden) positionMention();
-		if (!el.layoutMenu.hidden) placeMenu(el.layoutMenu, el.menuBtn);
+
 		if (!el.plusMenu.hidden) placeMenu(el.plusMenu, el.plusBtn, { align: "left", above: true });
 	});
 

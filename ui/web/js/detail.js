@@ -95,7 +95,11 @@ export function personDetailHtml(person, options = {}) {
 /** 一个群/项目：它是谁的地方，里面有谁。 */
 export function channelDetailHtml(channel, options = {}) {
 	if (!channel) return "";
-	const members = Array.isArray(options.members) ? options.members : [];
+	const source = Array.isArray(options.members) ? options.members : [];
+	// 知言（slug=知言）固定排第一（pin to top）：群/项目成员列表恒在首位。
+	const members = [...source].sort((left, right) =>
+		left.slug === "知言" ? -1 : right.slug === "知言" ? 1 : 0,
+	);
 	const kind = KIND_LABEL[options.kind ?? ""] ?? "频道";
 	const membersInner =
 		members.length === 0

@@ -1050,3 +1050,102 @@
 		mask-image: none;
 	}
 }
+
+/* ── 设置弹窗（布局 + 主题） ─────────────────────────────────────────── */
+
+.settings {
+	position: fixed;
+	inset: 0;
+	z-index: 80;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: color-mix(in srgb, var(--ink) 32%, transparent);
+}
+
+.settings-panel {
+	width: min(360px, calc(100vw - 32px));
+	background: var(--ground);
+	border: 1px solid var(--line);
+	border-radius: var(--r-row);
+	box-shadow: 0 18px 48px -12px rgba(28, 26, 22, 0.32);
+	overflow: hidden;
+}
+
+.settings-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 10px 10px 14px;
+	border-bottom: 1px solid var(--line);
+}
+
+.settings-head h2 {
+	font-size: 15px;
+	line-height: 22px;
+	font-weight: 600;
+	color: var(--ink);
+	margin: 0;
+}
+
+.settings-section {
+	padding: 12px 14px 14px;
+}
+
+.settings-section + .settings-section {
+	border-top: 1px solid var(--line);
+}
+
+.settings-section h3 {
+	margin: 0 0 10px;
+	font-size: 12px;
+	line-height: 18px;
+	font-weight: 600;
+	color: var(--ink-3);
+}
+
+.settings-options {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.settings-options .opt {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	height: 32px;
+	padding: 0 12px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+	background: var(--ground);
+	color: var(--ink-2);
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease, border-color var(--dur-line) ease;
+}
+
+.settings-options .opt:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.settings-options .opt[aria-checked="true"] {
+	color: var(--ink);
+	border-color: var(--accent, var(--ink));
+}
+
+.settings-options .opt-tick {
+	width: 12px;
+	flex: none;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--accent, var(--ink));
+	opacity: 0;
+	transition: opacity var(--dur-line) ease;
+}
+
+.settings-options .opt[aria-checked="true"] .opt-tick {
+	opacity: 1;
+}

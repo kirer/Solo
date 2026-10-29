@@ -270,13 +270,13 @@ function eventNode(message, text) {
 	row.className = "row row-event";
 	row.dataset.seq = String(message.seq);
 	row.dataset.kind = message.kind;
+	// 静态工具消息只展示「做了什么」（如「执行了命令」），不暴露是谁执行的 —— 匿名化。
 	const detail = String(message.text ?? "").trim();
-	const who = `<b>${escapeHtml(message.fromLabel ?? "")}</b>`;
 	if (detail === "") {
-		row.innerHTML = `<span class="ev">${who} <span class="ev-what">${escapeHtml(text)}</span></span>`;
+		row.innerHTML = `<span class="ev"><span class="ev-what">${escapeHtml(text)}</span></span>`;
 		return row;
 	}
-	row.innerHTML = `<button class="ev" type="button" data-act="expand" aria-expanded="false" title="展开看原文">${who} <span class="ev-what">${escapeHtml(
+	row.innerHTML = `<button class="ev" type="button" data-act="expand" aria-expanded="false" title="展开看原文"><span class="ev-what">${escapeHtml(
 		text,
 	)}</span>${CHEVRON}</button><div class="ev-body" hidden><pre></pre></div>`;
 	row.querySelector("pre").textContent = detail;

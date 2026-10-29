@@ -183,23 +183,15 @@ export function parseMentions(text: string, roster?: MentionRoster): string[] {
 /**
  * 这条消息是不是在「要老板拍板」。
  *
- * 为什么由代码判断而不是指望模型自觉：实测含「请确认/要不要/等你定」的消息里，大量
- * 没有 @ 老板，老板的回复率只有 1.06%。模型会写「要你定」，然后忘了 @ 你。
+ * 判据只有一条：消息显式 @了老板（`owner` 在 mentions 里）。是否真的需要老板拍板，
+ * 由说话人自己 @ 决定，代码不再替模型猜关键词。
  *
- * 只列 7 个信号，宁可多叫一次老板，也不要让一件等人拍板的事静默躺着。
+ * 旧实现用「要不要 / 请确认 / 等你定」这类正则嗅探正文，实测大量出现在普通 @同事
+ * 的协作消息里，导致没点老板的消息也被标「需要我」、并误把 owner 塞进 mentions —
+ * 这正是 #4 要修的误标。关键词嗅探已于本次移除。
  */
-const OWNER_SIGNALS: readonly RegExp[] = [
-	/请老板/,
-	/请确认/,
-	/需(?:要)?你(?:定|确认|拍板)?/,
-	/等你定|你定|老板定/,
-	/要不要/,
-	/还是/, // 「是 A 还是 B」的唯一共同词
-	/怎么定/,
-];
-
-export function needsOwner(text: string): boolean {
-	return OWNER_SIGNALS.some((signal) => signal.test(text));
+export function needsOwner(_text: string): boolean {
+	return false;
 }
 
 /**
