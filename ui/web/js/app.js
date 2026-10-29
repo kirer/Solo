@@ -466,6 +466,18 @@ function closeOpenGroups(endAt, slug, afterNode = null) {
 	}
 }
 
+/**
+ * 清掉同一个人残留的处理中占位。
+ *
+ * 服务端的占位填充不保证覆盖成功：实测有占位留在库里、真人回复另起一条，
+ * 于是屏幕上一条「开始处理」永远转圈。他说了话，这个人的旧占位就该消失。
+ */
+function dropStalePlaceholders(slug) {
+	for (const row of el.feed.querySelectorAll(".row-processing")) {
+		if (row.dataset.slug === String(slug ?? "")) row.remove();
+	}
+}
+
 /** 跑着的组每秒刷新一次秒数；只改文字，不重建 DOM（重建会吃掉展开状态）。 */
 function tickRunningGroups() {
 	const now = Date.now();
@@ -1065,6 +1077,8 @@ function openChannelStream(id) {
 				el.feed.append(buildOne(message, streamCtx(), previous));
 				// 他开口了：这一轮的组头挪到他这句话后面（`after` 是移动，不复制），计时定格。
 				closeOpenGroups(message.at, message.fromSlug, el.feed.lastElementChild);
+				// 他真说话了：这个人的旧占位（没被覆盖成功的那种）一起收掉。
+				if (message.processing !== true) dropStalePlaceholders(message.fromSlug);
 			}
 			state.lastRendered = message.seq;
 		} else if (index >= 0) {
@@ -1073,6 +1087,8 @@ function openChannelStream(id) {
 			const row = el.feed.querySelector(`.row[data-seq="${message.seq}"]`);
 			if (row === null) renderFlow({ restore: false });
 			else row.replaceWith(buildOne(messages[index], streamCtx(), previous));
+			// 占位被真实回复覆盖之后，这个人其它的残留占位也一并收掉。
+			if (message.processing !== true) dropStalePlaceholders(message.fromSlug);
 		} else {
 			renderFlow({ restore: false });
 		}

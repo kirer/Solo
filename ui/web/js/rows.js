@@ -39,6 +39,28 @@ export const TOOL_PHRASES = {
 /** 说人类的 kind 走 say 行。其余（think/tool/work/note）各有归宿，剩下的不画。 */
 const SAY_KINDS = new Set(["say", "chat", "report", "decision", "question"]);
 
+/** 处理中占位的固定文案。存量数据里落库的是旧文案，界面不再读 message.text。 */
+export const PROCESSING_TEXT = "开始处理";
+
+/**
+ * 这条占位是不是已经过期（同一个人在这之后已经说过话了）。
+ *
+ * 服务端的占位填充不保证一定覆盖成功：实测有占位留在库里、真人回复另起一条，
+ * 于是屏幕上一条「开始处理」永远转圈。判断只看顺序与发言人，不看文案：
+ * 同一个 slug 在它之后有任意一条非占位的说话行，这条占位就不该再画。
+ */
+export function isStalePlaceholder(message, messages, index) {
+	if (message?.processing !== true) return false;
+	const list = Array.isArray(messages) ? messages : [];
+	for (let cursor = index + 1; cursor < list.length; cursor += 1) {
+		const later = list[cursor];
+		if (!later || later.fromSlug !== message.fromSlug) continue;
+		if (later.processing === true) continue;
+		if (later.kind == null || SAY_KINDS.has(later.kind)) return true;
+	}
+	return false;
+}
+
 /** 长文才折叠，追问和短报告不折。 */
 const FOLD_KINDS = new Set(["chat", "report", "decision", "question", "say"]);
 const FOLD_OVER = 1500;
@@ -605,9 +627,11 @@ function parsePending(message) {
  * status=done）后，同一个 seq 就地变成普通气泡，不是一条孤立的闪烁条（#92）。
  */
 function processingRow(message, ctx, grouped, cont) {
-	const row = sayRow(message, ctx, grouped, cont);
+	// 文案固定「开始处理」：存量占位落库的是旧文案（「开始处理…」），界面不读 message.text。
+	const row = sayRow({ ...message, text: PROCESSING_TEXT }, ctx, grouped, cont);
 	row.classList.add("row-processing");
 	row.dataset.kind = "processing";
+	row.dataset.slug = String(message.fromSlug ?? "");
 	const dots = document.createElement("span");
 	dots.className = "proc-dots";
 	dots.innerHTML = "<i></i><i></i><i></i>";
@@ -869,7 +893,8 @@ export function buildStream(messages, ctx = {}) {
 		});
 	};
 
-	for (const message of list) {
+	for (let cursor = 0; cursor < list.length; cursor += 1) {
+		const message = list[cursor];
 		if (!message) continue;
 
 		if (isEventKind(message.kind)) {
@@ -897,6 +922,8 @@ export function buildStream(messages, ctx = {}) {
 		// B（处理中指示）：processing 占位按一条普通聊天消息画（头像 + 气泡，见 processingRow）。
 		// 必须在 pending 分支之前拦：占位的 status 也是 pending，不拦就会被画成拍板卡。
 		if (message.processing === true) {
+			// 本人已经说过话：这条占位是残留，不画（不然永远停在「开始处理」）。
+			if (isStalePlaceholder(message, list, cursor)) continue;
 			const gap = prevSay === null ? Number.POSITIVE_INFINITY : message.at - prevSay.at;
 			const grouped = prevSay !== null && prevSay.fromSlug === message.fromSlug && gap < GROUP_MS && gap >= 0;
 			const cont = grouped && gap <= CONT_MS;
