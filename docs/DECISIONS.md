@@ -1565,3 +1565,39 @@ entries   conv 2 最后一条是 user（#192），之后没有任何 assistant �
 **回归**：`test/core/models.test.ts`（7 例）—— 坏 provider 回落并警告 / 坏模型名回落 /
 对的引用不动也不警告 / 没写 defaultModel 用第一个 / 清单空则报错 / 清单空且引用坏也报错 /
 `settings.json` 读不出来回落本地网关。
+
+## ADR-069：他没答上来要留痕，系统留痕不进沉淀候选
+
+**背景**。ADR-068 修好了一次「全员静默」的故障，但那件事真正的教训不是模型配错，而是
+**配错之后界面上什么都没有**：频道里只剩一条占位「开始处理…」，进程 0% CPU，
+`pi.live` 里没有 `run`。要靠人猜到「他们没在工作」，再靠翻 sqlite 的 `tasks.outcome`
+才知道是 `no_model`。
+
+投递本身「投了就走、不等回复」，这是对的（`deliver.ts` 头注释）。但**不等**不等于
+**不知道**：`conversation.submit()` 返回的提交对象能等到结算，结算是 `unanswered`
+就说明这一轮一个字都没产出，并且带着 `reason`（实测 `no_model` / `model_error`）。
+
+**决定**。
+
+1. `deliver()` 新增可选 `noteUnanswered`：提交之后在**后台**等它结算，只有 `unanswered`
+   才回调。不 `await`（否则投递又变成等回复）、不抛（库关了不该影响别人）、
+   只在底层真给了可等待提交时才做（测试替身没有 `.wait`，不能让留痕把投递拖成失败）。
+2. 结算原因翻成人话写在 `src/core/channel/unanswered.ts` 的 `reasonText()`：
+   `no_model` → 模型引用对不上；`model_error` → 调模型失败；`aborted` / `run_failed`
+   各有说法；**没见过的原样贴出来** —— 编一句「未知错误」等于把唯一线索丢掉。
+3. 频道里那一行：`#209 叫了 @知言，但他这一轮没答上来：model_error。`（`kind:"note"`，
+   不唤醒、不计未读，和投递失败、接力到上限的留痕同一个语汇）。
+
+**顺带修掉一个被它照出来的 bug**：`settleCandidates()` 原来把 `note` 也当候选。
+于是「系统写了一条他没答上来」→ 沉淀扫描看见新消息 → 又叫负责人整理记忆 →
+他没写 → 游标不推进 → 每轮再问一次。`botHopsSinceOwner` 的告警 note、投递失败的
+note 同样会触发。现在 `settleCandidates()` 跳过 `kind === "note"`，
+`confirmedBy()` 也只把候选消息的 seq 算进游标。
+
+**为什么不轮询扫描**：`harness.inspect()` 只返回**还没结算**的提交
+（`types.d.ts:656`「queued and placed submissions」），`unanswered` 是已结算状态，扫不到。
+
+**回归**：`test/core/unanswered.test.ts`（9 例：原因翻译 3、留痕文案 1、后台等结算 5，
+其中「底层没给可等待提交时什么都不做」是这次真踩到的：测试替身没有 `.wait`，
+原来的写法让 `deliver` 抛错、目标被记成投递失败）；`test/core/project-memory.test.ts`
+新增「系统留痕不是候选」。

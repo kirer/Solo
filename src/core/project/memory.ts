@@ -146,6 +146,10 @@ export function settleCandidates(
 	exclude?: string,
 ): readonly SettleCandidate[] {
 	return messages
+		// `note` 是系统留痕（投递失败、接力到上限、他这一轮没答上来…），不是项目知识。
+		// 把它算成候选会让「系统报了一次错」变成「叫负责人再整理一遍记忆」，并且
+		// 因为他没写记忆，游标一直不推进 → 每一轮都会再问一次。
+		.filter((message) => message.kind !== "note")
 		.filter((message) => message.seq > since && message.from !== exclude)
 		.map((message) => ({ seq: message.seq, from: message.from, text: message.text, kind: message.kind }));
 }

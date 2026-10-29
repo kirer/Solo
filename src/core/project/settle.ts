@@ -200,7 +200,11 @@ export async function confirmedBy(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<number> {
 	const state = (await harness.snapshot(ChannelDoc, context)) as ChannelState | undefined;
-	const maxSeq = (state?.messages[`proj:${project}`] ?? []).reduce((max, m) => Math.max(max, m.seq), 0);
+	// 只算会进候选的消息：`note` 是系统留痕，游标不该因为「系统报过一次错」而前进。
+	const maxSeq = (state?.messages[`proj:${project}`] ?? []).reduce(
+		(max, m) => (m.kind === "note" ? max : Math.max(max, m.seq)),
+		0,
+	);
 	const settle = (await harness.snapshot(SettleDoc, context)) as SettleState | undefined;
 	if (maxSeq <= (settle?.cursors[project] ?? 0)) return 0;
 	await advanceCursor(harness, project, maxSeq, context);

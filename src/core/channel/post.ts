@@ -36,6 +36,7 @@ import {
 	type DeliverResult,
 	type WakeRecord,
 } from "./deliver.ts";
+import { renderUnanswered } from "./unanswered.ts";
 
 // T-016 v2：占位填充时的逐字增量推送钩子。由 serveCore 在启动时挂载（写进 channelClients），
 // 未挂载时为空操作 —— post.ts 不依赖 shell/serve，避免循环依赖。
@@ -466,6 +467,11 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
+			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
+			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
+			noteUnanswered: async ({ label, seq, reason }) => {
+				await appendNote(deps, liveChannel.id, renderUnanswered(seq, label, reason), Date.now(), BACKGROUND_CONTEXT);
+			},
 			// 没人被叫醒就说一句：只写 stderr 的话，频道里一片空白，
 			// 老板看到的「我说了没人理」和「系统挂了」长得一模一样。
 			notify: async (issues) => {

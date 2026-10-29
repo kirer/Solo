@@ -47,6 +47,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `channel/state.ts` | 415 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `needsOwner`（决策句式，ADR-037）/ `fallbackChannelId`（兜底频道，非个人频道优先）/ `unreadCount` / `markRead` / `ensureChannel` |
 | `channel/alias.ts` | 116 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@老板` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
 | `channel/deliver.ts` | 273 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）/ `renderDigest` |
+| `channel/unanswered.ts` | 78 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话，没见过的原样贴）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
 | `channel/speech.ts` | 40 | 「这一轮已经说过结果了」的进程内标记（`markSpoken` / `spokenResult` / `clearSpoken`）；由 `deliver()` 在新一轮清空（ADR-064） |
 | `channel/post.ts` | 238 | `postMessage()` —— 写一条（单元素 splice，ADR-027）+ 解析 @（可带 roster / 额外 mention）+ 投递 |
 | `channel/transcript.ts` | 129 | `projectAssistantEntry()`：把会话 `pi.assistant` 条目里的 thinking/text/toolCall 投影成 `think`/`say`/`tool` 三类消息（纯函数，不落库） |
@@ -138,7 +139,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 37 文件 / 358 例，应该 <2s
+npm test           # 40 文件 / 380 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 

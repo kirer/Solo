@@ -14,6 +14,7 @@ import type { Conversation, Harness, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { planAttachments } from "./attach.ts";
 import { clearSpoken } from "./speech.ts";
+import { watchSettled } from "./unanswered.ts";
 import {
 	type Channel,
 	type ChannelState,
@@ -102,6 +103,18 @@ export type DeliverOptions = {
 	 * 只有老板说话时才调。返回让了几条。
 	 */
 	readonly clearQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
+	/**
+	 * 这一轮什么都没产出时留一句话。
+	 *
+	 * 不传就什么都不写（投递仍然不等回复）。传了就在后台等这次提交结算，
+	 * 结算为 `unanswered` 时回调 —— 频道里至少有人能看出「他回答了没」。
+	 */
+	readonly noteUnanswered?: (info: {
+		readonly slug: string;
+		readonly label: string;
+		readonly seq: number;
+		readonly reason: string | undefined;
+	}) => Promise<void>;
 };
 
 /** 这个频道是不是「我和老板的私聊」。`viewer` 缺省时只要求两边里有老板。 */
@@ -296,7 +309,7 @@ export async function deliver(
 			if (options.clearQueue !== undefined && options.message.from === "owner") {
 				await options.clearQueue(Number(conversation.id), requestId).catch(() => 0);
 			}
-			await conversation.submit(
+			const submission = await conversation.submit(
 				{
 					type: "input",
 					content,
@@ -317,6 +330,12 @@ export async function deliver(
 				},
 				context,
 			);
+			if (options.noteUnanswered !== undefined) {
+				const report = options.noteUnanswered;
+				watchSettled(submission, async (reason) => {
+					await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
+				});
+			}
 			delivered.push(slug);
 		} catch (error) {
 			// 不抛：消息已在频道里，对方下次醒来会看到未读摘要。
