@@ -5,11 +5,17 @@
  * 不做上传、不做语音：没有麦克风，＋ 里只有两个真能做到的项。
  */
 
+:root {
+	/* composer 的左右内边距。引用条在 composer 外面，却必须和卡片走同一条轨道，
+	   所以这份值挂在根上，两边都读同一份（手机在下面改成 12）。 */
+	--composer-pad: 16px;
+}
+
 .composer {
 	position: relative; /* 拖拽时的那层「松手就发出去」压在它上面 */
 	flex: none;
 	/* 底部留 16（手机再加手势条，不然发送按钮压在家指示条上）。 */
-	padding: 0 16px calc(16px + env(safe-area-inset-bottom));
+	padding: 0 var(--composer-pad) calc(16px + env(safe-area-inset-bottom));
 }
 
 /* 输入卡：圆角 28、边框画在阴影里（0.5px 发丝），不占布局。
@@ -163,10 +169,28 @@
 
 /* ── 引用条 ─────────────────────────────────────────────────────────── */
 
+/*
+ * 引用条和输入卡必须共用同一条居中轨道。
+ *
+ * 引用条在 .composer **外面**（它是 sheet 的一行），按整张 sheet 宽铺开，
+ * 而输入卡在 .composer 的 16px 内边距里再居中一次 —— 于是引用条比卡片靠左一大截。
+ * 这里把卡片的宽度公式原样抄过来，只是 100% 换成 sheet 宽、两边各让出 16px
+ * （= 卡片内容宽 = min(100% - 64, clamp + 32)），左边缘就和卡片对齐了。
+ */
 .reply {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	/* width 必须写死 100%：flex 列里 `margin: auto` 会让它按内容收缩，
+	   只是看着居中，实际宽度跟输入卡对不上。 */
+	width: 100%;
+	/* 64% 那一项要按「composer 内容宽」算：卡片里 64% 是相对 (100% - 2*pad)，
+	   引用条在外面，直接写 64% 会按整张 sheet 算，宽屏下就比卡片宽一截。 */
+	max-width: calc(
+		min(calc(100% - 2 * var(--composer-pad, 16px) - 32px), clamp(680px, calc((100% - 2 * var(--composer-pad, 16px)) * 0.64), 920px)) +
+			32px
+	);
+	margin: 0 auto;
 	padding: 6px var(--pad);
 	border-bottom: 1px solid var(--line);
 	font-size: 12px;
@@ -278,8 +302,12 @@
 }
 
 @media (max-width: 640px) {
+	:root {
+		--composer-pad: 12px;
+	}
+
 	.composer {
-		padding: 0 12px 12px;
+		padding: 0 var(--composer-pad) 12px;
 	}
 
 	.mention {
@@ -313,6 +341,11 @@
 	display: flex;
 	flex-wrap: wrap;
 	gap: 8px;
+	/* 和输入卡同一条轨道：托盘在 composer 内容盒里，卡片的宽度公式直接照抄，
+	   左右各留出卡片那 32px，别让预览块比输入卡还靠左。 */
+	width: 100%;
+	max-width: calc(min(calc(100% - 32px), clamp(680px, 64%, 920px)) + 32px);
+	margin: 0 auto;
 	padding: 0 0 8px;
 }
 
