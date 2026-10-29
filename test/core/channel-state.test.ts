@@ -10,6 +10,7 @@ import {
 	channelsOf,
 	dmId,
 	ensureChannel,
+	ChannelDoc,
 	markRead,
 	parseMentions,
 	projectId,
@@ -153,6 +154,28 @@ describe("引用回复", () => {
 		const { message } = appendMessage(state, "general", { from: "cto", text: "x", at: 1, replyTo: 99 });
 		expect(message.mentions).toEqual([]);
 		expect(message.replyTo).toBe(99);
+	});
+});
+
+describe("压基线的时机（长频道写入为什么变慢）", () => {
+	// `defineDoc` 把定义包成 token（`{ definition }`），判据在 `definition.checkpointWhen` 上。
+	const definition = (ChannelDoc as unknown as {
+		definition: {
+			checkpointWhen: (value: unknown, ops: readonly unknown[], info: { deltasSinceBase: number }) => boolean;
+		};
+	}).definition;
+	const long = { messages: { all: Array.from({ length: 300 }, () => ({})) } };
+	const short = { messages: { all: Array.from({ length: 10 }, () => ({})) } };
+
+	test("长频道不是每条提交都压基线（旧写法 `>= 256` 恒真 → 每条消息序列化整份历史）", () => {
+		expect(definition.checkpointWhen(long, [], { deltasSinceBase: 1 })).toBe(false);
+		expect(definition.checkpointWhen(long, [], { deltasSinceBase: 15 })).toBe(false);
+		expect(definition.checkpointWhen(long, [], { deltasSinceBase: 16 })).toBe(true);
+	});
+
+	test("短频道仍然按 64 条增量压一次", () => {
+		expect(definition.checkpointWhen(short, [], { deltasSinceBase: 16 })).toBe(false);
+		expect(definition.checkpointWhen(short, [], { deltasSinceBase: 64 })).toBe(true);
 	});
 });
 

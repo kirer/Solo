@@ -107,52 +107,68 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		map.set(id, seq);
 	}
 
-	// T-016 v2：把「占位填充 → 逐字增量推送」接到 post.ts 的钩子上（避免循环依赖：post 不 import serve）。
-	// 前端拿到 token 分片后渐显，最终以 done 全文兜底（刷新/丢包不漏字）。
+	// 回复落库后只推一条 `done` 全文（审计 P1-3）。
+	//
+	// 旧做法是把**已经完整**的 `fullText` 切成 24 片、每 18ms 推一片来「模拟逐字」：
+	// 一条 2000 字的回复 = 24 次 SSE 写 + 24 次前端 DOM 操作，纯动画开销；而且前端是往
+	// 渲染过 Markdown 的 `.md` 里 `append` 纯文本节点，两种渲染混在同一个容器里。
+	// 前端的 `merge` / `buildOne` 本来就能用 done 全文整体重建，所以这里直接给全文。
 	setChannelStreamHook((channelId, seq, fullText) => {
-		let acc = 0;
-		const step = Math.max(1, Math.ceil(fullText.length / 24));
-		const emitToken = (from: number, to: number) => {
-			const delta = fullText.slice(from, to);
-			if (delta.length === 0) return;
-			const clients = channelClients.get(channelId);
-			if (clients === undefined || clients.size === 0) return;
-			const payload = `event: token\ndata: ${JSON.stringify({ seq, delta })}\n\n`;
-			for (const client of [...clients]) {
-				try { client.write(payload); } catch { clients.delete(client); }
+		const clients = channelClients.get(channelId);
+		if (clients === undefined || clients.size === 0) return;
+		const done = `event: done\ndata: ${JSON.stringify({ seq, text: fullText, status: "done" })}\n\n`;
+		for (const client of [...clients]) {
+			try {
+				client.write(done);
+			} catch {
+				clients.delete(client);
 			}
-		};
-		// 把全文切成最多 24 片，错峰推（每片 18ms），模拟逐字；末片后补 done 全文兜底。
-		const timer = setInterval(() => {
-			if (acc >= fullText.length) {
-				clearInterval(timer);
-				channelTimers.delete(`tok:${channelId}:${seq}`);
-				const clients = channelClients.get(channelId);
-				if (clients !== undefined && clients.size > 0) {
-					const done = `event: done\ndata: ${JSON.stringify({ seq, text: fullText, status: "done" })}\n\n`;
-					for (const client of [...clients]) {
-						try { client.write(done); } catch { clients.delete(client); }
-					}
-			}
-			return;
 		}
-		emitToken(acc, Math.min(fullText.length, acc + step));
-		acc = Math.min(fullText.length, acc + step);
-		}, 18);
-		channelTimers.set(`tok:${channelId}:${seq}`, timer);
 	});
 	setChannelClientsHas((channelId) => (channelClients.get(channelId)?.size ?? 0) > 0);
 
 	/**
-	 * 组织快照：名册 + 身份 + 频道 + 项目负责人表。界面的组织图与顶栏都吃这一份。
-	 *
-	 * 项目负责人的真相在 `projects/<slug>/README.md`，不在频道文档里。所以这里把它读成
-	 * 一张 `project → owner` 的查表函数交给视图层 —— 视图层只做投影，不猜谁负责。
+	 * 只读「人 + 频道」的快照。SSE 增量推送用它 —— 推一条消息完全用不到项目文档，
+	 * 旧版本却每条推送都去串行读一遍全部项目 README（审计 P1-4）。
 	 */
-	async function snapshot(context: Context = BACKGROUND_CONTEXT) {
-		const [identities, projects] = await Promise.all([shell.identities(), listProjects(shell.projectsRoot)]);
+	async function channelSnapshot(context: Context = BACKGROUND_CONTEXT) {
+		const identities = await shell.identities();
 		const directory = withLabels(shell.bindings(), identities);
 		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannels();
+		return { identities, directory, channels };
+	}
+
+	/**
+	 * 项目文档的短缓存。
+	 *
+	 * 为什么需要：`listProjects` 是一个项目一次 `readFile`，串行。agent 连续干活时
+	 * 「一次提交 × 每个活跃频道 × 每个项目」会把磁盘读放大成每秒几十次，而项目文档
+	 * 一秒内几乎不会变。这里按 `projects/` 目录 mtime + 250ms 窗口缓存：窗口内的
+	 * 重复读取共用一份，改了项目文件最迟 250ms 后生效（界面上看不出来）。
+	 */
+	let projectsCache: { at: number; stamp: number; value: readonly Awaited<ReturnType<typeof listProjects>>[number][] } | undefined;
+	async function projectsNow() {
+		const stamp = await stat(shell.projectsRoot).then((info) => info.mtimeMs).catch(() => -1);
+		const now = Date.now();
+		if (projectsCache !== undefined && projectsCache.stamp === stamp && now - projectsCache.at < PROJECT_CACHE_MS) {
+			return projectsCache.value;
+		}
+		const value = [...(await listProjects(shell.projectsRoot))];
+		projectsCache = { at: now, stamp, value };
+		return value;
+	}
+
+	/**
+	 * 组织快照：名册 + 身份 + 频道 + 项目负责人/现状表。界面的组织图与顶栏都吃这一份。
+	 *
+	 * 项目负责人的真相在项目 README 里，不在频道文档里。所以这里把它读成查表函数交给
+	 * 视图层 —— 视图层只做投影，不猜谁负责。
+	 */
+	async function snapshot(context: Context = BACKGROUND_CONTEXT) {
+		const [{ identities, directory, channels }, projects] = await Promise.all([
+			channelSnapshot(context),
+			projectsNow(),
+		]);
 		const owners = new Map<string, string | undefined>(projects.map((project) => [project.slug, project.owner]));
 		const projectOwnerOf = (project: string) => owners.get(project);
 		// 一句话现状与负责人同源（同一份项目文档），所以是同一个快照里的一张表。
@@ -199,7 +215,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		if (clients === undefined || clients.size === 0) return;
 		let views: { seq: number; line: string }[];
 		try {
-			const { directory, channels } = await snapshot();
+			const { directory, channels } = await channelSnapshot();
 			const channel = channels.channels[id];
 			if (channel === undefined) return;
 			const list = channels.messages[id] ?? [];
@@ -1075,6 +1091,9 @@ async function readJson<T>(request: IncomingMessage, options: { readonly require
 		return {} as T;
 	}
 }
+
+/** 项目文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
+const PROJECT_CACHE_MS = 250;
 
 /** 写接口的 JSON 正文上限。正常消息几千字，1MB 已经宽得离谱。 */
 const JSON_BODY_LIMIT = 1 << 20;

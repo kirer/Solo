@@ -134,8 +134,17 @@ export const ChannelDoc = defineDoc<ChannelState>({
 	//
 	// 早先只按「单频道 ≥ 256 条消息」判断，结果一直不触发（最多 189 条），库里的
 	// 增量无限累积到 60 MB。按增量条数判断拿得到确定的回收上限，与消息分布无关。
-	checkpointWhen: (value, _ops, info) =>
-		info.deltasSinceBase >= 64 || Object.values(value.messages).some((list) => list.length >= 256),
+	//
+	// 但长频道那条**必须带一个增量下限**：写成 `|| 某频道 ≥ 256 条` 就变成恒真 ——
+	// 单频道一旦超过 256 条，之后**每次提交都压一份完整基线**（这个文档是 current-only，
+	// 压基线会删掉旧 revision），于是「发一条消息」的成本 = 序列化整份频道历史。
+	// 实测（2026-10-30）：1600 条时单条提交 0.45ms，且随消息数线性增长；3000 条时
+	// 每发一条要写 200KB 以上，RSS 也跟着涨。长频道现在改成每 16 条压一次，
+	// 回收上限仍然确定，但不会每条都压。
+	checkpointWhen: (value, _ops, info) => {
+		const longChannel = Object.values(value.messages).some((list) => list.length >= 256);
+		return info.deltasSinceBase >= (longChannel ? 16 : 64);
+	},
 });
 
 /** 老板的 slug。不是 agent，但出现在成员表里。 */
