@@ -268,6 +268,9 @@ export function groupSpan(entries) {
 	return { startAt, endAt: Math.max(startAt, endAt), count: list.length };
 }
 
+/** 占位记下的 startedAt 与首条过程行差多远就不再算「同一轮」。 */
+export const RUN_START_MAX_GAP_MS = 10 * 60 * 1000;
+
 /**
  * 这一段活**真正**从什么时候开始（ADR-072）。
  *
@@ -281,19 +284,20 @@ export function runStartAt(all, run) {
 	if (first === undefined) return 0;
 	const base = Number(first.startedAt ?? first.at ?? 0);
 	const list = Array.isArray(all) ? all : [];
-	// 只往前看。占位是**触发那条消息时就建**的，所以它（填充后仍带 `startedAt`）
-	// 在数组里排在它的过程行**前面** —— 但 `at` 反而更晚（填充时才改写）。
-	// 因此判据按位置、不按 `at`；再用 `startedAt <= base` 挡掉不属于这一轮的提示。
 	const stop = list.indexOf(first);
-	const slug = first.fromSlug;
-	let hinted = 0;
-	for (let index = 0; index < (stop < 0 ? 0 : stop); index += 1) {
+	// 只往前看「最近的一条」：更早的 startedAt 属于上一轮、甚至几小时前的旧占位，
+	// 拿它当起点会把计时直接算成 14170s / 20268s（老板实测过）。
+	for (let index = (stop < 0 ? 0 : stop) - 1; index >= 0; index -= 1) {
 		const item = list[index];
-		if (item?.fromSlug !== slug) continue;
+		if (item?.fromSlug !== first.fromSlug) continue;
 		if (typeof item.startedAt !== "number") continue;
-		if (item.startedAt > hinted) hinted = item.startedAt;
+		// 和首条过程行差太远就不是「这一轮」的占位：宁可退回首条 at，也别算出一个
+		// 几小时的总用时。
+		if (item.startedAt > base) return base;
+		if (base - item.startedAt > RUN_START_MAX_GAP_MS) return base;
+		return item.startedAt;
 	}
-	return hinted > 0 && hinted <= base ? hinted : base;
+	return base;
 }
 
 /**
@@ -334,6 +338,17 @@ export function groupStatus({ running = false, startAt = 0, endAt = 0, now = 0 }
 /** 跑着的组头文案：只吃一个秒数。逐秒刷新时用它，别再从文案里反解数字。 */
 export function runningStatus(seconds) {
 	return `正在执行 · ${Math.max(0, Math.round(Number(seconds) || 0))}s`;
+}
+
+/**
+ * 底部活动行要不要显示：**只在过程行没画出来时兜底**。
+ *
+ * 跑着的组头已经写着「正在执行 · 12s + 动点」，底下再挂一条活动行就是同一件事
+ * 说两遍。所以页面上已经有一个 running 组头时，这一行不显示。
+ */
+export function shouldShowActivity(run, { hasRunningGroup = false } = {}) {
+	if (run == null) return false;
+	return hasRunningGroup !== true;
 }
 
 /** 底部活动行：多久没新过程行就不再当它还在跑。 */
@@ -405,7 +420,8 @@ export function groupHeaderText({ name = "", running = false, startAt = 0, endAt
 	// 跑完的组头只留一句「查看过程」+ 箭头：老板说光一个空箭头「什么提示都没有」，
 	// 但名字和「已完成，用时 X 秒」也不再往屏幕上放 —— 那些留在 aria-label 里。
 	if (!running) return DONE_HINT;
-	return name ? `${name} ${groupStatus({ running: true, startAt, endAt, now })}` : groupStatus({ running: true, startAt, endAt, now });
+	// 名字不进可见文案（aria 里仍有）；组头只说「正在执行 · 12s」。
+	return groupStatus({ running: true, startAt, endAt, now });
 }
 
 function firstQuote(text) {
@@ -823,8 +839,10 @@ export function wrapEvents(slug, name, nodes, timing = {}) {
 	button.dataset.act = "expand";
 	button.setAttribute("aria-expanded", "false");
 	button.setAttribute("aria-label", groupHeader({ name, running, startAt, endAt, now }));
+	// 跑着的组头不写名字（老板的口径）：正文那块已经有头像和名字，组头再写一遍就是重复。
+	// 名字留在 aria-label 里（groupHeader），读屏仍然知道是谁在跑。
 	button.innerHTML = running
-		? `<span class="evs-ico" aria-hidden="true">${ICONS.work}</span><b>${escapeHtml(name ?? "")}</b><span class="evs-what">${escapeHtml(
+		? `<span class="evs-ico" aria-hidden="true">${ICONS.work}</span><span class="evs-what">${escapeHtml(
 				groupStatus({ running: true, startAt, endAt, now }),
 			)}</span><span class="evs-live" aria-hidden="true"><i></i><i></i><i></i></span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`
 		: `<span class="evs-what">${DONE_HINT}</span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;

@@ -19,6 +19,7 @@ import {
 	groupHeader,
 	groupHeaderText,
 	groupSpan,
+	RUN_START_MAX_GAP_MS,
 	groupStatus,
 	runStartAt,
 	splitRuns,
@@ -94,7 +95,9 @@ describe("组头与计时", () => {
 	});
 
 	it("跑着写名字 + 正在执行；跑完只留一句「查看过程」，名字与用时只进 aria", () => {
-		expect(groupHeaderText({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("知言 正在执行 · 67s");
+		// 跑着也不写名字：组头只说「正在执行 · 67s」，名字只进 aria-label
+		expect(groupHeaderText({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("正在执行 · 67s");
+		expect(groupHeader({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("知言 正在执行 · 67s");
 		// 已完成：可见的是「查看过程」+ 箭头（老板说光一个空箭头什么提示都没有），
 		// 但不再显示名字和「已完成，用时 X 秒」—— 那些留在 aria-label（groupHeader）
 		expect(groupHeaderText({ name: "知言", running: false, startAt: 0, endAt: 55_000 })).toBe(DONE_HINT);
@@ -118,6 +121,30 @@ describe("组头与计时", () => {
 		expect(span).toEqual({ startAt: 2_000, endAt: 20_000, count: 3 });
 		// 一轮带 startedAt 时，组起点是开跑那一刻，不是首条投影落地那一刻
 		expect(groupSpan([{ at: 9_000, startedAt: 3_000 }, { at: 20_000 }]).startAt).toBe(3_000);
+	});
+
+	it("几小时前的旧占位不参与计时（实测 14170s 那种）", () => {
+		const now = 100_000_000;
+		const oldPlaceholder = { seq: 1, fromSlug: "林越", kind: "say", processing: true, at: now - 4 * 60 * 60 * 1000, startedAt: now - 4 * 60 * 60 * 1000 };
+		const firstEvent = { seq: 2, fromSlug: "林越", kind: "think", at: now - 20_000 };
+		const run = [firstEvent];
+		// 旧占位的 startedAt 离首条过程行差 4 小时：不算这一轮，回退到首条 at
+		expect(runStartAt([oldPlaceholder, firstEvent], run)).toBe(now - 20_000);
+	});
+
+	it("只认最近一条 preceding startedAt（两轮占位不会串）", () => {
+		const now = 100_000_000;
+		const older = { seq: 1, fromSlug: "林越", kind: "say", processing: true, at: now - 20 * 60 * 1000, startedAt: now - 20 * 60 * 1000 };
+		const newer = { seq: 2, fromSlug: "林越", kind: "say", processing: true, at: now - 30_000, startedAt: now - 30_000 };
+		const firstEvent = { seq: 3, fromSlug: "林越", kind: "think", at: now - 10_000 };
+		expect(runStartAt([older, newer, firstEvent], [firstEvent])).toBe(now - 30_000);
+	});
+
+	it("和首条过程行差超过 10 分钟就回退到首条 at", () => {
+		const now = 100_000_000;
+		const stale = { seq: 1, fromSlug: "林越", kind: "say", processing: true, at: now - 11 * 60 * 1000, startedAt: now - 11 * 60 * 1000 };
+		const firstEvent = { seq: 2, fromSlug: "林越", kind: "think", at: now };
+		expect(runStartAt([stale, firstEvent], [firstEvent])).toBe(now);
 	});
 
 	it("新来一条过程行不会把起点清零，也不会算出负时间", () => {

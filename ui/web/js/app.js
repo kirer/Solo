@@ -28,6 +28,7 @@ import {
 	PLACEHOLDER_TTL_MS,
 	markGroupDone,
 	runningStatus,
+	shouldShowActivity,
 	mergeDoneGroups,
 	runStartAt,
 	isNeed as isNeedRow,
@@ -634,7 +635,10 @@ const act = { slug: "", running: null, startAt: 0, endAt: 0 };
  */
 function renderActivity() {
 	const run = activityRun(state.detail?.messages ?? [], Date.now());
-	if (!run) {
+	// 过程行已经画出了一个跑着的组头（「正在执行 · 12s + 动点」）时，这一行是重复的：
+	// 活动行只在「过程行没画出来」时兜底（比如刚打开频道还没渲染完）。
+	const hasRunningGroup = el.feed.querySelector('.row-events[data-state="running"]') !== null;
+	if (!shouldShowActivity(run, { hasRunningGroup })) {
 		hideActivity();
 		return;
 	}

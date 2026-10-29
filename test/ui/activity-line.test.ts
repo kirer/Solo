@@ -9,7 +9,7 @@
  * 文案在 rows.js 的纯函数里，DOM 只负责画，所以这里断言文案与状态。
  */
 import { describe, expect, it } from "vitest";
-import { activityRun, groupStatus } from "../../ui/web/js/rows.js";
+import { activityRun, groupStatus, shouldShowActivity } from "../../ui/web/js/rows.js";
 
 const think = (at, slug = "知言") => ({ fromSlug: slug, kind: "think", text: "想一下。", at });
 const say = (at, slug = "知言") => ({ fromSlug: slug, kind: "say", text: "做完了。", at });
@@ -58,5 +58,22 @@ describe("activityRun：底部活动行的起点与状态", () => {
 
 	it("很久没有新过程行就不再当它还在跑", () => {
 		expect(activityRun([think(1_000)], 1_000 + 5 * 60 * 1000 + 1)).toBeNull();
+	});
+});
+
+describe("活动行只在过程行没画出来时兜底", () => {
+	const run = { slug: "知言", running: true, startAt: 1_000, endAt: 5_000 };
+
+	it("页面上已经有 running 组头 → 不再显示活动行（同一件事不说两遍）", () => {
+		expect(shouldShowActivity(run, { hasRunningGroup: true })).toBe(false);
+	});
+
+	it("没有 running 组头 → 兜底显示", () => {
+		expect(shouldShowActivity(run, { hasRunningGroup: false })).toBe(true);
+		expect(shouldShowActivity(run)).toBe(true);
+	});
+
+	it("根本没有在跑的东西 → 不显示", () => {
+		expect(shouldShowActivity(null, { hasRunningGroup: false })).toBe(false);
 	});
 });
