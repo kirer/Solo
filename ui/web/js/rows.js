@@ -335,7 +335,8 @@ export function elapsedSeconds(startAt, endAt) {
 }
 
 /**
- * 组头那一句：跑着「正在执行 · 67s」，跑完「已完成，用时 55 秒」。
+ * 组头/aria 那一句：跑着「正在执行 · 67s」，跑完「已完成，用时 55 秒」。
+ * 注意可见文案里跑着也只用「查看过程」—— 这个串只出现在 aria-label 与活动行。
  *
  * 以前这里是「14 步过程 命令 14」—— 内部术语，读不懂还重复。
  * running 时终点用 now，所以每多跑一秒数字就大一点；定格之后传 endAt，数字不再动。
@@ -351,14 +352,14 @@ export function runningStatus(seconds) {
 }
 
 /**
- * 底部活动行要不要显示：**只在过程行没画出来时兜底**。
+ * 底部活动行要不要显示：**有活跃轮次就显示**。
  *
- * 跑着的组头已经写着「正在执行 · 12s + 动点」，底下再挂一条活动行就是同一件事
- * 说两遍。所以页面上已经有一个 running 组头时，这一行不显示。
+ * 过程组头现在只说「查看过程」（不写名字、不写计时、不带动点），活跃状态只有
+ * 这一条活动行负责 —— 所以它不再因为「组头在跑」而隐藏。`hasRunningGroup` 这个
+ * 入参保留着只为兼容调用点，不影响判断。
  */
-export function shouldShowActivity(run, { hasRunningGroup = false } = {}) {
-	if (run == null) return false;
-	return hasRunningGroup !== true;
+export function shouldShowActivity(run) {
+	return run != null;
 }
 
 /** 底部活动行：多久没新过程行就不再当它还在跑。 */
@@ -424,14 +425,13 @@ export function groupHeader({ name = "", ...timing } = {}) {
  *
  * 老板的口径：跑完的过程组只留一句「查看过程」+ 展开箭头（不写名字、不写
  * 「已完成，用时 X 秒」；他说光一个空箭头「什么提示都没有」）。只有跑着时才显示
- * 「名字 正在执行 · 67s + 动点」。读屏和 tooltip 仍走 `groupHeader`（带名字和用时）。
+ * 「查看过程」。读屏和 tooltip 仍走 `groupHeader`（带名字和用时）。
  */
 export function groupHeaderText({ name = "", running = false, startAt = 0, endAt = 0, now = 0 } = {}) {
 	// 跑完的组头只留一句「查看过程」+ 箭头：老板说光一个空箭头「什么提示都没有」，
 	// 但名字和「已完成，用时 X 秒」也不再往屏幕上放 —— 那些留在 aria-label 里。
-	if (!running) return DONE_HINT;
-	// 名字不进可见文案（aria 里仍有）；组头只说「正在执行 · 12s」。
-	return groupStatus({ running: true, startAt, endAt, now });
+	// 跑着和跑完都一样：组头只说「查看过程」。活跃状态由底部活动行负责显示。
+	return DONE_HINT;
 }
 
 function firstQuote(text) {
@@ -849,13 +849,10 @@ export function wrapEvents(slug, name, nodes, timing = {}) {
 	button.dataset.act = "expand";
 	button.setAttribute("aria-expanded", "false");
 	button.setAttribute("aria-label", groupHeader({ name, running, startAt, endAt, now }));
-	// 跑着的组头不写名字（老板的口径）：正文那块已经有头像和名字，组头再写一遍就是重复。
-	// 名字留在 aria-label 里（groupHeader），读屏仍然知道是谁在跑。
-	button.innerHTML = running
-		? `<span class="evs-ico" aria-hidden="true">${ICONS.work}</span><span class="evs-what">${escapeHtml(
-				groupStatus({ running: true, startAt, endAt, now }),
-			)}</span><span class="evs-live" aria-hidden="true"><i></i><i></i><i></i></span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`
-		: `<span class="evs-what">${DONE_HINT}</span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+	// 所有过程组头可见文案统一成「查看过程」+ 箭头：跑着也不写名字 / 不写计时 / 不带动点。
+	// 老板的原话是「多条『正在执行』组头看得人晕」—— 活跃状态只保留底部那一条活动行。
+	// 名字与用时仍在 aria-label 里（groupHeader），读屏和悬停都还有信息。
+	button.innerHTML = `<span class="evs-what">${DONE_HINT}</span><svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
 	const body = document.createElement("div");
 	body.className = "evs-body";
 	body.hidden = true;

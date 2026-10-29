@@ -9,7 +9,7 @@
  * 文案在 rows.js 的纯函数里，DOM 只负责画，所以这里断言文案与状态。
  */
 import { describe, expect, it } from "vitest";
-import { activityRun, groupStatus, shouldShowActivity } from "../../ui/web/js/rows.js";
+import { activityRun, groupHeader, groupHeaderText, groupStatus, shouldShowActivity } from "../../ui/web/js/rows.js";
 
 const think = (at, slug = "知言") => ({ fromSlug: slug, kind: "think", text: "想一下。", at });
 const say = (at, slug = "知言") => ({ fromSlug: slug, kind: "say", text: "做完了。", at });
@@ -61,19 +61,25 @@ describe("activityRun：底部活动行的起点与状态", () => {
 	});
 });
 
-describe("活动行只在过程行没画出来时兜底", () => {
+describe("活跃状态只由活动行显示", () => {
 	const run = { slug: "知言", running: true, startAt: 1_000, endAt: 5_000 };
 
-	it("页面上已经有 running 组头 → 不再显示活动行（同一件事不说两遍）", () => {
-		expect(shouldShowActivity(run, { hasRunningGroup: true })).toBe(false);
-	});
-
-	it("没有 running 组头 → 兜底显示", () => {
-		expect(shouldShowActivity(run, { hasRunningGroup: false })).toBe(true);
+	it("有活跃轮次就显示（不再因为组头在跑而隐藏）", () => {
 		expect(shouldShowActivity(run)).toBe(true);
+		// 兼容旧调用点：多传 hasRunningGroup 也不影响
+		expect(shouldShowActivity(run, { hasRunningGroup: true })).toBe(true);
 	});
 
-	it("根本没有在跑的东西 → 不显示", () => {
-		expect(shouldShowActivity(null, { hasRunningGroup: false })).toBe(false);
+	it("没有在跑的东西 → 不显示", () => {
+		expect(shouldShowActivity(null)).toBe(false);
+	});
+});
+
+describe("屏幕上的「正在执行」只出现一次", () => {
+	it("组头的可见文案里不出现「正在执行」", () => {
+		expect(groupHeaderText({ name: "知言", running: true, startAt: 0, endAt: 0, now: 12_000 })).toBe("查看过程");
+		expect(groupHeaderText({ name: "知言", running: false, startAt: 0, endAt: 12_000 })).toBe("查看过程");
+		// 计时只在 aria-label（groupHeader）与活动行里
+		expect(groupHeader({ name: "知言", running: true, startAt: 0, endAt: 0, now: 12_000 })).toBe("知言 正在执行 · 12s");
 	});
 });

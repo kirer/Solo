@@ -27,7 +27,6 @@ import {
 	isEventKind,
 	PLACEHOLDER_TTL_MS,
 	markGroupDone,
-	runningStatus,
 	shouldShowActivity,
 	mergeDoneGroups,
 	runStartAt,
@@ -433,7 +432,7 @@ function openGroupOf(slug) {
 	return last;
 }
 
-/** 一条过程行到了：并进正在跑的组，没有就开一个（组头立刻显示「正在执行 · 0s」）。 */
+/** 一条过程行到了：并进正在跑的组，没有就开一个（组头照例只说「查看过程」）。 */
 function appendEventRow(message, node) {
 	const group = openGroupOf(message.fromSlug);
 	if (group) {
@@ -443,7 +442,7 @@ function appendEventRow(message, node) {
 	}
 	// 换人了：先把上一个人的 running 组定格到**它自己最后一条过程行**，
 	// 不然没人来收口，它会一直跳到 5 分钟超时才停 —— 屏幕上就是别人的活
-	// 明明干完了还写着「正在执行 · 300s」。
+	// 明明干完了还挂着在跑的状态（活动行也是按它算的）。
 	closeOpenGroups(undefined, undefined);
 	// 相邻同名的已完成组能并就并：上一段刚收口、这一段又接着干，屏幕上只留一个箭头。
 	const prev = el.feed.lastElementChild;
@@ -465,7 +464,7 @@ function appendEventRow(message, node) {
 }
 
 /**
- * 收口：组头从「正在执行 · 67s」定格成「已完成，用时 55 秒」。
+ * 收口：把跑着的组标成已完成（组头文字不变，都是「查看过程」；用时写进 aria 与 dataset）。
  *
  * 只收 `slug` 这个人的组 —— 别人还在跑，不能因为有人说话就把他的表停掉。
  * `afterNode` 给的时候把组挪到那句话下面：读起来才是「先干活、再开口」。
@@ -509,8 +508,6 @@ function tickRunningGroups() {
 	for (const group of el.feed.querySelectorAll('.row-events[data-state="running"]')) {
 		const startAt = Number(group.dataset.start ?? 0);
 		if (!startAt) continue;
-		const what = group.querySelector(".evs-what");
-		if (!what) continue;
 		// 五分钟没来新过程行就当这一轮结束了：否则一条历史上的尾巴会永远在跳秒，
 		// 变成「看起来一直在跑」的假象。真在跑的话，新过程行会不断刷新 data-end。
 		const lastAt = Number(group.dataset.end ?? 0);
@@ -520,10 +517,9 @@ function tickRunningGroups() {
 		}
 		// 秒数只许变大：系统时钟被拨回时也不能让老板看到「67s 变成 55s」。
 		// 比较用 dataset 里的数值，不从文案里抠 —— 文案改了也不会静默失效。
-		const seconds = advanceSeconds(group.dataset.seconds, startAt, now);
-		group.dataset.seconds = String(seconds);
-		// 显示也用这个（已钳过的）秒数：时钟拨回时不能显示比上次小的数字。
-		what.textContent = runningStatus(seconds);
+		// 组头本身不再显示计时（老板的口径：组头只说「查看过程」），这里只维护数值，
+		// 供 aria-label 和收口时定格用。
+		group.dataset.seconds = String(advanceSeconds(group.dataset.seconds, startAt, now));
 	}
 }
 
@@ -629,16 +625,14 @@ const act = { slug: "", running: null, startAt: 0, endAt: 0 };
 /**
  * 底部活动行：和过程组头同一套文案与计时。
  *
- * 跑着是「名字 + 正在执行 · 67s + 三个动点」，他说完话那一刻换成
- * 「已完成，用时 55 秒」，停 4 秒再收掉 —— 老板的原话就是这个。
+ * 活跃状态只在这一条上显示：名字 + 正在执行 · 67s + 三个动点（过程组头不写这些，
+ * 不然屏幕上会有好几条「正在执行」）。他开口后这一行直接收掉。
  * 起点用这一段活的组起点（`startedAt ?? 第一条过程行 at`），新过程行不会把表清零。
  */
 function renderActivity() {
 	const run = activityRun(state.detail?.messages ?? [], Date.now());
-	// 过程行已经画出了一个跑着的组头（「正在执行 · 12s + 动点」）时，这一行是重复的：
-	// 活动行只在「过程行没画出来」时兜底（比如刚打开频道还没渲染完）。
-	const hasRunningGroup = el.feed.querySelector('.row-events[data-state="running"]') !== null;
-	if (!shouldShowActivity(run, { hasRunningGroup })) {
+	// 过程组头只说「查看过程」，活跃状态只由这一条活动行负责 —— 有活跃轮次就显示。
+	if (!shouldShowActivity(run)) {
 		hideActivity();
 		return;
 	}

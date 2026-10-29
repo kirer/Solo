@@ -95,8 +95,8 @@ describe("组头与计时", () => {
 	});
 
 	it("跑着写名字 + 正在执行；跑完只留一句「查看过程」，名字与用时只进 aria", () => {
-		// 跑着也不写名字：组头只说「正在执行 · 67s」，名字只进 aria-label
-		expect(groupHeaderText({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("正在执行 · 67s");
+		// 跑着和跑完都一样：可见文案只有「查看过程」，名字/正在执行/计时都只在 aria-label
+		expect(groupHeaderText({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe(DONE_HINT);
 		expect(groupHeader({ name: "知言", running: true, startAt: 0, endAt: 0, now: 67_000 })).toBe("知言 正在执行 · 67s");
 		// 已完成：可见的是「查看过程」+ 箭头（老板说光一个空箭头什么提示都没有），
 		// 但不再显示名字和「已完成，用时 X 秒」—— 那些留在 aria-label（groupHeader）
