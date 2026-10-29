@@ -22,6 +22,44 @@ export function escapeAttr(text) {
 	return escapeHtml(text).replace(/`/g, "&#96;");
 }
 
+/**
+ * 按「字素簇」截断文本，不把 emoji / 扩展区汉字切成半个。
+ *
+ * `String.prototype.slice` 切的是 UTF-16 码元：`🚀`（两个码元）会被切出孤立代理，
+ * 屏幕上就是一个 `�`；`𠮷` 这类扩展 B 区汉字同理。这里优先用 Intl.Segmenter 按字素簇切
+ * （连「👨‍👩‍👧」这种 ZWJ 组合也不会拆开），环境不支持就退回按码点切。
+ */
+function graphemes(text) {
+	const segmenter =
+		typeof Intl !== "undefined" && typeof Intl.Segmenter === "function"
+			? new Intl.Segmenter("zh", { granularity: "grapheme" })
+			: null;
+	return segmenter ? [...segmenter.segment(text)].map((part) => part.segment) : [...text];
+}
+
+export function clipText(text, limit) {
+	const raw = String(text ?? "");
+	const max = Math.max(0, Math.floor(Number(limit) || 0));
+	if (raw === "" || max === 0) return "";
+	// 快路径：UTF-16 长度都不超，就一定不超字素数。
+	if (raw.length <= max) return raw;
+	const units = graphemes(raw);
+	if (units.length <= max) return raw;
+	return units.slice(0, max).join("");
+}
+
+/** 截断并补省略号：总长度（按字素）不超过 limit，和原来 `slice(0, limit-1) + "…"` 同口径。 */
+export function clipWithEllipsis(text, limit) {
+	const raw = String(text ?? "");
+	const max = Math.max(0, Math.floor(Number(limit) || 0));
+	if (raw === "" || max === 0) return "";
+	if (raw.length <= max) return raw;
+	const units = graphemes(raw);
+	// 正好等于 limit 也算「不超」：老实现是 `if (length <= limit) return text`。
+	if (units.length <= max) return raw;
+	return `${units.slice(0, max - 1).join("")}…`;
+}
+
 /** 列表里的相对时间：「刚刚 / 3 分钟前 / 昨天 14:05」。 */
 export function relTime(at, now = Date.now()) {
 	const diff = now - at;
@@ -80,7 +118,7 @@ export function initials(label) {
 	const text = String(label ?? "").trim();
 	if (text === "") return "?";
 	// 中文取首字，英文取首字母（最多两个）。
-	if (/[\u4e00-\u9fa5]/.test(text)) return text.slice(0, 1);
+	if (/[\u4e00-\u9fa5]/.test(text)) return clipText(text, 1);
 	const words = text.split(/\s+/).filter(Boolean);
 	return words.slice(0, 2).map((word) => word[0].toUpperCase()).join("");
 }

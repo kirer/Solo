@@ -7,7 +7,7 @@
  *
  * 只导出 renderMarkdown(text) -> string。
  */
-import { escapeHtml, escapeAttr } from "./format.js";
+import { clipText, escapeHtml, escapeAttr } from "./format.js";
 
 /** 行内占位符：先抽走代码与链接，避免它们的内部符号被当成 Markdown。 */
 const SLOT = "\u0000";
@@ -157,7 +157,7 @@ function startsBlock(lines, index) {
 }
 
 function renderCode(lang, code) {
-	const language = String(lang ?? "").trim().slice(0, 24);
+	const language = clipText(String(lang ?? "").trim(), 24);
 	const label = language === "" ? "代码" : language;
 	return `<figure class="md-code" data-lang="${escapeAttr(language)}"><figcaption class="md-code-bar"><span class="md-code-lang mono">${escapeHtml(label)}</span><button class="md-code-copy" type="button" data-copy="code" aria-label="复制代码" title="复制代码">复制</button></figcaption><pre><code>${escapeHtml(code.replace(/\n$/, ""))}</code></pre></figure>`;
 }

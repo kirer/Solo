@@ -9,7 +9,7 @@
 
 import { attachmentsHtml } from "./attach.js";
 import { avatarSvg } from "./avatar.js";
-import { clockTime, dayLabel, escapeHtml, sameDay } from "./format.js";
+import { clipText, clipWithEllipsis, clockTime, dayLabel, escapeHtml, sameDay } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
 
 /**
@@ -113,8 +113,7 @@ export function clampLine(text, limit = SUMMARY_LIMIT) {
 		.replace(/\s+/g, " ")
 		.trim();
 	if (flat === "") return "";
-	if (flat.length <= limit) return flat;
-	return `${flat.slice(0, limit - 1)}…`;
+	return clipWithEllipsis(flat, limit);
 }
 
 /** 一段文字的第一句（句号/问号/叹号/换行切），再截到一行 60 字。 */
@@ -422,7 +421,7 @@ function toolsBar() {
 function quoteBlock(replyTo) {
 	if (!replyTo) return "";
 	const label = escapeHtml(replyTo.fromLabel ?? "");
-	const excerpt = escapeHtml(String(replyTo.excerpt ?? "").slice(0, 80));
+	const excerpt = escapeHtml(clipText(replyTo.excerpt, 80));
 	return `<button class="row-quote" type="button" data-jump="${Number(replyTo.seq) || 0}"><b>${label}</b><span>${excerpt}</span></button>`;
 }
 

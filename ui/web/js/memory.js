@@ -18,6 +18,7 @@
  */
 
 import { editPersonMemory, personMemory } from "./api.js";
+import { clipText } from "./format.js";
 import { avatarSvg } from "./avatar.js";
 import { withLinger } from "./motion.js";
 
@@ -95,9 +96,8 @@ export function isLongEntry(body) {
 
 /** 提交前夹一次：textarea 的 maxlength 挡得住键盘，挡不住脚本与粘贴绕路。 */
 export function clampAdd(text, max = MAX_ADD) {
-	return String(text ?? "")
-		.trim()
-		.slice(0, max);
+	// 按字素切：粘贴进来的 emoji 不能被切掉半个（孤立代理会显示成 �）。
+	return clipText(String(text ?? "").trim(), max);
 }
 
 /**

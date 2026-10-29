@@ -15,7 +15,7 @@ import { MAX_PER_MESSAGE, filesOf, kindOfFile, queueItemHtml, uploadOne } from "
 import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
 import { channelDetailHtml, personDetailHtml } from "./detail.js";
-import { copyText, escapeHtml, headParts, relTime, sortChannels, unreadLabel } from "./format.js";
+import { clipText, copyText, escapeHtml, headParts, relTime, sortChannels, unreadLabel } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
 import {
 	activityRun,
@@ -257,7 +257,7 @@ function renderNeedMenu() {
 	}
 	const rows = items.slice(0, 12).map((item) => {
 		const who = item.fromLabel ?? item.fromSlug ?? "";
-		const excerpt = String(item.excerpt ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+		const excerpt = clipText(String(item.excerpt ?? "").replace(/\s+/g, " ").trim(), 80);
 		const time = item.at ? relTime(item.at) : "";
 		return `<button class="need-item" type="button" role="menuitem" data-need="${escapeHtml(
 			item.channelId
@@ -706,7 +706,7 @@ function renderReply() {
 	}
 	el.replyBar.hidden = false;
 	el.replyText.innerHTML = `<b>${escapeHtml(state.replyTo.fromLabel ?? "")}</b> ${escapeHtml(
-		String(state.replyTo.excerpt ?? "").slice(0, 60),
+		clipText(state.replyTo.excerpt, 60),
 	)}`;
 }
 
@@ -1304,7 +1304,7 @@ function recentLineOf() {
 		if (quiet.has(message.kind)) continue;
 		const text = (message.text ?? "").replace(/\s+/g, " ").trim();
 		if (text === "") continue;
-		return `${message.fromLabel ?? message.from}：${text.slice(0, 90)}`;
+		return `${message.fromLabel ?? message.from}：${clipText(text, 90)}`;
 	}
 	return "";
 }
@@ -1688,7 +1688,7 @@ function expandEvent(button) {
 function replyToRow(row) {
 	const seq = Number(row.dataset.seq);
 	if (!seq) return;
-	state.replyTo = { seq, fromLabel: row.querySelector(".row-name")?.textContent ?? "消息", excerpt: rowText(row).slice(0, 80) };
+	state.replyTo = { seq, fromLabel: row.querySelector(".row-name")?.textContent ?? "消息", excerpt: clipText(rowText(row), 80) };
 	renderReply();
 	el.input.focus();
 }

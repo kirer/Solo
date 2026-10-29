@@ -11,6 +11,8 @@
  */
 
 /** 上传上限，与 `src/core/shell/uploads.ts` 的 `UPLOAD_MAX_BYTES` 对齐（前端先拦一道，省一次白跑）。 */
+import { clipText } from "./format.js";
+
 export const MAX_BYTES = 25 * 1024 * 1024;
 /** 一条消息最多几个，与 `UPLOAD_PER_MESSAGE` 对齐。 */
 export const MAX_PER_MESSAGE = 10;
@@ -38,9 +40,9 @@ export function shortName(name, max = 28) {
 	if ([...text].length <= max) return text;
 	const dot = text.lastIndexOf(".");
 	const keep = max - 1;
-	if (dot <= 0 || text.length - dot > 8) return `${[...text].slice(0, keep).join("")}…`;
+	if (dot <= 0 || text.length - dot > 8) return `${clipText(text, keep)}…`;
 	const ext = text.slice(dot);
-	const head = [...text.slice(0, dot)].slice(0, keep - ext.length).join("");
+	const head = clipText(text.slice(0, dot), keep - ext.length);
 	return `${head}…${ext}`;
 }
 
