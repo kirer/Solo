@@ -23,8 +23,10 @@ import {
 	buildOne,
 	buildStream,
 	groupStatus,
+	advanceSeconds,
 	isEventKind,
 	markGroupDone,
+	runningStatus,
 	mergeDoneGroups,
 	runStartAt,
 	isNeed as isNeedRow,
@@ -493,12 +495,12 @@ function tickRunningGroups() {
 			closeOpenGroups(lastAt, group.dataset.slug ?? undefined);
 			continue;
 		}
-		const next = groupStatus({ running: true, startAt, endAt: now, now });
 		// 秒数只许变大：系统时钟被拨回时也不能让老板看到「67s 变成 55s」。
-		const before = Number(/(\d+)s/.exec(what.textContent ?? "")?.[1] ?? -1);
-		const after = Number(/(\d+)s/.exec(next)?.[1] ?? -1);
-		if (after < before) continue;
-		what.textContent = next;
+		// 比较用 dataset 里的数值，不从文案里抠 —— 文案改了也不会静默失效。
+		const seconds = advanceSeconds(group.dataset.seconds, startAt, now);
+		group.dataset.seconds = String(seconds);
+		// 显示也用这个（已钳过的）秒数：时钟拨回时不能显示比上次小的数字。
+		what.textContent = runningStatus(seconds);
 	}
 }
 

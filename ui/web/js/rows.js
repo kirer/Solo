@@ -311,7 +311,12 @@ export function elapsedSeconds(startAt, endAt) {
  */
 export function groupStatus({ running = false, startAt = 0, endAt = 0, now = 0 } = {}) {
 	const seconds = elapsedSeconds(startAt, running ? now || endAt : endAt);
-	return running ? `正在执行 · ${seconds}s` : `已完成，用时 ${seconds} 秒`;
+	return running ? runningStatus(seconds) : `已完成，用时 ${seconds} 秒`;
+}
+
+/** 跑着的组头文案：只吃一个秒数。逐秒刷新时用它，别再从文案里反解数字。 */
+export function runningStatus(seconds) {
+	return `正在执行 · ${Math.max(0, Math.round(Number(seconds) || 0))}s`;
 }
 
 /** 底部活动行：多久没新过程行就不再当它还在跑。 */
@@ -350,6 +355,21 @@ export function activityRun(messages, now = Date.now()) {
 
 /** 已完成组的可见提示：一句人话 + 箭头，点开看过程。 */
 export const DONE_HINT = "查看过程";
+
+/**
+ * 逐秒刷新时的「只增不减」判断：上次多少秒、这次该显示多少秒。
+ *
+ * 以前这里是从组头的**文案**里抠数字（`/(\d+)s/`）：组头一旦改成「用时 67 秒」，
+ * 抠出来是 null，比较恒为 false，防倒退逻辑就静默失效了 —— 而且没人会知道。
+ * 所以秒数单独存在数值里（DOM 上是 `dataset.seconds`），文案只管显示。
+ */
+export function advanceSeconds(previous, startAt, now) {
+	const seconds = elapsedSeconds(startAt, now);
+	const prev = Number(previous);
+	// 时钟被拨回时 seconds 会变小：保留上次的值，老板看不到数字倒退。
+	if (Number.isFinite(prev) && prev >= 0 && seconds < prev) return prev;
+	return seconds;
+}
 
 /** 完整组头：名字 + 状态。DOM 里名字单独一个节点，这里给测试和 aria 用。 */
 export function groupHeader({ name = "", ...timing } = {}) {
@@ -742,6 +762,7 @@ export function markGroupDone(group, endAt) {
 	const name = group.dataset.name ?? "";
 	group.dataset.state = "done";
 	group.dataset.end = String(end);
+	group.dataset.seconds = String(elapsedSeconds(startAt, end));
 	const button = group.querySelector(".evs");
 	if (!button) return group;
 	button.setAttribute("aria-label", groupHeader({ name, running: false, startAt, endAt: end }));
@@ -774,6 +795,8 @@ export function wrapEvents(slug, name, nodes, timing = {}) {
 	wrap.dataset.state = running ? "running" : "done";
 	wrap.dataset.start = String(startAt);
 	wrap.dataset.end = String(endAt);
+	// 秒数的数值真相存在这里：只增不减的比较读它，不读文案。
+	wrap.dataset.seconds = String(elapsedSeconds(startAt, running ? now : endAt));
 	// 组头是唯一的开关：展开/收起只在这里，行自己不再挂 chevron。
 	const button = document.createElement("button");
 	button.className = "evs";
