@@ -3,10 +3,11 @@
  *
  * 三件事决定它「像一个人」而不是一个图标：
  *   1. 外形按 slug 的哈希分成三族（圆胖 / 带角 / 方肩）。
- *   2. 眼睛是 <mask> 挖出来的洞，透的是纸的底色 —— 不是画上去的黑点，
- *      所以歪头、压扁时眼睛跟着形状走，不会「贴」在脸上。
- *      洞下面垫一层 --ground 的「眼窝」：淡底行（老板的 --accent-wash 色带）
- *      或者灰底上，洞如果不垫白就会和底色混成一片，眼睛直接消失。
+ *   2. 眼睛是**画上去**的两块 --av-eye 色，不是 <mask> 挖的洞。
+ *      原先用 mask 是为了「眼睛透出纸色、歪头时跟着形状走」，但代价是每张脸
+ *      都带一份 <defs><mask>，而且动画（av-bob）每一帧都要重新栅格化蒙版 ——
+ *      一屏几十张脸时这是 CPU 大户。实测眼睛的矩形在三个外形里都在脸内部，
+ *      直接画两块颜色完全等价，视觉上一像素不差，省掉全部 defs。
  *   3. 底色只做身份，不做数据：明度 > 92%，色相固定间隔 60°，
  *      相邻两个人永远不会撞成一个色。
  */
@@ -33,7 +34,14 @@ const BODIES = [
 
 const HORNS = "M27.5 27 22 9.5 41 19.5ZM72.5 27 78 9.5 59 19.5Z";
 
-let serial = 0;
+/**
+ * 缓存：同一个 slug + 尺寸 + 状态画出来的字符串是常量。
+ *
+ * 为什么值得缓存：一屏几十行就是几十张脸，每行都重新拼一遍 SVG 字符串
+ * （几十次字符串拼接 + 哈希）纯属重复劳动。缓存后同一张脸一屏只拼一次。
+ * 因为没有 `<mask id>` 那种「必须全局唯一」的东西了，字符串可以安全复用。
+ */
+const CACHE = new Map();
 
 /** FNV-1a：稳定、够散、不依赖运行环境。 */
 function hash(text) {
@@ -62,23 +70,24 @@ const OWNER_LOOK = { shape: 2, tone: "hsl(14 52% 91%)" };
  */
 export function avatarSvg({ slug, name, size = 24, state = "idle" }) {
 	const key = slug || name || "anon";
+	const cacheKey = `${key}|${size}|${state}`;
+	const hit = CACHE.get(cacheKey);
+	if (hit !== undefined) return hit;
+
 	const shape = key === OWNER_SLUG ? OWNER_LOOK.shape : hash(key) % BODIES.length;
 	const tone = key === OWNER_SLUG ? OWNER_LOOK.tone : TONES[hash(`${key}:tone`) % TONES.length];
-	serial += 1;
-	const id = `avm${serial}`;
 
 	const horns =
 		shape === 1
 			? `<path d="${HORNS}" fill="${tone}" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"/>`
 			: "";
 
-	return `<svg class="av" data-shape="${shape}" data-state="${state}" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-	<defs><mask id="${id}" maskUnits="userSpaceOnUse" x="-100" y="-100" width="300" height="300">
-	<rect x="-100" y="-100" width="300" height="300" fill="#fff"/>
-	<g class="av-eyes" fill="#000"><rect x="32" y="44.5" width="10.5" height="15" rx="5.25"/><rect x="57.5" y="44.5" width="10.5" height="15" rx="5.25"/></g>
-	</mask></defs>
-	<g class="av-b"><path class="av-plate" d="${BODIES[shape]}" fill="var(--av-eye)"/><g mask="url(#${id})">${horns}<path d="${BODIES[shape]}" fill="${tone}" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"/></g></g>
+	// 眼睛：两块圆角矩形，直接填 --av-eye（和原来蒙版挖出来的颜色相同）。
+	const svg = `<svg class="av" data-shape="${shape}" data-state="${state}" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
+	<g class="av-b">${horns}<path class="av-body" d="${BODIES[shape]}" fill="${tone}" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"/><g class="av-eyes" fill="var(--av-eye)"><rect x="32" y="44.5" width="10.5" height="15" rx="5.25"/><rect x="57.5" y="44.5" width="10.5" height="15" rx="5.25"/></g></g>
 </svg>`;
+	CACHE.set(cacheKey, svg);
+	return svg;
 }
 
 /** 2×2 / 对角 / 品字的座位表。返回 [{x,y,d}]，坐标单位是 px。 */

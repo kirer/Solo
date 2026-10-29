@@ -137,7 +137,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 35 文件 / 321 例，应该 <2s
+npm test           # 35 文件 / 322 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 

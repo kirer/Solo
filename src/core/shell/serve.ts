@@ -10,6 +10,7 @@
  * 路径带 `:id` 的匹配器在 `./http/routes.ts`（纯函数，无业务概念）。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { appendFile, mkdir } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
@@ -77,6 +78,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
 	// 附件根跟着工作区走：`<workspace>/uploads`（agentsRoot 是 `<workspace>/agents`）。
 	const uploadsRoot = uploadsRootOf(shell.agentsRoot);
+	const workspaceRoot = dirname(shell.agentsRoot);
 	const orgClients = new Set<ServerResponse>();
 	let orgTimer: NodeJS.Timeout | undefined;
 
@@ -565,7 +567,14 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		{
 			pattern: "/api/channels/:id/stream",
 			method: "GET",
-			handler: ({ response, params }) => streamChannel(response, params.id ?? ""),
+			handler: ({ response, url, params }) => {
+				// `?since=N` = 「我已经有到 N 了」。客户端开着页面刷新时带上它，
+				// 服务端就只补 N 之后的消息，不再把 60 条历史重发一遍。
+				//
+				// 不带的话（第一次打开、没有 detail）就连历史一起推 —— 那是首屏补齐。
+				const since = Number(url.searchParams.get("since") ?? "");
+				return streamChannel(response, params.id ?? "", Number.isFinite(since) && since > 0 ? since : undefined);
+			},
 		},
 		{
 			pattern: "/api/channels/:id/read",
@@ -582,6 +591,25 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				return json(response, { ok: true });
 			},
 		},
+		{
+			// 浏览器自己报上来的卡顿（`ui/web/js/jank.js`）。
+			//
+			// 老板两次报「agent 在跑的时候页面卡死」，而我在无头 Chrome 里量出来是
+			// 「长任务 0、最慢帧 17ms」—— 两边对不上，靠猜猜不完。让浏览器在真卡的时候
+			// 把「卡了多久、当时在干什么」写到 `workspace/logs/jank.jsonl`，复现一次就能读。
+			pattern: "/api/diag",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				const body = await readJson<{ kind?: string; entries?: unknown }>(request);
+				try {
+					await mkdir(join(workspaceRoot, "logs"), { recursive: true });
+					await appendFile(join(workspaceRoot, "logs", "jank.jsonl"), `${JSON.stringify({ ...body, at: new Date().toISOString() })}\n`);
+				} catch {
+					/* 诊断写不进去不该影响任何事 */
+				}
+				return json(response, { ok: true });
+			},
+		},
 		// 界面上还没有的入口，先明确 501，免得前端拿到 404 后误以为是「频道没了」。
 		{
 			pattern: "*rest",
@@ -591,7 +619,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		},
 	];
 
-	function streamChannel(response: ServerResponse, id: string): void {
+	function streamChannel(response: ServerResponse, id: string, since?: number): void {
 		response.writeHead(200, {
 			"Content-Type": "text/event-stream; charset=utf-8",
 			"Cache-Control": "no-cache, no-transform",
@@ -605,7 +633,13 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			channelClients.set(id, clients);
 		}
 		clients.add(response);
-		// 连接建立即推全量补齐（含已落库的 pending 占位与历史 done 消息）。
+		// 客户端说「我已经有到 N 了」：把游标设到 N，`pushChannel` 就只推 N 之后的。
+		//
+		// 不设的话，刷新页面会再收一遍最近 60 条历史 —— 那 60 条里有 20 来条比已加载窗口
+		// 更早，前端只能把它们追加到列表**末尾**，于是一刷新频道就变成
+		// 「最新的在上面、更早的在最下面」的乱序（实测 60 行里 20 行错位）。
+		if (since !== undefined) setCursorOf(response, id, since + RECENT_RESEND);
+		// 连接建立即推补齐（首屏全量；带 since 时只补增量）。
 		void pushChannel(id);
 		const keepAlive = setInterval(() => {
 			try {

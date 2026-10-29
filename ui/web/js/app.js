@@ -18,6 +18,7 @@ import { copyText, escapeHtml, relTime } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
 import { activityPhrase, buildOne, buildStream, eventLabel, isEventKind, isNeed as isNeedRow, wrapEvents } from "./rows.js";
 import { mergeMessages } from "./messages.js";
+import { installJankMonitor, mark } from "./jank.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
 
@@ -288,9 +289,11 @@ function slugOfChannel(channel) {
  * 预览、职位、项目、人数全不放 —— 那些扫一眼看不出来，只会把名字挤小。
  */
 function renderSidebar() {
+	const endMark = mark("render:sidebar");
 	const channels = [...state.channels].sort((a, b) => (b.lastAt ?? 0) - (a.lastAt ?? 0));
 	if (channels.length === 0) {
 		el.rows.innerHTML = `<div class="empty"><span>还没有频道。</span></div>`;
+		endMark();
 		return;
 	}
 	const out = channels.map((channel) => {
@@ -319,6 +322,7 @@ function renderSidebar() {
 		)}</span>${dot}</span></button>`;
 	});
 	el.rows.innerHTML = out.join("");
+	endMark();
 }
 
 /**
@@ -866,9 +870,15 @@ function messageSignature(message) {
 
 function openChannelStream(id) {
 	if (typeof EventSource === "undefined") return;
-	const source = new EventSource(`/api/channels/${encodeURIComponent(id)}/stream`);
+	// `since` = 已经拿到的最后一条。带上它，服务端只补增量，
+	// 不会把 60 条历史再推一遍（推过来的旧消息会插到列表末尾，一刷新就乱序）。
+	const lastSeq = state.detail?.channel?.lastSeq ?? state.detail?.messages?.at(-1)?.seq ?? 0;
+	const source = new EventSource(
+		`/api/channels/${encodeURIComponent(id)}/stream${lastSeq > 0 ? `?since=${lastSeq}` : ""}`,
+	);
 	const merge = (payload) => {
 		if (state.currentId !== id || !state.detail) return;
+		const endMark = mark("sse:merge");
 		const message = payload?.message ?? payload;
 		if (!message || typeof message.seq !== "number") return;
 		const messages = state.detail.messages ?? [];
@@ -884,6 +894,15 @@ function openChannelStream(id) {
 			// 加了 5 万个节点又删掉，最长一次卡了 2.7 秒。重推不是变化，直接扔掉。
 			if (messageSignature(merged) === messageSignature(messages[index])) return;
 			messages[index] = merged;
+		} else if (messages.length > 0 && message.seq < messages[messages.length - 1].seq) {
+			// 比已加载窗口还早的消息不该追加到末尾（会变成「最新的在上面、更早的在最下面」）。
+			// 正常不会走到这里 —— 客户端带 `since` 连流之后服务端只补增量；
+			// 万一走了，也宁可整列按 seq 重排，不要乱序。
+			messages.push(message);
+			messages.sort((left, right) => left.seq - right.seq);
+			renderFlow({ restore: false });
+			renderActivity();
+			return;
 		} else messages.push(message);
 		notePresence(message);
 		const pinned = isPinned();
@@ -926,6 +945,7 @@ function openChannelStream(id) {
 		if (pinned) scrollToBottom();
 		else syncToBottom();
 		renderActivity();
+		endMark();
 	};
 	source.addEventListener("create", (event) => {
 		try {
@@ -1893,6 +1913,7 @@ function firstInterestingChannel() {
 
 function boot() {
 	installMotionTokens();
+	installJankMonitor();
 	applyLayout();
 	bind();
 	el.skel.hidden = false;

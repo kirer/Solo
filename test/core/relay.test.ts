@@ -188,6 +188,28 @@ describe("接力上限拦截", () => {
 		expect(resumed.delivery.delivered.length).toBe(1);
 	});
 
+	it("连续被拦只留一条 note —— 否则频道里几百行「接力到上限」", async () => {
+		// 线上实测：一个私聊 197 条消息里 150 多条是这个 note。上限一旦触发，之后每条
+		// agent 消息都会被拦，每拦一条写一条 note 就是把告警刷成正文。
+		const { state, post } = await setup([OWNER, "a", "b"], ["a", "b"]);
+		const limit = relayLimit((await state()).channels["proj:x"]!);
+		await post({ from: OWNER, text: "开工", at: 2 });
+		for (let index = 1; index <= limit; index += 1) {
+			await post({ from: index % 2 === 1 ? "a" : "b", text: `第${index}棒`, at: 10 + index });
+		}
+		const notes = async () =>
+			(await state()).messages["proj:x"]!.filter((item) => item.text.startsWith("接力到上限（")).length;
+
+		await post({ from: "a", text: "第一次超限", at: 90 });
+		expect(await notes()).toBe(1);
+		// 第二、第三次超限：消息照落库，note 不再追加。
+		const before = (await state()).messages["proj:x"]!.length;
+		await post({ from: "b", text: "第二次超限", at: 91 });
+		await post({ from: "a", text: "第三次超限", at: 92 });
+		expect((await state()).messages["proj:x"]!.length).toBe(before + 2);
+		expect(await notes()).toBe(1);
+	});
+
 	it("显式 @ 一个人可以突破上限 —— note 里说「自己 @ 人就能接着走」，代码就得真的放行", async () => {
 		const { state, post, submitted } = await setup([OWNER, "a", "b"], ["a", "b"]);
 		const limit = relayLimit((await state()).channels["proj:x"]!);

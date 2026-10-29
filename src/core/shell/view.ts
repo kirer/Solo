@@ -166,6 +166,10 @@ export function channelList(
 		if (channel.archived === true) continue;
 		const messages = state.messages[channel.id] ?? [];
 		const last = messages[messages.length - 1];
+		// 侧栏预览只取「人说的话」。`note` 是系统留的告警（接力到上限、投递失败），
+		// 让它当预览的结果是：一个频道最新一条是告警时，整行看起来像坏掉了 ——
+		// 老板扫一眼以为这个频道只剩错误。
+		const lastSpoken = messages.findLast((item) => item.kind !== "note");
 		const unread = unreadCount(state, channel.id, slug);
 		// 「@ 我」的条数：未读里点名提到我的那些。界面上它们比普通未读更红。
 		//
@@ -194,7 +198,7 @@ export function channelList(
 			...(project === undefined ? {} : { project }),
 			unread,
 			mentions,
-			preview: previewOf(last),
+			preview: previewOf(lastSpoken),
 			lastAt: last?.at ?? channel.createdAt,
 			lastSeq: last?.seq ?? 0,
 			memberCount: channel.members.length,

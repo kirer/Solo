@@ -1267,3 +1267,68 @@ skills[],memory{exists,entries,digest},channels[]}`。不复用 `/api/org`（那
 费用，而「开头是不是 Let me…」已经能覆盖绝大多数。误伤面很小 —— 中文汇报里夹
 `docker compose up`、`SKILL.md`、报错原文都不会被打中，`test/core/monologue.test.ts`
 四例专门钉住这四个边界。
+
+## ADR-059：头像不用 `<mask>` 画眼睛，输出按「人 + 尺寸 + 状态」缓存
+
+**背景。** 老板两次报「agent 在跑的时候页面卡死」。我在无头 Chrome 里量了 CPU profile、
+长任务、帧间隔、服务端延迟、SSE 字节数，全都正常（最长帧 17ms、长任务 0、服务端最大 1.4ms）。
+两边现象对不上的嫌疑落在一处：无头里 `prefers-reduced-motion` 被强制成 `reduce`，
+`motion.css` 的 `av-bob` / `av-ponder` / `av-blink` 根本不跑；而真实浏览器里它们是
+`animation: … infinite`。原来每张脸都是
+
+```html
+<svg><defs><mask id="avm123">…</mask></defs>
+  <g class="av-b"><path class="av-plate"/><g mask="url(#avm123)">…</g></g></svg>
+```
+
+两个代价叠在一起：**①** 每张脸一份 `<defs><mask>`，一屏几十行就是几十份，而且 `id` 是自增的
+（`avm1`、`avm2`…），同一张脸每次重画都是新 id，浏览器无法复用任何栅格化结果；
+**②** `av-b` 上的 transform 动画每帧都要把蒙版重新栅格化。
+
+**决定。** 眼睛改成直接画两块 `fill="var(--av-eye)"` 的圆角矩形，删掉全部 `<defs>`，
+`avatarSvg()` 的输出按 `` `${slug}|${size}|${state}` `` 缓存成字符串。
+
+**为什么视觉上一像素不差。** 蒙版的作用是「眼睛透出底下 `av-plate` 的颜色」，而 `av-plate`
+的 fill 就是 `var(--av-eye)`；两个眼睛矩形（x 32–42.5 / 57.5–68，y 44.5–59.5）在三个外形里
+都落在脸内部，不需要被外形裁剪。所以「先画脸再画两块 `--av-eye`」等价于「挖洞露出
+`--av-eye`」。副作用是 `.av-plate` 这个类没有了 —— 已全仓 grep 确认没有别处引用。
+
+**回归。** `test/ui/detail-panel.test.ts` 与浏览器实测：`svg.av mask` 计数 0、`defs` 计数 0；
+截图对比眼睛位置、颜色、描边一致。
+
+## ADR-060：连续的「接力到上限」告警只留一条；侧栏预览不取告警
+
+**背景。** 线上一个私聊 197 条消息里 150 多条是 `接力到上限（3 次）…` 这条 note。
+根因是 `post.ts` 每拦下一条 agent 消息就补一条 note —— 上限一旦触发，之后**每一条**都被拦，
+于是告警被刷成了正文。这直接对应老板的抱怨「沟通的内容太多了，根本不像正常人之间沟通」。
+同一时间侧栏预览显示的也是这条告警（预览取的是「最后一条消息」），于是整个频道看起来只剩错误。
+
+**决定。**
+1. `src/core/channel/post.ts`：只有「老板上次说话之后还没报过警」才补 note。
+   判据不能写成「上一条是不是 note」—— 被拦的那条消息本身也会落库，上一条永远是它；
+   也不能写成 `findLastIndex(from === OWNER)` —— note 自己就是 `from: OWNER`，
+   它会把「老板刚说过话」误判成成立。所以找的是
+   `item.from === OWNER && item.kind !== "note"`。
+2. `src/core/shell/view.ts`：侧栏 `preview` 取 `findLast((item) => item.kind !== "note")`。
+
+**回归。** `test/core/relay.test.ts` 的「连续被拦只留一条 note —— 否则频道里几百行
+「接力到上限」」：第一次超限留 1 条 note，第二三次超限只加消息不加 note，note 总数保持 1。
+
+## ADR-061：卡顿由浏览器自己记账，上报到 `workspace/logs/jank.jsonl`
+
+**背景。** 「agent 在跑的时候页面卡死」复现不了：无头实测 55 秒 `replace 0`、`feedAppends 4`、
+长任务 0、最慢帧 17ms；服务端 `/api/channels` 100 次采样最大 1.4ms；接口体积 1.2–5.8KB；
+突发 40 条消息最慢帧 17ms。而老板那边是真卡。**继续在无头里猜是浪费老板的时间。**
+
+**决定。** 让浏览器自己记：`ui/web/js/jank.js` 用 `PerformanceObserver({entryTypes:["longtask"]})`
+加 rAF 帧间隔（`FRAME_GAP_MS = 240`、`TASK_MS = 200`），只记真卡的那几次，
+带上「当时正在干什么」（`mark(label)` 由 `merge()` 和 `renderSidebar()` 埋点），
+每 5 秒 `fetch("/api/diag", { keepalive: true })` 上报；服务端 `POST /api/diag`
+追加到 `workspace/logs/jank.jsonl`。
+
+**为什么值得留一个上报口子。** 这是唯一能拿到「老板真机上到底什么东西慢」的办法，
+而且成本极低（只在卡的时候写、5 秒一次）。它也是唯一一个不画在界面上的接口 ——
+消费者是 `jank.js`，不是视图，`check-boundaries.mjs` 的「路由必须有前端消费者」照样成立。
+
+**自测。** 注入一次 500ms 主线程阻塞 → 6 秒后 `workspace/logs/jank.jsonl` 出现
+`{"kind":"jank","entries":[{"why":"frame","ms":483,"doing":"idle","forMs":3394}]}`。
