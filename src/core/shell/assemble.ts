@@ -39,6 +39,7 @@ import { membersOfProject, readProject } from "../project/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleProject } from "../project/settle.ts";
 import { backfillTranscripts, startTranscriptSink } from "./projector.ts";
+import { startAnswerRescue } from "./rescue.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -444,6 +445,8 @@ export async function assembleCore(
 		console.error("[core] 历史投影回填失败（已忽略，不影响启动）：", error);
 	}
 	const unsubscribeTranscript = startTranscriptSink(harness, directory);
+	// 「他答了但没说出来」的安全网：模型漏调 `say` 时替它把最终正文发出去。
+	const stopAnswerRescue = startAnswerRescue(harness);
 
 	const shell: CoreShell = {
 		harness,
@@ -509,7 +512,12 @@ export async function assembleCore(
 		agentsRoot: options.agentsRoot,
 		projectsRoot: options.projectsRoot,
 		companyChannel,
-		close: (ctx?: Context) => harness.close(ctx ?? context),
+		close: async (ctx?: Context) => {
+			// 两个订阅都是「读会话、写频道」，关库之前先停掉，免得它们对着已关闭的库再提交一次。
+			unsubscribeTranscript();
+			stopAnswerRescue();
+			await harness.close(ctx ?? context);
+		},
 	};
 
 	return shell;

@@ -291,6 +291,15 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	await deps.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const state = doc as ChannelState;
+		// 序号以**消息本身**为准，不以 `nextSeq` 为准。
+		//
+		// 实测（2026-10-29）：`nextSeq["company"]` 是 19 而频道里已经有 36 条消息，于是新消息
+		// 拿到了 #20 —— 和一条旧消息撞号。撞号的后果不是「多一条」，是序列唯一的假设塌了：
+		// 前端按 seq 去重、按 `[data-seq=N]` 定位、补历史时按 seq 合并，全都指向错的那条，
+		// 症状就是「刷新以后少了几句」。这类不一致只能在这里兜（唯一写入口），
+		// 让它自愈，而不是要求所有调用方都保证 `nextSeq` 正确。
+		const highestSeq = (doc.messages[input.channelId] ?? []).reduce((max, item) => (item.seq > max ? item.seq : max), 0);
+		if ((doc.nextSeq[input.channelId] ?? 1) <= highestSeq) doc.nextSeq[input.channelId] = highestSeq + 1;
 		// appendMessage 返回的是新 state；这里只要它算好的 message，写入按路径原地做。
 		const next = appendMessage(state, input.channelId, {
 			from: input.from,
@@ -323,7 +332,10 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		// 天然不是「待 from 响应的新待办」——由此严格绑定 processing 的触发判据，回环本不存在。
 		const fillIdx =
 			list !== undefined && input.status !== "pending" && (input.text ?? "").trim() !== ""
-				? (list as Message[]).findIndex(
+				? // 取**最后**一个匹配的占位：同一个人的历史里可能躺着好几条没被回复的
+					// 「开始处理…」（以前每轮都会留一条），填最早的那条等于把答案塞进一条
+					// 早已滚出屏幕的旧消息里 —— 实测补发时写进了 #26 而当时频道已经有 #43。
+					(list as Message[]).findLastIndex(
 						(m) => m.status === "pending" && m.pendingFor === input.from && (m.processing === true || (m.text ?? "").trim() === ""),
 					)
 			: -1;
