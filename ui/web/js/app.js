@@ -146,9 +146,9 @@ const el = {
 	toastRoot: $("toast-root"),
 	teamBtn: $("team-btn"),
 	detailBtn: $("detail-btn"),
-	filesBtn: $("files-btn"),
 	detailClose: $("detail-close"),
 	filesBody: $("files-body"),
+	detailBack: $("detail-back"),
 	detail: $("detail"),
 	detailPanel: $("detail-panel"),
 	detailBody: $("detail-body"),
@@ -1210,10 +1210,40 @@ function selectRightTab(tab) {
 
 let files = null;
 
-async function openDetail() {
+/**
+ * 右栏往下钻的路径。栈底永远是「当前频道」，每进一个人压一层。
+ *
+ * 为什么要有它：从项目详情点进某个成员，是同一个面板换了内容 —— 没有这一层，
+ * 老板点完就回不到项目了（只能收起再点一次详情）。
+ */
+let rightTrail = [];
+
+function pushRight(entry) {
+	if (entry.kind === "channel") rightTrail = [entry];
+	else rightTrail.push(entry);
+	renderRightBack();
+}
+
+function renderRightBack() {
+	el.detailBack.hidden = rightTrail.length < 2;
+}
+
+/** 返回上一层：人 → 人，或人 → 群。退到底就没了（栈底不画返回）。 */
+function backRight() {
+	if (rightTrail.length < 2) return;
+	rightTrail.pop();
+	const previous = rightTrail[rightTrail.length - 1];
+	renderRightBack();
+	if (previous === undefined) return;
+	if (previous.kind === "person") void openPersonDetail(previous.slug, { push: false });
+	else void openDetail({ push: false });
+}
+
+async function openDetail({ push = true } = {}) {
 	const channel = currentChannel();
 	if (!channel) return;
 	openRight("detail");
+	if (push) pushRight({ kind: "channel" });
 	// 不设 `el.frame.inert`：这是从右边**展开**的一列，不是模态框。
 	// 老板可以一边看档案一边点频道。
 	el.detailPanel.focus();
@@ -1247,13 +1277,30 @@ async function openDetail() {
 		kind,
 		members,
 		avatarHtml: channelAvatar(channel, 56),
-		preview: channel.preview ?? "",
+		// 详情里「最近」显示的是**最后一句人话**：过程投影（think/tool/work）和系统留痕
+		// （note）都不算，否则这里会显示「$ date」这种没人要看的东西。
+		preview: recentLineOf(),
 		lastAt: channel.lastAt ?? 0,
 	});
 }
 
+/** 当前频道最后一句「人话」，没有就给空串（详情里那一段会自己收起来）。 */
+function recentLineOf() {
+	const list = state.detail?.messages ?? [];
+	const quiet = new Set(["note", "think", "tool", "work"]);
+	for (let index = list.length - 1; index >= 0; index -= 1) {
+		const message = list[index];
+		if (quiet.has(message.kind)) continue;
+		const text = (message.text ?? "").replace(/\s+/g, " ").trim();
+		if (text === "") continue;
+		return `${message.fromLabel ?? message.from}：${text.slice(0, 90)}`;
+	}
+	return "";
+}
+
 /** 从群详情里点一个人：换成那个人的档案（不关面板）。 */
-async function openPersonDetail(slug) {
+async function openPersonDetail(slug, { push = true } = {}) {
+	const before = el.detailBody.innerHTML;
 	el.detailBody.innerHTML = `<p class="detail-loading">正在读档案…</p>`;
 	try {
 		const person = await personProfile(slug);
@@ -1261,10 +1308,12 @@ async function openPersonDetail(slug) {
 			presence: presenceOf(slug),
 			statusLabel: STATUS_LABEL[presenceOf(slug)] ?? "",
 		});
+		if (push) pushRight({ kind: "person", slug });
 	} catch (error) {
-		el.detailBody.innerHTML = `<p class="detail-loading">读不到档案：${escapeHtml(
-			error instanceof Error ? error.message : String(error),
-		)}</p>`;
+		// 读不到就**退回原样**再说一声：把整块内容换成一行错误，等于老板点错一下
+		// 就把刚才那个项目详情弄丢了（他得重新收起、再点一遍）。
+		el.detailBody.innerHTML = before;
+		toast(`读不到这个人的档案：${error instanceof Error ? error.message : String(error)}`, "error");
 	}
 }
 
@@ -1277,6 +1326,8 @@ function closeDetail() {
 	window.setTimeout(() => {
 		if (el.frame.dataset.right !== "closed") return;
 		el.detail.hidden = true;
+		rightTrail = [];
+		renderRightBack();
 		if (detailReturn instanceof HTMLElement) detailReturn.focus();
 		detailReturn = null;
 	}, wait);
@@ -1947,8 +1998,8 @@ function bind() {
 	el.teamBtn.addEventListener("click", openTeam);
 	el.teamClose.addEventListener("click", closeTeam);
 	el.detailBtn.addEventListener("click", openDetail);
-	el.filesBtn.addEventListener("click", () => openRight("files"));
 	el.detailClose.addEventListener("click", closeDetail);
+	el.detailBack.addEventListener("click", () => backRight());
 
 	// 「文件」页只挂一次，切走再切回来只是 `reload()`（不重建 DOM，滚动位置还在）。
 	files = mountFiles(el.filesBody, { load: workspaceFiles, onToast: toast });

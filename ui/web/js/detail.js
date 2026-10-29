@@ -10,7 +10,22 @@ import { avatarSvg } from "./avatar.js";
 import { escapeHtml, relTime } from "./format.js";
 import { renderMarkdown } from "./markdown.js";
 
+// 老板自己的 slug。他没有「档案」这一页（`GET /api/people/owner` 是 404），
+// 所以成员列表里他是不可点的 —— 见下面那段注释。
+const OWNER_SLUG = "owner";
+
 const KIND_LABEL = { company: "全员", leadership: "领导层", project: "项目", dm: "私聊", other: "频道" };
+
+/**
+ * `identity.md` 的正文通常以 `# 名字` 开头，而面板顶上已经写着名字了。
+ * 同一屏出现两遍同一个名字，看起来像渲染错了 —— 只在**完全一致**时剥掉那一行。
+ */
+function bodyWithoutName(body, name) {
+	if (!body) return "";
+	const first = body.split("\n", 1)[0]?.trim() ?? "";
+	if (first.replace(/^#+\s*/, "") !== name) return body;
+	return body.slice(first.length).replace(/^\n+/, "");
+}
 
 function statusTag(label) {
 	if (!label) return "";
@@ -76,7 +91,6 @@ export function personDetailHtml(person, options = {}) {
 			<h2 class="detail-name" id="detail-name">${escapeHtml(person.label ?? person.slug)}</h2>
 			<span class="detail-tags">${[person.title, person.project].filter(Boolean).map((text) => `<span class="detail-tag">${escapeHtml(text)}</span>`).join("")}${statusTag(statusLabel)}</span>
 		</span>
-		<button class="icon-btn detail-x" type="button" data-close-detail title="关闭（Esc）" aria-label="关闭">✕</button>
 	</header>
 	${section(
 		"关系",
@@ -87,7 +101,7 @@ export function personDetailHtml(person, options = {}) {
 		].join(""),
 	)}
 	${section("在哪些频道", channelsInner)}
-	${section("预置提示词", person.body ? `<div class="detail-doc">${renderMarkdown(person.body)}</div>` : `<p class="detail-empty">identity.md 是空的。</p>`)}
+	${section("预置提示词", person.body ? `<div class="detail-doc">${renderMarkdown(bodyWithoutName(person.body, person.label ?? person.slug))}</div>` : `<p class="detail-empty">identity.md 是空的。</p>`)}
 	${section("技能", skillsInner)}
 	${section("记忆", memoryInner)}`;
 }
@@ -105,15 +119,21 @@ export function channelDetailHtml(channel, options = {}) {
 		members.length === 0
 			? `<p class="detail-empty">还没有成员。</p>`
 			: `<ul class="detail-people">${members
-					.map(
-						(member) => `<li class="detail-person">
+					.map((member) => {
+						const face = avatarSvg({ slug: member.slug, name: member.label, size: 24, state: member.presence ?? "idle" });
+						const name = `<span class="detail-person-name">${escapeHtml(member.label ?? member.slug)}</span>`;
+						const title = member.title ? `<span class="detail-person-title">${escapeHtml(member.title)}</span>` : "";
+						// 老大没有「档案」可看（他自己的名片就是这个界面），所以这里不做成按钮：
+						// 做成按钮的结果是点进去报「没有这个人」—— 一个不该出现的 404。
+						if (member.slug === OWNER_SLUG) {
+							return `<li class="detail-person"><span class="detail-person-btn is-static">${face}${name}${title}</span></li>`;
+						}
+						return `<li class="detail-person">
 						<button class="detail-person-btn" type="button" data-open-person="${escapeHtml(member.slug)}">
-							${avatarSvg({ slug: member.slug, name: member.label, size: 24, state: member.presence ?? "idle" })}
-							<span class="detail-person-name">${escapeHtml(member.label ?? member.slug)}</span>
-							${member.title ? `<span class="detail-person-title">${escapeHtml(member.title)}</span>` : ""}
+							${face}${name}${title}
 						</button>
-					</li>`,
-					)
+					</li>`;
+					})
 					.join("")}</ul>`;
 
 	return `<header class="detail-head">
@@ -126,8 +146,18 @@ export function channelDetailHtml(channel, options = {}) {
 				channel.ownerLabel ? `<span class="detail-tag">负责人 ${escapeHtml(channel.ownerLabel)}</span>` : ""
 			}</span>
 		</span>
-		<button class="icon-btn detail-x" type="button" data-close-detail title="关闭（Esc）" aria-label="关闭">✕</button>
 	</header>
-	${section("最近", [labeled("最后一条", options.preview ?? ""), labeled("时间", options.lastAt ? relTime(options.lastAt) : "")].join(""))}
+	${
+		// 没有「人话」就不画这一段（空标签比没有更难看），有就单独一行显示原文。
+		(options.preview ?? "") === ""
+			? ""
+			: section(
+					"最近",
+					`<p class="detail-recent">${escapeHtml(options.preview ?? "")}</p>${labeled(
+						"时间",
+						options.lastAt ? relTime(options.lastAt) : "",
+					)}`,
+				)
+	}
 	${section(`成员 ${members.length}`, membersInner)}`;
 }
