@@ -572,6 +572,72 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 	text-align: left;
 }
 
+/* 一组过程行：一行摘要「15 步过程 · 想 3 · 跑 8」，点开才看细节。
+   左缘和正文对齐（48 = 40 头像 + 8 间距），缩进层级靠这条线，不靠颜色。 */
+.row-events {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	margin-left: 48px;
+	max-width: calc(100% - 48px);
+}
+
+button.evs {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	max-width: 100%;
+	padding: 2px 6px 2px 2px;
+	margin-left: -2px;
+	border: 0;
+	background: transparent;
+	color: var(--ink-3);
+	font: inherit;
+	font-size: 12px;
+	line-height: 20px;
+	text-align: left;
+	cursor: pointer;
+	border-radius: var(--r-chip, 6px);
+}
+
+button.evs:hover {
+	background: var(--hover);
+	color: var(--ink-2);
+}
+
+.evs b {
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.evs-what {
+	color: var(--ink-3);
+}
+
+.evs-mix {
+	color: var(--ink-3);
+	opacity: 0.75;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.row-events[data-open="true"] .ev-chevron {
+	transform: rotate(90deg);
+}
+
+.evs-body {
+	margin: 2px 0 2px 4px;
+	padding-left: 10px;
+	border-left: 1px solid var(--line);
+}
+
+.evs-list {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+}
+
 button.ev {
 	border: 0;
 	background: none;

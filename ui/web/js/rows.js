@@ -77,6 +77,14 @@ function shortPath(path) {
 }
 
 /** 工具名：文本的第一个词。如 `run command="ls"` → `run`。 */
+/**
+ * 「过程行」：他在想什么、跑了什么。这些行没有头像，缩进对齐在正文左缘，
+ * 归属是**紧随其后的那句话**（见 `app.js` 里 `state.tailEvents` 的搬移）。
+ */
+export function isEventKind(kind) {
+	return kind === "think" || kind === "tool" || kind === "work";
+}
+
 export function toolNameOf(message) {
 	if (message.kind !== "tool") return "";
 	return String(message.text ?? "")
@@ -359,6 +367,59 @@ function sepNode(label) {
 	return node;
 }
 
+/** 过程行的短标签，用来做「15 步过程 · 想 3 · 跑命令 8」这行摘要。 */
+export function eventLabel(message) {
+	if (message.kind === "think") return "想";
+	if (message.kind === "work") return "跑";
+	const tool = toolNameOf(message);
+	// `run` 的 stdout 会另存一条 `work`（同一次命令），两条都数就会变成「跑 6 · run 6」。
+	if (tool === "run" || tool === "bash") return "跑";
+	return tool ?? "用工具";
+}
+
+/**
+ * 把一串过程行收成一个可展开的组。
+ *
+ * 一个人干一件事能留下十几条 think/tool。全都平铺出来，一屏全是「想了 1s」，
+ * 把他真正说的那句话埋掉了 —— 老板的原话是「沟通内容太多了，根本不像正常人之间沟通」。
+ * 收成一行，想看细节再点开。
+ */
+export function wrapEvents(slug, name, nodes, labels = []) {
+	const rows = nodes.filter((node) => node.classList?.contains("row-event"));
+	if (rows.length <= 1) return nodes;
+	const counts = new Map();
+	for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+	const mix = [...counts]
+		.sort((left, right) => right[1] - left[1])
+		.slice(0, 3)
+		.map(([label, count]) => `${escapeHtml(label)} ${count}`)
+		.join(" · ");
+	const wrap = document.createElement("div");
+	wrap.className = "row row-events";
+	wrap.dataset.slug = slug ?? "";
+	const button = document.createElement("button");
+	button.className = "evs";
+	button.type = "button";
+	button.dataset.act = "expand";
+	button.setAttribute("aria-expanded", "false");
+	button.innerHTML = `<b>${escapeHtml(name ?? "")}</b> <span class="evs-what">${rows.length} 步过程</span>${
+		mix ? ` <span class="evs-mix">${mix}</span>` : ""
+	}<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>`;
+	const body = document.createElement("div");
+	body.className = "evs-body";
+	body.hidden = true;
+	const inner = document.createElement("div");
+	inner.className = "evs-list";
+	for (const node of nodes) {
+		// 组里的时间分隔线没有意义（本来就在一段连续干活里），只留过程行本身
+		if (node.classList?.contains("row-time-divider")) continue;
+		inner.append(node);
+	}
+	body.append(inner);
+	wrap.append(button, body);
+	return [wrap];
+}
+
 /**
  * @param {Array<object>} messages 已按时间正序
  * @param {{people?:Array<object>, now?:number, stateOf?:(slug:string)=>string}} ctx
@@ -374,6 +435,46 @@ export function buildStream(messages, ctx = {}) {
 	let prevSay = ctx.prev ?? null; // 上一条 say（判断是否同人连发）
 	let lastAt = ctx.prev?.at ?? 0; // 上一条被画出来的行的时间
 	let thinkRun = null;
+	// 过程行先攒着，等「它产出的那句话」出现再一起放。
+	//
+	// 不攒的话：agent 先想、先跑命令、最后才说，于是「沈舟 想了 1s」出现在沈舟的**头像上方**
+	// —— 读起来像是上一句的尾巴，也确实让人认错发言人。攒到他开口之后再放，
+	// 三行过程就落在他那句话底下、和正文左缘对齐。
+	const pendingEvents = [];
+	const queueEvent = (slug, nodes, label) => pendingEvents.push({ slug, nodes, label });
+	const flushEntry = (entry) => {
+		const nameOf = bySlug.get(entry.slug)?.label ?? entry.slug;
+		for (const node of wrapEvents(entry.slug, nameOf, entry.nodes, entry.label ? [entry.label] : [])) {
+			frag.append(node);
+		}
+	};
+	const flushEvents = (keepSlug) => {
+		if (pendingEvents.length === 0) return;
+		if (keepSlug !== undefined) {
+			// 只留下这位说话人的过程行（它们要挪到他那句话后面）
+			for (let i = pendingEvents.length - 1; i >= 0; i -= 1) {
+				const entry = pendingEvents[i];
+				if (entry.slug === keepSlug) continue;
+				flushEntry(entry);
+				pendingEvents.splice(i, 1);
+			}
+			return;
+		}
+		for (const entry of pendingEvents) flushEntry(entry);
+		pendingEvents.length = 0;
+	};
+	const takeEvents = (slug) => {
+		const taken = [];
+		const labels = [];
+		for (let i = pendingEvents.length - 1; i >= 0; i -= 1) {
+			if (pendingEvents[i].slug !== slug) continue;
+			taken.unshift(...pendingEvents[i].nodes);
+			if (pendingEvents[i].label) labels.unshift(pendingEvents[i].label);
+			pendingEvents.splice(i, 1);
+		}
+		// 一次性收成一组：一段连续干活十几条过程行，展开的时候才看。
+		return wrapEvents(slug, bySlug.get(slug)?.label ?? slug, taken, labels);
+	};
 
 	for (const message of list) {
 		if (!message) continue;
@@ -389,7 +490,7 @@ export function buildStream(messages, ctx = {}) {
 			}
 			const row = eventNode(message, "想了 1s");
 			thinkRun = { slug: message.fromSlug, start: message.at, end: message.at, el: row };
-			frag.append(row);
+			queueEvent(message.fromSlug, [row], eventLabel(message));
 			lastAt = message.at;
 			prevSay = null;
 			continue;
@@ -397,14 +498,15 @@ export function buildStream(messages, ctx = {}) {
 		thinkRun = null;
 
 		if (message.kind === "tool" || message.kind === "work") {
-			for (const sep of timeSepNodes(message, lastAt ? { at: lastAt } : null)) frag.append(sep);
-			frag.append(eventNode(message, eventPhrase(message)));
+			const nodes = [...timeSepNodes(message, lastAt ? { at: lastAt } : null), eventNode(message, eventPhrase(message))];
+			queueEvent(message.fromSlug, nodes, eventLabel(message));
 			lastAt = message.at;
 			prevSay = null;
 			continue;
 		}
 
 		if (message.kind === "note") {
+			flushEvents();
 			frag.append(noteRow(message));
 			lastAt = message.at;
 			prevSay = null;
@@ -414,6 +516,7 @@ export function buildStream(messages, ctx = {}) {
 		if (message.kind === "pending" || message.status === "pending") {
 			const row = pendingRow(message, message.at, now);
 			if (!row) continue;
+			flushEvents();
 			for (const sep of timeSepNodes(message, lastAt ? { at: lastAt } : null)) frag.append(sep);
 			frag.append(row);
 			lastAt = message.at;
@@ -430,15 +533,20 @@ export function buildStream(messages, ctx = {}) {
 			message.at - prevSay.at < GROUP_MS &&
 			message.at - prevSay.at >= 0;
 
+		flushEvents(message.fromSlug);
 		if (!grouped) {
 			for (const sep of timeSepNodes(message, lastAt ? { at: lastAt } : null)) frag.append(sep);
 		}
 
 		frag.append(sayRow(message, full, grouped));
+		// 他自己的过程行跟在他这句话下面（见上面 `pendingEvents` 的注释）。
+		for (const node of takeEvents(message.fromSlug)) frag.append(node);
+		flushEvents();
 		prevSay = message;
 		lastAt = message.at;
 	}
 
+	flushEvents();
 	return frag;
 }
 

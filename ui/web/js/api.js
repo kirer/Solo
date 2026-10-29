@@ -78,3 +78,8 @@ export function personMemory(slug) {
 export function editPersonMemory(slug, body) {
 	return postJSON(`/api/people/${encodeURIComponent(slug)}/memory`, body);
 }
+
+/** 一个人的全部档案（详情面板一次要的东西）：身份、技能、记忆概况、所在频道。 */
+export function personProfile(slug) {
+	return getJSON(`/api/people/${encodeURIComponent(slug)}`);
+}

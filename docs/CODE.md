@@ -77,6 +77,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `js/avatar.js` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像（座位表 + mask 挖洞） |
 | `js/messages.js` | `mergeMessages()` —— 两页消息按 `seq` 去重合并（唯一可脱离浏览器测的前端逻辑） |
 | `js/memory.js` | 记忆面板：拉取 / 筛选 / 展开 / 记一条 / 删一节 + 纯函数（`lineCount` / `linesOf` / 过滤） |
+| `js/detail.js` | 详情面板的内容（私聊看人 / 群看群）：纯「数据 → HTML」，不发请求。**没有的字段不画空标题** |
 | `js/attach.js` | 附件：判断类型、缩略图、文件 chip、上传、队列项 |
 | `js/markdown.js` | `renderMarkdown()` —— 最小的 Markdown（标题 / 列表 / 代码 / 表格 / 链接 / 图片），**先转义再拼** |
 | `js/motion.js` | 弹簧缓动、`installMotionTokens()`、`withLinger()`（退场动画的通用壳） |
@@ -136,7 +137,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 33 文件 / 308 例，应该 <2s
+npm test           # 34 文件 / 315 例，应该 <2s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
@@ -178,3 +179,4 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | --- | --- |
 | `memory-panel.test.ts` | 记忆面板纯逻辑：`lineCount` / `linesOf`（「条」是行数不是节数）/ 筛选 / 行数版文案 / 删除确认里的条数 |
 | `merge-messages.test.ts` | `mergeMessages()`：升序、去重、重叠时后一批赢、乱序、空输入、丢掉没有 `seq` 的项（ADR-052） |
+| `detail-panel.test.ts` | 详情面板：后端字段都画出来 / 没技能没记忆就明说 / 用户可控字串不变标签（ADR-056） |

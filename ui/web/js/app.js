@@ -9,13 +9,14 @@
  * 因为消息流每次都是整体重建的 —— 逐条 bind 会在重建时泄漏。
  */
 
-import { attention, getJSON, postJSON, streamOrg } from "./api.js";
+import { attention, getJSON, personProfile, postJSON, streamOrg } from "./api.js";
 import { MAX_PER_MESSAGE, filesOf, kindOfFile, queueItemHtml, uploadOne } from "./attach.js";
 import { openMemory } from "./memory.js";
 import { avatarSvg, groupAvatar } from "./avatar.js";
+import { channelDetailHtml, personDetailHtml } from "./detail.js";
 import { copyText, escapeHtml, relTime } from "./format.js";
 import { glide, installMotionTokens, prefersReducedMotion, withLinger } from "./motion.js";
-import { activityPhrase, buildOne, buildStream, isNeed as isNeedRow } from "./rows.js";
+import { activityPhrase, buildOne, buildStream, eventLabel, isEventKind, isNeed as isNeedRow, wrapEvents } from "./rows.js";
 import { mergeMessages } from "./messages.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -57,6 +58,8 @@ const state = {
 	closeChannelStream: null,
 	/** 当前列上最后画出来的那条消息的 seq。SSE 只追加比它大的。 */
 	lastRendered: 0,
+	// 这一轮已经落地、还没等到那句 `say` 的过程行。见 merge()。
+	tailEvents: [],
 	refreshTimer: 0,
 };
 
@@ -112,6 +115,10 @@ const el = {
 	mentionThumb: $("mention-thumb"),
 	toastRoot: $("toast-root"),
 	teamBtn: $("team-btn"),
+	detailBtn: $("detail-btn"),
+	detail: $("detail"),
+	detailPanel: $("detail-panel"),
+	detailBody: $("detail-body"),
 	team: $("team"),
 	teamPanel: $("team-panel"),
 	teamList: $("team-list"),
@@ -148,6 +155,12 @@ function channelAvatar(channel, size) {
 	const slug = channel.project ?? channel.owner ?? channel.id;
 	const name = channel.ownerLabel ?? channel.title;
 	return avatarSvg({ slug, name, size });
+}
+
+/** slug → 名册里那个人（身份正文、岗位、项目）。名册是 `/api/org` 给的唯一事实。 */
+function personOf(slug) {
+	if (!slug) return undefined;
+	return state.people.find((person) => person.slug === slug);
 }
 
 function presenceOf(slug) {
@@ -388,6 +401,7 @@ function renderFlow({ veil = false, restore = true } = {}) {
 		el.feed.append(buildStream(messages, streamCtx()));
 	}
 	state.lastRendered = messages.length > 0 ? Number(messages[messages.length - 1].seq ?? 0) : 0;
+	state.tailEvents = [];
 	if (state.error) el.feed.prepend(errorBlock(state.error, "重试", () => openChannel(state.currentId)));
 
 	if (veil) {
@@ -536,19 +550,32 @@ function renderHead() {
 	//
 	// 私聊不写「2 人」：私聊本来就是两个人，写出来是废话，还占掉一行副标题的位置。
 	// 私聊写的是这个人在干什么（和左侧列表一致），这才是老板打开私聊想知道的第一件事。
-	const parts = [];
-	if (channel) {
-		const kind = kindOf(channel);
-		if (kind === "dm") {
-			const slug = slugOfChannel(channel);
-			if (slug) parts.push(STATUS_LABEL[presenceOf(slug)] ?? "");
-		} else {
-			if (kind === "project" && channel.project) parts.push(channel.project);
-			if (channel.ownerLabel) parts.push(`负责人 ${channel.ownerLabel}`);
-			if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
-		}
+	if (!channel) {
+		el.paneSub.textContent = "";
+		el.composer.hidden = !state.currentId;
+		document.body.dataset.pane = state.currentId ? "chat" : "list";
+		return;
 	}
-	el.paneSub.textContent = parts.join(" · ");
+	const kind = kindOf(channel);
+	if (kind === "dm") {
+		// 私聊的副标题是**这个人是谁**：岗位、项目，最后是状态（带边框的标签）。
+		// 只写「睡了」等于什么都没说 —— 老板打开私聊想知道的是他能干什么。
+		const slug = slugOfChannel(channel);
+		const person = slug === null ? undefined : personOf(slug);
+		const before = [person?.title, person?.project].filter(Boolean).map((text) => escapeHtml(String(text)));
+		const status = slug === null ? "" : STATUS_LABEL[presenceOf(slug)] ?? "";
+		// 前半段自己一个可省略的盒子：不然「岗位 · 项目」太长时会把右边的状态标签一起切掉
+		// （实测过：`前端开发（小恐龙）·di` 后面直接没字了）。
+		el.paneSub.innerHTML = `<span class="pane-text">${before.join('<span class="pane-dot">·</span>')}</span>${
+			status === "" ? "" : `<span class="pane-state">${escapeHtml(status)}</span>`
+		}`;
+	} else {
+		const parts = [];
+		if (kind === "project" && channel.project) parts.push(channel.project);
+		if (channel.ownerLabel) parts.push(`负责人 ${channel.ownerLabel}`);
+		if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
+		el.paneSub.textContent = parts.join(" · ");
+	}
 	el.composer.hidden = !state.currentId;
 	document.body.dataset.pane = state.currentId ? "chat" : "list";
 }
@@ -700,6 +727,7 @@ async function openChannel(id, { push = true } = {}) {
 		state.scrollPos.set(state.currentId, isPinned() ? -1 : el.flow.scrollTop);
 	}
 	closeChannelStream();
+	closeDetail();
 	state.currentId = id;
 	state.detail = null;
 	state.error = null;
@@ -832,8 +860,25 @@ function openChannelStream(id) {
 		// 加上 think/tool 过程投影，一秒能来好几条，主线程一直占着，点哪儿都像卡住。
 		// 重建还会把正在流式写入的那个 `.md` 节点一起换掉，token 的后续增量就找不到落点了。
 		if (isAppend) {
-			el.feed.append(buildOne(message, streamCtx(), previous));
+			const node = buildOne(message, streamCtx(), previous);
+			el.feed.append(node);
 			state.lastRendered = message.seq;
+			// 过程行（想了多久、跑了什么）先到，他说的那句话后到。到达顺序反不了，
+			// 但**阅读顺序**要正过来：say 一到，就把这一轮攒下的过程行挪到它后面。
+			// `append` 一个已在文档里的节点是移动，不会复制。
+			if (isEventKind(message.kind)) {
+				state.tailEvents.push({ node, label: eventLabel(message), slug: message.fromSlug });
+			} else if (state.tailEvents.length > 0) {
+				// 攒着的过程行收成一组再挪到他这句话后面（十几条平铺会把正文埋掉）。
+				const group = wrapEvents(
+					message.fromSlug,
+					personOf(message.fromSlug)?.label ?? message.fromSlug,
+					state.tailEvents.map((entry) => entry.node),
+					state.tailEvents.map((entry) => entry.label),
+				);
+				for (const event of group) el.feed.append(event);
+				state.tailEvents = [];
+			}
 		} else {
 			// 编辑、占位填充、乱序到达：这几条路径很少，老老实实重画。
 			renderFlow({ restore: false });
@@ -917,6 +962,84 @@ async function submitPending(row, action, option) {
 	} catch (error) {
 		feedback(`没提交上去：${error.message}`, false);
 	}
+}
+
+/* ── 详情浮层（右上角那个 ⓘ） ──────────────────────────────────────── */
+
+/**
+ * 私聊看这个人，群看这个群。
+ *
+ * 人的档案走 `GET /api/people/:slug`（身份、技能、记忆概况、所在频道都在那一个响应里）；
+ * 群的档案直接用手上已有的东西（频道元信息 + 成员），不再发一次请求。
+ */
+let detailReturn = null;
+
+function currentChannel() {
+	return state.detail?.channel ?? state.channels.find((candidate) => candidate.id === state.currentId) ?? null;
+}
+
+async function openDetail() {
+	const channel = currentChannel();
+	if (!channel) return;
+	detailReturn = document.activeElement;
+	el.detail.hidden = false;
+	el.frame.inert = true;
+	el.detailPanel.focus();
+	const kind = kindOf(channel);
+	if (kind === "dm") {
+		const slug = slugOfChannel(channel);
+		el.detailBody.innerHTML = `<p class="detail-loading">正在读档案…</p>`;
+		try {
+			const person = await personProfile(slug);
+			el.detailBody.innerHTML = personDetailHtml(person, {
+				presence: presenceOf(slug),
+				statusLabel: STATUS_LABEL[presenceOf(slug)] ?? "",
+			});
+		} catch (error) {
+			el.detailBody.innerHTML = `<p class="detail-loading">读不到档案：${escapeHtml(
+				error instanceof Error ? error.message : String(error),
+			)}</p>`;
+		}
+		return;
+	}
+	const members = (state.detail?.members ?? []).map((member) => ({
+		slug: member.slug,
+		label: member.label,
+		title: personOf(member.slug)?.title ?? "",
+		presence: presenceOf(member.slug),
+	}));
+	el.detailBody.innerHTML = channelDetailHtml(channel, {
+		kind,
+		members,
+		avatarHtml: channelAvatar(channel, 56),
+		preview: channel.preview ?? "",
+		lastAt: channel.lastAt ?? 0,
+	});
+}
+
+/** 从群详情里点一个人：换成那个人的档案（不关面板）。 */
+async function openPersonDetail(slug) {
+	el.detailBody.innerHTML = `<p class="detail-loading">正在读档案…</p>`;
+	try {
+		const person = await personProfile(slug);
+		el.detailBody.innerHTML = personDetailHtml(person, {
+			presence: presenceOf(slug),
+			statusLabel: STATUS_LABEL[presenceOf(slug)] ?? "",
+		});
+	} catch (error) {
+		el.detailBody.innerHTML = `<p class="detail-loading">读不到档案：${escapeHtml(
+			error instanceof Error ? error.message : String(error),
+		)}</p>`;
+	}
+}
+
+function closeDetail() {
+	if (el.detail.hidden) return;
+	withLinger(el.detail, 160, () => {
+		el.detail.hidden = true;
+		if (detailReturn instanceof HTMLElement) detailReturn.focus();
+	});
+	el.frame.inert = false;
 }
 
 /* ── 团队浮层 ───────────────────────────────────────────────────────── */
@@ -1201,8 +1324,9 @@ function highlightSeq(seq, attempt = 0) {
  * `aria-expanded` 同步，键盘用户听得到状态。
  */
 function expandEvent(button) {
-	const row = button.closest(".row-event");
-	const body = row?.querySelector(".ev-body");
+	// 单条过程行是 `.row-event`，一组过程行是 `.row-events` —— 两种都能展开。
+	const row = button.closest(".row-event, .row-events");
+	const body = row?.querySelector(".ev-body, .evs-body");
 	if (!body) return;
 	const open = body.hidden;
 	body.hidden = !open;
@@ -1528,6 +1652,49 @@ function bind() {
 
 	el.teamBtn.addEventListener("click", openTeam);
 	el.teamClose.addEventListener("click", closeTeam);
+	el.detailBtn.addEventListener("click", openDetail);
+
+	// 详情面板里的点击：关、跳到某个频道、看某个人、开记忆。
+	// 一律走委托 —— 面板内容每次是整块 innerHTML 换掉的。
+	el.detailBody.addEventListener("click", (event) => {
+		const target = event.target;
+		if (!(target instanceof Element)) return;
+		if (target.closest("[data-close-detail]")) {
+			closeDetail();
+			return;
+		}
+		const memory = target.closest("[data-open-memory]");
+		if (memory) {
+			const slug = memory.getAttribute("data-open-memory") ?? "";
+			const person = personOf(slug);
+			closeDetail();
+			window.setTimeout(() => openMemory({ slug, label: person?.label ?? slug }), 180);
+			return;
+		}
+		const goto = target.closest("[data-goto]");
+		if (goto) {
+			const id = goto.getAttribute("data-goto") ?? "";
+			closeDetail();
+			if (id !== state.currentId) void openChannel(id);
+			return;
+		}
+		const person = target.closest("[data-open-person]");
+		if (person) {
+			const slug = person.getAttribute("data-open-person") ?? "";
+			void openPersonDetail(slug);
+			return;
+		}
+		if (target === el.detail) closeDetail();
+	});
+
+	// 换频道时详情面板自动收起：它讲的是上一个频道那个人。
+	document.addEventListener("keydown", (event) => {
+		if (event.key !== "Escape") return;
+		if (!el.detail.hidden) {
+			event.stopPropagation();
+			closeDetail();
+		}
+	}, true);
 
 	// 团队表里的「记忆」。先关团队浮层再开记忆面板 —— 两层浮层都抢 Esc 与 inert，
 	// 叠在一起会变成「按 Esc 只关了下面那层」。

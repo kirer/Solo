@@ -371,10 +371,10 @@
 }
 
 .sheet-sub {
+	display: flex;
+	align-items: center;
 	min-width: 0;
-	overflow: hidden;
 	white-space: nowrap;
-	text-overflow: ellipsis;
 	font-size: 12px;
 	line-height: 16px;
 	color: var(--ink-3);
@@ -725,5 +725,311 @@
 
 	.crew-report {
 		display: none;
+	}
+}
+
+/* ── 详情浮层（右上角 ⓘ）：这个人 / 这个群 ─────────────────────────── */
+
+/* 私聊副标题里的状态：带边框的标签，不是灰字。
+   「睡了」两个字放在一排灰字里会读成项目名；加边框才读得出「这是个状态」。 */
+/* 只有这一段可以省略；右边的状态标签永远完整（它是这条头部的重点）。 */
+.pane-text {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.pane-state {
+	display: inline-block;
+	flex: none;
+	margin-inline-start: 8px;
+	padding: 1px 7px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-2);
+	white-space: nowrap;
+}
+
+.pane-dot {
+	margin: 0 6px;
+	color: var(--ink-3);
+}
+
+.detail {
+	position: fixed;
+	inset: 0;
+	z-index: 60;
+	display: grid;
+	place-items: center;
+	padding: 24px;
+	background: color-mix(in oklab, var(--ink) 18%, transparent);
+	animation: detail-in 160ms ease-out;
+}
+
+/* tabindex=-1 只是为了能接焦点（Esc/读屏），不是可点控件 —— 不画焦点环。 */
+.detail-panel:focus,
+.detail-panel:focus-visible {
+	outline: none;
+}
+
+.detail-panel {
+	width: min(560px, 100%);
+	max-height: min(760px, calc(100dvh - 48px));
+	overflow: auto;
+	background: var(--raised);
+	border: 1px solid var(--line);
+	border-radius: var(--r-panel, 14px);
+}
+
+.detail-body {
+	display: flex;
+	flex-direction: column;
+	gap: 18px;
+	padding: 20px 22px 24px;
+}
+
+.detail-head {
+	display: grid;
+	grid-template-columns: 56px minmax(0, 1fr) auto;
+	column-gap: 14px;
+	align-items: center;
+}
+
+.detail-av {
+	display: grid;
+	place-items: center;
+}
+
+.detail-ident {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.detail-name {
+	margin: 0;
+	font-size: 22px;
+	line-height: 28px;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.detail-tags {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: center;
+}
+
+.detail-tag {
+	padding: 1px 8px;
+	border-radius: 999px;
+	background: var(--active);
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-2);
+}
+
+.detail-state {
+	padding: 1px 8px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.detail-sec {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding-top: 16px;
+	border-top: 1px solid var(--line);
+}
+
+.detail-sec-head {
+	margin: 0;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	letter-spacing: 0.02em;
+	color: var(--ink-3);
+}
+
+.detail-field {
+	display: flex;
+	gap: 12px;
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.detail-k {
+	flex: none;
+	width: 68px;
+	color: var(--ink-3);
+}
+
+.detail-v {
+	color: var(--ink);
+	min-width: 0;
+}
+
+.detail-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.detail-chip {
+	padding: 3px 10px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	font: inherit;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-2);
+	cursor: pointer;
+}
+
+.detail-chip:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.detail-doc {
+	max-height: 260px;
+	overflow: auto;
+	padding: 12px 14px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+	background: var(--ground);
+	font-size: 13px;
+	line-height: 21px;
+}
+
+.detail-skills,
+.detail-people {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.detail-skill {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	align-items: baseline;
+	padding: 8px 10px;
+	border: 1px solid var(--line);
+	border-radius: 10px;
+}
+
+.detail-skill-name {
+	font-size: 13px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.detail-badge {
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--active);
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.detail-skill-desc {
+	flex: 1 1 100%;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.detail-person-btn {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	width: 100%;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: 10px;
+	background: transparent;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	color: var(--ink);
+}
+
+.detail-person-btn:hover {
+	background: var(--hover);
+}
+
+.detail-person-name {
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.detail-person-title {
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.detail-memory,
+.detail-empty,
+.detail-loading {
+	margin: 0;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-3);
+}
+
+.detail-btn {
+	align-self: flex-start;
+	padding: 5px 12px;
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	font: inherit;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-2);
+	cursor: pointer;
+}
+
+.detail-btn:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+@keyframes detail-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@media (max-width: 640px) {
+	.detail {
+		padding: 0;
+		place-items: end stretch;
+	}
+
+	.detail-panel {
+		width: 100%;
+		max-height: 88dvh;
+		border-radius: 16px 16px 0 0;
+		border-bottom: 0;
+		padding-bottom: env(safe-area-inset-bottom);
 	}
 }

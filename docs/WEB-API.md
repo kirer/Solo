@@ -19,6 +19,7 @@
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
 | `GET` | `/api/attention` | 「找你」：跨频道、需要老板拍板的消息 |
+| `GET` | `/api/people/:slug` | 一个人的档案：身份 / 技能 / 记忆概况 / 所在频道 |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
@@ -243,7 +244,27 @@ type ViewMessage = {
 为什么需要它：实测老板在 4804 条消息里回了 51 条（**1.06%**）。不是不想理，是**找不到**
 —— 一条要拍板的消息埋在两小时的 think/tool 流水里，没有任何东西把它拎出来。
 
-## 10. `GET /api/people/:slug/memory`
+## 10. `GET /api/people/:slug`
+
+详情面板的**一次取全**：点开一个私聊的右上角，要的就是这一份。
+
+```ts
+// 响应
+{
+  slug: string, label: string, title: string | null, project: string | null,
+  manager: string | null, managerLabel: string | null,
+  body: string,                      // identity.md 正文（预置提示词）
+  skills: { name: string, description: string, scope: "personal" | "company", overrides: boolean }[],
+  memory: { exists: boolean, entries: number, digest: string },
+  channels: { id: string, kind: "company" | "leadership" | "project" | "dm" | "other", title: string }[]
+}
+```
+
+`kind` 是**按 id 前缀推的**（`company` / `leadership` / `proj:` / `dm:`），频道文档里不存这个字段。
+`skills` 来自 `listSkills()`，个人层覆盖公司同名时 `overrides: true`（界面显示「覆盖公司同名」）。
+`slug` 必须是名册里存在的 agent 且不是 `owner`，否则 404。
+
+## 11. `GET /api/people/:slug/memory`
 
 ```ts
 // 响应
@@ -255,7 +276,7 @@ type ViewMessage = {
 全文。`slug` 必须是名册里存在的 agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 老实 404。
 
-## 11. `POST /api/people/:slug/memory`
+## 12. `POST /api/people/:slug/memory`
 
 ```ts
 // 删一条
@@ -270,7 +291,7 @@ type ViewMessage = {
 同一道闸（`entryProblem` 拒空/超长/像密钥，`appendMemory` 串行 + 落 journal），和管理端
 没有第二条路。
 
-## 12. `POST /api/uploads` / `GET /api/uploads/:id`
+## 13. `POST /api/uploads` / `GET /api/uploads/:id`
 
 上传是**裸二进制**，不是 multipart：请求体就是文件本身，文件名走 `x-filename` 头或
 `?name=` 查询参数。
@@ -292,7 +313,7 @@ type ViewMessage = {
 **模型看不见图片内容**（ADR-051）：附件在投递正文里只有一行占位。agent 应该说
 「我读不了图里的内容，请用文字说一下要我做什么」，而不是猜。
 
-## 13. 静态文件
+## 14. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`serve.ts` 的 `uiDir` 默认值）：
 
@@ -303,7 +324,7 @@ type ViewMessage = {
 
 界面**没有构建步骤** —— 改 `ui/web/` 里的文件，刷新浏览器就生效。
 
-## 14. 已知限制
+## 15. 已知限制
 
 - **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
 - **没有工具调用 trace**。`ViewMessage` 只有消息正文，看不到 agent 中间调了哪些工具。
@@ -311,7 +332,7 @@ type ViewMessage = {
   （ADR-016：不画后端没有的东西）。
 - **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。
 
-## 15. 兼容性纪律
+## 16. 兼容性纪律
 
 1. 加字段随便加（前端忽略未知字段）。
 2. **不许改字段含义**，尤其是 `read` / `unread` / `mentions` 这种带状态的 —— 宁可加新字段。

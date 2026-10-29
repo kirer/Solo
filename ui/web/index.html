@@ -44,6 +44,13 @@
 				<span class="topbar-grow"></span>
 				<span class="conn" id="conn" hidden></span>
 				<button class="need" id="unread-total" type="button" title="跳到下一条需要你的事"></button>
+				<button class="icon-btn" id="team-btn" type="button" aria-expanded="false" aria-haspopup="dialog" title="团队：谁在哪个项目、什么职位（Esc 关闭）" aria-label="团队">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="9" cy="8.5" r="3.2" />
+						<path d="M3.2 19.5c0-3 2.6-5 5.8-5s5.8 2 5.8 5" />
+						<path d="M16.4 6.1a3.2 3.2 0 0 1 0 6.2M17.6 14.9c1.9.4 3.2 1.7 3.2 3.6" />
+					</svg>
+				</button>
 				<div class="menu-anchor">
 					<button class="icon-btn" id="menu-btn" type="button" aria-haspopup="menu" aria-expanded="false" title="布局">
 						<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
@@ -74,7 +81,13 @@
 					<h2 class="pane-title" id="pane-title">频道</h2>
 					<span class="sheet-sub" id="pane-sub"></span>
 					<span class="sheet-grow"></span>
-					<button class="text-btn" id="team-btn" type="button" aria-expanded="false" aria-haspopup="dialog" title="团队：谁在哪个项目、什么职位（Esc 关闭）">团队</button>
+					<!-- 详情：私聊看这个人，群看这个群。DS-BOT 那个位置就是这个东西。 -->
+					<button class="icon-btn" id="detail-btn" type="button" title="详情" aria-label="详情">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="8.6" />
+							<path d="M12 10.6v6M12 7.7v.1" />
+						</svg>
+					</button>
 				</div>
 
 				<div class="flow" id="flow">
@@ -168,6 +181,12 @@
 		<div class="lightbox" id="lightbox" role="dialog" aria-modal="true" aria-label="图片" hidden>
 			<img id="lightbox-img" alt="" />
 		</div>
+
+		<section class="detail" id="detail" hidden>
+			<div class="detail-panel" id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detail-name" tabindex="-1">
+				<div class="detail-body" id="detail-body"></div>
+			</div>
+		</section>
 
 		<section class="team" id="team" hidden>
 			<div class="team-panel" id="team-panel" role="dialog" aria-modal="true" aria-labelledby="team-title" tabindex="-1">

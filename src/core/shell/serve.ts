@@ -11,7 +11,7 @@
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createReadStream } from "node:fs";
-import { extname, join, normalize, sep } from "node:path";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { matchRoute, type Route } from "./http/routes.ts";
 import {
@@ -32,7 +32,8 @@ import { ChannelDoc, markRead, type Attachment, type ChannelState } from "../cha
 import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
 import { appendMemory, memoryDigest, readMemory, sectionsOf, writeMemory } from "../agent/memory.ts";
-import { attentionItems, channelDetail, channelList, messageView, orgView, withLabels } from "./view.ts";
+import { listSkills } from "../agent/skills.ts";
+import { attentionItems, channelDetail, channelList, labelIn, messageView, orgView, withLabels } from "./view.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,
@@ -308,6 +309,51 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			handler: async ({ response }) => {
 				const { identities, directory } = await snapshot();
 				return json(response, orgView(identities, directory));
+			},
+		},
+		{
+			// 一个人的全部档案：界面右上角那个「详情」面板一次要的东西都在这。
+			// 不给界面对磁盘的访问权（它会拿 slug 拼路径），也不让它自己去读技能目录。
+			pattern: "/api/people/:slug",
+			method: "GET",
+			handler: async ({ response, params }) => {
+				const { identities, directory } = await snapshot();
+				const slug = params.slug ?? "";
+				if (!(slug in directory.slugToConversation) || slug === OWNER_SLUG) {
+					return fail(response, 404, "没有这个人");
+				}
+				const state = await shell.channels();
+				const skills = await listSkills(
+					{ workspace: dirname(shell.agentsRoot), agents: shell.agentsRoot },
+					slug,
+				);
+				const identity = identities.find((candidate) => candidate.slug === slug);
+				const source = (await readMemory(join(shell.agentsRoot, slug))) ?? "";
+				return json(response, {
+					slug,
+					label: labelIn(directory, slug),
+					title: identity?.title ?? "",
+					...(identity?.project === undefined ? {} : { project: identity.project }),
+					manager: identity?.manager ?? "",
+					managerLabel: identity?.manager === undefined ? "" : labelIn(directory, identity.manager),
+					body: identity?.body ?? "",
+					skills: skills.map((skill) => ({
+						name: skill.name,
+						description: skill.description,
+						scope: skill.scope,
+						overrides: skill.overrides === true,
+					})),
+					memory: {
+						exists: source !== "",
+						entries: sectionsOf(source).length,
+						digest: memoryDigest(source) ?? null,
+					},
+					// 他在哪些频道里。`members` 是真相，界面不用自己比。频道「是什么类型」
+					// 不在文档里，是 id 前缀的约定（`company` / `leadership` / `proj:` / `dm:`）。
+					channels: Object.values(state.channels ?? {})
+						.filter((channel) => channel.members.includes(slug))
+						.map((channel) => ({ id: channel.id, kind: channelKind(channel.id), title: channel.title })),
+				});
 			},
 		},
 		{
@@ -770,4 +816,13 @@ async function readJson<T>(request: IncomingMessage): Promise<T> {
 	} catch {
 		return {} as T;
 	}
+}
+
+/** 频道 id 前缀 → 类型。文档里不存 kind，约定在 id 上（见 `channel/state.ts` 的 `channelIdOf`）。 */
+function channelKind(id: string): "company" | "leadership" | "project" | "dm" | "other" {
+	if (id === "company") return "company";
+	if (id === "leadership") return "leadership";
+	if (id.startsWith("proj:")) return "project";
+	if (id.startsWith("dm:")) return "dm";
+	return "other";
 }
