@@ -388,7 +388,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			for (const target of processingTargets) {
 				const placeholder = appendMessage(state, input.channelId, {
 					from: target,
-					text: `开始处理…`,
+					text: `开始处理`,
 					at: input.at,
 					kind: "chat",
 					status: "pending",
