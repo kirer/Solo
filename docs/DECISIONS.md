@@ -1152,6 +1152,19 @@ skills[],memory{exists,entries,digest},channels[]}`。不复用 `/api/org`（那
 - slug 必须先存在于 `directory.slugToConversation` 且不是 `owner`。这一条同时干两件事：
   挡路径穿越，以及让不存在的人老实 404 而不是返回一个空档案。
 
+### 决定一·五：从右边展开，不是弹窗
+第一版做成了居中的模态框（遮罩压暗 18%、`place-items: center`、`el.frame.inert = true`）。
+老板的原话是「要以右边展开的形式展现，不要弹窗」，改成：
+- `.detail` 是 `position: fixed; inset: 0` 的**透明**层，`pointer-events: none` —— 底下的频道照常能点，
+  `.detail-panel` 自己 `pointer-events: auto`。
+- 面板 `width: min(420px, 100%)`、贴右、`padding-top: calc(var(--topbar) + env(safe-area-inset-top))`
+  —— **从顶栏下面开始**，否则它会把「找你 / 团队 / 布局 / 主题」这几个开关自己挡住。
+- 入场只走 `translateX(16px)` + 透明 → 不缩放；不设 `inert`（非模态），收起靠 document 的
+  click 判「点在面板外且不是那个开关按钮」。
+- 手机 ≤640px 铺满整屏（390px 的一条放下提示词太窄），并且**去掉 `.detail-doc` 的 260px 小滚动区**
+  —— 整屏都是它时再套一层滚动就是「滚中滚」，手指没法操作。桌面那层仍限高，底部加一道渐隐
+  （浮层滚动条在 macOS 上不动鼠标不出现，切断的行看着像排版坏了）。
+
 ### 决定二：界面不画后端没有的东西
 `ui/web/js/detail.js` 只做「数据 → HTML」，开关和取数在 `app.js`。硬规矩写在文件头：
 **没有的技能不画空标题**（写「还没有技能。他可以在干活时自己写一份」），没有记忆就没有

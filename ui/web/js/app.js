@@ -983,7 +983,8 @@ async function openDetail() {
 	if (!channel) return;
 	detailReturn = document.activeElement;
 	el.detail.hidden = false;
-	el.frame.inert = true;
+	// 不设 `el.frame.inert`：这是从右边**展开**的一条竖栏，不是模态框。
+	// 老板可以一边看档案一边点频道 —— 点外面会顺手收起来（见 bind 里的 document click）。
 	el.detailPanel.focus();
 	const kind = kindOf(channel);
 	if (kind === "dm") {
@@ -1741,6 +1742,11 @@ function bind() {
 				withLinger(el.needMenu, 120);
 				el.unreadTotal.setAttribute("aria-expanded", "false");
 			}
+		}
+		// 详情是从右边展开的竖栏（`pointer-events: none` 让底下照常能点），
+		// 所以「点外面收起」只能在这里判：点在面板外、也不是那个开关按钮。
+		if (!el.detail.hidden && !el.detailPanel.contains(event.target) && !event.target.closest("#detail-btn")) {
+			closeDetail();
 		}
 	});
 

@@ -761,11 +761,16 @@
 	position: fixed;
 	inset: 0;
 	z-index: 60;
+	/* 从右边展开：贴着右边缘的一条竖栏，不压暗背景、不居中、不是 dialog。
+	   老板要在看档案时还能看着频道，所以压在纸面上而不是盖住整屏。 */
 	display: grid;
-	place-items: center;
-	padding: 24px;
-	background: color-mix(in oklab, var(--ink) 18%, transparent);
-	animation: detail-in 160ms ease-out;
+	justify-items: end;
+	align-items: stretch;
+	background: transparent;
+	/* 从顶栏下面开始：顶栏那几个开关（找你/团队/布局/主题）不该被自己的详情挡住。 */
+	padding-top: calc(var(--topbar) + env(safe-area-inset-top));
+	/* 不挡住底下的频道：点侧栏/点消息照常生效，收起由 document 的 click 处理。 */
+	pointer-events: none;
 }
 
 /* tabindex=-1 只是为了能接焦点（Esc/读屏），不是可点控件 —— 不画焦点环。 */
@@ -775,12 +780,16 @@
 }
 
 .detail-panel {
-	width: min(560px, 100%);
-	max-height: min(760px, calc(100dvh - 48px));
+	width: min(420px, 100%);
+	height: 100%;
+	border-top: 1px solid var(--line);
+	border-top-left-radius: var(--r-paper, 14px);
 	overflow: auto;
-	background: var(--raised);
-	border: 1px solid var(--line);
-	border-radius: var(--r-panel, 14px);
+	overscroll-behavior: contain;
+	background: var(--ground);
+	border-left: 1px solid var(--line);
+	pointer-events: auto;
+	animation: detail-in 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 .detail-body {
@@ -900,9 +909,14 @@
 	color: var(--ink);
 }
 
+/* 提示词可以很长，收在一个可滚的框里。底部做一道渐隐 —— macOS 的滚动条是浮层，
+   不碰鼠标不出现，被切断的那行看起来像排版坏了（记忆面板踩过同一个坑）。 */
 .detail-doc {
 	max-height: 260px;
 	overflow: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
 	padding: 12px 14px;
 	border: 1px solid var(--line);
 	border-radius: 10px;
@@ -1010,26 +1024,29 @@
 	color: var(--ink);
 }
 
+/* 从右侧滑进来 16px —— 只走「从边上推开」这个意思，不做缩放入场。 */
 @keyframes detail-in {
 	from {
+		transform: translateX(16px);
 		opacity: 0;
 	}
 	to {
+		transform: none;
 		opacity: 1;
 	}
 }
 
 @media (max-width: 640px) {
-	.detail {
-		padding: 0;
-		place-items: end stretch;
-	}
-
+	/* 手机上「右边一条」只有 390px 宽，直接铺满整屏才放得下提示词。 */
 	.detail-panel {
 		width: 100%;
-		max-height: 88dvh;
-		border-radius: 16px 16px 0 0;
-		border-bottom: 0;
 		padding-bottom: env(safe-area-inset-bottom);
+	}
+
+	/* 整屏都是它，再套一层 260px 的小滚动区就成了「滚中滚」，手指很难操作。 */
+	.detail-doc {
+		max-height: none;
+		overflow: visible;
+		mask-image: none;
 	}
 }

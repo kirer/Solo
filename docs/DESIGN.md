@@ -398,3 +398,10 @@ node ~/.pi/agent/skills/design-taste-frontend/scripts/inspect.mjs http://127.0.0
   `env()` 在无刘海设备上是 0，等价于原值。高度用 `100dvh`（不是 `100vh`），地址栏伸缩时不跳。
 - 动作条不绝对定位（桌面那套 `left: 100%` 在手机上会跑到屏幕外）：改成 `static`，
   点一下那一行才显示（`data-tools="true"`），点空白或 Esc 收起。
+
+## 详情面板：从右边展开
+
+`#detail` 是透明层 + `pointer-events: none`，`.detail-panel` 贴右、宽 `min(420px, 100%)`、
+从顶栏下沿开始（`padding-top: calc(var(--topbar) + env(safe-area-inset-top))`）、只有
+`border-left` 和一道 16px 的 `translateX` 入场。**不压暗、不居中、不 inert** —— 这不是弹窗，
+是一条可以一边看一边继续说话的竖栏。手机 ≤640px 铺满整屏。
