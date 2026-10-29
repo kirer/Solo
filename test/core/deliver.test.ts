@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { renderDelivery, renderDigest } from "../../src/core/channel/deliver.ts";
+import { deliver, queuedAhead, renderDelivery, renderDigest } from "../../src/core/channel/deliver.ts";
+import type { Harness } from "../../src/core/runtime/index.ts";
 import { appendMessage, ensureChannel, type ChannelState } from "../../src/core/channel/state.ts";
 
 function stateWith(...ids: { id: string; title: string; members: string[]; wakeOnAll?: string[] }[]): ChannelState {
@@ -97,5 +98,76 @@ describe("未读摘要", () => {
 		let state = stateWith({ id: "g", title: "G", members: ["owner", "cto"] });
 		state = appendMessage(state, "g", { from: "cto", text: "我说的", at: 1 }).state;
 		expect(renderDigest(state, "cto")).toBe("");
+	});
+});
+
+describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
+	const submissions = [
+		{ id: 1, conversationId: 7, status: "queued", requestId: "ch:proj:x:3:lin" },
+		{ id: 2, conversationId: 7, status: "placed", requestId: "ch:proj:x:2:lin" },
+		{ id: 3, conversationId: 9, status: "queued", requestId: "ch:proj:x:3:gu" },
+		{ id: 4, conversationId: 7, status: "queued", requestId: "ch:owner:proj:x:1:lin" },
+	];
+
+	test("只挑同会话、还没开始的；正在跑的不算，别的会话不算，老板排的队不算", () => {
+		expect(queuedAhead(submissions, 7)).toEqual([1]);
+		expect(queuedAhead(submissions, 9)).toEqual([3]);
+	});
+
+	test("连续三条只留一个未开始项，且一条消息都没丢", async () => {
+		// 假 harness：提交进排队、撤销把状态改成 cancelled —— 够验「最多一个」这条约束。
+		let nextId = 100;
+		const queue: { id: number; conversationId: number; status: string; requestId?: string }[] = [];
+		const submitted: string[] = [];
+		const harness = {
+			inspect: async () => ({ submissions: queue, tasks: [] }),
+			abortSubmission: async (id: number) => {
+				const found = queue.find((item) => item.id === id);
+				if (found !== undefined) found.status = "cancelled";
+			},
+		} as unknown as Harness;
+		const conversation = {
+			id: 7,
+			submit: async (input: { requestId?: string; content?: unknown }) => {
+				queue.push({ id: nextId, conversationId: 7, status: "queued", requestId: input.requestId });
+				submitted.push(String((input.content as { type: string; text?: string }[] | string) instanceof Array
+					? (input.content as { text?: string }[]).map((part) => part.text ?? "").join("")
+					: String(input.content)));
+				return { id: nextId++ };
+			},
+		};
+
+		// 发送方是同事而不是老板：老板自己的排期不合并（连说三句要按顺序答三句）。
+		let state = stateWith({ id: "proj:x", title: "X", members: ["owner", "lin", "gu"] });
+		const bodies: string[] = [];
+		for (const text of ["第一条", "第二条", "第三条"]) {
+			const { state: next, message } = appendMessage(state, "proj:x", { from: "lin", text, at: Date.now() });
+			state = next;
+			const result = await deliver({
+				digests: new Map(),
+				channel: state.channels["proj:x"]!,
+				message,
+				targets: ["gu"],
+				conversationOf: async () => conversation as never,
+				coalesceQueue: async (conversationId, keepRequestId) => {
+					const pending = queuedAhead((await harness.inspect()) .submissions, conversationId, keepRequestId);
+					let merged = 0;
+					for (const id of pending) {
+						await harness.abortSubmission(id as number, undefined as never, undefined as never);
+						merged += 1;
+					}
+					return merged;
+				},
+			});
+			bodies.push(String(result.merged?.[0]?.count ?? 0));
+		}
+
+		// 每条消息都还在频道里（一条不漏），但同一时刻只有一个「还没开始」的排队项。
+		expect(state.messages["proj:x"]!.map((item) => item.text)).toEqual(["第一条", "第二条", "第三条"]);
+		expect(submitted).toHaveLength(3);
+		// 第一、二条各撤掉前一条没开始的，第三条撤掉第二条：合并计数 0、1、1。
+		expect(bodies).toEqual(["0", "1", "1"]);
+		expect(queue.filter((item) => item.status === "queued")).toHaveLength(1);
+		expect(queue.filter((item) => item.status === "cancelled")).toHaveLength(2);
 	});
 });

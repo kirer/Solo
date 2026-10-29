@@ -42,6 +42,12 @@ export type DeliverResult = {
 	readonly failed: string[];
 	/** 没有会话、或就是老板本人，跳过的 slug。 */
 	readonly skipped: string[];
+	/**
+	 * 这次合并唤醒的账：谁本来已经有一条「还没开始」的排队项，被这一条取代了。
+	 *
+	 * 消息一条都没删（都在频道里），少掉的只是**重复的唤醒**。
+	 */
+	readonly merged?: readonly { readonly slug: string; readonly count: number }[];
 };
 
 /** 一个「叫了但没人会答」的收件人。拼成频道里的 `note` 用，老板才能看见系统做了什么。 */
@@ -103,6 +109,14 @@ export type DeliverOptions = {
 	 * 只有老板说话时才调。返回让了几条。
 	 */
 	readonly clearQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
+	/**
+	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
+	 * 返回合并了几条（0 = 没合并）。不传就不合并。
+	 *
+	 * 与 `clearQueue` 的区别：`clearQueue` 是**老板插队**（只对老板的发言调，会顺带
+	 * 保住老板自己排的队），这里是**同一个人的连续唤醒去重**，对所有人的发言都生效。
+	 */
+	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
 	/**
 	 * 这一轮什么都没产出时留一句话。
 	 *
@@ -263,6 +277,7 @@ export async function deliver(
 	const delivered: string[] = [];
 	const failed: string[] = [];
 	const skipped: string[] = [];
+	const mergedList: { slug: string; count: number }[] = [];
 	const issues: DeliverIssue[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
 	// 附件只读一次：所有收件人拿到的是同一份图片内容块。
@@ -286,7 +301,20 @@ export async function deliver(
 				continue;
 			}
 			const digest = options.digests.get(slug) ?? "";
-			const body = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
+			const requestId = `ch:${options.message.from === "owner" ? "owner:" : ""}${options.channel.id}:${
+				options.message.seq
+			}:${slug}`;
+			// 合并唤醒：先撤掉这个会话里还没开始的排队项，再按「合并了几条」补一句正文。
+			// 必须在拼正文之前做 —— 那一句要告诉它「更早的几条还在频道里，先看一遍」。
+			const merged =
+				options.coalesceQueue === undefined
+					? 0
+					: await options.coalesceQueue(Number(conversation.id), requestId).catch(() => 0);
+			const base = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
+			const body =
+				merged === 0
+					? base
+					: `${base}\n\n（合并唤醒：把 ${merged} 条还没开始处理的消息并成了这一条 —— 更早的那几条内容都还在频道里，先 read_channel 看一遍再答，别只答最新这条。）`;
 			const text = digest === "" ? body : `${body}\n\n${digest}`;
 			// 有图就发内容块：文字在前，图片在后（多数模型要求首块是文本）。
 			const content: UserInput =
@@ -306,9 +334,6 @@ export async function deliver(
 					at: options.message.at,
 				});
 			}
-			const requestId = `ch:${options.message.from === "owner" ? "owner:" : ""}${options.channel.id}:${
-				options.message.seq
-			}:${slug}`;
 			if (options.clearQueue !== undefined && options.message.from === "owner") {
 				await options.clearQueue(Number(conversation.id), requestId).catch(() => 0);
 			}
@@ -339,6 +364,7 @@ export async function deliver(
 					await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
 				});
 			}
+			if (merged > 0) mergedList.push({ slug, count: merged });
 			delivered.push(slug);
 		} catch (error) {
 			// 不抛：消息已在频道里，对方下次醒来会看到未读摘要。
@@ -365,7 +391,7 @@ export async function deliver(
 		}
 	}
 
-	return { delivered, failed, skipped };
+	return { delivered, failed, skipped, ...(mergedList.length === 0 ? {} : { merged: mergedList }) };
 }
 
 /**
@@ -403,6 +429,69 @@ export function choresAheadOf(
 		if (out.length >= max) break;
 	}
 	return out;
+}
+
+/**
+ * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。
+ *
+ * 三条约束（知言 2026-10-30 定）：
+ * 1. **同一会话最多保留一个未开始的排队项**：所以每次投递前先把旧的撤掉；
+ * 2. **正在跑的那条不算**：只认 `status: "queued"`，`placed` 已经开始了，它不会被撤；
+ * 3. **消息一条都不删**：撤的只是唤醒，那几条消息还在频道里，醒来读一遍就看到。
+ *
+ * 老板自己排的队不合并：他连说三句就该按顺序答三句（与 `choresAheadOf` 同一个理由）。
+ */
+export function queuedAhead(
+	submissions: readonly {
+		readonly id: number | bigint | string;
+		readonly conversationId: number | bigint | string;
+		readonly status: string;
+		readonly requestId?: string | undefined;
+	}[],
+	conversationId: number,
+	keepRequestId?: string,
+	max = 8,
+): (number | bigint | string)[] {
+	const out: (number | bigint | string)[] = [];
+	for (const submission of submissions) {
+		if (Number(submission.conversationId) !== conversationId) continue;
+		if (submission.status !== "queued") continue;
+		if (keepRequestId !== undefined && submission.requestId === keepRequestId) continue;
+		if (submission.requestId?.includes(":owner:") === true) continue;
+		out.push(submission.id);
+		if (out.length >= max) break;
+	}
+	return out;
+}
+
+/**
+ * 合并唤醒的执行器：撤掉这个会话里还没开始的排队项，返回撤了几条。
+ *
+ * 撤不掉（已经在跑、或者竞态里被别人取走）就跳过 —— 多叫醒一次只是慢，
+ * 而「以为撤掉了其实没撤」会让人以为消息丢了。
+ */
+export async function coalesceQueue(
+	harness: Harness,
+	conversationId: number,
+	keepRequestId: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	const inspection = await harness.inspect(context);
+	const pending = queuedAhead(inspection.submissions, conversationId, keepRequestId);
+	let merged = 0;
+	for (const id of pending) {
+		try {
+			await harness.abortSubmission(
+				id as Parameters<Harness["abortSubmission"]>[0],
+				context,
+				conversationId as Parameters<Harness["abortSubmission"]>[2],
+			);
+			merged += 1;
+		} catch {
+			// 撤不掉就算了：那一条照样会被答，只是多一次唤醒。
+		}
+	}
+	return merged;
 }
 
 /**
