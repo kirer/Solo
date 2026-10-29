@@ -30,7 +30,7 @@ import {
 	isNeed as isNeedRow,
 	wrapEvents,
 } from "./rows.js";
-import { insertLocalMessage, localEcho, mergeMessage, mergeMessages, previousOf } from "./messages.js";
+import { channelCursor, insertLocalMessage, localEcho, mergeMessage, mergeMessages, previousOf } from "./messages.js";
 import { installJankMonitor, mark } from "./jank.js";
 
 /* ── 常量 ───────────────────────────────────────────────────────────── */
@@ -2186,7 +2186,21 @@ async function sendMessage(raw) {
 					}),
 				);
 				state.lastRendered = Math.max(state.lastRendered ?? 0, result.seq);
+				// 频道的「我拿到哪了」也要往前推：重连时 `since` 取的就是 lastSeq，
+				// 不推的话重连会把这条再推一遍（更糟的是补历史窗口对不上，看起来像丢消息）。
+				const cursor = channelCursor(state.detail.channel ?? null, result.seq);
+				if (state.detail.channel) {
+					state.detail.channel.lastSeq = cursor.lastSeq;
+					state.detail.channel.lastAt = cursor.lastAt;
+				}
+				const row = state.channels.find((item) => item.id === channelId);
+				if (row) {
+					const next = channelCursor(row, result.seq);
+					row.lastSeq = next.lastSeq;
+					row.lastAt = next.lastAt;
+				}
 				renderFlow({ restore: false });
+				renderSidebar();
 			}
 		}
 		el.input.value = "";

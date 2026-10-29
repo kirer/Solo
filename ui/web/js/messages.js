@@ -69,7 +69,7 @@ export function mergeMessage(older, newer) {
  * 看起来就是「没发出去」，于是他会再发一遍。POST 的返回里有 `seq`，本地先按这个
  * seq 落一条，SSE 到达时 `merge` 按 seq 覆盖（幂等），同一条不会变成两条。
  */
-export function localEcho({ seq, text, at = Date.now(), fromSlug = "owner", fromLabel = "老大", attachments, replyTo, kind = "say" }) {
+export function localEcho({ seq, text, at = Date.now(), fromSlug = "owner", fromLabel = "老大", attachments, replyTo, kind = "chat" }) {
 	return {
 		seq,
 		fromSlug,
@@ -79,6 +79,7 @@ export function localEcho({ seq, text, at = Date.now(), fromSlug = "owner", from
 		at,
 		...(typeof replyTo === "number" ? { replyTo } : {}),
 		...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
+		// kind 用 `chat`：和服务端给老板消息的投影保持一致（`say` 是 agent 的语义标签）。
 		// 只是给界面一个「这条还没被服务端回显」的标记，SSE 覆盖后自然消失。
 		local: true,
 	};
@@ -95,4 +96,19 @@ export function insertLocalMessage(messages, message) {
 		return next;
 	}
 	return [...list, message].sort((left, right) => (left?.seq ?? 0) - (right?.seq ?? 0));
+}
+
+/**
+ * 本地落一条之后，把频道的「我拿到哪了」也推到这条 seq。
+ *
+ * 重连时 EventSource 带的 `since` 就是 `channel.lastSeq`：不推的话重连会把这条
+ * 再推一遍，补历史的窗口也会错位 —— 看起来像丢了一条。`lastAt` 一起推，侧栏
+ * 的排序和时间才跟得上。
+ */
+export function channelCursor(channel, seq, at = Date.now()) {
+	if (channel == null || typeof seq !== "number") return { lastSeq: Number(channel?.lastSeq ?? 0), lastAt: Number(channel?.lastAt ?? 0) };
+	return {
+		lastSeq: Math.max(Number(channel.lastSeq ?? 0), seq),
+		lastAt: Math.max(Number(channel.lastAt ?? 0), at),
+	};
 }
