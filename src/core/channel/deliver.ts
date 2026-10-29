@@ -96,6 +96,12 @@ export type DeliverOptions = {
 	 * `read_file` 的路径。不给就退化成正文里一行「[图片] x.png」—— 那是旧行为。
 	 */
 	readonly uploadsRoot?: string;
+	/**
+	 * 把排在这条前面的排队项让路（见 `choresAheadOf`）。
+	 *
+	 * 只有老板说话时才调。返回让了几条。
+	 */
+	readonly clearQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
 };
 
 /** 这个频道是不是「我和老板的私聊」。`viewer` 缺省时只要求两边里有老板。 */
@@ -284,11 +290,17 @@ export async function deliver(
 					at: options.message.at,
 				});
 			}
+			const requestId = `ch:${options.message.from === "owner" ? "owner:" : ""}${options.channel.id}:${
+				options.message.seq
+			}:${slug}`;
+			if (options.clearQueue !== undefined && options.message.from === "owner") {
+				await options.clearQueue(Number(conversation.id), requestId).catch(() => 0);
+			}
 			await conversation.submit(
 				{
 					type: "input",
 					content,
-					requestId: `ch:${options.channel.id}:${options.message.seq}:${slug}`,
+					requestId,
 					entry: {
 						kind: "core.channel",
 						data: {
@@ -332,6 +344,73 @@ export async function deliver(
 	}
 
 	return { delivered, failed, skipped };
+}
+
+/**
+ * 排在老板这句话前面、该让路的那些待办。
+ *
+ * 纯函数：吃 `harness.inspect().submissions`，吐 submission id。
+ *
+ * 为什么是「让路」而不是「打断」：实测过打断正在跑的那一轮（`abortTask`），
+ * 结果是**老板这句话本身也被级联吞掉** —— 对方会话里连这条消息的条目都没有，
+ * 老板看到的是彻底的没回应。丢他的消息是比慢更坏的错。
+ *
+ * 让路只碰**还没进 transcript 的排队项**（`status: "queued"`），一条都不删消息：
+ * 那些消息还在频道里，对方下次被未读摘要叫醒时照样看得到。而老板这句话
+ * 因此排在队头，跑完当前这一轮就轮到他。
+ */
+export function choresAheadOf(
+	submissions: readonly {
+		readonly id: number | bigint | string;
+		readonly conversationId: number | bigint | string;
+		readonly status: string;
+		readonly requestId?: string | undefined;
+	}[],
+	conversationId: number,
+	keepRequestId: string,
+	max = 5,
+): (number | bigint | string)[] {
+	const out: (number | bigint | string)[] = [];
+	for (const submission of submissions) {
+		if (Number(submission.conversationId) !== conversationId) continue;
+		if (submission.status !== "queued") continue;
+		if (submission.requestId === keepRequestId) continue;
+		// 老板自己的排期不让路：他连说三句，就按顺序答三句。
+		if (submission.requestId?.includes(":owner:") === true) continue;
+		out.push(submission.id);
+		if (out.length >= max) break;
+	}
+	return out;
+}
+
+/**
+ * 让路的执行器：把排在这条前面的排队项撤掉。
+ *
+ * 只撤 `status: "queued"`（还没进 transcript 的），撤不掉正在跑的那一轮 ——
+ * 那条路我先试过 `abortTask`，它会连老板这句话一起吞掉（实测对方会话里连条目都没有）。
+ */
+export async function clearQueueAhead(
+	harness: Harness,
+	conversationId: number,
+	keepRequestId: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<number> {
+	const inspection = await harness.inspect(context);
+	const chores = choresAheadOf(inspection.submissions, conversationId, keepRequestId);
+	let cleared = 0;
+	for (const id of chores) {
+		try {
+			await harness.abortSubmission(
+				id as Parameters<Harness["abortSubmission"]>[0],
+				context,
+				conversationId as Parameters<Harness["abortSubmission"]>[2],
+			);
+			cleared += 1;
+		} catch {
+			// 撤不掉就算了：它还是会被答，只是排在老板前面。
+		}
+	}
+	return cleared;
 }
 
 /**

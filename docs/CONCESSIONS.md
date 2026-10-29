@@ -16,3 +16,5 @@
 | C-005 | 2026-10-28 | `project/memory.ts` / `agent/memory.ts` | **没有多进程安全** | 单进程；记忆写入用模块级 Promise 串行队列 | 不能水平扩展 | 若 storage 提供锁，可去掉队列 |
 | C-006 | 2026-10-28 | `runtime/open.ts` | `tasks` 表**没有「孤儿任务」的自动回收** | `reconcileZombieTasks` 在启动时把 `LIVE` 状态强制结算成 `terminal` + `outcome:{status:"orphaned",reason:"restart"}`，并摘掉 `pi.live` 里指向已终态任务的 `run` | 重启会有一次全表扫描 | 若 harness 自带崩溃恢复，可删 |
 | C-007 | 2026-10-28 | `ui/web/js/app.js` 的渲染策略 | **没有可用的 token 流**：`watchEvents()` 只在助手正文上零星推 `text_delta`，工具调用的参数（`say` 的 `text`）**一次 `toolcall_delta` 都不推**；而且串行化代理过不了它的 `WeakMap` 品牌检查（报 `Not a Harness`） | 不做「正在说」气泡；改为「新消息只追加、旧消息比指纹后原地换一行」（ADR-057），等话就靠活动行（想了 N 秒 / 跑了一条命令）先出现 | 用户点发送后到整段话出现之间仍是空白，只是界面不再卡 | 若 pi-durable 推 `toolcall_delta` 或提供 draft API，可补真流式 |
+
+| C-008 | `harness.abortTask()` 打断一个正在跑的任务，会把**同一会话里排队等着的输入**一起吞掉：`deliver()` 已经 `submit` 成功（`delivered` 里有这个人），但对方 transcript 里连这条消息的条目都没有，老板看到的是彻底没回应。 | 「老板问话插队」不再打断任务，改成只撤 `status: "queued"` 的排队项（ADR-066）；长命令跑着的时候，老板的问题仍然要等它结束。 | 等 pi-durable 提供「打断但保留排队输入」的语义再重试。 |

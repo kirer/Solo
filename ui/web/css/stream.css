@@ -102,6 +102,32 @@
 	grid-column: 2;
 }
 
+/* 半分钟内连着说的几句：一段话，不是一个话题下的一串消息。
+   - 间距归零：连发的 2px 在深色下看起来仍是两条
+   - 时间戳只留第一个：同一段里出现三个时间戳，读起来像三次发言
+   - 老板的气泡把相邻的圆角收平，读成一整块（`:has` 选中「后面还跟着同一段」的那一条） */
+.row-say[data-cont="true"] {
+	margin-top: 0;
+}
+
+.row-say[data-cont="true"] .row-time {
+	display: none;
+}
+
+.row-say[data-cont="true"] .row-body > .md {
+	margin-top: 4px;
+}
+
+.row-say[data-owner="true"][data-cont="true"] .row-body > .md {
+	border-top-right-radius: 4px;
+	border-bottom-right-radius: 4px;
+	margin-top: 2px;
+}
+
+.row-say[data-owner="true"]:has(+ .row-say[data-cont="true"]) .row-body > .md {
+	border-bottom-right-radius: 4px;
+}
+
 .row-av {
 	display: grid;
 	place-items: center;

@@ -29,6 +29,7 @@ import { EMPTY_ROSTER } from "./alias.ts";
 import type { MentionRoster } from "./alias.ts";
 import {
 	deliver,
+	clearQueueAhead,
 	liveConversations,
 	renderDigest,
 	type DeliverIssue,
@@ -77,7 +78,7 @@ export type PostInput = {
 	readonly status?: "pending" | "done" | "error";
 	/** T-016：占位归属的被唤醒人 slug。 */
 	readonly pendingFor?: string;
-	/** T-016：处理中指示占位（显示动画文案「X 开始处理…」）。被真实回复原地覆盖后消失。 */
+	/** T-016：处理中指示占位（显示动画文案「开始处理…」）。被真实回复原地覆盖后消失。 */
 	readonly processing?: boolean;
 	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
 	readonly attachments?: readonly Attachment[];
@@ -229,15 +230,18 @@ export async function postMessage(
  * - @某人：mention 中除发起方外的频道成员；
  * - 直接发给某人：dm 频道的另一成员（即接收方）；
  * - 普通无指向群消息：无接收方（不误触发）。
- * 老板收到 @ 也按通用规则触发（由其后续回复原地覆盖），不在此处排除身份。
+ * 老板（owner）一律不生成 processing 占位：他是发起方/主语，自己不会「处理」；
+ *   被 @ 或处于与别人的私聊时也不在此处生成（即便他是接收方身份）。
  */
 function collectProcessingTargets(mentions: readonly string[], channel: Channel | undefined, from: string, channelId: string): readonly string[] {
 	const set = new Set<string>();
+	// 只给「非发起方、且非老板」的接收人：老板是发起方/主语，自己不会「处理」，
+	// 无论是被 @ 还是身处与别人的私聊，都永远不生成 processing 占位。
 	for (const mention of mentions) {
-		if (mention !== from && channel?.members.includes(mention)) set.add(mention);
+		if (mention !== from && mention !== OWNER && channel?.members.includes(mention)) set.add(mention);
 	}
 	if (channelId.startsWith("dm:") && channel !== undefined) {
-		const other = channel.members.find((member) => member !== from);
+		const other = channel.members.find((member) => member !== from && member !== OWNER);
 		if (other !== undefined) set.add(other);
 	}
 	return [...set];
@@ -371,7 +375,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			for (const target of processingTargets) {
 				const placeholder = appendMessage(state, input.channelId, {
 					from: target,
-					text: `${deps.labelOf?.(target) ?? target} 开始处理…`,
+					text: `开始处理…`,
 					at: input.at,
 					kind: "chat",
 					status: "pending",
@@ -443,6 +447,9 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			message,
 			targets,
 			busy,
+			// 老板问话插队：让他排在前面的待办让路（只清排队项，不删消息、不打断正在跑的那一轮）。
+			clearQueue: (conversationId, keepRequestId) =>
+				clearQueueAhead(deps.harness, conversationId, keepRequestId, context),
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),

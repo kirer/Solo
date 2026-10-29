@@ -45,6 +45,10 @@ const FOLD_OVER = 1500;
 
 /** 同一人 2 分钟内连发 → 后续行不画头像名字，只缩进对齐。 */
 const GROUP_MS = 2 * 60 * 1000;
+// 半分钟内连着说的几句算「一段」：气泡角连起来、时间戳只留第一个。
+// 这和后端 `STEP_MERGE_MS` 是同一个数 —— 后端把过程话并进上一条，前端把漏过来的相邻几句
+// 在视觉上并成一块，否则同一件事在屏幕上被切开成三块，读起来像三个人在抢话。
+const CONT_MS = 30 * 1000;
 
 const ICONS = {
 	copy: `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5.5" y="5.5" width="7" height="7" rx="1.6"/><path d="M10.5 3.6A1.6 1.6 0 0 0 8.9 2.5H5A1.5 1.5 0 0 0 3.5 4v3.9c0 .7.5 1.3 1.1 1.5"/></svg>`,
@@ -203,7 +207,7 @@ function bodyHtml(message) {
 
 /* ── say ────────────────────────────────────────────────────────────── */
 
-function sayRow(message, ctx, grouped) {
+function sayRow(message, ctx, grouped, cont = false) {
 	const isOwner = message.fromSlug === "owner";
 	const person = ctx.bySlug.get(message.fromSlug);
 	const role = [person?.title, person?.project].filter(Boolean).join(" · ");
@@ -232,6 +236,7 @@ function sayRow(message, ctx, grouped) {
 	wrap.className = "row row-say";
 	wrap.dataset.seq = String(message.seq);
 	wrap.dataset.grouped = grouped ? "true" : "false";
+	if (cont) wrap.dataset.cont = "true";
 	if (isOwner) wrap.dataset.owner = "true";
 	if (need) wrap.dataset.need = "true";
 	wrap.innerHTML = `${av}<div class="row-body">${head}${quoteBlock(message.replyTo)}${bodyHtml(message)}${toolsBar()}</div>`;
@@ -316,7 +321,7 @@ function parsePending(message) {
 }
 
 /**
- * 处理中指示：某人收到 @他 / 直接发给他的消息后，在他所在频道出现的「X 开始处理…」动画行。
+ * 处理中指示：某人收到 @他 / 直接发给他的消息后，在他所在频道出现的「开始处理…」动画行。
  * 不是拍板卡、不是普通气泡——纯状态提示，被该人真实回复原地覆盖（processing 标记消失、status=done）后走 sayRow 渲染。
  */
 function processingRow(message) {
@@ -324,9 +329,8 @@ function processingRow(message) {
 	row.className = "row row-processing";
 	row.dataset.seq = String(message.seq);
 	row.dataset.kind = "processing";
-	const who = escapeHtml(message.fromLabel ?? message.from ?? "");
 	const text = escapeHtml(message.text ?? "");
-	row.innerHTML = `<span class="proc"><span class="proc-who">${who}</span><span class="proc-text">${text}</span><span class="proc-dots"><i></i><i></i><i></i></span></span>`;
+	row.innerHTML = `<span class="proc"><span class="proc-text">${text}</span><span class="proc-dots"><i></i><i></i><i></i></span></span>`;
 	return row;
 }
 
@@ -560,18 +564,21 @@ export function buildStream(messages, ctx = {}) {
 		// 未登记的 kind：不画。
 		if (message.kind != null && !SAY_KINDS.has(message.kind)) continue;
 
+		const gap = prevSay === null ? Number.POSITIVE_INFINITY : message.at - prevSay.at;
 		const grouped =
 			prevSay !== null &&
 			prevSay.fromSlug === message.fromSlug &&
-			message.at - prevSay.at < GROUP_MS &&
-			message.at - prevSay.at >= 0;
+			gap < GROUP_MS &&
+			gap >= 0;
+		// 比「同一人连发」更紧的一档：半分钟内。再远就不是一段话，是两次说话了。
+		const cont = grouped && gap <= CONT_MS;
 
 		flushEvents(message.fromSlug);
 		if (!grouped) {
 			for (const sep of timeSepNodes(message, lastAt ? { at: lastAt } : null)) frag.append(sep);
 		}
 
-		frag.append(sayRow(message, full, grouped));
+		frag.append(sayRow(message, full, grouped, cont));
 		// 他自己的过程行跟在他这句话下面（见上面 `pendingEvents` 的注释）。
 		for (const node of takeEvents(message.fromSlug)) frag.append(node);
 		flushEvents();
