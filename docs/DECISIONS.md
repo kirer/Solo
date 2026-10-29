@@ -1524,3 +1524,44 @@ PASS 被拒且不落库 / 7 种写法算 PASS、4 种不算 / 附言在「一人
 `note` 与占位不算说过 / 补发顶掉占位不新增一条 / `nextSeq` 落后时不自撞号 / 多条占位填最近的）。
 线上实测：`[rescue] 知言 答在会话里但没说出来，已补发到 company（唤自 #43；落成 #44）`，
 频道里 `#44 知言 现在 18:26:15。`。
+
+## ADR-068：默认模型必须是清单里真有的，说不出来就回落并说清
+
+**背景（实测，两次同一类）**。`workspace/settings.json` 里写着
+`"defaultModel": "commandcode/auto/hy3"`，而 `providers` 里注册的 id 只有 `magpie`。
+`setupModels()` 把这个字符串按第一个 `/` 拆成 `{provider:"commandcode", modelId:"auto/hy3"}`
+原样返回，`assembleCore()` 再把它 `configure` 进每一个会话 —— 于是每次生成都在模型产字
+之前就以 `no_model` 失败。
+
+现场的三条证据：
+
+```
+tasks 5543  pi.generation  conv 2  terminal  startedAt→endedAt 相差 2ms
+  outcome: {"status":"failed","error":{"message":"Model commandcode/auto/hy3 is not available",
+            "detail":{"reason":"no_model"}}}
+submissions 5542  "ch:owner:dm:owner-知言:192:知言"  status "unanswered"
+entries   conv 2 最后一条是 user（#192），之后没有任何 assistant 条目
+```
+
+表现是**所有人都像在休息**：频道里只留下占位「开始处理…」，没有错误、没有回复、进程
+0% CPU、`pi.live` 里没有任何 `run`。这和 ADR-0xx（`@CEO 不理我`）是同一类故障的第二次
+发作 —— 上一次是 provider 改名（`commandcode` → `magpie`），这一次是 `defaultModel` 手改。
+
+**决定**。`setupModels()` 在返回默认引用之前，拿注册好的清单核一遍（`models.getModel()`）：
+
+- 命中 → 原样返回，不打日志；
+- 没命中 → `console.warn("[core] … 指向不存在的模型 X/Y，改用 Z/W")` 并回落到清单里的
+  第一个模型；
+- 清单本身是空的 → 直接 `throw`，不拿空清单去启动（空清单启动等于全员静默死亡）。
+
+三条入口（`settings.json`、`ANTHROPIC_API_KEY`、`OPENAI_API_KEY`）和本地网关兜底都走这个函数。
+`settings.json` 本身也已改成 `magpie/auto/deepseek-v4.1-flash`，并把网关实际提供的
+`auto/hy3` 加进清单（备用，不再是默认）。
+
+**为什么不把错误也发声到频道里**：那是第二步（把 `unanswered` 的提交扫出来写一条
+`kind:"note"`）。这一条先保证「配错了会自愈，日志里有话」，因为它是唯一让系统整体
+失效、且界面上完全看不出异常的那种故障。
+
+**回归**：`test/core/models.test.ts`（7 例）—— 坏 provider 回落并警告 / 坏模型名回落 /
+对的引用不动也不警告 / 没写 defaultModel 用第一个 / 清单空则报错 / 清单空且引用坏也报错 /
+`settings.json` 读不出来回落本地网关。
