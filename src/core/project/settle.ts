@@ -30,7 +30,8 @@ export const SettleDoc = defineDoc<SettleState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ cursors: {} }),
-	checkpointWhen: () => false,
+	// 沉淀游标也是只增的增量文档，同样要有回收上界（见 `roster.ts` 的说明）。
+	checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 64,
 });
 
 export type SettleDeps = {

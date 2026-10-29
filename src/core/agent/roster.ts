@@ -34,7 +34,10 @@ export const DirectoryDoc = defineDoc<DirectoryState>({
 	version: 1,
 	scope: "session",
 	initial: () => ({ slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} }),
-	checkpointWhen: () => false,
+	// 名册也是「每次改动都是增量」的文档：`wake` 每次有人被叫醒就写一次，`labels` 每次
+	// rescan 刷一遍。原来写 `() => false` 的结果是增量永不回收 —— 实测 164 条 delta / 44KB，
+	// 而频道文档只有 13 个。按条数压基线就是确定的回收上界。
+	checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 64,
 });
 
 export function emptyDirectory(): DirectoryState {
