@@ -17,7 +17,7 @@
  * 一个都过不去。所有拼路径的地方都必须先过 `isUploadId`。
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Attachment } from "../channel/state.ts";
 
@@ -184,6 +184,56 @@ export async function readUploadMeta(root: string, id: string): Promise<UploadMe
 		return undefined;
 	}
 	return { name: meta.name, mime: meta.mime, bytes: meta.bytes, at: meta.at };
+}
+
+/**
+ * 扫掉没人引用的附件（审计 P2-3）。
+ *
+ * 为什么会有孤儿：`putUpload` 是两次 `writeFile`（本体 + 元数据），进程在中间被杀就留下
+ * 半套；另外「上传了但没发出去」（老板选了图又关掉页面）也会留一份永远没人用的文件。
+ * `readUploadMeta` 只是把它显示成「不存在」，磁盘上一直占着。
+ *
+ * 三条安全线：
+ * 1. **引用真相是频道文档里的 `attachments`**（调用方传进来），不是元数据文件；
+ * 2. **太新的不动**：`minAgeMs` 之内的文件可能是正在上传的（写本体和写元数据之间），
+ *    删了就是把人正在发的图弄丢；
+ * 3. 只认 `isUploadId` 的纯文件名，别的（`.DS_Store`、子目录）一律不碰。
+ */
+export async function sweepOrphanUploads(
+	root: string,
+	referenced: ReadonlySet<string>,
+	now: number,
+	options: { readonly minAgeMs?: number } = {},
+): Promise<{ scanned: number; removed: number; keptRecent: number }> {
+	const minAgeMs = options.minAgeMs ?? 10 * 60_000;
+	let scanned = 0;
+	let removed = 0;
+	let keptRecent = 0;
+	let names: string[];
+	try {
+		names = await readdir(root);
+	} catch {
+		return { scanned, removed, keptRecent };
+	}
+	for (const name of names) {
+		const id = name.endsWith(".json") ? name.slice(0, -".json".length) : name;
+		if (!isUploadId(id)) continue;
+		scanned += 1;
+		if (referenced.has(id)) continue;
+		const info = await stat(join(root, name)).catch(() => null);
+		// 只删**普通文件**：同名目录（`sub` 也符合 id 白名单）删不掉，算进「已删」会骗人。
+		if (info === null || !info.isFile()) continue;
+		if (now - info.mtimeMs < minAgeMs) {
+			keptRecent += 1;
+			continue;
+		}
+		const ok = await unlink(join(root, name)).then(
+			() => true,
+			() => false,
+		);
+		if (ok && name === id) removed += 1;
+	}
+	return { scanned, removed, keptRecent };
 }
 
 /** 附件超出上限。单独一个类型，好让路由把它翻成 413 而不是 500。 */

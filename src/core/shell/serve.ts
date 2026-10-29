@@ -48,6 +48,7 @@ import {
 	putUpload,
 	readBounded,
 	readUploadMeta,
+	sweepOrphanUploads,
 	uploadPathOf,
 	uploadsRootOf,
 } from "../channel/uploads.ts";
@@ -368,6 +369,12 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			method: "GET",
 			handler: async ({ response, url }) => {
 				const asked = url.searchParams.get("path") ?? "";
+				// 分页（审计 P2-2）：默认一页 500 条 —— 右栏那种目录远远用不完，
+				// 而 5000 个文件的目录不会一次全 stat 一遍。上限 2000 防止被当成批量接口用。
+				const askedLimit = Number(url.searchParams.get("limit") ?? "");
+				const askedOffset = Number(url.searchParams.get("offset") ?? "");
+				const limit = Number.isFinite(askedLimit) && askedLimit > 0 ? Math.min(Math.floor(askedLimit), FILE_LIST_MAX) : FILE_LIST_DEFAULT;
+				const offset = Number.isFinite(askedOffset) && askedOffset > 0 ? Math.floor(askedOffset) : 0;
 				const root = resolve(workspaceRoot);
 				const target = resolve(root, asked);
 				if (target !== root && !target.startsWith(root + sep)) {
@@ -417,26 +424,43 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 					});
 				}
 				const names = await readdir(target, { withFileTypes: true });
-				const entries = [];
-				for (const dirent of names) {
-					// 隐藏文件、node_modules 与敏感文件不进列表：那不是老板要读的东西，
-					// 只是噪音或不该看的（规则见 `fileHidden`，与直接访问共用一份）。
-					if (fileHidden(dirent.name, relative === "" ? dirent.name : `${relative}/${dirent.name}`)) continue;
-					const full = join(target, dirent.name);
-					const meta = await stat(full).catch(() => null);
-					if (meta === null) continue;
-					entries.push({
-						name: dirent.name,
-						kind: meta.isDirectory() ? "dir" : "file",
-						bytes: meta.isDirectory() ? 0 : meta.size,
-						at: Math.round(meta.mtimeMs),
-					});
-				}
-				// 目录在前、同类按名字（中文按码点，和其余排序一致）。
-				entries.sort((left, right) =>
-					left.kind === right.kind ? left.name.localeCompare(right.name, "zh") : left.kind === "dir" ? -1 : 1,
+				// 隐藏文件、node_modules 与敏感文件不进列表：那不是老板要读的东西，
+				// 只是噪音或不该看的（规则见 `fileHidden`，与直接访问共用一份）。
+				const visible = names.filter((dirent) =>
+					!fileHidden(dirent.name, relative === "" ? dirent.name : `${relative}/${dirent.name}`),
 				);
-				return json(response, { path: shown, parent, entries });
+				// 先按名字排（目录在前）再分页：顺序必须**稳定**，否则翻页会漏条目或重复。
+				visible.sort((left, right) => {
+					const leftDir = left.isDirectory();
+					const rightDir = right.isDirectory();
+					if (leftDir !== rightDir) return leftDir ? -1 : 1;
+					return left.name.localeCompare(right.name, "zh");
+				});
+				const total = visible.length;
+				const page = visible.slice(offset, offset + limit);
+				// 并发 stat：以前是一条一条 `await`，5000 个文件的目录要排 5000 次系统调用
+				// （审计 P2-2）。上限 16 是「够快但不会把 fd 打满」的折中。
+				const entries = await mapLimit(page, FILE_STAT_CONCURRENCY, async (dirent) => {
+					const meta = await stat(join(target, dirent.name)).catch(() => null);
+					// stat 失败（刚被删、权限不足）**仍然返回这一条**：从列表里悄悄少一个文件，
+					// 比显示成 0 字节更让人困惑 —— 后者点开就知道怎么回事。
+					const dir = meta === null ? dirent.isDirectory() : meta.isDirectory();
+					return {
+						name: dirent.name,
+						kind: dir ? "dir" : "file",
+						bytes: meta === null || dir ? 0 : meta.size,
+						at: meta === null ? 0 : Math.round(meta.mtimeMs),
+					};
+				});
+				return json(response, {
+					path: shown,
+					parent,
+					entries,
+					// 前端目前不用这两个字段（默认一页 500 条，够右栏用）；给脚本一个明确的
+					// 「还有多少没给」的说法，而不是让人数 entries 猜。
+					total,
+					truncated: offset + entries.length < total,
+				});
 			},
 		},
 		{
@@ -523,11 +547,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 					// 在这里手拼行切片实测会把后面的节写坏（删末节最容易被漏）。
 					const next = removeSection(source, body.heading ?? "");
 					if (next === undefined) return fail(response, 404, "没有这一条记忆（可能已经被删掉）");
-					const result = await writeMemory(agentDir, next, "owner");
+					const result = await writeMemory(agentDir, next, MEMORY_ACTOR_WEB);
 					return json(response, { ok: true, entries: sectionsOf(result.source).length });
 				}
 				if (body.op === "add") {
-					const result = await appendMemory(agentDir, body.text ?? "", new Date(), "owner");
+					const result = await appendMemory(agentDir, body.text ?? "", new Date(), MEMORY_ACTOR_WEB);
 					if (!result.changed) return fail(response, 400, result.message);
 					return json(response, { ok: true, entries: sectionsOf(result.source).length });
 				}
@@ -883,6 +907,32 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		}
 	}
 
+	/**
+	 * 启动时清一次上传孤儿（审计 P2-3）。
+	 *
+	 * 引用真相是频道文档里的 `attachments`：一条消息引用过的 id 一个都不动，其余超过
+	 * 10 分钟的（避免误删正在上传的那半套）删掉。失败只记一行，不影响启动 ——
+	 * 清不掉只是占点磁盘。
+	 */
+	async function sweepUploads(): Promise<void> {
+		try {
+			const state = await shell.channels();
+			const referenced = new Set<string>();
+			for (const list of Object.values(state.messages ?? {})) {
+				for (const message of list) {
+					for (const attachment of message.attachments ?? []) referenced.add(attachment.id);
+				}
+			}
+			const result = await sweepOrphanUploads(uploadsRoot, referenced, Date.now());
+			if (result.removed > 0) {
+				console.log(`[core] 清掉 ${result.removed} 个没人引用的上传文件（扫描 ${result.scanned} 个）`);
+			}
+		} catch {
+			/* 清理失败不影响启动 */
+		}
+	}
+	void sweepUploads();
+
 	if (process.env.SOLO_DEBUG_FROM === "1") {
 		console.warn("[core] 警告：from 可伪造（SOLO_DEBUG_FROM=1），只用于本机调试");
 	}
@@ -1090,6 +1140,47 @@ async function readJson<T>(request: IncomingMessage, options: { readonly require
 	} catch {
 		return {} as T;
 	}
+}
+
+/**
+ * 记忆留痕里的「操作者」。
+ *
+ * P0-4 之后 HTTP 侧只剩老板一个身份，所以这里**不造多用户模型**：只把来源标清楚 ——
+ * 网页（老板点「忘掉」/「添一条」）写 `owner:web`，agent 自己 `remember` 写 `agent`。
+ * 以后真出错时，「这条是人在面板上删的」和「它自己改的」能一眼分开。
+ */
+const MEMORY_ACTOR_WEB = "owner:web";
+
+/** 文件列表一页多少条（默认 / 上限）。 */
+const FILE_LIST_DEFAULT = 500;
+const FILE_LIST_MAX = 2000;
+
+/** 目录列表里同时开多少个 `stat`。够快，又不会在大目录上把文件描述符打满。 */
+const FILE_STAT_CONCURRENCY = 16;
+
+/**
+ * 限并发地跑一遍异步映射。
+ *
+ * 为什么不用 `Promise.all`：5000 个文件的目录会同时开 5000 个 `stat`，把 fd 和内存一起打满 ——
+ * 那正是审计里「串行太慢」的反面错误。这里的并发上限是固定的，结果顺序与输入一致。
+ */
+export async function mapLimit<T, R>(
+	items: readonly T[],
+	limit: number,
+	run: (item: T) => Promise<R>,
+): Promise<R[]> {
+	const out = new Array<R>(items.length);
+	let next = 0;
+	const worker = async (): Promise<void> => {
+		for (;;) {
+			const index = next;
+			next += 1;
+			if (index >= items.length) return;
+			out[index] = await run(items[index] as T);
+		}
+	};
+	await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+	return out;
 }
 
 /** 项目文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
