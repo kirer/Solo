@@ -1,5 +1,5 @@
 /**
- * 右侧栏（第三列）与它的「文件」页。布局靠 CSS，node 里没有布局引擎，
+ * 右侧栏（第三列）。布局靠 CSS，node 里没有布局引擎，
  * 所以照旧读原文断言规则 —— 盯的是四件容易被后来改动弄坏的事：
  *
  *   1. 右栏是**列**不是浮层：`.frame` 必须是三列，且宽度来自 `--rightbar`；
@@ -7,6 +7,8 @@
  *      `grid-template-columns` 作废，三列会塌成一列；
  *   3. 收起时 `hidden` 真的不占位（`display: flex` 会盖掉 hidden 的默认规则）；
  *   4. 动画是「列先让开、字后进来」（列 300ms，内容 240ms 带 60ms 延迟）。
+ *
+ * 文件页已删（ADR-091），右栏只剩详情。
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -16,7 +18,7 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 const shell = read("../../ui/app/src/styles/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
 const base = read("../../ui/app/src/styles/base.css").replace(/\/\*[\s\S]*?\*\//g, "");
 // React 重构后：`data-right` 由 App.tsx 的 `.frame` 渲染，关闭要等动画由 RightPanel.tsx 的
-// 延迟卸载负责，文件页在同一个文件里（旧前端是 app.js + files.js 两个模块）。
+// 延迟卸载负责。
 const app = read("../../ui/app/src/App.tsx");
 const files = read("../../ui/app/src/panels/RightPanel.tsx");
 
@@ -48,7 +50,7 @@ describe("右侧栏", () => {
 	});
 
 	it("收起时 hidden 真的不占位", () => {
-		expect(shell).toMatch(/\.detail\[hidden\],\s*\n\s*\.detail-body\[hidden\],\s*\n\s*\.files\[hidden\]\s*\{\s*\n\s*display: none;/);
+		expect(shell).toMatch(/\.detail\[hidden\],\s*\n\s*\.detail-body\[hidden\]\s*\{\s*\n\s*display: none;/);
 	});
 
 	it("动画：列 300ms，内容 240ms 且带 60ms 延迟", () => {
@@ -58,23 +60,9 @@ describe("右侧栏", () => {
 		expect(content).toContain("60ms both");
 	});
 
-	it("tab 下划线是从中间长出来的", () => {
-		const underline = blocksOf(shell, ".detail-tab::after").join("\n");
-		expect(underline).toContain("transform: scaleX(0)");
-		expect(underline).toContain("transition: transform 220ms");
-		expect(blocksOf(shell, '.detail-tab[aria-selected="true"]::after').join("\n")).toContain("scaleX(1)");
-	});
-
 	it("关闭要等滑完再 hidden（否则动画被剪掉）", () => {
 		// `.frame[data-right]` 由 App.tsx 渲染；关的时候先让列宽过渡跑完，再真正卸载内容。
 		expect(app).toContain('data-right={right.open ? "open" : "closed"}');
 		expect(files).toContain("window.setTimeout(() => setMounted(false), 300)");
-	});
-
-	it("文件页不在前端拼路径：越界由后端拦", () => {
-		// 前端只把 `path` 原样交给接口，不做 `..` 判断——判断在两处就会有两套答案。
-		expect(files).toContain("loadFiles(path)");
-		expect(files).not.toContain('".."');
-		expect(files).not.toContain("replace(/\\.\\./");
 	});
 });

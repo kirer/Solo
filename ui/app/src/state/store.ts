@@ -28,7 +28,6 @@ export type Presence = "idle" | "working" | "thinking" | "asleep";
 export type Layout = "flat" | "bubble";
 export type Theme = "system" | "light" | "dark";
 export type Side = "open" | "rail";
-export type RightTab = "detail" | "files";
 
 export type State = {
 	/** 首屏数据都到齐了才画主界面 —— 半渲染的界面比什么都不画更像坏了。 */
@@ -49,7 +48,7 @@ export type State = {
 	layout: Layout;
 	theme: Theme;
 	side: Side;
-	right: { open: boolean; tab: RightTab };
+	right: { open: boolean };
 	needMenu: boolean;
 	settings: boolean;
 	team: boolean;
@@ -88,7 +87,7 @@ const initial: State = {
 	layout: read(LAYOUT_KEY, ["flat", "bubble"], "bubble"),
 	theme: read(THEME_KEY, ["system", "light", "dark"], "system"),
 	side: read(SIDE_KEY, ["open", "rail"], "open"),
-	right: { open: false, tab: "detail" },
+	right: { open: false },
 	needMenu: false,
 	settings: false,
 	team: false,
@@ -357,7 +356,7 @@ export function closeMemory(): void {
 export async function openPerson(slug: string): Promise<void> {
 	try {
 		const profile = await getPerson(slug);
-		patch({ person: profile, trail: [...state.trail, { kind: "person", slug }], right: { open: true, tab: "detail" } });
+		patch({ person: profile, trail: [...state.trail, { kind: "person", slug }], right: { open: true } });
 	} catch (error) {
 		throw error;
 	}

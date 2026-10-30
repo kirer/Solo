@@ -206,7 +206,7 @@ export function App(): JSX.Element {
 						aria-label="详情"
 						title="详情"
 						aria-pressed={right.open}
-						onClick={() => setRight({ open: !right.open, tab: "detail" })}
+						onClick={() => setRight({ open: !right.open })}
 					>
 						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
 							<rect x="3" y="4" width="18" height="16" rx="2.5" />

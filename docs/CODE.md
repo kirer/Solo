@@ -50,7 +50,7 @@ shell = 装配层，唯一可以同时 import 全部
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
    不许 import `agent|channel|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
 
-## 2. 全量文件（`src/core` 下 46 个 ts，10371 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 46 个 ts，10169 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -83,16 +83,16 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/wake.ts` | 132 | `wake()` —— **叫醒一个人只有这一条路**：合并排队项、记 wake、重置「一轮一句」、提交、没产出留痕；正文用 `bodyOf(merged, busy)` 回调给（要先合并才知道并了几条）。`post()` 与 `team/settle.ts` 都走它 |
 | `channel/tools.ts` | 1010 | **7 个工具**（`createCoreTools`，ADR-084 / ADR-090）：`say` / `chats` / `read_history` / `remember` / `hire` / `run` / `file`；同一件事的几种做法是一个 `action` 枚举，不是几个近义工具名。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），`defaultChannel` 兜底落到私聊**直接报错**。`me` / `skills` / `teams` / `write_team` 已删——它们是「用 `file` 读写某个固定路径 md」的包装，改自己就是写 `agents/<slug>/identity.md` |
 | `channel/unanswered.ts` | 71 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
-| `app/index.ts` | 52 | `createApp(services)` → `{snapshots, read, people, chat, files, uploads, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
+| `app/index.ts` | 50 | `createApp(services)` → `{snapshots, read, people, chat, uploads, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
 | `app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」 |
 | `app/snapshot.ts` | 88 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
 | `app/read.ts` | 589 | 读 + 人 + **投影**（原 `app/people.ts` 与 `view/index.ts` 并进来）：`channelList` / `channelDetail` / `messageView` / `orgView` / `attentionItems` / `labelIn` / `withLabels`，外加 `createPeople` 的档案与记忆读改写；每个入口都是「取快照 → 投影 → 返回 DTO」 |
 | `app/chat.ts` | 166 | 说话用例：`postMessage` / `createChannel` / `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界）在这里而不在路由里 |
-| `app/files.ts` | 242 | 右栏只读文件树 + 附件语义（原 `app/uploads.ts` 并进来）：三道闸（前缀 → `lstat` 不跟链 → `realpath` 再验，越界一律 `forbidden`）/ `createUploads` / `mapLimit` |
+| `app/files.ts` | 78 | 附件语义（原 `app/uploads.ts` 并进来）：`createUploads` —— 收下字节、写元数据、读回时决定内联还是下载。工作区文件树已删（ADR-091），三道闸随它一起走了 |
 | `app/diag.ts` | 139 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性（ADR-083）。单条 4KB、单文件 5MB 轮转一代 |
 | `app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
-| `view/dto.ts` | 223 | **界面吃的每种 JSON 只在这里定义一次**（ADR-082）：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/read.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
-| `interface/http/routes.ts` | 222 | 路由表：18 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
+| `view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**（ADR-082）：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/read.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
+| `interface/http/routes.ts` | 208 | 路由表：17 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
 | `interface/http/server.ts` | 733 | HTTP 原语 + 表驱动匹配 + 来源闸 + 静态资源 + 网卡探测（原 `match` / `guard` / `network` / `static-assets` 都并进来）：`json` / `fail` / `readJson` / `serveStatic` / `matchRoute`（`:name` 捕获 / `*name` 吃余量）/ `isWildcardHost` / `browserUrlOf`；静态资源带 ETag（按编码）+ Last-Modified + `Vary` + br/gzip 协商 |
 | `interface/http/sse.ts` | 262 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照，`create` 只推订阅者） |
 | `shell/assemble.ts` | 626 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道；`addToCompanyChannel` / `joinTeamChannel` / `syncTeamChannel` / `ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板） |
@@ -120,7 +120,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
 | `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层、附件队列、拖拽、粘贴、引用条 |
-| `src/panels/RightPanel.tsx` | 右栏第三列：两个 tab（详情 / 文件）。关的时候等 300ms 过渡再卸载 |
+| `src/panels/RightPanel.tsx` | 右栏第三列：只有详情（文件页已删，ADR-091）。关的时候等 300ms 过渡再卸载 |
 | `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`） |
 | `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create`）；失败退避 1s→15s；org 推送交给 `store.refreshLists`（侧栏与「找你」只有这一条刷新路） |
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
@@ -205,24 +205,24 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 61 文件 / 549 例，应该 <3s
+npm test             # 60 文件 / 538 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
-npm run live         # 真实模型端到端 12 项，会花 token，只在改行为后跑；连跑两次都要 12/12
+npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
 ```
 
-`live` 的验收门是**两条 + 一个趋势**（ADR-089）：两次 12/12；`rescue` 补发的内容/频道/去重
+`live` 的验收门是**两条 + 一个趋势**（ADR-089）：两次 16/16；`rescue` 补发的内容/频道/去重
 正确（单测守）；`rescue` 次数记下来 —— 7 个阶段超过 4 次就是提示词在退化。`rescue=0` 不是门。
 
 改行为时**必须**同步三处：代码、`test/core/` 里的用例、`docs/`（`CORE` 概念 / `WEB-API`
 字段 / `DECISIONS` 若碰了不可轻易改的约定）。
 
-真实模型自测是保底：549 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
+真实模型自测是保底：538 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
 那一次是两个 bug 叠在一起（`ownerSpeak` 漏传 wake + wake 在 `submit` 之后才落盘），
 症状是「我在群里问，对方在私聊里答」，单测完全看不见。
 
 ## 6. 测试布局
 
-`test/core/`（50 文件，纯函数 + 装配）：
+`test/core/`（49 文件，纯函数 + 装配）：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -259,7 +259,6 @@ npm run live         # 真实模型端到端 12 项，会花 token，只在改�
 | `history.test.ts` | `read_history` 能翻到被压缩掉的历史 |
 | `attach.test.ts` | `planAttachments`：哪些附件给模型读、怎么读 |
 | `uploads-sweep.test.ts` | `sweepOrphanUploads`：没人引用的附件被清掉 |
-| `files-list.test.ts` | `mapLimit`：并发有上限、顺序不变 |
 | `safety.test.ts` | `resolveInWorkspace`：越界路径一律拒 |
 | `http-guard.test.ts` | `hostAllowed`：Host 头必须是本服务自己 |
 | `reconcile.test.ts` / `runtime-reconcile.test.ts` | 僵尸任务回收 + 启动自愈真的跑完了 |

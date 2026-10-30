@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **18** 条路由（按方法+路径算；按路径去重是 **15** 条 —— `check-boundaries.mjs`
+只有 **17** 条路由（按方法+路径算；按路径去重是 **14** 条 —— `check-boundaries.mjs`
 数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
@@ -21,7 +21,6 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
 | `GET` | `/api/attention` | 「找我」：跨频道、需要我本人看一眼的消息 |
-| `GET` | `/api/files?path=` | 工作区的只读文件树（右栏「文件」页） |
 | `GET` | `/api/people/:slug` | 一个人的档案：身份 / 技能 / 记忆概况 / 所在频道 |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
@@ -278,26 +277,7 @@ type ViewMessage = {
 为什么需要它：实测我在 4804 条消息里回了 51 条（**1.06%**）。不是不想理，是**找不到**
 —— 一条要拍板的消息埋在流水里，没有任何东西把它拎出来。
 
-## 10. `GET /api/files?path=<相对路径>`
-
-工作区的只读文件树，右栏「文件」页用。`path` 省略或为空就是根。
-Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
-
-- 目录 → `{ path, parent, entries: [{ name, kind: "dir" | "file", bytes, at }], total, truncated }`
-- 文件 → `{ path, parent, file: { name, bytes, binary, text } }`
-
-`truncated` = 这一页之后还有；前端目前不用（默认一页够右栏用），脚本可以用它翻页。
-顺序稳定（目录在前、再按名字），翻页不会漏也不会重。
-
-**越界由服务端拦**：`path` 一律 `resolve` 成绝对路径再校验是否以工作区根开头，不满足就 403；
-符号链接不跟随（`lstat` 查一次、`realpath` 再查一次）。前端不做 `..` 判断 —— 一件事有
-两处判断就会有两套答案。
-
-**不猜内容**：前 4 KB 有 NUL 就当二进制（只报 `bytes`，`text` 为空）；超过 200 KB 不往回传。
-列表与直接访问都跳过 `.` 开头的文件、`node_modules` 与敏感文件（同一份 `fileHidden` 规则）
-—— 那不是我要读的东西，只是噪音。
-
-## 11. `GET /api/people/:slug`
+## 10. `GET /api/people/:slug`
 
 详情面板的**一次取全**：点开会话右上角的「详情」，要的就是这一份。
 
@@ -321,7 +301,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 `overrides: true`（界面显示「覆盖公司同名」）。`slug` 必须是名册里存在的 agent 且不是
 `owner`，否则 404。
 
-## 12. `GET /api/people/:slug/memory`
+## 11. `GET /api/people/:slug/memory`
 
 ```ts
 // 响应
@@ -340,7 +320,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 `op` 是「新加」还是「改过」。手写进 `memory.md`、没有日志的条目一律 `null` ——
 **不拿「现在」冒充「当时」**（ADR-016）。
 
-## 13. `POST /api/people/:slug/memory`
+## 12. `POST /api/people/:slug/memory`
 
 ```ts
 // 删一条
@@ -361,7 +341,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 同一道闸（`entryProblem` 拒空/超长/像密钥，`appendMemory` 串行 + 落 journal），
 和 agent 自己写没有第二条路。
 
-## 14. `POST /api/uploads` / `GET /api/uploads/:id`
+## 13. `POST /api/uploads` / `GET /api/uploads/:id`
 
 上传是**裸二进制**，不是 multipart：请求体就是文件本身，文件名走 `x-filename` 头或
 `?name=` 查询参数。
@@ -384,7 +364,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 **模型看不见图片内容**（ADR-051）：附件在投递正文里只有一行占位。agent 应该说
 「我读不了图里的内容，请用文字说一下要我做什么」，而不是猜。
 
-## 14.1 `POST /api/diag`
+## 13.1 `POST /api/diag`
 
 浏览器自报卡顿。请求体自由（前端发 `{ kind: "jank", at, entries: [...] }`），服务端补
 `at` 后追加到 `<workspace>/logs/jank.jsonl`；单条 4KB、单文件 5MB 封顶，满了轮转一次。
@@ -394,7 +374,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 或 `pagehide` 时发上来。每条带「当时在干什么」（`doing`）和可见性状态（`hidden` /
 `resumed` / `foreground`），用来区分「真卡」和「切后台被节流」。
 
-## 14.2 `GET /api/diag`
+## 13.2 `GET /api/diag`
 
 最近一条**运行报告**（ADR-083）。底座把失败经由 `onReport` 交给 `app/diag.ts`，落到
 `<workspace>/logs/runtime.jsonl`；这条接口只把「最近一条非良性报告」露出来 ——
@@ -415,7 +395,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 - `task_outdated` **不算异常**（每次启动都会出现），`lastReport` 跳过它。
 - 口径是**快照**，不是流：要持续观察就轮询，或直接 tail 那个 jsonl。
 
-## 15. 静态文件
+## 14. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`shell/serve.ts` 的 `uiDir` 默认值，
 实际读盘在 `interface/http/static-assets.ts`）：
@@ -428,7 +408,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 界面源码在 `ui/app/`（React + TypeScript + Vite，ADR-079），构建产物写回 `ui/web/`。
 **改完界面必须 `npm run ui:build`** —— 服务端只发 `ui/web/`，源码改动不会自己出现。
 
-## 16. 已知限制
+## 15. 已知限制
 
 - **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
 - **没有待办 / 任务 / 成本**。第一代有，当前核心一个都没有，界面相应位置是空的
@@ -436,7 +416,7 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
   打算以后从 `harness.inspect()` 派生，而不是把思考落库（ADR-081）。
 - **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。
 
-## 17. 兼容性纪律
+## 16. 兼容性纪律
 
 1. 加字段随便加（前端忽略未知字段）。
 2. **不许改字段含义**，尤其是 `read` / `unread` / `mentions` 这种带状态的 —— 宁可加新字段。

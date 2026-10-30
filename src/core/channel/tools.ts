@@ -5,7 +5,7 @@
  * 「员工不能越级」，代价是：调一个岗位就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
- * 十一个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
+ * 七个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
  * 工具的 `action` 枚举，而**不是**几个近义的工具名 —— 名字越多，模型选错的概率越高。
  *
  * | 工具 | 用途 |
@@ -14,11 +14,7 @@
  * | `chats` | `list` 列我在的会话和未读；`read` 读历史消息 |
  * | `read_history` | `scope=channel` 翻自己的对话（含压缩掉的）；`scope=memory` 翻记忆 |
  * | `remember` | 记一条经验（个人 / 团队） |
- * | `teams` | `list` 列团队；`read` 读团队说明 |
- * | `write_team` | 写一个团队（`teams/<slug>/README.md`） |
- * | `skills` | `list` / `read` / `write` 技能（怎么做一件事的说明书） |
  * | `hire` | 新建一个 agent（写文件夹） |
- * | `me` | `show` 我是谁、上级下属；`update` 改自己的身份正文 |
  * | `run` | 执行命令 |
  * | `file` | `read` / `write` 工作区里的一个文件 |
  *
@@ -57,6 +53,7 @@ import {
 	type Message,
 } from "./store.ts";
 import { renderDigest } from "./post.ts";
+import { promptDirOf } from "../prompt.ts";
 import { oneLine } from "../oneline.ts";
 import { confirmedBy } from "../team/settle.ts";
 import {
@@ -865,6 +862,10 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
 	return {
 		harness: deps.harness,
 		state,
+		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：**agent 叫醒 agent 也要贴**。
+		// 以前这里漏了它，于是成员 `say` 叫管理员时，管理员那条唤醒没有回话规矩 ——
+		// 表现是「能回，但不知道要先把话说进频道」，日志里一行 warn 谁也没注意。
+		promptDir: promptDirOf(deps.agentsRoot),
 		conversationOf: (slug: string) => conversationOf(deps, slug, context),
 		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算），
 		// 传一个 `(slug) => slug` 只是把缺省重写一遍。

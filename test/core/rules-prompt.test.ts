@@ -90,9 +90,10 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		expect(seed).toContain("只在叫你的那个频道回话");
 		expect(seed).toContain("3 句");
 		expect(seed).toContain("英文");
-		// 3. 拿不准问我；4. 先说要去找谁；5. 拍板用 @我。
-		expect(seed).toContain("问我");
+		// 3. 拿不准问直属上级、别跳级；4. 先说要去找谁；5. 只有助理能直接找我拍板。
+		expect(seed).toContain("先问你的直属上级");
+		expect(seed).toContain("别跳级");
 		expect(seed).toContain("我要去问 X 关于 Y");
-		expect(seed).toContain("@我");
+		expect(seed).toContain("只有助理能直接找我");
 	});
 });

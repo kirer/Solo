@@ -54,13 +54,13 @@ ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
 scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
-test/             61 文件 / 549 例
-  ├ test/core/    50 文件 / 493 例（纯函数 + 装配）
-  └ test/ui/      11 文件 / 56 例（界面纯函数与源码约定）
+test/             60 文件 / 538 例
+  ├ test/core/    49 文件 / 484 例（纯函数 + 装配）
+  └ test/ui/      11 文件 / 54 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 46 个 ts / 10371 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 46 个 ts / 10169 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -109,12 +109,12 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 61 文件 549 例，<3s，必须全绿
+npm test             # 60 文件 538 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
-npm run live         # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token；连跑两次都要 12/12
+npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 ```
 
-- **`live` 的门是「两次 12/12 + rescue 趋势」，不是 `rescue=0`**（ADR-089）：`rescue` 是安全网，
+- **`live` 的门是「两次 16/16 + rescue 趋势」，不是 `rescue=0`**（ADR-089）：`rescue` 是安全网，
   它补发的内容/频道/去重由单测守；次数记下来，7 个阶段超 4 次就查提示词。
 - **`npm run live` 不能省。** 五百多个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
   两个 bug 叠在一起（我发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），

@@ -17,9 +17,10 @@
  * 直接跑 `main()` 会：建临时工作区 → 播种助理 → 我 @ 助理 → 等回话 → 检查
  * 技能与团队是否有落盘生效。全程打印到 stdout，失败不抛（输出就是判据）。
  */
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Message } from "../src/core/channel/store.ts";
 import type { Context, Harness } from "../src/core/runtime/index.ts";
 
 const WAIT_MS = 240_000;
@@ -31,9 +32,11 @@ function log(phase: Phase): void {
 	console.log(`${mark} ${phase.name}${phase.detail === "" ? "" : ` — ${phase.detail}`}`);
 }
 
+type LiveShell = Awaited<ReturnType<typeof import("../src/core/shell/assemble.ts").assembleCore>>;
+
 /** 轮询频道，直到出现某个人发的消息（不是我发的）。 */
 async function waitForReply(
-	shell: Awaited<ReturnType<typeof import("../src/core/shell/assemble.ts").assembleCore>>,
+	shell: LiveShell,
 	channelId: string,
 	fromSlug: string,
 	afterSeq: number,
@@ -48,6 +51,61 @@ async function waitForReply(
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
 	}
 	return undefined;
+}
+
+/**
+ * 某一刻每个频道的「下一条 seq」。之后出现的消息 seq 一定 >= 这个数。
+ *
+ * 上报链的每一跳都可能落在不同频道（团队频道 / 公司频道），所以不能像
+ * `waitForReply` 那样只盯一个频道 —— 逐级往上本来就会换地方说话。
+ */
+async function seqBaseline(shell: LiveShell): Promise<Record<string, number>> {
+	return { ...(await shell.channels()).nextSeq };
+}
+
+/**
+ * 等 `from` 在下一条新消息里 @ 到 `target`。
+ *
+ * `target !== "owner"` 时额外盯「跳级」：只要他在这段时间里 @ 了我，立刻判失败，
+ * 不再等他补救 —— 跳级本身就是这条链要防的事。
+ */
+async function waitForMention(
+	shell: LiveShell,
+	baseline: Readonly<Record<string, number>>,
+	from: string,
+	target: string,
+	timeoutMs: number,
+): Promise<{ readonly hit?: Message; readonly wrong?: Message }> {
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const state = await shell.channels();
+		const messages: Message[] = [];
+		for (const [channelId, list] of Object.entries(state.messages)) {
+			const base = baseline[channelId] ?? Number.POSITIVE_INFINITY;
+			for (const message of list) {
+				if (message.seq >= base && message.from === from) messages.push(message);
+			}
+		}
+		messages.sort((left, right) => left.at - right.at || left.seq - right.seq);
+		if (target !== "owner") {
+			const wrong = messages.find((message) => message.mentions.includes("owner"));
+			if (wrong !== undefined) return { wrong };
+		}
+		const hit = messages.find((message) => message.mentions.includes(target));
+		if (hit !== undefined) return { hit };
+		await new Promise((resolve) => setTimeout(resolve, 1_000));
+	}
+	return {};
+}
+
+/** 把一跳的结果翻成一句能直接决定去查哪儿的话。 */
+function hopDetail(
+	outcome: { readonly hit?: Message; readonly wrong?: Message },
+	targetLabel: string,
+): string {
+	if (outcome.hit !== undefined) return outcome.hit.text.slice(0, 120);
+	if (outcome.wrong !== undefined) return `跳级了：${outcome.wrong.text.slice(0, 110)}`;
+	return `等待超时：没有把话交给${targetLabel}`;
 }
 
 /**
@@ -338,7 +396,7 @@ async function main(): Promise<void> {
 	//    现在先等提交走到终态，再按状态分因；文件内容只回答「该写的写了没有」。
 	const settleAsked = await shell.ownerSay({
 		channelId: `team:自测团队`,
-		text: "定了：这个团队的验收标准是「能跑通 core:live 全部 12 项」。",
+		text: "定了：这个团队的验收标准是「能跑通 core:live 全部 16 项」。",
 		kind: "decision",
 	});
 	console.log(`团队频道已投递 #${settleAsked.seq}（kind=decision）`);
@@ -444,6 +502,98 @@ async function main(): Promise<void> {
 					? "工作规矩已列进提示词，正文含「绝不跳级」"
 					: "技能正文里没有「绝不跳级」"
 				: "提示词里没列出「工作规矩」技能",
+		});
+	}
+
+	// 9. 上报链：四个身份 —— 我 / 助理 / 团队管理员 / 成员。
+	//
+	//    前 12 项验的全是机制（回话、记忆、技能、招人），没有一项验「组织对不对」：
+	//    成员该找管理员、管理员该找助理、助理才直接找我。这一段补上这条产品主线。
+	//    身份直接用 `createAgent` 建（招人本身已经在上面的阶段验过），这样三层的
+	//    上级关系是确定事实，不会因为模型这一次招人招得不对而让整条链失真。
+	const chainTeam = "上报链团队";
+	{
+		const { createAgent } = await import("../src/core/agent/create.ts");
+		await mkdir(join(teamsRoot, chainTeam), { recursive: true });
+		const lead = await createAgent({
+			root: agentsRoot,
+			name: "团队管理员甲",
+			title: "团队管理员",
+			manager: slug,
+			team: chainTeam,
+			body:
+				"你是「上报链团队」的团队管理员。团队成员向你汇报，你向助理汇报。\n" +
+				"团队内的事你能定；招人、改别人身份、花钱、跨团队的事超出你的职权，先问助理，不要直接找老板。",
+		});
+		const member = await createAgent({
+			root: agentsRoot,
+			name: "成员乙",
+			title: "成员",
+			manager: lead.slug,
+			team: chainTeam,
+			body:
+				"你是「上报链团队」的成员，向团队管理员汇报。\n" +
+				"你自己职责内的事自己定；超出职责、要花钱、要改别人的事，先问团队管理员，绝不跳级找老板。",
+		});
+		await writeFile(
+			join(teamsRoot, chainTeam, "README.md"),
+			`---\nname: ${chainTeam}\nlead: ${lead.slug}\nstatus: active\n---\n\n` +
+				"目标：跑通上报链自测。成员 → 团队管理员 → 助理 → 我，逐级上报。\n" +
+				"验收：拍不了板的时候话逐级往上，任何一层都不跳级。\n不做：真的买服务器。\n",
+			"utf8",
+		);
+		// 新团队 / 新成员都要重扫：团队频道是在「开会话」时按 `team:` 建的。
+		await shell.rescan();
+
+		// 9.1 先验静态事实：三个人的提示词里，上级与下属写对了没有。
+		const memberPrompt = await shell.promptOf(member.slug);
+		const leadPrompt = await shell.promptOf(lead.slug);
+		const assistantPrompt = await shell.promptOf(slug);
+		const leadName = lead.name ?? lead.slug;
+		const memberName = member.name ?? member.slug;
+		const managerLine = (text: string): string => text.split("\n").find((line) => line.includes("你的上级：")) ?? "";
+		const links = [managerLine(memberPrompt), managerLine(leadPrompt), managerLine(assistantPrompt)];
+		phases.push({
+			name: "四个身份的汇报线各自正确",
+			ok:
+				links[0]?.includes(leadName) === true &&
+				links[1]?.includes("助理") === true &&
+				links[2]?.includes("我（用户本人）") === true &&
+				leadPrompt.includes(memberName) &&
+				assistantPrompt.includes(leadName),
+			detail: links.join(" ｜ "),
+		});
+
+		// 9.2 跑一次真实的上报：只有最低层收到指令，剩下两跳靠自己往上走。
+		//     花老板的钱是三层都拍不了的典型事 —— 成员不能订、管理员不能批、助理得问我。
+		const chainBaseline = await seqBaseline(shell);
+		const chainAsked = await shell.ownerSay({
+			channelId: "all",
+			text: `@${member.slug} 团队需要一台新服务器，每月 3000 块，你去办，今天就订。`,
+		});
+		console.log(`上报链起点已投递 #${chainAsked.seq}，唤醒 ${chainAsked.delivery.delivered.join(",") || "（没人）"}`);
+
+		const hop1 = await waitForMention(shell, chainBaseline, member.slug, lead.slug, WAIT_MS);
+		phases.push({
+			name: "成员拍不了板，先找团队管理员（不跳级）",
+			ok: hop1.hit !== undefined,
+			detail: hopDetail(hop1, "团队管理员"),
+		});
+
+		const hop2 =
+			hop1.hit === undefined ? {} : await waitForMention(shell, chainBaseline, lead.slug, slug, WAIT_MS);
+		phases.push({
+			name: "管理员拍不了板，转给助理（不跳级）",
+			ok: hop2.hit !== undefined,
+			detail: hopDetail(hop2, "助理"),
+		});
+
+		const hop3 =
+			hop2.hit === undefined ? {} : await waitForMention(shell, chainBaseline, slug, "owner", WAIT_MS);
+		phases.push({
+			name: "助理把要我定的事报到我这里",
+			ok: hop3.hit !== undefined,
+			detail: hopDetail(hop3, "我"),
 		});
 	}
 

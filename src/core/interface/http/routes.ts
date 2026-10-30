@@ -54,20 +54,6 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			handler: async ({ response }) => json(response, await app.read.readOrg()),
 		},
 		{
-			// 工作区的只读文件树。右侧那一栏「文件」用。越界、符号链接、隐藏文件三道闸
-			// 全在 `app/files.ts`（只读且只能在工作区里面）。
-			pattern: "/api/files",
-			method: "GET",
-			handler: async ({ response, url }) => {
-				const listed = await app.files.list({
-					path: url.searchParams.get("path") ?? "",
-					limit: numberParam(url, "limit"),
-					offset: numberParam(url, "offset"),
-				});
-				return json(response, listed);
-			},
-		},
-		{
 			// 一个人的全部档案：界面右上角那个「详情」面板一次要的东西都在这。
 			pattern: "/api/people/:slug",
 			method: "GET",

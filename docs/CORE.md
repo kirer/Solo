@@ -255,7 +255,7 @@ ui/app/src/
   state/      唯一状态源：一个 store + useStore
   stream/     buildRows() 纯函数算行，Stream.tsx 只负责画
   composer/   输入卡（@、附件、引用、输入法合成期不误发）
-  panels/     右栏（详情 / 文件）、记忆抽屉、浮层
+  panels/     右栏（详情）、记忆抽屉、浮层
   sidebar/    左栏频道列表
   lib/        时间 / 头像 / Markdown / 合并消息 / 卡顿记录
   styles/     沿用 DSH 观感，类名不变
@@ -298,7 +298,7 @@ src/core/
                    unanswered（进程内补丁；speech 已删，ADR-090）
   ── 以上是 domain（业务事实）────────────────────────────────
   app/             用例：index（装配）/ types / snapshot / read（读 + 人 + 投影）
-                   chat / files（文件树 + 附件语义）/ diag / errors
+                   chat / files（附件语义）/ diag / errors
                    （不 import node:http，能脱离网络直接测）
   view/            dto.ts 一处定义界面吃的 JSON —— **契约层**，零 import
   interface/http/  唯一 import node:http 的地方：routes（路由表）

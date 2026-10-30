@@ -12,7 +12,6 @@ import type {
 	AttentionItem,
 	Channel,
 	ChannelDetail,
-	FilesView,
 	Org,
 	PersonMemory,
 	PersonProfile,
@@ -89,10 +88,6 @@ export const editPersonMemory = (
 		method: "POST",
 		body: JSON.stringify(body),
 	});
-
-/** 工作区文件浏览器（`path` 是相对工作区根的路径，空串是根）。 */
-export const getFiles = (path = ""): Promise<FilesView> =>
-	call<FilesView>(`/api/files?path=${encodeURIComponent(path)}`);
 
 /**
  * 这个频道里能被 @ 到的人。

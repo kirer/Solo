@@ -7,7 +7,7 @@
  *   只测纯函数的话，函数再对、`handle()` 忘了调用也是全绿。
  */
 import { request as httpRequest } from "node:http";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,7 +15,6 @@ import { hostAllowed, originAllowed } from "../../src/core/interface/http/server
 import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
-import { fileHidden } from "../../src/core/app/files.ts";
 import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
 
 const SELF = ["http://127.0.0.1:7788", "http://localhost:7788"];
@@ -213,47 +212,7 @@ describe("① 隧道域名口子：SOLO_ALLOWED_HOSTS", () => {
 	});
 });
 
-describe("② /api/files 越权读：链接不跟、点文件与敏感文件直接读也拒", () => {
-	it("fileHidden 的名字规则：隐藏文件、库与配置、附件、日志，其余放行", () => {
-		expect(fileHidden(".env", ".env")).toBe(true);
-		expect(fileHidden("core.sqlite", "core.sqlite")).toBe(true);
-		expect(fileHidden("settings.json", "settings.json")).toBe(true);
-		expect(fileHidden("a.png", "uploads/a.png")).toBe(true);
-		expect(fileHidden("jank.jsonl", "logs/jank.jsonl")).toBe(true);
-		expect(fileHidden("notes.md", "notes.md")).toBe(false);
-		expect(fileHidden("README.md", "teams/solo/README.md")).toBe(false);
-	});
-
-	it("符号链接 403（否则一个链接就能把 /etc/hosts 读出来）", async () => {
-		const { port, root } = await setup();
-		await symlink("/etc/hosts", join(root, "hosts-link"));
-		const blocked = await call(port, { path: "/api/files?path=hosts-link" });
-		expect(blocked.status).toBe(403);
-	});
-
-	it("点文件与 core.sqlite 直接访问 404，列表里也不出现；普通文件照常 200", async () => {
-		const { port, root } = await setup();
-		await writeFile(join(root, ".env"), "SECRET=1", "utf8");
-		await writeFile(join(root, "core.sqlite"), "x", "utf8");
-		await writeFile(join(root, "notes.md"), "随手记", "utf8");
-		expect((await call(port, { path: "/api/files?path=.env" })).status).toBe(404);
-		expect((await call(port, { path: "/api/files?path=core.sqlite" })).status).toBe(404);
-		const ok = await call(port, { path: "/api/files?path=notes.md" });
-		expect(ok.status).toBe(200);
-		const listing = JSON.parse((await call(port, { path: "/api/files?path=" })).body) as { entries: { name: string }[] };
-		const names = listing.entries.map((entry) => entry.name);
-		expect(names).toContain("notes.md");
-		expect(names).not.toContain(".env");
-		expect(names).not.toContain("core.sqlite");
-	});
-
-	it("工作区外（../）仍然 403", async () => {
-		const { port } = await setup();
-		expect((await call(port, { path: "/api/files?path=../../etc/hosts" })).status).toBe(403);
-	});
-});
-
-describe("④ 发消息的 from 默认只认我", () => {
+describe("② 发消息的 from 默认只认我", () => {
 	it("请求里写 from 不生效，落库的是 owner", async () => {
 		const { shell, port } = await setup();
 		const sent = await call(port, {
@@ -286,7 +245,7 @@ describe("④ 发消息的 from 默认只认我", () => {
 	});
 });
 
-describe("⑤ 已读位置夹到上界（越界请求不能把以后的消息都吃掉）", () => {
+describe("③ 已读位置夹到上界（越界请求不能把以后的消息都吃掉）", () => {
 	it("seq=999999 之后来一条新消息，未读仍然是 1", async () => {
 		const { shell, port } = await setup();
 		await call(port, {
@@ -308,7 +267,7 @@ describe("⑤ 已读位置夹到上界（越界请求不能把以后的消息都
 	});
 });
 
-describe("⑥ 正文限长与诊断落盘", () => {
+describe("④ 正文限长与诊断落盘", () => {
 	it("2MB 的 JSON 正文 413，不写成 500", async () => {
 		const { port } = await setup();
 		const huge = JSON.stringify({ kind: "x", entries: "A".repeat(2_000_000) });

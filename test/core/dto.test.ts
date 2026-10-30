@@ -100,8 +100,6 @@ describe("view/dto.ts 是唯一权威", () => {
 				"Channel",
 				"ChannelDetail",
 				"ChannelKind",
-				"FileEntry",
-				"FilesView",
 				"Member",
 				"MemoryEntry",
 				"Mention",

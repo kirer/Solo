@@ -186,25 +186,6 @@ export type ViewPersonProfile = {
 	channels: { id: string; kind: ViewChannelKind; title: string }[];
 };
 
-/** 文件树里的一格。 */
-export type ViewFileEntry = { name: string; kind: "dir" | "file"; bytes: number; at: number };
-
-/** 目录一页。`truncated` = 这页之后还有。 */
-export type ViewFilesList = {
-	path: string;
-	parent: string | null;
-	entries: ViewFileEntry[];
-	total: number;
-	truncated: boolean;
-};
-
-/** 一个文件的内容（二进制只报 `bytes`，`text` 为空串）。 */
-export type ViewFileText = {
-	path: string;
-	parent: string | null;
-	file: { name: string; bytes: number; binary: boolean; text: string };
-};
-
 /** 上传成功的回执。 */
 export type ViewUploaded = { id: string; name: string; kind: "image" | "file"; bytes: number };
 
@@ -218,6 +199,3 @@ export type ViewPost = { ok: true; seq: number; delivered: string[]; failed: str
 
 /** 把已读位置推到某条。 */
 export type ViewOk = { ok: true };
-
-/** `/api/files` 的两种回答：列目录，或者一个文件的内容。 */
-export type ViewFiles = ViewFilesList | ViewFileText;

@@ -8,7 +8,7 @@
 
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
-import { openChannel, setRight, setSide } from "../state/store.ts";
+import { openChannel, setSide } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Channel } from "../api/types.ts";
 
@@ -63,10 +63,7 @@ export function Sidebar(): JSX.Element {
 						active={channel.id === currentId}
 						presence={presence}
 						bySlug={bySlug}
-						onOpen={() => {
-							void openChannel(channel.id);
-							setRight({ tab: "detail" });
-						}}
+						onOpen={() => void openChannel(channel.id)}
 					/>
 				))}
 			</div>

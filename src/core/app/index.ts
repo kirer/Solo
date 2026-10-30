@@ -10,7 +10,6 @@
 import { dirname } from "node:path";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
-import { createFiles } from "./files.ts";
 import { createPeople } from "./read.ts";
 import { createRead } from "./read.ts";
 import { createSnapshots } from "./snapshot.ts";
@@ -22,10 +21,9 @@ export function createApp(services: CoreServices) {
 	const read = createRead(services, snapshots);
 	const people = createPeople(services, snapshots, read);
 	const chat = createChat(services, snapshots);
-	const files = createFiles(dirname(services.agentsRoot));
 	const uploads = createUploads(services);
 	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
-	return { snapshots, read, people, chat, files, uploads, diag };
+	return { snapshots, read, people, chat, uploads, diag };
 }
 
 export type App = ReturnType<typeof createApp>;
