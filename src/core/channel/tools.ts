@@ -50,7 +50,7 @@ import { listTeams, readTeam, writeTeam } from "../team/doc.ts";
 import { createAgent, renderIdentityFile } from "../agent/create.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
-import { mentionRosterOf, resolveMention, type MentionRoster } from "./alias.ts";
+import { mentionRosterOf, resolveMention, type MentionRoster } from "./store.ts";
 import { markSpoken, spokenResult } from "./speech.ts";
 import {
 	ChannelDoc,
@@ -64,8 +64,8 @@ import {
 	unreadCount,
 	type ChannelState,
 	type Message,
-} from "./state.ts";
-import { renderDigest } from "./deliver.ts";
+} from "./store.ts";
+import { renderDigest } from "./post.ts";
 import { oneLine } from "../oneline.ts";
 import { confirmedBy } from "../team/settle.ts";
 import {
@@ -285,8 +285,17 @@ async function defaultChannel(
 		const channel = state.channels[wake.channelId];
 		if (channel !== undefined && channel.members.includes(slug)) return { channelId: wake.channelId };
 	}
-	// 兜底：群聊优先，私聊最后。
-	return { channelId: fallbackChannelId(state, slug) };
+	// 兜底：群聊优先。
+	//
+	// **落到私聊就拒绝**：没有唤醒记录 = 不知道这一轮是从哪儿被叫来的；此时把话写进
+	// 我和我的私聊，问的人在原频道就什么都看不到（ADR-037 修过的老 bug）。宁可报一个
+	// 看得见的错，也不静默放进私聊。
+	const fallback = fallbackChannelId(state, slug);
+	const target = state.channels[fallback];
+	if (target === undefined || chatKind(target) === "dm") {
+		return { error: "这一轮没有唤醒记录，不知道该回哪个频道。请显式给 channel（`chats` 能列出你在的频道）。" };
+	}
+	return { channelId: fallback };
 }
 
 /**

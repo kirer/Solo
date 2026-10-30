@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
-import { ChannelDoc, recipientsOf, type ChannelState } from "../../src/core/channel/state.ts";
+import { ChannelDoc, recipientsOf, type ChannelState } from "../../src/core/channel/store.ts";
 import { readAllIdentities } from "../../src/core/agent/identity.ts";
 
 /**

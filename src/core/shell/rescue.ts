@@ -16,7 +16,7 @@
  */
 import type { EntryRecord, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, type ChannelState, type Message } from "../channel/state.ts";
+import { ChannelDoc, OWNER, type ChannelState, type Message } from "../channel/store.ts";
 import { DirectoryDoc, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage } from "../channel/post.ts";
 

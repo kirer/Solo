@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/state.ts";
+import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
 import { postMessage } from "../../src/core/channel/post.ts";
 
 /**

@@ -10,10 +10,10 @@
  * `src/core/interface/http/`。这一层不再认识「一条消息长什么样」。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { browserUrlOf, lanAddresses, lanUrlsOf } from "../interface/http/network.ts";
-import { allowedHostsOf, hostAllowed, originAllowed, selfOriginsOf } from "../interface/http/guard.ts";
-import { matchRoute } from "../interface/http/match.ts";
-import { createStreamHub } from "../interface/http/hub.ts";
+import { browserUrlOf, lanAddresses, lanUrlsOf } from "../interface/http/server.ts";
+import { allowedHostsOf, hostAllowed, originAllowed, selfOriginsOf } from "../interface/http/server.ts";
+import { matchRoute } from "../interface/http/server.ts";
+import { createStreamHub } from "../interface/http/sse.ts";
 import { coreRoutes } from "../interface/http/routes.ts";
 import { fail, statusOf } from "../interface/http/server.ts";
 import { createApp } from "../app/index.ts";

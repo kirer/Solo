@@ -11,8 +11,8 @@
  */
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import type { Route } from "./match.ts";
-import type { StreamHub } from "./hub.ts";
+import type { Route } from "./server.ts";
+import type { StreamHub } from "./sse.ts";
 import type { App } from "../../app/index.ts";
 import { json, readJson, serveStatic } from "./server.ts";
 

@@ -11,9 +11,9 @@
  * - 投影镜像（think/tool/work）不进（它们在我私聊里只是过程，不是待办）。
  */
 import { describe, expect, it } from "vitest";
-import { attentionItems, messageView } from "../../src/core/view/index.ts";
+import { attentionItems, messageView } from "../../src/core/app/read.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
-import type { Channel, ChannelState, Message } from "../../src/core/channel/state.ts";
+import type { Channel, ChannelState, Message } from "../../src/core/channel/store.ts";
 
 const AT = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;

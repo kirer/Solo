@@ -13,8 +13,8 @@ import {
 	MAX_INLINE_IMAGES,
 	MAX_INLINE_IMAGE_BYTES,
 	planAttachments,
-} from "../../src/core/channel/attach.ts";
-import type { Attachment } from "../../src/core/channel/state.ts";
+} from "../../src/core/channel/files.ts";
+import type { Attachment } from "../../src/core/channel/store.ts";
 
 let root = "";
 

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
-import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/state.ts";
+import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
 import { createAgent } from "../../src/core/agent/create.ts";
 import { SettleDoc, confirmedBy, settleTeam, type SettleState } from "../../src/core/team/settle.ts";
 import { appendTeamMemory } from "../../src/core/team/memory.ts";

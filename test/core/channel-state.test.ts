@@ -21,7 +21,7 @@ import {
 	unreadCount,
 	type Channel,
 	type ChannelState,
-} from "../../src/core/channel/state.ts";
+} from "../../src/core/channel/store.ts";
 
 function empty(): ChannelState {
 	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };

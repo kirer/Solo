@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { ChannelDoc, appendMessage, ensureChannel, type ChannelState } from "../../src/core/channel/state.ts";
+import { ChannelDoc, appendMessage, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import { rescueAnswer, spokeAfterWake } from "../../src/core/shell/rescue.ts";
 

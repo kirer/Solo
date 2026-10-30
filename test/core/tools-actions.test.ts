@@ -22,7 +22,7 @@ import {
 	dmId,
 	teamId,
 	type ChannelState,
-} from "../../src/core/channel/state.ts";
+} from "../../src/core/channel/store.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 

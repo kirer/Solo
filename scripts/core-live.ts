@@ -185,7 +185,7 @@ async function main(): Promise<void> {
 		console.log("──── 以上是模型真收到的 ────\n");
 
 		// delivery 段同样贴出来：它在同步/异步交接处，单测测的是函数、不是链路。
-		const { renderReplyRules } = await import("../src/core/channel/deliver.ts");
+		const { renderReplyRules } = await import("../src/core/channel/post.ts");
 		const { loadTemplates, promptDirOf } = await import("../src/core/prompt.ts");
 		const { createFsx } = await import("../src/core/fsx.ts");
 		const delivery = (await loadTemplates(createFsx(promptDirOf(agentsRoot)), ".")).filter(

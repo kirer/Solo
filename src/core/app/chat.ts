@@ -11,7 +11,7 @@
  */
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
-import { ChannelDoc, ensureChannel, markRead as markReadDoc, type Attachment, type ChannelState } from "../channel/state.ts";
+import { ChannelDoc, ensureChannel, markRead as markReadDoc, type Attachment, type ChannelState } from "../channel/store.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,
@@ -24,7 +24,7 @@ import {
 	readBounded,
 	readUploadMeta,
 	uploadsRootOf,
-} from "../channel/uploads.ts";
+} from "../channel/files.ts";
 import type { ViewOk, ViewPost, ViewUploaded } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { emptyChannels, type Snapshots } from "./snapshot.ts";

@@ -26,8 +26,8 @@ import {
 	recipientsOf,
 	type ChannelState,
 	type Message,
-} from "../../src/core/channel/state.ts";
-import { renderDelivery, renderReplyRules } from "../../src/core/channel/deliver.ts";
+} from "../../src/core/channel/store.ts";
+import { renderDelivery, renderReplyRules } from "../../src/core/channel/post.ts";
 import { INTERRUPTED_TEMPLATE, REPLY_TEMPLATE } from "./seed-prompt.ts";
 
 /**
@@ -68,6 +68,8 @@ async function setup(options: {
 	wake?: { channelId: string; seq: number };
 	/** 团队频道里多一个成员，并留下一条同时叫醒我们俩的消息。 */
 	colleague?: string;
+	/** 团队频道只有「我 + 他」两个人（按 chatKind 就是私聊形态）。live 第一轮就是这个形状。 */
+	solo?: boolean;
 } = {}): Promise<{
 	say: (args: Record<string, unknown>) => Promise<string>;
 	snapshot: () => Promise<ChannelState>;
@@ -101,7 +103,11 @@ async function setup(options: {
 	runtimes.push(runtime);
 
 	// 团队频道必须是**群聊**：形态按成员推 —— 我 + 一个人就是私聊，不需要第三个概念。
-	const members = options.colleague === undefined ? [OWNER, ME, BYSTANDER] : [OWNER, ME, options.colleague];
+	const members = options.solo === true
+		? [OWNER, ME]
+		: options.colleague === undefined
+			? [OWNER, ME, BYSTANDER]
+			: [OWNER, ME, options.colleague];
 	let wokeSeq: number | undefined;
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
@@ -337,6 +343,43 @@ describe("这一轮不说话（[PASS]）", () => {
 });
 
 describe("每轮附言（怎么回话）", () => {
+	it("被叫醒后 say 不填频道 → 落回叫你的那个频道（不是最近的群，也不是私聊）", async () => {
+		// live 第一轮「提交 done 但频道里没有它说的话」的最小复现：先证明落点机制本身是好的。
+		// 机制好 → 问题在模型/提示词侧；机制坏 → 问题在 code，不用等 live。
+		const { say, snapshot } = await setup({ wake: { channelId: PROJ, seq: 1 } });
+		await say({ text: "看完了，可以加联机" });
+		const state = await snapshot();
+		expect((state.messages[PROJ] ?? []).filter((m) => m.from === ME).map((m) => m.text)).toContain(
+			"看完了，可以加联机",
+		);
+		// 群里被叫、却在私聊里答过一次（ADR-081 之前的老 bug）：这里钉死不许再发生。
+		expect((state.messages[DM] ?? []).some((m) => m.from === ME)).toBe(false);
+	});
+
+	it("被叫醒的频道只有我+他两个人（私聊形态）时，say 不填频道也要落回那里", async () => {
+		// live 第一轮就是这个形状：公司频道只有 owner + 助理，按 chatKind 是 dm。
+		// 兜底分支（fallbackChannelId 只找「群」）在这个形状下会错过它，所以必须靠 wake 记录。
+		const { say, snapshot } = await setup({ solo: true, wake: { channelId: PROJ, seq: 1 } });
+		await say({ text: "在，听你说" });
+		const state = await snapshot();
+		expect((state.messages[PROJ] ?? []).filter((m) => m.from === ME).map((m) => m.text)).toContain("在，听你说");
+	});
+
+	it("没有 wake 记录时，say 不填频道不许落到私聊（更不许落到不存在的频道）", async () => {
+		// `fallbackChannelId` 的兜底起点是 `dmId(owner, slug)`，只有找到**群**才替换它。
+		// 于是「我 + 他」两个人的频道（chatKind = dm）会被跳过，say 就去写私聊/写一个不存在的 id。
+		// ADR-037 的契约是「兜底频道不落私聊」——这条把那条契约钉回来。
+		const { say, snapshot } = await setup({ solo: true });
+		await say({ text: "在，听你说" });
+		const state = await snapshot();
+		const landed = Object.keys(state.messages).filter((id) =>
+			(state.messages[id] ?? []).some((m) => m.from === ME && m.text === "在，听你说"),
+		);
+		// 落到的每个频道都必须真实存在，而且不能是私聊。
+		for (const id of landed) expect(state.channels[id], `写进了不存在的频道 ${id}`).toBeDefined();
+		expect(landed, "答在私聊里：问的人在原频道什么都看不到（ADR-037 修过的老 bug）").not.toContain(DM);
+	});
+
 	it("只有自己时：必须回，不提 PASS", () => {
 		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟" });
 		expect(rules).toContain("必须回");

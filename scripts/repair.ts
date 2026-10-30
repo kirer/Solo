@@ -14,7 +14,7 @@
 import { createRegistry, setupModels } from "../src/core/runtime/index.ts";
 import { openCore } from "../src/core/runtime/open.ts";
 import { assembleCore } from "../src/core/shell/assemble.ts";
-import { ChannelDoc, teamId } from "../src/core/channel/state.ts";
+import { ChannelDoc, teamId } from "../src/core/channel/store.ts";
 import { listTeams } from "../src/core/team/doc.ts";
 import { BACKGROUND_CONTEXT } from "../src/core/runtime/index.ts";
 

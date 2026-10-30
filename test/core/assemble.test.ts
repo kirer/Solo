@@ -15,7 +15,7 @@ import { BACKGROUND_CONTEXT, openCore, createRegistry, setupModels } from "../..
 import { assembleCore, ownerSpeak } from "../../src/core/shell/assemble.ts";
 import { seedOwnerAssistant } from "../../src/core/shell/seed.ts";
 import { readIdentity } from "../../src/core/agent/identity.ts";
-import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/state.ts";
+import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/store.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
 import { createAgent } from "../../src/core/agent/create.ts";

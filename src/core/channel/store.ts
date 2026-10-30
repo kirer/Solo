@@ -13,7 +13,6 @@
  * 最容易写错、也最需要单测的一段。
  */
 import { defineDoc } from "../runtime/index.ts";
-import { EMPTY_ROSTER, resolveMention, type MentionRoster } from "./alias.ts";
 
 /**
  * 一条消息带的一个附件。**只有引用，没有内容。**
@@ -473,4 +472,78 @@ export function markRead(state: ChannelState, slug: string, channelId: string, s
 export function tail(state: ChannelState, channelId: string, limit: number): Message[] {
 	const list = state.messages[channelId] ?? [];
 	return list.slice(Math.max(0, list.length - limit));
+}
+
+// ── `@` 解析（原 `alias.ts`）──────────────────────────────────────────────
+//
+// V2 有一层模糊别名：拼音、简称、岗位名（`CEO`）、title 的每一段都能 @ 到人。实测它
+// 确实救回了老消息里的 `@老板`，代价是「谁都能被 @ 到」—— 一个词撞上某个人的 title
+// 就会把消息投给他。V3 只认三种精确写法，其余一律丢弃：
+//
+// 1. `slug`（目录名，唯一稳定标识）；
+// 2. `name`（`identity.md` 的显示名）；
+// 3. `我` / `owner` —— **必须保留**：`rules.md` 每轮都告诉模型「要让我拍板就用 `@我`」，
+//    这条映射没了，拍板会静默丢失（没人被叫醒、也不报错）。
+//
+// 解析不出来的 token（`@import`、`@x`）丢弃：它们不是人，留着只是噪音。
+
+/** 名册里的一个人。字段全部可选（除了 slug）：缺什么就少一种叫法。 */
+export type MentionAgent = {
+	/** 目录名，唯一稳定标识。 */
+	readonly slug: string;
+	/** `identity.md` 的 `name`（真名，例如「周砚」）。 */
+	readonly name?: string | undefined;
+};
+
+/** 一份名册：我的 slug + 全公司的人。 */
+export type MentionRoster = {
+	/** 我的 slug，正常就是 `owner`。 */
+	readonly owner: string;
+	readonly agents: readonly MentionAgent[];
+};
+
+/** 没有名册时的兜底：只认我。 */
+export const EMPTY_ROSTER: MentionRoster = { owner: OWNER, agents: [] };
+
+/**
+ * 我的叫法。只剩两个：`owner` 是 slug，`我` 是提示词里那个写法。
+ *
+ * 「老大」「老板」「boss」这些是历史别名，V3 不认 —— 提示词和界面一律用「我」。
+ */
+const OWNER_ALIASES: readonly string[] = [OWNER, "我"];
+
+/** 归一：去 `@`、去首尾空格、全角转半角（`ＯＷＮＥＲ` → `owner`）、转小写。 */
+function normalizeAlias(raw: string): string {
+	return raw
+		.normalize("NFKC")
+		.trim()
+		.replace(/^@+/, "")
+		.trim()
+		.toLowerCase();
+}
+
+/** 从一份身份清单建名册。只带 `slug` 和 `name` —— 没有 role / title 匹配了。 */
+export function mentionRosterOf(
+	agents: readonly { readonly slug: string; readonly name?: string | undefined }[],
+	owner: string = OWNER,
+): MentionRoster {
+	return { owner, agents: agents.map((agent) => ({ slug: agent.slug, ...(agent.name === undefined ? {} : { name: agent.name }) })) };
+}
+
+/**
+ * 把 `@` 后面的字解析成 slug。纯函数，喂一份名册。
+ *
+ * 顺序：slug → 我 → 显示名。都匹配不上返回 `undefined`（调用方丢弃，不瞎猜）。
+ */
+export function resolveMention(raw: string, roster: MentionRoster = EMPTY_ROSTER): string | undefined {
+	const key = normalizeAlias(raw);
+	if (key === "") return undefined;
+	for (const agent of roster.agents) {
+		if (normalizeAlias(agent.slug) === key) return agent.slug;
+	}
+	if (OWNER_ALIASES.includes(key)) return roster.owner;
+	for (const agent of roster.agents) {
+		if (agent.name !== undefined && normalizeAlias(agent.name) === key) return agent.slug;
+	}
+	return undefined;
 }

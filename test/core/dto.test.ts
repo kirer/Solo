@@ -11,10 +11,10 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { channelList, messageView, orgView } from "../../src/core/view/index.ts";
+import { channelList, messageView, orgView } from "../../src/core/app/read.ts";
 import type { ViewChannel, ViewMessage } from "../../src/core/view/dto.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
-import type { Channel, ChannelState } from "../../src/core/channel/state.ts";
+import type { Channel, ChannelState } from "../../src/core/channel/store.ts";
 
 const AT = 1_700_000_000_000;
 const ROOT = new URL("../../", import.meta.url).pathname;

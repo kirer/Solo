@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { ChannelDoc, type ChannelState } from "../../src/core/channel/state.ts";
+import { ChannelDoc, type ChannelState } from "../../src/core/channel/store.ts";
 import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/runtime.ts";
 import { parseDoc } from "../../src/core/doc.ts";

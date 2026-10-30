@@ -11,10 +11,10 @@ import { dirname } from "node:path";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
 import { createFiles } from "./files.ts";
-import { createPeople } from "./people.ts";
+import { createPeople } from "./read.ts";
 import { createRead } from "./read.ts";
 import { createSnapshots } from "./snapshot.ts";
-import { createUploads } from "./uploads.ts";
+import { createUploads } from "./files.ts";
 import type { CoreServices } from "./types.ts";
 
 export function createApp(services: CoreServices) {
@@ -49,4 +49,4 @@ export type { CoreServices } from "./types.ts";
  * 只有一个函数，但它是**语义**而不是转发：先读完再比上限等于没有上限
  * （一个 4GB 的请求先把内存吃光），所以必须边读边数。
  */
-export { UploadTooLargeError, readBounded as readBody } from "../channel/uploads.ts";
+export { UploadTooLargeError, readBounded as readBody } from "../channel/files.ts";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { queuedAhead } from "../../src/core/channel/deliver.ts";
+import { queuedAhead } from "../../src/core/channel/post.ts";
 
 /**
  * 「谁该让路」的判据 —— 现在只有一份（`queuedAhead`）。

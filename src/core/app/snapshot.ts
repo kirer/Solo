@@ -13,11 +13,11 @@
 import { stat } from "node:fs/promises";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { listTeams } from "../team/doc.ts";
-import { ChannelDoc, type ChannelState } from "../channel/state.ts";
+import { ChannelDoc, type ChannelState } from "../channel/store.ts";
 import type { DirectoryState } from "../agent/roster.ts";
 import type { Identity } from "../agent/identity.ts";
 import type { TeamDoingOf, TeamLeadOf } from "../view/dto.ts";
-import { withLabels } from "../view/index.ts";
+import { withLabels } from "./read.ts";
 import type { CoreServices } from "./types.ts";
 
 /** 团队文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */

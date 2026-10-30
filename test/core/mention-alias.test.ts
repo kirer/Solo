@@ -6,15 +6,18 @@
  * 真名在 `recipientsOf` 的成员过滤里被静默丢弃。
  */
 import { describe, expect, test } from "vitest";
-import { EMPTY_ROSTER, mentionRosterOf, resolveMention, type MentionAgent } from "../../src/core/channel/alias.ts";
 import {
+	EMPTY_ROSTER,
 	OWNER,
 	appendMessage,
 	ensureChannel,
+	mentionRosterOf,
 	parseMentions,
 	recipientsOf,
+	resolveMention,
 	type ChannelState,
-} from "../../src/core/channel/state.ts";
+	type MentionAgent,
+} from "../../src/core/channel/store.ts";
 
 /** 一份贴近真实的名册：`workspace/agents/` 里那几个人的头字段。 */
 const people: readonly MentionAgent[] = [
@@ -35,9 +38,13 @@ function channelWith(members: string[]): ChannelState {
 }
 
 describe("resolveMention：我", () => {
-	test("owner / 我 / BOSS / 我 / YOU 都指向我", () => {
-		for (const raw of ["owner", "我", "BOSS", " boss ", "我", "YOU", "@我"]) {
+	test("owner / 我 指向我；历史别名 BOSS / boss / YOU 不认了", () => {
+		for (const raw of ["owner", "我", " @我 ", "ＯＷＮＥＲ"]) {
 			expect(resolveMention(raw, roster), raw).toBe(OWNER);
+		}
+		// V3 收窄到精确匹配：提示词和界面一律写「我」，不再猜历史叫法。
+		for (const raw of ["BOSS", "boss", "YOU", "老板", "老大"]) {
+			expect(resolveMention(raw, roster), raw).toBeUndefined();
 		}
 	});
 
@@ -52,10 +59,9 @@ describe("resolveMention：成员", () => {
 		expect(resolveMention("顾南雁", roster)).toBe("顾南雁");
 	});
 
-	test("岗位名大小写 / 全半角不敏感", () => {
-		// 直属我的人就是 ceo（见 mentionRosterOf 的推导）。
-		for (const raw of ["ceo", "CEO", "ＣＥＯ", "@Ceo"]) {
-			expect(resolveMention(raw, roster), raw).toBe("知言");
+	test("岗位名 / title / 拼音 都不认：V3 只认 slug 和显示名", () => {
+		for (const raw of ["ceo", "CEO", "ＣＥＯ", "平台负责人", "平台功能开发", "xiangmu", "修"]) {
+			expect(resolveMention(raw, roster), raw).toBeUndefined();
 		}
 	});
 
@@ -64,11 +70,6 @@ describe("resolveMention：成员", () => {
 		expect(resolveMention(" 周砚 ", roster)).toBe("周砚");
 	});
 
-	test("title 整串，或其中一段", () => {
-		expect(resolveMention("@平台负责人", roster)).toBe("顾南雁");
-		expect(resolveMention("@平台功能开发", roster)).toBe("周砚");
-		expect(resolveMention("@修", roster)).toBe("周砚");
-	});
 
 	test("找不到就是找不到，不瞎猜", () => {
 		expect(resolveMention("@不存在的人", roster)).toBeUndefined();
@@ -77,8 +78,8 @@ describe("resolveMention：成员", () => {
 });
 
 describe("parseMentions：垃圾 token 不再进 mentions", () => {
-	test("@我 → owner，@CEO → 那个人", () => {
-		expect(parseMentions("@我 看一下 @CEO 的活", roster)).toEqual([OWNER, "知言"]);
+	test("@我 → owner；@CEO 这种岗位名不认，直接丢弃", () => {
+		expect(parseMentions("@我 看一下 @CEO 的活", roster)).toEqual([OWNER]);
 	});
 
 	test("解析到同一个人的两种叫法只算一次", () => {

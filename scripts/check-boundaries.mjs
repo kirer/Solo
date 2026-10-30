@@ -13,7 +13,7 @@
  *    依赖方向只有一条：`shell → interface → {app, view} → 领域 → runtime`。
  * 3. 服务端路由必须有界面消费者（有界面看不见的接口就是死接口）。
  *    前端源码在 `ui/app/src`（React + TS，构建到 `ui/web`），所以查那里。
- * 4. `src/core/view/` 是**纯投影**：零 IO（不 import 任何 `node:*`）、不碰 `runtime/`。
+ * 4. `src/core/view/` 是**契约层**：零 IO（不 import 任何 `node:*`）、不碰 `runtime/`。
  *    它只吃 `ChannelState` / 名册 / DTO 类型，吐界面要的 JSON。一条 `await` 都不该有。
  * 5. `src/core/app/` 是**用例层**：不许 import `node:http` —— 传输是接口层的事，
  *    用例要能脱离网络被测试（现在 `test/core/` 里就是这样直接调它们的）。
@@ -89,15 +89,15 @@ const LAYER_RULES = [
 			{ match: /\/shell\//, reason: "内核不得 import 外壳（shell）" },
 			{ match: /\/interface\//, reason: "内核不得 import 接口层（interface）" },
 			{ match: /\/app\//, reason: "内核不得 import 用例层（app）" },
-			{ match: /\/view\//, reason: "内核不得 import 投影层（view）" },
+			{ match: /\/view\//, reason: "内核不得 import 契约层（view）" },
 		],
 	},
-	// 投影：零 IO、零运行时。它必须能被单测直接喂一个假状态。
+	// 契约层：零 IO、零运行时。它必须能被单测直接喂一个假状态。
 	{
 		dirs: ["src/core/view/"],
-		layer: "投影（view）",
+		layer: "契约（view）",
 		deny: [
-			{ match: /^node:/, reason: "投影层必须零 IO：不许 import 任何 node:* 内置模块" },
+			{ match: /^node:/, reason: "契约层必须零 IO：不许 import 任何 node:* 内置模块" },
 			{ match: /\/runtime\//, reason: "投影层不许碰运行时（runtime）" },
 		],
 	},
@@ -212,6 +212,6 @@ if (violations.length > 0) {
 
 console.log(
 	`边界检查通过：${CHECKED_DIRS.join(", ")} 未越界导入底层库；` +
-		`分层规则 ${LAYER_RULES.length} 组（view 零 IO / app 无 http / interface 只经 app·view）；` +
+		`分层规则 ${LAYER_RULES.length} 组（view 契约层零 IO / app 无 http / interface 只经 app·view）；` +
 		`${routes.length} 条路由路径都有消费者。`,
 );

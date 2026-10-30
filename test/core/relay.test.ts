@@ -12,7 +12,7 @@ import {
 	ensureChannel,
 	relayLimit,
 	type ChannelState,
-} from "../../src/core/channel/state.ts";
+} from "../../src/core/channel/store.ts";
 import { postMessage } from "../../src/core/channel/post.ts";
 
 /**

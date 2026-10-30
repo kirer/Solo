@@ -24,7 +24,7 @@ import {
 import { chainUp, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { agentSections, renderAgentSection, type ChatRef } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
-import { mentionRosterOf } from "../channel/alias.ts";
+import { mentionRosterOf } from "../channel/store.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -35,16 +35,16 @@ import {
 	type Attachment,
 	type ChannelState,
 	type Message,
-} from "../channel/state.ts";
-import { uploadsRootOf } from "../channel/uploads.ts";
+} from "../channel/store.ts";
+import { uploadsRootOf } from "../channel/files.ts";
 import { promptDirOf } from "../prompt.ts";
 import { postMessage } from "../channel/post.ts";
-import { coalesceQueue } from "../channel/deliver.ts";
+import { coalesceQueue } from "../channel/post.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleTeam } from "../team/settle.ts";
 import { startAnswerRescue } from "./rescue.ts";
-import { labelIn } from "../view/index.ts";
+import { labelIn } from "../app/read.ts";
 import type { CoreServices } from "../app/types.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
@@ -553,7 +553,7 @@ export async function ownerSpeak(
 		readonly attachments?: readonly Attachment[];
 	},
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }> {
+): Promise<{ readonly seq: number; readonly delivery: import("../channel/post.ts").DeliverResult }> {
 	const state = await shell.channels(context);
 	const channel = state.channels[options.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${options.channelId}`);

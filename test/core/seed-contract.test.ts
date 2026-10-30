@@ -17,6 +17,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { createCoreTools } from "../../src/core/channel/tools.ts";
 
 const SEED = fileURLToPath(new URL("../../seed/", import.meta.url));
 
@@ -280,6 +281,26 @@ describe("seed/prompt：段落与插槽", () => {
 			for (const hit of toolMentions(text)) bad.push(`${name} ${hit}`);
 		}
 		expect(bad).toEqual([]);
+	});
+
+	it("{{tool:X}} 的名字必须是真工具（写错不会报错，只会把错名原样写进正文）", async () => {
+		// `toolSlots()` 按后缀自解释、不查表 —— 这是刻意的：投递层没有注册表可查，
+		// 宁可让错名原样出现（一眼看得见），也不渲染成「（未设置）」把话截断。
+		// 代价就是「写错不报错」，所以对表这件事只能由这里兜。
+		const names = new Set(createCoreTools({} as never).map((tool) => tool.name));
+		const bad: string[] = [];
+		let seen = 0;
+		for (const name of await promptFiles()) {
+			const text = bodyOf(await readSeed(`prompt/${name}`));
+			for (const match of text.matchAll(/\{\{tool:([^}]*)\}\}/g)) {
+				seen += 1;
+				const tool = (match[1] ?? "").trim();
+				if (!names.has(tool)) bad.push(`${name}：{{tool:${tool}}}`);
+			}
+		}
+		// 一条「没找到任何插槽」的检查等于没跑：正则写错、目录读空，它都会绿。
+		expect(seen, "模板里一个 {{tool:*}} 都没有，这条检查等于没跑").toBeGreaterThan(0);
+		expect(bad, `真工具只有：${[...names].join("、")}`).toEqual([]);
 	});
 
 	it("人名只在 identity.md 里（别处写死，换个名 seed 就全错）", async () => {
