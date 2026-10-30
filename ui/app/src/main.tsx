@@ -9,6 +9,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { bootstrap } from "./state/store.ts";
+import { installJankMonitor } from "./lib/jank.ts";
 import "./styles/index.css";
 
 const host = document.getElementById("root");
@@ -20,4 +21,6 @@ createRoot(host).render(
 	</StrictMode>,
 );
 
+// 卡顿自报要在第一次渲染之前装好，否则首屏那段最长的工作恰好没被观察到。
+installJankMonitor();
 void bootstrap();

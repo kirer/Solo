@@ -1488,3 +1488,38 @@ body[data-layout="bubble"] .attach-files {
 .row-event .ev-ico svg { width: 14px; height: 14px; }
 .row-events[data-state="running"] .evs-what { color: var(--ink-2); }
 .evs-time { color: var(--ink-3); font-variant-numeric: tabular-nums; margin-left: 6px; }
+
+/* 「正在说…」草稿行：模型正在生成、还没落库的那句话。
+   和真消息的区别要一眼看出来：字色浅一档、正文按纯文本画（生成到一半的 Markdown
+   会画成半截列表），末尾一根光标。 */
+.row-draft .row-role {
+	color: var(--accent);
+}
+.draft-text {
+	white-space: pre-wrap;
+	color: var(--ink-2);
+	/* 只显示最后几行：草稿是「它正在说」的指示，不是要读的内容。 */
+	display: -webkit-box;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 4;
+	overflow: hidden;
+}
+.draft-caret {
+	display: inline-block;
+	width: 2px;
+	height: 1em;
+	margin-left: 2px;
+	vertical-align: -0.15em;
+	background: var(--accent);
+	animation: draft-blink 1s steps(2, start) infinite;
+}
+@keyframes draft-blink {
+	to {
+		visibility: hidden;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	.draft-caret {
+		animation: none;
+	}
+}

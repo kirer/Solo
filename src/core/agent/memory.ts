@@ -236,3 +236,60 @@ export function memoryDigest(source: string): string | undefined {
 	if (hidden > 0) lines.unshift(`（还有 ${hidden} 条更早的没列出）`);
 	return lines.join("\n");
 }
+
+/* ── 时间线：这条记忆是什么时候、被谁、怎么进来的 ─────────────────────── */
+
+/** 一条记忆的来历。`op` 是它最近一次变化是「新加的」还是「改过的」。 */
+export type MemoryStamp = {
+	/** ISO 时间。 */
+	readonly at: string;
+	/** 谁写的：`remember`（工具）/ `agent`（整篇重写）/ `human`（界面）。 */
+	readonly by: string;
+	readonly op: "add" | "edit";
+};
+
+/**
+ * 从 `.memory-journal.jsonl` 反推出「每个小节最后一次变化」。
+ *
+ * 为什么能反推：日志每行都存了写入前后的**全文**（见 `journal.ts` 的取舍说明）。
+ * 把相邻两行的 `before`/`after` 各切一次段，就能知道哪一节是新出现的、哪一节正文变了。
+ *
+ * 为什么要「最后一次」而不是全部历史：界面上一行记忆只需要一句「10-27 记下 · 老板改过」，
+ * 展开整条历史是调试需求，不是老板的需求。历史本身还在日志里，要查直接看文件。
+ *
+ * 返回 `Map<heading, MemoryStamp>`。读不到日志、某行坏了都跳过 —— 时间线是旁证，
+ * 缺了它记忆照常显示。
+ */
+export async function memoryTimeline(agentDir: string): Promise<ReadonlyMap<string, MemoryStamp>> {
+	const stamps = new Map<string, MemoryStamp>();
+	let raw = "";
+	try {
+		raw = await readFile(join(agentDir, ".memory-journal.jsonl"), "utf8");
+	} catch {
+		return stamps;
+	}
+	for (const line of raw.split("\n")) {
+		if (line.trim() === "") continue;
+		let entry: { at?: unknown; by?: unknown; before?: unknown; after?: unknown };
+		try {
+			entry = JSON.parse(line) as typeof entry;
+		} catch {
+			continue;
+		}
+		const at = typeof entry.at === "string" ? entry.at : "";
+		const by = typeof entry.by === "string" ? entry.by : "agent";
+		const before = typeof entry.before === "string" ? entry.before : "";
+		const after = typeof entry.after === "string" ? entry.after : "";
+		if (at === "") continue;
+		const previous = new Map(sectionsOf(before).map((section) => [section.heading, section.body]));
+		for (const section of sectionsOf(after)) {
+			const had = previous.get(section.heading);
+			if (had === section.body) continue;
+			stamps.set(section.heading, { at, by, op: had === undefined ? "add" : "edit" });
+		}
+		// 被删掉的小节不该继续留着时间戳：同名的标题以后再出现，应当算「新加的」。
+		const kept = new Set(sectionsOf(after).map((section) => section.heading));
+		for (const heading of [...stamps.keys()]) if (!kept.has(heading)) stamps.delete(heading);
+	}
+	return stamps;
+}

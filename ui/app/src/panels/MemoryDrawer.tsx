@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getPersonMemory, editPersonMemory } from "../api/client.ts";
 import type { MemoryEntry, PersonMemory } from "../api/types.ts";
-import { relTime } from "../lib/format.ts";
+import { clockTime, dayLabel } from "../lib/format.ts";
 import { closeMemory } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
@@ -129,6 +129,7 @@ export function MemoryDrawer(props: { toast: (text: string, tone?: "info" | "err
 										删除
 									</button>
 								</div>
+								{stampOf(entry) === undefined ? null : <p className="memory-stamp">{stampOf(entry)}</p>}
 								<div className="memory-lines">
 									{entry.body
 										.split("\n")
@@ -177,4 +178,12 @@ export function MemoryDrawer(props: { toast: (text: string, tone?: "info" | "err
 	);
 }
 
-export { relTime };
+/** 一行「10-27 03:12 · 老板改过」。没有日志时返回 undefined，界面就不画这一行。 */
+function stampOf(entry: MemoryEntry): string | undefined {
+	if (entry.at === null) return undefined;
+	const at = Date.parse(entry.at);
+	if (Number.isNaN(at)) return undefined;
+	const who = entry.by === "human" ? "老板" : entry.by === "remember" ? "他自己" : "agent";
+	const what = entry.op === "edit" ? "改过" : "记下";
+	return `${dayLabel(at)} ${clockTime(at)} · ${who}${what}`;
+}

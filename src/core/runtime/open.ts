@@ -4,7 +4,12 @@
  * 这里只做四件事：打开存储、建 harness、自愈脏数据、返回关闭句柄。
  */
 import type { Models } from "@earendil-works/pi-ai";
-import { Harness as DurableHarness, LiveDoc, type Harness, type HarnessSettings } from "@earendil-works/pi-durable";
+import {
+	Harness as DurableHarness,
+	LiveDoc,
+	type Harness,
+	type HarnessSettings,
+} from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";

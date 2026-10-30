@@ -33,7 +33,8 @@ import { listProjects } from "../project/doc.ts";
 import { ChannelDoc, markRead, type Attachment, type ChannelState } from "../channel/state.ts";
 import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
 import type { CoreShell } from "./assemble.ts";
-import { appendMemory, memoryDigest, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
+import { watchSayDrafts } from "../runtime/drafts.ts";
+import { appendMemory, memoryDigest, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { listSkills } from "../agent/skills.ts";
 import { attentionItems, channelDetail, channelList, labelIn, messageView, orgView, withLabels } from "./view.ts";
 import {
@@ -128,6 +129,51 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	});
 	setChannelClientsHas((channelId) => (channelClients.get(channelId)?.size ?? 0) > 0);
 
+	// 「正在说」草稿：从提交里的 `pi.live` 拿模型逐字生成的那句话，推给正在看的界面。
+	//
+	// 为什么值得单独一条通路：一条 200 字的话要生成十几秒，这期间界面上只有「想了 3 秒」。
+	// 草稿让老板看见它正在往外蹦字 —— 那是「它还活着」最直接的证据（通路与取舍见
+	// `src/core/runtime/drafts.ts` 的文件头注释、`docs/CONCESSIONS.md` C-007）。
+	//
+	// 节流在这里而不是在 runtime：生成时每 100ms 一次提交，一条 300 字的话会推 20 多次，
+	// 界面每次都重排一段文字，纯动画开销。「多久推一次」是界面关心的事。
+	//
+	// 草稿通路要的两份「只读缓存」：会话 id → slug，以及最近一次频道快照（草稿只推给
+	// 有这个人的频道）。两者都在 `channelSnapshot()` 里顺手刷新 —— 那条路每次推送都跑，
+	// 不存在「草稿要用的时候还没填过」的窗口。
+	const slugOfConversation = new Map<string, string>();
+	let latestChannels: ChannelState | undefined;
+	const DRAFT_GAP_MS = 260;
+	const lastDraftText = new Map<string, string>();
+	const lastDraftAt = new Map<string, number>();
+	const stopDrafts = watchSayDrafts(shell.harness, (conversationId, text) => {
+		const slug = slugOfConversation.get(String(conversationId));
+		if (slug === undefined) return;
+		if (text === undefined) {
+			// 说完了，或者这一轮根本没在说：把记住的那份扔掉，下一句从头算。
+			lastDraftText.delete(slug);
+			return;
+		}
+		if (lastDraftText.get(slug) === text) return;
+		const now = Date.now();
+		if (now - (lastDraftAt.get(slug) ?? 0) < DRAFT_GAP_MS) return;
+		lastDraftText.set(slug, text);
+		lastDraftAt.set(slug, now);
+		const line = `event: draft\ndata: ${JSON.stringify({ slug, text })}\n\n`;
+		for (const [id, clients] of channelClients) {
+			if (clients.size === 0) continue;
+			const channel = latestChannels?.channels[id];
+			if (channel === undefined || !channel.members.includes(slug)) continue;
+			for (const client of [...clients]) {
+				try {
+					client.write(line);
+				} catch {
+					clients.delete(client);
+				}
+			}
+		}
+	});
+
 	/**
 	 * 只读「人 + 频道」的快照。SSE 增量推送用它 —— 推一条消息完全用不到项目文档，
 	 * 旧版本却每条推送都去串行读一遍全部项目 README（审计 P1-4）。
@@ -136,6 +182,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		const identities = await shell.identities();
 		const directory = withLabels(shell.bindings(), identities);
 		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannels();
+		latestChannels = channels;
+		slugOfConversation.clear();
+		for (const [slug, conversationId] of Object.entries(directory.slugToConversation)) {
+			slugOfConversation.set(String(conversationId), slug);
+		}
 		return { identities, directory, channels };
 	}
 
@@ -519,13 +570,26 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				if (!(slug in directory.slugToConversation) || slug === OWNER_SLUG) {
 					return fail(response, 404, "没有这个人");
 				}
-				const source = (await readMemory(join(shell.agentsRoot, slug))) ?? "";
+				const agentDir = join(shell.agentsRoot, slug);
+				const source = (await readMemory(agentDir)) ?? "";
+				const stamps = await memoryTimeline(agentDir);
 				return json(response, {
 					slug,
 					label: withLabels(directory, []).labels?.[slug] ?? slug,
 					exists: source !== "",
 					digest: memoryDigest(source) ?? null,
-					entries: sectionsOf(source).map((section) => ({ heading: section.heading, body: section.body })),
+					// `at`/`by`/`op` 来自 `.memory-journal.jsonl`。手写进 memory.md 的条目没有日志，
+					// 就照实给 `null` —— 不拿「现在」去冒充「当时」（ADR-016）。
+					entries: sectionsOf(source).map((section) => {
+						const stamp = stamps.get(section.heading);
+						return {
+							heading: section.heading,
+							body: section.body,
+							at: stamp?.at ?? null,
+							by: stamp?.by ?? null,
+							op: stamp?.op ?? null,
+						};
+					}),
 					raw: source,
 				});
 			},
@@ -722,7 +786,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			},
 		},
 		{
-			// 浏览器自己报上来的卡顿（`ui/web/js/jank.js`）。
+			// 浏览器自己报上来的卡顿（`ui/app/src/lib/jank.ts`）。
 			//
 			// 老板两次报「agent 在跑的时候页面卡死」，而我在无头 Chrome 里量出来是
 			// 「长任务 0、最慢帧 17ms」—— 两边对不上，靠猜猜不完。让浏览器在真卡的时候
@@ -956,6 +1020,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		lanUrls: lanUrlsOf(boundHost, actualPort),
 		async close() {
 			unsubscribe();
+			stopDrafts();
 			if (orgTimer !== undefined) clearTimeout(orgTimer);
 			for (const client of orgClients) {
 				try {

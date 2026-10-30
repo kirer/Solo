@@ -10,7 +10,7 @@
 import { useEffect, useRef } from "react";
 import { getAttention, getChannels } from "../api/client.ts";
 import type { Message } from "../api/types.ts";
-import { applyMessage, getState, patch, setConn } from "../state/store.ts";
+import { applyDraft, applyMessage, getState, patch, setConn } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 打不开就等一等再试，退避到 15 秒封顶：服务重启期间不要每 100ms 打一次。 */
@@ -106,6 +106,13 @@ export function useChannelStream(): void {
 			const next = messages.slice();
 			next[index] = { ...messages[index]!, text: payload.text, processing: false, status: "done" };
 			patch({ detail: { ...state.detail!, messages: next } });
+		});
+		// `draft` 是「他正在说的那句话」（还没落库）：只用来画末尾那行预览，
+		// 真消息一到（`create` / `done`）store 会自己把它删掉。
+		source.addEventListener("draft", (event) => {
+			const payload = parse<{ slug: string; text: string }>(event);
+			if (payload === null || typeof payload.slug !== "string" || typeof payload.text !== "string") return;
+			applyDraft(payload.slug, payload.text);
 		});
 		source.addEventListener("error", () => {
 			source.close();

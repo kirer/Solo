@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 13 条路由（按方法+路径算；按路径去重是 12 条 —— `check-boundaries.mjs` 数的是去重后
+只有 17 条路由（按方法+路径算；按路径去重是 15 条 —— `check-boundaries.mjs` 数的是去重后
 的路径），全部在 `src/core/shell/serve.ts` 的 `routes` 表里声明。
 
 | 方法 | 路径 | 用途 |
@@ -16,6 +16,7 @@
 | `POST` | `/api/channels` | 新建频道 |
 | `GET` | `/api/channels/:id/mentionable` | 这个频道能 @ 谁 |
 | `GET` | `/api/channels/:id` | 频道详情（含消息） |
+| `GET` | `/api/channels/:id/stream` | 频道消息流（SSE：`create` / `done` / `draft`） |
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
 | `GET` | `/api/attention` | 「找你」：跨频道、需要老大拍板的消息 |
@@ -25,6 +26,7 @@
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
+| `POST` | `/api/diag` | 浏览器自报卡顿，落 `workspace/logs/jank.jsonl` |
 | `*` | 其余 | 静态文件（`ui/web/`） |
 
 所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
@@ -210,6 +212,23 @@ type ViewMessage = {
 紧凑摘要、默认收起：图标 + 「已运行 / 已写入文件 / 已调用 / 思考」+ 单行省略摘要 +
 展开箭头，连续多条时只第一条带头像 —— 过程是扫一眼的，不是逐条读的。
 
+## 7.1 `GET /api/channels/:id/stream`
+
+频道消息流（SSE）。查询参数 `?since=<seq>`：客户端已经拿到 seq N，服务端只补 N 之后
+（再往前多带 4 条，给占位原地覆盖用）；不带 `since` 时先推最近 60 条。
+
+| 事件 | `data` | 含义 |
+| --- | --- | --- |
+| `create` | `ViewMessage` | 新增或原地更新一条消息（按 `seq` 幂等 upsert） |
+| `done` | `{ seq, text, status: "done" }` | 回复落库，全文一次性给（不切片模拟逐字） |
+| `draft` | `{ slug, text }` | 「他正在说」：还没落库的 `say` 正文，尾部最多 600 字 |
+
+- 任何文档提交去抖 120ms 后推增量，只推订阅了这个频道的连接。
+- `draft` **不是消息**：不参与排序/分组，只画成末尾一行预览。真消息（`create` / `done`）
+  到达后前端必须丢掉同一个 `slug` 的草稿，否则同一句话会以两种形态出现两遍。
+- 草稿按人节流 260ms；来源与取舍见 `docs/CONCESSIONS.md` C-007。
+- 空闲每 15s 一个 `: ping` 注释行保活。
+
 ## 8. `POST /api/channels/:id/read`
 
 ```ts
@@ -283,12 +302,19 @@ type ViewMessage = {
 ```ts
 // 响应
 { slug: string, label: string, exists: boolean, digest: string,
-  entries: { heading: string, body: string }[], raw: string }
+  entries: { heading: string, body: string,
+             at: string | null, by: string | null, op: "add" | "edit" | null }[],
+  raw: string }
 ```
 
 `entries` 按 Markdown 的 `##` 标题拆（标题就是记下的日期）。`raw` 是 `agents/<slug>/memory.md`
 全文。`slug` 必须是名册里存在的 agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 老实 404。
+
+`at` / `by` / `op` 是这一节的**来历**，由 `memoryTimeline()` 从 `agents/<slug>/.memory-journal.jsonl`
+反推（每行都有写入前后的全文，切段比较即得）：`by` 是 `human` / `remember` / `agent`，
+`op` 是「新加」还是「改过」。手写进 `memory.md`、没有日志的条目一律 `null` ——
+**不拿「现在」冒充「当时」**（ADR-016）。
 
 ## 13. `POST /api/people/:slug/memory`
 
@@ -327,6 +353,16 @@ type ViewMessage = {
 **模型看不见图片内容**（ADR-051）：附件在投递正文里只有一行占位。agent 应该说
 「我读不了图里的内容，请用文字说一下要我做什么」，而不是猜。
 
+## 14.1 `POST /api/diag`
+
+浏览器自报卡顿。请求体自由（前端发 `{ kind: "jank", at, entries: [...] }`），服务端补
+`at` 后追加到 `<workspace>/logs/jank.jsonl`；单条 4KB、单文件 5MB 封顶，满了轮转一次。
+永远回 `{ ok: true }` —— 诊断写不进去不该影响任何事。
+
+来源是 `ui/app/src/lib/jank.ts`：只在长帧 > 240ms 或长任务 > 200ms 时记一条，攒够 5 秒
+或 `pagehide` 时发上来。每条带「当时在干什么」（`doing`）和可见性状态（`hidden` /
+`resumed` / `foreground`），用来区分「真卡」和「切后台被节流」。
+
 ## 15. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`serve.ts` 的 `uiDir` 默认值）：
@@ -336,12 +372,12 @@ type ViewMessage = {
 - 入口 `index.html` 不缓存（`no-cache`），其余 `max-age=300, must-revalidate`。
 - 带 ETag，支持 `br` / `gzip` 协商。
 
-界面**没有构建步骤** —— 改 `ui/web/` 里的文件，刷新浏览器就生效。
+界面源码在 `ui/app/`（React + TypeScript + Vite，ADR-079），构建产物写回 `ui/web/`。
+**改完界面必须 `npm run ui:build`** —— 服务端只发 `ui/web/`，源码改动不会自己出现。
 
 ## 16. 已知限制
 
 - **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
-- **没有工具调用 trace**。`ViewMessage` 只有消息正文，看不到 agent 中间调了哪些工具。
 - **没有待办 / 任务 / 成本**。第一代有，当前核心一个都没有，界面相应位置是空的
   （ADR-016：不画后端没有的东西）。
 - **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。

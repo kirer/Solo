@@ -29,13 +29,14 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
 | `runtime/index.ts` | 57 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `Type` |
-| `runtime/open.ts` | 142 | `openCore({databasePath, models, registry, settings?}) → {harness, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025） |
+| `runtime/open.ts` | 307 | `openCore({databasePath, models, registry, settings?}) → {harness, registry, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025） |
+| `runtime/drafts.ts` | 69 | `draftTextOf()` / `watchSayDrafts()` —— 从 `pi.live` 提交里只读地取「正在说的那句话」（C-007）；`DRAFT_TAIL=600` |
 | `runtime/models.ts` | 151 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；回落到环境变量 / 本地网关 |
 | `agent/identity.ts` | 136 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；`OWNER_SLUG = "owner"` |
 | `agent/prompt.ts` | 259 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005）；规矩一节来自 `rules.md`（ADR-038）；只留事实；出口再 `redact()` 一遍（密钥不许进提示词） |
 | `agent/rules.ts` | 41 | `loadRules()` / `renderRulesSection()` —— 读 `<workspace>/rules.md` 并排成「## 规矩」一节；缺文件 = 整段不出现 |
 | `agent/runtime.ts` | 151 | `registeredTools()`（从注册表实拍工具清单）、`renderAgentSection()`（每次重读盘，含 `rules.md`）、`readProjectBrief()` |
-| `agent/memory.ts` | 215 | `readMemory` / `sectionsOf` / `appendMemory` / `writeMemory` / `memoryDigest` / `entryProblem`；`MEMORY_FILE="memory.md"`、`DIGEST_LIMIT=12`、`MEMORY_LIMITS={entry:300, main:4_000}`；写入去重 + 串行 + 记一笔 journal |
+| `agent/memory.ts` | 295 | `readMemory` / `sectionsOf` / `appendMemory` / `writeMemory` / `memoryDigest` / `memoryTimeline` / `entryProblem`；`MEMORY_FILE="memory.md"`、`DIGEST_LIMIT=12`、`MEMORY_LIMITS={entry:300, main:4_000}`；写入去重 + 串行 + 记一笔 journal |
 | `agent/journal.ts` | 49 | `appendJournal()` —— `<agentDir>/.memory-journal.jsonl` 追加一行 JSON（谁、何时、append/replace、before/after 全文）；失败只 warn |
 | `agent/secrets.ts` | 100 | `loadSecrets` / `redactor` / `redact` —— 读 `<workspace>/.secrets.json`，把密钥的三种形态（原值 / JSON 转义 / URL 编码）从文本里抹掉 |
 | `agent/skills.ts` | 231 | 两层技能：`listSkills` / `readSkill` / `writeSkill` / `writeCompanySkill` / `copySkillDir` |
@@ -55,7 +56,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `shell/assemble.ts` | 612 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道 → 启投影；`ownerSpeak` / `makeAfterPost` |
 | `shell/projector.ts` | 208 | 会话记录 → 个人频道的投影管道：`startTranscriptSink` / `backfillTranscripts` / `projectEntry`（游标持久化，ADR-026）；`keptProjections()` 决定老大私聊只落 `say`（ADR-040） |
 | `shell/seed.ts` | 298 | `seedOwnerAssistant`（身份，只建一次）/ `syncCompanySkills`（公司层技能按 hash 同步，ADR-039）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills` |
-| `shell/serve.ts` | 454 | `serveCore()` —— 8 条路由 + SSE + 静态文件 |
+| `shell/serve.ts` | 1305 | `serveCore()` —— 17 条路由 + 两条 SSE（org / 频道，含 `draft`）+ 静态文件 |
 | `shell/view.ts` | 302 | 视图投影：`channelList` / `channelDetail` / `messageView` / `orgView`（无 `dmKind`，dm 统一为一类） |
 | `shell/main.ts` | 144 | 启动：同步规矩与公司层技能（`seedRules` / `syncCompanySkills`）→ 必要时建人 → 读模型 → `openCore` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
 | `shell/http/routes.ts` | 122 | `matchRoute()` 表驱动路由（`:name` 捕获 / `*name` 吃余量） |
@@ -87,7 +88,9 @@ scripts/     两个脚本：边界检查、真实模型自测
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
 | `src/lib/avatar.ts` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像 |
 | `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼** |
-| `src/lib/format.ts` | 转义、相对时间、`humanBytes`、`unreadLabel`、`copyText` |
+| `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanBytes`、`unreadLabel`、`copyText` |
+| `src/lib/jank.ts` | 卡顿自报：长帧 > 240ms / 长任务 > 200ms 才记一条，`mark(label)` 标「当时在干什么」，攒够 5 秒或 `pagehide` 发 `POST /api/diag` |
+| `src/panels/MemoryDrawer.tsx` | 记忆抽屉：读 / 加 / 删一条，每条画一行来历（`at` / `by` / `op`，没有日志就不画） |
 | `src/lib/messages.ts` | `mergeMessages()` —— 两页消息按 `seq` 去重合并（后一批赢，占位填充靠它） |
 | `src/styles/*.css` | 八个样式文件，顺序见 `styles/index.css`（token 先落地） |
 | `public/fonts/*.woff2` | Montserrat 300/400/500（本地字体，只用于品牌名） |
@@ -108,6 +111,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 | 改频道成员怎么来 | `shell/assemble.ts` 的 `joinProjectChannel` / `addToCompanyChannel` | 成员是 `identity.md` + `README.md` 的投影（ADR-012） |
 | 加一条 HTTP 路由 | `shell/serve.ts` 的 `routes` 表 | 必须在前端有消费者，否则边界检查失败 |
 | 改界面字段 | `shell/view.ts` | 字段必须有前端消费者（ADR-016） |
+| 改「正在说」草稿 / 逐字流 | `runtime/drafts.ts` + `shell/serve.ts` 的 draft 推送 + `stream/Stream.tsx` 的 `DraftRow` | 只认 `say` 的 `text`，别把工具参数当发言；真消息一到必须删草稿（C-007） |
 | 改界面样式 / 交互 | `ui/app/` | **改完必须 `npm run ui:build`**；文件职责见 §2.2 |
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建（ADR-052） |
 | 改记忆沉淀的触发条件 / 游标时机 | `project/memory.ts` 的 `settleCandidates` + `project/settle.ts` 的 `waiting` | 游标语义在 ADR-033（取代 ADR-013），改之前先读懂 |
@@ -144,7 +148,7 @@ scripts/     两个脚本：边界检查、真实模型自测
 
 ```bash
 npm run check      # tsc --noEmit + 边界检查
-npm test           # 65 文件 / 536 例，应该 <3s
+npm test           # 68 文件 / 553 例，应该 <3s
 npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
@@ -168,6 +172,8 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞 |
 | `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`、渲染确定性、不谎报文件路径 |
 | `memory.test.ts` | 分区、追加、摘要 |
+| `memory-timeline.test.ts` | `memoryTimeline()`：从 journal 反推每节来历（add/edit、时间、作者）、没变不刷新、删掉不留、坏行跳过 |
+| `drafts.test.ts` | `draftTextOf()`：只认 `say` 的 `text`、参数没到不算、思考不算、超长留尾部、多个 `say` 取第一个有正文的 |
 | `skills.test.ts` | 两层覆盖、拷贝不覆盖、frontmatter |
 | `org.test.ts` | slug、建人、组织架构投影 |
 | `project.test.ts` / `project-memory.test.ts` | README 读写、memory 追加、候选筛选 |
@@ -189,6 +195,7 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | 文件 | 测什么 |
 | --- | --- |
 | `memory-panel.test.ts` | 记忆面板纯逻辑：`lineCount` / `linesOf`（「条」是行数不是节数）/ 筛选 / 行数版文案 / 删除确认里的条数 |
+| `jank.test.ts` | `classifyJank()`：hidden / resumed / foreground 三判；`mark()` 幂等 |
 | `merge-messages.test.ts` | `mergeMessages()`：升序、去重、重叠时后一批赢、乱序、空输入、丢掉没有 `seq` 的项（ADR-052） |
 | `detail-panel.test.ts` | 详情面板：后端字段都画出来 / 没技能没记忆就明说 / 用户可控字串不变标签（ADR-056） |
 | `say-contract.test.ts`（新增两例） | 独白与超长**不落库**（不只返回提示，`lastOf().seq` 必须没变） |

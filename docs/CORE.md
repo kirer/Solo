@@ -199,26 +199,30 @@ workspace/
 
 ## 9. 界面
 
-服务把 `ui/web/` 当静态目录发出去，**没有构建步骤**：改文件、刷新浏览器就生效。
+界面源码在 `ui/app/`（React + TypeScript + Vite，ADR-079），构建产物写回 `ui/web/`；
+服务端只发 `ui/web/`。**改完界面必须 `npm run ui:build`**，源码改动不会自己出现在浏览器里。
 
 ```
-ui/web/
-  index.html      一个骨架：顶栏 / 左栏列表 / 右栏对话
-  css/app.css     一个文件，九个颜色变量，4px 栅格
-  js/app.js       唯一有状态的模块（一个对象 + 几个渲染函数）
-  js/api.js       只有 fetch 与 SSE，错误处理统一在这里
-  js/markdown.js  纯函数渲染器
-  js/format.js    时间 / 头像色 / 剪贴板
+ui/app/src/
+  api/        fetch + SSE 客户端与后端类型的镜像
+  state/      唯一状态源：一个 store + useStore
+  stream/     buildRows() 纯函数算行，Stream.tsx 只负责画
+  composer/   输入卡（@、附件、引用、输入法合成期不误发）
+  panels/     右栏（详情 / 文件）、记忆抽屉、浮层
+  sidebar/    左栏频道列表
+  lib/        时间 / 头像 / Markdown / 合并消息 / 卡顿记录
+  styles/     沿用 DSH 观感，类名不变
+ui/web/       构建产物，服务端发这个目录，别手改
 ```
 
 三条规矩：
 
 1. **只画后端真的有的东西。** 没有待办就不画待办卡，没有 trace 就不留占位。为填满
    布局画一堆恒空的块，看的人分不清是「没有」还是「坏了」。
-2. **一个区域整体替换**（`replaceChildren`），不做增量 patch。几百条消息时这比 diff
-   更快，也更难写错。
-3. **`[hidden]` 必须真的藏住**（`app.css` 里有一条 `display: none !important`）。
-   类选择器里的 `display: flex` 会顶掉浏览器默认的 `[hidden]`。
+2. **状态单向。** 「谁跟谁算一段、过程行归谁、时间分隔插哪儿」全由纯函数 `buildRows()`
+   算，视图状态写进 React state；不手工搬 DOM、不在 `dataset` 里存状态（ADR-079）。
+3. **样式类名沿用 DSH 观感**（`ui/app/src/styles/*.css`）。新样式加在对应文件里，
+   别在组件里写内联样式或造第二套命名。
 
 频道分三组：公司（`company` / `lead` 前缀）、项目（`proj:`）、个人（`dm:`）。
 消息按 `kind` 区分显示：`chat` 普通发言、`work` 执行记录（折叠等宽字体块）、
@@ -254,12 +258,22 @@ ADR-027 守的底线（`test/core/channel-write.test.ts` 把「每写一条花�
 `pi.assistant` 条目按时间顺序补进个人频道，再开投影订阅只听新提交。没有这一步，
 历史条目就永远不会被投影 —— 个人频道只剩 `run` 的 `work` 卡，看不到 agent 怎么想。
 
+### 「正在说」草稿
+
+一条 200 字的话要生成十几秒，这期间界面上原来只有「想了 3 秒」。底座的逐字事件流不可用
+（C-007），但每次提交都带着 `pi.live` 的整份快照，而模型正在拼的 `say` 参数就在里面。
+所以 `runtime/drafts.ts` 从提交里只读地取出那句正在长的正文，`serve.ts` 节流 260ms 后
+以 SSE `draft` 事件推给频道成员，界面在末尾画一行浅色的「正在说…」。
+
+它**不是消息**：不落库、不进 `buildRows()`、不参与分组；真消息一到就消失（否则同一句
+话会出现两遍）。草稿是「它还活着」的证据，不是要读的内容 —— 界面上只显示尾部几行。
+
 ## 10. 目录
 
 ```
 src/core/
   runtime/   openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
-             models / settings 也在这里
+             models / settings / drafts（「正在说」草稿）也在这里
   agent/     identity（他是谁）/ prompt（投影）/ runtime（接进会话）
              memory / skills / create（新建一个人）/ roster（slug ↔ 会话）
   project/   doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
@@ -290,8 +304,7 @@ src/core/
 
 ## 12. 还没做的
 
-- **工具调用 trace**：界面只显示消息，看不到 agent 中间调了哪些工具。
 - **待办拍板 / 任务 / 成本**：一个都没有（界面相应位置是空的）。
 - **看门狗 / 崩溃自愈 / IM 出站**：不为长跑兜底。
-- **发图片 / 附件**：输入框只有文本。
+- **模型看图**：附件能上传、能显示，但模型看不见图里的内容（ADR-051）。
 

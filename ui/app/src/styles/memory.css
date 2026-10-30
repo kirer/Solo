@@ -682,6 +682,9 @@
 }
 .memory-del:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 .memory-lines { margin-top: 6px; display: grid; gap: 4px; }
+
+/* 记忆的来历。11px 一档，比正文低一档但不低于可读线 —— 它是旁注，不是噪音。 */
+.memory-stamp { margin: 4px 0 0; font-size: 11px; line-height: 16px; color: var(--ink-3); }
 .memory-line {
 	font-size: 13.5px;
 	line-height: 1.72;

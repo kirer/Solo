@@ -6,10 +6,12 @@
 
 只有一个进程：`src/core/shell/main.ts`。它同时是：
 
-- HTTP 服务（静态界面 `ui/web/` + 8 条 `/api/*` 路由）
+- HTTP 服务（静态界面 `ui/web/` + 17 条 `/api/*` 路由）
 - agent 运行时（SQLite + 后台任务）
 
-没有反向代理、没有独立数据库服务、**没有鉴权层**、没有构建步骤。数据全在 `workspace/`：
+没有反向代理、没有独立数据库服务、**没有鉴权层**。后端没有构建步骤（`node --experimental-strip-types`
+直接跑 TS）；**界面有**：改 `ui/app/` 后必须 `npm run ui:build` 把产物写回 `ui/web/`（ADR-079）。
+数据全在 `workspace/`：
 
 ```text
 workspace/

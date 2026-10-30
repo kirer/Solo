@@ -21,6 +21,7 @@ import {
 	sendMessage,
 } from "../api/client.ts";
 import type { Actor, AttentionItem, Channel, ChannelDetail, Message, PersonProfile } from "../api/types.ts";
+import { mark } from "../lib/jank.ts";
 
 export type Presence = "idle" | "working" | "thinking" | "asleep";
 export type Layout = "flat" | "bubble";
@@ -42,6 +43,13 @@ export type State = {
 	attention: AttentionItem[];
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
+	/**
+	 * 「他正在说的那句话」：还没落库的草稿正文，按 slug。
+	 *
+	 * 只有正在生成的才有；真消息一到就删（见 `applyMessage`）——
+	 * 草稿是**临时**的，绝不能和已落库的消息并存，否则同一句话会出现两遍。
+	 */
+	drafts: Map<string, { text: string; at: number }>;
 	lastSeen: Map<string, number>;
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
@@ -83,6 +91,7 @@ const initial: State = {
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
+	drafts: new Map(),
 	lastSeen: new Map(),
 	conn: { ok: true, lastOkAt: Date.now() },
 	layout: read(LAYOUT_KEY, ["flat", "bubble"], "bubble"),
@@ -167,8 +176,10 @@ export async function openChannel(id: string | null): Promise<void> {
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
-	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false });
+	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false, drafts: new Map() });
+	const done = mark("channel:open");
 	const detail = await getChannel(id);
+	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
 	patch({ detail, hasMore: detail.hasMore });
@@ -185,6 +196,7 @@ export async function loadEarlier(): Promise<void> {
 		return;
 	}
 	patch({ loadingEarlier: true });
+	const done = mark("channel:earlier");
 	try {
 		const page = await getEarlier(currentId, earliest);
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
@@ -193,6 +205,7 @@ export async function loadEarlier(): Promise<void> {
 			hasMore: page.hasMore,
 		});
 	} finally {
+		done();
 		patch({ loadingEarlier: false });
 	}
 }
@@ -213,6 +226,8 @@ export function mergeMessages(older: readonly Message[], newer: readonly Message
 
 /** SSE 推来一条（新增或原地更新）。 */
 export function applyMessage(id: string, message: Message): void {
+	// SSE 一条一条到达，卡顿发生时最需要知道的就是「是不是正在合并消息」。
+	const done = mark("sse:apply");
 	const current = getState();
 	if (current.currentId !== id || current.detail === null) return;
 	const messages = current.detail.messages;
@@ -226,7 +241,29 @@ export function applyMessage(id: string, message: Message): void {
 		next[index] = message;
 	}
 	patch({ detail: { ...current.detail, messages: next } });
+	// 真消息到了，他刚才的草稿就该消失 —— 否则同一句话会以「正在说…」和气泡两种形态并存。
+	if (message.fromSlug !== undefined && current.drafts.has(message.fromSlug)) {
+		const drafts = new Map(current.drafts);
+		drafts.delete(message.fromSlug);
+		patch({ drafts });
+	}
 	if (message.fromSlug !== "owner") notePresence(message);
+	done();
+}
+
+/**
+ * 收到一条草稿（模型正在生成、还没落库的那句话）。
+ *
+ * 只认当前频道里的人：别的频道的草稿推过来也没处显示。
+ */
+export function applyDraft(slug: string, text: string): void {
+	const current = getState();
+	if (current.detail === null) return;
+	const member = current.detail.members.some((item) => item.slug === slug);
+	if (!member) return;
+	const drafts = new Map(current.drafts);
+	drafts.set(slug, { text, at: Date.now() });
+	patch({ drafts });
 }
 
 export async function send(text: string, attachmentIds: readonly string[] = []): Promise<void> {
@@ -235,6 +272,7 @@ export async function send(text: string, attachmentIds: readonly string[] = []):
 	const trimmed = text.trim();
 	if (trimmed === "" && attachmentIds.length === 0) return;
 	patch({ reply: null });
+	const done = mark("send");
 	try {
 		await sendMessage(currentId, {
 			text: trimmed,
@@ -244,6 +282,8 @@ export async function send(text: string, attachmentIds: readonly string[] = []):
 	} catch (error) {
 		patch({ reply });
 		throw error;
+	} finally {
+		done();
 	}
 }
 

@@ -84,7 +84,19 @@ export type AttentionItem = {
 	read: boolean;
 };
 
-export type MemoryEntry = { heading: string; body: string };
+/**
+ * 一条记忆。
+ *
+ * `at`/`by`/`op` 是它的来历，来自 `agents/<slug>/.memory-journal.jsonl`。
+ * 手写进 `memory.md` 的条目没有日志，后端给 `null` —— 前端照实留空，不编时间。
+ */
+export type MemoryEntry = {
+	heading: string;
+	body: string;
+	at: string | null;
+	by: string | null;
+	op: "add" | "edit" | null;
+};
 
 export type PersonMemory = {
 	slug: string;

@@ -43,9 +43,9 @@ ui/app/             界面源码（React + TS + Vite，ADR-079）
 ui/web/             构建产物（服务端发这个目录，别手改）
 seed/               播种技能
 scripts/            两个脚本：check-boundaries、core-live
-test/               65 文件 / 536 例
-  ├ test/core/      46 文件 / 414 例（纯函数 + 装配）
-  └ test/ui/        19 文件 / 122 例（界面纯函数与源码约定）
+test/               68 文件 / 553 例
+  ├ test/core/      48 文件 / 426 例（纯函数 + 装配）
+  └ test/ui/        20 文件 / 127 例（界面纯函数与源码约定）
 workspace/          运行时数据（gitignore）
 ```
 
@@ -83,7 +83,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 65 文件 536 例，<3s，必须全绿
+npm test          # 68 文件 553 例，<3s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 

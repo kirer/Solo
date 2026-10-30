@@ -47,6 +47,7 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const hasMore = useStore((state) => state.hasMore);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const presence = useStore((state) => state.presence);
+	const drafts = useStore((state) => state.drafts);
 	const people = useStore((state) => state.people);
 	const [atBottom, setAtBottom] = useState(true);
 	/** 展开过的过程组（key）。默认展开的那些由 `defaultOpen` 决定，不进这个表。 */
@@ -200,6 +201,11 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 								onImage={props.onImage}
 							/>
 						))}
+						{detail === null
+							? null
+							: [...drafts].map(([slug, draft]) => (
+									<DraftRow key={`draft-${slug}`} slug={slug} text={draft.text} labels={labels} />
+								))}
 					</div>
 
 					{activity === null ? null : (
@@ -284,6 +290,45 @@ function RowView(props: {
 			open={props.opened[row.key] ?? row.defaultOpen}
 			onToggle={(next) => props.onToggle(row.key, next)}
 		/>
+	);
+}
+
+/**
+ * 「正在说…」：模型正在生成、还没落库的那句话。
+ *
+ * 为什么值得画：一条 200 字的话要生成十几秒，这期间界面上只有「想了 3 秒」。
+ * 让老板看见它正在往外蹦字，是「它还活着」最直接的证据。
+ *
+ * 三条纪律：①不进 `buildRows`（它不是消息，不该参与分组/分隔的判定）；
+ * ②样式上明确是「草稿」——浅一档的字色 + 光标，不让人误以为已经说完了；
+ * ③真消息一到就消失（`applyMessage` 里删），否则同一句话会出现两遍。
+ */
+function DraftRow(props: {
+	slug: string;
+	text: string;
+	labels: Map<string, { label: string; role: string }>;
+}): JSX.Element {
+	const known = props.labels.get(props.slug);
+	const name = known?.label ?? props.slug;
+	return (
+		<div className="row row-say row-draft" data-slug={props.slug}>
+			<div
+				className="row-av"
+				dangerouslySetInnerHTML={{
+					__html: avatarSvg({ slug: props.slug, name, size: 40, state: "working" }),
+				}}
+			/>
+			<div className="row-body">
+				<div className="row-head">
+					<span className="row-name">{name}</span>
+					<span className="row-role">正在说</span>
+				</div>
+				<div className="md draft-text">
+					{props.text}
+					<span className="draft-caret" aria-hidden="true" />
+				</div>
+			</div>
+		</div>
 	);
 }
 
