@@ -55,7 +55,7 @@ shell = 装配层，唯一可以同时 import 全部
    `agent|team|channel|app|view|interface|shell`。
 8. **根目录两个原语**（`fsx.ts` / `naming.ts`）不许 import `app|view|interface|shell`。
 
-## 2. 全量文件（`src/core` 下 57 个 ts，10730 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 66 个 ts，10737 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -81,15 +81,24 @@ shell = 装配层，唯一可以同时 import 全部
 | `team/doc.ts` | 198 | `teams/<slug>/README.md` 的读写（走 `readDocFile` / `writeDocFile`）；`TeamDoc{slug,name,lead?,doing?,status,body}`、`membersOfTeam()`；`assertTeamSlug()` → `assertName(_, "team")`（读宽容、写严格，ADR-095）；`teamSlugOfReadmePath()` 给 `file` 判断「这次写的是不是团队说明」（ADR-097） |
 | `team/memory.ts` | 151 | `teams/<slug>/memory.md` + `settleCandidates()`（不按 `kind` 筛，只排除整理者自己）/ `renderSettlePrompt(template, team, candidates)`（**只做排版**：候选排成 `{{candidates}}`、填 `{{team}}` `{{pending}}`，判据在 `seed/prompt/95-settle.md`） |
 | `team/settle.ts` | 267 | 自动沉淀：`settleProject` 已改名 `settleTeam` / `settleTarget`；单游标（问完只记 `waiting`，记忆文件 mtime 变了才推进；等待期间来了新消息会重问、投递失败不记 `waiting`、唤醒记 wake，ADR-033 / ADR-095）；走 `wake()` 而不是直投；**模板缺了就不问**（warn + 游标不推进，等模板补上下次再问）；失败时往团队频道留一条 `note`（`appendTeamNote`） |
-| `channel/store.ts` | 561 | 频道的**纯规则**（原 `state.ts` + `alias.ts` 合并）：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `chatKind`（**只认 `dm:` 前缀 + 恰好 `{我, 一人}`**，其余一律群聊，ADR-097）/ `projectChannel`（成员投影唯一入口：create / merge / replace，ADR-096）/ `teamId` / `fallbackChannelId`（只找最近活跃的群；一个群都没有就回落 `dm:owner-<slug>`）/ `recipientsOf` / `deliveryTargets`（收件人减掉我）/ `hasMentionToken` / `unreadCount` / `markRead` / `ensureChannel`（= create）/ `upsertChannel`（= merge）；`parseMentions` 只排除 ASCII 字母数字与邮箱符号（中文紧贴 @ 也认，ADR-095）；别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（`@CEO`、拼音、title、`@老板` 一律丢弃，ADR-088）。接力上限（原 `relayLimit` / `botHopsSinceOwner`）已删，改由 `rules.md` 第 13 条约束（ADR-090） |
-| `channel/post.ts` | 542 | `appendToChannel()` —— **消息落盘**的唯一实现（频道存在性、`nextSeq` 自愈、按路径 push；ADR-096）；`postMessage()` 写一条 + 唤醒（落库与唤醒必须成对）；`appendNote()` 系统留痕（与普通消息共用同一条写入路径）；`deliver()`（唯一跨 agent 原语，ADR-008）。原 `deliver.ts` 并进来 |
+| `channel/types.ts` | 157 | 频道的数据形状：`ChannelDoc`（增量满 64 条压基线，长频道满 16 条，ADR-027）/ `Attachment` / `Message` / `Channel` / `ChannelState` / `emptyChannelState` / `OWNER` / `dmId` / `teamId` / `chatKind`（**只认 `dm:` 前缀 + 恰好 `{我, 一人}`**，其余一律群聊，ADR-097） |
+| `channel/mentions.ts` | 159 | `@` 解析与收件人：`parseMentions` 只排除 ASCII 字母数字与邮箱符号（中文紧贴 @ 也认，ADR-095）/ `hasMentionToken` / `recipientsOf`（成员过滤 + 「没 @ 人时第一个成员接」+ `wakeOnAll`）/ `deliveryTargets`（收件人减掉我）/ `MentionRoster` / `mentionRosterOf` / `resolveMention`：别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（`@CEO`、拼音、title、`@老板` 一律丢弃，ADR-088） |
+| `channel/rules.ts` | 240 | 频道的**纯规则**：`readMarkOf` / `unreadCount` / `fallbackChannelId`（只找最近活跃的群；一个群都没有就回落 `dm:owner-<slug>`）/ `channelsOf` / `appendMessage` / `projectChannel`（成员投影唯一入口：create / merge / replace，ADR-096）/ `ensureChannel`（= create）/ `upsertChannel`（= merge）/ `markRead` / `tail`。接力上限（原 `relayLimit` / `botHopsSinceOwner`）已删，改由 `rules.md` 第 13 条约束（ADR-090） |
+| `channel/write.ts` | 89 | `appendToChannel()` —— **消息落盘**的唯一实现（频道存在性、`nextSeq` 自愈、按路径 push；ADR-096）；`appendNote()` 系统留痕；只落盘，不叫醒人 |
+| `channel/post.ts` | 185 | `postMessage()` 写一条 + 唤醒（落库与唤醒必须成对）；串行闸（ADR-027）；`PostDeps` / `PostInput`。落盘交给 `write.ts`，逐条投递交给 `dispatch.ts` |
+| `channel/dispatch.ts` | 257 | `deliver()`（唯一跨 agent 原语，ADR-008）：逐条投递、两层唤醒记录、合并唤醒、失败通报；`DeliverResult` / `DeliverIssue` / `DeliverOptions` |
 | `channel/delivery.ts` | 257 | 投递正文的**排版**：`renderDelivery` / `renderReplyRules` / `digestRows` / `digestNotice` / `deliveryPrompt`（reply / interrupted / settle 三份系统模板 + 八个 delivery 片段）/ `mergedNotice`。文案全在 `seed/prompt/*.md`，这里只按条件选片段、填名字 |
 | `channel/queue.ts` | 94 | 唤醒队列：`queuedAhead`（同会话还没开始的排队项）/ `coalesceQueue`（合并成最多一个）/ `liveConversations` |
 | `channel/attachments.ts` | 405 | 附件（原 `uploads.ts` + `attach.ts` 合并）：`putUpload` / `readUploadMeta` / `sweepOrphanUploads`（单文件一份元数据，频道文档里只存 id）/ `kindOfMime` / `mimeOf` / `nameFrom` / `contentDisposition` / `readBounded`（边读边数——先读完再比上限等于没有上限）/ `placeholderOf`（附件 → 模型能看到的那几行） |
-| `channel/wake.ts` | 199 | `wake()` —— **叫醒一个人只有这一条路**：合并排队项、记两层 wake（`reply` / `task`，ADR-099）、提交、结算收尾（没产出留痕 / 正常答完自动补发）；正文用 `bodyOf(merged, busy)` 回调给（要先合并才知道并了几条）。`post()` 与 `team/settle.ts` 都走它 |
-| `channel/turn.ts` | 144 | 一轮的收尾（ADR-099）：结算 `done` 后取答案条目，没被 `say` 说出来的最终正文按两层唤醒记录补进频道；`finalTextOf` / `spokeAfterWake` / `turnTarget` / `createTurnFinisher` |
+| `channel/wake.ts` | 152 | `wake()` —— **叫醒一个人只有这一条路**：合并排队项、记两层 wake（`reply` / `task`，ADR-099）、提交、结算收尾（没产出留痕 / 正常答完自动补发）；正文用 `bodyOf(merged, busy)` 回调给（要先合并才知道并了几条）。`post()` 与 `team/settle.ts` 都走它 |
+| `channel/turn/record.ts` | 56 | 一轮的唤醒目标：`WakeTarget` / `WakeRecord{reply, task}`（ADR-099）；`parseWake` 兼容旧的平铺格式（`reply = task`） |
+| `channel/turn/finish.ts` | 144 | 一轮的收尾（ADR-099）：结算 `done` 后取答案条目，没被 `say` 说出来的最终正文按两层唤醒记录补进频道；`finalTextOf` / `spokeAfterWake` / `turnTarget` / `createTurnFinisher` |
+| `channel/turn/index.ts` | 17 | 这一层对外的出口：唤醒记录类型 + 收尾 |
 | `channel/tools/index.ts` | 47 | `createCoreTools` —— 组合下面 7 个 builder，并再导出 `isPass` / `monologueOpener` / `clip` / `resolveInWorkspace` / `CoreToolDeps`。**7 个工具**（ADR-084 / ADR-090）：`say` / `chats` / `read_history` / `remember` / `hire` / `run` / `file` |
-| `channel/tools/shared.ts` | 384 | 7 个工具共用的入参/出口：`CoreToolDeps`、`text` / `actionOf` / `selfOf` / `selfOrError` / `defaultChannel` / `othersAwoken` / `mentionRoster` / `readState` / `postDeps` / `recallText` / `renderLine`，安全闸 `isPass` / `monologueOpener` / `clip` / `resolveInWorkspace`，上限 `SAY_LIMIT` / `MODEL_LIMIT` |
+| `channel/tools/context.ts` | 149 | 工具的运行环境：`CoreToolDeps`、`text` / `actionOf` / `selfOf` / `selfOrError` / `mentionRoster` / `readState` / `postDeps`（投递依赖组装） |
+| `channel/tools/channel-choice.ts` | 80 | `defaultChannel`（唤醒记录 `reply` → 群里最近活跃 → 私聊**报错**）/ `othersAwoken`（同一条消息还叫醒了谁） |
+| `channel/tools/recall.ts` | 59 | `recallText`（翻自己 / 团队记忆，出口脱敏）/ `renderLine`（历史一行） |
+| `channel/tools/guards.ts` | 106 | 安全闸与上限：`isPass` / `monologueOpener` / `clip` / `resolveInWorkspace`、`SAY_LIMIT` / `MODEL_LIMIT` |
 | `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），`defaultChannel` 兜底落到私聊**直接报错**。`me` / `skills` / `teams` / `write_team` 已删——它们是「用 `file` 读写某个固定路径 md」的包装。`file` 写 `teams/<slug>/README.md` 后调 `syncTeam` 重投影频道（ADR-097）。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放（ADR-095） |
 | `channel/unanswered.ts` | 82 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
 | `app/index.ts` | 50 | `createApp(services)` → `{snapshots, read, people, chat, uploads, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
@@ -97,7 +106,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `app/snapshot.ts` | 86 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
 | `app/read.ts` | 107 | `createRead` —— 读的入口：每个方法都是「取快照 → 投影（`app/project.ts`）→ 返回 DTO」 |
 | `app/people.ts` | 135 | `createPeople` —— 一个人：档案、记忆的读 / 加 / 改 / 删；`MemoryEditBody` |
-| `app/project.ts` | 341 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels`；显示名走 `agent/identity.ts`，团队头走 `channel/store.ts` 的 `teamId` |
+| `app/project.ts` | 341 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels`；显示名走 `agent/identity.ts`，团队头走 `channel/types.ts` 的 `teamId` |
 | `app/chat.ts` | 183 | 说话用例：`postAsOwner` / `openDirectMessage`（唯一建频道入口，ADR-097）/ `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界、私聊对象必须在名册里）在这里而不在路由里 |
 | `app/uploads.ts` | 76 | 上传语义：`createUploads` —— 收下字节、写元数据、读回时决定内联还是下载。工作区文件树已删（ADR-091），三道闸随它一起走了 |
 | `app/diag.ts` | 127 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性（ADR-083）。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
@@ -147,7 +156,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 | 想改什么 | 动这里 | 注意 |
 | --- | --- | --- |
-| 加一个工具（能力） | `channel/tools/shared.ts` 加共用件、新工具一个 builder 文件，再登记进 `channel/tools/index.ts` 的 `createCoreTools` | 工具 description 只写参数语义和机械后果，行为要求引用技能 / 规矩；同一件事的几种做法用一个 `action` 枚举，不要开新工具名（现在是 7 个，ADR-084 / ADR-090）；加完数一遍总数 |
+| 加一个工具（能力） | `channel/tools/` 里对应的模块加共用件（`context.ts` / `channel-choice.ts` / `recall.ts` / `guards.ts`）、新工具一个 builder 文件，再登记进 `channel/tools/index.ts` 的 `createCoreTools` | 工具 description 只写参数语义和机械后果，行为要求引用技能 / 规矩；同一件事的几种做法用一个 `action` 枚举，不要开新工具名（现在是 7 个，ADR-084 / ADR-090）；加完数一遍总数 |
 | 教 agent 一套做法 | **不要写代码**，写 `seed/skills/<名字>/SKILL.md`（个人层写 `agents/<slug>/skills/<名字>/SKILL.md`） | 见 ADR-007 |
 | 改一段提示词的**措辞** | `seed/prompt/NN-段名.md`（播种进 `workspace/prompt/`，之后以 workspace 为准） | 改文案不用改代码、不用重启，下一条消息生效。一个 md = 一段 = 一个 cache section，文件名前缀定序 |
 | 加一段提示词 / 改段落顺序 | 在 `seed/prompt/` 加 `NN-段名.md` + `scripts/prompt-fixture.ts` 补它用到的样例插槽 | 顺序是语义（规矩在能力前面），改顺序会触发一次性整块重写（ADR-083）；确定性是硬要求（ADR-005），`npm run prompt:check` 会拦 |
@@ -156,12 +165,12 @@ shell = 装配层，唯一可以同时 import 全部
 | 改「全员都要守的规矩」（先给结论、在哪个频道回话、别写英文独白） | **不要写进 `.ts`**：改 `seed/rules.md`，再同步到 `workspace/rules.md` | 每轮都进提示词的只有这一份（ADR-038）；技能正文只在 `60-skills.md` 那段列目录时才进上下文 |
 | 改起手技能的同步行为 | `shell/seed.ts` 的 `syncAllSkills` + `<workspace>/.seed-manifest.json` | 按 hash 判「用户改过没有」，改过的不覆盖（ADR-039） |
 | 加一个身份字段 | `agent/identity.ts` 的 `IdentityHeader` | 现在是 4 个：`name`/`title`/`manager`/`team`，加之前先问能不能推导 |
-| 改「这条会话是私聊还是群聊」 | `channel/store.ts` 的 `chatKind` | **`dm:` 前缀 + 恰好 `{我, 一人}` 才是私聊**（ADR-097）；团队 / 全员频道两个人也永远是群聊。界面的 `kind` 只是它的投影 |
+| 改「这条会话是私聊还是群聊」 | `channel/types.ts` 的 `chatKind` | **`dm:` 前缀 + 恰好 `{我, 一人}` 才是私聊**（ADR-097）；团队 / 全员频道两个人也永远是群聊。界面的 `kind` 只是它的投影 |
 | 开一个私聊 / 建一个频道 | `app/chat.ts` 的 `openDirectMessage` + 路由 `POST /api/people/:slug/dm` | **这是唯一的建频道入口**（ADR-097）；通用 `POST /api/channels` 已删。其余频道只由装配投影（全员 / 团队） |
-| 改谁能被 @ 到 / 什么写法算 @ | `channel/store.ts` 的 `recipientsOf`（成员规则）+ `parseMentions`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译。别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（ADR-088）；`@CEO`、拼音、title、`@老板` 一律丢弃，不许加回模糊匹配 |
+| 改谁能被 @ 到 / 什么写法算 @ | `channel/mentions.ts` 的 `recipientsOf`（成员规则）+ `parseMentions`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译。别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（ADR-088）；`@CEO`、拼音、title、`@老板` 一律丢弃，不许加回模糊匹配 |
 | 改「要我拍板就 @ 我」 | `channel/tools/say.ts`（ADR-037） | 只有两种情形把 `owner` 加进 `mentions`：正文显式 @我；或 `kind=decision` 且没点别人。补的是 `mentions`，**不改正文**；关键词嗅探已删 |
-| 改「没明确频道时在哪儿回话」 | `channel/store.ts` 的 `fallbackChannelId` + `channel/tools/shared.ts` 的 `defaultChannel` | 兜底只找最近活跃的真实频道；**落到私聊就报错**让模型显式给 channel，不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见） |
-| 改频道成员怎么来 | `channel/store.ts` 的 `projectChannel` + `shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` | 成员是 `identity.md` + 团队 `README.md` 的投影（ADR-012）；全员 / 重扫用 `merge`，团队用 `replace`（ADR-096）。全员频道只是播种一次的普通群，没有特权 |
+| 改「没明确频道时在哪儿回话」 | `channel/rules.ts` 的 `fallbackChannelId` + `channel/tools/channel-choice.ts` 的 `defaultChannel` | 兜底只找最近活跃的真实频道；**落到私聊就报错**让模型显式给 channel，不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见） |
+| 改频道成员怎么来 | `channel/rules.ts` 的 `projectChannel` + `shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` | 成员是 `identity.md` + 团队 `README.md` 的投影（ADR-012）；全员 / 重扫用 `merge`，团队用 `replace`（ADR-096）。全员频道只是播种一次的普通群，没有特权 |
 | 文件读写 / 名字 / Markdown 头 | `fsx.ts`（工作区相对路径）/ `runtime/io.ts`（绝对路径机械 IO）/ `naming.ts` / `md/doc.ts` | 每个都只有一份实现（ADR-096）；直接 `node:fs` 只允许 ADR-096 列的五类例外，别在业务模块里新开 |
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/server.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |

@@ -9,17 +9,9 @@
  * 为什么文案不进代码：这些句子是「行为约束」，改一句不该重新编译、发版。它们和
  * 系统提示词里的模板同源，改 `workspace/prompt/*.md` 下一条消息就生效。
  */
-import {
-	OWNER,
-	chatKind,
-	channelsOf,
-	deliveryTargets,
-	tail,
-	unreadCount,
-	type Channel,
-	type ChannelState,
-	type Message,
-} from "./store.ts";
+import { OWNER, chatKind, type Channel, type ChannelState, type Message } from "./types.ts";
+import { deliveryTargets } from "./mentions.ts";
+import { channelsOf, tail, unreadCount } from "./rules.ts";
 import { loadTemplates, type PromptTemplate } from "../md/prompt.ts";
 import { createFsx } from "../fsx.ts";
 import { renderSlots, toolSlots, type SlotValue } from "../md/text.ts";
@@ -122,7 +114,7 @@ export function renderDelivery(options: {
 	 * 打断时他手上那件活所在的频道标题（和这条消息的频道不同才给）。
 	 *
 	 * 只提醒「活属于哪儿」；回话仍然回这条消息的频道（`reply`）。结论回哪儿由
-	 * 结算收尾决定（`turn.ts`），这里不替它做主。
+	 * 结算收尾决定（`turn/finish.ts`），这里不替它做主。
 	 */
 	readonly taskChannelTitle?: string | undefined;
 	/** 附件说明（`planAttachments` 的 `lines`）。没有附件时为空。 */

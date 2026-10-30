@@ -14,7 +14,7 @@ import {
 	MAX_INLINE_IMAGE_BYTES,
 	planAttachments,
 } from "../../src/core/channel/attachments.ts";
-import type { Attachment } from "../../src/core/channel/store.ts";
+import type { Attachment } from "../../src/core/channel/types.ts";
 
 let root = "";
 

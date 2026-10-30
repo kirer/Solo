@@ -5,14 +5,15 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import type { Conversation, EntryRecord } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
+import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
+import { ensureChannel } from "../../src/core/channel/rules.ts";
 import type { WakeRecord } from "../../src/core/channel/wake.ts";
 import {
 	createTurnFinisher,
 	finalTextOf,
 	spokeAfterWake,
 	turnTarget,
-} from "../../src/core/channel/turn.ts";
+} from "../../src/core/channel/turn/index.ts";
 
 /**
  * 「他答了，但没说出来」的收尾。

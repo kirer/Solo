@@ -20,7 +20,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message } from "../src/core/channel/store.ts";
+import type { Message } from "../src/core/channel/types.ts";
 import type { Context, Harness } from "../src/core/runtime/index.ts";
 
 const WAIT_MS = 240_000;
@@ -617,7 +617,7 @@ async function main(): Promise<void> {
 		turnPosted <= 4
 			? "正常"
 			: "提示词在退化（7 个回话阶段里超过 4 次走收尾 —— 改 80-reply / reply.alone 的措辞）";
-	const failedNote = turnFailed > 0 ? `；补发失败 ${turnFailed} 次（内容丢了，单测没覆盖到就查 channel/turn.ts）` : "";
+	const failedNote = turnFailed > 0 ? `；补发失败 ${turnFailed} 次（内容丢了，单测没覆盖到就查 channel/turn/finish.ts）` : "";
 	console.log(`收尾趋势：${turnPosted} 次 / ${REPLY_PHASES} 个回话阶段 —— ${trend}${failedNote}`);
 
 	await rm(root, { recursive: true, force: true }).catch(() => undefined);

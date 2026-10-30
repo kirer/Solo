@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { Attachment } from "../channel/store.ts";
+import type { Attachment } from "../channel/types.ts";
 
 /** 单文件上限。25MB 够放截图与文稿，又不至于一条消息把磁盘塞满。 */
 export const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;

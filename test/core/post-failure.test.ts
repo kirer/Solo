@@ -4,13 +4,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels, type Conversation } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import {
-	ChannelDoc,
-	OWNER,
-	appendMessage,
-	ensureChannel,
-	type ChannelState,
-} from "../../src/core/channel/store.ts";
+import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
+import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { postMessage } from "../../src/core/channel/post.ts";
 
 /**

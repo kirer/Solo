@@ -6,7 +6,7 @@
  * HTTP、以及将来任何别的入口共用一份。
  */
 import { OWNER_SLUG } from "../agent/identity.ts";
-import { chatKind } from "../channel/store.ts";
+import { chatKind } from "../channel/types.ts";
 import type { AttentionItem, ViewChannel, ViewChannelDetail, ViewOrg } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";

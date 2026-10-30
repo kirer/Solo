@@ -5,7 +5,8 @@ import { SECRETS_FILE, redact } from "../../agent/secrets.ts";
 import { readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
 import { teamSlugOfMemoryPath, teamSlugOfReadmePath } from "../../team/doc.ts";
 import { confirmedBy } from "../../team/settle.ts";
-import { actionOf, resolveInWorkspace, text, type CoreToolDeps } from "./shared.ts";
+import { actionOf, text, type CoreToolDeps } from "./context.ts";
+import { resolveInWorkspace } from "./guards.ts";
 
 export function createFileTool(deps: CoreToolDeps) {
 	const tool = defineTool({

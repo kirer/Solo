@@ -28,10 +28,10 @@ import { createHistoryTool } from "./history.ts";
 import { createRememberTool } from "./remember.ts";
 import { createRunTool } from "./run.ts";
 import { createSayTool } from "./say.ts";
-import type { CoreToolDeps } from "./shared.ts";
+import type { CoreToolDeps } from "./context.ts";
 
-export type { CoreToolDeps } from "./shared.ts";
-export { clip, isPass, monologueOpener, resolveInWorkspace } from "./shared.ts";
+export type { CoreToolDeps } from "./context.ts";
+export { clip, isPass, monologueOpener, resolveInWorkspace } from "./guards.ts";
 
 /** 建工具。返回一个扩展，装进所有 agent 的会话里。 */
 export function createCoreTools(deps: CoreToolDeps) {

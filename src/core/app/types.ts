@@ -9,8 +9,8 @@
  */
 import type { Conversation, Context, Harness, Registry } from "../runtime/index.ts";
 import type { DirectoryState } from "../agent/roster.ts";
-import type { ChannelState, Attachment, Message } from "../channel/store.ts";
-import type { DeliverResult } from "../channel/post.ts";
+import type { ChannelState, Attachment, Message } from "../channel/types.ts";
+import type { DeliverResult } from "../channel/dispatch.ts";
 import type { Identity } from "../agent/identity.ts";
 import type { Diag } from "./diag.ts";
 

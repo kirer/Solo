@@ -2568,3 +2568,41 @@ wake 依赖 3 份。`fsx.ts` 号称唯一文件入口，实际只有模板读取
 11 投递段，插槽 0 缺口）绿；`npm run live` 两轮 16/16，`[turn]` 趋势正常。
 `test/core/turn.test.ts` 守三条判据：不抢跑（说过就不补）、不重复（同一条唤醒只补一次）、
 插话不丢任务频道。
+
+---
+
+## ADR-100：一件事只有一处实现 —— 频道层按「做了什么」拆文件
+
+**背景**。V3 的结构是**横着切**的：`agent/` `team/` `channel/` 各一层，层内再按技术
+职责分（store / post / tools / turn）。结果是同一个概念散在七八个文件里：一轮的协议在
+`wake.ts`、`post.ts`、`turn.ts`、`unanswered.ts`、`settle.ts` 各有一段；`store.ts` 同时
+装着数据形状、`@` 解析、收件人规则、未读计数、成员投影；`post.ts` 既落盘又投递。
+判断标准不是「文件多大」，而是**改一个概念要动几个文件**。
+
+**决策**：
+
+1. **一轮的协议归 `channel/turn/`**：`record.ts`（`WakeTarget` / `WakeRecord` /
+   `parseWake`）、`finish.ts`（收尾：`finalTextOf` / `spokeAfterWake` / `turnTarget` /
+   `createTurnFinisher`）、`index.ts`（出口）。`wake.ts` 与 `post.ts` 只 import 类型，
+   不再各存一份「唤醒长什么样」。
+2. **频道规则按问题拆**：`types.ts`（数据形状、`ChannelDoc`、`chatKind` / `dmId` /
+   `teamId`）、`mentions.ts`（`@` 解析 + `recipientsOf` / `deliveryTargets` +
+   `resolveMention`）、`rules.ts`（未读、兜底频道、`appendMessage`、`projectChannel`、
+   `markRead`、`tail`）。删掉 `store.ts` 这个名字 —— 它是三个问题的集合，不是「存储」。
+3. **落盘与投递分家**：`write.ts`（`appendToChannel` / `appendNote`，唯一写入口）、
+   `post.ts`（`postMessage`：写一条 + 叫醒，串行闸）、`dispatch.ts`（`deliver`：逐条
+   投递、两层唤醒、合并唤醒、失败通报）。`post.ts` 只管「发」这个用例本身的顺序。
+4. **工具共用件按用途拆**：`tools/context.ts`（依赖表、`text` / `actionOf` / `self` /
+   `readState` / `postDeps`）、`channel-choice.ts`（`defaultChannel` / `othersAwoken`）、
+   `recall.ts`（记忆与历史渲染）、`guards.ts`（PASS / 独白 / 剪裁 / 路径闸）。删掉
+   `shared.ts`：一个叫「共用」的文件迟早什么都有。
+5. **不改变任何对外语义**：所有公开名字、文案、行为逐字保留；`npm test` 579 例未改一行
+   断言即通过。这是纯结构搬迁，不是重写。
+
+**取舍**：目录里的文件数变多（`channel/` 从 10 个到 14 个，`tools/` 从 2 个到 6 个），
+但每个文件只回答一个问题，import 方向仍然单向（`types ← mentions ← rules ←
+write ← post → dispatch`）。以后再出现「共用件」，先问它服务的是哪个问题，放进那个
+问题的文件，而不是新建 `shared`。
+
+**验收**：`npm run check`（tsc ×3 + 边界）与 `npm test`（62 文件 579 例）全绿；
+`npm run prompt:check` 不变。`docs/CODE.md` 的文件表同步为按问题命名的三张表。

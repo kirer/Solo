@@ -4,27 +4,9 @@
  * 这些函数决定「谁会醒」，是整套系统里最容易写错的一段，所以规则逐条测。
  */
 import { describe, expect, test } from "vitest";
-import {
-	OWNER,
-	appendMessage,
-	chatKind,
-	channelsOf,
-	dmId,
-	ensureChannel,
-	ChannelDoc,
-	deliveryTargets,
-	fallbackChannelId,
-	markRead,
-	parseMentions,
-	projectChannel,
-	teamId,
-	recipientsOf,
-	tail,
-	unreadCount,
-	type Channel,
-	type ChannelProjection,
-	type ChannelState,
-} from "../../src/core/channel/store.ts";
+import { OWNER, chatKind, dmId, ChannelDoc, teamId, type Channel, type ChannelState } from "../../src/core/channel/types.ts";
+import { deliveryTargets, parseMentions, recipientsOf } from "../../src/core/channel/mentions.ts";
+import { appendMessage, channelsOf, ensureChannel, fallbackChannelId, markRead, projectChannel, tail, unreadCount, type ChannelProjection } from "../../src/core/channel/rules.ts";
 
 function empty(): ChannelState {
 	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };

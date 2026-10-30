@@ -1,6 +1,7 @@
 /** `run`：执行一条 shell 命令。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { clip, MODEL_LIMIT, selfOrError, text, type CoreToolDeps } from "./shared.ts";
+import { selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { clip, MODEL_LIMIT } from "./guards.ts";
 
 export function createRunTool(deps: CoreToolDeps) {
 	const tool = defineTool({

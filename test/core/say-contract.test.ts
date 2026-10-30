@@ -16,17 +16,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { createCoreTools, isPass } from "../../src/core/channel/tools/index.ts";
-import {
-	ChannelDoc,
-	OWNER,
-	appendMessage,
-	ensureChannel,
-	dmId,
-	teamId,
-	recipientsOf,
-	type ChannelState,
-	type Message,
-} from "../../src/core/channel/store.ts";
+import { ChannelDoc, OWNER, dmId, teamId, type ChannelState, type Message } from "../../src/core/channel/types.ts";
+import { recipientsOf } from "../../src/core/channel/mentions.ts";
+import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { renderDelivery, renderReplyRules } from "../../src/core/channel/delivery.ts";
 import { REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
 

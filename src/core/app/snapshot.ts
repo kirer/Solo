@@ -13,7 +13,7 @@
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
 import { listTeams } from "../team/doc.ts";
-import { ChannelDoc, emptyChannelState, type ChannelState } from "../channel/store.ts";
+import { ChannelDoc, emptyChannelState, type ChannelState } from "../channel/types.ts";
 import type { DirectoryState } from "../agent/roster.ts";
 import type { Identity } from "../agent/identity.ts";
 import type { TeamDoingOf, TeamLeadOf } from "../view/dto.ts";

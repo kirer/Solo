@@ -14,7 +14,7 @@ import { assembleCore } from "../../src/core/shell/assemble.ts";
 import { createChat } from "../../src/core/app/chat.ts";
 import { AppError } from "../../src/core/app/errors.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";
-import { ChannelDoc, chatKind, dmId, type ChannelState } from "../../src/core/channel/store.ts";
+import { ChannelDoc, chatKind, dmId, type ChannelState } from "../../src/core/channel/types.ts";
 
 const roots: string[] = [];
 const runtimes: CoreRuntime[] = [];

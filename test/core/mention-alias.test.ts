@@ -6,18 +6,9 @@
  * 真名在 `recipientsOf` 的成员过滤里被静默丢弃。
  */
 import { describe, expect, test } from "vitest";
-import {
-	EMPTY_ROSTER,
-	OWNER,
-	appendMessage,
-	ensureChannel,
-	mentionRosterOf,
-	parseMentions,
-	recipientsOf,
-	resolveMention,
-	type ChannelState,
-	type MentionAgent,
-} from "../../src/core/channel/store.ts";
+import { OWNER, type ChannelState } from "../../src/core/channel/types.ts";
+import { EMPTY_ROSTER, mentionRosterOf, parseMentions, recipientsOf, resolveMention, type MentionAgent } from "../../src/core/channel/mentions.ts";
+import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 
 /** 一份贴近真实的名册：`workspace/agents/` 里那几个人的头字段。 */
 const people: readonly MentionAgent[] = [

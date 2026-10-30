@@ -14,15 +14,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
-import {
-	ChannelDoc,
-	OWNER,
-	appendMessage,
-	ensureChannel,
-	dmId,
-	teamId,
-	type ChannelState,
-} from "../../src/core/channel/store.ts";
+import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
+import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 

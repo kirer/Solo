@@ -12,12 +12,13 @@
 import { defineDoc } from "../runtime/index.ts";
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/store.ts";
-import { appendNote } from "../channel/post.ts";
+import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/types.ts";
+import { appendNote } from "../channel/write.ts";
 import { deliveryPrompt, renderReplyRules } from "../channel/delivery.ts";
-import { wake, type WakeRecord } from "../channel/wake.ts";
+import { wake } from "../channel/wake.ts";
+import type { WakeRecord } from "../channel/turn/record.ts";
 import { renderUnanswered } from "../channel/unanswered.ts";
-import type { FinishTurn } from "../channel/turn.ts";
+import type { FinishTurn } from "../channel/turn/index.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
@@ -202,7 +203,7 @@ function brief(reason: string): string {
 /**
  * 往团队频道追加一条系统留痕（`kind: "note"`，不唤醒人）。
  *
- * 写盘本身是 `channel/post.ts` 的 `appendNote`（同一个「唯一写入口」）。这里只多一层
+ * 写盘本身是 `channel/write.ts` 的 `appendNote`（同一个「唯一写入口」）。这里只多一层
  * try：沉淀已经在处理异常了，留痕再抛就是二次失败，所以失败只写 stderr。
  */
 async function appendTeamNote(deps: SettleDeps, team: string, text: string, context: Context): Promise<void> {

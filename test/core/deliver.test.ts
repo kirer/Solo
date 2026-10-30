@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { deliver } from "../../src/core/channel/post.ts";
+import { deliver } from "../../src/core/channel/dispatch.ts";
 import { queuedAhead } from "../../src/core/channel/queue.ts";
 import { digestNotice, digestRows, renderDelivery } from "../../src/core/channel/delivery.ts";
 import { DIGEST_TEMPLATE, INTERRUPTED_TEMPLATE, REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
@@ -12,7 +12,8 @@ function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDeliv
 	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT });
 }
 import type { Harness } from "../../src/core/runtime/index.ts";
-import { appendMessage, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
+import { type ChannelState } from "../../src/core/channel/types.ts";
+import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 
 function stateWith(...ids: { id: string; title: string; members: string[]; wakeOnAll?: string[] }[]): ChannelState {
 	return ids.reduce(

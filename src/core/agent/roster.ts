@@ -8,10 +8,10 @@
  * 它存在的唯一理由是「会话 id 不能从文件名推出来」。
  */
 import { BACKGROUND_CONTEXT, defineDoc, type Conversation, type Context, type Harness, type JsonObject } from "../runtime/index.ts";
-import { parseWake, type WakeRecord } from "../channel/wake.ts";
+import { parseWake, type WakeRecord } from "../channel/turn/record.ts";
 import { OWNER_SLUG } from "./identity.ts";
 
-export type { WakeRecord } from "../channel/wake.ts";
+export type { WakeRecord } from "../channel/turn/record.ts";
 
 export type DirectoryState = {
 	/** slug → 会话 id。 */

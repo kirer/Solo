@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest";
 import { DirectoryDoc } from "../../src/core/agent/roster.ts";
 import { SettleDoc } from "../../src/core/team/settle.ts";
-import { ChannelDoc } from "../../src/core/channel/store.ts";
+import { ChannelDoc } from "../../src/core/channel/types.ts";
 
 const checkpointOf = (token: unknown) =>
 	(token as { definition: { checkpointWhen: (value: unknown, ops: readonly unknown[], info: { deltasSinceBase: number }) => boolean } })

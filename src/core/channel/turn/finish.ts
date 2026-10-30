@@ -12,19 +12,19 @@
  * 1. 结算 `unanswered` → 频道里留一行痕（`unanswered.ts`）；
  * 2. 结算 `done` → 取出这次回答的条目，把最后一段正文按唤醒记录说出去。
  *
- * 唤醒记录是两层的（`wake.ts`）：私聊插话只改 `reply`，不动 `task`。所以：
+ * 唤醒记录是两层的（`turn/record.ts`）：私聊插话只改 `reply`，不动 `task`。所以：
  * - 正常一轮：结论回 `reply`；
  * - 插话一轮：先答私聊；如果私聊已经答过、任务频道还没汇报，这段正文就是
  *   任务的结论，回 `task`。
  *
  * 已经在目标频道说过话就不补（他调了 `say`，不需要替他重复）。
  */
-import type { Conversation, EntryRecord, Harness } from "../runtime/index.ts";
-import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "./store.ts";
-import type { WakeRecord, WakeTarget } from "./wake.ts";
-import { postMessage, type PostDeps } from "./post.ts";
-import { isPass } from "./tools/shared.ts";
+import type { Conversation, EntryRecord, Harness } from "../../runtime/index.ts";
+import { BACKGROUND_CONTEXT, type Context } from "../../runtime/index.ts";
+import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
+import type { WakeRecord, WakeTarget } from "./record.ts";
+import { postMessage, type PostDeps } from "../post.ts";
+import { isPass } from "../tools/guards.ts";
 
 /** 太短的不补：`好的`、`收到` 之类的残句补进频道只会更吵。 */
 const TURN_MIN_CHARS = 6;

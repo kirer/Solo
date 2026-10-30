@@ -11,14 +11,8 @@
  */
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { OWNER_SLUG, readIdentity } from "../agent/identity.ts";
-import {
-	ChannelDoc,
-	dmId,
-	markRead as markReadDoc,
-	projectChannel,
-	type Attachment,
-	type ChannelState,
-} from "../channel/store.ts";
+import { ChannelDoc, dmId, type Attachment, type ChannelState } from "../channel/types.ts";
+import { markRead as markReadDoc, projectChannel } from "../channel/rules.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,

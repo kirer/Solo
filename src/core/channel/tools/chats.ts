@@ -1,17 +1,12 @@
 /** `chats`：列会话，或者读某个频道的历史。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
 import { digestRows } from "../delivery.ts";
-import { ChannelDoc, channelsOf, chatKind, markRead, unreadCount, type ChannelState } from "../store.ts";
+import { ChannelDoc, chatKind, type ChannelState } from "../types.ts";
+import { channelsOf, markRead, unreadCount } from "../rules.ts";
 import { oneLine } from "../../md/oneline.ts";
-import {
-	actionOf,
-	selfOrError,
-	defaultChannel,
-	readState,
-	renderLine,
-	text,
-	type CoreToolDeps,
-} from "./shared.ts";
+import { actionOf, selfOrError, readState, text, type CoreToolDeps } from "./context.ts";
+import { defaultChannel } from "./channel-choice.ts";
+import { renderLine } from "./recall.ts";
 
 export function createChatsTool(deps: CoreToolDeps) {
 	const tool = defineTool({

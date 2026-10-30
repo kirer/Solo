@@ -15,7 +15,8 @@
  */
 import { OWNER_SLUG, labelsOf, type Identity } from "../agent/identity.ts";
 import { conversationFor, labelIn, type DirectoryState } from "../agent/roster.ts";
-import { chatKind, readMarkOf, unreadCount, type Channel, type ChannelState, type Message } from "../channel/store.ts";
+import { chatKind, type Channel, type ChannelState, type Message } from "../channel/types.ts";
+import { readMarkOf, unreadCount } from "../channel/rules.ts";
 import { excerptOf } from "../md/oneline.ts";
 import type {
 	AttentionItem,

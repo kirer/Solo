@@ -2,7 +2,7 @@
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
 import { OWNER_SLUG, createAgent, readAllIdentities } from "../../agent/identity.ts";
 import { redact } from "../../agent/secrets.ts";
-import { selfOf, text, type CoreToolDeps } from "./shared.ts";
+import { selfOf, text, type CoreToolDeps } from "./context.ts";
 
 export function createHireTool(deps: CoreToolDeps) {
 	const tool = defineTool({

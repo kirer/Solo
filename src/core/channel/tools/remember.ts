@@ -7,7 +7,7 @@ import { redact } from "../../agent/secrets.ts";
 import { assertTeamSlug, readTeam } from "../../team/doc.ts";
 import { appendTeamMemory } from "../../team/memory.ts";
 import { confirmedBy } from "../../team/settle.ts";
-import { selfOrError, text, type CoreToolDeps } from "./shared.ts";
+import { selfOrError, text, type CoreToolDeps } from "./context.ts";
 
 export function createRememberTool(deps: CoreToolDeps) {
 	const tool = defineTool({

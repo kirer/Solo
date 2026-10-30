@@ -13,7 +13,7 @@
 import { describe, expect, it } from "vitest";
 import { attentionItems, messageView } from "../../src/core/app/project.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
-import type { Channel, ChannelState, Message } from "../../src/core/channel/store.ts";
+import type { Channel, ChannelState, Message } from "../../src/core/channel/types.ts";
 
 const AT = 1_700_000_000_000;
 const DAY = 24 * 60 * 60 * 1000;

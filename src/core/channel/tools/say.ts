@@ -1,20 +1,11 @@
 /** `say`：在频道里说话。带 `mention` 就是提问并叫醒对方。 */
 import { BACKGROUND_CONTEXT, Type, defineTool, type Context } from "../../runtime/index.ts";
-import { OWNER, parseMentions, resolveMention } from "../store.ts";
+import { OWNER } from "../types.ts";
+import { parseMentions, resolveMention } from "../mentions.ts";
 import { postMessage } from "../post.ts";
-import {
-	selfOrError,
-	text,
-	readState,
-	othersAwoken,
-	isPass,
-	monologueOpener,
-	defaultChannel,
-	mentionRoster,
-	postDeps,
-	SAY_LIMIT,
-	type CoreToolDeps,
-} from "./shared.ts";
+import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { defaultChannel, othersAwoken } from "./channel-choice.ts";
+import { SAY_LIMIT, isPass, monologueOpener } from "./guards.ts";
 
 export function createSayTool(deps: CoreToolDeps) {
 	const say = defineTool({
