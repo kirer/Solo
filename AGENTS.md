@@ -51,7 +51,7 @@ src/core/
   interface/http/ 唯一 import node:http 的地方：routes / respond（原语）/ route-match（匹配）/
                   origin-guard（来源闸）/ network（网卡）/ static-assets / sse（编解码+hub）
   shell/          装配与启动：assemble / serve / main / seed
-ui/app/           界面源码（React + TS + Vite，ADR-079）
+ui/app/           界面源码（React + TS + Vite）
 ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
 scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
@@ -65,7 +65,7 @@ workspace/        运行时数据（gitignore）
 （`src/core` 共 72 个 ts / 10789 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
-`shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
+`shell/` 是唯一可以同时 import 全部的装配层。
 
 **三条老边界**（一开始就有，`npm run check` 机械化检查，违反即失败）：
 
@@ -90,9 +90,9 @@ workspace/        运行时数据（gitignore）
 
 4. **`channel/types.ts` / `mentions.ts` / `rules.ts` 是纯函数**，不做 IO。落盘在 `channel/write.ts`，
    写一条 + 叫醒在 `channel/post.ts`，投递编排在 `channel/dispatch.ts`。
-5. **提示词必须确定性**：同一份文件内容渲染出的字符串要逐字节相同，否则打穿 prompt cache
-   （ADR-005）。不许在提示词里塞时间戳、随机数、`Object.keys` 的顺序。
-6. **不画后端没有的东西**（ADR-016）。界面上每个字段都必须有真实数据来源；没有就留空，
+5. **提示词必须确定性**：同一份文件内容渲染出的字符串要逐字节相同，否则打穿 prompt cache。
+   不许在提示词里塞时间戳、随机数、`Object.keys` 的顺序。
+6. **不画后端没有的东西**。界面上每个字段都必须有真实数据来源；没有就留空，
    不要造 `tasks: []` 这种空壳字段假装有功能。
 
 ---
@@ -119,7 +119,7 @@ npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 ```
 
-- **`live` 的门是「两次 16/16 + 收尾（turn）趋势」**（ADR-099，取代 ADR-089）：
+- **`live` 的门是「两次 16/16 + 收尾（turn）趋势」**：
   `[turn]` = 模型把结论写在正文里、没调 `say`，由结算后的收尾补发；补发的内容/频道/去重
   由单测守；次数记下来，7 个阶段超 4 次就查提示词。
 - **`npm run live` 不能省。** 五百多个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
@@ -136,22 +136,22 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 | 你改了什么 | 必须同步 |
 |---|---|
 | 一个不显然的取舍 | `docs/DECISIONS.md` 追加一条 ADR |
-| 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md`（ADR-082）+ `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
-| 接一个 pi 能力 / 绕一个 pi 做不到的事 | ADR-083 类的新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」） |
+| 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md` + `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
+| 接一个 pi 能力 / 绕一个 pi 做不到的事 | 新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」） |
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
-| 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `md/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 ADR-096 列的五类例外 |
+| 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `md/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外 |
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
-| 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets`；ADR-096 |
-| 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 + ADR-099 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |
-| 建频道 / 私聊 | `docs/CORE.md` §4 + `docs/WEB-API.md`；唯一入口是 `POST /api/people/:slug/dm`（ADR-097） |
+| 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
+| 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |
+| 建频道 / 私聊 | `docs/CORE.md` §4 + `docs/WEB-API.md`；唯一入口是 `POST /api/people/:slug/dm` |
 | 改提示词模板 / 加一段 / 加一个插槽 | `docs/design/SEED-CONTRACT.md` §4 插槽表 + `scripts/prompt-fixture.ts` 样例值 + `docs/CODE.md` §2 文件表；跑 `npm run prompt:check` |
 | 改 seed 出厂内容（规矩 / 技能 / 助理身份 / pool） | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts`（一条事实一个家、≤15 条、零工具名、技能 ≤4 KB） |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
 | 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
-| 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表见 ADR-080、ADR-093、ADR-098（我 / 助理 / 团队 / 团队管理员 / 成员 / 全员；项目叫 Solo） |
-| 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md`（ADR-081） |
+| 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表：我 / 助理 / 团队 / 团队管理员 / 成员 / 全员；项目叫 Solo |
+| 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md` |
 | 撞上 pi-durable 做不到的事、或为它写了绕路代码 | `docs/CONCESSIONS.md` 追加一行（只追加；处理完写「已处理 + 日期」） |
 | 本文件的表 | `AGENTS.md` |
 
@@ -185,16 +185,16 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 
 | 我要… | 先读 | 再动 |
 |---|---|---|
-| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（7 个；同一件事加 `action`，别开新名字，ADR-084 / ADR-090） |
-| 教 agent 一套做法 | `docs/DECISIONS.md` ADR-007 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
-| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` + ADR-005 + ADR-083 | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/md/prompt.ts` 只剩排版）；加插槽要先登记 §4 并在 `scripts/prompt-fixture.ts` 给样例值 |
+| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（7 个；同一件事加 `action`，别开新名字） |
+| 教 agent 一套做法 | `seed/skills/` 里现成的技能 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
+| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/md/prompt.ts` 只剩排版）；加插槽要先登记 §4 并在 `scripts/prompt-fixture.ts` 给样例值 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/mentions.ts` 的 `recipientsOf` / `parseMentions` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/types.ts` 的 `chatKind`（只看成员表） |
-| 改频道成员怎么来 | ADR-012 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |
+| 改频道成员怎么来 | `docs/CORE.md` §4 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
-| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |
-| 改记忆沉淀 | ADR-033 | 机制在 `src/core/team/settle.ts` + `team/memory.ts`；**判据在 `seed/prompt/95-settle.md`** |
+| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |
+| 改记忆沉淀 | `docs/CORE.md` §8 | 机制在 `src/core/team/settle.ts` + `team/memory.ts`；**判据在 `seed/prompt/95-settle.md`** |
 | 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |
 

@@ -55,7 +55,7 @@ data: {"workspace":{...},"people":[...]}
 - 每帧是**完整快照**，不是增量。前端收到就重拉需要的列表。
 - 断线由 `EventSource` 自己重连。
 - 组织流只有这一个事件名。以前的 `draft`（正在说）与 `done`（回复落库）随过程投影一起
-  删掉了（ADR-081）。
+  删掉了。
 
 ## 2. `GET /api/org`
 
@@ -110,7 +110,7 @@ type ViewChannel = {
 | 其余全部（全员频道、团队频道、多人房间、历史无前缀房间） | `group` |
 
 团队频道就是 `team:<slug>` 这个**普通的群**，即使只有我和管理员两个人也永远是 `group`
-（ADR-097）—— 它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在
+—— 它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在
 `team` / `lead` / `leadLabel` / `doing` 这四个字段上。
 
 **`dm`**：一对一房间，id 是 `dm:<两个 slug 排序后拼接>`，成员就是 `{owner, 那个人}`。
@@ -126,7 +126,7 @@ type ViewChannel = {
 { ok: true, id: string }   // id = `dm:<slug>-owner`（排序后拼接）
 ```
 
-**这是唯一的建频道接口**（ADR-097）。通用的 `POST /api/channels` 已删：频道要么由装配
+**这是唯一的建频道接口**。通用的 `POST /api/channels` 已删：频道要么由装配
 投影出来（全员 `all` / 团队 `team:<slug>`），要么就是这里开的一对一私聊。
 
 - 对方必须真的在名册里（`agents/<slug>/identity.md` 存在），否则 `404`；
@@ -192,7 +192,7 @@ type ViewMessage = {
   `mentions` 里有 `owner`。界面不自己猜关键词。
 - `attachments` **没有附件时不出现这个键**，不要区分「空数组」和「没有」。
 - `kind` 是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
-  这些不再产生的消息（ADR-081 不清理旧数据），前端 `buildRows()` 直接过滤掉，不画。
+  这些不再产生的消息（不清理旧数据），前端 `buildRows()` 直接过滤掉，不画。
   消息上**没有** `status` / `pendingFor` / `processing` / `startedAt` 这些过程字段，
   占位（pending / processing）整套已经删了。
 - 频道不存在 → 404 `{ error: "频道不存在或无权查看" }`。
@@ -226,7 +226,7 @@ type ViewMessage = {
 - 前端拿到响应后不要自己插一条消息，等 SSE 推新快照（不制造一条假消息）。
 
 这里**没有**过程投影的 `kind` 了（`think` / `tool` / `say` 投影 / `work`）：运行时不再
-订阅会话提交往频道里写思考或工具卡（ADR-081）。历史库里的这些消息还在，读的时候当
+订阅会话提交往频道里写思考或工具卡。历史库里的这些消息还在，读的时候当
 普通消息处理即可。
 
 ## 7.1 `GET /api/channels/:id/stream`
@@ -239,7 +239,7 @@ type ViewMessage = {
 | `create` | `ViewMessage` | 新增或原地更新一条消息（按 `seq` 幂等 upsert） |
 
 - **只有 `create` 一个事件名。** `draft`（正在说）与 `done`（回复落库）随过程投影一起
-  删掉了（ADR-081）；真消息一律走 `create`，前端不需要为同一句话准备两种形态。
+  删掉了；真消息一律走 `create`，前端不需要为同一句话准备两种形态。
 - 任何文档提交去抖 120ms 后推增量，只推订阅了这个频道的连接。
 - 空闲每 15s 一个 `: ping` 注释行保活。
 
@@ -273,7 +273,7 @@ type ViewMessage = {
 
 判定在 `src/core/view/index.ts` 的 `needsYou(message)`：**不是我自己发的**，且
 `mentions` 里有 `owner`（由 `say` 自动补：正文显式 @我，或 `kind=decision`
-且没点别人，ADR-037）。只收「说出口的话」（`chat` / `say` / `question` / `decision` /
+且没点别人）。只收「说出口的话」（`chat` / `say` / `question` / `decision` /
 `report`），窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——
 我要能回头看「哪些还没理」。
 
@@ -300,7 +300,7 @@ type ViewMessage = {
 ```
 
 `channels` 里的 `kind` 同样是 `chatKind()` 的投影（`dm` / `group`）：私聊只认 `dm:` 前缀 +
-恰好 `{owner, 一人}`（ADR-097），**不按频道 id 前缀分**。`skills` 来自 `listSkills()`，个人层覆盖全员同名时
+恰好 `{owner, 一人}`，**不按频道 id 前缀分**。`skills` 来自 `listSkills()`，个人层覆盖全员同名时
 `overrides: true`（界面显示「覆盖全员同名」）。`slug` 必须是名册里存在的 agent 且不是
 `owner`，否则 404。
 
@@ -321,7 +321,7 @@ type ViewMessage = {
 `at` / `by` / `op` 是这一节的**来历**，由 `memoryTimeline()` 从 `agents/<slug>/.memory-journal.jsonl`
 反推（每行都有写入前后的全文，切段比较即得）：`by` 是 `human` / `remember` / `agent`，
 `op` 是「新加」还是「改过」。手写进 `memory.md`、没有日志的条目一律 `null` ——
-**不拿「现在」冒充「当时」**（ADR-016）。
+**不拿「现在」冒充「当时」**。
 
 ## 12. `POST /api/people/:slug/memory`
 
@@ -364,7 +364,7 @@ type ViewMessage = {
   `?download=1` 强制下载。带 `Cache-Control: immutable` 与
   `X-Content-Type-Options: nosniff`（id 一旦生成内容不变）。
 
-**模型看不见图片内容**（ADR-051）：附件在投递正文里只有一行占位。agent 应该说
+**模型看不见图片内容**：附件在投递正文里只有一行占位。agent 应该说
 「我读不了图里的内容，请用文字说一下要我做什么」，而不是猜。
 
 ## 13.1 `POST /api/diag`
@@ -379,7 +379,7 @@ type ViewMessage = {
 
 ## 13.2 `GET /api/diag`
 
-最近一条**运行报告**（ADR-083）。底座把失败经由 `onReport` 交给 `app/diag.ts`，落到
+最近一条**运行报告**。底座把失败经由 `onReport` 交给 `app/diag.ts`，落到
 `<workspace>/logs/runtime.jsonl`；这条接口只把「最近一条非良性报告」露出来 ——
 不需要人去读日志文件。
 
@@ -408,15 +408,15 @@ type ViewMessage = {
 - 入口 `index.html` 不缓存（`no-cache`），其余 `max-age=300, must-revalidate`。
 - 带 ETag，支持 `br` / `gzip` 协商。
 
-界面源码在 `ui/app/`（React + TypeScript + Vite，ADR-079），构建产物写回 `ui/web/`。
+界面源码在 `ui/app/`（React + TypeScript + Vite），构建产物写回 `ui/web/`。
 **改完界面必须 `npm run ui:build`** —— 服务端只发 `ui/web/`，源码改动不会自己出现。
 
 ## 15. 已知限制
 
 - **没有鉴权**。服务监听 `127.0.0.1`，只在可信内网用。不要做公网端口映射。
 - **没有待办 / 任务 / 成本**。第一代有，当前核心一个都没有，界面相应位置是空的
-  （ADR-016：不画后端没有的东西）。「它还在干」这类活性信号也不在接口里 ——
-  打算以后从 `harness.inspect()` 派生，而不是把思考落库（ADR-081）。
+  （不画后端没有的东西）。「它还在干」这类活性信号也不在接口里 ——
+  打算以后从 `harness.inspect()` 派生，而不是把思考落库。
 - **SSE 连接数**：浏览器的同源并发连接上限是 6，同时开很多标签页会碰上限。
 
 ## 16. 兼容性纪律

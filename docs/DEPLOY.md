@@ -10,7 +10,7 @@
 - agent 运行时（SQLite + 后台任务）
 
 没有反向代理、没有独立数据库服务、**没有鉴权层**。后端没有构建步骤（`node --experimental-strip-types`
-直接跑 TS）；**界面有**：改 `ui/app/` 后必须 `npm run ui:build` 把产物写回 `ui/web/`（ADR-079）。
+直接跑 TS）；**界面有**：改 `ui/app/` 后必须 `npm run ui:build` 把产物写回 `ui/web/`。
 数据全在 `workspace/`：
 
 ```text
@@ -92,7 +92,7 @@ AI_COMPANY_PROVIDER=openai    OPENAI_API_KEY=sk-...    npm start
 ```
 
 `custom[]` 的每一项都是**新 provider**，`id` 里第一个 `/` 之前是 provider 名、之后是
-模型名（ADR-021）。`apiKeyEnv` 是环境变量名，不写明文。
+模型名。`apiKeyEnv` 是环境变量名，不写明文。
 
 **排障第一招**：如果所有人都不回话，先看这个模型引用能不能解析。
 
@@ -212,7 +212,7 @@ curl -s localhost:7788/api/diag | jq
 
 ### 压缩（compaction）阈值
 
-上下文窗口**不再写死 1,000,000**（ADR-083）。启动时从 pi-ai 的模型目录取真实
+上下文窗口**不再写死 1,000,000**。启动时从 pi-ai 的模型目录取真实
 `contextWindow`，**取不到就回落 128k**（`FALLBACK_CONTEXT_WINDOW`）——保守方向：
 宁可早一点压缩，也不要等 provider 回 400。阈值按窗口算：
 
@@ -230,7 +230,7 @@ curl -s localhost:7788/api/diag | jq
 
 **任何**一条新消息落在团队频道（`team:<slug>`）里后，都会叫团队管理员按全员技能「记忆整理」
 判断「哪些要不要写进团队记忆」（`src/core/team/settle.ts` 的 `settleTeam`）。问完只记一笔
-「在等确认」，**`teams/<slug>/memory.md` 真的变了才推进游标**（ADR-033）：管理员没写进去，
+「在等确认」，**`teams/<slug>/memory.md` 真的变了才推进游标**：管理员没写进去，
 这批消息下次还会被看到。同一批在等确认期间不会重复催。这是正常行为，不是 bug。
 找不到管理员（档案没写 `lead`）时游标照常推进，不阻塞别人。
 
