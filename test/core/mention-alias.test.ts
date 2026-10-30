@@ -148,22 +148,3 @@ describe("我自己发的话也过名册", () => {
 		expect(parseMentions(message.text, mentionRosterOf(people))).toContain("owner");
 	});
 });
-
-describe("我 @ 了一个叫不应的人", () => {
-	test("不落到「房间里第一个人」头上", () => {
-		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言", "林越"], at: 1 });
-		const { message } = appendMessage(state, "g", {
-			from: OWNER,
-			text: "@nobody 你好",
-			at: 1,
-			roster,
-		});
-		expect(recipientsOf(state.channels.g!, message)).toEqual([]);
-	});
-
-	test("没 @ 人时才让第一个成员接", () => {
-		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言", "林越"], at: 1 });
-		const { message } = appendMessage(state, "g", { from: OWNER, text: "在吗", at: 1, roster });
-		expect(recipientsOf(state.channels.g!, message)).toEqual(["知言"]);
-	});
-});

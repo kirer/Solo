@@ -241,7 +241,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 62 文件 / 579 例，应该 <3s
+npm test             # 56 文件 / 575 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
 ```
@@ -258,10 +258,11 @@ npm run live         # 真实模型端到端 16 项，会花 token，只在改�
 
 ## 6. 测试布局
 
-`test/core/`（51 文件，纯函数 + 装配）：
+`test/core/`（49 文件，纯函数 + 装配）：
 
 | 文件 | 覆盖 |
 | --- | --- |
+| `support.ts` | 不是用例：测试脚手架（临时工作区、开库、装配、收尾），各文件共用 |
 | `channel-state.test.ts` | @ 解析、`chatKind`（`dm:` + 两人）、`projectChannel` 三态、四类收件人、`deliveryTargets`、`dmId` 顺序无关、未读、幂等建频道 |
 | `channel-write.test.ts` | 频道写入的字节代价（每写一条花多少字节是契约）；`appendNote` 与普通消息共用写入路径、`nextSeq` 自愈 |
 | `naming.test.ts` | 三种名字共用校验、`owner` 只对 agent 保留、清洗结果一定能过校验、旧 `assertSlug` / `assertTeamSlug` 仍可用 |
@@ -272,14 +273,13 @@ npm run live         # 真实模型端到端 16 项，会花 token，只在改�
 | `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`、`[PASS]` 与单人在场不许静音、过程话可连发（「一轮一句结论」已降级为 `rules.md` 约束） |
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞；两人团队频道不出现私聊文案 |
 | `post-failure.test.ts` | 投递失败可见：目标没会话时留 note、投递抛错时写「投递失败：会话已关闭」（原在 `relay.test.ts`，接力上限删掉后单独成文件） |
-| `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`；渲染部分走 V3：真实工作区 + 播种 `prompt/`，覆盖名字/正文/汇报线/团队 README/目录不谎报、确定性、工具清单从注册表实拍 |
+| `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`、slug 闸与重名后缀、建人；渲染部分走 V3：真实工作区 + 播种 `prompt/`，覆盖名字/正文/汇报线/团队 README/目录不谎报、确定性、工具清单从注册表实拍 |
 | `memory.test.ts` / `memory-forget.test.ts` | 分区、追加、摘要；`removeSection` 按 `sectionsOf` 的口径重建 |
 | `memory-timeline.test.ts` | `memoryTimeline()`：从 journal 反推每节来历（add/edit、时间、作者）、没变不刷新、删掉不留、坏行跳过 |
 | `memory-actor.test.ts` | 记忆面板留痕写上真实来源（`human` / `remember` / `agent`） |
 | `journal.test.ts` | 记忆日志：追加一行 JSON、落盘失败只 warn |
 | `secrets.test.ts` | 读密钥、三种形态的脱敏 |
 | `skills.test.ts` | 两层覆盖、拷贝不覆盖、frontmatter |
-| `org.test.ts` | slug、建人、组织架构投影 |
 | `models.test.ts` | `setupModels` 的默认模型 |
 | `team.test.ts` | 团队 README 的读写、`lead` / `doing` / `membersOfTeam` |
 | `team-memory.test.ts` | `teams/<slug>/memory.md`：追加、候选筛选 |
@@ -299,7 +299,7 @@ npm run live         # 真实模型端到端 16 项，会花 token，只在改�
 | `uploads-sweep.test.ts` | `sweepOrphanUploads`：没人引用的附件被清掉 |
 | `safety.test.ts` | `resolveInWorkspace`：越界路径一律拒 |
 | `http-guard.test.ts` | `hostAllowed`：Host 头必须是本服务自己 |
-| `reconcile.test.ts` / `runtime-reconcile.test.ts` | 僵尸任务回收 + 启动自愈真的跑完了 |
+| `reconcile.test.ts` | 启动自愈真的跑完了（不写表后读表、不撤排队输入、只清陈旧 `run`）+ 任务与输入记录回收 |
 | `serialize-commit.test.ts` | `serializedHarness`：同一进程里的 commit 排队跑不互相吃 |
 | `diag.test.ts` | 运行报告：底座形状摊平成可落盘的 JSON、`formatRuntimeReport` 的人话、写 `logs/runtime.jsonl`、`lastReport` 跳过 `task_outdated`、超长报告被截到 4KB、工作区不可写也不抛 |
 | `prompt-render.test.ts` | V3 模板渲染：文件名定序、段名唯一、`skip-empty` 空则整段消失、delivery 不进系统提示词、两次渲染逐字节相同、模板声明的插槽全被填满 |
@@ -309,18 +309,14 @@ npm run live         # 真实模型端到端 16 项，会花 token，只在改�
 | `sse.test.ts` | SSE 编解码：一帧的字节形状、多行 JSON 不会被拆行、`retry` / 保活注释 |
 | `tools-actions.test.ts` | 工具收敛：注册表只剩 **7** 个、旧名字一个不剩；`chats` / `read_history` / `file` 各自的 `action` 默认值与非法值报错；写团队 README 触发 `syncTeam`、失败仍算写入成功 |
 
-`test/ui/`（11 文件，前端里能脱离浏览器跑的那部分）：
+`test/ui/`（7 文件，前端里能脱离浏览器跑的那部分）：
 
 | 文件 | 测什么 |
 | --- | --- |
 | `stream-model.test.ts` | `buildRows()`：同一人连发 `grouped` / `cont` 的口径、时间分隔、历史 `think/tool/work` 被过滤 |
-| `stream-events.test.ts` | 频道 `EventSource` 的事件（`create` 幂等 upsert） |
+| `source-contract.test.ts` | 源码里接没接上：代码块复制按钮（生成的 HTML 有按钮 + 启动时装了委托）、设置面板选中态（`aria-checked` 两边一致）、频道 `EventSource` 只注册 `create` / `error` |
 | `sidebar-order.test.ts` | `sortChannels`：侧栏排序 |
-| `md-copy.test.ts` | 代码块复制按钮（生成的 HTML 有按钮 + 启动时装了委托）、设置面板选中态（`aria-checked` 两边一致） |
-| `side-rail.test.ts` | 侧栏收起成图标条 |
 | `unread-badge.test.ts` | `unreadLabel`：未读徽标文案 |
 | `head-subtitle.test.ts` | `headParts`：顶栏副标题拼装 |
-| `right-panel.test.ts` | 右栏：后端字段都画出来 / 没技能没记忆就明说 |
-| `composer-alignment.test.ts` | 引用条与附件托盘的居中轨道 |
-| `wrap-css.test.ts` | 消息正文换行 |
+| `layout.test.ts` | 布局约定（读 CSS / 组件源码）：引用条与附件托盘的居中轨道、右栏三列与收起动画、侧栏收起成图标条、消息正文换行 |
 | `jank.test.ts` | `classifyJank()`：hidden / resumed / foreground 三判；`mark()` 幂等 |

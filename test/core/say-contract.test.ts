@@ -9,12 +9,10 @@
  * 2. **要拍板的事必须叫我**。含「请确认/要不要/等你定」的消息里大量没有 @ 我，
  *    我的回复率只有 1.06% —— 代码兜底补 `owner`，不靠模型自觉。
  */
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { createCoreTools, isPass } from "../../src/core/channel/tools/index.ts";
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState, type Message } from "../../src/core/channel/types.ts";
 import { recipientsOf } from "../../src/core/channel/mentions.ts";
@@ -31,14 +29,11 @@ function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDeliv
 }
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { wireChannel } from "../../src/core/channel/wiring.ts";
+import { sandboxPool } from "./support.ts";
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 const ME = "沈舟";
 const CONVERSATION = 7;
@@ -64,10 +59,10 @@ async function setup(options: {
 	say: (args: Record<string, unknown>) => Promise<string>;
 	snapshot: () => Promise<ChannelState>;
 }> {
-	const root = await mkdtemp(join(tmpdir(), "core-say-"));
-	roots.push(root);
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
+	const box = await pool.make("core-say-");
+	const root = box.root;
+	const agentsRoot = box.agentsRoot;
+	const teamsRoot = box.teamsRoot;
 	await mkdir(join(agentsRoot, ME), { recursive: true });
 	await writeFile(
 		join(agentsRoot, ME, "identity.md"),
@@ -84,13 +79,7 @@ async function setup(options: {
 		);
 	}
 
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({
-		databasePath: join(root, "core.sqlite"),
-		models,
-		registry: createRegistry(),
-	});
-	runtimes.push(runtime);
+	const runtime = await box.open();
 
 	// 团队频道必须是**群聊**：形态按成员推 —— 我 + 一个人就是私聊，不需要第三个概念。
 	const members = options.solo === true

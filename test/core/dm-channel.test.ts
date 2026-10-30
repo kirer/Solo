@@ -4,40 +4,26 @@
  * 通用建频道接口已删 —— 频道要么由装配投影出来（全员 / 团队），要么由这里开一个
  * `dm:` 两人间。这些用例钉住三件事：id 形态是 `dm:`、重复调用幂等、对方必须真的存在。
  */
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { assembleCore } from "../../src/core/shell/assemble.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { createChat } from "../../src/core/app/chat.ts";
 import { AppError } from "../../src/core/app/errors.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, chatKind, dmId, type ChannelState } from "../../src/core/channel/types.ts";
+import { sandboxPool } from "./support.ts";
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 const ME = "林越";
 
 async function setup(): Promise<{ chat: ReturnType<typeof createChat>; runtime: CoreRuntime }> {
-	const root = await mkdtemp(join(tmpdir(), "core-dm-"));
-	roots.push(root);
-	const agentsRoot = join(root, "agents");
-	await createAgent({ root: agentsRoot, name: ME, title: "负责人", manager: "owner" });
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models, registry: createRegistry() });
-	runtimes.push(runtime);
-	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot,
-		teamsRoot: join(root, "teams"),
-	});
+	const box = await pool.make("core-dm-");
+	await createAgent({ root: box.agentsRoot, name: ME, title: "负责人", manager: "owner" });
+	const runtime = await box.open();
+	const shell = await box.assemble(runtime);
 	// `snapshots` 只在 markRead / 上传的闭包里用到，这里不碰。
 	const chat = createChat(shell, {} as never);
 	return { chat, runtime };

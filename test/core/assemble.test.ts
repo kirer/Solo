@@ -7,12 +7,11 @@
  * 3. 我 @ 谁，谁就被唤醒（且只有他）。
  * 4. 我不是 agent，不会被投递（也没有会话）。
  */
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { BACKGROUND_CONTEXT, openCore, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { assembleCore, ownerSpeak } from "../../src/core/shell/assemble.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import { ownerSpeak } from "../../src/core/shell/assemble.ts";
 import { seedOwnerAssistant } from "../../src/core/shell/seed.ts";
 import { readIdentity } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
@@ -20,42 +19,22 @@ import { writeTeam } from "../../src/core/team/doc.ts";
 import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";
 
-const dirs: string[] = [];
+import { sandboxPool } from "./support.ts";
 
-async function workspace(): Promise<string> {
-	const dir = await mkdtemp(join(tmpdir(), "core-shell-"));
-	dirs.push(dir);
-	return dir;
-}
+const pool = sandboxPool();
 
-afterEach(async () => {
-	await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
-
-/** 一个能开库的最小环境。不需要真模型：我们只验证装配与投递，不跑生成。 */
-async function env(root: string) {
-	const models = setupModels(process.env, { workspace: root }).models;
-	const opened = await openCore({
-		databasePath: join(root, "solo.sqlite"),
-		models,
-		registry: createRegistry(),
-	});
-	return opened;
-}
+afterEach(() => pool.cleanup());
 
 describe("装配", () => {
 	test("扫文件夹建会话，并把 slug↔会话写进名册", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", title: "负责人", manager: "owner" });
 		await createAgent({ root: agents, name: "沈舟", title: "财务", manager: "林越" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 
 			expect([...shell.conversations.keys()].sort()).toEqual(["林越", "沈舟"].sort());
 			const directory = (await opened.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
@@ -67,16 +46,13 @@ describe("装配", () => {
 	});
 
 	test("全员频道自动包含所有人和我", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			const state = await shell.channels();
 			expect(state.channels.all?.members.sort()).toEqual(["owner", "林越"].sort());
 		} finally {
@@ -85,16 +61,13 @@ describe("装配", () => {
 	});
 
 	test("rescan 只为新出现的人开会话", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			const before = shell.conversations.size;
 			await createAgent({ root: agents, name: "沈舟", manager: "林越" });
 			const added = await shell.rescan();
@@ -108,23 +81,23 @@ describe("装配", () => {
 	});
 
 	test("重启不会重复造人（会话 id 复用）", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 
-		const first = await env(root);
+		const first = await box.open();
 		let firstId: number | undefined;
 		try {
-			await assembleCore(first.harness, first.registry, { agentsRoot: agents, teamsRoot: join(root, "teams") });
+			await box.assemble(first, { agentsRoot: agents, teamsRoot: box.teamsRoot });
 			const directory = (await first.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
 			firstId = directory?.slugToConversation["林越"];
 		} finally {
 			await first.close();
 		}
 
-		const second = await env(root);
+		const second = await box.open();
 		try {
-			await assembleCore(second.harness, second.registry, { agentsRoot: agents, teamsRoot: join(root, "teams") });
+			await box.assemble(second, { agentsRoot: agents, teamsRoot: box.teamsRoot });
 			const directory = (await second.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
 			expect(directory?.slugToConversation["林越"]).toBe(firstId);
 		} finally {
@@ -135,17 +108,14 @@ describe("装配", () => {
 
 describe("我说话", () => {
 	test("@ 谁就只叫谁；我自己不被投递（他没有会话）", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 		await createAgent({ root: agents, name: "沈舟", manager: "林越" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			const sent = await ownerSpeak(shell, { channelId: "all", text: "@林越 停掉所有任务" });
 			expect(sent.seq).toBe(1);
 
@@ -166,16 +136,13 @@ describe("我说话", () => {
 	});
 
 	test("装配之后加的人：@ 得到他，投递摘要里也是名字不是 slug", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			// 装配之后才出现的人（另一个进程招的 / 手工加的目录 / 别处 rescan 过）：
 			// 装配期那份 `shell.directory` 里没有他。旧代码只读那一份，于是「我视角里没这个人」。
 			const dir = join(agents, "shenzhou");
@@ -209,16 +176,13 @@ describe("我说话", () => {
 	});
 
 	test("不 @ 人时按规则唤醒第一个非我成员", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			await ownerSpeak(shell, { channelId: "all", text: "有人吗" });
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
 			expect(state.messages.all?.[0]?.mentions).toEqual([]);
@@ -231,8 +195,8 @@ describe("我说话", () => {
 
 describe("播种", () => {
 	test("种出来的人 manager 就是 owner，且正文写清了职责", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		const slug = await seedOwnerAssistant(agents, { name: "林越" });
 		const identity = await readIdentity(agents, slug);
 		expect(identity?.manager).toBe("owner");
@@ -245,16 +209,13 @@ describe("播种", () => {
 	});
 
 	test("seed 出来的人能被装配扫到", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await seedOwnerAssistant(agents, { name: "林越" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			expect(shell.conversations.has("林越")).toBe(true);
 			expect((await shell.channels()).channels.all?.members).toContain("林越");
 		} finally {
@@ -265,17 +226,14 @@ describe("播种", () => {
 
 describe("会话只有两种形态与团队频道", () => {
 	test("新人只做三件事：建会话、记名册、进全员群 —— 不建个人频道，也不开私聊", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 		await createAgent({ root: agents, name: "沈舟", manager: "林越" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
-				agentsRoot: agents,
-				teamsRoot: join(root, "teams"),
-			});
+			const shell = await box.assemble(opened);
 			const state = await shell.channels();
 			// 私聊只能我开：装配绝不得凭空造一条两个人频道。
 			for (const slug of ["林越", "沈舟"]) {
@@ -292,17 +250,17 @@ describe("会话只有两种形态与团队频道", () => {
 	});
 
 	test("团队管理员、成员、我都进团队频道", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
-		const teams = join(root, "teams");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
+		const teams = box.teamsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
 		// 团队管理员是林越，但林越自己不在团队里（团队管理员不一定写代码）。
 		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
+			const shell = await box.assemble(opened, {
 				agentsRoot: agents,
 				teamsRoot: teams,
 			});
@@ -317,16 +275,16 @@ describe("会话只有两种形态与团队频道", () => {
 	});
 
 	test("团队频道里谁说话都叫醒团队管理员（成员不用 @ 上级）", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
-		const teams = join(root, "teams");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
+		const teams = box.teamsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
 		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
 		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
+			const shell = await box.assemble(opened, {
 				agentsRoot: agents,
 				teamsRoot: teams,
 			});
@@ -341,16 +299,16 @@ describe("会话只有两种形态与团队频道", () => {
 	});
 
 	test("改了团队管理员，频道成员跟着变（不需要重启）", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
-		const teams = join(root, "teams");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
+		const teams = box.teamsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner", team: "坦克大战" });
 		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
 		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
+			const shell = await box.assemble(opened, {
 				agentsRoot: agents,
 				teamsRoot: teams,
 			});
@@ -364,18 +322,18 @@ describe("会话只有两种形态与团队频道", () => {
 	});
 
 	test("团队频道含团队管理员的整条汇报线（统筹者也进团队频道）", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
-		const teams = join(root, "teams");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
+		const teams = box.teamsRoot;
 		// 知言：我直接下属（统筹者）；顾南雁：团队管理员，归知言；沈舟：执行成员，归顾南雁。
 		await createAgent({ root: agents, name: "知言", manager: "owner" });
 		await createAgent({ root: agents, name: "顾南雁", manager: "知言", team: "恐龙" });
 		await createAgent({ root: agents, name: "沈舟", manager: "顾南雁", team: "恐龙" });
 		await writeTeam(teams, { slug: "恐龙", lead: "顾南雁", body: "# 目标\n做一只恐龙。" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
+			const shell = await box.assemble(opened, {
 				agentsRoot: agents,
 				teamsRoot: teams,
 			});
@@ -390,16 +348,16 @@ describe("会话只有两种形态与团队频道", () => {
 	});
 
 	test("团队频道成员按事实精确重算，不残留幽灵成员", async () => {
-		const root = await workspace();
-		const agents = join(root, "agents");
-		const teams = join(root, "teams");
+		const box = await pool.make("core-assemble-");
+		const agents = box.agentsRoot;
+		const teams = box.teamsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner", team: "坦克大战" });
 		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
 		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
-		const opened = await env(root);
+		const opened = await box.open();
 		try {
-			const shell = await assembleCore(opened.harness, opened.registry, {
+			const shell = await box.assemble(opened, {
 				agentsRoot: agents,
 				teamsRoot: teams,
 			});

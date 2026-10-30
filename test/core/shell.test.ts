@@ -1,32 +1,25 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
-import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/sections.ts";
 import { parseDoc } from "../../src/core/md/doc.ts";
-import { assembleCore } from "../../src/core/shell/assemble.ts";
-import { seedOwnerAssistant, seedPersonalSkills, seedPromptTemplates, syncAllSkills } from "../../src/core/shell/seed.ts";
+import { seedOwnerAssistant, seedPersonalSkills, syncAllSkills } from "../../src/core/shell/seed.ts";
 import { listSkills, readSkill, writeAllSkill } from "../../src/core/agent/skills.ts";
+import { sandboxPool, type Sandbox } from "./support.ts";
 
-const dirs: string[] = [];
+const pool = sandboxPool();
 
-async function workspace(): Promise<{ readonly root: string; readonly agents: string; readonly teams: string }> {
-	const root = await mkdtemp(join(tmpdir(), "core-shell-"));
-	dirs.push(root);
-	const agents = join(root, "agents");
-	const teams = join(root, "teams");
-	await mkdir(teams, { recursive: true });
+afterEach(() => pool.cleanup());
+
+async function workspace(): Promise<Sandbox> {
+	const box = await pool.make("core-shell-");
 	// 提示词模板也要播种：生产里 `main.ts` 启动时先跑 `seedPromptTemplates` 再装配。
 	// 不播种的话 `agentSections` 读到空目录 → 一个身份段都没有，测试就在验一个不存在的状态。
-	await seedPromptTemplates(root);
-	return { root, agents, teams };
+	await box.seedTemplates();
+	return box;
 }
-
-afterEach(async () => {
-	await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-});
 
 /**
  * 这一组是**回归测试**：每一个都对应一次实测踩坑。
@@ -34,12 +27,12 @@ afterEach(async () => {
  */
 describe("装配", () => {
 	test("每个人都有自己的身份段落，且 key 是 ASCII", async () => {
-		const { root, agents, teams } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		const box = await workspace();
+		const agents = box.agentsRoot;
+		const opened = await box.open();
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, teamsRoot: teams });
+			const shell = await box.assemble(opened);
 			const conversation = shell.conversations.get(slug);
 			expect(conversation).toBeDefined();
 			if (conversation === undefined) return;
@@ -61,12 +54,12 @@ describe("装配", () => {
 	});
 
 	test("身份段落读到的是盘上的最新内容", async () => {
-		const { root, agents, teams } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		const box = await workspace();
+		const agents = box.agentsRoot;
+		const opened = await box.open();
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, teamsRoot: teams });
+			const shell = await box.assemble(opened);
 			const conversation = shell.conversations.get(slug);
 			if (conversation === undefined) throw new Error("没有会话");
 			const before = await conversation.agent(BACKGROUND_CONTEXT);
@@ -100,12 +93,12 @@ describe("装配", () => {
 	});
 
 	test("我说话会真的投递到收件人的会话里", async () => {
-		const { root, agents, teams } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
+		const box = await workspace();
+		const agents = box.agentsRoot;
+		const opened = await box.open();
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, teamsRoot: teams });
+			const shell = await box.assemble(opened);
 			const { delivery } = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			expect(delivery.failed).toEqual([]);
 			expect(delivery.delivered).toEqual([slug]);
@@ -131,7 +124,7 @@ describe("装配", () => {
 
 describe("助理身份：组织是文件，不是代码里的字符串", () => {
 	test("播种出来的 identity.md 正文就是 seed 文件里的正文", async () => {
-		const { agents } = await workspace();
+		const agents = (await workspace()).agentsRoot;
 		const slug = await seedOwnerAssistant(agents, { name: "示例" });
 
 		const created = parseDoc("identity.md", await readFile(join(agents, slug, "identity.md"), "utf8"));
@@ -146,7 +139,7 @@ describe("助理身份：组织是文件，不是代码里的字符串", () => {
 	});
 
 	test("改 seed 文件就换一个人的说法：代码里没有第二份正文", async () => {
-		const { agents } = await workspace();
+		const agents = (await workspace()).agentsRoot;
 		const slug = await seedOwnerAssistant(agents);
 		const created = parseDoc("identity.md", await readFile(join(agents, slug, "identity.md"), "utf8"));
 		// 代码里那份旧字面量（V2 的 `me(action=update)` / `read_history(scope=memory)`）不许再出现。
@@ -157,7 +150,7 @@ describe("助理身份：组织是文件，不是代码里的字符串", () => {
 
 describe("播种技能", () => {
 	test("全员层技能来自文件，不是代码里的字符串", async () => {
-		const { agents } = await workspace();
+		const agents = (await workspace()).agentsRoot;
 		const report = await syncAllSkills(agents);
 		// `写技能` / `找现成技能` 是所有人都该会的手艺，落在全员层。
 		expect(report.copied).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
@@ -168,7 +161,7 @@ describe("播种技能", () => {
 	});
 
 	test("立项与招人是助理的个人技能，不进全员层", async () => {
-		const { agents } = await workspace();
+		const agents = (await workspace()).agentsRoot;
 		// V3 把助理的个人技能挪到 seed/agents/assistant/skills/：一个 agent 的种子内容跟它的目录名走。
 		const copied = await seedPersonalSkills(agents, "助理", "agents/assistant/skills");
 		expect(copied).toEqual(expect.arrayContaining(["立项", "招人"]));
@@ -185,7 +178,7 @@ describe("播种技能", () => {
 	});
 
 	test("第二次播种不覆盖用户改过的内容", async () => {
-		const { agents } = await workspace();
+		const agents = (await workspace()).agentsRoot;
 		await syncAllSkills(agents);
 		// 用户改了自己的技能。
 		await writeAllSkill(join(agents, ".."), { name: "写技能", description: "改过", body: "# 我自己的版本" });

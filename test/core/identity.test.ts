@@ -6,7 +6,7 @@
  * 2. 组织架构完全由 `manager` 字段推导（没有枚举、没有数据库）；
  * 3. 渲染出的提示词**确定**（同样输入逐字节相同）且**不含任何身份文案常量**。
  */
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { join } from "node:path";
@@ -15,16 +15,32 @@ import { tmpdir } from "node:os";
 import {
 	OWNER_SLUG,
 	chainUp,
+	createAgent,
 	parseIdentity,
+	listAgentSlugs,
 	readAllIdentities,
 	readIdentity,
 	renderIdentityFile,
 	reportsOf,
+	uniqueSlug,
 	writeIdentity,
 } from "../../src/core/agent/identity.ts";
 import { renderAgentSection } from "../../src/core/agent/sections.ts";
 import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
 import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
+
+const dirs: string[] = [];
+
+afterEach(async () => {
+	await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+/** 临时目录，afterEach 统一删。 */
+async function tempDir(prefix = "core-identity-"): Promise<string> {
+	const dir = await mkdtemp(join(tmpdir(), prefix));
+	dirs.push(dir);
+	return dir;
+}
 
 const SAMPLE = `---
 name: 沈知远
@@ -60,49 +76,37 @@ describe("identity.md 解析", () => {
 
 describe("身份文件读写只有一处（ADR-096）", () => {
 	test("writeIdentity 写下的字节就是 renderIdentityFile，且读得回", async () => {
-		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
-		try {
-			const header = { name: "沈知远", title: "人力", manager: OWNER_SLUG, team: "alpha" };
-			const body = "我负责招人。\n\n用人需求从团队管理员那里来。";
-			const written = await writeIdentity(root, "shen", header, body);
+		const root = await tempDir();
+		const header = { name: "沈知远", title: "人力", manager: OWNER_SLUG, team: "alpha" };
+		const body = "我负责招人。\n\n用人需求从团队管理员那里来。";
+		const written = await writeIdentity(root, "shen", header, body);
 
-			expect(await readFile(join(root, "shen", "identity.md"), "utf8")).toBe(renderIdentityFile(header, body));
-			// 写出去的东西一定读得回来：写入口与读入口共用同一套解析。
-			expect(await readIdentity(root, "shen")).toEqual(written);
-			expect(written.body).toBe(body);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
+		expect(await readFile(join(root, "shen", "identity.md"), "utf8")).toBe(renderIdentityFile(header, body));
+		// 写出去的东西一定读得回来：写入口与读入口共用同一套解析。
+		expect(await readIdentity(root, "shen")).toEqual(written);
+		expect(written.body).toBe(body);
 	});
 
 	test("缺省字段不写成空行；返回的身份直接可用", async () => {
-		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
-		try {
-			const written = await writeIdentity(root, "lin", { name: "林越" }, "写代码。");
-			const source = await readFile(join(root, "lin", "identity.md"), "utf8");
-			expect(source).not.toContain("team:");
-			expect(source).not.toContain("manager:");
-			expect(written).toMatchObject({ slug: "lin", name: "林越", body: "写代码。" });
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
+		const root = await tempDir();
+		const written = await writeIdentity(root, "lin", { name: "林越" }, "写代码。");
+		const source = await readFile(join(root, "lin", "identity.md"), "utf8");
+		expect(source).not.toContain("team:");
+		expect(source).not.toContain("manager:");
+		expect(written).toMatchObject({ slug: "lin", name: "林越", body: "写代码。" });
 	});
 
 	test("写入口自己过名字闸：owner / .. / a/b 都写不出去", async () => {
-		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
-		try {
-			for (const slug of ["owner", "..", "a/b", ""]) {
-				await expect(writeIdentity(root, slug, { name: "X" }, "正文"), slug).rejects.toThrow();
-			}
-		} finally {
-			await rm(root, { recursive: true, force: true });
+		const root = await tempDir();
+		for (const slug of ["owner", "..", "a/b", ""]) {
+			await expect(writeIdentity(root, slug, { name: "X" }, "正文"), slug).rejects.toThrow();
 		}
 	});
 });
 
 /** 造一个 agents 目录。 */
 async function workspace(files: Record<string, string>): Promise<string> {
-	const root = await mkdtemp(join(tmpdir(), "core-agents-"));
+	const root = await tempDir("core-agents-");
 	for (const [path, content] of Object.entries(files)) {
 		await mkdir(join(root, path.split("/").slice(0, -1).join("/")), { recursive: true });
 		await writeFile(join(root, path), content, "utf8");
@@ -117,16 +121,12 @@ describe("组织架构 = manager 字段", () => {
 			"cto/identity.md": "---\nname: 周牧\nmanager: ceo\n---\n管技术。",
 			"dev/identity.md": "---\nname: 林越\nmanager: cto\nproject: alpha\n---\n写代码。",
 		});
-		try {
-			const all = await readAllIdentities(root);
-			expect(all.map((item) => item.slug)).toEqual(["ceo", "cto", "dev"]);
-			expect(reportsOf(all, "ceo").map((item) => item.slug)).toEqual(["cto"]);
-			expect(chainUp(all, "dev")).toEqual(["cto", "ceo", OWNER_SLUG]);
-			expect(chainUp(all, "ceo")).toEqual([OWNER_SLUG]);
-			expect(chainUp(all, "nobody")).toEqual([]);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
+		const all = await readAllIdentities(root);
+		expect(all.map((item) => item.slug)).toEqual(["ceo", "cto", "dev"]);
+		expect(reportsOf(all, "ceo").map((item) => item.slug)).toEqual(["cto"]);
+		expect(chainUp(all, "dev")).toEqual(["cto", "ceo", OWNER_SLUG]);
+		expect(chainUp(all, "ceo")).toEqual([OWNER_SLUG]);
+		expect(chainUp(all, "nobody")).toEqual([]);
 	});
 
 	test("断链就地停止，不抛错", async () => {
@@ -134,12 +134,8 @@ describe("组织架构 = manager 字段", () => {
 			"a/identity.md": "---\nmanager: ghost\n---\n甲",
 			"b/identity.md": "---\nmanager: a\n---\n乙",
 		});
-		try {
-			const all = await readAllIdentities(root);
-			expect(chainUp(all, "b")).toEqual(["a", "ghost"]);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
+		const all = await readAllIdentities(root);
+		expect(chainUp(all, "b")).toEqual(["a", "ghost"]);
 	});
 
 	test("同名循环不死循环", async () => {
@@ -147,12 +143,8 @@ describe("组织架构 = manager 字段", () => {
 			"a/identity.md": "---\nmanager: b\n---\n甲",
 			"b/identity.md": "---\nmanager: a\n---\n乙",
 		});
-		try {
-			const all = await readAllIdentities(root);
-			expect(chainUp(all, "a")).toEqual(["b"]);
-		} finally {
-			await rm(root, { recursive: true, force: true });
-		}
+		const all = await readAllIdentities(root);
+		expect(chainUp(all, "a")).toEqual(["b"]);
 	});
 });
 
@@ -163,22 +155,18 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 		slug: string,
 		registry = createRegistry(),
 	): Promise<string> {
-		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
-		try {
-			for (const [rel, body] of Object.entries(files)) {
-				await mkdir(dirname(join(root, rel)), { recursive: true });
-				await writeFile(join(root, rel), body, "utf8");
-			}
-			await mkdir(join(root, "teams"), { recursive: true });
-			await seedPromptTemplates(root);
-			return await renderAgentSection(
-				registry,
-				{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
-				slug,
-			);
-		} finally {
-			await rm(root, { recursive: true, force: true });
+		const root = await tempDir();
+		for (const [rel, body] of Object.entries(files)) {
+			await mkdir(dirname(join(root, rel)), { recursive: true });
+			await writeFile(join(root, rel), body, "utf8");
 		}
+		await mkdir(join(root, "teams"), { recursive: true });
+		await seedPromptTemplates(root);
+		return await renderAgentSection(
+			registry,
+			{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
+			slug,
+		);
 	}
 
 	const ORG: Record<string, string> = {
@@ -248,20 +236,65 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 });
 
 test("规矩里的「@我」进了提示词（那是拍板唯一被认的写法）", async () => {
-	const root = await mkdtemp(join(tmpdir(), "core-identity-"));
-	try {
-		await mkdir(join(root, "agents", "林越"), { recursive: true });
-		await writeFile(join(root, "agents", "林越", "identity.md"), "---\nname: 林越\nmanager: owner\n---\n\n写代码。\n");
-		await mkdir(join(root, "teams"), { recursive: true });
-		await writeFile(join(root, "rules.md"), "- 要让我拍板的事就用 `@我`，别写 `@owner`。\n");
-		await seedPromptTemplates(root);
-		const text = await renderAgentSection(
-			createRegistry(),
-			{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
-			"林越",
-		);
-		expect(text).toContain("`@我`");
-	} finally {
-		await rm(root, { recursive: true, force: true });
-	}
+	const root = await tempDir();
+	await mkdir(join(root, "agents", "林越"), { recursive: true });
+	await writeFile(join(root, "agents", "林越", "identity.md"), "---\nname: 林越\nmanager: owner\n---\n\n写代码。\n");
+	await mkdir(join(root, "teams"), { recursive: true });
+	await writeFile(join(root, "rules.md"), "- 要让我拍板的事就用 `@我`，别写 `@owner`。\n");
+	await seedPromptTemplates(root);
+	const text = await renderAgentSection(
+		createRegistry(),
+		{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
+		"林越",
+	);
+	expect(text).toContain("`@我`");
+});
+
+describe("建人（createAgent）", () => {
+	test("显式 slug 也过闸：`.`、`..`、`owner`、带 / 的一律拒绝", async () => {
+		const agents = await tempDir("core-org-");
+		for (const slug of ["..", ".", "owner", "a/b"]) {
+			await expect(createAgent({ root: agents, name: "林子", slug }), slug).rejects.toThrow();
+		}
+	});
+
+	test("重名自动加后缀", async () => {
+		const agents = await tempDir("core-org-");
+		expect(await uniqueSlug(agents, "林越")).toBe("林越");
+		await createAgent({ root: agents, name: "林越" });
+		expect(await uniqueSlug(agents, "林越")).toBe("林越-2");
+	});
+
+	test("建完就能读回来，字段无损", async () => {
+		const agents = await tempDir("core-org-");
+		await createAgent({
+			root: agents,
+			name: "林越",
+			title: "技术负责人",
+			manager: "owner",
+			team: "alpha",
+			body: "我管技术。",
+		});
+		const identity = await readIdentity(agents, "林越");
+		expect(identity?.name).toBe("林越");
+		expect(identity?.title).toBe("技术负责人");
+		expect(identity?.manager).toBe("owner");
+		expect(identity?.team).toBe("alpha");
+		expect(identity?.body).toBe("我管技术。");
+	});
+
+	test("不写正文就是空正文：代码不编一段「我是谁」", async () => {
+		const agents = await tempDir("core-org-");
+		await createAgent({ root: agents, name: "无名" });
+		const identity = await readIdentity(agents, "无名");
+		expect(identity?.body).toBe("");
+	});
+
+	test("全员人数 = 目录数", async () => {
+		const agents = await tempDir("core-org-");
+		await createAgent({ root: agents, name: "CEO" });
+		await createAgent({ root: agents, name: "CTO", manager: "CEO" });
+		expect((await listAgentSlugs(agents)).length).toBe(2);
+		expect((await readAllIdentities(agents)).map((item) => item.slug)).toEqual(["CEO", "CTO"]);
+	});
 });

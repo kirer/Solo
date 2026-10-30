@@ -1,14 +1,13 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { postMessage } from "../../src/core/channel/post.ts";
 import { appendNote } from "../../src/core/channel/write.ts";
+import { sandboxPool } from "./support.ts";
 
 /**
  * 频道写入的**代价**契约（不只是结果对不对）。
@@ -20,13 +19,9 @@ import { appendNote } from "../../src/core/channel/write.ts";
  * 所以断言不看「消息在不在」，看「写一条消息付出多少字节」。这类退化在功能测试里
  * 完全不可见：所有测试都能过，只有磁盘在涨。
  */
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 /** 频道文档在库里占的字节数（基线 + 全部增量）。 */
 function storedBytes(file: string, kind: string): number {
@@ -43,12 +38,9 @@ function storedBytes(file: string, kind: string): number {
 }
 
 async function setup(): Promise<{ runtime: CoreRuntime; file: string; channelId: string }> {
-	const root = await mkdtemp(join(tmpdir(), "core-write-"));
-	roots.push(root);
-	const file = join(root, "core.sqlite");
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: file, models, registry: createRegistry() });
-	runtimes.push(runtime);
+	const box = await pool.make("core-write-");
+	const file = join(box.root, "core.sqlite");
+	const runtime = await box.open();
 	const channelId = "team:计费";
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;

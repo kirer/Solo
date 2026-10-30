@@ -5,30 +5,25 @@
  * `owner:web`，agent 自己 `remember` 记 `agent`。出错时能一眼分开就够了。
  */
 import { request as httpRequest } from "node:http";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { assembleCore } from "../../src/core/shell/assemble.ts";
 import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
 import { JOURNAL_FILE } from "../../src/core/agent/journal.ts";
+import { sandboxPool } from "./support.ts";
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 const servers: CoreServer[] = [];
 
 afterEach(async () => {
 	for (const server of servers.splice(0)) await server.close().catch(() => undefined);
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+	await pool.cleanup();
 });
 
 async function setup(): Promise<{ root: string; port: number }> {
-	const root = await mkdtemp(join(tmpdir(), "core-memory-actor-"));
-	roots.push(root);
-	const agentsRoot = join(root, "agents");
+	const box = await pool.make("core-memory-actor-");
+	const root = box.root;
+	const agentsRoot = box.agentsRoot;
 	await mkdir(join(agentsRoot, "林越"), { recursive: true });
 	await writeFile(
 		join(agentsRoot, "林越", "identity.md"),
@@ -36,14 +31,8 @@ async function setup(): Promise<{ root: string; port: number }> {
 		"utf8",
 	);
 	await writeFile(join(agentsRoot, "林越", "memory.md"), "# 记忆\n", "utf8");
-	const { models: configured } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models: configured, registry: createRegistry() });
-	runtimes.push(runtime);
-	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot,
-		teamsRoot: join(root, "teams"),
-		defaultModel: { provider: "test", modelId: "test" },
-	});
+	const runtime = await box.open();
+	const shell = await box.assemble(runtime, { defaultModel: { provider: "test", modelId: "test" } });
 	await shell.rescan();
 	const server = await serveCore({ shell, port: 0 });
 	servers.push(server);

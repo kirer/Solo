@@ -1,10 +1,7 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import type { Conversation, EntryRecord } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { ensureChannel } from "../../src/core/channel/rules.ts";
 import type { WakeRecord } from "../../src/core/channel/wake.ts";
@@ -14,6 +11,7 @@ import {
 	spokeAfterWake,
 	turnTarget,
 } from "../../src/core/channel/turn/index.ts";
+import { sandboxPool } from "./support.ts";
 
 /**
  * 「他答了，但没说出来」的收尾。
@@ -22,24 +20,16 @@ import {
  * 「开始处理…」。V3 以前靠 6 秒定时器兜；现在靠结算（`done` 带 `answer`）。
  * 这里守的不是「能不能发」，而是三条判据：别抢跑、别重复、别把插话的任务频道弄丢。
  */
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 const CHANNEL = "team:计费";
 const DM = "dm:林越";
 const SLUG = "林越";
 
 async function setup(): Promise<CoreRuntime> {
-	const root = await mkdtemp(join(tmpdir(), "core-turn-"));
-	roots.push(root);
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models, registry: createRegistry() });
-	runtimes.push(runtime);
+	const runtime = await (await pool.make("core-turn-")).open();
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		for (const [id, title, members] of [

@@ -7,25 +7,21 @@
  * 1. 每个 `action` 都真的能跑通（不是只有默认那个）；
  * 2. 不认识的 `action` 要回一句能自救的话（列出合法值），而不是沉默或抛错。
  */
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
+import { sandboxPool } from "./support.ts";
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 const ME = "沈舟";
 const CONVERSATION = 7;
@@ -40,10 +36,10 @@ async function setup(
 	root: string;
 	runtime: CoreRuntime;
 }> {
-	const root = await mkdtemp(join(tmpdir(), "core-tools-"));
-	roots.push(root);
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
+	const box = await pool.make("core-tools-");
+	const root = box.root;
+	const agentsRoot = box.agentsRoot;
+	const teamsRoot = box.teamsRoot;
 	await mkdir(join(agentsRoot, ME, "skills"), { recursive: true });
 	await writeFile(
 		join(agentsRoot, ME, "identity.md"),
@@ -60,13 +56,7 @@ async function setup(
 	);
 	await writeFile(join(root, "notes.md"), "第一行\n第二行\n第三行\n", "utf8");
 
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({
-		databasePath: join(root, "core.sqlite"),
-		models,
-		registry: createRegistry(),
-	});
-	runtimes.push(runtime);
+	const runtime = await box.open();
 
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;

@@ -8,37 +8,26 @@
  * 2. 旧写法 `Object.assign(doc, { ...doc, wake })` 把文档代理展开后整份写回同一个覆盖层，
  *    会静默把别人的条目一起冲掉。
  */
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
+import type { CoreShell } from "../../src/core/shell/assemble.ts";
 import { DirectoryDoc, type DirectoryState } from "../../src/core/agent/roster.ts";
+import type { CoreRuntime } from "../../src/core/runtime/open.ts";
+import { sandboxPool, type Sandbox } from "./support.ts";
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
-async function identity(ws: string, slug: string): Promise<void> {
-	await mkdir(join(ws, "agents", slug), { recursive: true });
-	await writeFile(join(ws, "agents", slug, "identity.md"), `---\nname: ${slug}\ntitle: 工程师\n---\n\n# ${slug}\n`, "utf8");
+async function identity(box: Sandbox, slug: string): Promise<void> {
+	await mkdir(join(box.agentsRoot, slug), { recursive: true });
+	await writeFile(join(box.agentsRoot, slug, "identity.md"), `---\nname: ${slug}\ntitle: 工程师\n---\n\n# ${slug}\n`, "utf8");
 }
 
-async function boot(ws: string): Promise<{ shell: CoreShell; runtime: CoreRuntime; doc: DirectoryState }> {
-	const { models } = setupModels(process.env, { workspace: ws });
-	const runtime = await openCore({ databasePath: join(ws, "core.sqlite"), models, registry: createRegistry() });
-	runtimes.push(runtime);
-	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot: join(ws, "agents"),
-		teamsRoot: join(ws, "teams"),
-		defaultModel: { provider: "test", modelId: "test" },
-	});
+async function boot(box: Sandbox): Promise<{ shell: CoreShell; runtime: CoreRuntime; doc: DirectoryState }> {
+	const runtime = await box.open();
+	const shell = await box.assemble(runtime, { defaultModel: { provider: "test", modelId: "test" } });
 	const doc = ((await runtime.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined) ?? {
 		slugToConversation: {},
 		conversationToSlug: {},
@@ -48,28 +37,22 @@ async function boot(ws: string): Promise<{ shell: CoreShell; runtime: CoreRuntim
 	return { shell, runtime, doc };
 }
 
-async function freshWs(): Promise<string> {
-	const ws = await mkdtemp(join(tmpdir(), "core-directory-"));
-	roots.push(ws);
-	return ws;
-}
-
 describe("加人之后重启：复用同一个会话，不制造孤儿", () => {
 	it("openAgent 立刻把映射落盘，重开用的是同一个会话 id", async () => {
-		const ws = await freshWs();
-		await identity(ws, "甲");
-		const first = await boot(ws);
+		const box = await pool.make("core-directory-");
+		await identity(box, "甲");
+		const first = await boot(box);
 		const idA = first.doc.slugToConversation["甲"];
 		expect(idA).toBeDefined();
 
 		// 第二个人的身份是运行中才出现的（`hire` 的路径），只走 openAgent、不走 rescan。
-		await identity(ws, "乙");
+		await identity(box, "乙");
 		const idB = await first.shell.openAgent("乙");
 		const afterHire = (await first.runtime.harness.snapshot(DirectoryDoc)) as DirectoryState;
 		expect(afterHire.slugToConversation["乙"]).toBe(idB);
 		await first.runtime.close();
 
-		const second = await boot(ws);
+		const second = await boot(box);
 		expect(second.doc.slugToConversation["甲"]).toBe(idA);
 		// 关键断言：重启后**没有**给她新开一个会话（旧行为这里会变一个新 id）。
 		expect(second.doc.slugToConversation["乙"]).toBe(idB);
@@ -78,10 +61,10 @@ describe("加人之后重启：复用同一个会话，不制造孤儿", () => {
 
 describe("已有名册不被旧快照覆盖", () => {
 	it("一次唤醒写入不会把别人的映射冲掉，重启后全员 id 不变", async () => {
-		const ws = await freshWs();
-		await identity(ws, "甲");
-		await identity(ws, "乙");
-		const first = await boot(ws);
+		const box = await pool.make("core-directory-");
+		await identity(box, "甲");
+		await identity(box, "乙");
+		const first = await boot(box);
 		const before: Record<string, number | undefined> = { ...first.doc.slugToConversation };
 		expect(before["甲"]).toBeDefined();
 		expect(before["乙"]).toBeDefined();
@@ -94,7 +77,7 @@ describe("已有名册不被旧快照覆盖", () => {
 		expect(Object.keys(afterWake.labels).sort()).toEqual(["乙", "甲"].sort());
 		await first.runtime.close();
 
-		const second = await boot(ws);
+		const second = await boot(box);
 		expect(second.doc.slugToConversation).toEqual(before);
 	});
 });

@@ -7,15 +7,12 @@
  *   只测纯函数的话，函数再对、`handle()` 忘了调用也是全绿。
  */
 import { request as httpRequest } from "node:http";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { hostAllowed, originAllowed } from "../../src/core/interface/http/origin-guard.ts";
-import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
+import type { CoreShell } from "../../src/core/shell/assemble.ts";
 import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
+import { sandboxPool } from "./support.ts";
 
 const SELF = ["http://127.0.0.1:7788", "http://localhost:7788"];
 
@@ -56,30 +53,21 @@ describe("originAllowed：写请求的来源", () => {
 	});
 });
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 const servers: CoreServer[] = [];
 
 afterEach(async () => {
 	for (const server of servers.splice(0)) await server.close().catch(() => undefined);
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+	await pool.cleanup();
 });
 
 async function setup(): Promise<{ shell: CoreShell; port: number; root: string }> {
-	const root = await mkdtemp(join(tmpdir(), "core-http-guard-"));
-	roots.push(root);
-	const { models: configured } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models: configured, registry: createRegistry() });
-	runtimes.push(runtime);
-	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot: join(root, "agents"),
-		teamsRoot: join(root, "teams"),
-		defaultModel: { provider: "test", modelId: "test" },
-	});
+	const box = await pool.make("core-http-guard-");
+	const runtime = await box.open();
+	const shell = await box.assemble(runtime, { defaultModel: { provider: "test", modelId: "test" } });
 	const server = await serveCore({ shell, port: 0 });
 	servers.push(server);
-	return { shell, port: server.port, root };
+	return { shell, port: server.port, root: box.root };
 }
 
 /** 原始 http 请求：需要自己写 Host / Origin / Sec-Fetch-Site，fetch 不让设这些。 */

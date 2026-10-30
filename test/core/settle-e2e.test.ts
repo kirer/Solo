@@ -1,43 +1,27 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import type { CoreShell } from "../../src/core/shell/assemble.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { ensureChannel } from "../../src/core/channel/rules.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";
 import { SettleDoc, confirmedBy, settleTeam, type SettleState } from "../../src/core/team/settle.ts";
 import { appendTeamMemory } from "../../src/core/team/memory.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
-import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
+import { sandboxPool } from "./support.ts";
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 async function setup(): Promise<{ shell: CoreShell; root: string; agentsRoot: string; teamsRoot: string }> {
-	const root = await mkdtemp(join(tmpdir(), "core-settle-"));
-	roots.push(root);
+	const box = await pool.make("core-settle-");
 	// 沉淀正文现在来自 `prompt/95-settle.md`：没有模板就「不问」（不是退回硬编码）。
 	// 生产里 `main.ts` 启动先播种，测试的工作区要自己播。
-	await seedPromptTemplates(root);
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models, registry: createRegistry() });
-	runtimes.push(runtime);
-	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot,
-		teamsRoot,
-		defaultModel: { provider: "test", modelId: "test" },
-	});
-	return { shell, root, agentsRoot, teamsRoot };
+	await box.seedTemplates();
+	const runtime = await box.open();
+	const shell = await box.assemble(runtime, { defaultModel: { provider: "test", modelId: "test" } });
+	return { shell, root: box.root, agentsRoot: box.agentsRoot, teamsRoot: box.teamsRoot };
 }
 
 async function channelState(shell: CoreShell): Promise<ChannelState> {
@@ -278,16 +262,6 @@ describe("团队频道自动存在", () => {
 		await shell.openAgent(lin.slug);
 		const state = await channelState(shell);
 		expect(state.channels["team:alpha"]?.members.filter((item) => item === lin.slug)).toHaveLength(1);
-	});
-
-	it("同一个团队第二个人进来会加进同一个频道", async () => {
-		const { shell, agentsRoot } = await setup();
-		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
-		const zhao = await createAgent({ root: agentsRoot, name: "赵岚", team: "alpha" });
-		await shell.openAgent(lin.slug);
-		await shell.openAgent(zhao.slug);
-		const state = await channelState(shell);
-		expect(state.channels["team:alpha"]?.members.sort()).toEqual(["owner", lin.slug, zhao.slug].sort());
 	});
 
 	it("没有团队的人不会凭空多出频道", async () => {

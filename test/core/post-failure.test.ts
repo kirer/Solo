@@ -1,12 +1,9 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { BACKGROUND_CONTEXT, createRegistry, setupModels, type Conversation } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import { BACKGROUND_CONTEXT, type Conversation } from "../../src/core/runtime/index.ts";
 import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { postMessage } from "../../src/core/channel/post.ts";
+import { sandboxPool } from "./support.ts";
 
 /**
  * 投递失败必须看得见。
@@ -30,22 +27,14 @@ function stateWithChannel(): ChannelState {
 	});
 }
 
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+const pool = sandboxPool();
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+afterEach(() => pool.cleanup());
 
 type FakeConversation = { conversation: Conversation; submitted: string[] };
 
 async function setup(members: string[], wakeOnAll: string[]) {
-	const root = await mkdtemp(join(tmpdir(), "core-relay-"));
-	roots.push(root);
-	const { models } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models, registry: createRegistry() });
-	runtimes.push(runtime);
+	const runtime = await (await pool.make("core-relay-")).open();
 	const channelId = "team:x";
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;

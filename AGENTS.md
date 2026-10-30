@@ -56,9 +56,9 @@ ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
 scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
-test/             62 文件 / 579 例
-  ├ test/core/    51 文件 / 520 例（纯函数 + 装配）
-  └ test/ui/      11 文件 / 54 例（界面纯函数与源码约定）
+test/             56 文件 / 575 例
+  ├ test/core/    49 文件 / 521 例（纯函数 + 装配）
+  └ test/ui/      7 文件 / 54 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
@@ -114,7 +114,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 62 文件 579 例，<3s，必须全绿
+npm test             # 56 文件 575 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 ```

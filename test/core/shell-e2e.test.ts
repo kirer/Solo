@@ -1,10 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
-import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
+import type { CoreShell } from "../../src/core/shell/assemble.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { recipientsOf } from "../../src/core/channel/mentions.ts";
 import { readAllIdentities } from "../../src/core/agent/identity.ts";
@@ -17,25 +12,19 @@ import { readAllIdentities } from "../../src/core/agent/identity.ts";
  * 装配错的地方都很安静：会话建了但不在频道里、人存在但没有身份段落、
  * 名册有了但显示名没刷新，界面上全都表现为「这个人叫不动」。
  */
-const roots: string[] = [];
-const runtimes: CoreRuntime[] = [];
+import { sandboxPool, type Sandbox } from "./support.ts";
 
-afterEach(async () => {
-	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
-	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
-});
+const pool = sandboxPool();
 
-async function setup(): Promise<{ shell: CoreShell; agentsRoot: string; models: { provider: string; modelId: string } }> {
-	const root = await mkdtemp(join(tmpdir(), "core-shell-"));
-	roots.push(root);
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
-	const { models: configured } = setupModels(process.env, { workspace: root });
-	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models: configured, registry: createRegistry() });
-	runtimes.push(runtime);
-	const models = { provider: "test", modelId: "test" };
-	const shell = await assembleCore(runtime.harness, runtime.registry, { agentsRoot, teamsRoot, defaultModel: models });
-	return { shell, agentsRoot, models };
+afterEach(() => pool.cleanup());
+
+const models = { provider: "test", modelId: "test" };
+
+async function setup(): Promise<{ box: Sandbox; shell: CoreShell }> {
+	const box = await pool.make("core-shell-e2e-");
+	const runtime = await box.open();
+	const shell = await box.assemble(runtime, { defaultModel: models });
+	return { box, shell };
 }
 
 async function channels(shell: CoreShell): Promise<ChannelState> {
@@ -57,7 +46,8 @@ describe("外壳装配", () => {
 	});
 
 	it("hire 之后新人在频道里，且能被 @ 到", async () => {
-		const { shell, agentsRoot } = await setup();
+		const { box, shell } = await setup();
+		const agentsRoot = box.agentsRoot;
 		const created = await shell.rescan();
 		expect(created.length).toBe(0);
 
@@ -86,7 +76,8 @@ describe("外壳装配", () => {
 		// 回归：`ownerSpeak` 曾经没传 `rememberWake`，于是被叫的人回话时查不到
 		// 「是在哪儿被叫的」，只能退到「我最早的那个频道」—— 那往往是个人频道。
 		// 结果我在全员频道问、对方在私聊里答，问的人在原频道什么都看不到。
-		const { shell, agentsRoot } = await setup();
+		const { box, shell } = await setup();
+		const agentsRoot = box.agentsRoot;
 		const { createAgent } = await import("../../src/core/agent/identity.ts");
 		const { DirectoryDoc } = await import("../../src/core/agent/roster.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
@@ -107,7 +98,8 @@ describe("外壳装配", () => {
 	});
 
 	it("重启后再装配，不会重复建会话，名册与频道保持", async () => {
-		const { shell, agentsRoot, models } = await setup();
+		const { box, shell } = await setup();
+		const agentsRoot = box.agentsRoot;
 		const { createAgent } = await import("../../src/core/agent/identity.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		await shell.openAgent(identity.slug);
@@ -115,18 +107,8 @@ describe("外壳装配", () => {
 		await shell.close();
 
 		// 同名重开一份（同一 workspace）：人还在目录里，不应该再建一个。
-		const { models: configured } = setupModels(process.env, { workspace: join(agentsRoot, "..") });
-		const runtime2 = await openCore({
-			databasePath: join(agentsRoot, "..", "core.sqlite"),
-			models: configured,
-			registry: createRegistry(),
-		});
-		runtimes.push(runtime2);
-		const shell2 = await assembleCore(runtime2.harness, runtime2.registry, {
-			agentsRoot,
-			teamsRoot: join(agentsRoot, "..", "teams"),
-			defaultModel: models,
-		});
+		const runtime2 = await box.open();
+		const shell2 = await box.assemble(runtime2, { defaultModel: models });
 		const identities = await readAllIdentities(agentsRoot);
 		expect(identities.map((item) => item.slug)).toContain(identity.slug);
 		const after = await channels(shell2);
