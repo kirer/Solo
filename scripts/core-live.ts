@@ -136,6 +136,22 @@ function settleDetail(outcome: SettleOutcome, wroteIt: boolean, memoryText: stri
 }
 
 async function main(): Promise<void> {
+	// ── rescue 计数（ADR-089 c）──────────────────────────────────────────────
+	// `rescue=0` 已经不是验收门（它测的是「模型这一轮选不选工具」，不是系统对不对）。
+	// 但「多少回话走了安全网」是有用的趋势信号：超过一半就说明提示词在退化。
+	// 不设硬门槛，只报数 —— 把 6% 命中率的随机事件当门，只会让团队开始无视红灯。
+	let rescuePosted = 0;
+	let rescueFailed = 0;
+	const passLog = console.log.bind(console);
+	const passWarn = console.warn.bind(console);
+	console.log = (...args: unknown[]) => {
+		if (args.some((arg) => String(arg).includes("[rescue]"))) rescuePosted += 1;
+		passLog(...args);
+	};
+	console.warn = (...args: unknown[]) => {
+		if (args.some((arg) => String(arg).includes("[rescue]"))) rescueFailed += 1;
+		passWarn(...args);
+	};
 	const { BACKGROUND_CONTEXT, createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
 	const { assembleCore } = await import("../src/core/shell/assemble.ts");
@@ -436,6 +452,16 @@ async function main(): Promise<void> {
 	await shell.close().catch(() => undefined);
 	const failed = phases.filter((phase) => !phase.ok);
 	console.log(`\n${phases.length - failed.length}/${phases.length} 通过`);
+
+	// ADR-089 c：回话阶段里有多少次是安全网兜的。1–7 这 7 个阶段都要靠一句回话。
+	const REPLY_PHASES = 7;
+	const trend =
+		rescuePosted <= 4
+			? "正常"
+			: "提示词在退化（7 个回话阶段里超过 4 次走 rescue —— 改 80-reply / reply.alone 的措辞）";
+	const failedNote = rescueFailed > 0 ? `；补发失败 ${rescueFailed} 次（内容丢了，单测没覆盖到就查 rescue）` : "";
+	console.log(`rescue 趋势：${rescuePosted} 次 / ${REPLY_PHASES} 个回话阶段 —— ${trend}${failedNote}`);
+
 	await rm(root, { recursive: true, force: true }).catch(() => undefined);
 	if (failed.length > 0) process.exitCode = 1;
 }

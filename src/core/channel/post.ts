@@ -448,6 +448,8 @@ export function renderReplyRules(options: {
 	const others = options.woken.filter((slug) => slug !== options.viewer);
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const colleagues = (options.colleagues ?? []).filter((slug) => slug !== options.viewer);
+	// 模板里 `{{tool:say}}` 那个名字（模板没写就退回字面 `say`：工具名在这一层只有这一处）。
+	const say = toolSlots(options.template)["tool:say"] ?? "say";
 
 	// 两个条件句都必须有值：模板里它们是**整行**，留空会渲染成「（未设置）」占一行。
 	const slots: Record<string, SlotValue> = {
@@ -455,7 +457,10 @@ export function renderReplyRules(options: {
 		...toolSlots(options.template),
 		"reply.alone":
 			others.length === 0
-				? "（这一轮只有你被叫醒：必须回，回的就是结果。）"
+				? // 「必须回」不够：模型会理解成「在会话里答一句也算回」（实测 3/3 都不调 say）。
+					// 它必须知道**回的动作是发一条频道消息**，而且要先发再收工。工具名从模板的
+					// `{{tool:say}}` 取，模板那边有 seed 侧的对表检查（名字写错会红）。
+					`（这一轮只有你被叫醒：必须回，回的就是结果 —— 用 ${say} 把它发到这个频道，不要在会话里答完就算。）`
 				: `（没有新东西就不说：只把 text 写成 \`[PASS]\`，这条不会发出去 —— 这一轮还有 ${others
 						.map((slug) => label(slug))
 						.join("、")} 在。）`,
