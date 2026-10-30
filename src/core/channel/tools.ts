@@ -34,7 +34,7 @@ import {
 } from "../runtime/index.ts";
 import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
-import { redact } from "../agent/secrets.ts";
+import { redact, SECRETS_FILE } from "../agent/secrets.ts";
 import { createAgent } from "../agent/create.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
@@ -56,6 +56,7 @@ import { renderDigest } from "./post.ts";
 import { promptDirOf } from "../prompt.ts";
 import { oneLine } from "../oneline.ts";
 import { confirmedBy } from "../team/settle.ts";
+import { assertTeamSlug, readTeam } from "../team/doc.ts";
 import {
 	appendTeamMemory,
 	teamMemorySections,
@@ -131,26 +132,34 @@ function actionOf(
  * `team` 为空 = 翻自己的记忆，否则翻那个团队的记忆；`keyword` 为空 = 全文。
  */
 async function recallText(deps: CoreToolDeps, slug: string, team: string | undefined, keyword: string) {
+	// 记忆是自由文本，密钥可能早就被写进去了。读的时候也要过一遍脱敏 ——
+	// 渲染进提示词的那一路有出口，这一路是「它主动来翻」，同样不能把密钥交出去。
+	const mask = (value: string) => redact(value, deps.workspaceRoot);
 	if (team !== undefined && team !== "") {
 		const target = team;
+		try {
+			assertTeamSlug(target);
+		} catch (error) {
+			return text(error instanceof Error ? error.message : String(error));
+		}
 		const source = await readTeamMemory(deps.teamsRoot, target);
 		if (source === undefined) return text(`团队「${target}」还没有记忆。`);
-		if (keyword === "") return text(source);
+		if (keyword === "") return text(mask(source));
 		const sections = teamMemorySections(source).filter(
 			(section) => section.heading.includes(keyword) || section.body.includes(keyword),
 		);
 		if (sections.length === 0) return text(`团队「${target}」的记忆里没有「${keyword}」。`);
-		return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
+		return text(mask(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n")));
 	}
 
 	const source = await readMemory(join(deps.agentsRoot, slug));
 	if (source === undefined) return text("我还没记过任何东西。");
-	if (keyword === "") return text(source);
+	if (keyword === "") return text(mask(source));
 	const sections = sectionsOf(source).filter(
 		(section) => section.heading.includes(keyword) || section.body.includes(keyword),
 	);
 	if (sections.length === 0) return text(`记忆里没有「${keyword}」。`);
-	return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
+	return text(mask(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n")));
 }
 
 /** 历史条目里一条消息的收窄视图（结构上只用得到这几个字段）。 */
@@ -578,8 +587,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 				...(args.title === undefined ? {} : { title: args.title }),
 				manager,
 				...(args.team === undefined ? {} : { team: args.team }),
-				...(args.body === undefined ? {} : { body: args.body }),
-			});
+				// 身份正文也会进每一轮提示词，跟 `file` 写盘走同一道脱敏。
+				...(args.body === undefined ? {} : { body: redact(args.body, deps.workspaceRoot) }),
+			}).catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
+			// slug 不合法（含 `.`、`.`、`..` 之类）是输入问题，回一句话让它改，别把工具打成异常。
+			if (typeof identity === "string") return text(identity);
 			if (deps.openAgent !== undefined) {
 				const id = await deps.openAgent(identity.slug, ctx);
 				await deps.saveDirectory((value) => ({
@@ -613,8 +625,18 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const body = redact(args.text, deps.workspaceRoot);
 			if (args.scope === "team") {
 				const self = await readIdentity(deps.agentsRoot, slug);
-				const team = args.team ?? self?.team;
-				if (team === undefined) return text("我不在任何团队里。要记团队的事，先说清是哪个团队。");
+				const team = (args.team ?? self?.team)?.trim();
+				if (team === undefined || team === "") return text("我不在任何团队里。要记团队的事，先说清是哪个团队。");
+				// slug 会被拼成路径；成员资格决定「谁能写」——两者都不能只信入参。
+				try {
+					assertTeamSlug(team);
+				} catch (error) {
+					return text(error instanceof Error ? error.message : String(error));
+				}
+				const lead = (await readTeam(deps.teamsRoot, team))?.lead;
+				if (self?.team !== team && lead !== slug) {
+					return text(`你不在团队「${team}」里。团队记忆只能由这个团队的人写。`);
+				}
 				await appendTeamMemory(deps.teamsRoot, team, { text: body, by: slug });
 				const confirmed = await confirmedBy(deps.harness, team, ctx);
 				const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
@@ -729,7 +751,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const oldest = found[lines.length - 1];
 			const more = found.length > lines.length || (lines.length >= limit && !exhausted);
 			const tail = more && oldest !== undefined ? `\n\n还有更早的，用 around=${oldest.id} 继续往前。` : "";
-			return text(`${lines.join("\n")}${tail}`);
+			return text(redact(`${lines.join("\n")}${tail}`, deps.workspaceRoot));
 		},
 	});
 
@@ -820,6 +842,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 			if (typeof action !== "string") return text(action);
 			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
 			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
+			// 密钥文件对 agent 不存在：读出来等于把 key 装进上下文，写回去会把
+			// 人配好的值覆盖成脱敏后的马赛克。它要用 key，由人在 shell 里配、`run` 里用。
+			if (target === join(deps.workspaceRoot, SECRETS_FILE)) return text("这个文件不开放。");
 
 			if (action === "write") {
 				if (args.content === undefined) return text("write 要带 content（写什么）。只想读文件用 action=read。");

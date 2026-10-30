@@ -17,6 +17,7 @@ import { memoryDigest, readMemory } from "./memory.ts";
 import { loadRules } from "./rules.ts";
 import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
+import { redact } from "./secrets.ts";
 import { createFsx } from "../fsx.ts";
 import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../prompt.ts";
 import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../text.ts";
@@ -285,7 +286,10 @@ async function segmentText(
 			`[core] 提示词插槽没填上：agents/${slug} 的 ${segment} 段 {{${issue.slot}}}（${issue.reason}）`,
 		);
 	}
-	return rendered.text.trim();
+	// 唯一出口：身份、记忆、技能、团队简报都会进这里，密钥在这里统一换掉。
+	// 写入侧（`file` / `remember` / hire）也脱敏，但那是「尽量别写进去」；这一道才是
+	// 保证「已经写进去的也发不出去」的那一道（ADR-034）。
+	return redact(rendered.text.trim(), paths.workspace);
 }
 
 /**

@@ -523,6 +523,15 @@ function makeAfterPost(
 					coalesceQueue(harness, conversationId, keepRequestId, context),
 				// 留痕里用 slug：这一层拿不到显示名表，而留痕是给人看位置，不是给人看称呼。
 				labelOf: (slug) => slug,
+				// 沉淀也记 wake（与投递同一个写法）：不记的话他回话会落到别的频道。
+				rememberWake: async (slug: string, wake) => {
+					await harness.commit(async (tx) => {
+						const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+						const id = conversationFor(doc, slug);
+						if (id === undefined) return;
+						doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
+					}, context);
+				},
 			},
 			channelId.slice("team:".length),
 			context,

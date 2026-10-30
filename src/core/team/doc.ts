@@ -83,12 +83,35 @@ export function renderTeamFile(doc: {
 	);
 }
 
+/**
+ * 团队 slug 只允许字母、数字、中文、`-`、`_`。
+ *
+ * 它会被拼成 `teams/<slug>/...`：`..` 能跳出 `teams/`，`a/b` 能指到预期之外。
+ * 团队 slug 来自 agent 的自由文本（`remember(scope=team)` 的 `team` 参数），
+ * 不能只信调用方 —— 这里是唯一的闸。
+ */
+const TEAM_SLUG = /^[\p{L}\p{N}_-]+$/u;
+
+export function assertTeamSlug(slug: string): string {
+	if (!TEAM_SLUG.test(slug) || slug === "." || slug === "..") {
+		throw new Error(`不能用作团队 slug：${slug}。只能用字母、数字、中文、- 和 _。`);
+	}
+	return slug;
+}
+
 /** 团队目录名（与频道 id `team:<slug>` 用的是同一个 slug）。 */
 export function teamDirOf(teamsRoot: string, slug: string): string {
-	return join(teamsRoot, slug);
+	return join(teamsRoot, assertTeamSlug(slug));
 }
 
 export async function readTeam(teamsRoot: string, slug: string): Promise<TeamDoc | undefined> {
+	// 读是「尽力而为」：身份文件里写了 `team: foo/bar` 这样的坏值，只该让这个团队
+	// 不存在，不能把整个提示词渲染打挂。写（`writeTeam`）仍然严格拒绝。
+	try {
+		assertTeamSlug(slug);
+	} catch {
+		return undefined;
+	}
 	const source = await readTextOrUndefined(join(teamDirOf(teamsRoot, slug), TEAM_FILE));
 	return source === undefined ? undefined : parseTeam(slug, source);
 }
@@ -133,7 +156,7 @@ export async function writeTeam(
 	},
 ): Promise<TeamDoc> {
 	const slug = input.slug.trim();
-	if (slug === "" || slug === "." || slug === "..") throw new Error("团队 slug 不能为空");
+	if (slug === "") throw new Error("团队 slug 不能为空");
 	const dir = teamDirOf(teamsRoot, slug);
 	await mkdir(dir, { recursive: true });
 	const existing = await readTeam(teamsRoot, slug);

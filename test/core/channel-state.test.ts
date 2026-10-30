@@ -41,6 +41,10 @@ describe("@ 解析", () => {
 	test("邮箱与裸 @ 不算", () => {
 		expect(parseMentions("hi@example.com 你好 @ 没有名字")).toEqual([]);
 	});
+	test("中文紧贴 @ 也要认：「麻烦@林越」「请@我」是日常写法", () => {
+		expect(parseMentions("麻烦@林越 看一下")).toEqual(["林越"]);
+		expect(parseMentions("请@我 拍板")).toEqual(["我"]);
+	});
 });
 
 describe("频道 id", () => {

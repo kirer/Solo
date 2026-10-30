@@ -18,17 +18,23 @@ import { join } from "node:path";
 import { entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
 import { createSerialGate, readTextOrUndefined } from "../runtime/io.ts";
 import { renderSlots, toolSlots } from "../text.ts";
+import { assertTeamSlug } from "./doc.ts";
 
 export const TEAM_MEMORY_FILE = "memory.md";
 
 /** `teams/<slug>/memory.md` 的绝对路径。 */
 export function teamMemoryPath(teamsRoot: string, team: string): string {
-	return join(teamsRoot, team, TEAM_MEMORY_FILE);
+	return join(teamsRoot, assertTeamSlug(team), TEAM_MEMORY_FILE);
 }
 
 /** 读全文；不存在返回 undefined（没记过就是没记过，不自动建空文件）。 */
 export async function readTeamMemory(teamsRoot: string, team: string): Promise<string | undefined> {
-	return readTextOrUndefined(teamMemoryPath(teamsRoot, team));
+	// 与 `readTeam` 同一个口径：读是尽力而为，坏 slug 等于「这个团队没有记忆」。
+	try {
+		return await readTextOrUndefined(teamMemoryPath(teamsRoot, team));
+	} catch {
+		return undefined;
+	}
 }
 
 /**
@@ -53,6 +59,8 @@ export async function appendTeamMemory(
 ): Promise<string> {
 	const problem = entryProblem(input.text);
 	if (problem !== undefined) throw new Error(problem);
+	// 写是拼路径：坏 slug 一律拒绝（`readTeamMemory` 的宽容只适用于读）。
+	assertTeamSlug(team);
 	return serialized(async () => {
 	const path = teamMemoryPath(teamsRoot, team);
 	const existing =

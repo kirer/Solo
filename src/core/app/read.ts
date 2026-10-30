@@ -19,6 +19,7 @@ import type {
 	ViewOrg,
 } from "../view/dto.ts";
 import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
+import { redact } from "../agent/secrets.ts";
 import { appendMemory, memoryDigest, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { listSkills } from "../agent/skills.ts";
 import type { ViewPersonMemory, ViewPersonProfile } from "../view/dto.ts";
@@ -232,7 +233,8 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 			return { ok: true, entries: sectionsOf(result.source).length };
 		}
 		if (body.op === "add") {
-			const result = await appendMemory(agentDir, body.text ?? "", new Date(), actor);
+			// 网页上贴进来的这条也会进提示词，跟 agent 自己 `remember` 一样过脱敏。
+			const result = await appendMemory(agentDir, redact(body.text ?? "", dirname(shell.agentsRoot)), new Date(), actor);
 			if (!result.changed) throw new AppError("bad-request", result.message);
 			return { ok: true, entries: sectionsOf(result.source).length };
 		}

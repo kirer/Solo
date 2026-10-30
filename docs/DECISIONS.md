@@ -2402,3 +2402,35 @@ md」，两个补丁本质上都是「靠代码替模型记住一件事」。V3 
 
 **验收**：`npm run check` 绿、`npm test` 538/538、`npm run ui:build` 成功、
 `npm run prompt:check` 绿（行为未变，live 不必重跑）。
+
+## ADR-095：一轮代码审查的六个 P0 —— 脱敏出口、沉淀停摆、两处路径穿越、中文 @、崩溃恢复
+
+**背景**。V3 全量审查发现六处「单测看不见、真跑会出事」的缺陷。它们的共同点是：
+每条都有一个「看起来对」的局部实现，缺的是**一个出口**或**一个不变量**。
+
+**决策**：
+
+1. **脱敏回到渲染出口**。ADR-034 写的是「在渲染出口换掉密钥」，但 `segmentText()` 一直在
+   输出未脱敏的正文 —— 记忆 / 身份 / 技能里写进去的 key 每一轮都会发给模型。现在
+   `segmentText()` 返回前统一 `redact(text, paths.workspace)`。写入侧（`file`、`remember`、
+   hire 的 `body`、网页编辑记忆）也全部脱敏；`read_history` 与 `file(action=read)` 是
+   「它主动来取」的另一条路，同样过脱敏，且 `.secrets.json` 对工具直接不开放
+   （读出来等于把 key 装进上下文，写回去会把人配的值覆盖成马赛克）。
+2. **沉淀不再永久停摆**。`waiting` 存在、记忆文件没变时，旧逻辑直接返回；只要团队管理员
+   一次没写，之后所有消息都进不了沉淀。现在「等待期间又来了新消息」会让这一批重新被问；
+   `waiting` 只在 `wake()` 返回 `delivered` 时记（失败不记，下次再试）；沉淀唤醒补记
+   `wakeRecord`，并在正文里明写频道 id —— 否则整理结果可能落到私聊。
+3. **两处路径穿越收口**。`slugify("..")` 以前会得到 `..`，`hire(name="..")` 能把身份写到
+   工作区根；现在点号一律去掉，且 `createAgent` 对最终 slug 统一过 `assertSlug`
+   （字母 / 数字 / 中文 / `-` / `_`，拒绝 `.`、`..`、`owner`）。团队 slug 同理：`team/doc.ts`
+   的 `teamDirOf` 与 `team/memory.ts` 的 `teamMemoryPath` 都先过 `assertTeamSlug`；
+   `remember(scope=team)` 另外检查成员资格（`self.team` 或 README 里的 lead）。
+4. **中文紧贴 `@` 要认**。原正则用 `\p{L}` 排除前一个字符，于是「麻烦@林越」「请@我」整类
+   漏掉 —— 中文不写空格。现在只排除 ASCII 字母数字与邮箱符号，邮箱仍然不算。
+5. **崩溃恢复不吞排队输入**。旧自愈把所有活任务结算成 terminal，却只把「owner 已不存在 /
+   已 terminal」的会话算成陈旧；owner 还是 `running` 的会话，它排队的输入会被
+   `abortSubmission` 撤掉、也没人补占位。现在**只要有 `run` 标记就算陈旧**（它的 owner
+   本来就要被终止），排队输入一条都不撤，并补一句占位输入把会话踢起来。
+
+**验收**：`npm run check`、`npm test`（新增 8 例 + 更新崩溃恢复 1 例）、`npm run prompt:check`、
+`npm run live` 两轮 16/16。

@@ -21,6 +21,13 @@ afterEach(async () => {
 });
 
 describe("团队：一份 README.md 就是全部事实", () => {
+	it("团队 slug 是路径的一部分：`.`、`..`、带 / 的一律拒绝", async () => {
+		await expect(writeTeam(root, { slug: "..", body: "x" })).rejects.toThrow();
+		await expect(writeTeam(root, { slug: "a/b", body: "x" })).rejects.toThrow();
+		// 读是尽力而为：坏 slug 只等于「没有这个团队」，不能打挂提示词渲染。
+		expect(await readTeam(root, "..")).toBeUndefined();
+	});
+
 	it("没有目录时返回 undefined，列表为空", async () => {
 		expect(await readTeam(root, "demo")).toBeUndefined();
 		expect(await listTeams(root)).toEqual([]);

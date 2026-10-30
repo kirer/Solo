@@ -97,3 +97,19 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		expect(seed).toContain("只有助理能直接找我");
 	});
 });
+
+describe("密钥：写进记忆也发不出去（ADR-034 的渲染出口）", () => {
+	it("memory.md 里的密钥在提示词里被换掉，明文的 key 不出现", async () => {
+		const key = "sk-live-abcdef123456";
+		await writeFile(join(root, ".secrets.json"), JSON.stringify({ OPENAI_API_KEY: key }), "utf8");
+		// 直接写进记忆（绕过 remember 的写入脱敏）：这一道守的正是「已经写进去了」。
+		await writeFile(
+			join(root, "agents", "dev", "memory.md"),
+			`# 记忆\n\n## 2026-10-30\n用这个 key 调接口：${key}\n`,
+			"utf8",
+		);
+		const text = await render();
+		expect(text).not.toContain(key);
+		expect(text).toContain("[密钥已隐藏]");
+	});
+});

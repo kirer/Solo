@@ -183,12 +183,15 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 			for (const conversation of await scanAllPages((limit, cursor) => tx.scanConversations({}, limit, cursor))) {
 				const doc = await tx.doc(LiveDoc, conversation.id);
 				const run = doc.run;
-				// 任务不存在也算陈旧（指向一个已经不存在的任务，没人会来收尾）。
-				const owner = run === undefined ? undefined : await tx.task(run.taskId);
+				// **只要有 `run` 就算陈旧**：这次 commit 会把所有活着状态的任务统统结算成
+				// terminal（上面 `live`），所以它的 owner 也一样会死。旧判断只看
+				// 「owner 不存在或已 terminal」，owner 还是 `running` 时判成「不陈旧」，
+				// 于是它服务的排队输入被 `abortSubmission` 撤掉、也没人补占位 ——
+				// 我崩溃前说的话就这样被静默吞了（实测：私聊里几十条全没）。
 				stale.push({
 					conversationId: conversation.id,
 					runInputs: run?.inputs ?? [],
-					stale: run !== undefined && (owner === undefined || owner.state?.status === "terminal"),
+					stale: run !== undefined,
 				});
 			}
 			for (const id of stale.filter((item) => item.stale).flatMap((item) => item.runInputs)) {
@@ -223,15 +226,10 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 			return count;
 		}, context);
 
-		// 排队中的输入默认撤掉：它服务的那一轮已经死了，没人会再来取。
-		// 例外是被解开假忙的会话——它现在是真空闲，这些输入**能被处理**，
-		// 一律撤掉等于把我刚说的话默默吞了（实测：私聊里几十条全被吞）。
-		for (const submission of pendingSubmissions) {
-			if (submission.status === "queued" && !unblocked.has(submission.conversationId)) {
-				const result = await harness.abortSubmission(submission.id, context, submission.conversationId);
-				if (result === "aborted") settled += 1;
-			}
-		}
+		// **排队中的输入一条都不撤**。`queued` = 还躺在 inbox 里、从未被这一轮取走，
+		// 它的内容完好，撤掉就是把我崩溃前说的话静默吞掉（实测：私聊里几十条全没）。
+		// 之前只对「被解开假忙」的会话放行，可那个集合只包含有 `run` 标记的会话；
+		// 没有标记的会话里排队的东西同样能续上——下面统一补一句占位输入把它们踢起来。
 		const placed = pendingSubmissions.filter(
 			(submission) => submission.status === "placed" && !unblocked.has(submission.conversationId),
 		);
@@ -248,9 +246,7 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 		// 它们从未触发 `startRun`，而 inbox 只在「一轮结束」的边界上被取走。没有活着
 		// 的一轮，就没人来取。这里补一句占位输入把它自己踢起来——不用猜那些积压的正文，
 		// 一次 `admitSubmission` 会把 inbox 里所有排队项一起放进这一轮。
-		const backlog = pendingSubmissions.filter(
-			(submission) => submission.status === "queued" && unblocked.has(submission.conversationId),
-		);
+		const backlog = pendingSubmissions.filter((submission) => submission.status === "queued");
 		for (const conversationId of new Set(backlog.map((submission) => submission.conversationId))) {
 			const conversation = await harness.conversation(conversationId, context);
 			if (conversation === undefined) continue;

@@ -51,6 +51,12 @@ type SettleDeps = {
 	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
 	/** 显示名（留痕用）。 */
 	readonly labelOf?: (slug: string) => string;
+	/**
+	 * 记「被谁在哪个频道叫醒」。投递那条路一直有，沉淀这条以前没有 ——
+	 * 团队管理员被叫醒后查不到 wake，回话只能退到「最早的频道」，于是整理结果
+	 * 可能落在私聊里，团队频道看起来像没人整理。
+	 */
+	readonly rememberWake?: (slug: string, wake: { readonly channelId: string; readonly seq: number; readonly from: string; readonly at: number }) => Promise<void>;
 };
 
 /** 挑一个「该由谁来写这个团队记忆」的人。优先 README.md 里的 lead。 */
@@ -83,14 +89,6 @@ export async function settleTeam(
 	if (channel === undefined) return {};
 
 	let settle = (await deps.harness.snapshot(SettleDoc, context)) ?? { cursors: {} };
-	const waiting = settle.waiting?.[team];
-	if (waiting !== undefined) {
-		// 记忆文件变了才算这批被真写过；没变就是还没写（被打断、或者写砸了），不催也不推进。
-		const stamp = await memoryStamp(deps.teamsRoot, team);
-		if (stamp === null || stamp === waiting.stamp) return {};
-		await writeSettle(deps.harness, team, context, { cursor: waiting.seq, waiting: null });
-		settle = (await deps.harness.snapshot(SettleDoc, context)) ?? settle;
-	}
 
 	try {
 		const [doc, identities] = await Promise.all([
@@ -98,6 +96,22 @@ export async function settleTeam(
 			readAllIdentities(deps.agentsRoot),
 		]);
 		const to = settleTarget(doc, channel.members, identities);
+		const waiting = settle.waiting?.[team];
+		if (waiting !== undefined) {
+			// 记忆文件变了才算这批被真写过，推进游标放行。
+			const stamp = await memoryStamp(deps.teamsRoot, team);
+			if (stamp !== waiting.stamp) {
+				await writeSettle(deps.harness, team, context, { cursor: waiting.seq, waiting: null });
+				settle = (await deps.harness.snapshot(SettleDoc, context)) ?? settle;
+			} else if (latestSeq(state, channel.id, to) <= waiting.seq) {
+				// 文件没变、也没有「别人说的」新消息：还没写（被打断、写砸了），不催也不推进。
+				// 排除 `to` 自己的发言：他回一句「好的」不该把沉淀再问一遍。
+				return {};
+			}
+			// 文件没变但来了新消息：这一批不再等上一批 —— 否则团队管理员一次没写，
+			// 游标就永远停在 waiting.seq，之后所有消息都进不了沉淀（实测的永久停摆）。
+			// 往下走会把「游标之后」的全部消息重新列给他。
+		}
 		// 排除团队管理员自己说的话：他要整理的是别人说的东西。
 		const candidates = settleCandidates(state.messages[channel.id] ?? [], settle.cursors[team] ?? 0, to);
 		if (candidates.length === 0) return {};
@@ -127,6 +141,8 @@ export async function settleTeam(
 		}
 		const label = deps.labelOf?.(to) ?? to;
 		const body = [
+			// 频道 id 明写出来：工具默认在「被叫醒的频道」回话，而沉淀不是某个人 @ 出来的。
+			`你在团队「${team}」的频道（${channel.id}）里整理下面这些还没沉淀的消息。`,
 			renderSettlePrompt(prompt.settle, team, candidates),
 			renderReplyRules({ template: prompt.reply, woken: [to], viewer: to, colleagues: [] }),
 		]
@@ -136,6 +152,7 @@ export async function settleTeam(
 			{
 				conversationOf: deps.conversationOf,
 				...(deps.coalesceQueue === undefined ? {} : { coalesceQueue: deps.coalesceQueue }),
+				...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 				noteUnanswered: async (note) => {
 					await appendTeamNote(deps, team, renderUnanswered(note.seq, note.label, note.reason), context);
 				},
@@ -148,10 +165,16 @@ export async function settleTeam(
 				bodyOf: () => body,
 				entry: { kind: "core.settle", data: { team, count: candidates.length } },
 				note: { channelId: channel.id, seq: lastSeq, label },
+				// 沉淀也记 wake：他回话时 `say` 的默认频道就是这里。
+				wakeRecord: { channelId: channel.id, seq: lastSeq, from: OWNER, at: Date.now() },
 			},
 			context,
 		);
-		await writeSettle(deps.harness, team, context, { waiting: { seq: lastSeq, stamp } });
+		// 只有真的投出去了才记 waiting。失败还记，就等于「问都没问到」也算问过 ——
+		// 记忆永远不会变，下一批又会卡在同一个 seq 上。
+		if (woken.status === "delivered") {
+			await writeSettle(deps.harness, team, context, { waiting: { seq: lastSeq, stamp } });
+		}
 		return { asked: { team, to, count: candidates.length, delivered: woken.status === "delivered" } };
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
@@ -180,6 +203,15 @@ async function appendTeamNote(deps: SettleDeps, team: string, text: string, cont
 	} catch (error) {
 		process.stderr.write(`[沉淀失败] 留痕也失败：${error instanceof Error ? error.message : String(error)}\n`);
 	}
+}
+
+/** 这个频道里最新一条「会进候选」的消息序号（`note` 是系统留痕，`exclude` 是自己说的）。 */
+function latestSeq(state: ChannelState, channelId: string, exclude?: string): number {
+	return (state.messages[channelId] ?? []).reduce(
+		(max, message) =>
+			message.kind === "note" || message.from === exclude ? max : Math.max(max, message.seq),
+		0,
+	);
 }
 
 /** 记忆文件的印章（mtime）。没有记忆文件 = `null`。 */
@@ -229,10 +261,7 @@ export async function confirmedBy(
 ): Promise<number> {
 	const state = (await harness.snapshot(ChannelDoc, context)) as ChannelState | undefined;
 	// 只算会进候选的消息：`note` 是系统留痕，游标不该因为「系统报过一次错」而前进。
-	const latest = (state?.messages[teamId(team)] ?? []).reduce(
-		(max, message) => (message.kind === "note" ? max : Math.max(max, message.seq)),
-		0,
-	);
+	const latest = state === undefined ? 0 : latestSeq(state, teamId(team));
 	const settle = (await harness.snapshot(SettleDoc, context)) as SettleState | undefined;
 	if (latest <= (settle?.cursors[team] ?? 0)) return 0;
 	await writeSettle(harness, team, context, { cursor: latest, waiting: null });

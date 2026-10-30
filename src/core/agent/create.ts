@@ -9,17 +9,37 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { listAgentSlugs, readIdentity, type Identity, type IdentityHeader } from "../agent/identity.ts";
+import { listAgentSlugs, readIdentity, OWNER_SLUG, type Identity, type IdentityHeader } from "../agent/identity.ts";
 import { renderFrontmatter } from "./frontmatter.ts";
 
-/** 名字 → slug。中文保留（`林越` → `林越`），空白与其他符号换成 `-`。 */
+/**
+ * 名字 → slug。中文保留（`林越` → `林越`），空白与其他符号换成 `-`。
+ *
+ * 点号一律去掉：`.` / `..` 会让 `join(agentsRoot, slug)` 跳出 agents 目录
+ * （实测 `hire(name="..")` 会把身份写到工作区根），而以点开头的目录又会被
+ * `listAgentSlugs` 跳过，等于建了一个永不可见的人。
+ */
 export function slugify(name: string): string {
 	const flat = name
 		.trim()
 		.replace(/[\s/\\:*?"<>|]+/gu, "-")
+		.replace(/\.+/gu, "")
+		// 剩下的非 slug 字符（`#` `@` `!` 之类）也换掉：生成出来的 slug 必须能过
+		// `assertSlug`，否则一个奇怪的名字会让 `hire` 直接失败。
+		.replace(/[^\p{L}\p{N}_-]+/gu, "-")
 		.replace(/-+/gu, "-")
 		.replace(/^-|-$/gu, "");
 	return flat === "" ? "agent" : flat;
+}
+
+/** slug 只允许字母、数字、中文、`-`、`_`；别的一律拒绝（路径与 @ 都按它拼）。 */
+const SLUG = /^[\p{L}\p{N}_-]+$/u;
+
+export function assertSlug(slug: string): string {
+	if (!SLUG.test(slug) || slug === "." || slug === ".." || slug === OWNER_SLUG) {
+		throw new Error(`不能用作 slug：${slug}。只能用字母、数字、中文、- 和 _。`);
+	}
+	return slug;
 }
 
 /** 拿一个还没被占用的 slug：重名就加 `-2`、`-3`。 */
@@ -70,6 +90,8 @@ export type CreateAgentInput = {
  */
 export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	const slug = input.slug ?? (await uniqueSlug(input.root, input.name));
+	// 显式传入的 slug 也要过同一道闸：路径是拼出来的，不能只信调用方。
+	assertSlug(slug);
 	const dir = join(input.root, slug);
 	await mkdir(dir, { recursive: true });
 	const header: IdentityHeader = {

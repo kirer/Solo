@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { createAgent, slugify, uniqueSlug } from "../../src/core/agent/create.ts";
+import { assertSlug, createAgent, slugify, uniqueSlug } from "../../src/core/agent/create.ts";
 import { listAgentSlugs, readAllIdentities, readIdentity } from "../../src/core/agent/identity.ts";
 
 const dirs: string[] = [];
@@ -25,6 +25,18 @@ describe("slug", () => {
 	});
 	test("全是符号时退化成 agent", () => {
 		expect(slugify("  ")).toBe("agent");
+	});
+	test("点号一律去掉：`..` 不能拼出上一级路径", () => {
+		expect(slugify("..")).toBe("agent");
+		expect(slugify("a..b")).toBe("ab");
+	});
+	test("显式 slug 也过闸：`.`、`..`、`owner`、带 / 的一律拒绝", async () => {
+		expect(() => assertSlug("..")).toThrow();
+		expect(() => assertSlug(".")).toThrow();
+		expect(() => assertSlug("owner")).toThrow();
+		expect(() => assertSlug("a/b")).toThrow();
+		const agents = await root();
+		await expect(createAgent({ root: agents, name: "林子", slug: ".." })).rejects.toThrow();
 	});
 	test("重名自动加后缀", async () => {
 		const agents = await root();

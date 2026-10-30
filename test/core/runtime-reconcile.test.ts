@@ -30,7 +30,7 @@ async function freshWs(): Promise<string> {
 }
 
 describe("A2 启动自愈真的跑完了", () => {
-	it("有排队中的输入时，重开不再报「写表后读表」，且那条输入被结算掉", async () => {
+	it("有到一半的输入时，重开不再报「写表后读表」，且不会把排队中的输入撤掉", async () => {
 		const ws = await freshWs();
 		await mkdir(join(ws, "agents", "甲"), { recursive: true });
 		await writeFile(join(ws, "agents", "甲", "identity.md"), "---\nname: 甲\n---\n\n# 甲\n", "utf8");
@@ -53,12 +53,17 @@ describe("A2 启动自愈真的跑完了", () => {
 			errors.push(args.map(String).join(" "));
 		});
 		try {
+			const proto = Object.getPrototypeOf(first.harness) as { abortSubmission: (...args: unknown[]) => unknown };
+			const abort = vi.spyOn(proto, "abortSubmission");
 			const second = await openCore({ databasePath: join(ws, "core.sqlite"), models, registry: createRegistry() });
 			runtimes.push(second);
+			// 恢复时**一条排队输入都不许撤**：`queued` 是内容完好、还没被取走的输入，
+			// 撤掉就是把我崩溃前说的话静默吞掉。崩溃前正在跑的那条则会记成 unanswered。
+			expect(abort).not.toHaveBeenCalled();
+			abort.mockRestore();
 			const inspection = await second.harness.inspect();
 			const zombie = inspection.submissions.find((item) => item.requestId === "test:zombie");
-			// 要么被撤掉、要么被结算成 unanswered —— 不能还挂在 queued/placed 上。
-			expect(zombie?.status === "queued" || zombie?.status === "placed").toBe(false);
+			expect(zombie === undefined || zombie.status === "unanswered" || zombie.status === "done").toBe(true);
 		} finally {
 			spy.mockRestore();
 		}
