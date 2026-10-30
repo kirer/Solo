@@ -39,8 +39,11 @@ async function main(): Promise<void> {
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as Awaited<ReturnType<typeof shell.channels>>;
 		const company = doc.channels["company"];
-		if (company !== undefined && (doc.messages["company"]?.length ?? 0) > 0) {
-			cleared = doc.messages["company"].length;
+		// 收窄一次再判：`noUncheckedIndexedAccess` 下 `doc.messages["company"]` 每次访问都是
+		// `X | undefined`，先 `?.length ?? 0` 判空、再直接 `.length` 是类型撒谎（TS2532）。
+		const companyMessages = doc.messages["company"];
+		if (company !== undefined && companyMessages !== undefined && companyMessages.length > 0) {
+			cleared = companyMessages.length;
 			doc.messages["company"] = [];
 			doc.nextSeq["company"] = 1;
 		}

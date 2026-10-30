@@ -1,0 +1,13 @@
+{
+  "//": "scripts/ 的类型检查。主 tsconfig 的 rootDir 是 src/，include 进不来（tsc 会报 TS6059），所以单开一份 noEmit 的。",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "noEmit": true,
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["scripts/**/*.ts"],
+  "exclude": ["node_modules", "dist", "spikes"]
+}

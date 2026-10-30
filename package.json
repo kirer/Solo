@@ -9,7 +9,7 @@
 	},
 	"scripts": {
 		"start": "node --experimental-strip-types src/core/shell/main.ts",
-		"check": "tsc -p tsconfig.json --noEmit && tsc -p ui/app/tsconfig.json --noEmit && npm run check:boundaries",
+		"check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.scripts.json --noEmit && tsc -p ui/app/tsconfig.json --noEmit && npm run check:boundaries",
 		"check:boundaries": "node scripts/check-boundaries.mjs",
 		"test": "vitest --run",
 		"test:watch": "vitest",
