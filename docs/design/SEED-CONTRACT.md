@@ -14,7 +14,7 @@
 | --- | --- | --- | --- | --- |
 | `workspace/rules.md` | 是 | **不说就会立刻出错**的硬规矩 | 15 条，一行一条，不带解释 | 「只回叫你的那个频道」「像成员说话：一两句，先给结论」 |
 | `workspace/prompt/*.md` | 是 | 怎么组织信息、怎么用工具（带插槽） | 一段 ≤ 12 行 | 「你的上级：{{manager}}」 |
-| `workspace/skills/<n>/SKILL.md` | 否，查了才读 | 分场景的长做法 | ≤ 4 KB（自律 3 KB），四段 | 拍板链、怎么汇报、怎么立项 |
+| `workspace/skills/<n>/SKILL.md` | 否，查了才读 | 分场景的长做法 | ≤ 4 KB（自律 3 KB），四段 | 拍板链、怎么汇报、怎么建团队 |
 | `workspace/agents/<slug>/identity.md` | 是（正文） | 这个人的职责与边界 | ≤ 20 行 | 「你负责 X；不做 Y」 |
 
 **判据**：这句话不说，他下一句就会做错 → `rules`。要分三步做、只在某种场合才用 → `skill`。
@@ -49,7 +49,7 @@ seed/
     95-settle.md                 # 团队记忆沉淀那一轮的正文（插槽 {{team}} {{pending}} {{candidates}}）
   agents/
     assistant/identity.md        # 助理身份（从代码挪出来）
-    assistant/skills/立项/SKILL.md
+    assistant/skills/建立团队/SKILL.md
     assistant/skills/招人/SKILL.md
   skills/                        # 全员层：只放「全员都该这么干」的
     工作规矩/SKILL.md             # 和 rules.md 分工：rules 短硬，skill 长细

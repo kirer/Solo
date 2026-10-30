@@ -195,7 +195,7 @@ export async function seedPromptTemplates(workspaceRoot: string): Promise<readon
  * 给某一个人的个人层播种技能（`agents/<slug>/skills/`）。
  *
  * 为什么有些技能属于个人还是全员：一份技能属于谁，取决于「谁该为这条做法负责」。
- * 「怎么立项」「怎么招人」是助理的判断，它自己会迭代 —— 写在全员层就等于宣布全员
+ * 「怎么建团队」「怎么招人」是助理的判断，它自己会迭代 —— 写在全员层就等于宣布全员
  * 都得按助理那一套招人，而实际上别人不该招人。`写技能` / `找现成技能` 反过来是
  * 所有人都该会的手艺，所以它们在全员层。
  */
@@ -293,8 +293,8 @@ export async function seedOwnerAssistant(
 	//
 	// 两层，各自管各自的事：
 	// - 全员层 `seed/skills/`（`写技能`、`找现成技能`）—— 所有人都该会的手艺。
-	// - 助理自己的 `seed/agents/assistant/skills/`（`立项`、`招人`）—— 它的判断，不属于别人。
-	//   招人、立项是助理的职权，别人本来就不该招人；写进全员层等于宣布全员都这么干。
+	// - 助理自己的 `seed/agents/assistant/skills/`（`建立团队`、`招人`）—— 它的判断，不属于别人。
+	//   招人、建团队是助理的职权，别人本来就不该招人；写进全员层等于宣布全员都这么干。
 	await syncAllSkills(agentsRoot);
 	await seedPersonalSkills(agentsRoot, identity.slug, SEED_ASSISTANT_SKILLS);
 	return identity.slug;

@@ -33,16 +33,16 @@ describe("技能：目录即事实", () => {
 	});
 
 	it("读两种摆法：目录里的 SKILL.md 与单文件 .md", async () => {
-		await mkdir(join(agent, "skills", "立项"), { recursive: true });
+		await mkdir(join(agent, "skills", "建立团队"), { recursive: true });
 		await writeFile(
-			join(agent, "skills", "立项", "SKILL.md"),
-			"---\nname: 立项\ndescription: 什么时候该开一个新团队\n---\n\n正文一\n",
+			join(agent, "skills", "建立团队", "SKILL.md"),
+			"---\nname: 建立团队\ndescription: 什么时候该开一个新团队\n---\n\n正文一\n",
 			"utf8",
 		);
 		await writeFile(join(agent, "skills", "复盘.md"), "---\ndescription: 做完之后的回看\n---\n\n正文二\n", "utf8");
 
 		const skills = await listSkills(roots, "me");
-		expect(skills.map((skill) => skill.name)).toEqual(["复盘", "立项"]);
+		expect(skills.map((skill) => skill.name)).toEqual(["复盘", "建立团队"]);
 		expect(skills.map((skill) => skill.description)).toEqual(["做完之后的回看", "什么时候该开一个新团队"]);
 	});
 

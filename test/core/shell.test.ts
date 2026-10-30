@@ -160,20 +160,20 @@ describe("播种技能", () => {
 		expect(body?.body).toContain("## 什么时候该写");
 	});
 
-	test("立项与招人是助理的个人技能，不进全员层", async () => {
+	test("建立团队与招人是助理的个人技能，不进全员层", async () => {
 		const agents = (await workspace()).agentsRoot;
 		// V3 把助理的个人技能挪到 seed/agents/assistant/skills/：一个 agent 的种子内容跟它的目录名走。
 		const copied = await seedPersonalSkills(agents, "助理", "agents/assistant/skills");
-		expect(copied).toEqual(expect.arrayContaining(["立项", "招人"]));
+		expect(copied).toEqual(expect.arrayContaining(["建立团队", "招人"]));
 
-		// 全员层不该有它们：招人、立项是助理的职权，别人本来就不该招人。
+		// 全员层不该有它们：招人、建团队是助理的职权，别人本来就不该招人。
 		const synced = await syncAllSkills(agents);
 		const syncedNames = [...synced.copied, ...synced.updated];
-		expect(syncedNames).not.toContain("立项");
+		expect(syncedNames).not.toContain("建立团队");
 		expect(syncedNames).not.toContain("招人");
 
-		const body = await readSkill({ workspace: join(agents, ".."), agents }, "助理", "立项");
-		expect(body?.body).toContain("## 什么时候立");
+		const body = await readSkill({ workspace: join(agents, ".."), agents }, "助理", "建立团队");
+		expect(body?.body).toContain("## 什么时候建");
 		expect(body?.scope).toBe("personal");
 	});
 
