@@ -2606,3 +2606,38 @@ write ← post → dispatch`）。以后再出现「共用件」，先问它服�
 
 **验收**：`npm run check`（tsc ×3 + 边界）与 `npm test`（62 文件 579 例）全绿；
 `npm run prompt:check` 不变。`docs/CODE.md` 的文件表同步为按问题命名的三张表。
+
+---
+
+## ADR-101：装配不写业务；接线只接一次
+
+**背景**。ADR-100 拆完频道层之后，还剩两处「同一件事有两份实现」：
+
+1. **装配层在写业务**。`shell/assemble.ts` 里 `addToAllChannel` / `joinTeamChannel` /
+   `syncTeamChannel` 决定了「谁该在哪个频道里」——这是团队与身份文档的投影，是业务事实，
+   却住在外壳里；`tools/`、`app/`、测试想复用只能再写一遍或够到外壳。
+2. **接线散在四处**。`directoryWake` 在 `assemble`、`makeAfterPost`、`ownerSpeak`、
+   `tools/context.ts` 各造一次；`createTurnFinisher` 造两次；`promptDir` / `uploadsRoot`
+   各自拼。新增一个「叫醒谁」的依赖，要记得改四个地方，漏一个就是静默的「回错频道」。
+
+**决策**：
+
+1. **成员投影下沉到 `channel/membership.ts`**：`addToAllChannel` / `ensureAllChannel` /
+   `joinTeamChannel` / `syncTeamChannel` 只依赖 `{harness, agentsRoot, teamsRoot, allChannel}`。
+   外壳只决定「什么时候调」，不再决定「谁该在频道里」。
+2. **接线集中到 `channel/wiring.ts`**：`wireChannel()` 造一次 `ChannelWiring`
+   （`conversationOf` / `rememberWake` / `wakeOf` / `finishTurn` / `promptDir` / `uploadsRoot`）。
+   工具层（`CoreToolDeps.wiring`）、沉淀（`SettleDeps.wiring`）、`ownerSpeak`、收尾器
+   都从这里拿；`postDeps` 只补本次的 `state`。
+3. **HTTP 原语按问题拆**（原 `interface/http/server.ts` 733 行 → 5 个文件）：
+   `respond.ts`（出口：json / fail / readJson / statusOf）、`route-match.ts`（匹配）、
+   `network.ts`（监听地址）、`static-assets.ts`（压缩 / 条件请求 / SPA 回退 / 越界判断）、
+   `origin-guard.ts`（Host 与 Origin 白名单）。没有 `server.ts` 这个名字了 ——
+   它从来不是「一个服务器」，而是四件不相干的事。
+
+**取舍**：`ChannelWiring` 是一个新的跨文件类型，但它替换的是四份**隐式**约定
+（各自拼同样的字段），显式的代价更小。`SettleDeps` 从七个字段降到五个（`wiring` +
+两个根 + `channelState` + 两个可选钩子），测试夹具改一处即可。
+
+**验收**：`npm run check`、`npm test`（62 文件 579 例）、`npm run prompt:check` 全绿；
+`assemble.ts` 643 → 468 行，`settle.ts` 267 → 264 行；行为未变，无 `live` 必要。

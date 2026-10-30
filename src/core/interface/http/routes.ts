@@ -11,10 +11,11 @@
  */
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import type { Route } from "./server.ts";
+import type { Route } from "./route-match.ts";
 import type { StreamHub } from "./sse.ts";
 import type { App, MemoryEditBody, PostBody } from "../../app/index.ts";
-import { json, readJson, serveStatic } from "./server.ts";
+import { json, readJson } from "./respond.ts";
+import { serveStatic } from "./static-assets.ts";
 
 /**
  * 记忆留痕里的「操作者」。

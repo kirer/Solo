@@ -11,7 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { hostAllowed, originAllowed } from "../../src/core/interface/http/server.ts";
+import { hostAllowed, originAllowed } from "../../src/core/interface/http/origin-guard.ts";
 import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";

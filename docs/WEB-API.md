@@ -101,7 +101,7 @@ type ViewChannel = {
 }
 ```
 
-**`kind` 只有两种，由 id 前缀 + 成员表一起推出来**（`channel/store.ts` 的 `chatKind()`，
+**`kind` 只有两种，由 id 前缀 + 成员表一起推出来**（`channel/types.ts` 的 `chatKind()`，
 `app/project.ts` 的投影直接转它的结果，`dto.ts` 的 `ViewChannelKind` 只有这两个值）：
 
 | id + 成员表 | kind |

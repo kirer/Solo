@@ -10,20 +10,19 @@
  * 被别的事打断、或者写砸了，这批消息下次还会被看到，不会永久漏掉。
  */
 import { defineDoc } from "../runtime/index.ts";
-import type { Conversation, Harness } from "../runtime/index.ts";
+import type { Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/types.ts";
 import { appendNote } from "../channel/write.ts";
 import { deliveryPrompt, renderReplyRules } from "../channel/delivery.ts";
 import { wake } from "../channel/wake.ts";
-import type { WakeRecord } from "../channel/turn/record.ts";
 import { renderUnanswered } from "../channel/unanswered.ts";
-import type { FinishTurn } from "../channel/turn/index.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
 import { oneLine } from "../md/oneline.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
+import type { ChannelWiring } from "../channel/wiring.ts";
 
 export type SettleState = {
 	/** `团队 slug` → 已确认沉淀到第几条 seq。 */
@@ -42,25 +41,15 @@ export const SettleDoc = defineDoc<SettleState>({
 });
 
 type SettleDeps = {
-	readonly harness: Harness;
+	/** 频道层的接线：会话在哪、记唤醒、模板目录、答完收尾（`channel/wiring.ts`）。 */
+	readonly wiring: ChannelWiring;
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
 	readonly channelState: () => Promise<ChannelState>;
-	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
-	/** 提示词模板目录（`<workspace>/prompt`）：沉淀也要贴回话规矩，和投递同一个来源。 */
-	readonly promptDir?: string;
 	/** 合并唤醒：和投递同一条路，别让同一个会话排两个唤醒。 */
 	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
 	/** 显示名（留痕用）。 */
 	readonly labelOf?: (slug: string) => string;
-	/**
-	 * 记「被谁在哪个频道叫醒」。投递那条路一直有，沉淀这条以前没有 ——
-	 * 团队管理员被叫醒后查不到 wake，回话只能退到「最早的频道」，于是整理结果
-	 * 可能落在私聊里，团队频道看起来像没人整理。
-	 */
-	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
-	/** 这一轮答完把结论补进团队频道（和投递同一个收尾）。 */
-	readonly finishTurn?: FinishTurn;
 };
 
 /** 挑一个「该由谁来写这个团队记忆」的人。优先 README.md 里的 lead。 */
@@ -89,10 +78,11 @@ export async function settleTeam(
 	skipped?: { team: string; count: number };
 }> {
 	const state = await deps.channelState();
+	const { harness, conversationOf, rememberWake, finishTurn, promptDir } = deps.wiring;
 	const channel = state.channels[`team:${team}`];
 	if (channel === undefined) return {};
 
-	let settle = (await deps.harness.snapshot(SettleDoc, context)) ?? { cursors: {} };
+	let settle = (await harness.snapshot(SettleDoc, context)) ?? { cursors: {} };
 
 	try {
 		const [doc, identities] = await Promise.all([
@@ -105,8 +95,8 @@ export async function settleTeam(
 			// 记忆文件变了才算这批被真写过，推进游标放行。
 			const stamp = await memoryStamp(deps.teamsRoot, team);
 			if (stamp !== waiting.stamp) {
-				await writeSettle(deps.harness, team, context, { cursor: waiting.seq, waiting: null });
-				settle = (await deps.harness.snapshot(SettleDoc, context)) ?? settle;
+				await writeSettle(harness, team, context, { cursor: waiting.seq, waiting: null });
+				settle = (await harness.snapshot(SettleDoc, context)) ?? settle;
 			} else if (latestSeq(state, channel.id, to) <= waiting.seq) {
 				// 文件没变、也没有「别人说的」新消息：还没写（被打断、写砸了），不催也不推进。
 				// 排除 `to` 自己的发言：他回一句「好的」不该把沉淀再问一遍。
@@ -123,20 +113,20 @@ export async function settleTeam(
 		const lastSeq = candidates[candidates.length - 1]?.seq ?? 0;
 		if (to === undefined) {
 			// 没人能写：游标照常推进，这批不再重复打扰。
-			await writeSettle(deps.harness, team, context, { cursor: lastSeq, waiting: null });
+			await writeSettle(harness, team, context, { cursor: lastSeq, waiting: null });
 			return { skipped: { team, count: candidates.length } };
 		}
-		const conversation = await deps.conversationOf(to);
+		const conversation = await conversationOf(to);
 		if (conversation === undefined) {
 			// 有团队管理员但没会话：游标照常推进，下次团队管理员醒来读团队频道能看到。
-			await writeSettle(deps.harness, team, context, { cursor: lastSeq, waiting: null });
+			await writeSettle(harness, team, context, { cursor: lastSeq, waiting: null });
 			return { skipped: { team, count: candidates.length } };
 		}
 
 		const stamp = await memoryStamp(deps.teamsRoot, team);
 		// 回话规矩从模板现读一次（不缓存）：沉淀这条路上以前什么都没有 —— 裸提示词、
 		// 没留痕、没合并。现在和投递走同一个 `wake()`，两段规矩也一起贴。
-		const prompt = await deliveryPrompt(deps.promptDir);
+		const prompt = await deliveryPrompt(promptDir);
 		if (prompt.settle.trim() === "") {
 			// 模板缺了就别问：问出去也是一句「按技能整理」，模型既没判据也没被要求读技能
 			// —— 这一刀之前的 11/12 就是这么来的。游标不推进，等模板补上下次再问。
@@ -154,12 +144,12 @@ export async function settleTeam(
 			.join("\n");
 		const woken = await wake(
 			{
-				conversationOf: deps.conversationOf,
+				conversationOf: (slug) => conversationOf(slug),
 				...(deps.coalesceQueue === undefined ? {} : { coalesceQueue: deps.coalesceQueue }),
-				...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
-				...(deps.finishTurn === undefined ? {} : { finishTurn: deps.finishTurn }),
+				rememberWake: (slug, wake) => rememberWake(slug, wake),
+				finishTurn,
 				noteUnanswered: async (note) => {
-					await appendTeamNote(deps, team, renderUnanswered(note.seq, note.label, note.reason), context);
+					await appendTeamNote(harness, team, renderUnanswered(note.seq, note.label, note.reason), context);
 				},
 			},
 			{
@@ -182,7 +172,7 @@ export async function settleTeam(
 		// 只有真的投出去了才记 waiting。失败还记，就等于「问都没问到」也算问过 ——
 		// 记忆永远不会变，下一批又会卡在同一个 seq 上。
 		if (woken.status === "delivered") {
-			await writeSettle(deps.harness, team, context, { waiting: { seq: lastSeq, stamp } });
+			await writeSettle(harness, team, context, { waiting: { seq: lastSeq, stamp } });
 		}
 		return { asked: { team, to, count: candidates.length, delivered: woken.status === "delivered" } };
 	} catch (error) {
@@ -190,7 +180,7 @@ export async function settleTeam(
 		process.stderr.write(`[沉淀失败] ${team}: ${reason}\n`);
 		// 只写 stderr 等于没发生：我和团队管理员只看频道，日志里那一行没人读。所以往团队频道
 		// 留一条 `note`（不唤醒、不计未读），文案要说清「下次再试」—— 游标没推进，真的会再试。
-		await appendTeamNote(deps, team, `团队记忆整理失败（${brief(reason)}）。这批消息下次再试。`, context);
+		await appendTeamNote(harness, team, `团队记忆整理失败（${brief(reason)}）。这批消息下次再试。`, context);
 		return {};
 	}
 }
@@ -206,9 +196,9 @@ function brief(reason: string): string {
  * 写盘本身是 `channel/write.ts` 的 `appendNote`（同一个「唯一写入口」）。这里只多一层
  * try：沉淀已经在处理异常了，留痕再抛就是二次失败，所以失败只写 stderr。
  */
-async function appendTeamNote(deps: SettleDeps, team: string, text: string, context: Context): Promise<void> {
+async function appendTeamNote(harness: Harness, team: string, text: string, context: Context): Promise<void> {
 	try {
-		await appendNote(deps, teamId(team), text, Date.now(), context);
+		await appendNote({ harness }, teamId(team), text, Date.now(), context);
 	} catch (error) {
 		process.stderr.write(`[沉淀失败] 留痕也失败：${error instanceof Error ? error.message : String(error)}\n`);
 	}

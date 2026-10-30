@@ -30,6 +30,7 @@ function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDeliv
 	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT });
 }
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
+import { wireChannel } from "../../src/core/channel/wiring.ts";
 
 const roots: string[] = [];
 const runtimes: CoreRuntime[] = [];
@@ -145,6 +146,7 @@ async function setup(options: {
 			wake,
 		}),
 		saveDirectory: async () => undefined,
+		wiring: wireChannel({ harness: runtime.harness, agentsRoot }),
 	} as never);
 	// 每个用例都从「新一轮」开始（真实流程里由 `deliver()` 清）。不清的话，
 	const tool = tools.find((item) => item.name === "say");

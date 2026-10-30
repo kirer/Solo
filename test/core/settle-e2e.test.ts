@@ -52,13 +52,19 @@ async function openTeam(shell: CoreShell, team: string, members: readonly string
 }
 
 const settleDeps = (shell: CoreShell, agentsRoot: string, teamsRoot: string, convOf: (slug: string) => Promise<unknown>) => ({
-	harness: shell.harness,
+	wiring: {
+		harness: shell.harness,
+		// 工作区根 = agents 的上一层；模板目录跟着工作区走。
+		promptDir: join(agentsRoot, "..", "prompt"),
+		uploadsRoot: join(agentsRoot, "..", "uploads"),
+		conversationOf: async (slug: string) => convOf(slug) as never,
+		rememberWake: async () => undefined,
+		wakeOf: async () => undefined,
+		finishTurn: async () => undefined,
+	},
 	agentsRoot,
 	teamsRoot,
-	// 工作区根 = agents 的上一层；模板目录跟着工作区走。
-	promptDir: join(agentsRoot, "..", "prompt"),
 	channelState: () => channelState(shell),
-	conversationOf: async (slug: string) => convOf(slug) as never,
 });
 
 describe("团队记忆自动沉淀", () => {
@@ -202,10 +208,14 @@ describe("团队记忆自动沉淀", () => {
 		await openTeam(shell, "alpha", [lin.slug]);
 
 		const wakes: { slug: string; channelId: string; seq: number }[] = [];
+		const base = settleDeps(shell, agentsRoot, teamsRoot, async () => shell.conversations.get(lin.slug));
 		const deps = {
-			...settleDeps(shell, agentsRoot, teamsRoot, async () => shell.conversations.get(lin.slug)),
-			rememberWake: async (slug: string, wake: { reply: { channelId: string; seq: number } }) => {
-				wakes.push({ slug, channelId: wake.reply.channelId, seq: wake.reply.seq });
+			...base,
+			wiring: {
+				...base.wiring,
+				rememberWake: async (slug: string, wake: { reply: { channelId: string; seq: number } }) => {
+					wakes.push({ slug, channelId: wake.reply.channelId, seq: wake.reply.seq });
+				},
 			},
 		};
 		await shell.postAs({ channelId: "team:alpha", from: "owner", text: "定了", kind: "decision" });

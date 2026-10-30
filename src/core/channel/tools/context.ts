@@ -5,12 +5,11 @@
  */
 import { BACKGROUND_CONTEXT, type Context, type Harness } from "../../runtime/index.ts";
 import { readAllIdentities } from "../../agent/identity.ts";
-import { conversationFor, directoryWake, slugFor, wakeOf, type DirectoryState } from "../../agent/roster.ts";
+import { slugFor, type DirectoryState } from "../../agent/roster.ts";
 import { type PostDeps } from "../post.ts";
-import type { FinishTurn } from "../turn/index.ts";
 import { mentionRosterOf, type MentionRoster } from "../mentions.ts";
+import type { ChannelWiring } from "../wiring.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
-import { promptDirOf } from "../../md/prompt.ts";
 
 /** 工具运行所需的一切。全部由外壳在启动时装配，工具自己不读环境变量。 */
 export type CoreToolDeps = {
@@ -36,8 +35,11 @@ export type CoreToolDeps = {
 	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 按团队文件重建它的频道成员（幂等）。 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
-	/** 一轮正常答完时把最终回答补进频道（`channel/turn/finish.ts`）。 */
-	readonly finishTurn?: FinishTurn;
+	/**
+	 * 频道层接线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
+	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、沉淀、我说话共用。
+	 */
+	readonly wiring: ChannelWiring;
 };
 
 /**
@@ -118,32 +120,17 @@ export async function readState(deps: CoreToolDeps): Promise<ChannelState> {
 	return (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannelState();
 }
 
-/** 组装一次投递的全部依赖（`say` 共用）。 */
+/** 组装一次投递的全部依赖（`say` 共用）。接线只有一份（`wiring.ts`），这里只补本次的 state。 */
 export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): PostDeps {
-	// 唤醒依赖只有一份（`agent/roster.ts` 的 `directoryWake`）：投递、我说话、沉淀
-	// 三条路共用同一套「会话在哪 / 记下被谁叫醒」。
-	const wakeDeps = directoryWake({ harness: deps.harness });
 	return {
 		harness: deps.harness,
 		state,
-		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：**agent 叫醒 agent 也要贴**。
-		// 以前这里漏了它，于是成员 `say` 叫管理员时，管理员那条唤醒没有回话规矩 ——
-		// 表现是「能回，但不知道要先把话说进频道」，日志里一行 warn 谁也没注意。
-		promptDir: promptDirOf(deps.agentsRoot),
-		conversationOf: (slug: string) => wakeDeps.conversationOf(slug, context),
-		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算），
-		// 传一个 `(slug) => slug` 只是把缺省重写一遍。
-		rememberWake: (slug, wake) => wakeDeps.rememberWake(slug, wake, context),
-		// 插话时要从上一次的记录里继承 `task`；一次投递里多个收件人共用一份名册快照。
-		wakeOf: (() => {
-			let snapshot: Promise<DirectoryState> | undefined;
-			return async (slug: string) => {
-				snapshot ??= deps.directory(BACKGROUND_CONTEXT);
-				const directory = await snapshot;
-				const id = conversationFor(directory, slug);
-				return id === undefined ? undefined : wakeOf(directory, id);
-			};
-		})(),
-		...(deps.finishTurn === undefined ? {} : { finishTurn: deps.finishTurn }),
+		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：agent 叫醒 agent 也要贴。
+		promptDir: deps.wiring.promptDir,
+		conversationOf: (slug: string) => deps.wiring.conversationOf(slug, context),
+		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算）。
+		rememberWake: (slug, wake) => deps.wiring.rememberWake(slug, wake, context),
+		wakeOf: (slug: string) => deps.wiring.wakeOf(slug, context),
+		finishTurn: deps.wiring.finishTurn,
 	};
 }

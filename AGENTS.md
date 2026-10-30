@@ -48,7 +48,8 @@ src/core/
   ── 以上四层是 domain（业务事实）──────────────────────────────
   app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 诊断（不 import node:http）
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/project.ts）
-  interface/http/ 唯一 import node:http 的地方：routes / server（原语+匹配+来源闸+静态资源） / sse（编解码+hub）
+  interface/http/ 唯一 import node:http 的地方：routes / respond（原语）/ route-match（匹配）/
+                  origin-guard（来源闸）/ network（网卡）/ static-assets / sse（编解码+hub）
   shell/          装配与启动：assemble / serve / main / seed
 ui/app/           界面源码（React + TS + Vite，ADR-079）
 ui/web/           构建产物（服务端发这个目录，别手改）
@@ -61,7 +62,7 @@ test/             62 文件 / 579 例
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 66 个 ts / 10737 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 72 个 ts / 10789 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -190,7 +191,7 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/mentions.ts` 的 `recipientsOf` / `parseMentions` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/types.ts` 的 `chatKind`（只看成员表） |
-| 改频道成员怎么来 | ADR-012 | `src/core/shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` |
+| 改频道成员怎么来 | ADR-012 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
 | 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |
 | 改记忆沉淀 | ADR-033 | 机制在 `src/core/team/settle.ts` + `team/memory.ts`；**判据在 `seed/prompt/95-settle.md`** |
