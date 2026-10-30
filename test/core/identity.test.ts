@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,7 +19,9 @@ import {
 	readAllIdentities,
 	reportsOf,
 } from "../../src/core/agent/identity.ts";
-import { renderAgentPrompt } from "../../src/core/agent/prompt.ts";
+import { renderAgentSection } from "../../src/core/agent/runtime.ts";
+import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
+import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 
 const SAMPLE = `---
 name: 沈知远
@@ -108,26 +111,50 @@ describe("组织架构 = manager 字段", () => {
 	});
 });
 
-describe("渲染提示词", () => {
-	const all = [
-		parseIdentity("ceo", "/a/ceo", "---\nname: 陆沉\nmanager: owner\n---\n管全局。"),
-		parseIdentity("cto", "/a/cto", "---\nname: 周牧\nmanager: ceo\n---\n管技术。"),
-		parseIdentity("dev", "/a/dev", "---\nname: 林越\nmanager: cto\nproject: alpha\n---\n写代码。"),
-	];
+describe("渲染提示词（V3：模板 + 事实）", () => {
+	/** 搭一个临时工作区（agents/ + teams/ + 播种好的 prompt/），渲染某个人的提示词。 */
+	async function renderIn(
+		files: Record<string, string>,
+		slug: string,
+		registry = createRegistry(),
+	): Promise<string> {
+		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
+		try {
+			for (const [rel, body] of Object.entries(files)) {
+				await mkdir(dirname(join(root, rel)), { recursive: true });
+				await writeFile(join(root, rel), body, "utf8");
+			}
+			await mkdir(join(root, "teams"), { recursive: true });
+			await seedPromptTemplates(root);
+			return await renderAgentSection(
+				registry,
+				{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
+				slug,
+			);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	}
 
-	test("全部素材来自文件：名字、正文、汇报线、团队", () => {
-		const dev = all[2]!;
-		const text = renderAgentPrompt({ self: dev, all, teamBrief: "做一个坦克游戏。" });
+	const ORG: Record<string, string> = {
+		"agents/ceo/identity.md": "---\nname: 陆沉\nmanager: owner\n---\n管全局。",
+		"agents/cto/identity.md": "---\nname: 周牧\nmanager: ceo\n---\n管技术。",
+		"agents/dev/identity.md": "---\nname: 林越\nmanager: cto\nteam: alpha\n---\n写代码。",
+		"teams/alpha/README.md": "---\nname: alpha\nlead: dev\n---\n做一个坦克游戏。",
+	};
+
+	test("全部素材来自文件：名字、正文、汇报线、团队", async () => {
+		const text = await renderIn(ORG, "dev");
 		expect(text).toContain("# 你叫林越");
 		expect(text).toContain("写代码。");
-		expect(text).toContain("你的上级：周牧（`cto`）");
-		expect(text).toContain("周牧 → 陆沉 → 我");
-		expect(text).toContain("做一个坦克游戏。");
-		expect(text).toContain("agents/dev/");
+		expect(text).toContain("周牧"); // 直属上级
+		expect(text).toContain("陆沉"); // 上报链的更上面一层
+		expect(text).toContain("做一个坦克游戏。"); // 团队 README
+		expect(text).toContain("agents/dev"); // 目录段
 	});
 
-	test("目录说明不谎报文件：说到的文件必须真的会读", () => {
-		const text = renderAgentPrompt({ self: all[2]!, all });
+	test("目录说明不谎报文件：说到的文件必须真的会读", async () => {
+		const text = await renderIn(ORG, "dev");
 		// 曾经这里写的是 `capabilities` 与 `memory/` —— 两个都不存在的路径，
 		// 等于在提示词里告诉 agent「去改一个不存在的文件」，它改完毫无效果。
 		expect(text).not.toContain("`capabilities`");
@@ -136,46 +163,51 @@ describe("渲染提示词", () => {
 		expect(text).toContain("skills/<名字>/SKILL.md");
 	});
 
-	test("确定性：同样输入逐字节相同", () => {
-		const input = { self: all[1]!, all, teamBrief: "b" } as const;
-		expect(renderAgentPrompt(input)).toBe(renderAgentPrompt(input));
+	test("确定性：同样输入逐字节相同", async () => {
+		expect(await renderIn(ORG, "dev")).toBe(await renderIn(ORG, "dev"));
 	});
 
-	test("工具清单从注册表实拍，不写死的清单", () => {
-		const withTools = renderAgentPrompt({
-			self: all[1]!,
-			all,
-			capabilities: [
-				{ name: "say", summary: "在频道说话" },
-				{ name: "hire", summary: "新建一个 agent" },
-			],
-		});
-		expect(withTools).toContain("`say` — 在频道说话");
-		expect(withTools).toContain("`hire` — 新建一个 agent");
+	test("工具清单从注册表实拍，不写死的清单", async () => {
+		const registry = createRegistry();
+		registry.install(
+			defineExtension({
+				name: "test-tools",
+				tools: [
+					defineTool({ name: "say", description: "在频道说话。", parameters: Type.Object({}) }),
+					defineTool({ name: "hire", description: "新建一个 agent。", parameters: Type.Object({}) }),
+				],
+			}),
+		);
+		const text = await renderIn(ORG, "dev", registry);
+		expect(text).toContain("`say`");
+		expect(text).toContain("`hire`");
 
 		// 注册表空的时候不能凭空列假工具：直接报装配故障，让故障浮出来。
-		const noTools = renderAgentPrompt({ self: all[1]!, all });
-		expect(noTools).toContain("装配故障");
+		expect(await renderIn(ORG, "dev")).toContain("装配故障");
 	});
 
-	test("断链时写「未设置」而不是猜一个上级", () => {
-		const orphan = parseIdentity("x", "/a/x", "---\nname: 孤儿\n---\n没人管我。");
-		const text = renderAgentPrompt({ self: orphan, all: [orphan] });
-		expect(text).toContain("你的上级：（未设置）");
+	test("断链时写「未设置」而不是猜一个上级", async () => {
+		const text = await renderIn({ "agents/x/identity.md": "---\nname: 孤儿\n---\n没人管我。" }, "x");
+		expect(text).toContain("未设置");
+		expect(text).not.toContain("你的上级：owner");
 	});
 });
 
-
-test("称呼写进组织这一段：叫我、别写 @owner", async () => {
-	const { renderAgentPrompt } = await import("../../src/core/agent/prompt.ts");
-	const text = await renderAgentPrompt(
-		// 只喂最小素材：渲染器对缺字段是宽容的，这一段只看 self / all。
-		{
-			self: { slug: "林越", name: "林越", body: "", manager: "owner" },
-			all: [{ slug: "林越", name: "林越", manager: "owner" }],
-		},
-	);
-	expect(text).toContain("对用户的称呼：你");
-	expect(text).toContain("@我");
-	expect(text).toContain("不要写 `@owner`");
+test("规矩里的「@我」进了提示词（那是拍板唯一被认的写法）", async () => {
+	const root = await mkdtemp(join(tmpdir(), "core-identity-"));
+	try {
+		await mkdir(join(root, "agents", "林越"), { recursive: true });
+		await writeFile(join(root, "agents", "林越", "identity.md"), "---\nname: 林越\nmanager: owner\n---\n\n写代码。\n");
+		await mkdir(join(root, "teams"), { recursive: true });
+		await writeFile(join(root, "rules.md"), "- 要让我拍板的事就用 `@我`，别写 `@owner`。\n");
+		await seedPromptTemplates(root);
+		const text = await renderAgentSection(
+			createRegistry(),
+			{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
+			"林越",
+		);
+		expect(text).toContain("`@我`");
+	} finally {
+		await rm(root, { recursive: true, force: true });
+	}
 });

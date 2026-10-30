@@ -13,10 +13,10 @@ src/core/
   runtime/        防腐层：唯一能 import @earendil-works/* 的地方（openCore / models / serialize）
   agent/          一个人：身份 / 提示词 / 记忆 / 技能 / 名册
   team/           一个团队：README.md / memory.md / 自动沉淀
-  channel/        说话：纯规则 / 投递 / 写一条 / 11 个工具
-  app/            用例：说话 / 读数 / 人 / 附件 / 文件 / 诊断（不 import node:http）
-  view/           投影纯函数（index.ts）+ 界面契约的唯一权威（dto.ts），零 IO
-  interface/http/ 唯一 import node:http 的地方：路由表 / SSE / 静态资源 / 来源闸
+  channel/        说话：频道规则 / 写一条（含投递） / 唤醒 / 附件 / 11 个工具
+  app/            用例：读（含人 + 投影） / 说话 / 文件（含附件） / 诊断（不 import node:http）
+  view/           契约层：只有 `dto.ts`，零 import（投影已并进 `app/read.ts`）
+  interface/http/ 唯一 import node:http 的地方：路由表 / 原语与静态资源 / SSE
   shell/          装配与启动：assemble / main / serve / rescue / seed
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（公司层）/
@@ -29,7 +29,7 @@ scripts/          五个脚本：边界检查、真实模型自测、team 改名
 ```
 interface  →  app  →  domain（agent | channel | team | runtime）
      ↘         ↓
-       view（纯投影，自己不依赖任何一层）
+       view（契约层：只有 dto.ts，零 import）
 shell = 装配层，唯一可以同时 import 全部
 ```
 
@@ -44,12 +44,13 @@ shell = 装配层，唯一可以同时 import 全部
 **四组**：域 / view / app / interface —— 多出来的那组是把第 2 条扩成「域也不许向上够
 `app` / `view` / `interface`」）：
 
-4. **`view/` 零 IO**：不许 import 任何 `node:*`，不许碰 `runtime/`。
+4. **`view/` 是契约层**：只有 `dto.ts`，一个 import 都不许有（投影已并进 `app/read.ts`；
+   检查脚本第 2 组的目标仍是 `src/core/view/`，合并后目录里只剩这一个文件）。
 5. **`app/` 不许 import `node:http`** —— 用例要能脱离网络被直接测试。
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
    不许 import `agent|channel|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
 
-## 2. 全量文件（`src/core` 下 59 个 ts，11176 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 47 个 ts，10790 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -64,7 +65,6 @@ shell = 装配层，唯一可以同时 import 全部
 | `runtime/serialize.ts` | 59 | `serializedHarness()` —— 同一进程里所有 `harness.commit` 排队跑（底座的文档代理是按读集覆盖，不排队就会互相吃掉） |
 | `agent/frontmatter.ts` | 54 | `parseFrontmatter` / `stripFrontmatter` / `renderFrontmatter` —— identity / SKILL / 团队 README 的 YAML 头只有这一份实现，字段顺序与渲染字节是合同（黄金测试钉住） |
 | `agent/identity.ts` | 119 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；头字段只四个：`name` / `title` / `manager` / `team`；`OWNER_SLUG = "owner"` |
-| `agent/prompt.ts` | 353 | **V2 的渲染器，待删**（V3 起提示词由 `src/core/prompt.ts` 读 `seed/prompt/*.md` 渲染）：`renderAgentPrompt()`，确定性（ADR-005）；`PROMPT_SEGMENTS`（who→rules→position→team→tools→memory→skills→directory）+ `renderAgentPromptSegments()`，分段只是切法，拼出来**逐字节不变**（ADR-083）；首行定义「本提示词里的『我』指用户本人」；规矩一节来自 `rules.md`（ADR-038）；出口再 `redact()` 一遍（密钥不许进提示词）。还被 `rules-prompt` / `identity` / `prompt-segments` 三个测试 import，删它要和阿测一起把字节断言搬到 `prompt-render.test.ts` |
 | `oneline.ts` | 17 | `oneLine(text, max)` —— 折成一行 + 超长截断；频道摘要、投递预览、团队记忆、界面副标题共用 |
 | `agent/rules.ts` | 41 | `loadRules()` / `renderRulesSection()` —— 读 `<workspace>/rules.md` 并排成「## 规矩」一节；缺文件 = 整段不出现 |
 | `agent/runtime.ts` | 363 | `agentSections()`（**async**）—— 每段一个 section key（`<slug>-<segment>`、`tag:false`，ADR-083）；`slotsFor()` 只填**这段模板真用到的**插槽（保住按段懒读）；`registeredTools()`（从注册表实拍工具清单）、`renderAgentSection()`（每次重读盘，含 `rules.md`）、`readTeamBrief()` |
@@ -77,41 +77,30 @@ shell = 装配层，唯一可以同时 import 全部
 | `team/doc.ts` | 157 | `teams/<slug>/README.md` 的读写；`TeamDoc{slug,name,lead?,doing?,status,body}`、`membersOfTeam()` |
 | `team/memory.ts` | 150 | `teams/<slug>/memory.md` + `settleCandidates()`（不按 `kind` 筛，只排除整理者自己）/ `renderSettlePrompt(template, team, candidates)`（**只做排版**：候选排成 `{{candidates}}`、填 `{{team}}` `{{pending}}`，判据在 `seed/prompt/95-settle.md`） |
 | `team/settle.ts` | 240 | 自动沉淀：`settleProject` 已改名 `settleTeam` / `settleTarget`；单游标（问完只记 `waiting`，记忆文件 mtime 变了才推进，ADR-033）；走 `wake()` 而不是直投；**模板缺了就不问**（warn + 游标不推进，等模板补上下次再问）；失败时往团队频道留一条 `note`（`appendTeamNote`） |
-| `channel/state.ts` | 476 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `messageView` 侧的「要你拍板」只看 mentions（ADR-037，判定搬去了 `say`）/ `chatKind`（**只看成员表**：恰好 `{我, 一人}` = `dm`，其余 `group`）/ `teamId`（`team:<slug>`）/ `fallbackChannelId`（只找最近活跃的群，一个群都没有才回落 `dm:owner-<slug>`）/ `unreadCount` / `markRead` / `ensureChannel` |
-| `channel/alias.ts` | 117 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@我` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
-| `channel/wake.ts` | 132 | `wake()` —— **叫醒一个人只有这一条路**：合并排队项、记 wake、重置「一轮一句」、提交、没产出留痕，全收在这一个函数里；正文用 `bodyOf(merged, busy)` 回调给（要先合并才知道并了几条）。`post()` 与 `team/settle.ts` 都走它，以前 settle 直投 `conversation.submit()` 是裸提示词（没留痕、没回话规矩、没合并） |
-| `channel/deliver.ts` | 518 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）、`renderReplyRules` / `renderDigest` / `queuedAhead` / `coalesceQueue`。回话段走模板：`renderReplyRules(template, …)` / `renderDelivery({replyTemplate, interruptedTemplate, …})` 收模板当参数（纯函数不读盘），`deliver()` 每轮 `await` 读一次 `80-reply` / `90-interrupted`，**不缓存**；`deliveryPrompt` 扩成三份（reply / interrupted / settle），settle 复用同一个来源 |
-| `channel/unanswered.ts` | 71 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话，没见过的原样贴）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
+| `channel/store.ts` | 549 | 频道的**纯规则**（原 `state.ts` + `alias.ts` 合并）：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `chatKind`（**只看成员表**：恰好 `{我, 一人}` = `dm`）/ `teamId` / `fallbackChannelId`（只找最近活跃的群；一个群都没有就回落 `dm:owner-<slug>`）/ `recipientsOf` / `relayLimit` / `botHopsSinceOwner` / `unreadCount` / `markRead` / `ensureChannel`；`parseMentions` 的别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（`@CEO`、拼音、title、`@老板` 一律丢弃，ADR-088） |
+| `channel/post.ts` | 799 | `postMessage()` —— **写一条 + 唤醒**的唯一入口（落库与唤醒必须成对）；`appendNote()` 系统留痕；`deliver()`（唯一跨 agent 原语，ADR-008）/ `renderDelivery` / `renderReplyRules` / `renderDigest` / `queuedAhead` / `coalesceQueue` / `deliveryPrompt`（三份模板：reply / interrupted / settle）。原 `deliver.ts` 并进来 |
+| `channel/files.ts` | 405 | 附件（原 `uploads.ts` + `attach.ts` 合并）：`putUpload` / `readUploadMeta` / `sweepOrphanUploads`（单文件一份元数据，频道文档里只存 id）/ `kindOfMime` / `mimeOf` / `nameFrom` / `contentDisposition` / `readBounded`（边读边数——先读完再比上限等于没有上限）/ `placeholderOf`（附件 → 模型能看到的那几行） |
+| `channel/wake.ts` | 132 | `wake()` —— **叫醒一个人只有这一条路**：合并排队项、记 wake、重置「一轮一句」、提交、没产出留痕；正文用 `bodyOf(merged, busy)` 回调给（要先合并才知道并了几条）。`post()` 与 `team/settle.ts` 都走它 |
+| `channel/tools.ts` | 1296 | 11 个工具（`createCoreTools`，ADR-084）：`say` / `chats` / `read_history` / `remember` / `teams` / `write_team` / `skills` / `hire` / `me` / `run` / `file`；同一件事的几种做法是一个 `action` 枚举，不是几个近义工具名。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），`defaultChannel` 兜底落到私聊**直接报错**，不静默写进一个不存在的频道 |
+| `channel/unanswered.ts` | 71 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
 | `channel/speech.ts` | 35 | 「这一轮已经说过结果了」的进程内标记（`markSpoken` / `spokenResult` / `clearSpoken`）；`say` 不带 `step` 才算结果（ADR-064） |
-| `channel/post.ts` | 293 | `postMessage()` —— 写一条（单元素 splice，ADR-027）+ 解析 @（可带 roster / 额外 mention）+ 投递 |
-| `channel/attach.ts` | 121 | 附件 → 模型能看见的东西：`planAttachments()` 决定哪些附件给模型读、怎么读 |
-| `channel/uploads.ts` | 282 | 附件落盘与清理：`isUploadId` / `kindOfMime` / `mimeOf` / `safeName` / `nameFrom` / `sweepOrphanUploads`（单文件一份元数据，频道文档里只存 id） |
-| `channel/tools.ts` | 1287 | 11 个工具（`createCoreTools`，ADR-084）：`say` / `chats` / `read_history` / `remember` / `teams` / `write_team` / `skills` / `hire` / `me` / `run` / `file`；同一件事的几种做法是一个 `action` 枚举，不是几个近义工具名。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），`defaultChannel` / `mentionRoster` |
-| `app/index.ts` | 52 | `createApp(services)` → `{snapshots, read, people, chat, files, uploads, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices`（分层规则禁止 interface 层直接 import 领域） |
-| `app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」（原来的 `CoreShell` 搬来这里，`assemble.ts` 只是别名） |
+| `app/index.ts` | 52 | `createApp(services)` → `{snapshots, read, people, chat, files, uploads, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
+| `app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」 |
 | `app/snapshot.ts` | 88 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
-| `app/read.ts` | 107 | 读：`channelList` / `channelDetail` / `orgView` / `attentionItems` 各一条「取快照 → 调 `view/` → 返回 DTO」 |
+| `app/read.ts` | 589 | 读 + 人 + **投影**（原 `app/people.ts` 与 `view/index.ts` 并进来）：`channelList` / `channelDetail` / `messageView` / `orgView` / `attentionItems` / `labelIn` / `withLabels`，外加 `createPeople` 的档案与记忆读改写；每个入口都是「取快照 → 投影 → 返回 DTO」 |
 | `app/chat.ts` | 166 | 说话用例：`postMessage` / `createChannel` / `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界）在这里而不在路由里 |
-| `app/people.ts` | 130 | 一个人的档案与记忆：简介 / 技能清单 / 记忆读改写（`forget` 按 `sectionsOf` 口径重建）；不给界面对磁盘的访问权 |
-| `app/files.ts` | 160 | 右栏的只读文件树 + 三道闸（前缀 → `lstat` 不跟链 → `realpath` 再验）；越界一律 `forbidden` |
-| `app/uploads.ts` | 71 | 附件的**语义**：这个 id 是什么、该不该内联、叫什么名字；字节流交给传输层推 |
+| `app/files.ts` | 242 | 右栏只读文件树 + 附件语义（原 `app/uploads.ts` 并进来）：三道闸（前缀 → `lstat` 不跟链 → `realpath` 再验，越界一律 `forbidden`）/ `createUploads` / `mapLimit` |
 | `app/diag.ts` | 139 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性（ADR-083）。单条 4KB、单文件 5MB 轮转一代 |
 | `app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
-| `view/dto.ts` | 223 | **界面吃的每种 JSON 只在这里定义一次**（ADR-082）：零 import、零函数、零 IO；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
-| `view/index.ts` | 352 | 投影纯函数：`channelList` / `channelDetail` / `messageView` / `orgView` / `attentionItems` / `labelIn` / `withLabels`；`ViewChannelKind` **只有 `dm | group`**（`chatKind()` 的结果，不猜 id 前缀） |
+| `view/dto.ts` | 223 | **界面吃的每种 JSON 只在这里定义一次**（ADR-082）：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/read.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
 | `interface/http/routes.ts` | 222 | 路由表：18 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
-| `interface/http/match.ts` | 122 | `matchRoute()` 表驱动（`:name` 捕获 / `*name` 吃余量） |
-| `interface/http/server.ts` | 198 | HTTP 原语：`json` / 错误 → 状态码（`AppError.reason` 在这里翻译）/ `readJson` / `serveStatic`；handler 只许用这四个出口 |
-| `interface/http/hub.ts` | 205 | SSE 有状态的那一半：连接集合、120ms 去抖、每连接每频道的游标；`org` 推整份快照，`create` 只推订阅者 |
-| `interface/http/sse.ts` | 53 | SSE 编解码纯函数（`event:` / `data:` / `:` 保活 / `retry:`），唯一能脱离 socket 单测的部分 |
-| `interface/http/static-assets.ts` | 201 | ETag（按编码）+ Last-Modified + `Vary` + br/gzip 协商 / `loadAsset` |
-| `interface/http/guard.ts` | 131 | 来源闸：`hostAllowed` / `originAllowed` / `insideRoot` —— 谁的页面有资格让这个服务「写」 |
-| `interface/http/network.ts` | 78 | 网卡探测（启动时打印局域网地址） |
-| `shell/assemble.ts` | 618 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道；`addToCompanyChannel` / `joinTeamChannel` / `syncTeamChannel` / `ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板） |
+| `interface/http/server.ts` | 733 | HTTP 原语 + 表驱动匹配 + 来源闸 + 静态资源 + 网卡探测（原 `match` / `guard` / `network` / `static-assets` 都并进来）：`json` / `fail` / `readJson` / `serveStatic` / `matchRoute`（`:name` 捕获 / `*name` 吃余量）/ `isWildcardHost` / `browserUrlOf`；静态资源带 ETag（按编码）+ Last-Modified + `Vary` + br/gzip 协商 |
+| `interface/http/sse.ts` | 262 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照，`create` 只推订阅者） |
+| `shell/assemble.ts` | 626 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道；`addToCompanyChannel` / `joinTeamChannel` / `syncTeamChannel` / `ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板） |
 | `shell/rescue.ts` | 164 | 「他答了但没说出来」的安全网：`startAnswerRescue` / `spokeAfterWake` / `slugOfConversation`（ADR-067） |
 | `shell/seed.ts` | 330 | `seedOwnerAssistant`（读 `seed/agents/assistant/identity.md` 建人 + 助理个人层技能，只建一次）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `workspace/prompt/`）/ `syncCompanySkills`（公司层技能按 hash 同步，ADR-039）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/` |
-| `shell/main.ts` | 160 | 启动：播种规矩 / 提示词模板 / 公司层技能（`seedRules` / `seedPromptTemplates` / `syncCompanySkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
+| `shell/main.ts` | 176 | 启动：播种规矩 / 提示词模板 / 公司层技能（`seedRules` / `seedPromptTemplates` / `syncCompanySkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
 
 ### 2.2 `ui/app/src/`（React + TS，构建到 `ui/web/`，ADR-079）
 
@@ -158,13 +147,16 @@ shell = 装配层，唯一可以同时 import 全部
 | 改「全公司都要守的规矩」（先给结论、在哪个频道回话、别写英文独白） | **不要写进 `.ts`**：改 `seed/rules.md`，再同步到 `workspace/rules.md` | 每轮都进提示词的只有这一份（ADR-038）；技能正文只在 `skills(action=read)` 时才进上下文 |
 | 改起手技能的同步行为 | `shell/seed.ts` 的 `syncCompanySkills` + `<workspace>/.seed-manifest.json` | 按 hash 判「用户改过没有」，改过的不覆盖（ADR-039） |
 | 加一个身份字段 | `agent/identity.ts` 的 `IdentityHeader` | 现在是 4 个：`name`/`title`/`manager`/`team`，加之前先问能不能推导 |
-| 改「这条会话是私聊还是群聊」 | `channel/state.ts` 的 `chatKind` | **只看成员表**（恰好 `{我, 一人}` 才是私聊），不看 id 前缀；界面的 `kind` 只是它的投影 |
-| 改谁能被 @ 到 | `channel/state.ts` 的 `recipientsOf`（成员规则）+ `channel/alias.ts` 的 `resolveMention`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译；改前者要同步 `test/core/channel-state.test.ts`，改后者同步 `test/core/mention-alias.test.ts` |
+| 改「这条会话是私聊还是群聊」 | `channel/store.ts` 的 `chatKind` | **只看成员表**（恰好 `{我, 一人}` 才是私聊），不看 id 前缀；界面的 `kind` 只是它的投影 |
+| 改谁能被 @ 到 / 什么写法算 @ | `channel/store.ts` 的 `recipientsOf`（成员规则）+ `parseMentions`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译。别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（ADR-088）；`@CEO`、拼音、title、`@老板` 一律丢弃，不许加回模糊匹配 |
 | 改「要我拍板就 @ 我」 | `channel/tools.ts` 的 `say`（ADR-037） | 只有两种情形把 `owner` 加进 `mentions`：正文显式 @我；或 `kind=decision` 且没点别人。补的是 `mentions`，**不改正文**；关键词嗅探已删 |
-| 改「没明确频道时在哪儿回话」 | `channel/state.ts` 的 `fallbackChannelId` | 只在**群聊**里找最近活跃的那个；一个群都没有才回落我和他的私聊。兜底永远不新建频道 |
+| 改「没明确频道时在哪儿回话」 | `channel/store.ts` 的 `fallbackChannelId` + `channel/tools.ts` 的 `defaultChannel` | 兜底只找最近活跃的真实频道；**落到私聊就报错**让模型显式给 channel，不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见） |
 | 改频道成员怎么来 | `shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToCompanyChannel` | 成员是 `identity.md` + 团队 `README.md` 的投影（ADR-012）；公司频道只是播种一次的普通群，没有特权 |
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
-| 改界面字段 | `view/dto.ts`（先改 `docs/WEB-API.md`）+ `view/index.ts` | DTO 是唯一权威，`ui/app/src/api/types.ts` 只是它的 type-only 再导出 —— 改字段界面立刻编译不过。字段必须有前端消费者（ADR-016） |
+| 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/server.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
+| 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
+| 改附件（落盘 / 上限 / 清理） | `channel/files.ts`（字节与元数据）+ `app/files.ts`（语义：内联还是给路径） | 上限与「先读完再比等于没有上限」都在 `channel/files.ts`；别把字节塞进频道文档（ADR-027 的教训） |
+| 改界面字段 | `view/dto.ts`（先改 `docs/WEB-API.md`）+ 投影在 `app/read.ts` | DTO 是唯一权威，`ui/app/src/api/types.ts` 只是它的 type-only 再导出 —— 改字段界面立刻编译不过。字段必须有前端消费者（ADR-016） |
 | 改界面样式 / 交互 | `ui/app/` | **改完必须 `npm run ui:build`**；文件职责见 §2.2 |
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建（ADR-052） |
 | 改团队记忆沉淀的触发条件 / 游标时机 | `team/memory.ts` 的 `settleCandidates` + `team/settle.ts` 的 `waiting` | 游标语义在 ADR-033（取代 ADR-013），改之前先读懂 |
@@ -214,21 +206,24 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 62 文件 / 579 例，应该 <3s
+npm test             # 61 文件 / 574 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
-npm run live         # 真实模型端到端 12 项，会花 token，只在改行为后跑
+npm run live         # 真实模型端到端 12 项，会花 token，只在改行为后跑；连跑两次都要 12/12
 ```
+
+`live` 的验收门是**两条 + 一个趋势**（ADR-089）：两次 12/12；`rescue` 补发的内容/频道/去重
+正确（单测守）；`rescue` 次数记下来 —— 7 个阶段超过 4 次就是提示词在退化。`rescue=0` 不是门。
 
 改行为时**必须**同步三处：代码、`test/core/` 里的用例、`docs/`（`CORE` 概念 / `WEB-API`
 字段 / `DECISIONS` 若碰了不可轻易改的约定）。
 
-真实模型自测是保底：579 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
+真实模型自测是保底：574 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
 那一次是两个 bug 叠在一起（`ownerSpeak` 漏传 wake + wake 在 `submit` 之后才落盘），
 症状是「我在群里问，对方在私聊里答」，单测完全看不见。
 
 ## 6. 测试布局
 
-`test/core/`（51 文件，纯函数 + 装配）：
+`test/core/`（50 文件，纯函数 + 装配）：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -240,7 +235,7 @@ npm run live         # 真实模型端到端 12 项，会花 token，只在改�
 | `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`（ADR-037）、`[PASS]` 与单人在场不许静音（ADR-063）、一轮只说一句结论（ADR-064） |
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞 |
 | `relay.test.ts` | 接力上限（ADR-042）：`relayLimit` / `botHopsSinceOwner`（我没说过话也从建立算起）/ 拦截时只落库并留 note / 显式 `@` 可突破 |
-| `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`、渲染确定性、不谎报文件路径 |
+| `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`；渲染部分走 V3：真实工作区 + 播种 `prompt/`，覆盖名字/正文/汇报线/团队 README/目录不谎报、确定性、工具清单从注册表实拍 |
 | `memory.test.ts` / `memory-forget.test.ts` | 分区、追加、摘要；`removeSection` 按 `sectionsOf` 的口径重建 |
 | `memory-timeline.test.ts` | `memoryTimeline()`：从 journal 反推每节来历（add/edit、时间、作者）、没变不刷新、删掉不留、坏行跳过 |
 | `memory-actor.test.ts` | 记忆面板留痕写上真实来源（`human` / `remember` / `agent`） |
@@ -258,7 +253,7 @@ npm run live         # 真实模型端到端 12 项，会花 token，只在改�
 | `doc-checkpoint.test.ts` | 名册 / 沉淀游标按增量条数压基线 |
 | `view.test.ts` | 视图投影（`kind` / `role` / 未读、侧栏预览只取人说的话） |
 | `attention.test.ts` | 「找你」（`GET /api/attention`）：只收点名 @我的、排除我自己发的、7 天窗口、已读带标记 |
-| `rules-prompt.test.ts` | 规矩进提示词（位置、空则整段消失、确定性、`seed/rules.md` 覆盖六条） |
+| `rules-prompt.test.ts` | 规矩进提示词（走装配层同一个 `renderAgentSection()`）：位置在身份后能力前、缺了整段消失、确定性、`loadRules` 读盘、`seed/rules.md` 覆盖八条 |
 | `monologue.test.ts` | 内心独白拦截：英文计划式开场拦住、中文汇报里夹英文不拦、太短不判（ADR-058） |
 | `seed-sync.test.ts` | 公司层技能同步（缺的补上 / 未改的更新 / 改过的不动 / 幂等 / manifest / `rules.md` 只补不改） |
 | `unanswered.test.ts` | 结算原因翻成人话 |
@@ -271,10 +266,9 @@ npm run live         # 真实模型端到端 12 项，会花 token，只在改�
 | `reconcile.test.ts` / `runtime-reconcile.test.ts` | 僵尸任务回收 + 启动自愈真的跑完了 |
 | `serialize-commit.test.ts` | `serializedHarness`：同一进程里的 commit 排队跑不互相吃 |
 | `diag.test.ts` | 运行报告：底座形状摊平成可落盘的 JSON、`formatRuntimeReport` 的人话、写 `logs/runtime.jsonl`、`lastReport` 跳过 `task_outdated`、超长报告被截到 4KB、工作区不可写也不抛 |
-| `prompt-segments.test.ts` | **V2 的黄金断言，接线那一刀落地后删**：8 段顺序、每段 key 唯一、拼起来与 V2 实现逐字节相同 |
 | `prompt-render.test.ts` | V3 模板渲染：文件名定序、段名唯一、`skip-empty` 空则整段消失、delivery 不进系统提示词、两次渲染逐字节相同、模板声明的插槽全被填满 |
 | `text-slots.test.ts` | 插槽：未知 →「（未设置）」并报 `unknown`、空串/纯空白报 `unset`、值里带 `{{}}` 不二次展开、确定性 |
-| `seed-contract.test.ts` | seed 契约的机械验收：`rules.md` ≤15 条零工具名、一条事实一个家、`seed/prompt` 十段齐、人名只在 identity.md、项目技能不进公司层、技能 ≤4 KB、seed <500 KB |
+| `seed-contract.test.ts` | seed 契约的机械验收：`rules.md` ≤15 条零工具名、一条事实一个家、`seed/prompt` 十一段齐、`{{tool:X}}` 与注册表真名对表、人名只在 identity.md、项目技能不进公司层、技能 ≤4 KB、seed <500 KB |
 | `dto.test.ts` | DTO 是唯一权威：`dto.ts` 自己零 import、界面类型文件只再导出、界面用的名字都在 DTO 里；投影输出与 DTO 字段一一对应 |
 | `sse.test.ts` | SSE 编解码：一帧的字节形状、多行 JSON 不会被拆行、`retry` / 保活注释 |
 | `tools-actions.test.ts` | 工具收敛：注册表只剩 11 个、旧名字一个不剩；`chats` / `read_history` / `skills` / `me` / `file` 各自的 `action` 默认值与非法值报错 |

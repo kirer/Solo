@@ -45,7 +45,7 @@ npm start                 # http://127.0.0.1:7788
 ## 目录
 
 ```
-src/core/     核心（59 个文件，约 11K 行）
+src/core/     核心（47 个文件，约 11K 行）
   fsx.ts      文件系统的唯一入口（全项目只有它 import node:fs）
   doc.ts      所有 markdown 都是 {path, front, body}
   text.ts     插槽渲染（{{名字}} → 事实）
@@ -53,15 +53,15 @@ src/core/     核心（59 个文件，约 11K 行）
   runtime/    防腐层：唯一 import pi-durable / pi-ai 的地方 + 模型装配
   agent/      一个人：身份 / 提示词装配 / 记忆 / 技能 / 名册
   team/       一个团队：README.md / memory.md / 自动沉淀
-  channel/    说话：纯规则 / 投递 / 写一条 / 11 个工具
-  app/        用例：读数 / 说话 / 人 / 文件 / 附件 / 诊断（不 import node:http）
-  view/       投影纯函数 + 界面 DTO 的唯一权威，零 IO
-  interface/  唯一 import node:http 的地方：路由 / SSE / 静态资源 / 来源闸
+  channel/    说话：频道规则 / 写一条（含投递） / 唤醒 / 附件 / 11 个工具
+  app/        用例：读（含人 + 投影）/ 说话 / 文件（含附件）/ 诊断（不 import node:http）
+  view/       契约层：只有 dto.ts，零 import
+  interface/  唯一 import node:http 的地方：路由 / 原语与静态资源 / SSE
   shell/      装配与启动：assemble / main / serve / rescue / seed
 ui/app/       网页界面源码（React + TS + Vite，构建到 ui/web/，改完必须 npm run ui:build）
 seed/         出厂内容：规矩 / 提示词模板 / 技能 / 助理身份 / pool（默认不装的技能）
 scripts/      边界检查 + 真实模型自测 + 提示词黄金渲染
-test/         62 文件 / 579 例
+test/         61 文件 / 574 例
 ```
 
 ## 命令
@@ -70,7 +70,7 @@ test/         62 文件 / 579 例
 | --- | --- |
 | `npm start` | 起服务（`--port` `--host` `--workspace` `--no-seed`） |
 | `npm run check` | 类型检查 + 边界检查（唯 runtime 层能碰底层库、路由必须有前端消费者） |
-| `npm test` | 单测，62 文件 579 例，<3s |
+| `npm test` | 单测，61 文件 574 例，<3s |
 | `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 12 项（会花 token，改行为后跑） |
 | `npm run ui:build` | 构建界面到 `ui/web/`（改完 `ui/app/` 必跑） |
@@ -84,7 +84,7 @@ test/         62 文件 / 579 例
 | [docs/CODE](docs/CODE.md) | 代码地图：「我想改 X → 动这里」 |
 | [docs/design/SEED-CONTRACT](docs/design/SEED-CONTRACT.md) | 出厂内容契约：四个家、插槽表、一条事实一个家 |
 | [docs/WEB-API](docs/WEB-API.md) | 网页 API 的完整契约 |
-| [docs/DECISIONS](docs/DECISIONS.md) | 86 条架构决策（每条写了替代方案与理由） |
+| [docs/DECISIONS](docs/DECISIONS.md) | 89 条架构决策（每条写了替代方案与理由） |
 | [docs/DEPLOY](docs/DEPLOY.md) | 部署、局域网、Docker、排障 |
 
 ## 已知不做

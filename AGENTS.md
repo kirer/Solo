@@ -45,22 +45,22 @@ src/core/
   team/           一个团队：README.md / memory.md / 自动沉淀
   channel/        说话：纯规则 / 投递 / 写一条 / 11 个工具 / 附件
   ── 以上四层是 domain（业务事实）──────────────────────────────
-  app/            用例：snapshot / read / chat / people / files / uploads / diag
-  view/           投影纯函数（index.ts）+ 界面 DTO 的唯一权威（dto.ts），零 IO
-  interface/http/ 唯一 import node:http 的地方：routes / server / hub / sse / guard
+  app/            用例：读（快照 / 投影 / 人） / 说话 / 文件（含附件） / 诊断（不 import node:http）
+  view/           契约层：只有 dto.ts，零 import（投影已并进 app/read.ts）
+  interface/http/ 唯一 import node:http 的地方：routes / server（原语+匹配+来源闸+静态资源） / sse（编解码+hub）
   shell/          装配与启动：assemble / serve / main / rescue / seed
 ui/app/           界面源码（React + TS + Vite，ADR-079）
 ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
 scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
-test/             62 文件 / 579 例
-  ├ test/core/    51 文件 / 523 例（纯函数 + 装配）
+test/             61 文件 / 574 例
+  ├ test/core/    50 文件 / 518 例（纯函数 + 装配）
   └ test/ui/      11 文件 / 56 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 59 个 ts / 11176 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 47 个 ts / 10790 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -77,14 +77,14 @@ workspace/        运行时数据（gitignore）
 **分层后又收紧了三条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成四组：域 / view /
 app / interface）：
 
-- **`view/` 零 IO**：不许 import `node:*`，不许碰 `runtime/`。
+- **`view/` 是契约层**：只有 `dto.ts`，一个 import 都不许有（投影已并进 `app/read.ts`）。
 - **`app/` 不许 `node:http`**：用例要能脱离网络直接测。
 - **`interface/` 只经 `app/` 与 `view/` 说话**（不许 import 领域内部实现，否则业务会再长回
   handler 里）。
 
 另外三条容易踩的：
 
-4. **`channel/state.ts` 是纯函数**，不做 IO。写消息、投递在 `post.ts` / `deliver.ts`。
+4. **`channel/store.ts` 是纯函数**，不做 IO。写消息、投递都在 `channel/post.ts`。
 5. **提示词必须确定性**：同一份文件内容渲染出的字符串要逐字节相同，否则打穿 prompt cache
    （ADR-005）。不许在提示词里塞时间戳、随机数、`Object.keys` 的顺序。
 6. **不画后端没有的东西**（ADR-016）。界面上每个字段都必须有真实数据来源；没有就留空，
@@ -109,11 +109,13 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 62 文件 579 例，<3s，必须全绿
+npm test             # 61 文件 574 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
-npm run live         # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
+npm run live         # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token；连跑两次都要 12/12
 ```
 
+- **`live` 的门是「两次 12/12 + rescue 趋势」，不是 `rescue=0`**（ADR-089）：`rescue` 是安全网，
+  它补发的内容/频道/去重由单测守；次数记下来，7 个阶段超 4 次就查提示词。
 - **`npm run live` 不能省。** 五百多个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
   两个 bug 叠在一起（我发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
   症状是「我在公司频道问，对方在私聊里答」，单测完全看不见。单测测的是纯函数和装配，
@@ -174,10 +176,10 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 |---|---|---|
 | 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools`（11 个；同一件事加 `action`，别开新名字，ADR-084） |
 | 教 agent 一套做法 | `docs/DECISIONS.md` ADR-007 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
-| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` + ADR-005 + ADR-083 | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版）；加插槽要先登记 §4。V2 的 `agent/prompt.ts` 已无人调用，待删 |
+| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` + ADR-005 + ADR-083 | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/prompt.ts` 只剩排版）；加插槽要先登记 §4 并在 `scripts/prompt-fixture.ts` 给样例值 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
-| 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/state.ts` 的 `recipientsOf` |
-| 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/state.ts` 的 `chatKind`（只看成员表） |
+| 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/store.ts` 的 `recipientsOf` / `parseMentions` |
+| 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/store.ts` 的 `chatKind`（只看成员表） |
 | 改频道成员怎么来 | ADR-012 | `src/core/shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
 | 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |

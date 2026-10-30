@@ -33,9 +33,6 @@
 /** 填不上时写这个。不写空串：空串会让一句话只剩半截，模型会自己补。 */
 export const UNSET = "（未设置）";
 
-/** 同一个字的旧名字（V2 的 `agent/prompt.ts` 用它）。收敛成一个名字后删掉。 */
-export const NOT_SET = UNSET;
-
 /** 插槽的值。`undefined` = 这个事实现在没有。 */
 export type SlotValue = string | number | undefined;
 

@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SAMPLE_SLOTS } from "../../scripts/prompt-fixture.ts";
 import { createFsx } from "../../src/core/fsx.ts";
 import { loadTemplates, parseTemplate, renderPrompt, renderPromptDir, type PromptTemplate } from "../../src/core/prompt.ts";
-import { NOT_SET } from "../../src/core/text.ts";
+import { UNSET } from "../../src/core/text.ts";
 
 const SEED = fileURLToPath(new URL("../../seed/", import.meta.url));
 const CONTRACT = fileURLToPath(new URL("../../docs/design/SEED-CONTRACT.md", import.meta.url));
@@ -155,7 +155,7 @@ describe("renderPrompt：拼段", () => {
 		const rendered = renderPrompt([rules], { rules: "" });
 		expect(rendered.segments).toEqual([]);
 		expect(rendered.text).toBe("");
-		expect(rendered.text).not.toContain(NOT_SET);
+		expect(rendered.text).not.toContain(UNSET);
 	});
 
 	it("skip-empty：插槽有值 → 正常出现", () => {
@@ -170,7 +170,7 @@ describe("renderPrompt：拼段", () => {
 
 	it("模板里的未知插槽：文本里看得见，问题里报出来", () => {
 		const rendered = renderPrompt([template("10-a.md", "上级：{{boss}}")], {});
-		expect(rendered.text).toBe(`上级：${NOT_SET}`);
+		expect(rendered.text).toBe(`上级：${UNSET}`);
 		expect(rendered.issues).toEqual([{ slot: "boss", reason: "unknown" }]);
 	});
 
@@ -214,7 +214,7 @@ describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）"
 	it("渲染结果里没有残留的 {{ 和「（未设置）」", async () => {
 		const rendered = await renderPromptDir(createFsx(SEED), SAMPLE, "prompt");
 		expect(rendered.text).not.toContain("{{");
-		expect(rendered.text).not.toContain(NOT_SET);
+		expect(rendered.text).not.toContain(UNSET);
 	});
 
 	it("系统段 8 段 + 投递段 3 段（reply / interrupted / settle）", async () => {

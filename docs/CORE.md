@@ -150,12 +150,13 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 其余都是 `group`；不看 id 前缀，也没有「个人频道」这种对象。团队频道就是
 `team:<slug>` 这个普通的群，只是它有一份档案（见 §7）。
 
-`@` 写的是**名字**，`mentions` 存的是 **slug**：`channel/alias.ts` 把「我 / BOSS / CEO /
-真名 / title」翻成 slug（`@` 别名解析，ADR-036），解析不出来的一律丢弃（`@import` /
-`@media` 不是人）。**成员过滤不动** —— 别名只是翻译，不是放宽边界。两条说话规矩也
+`@` 写的是**名字**，`mentions` 存的是 **slug**：`channel/store.ts` 的 `parseMentions` 只认
+`slug` / `name` / `我` / `owner` **精确匹配**（ADR-088），其余（`@CEO`、拼音、title、`@老板`）
+一律丢弃。**成员过滤不动** —— 别名只是翻译，不是放宽边界。两条说话规矩也
 写在这里而不是提示词里：要找我拍板的事由 `say` 在两种情形下补 `owner`（ADR-037）；投递
-正文第一行写清频道 id，私聊额外说一句「只回这里」。没指明频道时 `fallbackChannelId`
-只在**群聊**里找最近活跃的那个，一个群都没有才回落我和他的私聊 —— 兜底永远不新建频道。
+正文第一行写清频道 id，私聊额外说一句「只回这里」。没指明频道时 `fallbackChannelId` 只找
+最近活跃的**真实**频道，`say` 的 `defaultChannel` 一旦发现兜底会落到私聊就**报错**，让模型
+显式给 channel —— 不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见）。
 
 ## 5. 文件夹就是边界
 
@@ -275,7 +276,7 @@ ui/web/       构建产物，服务端发这个目录，别手改
    别在组件里写内联样式或造第二套命名。
 
 频道只有两种形态：`dm`（成员恰好是我 + 一个人）和 `group`（其余全部）。形态由
-`view/index.ts` 从成员表算出来的 `chatKind()` 直接映射，核心没有「频道类型」这个概念。
+`channel/store.ts` 的 `chatKind()` 从成员表算出来，`app/read.ts` 的投影直接映射，核心没有「频道类型」这个概念。
 团队就是一个 `group`：`team:<slug>` 只是它的 id，侧栏另外用 `team` / `leadLabel` / `doing`
 三个字段把它标成团队。
 
@@ -293,18 +294,19 @@ ui/web/       构建产物，服务端发这个目录，别手改
 src/core/
   runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
                    models（contextWindow / compaction）/ settings 也在这里
-  agent/           identity（他是谁）/ prompt（投影 + 八段）/ runtime（接进会话）
-                   memory / skills / create（新建一个人）/ roster（slug ↔ 会话）
+  agent/           identity（他是谁）/ runtime（八段装配）/ memory
+                   skills / create（新建一个人）/ roster（slug ↔ 会话）/ rules / secrets
   team/            doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
-  channel/         state（纯规则）/ deliver（唤醒）/ post（写一条）
-                   tools（11 个工具）/ attach（附件）
+  channel/         store（纯规则 + @ 解析）/ post（写一条 + 投递 + 唤醒）
+                   wake（唯一唤醒入口）/ files（附件）/ tools（11 个工具）
+                   speech / unanswered（两个进程内补丁）
   ── 以上是 domain（业务事实）────────────────────────────────
-  app/             用例：snapshot / read / chat / people / files / uploads / diag
+  app/             用例：index（装配）/ types / snapshot / read（读 + 人 + 投影）
+                   chat / files（文件树 + 附件语义）/ diag / errors
                    （不 import node:http，能脱离网络直接测）
-  view/            index.ts（投影纯函数）+ dto.ts（界面契约的唯一权威）
-                   零 IO、零依赖，自己不认得任何一层
-  interface/http/  唯一 import node:http 的地方：routes / server / hub / sse
-                   match / static-assets / guard / network
+  view/            dto.ts 一处定义界面吃的 JSON —— **契约层**，零 import
+  interface/http/  唯一 import node:http 的地方：routes（路由表）
+                   server（原语 + 匹配 + 来源闸 + 静态资源）/ sse（编解码 + hub）
   shell/           assemble（扫文件夹 → 开会话 → 建频道）/ serve（装配顺序 + 监听）
                    main（启动）/ rescue / seed
 ```
