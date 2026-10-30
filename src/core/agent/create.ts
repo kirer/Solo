@@ -7,11 +7,8 @@
  * 唯一需要写文件的地方是「新建 agent」——所以它只有一处，且写的是同一个格式。
  * 这保证了「读」和「写」永远对称：写出来的东西，`readAllIdentities` 一定读得回。
  */
-import { join } from "node:path";
-import { listAgentSlugs, readIdentity, type Identity, type IdentityHeader } from "../agent/identity.ts";
-import { renderFrontmatter } from "../doc.ts";
+import { listAgentSlugs, writeIdentity, type Identity, type IdentityHeader } from "./identity.ts";
 import { assertName, slugifyName } from "../naming.ts";
-import { writeTextAt } from "../runtime/io.ts";
 
 /** 名字 → slug。规则只有一份，在 `naming.ts`。 */
 export function slugify(name: string): string {
@@ -33,19 +30,6 @@ export async function uniqueSlug(root: string, name: string): Promise<string> {
 		if (!taken.has(candidate)) return candidate;
 	}
 	throw new Error(`找不到可用名：${base}`);
-}
-
-/** 把一份身份写成 `identity.md`。头的字段按固定顺序输出，方便人读、也方便 diff。 */
-export function renderIdentityFile(header: IdentityHeader, body: string): string {
-	return renderFrontmatter(
-		[
-			["name", header.name],
-			["title", header.title],
-			["manager", header.manager],
-			["team", header.team],
-		],
-		body,
-	);
 }
 
 export type CreateAgentInput = {
@@ -70,9 +54,8 @@ export type CreateAgentInput = {
  * 而且都可以在之后补 —— 文件先存在，人才存在。
  */
 export async function createAgent(input: CreateAgentInput): Promise<Identity> {
+	// 显式传入的 slug 由 `writeIdentity` 过同一道名字闸（路径是拼出来的，不能只信调用方）。
 	const slug = input.slug ?? (await uniqueSlug(input.root, input.name));
-	// 显式传入的 slug 也要过同一道闸：路径是拼出来的，不能只信调用方。
-	assertSlug(slug);
 	const header: IdentityHeader = {
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
@@ -82,8 +65,5 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	const body =
 		input.body ??
 		`我是 ${input.name}。\n\n（这一段还没写。这是我的身份：我怎么理解自己的职责、我偏好怎么工作、我被交付了什么。\n我可以随时改这里 —— 改完下一条消息就生效。）`;
-	await writeTextAt(join(input.root, slug, "identity.md"), renderIdentityFile(header, body));
-	const identity = await readIdentity(input.root, slug);
-	if (identity === undefined) throw new Error(`身份写入后读不回来：${slug}`);
-	return identity;
+	return writeIdentity(input.root, slug, header, body);
 }

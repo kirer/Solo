@@ -7,7 +7,7 @@
  * 3. 渲染出的提示词**确定**（同样输入逐字节相同）且**不含任何身份文案常量**。
  */
 import { describe, expect, test } from "vitest";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -17,7 +17,10 @@ import {
 	chainUp,
 	parseIdentity,
 	readAllIdentities,
+	readIdentity,
+	renderIdentityFile,
 	reportsOf,
+	writeIdentity,
 } from "../../src/core/agent/identity.ts";
 import { renderAgentSection } from "../../src/core/agent/runtime.ts";
 import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
@@ -52,6 +55,48 @@ describe("identity.md 解析", () => {
 		const identity = parseIdentity("q", "/tmp/x/q", '---\nname: "林越"\ntitle: ""\n---\n正文');
 		expect(identity.name).toBe("林越");
 		expect(identity.title).toBeUndefined();
+	});
+});
+
+describe("身份文件读写只有一处（ADR-096）", () => {
+	test("writeIdentity 写下的字节就是 renderIdentityFile，且读得回", async () => {
+		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
+		try {
+			const header = { name: "沈知远", title: "人力", manager: OWNER_SLUG, team: "alpha" };
+			const body = "我负责招人。\n\n用人需求从团队管理员那里来。";
+			const written = await writeIdentity(root, "shen", header, body);
+
+			expect(await readFile(join(root, "shen", "identity.md"), "utf8")).toBe(renderIdentityFile(header, body));
+			// 写出去的东西一定读得回来：写入口与读入口共用同一套解析。
+			expect(await readIdentity(root, "shen")).toEqual(written);
+			expect(written.body).toBe(body);
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("缺省字段不写成空行；返回的身份直接可用", async () => {
+		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
+		try {
+			const written = await writeIdentity(root, "lin", { name: "林越" }, "写代码。");
+			const source = await readFile(join(root, "lin", "identity.md"), "utf8");
+			expect(source).not.toContain("team:");
+			expect(source).not.toContain("manager:");
+			expect(written).toMatchObject({ slug: "lin", name: "林越", body: "写代码。" });
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
+	});
+
+	test("写入口自己过名字闸：owner / .. / a/b 都写不出去", async () => {
+		const root = await mkdtemp(join(tmpdir(), "core-identity-"));
+		try {
+			for (const slug of ["owner", "..", "a/b", ""]) {
+				await expect(writeIdentity(root, slug, { name: "X" }, "正文"), slug).rejects.toThrow();
+			}
+		} finally {
+			await rm(root, { recursive: true, force: true });
+		}
 	});
 });
 

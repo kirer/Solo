@@ -17,9 +17,9 @@
  */
 import { cp } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "../doc.ts";
+import { readDocFile, writeDocFile } from "../doc.ts";
 import { skillDirName } from "../naming.ts";
-import { ensureDir, listDirSorted, mtimeOrUndefined, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
+import { ensureDir, listDirSorted, mtimeOrUndefined } from "../runtime/io.ts";
 
 /** 技能子目录名（公司层根目录与个人目录下都用它）。 */
 export const SKILLS_DIR = "skills";
@@ -64,21 +64,24 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 		if (entry.name.startsWith(".")) continue;
 		if (entry.kind === "dir") {
 			const dir = join(skillsRoot, entry.name);
-			const source = await readTextOrUndefined(join(dir, SKILL_FILE));
-			if (source === undefined) continue;
-			const header = parseFrontmatter(source);
+			const doc = await readDocFile(join(dir, SKILL_FILE));
+			if (doc === undefined) continue;
 			found.push({
-				name: header.name ?? entry.name,
-				description: header.description ?? entry.name,
+				name: doc.front.name ?? entry.name,
+				description: doc.front.description ?? entry.name,
 				dir,
 				scope,
 			});
 		} else if (entry.kind === "file" && entry.name.endsWith(".md")) {
-			const source = await readTextOrUndefined(join(skillsRoot, entry.name));
-			if (source === undefined) continue;
-			const header = parseFrontmatter(source);
+			const doc = await readDocFile(join(skillsRoot, entry.name));
+			if (doc === undefined) continue;
 			const bare = entry.name.slice(0, -3);
-			found.push({ name: header.name ?? bare, description: header.description ?? bare, dir: skillsRoot, scope });
+			found.push({
+				name: doc.front.name ?? bare,
+				description: doc.front.description ?? bare,
+				dir: skillsRoot,
+				scope,
+			});
 		}
 	}
 	return found.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
@@ -116,11 +119,10 @@ export async function readSkill(roots: SkillRoots, slug: string, name: string): 
 	const hit = (await listSkills(roots, slug)).find((skill) => skill.name === name);
 	if (hit === undefined) return undefined;
 	// 单文件形式时 `dir` 是 skills/ 本身，文件名得从 name 反推。
-	const source =
-		(await readTextOrUndefined(join(hit.dir, SKILL_FILE))) ??
-		(await readTextOrUndefined(join(hit.dir, `${hit.name}.md`)));
-	if (source === undefined) return undefined;
-	return { ...hit, body: stripFrontmatter(source) };
+	const doc =
+		(await readDocFile(join(hit.dir, SKILL_FILE))) ?? (await readDocFile(join(hit.dir, `${hit.name}.md`)));
+	if (doc === undefined) return undefined;
+	return { ...hit, body: doc.body };
 }
 
 /**
@@ -132,16 +134,17 @@ export async function writeSkillTo(
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
 	const clean = skillDirName(input.name);
+	const description = input.description.trim();
 	const dir = join(skillsRoot, clean);
-	const source = renderFrontmatter(
+	await writeDocFile(
+		join(dir, SKILL_FILE),
 		[
 			["name", clean],
-			["description", input.description.trim()],
+			["description", description],
 		],
 		input.body,
 	);
-	await writeTextAt(join(dir, SKILL_FILE), source);
-	return { name: clean, description: input.description.trim(), dir, scope: "personal" };
+	return { name: clean, description, dir, scope: "personal" };
 }
 
 /** 写进某个人的个人层。 */
@@ -181,6 +184,6 @@ export async function copySkillDir(fromDir: string, skillsRoot: string): Promise
 	// `runtime/io` 不替它做递归拷贝。
 	await ensureDir(skillsRoot);
 	await cp(fromDir, dir, { recursive: true });
-	const source = (await readTextOrUndefined(join(dir, SKILL_FILE))) ?? "";
-	return { name, description: parseFrontmatter(source).description ?? "", dir, scope: "company" };
+	const doc = await readDocFile(join(dir, SKILL_FILE));
+	return { name, description: doc?.front.description ?? "", dir, scope: "company" };
 }

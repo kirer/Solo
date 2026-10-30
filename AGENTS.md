@@ -56,13 +56,13 @@ ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
 scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
-test/             62 文件 / 572 例
+test/             62 文件 / 575 例
   ├ test/core/    51 文件 / 518 例（纯函数 + 装配）
   └ test/ui/      11 文件 / 54 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 46 个 ts / 10393 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 46 个 ts / 10471 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -111,7 +111,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 62 文件 572 例，<3s，必须全绿
+npm test             # 62 文件 575 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 ```
@@ -135,7 +135,7 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 | 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md`（ADR-082）+ `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
 | 接一个 pi 能力 / 绕一个 pi 做不到的事 | ADR-083 类的新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」） |
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
-| 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；直接 `node:fs` 只允许 ADR-096 列的五类例外 |
+| 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 ADR-096 列的五类例外 |
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `src/core/channel/store.ts` 的 `projectChannel`、`channel/post.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`store.ts` 的 `recipientsOf` / `deliveryTargets`；ADR-096 |
 | 建频道 / 私聊 | `docs/CORE.md` §4 + `docs/WEB-API.md`；唯一入口是 `POST /api/people/:slug/dm`（ADR-097） |

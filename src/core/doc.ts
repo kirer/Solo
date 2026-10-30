@@ -15,9 +15,13 @@
  *
  * `parseFrontmatter` / `stripFrontmatter` / `renderFrontmatter` 是同一套实现的
  * 两份外形：老调用方只要头或只要正文，不必先把整份 `Doc` 拼出来。
+ * 读写文件则用 `readDocFile` / `writeDocFile`：解析与落盘各配成一对，领域模块只提供
+ * 「哪些字段、按什么顺序」。
  *
  * `path` 是相对工作区的路径（写回去时原样用）。
  */
+import { readTextOrUndefined, writeTextAt } from "./runtime/io.ts";
+
 export type Doc = {
 	readonly path: string;
 	readonly front: Readonly<Record<string, string>>;
@@ -91,4 +95,31 @@ export function renderFrontmatter(fields: readonly FrontmatterField[], body: str
 export function frontOf(doc: Doc, key: string): string | undefined {
 	const value = doc.front[key];
 	return value === undefined || value === "" ? undefined : value;
+}
+
+/**
+ * 读一份 markdown 文件。文件不存在返回 `undefined`（缺席是常态，不是错误）。
+ *
+ * IO 与解析配成一对：调用方拿到的已经是 `{front, body}`，不会再出现「读了文件、
+ * 只拆了头、正文又去读一遍」的写法（identity / team 以前各解析了两次）。
+ */
+export async function readDocFile(path: string): Promise<Doc | undefined> {
+	const source = await readTextOrUndefined(path);
+	return source === undefined ? undefined : parseDoc(path, source);
+}
+
+/**
+ * 渲染并写入一份 markdown 文件（父目录自动建）。返回写下去的原文。
+ *
+ * 「头 + 正文 → 文件」是**一个动作**：identity / SKILL / 团队 README 的写入口都走这里，
+ * 不会有人只渲染不写、或只写不按同一套格式渲染。
+ */
+export async function writeDocFile(
+	path: string,
+	fields: readonly FrontmatterField[],
+	body: string,
+): Promise<string> {
+	const text = renderFrontmatter(fields, body);
+	await writeTextAt(path, text);
+	return text;
 }

@@ -20,9 +20,16 @@
  * ```
  */
 import { join } from "node:path";
-import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "../doc.ts";
+import {
+	parseDoc,
+	readDocFile,
+	renderFrontmatter,
+	writeDocFile,
+	type Doc,
+	type FrontmatterField,
+} from "../doc.ts";
 import { assertName } from "../naming.ts";
-import { listDirSorted, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
+import { listDirSorted } from "../runtime/io.ts";
 
 export const TEAM_FILE = "README.md";
 
@@ -49,8 +56,8 @@ export type TeamDoc = {
 
 const STATUSES: readonly TeamStatus[] = ["active", "paused", "done", "archived"];
 
-export function parseTeam(slug: string, source: string): TeamDoc {
-	const header = parseFrontmatter(source);
+function teamOf(slug: string, doc: Doc): TeamDoc {
+	const header = doc.front;
 	const status = STATUSES.find((item) => item === header.status) ?? "active";
 	const lead = header.lead;
 	return {
@@ -59,28 +66,36 @@ export function parseTeam(slug: string, source: string): TeamDoc {
 		...(lead === undefined ? {} : { lead }),
 		...(header.doing === undefined ? {} : { doing: header.doing }),
 		status,
-		body: stripFrontmatter(source),
+		body: doc.body,
 	};
 }
 
-/** 渲染成文件内容（写盘与测试共用，保证格式只有一份）。 */
-export function renderTeamFile(doc: {
+export function parseTeam(slug: string, source: string): TeamDoc {
+	return teamOf(slug, parseDoc("", source));
+}
+
+/** 团队说明在文件里的样子（渲染与写盘共用）。 */
+export type TeamFile = {
 	readonly name: string;
 	readonly lead?: string;
 	readonly doing?: string;
 	readonly status?: TeamStatus;
 	readonly body: string;
-}): string {
+};
+
+function teamFields(doc: TeamFile): readonly FrontmatterField[] {
 	// 空串按「没写」处理（`status` 例外：它是枚举，只在缺省时才不写）。
-	return renderFrontmatter(
-		[
-			["name", doc.name],
-			["lead", doc.lead === "" ? undefined : doc.lead],
-			["doing", doc.doing === "" ? undefined : doc.doing],
-			["status", doc.status],
-		],
-		doc.body,
-	);
+	return [
+		["name", doc.name],
+		["lead", doc.lead === "" ? undefined : doc.lead],
+		["doing", doc.doing === "" ? undefined : doc.doing],
+		["status", doc.status],
+	];
+}
+
+/** 渲染成文件内容（写盘与测试共用，保证格式只有一份）。 */
+export function renderTeamFile(doc: TeamFile): string {
+	return renderFrontmatter(teamFields(doc), doc.body);
 }
 
 /**
@@ -121,8 +136,8 @@ export async function readTeam(teamsRoot: string, slug: string): Promise<TeamDoc
 	} catch {
 		return undefined;
 	}
-	const source = await readTextOrUndefined(join(teamDirOf(teamsRoot, slug), TEAM_FILE));
-	return source === undefined ? undefined : parseTeam(slug, source);
+	const doc = await readDocFile(join(teamDirOf(teamsRoot, slug), TEAM_FILE));
+	return doc === undefined ? undefined : teamOf(slug, doc);
 }
 
 /** 全部团队（按 slug 码点序，保证渲染确定）。 */
@@ -170,8 +185,8 @@ export async function writeTeam(
 		status: input.status ?? existing?.status ?? "active",
 		body: input.body,
 	};
-	await writeTextAt(join(dir, TEAM_FILE), renderTeamFile(doc));
-	return parseTeam(slug, renderTeamFile(doc));
+	const text = await writeDocFile(join(dir, TEAM_FILE), teamFields(doc), doc.body);
+	return teamOf(slug, parseDoc("", text));
 }
 
 /** 团队里的 agent（谁在 `identity.md` 里写了 `team: <slug>`）。 */

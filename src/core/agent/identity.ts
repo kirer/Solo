@@ -9,8 +9,19 @@
  * 目录就是组织架构，改了文件就是改了组织架构，不需要第二条真相。
  */
 import { join } from "node:path";
-import { parseFrontmatter, stripFrontmatter } from "../doc.ts";
-import { listDirSorted, readTextOrUndefined } from "../runtime/io.ts";
+import {
+	parseDoc,
+	readDocFile,
+	renderFrontmatter,
+	writeDocFile,
+	type Doc,
+	type FrontmatterField,
+} from "../doc.ts";
+import { assertName } from "../naming.ts";
+import { listDirSorted } from "../runtime/io.ts";
+
+/** 一个人的身份文件。读写都经 `doc.ts`，格式只有一份。 */
+export const IDENTITY_FILE = "identity.md";
 
 /** `identity.md` 的 YAML 头。全部可选 —— 缺什么就渲染成「未设置」。 */
 export type IdentityHeader = {
@@ -35,23 +46,61 @@ export type Identity = IdentityHeader & {
 export const OWNER_SLUG = "owner";
 
 /** 头 → 身份头。只留认得的那几个字段；其余字段照旧留在文件里，不解析也不丢。 */
-function parseHeader(source: string): IdentityHeader {
-	const header = parseFrontmatter(source);
+function headerOf(front: Readonly<Record<string, string>>): IdentityHeader {
 	return {
-		...(header.name === undefined ? {} : { name: header.name }),
-		...(header.title === undefined ? {} : { title: header.title }),
-		...(header.manager === undefined ? {} : { manager: header.manager }),
+		...(front.name === undefined ? {} : { name: front.name }),
+		...(front.title === undefined ? {} : { title: front.title }),
+		...(front.manager === undefined ? {} : { manager: front.manager }),
 		// 迁移窗口：老工作区还写着 `project:`，改名后仍认它（`scripts/rename-teams.ts` 会改写）。
-		...(header.team === undefined
-			? header.project === undefined
+		...(front.team === undefined
+			? front.project === undefined
 				? {}
-				: { team: header.project }
-			: { team: header.team }),
+				: { team: front.project }
+			: { team: front.team }),
 	};
 }
 
+/** 身份头 → 文件里的字段（顺序就是人读到的顺序）。 */
+export function identityFields(header: IdentityHeader): readonly FrontmatterField[] {
+	return [
+		["name", header.name],
+		["title", header.title],
+		["manager", header.manager],
+		["team", header.team],
+	];
+}
+
+function identityOf(slug: string, dir: string, doc: Doc): Identity {
+	return { slug, dir, ...headerOf(doc.front), body: doc.body };
+}
+
 export function parseIdentity(slug: string, dir: string, source: string): Identity {
-	return { slug, dir, ...parseHeader(source), body: stripFrontmatter(source) };
+	return identityOf(slug, dir, parseDoc("", source));
+}
+
+/** 渲染一份身份文件（写盘与测试共用，保证格式只有一份）。 */
+export function renderIdentityFile(header: IdentityHeader, body: string): string {
+	return renderFrontmatter(identityFields(header), body);
+}
+
+/**
+ * 写一份身份。读与写在同一处：`createAgent` 与将来的编辑入口都只调它。
+ *
+ * 返回**写下去的内容**解析出的身份（不再「写完重读一遍」—— 同一份正文解析两次，
+ * 多出来的那次只会制造不一致的机会）。
+ */
+export async function writeIdentity(
+	agentsRoot: string,
+	slug: string,
+	header: IdentityHeader,
+	body: string,
+): Promise<Identity> {
+	// 路径是拼出来的，不能只信调用方：写入口自己过同一道名字闸。
+	const safe = assertName(slug, "agent");
+	const dir = join(agentsRoot, safe);
+	const path = join(dir, IDENTITY_FILE);
+	const text = await writeDocFile(path, identityFields(header), body);
+	return identityOf(safe, dir, parseDoc(path, text));
 }
 
 /** agent 根目录（`workspace/agents`）下的所有子目录。 */
@@ -63,8 +112,8 @@ export async function listAgentSlugs(root: string): Promise<readonly string[]> {
 /** 读一份身份；文件不存在返回 undefined（不是错误 —— 缺席是一种正常状态）。 */
 export async function readIdentity(root: string, slug: string): Promise<Identity | undefined> {
 	const dir = join(root, slug);
-	const source = await readTextOrUndefined(join(dir, "identity.md"));
-	return source === undefined ? undefined : parseIdentity(slug, dir, source);
+	const doc = await readDocFile(join(dir, IDENTITY_FILE));
+	return doc === undefined ? undefined : identityOf(slug, dir, doc);
 }
 
 /** 读全部身份。组织架构就是这份结果。 */
