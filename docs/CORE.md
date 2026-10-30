@@ -213,9 +213,7 @@ workspace/
 - **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
 - 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 全员层，
-  `seed/agents/assistant/skills/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次，
-  之后正文归 agent 自己迭代。`seed/pool/` 是「出厂有、默认不装」的技能，要用的项目自己拷进
-  `workspace/skills/`。
+  `seed/agents/assistant/skills/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次。
 
 判断边界：「做什么」是身份（`identity.md`），「怎么做」是技能（`skills/`），
 「发生过什么」是记忆（`memory.md`）。三条都不在代码里。

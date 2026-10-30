@@ -1,5 +1,5 @@
 /**
- * 提示词装配：**一个 md = 一段 = 一个 cache section**（`SEED-CONTRACT.md` §4 硬规矩 3）。
+ * 提示词装配：**一个 md = 一段 = 一个 cache section**（`SEED-CONTRACT.md` §3 硬规矩 3）。
  *
  * 这里钉三件 V2 用 353 行代码硬编码才换来、V3 想用「读文件 + 填插槽 + 排序」换来的性质：
  *
@@ -9,7 +9,7 @@
  * 3. **段与插槽对不上要看得见**：`skip-empty` 的插槽装配漏给，报 `unknown`；填不上写
  *    「（未设置）」，不许出现「## 规矩」下面空一片。
  *
- * 另外守一条**文档与代码一致**：模板里用的插槽必须登记在契约 §4 的插槽表里。契约是插槽
+ * 另外守一条**文档与代码一致**：模板里用的插槽必须登记在契约 §3 的插槽表里。契约是插槽
  * 名字唯一的家；表里没有的名字，写模板的人只能靠猜。
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -33,10 +33,10 @@ function slotsIn(text: string): readonly string[] {
 	return [...new Set(names)];
 }
 
-/** 契约 §4 插槽表里登记的名字。 */
+/** 契约 §3 插槽表里登记的名字。 */
 function documentedSlots(markdown: string): ReadonlySet<string> {
-	const start = markdown.indexOf("## 4.");
-	const end = markdown.indexOf("## 5.");
+	const start = markdown.indexOf("## 3.");
+	const end = markdown.indexOf("## 4.");
 	const section = markdown.slice(start, end < 0 ? undefined : end);
 	return new Set([...section.matchAll(/\{\{\s*([A-Za-z0-9_.:-]+)\s*\}\}/g)].map((match) => match[1] ?? ""));
 }
@@ -213,7 +213,7 @@ describe("renderPrompt：拼段", () => {
 	});
 });
 
-describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）", () => {
+describe("seed/prompt 真实渲染（契约 §5 的 prompt:check，测试版）", () => {
 	it("样例插槽表能填满：未知插槽 0 个", async () => {
 		const rendered = await renderPromptDir(createFsx(SEED), SAMPLE, "prompt");
 		const unknown = rendered.issues.filter((issue) => issue.reason === "unknown");
@@ -261,7 +261,7 @@ describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）"
 		expect(JSON.stringify(first.segments)).toBe(JSON.stringify(second.segments));
 	});
 
-	it("整句插槽（reply.*）只许出现在 delivery 段（契约 §4 硬规矩 4）", async () => {
+	it("整句插槽（reply.*）只许出现在 delivery 段（契约 §3 硬规矩 4）", async () => {
 		// `reply.alone` / `reply.colleagues` 是**条件句**（这一轮只有你被叫醒 / 还有别人在），
 		// 不是事实值。放进系统提示词就得给 md 发明一套条件语法，所以只许进投递段。
 		const templates = await loadTemplates(createFsx(SEED), "prompt");
@@ -274,7 +274,7 @@ describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）"
 		expect(bad, `整句插槽只许进 80-reply / 90-interrupted：\n${bad.join("\n")}`).toEqual([]);
 	});
 
-	it("模板用到的插槽都登记在契约 §4 的插槽表里", async () => {
+	it("模板用到的插槽都登记在契约 §3 的插槽表里", async () => {
 		const markdown = await import("node:fs/promises").then(({ readFile }) => readFile(CONTRACT, "utf8"));
 		const documented = documentedSlots(markdown);
 		const templates = await loadTemplates(createFsx(SEED), "prompt");
@@ -282,8 +282,8 @@ describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）"
 		const undocumented = [...new Set(used)].filter((slot) => !documented.has(slot) && !/^tool:/.test(slot));
 		expect(
 			undocumented,
-			`契约 §4 没有登记这些插槽，写模板的人只能猜：${undocumented.join("、")}\n` +
-				"补进 §4 的插槽表（值 + 来源），或者从模板里删掉。",
+			`契约 §3 没有登记这些插槽，写模板的人只能猜：${undocumented.join("、")}\n` +
+				"补进 §3 的插槽表（值 + 来源），或者从模板里删掉。",
 		).toEqual([]);
 	});
 });

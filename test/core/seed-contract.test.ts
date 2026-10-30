@@ -1,5 +1,5 @@
 /**
- * V3 seed 契约的**机械验收**（`docs/design/SEED-CONTRACT.md` §6）。
+ * V3 seed 契约的**机械验收**（`docs/design/SEED-CONTRACT.md` §5）。
  *
  * 这个文件不 import 任何业务代码，只读 `seed/` 的字节。理由是 seed 的错单测抓不到：
  * 它不会让函数返回错值，只会让模型每轮看到一句谎话（「用 hire 招人」而工具已经没了）。
@@ -137,7 +137,7 @@ function toolMentions(text: string): readonly string[] {
 // ── 一条事实一个家 ────────────────────────────────────────────────────────
 
 /**
- * 契约 §2.1 认账的那几条重复，每条只许命中一个文件。
+ * 契约 §1 的重复清单，每条只许命中一个文件。
  * 正则按「意思」写，不按原话写：换措辞但同一个意思，同样算重复。
  */
 const ONE_HOME: readonly { readonly what: string; readonly re: RegExp }[] = [
@@ -152,7 +152,7 @@ const ONE_HOME: readonly { readonly what: string; readonly re: RegExp }[] = [
 
 // ── prompt 插槽 ──────────────────────────────────────────────────────────
 
-/** 契约 §3 的模板：文件名前缀定序，一个文件 = 一段 = 一个 cache section。 */
+/** 契约 §2 的模板：文件名前缀定序，一个文件 = 一段 = 一个 cache section。 */
 const PROMPT_FILES = [
 	"00-who.md",
 	"05-body.md",
@@ -259,7 +259,7 @@ describe("一条事实一个家", () => {
 });
 
 describe("seed/prompt：段落与插槽", () => {
-	it("十九个模板都在（契约 §3）", async () => {
+	it("全部模板都在（契约 §2）", async () => {
 		const files = await promptFiles();
 		expect(files).toEqual(expect.arrayContaining([...PROMPT_FILES]));
 	});
@@ -326,14 +326,7 @@ describe("seed/prompt：段落与插槽", () => {
 });
 
 describe("出厂内容：体积与位置", () => {
-	it("项目技能不进全员层（前端视觉设计）", async () => {
-		expect(await exists("skills/前端视觉设计"), "它该按需装，不该让全员默认背一个前端技能").toBe(false);
-		const agents = await walk("agents");
-		const personal = agents.filter((rel) => rel.includes("前端视觉设计"));
-		expect(personal, "也别默认装进某个人的个人层").toEqual([]);
-	});
-
-	it("助理身份在 seed 里，不在代码里（契约 §2.5）", async () => {
+	it("助理身份在 seed 里，不在代码里", async () => {
 		const text = await readSeed("agents/assistant/identity.md");
 		expect(text.startsWith("---")).toBe(true);
 		// `team` 是可选的：助理不属于任何团队，别为凑字段编一个。
@@ -348,12 +341,12 @@ describe("出厂内容：体积与位置", () => {
 		expect(await exists("assistant")).toBe(false);
 	});
 
-	it("技能体积：工作规矩可用满 4 KB，其余自律 3 KB（契约 §5）", async () => {
+	it("技能体积：工作规矩可用满 4 KB，其余自律 3 KB（契约 §4）", async () => {
 		// 上限是 2026-10-30 定的：`工作规矩` 是唯一被反复读、且承载四个身份模型的那个
 		// 技能，为凑 3 KB 砍内容是本末倒置。其余技能照旧自律 —— 超了说明该拆或该挪进 prompt。
 		const big: string[] = [];
 		for (const rel of await walk()) {
-			if (!rel.endsWith("SKILL.md") || rel.includes("前端视觉设计")) continue;
+			if (!rel.endsWith("SKILL.md")) continue;
 			const limit = rel === "skills/工作规矩/SKILL.md" ? 4 * 1024 : 3 * 1024;
 			const size = byteLength(await readSeed(rel));
 			if (size > limit) big.push(`${rel}：${size} B（上限 ${limit / 1024} KB）`);
@@ -361,10 +354,9 @@ describe("出厂内容：体积与位置", () => {
 		expect(big).toEqual([]);
 	});
 
-	it("seed 总体积 < 500 KB（不含前端视觉设计）", async () => {
+	it("seed 总体积 < 500 KB", async () => {
 		let total = 0;
 		for (const rel of await walk()) {
-			if (rel.includes("前端视觉设计")) continue;
 			total += byteLength(await readSeed(rel));
 		}
 		expect(total, `现在 ${(total / 1024).toFixed(0)} KB`).toBeLessThan(500 * 1024);
