@@ -39,6 +39,10 @@ export const SAMPLE_SLOTS = {
 	memory: "- 示例：第一次上手，先看规矩",
 	skills: "- `工作规矩` — 什么时候用：不确定怎么说话时（公司通用）",
 
+	pending: "2",
+	candidates: "- #3 [decision] 示例上级：定了，验收标准是能跑通。\n- #4 [chat] 示例同僚：收到。",
+
+	"tool:say": "say",
 	"tool:skills": "skills",
 	"tool:remember": "remember",
 	"tool:read_history": "read_history",

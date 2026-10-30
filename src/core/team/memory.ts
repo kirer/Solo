@@ -17,6 +17,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
 import { createSerialGate, readTextOrUndefined } from "../runtime/io.ts";
+import { renderSlots, toolSlots } from "../text.ts";
 
 export const TEAM_MEMORY_FILE = "memory.md";
 
@@ -132,16 +133,18 @@ export function settleCandidates(
  * 写在公司技能「记忆整理」里 —— 那是给模型看的判断规则，人和 agent 都要能改。
  * 这里只做机械的事：把候选消息排成列表、说清记到哪个文件、回哪个频道。
  */
-export function renderSettlePrompt(team: string, candidates: readonly SettleCandidate[]): string {
-	const lines = candidates.map(
-		(item) => `- #${item.seq} [${item.kind}] ${item.from}：${item.text.replace(/\s+/g, " ").trim()}`,
-	);
-	return [
-		`团队 \`${team}\` 的频道里有 ${candidates.length} 条新消息还没整理进团队记忆：`,
-		"",
-		...lines,
-		"",
-		`按公司技能「记忆整理」的规矩整理这批消息（\`skills(action=read)\` 读那份技能：该记什么、不该记什么、记完怎么回话，都在里面），结论写进 \`teams/${team}/memory.md\`（用 remember(scope=team)）。`,
-		`一句话把「记了什么」回在团队频道 \`team:${team}\`（say 时传 channel: "team:${team}"）。`,
-	].join("\n");
+export function renderSettlePrompt(
+	template: string,
+	team: string,
+	candidates: readonly SettleCandidate[],
+): string {
+	return renderSlots(template, {
+		...toolSlots(template),
+		team,
+		pending: candidates.length,
+		// 候选消息只做机械排版（谁、第几条、什么标签、说了什么），判断规则不在这里。
+		candidates: candidates
+			.map((item) => `- #${item.seq} [${item.kind ?? "chat"}] ${item.from}：${item.text.replace(/\s+/g, " ").trim()}`)
+			.join("\n"),
+	}).text.trim();
 }

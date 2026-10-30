@@ -16,7 +16,7 @@ import { planAttachments } from "./attach.ts";
 import { wake } from "./wake.ts";
 import { createFsx } from "../fsx.ts";
 import { loadTemplates, type PromptTemplate } from "../prompt.ts";
-import { renderSlots, type SlotValue } from "../text.ts";
+import { renderSlots, toolSlots, type SlotValue } from "../text.ts";
 
 import { oneLine } from "../oneline.ts";
 import {
@@ -169,6 +169,8 @@ export function renderReplyRules(options: {
 
 	// 两个条件句都必须有值：模板里它们是**整行**，留空会渲染成「（未设置）」占一行。
 	const slots: Record<string, SlotValue> = {
+		// `{{tool:say}}` 这类：按名字自解释（投递层没有注册表，见 `text.ts` 的 `toolSlots`）。
+		...toolSlots(options.template),
 		"reply.alone":
 			others.length === 0
 				? "（这一轮只有你被叫醒：必须回，回的就是结果。）"
@@ -243,27 +245,34 @@ export function renderDelivery(options: {
 					: channel.members.filter((slug) => slug !== OWNER && slug !== options.viewer),
 		}),
 		...(options.interrupted === true && options.interruptedTemplate.trim() !== ""
-			? [renderSlots(options.interruptedTemplate, {}).text.trim()]
+			? [renderSlots(options.interruptedTemplate, toolSlots(options.interruptedTemplate)).text.trim()]
 			: []),
 	].join("\n");
 }
 
+/** delivery 段的三份模板：每轮回话规矩、插话那一句、沉淀指令。 */
+export type DeliveryPrompt = {
+	readonly reply: string;
+	readonly interrupted: string;
+	readonly settle: string;
+};
+
 /**
- * 读 delivery 段的两份模板（`80-reply.md` / `90-interrupted.md`）。
+ * 读 delivery 段的模板（`80-reply.md` / `90-interrupted.md` / `95-settle.md`）。
  *
  * 缺哪段就空串（调用方整段不贴）：模板是 workspace 里的活文件，可能被改成任意样子，
  * 读不到不该让投递失败 —— 但也不能静默：读不到就 warn 一次。
  */
-export async function deliveryPrompt(promptDir: string | undefined): Promise<{ readonly reply: string; readonly interrupted: string }> {
+export async function deliveryPrompt(promptDir: string | undefined): Promise<DeliveryPrompt> {
 	if (promptDir === undefined) {
 		console.warn("[core] 投递没拿到模板目录（prompt/）：回话规矩不会贴");
-		return { reply: "", interrupted: "" };
+		return { reply: "", interrupted: "", settle: "" };
 	}
 	// `promptDir` 本身就是模板目录，所以段目录是 `.`（不是默认的 `prompt`，那会变成 prompt/prompt）。
 	const templates = await loadTemplates(createFsx(promptDir), ".");
 	const delivery: readonly PromptTemplate[] = templates.filter((template) => template.use === "delivery");
 	const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
-	const prompt = { reply: bodyOf("reply"), interrupted: bodyOf("interrupted") };
+	const prompt = { reply: bodyOf("reply"), interrupted: bodyOf("interrupted"), settle: bodyOf("settle") };
 	if (prompt.reply === "") console.warn(`[core] ${promptDir} 里没有回话模板（80-reply.md）：这一段不会贴`);
 	return prompt;
 }

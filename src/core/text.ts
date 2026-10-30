@@ -82,6 +82,24 @@ export function slotsIn(text: string): readonly string[] {
 	return names;
 }
 
+/**
+ * `{{tool:say}}` 这类插槽的值：**名字本身就是答案**。
+ *
+ * delivery 段（回话规矩、插话、沉淀指令）在投递层渲染，那里没有工具注册表可查。
+ * 而 `{{tool:X}}` 的语义就是「把 X 这个工具名写出来」—— 工具改名时 seed 里那一行
+ * 跟着改名，两边一致。所以这里按后缀填，不查表：宁可让写错的名字**原样出现在正文里**
+ * （一眼看得见，模型会调失败再回头），也不让它渲染成「（未设置）」把一句话变成半截。
+ *
+ * 名字对不对由 seed 侧的检查兜（模板里的 `{{tool:X}}` 必须是真的工具名）。
+ */
+export function toolSlots(template: string): Record<string, string> {
+	const slots: Record<string, string> = {};
+	for (const name of slotsIn(template)) {
+		if (name.startsWith("tool:")) slots[name] = name.slice("tool:".length);
+	}
+	return slots;
+}
+
 /** 这个值算不算「有」。`skip-empty` 判它，和渲染时的判据必须一致（数字 0 算有）。 */
 export function hasSlot(slots: Slots, name: string): boolean {
 	const value = slots[name];

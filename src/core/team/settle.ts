@@ -119,9 +119,15 @@ export async function settleTeam(
 		// 回话规矩从模板现读一次（不缓存）：沉淀这条路上以前什么都没有 —— 裸提示词、
 		// 没留痕、没合并。现在和投递走同一个 `wake()`，两段规矩也一起贴。
 		const prompt = await deliveryPrompt(deps.promptDir);
+		if (prompt.settle.trim() === "") {
+			// 模板缺了就别问：问出去也是一句「按技能整理」，模型既没判据也没被要求读技能
+			// —— 这一刀之前的 11/12 就是这么来的。游标不推进，等模板补上下次再问。
+			console.warn(`[core] 没有沉淀模板（prompt/95-settle.md）：团队 ${team} 这批消息这次不问`);
+			return { skipped: { team, count: candidates.length } };
+		}
 		const label = deps.labelOf?.(to) ?? to;
 		const body = [
-			renderSettlePrompt(team, candidates),
+			renderSettlePrompt(prompt.settle, team, candidates),
 			renderReplyRules({ template: prompt.reply, woken: [to], viewer: to, colleagues: [] }),
 		]
 			.filter((part) => part.trim() !== "")

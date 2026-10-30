@@ -49,13 +49,13 @@ shell = 装配层，唯一可以同时 import 全部
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
    不许 import `agent|channel|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
 
-## 2. 全量文件（`src/core` 下 58 个 ts，10956 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 59 个 ts，11176 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
 | `fsx.ts` | 130 | `createFsx(root)` → `{read / write / list / exists / remove}`，路径一律相对工作区，越界抛 `FsxEscapeError`；列表用**码点**排序（`localeCompare` 跟机器 locale 变，会打穿 prompt cache）；读不到返回 `undefined`（缺席是常态），写失败才抛 |
 | `doc.ts` | 86 | `parseDoc` / `renderDoc` / `readDoc` / `writeDoc` / `frontOf` —— identity / 团队 README / SKILL / rules / memory 全是 `{path, front, body}`，只有这一份实现；头只认单行 `key: value`（多行值不解析也不丢）；读入统一换行 |
-| `text.ts` | 122 | `renderSlots`（返回 `{text, issues}`，装配层要区分两种错）/ `renderTemplate`（只返回文本的便捷壳）/ `slotsIn` / `hasSlot`；`unknown`（模板写了、装配没给 = 缺陷）与 `unset`（给了、现在确实是空 = 事实）分开报；不二次展开、纯函数 |
+| `text.ts` | 140 | `renderSlots`（返回 `{text, issues}`，装配层要区分两种错）/ `renderTemplate`（只返回文本的便捷壳）/ `slotsIn` / `hasSlot` / `toolSlots`（delivery 段没有注册表可查，`{{tool:say}}` 按后缀自解释——名字写错不报错，靠 seed 侧检查兜）；`unknown`（模板写了、装配没给 = 缺陷）与 `unset`（给了、现在确实是空 = 事实）分开报；不二次展开、纯函数 |
 | `prompt.ts` | 167 | `loadTemplates` / `renderPrompt` / `renderPromptDir` / `promptDirOf`：文件名 `NN-段名.md` 定序（不合法直接抛，顺序是语义）；`skip-empty` 为空则整段消失；`use: delivery` 不进系统提示词；模板缓存只允许落在 async 边界上，不跨轮复用 |
 | `runtime/index.ts` | 36 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `compactionSettings` / `Type` |
 | `runtime/open.ts` | 386 | `openCore({databasePath, models, registry, settings?, onReport?}) → {harness, registry, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025）；`onReport` 把底座的错误出口接成 `RuntimeReport`（ADR-083） |
@@ -75,11 +75,12 @@ shell = 装配层，唯一可以同时 import 全部
 | `agent/create.ts` | 88 | `slugify`（中文保留）/ `uniqueSlug` / `renderIdentityFile` / `createAgent` |
 | `agent/roster.ts` | 65 | `DirectoryDoc`、`conversationFor` / `slugFor` / `wakeOf` —— 名册是缓存，不是真相 |
 | `team/doc.ts` | 157 | `teams/<slug>/README.md` 的读写；`TeamDoc{slug,name,lead?,doing?,status,body}`、`membersOfTeam()` |
-| `team/memory.ts` | 147 | `teams/<slug>/memory.md` + `settleCandidates()`（不按 `kind` 筛，只排除整理者自己）/ `renderSettlePrompt()`（规则指向公司技能「记忆整理」，不复述清单） |
-| `team/settle.ts` | 203 | 自动沉淀：`settleProject` 已改名 `settleTeam` / `settleTarget`；单游标（问完只记 `waiting`，记忆文件 mtime 变了才推进，ADR-033）；失败时往团队频道留一条 `note`（`appendTeamNote`） |
+| `team/memory.ts` | 150 | `teams/<slug>/memory.md` + `settleCandidates()`（不按 `kind` 筛，只排除整理者自己）/ `renderSettlePrompt(template, team, candidates)`（**只做排版**：候选排成 `{{candidates}}`、填 `{{team}}` `{{pending}}`，判据在 `seed/prompt/95-settle.md`） |
+| `team/settle.ts` | 240 | 自动沉淀：`settleProject` 已改名 `settleTeam` / `settleTarget`；单游标（问完只记 `waiting`，记忆文件 mtime 变了才推进，ADR-033）；走 `wake()` 而不是直投；**模板缺了就不问**（warn + 游标不推进，等模板补上下次再问）；失败时往团队频道留一条 `note`（`appendTeamNote`） |
 | `channel/state.ts` | 476 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `messageView` 侧的「要你拍板」只看 mentions（ADR-037，判定搬去了 `say`）/ `chatKind`（**只看成员表**：恰好 `{我, 一人}` = `dm`，其余 `group`）/ `teamId`（`team:<slug>`）/ `fallbackChannelId`（只找最近活跃的群，一个群都没有才回落 `dm:owner-<slug>`）/ `unreadCount` / `markRead` / `ensureChannel` |
 | `channel/alias.ts` | 117 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@我` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
-| `channel/deliver.ts` | 512 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）、`renderReplyRules` / `renderDigest` / `queuedAhead` / `coalesceQueue`。回话两段走模板：`renderReplyRules(template, …)` / `renderDelivery({replyTemplate, interruptedTemplate, …})` 收模板当参数（纯函数不读盘），`deliver()` 每轮 `await` 读一次 `80-reply` / `90-interrupted`，**不缓存** |
+| `channel/wake.ts` | 132 | `wake()` —— **叫醒一个人只有这一条路**：合并排队项、记 wake、重置「一轮一句」、提交、没产出留痕，全收在这一个函数里；正文用 `bodyOf(merged, busy)` 回调给（要先合并才知道并了几条）。`post()` 与 `team/settle.ts` 都走它，以前 settle 直投 `conversation.submit()` 是裸提示词（没留痕、没回话规矩、没合并） |
+| `channel/deliver.ts` | 518 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）、`renderReplyRules` / `renderDigest` / `queuedAhead` / `coalesceQueue`。回话段走模板：`renderReplyRules(template, …)` / `renderDelivery({replyTemplate, interruptedTemplate, …})` 收模板当参数（纯函数不读盘），`deliver()` 每轮 `await` 读一次 `80-reply` / `90-interrupted`，**不缓存**；`deliveryPrompt` 扩成三份（reply / interrupted / settle），settle 复用同一个来源 |
 | `channel/unanswered.ts` | 71 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话，没见过的原样贴）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
 | `channel/speech.ts` | 35 | 「这一轮已经说过结果了」的进程内标记（`markSpoken` / `spokenResult` / `clearSpoken`）；`say` 不带 `step` 才算结果（ADR-064） |
 | `channel/post.ts` | 293 | `postMessage()` —— 写一条（单元素 splice，ADR-027）+ 解析 @（可带 roster / 额外 mention）+ 投递 |
@@ -167,6 +168,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改界面样式 / 交互 | `ui/app/` | **改完必须 `npm run ui:build`**；文件职责见 §2.2 |
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建（ADR-052） |
 | 改团队记忆沉淀的触发条件 / 游标时机 | `team/memory.ts` 的 `settleCandidates` + `team/settle.ts` 的 `waiting` | 游标语义在 ADR-033（取代 ADR-013），改之前先读懂 |
+| 改「这批消息该不该记」的判据 | `seed/prompt/95-settle.md` —— **不要写进 `team/memory.ts`** | 判据是 `use: delivery` 的模板：decision 必记、report 看是否超出当前任务、纯过程话不记；技能正文不在沉淀那一轮的上下文里，所以判据必须写在正文里 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制（ADR-021） |
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncCompanySkills`（公司层技能，按 hash 同步，ADR-039）/ `seedOwnerAssistant`（助理身份读 `seed/agents/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次；`seed/pool/` 不播种 |

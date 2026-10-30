@@ -10,6 +10,7 @@ import { createAgent } from "../../src/core/agent/create.ts";
 import { SettleDoc, confirmedBy, settleTeam, type SettleState } from "../../src/core/team/settle.ts";
 import { appendTeamMemory } from "../../src/core/team/memory.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
+import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 
 const roots: string[] = [];
 const runtimes: CoreRuntime[] = [];
@@ -22,6 +23,9 @@ afterEach(async () => {
 async function setup(): Promise<{ shell: CoreShell; root: string; agentsRoot: string; teamsRoot: string }> {
 	const root = await mkdtemp(join(tmpdir(), "core-settle-"));
 	roots.push(root);
+	// 沉淀正文现在来自 `prompt/95-settle.md`：没有模板就「不问」（不是退回硬编码）。
+	// 生产里 `main.ts` 启动先播种，测试的工作区要自己播。
+	await seedPromptTemplates(root);
 	const agentsRoot = join(root, "agents");
 	const teamsRoot = join(root, "teams");
 	const { models } = setupModels(process.env, { workspace: root });
@@ -50,6 +54,8 @@ const settleDeps = (shell: CoreShell, agentsRoot: string, teamsRoot: string, con
 	harness: shell.harness,
 	agentsRoot,
 	teamsRoot,
+	// 工作区根 = agents 的上一层；模板目录跟着工作区走。
+	promptDir: join(agentsRoot, "..", "prompt"),
 	channelState: () => channelState(shell),
 	conversationOf: async (slug: string) => convOf(slug) as never,
 });

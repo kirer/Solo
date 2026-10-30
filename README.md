@@ -45,7 +45,7 @@ npm start                 # http://127.0.0.1:7788
 ## 目录
 
 ```
-src/core/     核心（58 个文件，约 11K 行）
+src/core/     核心（59 个文件，约 11K 行）
   fsx.ts      文件系统的唯一入口（全项目只有它 import node:fs）
   doc.ts      所有 markdown 都是 {path, front, body}
   text.ts     插槽渲染（{{名字}} → 事实）
@@ -84,7 +84,7 @@ test/         62 文件 / 579 例
 | [docs/CODE](docs/CODE.md) | 代码地图：「我想改 X → 动这里」 |
 | [docs/design/SEED-CONTRACT](docs/design/SEED-CONTRACT.md) | 出厂内容契约：四个家、插槽表、一条事实一个家 |
 | [docs/WEB-API](docs/WEB-API.md) | 网页 API 的完整契约 |
-| [docs/DECISIONS](docs/DECISIONS.md) | 85 条架构决策（每条写了替代方案与理由） |
+| [docs/DECISIONS](docs/DECISIONS.md) | 86 条架构决策（每条写了替代方案与理由） |
 | [docs/DEPLOY](docs/DEPLOY.md) | 部署、局域网、Docker、排障 |
 
 ## 已知不做

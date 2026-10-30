@@ -151,7 +151,7 @@ const ONE_HOME: readonly { readonly what: string; readonly re: RegExp }[] = [
 
 // ── prompt 插槽 ──────────────────────────────────────────────────────────
 
-/** 契约 §3 的十个模板：文件名前缀定序，一个文件 = 一段 = 一个 cache section。 */
+/** 契约 §3 的十一个模板：文件名前缀定序，一个文件 = 一段 = 一个 cache section。 */
 const PROMPT_FILES = [
 	"00-who.md",
 	"10-rules.md",
@@ -163,6 +163,7 @@ const PROMPT_FILES = [
 	"70-directory.md",
 	"80-reply.md",
 	"90-interrupted.md",
+	"95-settle.md",
 ] as const;
 
 /** 一段 ≤ 12 行（契约 §1 的表格）。 */
@@ -248,7 +249,7 @@ describe("一条事实一个家", () => {
 });
 
 describe("seed/prompt：段落与插槽", () => {
-	it("十个模板都在（契约 §3）", async () => {
+	it("十一个模板都在（契约 §3）", async () => {
 		const files = await promptFiles();
 		expect(files).toEqual(expect.arrayContaining([...PROMPT_FILES]));
 	});

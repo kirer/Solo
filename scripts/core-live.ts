@@ -20,6 +20,7 @@
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { Context, Harness } from "../src/core/runtime/index.ts";
 
 const WAIT_MS = 240_000;
 
@@ -49,8 +50,93 @@ async function waitForReply(
 	return undefined;
 }
 
+/**
+ * settle 那条提交的终态。
+ *
+ * 判据只能落在「提交结没结算」上：`memory.md` 变没变是**结果**，回答不了「唤醒有没有跑」。
+ * 上一刀把这两件事算成同一个失败，于是红灯永远说不清话 —— 6 次跑 5 红 1 绿，代码没动过。
+ *
+ * 查法两步，因为 `harness.inspect()` **只返回 queued / placed**（底座 `types.d.ts:656`，
+ * `channel/unanswered.ts` 的头注释里也记过这条）：先在队列里认出 `settle:<team>:<seq>`
+ * 这条提交拿到 id，再用 `harness.submission(id).status()` 等它结算成 done / unanswered。
+ * 只盯着队列，永远看不到「跑完了」这个事实。
+ */
+type SettleOutcome =
+	| { readonly kind: "missing" }
+	| { readonly kind: "pending"; readonly status: string }
+	| { readonly kind: "unanswered"; readonly reason: string }
+	| { readonly kind: "gone" }
+	| { readonly kind: "done" };
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 等**一条唤醒提交**走到终态（done / unanswered），最多等 `timeoutMs`。
+ *
+ * `prefix` 是 `requestId` 的前缀：投递是 `ch:<频道>:<seq>:<slug>`，沉淀是 `settle:<team>:`。
+ */
+async function waitForSubmission(
+	harness: Harness,
+	prefix: string,
+	timeoutMs: number,
+	context: Context,
+): Promise<SettleOutcome> {
+	const deadline = Date.now() + timeoutMs;
+	let id: Parameters<Harness["submission"]>[0] | undefined;
+	let lastStatus = "queued";
+
+	while (Date.now() < deadline) {
+		if (id === undefined) {
+			const inspection = await harness.inspect(context);
+			const hit = inspection.submissions.find((item) => String(item.requestId ?? "").startsWith(prefix));
+			if (hit !== undefined) id = hit.id;
+		}
+		if (id !== undefined) {
+			const handle = await harness.submission(id, context);
+			if (handle === undefined) return { kind: "gone" };
+			const record = await handle.status(context);
+			if (record.status === "done") return { kind: "done" };
+			if (record.status === "unanswered") return { kind: "unanswered", reason: String(record.reason ?? "") };
+			lastStatus = record.status;
+		}
+		await sleep(1_000);
+	}
+	// 一次都没在队列里认出来 = 根本没提交，不是「排着没跑」。
+	return id === undefined ? { kind: "missing" } : { kind: "pending", status: lastStatus };
+}
+
+/** 沉淀那条：`settle:<team>:<seq>`。 */
+function waitForSettle(harness: Harness, team: string, timeoutMs: number, context: Context): Promise<SettleOutcome> {
+	return waitForSubmission(harness, `settle:${team}:`, timeoutMs, context);
+}
+
+/** 把「提交没结算」翻成一句能直接决定去查哪儿的话。 */
+function wakeDetail(outcome: SettleOutcome): string {
+	if (outcome.kind === "missing") return "提交没有落地：wake 没提交，或被合并撤掉了";
+	if (outcome.kind === "pending") return `提交一直是 ${outcome.status}，等到超时：没跑`;
+	if (outcome.kind === "unanswered") {
+		return `提交结算成 unanswered（${outcome.reason === "" ? "没有原因" : outcome.reason}）：底座/网关没产出`;
+	}
+	if (outcome.kind === "gone") return "提交结算后底座查不到记录：底座侧丢了";
+	return "提交 done，但频道里没有它说的话，rescue 也没补上";
+}
+
+/** 把终态翻成一句能直接决定「去改哪儿」的话。五种原因，五种修法。 */
+function settleDetail(outcome: SettleOutcome, wroteIt: boolean, memoryText: string): string {
+	if (outcome.kind === "missing") return "settle 没有提交：没有候选消息 / 找不到团队管理员 / 没有会话 —— 上游没叫，不是模型判断";
+	if (outcome.kind === "pending") {
+		return `唤醒排着没跑（提交一直是 ${outcome.status}，等到超时）：被合并或被吞，不是模型判断`;
+	}
+	if (outcome.kind === "unanswered") {
+		return `提交结算成 unanswered（${outcome.reason === "" ? "没有原因" : outcome.reason}）：底座/网关没产出，不是提示词`;
+	}
+	if (outcome.kind === "gone") return "提交在队列里出现过，结算后底座查不到记录：底座侧丢了，不是提示词";
+	if (!wroteIt) return "提交 done，但 memory.md 一个字没变：模型判断这批不值得记 —— 要改的是沉淀判据（提示词），不是机制";
+	return memoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "";
+}
+
 async function main(): Promise<void> {
-	const { createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
+	const { BACKGROUND_CONTEXT, createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
 	const { assembleCore } = await import("../src/core/shell/assemble.ts");
 	const { seedOwnerAssistant, seedPromptTemplates, seedRules } = await import("../src/core/shell/seed.ts");
@@ -119,8 +205,20 @@ async function main(): Promise<void> {
 	// 1. 我 @ 助理，等它开口。
 	const asked = await shell.ownerSay({ channelId: "all", text: `@${slug} 你在吗？用一句话回答。` });
 	console.log(`已投递 #${asked.seq}，唤醒 ${asked.delivery.delivered.join(",") || "（没人）"}`);
-	const reply = await waitForReply(shell, "all", slug, asked.seq, WAIT_MS);
-	phases.push({ name: "被 @ 会回话", ok: reply !== undefined, detail: reply?.text.slice(0, 80) ?? "超时无回话" });
+	// 先等这次唤醒的**提交**结算，再等频道里出现它的话：两者是两件事。
+	// 上一刀「超时无回话」说不清是「没叫」「叫了没跑」「跑了没 say」，这里让它自己说。
+	const firstWake = await waitForSubmission(
+		runtime.harness,
+		`ch:owner:all:${asked.seq}:`,
+		WAIT_MS,
+		BACKGROUND_CONTEXT,
+	);
+	const reply = await waitForReply(shell, "all", slug, asked.seq, 10_000);
+	phases.push({
+		name: "被 @ 会回话",
+		ok: reply !== undefined,
+		detail: reply?.text.slice(0, 80) ?? wakeDetail(firstWake),
+	});
 
 	// 2. 技能是否出现在提示词里（读的是同一份 render 结果）。
 	await mkdir(join(agentsRoot, slug, "skills", "自测技能"), { recursive: true });
@@ -217,6 +315,11 @@ async function main(): Promise<void> {
 	// 7. 团队记忆的自动沉淀：让助理在团队频道里拍一次板（kind=decision），
 	//    检查 `teams/自测团队/memory.md` 是否被自动写入了内容 —— 这条路上
 	//    agent 没有被明确要求「去记一条」，它只收到「请判断这件事值不值得沉淀」。
+	//
+	//    判据是「等 settle 那条提交**结算**」，不是「等 memory.md 变化」。上一刀吃过亏：
+	//    同一份代码连跑 6 次，5 红 1 绿，因为两种完全不同的原因共用一个红灯 ——
+	//    「唤醒被吞」（提交一直排着）和「模型判断这批不值得记」（提交 done、文件没变）。
+	//    现在先等提交走到终态，再按状态分因；文件内容只回答「该写的写了没有」。
 	const settleAsked = await shell.ownerSay({
 		channelId: `team:自测团队`,
 		text: "定了：这个团队的验收标准是「能跑通 core:live 全部 12 项」。",
@@ -224,25 +327,26 @@ async function main(): Promise<void> {
 	});
 	console.log(`团队频道已投递 #${settleAsked.seq}（kind=decision）`);
 	const memoryBefore = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
-	let settled = "";
-	const deadline = Date.now() + WAIT_MS;
-	while (Date.now() < deadline && settled === "") {
-		const now = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
-		if (now !== memoryBefore) settled = now;
-		await new Promise((resolve) => setTimeout(resolve, 1_000));
-	}
-	// 失败时要看得见助理到底说了什么：它说「没有需要沉淀的」是判断问题，它什么都没说
-	// 就是唤醒被吞了 —— 两者修法完全不同。
-	if (settled === "") {
-		const state = await shell.channels();
-		const tail = (state.messages["team:自测团队"] ?? []).slice(-4);
-		console.log("[debug] 团队频道最后几条：");
-		for (const message of tail) console.log(`  #${message.seq} ${message.from}（${message.kind ?? "-"}）：${message.text.slice(0, 120)}`);
+	const settleOutcome = await waitForSettle(runtime.harness, "自测团队", WAIT_MS, BACKGROUND_CONTEXT);
+	const settledText = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
+	const wroteIt = settledText !== memoryBefore;
+	// 只在「没跑」时打证据：那条提交到底还在队里，还是根本没提交。
+	if (settleOutcome.kind === "pending" || settleOutcome.kind === "missing") {
+		const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
+		const pending = inspection.submissions.filter((item) => item.status === "queued" || item.status === "placed");
+		console.log(`[debug] 未结提交 ${pending.length} 条：`);
+		for (const item of pending.slice(0, 8)) {
+			const record = item as unknown as { requestId?: string; conversationId?: number; status?: string };
+			console.log(`  ${record.status} conv=${record.conversationId} req=${record.requestId ?? "-"}`);
+		}
+		for (const task of inspection.tasks.slice(0, 6)) {
+			console.log(`  task ${task.record.kind} conv=${task.record.conversationId} state=${task.state.kind}`);
+		}
 	}
 	phases.push({
 		name: "团队记忆自动沉淀（拍板后被叫去沉淀并落盘）",
-		ok: settled.includes("验收标准"),
-		detail: settled === "" ? "memory.md 没变化（没人去沉淀，或沉淀了但没写这一条）" : settled.split("\n").filter(Boolean).slice(-1)[0] ?? "",
+		ok: wroteIt && settledText.includes("验收标准"),
+		detail: settleDetail(settleOutcome, wroteIt, settledText),
 	});
 
 	// 8. 招人：名字要像真人，且新人自动进公司群、进得了团队频道。

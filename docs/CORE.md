@@ -67,9 +67,10 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 00-who → 10-rules → 20-position → 30-team → 40-tools → 50-memory → 60-skills → 70-directory
 ```
 
-另有两段 `use: delivery`（`80-reply` / `90-interrupted`）**不进系统提示词**：它们每轮贴在
-投递正文末尾，由 `deliver()` 每轮 `await` 读一次、当参数传给纯函数（不缓存，改模板下一条
-消息就生效）。
+另有三段 `use: delivery`（`80-reply` / `90-interrupted` / `95-settle`）**不进系统提示词**：
+它们是某一轮贴给模型的话，由调用方每轮 `await` 读一次、当参数传给纯函数（不缓存，改模板下一条
+消息就生效）。`95-settle` 是团队记忆沉淀那一轮的正文——判据住在那儿，因为技能正文不在那一轮的
+上下文里，只写「按技能整理」等于没给判据。
 
 - 每段一个 section key（`<slug>-<segment>`，`agentSections()`），内容没变的段就不发新版本。
 - `tag: false`：tag 会往字节里加东西，加了就与前缀缓存对不上。

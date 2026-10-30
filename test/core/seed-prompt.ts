@@ -18,3 +18,6 @@ export const REPLY_TEMPLATE = await body("80-reply.md");
 
 /** `90-interrupted.md`：插话时多贴的那一句。 */
 export const INTERRUPTED_TEMPLATE = await body("90-interrupted.md");
+
+/** `95-settle.md`：团队记忆沉淀那一轮的唤醒正文（判据住在这里，不在代码里）。 */
+export const SETTLE_TEMPLATE = await body("95-settle.md");

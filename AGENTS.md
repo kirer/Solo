@@ -60,7 +60,7 @@ test/             62 文件 / 579 例
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 58 个 ts / 10956 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 59 个 ts / 11176 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -181,7 +181,7 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 | 改频道成员怎么来 | ADR-012 | `src/core/shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
 | 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |
-| 改记忆沉淀 | ADR-033 | `src/core/team/settle.ts` + `team/memory.ts` |
+| 改记忆沉淀 | ADR-033 | 机制在 `src/core/team/settle.ts` + `team/memory.ts`；**判据在 `seed/prompt/95-settle.md`** |
 | 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |
 

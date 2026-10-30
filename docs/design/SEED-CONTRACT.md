@@ -49,6 +49,7 @@ seed/
     70-directory.md              # 你的目录（identity/memory/skills 在哪）
     80-reply.md                  # 每轮贴在投递正文末尾的「怎么回话」
     90-interrupted.md            # 插话时的额外一句
+    95-settle.md                 # 团队记忆沉淀那一轮的正文（插槽 {{team}} {{pending}} {{candidates}}）
   agents/
     assistant/identity.md        # 助理身份（从代码挪出来）
     assistant/skills/立项/SKILL.md
@@ -82,22 +83,33 @@ seed/
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
 | `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | 投递时拼（这一轮只有他一个收件人） |
 | `{{reply.colleagues}}` | 「成员的事就在这个频道说，要问谁就 @ 他」 | 投递时拼（同频道还有其他成员） |
-| `{{tool:say}}` 等 | 工具名（唯一允许出现工具名的写法） | 注册表 |
+| `{{pending}}` | 这一轮要整理进团队记忆的消息条数 | settle 候选 |
+| `{{candidates}}` | 候选消息列表，一行一条：`#seq [kind] 谁：正文` | 频道消息（`settleCandidates`） |
+| `{{tool:say}}` 等 | 工具名（唯一允许出现工具名的写法） | system 段：注册表实拍；delivery 段：`toolSlots()` 按后缀自解释 |
 
-前 14 个是**单值**（一个名字、一串清单），后 6 个（`self.body` / `team.*` / `reply.*`）是
+前 15 个是**单值**：一个名字、一串清单、一个数字（`pending` 是条数）。后 7 个
+（`self.body` / `team.brief` / `team.members` / `team.memory` / `reply.*` / `candidates`）是
 **复合值**：整段文字从别的文件或投递上下文搬过来。它们不违反下面第 2 条——那段文字本来
 就住在那个文件里，模板只负责摆位置，不负责写它。
 
-四条硬规矩：
+五条硬规矩：
 
 1. **未知插槽不许静默变空**：渲染成 `（未设置）` 并 warn。静默空会让提示词里出现半句话。
 2. **插槽只放会变的事实**，不放模板自己编的整段文字。整段文字属于 md 本身（从别的文件
    整段搬来的正文除外，见上）。
 3. **一个 md = 一段 = 一个 cache section**，文件名前缀定序。加一段就是加个文件，不改代码。
    同一组文件必须渲染出**逐字节相同**的提示词，否则 prompt cache 每轮都被打穿。
-4. **整句插槽只许出现在 delivery 段**（`80-reply.md` / `90-interrupted.md`）：`reply.alone` /
+4. **整句插槽只许出现在 delivery 段**（`80-reply.md` / `90-interrupted.md` / `95-settle.md`）：`reply.alone` /
    `reply.colleagues` 是**条件句**（这一轮只有你被叫醒 / 还有 X 在），不是事实值；写进 md
    就得给 md 发明一套条件语法。别的段不许用 `reply.*`。
+5. **delivery 段的插槽面比 system 段窄，用错了会静默变「（未设置）」**：
+   - `tool:*` 两段都能用，但机制不同 —— system 段从**注册表实拍**（工具改名自动跟），delivery 段
+     没有注册表可查，由 `toolSlots(template)` **按后缀自解释**（`{{tool:say}}` → `say`）。代价是
+     **名字写错不报错**（写 `{{tool:sayy}}` 就渲染成 `sayy`），靠 seed 侧检查把名字和真工具名对一遍。
+   - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues`；
+     `90-interrupted` 只填 `tool:*`；`95-settle` 只填 `team` / `pending` / `candidates` + `tool:*`。
+     往这三段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
+     `prompt:check` 只查 system 段的样例表，查不到这条。
 
 ## 5. 改写规则
 
