@@ -15,6 +15,9 @@ import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/state.ts";
 import { appendNote } from "../channel/post.ts";
+import { deliveryPrompt, renderReplyRules } from "../channel/deliver.ts";
+import { wake } from "../channel/wake.ts";
+import { renderUnanswered } from "../channel/unanswered.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
@@ -42,6 +45,12 @@ type SettleDeps = {
 	readonly teamsRoot: string;
 	readonly channelState: () => Promise<ChannelState>;
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
+	/** 提示词模板目录（`<workspace>/prompt`）：沉淀也要贴回话规矩，和投递同一个来源。 */
+	readonly promptDir?: string;
+	/** 合并唤醒：和投递同一条路，别让同一个会话排两个唤醒。 */
+	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
+	/** 显示名（留痕用）。 */
+	readonly labelOf?: (slug: string) => string;
 };
 
 /** 挑一个「该由谁来写这个团队记忆」的人。优先 README.md 里的 lead。 */
@@ -65,7 +74,10 @@ export async function settleTeam(
 	deps: SettleDeps,
 	team: string,
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<{ asked?: { team: string; to: string; count: number }; skipped?: { team: string; count: number } }> {
+): Promise<{
+	asked?: { team: string; to: string; count: number; delivered: boolean };
+	skipped?: { team: string; count: number };
+}> {
 	const state = await deps.channelState();
 	const channel = state.channels[`team:${team}`];
 	if (channel === undefined) return {};
@@ -104,18 +116,37 @@ export async function settleTeam(
 		}
 
 		const stamp = await memoryStamp(deps.teamsRoot, team);
-		await conversation.submit(
+		// 回话规矩从模板现读一次（不缓存）：沉淀这条路上以前什么都没有 —— 裸提示词、
+		// 没留痕、没合并。现在和投递走同一个 `wake()`，两段规矩也一起贴。
+		const prompt = await deliveryPrompt(deps.promptDir);
+		const label = deps.labelOf?.(to) ?? to;
+		const body = [
+			renderSettlePrompt(team, candidates),
+			renderReplyRules({ template: prompt.reply, woken: [to], viewer: to, colleagues: [] }),
+		]
+			.filter((part) => part.trim() !== "")
+			.join("\n");
+		const woken = await wake(
 			{
-				type: "input",
-				content: renderSettlePrompt(team, candidates),
+				conversationOf: deps.conversationOf,
+				...(deps.coalesceQueue === undefined ? {} : { coalesceQueue: deps.coalesceQueue }),
+				noteUnanswered: async (note) => {
+					await appendTeamNote(deps, team, renderUnanswered(note.seq, note.label, note.reason), context);
+				},
+			},
+			{
+				slug: to,
 				requestId: `settle:${team}:${lastSeq}`,
-				entry: { kind: "core.settle", data: { team, count: candidates.length } },
+				coalesce: true,
 				whenBusy: "followUp",
+				bodyOf: () => body,
+				entry: { kind: "core.settle", data: { team, count: candidates.length } },
+				note: { channelId: channel.id, seq: lastSeq, label },
 			},
 			context,
 		);
 		await writeSettle(deps.harness, team, context, { waiting: { seq: lastSeq, stamp } });
-		return { asked: { team, to, count: candidates.length } };
+		return { asked: { team, to, count: candidates.length, delivered: woken.status === "delivered" } };
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
 		process.stderr.write(`[沉淀失败] ${team}: ${reason}\n`);

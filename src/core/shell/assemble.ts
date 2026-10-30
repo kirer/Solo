@@ -39,6 +39,7 @@ import {
 import { uploadsRootOf } from "../channel/uploads.ts";
 import { promptDirOf } from "../prompt.ts";
 import { postMessage } from "../channel/post.ts";
+import { coalesceQueue } from "../channel/deliver.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleTeam } from "../team/settle.ts";
@@ -515,6 +516,13 @@ function makeAfterPost(
 					if (id === undefined) return undefined;
 					return harness.conversation(id as never, context);
 				},
+				// 沉淀和投递走同一条 `wake()`：回话规矩同一个来源、同样合并唤醒、
+				// 没产出同样在频道里留一句（以前这条路上什么都没有）。
+				promptDir: promptDirOf(agentsRoot),
+				coalesceQueue: (conversationId, keepRequestId) =>
+					coalesceQueue(harness, conversationId, keepRequestId, context),
+				// 留痕里用 slug：这一层拿不到显示名表，而留痕是给人看位置，不是给人看称呼。
+				labelOf: (slug) => slug,
 			},
 			channelId.slice("team:".length),
 			context,

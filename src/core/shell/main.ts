@@ -27,6 +27,8 @@ import { setupModels, compactionSettings } from "../runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedPromptTemplates, seedRules, syncCompanySkills } from "./seed.ts";
+import { createFsx } from "../fsx.ts";
+import { loadTemplates, PROMPT_DIR } from "../prompt.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {
@@ -104,6 +106,20 @@ async function main(): Promise<void> {
 	if (args.seed && (await agentCount(agentsRoot)) === 0) {
 		const slug = await seedOwnerAssistant(agentsRoot);
 		console.log(`[core] 播种了「离我最近的人」：agents/${slug}/identity.md`);
+	}
+
+	// 播种之后立刻断言：system 模板一段都没有 = 播种或部署坏了。
+	//
+	// 不放在 `assembleCore` 里：测试故意在空 workspace 上装配（那是它们在测的东西），
+	// 放进去会一次红 55 条。生产入口只有一个，在这里拦就够了。症状本来也很难查 ——
+	// agent 醒过来不知道自己是谁，却照样能说话、能干活，看起来像模型变笨了。
+	const systemTemplates = (await loadTemplates(createFsx(args.workspace), PROMPT_DIR)).filter(
+		(template) => template.use === "system",
+	);
+	if (systemTemplates.length === 0) {
+		throw new Error(
+			`提示词模板一段都没有：${join(args.workspace, PROMPT_DIR)}（播种没跑，或者部署漏了 seed/prompt/）`,
+		);
 	}
 
 	const models = setupModels(process.env, { workspace: args.workspace });

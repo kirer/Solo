@@ -182,6 +182,20 @@ describe("renderPrompt：拼段", () => {
 		expect(renderPrompt([template("10-a.md", "甲"), template("20-b.md", "  \n")], {}).text).toBe("甲");
 	});
 
+	it("只改一个插槽 → 只有那一段的正文变（缓存的最小 patch 才不会整块重写）", () => {
+		// 这条是从 V2 的 `prompt-segments.test.ts` 搬过来的唯一有价值的断言：分段的全部意义
+		// 就是「只有真的变了的段失效」。段一变就整块重写，prompt cache 每轮都白算。
+		const templates = [
+			template("10-a.md", "甲：{{self.name}}"),
+			template("20-b.md", "乙：{{count}}"),
+			template("30-c.md", "丙：{{manager}}"),
+		];
+		const before = renderPrompt(templates, { "self.name": "林越", count: 3, manager: "我" });
+		const after = renderPrompt(templates, { "self.name": "林越", count: 4, manager: "我" });
+		const changed = after.segments.filter((segment, index) => segment.text !== before.segments[index]?.text);
+		expect(changed.map((segment) => segment.segment)).toEqual(["b"]);
+	});
+
 	it("同一组模板渲染两次逐字节相同（ADR-005）", () => {
 		const templates = [template("10-a.md", "{{self.name}}"), template("20-b.md", "{{count}}")];
 		const slots = { "self.name": "林越", count: 3 };

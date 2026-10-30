@@ -24,7 +24,7 @@ export {
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
 
-export type { Conversation, Cursor, EntryRecord, Harness, PromptSection, UserInput } from "@earendil-works/pi-durable";
+export type { Conversation, Cursor, EntryRecord, Harness, InputEntry, PromptSection, UserInput } from "@earendil-works/pi-durable";
 
 /** 会话条目标载荷的类型（底层要求严格 JSON）。 */
 export type { JsonValue } from "@earendil-works/chord";

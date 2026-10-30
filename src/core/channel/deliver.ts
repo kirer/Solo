@@ -10,14 +10,14 @@
  * 1. 一条投递失败不影响其余（逐条 try/catch）。
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
-import type { Conversation, Harness, UserInput } from "../runtime/index.ts";
+import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { planAttachments } from "./attach.ts";
-import { clearSpoken } from "./speech.ts";
+import { wake } from "./wake.ts";
 import { createFsx } from "../fsx.ts";
 import { loadTemplates, type PromptTemplate } from "../prompt.ts";
 import { renderSlots, type SlotValue } from "../text.ts";
-import { watchSettled } from "./unanswered.ts";
+
 import { oneLine } from "../oneline.ts";
 import {
 	type Channel,
@@ -254,7 +254,7 @@ export function renderDelivery(options: {
  * 缺哪段就空串（调用方整段不贴）：模板是 workspace 里的活文件，可能被改成任意样子，
  * 读不到不该让投递失败 —— 但也不能静默：读不到就 warn 一次。
  */
-async function deliveryPrompt(promptDir: string | undefined): Promise<{ readonly reply: string; readonly interrupted: string }> {
+export async function deliveryPrompt(promptDir: string | undefined): Promise<{ readonly reply: string; readonly interrupted: string }> {
 	if (promptDir === undefined) {
 		console.warn("[core] 投递没拿到模板目录（prompt/）：回话规矩不会贴");
 		return { reply: "", interrupted: "" };
@@ -324,85 +324,77 @@ export async function deliver(
 		});
 
 	for (const slug of options.targets) {
-		try {
-			const conversation = await options.conversationOf(slug);
-			if (conversation === undefined) {
-				skipped.push(slug);
-				issues.push({ slug, reason: "no-conversation" });
-				continue;
-			}
-			const digest = options.digests.get(slug) ?? "";
-			const requestId = `ch:${options.message.from === "owner" ? "owner:" : ""}${options.channel.id}:${
-				options.message.seq
-			}:${slug}`;
-			// 合并唤醒：先撤掉这个会话里还没开始的排队项，再按「合并了几条」补一句正文。
-			// 必须在拼正文之前做 —— 那一句要告诉它「更早的几条还在频道里，先看一遍」。
-			const merged =
-				options.coalesceQueue === undefined
-					? 0
-					: await options.coalesceQueue(Number(conversation.id), requestId).catch(() => 0);
-			const base = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
-			const body =
-				merged === 0
-					? base
-					: `${base}\n\n（合并唤醒：把 ${merged} 条还没开始处理的消息并成了这一条 —— 更早的那几条内容都还在频道里，先 chats(action=read) 看一遍再答，别只答最新这条。）`;
-			const text = digest === "" ? body : `${body}\n\n${digest}`;
-			// 有图就发内容块：文字在前，图片在后（多数模型要求首块是文本）。
-			const content: UserInput =
-				plan.images.length === 0 ? text : [{ type: "text", text }, ...plan.images];
-			// 先记「它在哪个频道被叫醒」，再提交。
-			//
-			// 反过来的话有竞态：`submit` 一入队对方就可能已经跑起来，而它此刻查不到
-			// wake，只能退到「我最早的那个频道」—— 那往往是私聊，于是**答在私聊里、
-			// 问的人在原频道什么都看不到**（`core:live` 12 项里 9 项因此超时，实测抓到）。
-			// 新一轮开始：它又可以重新说一句结论了。
-			clearSpoken(Number(conversation.id));
-			if (options.rememberWake !== undefined) {
-				await options.rememberWake(slug, {
+		const conversation = await options.conversationOf(slug).catch(() => undefined);
+		if (conversation === undefined) {
+			skipped.push(slug);
+			issues.push({ slug, reason: "no-conversation" });
+			continue;
+		}
+		const digest = options.digests.get(slug) ?? "";
+		const requestId = requestIdOf(options.channel.id, options.message, slug);
+		const base = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
+		const result = await wake(
+			{
+				conversationOf: async (target) => (target === slug ? conversation : options.conversationOf(target)),
+				coalesceQueue: options.coalesceQueue,
+				noteUnanswered:
+					options.noteUnanswered === undefined
+						? undefined
+						: async (note) => {
+								await options.noteUnanswered?.({ slug: note.slug, label: note.label, seq: note.seq, reason: note.reason });
+							},
+				rememberWake: options.rememberWake,
+			},
+			{
+				slug,
+				requestId,
+				coalesce: true,
+				whenBusy: "steer",
+				busy: options.busy?.has(Number(conversation.id)) === true,
+				bodyOf: (merged) => {
+					// 合并唤醒：告诉它「更早的几条还在频道里，先看一遍」。
+					const body =
+						merged === 0
+							? base
+							: `${base}\n\n（合并唤醒：把 ${merged} 条还没开始处理的消息并成了这一条 —— 更早的那几条内容都还在频道里，先 chats(action=read) 看一遍再答，别只答最新这条。）`;
+					const text = digest === "" ? body : `${body}\n\n${digest}`;
+					// 有图就发内容块：文字在前，图片在后（多数模型要求首块是文本）。
+					return plan.images.length === 0 ? text : [{ type: "text", text }, ...plan.images];
+				},
+				entry: {
+					kind: "core.channel",
+					data: {
+						channelId: options.channel.id,
+						channelTitle: options.channel.title,
+						seq: options.message.seq,
+						from: options.message.from,
+						text: options.message.text.slice(0, 400),
+						mentions: [...options.message.mentions],
+					},
+				},
+				wakeRecord: {
 					channelId: options.channel.id,
 					seq: options.message.seq,
 					from: options.message.from,
 					at: options.message.at,
-				});
-			}
-			const submission = await conversation.submit(
-				{
-					type: "input",
-					content,
-					requestId,
-					entry: {
-						kind: "core.channel",
-						data: {
-							channelId: options.channel.id,
-							channelTitle: options.channel.title,
-							seq: options.message.seq,
-							from: options.message.from,
-							text: options.message.text.slice(0, 400),
-							mentions: [...options.message.mentions],
-						},
-					},
-					// 本轮工具结束后并入：群里的一条问题不该等整轮答完。
-					whenBusy: "steer",
 				},
-				context,
-			);
-			// 这一轮结算时「一个字都没说」留痕。
-			const report = options.noteUnanswered;
-			if (report !== undefined) {
-				watchSettled(submission, async (reason) => {
-					await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
-				});
-			}
-			if (merged > 0) mergedList.push({ slug, count: merged });
+				note: { channelId: options.channel.id, seq: options.message.seq, label: label(slug) },
+			},
+			context,
+		);
+
+		if (result.status === "delivered") {
+			if (result.merged > 0) mergedList.push({ slug, count: result.merged });
 			delivered.push(slug);
-		} catch (error) {
-			// 不抛：消息已在频道里，对方下次醒来会看到未读摘要。
-			const detail = error instanceof Error ? error.message : String(error);
+		} else if (result.status === "failed") {
 			process.stderr.write(
-				`[投递失败] ${options.channel.id}#${options.message.seq} → ${slug}: ${detail}\n`,
+				`[投递失败] ${options.channel.id}#${options.message.seq} → ${slug}: ${result.detail}\n`,
 			);
 			failed.push(slug);
-			issues.push({ slug, reason: "failed", detail });
+			issues.push({ slug, reason: "failed", detail: result.detail });
+		} else {
+			skipped.push(slug);
+			issues.push({ slug, reason: "no-conversation" });
 		}
 	}
 
@@ -421,6 +413,11 @@ export async function deliver(
 	}
 
 	return { delivered, failed, skipped, ...(mergedList.length === 0 ? {} : { merged: mergedList }) };
+}
+
+/** 幂等键：频道 + seq + slug。同一条消息重复投递只醒一次（至少一次语义）。 */
+function requestIdOf(channelId: string, message: Message, slug: string): string {
+	return `ch:${message.from === "owner" ? "owner:" : ""}${channelId}:${message.seq}:${slug}`;
 }
 
 /**
