@@ -14,7 +14,6 @@
  */
 import type { Conversation, InputEntry, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { clearSpoken } from "./speech.ts";
 import { watchSettled } from "./unanswered.ts";
 
 /** 「刚被谁在哪个频道叫醒」。工具用它决定「默认在哪儿回话」。 */
@@ -101,7 +100,6 @@ export async function wake(
 		// 先记 wake、再提交：反过来的话有竞态 —— `submit` 一入队对方就可能跑起来，
 		// 那时它查不到 wake，只能退到「我最早的那个频道」（往往是私聊），于是答在私聊里、
 		// 问的人在原频道什么都看不到。
-		clearSpoken(conversationId);
 		if (deps.rememberWake !== undefined && input.wakeRecord !== undefined) {
 			await deps.rememberWake(input.slug, input.wakeRecord);
 		}

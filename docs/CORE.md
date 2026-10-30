@@ -98,28 +98,24 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 
 所有 agent 用同一套工具说话，没有「向上汇报」专用通道，也没有「管理层才能用」的工具：
 
-**十一个工具，一个动词一件事**（ADR-084）。同一件事的几种做法是一个工具的 `action`
-枚举，不是几个近义的工具名 —— 名字越多，模型选错的概率越高。
+**七个工具，一个动词一件事**（ADR-084 / ADR-090）。同一件事的几种做法是一个工具的
+`action` 枚举，不是几个近义的工具名 —— 名字越多，模型选错的概率越高。
 
 | 工具 | 作用 |
 | --- | --- |
-| `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方；**没有「私下发给谁」这个参数** —— 私聊只能我开；`text` 写 `[PASS]` 表示这一轮不说（只有一个人的频道里会被拒绝，见 ADR-063）；`step: true` 表示这只是过程话，一轮里结论只认一句（ADR-064） |
+| `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方；**没有「私下发给谁」这个参数** —— 私聊只能我开；`text` 写 `[PASS]` 表示这一轮不说（只有一个人的频道里会被拒绝，见 ADR-063）；`step: true` 表示这只是过程话；「一轮只认一句结论」原来由代码强制（ADR-064），现在只剩 `rules.md` 约束（ADR-090） |
 | `chats` | `action=list`（默认）= 我在的会话（标题、群聊/私聊、未读数、最后一条）；`action=read` = 读某个频道的历史消息 |
 | `read_history` | `scope=channel`（默认）翻自己被压缩掉的历史对话（原文还在 storage 里，压缩后模型看不见）；`scope=memory`（或 `personal` / `team`）翻记忆全文 |
 | `remember` | 记一条经验；`scope=team` 写团队记忆 |
-| `teams` | `action=list`（默认）列团队；`action=read` 读一份团队的说明 |
-| `write_team` | 写一个团队：`teams/<slug>/README.md` |
-| `skills` | `action=list` / `read` / `write`：技能两层（公司 + 个人）+ 按需读正文 |
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进公司频道与团队频道） |
-| `me` | `action=show`（默认）我是谁、在哪个团队、上级下属；`action=update` 整篇重写自己的 `identity.md` 正文（只改自己） |
 | `run` | 执行一条 shell 命令 |
 | `file` | `action=read` / `write`：工作区里的一个文件 |
 
 合并的口径一句话：`chats` 收回 `read_channel`，`read_history` 收回 `recall`（`scope`
-区分翻对话还是翻记忆），`teams` 收回 `list_teams` + `read_team`，`skills` 收回三个技能
-工具，`me` 收回 `update_identity`，`file` 收回读写两个工具，`org` 直接删掉（组织架构在
-提示词的「你在组织里的位置」一节里，不在工具里）。**工具总数 17 → 11，spec 字节
-6819 → 5892。**
+区分翻对话还是翻记忆），`hire` 收回建人，`file` 收回读写两个工具，`org` 直接删掉（组织架构在
+提示词的「你在组织里的位置」一节里，不在工具里）。**工具总数 17 → 11 → 7**：`teams` /
+`write_team` / `skills` / `me` 四个是「用 `file` 读写某个固定路径 md」的包装，删掉之后
+「改自己 = 写 `agents/<slug>/identity.md`」才真正成立（ADR-090）。
 
 组织架构（谁是谁的上级、谁在哪）不靠工具查：它在提示词的「你在组织里的位置」一节里，
 每次发送前从 `agents/*/identity.md` 现渲染。
@@ -298,8 +294,8 @@ src/core/
                    skills / create（新建一个人）/ roster（slug ↔ 会话）/ rules / secrets
   team/            doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
   channel/         store（纯规则 + @ 解析）/ post（写一条 + 投递 + 唤醒）
-                   wake（唯一唤醒入口）/ files（附件）/ tools（11 个工具）
-                   speech / unanswered（两个进程内补丁）
+                   wake（唯一唤醒入口）/ files（附件）/ tools（7 个工具）
+                   unanswered（进程内补丁；speech 已删，ADR-090）
   ── 以上是 domain（业务事实）────────────────────────────────
   app/             用例：index（装配）/ types / snapshot / read（读 + 人 + 投影）
                    chat / files（文件树 + 附件语义）/ diag / errors

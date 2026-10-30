@@ -39,7 +39,6 @@ function renderDeliveryWithTemplates(
 ): string {
 	return renderDelivery({ ...options, replyTemplate: REPLY_TEMPLATE, interruptedTemplate: INTERRUPTED_TEMPLATE });
 }
-import { clearSpoken } from "../../src/core/channel/speech.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 
 const roots: string[] = [];
@@ -158,8 +157,6 @@ async function setup(options: {
 		saveDirectory: async () => undefined,
 	} as never);
 	// 每个用例都从「新一轮」开始（真实流程里由 `deliver()` 清）。不清的话，
-	// 「一轮只说一句结论」这条会把后面每个用例都拒掉 —— 这正是它该有的行为。
-	clearSpoken(CONVERSATION);
 	const tool = tools.find((item) => item.name === "say");
 	expect(tool).toBeDefined();
 
@@ -417,17 +414,7 @@ describe("每轮附言（怎么回话）", () => {
 	});
 });
 
-describe("一轮只说一句结论", () => {
-	it("第二句结果被拒，而且什么都没写进去", async () => {
-		const { say, snapshot } = await setup();
-		await say({ text: "改完了，在 README 里" });
-		const before = await snapshot();
-		const reply = await say({ text: "另外我还顺手删了三个死函数" });
-		const after = await snapshot();
-		expect(reply).toContain("这一轮你已经说过结果了");
-		expect(after.messages[PROJ]?.length).toBe(before.messages[PROJ]?.length);
-	});
-
+describe("过程话可以连发（「一轮一句结论」已降级为 rules.md 约束，ADR-090）", () => {
 	it("过程话（step）可以连发，不影响后面那句结论", async () => {
 		const { say, snapshot } = await setup();
 		await say({ text: "我先看下代码", step: true });
@@ -447,11 +434,4 @@ describe("一轮只说一句结论", () => {
 		expect(await say({ text: "顺带说一下，我把它记进文档了", step: true })).toContain("已发到");
 	});
 
-	it("新一轮开始（清掉标记）就又可以说一句", async () => {
-		const { say } = await setup();
-		await say({ text: "第一轮的结论" });
-		expect(await say({ text: "第二句" })).toContain("已经说过结果了");
-		clearSpoken(CONVERSATION);
-		expect(await say({ text: "新一轮的结论" })).toContain("已发到");
-	});
 });

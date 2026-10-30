@@ -16,12 +16,9 @@ import {
 	ChannelDoc,
 	OWNER,
 	appendMessage,
-	botHopsSinceOwner,
 	chatKind,
 	channelsOf,
-	parseMentions,
 	recipientsOf,
-	relayLimit,
 	tail,
 	unreadCount,
 	type Attachment,
@@ -35,7 +32,7 @@ import { renderSlots, toolSlots, type SlotValue } from "../text.ts";
 import { oneLine } from "../oneline.ts";
 import { planAttachments } from "./files.ts";
 import { wake } from "./wake.ts";
-import { EMPTY_ROSTER, type MentionRoster } from "./store.ts";
+import type { MentionRoster } from "./store.ts";
 import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
 
@@ -144,17 +141,9 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
 
 	let created: Message | undefined;
-	let cappedLimit = 0;
-	// 接力上限：这条落库前先数一下 agent 已经自动接了几棒。
-	// 判在 appendMessage **之前**：之后这条自己也会被算进去（第 3 棒就会被误拦）。
-	const hops = botHopsSinceOwner(deps.state, input.channelId);
-	const limit = relayLimit(channel);
 	// 显式 @ 当场突破上限：上限是为了拦「A 回 B、B 又回 A」的自动接力，
 	// 不是为了拦住一个想清楚要叫谁的人。上面那条 note 就是这么告诉模型的，
 	// 文案和代码必须一致，否则它会以为自己能 @ 人而其实叫不醒。
-	const addressed = [...parseMentions(input.text), ...parseMentions(input.text, input.roster ?? EMPTY_ROSTER)].some(
-		(slug) => slug !== input.from && channel.members.includes(slug),
-	);
 	// 提交之前先把「后面还要读到的东西」抄成纯数据：提交一关，读覆盖层就释放了，
 	// 而成员列表、wakeOnAll、各人未读都要在提交之后才用得上（见下面的注释）。
 	const channelMeta: Channel = {
@@ -167,13 +156,6 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		if (slug === OWNER) continue;
 		digests.set(slug, renderDigest(deps.state, slug));
 	}
-	const capped =
-		input.wake !== false &&
-		input.from !== OWNER &&
-		input.kind !== "note" &&
-		!addressed &&
-		hops >= limit;
-	if (capped) cappedLimit = limit;
 	await deps.harness.commit(async (tx) => {
 		const doc = await tx.doc(ChannelDoc);
 		const state = doc as ChannelState;
@@ -211,32 +193,6 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		doc.messages[input.channelId] ??= [];
 		(doc.messages[input.channelId] as Message[]).push(next.message);
 		state.nextSeq[input.channelId] = next.message.seq + 1;
-		// 接力到上限：**只落消息、不投递**，再留一条 note 说清楚为什么没人被叫醒。
-		// 不投递就是暂停：消息已经在频道里任何人随时能读到，「继续」不需要按钮 ——
-		// 我一发言 `botHopsSinceOwner` 自动归零。
-		// 但**连着记就不记了**：上限一旦触发，之后每条 agent 消息都会被拦，
-		// 每拦一条写一条 note 结果就是频道里几百行「接力到上限」—— 实测一个私聊里
-		// 197 条消息有 150 多条是这个。人对同一条告警看第二遍就没有新信息了。
-		// 所以只在「上一条不是这条 note」时补一次，等于把连续拦截合并成一条。
-		// 判据是「我上次说话之后已经报过警没有」，不是「上一条是不是 note」：
-		// 每条被拦的消息本身也会落库，所以上一条永远是那条消息，不是 note。
-		// 用 `doc` 里的活数组，不能用 `deps.state` 的旧快照 —— 快照里没有刚追加的 note。
-		const trail = (doc.messages[input.channelId] as Message[] | undefined) ?? [];
-		// note 也是 `from: OWNER`，所以不能只按 from 找 —— 要不它会把自己当成「我刚说过话」。
-		const lastOwnerAt = trail.findLastIndex((item) => item.from === OWNER && item.kind !== "note");
-		const alreadyNoted = trail
-			.slice(lastOwnerAt + 1)
-			.some((item) => item.kind === "note" && item.text.startsWith("接力到上限（"));
-		if (capped && !alreadyNoted) {
-			const noted = appendMessage(state, input.channelId, {
-				from: OWNER,
-				text: `接力到上限（${cappedLimit} 次）：这条只记下，没人被叫醒。我说一句，或者自己 @ 人，就能接着走。`,
-				at: input.at,
-				kind: "note",
-			});
-			(doc.messages[input.channelId] as Message[]).push(noted.message);
-			state.nextSeq[input.channelId] = noted.message.seq + 1;
-		}
 		// 抄成纯对象再交出去：`next.message` 是这次事务里的代理，事务一关就不能再读
 		// （`Cannot use a settled overlay`），而收件人计算、投递、返回给工具都要用它。
 		created = JSON.parse(JSON.stringify(next.message)) as Message;
@@ -248,7 +204,6 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	if (input.wake === false || input.kind === "note") {
 		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
-	if (capped) return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 
 	// 我没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
 	const targets = recipientsOf(liveChannel, message).filter((slug) => slug !== OWNER);
@@ -311,7 +266,6 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
  * 1. 一条投递失败不影响其余（逐条 try/catch）。
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
-
 
 /** 记忆里「刚被谁在哪个频道叫醒」。工具用它决定「默认在哪儿回话」。 */
 export type WakeRecord = {

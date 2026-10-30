@@ -43,7 +43,7 @@ src/core/
   runtime/        防腐层：唯一能 import pi-durable / pi-ai / chord 的地方（含 models/compaction）
   agent/          一个人：身份 / 提示词装配（8 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
   team/           一个团队：README.md / memory.md / 自动沉淀
-  channel/        说话：纯规则 / 投递 / 写一条 / 11 个工具 / 附件
+  channel/        说话：频道规则 / 写一条（含投递） / 唤醒 / 附件 / 7 个工具
   ── 以上四层是 domain（业务事实）──────────────────────────────
   app/            用例：读（快照 / 投影 / 人） / 说话 / 文件（含附件） / 诊断（不 import node:http）
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/read.ts）
@@ -54,13 +54,13 @@ ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
 scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
-test/             61 文件 / 574 例
-  ├ test/core/    50 文件 / 518 例（纯函数 + 装配）
+test/             61 文件 / 549 例
+  ├ test/core/    50 文件 / 493 例（纯函数 + 装配）
   └ test/ui/      11 文件 / 56 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 47 个 ts / 10790 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 46 个 ts / 10371 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -109,7 +109,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 61 文件 574 例，<3s，必须全绿
+npm test             # 61 文件 549 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token；连跑两次都要 12/12
 ```
@@ -174,7 +174,7 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 
 | 我要… | 先读 | 再动 |
 |---|---|---|
-| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools`（11 个；同一件事加 `action`，别开新名字，ADR-084） |
+| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools`（7 个；同一件事加 `action`，别开新名字，ADR-084 / ADR-090） |
 | 教 agent 一套做法 | `docs/DECISIONS.md` ADR-007 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
 | 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` + ADR-005 + ADR-083 | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/prompt.ts` 只剩排版）；加插槽要先登记 §4 并在 `scripts/prompt-fixture.ts` 给样例值 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |

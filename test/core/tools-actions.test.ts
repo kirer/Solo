@@ -112,19 +112,15 @@ async function setup(): Promise<{
 	};
 }
 
-describe("工具收敛：注册表只有十一个", () => {
-	it("名单是 11 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有七个", () => {
+	it("名单是 7 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
 			"chats",
 			"read_history",
 			"remember",
-			"teams",
-			"write_team",
-			"skills",
 			"hire",
-			"me",
 			"run",
 			"file",
 		]);
@@ -202,110 +198,6 @@ describe("read_history", () => {
 	});
 });
 
-describe("teams", () => {
-	it("action=list 列出团队", async () => {
-		const { call } = await setup();
-		const output = await call("teams", {});
-		expect(output).toContain("alpha");
-		expect(output).toContain("目标：把网页做到能看。");
-	});
-
-	it("action=read 读团队说明", async () => {
-		const { call } = await setup();
-		const output = await call("teams", { action: "read", team: "alpha" });
-		expect(output).toContain("# alpha（alpha）");
-		expect(output).toContain("目标：把网页做到能看。");
-	});
-
-	it("有 action 没 team 时说出该给什么", async () => {
-		const { call } = await setup();
-		const output = await call("teams", { action: "read" });
-		expect(output).toContain("read 要带 team");
-		expect(output).toContain("alpha");
-	});
-
-	it("不认识的 action 列出合法值", async () => {
-		const { call } = await setup();
-		const output = await call("teams", { action: "open" });
-		expect(output).toContain("action 只有 list / read");
-	});
-});
-
-describe("skills", () => {
-	it("action=list 列公司层和我自己的技能", async () => {
-		const { call } = await setup();
-		const output = await call("skills", {});
-		expect(output).toContain("写周报（公司）");
-	});
-
-	it("action=read 读正文", async () => {
-		const { call } = await setup();
-		const output = await call("skills", { action: "read", name: "写周报" });
-		expect(output).toContain("# 技能：写周报（公司层）");
-		expect(output).toContain("1. 写三行。");
-	});
-
-	it("action=write 写我个人层，写完读得到", async () => {
-		const { call, root } = await setup();
-		const written = await call("skills", {
-			action: "write",
-			name: "部署检查",
-			description: "部署前要检查端口时用。",
-			body: "先 lsof 看端口。",
-		});
-		expect(written).toContain("已写入技能「部署检查」");
-		const source = await readFile(join(root, "agents", ME, "skills", "部署检查", "SKILL.md"), "utf8");
-		expect(source).toContain("先 lsof 看端口。");
-		const back = await call("skills", { action: "read", name: "部署检查" });
-		expect(back).toContain("先 lsof 看端口。");
-	});
-
-	it("action=write 缺 description 时说缺什么", async () => {
-		const { call } = await setup();
-		const output = await call("skills", { action: "write", name: "空技能", body: "只有正文" });
-		expect(output).toContain("写技能还缺");
-		expect(output).toContain("description");
-	});
-
-	it("不认识的 action 列出合法值", async () => {
-		const { call } = await setup();
-		const output = await call("skills", { action: "delete", name: "写周报" });
-		expect(output).toContain("action 只有 list / read / write");
-	});
-});
-
-describe("me", () => {
-	it("action=show 说出我是谁、在哪个团队、上级是谁", async () => {
-		const { call } = await setup();
-		const output = await call("me", {});
-		expect(output).toContain("沈舟");
-		expect(output).toContain("岗位：前端开发");
-		expect(output).toContain("所在团队：alpha");
-		expect(output).toContain("直属上级：owner");
-	});
-
-	it("action=update 整篇重写我的身份，文件真的变了", async () => {
-		const { call, root } = await setup();
-		const output = await call("me", { action: "update", body: "我是沈舟，现在也管部署。" });
-		expect(output).toContain("已改我的身份");
-		const source = await readFile(join(root, "agents", ME, "identity.md"), "utf8");
-		expect(source).toContain("我是沈舟，现在也管部署。");
-		expect(source).toContain("manager: owner");
-	});
-
-	it("action=update 不带 body 时说该带什么", async () => {
-		const { call } = await setup();
-		const output = await call("me", { action: "update" });
-		expect(output).toContain("body");
-	});
-
-	it("不认识的 action 列出合法值", async () => {
-		const { call } = await setup();
-		const output = await call("me", { action: "rename" });
-		expect(output).toContain("action 只有 show / update");
-	});
-});
-
 describe("写盘前先脱敏", () => {
 	const KEY = "{{SECRET_quvz7n3k}}";
 
@@ -313,34 +205,36 @@ describe("写盘前先脱敏", () => {
 		await writeFile(join(root, ".secrets.json"), JSON.stringify({ FAKE_KEY: KEY }), "utf8");
 	}
 
-	it("me action=update 写进 identity.md 的是马赛克", async () => {
+	// V3 删了 `me` / `skills` / `write_team` 三个包装工具，写盘只剩 `file`（+ `remember` / `hire`）。
+	// 脱敏这条契约没变：**任何进提示词的文件的写入口都必须脱敏**，所以改走 `file` 再钉一遍。
+	it("file 写进 identity.md 的是马赛克", async () => {
 		const { call, root } = await setup();
 		await withSecret(root);
-		await call("me", { action: "update", body: `部署用这个 key：${KEY}` });
+		const output = await call("file", { action: "write", path: `agents/${ME}/identity.md`, content: `---\nname: ${ME}\n---\n\n部署用这个 key：${KEY}` });
+		expect(output).toContain("已写入");
 		const source = await readFile(join(root, "agents", ME, "identity.md"), "utf8");
 		// identity.md 每轮都进提示词：原值写进去就是**每一轮**都发给模型，不可逆。
 		expect(source).not.toContain(KEY);
 		expect(source).toContain("[密钥已隐藏]");
 	});
 
-	it("skills action=write 写进 SKILL.md 的是马赛克", async () => {
+	it("file 写进个人 SKILL.md 的是马赛克", async () => {
 		const { call, root } = await setup();
 		await withSecret(root);
-		await call("skills", {
+		await call("file", {
 			action: "write",
-			name: "调接口",
-			description: "调那个接口时用。",
-			body: `curl -H 'Authorization: ${KEY}'`,
+			path: `agents/${ME}/skills/调接口/SKILL.md`,
+			content: `---\nname: 调接口\ndescription: 调那个接口时用。\n---\n\ncurl -H 'Authorization: ${KEY}'`,
 		});
 		const source = await readFile(join(root, "agents", ME, "skills", "调接口", "SKILL.md"), "utf8");
 		expect(source).not.toContain(KEY);
 		expect(source).toContain("[密钥已隐藏]");
 	});
 
-	it("write_team 写进 README.md 的是马赛克", async () => {
+	it("file 写进团队 README.md 的是马赛克", async () => {
 		const { call, root } = await setup();
 		await withSecret(root);
-		await call("write_team", { slug: "alpha", body: `目标：把网页做到能看。\n\n数据库密码：${KEY}` });
+		await call("file", { action: "write", path: "teams/alpha/README.md", content: `目标：把网页做到能看。\n\n数据库密码：${KEY}` });
 		const source = await readFile(join(root, "teams", "alpha", "README.md"), "utf8");
 		expect(source).not.toContain(KEY);
 		expect(source).toContain("[密钥已隐藏]");

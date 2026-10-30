@@ -228,61 +228,6 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	return [...targets];
 }
 
-/** 构成「接力」的 kind：说出口、会叫醒别人的话。 */
-const RELAY_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
-
-/**
- * 一个频道里 agent 之间最多能自动接多少棒。
- *
- * 团队频道用 `wakeOnAll` 让「不 @ 人也能把团队管理员叫醒」，于是 A 回复 → 唤醒 B →
- * B 回复 → 又唤醒 A。没有上限就是无限循环烧钱。上限按频道规模给：人多一个回合里
- * 该说的也更多。至少 3，否则 0 个 agent 的频道一上来就锁死。
- */
-export function relayLimit(channel: Channel): number {
-	const agents = channel.members.filter((slug) => slug !== OWNER).length;
-	// **只有一个人能说话时没有「接力」**。
-	//
-	// 这个上限存在的唯一理由是 A 回 → 唤醒 B → B 回 → 又唤醒 A 的无限循环。
-	// 投递时收件人一定会排除发件人自己，所以「我 + 一个 agent」的私聊里，
-	// 那个 agent 说完话之后**没有任何人**会被再叫醒 —— 循环根本起不来，
-	// 上限只会把他汇报几次之后的嘴堵上。实测就发生过：私聊里 197 条消息
-	// 有 150 多条是「接力到上限」这条告警。
-	if (agents <= 1) return Number.POSITIVE_INFINITY;
-	// 每人 6 条，群聊一律如此。
-	//
-	// 早先按 id 前缀分档（`team:` 给 6 倍、其余 3 倍）。那等于「频道是什么」由一个字符串
-	// 决定，而团队档案是可选的、`all` 也只是个普通群 —— 前缀不是事实。3 人按 3 倍给（9 条）
-	// 实测两次就撞线，拦掉的不是循环，是「两个人来回对齐一句」，所以统一取宽松的那一档。
-	return Math.max(3, agents * 6);
-}
-
-/**
- * 我在这条频道里最后说了一句之后，agent 已经自动接了几棒。
- *
- * **我从没在这个频道说过话时，从频道建立算起**。早先这里是 `return 0`（「不惩罚」），
- * 结果团队频道里的我一次不开口，上限就永远不触发 —— 那正是唯一真会烧钱失控的地方。
- * 我一开口就归零，所以「新频道」不会反而更严。
- * `note` / `work` 不算接力：那是系统留痕和执行过程，不是 agent 在跟人说话；
- * 它们也不能打断计数（`note` 的 from 是 `OWNER`，若当成我发言就会把计数清零）。
- */
-export function botHopsSinceOwner(state: ChannelState, channelId: string): number {
-	const list = state.messages[channelId] ?? [];
-	let last = -1;
-	for (let index = list.length - 1; index >= 0; index -= 1) {
-		const item = list[index]!;
-		if (item.from !== OWNER) continue;
-		if (item.kind === "note" || item.kind === "work") continue;
-		last = index;
-		break;
-	}
-	// 只有**说出口的话**才算接力。`think` / `tool` 是过程投影：它们不叫醒任何人，
-	// 把它们算进来等于「干得多就更容易被判失控」—— 一个 agent 跑 14 条命令就吃掉
-	// 一整个额度，那拦的不是循环，是他干活。
-	return list
-		.slice(last + 1)
-		.filter((item) => item.from !== OWNER && RELAY_KINDS.has(item.kind)).length;
-}
-
 /** 某个 slug 在一个频道里读到了哪里。0 表示一条没读。 */
 export function readMarkOf(state: ChannelState, slug: string, channelId: string): number {
 	return state.readMarks[slug]?.[channelId] ?? 0;

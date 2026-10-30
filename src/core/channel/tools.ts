@@ -36,22 +36,13 @@ import {
 	type Harness,
 	type ToolRegistration,
 } from "../runtime/index.ts";
-import { OWNER_SLUG, readAllIdentities, readIdentity, reportsOf } from "../agent/identity.ts";
-import {
-	listSkills,
-	readSkill,
-	type SkillRoots,
-	writeCompanySkill,
-	writeSkill,
-} from "../agent/skills.ts";
+import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
 import { redact } from "../agent/secrets.ts";
-import { listTeams, readTeam, writeTeam } from "../team/doc.ts";
-import { createAgent, renderIdentityFile } from "../agent/create.ts";
+import { createAgent } from "../agent/create.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
 import { mentionRosterOf, resolveMention, type MentionRoster } from "./store.ts";
-import { markSpoken, spokenResult } from "./speech.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -109,12 +100,6 @@ export type CoreToolDeps = {
 	 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
 };
-
-/** 技能的两级根目录。工具里每次都从 deps 现算，避免多存一份会漂的副本。 */
-function skillRoots(deps: CoreToolDeps): SkillRoots {
-	return { workspace: deps.workspaceRoot, agents: deps.agentsRoot };
-}
-
 
 /**
  * 工具的唯一出口：一段给模型读的自然语言。
@@ -215,11 +200,6 @@ async function selfOf(deps: CoreToolDeps, conversationId: number, context: Conte
  *
  * 查不到时返回一句能直接回给模型的话（工具不抛错：抛错它看到的是堆栈）。
  */
-/** 「我有的：…」—— 三处错误文案都要列一遍现有名字，写法只留一处。 */
-async function skillNames(roots: SkillRoots, slug: string): Promise<string> {
-	return renderDocNames((await listSkills(roots, slug)).map((item) => item.name));
-}
-
 async function selfOrError(
 	deps: CoreToolDeps,
 	conversationId: number,
@@ -231,32 +211,6 @@ async function selfOrError(
 }
 
 /**
- * 一列文档（技能 / 团队）渲染成清单：每行由调用方给，空清单给一句人话。
- *
- * 不能留一个空冒号：模型看到「我有的：」后面什么都没有，会以为工具坏了。
- */
-function renderDocList<T>(items: readonly T[], row: (item: T) => string, empty: string): string {
-	return items.length === 0 ? empty : items.map(row).join("\n");
-}
-
-/** 一列名字 → `甲、乙`（空 = 「（一个都没有）」）。 */
-function renderDocNames(names: readonly string[]): string {
-	return names.length === 0 ? "（一个都没有）" : names.join("、");
-}
-
-/**
- * 「写一份文档 → 回一句」。
- *
- * `me` / `write_team` / `skills` 是同一个动作：写盘，然后告诉模型写到哪儿了。写不进去
- * 时把原因原样回给模型 —— 它要能照着改参数重试，而不是拿到一段堆栈。
- */
-async function writeDoc(write: () => Promise<string>): Promise<ReturnType<typeof text>> {
-	try {
-		return text(await write());
-	} catch (error) {
-		return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
-	}
-}
 
 /**
  * 「默认在哪儿说话」：刚被叫醒的那个频道 → 我是成员的群里最近活跃的那个 → 我和我的私聊。
@@ -439,23 +393,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				return text(`这一句不说了（这一轮还有 ${others.join("、")} 在）。`);
 			}
 
-			// 一轮只说一句结论。第二句要补的是过程，不是又一篇结论。
-			//
-			// ds-bot 靠「回合末只交一次结果」做到这件事（`turns.js:532`）；我们没有那个
-			// 钩子，就在工具层拒第二次 —— 效果一样：模型没法在一轮里堆三段结论。
 			const conversationId = Number(api.conversationId);
-			if (args.step !== true) {
-				const previous = spokenResult(conversationId);
-				if (previous !== undefined) {
-					const head = previous.length > 40 ? `${previous.slice(0, 40)}…` : previous;
-					return text(
-						`这一轮你已经说过结果了：「${head}」。\n` +
-							"要让人知道进展就再发一次、带上 step: true（「正在改，几分钟」）；" +
-							"要补新的结论，等别人说完再来 —— 一轮里堆两段结论就不是聊天了。",
-					);
-				}
-			}
-
 			const target = await defaultChannel(deps, state, slug, conversationId, args.channel, ctx);
 			if ("error" in target) return text(target);
 			const roster = await mentionRoster(deps);
@@ -514,8 +452,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 				},
 				ctx,
 			);
-			// 过程话不算「这一轮说过结论」。
-			if (args.step !== true) markSpoken(conversationId, args.text);
 			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
 			const woke = result.delivery.delivered;
 			return text(
@@ -657,222 +593,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 				return text(`已新建 ${identity.name}（slug: ${identity.slug}），会话 ${id} 已就绪。它的身份在 agents/${identity.slug}/identity.md。`);
 			}
 			return text(`已新建 ${identity.name}（slug: ${identity.slug}）。身份在 agents/${identity.slug}/identity.md，重启或外壳扫描后它会开会话。`);
-		},
-	});
-
-	/**
-	 * 我：看自己是谁，或者改自己的身份正文。
-	 *
-	 * 旧版能改**别人**。收敛后只改自己 —— 「我是谁」是自己的事，
-	 * 要改别人的职责，说一句话或写团队文件，而不是替他改身份。
-	 */
-	const me = defineTool({
-		name: "me",
-		description:
-			"我自己。`action=show`（默认）看我叫什么、什么岗、在哪个团队、上级是谁、下有谁；`action=update` 整篇重写我的身份正文（下一句话就生效）。",
-		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "show（默认）看身份 / update 改身份正文" })),
-			body: Type.Optional(Type.String({ description: "新的身份正文（整篇替换；update 时必填）" })),
-		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const action = actionOf(args.action, ["show", "update"], "show");
-			if (typeof action !== "string") return text(action);
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
-			if (typeof slug !== "string") return text(slug);
-			const all = await readAllIdentities(deps.agentsRoot);
-			const self = all.find((item) => item.slug === slug);
-
-			if (action === "show") {
-				const reports = reportsOf(all, slug);
-				return text(
-					[
-						`你是 ${self?.name ?? slug}（slug: ${slug}）${self?.title === undefined ? "" : `，岗位：${self.title}`}`,
-						`所在团队：${self?.team ?? "（没有团队）"}`,
-						`直属上级：${self?.manager ?? "（无）"}`,
-						reports.length === 0
-							? "直接下属：（目前没有）"
-							: `直接下属：${reports.map((item) => `${item.name ?? item.slug}（${item.slug}）`).join("、")}`,
-						`你的目录：agents/${slug}/（identity.md、memory.md、skills/）`,
-					].join("\n"),
-				);
-			}
-
-			if (args.body === undefined || args.body.trim() === "") {
-				return text("要改身份就带上 body（整篇新正文）；只想看看自己现在什么样，用 action=show。");
-			}
-			if (self === undefined) return text(`名册里没有 ${slug}。先确认你的 identity.md 在不在 agents/${slug}/。`);
-			// 身份每轮都进提示词：密钥写进来就是**每一轮**都发给模型，且不可逆。落盘前先换掉。
-			const body = redact(args.body, deps.workspaceRoot);
-			const header = {
-				...(self.name === undefined ? {} : { name: self.name }),
-				...(self.title === undefined ? {} : { title: self.title }),
-				...(self.manager === undefined ? {} : { manager: self.manager }),
-				...(self.team === undefined ? {} : { team: self.team }),
-			};
-			return writeDoc(async () => {
-				await writeFile(join(self.dir, "identity.md"), renderIdentityFile(header, body), "utf8");
-				return `已改我的身份（agents/${slug}/identity.md）。下一条消息就按新身份工作。`;
-			});
-		},
-	});
-
-	/**
-	 * 技能：`skills/<名字>/SKILL.md`。
-	 *
-	 * 技能正文不进提示词，所以 agent 需要先「翻目录」再「读全文」。两种动作合成
-	 * 一个工具的 `action`，是因为它们是同一件事（找一门手艺）的前后两步，而不是两件事。
-	 */
-	const skills = defineTool({
-		name: "skills",
-		description: [
-			"我的技能。`action=list`（默认）看我会什么（名字 + 一句描述 + 公司教的还是自己写的）；",
-			"`action=read` 读一门技能的正文（要做那件事之前必须先读，提示词里只有名字和一句描述）；",
-			"`action=write` 写一门技能：步骤、判据、踩过的坑。",
-		].join(""),
-		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "list（默认）/ read / write" })),
-			name: Type.Optional(Type.String({ description: "技能名（read / write 必填）" })),
-			scope: Type.Optional(Type.String({ description: "write 时写哪里：personal（默认，只有我看得见）/ company（全公司看得见）" })),
-			description: Type.Optional(
-				Type.String({ description: "write 必填：一句话说清「做什么 + 什么时候用」，这行会常驻提示词" }),
-			),
-			body: Type.Optional(Type.String({ description: "write 必填：正文（步骤、判据、样例），写给下一次的你自己看" })),
-		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const action = actionOf(args.action, ["list", "read", "write"], "list");
-			if (typeof action !== "string") return text(action);
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
-			if (typeof slug !== "string") return text(slug);
-			const roots = skillRoots(deps);
-
-			if (action === "list") {
-				return text(
-					renderDocList(
-						await listSkills(roots, slug),
-						(skill) => `- ${skill.name}（${skill.scope === "company" ? "公司" : "我自己"}）：${skill.description}`,
-						"我还没有技能。",
-					),
-				);
-			}
-
-			if (args.name === undefined || args.name.trim() === "") {
-				return text(`action=${action} 要带 name。我有的：${await skillNames(roots, slug)}。`);
-			}
-			const name = args.name;
-
-			if (action === "read") {
-				const skill = await readSkill(roots, slug, name);
-				if (skill === undefined) {
-					return text(`没有叫「${name}」的技能。我有的：${await skillNames(roots, slug)}。`);
-				}
-				const where = skill.scope === "company" ? "公司层" : "我自己的";
-				return text(`# 技能：${skill.name}（${where}）\n\n${skill.body}`);
-			}
-
-			const scope = actionOf(args.scope, ["personal", "company"], "personal", "scope");
-			if (typeof scope !== "string") return text(scope);
-			const missing = [
-				args.description === undefined || args.description.trim() === "" ? "description（做什么 + 什么时候用）" : "",
-				args.body === undefined || args.body.trim() === "" ? "body（步骤、判据、样例）" : "",
-			].filter((line) => line !== "");
-			if (missing.length > 0) return text(`写技能还缺：${missing.join("、")}。`);
-			const input = {
-				name,
-				description: redact(args.description as string, deps.workspaceRoot),
-				body: redact(args.body as string, deps.workspaceRoot),
-			};
-			return writeDoc(async () => {
-				const written =
-					scope === "company"
-						? await writeCompanySkill(deps.workspaceRoot, input)
-						: await writeSkill(roots, slug, input);
-				const where =
-					scope === "company" ? `skills/${written.name}/SKILL.md（全公司）` : `agents/${slug}/skills/${written.name}/SKILL.md`;
-				return `已写入技能「${written.name}」：${where}。下一条消息就生效。`;
-			});
-		},
-	});
-
-	/**
-	 * 团队：`teams/<slug>/README.md`。
-	 *
-	 * 团队不是代码里的一个实体，就是一份文档。代码只负责读写它、按它算成员。
-	 * 「什么时候该立项」「团队该有谁」是判断，写在技能里。
-	 */
-	const teams = defineTool({
-		name: "teams",
-		description:
-			"团队。`action=list`（默认）列全部团队（slug、名字、团队管理员、状态、一句摘要）；`action=read` 读一个团队的完整说明（目标、验收、边界、进展）—— 进一个团队干活之前先读它。",
-		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "list（默认）/ read" })),
-			team: Type.Optional(Type.String({ description: "团队 slug（read 时必填）" })),
-		}),
-		execute: async (args) => {
-			const action = actionOf(args.action, ["list", "read"], "list");
-			if (typeof action !== "string") return text(action);
-			if (action === "list") {
-				return text(
-					renderDocList(
-						await listTeams(deps.teamsRoot),
-						(team) => {
-							const head = team.body.split("\n").find((line) => line.trim() !== "") ?? "";
-							return `- ${team.slug}（${team.name}）· ${team.status} · 团队管理员：${team.lead ?? "（没人负责）"}\n  ${head}`;
-						},
-						"还没有团队。",
-					),
-				);
-			}
-			if (args.team === undefined || args.team.trim() === "") {
-				const names = renderDocNames((await listTeams(deps.teamsRoot)).map((item) => item.slug));
-				return text(`read 要带 team。现有：${names}。`);
-			}
-			const team = await readTeam(deps.teamsRoot, args.team);
-			if (team === undefined) return text(`没有这个团队：${args.team}`);
-			return text(`# ${team.name}（${team.slug}）\n状态：${team.status}\n团队管理员：${team.lead ?? "（没人负责）"}\n\n${team.body}`);
-		},
-	});
-
-	const writeTeamTool = defineTool({
-		name: "write_team",
-		description: [
-			"写一个团队（整篇替换 teams/<slug>/README.md，不存在就建）。",
-			"写清楚：目标、验收标准、什么不做、现在进展到哪。",
-			"写完下一条消息生效 —— 团队成员的提示词里会自动出现这份说明。",
-		].join(""),
-		parameters: Type.Object({
-			slug: Type.String({ description: "团队 slug（会当目录名用）" }),
-			name: Type.Optional(Type.String({ description: "显示名" })),
-			lead: Type.Optional(Type.String({ description: "团队管理员的 slug" })),
-			doing: Type.Optional(
-				Type.String({ description: "一句话现状（谁在做什么），显示在团队频道顶栏；不传 = 保留原值" }),
-			),
-			status: Type.Optional(Type.String({ description: "active / paused / done / archived" })),
-			body: Type.String({ description: "正文：目标、验收标准、边界、进展" }),
-		}),
-		execute: async (args, _api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			return writeDoc(async () => {
-				const team = await writeTeam(deps.teamsRoot, {
-					slug: args.slug,
-					// 团队 README 同样进提示词（团队里每个人都读得到），自由文本一律先脱敏。
-					body: redact(args.body, deps.workspaceRoot),
-					...(args.name === undefined ? {} : { name: redact(args.name, deps.workspaceRoot) }),
-					...(args.lead === undefined ? {} : { lead: args.lead }),
-					// 不传 doing 时 doc.ts 会沿用文件里已有的 —— 这里不替它编。
-					...(args.doing === undefined ? {} : { doing: redact(args.doing, deps.workspaceRoot) }),
-					...(args.status === undefined ? {} : { status: args.status as never }),
-				});
-				// 团队管理员写进文件之后，团队频道要立刻把他拉进来：频道成员是文档的投影，
-				// 文档改了投影不改，员工在团队里就 @ 不到刚任命的团队管理员。
-				if (deps.syncTeam !== undefined) await deps.syncTeam(team.slug, ctx);
-				const leadNote =
-					team.lead === undefined
-						? "\n\n注意：这份团队还没有团队管理员（`lead`）。团队里出问题时没人能拍板 —— 现在就把团队管理员定下来。"
-						: "";
-				return `已写入团队「${team.name}」（${team.slug}），团队管理员：${team.lead ?? "（没人负责）"}。agents 里写 \`team: ${team.slug}\` 的人会看到这份说明。${leadNote}`;
-			});
 		},
 	});
 
@@ -1134,16 +854,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 		chats,
 		readHistory,
 		remember,
-		teams,
-		writeTeamTool,
-		skills,
 		hire,
-		me,
 		run,
 		file,
 	] as readonly ToolRegistration[];
 }
-
 
 /** 组装一次投递的全部依赖（`say` 共用）。 */
 function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): PostDeps {
@@ -1292,5 +1007,4 @@ function renderLine(message: Message): string {
 	const suffix = files.length === 0 ? "" : ` ${files.join(" ")}`;
 	return `#${message.seq} ${time} ${message.from}${mentions}：${quoted}${message.text}${suffix}`;
 }
-
 
