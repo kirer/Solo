@@ -2,11 +2,11 @@
  * 技能（skill）= 一份 `SKILL.md`。两级：
  *
  * ```
- * <workspace>/skills/<名字>/SKILL.md             公司层：所有人都看得见
+ * <workspace>/skills/<名字>/SKILL.md             全员层：所有人都看得见
  * <workspace>/agents/<slug>/skills/<名字>/...    个人层：只有他自己看得见
  * ```
  *
- * 个人层**覆盖**公司层：同名时用个人的。这样「全公司统一流程」写公司层，
+ * 个人层**覆盖**全员层：同名时用个人的。这样「全员统一流程」写全员层，
  * 「我这个人有自己的一套」写个人层，不需要拷贝，也不需要「取消继承」这类开关。
  *
  * 加载策略照搬 Agent Skills 规范（也照搬 pi 的做法）：
@@ -17,17 +17,17 @@
  */
 import { cp } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { readDocFile, writeDocFile } from "../doc.ts";
+import { readDocFile, writeDocFile } from "../md/doc.ts";
 import { skillDirName } from "../naming.ts";
-import { ensureDir, listDirSorted, mtimeOrUndefined } from "../runtime/io.ts";
+import { byName, ensureDir, listDirSorted, mtimeOrUndefined } from "../runtime/io.ts";
 
-/** 技能子目录名（公司层根目录与个人目录下都用它）。 */
+/** 技能子目录名（全员层根目录与个人目录下都用它）。 */
 export const SKILLS_DIR = "skills";
 /** 便携形式：一个目录一份 `SKILL.md`。 */
 export const SKILL_FILE = "SKILL.md";
 
-/** 技能来源。提示词里会标出来 —— 「这是公司教我的」和「这是我自己写的」不是一回事。 */
-export type SkillScope = "company" | "personal";
+/** 技能来源。提示词里会标出来 —— 「这是全员共用的」和「这是我自己写的」不是一回事。 */
+export type SkillScope = "all" | "personal";
 
 export type Skill = {
 	/** 目录名（或单文件时的文件名去掉 `.md`）。稳定标识。 */
@@ -36,9 +36,9 @@ export type Skill = {
 	readonly description: string;
 	/** 技能所在目录（正文里写的相对路径以它为准）。 */
 	readonly dir: string;
-	/** 哪一级的。个人层同名覆盖公司层。 */
+	/** 哪一级的。个人层同名覆盖全员层。 */
 	readonly scope: SkillScope;
-	/** 个人层且公司层有同名技能 —— 提示词里要标出来「这是你自己改过的版本」。 */
+	/** 个人层且全员层有同名技能 —— 提示词里要标出来「这是你自己改过的版本」。 */
 	readonly overrides?: true;
 };
 
@@ -84,29 +84,29 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 			});
 		}
 	}
-	return found.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+	return found.sort(byName);
 }
 
 /** 技能所在的两级根目录。传一个对象而不是三个字符串，调用点不容易把顺序搞错。 */
 export type SkillRoots = {
-	/** 工作区根：公司层技能在 `<workspace>/skills/`。 */
+	/** 工作区根：全员层技能在 `<workspace>/skills/`。 */
 	readonly workspace: string;
 	/** `<workspace>/agents`：个人层技能在 `<agents>/<slug>/skills/`。 */
 	readonly agents: string;
 };
 
-/** 一个 agent 能看见的全部技能：公司层打底，个人层同名覆盖。 */
+/** 一个 agent 能看见的全部技能：全员层打底，个人层同名覆盖。 */
 export async function listSkills(roots: SkillRoots, slug: string): Promise<readonly Skill[]> {
-	const company = await scanSkillsDir(join(roots.workspace, SKILLS_DIR), "company");
+	const shared = await scanSkillsDir(join(roots.workspace, SKILLS_DIR), "all");
 	const personal = await scanSkillsDir(join(roots.agents, slug, SKILLS_DIR), "personal");
-	const byName = new Map<string, Skill>();
-	const companyNames = new Set(company.map((skill) => skill.name));
-	for (const skill of company) byName.set(skill.name, skill);
-	// 个人层后写 → 同名覆盖。这是「我这个人跟公司不一样」的唯一机制，没有别的开关。
+	const merged = new Map<string, Skill>();
+	const sharedNames = new Set(shared.map((skill) => skill.name));
+	for (const skill of shared) merged.set(skill.name, skill);
+	// 个人层后写 → 同名覆盖。这是「我这个人跟全员不一样」的唯一机制，没有别的开关。
 	for (const skill of personal) {
-		byName.set(skill.name, companyNames.has(skill.name) ? { ...skill, overrides: true } : skill);
+		merged.set(skill.name, sharedNames.has(skill.name) ? { ...skill, overrides: true } : skill);
 	}
-	return [...byName.values()].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+	return [...merged.values()].sort(byName);
 }
 
 /**
@@ -127,9 +127,9 @@ export async function readSkill(roots: SkillRoots, slug: string, name: string): 
 
 /**
  * 写一份技能（整篇替换）。`skillsRoot` 是**哪一个 `skills/` 目录**：
- * 公司层传 `agentsRoot/skills`，个人层传 `agentsRoot/<slug>/skills`。
+ * 全员层传 `agentsRoot/skills`，个人层传 `agentsRoot/<slug>/skills`。
  */
-export async function writeSkillTo(
+async function writeSkillTo(
 	skillsRoot: string,
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
@@ -157,13 +157,13 @@ export async function writeSkill(
 	return { ...written, scope: "personal" };
 }
 
-/** 写进公司层（所有 agent 立刻看得见）。 */
-export async function writeCompanySkill(
+/** 写进全员层（所有 agent 立刻看得见）。 */
+export async function writeAllSkill(
 	workspaceRoot: string,
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
 	const written = await writeSkillTo(join(workspaceRoot, SKILLS_DIR), input);
-	return { ...written, scope: "company" };
+	return { ...written, scope: "all" };
 }
 
 /**
@@ -179,11 +179,11 @@ export async function copySkillDir(fromDir: string, skillsRoot: string): Promise
 	const name = basename(fromDir);
 	const dir = join(skillsRoot, name);
 	// 已经存在：读回来报告，不覆盖。
-	if ((await mtimeOrUndefined(dir)) !== undefined) return { name, description: "", dir, scope: "company" };
+	if ((await mtimeOrUndefined(dir)) !== undefined) return { name, description: "", dir, scope: "all" };
 	// `cp` 是这一层唯一保留的直接文件系统调用：技能是**目录**，可能带脚本与模板，
 	// `runtime/io` 不替它做递归拷贝。
 	await ensureDir(skillsRoot);
 	await cp(fromDir, dir, { recursive: true });
 	const doc = await readDocFile(join(dir, SKILL_FILE));
-	return { name, description: doc?.front.description ?? "", dir, scope: "company" };
+	return { name, description: doc?.front.description ?? "", dir, scope: "all" };
 }

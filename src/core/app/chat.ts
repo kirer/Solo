@@ -31,10 +31,10 @@ import {
 	readBounded,
 	readUploadMeta,
 	uploadsRootOf,
-} from "../channel/files.ts";
+} from "../channel/attachments.ts";
 import type { ViewOk, ViewPost, ViewUploaded } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
-import { emptyChannels, type Snapshots } from "./snapshot.ts";
+import { emptyChannels } from "./snapshot.ts";
 import type { CoreServices } from "./types.ts";
 
 /** `POST /api/channels/:id/messages` 的请求体（字段名就是线上的键名）。 */
@@ -47,7 +47,7 @@ export type PostBody = {
 	readonly attachments?: readonly (string | { readonly id?: unknown })[];
 };
 
-export function createChat(shell: CoreServices, snapshots: Snapshots) {
+export function createChat(shell: CoreServices) {
 	const uploadsRoot = uploadsRootOf(shell.agentsRoot);
 
 	/**
@@ -103,7 +103,7 @@ export function createChat(shell: CoreServices, snapshots: Snapshots) {
 
 	/**
 	 * 我和一个人开私聊（幂等）。**只有这一种建频道的入口** ——
-	 * 通用建频道接口已删：频道要么是装配投影出来的（公司 / 团队），要么是这里。
+	 * 通用建频道接口已删：频道要么是装配投影出来的（全员 / 团队），要么是这里。
 	 *
 	 * 形态由 id 前缀与成员一起决定：`dm:<两人>`，且 `chatKind` 只认这种形态为私聊。
 	 * 对方必须真的在名册里（不能拿一个不存在的 slug 建出永不可见的房间）。
@@ -179,5 +179,5 @@ export function createChat(shell: CoreServices, snapshots: Snapshots) {
 		return await putUpload(uploadsRoot, { name, mime, bytes, at: Date.now() });
 	}
 
-	return { postAsOwner, openDirectMessage, markRead, saveUpload, uploadsRoot, snapshots };
+	return { postAsOwner, openDirectMessage, markRead, saveUpload, uploadsRoot };
 }

@@ -19,7 +19,7 @@ workspace/
   settings.json          # 模型接入配置（可选）
   agents/<slug>/         # 每个人：identity.md / memory.md / skills/
   teams/<slug>/          # 每个团队：README.md / memory.md
-  skills/                # 公司层技能
+  skills/                # 全员层技能
   rules.md               # 全员规矩（每轮都进提示词）
 ```
 
@@ -44,9 +44,9 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 
 启动成功会打印监听地址和局域网地址。Ctrl-C 退出。
 
-**首次启动会做什么**：建 `workspace/` → 同步 `rules.md` 与公司层技能（《写技能》《找现成技能》
+**首次启动会做什么**：建 `workspace/` → 同步 `rules.md` 与全员层技能（《写技能》《找现成技能》
 《工作规矩》《记忆整理》，缺的补上、改过的不覆盖）→ 若 `agents/` 里一个人都没有，播种「知言」
-（含《立项》《招人》两份个人技能）→ 读模型配置 → 开会话 → 建公司频道。这个过程不产生对外
+（含《立项》《招人》两份个人技能）→ 读模型配置 → 开会话 → 建全员频道。这个过程不产生对外
 请求，模型不可用也能起来（只是 agent 不会回话）。
 
 开机**不建私聊**：私聊只有我在界面上开的时候才存在，一个 agent 不进任何群也能活。团队频道
@@ -106,7 +106,7 @@ console.log(m.defaultModel, m.models.map(x=>x.id ?? x.modelId));'
 
 错误信息 `Model <provider>/<id> is not available` = 引用对不上，改 `settings.json` 或
 环境变量。历史事故：`settings.json` 里给**内置模型**改名，导致注册表出现两条同 id 的
-provider，默认模型解析歧义后回落到 `no_model`，全公司静默不回复，界面上看不出任何错。
+provider，默认模型解析歧义后回落到 `no_model`，全员静默不回复，界面上看不出任何错。
 V2 已经删掉「覆盖内置模型」这整套机制，`custom[]` 只能新增。
 
 ## 4. 局域网访问
@@ -140,7 +140,7 @@ docker compose down
 - **`COMMANDCODE_BASE_URL=http://host.docker.internal:3425/v1`**：容器里的
   `127.0.0.1` 是容器自己，不是宿主机。用本地网关时必须显式指向宿主机。
 
-工作区是命名卷 `ai-company-workspace`。想直接看到文件就改成 bind mount：
+工作区是命名卷 `solo-workspace`。想直接看到文件就改成 bind mount：
 
 ```yaml
 volumes:
@@ -228,7 +228,7 @@ curl -s localhost:7788/api/diag | jq
 
 ## 8. 自动沉淀
 
-**任何**一条新消息落在团队频道（`team:<slug>`）里后，都会叫团队管理员按公司技能「记忆整理」
+**任何**一条新消息落在团队频道（`team:<slug>`）里后，都会叫团队管理员按全员技能「记忆整理」
 判断「哪些要不要写进团队记忆」（`src/core/team/settle.ts` 的 `settleTeam`）。问完只记一笔
 「在等确认」，**`teams/<slug>/memory.md` 真的变了才推进游标**（ADR-033）：管理员没写进去，
 这批消息下次还会被看到。同一批在等确认期间不会重复催。这是正常行为，不是 bug。

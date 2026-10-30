@@ -13,11 +13,11 @@
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
 import { listTeams } from "../team/doc.ts";
-import { ChannelDoc, type ChannelState } from "../channel/store.ts";
+import { ChannelDoc, emptyChannelState, type ChannelState } from "../channel/store.ts";
 import type { DirectoryState } from "../agent/roster.ts";
 import type { Identity } from "../agent/identity.ts";
 import type { TeamDoingOf, TeamLeadOf } from "../view/dto.ts";
-import { withLabels } from "./read.ts";
+import { withLabels } from "./project.ts";
 import type { CoreServices } from "./types.ts";
 
 /** 团队文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
@@ -25,7 +25,7 @@ const TEAM_CACHE_MS = 250;
 
 /** 空频道状态（文档还没写过时用）。 */
 export function emptyChannels(): ChannelState {
-	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+	return emptyChannelState();
 }
 
 export type ChannelSnapshot = {

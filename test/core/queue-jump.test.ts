@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { queuedAhead } from "../../src/core/channel/post.ts";
+import { queuedAhead } from "../../src/core/channel/queue.ts";
 
 /**
  * 「谁该让路」的判据 —— 现在只有一份（`queuedAhead`）。
@@ -21,41 +21,41 @@ describe("谁该让路（同一会话只留一个未开始项）", () => {
 			queuedAhead(
 				[sub(1, 100, "queued", "ch:team:solo:40:林越"), sub(2, 100, "queued", "ch:team:solo:41:林越")],
 				100,
-				"ch:owner:company:9:知言",
+				"ch:owner:all:9:知言",
 			),
 		).toEqual([1, 2]);
 	});
 
 	it("别的会话不碰", () => {
-		expect(queuedAhead([sub(1, 200, "queued", "ch:x:1:a")], 100, "ch:owner:company:9:知言")).toEqual([]);
+		expect(queuedAhead([sub(1, 200, "queued", "ch:x:1:a")], 100, "ch:owner:all:9:知言")).toEqual([]);
 	});
 
 	it("已经在跑的不碰（`placed`）—— 撤它会连新消息一起吞掉", () => {
-		expect(queuedAhead([sub(1, 100, "placed", "ch:x:1:a")], 100, "ch:owner:company:9:知言")).toEqual([]);
+		expect(queuedAhead([sub(1, 100, "placed", "ch:x:1:a")], 100, "ch:owner:all:9:知言")).toEqual([]);
 	});
 
 	it("我自己排的也撤：连说三句只该排一个唤醒（三句都在频道里）", () => {
 		expect(
 			queuedAhead(
-				[sub(1, 100, "queued", "ch:owner:company:7:知言"), sub(2, 100, "queued", "ch:x:1:a")],
+				[sub(1, 100, "queued", "ch:owner:all:7:知言"), sub(2, 100, "queued", "ch:x:1:a")],
 				100,
-				"ch:owner:company:9:知言",
+				"ch:owner:all:9:知言",
 			),
 		).toEqual([1, 2]);
 	});
 
 	it("自己这条不撤", () => {
 		expect(
-			queuedAhead([sub(1, 100, "queued", "ch:owner:company:9:知言")], 100, "ch:owner:company:9:知言"),
+			queuedAhead([sub(1, 100, "queued", "ch:owner:all:9:知言")], 100, "ch:owner:all:9:知言"),
 		).toEqual([]);
 	});
 
 	it("最多撤 8 条：一次清空整个积压等于替人做了排期决定", () => {
 		const many = Array.from({ length: 12 }, (_, i) => sub(i + 1, 100, "queued", `ch:x:${i}:a`));
-		expect(queuedAhead(many, 100, "ch:owner:company:9:知言")).toHaveLength(8);
+		expect(queuedAhead(many, 100, "ch:owner:all:9:知言")).toHaveLength(8);
 	});
 
 	it("没有排队项时什么都不做", () => {
-		expect(queuedAhead([], 100, "ch:owner:company:9:知言")).toEqual([]);
+		expect(queuedAhead([], 100, "ch:owner:all:9:知言")).toEqual([]);
 	});
 });

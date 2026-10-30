@@ -1,5 +1,5 @@
 /**
- * 公司层技能要能**补进**已有工作区，但不能覆盖用户改过的内容。
+ * 全员层技能要能**补进**已有工作区，但不能覆盖用户改过的内容。
  *
  * 审计发现：`seed/skills/工作规矩/SKILL.md` 5766 字节 vs `workspace/skills/工作规矩/SKILL.md`
  * 4729 字节 —— 1037 字节的规则修正从没生效；`seed/skills/记忆整理/` 干脆没被拷过去，而
@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SEED_MANIFEST_FILE, seedRules, syncCompanySkills } from "../../src/core/shell/seed.ts";
+import { SEED_MANIFEST_FILE, seedRules, syncAllSkills } from "../../src/core/shell/seed.ts";
 
 const SKILL = "记忆整理";
 const FILE = "SKILL.md";
@@ -45,9 +45,9 @@ afterEach(async () => {
 	await rm(root, { recursive: true, force: true });
 });
 
-describe("公司层技能：按 hash 同步", () => {
+describe("全员层技能：按 hash 同步", () => {
 	it("工作区没有 → 拷过去，并记账", async () => {
-		const report = await syncCompanySkills(agents);
+		const report = await syncAllSkills(agents);
 		expect(report.copied).toContain(SKILL);
 		// 这一份是沉淀链路上的必需品：没它 `skills(action=read, name="记忆整理")` 读不到东西。
 		expect(await readFile(target, "utf8")).toBe(await seedContent());
@@ -66,7 +66,7 @@ describe("公司层技能：按 hash 同步", () => {
 		await writeFile(target, old, "utf8");
 		await writeManifest({ [SKILL]: { [FILE]: hashOf(old) } });
 
-		const report = await syncCompanySkills(agents);
+		const report = await syncAllSkills(agents);
 		expect(report.updated).toContain(SKILL);
 		expect(await readFile(target, "utf8")).toBe(await seedContent());
 		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
@@ -82,19 +82,19 @@ describe("公司层技能：按 hash 同步", () => {
 		// 账本记的是「上次同步给它的那份」，和现在的内容不一样 = 用户动过。
 		await writeManifest({ [SKILL]: { [FILE]: hashOf("上次同步的那份") } });
 
-		const report = await syncCompanySkills(agents);
+		const report = await syncAllSkills(agents);
 		expect(report.kept).toContain(SKILL);
 		expect(report.updated).not.toContain(SKILL);
 		expect(await readFile(target, "utf8")).toBe(mine);
 	});
 
 	it("幂等：第二次跑不写文件", async () => {
-		await syncCompanySkills(agents);
+		await syncAllSkills(agents);
 		await new Promise((resolve) => setTimeout(resolve, 15));
 		const before = (await stat(target)).mtimeMs;
 		const manifestBefore = (await stat(manifestPath)).mtimeMs;
 
-		const second = await syncCompanySkills(agents);
+		const second = await syncAllSkills(agents);
 		expect(second.copied).toEqual([]);
 		expect(second.updated).toEqual([]);
 		expect((await stat(target)).mtimeMs).toBe(before);
@@ -105,7 +105,7 @@ describe("公司层技能：按 hash 同步", () => {
 		await mkdir(join(root, "skills", SKILL), { recursive: true });
 		await writeFile(target, await seedContent(), "utf8");
 
-		const report = await syncCompanySkills(agents);
+		const report = await syncAllSkills(agents);
 		expect(report.kept).toEqual([]);
 		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
 			skills: Record<string, Record<string, string>>;

@@ -23,7 +23,7 @@
  * ```
  */
 import { dirname, join } from "node:path";
-import type { Fsx } from "./fsx.ts";
+import type { Fsx } from "../fsx.ts";
 import { parseDoc } from "./doc.ts";
 import { hasSlot, renderSlots, type SlotIssue, type Slots } from "./text.ts";
 
@@ -158,6 +158,7 @@ export function renderPrompt(templates: readonly PromptTemplate[], slots: Slots)
 }
 
 /** 一步到位：读目录 + 渲染。装配层用这个。 */
+/** 整目录渲染（`prompt:check` 与测试用）。 @internal 仅供校验工具 */
 export async function renderPromptDir(
 	fsx: Fsx,
 	slots: Slots,

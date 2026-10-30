@@ -13,8 +13,8 @@
  * - 问题里区分 `unknown`（模板写了、装配没给 → 改代码）与 `unset`（给了、现在为空 → 事实）。
  */
 import { describe, expect, it } from "vitest";
-import { parseTemplate, renderPrompt } from "../../src/core/prompt.ts";
-import { hasSlot, slotText, type Slots } from "../../src/core/text.ts";
+import { parseTemplate, renderPrompt } from "../../src/core/md/prompt.ts";
+import { hasSlot, slotText, type Slots } from "../../src/core/md/text.ts";
 
 /** 契约里写死的那个字面量。测试钉字面量，不钉符号名（符号改过名）。 */
 const NOT_SET = "（未设置）";
@@ -52,7 +52,7 @@ describe("插槽：填得进去", () => {
 	});
 
 	it("数字插槽渲染成十进制（{{count}}）", () => {
-		expect(render("全公司 {{count}} 个 agent。", { count: 3 }).text).toBe("全公司 3 个 agent。");
+		expect(render("全员 {{count}} 个 agent。", { count: 3 }).text).toBe("全员 3 个 agent。");
 	});
 
 	it("没有插槽的文本原样返回（落单的括号也不许吃掉）", () => {

@@ -5,7 +5,7 @@
  *
  * 1. **成员就是 `@slug`**。不用数字 `conversationId`：会话 id 会随库重建而变，
  *    而 slug（`agents/<slug>/`）是文件夹名，稳定。
- * 2. **没有「公司群 / 领导层 / 团队群 / 私聊 / 工作记录」这套预置频道**。频道是
+ * 2. **没有「全员群 / 领导层 / 团队群 / 私聊 / 工作记录」这套预置频道**。频道是
  *    文档里的一条记录，谁需要谁建；`@所有人` 不是频道，是不 @ 任何人的时候的默认行为。
  * 3. **没有一条 `log:` 频道**。「工作记录」不是一个房间，是一条消息的 `kind`。
  *
@@ -72,7 +72,7 @@ export type Channel = {
 	/**
 	 * 这个频道里「不 @ 也会被唤醒」的成员。
 	 *
-	 * 建群时写一次，之后就是普通字段：团队群的团队管理员、公司群里放 `owner`（收件人
+	 * 建群时写一次，之后就是普通字段：团队群的团队管理员、全员群里放 `owner`（收件人
 	 * 永远排除发件人、也排除我，所以它不会让谁多醒一次）。私聊不需要它 ——
 	 * 两个人里说话的那个会被排除，剩下的本来就会被叫醒。
 	 */
@@ -90,11 +90,16 @@ export type ChannelState = {
 	readMarks: Record<string, Record<string, number>>;
 };
 
+/** 空状态。每次调用给一个新对象：它会被 `ensureChannel` 等原地改。 */
+export function emptyChannelState(): ChannelState {
+	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+}
+
 export const ChannelDoc = defineDoc<ChannelState>({
 	kind: "core.channels",
 	version: 1,
 	scope: "session",
-	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {} }),
+	initial: emptyChannelState,
 	// 什么时候把散着的增量压成一条基线。两个理由各占一半：
 	//
 	// 1. **重放成本**：基线之前的历史不用再重放，崩溃恢复只重放最多 64 条增量。
@@ -184,31 +189,6 @@ export function parseMentions(text: string, roster?: MentionRoster): string[] {
 }
 
 /**
- * 这条消息是不是在「要我拍板」。
- *
- * 判据只有一条：消息显式 @了我（`owner` 在 mentions 里）。是否真的需要我拍板，
- * 由说话人自己 @ 决定，代码不再替模型猜关键词。
- *
- * 旧实现用「要不要 / 请确认 / 等你定」这类正则嗅探正文，实测大量出现在普通 @成员
- * 的协作消息里，导致没点我的消息也被标「需要我」、并误把 owner 塞进 mentions —
- * 这正是 #4 要修的误标。关键词嗅探已于本次移除。
- */
-
-/**
- * 谁会被这条消息唤醒。
- *
- * 四条规则，按顺序（后写的不会覆盖先写的，只做并集，最后减去发件人自己）：
- * 1. 明确 `@` 到的人 —— 只有频道成员里的才算（防止 `@` 一个不在这个房间的人
- *    凭空拿到别人房间的上下文）。
- * 2. 我发言且**没有 @ 任何人**时，频道里的第一个非我成员。这条是为了让
- *    「我随口说一句」不至于没人接 —— 只依赖成员顺序，不依赖身份。
- * 3. `wakeOnAll` 里的成员（私聊双方）。
- * 4. 发件人自己永远不唤醒（它正在说话，不需要再被叫一次）。
- *
- * 注意 `@所有人`：如果正文里出现 `@owner`，我会被列为目标。但我没有会话，
- * 投递层会跳过它（见 `deliver.ts`）。
- */
-/**
  * 正文里有没有「@某人」这个动作（不管叫不叫得应）。
  *
  * 与 `MENTION` 用同一套字符判断（lookbehind 也一致）：邮箱里的 `hi@example.com`
@@ -216,7 +196,7 @@ export function parseMentions(text: string, roster?: MentionRoster): string[] {
  */
 const MENTION_TOKEN = /(?<![A-Za-z0-9._%+-])@[\p{L}\p{N}_-]+/u;
 
-export function hasMentionToken(text: string): boolean {
+function hasMentionToken(text: string): boolean {
 	return MENTION_TOKEN.test(text);
 }
 
@@ -387,7 +367,7 @@ export function appendMessage(
  * 一次频道「投影」：拿事实算出成员表，再按三种意图落到文档上。
  *
  * - `create`：不存在才建；已存在原样返回（幂等）。
- * - `merge`：建，或者只把缺的人补进去（幂等）。公司频道用它 —— 成员只会增加，
+ * - `merge`：建，或者只把缺的人补进去（幂等）。全员频道用它 —— 成员只会增加，
  *   不会因为某次扫描没读到人就把谁踢出去。
  * - `replace`：成员表**整体替换**为这次算出来的结果（团队频道用它，成员是团队文件
  *   的投影，人走了就该消失，不能留幽灵成员）。
@@ -439,7 +419,7 @@ export function projectChannel(state: ChannelState, input: ChannelProjection): C
 	};
 }
 
-/** 建频道；已存在时原样返回（幂等）。`projectChannel` 的 `create` 意图。 */
+/** 建频道；已存在时原样返回（幂等）。`projectChannel` 的 `create` 意图。 @internal 仅测试 */
 export function ensureChannel(
 	state: ChannelState,
 	input: { readonly id: string; readonly title: string; readonly members: string[]; readonly wakeOnAll?: string[]; readonly at: number },
@@ -507,7 +487,7 @@ export type MentionAgent = {
 	readonly name?: string | undefined;
 };
 
-/** 一份名册：我的 slug + 全公司的人。 */
+/** 一份名册：我的 slug + 全员的人。 */
 export type MentionRoster = {
 	/** 我的 slug，正常就是 `owner`。 */
 	readonly owner: string;

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	listSkills,
 	readSkill,
-	writeCompanySkill,
+	writeAllSkill,
 	writeSkill,
 	type SkillRoots,
 } from "../../src/core/agent/skills.ts";
@@ -14,7 +14,7 @@ import {
 let root = "";
 /** 某个 agent 的目录。 */
 let agent = "";
-/** 两级根目录（公司层 = root/skills，个人层 = root/agents/<slug>/skills）。 */
+/** 两级根目录（全员层 = root/skills，个人层 = root/agents/<slug>/skills）。 */
 let roots: SkillRoots;
 
 beforeEach(async () => {
@@ -94,18 +94,18 @@ describe("技能：目录即事实", () => {
 	});
 });
 
-describe("技能：公司层与个人层", () => {
-	it("公司层的技能所有人都看得见", async () => {
-		await writeCompanySkill(root, { name: "统一流程", description: "全公司都这么做", body: "步骤" });
+describe("技能：全员层与个人层", () => {
+	it("全员层的技能所有人都看得见", async () => {
+		await writeAllSkill(root, { name: "统一流程", description: "全员都这么做", body: "步骤" });
 		const mine = await listSkills(roots, "me");
 		const other = await listSkills(roots, "someone-else");
 		expect(mine.map((skill) => skill.name)).toContain("统一流程");
 		expect(other.map((skill) => skill.name)).toContain("统一流程");
-		expect(mine.find((skill) => skill.name === "统一流程")?.scope).toBe("company");
+		expect(mine.find((skill) => skill.name === "统一流程")?.scope).toBe("all");
 	});
 
-	it("个人层同名技能覆盖公司层，而不是两份都列出来", async () => {
-		await writeCompanySkill(root, { name: "复盘", description: "公司的复盘做法", body: "公司正文" });
+	it("个人层同名技能覆盖全员层，而不是两份都列出来", async () => {
+		await writeAllSkill(root, { name: "复盘", description: "全员的复盘做法", body: "全员正文" });
 		await writeSkill(roots, "me", { name: "复盘", description: "我自己的复盘做法", body: "我的正文" });
 		const mine = await listSkills(roots, "me");
 		const hit = mine.filter((skill) => skill.name === "复盘");
@@ -113,12 +113,12 @@ describe("技能：公司层与个人层", () => {
 		expect(hit[0]?.scope).toBe("personal");
 		expect(await readSkill(roots, "me", "复盘")).toMatchObject({ body: "我的正文" });
 
-		// 别人不受影响，读到的还是公司层。
-		expect((await readSkill(roots, "someone-else", "复盘"))?.body).toBe("公司正文");
+		// 别人不受影响，读到的还是全员层。
+		expect((await readSkill(roots, "someone-else", "复盘"))?.body).toBe("全员正文");
 	});
 
-	it("别人只看得到公司层（不掺某个人的个人技能）", async () => {
-		await writeCompanySkill(root, { name: "a", description: "公司", body: "x" });
+	it("别人只看得到全员层（不掺某个人的个人技能）", async () => {
+		await writeAllSkill(root, { name: "a", description: "全员", body: "x" });
 		await writeSkill(roots, "me", { name: "b", description: "个人", body: "y" });
 		expect((await listSkills(roots, "someone-else")).map((skill) => skill.name)).toEqual(["a"]);
 	});

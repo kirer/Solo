@@ -13,14 +13,12 @@
  *   提示词字节 —— 那会打穿 prompt cache。
  * - 不排序、不补字段：字段顺序由写的人给死，因为顺序本身就是可读性。
  *
- * `parseFrontmatter` / `stripFrontmatter` / `renderFrontmatter` 是同一套实现的
- * 两份外形：老调用方只要头或只要正文，不必先把整份 `Doc` 拼出来。
- * 读写文件则用 `readDocFile` / `writeDocFile`：解析与落盘各配成一对，领域模块只提供
+ * 读写文件用 `readDocFile` / `writeDocFile`：解析与落盘各配成一对，领域模块只提供
  * 「哪些字段、按什么顺序」。
  *
  * `path` 是相对工作区的路径（写回去时原样用）。
  */
-import { readTextOrUndefined, writeTextAt } from "./runtime/io.ts";
+import { readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 
 export type Doc = {
 	readonly path: string;
@@ -37,7 +35,7 @@ export type FrontmatterField = readonly [key: string, value: string | undefined]
 const HEAD_OPEN = /^---[ \t]*\n/;
 
 /** 统一换行。只做这一件事，别在这里 trim —— 位置有语义（正文开头可能有意留空）。 */
-export function normalizeNewlines(source: string): string {
+function normalizeNewlines(source: string): string {
 	return source.replace(/\r\n/g, "\n");
 }
 
@@ -67,16 +65,6 @@ export function parseDoc(path: string, source: string): Doc {
 		if (value !== "") front[key] = value;
 	}
 	return { path, front, body: text.slice(end + 4).trim() };
-}
-
-/** 只要头。 */
-export function parseFrontmatter(source: string): Frontmatter {
-	return { ...parseDoc("", source).front };
-}
-
-/** 只要正文。 */
-export function stripFrontmatter(source: string): string {
-	return parseDoc("", source).body;
 }
 
 /**

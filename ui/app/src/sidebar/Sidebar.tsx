@@ -14,7 +14,7 @@ import type { Channel } from "../api/types.ts";
 
 export function Sidebar(): JSX.Element {
 	const channels = useStore((state) => state.channels);
-	const company = useStore((state) => state.company);
+	const workspaceName = useStore((state) => state.workspaceName);
 	const people = useStore((state) => state.people);
 	const currentId = useStore((state) => state.currentId);
 	const side = useStore((state) => state.side);
@@ -32,7 +32,7 @@ export function Sidebar(): JSX.Element {
 					</svg>
 				</span>
 				<h1 className="brand-name" id="bar-title">
-					{company}
+					{workspaceName}
 				</h1>
 				<span className="side-grow" />
 				<button
@@ -51,7 +51,7 @@ export function Sidebar(): JSX.Element {
 			</div>
 			<div className="side-head">
 				<span>工作区</span>
-				<span className="side-meta" id="company-meta">
+				<span className="side-meta" id="workspace-meta">
 					{memberCount} 人 · {channels.length} 个会话
 				</span>
 			</div>

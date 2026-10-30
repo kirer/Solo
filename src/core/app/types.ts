@@ -84,7 +84,7 @@ export type CoreServices = {
 	readonly promptOf: (slug: string, context?: Context) => Promise<string>;
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
-	readonly companyChannel: string;
+	readonly allChannel: string;
 	/**
 	 * 诊断出口。装配方（`shell/main.ts`）在 `openCore` **之前**就要建好它：底座的
 	 * `onReport` 要往同一个实例里报，两边各建一个就看不到彼此的 `lastReport`。

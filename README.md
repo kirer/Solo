@@ -1,4 +1,4 @@
-# AI Company — 一人公司
+# Solo
 
 一个人 + 一个 AI 组织。**组织不是代码里的角色枚举，是磁盘上的一堆文件夹**：
 每个人的身份、记忆、技能都是文本文件，随时可改、改了立刻就生效。
@@ -10,11 +10,11 @@
 
 ## 它到底在解决什么
 
-让一堆 agent 像一个公司一样运转，而不需要为每一个身份写一份代码：
+让一堆 agent 像一个团队一样运转，而不需要为每一个身份写一份代码：
 
 - **身份是文件**：`workspace/agents/<slug>/identity.md`。加一个人 = 加一个目录，不用改代码、不用重启。
 - **提示词是投影**：模板在 `workspace/prompt/*.md`（出厂在 `seed/prompt/`），每次发消息前从
-  文件夹重新渲染（上级是谁、同团队有谁、公司多少人、有哪些技能），不是启动时算好存起来。
+  文件夹重新渲染（上级是谁、同团队有谁、全员多少人、有哪些技能），不是启动时算好存起来。
   改文件或改措辞，下一条消息就变 —— 改文案不用编译。
 - **能力是热的**：工具从注册表实拍，不分「管理层工具/成员工具」，现在是 7 个。
 - **技能是文档**：要教 agent 一套做法就写 `SKILL.md`，不要写代码。
@@ -30,14 +30,14 @@ npm start                 # http://127.0.0.1:7788
 ```
 
 首次启动会在 `workspace/` 里播种一个叫「知言」的助理（带《立项》《招人》两份个人技能），
-外加公司层技能《工作规矩》《记忆整理》《写技能》《找现成技能》。然后你就可以跟他说话了。
+外加全员层技能《工作规矩》《记忆整理》《写技能》《找现成技能》。然后你就可以跟他说话了。
 
 **模型**：默认用本地网关 `http://127.0.0.1:3425/v1` 的 `auto/deepseek-v4.1-flash`。
 换模型见 [docs/DEPLOY](docs/DEPLOY.md) §3。
 
 ## 一次怎么用
 
-1. 打开界面，在「公司」频道里跟助理说话。
+1. 打开界面，在「全员」频道里跟助理说话。
 2. 说「帮我做个贪吃蛇」——他有《立项》技能，会立一个团队、写 `teams/<slug>/README.md`。
 3. 说「招个人写前端」——他有《招人》技能，会建 `agents/<名字>/identity.md`，人会立刻出现在界面上。
 4. 团队频道里团队管理员在，成员有事先找他；他决定不了再往上问。
@@ -45,24 +45,22 @@ npm start                 # http://127.0.0.1:7788
 ## 目录
 
 ```
-src/core/     核心（47 个文件，约 11K 行）
+src/core/     核心（57 个文件，约 1.07 万行）
   fsx.ts      工作区内的相对路径入口（与 runtime/io.ts 是唯二碰 node:fs 的地方）
   naming.ts   名字 → 目录名的唯一规则（agent / 团队 / 技能共用）
-  doc.ts      所有 markdown 都是 {path, front, body}
-  text.ts     插槽渲染（{{名字}} → 事实）
-  prompt.ts   提示词：读模板 → 填插槽 → 按文件名前缀拼段
+  md/         markdown 流水线：doc（frontmatter）/ text（插槽）/ prompt（模板拼段）/ oneline
   runtime/    防腐层：唯一 import pi-durable / pi-ai 的地方 + 模型装配
-  agent/      一个人：身份 / 提示词装配 / 记忆 / 技能 / 名册
+  agent/      一个人：身份 / 提示词装配 / 记忆 / 技能 / 名册（含两层唤醒记录）
   team/       一个团队：README.md / memory.md / 自动沉淀
-  channel/    说话：频道规则 / 写一条（含投递） / 唤醒 / 附件 / 7 个工具
-  app/        用例：读（含人 + 投影）/ 说话 / 文件（含附件）/ 诊断（不 import node:http）
+  channel/    说话：频道规则 / 写一条（含投递） / 唤醒 / 收尾 / 附件 / 7 个工具
+  app/        用例：读（含人 + 投影）/ 说话 / 上传（含附件）/ 诊断（不 import node:http）
   view/       契约层：只有 dto.ts，零 import
   interface/  唯一 import node:http 的地方：路由 / 原语与静态资源 / SSE
-  shell/      装配与启动：assemble / main / serve / rescue / seed
+  shell/      装配与启动：assemble / main / serve / seed
 ui/app/       网页界面源码（React + TS + Vite，构建到 ui/web/，改完必须 npm run ui:build）
 seed/         出厂内容：规矩 / 提示词模板 / 技能 / 助理身份 / pool（默认不装的技能）
 scripts/      边界检查 + 真实模型自测 + 提示词黄金渲染
-test/         62 文件 / 575 例
+test/         62 文件 / 579 例
 ```
 
 ## 命令
@@ -71,7 +69,7 @@ test/         62 文件 / 575 例
 | --- | --- |
 | `npm start` | 起服务（`--port` `--host` `--workspace` `--no-seed`） |
 | `npm run check` | 类型检查 + 边界检查（唯 runtime 层能碰底层库、路由必须有前端消费者） |
-| `npm test` | 单测，62 文件 575 例，<3s |
+| `npm test` | 单测，62 文件 579 例，<3s |
 | `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 16 项（会花 token，改行为后跑） |
 | `npm run ui:build` | 构建界面到 `ui/web/`（改完 `ui/app/` 必跑） |

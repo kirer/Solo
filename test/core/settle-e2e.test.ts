@@ -6,7 +6,7 @@ import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
 import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
-import { createAgent } from "../../src/core/agent/create.ts";
+import { createAgent } from "../../src/core/agent/identity.ts";
 import { SettleDoc, confirmedBy, settleTeam, type SettleState } from "../../src/core/team/settle.ts";
 import { appendTeamMemory } from "../../src/core/team/memory.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
@@ -203,8 +203,8 @@ describe("团队记忆自动沉淀", () => {
 		const wakes: { slug: string; channelId: string; seq: number }[] = [];
 		const deps = {
 			...settleDeps(shell, agentsRoot, teamsRoot, async () => shell.conversations.get(lin.slug)),
-			rememberWake: async (slug: string, wake: { channelId: string; seq: number }) => {
-				wakes.push({ slug, channelId: wake.channelId, seq: wake.seq });
+			rememberWake: async (slug: string, wake: { reply: { channelId: string; seq: number } }) => {
+				wakes.push({ slug, channelId: wake.reply.channelId, seq: wake.reply.seq });
 			},
 		};
 		await shell.postAs({ channelId: "team:alpha", from: "owner", text: "定了", kind: "decision" });

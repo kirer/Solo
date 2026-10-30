@@ -10,17 +10,17 @@
 import { dirname } from "node:path";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
-import { createPeople } from "./read.ts";
+import { createPeople } from "./people.ts";
 import { createRead } from "./read.ts";
 import { createSnapshots } from "./snapshot.ts";
-import { createUploads } from "./files.ts";
+import { createUploads } from "./uploads.ts";
 import type { CoreServices } from "./types.ts";
 
 export function createApp(services: CoreServices) {
 	const snapshots = createSnapshots(services);
 	const read = createRead(services, snapshots);
 	const people = createPeople(services, snapshots, read);
-	const chat = createChat(services, snapshots);
+	const chat = createChat(services);
 	const uploads = createUploads(services);
 	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
 	return { snapshots, read, people, chat, uploads, diag };
@@ -37,6 +37,8 @@ export { AppError } from "./errors.ts";
  */
 export { OWNER_SLUG } from "../agent/identity.ts";
 export type { CoreServices } from "./types.ts";
+export type { MemoryEditBody } from "./people.ts";
+export type { PostBody } from "./chat.ts";
 /**
  * 正文读取：**带宽高的字节流**。
  *
@@ -47,4 +49,4 @@ export type { CoreServices } from "./types.ts";
  * 只有一个函数，但它是**语义**而不是转发：先读完再比上限等于没有上限
  * （一个 4GB 的请求先把内存吃光），所以必须边读边数。
  */
-export { UploadTooLargeError, readBounded as readBody } from "../channel/files.ts";
+export { UploadTooLargeError, readBounded as readBody } from "../channel/attachments.ts";

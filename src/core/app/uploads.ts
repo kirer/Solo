@@ -14,7 +14,7 @@ import {
 	sweepOrphanUploads,
 	uploadPathOf,
 	uploadsRootOf,
-} from "../channel/files.ts";
+} from "../channel/attachments.ts";
 
 /** 取一个附件时要给传输层的东西。 */
 export type UploadForRead = {

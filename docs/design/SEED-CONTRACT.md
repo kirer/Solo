@@ -24,11 +24,11 @@
 
 1. **重复**：`rules.md` 与 `skills/工作规矩` 重复 5 条（说话长度、不要轮询、英文内心独白、汇报、群聊句数），
    而且措辞不一致——rules 说「一两句」，技能说「最多 3 句」。agent 收到两个版本的同一规矩。
-2. **工具名硬编码 40 处**：`say`、`mention`、`hire`、`run`、`skills(action=write, scope=company)`、
+2. **工具名硬编码 40 处**：`say`、`mention`、`hire`、`run`、`skills(action=write, scope=all)`、
    `read_history(scope=memory)`……工具一改名，seed 就在教错的东西。
 3. **人名写死**：「知言」出现在 4 处；助理换名，seed 全错。
-4. **体积**：`seed/skills/前端视觉设计` 3.6 MB 进公司层。它属于某个项目，不属于全公司；
-   公司层技能会出现在每个人的提示词目录里，等于全员默认背着一个前端设计技能。
+4. **体积**：`seed/skills/前端视觉设计` 3.6 MB 进全员层。它属于某个项目，不属于全员；
+   全员层技能会出现在每个人的提示词目录里，等于全员默认背着一个前端设计技能。
 5. **身份不在文件里**：助理的身份在 `shell/seed.ts` 的代码里，和组织是文件矛盾。
 6. **上报链没有完整表达**：成员 → 团队管理员 → 助理 → 我，这条链散在「拍板链」和 rules 里，
    没有一处能完整读出来。
@@ -38,7 +38,7 @@
 ```
 seed/
   rules.md                       # 15 条以内，每轮都看见
-  prompt/                        # 8 段 + 2 段（每轮贴给模型的回话规矩）
+  prompt/                        # 9 段 + 11 段（每轮贴给模型的回话规矩）
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
     10-rules.md                  # {{rules}}
     20-position.md               # 上级 / 下属 / 整条链 / 同团队的人
@@ -48,20 +48,28 @@ seed/
     60-skills.md                 # 技能目录
     70-directory.md              # 你的目录（identity/memory/skills 在哪）
     80-reply.md                  # 每轮贴在投递正文末尾的「怎么回话」
+    81-alone.md                  # 只有你被叫醒时的那一句（投递条件片段）
+    82-shared.md                 # 还有别人在场时的那一句
+    83-colleagues.md             # 同频道有同事时的那一句
+    84-dm.md                     # 私聊尾注
+    85-multi.md                  # 多人被叫醒时的提醒
+    86-digest.md                 # 未读摘要尾注
+    87-merged.md                 # 合并唤醒尾注
+    88-task.md                   # 插话时提醒「手上的活属于哪个频道」
     90-interrupted.md            # 插话时的额外一句
     95-settle.md                 # 团队记忆沉淀那一轮的正文（插槽 {{team}} {{pending}} {{candidates}}）
   agents/
     assistant/identity.md        # 助理身份（从代码挪出来）
     assistant/skills/立项/SKILL.md
     assistant/skills/招人/SKILL.md
-  skills/                        # 公司层：只放「全公司都该这么干」的
+  skills/                        # 全员层：只放「全员都该这么干」的
     工作规矩/SKILL.md             # 和 rules.md 分工：rules 短硬，skill 长细
     记忆整理/SKILL.md
     写技能/SKILL.md
     找现成技能/SKILL.md
 ```
 
-`seed/pool/前端视觉设计/` 不进公司层（`seed/skills/` 才是公司层）：需要它的项目自己拷进
+`seed/pool/前端视觉设计/` 不进全员层（`seed/skills/` 才是全员层）：需要它的项目自己拷进
 `workspace/skills/`，或用「找现成技能」现场装。
 
 ## 4. 插槽表
@@ -76,13 +84,19 @@ seed/
 | `{{chats}}` | 你在哪些群、私聊开没开 | 频道文档 |
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
-| `{{count}}` | 全公司 agent 数 | 名册 |
+| `{{count}}` | 全员 agent 数 | 名册 |
 | `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | `agents/<slug>/identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
 | `{{team.members}}` | 团队成员的 slug | `teams/<slug>/` 下的 agent |
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
-| `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | 投递时拼（这一轮只有他一个收件人） |
-| `{{reply.colleagues}}` | 「成员的事就在这个频道说，要问谁就 @ 他」 | 投递时拼（同频道还有其他成员） |
+| `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | `81-alone.md` / `82-shared.md`（按收件人数选一份） |
+| `{{reply.colleagues}}` | 「成员的事就在这个频道说，要问谁就 @ 他」 | `83-colleagues.md` |
+| `{{others}}` | 同一轮还被叫醒的其他人 | 投递名单（除自己） |
+| `{{colleagues}}` | 同频道里除我和收件人之外的成员 | 频道成员表 |
+| `{{total}}` | 别的频道未读总数 | 频道文档 |
+| `{{rows}}` | 未读频道的行列表 | 频道文档 |
+| `{{merged}}` | 这次合并掉的未唤醒条数 | `wake()` 返回值 |
+| `{{task}}` | 插话时他手上那件活所在的频道标题 | 名册里上一次的唤醒记录（`wake.task`） |
 | `{{pending}}` | 这一轮要整理进团队记忆的消息条数 | settle 候选 |
 | `{{candidates}}` | 候选消息列表，一行一条：`#seq [kind] 谁：正文` | 频道消息（`settleCandidates`） |
 | `{{tool:say}}` 等 | 工具名（唯一允许出现工具名的写法） | system 段：注册表实拍；delivery 段：`toolSlots()` 按后缀自解释 |
@@ -100,16 +114,18 @@ seed/
 3. **一个 md = 一段 = 一个 cache section**，文件名前缀定序。加一段就是加个文件，不改代码。
    同一组文件必须渲染出**逐字节相同**的提示词，否则 prompt cache 每轮都被打穿。
 4. **整句插槽只许出现在 delivery 段**（`80-reply.md` / `90-interrupted.md` / `95-settle.md`）：`reply.alone` /
-   `reply.colleagues` 是**条件句**（这一轮只有你被叫醒 / 还有 X 在），不是事实值；写进 md
-   就得给 md 发明一套条件语法。别的段不许用 `reply.*`。
+   `reply.colleagues` 是**条件句**（这一轮只有你被叫醒 / 还有 X 在），不是事实值；代码只按条件
+   从 `81-alone.md` / `82-shared.md` / `83-colleagues.md` 三份片段里选一份填进去。别的段不许用 `reply.*`。
 5. **delivery 段的插槽面比 system 段窄，用错了会静默变「（未设置）」**：
    - `tool:*` 两段都能用，但机制不同 —— system 段从**注册表实拍**（工具改名自动跟），delivery 段
      没有注册表可查，由 `toolSlots(template)` **按后缀自解释**（`{{tool:say}}` → `say`）。代价是
      **名字写错不报错**（写 `{{tool:sayy}}` 就渲染成 `sayy`），靠 seed 侧检查把名字和真工具名对一遍。
    - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues`；
-     `90-interrupted` 只填 `tool:*`；`95-settle` 只填 `team` / `pending` / `candidates` + `tool:*`。
-     往这三段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
-     `prompt:check` 只查 system 段的样例表，查不到这条。
+     `81` / `82` 填 `others`；`83` 填 `colleagues`；`84` / `85` 不填；`86` 填 `total` / `rows`；
+     `87` 填 `merged`；`88` 填 `task`；`90-interrupted` 只填 `tool:*`；
+     `95-settle` 只填 `team` / `pending` / `candidates` + `tool:*`。
+     往这些段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
+     `prompt:check` 用样例表查所有段。
 
 ## 5. 改写规则
 

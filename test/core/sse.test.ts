@@ -67,7 +67,7 @@ describe("encodeEvent", () => {
 
 	it("组织事件叫 org，data 是整份快照", () => {
 		const org: ViewOrg = {
-			company: { name: "一人公司" },
+			orgName: { name: "Solo" },
 			people: [
 				{
 					slug: "assistant",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
-import { createCoreTools } from "../../src/core/channel/tools.ts";
+import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 
 /**

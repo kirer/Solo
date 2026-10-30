@@ -9,7 +9,7 @@
 
 代码只做四件事：读文件夹、把文件夹投影成提示词、把消息写进频道、把频道推给界面。
 除此之外的一切（谁是谁、谁向谁汇报、会什么、记住什么、团队做什么）都是磁盘上的
-markdown。改公司 = 改文件 = 下一条消息生效，不重启、不重新部署、不改一行 TS。
+markdown。改组织 = 改文件 = 下一条消息生效，不重启、不重新部署、不改一行 TS。
 
 这条原则有一个不能绕的例外，见 §3。
 
@@ -46,7 +46,7 @@ team: demo
 
 V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplates()` 读
 `workspace/prompt/NN-段名.md`，`renderPrompt()` 把「所有人 + 团队 + 技能目录 + 记忆目录 +
-注册表里的全部工具」填进插槽。代码只剩排版（`src/core/prompt.ts`），「怎么说」全在
+注册表里的全部工具」填进插槽。代码只剩排版（`src/core/md/prompt.ts`），「怎么说」全在
 `seed/prompt/`。三个性质没变：
 
 - **确定性**：同一组文件逐字节相同 —— 为了 prompt cache 不被打穿（cacheRead 便宜一个
@@ -59,7 +59,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 这一条把「改我自己」和「改组织」变成同一个动作：写文件。
 
 **公共事实是渲染出来的，不是写下来的。** 每个人的提示词里都有「你在组织里的位置」
-（上级、下属、整条汇报线、同一个团队的人、公司总人数）。这段不存进 `identity.md` ——
+（上级、下属、整条汇报线、同一个团队的人、全员人数）。这段不存进 `identity.md` ——
 组织会变，写死的话 agent 会按三周前的架构认真工作，而你看不出来它错了。
 
 ### 分段与前缀缓存（ADR-083）
@@ -110,7 +110,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 | `chats` | `action=list`（默认）= 我在的会话（标题、群聊/私聊、未读数、最后一条）；`action=read` = 读某个频道的历史消息 |
 | `read_history` | `scope=channel`（默认）翻自己被压缩掉的历史对话（原文还在 storage 里，压缩后模型看不见）；`scope=memory`（或 `personal` / `team`）翻记忆全文 |
 | `remember` | 记一条经验；`scope=team` 写团队记忆 |
-| `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进公司频道与团队频道） |
+| `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进全员频道与团队频道） |
 | `run` | 执行一条 shell 命令 |
 | `file` | `action=read` / `write`：工作区里的一个文件 |
 
@@ -151,7 +151,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 它也永远是群聊，投递正文不会写成「这是你和我的私聊」（ADR-097）。
 
 **建频道只有一个入口**：我开私聊（`POST /api/people/:slug/dm` / `openDirectMessage`），
-对方必须在名册里、幂等；其余频道都由装配投影出来（公司 / 团队）。通用的「建频道」接口
+对方必须在名册里、幂等；其余频道都由装配投影出来（全员 / 团队）。通用的「建频道」接口
 已删 —— 没有别的地方能造出一个没人投影的房间（ADR-097）。
 
 `@` 写的是**名字**，`mentions` 存的是 **slug**：`channel/store.ts` 的 `parseMentions` 只认
@@ -163,32 +163,41 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 最近活跃的**真实**频道，`say` 的 `defaultChannel` 一旦发现兜底会落到私聊就**报错**，让模型
 显式给 channel —— 不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见）。
 
+**唤醒记录是两层的**（ADR-099）：`reply` 是「这一句回哪儿」，`task` 是「手上那件活属于哪儿」。
+我在他干活时私聊插一句，只改 `reply`，`task` 保留原来那个团队频道；不这样的话插话一结束，
+团队再也等不到结论。两个频道相同时就简化为一条。
+
+**结算即收尾**：一次提交结算成 `done` 时，若他**在这条唤醒之后没在目标频道说过话**，
+`channel/turn.ts` 就把答案条目里的最后一段正文替他说进频道；`unanswered` 则留一行痕。
+V3 以前这里靠 6 秒定时器事后猜（ADR-067），现在结算本身就是信号，定时器删掉了。
+私聊插话那一轮：私聊已经答过 → 最终正文当作任务的结论回 `task`；否则回 `reply`。
+
 ## 5. 文件夹就是边界
 
 ```
 workspace/
-  skills/<名字>/SKILL.md        公司层技能：全公司通用（写技能 / 找现成技能 / 工作规矩 / 记忆整理）
+  skills/<名字>/SKILL.md        全员层技能：全员通用（写技能 / 找现成技能 / 工作规矩 / 记忆整理）
   agents/<slug>/
     identity.md                 他是谁
     memory.md                   他自己的记忆
-    skills/<名字>/SKILL.md      个人层技能：同名覆盖公司层（知言的立项 / 招人）
+    skills/<名字>/SKILL.md      个人层技能：同名覆盖全员层（知言的立项 / 招人）
   teams/<slug>/
     README.md                   要做什么、谁是团队管理员、什么不做
-    memory.md                   这个团队发生过什么（团队里的人写，全公司能读）
+    memory.md                   这个团队发生过什么（团队里的人写，全员能读）
   core.sqlite                   频道消息、名册、沉淀游标
 ```
 
 名册（`core.directory`）只是 slug ↔ 会话 id 的缓存，删了能从文件夹重建；**频道消息是
 真历史，删了就没了**。
 
-三级不是顺手分层，是**三种不同的变化频率**：公司通用做法几个月改一次、一个人的手艺
+三级不是顺手分层，是**三种不同的变化频率**：全员通用做法几个月改一次、一个人的手艺
 天天加、一个团队的坑一次就踩完。混在一起，改一处就得动全部。
 
 | 归属 | 谁写 | 谁读 | 换了人还在吗 |
 | --- | --- | --- | --- |
 | `agents/<slug>/*` | 他自己 | 他自己 | ✗ 跟着人走 |
-| `teams/<slug>/memory.md` | 这个团队的人 | 全公司 | ✓ 跟着团队走 |
-| `skills/`（公司层） | 谁都能写（`scope=company`） | 全公司 | ✓ |
+| `teams/<slug>/memory.md` | 这个团队的人 | 全员 | ✓ 跟着团队走 |
+| `skills/`（全员层） | 谁都能写（`scope=all`） | 全员 | ✓ |
 
 另有一条纪律（不是代码约束）：**有 `bash` 的 agent 能读写全盘，包括别人的记忆**。
 这是已知且被接受的 —— 隔离靠的是「目录归谁」的约定，不是沙箱。
@@ -200,10 +209,10 @@ workspace/
 - **`name` + `description` 常驻提示词**，正文按需 `skills(action=read)` 读。一个人攒 20 门手艺，
   常驻的是 20 行描述，不是 20 篇正文 —— 成本上最要紧的一条。
 - agent 自己就能 `skills(action=write)` 长出新技能。`scope=personal`（默认）写自己目录，
-  `scope=company` 写工作区根的 `skills/`。同名时个人层覆盖公司层。
+  `scope=all` 写工作区根的 `skills/`。同名时个人层覆盖全员层。
 - **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
-- 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 公司层，
+- 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 全员层，
   `seed/agents/assistant/skills/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次，
   之后正文归 agent 自己迭代。`seed/pool/` 是「出厂有、默认不装」的技能，要用的项目自己拷进
   `workspace/skills/`。
@@ -228,7 +237,7 @@ workspace/
 成员表是事实的投影，用整体替换而非只加不删，避免改名/重建后旧 slug 残留在成员表里变成
 幽灵成员。
 
-公司频道（`company`）**不是特权频道**：它只是开机时播种一次的普通群，除了「人人都在
+全员频道（`all`）**不是特权频道**：它只是开机时播种一次的普通群，除了「人人都在
 里面」以外没有任何特殊规则。「什么时候该立一个团队」是判断，写在知言的 `立项` 技能里。
 
 ## 8. 记忆怎么沉淀
@@ -237,19 +246,22 @@ workspace/
 
 1. **主动**：agent 用 `remember(scope=team)` 写 `teams/<slug>/memory.md`。
 2. **自动**：一条消息落地后 `settle.ts` 只检查一件事 —— 落在 `team:<slug>` 频道里。
-   命中就把**这条连同还没处理的新消息**交给团队管理员，请它按公司技能「记忆整理」判断
+   命中就把**这条连同还没处理的新消息**交给团队管理员，请它按全员技能「记忆整理」判断
    「哪些长期成立」，成立就 `remember(scope=team)`。找不到管理员时游标照常推进，不阻塞别人。
 
 **单游标**：`cursors[团队]` = **已确认**沉淀到第几条 seq。`settleTeam` 问完**不推进**，
-只记一笔 `waiting`（问到的 seq + 提问那一刻团队记忆文件的 mtime）；下次检查时记忆文件
-真的变了才推进。管理员被打断或写砸了，这批消息下次还会被看到。**等了之后又来了新消息，
-这一批会重新问**——否则管理员一次没写，游标就永远停在原地，之后所有消息都进不了沉淀。
-`waiting` 只在**真的投递成功**时记；失败不记，下一批还会再问。唤醒同时记 wake，回话落回
-团队频道。`remember(scope=team)` 落盘后 `confirmedBy()` 做兜底推进，且只有这个团队的
-人（或团队管理员）能写。整理失败时往团队频道留一条 `note` 说明「这批消息
-没整理成，下次再试」—— 沉默的失败等于没发生过。（ADR-033、ADR-095）
+只记一笔 `waiting`（问到的 seq + 提问那一刻团队记忆文件的 mtime）；管理员被打断或写砸了，
+这批消息下次还会被看到。**等了之后又来了新消息，这一批会重新问**——否则管理员一次没写，
+游标就永远停在原地，之后所有消息都进不了沉淀。`waiting` 只在**真的投递成功**时记；
+失败不记，下一批还会再问。唤醒同时记两层 wake，回话落回团队频道。
 
-**判断规则不在代码里**：什么该记、什么不该记、什么时候整理、记完怎么回话，都写在公司技能
+**确认是显式的**（ADR-099）：`remember(scope=team)` 落盘、或 `file` 写
+`teams/<slug>/memory.md`，都会立刻调 `confirmedBy()` 推进游标；mtime 变化只是兜底信号
+（人手工改记忆时用）。且只有这个团队的人（或团队管理员）能写。整理失败时往团队频道
+留一条 `note` 说明「这批消息没整理成，下次再试」—— 沉默的失败等于没发生过。
+（ADR-033、ADR-095）
+
+**判断规则不在代码里**：什么该记、什么不该记、什么时候整理、记完怎么回话，都写在全员技能
 「记忆整理」（`seed/skills/记忆整理/SKILL.md`）里 —— 人和 agent 都能改，改它不用改代码。
 
 
@@ -285,7 +297,7 @@ ui/web/       构建产物，服务端发这个目录，别手改
    别在组件里写内联样式或造第二套命名。
 
 频道只有两种形态：`dm`（`dm:` 前缀且成员恰好是我 + 一个人）和 `group`（其余全部）。形态由
-`channel/store.ts` 的 `chatKind()` 从 id 前缀与成员表算出来，`app/read.ts` 的投影直接映射，
+`channel/store.ts` 的 `chatKind()` 从 id 前缀与成员表算出来，`app/project.ts` 的投影直接映射，
 核心没有「频道类型」这个概念。
 团队就是一个 `group`：`team:<slug>` 只是它的 id，侧栏另外用 `team` / `leadLabel` / `doing`
 三个字段把它标成团队。
@@ -304,34 +316,34 @@ ui/web/       构建产物，服务端发这个目录，别手改
 src/core/
   runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
                    models（contextWindow / compaction）/ settings 也在这里
-  agent/           identity（他是谁）/ runtime（八段装配）/ memory
-                   skills / create（新建一个人）/ roster（slug ↔ 会话）/ rules / secrets
+  agent/           identity（他是谁 + 新建一个人）/ sections（提示词九段装配）/ memory
+                   skills / roster（slug ↔ 会话 + 两层唤醒记录）/ rules / secrets
   team/            doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
   channel/         store（纯规则 + @ 解析）/ post（写一条 + 投递 + 唤醒）
-                   wake（唯一唤醒入口）/ files（附件）/ tools（7 个工具）
-                   unanswered（进程内补丁；speech 已删，ADR-090）
+                   wake（唯一唤醒入口）/ turn（结算收尾）/ attachments（附件）
+                   tools（7 个工具）/ unanswered（结算原因翻成人话）
   ── 以上是 domain（业务事实）────────────────────────────────
-  app/             用例：index（装配）/ types / snapshot / read（读 + 人 + 投影）
-                   chat / files（附件语义）/ diag / errors
+  app/             用例：index（装配）/ types / snapshot / read / people / project（投影）
+                   chat / uploads（附件语义）/ diag / errors
                    （不 import node:http，能脱离网络直接测）
   view/            dto.ts 一处定义界面吃的 JSON —— **契约层**，零 import
   interface/http/  唯一 import node:http 的地方：routes（路由表）
                    server（原语 + 匹配 + 来源闸 + 静态资源）/ sse（编解码 + hub）
   shell/           assemble（扫文件夹 → 开会话 → 建频道）/ serve（装配顺序 + 监听）
-                   main（启动）/ rescue / seed
+                   main（启动）/ seed
 ```
 
 依赖只朝一个方向：`interface → app → domain`，`view` 谁都不依赖（大家都能用它），
 `shell` 是唯一可以同时 import 全部的装配层（ADR-082）。
 
-`team/` 与 `agent/`、`channel/` **平级**：团队不是公司的子概念，它是与「人」并列的
+`team/` 与 `agent/`、`channel/` **平级**：团队不是全员的子概念，它是与「人」并列的
 另一种归属。
 
 ## 11. 开机做了什么
 
 `npm start` 按顺序只做这几件事：
 
-1. 同步 `rules.md` 与公司层技能（`seedRules` / `syncCompanySkills`），并自检「记忆整理」
+1. 同步 `rules.md` 与全员层技能（`seedRules` / `syncAllSkills`），并自检「记忆整理」
    技能在不在；
 2. 读 `workspace/settings.json` 里的模型，装配 `models` —— 同时从 pi-ai 的模型目录取
    **真实 `contextWindow`**（取不到回落 128k），据此算 compaction 阈值（ADR-083）；
@@ -340,7 +352,7 @@ src/core/
 4. `openCore({ settings: { compaction }, onReport })` —— 打开 SQLite，并把底座的错误
    出口接成可读的报告：**失败不再静音**（crash-loop 把任务 park 成
    `blocked: restart_limit` 时，`GET /api/diag` 能看见原因）；
-5. `assembleCore()` —— 扫 `agents/` → 每人开一个会话 → 绑名册 → 建公司频道 →
+5. `assembleCore()` —— 扫 `agents/` → 每人开一个会话 → 绑名册 → 建全员频道 →
    按 `identity.md` 的 `team:` 拉进团队频道；
 6. `serveCore()` 起 HTTP + SSE；
 7. 等 Ctrl-C。
@@ -352,7 +364,7 @@ src/core/
 不进任何群也能活，私聊等我开。
 
 **刻意没有的东西**：看门狗、崩溃自愈、IM 出站、成本核算。
-加回任何一样之前先问「不修它，公司会不会停摆」，答案是否就别加。
+加回任何一样之前先问「不修它，系统会不会停摆」，答案是否就别加。
 
 ## 12. 还没做的
 

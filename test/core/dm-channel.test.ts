@@ -1,7 +1,7 @@
 /**
  * 私聊入口：**唯一**的建频道用例（ADR-097）。
  *
- * 通用建频道接口已删 —— 频道要么由装配投影出来（公司 / 团队），要么由这里开一个
+ * 通用建频道接口已删 —— 频道要么由装配投影出来（全员 / 团队），要么由这里开一个
  * `dm:` 两人间。这些用例钉住三件事：id 形态是 `dm:`、重复调用幂等、对方必须真的存在。
  */
 import { mkdtemp, rm } from "node:fs/promises";
@@ -13,7 +13,7 @@ import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
 import { createChat } from "../../src/core/app/chat.ts";
 import { AppError } from "../../src/core/app/errors.ts";
-import { createAgent } from "../../src/core/agent/create.ts";
+import { createAgent } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, chatKind, dmId, type ChannelState } from "../../src/core/channel/store.ts";
 
 const roots: string[] = [];

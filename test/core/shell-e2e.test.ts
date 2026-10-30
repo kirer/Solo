@@ -45,14 +45,14 @@ async function channels(shell: CoreShell): Promise<ChannelState> {
 }
 
 describe("外壳装配", () => {
-	it("new agent 会立刻进公司频道", async () => {
+	it("new agent 会立刻进全员频道", async () => {
 		const { shell } = await setup();
 		await shell.postAs({ channelId: "all", from: "owner", text: "@nowhere 测试" }).catch(() => undefined);
 		const state = await channels(shell);
-		const company = state.channels.all;
-		expect(company).toBeDefined();
+		const allChannel = state.channels.all;
+		expect(allChannel).toBeDefined();
 		// 新人的会话一建出来就要能收到 @：否则 `recipientsOf` 会按「@ 的必须是成员」把他过滤掉。
-		expect(company?.members).toContain("owner");
+		expect(allChannel?.members).toContain("owner");
 	});
 
 	it("hire 之后新人在频道里，且能被 @ 到", async () => {
@@ -61,7 +61,7 @@ describe("外壳装配", () => {
 		expect(created.length).toBe(0);
 
 		// 直接调用工具层的建人逻辑（与模型调 `hire` 走同一条路）。
-		const { createAgent } = await import("../../src/core/agent/create.ts");
+		const { createAgent } = await import("../../src/core/agent/identity.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		const id = await shell.openAgent(identity.slug);
 		expect(id).toBeGreaterThan(0);
@@ -84,9 +84,9 @@ describe("外壳装配", () => {
 	it("我在哪个频道叫醒某人，就记下那个频道", async () => {
 		// 回归：`ownerSpeak` 曾经没传 `rememberWake`，于是被叫的人回话时查不到
 		// 「是在哪儿被叫的」，只能退到「我最早的那个频道」—— 那往往是个人频道。
-		// 结果我在公司频道问、对方在私聊里答，问的人在原频道什么都看不到。
+		// 结果我在全员频道问、对方在私聊里答，问的人在原频道什么都看不到。
 		const { shell, agentsRoot } = await setup();
-		const { createAgent } = await import("../../src/core/agent/create.ts");
+		const { createAgent } = await import("../../src/core/agent/identity.ts");
 		const { DirectoryDoc } = await import("../../src/core/agent/roster.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		const conversationId = await shell.openAgent(identity.slug);
@@ -97,12 +97,17 @@ describe("外壳装配", () => {
 
 		const directory = await shell.harness.snapshot(DirectoryDoc);
 		expect(conversationId).toBeGreaterThan(0);
-		expect(directory?.wake[String(conversationId)]?.channelId).toBe("all");
+		// 没被打断时两层唤醒记录指向同一条。
+		const record = directory?.wake[String(conversationId)] as
+			| { reply?: { channelId?: string }; task?: { channelId?: string } }
+			| undefined;
+		expect(record?.reply?.channelId).toBe("all");
+		expect(record?.task?.channelId).toBe("all");
 	});
 
 	it("重启后再装配，不会重复建会话，名册与频道保持", async () => {
 		const { shell, agentsRoot, models } = await setup();
-		const { createAgent } = await import("../../src/core/agent/create.ts");
+		const { createAgent } = await import("../../src/core/agent/identity.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		await shell.openAgent(identity.slug);
 		const before = await channels(shell);

@@ -2502,3 +2502,69 @@ wake 依赖 3 份。`fsx.ts` 号称唯一文件入口，实际只有模板读取
 
 **验收**：`npm run check`（17 条路由）、`npm test`、`npm run prompt:check`、`npm run live`
 两轮 16/16；手工验证 `POST /api/people/<slug>/dm` 与 `POST /api/channels` 404。
+
+## ADR-098：词表再收敛 —— 项目叫 Solo，组织叫「全员」，没有「公司」
+
+**背景**。V2 的「公司」在代码、seed 与界面里留下了 216 处：`全公司`、`公司层技能`、
+`公司频道（company）`、技能标签「公司」、标识符 `companyChannel` / `syncCompanySkills`、
+技能 scope `"company"`，以及项目名「一人公司」。实际频道早就是 `all`（标题「全员」），
+文档里的 `company` 是旧 id，两边对不上。
+
+**决策**：
+
+1. **项目名 = Solo**。README / AGENTS / package.json 统一；`package.json` 的 `name` 改为
+   `solo`，界面 localStorage 前缀改为 `solo.`（旧的 `ai-company.*` 不再读取）。
+2. **组织只有「全员」这一个说法**：`全员频道`（id `all`）、`全员层技能`（`skills/`）、
+   `全员技能`、`全员人数`。删掉「公司频道 / 公司层 / 公司技能 / 全公司」这些词。
+3. **代码标识符跟着改**：`companyChannel → allChannel`、`addToCompanyChannel →
+   addToAllChannel`、`syncCompanySkills → syncAllSkills`、`writeCompanySkill →
+   writeAllSkill`、技能 scope `"company" → "all"`、DTO 的 `company: { name }` →
+   `workspace: { name }`（界面状态 `workspaceName`）。
+4. **频道不新建**：本来就只有一条 `all` 全员群，`assemble.ts` 播种；没有「公司」频道，
+   也没有 `company` id。`repair.ts` 的一次性迁移改为作用于 `all`。
+5. 历史 ADR 与 `docs/research/` 不改写；它们描述的是当时的决定。
+
+**验收**：全仓（除历史 ADR / 调研 / 第三方技能数据）`grep -r 公司` 与 `grep -r company`
+为 0；`npm run check && npm test && npm run prompt:check` 全绿。
+
+## ADR-099：结算即收尾；唤醒记录拆两层；沉淀确认改成显式
+
+**背景**。三处「靠猜」的补丁，都是同一个毛病的不同表现：系统在结算之后才去推断
+「他到底说没说、该回哪儿」，而不是把结算本身当成信号。
+
+1. **答案兜底靠定时器**（ADR-067 的 `shell/rescue.ts`）：订阅提交、看到正文等 6 秒、
+   再 `inspect()` 查一次忙闲、然后补发。时间猜短了会抢话，猜长了会漏；而且要维护
+   订阅、定时器、重试、关闭顺序。
+2. **唤醒记录只有一层**：我在他干活时私聊插话，投递把「被叫醒的频道」改写成私聊；
+   插话结束后，团队频道的结论再也回不去（`defaultChannel` 与收尾都只看那一个字段）。
+3. **沉淀游标靠 mtime 猜**：问完记 `waiting`，等记忆文件 mtime 变。人写、agent 写、
+   工具写都混在同一个信号里；写失败或时钟粒度不够时会提前/滞后推进。
+
+**决策**：
+
+1. **守卫改成结算驱动**（`channel/turn.ts`，取代 `shell/rescue.ts`）。
+   `submission.wait()` 返回 `done {answer}` / `unanswered {reason}`：
+   - `unanswered` → 频道里留一行痕（原 `unanswered.ts` 的职责不变）；
+   - `done` → 用 `Conversation.entries({order:"descending"})` 取回答案条目，把最后一个
+     assistant 文本块按唤醒记录补进频道（`kind:"say"`、`wake:false`，不二次唤醒）。
+   去重仍是「这条唤醒之后他在目标频道说过话就不补」；太短或 `[PASS]` 不补。
+   定时器、订阅、重试、`startAnswerRescue` 全部删除。
+2. **唤醒记录拆 `reply` / `task`**（`channel/wake.ts` 的 `WakeRecord`）。
+   `reply` = 这一句回哪儿；`task` = 手上那件活属于哪儿。投递时如果对方正忙，
+   `task` 继承上一次记录 —— 私聊插话不覆盖任务频道。`defaultChannel` 用 `reply`；
+   `say` 的插话文案新增 `88-task.md`（`{{task}}`）说明活属于哪个频道。
+   旧数据（平铺 `{channelId,seq,from,at}`）由 `parseWake` 当成两层相同，**不跑迁移**。
+   收尾选频道：任务频道已汇报 → 不补；私聊插话且私聊已答 → 回 `task`；否则回 `reply`。
+3. **沉淀确认显式化**：`remember(scope=team)` 与 `file` 写 `teams/<slug>/memory.md`
+   都直接调 `confirmedBy()`；mtime 只保留为「人手工改了记忆」的兜底信号。
+4. **live 的趋势指标从 `[rescue]` 改为 `[turn]`**：含义相同（多少回话没走 `say`），
+   门不变（7 个回话阶段 ≤4 次，超了查提示词）。ADR-089 的「`rescue=0` 不是门」继续成立。
+
+**取舍**：收尾在 `BACKGROUND_CONTEXT` 里异步执行，不阻塞投递；失败只写 `[turn]` 警告并
+计数，消息不会丢（频道里本来就没有它的话，条目还在会话里）。收尾发出的那条消息
+`wake:false`，不会因为「系统替我说话」再叫醒任何人。
+
+**验收**：`npm run check`、`npm test`（62 文件 579 例）、`npm run prompt:check`（9 系统段 +
+11 投递段，插槽 0 缺口）绿；`npm run live` 两轮 16/16，`[turn]` 趋势正常。
+`test/core/turn.test.ts` 守三条判据：不抢跑（说过就不补）、不重复（同一条唤醒只补一次）、
+插话不丢任务频道。

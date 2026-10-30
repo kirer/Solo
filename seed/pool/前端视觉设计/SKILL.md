@@ -4,7 +4,7 @@ description: 写新页面、或把现有页面改好看时的视觉方向决策�
 license: Complete terms in LICENSE.txt（来自 anthropics/skills 的 frontend-design）
 ---
 
-> 来源：skills.sh 市场的 `anthropics/skills@frontend-design`，装进公司层时改名为「前端视觉设计」。
+> 来源：skills.sh 市场的 `anthropics/skills@frontend-design`，装进全员层时改名为「前端视觉设计」。
 > 用法提要：先给这套视觉方案一个具体主题（给谁看、做什么用），出配色/字体/版式/原则四件套的简短方案，
 > 再拿它对着需求自查一遍「这方案换成别的产品是不是也成立」——成立就说明是默认套路，改掉。
 > 我们自己的额外规矩：成品必须零外链（不引 CDN/网络字体/外链图），字体用系统字体栈，

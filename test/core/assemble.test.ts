@@ -18,7 +18,7 @@ import { readIdentity } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/store.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
-import { createAgent } from "../../src/core/agent/create.ts";
+import { createAgent } from "../../src/core/agent/identity.ts";
 
 const dirs: string[] = [];
 
@@ -36,7 +36,7 @@ afterEach(async () => {
 async function env(root: string) {
 	const models = setupModels(process.env, { workspace: root }).models;
 	const opened = await openCore({
-		databasePath: join(root, "company.sqlite"),
+		databasePath: join(root, "solo.sqlite"),
 		models,
 		registry: createRegistry(),
 	});
@@ -66,7 +66,7 @@ describe("装配", () => {
 		}
 	});
 
-	test("公司频道自动包含所有人和我", async () => {
+	test("全员频道自动包含所有人和我", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -264,7 +264,7 @@ describe("播种", () => {
 });
 
 describe("会话只有两种形态与团队频道", () => {
-	test("新人只做三件事：建会话、记名册、进公司群 —— 不建个人频道，也不开私聊", async () => {
+	test("新人只做三件事：建会话、记名册、进全员群 —— 不建个人频道，也不开私聊", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -282,7 +282,7 @@ describe("会话只有两种形态与团队频道", () => {
 				expect(state.channels[dmId("owner", slug)]).toBeUndefined();
 			}
 			expect(state.channels[dmId("owner", "owner")]).toBeUndefined();
-			// 但两人都在公司群里（否则没人 @ 得到他们）。
+			// 但两人都在全员群里（否则没人 @ 得到他们）。
 			for (const slug of ["林越", "沈舟"]) {
 				expect(state.channels.all?.members).toContain(slug);
 			}

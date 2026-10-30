@@ -129,7 +129,7 @@ export function renderSlots(template: string, slots: Slots): Rendered {
 	return { text, issues };
 }
 
-/** 只要文本的便捷壳：填不上的名字走回调（不给回调就是「写（未设置）、不报」）。 */
+/** 只要文本的便捷壳：填不上的名字走回调（不给回调就是「写（未设置）、不报」）。 @internal 仅测试 */
 export function renderTemplate(template: string, values: Slots, onMissing?: MissingHandler): string {
 	const rendered = renderSlots(template, values);
 	if (onMissing !== undefined) for (const issue of rendered.issues) onMissing(issue.slot);

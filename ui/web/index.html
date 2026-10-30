@@ -9,18 +9,18 @@
 			// 首帧定色：放在样式之前同步执行，否则会先白一下再变深。
 			(() => {
 				try {
-					const saved = localStorage.getItem("ai-company.theme") || "system";
+					const saved = localStorage.getItem("solo.theme") || "system";
 					const dark = saved === "dark" || (saved === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
 					document.documentElement.dataset.theme = dark ? "dark" : "light";
 					document.documentElement.style.colorScheme = dark ? "dark" : "light";
-					document.body.dataset.layout = localStorage.getItem("ai-company.layout") || "flat";
+					document.body.dataset.layout = localStorage.getItem("solo.layout") || "flat";
 				} catch {
 					document.documentElement.dataset.theme = "light";
 				}
 			})();
 		</script>
-		<script type="module" crossorigin src="/assets/index-C5UjnxCj.js"></script>
-		<link rel="stylesheet" crossorigin href="/assets/index-D2YDSf-w.css">
+		<script type="module" crossorigin src="/assets/index-CxZm5VBQ.js"></script>
+		<link rel="stylesheet" crossorigin href="/assets/index-DSs64Ns9.css">
 	</head>
 	<body data-pane="list" data-layout="flat" data-side="open">
 		<div id="root"></div>

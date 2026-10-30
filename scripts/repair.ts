@@ -1,10 +1,10 @@
 /**
- * 一次性修复脚本：清理公司频道的历史任务消息 + 修正团队频道成员（去幽灵、补统筹）。
+ * 一次性修复脚本：清理全员频道的历史任务消息 + 修正团队频道成员（去幽灵、补统筹）。
  *
  * 这是给**已损坏的运行态**用的，不是常规装配路径。它复用团队自己的运行时
  * （openCore / assembleCore），只对 `core.channels` 文档做两件事：
- *   1. 把 #公司（company）频道里已有的消息清空 —— 那里混进了我误下的任务，
- *      公司频道现在预留、不承载任务消息；频道本身保留（成员不动）。
+ *   1. 把 全员频道（`all`）里已有的消息清空 —— 那里混进了我误下的任务，
+ *      全员频道现在预留、不承载任务消息；频道本身保留（成员不动）。
  *   2. 对每个团队频道调用 `syncTeam`，按事实精确重算成员（去掉 gunanyan 这类
  *      幽灵 slug，补上知言这类统筹者）。
  *
@@ -34,26 +34,26 @@ async function main(): Promise<void> {
 
 	const ctx = BACKGROUND_CONTEXT;
 
-	// 1. 清空公司频道的消息（保留频道与成员）。
+	// 1. 清空全员频道的消息（保留频道与成员）。
 	let cleared = 0;
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as Awaited<ReturnType<typeof shell.channels>>;
-		const company = doc.channels["company"];
-		// 收窄一次再判：`noUncheckedIndexedAccess` 下 `doc.messages["company"]` 每次访问都是
+		const allChannel = doc.channels["all"];
+		// 收窄一次再判：`noUncheckedIndexedAccess` 下 `doc.messages["all"]` 每次访问都是
 		// `X | undefined`，先 `?.length ?? 0` 判空、再直接 `.length` 是类型撒谎（TS2532）。
-		const companyMessages = doc.messages["company"];
-		if (company !== undefined && companyMessages !== undefined && companyMessages.length > 0) {
-			cleared = companyMessages.length;
-			doc.messages["company"] = [];
-			doc.nextSeq["company"] = 1;
+		const allMessages = doc.messages["all"];
+		if (allChannel !== undefined && allMessages !== undefined && allMessages.length > 0) {
+			cleared = allMessages.length;
+			doc.messages["all"] = [];
+			doc.nextSeq["all"] = 1;
 		}
 		for (const slug of Object.keys(doc.readMarks)) {
-			if (doc.readMarks[slug]?.["company"] !== undefined) {
-				delete doc.readMarks[slug]["company"];
+			if (doc.readMarks[slug]?.["all"] !== undefined) {
+				delete doc.readMarks[slug]["all"];
 			}
 		}
 	}, ctx);
-	console.log(`公司频道：清空了 ${cleared} 条历史消息（频道与成员保留）。`);
+	console.log(`全员频道：清空了 ${cleared} 条历史消息（频道与成员保留）。`);
 
 	// 2. 每个团队频道按事实重算成员。
 	const teams = await listTeams(teamsRoot);

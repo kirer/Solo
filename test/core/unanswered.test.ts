@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { reasonText, renderUnanswered, watchSettled } from "../../src/core/channel/unanswered.ts";
 
-function submission(result: () => Promise<{ status: string; reason?: string }>) {
+function submission(result: () => Promise<{ status: string; reason?: string; answer?: unknown }>) {
 	return { wait: async () => result() };
 }
 
@@ -38,9 +38,9 @@ describe("后台等结算", () => {
 	test("unanswered 才留痕，且只留一次", async () => {
 		const seen: (string | undefined)[] = [];
 		let calls = 0;
-		watchSettled(submission(async () => ({ status: "unanswered", reason: "no_model" })), async (reason) => {
+		watchSettled(submission(async () => ({ status: "unanswered", reason: "no_model" })), async (settled) => {
 			calls += 1;
-			seen.push(reason);
+			seen.push(settled.status === "unanswered" ? settled.reason : "?");
 		});
 		await settled();
 		await settled();
@@ -48,13 +48,13 @@ describe("后台等结算", () => {
 		expect(seen).toEqual(["no_model"]);
 	});
 
-	test("done 就不说话 —— 正常回答不该被系统插一句", async () => {
-		let called = false;
-		watchSettled(submission(async () => ({ status: "done" })), async () => {
-			called = true;
+	test("done 会回调，并带上答案条目 id（收尾靠它取正文）", async () => {
+		let answer: unknown;
+		watchSettled(submission(async () => ({ status: "done", answer: 42 })), async (settled) => {
+			answer = settled.status === "done" ? settled.answer : undefined;
 		});
 		await settled();
-		expect(called).toBe(false);
+		expect(answer).toBe(42);
 	});
 
 	test("等待自己失败（库关了、进程在退）不往外抛", async () => {

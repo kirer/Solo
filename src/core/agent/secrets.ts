@@ -16,6 +16,7 @@
  */
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { stampOf } from "../runtime/io.ts";
 
 export const SECRETS_FILE = ".secrets.json";
 
@@ -88,7 +89,7 @@ export function redact(text: string, workspaceRoot: string | undefined): string 
 	let stamp = "absent";
 	try {
 		const stat = statSync(file);
-		stamp = `${stat.mtimeMs}:${stat.size}`;
+		stamp = stampOf(stat);
 	} catch {
 		// 没有 .secrets.json 是最常见的情况，不该每次都重试解析。
 	}

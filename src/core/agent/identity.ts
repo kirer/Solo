@@ -16,8 +16,8 @@ import {
 	writeDocFile,
 	type Doc,
 	type FrontmatterField,
-} from "../doc.ts";
-import { assertName } from "../naming.ts";
+} from "../md/doc.ts";
+import { assertName, slugifyName } from "../naming.ts";
 import { listDirSorted } from "../runtime/io.ts";
 
 /** 一个人的身份文件。读写都经 `doc.ts`，格式只有一份。 */
@@ -116,6 +116,53 @@ export async function readIdentity(root: string, slug: string): Promise<Identity
 	return doc === undefined ? undefined : identityOf(slug, dir, doc);
 }
 
+/** 拿一个还没被占用的 slug：重名就加 `-2`、`-3`。 */
+export async function uniqueSlug(root: string, name: string): Promise<string> {
+	const base = slugifyName(name);
+	const taken = new Set(await listAgentSlugs(root));
+	if (!taken.has(base)) return base;
+	for (let index = 2; index < 1000; index += 1) {
+		const candidate = `${base}-${index}`;
+		if (!taken.has(candidate)) return candidate;
+	}
+	throw new Error(`找不到可用名：${base}`);
+}
+
+export type CreateAgentInput = {
+	/** `workspace/agents`。 */
+	readonly root: string;
+	/** 显示名。也用来生成 slug（除非显式给了 slug）。 */
+	readonly name: string;
+	/** 想指定的 slug。缺省从 name 生成，重名自动加后缀。 */
+	readonly slug?: string;
+	readonly title?: string;
+	/** 上级的 slug。我是 `owner`。 */
+	readonly manager?: string;
+	readonly team?: string;
+	/** 身份正文。空的话提示词里那一段整段消失。 */
+	readonly body?: string;
+};
+
+/**
+ * 新建一个 agent：建目录、写 `identity.md`，返回读回来的身份。
+ *
+ * **不建会话、不配模型、不进频道。** 那些是外壳的事（`src/core/shell/`），
+ * 而且都可以在之后补 —— 文件先存在，人才存在。
+ */
+export async function createAgent(input: CreateAgentInput): Promise<Identity> {
+	// 显式传入的 slug 由 `writeIdentity` 过同一道名字闸（路径是拼出来的，不能只信调用方）。
+	const slug = input.slug ?? (await uniqueSlug(input.root, input.name));
+	const header: IdentityHeader = {
+		name: input.name,
+		...(input.title === undefined ? {} : { title: input.title }),
+		...(input.manager === undefined ? {} : { manager: input.manager }),
+		...(input.team === undefined ? {} : { team: input.team }),
+	};
+	// 没写正文就写空正文：提示词里那一段由 `05-body.md` 的 `skip-empty` 整段吞掉，
+	// 不在代码里编一段「我是谁」——身份正文归那个人自己（或招他的人）写。
+	return writeIdentity(input.root, slug, header, input.body ?? "");
+}
+
 /** 读全部身份。组织架构就是这份结果。 */
 export async function readAllIdentities(root: string): Promise<readonly Identity[]> {
 	const slugs = await listAgentSlugs(root);
@@ -124,6 +171,24 @@ export async function readAllIdentities(root: string): Promise<readonly Identity
 		const identity = await readIdentity(root, slug);
 		if (identity !== undefined) out.push(identity);
 	}
+	return out;
+}
+
+/** 名册里的显示名。我是「我」，其余用 `name`，没有就用 slug。 */
+export function nameOf(
+	all: readonly { readonly slug: string; readonly name?: string }[],
+	slug: string,
+): string {
+	if (slug === OWNER_SLUG) return "我";
+	return all.find((identity) => identity.slug === slug)?.name ?? slug;
+}
+
+/** slug → 显示名的投影。名册落盘时用；真相仍是每个 `identity.md` 的 `name`。 */
+export function labelsOf(
+	all: readonly { readonly slug: string; readonly name?: string }[],
+): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const identity of all) out[identity.slug] = identity.name ?? identity.slug;
 	return out;
 }
 

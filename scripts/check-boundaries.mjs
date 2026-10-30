@@ -92,6 +92,31 @@ const LAYER_RULES = [
 			{ match: /\/view\//, reason: "内核不得 import 契约层（view）" },
 		],
 	},
+	// 文档流水线：markdown 解析、插槽渲染、提示词排版。它只有机械 IO，不碰任何业务。
+	{
+		dirs: ["src/core/md/"],
+		layer: "文档（md）",
+		deny: [
+			{ match: /\/agent\//, reason: "文档层不许 import 领域实现（agent）" },
+			{ match: /\/channel\//, reason: "文档层不许 import 领域实现（channel）" },
+			{ match: /\/team\//, reason: "文档层不许 import 领域实现（team）" },
+			{ match: /\/app\//, reason: "文档层不许 import 用例层（app）" },
+			{ match: /\/view\//, reason: "文档层不许 import 契约层（view）" },
+			{ match: /\/interface\//, reason: "文档层不许 import 接口层（interface）" },
+			{ match: /\/shell\//, reason: "文档层不许 import 外壳（shell）" },
+		],
+	},
+	// 根目录两个原语（工作区路径、名字规则）：谁都能用，但它们不许往上够。
+	{
+		dirs: ["src/core/fsx.ts", "src/core/naming.ts"],
+		layer: "原语（fsx/naming）",
+		deny: [
+			{ match: /\/app\//, reason: "原语不许 import 用例层（app）" },
+			{ match: /\/view\//, reason: "原语不许 import 契约层（view）" },
+			{ match: /\/interface\//, reason: "原语不许 import 接口层（interface）" },
+			{ match: /\/shell\//, reason: "原语不许 import 外壳（shell）" },
+		],
+	},
 	// 契约层：零 IO、零运行时。它必须能被单测直接喂一个假状态。
 	{
 		dirs: ["src/core/view/"],

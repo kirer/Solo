@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { createCoreTools } from "../../src/core/channel/tools.ts";
+import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import {
 	ChannelDoc,
 	OWNER,

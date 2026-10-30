@@ -8,7 +8,7 @@
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
 import { describe, expect, it } from "vitest";
-import { channelDetail, channelList, messageView } from "../../src/core/app/read.ts";
+import { channelDetail, channelList, messageView } from "../../src/core/app/project.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/store.ts";
 
@@ -49,7 +49,7 @@ describe("侧栏预览只取人说的话", () => {
 		const state = stateOf([lin], {
 			[lin.id]: [
 				msg(1, "lin", "say", "前端三项改完了，正在收测试。"),
-				msg(2, "lin", "work", "$ cd /Users/kirer/teams/ai-company && npm test"),
+				msg(2, "lin", "work", "$ cd /Users/kirer/teams/solo && npm test"),
 				msg(3, "lin", "tool", "run"),
 			],
 		});
@@ -198,7 +198,7 @@ describe("私聊里的 @ 红点：统一按未读与 mention 算，不再按消�
 			{ from: "gu", text: "@owner 群里叫你", kind: "chat", mentions: ["owner"] },
 		]);
 		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
-		const company = list.find((c) => c.id === "all")!;
-		expect(company.mentions).toBe(1);
+		const allChannel = list.find((c) => c.id === "all")!;
+		expect(allChannel.mentions).toBe(1);
 	});
 });

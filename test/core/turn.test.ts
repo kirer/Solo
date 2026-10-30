@@ -1,0 +1,176 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
+import type { Conversation, EntryRecord } from "../../src/core/runtime/index.ts";
+import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
+import type { WakeRecord } from "../../src/core/channel/wake.ts";
+import {
+	createTurnFinisher,
+	finalTextOf,
+	spokeAfterWake,
+	turnTarget,
+} from "../../src/core/channel/turn.ts";
+
+/**
+ * 「他答了，但没说出来」的收尾。
+ *
+ * 真事（2026-10-29）：会话 2 的 transcript 里躺着最终回答，可 `all` 频道里只有
+ * 「开始处理…」。V3 以前靠 6 秒定时器兜；现在靠结算（`done` 带 `answer`）。
+ * 这里守的不是「能不能发」，而是三条判据：别抢跑、别重复、别把插话的任务频道弄丢。
+ */
+const roots: string[] = [];
+const runtimes: CoreRuntime[] = [];
+
+afterEach(async () => {
+	for (const runtime of runtimes.splice(0)) await runtime.close().catch(() => undefined);
+	for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
+});
+
+const CHANNEL = "team:计费";
+const DM = "dm:林越";
+const SLUG = "林越";
+
+async function setup(): Promise<CoreRuntime> {
+	const root = await mkdtemp(join(tmpdir(), "core-turn-"));
+	roots.push(root);
+	const { models } = setupModels(process.env, { workspace: root });
+	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models, registry: createRegistry() });
+	runtimes.push(runtime);
+	await runtime.harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		for (const [id, title, members] of [
+			[CHANNEL, "计费", ["owner", SLUG]],
+			[DM, "林越", ["owner", SLUG]],
+		] as const) {
+			doc.channels[id] = ensureChannel(doc, { id, title, members: [...members], wakeOnAll: [], at: 1 }).channels[id] as never;
+			doc.nextSeq[id] = 1;
+		}
+	}, BACKGROUND_CONTEXT);
+	return runtime;
+}
+
+const wakeOf = (channelId: string, seq = 1): WakeRecord => {
+	const target = { channelId, seq, from: "owner", at: 1 };
+	return { reply: target, task: target };
+};
+
+const answer = (id: number, text: string): EntryRecord =>
+	({
+		id,
+		kind: "pi.assistant",
+		model: [{ role: "assistant", content: [{ type: "text", text }] }],
+	}) as unknown as EntryRecord;
+
+const conversationWith = (entry: EntryRecord): Conversation =>
+	({ id: 7, entries: async () => ({ items: [entry] }) }) as unknown as Conversation;
+
+describe("从条目里取最终正文", () => {
+	it("取最后一个 assistant 文本块（一轮里可能有工具与多段正文）", () => {
+		const entry = {
+			model: [
+				{ role: "assistant", content: [{ type: "text", text: "先查一下。" }] },
+				{ role: "tool", content: [] },
+				{ role: "assistant", content: [{ type: "text", text: "跑完了，耗时 45 秒。" }] },
+			],
+		} as unknown as EntryRecord;
+		expect(finalTextOf(entry)).toBe("跑完了，耗时 45 秒。");
+	});
+
+	it("没有条目或没有正文时返回 undefined", () => {
+		expect(finalTextOf(undefined)).toBeUndefined();
+		expect(finalTextOf({ model: [] } as unknown as EntryRecord)).toBeUndefined();
+	});
+});
+
+describe("谁说的话算「他说过」", () => {
+	const at = (over: Record<string, unknown>) => ({ seq: 1, from: SLUG, text: "x", at: 1, ...over }) as never;
+
+	it("唤醒之后他自己的发言算", () => {
+		expect(spokeAfterWake([at({ seq: 5 })], SLUG, 1)).toBe(true);
+	});
+
+	it("唤醒之前的发言不算（那是上一轮的答案）", () => {
+		expect(spokeAfterWake([at({ seq: 1 })], SLUG, 1)).toBe(false);
+	});
+
+	it("系统替他记的告警 note 不算", () => {
+		expect(spokeAfterWake([at({ seq: 5, kind: "note" })], SLUG, 1)).toBe(false);
+	});
+
+	it("别人的发言不算", () => {
+		expect(spokeAfterWake([at({ seq: 5, from: "owner" })], SLUG, 1)).toBe(false);
+	});
+});
+
+describe("这段正文该落到哪个频道", () => {
+	const state = (messages: Record<string, unknown[]>) =>
+		({ channels: {}, messages, nextSeq: {}, readMarks: {}, wake: {} }) as unknown as ChannelState;
+	const say = (seq: number, from = SLUG) => ({ seq, from, text: "x", at: 1, kind: "say", mentions: [] });
+
+	it("正常一轮：没说过话就回唤醒它的频道", () => {
+		expect(turnTarget(state({ [CHANNEL]: [] }), SLUG, wakeOf(CHANNEL))).toEqual(wakeOf(CHANNEL).reply);
+	});
+
+	it("已经在那个频道说过话就不补（同一条唤醒只补一次）", () => {
+		const wake = wakeOf(CHANNEL);
+		expect(turnTarget(state({ [CHANNEL]: [say(2)] }), SLUG, wake)).toBeUndefined();
+	});
+
+	it("私聊插话：私聊已经答过 → 这段是任务的结论，回任务频道", () => {
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
+		expect(turnTarget(state({ [DM]: [say(6)] }), SLUG, { reply, task })).toEqual(task);
+	});
+
+	it("私聊插话：私聊还没答 → 先回私聊", () => {
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
+		expect(turnTarget(state({ [DM]: [] }), SLUG, { reply, task })).toEqual(reply);
+	});
+});
+
+describe("收尾落库", () => {
+	it("他没说过话时，替他把正文发到被叫醒的频道", async () => {
+		const runtime = await setup();
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
+		await finisher(
+			{ slug: SLUG, conversation: conversationWith(answer(42, "跑完了，耗时 45 秒。")), answer: 42, wake: wakeOf(CHANNEL) },
+			BACKGROUND_CONTEXT,
+		);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		const last = (state.messages[CHANNEL] ?? []).at(-1);
+		expect(last?.from).toBe(SLUG);
+		expect(last?.text).toBe("跑完了，耗时 45 秒。");
+		// 落库的是真发言，不是投影消息 —— 否则前端会把它当过程行折起来。
+		expect(last?.kind).toBe("say");
+	});
+
+	it("太短或 [PASS] 的正文不补：残句补进频道只会更吵", async () => {
+		const runtime = await setup();
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
+		await finisher(
+			{ slug: SLUG, conversation: conversationWith(answer(42, "好的。")), answer: 42, wake: wakeOf(CHANNEL) },
+			BACKGROUND_CONTEXT,
+		);
+		await finisher(
+			{ slug: SLUG, conversation: conversationWith(answer(43, "[PASS]")), answer: 43, wake: wakeOf(CHANNEL) },
+			BACKGROUND_CONTEXT,
+		);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect(state.messages[CHANNEL] ?? []).toHaveLength(0);
+	});
+
+	it("找不到答案条目就跳过（不瞎猜一段正文）", async () => {
+		const runtime = await setup();
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
+		await finisher(
+			{ slug: SLUG, conversation: conversationWith(answer(1, "这段不是答案。")), answer: 999, wake: wakeOf(CHANNEL) },
+			BACKGROUND_CONTEXT,
+		);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect(state.messages[CHANNEL] ?? []).toHaveLength(0);
+	});
+});

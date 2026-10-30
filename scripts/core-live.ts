@@ -56,7 +56,7 @@ async function waitForReply(
 /**
  * 某一刻每个频道的「下一条 seq」。之后出现的消息 seq 一定 >= 这个数。
  *
- * 上报链的每一跳都可能落在不同频道（团队频道 / 公司频道），所以不能像
+ * 上报链的每一跳都可能落在不同频道（团队频道 / 全员频道），所以不能像
  * `waitForReply` 那样只盯一个频道 —— 逐级往上本来就会换地方说话。
  */
 async function seqBaseline(shell: LiveShell): Promise<Record<string, number>> {
@@ -176,7 +176,7 @@ function wakeDetail(outcome: SettleOutcome): string {
 		return `提交结算成 unanswered（${outcome.reason === "" ? "没有原因" : outcome.reason}）：底座/网关没产出`;
 	}
 	if (outcome.kind === "gone") return "提交结算后底座查不到记录：底座侧丢了";
-	return "提交 done，但频道里没有它说的话，rescue 也没补上";
+	return "提交 done，但频道里没有它说的话，收尾（turn）也没补上";
 }
 
 /** 把终态翻成一句能直接决定「去改哪儿」的话。五种原因，五种修法。 */
@@ -194,20 +194,20 @@ function settleDetail(outcome: SettleOutcome, wroteIt: boolean, memoryText: stri
 }
 
 async function main(): Promise<void> {
-	// ── rescue 计数（ADR-089 c）──────────────────────────────────────────────
-	// `rescue=0` 已经不是验收门（它测的是「模型这一轮选不选工具」，不是系统对不对）。
-	// 但「多少回话走了安全网」是有用的趋势信号：超过一半就说明提示词在退化。
-	// 不设硬门槛，只报数 —— 把 6% 命中率的随机事件当门，只会让团队开始无视红灯。
-	let rescuePosted = 0;
-	let rescueFailed = 0;
+	// ── 收尾计数（ADR-099，取代 ADR-089 c 的 rescue 趋势）────────────────────
+	// `[turn]` = 模型把结论写在正文里、一次 `say` 都没调，结算后由收尾补发。
+	// 它不是验收门（测的是「模型这一轮选不选工具」，不是系统对不对），但「多少回话
+	// 走了收尾」是有用的趋势信号：超过一半就说明提示词在退化。
+	let turnPosted = 0;
+	let turnFailed = 0;
 	const passLog = console.log.bind(console);
 	const passWarn = console.warn.bind(console);
 	console.log = (...args: unknown[]) => {
-		if (args.some((arg) => String(arg).includes("[rescue]"))) rescuePosted += 1;
+		if (args.some((arg) => String(arg).includes("[turn]"))) turnPosted += 1;
 		passLog(...args);
 	};
 	console.warn = (...args: unknown[]) => {
-		if (args.some((arg) => String(arg).includes("[rescue]"))) rescueFailed += 1;
+		if (args.some((arg) => String(arg).includes("[turn]"))) turnFailed += 1;
 		passWarn(...args);
 	};
 	const { BACKGROUND_CONTEXT, createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
@@ -222,7 +222,7 @@ async function main(): Promise<void> {
 	await mkdir(teamsRoot, { recursive: true });
 	console.log(`工作区：${root}`);
 
-	// 和 `main.ts` 启动时同一套播种：规矩、模板、公司层技能、助理身份。
+	// 和 `main.ts` 启动时同一套播种：规矩、模板、全员层技能、助理身份。
 	// 少了 `prompt/`，V3 的提示词渲染出来是空的 —— 那正是「单测全绿、模型收到半句话」。
 	await seedRules(root);
 	await seedPromptTemplates(root);
@@ -248,7 +248,7 @@ async function main(): Promise<void> {
 	// 把**真模型收到的** system prompt 打出来：单测全绿、模型收到半句话，是提示词外置
 	// 最典型的翻车方式，光看段数和字符数看不出来。
 	{
-		const { renderAgentSection } = await import("../src/core/agent/runtime.ts");
+		const { renderAgentSection } = await import("../src/core/agent/sections.ts");
 		const prompt = await renderAgentSection(
 			runtime.registry,
 			{ workspace: root, agents: agentsRoot, teams: teamsRoot, chats: async () => [] },
@@ -259,15 +259,23 @@ async function main(): Promise<void> {
 		console.log("──── 以上是模型真收到的 ────\n");
 
 		// delivery 段同样贴出来：它在同步/异步交接处，单测测的是函数、不是链路。
-		const { renderReplyRules } = await import("../src/core/channel/post.ts");
-		const { loadTemplates, promptDirOf } = await import("../src/core/prompt.ts");
+		const { renderReplyRules } = await import("../src/core/channel/delivery.ts");
+		const { loadTemplates, promptDirOf } = await import("../src/core/md/prompt.ts");
 		const { createFsx } = await import("../src/core/fsx.ts");
 		const delivery = (await loadTemplates(createFsx(promptDirOf(agentsRoot)), ".")).filter(
 			(item) => item.use === "delivery",
 		);
 		const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
 		console.log("──── delivery：只有我跟他两个人时 ────");
-		console.log(renderReplyRules({ template: bodyOf("reply"), woken: [slug], viewer: slug, colleagues: [] }));
+		console.log(
+			renderReplyRules({
+				template: bodyOf("reply"),
+				fragments: { alone: bodyOf("alone"), shared: bodyOf("shared"), colleagues: bodyOf("colleagues") },
+				woken: [slug],
+				viewer: slug,
+				colleagues: [],
+			}),
+		);
 		console.log("──── delivery：插话那一段 ────");
 		console.log(bodyOf("interrupted"));
 		console.log("──── 以上是每轮贴在投递正文末尾的 ────\n");
@@ -359,17 +367,17 @@ async function main(): Promise<void> {
 		detail: recallReply?.text.slice(0, 100) ?? "超时无回话",
 	});
 
-	// 5. 公司层技能：让它写一份 scope=company 的技能，检查是否落到工作区根的 skills/。
+	// 5. 全员层技能：让它写一份 scope=all 的技能，检查是否落到工作区根的 skills/。
 	const shareAsked = await shell.ownerSay({
 		channelId: "all",
-		text: `@${slug} 用 skills 写一份公司层技能（action=write, scope=company），名字「自测共享技能」，描述「全公司通用」，正文一句话。写完告诉我。`,
+		text: `@${slug} 用 skills 写一份全员层技能（action=write, scope=all），名字「自测共享技能」，描述「全员通用」，正文一句话。写完告诉我。`,
 	});
 	const shareReply = await waitForReply(shell, "all", slug, shareAsked.seq, WAIT_MS);
 	const sharedPath = join(root, "skills", "自测共享技能", "SKILL.md");
 	const sharedText = await readFile(sharedPath, "utf8").catch(() => "");
 	phases.push({
-		name: "技能共享（公司层真的写到了工作区根）",
-		ok: shareReply !== undefined && sharedText.includes("全公司通用"),
+		name: "技能共享（全员层真的写到了工作区根）",
+		ok: shareReply !== undefined && sharedText.includes("全员通用"),
 		detail: sharedText === "" ? "工作区根没有 skills/自测共享技能/SKILL.md" : sharedText.split("\n")[2] ?? "",
 	});
 
@@ -423,7 +431,7 @@ async function main(): Promise<void> {
 		detail: settleDetail(settleOutcome, wroteIt, settledText),
 	});
 
-	// 8. 招人：名字要像真人，且新人自动进公司群、进得了团队频道。
+	// 8. 招人：名字要像真人，且新人自动进全员群、进得了团队频道。
 	//
 	// 这是「模型有没有遵守我们写下的规矩」的唯一验证口径 —— 名字、频道、汇报线三件
 	// 事都只写在技能与提示词里，代码只负责记录结果。如果不验这一段，规矩写错了不会
@@ -443,8 +451,8 @@ async function main(): Promise<void> {
 		all = await readAllIdentities(agentsRoot);
 		hired = all.find((identity) => identity.slug !== slug);
 	}
-	const companyAfterHire = (await shell.channels()).messages["all"] ?? [];
-	const hireReply = companyAfterHire.filter((message) => message.seq > hireAsked.seq && message.from === slug).at(-1);
+	const allAfterHire = (await shell.channels()).messages["all"] ?? [];
+	const hireReply = allAfterHire.filter((message) => message.seq > hireAsked.seq && message.from === slug).at(-1);
 	// 「像真人的名字」：长度 2–4、不含身份词、不含英文字母。判断放宽一点，只拦明显的违规。
 	const JOB_WORDS = ["工程师", "负责人", "经理", "总监", "专员", "助理", "主管", "前端", "后端", "设计", "测试"];
 	const looksLikeName =
@@ -467,16 +475,16 @@ async function main(): Promise<void> {
 
 	if (hired !== undefined) {
 		const state = await shell.channels();
-		// 新人自动进公司群（否则没人 @ 得到他）；但**没有**私聊 —— 私聊只能我开。
+		// 新人自动进全员群（否则没人 @ 得到他）；但**没有**私聊 —— 私聊只能我开。
 		const allChannel = state.channels["all"];
 		const personal = state.channels[`dm:owner-${hired.slug}`];
 		phases.push({
-			name: "新人自动进公司群，且没有凭空建出的私聊",
+			name: "新人自动进全员群，且没有凭空建出的私聊",
 			ok: allChannel !== undefined && allChannel.members.includes(hired.slug) && personal === undefined,
 			detail:
 				allChannel === undefined
-					? "没有公司群"
-					: `公司群成员 ${allChannel.members.join("、")}${personal === undefined ? "；没有私聊" : "；居然有私聊"}`,
+					? "没有全员群"
+					: `全员群成员 ${allChannel.members.join("、")}${personal === undefined ? "；没有私聊" : "；居然有私聊"}`,
 		});
 		// 团队频道里有团队管理员（README.md 的 owner）+ 新人。
 		const team = state.channels["team:自测团队"];
@@ -489,13 +497,13 @@ async function main(): Promise<void> {
 				(owner === undefined || team.members.includes(owner)),
 			detail: team === undefined ? "没有团队频道" : `成员 ${team.members.join("、")}`,
 		});
-		// 拍板链写在公司技能「工作规矩」里（规则外移到技能，不进提示词正文），
+		// 拍板链写在全员技能「工作规矩」里（规则外移到技能，不进提示词正文），
 		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文里有不跳级。
 		const prompt = await shell.promptOf(hired.slug);
 		const rules = await readFile(join(root, "skills", "工作规矩", "SKILL.md"), "utf8").catch(() => "");
 		const listed = prompt.includes("工作规矩");
 		phases.push({
-			name: "新人拿得到拍板链（公司技能「工作规矩」）",
+			name: "新人拿得到拍板链（全员技能「工作规矩」）",
 			ok: listed && rules.includes("绝不跳级"),
 			detail: listed
 				? rules.includes("绝不跳级")
@@ -513,7 +521,7 @@ async function main(): Promise<void> {
 	//    上级关系是确定事实，不会因为模型这一次招人招得不对而让整条链失真。
 	const chainTeam = "上报链团队";
 	{
-		const { createAgent } = await import("../src/core/agent/create.ts");
+		const { createAgent } = await import("../src/core/agent/identity.ts");
 		await mkdir(join(teamsRoot, chainTeam), { recursive: true });
 		const lead = await createAgent({
 			root: agentsRoot,
@@ -603,14 +611,14 @@ async function main(): Promise<void> {
 	const failed = phases.filter((phase) => !phase.ok);
 	console.log(`\n${phases.length - failed.length}/${phases.length} 通过`);
 
-	// ADR-089 c：回话阶段里有多少次是安全网兜的。1–7 这 7 个阶段都要靠一句回话。
+	// ADR-099：回话阶段里有多少次是收尾（结算后自动补发）兜的。1–7 这 7 个阶段都要靠一句回话。
 	const REPLY_PHASES = 7;
 	const trend =
-		rescuePosted <= 4
+		turnPosted <= 4
 			? "正常"
-			: "提示词在退化（7 个回话阶段里超过 4 次走 rescue —— 改 80-reply / reply.alone 的措辞）";
-	const failedNote = rescueFailed > 0 ? `；补发失败 ${rescueFailed} 次（内容丢了，单测没覆盖到就查 rescue）` : "";
-	console.log(`rescue 趋势：${rescuePosted} 次 / ${REPLY_PHASES} 个回话阶段 —— ${trend}${failedNote}`);
+			: "提示词在退化（7 个回话阶段里超过 4 次走收尾 —— 改 80-reply / reply.alone 的措辞）";
+	const failedNote = turnFailed > 0 ? `；补发失败 ${turnFailed} 次（内容丢了，单测没覆盖到就查 channel/turn.ts）` : "";
+	console.log(`收尾趋势：${turnPosted} 次 / ${REPLY_PHASES} 个回话阶段 —— ${trend}${failedNote}`);
 
 	await rm(root, { recursive: true, force: true }).catch(() => undefined);
 	if (failed.length > 0) process.exitCode = 1;

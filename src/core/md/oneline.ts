@@ -6,7 +6,7 @@
  * 出来的长度是 `max + 1`）。统一取**最严格**的那条：折叠空白 → 去首尾空格 →
  * 超长则 `slice(0, max - 1) + "…"`，**结果长度永不超过 `max`**。
  *
- * 放 `src/core/` 根、不放任何一层：`view/` 零依赖（不许 import 领域），
+ * 放 `src/core/md/`、不放任何一层：`view/` 零依赖（不许 import 领域），
  * 领域又不许反向 import `view/`。它是纯字符串函数，没有 IO、没有业务概念。
  */
 
@@ -14,4 +14,10 @@
 export function oneLine(text: string, max: number): string {
 	const flat = text.replace(/\s+/gu, " ").trim();
 	return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
+}
+
+/** 取第一行非空文字，再压成一行并截断。列表预览与引用摘要用。 */
+export function excerptOf(text: string, max: number): string {
+	const first = text.split("\n").find((line) => line.trim() !== "") ?? "";
+	return oneLine(first, max);
 }

@@ -1,9 +1,9 @@
 {
-	"name": "ai-company",
+	"name": "solo",
 	"version": "2.0.0",
 	"private": true,
 	"type": "module",
-	"description": "一人公司：一个人 + 一个 AI 组织的多 agent 运行时（提示词、能力、记忆全部落盘）",
+	"description": "Solo：一个人 + 一个 AI 组织的多 agent 运行时（提示词、能力、记忆全部落盘）",
 	"engines": {
 		"node": ">=22.19.0"
 	},

@@ -8,7 +8,8 @@
  * 它存在的唯一理由是「会话 id 不能从文件名推出来」。
  */
 import { BACKGROUND_CONTEXT, defineDoc, type Conversation, type Context, type Harness, type JsonObject } from "../runtime/index.ts";
-import type { WakeRecord } from "../channel/wake.ts";
+import { parseWake, type WakeRecord } from "../channel/wake.ts";
+import { OWNER_SLUG } from "./identity.ts";
 
 export type { WakeRecord } from "../channel/wake.ts";
 
@@ -44,15 +45,19 @@ export function emptyDirectory(): DirectoryState {
 	return { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
 }
 
-/** 读一次唤醒（`wake` 的值类型是 `JsonObject`，读的时候收窄）。 */
+/** slug → 显示名（名册里没有就给 slug 本身；我是「我」）。 */
+export function labelIn(directory: DirectoryState, slug: string): string {
+	if (slug === OWNER_SLUG) return "我";
+	return directory.labels[slug] ?? slug;
+}
+
+/**
+ * 读一次唤醒（`wake` 的值类型是 `JsonObject`，读的时候收窄）。
+ *
+ * 旧数据是平铺的一层，`parseWake` 会把它的 `reply` / `task` 都当成同一条。
+ */
 export function wakeOf(state: DirectoryState, conversationId: number | string): WakeRecord | undefined {
-	const raw = state.wake[String(conversationId)];
-	if (raw === undefined) return undefined;
-	const { channelId, seq, from, at } = raw;
-	if (typeof channelId !== "string" || typeof seq !== "number" || typeof from !== "string" || typeof at !== "number") {
-		return undefined;
-	}
-	return { channelId, seq, from, at };
+	return parseWake(state.wake[String(conversationId)]);
 }
 
 
@@ -114,7 +119,10 @@ export function directoryWake(deps: {
 				if (id === undefined) return;
 				// 只写 `wake` 这一个字段：把整份名册展开再写回去，任何一处覆盖层节点被顺手
 				// 写回来就是一次静默丢人。
-				doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
+				doc.wake = {
+					...plainDirectory(doc).wake,
+					[String(id)]: { reply: { ...wake.reply }, task: { ...wake.task } },
+				};
 			}, context);
 		},
 	};

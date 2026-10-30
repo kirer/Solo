@@ -3,7 +3,7 @@
  *
  * 分两种写入：
  * - **身份**（`agents/<slug>/`）只在工作区空的时候写一次 —— 之后那些文件属于那个人自己。
- * - **公司层的规矩与技能**（`rules.md` / `skills/`）每次启动都同步一遍：它们是公司发的，
+ * - **全员层的规矩与技能**（`rules.md` / `skills/`）每次启动都同步一遍：它们是全员共用的，
  *   以前只在空工作区拷一次，导致 `seed/skills/工作规矩/SKILL.md` 的 1037 字节修正
  *   从来没有进过已在跑的工作区（实测 5766 vs 4729 字节）。同步按 hash 判「用户改过没有」：
  *   没改过的升到新版，改过的原样留着（见 ADR-039）。
@@ -16,8 +16,8 @@ import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { RULES_FILE } from "../agent/rules.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
-import { frontOf, parseDoc, type Doc } from "../doc.ts";
-import { PROMPT_DIR } from "../prompt.ts";
+import { frontOf, parseDoc, type Doc } from "../md/doc.ts";
+import { PROMPT_DIR } from "../md/prompt.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -28,7 +28,7 @@ type SeedManifest = {
 	skills: Record<string, Record<string, string>>;
 };
 
-/** 公司层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
+/** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
 type SyncReport = {
 	readonly copied: readonly string[];
 	readonly updated: readonly string[];
@@ -42,7 +42,7 @@ function hashOf(content: string): string {
 }
 
 /**
- * 把仓库自带的技能同步进工作区的公司层（`<workspace>/skills/`）。
+ * 把仓库自带的技能同步进工作区的全员层（`<workspace>/skills/`）。
  *
  * 每个文件单独判（不是整个技能判）：缺的补上、没改过的升到新版、改过的一动不动。
  * 幂等：内容已经一样就不写，manifest 没变也不写 —— 第二次启动不会碰磁盘。
@@ -50,7 +50,7 @@ function hashOf(content: string): string {
  * 找不到 `seed/skills/` 时静默跳过 —— 打包/部署方式可能不带这个目录，
  * 缺几份起手技能不该让服务起不来。
  */
-export async function syncCompanySkills(agentsRoot: string): Promise<SyncReport> {
+export async function syncAllSkills(agentsRoot: string): Promise<SyncReport> {
 	return syncSkillTree(
 		seedPath("skills"),
 		join(dirname(agentsRoot), SKILLS_DIR),
@@ -194,10 +194,10 @@ export async function seedPromptTemplates(workspaceRoot: string): Promise<readon
 /**
  * 给某一个人的个人层播种技能（`agents/<slug>/skills/`）。
  *
- * 为什么有些技能属于个人而不是公司：一份技能属于谁，取决于「谁该为这条做法负责」。
- * 「怎么立项」「怎么招人」是助理的判断，它自己会迭代 —— 写在公司层就等于宣布全公司
+ * 为什么有些技能属于个人还是全员：一份技能属于谁，取决于「谁该为这条做法负责」。
+ * 「怎么立项」「怎么招人」是助理的判断，它自己会迭代 —— 写在全员层就等于宣布全员
  * 都得按助理那一套招人，而实际上别人不该招人。`写技能` / `找现成技能` 反过来是
- * 所有人都该会的手艺，所以它们在公司层。
+ * 所有人都该会的手艺，所以它们在全员层。
  */
 export async function seedPersonalSkills(agentsRoot: string, slug: string, folder: string): Promise<readonly string[]> {
 	return copySeedSkills(seedPath(folder), join(agentsRoot, slug, SKILLS_DIR));
@@ -269,7 +269,7 @@ export async function seedOwnerAssistant(
 	agentsRoot: string,
 	options: { readonly name?: string } = {},
 ): Promise<string> {
-	const { createAgent } = await import("../agent/create.ts");
+	const { createAgent } = await import("../agent/identity.ts");
 	const seed = await readSeedAssistant();
 	if (seed === undefined) {
 		console.warn(`[core] 没读到 ${SEED_ASSISTANT_IDENTITY}：助理身份会是一份占位正文`);
@@ -292,10 +292,10 @@ export async function seedOwnerAssistant(
 	// 技能：和身份一样，是文件，不是代码。
 	//
 	// 两层，各自管各自的事：
-	// - 公司层 `seed/skills/`（`写技能`、`找现成技能`）—— 所有人都该会的手艺。
+	// - 全员层 `seed/skills/`（`写技能`、`找现成技能`）—— 所有人都该会的手艺。
 	// - 助理自己的 `seed/agents/assistant/skills/`（`立项`、`招人`）—— 它的判断，不属于别人。
-	//   招人、立项是助理的职权，别人本来就不该招人；写进公司层等于宣布全公司都这么干。
-	await syncCompanySkills(agentsRoot);
+	//   招人、立项是助理的职权，别人本来就不该招人；写进全员层等于宣布全员都这么干。
+	await syncAllSkills(agentsRoot);
 	await seedPersonalSkills(agentsRoot, identity.slug, SEED_ASSISTANT_SKILLS);
 	return identity.slug;
 }

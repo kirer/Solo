@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { assertSlug, createAgent, slugify, uniqueSlug } from "../../src/core/agent/create.ts";
+import { createAgent, uniqueSlug } from "../../src/core/agent/identity.ts";
 import { listAgentSlugs, readAllIdentities, readIdentity } from "../../src/core/agent/identity.ts";
 
 const dirs: string[] = [];
@@ -18,25 +18,11 @@ afterEach(async () => {
 });
 
 describe("slug", () => {
-	test("中文保留，空白与符号变连字符", () => {
-		expect(slugify("林越")).toBe("林越");
-		expect(slugify("Head of  Ops")).toBe("Head-of-Ops");
-		expect(slugify("a/b:c")).toBe("a-b-c");
-	});
-	test("全是符号时退化成 agent", () => {
-		expect(slugify("  ")).toBe("agent");
-	});
-	test("点号一律去掉：`..` 不能拼出上一级路径", () => {
-		expect(slugify("..")).toBe("agent");
-		expect(slugify("a..b")).toBe("ab");
-	});
 	test("显式 slug 也过闸：`.`、`..`、`owner`、带 / 的一律拒绝", async () => {
-		expect(() => assertSlug("..")).toThrow();
-		expect(() => assertSlug(".")).toThrow();
-		expect(() => assertSlug("owner")).toThrow();
-		expect(() => assertSlug("a/b")).toThrow();
 		const agents = await root();
-		await expect(createAgent({ root: agents, name: "林子", slug: ".." })).rejects.toThrow();
+		for (const slug of ["..", ".", "owner", "a/b"]) {
+			await expect(createAgent({ root: agents, name: "林子", slug }), slug).rejects.toThrow();
+		}
 	});
 	test("重名自动加后缀", async () => {
 		const agents = await root();
@@ -65,14 +51,14 @@ describe("新建 agent", () => {
 		expect(identity?.body).toBe("我管技术。");
 	});
 
-	test("不写正文时留一句占位，而不是空文件", async () => {
+	test("不写正文就是空正文：代码不编一段「我是谁」", async () => {
 		const agents = await root();
 		await createAgent({ root: agents, name: "无名" });
 		const identity = await readIdentity(agents, "无名");
-		expect(identity?.body).toContain("我可以随时改这里");
+		expect(identity?.body).toBe("");
 	});
 
-	test("公司人数 = 目录数", async () => {
+	test("全员人数 = 目录数", async () => {
 		const agents = await root();
 		await createAgent({ root: agents, name: "CEO" });
 		await createAgent({ root: agents, name: "CTO", manager: "CEO" });

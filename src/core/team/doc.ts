@@ -27,7 +27,7 @@ import {
 	writeDocFile,
 	type Doc,
 	type FrontmatterField,
-} from "../doc.ts";
+} from "../md/doc.ts";
 import { assertName } from "../naming.ts";
 import { listDirSorted } from "../runtime/io.ts";
 
@@ -68,10 +68,6 @@ function teamOf(slug: string, doc: Doc): TeamDoc {
 		status,
 		body: doc.body,
 	};
-}
-
-export function parseTeam(slug: string, source: string): TeamDoc {
-	return teamOf(slug, parseDoc("", source));
 }
 
 /** 团队说明在文件里的样子（渲染与写盘共用）。 */
@@ -123,8 +119,21 @@ export function teamSlugOfReadmePath(rel: string): string | undefined {
 	return slug;
 }
 
+/**
+ * `teams/<slug>/memory.md` → 团队 slug。别的路径返回 `undefined`。
+ *
+ * 写团队记忆是**显式确认**：文件真的变了，沉淀游标就该往前推（不再靠 mtime 猜）。
+ */
+export function teamSlugOfMemoryPath(rel: string): string | undefined {
+	const parts = rel.split(/[\\/]+/u).filter((part) => part !== "" && part !== ".");
+	if (parts.length !== 3) return undefined;
+	const [root, slug, file] = parts;
+	if (root !== "teams" || file !== "memory.md" || slug === undefined) return undefined;
+	return slug;
+}
+
 /** 团队目录名（与频道 id `team:<slug>` 用的是同一个 slug）。 */
-export function teamDirOf(teamsRoot: string, slug: string): string {
+function teamDirOf(teamsRoot: string, slug: string): string {
 	return join(teamsRoot, assertTeamSlug(slug));
 }
 

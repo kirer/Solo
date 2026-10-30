@@ -45,7 +45,7 @@ SSE。事件名 `org`，`data` 是 [§2](#2-get-apiorg) 的完整快照。
 retry: 1500
 
 event: org
-data: {"company":{...},"people":[...]}
+data: {"workspace":{...},"people":[...]}
 
 : ping
 ```
@@ -61,7 +61,7 @@ data: {"company":{...},"people":[...]}
 
 ```ts
 {
-  company: { name: string },              // 固定 "Solo"
+  workspace: { name: string },          // 固定 "Solo"
   people: ViewActor[]                     // 按「离我最近」排序，第一项是直接向我汇报的人
 }
 
@@ -102,12 +102,12 @@ type ViewChannel = {
 ```
 
 **`kind` 只有两种，由 id 前缀 + 成员表一起推出来**（`channel/store.ts` 的 `chatKind()`，
-`app/read.ts` 的投影直接转它的结果，`dto.ts` 的 `ViewChannelKind` 只有这两个值）：
+`app/project.ts` 的投影直接转它的结果，`dto.ts` 的 `ViewChannelKind` 只有这两个值）：
 
 | id + 成员表 | kind |
 | --- | --- |
 | `dm:` 前缀，且恰好两个人、其中一个是 `owner` | `dm` |
-| 其余全部（公司频道、团队频道、多人房间、历史无前缀房间） | `group` |
+| 其余全部（全员频道、团队频道、多人房间、历史无前缀房间） | `group` |
 
 团队频道就是 `team:<slug>` 这个**普通的群**，即使只有我和管理员两个人也永远是 `group`
 （ADR-097）—— 它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在
@@ -127,7 +127,7 @@ type ViewChannel = {
 ```
 
 **这是唯一的建频道接口**（ADR-097）。通用的 `POST /api/channels` 已删：频道要么由装配
-投影出来（公司 `company` / 团队 `team:<slug>`），要么就是这里开的一对一私聊。
+投影出来（全员 `all` / 团队 `team:<slug>`），要么就是这里开的一对一私聊。
 
 - 对方必须真的在名册里（`agents/<slug>/identity.md` 存在），否则 `404`；
 - 不能和我自己开 → `400`；slug 为空 → `400`；
@@ -256,7 +256,7 @@ type ViewMessage = {
 
 ## 9. `GET /api/attention`
 
-「找我」——全公司里**需要我本人看一眼**的消息，跨频道汇总，按时间倒序。
+「找我」——全员里**需要我本人看一眼**的消息，跨频道汇总，按时间倒序。
 
 ```ts
 // 响应
@@ -293,15 +293,15 @@ type ViewMessage = {
   manager: string,                  // 我 是 ""
   managerLabel: string,             // 同上
   body: string,                     // identity.md 正文（预置提示词）
-  skills: { name: string, description: string, scope: "personal" | "company", overrides: boolean }[],
+  skills: { name: string, description: string, scope: "personal" | "all", overrides: boolean }[],
   memory: { exists: boolean, entries: number, digest: string | null },
   channels: { id: string, kind: "dm" | "group", title: string }[]
 }
 ```
 
 `channels` 里的 `kind` 同样是 `chatKind()` 的投影（`dm` / `group`）：私聊只认 `dm:` 前缀 +
-恰好 `{owner, 一人}`（ADR-097），**不按 `company` / `leadership` / `project` 这类业务前缀分**。`skills` 来自 `listSkills()`，个人层覆盖公司同名时
-`overrides: true`（界面显示「覆盖公司同名」）。`slug` 必须是名册里存在的 agent 且不是
+恰好 `{owner, 一人}`（ADR-097），**不按频道 id 前缀分**。`skills` 来自 `listSkills()`，个人层覆盖全员同名时
+`overrides: true`（界面显示「覆盖全员同名」）。`slug` 必须是名册里存在的 agent 且不是
 `owner`，否则 404。
 
 ## 11. `GET /api/people/:slug/memory`

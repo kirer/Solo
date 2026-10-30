@@ -41,7 +41,7 @@ function fakeResponse() {
 
 function stateOf(): ChannelState {
 	let state: ChannelState = { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
-	state = ensureChannel(state, { id: ALL, title: "全公司", members: [OWNER_SLUG, "沈舟"], at: 1 });
+	state = ensureChannel(state, { id: ALL, title: "全员", members: [OWNER_SLUG, "沈舟"], at: 1 });
 	for (const [index, text] of ["一", "二", "三"].entries()) {
 		state = appendMessage(state, ALL, { from: OWNER_SLUG, text, at: index + 1 }).state;
 	}

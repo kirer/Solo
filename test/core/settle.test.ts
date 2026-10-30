@@ -72,7 +72,7 @@ describe("团队记忆自动沉淀：哪些消息算数", () => {
 		expect(picked.map((item) => item.from)).toEqual(["owner"]);
 	});
 
-	it("沉淀提示词：列全每条候选，判据来自 95-settle.md（不在代码里）", () => {
+	it("沉淀提示词：列全每条候选，判据指向技能「记忆整理」（不在代码里）", () => {
 		const candidates: SettleCandidate[] = [
 			{ seq: 4, from: "lin", text: "连接池默认 5，要调到 20", kind: "decision" },
 			{ seq: 5, from: "zhao", text: "v1 已上线", kind: "report" },
@@ -83,9 +83,8 @@ describe("团队记忆自动沉淀：哪些消息算数", () => {
 		expect(prompt).toContain("- #5 [report] zhao：v1 已上线");
 		expect(prompt).toContain("2 条新消息");
 		expect(prompt).toContain("`alpha`");
-		// 判据住在模板里，而且要明确到能判断 —— 不是「去看技能」。
-		expect(prompt).toContain("decision 必须记");
-		expect(prompt).toContain("report");
+		// 判据只有一处家：技能「记忆整理」。模板只负责把这一轮的候选捧到它面前。
+		expect(prompt).toContain("记忆整理");
 		// 落点写清楚，别让模型猜写到哪。
 		expect(prompt).toContain("teams/alpha/memory.md");
 		// V2 的工具调用语法不许回来（工具改名它就撒谎）。

@@ -19,8 +19,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SAMPLE_SLOTS } from "../../scripts/prompt-fixture.ts";
 import { createFsx } from "../../src/core/fsx.ts";
-import { loadTemplates, parseTemplate, renderPrompt, renderPromptDir, type PromptTemplate } from "../../src/core/prompt.ts";
-import { UNSET } from "../../src/core/text.ts";
+import { loadTemplates, parseTemplate, renderPrompt, renderPromptDir, type PromptTemplate } from "../../src/core/md/prompt.ts";
+import { UNSET } from "../../src/core/md/text.ts";
 
 const SEED = fileURLToPath(new URL("../../seed/", import.meta.url));
 const CONTRACT = fileURLToPath(new URL("../../docs/design/SEED-CONTRACT.md", import.meta.url));
@@ -95,6 +95,7 @@ describe("loadTemplates：排序与去重", () => {
 		const templates = await loadTemplates(createFsx(SEED), "prompt");
 		expect(templates.map((template) => template.file)).toEqual([
 			"00-who.md",
+			"05-body.md",
 			"10-rules.md",
 			"20-position.md",
 			"30-team.md",
@@ -103,6 +104,14 @@ describe("loadTemplates：排序与去重", () => {
 			"60-skills.md",
 			"70-directory.md",
 			"80-reply.md",
+			"81-alone.md",
+			"82-shared.md",
+			"83-colleagues.md",
+			"84-dm.md",
+			"85-multi.md",
+			"86-digest.md",
+			"87-merged.md",
+			"88-task.md",
 			"90-interrupted.md",
 			"95-settle.md",
 		]);
@@ -217,10 +226,11 @@ describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）"
 		expect(rendered.text).not.toContain(UNSET);
 	});
 
-	it("系统段 8 段 + 投递段 3 段（reply / interrupted / settle）", async () => {
+	it("系统段 9 段 + 投递段 11 段（回话片段全部来自 md）", async () => {
 		const rendered = await renderPromptDir(createFsx(SEED), SAMPLE, "prompt");
 		expect(rendered.segments.map((segment) => segment.segment)).toEqual([
 			"who",
+			"body",
 			"rules",
 			"position",
 			"team",
@@ -229,7 +239,19 @@ describe("seed/prompt 真实渲染（契约 §6 的 prompt:check，测试版）"
 			"skills",
 			"directory",
 		]);
-		expect(Object.keys(rendered.delivery).sort()).toEqual(["interrupted", "reply", "settle"]);
+		expect(Object.keys(rendered.delivery).sort()).toEqual([
+			"alone",
+			"colleagues",
+			"digest",
+			"dm",
+			"interrupted",
+			"merged",
+			"multi",
+			"reply",
+			"settle",
+			"shared",
+			"task",
+		]);
 	});
 
 	it("两次渲染逐字节相同（整组文件，真实 seed）", async () => {

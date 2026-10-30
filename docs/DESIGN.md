@@ -51,7 +51,7 @@ v2 的实测是 0 FAIL，但我看完的结论是「很垃圾，去学 ds-bot」
 ### 1.0 侧栏可收起
 
 logo 行右侧一个 28px 按钮，点一下整列收到 **56px 的图标条**（DSH 的 rail），再点展开。
-状态存 `localStorage["ai-company.side"]`，刷新后保持。
+状态存 `localStorage["solo.side"]`，刷新后保持。
 
 - **收起只由一个属性驱动**：`.frame[data-side="rail"]` 换掉 `--sidebar`，其余规则全部从它派生。
   JS 不碰任何尺寸 —— 尺寸写在 CSS 里，只有一个家。
@@ -170,7 +170,7 @@ logo 行右侧一个 28px 按钮，点一下整列收到 **56px 的图标条**�
 ### 2.5 深色主题
 
 同一批 token 名，`[data-theme="dark"]` 里换值，五个样式表一个字节都不改。
-三档：`system` / `light` / `dark`，存 `localStorage["ai-company.theme"]`，落成 `<html data-theme>`；
+三档：`system` / `light` / `dark`，存 `localStorage["solo.theme"]`，落成 `<html data-theme>`；
 `<head>` 里那段同步内联脚本先落色（否则刷新时闪一下白）。
 
 | token | 深色 | 说明 |
@@ -212,7 +212,7 @@ logo 行右侧一个 28px 按钮，点一下整列收到 **56px 的图标条**�
 
 `@media (prefers-reduced-motion: reduce)` 时全部 `animation: none`。
 
-### 3.2 群组头像（公司层频道用）
+### 3.2 群组头像（全员层频道用）
 
 2×2 排四个，每个缩到 55%，间距 4%，用 `mask` 的 `radial-gradient` + `mask-composite: intersect`
 让交界处互不糊。不足四个就少画。
@@ -265,7 +265,7 @@ logo 行右侧一个 28px 按钮，点一下整列收到 **56px 的图标条**�
 
 - **默认是平铺**，不是气泡。名字行在上，正文在下。
 - 连续同一个人发言（同一人、间隔 < 2 分钟）：只有第一条画名字和头像，后续行缩进对齐、`margin-top: 2px`。
-- **气泡开关**：顶栏菜单里「气泡 / 平铺」，存 `localStorage["ai-company.layout"]`，
+- **气泡开关**：顶栏菜单里「气泡 / 平铺」，存 `localStorage["solo.layout"]`，
   挂在 `body[data-layout]`。
   气泡模式下：
   - 正文包一层带 `--accent-wash` 底的圆角块（`--r-xl` = 20、22/24、padding 10/16），并且

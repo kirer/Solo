@@ -13,7 +13,7 @@ import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import type { Route } from "./server.ts";
 import type { StreamHub } from "./sse.ts";
-import type { App } from "../../app/index.ts";
+import type { App, MemoryEditBody, PostBody } from "../../app/index.ts";
 import { json, readJson, serveStatic } from "./server.ts";
 
 /**
@@ -72,7 +72,7 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/people/:slug/memory",
 			method: "POST",
 			handler: async ({ request, response, params }) => {
-				const body = await readJson<{ op?: string; heading?: string; text?: string }>(request);
+				const body = await readJson<MemoryEditBody>(request);
 				return json(response, await app.people.editPersonMemory(params.slug ?? "", body, WEB_ACTOR));
 			},
 		},
@@ -150,13 +150,7 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/channels/:id/messages",
 			method: "POST",
 			handler: async ({ request, response, params }) => {
-				const body = await readJson<{
-					text?: string;
-					replyTo?: number;
-					from?: string;
-					kind?: string;
-					attachments?: readonly (string | { id?: unknown })[];
-				}>(request);
+				const body = await readJson<PostBody>(request);
 				return json(response, await app.chat.postAsOwner(params.id ?? "", body));
 			},
 		},

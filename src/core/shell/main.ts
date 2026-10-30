@@ -6,16 +6,16 @@
  * 它做的事按顺序只有五件，没有第六件：
  * 1. 读设置里的模型；
  * 2. 打开库（`openCore`，它顺带做一次启动自愈）；
- * 3. 装配组织（`assembleCore`：扫 `agents/` → 开会话 → 播种公司频道）；
+ * 3. 装配组织（`assembleCore`：扫 `agents/` → 开会话 → 播种全员频道）；
  * 4. 起服务（`serveCore`）；
  * 5. 等 Ctrl-C。
  *
  * 已经有的：执行环境（`run` 工具，就是 shell）、启动自愈（`open.ts` 把强杀留下的
- * 半截任务树结算成 `terminal`）、答案兜底（`rescue.ts`：他答了但没调 `say` 时补发）。
+ * 半截任务树结算成 `terminal`）、收尾（`channel/turn.ts`：结算 done 后，没被 `say` 说出来的最终回答自动成消息）。
  *
  * 刻意没有的：看门狗（定时巡检卡住的人）、崩溃后自动重跑、IM 出站、成本核算。
  * 目标只有一个：**能跑，能被人看见在跑什么**。加回任何一样之前先问
- * 「不修它，公司会不会停摆」，答案是否就别加。
+ * 「不修它，系统会不会停摆」，答案是否就别加。
  */
 import { join } from "node:path";
 import { parseArgs as parseNodeArgs } from "node:util";
@@ -24,9 +24,9 @@ import { openCore, type CoreRuntime } from "../runtime/open.ts";
 import { setupModels, compactionSettings } from "../runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
-import { seedOwnerAssistant, seedPromptTemplates, seedRules, syncCompanySkills } from "./seed.ts";
+import { seedOwnerAssistant, seedPromptTemplates, seedRules, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../fsx.ts";
-import { loadTemplates, PROMPT_DIR } from "../prompt.ts";
+import { loadTemplates, PROMPT_DIR } from "../md/prompt.ts";
 import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
 	await ensureDir(teamsRoot);
 
 	if (args.seed) {
-		// 规矩与公司层技能**每次启动都同步**（不是「只在空工作区」）：它们是公司发的文件，
+		// 规矩与全员层技能**每次启动都同步**（不是「只在空工作区」）：它们是全员共用的文件，
 		// 以前只在空工作区拷一次，于是「先给结论」「不回错频道」这类修正永远进不了已在跑的
 		// 工作区。同步按 hash 判断用户改过没有，改过的不动（ADR-039）。
 		const rules = await seedRules(args.workspace);
@@ -87,15 +87,15 @@ async function main(): Promise<void> {
 		// 提示词模板同理：缺哪一段补哪一段，改过的不动。
 		const templates = await seedPromptTemplates(args.workspace);
 		if (templates.length > 0) console.log(`[core] 补进了提示词模板：${templates.join("、")}`);
-		const synced = await syncCompanySkills(agentsRoot);
+		const synced = await syncAllSkills(agentsRoot);
 		const touched = [...synced.copied, ...synced.updated];
-		if (touched.length > 0) console.log(`[core] 同步了公司层技能：${touched.join("、")}`);
+		if (touched.length > 0) console.log(`[core] 同步了全员层技能：${touched.join("、")}`);
 	}
 
 	// 启动自检：`team/memory.ts` 的沉淀指令让团队管理员 `skills(action=read, name="记忆整理")`，
 	// 那份技能不在工作区，沉淀就会变成「模型凭自己想法整理」—— 静默降级，没人知道。
 	if (!(await existsAt(join(args.workspace, "skills", "记忆整理", "SKILL.md")))) {
-		console.warn("[core] 公司技能「记忆整理」不在工作区：团队记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
+		console.warn("[core] 全员技能「记忆整理」不在工作区：团队记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
 	}
 
 	if (args.seed && (await agentCount(agentsRoot)) === 0) {

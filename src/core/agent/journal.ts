@@ -16,7 +16,7 @@ import { appendJsonLine } from "../runtime/io.ts";
 
 export const JOURNAL_FILE = ".memory-journal.jsonl";
 
-/** 日志文件路径。跟 `memory.md` 放在同一个目录，人一眼能找到。 */
+/** 日志文件路径。跟 `memory.md` 放在同一个目录，人一眼能找到。 @internal 仅测试 */
 export function journalPath(dir: string): string {
 	return join(dir, JOURNAL_FILE);
 }

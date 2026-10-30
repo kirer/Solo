@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clip, resolveInWorkspace } from "../../src/core/channel/tools.ts";
+import { clip, resolveInWorkspace } from "../../src/core/channel/tools/index.ts";
 
 /**
  * 两个「护栏」的单元契约：路径围栏与长文本裁剪。

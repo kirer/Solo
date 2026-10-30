@@ -12,7 +12,7 @@
  */
 import type { ServerResponse } from "node:http";
 import { OWNER_SLUG } from "../../app/index.ts";
-import { messageView, orgView } from "../../app/read.ts";
+import { messageView, orgView } from "../../app/project.ts";
 import type { ChannelSnapshot, Snapshots } from "../../app/snapshot.ts";
 import type { CoreServices } from "../../app/types.ts";
 import type { ViewMessage, ViewOrg } from "../../view/dto.ts";

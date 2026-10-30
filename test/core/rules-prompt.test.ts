@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadRules, renderRulesSection } from "../../src/core/agent/rules.ts";
-import { renderAgentSection } from "../../src/core/agent/runtime.ts";
+import { renderAgentSection } from "../../src/core/agent/sections.ts";
 import { createRegistry } from "../../src/core/runtime/index.ts";
 import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 

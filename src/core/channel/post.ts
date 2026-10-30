@@ -16,25 +16,27 @@ import {
 	ChannelDoc,
 	OWNER,
 	appendMessage,
-	chatKind,
-	channelsOf,
 	deliveryTargets,
-	tail,
-	unreadCount,
 	type Attachment,
 	type Channel,
 	type ChannelState,
 	type Message,
 } from "./store.ts";
-import { loadTemplates, type PromptTemplate } from "../prompt.ts";
-import { createFsx } from "../fsx.ts";
-import { renderSlots, toolSlots, type SlotValue } from "../text.ts";
-import { oneLine } from "../oneline.ts";
-import { planAttachments } from "./files.ts";
-import { wake, type WakeRecord } from "./wake.ts";
+import {
+	deliveryPrompt,
+	digestNotice,
+	digestRows,
+	mergedNotice,
+	renderDelivery,
+	type DeliveryPrompt,
+} from "./delivery.ts";
+import { planAttachments } from "./attachments.ts";
+import { wake, type WakeRecord, type WakeTarget } from "./wake.ts";
 import type { MentionRoster } from "./store.ts";
+import type { FinishTurn } from "./turn.ts";
 import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
+import { coalesceQueue, liveConversations } from "./queue.ts";
 
 type PostResult = {
 	readonly channel: Channel;
@@ -66,6 +68,12 @@ export type PostDeps = {
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	readonly labelOf?: (slug: string) => string;
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/** 读上一次的唤醒记录：忙的时候要在它上面保留 `task`（私聊插话不覆盖任务频道）。 */
+	readonly wakeOf?: (slug: string) => Promise<WakeRecord | undefined>;
+	/** 一轮正常答完时的收尾（最终回答自动成消息）。 */
+	readonly finishTurn?: FinishTurn;
+	/** 频道 id → 标题（收尾/插话文案里说清「回哪儿」）。 */
+	readonly titleOf?: (channelId: string) => string | undefined;
 	/** 附件根目录。给了模型就能真的看见消息里的图片。 */
 	readonly uploadsRoot?: string;
 	/** 提示词模板目录（`<workspace>/prompt`）。投递要用它贴「怎么回话」那两段。 */
@@ -202,10 +210,10 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		members: [...channel.members],
 		wakeOnAll: [...channel.wakeOnAll],
 	};
-	const digests = new Map<string, string>();
+	const digestParts = new Map<string, { readonly total: number; readonly rows: readonly string[] }>();
 	for (const slug of channelMeta.members) {
 		if (slug === OWNER) continue;
-		digests.set(slug, renderDigest(deps.state, slug));
+		digestParts.set(slug, digestRows(deps.state, slug));
 	}
 	const appended = await appendToChannel(deps, input, context);
 	if (appended === undefined) throw new Error(`频道不存在：${input.channelId}`);
@@ -225,10 +233,16 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
 	const busy = await liveConversations(deps.harness, context).catch(() => new Set<number>());
 	const labelOf = deps.labelOf ?? ((slug: string) => slug);
+	// 模板只读一次：摘要和正文用同一份，改 md 下一条生效。
+	const prompt = await deliveryPrompt(deps.promptDir);
+	// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
+	const digests = new Map(
+		[...digestParts].map(([slug, part]) => [slug, digestNotice(prompt.digest, part.total, part.rows)]),
+	);
 	const delivery = await deliver(
 		{
-			// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
 			digests,
+			prompt,
 			channel: liveChannel,
 			message,
 			targets,
@@ -242,6 +256,9 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+			...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
+			...(deps.finishTurn === undefined ? {} : { finishTurn: deps.finishTurn }),
+			titleOf: (channelId) => deps.state.channels[channelId]?.title,
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
 			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
@@ -315,6 +332,8 @@ type DeliverOptions = {
 	 * 提前算既对又安全。
 	 */
 	readonly digests: ReadonlyMap<string, string>;
+	/** 已经读好的 delivery 模板；不给就现读一次（`promptDir`）。 */
+	readonly prompt?: DeliveryPrompt;
 	readonly channel: Channel;
 	readonly message: Message;
 	/** 要唤醒谁（`recipientsOf` 的结果）。 */
@@ -325,6 +344,12 @@ type DeliverOptions = {
 	readonly labelOf?: (slug: string) => string;
 	/** 记住「被谁叫醒」。缺省不记。 */
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/** 读上一次的唤醒记录：忙的时候从它里面继承 `task`。缺省当没有（`task = reply`）。 */
+	readonly wakeOf?: (slug: string) => Promise<WakeRecord | undefined>;
+	/** 一轮正常答完时的收尾。缺省不补发。 */
+	readonly finishTurn?: FinishTurn;
+	/** 频道 id → 标题。插话文案里用标题说「回去哪个频道」。缺省直接用 id。 */
+	readonly titleOf?: (channelId: string) => string | undefined;
 	/**
 	 * 此刻手上还有活（有非后台任务在跑）的会话 id。
 	 *
@@ -377,175 +402,6 @@ type DeliverOptions = {
 	}) => Promise<void>;
 };
 
-/** 这个频道是不是「我和某个人的私聊」。形态按成员推，不看 id 前缀。 */
-function isOwnerDm(channel: Channel, viewer: string | undefined): boolean {
-	if (chatKind(channel) !== "dm") return false;
-	return viewer === undefined || channel.members.includes(viewer);
-}
-
-/**
- * 每轮贴在投递正文末尾的「怎么回话」。
- *
- * 为什么不写进系统提示词：静态规矩在长上下文里会被稀释，而这一段贴着生成点，
- * 每轮重申一次。ds-bot 就是这么干的（`groups.js:102` 的 `ROOM_REPLY`），实测比
- * 把规矩放在系统提示里有效一个量级。
- *
- * **正文在 `prompt/80-reply.md`，这里只填两个条件句**（契约 §4 第 4 条：整句插槽只许
- * 出现在 delivery 段）。模板由 `deliver()` 每轮现读一次当参数传进来 —— 这一层保持纯函数，
- * 单测照样能跑，而「改模板下一条生效」不丢。
- */
-export function renderReplyRules(options: {
-	readonly woken: readonly string[];
-	readonly viewer?: string | undefined;
-	readonly labelOf?: ((slug: string) => string) | undefined;
-	/** 这个频道里除自己和我之外的成员。有他们才提「成员的事在群里说」。 */
-	readonly colleagues?: readonly string[] | undefined;
-	/** `prompt/80-reply.md` 的正文。空串 = 没有模板（整段不贴）。 */
-	readonly template: string;
-}): string {
-	if (options.template.trim() === "") return "";
-	const others = options.woken.filter((slug) => slug !== options.viewer);
-	const label = options.labelOf ?? ((slug: string) => slug);
-	const colleagues = (options.colleagues ?? []).filter((slug) => slug !== options.viewer);
-	// 模板里 `{{tool:say}}` 那个名字（模板没写就退回字面 `say`：工具名在这一层只有这一处）。
-	const say = toolSlots(options.template)["tool:say"] ?? "say";
-
-	// 两个条件句都必须有值：模板里它们是**整行**，留空会渲染成「（未设置）」占一行。
-	const slots: Record<string, SlotValue> = {
-		// `{{tool:say}}` 这类：按名字自解释（投递层没有注册表，见 `text.ts` 的 `toolSlots`）。
-		...toolSlots(options.template),
-		"reply.alone":
-			others.length === 0
-				? // 「必须回」不够：模型会理解成「在会话里答一句也算回」（实测 3/3 都不调 say）。
-					// 它必须知道**回的动作是发一条频道消息**，而且要先发再收工。工具名从模板的
-					// `{{tool:say}}` 取，模板那边有 seed 侧的对表检查（名字写错会红）。
-					`（这一轮只有你被叫醒：必须回，回的就是结果 —— 用 ${say} 把它发到这个频道，不要在会话里答完就算。）`
-				: `（没有新东西就不说：只把 text 写成 \`[PASS]\`，这条不会发出去 —— 这一轮还有 ${others
-						.map((slug) => label(slug))
-						.join("、")} 在。）`,
-		"reply.colleagues":
-			colleagues.length === 0
-				? "（这个频道里只有你和我：不用为找一个人绕道。）"
-				: `（成员的事就在这个频道说：要问 ${colleagues.map(label).join("、")} 就 @ 他，他会收到、也看得到上下文。不要为了找一个人去私聊 —— 成员之间的私聊系统不允许。）`,
-	};
-	return renderSlots(options.template, slots).text.trim();
-}
-
-/** 一条消息交给模型时的正文。纯函数，方便单测。 */
-export function renderDelivery(options: {
-	readonly channel: Channel;
-	readonly message: Message;
-	/** 收件人。用来从「还 @ 了」里剔掉自己——否则每个人都会看到「还 @ 了你」。 */
-	readonly viewer?: string | undefined;
-	readonly labelOf?: ((slug: string) => string) | undefined;
-	/** 这句是插进一轮正在跑的工作里的。 */
-	readonly interrupted?: boolean;
-	/** 附件说明（`planAttachments` 的 `lines`）。没有附件时为空。 */
-	readonly attachmentLines?: readonly string[];
-	/** `prompt/80-reply.md` 的正文。空串 = 整段不贴。 */
-	readonly replyTemplate: string;
-	/** `prompt/90-interrupted.md` 的正文。空串 = 插话那两句不贴。 */
-	readonly interruptedTemplate: string;
-}): string {
-	const label = options.labelOf ?? ((slug: string) => slug);
-	const { channel, message } = options;
-	const quoted =
-		message.replyTo === undefined ? "" : `（回复 #${message.replyTo}）`;
-	const others = message.mentions.filter(
-		(slug) => slug !== message.from && slug !== options.viewer,
-	);
-	const also = others.length === 0 ? "" : `\n这条还 @ 了：${others.map(label).join("、")}`;
-	// 「这条会叫醒谁、你是第几个」和「别人也在看」必须由代码注入：模型看不到投递名单，
-	// 于是两个人被同时叫醒时各写一条重复甚至矛盾的回复，谁也不知道对方也在场。
-	const woken = deliveryTargets(channel, message);
-	const line = [also];
-	if (woken.length > 0) {
-		const position =
-			options.viewer === undefined ? "" : `（你在第 ${woken.indexOf(options.viewer) + 1 || 1} 位）`;
-		line.push(`\n这条会叫醒：${woken.map(label).join("、")}${position}`);
-		if (woken.length > 1) {
-			line.push("\n别人也在看这条。动手前先说一句你接哪一块，别重复别人已经做的。");
-		}
-	}
-	return [
-		// 第一行必须带**频道 id**：模型以前只看到标题，于是它只能用 `say` 的缺省频道回话；
-		// 一旦缺省频道猜错（例如猜成私聊），整段对话就跑到别的房间里去了。
-		`【${channel.title}】#${message.seq}（频道 ${channel.id}）${quoted}`,
-		`${label(message.from)}：${message.text}${line.join("")}`,
-		...(isOwnerDm(channel, options.viewer)
-			? ["（这是你和我的私聊，只回这里，别去群里说）"]
-			: []),
-		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
-			? []
-			: ["", "附件：", ...options.attachmentLines]),
-		// 「怎么回话」每轮贴在最后：它比系统提示词里的同一句规矩有效得多。
-		renderReplyRules({
-			template: options.replyTemplate,
-			woken,
-			viewer: options.viewer,
-			labelOf: label,
-			// 只在群聊里说「成员的事在群里说」：私聊里没有第三方，提了反而让它去找人。
-			colleagues:
-				chatKind(channel) === "dm"
-					? []
-					: channel.members.filter((slug) => slug !== OWNER && slug !== options.viewer),
-		}),
-		...(options.interrupted === true && options.interruptedTemplate.trim() !== ""
-			? [renderSlots(options.interruptedTemplate, toolSlots(options.interruptedTemplate)).text.trim()]
-			: []),
-	].join("\n");
-}
-
-/** delivery 段的三份模板：每轮回话规矩、插话那一句、沉淀指令。 */
-export type DeliveryPrompt = {
-	readonly reply: string;
-	readonly interrupted: string;
-	readonly settle: string;
-};
-
-/**
- * 读 delivery 段的模板（`80-reply.md` / `90-interrupted.md` / `95-settle.md`）。
- *
- * 缺哪段就空串（调用方整段不贴）：模板是 workspace 里的活文件，可能被改成任意样子，
- * 读不到不该让投递失败 —— 但也不能静默：读不到就 warn 一次。
- */
-export async function deliveryPrompt(promptDir: string | undefined): Promise<DeliveryPrompt> {
-	if (promptDir === undefined) {
-		console.warn("[core] 投递没拿到模板目录（prompt/）：回话规矩不会贴");
-		return { reply: "", interrupted: "", settle: "" };
-	}
-	// `promptDir` 本身就是模板目录，所以段目录是 `.`（不是默认的 `prompt`，那会变成 prompt/prompt）。
-	const templates = await loadTemplates(createFsx(promptDir), ".");
-	const delivery: readonly PromptTemplate[] = templates.filter((template) => template.use === "delivery");
-	const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
-	const prompt = { reply: bodyOf("reply"), interrupted: bodyOf("interrupted"), settle: bodyOf("settle") };
-	if (prompt.reply === "") console.warn(`[core] ${promptDir} 里没有回话模板（80-reply.md）：这一段不会贴`);
-	return prompt;
-}
-
-/** 未读摘要：这个人所有频道里还有多少没看。纯函数。 */
-export function renderDigest(state: ChannelState, slug: string, limit = 5): string {
-	const rows: string[] = [];
-	let total = 0;
-	for (const channel of channelsOf(state, slug)) {
-		const unread = unreadCount(state, channel.id, slug);
-		if (unread === 0) continue;
-		total += unread;
-		const last = tail(state, channel.id, 1)[0];
-		const preview = last === undefined ? "" : ` — ${oneLine(last.text, 60)}`;
-		rows.push(`- ${channel.title}：${unread} 条${preview}`);
-		if (rows.length >= limit) break;
-	}
-	if (rows.length === 0) return "";
-	// 「未读摘要」写得太像任务，模型会把它当成要回的东西 —— 实测一次积压 39 条时，
-	// 它答的是摘要里的旧问题，而不是刚投进来的这一条。所以这里明说它是背景。
-	return [
-		`【背景：别的频道里还有 ${total} 条没看】`,
-		...rows,
-		"（这不是要你现在回的。要用 chats(action=read) 看；先答上面那条。）",
-	].join("\n");
-}
-
 /**
  * 逐条投递。
  *
@@ -563,19 +419,19 @@ export async function deliver(
 	const issues: DeliverIssue[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
 	// 回话规矩每轮现读一次（不缓存：改模板要能下一条生效）。所有收件人共用同一份。
-	const prompt = await deliveryPrompt(options.promptDir);
+	const prompt = options.prompt ?? (await deliveryPrompt(options.promptDir));
 	// 附件只读一次：所有收件人拿到的是同一份图片内容块。
 	const plan = await planAttachments(options.uploadsRoot, options.message.attachments);
-	const bodyOf = (viewer: string, interrupted: boolean): string =>
+	const bodyOf = (viewer: string, interrupted: boolean, taskChannelTitle?: string): string =>
 		renderDelivery({
 			channel: options.channel,
 			message: options.message,
 			viewer,
 			labelOf: label,
 			interrupted,
+			...(taskChannelTitle === undefined ? {} : { taskChannelTitle }),
 			attachmentLines: plan.lines,
-			replyTemplate: prompt.reply,
-			interruptedTemplate: prompt.interrupted,
+			prompt,
 		});
 
 	for (const slug of options.targets) {
@@ -587,7 +443,23 @@ export async function deliver(
 		}
 		const digest = options.digests.get(slug) ?? "";
 		const requestId = requestIdOf(options.channel.id, options.message, slug);
-		const base = bodyOf(slug, options.busy?.has(Number(conversation.id)) === true);
+		const interrupted = options.busy?.has(Number(conversation.id)) === true;
+		// 两层唤醒记录：这一句回哪儿（`reply`）与手上那件活属于哪儿（`task`）。
+		// 打断他正在跑的一轮时，`task` 继承上一次的记录 —— 私聊插话不覆盖任务频道，
+		// 否则插话结束，团队频道就再也等不到结论（ADR-099）。
+		const reply: WakeTarget = {
+			channelId: options.channel.id,
+			seq: options.message.seq,
+			from: options.message.from,
+			at: options.message.at,
+		};
+		const previous = options.wakeOf === undefined ? undefined : await options.wakeOf(slug).catch(() => undefined);
+		const task = interrupted && previous !== undefined ? previous.task : reply;
+		const taskChannelTitle =
+			task.channelId === options.channel.id
+				? undefined
+				: (options.titleOf?.(task.channelId) ?? task.channelId);
+		const base = bodyOf(slug, interrupted, taskChannelTitle);
 		const result = await wake(
 			{
 				conversationOf: async (target) => (target === slug ? conversation : options.conversationOf(target)),
@@ -599,6 +471,7 @@ export async function deliver(
 								await options.noteUnanswered?.({ slug: note.slug, label: note.label, seq: note.seq, reason: note.reason });
 							},
 				rememberWake: options.rememberWake,
+				finishTurn: options.finishTurn,
 			},
 			{
 				slug,
@@ -607,11 +480,9 @@ export async function deliver(
 				whenBusy: "steer",
 				busy: options.busy?.has(Number(conversation.id)) === true,
 				bodyOf: (merged) => {
-					// 合并唤醒：告诉它「更早的几条还在频道里，先看一遍」。
-					const body =
-						merged === 0
-							? base
-							: `${base}\n\n（合并唤醒：把 ${merged} 条还没开始处理的消息并成了这一条 —— 更早的那几条内容都还在频道里，先 chats(action=read) 看一遍再答，别只答最新这条。）`;
+					// 合并唤醒：告诉它「更早的几条还在频道里，先看一遍」。文案在 87-merged.md。
+					const note = merged === 0 ? "" : mergedNotice(prompt.merged, merged);
+					const body = note === "" ? base : `${base}\n\n${note}`;
 					const text = digest === "" ? body : `${body}\n\n${digest}`;
 					// 有图就发内容块：文字在前，图片在后（多数模型要求首块是文本）。
 					return plan.images.length === 0 ? text : [{ type: "text", text }, ...plan.images];
@@ -627,12 +498,7 @@ export async function deliver(
 						mentions: [...options.message.mentions],
 					},
 				},
-				wakeRecord: {
-					channelId: options.channel.id,
-					seq: options.message.seq,
-					from: options.message.from,
-					at: options.message.at,
-				},
+				wakeRecord: { reply, task },
 				note: { channelId: options.channel.id, seq: options.message.seq, label: label(slug) },
 			},
 			context,
@@ -673,91 +539,4 @@ export async function deliver(
 /** 幂等键：频道 + seq + slug。同一条消息重复投递只醒一次（至少一次语义）。 */
 function requestIdOf(channelId: string, message: Message, slug: string): string {
 	return `ch:${message.from === "owner" ? "owner:" : ""}${channelId}:${message.seq}:${slug}`;
-}
-
-/**
- * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。
- *
- * 三条约束（知言 2026-10-30 定）：
- * 1. **同一会话最多保留一个未开始的排队项**：所以每次投递前先把旧的撤掉；
- * 2. **正在跑的那条不算**：只认 `status: "queued"`，`placed` 已经开始了，它不会被撤；
- * 3. **消息一条都不删**：撤的只是唤醒，那几条消息还在频道里，醒来读一遍就看到。
- *
- * 我连发的几条**也合并**（2026-10-30 我定）：他连说三句时，对方醒来读一遍频道就能
- * 把三句一起答；排三个唤醒只会让它跑三趟、还各答一遍。消息一条都不删，所以「三句都看到」
- * 不受影响。这里同时是**唯一**一份「谁该让路」的判据 —— 旧代码里我插队另有一个
- * `choresAheadOf`（跳过我自己的排期），两套口径迟早分叉，已合并到这里。
- */
-export function queuedAhead(
-	submissions: readonly {
-		readonly id: number | bigint | string;
-		readonly conversationId: number | bigint | string;
-		readonly status: string;
-		readonly requestId?: string | undefined;
-	}[],
-	conversationId: number,
-	keepRequestId?: string,
-	max = 8,
-): (number | bigint | string)[] {
-	const out: (number | bigint | string)[] = [];
-	for (const submission of submissions) {
-		if (Number(submission.conversationId) !== conversationId) continue;
-		if (submission.status !== "queued") continue;
-		if (keepRequestId !== undefined && submission.requestId === keepRequestId) continue;
-		out.push(submission.id);
-		if (out.length >= max) break;
-	}
-	return out;
-}
-
-/**
- * 合并唤醒的执行器（也负责我插队）：撤掉这个会话里还没开始的排队项，返回撤了几条。
- *
- * 我发消息时走的也是这里 —— 以前另有一条 `clearQueueAhead`，两个函数会去撤同一批
- * 排队项（第二次白跑一趟），现在只有这一条路。
- *
- * 撤不掉（已经在跑、或者竞态里被别人取走）就跳过 —— 多叫醒一次只是慢，
- * 而「以为撤掉了其实没撤」会让人以为消息丢了。
- */
-export async function coalesceQueue(
-	harness: Harness,
-	conversationId: number,
-	keepRequestId: string,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<number> {
-	const inspection = await harness.inspect(context);
-	const pending = queuedAhead(inspection.submissions, conversationId, keepRequestId);
-	let merged = 0;
-	for (const id of pending) {
-		try {
-			await harness.abortSubmission(
-				id as Parameters<Harness["abortSubmission"]>[0],
-				context,
-				conversationId as Parameters<Harness["abortSubmission"]>[2],
-			);
-			merged += 1;
-		} catch {
-			// 撤不掉就算了：那一条照样会被答，只是多一次唤醒。
-		}
-	}
-	return merged;
-}
-
-/**
- * 哪些会话此刻手上有活。
- *
- * 用 `harness.inspect()`（只读、不写、不跑任务）取「活着的任务」，按会话聚合，
- * 排掉后台任务 —— 后台任务是代理自己的账本，不算「打断它正在干的事」。
- */
-export async function liveConversations(
-	harness: Harness,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<Set<number>> {
-	const inspection = await harness.inspect(context);
-	const busy = new Set<number>();
-	for (const task of inspection.tasks) {
-		if (task.record.background === true) continue;
-		busy.add(Number(task.record.conversationId));
-	}
-	return busy;
 }

@@ -14,14 +14,7 @@
  */
 import { rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import {
-	compareCodePoints,
-	listDirSorted,
-	mtimeOrUndefined,
-	readTextOrUndefined,
-	writeTextAt,
-	type DirEntry,
-} from "./runtime/io.ts";
+import { listDirSorted, mtimeOrUndefined, readTextOrUndefined, writeTextAt, type DirEntry } from "./runtime/io.ts";
 
 /** 一个目录项。与 `runtime/io` 的 `DirEntry` 是同一个形状。 */
 export type FsxEntry = DirEntry;
@@ -41,8 +34,8 @@ export type Fsx = {
 	remove(rel: string): Promise<void>;
 };
 
-/** 越界访问。名字固定，调用方与测试都按它判。 */
-export class FsxEscapeError extends Error {
+/** 越界访问。捕获方只看 `code`，不看类名。 */
+class FsxEscapeError extends Error {
 	readonly code = "outside-workspace";
 	readonly rel: string;
 
@@ -59,7 +52,7 @@ export class FsxEscapeError extends Error {
  * 绝对路径一律拒绝：`/etc/passwd` 与 `../../x` 是同一类问题，没必要分别处理。
  * 判据是**解析后**的 `relative()`，所以 `a/../../b` 这种绕路也拦得住。
  */
-export function resolveIn(root: string, rel: string): string {
+function resolveIn(root: string, rel: string): string {
 	if (isAbsolute(rel)) throw new FsxEscapeError(rel, root);
 	const base = resolve(root);
 	const target = resolve(base, rel);
@@ -106,6 +99,3 @@ export function createFsx(root: string): Fsx {
 		},
 	};
 }
-
-/** 保留给「按名字排序」的调用方：与 `fsx.list` 同一个口径。 */
-export { compareCodePoints };

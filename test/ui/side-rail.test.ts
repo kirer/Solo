@@ -57,7 +57,7 @@ describe("侧栏收起", () => {
 	});
 
 	it("状态存在本地，刷新后保持", () => {
-		expect(app).toContain('const SIDE_KEY = "ai-company.side"');
+		expect(app).toContain('const SIDE_KEY = "solo.side"');
 		expect(app).toContain("localStorage.setItem(SIDE_KEY, side)");
 		// `.frame[data-side]` 是这套布局唯一的开关（JS 不碰列宽）。
 		expect(frame).toContain("data-side={side}");

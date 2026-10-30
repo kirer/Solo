@@ -44,6 +44,11 @@ export async function existsAt(path: string): Promise<boolean> {
 	return (await mtimeOrUndefined(path)) !== undefined;
 }
 
+/** 文件版本戳：`mtimeMs:size`。同一次写入要么同时改这两样，要么都不改。 */
+export function stampOf(info: { readonly mtimeMs: number; readonly size: number }): string {
+	return `${info.mtimeMs}:${info.size}`;
+}
+
 /** 修改时间（毫秒）。不存在 = `undefined`。 */
 export async function mtimeOrUndefined(path: string): Promise<number | undefined> {
 	try {
@@ -93,12 +98,17 @@ export async function listDirSorted(path: string): Promise<readonly DirEntry[]> 
 			name: entry.name,
 			kind: entry.isFile() ? "file" : entry.isDirectory() ? "dir" : "other",
 		}))
-		.sort((left, right) => compareCodePoints(left.name, right.name));
+		.sort(byName);
 }
 
 /** 码点比较：不用 `localeCompare`，它随 locale 变，提示词会跟着变。 */
-export function compareCodePoints(a: string, b: string): number {
+function compareCodePoints(a: string, b: string): number {
 	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/** 按 `name` 的码点排序。目录项、技能、工具、能力清单都用这一份口径。 */
+export function byName<T extends { readonly name: string }>(a: T, b: T): number {
+	return compareCodePoints(a.name, b.name);
 }
 
 /** 一条 Promise 尾链：后一个任务等前一个结束，无论它成败。 */

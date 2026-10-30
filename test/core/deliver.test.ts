@@ -1,15 +1,15 @@
 import { describe, expect, test } from "vitest";
-import { deliver, queuedAhead, renderDelivery, renderDigest } from "../../src/core/channel/post.ts";
-import { INTERRUPTED_TEMPLATE, REPLY_TEMPLATE } from "./seed-prompt.ts";
+import { deliver } from "../../src/core/channel/post.ts";
+import { queuedAhead } from "../../src/core/channel/queue.ts";
+import { digestNotice, digestRows, renderDelivery } from "../../src/core/channel/delivery.ts";
+import { DIGEST_TEMPLATE, INTERRUPTED_TEMPLATE, REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
 
 /**
- * 投递正文必须带真模板：`renderDelivery` 刻意**不给** `replyTemplate` 默认值 ——
+ * 投递正文必须带真模板：`renderDelivery` 刻意**不给**默认模板 ——
  * 默认值等于允许「回话段为空」静默通过，正是这一刀要防的洞。所以这里统一补上 seed 里那份。
  */
-function renderDeliveryWithTemplates(
-	options: Omit<Parameters<typeof renderDelivery>[0], "replyTemplate" | "interruptedTemplate">,
-): string {
-	return renderDelivery({ ...options, replyTemplate: REPLY_TEMPLATE, interruptedTemplate: INTERRUPTED_TEMPLATE });
+function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDelivery>[0], "prompt">): string {
+	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT });
 }
 import type { Harness } from "../../src/core/runtime/index.ts";
 import { appendMessage, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
@@ -104,10 +104,15 @@ describe("投递正文", () => {
 	});
 });
 
+function digestOf(state: ChannelState, slug: string): string {
+	const { total, rows } = digestRows(state, slug);
+	return digestNotice(DIGEST_TEMPLATE, total, rows);
+}
+
 describe("未读摘要", () => {
 	test("没有未读时不产生任何文字", () => {
 		const state = stateWith({ id: "g", title: "G", members: ["cto"] });
-		expect(renderDigest(state, "cto")).toBe("");
+		expect(digestOf(state, "cto")).toBe("");
 	});
 
 	test("列出有未读的频道与最后一句预览", () => {
@@ -119,7 +124,7 @@ describe("未读摘要", () => {
 		state = appendMessage(state, "g", { from: "owner", text: "最新一条", at: 2 }).state;
 		state = appendMessage(state, "p", { from: "owner", text: "团队里的事", at: 3 }).state;
 
-		const digest = renderDigest(state, "cto");
+		const digest = digestOf(state, "cto");
 		expect(digest).toContain("别的频道里还有 3 条没看");
 		expect(digest).toContain("全员：2 条 — 最新一条");
 		expect(digest).toContain("团队：1 条 — 团队里的事");
@@ -128,7 +133,7 @@ describe("未读摘要", () => {
 	test("自己发的不算未读", () => {
 		let state = stateWith({ id: "g", title: "G", members: ["owner", "cto"] });
 		state = appendMessage(state, "g", { from: "cto", text: "我说的", at: 1 }).state;
-		expect(renderDigest(state, "cto")).toBe("");
+		expect(digestOf(state, "cto")).toBe("");
 	});
 });
 

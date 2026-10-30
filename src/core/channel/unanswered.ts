@@ -14,11 +14,17 @@
  */
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 
-/** 一次提交结算时的形态。只关心两件事：成没成、为什么没成。 */
+/** 一次提交结算时的形态。只关心两件事：成没成（`answer` 是什么）、为什么没成。 */
 type SettledLike = {
 	readonly status: string;
 	readonly reason?: string | undefined;
+	readonly answer?: unknown;
 };
+
+/** 结算的两种终态。别的状态（例如还在排队的中间态）不会回调。 */
+export type Settlement =
+	| { readonly status: "done"; readonly answer: unknown }
+	| { readonly status: "unanswered"; readonly reason: string | undefined };
 
 /** 一个能等到结算的提交（`conversation.submit()` 的返回值）。 */
 type AwaitableSubmission = {
@@ -46,7 +52,7 @@ export function renderUnanswered(seq: number, label: string, reason: string | un
 }
 
 /**
- * 在后台等这次提交结算；只有 `unanswered` 才回调。
+ * 在后台等这次提交结算；`done` 和 `unanswered` 都回调。
  *
  * 三条纪律：
  * 1. **不 await**：调用方是投递循环，等它就变成「发送方等回复」了。
@@ -55,17 +61,22 @@ export function renderUnanswered(seq: number, label: string, reason: string | un
  */
 export function watchSettled(
 	submission: AwaitableSubmission,
-	onUnanswered: (reason: string | undefined) => Promise<void>,
+	onSettled: (settled: Settlement) => Promise<void>,
 	context: Context = BACKGROUND_CONTEXT,
 ): void {
 	// 底层没给可等待的提交就不做（测试替身、或将来换了 harness 都可能是这种情况）：
-	// 留痕是附加物，不能因为它让投递变成失败。
+	// 收尾是附加物，不能因为它让投递变成失败。
 	if (typeof submission?.wait !== "function") return;
 	void submission
 		.wait(context)
 		.then(async (record) => {
-			if (record.status !== "unanswered") return;
-			await onUnanswered(record.reason).catch(() => undefined);
+			if (record.status === "done") {
+				await onSettled({ status: "done", answer: record.answer }).catch(() => undefined);
+				return;
+			}
+			if (record.status === "unanswered") {
+				await onSettled({ status: "unanswered", reason: record.reason }).catch(() => undefined);
+			}
 		})
 		.catch(() => undefined);
 }

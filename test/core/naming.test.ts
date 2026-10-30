@@ -7,7 +7,6 @@
  */
 import { describe, expect, test } from "vitest";
 import { assertName, isSafeName, skillDirName, slugifyName } from "../../src/core/naming.ts";
-import { assertSlug, slugify } from "../../src/core/agent/create.ts";
 import { assertTeamSlug } from "../../src/core/team/doc.ts";
 
 describe("名字字符集", () => {
@@ -66,11 +65,8 @@ describe("skillDirName：替换而不是拒绝", () => {
 	});
 });
 
-describe("旧名字仍是薄包装", () => {
-	test("assertSlug / slugify / assertTeamSlug", () => {
-		expect(assertSlug("林越")).toBe("林越");
-		expect(() => assertSlug("owner")).toThrow();
-		expect(slugify("林 越")).toBe("林-越");
+describe("团队 slug 用同一套规则，错误文案说清对象", () => {
+	test("assertTeamSlug", () => {
 		expect(assertTeamSlug("alpha")).toBe("alpha");
 		expect(() => assertTeamSlug("a/b")).toThrow(/团队 slug/);
 	});

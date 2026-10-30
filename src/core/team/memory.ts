@@ -11,12 +11,12 @@
  * 谁能写：**这个团队的人能写**。判据是 `identity.md` 里的 `team: <slug>`，
  * 不是身份。理由：团队记忆的价值就在一线的人随手记，设审批等于把它变成汇报。
  *
- * 谁能读：全公司。理由同上 —— 记忆是资产，藏起来只会重复踩坑。
+ * 谁能读：全员。理由同上 —— 记忆是资产，藏起来只会重复踩坑。
  */
 import { join } from "node:path";
 import { entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
 import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
-import { renderSlots, toolSlots } from "../text.ts";
+import { renderSlots, toolSlots } from "../md/text.ts";
 import { assertTeamSlug } from "./doc.ts";
 
 export const TEAM_MEMORY_FILE = "memory.md";
@@ -98,7 +98,7 @@ export function teamMemorySections(source: string): readonly MemorySection[] {
  * 2. `seq > since`，且不是「即将被问的那个人」自己说的（把他的话再发回给他没意义）。
  *
  * 为什么去掉「只看 decision/report」：团队频道里大量结论是普通发言，那些永远不会
- * 被沉淀。什么值得写进记忆是模型的判断，代码判只会判错 —— 那条规则写在公司技能
+ * 被沉淀。什么值得写进记忆是模型的判断，代码判只会判错 —— 那条规则写在全员技能
  * 「记忆整理」里，人和 agent 都能改、都能迭代，改它不用改代码。
  * 这里的函数只负责回答「有哪些还没沉淀」。
  */
@@ -136,7 +136,7 @@ export function settleCandidates(
  * 给模型的沉淀指令。
  *
  * 判断规则（什么该记、什么不该记、什么时候记、记完怎么回话）**不在代码里**，
- * 写在公司技能「记忆整理」里 —— 那是给模型看的判断规则，人和 agent 都要能改。
+ * 写在全员技能「记忆整理」里 —— 那是给模型看的判断规则，人和 agent 都要能改。
  * 这里只做机械的事：把候选消息排成列表、说清记到哪个文件、回哪个频道。
  */
 export function renderSettlePrompt(

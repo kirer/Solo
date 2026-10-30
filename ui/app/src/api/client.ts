@@ -36,7 +36,7 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
 	throw new Error(message);
 }
 
-/** 组织快照（人 + 公司名）。 */
+/** 组织快照（人 + 组织名）。 */
 export const getOrg = (): Promise<Org> => call<Org>("/api/org");
 
 /** 频道列表（按最后活跃倒序）。 */

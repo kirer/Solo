@@ -22,7 +22,7 @@ import {
 	reportsOf,
 	writeIdentity,
 } from "../../src/core/agent/identity.ts";
-import { renderAgentSection } from "../../src/core/agent/runtime.ts";
+import { renderAgentSection } from "../../src/core/agent/sections.ts";
 import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
 import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 
@@ -196,6 +196,15 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 		expect(text).toContain("陆沉"); // 上报链的更上面一层
 		expect(text).toContain("做一个坦克游戏。"); // 团队 README
 		expect(text).toContain("agents/dev"); // 目录段
+	});
+
+	test("没写身份正文：整段消失，代码不补一句「我是谁」", async () => {
+		const text = await renderIn({ "agents/x/identity.md": "---\nname: 无名\n---\n" }, "x");
+		expect(text).toContain("# 你叫无名");
+		// 00-who 只留事实（正文在哪个文件），正文段由 `05-body.md` 的 skip-empty 整段吞掉。
+		expect(text).toContain("identity.md");
+		// 没有任何合成出来的身份文案。
+		expect(text).not.toContain("我可以随时改这里");
 	});
 
 	test("目录说明不谎报文件：说到的文件必须真的会读", async () => {

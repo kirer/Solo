@@ -34,7 +34,7 @@ function empty(): ChannelState {
 }
 
 function channelWith(members: string[]): ChannelState {
-	return ensureChannel(empty(), { id: "all", title: "公司", members, at: 1 });
+	return ensureChannel(empty(), { id: "all", title: "全员", members, at: 1 });
 }
 
 describe("resolveMention：我", () => {

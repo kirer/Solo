@@ -16,7 +16,7 @@
 /**
  * 界面用的会话种类。**只有两种**，由成员表推导（见 `channel/state.ts` 的 `chatKind`）。
  *
- * 以前这里是 `company | leadership | team | dm`，靠 id 前缀反推 —— 于是「公司频道」和
+ * 以前这里靠 id 前缀反推 —— 于是「全员频道」和
  * 「团队频道」在界面上长得不一样，而它们实际上是同一种东西：一个群。
  */
 export type ViewChannelKind = "dm" | "group";
@@ -111,7 +111,7 @@ export type ViewChannelDetail = {
  * 那些字段一个消费者也没有，留着只会让下一个人以为「这里有业务概念」。
  */
 export type ViewOrg = {
-	company: { name: string };
+	workspace: { name: string };
 	/** 全部人，按「离我最近」优先排序（第一项是那个直接向我汇报的人）。 */
 	people: ViewActor[];
 };
@@ -144,11 +144,11 @@ export type AttentionItem = {
 	read: boolean;
 };
 
-/** 一个人的一项技能。`scope` 是它从哪一层读来的（个人层 / 公司层）。 */
+/** 一个人的一项技能。`scope` 是它从哪一层读来的（个人层 / 全员层）。 */
 export type ViewSkill = {
 	name: string;
 	description: string;
-	scope: "personal" | "company";
+	scope: "personal" | "all";
 	overrides: boolean;
 };
 

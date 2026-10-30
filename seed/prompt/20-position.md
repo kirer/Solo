@@ -7,4 +7,4 @@
 - 同团队的人：{{peers}}
 - 你在这些群：{{chats}}
 
-当前全公司有 {{count}} 个 agent。
+当前全员有 {{count}} 个 agent。

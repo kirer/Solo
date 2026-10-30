@@ -28,7 +28,7 @@ import type { ChannelKind } from "./api/types.ts";
 
 export function App(): JSX.Element {
 	const ready = useStore((state) => state.ready);
-	const company = useStore((state) => state.company);
+	const workspaceName = useStore((state) => state.workspaceName);
 	const channels = useStore((state) => state.channels);
 	const detail = useStore((state) => state.detail);
 	const side = useStore((state) => state.side);
@@ -58,19 +58,19 @@ export function App(): JSX.Element {
 			root.style.colorScheme = resolved;
 		};
 		apply();
-		localStorage.setItem("ai-company.theme", theme);
+		localStorage.setItem("solo.theme", theme);
 		media.addEventListener("change", apply);
 		return () => media.removeEventListener("change", apply);
 	}, [theme]);
 
 	useEffect(() => {
 		document.body.dataset["layout"] = layout;
-		localStorage.setItem("ai-company.layout", layout);
+		localStorage.setItem("solo.layout", layout);
 	}, [layout]);
 
 	useEffect(() => {
 		document.body.dataset["side"] = side;
-		localStorage.setItem("ai-company.side", side);
+		localStorage.setItem("solo.side", side);
 	}, [side]);
 
 	/* 键盘只在「没在打字」时接管：Tab 顺序之外不再多抢一个键。 */
@@ -148,7 +148,7 @@ export function App(): JSX.Element {
 						</svg>
 					</button>
 					<h2 className="pane-title" id="pane-title">
-						{channel?.title ?? company}
+						{channel?.title ?? workspaceName}
 					</h2>
 					{sub === "" ? null : (
 						<span className="sheet-sub" id="pane-sub">

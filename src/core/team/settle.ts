@@ -1,7 +1,7 @@
 /**
  * 团队记忆的自动沉淀。
  *
- * 机制极简：团队频道来了新消息，叫团队管理员按公司技能「记忆整理」整理。
+ * 机制极简：团队频道来了新消息，叫团队管理员按全员技能「记忆整理」整理。
  * 写什么由模型决定（规则在技能里），代码只管「叫谁」「游标走到哪」。
  *
  * 单游标：`cursors[团队]` = **已确认**沉淀到第几条 seq。
@@ -14,13 +14,14 @@ import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/store.ts";
 import { appendNote } from "../channel/post.ts";
-import { deliveryPrompt, renderReplyRules } from "../channel/post.ts";
-import { wake } from "../channel/wake.ts";
+import { deliveryPrompt, renderReplyRules } from "../channel/delivery.ts";
+import { wake, type WakeRecord } from "../channel/wake.ts";
 import { renderUnanswered } from "../channel/unanswered.ts";
+import type { FinishTurn } from "../channel/turn.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
-import { oneLine } from "../oneline.ts";
+import { oneLine } from "../md/oneline.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
 
 export type SettleState = {
@@ -56,7 +57,9 @@ type SettleDeps = {
 	 * 团队管理员被叫醒后查不到 wake，回话只能退到「最早的频道」，于是整理结果
 	 * 可能落在私聊里，团队频道看起来像没人整理。
 	 */
-	readonly rememberWake?: (slug: string, wake: { readonly channelId: string; readonly seq: number; readonly from: string; readonly at: number }) => Promise<void>;
+	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/** 这一轮答完把结论补进团队频道（和投递同一个收尾）。 */
+	readonly finishTurn?: FinishTurn;
 };
 
 /** 挑一个「该由谁来写这个团队记忆」的人。优先 README.md 里的 lead。 */
@@ -144,7 +147,7 @@ export async function settleTeam(
 			// 频道 id 明写出来：工具默认在「被叫醒的频道」回话，而沉淀不是某个人 @ 出来的。
 			`你在团队「${team}」的频道（${channel.id}）里整理下面这些还没沉淀的消息。`,
 			renderSettlePrompt(prompt.settle, team, candidates),
-			renderReplyRules({ template: prompt.reply, woken: [to], viewer: to, colleagues: [] }),
+			renderReplyRules({ template: prompt.reply, fragments: prompt, woken: [to], viewer: to, colleagues: [] }),
 		]
 			.filter((part) => part.trim() !== "")
 			.join("\n");
@@ -153,6 +156,7 @@ export async function settleTeam(
 				conversationOf: deps.conversationOf,
 				...(deps.coalesceQueue === undefined ? {} : { coalesceQueue: deps.coalesceQueue }),
 				...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+				...(deps.finishTurn === undefined ? {} : { finishTurn: deps.finishTurn }),
 				noteUnanswered: async (note) => {
 					await appendTeamNote(deps, team, renderUnanswered(note.seq, note.label, note.reason), context);
 				},
@@ -165,8 +169,12 @@ export async function settleTeam(
 				bodyOf: () => body,
 				entry: { kind: "core.settle", data: { team, count: candidates.length } },
 				note: { channelId: channel.id, seq: lastSeq, label },
-				// 沉淀也记 wake：他回话时 `say` 的默认频道就是这里。
-				wakeRecord: { channelId: channel.id, seq: lastSeq, from: OWNER, at: Date.now() },
+				// 沉淀也记 wake：他回话时 `say` 的默认频道就是这里；沉淀没有「插话」形态，
+				// `reply` 和 `task` 是同一条。
+				wakeRecord: (() => {
+					const target = { channelId: channel.id, seq: lastSeq, from: OWNER, at: Date.now() };
+					return { reply: target, task: target };
+				})(),
 			},
 			context,
 		);

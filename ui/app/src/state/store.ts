@@ -32,7 +32,7 @@ export type Side = "open" | "rail";
 export type State = {
 	/** 首屏数据都到齐了才画主界面 —— 半渲染的界面比什么都不画更像坏了。 */
 	ready: boolean;
-	company: string;
+	workspaceName: string;
 	people: Actor[];
 	channels: Channel[];
 	currentId: string | null;
@@ -62,9 +62,9 @@ export type State = {
 	memoryPerson: { slug: string; label: string } | null;
 };
 
-const LAYOUT_KEY = "ai-company.layout";
-const THEME_KEY = "ai-company.theme";
-const SIDE_KEY = "ai-company.side";
+const LAYOUT_KEY = "solo.layout";
+const THEME_KEY = "solo.theme";
+const SIDE_KEY = "solo.side";
 
 function read<K extends string>(key: string, allowed: readonly K[], fallback: K): K {
 	const value = localStorage.getItem(key);
@@ -73,7 +73,7 @@ function read<K extends string>(key: string, allowed: readonly K[], fallback: K)
 
 const initial: State = {
 	ready: false,
-	company: "Solo",
+	workspaceName: "Solo",
 	people: [],
 	channels: [],
 	currentId: null,
@@ -147,7 +147,7 @@ function strip(channel: Channel): ChannelDetail["channel"] {
 
 export async function bootstrap(): Promise<void> {
 	const org = await getOrg();
-	patch({ company: org.company.name, people: org.people });
+	patch({ workspaceName: org.workspace.name, people: org.people });
 	await refreshLists();
 	// 进来就落到「最近有动静的那个频道」——空着中栏等于让人先做一次选择。
 	// 只在宽屏上自动落一个频道：手机上中栏是「第二屏」，一进来就跳进去等于

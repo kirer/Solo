@@ -16,13 +16,53 @@ import type { Conversation, InputEntry, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { watchSettled } from "./unanswered.ts";
 
-/** 「刚被谁在哪个频道叫醒」。工具用它决定「默认在哪儿回话」。 */
-export type WakeRecord = {
+/** 一条消息在某个频道里的位置。 */
+export type WakeTarget = {
 	readonly channelId: string;
 	readonly seq: number;
 	readonly from: string;
 	readonly at: number;
 };
+
+/**
+ * 「刚被谁在哪个频道叫醒」，拆成两层。工具用它决定「默认在哪儿回话」。
+ *
+ * - `reply`：**这一句**该回哪儿。私聊插话时它指向私聊。
+ * - `task`：他**手上那件活**属于哪儿。私聊插话不覆盖它 —— 否则插话结束，
+ *   团队频道的结论就再也回不去了（ADR-099）。
+ *
+ * 没被打断时两者相同。
+ */
+export type WakeRecord = {
+	readonly reply: WakeTarget;
+	readonly task: WakeTarget;
+};
+
+function targetOf(raw: unknown): WakeTarget | undefined {
+	if (raw === null || typeof raw !== "object") return undefined;
+	const value = raw as Record<string, unknown>;
+	const { channelId, seq, from, at } = value;
+	if (typeof channelId !== "string" || typeof seq !== "number" || typeof from !== "string" || typeof at !== "number") {
+		return undefined;
+	}
+	return { channelId, seq, from, at };
+}
+
+/**
+ * 把名册里存着的那份唤醒记录读成两层。
+ *
+ * 兼容旧数据：迁移前写的是平铺的 `{channelId, seq, from, at}`，读的时候当成
+ * 「reply 和 task 都是它」—— 老工作区不需要跑任何迁移脚本。
+ */
+export function parseWake(raw: unknown): WakeRecord | undefined {
+	if (raw === null || typeof raw !== "object") return undefined;
+	const value = raw as Record<string, unknown>;
+	const reply = targetOf(value.reply);
+	const task = targetOf(value.task);
+	if (reply !== undefined && task !== undefined) return { reply, task };
+	const legacy = targetOf(value);
+	return legacy === undefined ? undefined : { reply: legacy, task: legacy };
+}
 
 /** 这一轮一个字都没产出时，往哪儿留痕。 */
 export type WakeNote = {
@@ -41,6 +81,19 @@ export type WakeDeps = {
 	readonly noteUnanswered?: ((note: WakeNote) => Promise<void> | void) | undefined;
 	/** 记「被谁叫醒」。不传就不记（工具会退到「我最早的那个频道」）。 */
 	readonly rememberWake?: ((slug: string, wake: WakeRecord) => Promise<void>) | undefined;
+	/**
+	 * 这一轮正常结算（`done`）时收尾：模型经常把结论写在最后一段正文里、一次 `say`
+	 * 都不调。这里按唤醒记录把它替他说进频道（ADR-099）。
+	 */
+	readonly finishTurn?:
+		| ((info: {
+				readonly slug: string;
+				readonly conversation: Conversation;
+				readonly conversationId: number;
+				readonly answer: unknown;
+				readonly wake: WakeRecord;
+		  }) => Promise<void>)
+		| undefined;
 };
 
 export type WakeInput = {
@@ -115,12 +168,28 @@ export async function wake(
 			context,
 		);
 
-		// 这一轮结算时「一个字都没说」留痕：频道里至少有人能看出「他回答了没」。
+		// 这一轮结算时一次收尾，两条路：
+		// - 一个字都没产出 → 留一行痕，频道里至少能看出「他回答了没」；
+		// - 正常答完 → 把最终正文按唤醒记录替他说出去（模型漏调 `say` 的兜底）。
 		const report = deps.noteUnanswered;
 		const note = input.note;
-		if (report !== undefined && note !== undefined) {
-			watchSettled(submission, async (reason) => {
-				await report({ slug: input.slug, label: note.label, seq: note.seq, reason: reason ?? "unanswered" });
+		const finish = deps.finishTurn;
+		const record = input.wakeRecord;
+		if ((report !== undefined && note !== undefined) || (finish !== undefined && record !== undefined)) {
+			watchSettled(submission, async (settled) => {
+				if (settled.status === "unanswered") {
+					if (report === undefined || note === undefined) return;
+					await report({ slug: input.slug, label: note.label, seq: note.seq, reason: settled.reason ?? "unanswered" });
+					return;
+				}
+				if (finish === undefined || record === undefined) return;
+				await finish({
+					slug: input.slug,
+					conversation,
+					conversationId,
+					answer: settled.answer,
+					wake: record,
+				});
 			});
 		}
 		return { status: "delivered", merged };

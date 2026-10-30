@@ -67,7 +67,7 @@ describe("会话形态（dm: 前缀 + 恰好我和一个人）", () => {
 		expect(chatKind(channel("dm:a-owner", [OWNER, "a"]))).toBe("dm");
 	});
 
-	test("团队频道 / 公司频道两个人也永远是群聊（成员形状不能当判据）", () => {
+	test("团队频道 / 全员频道两个人也永远是群聊（成员形状不能当判据）", () => {
 		// 只有我和团队管理员两个人的团队频道，成员形状和私聊一样 —— 以前被判成私聊，
 		// 投递正文里出现「这是你和我的私聊」，团队协作被说成了悄悄话。
 		expect(chatKind(channel(teamId("x"), [OWNER, "a"]))).toBe("group");

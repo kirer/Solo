@@ -11,7 +11,7 @@
  */
 import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
-import { chainUp, managerOf, readAllIdentities, readIdentity, reportsOf, OWNER_SLUG, type Identity } from "./identity.ts";
+import { chainUp, managerOf, nameOf, readAllIdentities, readIdentity, reportsOf, OWNER_SLUG, type Identity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
 import { loadRules } from "./rules.ts";
@@ -19,11 +19,12 @@ import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
 import { redact } from "./secrets.ts";
 import { createFsx } from "../fsx.ts";
-import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../prompt.ts";
-import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../text.ts";
+import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../md/prompt.ts";
+import { byName } from "../runtime/io.ts";
+import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../md/text.ts";
 
 export type AgentPaths = {
-	/** 工作区根（公司层技能在 `<workspace>/skills/`）。 */
+	/** 工作区根（全员层技能在 `<workspace>/skills/`）。 */
 	readonly workspace: string;
 	/** `workspace/agents`。 */
 	readonly agents: string;
@@ -57,7 +58,7 @@ export type CapabilityLine = {
  * YAML 头里的字段单独摘出来写一行「状态/团队管理员」，因为模型扫一眼就知道该不该
  * 关心这件事，不用自己从正文里推。正文原样给全 —— 团队说明就是它的事实来源。
  */
-export async function readTeamBrief(teamsRoot: string, team: string): Promise<string | undefined> {
+async function readTeamBrief(teamsRoot: string, team: string): Promise<string | undefined> {
 	const doc = await readTeam(teamsRoot, team);
 	if (doc === undefined) return undefined;
 	const head = [`状态：${doc.status}`, `团队管理员：${doc.lead ?? "（还没人负责）"}`, `目录：teams/${doc.slug}/`];
@@ -72,13 +73,13 @@ export async function readTeamBrief(teamsRoot: string, team: string): Promise<st
  */
 export function registeredTools(registry: Registry): readonly CapabilityLine[] {
 	const snapshot = registry.snapshot();
-	const byName = new Map<string, CapabilityLine>();
+	const lines = new Map<string, CapabilityLine>();
 	for (const { tool } of snapshot.tools()) {
 		const name = (tool as { readonly name?: string }).name;
 		if (name === undefined) continue;
-		byName.set(name, { name, summary: summaryOf(tool) });
+		lines.set(name, { name, summary: summaryOf(tool) });
 	}
-	return [...byName.values()].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
+	return [...lines.values()].sort(byName);
 }
 
 function summaryOf(tool: unknown): string {
@@ -103,16 +104,10 @@ export function sectionKeyOf(slug: string): string {
 }
 
 const identitylessPrompt = (slug: string): string =>
-	`# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
+	`# 你还没有身份文件\n\n目录：\`agents/${slug}/\`。\n`;
 
 /** 空清单怎么写。写「（目前没有）」而不是留空：空串会让一句话只剩半截。 */
 const NOTHING = "（目前没有）";
-
-/** 名册里的显示名。我是「我」，其余用 `name`，没有就用 slug。 */
-function labelOf(all: readonly Identity[], slug: string): string {
-	if (slug === OWNER_SLUG) return "我";
-	return all.find((item) => item.slug === slug)?.name ?? slug;
-}
 
 /** `名字（\`slug\`）`—— 名字给人看，slug 给工具用，两个都要。 */
 function withSlug(name: string, slug: string): string {
@@ -123,15 +118,15 @@ function withSlug(name: string, slug: string): string {
 function skillLine(skill: {
 	readonly name: string;
 	readonly description: string;
-	readonly scope?: "company" | "personal";
+	readonly scope?: "all" | "personal";
 	readonly overrides?: boolean;
 }): string {
 	const source =
 		skill.scope === "personal"
 			? skill.overrides === true
-				? "（你自己改过的版本，覆盖了公司的同名技能）"
+				? "（你自己改过的版本，覆盖了全员的同名技能）"
 				: "（你自己写的）"
-			: "（公司通用）";
+			: "（全员通用）";
 	return `- \`${skill.name}\` — ${skill.description}${source}`;
 }
 
@@ -171,7 +166,7 @@ async function slotsFor(
 		"self.body": self.body,
 	};
 
-	// 规矩是公司层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
+	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.workspace);
 
 	const needsRoster = wants("manager", "reports", "chain", "count", "team", "peers", "team.members");
@@ -186,7 +181,7 @@ async function slotsFor(
 				? "没有人（要拍板的事自己定，或者交给我）"
 				: manager === OWNER_SLUG
 					? "我（用户本人）"
-					: withSlug(labelOf(all, manager), manager);
+					: withSlug(nameOf(all, manager), manager);
 	}
 	if (need.has("reports")) {
 		const reports = reportsOf(all, self.slug);
@@ -195,7 +190,7 @@ async function slotsFor(
 	}
 	if (need.has("chain")) {
 		const chain = chainUp(all, self.slug);
-		slots["chain"] = chain.length > 1 ? chain.map((item) => labelOf(all, item)).join(" → ") : "只有你和我";
+		slots["chain"] = chain.length > 1 ? chain.map((item) => nameOf(all, item)).join(" → ") : "只有你和我";
 	}
 	if (need.has("team")) slots["team"] = self.team === undefined ? "没在任何团队里" : `\`${self.team}\``;
 	if (need.has("peers")) {
@@ -324,7 +319,7 @@ async function promptSkills(paths: AgentPaths, slug: string) {
  *
  * 段名来自 `prompt/*.md` 的文件名，不再是一份代码里的常量表：加一段就是加个文件。
  */
-export async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: string) {
+async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: string) {
 	const self = await readIdentity(paths.agents, slug);
 	const templates = await systemTemplates(paths.workspace);
 	const segments: { readonly segment: string; readonly text: string }[] = [];

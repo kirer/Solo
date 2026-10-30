@@ -4,11 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/store.ts";
 import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
-import { sectionKeyOf } from "../../src/core/agent/runtime.ts";
-import { parseDoc } from "../../src/core/doc.ts";
+import { sectionKeyOf } from "../../src/core/agent/sections.ts";
+import { parseDoc } from "../../src/core/md/doc.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
-import { seedOwnerAssistant, seedPersonalSkills, seedPromptTemplates, syncCompanySkills } from "../../src/core/shell/seed.ts";
-import { listSkills, readSkill, writeCompanySkill } from "../../src/core/agent/skills.ts";
+import { seedOwnerAssistant, seedPersonalSkills, seedPromptTemplates, syncAllSkills } from "../../src/core/shell/seed.ts";
+import { listSkills, readSkill, writeAllSkill } from "../../src/core/agent/skills.ts";
 
 const dirs: string[] = [];
 
@@ -45,9 +45,9 @@ describe("装配", () => {
 			if (conversation === undefined) return;
 			const agent = await conversation.agent(BACKGROUND_CONTEXT);
 			// 坑 1：扩展按名字解析，忘了 install 身份扩展 → 会话里一个 section 都没有。
-			// 分段后每人 8 段（PROMPT_SEGMENTS）：底座按段做最小 patch，缓存才留得住。
+			// 分段后每人 9 段（PROMPT_SEGMENTS）：底座按段做最小 patch，缓存才留得住。
 			expect(agent.sections.map((section) => section.key)).toEqual(
-				["who", "rules", "position", "team", "tools", "memory", "skills", "directory"].map(
+				["who", "body", "rules", "position", "team", "tools", "memory", "skills", "directory"].map(
 					(segment) => `${sectionKeyOf(slug)}-${segment}`,
 				),
 			);
@@ -84,10 +84,14 @@ describe("装配", () => {
 			);
 
 			const after = await conversation.agent(BACKGROUND_CONTEXT);
-			const renderedAfter = await after.sections[0]?.render(
-				{ conversationId: conversation.id, agent: after, shown: {}, read: opened.harness },
-				BACKGROUND_CONTEXT,
-			);
+			// 正文现在单独一段（`05-body.md`）：渲染整组，才能看到盘上那几句。
+			const renderedAfter = (
+				await Promise.all(
+					after.sections.map((section) =>
+						section.render({ conversationId: conversation.id, agent: after, shown: {}, read: opened.harness }, BACKGROUND_CONTEXT),
+					),
+				)
+			).join("\n");
 			expect(renderedAfter).toContain("你现在只关心一件事：钱。");
 			expect(renderedAfter).not.toContain("我唯一直接对话的人");
 		} finally {
@@ -152,10 +156,10 @@ describe("助理身份：组织是文件，不是代码里的字符串", () => {
 });
 
 describe("播种技能", () => {
-	test("公司层技能来自文件，不是代码里的字符串", async () => {
+	test("全员层技能来自文件，不是代码里的字符串", async () => {
 		const { agents } = await workspace();
-		const report = await syncCompanySkills(agents);
-		// `写技能` / `找现成技能` 是所有人都该会的手艺，落在公司层。
+		const report = await syncAllSkills(agents);
+		// `写技能` / `找现成技能` 是所有人都该会的手艺，落在全员层。
 		expect(report.copied).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
 		const skills = await listSkills({ workspace: join(agents, ".."), agents }, "owner");
 		expect(skills.map((skill) => skill.name)).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
@@ -163,17 +167,17 @@ describe("播种技能", () => {
 		expect(body?.body).toContain("## 什么时候该写");
 	});
 
-	test("立项与招人是助理的个人技能，不进公司层", async () => {
+	test("立项与招人是助理的个人技能，不进全员层", async () => {
 		const { agents } = await workspace();
 		// V3 把助理的个人技能挪到 seed/agents/assistant/skills/：一个 agent 的种子内容跟它的目录名走。
 		const copied = await seedPersonalSkills(agents, "助理", "agents/assistant/skills");
 		expect(copied).toEqual(expect.arrayContaining(["立项", "招人"]));
 
-		// 公司层不该有它们：招人、立项是助理的职权，别人本来就不该招人。
-		const synced = await syncCompanySkills(agents);
-		const company = [...synced.copied, ...synced.updated];
-		expect(company).not.toContain("立项");
-		expect(company).not.toContain("招人");
+		// 全员层不该有它们：招人、立项是助理的职权，别人本来就不该招人。
+		const synced = await syncAllSkills(agents);
+		const syncedNames = [...synced.copied, ...synced.updated];
+		expect(syncedNames).not.toContain("立项");
+		expect(syncedNames).not.toContain("招人");
 
 		const body = await readSkill({ workspace: join(agents, ".."), agents }, "助理", "立项");
 		expect(body?.body).toContain("## 什么时候立");
@@ -182,10 +186,10 @@ describe("播种技能", () => {
 
 	test("第二次播种不覆盖用户改过的内容", async () => {
 		const { agents } = await workspace();
-		await syncCompanySkills(agents);
+		await syncAllSkills(agents);
 		// 用户改了自己的技能。
-		await writeCompanySkill(join(agents, ".."), { name: "写技能", description: "改过", body: "# 我自己的版本" });
-		await syncCompanySkills(agents);
+		await writeAllSkill(join(agents, ".."), { name: "写技能", description: "改过", body: "# 我自己的版本" });
+		await syncAllSkills(agents);
 		const body = await readSkill({ workspace: join(agents, ".."), agents }, "owner", "写技能");
 		expect(body?.body).toContain("我自己的版本");
 	});

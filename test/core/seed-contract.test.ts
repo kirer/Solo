@@ -8,7 +8,7 @@
  * 1. `rules.md` 短、硬、不带工具名（≤ 15 条，一行一条）；
  * 2. **一条事实一个家**：同一句意思只能命中一个文件；
  * 3. `seed/prompt/` 的插槽全部在契约表里——未知插槽渲染成「（未设置）」就是半句话；
- * 4. 出厂内容的体积与位置：项目技能不进公司层、助理身份在文件里、不写死人名。
+ * 4. 出厂内容的体积与位置：项目技能不进全员层、助理身份在文件里、不写死人名。
  *
  * **这是 V3 的验收门，不是 V2 的回归测试。** 在搬完之前它会红，红的就是还没做完的活；
  * 不要为了让这个文件变绿去放宽断言——要改的是 seed，不是这里。
@@ -17,7 +17,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createCoreTools } from "../../src/core/channel/tools.ts";
+import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 
 const SEED = fileURLToPath(new URL("../../seed/", import.meta.url));
 
@@ -98,7 +98,7 @@ const TOOL_NAMES = [
 /** 这些词在中文散文里只可能是工具名，不加反引号也算违规。 */
 const UNAMBIGUOUS = ["read_history", "write_team", "hire", "remember", "skills", "teams"] as const;
 
-/** 工具参数：`step: true` / `scope=company`。参数细节归工具自己的 description。 */
+/** 工具参数：`step: true` / `scope=all`。参数细节归工具自己的 description。 */
 const TOOL_PARAM = /`[^`]*\b(step|scope|action|mention)\s*[:=]/;
 
 /**
@@ -152,9 +152,10 @@ const ONE_HOME: readonly { readonly what: string; readonly re: RegExp }[] = [
 
 // ── prompt 插槽 ──────────────────────────────────────────────────────────
 
-/** 契约 §3 的十一个模板：文件名前缀定序，一个文件 = 一段 = 一个 cache section。 */
+/** 契约 §3 的模板：文件名前缀定序，一个文件 = 一段 = 一个 cache section。 */
 const PROMPT_FILES = [
 	"00-who.md",
+	"05-body.md",
 	"10-rules.md",
 	"20-position.md",
 	"30-team.md",
@@ -163,6 +164,14 @@ const PROMPT_FILES = [
 	"60-skills.md",
 	"70-directory.md",
 	"80-reply.md",
+	"81-alone.md",
+	"82-shared.md",
+	"83-colleagues.md",
+	"84-dm.md",
+	"85-multi.md",
+	"86-digest.md",
+	"87-merged.md",
+	"88-task.md",
 	"90-interrupted.md",
 	"95-settle.md",
 ] as const;
@@ -250,7 +259,7 @@ describe("一条事实一个家", () => {
 });
 
 describe("seed/prompt：段落与插槽", () => {
-	it("十一个模板都在（契约 §3）", async () => {
+	it("十九个模板都在（契约 §3）", async () => {
 		const files = await promptFiles();
 		expect(files).toEqual(expect.arrayContaining([...PROMPT_FILES]));
 	});
@@ -317,7 +326,7 @@ describe("seed/prompt：段落与插槽", () => {
 });
 
 describe("出厂内容：体积与位置", () => {
-	it("项目技能不进公司层（前端视觉设计）", async () => {
+	it("项目技能不进全员层（前端视觉设计）", async () => {
 		expect(await exists("skills/前端视觉设计"), "它该按需装，不该让全员默认背一个前端技能").toBe(false);
 		const agents = await walk("agents");
 		const personal = agents.filter((rel) => rel.includes("前端视觉设计"));

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { monologueOpener } from "../../src/core/channel/tools.ts";
+import { monologueOpener } from "../../src/core/channel/tools/index.ts";
 
 /**
  * 「这是内心独白，不是发言」的判据。

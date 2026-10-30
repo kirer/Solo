@@ -2,7 +2,7 @@
  * DTO 是**唯一权威**这件事，要能被机械地盯住。
  *
  * 以前 `ui/app/src/api/types.ts` 是手抄镜像：抄少了编译会错，但抄**错**（`scope: "own"`、
- * `memory.entries` 写成数组）不会错 —— 界面于是显示"undefined 段"、技能标签永远写"公司"。
+ * `memory.entries` 写成数组）不会错 —— 界面于是显示"undefined 段"、技能标签永远写"全员"。
  * 现在界面类型从 `view/dto.ts` 直接再导出，这个文件检查三件事：
  *
  * 1. DTO 自己零 import —— 它要是能 import 领域对象，就迟早长成一份投影；
@@ -11,7 +11,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { channelList, messageView, orgView } from "../../src/core/app/read.ts";
+import { channelList, messageView, orgView } from "../../src/core/app/project.ts";
 import type { ViewChannel, ViewMessage } from "../../src/core/view/dto.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/store.ts";
@@ -162,6 +162,6 @@ describe("投影的输出与 DTO 字段一一对应", () => {
 
 	it("Org", () => {
 		const org = orgView([{ slug: "lin", label: "林越", title: "前端", body: "# 林越" } as never], directory);
-		expect(keysOf(org)).toEqual(["company", "people"].sort());
+		expect(keysOf(org)).toEqual(["people", "workspace"].sort());
 	});
 });

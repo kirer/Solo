@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { createCoreTools, isPass } from "../../src/core/channel/tools.ts";
+import { createCoreTools, isPass } from "../../src/core/channel/tools/index.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -27,17 +27,15 @@ import {
 	type ChannelState,
 	type Message,
 } from "../../src/core/channel/store.ts";
-import { renderDelivery, renderReplyRules } from "../../src/core/channel/post.ts";
-import { INTERRUPTED_TEMPLATE, REPLY_TEMPLATE } from "./seed-prompt.ts";
+import { renderDelivery, renderReplyRules } from "../../src/core/channel/delivery.ts";
+import { REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
 
 /**
- * 投递正文必须带真模板：`renderDelivery` 刻意**不给** `replyTemplate` 默认值（默认值等于
- * 允许「回话段为空」静默通过）。这里补 seed 里那一份，断言的是「真的贴进去了」。
+ * 投递正文必须带真模板：`renderDelivery` 刻意**不给**默认模板（默认值等于允许「回话段为空」
+ * 静默通过）。这里补 seed 里那一份，断言的是「真的贴进去了」。
  */
-function renderDeliveryWithTemplates(
-	options: Omit<Parameters<typeof renderDelivery>[0], "replyTemplate" | "interruptedTemplate">,
-): string {
-	return renderDelivery({ ...options, replyTemplate: REPLY_TEMPLATE, interruptedTemplate: INTERRUPTED_TEMPLATE });
+function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDelivery>[0], "prompt">): string {
+	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT });
 }
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 
@@ -217,11 +215,11 @@ describe("投递正文带频道 id", () => {
 	it("第一行写清频道 id，模型才知道精确回哪儿", () => {
 		const state = ensureChannel(
 			{ channels: {}, messages: {}, nextSeq: {}, readMarks: {} },
-			{ id: "all", title: "公司大群", members: [OWNER, ME], at: 1 },
+			{ id: "all", title: "全员大群", members: [OWNER, ME], at: 1 },
 		);
 		const { message } = appendMessage(state, "all", { from: OWNER, text: "在吗", at: 2 });
 		const body = renderDeliveryWithTemplates({ channel: state.channels.all!, message, viewer: ME });
-		expect(body.split("\n")[0]).toBe("【公司大群】#1（频道 all）");
+		expect(body.split("\n")[0]).toBe("【全员大群】#1（频道 all）");
 	});
 
 	it("私聊额外说一句「只回这里，别去群里」", () => {
@@ -354,7 +352,7 @@ describe("每轮附言（怎么回话）", () => {
 	});
 
 	it("被叫醒的频道只有我+他两个人（私聊形态）时，say 不填频道也要落回那里", async () => {
-		// live 第一轮就是这个形状：公司频道只有 owner + 助理，按 chatKind 是 dm。
+		// live 第一轮就是这个形状：全员频道只有 owner + 助理，按 chatKind 是 dm。
 		// 兜底分支（fallbackChannelId 只找「群」）在这个形状下会错过它，所以必须靠 wake 记录。
 		const { say, snapshot } = await setup({ solo: true, wake: { channelId: PROJ, seq: 1 } });
 		await say({ text: "在，听你说" });
@@ -378,26 +376,65 @@ describe("每轮附言（怎么回话）", () => {
 	});
 
 	it("只有自己时：必须回，不提 PASS", () => {
-		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟" });
+		const rules = renderReplyRules({
+			template: REPLY_TEMPLATE,
+			fragments: SEED_DELIVERY_PROMPT,
+			woken: ["沈舟"],
+			viewer: "沈舟",
+		});
 		expect(rules).toContain("必须回");
 		expect(rules).not.toContain("[PASS]");
 	});
 
 	it("还有别人时：允许 PASS，并且点名是谁", () => {
-		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟", "陆衡"], viewer: "沈舟" });
+		const rules = renderReplyRules({
+			template: REPLY_TEMPLATE,
+			fragments: SEED_DELIVERY_PROMPT,
+			woken: ["沈舟", "陆衡"],
+			viewer: "沈舟",
+		});
 		expect(rules).toContain("[PASS]");
 		expect(rules).toContain("陆衡");
 		expect(rules).not.toContain("必须回");
 	});
 
 	it("群里有成员时：告诉他们「成员的事在群里说，@ 他」", () => {
-		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟", colleagues: ["陆衡"] });
-		expect(rules).toContain("成员的事就在这个频道说");
-		expect(rules).toContain("陆衡");
+		const withColleague = renderReplyRules({
+			template: REPLY_TEMPLATE,
+			fragments: SEED_DELIVERY_PROMPT,
+			woken: ["沈舟"],
+			viewer: "沈舟",
+			colleagues: ["陆衡"],
+		});
+		expect(withColleague).toContain("成员的事就在这个频道说");
+		expect(withColleague).toContain("陆衡");
 		// 私聊里没有第三方，不该提「去找成员」
-		expect(renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟", colleagues: [] })).not.toContain(
-			"成员的事就在这个频道说",
-		);
+		const without = renderReplyRules({
+			template: REPLY_TEMPLATE,
+			fragments: SEED_DELIVERY_PROMPT,
+			woken: ["沈舟"],
+			viewer: "沈舟",
+			colleagues: [],
+		});
+		expect(without).not.toContain("成员的事就在这个频道说");
+	});
+
+	it("条件句来自 prompt/ 片段：换一份片段，输出跟着变", () => {
+		const rules = renderReplyRules({
+			template: "{{reply.alone}}",
+			fragments: { ...SEED_DELIVERY_PROMPT, alone: "（换了一份说法。）" },
+			woken: ["沈舟"],
+			viewer: "沈舟",
+		});
+		expect(rules).toBe("（换了一份说法。）");
+		// 片段缺失时退回一句事实，不产生「（未设置）」半截句。
+		const missing = renderReplyRules({
+			template: "{{reply.alone}}",
+			fragments: { ...SEED_DELIVERY_PROMPT, alone: "" },
+			woken: ["沈舟"],
+			viewer: "沈舟",
+		});
+		expect(missing).toBe("（这一轮只有你被叫醒。）");
 	});
 
 	it("投递正文里带上了这两句（不是只在系统提示里）", async () => {
@@ -417,8 +454,8 @@ describe("每轮附言（怎么回话）", () => {
 describe("过程话可以连发（「一轮一句结论」已降级为 rules.md 约束，ADR-090）", () => {
 	it("过程话（step）可以连发，不影响后面那句结论", async () => {
 		const { say, snapshot } = await setup();
-		await say({ text: "我先看下代码", step: true });
-		await say({ text: "找到原因了，正在改", step: true });
+		await say({ text: "我先看下代码" });
+		await say({ text: "找到原因了，正在改" });
 		const reply = await say({ text: "改完了，根因是字符串被反复转义" });
 		const state = await snapshot();
 		expect(reply).toContain("已发到");
@@ -431,7 +468,7 @@ describe("过程话可以连发（「一轮一句结论」已降级为 rules.md 
 	it("说了结论之后再发过程话，还是允许的", async () => {
 		const { say } = await setup();
 		await say({ text: "结论：这个不需要改" });
-		expect(await say({ text: "顺带说一下，我把它记进文档了", step: true })).toContain("已发到");
+		expect(await say({ text: "顺带说一下，我把它记进文档了" })).toContain("已发到");
 	});
 
 });

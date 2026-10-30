@@ -37,18 +37,27 @@ export const SAMPLE_SLOTS = {
 	tools: "- `say` — 在当前频道说一句\n- `chats` — 看有哪些频道\n- `file` — 读写文件\n- `run` — 跑命令",
 
 	memory: "- 示例：第一次上手，先看规矩",
-	skills: "- `工作规矩` — 什么时候用：不确定怎么说话时（公司通用）",
+	skills: "- `工作规矩` — 什么时候用：不确定怎么说话时（全员通用）",
 
 	pending: "2",
 	candidates: "- #3 [decision] 示例上级：定了，验收标准是能跑通。\n- #4 [chat] 示例同僚：收到。",
 
 	"tool:say": "say",
+	"tool:chats": "chats",
 	"tool:skills": "skills",
 	"tool:remember": "remember",
 	"tool:read_history": "read_history",
 
 	"reply.alone": "（这一轮只有你被叫醒：必须回，回的就是结果。）",
 	"reply.colleagues": "（成员的事就在这个频道说：要问示例同僚就 @ 他。）",
+
+	// delivery 片段里的条件事实（81–87）。
+	others: "示例同僚",
+	colleagues: "示例同僚",
+	total: "2",
+	rows: "- 示例项目群：2 条 — 示例内容",
+	merged: "2",
+	task: "示例团队频道",
 } as const;
 
 export type SampleSlotName = keyof typeof SAMPLE_SLOTS;

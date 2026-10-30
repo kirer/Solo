@@ -239,7 +239,7 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 					{person.skills.map((skill) => (
 						<div key={skill.name} className="detail-skill">
 							<span className="detail-skill-name">{skill.name}</span>
-							<span className="detail-badge">{skill.scope === "personal" ? "自己的" : "公司"}</span>
+							<span className="detail-badge">{skill.scope === "personal" ? "自己的" : "全员"}</span>
 							<span className="detail-skill-desc">{skill.description}</span>
 						</div>
 					))}

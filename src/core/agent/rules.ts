@@ -30,6 +30,8 @@ export async function loadRules(workspaceRoot: string): Promise<string | undefin
  *
  * 纯函数、无时间戳、无随机量：同一份文件必须渲染出逐字节相同的字符串，否则每轮
  * system 段都变，prefix cache 全废（ADR-005）。
+ *
+ * @internal 仅测试（生产走 `agentSections` 读 `10-rules.md`）。
  */
 export function renderRulesSection(text: string | undefined): string | undefined {
 	if (text === undefined || text.trim() === "") return undefined;

@@ -14,7 +14,7 @@
  * 用法：`npm run prompt:check`，加 `--print` 顺便把渲染结果打出来。
  */
 import { createFsx } from "../src/core/fsx.ts";
-import { loadTemplates, renderPrompt, PROMPT_DIR } from "../src/core/prompt.ts";
+import { loadTemplates, renderPrompt, PROMPT_DIR } from "../src/core/md/prompt.ts";
 import { SAMPLE_SLOTS } from "./prompt-fixture.ts";
 
 /** V2 与 V3 用过的工具名。模板里出现它们 = 文案绑死了实现。 */
