@@ -2,7 +2,7 @@
  * 一个 agent 的身份 = `agents/<slug>/identity.md` 这一份文件。
  *
  * 没有数据库、没有枚举、没有 schema 校验。文件里的 YAML 头只提供**结构化的一点点**
- * （名字、岗位标签、上级），正文才是身份。系统不解析正文，只把它放进提示词。
+ * （名字、身份标签、上级），正文才是身份。系统不解析正文，只把它放进提示词。
  *
  * 为什么上级写在文件头而不是数据库：`docs/AGENT.md` §6 把「公共事实」定义为
  * 组织架构，而组织架构的唯一权威来源就是这些文件的 `manager` 字段 —— 扫一遍
@@ -16,7 +16,7 @@ import { readTextOrUndefined } from "../runtime/io.ts";
 /** `identity.md` 的 YAML 头。全部可选 —— 缺什么就渲染成「未设置」。 */
 export type IdentityHeader = {
 	readonly name?: string;
-	/** 岗位标签，纯展示用。不决定能力，不决定层级。 */
+	/** 身份标签，纯展示用。不决定能力，不决定层级。 */
 	readonly title?: string;
 	/** 上级的 slug。我本人用 `owner`。 */
 	readonly manager?: string;

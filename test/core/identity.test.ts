@@ -4,7 +4,7 @@
  * 这里只验证三件事，它们是整套设计的承重墙：
  * 1. `identity.md` 的 YAML 头 + 正文被正确拆开；
  * 2. 组织架构完全由 `manager` 字段推导（没有枚举、没有数据库）；
- * 3. 渲染出的提示词**确定**（同样输入逐字节相同）且**不含任何岗位文案常量**。
+ * 3. 渲染出的提示词**确定**（同样输入逐字节相同）且**不含任何身份文案常量**。
  */
 import { describe, expect, test } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";

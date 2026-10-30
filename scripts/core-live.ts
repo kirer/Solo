@@ -445,7 +445,7 @@ async function main(): Promise<void> {
 	}
 	const companyAfterHire = (await shell.channels()).messages["all"] ?? [];
 	const hireReply = companyAfterHire.filter((message) => message.seq > hireAsked.seq && message.from === slug).at(-1);
-	// 「像真人的名字」：长度 2–4、不含岗位词、不含英文字母。判断放宽一点，只拦明显的违规。
+	// 「像真人的名字」：长度 2–4、不含身份词、不含英文字母。判断放宽一点，只拦明显的违规。
 	const JOB_WORDS = ["工程师", "负责人", "经理", "总监", "专员", "助理", "主管", "前端", "后端", "设计", "测试"];
 	const looksLikeName =
 		hired !== undefined &&
@@ -523,7 +523,7 @@ async function main(): Promise<void> {
 			team: chainTeam,
 			body:
 				"你是「上报链团队」的团队管理员。团队成员向你汇报，你向助理汇报。\n" +
-				"团队内的事你能定；招人、改别人身份、花钱、跨团队的事超出你的职权，先问助理，不要直接找老板。",
+				"团队内的事你能定；招人、改别人身份、花钱、跨团队的事超出你的职权，先问助理，不要直接找我。",
 		});
 		const member = await createAgent({
 			root: agentsRoot,
@@ -533,7 +533,7 @@ async function main(): Promise<void> {
 			team: chainTeam,
 			body:
 				"你是「上报链团队」的成员，向团队管理员汇报。\n" +
-				"你自己职责内的事自己定；超出职责、要花钱、要改别人的事，先问团队管理员，绝不跳级找老板。",
+				"你自己职责内的事自己定；超出职责、要花钱、要改别人的事，先问团队管理员，绝不跳级找我。",
 		});
 		await writeFile(
 			join(teamsRoot, chainTeam, "README.md"),
@@ -565,7 +565,7 @@ async function main(): Promise<void> {
 		});
 
 		// 9.2 跑一次真实的上报：只有最低层收到指令，剩下两跳靠自己往上走。
-		//     花老板的钱是三层都拍不了的典型事 —— 成员不能订、管理员不能批、助理得问我。
+		//     花我的钱是三层都拍不了的典型事 —— 成员不能订、管理员不能批、助理得问我。
 		const chainBaseline = await seqBaseline(shell);
 		const chainAsked = await shell.ownerSay({
 			channelId: "all",

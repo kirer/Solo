@@ -16,7 +16,7 @@
  */
 export const SAMPLE_SLOTS = {
 	"self.name": "示例",
-	"self.title": "示例岗位",
+	"self.title": "示例身份",
 	"self.slug": "demo",
 	"self.body": "你负责把示例这件事做完。不做示例之外的事。",
 

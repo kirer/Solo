@@ -1,8 +1,8 @@
 /**
  * 全部工具：**只有一套，人人都有。**
  *
- * 这里没有「管理层工具」「员工工具」「团队管理员工具」的分层。按岗位发工具包来实现
- * 「员工不能越级」，代价是：调一个岗位就要改代码重新部署，而「谁能做什么」
+ * 这里没有「管理层工具」「成员工具」「团队管理员工具」的分层。按身份发工具包来实现
+ * 「成员不能越级」，代价是：调一个身份就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
  * 七个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
@@ -93,7 +93,7 @@ export type CoreToolDeps = {
 	 * 按团队文件重建它的频道成员（幂等）。
 	 *
 	 * `write_team` 改了 `lead` 之后必须调一次：团队频道里的人是文档的投影，
-	 * 不刷新的话，刚任命的团队管理员在团队频道里不存在，员工 @ 不到他。
+	 * 不刷新的话，刚任命的团队管理员在团队频道里不存在，成员 @ 不到他。
 	 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
 };
@@ -551,9 +551,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 		parameters: Type.Object({
 			name: Type.String({
 				description:
-					"他的姓名，像真人一样：姓 + 名，两到三个字（例如 林越、沈舟、顾南雁）。不要用岗位当名字（「技术负责人」不是名字），也不要英文名或代号——公司里的人有名字，岗位写在 title 里。",
+					"他的姓名，像真人一样：姓 + 名，两到三个字（例如 林越、沈舟、顾南雁）。不要用身份当名字（「技术负责人」不是名字），也不要英文名或代号——公司里的人有名字，身份写在 title 里。",
 			}),
-			title: Type.Optional(Type.String({ description: "岗位标签，纯展示用" })),
+			title: Type.Optional(Type.String({ description: "身份标签，纯展示用" })),
 			manager: Type.Optional(Type.String({ description: "上级的 slug，必须是名册里已有的人；不确定就不传，缺省是你自己" })),
 			team: Type.Optional(Type.String({ description: "所在团队 slug" })),
 			body: Type.Optional(

@@ -10,7 +10,7 @@
 
 「一人公司」：我 + 一个 AI 团队的多人 agent 运行时。
 
-**组织不是代码里的岗位枚举，而是磁盘上的一堆文件夹。**
+**组织不是代码里的身份枚举，而是磁盘上的一堆文件夹。**
 
 ```
 workspace/
@@ -139,7 +139,7 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
 | 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
-| 术语改名（项目→团队、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表见 ADR-080（我 / 助理 / 团队 / 成员 / 团队管理员） |
+| 术语改名（项目→团队、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表见 ADR-080、ADR-093（我 / 助理 / 团队 / 团队管理员 / 成员） |
 | 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md`（ADR-081） |
 | 撞上 pi-durable 做不到的事、或为它写了绕路代码 | `docs/CONCESSIONS.md` 追加一行（只追加；处理完写「已处理 + 日期」） |
 | 本文件的表 | `AGENTS.md` |

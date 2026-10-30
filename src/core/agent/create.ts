@@ -1,7 +1,7 @@
 /**
  * 组织：一个目录扫出来的东西，加上「新建一个 agent」这一个写动作。
  *
- * 这里没有 `createCompany`、没有 7 个岗位枚举、没有 `bootstrapCompany`。公司不是被
+ * 这里没有 `createCompany`、没有 7 个身份枚举、没有 `bootstrapCompany`。公司不是被
  * 创建出来的，是从文件夹里读出来的：`agents/<slug>/identity.md` 有几份，公司就有几个人。
  *
  * 唯一需要写文件的地方是「新建 agent」——所以它只有一处，且写的是同一个格式。

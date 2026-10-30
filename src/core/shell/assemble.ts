@@ -291,7 +291,7 @@ export async function assembleCore(
 	 * 因为沉淀逻辑靠这个前缀认出「这是团队频道」。
 	 *
 	 * 成员不只是「进来的人」：团队 `README.md` 里写了谁负责（`lead`），那个人就必须在
-	 * 频道里 —— 否则团队里出了问题，员工连派活的人都 @ 不到。我也始终在里面，
+	 * 频道里 —— 否则团队里出了问题，成员连派活的人都 @ 不到。我也始终在里面，
 	 * 因为拍板链的最后一环是他。
 	 */
 	async function joinTeamChannel(slug: string, ctx: Context): Promise<void> {
@@ -335,7 +335,7 @@ export async function assembleCore(
 			]),
 		);
 		// 团队频道里**任何人说话都叫醒团队管理员**。团队频道只为这一个团队而存在，
-		// 团队管理员本来就要看见全部进展；不这样设，员工说「做完了」而没 @ 人，团队管理员
+		// 团队管理员本来就要看见全部进展；不这样设，成员说「做完了」而没 @ 人，团队管理员
 		// 就永远收不到 —— 实测里 agent 因此用 `run sleep 120` 轮询等进度，白烧一轮。
 		const wakeOnAll = lead === undefined || lead === "" ? [] : [lead];
 		await harness.commit(async (tx) => {

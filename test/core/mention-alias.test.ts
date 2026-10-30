@@ -59,7 +59,7 @@ describe("resolveMention：成员", () => {
 		expect(resolveMention("顾南雁", roster)).toBe("顾南雁");
 	});
 
-	test("岗位名 / title / 拼音 都不认：V3 只认 slug 和显示名", () => {
+	test("身份名 / title / 拼音 都不认：V3 只认 slug 和显示名", () => {
 		for (const raw of ["ceo", "CEO", "ＣＥＯ", "平台负责人", "平台功能开发", "xiangmu", "修"]) {
 			expect(resolveMention(raw, roster), raw).toBeUndefined();
 		}
@@ -78,7 +78,7 @@ describe("resolveMention：成员", () => {
 });
 
 describe("parseMentions：垃圾 token 不再进 mentions", () => {
-	test("@我 → owner；@CEO 这种岗位名不认，直接丢弃", () => {
+	test("@我 → owner；@CEO 这种身份名不认，直接丢弃", () => {
 		expect(parseMentions("@我 看一下 @CEO 的活", roster)).toEqual([OWNER]);
 	});
 

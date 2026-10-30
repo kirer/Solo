@@ -308,7 +308,7 @@ describe("会话只有两种形态与团队频道", () => {
 			});
 			const state = await shell.channels();
 			const channel = state.channels[teamId("坦克大战")];
-			// 团队管理员不在频道里 → 员工派活 @ 不到他 → 出了问题没人能拍板。
+			// 团队管理员不在频道里 → 成员派活 @ 不到他 → 出了问题没人能拍板。
 			expect(channel?.members.sort()).toEqual(["owner", "沈舟", "林越"].sort());
 			expect(channel?.title).toBe("坦克大战");
 		} finally {
@@ -316,7 +316,7 @@ describe("会话只有两种形态与团队频道", () => {
 		}
 	});
 
-	test("团队频道里谁说话都叫醒团队管理员（员工不用 @ 上级）", async () => {
+	test("团队频道里谁说话都叫醒团队管理员（成员不用 @ 上级）", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		const teams = join(root, "teams");
@@ -332,7 +332,7 @@ describe("会话只有两种形态与团队频道", () => {
 			});
 			const state = await shell.channels();
 			const channel = state.channels[teamId("坦克大战")];
-			// 员工在团队频道说「做完了」时通常不会 @ 人。团队管理员收不到 → 只能轮询
+			// 成员在团队频道说「做完了」时通常不会 @ 人。团队管理员收不到 → 只能轮询
 			// （实测里 agent 用 `run sleep 120` 等进度）。所以团队频道要让团队管理员始终醒着。
 			expect(channel?.wakeOnAll).toEqual(["林越"]);
 		} finally {
@@ -367,7 +367,7 @@ describe("会话只有两种形态与团队频道", () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		const teams = join(root, "teams");
-		// 知言：我直接下属（统筹者）；顾南雁：团队管理员，归知言；沈舟：执行员工，归顾南雁。
+		// 知言：我直接下属（统筹者）；顾南雁：团队管理员，归知言；沈舟：执行成员，归顾南雁。
 		await createAgent({ root: agents, name: "知言", manager: "owner" });
 		await createAgent({ root: agents, name: "顾南雁", manager: "知言", team: "恐龙" });
 		await createAgent({ root: agents, name: "沈舟", manager: "顾南雁", team: "恐龙" });
@@ -380,7 +380,7 @@ describe("会话只有两种形态与团队频道", () => {
 				teamsRoot: teams,
 			});
 			const state = await shell.channels();
-			// 团队的成员是事实的投影：我 + 团队管理员(顾南雁) + 其汇报线(知言) + 执行员工(沈舟)。
+			// 团队的成员是事实的投影：我 + 团队管理员(顾南雁) + 其汇报线(知言) + 执行成员(沈舟)。
 			expect(state.channels[teamId("恐龙")]?.members.sort()).toEqual(
 				["owner", "沈舟", "知言", "顾南雁"].sort(),
 			);

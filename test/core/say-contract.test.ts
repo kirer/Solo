@@ -51,7 +51,7 @@ afterEach(async () => {
 
 const ME = "沈舟";
 const CONVERSATION = 7;
-/** 群聊里那个不说话的同事：让团队频道有两个以上成员，从而不是私聊。 */
+/** 群聊里那个不说话的成员：让团队频道有两个以上成员，从而不是私聊。 */
 const BYSTANDER = "顾南雁";
 const DM = dmId(OWNER, ME);
 const PROJ = teamId("dino");

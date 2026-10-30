@@ -141,7 +141,7 @@ type ViewChannel = {
 ```
 
 成员里除我以外的人。`id` 是会话号（名册里没有的人给 `-1`），`title` 来自
-`identity.md`，给 @ 浮窗显示「名字 / 职位 / @slug」三层。频道不存在时给
+`identity.md`，给 @ 浮窗显示「名字 / 身份 / @slug」三层。频道不存在时给
 `{ candidates: [] }` 而不是 404 —— 输入框的 @ 补全不该因为频道刚被删就报错。
 
 ## 6. `GET /api/channels/:id`
@@ -181,7 +181,7 @@ type ViewMessage = {
 }
 ```
 
-- `role` 只用三种**能从文件里读出来**的事实，不引岗位枚举：我 / 团队管理员（团队
+- `role` 只用三种**能从文件里读出来**的事实，不引身份枚举：我 / 团队管理员（团队
   `README.md` 的 `lead`）/ 成员。
 - `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
 - `replyTo.excerpt` 最多 60 字。

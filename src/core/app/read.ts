@@ -90,7 +90,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 		const channel = channels.channels[id];
 		if (channel === undefined) return { candidates: [] };
 		// `title` 取自 `identity.md` 的 title（与团队视图同源），让 @ 浮窗显示
-		// 「名字 / 职位 / @slug」三层，我要的职位信息就在这里。
+		// 「名字 / 身份 / @slug」三层，我要的身份信息就在这里。
 		const identityTitle = (slug: string): string => {
 			const found = identities.find((item) => item.slug === slug);
 			return found?.title ?? "";
@@ -471,7 +471,7 @@ export function channelDetail(
 			slug,
 			label: labelIn(directory, slug),
 			// `role` 的价值在界面：团队频道里要一眼看出谁是团队管理员。只用三种能从文件里
-			// 读出来的事实（我 / 团队管理员 / 成员），不引岗位枚举。
+			// 读出来的事实（我 / 团队管理员 / 成员），不引身份枚举。
 			role:
 				slug === OWNER_SLUG
 					? "owner"
