@@ -54,7 +54,15 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 
 ## 3. 模型接入
 
-三种方式，优先级：环境变量 > `workspace/settings.json` > 本地网关默认值。
+优先级（`src/core/runtime/models.ts` 的 `setupModels`）：
+
+1. `workspace/settings.json` 里写了 `providers` → 用它；
+2. 环境变量 `ANTHROPIC_API_KEY` → Anthropic（默认模型 `claude-sonnet-4-6`）；
+3. 环境变量 `OPENAI_API_KEY` → OpenAI（默认模型 `gpt-5`）；
+4. 都没有 → 本地网关（OpenAI Responses 协议，`http://127.0.0.1:3425/v1`，
+   模型 `auto/deepseek-v4.1-flash`）。
+
+配置文件优先于环境变量：只要 `settings.json` 里有非空 `providers[]`，就不会再看环境变量。
 
 ### 本地网关（默认）
 
@@ -72,42 +80,79 @@ COMMANDCODE_BASE_URL=http://127.0.0.1:3425/v1 npm start
 ### 官方 API
 
 ```bash
-AI_COMPANY_PROVIDER=anthropic ANTHROPIC_API_KEY=sk-... npm start
-AI_COMPANY_PROVIDER=openai    OPENAI_API_KEY=sk-...    npm start
+ANTHROPIC_API_KEY=sk-... npm start
+OPENAI_API_KEY=sk-...    npm start
 ```
+
+两个都设时 Anthropic 优先。想换官方模型或同时接多家，写 `settings.json`（下一节）。
 
 ### settings.json
 
 ```json
 {
-  "models": {
-    "default": "auto/deepseek-v4.1-flash",
-    "custom": [
-      { "id": "monotoo/gpt-6.1-sol", "provider": "openai-responses",
-        "baseUrl": "https://api.example.com/v1", "apiKeyEnv": "MONOTOO_KEY",
-        "contextWindow": 200000, "maxTokens": 32000, "label": "GPT-6.1 Sol" }
-    ]
-  }
+  "defaultModel": "monotoo/gpt-6.1-sol",
+  "providers": [
+    {
+      "id": "monotoo",
+      "name": "Monotoo",
+      "baseUrl": "https://api.example.com/v1",
+      "apiKey": "sk-...",
+      "api": "openai-responses",
+      "models": [
+        { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "contextWindow": 200000, "maxTokens": 32000 }
+      ]
+    }
+  ]
 }
 ```
 
-`custom[]` 的每一项都是**新 provider**，`id` 里第一个 `/` 之前是 provider 名、之后是
-模型名。`apiKeyEnv` 是环境变量名，不写明文。
+- `providers[]` 每项是一个 provider；`models[]` 用 `id` 指向该 provider 的模型。
+- `defaultModel` 是 `"<provider>/<modelId>"`。不写时用第一个 provider 的第一个模型。
+- `api` 可选 `openai-responses`（默认）、`anthropic`、`openai`。
+- `apiKey` 写在这个文件里（**不是**环境变量名），文件在 `workspace/` 下、已 gitignore；
+  本地网关可以省略。
+- `contextWindow` / `maxTokens` 不写时查 pi-ai 的模型目录，查不到按 128k / 32k 保守估算。
+- 名字里带 `/` 的模型 id 不用拆：`id` 本身可以含 `/`，provider 由 `providers[].id` 决定。
 
 **排障第一招**：如果所有人都不回话，先看这个模型引用能不能解析。
 
 ```bash
 # 看当前生效的模型
 node --experimental-strip-types -e '
-process.env.X=1; const {setupModels}=await import("./src/core/runtime/models.ts");
+const {setupModels}=await import("./src/core/runtime/models.ts");
 const m = setupModels(process.env, { workspace: "workspace" });
-console.log(m.defaultModel, m.models.map(x=>x.id ?? x.modelId));'
+console.log(m.defaultModel, m.models.getModels().map(x=>`${x.provider}/${x.id}`));'
 ```
 
 错误信息 `Model <provider>/<id> is not available` = 引用对不上，改 `settings.json` 或
 环境变量。历史事故：`settings.json` 里给**内置模型**改名，导致注册表出现两条同 id 的
 provider，默认模型解析歧义后回落到 `no_model`，全员静默不回复，界面上看不出任何错。
-V2 已经删掉「覆盖内置模型」这整套机制，`custom[]` 只能新增。
+V2 已经删掉「覆盖内置模型」这整套机制，provider 只能新增。
+
+### 真实模型自测
+
+单元测试不驱动生成，沟通跑偏只有真模型能测出来：
+
+```bash
+npm run live              # 出厂行为 16 项，需连续两次 16/16
+npm run live:scenarios    # 多 agent 场景 6 个 × 3 轮；硬场景 3/3、行为场景 2/3
+```
+
+`live:scenarios` 的参数与证据位置：
+
+```bash
+npm run live:scenarios -- --list
+npm run live:scenarios -- --scenario=dm-routing,restart --rounds=1 --smoke
+npm run live:scenarios -- --rounds=3 --keep-failed
+```
+
+- `--settings=<path>`：把一份 `settings.json` 拷进临时工作区，换模型跑；
+- `--out=<dir>`：报告目录（默认 `os.tmpdir()/solo-scenarios-<时间戳>/`）；
+- `--keep` / `--keep-failed`：保留临时工作区排查；
+- `--strict`：行为场景也要 3/3；`--smoke` 只用于 1 轮脚手架检查。
+
+两者都会花 token：`npm run live` 约几分钟；场景套件约 20–40 分钟。报告写在临时目录，
+不入库。两者都在 `mkdtemp` 工作区里跑，不碰 `workspace/` 真实数据。
 
 ## 4. 局域网访问
 

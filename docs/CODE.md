@@ -22,7 +22,9 @@ src/core/
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（全员层）/
                   `agents/assistant/`（助理身份 + 个人技能）
-scripts/          五个脚本：边界检查、真实模型自测、team 改名迁移、提示词黄金渲染、渲染样例插槽表
+scripts/          六个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
+                  （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表；
+                  真模型共用等待器/证据在 live-support.ts
 ```
 
 **五个层，依赖只能朝一个方向**：
@@ -171,6 +173,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 想改什么 | 动这里 | 注意 |
 | --- | --- | --- |
 | 加一个工具（能力） | `channel/tools/` 里对应的模块加共用件（`context.ts` / `channel-choice.ts` / `recall.ts` / `guards.ts`）、新工具一个 builder 文件，再登记进 `channel/tools/index.ts` 的 `createCoreTools` | 工具 description 只写参数语义和机械后果，行为要求引用技能 / 规矩；同一件事的几种做法用一个 `action` 枚举，不要开新工具名（现在是 7 个）；加完数一遍总数 |
+| 加一个真模型场景 | `scripts/scenario-live.ts` 的 `SCENARIOS` 注册表（`id` / `title` / `gate` / `cost` / `run`） | 搭建用代码（`createLiveAgent` / `createTeamFixture` / `openDm`），模型只负责被观察的行为；等待与证据只走 `scripts/live-support.ts`；`mechanism` 失败按代码查、`behavior` 失败按提示词查 |
 | 教 agent 一套做法 | **不要写代码**，写 `seed/skills/<名字>/SKILL.md`（个人层写 `agents/<slug>/skills/<名字>/SKILL.md`） | `seed/skills/` 的现成技能 |
 | 改一段提示词的**措辞** | `seed/prompt/NN-段名.md`（播种进 `workspace/prompt/`，之后以 workspace 为准） | 改文案不用改代码、不用重启，下一条消息生效。一个 md = 一段 = 一个 cache section，文件名前缀定序 |
 | 加一段提示词 / 改段落顺序 | 在 `seed/prompt/` 加 `NN-段名.md` + `scripts/prompt-fixture.ts` 补它用到的样例插槽 | 顺序是语义（规矩在能力前面），改顺序会触发一次性整块重写；确定性是硬要求，`npm run prompt:check` 会拦 |
@@ -241,9 +244,10 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 56 文件 / 575 例，应该 <3s
+npm test             # 57 文件 / 589 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
+npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
 ```
 
 `live` 的验收门是**两条 + 一个趋势**：两次 16/16；收尾（`[turn]`）

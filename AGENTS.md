@@ -54,10 +54,12 @@ src/core/
 ui/app/           界面源码（React + TS + Vite）
 ui/web/           构建产物（服务端发这个目录，别手改）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
-scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
-                  prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
-test/             56 文件 / 575 例
-  ├ test/core/    49 文件 / 521 例（纯函数 + 装配）
+scripts/          六个入口脚本：check-boundaries（边界）、core-live（真模型冒烟）、
+                  scenario-live（多 agent 真模型场景）、repair（改名迁移）、
+                  prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
+                  公共等待器与证据落盘在 live-support.ts
+test/             57 文件 / 589 例
+  ├ test/core/    50 文件 / 535 例（纯函数 + 装配）
   └ test/ui/      7 文件 / 54 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
@@ -114,9 +116,11 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 56 文件 575 例，<3s，必须全绿
+npm test             # 57 文件 589 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
+npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
+npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、行为场景 2/3
 ```
 
 - **`live` 的门是「两次 16/16 + 收尾（turn）趋势」**：
@@ -144,6 +148,7 @@ npm run live         # 改了 agent 行为就必须跑：真实模型端到端 1
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |
 | 建频道 / 私聊 | `docs/CORE.md` §4 + `docs/WEB-API.md`；唯一入口是 `POST /api/people/:slug/dm` |
+| 新增/修改真模型脚本（`scripts/*-live.ts`、`live-support.ts`） | 本文件 §2 + `docs/CODE.md` 目录与 §3 + `package.json`；等待器只放 `live-support.ts` |
 | 改提示词模板 / 加一段 / 加一个插槽 | `docs/design/SEED-CONTRACT.md` §3 插槽表 + `scripts/prompt-fixture.ts` 样例值 + `docs/CODE.md` §2 文件表；跑 `npm run prompt:check` |
 | 改 seed 出厂内容（规矩 / 技能 / 助理身份） | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts`（一条事实一个家、≤15 条、零工具名、技能 ≤4 KB） |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |

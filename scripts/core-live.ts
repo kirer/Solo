@@ -20,178 +20,19 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message } from "../src/core/channel/types.ts";
-import type { Context, Harness } from "../src/core/runtime/index.ts";
-
-const WAIT_MS = 240_000;
-
-type Phase = { readonly name: string; readonly ok: boolean; readonly detail: string };
-
-function log(phase: Phase): void {
-	const mark = phase.ok ? "✓" : "✗";
-	console.log(`${mark} ${phase.name}${phase.detail === "" ? "" : ` — ${phase.detail}`}`);
-}
-
-type LiveShell = Awaited<ReturnType<typeof import("../src/core/shell/assemble.ts").assembleCore>>;
-
-/** 轮询频道，直到出现某个人发的消息（不是我发的）。 */
-async function waitForReply(
-	shell: LiveShell,
-	channelId: string,
-	fromSlug: string,
-	afterSeq: number,
-	timeoutMs: number,
-): Promise<{ readonly seq: number; readonly text: string } | undefined> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const state = await shell.channels();
-		const list = state.messages[channelId] ?? [];
-		const hit = list.find((message) => message.seq > afterSeq && message.from === fromSlug);
-		if (hit !== undefined) return { seq: hit.seq, text: hit.text };
-		await new Promise((resolve) => setTimeout(resolve, 1_000));
-	}
-	return undefined;
-}
-
-/**
- * 某一刻每个频道的「下一条 seq」。之后出现的消息 seq 一定 >= 这个数。
- *
- * 上报链的每一跳都可能落在不同频道（团队频道 / 全员频道），所以不能像
- * `waitForReply` 那样只盯一个频道 —— 逐级往上本来就会换地方说话。
- */
-async function seqBaseline(shell: LiveShell): Promise<Record<string, number>> {
-	return { ...(await shell.channels()).nextSeq };
-}
-
-/**
- * 等 `from` 在下一条新消息里 @ 到 `target`。
- *
- * `target !== "owner"` 时额外盯「跳级」：只要他在这段时间里 @ 了我，立刻判失败，
- * 不再等他补救 —— 跳级本身就是这条链要防的事。
- */
-async function waitForMention(
-	shell: LiveShell,
-	baseline: Readonly<Record<string, number>>,
-	from: string,
-	target: string,
-	timeoutMs: number,
-): Promise<{ readonly hit?: Message; readonly wrong?: Message }> {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		const state = await shell.channels();
-		const messages: Message[] = [];
-		for (const [channelId, list] of Object.entries(state.messages)) {
-			const base = baseline[channelId] ?? Number.POSITIVE_INFINITY;
-			for (const message of list) {
-				if (message.seq >= base && message.from === from) messages.push(message);
-			}
-		}
-		messages.sort((left, right) => left.at - right.at || left.seq - right.seq);
-		if (target !== "owner") {
-			const wrong = messages.find((message) => message.mentions.includes("owner"));
-			if (wrong !== undefined) return { wrong };
-		}
-		const hit = messages.find((message) => message.mentions.includes(target));
-		if (hit !== undefined) return { hit };
-		await new Promise((resolve) => setTimeout(resolve, 1_000));
-	}
-	return {};
-}
-
-/** 把一跳的结果翻成一句能直接决定去查哪儿的话。 */
-function hopDetail(
-	outcome: { readonly hit?: Message; readonly wrong?: Message },
-	targetLabel: string,
-): string {
-	if (outcome.hit !== undefined) return outcome.hit.text.slice(0, 120);
-	if (outcome.wrong !== undefined) return `跳级了：${outcome.wrong.text.slice(0, 110)}`;
-	return `等待超时：没有把话交给${targetLabel}`;
-}
-
-/**
- * settle 那条提交的终态。
- *
- * 判据只能落在「提交结没结算」上：`memory.md` 变没变是**结果**，回答不了「唤醒有没有跑」。
- * 上一刀把这两件事算成同一个失败，于是红灯永远说不清话 —— 6 次跑 5 红 1 绿，代码没动过。
- *
- * 查法两步，因为 `harness.inspect()` **只返回 queued / placed**（底座 `types.d.ts:656`，
- * `channel/unanswered.ts` 的头注释里也记过这条）：先在队列里认出 `settle:<team>:<seq>`
- * 这条提交拿到 id，再用 `harness.submission(id).status()` 等它结算成 done / unanswered。
- * 只盯着队列，永远看不到「跑完了」这个事实。
- */
-type SettleOutcome =
-	| { readonly kind: "missing" }
-	| { readonly kind: "pending"; readonly status: string }
-	| { readonly kind: "unanswered"; readonly reason: string }
-	| { readonly kind: "gone" }
-	| { readonly kind: "done" };
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/**
- * 等**一条唤醒提交**走到终态（done / unanswered），最多等 `timeoutMs`。
- *
- * `prefix` 是 `requestId` 的前缀：投递是 `ch:<频道>:<seq>:<slug>`，沉淀是 `settle:<team>:`。
- */
-async function waitForSubmission(
-	harness: Harness,
-	prefix: string,
-	timeoutMs: number,
-	context: Context,
-): Promise<SettleOutcome> {
-	const deadline = Date.now() + timeoutMs;
-	let id: Parameters<Harness["submission"]>[0] | undefined;
-	let lastStatus = "queued";
-
-	while (Date.now() < deadline) {
-		if (id === undefined) {
-			const inspection = await harness.inspect(context);
-			const hit = inspection.submissions.find((item) => String(item.requestId ?? "").startsWith(prefix));
-			if (hit !== undefined) id = hit.id;
-		}
-		if (id !== undefined) {
-			const handle = await harness.submission(id, context);
-			if (handle === undefined) return { kind: "gone" };
-			const record = await handle.status(context);
-			if (record.status === "done") return { kind: "done" };
-			if (record.status === "unanswered") return { kind: "unanswered", reason: String(record.reason ?? "") };
-			lastStatus = record.status;
-		}
-		await sleep(1_000);
-	}
-	// 一次都没在队列里认出来 = 根本没提交，不是「排着没跑」。
-	return id === undefined ? { kind: "missing" } : { kind: "pending", status: lastStatus };
-}
-
-/** 沉淀那条：`settle:<team>:<seq>`。 */
-function waitForSettle(harness: Harness, team: string, timeoutMs: number, context: Context): Promise<SettleOutcome> {
-	return waitForSubmission(harness, `settle:${team}:`, timeoutMs, context);
-}
-
-/** 把「提交没结算」翻成一句能直接决定去查哪儿的话。 */
-function wakeDetail(outcome: SettleOutcome): string {
-	if (outcome.kind === "missing") return "提交没有落地：wake 没提交，或被合并撤掉了";
-	if (outcome.kind === "pending") return `提交一直是 ${outcome.status}，等到超时：没跑`;
-	if (outcome.kind === "unanswered") {
-		return `提交结算成 unanswered（${outcome.reason === "" ? "没有原因" : outcome.reason}）：底座/网关没产出`;
-	}
-	if (outcome.kind === "gone") return "提交结算后底座查不到记录：底座侧丢了";
-	return "提交 done，但频道里没有它说的话，收尾（turn）也没补上";
-}
-
-/** 把终态翻成一句能直接决定「去改哪儿」的话。五种原因，五种修法。 */
-function settleDetail(outcome: SettleOutcome, wroteIt: boolean, memoryText: string): string {
-	if (outcome.kind === "missing") return "settle 没有提交：没有候选消息 / 找不到团队管理员 / 没有会话 —— 上游没叫，不是模型判断";
-	if (outcome.kind === "pending") {
-		return `唤醒排着没跑（提交一直是 ${outcome.status}，等到超时）：被合并或被吞，不是模型判断`;
-	}
-	if (outcome.kind === "unanswered") {
-		return `提交结算成 unanswered（${outcome.reason === "" ? "没有原因" : outcome.reason}）：底座/网关没产出，不是提示词`;
-	}
-	if (outcome.kind === "gone") return "提交在队列里出现过，结算后底座查不到记录：底座侧丢了，不是提示词";
-	if (!wroteIt) return "提交 done，但 memory.md 一个字没变：模型判断这批不值得记 —— 要改的是沉淀判据（提示词），不是机制";
-	return memoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "";
-}
+import {
+	WAIT_MS,
+	hopDetail,
+	log,
+	seqBaseline,
+	settleDetail,
+	waitForMention,
+	waitForReply,
+	waitForSettle,
+	waitForSubmission,
+	wakeDetail,
+	type Phase,
+} from "./live-support.ts";
 
 async function main(): Promise<void> {
 	// ── 收尾计数（ADR-099，取代 ADR-089 c 的 rescue 趋势）────────────────────
