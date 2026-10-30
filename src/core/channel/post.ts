@@ -18,7 +18,7 @@ import {
 	appendMessage,
 	chatKind,
 	channelsOf,
-	recipientsOf,
+	deliveryTargets,
 	tail,
 	unreadCount,
 	type Attachment,
@@ -31,7 +31,7 @@ import { createFsx } from "../fsx.ts";
 import { renderSlots, toolSlots, type SlotValue } from "../text.ts";
 import { oneLine } from "../oneline.ts";
 import { planAttachments } from "./files.ts";
-import { wake } from "./wake.ts";
+import { wake, type WakeRecord } from "./wake.ts";
 import type { MentionRoster } from "./store.ts";
 import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
@@ -72,6 +72,69 @@ export type PostDeps = {
 	readonly promptDir?: string;
 };
 
+/** 一条要落进频道的消息（`postMessage` 与 `appendNote` 的公共形状）。 */
+type AppendInput = {
+	readonly channelId: string;
+	readonly from: string;
+	readonly text: string;
+	readonly at: number;
+	readonly kind?: string;
+	readonly replyTo?: number;
+	readonly roster?: MentionRoster;
+	readonly mention?: readonly string[];
+	readonly attachments?: readonly Attachment[];
+};
+
+/**
+ * 消息落盘的**唯一**实现：一次 commit，一次路径式 push。
+ *
+ * `postMessage`（说话）与 `appendNote`（系统留痕）都走这里。以前各写一份，其中
+ * `appendNote` 没有 seq 自愈 —— 频道文档的 `nextSeq` 一旦落后，留痕会拿到一个撞号的
+ * seq。同一类错误只该在一处发生，所以也只在修一处能修好。
+ *
+ * 频道不存在返回 `undefined`（调用方自己决定是报错还是静默）；其余失败照常抛。
+ */
+async function appendToChannel(
+	deps: { readonly harness: Harness },
+	input: AppendInput,
+	context: Context,
+): Promise<{ readonly channel: Channel; readonly message: Message } | undefined> {
+	let appended: { readonly channel: Channel; readonly message: Message } | undefined;
+	await deps.harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		const channel = doc.channels[input.channelId];
+		if (channel === undefined) return;
+		// 序号以**消息本身**为准，不以 `nextSeq` 为准（撞号的后果见 `postMessage` 的说明）。
+		const highestSeq = (doc.messages[input.channelId] ?? []).reduce((max, item) => (item.seq > max ? item.seq : max), 0);
+		if ((doc.nextSeq[input.channelId] ?? 1) <= highestSeq) doc.nextSeq[input.channelId] = highestSeq + 1;
+		// `appendMessage` 返回的是新 state；这里只要它算好的 message，写入按路径原地做。
+		const next = appendMessage(doc, input.channelId, {
+			from: input.from,
+			text: input.text,
+			at: input.at,
+			...(input.kind === undefined ? {} : { kind: input.kind }),
+			...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+			...(input.roster === undefined ? {} : { roster: input.roster }),
+			...(input.mention === undefined ? {} : { mention: input.mention }),
+			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+		});
+		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
+		// 新数组」。两者写下去的消息一样，代价差三个数量级（见 `test/core/channel-write.test.ts`）。
+		//
+		// `push` 必须作用在**文档代理给出的那个数组**上：`doc.messages[id] ??=` 之后再 push
+		// 本地变量不算数（那不是代理，提交时不会有任何 op，消息静默消失）。
+		doc.messages[input.channelId] ??= [];
+		(doc.messages[input.channelId] as Message[]).push(next.message);
+		doc.nextSeq[input.channelId] = next.message.seq + 1;
+		// 抄成纯对象再交出去：事务一关就不能再读代理（`Cannot use a settled overlay`）。
+		appended = {
+			channel: { ...channel, members: [...channel.members], wakeOnAll: [...channel.wakeOnAll] },
+			message: JSON.parse(JSON.stringify(next.message)) as Message,
+		};
+	}, context);
+	return appended;
+}
+
 /**
  * 追一条系统留痕到频道。`note` 不唤醒、不计未读（见 `Message.kind`），所以这里不碰
  * 投递层，否则「系统说一下没人被叫醒」会反过来叫醒人。
@@ -86,15 +149,7 @@ export async function appendNote(
 	at: number,
 	context: Context,
 ): Promise<void> {
-	await deps.harness.commit(async (tx) => {
-		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-		if (doc.channels[channelId] === undefined) return;
-		const next = appendMessage(doc, channelId, { from: OWNER, text, at, kind: "note" });
-		const list = doc.messages[channelId];
-		if (list === undefined) doc.messages[channelId] = [next.message];
-		else (list as Message[]).push(next.message);
-		doc.nextSeq[channelId] = next.message.seq + 1;
-	}, context);
+	await appendToChannel(deps, { channelId, from: OWNER, text, at, kind: "note" }, context);
 }
 
 /** 投递没成时给我留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
@@ -140,12 +195,8 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	const channel = deps.state.channels[input.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
 
-	let created: Message | undefined;
-	// 显式 @ 当场突破上限：上限是为了拦「A 回 B、B 又回 A」的自动接力，
-	// 不是为了拦住一个想清楚要叫谁的人。上面那条 note 就是这么告诉模型的，
-	// 文案和代码必须一致，否则它会以为自己能 @ 人而其实叫不醒。
 	// 提交之前先把「后面还要读到的东西」抄成纯数据：提交一关，读覆盖层就释放了，
-	// 而成员列表、wakeOnAll、各人未读都要在提交之后才用得上（见下面的注释）。
+	// 而成员列表、wakeOnAll、各人未读都要在提交之后才用得上。
 	const channelMeta: Channel = {
 		...channel,
 		members: [...channel.members],
@@ -156,49 +207,9 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		if (slug === OWNER) continue;
 		digests.set(slug, renderDigest(deps.state, slug));
 	}
-	await deps.harness.commit(async (tx) => {
-		const doc = await tx.doc(ChannelDoc);
-		const state = doc as ChannelState;
-		// 序号以**消息本身**为准，不以 `nextSeq` 为准。
-		//
-		// 实测（2026-10-29）：`nextSeq["company"]` 是 19 而频道里已经有 36 条消息，于是新消息
-		// 拿到了 #20 —— 和一条旧消息撞号。撞号的后果不是「多一条」，是序列唯一的假设塌了：
-		// 前端按 seq 去重、按 `[data-seq=N]` 定位、补历史时按 seq 合并，全都指向错的那条，
-		// 症状就是「刷新以后少了几句」。这类不一致只能在这里兜（唯一写入口），
-		// 让它自愈，而不是要求所有调用方都保证 `nextSeq` 正确。
-		const highestSeq = (doc.messages[input.channelId] ?? []).reduce((max, item) => (item.seq > max ? item.seq : max), 0);
-		if ((doc.nextSeq[input.channelId] ?? 1) <= highestSeq) doc.nextSeq[input.channelId] = highestSeq + 1;
-		// appendMessage 返回的是新 state；这里只要它算好的 message，写入按路径原地做。
-		const next = appendMessage(state, input.channelId, {
-			from: input.from,
-			text: input.text,
-			at: input.at,
-			...(input.kind === undefined ? {} : { kind: input.kind }),
-			...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
-			...(input.roster === undefined ? {} : { roster: input.roster }),
-			...(input.mention === undefined ? {} : { mention: input.mention }),
-			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
-		});
-		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
-		// 新数组」。两者写下去的消息一样，代价差三个数量级：
-		//
-		//   原地 push → `["p",["messages",频道],N,0,[消息]]`，约等于消息本身大小；
-		//   整值替换 → `["s",["messages",频道],[…整个频道历史]]`，**每条消息重写全部历史**。
-		//
-		// 实测（`test/core/channel-write.test.ts`）：200 字的消息，append 320 字节、
-		// 整值替换 582 字节且随历史线性变长。一个 189 条消息的频道因此涨到 27 MB。
-		//
-		// 注意 `push` 必须作用在**文档代理给出的那个数组**上：`doc.messages[id] ??=` 之后
-		// 再 push 本地变量不算数（那不是代理，提交时不会有任何 op，消息静默消失）。
-		doc.messages[input.channelId] ??= [];
-		(doc.messages[input.channelId] as Message[]).push(next.message);
-		state.nextSeq[input.channelId] = next.message.seq + 1;
-		// 抄成纯对象再交出去：`next.message` 是这次事务里的代理，事务一关就不能再读
-		// （`Cannot use a settled overlay`），而收件人计算、投递、返回给工具都要用它。
-		created = JSON.parse(JSON.stringify(next.message)) as Message;
-	}, context);
-
-	const message = created as Message;
+	const appended = await appendToChannel(deps, input, context);
+	if (appended === undefined) throw new Error(`频道不存在：${input.channelId}`);
+	const message = appended.message;
 
 	const liveChannel = channelMeta;
 	if (input.wake === false || input.kind === "note") {
@@ -206,7 +217,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	}
 
 	// 我没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
-	const targets = recipientsOf(liveChannel, message).filter((slug) => slug !== OWNER);
+	const targets = deliveryTargets(liveChannel, message);
 	if (targets.length === 0) {
 		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
@@ -267,13 +278,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
  * 2. 投递失败不丢消息 —— 消息在文档里，对方下次醒来会看到未读摘要。
  */
 
-/** 记忆里「刚被谁在哪个频道叫醒」。工具用它决定「默认在哪儿回话」。 */
-export type WakeRecord = {
-	readonly channelId: string;
-	readonly seq: number;
-	readonly from: string;
-	readonly at: number;
-};
+export type { WakeRecord } from "./wake.ts";
 
 export type DeliverResult = {
 	/** 真的进了队列的 slug。不代表已读。 */
@@ -452,7 +457,7 @@ export function renderDelivery(options: {
 	const also = others.length === 0 ? "" : `\n这条还 @ 了：${others.map(label).join("、")}`;
 	// 「这条会叫醒谁、你是第几个」和「别人也在看」必须由代码注入：模型看不到投递名单，
 	// 于是两个人被同时叫醒时各写一条重复甚至矛盾的回复，谁也不知道对方也在场。
-	const woken = recipientsOf(channel, message).filter((slug) => slug !== OWNER);
+	const woken = deliveryTargets(channel, message);
 	const line = [also];
 	if (woken.length > 0) {
 		const position =

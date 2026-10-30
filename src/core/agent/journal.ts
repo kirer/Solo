@@ -11,8 +11,8 @@
  * JSONL 而不是数组：写入是 append，不需要读全文再写回 —— 记忆写入是热路径，
  * 而且并发写数组会互相覆盖。
  */
-import { appendFile } from "node:fs/promises";
 import { join } from "node:path";
+import { appendJsonLine } from "../runtime/io.ts";
 
 export const JOURNAL_FILE = ".memory-journal.jsonl";
 
@@ -42,7 +42,7 @@ export type JournalEntry = {
  */
 export async function appendJournal(dir: string, entry: JournalEntry): Promise<void> {
 	try {
-		await appendFile(journalPath(dir), `${JSON.stringify(entry)}\n`, "utf8");
+		await appendJsonLine(journalPath(dir), entry);
 	} catch (error) {
 		console.warn(`[journal] 记忆留痕失败（不影响写入）：${error instanceof Error ? error.message : String(error)}`);
 	}

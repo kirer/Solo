@@ -13,9 +13,9 @@
  * 诊断是「卡了多久、当时在干什么」，不是数据仓库：单条 4KB、单文件 5MB 封顶，
  * 满了就轮转一次。否则一个循环报错的页面能把工作区写爆。
  */
-import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { RuntimeReport } from "../runtime/index.ts";
+import { appendJsonLine } from "../runtime/io.ts";
 
 /** 诊断日志单文件上限；超过就轮转成 `.1`（只留一代，诊断不需要历史）。 */
 const DIAG_FILE_LIMIT = 5 * 1024 * 1024;
@@ -76,12 +76,6 @@ function clipReport(report: RuntimeReport): unknown {
 	return { type: report.type, at: report.at, entries: `${text.slice(0, REPORT_ENTRY_LIMIT)}…[截断]` };
 }
 
-/** 文件超过上限就改名成 `.1`（覆盖上一代）。 */
-async function rotateIfTooBig(file: string, limit: number): Promise<void> {
-	const info = await stat(file).catch(() => null);
-	if (info === null || info.size <= limit) return;
-	await rename(file, `${file}.1`).catch(() => undefined);
-}
 
 export function createDiag(workspaceRoot: string) {
 	/** 最近一条「不正常」的运行报告（进程内；落盘的全文在 `logs/runtime.jsonl`）。 */
@@ -90,12 +84,9 @@ export function createDiag(workspaceRoot: string) {
 	/** 落一条诊断。写不进去不该影响任何事。 */
 	async function record(body: { readonly kind?: string; readonly entries?: unknown }): Promise<{ ok: true }> {
 		try {
-			const logsDir = join(workspaceRoot, "logs");
-			const file = join(logsDir, "jank.jsonl");
-			await mkdir(logsDir, { recursive: true });
+			const file = join(workspaceRoot, "logs", "jank.jsonl");
 			const entry = { ...body, entries: clipEntries(body.entries), at: new Date().toISOString() };
-			await rotateIfTooBig(file, DIAG_FILE_LIMIT);
-			await appendFile(file, `${JSON.stringify(entry)}\n`);
+			await appendJsonLine(file, entry, { rotateAt: DIAG_FILE_LIMIT });
 		} catch {
 			/* 诊断写不进去不该影响任何事 */
 		}
@@ -117,11 +108,8 @@ export function createDiag(workspaceRoot: string) {
 
 	async function appendReport(report: RuntimeReport): Promise<void> {
 		try {
-			const logsDir = join(workspaceRoot, "logs");
-			const file = join(logsDir, "runtime.jsonl");
-			await mkdir(logsDir, { recursive: true });
-			await rotateIfTooBig(file, DIAG_FILE_LIMIT);
-			await appendFile(file, `${JSON.stringify(clipReport(report))}\n`);
+			const file = join(workspaceRoot, "logs", "runtime.jsonl");
+			await appendJsonLine(file, clipReport(report), { rotateAt: DIAG_FILE_LIMIT });
 		} catch (error) {
 			// 报告写不进盘不许影响进程：它已经在 lastReport 里了。
 			console.error("[core] 运行报告落盘失败：", (error as Error)?.message);

@@ -10,8 +10,15 @@
  * 换成 CLI 或工具调用同样成立，所以它们不属于 HTTP。
  */
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { OWNER_SLUG } from "../agent/identity.ts";
-import { ChannelDoc, ensureChannel, markRead as markReadDoc, type Attachment, type ChannelState } from "../channel/store.ts";
+import { OWNER_SLUG, readIdentity } from "../agent/identity.ts";
+import {
+	ChannelDoc,
+	dmId,
+	markRead as markReadDoc,
+	projectChannel,
+	type Attachment,
+	type ChannelState,
+} from "../channel/store.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,
@@ -38,13 +45,6 @@ export type PostBody = {
 	readonly kind?: string;
 	/** `["<id>"]` 与 `[{ id }]` 两种写法都收（脚本 / 前端的自然写法不同）。 */
 	readonly attachments?: readonly (string | { readonly id?: unknown })[];
-};
-
-/** `POST /api/channels` 的请求体。 */
-export type OpenChannelBody = {
-	readonly id?: string;
-	readonly title?: string;
-	readonly members?: readonly string[];
 };
 
 export function createChat(shell: CoreServices, snapshots: Snapshots) {
@@ -101,15 +101,34 @@ export function createChat(shell: CoreServices, snapshots: Snapshots) {
 		}
 	}
 
-	/** 新建频道（agent 自己也能建，这是宿主入口）。已存在就是幂等成功。 */
-	async function openChannel(body: OpenChannelBody): Promise<{ ok: true; id: string }> {
-		const id = (body.id ?? "").trim();
-		if (id === "") throw new AppError("bad-request", "需要频道 id");
-		const members = [...new Set([OWNER_SLUG, ...(body.members ?? [])])].filter((slug) => slug !== "");
+	/**
+	 * 我和一个人开私聊（幂等）。**只有这一种建频道的入口** ——
+	 * 通用建频道接口已删：频道要么是装配投影出来的（公司 / 团队），要么是这里。
+	 *
+	 * 形态由 id 前缀与成员一起决定：`dm:<两人>`，且 `chatKind` 只认这种形态为私聊。
+	 * 对方必须真的在名册里（不能拿一个不存在的 slug 建出永不可见的房间）。
+	 */
+	async function openDirectMessage(slug: string): Promise<{ ok: true; id: string }> {
+		const target = slug.trim();
+		if (target === "") throw new AppError("bad-request", "需要对方的 slug");
+		if (target === OWNER_SLUG) throw new AppError("bad-request", "不能和我自己开私聊");
+		const identity = await readIdentity(shell.agentsRoot, target);
+		if (identity === undefined) throw new AppError("not-found", `没有这个人：${target}`);
+		const id = dmId(OWNER_SLUG, target);
 		await shell.harness.commit(async (tx) => {
 			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 			if (doc.channels[id] !== undefined) return;
-			Object.assign(doc, ensureChannel(doc, { id, title: body.title ?? id, members, wakeOnAll: [], at: Date.now() }));
+			Object.assign(
+				doc,
+				projectChannel(doc, {
+					id,
+					title: identity.name ?? target,
+					members: [OWNER_SLUG, target],
+					wakeOnAll: [],
+					at: Date.now(),
+					mode: "create",
+				}),
+			);
 		}, BACKGROUND_CONTEXT);
 		return { ok: true, id };
 	}
@@ -160,7 +179,5 @@ export function createChat(shell: CoreServices, snapshots: Snapshots) {
 		return await putUpload(uploadsRoot, { name, mime, bytes, at: Date.now() });
 	}
 
-	return { postAsOwner, openChannel, markRead, saveUpload, uploadsRoot, snapshots };
+	return { postAsOwner, openDirectMessage, markRead, saveUpload, uploadsRoot, snapshots };
 }
-
-export type Chat = ReturnType<typeof createChat>;

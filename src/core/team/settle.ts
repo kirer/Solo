@@ -9,7 +9,6 @@
  * 印章），等记忆文件真的变了、或者 `remember(scope=team)` 落地了，才推进。团队管理员
  * 被别的事打断、或者写砸了，这批消息下次还会被看到，不会永久漏掉。
  */
-import { stat } from "node:fs/promises";
 import { defineDoc } from "../runtime/index.ts";
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
@@ -22,6 +21,7 @@ import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
 import { oneLine } from "../oneline.ts";
+import { mtimeOrUndefined } from "../runtime/io.ts";
 
 export type SettleState = {
 	/** `团队 slug` → 已确认沉淀到第几条 seq。 */
@@ -216,11 +216,7 @@ function latestSeq(state: ChannelState, channelId: string, exclude?: string): nu
 
 /** 记忆文件的印章（mtime）。没有记忆文件 = `null`。 */
 async function memoryStamp(teamsRoot: string, team: string): Promise<number | null> {
-	try {
-		return (await stat(teamMemoryPath(teamsRoot, team))).mtimeMs;
-	} catch {
-		return null;
-	}
+	return (await mtimeOrUndefined(teamMemoryPath(teamsRoot, team))) ?? null;
 }
 
 /** 游标改动的形状：`undefined` = 这个字段不动，`null` = 清掉。 */

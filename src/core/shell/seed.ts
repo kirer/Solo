@@ -10,13 +10,12 @@
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { RULES_FILE } from "../agent/rules.ts";
-import { readTextOrUndefined } from "../runtime/io.ts";
+import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 import { frontOf, parseDoc, type Doc } from "../doc.ts";
 import { PROMPT_DIR } from "../prompt.ts";
 
@@ -61,12 +60,8 @@ export async function syncCompanySkills(agentsRoot: string): Promise<SyncReport>
 
 /** 同步入口：`seedSkillsRoot` 下的每个技能目录 → `skillsRoot/<技能>/...`。 */
 async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifestPath: string): Promise<SyncReport> {
-	let entries: import("node:fs").Dirent[];
-	try {
-		entries = await readdir(seedSkillsRoot, { withFileTypes: true });
-	} catch {
-		return EMPTY_REPORT;
-	}
+	const entries = await listDirSorted(seedSkillsRoot);
+	if (entries.length === 0) return EMPTY_REPORT;
 	const manifest = await readManifest(manifestPath);
 	const copied: string[] = [];
 	const updated: string[] = [];
@@ -74,7 +69,7 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 	let changed = false;
 
 	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
+		if (entry.kind !== "dir") continue;
 		const name = entry.name;
 		const files = await walkFiles(join(seedSkillsRoot, name), "");
 		if (files.length === 0) continue;
@@ -83,14 +78,14 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 		let keptThis = false;
 
 		for (const relpath of files) {
-			const source = await readFile(join(seedSkillsRoot, name, ...relpath.split("/")), "utf8");
+			const source = await readTextOrUndefined(join(seedSkillsRoot, name, ...relpath.split("/")));
+			if (source === undefined) continue;
 			const seedHash = hashOf(source);
 			const target = join(skillsRoot, name, ...relpath.split("/"));
 			const existing = await readTextOrUndefined(target);
 
 			if (existing === undefined) {
-				await mkdir(dirname(target), { recursive: true });
-				await writeFile(target, source, "utf8");
+				await writeTextAt(target, source);
 				recorded[relpath] = seedHash;
 				changed = true;
 				touched = true;
@@ -108,7 +103,7 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 			}
 			if (recorded[relpath] === currentHash) {
 				// 工作区里的内容还是上次同步给的那份（用户没改过）→ 升到新版。
-				await writeFile(target, source, "utf8");
+				await writeTextAt(target, source);
 				recorded[relpath] = seedHash;
 				changed = true;
 				touched = true;
@@ -128,15 +123,14 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 	}
 
 	if (changed) {
-		await mkdir(dirname(manifestPath), { recursive: true });
-		await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+		await writeTextAt(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 	}
 	return { copied, updated, kept };
 }
 
 async function readManifest(path: string): Promise<SeedManifest> {
 	try {
-		const raw = JSON.parse(await readFile(path, "utf8")) as Partial<SeedManifest>;
+		const raw = JSON.parse((await readTextOrUndefined(path)) ?? "") as Partial<SeedManifest>;
 		return { version: 1, skills: raw.skills ?? {} };
 	} catch {
 		return { version: 1, skills: {} };
@@ -145,17 +139,12 @@ async function readManifest(path: string): Promise<SeedManifest> {
 
 /** 递归列出目录下的文件（相对路径，`/` 分隔）。读失败 → 空。 */
 async function walkFiles(root: string, prefix: string): Promise<string[]> {
-	let entries: import("node:fs").Dirent[];
-	try {
-		entries = await readdir(join(root, ...prefix.split("/").filter(Boolean)), { withFileTypes: true });
-	} catch {
-		return [];
-	}
+	const entries = await listDirSorted(join(root, ...prefix.split("/").filter(Boolean)));
 	const out: string[] = [];
 	for (const entry of entries) {
 		const relpath = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
-		if (entry.isDirectory()) out.push(...(await walkFiles(root, relpath)));
-		else if (entry.isFile()) out.push(relpath);
+		if (entry.kind === "dir") out.push(...(await walkFiles(root, relpath)));
+		else if (entry.kind === "file") out.push(relpath);
 	}
 	return out;
 }
@@ -168,15 +157,11 @@ async function walkFiles(root: string, prefix: string): Promise<string[]> {
  */
 export async function seedRules(workspaceRoot: string): Promise<"written" | "exists" | "missing"> {
 	const target = join(workspaceRoot, RULES_FILE);
-	if (existsSync(target)) return "exists";
-	try {
-		const source = await readFile(seedPath(RULES_FILE), "utf8");
-		await mkdir(workspaceRoot, { recursive: true });
-		await writeFile(target, source, "utf8");
-		return "written";
-	} catch {
-		return "missing";
-	}
+	if (await existsAt(target)) return "exists";
+	const source = await readTextOrUndefined(seedPath(RULES_FILE));
+	if (source === undefined) return "missing";
+	await writeTextAt(target, source);
+	return "written";
 }
 
 /**
@@ -189,24 +174,18 @@ export async function seedRules(workspaceRoot: string): Promise<"written" | "exi
  * 而不是等谁删掉整个目录。
  */
 export async function seedPromptTemplates(workspaceRoot: string): Promise<readonly string[]> {
-	let entries: import("node:fs").Dirent[];
-	try {
-		entries = await readdir(seedPath("prompt"), { withFileTypes: true });
-	} catch {
-		return [];
-	}
-	// 顺序只由文件名决定：目录顺序来自文件系统，不同机器不一样。
-	const files = entries
-		.filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
-		.map((entry) => entry.name)
-		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+	// 顺序只由文件名决定：目录顺序来自文件系统，不同机器不一样（`listDirSorted` 已排序）。
+	const files = (await listDirSorted(seedPath("prompt")))
+		.filter((entry) => entry.kind === "file" && entry.name.endsWith(".md"))
+		.map((entry) => entry.name);
 
 	const written: string[] = [];
 	for (const name of files) {
 		const target = join(workspaceRoot, PROMPT_DIR, name);
-		if (existsSync(target)) continue;
-		await mkdir(dirname(target), { recursive: true });
-		await writeFile(target, await readFile(join(seedPath("prompt"), name), "utf8"), "utf8");
+		if (await existsAt(target)) continue;
+		const source = await readTextOrUndefined(join(seedPath("prompt"), name));
+		if (source === undefined) continue;
+		await writeTextAt(target, source);
 		written.push(name);
 	}
 	return written;
@@ -225,15 +204,9 @@ export async function seedPersonalSkills(agentsRoot: string, slug: string, folde
 }
 
 async function copySeedSkills(from: string, skillsRoot: string): Promise<readonly string[]> {
-	let entries: import("node:fs").Dirent[];
-	try {
-		entries = await readdir(from, { withFileTypes: true });
-	} catch {
-		return [];
-	}
 	const copied: string[] = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) continue;
+	for (const entry of await listDirSorted(from)) {
+		if (entry.kind !== "dir") continue;
 		const written = await copySkillDir(join(from, entry.name), skillsRoot);
 		copied.push(written.name);
 	}
@@ -248,6 +221,8 @@ async function copySeedSkills(from: string, skillsRoot: string): Promise<readonl
  */
 function seedPath(...segments: readonly string[]): string {
 	let dir = dirname(fileURLToPath(import.meta.url));
+	// `existsSync` 是保留例外：这里找的是**仓库自带的** `seed/`（启动装配期、同步调用），
+	// 不是工作区文件，读不到也不该让服务起不来。
 	for (let index = 0; index < 6; index += 1) {
 		const candidate = join(dir, "seed", ...segments);
 		if (existsSync(candidate)) return candidate;
@@ -276,12 +251,8 @@ function front(doc: Doc | undefined, key: string): string | undefined {
  * 解析走 `doc.ts`：身份文件只有一种格式，读它和写它用同一份实现。
  */
 async function readSeedAssistant(): Promise<Doc | undefined> {
-	try {
-		const source = await readFile(seedPath(SEED_ASSISTANT_IDENTITY), "utf8");
-		return parseDoc(SEED_ASSISTANT_IDENTITY, source);
-	} catch {
-		return undefined;
-	}
+	const source = await readTextOrUndefined(seedPath(SEED_ASSISTANT_IDENTITY));
+	return source === undefined ? undefined : parseDoc(SEED_ASSISTANT_IDENTITY, source);
 }
 
 /**

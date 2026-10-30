@@ -12,14 +12,17 @@ import {
 	dmId,
 	ensureChannel,
 	ChannelDoc,
+	deliveryTargets,
 	fallbackChannelId,
 	markRead,
 	parseMentions,
+	projectChannel,
 	teamId,
 	recipientsOf,
 	tail,
 	unreadCount,
 	type Channel,
+	type ChannelProjection,
 	type ChannelState,
 } from "../../src/core/channel/store.ts";
 
@@ -57,15 +60,21 @@ describe("频道 id", () => {
 	});
 });
 
-describe("会话形态（只看成员，不看 id 前缀）", () => {
+describe("会话形态（dm: 前缀 + 恰好我和一个人）", () => {
 	const channel = (id: string, members: string[]): Channel => ({ id, title: id, members, wakeOnAll: [], createdAt: 1 });
 
-	test("恰好我和一个人 = 私聊，id 长什么样都不影响", () => {
+	test("dm: 且恰好我和一个人 = 私聊", () => {
 		expect(chatKind(channel("dm:a-owner", [OWNER, "a"]))).toBe("dm");
-		expect(chatKind(channel("team:x", [OWNER, "a"]))).toBe("dm");
 	});
 
-	test("三个人、没有我、只有我 —— 全郡群聊", () => {
+	test("团队频道 / 公司频道两个人也永远是群聊（成员形状不能当判据）", () => {
+		// 只有我和团队管理员两个人的团队频道，成员形状和私聊一样 —— 以前被判成私聊，
+		// 投递正文里出现「这是你和我的私聊」，团队协作被说成了悄悄话。
+		expect(chatKind(channel(teamId("x"), [OWNER, "a"]))).toBe("group");
+		expect(chatKind(channel("general", [OWNER, "a"]))).toBe("group");
+	});
+
+	test("三个人、没有我、只有我 —— 全是群聊", () => {
 		expect(chatKind(channel("dm:a-b-owner", [OWNER, "a", "b"]))).toBe("group");
 		expect(chatKind(channel("dm:a-b", ["a", "b"]))).toBe("group");
 		expect(chatKind(channel("dm:owner", [OWNER]))).toBe("group");
@@ -89,6 +98,45 @@ describe("会话形态（只看成员，不看 id 前缀）", () => {
 		const blank = empty();
 		expect(fallbackChannelId(blank, "a")).toBe(dm);
 		expect(Object.keys(blank.channels)).toEqual([]);
+	});
+});
+
+describe("频道投影（create / merge / replace）", () => {
+	const projection = (
+		mode: ChannelProjection["mode"],
+		members: readonly string[],
+		wakeOnAll: readonly string[] = [],
+		title = "X",
+	): ChannelProjection => ({ id: "x", title, members, wakeOnAll, at: 1, mode });
+
+	test("create：不存在才建；已存在原样返回", () => {
+		const created = projectChannel(empty(), projection("create", [OWNER, "a"]));
+		expect(created.channels.x?.members).toEqual([OWNER, "a"]);
+		const again = projectChannel(created, projection("create", [OWNER, "a", "b"], [], "改标题"));
+		expect(again).toBe(created);
+	});
+
+	test("merge：只加不删，标题与唤醒表不动", () => {
+		const base = projectChannel(empty(), projection("create", [OWNER, "a"], ["a"]));
+		const merged = projectChannel(base, projection("merge", ["a", "b"], ["b"], "改标题"));
+		expect(merged.channels.x?.members).toEqual([OWNER, "a", "b"]);
+		expect(merged.channels.x?.wakeOnAll).toEqual(["a"]);
+		expect(merged.channels.x?.title).toBe("X");
+		expect(merged.channels.x?.createdAt).toBe(1);
+	});
+
+	test("replace：成员表整体替换（去幽灵）、标题与唤醒表照换，createdAt 保留", () => {
+		const base = projectChannel(empty(), projection("create", [OWNER, "ghost"], ["ghost"], "旧标题"));
+		const replaced = projectChannel(base, projection("replace", [OWNER, "lead"], ["lead"], "团队名"));
+		expect(replaced.channels.x?.members).toEqual([OWNER, "lead"]);
+		expect(replaced.channels.x?.wakeOnAll).toEqual(["lead"]);
+		expect(replaced.channels.x?.title).toBe("团队名");
+		expect(replaced.channels.x?.createdAt).toBe(1);
+	});
+
+	test("replace 幂等：投影没变时返回同一份 state（不产生空提交）", () => {
+		const base = projectChannel(empty(), projection("create", [OWNER, "a"], ["a"], "X"));
+		expect(projectChannel(base, projection("replace", [OWNER, "a"], ["a"], "X"))).toBe(base);
 	});
 });
 
@@ -142,6 +190,13 @@ describe("收件人规则", () => {
 		const state = withChannels({ ...channel, wakeOnAll: ["cto", "cfo"] });
 		const { message } = appendMessage(state, "general", { from: "cto", text: "@cto 自言自语", at: 1 });
 		expect(recipientsOf(state.channels.general!, message)).toEqual(["cfo"]);
+	});
+
+	test("deliveryTargets 在收件人里再减掉我：我不会出现在「这条会叫醒：」名单里", () => {
+		const state = withChannels(channel);
+		const { message } = appendMessage(state, "general", { from: "cto", text: "@owner 看下账", at: 1 });
+		expect(recipientsOf(state.channels.general!, message)).toEqual(["owner"]);
+		expect(deliveryTargets(state.channels.general!, message)).toEqual([]);
 	});
 });
 

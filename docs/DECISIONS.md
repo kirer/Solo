@@ -2434,3 +2434,71 @@ md」，两个补丁本质上都是「靠代码替模型记住一件事」。V3 
 
 **验收**：`npm run check`、`npm test`（新增 8 例 + 更新崩溃恢复 1 例）、`npm run prompt:check`、
 `npm run live` 两轮 16/16。
+
+## ADR-096：每件事只有一处实现 —— 两个 IO 入口、一份命名、一份频道投影 / 写入 / 唤醒 / 收件人
+
+**背景**。V3 瘦身之后功能不缺，缺的是**唯一出口**：同一件事散在多处实现，读代码时要在
+四五个地方拼。实测重复：文本读取 6 份、`mkdir + writeFile` 10+ 处、串行闸 2 份、
+frontmatter 2 套、路径越界检查 2 份、频道成员投影 4 套、消息写入 4 条、收件人计算 3 处、
+wake 依赖 3 份。`fsx.ts` 号称唯一文件入口，实际只有模板读取在用。
+
+**决策**：
+
+1. **文件 IO 两个入口，按路径种类分**：
+   - `src/core/fsx.ts`：**工作区内的相对路径**。`resolveIn` 拒绝 `../` 与绝对路径，
+     超界抛 `FsxEscapeError`；`resolveInOrUndefined` 是「问一下能不能用」的版本。
+   - `src/core/runtime/io.ts`：**绝对路径的机械操作** —— `readTextOrUndefined` /
+     `writeTextAt`（自动建父目录）/ `ensureDir` / `existsAt` / `mtimeOrUndefined` /
+     `appendJsonLine`（可轮转）/ `listDirSorted` / `compareCodePoints` / `createSerialGate`。
+   其余模块不再各自 `node:fs`。保留直接 `node:fs` 的五类例外：二进制上传与清理
+   （`channel/files.ts`）、seed 的递归拷贝（`shell/seed.ts`）、静态资源流式发送
+   （`interface/http/server.ts`、`routes.ts`）、同步读配置（`agent/secrets.ts`、
+   `runtime/models.ts`）、技能的目录复制（`cp`）。
+2. **名字规则只有 `src/core/naming.ts`**：`assertName(value, kind)` / `isSafeName` /
+   `slugifyName` / `skillDirName`。agent、团队、技能三处正则稍有出入时，最松的那一处
+   就是路径穿越入口。旧的 `assertSlug` / `assertTeamSlug` / `slugify` 保留为薄包装。
+3. **Markdown 头只有 `src/core/doc.ts`**。`agent/frontmatter.ts` 删除，它和 `parseDoc`
+   本来就是同一件事的两半。
+4. **频道成员变化只有 `projectChannel(state, input)`**，`mode` 显式三态：
+   `create`（不存在才建）、`merge`（只加不删，标题与唤醒表不动）、`replace`（成员表整体
+   替换、保留 `createdAt`、无变化时返回同一份 state）。`ensureChannel` / `upsertChannel`
+   只是 `create` / `merge` 的薄包装；装配层不再各写一套成员合并。
+5. **消息落盘只有 `channel/post.ts` 的 `appendToChannel`**：频道存在性检查、`nextSeq`
+   自愈、`appendMessage`、按路径 push 都在这一个 commit 里。`postMessage` 与 `appendNote`
+   共用 —— 以前留痕那份没有 seq 自愈，`nextSeq` 一落后就撞号。
+6. **唤醒依赖只有 `agent/roster.ts` 的 `directoryWake`**（`conversationOf` 先查活会话表、
+   再查名册；`rememberWake` 只写 `wake` 字段）。工具、`ownerSpeak`、`afterPost` 三处
+   各写的闭包删掉；`wake()` 本身不动。
+7. **收件人只有 `recipientsOf` + `deliveryTargets`**（后者在收件人里减掉 `owner`）。
+   `renderDelivery`、`postMessage`、`tools.othersAwoken` 都用它；`AT_TOKEN` 删掉，
+   「这条有没有 @」与 `parseMentions` 共用同一套字符判断（`hasMentionToken`）。
+
+**验收**：`npm run check`、`npm test`（62 文件 572 例）、`npm run prompt:check` 绿；
+`npm run live` 两轮 16/16。行为在这一条里应当**没有变化**（三个行为修复见 ADR-097）。
+
+## ADR-097：私聊以 `dm:` 显式标识；删通用建频道；写团队 README 后重投影
+
+**背景**。三个真实缺口：我无法开私聊（界面只能选现有会话）；写 `teams/<slug>/README.md`
+之后团队频道不刷新，新写的团队管理员在频道里不存在、成员 @ 不到他；只有 `{owner, 一人}`
+的团队频道被 `chatKind` 判成私聊，投递正文里出现「这是你和我的私聊」，团队协作被说成
+悄悄话。
+
+**决策**：
+
+1. **私聊只认 `dm:` 前缀 + 恰好 `{owner, 一人}`**。`chatKind` 不再按成员形状猜：非 `dm:`
+   的频道（`team:`、`general`、以及历史 API 建的无前缀房间）一律 `group`。历史私聊会变成
+   群聊 —— 可接受，因为本轮删掉了通用建频道接口，不再产生新的无前缀房间。
+2. **建频道只有一个入口：`POST /api/people/:slug/dm`**（用例 `openDirectMessage`）。
+   对方必须在名册里、不能是我、不能为空；id = `dmId(owner, slug)`；已存在直接返回
+   （幂等）。`POST /api/channels` 与 `openChannel` / `OpenChannelBody` 删除。界面入口下一轮
+   接，路由暂列进 `check-boundaries.mjs` 的白名单并写明理由。频道其余来源只有装配投影
+   （公司 / 团队）。
+3. **写 `teams/<slug>/README.md` 触发 `syncTeam(slug, ctx)`**。`file` 工具写成功后按
+   `teamSlugOfReadmePath` 判断；刷新失败时返回「已写入，但团队频道刷新失败：…」——
+   写入已经成功，不能反过来报失败（模型会重写一遍）。`CoreToolDeps.syncTeam` 从死接线变成
+   真调用。
+4. **边界检查防复发**：路由按 `${method} ${pattern}` 判消费者，不再让同路径的 GET 替
+   没人调过的 POST 顶包；非 GET 路由要求消费点附近出现对应的 `method: "…"`。
+
+**验收**：`npm run check`（17 条路由）、`npm test`、`npm run prompt:check`、`npm run live`
+两轮 16/16；手工验证 `POST /api/people/<slug>/dm` 与 `POST /api/channels` 404。

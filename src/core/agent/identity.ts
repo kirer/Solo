@@ -8,10 +8,9 @@
  * 组织架构，而组织架构的唯一权威来源就是这些文件的 `manager` 字段 —— 扫一遍
  * 目录就是组织架构，改了文件就是改了组织架构，不需要第二条真相。
  */
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
-import { parseFrontmatter, stripFrontmatter } from "./frontmatter.ts";
-import { readTextOrUndefined } from "../runtime/io.ts";
+import { parseFrontmatter, stripFrontmatter } from "../doc.ts";
+import { listDirSorted, readTextOrUndefined } from "../runtime/io.ts";
 
 /** `identity.md` 的 YAML 头。全部可选 —— 缺什么就渲染成「未设置」。 */
 export type IdentityHeader = {
@@ -57,16 +56,8 @@ export function parseIdentity(slug: string, dir: string, source: string): Identi
 
 /** agent 根目录（`workspace/agents`）下的所有子目录。 */
 export async function listAgentSlugs(root: string): Promise<readonly string[]> {
-	let entries;
-	try {
-		entries = await readdir(root, { withFileTypes: true });
-	} catch {
-		return [];
-	}
-	return entries
-		.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
-		.map((entry) => entry.name)
-		.sort();
+	const entries = await listDirSorted(root);
+	return entries.filter((entry) => entry.kind === "dir" && !entry.name.startsWith(".")).map((entry) => entry.name);
 }
 
 /** 读一份身份；文件不存在返回 undefined（不是错误 —— 缺席是一种正常状态）。 */

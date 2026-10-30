@@ -14,7 +14,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `GET` | `/api/stream/org` | 组织快照流（SSE） |
 | `GET` | `/api/org` | 组织快照（一次） |
 | `GET` | `/api/channels` | 频道列表 |
-| `POST` | `/api/channels` | 新建频道 |
+| `POST` | `/api/people/:slug/dm` | 和一个人开私聊（唯一的建频道入口） |
 | `GET` | `/api/channels/:id/mentionable` | 这个频道能 @ 谁 |
 | `GET` | `/api/channels/:id` | 频道详情（含消息） |
 | `GET` | `/api/channels/:id/stream` | 频道消息流（SSE：只有 `create`） |
@@ -101,38 +101,41 @@ type ViewChannel = {
 }
 ```
 
-**`kind` 只有两种，而且是从成员表推出来的**（`channel/state.ts` 的 `chatKind()`，
-`view/index.ts` 直接转它的结果，`dto.ts` 的 `ViewChannelKind` 只有这两个值）：
+**`kind` 只有两种，由 id 前缀 + 成员表一起推出来**（`channel/store.ts` 的 `chatKind()`，
+`app/read.ts` 的投影直接转它的结果，`dto.ts` 的 `ViewChannelKind` 只有这两个值）：
 
-| 成员表 | kind |
+| id + 成员表 | kind |
 | --- | --- |
-| 恰好两个人，且其中一个是 `owner` | `dm` |
-| 其余全部（公司频道、团队频道、多人房间） | `group` |
+| `dm:` 前缀，且恰好两个人、其中一个是 `owner` | `dm` |
+| 其余全部（公司频道、团队频道、多人房间、历史无前缀房间） | `group` |
 
-没有任何「按 id 前缀判断」的规则了。团队频道就是 `team:<slug>` 这个**普通的群** ——
-它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在 `team` /
-`lead` / `leadLabel` / `doing` 这四个字段上。
+团队频道就是 `team:<slug>` 这个**普通的群**，即使只有我和管理员两个人也永远是 `group`
+（ADR-097）—— 它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在
+`team` / `lead` / `leadLabel` / `doing` 这四个字段上。
 
-**`dm`**：一对一房间，成员就是 `{owner, 那个人}`。**私聊只能我开** —— 没有
-`ensureDm`，也没有「个人频道」这种东西；agent 不能私下找另一个人。
+**`dm`**：一对一房间，id 是 `dm:<两个 slug 排序后拼接>`，成员就是 `{owner, 那个人}`。
+**私聊只能我开** —— 没有 `ensureDm`，也没有「个人频道」这种东西；agent 不能私下找另一个人。
 
 `preview` 只取「人说的话」（`chat` / `say` / `question` / `decision` / `report`）：
 `note`（系统留痕）与历史遗留的 `think` / `tool` / `work` / `step` 都不进预览。
 
-## 4. `POST /api/channels`
+## 4. `POST /api/people/:slug/dm`（新建私聊）
 
 ```ts
-// 请求
-{ id: string, title?: string, members?: string[] }
 // 响应
-{ ok: true, id: string }
+{ ok: true, id: string }   // id = `dm:<slug>-owner`（排序后拼接）
 ```
 
-我自动入列（`members` 里给不给 `owner` 都一样）。同名频道已存在则原样返回（幂等）。
-`id` 为空 → 400。新建的频道 `wakeOnAll` 为空。
+**这是唯一的建频道接口**（ADR-097）。通用的 `POST /api/channels` 已删：频道要么由装配
+投影出来（公司 `company` / 团队 `team:<slug>`），要么就是这里开的一对一私聊。
 
-挑 id 的约定：团队频道是 `team:<slug>`，公司频道是 `company`。除此之外没有前缀语义 ——
-核心不解析 id，形态只看成员表。
+- 对方必须真的在名册里（`agents/<slug>/identity.md` 存在），否则 `404`；
+- 不能和我自己开 → `400`；slug 为空 → `400`；
+- 已存在则原样返回（幂等，不覆盖标题与成员）；
+- 新房间：成员 `{owner, slug}`、标题 = 对方名字、`wakeOnAll` 为空。
+
+界面入口下一轮接；现在由脚本 / 宿主直接调用（所以它列在 `check-boundaries.mjs` 的
+`NO_CONSUMER_ALLOWED` 里，理由写在那一行）。
 
 ## 5. `GET /api/channels/:id/mentionable`
 
@@ -296,8 +299,8 @@ type ViewMessage = {
 }
 ```
 
-`channels` 里的 `kind` 同样是 `chatKind()` 的投影（`dm` / `group`），**不再按 id 前缀分
-`company` / `leadership` / `project`**。`skills` 来自 `listSkills()`，个人层覆盖公司同名时
+`channels` 里的 `kind` 同样是 `chatKind()` 的投影（`dm` / `group`）：私聊只认 `dm:` 前缀 +
+恰好 `{owner, 一人}`（ADR-097），**不按 `company` / `leadership` / `project` 这类业务前缀分**。`skills` 来自 `listSkills()`，个人层覆盖公司同名时
 `overrides: true`（界面显示「覆盖公司同名」）。`slug` 必须是名册里存在的 agent 且不是
 `owner`，否则 404。
 

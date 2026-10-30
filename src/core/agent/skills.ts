@@ -15,10 +15,11 @@
  *
  * 这一条对成本很要紧：一个人攒 20 门手艺，常驻的是 20 行描述，不是 20 篇正文。
  */
-import { cp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { cp } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "./frontmatter.ts";
-import { readTextOrUndefined } from "../runtime/io.ts";
+import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "../doc.ts";
+import { skillDirName } from "../naming.ts";
+import { ensureDir, listDirSorted, mtimeOrUndefined, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 
 /** 技能子目录名（公司层根目录与个人目录下都用它）。 */
 export const SKILLS_DIR = "skills";
@@ -57,16 +58,11 @@ export type SkillBody = Skill & {
  * prompt cache 会被白白打穿。
  */
 async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<readonly Skill[]> {
-	let entries;
-	try {
-		entries = await readdir(skillsRoot, { withFileTypes: true });
-	} catch {
-		return [];
-	}
+	const entries = await listDirSorted(skillsRoot);
 	const found: Skill[] = [];
 	for (const entry of entries) {
 		if (entry.name.startsWith(".")) continue;
-		if (entry.isDirectory()) {
+		if (entry.kind === "dir") {
 			const dir = join(skillsRoot, entry.name);
 			const source = await readTextOrUndefined(join(dir, SKILL_FILE));
 			if (source === undefined) continue;
@@ -77,7 +73,7 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 				dir,
 				scope,
 			});
-		} else if (entry.isFile() && entry.name.endsWith(".md")) {
+		} else if (entry.kind === "file" && entry.name.endsWith(".md")) {
 			const source = await readTextOrUndefined(join(skillsRoot, entry.name));
 			if (source === undefined) continue;
 			const header = parseFrontmatter(source);
@@ -135,10 +131,8 @@ export async function writeSkillTo(
 	skillsRoot: string,
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
-	const clean = input.name.trim().replace(/[/\\]/gu, "-");
-	if (clean === "" || clean === "." || clean === "..") throw new Error("技能名不能为空");
+	const clean = skillDirName(input.name);
 	const dir = join(skillsRoot, clean);
-	await mkdir(dir, { recursive: true });
 	const source = renderFrontmatter(
 		[
 			["name", clean],
@@ -146,7 +140,7 @@ export async function writeSkillTo(
 		],
 		input.body,
 	);
-	await writeFile(join(dir, SKILL_FILE), source, "utf8");
+	await writeTextAt(join(dir, SKILL_FILE), source);
 	return { name: clean, description: input.description.trim(), dir, scope: "personal" };
 }
 
@@ -181,14 +175,11 @@ export async function writeCompanySkill(
 export async function copySkillDir(fromDir: string, skillsRoot: string): Promise<Skill> {
 	const name = basename(fromDir);
 	const dir = join(skillsRoot, name);
-	try {
-		await readdir(dir);
-		// 已经存在：读回来报告，不覆盖。
-		return { name, description: "", dir, scope: "company" };
-	} catch {
-		// 不存在，继续拷。
-	}
-	await mkdir(skillsRoot, { recursive: true });
+	// 已经存在：读回来报告，不覆盖。
+	if ((await mtimeOrUndefined(dir)) !== undefined) return { name, description: "", dir, scope: "company" };
+	// `cp` 是这一层唯一保留的直接文件系统调用：技能是**目录**，可能带脚本与模板，
+	// `runtime/io` 不替它做递归拷贝。
+	await ensureDir(skillsRoot);
 	await cp(fromDir, dir, { recursive: true });
 	const source = (await readTextOrUndefined(join(dir, SKILL_FILE))) ?? "";
 	return { name, description: parseFrontmatter(source).description ?? "", dir, scope: "company" };

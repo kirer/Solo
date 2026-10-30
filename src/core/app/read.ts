@@ -244,8 +244,6 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 	return { readPersonProfile, readPersonMemory, editPersonMemory };
 }
 
-export type People = ReturnType<typeof createPeople>;
-
 // ── 投影（原 `view/index.ts`）─────────────────────────────────────────────
 // 并进这里的原因：投影函数只被「读」这一个用例用（`read.ts` / `snapshot.ts` / `hub.ts`），
 // 单独一层是为了当年「界面契约唯一权威」那个抽象；现在契约只剩 `dto.ts`（纯类型、零 IO），

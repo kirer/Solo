@@ -5,8 +5,13 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
-import { ChannelDoc, ensureChannel, type ChannelState } from "../../src/core/channel/store.ts";
-import { postMessage } from "../../src/core/channel/post.ts";
+import {
+	ChannelDoc,
+	appendMessage,
+	ensureChannel,
+	type ChannelState,
+} from "../../src/core/channel/store.ts";
+import { appendNote, postMessage } from "../../src/core/channel/post.ts";
 
 /**
  * 频道写入的**代价**契约（不只是结果对不对）。
@@ -112,6 +117,55 @@ describe("频道写入的字节代价", () => {
 		expect(bases.n).toBeGreaterThanOrEqual(1);
 		const bytes = storedBytes(file, "core.channels");
 		expect(bytes).toBeLessThan(120_000);
+	});
+});
+
+describe("系统留痕与普通消息走同一条写入路径（ADR-096）", () => {
+	it("appendNote 在 nextSeq 落后时自愈，拿到的是真实下一条 seq", async () => {
+		const { runtime, channelId } = await setup();
+		// 模拟「文档里的 nextSeq 落后于消息」：消息已经到 seq 5，nextSeq 还停在 1。
+		// 旧实现（各写一份）里只有 postMessage 会自愈，留痕会拿到撞号的 seq。
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const { message } = appendMessage({ channels: doc.channels, messages: {}, nextSeq: {}, readMarks: {} }, channelId, {
+				from: "林越",
+				text: "旧消息",
+				at: 1,
+			});
+			doc.messages[channelId] = [{ ...message, seq: 5 }];
+			doc.nextSeq[channelId] = 1;
+		}, BACKGROUND_CONTEXT);
+
+		await appendNote({ harness: runtime.harness }, channelId, "系统留痕", 300, BACKGROUND_CONTEXT);
+
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		const messages = state.messages[channelId] ?? [];
+		expect(messages.map((item) => item.seq)).toEqual([5, 6]);
+		expect(messages[1]?.kind).toBe("note");
+		expect(state.nextSeq[channelId]).toBe(7);
+	});
+
+	it("留痕之后普通消息的 seq 紧接其后，两边连续", async () => {
+		const { runtime, channelId } = await setup();
+		await appendNote({ harness: runtime.harness }, channelId, "留痕", 300, BACKGROUND_CONTEXT);
+
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		await postMessage(
+			{ harness: runtime.harness, state, conversationOf: async () => undefined },
+			{ channelId, from: "林越", text: "正式回复", at: 301, wake: false },
+			BACKGROUND_CONTEXT,
+		);
+
+		const after = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect((after.messages[channelId] ?? []).map((item) => item.seq)).toEqual([1, 2]);
+		expect(after.messages[channelId]?.[1]?.text).toBe("正式回复");
+	});
+
+	it("频道不存在时静默不写：不造孤儿消息", async () => {
+		const { runtime } = await setup();
+		await expect(
+			appendNote({ harness: runtime.harness }, "team:不存在", "留痕", 1, BACKGROUND_CONTEXT),
+		).resolves.toBeUndefined();
 	});
 });
 

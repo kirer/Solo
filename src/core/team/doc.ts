@@ -19,10 +19,10 @@
  * 目标是 X。验收标准是 Y。不做的是 Z。
  * ```
  */
-import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "../agent/frontmatter.ts";
-import { readTextOrUndefined } from "../runtime/io.ts";
+import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "../doc.ts";
+import { assertName } from "../naming.ts";
+import { listDirSorted, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 
 export const TEAM_FILE = "README.md";
 
@@ -90,12 +90,21 @@ export function renderTeamFile(doc: {
  * 团队 slug 来自 agent 的自由文本（`remember(scope=team)` 的 `team` 参数），
  * 不能只信调用方 —— 这里是唯一的闸。
  */
-const TEAM_SLUG = /^[\p{L}\p{N}_-]+$/u;
-
 export function assertTeamSlug(slug: string): string {
-	if (!TEAM_SLUG.test(slug) || slug === "." || slug === "..") {
-		throw new Error(`不能用作团队 slug：${slug}。只能用字母、数字、中文、- 和 _。`);
-	}
+	return assertName(slug, "team");
+}
+
+/**
+ * `teams/<slug>/README.md` → 团队 slug；别的路径 → `undefined`。
+ *
+ * 写给 `file` 工具用：团队说明改了，团队频道（成员表是它的投影）必须跟着重算，
+ * 否则新写的团队管理员在频道里不存在、成员 @ 不到他。
+ */
+export function teamSlugOfReadmePath(rel: string): string | undefined {
+	const parts = rel.split(/[\\/]+/u).filter((part) => part !== "" && part !== ".");
+	if (parts.length !== 3) return undefined;
+	const [root, slug, file] = parts;
+	if (root !== "teams" || file !== TEAM_FILE || slug === undefined) return undefined;
 	return slug;
 }
 
@@ -118,19 +127,14 @@ export async function readTeam(teamsRoot: string, slug: string): Promise<TeamDoc
 
 /** 全部团队（按 slug 码点序，保证渲染确定）。 */
 export async function listTeams(teamsRoot: string): Promise<readonly TeamDoc[]> {
-	let entries;
-	try {
-		entries = await readdir(teamsRoot, { withFileTypes: true });
-	} catch {
-		return [];
-	}
+	const entries = await listDirSorted(teamsRoot);
 	const out: TeamDoc[] = [];
 	for (const entry of entries) {
-		if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+		if (entry.kind !== "dir" || entry.name.startsWith(".")) continue;
 		const doc = await readTeam(teamsRoot, entry.name);
 		if (doc !== undefined) out.push(doc);
 	}
-	return out.sort((left, right) => (left.slug < right.slug ? -1 : left.slug > right.slug ? 1 : 0));
+	return out;
 }
 
 /**
@@ -158,7 +162,6 @@ export async function writeTeam(
 	const slug = input.slug.trim();
 	if (slug === "") throw new Error("团队 slug 不能为空");
 	const dir = teamDirOf(teamsRoot, slug);
-	await mkdir(dir, { recursive: true });
 	const existing = await readTeam(teamsRoot, slug);
 	const doc = {
 		name: input.name ?? existing?.name ?? slug,
@@ -167,7 +170,7 @@ export async function writeTeam(
 		status: input.status ?? existing?.status ?? "active",
 		body: input.body,
 	};
-	await writeFile(join(dir, TEAM_FILE), renderTeamFile(doc), "utf8");
+	await writeTextAt(join(dir, TEAM_FILE), renderTeamFile(doc));
 	return parseTeam(slug, renderTeamFile(doc));
 }
 

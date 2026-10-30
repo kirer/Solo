@@ -121,11 +121,11 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
-			pattern: "/api/channels",
+			// 我和一个人开私聊。界面入口下一轮接，先开后端（ADR-097）。
+			pattern: "/api/people/:slug/dm",
 			method: "POST",
-			handler: async ({ request, response }) => {
-				const body = await readJson<{ id?: string; title?: string; members?: string[] }>(request);
-				return json(response, await app.chat.openChannel(body));
+			handler: async ({ response, params }) => {
+				return json(response, await app.chat.openDirectMessage(params.slug ?? ""));
 			},
 		},
 		{

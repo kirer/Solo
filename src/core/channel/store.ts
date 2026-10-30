@@ -130,13 +130,17 @@ export function dmId(a: string, b: string): string {
 }
 
 /**
- * 一条频道是哪种会话。**只看成员表**，不看 id 前缀。
+ * 一条频道是哪种会话：**`dm:` 前缀 + 恰好 `{我, 一个 agent}`** 才是私聊。
  *
- * 会话只有两种形态：恰好 `{我, 一个 agent}` 是私聊（一对一，说什么都没有第三个人
- * 听见），其余都是群聊（三个人以上，或者一个 agent 都没有的频道）。
- * 频道没有 `kind` 字段 —— 加了就要维护两处事实（成员变了、kind 没变）。
+ * 为什么不能只看成员表：只有我 + 团队管理员两个人的团队频道，成员形状和私聊一模一样。
+ * 旧判据把它当私聊，于是投递正文里出现「这是你和我的私聊，只回这里」—— 团队频道里的
+ * 协作被模型理解成悄悄话。私聊现在是**显式建出来的**（`dmId`，见 `POST /api/people/:slug/dm`），
+ * 所以前缀可以当判据；团队频道永远是群聊。
+ *
+ * 频道仍然没有 `kind` 字段 —— 加了就要维护两处事实（成员变了、kind 没变）。
  */
 export function chatKind(channel: Channel): "dm" | "group" {
+	if (!channel.id.startsWith("dm:")) return "group";
 	if (channel.members.length !== 2) return "group";
 	if (!channel.members.includes(OWNER)) return "group";
 	return "dm";
@@ -204,8 +208,17 @@ export function parseMentions(text: string, roster?: MentionRoster): string[] {
  * 注意 `@所有人`：如果正文里出现 `@owner`，我会被列为目标。但我没有会话，
  * 投递层会跳过它（见 `deliver.ts`）。
  */
-/** 正文里有没有「@某人」这个动作（不管叫不叫得应）。 */
-const AT_TOKEN = /@[\p{L}\p{N}._-]+/u;
+/**
+ * 正文里有没有「@某人」这个动作（不管叫不叫得应）。
+ *
+ * 与 `MENTION` 用同一套字符判断（lookbehind 也一致）：邮箱里的 `hi@example.com`
+ * 不算「叫了人」。
+ */
+const MENTION_TOKEN = /(?<![A-Za-z0-9._%+-])@[\p{L}\p{N}_-]+/u;
+
+export function hasMentionToken(text: string): boolean {
+	return MENTION_TOKEN.test(text);
+}
 
 export function recipientsOf(channel: Channel, message: Message): string[] {
 	const targets = new Set<string>();
@@ -220,7 +233,7 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	// 「我没 @ 人」才让第一个成员接。**判据看正文里有没有 @，不看解析结果**：
 	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个
 	// 不存在的人」变成「叫了房间里第一个人」—— 我会以为刚才那句没人理。
-	if (message.from === OWNER && message.mentions.length === 0 && !AT_TOKEN.test(message.text)) {
+	if (message.from === OWNER && message.mentions.length === 0 && !hasMentionToken(message.text)) {
 		const first = channel.members.find((slug) => slug !== OWNER);
 		if (first !== undefined) targets.add(first);
 	}
@@ -229,6 +242,16 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	}
 	targets.delete(message.from);
 	return [...targets];
+}
+
+/**
+ * 真正要**投递**给谁：`recipientsOf` 减去我。
+ *
+ * 我没有会话 —— 它是人，不是 agent。这个减法以前在三处各写一遍（投递、投递正文、
+ * 独白检测），任何一处漏了，我就会出现在「这条会叫醒：」的名单里。
+ */
+export function deliveryTargets(channel: Channel, message: Message): string[] {
+	return recipientsOf(channel, message).filter((slug) => slug !== OWNER);
 }
 
 /** 某个 slug 在一个频道里读到了哪里。0 表示一条没读。 */
@@ -360,24 +383,72 @@ export function appendMessage(
 	};
 }
 
-/** 建频道；已存在时原样返回（幂等）。 */
+/**
+ * 一次频道「投影」：拿事实算出成员表，再按三种意图落到文档上。
+ *
+ * - `create`：不存在才建；已存在原样返回（幂等）。
+ * - `merge`：建，或者只把缺的人补进去（幂等）。公司频道用它 —— 成员只会增加，
+ *   不会因为某次扫描没读到人就把谁踢出去。
+ * - `replace`：成员表**整体替换**为这次算出来的结果（团队频道用它，成员是团队文件
+ *   的投影，人走了就该消失，不能留幽灵成员）。
+ */
+export type ChannelProjection = {
+	readonly id: string;
+	readonly title: string;
+	readonly members: readonly string[];
+	readonly wakeOnAll?: readonly string[];
+	readonly at: number;
+	readonly mode: "create" | "merge" | "replace";
+};
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+	return a.length === b.length && a.every((item, index) => item === b[index]);
+}
+
+/** 成员 / 唤醒表的**唯一**写入点。三种意图只在这里落地。 */
+export function projectChannel(state: ChannelState, input: ChannelProjection): ChannelState {
+	const existing = state.channels[input.id];
+	const members = [...new Set(input.members)];
+	const wakeOnAll = [...new Set(input.wakeOnAll ?? [])];
+
+	if (existing === undefined) {
+		const channel: Channel = { id: input.id, title: input.title, members, wakeOnAll, createdAt: input.at };
+		return { ...state, channels: { ...state.channels, [input.id]: channel } };
+	}
+	if (input.mode === "create") return state;
+
+	if (input.mode === "merge") {
+		const missing = members.filter((slug) => !existing.members.includes(slug));
+		if (missing.length === 0) return state;
+		return {
+			...state,
+			channels: { ...state.channels, [input.id]: { ...existing, members: [...existing.members, ...missing] } },
+		};
+	}
+
+	// replace：成员表、唤醒表、标题都以上面这次投影为准；`createdAt` 是历史，保留。
+	if (existing.title === input.title && sameList(existing.members, members) && sameList(existing.wakeOnAll, wakeOnAll)) {
+		return state;
+	}
+	return {
+		...state,
+		channels: {
+			...state.channels,
+			[input.id]: { ...existing, title: input.title, members, wakeOnAll },
+		},
+	};
+}
+
+/** 建频道；已存在时原样返回（幂等）。`projectChannel` 的 `create` 意图。 */
 export function ensureChannel(
 	state: ChannelState,
 	input: { readonly id: string; readonly title: string; readonly members: string[]; readonly wakeOnAll?: string[]; readonly at: number },
 ): ChannelState {
-	if (state.channels[input.id] !== undefined) return state;
-	const channel: Channel = {
-		id: input.id,
-		title: input.title,
-		members: [...new Set(input.members)],
-		wakeOnAll: [...new Set(input.wakeOnAll ?? [])],
-		createdAt: input.at,
-	};
-	return { ...state, channels: { ...state.channels, [input.id]: channel } };
+	return projectChannel(state, { ...input, members: input.members, mode: "create" });
 }
 
 /**
- * 建频道，或者把缺的人补进去（幂等）。
+ * 建频道，或者把缺的人补进去（幂等）。`projectChannel` 的 `merge` 意图。
  *
  * 与 `ensureChannel` 的区别：后者见到已存在的频道就直接返回，于是「团队管理员后来才
  * 定下来」「新招的人进了团队」都不会反映到成员表里 —— 那些人明明在团队里却收不到团队
@@ -387,14 +458,7 @@ export function upsertChannel(
 	state: ChannelState,
 	input: { readonly id: string; readonly title: string; readonly members: string[]; readonly wakeOnAll?: string[]; readonly at: number },
 ): ChannelState {
-	const chann = state.channels[input.id];
-	if (chann === undefined) return ensureChannel(state, input);
-	const missing = input.members.filter((slug) => !chann.members.includes(slug));
-	if (missing.length === 0) return state;
-	return {
-		...state,
-		channels: { ...state.channels, [input.id]: { ...chann, members: [...chann.members, ...missing] } },
-	};
+	return projectChannel(state, { ...input, members: input.members, mode: "merge" });
 }
 
 /**

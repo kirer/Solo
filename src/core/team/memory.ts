@@ -13,10 +13,9 @@
  *
  * 谁能读：全公司。理由同上 —— 记忆是资产，藏起来只会重复踩坑。
  */
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
-import { createSerialGate, readTextOrUndefined } from "../runtime/io.ts";
+import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 import { renderSlots, toolSlots } from "../text.ts";
 import { assertTeamSlug } from "./doc.ts";
 
@@ -69,8 +68,7 @@ export async function appendTeamMemory(
 	const who = input.by === undefined ? "" : ` ${input.by}`;
 	const next = `${existing.trimEnd()}\n\n## ${stamp}${who}\n${input.text.trim()}\n`;
 	// 目录可能还不存在：团队记忆可以先于 `README.md` 写下（先记一条再补说明是常见的）。
-	await mkdir(join(teamsRoot, team), { recursive: true });
-	await writeFile(path, next, "utf8");
+	await writeTextAt(path, next);
 	return next;
 	});
 }

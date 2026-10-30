@@ -12,16 +12,23 @@
  * - 读入时统一换行（`\r\n` → `\n`）。同一份文件在不同编辑器里保存，不该渲染出不同的
  *   提示词字节 —— 那会打穿 prompt cache。
  * - 不排序、不补字段：字段顺序由写的人给死，因为顺序本身就是可读性。
+ *
+ * `parseFrontmatter` / `stripFrontmatter` / `renderFrontmatter` 是同一套实现的
+ * 两份外形：老调用方只要头或只要正文，不必先把整份 `Doc` 拼出来。
+ *
+ * `path` 是相对工作区的路径（写回去时原样用）。
  */
-/** 一份文档。`path` 是相对工作区的路径（写回去时原样用）。 */
 export type Doc = {
 	readonly path: string;
 	readonly front: Readonly<Record<string, string>>;
 	readonly body: string;
 };
 
+/** 头里的键值对。空值不出现。 */
+export type Frontmatter = Record<string, string>;
+
 /** 头里的一个字段。`undefined` = 这一行不写（空串**照写**，那是调用方的选择）。 */
-export type FrontField = readonly [key: string, value: string | undefined];
+export type FrontmatterField = readonly [key: string, value: string | undefined];
 
 const HEAD_OPEN = /^---[ \t]*\n/;
 
@@ -58,13 +65,28 @@ export function parseDoc(path: string, source: string): Doc {
 	return { path, front, body: text.slice(end + 4).trim() };
 }
 
-/** 渲染成文件内容：头、空行、正文、结尾换行。字段顺序由调用方给死。 */
-export function renderDoc(front: readonly FrontField[], body: string): string {
+/** 只要头。 */
+export function parseFrontmatter(source: string): Frontmatter {
+	return { ...parseDoc("", source).front };
+}
+
+/** 只要正文。 */
+export function stripFrontmatter(source: string): string {
+	return parseDoc("", source).body;
+}
+
+/**
+ * 渲染成文件内容：`---`、字段（按给定顺序）、`---`、空行、正文、结尾换行。
+ *
+ * 字段顺序由调用方给死，因为顺序是人读时的语义（`name` 在最上面），也让 diff 稳定。
+ */
+export function renderFrontmatter(fields: readonly FrontmatterField[], body: string): string {
 	const lines = ["---"];
-	for (const [key, value] of front) if (value !== undefined) lines.push(`${key}: ${value}`);
+	for (const [key, value] of fields) if (value !== undefined) lines.push(`${key}: ${value}`);
 	lines.push("---", "", body.trim(), "");
 	return lines.join("\n");
 }
+
 /** 取一个头字段。空串当没有 —— 头里写 `manager:` 与不写 manager 是同一个意思。 */
 export function frontOf(doc: Doc, key: string): string | undefined {
 	const value = doc.front[key];

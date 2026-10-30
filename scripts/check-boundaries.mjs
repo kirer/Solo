@@ -153,18 +153,26 @@ for (const dir of CHECKED_DIRS) {
 }
 
 // ── 第三类：HTTP 路由零消费者 ──
+//
+// **按「方法 + 路径」判，不按路径**：同一路径上 GET 有消费者，不代表 POST 也有。
+// 旧写法只抽 `pattern`，于是 `GET /api/channels` 有消费者就把 `POST /api/channels`
+// （一个谁都没调过的建频道接口）一起放过去了 —— 它与 GET 恰好同路径，藏了好几个月。
 const ROUTE_FILE = "src/core/interface/http/routes.ts";
+const routeSource = await readFile(join(ROOT, ROUTE_FILE), "utf8");
+const routeEntries = [...routeSource.matchAll(/pattern:\s*"(\/api\/[^"]*)"[\s\S]{0,200}?method:\s*"([A-Z]+)"/g)].map(
+	(match) => ({ pattern: match[1], method: match[2] }),
+);
 const routes = [
-	...new Set(
-		[...(await readFile(join(ROOT, ROUTE_FILE), "utf8")).matchAll(/pattern:\s*"(\/api\/[^"]*)"/g)].map(
-			(match) => match[1],
-		),
-	),
+	...new Map(routeEntries.map((entry) => [`${entry.method} ${entry.pattern}`, entry])).values(),
 ];
 
 /** 已知在仓库外消费的路由（界面不调，但别处要用）。每条都要写清是谁。 */
 const NO_CONSUMER_ALLOWED = new Map([
-	["/api/org", "运维探针：docker-compose.yml 健康检查与外部监控直接打这条"],
+	["GET /api/org", "运维探针：docker-compose.yml 健康检查与外部监控直接打这条"],
+	[
+		"POST /api/people/:slug/dm",
+		"私聊入口后端先行（ADR-097）：界面入口下一轮接，现在由脚本 / 宿主直接调用",
+	],
 ]);
 
 let consumerCorpus = "";
@@ -189,14 +197,30 @@ function consumerMatcher(prefix) {
 	return new RegExp(prefix.endsWith("/") ? escaped : `${escaped}(?![\\w/-])`);
 }
 
-for (const route of routes) {
-	if (NO_CONSUMER_ALLOWED.has(route)) continue;
-	const prefix = routePrefix(route);
-	if (consumerMatcher(prefix).test(consumerCorpus)) continue;
+/**
+ * 有没有消费者。GET 只看路径；其余方法还要求调用点附近出现对应的 `method: "..."`，
+ * 否则「同一路径的 GET 在用」会替一个没人调过的 POST 顶包。
+ */
+function hasConsumer(prefix, method) {
+	const matcher = consumerMatcher(prefix);
+	if (method === "GET") return matcher.test(consumerCorpus);
+	const global = new RegExp(matcher.source, "g");
+	for (const match of consumerCorpus.matchAll(global)) {
+		const window = consumerCorpus.slice(match.index, match.index + 300);
+		if (new RegExp(`method\\s*:\\s*["']${method}["']`).test(window)) return true;
+	}
+	return false;
+}
+
+for (const { method, pattern } of routes) {
+	const key = `${method} ${pattern}`;
+	if (NO_CONSUMER_ALLOWED.has(key)) continue;
+	const prefix = routePrefix(pattern);
+	if (hasConsumer(prefix, method)) continue;
 	violations.push({
 		file: ROUTE_FILE,
-		spec: route,
-		reason: `该路由在 ui/app/src 里没有消费者（查找前缀 ${prefix}）。接上，或删掉，或写进 NO_CONSUMER_ALLOWED 并注明谁在用`,
+		spec: key,
+		reason: `该路由在 ui/app/src 里没有消费者（查找前缀 ${prefix}，方法 ${method}）。接上，或删掉，或写进 NO_CONSUMER_ALLOWED 并注明谁在用`,
 	});
 }
 
@@ -213,5 +237,5 @@ if (violations.length > 0) {
 console.log(
 	`边界检查通过：${CHECKED_DIRS.join(", ")} 未越界导入底层库；` +
 		`分层规则 ${LAYER_RULES.length} 组（view 契约层零 IO / app 无 http / interface 只经 app·view）；` +
-		`${routes.length} 条路由路径都有消费者。`,
+		`${routes.length} 条路由（方法 + 路径）都有消费者。`,
 );

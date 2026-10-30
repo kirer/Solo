@@ -8,8 +8,8 @@
  * 为什么不放进技能正文：技能正文只在 `skills(action=read)` 时进上下文 —— 也就是**它必须记得
  * 去读**，而最该守规矩的那一刻恰恰是它在忙的时候。规矩每轮都要看见，所以它进提示词。
  */
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readTextOrUndefined } from "../runtime/io.ts";
 
 /** 规矩文件（工作区根）。改名等于换契约，别改。 */
 export const RULES_FILE = "rules.md";
@@ -21,12 +21,8 @@ export const RULES_FILE = "rules.md";
  * 也不要一节能让模型照着自己的想象补的「（未设置）」—— 那会被它当成许可。
  */
 export async function loadRules(workspaceRoot: string): Promise<string | undefined> {
-	try {
-		const text = await readFile(join(workspaceRoot, RULES_FILE), "utf8");
-		return text.trim() === "" ? undefined : text;
-	} catch {
-		return undefined;
-	}
+	const text = await readTextOrUndefined(join(workspaceRoot, RULES_FILE));
+	return text === undefined || text.trim() === "" ? undefined : text;
 }
 
 /**

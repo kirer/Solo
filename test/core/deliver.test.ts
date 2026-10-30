@@ -83,6 +83,25 @@ describe("投递正文", () => {
 		expect(single).toContain("这条会叫醒：cto（你在第 1 位）");
 		expect(single).not.toContain("别人也在看这条");
 	});
+
+	test("只有我和团队管理员的团队频道不写私聊文案（成员形状不是判据）", () => {
+		// 以前 chatKind 只看「恰好两个人」，于是 owner + lead 的团队频道被说成悄悄话，
+		// 团队协作的上下文被扭成了私聊。现在私聊只认 `dm:` 前缀。
+		const team = stateWith({ id: "team:x", title: "X", members: ["owner", "lin"] });
+		const teamMessage = appendMessage(team, "team:x", { from: "lin", text: "进度在这", at: 1 }).message;
+		const inTeam = renderDeliveryWithTemplates({ channel: team.channels["team:x"]!, message: teamMessage, viewer: "lin" });
+		expect(inTeam).not.toContain("这是你和我的私聊");
+
+		// 真私聊仍然要说：它决定「只回这里，别去群里说」。
+		const dm = stateWith({ id: "dm:lin-owner", title: "lin", members: ["owner", "lin"] });
+		const dmMessage = appendMessage(dm, "dm:lin-owner", { from: "lin", text: "在吗", at: 1 }).message;
+		const inDm = renderDeliveryWithTemplates({
+			channel: dm.channels["dm:lin-owner"]!,
+			message: dmMessage,
+			viewer: "lin",
+		});
+		expect(inDm).toContain("这是你和我的私聊");
+	});
 });
 
 describe("未读摘要", () => {

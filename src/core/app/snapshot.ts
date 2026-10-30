@@ -10,8 +10,8 @@
  * 「一次提交 × 每个活跃频道 × 每个团队」会把磁盘读放大成每秒几十次，而团队文档一秒内
  * 几乎不会变。按 `teams/` 目录 mtime + 250ms 窗口缓存，改了最迟 250ms 后生效。
  */
-import { stat } from "node:fs/promises";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
+import { mtimeOrUndefined } from "../runtime/io.ts";
 import { listTeams } from "../team/doc.ts";
 import { ChannelDoc, type ChannelState } from "../channel/store.ts";
 import type { DirectoryState } from "../agent/roster.ts";
@@ -44,9 +44,7 @@ export function createSnapshots(shell: CoreServices) {
 	let teamsCache: { at: number; stamp: number; value: readonly Team[] } | undefined;
 
 	async function teamsNow(): Promise<readonly Team[]> {
-		const stamp = await stat(shell.teamsRoot)
-			.then((info) => info.mtimeMs)
-			.catch(() => -1);
+		const stamp = (await mtimeOrUndefined(shell.teamsRoot)) ?? -1;
 		const now = Date.now();
 		if (teamsCache !== undefined && teamsCache.stamp === stamp && now - teamsCache.at < TEAM_CACHE_MS) {
 			return teamsCache.value;

@@ -7,39 +7,20 @@
  * 唯一需要写文件的地方是「新建 agent」——所以它只有一处，且写的是同一个格式。
  * 这保证了「读」和「写」永远对称：写出来的东西，`readAllIdentities` 一定读得回。
  */
-import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { listAgentSlugs, readIdentity, OWNER_SLUG, type Identity, type IdentityHeader } from "../agent/identity.ts";
-import { renderFrontmatter } from "./frontmatter.ts";
+import { listAgentSlugs, readIdentity, type Identity, type IdentityHeader } from "../agent/identity.ts";
+import { renderFrontmatter } from "../doc.ts";
+import { assertName, slugifyName } from "../naming.ts";
+import { writeTextAt } from "../runtime/io.ts";
 
-/**
- * 名字 → slug。中文保留（`林越` → `林越`），空白与其他符号换成 `-`。
- *
- * 点号一律去掉：`.` / `..` 会让 `join(agentsRoot, slug)` 跳出 agents 目录
- * （实测 `hire(name="..")` 会把身份写到工作区根），而以点开头的目录又会被
- * `listAgentSlugs` 跳过，等于建了一个永不可见的人。
- */
+/** 名字 → slug。规则只有一份，在 `naming.ts`。 */
 export function slugify(name: string): string {
-	const flat = name
-		.trim()
-		.replace(/[\s/\\:*?"<>|]+/gu, "-")
-		.replace(/\.+/gu, "")
-		// 剩下的非 slug 字符（`#` `@` `!` 之类）也换掉：生成出来的 slug 必须能过
-		// `assertSlug`，否则一个奇怪的名字会让 `hire` 直接失败。
-		.replace(/[^\p{L}\p{N}_-]+/gu, "-")
-		.replace(/-+/gu, "-")
-		.replace(/^-|-$/gu, "");
-	return flat === "" ? "agent" : flat;
+	return slugifyName(name);
 }
 
-/** slug 只允许字母、数字、中文、`-`、`_`；别的一律拒绝（路径与 @ 都按它拼）。 */
-const SLUG = /^[\p{L}\p{N}_-]+$/u;
-
+/** slug 校验。规则只有一份，在 `naming.ts`（`owner` 是保留名）。 */
 export function assertSlug(slug: string): string {
-	if (!SLUG.test(slug) || slug === "." || slug === ".." || slug === OWNER_SLUG) {
-		throw new Error(`不能用作 slug：${slug}。只能用字母、数字、中文、- 和 _。`);
-	}
-	return slug;
+	return assertName(slug, "agent");
 }
 
 /** 拿一个还没被占用的 slug：重名就加 `-2`、`-3`。 */
@@ -92,8 +73,6 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	const slug = input.slug ?? (await uniqueSlug(input.root, input.name));
 	// 显式传入的 slug 也要过同一道闸：路径是拼出来的，不能只信调用方。
 	assertSlug(slug);
-	const dir = join(input.root, slug);
-	await mkdir(dir, { recursive: true });
 	const header: IdentityHeader = {
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
@@ -103,7 +82,7 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	const body =
 		input.body ??
 		`我是 ${input.name}。\n\n（这一段还没写。这是我的身份：我怎么理解自己的职责、我偏好怎么工作、我被交付了什么。\n我可以随时改这里 —— 改完下一条消息就生效。）`;
-	await writeFile(join(dir, "identity.md"), renderIdentityFile(header, body), "utf8");
+	await writeTextAt(join(input.root, slug, "identity.md"), renderIdentityFile(header, body));
 	const identity = await readIdentity(input.root, slug);
 	if (identity === undefined) throw new Error(`身份写入后读不回来：${slug}`);
 	return identity;

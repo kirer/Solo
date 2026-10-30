@@ -17,8 +17,6 @@
  * 目标只有一个：**能跑，能被人看见在跑什么**。加回任何一样之前先问
  * 「不修它，公司会不会停摆」，答案是否就别加。
  */
-import { mkdir, readdir } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { createRegistry } from "../runtime/index.ts";
@@ -29,6 +27,7 @@ import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedPromptTemplates, seedRules, syncCompanySkills } from "./seed.ts";
 import { createFsx } from "../fsx.ts";
 import { loadTemplates, PROMPT_DIR } from "../prompt.ts";
+import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {
@@ -66,12 +65,8 @@ function parseArgs(argv: readonly string[]): Args {
 
 /** `agents/` 下有几个文件夹（有一个就算「已经有人了」，不再播种）。 */
 async function agentCount(agentsRoot: string): Promise<number> {
-	try {
-		const entries = await readdir(agentsRoot, { withFileTypes: true });
-		return entries.filter((entry) => entry.isDirectory()).length;
-	} catch {
-		return 0;
-	}
+	const entries = await listDirSorted(agentsRoot);
+	return entries.filter((entry) => entry.kind === "dir").length;
 }
 
 
@@ -80,8 +75,8 @@ async function main(): Promise<void> {
 	const agentsRoot = join(args.workspace, "agents");
 	const teamsRoot = join(args.workspace, "teams");
 	const databasePath = join(args.workspace, "core.sqlite");
-	await mkdir(agentsRoot, { recursive: true });
-	await mkdir(teamsRoot, { recursive: true });
+	await ensureDir(agentsRoot);
+	await ensureDir(teamsRoot);
 
 	if (args.seed) {
 		// 规矩与公司层技能**每次启动都同步**（不是「只在空工作区」）：它们是公司发的文件，
@@ -99,7 +94,7 @@ async function main(): Promise<void> {
 
 	// 启动自检：`team/memory.ts` 的沉淀指令让团队管理员 `skills(action=read, name="记忆整理")`，
 	// 那份技能不在工作区，沉淀就会变成「模型凭自己想法整理」—— 静默降级，没人知道。
-	if (!existsSync(join(args.workspace, "skills", "记忆整理", "SKILL.md"))) {
+	if (!(await existsAt(join(args.workspace, "skills", "记忆整理", "SKILL.md")))) {
 		console.warn("[core] 公司技能「记忆整理」不在工作区：团队记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
 	}
 

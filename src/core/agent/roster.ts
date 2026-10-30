@@ -7,10 +7,10 @@
  * 它是**可重建的缓存**，不是真相：真相是文件夹。删掉它，重启后按文件夹重建即可；
  * 它存在的唯一理由是「会话 id 不能从文件名推出来」。
  */
-import { defineDoc, type JsonObject } from "../runtime/index.ts";
+import { BACKGROUND_CONTEXT, defineDoc, type Conversation, type Context, type Harness, type JsonObject } from "../runtime/index.ts";
+import type { WakeRecord } from "../channel/wake.ts";
 
-/** 一次唤醒：谁在哪个频道、第几条消息叫的我。 */
-type WakeRecord = { channelId: string; seq: number; from: string; at: number };
+export type { WakeRecord } from "../channel/wake.ts";
 
 export type DirectoryState = {
 	/** slug → 会话 id。 */
@@ -62,4 +62,60 @@ export function conversationFor(state: DirectoryState, slug: string): number | u
 
 export function slugFor(state: DirectoryState, conversationId: number | string): string | undefined {
 	return state.conversationToSlug[String(conversationId)];
+}
+
+/**
+ * 把名册文档抄成纯数据。
+ *
+ * 为什么必须抄：`tx.doc()` 给的是**覆盖层代理**，它的嵌套值也是代理。把代理的值原样
+ * 写回同一个覆盖层会静默丢数据（见 `assemble.ts` 的 `saveDirectory`）。这份文档很小
+ * （几个人 + 唤醒记录），JSON 来回一次比任何「小心地读代理」都便宜且确定。
+ */
+export function plainDirectory(source: DirectoryState): DirectoryState {
+	const json = JSON.stringify({
+		slugToConversation: source.slugToConversation ?? {},
+		conversationToSlug: source.conversationToSlug ?? {},
+		wake: source.wake ?? {},
+		labels: source.labels ?? {},
+	});
+	return JSON.parse(json) as DirectoryState;
+}
+
+/**
+ * 唤醒要用的那两件事：**这个人的会话在哪**、**记下他被谁在哪个频道叫醒**。
+ *
+ * 投递、我说话、团队沉淀三条路以前各写一份闭包，三份的读法还不完全一样
+ * （有人先查内存会话表、有人只查文档）。现在只有这一份。
+ *
+ * `live`：装配期内存里的会话表。名册是异步落盘的，刚 `hire` 出来的人可能还没写进去，
+ * 先查内存才不会把「新招的人」静默算成「没有人」。
+ */
+export function directoryWake(deps: {
+	readonly harness: Harness;
+	readonly live?: () => ReadonlyMap<string, Conversation>;
+}): {
+	readonly conversationOf: (slug: string, context: Context) => Promise<Conversation | undefined>;
+	readonly rememberWake: (slug: string, wake: WakeRecord, context: Context) => Promise<void>;
+} {
+	return {
+		async conversationOf(slug, context) {
+			const known = deps.live?.().get(slug);
+			if (known !== undefined) return known;
+			const directory = (await deps.harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
+			const id = conversationFor(directory, slug);
+			if (id === undefined) return undefined;
+			return deps.harness.conversation(id as never, context);
+		},
+		async rememberWake(slug, wake, context = BACKGROUND_CONTEXT) {
+			await deps.harness.commit(async (tx) => {
+				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+				// 用**文档里**的映射：刚 `hire` 的人只在文档里有，装配期那份里没有。
+				const id = conversationFor(doc, slug);
+				if (id === undefined) return;
+				// 只写 `wake` 这一个字段：把整份名册展开再写回去，任何一处覆盖层节点被顺手
+				// 写回来就是一次静默丢人。
+				doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
+			}, context);
+		},
+	};
 }

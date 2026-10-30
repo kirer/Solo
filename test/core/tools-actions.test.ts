@@ -39,7 +39,9 @@ const CONVERSATION = 7;
 const DM = dmId(OWNER, ME);
 const TEAM = teamId("alpha");
 
-async function setup(): Promise<{
+async function setup(
+	extra: Record<string, unknown> = {},
+): Promise<{
 	tools: readonly { name: string; execute?: (...args: never[]) => Promise<unknown> }[];
 	call: (name: string, args: Record<string, unknown>) => Promise<string>;
 	root: string;
@@ -95,6 +97,7 @@ async function setup(): Promise<{
 			wake: { [String(CONVERSATION)]: { channelId: TEAM, seq: 1, from: OWNER, at: 10 } },
 		}),
 		saveDirectory: async () => undefined,
+		...extra,
 	} as never);
 
 	return {
@@ -276,5 +279,46 @@ describe("file", () => {
 		const { call } = await setup();
 		const output = await call("file", { action: "append", path: "notes.md" });
 		expect(output).toContain("action 只有 read / write");
+	});
+});
+
+describe("写团队 README 会重投影频道（ADR-097）", () => {
+	it("写 teams/<slug>/README.md 触发 syncTeam，写普通文件不触发", async () => {
+		const synced: string[] = [];
+		const { call } = await setup({
+			syncTeam: async (team: string) => {
+				synced.push(team);
+			},
+		});
+		await call("file", { action: "write", path: "teams/alpha/README.md", content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标。" });
+		expect(synced).toEqual(["alpha"]);
+
+		await call("file", { action: "write", path: "out/日报.md", content: "普通文件" });
+		expect(synced).toEqual(["alpha"]);
+	});
+
+	it("别的 teams 路径（memory.md、深层目录）不算团队说明", async () => {
+		const synced: string[] = [];
+		const { call } = await setup({
+			syncTeam: async (team: string) => {
+				synced.push(team);
+			},
+		});
+		await call("file", { action: "write", path: "teams/alpha/memory.md", content: "记忆" });
+		await call("file", { action: "write", path: "teams/alpha/sub/README.md", content: "子目录" });
+		expect(synced).toEqual([]);
+	});
+
+	it("syncTeam 抛错时仍算写入成功，并说清「刷新失败」", async () => {
+		const { call } = await setup({
+			syncTeam: async () => {
+				throw new Error("频道存储不可用");
+			},
+		});
+		const output = await call("file", { action: "write", path: "teams/alpha/README.md", content: "新目标" });
+		// 不能反过来报「没写进去」：模型会重写一遍，把刚写的正文覆盖掉。
+		expect(output).toContain("已写入 teams/alpha/README.md");
+		expect(output).toContain("团队频道刷新失败");
+		expect(output).toContain("频道存储不可用");
 	});
 });

@@ -20,8 +20,7 @@
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { join } from "node:path";
 import {
 	BACKGROUND_CONTEXT,
 	Type,
@@ -36,7 +35,9 @@ import { OWNER_SLUG, readAllIdentities, readIdentity } from "../agent/identity.t
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
 import { redact, SECRETS_FILE } from "../agent/secrets.ts";
 import { createAgent } from "../agent/create.ts";
-import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
+import { resolveInOrUndefined } from "../fsx.ts";
+import { readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
+import { directoryWake, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
 import { mentionRosterOf, resolveMention, type MentionRoster } from "./store.ts";
 import {
@@ -44,10 +45,10 @@ import {
 	OWNER,
 	channelsOf,
 	chatKind,
+	deliveryTargets,
 	fallbackChannelId,
 	markRead,
 	parseMentions,
-	recipientsOf,
 	unreadCount,
 	type ChannelState,
 	type Message,
@@ -56,7 +57,7 @@ import { renderDigest } from "./post.ts";
 import { promptDirOf } from "../prompt.ts";
 import { oneLine } from "../oneline.ts";
 import { confirmedBy } from "../team/settle.ts";
-import { assertTeamSlug, readTeam } from "../team/doc.ts";
+import { assertTeamSlug, readTeam, teamSlugOfReadmePath } from "../team/doc.ts";
 import {
 	appendTeamMemory,
 	teamMemorySections,
@@ -283,9 +284,9 @@ async function othersAwoken(
 	// 宁可让一句无话不说的话被放过，也不要因为一次读不到而把他卡在第 1 条消息上。
 	const candidates =
 		message === undefined
-			? channel.members
-			: recipientsOf(channel, message);
-	return candidates.filter((member) => member !== slug && member !== OWNER);
+			? channel.members.filter((member) => member !== OWNER)
+			: deliveryTargets(channel, message);
+	return candidates.filter((member) => member !== slug);
 }
 
 /** 当前名册：`@` 别名解析用。每次现读盘（`say` 不是热路径，且改 `identity.md` 要立刻生效）。 */
@@ -829,6 +830,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		description: [
 			"工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。",
 			"路径相对工作区根，`../` 会被拒；读写不了工作区以外的东西。",
+			"写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员（改完不用再单独同步）。",
 		].join(""),
 		parameters: Type.Object({
 			action: Type.Optional(Type.String({ description: "read（默认）/ write" })),
@@ -837,7 +839,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 			offset: Type.Optional(Type.Number({ description: "read 从第几行开始（1 起），默认 1" })),
 			limit: Type.Optional(Type.Number({ description: "read 最多几行，默认 400" })),
 		}),
-		execute: async (args) => {
+		execute: async (args, _api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
 			const action = actionOf(args.action, ["read", "write"], "read");
 			if (typeof action !== "string") return text(action);
 			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
@@ -850,12 +853,26 @@ export function createCoreTools(deps: CoreToolDeps) {
 				if (args.content === undefined) return text("write 要带 content（写什么）。只想读文件用 action=read。");
 				// 密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
 				const content = redact(args.content, deps.workspaceRoot);
-				await mkdir(dirname(target), { recursive: true });
-				await writeFile(target, content, "utf8");
+				await writeTextAt(target, content);
+				// 团队说明是事实，团队频道是它的投影：改了 README 立刻重算一次成员
+				// （否则刚写进去的团队管理员在频道里不存在，成员 @ 不到他）。
+				const team = teamSlugOfReadmePath(args.path);
+				if (team !== undefined && deps.syncTeam !== undefined) {
+					try {
+						await deps.syncTeam(team, ctx);
+					} catch (error) {
+						// 写入已经成功，刷新失败不能反过来报「没写进去」—— 否则模型会重写一遍。
+						return text(
+							`已写入 ${args.path}（${content.length} 字），但团队频道刷新失败：${
+								error instanceof Error ? error.message : String(error)
+							}`,
+						);
+					}
+				}
 				return text(`已写入 ${args.path}（${content.length} 字）`);
 			}
 
-			const source = await readFile(target, "utf8").catch(() => undefined);
+			const source = await readTextOrUndefined(target);
 			if (source === undefined) return text(`文件不存在：${args.path}`);
 			const rows = source.split("\n");
 			const offset = Math.max(Math.trunc(args.offset ?? 1), 1);
@@ -884,6 +901,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 
 /** 组装一次投递的全部依赖（`say` 共用）。 */
 function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): PostDeps {
+	// 唤醒依赖只有一份（`agent/roster.ts` 的 `directoryWake`）：投递、我说话、沉淀
+	// 三条路共用同一套「会话在哪 / 记下被谁叫醒」。
+	const wakeDeps = directoryWake({ harness: deps.harness });
 	return {
 		harness: deps.harness,
 		state,
@@ -891,18 +911,10 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
 		// 以前这里漏了它，于是成员 `say` 叫管理员时，管理员那条唤醒没有回话规矩 ——
 		// 表现是「能回，但不知道要先把话说进频道」，日志里一行 warn 谁也没注意。
 		promptDir: promptDirOf(deps.agentsRoot),
-		conversationOf: (slug: string) => conversationOf(deps, slug, context),
+		conversationOf: (slug: string) => wakeDeps.conversationOf(slug, context),
 		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算），
 		// 传一个 `(slug) => slug` 只是把缺省重写一遍。
-		rememberWake: async (slug: string, wake) => {
-			const directory = await deps.directory(context);
-			const id = conversationFor(directory, slug);
-			if (id === undefined) return;
-			await deps.saveDirectory(
-				(value) => ({ ...value, wake: { ...value.wake, [String(id)]: { ...wake } } }),
-				context,
-			);
-		},
+		rememberWake: (slug, wake) => wakeDeps.rememberWake(slug, wake, context),
 	};
 }
 
@@ -1003,22 +1015,7 @@ export function clip(source: string, limit: number): string {
  * 两处规则一致，读代码的人不用猜「这里到底拦不拦」。
  */
 export function resolveInWorkspace(root: string, path: string): string | undefined {
-	const base = resolve(root);
-	const target = resolve(base, path);
-	if (target === base) return target;
-	return target.startsWith(base + sep) ? target : undefined;
-}
-
-/**
- * slug → 会话句柄。名册里没有、或者会话已被删除时返回 undefined（不抛）。
- *
- * 找不到人不是错误：我就是没有会话的，刚 hire 的人也可能还没开。
- */
-async function conversationOf(deps: CoreToolDeps, slug: string, context: Context) {
-	const directory = await deps.directory(context);
-	const id = conversationFor(directory, slug);
-	if (id === undefined) return undefined;
-	return deps.harness.conversation(id as never, context);
+	return resolveInOrUndefined(root, path);
 }
 
 /** 一条消息的一行渲染（`chats` 用）。 */

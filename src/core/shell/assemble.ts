@@ -30,8 +30,8 @@ import {
 	OWNER,
 	chatKind,
 	channelsOf,
+	projectChannel,
 	teamId,
-	upsertChannel,
 	type Attachment,
 	type ChannelState,
 	type Message,
@@ -41,7 +41,13 @@ import { promptDirOf } from "../prompt.ts";
 import { postMessage } from "../channel/post.ts";
 import { coalesceQueue } from "../channel/post.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
-import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
+import {
+	DirectoryDoc,
+	directoryWake,
+	emptyDirectory,
+	plainDirectory,
+	type DirectoryState,
+} from "../agent/roster.ts";
 import { settleTeam } from "../team/settle.ts";
 import { startAnswerRescue } from "./rescue.ts";
 import { labelIn } from "../app/read.ts";
@@ -88,23 +94,6 @@ export type CoreShell = CoreServices;
 
 /** 名册的顶层字段（写回去时要逐字段比，不能整份替换）。 */
 const DIRECTORY_KEYS = ["slugToConversation", "conversationToSlug", "wake", "labels"] as const;
-
-/**
- * 把名册文档抄成纯数据。
- *
- * 为什么必须抄：`tx.doc()` 给的是**覆盖层代理**，它的嵌套值也是代理。把代理的值原样
- * 写回同一个覆盖层会静默丢数据（见 `saveDirectory` 的注释）。这份文档很小（几个人 +
- * 唤醒记录），JSON 来回一次比任何「小心地读代理」都便宜且确定。
- */
-function plainDirectory(source: DirectoryState): DirectoryState {
-	const json = JSON.stringify({
-		slugToConversation: source.slugToConversation ?? {},
-		conversationToSlug: source.conversationToSlug ?? {},
-		wake: source.wake ?? {},
-		labels: source.labels ?? {},
-	});
-	return JSON.parse(json) as DirectoryState;
-}
 
 /**
  * 装配。
@@ -280,7 +269,16 @@ export async function assembleCore(
 			const channel = doc.channels[companyChannel];
 			if (channel === undefined) return;
 			// 整体替换，不就地 push：读出来的是副本，就地改不产生 op。
-			Object.assign(doc, upsertChannel(doc, { id: companyChannel, title: channel.title, members: [slug], at: Date.now() }));
+			Object.assign(
+				doc,
+				projectChannel(doc, {
+					id: companyChannel,
+					title: channel.title,
+					members: [slug],
+					at: Date.now(),
+					mode: "merge",
+				}),
+			);
 		}, ctx);
 	}
 
@@ -340,17 +338,19 @@ export async function assembleCore(
 		const wakeOnAll = lead === undefined || lead === "" ? [] : [lead];
 		await harness.commit(async (tx) => {
 			const state = (await tx.doc(ChannelDoc)) as ChannelState;
-			const id = teamId(team);
-			const existing = state.channels[id];
-			const title = doc?.name ?? team;
-			if (existing === undefined) {
-				// 频道还不存在：建（同一个 `upsertChannel`，这里只是它的建群那一半）。
-				Object.assign(state, upsertChannel(state, { id, title, members, wakeOnAll, at: Date.now() }));
-			} else {
-				// 已存在：成员表整体替换为事实投影（去幽灵、补统筹），唤醒表同理。
-				// 这一步**不能**交给 `upsertChannel`：它只加不删，而这里要的是精确重算。
-				state.channels[id] = { ...existing, members, title, wakeOnAll };
-			}
+			// 成员表整体替换为事实投影（去幽灵、补统筹），唤醒表同理 —— 这正是
+			// `projectChannel` 的 `replace` 意图；`merge`（公司频道）只加不删。
+			Object.assign(
+				state,
+				projectChannel(state, {
+					id: teamId(team),
+					title: doc?.name ?? team,
+					members,
+					wakeOnAll,
+					at: Date.now(),
+					mode: "replace",
+				}),
+			);
 		}, ctx);
 	}
 
@@ -401,7 +401,14 @@ export async function assembleCore(
 		// （实测消息会静默消失）。
 		Object.assign(
 			doc,
-			upsertChannel(doc, { id: companyChannel, title: "全员", members, wakeOnAll: [OWNER], at: Date.now() }),
+			projectChannel(doc, {
+				id: companyChannel,
+				title: "全员",
+				members,
+				wakeOnAll: [OWNER],
+				at: Date.now(),
+				mode: "merge",
+			}),
 		);
 	}, context);
 
@@ -452,10 +459,16 @@ export async function assembleCore(
 					const channelDoc = (await tx.doc(ChannelDoc)) as ChannelState;
 					const channel = channelDoc.channels[companyChannel];
 					if (channel !== undefined) {
-						const missing = added.filter((slug) => !channel.members.includes(slug));
-						if (missing.length > 0) {
-							channelDoc.channels[companyChannel] = { ...channel, members: [...channel.members, ...missing] };
-						}
+						Object.assign(
+							channelDoc,
+							projectChannel(channelDoc, {
+								id: companyChannel,
+								title: channel.title,
+								members: added,
+								at: Date.now(),
+								mode: "merge",
+							}),
+						);
 					}
 				}, ctx);
 			}
@@ -497,6 +510,7 @@ function makeAfterPost(
 	teamsRoot: string,
 	live: () => ReadonlyMap<string, Conversation>,
 ): (message: Message, channelId: string, context: Context) => Promise<void> {
+	const wakeDeps = directoryWake({ harness, live });
 	return async (_message, channelId, context) => {
 		if (!channelId.startsWith("team:")) return;
 		await settleTeam(
@@ -508,14 +522,7 @@ function makeAfterPost(
 					(await harness.snapshot(ChannelDoc, context)) ?? { channels: {}, messages: {}, nextSeq: {}, readMarks: {} },
 				// 先查内存里的会话表：名册是异步落盘的，刚 `hire` 出来的人可能还没写进去
 				// （实测：新招的人被静默算成「没有人能写」）。名册只作为兜底。
-				conversationOf: async (slug) => {
-					const known = live().get(slug);
-					if (known !== undefined) return known;
-					const dir = (await harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
-					const id = conversationFor(dir, slug);
-					if (id === undefined) return undefined;
-					return harness.conversation(id as never, context);
-				},
+				conversationOf: (slug) => wakeDeps.conversationOf(slug, context),
 				// 沉淀和投递走同一条 `wake()`：回话规矩同一个来源、同样合并唤醒、
 				// 没产出同样在频道里留一句（以前这条路上什么都没有）。
 				promptDir: promptDirOf(agentsRoot),
@@ -524,14 +531,7 @@ function makeAfterPost(
 				// 留痕里用 slug：这一层拿不到显示名表，而留痕是给人看位置，不是给人看称呼。
 				labelOf: (slug) => slug,
 				// 沉淀也记 wake（与投递同一个写法）：不记的话他回话会落到别的频道。
-				rememberWake: async (slug: string, wake) => {
-					await harness.commit(async (tx) => {
-						const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-						const id = conversationFor(doc, slug);
-						if (id === undefined) return;
-						doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
-					}, context);
-				},
+				rememberWake: (slug, wake) => wakeDeps.rememberWake(slug, wake, context),
 			},
 			channelId.slice("team:".length),
 			context,
@@ -583,18 +583,13 @@ export async function ownerSpeak(
 	);
 	// 显示名以**当下的** `identity.md` 为准，名册里的 `labels` 只做兜底。
 	const labels = { ...directory.labels, ...labelsOf(everyone) };
+	// 唤醒依赖与工具层、沉淀共用同一份（先查内存会话表，再查名册）。
+	const wakeDeps = directoryWake({ harness: shell.harness, live: () => shell.conversations });
 	const result = await postMessage(
 		{
 			harness: shell.harness,
 			state,
-			conversationOf: async (slug: string) => {
-				const id = conversationFor(directory, slug);
-				if (id !== undefined) {
-					const found = await shell.harness.conversation(id as never, context);
-					if (found !== undefined) return found;
-				}
-				return shell.conversations.get(slug);
-			},
+			conversationOf: (slug: string) => wakeDeps.conversationOf(slug, context),
 			labelOf: (slug) => labelIn({ ...directory, labels }, slug),
 			// 附件根跟着工作区走：`<workspace>/uploads`。给了它，我发的图片才会被读成
 			// 内容块交给模型 —— 不给的话模型只看到一行「[图片] x.png」。
@@ -605,17 +600,7 @@ export async function ownerSpeak(
 			// 我说话也要记「谁在哪个频道被叫醒」。不传这一项，被叫的人回话时
 			// 查不到 wake，只能退到「我最早的那个频道」—— 那往往是私聊，
 			// 于是我在公司频道问话、对方在私聊里答，问到的人什么都看不到。
-			rememberWake: async (slug: string, wake) => {
-				await shell.harness.commit(async (tx) => {
-					const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-					// 用**文档里**的映射：刚 `hire` 的人只在文档里有，装配期那份里没有。
-					const id = conversationFor(doc, slug);
-					if (id === undefined) return;
-					// 只写 `wake` 这一个字段：以前是 `Object.assign(doc, { ...doc, wake })`，
-					// 把整份名册展开再写回去，任何一处覆盖层节点被顺手写回来就是一次静默丢人。
-					doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
-				}, context);
-			},
+			rememberWake: (slug: string, wake) => wakeDeps.rememberWake(slug, wake, context),
 		},
 		{
 			channelId: options.channelId,

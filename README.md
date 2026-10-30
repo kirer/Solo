@@ -46,7 +46,8 @@ npm start                 # http://127.0.0.1:7788
 
 ```
 src/core/     核心（47 个文件，约 11K 行）
-  fsx.ts      文件系统的唯一入口（全项目只有它 import node:fs）
+  fsx.ts      工作区内的相对路径入口（与 runtime/io.ts 是唯二碰 node:fs 的地方）
+  naming.ts   名字 → 目录名的唯一规则（agent / 团队 / 技能共用）
   doc.ts      所有 markdown 都是 {path, front, body}
   text.ts     插槽渲染（{{名字}} → 事实）
   prompt.ts   提示词：读模板 → 填插槽 → 按文件名前缀拼段
@@ -61,7 +62,7 @@ src/core/     核心（47 个文件，约 11K 行）
 ui/app/       网页界面源码（React + TS + Vite，构建到 ui/web/，改完必须 npm run ui:build）
 seed/         出厂内容：规矩 / 提示词模板 / 技能 / 助理身份 / pool（默认不装的技能）
 scripts/      边界检查 + 真实模型自测 + 提示词黄金渲染
-test/         60 文件 / 538 例
+test/         62 文件 / 572 例
 ```
 
 ## 命令
@@ -70,7 +71,7 @@ test/         60 文件 / 538 例
 | --- | --- |
 | `npm start` | 起服务（`--port` `--host` `--workspace` `--no-seed`） |
 | `npm run check` | 类型检查 + 边界检查（唯 runtime 层能碰底层库、路由必须有前端消费者） |
-| `npm test` | 单测，60 文件 538 例，<3s |
+| `npm test` | 单测，62 文件 572 例，<3s |
 | `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 16 项（会花 token，改行为后跑） |
 | `npm run ui:build` | 构建界面到 `ui/web/`（改完 `ui/app/` 必跑） |

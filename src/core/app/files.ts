@@ -74,5 +74,3 @@ export function createUploads(shell: CoreServices) {
 
 	return { root, read, sweep };
 }
-
-export type Uploads = ReturnType<typeof createUploads>;

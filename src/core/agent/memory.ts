@@ -16,8 +16,8 @@
  * 拼进每一轮提示词，一条 key 写进来就是永久泄露（`secrets.ts` 是最后一道网，
  * 这里是最前面那道）。
  */
-import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 import { appendJournal } from "./journal.ts";
 
 export const MEMORY_FILE = "memory.md";
@@ -50,11 +50,7 @@ export type MemoryWrite = {
 
 /** 读全文；不存在时返回 undefined（**不**自动建文件 —— 没记过就是没记过）。 */
 export async function readMemory(agentDir: string): Promise<string | undefined> {
-	try {
-		return await readFile(join(agentDir, MEMORY_FILE), "utf8");
-	} catch {
-		return undefined;
-	}
+	return readTextOrUndefined(join(agentDir, MEMORY_FILE));
 }
 
 /**
@@ -154,13 +150,7 @@ function alreadyRecorded(source: string, text: string): boolean {
  * 读 → 拼 → 写 不是原子的：两个工具调用并发跑，后写的那个会用旧的 `existing` 覆盖
  * 掉前一个刚追加的条目（丢了，而且没有任何迹象）。链只保证顺序，不保证跨进程。
  */
-let writing: Promise<unknown> = Promise.resolve();
-
-function serialized<T>(operation: () => Promise<T>): Promise<T> {
-	const next = writing.then(operation, operation);
-	writing = next.catch(() => undefined);
-	return next;
-}
+const serialized = createSerialGate();
 
 /**
  * 追加一条（带日期小节）。`by` 是「谁写的」，只进 journal，不进正文。
@@ -191,7 +181,7 @@ export async function appendMemory(
 			last !== undefined && last.heading === stamp
 				? `${before.trimEnd()}\n${body}\n`
 				: `${before.trimEnd()}\n\n## ${stamp}\n${body}\n`;
-		await writeFile(join(agentDir, MEMORY_FILE), next, "utf8");
+		await writeTextAt(join(agentDir, MEMORY_FILE), next);
 		await appendJournal(agentDir, { at: at.toISOString(), by, op: "append", before, after: next });
 		return { changed: true, message: "已记下。", source: next };
 	});
@@ -202,7 +192,7 @@ export async function writeMemory(agentDir: string, source: string, by = "agent"
 	return serialized(async () => {
 		const before = (await readMemory(agentDir)) ?? "";
 		const next = `${source.trimEnd()}\n`;
-		await writeFile(join(agentDir, MEMORY_FILE), next, "utf8");
+		await writeTextAt(join(agentDir, MEMORY_FILE), next);
 		await appendJournal(agentDir, { at: new Date().toISOString(), by, op: "replace", before, after: next });
 		return { changed: true, message: "已重写。", source: next };
 	});
@@ -262,12 +252,8 @@ export type MemoryStamp = {
  */
 export async function memoryTimeline(agentDir: string): Promise<ReadonlyMap<string, MemoryStamp>> {
 	const stamps = new Map<string, MemoryStamp>();
-	let raw = "";
-	try {
-		raw = await readFile(join(agentDir, ".memory-journal.jsonl"), "utf8");
-	} catch {
-		return stamps;
-	}
+	const raw = (await readTextOrUndefined(join(agentDir, ".memory-journal.jsonl"))) ?? "";
+	if (raw === "") return stamps;
 	for (const line of raw.split("\n")) {
 		if (line.trim() === "") continue;
 		let entry: { at?: unknown; by?: unknown; before?: unknown; after?: unknown };
