@@ -53,7 +53,7 @@ async function main(): Promise<void> {
 	const { createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
 	const { assembleCore } = await import("../src/core/shell/assemble.ts");
-	const { seedOwnerAssistant } = await import("../src/core/shell/seed.ts");
+	const { seedOwnerAssistant, seedPromptTemplates, seedRules } = await import("../src/core/shell/seed.ts");
 
 	const root = await mkdtemp(join(tmpdir(), "core-live-"));
 	const agentsRoot = join(root, "agents");
@@ -62,6 +62,10 @@ async function main(): Promise<void> {
 	await mkdir(teamsRoot, { recursive: true });
 	console.log(`工作区：${root}`);
 
+	// 和 `main.ts` 启动时同一套播种：规矩、模板、公司层技能、助理身份。
+	// 少了 `prompt/`，V3 的提示词渲染出来是空的 —— 那正是「单测全绿、模型收到半句话」。
+	await seedRules(root);
+	await seedPromptTemplates(root);
 	const slug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
 	console.log(`播种：agents/${slug}`);
 
@@ -80,6 +84,35 @@ async function main(): Promise<void> {
 		teamsRoot,
 		defaultModel: picked,
 	});
+
+	// 把**真模型收到的** system prompt 打出来：单测全绿、模型收到半句话，是提示词外置
+	// 最典型的翻车方式，光看段数和字符数看不出来。
+	{
+		const { renderAgentSection } = await import("../src/core/agent/runtime.ts");
+		const prompt = await renderAgentSection(
+			runtime.registry,
+			{ workspace: root, agents: agentsRoot, teams: teamsRoot, chats: async () => [] },
+			slug,
+		);
+		console.log(`\n──── system prompt（前 40 行 / 共 ${prompt.split("\n").length} 行）────`);
+		console.log(prompt.split("\n").slice(0, 40).join("\n"));
+		console.log("──── 以上是模型真收到的 ────\n");
+
+		// delivery 段同样贴出来：它在同步/异步交接处，单测测的是函数、不是链路。
+		const { renderReplyRules } = await import("../src/core/channel/deliver.ts");
+		const { loadTemplates, promptDirOf } = await import("../src/core/prompt.ts");
+		const { createFsx } = await import("../src/core/fsx.ts");
+		const delivery = (await loadTemplates(createFsx(promptDirOf(agentsRoot)), ".")).filter(
+			(item) => item.use === "delivery",
+		);
+		const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
+		console.log("──── delivery：只有我跟他两个人时 ────");
+		console.log(renderReplyRules({ template: bodyOf("reply"), woken: [slug], viewer: slug, colleagues: [] }));
+		console.log("──── delivery：插话那一段 ────");
+		console.log(bodyOf("interrupted"));
+		console.log("──── 以上是每轮贴在投递正文末尾的 ────\n");
+	}
+
 
 	const phases: Phase[] = [];
 
@@ -197,6 +230,14 @@ async function main(): Promise<void> {
 		const now = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
 		if (now !== memoryBefore) settled = now;
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
+	}
+	// 失败时要看得见助理到底说了什么：它说「没有需要沉淀的」是判断问题，它什么都没说
+	// 就是唤醒被吞了 —— 两者修法完全不同。
+	if (settled === "") {
+		const state = await shell.channels();
+		const tail = (state.messages["team:自测团队"] ?? []).slice(-4);
+		console.log("[debug] 团队频道最后几条：");
+		for (const message of tail) console.log(`  #${message.seq} ${message.from}（${message.kind ?? "-"}）：${message.text.slice(0, 120)}`);
 	}
 	phases.push({
 		name: "团队记忆自动沉淀（拍板后被叫去沉淀并落盘）",

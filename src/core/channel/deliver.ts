@@ -14,6 +14,9 @@ import type { Conversation, Harness, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { planAttachments } from "./attach.ts";
 import { clearSpoken } from "./speech.ts";
+import { createFsx } from "../fsx.ts";
+import { loadTemplates, type PromptTemplate } from "../prompt.ts";
+import { renderSlots, type SlotValue } from "../text.ts";
 import { watchSettled } from "./unanswered.ts";
 import { oneLine } from "../oneline.ts";
 import {
@@ -98,6 +101,13 @@ type DeliverOptions = {
 	 */
 	readonly notify?: (issues: readonly DeliverIssue[]) => Promise<void> | void;
 	/**
+	 * 提示词模板目录（`<workspace>/prompt`）。给了才贴「怎么回话」那两段。
+	 *
+	 * 为什么不传工作区根：这一层只该知道「模板在哪」，不该知道工作区长什么样。
+	 * 每轮现读一次（不缓存）—— 缓存一进投递层，改模板就要重启。
+	 */
+	readonly promptDir?: string;
+	/**
 	 * 附件根目录（`<workspace>/uploads`）。
 	 *
 	 * 给了就把消息里的图片读成内容块直接交给模型（它真的看得见图），其它文件给出
@@ -139,40 +149,38 @@ function isOwnerDm(channel: Channel, viewer: string | undefined): boolean {
  * 每轮重申一次。ds-bot 就是这么干的（`groups.js:102` 的 `ROOM_REPLY`），实测比
  * 把规矩放在系统提示里有效一个量级。
  *
- * 两句关键：①**长只允许出现在被点名要的场合** —— 只写「要短」会得到又短又偷工；
- * ②只有一个人在场时不能静音（PASS 会断线）。
+ * **正文在 `prompt/80-reply.md`，这里只填两个条件句**（契约 §4 第 4 条：整句插槽只许
+ * 出现在 delivery 段）。模板由 `deliver()` 每轮现读一次当参数传进来 —— 这一层保持纯函数，
+ * 单测照样能跑，而「改模板下一条生效」不丢。
  */
 export function renderReplyRules(options: {
 	readonly woken: readonly string[];
 	readonly viewer?: string | undefined;
 	readonly labelOf?: ((slug: string) => string) | undefined;
 	/** 这个频道里除自己和我之外的成员。有他们才提「成员的事在群里说」。 */
-	readonly colleagues?: readonly string[];
+	readonly colleagues?: readonly string[] | undefined;
+	/** `prompt/80-reply.md` 的正文。空串 = 没有模板（整段不贴）。 */
+	readonly template: string;
 }): string {
+	if (options.template.trim() === "") return "";
 	const others = options.woken.filter((slug) => slug !== options.viewer);
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const colleagues = (options.colleagues ?? []).filter((slug) => slug !== options.viewer);
-	return [
-		"（回话像成员发消息：一两句、说结论。不写小标题、不列清单、不总结你刚做过什么。）",
-		"（被要求做事就现在用工具做，说完只说结果 —— 谁、做了什么、卡在哪、下一步。不要许诺「我马上处理」。）",
-		"（干活中途想让人知道进展，就发 `say` 带 `step: true`，那种可以连发几句；不带的是结论，**这一轮只认一句**，第二句会被拒。）",
-		others.length === 0
-			? "（这一轮只有你被叫醒：必须回，回的就是结果。）"
-			: `（没有新东西就不说：只把 text 写成 \`[PASS]\`，这条不会发出去 —— 这一轮还有 ${others
-					.map((slug) => options.labelOf?.(slug) ?? slug)
-					.join("、")} 在。）`,
-		// 说完之后模型常把「我做了 X」再写成最终回答。那段正文会被投影成第二条消息
-		// （实测原文「已回我：在，随时待命。」紧跟在自己的发言之后）。
-		"（别复述：最终回答里不要写「已回我」「已发到频道」这类话 —— 你说过的他已经在频道里看到了。）",
-		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 chats(action=read)）",
-		// 成员之间的事放在群里说。私聊只有我能用（系统会拦），而「找个人问一句」如果没有
-		// 出口，agent 就会绕道群里喊一句「@所有人」或者干脆自己猜 —— 实测员工↔员工只有 1.2%。
-		colleagues.length === 0
-			? ""
-			: `（成员的事就在这个频道说：要问 ${colleagues.map(label).join("、")} 就 @ 他，他会收到、也看得到上下文。不要为了找一个人去私聊 —— 成员之间的私聊系统不允许。）`,
-	]
-		.filter((item) => item !== "")
-		.join("\n");
+
+	// 两个条件句都必须有值：模板里它们是**整行**，留空会渲染成「（未设置）」占一行。
+	const slots: Record<string, SlotValue> = {
+		"reply.alone":
+			others.length === 0
+				? "（这一轮只有你被叫醒：必须回，回的就是结果。）"
+				: `（没有新东西就不说：只把 text 写成 \`[PASS]\`，这条不会发出去 —— 这一轮还有 ${others
+						.map((slug) => label(slug))
+						.join("、")} 在。）`,
+		"reply.colleagues":
+			colleagues.length === 0
+				? "（这个频道里只有你和我：不用为找一个人绕道。）"
+				: `（成员的事就在这个频道说：要问 ${colleagues.map(label).join("、")} 就 @ 他，他会收到、也看得到上下文。不要为了找一个人去私聊 —— 成员之间的私聊系统不允许。）`,
+	};
+	return renderSlots(options.template, slots).text.trim();
 }
 
 /** 一条消息交给模型时的正文。纯函数，方便单测。 */
@@ -186,6 +194,10 @@ export function renderDelivery(options: {
 	readonly interrupted?: boolean;
 	/** 附件说明（`planAttachments` 的 `lines`）。没有附件时为空。 */
 	readonly attachmentLines?: readonly string[];
+	/** `prompt/80-reply.md` 的正文。空串 = 整段不贴。 */
+	readonly replyTemplate: string;
+	/** `prompt/90-interrupted.md` 的正文。空串 = 插话那两句不贴。 */
+	readonly interruptedTemplate: string;
 }): string {
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const { channel, message } = options;
@@ -220,6 +232,7 @@ export function renderDelivery(options: {
 			: ["", "附件：", ...options.attachmentLines]),
 		// 「怎么回话」每轮贴在最后：它比系统提示词里的同一句规矩有效得多。
 		renderReplyRules({
+			template: options.replyTemplate,
 			woken,
 			viewer: options.viewer,
 			labelOf: label,
@@ -229,12 +242,30 @@ export function renderDelivery(options: {
 					? []
 					: channel.members.filter((slug) => slug !== OWNER && slug !== options.viewer),
 		}),
-		...(options.interrupted === true
-			? [
-					"（这是插话，不是新任务：答完这一句就回到你手上的活，别停。手上的活干完按规矩汇报，汇报完再管这件事。）",
-				]
+		...(options.interrupted === true && options.interruptedTemplate.trim() !== ""
+			? [renderSlots(options.interruptedTemplate, {}).text.trim()]
 			: []),
 	].join("\n");
+}
+
+/**
+ * 读 delivery 段的两份模板（`80-reply.md` / `90-interrupted.md`）。
+ *
+ * 缺哪段就空串（调用方整段不贴）：模板是 workspace 里的活文件，可能被改成任意样子，
+ * 读不到不该让投递失败 —— 但也不能静默：读不到就 warn 一次。
+ */
+async function deliveryPrompt(promptDir: string | undefined): Promise<{ readonly reply: string; readonly interrupted: string }> {
+	if (promptDir === undefined) {
+		console.warn("[core] 投递没拿到模板目录（prompt/）：回话规矩不会贴");
+		return { reply: "", interrupted: "" };
+	}
+	// `promptDir` 本身就是模板目录，所以段目录是 `.`（不是默认的 `prompt`，那会变成 prompt/prompt）。
+	const templates = await loadTemplates(createFsx(promptDir), ".");
+	const delivery: readonly PromptTemplate[] = templates.filter((template) => template.use === "delivery");
+	const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
+	const prompt = { reply: bodyOf("reply"), interrupted: bodyOf("interrupted") };
+	if (prompt.reply === "") console.warn(`[core] ${promptDir} 里没有回话模板（80-reply.md）：这一段不会贴`);
+	return prompt;
 }
 
 /** 未读摘要：这个人所有频道里还有多少没看。纯函数。 */
@@ -276,6 +307,8 @@ export async function deliver(
 	const mergedList: { slug: string; count: number }[] = [];
 	const issues: DeliverIssue[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
+	// 回话规矩每轮现读一次（不缓存：改模板要能下一条生效）。所有收件人共用同一份。
+	const prompt = await deliveryPrompt(options.promptDir);
 	// 附件只读一次：所有收件人拿到的是同一份图片内容块。
 	const plan = await planAttachments(options.uploadsRoot, options.message.attachments);
 	const bodyOf = (viewer: string, interrupted: boolean): string =>
@@ -286,6 +319,8 @@ export async function deliver(
 			labelOf: label,
 			interrupted,
 			attachmentLines: plan.lines,
+			replyTemplate: prompt.reply,
+			interruptedTemplate: prompt.interrupted,
 		});
 
 	for (const slug of options.targets) {

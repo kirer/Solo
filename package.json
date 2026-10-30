@@ -14,6 +14,7 @@
 		"test": "vitest --run",
 		"test:watch": "vitest",
 		"live": "node --experimental-strip-types scripts/core-live.ts",
+		"prompt:check": "node --experimental-strip-types scripts/prompt-check.ts",
 		"ui:build": "vite build --config ui/app/vite.config.ts",
 		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit"
 	},

@@ -17,6 +17,8 @@ import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { RULES_FILE } from "../agent/rules.ts";
 import { readTextOrUndefined } from "../runtime/io.ts";
+import { frontOf, parseDoc, type Doc } from "../doc.ts";
+import { PROMPT_DIR } from "../prompt.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -178,6 +180,39 @@ export async function seedRules(workspaceRoot: string): Promise<"written" | "exi
 }
 
 /**
+ * 把出厂的提示词模板（`seed/prompt/*.md`）补进工作区（`<workspace>/prompt/`）。
+ *
+ * **只补不改**，和 `rules.md` 同一条规矩：模板是每一轮都要进提示词的活文件，我可能亲手
+ * 改过措辞。技能有 hash 账本能判断「改没改」，模板没有可靠基线，所以缺了就补、有了不动。
+ *
+ * 逐个文件判而不是整目录判：新增一段模板（`85-xxx.md`）应该能补进已经在跑的工作区，
+ * 而不是等谁删掉整个目录。
+ */
+export async function seedPromptTemplates(workspaceRoot: string): Promise<readonly string[]> {
+	let entries: import("node:fs").Dirent[];
+	try {
+		entries = await readdir(seedPath("prompt"), { withFileTypes: true });
+	} catch {
+		return [];
+	}
+	// 顺序只由文件名决定：目录顺序来自文件系统，不同机器不一样。
+	const files = entries
+		.filter((entry) => entry.isFile() && entry.name.endsWith(".md"))
+		.map((entry) => entry.name)
+		.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+
+	const written: string[] = [];
+	for (const name of files) {
+		const target = join(workspaceRoot, PROMPT_DIR, name);
+		if (existsSync(target)) continue;
+		await mkdir(dirname(target), { recursive: true });
+		await writeFile(target, await readFile(join(seedPath("prompt"), name), "utf8"), "utf8");
+		written.push(name);
+	}
+	return written;
+}
+
+/**
  * 给某一个人的个人层播种技能（`agents/<slug>/skills/`）。
  *
  * 为什么有些技能属于个人而不是公司：一份技能属于谁，取决于「谁该为这条做法负责」。
@@ -223,57 +258,73 @@ function seedPath(...segments: readonly string[]): string {
 	return join(dirname(fileURLToPath(import.meta.url)), "seed", ...segments);
 }
 
+/** 出厂助理身份的路径（相对 `seed/`）。身份是文件，不是代码里的字符串。 */
+export const SEED_ASSISTANT_IDENTITY = "agents/assistant/identity.md";
+
+/** 出厂助理的个人技能目录（相对 `seed/`）。 */
+const SEED_ASSISTANT_SKILLS = "agents/assistant/skills";
+
+/** 取一个头字段；文档不存在 = `undefined`。 */
+function front(doc: Doc | undefined, key: string): string | undefined {
+	return doc === undefined ? undefined : frontOf(doc, key);
+}
+
+/**
+ * 读出厂的助理身份。
+ *
+ * 读不到 → `undefined`（打包/部署方式可能不带 `seed/`，缺一份起手身份不该让服务起不来）。
+ * 解析走 `doc.ts`：身份文件只有一种格式，读它和写它用同一份实现。
+ */
+async function readSeedAssistant(): Promise<Doc | undefined> {
+	try {
+		const source = await readFile(seedPath(SEED_ASSISTANT_IDENTITY), "utf8");
+		return parseDoc(SEED_ASSISTANT_IDENTITY, source);
+	} catch {
+		return undefined;
+	}
+}
+
 /**
  * 给一个工作区播种「我身边的人」。
  *
- * 这是**唯一**一处预置身份的地方，而且只写文件、不写代码：一个 `manager: owner` 的
- * agent，正文说清「你是我唯一直接对话的人，其余的人由你按需要创建」。
- * 之后它自己就会 `hire` 别人 —— 那些人的身份是它写的，不是代码写的。
+ * 这是**唯一**一处预置身份的地方，而且只写文件、不写代码：一份 `manager: owner` 的
+ * identity.md，正文说清「你是我唯一直接对话的人，其余的人由你按需要创建」。
+ * 之后它自己就会建人 —— 那些人的身份是它写的，不是代码写的。
+ *
+ * V2 的正文是写在这个函数里的字符串字面量：改一句话要改 TS、要重新编译、要重启。
+ * 现在它和 agent 自己写的身份是同一种东西（同一个文件夹结构），改完下一条消息就生效。
  */
 export async function seedOwnerAssistant(
 	agentsRoot: string,
-	options: { readonly name: string; readonly body?: string },
+	options: { readonly name?: string } = {},
 ): Promise<string> {
 	const { createAgent } = await import("../agent/create.ts");
+	const seed = await readSeedAssistant();
+	if (seed === undefined) {
+		console.warn(`[core] 没读到 ${SEED_ASSISTANT_IDENTITY}：助理身份会是一份占位正文`);
+	}
+	const name = options.name ?? front(seed, "name") ?? "助理";
+	const title = front(seed, "title") ?? "负责人";
+	const manager = front(seed, "manager") ?? OWNER_SLUG;
+	const team = front(seed, "team");
+	const body = seed?.body;
+
 	const identity = await createAgent({
 		root: agentsRoot,
-		name: options.name,
-		title: "负责人",
-		manager: OWNER_SLUG,
-		body:
-			options.body ??
-			[
-				"你是我唯一直接对话的人。我不直接管别人，只跟你说话。",
-				"",
-				"## 你做什么",
-				"我说一件事，你判断它需要谁，用 `hire` 建人，用 `write_team` 立团队。",
-				"招人、分工、定边界都是你的活，不必请示。做完在频道里向我说清楚。",
-				"",
-				"## 你的边界",
-				"你不写代码、不做设计。你决定「谁来做、做什么、做到什么程度」，然后验收。",
-				"一个任务需要N个人时，就建N个人；需要一个人时，就一个人做到底。",
-				"",
-				"## 怎么说话",
-				"对我：结论先行，一句话说清做完了什么、卡在哪、要他定什么。不铺垫、不罗列过程。",
-				"对下属：说清目标与验收标准，不说做法。",
-				"",
-				"## 你自己也在变",
-				"你可以用 `me(action=update)` 改自己的身份正文。发现「我该更关注成本」这类结论，就写进自己的 identity.md。",
-				"经验用 `remember` 记下来，下次先 `read_history(scope=memory)` 再动手。",
-			].join("\n"),
+		name,
+		title,
+		manager,
+		...(team === undefined ? {} : { team }),
+		...(body === undefined || body === "" ? {} : { body }),
 	});
 
 	// 技能：和身份一样，是文件，不是代码。
 	//
 	// 两层，各自管各自的事：
 	// - 公司层 `seed/skills/`（`写技能`、`找现成技能`）—— 所有人都该会的手艺。
-	// - 助理自己的 `seed/assistant/`（`立项`、`招人`）—— 它的判断，不属于别人。
+	// - 助理自己的 `seed/agents/assistant/skills/`（`立项`、`招人`）—— 它的判断，不属于别人。
 	//   招人、立项是助理的职权，别人本来就不该招人；写进公司层等于宣布全公司都这么干。
-	//
-	// 正文以前是写在本函数里的字符串字面量 —— 那等于把「做法」硬编码进代码：改一句话
-	// 要改 TS、要重新编译、要重启。现在它们和 agent 自己写的技能是同一种东西
-	// （同一个文件夹结构），改完下一条消息就生效。
 	await syncCompanySkills(agentsRoot);
-	await seedPersonalSkills(agentsRoot, identity.slug, "assistant");
+	await seedPersonalSkills(agentsRoot, identity.slug, SEED_ASSISTANT_SKILLS);
 	return identity.slug;
 }

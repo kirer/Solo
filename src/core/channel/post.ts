@@ -71,6 +71,8 @@ export type PostDeps = {
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
 	/** 附件根目录。给了模型就能真的看见消息里的图片。 */
 	readonly uploadsRoot?: string;
+	/** 提示词模板目录（`<workspace>/prompt`）。投递要用它贴「怎么回话」那两段。 */
+	readonly promptDir?: string;
 };
 
 /**
@@ -275,6 +277,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
+			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
 			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
 			noteUnanswered: async ({ label, seq, reason }) => {

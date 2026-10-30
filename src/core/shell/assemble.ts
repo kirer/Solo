@@ -37,6 +37,7 @@ import {
 	type Message,
 } from "../channel/state.ts";
 import { uploadsRootOf } from "../channel/uploads.ts";
+import { promptDirOf } from "../prompt.ts";
 import { postMessage } from "../channel/post.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
@@ -176,10 +177,10 @@ export async function assembleCore(
 
 	// 身份段：每个 agent 装的扩展不一样（key 里带 slug），所以这里是一个工厂。
 	// 一个人有 8 段（身份/规矩/位置/团队/能力/记忆/技能/目录），底座按段做最小 patch。
-	const identityExtension = (slug: string): Extension =>
+	const identityExtension = async (slug: string): Promise<Extension> =>
 		defineExtension({
 			name: `core-identity:${slug}`,
-			sections: agentSections(
+			sections: await agentSections(
 				registry,
 				{ workspace: workspaceRoot, agents: options.agentsRoot, teams: options.teamsRoot, chats: chatRefsOf },
 				slug,
@@ -195,8 +196,8 @@ export async function assembleCore(
 	 * （实测踩过：会话里一个 section 都没有，模型完全不知道自己的身份）。
 	 * 所以每加一个人都必须先 install 它自己的身份扩展。
 	 */
-	function installIdentity(slug: string): Extension {
-		const extension = identityExtension(slug);
+	async function installIdentity(slug: string): Promise<Extension> {
+		const extension = await identityExtension(slug);
 		registry.install(extension);
 		return extension;
 	}
@@ -219,7 +220,7 @@ export async function assembleCore(
 				await applyModel(found, ctx);
 				// 也补一次身份扩展（幂等）：`hire` 时会立刻开会话，那时还没重启，
 				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
-				installIdentity(slug);
+				await installIdentity(slug);
 				conversations.set(slug, found);
 				// 已有会话也要补一次团队频道：老工作区里的人在团队频道出现之前建的，
 				// 或者 `identity.md` 里刚补上 `team:`。两个都是幂等的。
@@ -232,7 +233,7 @@ export async function assembleCore(
 				ownership: { kind: "ownerless" },
 				agent: {
 					// 扩展是**按名字选的**：漏了 `core-tools` 这个人就一个工具都没有（实测踩过）。
-					extensions: [toolsExtension, installIdentity(slug)],
+					extensions: [toolsExtension, await installIdentity(slug)],
 					// 模型在建会话时一次给全，不要等第一次生成才发现没有模型。
 					...(options.defaultModel === undefined
 						? {}
@@ -581,6 +582,9 @@ export async function ownerSpeak(
 			// 附件根跟着工作区走：`<workspace>/uploads`。给了它，我发的图片才会被读成
 			// 内容块交给模型 —— 不给的话模型只看到一行「[图片] x.png」。
 			uploadsRoot: uploadsRootOf(shell.agentsRoot),
+			// 回话规矩（`prompt/80-reply.md`、`90-interrupted.md`）每轮现读一次：
+			// 改模板下一条消息生效，不需要重启（V3 第一条纪律）。
+			promptDir: promptDirOf(shell.agentsRoot),
 			// 我说话也要记「谁在哪个频道被叫醒」。不传这一项，被叫的人回话时
 			// 查不到 wake，只能退到「我最早的那个频道」—— 那往往是私聊，
 			// 于是我在公司频道问话、对方在私聊里答，问到的人什么都看不到。

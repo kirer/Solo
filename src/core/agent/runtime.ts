@@ -11,19 +11,15 @@
  */
 import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
-import { readAllIdentities, readIdentity, type Identity } from "./identity.ts";
+import { chainUp, managerOf, readAllIdentities, readIdentity, reportsOf, OWNER_SLUG, type Identity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
 import { loadRules } from "./rules.ts";
 import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
-import {
-	PROMPT_SEGMENTS,
-	renderPromptSegment,
-	type CapabilityLine,
-	type PromptSegment,
-	type RenderInput,
-} from "./prompt.ts";
+import { createFsx } from "../fsx.ts";
+import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../prompt.ts";
+import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../text.ts";
 
 export type AgentPaths = {
 	/** 工作区根（公司层技能在 `<workspace>/skills/`）。 */
@@ -46,6 +42,12 @@ export type ChatRef = {
 	readonly id: string;
 	readonly title: string;
 	readonly kind: "dm" | "group";
+};
+
+/** 一项能力的展示信息：名字 + 一句话。正文归工具自己的 description。 */
+export type CapabilityLine = {
+	readonly name: string;
+	readonly summary: string;
 };
 
 /**
@@ -102,6 +104,160 @@ export function sectionKeyOf(slug: string): string {
 const identitylessPrompt = (slug: string): string =>
 	`# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
 
+/** 空清单怎么写。写「（目前没有）」而不是留空：空串会让一句话只剩半截。 */
+const NOTHING = "（目前没有）";
+
+/** 名册里的显示名。我是「我」，其余用 `name`，没有就用 slug。 */
+function labelOf(all: readonly Identity[], slug: string): string {
+	if (slug === OWNER_SLUG) return "我";
+	return all.find((item) => item.slug === slug)?.name ?? slug;
+}
+
+/** `名字（\`slug\`）`—— 名字给人看，slug 给工具用，两个都要。 */
+function withSlug(name: string, slug: string): string {
+	return `${name}（\`${slug}\`）`;
+}
+
+/** 技能一行：名字 — 什么时候用（来源）。正文不在提示词里，读了才知道细节。 */
+function skillLine(skill: {
+	readonly name: string;
+	readonly description: string;
+	readonly scope?: "company" | "personal";
+	readonly overrides?: boolean;
+}): string {
+	const source =
+		skill.scope === "personal"
+			? skill.overrides === true
+				? "（你自己改过的版本，覆盖了公司的同名技能）"
+				: "（你自己写的）"
+			: "（公司通用）";
+	return `- \`${skill.name}\` — ${skill.description}${source}`;
+}
+
+/** 频道一行：在哪些群、和我的私聊开没开。 */
+function chatLine(chats: readonly ChatRef[]): string {
+	const groups = chats.filter((chat) => chat.kind === "group");
+	const dm = chats.some((chat) => chat.kind === "dm");
+	return [
+		groups.length === 0 ? "没在任何群里" : `群${groups.map((chat) => `「${chat.title}」`).join("、")}`,
+		dm ? "和我的私聊已开" : "和我的私聊没开（私聊只能我开）",
+	].join("；");
+}
+
+/**
+ * 这一段用得到的插槽 → 值。
+ *
+ * **只填这段模板真的写到的名字**（`slotsIn`）：一次生成要渲染 8 段，全填一遍等于每段都把
+ * 名册、技能、记忆、团队读一遍。V2 就是按段懒读的，这个性质不能丢。
+ *
+ * 读盘全在这里：模板只负责排版，事实从磁盘/注册表现拍。
+ */
+async function slotsFor(
+	registry: Registry,
+	paths: AgentPaths,
+	slug: string,
+	self: Identity,
+	template: PromptTemplate,
+): Promise<Slots> {
+	const need = new Set(slotsIn(template.body));
+	if (template.skipEmpty !== undefined) need.add(template.skipEmpty);
+	const wants = (...names: readonly string[]): boolean => names.some((name) => need.has(name));
+
+	const slots: Record<string, SlotValue> = {
+		"self.name": self.name ?? self.slug,
+		"self.title": self.title,
+		"self.slug": self.slug,
+		"self.body": self.body,
+	};
+
+	// 规矩是公司层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
+	if (need.has("rules")) slots["rules"] = await loadRules(paths.workspace);
+
+	const needsRoster = wants("manager", "reports", "chain", "count", "team", "peers", "team.members");
+	const all = needsRoster ? await readAllIdentities(paths.agents) : [];
+	if (need.has("count")) slots["count"] = all.length;
+	// 位置段这四行**永远有值**：写「（未设置）」会让提示词里出现一句半截的话，模型会自己补。
+	// 没有上级 / 没有团队本身就是事实，直接说出来。
+	if (need.has("manager")) {
+		const manager = managerOf(all, self.slug);
+		slots["manager"] =
+			manager === undefined
+				? "没有人（要拍板的事自己定，或者交给我）"
+				: manager === OWNER_SLUG
+					? "我（用户本人）"
+					: withSlug(labelOf(all, manager), manager);
+	}
+	if (need.has("reports")) {
+		const reports = reportsOf(all, self.slug);
+		slots["reports"] =
+			reports.length === 0 ? NOTHING : reports.map((item) => withSlug(item.name ?? item.slug, item.slug)).join("、");
+	}
+	if (need.has("chain")) {
+		const chain = chainUp(all, self.slug);
+		slots["chain"] = chain.length > 1 ? chain.map((item) => labelOf(all, item)).join(" → ") : "只有你和我";
+	}
+	if (need.has("team")) slots["team"] = self.team === undefined ? "没在任何团队里" : `\`${self.team}\``;
+	if (need.has("peers")) {
+		const peers =
+			self.team === undefined ? [] : all.filter((item) => item.team === self.team && item.slug !== self.slug);
+		slots["peers"] =
+			peers.length === 0
+				? "没有同团队的人"
+				: peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、");
+	}
+	if (need.has("chats")) {
+		const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
+		slots["chats"] = chats === undefined ? undefined : chatLine(chats);
+	}
+	// 模板里唯一允许出现工具名的地方：`{{tool:say}}`。名字从注册表现拍 —— 工具改了名，
+	// 提示词自动跟着变，不会教错。注册表里没有这个名字就留空（渲染成「（未设置）」并 warn）。
+	const tools = wants("tools") || [...need].some((name) => name.startsWith("tool:")) ? registeredTools(registry) : [];
+	if (need.has("tools")) {
+		slots["tools"] =
+			tools.length === 0
+				? "（工具没装上 —— 这是装配故障，不是你的问题。请向我报告。）"
+				: tools.map((tool) => `- \`${tool.name}\` — ${tool.summary}`).join("\n");
+	}
+	for (const name of need) {
+		if (!name.startsWith("tool:")) continue;
+		const tool = name.slice("tool:".length);
+		slots[name] = tools.some((item) => item.name === tool) ? tool : undefined;
+	}
+	if (need.has("memory")) {
+		const memory = await readMemory(join(paths.agents, slug));
+		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory);
+	}
+	if (need.has("skills")) {
+		const skills = await promptSkills(paths, slug);
+		slots["skills"] = skills.length === 0 ? undefined : skills.map(skillLine).join("\n");
+	}
+
+	const team = self.team;
+	if (wants("team.brief", "team.members", "team.memory")) {
+		const brief = team === undefined ? undefined : await readTeamBrief(paths.teams, team);
+		const members =
+			team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);
+		const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.teams, team);
+		slots["team.brief"] = brief;
+		slots["team.members"] = members === undefined || members.length === 0 ? undefined : members.map((item) => `\`${item}\``).join("、");
+		// 新团队还没有记忆：写一句真话，别让模板里出现「（未设置）」。
+		slots["team.memory"] =
+			teamMemory === undefined ? "（这个团队还没有记忆。踩到的坑自己记下来。）" : teamMemoryDigest(teamMemory);
+	}
+
+	return slots;
+}
+
+/** 系统提示词模板（`use: system`）。读不到 = 空数组（模板缺失，提示词会是空的）。 */
+async function systemTemplates(workspace: string): Promise<readonly PromptTemplate[]> {
+	const templates = await loadTemplates(createFsx(workspace), PROMPT_DIR);
+	const system = templates.filter((template) => template.use === "system");
+	if (system.length === 0) {
+		console.warn(`[core] 没读到提示词模板（${join(workspace, PROMPT_DIR)}）：身份段会是空的`);
+	}
+	return system;
+}
+
 /**
  * 一段的正文。`self` 是已经读过的身份（`undefined` = 还没有身份文件）。
  *
@@ -114,11 +270,22 @@ async function segmentText(
 	paths: AgentPaths,
 	slug: string,
 	self: Identity | undefined,
-	segment: PromptSegment,
+	segment: string,
+	templates: readonly PromptTemplate[],
 ): Promise<string> {
 	if (self === undefined) return segment === "who" ? identitylessPrompt(slug) : "";
-	const input = await promptInputFor(registry, paths, slug, self, segment);
-	return renderPromptSegment(segment, input);
+	const template = templates.find((item) => item.segment === segment);
+	if (template === undefined) return "";
+	const slots = await slotsFor(registry, paths, slug, self, template);
+	// `skip-empty`：这个事实现在没有 → 整段消失（不写「规矩：（未设置）」，那会被当成许可）。
+	if (template.skipEmpty !== undefined && !hasSlot(slots, template.skipEmpty)) return "";
+	const rendered = renderSlots(template.body, slots);
+	for (const issue of rendered.issues) {
+		console.warn(
+			`[core] 提示词插槽没填上：agents/${slug} 的 ${segment} 段 {{${issue.slot}}}（${issue.reason}）`,
+		);
+	}
+	return rendered.text.trim();
 }
 
 /**
@@ -138,7 +305,7 @@ export async function renderAgentSection(registry: Registry, paths: AgentPaths, 
 }
 
 /** 技能清单（提示词只要名字 + 一句描述）。 */
-async function promptSkills(paths: AgentPaths, slug: string): Promise<RenderInput["skills"]> {
+async function promptSkills(paths: AgentPaths, slug: string) {
 	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
 	return skills.map((skill) => ({
 		name: skill.name,
@@ -149,75 +316,19 @@ async function promptSkills(paths: AgentPaths, slug: string): Promise<RenderInpu
 }
 
 /**
- * 渲染**一段**用得到的输入。
+ * 渲染某人此刻的提示词，**按稳定段切开**（顺序即拼接顺序 = 模板文件名前缀）。
  *
- * 各段只读自己用得到的东西：一次生成要渲染 8 段，不能每段都把全部文件读一遍
- * （`paths.chats` 是一条底座快照查询，重复 8 次不是白拿的）。
- * 代价是位置段与团队段各读一次身份清单，总共多几次小文件读——微秒级。
- */
-async function promptInputFor(
-	registry: Registry,
-	paths: AgentPaths,
-	slug: string,
-	self: Identity,
-	segment: PromptSegment,
-): Promise<RenderInput> {
-	const base: RenderInput = { self, all: [self], workspaceRoot: paths.workspace };
-	switch (segment) {
-		case "rules": {
-			// 规矩是公司层文件（`<workspace>/rules.md`），读不到就当没有：
-			// 不能让一次文件缺失拖垮整段提示词（那时它连自己叫什么都不会知道）。
-			const rules = await loadRules(paths.workspace);
-			return rules === undefined ? base : { ...base, rules };
-		}
-		case "position": {
-			const all = await readAllIdentities(paths.agents);
-			const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
-			return { ...base, all, ...(chats === undefined ? {} : { chats }) };
-		}
-		case "team": {
-			const all = await readAllIdentities(paths.agents);
-			const team = self.team;
-			const brief = team === undefined ? undefined : await readTeamBrief(paths.teams, team);
-			const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.teams, team);
-			const digest = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
-			const members = team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);
-			return {
-				...base,
-				all,
-				...(brief === undefined ? {} : { teamBrief: brief }),
-				...(members === undefined ? {} : { teamMembers: members }),
-				...(digest === undefined ? {} : { teamMemoryDigest: digest }),
-			};
-		}
-		case "tools":
-			// 直接拍注册表：注册表里有什么，就写什么（清单文件会撒谎）。
-			return { ...base, capabilities: registeredTools(registry) };
-		case "memory": {
-			const memory = await readMemory(join(paths.agents, slug));
-			const digest = memory === undefined ? undefined : memoryDigest(memory);
-			return digest === undefined ? base : { ...base, memoryDigest: digest };
-		}
-		case "skills": {
-			const skills = await promptSkills(paths, slug);
-			return skills === undefined ? base : { ...base, skills };
-		}
-		// `who` / `directory` 只需要身份本身（目录段只用 slug）。
-		default:
-			return base;
-	}
-}
-
-/**
- * 渲染某人此刻的提示词，**按稳定段切开**（顺序即拼接顺序）。
- *
- * 拼回去与以前一次性渲染的结果逐字节相同（`test/core/prompt-segments.test.ts` 有黄金断言）。
+ * 段名来自 `prompt/*.md` 的文件名，不再是一份代码里的常量表：加一段就是加个文件。
  */
 export async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: string) {
 	const self = await readIdentity(paths.agents, slug);
-	const segments: { readonly segment: PromptSegment; readonly text: string }[] = [];
-	for (const segment of PROMPT_SEGMENTS) {
-		segments.push({ segment, text: await segmentText(registry, paths, slug, self, segment) });
+	const templates = await systemTemplates(paths.workspace);
+	const segments: { readonly segment: string; readonly text: string }[] = [];
+	if (self === undefined) {
+		return [{ segment: "who", text: identitylessPrompt(slug) }];
+	}
+	for (const template of templates) {
+		segments.push({ segment: template.segment, text: await segmentText(registry, paths, slug, self, template.segment, templates) });
 	}
 	return segments;
 }
@@ -231,18 +342,22 @@ export async function renderAgentSegments(registry: Registry, paths: AgentPaths,
  * C-003）等于不存在。切成稳定段之后，只有真正变了的那段写新条目。
  *
  * `tag: false`：tag 会包一层 `<key>…</key>`，那就改了发给模型的字节 —— 分段只靠 key。
+ *
+ * **async 的理由**：段名来自模板目录（文件），读目录是异步的。装配层在 `installIdentity`
+ * 里 await 一次，之后就只是「每轮重读」——改模板下一条生效，不需要重启。
  */
-export function agentSections(
+export async function agentSections(
 	registry: Registry,
 	paths: AgentPaths,
 	slug: string,
-): readonly PromptSection<ToolRegistration>[] {
+): Promise<readonly PromptSection<ToolRegistration>[]> {
 	const base = sectionKeyOf(slug);
-	return PROMPT_SEGMENTS.map((segment) => ({
-		key: `${base}-${segment}`,
+	const templates = await systemTemplates(paths.workspace);
+	return templates.map((template) => ({
+		key: `${base}-${template.segment}`,
 		tag: false,
 		async render(): Promise<string> {
-			return segmentText(registry, paths, slug, await readIdentity(paths.agents, slug), segment);
+			return segmentText(registry, paths, slug, await readIdentity(paths.agents, slug), template.segment, templates);
 		},
 	}));
 }

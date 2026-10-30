@@ -26,7 +26,7 @@ import { openCore, type CoreRuntime } from "../runtime/open.ts";
 import { setupModels, compactionSettings } from "../runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
-import { seedOwnerAssistant, seedRules, syncCompanySkills } from "./seed.ts";
+import { seedOwnerAssistant, seedPromptTemplates, seedRules, syncCompanySkills } from "./seed.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {
@@ -87,6 +87,9 @@ async function main(): Promise<void> {
 		// 工作区。同步按 hash 判断用户改过没有，改过的不动（ADR-039）。
 		const rules = await seedRules(args.workspace);
 		if (rules === "written") console.log(`[core] 写入了工作区规矩：${join(args.workspace, "rules.md")}`);
+		// 提示词模板同理：缺哪一段补哪一段，改过的不动。
+		const templates = await seedPromptTemplates(args.workspace);
+		if (templates.length > 0) console.log(`[core] 补进了提示词模板：${templates.join("、")}`);
 		const synced = await syncCompanySkills(agentsRoot);
 		const touched = [...synced.copied, ...synced.updated];
 		if (touched.length > 0) console.log(`[core] 同步了公司层技能：${touched.join("、")}`);
@@ -99,7 +102,7 @@ async function main(): Promise<void> {
 	}
 
 	if (args.seed && (await agentCount(agentsRoot)) === 0) {
-		const slug = await seedOwnerAssistant(agentsRoot, { name: "知言" });
+		const slug = await seedOwnerAssistant(agentsRoot);
 		console.log(`[core] 播种了「离我最近的人」：agents/${slug}/identity.md`);
 	}
 
