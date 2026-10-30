@@ -6,7 +6,7 @@
 
 只有一个进程：`src/core/shell/main.ts`。它同时是：
 
-- HTTP 服务（静态界面 `ui/web/` + 17 条 `/api/*` 路由）
+- HTTP 服务（静态界面 `ui/web/` + 18 条 `/api/*` 路由）
 - agent 运行时（SQLite + 后台任务）
 
 没有反向代理、没有独立数据库服务、**没有鉴权层**。后端没有构建步骤（`node --experimental-strip-types`
@@ -177,10 +177,54 @@ tar xzf backup-20261027.tar.gz
 | agent 说话了，但回在别的频道 | `directory.wake` —— 他去「最后被叫到的那个频道」回话；我发的消息必须先把 wake 记下来再唤醒他 |
 | 改了 `identity.md` 没生效 | 提示词每次发送前重新读盘，所以下一条消息就该生效。没生效说明改的是别人的文件 |
 | 启动很慢 | 名册是不是每人一次 commit；`agents/` 里是不是有几百个目录 |
+| agent 突然不干活了，日志里什么都没有 | `workspace/logs/runtime.jsonl` 有没有 `task_parked` / `restart_limit`（见下面「诊断三处」） |
+| 报 provider 的 context overflow / 400 too long | 模型的 `contextWindow` 是不是取到了（见下面「压缩」） |
 | 7788 端口被占 | `lsof -nP -iTCP:7788 -sTCP:LISTEN` |
 
-日志直接打到 stderr，没有日志文件、没有轮转。要留档就
-`npm start 2>&1 | tee -a /tmp/aic.log`。
+### 诊断三处
+
+服务本身的日志**只打 stderr**（没有进程日志文件）。另外有两份结构化日志，都在
+`<workspace>/logs/` 下，都是「单条 4KB、单文件 5MB、满了轮转成 `.1` 一代」：
+
+| 文件 | 装什么 | 怎么看 |
+| --- | --- | --- |
+| `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 workspace/logs/runtime.jsonl` |
+| `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 workspace/logs/jank.jsonl` |
+
+**一眼分辨两类事故**：
+
+- `restart_limit` / `task_parked` = 任务连续重启超限被底座挂起了，人还在、频道还在，
+  但那个人此后不会再有输出。要么查 `message` 里的原因，要么让他重做。
+- `storage` / `migration_failed` = 库或迁移出了问题，这类不看日志就是瞎的。
+
+不想 `ssh` 进去读文件时，直接问接口（`lastReport` 是最近一条**非良性**报告，没有就是
+`null`；`task_outdated` 不算异常，会被跳过）：
+
+```bash
+curl -s localhost:7788/api/diag | jq
+# {"lastReport":{"type":"task_parked","at":"2026-10-30T12:03:11.412Z",
+#                "text":"任务 \"daily-digest\" 被挂起：任务连续重启超限，已挂起"}}
+```
+
+字段只有 `type` / `at` / `text` 三个（契约见 [WEB-API](WEB-API.md) §14.2）。
+
+要留档 stderr 就 `npm start 2>&1 | tee -a /tmp/aic.log`。
+
+### 压缩（compaction）阈值
+
+上下文窗口**不再写死 1,000,000**（ADR-083）。启动时从 pi-ai 的模型目录取真实
+`contextWindow`，**取不到就回落 128k**（`FALLBACK_CONTEXT_WINDOW`）——保守方向：
+宁可早一点压缩，也不要等 provider 回 400。阈值按窗口算：
+
+| 项 | 比例 | 说明 |
+| --- | --- | --- |
+| `reserve` | 15% | 留给「下一轮回复 + 工具结果」的空间 |
+| `keepRecent` | 10%，底 8192 token，封顶阈值的一半 | 压缩后原文保留的尾部 |
+| `background` | 5% | 后台任务（沉淀之类）更早触发，别把主对话挤爆 |
+
+所以「128k 回落」的代价是：真·长上下文模型（1M）会被当成 128k 用，压缩来得比需要的早，
+对话里更早出现「我记不清前面了」。症状是 agent 主动 `read_history` 变多。要修不是改代码，
+而是在 `workspace/settings.json` 里把模型写成 pi-ai 目录认得的名字（见 §3）。
 
 ## 8. 自动沉淀
 

@@ -140,3 +140,24 @@ export function reportJank(body: unknown): void {
 		keepalive: true,
 	}).catch(() => undefined);
 }
+
+/** 一条运行报告（`GET /api/diag` 的 `lastReport`）。 */
+export type LastRuntimeReport = { readonly type: string; readonly at: string; readonly text: string };
+
+/**
+ * 底座最近一条「不正常」的运行报告（`workspace/logs/runtime.jsonl` 的最新一条）。
+ *
+ * 拉不到、没有、格式不对都返回 `undefined`：诊断不该让页面报错。
+ */
+export async function fetchLastRuntimeReport(): Promise<LastRuntimeReport | undefined> {
+	try {
+		const response = await fetch("/api/diag");
+		if (!response.ok) return undefined;
+		const body = (await response.json()) as { lastReport?: { type?: unknown; at?: unknown; text?: unknown } | null };
+		const report = body.lastReport;
+		if (report === null || report === undefined || typeof report.text !== "string") return undefined;
+		return { type: String(report.type ?? ""), at: String(report.at ?? ""), text: report.text };
+	} catch {
+		return undefined;
+	}
+}

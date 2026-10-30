@@ -5,20 +5,22 @@
  * 「员工不能越级」，代价是：调一个岗位就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
- * 十六个工具，按「做一件事」划分，不按「谁配用」划分：
+ * 十一个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
+ * 工具的 `action` 枚举，而**不是**几个近义的工具名 —— 名字越多，模型选错的概率越高。
  *
  * | 工具 | 用途 |
  * |---|---|
  * | `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方 |
- * | `read_channel` | 不传频道=未读摘要+频道列表；传频道=读历史消息 |
- * | `org` | 我是谁、上级下属、全公司架构 |
+ * | `chats` | `list` 列我在的会话和未读；`read` 读历史消息 |
+ * | `read_history` | `scope=channel` 翻自己的对话（含压缩掉的）；`scope=memory` 翻记忆 |
+ * | `remember` | 记一条经验（个人 / 团队） |
+ * | `teams` | `list` 列团队；`read` 读团队说明 |
+ * | `write_team` | 写一个团队（`teams/<slug>/README.md`） |
+ * | `skills` | `list` / `read` / `write` 技能（怎么做一件事的说明书） |
  * | `hire` | 新建一个 agent（写文件夹） |
- * | `update_identity` | 改我自己或我下属的身份 |
- * | `remember` / `recall` | 写/读记忆；`scope=team` 切到团队记忆 |
- * | `read_history` | 翻自己被压缩掉的历史对话（精确原话/路径找回） |
- * | `list_skills` / `read_skill` / `write_skill` | 技能（怎么做一件事的说明书） |
- * | `list_teams` / `read_team` / `write_team` | 团队（`teams/<slug>/README.md`） |
- * | `run` / `write_file` / `read_file` | 执行命令 / 写文件 / 读文件 |
+ * | `me` | `show` 我是谁、上级下属；`update` 改自己的身份正文 |
+ * | `run` | 执行命令 |
+ * | `file` | `read` / `write` 工作区里的一个文件 |
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
@@ -45,7 +47,7 @@ import {
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
 import { redact } from "../agent/secrets.ts";
 import { listTeams, readTeam, writeTeam } from "../team/doc.ts";
-import { createAgent, renderIdentityFile, renderOrgChart } from "../agent/create.ts";
+import { createAgent, renderIdentityFile } from "../agent/create.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
 import { mentionRosterOf, resolveMention, type MentionRoster } from "./alias.ts";
@@ -54,6 +56,7 @@ import {
 	ChannelDoc,
 	OWNER,
 	channelsOf,
+	chatKind,
 	fallbackChannelId,
 	parseMentions,
 	readMarkOf,
@@ -114,6 +117,57 @@ function skillRoots(deps: CoreToolDeps): SkillRoots {
 
 function text(value: string) {
 	return { output: [{ type: "text" as const, text: value }] };
+}
+
+/**
+ * 读一个枚举型参数。
+ *
+ * 校验失败时要把合法值列出来 —— 模型看到「只有 list / read」才知道下一步该改什么，
+ * 只回一句「参数不合法」它就只能乱试。
+ */
+function actionOf(
+	value: string | undefined,
+	allowed: readonly string[],
+	fallback: string,
+	label = "action",
+): string | { error: string } {
+	if (value === undefined || value.trim() === "") return fallback;
+	if (allowed.includes(value)) return value;
+	return { error: `${label} 只有 ${allowed.join(" / ")}，没有「${value}」。` };
+}
+
+/** 把一段可能带换行的正文压成一行，给列表预览用。 */
+function oneLine(value: string, limit: number): string {
+	const flat = value.replace(/\s+/gu, " ").trim();
+	return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
+}
+
+/**
+ * 翻记忆全文（ADR-084 合并进来的那一半）。
+ *
+ * `team` 为空 = 翻自己的记忆，否则翻那个团队的记忆；`keyword` 为空 = 全文。
+ */
+async function recallText(deps: CoreToolDeps, slug: string, team: string | undefined, keyword: string) {
+	if (team !== undefined && team !== "") {
+		const target = team;
+		const source = await readTeamMemory(deps.teamsRoot, target);
+		if (source === undefined) return text(`团队「${target}」还没有记忆。`);
+		if (keyword === "") return text(source);
+		const sections = teamMemorySections(source).filter(
+			(section) => section.heading.includes(keyword) || section.body.includes(keyword),
+		);
+		if (sections.length === 0) return text(`团队「${target}」的记忆里没有「${keyword}」。`);
+		return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
+	}
+
+	const source = await readMemory(join(deps.agentsRoot, slug));
+	if (source === undefined) return text("我还没记过任何东西。");
+	if (keyword === "") return text(source);
+	const sections = sectionsOf(source).filter(
+		(section) => section.heading.includes(keyword) || section.body.includes(keyword),
+	);
+	if (sections.length === 0) return text(`记忆里没有「${keyword}」。`);
+	return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
 }
 
 /** 历史条目里一条消息的收窄视图（结构上只用得到这几个字段）。 */
@@ -254,26 +308,26 @@ export function createCoreTools(deps: CoreToolDeps) {
 	const say = defineTool({
 		name: "say",
 		description:
-			"在当前频道说话。不传 mention 就是一句普通发言（正文里写 @某人 才会叫醒他）；传 mention 就是提问或 @ 某人（会叫醒他）。用于汇报进度、说明结论、回应别人、提问。活干完了一定要汇报，并把上级写进 mention —— 没人知道你做完了，等于没做完。",
+			"在频道里说话：汇报结论、回应别人、提问。不带 mention 是一句普通发言（正文里写 @某人 才叫醒他）；带 mention 就一定会叫醒他。活干完必须汇报，并把上级写进 mention —— 没人知道你做完了，等于没做完。",
 		parameters: Type.Object({
 			text: Type.String({
 				description:
-					"要说的话。**像成员发消息：一两句，说结论** —— 不写小标题、不列清单、不总结你刚做了什么（`run` 的过程不用复述）。" +
-					"这一轮没有新东西要说就写 `[PASS]`，系统不会发出去（但如果这一轮只有你被叫醒，PASS 会被拒绝）。",
+					"要说的话。像成员发消息：一两句，说结论，不写小标题、不列清单、不复述过程。" +
+					"这一轮没有新东西就说 `[PASS]`（这一轮只有你被叫醒时会被拒）。",
 			}),
 			step: Type.Optional(
 				Type.Boolean({
 					description:
-						"`true` = 这只是过程话（「我正在改」「找到原因了」），可以连着说几句，不算这一轮的结论；不传 = 结论，**一轮只认一句**，第二句会被拒。干活中途想让人知道进展就用这个。",
+						"`true` = 过程话（「正在改」「找到原因了」），可以连说几句，不算结论；不传 = 结论，一轮只认一句，第二句会被拒。",
 				}),
 			),
-			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@我` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
-			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的成员），用 `<频道 id>` 指定，或先问我 —— 频道成员以外的人 @ 不到。" })),
+			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@我` / `@CEO` / `@张三`）。不要凭印象编 slug；不知道 @ 谁就写上级。带上会叫醒他，适合提问或要别人拍板。" })),
+			channel: Type.Optional(Type.String({ description: "频道 id，省略 = 我刚被叫醒的那个频道。不在那个频道里的人 @ 不到。" })),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
 			kind: Type.Optional(
 				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
 					description:
-						"给这条消息打标签：decision = 拍了板（结论、约定、定了怎么做）；report = 交付了什么。标签是给人的线索（谁拍板、谁交付），不影响沉淀——团队频道里所有新消息都会被送去整理。普通发言不要传。",
+						"给这条消息打标签：decision = 拍了板（结论、定了怎么做）；report = 交付了什么。普通发言不要传。",
 				}),
 			),
 		}),
@@ -286,7 +340,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		ctx: Context,
 	): Promise<ReturnType<typeof text>> => {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
+			if (slug === undefined) return text("你还不在名册里。先用 me 看看情况，或请上级重新登记你。");
 			// 没有「私下发给谁」这个参数：私聊只能我开，agent 只能在已有的频道里说话。
 			// 也不需要专门硬拦 ——「非成员发不进去」已经重定了这条边界。
 			// 一条频道消息最多 1200 字。
@@ -413,25 +467,43 @@ export function createCoreTools(deps: CoreToolDeps) {
 			);
 		};
 
-	const readChannel = defineTool({
-		name: "read_channel",
-		description: "读频道。不传 channel 时显示摘要：你能看到哪些频道、各有多少未读。传 channel 时读那个频道的历史消息（自动标记已读）。",
+	/**
+	 * 会话：列出来，或者读其中一个的历史。
+	 *
+	 * 两个分支（不传 channel = 摘要，传 = 读历史）合成一个工具的理由：仍是一件事，
+	 * 看会话；所以留一个工具，用一个 `action` 区分。
+	 */
+	const chats = defineTool({
+		name: "chats",
+		description:
+			"看会话。`action=list`（默认）列我在的会话：标题、群聊还是私聊、未读数、最后一条；`action=read` 读某个频道的历史消息（读完标已读）。想知道别人说了什么、翻上次的结论，都用它。",
 		parameters: Type.Object({
-			channel: Type.Optional(Type.String({ description: "频道 id。不传则显示未读摘要 + 频道列表" })),
+			action: Type.Optional(Type.String({ description: "list（默认）列会话 / read 读消息" })),
+			channel: Type.Optional(Type.String({ description: "频道 id。read 时省略 = 刚叫醒我的那个频道" })),
+			since: Type.Optional(Type.Number({ description: "只要这个序号之后的消息（read）" })),
 			limit: Type.Optional(Type.Number({ description: "最多几条，默认 30，上限 100" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
+			const action = actionOf(args.action, ["list", "read"], "list");
+			if (typeof action !== "string") return text(action.error);
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
 			const state = await readState(deps);
 
-			// 无 channel：返回未读摘要 + 频道列表（原 inbox + channels 合并）
-			if (args.channel === undefined || args.channel === "") {
+			if (action === "list") {
 				const digest = renderDigest(state, slug, 20);
 				const rows = channelsOf(state, slug).map((channel) => {
 					const unread = unreadCount(state, channel.id, slug);
-					return `- ${channel.id}「${channel.title}」${unread === 0 ? "" : ` ${unread} 条未读`}（${channel.members.length} 人）`;
+					const list = state.messages[channel.id] ?? [];
+					const last = list[list.length - 1];
+					const preview =
+						last === undefined ? "（还没有消息）" : `${last.from}: ${oneLine(last.text, 60)}`;
+					return [
+						`- ${channel.id}「${channel.title}」${chatKind(channel) === "dm" ? "私聊" : "群聊"}` +
+							`${unread === 0 ? "" : ` · ${unread} 条未读`}（${channel.members.length} 人）`,
+						`  ${preview}`,
+					].join("\n");
 				});
 				const parts = [
 					...(digest === "" ? [] : ["未读消息：", digest]),
@@ -440,15 +512,22 @@ export function createCoreTools(deps: CoreToolDeps) {
 				return text(parts.join("\n"));
 			}
 
-			// 有 channel：读历史消息
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target.error);
 			const channel = state.channels[target.channelId];
 			if (channel === undefined) return text("没有这个频道。");
 			const limit = Math.min(Math.max(args.limit ?? 30, 1), 100);
 			const list = state.messages[channel.id] ?? [];
-			const shown = list.slice(Math.max(0, list.length - limit));
-			if (shown.length === 0) return text(`「${channel.title}」里还没有消息。`);
+			const pool =
+				args.since === undefined ? list : list.filter((message) => message.seq > (args.since as number));
+			const shown = pool.slice(Math.max(0, pool.length - limit));
+			if (shown.length === 0) {
+				return text(
+					args.since === undefined
+						? `「${channel.title}」里还没有消息。`
+						: `「${channel.title}」在 #${args.since} 之后没有新消息。`,
+				);
+			}
 			const last = shown[shown.length - 1];
 			const lines = shown.map((message) => renderLine(message));
 			if (last !== undefined) {
@@ -468,26 +547,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 					`（已标记到 #${last?.seq ?? 0} 为已读）`,
 				].join("\n"),
 			);
-		},
-	});
-
-	const org = defineTool({
-		name: "org",
-		description: "你是谁、你的上级和下属、全公司组织架构。从文件夹实时渲染，永远是最新的。",
-		parameters: Type.Object({}),
-		execute: async (_args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			const all = await readAllIdentities(deps.agentsRoot);
-			const self = all.find((item) => item.slug === slug);
-			const reports = reportsOf(all, slug ?? "");
-			const personal = [
-				`你是 ${self?.name ?? slug ?? "（未登记）"}（slug: ${slug ?? "?"}）${self?.title === undefined ? "" : `，岗位：${self.title}`}`,
-				`直属上级：${self?.manager ?? "（无）"}`,
-				reports.length === 0 ? "" : `直接下属：${reports.map((item) => `${item.name ?? item.slug}（${item.slug}）`).join("、")}`,
-				slug === undefined ? "" : `你的目录：agents/${slug}/（identity.md、memory.md、skills/）`,
-			].filter((line) => line !== "").join("\n");
-			return text(`${personal}\n\n--- 全公司架构 ---\n${renderOrgChart(all, slug)}`);
 		},
 	});
 
@@ -543,110 +602,132 @@ export function createCoreTools(deps: CoreToolDeps) {
 		},
 	});
 
-	const updateIdentity = defineTool({
-		name: "update_identity",
-		description: [
-			"改一个 agent 的 identity.md（正文或头部字段）。",
-			"改完下一条消息就生效 —— 不需要重启、不需要重新部署。",
-		].join(""),
+	/**
+	 * 我：看自己是谁，或者改自己的身份正文。
+	 *
+	 * 旧版能改**别人**。收敛后只改自己 —— 「我是谁」是自己的事，
+	 * 要改别人的职责，说一句话或写团队文件，而不是替他改身份。
+	 */
+	const me = defineTool({
+		name: "me",
+		description:
+			"我自己。`action=show`（默认）看我叫什么、什么岗、在哪个团队、上级是谁、下有谁；`action=update` 整篇重写我的身份正文（下一句话就生效）。",
 		parameters: Type.Object({
-			slug: Type.String({ description: "改谁" }),
-			body: Type.Optional(Type.String({ description: "新的身份正文（整篇替换）" })),
-			title: Type.Optional(Type.String({ description: "新的岗位标签" })),
-			manager: Type.Optional(Type.String({ description: "新的上级 slug" })),
+			action: Type.Optional(Type.String({ description: "show（默认）看身份 / update 改身份正文" })),
+			body: Type.Optional(Type.String({ description: "新的身份正文（整篇替换；update 时必填）" })),
 		}),
-		execute: async (args) => {
-			const target = (await readAllIdentities(deps.agentsRoot)).find((item) => item.slug === args.slug);
-			if (target === undefined) return text(`没有这个人：${args.slug}`);
+		execute: async (args, api, context) => {
+			const ctx = context ?? BACKGROUND_CONTEXT;
+			const action = actionOf(args.action, ["show", "update"], "show");
+			if (typeof action !== "string") return text(action.error);
+			const slug = await selfOf(deps, Number(api.conversationId), ctx);
+			if (slug === undefined) return text("你还不在名册里。");
+			const all = await readAllIdentities(deps.agentsRoot);
+			const self = all.find((item) => item.slug === slug);
 
+			if (action === "show") {
+				const reports = reportsOf(all, slug);
+				return text(
+					[
+						`你是 ${self?.name ?? slug}（slug: ${slug}）${self?.title === undefined ? "" : `，岗位：${self.title}`}`,
+						`所在团队：${self?.team ?? "（没有团队）"}`,
+						`直属上级：${self?.manager ?? "（无）"}`,
+						reports.length === 0
+							? "直接下属：（目前没有）"
+							: `直接下属：${reports.map((item) => `${item.name ?? item.slug}（${item.slug}）`).join("、")}`,
+						`你的目录：agents/${slug}/（identity.md、memory.md、skills/）`,
+					].join("\n"),
+				);
+			}
+
+			if (args.body === undefined || args.body.trim() === "") {
+				return text("要改身份就带上 body（整篇新正文）；只想看看自己现在什么样，用 action=show。");
+			}
+			if (self === undefined) return text(`名册里没有 ${slug}。先确认你的 identity.md 在不在 agents/${slug}/。`);
 			const header = {
-				name: target.name,
-				title: args.title ?? target.title,
-				manager: args.manager ?? target.manager,
-				team: target.team,
+				...(self.name === undefined ? {} : { name: self.name }),
+				...(self.title === undefined ? {} : { title: self.title }),
+				...(self.manager === undefined ? {} : { manager: self.manager }),
+				...(self.team === undefined ? {} : { team: self.team }),
 			};
-			const body = args.body ?? target.body;
-			await writeFile(join(target.dir, "identity.md"), renderIdentityFile(header as never, body), "utf8");
-			return text(`已改 ${target.name ?? target.slug} 的身份。下一条消息它就按新身份工作。`);
+			await writeFile(join(self.dir, "identity.md"), renderIdentityFile(header, args.body), "utf8");
+			return text(`已改我的身份（agents/${slug}/identity.md）。下一条消息就按新身份工作。`);
 		},
 	});
 
 	/**
-	 * 我会哪些技能。
+	 * 技能：`skills/<名字>/SKILL.md`。
 	 *
-	 * 技能正文不进提示词，所以 agent 需要先「翻目录」再「读全文」。这两个动作分开，
-	 * 是为了让它能在一屏之内比较五门手艺该用哪一门，而不是把五篇正文全吞下去。
+	 * 技能正文不进提示词，所以 agent 需要先「翻目录」再「读全文」。两种动作合成
+	 * 一个工具的 `action`，是因为它们是同一件事（找一门手艺）的前后两步，而不是两件事。
 	 */
-	const listSkillsTool = defineTool({
-		name: "list_skills",
-		description: "列出我能用的全部技能（名字 + 一句描述 + 公司教的还是我自己写的）。要看正文用 read_skill。",
-		parameters: Type.Object({}),
-		execute: async (_args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-			const skills = await listSkills(skillRoots(deps), slug);
-			if (skills.length === 0) return text("我还没有技能。");
-			return text(
-				skills
-					.map((skill) => `- ${skill.name}（${skill.scope === "company" ? "公司" : "我自己"}）：${skill.description}`)
-					.join("\n"),
-			);
-		},
-	});
-
-	const readSkillTool = defineTool({
-		name: "read_skill",
+	const skills = defineTool({
+		name: "skills",
 		description: [
-			"读一门技能的正文。公司层的在 skills/<名字>/SKILL.md，我自己的在 agents/<我>/skills/<名字>/SKILL.md。",
-			"提示词里只有技能的名字和一句描述；要做那件事之前，先读它的正文。",
+			"我的技能。`action=list`（默认）看我会什么（名字 + 一句描述 + 公司教的还是自己写的）；",
+			"`action=read` 读一门技能的正文（要做那件事之前必须先读，提示词里只有名字和一句描述）；",
+			"`action=write` 写一门技能：步骤、判据、踩过的坑。",
 		].join(""),
 		parameters: Type.Object({
-			name: Type.String({ description: "技能名（list_skills 里看到的那个）" }),
-		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-			const skill = await readSkill(skillRoots(deps), slug, args.name);
-			if (skill === undefined) {
-				const all = await listSkills(skillRoots(deps), slug);
-				const names = all.map((item) => item.name).join("、");
-				return text(`没有叫「${args.name}」的技能。我有的：${names === "" ? "（一个都没有）" : names}。`);
-			}
-			const where = skill.scope === "company" ? "公司层" : "我自己的";
-			return text(`# 技能：${skill.name}（${where}）\n\n${skill.body}`);
-		},
-	});
-
-	const writeSkillTool = defineTool({
-		name: "write_skill",
-		description: [
-			"写一门技能（整篇替换 SKILL.md）。",
-			"`scope=personal`（默认）写进我自己的目录，只有我看得见；`scope=company` 写进公司层，所有人立刻看得见。",
-			"技能是「怎么做一件事」的说明书：步骤、判据、踩过的坑。写具体，别写口号。",
-			"写完下一条消息就生效 —— 不用重启。",
-		].join(""),
-		parameters: Type.Object({
-			name: Type.String({ description: "技能名，会当目录名用（不能含斜杠）" }),
-			description: Type.String({
-				description: "一句话说清「做什么 + 什么时候用」。这行会常驻提示词，要能当路由依据。",
-			}),
-			body: Type.String({ description: "正文：步骤、判据、样例。写给下一次的你自己看。" }),
-			scope: Type.Optional(
-				Type.String({ description: "personal（默认，只我看得见）或 company（全公司都看得见）" }),
+			action: Type.Optional(Type.String({ description: "list（默认）/ read / write" })),
+			name: Type.Optional(Type.String({ description: "技能名（read / write 必填）" })),
+			scope: Type.Optional(Type.String({ description: "write 时写哪里：personal（默认，只有我看得见）/ company（全公司看得见）" })),
+			description: Type.Optional(
+				Type.String({ description: "write 必填：一句话说清「做什么 + 什么时候用」，这行会常驻提示词" }),
 			),
+			body: Type.Optional(Type.String({ description: "write 必填：正文（步骤、判据、样例），写给下一次的你自己看" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
+			const action = actionOf(args.action, ["list", "read", "write"], "list");
+			if (typeof action !== "string") return text(action.error);
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
-			const company = args.scope === "company";
+			const roots = skillRoots(deps);
+
+			if (action === "list") {
+				const all = await listSkills(roots, slug);
+				if (all.length === 0) return text("我还没有技能。");
+				return text(
+					all
+						.map((skill) => `- ${skill.name}（${skill.scope === "company" ? "公司" : "我自己"}）：${skill.description}`)
+						.join("\n"),
+				);
+			}
+
+			if (args.name === undefined || args.name.trim() === "") {
+				const all = await listSkills(roots, slug);
+				const names = all.map((item) => item.name).join("、");
+				return text(`action=${action} 要带 name。我有的：${names === "" ? "（一个都没有）" : names}。`);
+			}
+			const name = args.name;
+
+			if (action === "read") {
+				const skill = await readSkill(roots, slug, name);
+				if (skill === undefined) {
+					const all = await listSkills(roots, slug);
+					const names = all.map((item) => item.name).join("、");
+					return text(`没有叫「${name}」的技能。我有的：${names === "" ? "（一个都没有）" : names}。`);
+				}
+				const where = skill.scope === "company" ? "公司层" : "我自己的";
+				return text(`# 技能：${skill.name}（${where}）\n\n${skill.body}`);
+			}
+
+			const scope = actionOf(args.scope, ["personal", "company"], "personal", "scope");
+			if (typeof scope !== "string") return text(scope.error);
+			const missing = [
+				args.description === undefined || args.description.trim() === "" ? "description（做什么 + 什么时候用）" : "",
+				args.body === undefined || args.body.trim() === "" ? "body（步骤、判据、样例）" : "",
+			].filter((line) => line !== "");
+			if (missing.length > 0) return text(`写技能还缺：${missing.join("、")}。`);
+			const input = { name, description: args.description as string, body: args.body as string };
 			try {
-				const written = company
-					? await writeCompanySkill(deps.workspaceRoot, args)
-					: await writeSkill(skillRoots(deps), slug, args);
-				const where = company ? `skills/${written.name}/SKILL.md（全公司）` : `agents/${slug}/skills/${written.name}/SKILL.md`;
+				const written =
+					scope === "company"
+						? await writeCompanySkill(deps.workspaceRoot, input)
+						: await writeSkill(roots, slug, input);
+				const where =
+					scope === "company" ? `skills/${written.name}/SKILL.md（全公司）` : `agents/${slug}/skills/${written.name}/SKILL.md`;
 				return text(`已写入技能「${written.name}」：${where}。下一条消息就生效。`);
 			} catch (error) {
 				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
@@ -660,31 +741,35 @@ export function createCoreTools(deps: CoreToolDeps) {
 	 * 团队不是代码里的一个实体，就是一份文档。代码只负责读写它、按它算成员。
 	 * 「什么时候该立项」「团队该有谁」是判断，写在技能里。
 	 */
-	const listTeamsTool = defineTool({
-		name: "list_teams",
-		description: "列出全部团队（slug、名字、团队管理员、状态、一句摘要）。",
-		parameters: Type.Object({}),
-		execute: async () => {
-			const teams = await listTeams(deps.teamsRoot);
-			if (teams.length === 0) return text("还没有团队。");
-			return text(
-				teams
-					.map((team) => {
-						const head = team.body.split("\n").find((line) => line.trim() !== "") ?? "";
-						return `- ${team.slug}（${team.name}）· ${team.status} · 团队管理员：${team.lead ?? "（没人负责）"}\n  ${head}`;
-					})
-					.join("\n"),
-			);
-		},
-	});
-
-	const readTeamTool = defineTool({
-		name: "read_team",
-		description: "读一个团队的完整说明（目标、验收标准、边界、进展）。",
-		parameters: Type.Object({ slug: Type.String({ description: "团队 slug" }) }),
+	const teams = defineTool({
+		name: "teams",
+		description:
+			"团队。`action=list`（默认）列全部团队（slug、名字、团队管理员、状态、一句摘要）；`action=read` 读一个团队的完整说明（目标、验收、边界、进展）—— 进一个团队干活之前先读它。",
+		parameters: Type.Object({
+			action: Type.Optional(Type.String({ description: "list（默认）/ read" })),
+			team: Type.Optional(Type.String({ description: "团队 slug（read 时必填）" })),
+		}),
 		execute: async (args) => {
-			const team = await readTeam(deps.teamsRoot, args.slug);
-			if (team === undefined) return text(`没有这个团队：${args.slug}`);
+			const action = actionOf(args.action, ["list", "read"], "list");
+			if (typeof action !== "string") return text(action.error);
+			if (action === "list") {
+				const all = await listTeams(deps.teamsRoot);
+				if (all.length === 0) return text("还没有团队。");
+				return text(
+					all
+						.map((team) => {
+							const head = team.body.split("\n").find((line) => line.trim() !== "") ?? "";
+							return `- ${team.slug}（${team.name}）· ${team.status} · 团队管理员：${team.lead ?? "（没人负责）"}\n  ${head}`;
+						})
+						.join("\n"),
+				);
+			}
+			if (args.team === undefined || args.team.trim() === "") {
+				const all = await listTeams(deps.teamsRoot);
+				return text(`read 要带 team。现有：${all.map((item) => item.slug).join("、") || "（一个都没有）"}。`);
+			}
+			const team = await readTeam(deps.teamsRoot, args.team);
+			if (team === undefined) return text(`没有这个团队：${args.team}`);
 			return text(`# ${team.name}（${team.slug}）\n状态：${team.status}\n团队管理员：${team.lead ?? "（没人负责）"}\n\n${team.body}`);
 		},
 	});
@@ -771,30 +856,48 @@ export function createCoreTools(deps: CoreToolDeps) {
 	const HISTORY_PAGES = 8;
 
 	/**
-	 * 翻自己的历史。
+	 * 翻过去的话：对话历史，或者记忆。
 	 *
-	 * 为什么必须有这个工具：上下文压缩是 pi-durable 的默认行为，压成 `pi.compaction`
+	 * 为什么必须有对话那一半：上下文压缩是 pi-durable 的默认行为，压成 `pi.compaction`
 	 * 条目之后，原文还在 storage 里，但**模型再也看不见了，也没任何办法读回**。
 	 * 于是它只能凭记忆补路径、补数字、补原话 —— 看起来很像，可能是错的，而且
 	 * 错得无法被发现。这把记忆能不能查询变成了可以查询。
 	 *
-	 * 分页从新往回扇：一次 64 条。
+	 * 分页从新往回扇：一次 64 条。记忆那一半见 `recallText`。
 	 */
 	const readHistory = defineTool({
 		name: "read_history",
 		description: [
-			"查你自己这个会话过去说过的话（上下文被压缩掉的部分也查得到）。",
-			"上下文被压缩过之后，早先的原文不在眼里了。要写精确的路径、数字、原话，先用它查，不要凭记忆补。",
-			"不给参数 = 最近 12 条；给 query 按关键词找；给 around=<行首的 #id> 从那条往前翻。",
+			"翻过去的话。`scope=channel`（默认）查我自己这个会话的历史（上下文被压缩掉的部分也查得到）；",
+			"被压缩过之后要写精确的路径、数字、原话，先用它查，不要凭记忆补。",
+			"`scope=memory`（或 personal / team 简写）翻记忆全文，可以只筛包含某个词的段落。",
 		].join(""),
 		parameters: Type.Object({
-			query: Type.Optional(Type.String({ description: "关键词（不区分大小写）。给了就只留包含它的条目" })),
-			around: Type.Optional(Type.Number({ description: "条目 id（输出里每行开头的 #号就是）。从这条往前取" })),
-			limit: Type.Optional(Type.Number({ description: "最多几条，默认 12，上限 50" })),
+			scope: Type.Optional(
+				Type.String({ description: "channel（默认，对话历史）/ memory（我的记忆）/ team（团队记忆；也可以先写 memory 再给 team）" }),
+			),
+			query: Type.Optional(Type.String({ description: "关键词（不区分大小写），只留包含它的条目 / 段落" })),
+			team: Type.Optional(Type.String({ description: "团队 slug，默认是我所在的团队（scope=team / memory 且要看团队时用）" })),
+			around: Type.Optional(Type.Number({ description: "条目 id（每行开头的 #号）。从这条往前翻（只看对话历史）" })),
+			limit: Type.Optional(Type.Number({ description: "最多几条，默认 12，上限 50（只看对话历史）" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const wanted = Math.min(Math.max(Math.trunc(args.limit ?? 12), 1), 50);
+			const wanted = actionOf(args.scope, ["channel", "memory", "personal", "team"], "channel", "scope");
+			if (typeof wanted !== "string") return text(wanted.error);
+
+			// 记忆那一半：入参是「谁的记忆 / 哪个团队 / 只留含某词的段落」。
+			if (wanted !== "channel") {
+				const slug = await selfOf(deps, Number(api.conversationId), ctx);
+				if (slug === undefined) return text("你还不在名册里。");
+				const keyword = (args.query ?? "").trim();
+				if (wanted === "team") return recallText(deps, slug, args.team, keyword);
+				if (wanted === "personal") return recallText(deps, slug, undefined, keyword);
+				// scope=memory：给了 team 就看团队，否则看自己。
+				return recallText(deps, slug, args.team, keyword);
+			}
+
+			const limit = Math.min(Math.max(Math.trunc(args.limit ?? 12), 1), 50);
 			const keyword = (args.query ?? "").trim().toLowerCase();
 			const conversation = await deps.harness.conversation(Number(api.conversationId) as never, ctx);
 			if (conversation === undefined) return text("这个会话还没有任何记录。");
@@ -804,7 +907,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			let exhausted = false;
 			let enough = false;
 			// 多取一条：只有拿到「第 limit+1 条」才知道后面确实还有更早的。
-			for (let index = 0; index < HISTORY_PAGES && found.length <= wanted; index += 1) {
+			for (let index = 0; index < HISTORY_PAGES && found.length <= limit; index += 1) {
 				const page = await conversation.entries(
 					{
 						order: "descending",
@@ -825,7 +928,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 					const line = `[#${entry.id} ${agoOf(model?.timestamp, now)}] ${speaker}: ${clipped}`;
 					if (keyword !== "" && !line.toLowerCase().includes(keyword)) continue;
 					found.push({ id: Number(entry.id), line });
-					if (found.length > wanted) {
+					if (found.length > limit) {
 						// 够数了：这一页没扫完，也就不能断言「没有更早的了」。
 						enough = true;
 						break;
@@ -843,66 +946,23 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const lines: string[] = [];
 			let used = 0;
 			for (const item of found) {
-				if (lines.length >= wanted || used + item.line.length + 1 > HISTORY_BUDGET) break;
+				if (lines.length >= limit || used + item.line.length + 1 > HISTORY_BUDGET) break;
 				lines.push(item.line);
 				used += item.line.length + 1;
 			}
 			const oldest = found[lines.length - 1];
-			const more = found.length > lines.length || (lines.length >= wanted && !exhausted);
+			const more = found.length > lines.length || (lines.length >= limit && !exhausted);
 			const tail = more && oldest !== undefined ? `\n\n还有更早的，用 around=${oldest.id} 继续往前。` : "";
 			return text(`${lines.join("\n")}${tail}`);
-		},
-	});
-
-	const recall = defineTool({
-		name: "recall",
-		description: [
-			"翻记忆全文。scope=personal（默认）翻你自己的记忆；scope=team 翻团队记忆。",
-			"可以只筛包含某个词的段落。",
-		].join(""),
-		parameters: Type.Object({
-			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 team（团队记忆）" })),
-			team: Type.Optional(Type.String({ description: "团队 slug；scope=team 时用。默认是我所在的团队" })),
-			contains: Type.Optional(Type.String({ description: "只看包含这个词的段落" })),
-		}),
-		execute: async (args, api, context) => {
-			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
-
-			if (args.scope === "team") {
-				const self = await readIdentity(deps.agentsRoot, slug);
-				const team = args.team ?? self?.team;
-				if (team === undefined) return text("我不在任何团队里。要看团队记忆，请说是哪个团队。");
-				const source = await readTeamMemory(deps.teamsRoot, team);
-				if (source === undefined) return text(`团队「${team}」还没有记忆。`);
-				if (args.contains === undefined || args.contains === "") return text(source);
-				const sections = teamMemorySections(source).filter(
-					(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
-				);
-				if (sections.length === 0) return text(`团队「${team}」的记忆里没有「${args.contains}」。`);
-				return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
-			}
-
-			const source = await readMemory(join(deps.agentsRoot, slug));
-			if (source === undefined) return text("我还没记过任何东西。");
-			if (args.contains === undefined || args.contains === "") return text(source);
-			const sections = sectionsOf(source).filter(
-				(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
-			);
-			if (sections.length === 0) return text(`记忆里没有「${args.contains}」。`);
-			return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
 		},
 	});
 
 	const run = defineTool({
 		name: "run",
 		description: [
-			"执行一条 shell 命令，返回 stdout / stderr / 退出码。",
-			"用于：写代码文件、起服务、跑测试、装依赖。",
-			"命令以 & 结尾或以 nohup 开头时，后台运行并立即返回 PID（用于起服务）。",
-			"不要用 `sleep` 等别人：别人做完会在频道里说话并叫醒你，等消息来找你，别去追消息。",
-			"不确定能不能跑某条命令时，先看你的技能（`read_skill`）。",
+			"执行一条 shell 命令，返回 stdout / stderr / 退出码。装依赖、跑测试、起服务、拼装工具链用它。",
+			"以 `&` 结尾或以 `nohup` 开头 = 后台跑，立即返回 PID；不要用 `sleep` 等人 —— 别人做完会叫你。",
+			"不确定某件事该怎么做，先用 `skills` 看你有没有那门手艺。",
 		].join(""),
 		parameters: Type.Object({
 			command: Type.String({ description: "要执行的命令" }),
@@ -962,76 +1022,66 @@ export function createCoreTools(deps: CoreToolDeps) {
 	});
 
 	/**
-	 * 写一个文件。
+	 * 工作区里的一个文件：读，或者写。
 	 *
-	 * 与 `run` 写文件的差别：这个工具不经过 shell，路径可控、内容不经过转义。
-	 * 适合写大段代码、配置、文档。
+	 * 与 `run` 的差别：不经过 shell，路径可控、内容不经过转义。
 	 */
-	const writeFileTool = defineTool({
-		name: "write_file",
+	const file = defineTool({
+		name: "file",
 		description: [
-			"把一段内容写进一个文件（UTF-8）。路径相对于工作区根。",
-			"不能写工作区以外的路径（`../` 会被拒绕）。",
-			"用于写代码、配置、文档。写完文件存在了，不会自动起服务或跑测试。",
+			"工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。",
+			"路径相对工作区根，`../` 会被拒；读写不了工作区以外的东西。",
 		].join(""),
 		parameters: Type.Object({
+			action: Type.Optional(Type.String({ description: "read（默认）/ write" })),
 			path: Type.String({ description: "文件路径（相对工作区根）" }),
-			content: Type.String({ description: "文件内容" }),
+			content: Type.Optional(Type.String({ description: "write 必填：文件内容" })),
+			offset: Type.Optional(Type.Number({ description: "read 从第几行开始（1 起），默认 1" })),
+			limit: Type.Optional(Type.Number({ description: "read 最多几行，默认 400" })),
 		}),
 		execute: async (args) => {
+			const action = actionOf(args.action, ["read", "write"], "read");
+			if (typeof action !== "string") return text(action.error);
 			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
 			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
-			// 同上：密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
-			const content = redact(args.content, deps.workspaceRoot);
-			await mkdir(dirname(target), { recursive: true });
-			await writeFile(target, content, "utf8");
-			return text(`已写入 ${args.path}（${content.length} 字）`);
-		},
-	});
 
-	/**
-	 * 读一个文件。
-	 *
-	 * 与 `read_channel` / `recall` 的差别：读的是文件系统上的任意文件，
-	 * 不是频道消息或记忆。用于查看代码、配置、输出。
-	 */
-	const readFileTool = defineTool({
-		name: "read_file",
-		description: [
-			"读一个文件的内容（UTF-8，最多 8000 字）。路径相对于工作区根。",
-			"不能读工作区以外的路径。",
-		].join(""),
-		parameters: Type.Object({
-			path: Type.String({ description: "文件路径（相对工作区根）" }),
-		}),
-		execute: async (args) => {
-			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
-			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
+			if (action === "write") {
+				if (args.content === undefined) return text("write 要带 content（写什么）。只想读文件用 action=read。");
+				// 密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
+				const content = redact(args.content, deps.workspaceRoot);
+				await mkdir(dirname(target), { recursive: true });
+				await writeFile(target, content, "utf8");
+				return text(`已写入 ${args.path}（${content.length} 字）`);
+			}
+
 			const source = await readFile(target, "utf8").catch(() => undefined);
 			if (source === undefined) return text(`文件不存在：${args.path}`);
-			const trimmed = source.length > 8000 ? `${source.slice(0, 8000)}\n…（已截断，共 ${source.length} 字）` : source;
-			return text(trimmed);
+			const rows = source.split("\n");
+			const offset = Math.max(Math.trunc(args.offset ?? 1), 1);
+			const limit = Math.min(Math.max(Math.trunc(args.limit ?? 400), 1), 800);
+			const shown = rows.slice(offset - 1, offset - 1 + limit);
+			const head = shown.join("\n");
+			// 行的尺度和字的尺度都要管：一行十万字的压缩包也是合法的。
+			const clipped = head.length > 8000 ? `${head.slice(0, 8000)}\n…（已截断）` : head;
+			const last = offset - 1 + shown.length;
+			if (last >= rows.length && clipped.length === head.length) return text(clipped);
+			const more = last < rows.length ? `，还有，用 offset=${last + 1} 继续` : "";
+			return text(`${clipped}\n（共 ${rows.length} 行、${source.length} 字；这里从第 ${offset} 行起${more}）`);
 		},
 	});
 
 	return [
 		say,
-		readChannel,
-		org,
-		hire,
-		updateIdentity,
-		remember,
+		chats,
 		readHistory,
-		recall,
-		listSkillsTool,
-		readSkillTool,
-		writeSkillTool,
-		listTeamsTool,
-		readTeamTool,
+		remember,
+		teams,
 		writeTeamTool,
+		skills,
+		hire,
+		me,
 		run,
-		writeFileTool,
-		readFileTool,
+		file,
 	] as readonly ToolRegistration[];
 }
 
@@ -1170,7 +1220,7 @@ async function conversationOf(deps: CoreToolDeps, slug: string, context: Context
 	return deps.harness.conversation(id as never, context);
 }
 
-/** 一条消息的一行渲染（`read_channel` 用）。 */
+/** 一条消息的一行渲染（`chats` 用）。 */
 function renderLine(message: Message): string {
 	const time = new Date(message.at).toISOString().slice(11, 16);
 	const mentions = message.mentions.length === 0 ? "" : ` @${message.mentions.join("、")}`;

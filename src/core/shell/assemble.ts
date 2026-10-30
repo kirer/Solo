@@ -22,7 +22,7 @@ import {
 	type Context,
 } from "../runtime/index.ts";
 import { chainUp, readAllIdentities, readIdentity } from "../agent/identity.ts";
-import { agentSection, renderAgentSection, type ChatRef } from "../agent/runtime.ts";
+import { agentSections, renderAgentSection, type ChatRef } from "../agent/runtime.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools.ts";
 import { mentionRosterOf } from "../channel/alias.ts";
 import {
@@ -41,6 +41,7 @@ import { membersOfTeam, readTeam } from "../team/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleTeam } from "../team/settle.ts";
 import { startAnswerRescue } from "./rescue.ts";
+import type { CoreServices } from "../app/types.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 export type CoreShellOptions = {
@@ -60,6 +61,11 @@ export type CoreShellOptions = {
 	 * 统一在这里补：装配时给每个会话对齐一次模型，而不是在每个新建入口里各写一遍。
 	 */
 	readonly defaultModel?: { readonly provider: string; readonly modelId: string };
+	/**
+	 * 诊断出口。给了就用它（`openCore` 的 `onReport` 已经往里报）；不给就由 `app/`
+	 * 自己建一个。装配要传入**同一个实例**，否则 `lastReport` 不在那条线上。
+	 */
+	readonly diag?: CoreServices["diag"];
 };
 
 /** `identity.md` → 名册里的显示名投影。 */
@@ -69,74 +75,14 @@ function labelsOf(identities: readonly { readonly slug: string; readonly name?: 
 	return out;
 }
 
-export type CoreShell = {
-	readonly harness: Harness;
-	readonly registry: Registry;
-	/** slug → 会话。已经建好的都在里面。 */
-	readonly conversations: ReadonlyMap<string, Conversation>;
-	/** 名册快照（只读用途；写请走工具）。 */
-	readonly directory: DirectoryState;
-	/** 重新扫描文件夹，给新出现的人开会话。返回新建的 slug。 */
-	readonly rescan: (context?: Context) => Promise<readonly string[]>;
-	/**
-	 * 给某个人开会话（已存在就直接返回）。`hire` 内部就用它，外壳/测试也用同一个入口。
-	 *
-	 * 返回会话的数字 id（界面拿它当 `conversationId`）。
-	 */
-	readonly openAgent: (slug: string, context?: Context) => Promise<number>;
-	/** 读一次频道状态（工具内部已自带，这个是给外壳/API 用的）。 */
-	readonly channels: (context?: Context) => Promise<ChannelState>;
-	/** 我说话。宿主入口，语义与 agent 的 `say` 完全一致。 */
-	readonly ownerSay: (
-		options: {
-			readonly channelId: string;
-			readonly text: string;
-			readonly replyTo?: number;
-			readonly kind?: string;
-			/** 附件引用。给了模型就能真的看见这些图片 / 读到这些文件。 */
-			readonly attachments?: readonly import("../channel/state.ts").Attachment[];
-		},
-		context?: Context,
-	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
-	/**
-	 * **任何**一方在频道里说话（我走 `OWNER`，agent 走自己的 slug）。
-	 *
-	 * 与 `ownerSay` 是同一个动作，只差发件人是谁 —— 所以它排在 `ownerSay` 里面
-	 * （`ownerSay = postAs(OWNER, ...)`），不写第二份语义。
-	 */
-	readonly postAs: (
-		options: {
-			readonly channelId: string;
-			readonly from: string;
-			readonly text: string;
-			readonly replyTo?: number;
-			readonly kind?: string;
-		},
-		context?: Context,
-	) => Promise<{ readonly seq: number; readonly delivery: import("../channel/deliver.ts").DeliverResult }>;
-	/** 名册：slug ↔ 会话 id 的当前快照（界面拿它把 slug 翻成数字 id）。 */
-	readonly bindings: () => DirectoryState;
-	/** 显示名：slug → `identity.md` 里的 name。 */
-	readonly labelOf: (slug: string) => string;
-	/** 当前所有身份（每次都重读盘：改 `identity.md` 立刻反映到档案页）。 */
-	readonly identities: () => Promise<readonly import("../agent/identity.ts").Identity[]>;
-	/**
-	 * 补漏扫一遍所有团队频道，把「该沉淀但还没等到答复」的结论再问一次。
-	 *
-	/** 按团队文件重建它的频道成员（幂等）。`write_team` 里用过，界面也用它。 */
-	readonly syncTeam: (team: string, context?: Context) => Promise<void>;
-	/**
-	 * 某人**此刻**会看到的提示词原文。
-	 *
-	 * 给自测与调试用：断言「规矩真的进了提示词」时不该靠猜。它调的是会话里同一个
-	 * section 的 `render`，所以拿到的就是模型下次开口时会读到的东西。
-	 */
-	readonly promptOf: (slug: string, context?: Context) => Promise<string>;
-	readonly agentsRoot: string;
-	readonly teamsRoot: string;
-	readonly companyChannel: string;
-	readonly close: (context?: Context) => Promise<void>;
-};
+/**
+ * 装配结果的形状。
+ *
+ * 类型本体住在 `src/core/app/types.ts`：用例层（app）要拿它当入参，而依赖方向是
+ * `shell → app`，所以这份形状不能反过来定义在外壳里。这里只留一个别名，
+ * 免得老调用方（测试、`main.ts`）全都要改。
+ */
+export type CoreShell = CoreServices;
 
 /** 名册的顶层字段（写回去时要逐字段比，不能整份替换）。 */
 const DIRECTORY_KEYS = ["slugToConversation", "conversationToSlug", "wake", "labels"] as const;
@@ -228,17 +174,16 @@ export async function assembleCore(
 		return channelsOf(state, slug).map((channel) => ({ id: channel.id, title: channel.title, kind: chatKind(channel) }));
 	}
 
-	// 身份段落：每个 agent 装的扩展不一样（key 里带 slug），所以这里是一个工厂。
+	// 身份段：每个 agent 装的扩展不一样（key 里带 slug），所以这里是一个工厂。
+	// 一个人有 8 段（身份/规矩/位置/团队/能力/记忆/技能/目录），底座按段做最小 patch。
 	const identityExtension = (slug: string): Extension =>
 		defineExtension({
 			name: `core-identity:${slug}`,
-			sections: [
-				agentSection(
-					registry,
-					{ workspace: workspaceRoot, agents: options.agentsRoot, teams: options.teamsRoot, chats: chatRefsOf },
-					slug,
-				),
-			],
+			sections: agentSections(
+				registry,
+				{ workspace: workspaceRoot, agents: options.agentsRoot, teams: options.teamsRoot, chats: chatRefsOf },
+				slug,
+			),
 		});
 
 	registry.install(toolsExtension);
@@ -532,6 +477,7 @@ export async function assembleCore(
 		agentsRoot: options.agentsRoot,
 		teamsRoot: options.teamsRoot,
 		companyChannel,
+		...(options.diag === undefined ? {} : { diag: options.diag }),
 		close: async (ctx?: Context) => {
 			// 这个订阅是「读会话、写频道」，关库之前先停掉，免得它对着已关闭的库再提交一次。
 			stopAnswerRescue();

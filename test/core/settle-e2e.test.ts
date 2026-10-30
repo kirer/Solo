@@ -157,7 +157,7 @@ describe("团队记忆自动沉淀", () => {
 		expect(state?.cursors.ghost).toBe(1);
 	});
 
-	it("remember/recall 支持 scope=team", async () => {
+	it("remember 与 read_history(scope=memory) 都在注册表里，记忆只有一个入口", async () => {
 		const { shell, agentsRoot } = await setup();
 		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
 		await shell.openAgent(lin.slug);
@@ -165,9 +165,10 @@ describe("团队记忆自动沉淀", () => {
 		if (conversation === undefined) throw new Error("没有会话");
 		const agent = await conversation.agent();
 		const names = agent.tools.map((item) => item.name);
-		// 合并后 remember 和 recall 各只有一个，不再有 remember_team/read_team_memory
+		// 记忆有写（remember）和读（read_history 的 memory 分支）两个入口，各只有一个，
+		// 不再有 remember_team / read_team_memory 这类同义工具。
 		expect(names).toContain("remember");
-		expect(names).toContain("recall");
+		expect(names).toContain("read_history");
 		expect(names).not.toContain("remember_team");
 		expect(names).not.toContain("read_team_memory");
 	});

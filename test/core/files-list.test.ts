@@ -14,7 +14,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
-import { mapLimit, serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
+import { mapLimit } from "../../src/core/app/files.ts";
+import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
 
 describe("mapLimit：并发有上限、顺序不变", () => {
 	it("同时在跑的从不超过上限，结果顺序与输入一致", async () => {

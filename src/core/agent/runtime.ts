@@ -11,13 +11,20 @@
  */
 import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
-import { readAllIdentities, readIdentity } from "./identity.ts";
+import { readAllIdentities, readIdentity, type Identity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
 import { loadRules } from "./rules.ts";
 import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
-import { renderAgentPrompt, type CapabilityLine } from "./prompt.ts";
+import {
+	PROMPT_SEGMENTS,
+	renderPromptSegment,
+	type CapabilityLine,
+	type PromptSegment,
+	type PromptSegmentText,
+	type RenderInput,
+} from "./prompt.ts";
 
 export type AgentPaths = {
 	/** 工作区根（公司层技能在 `<workspace>/skills/`）。 */
@@ -110,58 +117,136 @@ export async function renderAgentSection(
 	paths: AgentPaths,
 	slug: string,
 ): Promise<string> {
-	const self = await readIdentity(paths.agents, slug);
-	if (self === undefined) {
-		return `# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
-	}
-	const all = await readAllIdentities(paths.agents);
-	const brief = self.team === undefined ? undefined : await readTeamBrief(paths.teams, self.team);
-	const members =
-		self.team === undefined
-			? undefined
-			: all.filter((item) => item.team === self.team).map((item) => item.slug);
-	const teamMemory = self.team === undefined ? undefined : await readTeamMemory(paths.teams, self.team);
-	const teamDigest = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
-	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
-	const memory = await readMemory(join(paths.agents, slug));
-	const digest = memory === undefined ? undefined : memoryDigest(memory);
-	// 规矩是公司层文件（`<workspace>/rules.md`），每人每轮都读一次：读不到就当没有，
-	// 不能让一次文件缺失拖垮整段提示词（那时它连自己叫什么都不会知道）。
-	const rules = await loadRules(paths.workspace);
-	const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
-	return renderAgentPrompt({
-		self,
-		all,
-		// 脱敏要在拼完的整段上做：key 可能来自身份、技能、记忆里任何一处。
-		workspaceRoot: paths.workspace,
-		capabilities: registeredTools(registry),
-		skills: skills.map((skill) => ({
-			name: skill.name,
-			description: skill.description,
-			scope: skill.scope,
-			...(skill.overrides === true ? { overrides: true } : {}),
-		})),
-		...(digest === undefined ? {} : { memoryDigest: digest }),
-		...(rules === undefined ? {} : { rules }),
-		...(brief === undefined ? {} : { teamBrief: brief }),
-		...(members === undefined ? {} : { teamMembers: members }),
-		...(teamDigest === undefined ? {} : { teamMemoryDigest: teamDigest }),
-		...(chats === undefined ? {} : { chats }),
-	});
+	return (await renderAgentSegments(registry, paths, slug))
+		.map((segment) => segment.text)
+		.filter((text) => text !== "")
+		.join("\n\n");
 }
 
-export function agentSection(
+const identitylessPrompt = (slug: string): string =>
+	`# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
+
+/** 技能清单（提示词只要名字 + 一句描述）。 */
+async function promptSkills(paths: AgentPaths, slug: string): Promise<RenderInput["skills"]> {
+	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
+	return skills.map((skill) => ({
+		name: skill.name,
+		description: skill.description,
+		scope: skill.scope,
+		...(skill.overrides === true ? { overrides: true } : {}),
+	}));
+}
+
+/**
+ * 渲染**一段**用得到的输入。
+ *
+ * 各段只读自己用得到的东西：一次生成要渲染 8 段，不能每段都把全部文件读一遍
+ * （`paths.chats` 是一条底座快照查询，重复 8 次不是白拿的）。
+ * 代价是位置段与团队段各读一次身份清单，总共多几次小文件读——微秒级。
+ */
+async function promptInputFor(
 	registry: Registry,
 	paths: AgentPaths,
 	slug: string,
-): PromptSection<ToolRegistration> {
-	return {
-		key: sectionKeyOf(slug),
-		// 不包 `<key>...</key>` 标签：这整段就是它的身份，不是一条附加信息。
-		tag: false,
-		async render(_input, _context): Promise<string | undefined> {
-			return renderAgentSection(registry, paths, slug);
-		},
-	};
+	self: Identity,
+	segment: PromptSegment,
+): Promise<RenderInput> {
+	const base: RenderInput = { self, all: [self], workspaceRoot: paths.workspace };
+	switch (segment) {
+		case "rules": {
+			// 规矩是公司层文件（`<workspace>/rules.md`），读不到就当没有：
+			// 不能让一次文件缺失拖垮整段提示词（那时它连自己叫什么都不会知道）。
+			const rules = await loadRules(paths.workspace);
+			return rules === undefined ? base : { ...base, rules };
+		}
+		case "position": {
+			const all = await readAllIdentities(paths.agents);
+			const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
+			return { ...base, all, ...(chats === undefined ? {} : { chats }) };
+		}
+		case "team": {
+			const all = await readAllIdentities(paths.agents);
+			const team = self.team;
+			const brief = team === undefined ? undefined : await readTeamBrief(paths.teams, team);
+			const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.teams, team);
+			const digest = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
+			const members = team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);
+			return {
+				...base,
+				all,
+				...(brief === undefined ? {} : { teamBrief: brief }),
+				...(members === undefined ? {} : { teamMembers: members }),
+				...(digest === undefined ? {} : { teamMemoryDigest: digest }),
+			};
+		}
+		case "tools":
+			// 直接拍注册表：注册表里有什么，就写什么（清单文件会撒谎）。
+			return { ...base, capabilities: registeredTools(registry) };
+		case "memory": {
+			const memory = await readMemory(join(paths.agents, slug));
+			const digest = memory === undefined ? undefined : memoryDigest(memory);
+			return digest === undefined ? base : { ...base, memoryDigest: digest };
+		}
+		case "skills": {
+			const skills = await promptSkills(paths, slug);
+			return skills === undefined ? base : { ...base, skills };
+		}
+		// `who` / `directory` 只需要身份本身（目录段只用 slug）。
+		default:
+			return base;
+	}
 }
 
+/**
+ * 渲染某人此刻的提示词，**按稳定段切开**（顺序即拼接顺序）。
+ *
+ * 拼回去与以前一次性渲染的结果逐字节相同（`test/core/prompt-segments.test.ts` 有黄金断言）。
+ */
+export async function renderAgentSegments(
+	registry: Registry,
+	paths: AgentPaths,
+	slug: string,
+): Promise<readonly PromptSegmentText[]> {
+	const self = await readIdentity(paths.agents, slug);
+	if (self === undefined) {
+		// 没有身份文件：整段提示词只有一句「先写你是谁」，其余各段为空。
+		return PROMPT_SEGMENTS.map((segment) => ({
+			segment,
+			text: segment === "who" ? identitylessPrompt(slug) : "",
+		}));
+	}
+	const segments: PromptSegmentText[] = [];
+	for (const segment of PROMPT_SEGMENTS) {
+		const input = await promptInputFor(registry, paths, slug, self, segment);
+		segments.push({ segment, text: renderPromptSegment(segment, input) });
+	}
+	return segments;
+}
+
+/**
+ * 一个 agent 的提示词段落（一段一个 section，key = `<agent key>-<段名>`）。
+ *
+ * **为什么不像以前那样整段一个 section**：底座按 key 做最小 patch
+ * （`planSystemEntries` → `planSections`），整段一个 key 等于「一个字变了整段作废」。
+ * 记忆目录、技能索引、组织里的人员都会变，于是每轮都重发整段提示词，前缀缓存（ADR-005 /
+ * C-003）等于不存在。切成稳定段之后，只有真正变了的那段写新条目。
+ *
+ * `tag: false`：tag 会包一层 `<key>…</key>`，那就改了发给模型的字节 —— 分段只靠 key。
+ */
+export function agentSections(
+	registry: Registry,
+	paths: AgentPaths,
+	slug: string,
+): readonly PromptSection<ToolRegistration>[] {
+	const base = sectionKeyOf(slug);
+	return PROMPT_SEGMENTS.map((segment) => ({
+		key: `${base}-${segment}`,
+		tag: false,
+		async render(): Promise<string> {
+			const self = await readIdentity(paths.agents, slug);
+			if (self === undefined) return segment === "who" ? identitylessPrompt(slug) : "";
+			const input = await promptInputFor(registry, paths, slug, self, segment);
+			return renderPromptSegment(segment, input);
+		},
+	}));
+}

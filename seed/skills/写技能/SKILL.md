@@ -19,9 +19,9 @@ description: 遇到一件以后还会重复做的事，把做法写成一份技�
 
 ## 写在哪一层
 
-- **公司层**（`write_skill` 不传 `scope`，落 `<workspace>/skills/`）：所有人都该这么做的。
+- **公司层**（`skills(action=write, scope=company)`，落 `<workspace>/skills/`）：所有人都该这么做的。
   判断标准是「如果我明天走了，这条规矩还成立吗」。
-- **个人层**（`write_skill` 传 `scope=personal`）：只有我这么干、或者我在试的做法。
+- **个人层**（`skills(action=write)`，默认就写这一层；也可显式传 `scope=personal`）：只有我这么干、或者我在试的做法。
   个人层会**覆盖**公司的同名技能 —— 想改一条公司规矩但还没把握时，先写个人层。
 
 ## 怎么写

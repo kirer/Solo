@@ -32,32 +32,50 @@ workspace/
 
 ---
 
-## 2. 目录与三条边界
+## 2. 目录与五层边界
 
 ```
-src/core/runtime/   防腐层：唯一能 import pi-durable / pi-ai / chord 的地方
-src/core/agent/     一个人：身份 / 提示词 / 记忆 / 技能 / 名册
-src/core/team/      一个团队：README.md / memory.md / 自动沉淀
-src/core/channel/   说话：纯规则 / 投递 / 写一条 / 17 个工具
-src/core/shell/     外壳：装配 / HTTP+SSE / 视图投影 / 启动（含 http/）
-ui/app/             界面源码（React + TS + Vite，ADR-079）
-ui/web/             构建产物（服务端发这个目录，别手改）
-seed/               播种技能与规矩文案
-scripts/            三个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）
-test/               55 文件 / 451 例
-  ├ test/core/      42 文件 / 384 例（纯函数 + 装配）
-  └ test/ui/        13 文件 / 67 例（界面纯函数与源码约定）
-workspace/          运行时数据（gitignore）
+src/core/
+  runtime/        防腐层：唯一能 import pi-durable / pi-ai / chord 的地方（含 models/compaction）
+  agent/          一个人：身份 / 提示词（8 段）/ 记忆 / 技能 / 名册
+  team/           一个团队：README.md / memory.md / 自动沉淀
+  channel/        说话：纯规则 / 投递 / 写一条 / 11 个工具 / 附件
+  ── 以上四层是 domain（业务事实）──────────────────────────────
+  app/            用例：snapshot / read / chat / people / files / uploads / diag
+  view/           投影纯函数（index.ts）+ 界面 DTO 的唯一权威（dto.ts），零 IO
+  interface/http/ 唯一 import node:http 的地方：routes / server / hub / sse / guard
+  shell/          装配与启动：assemble / serve / main / rescue / seed
+ui/app/           界面源码（React + TS + Vite，ADR-079）
+ui/web/           构建产物（服务端发这个目录，别手改）
+seed/             播种技能与规矩文案
+scripts/          三个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）
+test/             60 文件 / 514 例
+  ├ test/core/    47 文件 / 447 例（纯函数 + 装配）
+  └ test/ui/      13 文件 / 67 例（界面纯函数与源码约定）
+workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 36 个 ts / 9177 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 52 个 ts / 10340 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
-**三条边界**，`npm run check` 机械化检查（`scripts/check-boundaries.mjs`），违反即失败：
+**依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
+`shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
+
+**三条老边界**（一开始就有，`npm run check` 机械化检查，违反即失败）：
 
 1. **只有 `src/core/runtime/` 能 import 底层库**（pi-durable / pi-ai / chord）。
-2. **内核（`agent|team|channel`）不得反向 import `shell/`**。依赖方向只能是 `shell → 内核`。
-3. **`serve.ts` 的每条路由必须在前端有消费者**（白名单只有 `/api/org`，Docker 健康检查用）。
-   加路由没人用 → 要么接上界面、要么删掉、要么改白名单并写清理由。
+2. **内核（domain）不得反向 import 上层**：`agent|team|channel|runtime` 不许碰
+   `shell/` / `interface/` / `app/` / `view/`。
+3. **每条路由必须在前端有消费者**（`src/core/interface/http/routes.ts` 的 `pattern` ×
+   `ui/app/src`；白名单只有 `/api/org`，Docker 健康检查用）。加路由没人用 → 要么接上界面、
+   要么删掉、要么改白名单并写清理由。
+
+**分层后又收紧了三条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成四组：域 / view /
+app / interface）：
+
+- **`view/` 零 IO**：不许 import `node:*`，不许碰 `runtime/`。
+- **`app/` 不许 `node:http`**：用例要能脱离网络直接测。
+- **`interface/` 只经 `app/` 与 `view/` 说话**（不许 import 领域内部实现，否则业务会再长回
+  handler 里）。
 
 另外三条容易踩的：
 
@@ -86,11 +104,11 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check     # tsc --noEmit + 边界检查
-npm test          # 55 文件 451 例，<3s，必须全绿
+npm test          # 60 文件 514 例，<3s，必须全绿
 npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
-- **`npm run live` 不能省。** 451 个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
+- **`npm run live` 不能省。** 五百多个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
   两个 bug 叠在一起（我发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
   症状是「我在公司频道问，对方在私聊里答」，单测完全看不见。单测测的是纯函数和装配，
   **只有真模型能测出「沟通会不会跑偏」**。
@@ -104,6 +122,8 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 | 你改了什么 | 必须同步 |
 |---|---|
 | 一个不显然的取舍 | `docs/DECISIONS.md` 追加一条 ADR |
+| 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md`（ADR-082）+ `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
+| 接一个 pi 能力 / 绕一个 pi 做不到的事 | ADR-083 类的新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」） |
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
@@ -144,15 +164,15 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 
 | 我要… | 先读 | 再动 |
 |---|---|---|
-| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools` |
+| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools`（11 个；同一件事加 `action`，别开新名字，ADR-084） |
 | 教 agent 一套做法 | `docs/DECISIONS.md` ADR-007 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
-| 改提示词 | `docs/CODE.md` §3 + ADR-005 | `src/core/agent/prompt.ts` 的 `renderAgentPrompt` |
+| 改提示词 | `docs/CODE.md` §3 + ADR-005 + ADR-083 | `src/core/agent/prompt.ts` 的 `renderAgentPrompt` / `PROMPT_SEGMENTS`（8 段，逐字节不变） |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/state.ts` 的 `recipientsOf` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/state.ts` 的 `chatKind`（只看成员表） |
 | 改频道成员怎么来 | ADR-012 | `src/core/shell/assemble.ts` 的 `joinTeamChannel` / `syncTeamChannel` |
-| 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/shell/serve.ts` 的 `routes` 表 + 接前端 |
-| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build` |
+| 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
+| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 + ADR-079 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |
 | 改记忆沉淀 | ADR-033 | `src/core/team/settle.ts` + `team/memory.ts` |
 | 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |

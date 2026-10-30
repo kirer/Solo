@@ -22,7 +22,7 @@ const SAY_KINDS = new Set(["say", "chat", "report", "decision", "question"]);
  *
  * 处理方式：**直接过滤掉**，不画成普通行。理由：这些是机器执行留痕（`$ ls`、
  * 「读了一个文件」），画成普通消息会被误读成「他说了这句话」，也正好是 ADR-081 要
- * 消除的噪音。它们仍然在库里、`read_channel` 读得到，只是这一屏不显示。
+ * 消除的噪音。它们仍然在库里、`chats(action=read)` 读得到，只是这一屏不显示。
  */
 const LEGACY_PROCESS_KINDS = new Set(["think", "tool", "work", "step"]);
 

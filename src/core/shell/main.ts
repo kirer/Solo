@@ -22,7 +22,8 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { createRegistry } from "../runtime/index.ts";
 import { openCore, type CoreRuntime } from "../runtime/open.ts";
-import { setupModels } from "../runtime/index.ts";
+import { setupModels, compactionSettings } from "../runtime/index.ts";
+import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedRules, syncCompanySkills } from "./seed.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
@@ -89,7 +90,7 @@ async function main(): Promise<void> {
 		if (touched.length > 0) console.log(`[core] 同步了公司层技能：${touched.join("、")}`);
 	}
 
-	// 启动自检：`team/memory.ts` 的沉淀指令让团队管理员 `read_skill "记忆整理"`，
+	// 启动自检：`team/memory.ts` 的沉淀指令让团队管理员 `skills(action=read, name="记忆整理")`，
 	// 那份技能不在工作区，沉淀就会变成「模型凭自己想法整理」—— 静默降级，没人知道。
 	if (!existsSync(join(args.workspace, "skills", "记忆整理", "SKILL.md"))) {
 		console.warn("[core] 公司技能「记忆整理」不在工作区：团队记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
@@ -102,6 +103,9 @@ async function main(): Promise<void> {
 
 	const models = setupModels(process.env, { workspace: args.workspace });
 	const registry = createRegistry();
+	// 诊断出口必须在 `openCore` **之前**建：底座的运行报告要写进同一个实例，
+	// 才能和 `GET /api/diag` 看到的是同一条。
+	const diag = createDiag(args.workspace);
 	let runtime: CoreRuntime | undefined;
 	let shell: CoreShell | undefined;
 	let server: CoreServer | undefined;
@@ -117,12 +121,20 @@ async function main(): Promise<void> {
 	process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 	try {
-		runtime = await openCore({ databasePath, models: models.models, registry });
+		runtime = await openCore({
+			databasePath,
+			models: models.models,
+			registry,
+			// 压缩阈值跟着每个模型的真实上下文窗口走（默认值会让 1M 窗口永不触发）。
+			settings: { compaction: compactionSettings(models.models) },
+			onReport: (report) => diag.recordRuntimeReport(report),
+		});
 		shell = await assembleCore(runtime.harness, registry, {
 			agentsRoot,
 			teamsRoot,
 			ownerName: "我",
 			defaultModel: models.defaultModel,
+			diag,
 		});
 		server = await serveCore({
 			shell,

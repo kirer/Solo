@@ -100,7 +100,7 @@ export function teamMemoryDigest(source: string): string | undefined {
 	return memoryDigest(source);
 }
 
-/** 按 `## ` 切段（给 `recall(scope=team)` 全文渲染用）。 */
+/** 按 `## ` 切段（给 `read_history(scope=team)` 全文渲染用）。 */
 export function teamMemorySections(source: string): readonly MemorySection[] {
 	return sectionsOf(source);
 }
@@ -170,7 +170,7 @@ export function renderSettlePrompt(team: string, candidates: readonly SettleCand
 		"",
 		...lines,
 		"",
-		`按公司技能「记忆整理」的规矩整理这批消息（\`read_skill\` 读那份技能：该记什么、不该记什么、记完怎么回话，都在里面），结论写进 \`teams/${team}/memory.md\`（用 remember(scope=team)）。`,
+		`按公司技能「记忆整理」的规矩整理这批消息（\`skills(action=read)\` 读那份技能：该记什么、不该记什么、记完怎么回话，都在里面），结论写进 \`teams/${team}/memory.md\`（用 remember(scope=team)）。`,
 		`一句话把「记了什么」回在团队频道 \`team:${team}\`（say 时传 channel: "team:${team}"）。`,
 	].join("\n");
 }

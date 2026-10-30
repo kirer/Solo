@@ -1986,3 +1986,100 @@ React state，行模型由纯函数算出来，DOM 不再被手工搬来搬去�
 
 **代价。** 删掉后界面在 agent 干活期间是静的，只能看到最终的 `say`。这是有意的：先保证
 「消息 = 说过的话」，恢复可见性再作为纯读取层的功能加回来。
+
+---
+
+## ADR-082：四层，依赖只能朝一个方向
+
+**背景。** `shell/` 曾经同时是 HTTP 传输、业务编排、前端契约和组合根。`serve.ts` 1305 行，
+每条路由的 handler 里直接写业务；`view.ts`（界面投影）长在外壳里；`ui/app/src/api/types.ts`
+是 DTO 的手抄镜像，改后端字段界面不会报错。ADR-016 要求「不画后端没有的东西」，但没有机制
+保证界面看到的就是后端愿意承诺的。
+
+**决定。** 内核分四层，依赖方向单向：
+
+```
+interface  →  app  →  domain
+     ↘         ↓
+       view（纯投影，谁都能用，自己不依赖任何人）
+shell = 装配层，唯一可以同时 import 全部
+```
+
+| 层 | 目录 | 规则 |
+|---|---|---|
+| domain | `agent/` `channel/` `team/` `runtime/` | 不 import 其它三层；只有 `runtime/` 能碰 pi-durable |
+| app | `app/` | 用例：发消息、开私聊、开团队、招人、读数；不 import `node:http`，不写 HTTP 状态码 |
+| view | `view/` | 纯函数，零 IO、零 `node:*`；`view/dto.ts` 是界面契约的唯一权威 |
+| interface | `interface/http/` | 唯一能 `import node:http` 的地方；handler 只做「解析 → 调 app → 序列化」，≤30 行 |
+| shell | `shell/` | `assemble.ts` / `main.ts` / `serve.ts`，只做装配与启动 |
+
+`scripts/check-boundaries.mjs` 机械检查这五条，违反即失败（和 ADR-002 的三条边界同一机制）。
+
+**为什么 view 不依赖 domain 的类型。** 如果 DTO 直接引用 `ChannelState`，改内核字段就会
+悄悄改掉界面契约。DTO 自带结构，投影函数显式挑字段，界面 type-only 引用 DTO。
+
+**代价。** 多了一层转发，一个路由要跨三个文件才能读完。这是有意的：读 `interface/http/routes.ts`
+能看到「有哪些接口」，读 `app/` 能看到「系统能做什么」，读 `view/` 能看到「界面被承诺了什么」。
+
+---
+
+## ADR-083：把 pi 已经给的三个机制接上，不再自己绕
+
+**背景。** `runtime/open.ts` 只给底座传了 models/registry/settings，三处能力一直空着：
+
+1. **失败是静音的。** pi 的 crash-loop guard 第 5 次重启后会把任务 park 成 `blocked:
+   restart_limit` —— 既不 pending 也不 terminal，对我们就是「这个人突然不干活了」，日志里
+   什么都没有。
+2. **compaction 永不触发。** `models.ts` 写 `contextWindow ?? 1_000_000`，阈值 983616；
+   真实 200k 模型永远到不了，最后是 provider overflow 报错。等于把底座最贵的一个机制关掉了。
+3. **提示词整段 `tag:false`**，打穿前缀缓存（ADR-005 / C-003）：每轮重新计费整段 system。
+
+**决定。**
+
+- **接 `onReport`。** 报告落 `workspace/logs/runtime.jsonl`（单条 4KB、单文件 5MB 轮转，
+  与 `logs/jank.jsonl` 同一套写法）；最近一条非良性报告经 `GET /api/diag` 的 `lastReport`
+  露出来。`task_outdated` 视为良性（每次启动都会出现，不能当事故）。
+- **真实 `contextWindow`。** 先用 pi-ai 的模型目录取值；取不到回落 **128k**（保守：宁可
+  早压缩，也不要等 provider 报错）。compaction 显式配：reserve 15%、keepRecent 10%
+  （底 8192、封顶阈值一半）、background 5%，按 `provider/model` 出 overrides。
+- **提示词分段。** 稳定段 `who → rules → position → team → tools → memory → skills →
+  directory`，每段一个 section key（`tag:false`，因为 tag 会多出字节）；内容没变的段不发
+  新版本。渲染结果与旧实现**逐字节相同**（黄金测试 `test/core/prompt-segments.test.ts`）。
+
+**代价与边界。** 底座没有「某段失效」的钩子，只有按 key 的最小 patch，所以新增段或调序会
+触发一次性整块重写。`telemetry` 不接：它要求 `pi-telemetry` 的 `TelemetryContext`，那是
+传递依赖、不在 dependencies 里，自写适配器的成本高于收益。以上三条写进 `CONCESSIONS.md`
+的条目可标「已处理」。
+
+---
+
+## ADR-084：工具 17 → 11，一个动词一件事
+
+**背景。** 17 个工具每轮都进提示词；其中 5 组是同一件事换个动词
+（`list_skills`/`read_skill`/`write_skill`、`list_teams`/`read_team`、
+`read_channel`、`read_history`/`recall`、`read_file`/`write_file`），模型要在近义名字里
+选，选错的代价是一轮对话。`org` 返回的东西提示词里已经有一份。
+
+**决定。** 收敛成 11 个，合并的工具用 `action` 枚举，不用多个布尔参数：
+
+| 工具 | 吸收 |
+|---|---|
+| `say` | — |
+| `chats` | `read_channel`（`list` 列会话、`read` 读消息） |
+| `read_history` | `recall`（`scope: channel｜memory`） |
+| `remember` | — |
+| `teams` | `list_teams` + `read_team` |
+| `write_team` | — |
+| `skills` | `list_skills` + `read_skill` + `write_skill` |
+| `hire` | — |
+| `me` | `update_identity`（`show` 顺带返回自己的身份/团队/上级） |
+| `run` | — |
+| `file` | `read_file` + `write_file` |
+| 删除 | `org` |
+
+**为什么不用「一个万能工具」。** 工具的 description 是模型唯一的说明书。合并到「同一件事
+的几种做法」是收敛；合并到「读写删查都走一个入口」是把选择成本转成参数猜测成本。`say`
+尤其不合并：它是唯一有硬拦（长度、英文独白、私聊权限）的工具，值得独立。
+
+**验收。** 工具清单仍由注册表实拍（不写死名字）；`say` 的选频道/叫醒/硬拦行为不变；
+`live` 12/12。

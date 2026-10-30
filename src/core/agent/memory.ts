@@ -2,12 +2,12 @@
  * 记忆 = `agents/<slug>/memory.md`，一份人手写的 Markdown。
  *
  * 为什么不是数据库：记忆的价值在于**被改**。我说「以后别这样」，agent 应该能把
- * 那条改掉或者划掉；写在 Markdown 里，它自己 `write_skill`/直接改文件都行，
+ * 那条改掉或者划掉；写在 Markdown 里，它自己 `skills(action=write)`/直接改文件都行，
  * 而一行行 insert 的日志它是改不动的。
  *
  * 为什么不全塞进提示词：记忆会一直长。全塞进去等于每轮都为历史付费（而且长到
  * 一定长度后，模型对中段的内容注意力最差）。所以提示词里只放**目录**（每条的
- * 小节标题），要用哪一条由 agent 自己 `recall`。
+ * 小节标题），要用哪一条由 agent 自己 `read_history(scope=memory)`。
  *
  * ## 机器守的三条底线
  *
@@ -22,14 +22,14 @@ import { appendJournal } from "./journal.ts";
 
 export const MEMORY_FILE = "memory.md";
 
-/** 提示词里最多列几条标题。超过就只给「还有 N 条」，让它自己 recall。 */
+/** 提示词里最多列几条标题。超过就只给「还有 N 条」，让它自己 read_history。 */
 export const DIGEST_LIMIT = 12;
 
 /**
  * 硬上限（字符）。`entry` 是**一条**，`main` 是记忆目录在提示词里的预算（不是文件上限）。
  *
  * 为什么不是文件上限：文件写超了只能拒写，而拒写意味着「这条经验丢了」。目录预算
- * 收窄则是无损的 —— 条目还在文件里，`recall` / `read_file` 仍读得到。
+ * 收窄则是无损的 —— 条目还在文件里，`read_history` / `file` 仍读得到。
  */
 export const MEMORY_LIMITS = { entry: 300, main: 4_000 } as const;
 

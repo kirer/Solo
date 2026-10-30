@@ -100,7 +100,7 @@ export type DeliverOptions = {
 	 * 附件根目录（`<workspace>/uploads`）。
 	 *
 	 * 给了就把消息里的图片读成内容块直接交给模型（它真的看得见图），其它文件给出
-	 * `read_file` 的路径。不给就退化成正文里一行「[图片] x.png」—— 那是旧行为。
+	 * `file` 的路径。不给就退化成正文里一行「[图片] x.png」—— 那是旧行为。
 	 */
 	readonly uploadsRoot?: string;
 	/**
@@ -163,7 +163,7 @@ export function renderReplyRules(options: {
 		// 说完之后模型常把「我做了 X」再写成最终回答。那段正文会被投影成第二条消息
 		// （实测原文「已回我：在，随时待命。」紧跟在自己的发言之后）。
 		"（别复述：最终回答里不要写「已回我」「已发到频道」这类话 —— 你说过的他已经在频道里看到了。）",
-		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 read_channel）",
+		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 chats(action=read)）",
 		// 成员之间的事放在群里说。私聊只有我能用（系统会拦），而「找个人问一句」如果没有
 		// 出口，agent 就会绕道群里喊一句「@所有人」或者干脆自己猜 —— 实测员工↔员工只有 1.2%。
 		colleagues.length === 0
@@ -255,7 +255,7 @@ export function renderDigest(state: ChannelState, slug: string, limit = 5): stri
 	return [
 		`【背景：别的频道里还有 ${total} 条没看】`,
 		...rows,
-		"（这不是要你现在回的。要用 read_channel 看；先答上面那条。）",
+		"（这不是要你现在回的。要用 chats(action=read) 看；先答上面那条。）",
 	].join("\n");
 }
 
@@ -309,7 +309,7 @@ export async function deliver(
 			const body =
 				merged === 0
 					? base
-					: `${base}\n\n（合并唤醒：把 ${merged} 条还没开始处理的消息并成了这一条 —— 更早的那几条内容都还在频道里，先 read_channel 看一遍再答，别只答最新这条。）`;
+					: `${base}\n\n（合并唤醒：把 ${merged} 条还没开始处理的消息并成了这一条 —— 更早的那几条内容都还在频道里，先 chats(action=read) 看一遍再答，别只答最新这条。）`;
 			const text = digest === "" ? body : `${body}\n\n${digest}`;
 			// 有图就发内容块：文字在前，图片在后（多数模型要求首块是文本）。
 			const content: UserInput =

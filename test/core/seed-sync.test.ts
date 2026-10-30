@@ -3,7 +3,7 @@
  *
  * 审计发现：`seed/skills/工作规矩/SKILL.md` 5766 字节 vs `workspace/skills/工作规矩/SKILL.md`
  * 4729 字节 —— 1037 字节的规则修正从没生效；`seed/skills/记忆整理/` 干脆没被拷过去，而
- * `team/memory.ts` 让 agent `read_skill "记忆整理"`。所以同步改成每次启动都跑，
+ * `team/memory.ts` 让 agent `skills(action=read, name="记忆整理")`。所以同步改成每次启动都跑，
  * 用 `.seed-manifest.json` 里记的 hash 分辨「用户改过没有」。
  */
 import { createHash } from "node:crypto";
@@ -49,7 +49,7 @@ describe("公司层技能：按 hash 同步", () => {
 	it("工作区没有 → 拷过去，并记账", async () => {
 		const report = await syncCompanySkills(agents);
 		expect(report.copied).toContain(SKILL);
-		// 这一份是沉淀链路上的必需品：没它 `read_skill "记忆整理"` 读不到东西。
+		// 这一份是沉淀链路上的必需品：没它 `skills(action=read, name="记忆整理")` 读不到东西。
 		expect(await readFile(target, "utf8")).toBe(await seedContent());
 
 		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {

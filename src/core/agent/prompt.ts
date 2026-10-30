@@ -64,12 +64,12 @@ export type RenderInput = {
 	/**
 	 * 团队记忆目录（`teams/<slug>/memory.md` 的小节标题）。
 	 *
-	 * 只给目录，条文靠 `recall(scope=team)` 读。团队换人时，接手的人看目录就知道
+	 * 只给目录，条文靠 `read_history(scope=team)` 读。团队换人时，接手的人看目录就知道
 	 * 有哪些坑，再决定读哪几条 —— 这比把整本翻一遍便宜得多。
 	 */
 	readonly teamMemoryDigest?: string;
 	/**
-	 * 你会的技能。只列名字 + 一句描述，正文按需用 `read_skill` 读。
+	 * 你会的技能。只列名字 + 一句描述，正文按需用 `skills(action=read)` 读。
 	 *
 	 * 为什么不把正文塞进来：一个 agent 攒 20 门手艺，正文全进提示词就是几万 token，
 	 * 而且大部分跟当前这件事无关。常驻的应该只是「我会什么」，不是「怎么做的全文」。
@@ -83,7 +83,7 @@ export type RenderInput = {
 		readonly overrides?: boolean;
 	}[];
 	/**
-	 * 记忆目录（每小节一行摘要）。正文不在提示词里，要用的那条自己 `recall`。
+	 * 记忆目录（每小节一行摘要）。正文不在提示词里，要用的那条自己 `read_history(scope=memory)`。
 	 *
 	 * 为什么不给全文：记忆只增不减，全塞进去等于每轮都为全部历史付费；而且太长之后
 	 * 模型对中段的注意力反而最差。
@@ -174,7 +174,7 @@ function orgSection(input: RenderInput): string {
 /**
  * 「你的技能」一节。
  *
- * 只写「名字 — 什么时候该用」，不写正文。要用的时候 agent 自己 `read_skill`。
+ * 只写「名字 — 什么时候该用」，不写正文。要用的时候 agent 自己 `skills(action=read)`。
  * 空目录时整节不出现（不写「你还没有技能」，那只是噪音）。
  */
 function skillSection(
@@ -198,8 +198,8 @@ function skillSection(
 	});
 	lines.push("");
 	lines.push(
-		"要用哪一门，就 \`read_skill\` 读它 —— 正文不在上下文里，读了才知道细节。",
-		"缺什么手艺就 \`write_skill\` 自己写一份；\`scope=company\` 写进公司层，所有人都立刻看得见。",
+		"要用哪一门，就 \`skills(action=read)\` 读它 —— 正文不在上下文里，读了才知道细节。",
+		"缺什么手艺就 \`skills(action=write)\` 自己写一份；\`scope=company\` 写进公司层，所有人都立刻看得见。",
 		"外面的技能市场有现成的：\`run\` 跑 \`npx skills find\` / \`npx skills add\` 能搜、能装。装完别直接用，按我们的话重写一遍。",
 	);
 	return lines.join("\n");
@@ -226,28 +226,49 @@ function capabilitySection(capabilities: readonly CapabilityLine[] | undefined):
 }
 
 /**
- * 渲染完整提示词。
+ * 提示词的**稳定分段**。顺序就是渲染顺序，`renderAgentPrompt` 就是把它们的正文按序
+ * 用空行连起来。
  *
- * 段落顺序固定，段落之间用空行分隔；任何一段为空时整段不出现（不留空标题）。
+ * 为什么要分段：底座的 system 提示词是按 section **名字**做最小 patch 的
+ * （`planSystemEntries` → `planSections`），只改变化的那几段。整段一个 section 意味着
+ * 「任何一个字变了整段作废」——记忆目录、技能索引、组织里的人员都是会变的，于是前缀缓存
+ * （ADR-005 / C-003）每轮都被打穿。切成 8 段之后，只有真正变了的那段失效。
+ *
+ * 为什么 `tag` 全是 `false`：tag 会在正文外面包一层 `<key>…</key>`，那就改了发给模型的
+ * 字节。分段**只靠 key**，不靠标签。
  */
-export function renderAgentPrompt(input: RenderInput): string {
-	const parts: string[] = [];
+export const PROMPT_SEGMENTS = [
+	"who",
+	"rules",
+	"position",
+	"team",
+	"tools",
+	"memory",
+	"skills",
+	"directory",
+] as const;
 
-	const heading = input.self.name ?? input.self.slug;
-	const title = input.self.title === undefined ? "" : `（${input.self.title}）`;
-	parts.push(`# 你叫${heading}${title}`);
+export type PromptSegment = (typeof PROMPT_SEGMENTS)[number];
+
+/** 一段的正文（已脱敏；空串 = 这一段不出现）。 */
+export type PromptSegmentText = { readonly segment: PromptSegment; readonly text: string };
+
+/** 按段归位。空段保留空数组，渲染时变成空串（整段不出现，不留空标题）。 */
+function segmentParts(input: RenderInput): Readonly<Record<PromptSegment, readonly string[]>> {
+	const self = input.self;
+	const who: string[] = [];
+	const heading = self.name ?? self.slug;
+	const title = self.title === undefined ? "" : `（${self.title}）`;
+	who.push(`# 你叫${heading}${title}`);
 	// 「我」是谁只有这一处定义：全文（含 agents 自己的 identity.md 与技能）都用「我」指用户。
-	parts.push("本提示词里的『我』指用户本人；你称呼对方时用『你』。");
-
-	if (input.self.body !== "") parts.push(input.self.body);
+	who.push("本提示词里的『我』指用户本人；你称呼对方时用『你』。");
+	if (self.body !== "") who.push(self.body);
 
 	// 规矩紧跟在「你是谁」后面、能力清单之前：它决定**怎么用**下面那些能力，
 	// 排在能力后面就变成脚注了。空则整段消失（不写「（没有规矩）」）。
 	const rules = renderRulesSection(input.rules);
-	if (rules !== undefined) parts.push(rules);
 
-	parts.push(section("你在组织里的位置", orgSection(input)));
-
+	const team: string[] = [];
 	if (input.teamBrief !== undefined && input.teamBrief.trim() !== "") {
 		const members = input.teamMembers ?? [];
 		const memberLine =
@@ -258,37 +279,78 @@ export function renderAgentPrompt(input: RenderInput): string {
 		const memoryLine =
 			memory === undefined
 				? "\n\n这个团队还没有记忆。你踩到的坑记得用 `remember(scope=team)` 写下来。"
-				: `\n\n团队记忆（目录，正文用 \`recall(scope=team)\` 读）：\n${memory}`;
-		parts.push(section(`你的团队：${input.self.team ?? ""}`, `${input.teamBrief}${memberLine}${memoryLine}`));
+				: `\n\n团队记忆（目录，正文用 \`read_history(scope=team)\` 读）：\n${memory}`;
+		team.push(section(`你的团队：${self.team ?? ""}`, `${input.teamBrief}${memberLine}${memoryLine}`));
 	}
 
-	parts.push(section("你能做的事", capabilitySection(input.capabilities)));
-
+	const memory: string[] = [];
 	if (input.memoryDigest !== undefined && input.memoryDigest.trim() !== "") {
-		parts.push(section("你的记忆", `${input.memoryDigest}\n\n要用哪条就 \`recall\` 读全文。新经验用 \`remember\` 记下。`));
+		memory.push(section("你的记忆", `${input.memoryDigest}\n\n要用哪条就 \`read_history(scope=memory)\` 读全文。新经验用 \`remember\` 记下。`));
 	}
 
+	const skills: string[] = [];
 	if ((input.skills ?? []).length > 0) {
-		parts.push(section("你的技能", skillSection(input.skills ?? [])));
+		skills.push(section("你的技能", skillSection(input.skills ?? [])));
 	}
 
-	parts.push(
-		section(
-			"你的目录",
-			[
-				`你的全部身份都在 \`agents/${input.self.slug}/\` 里，只有你能改它：`,
-				"",
-				"- `identity.md` — 你是谁（名字、岗位、上级、所在团队）。改它等于改你自己，下一句话就生效。",
-				"- `memory.md` — 你的长期记忆。`remember` 写、`recall` 读。",
-				"- `skills/<名字>/SKILL.md` — 你的手艺。`write_skill` 写、`read_skill` 读。",
-				"",
-				"你的能力（能调用哪些工具）不在这几个文件里：它由代码注册，人人一样多。",
-				"要「多会一件事」，写技能，不要指望加一行配置。",
-				"",
-				"改动不需要重启，也不需要谁批准。改坏了就改回来。",
-			].join("\n"),
-		),
-	);
+	return {
+		who,
+		rules: rules === undefined ? [] : [rules],
+		position: [section("你在组织里的位置", orgSection(input))],
+		team,
+		tools: [section("你能做的事", capabilitySection(input.capabilities))],
+		memory,
+		skills,
+		directory: [
+			section(
+				"你的目录",
+				[
+					`你的全部身份都在 \`agents/${self.slug}/\` 里，只有你能改它：`,
+					"",
+					"- `identity.md` — 你是谁（名字、岗位、上级、所在团队）。改它等于改你自己，下一句话就生效。",
+					"- `memory.md` — 你的长期记忆。`remember` 写、`read_history(scope=memory)` 读。",
+					"- `skills/<名字>/SKILL.md` — 你的手艺。`skills(action=write)` 写、`skills(action=read)` 读。",
+					"",
+					"你的能力（能调用哪些工具）不在这几个文件里：它由代码注册，人人一样多。",
+					"要「多会一件事」，写技能，不要指望加一行配置。",
+					"",
+					"改动不需要重启，也不需要谁批准。改坏了就改回来。",
+				].join("\n"),
+			),
+		],
+	};
+}
 
-	return redact(`${parts.join("\n\n")}\n`, input.workspaceRoot);
+/**
+ * 渲染一段（不渲染整段）。`text` 与 `renderAgentPromptSegments` 里的同名段一致。
+ *
+ * 脱敏按段做：密钥是单行值，不会跨段，所以逐段脱敏与整段脱敏等价。
+ * 结尾换行只挂在「你的目录」上：它是最后一段且永远非空（有身份文件时），
+ * 所以整段拼回去时换行仍然落在最后。
+ */
+export function renderPromptSegment(segment: PromptSegment, input: RenderInput): string {
+	const text = redact(segmentParts(input)[segment].join("\n\n"), input.workspaceRoot);
+	return segment === "directory" && text !== "" ? `${text}\n` : text;
+}
+
+/**
+ * 按段渲染。
+ *
+ * 不变量：`renderAgentPromptSegments(input).map(s => s.text).filter(t => t !== "").join("\n\n")`
+ * 与 `renderAgentPrompt(input)` **逐字节相等**。改了这里就要跑黄金测试。
+ */
+export function renderAgentPromptSegments(input: RenderInput): readonly PromptSegmentText[] {
+	return PROMPT_SEGMENTS.map((segment) => ({ segment, text: renderPromptSegment(segment, input) }));
+}
+
+/**
+ * 渲染完整提示词。
+ *
+ * 段落顺序固定，段落之间用空行分隔；任何一段为空时整段不出现（不留空标题）。
+ */
+export function renderAgentPrompt(input: RenderInput): string {
+	return renderAgentPromptSegments(input)
+		.map((segment) => segment.text)
+		.filter((text) => text !== "")
+		.join("\n\n");
 }

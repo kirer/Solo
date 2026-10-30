@@ -13,110 +13,31 @@
  */
 import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
 import { conversationFor, type DirectoryState } from "../agent/roster.ts";
-import {
-	chatKind,
-	readMarkOf,
-	unreadCount,
-	type Attachment,
-	type Channel,
-	type ChannelState,
-	type Message,
-} from "../channel/state.ts";
+import { chatKind, readMarkOf, unreadCount, type Channel, type ChannelState, type Message } from "../channel/state.ts";
+import type {
+	AttentionItem,
+	TeamDoingOf,
+	TeamLeadOf,
+	ViewActor,
+	ViewChannel,
+	ViewChannelDetail,
+	ViewMessage,
+	ViewOrg,
+} from "./dto.ts";
 
-/**
- * 界面用的会话种类。**只有两种**，由成员表推导（见 `channel/state.ts` 的 `chatKind`）。
- *
- * 以前这里是 `company | leadership | team | dm`，靠 id 前缀反推 —— 于是「公司频道」和
- * 「团队频道」在界面上长得不一样，而它们实际上是同一种东西：一个群。
- */
-export type ViewChannelKind = "dm" | "group";
-
-/** 频道列表项。 */
-export type ViewChannel = {
-	id: string;
-	kind: ViewChannelKind;
-	/** 仅团队频道有：这个团队归谁负责（`README.md` 的 `lead`）。 */
-	lead?: string;
-	/** 仅团队频道有：团队管理员显示名。 */
-	leadLabel?: string;
-	/**
-	 * 仅团队频道且团队文档写了 `doing` 时有：一句话现状。
-	 * 界面拿它当顶栏副标题的第一段；缺了这个键就什么都不画。
-	 */
-	doing?: string;
-	title: string;
-	team?: string;
-	unread: number;
-	mentions: number;
-	preview: string;
-	lastAt: number;
-	lastSeq: number;
-	memberCount: number;
-};
-
-/** 一条消息。 */
-export type ViewMessage = {
-	seq: number;
-	at: number;
-	from: number;
-	fromSlug: string;
-	fromLabel: string;
-	kind: string;
-	text: string;
-	mentions: { id: number; label: string; read: boolean; offset: number }[];
-	replyTo?: { seq: number; from: number; fromSlug: string; fromLabel: string; excerpt: string };
-	read: boolean;
-	/**
-	 * 这条要不要我本人看一眼。
-	 *
-	 * 判据在核心（只认显式 @ 我），这里只做投影 —— 界面不该自己猜关键词。
-	 * 我自己说的话永不算「需要你」。
-	 */
-	needsYou?: true;
-	/**
-	 * 附件（图片/文件）。没有附件时**不出现这个字段** —— 界面用 `?.length` 判一下够了，
-	 * 不用区分「空数组」与「没有」两种差不多的状态。
-	 */
-	attachments?: Attachment[];
-};
-
-/** 成员。 */
-export type ViewMember = { id: number; slug: string; label: string; role: string; unread: number };
-
-/** 频道详情。 */
-export type ViewChannelDetail = {
-	channel: Omit<ViewChannel, "unread" | "mentions" | "preview">;
-	members: ViewMember[];
-	messages: ViewMessage[];
-	hasMore: boolean;
-	serverNow: number;
-};
-
-/**
- * 组织快照。
- *
- * 只装**界面真会看**的东西。「有没有新消息」靠 SSE 这条事件本身通知（界面收到就重拉列表），
- * 所以早先那版为旧界面凑的 `teams` / `pending` / `costs` / `links` / `ceoQueue` 全删了 ——
- * 那些字段一个消费者也没有，留着只会让下一个人以为「这里有业务概念」。
- */
-export type ViewOrg = {
-	company: { name: string };
-	/** 全部人，按「离我最近」优先排序（第一项是那个直接向我汇报的人）。 */
-	people: ViewActor[];
-};
-
-/** 组织图上的一个人。 */
-export type ViewActor = {
-	/** 稳定标识。核心只用这个。 */
-	slug: string;
-	label: string;
-	title: string;
-	team?: string;
-	manager?: string;
-	managerLabel?: string;
-	/** `identity.md` 正文 —— 档案页要显示「他是谁」，只有 slug 不够。 */
-	body: string;
-};
+// 形状全部定义在 `dto.ts`（唯一权威），这里只做投影。注释见那份文件。
+export type {
+	AttentionItem,
+	TeamDoingOf,
+	TeamLeadOf,
+	ViewActor,
+	ViewChannel,
+	ViewChannelDetail,
+	ViewChannelKind,
+	ViewMember,
+	ViewMessage,
+	ViewOrg,
+} from "./dto.ts";
 
 /**
  * 频道显示成什么标题：私聊是**对方的名字**，群聊是频道自己的标题（团队频道就是团队名）。
@@ -158,17 +79,6 @@ function offsetOf(text: string, label: string): number {
 	const at = text.indexOf(needle);
 	return at < 0 ? -1 : at;
 }
-
-/**
- * 「团队归谁负责」的查询函数。
- *
- * 它来自 `teams/<slug>/README.md` —— 真相在文件里，不在频道文档里。所以这里只收
- * 一个查表函数，而不是把团队文档搬进频道状态（那会造出第二份会漂的副本）。
- */
-export type TeamLeadOf = (team: string) => string | undefined;
-
-/** 「这个团队的一句话现状」的查询函数。来源同上（团队文档的 `doing`）。 */
-export type TeamDoingOf = (team: string) => string | undefined;
 
 /** 频道列表。 */
 export function channelList(
@@ -405,20 +315,6 @@ export function withLabels(directory: DirectoryState, identities: readonly Ident
  * 只收 7 天内、最多 60 条：再旧的已经该由记忆处理，不该占着「待办」的位置。已读的也
  * 收（带 `read` 标记），因为「读过了但还没作答」和「没看见」是两件事，界面可以分开显示。
  */
-export type AttentionItem = {
-	channelId: string;
-	channelKind: ViewChannelKind;
-	channelTitle: string;
-	seq: number;
-	at: number;
-	from: number;
-	fromSlug: string;
-	fromLabel: string;
-	/** 正文第一行，最多 80 字。 */
-	excerpt: string;
-	read: boolean;
-};
-
 const ATTENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ATTENTION_MAX = 60;
 

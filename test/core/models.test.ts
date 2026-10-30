@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setupModels } from "../../src/core/runtime/models.ts";
+import { compactionPolicyFor, compactionSettings, FALLBACK_CONTEXT_WINDOW, setupModels } from "../../src/core/runtime/models.ts";
 
 const dirs: string[] = [];
 
@@ -71,5 +71,64 @@ describe("setupModels 的默认模型", () => {
 		const setup = setupModels({}, { workspace: workspaceWith("坏掉的内容") });
 		expect(setup.defaultModel.provider).toBe("magpie");
 		expect(setup.models.getModel(setup.defaultModel.provider, setup.defaultModel.modelId)).toBeDefined();
+	});
+});
+
+describe("上下文窗口：真值优先，取不到才保守", () => {
+	it("pi-ai 目录里有这个模型就用目录的 contextWindow", () => {
+		const settings = {
+			providers: [
+				{ id: "anthropic", api: "anthropic", models: [{ id: "claude-sonnet-4-5" }] },
+			],
+		};
+		const setup = setupModels({}, { workspace: workspaceWith(settings) });
+		const model = setup.models.getModel("anthropic", "claude-sonnet-4-5");
+		expect(model?.contextWindow).toBe(200_000);
+	});
+
+	it("目录里没有（自建网关）就用保守默认，不是 1M", () => {
+		const setup = setupModels({}, { workspace: workspaceWith({ providers: [PROVIDER] }) });
+		const model = setup.models.getModel("magpie", "auto/deepseek-v4.1-flash");
+		expect(model?.contextWindow).toBe(FALLBACK_CONTEXT_WINDOW);
+		expect(model?.contextWindow).toBeLessThan(1_000_000);
+	});
+
+	it("settings.json 显式写了就以它为准", () => {
+		const provider = { ...PROVIDER, models: [{ id: "auto/deepseek-v4.1-flash", contextWindow: 64_000, maxTokens: 8_000 }] };
+		const setup = setupModels({}, { workspace: workspaceWith({ providers: [provider] }) });
+		const model = setup.models.getModel("magpie", "auto/deepseek-v4.1-flash");
+		expect(model?.contextWindow).toBe(64_000);
+		expect(model?.maxTokens).toBe(8_000);
+	});
+});
+
+describe("压缩策略：阈值跟着窗口走", () => {
+	it("200k 的模型，阻塞阈值明显小于 200k", () => {
+		const settings = { providers: [{ id: "anthropic", api: "anthropic", models: [{ id: "claude-sonnet-4-5" }] }] };
+		const setup = setupModels({}, { workspace: workspaceWith(settings) });
+		const policy = compactionSettings(setup.models).modelOverrides["anthropic/claude-sonnet-4-5"];
+		expect(policy).toBeDefined();
+		const threshold = 200_000 - (policy?.reserveTokens ?? 0);
+		expect(threshold).toBeLessThan(200_000);
+		expect(threshold).toBeGreaterThan(150_000);
+	});
+
+	it("未知模型按保守窗口算阈值", () => {
+		const setup = setupModels({}, { workspace: workspaceWith({ providers: [PROVIDER] }) });
+		const policy = compactionSettings(setup.models).modelOverrides["magpie/deepseek-v4.1-flash"] ??
+			compactionSettings(setup.models).modelOverrides["magpie/auto/deepseek-v4.1-flash"];
+		expect(policy).toBeDefined();
+		expect(FALLBACK_CONTEXT_WINDOW - (policy?.reserveTokens ?? 0)).toBeLessThan(FALLBACK_CONTEXT_WINDOW);
+		// 兜底那条（不在覆写里的模型）也是保守窗口，不是底座那个 16384/1M 组合。
+		const global = compactionSettings(setup.models);
+		expect(FALLBACK_CONTEXT_WINDOW - global.reserveTokens).toBeLessThan(FALLBACK_CONTEXT_WINDOW);
+	});
+
+	it("保留原文的量永远小于压缩阈值（否则压不动）", () => {
+		for (const window of [8_192, 32_768, 131_072, 200_000, 1_000_000]) {
+			const policy = compactionPolicyFor(window);
+			expect(policy.keepRecentTokens).toBeLessThan(window - policy.reserveTokens);
+			expect(policy.backgroundTokens).toBeLessThan(window - policy.reserveTokens);
+		}
 	});
 });

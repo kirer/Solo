@@ -11,11 +11,12 @@ import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { hostAllowed, originAllowed } from "../../src/core/shell/http/origin.ts";
+import { hostAllowed, originAllowed } from "../../src/core/interface/http/guard.ts";
 import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
-import { fileHidden, serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
+import { fileHidden } from "../../src/core/app/files.ts";
+import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
 
 const SELF = ["http://127.0.0.1:7788", "http://localhost:7788"];
 

@@ -41,7 +41,12 @@ describe("装配", () => {
 			if (conversation === undefined) return;
 			const agent = await conversation.agent(BACKGROUND_CONTEXT);
 			// 坑 1：扩展按名字解析，忘了 install 身份扩展 → 会话里一个 section 都没有。
-			expect(agent.sections.map((section) => section.key)).toEqual([sectionKeyOf(slug)]);
+			// 分段后每人 8 段（PROMPT_SEGMENTS）：底座按段做最小 patch，缓存才留得住。
+			expect(agent.sections.map((section) => section.key)).toEqual(
+				["who", "rules", "position", "team", "tools", "memory", "skills", "directory"].map(
+					(segment) => `${sectionKeyOf(slug)}-${segment}`,
+				),
+			);
 			// 坑 2：section key 必须匹配 /^[a-z][a-z0-9_-]*$/，中文 slug 必须转义。
 			expect(sectionKeyOf("林越")).toMatch(/^[a-z][a-z0-9_-]*$/);
 			// 坑 3：会话没选 core-tools → 一个工具都没有。

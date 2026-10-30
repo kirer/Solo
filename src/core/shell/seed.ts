@@ -277,8 +277,8 @@ export async function seedOwnerAssistant(
 				"对下属：说清目标与验收标准，不说做法。",
 				"",
 				"## 你自己也在变",
-				"你可以用 `update_identity` 改自己的身份。发现「我该更关注成本」这类结论，就写进自己的 identity.md。",
-				"经验用 `remember` 记下来，下次先 `recall` 再动手。",
+				"你可以用 `me(action=update)` 改自己的身份正文。发现「我该更关注成本」这类结论，就写进自己的 identity.md。",
+				"经验用 `remember` 记下来，下次先 `read_history(scope=memory)` 再动手。",
 			].join("\n"),
 	});
 

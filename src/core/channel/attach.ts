@@ -9,7 +9,7 @@
  *
  * - **图片**：读成 base64 内联进这一轮输入。模型真的看得见。
  * - **其它文件**：不内联（模型没法直接吃 PDF/zip），但把**工作区内的路径**告诉它，
- *   它自己的 `read_file` 就能读（文本、代码、csv、json 都能读）。
+ *   它自己的 `file` 就能读（文本、代码、csv、json 都能读）。
  *
  * 三条闸，都因为「图片按 token 计费，而且是每一轮都重发」：
  *
@@ -74,7 +74,7 @@ export async function planAttachments(
 		const size = humanBytes(attachment.bytes);
 		if (attachment.kind !== "image") {
 			lines.push(
-				`- 文件「${attachment.name}」（${size}）：用 read_file 读它，path 写 uploads/${attachment.id}`,
+				`- 文件「${attachment.name}」（${size}）：用 file(action=read) 读它，path 写 uploads/${attachment.id}`,
 			);
 			continue;
 		}

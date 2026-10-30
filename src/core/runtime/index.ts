@@ -54,5 +54,15 @@ export type { JsonValue } from "@earendil-works/chord";
 export type { JsonObject } from "@earendil-works/pi-durable";
 
 export { Type } from "@earendil-works/pi-ai";
-export { openCore, type CoreRuntime, type OpenCoreOptions } from "./open.ts";
-export { setupModels, type ModelSetup, type ModelRef } from "./models.ts";
+export { openCore, toRuntimeReport, type CoreRuntime, type OpenCoreOptions, type RuntimeReport } from "./open.ts";
+export {
+	setupModels,
+	compactionSettings,
+	compactionPolicyFor,
+	FALLBACK_CONTEXT_WINDOW,
+	FALLBACK_MAX_TOKENS,
+	type CompactionPolicyLike,
+	type CompactionSettingsLike,
+	type ModelSetup,
+	type ModelRef,
+} from "./models.ts";

@@ -56,6 +56,25 @@ team: demo
 （上级、下属、整条汇报线、同一个团队的人、公司总人数）。这段不存进 `identity.md` ——
 组织会变，写死的话 agent 会按三周前的架构认真工作，而你看不出来它错了。
 
+### 分段与前缀缓存（ADR-083）
+
+「一段提示词」在发给模型时其实是**八个段**，顺序固定
+（`PROMPT_SEGMENTS`）：
+
+```
+who → rules → position → team → tools → memory → skills → directory
+```
+
+- 每段一个 section key（`<slug>-<segment>`，`agentSections()`），内容没变的段就不发新版本。
+- `tag: false`：tag 会往字节里加东西，加了就与前缀缓存对不上。
+- **分段只是切法**：`renderAgentPrompt()` 拼出来的字符串与旧实现**逐字节相同**
+  （黄金测试 `test/core/prompt-segments.test.ts`），所以确定性（ADR-005）没有被换掉。
+- 代价：底座没有「某段失效」的钩子，只有按 key 的最小 patch —— 新增段或调序会触发
+  一次性整块重写。所以「加一段」不是免费操作。
+
+这解释了为什么第 2、3 节说的「下一条消息就生效」是**按段**生效：改记忆只让 `memory`
+之后的那几段重写，前面那几段（人人同款的规矩与工具清单）仍在缓存里。
+
 ## 3. 能力是**热**的，而且**不分层**
 
 - 工具只有一套，人人都有（`registeredTools()` 直接从注册表实拍，不读任何清单文件）。
@@ -72,18 +91,31 @@ team: demo
 
 所有 agent 用同一套工具说话，没有「向上汇报」专用通道，也没有「管理层才能用」的工具：
 
+**十一个工具，一个动词一件事**（ADR-084）。同一件事的几种做法是一个工具的 `action`
+枚举，不是几个近义的工具名 —— 名字越多，模型选错的概率越高。
+
 | 工具 | 作用 |
 | --- | --- |
 | `say` | 在频道说一句；带 `mention` 就是提问并叫醒对方；**没有「私下发给谁」这个参数** —— 私聊只能我开；`text` 写 `[PASS]` 表示这一轮不说（只有一个人的频道里会被拒绝，见 ADR-063）；`step: true` 表示这只是过程话，一轮里结论只认一句（ADR-064） |
-| `read_channel` | 不传频道=未读摘要+频道列表；传频道=读历史消息 |
-| `org` | 我是谁、上级下属、全公司架构 |
+| `chats` | `action=list`（默认）= 我在的会话（标题、群聊/私聊、未读数、最后一条）；`action=read` = 读某个频道的历史消息 |
+| `read_history` | `scope=channel`（默认）翻自己被压缩掉的历史对话（原文还在 storage 里，压缩后模型看不见）；`scope=memory`（或 `personal` / `team`）翻记忆全文 |
+| `remember` | 记一条经验；`scope=team` 写团队记忆 |
+| `teams` | `action=list`（默认）列团队；`action=read` 读一份团队的说明 |
+| `write_team` | 写一个团队：`teams/<slug>/README.md` |
+| `skills` | `action=list` / `read` / `write`：技能两层（公司 + 个人）+ 按需读正文 |
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进公司频道与团队频道） |
-| `update_identity` | 改自己或直接下属的 `identity.md` |
-| `remember` / `recall` | 写/读记忆；`scope=team` 切到团队记忆 |
-| `read_history` | 翻自己被压缩掉的历史对话（原文还在 storage 里，压缩后模型看不见） |
-| `list_skills` / `read_skill` / `write_skill` | 技能：两层（公司 + 个人）+ 按需读正文 |
-| `run` / `write_file` / `read_file` | 执行：跑命令 / 写文件 / 读文件 |
-| `list_teams` / `read_team` / `write_team` | 团队：`teams/<slug>/README.md` |
+| `me` | `action=show`（默认）我是谁、在哪个团队、上级下属；`action=update` 整篇重写自己的 `identity.md` 正文（只改自己） |
+| `run` | 执行一条 shell 命令 |
+| `file` | `action=read` / `write`：工作区里的一个文件 |
+
+合并的口径一句话：`chats` 收回 `read_channel`，`read_history` 收回 `recall`（`scope`
+区分翻对话还是翻记忆），`teams` 收回 `list_teams` + `read_team`，`skills` 收回三个技能
+工具，`me` 收回 `update_identity`，`file` 收回读写两个工具，`org` 直接删掉（组织架构在
+提示词的「你在组织里的位置」一节里，不在工具里）。**工具总数 17 → 11，spec 字节
+6819 → 5892。**
+
+组织架构（谁是谁的上级、谁在哪）不靠工具查：它在提示词的「你在组织里的位置」一节里，
+每次发送前从 `agents/*/identity.md` 现渲染。
 
 「层级」不在代码里，在提示词里：某个人的 `identity.md` 写着「你向知言汇报」，他自己
 就知道该找谁。代码只保证事实（谁能收到消息、谁的目录归谁），不保证纪律。
@@ -152,9 +184,9 @@ workspace/
 
 一门技能是一个目录 + 一份 `SKILL.md`（YAML 头只有 `name` / `description`）：
 
-- **`name` + `description` 常驻提示词**，正文按需 `read_skill` 读。一个人攒 20 门手艺，
+- **`name` + `description` 常驻提示词**，正文按需 `skills(action=read)` 读。一个人攒 20 门手艺，
   常驻的是 20 行描述，不是 20 篇正文 —— 成本上最要紧的一条。
-- agent 自己就能 `write_skill` 长出新技能。`scope=personal`（默认）写自己目录，
+- agent 自己就能 `skills(action=write)` 长出新技能。`scope=personal`（默认）写自己目录，
   `scope=company` 写工作区根的 `skills/`。同名时个人层覆盖公司层。
 - **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
@@ -235,7 +267,7 @@ ui/web/       构建产物，服务端发这个目录，别手改
    别在组件里写内联样式或造第二套命名。
 
 频道只有两种形态：`dm`（成员恰好是我 + 一个人）和 `group`（其余全部）。形态由
-`view.ts` 从成员表算出来的 `chatKind()` 直接映射，核心没有「频道类型」这个概念。
+`view/index.ts` 从成员表算出来的 `chatKind()` 直接映射，核心没有「频道类型」这个概念。
 团队就是一个 `group`：`team:<slug>` 只是它的 id，侧栏另外用 `team` / `leadLabel` / `doing`
 三个字段把它标成团队。
 
@@ -251,15 +283,26 @@ ui/web/       构建产物，服务端发这个目录，别手改
 
 ```
 src/core/
-  runtime/   openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
-             models / settings 也在这里
-  agent/     identity（他是谁）/ prompt（投影）/ runtime（接进会话）
-             memory / skills / create（新建一个人）/ roster（slug ↔ 会话）
-  team/       doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
-  channel/   state（纯规则）/ deliver（唤醒）/ post（写一条）/ tools（17 个工具）
-  shell/     assemble（扫文件夹 → 开会话 → 建频道）/ serve（HTTP+SSE）/ view / main
-             http/（routes / static-assets / network / origin）
+  runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
+                   models（contextWindow / compaction）/ settings 也在这里
+  agent/           identity（他是谁）/ prompt（投影 + 八段）/ runtime（接进会话）
+                   memory / skills / create（新建一个人）/ roster（slug ↔ 会话）
+  team/            doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
+  channel/         state（纯规则）/ deliver（唤醒）/ post（写一条）
+                   tools（11 个工具）/ attach（附件）
+  ── 以上是 domain（业务事实）────────────────────────────────
+  app/             用例：snapshot / read / chat / people / files / uploads / diag
+                   （不 import node:http，能脱离网络直接测）
+  view/            index.ts（投影纯函数）+ dto.ts（界面契约的唯一权威）
+                   零 IO、零依赖，自己不认得任何一层
+  interface/http/  唯一 import node:http 的地方：routes / server / hub / sse
+                   match / static-assets / guard / network
+  shell/           assemble（扫文件夹 → 开会话 → 建频道）/ serve（装配顺序 + 监听）
+                   main（启动）/ rescue / seed
 ```
+
+依赖只朝一个方向：`interface → app → domain`，`view` 谁都不依赖（大家都能用它），
+`shell` 是唯一可以同时 import 全部的装配层（ADR-082）。
 
 `team/` 与 `agent/`、`channel/` **平级**：团队不是公司的子概念，它是与「人」并列的
 另一种归属。
@@ -270,12 +313,17 @@ src/core/
 
 1. 同步 `rules.md` 与公司层技能（`seedRules` / `syncCompanySkills`），并自检「记忆整理」
    技能在不在；
-2. 读 `workspace/settings.json` 里的模型，装配 `models`；
-3. `openCore()` 打开 SQLite；
-4. `assembleCore()` —— 扫 `agents/` → 每人开一个会话 → 绑名册 → 建公司频道 →
+2. 读 `workspace/settings.json` 里的模型，装配 `models` —— 同时从 pi-ai 的模型目录取
+   **真实 `contextWindow`**（取不到回落 128k），据此算 compaction 阈值（ADR-083）；
+3. `createDiag(workspace)` —— 诊断落盘口（卡顿 `logs/jank.jsonl`、运行报告
+   `logs/runtime.jsonl`）；
+4. `openCore({ settings: { compaction }, onReport })` —— 打开 SQLite，并把底座的错误
+   出口接成可读的报告：**失败不再静音**（crash-loop 把任务 park 成
+   `blocked: restart_limit` 时，`GET /api/diag` 能看见原因）；
+5. `assembleCore()` —— 扫 `agents/` → 每人开一个会话 → 绑名册 → 建公司频道 →
    按 `identity.md` 的 `team:` 拉进团队频道；
-5. `serveCore()` 起 HTTP + SSE；
-6. 等 Ctrl-C。
+6. `serveCore()` 起 HTTP + SSE；
+7. 等 Ctrl-C。
 
 `agents/` 为空时播种一个「离我最近的人」（`seedOwnerAssistant()`）—— 这是**唯一**
 一处预置身份的地方，而且只写文件、不写代码。之后它自己 `hire` 别人。
@@ -290,6 +338,8 @@ src/core/
 
 - **待办拍板 / 任务 / 成本 / 过程可见**：一个都没有（界面相应位置是空的）。
   「它还在干」这种活性信号打算从 `harness.inspect()` 派生，而不是把思考落库（ADR-081）。
-- **看门狗 / 崩溃自愈 / IM 出站**：不为长跑兜底。
+- **看门狗 / 崩溃自愈 / IM 出站**：不为长跑兜底。但「出事了看不出来」这条已经补上一半：
+  `onReport` + `logs/runtime.jsonl` + `GET /api/diag` 能看到最近一次失败的原因
+  （ADR-083），只是**看见了也不会自动救**。
 - **模型看图**：附件能上传、能显示，但模型看不见图里的内容（ADR-051）。
 

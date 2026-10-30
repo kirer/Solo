@@ -133,7 +133,7 @@ async function main(): Promise<void> {
 		detail: teamReply?.text.slice(0, 120) ?? "超时无回话",
 	});
 
-	// 4. 记忆：让它记一条，再问它记了什么（提示词里只有目录，正文靠 recall）。
+	// 4. 记忆：让它记一条，再问它记了什么（提示词里只有目录，正文靠 read_history(scope=memory)）。
 	const rememberAsked = await shell.ownerSay({
 		channelId: "all",
 		text: `@${slug} 用 remember 记一条：「我喜欢结论先行」。记完告诉我。`,
@@ -147,10 +147,10 @@ async function main(): Promise<void> {
 		detail: memoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
 	});
 
-	const recallAsked = await shell.ownerSay({ channelId: "all", text: `@${slug} recall 一下你关于「结论」的记忆。` });
+	const recallAsked = await shell.ownerSay({ channelId: "all", text: `@${slug} 用 read_history(scope=memory) 查一下你关于「结论」的记忆。` });
 	const recallReply = await waitForReply(shell, "all", slug, recallAsked.seq, WAIT_MS);
 	phases.push({
-		name: "记忆能读回（recall 真读到了）",
+		name: "记忆能读回（read_history 真读到了）",
 		ok: recallReply !== undefined && recallReply.text.includes("结论"),
 		detail: recallReply?.text.slice(0, 100) ?? "超时无回话",
 	});
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
 	// 5. 公司层技能：让它写一份 scope=company 的技能，检查是否落到工作区根的 skills/。
 	const shareAsked = await shell.ownerSay({
 		channelId: "all",
-		text: `@${slug} 用 write_skill 写一份公司层技能（scope=company），名字「自测共享技能」，描述「全公司通用」，正文一句话。写完告诉我。`,
+		text: `@${slug} 用 skills 写一份公司层技能（action=write, scope=company），名字「自测共享技能」，描述「全公司通用」，正文一句话。写完告诉我。`,
 	});
 	const shareReply = await waitForReply(shell, "all", slug, shareAsked.seq, WAIT_MS);
 	const sharedPath = join(root, "skills", "自测共享技能", "SKILL.md");

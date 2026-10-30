@@ -139,7 +139,7 @@ export async function listTeams(teamsRoot: string): Promise<readonly TeamDoc[]> 
  *
  * **不检查团队管理员是不是真的存在** —— 那是判断，不是这里该管的事。写错了人的名字，
  * `renderAgentPrompt` 会原样告诉团队成员「团队管理员是 X」，而 X 不存在这件事，
- * 由 agent 自己 `org` 发现。代码不替它兜。
+ * 由 agent 自己（`teams` / `me`）发现。代码不替它兜。
  */
 export async function writeTeam(
 	teamsRoot: string,

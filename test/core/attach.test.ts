@@ -66,12 +66,12 @@ describe("planAttachments", () => {
 		expect(plan.lines.join("\n")).toContain("已经直接给你看了");
 	});
 
-	it("非图片文件不内联，给 read_file 的路径", async () => {
+	it("非图片文件不内联，给 file(action=read) 的路径", async () => {
 		const item = await put("b1", { mime: "text/plain" });
 		const plan = await planAttachments(root, [item]);
 		expect(plan.images).toEqual([]);
 		expect(plan.lines.join("\n")).toContain("uploads/b1");
-		expect(plan.lines.join("\n")).toContain("read_file");
+		expect(plan.lines.join("\n")).toContain("file(action=read)");
 	});
 
 	it("超过单张上限：不内联，但明确说没给看", async () => {

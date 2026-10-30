@@ -130,7 +130,7 @@ describe("note 与其余 kind", () => {
 });
 
 describe("历史过程 kind：过滤，不画成普通行", () => {
-	// ADR-081 停止生成这些 kind，但不做数据清洗：库里仍有、`read_channel` 仍读得到，
+	// ADR-081 停止生成这些 kind，但不做数据清洗：库里仍有、`chats(action=read)` 仍读得到，
 	// 只是这一屏不显示 —— 画成普通行会被误读成「他说了这句话」。
 	for (const kind of ["think", "tool", "work", "step"]) {
 		it(`${kind} 不产生行，也不打断前后的连发`, () => {

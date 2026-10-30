@@ -210,7 +210,8 @@ function DetailTab(): JSX.Element {
 
 function PersonView(props: { person: PersonProfile }): JSX.Element {
 	const { person } = props;
-	const memoryCount = person.memory.entries.length;
+	// 后端给的是**条数**（`/api/people/:slug` 的 `memory.entries`），全文在抽屉里另取。
+	const memoryCount = person.memory.entries;
 	return (
 		<div className="detail-sec">
 			<div className="detail-head">
@@ -266,7 +267,7 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 					{person.skills.map((skill) => (
 						<div key={skill.name} className="detail-skill">
 							<span className="detail-skill-name">{skill.name}</span>
-							<span className="detail-badge">{skill.scope === "own" ? "自己的" : "公司"}</span>
+							<span className="detail-badge">{skill.scope === "personal" ? "自己的" : "公司"}</span>
 							<span className="detail-skill-desc">{skill.description}</span>
 						</div>
 					))}
@@ -348,7 +349,7 @@ function FilesTab(): JSX.Element {
 					))}
 				</div>
 				{view.path === "" ? null : (
-					<button type="button" className="file-back" onClick={() => setPath(view.parent)}>
+					<button type="button" className="file-back" onClick={() => setPath(view.parent ?? "")}>
 						‹ 上一层
 					</button>
 				)}

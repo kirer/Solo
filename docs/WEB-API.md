@@ -1,12 +1,13 @@
 # 网页 API 契约
 
 前端只按这份写；后端改字段必须同步这里。**代码是唯一事实**，本文档与
-`src/core/shell/serve.ts` 冲突时以代码为准，并回来改这份文档。
+`src/core/interface/http/routes.ts` 冲突时以代码为准，并回来改这份文档。
 
 ## 0. 总览
 
-只有 17 条路由（按方法+路径算；按路径去重是 15 条 —— `check-boundaries.mjs` 数的是去重后
-的路径），全部在 `src/core/shell/serve.ts` 的 `routes` 表里声明。
+只有 **18** 条路由（按方法+路径算；按路径去重是 **15** 条 —— `check-boundaries.mjs`
+数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
+handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -27,6 +28,7 @@
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `POST` | `/api/diag` | 浏览器自报卡顿，落 `workspace/logs/jank.jsonl` |
+| `GET` | `/api/diag` | 最近一条**运行报告**（底座报上来的失败），没有就是 `null` |
 | `*` | 其余 | 静态文件（`ui/web/`） |
 
 所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
@@ -101,7 +103,7 @@ type ViewChannel = {
 ```
 
 **`kind` 只有两种，而且是从成员表推出来的**（`channel/state.ts` 的 `chatKind()`，
-`view.ts` 直接转它的结果）：
+`view/index.ts` 直接转它的结果，`dto.ts` 的 `ViewChannelKind` 只有这两个值）：
 
 | 成员表 | kind |
 | --- | --- |
@@ -184,7 +186,7 @@ type ViewMessage = {
   `README.md` 的 `lead`）/ 成员。
 - `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
 - `replyTo.excerpt` 最多 60 字。
-- `needsYou` 的判据在核心（`view.ts` 的 `needsYou`）：**不是我自己发的**、且
+- `needsYou` 的判据在核心（`view/index.ts` 的 `needsYou`）：**不是我自己发的**、且
   `mentions` 里有 `owner`。界面不自己猜关键词。
 - `attachments` **没有附件时不出现这个键**，不要区分「空数组」和「没有」。
 - `kind` 是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
@@ -268,7 +270,7 @@ type ViewMessage = {
 }
 ```
 
-判定在 `src/core/shell/view.ts` 的 `needsYou(message)`：**不是我自己发的**，且
+判定在 `src/core/view/index.ts` 的 `needsYou(message)`：**不是我自己发的**，且
 `mentions` 里有 `owner`（由 `say` 的 `decision` 或 `channel/state.ts` 的 `needsOwner()`
 自动补上，ADR-037）。只收「说出口的话」（`chat` / `say` / `question` / `decision` /
 `report`），窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——
@@ -393,9 +395,31 @@ Query 还有 `limit`（默认 500，上限 2000）与 `offset`。
 或 `pagehide` 时发上来。每条带「当时在干什么」（`doing`）和可见性状态（`hidden` /
 `resumed` / `foreground`），用来区分「真卡」和「切后台被节流」。
 
+## 14.2 `GET /api/diag`
+
+最近一条**运行报告**（ADR-083）。底座把失败经由 `onReport` 交给 `app/diag.ts`，落到
+`<workspace>/logs/runtime.jsonl`；这条接口只把「最近一条非良性报告」露出来 ——
+不需要人去读日志文件。
+
+```json
+{ "lastReport": { "type": "task_parked", "at": "2026-10-30T12:03:11.412Z",
+                  "text": "任务 \"daily-digest\" 被挂起：任务连续重启超限，已挂起" } }
+```
+
+- **只有三个键**：`type` / `at` / `text`（`app/diag.ts` 的 `lastReport()` 原样转出）。
+  任务信息是写进 `text` 的，没有单独的 `task` 字段。
+- 没有报告时是 `{ "lastReport": null }` —— 前端据此显示「暂无异常」，不要把它当失败。
+- `type` 是底座的原名（`task_parked` / `session_failed` / `task_faulted` /
+  `migration_failed` / `extension_error` / `host_error` / `listener_error` / …），
+  `text` 是已经写成中文的人话。**前端不认识新 `type` 时显示 `text`，不要按 `type`
+  分支做文案。**
+- `task_outdated` **不算异常**（每次启动都会出现），`lastReport` 跳过它。
+- 口径是**快照**，不是流：要持续观察就轮询，或直接 tail 那个 jsonl。
+
 ## 15. 静态文件
 
-其余所有路径都当静态文件处理，根目录是 `ui/web/`（`serve.ts` 的 `uiDir` 默认值）：
+其余所有路径都当静态文件处理，根目录是 `ui/web/`（`shell/serve.ts` 的 `uiDir` 默认值，
+实际读盘在 `interface/http/static-assets.ts`）：
 
 - 越界保护：解析后的路径必须仍在根目录下。
 - 无扩展名的路径回退到 `index.html`（SPA）。
