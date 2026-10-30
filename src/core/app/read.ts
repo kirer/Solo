@@ -7,10 +7,13 @@
  */
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { chatKind } from "../channel/types.ts";
-import type { AttentionItem, ViewChannel, ViewChannelDetail, ViewOrg } from "../view/dto.ts";
+import { wakeOf } from "../agent/roster.ts";
+import { BACKGROUND_CONTEXT, LiveDoc, type EntryRecord, type LiveState } from "../runtime/index.ts";
+import type { AttentionItem, ViewActivity, ViewChannel, ViewChannelDetail, ViewOrg, ViewTurn } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";
 import type { Snapshots } from "./snapshot.ts";
+import { buildTurn, withoutSteps } from "./trace.ts";
 import type { CoreServices } from "./types.ts";
 
 /** 频道列表 + 两个汇总数（侧栏顶部那两个红点）。 */
@@ -31,7 +34,59 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	/** 组织快照。界面的组织图与顶栏都吃这一份。 */
 	async function readOrg(): Promise<ViewOrg> {
 		const { identities, directory } = await snapshots.snapshot();
-		return orgView(identities, directory);
+		const org = orgView(identities, directory);
+		const activity = await activityMap(directory);
+		if (activity.size === 0) return org;
+		return {
+			...org,
+			people: org.people.map((actor) => {
+				const found = activity.get(actor.slug);
+				return found === undefined ? actor : { ...actor, activity: found };
+			}),
+		};
+	}
+
+	/**
+	 * 谁此刻在干什么。
+	 *
+	 * 出处只有一处：会话的 live 文档。`run` 在 = 忙；`generation` 在 = 在想；
+	 * `tools` 里有 running 的调用 = 在做。**不读消息、不猜**（ADR-001）。
+	 *
+	 * `since` 用唤醒记录里那条消息的时间 —— 它是这一轮真正的开始，不是「刚刚看到」。
+	 */
+	async function activityMap(directory: Awaited<ReturnType<Snapshots["snapshot"]>>["directory"]): Promise<Map<string, ViewActivity>> {
+		const out = new Map<string, ViewActivity>();
+		const entries = Object.entries(directory.slugToConversation ?? {});
+		if (entries.length === 0) return out;
+		await Promise.all(
+			entries.map(async ([slug, id]) => {
+				const state = await liveOf(id);
+				if (state === undefined) return;
+				const wake = wakeOf(directory, id);
+				out.set(slug, {
+					state,
+					since: wake?.reply.at ?? Date.now(),
+					...(wake === undefined ? {} : { channelId: wake.reply.channelId }),
+				});
+			}),
+		);
+		return out;
+	}
+
+	/** 一个会话此刻在不在跑，跑在哪个阶段。 */
+	async function liveOf(id: number): Promise<ViewActivity["state"] | undefined> {
+		let live: LiveState | undefined;
+		try {
+			live = await shell.harness.snapshot(LiveDoc, id as never, BACKGROUND_CONTEXT);
+		} catch {
+			return undefined;
+		}
+		if (live?.run === undefined) return undefined;
+		const tools = live.tools ?? [];
+		if (tools.some((slot) => slot.status === "running")) return "working";
+		if (live.generation !== undefined) return "thinking";
+		// `run` 在、既没在生成也没有工具在跑 = 正在把结果写回频道。
+		return "working";
 	}
 
 	async function readChannelList(): Promise<ChannelListResult> {
@@ -93,6 +148,83 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 		};
 	}
 
+	/**
+	 * 一段消息窗口里每一轮的轨迹（**不带步骤**）。
+	 *
+	 * 折叠态只要摘要：步数、时长、状态、一句话。展开时再按 `(seq, slug)` 拉完整版 ——
+	 * 一屏十几轮，每轮八步，一次全带会把响应撑到几百 KB。
+	 */
+	async function readTurns(id: string, from: number, to: number, withSteps = false): Promise<{ turns: ViewTurn[] }> {
+		const turns = await turnsOf(id, from, to);
+		return { turns: withSteps ? turns : turns.map(withoutSteps) };
+	}
+
+	/** 一轮的完整轨迹（带步骤）。找不到（没被叫醒 / 条目已被压缩）就是 `null`。 */
+	async function readTurn(id: string, seq: number, slug: string): Promise<{ turn: ViewTurn | null }> {
+		const turns = await turnsOf(id, seq, seq, slug);
+		return { turn: turns[0] ?? null };
+	}
+
+	/**
+	 * 一轮的切分：会话条目里 `core.channel` 且 `data.channelId/seq` 对上的那条，
+	 * 到**下一条** `core.channel` 之间。
+	 */
+	async function turnsOf(id: string, from: number, to: number, onlySlug?: string): Promise<ViewTurn[]> {
+		const { directory, channels } = await snapshots.channelSnapshot();
+		const channel = channels.channels[id];
+		if (channel === undefined) return [];
+		const titles = new Map(Object.values(channels.channels ?? {}).map((item) => [item.id, item.title]));
+
+		// 回复可能落在别的频道（任务频道），所以按「所有频道的消息」找，不只看当前频道。
+		const said: { channelId: string; seq: number; at: number; fromSlug: string }[] = [];
+		for (const [channelId, list] of Object.entries(channels.messages ?? {})) {
+			for (const message of list) {
+				if (message.from !== "owner") said.push({ channelId, seq: message.seq, at: message.at, fromSlug: message.from });
+			}
+		}
+
+		const people = Object.entries(directory.slugToConversation ?? {}).filter(
+			([slug]) => onlySlug === undefined || slug === onlySlug,
+		);
+
+		const turns: ViewTurn[] = [];
+		for (const [slug, conversationId] of people) {
+			let view;
+			try {
+				const conversation = await shell.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
+				if (conversation === undefined) continue;
+				view = await conversation.context(BACKGROUND_CONTEXT);
+			} catch {
+				// 会话已回收 / 进程刚重启：这一轮就是看不到，不是错误。
+				continue;
+			}
+			const groups = groupsOf(view.entries, id, from, to);
+			const running = groups.length > 0 ? (await liveOf(conversationId)) !== undefined : false;
+			for (const [index, group] of groups.entries()) {
+				const entries = view.entries.slice(group.start + 1, group.end);
+				const trigger = (channels.messages[id] ?? []).find((message) => message.seq === group.seq);
+				const startedAt = trigger?.at ?? 0;
+				const nextStart = groups[index + 1] === undefined ? Number.POSITIVE_INFINITY : groups[index + 1]!.seq;
+				const reply = said
+					.filter((item) => item.fromSlug === slug && item.channelId === id && item.seq > group.seq && item.seq < nextStart)
+					.sort((left, right) => left.seq - right.seq)[0];
+				turns.push(
+					buildTurn(entries, {
+						channelId: id,
+						seq: group.seq,
+						slug,
+						label: shell.labelOf(slug),
+						startedAt,
+						...(reply === undefined ? {} : { endedAt: reply.at, replySeq: reply.seq }),
+						live: running && index === groups.length - 1,
+						channelTitles: titles,
+					}),
+				);
+			}
+		}
+		return turns.sort((left, right) => left.seq - right.seq || left.slug.localeCompare(right.slug));
+	}
+
 	/** 档案页里「他在哪些频道」那一栏：成员表是真相，界面不用自己比。 */
 	async function channelsOf(slug: string): Promise<{ id: string; kind: "dm" | "group"; title: string }[]> {
 		const state = await shell.channels();
@@ -101,7 +233,36 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 			.map((channel) => ({ id: channel.id, kind: chatKind(channel), title: channel.title }));
 	}
 
-	return { readOrg, readChannelList, readChannelDetail, readAttention, readMentionable, channelsOf };
+	return { readOrg, readChannelList, readChannelDetail, readAttention, readMentionable, channelsOf, readTurns, readTurn };
+}
+
+/** 一轮在条目数组里的位置：触发条目下标 → 下一条 `core.channel` 之前。 */
+type Group = { readonly seq: number; readonly start: number; readonly end: number };
+
+/**
+ * 把条目按「一次唤醒」切开。
+ *
+ * 遇到**任何** `core.channel` 都收口 —— 他在团队频道干活时我私聊插一句，是新一轮，
+ * 轨迹另起一块；两轮的条目不能混进同一个块。
+ */
+export function groupsOf(entries: readonly EntryRecord[], channelId: string, from: number, to: number): Group[] {
+	const groups: Group[] = [];
+	let current: { seq: number; start: number; end: number } | undefined;
+	for (const [index, entry] of entries.entries()) {
+		if (entry.kind !== "core.channel") continue;
+		if (current !== undefined) {
+			current.end = index;
+			groups.push(current);
+			current = undefined;
+		}
+		const data = entry.data as Record<string, unknown> | undefined;
+		if (data?.["channelId"] !== channelId) continue;
+		const seq = typeof data["seq"] === "number" ? data["seq"] : undefined;
+		if (seq === undefined || seq < from || seq > to) continue;
+		current = { seq, start: index, end: entries.length };
+	}
+	if (current !== undefined) groups.push(current);
+	return groups;
 }
 
 export type Read = ReturnType<typeof createRead>;

@@ -219,55 +219,91 @@
 	line-height: 14px;
 }
 
-/* ── @ 弹窗 ─────────────────────────────────────────────────────────── */
+/* ── @ 弹窗（DESIGN §7.4）──────────────────────────────────────────────
+   贴着输入卡上沿，宽 280、最多 6 行、每行 32。选中只有 --hover 底，
+   不加 accent 边、不加底色块 —— 它是一张候选人清单，不是一个菜单。 */
 
 .mention {
 	position: absolute;
 	z-index: 80;
-	width: 260px;
-	max-height: min(300px, 45vh);
+	left: calc(var(--composer-pad) + 12px);
+	bottom: calc(100% + 6px);
+	width: 280px;
+	max-height: 200px;
 	padding: 4px;
 	overflow-y: auto;
-	background: var(--ground);
+	background: var(--field);
 	border: 1px solid var(--line);
 	border-radius: var(--r-row);
-	box-shadow: 0 6px 20px -6px rgba(28, 26, 22, 0.16);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 8%);
 	transform-origin: 16px 100%;
 }
 
-/* 滑块：glide() 动起来是「先拉长再收回」，所以它是独立的一层，不在行上改背景。 */
-.mention-thumb {
-	position: absolute;
-	left: 4px;
-	top: 4px;
-	width: calc(100% - 8px);
-	height: 36px;
-	border-radius: var(--r-control);
-	background: var(--hover);
-	pointer-events: none;
-	opacity: 0;
-}
-
-.mention[data-active="true"] .mention-thumb {
-	opacity: 1;
-}
-
 .mention-list {
-	position: relative;
 	display: flex;
 	flex-direction: column;
 }
 
 .mention-item {
 	display: grid;
-	grid-template-columns: var(--av-md) minmax(0, 1fr);
+	grid-template-columns: 20px minmax(0, auto) minmax(0, 1fr) auto;
 	column-gap: 8px;
 	align-items: center;
 	width: 100%;
-	min-height: 36px;
-	padding: 6px 8px;
+	height: 32px;
+	padding: 0 8px;
+	border: 0;
 	border-radius: var(--r-control);
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
 	text-align: left;
+	cursor: pointer;
+}
+
+.mention-item[aria-selected="true"] {
+	background: var(--hover);
+}
+
+.mention-av {
+	display: grid;
+	place-items: center;
+}
+
+.mention-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.mention-sub {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.mention-slug {
+	font-family: var(--mono);
+	font-size: 10px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+/* 没有匹配：说清楚为什么空，且**不自动关闭** —— 删掉字符就能恢复。 */
+.mention-none {
+	padding: 8px 10px;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
 }
 
 @media (max-width: 640px) {
@@ -279,8 +315,15 @@
 		padding: 0 var(--composer-pad) 12px;
 	}
 
+	/* 手机：贴输入卡上沿，宽 = 屏宽 − 16，行高 44（手指够得着）。 */
 	.mention {
-		width: min(260px, calc(100vw - 24px));
+		left: var(--composer-pad);
+		width: calc(100vw - 2 * var(--composer-pad));
+		max-height: 264px;
+	}
+
+	.mention-item {
+		height: 44px;
 	}
 
 	.send {
@@ -450,5 +493,122 @@
 		animation: none;
 		opacity: 0.5;
 		transform: scaleX(0.5);
+	}
+}
+
+/* ── 活动条（DESIGN §4）───────────────────────────────────────────────
+   贴在输入卡正上方，只在当前频道有人正在跑时出现。
+   收放用 grid-template-rows：不许对 height 做 transition（DESIGN §6.4 硬规则 2）。 */
+
+.activity {
+	display: grid;
+	grid-template-rows: 0fr;
+	overflow: hidden;
+	transition: grid-template-rows 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.activity[data-on="true"] {
+	grid-template-rows: 1fr;
+}
+
+.activity-inner {
+	min-height: 0;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 0 var(--composer-pad);
+	/* 卡片是居中的，活动条跟它同一条轨道。 */
+	max-width: 100%;
+}
+
+.activity-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: min(100%, 920px);
+	margin: 0 auto;
+	height: 32px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--r-control);
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.activity-row:hover {
+	background: var(--hover);
+}
+
+.activity-dot {
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--live);
+	animation: activity-pulse 2s ease-in-out infinite;
+}
+
+.activity-name {
+	flex: none;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.activity-what {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.activity-meta {
+	flex: none;
+	margin-left: auto;
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.activity-go {
+	flex: none;
+	color: var(--ink-3);
+}
+
+.activity-more {
+	width: min(100%, 920px);
+	margin: 0 auto;
+	padding: 0 10px;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+@keyframes activity-pulse {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 rgb(65 118 230 / 0.28);
+		opacity: 0.9;
+	}
+	50% {
+		box-shadow: 0 0 0 3px rgb(65 118 230 / 0);
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.activity {
+		transition: none;
+	}
+
+	.activity-dot {
+		animation: none;
 	}
 }

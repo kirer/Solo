@@ -44,7 +44,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	const boundHost = options.host ?? "127.0.0.1";
 
 	const app = createApp(shell);
-	const hub = createStreamHub(shell, app.snapshots);
+	const hub = createStreamHub(shell, app.snapshots, app.read);
 	const unsubscribe = hub.start();
 	const routes = coreRoutes({ app, hub, uiDir });
 

@@ -1370,3 +1370,299 @@
 	line-height: 20px;
 	color: var(--ink-2);
 }
+
+/* ── 右栏三视图（详情 / 技能 / 记忆）──────────────────────────────────
+   顶栏那三个是 tab，不是按钮：同一份数据换一个看法，不离开这一屏。
+   见 docs/DESIGN.md §5。 */
+
+.rail-tabs {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+}
+
+.rail-tab {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 5px 10px;
+	border-radius: var(--r-control);
+	color: var(--ink-3);
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	cursor: pointer;
+}
+
+.rail-tab:hover {
+	background: var(--hover);
+	color: var(--ink-2);
+}
+
+.rail-tab[aria-selected="true"] {
+	background: var(--hover);
+	color: var(--ink);
+	font-weight: 500;
+}
+
+.rail-view {
+	gap: 0;
+}
+
+.rail-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 8px;
+}
+
+/* 换人：原生 select 最可靠（键盘、读屏、手机滚轮都不用自己写）。 */
+.rail-who {
+	position: relative;
+	display: inline-flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.rail-who select {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 4px 20px 4px 4px;
+	border-radius: var(--r-control);
+	color: var(--ink);
+	font: inherit;
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	cursor: pointer;
+	max-width: 180px;
+}
+
+.rail-who select:hover {
+	background: var(--hover);
+}
+
+.rail-who-caret {
+	position: absolute;
+	right: 6px;
+	pointer-events: none;
+	font-size: 12px;
+	line-height: 12px;
+	color: var(--ink-3);
+}
+
+.rail-count {
+	margin-left: auto;
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.rail-group {
+	margin: 14px 0 4px;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.rail-skill {
+	padding: 8px 6px;
+	border-radius: var(--r-control);
+}
+
+.rail-skill:hover {
+	background: var(--run-line);
+}
+
+.rail-skill-head {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	border: 0;
+	background: transparent;
+	padding: 0;
+	color: var(--ink);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.rail-skill-name {
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+.rail-scope {
+	margin-left: auto;
+	flex: none;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.rail-skill-desc {
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+	margin: 2px 0 0;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.rail-skill[data-open="true"] .rail-skill-desc {
+	display: block;
+	-webkit-line-clamp: unset;
+}
+
+.rail-hint {
+	margin: 4px 0 0;
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.rail-error {
+	margin: 0 0 8px;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--danger);
+}
+
+.rail-memo {
+	padding: 10px 6px;
+	border-bottom: 1px solid var(--rule);
+}
+
+.rail-memo-head {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.rail-memo-stamp {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.rail-memo-grow {
+	flex: 1 1 auto;
+}
+
+.rail-memo-more {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 0 4px;
+	color: var(--ink-3);
+	font: inherit;
+	cursor: pointer;
+	border-radius: var(--r-xs);
+}
+
+.rail-memo-more:hover {
+	background: var(--hover);
+	color: var(--ink-2);
+}
+
+/* 删除菜单：一次点击就能重建的小东西，不弹确认框。 */
+.rail-memo-menu {
+	position: absolute;
+	right: 0;
+	top: 20px;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	min-width: 108px;
+	padding: 4px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+	background: var(--field);
+	box-shadow: var(--shadow);
+}
+
+.rail-memo-menu button {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 5px 8px;
+	border-radius: var(--r-xs);
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 12px;
+	line-height: 16px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.rail-memo-menu button:hover {
+	background: var(--hover);
+}
+
+.rail-memo-menu .rail-memo-del {
+	color: var(--danger);
+}
+
+.rail-memo-body {
+	margin: 2px 0 0;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+/* 底部输入卡：一行字 + 右侧「添加」。 */
+.rail-add {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	align-items: end;
+	gap: 8px;
+	margin-top: 16px;
+	padding: 8px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-control);
+	background: var(--ground);
+}
+
+.rail-add textarea {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	resize: none;
+	min-height: 36px;
+	max-height: 120px;
+	padding: 2px 4px;
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	outline: none;
+}
+
+.rail-add-btn {
+	appearance: none;
+	border: 0;
+	background: transparent;
+	padding: 4px 6px;
+	border-radius: var(--r-xs);
+	color: var(--accent);
+	font: inherit;
+	font-size: 13px;
+	line-height: 20px;
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.rail-add-btn:disabled {
+	color: var(--ink-3);
+	cursor: default;
+}

@@ -25,5 +25,8 @@ export type {
 	ViewPersonMemory as PersonMemory,
 	ViewPersonProfile as PersonProfile,
 	ViewSkill as SkillInfo,
+	ViewActivity as Activity,
+	ViewStep as Step,
+	ViewTurn as Turn,
 	ViewUploaded as Uploaded,
 } from "../../../../src/core/view/dto.ts";

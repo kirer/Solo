@@ -127,6 +127,11 @@ export type ViewActor = {
 	managerLabel?: string;
 	/** `identity.md` 正文 —— 档案页要显示「他是谁」，只有 slug 不够。 */
 	body: string;
+	/**
+	 * 此刻在干什么。**没有这个键 = 待命**（不是 `state: "idle"`）。
+	 * 由会话的 live 状态派生，结算即消失。
+	 */
+	activity?: ViewActivity;
 };
 
 /** 「找我」列表里的一条。 */
@@ -184,6 +189,77 @@ export type ViewPersonProfile = {
 	/** `entries` 是**条数**（档案页只显示概况），全文在 `/api/people/:slug/memory`。 */
 	memory: { exists: boolean; entries: number; digest: string | null };
 	channels: { id: string; kind: ViewChannelKind; title: string }[];
+};
+
+/**
+ * 一轮里的一步。
+ *
+ * **只从会话条目派生，不落库**（ADR-001）。没有耗时就**不出现** `ms`，没有 diff 就
+ * 不出现 `diff` —— 界面上每个数字都要有出处。
+ */
+export type ViewStep = {
+	/** 会话条目里的 toolCall id（稳定；前端拿它做 key 与展开状态）。 */
+	id: string;
+	kind: "think" | "say" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
+	/** 服务端算好的一行人话（`跑了 npm test` / `读了 a.ts`）。 */
+	title: string;
+	status: "running" | "ok" | "failed";
+	/** 毫秒。工具结果的时间戳减去调用的时间戳；拿不到就没有。 */
+	ms?: number;
+	/** 调用开始的时刻（毫秒）。只给进行中的步骤算「已跑了多久」。 */
+	startedAt?: number;
+	/** `run`：命令行。 */
+	command?: string;
+	/** `run`：输出（≤ 8 KB，已剥 ANSI，尾部带截断说明）。 */
+	output?: string;
+	/** `run`：退出码（能从输出里读到时）。 */
+	exitCode?: number;
+	/** 输出被截断。 */
+	truncated?: true;
+	/** `file-*`：工作区相对路径。 */
+	path?: string;
+	/** `file-write`：这次写入的行数。 */
+	added?: number;
+	/** `think` / `say`：正文。 */
+	text?: string;
+	/** 未知工具的原名。 */
+	tool?: string;
+};
+
+/**
+ * 一轮（一次唤醒）的轨迹。
+ *
+ * 切分：会话条目里 `kind === "core.channel"` 且 `data.channelId/seq` 对上的那条，
+ * 到下一条 `core.channel` 之间。
+ */
+export type ViewTurn = {
+	channelId: string;
+	/** 触发这一轮的消息 seq。 */
+	seq: number;
+	slug: string;
+	label: string;
+	status: "running" | "done" | "failed" | "aborted";
+	startedAt: number;
+	/** = 回复消息的 at；还在跑就没有。 */
+	endedAt?: number;
+	/** 他最终说出口的那条。 */
+	replySeq?: number;
+	stepCount: number;
+	/** 折叠行右端的确定性摘要（`跑了 2 条命令 · 读了 3 个文件`）。 */
+	summary: string;
+	/** 步骤被截断（> 200 步）。 */
+	truncated?: true;
+	/** 只在展开时出现：`GET /api/channels/:id/turn` 与 SSE 的 `trace` 事件带，列表不带。 */
+	steps?: ViewStep[];
+};
+
+/** 一个人此刻在干什么。由会话的 live 状态派生，结算即消失。 */
+export type ViewActivity = {
+	state: "thinking" | "working";
+	/** 开始时刻（毫秒）。 */
+	since: number;
+	/** 这一轮在哪个频道。 */
+	channelId?: string;
 };
 
 /** 上传成功的回执。 */

@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getMentionable, uploadFile } from "../api/client.ts";
 import type { Uploaded } from "../api/types.ts";
+import { avatarSvg } from "../lib/avatar.ts";
 import { humanBytes } from "../lib/format.ts";
 import { send, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
@@ -224,7 +225,8 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 		const caret = event.target.selectionStart ?? value.length;
 		setText(value);
 		const before = value.slice(0, caret);
-		const found = /(?:^|\s)@([\p{L}\p{N}._-]*)$/u.exec(before);
+		// 词首的 `@` 就弹：行首、空白、标点都算；中文不写空格也认（`麻烦@林越`）。
+		const found = /(?:^|[^\p{L}\p{N}._-])@([\p{L}\p{N}._-]*)$/u.exec(before);
 		if (found === null) setMention(null);
 		else setMention({ at: before.length - found[1]!.length - 1, query: found[1]! });
 	}, []);
@@ -435,28 +437,40 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 				</button>
 			</div>
 
-			{mention === null || candidates.length === 0 ? null : (
-				<div className="mention" id="mention-pop" role="listbox">
-					<div className="mention-thumb" id="mention-thumb" hidden />
-					<div className="mention-list" id="mention-list">
-						{candidates.slice(0, 8).map((candidate, index) => (
-							<button
-								type="button"
-								key={candidate.slug}
-								role="option"
-								aria-selected={index === pick}
-								className="mention-item"
-								data-slug={candidate.slug}
-								onMouseDown={(event) => {
-									event.preventDefault();
-									applyMention(candidate);
-								}}
-							>
-								<span className="mention-name">{candidate.label}</span>
-								<span className="mention-sub">{candidate.title}</span>
-							</button>
-						))}
-					</div>
+			{mention === null ? null : (
+				<div className="mention" id="mention-pop" role="listbox" aria-label="提到谁">
+					{candidates.length === 0 ? (
+						<div className="mention-none">这个频道里没有叫「{mention.query}」的人</div>
+					) : (
+						<div className="mention-list" id="mention-list">
+							{candidates.slice(0, 6).map((candidate, index) => (
+								<button
+									type="button"
+									key={candidate.slug}
+									role="option"
+									aria-selected={index === pick}
+									className="mention-item"
+									data-slug={candidate.slug}
+									onMouseEnter={() => setPick(index)}
+									onMouseDown={(event) => {
+										event.preventDefault();
+										applyMention(candidate);
+									}}
+								>
+									<span
+										className="mention-av"
+										aria-hidden="true"
+										dangerouslySetInnerHTML={{
+											__html: avatarSvg({ slug: candidate.slug, name: candidate.label, size: 20, state: "idle" }),
+										}}
+									/>
+									<span className="mention-name">{candidate.label}</span>
+									<span className="mention-sub">{candidate.title}</span>
+									<span className="mention-slug">@{candidate.slug}</span>
+								</button>
+							))}
+						</div>
+					)}
 				</div>
 			)}
 		</form>

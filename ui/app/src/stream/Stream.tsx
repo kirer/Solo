@@ -17,6 +17,7 @@ import { renderMarkdown } from "../lib/markdown.ts";
 import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
+import { RunBlock } from "./RunBlock.tsx";
 import { loadEarlier, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
@@ -33,6 +34,7 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const hasMore = useStore((state) => state.hasMore);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const people = useStore((state) => state.people);
+	const turns = useStore((state) => state.turns);
 	const [atBottom, setAtBottom] = useState(true);
 
 	const flowRef = useRef<HTMLDivElement | null>(null);
@@ -41,7 +43,7 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const pinned = useRef(true);
 
 	const messages = detail?.messages ?? [];
-	const rows = useMemo(() => buildRows({ messages, now: Date.now() }), [messages]);
+	const rows = useMemo(() => buildRows({ messages, turns, now: Date.now() }), [messages, turns]);
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string }>();
@@ -205,6 +207,18 @@ function RowView(props: {
 		);
 	}
 	if (row.type === "say") return <SayRow row={row} labels={props.labels} onCopy={props.onCopy} onImage={props.onImage} />;
+	if (row.type === "run") {
+		return (
+			<div className="row row-run" data-seq={row.seq}>
+				<div className="row-run-gutter" aria-hidden="true" />
+				<div className="row-run-body">
+					{row.turns.map((turn) => (
+						<RunBlock key={turn.slug} turn={turn} />
+					))}
+				</div>
+			</div>
+		);
+	}
 	return (
 		<div className="row row-note" data-seq={row.message.seq}>
 			<div className="note-mark" aria-hidden="true">

@@ -116,7 +116,8 @@ shell = 装配层，唯一可以同时 import 全部
 | `app/index.ts` | 50 | `createApp(services)` → `{snapshots, read, people, chat, uploads, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
 | `app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」 |
 | `app/snapshot.ts` | 86 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
-| `app/read.ts` | 107 | `createRead` —— 读的入口：每个方法都是「取快照 → 投影（`app/project.ts`）→ 返回 DTO」 |
+| `app/read.ts` | 268 | `createRead` —— 读的入口：每个方法都是「取快照 → 投影（`app/project.ts`）→ 返回 DTO」。另有轨迹三件：`activityMap` / `liveOf`（谁此刻在跑，读 `LiveDoc`）、`readTurns` / `readTurn`（`turnsOf` 按 `core.channel` 切轮、`groupsOf` 是纯切轮函数） |
+| `app/trace.ts` | 313 | **轨迹派生，纯函数**（ADR-001 / ADR-003）：会话条目 → `ViewTurn`。`buildTurn` / `summaryOf` / `withoutSteps` / `slimTurn` / `stripAnsi`；单轮 200 步、单步输出 8 KB、思考 4 KB 上限；拿不到耗时就不编 |
 | `app/people.ts` | 135 | `createPeople` —— 一个人：档案、记忆的读 / 加 / 改 / 删；`MemoryEditBody` |
 | `app/project.ts` | 341 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels`；显示名走 `agent/identity.ts`，团队头走 `channel/types.ts` 的 `teamId` |
 | `app/chat.ts` | 183 | 说话用例：`postAsOwner` / `openDirectMessage`（唯一建频道入口）/ `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界、私聊对象必须在名册里）在这里而不在路由里 |
@@ -124,13 +125,13 @@ shell = 装配层，唯一可以同时 import 全部
 | `app/diag.ts` | 127 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
 | `app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
 | `view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/project.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
-| `interface/http/routes.ts` | 203 | 路由表：17 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
+| `interface/http/routes.ts` | 223 | 路由表：19 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
 | `interface/http/respond.ts` | 100 | HTTP 出口原语：`json` / `fail` / `HttpError` / `readJson`（正文上限 1MB、写接口必须声明 `application/json`）/ `statusOf`（用例原因 → 状态码） |
 | `interface/http/route-match.ts` | 131 | 表驱动路由匹配：`Route` / `RouteContext` / `RouteHandler` / `matchRoute`（`:name` 捕获 / `*name` 吃余量），不引入框架 |
 | `interface/http/network.ts` | 80 | 监听地址：`isWildcardHost` / `isLoopbackHost` / `browserUrlOf` / `lanAddresses` / `lanUrlsOf` |
 | `interface/http/static-assets.ts` | 310 | 静态资源：`serveStatic`（SPA 回退）/ `loadAsset` / `etagFor` / `bodyFor`；按编码区分的 ETag + Last-Modified + `Vary` + br/gzip 协商 + `insideRoot` 越界判断 |
 | `interface/http/origin-guard.ts` | 130 | 来源闸：`hostAllowed` / `originAllowed` / `allowedHostsOf` / `selfOriginsOf`（Host 与 Origin 白名单，默认只给本机） |
-| `interface/http/sse.ts` | 262 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照，`create` 只推订阅者） |
+| `interface/http/sse.ts` | 262 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照（带 `activity`），`create` 只推订阅者，`trace` 只推正在跑的那几轮并按指纹去重） |
 | `shell/assemble.ts` | 468 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 播种全员频道；接线只调一次 `wireChannel`，成员投影只调 `channel/membership.ts`（装配不再自己写业务规则）；`ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板） |
 | `shell/seed.ts` | 301 | `seedOwnerAssistant`（读 `seed/agents/assistant/identity.md` 建人 + 助理个人层技能，只建一次）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `workspace/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/` |
@@ -146,26 +147,27 @@ shell = 装配层，唯一可以同时 import 全部
 | `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
 | `src/main.tsx` | 入口：装样式、`bootstrap()`、挂 `<App>` |
 | `src/App.tsx` | 外壳装配：三列网格、头部（标题 / 状态 / 找你 / 团队 / 设置 / 详情）、主题与布局落地、键盘（Esc 关浮层、⌘K 开「找你」） |
-| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、在线状态推导、localStorage 三键 |
+| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`/`loadTurn`（轨迹按 `seq` 分桶）、localStorage 两键 |
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
 | `src/api/types.ts` | **type-only 再导出** `src/core/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
-| `src/stream/model.ts` | **消息 → 行模型，纯函数** `buildRows()`。时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
-| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新 |
+| `src/stream/model.ts` | **消息 → 行模型，纯函数** `buildRows()`。时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行；有轨迹的消息后面跟一行 `run`（按触发消息的 `seq` 分桶）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
+| `src/stream/RunBlock.tsx` | 一轮的折叠行 + 步骤树。默认「在跑就展开、历史收起」，手动改过记 `localStorage["solo.trace.open"]`；步骤详情按 kind 分四种（命令 / 文件 / 思考 / 说话），同一时间只展开一个 |
+| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`run` 行交给 `RunBlock` |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
 | `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览） |
-| `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层、附件队列、拖拽、粘贴、引用条 |
-| `src/panels/RightPanel.tsx` | 右栏第三列：只有详情（文件页已删）。关的时候等 300ms 过渡再卸载 |
+| `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |
+| `src/composer/ActivityBar.tsx` | 输入卡上方的活动条：只在当前频道有人正在跑时出现，动作取最近一步的摘要；点整条滚到那一轮 |
+| `src/panels/RightPanel.tsx` | 右栏第三列，三个视图：详情 / 技能 / 记忆（后两个共用一个换人器，只列当前频道成员）。关的时候等 300ms 过渡再卸载 |
 | `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`） |
-| `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create`）；失败退避 1s→15s；org 推送交给 `store.refreshLists`（侧栏与「找你」只有这一条刷新路） |
+| `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create` / `trace`）；失败退避 1s→15s；org 事件自带整份快照（`applyOrg`），侧栏与「找你」仍走 `store.refreshLists` |
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
 | `src/lib/avatar.ts` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像 |
 | `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼** |
 | `src/lib/copy-code.ts` | 代码块「复制」：`CODE_COPY_CLASS` 一处定义，`installCodeCopy()` 在 `main.tsx` 装一次全局委托（正文是 `dangerouslySetInnerHTML` 注入的，React 事件接不到里面的按钮） |
-| `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanBytes`、`unreadLabel`、`copyText` |
+| `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanDuration`（`<1s` / `3.2s` / `1m 12s`）、`humanBytes`、`unreadLabel`、`copyText` |
 | `src/lib/jank.ts` | 卡顿自报：长帧 > 240ms / 长任务 > 200ms 才记一条，`mark(label)` 标「当时在干什么」，攒够 5 秒或 `pagehide` 发 `POST /api/diag` |
-| `src/panels/MemoryDrawer.tsx` | 记忆抽屉：读 / 加 / 删一条，每条画一行来历（`at` / `by` / `op`，没有日志就不画） |
-| `src/styles/*.css` | 八个样式文件，顺序见 `styles/index.css`（token 先落地） |
+| `src/styles/*.css` | 七个样式文件，顺序见 `styles/index.css`（token 先落地）；记忆抽屉并进右栏后 `memory.css` 已删 |
 | `public/fonts/*.woff2` | Montserrat 300/400/500（本地字体，只用于品牌名） |
 
 ## 3. 「我想改 X → 动这里」

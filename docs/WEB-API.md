@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **17** 条路由（按方法+路径算；按路径去重是 **14** 条 —— `check-boundaries.mjs`
+只有 **19** 条路由（按方法+路径算；按路径去重是 **16** 条 —— `check-boundaries.mjs`
 数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
@@ -17,7 +17,9 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/people/:slug/dm` | 和一个人开私聊（唯一的建频道入口） |
 | `GET` | `/api/channels/:id/mentionable` | 这个频道能 @ 谁 |
 | `GET` | `/api/channels/:id` | 频道详情（含消息） |
-| `GET` | `/api/channels/:id/stream` | 频道消息流（SSE：只有 `create`） |
+| `GET` | `/api/channels/:id/turns` | 一段消息窗口里每一轮的轨迹（折叠版，不带步骤） |
+| `GET` | `/api/channels/:id/turn` | 一轮的完整轨迹（带步骤） |
+| `GET` | `/api/channels/:id/stream` | 频道消息流（SSE：`create` 与 `trace`） |
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
 | `GET` | `/api/attention` | 「找我」：跨频道、需要我本人看一眼的消息 |
@@ -73,6 +75,15 @@ type ViewActor = {
   manager?: string;     // slug；undefined = 直接向我汇报
   managerLabel?: string;
   body: string;         // identity.md 正文（档案页要显示「他是谁」）
+  activity?: ViewActivity; // 此刻在干什么；**没有这个键 = 待命**
+}
+
+// 由会话的 live 状态派生（run / generation / running 的工具），结算即消失。
+// 不落库、不读消息、不猜（ADR-001）。
+type ViewActivity = {
+  state: "thinking" | "working";
+  since: number;        // 这一轮的开始时刻（唤醒记录里那条消息的 at）
+  channelId?: string;   // 这一轮在哪个频道
 }
 ```
 
@@ -237,11 +248,79 @@ type ViewMessage = {
 | 事件 | `data` | 含义 |
 | --- | --- | --- |
 | `create` | `ViewMessage` | 新增或原地更新一条消息（按 `seq` 幂等 upsert） |
+| `trace` | `ViewTurn`（瘦身版） | 正在跑的那一轮的整轮快照；结算时补最后一帧 |
 
-- **只有 `create` 一个事件名。** `draft`（正在说）与 `done`（回复落库）随过程投影一起
-  删掉了；真消息一律走 `create`，前端不需要为同一句话准备两种形态。
+- `draft`（正在说）与 `done`（回复落库）随过程投影一起删掉了；真消息一律走 `create`。
+- `trace` **不是过程投影**：它推的是会话条目派生出的**整轮快照**，不按 token 推（C-007），
+  也不进消息表（ADR-001）。步骤没变就不重推（服务端按指纹去重）；单步输出在推送版里
+  压到 2 KB，展开那一步时再走 §7.3 拉全文。
 - 任何文档提交去抖 120ms 后推增量，只推订阅了这个频道的连接。
 - 空闲每 15s 一个 `: ping` 注释行保活。
+
+## 7.2 `GET /api/channels/:id/turns?from=&to=`
+
+一段消息窗口里**每一轮**的轨迹，折叠版（不带 `steps`）。
+
+```ts
+// 查询参数：from / to 是消息 seq（含端点）；缺省 = 全部
+{ turns: ViewTurn[] }
+```
+
+- 一轮 = 一次唤醒：会话条目里 `core.channel` 且 `data.channelId/seq` 对上的那条，到**下一条**
+  `core.channel` 之间。一条消息可以叫醒多个人 → 同一个 `seq` 会出现多条（按 `slug` 区分）。
+- 找不到（没被叫醒 / 条目已被压缩）就没有那一条，**不是错误**。
+- 折叠版只给 `stepCount` 与 `summary`：一屏十几轮、每轮八步，一次全带会把响应撑到几百 KB。
+
+```ts
+type ViewTurn = {
+  channelId: string;
+  seq: number;                  // 触发这一轮的消息
+  slug: string;
+  label: string;
+  status: "running" | "done" | "failed" | "aborted";
+  startedAt: number;            // = 触发消息的 at
+  endedAt?: number;             // = 回复消息的 at；还在跑就没有
+  replySeq?: number;            // 他最终说出口的那条
+  stepCount: number;
+  summary: string;              // 确定性摘要：跑了 N 条命令 · 读了 N 个文件 · 写了 N 个文件
+  truncated?: true;             // 步骤超过 200 步
+  steps?: ViewStep[];           // 只在 §7.3 与 SSE trace 里出现
+}
+```
+
+## 7.3 `GET /api/channels/:id/turn?seq=&slug=`
+
+一轮的完整轨迹（带 `steps`）。
+
+```ts
+{ turn: ViewTurn | null }       // 找不到就是 null
+```
+
+```ts
+type ViewStep = {
+  id: string;                   // 会话条目里的 toolCall id
+  kind: "think" | "say" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
+  title: string;                // 服务端算好的一行人话（跑了 npm test / 读了 a.ts）
+  status: "running" | "ok" | "failed";
+  ms?: number;                  // 工具结果时间 − 调用时间；拿不到就不出现
+  startedAt?: number;
+  command?: string;             // run
+  output?: string;              // run / 其他工具：≤ 8 KB，已剥 ANSI，尾部带截断说明
+  exitCode?: number;            // run：能从输出里读到「退出码 N」时
+  truncated?: true;
+  path?: string;                // file-*
+  added?: number;               // file-write：写入行数
+  text?: string;                // think / say 正文
+  tool?: string;                // 未知工具的原名
+}
+```
+
+规矩（ADR-001）：
+
+- **不落库。** 轨迹是会话条目的投影，频道文档与 SQLite 里都不多一个字段。
+- **拿不到就不画。** 没有耗时不编耗时，没有 diff 不画 diff —— 界面上每个数字都要有出处。
+- 一轮结束了还挂着 `running` 的步骤 = 那次调用没回来，服务端把它标成 `failed`，
+  整轮 `status` 是 `aborted`。
 
 ## 8. `POST /api/channels/:id/read`
 

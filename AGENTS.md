@@ -58,13 +58,13 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             57 文件 / 589 例
-  ├ test/core/    50 文件 / 535 例（纯函数 + 装配）
-  └ test/ui/      7 文件 / 54 例（界面纯函数与源码约定）
+test/             58 文件 / 605 例
+  ├ test/core/    51 文件 / 547 例（纯函数 + 装配）
+  └ test/ui/      7 文件 / 58 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 72 个 ts / 10789 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 73 个 ts / 11428 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -116,7 +116,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 57 文件 589 例，<3s，必须全绿
+npm test             # 58 文件 605 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -146,6 +146,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `md/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外 |
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
+| 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2–7.3 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/core/app/trace.ts`（纯函数）+ `src/core/app/read.ts` 的 `turnsOf` / `groupsOf` + `test/core/trace.test.ts` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |
 | 建频道 / 私聊 | `docs/CORE.md` §4 + `docs/WEB-API.md`；唯一入口是 `POST /api/people/:slug/dm` |
 | 新增/修改真模型脚本（`scripts/*-live.ts`、`live-support.ts`） | 本文件 §2 + `docs/CODE.md` 目录与 §3 + `package.json`；等待器只放 `live-support.ts` |
@@ -153,6 +154,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改 seed 出厂内容（规矩 / 技能 / 助理身份） | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts`（一条事实一个家、≤15 条、零工具名、技能 ≤4 KB） |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
+| 界面布局 / 行类型 / 轨迹展示 | `docs/DESIGN.md`（决策稿：改之前先说明原决策错在哪）+ 本文件 §2 的「不画后端没有的东西」 |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
 | 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
 | 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表：我 / 助理 / 团队 / 团队管理员 / 成员 / 全员；项目叫 Solo |
@@ -173,6 +175,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 |---|---|
 | `docs/CORE.md` | 概念：为什么这么设计 |
 | `docs/CODE.md` | 代码在哪、谁负责什么 |
+| `docs/DESIGN.md` | 界面长什么样、每个元素的数据来源（决策稿，不是建议） |
 | `docs/DECISIONS.md` | 哪些约定不能轻易碰、为什么 |
 | `docs/CONCESSIONS.md` | 底座（pi-durable）做不到什么、我们怎么绕的、升级后能不能删 |
 | `docs/WEB-API.md` | 接口字段 |
@@ -198,7 +201,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/types.ts` 的 `chatKind`（只看成员表） |
 | 改频道成员怎么来 | `docs/CORE.md` §4 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/core/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
-| 改界面 | `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts` |
+| 改界面 | `docs/DESIGN.md` + `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/core/view/dto.ts`；新元素必须在 DESIGN §8 的数据来源表里指到字段 |
 | 改记忆沉淀 | `docs/CORE.md` §8 | 机制在 `src/core/team/settle.ts` + `team/memory.ts`；**判据在 `seed/prompt/95-settle.md`** |
 | 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |

@@ -15,7 +15,9 @@ import { OWNER_SLUG } from "../../app/index.ts";
 import { messageView, orgView } from "../../app/project.ts";
 import type { ChannelSnapshot, Snapshots } from "../../app/snapshot.ts";
 import type { CoreServices } from "../../app/types.ts";
-import type { ViewMessage, ViewOrg } from "../../view/dto.ts";
+import type { Read } from "../../app/read.ts";
+import { slimTurn } from "../../app/trace.ts";
+import type { ViewMessage, ViewOrg, ViewTurn } from "../../view/dto.ts";
 
 /** 保活间隔：中间代理通常 30–60s 掐空闲连接，15s 足够稳。 */
 export const KEEP_ALIVE_MS = 15_000;
@@ -24,12 +26,16 @@ export const KEEP_ALIVE_MS = 15_000;
 export const RETRY_MS = 1500;
 
 /**
- * 组织流只有 `org` 一个事件（整份快照，不是增量）；频道流只有 `create` 一个事件。
- * 过程投影的 `draft` / `done` 已随 ADR-081 删掉 —— 别把它们加回来。
+ * 组织流只有 `org` 一个事件（整份快照，不是增量）；频道流有 `create`（一条消息）
+ * 与 `trace`（正在跑的那一轮的完整快照）。
+ *
+ * 过程投影的 `draft` / `done` 已随 ADR-081 删掉 —— 别把它们加回来；`trace` 不是它们：
+ * 它推的是会话条目派生出的**整轮快照**，不按字推（C-007）。
  */
 export type SseEvent =
 	| { readonly type: "org"; readonly org: ViewOrg }
-	| { readonly type: "create"; readonly message: ViewMessage };
+	| { readonly type: "create"; readonly message: ViewMessage }
+	| { readonly type: "trace"; readonly turn: ViewTurn };
 
 /** SSE 响应的头。`no-transform` 是给中间代理看的：别压缩、别攒包。 */
 export function sseHeaders(): Record<string, string> {
@@ -53,7 +59,7 @@ export function keepAliveFrame(): string {
 
 /** 把一个事件编成一段 SSE 字节。 */
 export function encodeEvent(event: SseEvent): string {
-	const payload = event.type === "org" ? event.org : event.message;
+	const payload = event.type === "org" ? event.org : event.type === "trace" ? event.turn : event.message;
 	return `event: ${event.type}\ndata: ${JSON.stringify(payload)}\n\n`;
 }
 
@@ -83,12 +89,16 @@ const PUSH_DEBOUNCE_MS = 120;
 /** 一次最多推多少条：首屏补齐，以及增量积压时的上界。更早的靠 `/api/channels/:id?before=`。 */
 const PAGE = 60;
 
-export function createStreamHub(shell: CoreServices, snapshots: Snapshots) {
+export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?: Read) {
 	const orgClients = new Set<ServerResponse>();
 	// T-016：按频道的 SSE 连接（channelId → 连接集合）。消息增量只推给订阅了该频道的浏览器。
 	const channelClients = new Map<string, Set<ServerResponse>>();
 	/** `频道 → 已经推到第几条`（`?since=` 与增量都读它）。 */
 	const pushed = new Map<string, number>();
+	/** `频道 → 上一次推出去的轨迹指纹`：步骤没变就不重推。 */
+	const traceSig = new Map<string, string>();
+	/** `频道 → 上一次还在跑的那些轮`：用来在结算时补最后一帧 `done`。 */
+	const traceOpen = new Map<string, ViewTurn[]>();
 	let timer: NodeJS.Timeout | undefined;
 
 	/** 写给一组连接；写失败（已断）的顺手摘掉。 */
@@ -126,6 +136,45 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots) {
 		pushed.set(id, tail[tail.length - 1]!.seq);
 	}
 
+	/**
+	 * 推正在跑的那一轮（`trace` 事件）。
+	 *
+	 * 三条规矩：
+	 * 1. **只在步骤变了时推**（指纹比对）—— 一次提交会连带好几次推送；
+	 * 2. 结算时补最后一帧 `done`，之后不再推（前端自己收尾）；
+	 * 3. 没有 `read`（测试装配）就整个跳过。
+	 */
+	async function pushTrace(id: string): Promise<void> {
+		const clients = channelClients.get(id);
+		if (read === undefined || clients === undefined || clients.size === 0) return;
+		let turns: ViewTurn[];
+		try {
+			({ turns } = await read.readTurns(id, 0, Number.MAX_SAFE_INTEGER, true));
+		} catch {
+			return;
+		}
+		const running = turns.filter((turn) => turn.status === "running");
+		const before = traceOpen.get(id) ?? [];
+		const ended = turns.filter(
+			(turn) =>
+				turn.status !== "running" &&
+				before.some((previous) => previous.seq === turn.seq && previous.slug === turn.slug),
+		);
+		const outgoing = [...running, ...ended];
+		if (outgoing.length === 0) {
+			traceSig.delete(id);
+			traceOpen.delete(id);
+			return;
+		}
+		const signature = outgoing
+			.map((turn) => `${String(turn.seq)}:${turn.slug}:${turn.status}:${String(turn.stepCount)}:${String(turn.steps?.length ?? 0)}`)
+			.join("|");
+		if (traceSig.get(id) === signature) return;
+		traceSig.set(id, signature);
+		traceOpen.set(id, running);
+		broadcast(clients, outgoing.map((turn) => encodeEvent({ type: "trace", turn: slimTurn(turn) })).join(""));
+	}
+
 	/** 一次 flush：读一次快照，org 推整份、每个活跃频道推增量。 */
 	async function flush(): Promise<void> {
 		if (orgClients.size === 0 && channelClients.size === 0) return;
@@ -137,9 +186,15 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots) {
 			return;
 		}
 		if (orgClients.size > 0) {
-			broadcast(orgClients, encodeEvent({ type: "org", org: orgView(snap.identities, snap.directory) }));
+			// 有 `read` 时走它：`readOrg` 会补上每个人此刻的 `activity`（在想 / 在做）。
+			// 没有 `read`（测试装配）就退回纯投影 —— 少一个字段，不会错。
+			const org = read === undefined ? orgView(snap.identities, snap.directory) : await read.readOrg();
+			broadcast(orgClients, encodeEvent({ type: "org", org }));
 		}
-		for (const id of [...channelClients.keys()]) pushChannel(id, snap, pushed.get(id) ?? 0);
+		for (const id of [...channelClients.keys()]) {
+			pushChannel(id, snap, pushed.get(id) ?? 0);
+			await pushTrace(id);
+		}
 	}
 
 	/** 排一次推送（去抖，全局一个定时器）。 */
@@ -222,7 +277,11 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots) {
 		// 连接建立即推补齐（首屏全量；带 since 时只补增量）。
 		void prime(response, id, since);
 		response.on("close", () => {
-			if (clients.size === 0) channelClients.delete(id);
+			if (clients.size === 0) {
+				channelClients.delete(id);
+				traceSig.delete(id);
+				traceOpen.delete(id);
+			}
 		});
 	}
 
@@ -254,6 +313,8 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots) {
 		}
 		channelClients.clear();
 		pushed.clear();
+		traceSig.clear();
+		traceOpen.clear();
 	}
 
 	return { streamOrg, streamChannel, start, close };

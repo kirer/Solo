@@ -148,3 +148,46 @@ describe("历史过程 kind：过滤，不画成普通行", () => {
 		expect(types([m(1, "think", T), m(2, "tool", T + SEC)])).toEqual([]);
 	});
 });
+
+describe("轨迹：run 行挂在触发它的那条消息下面", () => {
+	const turn = (seq: number, slug: string, status = "done") => ({
+		channelId: "c1",
+		seq,
+		slug,
+		label: slug,
+		status,
+		startedAt: T,
+		stepCount: 3,
+		summary: "跑了 1 条命令",
+	});
+
+	it("有轨迹的消息后面跟一行 run，里面是那几轮", () => {
+		const turns = new Map([[1, [turn(1, "zhiyan"), turn(1, "linyue")]]]);
+		const rows = buildRows({ messages: [m(1, "say", T)], turns, now: T + MIN });
+		expect(rows.map((row) => row.type)).toEqual(["say", "run"]);
+		const run = rows[1];
+		if (run?.type !== "run") throw new Error("第二行应该是 run");
+		expect(run.seq).toBe(1);
+		expect(run.turns.map((item) => item.slug)).toEqual(["zhiyan", "linyue"]);
+	});
+
+	it("没有轨迹就不多画一行（说了句话不等于干了件大事）", () => {
+		const rows = buildRows({ messages: [m(1, "say", T)], turns: new Map(), now: T + MIN });
+		expect(rows.map((row) => row.type)).toEqual(["say"]);
+	});
+
+	it("轨迹只挂在自己的 seq 上，不会串到隔壁那条消息", () => {
+		const turns = new Map([[2, [turn(2, "zhiyan")]]]);
+		const rows = buildRows({ messages: [m(1, "say", T), m(2, "say", T + SEC)], turns, now: T + MIN });
+		expect(rows.map((row) => row.type)).toEqual(["say", "say", "run"]);
+		const run = rows[2];
+		if (run?.type !== "run") throw new Error("最后一行应该是 run");
+		expect(run.seq).toBe(2);
+	});
+
+	it("系统 note 也能挂轨迹（它同样会叫醒人）", () => {
+		const turns = new Map([[1, [turn(1, "zhiyan")]]]);
+		const rows = buildRows({ messages: [m(1, "note", T)], turns, now: T + MIN });
+		expect(rows.map((row) => row.type)).toEqual(["note", "run"]);
+	});
+});

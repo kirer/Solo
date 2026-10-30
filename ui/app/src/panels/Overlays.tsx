@@ -9,9 +9,9 @@
 
 import { avatarSvg } from "../lib/avatar.ts";
 import { relTime } from "../lib/format.ts";
-import { openChannel, setLayout, setNeedMenu, setSettings, setTeam, setTheme } from "../state/store.ts";
+import { openChannel, setNeedMenu, setSettings, setTeam, setTheme } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
-import type { Layout, Theme } from "../state/store.ts";
+import type { Theme } from "../state/store.ts";
 
 export function Overlays(props: {
 	toasts: readonly { id: number; text: string; tone: "info" | "error" }[];
@@ -19,13 +19,12 @@ export function Overlays(props: {
 	const settings = useStore((state) => state.settings);
 	const team = useStore((state) => state.team);
 	const needMenu = useStore((state) => state.needMenu);
-	const layout = useStore((state) => state.layout);
 	const theme = useStore((state) => state.theme);
 	const attention = useStore((state) => state.attention);
 
 	return (
 		<>
-			{settings ? <SettingsSheet layout={layout} theme={theme} /> : null}
+			{settings ? <SettingsSheet theme={theme} /> : null}
 			{team ? <TeamSheet /> : null}
 			{needMenu ? (
 				<div className="need-menu pop-menu" id="need-menu" role="menu">
@@ -97,31 +96,6 @@ function highlight(seq: number): void {
 
 /* ── 设置 ────────────────────────────────────────────────────────────── */
 
-const LAYOUTS: readonly { value: Layout; text: string; hint: string; icon: JSX.Element }[] = [
-	{
-		value: "flat",
-		text: "平铺",
-		hint: "一列到底，扫读快",
-		icon: (
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-				<path d="M4 7h10M4 12h16M4 17h12" />
-				<circle cx="18.5" cy="7" r="1.2" fill="currentColor" stroke="none" />
-			</svg>
-		),
-	},
-	{
-		value: "bubble",
-		text: "气泡",
-		hint: "你靠右，别人靠左",
-		icon: (
-			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-				<rect x="3" y="5" width="11" height="6" rx="3" />
-				<rect x="10" y="13" width="11" height="6" rx="3" />
-			</svg>
-		),
-	},
-];
-
 const THEMES: readonly { value: Theme; text: string; hint: string; icon: JSX.Element }[] = [
 	{
 		value: "system",
@@ -157,7 +131,7 @@ const THEMES: readonly { value: Theme; text: string; hint: string; icon: JSX.Ele
 	},
 ];
 
-function SettingsSheet(props: { layout: Layout; theme: Theme }): JSX.Element {
+function SettingsSheet(props: { theme: Theme }): JSX.Element {
 	return (
 		<section className="settings" id="settings" role="dialog" aria-modal="true" aria-label="设置">
 			<div
@@ -175,29 +149,6 @@ function SettingsSheet(props: { layout: Layout; theme: Theme }): JSX.Element {
 					</button>
 				</div>
 				<div className="settings-body">
-					<div className="settings-section">
-						<h3>消息布局</h3>
-						<p className="settings-hint">平铺适合扫读，气泡分得清谁在说。</p>
-						<div className="settings-options is-two" id="layout-options">
-							{LAYOUTS.map((item) => (
-								<button
-									type="button"
-									key={item.value}
-									className="opt"
-									data-layout={item.value}
-									aria-checked={props.layout === item.value}
-									onClick={() => setLayout(item.value)}
-								>
-									<span className="opt-ico">{item.icon}</span>
-									<span className="opt-text">{item.text}</span>
-									{item.hint === "" ? null : <span className="opt-hint">{item.hint}</span>}
-									<span className="opt-tick" aria-hidden="true">
-										✓
-									</span>
-								</button>
-							))}
-						</div>
-					</div>
 					<div className="settings-section">
 						<h3>外观</h3>
 						<p className="settings-hint">深色在晚上不刺眼，浅色在白天更清楚。</p>

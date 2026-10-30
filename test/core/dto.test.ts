@@ -94,6 +94,7 @@ describe("view/dto.ts 是唯一权威", () => {
 		const exported = [...block.matchAll(/(?:\w+\s+as\s+)?(\w+)\s*,/g)].map((match) => match[1]);
 		expect(exported.sort()).toEqual(
 			[
+				"Activity",
 				"Actor",
 				"Attachment",
 				"AttentionItem",
@@ -108,6 +109,8 @@ describe("view/dto.ts 是唯一权威", () => {
 				"PersonMemory",
 				"PersonProfile",
 				"SkillInfo",
+				"Step",
+				"Turn",
 				"Uploaded",
 			].sort(),
 		);

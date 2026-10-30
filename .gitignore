@@ -27,3 +27,6 @@ coverage/
 .idea/
 .vscode/
 .taste-skill/
+
+# Superdesign 画布状态（工具产物，不是文档）
+.superdesign/

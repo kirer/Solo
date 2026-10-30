@@ -71,6 +71,25 @@ export function clockTime(at: number): string {
 	return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
+/**
+ * 耗时说人话：`0.4s` / `3.2s` / `1m 12s` / `2h 03m`。
+ *
+ * 规则来自 DESIGN §2.3：10 秒以内留一位小数（「3.2s」比「3s」更能看出快慢），
+ * 一分钟以上进位到分，小时以上进位到小时 —— 一个步骤跑到几小时是异常，不需要秒。
+ */
+export function humanDuration(ms: number): string {
+	if (!Number.isFinite(ms) || ms < 0) return "";
+	const seconds = ms / 1000;
+	// 不到一秒写 `<1s`：`0.0s` 读起来像「没跑」，而它其实跑了。
+	if (seconds < 1) return "<1s";
+	if (seconds < 10) return `${seconds.toFixed(1)}s`;
+	if (seconds < 60) return `${String(Math.round(seconds))}s`;
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${String(minutes)}m ${String(Math.floor(seconds % 60)).padStart(2, "0")}s`;
+	const hours = Math.floor(minutes / 60);
+	return `${String(hours)}h ${String(minutes % 60).padStart(2, "0")}m`;
+}
+
 /** 同一天的时刻分隔条：`今天 14:05` / `10月26日 14:05`。 */
 export function dayLabel(at: number, now: number = Date.now()): string {
 	const date = new Date(at);

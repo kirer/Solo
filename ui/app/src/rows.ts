@@ -1,29 +1,26 @@
 /**
  * 行级规则。
  *
- * ADR-081 之后这里只剩一条：**这一条要不要我处理**（顶栏「N 件找你」与左侧 2px 竖线
- * 的唯一来源）。过程行（think / tool / work）、step 合并、「正在处理」占位、「正在说」
- * 草稿全部删掉了 —— 屏幕上只有真实消息，见 `stream/model.ts`。
+ * 这里只剩一条：**这一条要不要我处理**（顶栏「N 件找你」与左侧 2px 竖线的唯一来源）。
+ *
+ * 判据在后端（`project.ts` 的 `needsYou`：显式 @ 我，或问句点名我），界面只读
+ * `needsYou` 这个字段。以前这里自己猜「kind === question 且 mentions 里有 0」，
+ * 猜漏了 `needsYou` 已经判出来的那一半 —— 两份判据迟早不一致。
  */
 
 import type { Message } from "./api/types.ts";
 
 /** 判定「需要你」真正用到的字段。 */
 export type MsgLike = {
-	kind?: string | undefined;
+	needsYou?: true | undefined;
 	fromSlug?: string | undefined;
-	mentions?: { id: number }[] | undefined;
 };
 
 export type AnyMsg = MsgLike | Message | undefined;
 
-/** 一条消息是不是「需要你」。owner 的 id 恒为 0。 */
-export function isNeed(message: AnyMsg) {
+/** 一条消息是不是「需要你」。我自己说的话永不算。 */
+export function isNeed(message: AnyMsg): boolean {
 	if (!message) return false;
 	if (message.fromSlug === "owner") return false;
-	// 提问，且点名了我。
-	if (message.kind === "question") {
-		return Array.isArray(message.mentions) && message.mentions.some((m) => m.id === 0);
-	}
-	return false;
+	return message.needsYou === true;
 }

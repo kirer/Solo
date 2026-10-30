@@ -8,8 +8,8 @@
  */
 
 import { useEffect, useRef } from "react";
-import type { Message } from "../api/types.ts";
-import { applyMessage, refreshLists, setConn } from "../state/store.ts";
+import type { Message, Org, Turn } from "../api/types.ts";
+import { applyMessage, applyOrg, applyTurn, refreshLists, setConn } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 打不开就等一等再试，退避到 15 秒封顶：服务重启期间不要每 100ms 打一次。 */
@@ -26,8 +26,11 @@ export function useOrgStream(): void {
 		const connect = (): void => {
 			if (closed) return;
 			source = new EventSource("/api/stream/org");
-			source.addEventListener("org", () => {
+			source.addEventListener("org", (event) => {
 				retry = RETRY_MIN_MS;
+				// 组织快照就在事件里（人、名字、此刻谁在跑），别再发一次 HTTP 拉它。
+				const org = parse<Org>(event);
+				if (org !== null && Array.isArray(org.people)) applyOrg(org);
 				// 侧栏与「找你」的刷新只有一条路（`store.refreshLists`）：org 推送很密，
 				// 一条消息会连带推好几条事件，这里只要把「有新东西了」交给 store。
 				void refreshLists();
@@ -68,6 +71,10 @@ export function useChannelStream(): void {
 		source.addEventListener("create", (event) => {
 			const message = parse<Message>(event);
 			if (message !== null && message.seq !== undefined) applyMessage(currentId, message);
+		});
+		source.addEventListener("trace", (event) => {
+			const turn = parse<Turn>(event);
+			if (turn !== null && typeof turn.seq === "number") applyTurn(currentId, turn);
 		});
 		source.addEventListener("error", () => {
 			source.close();

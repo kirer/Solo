@@ -26,6 +26,14 @@ export {
 
 export type { Conversation, Cursor, EntryRecord, Harness, InputEntry, PromptSection, UserInput } from "@earendil-works/pi-durable";
 
+/**
+ * 会话的 live 状态（`run` / `generation` / `tools`）。
+ *
+ * 界面要的「在想 / 在做」只有这一个出处：`run` 在就是忙，`generation` 在就是想，
+ * `tools` 里有 running 的调用就是在做。**不落库、不猜消息**。
+ */
+export type { LiveState } from "@earendil-works/pi-durable";
+
 /** 会话条目标载荷的类型（底层要求严格 JSON）。 */
 export type { JsonValue } from "@earendil-works/chord";
 /** 文档根的类型（底层要求是 JSON 对象，不是任意 JSON 值）。 */

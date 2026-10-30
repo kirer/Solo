@@ -11,7 +11,7 @@
  */
 
 import { isNeed } from "../rows.ts";
-import type { Message } from "../api/types.ts";
+import type { Message, Turn } from "../api/types.ts";
 import { clockTime, dayLabel, sameDay } from "../lib/format.ts";
 
 /** 说人话的 kind 走 say 行。其余（含历史里的 think/tool/work）不走这一行。 */
@@ -45,10 +45,17 @@ export type Row =
 			cont: boolean;
 			need: boolean;
 	  }
-	| { type: "note"; key: string; message: Message };
+	| { type: "note"; key: string; message: Message }
+	/**
+	 * 一条消息叫醒的那几轮（一个人一行）。挂在**触发它的那条消息下面** —— 读者要的是
+	 * 「我说了这句之后，他做了什么」，不是按时间混排的另一条流。
+	 */
+	| { type: "run"; key: string; seq: number; turns: readonly Turn[] };
 
 export type BuildInput = {
 	messages: readonly Message[];
+	/** 当前频道里每一轮的轨迹，按触发消息的 seq 分桶。没有就是没有过程可画。 */
+	turns?: ReadonlyMap<number, Turn[]> | undefined;
 	now?: number;
 };
 
@@ -57,7 +64,7 @@ function dividerLabel(at: number, now: number): string {
 	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
-export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
+export function buildRows({ messages, turns, now = Date.now() }: BuildInput): Row[] {
 	const rows: Row[] = [];
 	let previous: Message | undefined;
 	let previousSay: Message | undefined;
@@ -66,6 +73,13 @@ export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
 		rows.push({ type: "divider", key: `d-${message.seq}`, label: dividerLabel(message.at, now) });
 		// 分隔之后不再算「同一段」：屏幕上已经断开了。
 		previousSay = undefined;
+	};
+
+	/** 这一条消息叫醒的那几轮，紧跟在它下面。 */
+	const attachTurns = (message: Message): void => {
+		const list = turns?.get(message.seq);
+		if (list === undefined || list.length === 0) return;
+		rows.push({ type: "run", key: `t-${message.seq}`, seq: message.seq, turns: list });
 	};
 
 	for (const message of messages) {
@@ -88,12 +102,14 @@ export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
 				cont: grouped && gap <= CONT_MS,
 				need: isNeed(message),
 			});
+			attachTurns(message);
 			previousSay = message;
 			continue;
 		}
 
 		if (message.kind === "note") {
 			rows.push({ type: "note", key: `n-${message.seq}`, message });
+			attachTurns(message);
 			previousSay = undefined;
 			continue;
 		}

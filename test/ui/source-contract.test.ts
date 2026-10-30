@@ -52,7 +52,6 @@ describe("设置面板的选中态", () => {
 	});
 
 	it("按钮写的是 aria-checked，不是 aria-pressed", () => {
-		expect(overlays).toContain("aria-checked={props.layout === item.value}");
 		expect(overlays).toContain("aria-checked={props.theme === item.value}");
 		expect(overlays).not.toContain("aria-pressed");
 	});

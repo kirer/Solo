@@ -15,6 +15,7 @@ import type {
 	Org,
 	PersonMemory,
 	PersonProfile,
+	Turn,
 	Uploaded,
 } from "./types.ts";
 
@@ -49,6 +50,18 @@ export const getChannel = (id: string, limit = 40): Promise<ChannelDetail> =>
 /** 更早的一页（`before` 是当前最早那条的 seq）。 */
 export const getEarlier = (id: string, before: number, limit = 30): Promise<ChannelDetail> =>
 	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}&before=${before}`);
+
+/**
+ * 一段消息窗口里每一轮的轨迹（**不带步骤**）。
+ *
+ * 折叠态只要摘要。展开时再拉 `getTurn` —— 一屏十几轮、每轮八步，一次全带会撑到几百 KB。
+ */
+export const getTurns = (id: string, from: number, to: number): Promise<{ turns: Turn[] }> =>
+	call(`/api/channels/${encodeURIComponent(id)}/turns?from=${String(from)}&to=${String(to)}`);
+
+/** 一轮的完整轨迹（带步骤）。找不到（没被叫醒 / 条目已被压缩）就是 `null`。 */
+export const getTurn = (id: string, seq: number, slug: string): Promise<{ turn: Turn | null }> =>
+	call(`/api/channels/${encodeURIComponent(id)}/turn?seq=${String(seq)}&slug=${encodeURIComponent(slug)}`);
 
 /** 发一条消息（带 `replyTo` 就是引用某条）。 */
 export const sendMessage = (

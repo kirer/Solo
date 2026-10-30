@@ -17,15 +17,16 @@ import {
 	getEarlier,
 	getOrg,
 	getPerson,
+	getTurn,
+	getTurns,
 	markRead as markReadApi,
 	sendMessage,
 } from "../api/client.ts";
-import type { Actor, AttentionItem, Channel, ChannelDetail, Message, PersonProfile } from "../api/types.ts";
+import type { Actor, Activity, AttentionItem, Channel, ChannelDetail, Message, Org, PersonProfile, Turn } from "../api/types.ts";
 import { sortChannels } from "../lib/format.ts";
 import { mark } from "../lib/jank.ts";
 
 export type Presence = "idle" | "working" | "thinking" | "asleep";
-export type Layout = "flat" | "bubble";
 export type Theme = "system" | "light" | "dark";
 export type Side = "open" | "rail";
 
@@ -43,9 +44,21 @@ export type State = {
 	attention: AttentionItem[];
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
+	/**
+	 * 此刻谁在跑（来自 `/api/org` 的 `people[].activity`）。
+	 *
+	 * 与 `presence` 是同一件事的两种画法：`presence` 给头像与圆点，这里给活动条上那句
+	 * 「知言 正在跑 npm test」。没有这个键 = 待命。
+	 */
+	activity: Map<string, Activity>;
+	/**
+	 * 当前频道里每一轮的轨迹，按触发消息的 seq 分桶（一条消息可以叫醒好几个人）。
+	 *
+	 * 折叠版只有摘要（`stepCount` / `summary`）；展开时 `loadTurn` 再拉步骤。
+	 */
+	turns: Map<number, Turn[]>;
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
-	layout: Layout;
 	theme: Theme;
 	side: Side;
 	right: { open: boolean };
@@ -58,11 +71,8 @@ export type State = {
 	trail: RightEntry[];
 	/** 右侧栏正在看的那个人（`null` = 看频道本身）。 */
 	person: PersonProfile | null;
-	/** 记忆抽屉正在看谁（`null` = 抽屉关着）。 */
-	memoryPerson: { slug: string; label: string } | null;
 };
 
-const LAYOUT_KEY = "solo.layout";
 const THEME_KEY = "solo.theme";
 const SIDE_KEY = "solo.side";
 
@@ -83,8 +93,9 @@ const initial: State = {
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
+	activity: new Map(),
+	turns: new Map(),
 	conn: { ok: true, lastOkAt: Date.now() },
-	layout: read(LAYOUT_KEY, ["flat", "bubble"], "bubble"),
 	theme: read(THEME_KEY, ["system", "light", "dark"], "system"),
 	side: read(SIDE_KEY, ["open", "rail"], "open"),
 	right: { open: false },
@@ -94,7 +105,6 @@ const initial: State = {
 	reply: null,
 	trail: [{ kind: "channel" }],
 	person: null,
-	memoryPerson: null,
 };
 
 let state: State = initial;
@@ -145,9 +155,26 @@ function strip(channel: Channel): ChannelDetail["channel"] {
 	return rest;
 }
 
+/**
+ * 收下一份组织快照：人、组织名、以及「谁此刻在跑」。
+ *
+ * `activity` 只在**有会话在跑**时出现 —— 没有这个键就是待命，界面不自己编状态。
+ */
+export function applyOrg(org: Org): void {
+	const activity = new Map<string, Activity>();
+	const presence = new Map<string, { state: Presence; at: number }>();
+	for (const actor of org.people) {
+		const found = actor.activity;
+		if (found === undefined) continue;
+		activity.set(actor.slug, found);
+		presence.set(actor.slug, { state: found.state, at: found.since });
+	}
+	patch({ workspaceName: org.workspace.name, people: org.people, activity, presence });
+}
+
 export async function bootstrap(): Promise<void> {
 	const org = await getOrg();
-	patch({ workspaceName: org.workspace.name, people: org.people });
+	applyOrg(org);
 	await refreshLists();
 	// 进来就落到「最近有动静的那个频道」——空着中栏等于让人先做一次选择。
 	// 只在宽屏上自动落一个频道：手机上中栏是「第二屏」，一进来就跳进去等于
@@ -164,18 +191,18 @@ export async function bootstrap(): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null });
+		patch({ currentId: null, detail: null, hasMore: false, reply: null, turns: new Map() });
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
-	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false });
+	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false, turns: new Map() });
 	const done = mark("channel:open");
 	const detail = await getChannel(id);
 	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
 	patch({ detail, hasMore: detail.hasMore });
-	notePresenceOf(detail.messages);
+	void loadTurns(id, detail.messages);
 	void readToEnd(id, detail.messages);
 }
 
@@ -191,6 +218,7 @@ export async function loadEarlier(): Promise<void> {
 	const done = mark("channel:earlier");
 	try {
 		const page = await getEarlier(currentId, earliest);
+		void loadTurns(currentId, page.messages);
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
 		patch({
 			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
@@ -232,7 +260,6 @@ export function applyMessage(id: string, message: Message): void {
 		next[index] = message;
 	}
 	patch({ detail: { ...current.detail, messages: next } });
-	if (message.fromSlug !== "owner") notePresence(message);
 	done();
 }
 
@@ -267,40 +294,75 @@ async function readToEnd(id: string, messages: readonly Message[]): Promise<void
 	}
 }
 
-/* ── 在场（推导，不落库） ───────────────────────────────────────────── */
+/* ── 轨迹（从会话条目派生，不落库：ADR-001） ────────────────────────── */
 
-function notePresence(message: Message): void {
-	notePresenceOf([message]);
+/** 一条消息叫醒了几个人，就可能有几轮轨迹 —— 按 seq 分桶，同一人只留最新的一帧。 */
+function bucket(turns: Map<number, Turn[]>, turn: Turn): Map<number, Turn[]> {
+	const next = new Map(turns);
+	const list = (next.get(turn.seq) ?? []).filter((item) => item.slug !== turn.slug);
+	list.push(turn);
+	list.sort((left, right) => left.label.localeCompare(right.label));
+	next.set(turn.seq, list);
+	return next;
+}
+
+/** SSE 推来一帧轨迹（`trace` 事件）：覆盖同一 `(seq, slug)`，别的原样。 */
+export function applyTurn(id: string, turn: Turn): void {
+	if (state.currentId !== id) return;
+	patch({ turns: bucket(state.turns, turn) });
 }
 
 /**
- * 从一批消息推导「他现在在干什么」。
+ * 拉一段消息窗口的轨迹（折叠版，不带步骤）。
  *
- * 后端没有「在线状态」这个概念 —— 它是从消息流里推导出来的：think 就是「在想」、
- * tool/work 就是「在做」，说了话就是「待命」。推导放在前端是因为它是**显示**问题：
- * 同一条消息在别人眼里和在你眼里含义相同。
+ * 已经在跑的那几轮不覆盖：SSE 手里那帧比这次 HTTP 更新。窗口里没有轨迹的消息不会出现
+ * 空桶 —— 界面上「这一轮没有过程」与「这一轮的过程还没到」长得不一样。
  */
-function notePresenceOf(messages: readonly Message[]): void {
-	const presence = new Map(state.presence);
-	for (const message of messages) {
-		if (message.fromSlug === "owner") continue;
-		let next: Presence = "idle";
-		if (message.kind === "think") next = "thinking";
-		else if (message.kind === "tool" || message.kind === "work") next = "working";
-		const current = presence.get(message.fromSlug);
-		// 一句「好」不该把「在做」熄灭：只有更强的状态才覆盖，idle 只在没有状态时写。
-		if (next === "idle" && current !== undefined) continue;
-		presence.set(message.fromSlug, { state: next, at: message.at });
+async function loadTurns(id: string, messages: readonly Message[]): Promise<void> {
+	const first = messages[0];
+	const last = messages[messages.length - 1];
+	if (first === undefined || last === undefined) return;
+	let result: { turns: Turn[] };
+	try {
+		result = await getTurns(id, first.seq, last.seq);
+	} catch {
+		return;
 	}
-	patch({ presence });
+	if (getState().currentId !== id) return;
+	let turns = getState().turns;
+	for (const turn of result.turns) turns = bucket(turns, turn);
+	for (const [seq, list] of getState().turns) {
+		for (const turn of list) {
+			if (turn.status !== "running") continue;
+			const kept = turns.get(seq)?.some((item) => item.slug === turn.slug) ?? false;
+			if (!kept) turns = bucket(turns, turn);
+		}
+	}
+	patch({ turns });
+}
+
+/**
+ * 展开一轮：把步骤拉回来（折叠版没有）。
+ *
+ * 找不到（没被叫醒 / 条目已被压缩）就把步骤记成空数组 —— 「确实没有过程」比一直转圈诚实。
+ */
+export async function loadTurn(turn: Turn): Promise<void> {
+	const { currentId } = state;
+	if (currentId === null || turn.steps !== undefined) return;
+	try {
+		const result = await getTurn(currentId, turn.seq, turn.slug);
+		const full = result.turn;
+		if (full !== null) {
+			applyTurn(currentId, full);
+			return;
+		}
+	} catch {
+		// 拉失败就当作没有过程，下次展开还会再试一次。
+	}
+	applyTurn(currentId, { ...turn, steps: [] });
 }
 
 /* ── 界面开关（都落 localStorage） ──────────────────────────────────── */
-
-export function setLayout(layout: Layout): void {
-	localStorage.setItem(LAYOUT_KEY, layout);
-	patch({ layout });
-}
 
 export function setTheme(theme: Theme): void {
 	localStorage.setItem(THEME_KEY, theme);
@@ -344,15 +406,6 @@ export function setNeedMenu(open: boolean): void {
 export type RightEntry = { kind: "channel" } | { kind: "person"; slug: string };
 
 /** 进一个人的人物案。拉不到就抛（由调用方 toast），并把栈恢复原样。 */
-/** 打开某个人的记忆抽屉。没有档案页的人（我）也能看，所以不走 `openPerson`。 */
-export function openMemory(slug: string, label: string): void {
-	patch({ memoryPerson: { slug, label } });
-}
-
-export function closeMemory(): void {
-	patch({ memoryPerson: null });
-}
-
 export async function openPerson(slug: string): Promise<void> {
 	try {
 		const profile = await getPerson(slug);

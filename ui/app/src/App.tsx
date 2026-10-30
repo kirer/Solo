@@ -6,10 +6,10 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { ActivityBar } from "./composer/ActivityBar.tsx";
 import { Composer } from "./composer/Composer.tsx";
 import { useToasts } from "./hooks/useToasts.ts";
 import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
-import { MemoryDrawer } from "./panels/MemoryDrawer.tsx";
 import { Overlays } from "./panels/Overlays.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
@@ -32,7 +32,6 @@ export function App(): JSX.Element {
 	const channels = useStore((state) => state.channels);
 	const detail = useStore((state) => state.detail);
 	const side = useStore((state) => state.side);
-	const layout = useStore((state) => state.layout);
 	const theme = useStore((state) => state.theme);
 	const right = useStore((state) => state.right);
 	const conn = useStore((state) => state.conn);
@@ -62,11 +61,6 @@ export function App(): JSX.Element {
 		media.addEventListener("change", apply);
 		return () => media.removeEventListener("change", apply);
 	}, [theme]);
-
-	useEffect(() => {
-		document.body.dataset["layout"] = layout;
-		localStorage.setItem("solo.layout", layout);
-	}, [layout]);
 
 	useEffect(() => {
 		document.body.dataset["side"] = side;
@@ -230,14 +224,13 @@ export function App(): JSX.Element {
 					<Stream onImage={setImage} />
 				)}
 
+				<ActivityBar />
 				<Composer toast={toast} />
 			</main>
 
 			<RightPanel />
 
 			<Overlays toasts={toasts} />
-
-			<MemoryDrawer toast={toast} />
 
 			{image === null ? null : (
 				<div className="lightbox" id="lightbox" role="dialog" aria-modal="true" onClick={() => setImage(null)}>

@@ -137,6 +137,26 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
+			// 一段消息窗口里每一轮的轨迹（**不带步骤**）。折叠行只要摘要。
+			pattern: "/api/channels/:id/turns",
+			method: "GET",
+			handler: async ({ response, url, params }) => {
+				const from = numberParam(url, "from") ?? 0;
+				const to = numberParam(url, "to") ?? Number.MAX_SAFE_INTEGER;
+				return json(response, await app.read.readTurns(params.id ?? "", from, to));
+			},
+		},
+		{
+			// 一轮的完整轨迹（带步骤）。展开时按 (seq, slug) 拉一次。
+			pattern: "/api/channels/:id/turn",
+			method: "GET",
+			handler: async ({ response, url, params }) => {
+				const seq = numberParam(url, "seq") ?? 0;
+				const slug = url.searchParams.get("slug") ?? "";
+				return json(response, await app.read.readTurn(params.id ?? "", seq, slug));
+			},
+		},
+		{
 			pattern: "/api/channels/:id",
 			method: "GET",
 			handler: async ({ response, url, params }) => {

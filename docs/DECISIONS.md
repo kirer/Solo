@@ -26,3 +26,48 @@
 不写施工流水与文件清单（那些在 `docs/CODE.md`），也不写「以后可能怎样」的猜测。
 
 ---
+
+## ADR-001 轨迹从会话条目派生，不落库
+
+- **背景**：V3 把 `think` / `tool` / `work` 的过程投影从频道里删掉了 —— 它们混在人的对话里，
+  机器留痕被读成「他说了这句话」。删干净之后，agent 干活的几分钟界面上是静的：
+  跑了什么命令、改了哪个文件、为什么失败，只能事后翻日志。CONCESSIONS C-007 也记过：
+  草稿和 token 流都不可靠，删了。
+- **决策**：轨迹**只读派生**，不新增表、不写频道、不发草稿。一轮 = 会话里那条
+  `kind: "core.channel"`（`data` 带 `channelId` / `seq`）到下一条 `core.channel` 之间的全部条目；
+  助手消息里的 `thinking` / `text` / `toolCall` 与工具结果本来就在会话里。
+  新接口 `GET /api/channels/:id/trace` 读它，SSE `trace` 只推节流后的快照。
+- **执行**：切轮与摘要写成纯函数（服务端切轮、前端排版，同一套判据各一份），单测守
+  「摘要文案、连续 think 合并、`[PASS]` 不画、截断」；`check-boundaries.mjs` 要求新路由
+  在前端有消费者。
+- **取舍**：读一次要扫会话条目（单轮上限 200 步、64 KB）；进程重启或会话回收后，历史轨迹
+  可能读不到（返回 `null`，界面不画）。换来的是频道里永远只有人说的话 —— 机器做过什么，
+  在另一个维度里看。
+- **验收**：真模型跑一轮，轨迹里的命令/文件与频道里的结论对得上；刷新后同一条轨迹仍在；
+  `workspace/core.sqlite` 不因轨迹变大。
+
+## ADR-002 前端保持 React 18 + Vite，桌面端后置成壳
+
+- **背景**：参考实现（deepseek-harness）是 `apps/web`（Vite + React）+ `apps/desktop`（Electron 壳），
+  客户端逻辑收在共享的 client 层。我们已经有 React 18 + Vite + 手写 CSS，换栈的收益为零。
+- **决策**：不换框架、不引组件库、不引 Tailwind。平台差异只经过 `ui/app/src/platform.ts`
+  （storage / openExternal / copy）。桌面端以后用 Electron 加载同一个本地服务，不重写界面。
+- **执行**：不引平台抽象层（一开始写的 `platform.ts` 没落地 —— 为两个调用写一层壳，
+  比直接调更绕）。`localStorage` 只出现在 `state/store.ts`（界面开关与轨迹展开状态），
+  剪贴板走 `lib/format.ts` 的 `copyText`；这两处是以后套壳时唯一要看的文件。
+- **取舍**：放弃「一次做成跨端组件库」；换来改造面小、样式完全可控、六档字号不被工具类打散。
+- **验收**：`grep -r "localStorage" ui/app/src` 只命中 `state/store.ts` 与 `stream/RunBlock.tsx`；
+  `npm run ui:build` 的产物能被 Electron 直接加载。
+
+## ADR-003 轨迹接口拆成「窗口摘要」与「单轮全文」
+
+- **背景**：ADR-001 写的是 `GET /api/channels/:id/trace?seq=`，一次返回一轮的完整步骤。
+  实现时发现两个问题：① 一条消息可以叫醒多个人，`seq` 不唯一；② 消息流首屏有十几轮，
+  每轮八步，全带会把一次读放大到几百 KB。
+- **决策**：拆成两条 —— `GET /api/channels/:id/turns?from&to` 返回窗口内每一轮的**折叠版**
+  （`stepCount` + `summary`，不带 `steps`）；`GET /api/channels/:id/turn?seq&slug` 返回
+  一轮的完整步骤。SSE `trace` 推正在跑的那几轮的瘦身版（每步输出 ≤ 2 KB）。
+  这是 ADR-001 的接口细化，**不改变「不落库」那条**。
+- **取舍**：折叠态与展开态是两种形状，前端要认 `steps === undefined` 是「还没拉」而不是
+  「没有过程」；换来首屏读小、展开只拉一次。
+- **验收**：`npm test` 的 `test/core/trace.test.ts`；真模型跑一轮时，折叠行有摘要、点开有步骤。
