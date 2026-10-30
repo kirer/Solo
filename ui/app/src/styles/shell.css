@@ -245,16 +245,6 @@
 	scrollbar-gutter: stable;
 }
 
-/* 「在做」是唯一带颜色的状态：一个 --live 小点。 */
-.p-status[data-state="working"]::before {
-	content: "";
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: var(--live);
-	flex: none;
-}
-
 .channels {
 	flex: 1 1 auto;
 	min-height: 0;
@@ -344,14 +334,6 @@
 	font-size: 13px;
 	line-height: 20px;
 	font-weight: 500;
-}
-
-.ch-meta {
-	display: flex;
-	flex-direction: column;
-	align-items: flex-end;
-	gap: 3px;
-	flex: none;
 }
 
 .ch-time {
@@ -565,16 +547,6 @@
 	color: var(--ink);
 }
 
-.menu-tick {
-	width: 12px;
-	flex: none;
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-	opacity: 0;
-	transition: opacity var(--dur-line) ease;
-}
-
 .menu-item[aria-checked="true"] .menu-tick {
 	opacity: 1;
 }
@@ -649,59 +621,14 @@
 	font-weight: 500;
 }
 
-.crew-line {
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-}
-
-.crew-report {
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-	white-space: nowrap;
-}
-
-/* 「记忆」：安静地待在行尾，鼠标进这一行才显形。
-   常驻显示会让 8 行名册变成 8 个按钮，抢掉「向谁汇报」那条信息的视线。 */
-/* 记忆入口常显但压暗：默认 opacity:0 的话，不悬停根本不知道有这个功能
-   （用户明确要求「每个人有记忆管理」，藏起来的入口等于没有）。 */
-.crew-mem {
-	padding: 3px 8px;
-	font-family: inherit;
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-2);
-	cursor: pointer;
-	background: transparent;
-	border: 1px solid var(--line);
-	border-radius: 999px;
-	opacity: 0.55;
-	transition:
-		opacity var(--dur-line) var(--ease-line),
-		background var(--dur-tap) var(--ease-tap);
-}
-
 .crew:hover .crew-mem,
 .crew-mem:focus-visible {
 	opacity: 1;
 }
 
-.crew-mem:hover {
-	color: var(--ink);
-	background: var(--ground);
-	border-color: var(--control);
-}
-
 /* 触屏没有 hover，直接常显。 */
 @media (hover: none) {
-	.crew-mem {
-		opacity: 1;
 	}
-}
 
 .team-foot {
 	padding: 10px 20px 14px;
@@ -878,39 +805,7 @@
 		grid-template-columns: var(--av-md) minmax(0, 1fr);
 	}
 
-	.crew-report {
-		display: none;
 	}
-}
-
-/* ── 详情浮层（右上角 ⓘ）：这个人 / 这个群 ─────────────────────────── */
-
-/* 私聊副标题里的状态：带边框的标签，不是灰字。
-   「睡了」两个字放在一排灰字里会读成项目名；加边框才读得出「这是个状态」。 */
-/* 只有这一段可以省略；右边的状态标签永远完整（它是这条头部的重点）。 */
-.pane-text {
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
-.pane-state {
-	display: inline-block;
-	flex: none;
-	margin-inline-start: 8px;
-	padding: 1px 7px;
-	border: 1px solid var(--line);
-	border-radius: 999px;
-	font-size: 11px;
-	line-height: 16px;
-	color: var(--ink-2);
-	white-space: nowrap;
-}
-
-.pane-dot {
-	margin: 0 6px;
-	color: var(--ink-3);
-}
 
 /* 右侧栏 = 第三列。列宽由 --rightbar 过渡，内容自己滑进来（见 .detail-panel > * 的动画）。 */
 .detail {
@@ -1459,7 +1354,6 @@
 		transform: none;
 	}
 }
-
 
 .settings-options .opt[aria-checked="true"] .opt-tick {
 	opacity: 1;

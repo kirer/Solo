@@ -577,27 +577,6 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 	text-overflow: ellipsis;
 }
 
-/* ── 长消息折叠 ─────────────────────────────────────────────────────── */
-
-.fold[data-folded="true"] {
-	max-height: 180px;
-	overflow: hidden;
-	-webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent);
-	mask-image: linear-gradient(to bottom, #000 72%, transparent);
-}
-
-.fold-btn {
-	margin-top: 4px;
-	height: 22px;
-	font-size: 12px;
-	line-height: 16px;
-	color: var(--ink-2);
-}
-
-.fold-btn:hover {
-	color: var(--ink);
-}
-
 /* ── note 行 ────────────────────────────────────────────────────────── */
 
 .row-note {
@@ -612,39 +591,6 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 	color: var(--ink-3);
 	overflow-wrap: anywhere;
 	text-wrap: pretty;
-}
-
-/* ── 时间分隔 ───────────────────────────────────────────────────────── */
-
-.time-sep {
-	display: flex;
-	justify-content: center;
-	align-items: center;
-	height: 28px;
-	margin: 14px 0 2px;
-	font-size: 12px;
-	line-height: 16px;
-	color: var(--ink-3);
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-}
-
-.new-sep {
-	display: flex;
-	align-items: center;
-	gap: 10px;
-	margin: 10px 0 2px;
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-}
-
-.new-sep::before,
-.new-sep::after {
-	content: "";
-	flex: 1;
-	height: 1px;
-	background: var(--line);
 }
 
 /* ── 动作条 ─────────────────────────────────────────────────────────── */
@@ -842,23 +788,6 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 	text-align: center;
 }
 
-/* 「从谁开始」：点一下把人 @ 进输入框。头像 20 与文字基线对齐。 */
-.empty-hints {
-	display: flex;
-	flex-wrap: wrap;
-	justify-content: center;
-	align-items: center;
-	gap: 6px;
-	margin-top: 14px;
-}
-
-.empty-hints-cap {
-	font-size: 12px;
-	line-height: 16px;
-	color: var(--ink-3);
-	margin-inline-end: 2px;
-}
-
 .empty-hint {
 	display: inline-flex;
 	align-items: center;
@@ -880,13 +809,6 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 .empty-hint:focus-visible {
 	border-color: var(--accent);
 	background: var(--accent-wash);
-}
-
-.empty-hint-av {
-	display: grid;
-	place-items: center;
-	width: 20px;
-	height: 20px;
 }
 
 .empty b {

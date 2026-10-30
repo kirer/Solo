@@ -10,6 +10,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Attachment } from "../api/types.ts";
+import { uploadUrl } from "../api/client.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { clockTime, copyText, humanBytes } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
@@ -313,9 +314,9 @@ function Attachments(props: {
 							key={item.id}
 							type="button"
 							className="attach-thumb"
-							onClick={() => props.onImage(`/api/uploads/${item.id}`)}
+							onClick={() => props.onImage(uploadUrl(item.id))}
 						>
-							<img src={`/api/uploads/${item.id}`} alt={item.name} loading="lazy" />
+							<img src={uploadUrl(item.id)} alt={item.name} loading="lazy" />
 						</button>
 					))}
 				</div>
@@ -323,7 +324,7 @@ function Attachments(props: {
 			{files.length === 0 ? null : (
 				<div className="attach-files">
 					{files.map((item) => (
-						<a key={item.id} className="attach-file" href={`/api/uploads/${item.id}?download=1`} download={item.name}>
+						<a key={item.id} className="attach-file" href={`${uploadUrl(item.id)}?download=1`} download={item.name}>
 							<span className="attach-ico" aria-hidden="true">
 								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
 									<path d="M5 4h9l5 5v11H5z" />

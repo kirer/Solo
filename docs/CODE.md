@@ -50,12 +50,12 @@ shell = 装配层，唯一可以同时 import 全部
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
    不许 import `agent|channel|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
 
-## 2. 全量文件（`src/core` 下 46 个 ts，10169 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 46 个 ts，10156 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
 | `fsx.ts` | 130 | `createFsx(root)` → `{read / write / list / exists / remove}`，路径一律相对工作区，越界抛 `FsxEscapeError`；列表用**码点**排序（`localeCompare` 跟机器 locale 变，会打穿 prompt cache）；读不到返回 `undefined`（缺席是常态），写失败才抛 |
-| `doc.ts` | 86 | `parseDoc` / `renderDoc` / `readDoc` / `writeDoc` / `frontOf` —— identity / 团队 README / SKILL / rules / memory 全是 `{path, front, body}`，只有这一份实现；头只认单行 `key: value`（多行值不解析也不丢）；读入统一换行 |
+| `doc.ts` | 72 | `parseDoc` / `renderDoc` / `frontOf` —— identity / 团队 README / SKILL / rules / memory 全是 `{path, front, body}`，只有这一份实现；头只认单行 `key: value`（多行值不解析也不丢）；读入统一换行 |
 | `text.ts` | 140 | `renderSlots`（返回 `{text, issues}`，装配层要区分两种错）/ `renderTemplate`（只返回文本的便捷壳）/ `slotsIn` / `hasSlot` / `toolSlots`（delivery 段没有注册表可查，`{{tool:say}}` 按后缀自解释——名字写错不报错，靠 seed 侧检查兜）；`unknown`（模板写了、装配没给 = 缺陷）与 `unset`（给了、现在确实是空 = 事实）分开报；不二次展开、纯函数 |
 | `prompt.ts` | 167 | `loadTemplates` / `renderPrompt` / `renderPromptDir` / `promptDirOf`：文件名 `NN-段名.md` 定序（不合法直接抛，顺序是语义）；`skip-empty` 为空则整段消失；`use: delivery` 不进系统提示词；模板缓存只允许落在 async 边界上，不跨轮复用 |
 | `runtime/index.ts` | 36 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `compactionSettings` / `Type` |

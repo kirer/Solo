@@ -240,45 +240,6 @@ img {
 	outline-offset: 2px;
 }
 
-/* ── 字号阶梯（只有这 6 档；字重只有 400/500/600） ───────────────────── */
-
-.t-title {
-	font-size: 22px;
-	line-height: 28px;
-	font-weight: 600;
-	letter-spacing: -0.01em;
-}
-
-.t-label {
-	font-size: 16px;
-	line-height: 24px;
-	font-weight: 500;
-}
-
-.t-body {
-	font-size: 14px;
-	line-height: 24px;
-	font-weight: 400;
-}
-
-.t-name {
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
-}
-
-.t-meta {
-	font-size: 12px;
-	line-height: 16px;
-	font-weight: 400;
-}
-
-.t-micro {
-	font-size: 11px;
-	line-height: 14px;
-	font-weight: 400;
-}
-
 /* 所有数字等宽：时间戳、计数、秒表不会左右跳。 */
 .num,
 time,
@@ -310,23 +271,6 @@ time,
 
 .icon-btn:active {
 	background: var(--active);
-}
-
-/* 文字按钮：没有底色、没有边框、只有字。错误态与「重试」全靠它。 */
-.text-btn {
-	padding: 0 6px;
-	height: 28px;
-	border-radius: var(--r-control);
-	color: var(--ink-2);
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
-	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
-}
-
-.text-btn:hover {
-	background: var(--hover);
-	color: var(--ink);
 }
 
 .topbar-grow,

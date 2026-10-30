@@ -13,32 +13,6 @@ html {
 	transition: background-color 0.18s ease;
 }
 
-/* 顶栏里多一个 28px 的格子。切换动效只过渡背景 / 文字 / 边线，不缩放、不旋转：
-   主题是「环境」在变，按钮自己动起来会把注意力从内容上拽走。 */
-.theme-btn {
-	flex: none;
-	display: inline-grid;
-	place-items: center;
-	width: 28px;
-	height: 28px;
-	border-radius: var(--r-control);
-	color: var(--ink-2);
-	transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease;
-}
-
-.theme-btn:hover {
-	background: var(--hover);
-	color: var(--ink);
-}
-
-.theme-btn:active {
-	background: var(--active);
-}
-
-.theme-btn svg {
-	display: block;
-}
-
 @media (prefers-reduced-motion: reduce) {
 	html,
 	.theme-btn {

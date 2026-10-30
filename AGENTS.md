@@ -60,7 +60,7 @@ test/             60 文件 / 538 例
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 46 个 ts / 10169 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 46 个 ts / 10156 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。

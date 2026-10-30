@@ -13,8 +13,6 @@
  *   提示词字节 —— 那会打穿 prompt cache。
  * - 不排序、不补字段：字段顺序由写的人给死，因为顺序本身就是可读性。
  */
-import type { Fsx } from "./fsx.ts";
-
 /** 一份文档。`path` 是相对工作区的路径（写回去时原样用）。 */
 export type Doc = {
 	readonly path: string;
@@ -67,18 +65,6 @@ export function renderDoc(front: readonly FrontField[], body: string): string {
 	lines.push("---", "", body.trim(), "");
 	return lines.join("\n");
 }
-
-/** 读一份文档。不存在 = `undefined`（缺席是常态，不是错误）。 */
-export async function readDoc(fsx: Fsx, rel: string): Promise<Doc | undefined> {
-	const source = await fsx.readText(rel);
-	return source === undefined ? undefined : parseDoc(rel, source);
-}
-
-/** 写一份文档。父目录由 `fsx` 建。 */
-export async function writeDoc(fsx: Fsx, rel: string, front: readonly FrontField[], body: string): Promise<void> {
-	await fsx.writeText(rel, renderDoc(front, body));
-}
-
 /** 取一个头字段。空串当没有 —— 头里写 `manager:` 与不写 manager 是同一个意思。 */
 export function frontOf(doc: Doc, key: string): string | undefined {
 	const value = doc.front[key];

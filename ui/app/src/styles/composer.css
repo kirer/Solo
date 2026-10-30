@@ -270,37 +270,6 @@
 	text-align: left;
 }
 
-.mi-main {
-	min-width: 0;
-}
-
-.mi-name {
-	display: block;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
-}
-
-.mi-title {
-	display: block;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-}
-
-.mention-empty {
-	padding: 8px;
-	font-size: 12px;
-	line-height: 16px;
-	color: var(--ink-3);
-}
-
 @media (max-width: 640px) {
 	:root {
 		--composer-pad: 12px;

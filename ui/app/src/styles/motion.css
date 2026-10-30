@@ -250,16 +250,6 @@
 	height: 100%;
 }
 
-/* ── 应用在元素上的类 ───────────────────────────────────────────────── */
-
-.veil {
-	animation: veil-in 220ms ease-out both;
-}
-
-.row-new {
-	animation: row-in 240ms var(--ease-pop) both;
-}
-
 .row[data-hl="true"] .row-body {
 	border-radius: 4px;
 	animation: row-hl 1.2s ease-out;
