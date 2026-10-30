@@ -6,6 +6,10 @@
 
 ```
 src/core/
+  fsx.ts          文件系统的唯一入口：全项目只有它 import `node:fs`；路径不许出工作区
+  doc.ts          所有 markdown 都是 `{path, front, body}`：一套 frontmatter 解析与渲染
+  text.ts         插槽渲染：`{{名字}}` → 事实；未知插槽写「（未设置）」并报出来
+  prompt.ts       提示词：读 `workspace/prompt/*.md` → 填插槽 → 按文件名前缀拼段
   runtime/        防腐层：唯一能 import @earendil-works/* 的地方（openCore / models / serialize）
   agent/          一个人：身份 / 提示词 / 记忆 / 技能 / 名册
   team/           一个团队：README.md / memory.md / 自动沉淀
@@ -15,8 +19,9 @@ src/core/
   interface/http/ 唯一 import node:http 的地方：路由表 / SSE / 静态资源 / 来源闸
   shell/          装配与启动：assemble / main / serve / rescue / seed
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
-seed/             起手技能（公司层 + 助理个人层）+ 规矩文案 `rules.md`
-scripts/          三个脚本：边界检查、真实模型自测、team 改名迁移
+seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（公司层）/
+                  `agents/assistant/`（助理身份 + 个人技能）/ `pool/`（默认不装的技能）
+scripts/          五个脚本：边界检查、真实模型自测、team 改名迁移、提示词黄金渲染、渲染样例插槽表
 ```
 
 **五个层，依赖只能朝一个方向**（ADR-082）：
@@ -44,10 +49,14 @@ shell = 装配层，唯一可以同时 import 全部
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
    不许 import `agent|channel|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
 
-## 2. 全量文件（`src/core` 下 54 个 ts，10240 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 58 个 ts，10956 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
+| `fsx.ts` | 130 | `createFsx(root)` → `{read / write / list / exists / remove}`，路径一律相对工作区，越界抛 `FsxEscapeError`；列表用**码点**排序（`localeCompare` 跟机器 locale 变，会打穿 prompt cache）；读不到返回 `undefined`（缺席是常态），写失败才抛 |
+| `doc.ts` | 86 | `parseDoc` / `renderDoc` / `readDoc` / `writeDoc` / `frontOf` —— identity / 团队 README / SKILL / rules / memory 全是 `{path, front, body}`，只有这一份实现；头只认单行 `key: value`（多行值不解析也不丢）；读入统一换行 |
+| `text.ts` | 122 | `renderSlots`（返回 `{text, issues}`，装配层要区分两种错）/ `renderTemplate`（只返回文本的便捷壳）/ `slotsIn` / `hasSlot`；`unknown`（模板写了、装配没给 = 缺陷）与 `unset`（给了、现在确实是空 = 事实）分开报；不二次展开、纯函数 |
+| `prompt.ts` | 167 | `loadTemplates` / `renderPrompt` / `renderPromptDir` / `promptDirOf`：文件名 `NN-段名.md` 定序（不合法直接抛，顺序是语义）；`skip-empty` 为空则整段消失；`use: delivery` 不进系统提示词；模板缓存只允许落在 async 边界上，不跨轮复用 |
 | `runtime/index.ts` | 36 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `compactionSettings` / `Type` |
 | `runtime/open.ts` | 386 | `openCore({databasePath, models, registry, settings?, onReport?}) → {harness, registry, close}`；open 之后先跑 `reconcileZombieTasks()`（ADR-025）；`onReport` 把底座的错误出口接成 `RuntimeReport`（ADR-083） |
 | `runtime/models.ts` | 272 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；回落到环境变量 / 本地网关。`contextWindow` 取自 pi-ai 的模型目录，取不到回落 `FALLBACK_CONTEXT_WINDOW = 128 * 1024`；`compactionPolicyFor` / `compactionSettings` 按窗口算压缩阈值（reserve 15%、keepRecent 10% 底 8192、background 5%），并按 `provider/model` 出 overrides |
@@ -55,10 +64,10 @@ shell = 装配层，唯一可以同时 import 全部
 | `runtime/serialize.ts` | 59 | `serializedHarness()` —— 同一进程里所有 `harness.commit` 排队跑（底座的文档代理是按读集覆盖，不排队就会互相吃掉） |
 | `agent/frontmatter.ts` | 54 | `parseFrontmatter` / `stripFrontmatter` / `renderFrontmatter` —— identity / SKILL / 团队 README 的 YAML 头只有这一份实现，字段顺序与渲染字节是合同（黄金测试钉住） |
 | `agent/identity.ts` | 119 | `parseIdentity` / `readIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf`；头字段只四个：`name` / `title` / `manager` / `team`；`OWNER_SLUG = "owner"` |
-| `agent/prompt.ts` | 353 | `renderAgentPrompt()` —— 唯一的提示词渲染器，确定性（ADR-005）；`PROMPT_SEGMENTS`（who→rules→position→team→tools→memory→skills→directory）+ `renderAgentPromptSegments()`，分段只是切法，拼出来**逐字节不变**（ADR-083）；首行定义「本提示词里的『我』指用户本人」；规矩一节来自 `rules.md`（ADR-038）；出口再 `redact()` 一遍（密钥不许进提示词） |
+| `agent/prompt.ts` | 353 | **V2 的渲染器，待删**（V3 起提示词由 `src/core/prompt.ts` 读 `seed/prompt/*.md` 渲染）：`renderAgentPrompt()`，确定性（ADR-005）；`PROMPT_SEGMENTS`（who→rules→position→team→tools→memory→skills→directory）+ `renderAgentPromptSegments()`，分段只是切法，拼出来**逐字节不变**（ADR-083）；首行定义「本提示词里的『我』指用户本人」；规矩一节来自 `rules.md`（ADR-038）；出口再 `redact()` 一遍（密钥不许进提示词）。还被 `rules-prompt` / `identity` / `prompt-segments` 三个测试 import，删它要和阿测一起把字节断言搬到 `prompt-render.test.ts` |
 | `oneline.ts` | 17 | `oneLine(text, max)` —— 折成一行 + 超长截断；频道摘要、投递预览、团队记忆、界面副标题共用 |
 | `agent/rules.ts` | 41 | `loadRules()` / `renderRulesSection()` —— 读 `<workspace>/rules.md` 并排成「## 规矩」一节；缺文件 = 整段不出现 |
-| `agent/runtime.ts` | 248 | `agentSections()` —— 每段一个 section key（`<slug>-<segment>`、`tag:false`，ADR-083）；`registeredTools()`（从注册表实拍工具清单）、`renderAgentSection()`（每次重读盘，含 `rules.md`）、`readTeamBrief()` |
+| `agent/runtime.ts` | 363 | `agentSections()`（**async**）—— 每段一个 section key（`<slug>-<segment>`、`tag:false`，ADR-083）；`slotsFor()` 只填**这段模板真用到的**插槽（保住按段懒读）；`registeredTools()`（从注册表实拍工具清单）、`renderAgentSection()`（每次重读盘，含 `rules.md`）、`readTeamBrief()` |
 | `agent/memory.ts` | 295 | `readMemory` / `sectionsOf` / `appendMemory` / `writeMemory` / `memoryDigest` / `memoryTimeline` / `entryProblem`；`MEMORY_FILE="memory.md"`、`DIGEST_LIMIT=12`、`MEMORY_LIMITS={entry:300, main:4_000}`；写入去重 + 串行 + 记一笔 journal |
 | `agent/journal.ts` | 49 | `appendJournal()` —— `<agentDir>/.memory-journal.jsonl` 追加一行 JSON（谁、何时、append/replace、before/after 全文）；失败只 warn |
 | `agent/secrets.ts` | 100 | `loadSecrets` / `redactor` / `redact` —— 读 `<workspace>/.secrets.json`，把密钥的三种形态（原值 / JSON 转义 / URL 编码）从文本里抹掉 |
@@ -70,7 +79,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `team/settle.ts` | 203 | 自动沉淀：`settleProject` 已改名 `settleTeam` / `settleTarget`；单游标（问完只记 `waiting`，记忆文件 mtime 变了才推进，ADR-033）；失败时往团队频道留一条 `note`（`appendTeamNote`） |
 | `channel/state.ts` | 476 | 纯规则：`ChannelDoc`（增量满 64 条压基线，ADR-027）/ `appendMessage` / `recipientsOf` / `parseMentions` / `messageView` 侧的「要你拍板」只看 mentions（ADR-037，判定搬去了 `say`）/ `chatKind`（**只看成员表**：恰好 `{我, 一人}` = `dm`，其余 `group`）/ `teamId`（`team:<slug>`）/ `fallbackChannelId`（只找最近活跃的群，一个群都没有才回落 `dm:owner-<slug>`）/ `unreadCount` / `markRead` / `ensureChannel` |
 | `channel/alias.ts` | 117 | `@` 别名解析（ADR-036）：`resolveMention` / `mentionRosterOf` / `normalizeAlias`——`@我` / `@CEO` / 真名 / title → slug，名册由 `agents/*/identity.md` 喂进来 |
-| `channel/deliver.ts` | 477 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）、`renderReplyRules` / `renderDigest` / `queuedAhead` / `coalesceQueue` |
+| `channel/deliver.ts` | 512 | `deliver()`（唯一的跨 agent 原语，ADR-008）、`renderDelivery`（第一行带频道 id；私聊多一句「只回这里」）、`renderReplyRules` / `renderDigest` / `queuedAhead` / `coalesceQueue`。回话两段走模板：`renderReplyRules(template, …)` / `renderDelivery({replyTemplate, interruptedTemplate, …})` 收模板当参数（纯函数不读盘），`deliver()` 每轮 `await` 读一次 `80-reply` / `90-interrupted`，**不缓存** |
 | `channel/unanswered.ts` | 71 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话，没见过的原样贴）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛，ADR-069） |
 | `channel/speech.ts` | 35 | 「这一轮已经说过结果了」的进程内标记（`markSpoken` / `spokenResult` / `clearSpoken`）；`say` 不带 `step` 才算结果（ADR-064） |
 | `channel/post.ts` | 293 | `postMessage()` —— 写一条（单元素 splice，ADR-027）+ 解析 @（可带 roster / 额外 mention）+ 投递 |
@@ -97,11 +106,11 @@ shell = 装配层，唯一可以同时 import 全部
 | `interface/http/static-assets.ts` | 201 | ETag（按编码）+ Last-Modified + `Vary` + br/gzip 协商 / `loadAsset` |
 | `interface/http/guard.ts` | 131 | 来源闸：`hostAllowed` / `originAllowed` / `insideRoot` —— 谁的页面有资格让这个服务「写」 |
 | `interface/http/network.ts` | 78 | 网卡探测（启动时打印局域网地址） |
-| `shell/assemble.ts` | 615 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道；`addToCompanyChannel` / `joinTeamChannel` / `syncTeamChannel` / `ownerSpeak` / `makeAfterPost` |
+| `shell/assemble.ts` | 618 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 建频道；`addToCompanyChannel` / `joinTeamChannel` / `syncTeamChannel` / `ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板） |
 | `shell/rescue.ts` | 164 | 「他答了但没说出来」的安全网：`startAnswerRescue` / `spokeAfterWake` / `slugOfConversation`（ADR-067） |
-| `shell/seed.ts` | 279 | `seedOwnerAssistant`（身份 + 助理个人层技能，只建一次）/ `syncCompanySkills`（公司层技能按 hash 同步，ADR-039）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills` |
+| `shell/seed.ts` | 330 | `seedOwnerAssistant`（读 `seed/agents/assistant/identity.md` 建人 + 助理个人层技能，只建一次）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `workspace/prompt/`）/ `syncCompanySkills`（公司层技能按 hash 同步，ADR-039）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/` |
-| `shell/main.ts` | 157 | 启动：同步规矩与公司层技能（`seedRules` / `syncCompanySkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
+| `shell/main.ts` | 160 | 启动：播种规矩 / 提示词模板 / 公司层技能（`seedRules` / `seedPromptTemplates` / `syncCompanySkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
 
 ### 2.2 `ui/app/src/`（React + TS，构建到 `ui/web/`，ADR-079）
 
@@ -141,7 +150,10 @@ shell = 装配层，唯一可以同时 import 全部
 | --- | --- | --- |
 | 加一个工具（能力） | `channel/tools.ts` 的 `createCoreTools` | 工具 description 就是说明书，写清「什么时候用」；同一件事的几种做法用一个 `action` 枚举，不要开新工具名（现在是 11 个，ADR-084）；加完数一遍总数 |
 | 教 agent 一套做法 | **不要写代码**，写 `seed/skills/<名字>/SKILL.md` 或让 agent `skills(action=write)` | 见 ADR-007 |
-| 改提示词的段落 | `agent/prompt.ts` 的 `PROMPT_SEGMENTS` + `renderPromptSegment` | 必须保持确定性（ADR-005）；段落顺序就是 section key 的顺序，改顺序/插新段会触发一次性整块重写（ADR-083）；加了字段就要有测试（黄金测试 `test/core/prompt-segments.test.ts`） |
+| 改一段提示词的**措辞** | `seed/prompt/NN-段名.md`（播种进 `workspace/prompt/`，之后以 workspace 为准） | 改文案不用改代码、不用重启，下一条消息生效。一个 md = 一段 = 一个 cache section，文件名前缀定序 |
+| 加一段提示词 / 改段落顺序 | 在 `seed/prompt/` 加 `NN-段名.md` + `scripts/prompt-fixture.ts` 补它用到的样例插槽 | 顺序是语义（规矩在能力前面），改顺序会触发一次性整块重写（ADR-083）；确定性是硬要求（ADR-005），`npm run prompt:check` 会拦 |
+| 加一个插槽 | `docs/design/SEED-CONTRACT.md` §4 登记（值 + 来源）+ `scripts/prompt-fixture.ts` 给样例值 + 装配层填值 | 插槽表是唯一权威；未知插槽渲染成「（未设置）」并报出来，不许静默变空 |
+| 工具名要出现在提示词里 | 写 `{{tool:xxx}}`（注册表实拍，工具改名自动跟） | 不许写字面量 —— V2 的 40 处硬编码就是这么烂掉的 |
 | 改「全公司都要守的规矩」（先给结论、在哪个频道回话、别写英文独白） | **不要写进 `.ts`**：改 `seed/rules.md`，再同步到 `workspace/rules.md` | 每轮都进提示词的只有这一份（ADR-038）；技能正文只在 `skills(action=read)` 时才进上下文 |
 | 改起手技能的同步行为 | `shell/seed.ts` 的 `syncCompanySkills` + `<workspace>/.seed-manifest.json` | 按 hash 判「用户改过没有」，改过的不覆盖（ADR-039） |
 | 加一个身份字段 | `agent/identity.ts` 的 `IdentityHeader` | 现在是 4 个：`name`/`title`/`manager`/`team`，加之前先问能不能推导 |
@@ -157,14 +169,17 @@ shell = 装配层，唯一可以同时 import 全部
 | 改团队记忆沉淀的触发条件 / 游标时机 | `team/memory.ts` 的 `settleCandidates` + `team/settle.ts` 的 `waiting` | 游标语义在 ADR-033（取代 ADR-013），改之前先读懂 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制（ADR-021） |
-| 播种技能 | `seed/` + `shell/seed.ts` 的 `syncCompanySkills` / `seedPersonalSkills` | 公司层每次启动同步、改过的不覆盖；个人层只建一次 |
+| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncCompanySkills`（公司层技能，按 hash 同步，ADR-039）/ `seedOwnerAssistant`（助理身份读 `seed/agents/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次；`seed/pool/` 不播种 |
+| 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB、项目技能不进公司层 —— 这些是机械验收，改 seed 前先读契约 |
 
 ## 4. 启动顺序（第 3 步最容易出错）
 
 `main.ts`：
 
-0. `seedRules` + `syncCompanySkills`（`--no-seed` 时不跑）—— 规矩与公司层技能每次启动同步一遍
-   （ADR-039），并自检「记忆整理」技能是否存在（沉淀链路要用它）。
+0. `seedRules` + `seedPromptTemplates` + `syncCompanySkills`（`--no-seed` 时不跑）—— 规矩、
+   提示词模板、公司层技能每次启动各同步一遍（ADR-039），并自检「记忆整理」技能是否存在
+   （沉淀链路要用它）。**顺序有讲究**：模板必须在 `assembleCore` 之前落到 `workspace/prompt/`，
+   否则身份段读不到模板、装配出 0 段的 agent。
 1. `setupModels(process.env, { workspace })` —— 读 `settings.json`，装配 provider。**在
    `openCore` 之前**，因为 `harness` 需要 `models`。`contextWindow` 取不到时回落 128k。
 2. `createDiag(workspace)` —— 卡顿与运行报告的落盘口。
@@ -185,27 +200,33 @@ shell = 装配层，唯一可以同时 import 全部
 **坑**：第 3 步的 `openOne` 必须同时做「进公司频道」和「进团队频道」，两者都幂等。
 第一版只在 `rescan()` 里补团队频道，于是「改 identity 加上 team」的人永远进不去。
 
+**坑（已定，未落）**：`assembleCore` 现在读不到任何 system 模板时只 warn，症状是「提示词
+全空但服务正常启动」。定论是**模板目录不存在或为空就抛**（单段缺失不抛 —— `skip-empty` 就是
+为合法编辑准备的）。卡在 `assemble.test.ts` 那批临时工作区只建了 `agents/`、没播种 `prompt/`，
+要先让它们补 `seedPromptTemplates(root)` 才能落，否则一次红 55 条。
+
 会话形态不在这里决定：没有「个人频道」这种东西，也没有 `ensurePersonalChannel`。
 私聊是成员恰好 `{我, 一人}` 的会话，我开的时候才有；一个 agent 不进任何群也能活。
 
 ## 5. 改动前的检查清单
 
 ```bash
-npm run check      # tsc --noEmit + 边界检查
-npm test           # 59 文件 / 511 例，应该 <3s
-npm run live       # 真实模型端到端 12 项，会花 token，只在改行为后跑
+npm run check        # tsc --noEmit + 边界检查
+npm test             # 62 文件 / 579 例，应该 <3s
+npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
+npm run live         # 真实模型端到端 12 项，会花 token，只在改行为后跑
 ```
 
 改行为时**必须**同步三处：代码、`test/core/` 里的用例、`docs/`（`CORE` 概念 / `WEB-API`
 字段 / `DECISIONS` 若碰了不可轻易改的约定）。
 
-真实模型自测是保底：511 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
+真实模型自测是保底：579 个单测全绿而 `npm run live` 只过 4 项的情况**发生过**——
 那一次是两个 bug 叠在一起（`ownerSpeak` 漏传 wake + wake 在 `submit` 之后才落盘），
 症状是「我在群里问，对方在私聊里答」，单测完全看不见。
 
 ## 6. 测试布局
 
-`test/core/`（47 文件，纯函数 + 装配）：
+`test/core/`（51 文件，纯函数 + 装配）：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -248,7 +269,10 @@ npm run live       # 真实模型端到端 12 项，会花 token，只在改行�
 | `reconcile.test.ts` / `runtime-reconcile.test.ts` | 僵尸任务回收 + 启动自愈真的跑完了 |
 | `serialize-commit.test.ts` | `serializedHarness`：同一进程里的 commit 排队跑不互相吃 |
 | `diag.test.ts` | 运行报告：底座形状摊平成可落盘的 JSON、`formatRuntimeReport` 的人话、写 `logs/runtime.jsonl`、`lastReport` 跳过 `task_outdated`、超长报告被截到 4KB、工作区不可写也不抛 |
-| `prompt-segments.test.ts` | 提示词分段：8 段顺序、每段 key 唯一、拼起来与旧实现**逐字节相同** |
+| `prompt-segments.test.ts` | **V2 的黄金断言，接线那一刀落地后删**：8 段顺序、每段 key 唯一、拼起来与 V2 实现逐字节相同 |
+| `prompt-render.test.ts` | V3 模板渲染：文件名定序、段名唯一、`skip-empty` 空则整段消失、delivery 不进系统提示词、两次渲染逐字节相同、模板声明的插槽全被填满 |
+| `text-slots.test.ts` | 插槽：未知 →「（未设置）」并报 `unknown`、空串/纯空白报 `unset`、值里带 `{{}}` 不二次展开、确定性 |
+| `seed-contract.test.ts` | seed 契约的机械验收：`rules.md` ≤15 条零工具名、一条事实一个家、`seed/prompt` 十段齐、人名只在 identity.md、项目技能不进公司层、技能 ≤4 KB、seed <500 KB |
 | `dto.test.ts` | DTO 是唯一权威：`dto.ts` 自己零 import、界面类型文件只再导出、界面用的名字都在 DTO 里；投影输出与 DTO 字段一一对应 |
 | `sse.test.ts` | SSE 编解码：一帧的字节形状、多行 JSON 不会被拆行、`retry` / 保活注释 |
 | `tools-actions.test.ts` | 工具收敛：注册表只剩 11 个、旧名字一个不剩；`chats` / `read_history` / `skills` / `me` / `file` 各自的 `action` 默认值与非法值报错 |

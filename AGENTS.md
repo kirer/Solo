@@ -36,8 +36,12 @@ workspace/
 
 ```
 src/core/
+  fsx.ts          文件系统的唯一入口（全项目只有它 import `node:fs`；路径不许出工作区）
+  doc.ts          所有 markdown 都是 `{path, front, body}`（identity / 团队 / 技能 / 记忆一套实现）
+  text.ts         插槽渲染（`{{名字}}` → 事实；填不上写「（未设置）」并报出来）
+  prompt.ts       提示词：读 `workspace/prompt/*.md` → 填插槽 → 按文件名前缀拼段
   runtime/        防腐层：唯一能 import pi-durable / pi-ai / chord 的地方（含 models/compaction）
-  agent/          一个人：身份 / 提示词（8 段）/ 记忆 / 技能 / 名册
+  agent/          一个人：身份 / 提示词装配（8 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
   team/           一个团队：README.md / memory.md / 自动沉淀
   channel/        说话：纯规则 / 投递 / 写一条 / 11 个工具 / 附件
   ── 以上四层是 domain（业务事实）──────────────────────────────
@@ -47,15 +51,16 @@ src/core/
   shell/          装配与启动：assemble / serve / main / rescue / seed
 ui/app/           界面源码（React + TS + Vite，ADR-079）
 ui/web/           构建产物（服务端发这个目录，别手改）
-seed/             播种技能与规矩文案
-scripts/          三个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）
-test/             59 文件 / 511 例
-  ├ test/core/    47 文件 / 447 例（纯函数 + 装配）
+seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
+scripts/          五个脚本：check-boundaries（边界）、core-live（真模型）、repair（改名迁移）、
+                  prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）
+test/             62 文件 / 579 例
+  ├ test/core/    51 文件 / 523 例（纯函数 + 装配）
   └ test/ui/      11 文件 / 56 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 52 个 ts / 10340 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 58 个 ts / 10956 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层（ADR-082）。
@@ -103,9 +108,10 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 ### 3.2 提交前（缺一不可）
 
 ```bash
-npm run check     # tsc --noEmit + 边界检查
-npm test          # 59 文件 511 例，<3s，必须全绿
-npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
+npm run check        # tsc --noEmit + 边界检查
+npm test             # 62 文件 579 例，<3s，必须全绿
+npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
+npm run live         # 改了 agent 行为就必须跑：真实模型端到端 12 项，会花 token
 ```
 
 - **`npm run live` 不能省。** 五百多个单测全绿而 `live` 只过 4 项的情况**真实发生过**：
@@ -125,6 +131,8 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 | 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md`（ADR-082）+ `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
 | 接一个 pi 能力 / 绕一个 pi 做不到的事 | ADR-083 类的新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」） |
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
+| 改提示词模板 / 加一段 / 加一个插槽 | `docs/design/SEED-CONTRACT.md` §4 插槽表 + `scripts/prompt-fixture.ts` 样例值 + `docs/CODE.md` §2 文件表；跑 `npm run prompt:check` |
+| 改 seed 出厂内容（规矩 / 技能 / 助理身份 / pool） | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts`（一条事实一个家、≤15 条、零工具名、技能 ≤4 KB） |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
@@ -166,7 +174,7 @@ npm run live      # 改了 agent 行为就必须跑：真实模型端到端 12 �
 |---|---|---|
 | 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools.ts` 的 `createCoreTools`（11 个；同一件事加 `action`，别开新名字，ADR-084） |
 | 教 agent 一套做法 | `docs/DECISIONS.md` ADR-007 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
-| 改提示词 | `docs/CODE.md` §3 + ADR-005 + ADR-083 | `src/core/agent/prompt.ts` 的 `renderAgentPrompt` / `PROMPT_SEGMENTS`（8 段，逐字节不变） |
+| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` + ADR-005 + ADR-083 | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版）；加插槽要先登记 §4。V2 的 `agent/prompt.ts` 已无人调用，待删 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/state.ts` 的 `recipientsOf` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/state.ts` 的 `chatKind`（只看成员表） |

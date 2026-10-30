@@ -4,8 +4,8 @@
 每个人的身份、记忆、技能都是文本文件，随时可改、改了立刻就生效。
 
 ```
-老板 ── 直接对话 ── 助理 ── 他招的人 ── 项目负责人 ── 项目成员
-                      （谁都可以跟谁说话，层级只写在文件里）
+我 ── 直接对话 ── 助理 ── 助理招的人 ── 团队管理员 ── 团队成员
+                    （谁都可以跟谁说话，层级只写在文件里）
 ```
 
 ## 它到底在解决什么
@@ -13,11 +13,12 @@
 让一堆 agent 像一个公司一样运转，而不需要为每一个岗位写一份代码：
 
 - **身份是文件**：`workspace/agents/<slug>/identity.md`。加一个人 = 加一个目录，不用改代码、不用重启。
-- **提示词是投影**：每次发消息前从文件夹重新渲染（上级是谁、同项目有谁、公司多少人、有哪些技能），
-  不是启动时算好存起来。改文件，下一条消息就变。
-- **能力是热的**：工具从注册表实拍，不分「管理层工具/员工工具」。
+- **提示词是投影**：模板在 `workspace/prompt/*.md`（出厂在 `seed/prompt/`），每次发消息前从
+  文件夹重新渲染（上级是谁、同团队有谁、公司多少人、有哪些技能），不是启动时算好存起来。
+  改文件或改措辞，下一条消息就变 —— 改文案不用编译。
+- **能力是热的**：工具从注册表实拍，不分「管理层工具/员工工具」，现在是 11 个。
 - **技能是文档**：要教 agent 一套做法就写 `SKILL.md`，不要写代码。
-- **记忆在磁盘**：个人 `memory.md`、项目 `memory.md`，项目结论由负责人整理进去。
+- **记忆在磁盘**：个人 `memory.md`、团队 `teams/<slug>/memory.md`。
 
 ## 快速开始
 
@@ -28,8 +29,8 @@ npm install
 npm start                 # http://127.0.0.1:7788
 ```
 
-首次启动会在 `workspace/` 里播种一个叫「助理」的人（带《立项》《招人》两份技能），
-外加公司层技能《写技能》《找现成技能》。然后你就可以跟他说话了。
+首次启动会在 `workspace/` 里播种一个叫「知言」的助理（带《立项》《招人》两份个人技能），
+外加公司层技能《工作规矩》《记忆整理》《写技能》《找现成技能》。然后你就可以跟他说话了。
 
 **模型**：默认用本地网关 `http://127.0.0.1:3425/v1` 的 `auto/deepseek-v4.1-flash`。
 换模型见 [docs/DEPLOY](docs/DEPLOY.md) §3。
@@ -37,23 +38,30 @@ npm start                 # http://127.0.0.1:7788
 ## 一次怎么用
 
 1. 打开界面，在「公司」频道里跟助理说话。
-2. 说「帮我做个贪吃蛇」——他有《立项》技能，会建一个项目、写 `projects/<slug>/README.md`。
+2. 说「帮我做个贪吃蛇」——他有《立项》技能，会立一个团队、写 `teams/<slug>/README.md`。
 3. 说「招个人写前端」——他有《招人》技能，会建 `agents/<名字>/identity.md`，人会立刻出现在界面上。
-4. 项目频道里负责人在，员工有事先找他；他决定不了再往上问。
+4. 团队频道里团队管理员在，成员有事先找他；他决定不了再往上问。
 
 ## 目录
 
 ```
-src/core/     核心（25 个文件，约 5.8K 行）
+src/core/     核心（58 个文件，约 11K 行）
+  fsx.ts      文件系统的唯一入口（全项目只有它 import node:fs）
+  doc.ts      所有 markdown 都是 {path, front, body}
+  text.ts     插槽渲染（{{名字}} → 事实）
+  prompt.ts   提示词：读模板 → 填插槽 → 按文件名前缀拼段
   runtime/    防腐层：唯一 import pi-durable / pi-ai 的地方 + 模型装配
-  agent/      一个人：身份 / 提示词 / 记忆 / 技能 / 名册
-  project/    一个项目：README.md / memory.md / 自动沉淀
-  channel/    说话：纯规则 / 投递 / 写一条 / 20 个工具
-  shell/      外壳：装配 / HTTP+SSE / 视图 / 启动
-ui/web/       网页界面（原生 ES module，**无构建步骤**，改完刷新就生效）
-seed/         播种技能
-scripts/      边界检查 + 真实模型自测
-test/core/    14 文件 / 137 例
+  agent/      一个人：身份 / 提示词装配 / 记忆 / 技能 / 名册
+  team/       一个团队：README.md / memory.md / 自动沉淀
+  channel/    说话：纯规则 / 投递 / 写一条 / 11 个工具
+  app/        用例：读数 / 说话 / 人 / 文件 / 附件 / 诊断（不 import node:http）
+  view/       投影纯函数 + 界面 DTO 的唯一权威，零 IO
+  interface/  唯一 import node:http 的地方：路由 / SSE / 静态资源 / 来源闸
+  shell/      装配与启动：assemble / main / serve / rescue / seed
+ui/app/       网页界面源码（React + TS + Vite，构建到 ui/web/，改完必须 npm run ui:build）
+seed/         出厂内容：规矩 / 提示词模板 / 技能 / 助理身份 / pool（默认不装的技能）
+scripts/      边界检查 + 真实模型自测 + 提示词黄金渲染
+test/         62 文件 / 579 例
 ```
 
 ## 命令
@@ -62,8 +70,10 @@ test/core/    14 文件 / 137 例
 | --- | --- |
 | `npm start` | 起服务（`--port` `--host` `--workspace` `--no-seed`） |
 | `npm run check` | 类型检查 + 边界检查（唯 runtime 层能碰底层库、路由必须有前端消费者） |
-| `npm test` | 单测，14 文件 137 例，<1s |
+| `npm test` | 单测，62 文件 579 例，<3s |
+| `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 12 项（会花 token，改行为后跑） |
+| `npm run ui:build` | 构建界面到 `ui/web/`（改完 `ui/app/` 必跑） |
 
 ## 文档
 
@@ -72,12 +82,12 @@ test/core/    14 文件 / 137 例
 | [AGENTS.md](AGENTS.md) | **AI agent 在本仓库工作前先读这个** |
 | [docs/CORE](docs/CORE.md) | 概念地基：组织为什么是文件夹、提示词怎么投影、记忆怎么沉淀 |
 | [docs/CODE](docs/CODE.md) | 代码地图：「我想改 X → 动这里」 |
-| [docs/WEB-API](docs/WEB-API.md) | 8 条网页 API 的完整契约 |
-| [docs/DECISIONS](docs/DECISIONS.md) | 23 条架构决策（每条写了替代方案与理由） |
+| [docs/design/SEED-CONTRACT](docs/design/SEED-CONTRACT.md) | 出厂内容契约：四个家、插槽表、一条事实一个家 |
+| [docs/WEB-API](docs/WEB-API.md) | 网页 API 的完整契约 |
+| [docs/DECISIONS](docs/DECISIONS.md) | 85 条架构决策（每条写了替代方案与理由） |
 | [docs/DEPLOY](docs/DEPLOY.md) | 部署、局域网、Docker、排障 |
 
 ## 已知不做
 
-没有鉴权、没有成本核算、没有待办拍板界面、没有工具调用 trace、不能发图片、
-没有看门狗与崩溃自愈、没有 IM 出站。这些第一代都有，V2 全部删掉了 —— 见
+没有鉴权、没有成本核算、没有 IM 出站。这些第一代都有，V2 全部删掉了 —— 见
 [docs/DECISIONS](docs/DECISIONS.md) 里各条「替代方案」。

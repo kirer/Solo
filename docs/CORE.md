@@ -41,12 +41,15 @@ team: demo
 
 ## 2. 提示词是**投影**
 
-`renderAgentPrompt()` 把「所有人 + 团队 + 技能目录 + 记忆目录 + 注册表里的全部工具」
-投影成一段提示词。三个性质：
+V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplates()` 读
+`workspace/prompt/NN-段名.md`，`renderPrompt()` 把「所有人 + 团队 + 技能目录 + 记忆目录 +
+注册表里的全部工具」填进插槽。代码只剩排版（`src/core/prompt.ts`），「怎么说」全在
+`seed/prompt/`。三个性质没变：
 
-- **确定性**：同一输入逐字节相同 —— 为了 prompt cache 不被打穿（cacheRead 便宜一个
+- **确定性**：同一组文件逐字节相同 —— 为了 prompt cache 不被打穿（cacheRead 便宜一个
   数量级，cacheWrite 更贵）。
-- **不哄人**：查不到的写「（未设置）」，不编造。
+- **不哄人**：填不上的插槽写「（未设置）」并报出来，不编造。报的两种原因分开：
+  `unknown`（模板写了、装配没给 = 缺陷）、`unset`（给了、现在确实是空 = 事实）。
 - **每次渲染都重读磁盘**（`agentSection` 的 `render` 是函数），所以改 `identity.md` /
   `memory.md` / `skills/` 之后**下一条消息就生效**。
 
@@ -58,19 +61,22 @@ team: demo
 
 ### 分段与前缀缓存（ADR-083）
 
-「一段提示词」在发给模型时其实是**八个段**，顺序固定
-（`PROMPT_SEGMENTS`）：
+「一段提示词」在发给模型时其实是**八个段**，段名 = 文件名前缀，顺序 = 文件名顺序：
 
 ```
-who → rules → position → team → tools → memory → skills → directory
+00-who → 10-rules → 20-position → 30-team → 40-tools → 50-memory → 60-skills → 70-directory
 ```
+
+另有两段 `use: delivery`（`80-reply` / `90-interrupted`）**不进系统提示词**：它们每轮贴在
+投递正文末尾，由 `deliver()` 每轮 `await` 读一次、当参数传给纯函数（不缓存，改模板下一条
+消息就生效）。
 
 - 每段一个 section key（`<slug>-<segment>`，`agentSections()`），内容没变的段就不发新版本。
 - `tag: false`：tag 会往字节里加东西，加了就与前缀缓存对不上。
-- **分段只是切法**：`renderAgentPrompt()` 拼出来的字符串与旧实现**逐字节相同**
-  （黄金测试 `test/core/prompt-segments.test.ts`），所以确定性（ADR-005）没有被换掉。
-- 代价：底座没有「某段失效」的钩子，只有按 key 的最小 patch —— 新增段或调序会触发
-  一次性整块重写。所以「加一段」不是免费操作。
+- **加一段 = 加一个文件**，不改代码。但顺序是语义（规矩排在能力前面），新增段或调序会触发
+  一次性整块重写 —— 底座没有「某段失效」的钩子，只有按 key 的最小 patch。所以「加一段」
+  不是免费操作。
+- 确定性由 `npm run prompt:check` 守着：十段全渲染两遍，逐字节比对，未知插槽必须是 0 个。
 
 这解释了为什么第 2、3 节说的「下一条消息就生效」是**按段**生效：改记忆只让 `memory`
 之后的那几段重写，前面那几段（人人同款的规矩与工具清单）仍在缓存里。
@@ -191,8 +197,9 @@ workspace/
 - **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
 - 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 公司层，
-  `seed/assistant/` → 知言个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次，
-  之后正文归 agent 自己迭代。
+  `seed/agents/assistant/skills/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次，
+  之后正文归 agent 自己迭代。`seed/pool/` 是「出厂有、默认不装」的技能，要用的项目自己拷进
+  `workspace/skills/`。
 
 判断边界：「做什么」是身份（`identity.md`），「怎么做」是技能（`skills/`），
 「发生过什么」是记忆（`memory.md`）。三条都不在代码里。
