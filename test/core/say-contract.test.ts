@@ -28,6 +28,17 @@ import {
 	type Message,
 } from "../../src/core/channel/state.ts";
 import { renderDelivery, renderReplyRules } from "../../src/core/channel/deliver.ts";
+import { INTERRUPTED_TEMPLATE, REPLY_TEMPLATE } from "./seed-prompt.ts";
+
+/**
+ * 投递正文必须带真模板：`renderDelivery` 刻意**不给** `replyTemplate` 默认值（默认值等于
+ * 允许「回话段为空」静默通过）。这里补 seed 里那一份，断言的是「真的贴进去了」。
+ */
+function renderDeliveryWithTemplates(
+	options: Omit<Parameters<typeof renderDelivery>[0], "replyTemplate" | "interruptedTemplate">,
+): string {
+	return renderDelivery({ ...options, replyTemplate: REPLY_TEMPLATE, interruptedTemplate: INTERRUPTED_TEMPLATE });
+}
 import { clearSpoken } from "../../src/core/channel/speech.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 
@@ -206,7 +217,7 @@ describe("投递正文带频道 id", () => {
 			{ id: "all", title: "公司大群", members: [OWNER, ME], at: 1 },
 		);
 		const { message } = appendMessage(state, "all", { from: OWNER, text: "在吗", at: 2 });
-		const body = renderDelivery({ channel: state.channels.all!, message, viewer: ME });
+		const body = renderDeliveryWithTemplates({ channel: state.channels.all!, message, viewer: ME });
 		expect(body.split("\n")[0]).toBe("【公司大群】#1（频道 all）");
 	});
 
@@ -216,7 +227,7 @@ describe("投递正文带频道 id", () => {
 			{ id: DM, title: ME, members: [OWNER, ME], at: 1 },
 		);
 		const { message } = appendMessage(state, DM, { from: OWNER, text: "怎么样", at: 2 });
-		const body = renderDelivery({ channel: state.channels[DM]!, message, viewer: ME });
+		const body = renderDeliveryWithTemplates({ channel: state.channels[DM]!, message, viewer: ME });
 		expect(body).toContain("别去群里");
 	});
 });
@@ -327,24 +338,24 @@ describe("这一轮不说话（[PASS]）", () => {
 
 describe("每轮附言（怎么回话）", () => {
 	it("只有自己时：必须回，不提 PASS", () => {
-		const rules = renderReplyRules({ woken: ["沈舟"], viewer: "沈舟" });
+		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟" });
 		expect(rules).toContain("必须回");
 		expect(rules).not.toContain("[PASS]");
 	});
 
 	it("还有别人时：允许 PASS，并且点名是谁", () => {
-		const rules = renderReplyRules({ woken: ["沈舟", "陆衡"], viewer: "沈舟" });
+		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟", "陆衡"], viewer: "沈舟" });
 		expect(rules).toContain("[PASS]");
 		expect(rules).toContain("陆衡");
 		expect(rules).not.toContain("必须回");
 	});
 
 	it("群里有成员时：告诉他们「成员的事在群里说，@ 他」", () => {
-		const rules = renderReplyRules({ woken: ["沈舟"], viewer: "沈舟", colleagues: ["陆衡"] });
+		const rules = renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟", colleagues: ["陆衡"] });
 		expect(rules).toContain("成员的事就在这个频道说");
 		expect(rules).toContain("陆衡");
 		// 私聊里没有第三方，不该提「去找成员」
-		expect(renderReplyRules({ woken: ["沈舟"], viewer: "沈舟", colleagues: [] })).not.toContain(
+		expect(renderReplyRules({ template: REPLY_TEMPLATE, woken: ["沈舟"], viewer: "沈舟", colleagues: [] })).not.toContain(
 			"成员的事就在这个频道说",
 		);
 	});
@@ -353,7 +364,7 @@ describe("每轮附言（怎么回话）", () => {
 		const { snapshot } = await setup();
 		const state = await snapshot();
 		const message = state.messages[PROJ]![0]!;
-		const body = renderDelivery({
+		const body = renderDeliveryWithTemplates({
 			channel: state.channels[PROJ]!,
 			message,
 			viewer: ME,

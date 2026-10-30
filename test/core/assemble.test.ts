@@ -236,7 +236,12 @@ describe("播种", () => {
 		const slug = await seedOwnerAssistant(agents, { name: "林越" });
 		const identity = await readIdentity(agents, slug);
 		expect(identity?.manager).toBe("owner");
-		expect(identity?.body).toContain("hire");
+		// 正文来自 `seed/agents/assistant/identity.md`（组织是文件）。这里只钉两条不变式：
+		// 它得是**真的写清了职责**（不是占位），且零工具名 —— V3 起工具改名不许让 seed 撒谎。
+		const body = identity?.body ?? "";
+		expect(body.length).toBeGreaterThan(80);
+		expect(body).not.toMatch(/[a-z_]+\((action|scope)=/);
+		expect(body).not.toMatch(/`(say|hire|skills|remember|read_history|write_team|me|run|file)`/);
 	});
 
 	test("seed 出来的人能被装配扫到", async () => {

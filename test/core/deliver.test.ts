@@ -1,5 +1,16 @@
 import { describe, expect, test } from "vitest";
 import { deliver, queuedAhead, renderDelivery, renderDigest } from "../../src/core/channel/deliver.ts";
+import { INTERRUPTED_TEMPLATE, REPLY_TEMPLATE } from "./seed-prompt.ts";
+
+/**
+ * 投递正文必须带真模板：`renderDelivery` 刻意**不给** `replyTemplate` 默认值 ——
+ * 默认值等于允许「回话段为空」静默通过，正是这一刀要防的洞。所以这里统一补上 seed 里那份。
+ */
+function renderDeliveryWithTemplates(
+	options: Omit<Parameters<typeof renderDelivery>[0], "replyTemplate" | "interruptedTemplate">,
+): string {
+	return renderDelivery({ ...options, replyTemplate: REPLY_TEMPLATE, interruptedTemplate: INTERRUPTED_TEMPLATE });
+}
 import type { Harness } from "../../src/core/runtime/index.ts";
 import { appendMessage, ensureChannel, type ChannelState } from "../../src/core/channel/state.ts";
 
@@ -14,10 +25,11 @@ describe("投递正文", () => {
 	test("带频道名、序号、说话人", () => {
 		const state = stateWith({ id: "general", title: "全员", members: ["owner", "cto"] });
 		const { message } = appendMessage(state, "general", { from: "owner", text: "有人吗", at: 1 });
-		const text = renderDelivery({ channel: state.channels.general!, message });
+		const text = renderDeliveryWithTemplates({ channel: state.channels.general!, message });
 		expect(text).toContain("【全员】#1");
 		expect(text).toContain("owner：有人吗");
-		expect(text).toContain("say");
+		// 回话规矩由 seed 的 80-reply.md 提供：正文里必须贴上它的第一行（不是代码里硬编码的那句）。
+		expect(text).toContain(REPLY_TEMPLATE.split("\n")[0]!);
 	});
 
 	test("引用时标出被引用的序号", () => {
@@ -25,7 +37,7 @@ describe("投递正文", () => {
 		const first = appendMessage(state, "g", { from: "cto", text: "A", at: 1 });
 		state = first.state;
 		const second = appendMessage(state, "g", { from: "owner", text: "B", at: 2, replyTo: 1 });
-		expect(renderDelivery({ channel: state.channels.g!, message: second.message })).toContain("（回复 #1）");
+		expect(renderDeliveryWithTemplates({ channel: state.channels.g!, message: second.message })).toContain("（回复 #1）");
 	});
 
 	test("插话要明说「不是新任务」", () => {
@@ -33,10 +45,10 @@ describe("投递正文", () => {
 		// 再没回团队频道汇报。所以打断式的投递必须把「答完回去干活」写进正文。
 		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto"] });
 		const { message } = appendMessage(state, "g", { from: "owner", text: "你是谁", at: 1 });
-		const interrupted = renderDelivery({ channel: state.channels.g!, message, interrupted: true });
-		expect(interrupted).toContain("这是插话，不是新任务");
+		const interrupted = renderDeliveryWithTemplates({ channel: state.channels.g!, message, interrupted: true });
+		expect(interrupted).toContain(INTERRUPTED_TEMPLATE.trim());
 		// 对方闲着时不该看到这句——那会让人以为手上还有活。
-		expect(renderDelivery({ channel: state.channels.g!, message })).not.toContain("这是插话");
+		expect(renderDeliveryWithTemplates({ channel: state.channels.g!, message })).not.toContain(INTERRUPTED_TEMPLATE.trim());
 	});
 
 	test("列出同时被 @ 的其他人，且不含自己", () => {
@@ -46,7 +58,7 @@ describe("投递正文", () => {
 			text: "@cto @cfo 一起看",
 			at: 1,
 		});
-		const text = renderDelivery({
+		const text = renderDeliveryWithTemplates({
 			channel: state.channels.g!,
 			message,
 			viewer: "cto",
@@ -61,13 +73,13 @@ describe("投递正文", () => {
 		// 投递名单模型看不到，只能由代码注入。
 		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto", "cfo"] });
 		const { message } = appendMessage(state, "g", { from: "owner", text: "@cto @cfo 一起看", at: 1 });
-		const forCfo = renderDelivery({ channel: state.channels.g!, message, viewer: "cfo" });
+		const forCfo = renderDeliveryWithTemplates({ channel: state.channels.g!, message, viewer: "cfo" });
 		expect(forCfo).toContain("这条会叫醒：cto、cfo（你在第 2 位）");
 		expect(forCfo).toContain("别人也在看这条。动手前先说一句你接哪一块");
 		// 只叫醒一个人时不写「别人也在看」——那是假话。
 		const solo = stateWith({ id: "s", title: "S", members: ["owner", "cto"] });
 		const soloMessage = appendMessage(solo, "s", { from: "owner", text: "@cto 看一下", at: 1 }).message;
-		const single = renderDelivery({ channel: solo.channels.s!, message: soloMessage, viewer: "cto" });
+		const single = renderDeliveryWithTemplates({ channel: solo.channels.s!, message: soloMessage, viewer: "cto" });
 		expect(single).toContain("这条会叫醒：cto（你在第 1 位）");
 		expect(single).not.toContain("别人也在看这条");
 	});

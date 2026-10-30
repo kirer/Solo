@@ -1,12 +1,13 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/state.ts";
 import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/runtime.ts";
+import { parseDoc } from "../../src/core/doc.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
-import { seedOwnerAssistant, seedPersonalSkills, syncCompanySkills } from "../../src/core/shell/seed.ts";
+import { seedOwnerAssistant, seedPersonalSkills, seedPromptTemplates, syncCompanySkills } from "../../src/core/shell/seed.ts";
 import { listSkills, readSkill, writeCompanySkill } from "../../src/core/agent/skills.ts";
 
 const dirs: string[] = [];
@@ -17,6 +18,9 @@ async function workspace(): Promise<{ readonly root: string; readonly agents: st
 	const agents = join(root, "agents");
 	const teams = join(root, "teams");
 	await mkdir(teams, { recursive: true });
+	// 提示词模板也要播种：生产里 `main.ts` 启动时先跑 `seedPromptTemplates` 再装配。
+	// 不播种的话 `agentSections` 读到空目录 → 一个身份段都没有，测试就在验一个不存在的状态。
+	await seedPromptTemplates(root);
 	return { root, agents, teams };
 }
 
@@ -121,6 +125,32 @@ describe("装配", () => {
 	});
 });
 
+describe("助理身份：组织是文件，不是代码里的字符串", () => {
+	test("播种出来的 identity.md 正文就是 seed 文件里的正文", async () => {
+		const { agents } = await workspace();
+		const slug = await seedOwnerAssistant(agents, { name: "示例" });
+
+		const created = parseDoc("identity.md", await readFile(join(agents, slug, "identity.md"), "utf8"));
+		const seed = parseDoc("identity.md", await readFile(new URL("../../seed/agents/assistant/identity.md", import.meta.url), "utf8"));
+
+		// 逐字节相同才说明它是「读文件」，不是代码里又抄了一份。
+		expect(created.body).toBe(seed.body);
+		expect(created.body.length).toBeGreaterThan(80);
+		// 名字可以从参数覆盖，但默认取自文件。
+		expect(created.front["name"]).toBe("示例");
+		expect(created.front["manager"]).toBe("owner");
+	});
+
+	test("改 seed 文件就换一个人的说法：代码里没有第二份正文", async () => {
+		const { agents } = await workspace();
+		const slug = await seedOwnerAssistant(agents);
+		const created = parseDoc("identity.md", await readFile(join(agents, slug, "identity.md"), "utf8"));
+		// 代码里那份旧字面量（V2 的 `me(action=update)` / `read_history(scope=memory)`）不许再出现。
+		expect(created.body).not.toContain("me(action=update)");
+		expect(created.body).not.toContain("read_history(scope=memory)");
+	});
+});
+
 describe("播种技能", () => {
 	test("公司层技能来自文件，不是代码里的字符串", async () => {
 		const { agents } = await workspace();
@@ -135,7 +165,8 @@ describe("播种技能", () => {
 
 	test("立项与招人是助理的个人技能，不进公司层", async () => {
 		const { agents } = await workspace();
-		const copied = await seedPersonalSkills(agents, "助理", "assistant");
+		// V3 把助理的个人技能挪到 seed/agents/assistant/skills/：一个 agent 的种子内容跟它的目录名走。
+		const copied = await seedPersonalSkills(agents, "助理", "agents/assistant/skills");
 		expect(copied).toEqual(expect.arrayContaining(["立项", "招人"]));
 
 		// 公司层不该有它们：招人、立项是助理的职权，别人本来就不该招人。
