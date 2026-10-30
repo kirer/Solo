@@ -2,7 +2,7 @@
  * 把一个 agent 的文件夹渲染成它的系统提示词。
  *
  * 这里是整个新核心的**唯一**提示词来源。没有任何岗位文案写在这份代码里：
- * 组织架构谁向谁汇报、你的职责、你的项目、你的能力清单，全部来自
+ * 组织架构谁向谁汇报、你的职责、你的团队、你的能力清单，全部来自
  * `workspace/agents/<slug>/` 下的文件与目录。代码只负责**排版**。
  *
  * 两条设计约束：
@@ -27,7 +27,7 @@ export type RenderInput = {
 	readonly self: Identity;
 	/** 全部 agent（组织架构的公共事实）。 */
 	readonly all: readonly Identity[];
-	/** 老板的显示名。老板不是 agent，没有文件夹。 */
+	/** 我的显示名。我不是 agent，没有文件夹。 */
 	readonly ownerName?: string;
 	/**
 	 * workspace 根目录。只用来找 `.secrets.json` 做脱敏；给了才脱敏。
@@ -45,17 +45,29 @@ export type RenderInput = {
 	readonly rules?: string;
 	/** 这个 agent 能调用的全部能力。缺省 = 没有能力（只说话）。 */
 	readonly capabilities?: readonly CapabilityLine[];
-	/** 项目简报（项目根 `README.md` 的正文），仅有项目时提供。 */
-	readonly projectBrief?: string;
-	/** 项目成员目录（`projects/<slug>/` 下的 agent slug）。 */
-	readonly projectMembers?: readonly string[];
+	/** 团队简报（团队根 `README.md` 的正文），仅有团队时提供。 */
+	readonly teamBrief?: string;
+	/** 团队成员目录（`teams/<slug>/` 下的 agent slug）。 */
+	readonly teamMembers?: readonly string[];
 	/**
-	 * 项目记忆目录（`projects/<slug>/memory.md` 的小节标题）。
+	 * 他在哪些会话里（`chatKind` 已推好）。
 	 *
-	 * 只给目录，条文靠 `recall(scope=project)` 读。项目换人时，接手的人看目录就知道
+	 * 只写「哪些群 + 和我的私聊开没开」，不给就是旧形状（整段不出现）。
+	 * 以前这里写的是「你的个人频道」—— 那个概念已经不存在了：私聊是会话的一种形态，
+	 * 不是每个人的固定财产。
+	 */
+	readonly chats?: readonly {
+		readonly id: string;
+		readonly title: string;
+		readonly kind: "dm" | "group";
+	}[];
+	/**
+	 * 团队记忆目录（`teams/<slug>/memory.md` 的小节标题）。
+	 *
+	 * 只给目录，条文靠 `recall(scope=team)` 读。团队换人时，接手的人看目录就知道
 	 * 有哪些坑，再决定读哪几条 —— 这比把整本翻一遍便宜得多。
 	 */
-	readonly projectMemoryDigest?: string;
+	readonly teamMemoryDigest?: string;
 	/**
 	 * 你会的技能。只列名字 + 一句描述，正文按需用 `read_skill` 读。
 	 *
@@ -82,7 +94,7 @@ export type RenderInput = {
 const NOT_SET = "（未设置）";
 
 function labelOf(all: readonly Identity[], slug: string): string {
-	if (slug === OWNER_SLUG) return "老大";
+	if (slug === OWNER_SLUG) return "我";
 	return all.find((identity) => identity.slug === slug)?.name ?? slug;
 }
 
@@ -103,9 +115,10 @@ function orgSection(input: RenderInput): string {
 
 	const manager = managerOf(all, self.slug);
 	if (manager === undefined) {
-		lines.push(`- 你的上级：${NOT_SET}（这意味着没有人替你拍板，遇到需要决策的事要自己定，或交给老大）`);
+		lines.push(`- 你的上级：${NOT_SET}（这意味着没有人替你拍板，遇到需要决策的事要自己定，或交给我）`);
 	} else if (manager === OWNER_SLUG) {
-		lines.push(`- 你的上级：老大（${input.ownerName ?? "老大本人"}）—— 你直接对老大负责`);
+		const me = input.ownerName ?? "我";
+		lines.push(`- 你的上级：${me}（用户本人）—— 你直接对${me}负责`);
 	} else {
 		lines.push(`- 你的上级：${labelOf(all, manager)}（\`${manager}\`）`);
 	}
@@ -124,21 +137,37 @@ function orgSection(input: RenderInput): string {
 
 	// 称呼是**事实**，和上级是谁一样属于「本来就在那儿」的东西，不是规矩。
 	// 写在组织这一段而不是 rules.md：rules.md 是可删可改的工作约定，称呼不该跟着丢。
-	lines.push(`- 对老板的称呼：老大。正文里直接写「老大」，要叫他写 \`@老大\` —— 不要写 \`@owner\`。`);
+	lines.push(`- 对用户的称呼：你。正文里直接写「你」，要提到他时写 \`@我\` —— 不要写 \`@owner\`。`);
 
-	if (self.project !== undefined) {
+	if (self.team !== undefined) {
 		const peers = all.filter(
-			(item) => item.project === self.project && item.slug !== self.slug,
+			(item) => item.team === self.team && item.slug !== self.slug,
 		);
 		lines.push(
 			peers.length === 0
-				? `- 你在项目 \`${self.project}\` 里，目前只有你一个人`
-				: `- 你在项目 \`${self.project}\` 里，同项目的人：${peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、")}`,
+				? `- 你在团队 \`${self.team}\` 里，目前只有你一个人`
+				: `- 你在团队 \`${self.team}\` 里，同团队的人：${peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、")}`,
 		);
 	}
 
 	lines.push("");
-	lines.push(`当前全公司有 ${all.length} 个 agent：${all.map((item) => item.name ?? item.slug).join("、")}，加上老大。`);
+	// 位置：只在哪些会话里 —— 不说「你有一个个人频道」（那是个已经不存在的概念）。
+	if (input.chats !== undefined) {
+		const groups = input.chats.filter((chat) => chat.kind === "group");
+		const dm = input.chats.find((chat) => chat.kind === "dm");
+		lines.push(
+			groups.length === 0
+				? "- 你不在任何群里：没人能在那儿 @ 你"
+				: `- 你在这些群里：${groups.map((chat) => `「${chat.title}」`).join("、")}`,
+		);
+		lines.push(
+			dm === undefined
+				? "- 和我的私聊：没开（要找我就在群里 @我；私聊只能我开）"
+				: "- 和我的私聊：已开（只有你和我两个人，别人看不到）",
+		);
+	}
+	lines.push("");
+	lines.push(`当前全公司有 ${all.length} 个 agent：${all.map((item) => item.name ?? item.slug).join("、")}，加上我。`);
 	return lines.join("\n");
 }
 
@@ -187,7 +216,7 @@ function skillSection(
  */
 function capabilitySection(capabilities: readonly CapabilityLine[] | undefined): string {
 	if (capabilities === undefined || capabilities.length === 0) {
-		return "（工具没装上 —— 这是装配故障，不是你的问题。请向老大报告。）";
+		return "（工具没装上 —— 这是装配故障，不是你的问题。请向我报告。）";
 	}
 	const lines = capabilities.map((item) => `- \`${item.name}\` — ${item.summary}`);
 	// 压缩是 pi-durable 的默认行为，模型看不见被压掉的部分，更不知道「我不知道」。
@@ -207,6 +236,8 @@ export function renderAgentPrompt(input: RenderInput): string {
 	const heading = input.self.name ?? input.self.slug;
 	const title = input.self.title === undefined ? "" : `（${input.self.title}）`;
 	parts.push(`# 你叫${heading}${title}`);
+	// 「我」是谁只有这一处定义：全文（含 agents 自己的 identity.md 与技能）都用「我」指用户。
+	parts.push("本提示词里的『我』指用户本人；你称呼对方时用『你』。");
 
 	if (input.self.body !== "") parts.push(input.self.body);
 
@@ -217,18 +248,18 @@ export function renderAgentPrompt(input: RenderInput): string {
 
 	parts.push(section("你在组织里的位置", orgSection(input)));
 
-	if (input.projectBrief !== undefined && input.projectBrief.trim() !== "") {
-		const members = input.projectMembers ?? [];
+	if (input.teamBrief !== undefined && input.teamBrief.trim() !== "") {
+		const members = input.teamMembers ?? [];
 		const memberLine =
 			members.length === 0
 				? ""
-				: `\n\n项目里的成员（目录名）：${members.map((slug) => `\`${slug}\``).join("、")}`;
-		const memory = input.projectMemoryDigest;
+				: `\n\n团队里的成员（目录名）：${members.map((slug) => `\`${slug}\``).join("、")}`;
+		const memory = input.teamMemoryDigest;
 		const memoryLine =
 			memory === undefined
-				? "\n\n这个项目还没有记忆。你踩到的坑记得用 `remember(scope=project)` 写下来。"
-				: `\n\n项目记忆（目录，正文用 \`recall(scope=project)\` 读）：\n${memory}`;
-		parts.push(section(`你的项目：${input.self.project ?? ""}`, `${input.projectBrief}${memberLine}${memoryLine}`));
+				? "\n\n这个团队还没有记忆。你踩到的坑记得用 `remember(scope=team)` 写下来。"
+				: `\n\n团队记忆（目录，正文用 \`recall(scope=team)\` 读）：\n${memory}`;
+		parts.push(section(`你的团队：${input.self.team ?? ""}`, `${input.teamBrief}${memberLine}${memoryLine}`));
 	}
 
 	parts.push(section("你能做的事", capabilitySection(input.capabilities)));
@@ -247,7 +278,7 @@ export function renderAgentPrompt(input: RenderInput): string {
 			[
 				`你的全部身份都在 \`agents/${input.self.slug}/\` 里，只有你能改它：`,
 				"",
-				"- `identity.md` — 你是谁（名字、岗位、上级、所在项目）。改它等于改你自己，下一句话就生效。",
+				"- `identity.md` — 你是谁（名字、岗位、上级、所在团队）。改它等于改你自己，下一句话就生效。",
 				"- `memory.md` — 你的长期记忆。`remember` 写、`recall` 读。",
 				"- `skills/<名字>/SKILL.md` — 你的手艺。`write_skill` 写、`read_skill` 读。",
 				"",

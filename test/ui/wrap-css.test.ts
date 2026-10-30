@@ -3,7 +3,7 @@
  *
  * 这是纯 CSS 的事，node 环境没有布局引擎，所以这里读 stream.css 原文断言规则：
  *   1. .md 及其 a / code 后代继承 overflow-wrap:anywhere，长 URL 能断；
- *   2. .md pre、.md-code pre、.ev-body pre 用 pre-wrap，且**没有** overflow-x:auto。
+ *   2. .md pre、.md-code pre 用 pre-wrap，且**没有** overflow-x:auto。
  * 断的是「规则在不在、有没有被退回 auto」，不是像素 —— 像素留给手工验收。
  */
 import { readFileSync } from "node:fs";
@@ -40,8 +40,8 @@ describe("消息正文换行", () => {
 		}
 	});
 
-	it("三处 pre 都是 pre-wrap，且都不留横向滚动条", () => {
-		for (const selector of [".md pre", ".md-code pre", ".ev-body pre"]) {
+	it("两处 pre 都是 pre-wrap，且都不留横向滚动条", () => {
+		for (const selector of [".md pre", ".md-code pre"]) {
 			expect(anyBlock(selector, "white-space: pre-wrap")).toBe(true);
 			// 任何一条关于它的规则都不许再写回横向滚动
 			for (const rule of blocksOf(selector)) {
@@ -49,7 +49,5 @@ describe("消息正文换行", () => {
 				expect(rule).not.toMatch(/overflow:\s*auto/);
 			}
 		}
-		// .ev-body 限高要看展开的命令输出，只纵向滚
-		expect(anyBlock(".ev-body pre", "overflow-x: hidden")).toBe(true);
 	});
 });

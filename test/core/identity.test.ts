@@ -26,7 +26,7 @@ title: 人力
 manager: owner
 ---
 
-我负责招人。用人需求从项目负责人那里来。
+我负责招人。用人需求从团队管理员那里来。
 `;
 
 describe("identity.md 解析", () => {
@@ -35,8 +35,8 @@ describe("identity.md 解析", () => {
 		expect(identity.name).toBe("沈知远");
 		expect(identity.title).toBe("人力");
 		expect(identity.manager).toBe(OWNER_SLUG);
-		expect(identity.project).toBeUndefined();
-		expect(identity.body).toBe("我负责招人。用人需求从项目负责人那里来。");
+		expect(identity.team).toBeUndefined();
+		expect(identity.body).toBe("我负责招人。用人需求从团队管理员那里来。");
 	});
 
 	test("没有 YAML 头时整份文件都是正文", () => {
@@ -115,13 +115,13 @@ describe("渲染提示词", () => {
 		parseIdentity("dev", "/a/dev", "---\nname: 林越\nmanager: cto\nproject: alpha\n---\n写代码。"),
 	];
 
-	test("全部素材来自文件：名字、正文、汇报线、项目", () => {
+	test("全部素材来自文件：名字、正文、汇报线、团队", () => {
 		const dev = all[2]!;
-		const text = renderAgentPrompt({ self: dev, all, projectBrief: "做一个坦克游戏。" });
+		const text = renderAgentPrompt({ self: dev, all, teamBrief: "做一个坦克游戏。" });
 		expect(text).toContain("# 你叫林越");
 		expect(text).toContain("写代码。");
 		expect(text).toContain("你的上级：周牧（`cto`）");
-		expect(text).toContain("周牧 → 陆沉 → 老大");
+		expect(text).toContain("周牧 → 陆沉 → 我");
 		expect(text).toContain("做一个坦克游戏。");
 		expect(text).toContain("agents/dev/");
 	});
@@ -137,7 +137,7 @@ describe("渲染提示词", () => {
 	});
 
 	test("确定性：同样输入逐字节相同", () => {
-		const input = { self: all[1]!, all, projectBrief: "b" } as const;
+		const input = { self: all[1]!, all, teamBrief: "b" } as const;
 		expect(renderAgentPrompt(input)).toBe(renderAgentPrompt(input));
 	});
 
@@ -166,17 +166,17 @@ describe("渲染提示词", () => {
 });
 
 
-test("称呼写进组织这一段：叫老大、别写 @owner", async () => {
+test("称呼写进组织这一段：叫我、别写 @owner", async () => {
 	const { renderAgentPrompt } = await import("../../src/core/agent/prompt.ts");
 	const text = await renderAgentPrompt(
 		// 只喂最小素材：渲染器对缺字段是宽容的，这一段只看 self / all / ownerName。
 		{
 			self: { slug: "林越", name: "林越", body: "", manager: "owner" },
 			all: [{ slug: "林越", name: "林越", manager: "owner" }],
-			ownerName: "老大",
+			ownerName: "我",
 		},
 	);
-	expect(text).toContain("对老板的称呼：老大");
-	expect(text).toContain("@老大");
+	expect(text).toContain("对用户的称呼：你");
+	expect(text).toContain("@我");
 	expect(text).toContain("不要写 `@owner`");
 });

@@ -1,5 +1,5 @@
 /**
- * 两条 SSE 订阅：组织（谁在、谁改名）与当前频道（新消息 / 占位被覆盖）。
+ * 两条 SSE 订阅：组织（谁在、谁改名）与当前频道（新消息）。
  *
  * 关键纪律：**事件只负责把数据交给 store，不负责画**。
  * 上一个版本在 SSE 回调里直接 `feed.replaceChildren(...)` 重建整列，
@@ -10,7 +10,7 @@
 import { useEffect, useRef } from "react";
 import { getAttention, getChannels } from "../api/client.ts";
 import type { Message } from "../api/types.ts";
-import { applyDraft, applyMessage, getState, patch, setConn } from "../state/store.ts";
+import { applyMessage, getState, patch, setConn } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 打不开就等一等再试，退避到 15 秒封顶：服务重启期间不要每 100ms 打一次。 */
@@ -92,27 +92,6 @@ export function useChannelStream(): void {
 		source.addEventListener("create", (event) => {
 			const message = parse<Message>(event);
 			if (message !== null && message.seq !== undefined) applyMessage(currentId, message);
-		});
-		// `done` 是「这条消息的正文定稿了」：服务端给全文，前端整行替换。
-		// 不再往已经渲染成 HTML 的正文里追加纯文本（旧版本那样做，两种渲染混在一个容器里）。
-		source.addEventListener("done", (event) => {
-			const payload = parse<{ seq: number; text: string; status?: string }>(event);
-			if (payload === null) return;
-			const state = getState();
-			const messages = state.detail?.messages;
-			if (messages === undefined) return;
-			const index = messages.findIndex((item) => item.seq === payload.seq);
-			if (index < 0) return;
-			const next = messages.slice();
-			next[index] = { ...messages[index]!, text: payload.text, processing: false, status: "done" };
-			patch({ detail: { ...state.detail!, messages: next } });
-		});
-		// `draft` 是「他正在说的那句话」（还没落库）：只用来画末尾那行预览，
-		// 真消息一到（`create` / `done`）store 会自己把它删掉。
-		source.addEventListener("draft", (event) => {
-			const payload = parse<{ slug: string; text: string }>(event);
-			if (payload === null || typeof payload.slug !== "string" || typeof payload.text !== "string") return;
-			applyDraft(payload.slug, payload.text);
 		});
 		source.addEventListener("error", () => {
 			source.close();

@@ -15,7 +15,7 @@ describe("resolveInWorkspace", () => {
 
 	it("工作区内的相对路径原样给出", () => {
 		expect(resolveInWorkspace(root, "a.txt")).toBe("/tmp/ws/a.txt");
-		expect(resolveInWorkspace(root, "projects/dino/README.md")).toBe("/tmp/ws/projects/dino/README.md");
+		expect(resolveInWorkspace(root, "teams/dino/README.md")).toBe("/tmp/ws/teams/dino/README.md");
 		expect(resolveInWorkspace(root, "./a/../b.txt")).toBe("/tmp/ws/b.txt");
 	});
 

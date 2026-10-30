@@ -39,7 +39,7 @@ describe("A2 启动自愈真的跑完了", () => {
 		runtimes.push(first);
 		const shell = await assembleCore(first.harness, first.registry, {
 			agentsRoot: join(ws, "agents"),
-			projectsRoot: join(ws, "projects"),
+			teamsRoot: join(ws, "teams"),
 			defaultModel: { provider: "test", modelId: "test" },
 		});
 		const conversation = shell.conversations.get("甲");

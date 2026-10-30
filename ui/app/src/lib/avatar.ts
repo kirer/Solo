@@ -54,10 +54,10 @@ function hash(text: unknown): number {
 }
 
 /**
- * 老板的脸固定下来，不走哈希。
+ * 我的脸固定下来，不走哈希。
  *
  * 为什么：`owner` 不在 `people` 名册里（他是人，不是 agent），哈希出来是「圆胖」那族，
- * 和另外六七个人撞成同一种脸。老板的消息在界面上必须一眼认出来 —— 它是这个产品的
+ * 和另外六七个人撞成同一种脸。我的消息在界面上必须一眼认出来 —— 它是这个产品的
  * 主语。所以固定成「方肩」（第三族，最像管事的人）+ 暖色调（和强调色同一支色相），
  * 不论在哪个频道、不管名册里多了一个人，他的脸都不变。
  */
@@ -95,7 +95,7 @@ export function avatarSvg({
 
 	const shape = key === OWNER_SLUG ? OWNER_LOOK.shape : hash(key) % BODIES.length;
 	const tone = key === OWNER_SLUG ? OWNER_LOOK.tone : (TONES[hash(`${key}:tone`) % TONES.length] ?? TONES[0]);
-	// `shape` 恒落在 0–2（`hash % BODIES.length`，老板固定 2），`??` 只为让下标访问过类型检查。
+	// `shape` 恒落在 0–2（`hash % BODIES.length`，我固定 2），`??` 只为让下标访问过类型检查。
 	const body = BODIES[shape] ?? BODIES[0];
 
 	const horns =

@@ -1,7 +1,7 @@
 /**
  * 记忆留痕里的「操作者」必须能分清来源（审计 P2-4）。
  *
- * P0-4 之后 HTTP 侧只剩老板一个身份，所以**不造多用户模型**：面板上的改动记
+ * P0-4 之后 HTTP 侧只剩我一个身份，所以**不造多用户模型**：面板上的改动记
  * `owner:web`，agent 自己 `remember` 记 `agent`。出错时能一眼分开就够了。
  */
 import { request as httpRequest } from "node:http";
@@ -41,7 +41,7 @@ async function setup(): Promise<{ root: string; port: number }> {
 	runtimes.push(runtime);
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
 		agentsRoot,
-		projectsRoot: join(root, "projects"),
+		teamsRoot: join(root, "teams"),
 		defaultModel: { provider: "test", modelId: "test" },
 	});
 	await shell.rescan();

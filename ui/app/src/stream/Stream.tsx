@@ -1,24 +1,20 @@
 /**
  * 消息流。
  *
- * 这个文件只做三件事：把 `buildRows()` 算出来的行画出来、维护「贴底」与
- * 「上翻加载」、把过程组展开/收起记在本组件内（**不进 store**：展开状态是
- * 视图私事，塞进全局会让每次 SSE 都触发整棵重渲染）。
+ * 这个文件只做三件事：把 `buildRows()` 算出来的行画出来、维护「贴底」与「上翻加载」。
  *
- * 上一版的三个毛病在这里从结构上消失：
- * 1. 整列 `replaceChildren` → React 按 key 复用，只补增量；
- * 2. 过程行顺序靠「事后搬 DOM」→ 顺序在 `buildRows` 里就定了；
- * 3. 上翻时位置乱跳 → 插旧消息前后各量一次锚点行，按差值补 `scrollTop`。
+ * ADR-081 之后这里没有过程组、没有占位行、没有草稿行、没有底部活动行 —— 屏幕上只有
+ * 真实消息（`say` 与系统 `note`）。「他正在做什么」要看得见的话，只能从读取层派生
+ * （`harness.inspect()` 的忙闲），不进消息表。
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Attachment, Message } from "../api/types.ts";
+import type { Attachment } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { clockTime, copyText } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { buildRows } from "./model.ts";
-import type { EventGroupRow, Row } from "./model.ts";
-import { DONE_HINT, eventDetail, eventPhrase } from "../rows.ts";
+import type { Row } from "./model.ts";
 import { loadEarlier, openChannel, setReply } from "../state/store.ts";
 import type { Presence } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
@@ -29,29 +25,14 @@ const DONE_ICON =
 	'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>';
 const REPLY_ICON =
 	'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a7 7 0 0 1 7 7v1"/></svg>';
-const CHEVRON =
-	'<svg class="ev-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>';
-
-const EVENT_ICONS: Record<string, string> = {
-	think: '<path d="M12 3a7 7 0 0 1 4 12.7V19H8v-3.3A7 7 0 0 1 12 3z"/><path d="M9.5 21h5"/>',
-	command: '<path d="M5 7l4 5-4 5"/><path d="M12 17h7"/>',
-	read: '<path d="M4 5h7l2 2h7v12H4z"/>',
-	write: '<path d="M5 19l1-4 9-9 3 3-9 9z"/>',
-	talk: '<path d="M4 6h16v10H9l-5 4z"/>',
-	other: '<circle cx="12" cy="12" r="7"/><path d="M12 9v3l2 2"/>',
-};
 
 export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const detail = useStore((state) => state.detail);
 	const hasMore = useStore((state) => state.hasMore);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
-	const presence = useStore((state) => state.presence);
-	const drafts = useStore((state) => state.drafts);
 	const people = useStore((state) => state.people);
 	const [atBottom, setAtBottom] = useState(true);
-	/** 展开过的过程组（key）。默认展开的那些由 `defaultOpen` 决定，不进这个表。 */
-	const [opened, setOpened] = useState<Record<string, boolean>>({});
 
 	const flowRef = useRef<HTMLDivElement | null>(null);
 	const feedRef = useRef<HTMLDivElement | null>(null);
@@ -59,18 +40,7 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const pinned = useRef(true);
 
 	const messages = detail?.messages ?? [];
-	const channelKind = detail?.channel.kind ?? "dm";
-	const runningSlug = useMemo(() => {
-		for (const [slug, entry] of presence) {
-			if (entry.state === "thinking" || entry.state === "working") return slug;
-		}
-		return undefined;
-	}, [presence]);
-
-	const { rows, activity } = useMemo(
-		() => buildRows({ messages, channelKind, runningSlug, now: Date.now() }),
-		[messages, channelKind, runningSlug],
-	);
+	const rows = useMemo(() => buildRows({ messages, now: Date.now() }), [messages]);
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string }>();
@@ -145,9 +115,8 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 		return () => flow.removeEventListener("scroll", onScroll);
 	}, [isPinned]);
 
-	// 切频道：到底部，并把展开状态清掉（上一段的展开跟这一段无关）。
+	// 切频道：到底部。
 	useEffect(() => {
-		setOpened({});
 		anchor.current = null;
 		pinned.current = true;
 		requestAnimationFrame(() => toBottom());
@@ -191,42 +160,10 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 					<div className="feed" id="feed" ref={feedRef}>
 						{detail !== null && rows.length === 0 ? <Empty channelId={detail.channel.id} /> : null}
 						{rows.map((row) => (
-							<RowView
-								key={row.key}
-								row={row}
-								labels={labels}
-								opened={opened}
-								onToggle={(key, next) => setOpened((current) => ({ ...current, [key]: next }))}
-								onCopy={copy}
-								onImage={props.onImage}
-							/>
+							<RowView key={row.key} row={row} labels={labels} onCopy={copy} onImage={props.onImage} />
 						))}
-						{detail === null
-							? null
-							: [...drafts].map(([slug, draft]) => (
-									<DraftRow key={`draft-${slug}`} slug={slug} text={draft.text} labels={labels} />
-								))}
 					</div>
 
-					{activity === null ? null : (
-						<div className="act" data-slug={activity.slug}>
-							<span
-								className="act-av"
-								dangerouslySetInnerHTML={{
-									__html: avatarSvg({ slug: activity.slug, name: activity.label, size: 22, state: "working" }),
-								}}
-							/>
-							<span className="act-text">{activity.phrase}</span>
-							<span className="act-time">
-								<Living startAt={activity.startAt} />
-							</span>
-							<span className="act-live" aria-hidden="true">
-								<i />
-								<i />
-								<i />
-							</span>
-						</div>
-					)}
 				</div>
 			</div>
 			<button
@@ -245,8 +182,6 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 function RowView(props: {
 	row: Row;
 	labels: Map<string, { label: string; role: string }>;
-	opened: Record<string, boolean>;
-	onToggle: (key: string, next: boolean) => void;
 	onCopy: (node: HTMLElement) => void;
 	onImage: (src: string) => void;
 }): JSX.Element {
@@ -259,75 +194,13 @@ function RowView(props: {
 		);
 	}
 	if (row.type === "say") return <SayRow row={row} labels={props.labels} onCopy={props.onCopy} onImage={props.onImage} />;
-	if (row.type === "note") {
-		return (
-			<div className="row row-note" data-seq={row.message.seq}>
-				<div className="note-mark" aria-hidden="true">
-					i
-				</div>
-				<span className="note-text">{row.message.text}</span>
-				<span className="row-time">{clockTime(row.message.at)}</span>
-			</div>
-		);
-	}
-	if (row.type === "processing") {
-		return (
-			<div className="row row-event row-processing" data-seq={row.message.seq}>
-				<span className="ev-dot" aria-hidden="true" />
-				<span className="ev">
-					<b>{row.message.fromLabel}</b>
-					<span className="ev-what">正在处理</span>
-				</span>
-				<span className="ev-time">
-					<Living startAt={row.startAt} />
-				</span>
-			</div>
-		);
-	}
 	return (
-		<EventsRow
-			row={row}
-			open={props.opened[row.key] ?? row.defaultOpen}
-			onToggle={(next) => props.onToggle(row.key, next)}
-		/>
-	);
-}
-
-/**
- * 「正在说…」：模型正在生成、还没落库的那句话。
- *
- * 为什么值得画：一条 200 字的话要生成十几秒，这期间界面上只有「想了 3 秒」。
- * 让老板看见它正在往外蹦字，是「它还活着」最直接的证据。
- *
- * 三条纪律：①不进 `buildRows`（它不是消息，不该参与分组/分隔的判定）；
- * ②样式上明确是「草稿」——浅一档的字色 + 光标，不让人误以为已经说完了；
- * ③真消息一到就消失（`applyMessage` 里删），否则同一句话会出现两遍。
- */
-function DraftRow(props: {
-	slug: string;
-	text: string;
-	labels: Map<string, { label: string; role: string }>;
-}): JSX.Element {
-	const known = props.labels.get(props.slug);
-	const name = known?.label ?? props.slug;
-	return (
-		<div className="row row-say row-draft" data-slug={props.slug}>
-			<div
-				className="row-av"
-				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: props.slug, name, size: 40, state: "working" }),
-				}}
-			/>
-			<div className="row-body">
-				<div className="row-head">
-					<span className="row-name">{name}</span>
-					<span className="row-role">正在说</span>
-				</div>
-				<div className="md draft-text">
-					{props.text}
-					<span className="draft-caret" aria-hidden="true" />
-				</div>
+		<div className="row row-note" data-seq={row.message.seq}>
+			<div className="note-mark" aria-hidden="true">
+				i
 			</div>
+			<span className="note-text">{row.message.text}</span>
+			<span className="row-time">{clockTime(row.message.at)}</span>
 		</div>
 	);
 }
@@ -343,7 +216,7 @@ function SayRow(props: {
 	const owner = message.fromSlug === "owner";
 	const known = props.labels.get(message.fromSlug);
 	const name = known?.label ?? message.fromLabel;
-	// 老大不在名册里，`member.role` 会漏出 slug（`owner`），所以硬性不给。
+	// 我不在名册里，`member.role` 会漏出 slug（`owner`），所以硬性不给。
 	const role = owner ? "" : (known?.role ?? "");
 
 	return (
@@ -455,109 +328,6 @@ function Attachments(props: {
 			)}
 		</>
 	);
-}
-
-function EventsRow(props: { row: EventGroupRow; open: boolean; onToggle: (next: boolean) => void }): JSX.Element {
-	const { row } = props;
-	return (
-		<div
-			className="row row-events"
-			data-slug={row.slug}
-			data-state={row.running ? "running" : "done"}
-			data-open={props.open ? "true" : "false"}
-		>
-			<div
-				className="row-av"
-				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: row.slug, name: row.label, size: 40, state: row.running ? "working" : "idle" }),
-				}}
-			/>
-			<div className="row-body">
-			<button
-				type="button"
-				className="evs"
-				aria-expanded={props.open}
-				aria-label={row.describe}
-				title={row.describe}
-				onClick={() => props.onToggle(!props.open)}
-			>
-				{row.running ? (
-					<>
-						<b>{row.label}</b>
-						<span className="evs-what">{row.mix}</span>
-						<span className="evs-time">
-							<Living startAt={row.startAt} />
-						</span>
-					</>
-				) : (
-					<>
-						<span className="evs-what">{DONE_HINT}</span>
-					</>
-				)}
-				<span dangerouslySetInnerHTML={{ __html: CHEVRON }} style={{ display: "contents" }} />
-			</button>
-			<div className="evs-body" hidden={!props.open}>
-				<div className="evs-list">
-					{row.entries.map((entry) => (
-						<EventLine key={entry.seq} message={entry} />
-					))}
-				</div>
-			</div>
-			</div>
-		</div>
-	);
-}
-
-function EventLine(props: { message: Message }): JSX.Element {
-	const [open, setOpen] = useState(false);
-	const detail = eventDetail(props.message);
-	const kind = iconKindOf(props.message);
-	const icon = EVENT_ICONS[kind] ?? EVENT_ICONS["other"] ?? "";
-	return (
-		<div className="row-event" data-seq={props.message.seq} data-open={open ? "true" : "false"}>
-			{detail === "" ? (
-				<span className="ev">
-					<span className="ev-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>` }} />
-					<span className="ev-what">{eventPhrase(props.message)}</span>
-				</span>
-			) : (
-				<button type="button" className="ev" aria-expanded={open} onClick={() => setOpen(!open)}>
-					<span className="ev-ico" aria-hidden="true" dangerouslySetInnerHTML={{ __html: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${icon}</svg>` }} />
-					<span className="ev-what">{eventPhrase(props.message)}</span>
-					<span className="ev-chevron" aria-hidden="true" dangerouslySetInnerHTML={{ __html: CHEVRON }} />
-				</button>
-			)}
-			{detail === "" ? null : (
-				<div className="ev-body" hidden={!open}>
-					<pre>{detail}</pre>
-				</div>
-			)}
-		</div>
-	);
-}
-
-function iconKindOf(message: Message): string {
-	// 工具名只在正文里（`run command=…` / `read_file path=…`），视图层没单独字段。
-	const name = /^([a-z_]+)[\s(]/.exec(message.text)?.[1] ?? "";
-	if (message.kind === "think") return "think";
-	if (name === "run" || name === "bash") return "command";
-	if (name === "read_file" || name === "read_channel" || name === "read_history") return "read";
-	if (name === "write_file" || name === "edit_file") return "write";
-	if (name === "say") return "talk";
-	return "other";
-}
-
-/** 计时器：每 5 秒读一次真实时钟，不靠「帧」累加（切到后台会漏帧）。 */
-function Living(props: { startAt: number }): JSX.Element {
-	const [seconds, setSeconds] = useState(() => Math.max(0, Math.round((Date.now() - props.startAt) / 1000)));
-	useEffect(() => {
-		setSeconds(Math.max(0, Math.round((Date.now() - props.startAt) / 1000)));
-		const timer = window.setInterval(() => {
-			setSeconds((current) => Math.max(current, Math.round((Date.now() - props.startAt) / 1000)));
-		}, 5000);
-		return () => window.clearInterval(timer);
-	}, [props.startAt]);
-	return <>{seconds}s</>;
 }
 
 function Skeleton(): JSX.Element {

@@ -16,10 +16,10 @@ export type IdentityHeader = {
 	readonly name?: string;
 	/** 岗位标签，纯展示用。不决定能力，不决定层级。 */
 	readonly title?: string;
-	/** 上级的 slug。老板本人用 `owner`。 */
+	/** 上级的 slug。我本人用 `owner`。 */
 	readonly manager?: string;
-	/** 所在项目 slug；管理层与老板不必填。 */
-	readonly project?: string;
+	/** 所在团队 slug；管理层与我不必填。 */
+	readonly team?: string;
 };
 
 export type Identity = IdentityHeader & {
@@ -30,7 +30,7 @@ export type Identity = IdentityHeader & {
 	readonly dir: string;
 };
 
-/** 老板的 slug 常量。它不是 agent，是对话的另一端。 */
+/** 我的 slug 常量。它不是 agent，是对话的另一端。 */
 export const OWNER_SLUG = "owner";
 
 /** 只取 `---` 之间的行，逐行 `key: value`。不引入 YAML 依赖。 */
@@ -52,7 +52,12 @@ function parseHeader(source: string): IdentityHeader {
 		...(header.name === undefined ? {} : { name: header.name }),
 		...(header.title === undefined ? {} : { title: header.title }),
 		...(header.manager === undefined ? {} : { manager: header.manager }),
-		...(header.project === undefined ? {} : { project: header.project }),
+		// 迁移窗口：老工作区还写着 `project:`，改名后仍认它（`scripts/rename-teams.ts` 会改写）。
+		...(header.team === undefined
+			? header.project === undefined
+				? {}
+				: { team: header.project }
+			: { team: header.team }),
 	};
 }
 
@@ -110,7 +115,7 @@ export function reportsOf(all: readonly Identity[], slug: string): readonly Iden
 }
 
 /**
- * 从某个 agent 往上走到老板的整条链，**不含自己，含老板**。
+ * 从某个 agent 往上走到我的整条链，**不含自己，含我**。
  *
  * 用来渲染「你的汇报线」，也用来做「逐级上报」的工具校验。断链（`manager`
  * 指向一个不存在的 slug）时就地停止 —— 渲染出一半的链比报错有用。
@@ -129,7 +134,7 @@ export function chainUp(all: readonly Identity[], slug: string): readonly string
 	return chain;
 }
 
-/** 直接上级。老板返回 undefined。断链返回 `undefined` 且 `broken: true`。 */
+/** 直接上级。我返回 undefined。断链返回 `undefined` 且 `broken: true`。 */
 export function managerOf(all: readonly Identity[], slug: string): string | undefined {
 	const manager = all.find((identity) => identity.slug === slug)?.manager;
 	return manager === undefined || manager === "" ? undefined : manager;

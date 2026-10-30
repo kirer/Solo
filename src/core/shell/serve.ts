@@ -29,11 +29,9 @@ import { browserUrlOf, isWildcardHost, lanAddresses, lanUrlsOf } from "./http/ne
 import { hostAllowed, originAllowed } from "./http/origin.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
-import { listProjects } from "../project/doc.ts";
-import { ChannelDoc, markRead, type Attachment, type ChannelState } from "../channel/state.ts";
-import { setChannelStreamHook, setChannelClientsHas } from "../channel/post.ts";
+import { listTeams } from "../team/doc.ts";
+import { ChannelDoc, chatKind, markRead, type Attachment, type ChannelState } from "../channel/state.ts";
 import type { CoreShell } from "./assemble.ts";
-import { watchSayDrafts } from "../runtime/drafts.ts";
 import { appendMemory, memoryDigest, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { listSkills } from "../agent/skills.ts";
 import { attentionItems, channelDetail, channelList, labelIn, messageView, orgView, withLabels } from "./view.ts";
@@ -94,7 +92,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	//
 	// 原来的做法是每次提交都把**最后 60 条**重推一遍。实测：一次运行 15 秒里推了 1620 条
 	// create 事件、51,359 个 DOM 节点被加进去又删掉、浏览器最长一次卡 2.7 秒。
-	// 增量就该是增量：只推比这个游标新的，外加最后几条（占位填充要能原地覆盖）。
+	// 增量就该是增量：只推比这个游标新的，外加最后几条（补历史与增量会重叠，前端按 seq 幂等）。
 	const channelSeqs = new WeakMap<ServerResponse, Map<string, number>>();
 	const RECENT_RESEND = 4;
 	function cursorOf(client: ServerResponse, id: string): number | undefined {
@@ -109,124 +107,54 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		map.set(id, seq);
 	}
 
-	// 回复落库后只推一条 `done` 全文（审计 P1-3）。
-	//
-	// 旧做法是把**已经完整**的 `fullText` 切成 24 片、每 18ms 推一片来「模拟逐字」：
-	// 一条 2000 字的回复 = 24 次 SSE 写 + 24 次前端 DOM 操作，纯动画开销；而且前端是往
-	// 渲染过 Markdown 的 `.md` 里 `append` 纯文本节点，两种渲染混在同一个容器里。
-	// 前端的 `merge` / `buildOne` 本来就能用 done 全文整体重建，所以这里直接给全文。
-	setChannelStreamHook((channelId, seq, fullText) => {
-		const clients = channelClients.get(channelId);
-		if (clients === undefined || clients.size === 0) return;
-		const done = `event: done\ndata: ${JSON.stringify({ seq, text: fullText, status: "done" })}\n\n`;
-		for (const client of [...clients]) {
-			try {
-				client.write(done);
-			} catch {
-				clients.delete(client);
-			}
-		}
-	});
-	setChannelClientsHas((channelId) => (channelClients.get(channelId)?.size ?? 0) > 0);
-
-	// 「正在说」草稿：从提交里的 `pi.live` 拿模型逐字生成的那句话，推给正在看的界面。
-	//
-	// 为什么值得单独一条通路：一条 200 字的话要生成十几秒，这期间界面上只有「想了 3 秒」。
-	// 草稿让老板看见它正在往外蹦字 —— 那是「它还活着」最直接的证据（通路与取舍见
-	// `src/core/runtime/drafts.ts` 的文件头注释、`docs/CONCESSIONS.md` C-007）。
-	//
-	// 节流在这里而不是在 runtime：生成时每 100ms 一次提交，一条 300 字的话会推 20 多次，
-	// 界面每次都重排一段文字，纯动画开销。「多久推一次」是界面关心的事。
-	//
-	// 草稿通路要的两份「只读缓存」：会话 id → slug，以及最近一次频道快照（草稿只推给
-	// 有这个人的频道）。两者都在 `channelSnapshot()` 里顺手刷新 —— 那条路每次推送都跑，
-	// 不存在「草稿要用的时候还没填过」的窗口。
-	const slugOfConversation = new Map<string, string>();
-	let latestChannels: ChannelState | undefined;
-	const DRAFT_GAP_MS = 260;
-	const lastDraftText = new Map<string, string>();
-	const lastDraftAt = new Map<string, number>();
-	const stopDrafts = watchSayDrafts(shell.harness, (conversationId, text) => {
-		const slug = slugOfConversation.get(String(conversationId));
-		if (slug === undefined) return;
-		if (text === undefined) {
-			// 说完了，或者这一轮根本没在说：把记住的那份扔掉，下一句从头算。
-			lastDraftText.delete(slug);
-			return;
-		}
-		if (lastDraftText.get(slug) === text) return;
-		const now = Date.now();
-		if (now - (lastDraftAt.get(slug) ?? 0) < DRAFT_GAP_MS) return;
-		lastDraftText.set(slug, text);
-		lastDraftAt.set(slug, now);
-		const line = `event: draft\ndata: ${JSON.stringify({ slug, text })}\n\n`;
-		for (const [id, clients] of channelClients) {
-			if (clients.size === 0) continue;
-			const channel = latestChannels?.channels[id];
-			if (channel === undefined || !channel.members.includes(slug)) continue;
-			for (const client of [...clients]) {
-				try {
-					client.write(line);
-				} catch {
-					clients.delete(client);
-				}
-			}
-		}
-	});
-
 	/**
-	 * 只读「人 + 频道」的快照。SSE 增量推送用它 —— 推一条消息完全用不到项目文档，
-	 * 旧版本却每条推送都去串行读一遍全部项目 README（审计 P1-4）。
+	 * 只读「人 + 频道」的快照。SSE 增量推送用它 —— 推一条消息完全用不到团队文档，
+	 * 旧版本却每条推送都去串行读一遍全部团队 README（审计 P1-4）。
 	 */
 	async function channelSnapshot(context: Context = BACKGROUND_CONTEXT) {
 		const identities = await shell.identities();
 		const directory = withLabels(shell.bindings(), identities);
 		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannels();
-		latestChannels = channels;
-		slugOfConversation.clear();
-		for (const [slug, conversationId] of Object.entries(directory.slugToConversation)) {
-			slugOfConversation.set(String(conversationId), slug);
-		}
 		return { identities, directory, channels };
 	}
 
 	/**
-	 * 项目文档的短缓存。
+	 * 团队文档的短缓存。
 	 *
-	 * 为什么需要：`listProjects` 是一个项目一次 `readFile`，串行。agent 连续干活时
-	 * 「一次提交 × 每个活跃频道 × 每个项目」会把磁盘读放大成每秒几十次，而项目文档
-	 * 一秒内几乎不会变。这里按 `projects/` 目录 mtime + 250ms 窗口缓存：窗口内的
-	 * 重复读取共用一份，改了项目文件最迟 250ms 后生效（界面上看不出来）。
+	 * 为什么需要：`listTeams` 是一个团队一次 `readFile`，串行。agent 连续干活时
+	 * 「一次提交 × 每个活跃频道 × 每个团队」会把磁盘读放大成每秒几十次，而团队文档
+	 * 一秒内几乎不会变。这里按 `teams/` 目录 mtime + 250ms 窗口缓存：窗口内的
+	 * 重复读取共用一份，改了团队文件最迟 250ms 后生效（界面上看不出来）。
 	 */
-	let projectsCache: { at: number; stamp: number; value: readonly Awaited<ReturnType<typeof listProjects>>[number][] } | undefined;
-	async function projectsNow() {
-		const stamp = await stat(shell.projectsRoot).then((info) => info.mtimeMs).catch(() => -1);
+	let teamsCache: { at: number; stamp: number; value: readonly Awaited<ReturnType<typeof listTeams>>[number][] } | undefined;
+	async function teamsNow() {
+		const stamp = await stat(shell.teamsRoot).then((info) => info.mtimeMs).catch(() => -1);
 		const now = Date.now();
-		if (projectsCache !== undefined && projectsCache.stamp === stamp && now - projectsCache.at < PROJECT_CACHE_MS) {
-			return projectsCache.value;
+		if (teamsCache !== undefined && teamsCache.stamp === stamp && now - teamsCache.at < TEAM_CACHE_MS) {
+			return teamsCache.value;
 		}
-		const value = [...(await listProjects(shell.projectsRoot))];
-		projectsCache = { at: now, stamp, value };
+		const value = [...(await listTeams(shell.teamsRoot))];
+		teamsCache = { at: now, stamp, value };
 		return value;
 	}
 
 	/**
-	 * 组织快照：名册 + 身份 + 频道 + 项目负责人/现状表。界面的组织图与顶栏都吃这一份。
+	 * 组织快照：名册 + 身份 + 频道 + 团队管理员/现状表。界面的组织图与顶栏都吃这一份。
 	 *
-	 * 项目负责人的真相在项目 README 里，不在频道文档里。所以这里把它读成查表函数交给
+	 * 团队管理员的真相在团队 README 里，不在频道文档里。所以这里把它读成查表函数交给
 	 * 视图层 —— 视图层只做投影，不猜谁负责。
 	 */
 	async function snapshot(context: Context = BACKGROUND_CONTEXT) {
-		const [{ identities, directory, channels }, projects] = await Promise.all([
+		const [{ identities, directory, channels }, teams] = await Promise.all([
 			channelSnapshot(context),
-			projectsNow(),
+			teamsNow(),
 		]);
-		const owners = new Map<string, string | undefined>(projects.map((project) => [project.slug, project.owner]));
-		const projectOwnerOf = (project: string) => owners.get(project);
-		// 一句话现状与负责人同源（同一份项目文档），所以是同一个快照里的一张表。
-		const doings = new Map<string, string | undefined>(projects.map((project) => [project.slug, project.doing]));
-		const projectDoingOf = (project: string) => doings.get(project);
-		return { identities, directory, channels, projectOwnerOf, projectDoingOf };
+		const leads = new Map<string, string | undefined>(teams.map((team) => [team.slug, team.lead]));
+		const teamLeadOf = (team: string) => leads.get(team);
+		// 一句话现状与团队管理员同源（同一份团队文档），所以是同一个快照里的一张表。
+		const doings = new Map<string, string | undefined>(teams.map((team) => [team.slug, team.doing]));
+		const teamDoingOf = (team: string) => doings.get(team);
+		return { identities, directory, channels, teamLeadOf, teamDoingOf };
 	}
 
 	/** 向所有 SSE 连接推一份新快照（去抖：一次提交可能连带几次改动）。 */
@@ -258,8 +186,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	}
 
 	/**
-	 * T-016：向某个频道的所有 SSE 连接推一次该频道消息尾巴的增量（create 事件，带 status/text）。
-	 * 前端按 seq 幂等 upsert：新 seq 插入、已有 seq 覆盖（占位 pending → 填充后 done 靠这里覆盖，无需 runtime 钩子）。
+	 * 向某个频道的所有 SSE 连接推一次该频道消息尾巴的增量（`create` 事件）。
+	 * 前端按 seq 幂等 upsert：新 seq 插入、已有 seq 覆盖。
 	 * 只推「当前有连接的频道」，避免无谓扫描；连接建立时也会立即调一次做全量补齐。
 	 */
 	async function pushChannel(id: string): Promise<void> {
@@ -309,11 +237,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	// 任何文档提交都推一次：新消息、新 agent、改名，界面都会跟着变。
 	const unsubscribe = shell.harness.subscribeCommits(() => {
 		scheduleOrg();
-		// T-016：任何提交都可能改变某频道的占位状态（如 A 填充占位），对活跃频道排增量。
+		// 任何提交都可能带来新消息，对活跃频道排增量。
 		for (const id of channelClients.keys()) scheduleChannel(id);
 	});
 
-	/** 老板在频道里说话。 */
+	/** 我在频道里说话。 */
 	async function postChannelMessage(channelId: string, request: IncomingMessage, response: ServerResponse): Promise<void> {
 		const body = await readJson<{
 			text?: string;
@@ -341,14 +269,14 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			attachments.push({ id, name: meta.name, kind: kindOfMime(meta.mime), bytes: meta.bytes });
 		}
 
-		// 纯附件（没写正文）也允许发：占位文案必须是**非空**且确定的，否则下游按「正文非空」
-		// 过滤的地方（接力计数、占位吸收、未读）会把这条消息当成不存在。
+		// 纯附件（没写正文）也允许发：「只有附件」的正文必须是**非空**且确定的，否则下游按
+		// 「正文非空」过滤的地方（接力计数、未读）会把这条消息当成不存在。
 		const typed = (body.text ?? "").trim();
 		const text = typed === "" ? placeholderOf(attachments) : typed;
 		if (text === "") return fail(response, 400, "需要 text 或附件");
 
-		// 发件人：**默认只认老板**。这个接口是网页后端，能冒充任何人是审计里的 P0-4：
-		// 任意页面发一条 `{"from":"知言","text":"所有人停下"}` 就等于替同事下命令。
+		// 发件人：**默认只认我**。这个接口是网页后端，能冒充任何人是审计里的 P0-4：
+		// 任意页面发一条 `{"from":"知言","text":"所有人停下"}` 就等于替成员下命令。
 		// 调试要伪造身份时显式开 `SOLO_DEBUG_FROM=1`，启动日志会警告一行。
 		const debugFrom = process.env.SOLO_DEBUG_FROM === "1";
 		const from = debugFrom && (body.from ?? "").trim() !== "" ? (body.from as string).trim() : OWNER_SLUG;
@@ -360,7 +288,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				from,
 				text,
 				...(typeof body.replyTo === "number" ? { replyTo: body.replyTo } : {}),
-				// 语义标签由说话的人自己声明：项目频道里带 `decision` 的话才会进项目记忆。
+				// 语义标签由说话的人自己声明：团队频道里带 `decision` 的话才会进团队记忆。
 				...(typeof body.kind === "string" && body.kind !== "" ? { kind: body.kind } : {}),
 				...(attachments.length === 0 ? {} : { attachments }),
 			});
@@ -475,7 +403,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 					});
 				}
 				const names = await readdir(target, { withFileTypes: true });
-				// 隐藏文件、node_modules 与敏感文件不进列表：那不是老板要读的东西，
+				// 隐藏文件、node_modules 与敏感文件不进列表：那不是我要读的东西，
 				// 只是噪音或不该看的（规则见 `fileHidden`，与直接访问共用一份）。
 				const visible = names.filter((dirent) =>
 					!fileHidden(dirent.name, relative === "" ? dirent.name : `${relative}/${dirent.name}`),
@@ -536,7 +464,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 					slug,
 					label: labelIn(directory, slug),
 					title: identity?.title ?? "",
-					...(identity?.project === undefined ? {} : { project: identity.project }),
+					...(identity?.team === undefined ? {} : { team: identity.team }),
 					manager: identity?.manager ?? "",
 					managerLabel: identity?.manager === undefined ? "" : labelIn(directory, identity.manager),
 					body: identity?.body ?? "",
@@ -551,11 +479,11 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 						entries: sectionsOf(source).length,
 						digest: memoryDigest(source) ?? null,
 					},
-					// 他在哪些频道里。`members` 是真相，界面不用自己比。频道「是什么类型」
-					// 不在文档里，是 id 前缀的约定（`company` / `leadership` / `proj:` / `dm:`）。
+					// 他在哪些频道里。`members` 是真相，界面不用自己比。频道是私聊还是群聊
+					// 也由成员推（`chatKind`），不靠 id 前缀。
 					channels: Object.values(state.channels ?? {})
 						.filter((channel) => channel.members.includes(slug))
-						.map((channel) => ({ id: channel.id, kind: channelKind(channel.id), title: channel.title })),
+						.map((channel) => ({ id: channel.id, kind: chatKind(channel), title: channel.title })),
 				});
 			},
 		},
@@ -626,8 +554,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels",
 			method: "GET",
 			handler: async ({ response }) => {
-				const { directory, channels, projectOwnerOf, projectDoingOf } = await snapshot();
-				const list = channelList(channels, directory, OWNER_SLUG, projectOwnerOf, projectDoingOf);
+				const { directory, channels, teamLeadOf, teamDoingOf } = await snapshot();
+				const list = channelList(channels, directory, OWNER_SLUG, teamLeadOf, teamDoingOf);
 				return json(response, {
 					channels: list,
 					unread: {
@@ -711,7 +639,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				const channel = channels.channels[params.id ?? ""];
 				if (channel === undefined) return json(response, { candidates: [] });
 				// `title` 取自 `identity.md` 的 title（与团队视图同源），让 @ 浮窗显示
-				// 「名字 / 职位 / @slug」三层，老板要的职位信息就在这里。
+				// 「名字 / 职位 / @slug」三层，我要的职位信息就在这里。
 				const identityTitle = (slug: string): string => {
 					const found = identities.find((item) => item.slug === slug);
 					return found?.title ?? "";
@@ -732,7 +660,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 			pattern: "/api/channels/:id",
 			method: "GET",
 			handler: async ({ response, url, params }) => {
-				const { directory, channels, projectOwnerOf, projectDoingOf } = await snapshot();
+				const { directory, channels, teamLeadOf, teamDoingOf } = await snapshot();
 				const channel = channels.channels[params.id ?? ""];
 				if (channel === undefined) return fail(response, 404, "频道不存在或无权查看");
 				const limit = Number(url.searchParams.get("limit") ?? "");
@@ -740,8 +668,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				return json(
 					response,
 					channelDetail(channels, channel, directory, {
-						projectOwnerOf,
-						projectDoingOf,
+						teamLeadOf,
+						teamDoingOf,
 						...(Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 						...(Number.isFinite(before) && before > 0 ? { before } : {}),
 					}),
@@ -773,7 +701,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				const body = await readJson<{ seq?: number }>(request);
 				if (typeof body.seq === "number" && Number.isFinite(body.seq)) {
 					// 已读位置夹到频道真实上界：把 `{"seq":999999}` 直接写进去等于「以后所有消息
-					// 都算已读」，未读数从此永远 0 —— 老板再也看不到新消息的红点。
+					// 都算已读」，未读数从此永远 0 —— 我再也看不到新消息的红点。
 					const list = (await shell.channels()).messages[id] ?? [];
 					const lastSeq = list[list.length - 1]?.seq ?? 0;
 					const seq = Math.min(Math.max(Math.floor(body.seq), 0), lastSeq);
@@ -788,7 +716,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		{
 			// 浏览器自己报上来的卡顿（`ui/app/src/lib/jank.ts`）。
 			//
-			// 老板两次报「agent 在跑的时候页面卡死」，而我在无头 Chrome 里量出来是
+			// 我两次报「agent 在跑的时候页面卡死」，而我在无头 Chrome 里量出来是
 			// 「长任务 0、最慢帧 17ms」—— 两边对不上，靠猜猜不完。让浏览器在真卡的时候
 			// 把「卡了多久、当时在干什么」写到 `workspace/logs/jank.jsonl`，复现一次就能读。
 			pattern: "/api/diag",
@@ -810,7 +738,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 				return json(response, { ok: true });
 			},
 		},
-		// 界面上还没有的入口，先明确 501，免得前端拿到 404 后误以为是「频道没了」。
+		// 其余路径交给静态资源；找不到就 404（前端据此判断「是不是接口写错了」）。
 		{
 			pattern: "*rest",
 			handler: async ({ request, response, path }) => {
@@ -1020,7 +948,6 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		lanUrls: lanUrlsOf(boundHost, actualPort),
 		async close() {
 			unsubscribe();
-			stopDrafts();
 			if (orgTimer !== undefined) clearTimeout(orgTimer);
 			for (const client of orgClients) {
 				try {
@@ -1210,8 +1137,8 @@ async function readJson<T>(request: IncomingMessage, options: { readonly require
 /**
  * 记忆留痕里的「操作者」。
  *
- * P0-4 之后 HTTP 侧只剩老板一个身份，所以这里**不造多用户模型**：只把来源标清楚 ——
- * 网页（老板点「忘掉」/「添一条」）写 `owner:web`，agent 自己 `remember` 写 `agent`。
+ * P0-4 之后 HTTP 侧只剩我一个身份，所以这里**不造多用户模型**：只把来源标清楚 ——
+ * 网页（我点「忘掉」/「添一条」）写 `owner:web`，agent 自己 `remember` 写 `agent`。
  * 以后真出错时，「这条是人在面板上删的」和「它自己改的」能一眼分开。
  */
 const MEMORY_ACTOR_WEB = "owner:web";
@@ -1248,8 +1175,8 @@ export async function mapLimit<T, R>(
 	return out;
 }
 
-/** 项目文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
-const PROJECT_CACHE_MS = 250;
+/** 团队文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
+const TEAM_CACHE_MS = 250;
 
 /** 写接口的 JSON 正文上限。正常消息几千字，1MB 已经宽得离谱。 */
 const JSON_BODY_LIMIT = 1 << 20;
@@ -1295,11 +1222,3 @@ export function fileHidden(name: string, relativePath: string): boolean {
 	return false;
 }
 
-/** 频道 id 前缀 → 类型。文档里不存 kind，约定在 id 上（见 `channel/state.ts` 的 `channelIdOf`）。 */
-function channelKind(id: string): "company" | "leadership" | "project" | "dm" | "other" {
-	if (id === "all") return "company";
-	if (id === "leadership") return "leadership";
-	if (id.startsWith("proj:")) return "project";
-	if (id.startsWith("dm:")) return "dm";
-	return "other";
-}

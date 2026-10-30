@@ -6,7 +6,7 @@
  */
 import { describe, expect, test } from "vitest";
 import { DirectoryDoc } from "../../src/core/agent/roster.ts";
-import { SettleDoc } from "../../src/core/project/settle.ts";
+import { SettleDoc } from "../../src/core/team/settle.ts";
 import { ChannelDoc } from "../../src/core/channel/state.ts";
 
 const checkpointOf = (token: unknown) =>

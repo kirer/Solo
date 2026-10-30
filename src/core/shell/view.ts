@@ -8,12 +8,13 @@
  * - **数字 id**：界面到处用 `conversationId` 做 key（成员、@ 对象、看板卡片）。
  *   核心的稳定标识是 slug，但界面上要一个能排序、能当 DOM 属性的东西。这里把
  *   slug → 会话 id 的映射拿出来当 id 用，界面对它一无所知。
- * - **`kind`**：界面按 `company/leadership/project/dm` 分组。核心没有频道类型，
- *   这里从频道 id 前缀猜（`dm:` → dm，`proj:` → project，其余 → company）。
+ * - **`kind`**：界面只需要知道「私聊还是群聊」。这是成员表的事（恰好 `{我, 一个
+ *   agent}` 就是私聊），所以这里直接转 `chatKind()` 的结果，不猜 id 前缀。
  */
 import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
 import { conversationFor, type DirectoryState } from "../agent/roster.ts";
 import {
+	chatKind,
 	readMarkOf,
 	unreadCount,
 	type Attachment,
@@ -22,24 +23,29 @@ import {
 	type Message,
 } from "../channel/state.ts";
 
-/** 界面用的频道种类。核心没有频道类型，从 id 前缀反推。 */
-export type ViewChannelKind = "company" | "leadership" | "project" | "dm";
+/**
+ * 界面用的会话种类。**只有两种**，由成员表推导（见 `channel/state.ts` 的 `chatKind`）。
+ *
+ * 以前这里是 `company | leadership | team | dm`，靠 id 前缀反推 —— 于是「公司频道」和
+ * 「团队频道」在界面上长得不一样，而它们实际上是同一种东西：一个群。
+ */
+export type ViewChannelKind = "dm" | "group";
 
 /** 频道列表项。 */
 export type ViewChannel = {
 	id: string;
 	kind: ViewChannelKind;
-	/** 仅 `kind === "project"` 时有：这个项目归谁负责（`README.md` 的 `owner`）。 */
-	owner?: string;
-	/** 仅 `kind === "project"` 时有：负责人显示名。 */
-	ownerLabel?: string;
+	/** 仅团队频道有：这个团队归谁负责（`README.md` 的 `lead`）。 */
+	lead?: string;
+	/** 仅团队频道有：团队管理员显示名。 */
+	leadLabel?: string;
 	/**
-	 * 仅 `kind === "project"` 且项目文档写了 `doing` 时有：一句话现状。
+	 * 仅团队频道且团队文档写了 `doing` 时有：一句话现状。
 	 * 界面拿它当顶栏副标题的第一段；缺了这个键就什么都不画。
 	 */
 	doing?: string;
 	title: string;
-	project?: string;
+	team?: string;
 	unread: number;
 	mentions: number;
 	preview: string;
@@ -60,19 +66,11 @@ export type ViewMessage = {
 	mentions: { id: number; label: string; read: boolean; offset: number }[];
 	replyTo?: { seq: number; from: number; fromSlug: string; fromLabel: string; excerpt: string };
 	read: boolean;
-	/** T-016：生成状态。undefined/done = 正常；pending = 占位 loading；error = 生成失败。 */
-	status?: "pending" | "done" | "error";
-	/** T-016：占位归属的被唤醒人 slug。 */
-	pendingFor?: string;
-	/** B（通用处理中指示）：该消息是否为「开始处理…」动画占位（前端渲染动画行）。 */
-	processing?: boolean;
-	/** 这一轮真正开始的时刻（ADR-072）。缺省时界面退回第一条过程行的 `at`。 */
-	startedAt?: number;
 	/**
-	 * 这条要不要老板本人看一眼。
+	 * 这条要不要我本人看一眼。
 	 *
-	 * 判据在核心（`needsOwner` + 显式 @ 老板），这里只做投影 —— 界面不该自己猜关键词。
-	 * 老板自己说的话永不算「需要你」。
+	 * 判据在核心（只认显式 @ 我），这里只做投影 —— 界面不该自己猜关键词。
+	 * 我自己说的话永不算「需要你」。
 	 */
 	needsYou?: true;
 	/**
@@ -98,12 +96,12 @@ export type ViewChannelDetail = {
  * 组织快照。
  *
  * 只装**界面真会看**的东西。「有没有新消息」靠 SSE 这条事件本身通知（界面收到就重拉列表），
- * 所以早先那版为旧界面凑的 `projects` / `pending` / `costs` / `links` / `ceoQueue` 全删了 ——
+ * 所以早先那版为旧界面凑的 `teams` / `pending` / `costs` / `links` / `ceoQueue` 全删了 ——
  * 那些字段一个消费者也没有，留着只会让下一个人以为「这里有业务概念」。
  */
 export type ViewOrg = {
 	company: { name: string };
-	/** 全部人，按「离老板最近」优先排序（第一项是那个直接向老板汇报的人）。 */
+	/** 全部人，按「离我最近」优先排序（第一项是那个直接向我汇报的人）。 */
 	people: ViewActor[];
 };
 
@@ -113,19 +111,23 @@ export type ViewActor = {
 	slug: string;
 	label: string;
 	title: string;
-	project?: string;
+	team?: string;
 	manager?: string;
 	managerLabel?: string;
 	/** `identity.md` 正文 —— 档案页要显示「他是谁」，只有 slug 不够。 */
 	body: string;
 };
 
-/** 频道 id → 界面种类。核心没有类型这个概念，只能从命名约定反推。 */
-function kindOf(id: string): ViewChannelKind {
-	if (id.startsWith("dm:")) return "dm";
-	if (id.startsWith("proj:")) return "project";
-	if (id.startsWith("lead:")) return "leadership";
-	return "company";
+/**
+ * 频道显示成什么标题：私聊是**对方的名字**，群聊是频道自己的标题（团队频道就是团队名）。
+ *
+ * 私聊不存「对方是谁」这个字段 —— 成员表里除了我之外的另一个就是它，名字从名册现取，
+ * 改了 `identity.md` 下一条消息就生效。
+ */
+function titleOf(channel: Channel, directory: DirectoryState): string {
+	if (chatKind(channel) !== "dm") return channel.title;
+	const other = channel.members.find((slug) => slug !== OWNER_SLUG);
+	return other === undefined ? channel.title : labelIn(directory, other);
 }
 
 /** 由 slug 拿界面 id（会话号）。名册里没有的给 -1，界面上会显示成一串连不上的节点。 */
@@ -158,23 +160,23 @@ function offsetOf(text: string, label: string): number {
 }
 
 /**
- * 「项目归谁负责」的查询函数。
+ * 「团队归谁负责」的查询函数。
  *
- * 它来自 `projects/<slug>/README.md` —— 真相在文件里，不在频道文档里。所以这里只收
- * 一个查表函数，而不是把项目文档搬进频道状态（那会造出第二份会漂的副本）。
+ * 它来自 `teams/<slug>/README.md` —— 真相在文件里，不在频道文档里。所以这里只收
+ * 一个查表函数，而不是把团队文档搬进频道状态（那会造出第二份会漂的副本）。
  */
-export type ProjectOwnerOf = (project: string) => string | undefined;
+export type TeamLeadOf = (team: string) => string | undefined;
 
-/** 「这个项目的一句话现状」的查询函数。来源同上（项目文档的 `doing`）。 */
-export type ProjectDoingOf = (project: string) => string | undefined;
+/** 「这个团队的一句话现状」的查询函数。来源同上（团队文档的 `doing`）。 */
+export type TeamDoingOf = (team: string) => string | undefined;
 
 /** 频道列表。 */
 export function channelList(
 	state: ChannelState,
 	directory: DirectoryState,
 	slug = OWNER_SLUG,
-	projectOwnerOf?: ProjectOwnerOf,
-	projectDoingOf?: ProjectDoingOf,
+	teamLeadOf?: TeamLeadOf,
+	teamDoingOf?: TeamDoingOf,
 ): ViewChannel[] {
 	const out: ViewChannel[] = [];
 	for (const channel of Object.values(state.channels)) {
@@ -187,40 +189,27 @@ export function channelList(
 		// 2. 一层都没有时退回「最后一条非 note 的」。
 		//
 		// 为什么要分两层：`work`/`tool` 是运行时记的命令行与工具名，一条频道里
-		// 大量出现（实测侧栏整列显示 `$ cd /Users/kirer/projects/...`）。拿它当预览，
-		// 老板扫一眼会以为这个频道里没人说话，全是机器输出 —— 而其实下面就有正常对话。
+		// 大量出现（实测侧栏整列显示 `$ cd /Users/kirer/teams/...`）。拿它当预览，
+		// 我扫一眼会以为这个频道里没人说话，全是机器输出 —— 而其实下面就有正常对话。
 		// `note` 是系统告警（接力到上限、投递失败），同理不能当预览。
 		const lastSpoken =
 			messages.findLast((item) => SPOKEN_KINDS.has(item.kind)) ??
 			messages.findLast((item) => item.kind !== "note");
 		const unread = unreadCount(state, channel.id, slug);
 		// 「@ 我」的条数：未读里点名提到我的那些。界面上它们比普通未读更红。
-		//
-		// 个人频道（dm:owner-<slug>）里，agent 自己的「过程投影」消息（kind 为
-		// say/think/tool，见 projector.ts）是从它所在群/项目的发言镜像过来的，
-		// 不是它主动在私聊里 @ 老板。这类镜像如果正文里带了 `@owner`（最常见就是
-		// 它在群里回老板时被解析出的 mention），会让老板的个人频道误亮红点。
-		// 因此这里把投影镜像排除出「@ 我」计数 —— 真实在私聊里 @ 老板的消息
-		// （kind 为 chat/question，由 say 工具发出）照常计数，口径 A 不倒退。
-		const isPersonalMirror = (message: Message): boolean =>
-			kindOf(channel.id) === "dm" &&
-			(message.kind === "say" || message.kind === "think" || message.kind === "tool");
 		const mentions = messages.filter(
-			(message) =>
-				!isPersonalMirror(message) &&
-				message.seq > readMarkOf(state, slug, channel.id) &&
-				message.mentions.includes(slug),
+			(message) => message.seq > readMarkOf(state, slug, channel.id) && message.mentions.includes(slug),
 		).length;
-		const project = channel.id.startsWith("proj:") ? channel.id.slice("proj:".length) : undefined;
-		const owner = project === undefined ? undefined : projectOwnerOf?.(project);
-		const doing = project === undefined ? undefined : projectDoingOf?.(project);
+		const team = channel.id.startsWith("team:") ? channel.id.slice("team:".length) : undefined;
+		const lead = team === undefined ? undefined : teamLeadOf?.(team);
+		const doing = team === undefined ? undefined : teamDoingOf?.(team);
 		out.push({
 			id: channel.id,
-			kind: kindOf(channel.id),
-			...(owner === undefined || owner === "" ? {} : { owner, ownerLabel: labelIn(directory, owner) }),
+			kind: chatKind(channel),
+			...(lead === undefined || lead === "" ? {} : { lead, leadLabel: labelIn(directory, lead) }),
 			...(doing === undefined || doing === "" ? {} : { doing }),
-			title: channel.title,
-			...(project === undefined ? {} : { project }),
+			title: titleOf(channel, directory),
+			...(team === undefined ? {} : { team }),
 			unread,
 			mentions,
 			preview: previewOf(lastSpoken),
@@ -234,13 +223,13 @@ export function channelList(
 }
 
 /**
- * 「这条要不要老板看一眼」。
+ * 「这条要不要我看一眼」。
  *
- * 老板自己说的话不算（他不需要提醒自己）。判据只有一条：消息显式 @了老板。
+ * 我自己说的话不算（他不需要提醒自己）。判据只有一条：消息显式 @了我。
  *
- * 旧逻辑用 `needsOwner` 做关键词嗅探（「要不要/请确认/等你定」），会把没点老板的
- * 普通 @同事 协作消息误标「需要我」—— 这正是 #4 要修的误标。关键词嗅探已移除，
- * `needsOwner` 现在恒返回 false，这里只认显式 @owner。
+ * 旧逻辑用关键词嗅探（「要不要/请确认/等你定」），会把没点我的
+ * 普通 @成员 协作消息误标「需要我」—— 这正是 #4 要修的误标。关键词嗅探已移除，
+ * 关键词嗅探已删除（连同同名函数），这里只认显式 @owner。
  */
 function needsYou(message: Message): boolean {
 	if (message.from === OWNER_SLUG) return false;
@@ -284,10 +273,6 @@ export function messageView(
 					},
 				}),
 		read: readMarkOf(state, viewer, channel.id) >= message.seq,
-		...(message.status === undefined ? {} : { status: message.status }),
-		...(message.pendingFor === undefined ? {} : { pendingFor: message.pendingFor }),
-		...(message.processing === undefined || message.processing === false ? {} : { processing: true }),
-		...(message.startedAt === undefined ? {} : { startedAt: message.startedAt }),
 		// 附件只透传引用（id/name/kind/bytes），文件本体走 `/api/uploads/:id`。
 		// 逐字段重建是为了固定键顺序：这份 JSON 也会进 SSE 与提示词，字节要确定。
 		...(message.attachments === undefined || message.attachments.length === 0
@@ -313,8 +298,8 @@ export function channelDetail(
 		readonly limit?: number;
 		readonly before?: number;
 		readonly viewer?: string;
-		readonly projectOwnerOf?: ProjectOwnerOf;
-		readonly projectDoingOf?: ProjectDoingOf;
+		readonly teamLeadOf?: TeamLeadOf;
+		readonly teamDoingOf?: TeamDoingOf;
 	} = {},
 ): ViewChannelDetail {
 	const viewer = options.viewer ?? OWNER_SLUG;
@@ -325,20 +310,20 @@ export function channelDetail(
 	const start = Math.max(0, end - limit);
 	const page = all.slice(start, end);
 	const last = page[page.length - 1];
-	const projectSlug = channel.id.startsWith("proj:") ? channel.id.slice("proj:".length) : undefined;
-	const ownerSlug = projectSlug === undefined ? undefined : options.projectOwnerOf?.(projectSlug);
-	const doing = projectSlug === undefined ? undefined : options.projectDoingOf?.(projectSlug);
-	// 个人频道显示成那个人的名字 —— 频道建立时标题就是它，这里不重复计算。
+	const teamSlug = channel.id.startsWith("team:") ? channel.id.slice("team:".length) : undefined;
+	const leadSlug = teamSlug === undefined ? undefined : options.teamLeadOf?.(teamSlug);
+	const doing = teamSlug === undefined ? undefined : options.teamDoingOf?.(teamSlug);
+	// 私聊的标题是那个人的名字（`titleOf` 现算，不读频道里存的那份）。
 	return {
 		channel: {
 			id: channel.id,
-			kind: kindOf(channel.id),
-			...(ownerSlug === undefined || ownerSlug === ""
+			kind: chatKind(channel),
+			...(leadSlug === undefined || leadSlug === ""
 				? {}
-				: { owner: ownerSlug, ownerLabel: labelIn(directory, ownerSlug) }),
+				: { lead: leadSlug, leadLabel: labelIn(directory, leadSlug) }),
 			...(doing === undefined || doing === "" ? {} : { doing }),
-			title: channel.title,
-			...(projectSlug === undefined ? {} : { project: projectSlug }),
+			title: titleOf(channel, directory),
+			...(teamSlug === undefined ? {} : { team: teamSlug }),
 			lastAt: last?.at ?? channel.createdAt,
 			lastSeq: last?.seq ?? 0,
 			memberCount: channel.members.length,
@@ -347,12 +332,12 @@ export function channelDetail(
 			id: idOf(directory, slug),
 			slug,
 			label: labelIn(directory, slug),
-			// `role` 的价值在界面：项目频道里要一眼看出谁是负责人。只用三种能从文件里
-			// 读出来的事实（老板 / 项目负责人 / 成员），不引岗位枚举。
+			// `role` 的价值在界面：团队频道里要一眼看出谁是团队管理员。只用三种能从文件里
+			// 读出来的事实（我 / 团队管理员 / 成员），不引岗位枚举。
 			role:
 				slug === OWNER_SLUG
 					? "owner"
-					: ownerSlug !== undefined && slug === ownerSlug
+					: leadSlug !== undefined && slug === leadSlug
 						? "lead"
 						: "member",
 			unread: unreadCount(state, channel.id, slug),
@@ -366,7 +351,7 @@ export function channelDetail(
 /**
  * 组织快照。
  *
- * 只给「有谁、谁向谁汇报」这两件事。人按「离老板最近」优先排序：`manager` 是老板的
+ * 只给「有谁、谁向谁汇报」这两件事。人按「离我最近」优先排序：`manager` 是我的
  * 排最前，其余按报名顺序 —— 界面左侧成员列表直接用这个顺序。
  */
 export function orgView(identities: readonly Identity[], directory: DirectoryState, companyName = "Solo"): ViewOrg {
@@ -374,13 +359,13 @@ export function orgView(identities: readonly Identity[], directory: DirectorySta
 		slug: identity.slug,
 		label: identity.name ?? identity.slug,
 		title: identity.title ?? "",
-		...(identity.project === undefined ? {} : { project: identity.project }),
+		...(identity.team === undefined ? {} : { team: identity.team }),
 		...(identity.manager === undefined ? {} : { manager: identity.manager }),
 		...(identity.manager === undefined ? {} : { managerLabel: labelIn(directory, identity.manager) }),
 		body: identity.body,
 	});
 
-	// 知言（老板唯一直接对话的助理）固定排第一（pin to top）：任何成员/团队列表恒首位。
+	// 知言（我唯一直接对话的助理）固定排第一（pin to top）：任何成员/团队列表恒首位。
 	const pinned = identities.filter((identity) => identity.slug === "知言");
 	const rest = identities.filter((identity) => identity.slug !== "知言");
 	return {
@@ -389,7 +374,7 @@ export function orgView(identities: readonly Identity[], directory: DirectorySta
 	};
 }
 
-/** 离老板最近（manager 是老板）的排在前面，其余按原序。 */
+/** 离我最近（manager 是我）的排在前面，其余按原序。 */
 function nearestOf(identities: readonly Identity[]): readonly Identity[] {
 	return identities.filter((identity) => identity.manager === OWNER_SLUG);
 }
@@ -399,7 +384,7 @@ function othersOf(identities: readonly Identity[]): readonly Identity[] {
 
 /** slug → 显示名。名册里没有就给 slug 本身（总比空白强）。 */
 export function labelIn(directory: DirectoryState, slug: string): string {
-	if (slug === OWNER_SLUG) return "老大";
+	if (slug === OWNER_SLUG) return "我";
 	return directory.labels?.[slug] ?? slug;
 }
 
@@ -413,7 +398,7 @@ export function withLabels(directory: DirectoryState, identities: readonly Ident
 /**
  * 「找你的 N 件事」。
  *
- * 老板的抱怨是「消息太多，真正需要我的信息没有 @ 我，没法直接定位」。频道列表只能给出
+ * 我的抱怨是「消息太多，真正需要我的信息没有 @ 我，没法直接定位」。频道列表只能给出
  * 每个频道一个红点，回答不了「我现在该看哪一条」。这份列表把散落在所有频道里、真正
  * 等他开口的消息按时间倒序摊平，每条都带回到原频道的锚点。
  *
@@ -451,20 +436,20 @@ export function attentionItems(
 		const mark = readMarkOf(state, viewer, channel.id);
 		for (const message of state.messages[channel.id] ?? []) {
 			if (now - message.at > ATTENTION_WINDOW_MS) continue;
-			// 只收「说出口的话」。过程投影（think / tool / work）和系统 note 不是发言，
+			// 只收「说出口的话」。历史的过程投影（think / tool / work）和系统 note 不是发言，
 			// 它们里的「要不要 / 还是 / 怎么定」是模型的自言自语（实测 60 条里有 40 多条
 			// 是英文内心独白），进来就把这个列表变成噪音。
 			if (!SPOKEN_KINDS.has(message.kind)) continue;
 			if (!needsYou(message)) continue;
 			// 说给别人听的不进。`needsYou` 的判据（`要不要` / `还是` / `怎么定`）故意宽，
-			// 因为模型忘了 @ 老板的代价更高；但在「找你」这个列表里必须再收一道：
-			// 一条消息如果**明确点了别人**而没点老板，它就不是找老板的。
+			// 因为模型忘了 @ 我的代价更高；但在「找你」这个列表里必须再收一道：
+			// 一条消息如果**明确点了别人**而没点我，它就不是找我的。
 			const others = message.mentions.filter((slug) => slug !== viewer);
 			if (others.length > 0 && !message.mentions.includes(viewer)) continue;
 			const first = message.text.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
 			out.push({
 				channelId: channel.id,
-				channelKind: kindOf(channel.id),
+				channelKind: chatKind(channel),
 				channelTitle: channel.title,
 				seq: message.seq,
 				at: message.at,

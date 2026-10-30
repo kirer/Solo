@@ -37,14 +37,14 @@ describe("技能：目录即事实", () => {
 		await mkdir(join(agent, "skills", "立项"), { recursive: true });
 		await writeFile(
 			join(agent, "skills", "立项", "SKILL.md"),
-			"---\nname: 立项\ndescription: 什么时候该开一个新项目\n---\n\n正文一\n",
+			"---\nname: 立项\ndescription: 什么时候该开一个新团队\n---\n\n正文一\n",
 			"utf8",
 		);
 		await writeFile(join(agent, "skills", "复盘.md"), "---\ndescription: 做完之后的回看\n---\n\n正文二\n", "utf8");
 
 		const skills = await listSkills(roots, "me");
 		expect(skills.map((skill) => skill.name)).toEqual(["复盘", "立项"]);
-		expect(skills.map((skill) => skill.description)).toEqual(["做完之后的回看", "什么时候该开一个新项目"]);
+		expect(skills.map((skill) => skill.description)).toEqual(["做完之后的回看", "什么时候该开一个新团队"]);
 	});
 
 	it("缺 description 时退回名字，不编造", async () => {

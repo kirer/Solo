@@ -1,7 +1,7 @@
 /**
  * 附件 → 模型能看见的东西。
  *
- * 背景：老板发一张截图，模型以前只看到一行字「[图片] 宽图.png」，于是它只能回
+ * 背景：我发一张截图，模型以前只看到一行字「[图片] 宽图.png」，于是它只能回
  * 「我读不了图里的内容」。这是实现的问题，不是模型的问题 —— 底层（pi-ai）的
  * `UserInput` 本来就允许 `{ type: "image", data, mimeType }` 内容块。
  *
@@ -86,7 +86,7 @@ export async function planAttachments(
 		}
 		if (attachment.bytes > MAX_INLINE_IMAGE_BYTES) {
 			lines.push(
-				`- 图片「${attachment.name}」（${size}）：太大，没有直接给你看。要细节请老板说一句里面的内容，或者裁小一点再发。`,
+				`- 图片「${attachment.name}」（${size}）：太大，没有直接给你看。要细节请我说一句里面的内容，或者裁小一点再发。`,
 			);
 			continue;
 		}

@@ -26,7 +26,7 @@ describe("memoryTimeline", () => {
 
 	it("新出现的小节记成 add，带上时间与作者", async () => {
 		const before = "# 记忆\n";
-		const after = "# 记忆\n\n## 2026-10-27\n- 老板讨厌废话。\n";
+		const after = "# 记忆\n\n## 2026-10-27\n- 我讨厌废话。\n";
 		await writeFile(journalPath(root), line("2026-10-27T03:12:00.000Z", "human", before, after), "utf8");
 		const stamps = await memoryTimeline(root);
 		expect(stamps.get("2026-10-27")).toEqual({ at: "2026-10-27T03:12:00.000Z", by: "human", op: "add" });

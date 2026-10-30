@@ -190,7 +190,7 @@ export async function readUploadMeta(root: string, id: string): Promise<UploadMe
  * 扫掉没人引用的附件（审计 P2-3）。
  *
  * 为什么会有孤儿：`putUpload` 是两次 `writeFile`（本体 + 元数据），进程在中间被杀就留下
- * 半套；另外「上传了但没发出去」（老板选了图又关掉页面）也会留一份永远没人用的文件。
+ * 半套；另外「上传了但没发出去」（我选了图又关掉页面）也会留一份永远没人用的文件。
  * `readUploadMeta` 只是把它显示成「不存在」，磁盘上一直占着。
  *
  * 三条安全线：
@@ -272,7 +272,7 @@ export async function readBounded(
  * 纯附件消息的正文占位。
  *
  * 为什么不能留空：下游很多判据按「正文非空」过滤（接力上限、占位吸收、`unread`、
- * 提示词里的发言摘要），空正文的消息对模型等于不存在 —— 老板发了一张图，agent 什么
+ * 提示词里的发言摘要），空正文的消息对模型等于不存在 —— 我发了一张图，agent 什么
  * 都看不到。这份占位是**确定**的（同名同序同字节），并且前端认得这个形状，不会重复画。
  */
 export function placeholderOf(attachments: readonly Attachment[]): string {

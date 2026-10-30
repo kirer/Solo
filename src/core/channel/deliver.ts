@@ -20,7 +20,7 @@ import {
 	type ChannelState,
 	type Message,
 	OWNER,
-	personalId,
+	chatKind,
 	recipientsOf,
 	unreadCount,
 	channelsOf,
@@ -40,7 +40,7 @@ export type DeliverResult = {
 	readonly delivered: string[];
 	/** 连队列都没进的 slug（消息仍在频道里）。 */
 	readonly failed: string[];
-	/** 没有会话、或就是老板本人，跳过的 slug。 */
+	/** 没有会话、或就是我本人，跳过的 slug。 */
 	readonly skipped: string[];
 	/**
 	 * 这次合并唤醒的账：谁本来已经有一条「还没开始」的排队项，被这一条取代了。
@@ -50,7 +50,7 @@ export type DeliverResult = {
 	readonly merged?: readonly { readonly slug: string; readonly count: number }[];
 };
 
-/** 一个「叫了但没人会答」的收件人。拼成频道里的 `note` 用，老板才能看见系统做了什么。 */
+/** 一个「叫了但没人会答」的收件人。拼成频道里的 `note` 用，我才能看见系统做了什么。 */
 export type DeliverIssue = {
 	readonly slug: string;
 	/** 「还没有会话」还是「投递抛错」。两者文案不同，不能糊成一句。 */
@@ -74,7 +74,7 @@ export type DeliverOptions = {
 	readonly message: Message;
 	/** 要唤醒谁（`recipientsOf` 的结果）。 */
 	readonly targets: readonly string[];
-	/** slug → 会话。返回 undefined 表示这个人没有会话（比如老板）。 */
+	/** slug → 会话。返回 undefined 表示这个人没有会话（比如我）。 */
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	/** 显示名字。缺省用 slug。 */
 	readonly labelOf?: (slug: string) => string;
@@ -84,14 +84,14 @@ export type DeliverOptions = {
 	 * 此刻手上还有活（有非后台任务在跑）的会话 id。
 	 *
 	 * 这类投递会**打断**对方正在干的事（`whenBusy: "steer"`），所以正文要多一句
-	 * 「这是插话，不是新任务」—— 否则它答完这句就把活丢了。实测：老板在沈舟加音效
-	 * 的中途私聊问「你是谁啊」，它答完就收工，再没回项目频道汇报。
+	 * 「这是插话，不是新任务」—— 否则它答完这句就把活丢了。实测：我在沈舟加音效
+	 * 的中途私聊问「你是谁啊」，它答完就收工，再没回团队频道汇报。
 	 */
 	readonly busy?: ReadonlySet<number>;
 	/**
 	 * 有人没被叫醒时通报一声。不传就只听 stderr。
 	 *
-	 * 为什么需要这个：投递失败只写 stderr 的话，频道里空白一片，老板看到的
+	 * 为什么需要这个：投递失败只写 stderr 的话，频道里空白一片，我看到的
 	 * 「我说了没人回」和「系统真挂了」长得一模一样 —— 那个「@CEO 不理我」的现象
 	 * 就是这么排查了很多轮才定位到投递层的。
 	 */
@@ -107,7 +107,7 @@ export type DeliverOptions = {
 	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
 	 * 返回合并了几条（0 = 没合并）。不传就不合并。
 	 *
-	 * 所有发言都走这一条：老板插队（撤掉排在他前面的待办）与「同一个人连发只排一个
+	 * 所有发言都走这一条：我插队（撤掉排在他前面的待办）与「同一个人连发只排一个
 	 * 唤醒」是同一件事 —— 都是「这个会话最多留一个未开始的排队项」。
 	 */
 	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
@@ -117,15 +117,6 @@ export type DeliverOptions = {
 	 * 不传就什么都不写（投递仍然不等回复）。传了就在后台等这次提交结算，
 	 * 结算为 `unanswered` 时回调 —— 频道里至少有人能看出「他回答了没」。
 	 */
-	/**
-	 * 这一轮结束了（提交结算）：把这个人**在这个频道**里还没被填的占位标成 error。
-	 *
-	 * 为什么必须有：占位只在「同一个人往同一个频道发言」时被原地填充。他一轮没在这个
-	 * 频道说话（结论发去私聊、被 `[PASS]` 静音、或半路被打断），占位就永远 `pending` ——
-	 * 实测 `proj:solo` 里挂过 175 分钟的「开始处理…」。前端 10 分钟 TTL 只是遮住显示，
-	 * 数据得有人收尾。
-	 */
-	readonly removePlaceholders?: (slug: string) => Promise<number>;
 	readonly noteUnanswered?: (info: {
 		readonly slug: string;
 		readonly label: string;
@@ -134,10 +125,10 @@ export type DeliverOptions = {
 	}) => Promise<void>;
 };
 
-/** 这个频道是不是「我和老板的私聊」。`viewer` 缺省时只要求两边里有老板。 */
+/** 这个频道是不是「我和某个人的私聊」。形态按成员推，不看 id 前缀。 */
 function isOwnerDm(channel: Channel, viewer: string | undefined): boolean {
-	if (!channel.id.startsWith("dm:") || !channel.members.includes(OWNER)) return false;
-	return viewer === undefined || channel.id === personalId(viewer);
+	if (chatKind(channel) !== "dm") return false;
+	return viewer === undefined || channel.members.includes(viewer);
 }
 
 /**
@@ -154,14 +145,14 @@ export function renderReplyRules(options: {
 	readonly woken: readonly string[];
 	readonly viewer?: string | undefined;
 	readonly labelOf?: ((slug: string) => string) | undefined;
-	/** 这个频道里除自己和老板之外的同事。有他们才提「同事的事在群里说」。 */
+	/** 这个频道里除自己和我之外的成员。有他们才提「成员的事在群里说」。 */
 	readonly colleagues?: readonly string[];
 }): string {
 	const others = options.woken.filter((slug) => slug !== options.viewer);
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const colleagues = (options.colleagues ?? []).filter((slug) => slug !== options.viewer);
 	return [
-		"（回话像同事发消息：一两句、说结论。不写小标题、不列清单、不总结你刚做过什么。）",
+		"（回话像成员发消息：一两句、说结论。不写小标题、不列清单、不总结你刚做过什么。）",
 		"（被要求做事就现在用工具做，说完只说结果 —— 谁、做了什么、卡在哪、下一步。不要许诺「我马上处理」。）",
 		"（干活中途想让人知道进展，就发 `say` 带 `step: true`，那种可以连发几句；不带的是结论，**这一轮只认一句**，第二句会被拒。）",
 		others.length === 0
@@ -170,14 +161,14 @@ export function renderReplyRules(options: {
 					.map((slug) => options.labelOf?.(slug) ?? slug)
 					.join("、")} 在。）`,
 		// 说完之后模型常把「我做了 X」再写成最终回答。那段正文会被投影成第二条消息
-		// （实测原文「已回老板：在，随时待命。」紧跟在自己的发言之后）。
-		"（别复述：最终回答里不要写「已回老大」「已发到频道」这类话 —— 你说过的他已经在频道里看到了。）",
+		// （实测原文「已回我：在，随时待命。」紧跟在自己的发言之后）。
+		"（别复述：最终回答里不要写「已回我」「已发到频道」这类话 —— 你说过的他已经在频道里看到了。）",
 		"（要回这个频道就用 say，channel 省略即可；要看完整历史用 read_channel）",
-		// 同事之间的事放在群里说。私聊只有老板能用（系统会拦），而「找个人问一句」如果没有
+		// 成员之间的事放在群里说。私聊只有我能用（系统会拦），而「找个人问一句」如果没有
 		// 出口，agent 就会绕道群里喊一句「@所有人」或者干脆自己猜 —— 实测员工↔员工只有 1.2%。
 		colleagues.length === 0
 			? ""
-			: `（同事的事就在这个频道说：要问 ${colleagues.map(label).join("、")} 就 @ 他，他会收到、也看得到上下文。不要为了找一个人去私聊 —— 同事之间的私聊系统不允许。）`,
+			: `（成员的事就在这个频道说：要问 ${colleagues.map(label).join("、")} 就 @ 他，他会收到、也看得到上下文。不要为了找一个人去私聊 —— 成员之间的私聊系统不允许。）`,
 	]
 		.filter((item) => item !== "")
 		.join("\n");
@@ -221,7 +212,7 @@ export function renderDelivery(options: {
 		`【${channel.title}】#${message.seq}（频道 ${channel.id}）${quoted}`,
 		`${label(message.from)}：${message.text}${line.join("")}`,
 		...(isOwnerDm(channel, options.viewer)
-			? ["（这是你和老大的私聊，只回这里，别去群里说）"]
+			? ["（这是你和我的私聊，只回这里，别去群里说）"]
 			: []),
 		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
 			? []
@@ -231,10 +222,11 @@ export function renderDelivery(options: {
 			woken,
 			viewer: options.viewer,
 			labelOf: label,
-			// 只在群/项目频道里说「同事的事在群里说」：私聊里没有第三方，提了反而让它去找人。
-			colleagues: channel.id.startsWith("dm:")
-				? []
-				: channel.members.filter((slug) => slug !== OWNER && slug !== options.viewer),
+			// 只在群聊里说「成员的事在群里说」：私聊里没有第三方，提了反而让它去找人。
+			colleagues:
+				chatKind(channel) === "dm"
+					? []
+					: channel.members.filter((slug) => slug !== OWNER && slug !== options.viewer),
 		}),
 		...(options.interrupted === true
 			? [
@@ -325,7 +317,7 @@ export async function deliver(
 			// 先记「它在哪个频道被叫醒」，再提交。
 			//
 			// 反过来的话有竞态：`submit` 一入队对方就可能已经跑起来，而它此刻查不到
-			// wake，只能退到「我最早的那个频道」—— 那往往是个人频道，于是**答在私聊里、
+			// wake，只能退到「我最早的那个频道」—— 那往往是私聊，于是**答在私聊里、
 			// 问的人在原频道什么都看不到**（`core:live` 12 项里 9 项因此超时，实测抓到）。
 			// 新一轮开始：它又可以重新说一句结论了。
 			clearSpoken(Number(conversation.id));
@@ -358,15 +350,11 @@ export async function deliver(
 				},
 				context,
 			);
-			// 这一轮结算时两件事：收掉没被填的占位（无论成败），以及「一个字都没说」时留痕。
-			const expire = options.removePlaceholders;
+			// 这一轮结算时「一个字都没说」留痕。
 			const report = options.noteUnanswered;
-			if (expire !== undefined || report !== undefined) {
+			if (report !== undefined) {
 				watchSettled(submission, async (reason) => {
-					if (expire !== undefined) await expire(slug).catch(() => 0);
-					if (report !== undefined) {
-						await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
-					}
+					await report({ slug, label: options.labelOf?.(slug) ?? slug, seq: options.message.seq, reason });
 				});
 			}
 			if (merged > 0) mergedList.push({ slug, count: merged });
@@ -383,7 +371,7 @@ export async function deliver(
 	}
 
 	// 通报放在最后、一次说完：逐条写 note 会让频道多出一串系统消息。
-	// 老板被 `recipientsOf` 选中是正常现象（他没有会话），所以那一条由调用方先滤掉。
+	// 我被 `recipientsOf` 选中是正常现象（他没有会话），所以那一条由调用方先滤掉。
 	if (issues.length > 0 && options.notify !== undefined) {
 		try {
 			await options.notify(issues);
@@ -407,10 +395,10 @@ export async function deliver(
  * 2. **正在跑的那条不算**：只认 `status: "queued"`，`placed` 已经开始了，它不会被撤；
  * 3. **消息一条都不删**：撤的只是唤醒，那几条消息还在频道里，醒来读一遍就看到。
  *
- * 老板连发的几条**也合并**（2026-10-30 老板定）：他连说三句时，对方醒来读一遍频道就能
+ * 我连发的几条**也合并**（2026-10-30 我定）：他连说三句时，对方醒来读一遍频道就能
  * 把三句一起答；排三个唤醒只会让它跑三趟、还各答一遍。消息一条都不删，所以「三句都看到」
- * 不受影响。这里同时是**唯一**一份「谁该让路」的判据 —— 旧代码里老板插队另有一个
- * `choresAheadOf`（跳过老板自己的排期），两套口径迟早分叉，已合并到这里。
+ * 不受影响。这里同时是**唯一**一份「谁该让路」的判据 —— 旧代码里我插队另有一个
+ * `choresAheadOf`（跳过我自己的排期），两套口径迟早分叉，已合并到这里。
  */
 export function queuedAhead(
 	submissions: readonly {
@@ -435,9 +423,9 @@ export function queuedAhead(
 }
 
 /**
- * 合并唤醒的执行器（也负责老板插队）：撤掉这个会话里还没开始的排队项，返回撤了几条。
+ * 合并唤醒的执行器（也负责我插队）：撤掉这个会话里还没开始的排队项，返回撤了几条。
  *
- * 老板发消息时走的也是这里 —— 以前另有一条 `clearQueueAhead`，两个函数会去撤同一批
+ * 我发消息时走的也是这里 —— 以前另有一条 `clearQueueAhead`，两个函数会去撤同一批
  * 排队项（第二次白跑一趟），现在只有这一条路。
  *
  * 撤不掉（已经在跑、或者竞态里被别人取走）就跳过 —— 多叫醒一次只是慢，

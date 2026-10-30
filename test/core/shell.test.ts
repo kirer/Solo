@@ -11,13 +11,13 @@ import { listCompanySkills, readSkill, writeCompanySkill } from "../../src/core/
 
 const dirs: string[] = [];
 
-async function workspace(): Promise<{ readonly root: string; readonly agents: string; readonly projects: string }> {
+async function workspace(): Promise<{ readonly root: string; readonly agents: string; readonly teams: string }> {
 	const root = await mkdtemp(join(tmpdir(), "core-shell-"));
 	dirs.push(root);
 	const agents = join(root, "agents");
-	const projects = join(root, "projects");
-	await mkdir(projects, { recursive: true });
-	return { root, agents, projects };
+	const teams = join(root, "teams");
+	await mkdir(teams, { recursive: true });
+	return { root, agents, teams };
 }
 
 afterEach(async () => {
@@ -30,12 +30,12 @@ afterEach(async () => {
  */
 describe("装配", () => {
 	test("每个人都有自己的身份段落，且 key 是 ASCII", async () => {
-		const { root, agents, projects } = await workspace();
+		const { root, agents, teams } = await workspace();
 		const { models } = setupModels(process.env, { workspace: root });
 		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, teamsRoot: teams });
 			const conversation = shell.conversations.get(slug);
 			expect(conversation).toBeDefined();
 			if (conversation === undefined) return;
@@ -52,12 +52,12 @@ describe("装配", () => {
 	});
 
 	test("身份段落读到的是盘上的最新内容", async () => {
-		const { root, agents, projects } = await workspace();
+		const { root, agents, teams } = await workspace();
 		const { models } = setupModels(process.env, { workspace: root });
 		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, teamsRoot: teams });
 			const conversation = shell.conversations.get(slug);
 			if (conversation === undefined) throw new Error("没有会话");
 			const before = await conversation.agent(BACKGROUND_CONTEXT);
@@ -80,19 +80,19 @@ describe("装配", () => {
 				BACKGROUND_CONTEXT,
 			);
 			expect(renderedAfter).toContain("你现在只关心一件事：钱。");
-			expect(renderedAfter).not.toContain("老大唯一直接对话的人");
+			expect(renderedAfter).not.toContain("我唯一直接对话的人");
 		} finally {
 			await opened.close();
 		}
 	});
 
-	test("老板说话会真的投递到收件人的会话里", async () => {
-		const { root, agents, projects } = await workspace();
+	test("我说话会真的投递到收件人的会话里", async () => {
+		const { root, agents, teams } = await workspace();
 		const { models } = setupModels(process.env, { workspace: root });
 		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
 		try {
 			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
+			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, teamsRoot: teams });
 			const { delivery } = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			expect(delivery.failed).toEqual([]);
 			expect(delivery.delivered).toEqual([slug]);
@@ -106,181 +106,10 @@ describe("装配", () => {
 			expect(JSON.stringify(entry?.data)).toContain("在吗");
 
 			const state = await shell.channels();
-			// B（处理中指示）：@A 会在同频道为其创建一条 processing 占位（text="开始处理…"），真实消息在前、占位在后。
+			// 频道里只有我说的那一句：ADR-081 之后不再为被叫醒的人写任何占位。
 			const texts = state.messages.all?.map((message) => message.text) ?? [];
 			expect(texts).toContain(`@${slug} 在吗`);
-			const pending = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug);
-			expect(pending).toBeDefined();
-			expect(pending?.text).toContain("开始处理");
-			expect(pending?.processing).toBe(true);
-		} finally {
-			await opened.close();
-		}
-	});
-});
-
-describe("T-016 流式占位气泡（v1 基线：占位 + 轮结束一次性 done）", () => {
-	test("@A 且 A 被唤醒 → 创建 pending 占位；A 未唤醒 → 不创建", async () => {
-		const { root, agents, projects } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
-		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			const hit = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
-			expect(hit.delivery.delivered).toEqual([slug]);
-			let state = await shell.channels();
-			const pending = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug);
-			expect(pending).toBeDefined();
-			expect(pending?.from).toBe(slug);
-			expect(pending?.text).toContain("开始处理");
-			expect(pending?.processing).toBe(true);
-			const miss = await shell.ownerSay({ channelId: "all", text: "@nobody 你好" });
-			expect(miss.delivery.delivered).toEqual([]);
-			state = await shell.channels();
-			const pendingAfter = (state.messages.all ?? []).filter((m) => m.status === "pending" && m.pendingFor === "nobody");
-			expect(pendingAfter).toHaveLength(0);
-		} finally {
-			await opened.close();
-		}
-	});
-
-	test("A 真实回复原地填充占位（占位即最终消息，不重复气泡）", async () => {
-		const { root, agents, projects } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
-		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
-			let state = await shell.channels();
-			const pendingSeq = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug)?.seq;
-			expect(pendingSeq).toBeDefined();
-			const before = (await shell.channels()).messages.all ?? [];
-			// 模拟 A 醒来回频道：用 harness.snapshot(ChannelDoc) 作为 state（与 channel-write.test 一致），
-			// 直接 postMessage 触发占位吸收（不在 commit 内、不复用已 settled 的 shell.channels 投影快照）。
-			const { postMessage } = await import("../../src/core/channel/post.ts");
-			const rawState = (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never;
-			await postMessage(
-				{ harness: opened.harness, state: rawState, conversationOf: async () => undefined },
-				{ channelId: "all", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
-				BACKGROUND_CONTEXT,
-			);
-			state = await shell.channels();
-			const after = state.messages.all ?? [];
-			expect(after.length).toBe(before.length);
-			const filled = after.find((m) => m.seq === pendingSeq);
-			expect(filled?.status).toBe("done");
-			expect(filled?.text).toBe("我在的，怎么了");
-			expect(filled?.from).toBe(slug);
-		} finally {
-			await opened.close();
-		}
-	});
-
-	test("占位被填充时，钩子只拿到一次完整全文（serve 不再切片推 token，审计 P1-3）", async () => {
-		const { root, agents, projects } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
-		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
-			let state = await shell.channels();
-			const pendingSeq = (state.messages.all ?? []).find((m) => m.processing === true && m.pendingFor === slug)?.seq;
-			expect(pendingSeq).toBeDefined();
-			const { postMessage } = await import("../../src/core/channel/post.ts");
-			const { setChannelStreamHook, setChannelClientsHas } = await import("../../src/core/channel/post.ts");
-			// 钩子的契约：一次调用、给的是完整全文（serveCore 只据此推一条 done）。
-			const calls: { channelId: string; seq: number; fullText: string }[] = [];
-			setChannelClientsHas(() => true);
-			setChannelStreamHook((channelId, seq, fullText) => {
-				calls.push({ channelId, seq, fullText });
-			});
-			await postMessage(
-				{ harness: opened.harness, state: (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never, conversationOf: async () => undefined },
-				{ channelId: "all", from: slug, text: "我在的，怎么了", at: Date.now(), wake: false },
-				BACKGROUND_CONTEXT,
-			);
-			setChannelStreamHook(undefined);
-			setChannelClientsHas(() => false);
-			expect(calls).toHaveLength(1);
-			expect(calls[0]?.channelId).toBe("all");
-			expect(calls[0]?.seq).toBe(pendingSeq);
-			expect(calls[0]?.fullText).toBe("我在的，怎么了");
-			state = await shell.channels();
-			const filled = (state.messages.all ?? []).find((m) => m.seq === pendingSeq);
-			expect(filled?.status).toBe("done");
-		} finally {
-			await opened.close();
-		}
-	});
-
-	test("回归：013/014 口径 A 不倒退 —— 群@A 不影响老板个人频道", async () => {
-		const { root, agents, projects } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
-		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
-			const state = await shell.channels();
-			const ownerDm = Object.values(state.channels).find((c) => c.id.startsWith("dm:owner-"));
-			if (ownerDm !== undefined) {
-				expect(state.messages[ownerDm.id] ?? []).toHaveLength(0);
-			}
-			expect((state.messages.all ?? []).some((m) => m.status === "pending")).toBe(true);
-		} finally {
-			await opened.close();
-		}
-	});
-	test("B 私聊助理：老板私聊知言视图层透传 processing（老板能看到动画，#86）", async () => {
-		const { root, agents, projects } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
-		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			const dmId = `dm:owner-${slug}`;
-			await shell.ownerSay({ channelId: dmId, text: "在吗，帮我看下这个" });
-			const state = (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
-			const channel = state.channels[dmId];
-			const placeholder = (state.messages[dmId] ?? []).find((m) => m.processing === true);
-			expect(placeholder).toBeDefined();
-			// 视图层（SSE / GET 历史都走 messageView）必须透传 processing 字段，前端才渲染动画。
-			const { messageView } = await import("../../src/core/shell/view.ts");
-			const view = messageView(state, channel, placeholder, shell.directory, "owner");
-			expect(view.processing).toBe(true);
-			expect(view.pendingFor).toBe(slug);
-		} finally {
-			await opened.close();
-		}
-	});
-	test("B 闭环硬约束：A@B 后 B 回 A@A，A 不再二次进 processing（#54/#55 本质口径）", async () => {
-		const { root, agents, projects } = await workspace();
-		const { models } = setupModels(process.env, { workspace: root });
-		const opened = await openCore({ databasePath: join(root, "c.sqlite"), models, registry: createRegistry() });
-		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
-			const shell = await assembleCore(opened.harness, opened.registry, { agentsRoot: agents, projectsRoot: projects });
-			// A（老板）@ B（助理），应创建 B 的 processing 占位。
-			await shell.ownerSay({ channelId: "all", text: "@" + slug + " 你处理一下这个" });
-			let state = await shell.channels();
-			const procAfterA = (state.messages.all ?? []).filter((m) => m.processing === true);
-			expect(procAfterA).toHaveLength(1);
-			expect(procAfterA[0]?.pendingFor).toBe(slug);
-			// B 闭环回复、@ 回 A（老板）：应原地填充 B 自己的占位，且**不**为 A 创建新 processing。
-			const { postMessage } = await import("../../src/core/channel/post.ts");
-			await postMessage(
-				{ harness: opened.harness, state: (await opened.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as never, conversationOf: async () => undefined },
-				{ channelId: "all", from: slug, text: "收到，@owner 已处理完成", at: Date.now(), wake: false },
-				BACKGROUND_CONTEXT,
-			);
-			state = await shell.channels();
-			const procAfterB = (state.messages.all ?? []).filter((m) => m.processing === true);
-			// 占位被 B 的回复原地覆盖消失：没有任何 processing 残留（尤其 owner 不应二次出现）。
-			expect(procAfterB).toHaveLength(0);
-			expect(procAfterB.find((m) => m.pendingFor === "owner")).toBeUndefined();
+			expect(state.messages.all).toHaveLength(1);
 		} finally {
 			await opened.close();
 		}

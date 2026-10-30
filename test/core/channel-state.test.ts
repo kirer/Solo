@@ -7,16 +7,19 @@ import { describe, expect, test } from "vitest";
 import {
 	OWNER,
 	appendMessage,
+	chatKind,
 	channelsOf,
 	dmId,
 	ensureChannel,
 	ChannelDoc,
+	fallbackChannelId,
 	markRead,
 	parseMentions,
-	projectId,
+	teamId,
 	recipientsOf,
 	tail,
 	unreadCount,
+	type Channel,
 	type ChannelState,
 } from "../../src/core/channel/state.ts";
 
@@ -45,8 +48,43 @@ describe("频道 id", () => {
 		expect(dmId("cto", "owner")).toBe("dm:cto-owner");
 		expect(dmId("owner", "cto")).toBe("dm:cto-owner");
 	});
-	test("项目频道", () => {
-		expect(projectId("alpha")).toBe("proj:alpha");
+	test("团队频道", () => {
+		expect(teamId("alpha")).toBe("team:alpha");
+	});
+});
+
+describe("会话形态（只看成员，不看 id 前缀）", () => {
+	const channel = (id: string, members: string[]): Channel => ({ id, title: id, members, wakeOnAll: [], createdAt: 1 });
+
+	test("恰好我和一个人 = 私聊，id 长什么样都不影响", () => {
+		expect(chatKind(channel("dm:a-owner", [OWNER, "a"]))).toBe("dm");
+		expect(chatKind(channel("team:x", [OWNER, "a"]))).toBe("dm");
+	});
+
+	test("三个人、没有我、只有我 —— 全郡群聊", () => {
+		expect(chatKind(channel("dm:a-b-owner", [OWNER, "a", "b"]))).toBe("group");
+		expect(chatKind(channel("dm:a-b", ["a", "b"]))).toBe("group");
+		expect(chatKind(channel("dm:owner", [OWNER]))).toBe("group");
+	});
+
+	test("兜底只挑群聊：私聊先建、更新，也不落到私聊", () => {
+		const dm = dmId(OWNER, "a");
+		let state = withChannels(
+			{ id: dm, title: "a", members: [OWNER, "a"], at: 1 },
+			{ id: teamId("x"), title: "团队", members: [OWNER, "a", "b"], at: 2 },
+		);
+		state = appendMessage(state, dm, { from: "a", text: "私聊里刚说过", at: 99 }).state;
+		state = appendMessage(state, teamId("x"), { from: "a", text: "群里说过", at: 50 }).state;
+		expect(fallbackChannelId(state, "a")).toBe(teamId("x"));
+	});
+
+	test("一个群都没有才回私聊，并且不凭空建频道", () => {
+		const dm = dmId(OWNER, "a");
+		const state = withChannels({ id: dm, title: "a", members: [OWNER, "a"], at: 1 });
+		expect(fallbackChannelId(state, "a")).toBe(dm);
+		const blank = empty();
+		expect(fallbackChannelId(blank, "a")).toBe(dm);
+		expect(Object.keys(blank.channels)).toEqual([]);
 	});
 });
 
@@ -71,13 +109,13 @@ describe("收件人规则", () => {
 		expect(recipientsOf(state.channels.general!, message)).toEqual([]);
 	});
 
-	test("老板不 @ 时叫醒第一个非老板成员", () => {
+	test("我不 @ 时叫醒第一个非我成员", () => {
 		const state = withChannels(channel);
 		const { message } = appendMessage(state, "general", { from: OWNER, text: "有人吗", at: 1 });
 		expect(recipientsOf(state.channels.general!, message)).toEqual(["cto"]);
 	});
 
-	test("非老板不 @ 时谁也不叫醒", () => {
+	test("非我不 @ 时谁也不叫醒", () => {
 		const state = withChannels(channel);
 		const { message } = appendMessage(state, "general", { from: "cfo", text: "记录一下", at: 1 });
 		expect(recipientsOf(state.channels.general!, message)).toEqual([]);
@@ -229,23 +267,5 @@ describe("可见性", () => {
 		const state = withChannels({ id: "a", title: "旧", members: ["cto"], wakeOnAll: [], at: 1 });
 		const again = ensureChannel(state, { id: "a", title: "新", members: ["cfo"], at: 2 });
 		expect(again.channels.a?.title).toBe("旧");
-	});
-});
-
-describe("这一轮从什么时候开始（ADR-072）", () => {
-	test("startedAt 原样落库；不传就不写这个键", () => {
-		const state = withChannels({ id: "g", title: "t", members: ["a"], wakeOnAll: [], at: 1 });
-		const withHint = appendMessage(state, "g", {
-			from: "a",
-			text: "开始处理…",
-			at: 5_000,
-			status: "pending",
-			processing: true,
-			startedAt: 3_000,
-		}).message;
-		expect(withHint.startedAt).toBe(3_000);
-		const plain = appendMessage(state, "g", { from: "a", text: "普通", at: 6 }).message;
-		// 「没有」和「0」是两件事：键不存在，界面才会退回第一条过程行的 at。
-		expect("startedAt" in plain).toBe(false);
 	});
 });

@@ -18,10 +18,10 @@ import { postMessage } from "../../src/core/channel/post.ts";
 /**
  * 投递层的两条护栏：
  *
- * 1. **接力上限**：`wakeOnAll` 让「不 @ 人也叫醒负责人」，于是 A 回 → 唤醒 B →
+ * 1. **接力上限**：`wakeOnAll` 让「不 @ 人也叫醒团队管理员」，于是 A 回 → 唤醒 B →
  *    B 回 → 又唤醒 A。没有上限就是无限循环烧钱。
  * 2. **没人接要看得见**：投递失败/没会话原来只写 stderr，频道里什么都没有，
- *    老板看到的「我说了没人理」和「系统挂了」长得一模一样。
+ *    我看到的「我说了没人理」和「系统挂了」长得一模一样。
  */
 function emptyState(): ChannelState {
 	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
@@ -29,8 +29,8 @@ function emptyState(): ChannelState {
 
 function stateWithChannel(): ChannelState {
 	return ensureChannel(emptyState(), {
-		id: "proj:x",
-		title: "项目",
+		id: "team:x",
+		title: "团队",
 		members: [OWNER, "a", "b"],
 		wakeOnAll: ["a", "b"],
 		at: 1,
@@ -38,15 +38,15 @@ function stateWithChannel(): ChannelState {
 }
 
 describe("接力上限（纯函数）", () => {
-	it("只有老板和一个 agent 时不设上限 —— 那种频道里循环起不来", () => {
-		// 投递永远排除发件人自己，所以「老板 + a」的私聊里 a 说完话没人会被叫醒，
+	it("只有我和一个 agent 时不设上限 —— 那种频道里循环起不来", () => {
+		// 投递永远排除发件人自己，所以「我 + a」的私聊里 a 说完话没人会被叫醒，
 		// 接力计数只会一路上涨，把 a 汇报到第 4 条时堵住他的嘴。
 		const channel = { id: "dm", title: "dm", members: [OWNER, "a"], wakeOnAll: [] as string[], createdAt: 1 };
 		expect(relayLimit(channel)).toBe(Number.POSITIVE_INFINITY);
 		expect(relayLimit({ ...channel, members: [OWNER] })).toBe(Number.POSITIVE_INFINITY);
 	});
 
-	it("按频道里的 agent 数量给，至少 3；项目频道按 6 倍", () => {
+	it("按频道里的 agent 数量给，每人 6 条，与频道 id 无关", () => {
 		const channel = (members: string[]) => ({
 			id: "c",
 			title: "c",
@@ -55,58 +55,57 @@ describe("接力上限（纯函数）", () => {
 			createdAt: 1,
 		});
 		// 0 个 / 1 个 agent 见上一条用例（不设上限）。
-		expect(relayLimit(channel([OWNER, "a", "b"]))).toBe(6);
-		expect(relayLimit(channel([OWNER, "a", "b", "c"]))).toBe(9);
-		// 项目频道是干活的地方：拆活、报到、来回对齐本来就多。
-		// 3 倍实测两次就撞线（proj:solo 3 人 → 9），拦掉的是协作不是循环。
-		const proj = (members: string[]) => ({ ...channel(members), id: "proj:x" });
-		expect(relayLimit(proj([OWNER, "a", "b"]))).toBe(12);
-		expect(relayLimit(proj([OWNER, "a", "b", "c"]))).toBe(18);
+		expect(relayLimit(channel([OWNER, "a", "b"]))).toBe(12);
+		expect(relayLimit(channel([OWNER, "a", "b", "c"]))).toBe(18);
+		// 3 倍实测两次就撞线（3 人 → 9），拦掉的是「两个人来回对齐一句」而不是循环。
+		// 早先按 id 前缀分档（`team:` 给 6 倍、其余 3 倍）—— 频道是什么不该由字符串决定。
+		const teamLike = (members: string[]) => ({ ...channel(members), id: "team:x" });
+		expect(relayLimit(teamLike([OWNER, "a", "b"]))).toBe(relayLimit(channel([OWNER, "a", "b"])));
 	});
 
 	it("过程投影不算接力 —— think / tool 不叫醒任何人，算进来就是「干得多更容易被判失控」", () => {
 		let state = stateWithChannel();
-		state = appendMessage(state, "proj:x", { from: OWNER, text: "开始", at: 2 }).state;
+		state = appendMessage(state, "team:x", { from: OWNER, text: "开始", at: 2 }).state;
 		for (let index = 0; index < 20; index += 1) {
-			state = appendMessage(state, "proj:x", { from: "a", text: "想了", at: 3 + index, kind: "think" }).state;
+			state = appendMessage(state, "team:x", { from: "a", text: "想了", at: 3 + index, kind: "think" }).state;
 		}
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(0);
-		state = appendMessage(state, "proj:x", { from: "a", text: "我接前端", at: 30 }).state;
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(1);
+		expect(botHopsSinceOwner(state, "team:x")).toBe(0);
+		state = appendMessage(state, "team:x", { from: "a", text: "我接前端", at: 30 }).state;
+		expect(botHopsSinceOwner(state, "team:x")).toBe(1);
 	});
 
-	it("老板还没在这个频道说过话时，从频道建立算起", () => {
-		// 早先这里返回 0（「不惩罚」），结果是：老板一次不开口的项目频道，上限永远
-		// 不触发 —— 那正是唯一会烧钱失控的地方。真正让项目频道安静下来的不是豁免，
+	it("我还没在这个频道说过话时，从频道建立算起", () => {
+		// 早先这里返回 0（「不惩罚」），结果是：我一次不开口的团队频道，上限永远
+		// 不触发 —— 那正是唯一会烧钱失控的地方。真正让团队频道安静下来的不是豁免，
 		// 是这条计数 + `post.ts` 的拦截。
 		let state = stateWithChannel();
-		state = appendMessage(state, "proj:x", { from: "a", text: "1", at: 2 }).state;
-		state = appendMessage(state, "proj:x", { from: "b", text: "2", at: 3 }).state;
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(2);
-		// 老板终于开口 → 归零，重新开始计。
-		state = appendMessage(state, "proj:x", { from: OWNER, text: "在", at: 4 }).state;
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(0);
+		state = appendMessage(state, "team:x", { from: "a", text: "1", at: 2 }).state;
+		state = appendMessage(state, "team:x", { from: "b", text: "2", at: 3 }).state;
+		expect(botHopsSinceOwner(state, "team:x")).toBe(2);
+		// 我终于开口 → 归零，重新开始计。
+		state = appendMessage(state, "team:x", { from: OWNER, text: "在", at: 4 }).state;
+		expect(botHopsSinceOwner(state, "team:x")).toBe(0);
 	});
 
-	it("只数老板最后一条之后、agent 发的普通消息", () => {
+	it("只数我最后一条之后、agent 发的普通消息", () => {
 		let state = stateWithChannel();
-		state = appendMessage(state, "proj:x", { from: OWNER, text: "开始", at: 2 }).state;
-		state = appendMessage(state, "proj:x", { from: "a", text: "1", at: 3 }).state;
-		state = appendMessage(state, "proj:x", { from: "b", text: "2", at: 4 }).state;
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(2);
-		// 老板再说一句就归零。
-		state = appendMessage(state, "proj:x", { from: OWNER, text: "停", at: 5 }).state;
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(0);
+		state = appendMessage(state, "team:x", { from: OWNER, text: "开始", at: 2 }).state;
+		state = appendMessage(state, "team:x", { from: "a", text: "1", at: 3 }).state;
+		state = appendMessage(state, "team:x", { from: "b", text: "2", at: 4 }).state;
+		expect(botHopsSinceOwner(state, "team:x")).toBe(2);
+		// 我再说一句就归零。
+		state = appendMessage(state, "team:x", { from: OWNER, text: "停", at: 5 }).state;
+		expect(botHopsSinceOwner(state, "team:x")).toBe(0);
 	});
 
 	it("note / work 不算接力，也不能把计数清零", () => {
 		let state = stateWithChannel();
-		state = appendMessage(state, "proj:x", { from: OWNER, text: "开始", at: 2 }).state;
-		state = appendMessage(state, "proj:x", { from: "a", text: "1", at: 3 }).state;
-		// 系统留痕的 from 是 owner，但它不是老板在说话 —— 不能当成交接点。
-		state = appendMessage(state, "proj:x", { from: OWNER, text: "系统说明", at: 4, kind: "note" }).state;
-		state = appendMessage(state, "proj:x", { from: "b", text: "记录", at: 5, kind: "work" }).state;
-		expect(botHopsSinceOwner(state, "proj:x")).toBe(1);
+		state = appendMessage(state, "team:x", { from: OWNER, text: "开始", at: 2 }).state;
+		state = appendMessage(state, "team:x", { from: "a", text: "1", at: 3 }).state;
+		// 系统留痕的 from 是 owner，但它不是我在说话 —— 不能当成交接点。
+		state = appendMessage(state, "team:x", { from: OWNER, text: "系统说明", at: 4, kind: "note" }).state;
+		state = appendMessage(state, "team:x", { from: "b", text: "记录", at: 5, kind: "work" }).state;
+		expect(botHopsSinceOwner(state, "team:x")).toBe(1);
 	});
 });
 
@@ -126,10 +125,10 @@ async function setup(members: string[], wakeOnAll: string[]) {
 	const { models } = setupModels(process.env, { workspace: root });
 	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models, registry: createRegistry() });
 	runtimes.push(runtime);
-	const channelId = "proj:x";
+	const channelId = "team:x";
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-		Object.assign(doc, ensureChannel(emptyState(), { id: channelId, title: "项目", members, wakeOnAll, at: 1 }));
+		Object.assign(doc, ensureChannel(emptyState(), { id: channelId, title: "团队", members, wakeOnAll, at: 1 }));
 	}, BACKGROUND_CONTEXT);
 
 	const submitted: string[] = [];
@@ -176,10 +175,10 @@ async function setup(members: string[], wakeOnAll: string[]) {
 }
 
 describe("接力上限拦截", () => {
-	it("接力到上限的那条只落库、不投递，并留一条 note；老板发言后恢复", async () => {
+	it("接力到上限的那条只落库、不投递，并留一条 note；我发言后恢复", async () => {
 		const { state, post, submitted } = await setup([OWNER, "a", "b"], ["a", "b"]);
-		// 项目频道按 6 倍给：2 个 agent → 12（ADR-072）。
-		const limit = relayLimit((await state()).channels["proj:x"]!);
+		// 团队频道按 6 倍给：2 个 agent → 12（ADR-072）。
+		const limit = relayLimit((await state()).channels["team:x"]!);
 		expect(limit).toBe(12);
 
 		await post({ from: OWNER, text: "@a @b 开工", at: 2 });
@@ -189,24 +188,24 @@ describe("接力上限拦截", () => {
 			const result = await post({ from: index % 2 === 1 ? "a" : "b", text: `第${index}棒`, at: 10 + index });
 			expect(result.delivery.delivered.length).toBe(1);
 		}
-		expect(botHopsSinceOwner(await state(), "proj:x")).toBe(limit);
+		expect(botHopsSinceOwner(await state(), "team:x")).toBe(limit);
 
 		// 第 limit+1 棒：消息进频道，但没人被叫醒，多出一条 note。
 		submitted.length = 0;
-		const before = (await state()).messages["proj:x"]!.length;
+		const before = (await state()).messages["team:x"]!.length;
 		const blocked = await post({ from: "a", text: "超出的一棒", at: 99 });
 		expect(blocked.delivery.delivered).toEqual([]);
 		expect(submitted.length).toBe(0);
-		const after = (await state()).messages["proj:x"]!;
+		const after = (await state()).messages["team:x"]!;
 		expect(after.length).toBe(before + 2);
 		expect(after.at(-2)!.text).toBe("超出的一棒");
 		expect(after.at(-1)!.kind).toBe("note");
 		expect(after.at(-1)!.from).toBe(OWNER);
 		expect(after.at(-1)!.text).toContain(`接力到上限（${limit} 次）`);
 
-		// 老板说一句 → 计数归零，agent 之间又能接。
+		// 我说一句 → 计数归零，agent 之间又能接。
 		await post({ from: OWNER, text: "继续", at: 100 });
-		expect(botHopsSinceOwner(await state(), "proj:x")).toBe(0);
+		expect(botHopsSinceOwner(await state(), "team:x")).toBe(0);
 		submitted.length = 0;
 		const resumed = await post({ from: "b", text: "接着干", at: 101 });
 		expect(resumed.delivery.delivered.length).toBe(1);
@@ -216,32 +215,32 @@ describe("接力上限拦截", () => {
 		// 线上实测：一个私聊 197 条消息里 150 多条是这个 note。上限一旦触发，之后每条
 		// agent 消息都会被拦，每拦一条写一条 note 就是把告警刷成正文。
 		const { state, post } = await setup([OWNER, "a", "b"], ["a", "b"]);
-		const limit = relayLimit((await state()).channels["proj:x"]!);
+		const limit = relayLimit((await state()).channels["team:x"]!);
 		await post({ from: OWNER, text: "开工", at: 2 });
 		for (let index = 1; index <= limit; index += 1) {
 			await post({ from: index % 2 === 1 ? "a" : "b", text: `第${index}棒`, at: 10 + index });
 		}
 		const notes = async () =>
-			(await state()).messages["proj:x"]!.filter((item) => item.text.startsWith("接力到上限（")).length;
+			(await state()).messages["team:x"]!.filter((item) => item.text.startsWith("接力到上限（")).length;
 
 		await post({ from: "a", text: "第一次超限", at: 90 });
 		expect(await notes()).toBe(1);
 		// 第二、第三次超限：消息照落库，note 不再追加。
-		const before = (await state()).messages["proj:x"]!.length;
+		const before = (await state()).messages["team:x"]!.length;
 		await post({ from: "b", text: "第二次超限", at: 91 });
 		await post({ from: "a", text: "第三次超限", at: 92 });
-		expect((await state()).messages["proj:x"]!.length).toBe(before + 2);
+		expect((await state()).messages["team:x"]!.length).toBe(before + 2);
 		expect(await notes()).toBe(1);
 	});
 
 	it("显式 @ 一个人可以突破上限 —— note 里说「自己 @ 人就能接着走」，代码就得真的放行", async () => {
 		const { state, post, submitted } = await setup([OWNER, "a", "b"], ["a", "b"]);
-		const limit = relayLimit((await state()).channels["proj:x"]!);
+		const limit = relayLimit((await state()).channels["team:x"]!);
 		await post({ from: OWNER, text: "开工", at: 2 });
 		for (let index = 1; index <= limit; index += 1) {
 			await post({ from: index % 2 === 1 ? "a" : "b", text: `第${index}棒`, at: 10 + index });
 		}
-		expect(botHopsSinceOwner(await state(), "proj:x")).toBe(limit);
+		expect(botHopsSinceOwner(await state(), "team:x")).toBe(limit);
 
 		submitted.length = 0;
 		const addressed = await post({ from: "a", text: "@b 这块你接一下", at: 98 });
@@ -254,20 +253,20 @@ describe("接力上限拦截", () => {
 		expect(plain.delivery.delivered).toEqual([]);
 	});
 
-	it("老板自己发言永远不拦（计数满了也照发照叫）", async () => {
+	it("我自己发言永远不拦（计数满了也照发照叫）", async () => {
 		const { state, post, submitted } = await setup([OWNER, "a", "b"], ["a", "b"]);
-		const limit = relayLimit((await state()).channels["proj:x"]!);
+		const limit = relayLimit((await state()).channels["team:x"]!);
 		await post({ from: OWNER, text: "开工", at: 2 });
 		for (let index = 1; index <= limit; index += 1) {
 			await post({ from: index % 2 === 1 ? "a" : "b", text: `第${index}棒`, at: 10 + index });
 		}
-		expect(botHopsSinceOwner(await state(), "proj:x")).toBe(limit);
+		expect(botHopsSinceOwner(await state(), "team:x")).toBe(limit);
 
 		submitted.length = 0;
 		const result = await post({ from: OWNER, text: "都停一下", at: 50 });
 		expect(result.delivery.failed).toEqual([]);
 		expect(result.delivery.delivered).toEqual(["a", "b"]);
-		expect((await state()).messages["proj:x"]!.at(-1)!.kind).toBe("chat");
+		expect((await state()).messages["team:x"]!.at(-1)!.kind).toBe("chat");
 	});
 });
 
@@ -277,7 +276,7 @@ describe("投递失败可见", () => {
 		const result = await post({ from: OWNER, text: "@a 在吗", at: 2, conversationOf: async () => undefined });
 		expect(result.delivery.delivered).toEqual([]);
 		expect(result.delivery.skipped).toEqual(["a"]);
-		const channel = (await state()).messages["proj:x"]!;
+		const channel = (await state()).messages["team:x"]!;
 		expect(channel.at(-1)!.kind).toBe("note");
 		expect(channel.at(-1)!.from).toBe(OWNER);
 		expect(channel.at(-1)!.text).toContain("还没有会话");
@@ -294,7 +293,7 @@ describe("投递失败可见", () => {
 				({ id: "9", submit: async () => { throw new Error("会话已关闭"); } }) as unknown as Conversation,
 		});
 		expect(result.delivery.failed).toEqual(["a"]);
-		const channel = (await state()).messages["proj:x"]!;
+		const channel = (await state()).messages["team:x"]!;
 		expect(channel.at(-1)!.kind).toBe("note");
 		expect(channel.at(-1)!.text).toContain("投递失败：会话已关闭");
 	});

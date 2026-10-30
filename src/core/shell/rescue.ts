@@ -4,12 +4,11 @@
  * 病根：`say` 是 agent 唯一能把话送进频道的手段，而模型经常在**最后一个回合**里
  * 直接把结论写成正文、然后结束 —— 一次 `say` 都不调。实测（2026-10-29）会话 2 的
  * transcript 里躺着 `sleep 45 跑完、耗时 45 秒…` 这段最终回答，可 `company` 频道里
- * 只有占位「开始处理…」。老板那边看到的就是「问了没人理」。
+ * 一个字都没有。我那边看到的就是「问了没人理」。
  *
  * 这里订阅会话提交，看到一条 `pi.assistant` 文本就等一会儿；如果这轮结束时
  * （没有正在跑的提交）他**在这条唤醒消息之后一个字都没说过**，就把那段正文
- * 替他说进他被叫醒的那个频道。落库走的仍是 `postMessage`，所以占位会被原地吸收
- * —— 屏幕上不会多出一条，而是「开始处理…」变成真正的回答。
+ * 替他说进他被叫醒的那个频道。落库走的仍是 `postMessage` —— 唯一写入口，不绕过任何规则。
  *
  * 为什么必须是「事后补」，不能改提示词了事：模型漏调工具是无法禁止的行为，
  * 只能在外面兜。为什么不放在 `deliver()` 里：那一层是「把消息交给会话」，
@@ -18,7 +17,6 @@
 import type { EntryRecord, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, type ChannelState, type Message } from "../channel/state.ts";
-import { projectAssistantEntry } from "../channel/transcript.ts";
 import { DirectoryDoc, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage } from "../channel/post.ts";
 
@@ -31,11 +29,18 @@ const RESCUE_MIN_CHARS = 6;
 
 /** 从一条 `pi.assistant` 里取出「最终正文」——最后一个 text 块。 */
 function finalTextOf(entry: EntryRecord): string | undefined {
-	const said = projectAssistantEntry(entry).filter((item) => item.kind === "say");
-	return said.length === 0 ? undefined : said[said.length - 1]?.text;
+	let said: string | undefined;
+	for (const message of entry.model ?? []) {
+		if (message.role !== "assistant") continue;
+		for (const block of message.content) {
+			if (block.type !== "text" || block.text.trim().length === 0) continue;
+			said = block.text;
+		}
+	}
+	return said;
 }
 
-/** 会话号 → slug（老板不在其中）。 */
+/** 会话号 → slug（我不在其中）。 */
 export function slugOfConversation(directory: DirectoryState, conversationId: number): string | undefined {
 	for (const [slug, id] of Object.entries(directory.slugToConversation)) {
 		if (slug === OWNER) continue;
@@ -52,9 +57,9 @@ async function sidOf(harness: Harness, conversationId: number): Promise<string |
 
 /** 这条唤醒之后，他在这个频道里说过话吗？ */
 export function spokeAfterWake(list: readonly Message[], slug: string, sinceSeq: number): boolean {
-	// note 是系统替他记的告警，不是他的发言；占位是「开始处理…」，更不能算答案。
+	// note 是系统替他记的告警，不是他的发言，不能算答案。
 	return list.some(
-		(item) => item.seq > sinceSeq && item.from === slug && item.kind !== "note" && item.processing !== true,
+		(item) => item.seq > sinceSeq && item.from === slug && item.kind !== "note",
 	);
 }
 
@@ -62,13 +67,13 @@ export function spokeAfterWake(list: readonly Message[], slug: string, sinceSeq:
  * 启动安全网。返回取消函数（取消时把待补的箭头一起撤掉）。
  *
  * 全部在 `BACKGROUND_CONTEXT` 里跑：提交回调拿到的 context 属于刚结束的那次任务，
- * 任务一结束它就 abort（同 `startTranscriptSink` 的注释）。
+ * 任务一结束它就 abort（见 `spokeAfterWake` 上面那段注释）。
  */
 export type RescueOutcome = "posted" | "skipped" | "busy";
 
 /**
  * 补发一次。导出是为了能被直接验：整条链路（等一会、判忙、查有没有说过话、
- * 落库吸收占位）都走这里，定时器只是它的外壳。
+ * 落库）都走这里，定时器只是它的外壳。
  */
 export async function rescueAnswer(
 	harness: Harness,
@@ -109,7 +114,7 @@ export async function rescueAnswer(
  * 启动安全网。返回取消函数（取消时把待补的定时器一起撤掉）。
  *
  * 全部在 `BACKGROUND_CONTEXT` 里跑：提交回调拿到的 context 属于刚结束的那次任务，
- * 任务一结束它就 abort（同 `startTranscriptSink` 的注释）。
+ * 任务一结束它就 abort —— 所以我们只存 `conversationId`，回调里现查。
  */
 export function startAnswerRescue(harness: Harness): () => void {
 	const timers = new Map<string, ReturnType<typeof setTimeout>>();

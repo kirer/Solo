@@ -38,51 +38,6 @@ export function mergeMessages<T extends Seq>(
 }
 
 /**
- * 「这条消息之前的那一条」是谁 —— 连发合并、时间分隔都靠它判断。
- *
- * 两种情况必须分开：
- *   - **追加**（新消息落在列表末尾）：上一条就是列表最后一条。
- *   - **原地替换**（占位被真实回复覆盖）：上一条是 `index - 1`。
- *
- * 以前这里一律取列表最后一条 —— 而占位填充时被替换的占位**通常就是最后一条**，
- * 等于拿「自己」当上一条：同一个人 2 分钟内必然满足「连发合并」，头像和名字被吃掉，
- * 那条回复看起来像上一条的续写。替换时必须往前看一位。
- */
-export function previousOf<T extends Seq>(
-	messages: readonly T[] | null | undefined,
-	index: number,
-	isAppend: boolean,
-): T | null {
-	const list = Array.isArray(messages) ? messages : [];
-	if (isAppend) return list[list.length - 1] ?? null;
-	if (index > 0) return list[index - 1] ?? null;
-	return null;
-}
-
-/**
- * 用同一条 seq 的新消息覆盖旧消息（SSE 占位填充走这里）。
- *
- * 坑在「省略的键」：服务端填充占位时不再带 `processing`（false 会被 JSON 省掉），
- * 而 `{...旧, ...新}` 里旧对象的 `processing: true` 不会被覆盖 —— 于是界面继续
- * 按处理中画，动画点永远停在那儿。所以这几个「只可能变没」的键，新消息没带就显式删掉。
- * `status` 同理：它跟着新值走，新值没有就说明这条已经不是 pending 了。
- */
-const DROP_WHEN_ABSENT = ["processing", "status"];
-
-export function mergeMessage<Older extends object, Newer extends object>(
-	older: Older | null | undefined,
-	newer: Newer | null | undefined,
-): Omit<Older, keyof Newer> & Newer {
-	// 删键要用「任意字符串下标」的视图，拼完再按真实类型交回去：
-	// 删掉的两个键在两个入参上都是可选的，所以断言不会抹掉任何必有字段。
-	const merged: Record<string, unknown> = { ...(older ?? {}), ...(newer ?? {}) };
-	for (const key of DROP_WHEN_ABSENT) {
-		if (newer == null || !Object.prototype.hasOwnProperty.call(newer, key)) delete merged[key];
-	}
-	return merged as Omit<Older, keyof Newer> & Newer;
-}
-
-/**
  * 本地先画的一条（POST 成功、SSE 还没回显）。**不是**服务端的 `Message`：
  * 只有界面当场画得出来的字段，`local: true` 是「还没被回显确认」的标记，
  * `replyTo` 这时还是 POST 出去的**数字 seq**（服务端回显时才展开成那条消息的引用）。
@@ -116,7 +71,7 @@ export type LocalEchoInput = {
 /**
  * 本地先画一条自己刚发的消息（POST 成功、SSE 还没回显时用）。
  *
- * 老板的验收口径：发送成功之后不能只靠 SSE 回显 —— 断线重连那几秒里消息不出现，
+ * 我的验收口径：发送成功之后不能只靠 SSE 回显 —— 断线重连那几秒里消息不出现，
  * 看起来就是「没发出去」，于是他会再发一遍。POST 的返回里有 `seq`，本地先按这个
  * seq 落一条，SSE 到达时 `merge` 按 seq 覆盖（幂等），同一条不会变成两条。
  */
@@ -125,7 +80,7 @@ export function localEcho({
 	text,
 	at = Date.now(),
 	fromSlug = "owner",
-	fromLabel = "老大",
+	fromLabel = "我",
 	attachments,
 	replyTo,
 	kind = "chat",
@@ -139,7 +94,7 @@ export function localEcho({
 		at,
 		...(typeof replyTo === "number" ? { replyTo } : {}),
 		...(Array.isArray(attachments) && attachments.length > 0 ? { attachments } : {}),
-		// kind 用 `chat`：和服务端给老板消息的投影保持一致（`say` 是 agent 的语义标签）。
+		// kind 用 `chat`：和服务端给我消息的投影保持一致（`say` 是 agent 的语义标签）。
 		// 只是给界面一个「这条还没被服务端回显」的标记，SSE 覆盖后自然消失。
 		local: true,
 	};

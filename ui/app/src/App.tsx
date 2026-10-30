@@ -24,6 +24,7 @@ import {
 } from "./state/store.ts";
 import { useStore } from "./state/useStore.ts";
 import { clockTime } from "./lib/format.ts";
+import type { ChannelKind } from "./api/types.ts";
 
 export function App(): JSX.Element {
 	const ready = useStore((state) => state.ready);
@@ -122,7 +123,7 @@ export function App(): JSX.Element {
 
 	const channel = detail?.channel ?? null;
 	const members = detail?.members ?? [];
-	const sub = channel === null ? "" : headSub(channel.kind, channel.project, channel.ownerLabel, members.length);
+	const sub = channel === null ? "" : headSub(channel.kind, channel.team, channel.leadLabel, members.length);
 	const running = [...presence.values()].some((entry) => entry.state === "thinking" || entry.state === "working");
 
 	return (
@@ -218,7 +219,7 @@ export function App(): JSX.Element {
 					<div className="sheet-blank">
 						<div className="blank-mark">Solo</div>
 						<p className="blank-text">
-							{channels.length === 0 ? "还没有频道。" : "左边选一个频道。"}
+							{channels.length === 0 ? "还没有会话。" : "左边选一个会话。"}
 							{running ? "现在有人在做活。" : ""}
 						</p>
 						<button type="button" className="blank-btn" onClick={() => void refreshLists()}>
@@ -247,9 +248,10 @@ export function App(): JSX.Element {
 	);
 }
 
-function headSub(kind: string, project: string | undefined, ownerLabel: string | undefined, count: number): string {
+/** 顶栏副标题：私聊只写名字（和谁），群聊才补充团队/管理员/人数。 */
+function headSub(kind: ChannelKind, team: string | undefined, leadLabel: string | undefined, count: number): string {
 	if (kind === "dm") return "";
-	const bits = [project, ownerLabel === undefined ? undefined : `负责人 ${ownerLabel}`, `${String(count)} 人`];
+	const bits = [team, leadLabel === undefined ? undefined : `团队管理员 ${leadLabel}`, `${String(count)} 人`];
 	return bits.filter((bit) => bit !== undefined && bit !== "").join(" · ");
 }
 

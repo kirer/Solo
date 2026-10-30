@@ -12,8 +12,8 @@
  *    来，读盘是外壳和工具层的事。
  * 2. **只认名册里的人**。解析不出来的 token（`@import`、`@media`、`@x`）一律丢弃 ——
  *    它们不是人，留着只会让「谁被 @ 了」变成噪音。
- * 3. **老板的名字是静态表**。老数据里已经存着 `@老板` / `@owner`，没有名册也必须能认出来，
- *    所以 `resolveMention` 的缺省名册就能把老板的各种叫法翻成 `owner`。
+ * 3. **我的名字是静态表**。老数据里已经存着 `@老板` / `@owner`，没有名册也必须能认出来，
+ *    所以 `resolveMention` 的缺省名册就能把我的各种叫法翻成 `owner`。
  */
 
 /** 名册里的一个人。字段全部可选（除了 slug）：缺什么就少一种叫法。 */
@@ -26,29 +26,30 @@ export type MentionAgent = {
 	readonly role?: string | undefined;
 	/** `identity.md` 的 `title`（例如「平台负责人」）。 */
 	readonly title?: string | undefined;
-	/** 上级 slug。用来推导岗位名（直属老板的人就是 `ceo`）。 */
+	/** 上级 slug。用来推导岗位名（直属我的人就是 `ceo`）。 */
 	readonly manager?: string | undefined;
 };
 
-/** 一份名册：老板的 slug + 全公司的人。 */
+/** 一份名册：我的 slug + 全公司的人。 */
 export type MentionRoster = {
-	/** 老板的 slug，正常就是 `owner`。 */
+	/** 我的 slug，正常就是 `owner`。 */
 	readonly owner: string;
 	readonly agents: readonly MentionAgent[];
 };
 
-/** 老板的 slug。与 `state.ts` 的 `OWNER` 是同一个字面量（这里不能 import，会成环）。 */
+/** 我的 slug。与 `state.ts` 的 `OWNER` 是同一个字面量（这里不能 import，会成环）。 */
 const OWNER_SLUG = "owner";
 
-/** 没有名册时的兜底：只认老板。老数据里的 `@老板` 靠它复活。 */
+/** 没有名册时的兜底：只认我。老数据里的 `@老板` 靠它复活。 */
 export const EMPTY_ROSTER: MentionRoster = { owner: OWNER_SLUG, agents: [] };
 
 /**
- * 老板的各种叫法。故意短：每加一个词就多一条「谁都能被 @ 到」的路。
+ * 我的各种叫法。故意短：每加一个词就多一条「谁都能被 @ 到」的路。
  *
  * `我` / `YOU` 是模型从正文视角抄下来的（「请 @我」），它们在真实数据里出现了 27 次，
- * 全都指向老板 —— 员工不会用第三人称叫自己。
+ * 全都指向我 —— 员工不会用第三人称叫自己。
  */
+// 「老大」「老板」是历史写法，保留别名只为让老消息里的 @ 还能解析；界面与提示词一律用「我」。
 const OWNER_ALIASES: readonly string[] = ["owner", "老大", "老板", "boss", "我", "you", "你自己"];
 
 /** 别名归一：去 `@`、去首尾空格、全角转半角（`ＣＥＯ` → `CEO`）、转小写。 */
@@ -72,8 +73,8 @@ function titleSegments(title: string): readonly string[] {
 /**
  * 从一份身份清单建名册。
  *
- * 岗位名的来源只有一处：**直属老板的人就是 `ceo`**。`identity.md` 的 YAML 头只有
- * 4 个字段（`name`/`title`/`manager`/`project`），没有岗位缩写；而「老板唯一直接对话
+ * 岗位名的来源只有一处：**直属我的人就是 `ceo`**。`identity.md` 的 YAML 头只有
+ * 4 个字段（`name`/`title`/`manager`/`team`），没有岗位缩写；而「我唯一直接对话
  * 的人」是组织架构里的事实（见 `知言` 的正文），不需要再让人手填一遍。
  * 显式写了 `role` 的人以 `role` 为准。
  */
@@ -91,7 +92,7 @@ export function mentionRosterOf(agents: readonly MentionAgent[], owner: string =
 /**
  * 把用户/模型写的 `@` 名字解析成真正的 slug。纯函数，喂一份名册。
  *
- * 顺序：slug 本身 → 老板的叫法 → 真名 → 岗位名 → title（整串或其中一段）。
+ * 顺序：slug 本身 → 我的叫法 → 真名 → 岗位名 → title（整串或其中一段）。
  * 都匹配不上返回 `undefined`（调用方丢弃，不要瞎猜）。
  */
 export function resolveMention(raw: string, roster: MentionRoster = EMPTY_ROSTER): string | undefined {

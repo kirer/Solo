@@ -39,7 +39,7 @@ export function renderIdentityFile(header: IdentityHeader, body: string): string
 	if (header.name !== undefined) lines.push(`name: ${header.name}`);
 	if (header.title !== undefined) lines.push(`title: ${header.title}`);
 	if (header.manager !== undefined) lines.push(`manager: ${header.manager}`);
-	if (header.project !== undefined) lines.push(`project: ${header.project}`);
+	if (header.team !== undefined) lines.push(`team: ${header.team}`);
 	lines.push("---", "", body.trim(), "");
 	return lines.join("\n");
 }
@@ -52,9 +52,9 @@ export type CreateAgentInput = {
 	/** 想指定的 slug。缺省从 name 生成，重名自动加后缀。 */
 	readonly slug?: string;
 	readonly title?: string;
-	/** 上级的 slug。老板是 `owner`。 */
+	/** 上级的 slug。我是 `owner`。 */
 	readonly manager?: string;
-	readonly project?: string;
+	readonly team?: string;
 	/** 身份正文。空的话写一句占位，让它自己来改。 */
 	readonly body?: string;
 };
@@ -73,7 +73,7 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
 		...(input.manager === undefined ? {} : { manager: input.manager }),
-		...(input.project === undefined ? {} : { project: input.project }),
+		...(input.team === undefined ? {} : { team: input.team }),
 	};
 	const body =
 		input.body ??

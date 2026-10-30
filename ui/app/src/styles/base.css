@@ -282,7 +282,6 @@ img {
 /* 所有数字等宽：时间戳、计数、秒表不会左右跳。 */
 .num,
 time,
-.act-time,
 .row-time,
 .ch-time,
 .pending-time,

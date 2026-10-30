@@ -1924,3 +1924,65 @@ React state，行模型由纯函数算出来，DOM 不再被手工搬来搬去�
 
 **没做的。** 不引入状态库（Redux/Zustand/Jotai）—— 一个 `useSyncExternalStore` 的 40 行 store
 够用；不引入 UI 组件库 —— 观感是手写的，组件库会把它拉回「生成式仪表盘」。
+
+---
+
+## ADR-080：五个词定死——我、助理、团队、agents、团队管理员
+
+**背景。** 同一件事在仓库里有好几套名字：真人叫「老板」「老大」「上级」「owner」；项目既是
+一个聊天频道又是一个档案目录；「项目负责人」和「老板」在代码里都叫 `owner`（`ChannelState.owner`
+与 `READMEFront.owner` 在同一个函数里含义相反）。频道还按前缀分成 `dm:` / `proj:` / `all`
+三套，每套一套规则。
+
+**决定。** 组织只有五个概念，代码与文档按这张表对齐：
+
+| 概念 | 内部标识 | 界面上叫 |
+|---|---|---|
+| 真人（唯一的用户） | `owner` / `OWNER_SLUG` / `dm:owner-*` **保持不变** | 我 |
+| 直接向我汇报的 agent | `manager: owner`（已有字段） | 助理（默认「知言」） |
+| 有档案的一组人和一个目标 | `team:<slug>` / `teams/<slug>/` / `src/core/team/` | 团队 |
+| 团队成员（含助理） | `agents/<slug>/` | agents / 同事 |
+| 团队负责人 | README 的 `lead:` / `ChannelState.lead` | 团队管理员 |
+
+1. **内部 `owner` 保留**，不做数据迁移；只改给人看的文字。代价是提示词里会出现
+   「我是上级」这种歧义，所以在系统提示词首行加一句定义：**提示词里的「我」指用户本人**，
+   agent 称呼用户时用「你」。
+2. **项目 → 团队** 全改：目录、频道前缀（`proj:` → `team:`）、`identity.md` 的 `project:`
+   字段、工具名（`list_projects` → `list_teams` 等）、`scope: "project"` → `"team"`。
+   这是一次带数据迁移的改名，脚本见 `scripts/rename-teams.ts`（默认 dry-run）。
+3. **项目负责人 → 团队管理员**：README 头字段 `owner:` 改成 `lead:`，
+   `ChannelState.owner/ownerLabel` 改成 `lead/leadLabel`。**不能机械替换**：`ownership`、
+   `ownerless` 是 pi-durable 的 API，`projection` 是「投影」，都不是这个意思。
+
+**为什么团队不是一个新实体。** 团队 = 一个有档案的群聊。没有 `README.md` 的群就是一个
+拉起来问一句的群，不需要登记、不需要成员表、不需要负责人。这样「建团队」和「拉个群」是
+同一个动作，少一套状态机。
+
+**代价。** 磁盘上已有 `proj:solo`(214 条)、`proj:ai-drama`(15 条) 与 6 个 `dm:owner-*`(579 条)，
+不迁移就是孤儿消息、员工被 `syncTeamChannel` 踢出群。迁移脚本必须先备份、可 dry-run、
+可重入。
+
+---
+
+## ADR-081：删掉「过程剧场」——投影、占位、步骤合并、草稿流
+
+**背景。** 为了让界面「看得见 agent 在干活」，仓库里长出了四层东西：把 think/tool 事件
+投影成消息写进个人频道（`shell/projector.ts` + `startTranscriptSink`）、发消息时先占位
+（pending/processing，10 分钟 TTL）、把同一轮的多个 tool 合并成 step（`STEP_MERGE_MS`）、
+以及从 `subscribeCommits` 里偷 say 参数当「正在说」（`runtime/drafts.ts`）。它们共用一套
+索引、一个反向注入的 hook（`setChannelStreamHook`）、一条 SSE `draft` 事件和约 250 行状态机，
+而 ADR-040 的数据是：私聊 30 分钟 76–197 条，回复率 1%。问题不是「看不见思考」。
+
+**决定。** 全部删除，不留开关：
+- `shell/projector.ts`、`backfillTranscripts`、`startTranscriptSink`；
+- 占位消息与 `expireStalePlaceholders`、`PLACEHOLDER_TTL_MS`；
+- step 合并与 `STEP_MERGE_MS`；
+- `runtime/drafts.ts`、SSE `draft` 事件、「正在说」界面；
+- 生成 `think` / `tool` / `work` 消息的路径。历史库里已有的这些 `kind` 仍然要能读出来
+  （按普通行显示或忽略），不做数据清洗。
+
+**以后要「正在输入」怎么办。** 用 `harness.inspect()` 的会话忙闲在读取时派生，不落库、
+不进消息表、不发 SSE 事件。界面可以有，数据模型里没有。
+
+**代价。** 删掉后界面在 agent 干活期间是静的，只能看到最终的 `say`。这是有意的：先保证
+「消息 = 说过的话」，恢复可见性再作为纯读取层的功能加回来。

@@ -11,7 +11,7 @@
  * 5. 等 Ctrl-C。
  *
  * 已经有的：执行环境（`run` 工具，就是 shell）、启动自愈（`open.ts` 把强杀留下的
- * 半截任务树结算成 `terminal`）、过程记录（`projector.ts` 把会话条目投影进个人频道）。
+ * 半截任务树结算成 `terminal`）、答案兜底（`rescue.ts`：他答了但没调 `say` 时补发）。
  *
  * 刻意没有的：看门狗（定时巡检卡住的人）、崩溃后自动重跑、IM 出站、成本核算。
  * 目标只有一个：**能跑，能被人看见在跑什么**。加回任何一样之前先问
@@ -31,7 +31,7 @@ type Args = {
 	readonly port: number;
 	readonly host: string;
 	readonly workspace: string;
-	/** 播种：如果 `agents/` 是空的，建一个「离老板最近的人」。 */
+	/** 播种：如果 `agents/` 是空的，建一个「离我最近的人」。 */
 	readonly seed: boolean;
 };
 
@@ -73,10 +73,10 @@ async function agentCount(agentsRoot: string): Promise<number> {
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
 	const agentsRoot = join(args.workspace, "agents");
-	const projectsRoot = join(args.workspace, "projects");
+	const teamsRoot = join(args.workspace, "teams");
 	const databasePath = join(args.workspace, "core.sqlite");
 	await mkdir(agentsRoot, { recursive: true });
-	await mkdir(projectsRoot, { recursive: true });
+	await mkdir(teamsRoot, { recursive: true });
 
 	if (args.seed) {
 		// 规矩与公司层技能**每次启动都同步**（不是「只在空工作区」）：它们是公司发的文件，
@@ -89,15 +89,15 @@ async function main(): Promise<void> {
 		if (touched.length > 0) console.log(`[core] 同步了公司层技能：${touched.join("、")}`);
 	}
 
-	// 启动自检：`project/memory.ts` 的沉淀指令让负责人 `read_skill "记忆整理"`，
+	// 启动自检：`team/memory.ts` 的沉淀指令让团队管理员 `read_skill "记忆整理"`，
 	// 那份技能不在工作区，沉淀就会变成「模型凭自己想法整理」—— 静默降级，没人知道。
 	if (!existsSync(join(args.workspace, "skills", "记忆整理", "SKILL.md"))) {
-		console.warn("[core] 公司技能「记忆整理」不在工作区：项目记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
+		console.warn("[core] 公司技能「记忆整理」不在工作区：团队记忆沉淀会读不到规矩（重新启动一次，或看 seed/skills/ 是否缺失）");
 	}
 
 	if (args.seed && (await agentCount(agentsRoot)) === 0) {
 		const slug = await seedOwnerAssistant(agentsRoot, { name: "知言" });
-		console.log(`[core] 播种了「离老板最近的人」：agents/${slug}/identity.md`);
+		console.log(`[core] 播种了「离我最近的人」：agents/${slug}/identity.md`);
 	}
 
 	const models = setupModels(process.env, { workspace: args.workspace });
@@ -120,8 +120,8 @@ async function main(): Promise<void> {
 		runtime = await openCore({ databasePath, models: models.models, registry });
 		shell = await assembleCore(runtime.harness, registry, {
 			agentsRoot,
-			projectsRoot,
-			ownerName: "老大",
+			teamsRoot,
+			ownerName: "我",
 			defaultModel: models.defaultModel,
 		});
 		server = await serveCore({

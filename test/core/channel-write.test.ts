@@ -47,7 +47,7 @@ async function setup(): Promise<{ runtime: CoreRuntime; file: string; channelId:
 	const { models } = setupModels(process.env, { workspace: root });
 	const runtime = await openCore({ databasePath: file, models, registry: createRegistry() });
 	runtimes.push(runtime);
-	const channelId = "proj:计费";
+	const channelId = "team:计费";
 	await runtime.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		doc.channels[channelId] = ensureChannel(doc, {

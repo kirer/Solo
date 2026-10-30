@@ -29,8 +29,8 @@ describe("投递正文", () => {
 	});
 
 	test("插话要明说「不是新任务」", () => {
-		// 实测：老板在沈舟加音效的中途私聊问「你是谁啊」，它答完就收工，
-		// 再没回项目频道汇报。所以打断式的投递必须把「答完回去干活」写进正文。
+		// 实测：我在沈舟加音效的中途私聊问「你是谁啊」，它答完就收工，
+		// 再没回团队频道汇报。所以打断式的投递必须把「答完回去干活」写进正文。
 		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto"] });
 		const { message } = appendMessage(state, "g", { from: "owner", text: "你是谁", at: 1 });
 		const interrupted = renderDelivery({ channel: state.channels.g!, message, interrupted: true });
@@ -82,16 +82,16 @@ describe("未读摘要", () => {
 	test("列出有未读的频道与最后一句预览", () => {
 		let state = stateWith(
 			{ id: "g", title: "全员", members: ["owner", "cto"] },
-			{ id: "p", title: "项目", members: ["owner", "cto"] },
+			{ id: "p", title: "团队", members: ["owner", "cto"] },
 		);
 		state = appendMessage(state, "g", { from: "owner", text: "第一条", at: 1 }).state;
 		state = appendMessage(state, "g", { from: "owner", text: "最新一条", at: 2 }).state;
-		state = appendMessage(state, "p", { from: "owner", text: "项目里的事", at: 3 }).state;
+		state = appendMessage(state, "p", { from: "owner", text: "团队里的事", at: 3 }).state;
 
 		const digest = renderDigest(state, "cto");
 		expect(digest).toContain("别的频道里还有 3 条没看");
 		expect(digest).toContain("全员：2 条 — 最新一条");
-		expect(digest).toContain("项目：1 条 — 项目里的事");
+		expect(digest).toContain("团队：1 条 — 团队里的事");
 	});
 
 	test("自己发的不算未读", () => {
@@ -103,13 +103,13 @@ describe("未读摘要", () => {
 
 describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 	const submissions = [
-		{ id: 1, conversationId: 7, status: "queued", requestId: "ch:proj:x:3:lin" },
-		{ id: 2, conversationId: 7, status: "placed", requestId: "ch:proj:x:2:lin" },
-		{ id: 3, conversationId: 9, status: "queued", requestId: "ch:proj:x:3:gu" },
-		{ id: 4, conversationId: 7, status: "queued", requestId: "ch:owner:proj:x:1:lin" },
+		{ id: 1, conversationId: 7, status: "queued", requestId: "ch:team:x:3:lin" },
+		{ id: 2, conversationId: 7, status: "placed", requestId: "ch:team:x:2:lin" },
+		{ id: 3, conversationId: 9, status: "queued", requestId: "ch:team:x:3:gu" },
+		{ id: 4, conversationId: 7, status: "queued", requestId: "ch:owner:team:x:1:lin" },
 	];
 
-	test("只挑同会话、还没开始的；正在跑的不算，别的会话不算，老板排的队也算（连发要合并）", () => {
+	test("只挑同会话、还没开始的；正在跑的不算，别的会话不算，我排的队也算（连发要合并）", () => {
 		expect(queuedAhead(submissions, 7)).toEqual([1, 4]);
 		expect(queuedAhead(submissions, 9)).toEqual([3]);
 	});
@@ -137,15 +137,15 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 			},
 		};
 
-		// 发送方是同事而不是老板：老板自己的排期不合并（连说三句要按顺序答三句）。
-		let state = stateWith({ id: "proj:x", title: "X", members: ["owner", "lin", "gu"] });
+		// 发送方是成员而不是我：我自己的排期不合并（连说三句要按顺序答三句）。
+		let state = stateWith({ id: "team:x", title: "X", members: ["owner", "lin", "gu"] });
 		const bodies: string[] = [];
 		for (const text of ["第一条", "第二条", "第三条"]) {
-			const { state: next, message } = appendMessage(state, "proj:x", { from: "lin", text, at: Date.now() });
+			const { state: next, message } = appendMessage(state, "team:x", { from: "lin", text, at: Date.now() });
 			state = next;
 			const result = await deliver({
 				digests: new Map(),
-				channel: state.channels["proj:x"]!,
+				channel: state.channels["team:x"]!,
 				message,
 				targets: ["gu"],
 				conversationOf: async () => conversation as never,
@@ -163,7 +163,7 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 		}
 
 		// 每条消息都还在频道里（一条不漏），但同一时刻只有一个「还没开始」的排队项。
-		expect(state.messages["proj:x"]!.map((item) => item.text)).toEqual(["第一条", "第二条", "第三条"]);
+		expect(state.messages["team:x"]!.map((item) => item.text)).toEqual(["第一条", "第二条", "第三条"]);
 		expect(submitted).toHaveLength(3);
 		// 第一、二条各撤掉前一条没开始的，第三条撤掉第二条：合并计数 0、1、1。
 		expect(bodies).toEqual(["0", "1", "1"]);
@@ -172,7 +172,7 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 	});
 });
 
-describe("老板连发三条也只排一个唤醒", () => {
+describe("我连发三条也只排一个唤醒", () => {
 	test("三条消息都在频道里，未开始项只剩一个", async () => {
 		let nextId = 500;
 		const queue: { id: number; conversationId: number; status: string; requestId?: string }[] = [];
@@ -200,24 +200,24 @@ describe("老板连发三条也只排一个唤醒", () => {
 			return merged;
 		};
 
-		let state = stateWith({ id: "proj:x", title: "X", members: ["owner", "lin"] });
+		let state = stateWith({ id: "team:x", title: "X", members: ["owner", "lin"] });
 		const mergedCounts: number[] = [];
 		for (const text of ["第一句", "第二句", "第三句"]) {
-			const { state: next, message } = appendMessage(state, "proj:x", { from: "owner", text, at: Date.now() });
+			const { state: next, message } = appendMessage(state, "team:x", { from: "owner", text, at: Date.now() });
 			state = next;
 			const result = await deliver({
 				digests: new Map(),
-				channel: state.channels["proj:x"]!,
+				channel: state.channels["team:x"]!,
 				message,
 				targets: ["lin"],
 				conversationOf: async () => conversation as never,
-				// 老板插队与「连发合并」现在同一条路（`coalesceQueue`）。
+				// 我插队与「连发合并」现在同一条路（`coalesceQueue`）。
 				coalesceQueue,
 			});
 			mergedCounts.push(result.merged?.[0]?.count ?? 0);
 		}
 
-		expect(state.messages["proj:x"]!.map((item) => item.text)).toEqual(["第一句", "第二句", "第三句"]);
+		expect(state.messages["team:x"]!.map((item) => item.text)).toEqual(["第一句", "第二句", "第三句"]);
 		expect(mergedCounts).toEqual([0, 1, 1]);
 		expect(queue.filter((item) => item.status === "queued")).toHaveLength(1);
 		expect(queue.filter((item) => item.status === "cancelled")).toHaveLength(2);

@@ -1,8 +1,8 @@
 /**
  * `@` 别名解析。
  *
- * 守的事故：库里 980 个 mention token 有 573 个（58%）是垃圾，48 条消息写了 `@老板`
- * 而**没有任何人被叫醒** —— 因为成员表里存的是 slug `owner`，`@老板` / `@CEO` /
+ * 守的事故：库里 980 个 mention token 有 573 个（58%）是垃圾，48 条消息写了 `@我`
+ * 而**没有任何人被叫醒** —— 因为成员表里存的是 slug `owner`，`@我` / `@CEO` /
  * 真名在 `recipientsOf` 的成员过滤里被静默丢弃。
  */
 import { describe, expect, test } from "vitest";
@@ -21,7 +21,7 @@ const people: readonly MentionAgent[] = [
 	{ slug: "知言", name: "知言", title: "负责人", manager: OWNER },
 	{ slug: "顾南雁", name: "顾南雁", title: "平台负责人", manager: "知言" },
 	{ slug: "周砚", name: "周砚", title: "平台功能开发 / 修 bug", manager: "顾南雁" },
-	{ slug: "林越", name: "林越", title: "项目负责人（小恐龙）", manager: "知言" },
+	{ slug: "林越", name: "林越", title: "团队管理员（小恐龙）", manager: "知言" },
 ];
 
 const roster = mentionRosterOf(people);
@@ -34,26 +34,26 @@ function channelWith(members: string[]): ChannelState {
 	return ensureChannel(empty(), { id: "all", title: "公司", members, at: 1 });
 }
 
-describe("resolveMention：老板", () => {
-	test("owner / 老板 / BOSS / 我 / YOU 都指向老板", () => {
-		for (const raw of ["owner", "老板", "BOSS", " boss ", "我", "YOU", "@老板"]) {
+describe("resolveMention：我", () => {
+	test("owner / 我 / BOSS / 我 / YOU 都指向我", () => {
+		for (const raw of ["owner", "我", "BOSS", " boss ", "我", "YOU", "@我"]) {
 			expect(resolveMention(raw, roster), raw).toBe(OWNER);
 		}
 	});
 
-	test("没有名册也能认出老板（老数据里的 @老板 靠这条复活）", () => {
-		expect(resolveMention("老板")).toBe(OWNER);
-		expect(resolveMention("@老板")).toBe(OWNER);
+	test("没有名册也能认出我（老数据里的 @我 靠这条复活）", () => {
+		expect(resolveMention("我")).toBe(OWNER);
+		expect(resolveMention("@我")).toBe(OWNER);
 	});
 });
 
-describe("resolveMention：同事", () => {
+describe("resolveMention：成员", () => {
 	test("slug 本身", () => {
 		expect(resolveMention("顾南雁", roster)).toBe("顾南雁");
 	});
 
 	test("岗位名大小写 / 全半角不敏感", () => {
-		// 直属老板的人就是 ceo（见 mentionRosterOf 的推导）。
+		// 直属我的人就是 ceo（见 mentionRosterOf 的推导）。
 		for (const raw of ["ceo", "CEO", "ＣＥＯ", "@Ceo"]) {
 			expect(resolveMention(raw, roster), raw).toBe("知言");
 		}
@@ -77,12 +77,12 @@ describe("resolveMention：同事", () => {
 });
 
 describe("parseMentions：垃圾 token 不再进 mentions", () => {
-	test("@老板 → owner，@CEO → 那个人", () => {
-		expect(parseMentions("@老板 看一下 @CEO 的活", roster)).toEqual([OWNER, "知言"]);
+	test("@我 → owner，@CEO → 那个人", () => {
+		expect(parseMentions("@我 看一下 @CEO 的活", roster)).toEqual([OWNER, "知言"]);
 	});
 
 	test("解析到同一个人的两种叫法只算一次", () => {
-		expect(parseMentions("@老板 @owner BOSS", roster)).toEqual([OWNER]);
+		expect(parseMentions("@我 @owner BOSS", roster)).toEqual([OWNER]);
 	});
 
 	test("@media / @import / 邮箱 / 代码里的 @x 都不是人", () => {
@@ -97,15 +97,15 @@ describe("parseMentions：垃圾 token 不再进 mentions", () => {
 });
 
 describe("recipientsOf：老数据兜底", () => {
-	test("成员表里是 owner，老消息里存的是「老板」→ 老板被叫醒", () => {
+	test("成员表里是 owner，老消息里存的是「我」→ 我被叫醒", () => {
 		const state = channelWith([OWNER, "知言"]);
 		const { message } = appendMessage(state, "all", {
 			from: "知言",
-			text: "@老板 这件事要你定",
+			text: "@我 这件事要你定",
 			at: 1,
 		});
 		// 这条模拟老数据：mentions 里存的是字面 token。
-		const legacy = { ...message, mentions: ["老板"] };
+		const legacy = { ...message, mentions: ["我"] };
 		expect(recipientsOf(state.channels.all!, legacy)).toEqual([OWNER]);
 	});
 
@@ -113,12 +113,12 @@ describe("recipientsOf：老数据兜底", () => {
 		const state = channelWith([OWNER, "知言"]);
 		const { message } = appendMessage(state, "all", {
 			from: "知言",
-			text: "@老板 要不要加联机",
+			text: "@我 要不要加联机",
 			at: 1,
 			roster,
 		});
 		expect(message.mentions).toEqual([OWNER]);
-		expect(message.text).toContain("@老板"); // 正文原样保留：那是模型的嘴
+		expect(message.text).toContain("@我"); // 正文原样保留：那是模型的嘴
 		expect(recipientsOf(state.channels.all!, message)).toEqual([OWNER]);
 	});
 
@@ -134,30 +134,30 @@ describe("recipientsOf：老数据兜底", () => {
 	});
 });
 
-describe("老大（老板的称呼）", () => {
-	test("@老大 解析成 owner，@老板 也还认", () => {
-		expect(resolveMention("@老大", EMPTY_ROSTER)).toBe("owner");
-		expect(resolveMention("老大", EMPTY_ROSTER)).toBe("owner");
-		expect(resolveMention("@老板", EMPTY_ROSTER)).toBe("owner");
+describe("我（我的称呼）", () => {
+	test("@我 解析成 owner，@我 也还认", () => {
+		expect(resolveMention("@我", EMPTY_ROSTER)).toBe("owner");
+		expect(resolveMention("我", EMPTY_ROSTER)).toBe("owner");
+		expect(resolveMention("@我", EMPTY_ROSTER)).toBe("owner");
 	});
 });
 
-describe("老板自己发的话也过名册", () => {
-	test("`@老大` 落库时解析成 owner，而不是留成字面 token", () => {
+describe("我自己发的话也过名册", () => {
+	test("`@我` 落库时解析成 owner，而不是留成字面 token", () => {
 		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言"], at: 1 });
 		const { message } = appendMessage(state, "g", {
 			from: OWNER,
-			text: "@老大 在吗",
+			text: "@我 在吗",
 			at: 1,
 			roster: mentionRosterOf(people),
 		});
-		// 老板 @ 自己会被收件人过滤掉，但 mentions 里必须已经是 slug，界面才画得出「谁被叫了」。
-		expect(message.mentions).not.toContain("老大");
+		// 我 @ 自己会被收件人过滤掉，但 mentions 里必须已经是 slug，界面才画得出「谁被叫了」。
+		expect(message.mentions).not.toContain("我");
 		expect(parseMentions(message.text, mentionRosterOf(people))).toContain("owner");
 	});
 });
 
-describe("老板 @ 了一个叫不应的人", () => {
+describe("我 @ 了一个叫不应的人", () => {
 	test("不落到「房间里第一个人」头上", () => {
 		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言", "林越"], at: 1 });
 		const { message } = appendMessage(state, "g", {
@@ -169,7 +169,7 @@ describe("老板 @ 了一个叫不应的人", () => {
 		expect(recipientsOf(state.channels.g!, message)).toEqual([]);
 	});
 
-	test("没 @ 人时才让第一个同事接", () => {
+	test("没 @ 人时才让第一个成员接", () => {
 		const state = ensureChannel(empty(), { id: "g", title: "群", members: [OWNER, "知言", "林越"], at: 1 });
 		const { message } = appendMessage(state, "g", { from: OWNER, text: "在吗", at: 1, roster });
 		expect(recipientsOf(state.channels.g!, message)).toEqual(["知言"]);

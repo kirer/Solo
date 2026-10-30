@@ -1,8 +1,9 @@
 /**
- * 左栏：品牌头 + 一列频道。
+ * 左栏：品牌头 + 一列会话。
  *
- * 只有一个列表，没有分组 —— 老板要的是「一眼扫到哪个频道动了」，
+ * 只有一个列表，没有分组 —— 我要的是「一眼扫到哪个会话动了」，
  * 分组标题占的是垂直空间，换来的信息量是零（他自己分的组，他记得）。
+ * 一行要么是一个人（私聊），要么是一群人（群聊）—— 形态由后端 `kind` 给。
  */
 
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
@@ -52,7 +53,7 @@ export function Sidebar(): JSX.Element {
 			<div className="side-head">
 				<span>工作区</span>
 				<span className="side-meta" id="company-meta">
-					{memberCount} 人 · {channels.length} 个频道
+					{memberCount} 人 · {channels.length} 个会话
 				</span>
 			</div>
 			<div className="channels" id="rows" role="list">
@@ -82,7 +83,7 @@ function ChannelRow(props: {
 	onOpen: () => void;
 }): JSX.Element {
 	const { channel } = props;
-	const person = channel.kind === "dm" ? props.bySlug.get(dmSlugOf(channel.id)) : undefined;
+	const person = channel.kind === "dm" ? peerOf(channel, props.bySlug) : undefined;
 	const state = person === undefined ? "idle" : (props.presence.get(person.slug)?.state ?? "idle");
 	const title = channel.title;
 	const parts = headParts(channel);
@@ -136,18 +137,25 @@ function ChannelRow(props: {
 	);
 }
 
-function dmSlugOf(id: string): string {
-	// `dm:owner-知言` / `dm:知言--林越` —— 只有「和老大一对一」的那条有状态可言。
-	const rest = id.startsWith("dm:") ? id.slice(3) : id;
-	const single = /^owner-(.+)$/.exec(rest);
-	return single?.[1] ?? rest;
+/**
+ * 私聊里对面是谁：后端已经把私聊标题写成对方的名字（`chatKind` 推的），
+ * 所以按标题在名册里找人 —— 不去拆 id 前缀，也不往后端要新字段。
+ */
+function peerOf(
+	channel: Channel,
+	bySlug: Map<string, { label: string; title: string; slug: string }>,
+): { label: string; title: string; slug: string } | undefined {
+	for (const person of bySlug.values()) {
+		if (person.label === channel.title) return person;
+	}
+	return undefined;
 }
 
 function groupPeopleOf(
 	channel: Channel,
 	bySlug: Map<string, { label: string; title: string; slug: string }>,
 ): { slug: string; label: string }[] {
-	// 群头像只画得出 4 个座位，多的也没地方放。
+	// 只有群聊才画群头像（私聊画那个人的脸）。群头像只画得出 4 个座位，多的也没地方放。
 	return channel.kind === "dm"
 		? []
 		: [...bySlug.values()].slice(0, 4).map((person) => ({ slug: person.slug, label: person.label }));

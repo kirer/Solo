@@ -159,7 +159,7 @@ export async function copyText(text: string): Promise<boolean> {
  * 会话列表的未读数文案：0 → 空，1–99 → 数字，>99 → 「99+」。
  *
  * 为什么要在这里截断而不是让 CSS 去缩：徽标是定宽的，三位数一进来整行的
- * 名字就被挤窄一档（实测 1234 会把标题压掉两个字）。数字本身对老板的价值
+ * 名字就被挤窄一档（实测 1234 会把标题压掉两个字）。数字本身对我的价值
  * 到「有几十条」就饱和了，99+ 既说了量级又不改变行宽。
  */
 const UNITS: readonly string[] = ["B", "KB", "MB", "GB"];
@@ -185,27 +185,27 @@ export function unreadLabel(count: number): string {
 }
 
 /**
- * 顶栏副标题只用得上这四样：项目在干什么、项目名、负责人、人数。
+ * 顶栏副标题只用得上这四样：团队在干什么、团队名、团队管理员、人数。
  *
- * 单独声明而不是直接要 `Channel`：这个投影在私聊、项目频道、搜索结果上都要能跑，
+ * 单独声明而不是直接要 `Channel`：这个投影在私聊、团队频道、搜索结果上都要能跑，
  * 而那些地方手里未必有一条完整的 `Channel`（见 `api/types.ts`）。
  */
 export type ChannelHead = {
 	doing?: string | undefined;
-	project?: string | undefined;
-	ownerLabel?: string | undefined;
+	team?: string | undefined;
+	leadLabel?: string | undefined;
 	memberCount?: number | undefined;
 };
 
-/** 频道详情顶栏副标题的组成部分（非私聊）。项目频道把 doing 放最前面。 */
+/** 频道详情顶栏副标题的组成部分（非私聊）。团队频道把 doing 放最前面。 */
 export function headParts(channel: ChannelHead | null | undefined): string[] {
 	if (!channel) return [];
 	const parts: string[] = [];
-	// doing 是「这个项目现在在干什么」，比项目名更能回答「我该不该点进去」，
+	// doing 是「这个团队现在在干什么」，比团队名更能回答「我该不该点进去」，
 	// 所以放在最前面；没有就不占位。
 	if (channel.doing) parts.push(String(channel.doing));
-	if (channel.project) parts.push(String(channel.project));
-	if (channel.ownerLabel) parts.push(`负责人 ${channel.ownerLabel}`);
+	if (channel.team) parts.push(String(channel.team));
+	if (channel.leadLabel) parts.push(`团队管理员 ${channel.leadLabel}`);
 	if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
 	return parts;
 }
@@ -214,7 +214,7 @@ export function headParts(channel: ChannelHead | null | undefined): string[] {
  * 会话列表的排序：**知言恒第一**，其余按最后说话时间倒序。
  *
  * 为什么要在这里排而不是靠后端顺序：列表每次刷新（含重启后重新拉
- * `/api/channels`）都会重画，`lastAt` 一变知言就沉下去了 —— 老板的助理
+ * `/api/channels`）都会重画，`lastAt` 一变知言就沉下去了 —— 我的助理
  * 不该因为「今天没说话」掉到列表底下。所以排序时先比「是不是知言的私聊」，
  * 再比时间，pin 与刷新顺序无关。
  */
@@ -223,16 +223,16 @@ export const PINNED_SLUG = "知言";
 /**
  * 排序与置顶只认这三样：`id`（认出「知言的私聊」）、`kind`（只对私聊置顶）、
  * `lastAt`（比时间）。同样不直接要 `Channel`，因为侧栏与搜索结果都往这里塞。
- */
-export type ChannelPin = {
+ */export type ChannelPin = {
 	id?: string | undefined;
 	kind?: string | undefined;
 	lastAt?: number | undefined;
 };
 
 export function isPinnedChannel(channel: ChannelPin | null | undefined): boolean {
-	const id = String(channel?.id ?? "");
-	return id.endsWith(`-${PINNED_SLUG}`) && String(channel?.kind ?? id.split(":")[0]) === "dm";
+	// 形态只看 `kind`（后端按成员推的 dm/group），不再从 id 前缀猜。
+	if (channel?.kind !== "dm") return false;
+	return String(channel.id ?? "").endsWith(`-${PINNED_SLUG}`);
 }
 
 /** 泛型只为「排完还是原来那种频道对象」，不把字段裁成 `ChannelPin`。 */

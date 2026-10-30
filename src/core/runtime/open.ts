@@ -155,7 +155,7 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 
 		// 排队中的输入默认撤掉：它服务的那一轮已经死了，没人会再来取。
 		// 例外是被解开假忙的会话——它现在是真空闲，这些输入**能被处理**，
-		// 一律撤掉等于把老板刚说的话默默吞了（实测：私聊里几十条全被吞）。
+		// 一律撤掉等于把我刚说的话默默吞了（实测：私聊里几十条全被吞）。
 		for (const submission of pendingSubmissions) {
 			if (submission.status === "queued" && !unblocked.has(submission.conversationId)) {
 				const result = await harness.abortSubmission(submission.id, context, submission.conversationId);

@@ -7,7 +7,7 @@
  *
  * 三条规定：
  * 1. `src/core/runtime/` 之外，任何文件不得 import 那三个包。
- * 2. `src/core/agent`、`src/core/project`、`src/core/channel` 是纯规则与纯 IO 层，
+ * 2. `src/core/agent`、`src/core/team`、`src/core/channel` 是纯规则与纯 IO 层，
  *    不得反向 import `src/core/shell`（外壳依赖内核，内核不依赖外壳）。
  * 3. 服务端路由必须有界面消费者（有界面看不见的接口就是死接口）。
  *    前端源码在 `ui/app/src`（React + TS，构建到 `ui/web`），所以查那里。
@@ -81,7 +81,7 @@ for (const dir of CHECKED_DIRS) {
 			}
 			// 内核不得反向依赖外壳：解析后的相对路径里出现 `/shell/` 就是违规
 			if (!isShell && /\/shell\//.test(spec)) {
-				violations.push({ file: rel, spec, reason: "内核（agent/project/channel）不得 import 外壳（shell）" });
+				violations.push({ file: rel, spec, reason: "内核（agent/team/channel）不得 import 外壳（shell）" });
 			}
 		}
 	}

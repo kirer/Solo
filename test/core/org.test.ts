@@ -42,14 +42,14 @@ describe("新建 agent", () => {
 			name: "林越",
 			title: "技术负责人",
 			manager: "owner",
-			project: "alpha",
+			team: "alpha",
 			body: "我管技术。",
 		});
 		const identity = await readIdentity(agents, "林越");
 		expect(identity?.name).toBe("林越");
 		expect(identity?.title).toBe("技术负责人");
 		expect(identity?.manager).toBe("owner");
-		expect(identity?.project).toBe("alpha");
+		expect(identity?.team).toBe("alpha");
 		expect(identity?.body).toBe("我管技术。");
 	});
 

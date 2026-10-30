@@ -74,7 +74,7 @@ async function setup(): Promise<{ shell: CoreShell; port: number; root: string }
 	runtimes.push(runtime);
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
 		agentsRoot: join(root, "agents"),
-		projectsRoot: join(root, "projects"),
+		teamsRoot: join(root, "teams"),
 		defaultModel: { provider: "test", modelId: "test" },
 	});
 	const server = await serveCore({ shell, port: 0 });
@@ -220,7 +220,7 @@ describe("② /api/files 越权读：链接不跟、点文件与敏感文件直�
 		expect(fileHidden("a.png", "uploads/a.png")).toBe(true);
 		expect(fileHidden("jank.jsonl", "logs/jank.jsonl")).toBe(true);
 		expect(fileHidden("notes.md", "notes.md")).toBe(false);
-		expect(fileHidden("README.md", "projects/solo/README.md")).toBe(false);
+		expect(fileHidden("README.md", "teams/solo/README.md")).toBe(false);
 	});
 
 	it("符号链接 403（否则一个链接就能把 /etc/hosts 读出来）", async () => {
@@ -252,7 +252,7 @@ describe("② /api/files 越权读：链接不跟、点文件与敏感文件直�
 	});
 });
 
-describe("④ 发消息的 from 默认只认老板", () => {
+describe("④ 发消息的 from 默认只认我", () => {
 	it("请求里写 from 不生效，落库的是 owner", async () => {
 		const { shell, port } = await setup();
 		const sent = await call(port, {

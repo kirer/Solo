@@ -36,7 +36,7 @@ async function boot(ws: string): Promise<{ shell: CoreShell; runtime: CoreRuntim
 	runtimes.push(runtime);
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
 		agentsRoot: join(ws, "agents"),
-		projectsRoot: join(ws, "projects"),
+		teamsRoot: join(ws, "teams"),
 		defaultModel: { provider: "test", modelId: "test" },
 	});
 	const doc = ((await runtime.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined) ?? {
@@ -86,7 +86,7 @@ describe("已有名册不被旧快照覆盖", () => {
 		expect(before["甲"]).toBeDefined();
 		expect(before["乙"]).toBeDefined();
 
-		// 老板在频道里 @甲：会走 `rememberWake`（旧写法在这里整份回写名册）。
+		// 我在频道里 @甲：会走 `rememberWake`（旧写法在这里整份回写名册）。
 		await first.shell.postAs({ channelId: "all", from: "owner", text: "@甲 在吗" });
 
 		const afterWake = (await first.runtime.harness.snapshot(DirectoryDoc)) as DirectoryState;

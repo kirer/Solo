@@ -1,7 +1,7 @@
 /**
  * 右栏：两个 tab —— 「详情」与「文件」。
  *
- * 它是布局的第三列，不是浮层：老板要一边看对话一边看文件，浮层会把对话盖住。
+ * 它是布局的第三列，不是浮层：我要一边看对话一边看文件，浮层会把对话盖住。
  * 靠 `--rightbar` 从 0 变 360 让整列滑出来（见 `styles/shell.css`），
  * 所以「关」的时候必须等过渡跑完再 `hidden`，否则没有动画。
  */
@@ -107,7 +107,7 @@ function DetailTab(): JSX.Element {
 	const detail = useStore((state) => state.detail);
 	const people = useStore((state) => state.people);
 	if (person !== null) return <PersonView person={person} />;
-	if (detail === null) return <p className="detail-empty">左边选一个频道。</p>;
+	if (detail === null) return <p className="detail-empty">左边选一个会话。</p>;
 
 	const channel = detail.channel;
 	const members = detail.members.filter((member) => member.slug !== "owner");
@@ -125,7 +125,7 @@ function DetailTab(): JSX.Element {
 							channel.kind === "dm"
 								? avatarSvg({
 										slug: members[0]?.slug ?? "owner",
-										name: members[0]?.label ?? "老大",
+										name: members[0]?.label ?? "我",
 										size: 44,
 										state: "idle",
 									})
@@ -139,7 +139,7 @@ function DetailTab(): JSX.Element {
 					<span className="detail-name">{channel.title}</span>
 					<span className="detail-tags">
 						<span className="detail-tag">{kindLabel(channel.kind)}</span>
-						{channel.project === undefined ? null : <span className="detail-tag">{channel.project}</span>}
+						{channel.team === undefined ? null : <span className="detail-tag">{channel.team}</span>}
 					</span>
 				</div>
 			</div>
@@ -150,10 +150,10 @@ function DetailTab(): JSX.Element {
 					<span className="detail-v">{channel.doing}</span>
 				</div>
 			)}
-			{channel.ownerLabel === undefined ? null : (
+			{channel.leadLabel === undefined ? null : (
 				<div className="detail-field">
-					<span className="detail-k">负责人</span>
-					<span className="detail-v">{channel.ownerLabel}</span>
+					<span className="detail-k">团队管理员</span>
+					<span className="detail-v">{channel.leadLabel}</span>
 				</div>
 			)}
 			<div className="detail-field">
@@ -177,10 +177,10 @@ function DetailTab(): JSX.Element {
 				{people.length === 0 ? <p className="detail-empty">名册还没读出来。</p> : null}
 				{detail.members.map((member) => {
 					if (member.slug === "owner") {
-						// 老大没有档案页（`GET /api/people/owner` 是 404），所以不给点击态。
+						// 我没有档案页（`GET /api/people/owner` 是 404），所以不给点击态。
 						return (
 							<span key={member.slug} className="detail-person-btn is-static">
-								<span className="detail-person-name">老大</span>
+								<span className="detail-person-name">我</span>
 							</span>
 						);
 					}
@@ -224,7 +224,7 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 					<span className="detail-name">{person.label}</span>
 					<span className="detail-tags">
 						<span className="detail-tag">{person.title}</span>
-						{person.project === undefined ? null : <span className="detail-tag">{person.project}</span>}
+						{person.team === undefined ? null : <span className="detail-tag">{person.team}</span>}
 					</span>
 				</div>
 			</div>
@@ -410,10 +410,7 @@ function FilesTab(): JSX.Element {
 /* ── 小工具 ──────────────────────────────────────────────────────────── */
 
 function kindLabel(kind: string): string {
-	if (kind === "company") return "全员";
-	if (kind === "leadership") return "管理层";
-	if (kind === "project") return "项目";
-	return "私聊";
+	return kind === "dm" ? "私聊" : "群聊";
 }
 
 /** `identity.md` 的第一个 `# 名字` 与上面的标题重复，剥掉它和紧随的空行。 */

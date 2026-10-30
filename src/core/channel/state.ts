@@ -5,7 +5,7 @@
  *
  * 1. **成员就是 `@slug`**。不用数字 `conversationId`：会话 id 会随库重建而变，
  *    而 slug（`agents/<slug>/`）是文件夹名，稳定。
- * 2. **没有「公司群 / 领导层 / 项目群 / 私聊 / 工作记录」这套预置频道**。频道是
+ * 2. **没有「公司群 / 领导层 / 团队群 / 私聊 / 工作记录」这套预置频道**。频道是
  *    文档里的一条记录，谁需要谁建；`@所有人` 不是频道，是不 @ 任何人的时候的默认行为。
  * 3. **没有一条 `log:` 频道**。「工作记录」不是一个房间，是一条消息的 `kind`。
  *
@@ -37,7 +37,7 @@ export type Attachment = {
 export type Message = {
 	/** 频道内自增序号，从 1 开始。全系统唯一的消息锚点（引用回复存的就是它）。 */
 	seq: number;
-	/** 发件人的 slug。老板是 `owner`。 */
+	/** 发件人的 slug。我是 `owner`。 */
 	from: string;
 	at: number;
 	/** 正文。`@slug` 在里面，解析结果另存 `mentions`。 */
@@ -47,37 +47,14 @@ export type Message = {
 	/** 引用的那条消息的 seq。 */
 	replyTo?: number;
 	/**
-	 * 消息类别。`chat` 是普通发言；`note` 是系统写的留痕（不唤醒、不计未读）；
-	 * `work` 是工作记录（不唤醒、不计未读 —— 是自己的执行留痕）；
-	 * 其余是给界面用的语义标签（`task` / `report` / `decision`）。
+	 * 消息类别。生成侧只有：`chat` 普通发言、`say`（agent 说的话）、`note` 系统留痕
+	 * （不唤醒、不计未读）、`question` / `decision` / `report` 语义标签。
+	 *
+	 * 类型是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
+	 * 这些不再产生的 kind（ADR-081 删掉过程投影后不清理旧数据），读取侧按普通行显示。
 	 */
 	kind: string;
-	/**
-	 * T-016：生成状态。undefined/未设 = done（历史消息兼容，一律按已生成处理）。
-	 * `pending` = 占位生成的消息（@某人后其占位气泡，loading 中）；`done` = 已生成完毕；
-	 * `error` = 生成失败（占位兜底显示「处理中，稍候刷新」）。
-	 */
-	status?: "pending" | "done" | "error";
-	/** T-016：占位消息归属的「被唤醒人」slug（与 `from` 相同，仅用于前端关联 @ 动作与占位气泡）。 */
-	pendingFor?: string;
-	/** T-016：处理中指示占位（显示动画文案「开始处理…」），被真实回复原地覆盖后消失。 */
-	processing?: boolean;
-	/**
-	 * 这一条是「过程话」而不是结论（ADR-065）。
-	 *
-	 * 过程话可以连发，30 秒内同一个人连发的过程话会被并进上一条（读起来像一段），
-	 * 结论一轮只认一句。见 `channel/speech.ts` 与 `post.ts` 的合并逻辑。
-	 */
-	step?: boolean;
-	/**
-	 * 这一轮什么时候**真正开始**（ADR-072）。
-	 *
-	 * `at` 是投影落库时刻，比模型开始思考晚一个首包（实测 1–3 秒），拿它当计时起点会让
-	 * 「正在执行 · 67s」跑出 67s → 55s 这种倒退。所以处理中占位在创建时把触发那条消息的
-	 * `at` 记在这里，被原地填充时**沿用**；界面起点 = `startedAt ?? 第一条过程行 at`。
-	 */
-	startedAt?: number;
-	/** 附件（图片/文件）。没有附件时**不写这个键**，与 `replyTo` / `status` 一个规矩。 */
+	/** 附件（图片/文件）。没有附件时**不写这个键**，与 `replyTo` 一个规矩。 */
 	/*
 	 * 为什么是可变数组而不是 `readonly`：文档层的 `JsonValue` 里数组是 `JsonValue[]`，
 	 * `readonly Attachment[]` 不满足它（`ChannelState` 整个就不符合 `JsonObject` 了）。
@@ -88,14 +65,17 @@ export type Message = {
 
 /** 一个频道。 */
 export type Channel = {
-	/** 频道 id：`general` / `proj:alpha` / `dm:owner-cto` 之类，由建频道的人自己起。 */
+	/** 频道 id：`general` / `team:alpha` / `dm:owner-cto` 之类，由建频道的人自己起。 */
 	id: string;
 	title: string;
-	/** 成员 slug 列表。老板用 `owner`。 */
+	/** 成员 slug 列表。我用 `owner`。 */
 	members: string[];
 	/**
-	 * 这个频道里「不 @ 也会被唤醒」的成员。私聊把双方都放进去，
-	 * 群聊一般是空数组（老板发言时特例，见 `recipientsOf`）。
+	 * 这个频道里「不 @ 也会被唤醒」的成员。
+	 *
+	 * 建群时写一次，之后就是普通字段：团队群的团队管理员、公司群里放 `owner`（收件人
+	 * 永远排除发件人、也排除我，所以它不会让谁多醒一次）。私聊不需要它 ——
+	 * 两个人里说话的那个会被排除，剩下的本来就会被叫醒。
 	 */
 	wakeOnAll: string[];
 	createdAt: number;
@@ -109,22 +89,13 @@ export type ChannelState = {
 	nextSeq: Record<string, number>;
 	/** `slug → 频道 id → 已读到的 seq`。只记自己读过的位置。 */
 	readMarks: Record<string, Record<string, number>>;
-	/**
-	 * 投影游标：`会话 id → 已投影的最大 `pi.assistant` 条目 id`。
-	 *
-	 * 运行时把 agent 会话里的 `pi.assistant` 条目投影成个人频道消息（think/say/tool）。
-	 * 这条游标决定「只投影新产出的」，且重启后能接着上次的进度，**不重复投影**历史
-	 * 条目（否则每次重启个人频道都会长出一批重复的思考/文案卡）。持久化在文档里，
-	 * 因为重启后内存 Map 是空的，不回灌就会重头来过。
-	 */
-	cursors?: Record<string, number>;
 };
 
 export const ChannelDoc = defineDoc<ChannelState>({
 	kind: "core.channels",
 	version: 1,
 	scope: "session",
-	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {}, cursors: {} }),
+	initial: () => ({ channels: {}, messages: {}, nextSeq: {}, readMarks: {} }),
 	// 什么时候把散着的增量压成一条基线。两个理由各占一半：
 	//
 	// 1. **重放成本**：基线之前的历史不用再重放，崩溃恢复只重放最多 64 条增量。
@@ -147,10 +118,10 @@ export const ChannelDoc = defineDoc<ChannelState>({
 	},
 });
 
-/** 老板的 slug。不是 agent，但出现在成员表里。 */
+/** 我的 slug。不是 agent，但出现在成员表里。 */
 export const OWNER = "owner";
 
-/** 老板 slug。与 `OWNER` 同值，单独的常量名便于在阅读时区分「常量」与「比较」。 */
+/** 我 slug。与 `OWNER` 同值，单独的常量名便于在阅读时区分「常量」与「比较」。 */
 export const OWNER_SLUG = OWNER;
 
 /** 私聊频道的命名规则。双方 slug 排序后拼接，保证 `a-b` 与 `b-a` 是同一个频道。 */
@@ -160,19 +131,21 @@ export function dmId(a: string, b: string): string {
 }
 
 /**
- * 一个人的**个人频道**：他和老板的私聊。
+ * 一条频道是哪种会话。**只看成员表**，不看 id 前缀。
  *
- * 为什么个人频道就是「和老板的私聊」而不是另建一个房间：升到顶只能是一个人 —— 老板。
- * 于是这条链的顶端（「助理拍不了板就问我」）和每个人的「记录落在自己频道」是同一个
- * 房间，不需要第二套命名。员工在个人频道里记自己的过程，项目里只放需要别人看见的。
+ * 会话只有两种形态：恰好 `{我, 一个 agent}` 是私聊（一对一，说什么都没有第三个人
+ * 听见），其余都是群聊（三个人以上，或者一个 agent 都没有的频道）。
+ * 频道没有 `kind` 字段 —— 加了就要维护两处事实（成员变了、kind 没变）。
  */
-export function personalId(slug: string): string {
-	return dmId(OWNER, slug);
+export function chatKind(channel: Channel): "dm" | "group" {
+	if (channel.members.length !== 2) return "group";
+	if (!channel.members.includes(OWNER)) return "group";
+	return "dm";
 }
 
-/** 项目频道的命名规则。 */
-export function projectId(project: string): string {
-	return `proj:${project}`;
+/** 团队频道的命名规则。 */
+export function teamId(team: string): string {
+	return `team:${team}`;
 }
 
 /**
@@ -185,13 +158,13 @@ export function projectId(project: string): string {
 const MENTION = /(?<![\p{L}\p{N}._-])@([\p{L}\p{N}_-]+)/gu;
 
 /**
- * 从正文里解析 `@` 名字，返回**解析后的 slug**（`@老板` → `owner`，`@CEO` → 那个人）。
+ * 从正文里解析 `@` 名字，返回**解析后的 slug**（`@我` → `owner`，`@CEO` → 那个人）。
  *
  * 传了 `roster` 就按名册严格解析：解析不出来的 token（`@import` / `@media` / `@x`）
  * **丢弃**，因为它们在成员表里不存在，留着只是噪音。
  *
  * 不传 `roster` 时保留旧行为（字面 token 原样返回）—— 旧调用点（外壳的留痕、老数据的
- * 重新投递）不因为这一层而改变语义；老板的叫法由 `recipientsOf` 的兜底兜住。
+ * 重新投递）不因为这一层而改变语义；我的叫法由 `recipientsOf` 的兜底兜住。
  */
 export function parseMentions(text: string, roster?: MentionRoster): string[] {
 	const out: string[] = [];
@@ -205,18 +178,15 @@ export function parseMentions(text: string, roster?: MentionRoster): string[] {
 }
 
 /**
- * 这条消息是不是在「要老板拍板」。
+ * 这条消息是不是在「要我拍板」。
  *
- * 判据只有一条：消息显式 @了老板（`owner` 在 mentions 里）。是否真的需要老板拍板，
+ * 判据只有一条：消息显式 @了我（`owner` 在 mentions 里）。是否真的需要我拍板，
  * 由说话人自己 @ 决定，代码不再替模型猜关键词。
  *
- * 旧实现用「要不要 / 请确认 / 等你定」这类正则嗅探正文，实测大量出现在普通 @同事
- * 的协作消息里，导致没点老板的消息也被标「需要我」、并误把 owner 塞进 mentions —
+ * 旧实现用「要不要 / 请确认 / 等你定」这类正则嗅探正文，实测大量出现在普通 @成员
+ * 的协作消息里，导致没点我的消息也被标「需要我」、并误把 owner 塞进 mentions —
  * 这正是 #4 要修的误标。关键词嗅探已于本次移除。
  */
-export function needsOwner(_text: string): boolean {
-	return false;
-}
 
 /**
  * 谁会被这条消息唤醒。
@@ -224,12 +194,12 @@ export function needsOwner(_text: string): boolean {
  * 四条规则，按顺序（后写的不会覆盖先写的，只做并集，最后减去发件人自己）：
  * 1. 明确 `@` 到的人 —— 只有频道成员里的才算（防止 `@` 一个不在这个房间的人
  *    凭空拿到别人房间的上下文）。
- * 2. 老板发言且**没有 @ 任何人**时，频道里的第一个非老板成员。这条是为了让
- *    「老板随口说一句」不至于没人接 —— 只依赖成员顺序，不依赖岗位。
+ * 2. 我发言且**没有 @ 任何人**时，频道里的第一个非我成员。这条是为了让
+ *    「我随口说一句」不至于没人接 —— 只依赖成员顺序，不依赖岗位。
  * 3. `wakeOnAll` 里的成员（私聊双方）。
  * 4. 发件人自己永远不唤醒（它正在说话，不需要再被叫一次）。
  *
- * 注意 `@所有人`：如果正文里出现 `@owner`，老板会被列为目标。但老板没有会话，
+ * 注意 `@所有人`：如果正文里出现 `@owner`，我会被列为目标。但我没有会话，
  * 投递层会跳过它（见 `deliver.ts`）。
  */
 /** 正文里有没有「@某人」这个动作（不管叫不叫得应）。 */
@@ -239,15 +209,15 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	const targets = new Set<string>();
 	const members = new Set(channel.members);
 
-	// 兜底再解析一次别名：老数据里存的是字面 token（`@老板`），而频道成员里是 `owner`。
+	// 兜底再解析一次别名：老数据里存的是字面 token（`@我`），而频道成员里是 `owner`。
 	// 成员过滤规则本身**不动** —— 不是这个房间的人照样 @ 不到（防止拿到别人房间的上下文）。
 	for (const mention of message.mentions) {
 		const slug = members.has(mention) ? mention : resolveMention(mention, EMPTY_ROSTER);
 		if (slug !== undefined && members.has(slug)) targets.add(slug);
 	}
-	// 「老板没 @ 人」才让第一个同事接。**判据看正文里有没有 @，不看解析结果**：
+	// 「我没 @ 人」才让第一个成员接。**判据看正文里有没有 @，不看解析结果**：
 	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个
-	// 不存在的人」变成「叫了房间里第一个人」—— 老板会以为刚才那句没人理。
+	// 不存在的人」变成「叫了房间里第一个人」—— 我会以为刚才那句没人理。
 	if (message.from === OWNER && message.mentions.length === 0 && !AT_TOKEN.test(message.text)) {
 		const first = channel.members.find((slug) => slug !== OWNER);
 		if (first !== undefined) targets.add(first);
@@ -265,7 +235,7 @@ const RELAY_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
 /**
  * 一个频道里 agent 之间最多能自动接多少棒。
  *
- * 项目频道用 `wakeOnAll` 让「不 @ 人也能把负责人叫醒」，于是 A 回复 → 唤醒 B →
+ * 团队频道用 `wakeOnAll` 让「不 @ 人也能把团队管理员叫醒」，于是 A 回复 → 唤醒 B →
  * B 回复 → 又唤醒 A。没有上限就是无限循环烧钱。上限按频道规模给：人多一个回合里
  * 该说的也更多。至少 3，否则 0 个 agent 的频道一上来就锁死。
  */
@@ -274,26 +244,27 @@ export function relayLimit(channel: Channel): number {
 	// **只有一个人能说话时没有「接力」**。
 	//
 	// 这个上限存在的唯一理由是 A 回 → 唤醒 B → B 回 → 又唤醒 A 的无限循环。
-	// 投递时收件人一定会排除发件人自己，所以「老板 + 一个 agent」的私聊里，
+	// 投递时收件人一定会排除发件人自己，所以「我 + 一个 agent」的私聊里，
 	// 那个 agent 说完话之后**没有任何人**会被再叫醒 —— 循环根本起不来，
-	// 上限只会在他汇报到第 4 条时把他嘴堵上。实测就发生过：私聊里 197 条消息
+	// 上限只会把他汇报几次之后的嘴堵上。实测就发生过：私聊里 197 条消息
 	// 有 150 多条是「接力到上限」这条告警。
 	if (agents <= 1) return Number.POSITIVE_INFINITY;
-	// 项目频道是干活的地方：拆活、报到、互相问一句本来就多。
-	// 同样 3 个人的项目频道按 3 倍给（9 条）实测两次就撞线 —— 那拦掉的不是循环，
-	// 是「两个人来回对齐一句」。闲聊频道保持 3 倍。
-	const factor = channel.id.startsWith("proj:") ? 6 : 3;
-	return Math.max(3, factor * agents);
+	// 每人 6 条，群聊一律如此。
+	//
+	// 早先按 id 前缀分档（`team:` 给 6 倍、其余 3 倍）。那等于「频道是什么」由一个字符串
+	// 决定，而团队档案是可选的、`all` 也只是个普通群 —— 前缀不是事实。3 人按 3 倍给（9 条）
+	// 实测两次就撞线，拦掉的不是循环，是「两个人来回对齐一句」，所以统一取宽松的那一档。
+	return Math.max(3, agents * 6);
 }
 
 /**
- * 老板在这条频道里最后说了一句之后，agent 已经自动接了几棒。
+ * 我在这条频道里最后说了一句之后，agent 已经自动接了几棒。
  *
- * **老板从没在这个频道说过话时，从频道建立算起**。早先这里是 `return 0`（「不惩罚」），
- * 结果项目频道里的老板一次不开口，上限就永远不触发 —— 那正是唯一真会烧钱失控的地方。
- * 老板一开口就归零，所以「新频道」不会反而更严。
+ * **我从没在这个频道说过话时，从频道建立算起**。早先这里是 `return 0`（「不惩罚」），
+ * 结果团队频道里的我一次不开口，上限就永远不触发 —— 那正是唯一真会烧钱失控的地方。
+ * 我一开口就归零，所以「新频道」不会反而更严。
  * `note` / `work` 不算接力：那是系统留痕和执行过程，不是 agent 在跟人说话；
- * 它们也不能打断计数（`note` 的 from 是 `OWNER`，若当成老板发言就会把计数清零）。
+ * 它们也不能打断计数（`note` 的 from 是 `OWNER`，若当成我发言就会把计数清零）。
  */
 export function botHopsSinceOwner(state: ChannelState, channelId: string): number {
 	const list = state.messages[channelId] ?? [];
@@ -332,16 +303,17 @@ export function unreadCount(state: ChannelState, channelId: string, slug: string
 /**
  * 没被叫醒、也没指定频道时，最后一级兜底在哪儿说话。
  *
- * **先排掉个人频道**：`mine[0]` 可能正是「我和老板的私聊」，于是老板在群里问的一句话
- * 被答进私聊（实测 2598 条噪音灌进了老板私聊）。所以顺序是「我所在的非个人频道里最近
- * 活跃的那个」→ 个人频道。
+ * **只在群聊里找**：私聊是一对一的地方，不是兜底去处 —— 否则我在群里问的一句话会被
+ * 答进我和某个人的私聊（实测 2598 条噪音灌进了我的私聊）。顺序是「我是成员的群里最近
+ * 活跃的那个」→ 一个群都没有才回落到我和他的私聊。
+ *
+ * 不新建任何频道：说话只发生在已经存在的频道里，建频道是装配和我的事。
  */
 export function fallbackChannelId(state: ChannelState, slug: string): string {
-	const personal = personalId(slug);
-	let best = personal;
+	let best = dmId(OWNER, slug);
 	let bestAt = Number.NEGATIVE_INFINITY;
 	for (const channel of channelsOf(state, slug)) {
-		if (channel.id === personal) continue;
+		if (chatKind(channel) !== "group") continue;
 		const list = state.messages[channel.id] ?? [];
 		const at = list.length === 0 ? channel.createdAt : list[list.length - 1]!.at;
 		if (at > bestAt) {
@@ -379,20 +351,10 @@ export function appendMessage(
 		readonly at: number;
 		readonly kind?: string;
 		readonly replyTo?: number;
-		/** 名册：给了就按名册解析 `@`（`@老板` → `owner`），不给就保留字面 token。 */
+		/** 名册：给了就按名册解析 `@`（`@我` → `owner`），不给就保留字面 token。 */
 		readonly roster?: MentionRoster;
 		/** 正文里没写、但要额外记进 `mentions` 的 slug（例如 `decision` 自动补 `owner`）。 */
 		readonly mention?: readonly string[];
-		/** T-016：占位消息的生成状态（缺省 undefined → done）。 */
-		readonly status?: "pending" | "done" | "error";
-		/** T-016：占位归属的被唤醒人 slug。 */
-		readonly pendingFor?: string;
-		/** T-016：处理中指示占位标记。 */
-		readonly processing?: boolean;
-		/** 过程话（可以连发、会被并进上一条）。缺省 = 结论。 */
-		readonly step?: boolean;
-		/** 这一轮真正开始的时刻（缺省 = 没有，界面退回第一条过程行）。 */
-		readonly startedAt?: number;
 		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
 		readonly attachments?: readonly Attachment[];
 	},
@@ -402,7 +364,7 @@ export function appendMessage(
 
 	const seq = state.nextSeq[channelId] ?? 1;
 	const mentions = parseMentions(input.text, input.roster);
-	// 代码补的 @（`decision` 自动叫老板）不改正文，只进 mentions —— 正文是模型的嘴，
+	// 代码补的 @（`decision` 自动叫我）不改正文，只进 mentions —— 正文是模型的嘴，
 	// 不该被系统塞字；而「提醒谁」是系统的责任。
 	for (const raw of input.mention ?? []) {
 		const slug = resolveMention(raw, input.roster ?? EMPTY_ROSTER);
@@ -427,11 +389,6 @@ export function appendMessage(
 		mentions: mentionList,
 		kind: input.kind ?? "chat",
 		...(replyTo === undefined ? {} : { replyTo }),
-		...(input.status === undefined ? {} : { status: input.status }),
-		...(input.pendingFor === undefined ? {} : { pendingFor: input.pendingFor }),
-		...(input.processing === undefined ? {} : { processing: input.processing }),
-		...(input.step === undefined || input.step === false ? {} : { step: true }),
-		...(input.startedAt === undefined ? {} : { startedAt: input.startedAt }),
 		...(input.attachments === undefined || input.attachments.length === 0
 			? {}
 			: {
@@ -475,8 +432,8 @@ export function ensureChannel(
 /**
  * 建频道，或者把缺的人补进去（幂等）。
  *
- * 与 `ensureChannel` 的区别：后者见到已存在的频道就直接返回，于是「项目负责人后来才
- * 定下来」「新招的人进了项目」都不会反映到成员表里 —— 那些人明明在项目里却收不到项目
+ * 与 `ensureChannel` 的区别：后者见到已存在的频道就直接返回，于是「团队管理员后来才
+ * 定下来」「新招的人进了团队」都不会反映到成员表里 —— 那些人明明在团队里却收不到团队
  * 频道的话。这里两个动作合成一个，调用点不用自己判「建还是补」。
  */
 export function upsertChannel(
@@ -497,7 +454,7 @@ export function upsertChannel(
  * 把某个 slug 在某个频道的已读位置推到 `seq`。回退不生效（已读不会变未读）。
  *
  * `seq` 会**夹到频道真实上界**：已读标记是「读到第几条」，写进一个比历史还大的数字
- * 等于声明「以后所有消息都已读」，未读数从此永远 0 —— 一条越界的请求就能让老板
+ * 等于声明「以后所有消息都已读」，未读数从此永远 0 —— 一条越界的请求就能让我
  * 再也看不见红点。路由层已经夹过一次，这里是第二道（唯一写入口自己兜底）。
  */
 export function markRead(state: ChannelState, slug: string, channelId: string, seq: number): ChannelState {

@@ -1,7 +1,7 @@
 /**
  * 记忆抽屉：看某个人记了什么、加一条、删一条。
  *
- * 为什么是一个抽屉而不是右栏的一个 tab：老板点「记忆」时通常正在跟这个人说话，
+ * 为什么是一个抽屉而不是右栏的一个 tab：我点「记忆」时通常正在跟这个人说话，
  * 抽屉盖住右半屏仍看得见对话；换成 tab 会把详情挤走，看完还得切回来。
  *
  * 三条硬规矩：
@@ -9,7 +9,7 @@
  * 2. 删除要二次确认，但**不加输入框**：`window.confirm` 就够了，多一个输入框是
  *    把「删一条笔记」当成「删库」。
  * 3. 加一条失败（超长 / 像密钥 / 空）时把后端那句中文原样显示出来 ——
- *    那是唯一能让老板知道「为什么没记上」的东西。
+ *    那是唯一能让我知道「为什么没记上」的东西。
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -178,12 +178,12 @@ export function MemoryDrawer(props: { toast: (text: string, tone?: "info" | "err
 	);
 }
 
-/** 一行「10-27 03:12 · 老板改过」。没有日志时返回 undefined，界面就不画这一行。 */
+/** 一行「10-27 03:12 · 我改过」。没有日志时返回 undefined，界面就不画这一行。 */
 function stampOf(entry: MemoryEntry): string | undefined {
 	if (entry.at === null) return undefined;
 	const at = Date.parse(entry.at);
 	if (Number.isNaN(at)) return undefined;
-	const who = entry.by === "human" ? "老板" : entry.by === "remember" ? "他自己" : "agent";
+	const who = entry.by === "human" ? "我" : entry.by === "remember" ? "他自己" : "agent";
 	const what = entry.op === "edit" ? "改过" : "记下";
 	return `${dayLabel(at)} ${clockTime(at)} · ${who}${what}`;
 }

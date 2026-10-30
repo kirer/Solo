@@ -39,7 +39,7 @@ async function ask(fixtures: readonly Fixture[], args: Record<string, unknown>):
 		harness: harnessOf(fixtures) as never,
 		workspaceRoot: "/tmp/nowhere-history",
 		agentsRoot: "/tmp/nowhere-history/agents",
-		projectsRoot: "/tmp/nowhere-history/projects",
+		teamsRoot: "/tmp/nowhere-history/teams",
 		directory: async () => emptyDirectory(),
 		saveDirectory: async () => undefined,
 	} as never);

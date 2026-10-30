@@ -14,7 +14,7 @@ import { renderAgentPrompt } from "../../src/core/agent/prompt.ts";
 import type { Identity } from "../../src/core/agent/identity.ts";
 
 const RULES = [
-	"- 只在叫你的那个频道回话。群里叫你就群里回，老大私聊你就私聊回。",
+	"- 只在叫你的那个频道回话。群里叫你就群里回，我私聊你就私聊回。",
 	"- 群里一条消息最多 3 句。汇报先给结论一句话，再给要点。",
 ].join("\n");
 
@@ -83,8 +83,8 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		expect(seed).toContain("只在叫你的那个频道回话");
 		expect(seed).toContain("3 句");
 		expect(seed).toContain("英文");
-		// 3. 拿不准问老大；4. 先说要去找谁；5. 拍板用 @老大。
-		expect(seed).toContain("问老大");
+		// 3. 拿不准问我；4. 先说要去找谁；5. 拍板用 @我。
+		expect(seed).toContain("问我");
 		expect(seed).toContain("我要去问 X 关于 Y");
 		expect(seed).toContain("@owner");
 	});

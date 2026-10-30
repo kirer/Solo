@@ -1,11 +1,11 @@
 /**
- * 装配的端到端测试：从「文件夹里有什么」到「老板说一句话、谁被唤醒」。
+ * 装配的端到端测试：从「文件夹里有什么」到「我说一句话、谁被唤醒」。
  *
  * 这是新核心最重要的一条验证 —— 它同时证明了四件事：
  * 1. `identity.md` 是唯一事实：没有代码里的角色枚举。
  * 2. 名册能从会话 id 反查 slug，因此投递能落地。
- * 3. 老板 @ 谁，谁就被唤醒（且只有他）。
- * 4. 老板不是 agent，不会被投递（也没有会话）。
+ * 3. 我 @ 谁，谁就被唤醒（且只有他）。
+ * 4. 我不是 agent，不会被投递（也没有会话）。
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -15,8 +15,8 @@ import { BACKGROUND_CONTEXT, openCore, createRegistry, setupModels } from "../..
 import { assembleCore, ownerSpeak } from "../../src/core/shell/assemble.ts";
 import { seedOwnerAssistant } from "../../src/core/shell/seed.ts";
 import { readIdentity } from "../../src/core/agent/identity.ts";
-import { ChannelDoc, personalId, projectId, type ChannelState } from "../../src/core/channel/state.ts";
-import { writeProject } from "../../src/core/project/doc.ts";
+import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/state.ts";
+import { writeTeam } from "../../src/core/team/doc.ts";
 import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
 import { createAgent } from "../../src/core/agent/create.ts";
 
@@ -54,7 +54,7 @@ describe("装配", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 
 			expect([...shell.conversations.keys()].sort()).toEqual(["林越", "沈舟"].sort());
@@ -66,7 +66,7 @@ describe("装配", () => {
 		}
 	});
 
-	test("公司频道自动包含所有人和老板", async () => {
+	test("公司频道自动包含所有人和我", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -75,7 +75,7 @@ describe("装配", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 			const state = await shell.channels();
 			expect(state.channels.all?.members.sort()).toEqual(["owner", "林越"].sort());
@@ -93,7 +93,7 @@ describe("装配", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 			const before = shell.conversations.size;
 			await createAgent({ root: agents, name: "沈舟", manager: "林越" });
@@ -115,7 +115,7 @@ describe("装配", () => {
 		const first = await env(root);
 		let firstId: number | undefined;
 		try {
-			await assembleCore(first.harness, first.registry, { agentsRoot: agents, projectsRoot: join(root, "projects") });
+			await assembleCore(first.harness, first.registry, { agentsRoot: agents, teamsRoot: join(root, "teams") });
 			const directory = (await first.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
 			firstId = directory?.slugToConversation["林越"];
 		} finally {
@@ -124,7 +124,7 @@ describe("装配", () => {
 
 		const second = await env(root);
 		try {
-			await assembleCore(second.harness, second.registry, { agentsRoot: agents, projectsRoot: join(root, "projects") });
+			await assembleCore(second.harness, second.registry, { agentsRoot: agents, teamsRoot: join(root, "teams") });
 			const directory = (await second.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
 			expect(directory?.slugToConversation["林越"]).toBe(firstId);
 		} finally {
@@ -133,8 +133,8 @@ describe("装配", () => {
 	});
 });
 
-describe("老板说话", () => {
-	test("@ 谁就只叫谁；老板自己不被投递（他没有会话）", async () => {
+describe("我说话", () => {
+	test("@ 谁就只叫谁；我自己不被投递（他没有会话）", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -144,7 +144,7 @@ describe("老板说话", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 			const sent = await ownerSpeak(shell, { channelId: "all", text: "@林越 停掉所有任务" });
 			expect(sent.seq).toBe(1);
@@ -165,7 +165,7 @@ describe("老板说话", () => {
 		}
 	});
 
-	test("不 @ 人时按规则唤醒第一个非老板成员", async () => {
+	test("不 @ 人时按规则唤醒第一个非我成员", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -174,7 +174,7 @@ describe("老板说话", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 			await ownerSpeak(shell, { channelId: "all", text: "有人吗" });
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
@@ -205,7 +205,7 @@ describe("播种", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 			expect(shell.conversations.has("林越")).toBe(true);
 			expect((await shell.channels()).channels.all?.members).toContain("林越");
@@ -215,8 +215,8 @@ describe("播种", () => {
 	});
 });
 
-describe("个人频道与项目频道", () => {
-	test("每个人一出生就有个人频道（与老板的私聊）", async () => {
+describe("会话只有两种形态与团队频道", () => {
+	test("新人只做三件事：建会话、记名册、进公司群 —— 不建个人频道，也不开私聊", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -226,39 +226,41 @@ describe("个人频道与项目频道", () => {
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: join(root, "projects"),
+				teamsRoot: join(root, "teams"),
 			});
 			const state = await shell.channels();
-			// 个人频道是「他和老板的私聊」，也是拍板链的顶端。没有它，向上汇报没有落点。
+			// 私聊只能我开：装配绝不得凭空造一条两个人频道。
 			for (const slug of ["林越", "沈舟"]) {
-				const personal = state.channels[personalId(slug)];
-				expect(personal?.members.sort()).toEqual(["owner", slug].sort());
+				expect(state.channels[dmId("owner", slug)]).toBeUndefined();
 			}
-			// 老板自己没有个人频道。
-			expect(state.channels[personalId("owner")]).toBeUndefined();
+			expect(state.channels[dmId("owner", "owner")]).toBeUndefined();
+			// 但两人都在公司群里（否则没人 @ 得到他们）。
+			for (const slug of ["林越", "沈舟"]) {
+				expect(state.channels.all?.members).toContain(slug);
+			}
 		} finally {
 			await opened.close();
 		}
 	});
 
-	test("项目负责人、成员、老板都进项目频道", async () => {
+	test("团队管理员、成员、我都进团队频道", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
-		const projects = join(root, "projects");
+		const teams = join(root, "teams");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", project: "坦克大战" });
-		// 负责人是林越，但林越自己不在项目里（负责人不一定写代码）。
-		await writeProject(projects, { slug: "坦克大战", owner: "林越", body: "# 目标\n能两个人打。" });
+		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
+		// 团队管理员是林越，但林越自己不在团队里（团队管理员不一定写代码）。
+		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
 		const opened = await env(root);
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: projects,
+				teamsRoot: teams,
 			});
 			const state = await shell.channels();
-			const channel = state.channels[projectId("坦克大战")];
-			// 负责人不在频道里 → 员工派活 @ 不到他 → 出了问题没人能拍板。
+			const channel = state.channels[teamId("坦克大战")];
+			// 团队管理员不在频道里 → 员工派活 @ 不到他 → 出了问题没人能拍板。
 			expect(channel?.members.sort()).toEqual(["owner", "沈舟", "林越"].sort());
 			expect(channel?.title).toBe("坦克大战");
 		} finally {
@@ -266,72 +268,72 @@ describe("个人频道与项目频道", () => {
 		}
 	});
 
-	test("项目频道里谁说话都叫醒负责人（员工不用 @ 上级）", async () => {
+	test("团队频道里谁说话都叫醒团队管理员（员工不用 @ 上级）", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
-		const projects = join(root, "projects");
+		const teams = join(root, "teams");
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", project: "坦克大战" });
-		await writeProject(projects, { slug: "坦克大战", owner: "林越", body: "# 目标\n能两个人打。" });
+		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
 		const opened = await env(root);
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: projects,
+				teamsRoot: teams,
 			});
 			const state = await shell.channels();
-			const channel = state.channels[projectId("坦克大战")];
-			// 员工在项目频道说「做完了」时通常不会 @ 人。负责人收不到 → 只能轮询
-			// （实测里 agent 用 `run sleep 120` 等进度）。所以项目频道要让负责人始终醒着。
+			const channel = state.channels[teamId("坦克大战")];
+			// 员工在团队频道说「做完了」时通常不会 @ 人。团队管理员收不到 → 只能轮询
+			// （实测里 agent 用 `run sleep 120` 等进度）。所以团队频道要让团队管理员始终醒着。
 			expect(channel?.wakeOnAll).toEqual(["林越"]);
 		} finally {
 			await opened.close();
 		}
 	});
 
-	test("改了项目负责人，频道成员跟着变（不需要重启）", async () => {
+	test("改了团队管理员，频道成员跟着变（不需要重启）", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
-		const projects = join(root, "projects");
-		await createAgent({ root: agents, name: "林越", manager: "owner", project: "坦克大战" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", project: "坦克大战" });
-		await writeProject(projects, { slug: "坦克大战", owner: "林越", body: "# 目标\n能两个人打。" });
+		const teams = join(root, "teams");
+		await createAgent({ root: agents, name: "林越", manager: "owner", team: "坦克大战" });
+		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
 		const opened = await env(root);
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: projects,
+				teamsRoot: teams,
 			});
-			await writeProject(projects, { slug: "坦克大战", owner: "沈舟", body: "# 目标\n能两个人打。" });
-			await shell.syncProject("坦克大战");
+			await writeTeam(teams, { slug: "坦克大战", lead: "沈舟", body: "# 目标\n能两个人打。" });
+			await shell.syncTeam("坦克大战");
 			const state = await shell.channels();
-			expect(state.channels[projectId("坦克大战")]?.members).toContain("沈舟");
+			expect(state.channels[teamId("坦克大战")]?.members).toContain("沈舟");
 		} finally {
 			await opened.close();
 		}
 	});
 
-	test("项目频道含负责人的整条汇报线（统筹者也进项目频道）", async () => {
+	test("团队频道含团队管理员的整条汇报线（统筹者也进团队频道）", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
-		const projects = join(root, "projects");
-		// 知言：老板直接下属（统筹者）；顾南雁：项目负责人，归知言；沈舟：执行员工，归顾南雁。
+		const teams = join(root, "teams");
+		// 知言：我直接下属（统筹者）；顾南雁：团队管理员，归知言；沈舟：执行员工，归顾南雁。
 		await createAgent({ root: agents, name: "知言", manager: "owner" });
-		await createAgent({ root: agents, name: "顾南雁", manager: "知言", project: "恐龙" });
-		await createAgent({ root: agents, name: "沈舟", manager: "顾南雁", project: "恐龙" });
-		await writeProject(projects, { slug: "恐龙", owner: "顾南雁", body: "# 目标\n做一只恐龙。" });
+		await createAgent({ root: agents, name: "顾南雁", manager: "知言", team: "恐龙" });
+		await createAgent({ root: agents, name: "沈舟", manager: "顾南雁", team: "恐龙" });
+		await writeTeam(teams, { slug: "恐龙", lead: "顾南雁", body: "# 目标\n做一只恐龙。" });
 
 		const opened = await env(root);
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: projects,
+				teamsRoot: teams,
 			});
 			const state = await shell.channels();
-			// 项目的成员是事实的投影：老板 + 负责人(顾南雁) + 其汇报线(知言) + 执行员工(沈舟)。
-			expect(state.channels[projectId("恐龙")]?.members.sort()).toEqual(
+			// 团队的成员是事实的投影：我 + 团队管理员(顾南雁) + 其汇报线(知言) + 执行员工(沈舟)。
+			expect(state.channels[teamId("恐龙")]?.members.sort()).toEqual(
 				["owner", "沈舟", "知言", "顾南雁"].sort(),
 			);
 		} finally {
@@ -339,36 +341,36 @@ describe("个人频道与项目频道", () => {
 		}
 	});
 
-	test("项目频道成员按事实精确重算，不残留幽灵成员", async () => {
+	test("团队频道成员按事实精确重算，不残留幽灵成员", async () => {
 		const root = await workspace();
 		const agents = join(root, "agents");
-		const projects = join(root, "projects");
-		await createAgent({ root: agents, name: "林越", manager: "owner", project: "坦克大战" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", project: "坦克大战" });
-		await writeProject(projects, { slug: "坦克大战", owner: "林越", body: "# 目标\n能两个人打。" });
+		const teams = join(root, "teams");
+		await createAgent({ root: agents, name: "林越", manager: "owner", team: "坦克大战" });
+		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
 
 		const opened = await env(root);
 		try {
 			const shell = await assembleCore(opened.harness, opened.registry, {
 				agentsRoot: agents,
-				projectsRoot: projects,
+				teamsRoot: teams,
 			});
 			// 模拟一个旧 slug 残留（改名/重建后留下的幽灵成员）。
 			const before = await shell.channels();
-			before.channels[projectId("坦克大战")] = {
-				...before.channels[projectId("坦克大战")],
-				members: [...before.channels[projectId("坦克大战")].members, "gunanyan"],
+			before.channels[teamId("坦克大战")] = {
+				...before.channels[teamId("坦克大战")],
+				members: [...before.channels[teamId("坦克大战")].members, "gunanyan"],
 			};
 			await opened.harness.commit(async (tx) => {
 				const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-				doc.channels[projectId("坦克大战")] = before.channels[projectId("坦克大战")];
+				doc.channels[teamId("坦克大战")] = before.channels[teamId("坦克大战")];
 			}, BACKGROUND_CONTEXT);
 
 			// 重算后幽灵成员应被清除。
-			await shell.syncProject("坦克大战");
+			await shell.syncTeam("坦克大战");
 			const after = await shell.channels();
-			expect(after.channels[projectId("坦克大战")]?.members).not.toContain("gunanyan");
-			expect(after.channels[projectId("坦克大战")]?.members.sort()).toEqual(
+			expect(after.channels[teamId("坦克大战")]?.members).not.toContain("gunanyan");
+			expect(after.channels[teamId("坦克大战")]?.members.sort()).toEqual(
 				["owner", "林越", "沈舟"].sort(),
 			);
 		} finally {

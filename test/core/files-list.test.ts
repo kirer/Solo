@@ -55,7 +55,7 @@ async function setup(): Promise<{ root: string; port: number }> {
 	runtimes.push(runtime);
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
 		agentsRoot: join(root, "agents"),
-		projectsRoot: join(root, "projects"),
+		teamsRoot: join(root, "teams"),
 		defaultModel: { provider: "test", modelId: "test" },
 	});
 	const server = await serveCore({ shell, port: 0 });

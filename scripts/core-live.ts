@@ -5,7 +5,7 @@
  * - `npm test` 不该依赖外部网关。模型不可用时，一场「本机能不能跑通」的测试会
  *   红一片，把真正的逻辑错埋掉；而模型错的表现恰好是「什么都没发生」，最容易
  *   被误当成逻辑错去改代码。
- * - 它要验的东西逻辑单测验不了：技能/项目文件改完之后，**下一条消息**是否真的
+ * - 它要验的东西逻辑单测验不了：技能/团队文件改完之后，**下一条消息**是否真的
  *   出现在提示词里；招来的人被 @ 之后是否真的回话。
  *
  * 用法（需要真实网关）：
@@ -14,8 +14,8 @@
  * node --experimental-strip-types scripts/core-live.ts
  * ```
  *
- * 直接跑 `main()` 会：建临时工作区 → 播种助理 → 老板 @ 助理 → 等回话 → 检查
- * 技能与项目是否有落盘生效。全程打印到 stdout，失败不抛（输出就是判据）。
+ * 直接跑 `main()` 会：建临时工作区 → 播种助理 → 我 @ 助理 → 等回话 → 检查
+ * 技能与团队是否有落盘生效。全程打印到 stdout，失败不抛（输出就是判据）。
  */
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -30,7 +30,7 @@ function log(phase: Phase): void {
 	console.log(`${mark} ${phase.name}${phase.detail === "" ? "" : ` — ${phase.detail}`}`);
 }
 
-/** 轮询频道，直到出现某个人发的消息（不是老板发的）。 */
+/** 轮询频道，直到出现某个人发的消息（不是我发的）。 */
 async function waitForReply(
 	shell: Awaited<ReturnType<typeof import("../src/core/shell/assemble.ts").assembleCore>>,
 	channelId: string,
@@ -57,9 +57,9 @@ async function main(): Promise<void> {
 
 	const root = await mkdtemp(join(tmpdir(), "core-live-"));
 	const agentsRoot = join(root, "agents");
-	const projectsRoot = join(root, "projects");
+	const teamsRoot = join(root, "teams");
 	await mkdir(agentsRoot, { recursive: true });
-	await mkdir(projectsRoot, { recursive: true });
+	await mkdir(teamsRoot, { recursive: true });
 	console.log(`工作区：${root}`);
 
 	const slug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
@@ -77,17 +77,17 @@ async function main(): Promise<void> {
 
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
 		agentsRoot,
-		projectsRoot,
+		teamsRoot,
 		defaultModel: picked,
-		ownerName: "老板",
+		ownerName: "我",
 	});
 
 	const phases: Phase[] = [];
 
-	// 1. 老板 @ 助理，等它开口。
-	const asked = await shell.ownerSay({ channelId: "company", text: `@${slug} 你在吗？用一句话回答。` });
+	// 1. 我 @ 助理，等它开口。
+	const asked = await shell.ownerSay({ channelId: "all", text: `@${slug} 你在吗？用一句话回答。` });
 	console.log(`已投递 #${asked.seq}，唤醒 ${asked.delivery.delivered.join(",") || "（没人）"}`);
-	const reply = await waitForReply(shell, "company", slug, asked.seq, WAIT_MS);
+	const reply = await waitForReply(shell, "all", slug, asked.seq, WAIT_MS);
 	phases.push({ name: "被 @ 会回话", ok: reply !== undefined, detail: reply?.text.slice(0, 80) ?? "超时无回话" });
 
 	// 2. 技能是否出现在提示词里（读的是同一份 render 结果）。
@@ -97,48 +97,48 @@ async function main(): Promise<void> {
 		"---\nname: 自测技能\ndescription: 这是实测写入的技能\n---\n\n正文。\n",
 		"utf8",
 	);
-	const skillAsked = await shell.ownerSay({ channelId: "company", text: `@${slug} 你有哪些技能？只列名字。` });
-	const skillReply = await waitForReply(shell, "company", slug, skillAsked.seq, WAIT_MS);
+	const skillAsked = await shell.ownerSay({ channelId: "all", text: `@${slug} 你有哪些技能？只列名字。` });
+	const skillReply = await waitForReply(shell, "all", slug, skillAsked.seq, WAIT_MS);
 	phases.push({
 		name: "技能热更新生效（不需要重启）",
 		ok: skillReply !== undefined && skillReply.text.includes("自测技能"),
 		detail: skillReply?.text.slice(0, 120) ?? "超时无回话",
 	});
 
-	// 3. 项目说明是否进入项目成员的提示词。
-	await mkdir(join(projectsRoot, "自测项目"), { recursive: true });
+	// 3. 团队说明是否进入团队成员的提示词。
+	await mkdir(join(teamsRoot, "自测团队"), { recursive: true });
 	await (await import("node:fs/promises")).writeFile(
-		join(projectsRoot, "自测项目", "README.md"),
-		"---\nname: 自测项目\nowner: " + slug + "\nstatus: active\n---\n\n目标：验证项目说明会进提示词。\n",
+		join(teamsRoot, "自测团队", "README.md"),
+		"---\nname: 自测团队\nlead: " + slug + "\nstatus: active\n---\n\n目标：验证团队说明会进提示词。\n",
 		"utf8",
 	);
 	const identityPath = join(agentsRoot, slug, "identity.md");
 	const identity = await readFile(identityPath, "utf8");
 	await (await import("node:fs/promises")).writeFile(
 		identityPath,
-		identity.replace(/^---\n([\s\S]*?)\n---/, `---\n$1\nproject: 自测项目\n---`),
+		identity.replace(/^---\n([\s\S]*?)\n---/, `---\n$1\nteam: 自测团队\n---`),
 		"utf8",
 	);
-	// 改了 identity.md 之后必须重扫一次：项目频道是在「开会话」时按 `project:` 建的，
-	// 不重扫的话这个人永远不在项目频道里（实测踩过：`频道不存在：proj:自测项目`）。
+	// 改了 identity.md 之后必须重扫一次：团队频道是在「开会话」时按 `team:` 建的，
+	// 不重扫的话这个人永远不在团队频道里（实测踩过：`频道不存在：team:自测团队`）。
 	await shell.rescan();
-	const projectAsked = await shell.ownerSay({
-		channelId: "company",
-		text: `@${slug} 你现在在哪个项目里？项目目标是什么？一句话。`,
+	const teamAsked = await shell.ownerSay({
+		channelId: "all",
+		text: `@${slug} 你现在在哪个团队里？团队目标是什么？一句话。`,
 	});
-	const projectReply = await waitForReply(shell, "company", slug, projectAsked.seq, WAIT_MS);
+	const teamReply = await waitForReply(shell, "all", slug, teamAsked.seq, WAIT_MS);
 	phases.push({
-		name: "项目说明进提示词",
-		ok: projectReply !== undefined && projectReply.text.includes("自测项目"),
-		detail: projectReply?.text.slice(0, 120) ?? "超时无回话",
+		name: "团队说明进提示词",
+		ok: teamReply !== undefined && teamReply.text.includes("自测团队"),
+		detail: teamReply?.text.slice(0, 120) ?? "超时无回话",
 	});
 
 	// 4. 记忆：让它记一条，再问它记了什么（提示词里只有目录，正文靠 recall）。
 	const rememberAsked = await shell.ownerSay({
-		channelId: "company",
-		text: `@${slug} 用 remember 记一条：「老板喜欢结论先行」。记完告诉我。`,
+		channelId: "all",
+		text: `@${slug} 用 remember 记一条：「我喜欢结论先行」。记完告诉我。`,
 	});
-	const rememberReply = await waitForReply(shell, "company", slug, rememberAsked.seq, WAIT_MS);
+	const rememberReply = await waitForReply(shell, "all", slug, rememberAsked.seq, WAIT_MS);
 	const memoryPath = join(agentsRoot, slug, "memory.md");
 	const memoryText = await readFile(memoryPath, "utf8").catch(() => "");
 	phases.push({
@@ -147,8 +147,8 @@ async function main(): Promise<void> {
 		detail: memoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
 	});
 
-	const recallAsked = await shell.ownerSay({ channelId: "company", text: `@${slug} recall 一下你关于「结论」的记忆。` });
-	const recallReply = await waitForReply(shell, "company", slug, recallAsked.seq, WAIT_MS);
+	const recallAsked = await shell.ownerSay({ channelId: "all", text: `@${slug} recall 一下你关于「结论」的记忆。` });
+	const recallReply = await waitForReply(shell, "all", slug, recallAsked.seq, WAIT_MS);
 	phases.push({
 		name: "记忆能读回（recall 真读到了）",
 		ok: recallReply !== undefined && recallReply.text.includes("结论"),
@@ -157,10 +157,10 @@ async function main(): Promise<void> {
 
 	// 5. 公司层技能：让它写一份 scope=company 的技能，检查是否落到工作区根的 skills/。
 	const shareAsked = await shell.ownerSay({
-		channelId: "company",
+		channelId: "all",
 		text: `@${slug} 用 write_skill 写一份公司层技能（scope=company），名字「自测共享技能」，描述「全公司通用」，正文一句话。写完告诉我。`,
 	});
-	const shareReply = await waitForReply(shell, "company", slug, shareAsked.seq, WAIT_MS);
+	const shareReply = await waitForReply(shell, "all", slug, shareAsked.seq, WAIT_MS);
 	const sharedPath = join(root, "skills", "自测共享技能", "SKILL.md");
 	const sharedText = await readFile(sharedPath, "utf8").catch(() => "");
 	phases.push({
@@ -169,50 +169,50 @@ async function main(): Promise<void> {
 		detail: sharedText === "" ? "工作区根没有 skills/自测共享技能/SKILL.md" : sharedText.split("\n")[2] ?? "",
 	});
 
-	// 6. 项目记忆：让它记一条项目级的事，检查是否落到 projects/<slug>/memory.md。
-	const projectMemoryAsked = await shell.ownerSay({
-		channelId: "company",
-		text: `@${slug} 用 remember(scope=project) 记一条项目级的事：「这个项目第一次跑通了」。记完告诉我。`,
+	// 6. 团队记忆：让它记一条团队级的事，检查是否落到 teams/<slug>/memory.md。
+	const teamMemoryAsked = await shell.ownerSay({
+		channelId: "all",
+		text: `@${slug} 用 remember(scope=team) 记一条团队级的事：「这个团队第一次跑通了」。记完告诉我。`,
 	});
-	const projectMemoryReply = await waitForReply(shell, "company", slug, projectMemoryAsked.seq, WAIT_MS);
-	const projectMemoryText = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");
+	const teamMemoryReply = await waitForReply(shell, "all", slug, teamMemoryAsked.seq, WAIT_MS);
+	const teamMemoryText = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
 	phases.push({
-		name: "项目记忆落盘（projects/<slug>/memory.md）",
-		ok: projectMemoryReply !== undefined && projectMemoryText.includes("第一次跑通"),
-		detail: projectMemoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
+		name: "团队记忆落盘（teams/<slug>/memory.md）",
+		ok: teamMemoryReply !== undefined && teamMemoryText.includes("第一次跑通"),
+		detail: teamMemoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
 	});
 
-	// 7. 项目记忆的自动沉淀：让助理在项目频道里拍一次板（kind=decision），
-	//    检查 `projects/自测项目/memory.md` 是否被自动写入了内容 —— 这条路上
+	// 7. 团队记忆的自动沉淀：让助理在团队频道里拍一次板（kind=decision），
+	//    检查 `teams/自测团队/memory.md` 是否被自动写入了内容 —— 这条路上
 	//    agent 没有被明确要求「去记一条」，它只收到「请判断这件事值不值得沉淀」。
 	const settleAsked = await shell.ownerSay({
-		channelId: `proj:自测项目`,
-		text: "定了：这个项目的验收标准是「能跑通 core:live 全部 12 项」。",
+		channelId: `team:自测团队`,
+		text: "定了：这个团队的验收标准是「能跑通 core:live 全部 12 项」。",
 		kind: "decision",
 	});
-	console.log(`项目频道已投递 #${settleAsked.seq}（kind=decision）`);
-	const memoryBefore = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");
+	console.log(`团队频道已投递 #${settleAsked.seq}（kind=decision）`);
+	const memoryBefore = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
 	let settled = "";
 	const deadline = Date.now() + WAIT_MS;
 	while (Date.now() < deadline && settled === "") {
-		const now = await readFile(join(projectsRoot, "自测项目", "memory.md"), "utf8").catch(() => "");
+		const now = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
 		if (now !== memoryBefore) settled = now;
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
 	}
 	phases.push({
-		name: "项目记忆自动沉淀（拍板后被叫去沉淀并落盘）",
+		name: "团队记忆自动沉淀（拍板后被叫去沉淀并落盘）",
 		ok: settled.includes("验收标准"),
 		detail: settled === "" ? "memory.md 没变化（没人去沉淀，或沉淀了但没写这一条）" : settled.split("\n").filter(Boolean).slice(-1)[0] ?? "",
 	});
 
-	// 8. 招人：名字要像真人，且新人自动有个人频道、进得了项目频道。
+	// 8. 招人：名字要像真人，且新人自动进公司群、进得了团队频道。
 	//
 	// 这是「模型有没有遵守我们写下的规矩」的唯一验证口径 —— 名字、频道、汇报线三件
 	// 事都只写在技能与提示词里，代码只负责记录结果。如果不验这一段，规矩写错了不会
 	// 有任何反馈，只会在用起来的那天变成「@前端工程师」这种叫座位的话。
 	const hireAsked = await shell.ownerSay({
-		channelId: "company",
-		text: `@${slug} 招一个人进「自测项目」做前端，负责项目频道的界面。用 hire 建，名字用真人的名字（姓+名）。建完告诉我他叫什么。`,
+		channelId: "all",
+		text: `@${slug} 招一个人进「自测团队」做前端，负责团队频道的界面。用 hire 建，名字用真人的名字（姓+名）。建完告诉我他叫什么。`,
 	});
 	// 等「人真的建出来了」，不等某一条回话。回话可能串到别的频道去（它答的是上一个
 	// 问题），按消息判断会把「没招人」误判成「招了人」，再让后面的断言全部失真。
@@ -225,7 +225,7 @@ async function main(): Promise<void> {
 		all = await readAllIdentities(agentsRoot);
 		hired = all.find((identity) => identity.slug !== slug);
 	}
-	const companyAfterHire = (await shell.channels()).messages["company"] ?? [];
+	const companyAfterHire = (await shell.channels()).messages["all"] ?? [];
 	const hireReply = companyAfterHire.filter((message) => message.seq > hireAsked.seq && message.from === slug).at(-1);
 	// 「像真人的名字」：长度 2–4、不含岗位词、不含英文字母。判断放宽一点，只拦明显的违规。
 	const JOB_WORDS = ["工程师", "负责人", "经理", "总监", "专员", "助理", "主管", "前端", "后端", "设计", "测试"];
@@ -249,23 +249,27 @@ async function main(): Promise<void> {
 
 	if (hired !== undefined) {
 		const state = await shell.channels();
-		// 个人频道 = 他与老板的私聊。没有它，「向上汇报」连个落点都没有。
+		// 新人自动进公司群（否则没人 @ 得到他）；但**没有**私聊 —— 私聊只能我开。
+		const allChannel = state.channels["all"];
 		const personal = state.channels[`dm:owner-${hired.slug}`];
 		phases.push({
-			name: "新人自动有个人频道",
-			ok: personal !== undefined && personal.members.includes(hired.slug) && personal.members.includes("owner"),
-			detail: personal === undefined ? "没有 dm 频道" : `成员 ${personal.members.join("、")}`,
+			name: "新人自动进公司群，且没有凭空建出的私聊",
+			ok: allChannel !== undefined && allChannel.members.includes(hired.slug) && personal === undefined,
+			detail:
+				allChannel === undefined
+					? "没有公司群"
+					: `公司群成员 ${allChannel.members.join("、")}${personal === undefined ? "；没有私聊" : "；居然有私聊"}`,
 		});
-		// 项目频道里有负责人（README.md 的 owner）+ 新人。
-		const project = state.channels["proj:自测项目"];
+		// 团队频道里有团队管理员（README.md 的 owner）+ 新人。
+		const team = state.channels["team:自测团队"];
 		const owner = all.find((identity) => identity.slug === slug)?.slug;
 		phases.push({
-			name: "项目频道里有负责人和新人",
+			name: "团队频道里有团队管理员和新人",
 			ok:
-				project !== undefined &&
-				project.members.includes(hired.slug) &&
-				(owner === undefined || project.members.includes(owner)),
-			detail: project === undefined ? "没有项目频道" : `成员 ${project.members.join("、")}`,
+				team !== undefined &&
+				team.members.includes(hired.slug) &&
+				(owner === undefined || team.members.includes(owner)),
+			detail: team === undefined ? "没有团队频道" : `成员 ${team.members.join("、")}`,
 		});
 		// 拍板链写在公司技能「工作规矩」里（规则外移到技能，不进提示词正文），
 		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文里有不跳级。

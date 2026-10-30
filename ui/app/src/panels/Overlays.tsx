@@ -261,7 +261,7 @@ function TeamSheet(): JSX.Element {
 									<span className="crew-name">{actor.label}</span>
 									<span className="crew-sub">
 										{actor.title}
-										{actor.project === undefined ? "" : ` · ${actor.project}`}
+										{actor.team === undefined ? "" : ` · ${actor.team}`}
 									</span>
 								</span>
 								<span className="crew-state" data-state={look.state}>

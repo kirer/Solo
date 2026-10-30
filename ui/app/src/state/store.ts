@@ -43,13 +43,6 @@ export type State = {
 	attention: AttentionItem[];
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
-	/**
-	 * 「他正在说的那句话」：还没落库的草稿正文，按 slug。
-	 *
-	 * 只有正在生成的才有；真消息一到就删（见 `applyMessage`）——
-	 * 草稿是**临时**的，绝不能和已落库的消息并存，否则同一句话会出现两遍。
-	 */
-	drafts: Map<string, { text: string; at: number }>;
 	lastSeen: Map<string, number>;
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
@@ -91,7 +84,6 @@ const initial: State = {
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
-	drafts: new Map(),
 	lastSeen: new Map(),
 	conn: { ok: true, lastOkAt: Date.now() },
 	layout: read(LAYOUT_KEY, ["flat", "bubble"], "bubble"),
@@ -176,7 +168,7 @@ export async function openChannel(id: string | null): Promise<void> {
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
-	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false, drafts: new Map() });
+	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false });
 	const done = mark("channel:open");
 	const detail = await getChannel(id);
 	done();
@@ -213,9 +205,8 @@ export async function loadEarlier(): Promise<void> {
 /**
  * 按 seq 合并两批消息：去重、升序，后一批赢。
  *
- * 「后一批赢」很关键：占位（`processing: true` 的「开始处理…」）会被正文原地覆盖，
- * 同一个 seq 两次到达时必须取新的那份。按到达顺序 push 会出现重复行和乱序 ——
- * 那正是老板报过「刷新后少了几句」的样子。
+ * 「后一批赢」很关键：同一个 seq 两次到达时必须取新的那份（补历史与 SSE 会重叠）。
+ * 按到达顺序 push 会出现重复行和乱序 —— 那正是我报过「刷新后少了几句」的样子。
  */
 export function mergeMessages(older: readonly Message[], newer: readonly Message[]): Message[] {
 	const bySeq = new Map<number, Message>();
@@ -241,29 +232,8 @@ export function applyMessage(id: string, message: Message): void {
 		next[index] = message;
 	}
 	patch({ detail: { ...current.detail, messages: next } });
-	// 真消息到了，他刚才的草稿就该消失 —— 否则同一句话会以「正在说…」和气泡两种形态并存。
-	if (message.fromSlug !== undefined && current.drafts.has(message.fromSlug)) {
-		const drafts = new Map(current.drafts);
-		drafts.delete(message.fromSlug);
-		patch({ drafts });
-	}
 	if (message.fromSlug !== "owner") notePresence(message);
 	done();
-}
-
-/**
- * 收到一条草稿（模型正在生成、还没落库的那句话）。
- *
- * 只认当前频道里的人：别的频道的草稿推过来也没处显示。
- */
-export function applyDraft(slug: string, text: string): void {
-	const current = getState();
-	if (current.detail === null) return;
-	const member = current.detail.members.some((item) => item.slug === slug);
-	if (!member) return;
-	const drafts = new Map(current.drafts);
-	drafts.set(slug, { text, at: Date.now() });
-	patch({ drafts });
 }
 
 export async function send(text: string, attachmentIds: readonly string[] = []): Promise<void> {
@@ -293,7 +263,7 @@ async function readToEnd(id: string, messages: readonly Message[]): Promise<void
 	try {
 		await markReadApi(id, last.seq);
 	} catch {
-		// 已读失败不该打扰老板：下一次进这个频道还会再试一次。
+		// 已读失败不该打扰我：下一次进这个频道还会再试一次。
 	}
 }
 
@@ -402,7 +372,7 @@ export function pushRight(entry: RightEntry): void {
 }
 
 /** 进一个人的人物案。拉不到就抛（由调用方 toast），并把栈恢复原样。 */
-/** 打开某个人的记忆抽屉。没有档案页的人（老大）也能看，所以不走 `openPerson`。 */
+/** 打开某个人的记忆抽屉。没有档案页的人（我）也能看，所以不走 `openPerson`。 */
 export function openMemory(slug: string, label: string): void {
 	patch({ memoryPerson: { slug, label } });
 }

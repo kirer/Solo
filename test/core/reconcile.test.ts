@@ -8,7 +8,7 @@ import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 /**
  * 重启自愈：**会话的「忙」标记必须一起清掉**。
  *
- * 这是一个真实事故的回归测试。老板私聊问「音效加完了吗？」，助手一直不理——库里
+ * 这是一个真实事故的回归测试。我私聊问「音效加完了吗？」，助手一直不理——库里
  * 一切正常：消息在、投递成功、任务也都被启动自愈结算成了 terminal。但 `pi.live`
  * 文档里的 `run` 还指着那个已经 terminal 的 generation，而入库的判据是
  * `busy = live.run !== undefined`，于是这个会话**被永久当成忙**：之后每一条输入

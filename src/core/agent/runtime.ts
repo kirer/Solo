@@ -15,8 +15,8 @@ import { readAllIdentities, readIdentity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { memoryDigest, readMemory } from "./memory.ts";
 import { loadRules } from "./rules.ts";
-import { readProject } from "../project/doc.ts";
-import { projectMemoryDigest, readProjectMemory } from "../project/memory.ts";
+import { readTeam } from "../team/doc.ts";
+import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
 import { renderAgentPrompt, type CapabilityLine } from "./prompt.ts";
 
 export type AgentPaths = {
@@ -24,20 +24,34 @@ export type AgentPaths = {
 	readonly workspace: string;
 	/** `workspace/agents`。 */
 	readonly agents: string;
-	/** `workspace/projects`。 */
-	readonly projects: string;
+	/** `workspace/teams`。 */
+	readonly teams: string;
+	/**
+	 * 这个人此刻在哪些会话里。
+	 *
+	 * 用函数而不是数组：提示词是每次渲染现读的，我建群、加人、开私聊之后下一条就生效。
+	 * 不给就整段不出现（纯文件场景与旧测试）。
+	 */
+	readonly chats?: (slug: string) => Promise<readonly ChatRef[]>;
+};
+
+/** 一个会话的对外形状。`kind` 由成员推（`channel/state.ts` 的 `chatKind`），不存字段。 */
+export type ChatRef = {
+	readonly id: string;
+	readonly title: string;
+	readonly kind: "dm" | "group";
 };
 
 /**
- * 读项目简报（`projects/<slug>/README.md`）。
+ * 读团队简报（`teams/<slug>/README.md`）。
  *
- * YAML 头里的字段单独摘出来写一行「状态/负责人」，因为模型扫一眼就知道该不该
- * 关心这件事，不用自己从正文里推。正文原样给全 —— 项目说明就是它的事实来源。
+ * YAML 头里的字段单独摘出来写一行「状态/团队管理员」，因为模型扫一眼就知道该不该
+ * 关心这件事，不用自己从正文里推。正文原样给全 —— 团队说明就是它的事实来源。
  */
-export async function readProjectBrief(projectsRoot: string, project: string): Promise<string | undefined> {
-	const doc = await readProject(projectsRoot, project);
+export async function readTeamBrief(teamsRoot: string, team: string): Promise<string | undefined> {
+	const doc = await readTeam(teamsRoot, team);
 	if (doc === undefined) return undefined;
-	const head = [`状态：${doc.status}`, `负责人：${doc.owner ?? "（还没人负责）"}`, `目录：projects/${doc.slug}/`];
+	const head = [`状态：${doc.status}`, `团队管理员：${doc.lead ?? "（还没人负责）"}`, `目录：teams/${doc.slug}/`];
 	return `${head.join(" · ")}\n\n${doc.body}`;
 }
 
@@ -98,22 +112,23 @@ export async function renderAgentSection(
 ): Promise<string> {
 	const self = await readIdentity(paths.agents, slug);
 	if (self === undefined) {
-		return `# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟老板对话。\n`;
+		return `# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
 	}
 	const all = await readAllIdentities(paths.agents);
-	const brief = self.project === undefined ? undefined : await readProjectBrief(paths.projects, self.project);
+	const brief = self.team === undefined ? undefined : await readTeamBrief(paths.teams, self.team);
 	const members =
-		self.project === undefined
+		self.team === undefined
 			? undefined
-			: all.filter((item) => item.project === self.project).map((item) => item.slug);
-	const projectMemory = self.project === undefined ? undefined : await readProjectMemory(paths.projects, self.project);
-	const projectDigest = projectMemory === undefined ? undefined : projectMemoryDigest(projectMemory);
+			: all.filter((item) => item.team === self.team).map((item) => item.slug);
+	const teamMemory = self.team === undefined ? undefined : await readTeamMemory(paths.teams, self.team);
+	const teamDigest = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
 	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
 	const memory = await readMemory(join(paths.agents, slug));
 	const digest = memory === undefined ? undefined : memoryDigest(memory);
 	// 规矩是公司层文件（`<workspace>/rules.md`），每人每轮都读一次：读不到就当没有，
 	// 不能让一次文件缺失拖垮整段提示词（那时它连自己叫什么都不会知道）。
 	const rules = await loadRules(paths.workspace);
+	const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
 	return renderAgentPrompt({
 		self,
 		all,
@@ -128,9 +143,10 @@ export async function renderAgentSection(
 		})),
 		...(digest === undefined ? {} : { memoryDigest: digest }),
 		...(rules === undefined ? {} : { rules }),
-		...(brief === undefined ? {} : { projectBrief: brief }),
-		...(members === undefined ? {} : { projectMembers: members }),
-		...(projectDigest === undefined ? {} : { projectMemoryDigest: projectDigest }),
+		...(brief === undefined ? {} : { teamBrief: brief }),
+		...(members === undefined ? {} : { teamMembers: members }),
+		...(teamDigest === undefined ? {} : { teamMemoryDigest: teamDigest }),
+		...(chats === undefined ? {} : { chats }),
 	});
 }
 

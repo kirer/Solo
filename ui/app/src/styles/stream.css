@@ -111,7 +111,7 @@
 /* 半分钟内连着说的几句：一段话，不是一个话题下的一串消息。
    - 间距归零：连发的 2px 在深色下看起来仍是两条
    - 时间戳只留第一个：同一段里出现三个时间戳，读起来像三次发言
-   - 老板的气泡把相邻的圆角收平，读成一整块（`:has` 选中「后面还跟着同一段」的那一条） */
+   - 我的气泡把相邻的圆角收平，读成一整块（`:has` 选中「后面还跟着同一段」的那一条） */
 .row-say[data-cont="true"] {
 	margin-top: 0;
 }
@@ -212,10 +212,10 @@
 }
 
 /*
- * 老板自己说的话：淡绿底，**贴着正文**长，不是整宽色带。
+ * 我自己说的话：淡绿底，**贴着正文**长，不是整宽色带。
  *
- * 早先这里是 `::after` 画的一条左右出血的整宽色带 —— 那时老板的话靠左，色带
- * 从左边起、右边空一截，看着像一段高亮。老板的话改成靠右之后，同一条色带
+ * 早先这里是 `::after` 画的一条左右出血的整宽色带 —— 那时我的话靠左，色带
+ * 从左边起、右边空一截，看着像一段高亮。我的话改成靠右之后，同一条色带
  * 会横贯 1142px 只为了包住右边一小块字，读起来像一条分隔条而不是一句话。
  * 所以底色回到 `.md` 自己身上（跟气泡布局同一个做法），宽度跟随内容。
  */
@@ -304,7 +304,7 @@
 /*
  * 代码块折行，不横向滚。
  *
- * 这是老板的验收口径：贴一条巨型命令进来，消息流不能出现横向滚动条。
+ * 这是我的验收口径：贴一条巨型命令进来，消息流不能出现横向滚动条。
  * pre 保留换行（pre-wrap），长行由 word-break 强断；横向不再出滚动条，
  * 纵向也不加限高 —— 这里的高度交给行本身，裁切留给 .ev-body。
  */
@@ -476,9 +476,9 @@ body[data-layout="bubble"] .row-say .row-body > .md {
 	padding: 8px 12px;
 }
 
-/* 老板的话靠右：头像换到右边，正文列换到左边，正文自己右对齐。
+/* 我的话靠右：头像换到右边，正文列换到左边，正文自己右对齐。
    两列互换（而不是 `justify-content`），因为行是 grid，头像必须还在版心边上。
-   **平铺也要靠右** —— 刚上线时这条只在气泡布局里生效，平铺下老板的话和别人的话
+   **平铺也要靠右** —— 刚上线时这条只在气泡布局里生效，平铺下我的话和别人的话
    左缘对齐、长得一模一样，一眼看不出谁说的。 */
 .row-say[data-owner="true"] {
 	grid-template-columns: minmax(0, 1fr) var(--av-lg);
@@ -486,7 +486,7 @@ body[data-layout="bubble"] .row-say .row-body > .md {
 
 /* `grid-row: 1` 两处都要写死。
    头像显式落在第 2 列之后，网格的自动排布游标已经走到第 2 行，正文再显式声明
-   第 1 列就会被塞进第 2 行 —— 老板那条消息上方于是多出 42px 空白（= 头像高度），
+   第 1 列就会被塞进第 2 行 —— 我那条消息上方于是多出 42px 空白（= 头像高度），
    实测行高 103px 而正文只有 61px。 */
 .row-say[data-owner="true"] .row-av {
 	grid-column: 2;
@@ -512,7 +512,7 @@ body[data-layout="bubble"] .row-say .row-body > .md {
 	text-align: left;
 }
 
-/* 老板气泡自己带底色，动作条要落在气泡右下角外侧，别压住气泡的圆角。 */
+/* 我气泡自己带底色，动作条要落在气泡右下角外侧，别压住气泡的圆角。 */
 .row-say[data-owner="true"] .row-tools {
 	left: auto;
 	right: 100%;
@@ -534,7 +534,7 @@ body[data-layout="bubble"]
 	border-end-start-radius: var(--r-control);
 }
 
-/* 老板自己说的话：气泡换成淡绿；整宽出血色带只在平铺里存在。 */
+/* 我自己说的话：气泡换成淡绿；整宽出血色带只在平铺里存在。 */
 body[data-layout="bubble"] .row-say[data-owner="true"]::after {
 	display: none;
 }
@@ -596,278 +596,6 @@ body[data-layout="bubble"] .row-say[data-owner="true"] .row-body > .md {
 
 .fold-btn:hover {
 	color: var(--ink);
-}
-
-/* ── event 行（think / tool / work） ───────────────────────────────── */
-
-/*
- * 过程行（think / tool / work）—— 按 DeepSeek 那种工整重做。
- *
- * 老板的原话是「过程行现在读起来是一团重复的废话」「多么工整啊」。所以这一块
- * 的规则很窄：
- *   1. 一个连续干活段 = **一个**组头（「已完成，用时 55 秒」/「正在执行 · 67s」），
- *      组头是唯一的开合开关，左缘和正文对齐（48px = 40 头像 + 8 间距）。
- *   2. 展开后每步一行：图标 + 动作 + 摘要，12–13px / 行高 20–22，无边框、
- *      无缩进盒子、每行不挂自己的 chevron —— 一屏要装得下十二步。
- *   3. 跑着和跑完一眼分开：跑着多一组跳动的小点，秒数逐秒递增；跑完点消失、
- *      数字定格。颜色只用 --ink-3 / --live 两档，过程行是背景音，不该比正文抢眼。
- */
-.row-events {
-	display: flex;
-	flex-direction: column;
-	align-items: stretch;
-	margin: 3px 0 3px 48px;
-	max-width: calc(100% - 48px);
-}
-
-button.evs {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	align-self: flex-start;
-	max-width: 100%;
-	height: 24px;
-	padding: 0 6px 0 0;
-	margin-left: -2px;
-	border: 0;
-	background: transparent;
-	font: inherit;
-	font-size: 13px;
-	line-height: 24px;
-	color: var(--ink-3);
-	text-align: left;
-	cursor: pointer;
-	border-radius: var(--r-chip, 6px);
-	transition: background-color var(--dur-line) ease;
-}
-
-button.evs:hover {
-	background: var(--hover);
-	color: var(--ink-2);
-}
-
-.evs-ico {
-	display: grid;
-	place-items: center;
-	flex: none;
-	width: 16px;
-	height: 16px;
-}
-
-.evs-ico svg {
-	width: 14px;
-	height: 14px;
-}
-
-.evs b {
-	flex: none;
-	font-weight: 500;
-	color: var(--ink-2);
-}
-
-.evs-what {
-	flex: 0 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	font-variant-numeric: tabular-nums;
-	color: var(--ink-3);
-}
-
-/* 跑着的三个点：只动透明度，不做位移 —— 位移会让整行在扫读时抖。 */
-.evs-live {
-	display: inline-flex;
-	flex: none;
-	gap: 2px;
-	align-items: center;
-}
-
-.evs-live i {
-	width: 3px;
-	height: 3px;
-	border-radius: 50%;
-	background: var(--live);
-	opacity: 0.35;
-	animation: evs-live-pulse 1.1s ease-in-out infinite;
-}
-
-.evs-live i:nth-child(2) {
-	animation-delay: 0.18s;
-}
-
-.evs-live i:nth-child(3) {
-	animation-delay: 0.36s;
-}
-
-@keyframes evs-live-pulse {
-	0%,
-	100% {
-		opacity: 0.25;
-	}
-	50% {
-		opacity: 1;
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.evs-live i {
-		animation: none;
-		opacity: 0.8;
-	}
-}
-
-/*
- * 已完成：组头只写「查看过程」+ 箭头（老板的口径：光一个空箭头「什么提示都没有」）。
- * 名字与「已完成，用时 X 秒」不再上屏幕，只留在 aria-label 里 —— 看得见的地方干净，
- * 又不至于让人不知道这里可以点。
- */
-.row-events[data-state="done"] button.evs {
-	padding: 1px 4px;
-	opacity: 0.8;
-}
-
-.row-events[data-state="done"] button.evs:hover {
-	opacity: 1;
-}
-
-.row-events[data-state="done"] .evs-what {
-	color: var(--ink-3);
-}
-
-/* 跑着的组头比跑完的稍微亮一点：老板一眼要能分出「这条还在动」。 */
-.row-events[data-state="running"] button.evs .evs-what {
-	color: var(--ink-2);
-}
-
-.evs-body {
-	margin: 2px 0 0;
-	padding: 0;
-	/* 展开态没有盒子：没有边框、没有缩进竖线，只有一行一行的过程。 */
-}
-
-.evs-list {
-	display: flex;
-	flex-direction: column;
-	align-items: stretch;
-	gap: 0;
-}
-
-/* 组里的过程行不再自带 48px 左缩进：它们已经在组头下面，再缩一次就歪了。
-   左缘和组头对齐，宽度吃满。 */
-.evs-list .row-event {
-	margin-left: 0;
-	max-width: 100%;
-}
-
-/* 单条过程行（组外的零星一条）。 */
-.row-event {
-	display: flex;
-	flex-direction: column;
-	align-items: stretch;
-	margin: 2px 0 2px 48px;
-	max-width: calc(100% - 48px);
-}
-
-.ev {
-	display: flex;
-	align-items: center;
-	gap: 6px;
-	width: 100%;
-	max-width: 100%;
-	height: 24px;
-	padding: 0 2px;
-	border: 0;
-	background: none;
-	font: inherit;
-	font-size: 13px;
-	line-height: 24px;
-	color: var(--ink-3);
-	text-align: left;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-}
-
-button.ev {
-	border-radius: var(--r-chip, 6px);
-	cursor: pointer;
-	transition: background-color var(--dur-line) ease;
-}
-
-button.ev:hover {
-	background: var(--hover);
-}
-
-.ev-ico {
-	display: grid;
-	place-items: center;
-	flex: none;
-	width: 16px;
-	height: 16px;
-}
-
-.ev-ico svg {
-	width: 14px;
-	height: 14px;
-}
-
-/* 第二段：动作。定宽不现实（「读文件」和「翻频道」字数不同），但只说一个词，
-   所以给 flex: none，让摘要去吃掉剩下的宽度。 */
-.ev-act {
-	flex: none;
-	color: var(--ink-3);
-}
-
-/* 第三段：摘要。永远一行，60 字以外由 JS 截断，这里只兜底。 */
-.ev-txt {
-	flex: 1 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	white-space: nowrap;
-	text-overflow: ellipsis;
-	color: var(--ink-2);
-	font-variant-numeric: tabular-nums;
-}
-
-/* 剪头只在能展开的行上转，收起时朝右（组头是唯一挂着它的地方） */
-.ev-chevron {
-	flex: none;
-	opacity: 0.5;
-	transition: transform var(--dur-line) var(--ease-line);
-}
-
-.row-events[data-open="true"] .ev-chevron {
-	transform: rotate(90deg);
-}
-
-/*
- * 单条过程行点开的原文：等宽、可换行、限高。
- * 不换行会撑出一条横向滚动条盖住整列；不限高的话一条 20 行的命令输出
- * 会把下面所有消息推出屏幕 —— 展开是「看一眼」，不是「进入另一个页面」。
- */
-.ev-body {
-	margin: 2px 0 2px;
-	max-width: 100%;
-	width: 100%;
-}
-
-.ev-body pre {
-	margin: 0;
-	padding: 8px 10px;
-	max-height: 320px;
-	/* 只纵向滚：pre-wrap 已经让长命令折行，横向再出条只会盖住正文。 */
-	overflow-y: auto;
-	overflow-x: hidden;
-	background: var(--raised);
-	border: 0;
-	border-radius: var(--r-control);
-	font-family: var(--mono);
-	font-size: 12px;
-	line-height: 18px;
-	color: var(--ink-2);
-	white-space: pre-wrap;
-	word-break: break-word;
 }
 
 /* ── note 行 ────────────────────────────────────────────────────────── */
@@ -948,7 +676,7 @@ button.ev:hover {
 	visibility: visible;
 }
 
-/* 老板自己的行整宽，工具条挪到左侧，不然会出屏。 */
+/* 我自己的行整宽，工具条挪到左侧，不然会出屏。 */
 .row-say[data-owner="true"] .row-tools {
 	left: auto;
 	right: 100%;
@@ -1029,90 +757,6 @@ button.ev:hover {
 		height: 20px;
 		color: var(--ink-3);
 	}
-}
-
-/* ── 活动行：谁在干什么，永远只有一行 ──────────────────────────────── */
-
-.act {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	height: 36px;
-	margin: 8px 0 4px 2px;
-	padding-left: 8px;
-	min-width: 0;
-	transform-origin: 0 50%;
-}
-
-.act[hidden] {
-	display: none;
-}
-
-.act-av {
-	display: grid;
-	place-items: center;
-	flex: none;
-}
-
-/* 名字：活动行第一段。以前这里是一句会 shimmer 的「在做什么」，读不出是谁、
-   也读不出跑了多久。现在只放名字，状态和秒数交给下面两段。 */
-.act-text {
-	flex: none;
-	color: var(--ink-2);
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
-}
-
-/* 跑着的三个点：和过程组头同一套（透明度呼吸，不做位移）。 */
-.act-live {
-	display: inline-flex;
-	flex: none;
-	gap: 2px;
-	align-items: center;
-	margin-left: -2px;
-}
-
-.act-live[hidden] {
-	display: none;
-}
-
-.act-live i {
-	width: 3px;
-	height: 3px;
-	border-radius: 50%;
-	background: var(--live);
-	opacity: 0.35;
-	animation: evs-live-pulse 1.1s ease-in-out infinite;
-}
-
-.act-live i:nth-child(2) {
-	animation-delay: 0.18s;
-}
-
-.act-live i:nth-child(3) {
-	animation-delay: 0.36s;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.act-live i {
-		animation: none;
-		opacity: 0.8;
-	}
-}
-
-.act-time {
-	flex: none;
-	font-size: 12px;
-	line-height: 16px;
-	color: var(--ink-3);
-	font-family: var(--mono);
-	font-variant-numeric: tabular-nums;
-}
-
-/* 跑完那一刻：状态字从「正在执行」换成「已完成」，颜色随之沉下去。 */
-.act[data-state="done"] .act-time {
-	color: var(--ink-3);
 }
 
 /* ── 骨架：与最终行同尺寸的灰色实心条，不做 shimmer ────────────────── */
@@ -1431,95 +1075,4 @@ button.ev:hover {
 body[data-layout="bubble"] .attach-grid,
 body[data-layout="bubble"] .attach-files {
 	max-width: min(68ch, calc(100% - 76px));
-}
-
-
-/* ── 处理中指示（B）：某人收到 @他 / 直接发给他的消息后出现的「开始处理…」气泡 ──
-   它是一条正常聊天消息：行结构、头像、名字、气泡全部复用 .row-say，只是文案是「开始处理…」，
-   末尾挂三个跳动的点，气泡整体极轻地呼吸一下。被真实回复原地覆盖后就地变成普通气泡（#92/#97）。 */
-.row-processing .row-body > .md {
-	animation: proc-breathe 2.6s ease-in-out infinite;
-}
-/* 跳动省略号：三点依次起伏，传达「正在处理」而不卡死 */
-.row-processing .proc-dots {
-	display: inline-flex;
-	gap: 2px;
-	margin-left: 3px;
-	vertical-align: baseline;
-}
-.row-processing .proc-dots i {
-	width: 4px;
-	height: 4px;
-	border-radius: 50%;
-	background: currentColor;
-	opacity: 0.3;
-	animation: proc-blink 1.2s infinite ease-in-out;
-}
-.row-processing .proc-dots i:nth-child(2) { animation-delay: 0.2s; }
-.row-processing .proc-dots i:nth-child(3) { animation-delay: 0.4s; }
-@keyframes proc-blink {
-	0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
-	40% { opacity: 1; transform: translateY(-2px); }
-}
-@keyframes proc-breathe {
-	0%, 100% { opacity: 0.78; }
-	50% { opacity: 1; }
-}
-@media (prefers-reduced-motion: reduce) {
-	.row-processing .proc-dots i { animation: none; opacity: 0.5; }
-	.row-processing .row-body > .md { animation: none; opacity: 0.9; }
-}
-
-/* ── React 重写补丁 ───────────────────────────────────────────────────
-   过程组和发言人共用同一套「头像列 + 正文列」网格。上一版是手工拼的
-   绝对定位，React 版改成网格，两列在所有行类型上对齐到同一根线。 */
-.row-events {
-	display: grid;
-	grid-template-columns: var(--av-lg) minmax(0, 1fr);
-	gap: 8px;
-	align-items: start;
-	margin-top: 6px;
-	padding-left: 0;
-}
-.row-events > .row-av { grid-column: 1; }
-.row-events > .row-body { grid-column: 2; min-width: 0; }
-.row-events .evs { margin-left: 0; }
-.row-event .ev-ico { display: inline-flex; align-items: center; margin-right: 6px; color: var(--ink-3); }
-.row-event .ev-ico svg { width: 14px; height: 14px; }
-.row-events[data-state="running"] .evs-what { color: var(--ink-2); }
-.evs-time { color: var(--ink-3); font-variant-numeric: tabular-nums; margin-left: 6px; }
-
-/* 「正在说…」草稿行：模型正在生成、还没落库的那句话。
-   和真消息的区别要一眼看出来：字色浅一档、正文按纯文本画（生成到一半的 Markdown
-   会画成半截列表），末尾一根光标。 */
-.row-draft .row-role {
-	color: var(--accent);
-}
-.draft-text {
-	white-space: pre-wrap;
-	color: var(--ink-2);
-	/* 只显示最后几行：草稿是「它正在说」的指示，不是要读的内容。 */
-	display: -webkit-box;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 4;
-	overflow: hidden;
-}
-.draft-caret {
-	display: inline-block;
-	width: 2px;
-	height: 1em;
-	margin-left: 2px;
-	vertical-align: -0.15em;
-	background: var(--accent);
-	animation: draft-blink 1s steps(2, start) infinite;
-}
-@keyframes draft-blink {
-	to {
-		visibility: hidden;
-	}
-}
-@media (prefers-reduced-motion: reduce) {
-	.draft-caret {
-		animation: none;
-	}
 }

@@ -1,7 +1,7 @@
 /**
  * 全部工具：**只有一套，人人都有。**
  *
- * 这里没有「管理层工具」「员工工具」「负责人工具」的分层。按岗位发工具包来实现
+ * 这里没有「管理层工具」「员工工具」「团队管理员工具」的分层。按岗位发工具包来实现
  * 「员工不能越级」，代价是：调一个岗位就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
@@ -14,10 +14,10 @@
  * | `org` | 我是谁、上级下属、全公司架构 |
  * | `hire` | 新建一个 agent（写文件夹） |
  * | `update_identity` | 改我自己或我下属的身份 |
- * | `remember` / `recall` | 写/读记忆；`scope=project` 切到项目记忆 |
+ * | `remember` / `recall` | 写/读记忆；`scope=team` 切到团队记忆 |
  * | `read_history` | 翻自己被压缩掉的历史对话（精确原话/路径找回） |
  * | `list_skills` / `read_skill` / `write_skill` | 技能（怎么做一件事的说明书） |
- * | `list_projects` / `read_project` / `write_project` | 项目（`projects/<slug>/README.md`） |
+ * | `list_teams` / `read_team` / `write_team` | 团队（`teams/<slug>/README.md`） |
  * | `run` / `write_file` / `read_file` | 执行命令 / 写文件 / 读文件 |
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
@@ -44,7 +44,7 @@ import {
 } from "../agent/skills.ts";
 import { appendMemory, readMemory, sectionsOf } from "../agent/memory.ts";
 import { redact } from "../agent/secrets.ts";
-import { listProjects, readProject, writeProject } from "../project/doc.ts";
+import { listTeams, readTeam, writeTeam } from "../team/doc.ts";
 import { createAgent, renderIdentityFile, renderOrgChart } from "../agent/create.ts";
 import { conversationFor, slugFor, wakeOf, type DirectoryState } from "../agent/roster.ts";
 import { postMessage, type PostDeps } from "./post.ts";
@@ -54,24 +54,21 @@ import {
 	ChannelDoc,
 	OWNER,
 	channelsOf,
-	ensureChannel,
 	fallbackChannelId,
 	parseMentions,
-	personalId,
 	readMarkOf,
 	recipientsOf,
 	unreadCount,
-	type Channel,
 	type ChannelState,
 	type Message,
 } from "./state.ts";
 import { renderDigest } from "./deliver.ts";
-import { confirmedBy } from "../project/settle.ts";
+import { confirmedBy } from "../team/settle.ts";
 import {
-	appendProjectMemory,
-	projectMemorySections,
-	readProjectMemory,
-} from "../project/memory.ts";
+	appendTeamMemory,
+	teamMemorySections,
+	readTeamMemory,
+} from "../team/memory.ts";
 
 /** 工具运行所需的一切。全部由外壳在启动时装配，工具自己不读环境变量。 */
 export type CoreToolDeps = {
@@ -85,8 +82,8 @@ export type CoreToolDeps = {
 	readonly workspaceRoot: string;
 	/** `workspace/agents`。 */
 	readonly agentsRoot: string;
-	/** `workspace/projects`。 */
-	readonly projectsRoot: string;
+	/** `workspace/teams`。 */
+	readonly teamsRoot: string;
 	/** 读名册（slug ↔ 会话）。 */
 	readonly directory: (context: Context) => Promise<DirectoryState>;
 	/** 落一次名册变更。 */
@@ -94,19 +91,19 @@ export type CoreToolDeps = {
 	/** 为某个 slug 建会话并绑定。缺省表示不支持热建（测试里可以不提供）。 */
 	readonly openAgent?: (slug: string, context: Context) => Promise<number>;
 	/**
-	 * 一条消息落地之后的钩子。外壳用它接「项目记忆自动沉淀」。
+	 * 一条消息落地之后的钩子。外壳用它接「团队记忆自动沉淀」。
 	 *
-	 * 为什么挂在工具层而不是频道层：沉淀要读 `agents/` 与 `projects/`，那是外壳的
-	 * 视野；`channel/post.ts` 只认识频道文档，不该知道项目记忆存在。
+	 * 为什么挂在工具层而不是频道层：沉淀要读 `agents/` 与 `teams/`，那是外壳的
+	 * 视野；`channel/post.ts` 只认识频道文档，不该知道团队记忆存在。
 	 */
 	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/**
-	 * 按项目文件重建它的频道成员（幂等）。
+	 * 按团队文件重建它的频道成员（幂等）。
 	 *
-	 * `write_project` 改了 `owner` 之后必须调一次：项目频道里的人是文档的投影，
-	 * 不刷新的话，刚任命的负责人在项目频道里不存在，员工 @ 不到他。
+	 * `write_team` 改了 `lead` 之后必须调一次：团队频道里的人是文档的投影，
+	 * 不刷新的话，刚任命的团队管理员在团队频道里不存在，员工 @ 不到他。
 	 */
-	readonly syncProject?: (project: string, context: Context) => Promise<void>;
+	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
 };
 
 /** 技能的两级根目录。工具里每次都从 deps 现算，避免多存一份会漂的副本。 */
@@ -159,10 +156,11 @@ async function selfOf(deps: CoreToolDeps, conversationId: number, context: Conte
 }
 
 /**
- * 「默认在哪儿说话」：刚被叫醒的那个频道 → 我所在的非个人频道里最近活跃的那个 → 我的个人频道。
+ * 「默认在哪儿说话」：刚被叫醒的那个频道 → 我是成员的群里最近活跃的那个 → 我和我的私聊。
  *
- * 第一条最重要：老板在私聊里问我一句，我一开口就该回私聊，而不是群里。
- * 最后一级**不能直接拿 `mine[0]`**：那可能正是我和老板的私聊，于是老板在群里问的话被答进私聊。
+ * 第一条最重要：我在私聊里问我一句，我一开口就该回私聊，而不是群里。
+ * 最后一级**不能直接拿 `mine[0]`**：那可能正是我和我的私聊，于是我在群里问的话被答进私聊。
+ * 形态由 `fallbackChannelId` 按成员推导，不看 id 前缀。
  */
 async function defaultChannel(
 	deps: CoreToolDeps,
@@ -184,7 +182,7 @@ async function defaultChannel(
 		const channel = state.channels[wake.channelId];
 		if (channel !== undefined && channel.members.includes(slug)) return { channelId: wake.channelId };
 	}
-	// 兜底：非个人频道优先，个人频道最后。
+	// 兜底：群聊优先，私聊最后。
 	return { channelId: fallbackChannelId(state, slug) };
 }
 
@@ -194,7 +192,7 @@ async function defaultChannel(
  * 判据取自名册里的唤醒记录（`wakeOf`，由投递层在成功投递时写入），再用
  * `recipientsOf` 重算一次收件人 —— 和投递层用的是同一个纯函数，不会两处口径不一致。
  *
- * 老板不算：他不是一个会接着说话的 agent。
+ * 我不算：他不是一个会接着说话的 agent。
  */
 async function othersAwoken(
 	deps: CoreToolDeps,
@@ -232,49 +230,6 @@ async function mentionRoster(deps: CoreToolDeps): Promise<MentionRoster> {
 }
 
 /**
- * 拿到（必要时建出）两个人之间的私聊频道。
- *
- * 为什么要有这条：实测「员工↔员工」的发言只有全部 agent 发言的 1.2%，而组织里明明
- * 有该对接的事（音效要问开发、平台要问负责人）。根因不是模型不想说，是**没有地方说** ——
- * `dm:owner-X` 的成员只有老板和 X，X 想找另一个同事只能跑去群里喊，而群里的喊话又会
- * 把不相干的人叫醒。所以给一条只装两个人的频道。
- *
- * 和老板的「私聊」不新建：老板的个人频道 `dm:owner-<slug>` 本来就是那条。
- * 频道 id 用排序后的 slug 拼接，所以 A 找 B 和 B 找 A 是同一条，不会长出两条平行对话。
- */
-async function ensureDm(
-	deps: CoreToolDeps,
-	state: ChannelState,
-	from: string,
-	to: string,
-	context: Context,
-): Promise<string> {
-	if (to === OWNER_SLUG) return personalId(from);
-	if (from === OWNER_SLUG) return personalId(to);
-	const id = `dm:${[from, to].sort().join("--")}`;
-	if (state.channels[id] !== undefined) return id;
-	const all = await readAllIdentities(deps.agentsRoot);
-	const nameOf = (slug: string): string => all.find((identity) => identity.slug === slug)?.name ?? slug;
-	await deps.harness.commit(async (tx) => {
-		const doc = await tx.doc(ChannelDoc);
-		const current = doc as ChannelState;
-		if (current.channels[id] !== undefined) return;
-		Object.assign(
-			doc,
-			ensureChannel(current, {
-				id,
-				title: `${nameOf(from)} · ${nameOf(to)}`,
-				members: [from, to],
-				// 两边互相唤醒：私聊里没有第三方，不存在「叫醒一堆人」的风险。
-				wakeOnAll: [from, to],
-				at: Date.now(),
-			}),
-		);
-	}, context);
-	return id;
-}
-
-/**
  * 读一份频道状态。
  *
  * **必须用 `BACKGROUND_CONTEXT` 读，不能用工具自己的 `ctx`。**
@@ -303,7 +258,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		parameters: Type.Object({
 			text: Type.String({
 				description:
-					"要说的话。**像同事发消息：一两句，说结论** —— 不写小标题、不列清单、不总结你刚做了什么（`run` 的过程不用复述）。" +
+					"要说的话。**像成员发消息：一两句，说结论** —— 不写小标题、不列清单、不总结你刚做了什么（`run` 的过程不用复述）。" +
 					"这一轮没有新东西要说就写 `[PASS]`，系统不会发出去（但如果这一轮只有你被叫醒，PASS 会被拒绝）。",
 			}),
 			step: Type.Optional(
@@ -312,14 +267,13 @@ export function createCoreTools(deps: CoreToolDeps) {
 						"`true` = 这只是过程话（「我正在改」「找到原因了」），可以连着说几句，不算这一轮的结论；不传 = 结论，**一轮只认一句**，第二句会被拒。干活中途想让人知道进展就用这个。",
 				}),
 			),
-			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@老大` / `@老板` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
-			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的同事，或你在私聊里想找人），用 `<频道 id>` 指定，或先问老大 —— 频道成员以外的人 @ 不到。" })),
-			to: Type.Optional(Type.String({ description: "把这句话**私下**发给某个人（写名字或 slug）。系统会自动建出只有你们两人的私聊频道，别人看不到。要对接同事、找上级问一句细节、向老板单独汇报，都用这个 —— 不要为了找一个人去群里喊。" })),
+			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@我` / `@CEO` / `@张三` / `@zhangsan` 都行，系统会解析成 slug）。**不要凭印象编 slug** —— 名字报错比 @ 错人好。带上会叫醒他，适合提问或需要别人拍板。不知道 @ 谁就写你上级的 slug。" })),
+			channel: Type.Optional(Type.String({ description: "频道 id，省略则回刚被叫醒的那个频道。要发给不在这个频道的人（另一个频道里的成员），用 `<频道 id>` 指定，或先问我 —— 频道成员以外的人 @ 不到。" })),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
 			kind: Type.Optional(
 				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
 					description:
-						"给这条消息打标签：decision = 拍了板（结论、约定、定了怎么做）；report = 交付了什么。标签是给人的线索（谁拍板、谁交付），不影响沉淀——项目频道里所有新消息都会被送去整理。普通发言不要传。",
+						"给这条消息打标签：decision = 拍了板（结论、约定、定了怎么做）；report = 交付了什么。标签是给人的线索（谁拍板、谁交付），不影响沉淀——团队频道里所有新消息都会被送去整理。普通发言不要传。",
 				}),
 			),
 		}),
@@ -327,30 +281,28 @@ export function createCoreTools(deps: CoreToolDeps) {
 	});
 
 	const sayUnlocked = async (
-		args: { text: string; mention?: string; channel?: string; to?: string; replyTo?: number; kind?: "decision" | "report"; step?: boolean },
+		args: { text: string; mention?: string; channel?: string; replyTo?: number; kind?: "decision" | "report"; step?: boolean },
 		api: { conversationId: string | number },
 		ctx: Context,
 	): Promise<ReturnType<typeof text>> => {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。先用 org 看看情况，或请上级重新登记你。");
-				// 通信规则：非老板不得私聊（to），其余沟通走群聊；老板本人不受限。
-				if (slug !== OWNER && args.to !== undefined && args.to.trim() !== "") {
-					return text("仅老板可私聊；项目的事发本项目群，跨项目发公司群，其余沟通请勿私聊（去掉 to，改用 channel 或 @ 某人）。");
-				}
+			// 没有「私下发给谁」这个参数：私聊只能我开，agent 只能在已有的频道里说话。
+			// 也不需要专门硬拦 ——「非成员发不进去」已经重定了这条边界。
 			// 一条频道消息最多 1200 字。
 			//
 			// 线上见过 21,568 字的一条 `say` —— 那不是在说话，是把整个思考过程倒进频道。
-			// 长内容有它的地方（项目文件、记忆、审查记录），频道里只放结论和路径。
+			// 长内容有它的地方（团队文件、记忆、审查记录），频道里只放结论和路径。
 			if (args.text.length > SAY_LIMIT) {
 				return text(
 					`太长了：${args.text.length} 字，一条消息最多 ${SAY_LIMIT} 字。频道里只放结论，` +
-						"把过程或整份内容写进项目文件，再发一句结论加路径。",
+						"把过程或整份内容写进团队文件，再发一句结论加路径。",
 				);
 			}
 			// 内心独白不是发言。
 			//
 			// 规矩里早写了「不用英文写内心独白」，但模型该写还是写（线上 46% 的发言是英文）。
-			// 这一条必须由代码拦：贴出去的每一句都会出现在老板眼前，靠自觉等于没拦。
+			// 这一条必须由代码拦：贴出去的每一句都会出现在我眼前，靠自觉等于没拦。
 			const monologue = monologueOpener(args.text);
 			if (monologue !== undefined) {
 				return text(
@@ -362,7 +314,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 
 			// 「这一轮我不说」—— 但不是随时都能不说。
 			//
-			// 独享一个频道的人 PASS 掉，等于老板问了一句什么都没收到：那不是安静，是断线。
+			// 独享一个频道的人 PASS 掉，等于我问了一句什么都没收到：那不是安静，是断线。
 			// 所以 PASS 只在「这一轮还有别的 agent 被同一条消息叫醒」时成立。
 			if (isPass(args.text)) {
 				const others = await othersAwoken(deps, state, Number(api.conversationId), slug, ctx);
@@ -395,30 +347,11 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const target = await defaultChannel(deps, state, slug, conversationId, args.channel, ctx);
 			if ("error" in target) return text(target.error);
 			const roster = await mentionRoster(deps);
-
-			// 「私下发给某个人」：频道换成两人的私聊（必要时现建），@ 也自动补上。
-			let channelId = target.channelId;
-			let privateTo: string | undefined;
-			if (args.to !== undefined && args.to.trim() !== "") {
-				const typed = args.to.trim().replace(/^@/, "");
-				const who = resolveMention(typed, roster) ?? typed;
-				if (who !== OWNER_SLUG) {
-					const all = await readAllIdentities(deps.agentsRoot);
-					if (!all.some((identity) => identity.slug === who)) {
-						const names = all.map((identity) => identity.slug).join("、");
-						return text(`公司里没有「${typed}」。可以发给：${names}（或 owner 给老板）。`);
-					}
-				}
-				if (who === slug) return text("不用私聊自己。");
-				channelId = await ensureDm(deps, state, slug, who, ctx);
-				privateTo = who;
-				// 频道是刚刚建出来的：`postMessage` 用的是下面这份快照，不重新取就会「频道不存在」。
-				state = await readState(deps);
-			}
-			const targetChannel = state.channels[channelId] ?? state.channels[target.channelId];
+			const channelId = target.channelId;
+			const targetChannel = state.channels[channelId];
 
 			// 带 mention：验证成员、补 @ 前缀、默认 kind=question。
-			// `@老板` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。
+			// `@我` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。
 			let messageText = args.text;
 			let kind: string | undefined = args.kind;
 			if (args.mention !== undefined && args.mention !== "") {
@@ -433,15 +366,15 @@ export function createCoreTools(deps: CoreToolDeps) {
 				kind = args.kind ?? "question";
 			}
 
-			// 要老板拍板：仅两种情形把 owner 加进 mentions（**不改正文**）：
-			//  1) 消息显式 @了老板（messageText 里的 @owner/@老板 已由 parseMentions 解析命中）；
+			// 要我拍板：仅两种情形把 owner 加进 mentions（**不改正文**）：
+			//  1) 消息显式 @了我（messageText 里的 @owner/@我 已由 parseMentions 解析命中）；
 			//  2) 消息是「决策」类（kind=decision），且**没有明确点别人**。
-			// 旧逻辑还用「要不要/请确认/等你定」等关键词嗅探正文，会把普通 @同事 的协作消息
+			// 旧逻辑还用「要不要/请确认/等你定」等关键词嗅探正文，会把普通 @成员 的协作消息
 			// 误标「需要我」并塞进 owner —— 这一条关键词嗅探已在 #4 移除。
 			//
-			// `decision` 曾经无条件叫老板，于是「@知言 … 要不要做，你和老板定」这种
-			// 内部结论也被塞进「N 件找你」。老板的原话：「明明他们 at 的别人，跟我有什么关系」。
-			// 判据与「找你」列表一致：明确点了别人而没点老板的，就不是找老板的。
+			// `decision` 曾经无条件叫我，于是「@知言 … 要不要做，你和我定」这种
+			// 内部结论也被塞进「N 件找你」。我的原话：「明明他们 at 的别人，跟我有什么关系」。
+			// 判据与「找你」列表一致：明确点了别人而没点我的，就不是找我的。
 			const typedMentions = parseMentions(messageText, roster);
 			const addressedOthers =
 				targetChannel === undefined
@@ -451,12 +384,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 						);
 			const wakeOwner =
 				kind === "decision" ? addressedOthers.length === 0 : typedMentions.includes(OWNER);
-			// 私聊里对方一定被叫醒（wakeOnAll 已经兜住），但要确保 `mentions` 里有他 ——
-			// 界面的「@ 我」红点、未读口径都读这个字段。
-			const privateMention =
-				privateTo !== undefined && privateTo !== OWNER && !parseMentions(messageText, roster).includes(privateTo)
-					? [privateTo]
-					: [];
 
 			const result = await postMessage(
 				postDeps(deps, state, ctx),
@@ -467,23 +394,17 @@ export function createCoreTools(deps: CoreToolDeps) {
 					at: Date.now(),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
 					...(kind === undefined ? {} : { kind }),
-					...(args.step === true ? { step: true } : {}),
 					roster,
 					...((() => {
-						const extra = [...(wakeOwner ? [OWNER] : []), ...privateMention];
+						const extra = wakeOwner ? [OWNER] : [];
 						return extra.length === 0 ? {} : { mention: extra };
 					})()),
 				},
 				ctx,
 			);
-			// 并进上一条时不算「这一轮说过结论」（它本来就是过程话）。
+			// 过程话不算「这一轮说过结论」。
 			if (args.step !== true) markSpoken(conversationId, args.text);
 			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
-			if (result.merged === true) {
-				return text(
-					`并进了「${result.channel.title}」#${result.message.seq}（30 秒内连着说的过程话算一段，没有重复叫人）。`,
-				);
-			}
 			const woke = result.delivery.delivered;
 			return text(
 				`已发到「${result.channel.title}」#${result.message.seq}。${
@@ -584,7 +505,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			}),
 			title: Type.Optional(Type.String({ description: "岗位标签，纯展示用" })),
 			manager: Type.Optional(Type.String({ description: "上级的 slug，必须是名册里已有的人；不确定就不传，缺省是你自己" })),
-			project: Type.Optional(Type.String({ description: "所在项目 slug" })),
+			team: Type.Optional(Type.String({ description: "所在团队 slug" })),
 			body: Type.Optional(
 				Type.String({
 					description:
@@ -606,7 +527,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				name: args.name,
 				...(args.title === undefined ? {} : { title: args.title }),
 				manager,
-				...(args.project === undefined ? {} : { project: args.project }),
+				...(args.team === undefined ? {} : { team: args.team }),
 				...(args.body === undefined ? {} : { body: args.body }),
 			});
 			if (deps.openAgent !== undefined) {
@@ -642,7 +563,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				name: target.name,
 				title: args.title ?? target.title,
 				manager: args.manager ?? target.manager,
-				project: target.project,
+				team: target.team,
 			};
 			const body = args.body ?? target.body;
 			await writeFile(join(target.dir, "identity.md"), renderIdentityFile(header as never, body), "utf8");
@@ -734,53 +655,53 @@ export function createCoreTools(deps: CoreToolDeps) {
 	});
 
 	/**
-	 * 项目：`projects/<slug>/README.md`。
+	 * 团队：`teams/<slug>/README.md`。
 	 *
-	 * 项目不是代码里的一个实体，就是一份文档。代码只负责读写它、按它算成员。
-	 * 「什么时候该立项」「项目该有谁」是判断，写在技能里。
+	 * 团队不是代码里的一个实体，就是一份文档。代码只负责读写它、按它算成员。
+	 * 「什么时候该立项」「团队该有谁」是判断，写在技能里。
 	 */
-	const listProjectsTool = defineTool({
-		name: "list_projects",
-		description: "列出全部项目（slug、名字、负责人、状态、一句摘要）。",
+	const listTeamsTool = defineTool({
+		name: "list_teams",
+		description: "列出全部团队（slug、名字、团队管理员、状态、一句摘要）。",
 		parameters: Type.Object({}),
 		execute: async () => {
-			const projects = await listProjects(deps.projectsRoot);
-			if (projects.length === 0) return text("还没有项目。");
+			const teams = await listTeams(deps.teamsRoot);
+			if (teams.length === 0) return text("还没有团队。");
 			return text(
-				projects
-					.map((project) => {
-						const head = project.body.split("\n").find((line) => line.trim() !== "") ?? "";
-						return `- ${project.slug}（${project.name}）· ${project.status} · 负责人：${project.owner ?? "（没人负责）"}\n  ${head}`;
+				teams
+					.map((team) => {
+						const head = team.body.split("\n").find((line) => line.trim() !== "") ?? "";
+						return `- ${team.slug}（${team.name}）· ${team.status} · 团队管理员：${team.lead ?? "（没人负责）"}\n  ${head}`;
 					})
 					.join("\n"),
 			);
 		},
 	});
 
-	const readProjectTool = defineTool({
-		name: "read_project",
-		description: "读一个项目的完整说明（目标、验收标准、边界、进展）。",
-		parameters: Type.Object({ slug: Type.String({ description: "项目 slug" }) }),
+	const readTeamTool = defineTool({
+		name: "read_team",
+		description: "读一个团队的完整说明（目标、验收标准、边界、进展）。",
+		parameters: Type.Object({ slug: Type.String({ description: "团队 slug" }) }),
 		execute: async (args) => {
-			const project = await readProject(deps.projectsRoot, args.slug);
-			if (project === undefined) return text(`没有这个项目：${args.slug}`);
-			return text(`# ${project.name}（${project.slug}）\n状态：${project.status}\n负责人：${project.owner ?? "（没人负责）"}\n\n${project.body}`);
+			const team = await readTeam(deps.teamsRoot, args.slug);
+			if (team === undefined) return text(`没有这个团队：${args.slug}`);
+			return text(`# ${team.name}（${team.slug}）\n状态：${team.status}\n团队管理员：${team.lead ?? "（没人负责）"}\n\n${team.body}`);
 		},
 	});
 
-	const writeProjectTool = defineTool({
-		name: "write_project",
+	const writeTeamTool = defineTool({
+		name: "write_team",
 		description: [
-			"写一个项目（整篇替换 projects/<slug>/README.md，不存在就建）。",
+			"写一个团队（整篇替换 teams/<slug>/README.md，不存在就建）。",
 			"写清楚：目标、验收标准、什么不做、现在进展到哪。",
-			"写完下一条消息生效 —— 项目成员的提示词里会自动出现这份说明。",
+			"写完下一条消息生效 —— 团队成员的提示词里会自动出现这份说明。",
 		].join(""),
 		parameters: Type.Object({
-			slug: Type.String({ description: "项目 slug（会当目录名用）" }),
+			slug: Type.String({ description: "团队 slug（会当目录名用）" }),
 			name: Type.Optional(Type.String({ description: "显示名" })),
-			owner: Type.Optional(Type.String({ description: "负责人的 slug" })),
+			lead: Type.Optional(Type.String({ description: "团队管理员的 slug" })),
 			doing: Type.Optional(
-				Type.String({ description: "一句话现状（谁在做什么），显示在项目频道顶栏；不传 = 保留原值" }),
+				Type.String({ description: "一句话现状（谁在做什么），显示在团队频道顶栏；不传 = 保留原值" }),
 			),
 			status: Type.Optional(Type.String({ description: "active / paused / done / archived" })),
 			body: Type.String({ description: "正文：目标、验收标准、边界、进展" }),
@@ -788,23 +709,23 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, _api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			try {
-				const project = await writeProject(deps.projectsRoot, {
+				const team = await writeTeam(deps.teamsRoot, {
 					slug: args.slug,
 					body: args.body,
 					...(args.name === undefined ? {} : { name: args.name }),
-					...(args.owner === undefined ? {} : { owner: args.owner }),
+					...(args.lead === undefined ? {} : { lead: args.lead }),
 					// 不传 doing 时 doc.ts 会沿用文件里已有的 —— 这里不替它编。
 					...(args.doing === undefined ? {} : { doing: args.doing }),
 					...(args.status === undefined ? {} : { status: args.status as never }),
 				});
-				// 负责人写进文件之后，项目频道要立刻把他拉进来：频道成员是文档的投影，
-				// 文档改了投影不改，员工在项目里就 @ 不到刚任命的负责人。
-				if (deps.syncProject !== undefined) await deps.syncProject(project.slug, ctx);
-				const ownerNote =
-					project.owner === undefined
-						? "\n\n注意：这份项目还没有负责人（`owner`）。项目里出问题时没人能拍板 —— 现在就把负责人定下来。"
+				// 团队管理员写进文件之后，团队频道要立刻把他拉进来：频道成员是文档的投影，
+				// 文档改了投影不改，员工在团队里就 @ 不到刚任命的团队管理员。
+				if (deps.syncTeam !== undefined) await deps.syncTeam(team.slug, ctx);
+				const leadNote =
+					team.lead === undefined
+						? "\n\n注意：这份团队还没有团队管理员（`lead`）。团队里出问题时没人能拍板 —— 现在就把团队管理员定下来。"
 						: "";
-				return text(`已写入项目「${project.name}」（${project.slug}），负责人：${project.owner ?? "（没人负责）"}。agents 里写 \`project: ${project.slug}\` 的人会看到这份说明。${ownerNote}`);
+				return text(`已写入团队「${team.name}」（${team.slug}），团队管理员：${team.lead ?? "（没人负责）"}。agents 里写 \`team: ${team.slug}\` 的人会看到这份说明。${leadNote}`);
 			} catch (error) {
 				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
 			}
@@ -815,13 +736,13 @@ export function createCoreTools(deps: CoreToolDeps) {
 		name: "remember",
 		description: [
 			"记一条经验。",
-			"scope=personal（默认）写进你自己的记忆（agents/<我>/memory.md）；scope=project 写进所在项目的记忆（projects/<项目>/memory.md，带日期和你的名字）。",
+			"scope=personal（默认）写进你自己的记忆（agents/<我>/memory.md）；scope=team 写进所在团队的记忆（teams/<团队>/memory.md，带日期和你的名字）。",
 			"写「下次遇到 X 该怎么做」这类可复用的判断，不要写流水账。",
 		].join(""),
 		parameters: Type.Object({
 			text: Type.String({ description: "要记的东西。一句话说清一条，几条就调几次。" }),
-			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 project（项目记忆）" })),
-			project: Type.Optional(Type.String({ description: "项目 slug；scope=project 时用。默认是我所在的项目" })),
+			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 team（团队记忆）" })),
+			team: Type.Optional(Type.String({ description: "团队 slug；scope=team 时用。默认是我所在的团队" })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
@@ -829,14 +750,14 @@ export function createCoreTools(deps: CoreToolDeps) {
 			if (slug === undefined) return text("你还不在名册里。");
 			// 密钥不能靠模型自觉：它写下来的时候并不觉得那是泄密。落盘前先把真值换掉。
 			const body = redact(args.text, deps.workspaceRoot);
-			if (args.scope === "project") {
+			if (args.scope === "team") {
 				const self = await readIdentity(deps.agentsRoot, slug);
-				const project = args.project ?? self?.project;
-				if (project === undefined) return text("我不在任何项目里。要记项目的事，先说清是哪个项目。");
-				await appendProjectMemory(deps.projectsRoot, project, { text: body, by: slug });
-				const confirmed = await confirmedBy(deps.harness, project, ctx);
+				const team = args.team ?? self?.team;
+				if (team === undefined) return text("我不在任何团队里。要记团队的事，先说清是哪个团队。");
+				await appendTeamMemory(deps.teamsRoot, team, { text: body, by: slug });
+				const confirmed = await confirmedBy(deps.harness, team, ctx);
 				const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
-				return text(`已记进项目「${project}」的记忆${tail}。下一条消息就会出现在这个项目的记忆目录里。`);
+				return text(`已记进团队「${team}」的记忆${tail}。下一条消息就会出现在这个团队的记忆目录里。`);
 			}
 			await appendMemory(join(deps.agentsRoot, slug), body, new Date(), "remember");
 			return text("已记下。下一条消息的记忆目录里就会出现它。");
@@ -857,7 +778,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 	 * 于是它只能凭记忆补路径、补数字、补原话 —— 看起来很像，可能是错的，而且
 	 * 错得无法被发现。这把记忆能不能查询变成了可以查询。
 	 *
-	 * 分页走 `projector.ts` 那套 cursor：一次 64 条，从新往回扇。
+	 * 分页从新往回扇：一次 64 条。
 	 */
 	const readHistory = defineTool({
 		name: "read_history",
@@ -936,12 +857,12 @@ export function createCoreTools(deps: CoreToolDeps) {
 	const recall = defineTool({
 		name: "recall",
 		description: [
-			"翻记忆全文。scope=personal（默认）翻你自己的记忆；scope=project 翻项目记忆。",
+			"翻记忆全文。scope=personal（默认）翻你自己的记忆；scope=team 翻团队记忆。",
 			"可以只筛包含某个词的段落。",
 		].join(""),
 		parameters: Type.Object({
-			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 project（项目记忆）" })),
-			project: Type.Optional(Type.String({ description: "项目 slug；scope=project 时用。默认是我所在的项目" })),
+			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 team（团队记忆）" })),
+			team: Type.Optional(Type.String({ description: "团队 slug；scope=team 时用。默认是我所在的团队" })),
 			contains: Type.Optional(Type.String({ description: "只看包含这个词的段落" })),
 		}),
 		execute: async (args, api, context) => {
@@ -949,17 +870,17 @@ export function createCoreTools(deps: CoreToolDeps) {
 			const slug = await selfOf(deps, Number(api.conversationId), ctx);
 			if (slug === undefined) return text("你还不在名册里。");
 
-			if (args.scope === "project") {
+			if (args.scope === "team") {
 				const self = await readIdentity(deps.agentsRoot, slug);
-				const project = args.project ?? self?.project;
-				if (project === undefined) return text("我不在任何项目里。要看项目记忆，请说是哪个项目。");
-				const source = await readProjectMemory(deps.projectsRoot, project);
-				if (source === undefined) return text(`项目「${project}」还没有记忆。`);
+				const team = args.team ?? self?.team;
+				if (team === undefined) return text("我不在任何团队里。要看团队记忆，请说是哪个团队。");
+				const source = await readTeamMemory(deps.teamsRoot, team);
+				if (source === undefined) return text(`团队「${team}」还没有记忆。`);
 				if (args.contains === undefined || args.contains === "") return text(source);
-				const sections = projectMemorySections(source).filter(
+				const sections = teamMemorySections(source).filter(
 					(section) => section.heading.includes(args.contains as string) || section.body.includes(args.contains as string),
 				);
-				if (sections.length === 0) return text(`项目「${project}」的记忆里没有「${args.contains}」。`);
+				if (sections.length === 0) return text(`团队「${team}」的记忆里没有「${args.contains}」。`);
 				return text(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n"));
 			}
 
@@ -980,7 +901,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 			"执行一条 shell 命令，返回 stdout / stderr / 退出码。",
 			"用于：写代码文件、起服务、跑测试、装依赖。",
 			"命令以 & 结尾或以 nohup 开头时，后台运行并立即返回 PID（用于起服务）。",
-			"执行过程会记录到你的个人频道（老板能看到你在做什么）。",
 			"不要用 `sleep` 等别人：别人做完会在频道里说话并叫醒你，等消息来找你，别去追消息。",
 			"不确定能不能跑某条命令时，先看你的技能（`read_skill`）。",
 		].join(""),
@@ -1010,9 +930,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 				});
 				child.unref();
 				const pid = child.pid ?? -1;
-				const report = [`$ ${command}`, `(后台运行，PID ${pid}）`].join("\n");
-				await logWork(deps, slug, report, ctx);
-				return text(report);
+				return text([`$ ${command}`, `(后台运行，PID ${pid}）`].join("\n"));
 			}
 
 			// 前台命令：等它跑完。
@@ -1037,11 +955,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 				...(result.tooMuch ? ["（输出超过 512 KB，后面的被丢弃）"] : []),
 				`(退出码 ${result.code})`,
 			].join("\n");
-			// 两处都要剪，但剪的尺度不同：
-			// - 落进个人频道的那一条是给人看的，留头尾、中间省掉；
-			// - 回给模型的是它继续干活要用的，给得宽一些，但**绝不能全量**：
-			//   一次跑整个测试套件就能把 512 KB 塞进上下文，后面几轮全在付费读它。
-			await logWork(deps, slug, clip(buffer, CHANNEL_LIMIT), ctx);
+			// 剪的尺度：回给模型的是它继续干活要用的，给得宽一些，但**绝不能全量** ——
+			// 一次跑整个测试套件就能把 512 KB 塞进上下文，后面几轮全在付费读它。
 			return text(clip(buffer, MODEL_LIMIT));
 		},
 	});
@@ -1111,9 +1026,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 		listSkillsTool,
 		readSkillTool,
 		writeSkillTool,
-		listProjectsTool,
-		readProjectTool,
-		writeProjectTool,
+		listTeamsTool,
+		readTeamTool,
+		writeTeamTool,
 		run,
 		writeFileTool,
 		readFileTool,
@@ -1139,13 +1054,6 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
 		},
 	};
 }
-
-/**
- * 一条 `run` 输出落进个人频道的长度上限。
- *
- * 这个数字同时是「消息存多大」与「界面上一个折叠块展开有多长」。
- */
-const CHANNEL_LIMIT = 3_000;
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 const SAY_LIMIT = 1_200;
@@ -1191,7 +1099,7 @@ const MONOLOGUE_OPENERS = [
  * 判断一段 `say` 是不是模型在把「思考」当「发言」倒出来。
  *
  * 证据来自线上：agent 1136 条发言里 46% 是英文（苏澄 96%、温言 92%），长度中位数 195 字
- * 而老板是 15 字。老板的原话是「根本不像正常人之间沟通」。
+ * 而我是 15 字。我的原话是「根本不像正常人之间沟通」。
  *
  * 判据必须两道一起过，单看哪一道都会误伤：
  * - **以第一人称计划开头**（`Let me…` / `Now I'll…` / `I need to…`）—— 中文正文里夹英文
@@ -1251,41 +1159,9 @@ export function resolveInWorkspace(root: string, path: string): string | undefin
 }
 
 /**
- * 这条命令日志该不该落到频道里。
- *
- * 不该的情况只有一个但非常要紧：**老板的私聊**。`personalId(slug)` 在老板那里就是
- * `dm:owner-<slug>` —— 同一个频道。于是 `run` 每跑一条命令就往老板的对话里塞一行
- * `$ cd /Users/kirer/projects/...`，实测一个私聊里能堆到几百条，老板回复率因此掉到 1%
- * 量级（ADR-040 的审计数字）。投影管道管不到这里：`run` 的命令行是**直接写**进频道的，
- * 不经过 `projector.ts` 的投影（那条路 2026-10-30 起私聊也放行了 think/tool）。
- *
- * 命令输出不丢：`run` 的返回里本来就有全文，agent 要看自己翻；老板要看用 `read_channel`。
- * 抽成纯函数是为了能被直接验 —— 这条规则错了的表现是「私聊又变成日志墙」，
- * 需要真模型跑到才看得出来。
- */
-export function shouldLogWork(channel: Channel | undefined): boolean {
-	if (channel === undefined) return false;
-	return !(channel.id.startsWith("dm:") && channel.members.includes(OWNER));
-}
-
-/** 把执行结果记到个人频道（`kind:"work"`，不唤醒任何人）。老板的私聊除外。 */
-async function logWork(deps: CoreToolDeps, slug: string, report: string, ctx: Context): Promise<void> {
-	try {
-		const state = await readState(deps);
-		const channelId = personalId(slug);
-		if (!shouldLogWork(state.channels[channelId])) return;
-		await postMessage(
-			postDeps(deps, state, ctx),
-			{ channelId, from: slug, text: report, at: Date.now(), kind: "work", wake: false },
-			ctx,
-		);
-	} catch { /* 记录失败不影响返回结果 */ }
-}
-
-/**
  * slug → 会话句柄。名册里没有、或者会话已被删除时返回 undefined（不抛）。
  *
- * 找不到人不是错误：老板就是没有会话的，刚 hire 的人也可能还没开。
+ * 找不到人不是错误：我就是没有会话的，刚 hire 的人也可能还没开。
  */
 async function conversationOf(deps: CoreToolDeps, slug: string, context: Context) {
 	const directory = await deps.directory(context);

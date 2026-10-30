@@ -6,7 +6,15 @@
  * 所以宁可少抄、需要时再去后端确认。
  */
 
-export type ChannelKind = "company" | "leadership" | "project" | "dm";
+/**
+ * 会话只有两种形态，按成员推（后端 `chatKind`）：
+ *
+ * - `dm`：恰好我和一个人 —— 标题是对方的名字；
+ * - `group`：其余全部 —— 全员群、团队群、三个人以上的群都算。
+ *
+ * 没有「项目频道」「个人频道」这些分类：标题、头像、副标题全部从这两类里推。
+ */
+export type ChannelKind = "dm" | "group";
 
 export type Attachment = { id: string; name: string; kind: "image" | "file"; bytes: number };
 
@@ -14,10 +22,10 @@ export type Channel = {
 	id: string;
 	kind: ChannelKind;
 	owner?: string;
-	ownerLabel?: string;
+	leadLabel?: string;
 	doing?: string;
 	title: string;
-	project?: string;
+	team?: string;
 	unread: number;
 	mentions: number;
 	preview: string;
@@ -39,10 +47,6 @@ export type Message = {
 	mentions: Mention[];
 	replyTo?: { seq: number; from: number; fromSlug: string; fromLabel: string; excerpt: string };
 	read: boolean;
-	status?: "pending" | "done" | "error";
-	pendingFor?: string;
-	processing?: boolean;
-	startedAt?: number;
 	needsYou?: true;
 	attachments?: Attachment[];
 };
@@ -61,7 +65,7 @@ export type Actor = {
 	slug: string;
 	label: string;
 	title: string;
-	project?: string;
+	team?: string;
 	manager?: string;
 	managerLabel?: string;
 	body: string;
@@ -113,7 +117,7 @@ export type PersonProfile = {
 	slug: string;
 	label: string;
 	title: string;
-	project?: string;
+	team?: string;
 	manager: string;
 	managerLabel: string;
 	body: string;

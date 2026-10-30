@@ -2,8 +2,8 @@
  * 视图层的约定：**界面看到的东西，必须是文件里的事实**。
  *
  * 这一层最容易出的错不是崩溃，而是「显示得像真的、其实不是」：
- * - 项目频道显示成「3 人」，但负责人不在成员表里 → 员工在项目里 @ 不到拍板的人；
- * - dm 频道统一为一类 → 个人频道即工作台，不区分「个人」和「私聊」。
+ * - 团队频道显示成「3 人」，但团队管理员不在成员表里 → 员工在团队里 @ 不到拍板的人；
+ * - 私聊/群聊的区分必须按成员推 —— 看 id 前缀就会把「三人小群」显示成私聊。
  *
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
@@ -37,7 +37,7 @@ function stateOf(channels: Channel[], messages: Record<string, ChannelState["mes
 }
 
 const lin = { id: "dm:lin-owner", title: "林越", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
-const project = { id: "proj:坦克大战", title: "坦克大战", members: ["owner", "lin", "shen"], wakeOnAll: [], createdAt: AT };
+const team = { id: "team:坦克大战", title: "坦克大战", members: ["owner", "lin", "shen"], wakeOnAll: [], createdAt: AT };
 
 describe("侧栏预览只取人说的话", () => {
 	const msg = (seq: number, from: string, kind: string, text: string) =>
@@ -45,11 +45,11 @@ describe("侧栏预览只取人说的话", () => {
 
 	it("最新一条是命令输出时，预览仍显示前一句人话", () => {
 		// 实测现场的形态：林越说了句话，然后连着几条 `work` 记的是命令行。
-		// 拿最后一条当预览，侧栏整列变成 `$ cd /Users/kirer/projects/...`。
+		// 拿最后一条当预览，侧栏整列变成 `$ cd /Users/kirer/teams/...`。
 		const state = stateOf([lin], {
 			[lin.id]: [
 				msg(1, "lin", "say", "前端三项改完了，正在收测试。"),
-				msg(2, "lin", "work", "$ cd /Users/kirer/projects/ai-company && npm test"),
+				msg(2, "lin", "work", "$ cd /Users/kirer/teams/ai-company && npm test"),
 				msg(3, "lin", "tool", "run"),
 			],
 		});
@@ -73,7 +73,7 @@ describe("侧栏预览只取人说的话", () => {
 });
 
 describe("频道列表的投影", () => {
-	it("个人频道标成 personal，且给出是谁的个人频道", () => {
+	it("恰好两个人（我 + 一个人）就是私聊，标题是对方的名字", () => {
 		const state = stateOf([lin]);
 		const directory = directoryOf({ lin: "林越" });
 		const [channel] = channelList(state, directory);
@@ -81,25 +81,31 @@ describe("频道列表的投影", () => {
 		expect(channel.title).toBe("林越");
 	});
 
-	it("两人以上的 dm 仍然是 dm 类型", () => {
+	it("三人就是群聊 —— 哪怕 id 写成 dm:", () => {
 		const group = { id: "dm:a-b-c", title: "小群", members: ["owner", "lin", "shen"], wakeOnAll: [], createdAt: AT };
 		const state = stateOf([group]);
 		const [channel] = channelList(state, directoryOf({ lin: "林越", shen: "沈舟" }));
-		expect(channel.kind).toBe("dm");
+		expect(channel.kind).toBe("group");
 	});
 
-	it("项目频道带上负责人（来自项目文件，不是频道文档）", () => {
-		const state = stateOf([project]);
+	it("没有我的两人频道也是群聊（只看成员，不看 id）", () => {
+		const pair = { id: "dm:lin-shen", title: "对接", members: ["lin", "shen"], wakeOnAll: [], createdAt: AT };
+		const [channel] = channelList(stateOf([pair]), directoryOf({ lin: "林越", shen: "沈舟" }), "lin");
+		expect(channel.kind).toBe("group");
+	});
+
+	it("团队频道也是群聊，但仍然带上团队管理员（来自团队文件，不是频道文档）", () => {
+		const state = stateOf([team]);
 		const directory = directoryOf({ lin: "林越", shen: "沈舟" });
 		const [channel] = channelList(state, directory, "owner", (slug) => (slug === "坦克大战" ? "shen" : undefined));
-		expect(channel.kind).toBe("project");
-		expect(channel.project).toBe("坦克大战");
-		expect(channel.owner).toBe("shen");
-		expect(channel.ownerLabel).toBe("沈舟");
+		expect(channel.kind).toBe("group");
+		expect(channel.team).toBe("坦克大战");
+		expect(channel.lead).toBe("shen");
+		expect(channel.leadLabel).toBe("沈舟");
 	});
 
-	it("项目频道带上一句话现状 doing（来自项目文件）", () => {
-		const state = stateOf([project]);
+	it("团队频道带上一句话现状 doing（来自团队文件）", () => {
+		const state = stateOf([team]);
 		const [channel] = channelList(
 			state,
 			directoryOf({ lin: "林越", shen: "沈舟" }),
@@ -110,57 +116,57 @@ describe("频道列表的投影", () => {
 		expect(channel.doing).toBe("沈舟在改 doing 链路");
 	});
 
-	it("没有 doing 时列表里不带这个键，非项目频道也不带", () => {
-		const state = stateOf([project, lin]);
+	it("没有 doing 时列表里不带这个键，非团队频道也不带", () => {
+		const state = stateOf([team, lin]);
 		const list = channelList(state, directoryOf({ lin: "林越" }), "owner", () => undefined, () => undefined);
 		expect("doing" in list[0]!).toBe(false);
 		const dm = list.find((channel) => channel.kind === "dm")!;
 		expect("doing" in dm).toBe(false);
 	});
 
-	it("没有负责人的项目不编造一个", () => {
-		const state = stateOf([project]);
+	it("没有团队管理员的团队不编造一个", () => {
+		const state = stateOf([team]);
 		const [channel] = channelList(state, directoryOf({}), "owner", () => undefined);
-		expect(channel.owner).toBeUndefined();
-		expect(channel.ownerLabel).toBeUndefined();
+		expect(channel.lead).toBeUndefined();
+		expect(channel.leadLabel).toBeUndefined();
 	});
 });
 
 describe("频道详情的投影", () => {
-	it("项目成员的角色：老板 / 负责人 / 成员三种", () => {
-		const state = stateOf([project]);
-		const detail = channelDetail(state, project, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			projectOwnerOf: (slug) => (slug === "坦克大战" ? "shen" : undefined),
+	it("团队成员的角色：我 / 团队管理员 / 成员三种", () => {
+		const state = stateOf([team]);
+		const detail = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {
+			teamLeadOf: (slug) => (slug === "坦克大战" ? "shen" : undefined),
 		});
 		const roles = Object.fromEntries(detail.members.map((member) => [member.slug, member.role]));
 		expect(roles).toEqual({ owner: "owner", lin: "member", shen: "lead" });
 	});
 
 	it("详情也带出 doing；没有就不带这个键", () => {
-		const state = stateOf([project]);
-		const withDoing = channelDetail(state, project, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			projectOwnerOf: () => "shen",
-			projectDoingOf: () => "沈舟在改 doing 链路",
+		const state = stateOf([team]);
+		const withDoing = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {
+			teamLeadOf: () => "shen",
+			teamDoingOf: () => "沈舟在改 doing 链路",
 		});
 		expect(withDoing.channel.doing).toBe("沈舟在改 doing 链路");
-		const withoutDoing = channelDetail(state, project, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			projectOwnerOf: () => "shen",
+		const withoutDoing = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {
+			teamLeadOf: () => "shen",
 		});
 		expect("doing" in withoutDoing.channel).toBe(false);
 	});
 
-	it("负责人不在成员里时，没人被标成 lead", () => {
-		const unbalanced = { ...project, members: ["owner", "lin"] };
+	it("团队管理员不在成员里时，没人被标成 lead", () => {
+		const unbalanced = { ...team, members: ["owner", "lin"] };
 		const state = stateOf([unbalanced]);
 		const detail = channelDetail(state, unbalanced, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			projectOwnerOf: () => "shen",
+			teamLeadOf: () => "shen",
 		});
 		expect(detail.members.some((member) => member.role === "lead")).toBe(false);
-		expect(detail.channel.owner).toBe("shen");
+		expect(detail.channel.lead).toBe("shen");
 	});
 });
 
-describe("T-013：个人频道的投影镜像不点亮 @ 红点，真实私聊 @ 仍计数", () => {
+describe("私聊里的 @ 红点：统一按未读与 mention 算，不再按消息 kind 特判", () => {
 	const AT = 1_700_000_000_000;
 	function withMessages(channelId: string, msgs: { from: string; text: string; kind?: string; at?: number; mentions?: string[] }[]) {
 		const base = { id: channelId, title: channelId, members: ["owner", "gu"], wakeOnAll: [], createdAt: AT };
@@ -177,40 +183,17 @@ describe("T-013：个人频道的投影镜像不点亮 @ 红点，真实私聊 @
 		return stateOf([base], messages);
 	}
 
-	it("群回复被投影进个人频道（kind=say）时，老板的个人频道 mentions 不计", () => {
+	it("私聊里 @ 我照样计数（历史库里残留的过程消息不再特判）", () => {
 		const state = withMessages("dm:owner-gu", [
 			{ from: "gu", text: "@owner 我在群里回你了", kind: "say", mentions: ["owner"] },
 		]);
 		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
 		const dm = list.find((c) => c.id === "dm:owner-gu")!;
-		expect(dm.mentions).toBe(0);
-		// 但 unread 仍计入（老板确实没读这条投影）
+		expect(dm.mentions).toBe(1);
 		expect(dm.unread).toBe(1);
 	});
 
-	it("真实在私聊里 @ 老板（kind=chat）仍计数，口径 A 不倒退", () => {
-		const state = withMessages("dm:owner-gu", [
-			{ from: "gu", text: "@owner 老板看这条", kind: "chat", mentions: ["owner"] },
-		]);
-		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
-		const dm = list.find((c) => c.id === "dm:owner-gu")!;
-		expect(dm.mentions).toBe(1);
-	});
-	it("B 处理中占位：messageView 把 processing 透传给前端（私聊助理场景）", () => {
-		const channel = { id: "dm:owner-lin", title: "林越", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
-		const state = stateOf([channel], {
-			"dm:owner-lin": [
-				{ seq: 1, from: "owner", at: AT, text: "在吗", kind: "chat", mentions: [] },
-				{ seq: 2, from: "lin", at: AT + 1, text: "开始处理…", kind: "chat", status: "pending", pendingFor: "lin", processing: true, mentions: [] },
-			],
-		});
-		const view = messageView(state, channel, state.messages["dm:owner-lin"][1], directoryOf({ lin: "林越" }), "owner");
-		expect(view.processing).toBe(true);
-		expect(view.pendingFor).toBe("lin");
-	});
-
-
-	it("群频道里的 @ 老板照常计数（与 013 无关的普通场景）", () => {
+	it("群频道里的 @ 我照常计数（与 013 无关的普通场景）", () => {
 		const state = withMessages("all", [
 			{ from: "gu", text: "@owner 群里叫你", kind: "chat", mentions: ["owner"] },
 		]);

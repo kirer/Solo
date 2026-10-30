@@ -28,12 +28,12 @@ async function setup(): Promise<{ shell: CoreShell; agentsRoot: string; models: 
 	const root = await mkdtemp(join(tmpdir(), "core-shell-"));
 	roots.push(root);
 	const agentsRoot = join(root, "agents");
-	const projectsRoot = join(root, "projects");
+	const teamsRoot = join(root, "teams");
 	const { models: configured } = setupModels(process.env, { workspace: root });
 	const runtime = await openCore({ databasePath: join(root, "core.sqlite"), models: configured, registry: createRegistry() });
 	runtimes.push(runtime);
 	const models = { provider: "test", modelId: "test" };
-	const shell = await assembleCore(runtime.harness, runtime.registry, { agentsRoot, projectsRoot, defaultModel: models });
+	const shell = await assembleCore(runtime.harness, runtime.registry, { agentsRoot, teamsRoot, defaultModel: models });
 	return { shell, agentsRoot, models };
 }
 
@@ -69,7 +69,7 @@ describe("外壳装配", () => {
 		const state = await channels(shell);
 		expect(state.channels.all?.members).toContain(identity.slug);
 
-		// 老板 @ 他：收件人里必须有他（这正是「招了人但叫不动」的那个 bug）。
+		// 我 @ 他：收件人里必须有他（这正是「招了人但叫不动」的那个 bug）。
 		const targets = recipientsOf(state.channels.all!, {
 			seq: 1,
 			from: "owner",
@@ -81,10 +81,10 @@ describe("外壳装配", () => {
 		expect(targets).toContain(identity.slug);
 	});
 
-	it("老板在哪个频道叫醒某人，就记下那个频道", async () => {
+	it("我在哪个频道叫醒某人，就记下那个频道", async () => {
 		// 回归：`ownerSpeak` 曾经没传 `rememberWake`，于是被叫的人回话时查不到
 		// 「是在哪儿被叫的」，只能退到「我最早的那个频道」—— 那往往是个人频道。
-		// 结果老板在公司频道问、对方在私聊里答，问的人在原频道什么都看不到。
+		// 结果我在公司频道问、对方在私聊里答，问的人在原频道什么都看不到。
 		const { shell, agentsRoot } = await setup();
 		const { createAgent } = await import("../../src/core/agent/create.ts");
 		const { DirectoryDoc } = await import("../../src/core/agent/roster.ts");
@@ -118,7 +118,7 @@ describe("外壳装配", () => {
 		runtimes.push(runtime2);
 		const shell2 = await assembleCore(runtime2.harness, runtime2.registry, {
 			agentsRoot,
-			projectsRoot: join(agentsRoot, "..", "projects"),
+			teamsRoot: join(agentsRoot, "..", "teams"),
 			defaultModel: models,
 		});
 		const identities = await readAllIdentities(agentsRoot);
