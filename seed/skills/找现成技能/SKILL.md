@@ -15,25 +15,14 @@ description: 缺一门手艺、或者不确定该怎么做一件事时，先去�
 
 ## 怎么做
 
-1. 先看手上有什么：`skills(action=list)` 列出全公司的技能（公司层 + 你自己的），也许已经有了。
+1. 先看手上有什么：翻一遍技能目录（公司层 + 你自己的），也许已经有了。
 2. 没有就搜：
 
-   ```
-   run command="npx skills find <关键词>"
-   ```
-
-   它会去 skills.sh 的市场里搜，返回一串 `owner/名字`。
+   跑 `npx skills find <关键词>`，它会去 skills.sh 的市场里搜，返回一串 `owner/名字`。
 3. 看到合适的就装到一个临时目录：
 
-   ```
-   run command="npx skills add <owner/名字> --yes" cwd="/tmp/skills-staging"
-   ```
-
-   装完把技能目录拷进公司层 `<workspace>/skills/`：
-
-   ```
-   run command="cp -r /tmp/skills-staging/.agents/skills/<名字> <workspace>/skills/"
-   ```
+   在 `/tmp/skills-staging` 里跑 `npx skills add <owner/名字> --yes`，再把技能目录拷进公司层
+   `<workspace>/skills/`：`cp -r /tmp/skills-staging/.agents/skills/<名字> <workspace>/skills/`。
 
    装进的是**公司层**，所有人立刻看得见、下一条消息就生效。
 
@@ -44,10 +33,9 @@ description: 缺一门手艺、或者不确定该怎么做一件事时，先去�
 
 所以装完做三件事：
 
-1. `skills(action=read)` 读一遍，看它有没有跟我们冲突的地方。
-2. 有冲突就 `skills(action=write, scope=personal)` 写一份自己的版本改掉 —— 个人层覆盖公司层，
-   不污染别人的做法。
-3. 确实是我们全公司都该改的，就 `skills(action=write, scope=company)` 重写那一份。
+1. 读一遍，看它有没有跟我们冲突的地方。
+2. 有冲突就写一份自己的版本（个人层）改掉 —— 个人层覆盖公司层，不污染别人的做法。
+3. 确实是我们全公司都该改的，就重写公司层那一份。
 
 ## 怎么算做对了
 
