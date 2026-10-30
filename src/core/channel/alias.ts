@@ -53,7 +53,7 @@ export const EMPTY_ROSTER: MentionRoster = { owner: OWNER_SLUG, agents: [] };
 const OWNER_ALIASES: readonly string[] = ["owner", "老大", "老板", "boss", "我", "you", "你自己"];
 
 /** 别名归一：去 `@`、去首尾空格、全角转半角（`ＣＥＯ` → `CEO`）、转小写。 */
-export function normalizeAlias(raw: string): string {
+function normalizeAlias(raw: string): string {
 	return raw
 		.normalize("NFKC")
 		.trim()

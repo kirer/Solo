@@ -43,6 +43,7 @@ async function setup(): Promise<{
 	tools: readonly { name: string; execute?: (...args: never[]) => Promise<unknown> }[];
 	call: (name: string, args: Record<string, unknown>) => Promise<string>;
 	root: string;
+	runtime: CoreRuntime;
 }> {
 	const root = await mkdtemp(join(tmpdir(), "core-tools-"));
 	roots.push(root);
@@ -107,6 +108,7 @@ async function setup(): Promise<{
 			return result?.output?.[0]?.text ?? "";
 		},
 		root,
+		runtime,
 	};
 }
 
@@ -144,6 +146,32 @@ describe("chats", () => {
 		const output = await call("chats", { action: "read", channel: TEAM });
 		expect(output).toContain("连接池调到 20");
 		expect(output).toContain("已标记到 #1 为已读");
+	});
+
+	it("action=read 走 markRead：游标既不越界也不往回拉", async () => {
+		const { call, runtime } = await setup();
+		// 先造一个越界的旧游标。旧写法是 `doc.readMarks[slug][频道] = last.seq`，无条件覆盖：
+		// 一次被 `since` 过滤过的读就能把游标从 999999 拉回 #1，读过的消息全部重新变红。
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			doc.readMarks[ME] = { [TEAM]: 999_999 };
+		}, BACKGROUND_CONTEXT);
+		await call("chats", { action: "read", channel: TEAM });
+		const after = (await runtime.harness.snapshot(ChannelDoc)) as ChannelState;
+		expect(after.readMarks[ME]?.[TEAM]).toBe(999_999);
+	});
+
+	it("action=read 之后来的消息仍然算未读", async () => {
+		const { call, runtime } = await setup();
+		await call("chats", { action: "read", channel: TEAM });
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const added = appendMessage(doc, TEAM, { from: OWNER, text: "连接池调到 50", at: 20 });
+			doc.messages[TEAM] = [...(doc.messages[TEAM] ?? []), added.message];
+			doc.nextSeq[TEAM] = added.message.seq + 1;
+		}, BACKGROUND_CONTEXT);
+		// 游标被写成「以后全已读」的话，这个红点永远不会再出现。
+		expect(await call("chats", {})).toContain("1 条未读");
 	});
 
 	it("不认识的 action 列出合法值", async () => {
@@ -275,6 +303,56 @@ describe("me", () => {
 		const { call } = await setup();
 		const output = await call("me", { action: "rename" });
 		expect(output).toContain("action 只有 show / update");
+	});
+});
+
+describe("写盘前先脱敏", () => {
+	const KEY = "{{SECRET_quvz7n3k}}";
+
+	async function withSecret(root: string): Promise<void> {
+		await writeFile(join(root, ".secrets.json"), JSON.stringify({ FAKE_KEY: KEY }), "utf8");
+	}
+
+	it("me action=update 写进 identity.md 的是马赛克", async () => {
+		const { call, root } = await setup();
+		await withSecret(root);
+		await call("me", { action: "update", body: `部署用这个 key：${KEY}` });
+		const source = await readFile(join(root, "agents", ME, "identity.md"), "utf8");
+		// identity.md 每轮都进提示词：原值写进去就是**每一轮**都发给模型，不可逆。
+		expect(source).not.toContain(KEY);
+		expect(source).toContain("[密钥已隐藏]");
+	});
+
+	it("skills action=write 写进 SKILL.md 的是马赛克", async () => {
+		const { call, root } = await setup();
+		await withSecret(root);
+		await call("skills", {
+			action: "write",
+			name: "调接口",
+			description: "调那个接口时用。",
+			body: `curl -H 'Authorization: ${KEY}'`,
+		});
+		const source = await readFile(join(root, "agents", ME, "skills", "调接口", "SKILL.md"), "utf8");
+		expect(source).not.toContain(KEY);
+		expect(source).toContain("[密钥已隐藏]");
+	});
+
+	it("write_team 写进 README.md 的是马赛克", async () => {
+		const { call, root } = await setup();
+		await withSecret(root);
+		await call("write_team", { slug: "alpha", body: `目标：把网页做到能看。\n\n数据库密码：${KEY}` });
+		const source = await readFile(join(root, "teams", "alpha", "README.md"), "utf8");
+		expect(source).not.toContain(KEY);
+		expect(source).toContain("[密钥已隐藏]");
+	});
+
+	it("remember scope=team 写进 memory.md 的是马赛克", async () => {
+		const { call, root } = await setup();
+		await withSecret(root);
+		await call("remember", { scope: "team", text: `以后用这个 key 连库：${KEY}` });
+		const source = await readFile(join(root, "teams", "alpha", "memory.md"), "utf8");
+		expect(source).not.toContain(KEY);
+		expect(source).toContain("[密钥已隐藏]");
 	});
 });
 

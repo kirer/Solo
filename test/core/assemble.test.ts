@@ -7,7 +7,7 @@
  * 3. 我 @ 谁，谁就被唤醒（且只有他）。
  * 4. 我不是 agent，不会被投递（也没有会话）。
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -160,6 +160,49 @@ describe("我说话", () => {
 			const view = await lin!.context(undefined as never).catch(() => undefined);
 			// 不强制断言 context 内容：投递是异步 task，能读到会话本身已足够。
 			expect(view === undefined || Array.isArray(view.messages)).toBe(true);
+		} finally {
+			await opened.close();
+		}
+	});
+
+	test("装配之后加的人：@ 得到他，投递摘要里也是名字不是 slug", async () => {
+		const root = await workspace();
+		const agents = join(root, "agents");
+		await createAgent({ root: agents, name: "林越", manager: "owner" });
+
+		const opened = await env(root);
+		try {
+			const shell = await assembleCore(opened.harness, opened.registry, {
+				agentsRoot: agents,
+				teamsRoot: join(root, "teams"),
+			});
+			// 装配之后才出现的人（另一个进程招的 / 手工加的目录 / 别处 rescan 过）：
+			// 装配期那份 `shell.directory` 里没有他。旧代码只读那一份，于是「我视角里没这个人」。
+			const dir = join(agents, "shenzhou");
+			await mkdir(dir, { recursive: true });
+			await writeFile(
+				join(dir, "identity.md"),
+				"---\nname: 沈舟\ntitle: 前端开发\nmanager: 林越\n---\n\n写小恐龙。\n",
+				"utf8",
+			);
+			// 模拟「另一个进程已经 rescan 过」：频道成员里有他、名册文档里有他的会话映射，
+			// 但**本进程**装配期那份 `shell.directory` 里没有他。旧代码只读那一份，
+			// 于是投递去找人时找不到，留痕里连名字都退回 slug。
+			await opened.harness.commit(async (tx) => {
+				const channels = (await tx.doc(ChannelDoc)) as ChannelState;
+				const all = channels.channels.all;
+				if (all !== undefined) channels.channels.all = { ...all, members: [...all.members, "shenzhou"] };
+				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+				doc.slugToConversation = { ...doc.slugToConversation, shenzhou: 4242 };
+				doc.conversationToSlug = { ...doc.conversationToSlug, "4242": "shenzhou" };
+			}, BACKGROUND_CONTEXT);
+			const sent = await ownerSpeak(shell, { channelId: "all", text: "@沈舟 看下首页" });
+			expect(sent.seq).toBe(1);
+			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
+			expect(state.messages.all?.[0]?.mentions).toEqual(["shenzhou"]);
+			// 他还没有会话（没人打开过他）：留痕要说清，而且 `@…` 得是当下的名字。
+			const note = (state.messages.all ?? []).find((message) => message.kind === "note");
+			expect(note?.text ?? "").toContain("@沈舟");
 		} finally {
 			await opened.close();
 		}

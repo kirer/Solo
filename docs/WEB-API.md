@@ -221,8 +221,7 @@ type ViewMessage = {
 - `kind` 由**说话的人自己声明**。团队频道（`team:<slug>`）里的消息会进团队记忆的沉淀
   队列（`src/core/team/settle.ts`）。
 - 投递是异步的：`delivered` / `failed` 是本条消息唤醒了几个人，**不是**他们的回答。
-- 前端拿到响应后不要自己插一条消息，等 SSE 推新快照（`ui/app/src/lib/messages.ts` 的
-  `localEcho()` 只做「已经落库」的乐观显示，不制造一条假消息）。
+- 前端拿到响应后不要自己插一条消息，等 SSE 推新快照（不制造一条假消息）。
 
 这里**没有**过程投影的 `kind` 了（`think` / `tool` / `say` 投影 / `work`）：运行时不再
 订阅会话提交往频道里写思考或工具卡（ADR-081）。历史库里的这些消息还在，读的时候当
@@ -271,8 +270,8 @@ type ViewMessage = {
 ```
 
 判定在 `src/core/view/index.ts` 的 `needsYou(message)`：**不是我自己发的**，且
-`mentions` 里有 `owner`（由 `say` 的 `decision` 或 `channel/state.ts` 的 `needsOwner()`
-自动补上，ADR-037）。只收「说出口的话」（`chat` / `say` / `question` / `decision` /
+`mentions` 里有 `owner`（由 `say` 自动补：正文显式 @我，或 `kind=decision`
+且没点别人，ADR-037）。只收「说出口的话」（`chat` / `say` / `question` / `decision` /
 `report`），窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——
 我要能回头看「哪些还没理」。
 

@@ -1,10 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-	renderSettlePrompt,
-	settleCandidates,
-	settleKey,
-	type SettleCandidate,
-} from "../../src/core/team/memory.ts";
+import { renderSettlePrompt, settleCandidates, type SettleCandidate } from "../../src/core/team/memory.ts";
 import { settleTarget } from "../../src/core/team/settle.ts";
 import type { Identity } from "../../src/core/agent/identity.ts";
 import type { TeamDoc } from "../../src/core/team/doc.ts";
@@ -22,7 +17,6 @@ const team = (lead?: string): TeamDoc => ({
 	name: "alpha",
 	status: "active",
 	body: "",
-	dir: "/tmp/alpha",
 	...(lead === undefined ? {} : { lead }),
 });
 
@@ -89,11 +83,6 @@ describe("团队记忆自动沉淀：哪些消息算数", () => {
 		expect(prompt).toContain("记忆整理");
 		expect(prompt).toContain("teams/alpha/memory.md");
 		expect(prompt).not.toContain("不写过程");
-	});
-
-	it("游标键按团队分", () => {
-		expect(settleKey("alpha")).toBe("settle:alpha");
-		expect(settleKey("beta")).not.toBe(settleKey("alpha"));
 	});
 });
 

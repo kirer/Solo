@@ -234,14 +234,14 @@ export type CompactionSettingsLike = CompactionPolicyLike & {
  * **为什么不能沿用底座的 16384**：那是给 200k 模型的 8%，放到 32k 的小模型上就是
  * 一半窗口，放到 1M 上又等于没留余量——必须跟着窗口走。
  */
-export const COMPACTION_RESERVE_RATIO = 0.15;
+const COMPACTION_RESERVE_RATIO = 0.15;
 
 /** 最近多少 token 原文不压（判定「压到哪儿」用）。按窗口的 10%，但不少于 8192。 */
-export const COMPACTION_KEEP_RECENT_RATIO = 0.1;
-export const COMPACTION_KEEP_RECENT_FLOOR = 8_192;
+const COMPACTION_KEEP_RECENT_RATIO = 0.1;
+const COMPACTION_KEEP_RECENT_FLOOR = 8_192;
 
 /** 后台压缩提前量：距阻塞阈值还有 5% 窗口就开始在后台压，不堵这一轮说话。 */
-export const COMPACTION_BACKGROUND_RATIO = 0.05;
+const COMPACTION_BACKGROUND_RATIO = 0.05;
 
 /** 一个上下文窗口对应的压缩策略。纯函数。 */
 export function compactionPolicyFor(contextWindow: number): CompactionPolicyLike {

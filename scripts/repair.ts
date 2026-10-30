@@ -30,7 +30,6 @@ async function main(): Promise<void> {
 		agentsRoot,
 		teamsRoot,
 		defaultModel: setupModels(process.env, { workspace }).defaultModel,
-		ownerName: "我",
 	});
 
 	const ctx = BACKGROUND_CONTEXT;

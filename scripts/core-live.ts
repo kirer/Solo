@@ -79,7 +79,6 @@ async function main(): Promise<void> {
 		agentsRoot,
 		teamsRoot,
 		defaultModel: picked,
-		ownerName: "我",
 	});
 
 	const phases: Phase[] = [];

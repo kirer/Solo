@@ -12,7 +12,7 @@
 
 import { isNeed } from "../rows.ts";
 import type { Message } from "../api/types.ts";
-import { dayLabel, relTime, sameDay } from "../lib/format.ts";
+import { clockTime, dayLabel, sameDay } from "../lib/format.ts";
 
 /** 说人话的 kind 走 say 行。其余（含历史里的 think/tool/work）不走这一行。 */
 const SAY_KINDS = new Set(["say", "chat", "report", "decision", "question"]);
@@ -54,9 +54,7 @@ export type BuildInput = {
 
 /** 时间分隔上的字：今天只写时刻，昨天写「昨天 HH:MM」，更早写「M月D日」。 */
 function dividerLabel(at: number, now: number): string {
-	const day = dayLabel(at, now);
-	const time = new Date(at).toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
-	return `${day} ${time}`;
+	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
 export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
@@ -105,6 +103,3 @@ export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
 
 	return rows;
 }
-
-/** 相对时间（列表里用）。抽在这里是为了让测试能传固定的 now。 */
-export const relativeTime = relTime;

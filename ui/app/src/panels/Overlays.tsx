@@ -1,11 +1,12 @@
 /**
- * 全部浮层：设置、找你清单、团队、灯箱、toast。
+ * 全部浮层：设置、找你清单、团队、toast。
+ *
+ * 灯箱不在这里：图片放大在 `App.tsx`（它拿的是 `Stream` 的 `onImage`）。
  *
  * 规矩只有一条：**同一时刻只开一个**。三处状态（settings/team/needMenu）由
  * `store` 的 `setSettings`/`setTeam`/`setNeedMenu` 互斥，这里只负责画。
  */
 
-import { useEffect, useState } from "react";
 import { avatarSvg } from "../lib/avatar.ts";
 import { relTime } from "../lib/format.ts";
 import { openChannel, setLayout, setNeedMenu, setSettings, setTeam, setTheme } from "../state/store.ts";
@@ -68,7 +69,6 @@ export function Overlays(props: {
 					</div>
 				))}
 			</div>
-			<Lightbox />
 		</>
 	);
 }
@@ -185,7 +185,7 @@ function SettingsSheet(props: { layout: Layout; theme: Theme }): JSX.Element {
 									key={item.value}
 									className="opt"
 									data-layout={item.value}
-									aria-pressed={props.layout === item.value}
+									aria-checked={props.layout === item.value}
 									onClick={() => setLayout(item.value)}
 								>
 									<span className="opt-ico">{item.icon}</span>
@@ -208,7 +208,7 @@ function SettingsSheet(props: { layout: Layout; theme: Theme }): JSX.Element {
 									key={item.value}
 									className="opt"
 									data-theme-mode={item.value}
-									aria-pressed={props.theme === item.value}
+									aria-checked={props.theme === item.value}
 									onClick={() => setTheme(item.value)}
 								>
 									<span className="opt-ico">{item.icon}</span>
@@ -274,48 +274,6 @@ function TeamSheet(): JSX.Element {
 				<div className="team-foot">共 {people.length} 人</div>
 			</div>
 		</section>
-	);
-}
-
-/* ── 灯箱 ────────────────────────────────────────────────────────────── */
-
-function Lightbox(): JSX.Element | null {
-	const [src, setSrc] = useState<string | null>(null);
-
-	useEffect(() => {
-		const onClick = (event: MouseEvent): void => {
-			const target = event.target;
-			if (!(target instanceof HTMLImageElement)) return;
-			if (!target.closest(".md")) return;
-			if (target.dataset["lightbox"] === undefined && target.closest("[data-lightbox]") === null) return;
-			if (target.src === "") return;
-			event.preventDefault();
-			setSrc(target.src);
-		};
-		const onKey = (event: KeyboardEvent): void => {
-			if (event.key === "Escape") setSrc(null);
-		};
-		// capture 阶段：Markdown 生成的 `<a><img></a>` 里点击会被链接先吃掉。
-		document.addEventListener("click", onClick, true);
-		document.addEventListener("keydown", onKey);
-		return () => {
-			document.removeEventListener("click", onClick, true);
-			document.removeEventListener("keydown", onKey);
-		};
-	}, []);
-
-	if (src === null) return <div className="lightbox" id="lightbox" hidden />;
-	return (
-		<div
-			className="lightbox"
-			id="lightbox"
-			onClick={() => setSrc(null)}
-			role="dialog"
-			aria-modal="true"
-			aria-label="查看图片"
-		>
-			<img id="lightbox-img" src={src} alt="" />
-		</div>
 	);
 }
 

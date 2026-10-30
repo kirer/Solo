@@ -9,7 +9,6 @@ import {
 	teamMemorySections,
 	readTeamMemory,
 	settleCandidates,
-	writeTeamMemory,
 } from "../../src/core/team/memory.ts";
 
 let teams = "";
@@ -60,14 +59,6 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 		expect(await readTeamMemory(teams, "alpha")).toContain("alpha 的事");
 		expect(await readTeamMemory(teams, "alpha")).not.toContain("beta 的事");
 		expect(await readTeamMemory(teams, "beta")).toContain("beta 的事");
-	});
-
-	it("整篇替换：能改掉错的结论，而不是只能追加", async () => {
-		await appendTeamMemory(teams, "alpha", { text: "旧结论" });
-		await writeTeamMemory(teams, "alpha", "# 团队记忆：alpha\n\n## 2026-10-27\n新结论\n");
-		const source = await readTeamMemory(teams, "alpha");
-		expect(source).toContain("新结论");
-		expect(source).not.toContain("旧结论");
 	});
 
 	it("摘要只给标题 + 首行，不给全文", async () => {

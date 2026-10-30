@@ -11,12 +11,12 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Attachment } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
-import { clockTime, copyText } from "../lib/format.ts";
+import { clockTime, copyText, humanBytes } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
+import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
-import { loadEarlier, openChannel, setReply } from "../state/store.ts";
-import type { Presence } from "../state/store.ts";
+import { loadEarlier, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const COPY_ICON =
@@ -128,9 +128,19 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 		void loadEarlier();
 	}, [hasMore, loadingEarlier, rememberAnchor]);
 
-	const copy = useCallback((node: HTMLElement) => {
-		const body = node.querySelector(".md")?.textContent ?? "";
-		void copyText(body).then((ok) => {
+	/**
+	 * 双击整行复制正文。
+	 *
+	 * 代码块里的「复制」按钮在 `.md` 里也占文字，所以先拿一份去掉按钮的副本再读
+	 * `textContent`，否则剪贴板里会多出两个「复制」字。
+	 */
+	const copy = useCallback((node: HTMLElement): void => {
+		const body = node.querySelector(".md");
+		const clean = body?.cloneNode(true);
+		if (clean instanceof HTMLElement) {
+			for (const button of clean.querySelectorAll(`.${CODE_COPY_CLASS}`)) button.remove();
+		}
+		void copyText(clean?.textContent ?? "").then((ok) => {
 			if (!ok) return;
 			const button = node.querySelector<HTMLElement>('[data-act="copy"]');
 			if (button === null) return;
@@ -147,7 +157,7 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 		<>
 			<div className="flow" id="flow" ref={flowRef}>
 				<div className="flow-inner" id="flow-inner">
-					<div className="flow-top" id="flow-top" data-active={hasMore ? "true" : "false"} ref={undefined}>
+					<div className="flow-top" id="flow-top" data-active={hasMore ? "true" : "false"}>
 						{hasMore ? (
 							<button type="button" className="load-earlier" onClick={onTop} disabled={loadingEarlier}>
 								{loadingEarlier ? "正在读更早的…" : "加载更早的消息"}
@@ -321,7 +331,7 @@ function Attachments(props: {
 								</svg>
 							</span>
 							<span className="attach-name">{item.name}</span>
-							<span className="attach-size">{Math.max(1, Math.round(item.bytes / 1024))} KB</span>
+							<span className="attach-size">{humanBytes(item.bytes)}</span>
 						</a>
 					))}
 				</div>
@@ -387,6 +397,3 @@ function Empty(_props: { channelId: string }): JSX.Element {
 		</div>
 	);
 }
-
-export { openChannel };
-export type { Presence };

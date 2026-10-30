@@ -15,6 +15,7 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { planAttachments } from "./attach.ts";
 import { clearSpoken } from "./speech.ts";
 import { watchSettled } from "./unanswered.ts";
+import { oneLine } from "../oneline.ts";
 import {
 	type Channel,
 	type ChannelState,
@@ -59,7 +60,7 @@ export type DeliverIssue = {
 	readonly detail?: string;
 };
 
-export type DeliverOptions = {
+type DeliverOptions = {
 	/**
 	 * 每个人各自的未读摘要，**在调用方提交之前**就算好。
 	 *
@@ -474,7 +475,3 @@ export async function liveConversations(
 	return busy;
 }
 
-function oneLine(text: string, max: number): string {
-	const flat = text.replace(/\s+/g, " ").trim();
-	return flat.length <= max ? flat : `${flat.slice(0, max - 1)}…`;
-}

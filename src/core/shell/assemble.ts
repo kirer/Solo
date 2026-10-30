@@ -30,29 +30,29 @@ import {
 	OWNER,
 	chatKind,
 	channelsOf,
-	ensureChannel,
 	teamId,
+	upsertChannel,
 	type Attachment,
 	type ChannelState,
 	type Message,
 } from "../channel/state.ts";
 import { uploadsRootOf } from "../channel/uploads.ts";
+import { postMessage } from "../channel/post.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 import { DirectoryDoc, conversationFor, emptyDirectory, type DirectoryState } from "../agent/roster.ts";
 import { settleTeam } from "../team/settle.ts";
 import { startAnswerRescue } from "./rescue.ts";
+import { labelIn } from "../view/index.ts";
 import type { CoreServices } from "../app/types.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
-export type CoreShellOptions = {
+type CoreShellOptions = {
 	/** `workspace/agents`。每个 agent 一个文件夹。 */
 	readonly agentsRoot: string;
 	/** `workspace/teams`。 */
 	readonly teamsRoot: string;
 	/** 公司频道 id。 */
 	readonly companyChannel?: string;
-	/** 我显示名。只用于渲染。 */
-	readonly ownerName?: string;
 	/**
 	 * 会话默认模型。
 	 *
@@ -266,15 +266,19 @@ export async function assembleCore(
 		return created;
 	}
 
-	/** 把人加进公司频道（幂等）。 */
+	/**
+	 * 把人加进公司频道（幂等）。
+	 *
+	 * 「有则并成员、无则建」的规矩只在 `channel/state.ts` 的 `upsertChannel` 里写一次；
+	 * 公司频道不存在时这里什么都不做（它由播种建，招人只是往里加人）。
+	 */
 	async function addToCompanyChannel(slug: string, ctx: Context): Promise<void> {
 		await harness.commit(async (tx) => {
 			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 			const channel = doc.channels[companyChannel];
 			if (channel === undefined) return;
-			if (channel.members.includes(slug)) return;
 			// 整体替换，不就地 push：读出来的是副本，就地改不产生 op。
-			doc.channels[companyChannel] = { ...channel, members: [...channel.members, slug] };
+			Object.assign(doc, upsertChannel(doc, { id: companyChannel, title: channel.title, members: [slug], at: Date.now() }));
 		}, ctx);
 	}
 
@@ -338,13 +342,11 @@ export async function assembleCore(
 			const existing = state.channels[id];
 			const title = doc?.name ?? team;
 			if (existing === undefined) {
-				// 频道还不存在：建。
-				Object.assign(
-					state,
-					ensureChannel(state, { id, title, members, wakeOnAll, at: Date.now() }),
-				);
+				// 频道还不存在：建（同一个 `upsertChannel`，这里只是它的建群那一半）。
+				Object.assign(state, upsertChannel(state, { id, title, members, wakeOnAll, at: Date.now() }));
 			} else {
 				// 已存在：成员表整体替换为事实投影（去幽灵、补统筹），唤醒表同理。
+				// 这一步**不能**交给 `upsertChannel`：它只加不删，而这里要的是精确重算。
 				state.channels[id] = { ...existing, members, title, wakeOnAll };
 			}
 		}, ctx);
@@ -390,25 +392,15 @@ export async function assembleCore(
 	await harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		const members = [OWNER, ...identities.map((item) => item.slug)];
-		if (doc.channels[companyChannel] === undefined) {
-			// `wakeOnAll` 只在建群这一刻写一次，之后它只是个普通字段（投递时
-			// 收件人一定排除发件人、也一定排除我，所以它不会让任何人多醒一次）。
-			Object.assign(
-				doc,
-				ensureChannel(doc, { id: companyChannel, title: "全员", members, wakeOnAll: [OWNER], at: Date.now() }),
-			);
-		} else {
-			// 频道已存在：把新出现的人加进去（我永远在）。
-			const channel = doc.channels[companyChannel];
-			if (channel !== undefined) {
-				// 整体替换频道记录，不用 push / 不用就地改：文档读出来的是副本，
-				// 就地改不产生 op（实测消息会静默消失）。
-				const missing = members.filter((member) => !channel.members.includes(member));
-				if (missing.length > 0) {
-					doc.channels[companyChannel] = { ...channel, members: [...channel.members, ...missing] };
-				}
-			}
-		}
+		// 「有则并成员、无则建」：`upsertChannel` 就是这一件事的唯一实现。`wakeOnAll`
+		// 只在建群那一刻写一次，之后它只是个普通字段（投递时收件人一定排除发件人、
+		// 也一定排除我，所以它不会让任何人多醒一次）。
+		// 整体替换文档对象，不用 push / 不用就地改：读出来的是副本，就地改不产生 op
+		// （实测消息会静默消失）。
+		Object.assign(
+			doc,
+			upsertChannel(doc, { id: companyChannel, title: "全员", members, wakeOnAll: [OWNER], at: Date.now() }),
+		);
 	}, context);
 
 
@@ -420,6 +412,8 @@ export async function assembleCore(
 		registry,
 		conversations,
 		directory,
+		// 沉淀钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
+		afterPost,
 		async syncTeam(team: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
 			await syncTeamChannel(team, ctx);
 		},
@@ -472,7 +466,7 @@ export async function assembleCore(
 		ownerSay: (input, ctx) => ownerSpeak(shell, input, ctx),
 		postAs: (input, ctx) => ownerSpeak(shell, input, ctx),
 		bindings: () => directory,
-		labelOf: (slug: string) => (slug === OWNER ? "我" : (directory.labels[slug] ?? slug)),
+		labelOf: (slug) => labelIn(directory, slug),
 		identities: () => readAllIdentities(options.agentsRoot),
 		agentsRoot: options.agentsRoot,
 		teamsRoot: options.teamsRoot,
@@ -554,8 +548,10 @@ export async function ownerSpeak(
 	const state = await shell.channels(context);
 	const channel = state.channels[options.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${options.channelId}`);
-	const { postMessage } = await import("../channel/post.ts");
-	const { conversationFor } = await import("../agent/roster.ts");
+	// 名册读**当下**那一份，不读装配期那份：`hire` 之后 `labels` 要等下一次 `rescan`
+	// 才刷新，中间这个人会以 slug 出现在投递摘要与提示词里（`@shen-zhou`），
+	// 看上去就像「我视角里没有这个人」。
+	const directory = (await shell.harness.snapshot(DirectoryDoc, context)) ?? shell.directory;
 	// 我的话也要过一遍名册：他自己写 `@我`（或者老消息里的 `@我`）时，
 	// 不给名册就只能存成字面 token，界面画得出来、`recipientsOf` 却认不出人。
 	const everyone = await readAllIdentities(shell.agentsRoot);
@@ -567,19 +563,21 @@ export async function ownerSpeak(
 			manager: identity.manager,
 		})),
 	);
+	// 显示名以**当下的** `identity.md` 为准，名册里的 `labels` 只做兜底。
+	const labels = { ...directory.labels, ...labelsOf(everyone) };
 	const result = await postMessage(
 		{
 			harness: shell.harness,
 			state,
 			conversationOf: async (slug: string) => {
-				const id = conversationFor(shell.directory, slug);
+				const id = conversationFor(directory, slug);
 				if (id !== undefined) {
 					const found = await shell.harness.conversation(id as never, context);
 					if (found !== undefined) return found;
 				}
 				return shell.conversations.get(slug);
 			},
-			labelOf: (slug: string) => (slug === OWNER ? "我" : (shell.directory.labels[slug] ?? slug)),
+			labelOf: (slug) => labelIn({ ...directory, labels }, slug),
 			// 附件根跟着工作区走：`<workspace>/uploads`。给了它，我发的图片才会被读成
 			// 内容块交给模型 —— 不给的话模型只看到一行「[图片] x.png」。
 			uploadsRoot: uploadsRootOf(shell.agentsRoot),
@@ -587,10 +585,11 @@ export async function ownerSpeak(
 			// 查不到 wake，只能退到「我最早的那个频道」—— 那往往是私聊，
 			// 于是我在公司频道问话、对方在私聊里答，问到的人什么都看不到。
 			rememberWake: async (slug: string, wake) => {
-				const id = conversationFor(shell.directory, slug);
-				if (id === undefined) return;
 				await shell.harness.commit(async (tx) => {
 					const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+					// 用**文档里**的映射：刚 `hire` 的人只在文档里有，装配期那份里没有。
+					const id = conversationFor(doc, slug);
+					if (id === undefined) return;
 					// 只写 `wake` 这一个字段：以前是 `Object.assign(doc, { ...doc, wake })`，
 					// 把整份名册展开再写回去，任何一处覆盖层节点被顺手写回来就是一次静默丢人。
 					doc.wake = { ...plainDirectory(doc).wake, [String(id)]: { ...wake } };
@@ -611,10 +610,6 @@ export async function ownerSpeak(
 	);
 
 	// 我在团队频道里拍板也要沉淀：它不是 agent，不会走工具层，这条路径得自己调。
-	await makeAfterPost(shell.harness, shell.agentsRoot, shell.teamsRoot, () => shell.conversations)(
-		result.message,
-		options.channelId,
-		context,
-	);
+	await shell.afterPost(result.message, options.channelId, context);
 	return { seq: result.message.seq, delivery: result.delivery };
 }

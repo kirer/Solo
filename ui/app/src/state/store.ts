@@ -21,6 +21,7 @@ import {
 	sendMessage,
 } from "../api/client.ts";
 import type { Actor, AttentionItem, Channel, ChannelDetail, Message, PersonProfile } from "../api/types.ts";
+import { sortChannels } from "../lib/format.ts";
 import { mark } from "../lib/jank.ts";
 
 export type Presence = "idle" | "working" | "thinking" | "asleep";
@@ -43,7 +44,6 @@ export type State = {
 	attention: AttentionItem[];
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
-	lastSeen: Map<string, number>;
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
 	layout: Layout;
@@ -84,7 +84,6 @@ const initial: State = {
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
-	lastSeen: new Map(),
 	conn: { ok: true, lastOkAt: Date.now() },
 	layout: read(LAYOUT_KEY, ["flat", "bubble"], "bubble"),
 	theme: read(THEME_KEY, ["system", "light", "dark"], "system"),
@@ -121,23 +120,25 @@ export function patch(change: Partial<State> | ((current: State) => Partial<Stat
 
 /** 拉频道列表 + 「找你」清单。org 推送很密，调用方要自己去抖。 */
 export async function refreshLists(): Promise<void> {
-	const [channels, attention] = await Promise.all([getChannels(), getAttention()]);
-	patch({
-		channels: sortChannels(channels.channels),
-		attention: attention.items,
-		attentionUnread: attention.unread,
-	});
-	// 列表里的未读数变了，顶部标题（当前频道）也要跟着变 —— 用 detail 的 channel 覆盖一次。
-	if (state.currentId !== null) {
-		const mine = channels.channels.find((channel) => channel.id === state.currentId);
-		if (mine !== undefined && state.detail !== null) {
-			patch({ detail: { ...state.detail, channel: strip(mine) } });
+	try {
+		const [channels, attention] = await Promise.all([getChannels(), getAttention()]);
+		patch({
+			channels: sortChannels(channels.channels),
+			attention: attention.items,
+			attentionUnread: attention.unread,
+		});
+		setConn(true);
+		// 列表里的未读数变了，顶部标题（当前频道）也要跟着变 —— 用 detail 的 channel 覆盖一次。
+		if (state.currentId !== null) {
+			const mine = channels.channels.find((channel) => channel.id === state.currentId);
+			if (mine !== undefined && state.detail !== null) {
+				patch({ detail: { ...state.detail, channel: strip(mine) } });
+			}
 		}
+	} catch {
+		// 侧栏刷新失败就是「连不上」：SSE 断线时也在同一条路上标，界面只画一个状态。
+		setConn(false);
 	}
-}
-
-function sortChannels(list: readonly Channel[]): Channel[] {
-	return [...list].sort((left, right) => right.lastAt - left.lastAt);
 }
 
 function strip(channel: Channel): ChannelDetail["channel"] {
@@ -269,35 +270,21 @@ async function readToEnd(id: string, messages: readonly Message[]): Promise<void
 
 /* ── 在场（推导，不落库） ───────────────────────────────────────────── */
 
-const LIVE_MS = 5 * 60 * 1000;
-const ASLEEP_MS = 6 * 60 * 60 * 1000;
-
-/**
- * 一个 agent 现在在干什么。
- *
- * 后端没有「在线状态」这个概念 —— 它是从消息流里推导出来的：think 就是「在想」、
- * tool/work 就是「在做」，说了话就是「待命」，很久没动静就是「睡了」。
- * 推导放在前端是因为它是**显示**问题：同一条消息在别人眼里和在你眼里含义相同。
- */
-export function presenceOf(slug: string | null, now = Date.now()): Presence {
-	if (slug === null) return "idle";
-	const live = state.presence.get(slug);
-	if (live !== undefined && now - live.at < LIVE_MS) return live.state;
-	const seen = state.lastSeen.get(slug);
-	if (seen !== undefined && now - seen > ASLEEP_MS) return "asleep";
-	return "idle";
-}
-
 function notePresence(message: Message): void {
 	notePresenceOf([message]);
 }
 
+/**
+ * 从一批消息推导「他现在在干什么」。
+ *
+ * 后端没有「在线状态」这个概念 —— 它是从消息流里推导出来的：think 就是「在想」、
+ * tool/work 就是「在做」，说了话就是「待命」。推导放在前端是因为它是**显示**问题：
+ * 同一条消息在别人眼里和在你眼里含义相同。
+ */
 function notePresenceOf(messages: readonly Message[]): void {
 	const presence = new Map(state.presence);
-	const lastSeen = new Map(state.lastSeen);
 	for (const message of messages) {
 		if (message.fromSlug === "owner") continue;
-		lastSeen.set(message.fromSlug, message.at);
 		let next: Presence = "idle";
 		if (message.kind === "think") next = "thinking";
 		else if (message.kind === "tool" || message.kind === "work") next = "working";
@@ -306,7 +293,7 @@ function notePresenceOf(messages: readonly Message[]): void {
 		if (next === "idle" && current !== undefined) continue;
 		presence.set(message.fromSlug, { state: next, at: message.at });
 	}
-	patch({ presence, lastSeen });
+	patch({ presence });
 }
 
 /* ── 界面开关（都落 localStorage） ──────────────────────────────────── */
@@ -352,24 +339,10 @@ export function setNeedMenu(open: boolean): void {
 	patch({ needMenu: open, ...(open ? { settings: false } : {}) });
 }
 
-/** 只刷「找你」，不动频道列表 —— org 推送很密，整条侧栏跟着重排最费事。 */
-export async function refreshAttention(): Promise<void> {
-	const data = await getAttention();
-	patch({ attention: data.items, attentionUnread: data.unread });
-}
-
-export function setAttention(items: AttentionItem[], unread: number): void {
-	patch({ attention: items, attentionUnread: unread });
-}
-
 /* ── 右侧栏：详情可以往里钻（频道 → 人 → 再点频道里的人） ────────────── */
 
 /** 栈底永远是「当前频道」，所以「返回」总是能退出一个人物案。 */
 export type RightEntry = { kind: "channel" } | { kind: "person"; slug: string };
-
-export function pushRight(entry: RightEntry): void {
-	patch({ trail: [...state.trail, entry] });
-}
 
 /** 进一个人的人物案。拉不到就抛（由调用方 toast），并把栈恢复原样。 */
 /** 打开某个人的记忆抽屉。没有档案页的人（我）也能看，所以不走 `openPerson`。 */
@@ -402,9 +375,4 @@ export function backRight(): void {
 	void getPerson(last.slug)
 		.then((profile) => patch({ trail, person: profile }))
 		.catch(() => patch({ trail, person: null }));
-}
-
-/** 切频道：右侧栏回到「这个频道」。 */
-export function resetRight(): void {
-	patch({ trail: [{ kind: "channel" }], person: null });
 }

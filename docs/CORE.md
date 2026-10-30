@@ -146,7 +146,7 @@ who → rules → position → team → tools → memory → skills → director
 `@` 写的是**名字**，`mentions` 存的是 **slug**：`channel/alias.ts` 把「我 / BOSS / CEO /
 真名 / title」翻成 slug（`@` 别名解析，ADR-036），解析不出来的一律丢弃（`@import` /
 `@media` 不是人）。**成员过滤不动** —— 别名只是翻译，不是放宽边界。两条说话规矩也
-写在这里而不是提示词里：要找我拍板的事由 `needsOwner` 自动补 `owner`（ADR-037）；投递
+写在这里而不是提示词里：要找我拍板的事由 `say` 在两种情形下补 `owner`（ADR-037）；投递
 正文第一行写清频道 id，私聊额外说一句「只回这里」。没指明频道时 `fallbackChannelId`
 只在**群聊**里找最近活跃的那个，一个群都没有才回落我和他的私聊 —— 兜底永远不新建频道。
 

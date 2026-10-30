@@ -15,8 +15,10 @@
  *
  * 这一条对成本很要紧：一个人攒 20 门手艺，常驻的是 20 行描述，不是 20 篇正文。
  */
-import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "./frontmatter.ts";
+import { readTextOrUndefined } from "../runtime/io.ts";
 
 /** 技能子目录名（公司层根目录与个人目录下都用它）。 */
 export const SKILLS_DIR = "skills";
@@ -45,46 +47,6 @@ export type SkillBody = Skill & {
 };
 
 /**
- * 解析 frontmatter 里的 `name` / `description`。
- *
- * 只认这两个字段：技能是给模型读的说明书，不需要 schema。`license`、
- * `allowed-tools` 这类字段留着不动（不解析也不丢，读正文时原样给模型看）。
- */
-function parseFrontmatter(source: string): Record<string, string> {
-	if (!source.startsWith("---")) return {};
-	const end = source.indexOf("\n---", 3);
-	if (end < 0) return {};
-	const out: Record<string, string> = {};
-	for (const line of source.slice(3, end).split("\n")) {
-		// 支持 `key: value`；不解析多行 YAML（技能描述就该是一句话）。
-		const match = /^\s*([A-Za-z][\w-]*)\s*:\s*(.*)$/.exec(line);
-		if (match === null) continue;
-		const key = match[1];
-		const raw = match[2];
-		if (key === undefined || raw === undefined) continue;
-		const value = raw.trim().replace(/^["']|["']$/g, "");
-		if (value !== "") out[key] = value;
-	}
-	return out;
-}
-
-/** frontmatter 之后的正文。 */
-function stripFrontmatter(source: string): string {
-	if (!source.startsWith("---")) return source.trim();
-	const end = source.indexOf("\n---", 3);
-	if (end < 0) return source.trim();
-	return source.slice(end + 4).trim();
-}
-
-async function readOrUndefined(path: string): Promise<string | undefined> {
-	try {
-		return await readFile(path, "utf8");
-	} catch {
-		return undefined;
-	}
-}
-
-/**
  * 扫一个 `skills/` 目录。
  *
  * 支持两种摆法：
@@ -106,7 +68,7 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 		if (entry.name.startsWith(".")) continue;
 		if (entry.isDirectory()) {
 			const dir = join(skillsRoot, entry.name);
-			const source = await readOrUndefined(join(dir, SKILL_FILE));
+			const source = await readTextOrUndefined(join(dir, SKILL_FILE));
 			if (source === undefined) continue;
 			const header = parseFrontmatter(source);
 			found.push({
@@ -116,7 +78,7 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 				scope,
 			});
 		} else if (entry.isFile() && entry.name.endsWith(".md")) {
-			const source = await readOrUndefined(join(skillsRoot, entry.name));
+			const source = await readTextOrUndefined(join(skillsRoot, entry.name));
 			if (source === undefined) continue;
 			const header = parseFrontmatter(source);
 			const bare = entry.name.slice(0, -3);
@@ -148,11 +110,6 @@ export async function listSkills(roots: SkillRoots, slug: string): Promise<reado
 	return [...byName.values()].sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 }
 
-/** 只列公司层的技能（给「公司教了什么」用）。 */
-export async function listCompanySkills(workspaceRoot: string): Promise<readonly Skill[]> {
-	return scanSkillsDir(join(workspaceRoot, SKILLS_DIR), "company");
-}
-
 /**
  * 读一份技能的正文。
  *
@@ -164,7 +121,8 @@ export async function readSkill(roots: SkillRoots, slug: string, name: string): 
 	if (hit === undefined) return undefined;
 	// 单文件形式时 `dir` 是 skills/ 本身，文件名得从 name 反推。
 	const source =
-		(await readOrUndefined(join(hit.dir, SKILL_FILE))) ?? (await readOrUndefined(join(hit.dir, `${hit.name}.md`)));
+		(await readTextOrUndefined(join(hit.dir, SKILL_FILE))) ??
+		(await readTextOrUndefined(join(hit.dir, `${hit.name}.md`)));
 	if (source === undefined) return undefined;
 	return { ...hit, body: stripFrontmatter(source) };
 }
@@ -181,7 +139,13 @@ export async function writeSkillTo(
 	if (clean === "" || clean === "." || clean === "..") throw new Error("技能名不能为空");
 	const dir = join(skillsRoot, clean);
 	await mkdir(dir, { recursive: true });
-	const source = `---\nname: ${clean}\ndescription: ${input.description.trim()}\n---\n\n${input.body.trim()}\n`;
+	const source = renderFrontmatter(
+		[
+			["name", clean],
+			["description", input.description.trim()],
+		],
+		input.body,
+	);
 	await writeFile(join(dir, SKILL_FILE), source, "utf8");
 	return { name: clean, description: input.description.trim(), dir, scope: "personal" };
 }
@@ -226,6 +190,6 @@ export async function copySkillDir(fromDir: string, skillsRoot: string): Promise
 	}
 	await mkdir(skillsRoot, { recursive: true });
 	await cp(fromDir, dir, { recursive: true });
-	const source = await readFile(join(dir, SKILL_FILE), "utf8").catch(() => "");
+	const source = (await readTextOrUndefined(join(dir, SKILL_FILE))) ?? "";
 	return { name, description: parseFrontmatter(source).description ?? "", dir, scope: "company" };
 }

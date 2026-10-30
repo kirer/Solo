@@ -14,6 +14,7 @@ import {
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
 import type { JsonValue } from "@earendil-works/chord";
+import type { DatabaseSync } from "node:sqlite";
 import type { Cursor, Registry, SubmissionId, TaskRecord } from "@earendil-works/pi-durable";
 import { serializedHarness } from "./serialize.ts";
 
@@ -132,6 +133,22 @@ export type CoreRuntime = {
  * 而它指向的 generation 任务已经是 terminal —— 于是这个会话**永远被当成忙**，
  * 之后的每一条输入都被塞进 `queued` 再也无人取（实测：私聊几十条消息全哑）。
  */
+/**
+ * 把一个 `scan*` 接口的所有页读全（库一次只给一页；只读第一页会让后面的僵尸永远清不掉）。
+ */
+async function scanAllPages<T>(
+	scan: (limit: number, cursor?: Cursor) => Promise<{ items: readonly T[]; next?: Cursor }>,
+): Promise<T[]> {
+	const items: T[] = [];
+	let page = await scan(256);
+	items.push(...page.items);
+	while (page.next !== undefined) {
+		page = await scan(256, page.next);
+		items.push(...page.items);
+	}
+	return items;
+}
+
 async function reconcileZombieTasks(harness: Harness, context: Context): Promise<void> {
 	// 调度器 open 时按这些列扫描「活着」的任务。
 	const LIVE = ["pending", "running", "waiting", "sleeping", "completing"] as const;
@@ -154,37 +171,25 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 			// 被外层 catch 吞成一行警告，结果是**这套自愈从上线起一次都没真正跑过**
 			// （实测每次启动都打 `Tx.scanConversations() cannot read tables after the first table write`），
 			// 僵尸任务与残留输入一直挂在库里（`submissions` 里 2 条 unanswered 从 10-29 挂到现在）。
+			// 必须翻页：`scan*` 一次只给一页。早先只读第一页（256 条），某个状态超过 256 条时
+			// 后面的僵尸永远清不掉，每次启动都重建一次崩溃。
 			const live = [];
 			for (const status of LIVE) {
-				// 必须翻页：`scanTasks` 一次只给一页。早先只读第一页（256 条），
-				// 某个状态超过 256 条时后面的僵尸永远清不掉，每次启动都重建一次崩溃。
-				let cursor: Cursor | undefined;
-				for (;;) {
-					const page = await tx.scanTasks({ status }, 256, cursor);
-					live.push(...page.items);
-					if (page.next === undefined) break;
-					cursor = page.next;
-				}
+				live.push(...(await scanAllPages((limit, cursor) => tx.scanTasks({ status }, limit, cursor))));
 			}
 
 			// 会话 + 每个会话的 `pi.live`（也是读）：判断那一条 `run` 是不是已经没人收尾了。
 			const stale: { conversationId: number; runInputs: readonly SubmissionId[]; stale: boolean }[] = [];
-			let conversationCursor: Cursor | undefined;
-			for (;;) {
-				const page = await tx.scanConversations({}, 256, conversationCursor);
-				for (const conversation of page.items) {
-					const doc = await tx.doc(LiveDoc, conversation.id);
-					const run = doc.run;
-					// 任务不存在也算陈旧（指向一个已经不存在的任务，没人会来收尾）。
-					const owner = run === undefined ? undefined : await tx.task(run.taskId);
-					stale.push({
-						conversationId: conversation.id,
-						runInputs: run?.inputs ?? [],
-						stale: run !== undefined && (owner === undefined || owner.state?.status === "terminal"),
-					});
-				}
-				if (page.next === undefined) break;
-				conversationCursor = page.next;
+			for (const conversation of await scanAllPages((limit, cursor) => tx.scanConversations({}, limit, cursor))) {
+				const doc = await tx.doc(LiveDoc, conversation.id);
+				const run = doc.run;
+				// 任务不存在也算陈旧（指向一个已经不存在的任务，没人会来收尾）。
+				const owner = run === undefined ? undefined : await tx.task(run.taskId);
+				stale.push({
+					conversationId: conversation.id,
+					runInputs: run?.inputs ?? [],
+					stale: run !== undefined && (owner === undefined || owner.state?.status === "terminal"),
+				});
 			}
 			for (const id of stale.filter((item) => item.stale).flatMap((item) => item.runInputs)) {
 				tx.settleSubmission(id, { status: "unanswered", reason: "restart" });
@@ -271,6 +276,24 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 const TASK_RETENTION_MS = 3 * 24 * 60 * 60_000;
 
 /**
+ * 直接开一条 SQLite 连接跑一句 SQL（回收用），完了关掉。表不在 / 没开 JSON1 一律返回
+ * `fallback`，不挡启动。
+ */
+async function withSqlite<T>(databasePath: string, run: (db: DatabaseSync) => T, fallback: T): Promise<T> {
+	if (databasePath === ":memory:") return fallback;
+	const { DatabaseSync } = await import("node:sqlite");
+	let db: DatabaseSync | undefined;
+	try {
+		db = new DatabaseSync(databasePath);
+		return run(db);
+	} catch {
+		return fallback;
+	} finally {
+		db?.close();
+	}
+}
+
+/**
  * 回收「已完成且超过 3 天」的任务记录（A3）。
  *
  * 为什么用直接 SQL 而不是库的 API：pi-durable 只提供 `setTask`（整条替换），**没有删任务
@@ -280,27 +303,20 @@ const TASK_RETENTION_MS = 3 * 24 * 60 * 60_000;
  * 只删 `status = 'terminal'` 且 `endedAt` 早于 3 天前的：正在跑的和最近的都不动。
  */
 export async function pruneTerminalTasks(databasePath: string, retentionMs = TASK_RETENTION_MS): Promise<number> {
-	if (databasePath === ":memory:") return 0;
-	const { DatabaseSync } = await import("node:sqlite");
-	let db: InstanceType<typeof DatabaseSync> | undefined;
-	try {
-		db = new DatabaseSync(databasePath);
-		const cutoff = Date.now() - retentionMs;
-		const statement = db.prepare(
-			"DELETE FROM tasks WHERE status = 'terminal' AND json_extract(record, '$.endedAt') < ?",
-		);
-		const result = statement.run(cutoff);
-		return Number(result.changes ?? 0);
-	} catch {
-		// 表还没建（第一次启动）、或者这版 SQLite 没开 JSON1：都不该挡启动。
-		return 0;
-	} finally {
-		db?.close();
-	}
+	const sql = "DELETE FROM tasks WHERE status = 'terminal' AND json_extract(record, '$.endedAt') < ?";
+	return withSqlite(databasePath, (db) => Number(db.prepare(sql).run(Date.now() - retentionMs).changes ?? 0), 0);
 }
 
 /** 每个会话保留多少条「已结算」的 submission 记录。 */
 const SUBMISSION_KEEP_PER_CONVERSATION = 500;
+
+/** 只删终态（`queued` / `placed` 是真在排队的活，一律不碰），每个会话留最近 N 条。 */
+const SUBMISSION_PRUNE_SQL = `DELETE FROM submissions WHERE status IN ('done', 'unanswered') AND id NOT IN (
+	SELECT id FROM submissions AS inner_table
+	WHERE inner_table.conversation_id = submissions.conversation_id
+	  AND inner_table.status IN ('done', 'unanswered')
+	ORDER BY id DESC LIMIT ?
+)`;
 
 /**
  * 回收「已结算的输入记录」，每个会话只留最近 N 条。
@@ -319,27 +335,24 @@ export async function pruneTerminalSubmissions(
 	databasePath: string,
 	keepPerConversation = SUBMISSION_KEEP_PER_CONVERSATION,
 ): Promise<number> {
-	if (databasePath === ":memory:") return 0;
-	const { DatabaseSync } = await import("node:sqlite");
-	let db: InstanceType<typeof DatabaseSync> | undefined;
-	try {
-		db = new DatabaseSync(databasePath);
-		const result = db
-			.prepare(
-				`DELETE FROM submissions WHERE status IN ('done', 'unanswered') AND id NOT IN (
-					SELECT id FROM submissions AS inner_table
-					WHERE inner_table.conversation_id = submissions.conversation_id
-					  AND inner_table.status IN ('done', 'unanswered')
-					ORDER BY id DESC LIMIT ?
-				)`,
-			)
-			.run(keepPerConversation);
-		return Number(result.changes ?? 0);
-	} catch {
-		return 0;
-	} finally {
-		db?.close();
-	}
+	return withSqlite(
+		databasePath,
+		(db) => Number(db.prepare(SUBMISSION_PRUNE_SQL).run(keepPerConversation).changes ?? 0),
+		0,
+	);
+}
+
+/** 报告出口自己不许抛：它会连累底座把「一次任务失败」升级成别的后果。 */
+function safeReport(
+	report: ((value: RuntimeReport) => void) | undefined,
+): (error: unknown, info: ReportInfo) => void {
+	return (error, info) => {
+		try {
+			report?.(toRuntimeReport(error, info));
+		} catch (reportError) {
+			console.error("[core] 运行报告没处理掉：", (reportError as Error)?.message);
+		}
+	};
 }
 
 export async function openCore(options: OpenCoreOptions, context: Context = BACKGROUND_CONTEXT): Promise<CoreRuntime> {
@@ -354,18 +367,7 @@ export async function openCore(options: OpenCoreOptions, context: Context = BACK
 			models: options.models,
 			registry: options.registry,
 			...(options.settings === undefined ? {} : { settings: options.settings }),
-			...(options.onReport === undefined
-				? {}
-				: {
-						onReport: (error: unknown, info: ReportInfo) => {
-							// 报告出口自己不许抛：它会连累底座把「一次任务失败」升级成别的后果。
-							try {
-								options.onReport?.(toRuntimeReport(error, info));
-							} catch (reportError) {
-								console.error("[core] 运行报告没处理掉：", (reportError as Error)?.message);
-							}
-						},
-					}),
+			...(options.onReport === undefined ? {} : { onReport: safeReport(options.onReport) }),
 		},
 		context,
 	);

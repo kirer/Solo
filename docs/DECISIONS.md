@@ -2083,3 +2083,34 @@ shell = 装配层，唯一可以同时 import 全部
 
 **验收。** 工具清单仍由注册表实拍（不写死名字）；`say` 的选频道/叫醒/硬拦行为不变；
 `live` 12/12。
+
+## ADR-085：瘦身是删代码，不是加防御——审计出的 4 个 bug 与「过防御」清理
+
+**背景**：四层与工具收敛落地后，代码仍然偏多（`src/core` 10340 行、前端死 CSS 801 行）。
+五个只读 agent 逐符号审了一遍（报告在 `workspace/notes/code-audit*.md`），结论是三类：
+死代码、重复实现、过防御。同一轮里还查出 4 个真 bug —— 说明「代码多」不只是难读，
+它会让同一条规则存在两个实现，然后只有其中一个被修。
+
+**决策**：
+1. 删死代码与重复实现，不为了「以后可能要用」保留。新增三处唯一实现：
+   `agent/frontmatter.ts`（YAML 头）、`oneline.ts`（折行截断）、`runtime/io.ts`
+   （`readTextOrUndefined` / `createSerialGate`）；`channel/state.ts` 的 `upsertChannel`
+   成为「有则并成员、无则建」的唯一实现。
+2. 过防御该减的减：SSE 的按连接游标合成一份共享游标（字节合同用
+   `test/core/hub-stream.test.ts` 钉死）、`open.ts` 的翻页/sqlite 样板合一、
+   `main.ts` 换 `node:util` 的 `parseArgs`。
+3. 修 4 个 bug：`chats` 的 read 改走 `markRead`（游标夹取）；`ownerSpeak` 每次重新读名册
+   合成 labels（原来用装配期那份，新人的显示名永远缺）；identity / SKILL / 团队 README
+   三条写盘补 `redact`；前端设置面板的 `aria-pressed` 改 `aria-checked`、代码块复制改用
+   事件委托（正文是 `dangerouslySetInnerHTML`，React 事件接不到里面的按钮）。
+4. `needsOwner()` 删除（ADR-037 的关键词嗅探在更早就已移除，函数只剩恒 false 的空壳）：
+   「要你拍板」的判据现在只有一处 —— `say` 在两种情形把 `owner` 加进 `mentions`：
+   正文显式 @我，或 `kind=decision` 且没点别人。ADR-037 的「两处判据故意不同」因此作废：
+   投递侧与「找你」列表现在是同一个判据。
+
+**不做的**：`reconcileZombieTasks` 的单事务顺序、`serialize.ts` 的进程级串行、
+`models.ts` 的四级回落、`rescue.ts` 的三个阈值 —— 这些是踩过坑换来的，不是防御。
+`tools.ts` 里 7 处 `typeof slug !== "string"` 也不收：收成回调要重排 7 个工具体，
+净行数为 0，diff 却覆盖全部工具。
+
+**验收**：`npm run check` 绿、59 文件 511 例、`ui:build` 成功、`live` 两轮 12/12。

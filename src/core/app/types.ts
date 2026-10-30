@@ -9,7 +9,7 @@
  */
 import type { Conversation, Context, Harness, Registry } from "../runtime/index.ts";
 import type { DirectoryState } from "../agent/roster.ts";
-import type { ChannelState, Attachment } from "../channel/state.ts";
+import type { ChannelState, Attachment, Message } from "../channel/state.ts";
 import type { DeliverResult } from "../channel/deliver.ts";
 import type { Identity } from "../agent/identity.ts";
 import type { Diag } from "./diag.ts";
@@ -21,6 +21,12 @@ export type CoreServices = {
 	readonly conversations: ReadonlyMap<string, Conversation>;
 	/** 名册快照（只读用途；写请走工具）。 */
 	readonly directory: DirectoryState;
+	/**
+	 * 一条消息落地之后的钩子（团队记忆自动沉淀）。
+	 *
+	 * 装配时只造一个：它无状态（读的都是当下的事实），每个发言入口再造一个就是两份语义。
+	 */
+	readonly afterPost: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 重新扫描文件夹，给新出现的人开会话。返回新建的 slug。 */
 	readonly rescan: (context?: Context) => Promise<readonly string[]>;
 	/**

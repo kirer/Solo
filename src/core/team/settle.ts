@@ -13,10 +13,12 @@ import { stat } from "node:fs/promises";
 import { defineDoc } from "../runtime/index.ts";
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { ChannelDoc, OWNER, appendMessage, teamId, type ChannelState, type Message } from "../channel/state.ts";
+import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/state.ts";
+import { appendNote } from "../channel/post.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
+import { oneLine } from "../oneline.ts";
 
 export type SettleState = {
 	/** `团队 slug` → 已确认沉淀到第几条 seq。 */
@@ -34,7 +36,7 @@ export const SettleDoc = defineDoc<SettleState>({
 	checkpointWhen: (_value, _ops, info) => info.deltasSinceBase >= 64,
 });
 
-export type SettleDeps = {
+type SettleDeps = {
 	readonly harness: Harness;
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
@@ -74,7 +76,7 @@ export async function settleTeam(
 		// 记忆文件变了才算这批被真写过；没变就是还没写（被打断、或者写砸了），不催也不推进。
 		const stamp = await memoryStamp(deps.teamsRoot, team);
 		if (stamp === null || stamp === waiting.stamp) return {};
-		await advanceCursor(deps.harness, team, waiting.seq, context);
+		await writeSettle(deps.harness, team, context, { cursor: waiting.seq, waiting: null });
 		settle = (await deps.harness.snapshot(SettleDoc, context)) ?? settle;
 	}
 
@@ -91,13 +93,13 @@ export async function settleTeam(
 		const lastSeq = candidates[candidates.length - 1]?.seq ?? 0;
 		if (to === undefined) {
 			// 没人能写：游标照常推进，这批不再重复打扰。
-			await advanceCursor(deps.harness, team, lastSeq, context);
+			await writeSettle(deps.harness, team, context, { cursor: lastSeq, waiting: null });
 			return { skipped: { team, count: candidates.length } };
 		}
 		const conversation = await deps.conversationOf(to);
 		if (conversation === undefined) {
 			// 有团队管理员但没会话：游标照常推进，下次团队管理员醒来读团队频道能看到。
-			await advanceCursor(deps.harness, team, lastSeq, context);
+			await writeSettle(deps.harness, team, context, { cursor: lastSeq, waiting: null });
 			return { skipped: { team, count: candidates.length } };
 		}
 
@@ -112,7 +114,7 @@ export async function settleTeam(
 			},
 			context,
 		);
-		await parkWaiting(deps.harness, team, lastSeq, stamp, context);
+		await writeSettle(deps.harness, team, context, { waiting: { seq: lastSeq, stamp } });
 		return { asked: { team, to, count: candidates.length } };
 	} catch (error) {
 		const reason = error instanceof Error ? error.message : String(error);
@@ -126,29 +128,18 @@ export async function settleTeam(
 
 /** 失败原因只要一句话：频道里的留痕是给人看的，“堆栈那一坨”没人读。 */
 function brief(reason: string): string {
-	const oneLine = reason.replace(/\s+/g, " ").trim();
-	return oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine || "未知原因";
+	return oneLine(reason, 120) || "未知原因";
 }
 
 /**
  * 往团队频道追加一条系统留痕（`kind: "note"`，不唤醒人）。
  *
- * 与 `channel/post.ts` 的 `appendNote` 同形，但那里没导出、而且 `post.ts` 不接受
- * 「只记一笔」这种一次性用途（它会算接力、算投递）。沉淀已经在处理异常了，
- * 这里再抛就是二次失败，所以整段包在 try 里，失败只写 stderr。
+ * 写盘本身是 `channel/post.ts` 的 `appendNote`（同一个「唯一写入口」）。这里只多一层
+ * try：沉淀已经在处理异常了，留痕再抛就是二次失败，所以失败只写 stderr。
  */
 async function appendTeamNote(deps: SettleDeps, team: string, text: string, context: Context): Promise<void> {
-	const channelId = teamId(team);
 	try {
-		await deps.harness.commit(async (tx) => {
-			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-			if (doc.channels[channelId] === undefined) return;
-			const next = appendMessage(doc, channelId, { from: OWNER, text, at: Date.now(), kind: "note" });
-			const list = doc.messages[channelId];
-			if (list === undefined) doc.messages[channelId] = [next.message];
-			else (list as Message[]).push(next.message);
-			doc.nextSeq[channelId] = next.message.seq + 1;
-		}, context);
+		await appendNote(deps, teamId(team), text, Date.now(), context);
 	} catch (error) {
 		process.stderr.write(`[沉淀失败] 留痕也失败：${error instanceof Error ? error.message : String(error)}\n`);
 	}
@@ -163,37 +154,36 @@ async function memoryStamp(teamsRoot: string, team: string): Promise<number | nu
 	}
 }
 
-/** 记一笔「这批问过了」，等记忆文件变了再推进游标。 */
-async function parkWaiting(
-	harness: Harness,
-	team: string,
-	seq: number,
-	stamp: number | null,
-	context: Context,
-): Promise<void> {
-	await harness.commit(async (tx) => {
-		const doc = (await tx.doc(SettleDoc)) as SettleState;
-		doc.waiting = { ...(doc.waiting ?? {}), [team]: { seq, stamp } };
-	}, context);
-}
+/** 游标改动的形状：`undefined` = 这个字段不动，`null` = 清掉。 */
+type SettlePatch = {
+	readonly cursor?: number;
+	readonly waiting?: { readonly seq: number; readonly stamp: number | null } | null;
+};
 
-/** 推进游标到指定 seq（并清掉这一项的「等确认」）。 */
-async function advanceCursor(harness: Harness, team: string, seq: number, context: Context): Promise<void> {
+/**
+ * 游标的**唯一写入口**（以前是 `parkWaiting` / `advanceCursor` / `confirmedBy` 三段各自
+ * 「读 → 改一个字段 → commit」，同一个文档三种写法，加一个字段要改三处）。
+ */
+async function writeSettle(harness: Harness, team: string, context: Context, patch: SettlePatch): Promise<void> {
 	await harness.commit(async (tx) => {
 		const doc = (await tx.doc(SettleDoc)) as SettleState;
 		const current = doc.cursors[team] ?? 0;
-		if (seq > current) doc.cursors = { ...doc.cursors, [team]: seq };
-		if (doc.waiting !== undefined && doc.waiting[team] !== undefined) {
-			const rest = { ...doc.waiting };
-			delete rest[team];
-			doc.waiting = rest;
+		if (patch.cursor !== undefined && patch.cursor > current) {
+			doc.cursors = { ...doc.cursors, [team]: patch.cursor };
 		}
+		if (patch.waiting === undefined) return;
+		const before = doc.waiting?.[team];
+		if (before === patch.waiting) return;
+		const next = { ...(doc.waiting ?? {}) };
+		if (patch.waiting === null) delete next[team];
+		else next[team] = patch.waiting;
+		doc.waiting = next;
 	}, context);
 }
 
 /**
- * `remember(scope=team)` 落盘成功后推进游标（兼容旧调用点）。
- * 游标正常由 `settleTeam` 在确认后推进，这里兜底：记忆写入的 seq 比游标新就补推进。
+ * `remember(scope=team)` 落盘成功后推进游标。
+ * 游标正常由 `settleTeam` 在确认后推进，这里兜底：记忆已经写下了，就不该再把同一批消息问一遍。
  */
 export async function confirmedBy(
 	harness: Harness,
@@ -202,12 +192,12 @@ export async function confirmedBy(
 ): Promise<number> {
 	const state = (await harness.snapshot(ChannelDoc, context)) as ChannelState | undefined;
 	// 只算会进候选的消息：`note` 是系统留痕，游标不该因为「系统报过一次错」而前进。
-	const maxSeq = (state?.messages[`team:${team}`] ?? []).reduce(
-		(max, m) => (m.kind === "note" ? max : Math.max(max, m.seq)),
+	const latest = (state?.messages[teamId(team)] ?? []).reduce(
+		(max, message) => (message.kind === "note" ? max : Math.max(max, message.seq)),
 		0,
 	);
 	const settle = (await harness.snapshot(SettleDoc, context)) as SettleState | undefined;
-	if (maxSeq <= (settle?.cursors[team] ?? 0)) return 0;
-	await advanceCursor(harness, team, maxSeq, context);
-	return maxSeq;
+	if (latest <= (settle?.cursors[team] ?? 0)) return 0;
+	await writeSettle(harness, team, context, { cursor: latest, waiting: null });
+	return latest;
 }

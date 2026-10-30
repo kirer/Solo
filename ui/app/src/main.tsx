@@ -11,6 +11,7 @@ import { App } from "./App.tsx";
 import { bootstrap } from "./state/store.ts";
 import { fetchLastRuntimeReport } from "./api/client.ts";
 import { installJankMonitor } from "./lib/jank.ts";
+import { installCodeCopy } from "./lib/copy-code.ts";
 import "./styles/index.css";
 
 const host = document.getElementById("root");
@@ -24,6 +25,8 @@ createRoot(host).render(
 
 // 卡顿自报要在第一次渲染之前装好，否则首屏那段最长的工作恰好没被观察到。
 installJankMonitor();
+// 代码块的「复制」按钮是 `dangerouslySetInnerHTML` 注入的，只能全局委托一次。
+installCodeCopy();
 void bootstrap();
 
 // 底座上一轮留下的「不正常」报告（任务抛异常 / 重启超限被挂起 / storage 让会话关掉）。

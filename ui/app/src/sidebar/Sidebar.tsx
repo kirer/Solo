@@ -7,7 +7,7 @@
  */
 
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
-import { clockTime, headParts, relTime, sortChannels, unreadLabel } from "../lib/format.ts";
+import { headParts, relTime, unreadLabel } from "../lib/format.ts";
 import { openChannel, setRight, setSide } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Channel } from "../api/types.ts";
@@ -22,7 +22,6 @@ export function Sidebar(): JSX.Element {
 	const memberCount = useStore((state) => state.people.length);
 
 	const bySlug = new Map(people.map((person) => [person.slug, person]));
-	const rows = sortChannels(channels);
 
 	return (
 		<aside className="sidebar" data-side={side}>
@@ -57,7 +56,7 @@ export function Sidebar(): JSX.Element {
 				</span>
 			</div>
 			<div className="channels" id="rows" role="list">
-				{rows.map((channel) => (
+				{channels.map((channel) => (
 					<ChannelRow
 						key={channel.id}
 						channel={channel}
@@ -173,5 +172,3 @@ function stateLabel(state: string): string {
 	if (state === "asleep") return "睡了";
 	return "待命";
 }
-
-export { clockTime };

@@ -13,9 +13,10 @@
  *
  * 谁能读：全公司。理由同上 —— 记忆是资产，藏起来只会重复踩坑。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DIGEST_LIMIT, entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
+import { entryProblem, memoryDigest, sectionsOf, type MemorySection } from "../agent/memory.ts";
+import { createSerialGate, readTextOrUndefined } from "../runtime/io.ts";
 
 export const TEAM_MEMORY_FILE = "memory.md";
 
@@ -26,33 +27,18 @@ export function teamMemoryPath(teamsRoot: string, team: string): string {
 
 /** 读全文；不存在返回 undefined（没记过就是没记过，不自动建空文件）。 */
 export async function readTeamMemory(teamsRoot: string, team: string): Promise<string | undefined> {
-	try {
-		return await readFile(teamMemoryPath(teamsRoot, team), "utf8");
-	} catch {
-		return undefined;
-	}
+	return readTextOrUndefined(teamMemoryPath(teamsRoot, team));
 }
 
 /**
- * 追加一条。小节标题带日期**和记录人**：
- * 「2026-10-27 林越」。看到是谁写的，后来的争议才有地方追。
+ * 写团队记忆的串行闸（与个人记忆同一个理由：`appendTeamMemory` 是「读全文 → 拼 → 写回」，
+ * 两个 agent 同时追加就会丢一条。团队频道里本来就常有两个人同时被叫醒）。
  */
-/**
- * 写团队记忆的串行闸。
- *
- * 与个人记忆同一个理由：`appendTeamMemory` 是「读全文 → 拼 → 写回」，两个 agent 同时
- * 追加就会丢一条。团队频道里本来就常有两个人同时被叫醒，这条不是理论风险。
- */
-let writing: Promise<unknown> = Promise.resolve();
-
-function serialized<T>(operation: () => Promise<T>): Promise<T> {
-	const next = writing.then(operation, operation);
-	writing = next.catch(() => undefined);
-	return next;
-}
+const serialized = createSerialGate();
 
 /**
- * 追加一条。**超长/空/像密钥的条目直接拒写并抛错**，不做静默截断。
+ * 追加一条。小节标题带日期**和记录人**：「2026-10-27 林越」。看到是谁写的，后来的争议才有地方追。
+ ***超长/空/像密钥的条目直接拒写并抛错**，不做静默截断。
  *
  * 为什么本仓库要管长度：个人记忆早就有 300/4000 的两道闸，团队记忆一条都没有，实测
  * 某个团队的 `memory.md` 涨到 7524 字符、约 37 条 —— 而提示词里的目录只放得下十几条，
@@ -77,16 +63,6 @@ export async function appendTeamMemory(
 	await mkdir(join(teamsRoot, team), { recursive: true });
 	await writeFile(path, next, "utf8");
 	return next;
-	});
-}
-
-/** 整篇替换（谁都能改，改错了看 git / 看历史）。 */
-export async function writeTeamMemory(teamsRoot: string, team: string, source: string): Promise<void> {
-	// 整篇替换不做逐条校验（那是「把文件改小」的合法路径），但要走同一条串行闸，
-	// 否则它可能和 append 交错，把刚追加的一条覆盖掉。
-	return serialized(async () => {
-		await mkdir(join(teamsRoot, team), { recursive: true });
-		await writeFile(teamMemoryPath(teamsRoot, team), source.trimEnd() + "\n", "utf8");
 	});
 }
 
@@ -119,11 +95,6 @@ export function teamMemorySections(source: string): readonly MemorySection[] {
  * 「记忆整理」里，人和 agent 都能改、都能迭代，改它不用改代码。
  * 这里的函数只负责回答「有哪些还没沉淀」。
  */
-
-/** 沉淀游标的键：`团队 slug` → 已经沉淀到第几条 seq。 */
-export function settleKey(team: string): string {
-	return `settle:${team}`;
-}
 
 /** 一条待沉淀的消息。 */
 export type SettleCandidate = {
@@ -174,5 +145,3 @@ export function renderSettlePrompt(team: string, candidates: readonly SettleCand
 		`一句话把「记了什么」回在团队频道 \`team:${team}\`（say 时传 channel: "team:${team}"）。`,
 	].join("\n");
 }
-
-export { DIGEST_LIMIT };

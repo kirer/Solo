@@ -7,7 +7,7 @@
  */
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { chatKind } from "../channel/state.ts";
-import { attentionItems, channelDetail, channelList, orgView } from "../view/index.ts";
+import { attentionItems, channelDetail, channelList, idOf, orgView } from "../view/index.ts";
 import type { AttentionItem, ViewChannel, ViewChannelDetail, ViewOrg } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import type { Snapshots } from "./snapshot.ts";
@@ -26,12 +26,6 @@ export type MentionCandidate = {
 	readonly slug: string;
 	readonly title: string;
 };
-
-/** slug → 界面用的数字 id（名册里没有给 -1）。 */
-function conversationIdOf(directory: { slugToConversation: Record<string, number> }, slug: string): number {
-	if (slug === OWNER_SLUG) return 0;
-	return directory.slugToConversation[slug] ?? -1;
-}
 
 export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	/** 组织快照。界面的组织图与顶栏都吃这一份。 */
@@ -91,7 +85,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 			candidates: channel.members
 				.filter((slug) => slug !== OWNER_SLUG)
 				.map((slug) => ({
-					id: conversationIdOf(directory, slug),
+					id: idOf(directory, slug),
 					label: shell.labelOf(slug),
 					slug,
 					title: identityTitle(slug),

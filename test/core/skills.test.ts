@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-	listCompanySkills,
 	listSkills,
 	readSkill,
 	writeCompanySkill,
@@ -118,10 +117,10 @@ describe("技能：公司层与个人层", () => {
 		expect((await readSkill(roots, "someone-else", "复盘"))?.body).toBe("公司正文");
 	});
 
-	it("listCompanySkills 只给公司层（不掺个人技能）", async () => {
+	it("别人只看得到公司层（不掺某个人的个人技能）", async () => {
 		await writeCompanySkill(root, { name: "a", description: "公司", body: "x" });
 		await writeSkill(roots, "me", { name: "b", description: "个人", body: "y" });
-		expect((await listCompanySkills(root)).map((skill) => skill.name)).toEqual(["a"]);
+		expect((await listSkills(roots, "someone-else")).map((skill) => skill.name)).toEqual(["a"]);
 	});
 });
 

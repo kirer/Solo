@@ -16,15 +16,10 @@ const MAX_TOASTS = 3;
 export function useToasts(): {
 	toasts: Toast[];
 	toast: (text: string, tone?: Tone) => void;
-	dismiss: (id: number) => void;
 } {
 	const [toasts, setToasts] = useState<Toast[]>([]);
 	const next = useRef(0);
 	const timers = useRef(new Set<number>());
-
-	const dismiss = useCallback((id: number) => {
-		setToasts((current) => current.filter((item) => item.id !== id));
-	}, []);
 
 	const toast = useCallback((text: string, tone: Tone = "info") => {
 		const id = next.current++;
@@ -44,5 +39,5 @@ export function useToasts(): {
 		[],
 	);
 
-	return { toasts, toast, dismiss };
+	return { toasts, toast };
 }

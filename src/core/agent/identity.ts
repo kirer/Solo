@@ -8,8 +8,10 @@
  * 组织架构，而组织架构的唯一权威来源就是这些文件的 `manager` 字段 —— 扫一遍
  * 目录就是组织架构，改了文件就是改了组织架构，不需要第二条真相。
  */
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { parseFrontmatter, stripFrontmatter } from "./frontmatter.ts";
+import { readTextOrUndefined } from "../runtime/io.ts";
 
 /** `identity.md` 的 YAML 头。全部可选 —— 缺什么就渲染成「未设置」。 */
 export type IdentityHeader = {
@@ -33,21 +35,9 @@ export type Identity = IdentityHeader & {
 /** 我的 slug 常量。它不是 agent，是对话的另一端。 */
 export const OWNER_SLUG = "owner";
 
-/** 只取 `---` 之间的行，逐行 `key: value`。不引入 YAML 依赖。 */
+/** 头 → 身份头。只留认得的那几个字段；其余字段照旧留在文件里，不解析也不丢。 */
 function parseHeader(source: string): IdentityHeader {
-	if (!source.startsWith("---")) return {};
-	const end = source.indexOf("\n---", 3);
-	if (end < 0) return {};
-	const header: Record<string, string> = {};
-	for (const line of source.slice(3, end).split("\n")) {
-		const match = /^\s*([A-Za-z_][\w-]*)\s*:\s*(.*)$/.exec(line);
-		if (match === null) continue;
-		const key = match[1];
-		const raw = match[2];
-		if (key === undefined || raw === undefined) continue;
-		const value = raw.trim().replace(/^["']|["']$/g, "");
-		if (value !== "") header[key] = value;
-	}
+	const header = parseFrontmatter(source);
 	return {
 		...(header.name === undefined ? {} : { name: header.name }),
 		...(header.title === undefined ? {} : { title: header.title }),
@@ -61,16 +51,8 @@ function parseHeader(source: string): IdentityHeader {
 	};
 }
 
-/** 只取 `---` 之后的正文。 */
-function parseBody(source: string): string {
-	if (!source.startsWith("---")) return source.trim();
-	const end = source.indexOf("\n---", 3);
-	if (end < 0) return source.trim();
-	return source.slice(end + 4).trim();
-}
-
 export function parseIdentity(slug: string, dir: string, source: string): Identity {
-	return { slug, dir, ...parseHeader(source), body: parseBody(source) };
+	return { slug, dir, ...parseHeader(source), body: stripFrontmatter(source) };
 }
 
 /** agent 根目录（`workspace/agents`）下的所有子目录。 */
@@ -90,12 +72,8 @@ export async function listAgentSlugs(root: string): Promise<readonly string[]> {
 /** 读一份身份；文件不存在返回 undefined（不是错误 —— 缺席是一种正常状态）。 */
 export async function readIdentity(root: string, slug: string): Promise<Identity | undefined> {
 	const dir = join(root, slug);
-	try {
-		const source = await readFile(join(dir, "identity.md"), "utf8");
-		return parseIdentity(slug, dir, source);
-	} catch {
-		return undefined;
-	}
+	const source = await readTextOrUndefined(join(dir, "identity.md"));
+	return source === undefined ? undefined : parseIdentity(slug, dir, source);
 }
 
 /** 读全部身份。组织架构就是这份结果。 */

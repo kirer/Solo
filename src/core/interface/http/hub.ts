@@ -2,228 +2,204 @@
  * SSE 的连接与推送：谁连着、推到第几条、什么时候推。
  *
  * 编码在 `sse.ts`（纯函数、可单测），这里只管**有状态**的那一半：连接集合、去抖定时器、
- * 每个连接在每个频道上的游标。这一半必须连着真连接才能验，所以它和纯逻辑分开。
+ * 「这个频道已经推到第几条」。这一半必须连着真连接才能验，所以它和纯逻辑分开。
  *
  * 两条流各有各的事件：
  * - `org`：整份组织快照，任何文档提交都推（去抖 120ms）；
  * - `create`：一条消息，只推给订阅了那个频道的连接，且只推游标之后的增量。
+ *
+ * 游标只有**一份**，按频道记：所有连着的人在同一时刻收到的增量是同一批，所以
+ * 「推到哪了」是频道的事实，不是连接的事实。按连接记的那一版要维护
+ * `WeakMap<连接, Map<频道, seq>>`，还要配一个「补历史和增量重叠几条」的常数
+ * （`seek` 加 4、过滤时再减 4），两个东西互相抵消，等于绕一圈回到「推 seq 之后的」。
  */
 import type { ServerResponse } from "node:http";
 import { OWNER_SLUG } from "../../app/index.ts";
 import { messageView, orgView } from "../../view/index.ts";
-import type { Snapshots } from "../../app/snapshot.ts";
+import type { ChannelSnapshot, Snapshots } from "../../app/snapshot.ts";
 import type { CoreServices } from "../../app/types.ts";
 import { encodeEvent, keepAliveFrame, KEEP_ALIVE_MS, retryFrame, sseHeaders } from "./sse.ts";
 
 /** 推送去抖（毫秒）：一次提交可能连带几次改动。 */
 const PUSH_DEBOUNCE_MS = 120;
 
-/**
- * 每条消息推的时候多回看几条。
- *
- * 补历史与增量会重叠，前端按 `seq` 幂等 upsert，重叠几条换来的是「漏一条」的概率更低。
- */
-const RECENT_RESEND = 4;
-
-/** 首屏一次推多少条历史。 */
-const FIRST_PAGE = 60;
+/** 一次最多推多少条：首屏补齐，以及增量积压时的上界。更早的靠 `/api/channels/:id?before=`。 */
+const PAGE = 60;
 
 export function createStreamHub(shell: CoreServices, snapshots: Snapshots) {
 	const orgClients = new Set<ServerResponse>();
-	let orgTimer: NodeJS.Timeout | undefined;
-
 	// T-016：按频道的 SSE 连接（channelId → 连接集合）。消息增量只推给订阅了该频道的浏览器。
 	const channelClients = new Map<string, Set<ServerResponse>>();
-	const channelTimers = new Map<string, NodeJS.Timeout>();
-	// 每个 SSE 连接在每个频道上「已经推到第几条」。
-	//
-	// 原来的做法是每次提交都把**最后 60 条**重推一遍。实测：一次运行 15 秒里推了 1620 条
-	// create 事件、51,359 个 DOM 节点被加进去又删掉、浏览器最长一次卡 2.7 秒。
-	// 增量就该是增量：只推比这个游标新的，外加最后几条。
-	const channelSeqs = new WeakMap<ServerResponse, Map<string, number>>();
-	function cursorOf(client: ServerResponse, id: string): number | undefined {
-		return channelSeqs.get(client)?.get(id);
-	}
-	function setCursorOf(client: ServerResponse, id: string, seq: number): void {
-		let map = channelSeqs.get(client);
-		if (map === undefined) {
-			map = new Map();
-			channelSeqs.set(client, map);
-		}
-		map.set(id, seq);
-	}
+	/** `频道 → 已经推到第几条`（`?since=` 与增量都读它）。 */
+	const pushed = new Map<string, number>();
+	let timer: NodeJS.Timeout | undefined;
 
-	/** 向所有 SSE 连接推一份新快照（去抖）。 */
-	function scheduleOrg(): void {
-		if (orgClients.size === 0) return;
-		if (orgTimer !== undefined) return;
-		orgTimer = setTimeout(() => {
-			orgTimer = undefined;
-			void pushOrg();
-		}, PUSH_DEBOUNCE_MS);
-	}
-
-	async function pushOrg(): Promise<void> {
-		if (orgClients.size === 0) return;
-		let payload: string;
-		try {
-			const { identities, directory } = await snapshots.snapshot();
-			payload = encodeEvent({ type: "org", org: orgView(identities, directory) });
-		} catch {
-			return;
-		}
-		for (const client of [...orgClients]) {
+	/** 写给一组连接；写失败（已断）的顺手摘掉。 */
+	function broadcast(clients: Set<ServerResponse>, payload: string): void {
+		for (const client of [...clients]) {
 			try {
 				client.write(payload);
-			} catch {
-				orgClients.delete(client);
-			}
-		}
-	}
-
-	/**
-	 * 向某个频道的所有 SSE 连接推一次该频道消息尾巴的增量（`create` 事件）。
-	 * 前端按 seq 幂等 upsert：新 seq 插入、已有 seq 覆盖。
-	 * 只推「当前有连接的频道」，避免无谓扫描；连接建立时也会立即调一次做全量补齐。
-	 */
-	async function pushChannel(id: string): Promise<void> {
-		const clients = channelClients.get(id);
-		if (clients === undefined || clients.size === 0) return;
-		let views: { seq: number; line: string }[];
-		try {
-			const { directory, channels } = await snapshots.channelSnapshot();
-			const channel = channels.channels[id];
-			if (channel === undefined) return;
-			const list = channels.messages[id] ?? [];
-			const tail = list.slice(Math.max(0, list.length - FIRST_PAGE));
-			views = tail.map((message) => {
-				const view = messageView(channels, channel, message, directory, OWNER_SLUG);
-				return { seq: message.seq, line: encodeEvent({ type: "create", message: view }) };
-			});
-		} catch {
-			return;
-		}
-		const newest = views.length > 0 ? views[views.length - 1]!.seq : 0;
-		for (const client of [...clients]) {
-			// 没有游标 = 刚连上来，给全量（更早靠 `/api/channels/:id?before=`，这 60 条只是首屏）。
-			const since = cursorOf(client, id);
-			const wanted = since === undefined ? views : views.filter((view) => view.seq > since - RECENT_RESEND);
-			if (wanted.length === 0) continue;
-			try {
-				client.write(wanted.map((view) => view.line).join(""));
-				setCursorOf(client, id, newest);
 			} catch {
 				clients.delete(client);
 			}
 		}
 	}
 
-	/** 按频道去抖推增量。 */
-	function scheduleChannel(id: string): void {
-		if (channelClients.get(id)?.size === 0) return;
-		const existing = channelTimers.get(id);
-		if (existing !== undefined) return;
-		const timer = setTimeout(() => {
-			channelTimers.delete(id);
-			void pushChannel(id);
-		}, PUSH_DEBOUNCE_MS);
-		channelTimers.set(id, timer);
+	/**
+	 * 把 `> since` 的消息推给这个频道的所有连接（`create` 事件）。
+	 * 前端按 seq 幂等 upsert：新 seq 插入、已有 seq 覆盖。
+	 */
+	function pushChannel(id: string, snap: ChannelSnapshot, since: number): void {
+		const clients = channelClients.get(id);
+		if (clients === undefined || clients.size === 0) return;
+		const channel = snap.channels.channels[id];
+		if (channel === undefined) return;
+		const fresh = (snap.channels.messages[id] ?? []).filter((message) => message.seq > since);
+		if (fresh.length === 0) return;
+		const tail = fresh.slice(Math.max(0, fresh.length - PAGE));
+		const payload = tail
+			.map((message) =>
+				encodeEvent({
+					type: "create",
+					message: messageView(snap.channels, channel, message, snap.directory, OWNER_SLUG),
+				}),
+			)
+			.join("");
+		broadcast(clients, payload);
+		pushed.set(id, tail[tail.length - 1]!.seq);
 	}
 
-	/** 一条连接推到这个频道的第几条（`?since=` 用）。 */
-	function seek(id: string, response: ServerResponse, since: number): void {
-		// 客户端说「我已经有到 N 了」：把游标设到 N，`pushChannel` 就只推 N 之后的。
-		//
-		// 不设的话，刷新页面会再收一遍最近 60 条历史 —— 那 60 条里有 20 来条比已加载窗口
-		// 更早，前端只能把它们追加到列表**末尾**，于是一刷新频道就变成
-		// 「最新的在上面、更早的在最下面」的乱序（实测 60 行里 20 行错位）。
-		setCursorOf(response, id, since + RECENT_RESEND);
+	/** 一次 flush：读一次快照，org 推整份、每个活跃频道推增量。 */
+	async function flush(): Promise<void> {
+		if (orgClients.size === 0 && channelClients.size === 0) return;
+		let snap: ChannelSnapshot;
+		try {
+			// 有 org 订阅者就读全量（顺带带上 teams），否则只读频道那半边。
+			snap = orgClients.size > 0 ? await snapshots.snapshot() : await snapshots.channelSnapshot();
+		} catch {
+			return;
+		}
+		if (orgClients.size > 0) {
+			broadcast(orgClients, encodeEvent({ type: "org", org: orgView(snap.identities, snap.directory) }));
+		}
+		for (const id of [...channelClients.keys()]) pushChannel(id, snap, pushed.get(id) ?? 0);
+	}
+
+	/** 排一次推送（去抖，全局一个定时器）。 */
+	function schedule(): void {
+		if (orgClients.size === 0 && channelClients.size === 0) return;
+		if (timer !== undefined) return;
+		timer = setTimeout(() => {
+			timer = undefined;
+			void flush();
+		}, PUSH_DEBOUNCE_MS);
+	}
+
+	/**
+	 * 连接建立时给**这一条**连接补齐。
+	 *
+	 * 只写它一个：游标是频道共享的，别人的增量不能因为「又来一个人」而重推一遍。
+	 * 带 `?since=N` 就只补 N 之后的（前端已经有的不重发）；没带就补最后一屏。
+	 */
+	async function prime(response: ServerResponse, id: string, since?: number): Promise<void> {
+		let snap: ChannelSnapshot;
+		try {
+			snap = await snapshots.channelSnapshot();
+		} catch {
+			return;
+		}
+		const channel = snap.channels.channels[id];
+		if (channel === undefined) return;
+		const list = snap.channels.messages[id] ?? [];
+		const newest = list.at(-1)?.seq ?? 0;
+		// 带 `?since=N` 就只补 N 之后的；没带就补最后一屏（按**条数**算，不按 seq 算：
+		// seq 会有空洞，用 `newest - PAGE` 推出来的窗口大小会漂）。
+		const fresh = (since === undefined ? list : list.filter((message) => message.seq > since)).slice(-PAGE);
+		if (fresh.length > 0) {
+			try {
+				response.write(
+					fresh
+						.map((message) =>
+							encodeEvent({
+								type: "create",
+								message: messageView(snap.channels, channel, message, snap.directory, OWNER_SLUG),
+							}),
+						)
+						.join(""),
+				);
+			} catch {
+				return;
+			}
+		}
+		// 没有别人连着的时候，这条连接就是全部：游标可以直接抬到最新。
+		// 还有别人连着时不抬 —— 中间那些增量还没推给他们，抬了就把它们漏掉。
+		if ((channelClients.get(id)?.size ?? 0) <= 1) pushed.set(id, Math.max(pushed.get(id) ?? 0, newest));
+	}
+
+	/** 开一条 SSE：头 + retry 帧 + 保活 + 断开清理（两条流共用的那一半）。 */
+	function openStream(response: ServerResponse, clients: Set<ServerResponse>): void {
+		response.writeHead(200, sseHeaders());
+		response.write(retryFrame());
+		clients.add(response);
+		const keepAlive = setInterval(() => {
+			try {
+				response.write(keepAliveFrame());
+			} catch {
+				clearInterval(keepAlive);
+				clients.delete(response);
+			}
+		}, KEEP_ALIVE_MS);
+		response.on("close", () => {
+			clearInterval(keepAlive);
+			clients.delete(response);
+		});
 	}
 
 	function streamChannel(response: ServerResponse, id: string, since?: number): void {
-		response.writeHead(200, sseHeaders());
-		response.write(retryFrame());
 		let clients = channelClients.get(id);
 		if (clients === undefined) {
 			clients = new Set<ServerResponse>();
 			channelClients.set(id, clients);
 		}
-		clients.add(response);
-		if (since !== undefined) seek(id, response, since);
+		openStream(response, clients);
 		// 连接建立即推补齐（首屏全量；带 since 时只补增量）。
-		void pushChannel(id);
-		const keepAlive = setInterval(() => {
-			try {
-				response.write(keepAliveFrame());
-			} catch {
-				clearInterval(keepAlive);
-				clients?.delete(response);
-			}
-		}, KEEP_ALIVE_MS);
+		void prime(response, id, since);
 		response.on("close", () => {
-			clearInterval(keepAlive);
-			clients?.delete(response);
-			if (clients !== undefined && clients.size === 0) channelClients.delete(id);
+			if (clients.size === 0) channelClients.delete(id);
 		});
 	}
 
 	function streamOrg(response: ServerResponse): void {
-		response.writeHead(200, sseHeaders());
-		response.write(retryFrame());
-		orgClients.add(response);
-		void pushOrg();
-		const keepAlive = setInterval(() => {
-			try {
-				response.write(keepAliveFrame());
-			} catch {
-				clearInterval(keepAlive);
-				orgClients.delete(response);
-			}
-		}, KEEP_ALIVE_MS);
-		response.on("close", () => {
-			clearInterval(keepAlive);
-			orgClients.delete(response);
-		});
+		openStream(response, orgClients);
+		void flush();
 	}
 
 	/**
 	 * 订阅提交。任何文档提交都推一次：新消息、新 agent、改名，界面都会跟着变。
 	 */
 	function start(): () => void {
-		return shell.harness.subscribeCommits(() => {
-			scheduleOrg();
-			// 任何提交都可能带来新消息，对活跃频道排增量。
-			for (const id of channelClients.keys()) scheduleChannel(id);
-		});
+		return shell.harness.subscribeCommits(() => schedule());
 	}
 
 	/** 收摊：停定时器、断所有连接。 */
 	function close(): void {
-		if (orgTimer !== undefined) clearTimeout(orgTimer);
-		orgTimer = undefined;
-		for (const client of orgClients) {
-			try {
-				client.end();
-			} catch {
-				/* 已断 */
-			}
-		}
-		orgClients.clear();
-		for (const set of channelClients.values()) {
-			for (const client of set) {
+		if (timer !== undefined) clearTimeout(timer);
+		timer = undefined;
+		for (const clients of [orgClients, ...channelClients.values()]) {
+			for (const client of clients) {
 				try {
 					client.end();
 				} catch {
 					/* 已断 */
 				}
 			}
+			clients.clear();
 		}
 		channelClients.clear();
-		for (const timer of channelTimers.values()) clearTimeout(timer);
-		channelTimers.clear();
+		pushed.clear();
 	}
 
-	return { streamOrg, streamChannel, scheduleOrg, scheduleChannel, start, close };
+	return { streamOrg, streamChannel, start, close };
 }
 
 export type StreamHub = ReturnType<typeof createStreamHub>;

@@ -10,7 +10,7 @@
 import { defineDoc, type JsonObject } from "../runtime/index.ts";
 
 /** 一次唤醒：谁在哪个频道、第几条消息叫的我。 */
-export type WakeRecord = { channelId: string; seq: number; from: string; at: number };
+type WakeRecord = { channelId: string; seq: number; from: string; at: number };
 
 export type DirectoryState = {
 	/** slug → 会话 id。 */

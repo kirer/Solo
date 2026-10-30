@@ -28,16 +28,16 @@ export const MAX_INLINE_IMAGES = 4;
 /** 单张图的上限（原始字节）。base64 会再涨三分之一，所以留了余量。 */
 export const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
 /** 一条消息里所有内联图的原始字节总量上限。 */
-export const MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024;
+const MAX_INLINE_TOTAL_BYTES = 8 * 1024 * 1024;
 
 /** 模型能直接看的图片内容块。形状由 pi-ai 的 `ImageContent` 定。 */
-export type InlineImage = {
+type InlineImage = {
 	readonly type: "image";
 	readonly data: string;
 	readonly mimeType: string;
 };
 
-export type AttachmentPlan = {
+type AttachmentPlan = {
 	/** 直接塞进这一轮输入的图片。可能少于附件里的图片数（被闸挡住的不在这里）。 */
 	readonly images: readonly InlineImage[];
 	/** 拼进正文的说明，一行一条。没有附件时为空数组。 */
@@ -45,7 +45,7 @@ export type AttachmentPlan = {
 };
 
 /** 没给附件时的空计划。省得调用方到处判 `undefined`。 */
-export const NO_ATTACHMENTS: AttachmentPlan = { images: [], lines: [] };
+const NO_ATTACHMENTS: AttachmentPlan = { images: [], lines: [] };
 
 /** `11 B` / `4.2 KB` / `1.3 MB` —— 与界面同一套写法。 */
 function humanBytes(bytes: number): string {

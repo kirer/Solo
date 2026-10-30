@@ -7,7 +7,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getMentionable, uploadFile, uploadUrl } from "../api/client.ts";
+import { getMentionable, uploadFile } from "../api/client.ts";
 import type { Uploaded } from "../api/types.ts";
 import { humanBytes } from "../lib/format.ts";
 import { send, setReply } from "../state/store.ts";
@@ -42,7 +42,6 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 
 	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);
-	const accept = useRef<"image" | "file">("file");
 	const dragDepth = useRef(0);
 
 	const uploading = drafts.some((draft) => draft.state === "uploading");
@@ -360,7 +359,6 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 								role="menuitem"
 								data-plus="image"
 								onClick={() => {
-									accept.current = "image";
 									if (fileRef.current !== null) fileRef.current.accept = "image/*";
 									fileRef.current?.click();
 									setMenu(false);
@@ -374,7 +372,6 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 								role="menuitem"
 								data-plus="file"
 								onClick={() => {
-									accept.current = "file";
 									if (fileRef.current !== null) fileRef.current.accept = "";
 									fileRef.current?.click();
 									setMenu(false);
@@ -469,5 +466,3 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 function hasFiles(event: React.DragEvent<HTMLElement>): boolean {
 	return [...event.dataTransfer.types].includes("Files");
 }
-
-export { uploadUrl };

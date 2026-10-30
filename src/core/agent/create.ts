@@ -9,7 +9,8 @@
  */
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { OWNER_SLUG, listAgentSlugs, readIdentity, type Identity, type IdentityHeader } from "../agent/identity.ts";
+import { listAgentSlugs, readIdentity, type Identity, type IdentityHeader } from "../agent/identity.ts";
+import { renderFrontmatter } from "./frontmatter.ts";
 
 /** 名字 → slug。中文保留（`林越` → `林越`），空白与其他符号换成 `-`。 */
 export function slugify(name: string): string {
@@ -35,13 +36,15 @@ export async function uniqueSlug(root: string, name: string): Promise<string> {
 
 /** 把一份身份写成 `identity.md`。头的字段按固定顺序输出，方便人读、也方便 diff。 */
 export function renderIdentityFile(header: IdentityHeader, body: string): string {
-	const lines = ["---"];
-	if (header.name !== undefined) lines.push(`name: ${header.name}`);
-	if (header.title !== undefined) lines.push(`title: ${header.title}`);
-	if (header.manager !== undefined) lines.push(`manager: ${header.manager}`);
-	if (header.team !== undefined) lines.push(`team: ${header.team}`);
-	lines.push("---", "", body.trim(), "");
-	return lines.join("\n");
+	return renderFrontmatter(
+		[
+			["name", header.name],
+			["title", header.title],
+			["manager", header.manager],
+			["team", header.team],
+		],
+		body,
+	);
 }
 
 export type CreateAgentInput = {
@@ -82,50 +85,4 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	const identity = await readIdentity(input.root, slug);
 	if (identity === undefined) throw new Error(`身份写入后读不回来：${slug}`);
 	return identity;
-}
-
-/**
- * 组织架构的纯文本投影（给 agent 看的，不是给程序解析的）。
- *
- * 为什么要一个「投影」而不是让 agent 直接读文件夹：agent 读不到别人的文件夹
- * （那是文件系统的细节），但它需要知道「公司里有谁、谁向谁汇报」。这份文本
- * 就是公共事实的唯一渲染 —— 每次请求现算，所以重组公司不需要改任何旧文档。
- */
-export function renderOrgChart(all: readonly Identity[], self?: string): string {
-	if (all.length === 0) return "公司里还没有其他人。";
-	const byManager = new Map<string, Identity[]>();
-	for (const identity of all) {
-		const key = identity.manager ?? OWNER_SLUG;
-		const list = byManager.get(key) ?? [];
-		list.push(identity);
-		byManager.set(key, list);
-	}
-	const lines: string[] = [];
-	const walk = (slug: string, depth: number): void => {
-		for (const person of byManager.get(slug) ?? []) {
-			const title = person.title === undefined ? "" : `（${person.title}）`;
-			const mark = person.slug === self ? "  ← 你" : "";
-			lines.push(`${"  ".repeat(depth)}- ${person.name ?? person.slug}${title}${mark}`);
-			walk(person.slug, depth + 1);
-		}
-	};
-	walk(OWNER_SLUG, 0);
-	// 上级指向一个不存在的人（断链）：仍然列出来，否则这些人会凭空消失。
-	const reachable = new Set<string>();
-	const collect = (slug: string): void => {
-		for (const person of byManager.get(slug) ?? []) {
-			if (reachable.has(person.slug)) continue;
-			reachable.add(person.slug);
-			collect(person.slug);
-		}
-	};
-	collect(OWNER_SLUG);
-	const orphans = all.filter((person) => !reachable.has(person.slug));
-	if (orphans.length > 0) {
-		lines.push("（汇报线断了，这些人找不到上级）");
-		for (const person of orphans) {
-			lines.push(`- ${person.name ?? person.slug}${person.slug === self ? "  ← 你" : ""}`);
-		}
-	}
-	return lines.join("\n");
 }

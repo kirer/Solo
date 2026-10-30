@@ -19,8 +19,10 @@
  * 目标是 X。验收标准是 Y。不做的是 Z。
  * ```
  */
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { parseFrontmatter, renderFrontmatter, stripFrontmatter } from "../agent/frontmatter.ts";
+import { readTextOrUndefined } from "../runtime/io.ts";
 
 export const TEAM_FILE = "README.md";
 
@@ -43,37 +45,12 @@ export type TeamDoc = {
 	readonly status: TeamStatus;
 	/** 正文：目标、验收标准、边界、当前进展。 */
 	readonly body: string;
-	readonly dir: string;
 };
 
 const STATUSES: readonly TeamStatus[] = ["active", "paused", "done", "archived"];
 
-function parseHeader(source: string): Record<string, string> {
-	if (!source.startsWith("---")) return {};
-	const end = source.indexOf("\n---", 3);
-	if (end < 0) return {};
-	const out: Record<string, string> = {};
-	for (const line of source.slice(3, end).split("\n")) {
-		const match = /^\s*([A-Za-z][\w-]*)\s*:\s*(.*)$/.exec(line);
-		if (match === null) continue;
-		const key = match[1];
-		const raw = match[2];
-		if (key === undefined || raw === undefined) continue;
-		const value = raw.trim().replace(/^["']|["']$/g, "");
-		if (value !== "") out[key] = value;
-	}
-	return out;
-}
-
-function stripFrontmatter(source: string): string {
-	if (!source.startsWith("---")) return source.trim();
-	const end = source.indexOf("\n---", 3);
-	if (end < 0) return source.trim();
-	return source.slice(end + 4).trim();
-}
-
-export function parseTeam(slug: string, dir: string, source: string): TeamDoc {
-	const header = parseHeader(source);
+export function parseTeam(slug: string, source: string): TeamDoc {
+	const header = parseFrontmatter(source);
 	const status = STATUSES.find((item) => item === header.status) ?? "active";
 	const lead = header.lead;
 	return {
@@ -83,7 +60,6 @@ export function parseTeam(slug: string, dir: string, source: string): TeamDoc {
 		...(header.doing === undefined ? {} : { doing: header.doing }),
 		status,
 		body: stripFrontmatter(source),
-		dir,
 	};
 }
 
@@ -95,12 +71,16 @@ export function renderTeamFile(doc: {
 	readonly status?: TeamStatus;
 	readonly body: string;
 }): string {
-	const lines = ["---", `name: ${doc.name}`];
-	if (doc.lead !== undefined && doc.lead !== "") lines.push(`lead: ${doc.lead}`);
-	if (doc.doing !== undefined && doc.doing !== "") lines.push(`doing: ${doc.doing}`);
-	if (doc.status !== undefined) lines.push(`status: ${doc.status}`);
-	lines.push("---", "", doc.body.trim());
-	return `${lines.join("\n")}\n`;
+	// 空串按「没写」处理（`status` 例外：它是枚举，只在缺省时才不写）。
+	return renderFrontmatter(
+		[
+			["name", doc.name],
+			["lead", doc.lead === "" ? undefined : doc.lead],
+			["doing", doc.doing === "" ? undefined : doc.doing],
+			["status", doc.status],
+		],
+		doc.body,
+	);
 }
 
 /** 团队目录名（与频道 id `team:<slug>` 用的是同一个 slug）。 */
@@ -109,12 +89,8 @@ export function teamDirOf(teamsRoot: string, slug: string): string {
 }
 
 export async function readTeam(teamsRoot: string, slug: string): Promise<TeamDoc | undefined> {
-	const dir = teamDirOf(teamsRoot, slug);
-	try {
-		return parseTeam(slug, dir, await readFile(join(dir, TEAM_FILE), "utf8"));
-	} catch {
-		return undefined;
-	}
+	const source = await readTextOrUndefined(join(teamDirOf(teamsRoot, slug), TEAM_FILE));
+	return source === undefined ? undefined : parseTeam(slug, source);
 }
 
 /** 全部团队（按 slug 码点序，保证渲染确定）。 */
@@ -169,7 +145,7 @@ export async function writeTeam(
 		body: input.body,
 	};
 	await writeFile(join(dir, TEAM_FILE), renderTeamFile(doc), "utf8");
-	return parseTeam(slug, dir, renderTeamFile(doc));
+	return parseTeam(slug, renderTeamFile(doc));
 }
 
 /** 团队里的 agent（谁在 `identity.md` 里写了 `team: <slug>`）。 */

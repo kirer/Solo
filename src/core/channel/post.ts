@@ -37,15 +37,16 @@ import {
 	type WakeRecord,
 } from "./deliver.ts";
 import { renderUnanswered } from "./unanswered.ts";
+import { createSerialGate } from "../runtime/io.ts";
 
-export type PostResult = {
+type PostResult = {
 	readonly channel: Channel;
 	readonly message: Message;
 	/** 没唤醒任何人时是空数组。 */
 	readonly delivery: DeliverResult;
 };
 
-export type PostInput = {
+type PostInput = {
 	readonly channelId: string;
 	readonly from: string;
 	readonly text: string;
@@ -75,10 +76,20 @@ export type PostDeps = {
 /**
  * 追一条系统留痕到频道。`note` 不唤醒、不计未读（见 `Message.kind`），所以这里不碰
  * 投递层，否则「系统说一下没人被叫醒」会反过来叫醒人。
+ *
+ * 只要求 `harness`（不需要完整的 `PostDeps`）：沉淀失败时的留痕也走这里。
+ * 频道不存在就什么都不写 —— 没有地方给人看，别造一个孤儿消息。
  */
-async function appendNote(deps: PostDeps, channelId: string, text: string, at: number, context: Context): Promise<void> {
+export async function appendNote(
+	deps: { readonly harness: Harness },
+	channelId: string,
+	text: string,
+	at: number,
+	context: Context,
+): Promise<void> {
 	await deps.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		if (doc.channels[channelId] === undefined) return;
 		const next = appendMessage(doc, channelId, { from: OWNER, text, at, kind: "note" });
 		const list = doc.messages[channelId];
 		if (list === undefined) doc.messages[channelId] = [next.message];
@@ -109,13 +120,7 @@ function renderIssues(seq: number, issues: readonly DeliverIssue[], labelOf: (sl
  * 串行化的代价是频道写入排队（毫秒级，一次 commit），换来的是「一次调用 = 一条消息」
  * 这条最基本的保证。
  */
-let writing: Promise<unknown> = Promise.resolve();
-
-function serialized<T>(operation: () => Promise<T>): Promise<T> {
-	const next = writing.then(operation, operation);
-	writing = next.catch(() => undefined);
-	return next;
-}
+const serialized = createSerialGate();
 
 /**
  * 写一条消息并唤醒该唤醒的人。

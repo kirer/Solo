@@ -87,8 +87,9 @@ describe("落盘与 /api/diag 看到的最近一条", () => {
 		});
 	});
 
-	it("最近一条跳过 task_outdated（每次启动都会有的正常现象）", () => {
-		const diag = createDiag(workspace());
+	it("最近一条跳过 task_outdated（每次启动都会有的正常现象）", async () => {
+		const root = workspace();
+		const diag = createDiag(root);
 		diag.recordRuntimeReport({ type: "task_outdated", at: "2026-01-01T00:00:00.000Z" });
 		expect(diag.lastReport()).toBeUndefined();
 		diag.recordRuntimeReport({
@@ -99,6 +100,10 @@ describe("落盘与 /api/diag 看到的最近一条", () => {
 		});
 		expect(diag.lastReport()?.type).toBe("task_faulted");
 		expect(diag.lastReport()?.text).toContain("restart_limit");
+		// 落盘是异步的：等它写完再让 afterEach 删目录，否则 rm 会撞上 ENOTEMPTY
+		await vi.waitFor(() => {
+			expect(readFileSync(join(root, "logs", "runtime.jsonl"), "utf8")).toContain("restart_limit");
+		});
 	});
 
 	it("超长的报告被截到单条上限以内（不静默丢字段）", async () => {

@@ -254,5 +254,3 @@ function headSub(kind: ChannelKind, team: string | undefined, leadLabel: string 
 	const bits = [team, leadLabel === undefined ? undefined : `团队管理员 ${leadLabel}`, `${String(count)} 人`];
 	return bits.filter((bit) => bit !== undefined && bit !== "").join(" · ");
 }
-
-export { openChannel };

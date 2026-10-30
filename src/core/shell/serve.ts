@@ -20,7 +20,7 @@ import { createApp } from "../app/index.ts";
 import type { CoreShell } from "./assemble.ts";
 
 /** 服务选项。 */
-export type CoreServeOptions = {
+type CoreServeOptions = {
 	readonly shell: CoreShell;
 	readonly port?: number;
 	readonly host?: string;

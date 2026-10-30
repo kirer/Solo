@@ -33,7 +33,6 @@ const full: RenderInput = {
 		{ slug: "zhao", name: "赵四", title: "后端", team: "web", manager: "owner" } as unknown as RenderInput["self"],
 		{ slug: "owner", name: "我" } as unknown as RenderInput["self"],
 	],
-	ownerName: "我",
 	rules: "- 说话短。\n- 不编。",
 	capabilities: [
 		{ name: "say", summary: "在频道里说一句。" },

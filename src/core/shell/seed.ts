@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
 import { OWNER_SLUG } from "../agent/identity.ts";
 import { RULES_FILE } from "../agent/rules.ts";
+import { readTextOrUndefined } from "../runtime/io.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -27,7 +28,7 @@ type SeedManifest = {
 };
 
 /** 公司层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
-export type SyncReport = {
+type SyncReport = {
 	readonly copied: readonly string[];
 	readonly updated: readonly string[];
 	readonly kept: readonly string[];
@@ -49,18 +50,11 @@ function hashOf(content: string): string {
  * 缺几份起手技能不该让服务起不来。
  */
 export async function syncCompanySkills(agentsRoot: string): Promise<SyncReport> {
-	return syncSkillTree(seedRoot("skills"), join(dirname(agentsRoot), SKILLS_DIR), join(dirname(agentsRoot), SEED_MANIFEST_FILE));
-}
-
-/**
- * 旧名字，保留给已有调用点：现在它是「同步」，不再是「播种」。
- *
- * 返回**动过的**技能名。第一次跑等于全部拷过去，所以旧测试里
- * `arrayContaining(["写技能", "找现成技能"])` 的断言仍然成立。
- */
-export async function seedCompanySkills(agentsRoot: string): Promise<readonly string[]> {
-	const report = await syncCompanySkills(agentsRoot);
-	return [...report.copied, ...report.updated];
+	return syncSkillTree(
+		seedPath("skills"),
+		join(dirname(agentsRoot), SKILLS_DIR),
+		join(dirname(agentsRoot), SEED_MANIFEST_FILE),
+	);
 }
 
 /** 同步入口：`seedSkillsRoot` 下的每个技能目录 → `skillsRoot/<技能>/...`。 */
@@ -90,7 +84,7 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 			const source = await readFile(join(seedSkillsRoot, name, ...relpath.split("/")), "utf8");
 			const seedHash = hashOf(source);
 			const target = join(skillsRoot, name, ...relpath.split("/"));
-			const existing = await readOrUndefined(target);
+			const existing = await readTextOrUndefined(target);
 
 			if (existing === undefined) {
 				await mkdir(dirname(target), { recursive: true });
@@ -147,14 +141,6 @@ async function readManifest(path: string): Promise<SeedManifest> {
 	}
 }
 
-async function readOrUndefined(path: string): Promise<string | undefined> {
-	try {
-		return await readFile(path, "utf8");
-	} catch {
-		return undefined;
-	}
-}
-
 /** 递归列出目录下的文件（相对路径，`/` 分隔）。读失败 → 空。 */
 async function walkFiles(root: string, prefix: string): Promise<string[]> {
 	let entries: import("node:fs").Dirent[];
@@ -200,7 +186,7 @@ export async function seedRules(workspaceRoot: string): Promise<"written" | "exi
  * 所有人都该会的手艺，所以它们在公司层。
  */
 export async function seedPersonalSkills(agentsRoot: string, slug: string, folder: string): Promise<readonly string[]> {
-	return copySeedSkills(seedRoot(folder), join(agentsRoot, slug, SKILLS_DIR));
+	return copySeedSkills(seedPath(folder), join(agentsRoot, slug, SKILLS_DIR));
 }
 
 async function copySeedSkills(from: string, skillsRoot: string): Promise<readonly string[]> {
@@ -220,16 +206,11 @@ async function copySeedSkills(from: string, skillsRoot: string): Promise<readonl
 }
 
 /**
- * 仓库自带的播种目录（`seed/<folder>`）。
+ * 仓库自带的播种目录（`seed/<segments...>`）的真实路径。
  *
  * 用「从本文件往上找」而不是写死绝对路径：`src/core/shell/` 到仓库根是固定深度，
  * 但源码（`src/`）与构建产物（`dist/`）深度不同，所以往上找而不是数层级。
  */
-function seedRoot(folder: string): string {
-	return seedPath(folder);
-}
-
-/** `seed/<segments...>` 的真实路径（从本文件往上找，见 `seedRoot` 的注释）。 */
 function seedPath(...segments: readonly string[]): string {
 	let dir = dirname(fileURLToPath(import.meta.url));
 	for (let index = 0; index < 6; index += 1) {

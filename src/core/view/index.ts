@@ -14,6 +14,7 @@
 import { OWNER_SLUG, type Identity } from "../agent/identity.ts";
 import { conversationFor, type DirectoryState } from "../agent/roster.ts";
 import { chatKind, readMarkOf, unreadCount, type Channel, type ChannelState, type Message } from "../channel/state.ts";
+import { oneLine } from "../oneline.ts";
 import type {
 	AttentionItem,
 	TeamDoingOf,
@@ -21,20 +22,6 @@ import type {
 	ViewActor,
 	ViewChannel,
 	ViewChannelDetail,
-	ViewMessage,
-	ViewOrg,
-} from "./dto.ts";
-
-// 形状全部定义在 `dto.ts`（唯一权威），这里只做投影。注释见那份文件。
-export type {
-	AttentionItem,
-	TeamDoingOf,
-	TeamLeadOf,
-	ViewActor,
-	ViewChannel,
-	ViewChannelDetail,
-	ViewChannelKind,
-	ViewMember,
 	ViewMessage,
 	ViewOrg,
 } from "./dto.ts";
@@ -51,21 +38,25 @@ function titleOf(channel: Channel, directory: DirectoryState): string {
 	return other === undefined ? channel.title : labelIn(directory, other);
 }
 
-/** 由 slug 拿界面 id（会话号）。名册里没有的给 -1，界面上会显示成一串连不上的节点。 */
-function idOf(directory: DirectoryState, slug: string): number {
+/**
+ * 由 slug 拿界面 id（会话号）。名册里没有的给 -1，界面上会显示成一串连不上的节点。
+ *
+ * 界面侧（`app/`）也用它：id 的算法只能有一份，否则「@ 浮窗里的 id」与「成员列表里的
+ * id」会漂成两个数，界面上点谁都点不开。
+ */
+export function idOf(directory: DirectoryState, slug: string): number {
 	if (slug === OWNER_SLUG) return 0;
 	return conversationFor(directory, slug) ?? -1;
 }
 
-/** 一条消息的正文预览：只取第一行、最多 60 字。 */
 /** 「人说的话」的几种 kind。侧栏预览与「找你」共用 —— 过程投影与系统告警都不算。 */
 const SPOKEN_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
 
+/** 一条消息的正文预览：只取第一行、压成一行、最多 60 字。 */
 function previewOf(message: Message | undefined): string {
 	if (message === undefined) return "";
 	const first = message.text.split("\n").find((line) => line.trim() !== "") ?? "";
-	const flat = first.trim();
-	return flat.length > 60 ? `${flat.slice(0, 60)}…` : flat;
+	return oneLine(first, 60);
 }
 
 /**
@@ -154,7 +145,7 @@ export function messageView(
 	directory: DirectoryState,
 	viewer = OWNER_SLUG,
 ): ViewMessage {
-	const labelOf = (slug: string) => labelIn(directory, slug);
+
 	const quoted = message.replyTo === undefined ? undefined : (state.messages[channel.id] ?? []).find((item) => item.seq === message.replyTo);
 	const excerptSource = quoted?.text.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
 	return {
@@ -162,12 +153,12 @@ export function messageView(
 		at: message.at,
 		from: idOf(directory, message.from),
 		fromSlug: message.from,
-		fromLabel: labelOf(message.from),
+		fromLabel: labelIn(directory, message.from),
 		kind: message.kind,
 		text: message.text,
 		mentions: message.mentions.map((slug) => ({
 			id: idOf(directory, slug),
-			label: labelOf(slug),
+			label: labelIn(directory, slug),
 			read: readMarkOf(state, slug, channel.id) >= message.seq,
 			offset: offsetOf(message.text, slug),
 		})),
@@ -178,7 +169,7 @@ export function messageView(
 						seq: quoted.seq,
 						from: idOf(directory, quoted.from),
 						fromSlug: quoted.from,
-						fromLabel: labelOf(quoted.from),
+						fromLabel: labelIn(directory, quoted.from),
 						excerpt: excerptSource.length > 60 ? `${excerptSource.slice(0, 60)}…` : excerptSource,
 					},
 				}),

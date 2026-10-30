@@ -169,11 +169,10 @@ describe("渲染提示词", () => {
 test("称呼写进组织这一段：叫我、别写 @owner", async () => {
 	const { renderAgentPrompt } = await import("../../src/core/agent/prompt.ts");
 	const text = await renderAgentPrompt(
-		// 只喂最小素材：渲染器对缺字段是宽容的，这一段只看 self / all / ownerName。
+		// 只喂最小素材：渲染器对缺字段是宽容的，这一段只看 self / all。
 		{
 			self: { slug: "林越", name: "林越", body: "", manager: "owner" },
 			all: [{ slug: "林越", name: "林越", manager: "owner" }],
-			ownerName: "我",
 		},
 	);
 	expect(text).toContain("对用户的称呼：你");

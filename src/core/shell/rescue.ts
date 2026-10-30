@@ -41,7 +41,7 @@ function finalTextOf(entry: EntryRecord): string | undefined {
 }
 
 /** 会话号 → slug（我不在其中）。 */
-export function slugOfConversation(directory: DirectoryState, conversationId: number): string | undefined {
+function slugOfConversation(directory: DirectoryState, conversationId: number): string | undefined {
 	for (const [slug, id] of Object.entries(directory.slugToConversation)) {
 		if (slug === OWNER) continue;
 		if (Number(id) === conversationId) return slug;
@@ -69,7 +69,7 @@ export function spokeAfterWake(list: readonly Message[], slug: string, sinceSeq:
  * 全部在 `BACKGROUND_CONTEXT` 里跑：提交回调拿到的 context 属于刚结束的那次任务，
  * 任务一结束它就 abort（见 `spokeAfterWake` 上面那段注释）。
  */
-export type RescueOutcome = "posted" | "skipped" | "busy";
+type RescueOutcome = "posted" | "skipped" | "busy";
 
 /**
  * 补发一次。导出是为了能被直接验：整条链路（等一会、判忙、查有没有说过话、
@@ -118,7 +118,6 @@ export async function rescueAnswer(
  */
 export function startAnswerRescue(harness: Harness): () => void {
 	const timers = new Map<string, ReturnType<typeof setTimeout>>();
-	const attempts = new Map<string, number>();
 
 	const schedule = (slug: string, conversationId: number, text: string, retry: number): void => {
 		const existing = timers.get(slug);
@@ -161,6 +160,5 @@ export function startAnswerRescue(harness: Harness): () => void {
 		unsubscribe();
 		for (const timer of timers.values()) clearTimeout(timer);
 		timers.clear();
-		attempts.clear();
 	};
 }

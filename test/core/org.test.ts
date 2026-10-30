@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
-import { createAgent, renderOrgChart, slugify, uniqueSlug } from "../../src/core/agent/create.ts";
+import { createAgent, slugify, uniqueSlug } from "../../src/core/agent/create.ts";
 import { listAgentSlugs, readAllIdentities, readIdentity } from "../../src/core/agent/identity.ts";
 
 const dirs: string[] = [];
@@ -66,31 +66,5 @@ describe("新建 agent", () => {
 		await createAgent({ root: agents, name: "CTO", manager: "CEO" });
 		expect((await listAgentSlugs(agents)).length).toBe(2);
 		expect((await readAllIdentities(agents)).map((item) => item.slug)).toEqual(["CEO", "CTO"]);
-	});
-});
-
-describe("组织架构投影", () => {
-	test("按汇报关系缩进，标出自己", async () => {
-		const agents = await root();
-		await createAgent({ root: agents, name: "总经理", manager: "owner" });
-		await createAgent({ root: agents, name: "技术", title: "CTO", manager: "总经理" });
-		await createAgent({ root: agents, name: "财务", manager: "总经理" });
-		const all = await readAllIdentities(agents);
-		const chart = renderOrgChart(all, "技术");
-		expect(chart).toContain("- 总经理");
-		expect(chart).toContain("  - 技术（CTO）  ← 你");
-		expect(chart).toContain("  - 财务");
-	});
-
-	test("断链的人不会凭空消失", async () => {
-		const agents = await root();
-		await createAgent({ root: agents, name: "孤儿", manager: "不存在的人" });
-		const chart = renderOrgChart(await readAllIdentities(agents));
-		expect(chart).toContain("汇报线断了");
-		expect(chart).toContain("孤儿");
-	});
-
-	test("空公司给一句话，不是空字符串", async () => {
-		expect(renderOrgChart([])).toContain("还没有其他人");
 	});
 });

@@ -7,7 +7,7 @@
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, join, normalize } from "node:path";
-import { readBody, UploadTooLargeError } from "../../app/body.ts";
+import { readBody, UploadTooLargeError } from "../../app/index.ts";
 import { AppError, type AppErrorReason } from "../../app/errors.ts";
 import { insideRoot } from "./guard.ts";
 import {

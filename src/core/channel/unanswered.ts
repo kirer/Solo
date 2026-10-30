@@ -15,13 +15,13 @@
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 
 /** 一次提交结算时的形态。只关心两件事：成没成、为什么没成。 */
-export type SettledLike = {
+type SettledLike = {
 	readonly status: string;
 	readonly reason?: string | undefined;
 };
 
 /** 一个能等到结算的提交（`conversation.submit()` 的返回值）。 */
-export type AwaitableSubmission = {
+type AwaitableSubmission = {
 	wait(context: Context): Promise<SettledLike>;
 };
 

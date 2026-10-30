@@ -22,7 +22,6 @@ import {
 	renderPromptSegment,
 	type CapabilityLine,
 	type PromptSegment,
-	type PromptSegmentText,
 	type RenderInput,
 } from "./prompt.ts";
 
@@ -100,31 +99,43 @@ export function sectionKeyOf(slug: string): string {
 	return `agent-${Buffer.from(slug, "utf8").toString("hex")}`;
 }
 
+const identitylessPrompt = (slug: string): string =>
+	`# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
+
 /**
- * 生成一个 agent 的提示词段落。
+ * 一段的正文。`self` 是已经读过的身份（`undefined` = 还没有身份文件）。
  *
- * 每次渲染都重新读盘，因此改了 `identity.md` / 记忆 / 技能后，**下一条消息**
- * 就生效。这是「文档是真理」在运行时的落点，这里退化成一次文件读。
+ * 「还没写身份」与「这一段要不要给东西」这两件事只有这一处判断：整段一次渲染
+ * （`renderAgentSegments`）与按段渲染（`agentSections`）都走它，否则两边的空段规则
+ * 迟早会分叉 —— 分叉的表现是提示词字节变了，缓存被悄悄打穿。
  */
+async function segmentText(
+	registry: Registry,
+	paths: AgentPaths,
+	slug: string,
+	self: Identity | undefined,
+	segment: PromptSegment,
+): Promise<string> {
+	if (self === undefined) return segment === "who" ? identitylessPrompt(slug) : "";
+	const input = await promptInputFor(registry, paths, slug, self, segment);
+	return renderPromptSegment(segment, input);
+}
+
 /**
  * 渲染某人**此刻**的提示词正文。
  *
  * 单独导出的理由：自测要断言「规矩真的进了提示词」，而去问模型不可靠（它会背课文）。
  * 拿同一份 `render` 的结果来断言，验的就是模型真会读到的那段字。
+ *
+ * 每次渲染都重新读盘，因此改了 `identity.md` / 记忆 / 技能后，**下一条消息**
+ * 就生效。这是「文档是真理」在运行时的落点，这里退化成一次文件读。
  */
-export async function renderAgentSection(
-	registry: Registry,
-	paths: AgentPaths,
-	slug: string,
-): Promise<string> {
+export async function renderAgentSection(registry: Registry, paths: AgentPaths, slug: string): Promise<string> {
 	return (await renderAgentSegments(registry, paths, slug))
 		.map((segment) => segment.text)
 		.filter((text) => text !== "")
 		.join("\n\n");
 }
-
-const identitylessPrompt = (slug: string): string =>
-	`# 你还没有身份文件\n\n请先在 \`agents/${slug}/identity.md\` 写下你是谁。在那之前，你只知道自己在跟我对话。\n`;
 
 /** 技能清单（提示词只要名字 + 一句描述）。 */
 async function promptSkills(paths: AgentPaths, slug: string): Promise<RenderInput["skills"]> {
@@ -202,23 +213,11 @@ async function promptInputFor(
  *
  * 拼回去与以前一次性渲染的结果逐字节相同（`test/core/prompt-segments.test.ts` 有黄金断言）。
  */
-export async function renderAgentSegments(
-	registry: Registry,
-	paths: AgentPaths,
-	slug: string,
-): Promise<readonly PromptSegmentText[]> {
+export async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: string) {
 	const self = await readIdentity(paths.agents, slug);
-	if (self === undefined) {
-		// 没有身份文件：整段提示词只有一句「先写你是谁」，其余各段为空。
-		return PROMPT_SEGMENTS.map((segment) => ({
-			segment,
-			text: segment === "who" ? identitylessPrompt(slug) : "",
-		}));
-	}
-	const segments: PromptSegmentText[] = [];
+	const segments: { readonly segment: PromptSegment; readonly text: string }[] = [];
 	for (const segment of PROMPT_SEGMENTS) {
-		const input = await promptInputFor(registry, paths, slug, self, segment);
-		segments.push({ segment, text: renderPromptSegment(segment, input) });
+		segments.push({ segment, text: await segmentText(registry, paths, slug, self, segment) });
 	}
 	return segments;
 }
@@ -243,10 +242,7 @@ export function agentSections(
 		key: `${base}-${segment}`,
 		tag: false,
 		async render(): Promise<string> {
-			const self = await readIdentity(paths.agents, slug);
-			if (self === undefined) return segment === "who" ? identitylessPrompt(slug) : "";
-			const input = await promptInputFor(registry, paths, slug, self, segment);
-			return renderPromptSegment(segment, input);
+			return segmentText(registry, paths, slug, await readIdentity(paths.agents, slug), segment);
 		},
 	}));
 }

@@ -35,7 +35,7 @@ export const UPLOAD_PER_MESSAGE = 10;
  */
 const ID_PATTERN = /^[A-Za-z0-9-]+$/;
 
-export function isUploadId(id: string): boolean {
+function isUploadId(id: string): boolean {
 	return ID_PATTERN.test(id);
 }
 
@@ -64,7 +64,7 @@ export function mimeOf(raw: string | undefined): string {
  * 名字只用于显示与下载建议名，但仍然不能带路径 —— 有些客户端会把整条本地路径当名字
  * 发上来（`C:\Users\...\a.png`），带着它进 `content-disposition` 就是路径泄露。
  */
-export function safeName(raw: string | undefined): string {
+function safeName(raw: string | undefined): string {
 	const flat = (raw ?? "").split(/[\\/]/).pop() ?? "";
 	// eslint-disable-next-line no-control-regex
 	const cleaned = flat.replace(/[\u0000-\u001f\u007f]/g, "").trim();
@@ -107,7 +107,7 @@ export function contentDisposition(inline: boolean, name: string): string {
 }
 
 /** 磁盘上的元数据。键顺序固定，写出去就是确定的字节。 */
-export type UploadMeta = {
+type UploadMeta = {
 	readonly name: string;
 	readonly mime: string;
 	readonly bytes: number;

@@ -20,6 +20,7 @@
 import { mkdir, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { parseArgs as parseNodeArgs } from "node:util";
 import { createRegistry } from "../runtime/index.ts";
 import { openCore, type CoreRuntime } from "../runtime/open.ts";
 import { setupModels, compactionSettings } from "../runtime/index.ts";
@@ -37,27 +38,28 @@ type Args = {
 };
 
 function parseArgs(argv: readonly string[]): Args {
-	let port = 7788;
-	let host = "127.0.0.1";
-	let workspace = join(process.cwd(), "workspace");
-	let seed = true;
-	for (let index = 0; index < argv.length; index += 1) {
-		const arg = argv[index];
-		const next = argv[index + 1];
-		if (arg === "--port" && next !== undefined) {
-			port = Number(next);
-			index += 1;
-		} else if (arg === "--host" && next !== undefined) {
-			host = next;
-			index += 1;
-		} else if (arg === "--workspace" && next !== undefined) {
-			workspace = next;
-			index += 1;
-		} else if (arg === "--no-seed") {
-			seed = false;
-		}
+	try {
+		const { values } = parseNodeArgs({
+			args: [...argv],
+			options: {
+				port: { type: "string" },
+				host: { type: "string" },
+				workspace: { type: "string" },
+				"no-seed": { type: "boolean" },
+			},
+			strict: true,
+		});
+		return {
+			port: values.port === undefined ? 7788 : Number(values.port),
+			host: values.host ?? "127.0.0.1",
+			workspace: values.workspace ?? join(process.cwd(), "workspace"),
+			seed: values["no-seed"] !== true,
+		};
+	} catch (error) {
+		console.error(`[core] 参数不对：${(error as Error).message}`);
+		console.error("用法：npm start -- [--port 7788] [--host 127.0.0.1] [--workspace workspace] [--no-seed]");
+		process.exit(2);
 	}
-	return { port, host, workspace, seed };
 }
 
 /** `agents/` 下有几个文件夹（有一个就算「已经有人了」，不再播种）。 */
@@ -132,7 +134,6 @@ async function main(): Promise<void> {
 		shell = await assembleCore(runtime.harness, registry, {
 			agentsRoot,
 			teamsRoot,
-			ownerName: "我",
 			defaultModel: models.defaultModel,
 			diag,
 		});

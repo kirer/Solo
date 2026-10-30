@@ -8,9 +8,8 @@
  */
 
 import { useEffect, useRef } from "react";
-import { getAttention, getChannels } from "../api/client.ts";
 import type { Message } from "../api/types.ts";
-import { applyMessage, getState, patch, setConn } from "../state/store.ts";
+import { applyMessage, refreshLists, setConn } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 打不开就等一等再试，退避到 15 秒封顶：服务重启期间不要每 100ms 打一次。 */
@@ -29,7 +28,9 @@ export function useOrgStream(): void {
 			source = new EventSource("/api/stream/org");
 			source.addEventListener("org", () => {
 				retry = RETRY_MIN_MS;
-				void refreshSide();
+				// 侧栏与「找你」的刷新只有一条路（`store.refreshLists`）：org 推送很密，
+				// 一条消息会连带推好几条事件，这里只要把「有新东西了」交给 store。
+				void refreshLists();
 			});
 			source.addEventListener("error", () => {
 				source?.close();
@@ -47,31 +48,6 @@ export function useOrgStream(): void {
 			source?.close();
 		};
 	}, []);
-}
-
-/**
- * 侧栏与「找你」的刷新。
- *
- * 一次提交会连带推好几条 org 事件（一条消息、一个占位、一次填充），
- * 每条都拉一次 `/api/channels` + `/api/attention` 就是三次网络往返 + 三次整栏重画。
- * 合并到一次 300ms 的尾巴上。
- */
-async function refreshSide(): Promise<void> {
-	try {
-		const [lists, attention] = await Promise.all([getChannels(), getAttention()]);
-		patch({ channels: lists.channels, attention: attention.items, attentionUnread: attention.unread });
-		setConn(true);
-		const current = getState();
-		// 侧栏预览与未读数变了，但「当前频道」的标题行也要跟着变（比如未读清零）。
-		if (current.detail !== null) {
-			const fresh = lists.channels.find((channel) => channel.id === current.detail?.channel.id);
-			if (fresh !== undefined) {
-				patch({ detail: { ...current.detail, channel: { ...current.detail.channel, ...fresh } } });
-			}
-		}
-	} catch {
-		setConn(false);
-	}
 }
 
 /** 当前频道的消息流。切频道就重连（带上 since，避免把历史整段重推一遍）。 */

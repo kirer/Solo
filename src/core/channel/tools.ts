@@ -58,14 +58,15 @@ import {
 	channelsOf,
 	chatKind,
 	fallbackChannelId,
+	markRead,
 	parseMentions,
-	readMarkOf,
 	recipientsOf,
 	unreadCount,
 	type ChannelState,
 	type Message,
 } from "./state.ts";
 import { renderDigest } from "./deliver.ts";
+import { oneLine } from "../oneline.ts";
 import { confirmedBy } from "../team/settle.ts";
 import {
 	appendTeamMemory,
@@ -115,8 +116,14 @@ function skillRoots(deps: CoreToolDeps): SkillRoots {
 }
 
 
-function text(value: string) {
-	return { output: [{ type: "text" as const, text: value }] };
+/**
+ * 工具的唯一出口：一段给模型读的自然语言。
+ *
+ * 也接受 `{ error }` —— `actionOf` / `defaultChannel` 这类「参数不合法」的结果直接
+ * 丢进来就行，不用每个调用点再拆一次。
+ */
+function text(value: string | { readonly error: string }) {
+	return { output: [{ type: "text" as const, text: typeof value === "string" ? value : value.error }] };
 }
 
 /**
@@ -134,12 +141,6 @@ function actionOf(
 	if (value === undefined || value.trim() === "") return fallback;
 	if (allowed.includes(value)) return value;
 	return { error: `${label} 只有 ${allowed.join(" / ")}，没有「${value}」。` };
-}
-
-/** 把一段可能带换行的正文压成一行，给列表预览用。 */
-function oneLine(value: string, limit: number): string {
-	const flat = value.replace(/\s+/gu, " ").trim();
-	return flat.length <= limit ? flat : `${flat.slice(0, limit)}…`;
 }
 
 /**
@@ -207,6 +208,54 @@ function agoOf(timestamp: unknown, now: number): string {
 async function selfOf(deps: CoreToolDeps, conversationId: number, context: Context): Promise<string | undefined> {
 	const directory = await deps.directory(context);
 	return slugFor(directory, conversationId);
+}
+
+/**
+ * 「先知道自己是谁」：七个工具的第一句都是这件事，文案只在这里写一次。
+ *
+ * 查不到时返回一句能直接回给模型的话（工具不抛错：抛错它看到的是堆栈）。
+ */
+/** 「我有的：…」—— 三处错误文案都要列一遍现有名字，写法只留一处。 */
+async function skillNames(roots: SkillRoots, slug: string): Promise<string> {
+	return renderDocNames((await listSkills(roots, slug)).map((item) => item.name));
+}
+
+async function selfOrError(
+	deps: CoreToolDeps,
+	conversationId: number,
+	context: Context,
+	hint = "你还不在名册里。",
+): Promise<string | { readonly error: string }> {
+	const slug = await selfOf(deps, conversationId, context);
+	return slug ?? { error: hint };
+}
+
+/**
+ * 一列文档（技能 / 团队）渲染成清单：每行由调用方给，空清单给一句人话。
+ *
+ * 不能留一个空冒号：模型看到「我有的：」后面什么都没有，会以为工具坏了。
+ */
+function renderDocList<T>(items: readonly T[], row: (item: T) => string, empty: string): string {
+	return items.length === 0 ? empty : items.map(row).join("\n");
+}
+
+/** 一列名字 → `甲、乙`（空 = 「（一个都没有）」）。 */
+function renderDocNames(names: readonly string[]): string {
+	return names.length === 0 ? "（一个都没有）" : names.join("、");
+}
+
+/**
+ * 「写一份文档 → 回一句」。
+ *
+ * `me` / `write_team` / `skills` 是同一个动作：写盘，然后告诉模型写到哪儿了。写不进去
+ * 时把原因原样回给模型 —— 它要能照着改参数重试，而不是拿到一段堆栈。
+ */
+async function writeDoc(write: () => Promise<string>): Promise<ReturnType<typeof text>> {
+	try {
+		return text(await write());
+	} catch (error) {
+		return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
+	}
 }
 
 /**
@@ -339,8 +388,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 		api: { conversationId: string | number },
 		ctx: Context,
 	): Promise<ReturnType<typeof text>> => {
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。先用 me 看看情况，或请上级重新登记你。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。先用 me 看看情况，或请上级重新登记你。");
+			if (typeof slug !== "string") return text(slug);
 			// 没有「私下发给谁」这个参数：私聊只能我开，agent 只能在已有的频道里说话。
 			// 也不需要专门硬拦 ——「非成员发不进去」已经重定了这条边界。
 			// 一条频道消息最多 1200 字。
@@ -399,7 +448,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			}
 
 			const target = await defaultChannel(deps, state, slug, conversationId, args.channel, ctx);
-			if ("error" in target) return text(target.error);
+			if ("error" in target) return text(target);
 			const roster = await mentionRoster(deps);
 			const channelId = target.channelId;
 			const targetChannel = state.channels[channelId];
@@ -486,9 +535,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const action = actionOf(args.action, ["list", "read"], "list");
-			if (typeof action !== "string") return text(action.error);
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
+			if (typeof action !== "string") return text(action);
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			if (typeof slug !== "string") return text(slug);
 			const state = await readState(deps);
 
 			if (action === "list") {
@@ -513,7 +562,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 			}
 
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
-			if ("error" in target) return text(target.error);
+			if ("error" in target) return text(target);
 			const channel = state.channels[target.channelId];
 			if (channel === undefined) return text("没有这个频道。");
 			const limit = Math.min(Math.max(args.limit ?? 30, 1), 100);
@@ -533,10 +582,10 @@ export function createCoreTools(deps: CoreToolDeps) {
 			if (last !== undefined) {
 				await deps.harness.commit(async (tx) => {
 					const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-					const mark = readMarkOf(doc, slug, channel.id);
-					if (last.seq > mark) {
-						doc.readMarks[slug] = { ...(doc.readMarks[slug] ?? {}), [channel.id]: last.seq };
-					}
+					// 走 `markRead` 而不是直接写 `readMarks`：它会**把 seq 夹到频道真实上界**。
+					// 直接写的话，一条越界的请求就能声明「以后全已读」，红点从此再也不出现。
+					const marked = markRead(doc, slug, channel.id, last.seq);
+					if (marked !== doc) doc.readMarks = marked.readMarks;
 				}, ctx);
 			}
 			return text(
@@ -619,9 +668,9 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const action = actionOf(args.action, ["show", "update"], "show");
-			if (typeof action !== "string") return text(action.error);
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
+			if (typeof action !== "string") return text(action);
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			if (typeof slug !== "string") return text(slug);
 			const all = await readAllIdentities(deps.agentsRoot);
 			const self = all.find((item) => item.slug === slug);
 
@@ -644,14 +693,18 @@ export function createCoreTools(deps: CoreToolDeps) {
 				return text("要改身份就带上 body（整篇新正文）；只想看看自己现在什么样，用 action=show。");
 			}
 			if (self === undefined) return text(`名册里没有 ${slug}。先确认你的 identity.md 在不在 agents/${slug}/。`);
+			// 身份每轮都进提示词：密钥写进来就是**每一轮**都发给模型，且不可逆。落盘前先换掉。
+			const body = redact(args.body, deps.workspaceRoot);
 			const header = {
 				...(self.name === undefined ? {} : { name: self.name }),
 				...(self.title === undefined ? {} : { title: self.title }),
 				...(self.manager === undefined ? {} : { manager: self.manager }),
 				...(self.team === undefined ? {} : { team: self.team }),
 			};
-			await writeFile(join(self.dir, "identity.md"), renderIdentityFile(header, args.body), "utf8");
-			return text(`已改我的身份（agents/${slug}/identity.md）。下一条消息就按新身份工作。`);
+			return writeDoc(async () => {
+				await writeFile(join(self.dir, "identity.md"), renderIdentityFile(header, body), "utf8");
+				return `已改我的身份（agents/${slug}/identity.md）。下一条消息就按新身份工作。`;
+			});
 		},
 	});
 
@@ -680,58 +733,56 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const action = actionOf(args.action, ["list", "read", "write"], "list");
-			if (typeof action !== "string") return text(action.error);
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
+			if (typeof action !== "string") return text(action);
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			if (typeof slug !== "string") return text(slug);
 			const roots = skillRoots(deps);
 
 			if (action === "list") {
-				const all = await listSkills(roots, slug);
-				if (all.length === 0) return text("我还没有技能。");
 				return text(
-					all
-						.map((skill) => `- ${skill.name}（${skill.scope === "company" ? "公司" : "我自己"}）：${skill.description}`)
-						.join("\n"),
+					renderDocList(
+						await listSkills(roots, slug),
+						(skill) => `- ${skill.name}（${skill.scope === "company" ? "公司" : "我自己"}）：${skill.description}`,
+						"我还没有技能。",
+					),
 				);
 			}
 
 			if (args.name === undefined || args.name.trim() === "") {
-				const all = await listSkills(roots, slug);
-				const names = all.map((item) => item.name).join("、");
-				return text(`action=${action} 要带 name。我有的：${names === "" ? "（一个都没有）" : names}。`);
+				return text(`action=${action} 要带 name。我有的：${await skillNames(roots, slug)}。`);
 			}
 			const name = args.name;
 
 			if (action === "read") {
 				const skill = await readSkill(roots, slug, name);
 				if (skill === undefined) {
-					const all = await listSkills(roots, slug);
-					const names = all.map((item) => item.name).join("、");
-					return text(`没有叫「${name}」的技能。我有的：${names === "" ? "（一个都没有）" : names}。`);
+					return text(`没有叫「${name}」的技能。我有的：${await skillNames(roots, slug)}。`);
 				}
 				const where = skill.scope === "company" ? "公司层" : "我自己的";
 				return text(`# 技能：${skill.name}（${where}）\n\n${skill.body}`);
 			}
 
 			const scope = actionOf(args.scope, ["personal", "company"], "personal", "scope");
-			if (typeof scope !== "string") return text(scope.error);
+			if (typeof scope !== "string") return text(scope);
 			const missing = [
 				args.description === undefined || args.description.trim() === "" ? "description（做什么 + 什么时候用）" : "",
 				args.body === undefined || args.body.trim() === "" ? "body（步骤、判据、样例）" : "",
 			].filter((line) => line !== "");
 			if (missing.length > 0) return text(`写技能还缺：${missing.join("、")}。`);
-			const input = { name, description: args.description as string, body: args.body as string };
-			try {
+			const input = {
+				name,
+				description: redact(args.description as string, deps.workspaceRoot),
+				body: redact(args.body as string, deps.workspaceRoot),
+			};
+			return writeDoc(async () => {
 				const written =
 					scope === "company"
 						? await writeCompanySkill(deps.workspaceRoot, input)
 						: await writeSkill(roots, slug, input);
 				const where =
 					scope === "company" ? `skills/${written.name}/SKILL.md（全公司）` : `agents/${slug}/skills/${written.name}/SKILL.md`;
-				return text(`已写入技能「${written.name}」：${where}。下一条消息就生效。`);
-			} catch (error) {
-				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
-			}
+				return `已写入技能「${written.name}」：${where}。下一条消息就生效。`;
+			});
 		},
 	});
 
@@ -751,22 +802,22 @@ export function createCoreTools(deps: CoreToolDeps) {
 		}),
 		execute: async (args) => {
 			const action = actionOf(args.action, ["list", "read"], "list");
-			if (typeof action !== "string") return text(action.error);
+			if (typeof action !== "string") return text(action);
 			if (action === "list") {
-				const all = await listTeams(deps.teamsRoot);
-				if (all.length === 0) return text("还没有团队。");
 				return text(
-					all
-						.map((team) => {
+					renderDocList(
+						await listTeams(deps.teamsRoot),
+						(team) => {
 							const head = team.body.split("\n").find((line) => line.trim() !== "") ?? "";
 							return `- ${team.slug}（${team.name}）· ${team.status} · 团队管理员：${team.lead ?? "（没人负责）"}\n  ${head}`;
-						})
-						.join("\n"),
+						},
+						"还没有团队。",
+					),
 				);
 			}
 			if (args.team === undefined || args.team.trim() === "") {
-				const all = await listTeams(deps.teamsRoot);
-				return text(`read 要带 team。现有：${all.map((item) => item.slug).join("、") || "（一个都没有）"}。`);
+				const names = renderDocNames((await listTeams(deps.teamsRoot)).map((item) => item.slug));
+				return text(`read 要带 team。现有：${names}。`);
 			}
 			const team = await readTeam(deps.teamsRoot, args.team);
 			if (team === undefined) return text(`没有这个团队：${args.team}`);
@@ -793,14 +844,15 @@ export function createCoreTools(deps: CoreToolDeps) {
 		}),
 		execute: async (args, _api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			try {
+			return writeDoc(async () => {
 				const team = await writeTeam(deps.teamsRoot, {
 					slug: args.slug,
-					body: args.body,
-					...(args.name === undefined ? {} : { name: args.name }),
+					// 团队 README 同样进提示词（团队里每个人都读得到），自由文本一律先脱敏。
+					body: redact(args.body, deps.workspaceRoot),
+					...(args.name === undefined ? {} : { name: redact(args.name, deps.workspaceRoot) }),
 					...(args.lead === undefined ? {} : { lead: args.lead }),
 					// 不传 doing 时 doc.ts 会沿用文件里已有的 —— 这里不替它编。
-					...(args.doing === undefined ? {} : { doing: args.doing }),
+					...(args.doing === undefined ? {} : { doing: redact(args.doing, deps.workspaceRoot) }),
 					...(args.status === undefined ? {} : { status: args.status as never }),
 				});
 				// 团队管理员写进文件之后，团队频道要立刻把他拉进来：频道成员是文档的投影，
@@ -810,10 +862,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 					team.lead === undefined
 						? "\n\n注意：这份团队还没有团队管理员（`lead`）。团队里出问题时没人能拍板 —— 现在就把团队管理员定下来。"
 						: "";
-				return text(`已写入团队「${team.name}」（${team.slug}），团队管理员：${team.lead ?? "（没人负责）"}。agents 里写 \`team: ${team.slug}\` 的人会看到这份说明。${leadNote}`);
-			} catch (error) {
-				return text(`写不进去：${error instanceof Error ? error.message : String(error)}`);
-			}
+				return `已写入团队「${team.name}」（${team.slug}），团队管理员：${team.lead ?? "（没人负责）"}。agents 里写 \`team: ${team.slug}\` 的人会看到这份说明。${leadNote}`;
+			});
 		},
 	});
 
@@ -831,8 +881,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			if (typeof slug !== "string") return text(slug);
 			// 密钥不能靠模型自觉：它写下来的时候并不觉得那是泄密。落盘前先把真值换掉。
 			const body = redact(args.text, deps.workspaceRoot);
 			if (args.scope === "team") {
@@ -884,12 +934,12 @@ export function createCoreTools(deps: CoreToolDeps) {
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const wanted = actionOf(args.scope, ["channel", "memory", "personal", "team"], "channel", "scope");
-			if (typeof wanted !== "string") return text(wanted.error);
+			if (typeof wanted !== "string") return text(wanted);
 
 			// 记忆那一半：入参是「谁的记忆 / 哪个团队 / 只留含某词的段落」。
 			if (wanted !== "channel") {
-				const slug = await selfOf(deps, Number(api.conversationId), ctx);
-				if (slug === undefined) return text("你还不在名册里。");
+				const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+				if (typeof slug !== "string") return text(slug);
 				const keyword = (args.query ?? "").trim();
 				if (wanted === "team") return recallText(deps, slug, args.team, keyword);
 				if (wanted === "personal") return recallText(deps, slug, undefined, keyword);
@@ -971,8 +1021,8 @@ export function createCoreTools(deps: CoreToolDeps) {
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOf(deps, Number(api.conversationId), ctx);
-			if (slug === undefined) return text("你还不在名册里。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			if (typeof slug !== "string") return text(slug);
 			const cwd = args.cwd ?? deps.workspaceRoot;
 			const seconds = Math.min(Math.max(args.timeout ?? 60, 1), 300);
 			const command = args.command;
@@ -1041,7 +1091,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		}),
 		execute: async (args) => {
 			const action = actionOf(args.action, ["read", "write"], "read");
-			if (typeof action !== "string") return text(action.error);
+			if (typeof action !== "string") return text(action);
 			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
 			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
 
@@ -1092,7 +1142,8 @@ function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): Po
 		harness: deps.harness,
 		state,
 		conversationOf: (slug: string) => conversationOf(deps, slug, context),
-		labelOf: (slug: string) => slug,
+		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算），
+		// 传一个 `(slug) => slug` 只是把缺省重写一遍。
 		rememberWake: async (slug: string, wake) => {
 			const directory = await deps.directory(context);
 			const id = conversationFor(directory, slug);

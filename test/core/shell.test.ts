@@ -6,8 +6,8 @@ import { ChannelDoc, type ChannelState } from "../../src/core/channel/state.ts";
 import { BACKGROUND_CONTEXT, createRegistry, openCore, setupModels } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/runtime.ts";
 import { assembleCore } from "../../src/core/shell/assemble.ts";
-import { seedCompanySkills, seedOwnerAssistant, seedPersonalSkills } from "../../src/core/shell/seed.ts";
-import { listCompanySkills, readSkill, writeCompanySkill } from "../../src/core/agent/skills.ts";
+import { seedOwnerAssistant, seedPersonalSkills, syncCompanySkills } from "../../src/core/shell/seed.ts";
+import { listSkills, readSkill, writeCompanySkill } from "../../src/core/agent/skills.ts";
 
 const dirs: string[] = [];
 
@@ -124,10 +124,10 @@ describe("装配", () => {
 describe("播种技能", () => {
 	test("公司层技能来自文件，不是代码里的字符串", async () => {
 		const { agents } = await workspace();
-		const copied = await seedCompanySkills(agents);
+		const report = await syncCompanySkills(agents);
 		// `写技能` / `找现成技能` 是所有人都该会的手艺，落在公司层。
-		expect(copied).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
-		const skills = await listCompanySkills(join(agents, ".."));
+		expect(report.copied).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
+		const skills = await listSkills({ workspace: join(agents, ".."), agents }, "owner");
 		expect(skills.map((skill) => skill.name)).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
 		const body = await readSkill({ workspace: join(agents, ".."), agents }, "owner", "写技能");
 		expect(body?.body).toContain("## 什么时候该写");
@@ -139,7 +139,8 @@ describe("播种技能", () => {
 		expect(copied).toEqual(expect.arrayContaining(["立项", "招人"]));
 
 		// 公司层不该有它们：招人、立项是助理的职权，别人本来就不该招人。
-		const company = await seedCompanySkills(agents);
+		const synced = await syncCompanySkills(agents);
+		const company = [...synced.copied, ...synced.updated];
 		expect(company).not.toContain("立项");
 		expect(company).not.toContain("招人");
 
@@ -150,10 +151,10 @@ describe("播种技能", () => {
 
 	test("第二次播种不覆盖用户改过的内容", async () => {
 		const { agents } = await workspace();
-		await seedCompanySkills(agents);
+		await syncCompanySkills(agents);
 		// 用户改了自己的技能。
 		await writeCompanySkill(join(agents, ".."), { name: "写技能", description: "改过", body: "# 我自己的版本" });
-		await seedCompanySkills(agents);
+		await syncCompanySkills(agents);
 		const body = await readSkill({ workspace: join(agents, ".."), agents }, "owner", "写技能");
 		expect(body?.body).toContain("我自己的版本");
 	});

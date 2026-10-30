@@ -68,10 +68,10 @@ const OWNER_LOOK = { shape: 2, tone: "hsl(14 52% 91%)" };
  * 脸的状态。只影响 `data-state`，由 CSS（`motion.css` 的 `.av[data-state=…]`）决定动不动：
  * 认得的只有 thinking / working / done，其余一律静止。
  */
-export type AvatarState = "idle" | "thinking" | "working" | "done";
+type AvatarState = "idle" | "thinking" | "working" | "done";
 
 /** 画一张脸要的输入。`slug` 定外形与底色，`name` 只在没 slug 时当退路。 */
-export type AvatarSpec = {
+type AvatarSpec = {
 	slug?: string | undefined;
 	name?: string | undefined;
 	size?: number | undefined;
@@ -112,7 +112,7 @@ export function avatarSvg({
 }
 
 /** 一个座位：左上角坐标与直径，单位 px（相对群头像的边长盒）。 */
-export type Seat = { x: number; y: number; d: number };
+type Seat = { x: number; y: number; d: number };
 
 /** 2×2 / 对角 / 品字的座位表。返回 [{x,y,d}]，坐标单位是 px。 */
 function seatsFor(count: number, size: number): Seat[] {
@@ -144,13 +144,13 @@ function seatsFor(count: number, size: number): Seat[] {
 }
 
 /** 群头像里坐着的一个人：`slug` 决定脸，`label` 只是没有 slug 时的退路。 */
-export type AvatarPerson = {
+type AvatarPerson = {
 	slug?: string | undefined;
 	label?: string | undefined;
 };
 
 /** 群头像的输入。`people` 按顺序坐，超过 4 个的不画（见 groupAvatar 的小尺寸规则）。 */
-export type GroupAvatarSpec = {
+type GroupAvatarSpec = {
 	people?: readonly AvatarPerson[] | undefined;
 	size?: number | undefined;
 	state?: AvatarState | undefined;

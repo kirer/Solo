@@ -3,7 +3,7 @@
  *
  * 与 `ui/js/format.js` 的关系：那个文件是旧前端（组织图 / 看板 / 设置 / 档案 / 流水）
  * 共用的，里面有大量本页用不到的东西（token 格式化、状态色、工具图标映射）。
- * 这里只留本页真正用到的五个：转义、相对时间、时钟、头像色、剪贴板。
+ * 这里只留本页真正用到的：转义、截断、时间、剪贴板、字节、排序。
  *
  * 为什么新开一份而不是抽公共：旧前端的这些函数与它的 CSS 变量、图标表绑在一起，
  * 抽出来会连带把旧概念搬进新页面。等旧前端删掉，这两份自然合一。
@@ -52,18 +52,6 @@ export function clipText(text: unknown, limit: number): string {
 	return units.slice(0, max).join("");
 }
 
-/** 截断并补省略号：总长度（按字素）不超过 limit，和原来 `slice(0, limit-1) + "…"` 同口径。 */
-export function clipWithEllipsis(text: unknown, limit: number): string {
-	const raw = String(text ?? "");
-	const max = Math.max(0, Math.floor(Number(limit) || 0));
-	if (raw === "" || max === 0) return "";
-	if (raw.length <= max) return raw;
-	const units = graphemes(raw);
-	// 正好等于 limit 也算「不超」：老实现是 `if (length <= limit) return text`。
-	if (units.length <= max) return raw;
-	return `${units.slice(0, max - 1).join("")}…`;
-}
-
 /** 列表里的相对时间：「刚刚 / 3 分钟前 / 昨天 14:05」。 */
 export function relTime(at: number, now: number = Date.now()): string {
 	const diff = now - at;
@@ -104,35 +92,6 @@ export function sameDay(a: number, b: number): boolean {
 		left.getMonth() === right.getMonth() &&
 		left.getDate() === right.getDate()
 	);
-}
-
-/**
- * 头像底色：由名字算出稳定色相。
- *
- * 用固定饱和度和明度而不是随机：同一人在列表、气泡、档案里必须同色，
- * 否则眼睛会以为是两个人。
- */
-export function hueFor(label: unknown): number {
-	let hash = 0;
-	for (const char of String(label ?? "")) {
-		// 单个字符的 `codePointAt(0)` 恒定有值；`?? 0` 只是把 `number | undefined` 收窄掉。
-		const code = char.codePointAt(0) ?? 0;
-		hash = (hash * 31 + code) % 360;
-	}
-	return hash;
-}
-
-export function initials(label: unknown): string {
-	const text = String(label ?? "").trim();
-	if (text === "") return "?";
-	// 中文取首字，英文取首字母（最多两个）。
-	if (/[\u4e00-\u9fa5]/.test(text)) return clipText(text, 1);
-	const words = text.split(/\s+/).filter(Boolean);
-	// `filter(Boolean)` 之后每个词都非空，`word[0]` 必然有值；`??` 只为类型收窄。
-	return words
-		.slice(0, 2)
-		.map((word) => (word[0] ?? "").toUpperCase())
-		.join("");
 }
 
 /** 复制到剪贴板，失败时返回 false（页面自己决定怎么提示）。 */

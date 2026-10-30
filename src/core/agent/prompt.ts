@@ -27,8 +27,6 @@ export type RenderInput = {
 	readonly self: Identity;
 	/** 全部 agent（组织架构的公共事实）。 */
 	readonly all: readonly Identity[];
-	/** 我的显示名。我不是 agent，没有文件夹。 */
-	readonly ownerName?: string;
 	/**
 	 * workspace 根目录。只用来找 `.secrets.json` 做脱敏；给了才脱敏。
 	 *
@@ -117,8 +115,7 @@ function orgSection(input: RenderInput): string {
 	if (manager === undefined) {
 		lines.push(`- 你的上级：${NOT_SET}（这意味着没有人替你拍板，遇到需要决策的事要自己定，或交给我）`);
 	} else if (manager === OWNER_SLUG) {
-		const me = input.ownerName ?? "我";
-		lines.push(`- 你的上级：${me}（用户本人）—— 你直接对${me}负责`);
+		lines.push("- 你的上级：我（用户本人）—— 你直接对我负责");
 	} else {
 		lines.push(`- 你的上级：${labelOf(all, manager)}（\`${manager}\`）`);
 	}
@@ -251,7 +248,7 @@ export const PROMPT_SEGMENTS = [
 export type PromptSegment = (typeof PROMPT_SEGMENTS)[number];
 
 /** 一段的正文（已脱敏；空串 = 这一段不出现）。 */
-export type PromptSegmentText = { readonly segment: PromptSegment; readonly text: string };
+type PromptSegmentText = { readonly segment: PromptSegment; readonly text: string };
 
 /** 按段归位。空段保留空数组，渲染时变成空串（整段不出现，不留空标题）。 */
 function segmentParts(input: RenderInput): Readonly<Record<PromptSegment, readonly string[]>> {
