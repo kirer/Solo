@@ -118,7 +118,7 @@ describe("规矩文件：只补不改", () => {
 	it("工作区没有 rules.md → 写入；已有（用户改过）→ 不动", async () => {
 		expect(await seedRules(root)).toBe("written");
 		const written = await readFile(join(root, "rules.md"), "utf8");
-		expect(written).toContain("3 句");
+		expect(written).toContain("一两句");
 		expect(await seedRules(root)).toBe("exists");
 
 		const mine = "- 我自己的规矩\n";

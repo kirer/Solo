@@ -498,17 +498,18 @@ async function main(): Promise<void> {
 			detail: team === undefined ? "没有团队频道" : `成员 ${team.members.join("、")}`,
 		});
 		// 拍板链写在全员技能「工作规矩」里（规则外移到技能，不进提示词正文），
-		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文里有不跳级。
+		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文写了不许越级。
+		// 断言的是技能的**实际措辞**（「越过上级」），不是某句历史原话 —— 措辞会重写，判据不会。
 		const prompt = await shell.promptOf(hired.slug);
 		const rules = await readFile(join(root, "skills", "工作规矩", "SKILL.md"), "utf8").catch(() => "");
 		const listed = prompt.includes("工作规矩");
 		phases.push({
 			name: "新人拿得到拍板链（全员技能「工作规矩」）",
-			ok: listed && rules.includes("绝不跳级"),
+			ok: listed && rules.includes("越过上级"),
 			detail: listed
-				? rules.includes("绝不跳级")
-					? "工作规矩已列进提示词，正文含「绝不跳级」"
-					: "技能正文里没有「绝不跳级」"
+				? rules.includes("越过上级")
+					? "工作规矩已列进提示词，正文写了不许越级"
+					: "技能正文里没有「越过上级」"
 				: "提示词里没列出「工作规矩」技能",
 		});
 	}
@@ -606,6 +607,13 @@ async function main(): Promise<void> {
 	}
 
 	for (const phase of phases) log(phase);
+	// 排查用：把频道全文落一份再退出（`SOLO_LIVE_DUMP=/tmp/x.json`）。
+	// 端到端失败时唯一能回答「他到底说了什么」的就是这份数据；不设就不写、照常删工作区。
+	const dumpPath = process.env.SOLO_LIVE_DUMP;
+	if (dumpPath !== undefined) {
+		await writeFile(dumpPath, JSON.stringify(await shell.channels(), null, 2), "utf8");
+		console.log(`频道全文已写到 ${dumpPath}`);
+	}
 	await runtime.close().catch(() => undefined);
 	await shell.close().catch(() => undefined);
 	const failed = phases.filter((phase) => !phase.ok);
@@ -620,7 +628,8 @@ async function main(): Promise<void> {
 	const failedNote = turnFailed > 0 ? `；补发失败 ${turnFailed} 次（内容丢了，单测没覆盖到就查 channel/turn/finish.ts）` : "";
 	console.log(`收尾趋势：${turnPosted} 次 / ${REPLY_PHASES} 个回话阶段 —— ${trend}${failedNote}`);
 
-	await rm(root, { recursive: true, force: true }).catch(() => undefined);
+	if (dumpPath === undefined) await rm(root, { recursive: true, force: true }).catch(() => undefined);
+	else console.log(`工作区保留在 ${root}`);
 	if (failed.length > 0) process.exitCode = 1;
 }
 

@@ -19,7 +19,7 @@ import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 
 const RULES = [
 	"- 只在叫你的那个频道回话。群里叫你就群里回，我私聊你就私聊回。",
-	"- 群里一条消息最多 3 句。汇报先给结论一句话，再给要点。",
+	"- 交付前先跑一遍测试，结果写进回复里。",
 ].join("\n");
 
 let root = "";
@@ -52,7 +52,7 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		await writeFile(join(root, "rules.md"), `${RULES}\n`, "utf8");
 		const text = await render();
 		expect(text).toContain("## 规矩");
-		expect(text).toContain("3 句");
+		expect(text).toContain("先跑一遍测试");
 		expect(text).toContain("只在叫你的那个频道回话");
 	});
 
@@ -80,17 +80,17 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		await writeFile(join(root, "rules.md"), "  \n", "utf8");
 		expect(await loadRules(root)).toBeUndefined();
 		await writeFile(join(root, "rules.md"), `${RULES}\n`, "utf8");
-		expect(await loadRules(root)).toContain("3 句");
+		expect(await loadRules(root)).toContain("先跑一遍测试");
 		expect(renderRulesSection(await loadRules(root))).toContain("## 规矩");
 	});
 
-	it("仓库自带的 seed/rules.md 覆盖了八条规矩（其中三条是硬事故）", async () => {
+	it("仓库自带的 seed/rules.md 覆盖了九条规矩（其中三条是硬事故）", async () => {
 		const seed = await readFile(new URL("../../seed/rules.md", import.meta.url), "utf8");
-		// 1. 只在该回的频道回；2. 群里最多 3 句；6. 不写英文独白。
+		// 1. 只在该回的频道回；2. 一两句先给结论；3. 不写英文独白。
 		expect(seed).toContain("只在叫你的那个频道回话");
-		expect(seed).toContain("3 句");
+		expect(seed).toContain("一两句");
 		expect(seed).toContain("英文");
-		// 3. 拿不准问直属上级、别跳级；4. 先说要去找谁；5. 只有助理能直接找我拍板。
+		// 5. 拿不准问直属上级、别跳级；7. 先说要去找谁；8. 只有助理能直接找我拍板。
 		expect(seed).toContain("先问你的直属上级");
 		expect(seed).toContain("别跳级");
 		expect(seed).toContain("我要去问 X 关于 Y");
