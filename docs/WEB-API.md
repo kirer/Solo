@@ -370,8 +370,9 @@ type ViewStep = {
 ```
 
 判定在 `src/core/view/index.ts` 的 `needsYou(message)`：**不是我自己发的**，且
-`mentions` 里有 `owner`（由 `say` 自动补：正文显式 @我，或 `kind=decision`
-且没点别人）。只收「说出口的话」（`chat` / `say` / `question` / `decision` /
+`mentions` 里有 `owner` —— 也就是**正文显式 @了我**。`kind=decision` 不会再自动
+把我算进来（ADR-009）：助理几乎每条公告都打 decision，自动补会让「找你」被通告淹掉。
+只收「说出口的话」（`chat` / `say` / `question` / `decision` /
 `report`），窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——
 我要能回头看「哪些还没理」。
 

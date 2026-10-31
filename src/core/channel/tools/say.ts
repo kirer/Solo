@@ -99,24 +99,14 @@ export function createSayTool(deps: CoreToolDeps) {
 				kind = args.kind ?? "question";
 			}
 
-			// 要我拍板：仅两种情形把 owner 加进 mentions（**不改正文**）：
-			//  1) 消息显式 @了我（messageText 里的 @owner/@我 已由 parseMentions 解析命中）；
-			//  2) 消息是「决策」类（kind=decision），且**没有明确点别人**。
-			// 旧逻辑还用「要不要/请确认/等你定」等关键词嗅探正文，会把普通 @成员 的协作消息
-			// 误标「需要我」并塞进 owner —— 这一条关键词嗅探已在 #4 移除。
+			// 要我拍板只有一条路：**正文显式 @了我**（`@我` / `@owner` 已由 parseMentions 解析命中）。
 			//
-			// `decision` 曾经无条件叫我，于是「@知言 … 要不要做，你和我定」这种
-			// 内部结论也被塞进「N 件找你」。我的原话：「明明他们 at 的别人，跟我有什么关系」。
-			// 判据与「找你」列表一致：明确点了别人而没点我的，就不是找我的。
+			// 曾经 `decision` 标签也会自动把我加进收件人（「没点别人就算找我」）。实测下来，
+			// 助理几乎每条公告都打 decision，而它常在私聊里对着团队成员派活 —— 那些人不是私聊
+			// 成员，「没点别人」就成立，于是每条通告都变成「需要你」（43 条私聊里 13 条）。
+			// 拍板要我看见，就写 @我；标签不代劳（ADR-009）。
 			const typedMentions = parseMentions(messageText, roster);
-			const addressedOthers =
-				targetChannel === undefined
-					? []
-					: typedMentions.filter(
-							(slug) => slug !== OWNER && targetChannel.members.includes(slug),
-						);
-			const wakeOwner =
-				kind === "decision" ? addressedOthers.length === 0 : typedMentions.includes(OWNER);
+			const wakeOwner = typedMentions.includes(OWNER);
 
 			const result = await postMessage(
 				postDeps(deps, state, ctx),

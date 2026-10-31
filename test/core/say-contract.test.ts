@@ -205,26 +205,25 @@ describe("投递正文带频道 id", () => {
 		expect(body.split("\n")[0]).toBe("【全员大群】#1（频道 all）");
 	});
 
-	it("私聊额外说一句「只回这里，别去群里」", () => {
+	it("私聊额外说一句「要指挥团队就去团队频道」", () => {
 		const state = ensureChannel(
 			{ channels: {}, messages: {}, nextSeq: {}, readMarks: {} },
 			{ id: DM, title: ME, members: [OWNER, ME], at: 1 },
 		);
 		const { message } = appendMessage(state, DM, { from: OWNER, text: "怎么样", at: 2 });
 		const body = renderDeliveryWithTemplates({ channel: state.channels[DM]!, message, viewer: ME });
-		expect(body).toContain("别去群里");
+		expect(body).toContain("要指挥团队，就回团队频道");
 	});
 });
 
 describe("要我拍板就 @ 我", () => {
-	it("kind=decision 且没 @ 我 → mentions 补上 owner，正文不动", async () => {
+	it("kind=decision 不会自动叫我：只有 @ 我才进 mentions（ADR-009）", async () => {
 		const { say, snapshot } = await setup();
 		await say({ text: "接口先按 v1 做", kind: "decision" });
 		const state = await snapshot();
 		const message = lastSpoken(state, PROJ, "接口先按 v1 做");
-		expect(message?.mentions).toContain(OWNER);
-		expect(message?.text).not.toContain("@owner");
-		expect(recipientsOf(state.channels[PROJ]!, message!)).toContain(OWNER);
+		expect(message?.mentions).not.toContain(OWNER);
+		expect(recipientsOf(state.channels[PROJ]!, message!)).not.toContain(OWNER);
 	});
 
 	it("kind=decision 但 @ 了成员 → 不补 owner（内部结论不叫我）", async () => {

@@ -190,7 +190,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改私聊工作记录（跨频道轮次 / 实时） | `app/read.ts` 的 `readPersonTurns` / `groupsOf`（不传 `channelId`）/ `personOfChannel` + `interface/http/sse.ts` 的 `pushTrace` + `ui/app/src/stream/model.ts` 的 `buildWorkRows` + `state/store.ts` 的 `work` | 群聊不画过程；私聊按 `startedAt` 合排，跨频道 `seq` 不可比，键必须带 `channelId` |
 | 改团队 README 的写入校验 | `team/doc.ts` 的 `leadProblem` / `createTeamProblem` + `channel/tools/file.ts` 写分支 | 校验在 `writeTextAt` **之前**；拒绝时不落盘、不 `syncTeam`。助理 = 直接向 owner 汇报的人；开新团队只有助理能做，改已有团队不限 |
 | 改谁能被 @ 到 / 什么写法算 @ | `channel/mentions.ts` 的 `recipientsOf`（成员规则）+ `parseMentions`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译。别名只认 `slug` / `name` / `我` / `owner` **精确匹配**；`@CEO`、拼音、title、`@老板` 一律丢弃，不许加回模糊匹配 |
-| 改「要我拍板就 @ 我」 | `channel/tools/say.ts` | 只有两种情形把 `owner` 加进 `mentions`：正文显式 @我；或 `kind=decision` 且没点别人。补的是 `mentions`，**不改正文**；关键词嗅探已删 |
+| 改「要我拍板就 @ 我」 | `channel/tools/say.ts` | 只有一种情形把 `owner` 加进 `mentions`：**正文显式 @我**。补的是 `mentions`，**不改正文**；关键词嗅探与「`decision` 自动补 owner」都已删（ADR-009） |
 | 改「没明确频道时在哪儿回话」 | `channel/rules.ts` 的 `fallbackChannelId` + `channel/tools/channel-choice.ts` 的 `defaultChannel` | 兜底只找最近活跃的真实频道；**落到私聊就报错**让模型显式给 channel，不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见） |
 | 改频道成员怎么来 | `channel/rules.ts` 的 `projectChannel` + `channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` / `ensureOwnerDm` | 成员是 `identity.md` + 团队 `README.md` 的投影；全员 / 重扫用 `merge`，团队用 `replace`。全员频道只是播种一次的普通群，没有特权 |
 | 文件读写 / 名字 / Markdown 头 | `fsx.ts`（工作区相对路径）/ `runtime/io.ts`（绝对路径机械 IO）/ `naming.ts` / `md/doc.ts` | 每个都只有一份实现；直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外，别在业务模块里新开 |
@@ -280,7 +280,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `mention-alias.test.ts` | `@` 别名解析：`@我` 的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底 |
 | `turn.test.ts` | 答了却没说出来：结算收尾的补发判据、两层唤醒记录选频道 |
 | `queue-jump.test.ts` | 我问话插队：只撤同会话 `queued` 项、最多 5 条、我自己排的不让路 |
-| `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 自动补 `owner`、`[PASS]` 与单人在场不许静音、过程话可连发（「一轮一句结论」已降级为 `rules.md` 约束） |
+| `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 不自动补 `owner`、`[PASS]` 与单人在场不许静音、过程话可连发（「一轮一句结论」已降级为 `rules.md` 约束） |
 | `deliver.test.ts` | 投递正文 / 未读摘要 / 失败不阻塞；两人团队频道不出现私聊文案 |
 | `post-failure.test.ts` | 投递失败可见：目标没会话时留 note、投递抛错时写「投递失败：会话已关闭」（原在 `relay.test.ts`，接力上限删掉后单独成文件） |
 | `identity.test.ts` | YAML 解析、`reportsOf`/`chainUp`、slug 闸与重名后缀、建人；渲染部分走 V3：真实工作区 + 播种 `prompt/`，覆盖名字/正文/汇报线/团队 README/目录不谎报、确定性、工具清单从注册表实拍 |
