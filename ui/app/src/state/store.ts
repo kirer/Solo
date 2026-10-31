@@ -24,7 +24,7 @@ import {
 	openDirectMessage,
 	sendMessage,
 } from "../api/client.ts";
-import type { Actor, Activity, AttentionItem, Channel, ChannelDetail, Message, Org, PersonProfile, Turn } from "../api/types.ts";
+import type { Actor, AttentionItem, Channel, ChannelDetail, Message, Org, PersonProfile, Turn } from "../api/types.ts";
 import { sortChannels } from "../lib/format.ts";
 import { mark } from "../lib/jank.ts";
 
@@ -47,13 +47,6 @@ export type State = {
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
 	/**
-	 * 此刻谁在跑（来自 `/api/org` 的 `people[].activity`）。
-	 *
-	 * 与 `presence` 是同一件事的两种画法：`presence` 给头像与圆点，这里给活动条上那句
-	 * 「知言 正在跑 npm test」。没有这个键 = 待命。
-	 */
-	activity: Map<string, Activity>;
-	/**
 	 * 当前频道里每一轮的轨迹，按触发消息的 seq 分桶（一条消息可以叫醒好几个人）。
 	 *
 	 * 折叠版只有摘要（`stepCount` / `summary`）；展开时 `loadTurn` 再拉步骤。
@@ -62,7 +55,7 @@ export type State = {
 	/**
 	 * 私聊页的工作记录：这个人在**所有频道**里的轮次，按时间排。
 	 *
-	 * 与 `turns` 分开存：`turns` 按频道内的 seq 分桶（群聊的活动条用），跨频道的 seq
+	 * 与 `turns` 分开存：`turns` 按频道内的 seq 分桶（群聊里给消息挂轨迹用），跨频道的 seq
 	 * 不可比，混在一起会把 A 频道的轮次挂到 B 频道的消息下面。
 	 */
 	work: Turn[];
@@ -102,7 +95,6 @@ const initial: State = {
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
-	activity: new Map(),
 	turns: new Map(),
 	work: [],
 	conn: { ok: true, lastOkAt: Date.now() },
@@ -169,17 +161,16 @@ function strip(channel: Channel): ChannelDetail["channel"] {
  * 收下一份组织快照：人、组织名、以及「谁此刻在跑」。
  *
  * `activity` 只在**有会话在跑**时出现 —— 没有这个键就是待命，界面不自己编状态。
+ * 界面现在只拿它画头像的忙态；输入卡上方不再有活动条（ADR-008）。
  */
 export function applyOrg(org: Org): void {
-	const activity = new Map<string, Activity>();
 	const presence = new Map<string, { state: Presence; at: number }>();
 	for (const actor of org.people) {
 		const found = actor.activity;
 		if (found === undefined) continue;
-		activity.set(actor.slug, found);
 		presence.set(actor.slug, { state: found.state, at: found.since });
 	}
-	patch({ workspaceName: org.workspace.name, people: org.people, activity, presence });
+	patch({ workspaceName: org.workspace.name, people: org.people, presence });
 }
 
 export async function bootstrap(): Promise<void> {

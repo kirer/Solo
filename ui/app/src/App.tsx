@@ -6,7 +6,6 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { ActivityBar } from "./composer/ActivityBar.tsx";
 import { Composer } from "./composer/Composer.tsx";
 import { useToasts } from "./hooks/useToasts.ts";
 import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
@@ -207,7 +206,6 @@ export function App(): JSX.Element {
 					<Stream onImage={setImage} />
 				)}
 
-				<ActivityBar />
 				<Composer toast={toast} />
 			</main>
 

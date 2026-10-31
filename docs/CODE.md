@@ -159,7 +159,6 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
 | `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览）。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |
-| `src/composer/ActivityBar.tsx` | 输入卡上方的活动条：**只在私聊出现**（群聊不画过程），显示这个人在跑的那一轮，动作取最近一步的摘要；点整条滚到工作记录里那一轮 |
 | `src/panels/RightPanel.tsx` | 右栏第三列，三个视图：详情 / 技能 / 记忆（后两个共用一个换人器，只列当前频道成员）。关的时候等 300ms 过渡再卸载 |
 | `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
 | `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create` / `trace`）；失败退避 1s→15s；org 事件自带整份快照（`applyOrg`），侧栏与「找你」仍走 `store.refreshLists` |
