@@ -200,7 +200,8 @@ export type ViewPersonProfile = {
 export type ViewStep = {
 	/** 会话条目里的 toolCall id（稳定；前端拿它做 key 与展开状态）。 */
 	id: string;
-	kind: "think" | "say" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
+	/** 没有 `say`：说出口的话是频道消息，不进过程。 */
+	kind: "think" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
 	/** 服务端算好的一行人话（`跑了 npm test` / `读了 a.ts`）。 */
 	title: string;
 	status: "running" | "ok" | "failed";

@@ -62,7 +62,7 @@ function resultText(content: unknown): string {
 }
 
 /** 这个工具调用在这一行上怎么写。 */
-function titleOf(name: string, args: Json, channelTitles: ReadonlyMap<string, string>, fallbackChannel: string): string {
+function titleOf(name: string, args: Json): string {
 	switch (name) {
 		case "run": {
 			const command = asString(args["command"]) ?? "";
@@ -72,11 +72,6 @@ function titleOf(name: string, args: Json, channelTitles: ReadonlyMap<string, st
 			const path = asString(args["path"]) ?? "";
 			const action = asString(args["action"]) ?? "read";
 			return action === "write" ? `写了 ${path}` : `读了 ${path}`;
-		}
-		case "say": {
-			const target = asString(args["channel"]);
-			const title = target === undefined ? channelTitles.get(fallbackChannel) : (channelTitles.get(target) ?? target);
-			return `在 #${title ?? fallbackChannel} 说了一句`;
 		}
 		case "chats":
 			return "翻了频道记录";
@@ -91,14 +86,15 @@ function titleOf(name: string, args: Json, channelTitles: ReadonlyMap<string, st
 	}
 }
 
-function kindOf(name: string, args: Json): ViewStep["kind"] {
+/** 不知道 / 不该画成步骤的工具返回 `undefined`（`say` 就是：它是消息，不是过程）。 */
+function kindOf(name: string, args: Json): ViewStep["kind"] | undefined {
 	switch (name) {
 		case "run":
 			return "run";
 		case "file":
 			return (asString(args["action"]) ?? "read") === "write" ? "file-write" : "file-read";
 		case "say":
-			return "say";
+			return undefined;
 		case "chats":
 			return "chats";
 		case "read_history":
@@ -123,7 +119,6 @@ export type TurnFacts = {
 	readonly replySeq?: number;
 	/** 会话此刻还在跑这一轮。 */
 	readonly live: boolean;
-	readonly channelTitles: ReadonlyMap<string, string>;
 	/** 一轮被截断（步骤超过上限）。 */
 	readonly truncated?: true;
 };
@@ -155,12 +150,6 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 		if (entry.kind === "pi.assistant" && message["role"] === "assistant") {
 			const blocks = Array.isArray(message["content"]) ? message["content"] : [];
 			const stamp = asNumber(message["timestamp"]);
-			// 一条消息里同时有文本和 `say` 调用时，文本只是「他准备说的话」，
-			// 真正进频道的是 `say`。别把同一句话画两遍。
-			const speaks = blocks.some((block) => {
-				const item = asObject(block);
-				return item?.["type"] === "toolCall" && item["name"] === "say";
-			});
 			for (const block of blocks) {
 				const item = asObject(block);
 				if (item === undefined) continue;
@@ -182,24 +171,21 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 					continue;
 				}
 
-				if (type === "text") {
-					if (speaks) continue;
-					const text = asString(item["text"]) ?? "";
-					if (text.trim() === "") continue;
-					const clipped = clipText(text.trim(), MAX_TEXT);
-					push({ id: `${String(entry.id)}:text:${String(steps.length)}`, kind: "say", title: "说了一句", status: "ok", text: clipped.text });
-					continue;
-				}
+				// 说话不进过程：正文本身就是频道里的那条消息（没有 `say` 调用时由结算后的收尾补发）。
+				// 过程只答「他做了什么」，说出口的话在消息流里看。
+				if (type === "text") continue;
 
 				if (type === "toolCall") {
 					const name = asString(item["name"]) ?? "tool";
 					const callId = asString(item["id"]) ?? `${String(entry.id)}:${String(steps.length)}`;
 					const args = asObject(item["arguments"]) ?? {};
 					const kind = kindOf(name, args);
+					// `say` 落成频道里的消息：说话不进过程。
+					if (kind === undefined) continue;
 					const step: ViewStep = {
 						id: callId,
 						kind,
-						title: titleOf(name, args, facts.channelTitles, facts.channelId),
+						title: titleOf(name, args),
 						status: "running",
 					};
 					if (kind === "run") step.command = asString(args["command"]) ?? "";
@@ -208,7 +194,6 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 						const content = asString(args["content"]) ?? "";
 						step.added = content === "" ? 0 : content.split("\n").length;
 					}
-					if (kind === "say") step.text = asString(args["text"]) ?? "";
 					if (kind === "tool") step.tool = name;
 					if (stamp !== undefined) step.startedAt = stamp;
 					push(step);
@@ -238,9 +223,6 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 				}
 				const exit = /退出码\s*(-?\d+)/.exec(text);
 				if (exit !== null) step.exitCode = Number(exit[1]);
-			} else if (step.kind === "say") {
-				// `say` 的结果是「已发到 #频道」这类回执，正文已经在参数里了。
-				if (isError) step.text = text;
 			}
 			open.delete(callId!);
 		}

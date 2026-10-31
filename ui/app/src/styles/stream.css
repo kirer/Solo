@@ -1166,7 +1166,8 @@ body[data-layout="bubble"]
    10px 的等宽字在 `--raised` 底上糊成一片。 */
 .run-bar {
 	display: flex;
-	align-items: baseline;
+	/* 不是 baseline：14px 的 chevron 是独立的盒子，按基线对齐会掉到字下面去。 */
+	align-items: center;
 	gap: 8px;
 	min-width: 0;
 	font-size: 13px;
@@ -1174,10 +1175,20 @@ body[data-layout="bubble"]
 }
 
 .run-caret {
-	width: 10px;
+	display: grid;
+	place-items: center;
 	flex: none;
-	font-size: 11px;
-	color: var(--ink-3);
+	width: 14px;
+	height: 20px;
+	color: var(--ink-2);
+}
+
+.run-caret svg {
+	transition: transform 160ms ease;
+}
+
+.run[data-open="true"] .run-caret svg {
+	transform: rotate(90deg);
 }
 
 .run-meta {
@@ -1430,6 +1441,10 @@ body[data-layout="bubble"]
 	.step-live,
 	.run[data-status="running"] .run-status::before {
 		animation: none;
+	}
+
+	.run-caret svg {
+		transition: none;
 	}
 }
 

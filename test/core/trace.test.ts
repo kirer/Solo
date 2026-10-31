@@ -9,7 +9,6 @@ import { groupsOfPerson } from "../../src/core/app/read.ts";
 import { buildTurn, slimTurn, stripAnsi, summaryOf, withoutSteps } from "../../src/core/app/trace.ts";
 import type { EntryRecord } from "../../src/core/runtime/index.ts";
 
-const titles = new Map([["c1", "演示团队"]]);
 
 function entry(kind: string, model: unknown[], data?: unknown): EntryRecord {
 	return {
@@ -37,7 +36,6 @@ function facts(overrides: Partial<Parameters<typeof buildTurn>[1]> = {}) {
 		label: "知言",
 		startedAt: 100,
 		live: false,
-		channelTitles: titles,
 		...overrides,
 	};
 }
@@ -85,7 +83,7 @@ describe("buildTurn", () => {
 		expect(turn.summary).toBe("读了 1 个文件 · 写了 1 个文件");
 	});
 
-	it("有 say 调用时不再把同一段文字画成第二行", () => {
+	it("说话不算过程：say 与正文都不进步骤", () => {
 		const turn = buildTurn(
 			[
 				assistant([
@@ -93,10 +91,12 @@ describe("buildTurn", () => {
 					{ type: "toolCall", id: "s", name: "say", arguments: { text: "跑完了。", channel: "c1" } },
 				]),
 			],
-			facts(),
+			facts({ replySeq: 2 }),
 		);
-		expect(turn.steps).toHaveLength(1);
-		expect(turn.steps![0]!.title).toBe("在 #演示团队 说了一句");
+		// 说出口的话就是频道里那条消息，画成步骤会和工作记录里的原文重复一遍。
+		expect(turn.steps).toHaveLength(0);
+		expect(turn.stepCount).toBe(0);
+		expect(turn.status).toBe("done");
 	});
 
 	it("一轮结束了还挂着 running 的步骤 = 那次调用没回来", () => {

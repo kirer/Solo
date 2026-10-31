@@ -30,7 +30,8 @@
 	   1180px，和上面 755px 的正文完全不对齐。 */
 	max-width: calc(min(calc(100% - 32px), clamp(680px, 64%, 920px)) + 32px);
 	margin: 0 auto;
-	padding: 10px 8px 8px 10px;
+	/* 上下等距：三个控件都落在 34px 的同一行里，文字与图标才在同一条中线上。 */
+	padding: 9px 8px 9px 10px;
 	background: var(--field);
 	border: 0;
 	border-radius: var(--r-panel);
@@ -57,9 +58,9 @@
 #input {
 	flex: 1 1 auto;
 	min-width: 0;
-	min-height: 28px;
+	min-height: 34px;
 	max-height: 336px; /* DSH：14 行 × 24 */
-	padding: 2px 4px 2px 4px;
+	padding: 5px 4px;
 	background: none;
 	border: 0;
 	outline: none;
@@ -90,7 +91,6 @@
 	place-items: center;
 	flex: none;
 	align-self: flex-end;
-	margin-bottom: -3px;
 	width: 34px;
 	height: 34px;
 	padding: 0;
@@ -140,6 +140,8 @@
 .plus {
 	flex: none;
 	align-self: flex-end;
+	/* 28 的圆钮放进 34 的行里：贴底再抬 3px，圆心与文字中线重合。 */
+	margin-bottom: 3px;
 	display: grid;
 	place-items: center;
 	width: 28px;

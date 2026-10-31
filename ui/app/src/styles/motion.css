@@ -140,38 +140,38 @@
 	}
 }
 
-/* ── 头像（js/avatar.js 画出 SVG，这里只给形变） ────────────────────── */
+/* ── 头像（服务端画好的一张插画，这里只给圆角与形变） ──────────────── */
 
+/* 插画是方图，圆底由这里裁；`overflow: visible` 关掉，img 自己不溢出。
+   尺寸来自 `width` / `height` 属性（同 HTML 的固有尺寸），形状变化都绕中心。 */
 .av {
 	display: block;
-	overflow: visible;
-	transform-box: view-box;
-}
-
-/* 从脚底变形：歪头、压扁、回弹都绕着下巴转，不会「飘」。 */
-.av-b {
-	transform-box: fill-box;
-	transform-origin: 50% 100%;
-}
-
-.av-eyes {
-	transform-box: fill-box;
+	flex: none;
+	/* 容器比 `size` 窄时（侧栏那列的格子是 24）缩到格子宽，高度跟着比例走，
+	   不拉伸成椭圆。 */
+	max-width: 100%;
+	height: auto;
+	border-radius: 50%;
+	object-fit: cover;
 	transform-origin: 50% 50%;
+	/* 加载出来之前先占住一个纸色的圆，免得刷出一排空洞。 */
+	background: color-mix(in oklab, var(--ink) 6%, var(--ground));
+	/* 一圈极淡的边：浅色插画落在深色底上，没有这条边就像一块浮着的纸。 */
+	box-shadow: 0 0 0 1px color-mix(in oklab, var(--ink) 10%, transparent);
 }
 
-.av[data-state="thinking"] .av-b {
+/* 三种状态三种动法：思考是歪头、干活是点头、交付是一次回弹。
+   插画内部的结构 CSS 够不到（它是 `<img>`），所以动的只能是整张脸 —— 幅度压小，
+   一屏几十张一起点头才不晕。 */
+.av[data-state="thinking"] {
 	animation: av-ponder 2.2s ease-in-out infinite;
 }
 
-.av[data-state="working"] .av-b {
+.av[data-state="working"] {
 	animation: av-bob 1.6s ease-in-out infinite;
 }
 
-.av[data-state="working"] .av-eyes {
-	animation: av-blink 2.4s ease-in-out infinite;
-}
-
-.av[data-state="done"] .av-b {
+.av[data-state="done"] {
 	animation: av-done 1.8s cubic-bezier(0.22, 1, 0.36, 1) 1;
 }
 
@@ -214,21 +214,6 @@
 	51.1%,
 	100% {
 		transform: none;
-	}
-}
-
-@keyframes av-blink {
-	0%,
-	42%,
-	50%,
-	100% {
-		transform: scaleY(1);
-	}
-	46% {
-		transform: scaleY(0.03);
-	}
-	48% {
-		transform: scaleY(1.06);
 	}
 }
 

@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **20** 条路由（按方法+路径算；按路径去重是 **19** 条 —— `check-boundaries.mjs`
+只有 **21** 条路由（按方法+路径算；按路径去重是 **20** 条 —— `check-boundaries.mjs`
 数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
@@ -29,6 +29,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
+| `GET` | `/api/avatar/:seed` | 一个人的头像（SVG，服务端按名字画好） |
 | `POST` | `/api/diag` | 浏览器自报卡顿，落 `workspace/logs/jank.jsonl` |
 | `GET` | `/api/diag` | 最近一条**运行报告**（底座报上来的失败），没有就是 `null` |
 | `*` | 其余 | 静态文件（`ui/web/`） |
@@ -315,7 +316,8 @@ type ViewTurn = {
 ```ts
 type ViewStep = {
   id: string;                   // 会话条目里的 toolCall id
-  kind: "think" | "say" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
+  kind: "think" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
+                               // 没有 say：说出口的话是频道消息，不进过程
   title: string;                // 服务端算好的一行人话（跑了 npm test / 读了 a.ts）
   status: "running" | "ok" | "failed";
   ms?: number;                  // 工具结果时间 − 调用时间；拿不到就不出现
@@ -326,7 +328,7 @@ type ViewStep = {
   truncated?: true;
   path?: string;                // file-*
   added?: number;               // file-write：写入行数
-  text?: string;                // think / say 正文
+  text?: string;                // think 正文
   tool?: string;                // 未知工具的原名
 }
 ```
@@ -461,6 +463,24 @@ type ViewStep = {
 
 **模型看不见图片内容**：附件在投递正文里只有一行占位。agent 应该说
 「我读不了图里的内容，请用文字说一下要我做什么」，而不是猜。
+
+## 13.3 `GET /api/avatar/:seed`
+
+一个人的头像，**一张插画**，服务端画好直接吐 SVG。`seed` 是 slug（URL 编码）。
+
+```ts
+// GET /api/avatar/林越?size=64
+// → image/svg+xml，约 5 KB
+```
+
+- `size` 夹在 **16–256**（缺省 64，不是数字也用 64）。界面按显示尺寸的 **2 倍** 要
+  （高清屏），由浏览器缩到实际大小。
+- **同一个 seed 永远是同一张脸**：画风（DiceBear `micah`）、取景（`scale 170` /
+  `translateY 18`，把脸放到圆里）、底色（6 支淡彩按 seed 挑一支）都不掺时间与随机数。
+- `Cache-Control: public, max-age=604800`（一周，**不是** `immutable`：画风会改，
+  改了得能在缓存里过期），另有 `ETag`（seed + 尺寸）与 `304` 处理。
+- `X-Content-Type-Options: nosniff`：SVG 是可执行的，别让它被嗅探成别的类型。
+- 消费者只有一个：`ui/app/src/lib/avatar.ts` 拼的 `<img class="av" src="/api/avatar/…">`。
 
 ## 13.1 `POST /api/diag`
 

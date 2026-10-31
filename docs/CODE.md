@@ -121,11 +121,12 @@ shell = 装配层，唯一可以同时 import 全部
 | `app/people.ts` | 135 | `createPeople` —— 一个人：档案、记忆的读 / 加 / 改 / 删；`MemoryEditBody` |
 | `app/project.ts` | 341 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels`；显示名走 `agent/identity.ts`，团队头走 `channel/types.ts` 的 `teamId` |
 | `app/chat.ts` | 169 | 说话用例：`postAsOwner` / `openDirectMessage`（委托 `ensureOwnerDm`，幂等）/ `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界、私聊对象必须在名册里）在这里而不在路由里 |
+| `app/avatar.ts` | 69 | 头像的**画法**：`avatarSvg(seed, size)`（DiceBear `micah`，取景与底色都在这里）/ `avatarEtag` / `clampAvatarSize`。纯函数，没有 IO：路由把字节写出去 |
 | `app/uploads.ts` | 76 | 上传语义：`createUploads` —— 收下字节、写元数据、读回时决定内联还是下载。工作区文件树已删，三道闸随它一起走了 |
 | `app/diag.ts` | 127 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
 | `app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
 | `view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/project.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
-| `interface/http/routes.ts` | 223 | 路由表：19 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
+| `interface/http/routes.ts` | 266 | 路由表：21 条 `/api/*`（按方法 + 路径算）+ `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」 |
 | `interface/http/respond.ts` | 100 | HTTP 出口原语：`json` / `fail` / `HttpError` / `readJson`（正文上限 1MB、写接口必须声明 `application/json`）/ `statusOf`（用例原因 → 状态码） |
 | `interface/http/route-match.ts` | 131 | 表驱动路由匹配：`Route` / `RouteContext` / `RouteHandler` / `matchRoute`（`:name` 捕获 / `*name` 吃余量），不引入框架 |
 | `interface/http/network.ts` | 80 | 监听地址：`isWildcardHost` / `isLoopbackHost` / `browserUrlOf` / `lanAddresses` / `lanUrlsOf` |
@@ -151,7 +152,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
 | `src/api/types.ts` | **type-only 再导出** `src/core/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
-| `src/stream/model.ts` | **消息 → 行模型，纯函数** `buildRows()`。时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行；有轨迹的消息后面跟一行 `run`（按触发消息的 `seq` 分桶）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
+| `src/stream/model.ts` | **消息 → 行模型，纯函数**：`buildRows()`（时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行）与 `buildWorkRows()`（私聊页：消息 + 这个人在各频道的工作轮次按时间合排；只有话没做事的一轮不画壳）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
 | `src/stream/RunBlock.tsx` | 一轮的折叠行 + 步骤树。默认「在跑就展开、历史收起」，手动改过记 `localStorage["solo.trace.open"]`；步骤详情按 kind 分四种（命令 / 文件 / 思考 / 说话），同一时间只展开一个 |
 | `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`run` 行交给 `RunBlock`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`） |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
@@ -162,7 +163,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
 | `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create` / `trace`）；失败退避 1s→15s；org 事件自带整份快照（`applyOrg`），侧栏与「找你」仍走 `store.refreshLists` |
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
-| `src/lib/avatar.ts` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像 |
+| `src/lib/avatar.ts` | 头像只拼 `<img src="/api/avatar/…">`（种子取 slug、要 2 倍尺寸）、四种状态、`groupAvatar()` 群组头像（座位 + 挖洞遮罩）。**画在服务端**（`src/core/app/avatar.ts`），这里不画 |
 | `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼** |
 | `src/lib/copy-code.ts` | 代码块「复制」：`CODE_COPY_CLASS` 一处定义，`installCodeCopy()` 在 `main.tsx` 装一次全局委托（正文是 `dangerouslySetInnerHTML` 注入的，React 事件接不到里面的按钮） |
 | `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanDuration`（`<1s` / `3.2s` / `1m 12s`）、`humanBytes`、`unreadLabel`、`copyText` |
@@ -199,6 +200,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改附件（落盘 / 上限 / 清理） | `channel/attachments.ts`（字节与元数据）+ `app/uploads.ts`（语义：内联还是给路径） | 上限与「先读完再比等于没有上限」都在 `channel/attachments.ts`；别把字节塞进频道文档（教训） |
 | 改界面字段 | `view/dto.ts`（先改 `docs/WEB-API.md`）+ 投影在 `app/project.ts` | DTO 是唯一权威，`ui/app/src/api/types.ts` 只是它的 type-only 再导出 —— 改字段界面立刻编译不过。字段必须有前端消费者 |
 | 改界面样式 / 交互 | `ui/app/` | **改完必须 `npm run ui:build`**；文件职责见 §2.2 |
+| 改头像（画风 / 取景 / 配色 / 尺寸） | `src/core/app/avatar.ts`（画法）+ `ui/app/src/lib/avatar.ts`（种子与尺寸）+ `ui/app/src/styles/motion.css` 的 `.av` | 画在服务端、按 slug 稳定；`size` 夹在 16–256；界面要 2 倍尺寸。动的是整张 `<img>`（三态各一种动法） |
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建 |
 | 改团队记忆沉淀的触发条件 / 游标时机 | `team/memory.ts` 的 `settleCandidates` + `team/settle.ts` 的 `waiting` | 游标语义在 `team/settle.ts`，改之前先读懂 |
 | 改「这批消息该不该记」的判据 | `seed/prompt/95-settle.md` —— **不要写进 `team/memory.ts`** | 判据是 `use: delivery` 的模板：decision 必记、report 看是否超出当前任务、纯过程话不记；技能正文不在沉淀那一轮的上下文里，所以判据必须写在正文里 |

@@ -19,7 +19,6 @@ export function Sidebar(): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const side = useStore((state) => state.side);
 	const presence = useStore((state) => state.presence);
-	const memberCount = useStore((state) => state.people.length);
 
 	const bySlug = new Map(people.map((person) => [person.slug, person]));
 	// 「离我最近的人」= `identity.md` 里 `manager: owner` 的那一个。私聊还没开过时，
@@ -54,12 +53,6 @@ export function Sidebar(): JSX.Element {
 						<path d="M9 4v16" />
 					</svg>
 				</button>
-			</div>
-			<div className="side-head">
-				<span>工作区</span>
-				<span className="side-meta" id="workspace-meta">
-					{memberCount} 人 · {channels.length + (nearest === undefined || nearestOpened ? 0 : 1)} 个会话
-				</span>
 			</div>
 			<div className="channels" id="rows" role="list">
 				{nearest === undefined || nearestOpened ? null : (
@@ -106,7 +99,7 @@ function AssistantRow(props: { person: Actor; state: string; onOpen: () => void 
 			<span
 				className="ch-av"
 				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: person.slug, name: person.label, size: 32, state: avatarState(state) }),
+					__html: avatarSvg({ slug: person.slug, name: person.label, size: 24, state: avatarState(state) }),
 				}}
 			/>
 			<span className="ch-main">
@@ -158,10 +151,10 @@ function ChannelRow(props: {
 						person === undefined
 							? groupAvatar({
 									people: groupPeopleOf(channel, props.bySlug),
-									size: 32,
+									size: 24,
 									state: "idle",
 								})
-							: avatarSvg({ slug: person.slug, name: person.label, size: 32, state: avatarState(state) }),
+							: avatarSvg({ slug: person.slug, name: person.label, size: 24, state: avatarState(state) }),
 				}}
 			/>
 			<span className="ch-main">

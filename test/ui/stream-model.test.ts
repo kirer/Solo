@@ -195,6 +195,17 @@ describe("私聊工作记录：消息与跨频道轮次按时间合排", () => {
 		expect(new Set(rows.map((row) => row.key)).size).toBe(2);
 	});
 
+	it("只说话了、没做事的一轮不画 work 壳", () => {
+		const rows = buildWorkRows({
+			messages: [m(1, "say", T)],
+			work: [{ ...turn("dm:owner-linyue", 2, T + MIN), stepCount: 0, summary: "" }],
+			titles,
+			now: T + 60 * MIN,
+		});
+		// 话已经在消息流里了；空壳会让人以为这一轮干了件大事。
+		expect(rows.map((row) => row.type)).toEqual(["say"]);
+	});
+
 	it("时间分隔属于它下面那条消息：工作行插在分隔之前", () => {
 		const rows = buildWorkRows({
 			messages: [m(1, "say", T), m(2, "say", T + 60 * MIN)],

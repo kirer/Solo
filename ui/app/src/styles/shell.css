@@ -159,33 +159,6 @@
 	color: var(--ink);
 }
 
-/* 「工作区」：DSH 的分段标题行，36 高、14/20、三级灰。右边补一条人数统计。 */
-.side-head {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	height: 36px;
-	margin-top: 2px;
-	margin-bottom: 4px;
-	padding-left: 12px;
-	font-size: 14px;
-	line-height: 20px;
-	color: var(--ink-3);
-	flex: none;
-}
-
-.side-meta {
-	margin-left: auto;
-	padding-right: 8px;
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-}
-
 /* 断线：只在真断的时候出现一行 12px 文字，恢复后自己消失。 */
 .conn {
 	flex: none;
@@ -408,8 +381,6 @@
 /* 只留头像：名字、状态、预览、时间全收起来，塞进 title 属性里（见 app.js）。
    这不是「变小」，是换了一套信息密度 —— 窄栏里放不下两行字。 */
 .frame[data-side="rail"] .brand-name,
-.frame[data-side="rail"] .side-head > span,
-.frame[data-side="rail"] .side-meta,
 .frame[data-side="rail"] .ch-main,
 .frame[data-side="rail"] .ch-time {
 	display: none;
@@ -424,12 +395,6 @@
 /* logo 行 60 高放不下 logo + 按钮：收起后 logo 让位，只留按钮（点它展开）。 */
 .frame[data-side="rail"] .side-logo .brand-mark {
 	display: none;
-}
-
-.frame[data-side="rail"] .side-head {
-	height: 8px;
-	margin: 0;
-	padding: 0;
 }
 
 .frame[data-side="rail"] .ch {
@@ -744,10 +709,6 @@
 			calc(16px + env(safe-area-inset-left));
 		height: calc(56px + env(safe-area-inset-top));
 		gap: 6px;
-	}
-
-	.workspace-meta {
-		display: none;
 	}
 
 	/* 手机上一次只占满那一格：两张都放在同一格，靠 body[data-pane] 决定谁可见。 */

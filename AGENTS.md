@@ -58,13 +58,13 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             59 文件 / 624 例
-  ├ test/core/    52 文件 / 561 例（纯函数 + 装配）
-  └ test/ui/      7 文件 / 63 例（界面纯函数与源码约定）
+test/             60 文件 / 636 例
+  ├ test/core/    53 文件 / 569 例（纯函数 + 装配）
+  └ test/ui/      7 文件 / 67 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 73 个 ts / 11428 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 74 个 ts / 11694 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -116,7 +116,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 59 文件 624 例，<3s，必须全绿
+npm test             # 60 文件 636 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -156,6 +156,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改 seed 出厂内容（规矩 / 技能 / 助理身份） | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts`（一条事实一个家、≤15 条、零工具名、技能 ≤4 KB） |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
+| 头像的画法 / 取景 / 配色 / 尺寸 | `docs/DESIGN.md` §6.5 + `docs/DECISIONS.md`（画风是一条 ADR）+ `docs/WEB-API.md` 的 `/api/avatar/:seed` | `src/core/app/avatar.ts`（唯一的画法，纯函数）+ `ui/app/src/lib/avatar.ts`（种子与尺寸）+ `test/core/avatar.test.ts` |
 | 界面布局 / 行类型 / 轨迹展示 | `docs/DESIGN.md`（决策稿：改之前先说明原决策错在哪）+ 本文件 §2 的「不画后端没有的东西」 |
 | 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
 | 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |

@@ -1,68 +1,14 @@
 /**
- * 头像：一个 slug 画出一个人。纯 SVG，没有图片、没有 emoji、没有字母色块。
+ * 头像：一张插画，由服务端按名字画好（`GET /api/avatar/:seed`）。
  *
- * 三件事决定它「像一个人」而不是一个图标：
- *   1. 外形按 slug 的哈希分成三族（圆胖 / 带角 / 方肩）。
- *   2. 眼睛是**画上去**的两块 --av-eye 色，不是 <mask> 挖的洞。
- *      原先用 mask 是为了「眼睛透出纸色、歪头时跟着形状走」，但代价是每张脸
- *      都带一份 <defs><mask>，而且动画（av-bob）每一帧都要重新栅格化蒙版 ——
- *      一屏几十张脸时这是 CPU 大户。实测眼睛的矩形在三个外形里都在脸内部，
- *      直接画两块颜色完全等价，视觉上一像素不差，省掉全部 defs。
- *   3. 底色只做身份，不做数据：明度 > 92%，色相固定间隔 60°，
- *      相邻两个人永远不会撞成一个色。
- */
-
-/** 色相固定间隔 60°，明度 93–95%，饱和度压到 40% 上下。 */
-const TONES = [
-	"hsl(14 52% 93%)",
-	"hsl(74 44% 93%)",
-	"hsl(134 40% 93%)",
-	"hsl(194 46% 93%)",
-	"hsl(254 48% 93%)",
-	"hsl(314 46% 93%)",
-] as const;
-
-/** 三族外形（100×100 单位盒）。都在 14–88 之间，留出描边和形变的余量。 */
-const BODIES = [
-	// 0 圆胖：肩膀很软，最年轻
-	"M50 14C69.3 14 85 28.4 85 49.4 85 71.6 70.6 87 50 87 29.4 87 15 71.6 15 49.4 15 28.4 30.7 14 50 14Z",
-	// 1 带角：两个角是独立的路径，画在身体之前
-	"M50 24C67 24 81 36 81 55 81 74 67 88 50 88 33 88 19 74 19 55 19 36 33 24 50 24Z",
-	// 2 方肩：一条平顶的肩线，最像「管事的人」
-	"M30 21H70C78 21 82 26 82 34V56C82 75 68 88 50 88 32 88 18 75 18 56V34C18 26 22 21 30 21Z",
-] as const;
-
-const HORNS = "M27.5 27 22 9.5 41 19.5ZM72.5 27 78 9.5 59 19.5Z";
-
-/**
- * 缓存：同一个 slug + 尺寸 + 状态画出来的字符串是常量。
+ * 为什么不在前端画：插画头像要换肤色、发型、眼镜、表情、衣服色 —— 那是一套几百条路径的
+ * 图形库。打进 bundle 是几百 KB，画在一屏几十张脸上是几十毫秒；放到服务端只算一次，
+ * 内容由 seed 决定、永不变，浏览器长缓存之后就是一张本地图片。
  *
- * 为什么值得缓存：一屏几十行就是几十张脸，每行都重新拼一遍 SVG 字符串
- * （几十次字符串拼接 + 哈希）纯属重复劳动。缓存后同一张脸一屏只拼一次。
- * 因为没有 `<mask id>` 那种「必须全局唯一」的东西了，字符串可以安全复用。
+ * 这个文件只剩两件事：**算种子**和**给尺寸**。
+ * - 种子取 `slug`：改显示名不该换脸（同一个人，改了称呼还是他）。
+ * - 请求 2 倍尺寸给高清屏，服务端夹在 16–256。
  */
-const CACHE = new Map<string, string>();
-
-/** FNV-1a：稳定、够散、不依赖运行环境。 */
-function hash(text: unknown): number {
-	let h = 2166136261;
-	for (const ch of String(text)) {
-		h ^= ch.codePointAt(0) ?? 0;
-		h = Math.imul(h, 16777619);
-	}
-	return h >>> 0;
-}
-
-/**
- * 我的脸固定下来，不走哈希。
- *
- * 为什么：`owner` 不在 `people` 名册里（他是人，不是 agent），哈希出来是「圆胖」那族，
- * 和另外六七个人撞成同一种脸。我的消息在界面上必须一眼认出来 —— 它是这个产品的
- * 主语。所以固定成「方肩」（第三族，最像管事的人）+ 暖色调（和强调色同一支色相），
- * 不论在哪个频道、不管名册里多了一个人，他的脸都不变。
- */
-const OWNER_SLUG = "owner";
-const OWNER_LOOK = { shape: 2, tone: "hsl(14 52% 91%)" };
 
 /**
  * 脸的状态。只影响 `data-state`，由 CSS（`motion.css` 的 `.av[data-state=…]`）决定动不动：
@@ -70,7 +16,7 @@ const OWNER_LOOK = { shape: 2, tone: "hsl(14 52% 91%)" };
  */
 type AvatarState = "idle" | "thinking" | "working" | "done";
 
-/** 画一张脸要的输入。`slug` 定外形与底色，`name` 只在没 slug 时当退路。 */
+/** 画一张脸要的输入。`slug` 定脸，`name` 只在没 slug 时当退路。 */
 type AvatarSpec = {
 	slug?: string | undefined;
 	name?: string | undefined;
@@ -78,37 +24,27 @@ type AvatarSpec = {
 	state?: AvatarState | undefined;
 };
 
+/** 同一组输入的字符串是常量：一屏几十行就是几十张脸，不必每行拼一遍。 */
+const CACHE = new Map<string, string>();
+
 /**
  * @param spec 见 {@link AvatarSpec}
- * @returns 内联 SVG 字符串
+ * @returns 一个 `<img>` 字符串（消费者的 `__html` 直接塞进去）
  */
-export function avatarSvg({
-	slug,
-	name,
-	size = 24,
-	state = "idle",
-}: AvatarSpec): string {
-	const key = slug || name || "anon";
-	const cacheKey = `${key}|${size}|${state}`;
+export function avatarSvg({ slug, name, size = 24, state = "idle" }: AvatarSpec): string {
+	const seed = slug || name || "anon";
+	const px = Math.max(1, Math.round(size));
+	const cacheKey = `${seed}|${px}|${state}`;
 	const hit = CACHE.get(cacheKey);
 	if (hit !== undefined) return hit;
 
-	const shape = key === OWNER_SLUG ? OWNER_LOOK.shape : hash(key) % BODIES.length;
-	const tone = key === OWNER_SLUG ? OWNER_LOOK.tone : (TONES[hash(`${key}:tone`) % TONES.length] ?? TONES[0]);
-	// `shape` 恒落在 0–2（`hash % BODIES.length`，我固定 2），`??` 只为让下标访问过类型检查。
-	const body = BODIES[shape] ?? BODIES[0];
-
-	const horns =
-		shape === 1
-			? `<path d="${HORNS}" fill="${tone}" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"/>`
-			: "";
-
-	// 眼睛：两块圆角矩形，直接填 --av-eye（和原来蒙版挖出来的颜色相同）。
-	const svg = `<svg class="av" data-shape="${shape}" data-state="${state}" width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true" focusable="false">
-	<g class="av-b">${horns}<path class="av-body" d="${body}" fill="${tone}" stroke="var(--ink)" stroke-width="3" stroke-linejoin="round"/><g class="av-eyes" fill="var(--av-eye)"><rect x="32" y="44.5" width="10.5" height="15" rx="5.25"/><rect x="57.5" y="44.5" width="10.5" height="15" rx="5.25"/></g></g>
-</svg>`;
-	CACHE.set(cacheKey, svg);
-	return svg;
+	// 座位尺寸可能是小数（比例分配出来的），请求时取整；服务端还会再过一遍区间。
+	const src = `/api/avatar/${encodeURIComponent(seed)}?size=${String(Math.round(px * 2))}`;
+	const img = `<img class="av" data-state="${state}" src="${src}" width="${String(px)}" height="${String(
+		px,
+	)}" alt="" aria-hidden="true" decoding="async" draggable="false">`;
+	CACHE.set(cacheKey, img);
+	return img;
 }
 
 /** 一个座位：左上角坐标与直径，单位 px（相对群头像的边长盒）。 */

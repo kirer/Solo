@@ -14,6 +14,7 @@ import { pipeline } from "node:stream/promises";
 import type { Route } from "./route-match.ts";
 import type { StreamHub } from "./sse.ts";
 import type { App, MemoryEditBody, PostBody } from "../../app/index.ts";
+import { avatarEtag, avatarSvg, clampAvatarSize } from "../../app/avatar.ts";
 import { json, readJson } from "./respond.ts";
 import { serveStatic } from "./static-assets.ts";
 
@@ -53,6 +54,38 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/org",
 			method: "GET",
 			handler: async ({ response }) => json(response, await app.read.readOrg()),
+		},
+		{
+			// 头像：按名字稳定生成一张插画（同一个人永远同一张脸）。内容由 seed 决定、永不变，
+			// 所以给长缓存 + ETag；尺寸夹在 16–256，免得一个 `?size=999999` 把服务端画爆。
+			pattern: "/api/avatar/:seed",
+			method: "GET",
+			handler: ({ request, response, url, params }) => {
+				const seed = (params.seed ?? "").trim();
+				if (seed === "") {
+					response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+					response.end("缺少名字");
+					return;
+				}
+				const raw = url.searchParams.get("size");
+				const size = clampAvatarSize(raw === null ? undefined : Number(raw));
+				const etag = avatarEtag(seed, size);
+				if (request.headers["if-none-match"] === etag) {
+					response.writeHead(304, { ETag: etag });
+					response.end();
+					return;
+				}
+				response.writeHead(200, {
+					"Content-Type": "image/svg+xml; charset=utf-8",
+					// 一周，不是 immutable：画风要能换（改了 `avatar.ts` 的取景或配色，
+					// 老缓存得在一个星期内自己过期），而这一周里的重复请求都是本地命中。
+					"Cache-Control": "public, max-age=604800",
+					ETag: etag,
+					// SVG 是可执行的：同源 + nosniff，别让它被嗅探成别的类型。
+					"X-Content-Type-Options": "nosniff",
+				});
+				response.end(avatarSvg(seed, size));
+			},
 		},
 		{
 			// 一个人的全部档案：界面右上角那个「详情」面板一次要的东西都在这。

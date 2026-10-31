@@ -136,6 +136,8 @@ function atOf(row: Row): number | undefined {
 export function buildWorkRows({ messages, work, titles, now = Date.now() }: WorkInput): Row[] {
 	const rows = buildRows({ messages, now });
 	for (const turn of [...work].sort((left, right) => left.startedAt - right.startedAt)) {
+		// 只说了话、没做事的一轮不画 work 壳：说的话已经在消息流里，空壳会让人以为他干了件大事。
+		if (turn.stepCount === 0) continue;
 		const row: Row = {
 			type: "work",
 			key: `w-${turn.channelId}-${String(turn.seq)}-${turn.slug}`,

@@ -199,7 +199,6 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	async function turnsOf(channelId: string | undefined, from: number, to: number, onlySlug?: string): Promise<ViewTurn[]> {
 		const { directory, channels } = await snapshots.channelSnapshot();
 		if (channelId !== undefined && channels.channels[channelId] === undefined) return [];
-		const titles = new Map(Object.values(channels.channels ?? {}).map((item) => [item.id, item.title]));
 
 		// 回复可能落在别的频道（任务频道），所以按「所有频道的消息」找，不只看当前频道。
 		const said: { channelId: string; seq: number; at: number; fromSlug: string }[] = [];
@@ -255,7 +254,6 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 						startedAt,
 						...(reply === undefined ? {} : { endedAt: reply.at, replySeq: reply.seq }),
 						live: running && index === groups.length - 1,
-						channelTitles: titles,
 					}),
 				);
 			}

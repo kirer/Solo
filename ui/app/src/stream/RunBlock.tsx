@@ -94,8 +94,10 @@ export function RunBlock(props: { turn: Turn; role: string }): JSX.Element {
 				>
 					<span className="run-bar">
 						<span className="run-caret" aria-hidden="true">
-							{open ? "▾" : "▸"}
-						</span>
+						<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+							<path d="M9 5l7 7-7 7" />
+						</svg>
+					</span>
 						<span className="run-meta">{turn.stepCount} 步</span>
 						{elapsed === undefined || elapsed <= 0 ? null : <span className="run-meta">{humanDuration(elapsed)}</span>}
 						<span className="run-status" data-tone={status.tone}>
@@ -196,7 +198,7 @@ function StepDetail(props: { step: Step }): JSX.Element | null {
 			</div>
 		);
 	}
-	if (step.kind === "think" || step.kind === "say") {
+	if (step.kind === "think") {
 		if (step.text === undefined || step.text === "") return null;
 		return (
 			<div className="step-detail">
@@ -214,7 +216,7 @@ function StepDetail(props: { step: Step }): JSX.Element | null {
 	return null;
 }
 
-/** 图标只有四种：思考一个点、终端 `>_`、文件一页、未知一个问号。全部 `--ink-3` 描边。 */
+/** 图标只有三种：思考一个点、终端 `>_`、文件一页；其余工具画一个问号。全部 `--ink-2` 描边。 */
 function iconOf(kind: Step["kind"]): JSX.Element {
 	if (kind === "think") return <span className="ico-dot" />;
 	if (kind === "run") {
@@ -230,13 +232,6 @@ function iconOf(kind: Step["kind"]): JSX.Element {
 			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 				<path d="M6 3h8l4 4v14H6z" />
 				<path d="M14 3v4h4" />
-			</svg>
-		);
-	}
-	if (kind === "say") {
-		return (
-			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-				<path d="M4 6h16v10H9l-5 4z" />
 			</svg>
 		);
 	}
