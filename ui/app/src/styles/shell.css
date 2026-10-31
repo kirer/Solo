@@ -38,7 +38,8 @@
 }
 
 /* 「找你」清单：一张窄卡，不是弹窗。每条 3 行压成 2 行（上面「频道 · 谁」，
-   下面 80 字摘要），时间靠右。已理过的整条淡到 --ink-3。 */
+   下面 80 字摘要），时间靠右。已理过的整条淡到 --ink-3。
+   它同时挂 `.menu`（同一张卡、同一个锚点规则），这里只改尺寸。 */
 .need-menu {
 	width: min(420px, calc(100vw - 24px));
 	max-height: min(60vh, 520px);
@@ -222,6 +223,13 @@
 	position: relative;
 	flex: none;
 	display: inline-flex;
+}
+
+/* 顶栏那颗「N 件找你」：0 件时按钮自己 display:none，锚点不能跟着塌成 0 高 ——
+   那样 ⌘K 打开的清单会贴在标题行中间。锚点撑满整行高，菜单就总在标题行下面。 */
+.need-anchor {
+	height: 100%;
+	align-items: center;
 }
 
 /* ── 侧栏 ───────────────────────────────────────────────────────────── */
@@ -510,8 +518,13 @@
 
 /* ── 浮层：菜单（顶栏 / ＋） ─────────────────────────────────────────── */
 
+/* 菜单挂在触发它的那颗按钮上（`.menu-anchor` 是 relative），不用 fixed：
+   fixed 没有 top/left 时按「静态位置」摆，而它长在页面最底下 —— 整张菜单就落到
+   视口外面去了。绝对定位跟着锚点走，窗口怎么缩放都不会错位。 */
 .menu {
-	position: fixed;
+	position: absolute;
+	top: calc(100% + 6px);
+	right: 0;
 	z-index: 70;
 	min-width: 168px;
 	padding: 4px;
@@ -520,6 +533,15 @@
 	border-radius: var(--r-row);
 	box-shadow: 0 6px 20px -6px rgba(28, 26, 22, 0.18);
 	transform-origin: top right;
+}
+
+/* ＋ 在输入卡左下角，菜单只能往上长：往下会顶出屏幕，被输入框压住。 */
+#plus-menu {
+	top: auto;
+	right: auto;
+	bottom: calc(100% + 8px);
+	left: 0;
+	transform-origin: bottom left;
 }
 
 .menu-item {

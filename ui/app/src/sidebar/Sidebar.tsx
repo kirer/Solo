@@ -8,9 +8,9 @@
 
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
-import { openChannel, setSide } from "../state/store.ts";
+import { openChannel, openWithPerson, setSide } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
-import type { Channel } from "../api/types.ts";
+import type { Actor, Channel } from "../api/types.ts";
 
 export function Sidebar(): JSX.Element {
 	const channels = useStore((state) => state.channels);
@@ -22,6 +22,12 @@ export function Sidebar(): JSX.Element {
 	const memberCount = useStore((state) => state.people.length);
 
 	const bySlug = new Map(people.map((person) => [person.slug, person]));
+	// 「离我最近的人」= `identity.md` 里 `manager: owner` 的那一个。私聊还没开过时，
+	// 他是侧栏第一格；开过之后那一格由真实频道顶上（`sortChannels` 已经把他钉在最前）。
+	const nearest = people.find((person) => person.manager === "owner");
+	const nearestOpened =
+		nearest === undefined ||
+		channels.some((channel) => channel.kind === "dm" && channel.title === nearest.label);
 
 	return (
 		<aside className="sidebar" data-side={side}>
@@ -52,10 +58,17 @@ export function Sidebar(): JSX.Element {
 			<div className="side-head">
 				<span>工作区</span>
 				<span className="side-meta" id="workspace-meta">
-					{memberCount} 人 · {channels.length} 个会话
+					{memberCount} 人 · {channels.length + (nearest === undefined || nearestOpened ? 0 : 1)} 个会话
 				</span>
 			</div>
 			<div className="channels" id="rows" role="list">
+				{nearest === undefined || nearestOpened ? null : (
+					<AssistantRow
+						person={nearest}
+						state={presence.get(nearest.slug)?.state ?? "idle"}
+						onOpen={() => void openWithPerson(nearest.slug)}
+					/>
+				)}
 				{channels.map((channel) => (
 					<ChannelRow
 						key={channel.id}
@@ -68,6 +81,47 @@ export function Sidebar(): JSX.Element {
 				))}
 			</div>
 		</aside>
+	);
+}
+
+/**
+ * 助理那一格：私聊还没开过时的入口。
+ *
+ * 它**不是一条会话**（没有频道 id、没有消息），所以第二行写的是他的身份而不是预览 ——
+ * 不能编一句「还没有消息」假装那里有历史。点下去才真的建频道（`openWithPerson`）。
+ */
+function AssistantRow(props: { person: Actor; state: string; onOpen: () => void }): JSX.Element {
+	const { person, state } = props;
+	return (
+		<button
+			type="button"
+			role="listitem"
+			className="ch"
+			data-entry="assistant"
+			data-kind="dm"
+			aria-current="false"
+			title={person.title}
+			onClick={props.onOpen}
+		>
+			<span
+				className="ch-av"
+				dangerouslySetInnerHTML={{
+					__html: avatarSvg({ slug: person.slug, name: person.label, size: 32, state: avatarState(state) }),
+				}}
+			/>
+			<span className="ch-main">
+				<span className="ch-top">
+					<span className="ch-title">{person.label}</span>
+					<span className="ch-state" data-state={state}>
+						{stateLabel(state)}
+					</span>
+				</span>
+				<span className="ch-sub">
+					<span className="ch-time" />
+					<span className="ch-preview">{person.title}</span>
+				</span>
+			</span>
+		</button>
 	);
 }
 

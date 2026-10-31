@@ -58,6 +58,53 @@ describe("设置面板的选中态", () => {
 });
 
 /**
+ * 类名写进 JSX 却没写进 CSS —— 页面上就是一堆没样式的 div。
+ *
+ * 空频道真出过这个事故：`Stream.tsx` 用的是 `ch-empty*`，而 `stream.css` 里
+ * 只有旧版的 `.empty`，于是「这个频道还没有消息」挤在左上角，像加载失败。
+ * 这条测试拿 JSX 里出现的类名去 CSS 里对，缺一个就红。
+ */
+describe("空频道的样式真的存在", () => {
+	const css = read("../../ui/app/src/styles/stream.css").replace(/\/\*[\s\S]*?\*\//g, "");
+
+	it("Stream.tsx 用到的每个 ch-empty 类都在 CSS 里", () => {
+		const source = read("../../ui/app/src/stream/Stream.tsx");
+		const used = new Set([...source.matchAll(/className="(ch-empty[\w-]*)"/g)].map((match) => match[1]));
+		expect(used.size).toBeGreaterThan(0);
+		for (const name of used) expect(css).toContain(`.${name}`);
+	});
+});
+
+/**
+ * 菜单的定位：`position: fixed` 不写 `top`/`left` 时按「静态位置」摆，
+ * 而菜单在 DOM 里排在页面最后 —— 整张会掉到视口外面（＋ 菜单真掉过）。
+ * 所以菜单必须是绝对定位、挂在触发它的 `.menu-anchor` 上；输入卡贴着屏幕底边，
+ * ＋ 菜单只能往上开。
+ */
+describe("菜单贴着按钮长", () => {
+	const css = read("../../ui/app/src/styles/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
+	const rule = (selector: string): string => {
+		const at = css.indexOf(`\n${selector} {`);
+		expect(at).toBeGreaterThan(-1);
+		return css.slice(at, css.indexOf("}", at));
+	};
+
+	it(".menu 是 absolute，不是 fixed", () => {
+		expect(rule(".menu")).toContain("position: absolute");
+		expect(rule(".menu")).not.toContain("position: fixed");
+	});
+
+	it("＋ 菜单往上开（bottom 100% + 8）", () => {
+		expect(rule("#plus-menu")).toContain("bottom: calc(100% + 8px)");
+	});
+
+	it("「找你」清单挂在顶栏按钮的锚点里，不是一个裸浮层", () => {
+		expect(read("../../ui/app/src/panels/Overlays.tsx")).toContain("export function NeedMenu");
+		expect(read("../../ui/app/src/App.tsx")).toContain("<NeedMenu />");
+	});
+});
+
+/**
  * 频道 SSE 只认 create（新消息落库），外加 error 用来标断线。
  *
  * 删掉假流式（`token` / `done`）与「正在说」草稿（`draft`）之后，服务端只推两类事件。

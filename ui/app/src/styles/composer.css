@@ -82,11 +82,15 @@
 }
 
 /* 发送键：34px 满圆，比左边的 ＋ 大一圈 —— 视觉重心在这里。 */
+/* 34 的圆比 28 的文字行高 6px。两者都贴底对齐时，圆心会比文字中线高 3px ——
+   看着就是「发送按钮往上飘了一点」。往下压 3px，让圆心落在文字中线上；
+   输入框长到多行时文字行仍然贴底，这个偏移一直成立。 */
 .send {
 	display: grid;
 	place-items: center;
 	flex: none;
 	align-self: flex-end;
+	margin-bottom: -3px;
 	width: 34px;
 	height: 34px;
 	padding: 0;

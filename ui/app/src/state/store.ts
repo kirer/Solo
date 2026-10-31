@@ -20,6 +20,7 @@ import {
 	getTurn,
 	getTurns,
 	markRead as markReadApi,
+	openDirectMessage,
 	sendMessage,
 } from "../api/client.ts";
 import type { Actor, Activity, AttentionItem, Channel, ChannelDetail, Message, Org, PersonProfile, Turn } from "../api/types.ts";
@@ -187,6 +188,18 @@ export async function bootstrap(): Promise<void> {
 }
 
 /* ── 频道 ───────────────────────────────────────────────────────────── */
+
+/**
+ * 点侧栏第一格（助理）：先开（或复用）和这个人的私聊，再打开它。
+ *
+ * 私聊仍然「只能我开」—— 装配不会替任何人建两人频道（`test/core/assemble.test.ts`
+ * 守着这条）。所以这条会话不存在时，侧栏画的是一格**入口**，点下去才落成频道。
+ */
+export async function openWithPerson(slug: string): Promise<void> {
+	const { id } = await openDirectMessage(slug);
+	await refreshLists();
+	await openChannel(id);
+}
 
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。

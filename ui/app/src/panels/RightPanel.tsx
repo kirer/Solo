@@ -116,9 +116,6 @@ function DetailTab(): JSX.Element {
 
 	const channel = detail.channel;
 	const members = detail.members.filter((member) => member.slug !== "owner");
-	const recent = detail.messages
-		.filter((message) => ["say", "chat", "question", "decision", "report"].includes(message.kind))
-		.at(-1);
 
 	return (
 		<div className="detail-sec">
@@ -161,53 +158,31 @@ function DetailTab(): JSX.Element {
 					<span className="detail-v">{channel.leadLabel}</span>
 				</div>
 			)}
-			<div className="detail-field">
-				<span className="detail-k">消息</span>
-				<span className="detail-v">{detail.messages.length} 条（本窗口）</span>
-			</div>
-
-			{recent === undefined ? null : (
-				<div className="detail-field">
-					<span className="detail-k">最近</span>
-					<span className="detail-v detail-recent">
-						{recent.fromLabel}：{recent.text.slice(0, 90)}
-					</span>
-				</div>
-			)}
-
 			<div className="detail-sec-head">
 				成员 <span className="detail-count">{members.length + 1}</span>
 			</div>
 			<div className="detail-people">
 				{people.length === 0 ? <p className="detail-empty">名册还没读出来。</p> : null}
-				{detail.members.map((member) => {
-					if (member.slug === "owner") {
-						// 我没有档案页（`GET /api/people/owner` 是 404），所以不给点击态。
-						return (
-							<span key={member.slug} className="detail-person-btn is-static">
-								<span className="detail-person-name">我</span>
-							</span>
-						);
-					}
-					return (
-						<button
-							type="button"
-							key={member.slug}
-							className="detail-person-btn"
-							data-open-person={member.slug}
-							onClick={() => void openPerson(member.slug)}
-						>
-							<span
-								className="detail-av"
-								dangerouslySetInnerHTML={{
-									__html: avatarSvg({ slug: member.slug, name: member.label, size: 28, state: "idle" }),
-								}}
-							/>
-							<span className="detail-person-name">{member.label}</span>
-							<span className="detail-person-title">{member.role}</span>
-						</button>
-					);
-				})}
+				{members.map((member) => (
+					<button
+						type="button"
+						key={member.slug}
+						className="detail-person-btn"
+						data-open-person={member.slug}
+						onClick={() => void openPerson(member.slug)}
+					>
+						<span
+							className="detail-av"
+							dangerouslySetInnerHTML={{
+								__html: avatarSvg({ slug: member.slug, name: member.label, size: 28, state: "idle" }),
+							}}
+						/>
+						<span className="detail-person-name">{member.label}</span>
+						{memberRole(member.role) === "" ? null : (
+							<span className="detail-person-title">{memberRole(member.role)}</span>
+						)}
+					</button>
+				))}
 			</div>
 		</div>
 	);
@@ -558,6 +533,16 @@ function stampOf(entry: MemoryEntry): string | undefined {
 
 function kindLabel(kind: string): string {
 	return kind === "dm" ? "私聊" : "群聊";
+}
+
+/**
+ * 成员角色：后端只给三个值（`owner` / `lead` / `member`），界面只画 `lead`。
+ *
+ * 把 `member` 原样印出来等于印了一个英文枚举 —— 它说的是「其余所有人」，
+ * 而列表里本来就是其余所有人。我自己的那一行也不在列表里。
+ */
+function memberRole(role: string): string {
+	return role === "lead" ? "团队管理员" : "";
 }
 
 /** `identity.md` 的第一个 `# 名字` 与上面的标题重复，剥掉它和紧随的空行。 */

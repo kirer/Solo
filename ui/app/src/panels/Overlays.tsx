@@ -5,6 +5,9 @@
  *
  * 规矩只有一条：**同一时刻只开一个**。三处状态（settings/team/needMenu）由
  * `store` 的 `setSettings`/`setTeam`/`setNeedMenu` 互斥，这里只负责画。
+ *
+ * 唯一一个不在这里挂的：找你清单（`NeedMenu`）由 `App.tsx` 放进顶栏按钮的
+ * `.menu-anchor` 里 —— 它要贴着按钮长，挂在根节点上就只剩猜坐标这一条路。
  */
 
 import { avatarSvg } from "../lib/avatar.ts";
@@ -18,49 +21,12 @@ export function Overlays(props: {
 }): JSX.Element {
 	const settings = useStore((state) => state.settings);
 	const team = useStore((state) => state.team);
-	const needMenu = useStore((state) => state.needMenu);
 	const theme = useStore((state) => state.theme);
-	const attention = useStore((state) => state.attention);
 
 	return (
 		<>
 			{settings ? <SettingsSheet theme={theme} /> : null}
 			{team ? <TeamSheet /> : null}
-			{needMenu ? (
-				<div className="need-menu pop-menu" id="need-menu" role="menu">
-					{attention.length === 0 ? (
-						<p className="need-empty">没有需要你处理的事。</p>
-					) : (
-						<>
-							{attention.slice(0, 12).map((item) => (
-								<button
-									type="button"
-									key={`${item.channelId}-${String(item.seq)}`}
-									className="need-item"
-									role="menuitem"
-									data-read={item.read ? "true" : "false"}
-									data-need={`${item.channelId}|${String(item.seq)}`}
-									onClick={() => {
-										setNeedMenu(false);
-										void openChannel(item.channelId).then(() => {
-											window.setTimeout(() => highlight(item.seq), 160);
-										});
-									}}
-								>
-									<span className="need-where">
-										{item.channelTitle} · {item.fromLabel}
-									</span>
-									<span className="need-time">{relTime(item.at)}</span>
-									<span className="need-text">{item.excerpt}</span>
-								</button>
-							))}
-							{attention.length > 12 ? (
-								<p className="need-more">还有 {attention.length - 12} 条</p>
-							) : null}
-						</>
-					)}
-				</div>
-			) : null}
 			<div id="toast-root" className="app-toasts">
 				{props.toasts.map((toast) => (
 					<div key={toast.id} className="chat-toast" data-tone={toast.tone}>
@@ -69,6 +35,52 @@ export function Overlays(props: {
 				))}
 			</div>
 		</>
+	);
+}
+
+/**
+ * 「N 件找你」那张卡。
+ *
+ * 它不在这里渲染，而是由 `App.tsx` 放进顶栏那颗按钮旁边的 `.menu-anchor` 里 ——
+ * 菜单要贴着按钮长（见 `shell.css` 的 `.need-menu`），放在根节点上只能靠猜坐标。
+ * 状态仍在 `store` 里，与设置 / 团队浮层互斥。
+ */
+export function NeedMenu(): JSX.Element | null {
+	const needMenu = useStore((state) => state.needMenu);
+	const attention = useStore((state) => state.attention);
+	if (!needMenu) return null;
+	return (
+		<div className="menu need-menu pop-menu" id="need-menu" role="menu">
+			{attention.length === 0 ? (
+				<p className="need-empty">没有需要你处理的事。</p>
+			) : (
+				<>
+					{attention.slice(0, 12).map((item) => (
+						<button
+							type="button"
+							key={`${item.channelId}-${String(item.seq)}`}
+							className="need-item"
+							role="menuitem"
+							data-read={item.read ? "true" : "false"}
+							data-need={`${item.channelId}|${String(item.seq)}`}
+							onClick={() => {
+								setNeedMenu(false);
+								void openChannel(item.channelId).then(() => {
+									window.setTimeout(() => highlight(item.seq), 160);
+								});
+							}}
+						>
+							<span className="need-where">
+								{item.channelTitle} · {item.fromLabel}
+							</span>
+							<span className="need-time">{relTime(item.at)}</span>
+							<span className="need-text">{item.excerpt}</span>
+						</button>
+					))}
+					{attention.length > 12 ? <p className="need-more">还有 {attention.length - 12} 条</p> : null}
+				</>
+			)}
+		</div>
 	);
 }
 

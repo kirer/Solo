@@ -88,6 +88,10 @@ export const getAttention = (): Promise<{ items: AttentionItem[]; unread: number
 export const getPerson = (slug: string): Promise<PersonProfile> =>
 	call<PersonProfile>(`/api/people/${encodeURIComponent(slug)}`);
 
+/** 和一个人开私聊（幂等）。侧栏第一格点下去就是这条。 */
+export const openDirectMessage = (slug: string): Promise<{ ok: true; id: string }> =>
+	call(`/api/people/${encodeURIComponent(slug)}/dm`, { method: "POST" });
+
 /** 某个人的记忆。 */
 export const getPersonMemory = (slug: string): Promise<PersonMemory> =>
 	call<PersonMemory>(`/api/people/${encodeURIComponent(slug)}/memory`);

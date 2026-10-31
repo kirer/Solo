@@ -58,9 +58,9 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             58 文件 / 605 例
+test/             58 文件 / 609 例
   ├ test/core/    51 文件 / 547 例（纯函数 + 装配）
-  └ test/ui/      7 文件 / 58 例（界面纯函数与源码约定）
+  └ test/ui/      7 文件 / 62 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
@@ -116,7 +116,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 58 文件 605 例，<3s，必须全绿
+npm test             # 58 文件 609 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟

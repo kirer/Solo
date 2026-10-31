@@ -10,7 +10,7 @@ import { ActivityBar } from "./composer/ActivityBar.tsx";
 import { Composer } from "./composer/Composer.tsx";
 import { useToasts } from "./hooks/useToasts.ts";
 import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
-import { Overlays } from "./panels/Overlays.tsx";
+import { NeedMenu, Overlays } from "./panels/Overlays.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { Stream } from "./stream/Stream.tsx";
@@ -155,16 +155,20 @@ export function App(): JSX.Element {
 							连不上，{clockTime(conn.lastOkAt)} 最后一次成功
 						</span>
 					)}
-					<button
-						type="button"
-						className="need"
-						id="unread-total"
-						data-zero={attentionUnread === 0 ? "true" : "false"}
-						aria-label={`${String(attentionUnread)} 件需要你处理`}
-						onClick={() => setNeedMenu(!needMenu)}
-					>
-						{attentionUnread} 件找你
-					</button>
+					<div className="menu-anchor need-anchor">
+						<button
+							type="button"
+							className="need"
+							id="unread-total"
+							data-zero={attentionUnread === 0 ? "true" : "false"}
+							aria-expanded={needMenu}
+							aria-label={`${String(attentionUnread)} 件需要你处理`}
+							onClick={() => setNeedMenu(!needMenu)}
+						>
+							{attentionUnread} 件找你
+						</button>
+						<NeedMenu />
+					</div>
 					<button
 						type="button"
 						className="icon-btn"

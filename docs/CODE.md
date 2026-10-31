@@ -153,13 +153,13 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/api/types.ts` | **type-only 再导出** `src/core/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
 | `src/stream/model.ts` | **消息 → 行模型，纯函数** `buildRows()`。时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行；有轨迹的消息后面跟一行 `run`（按触发消息的 `seq` 分桶）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
 | `src/stream/RunBlock.tsx` | 一轮的折叠行 + 步骤树。默认「在跑就展开、历史收起」，手动改过记 `localStorage["solo.trace.open"]`；步骤详情按 kind 分四种（命令 / 文件 / 思考 / 说话），同一时间只展开一个 |
-| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`run` 行交给 `RunBlock` |
+| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`run` 行交给 `RunBlock`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`） |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
-| `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览） |
+| `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览）。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |
 | `src/composer/ActivityBar.tsx` | 输入卡上方的活动条：只在当前频道有人正在跑时出现，动作取最近一步的摘要；点整条滚到那一轮 |
 | `src/panels/RightPanel.tsx` | 右栏第三列，三个视图：详情 / 技能 / 记忆（后两个共用一个换人器，只列当前频道成员）。关的时候等 300ms 过渡再卸载 |
-| `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`） |
+| `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
 | `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create` / `trace`）；失败退避 1s→15s；org 事件自带整份快照（`applyOrg`），侧栏与「找你」仍走 `store.refreshLists` |
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
 | `src/lib/avatar.ts` | 手绘 SVG 头像（三族身体 × 六色）、四种状态、`groupAvatar()` 群组头像 |

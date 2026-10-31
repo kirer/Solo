@@ -776,63 +776,85 @@ body[data-layout="bubble"]
 
 /* ── 空态 / 错误 ────────────────────────────────────────────────────── */
 
-/* 空态：居中偏上一点，不要贴在左上角 —— 贴在左上角读起来像「出错了」，
-   而空频道只是「还没开始」。 */
-.empty {
+/* 空频道：还没开始，不是出错。所以不贴左上角（那读起来像加载失败），
+   整块居中偏上，把下面大半屏留给输入框。 */
+.ch-empty {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 6px;
-	margin: clamp(48px, 18vh, 160px) auto 0;
-	max-width: 46ch;
+	margin: clamp(56px, 20vh, 180px) auto 0;
+	padding: 0 16px;
+	max-width: 40ch;
 	text-align: center;
 }
 
-.empty-hint {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-	height: 30px;
-	padding: 0 10px 0 5px;
-	border: 1px solid var(--line);
-	border-radius: 999px;
-	background: var(--raised);
-	font: inherit;
-	font-size: 13px;
-	line-height: 30px;
-	color: var(--ink);
-	cursor: pointer;
-	transition: border-color 120ms var(--ease), background-color 120ms var(--ease);
+/* 这一屏唯一的画面：频道里的人。一个人是 56 的头像，几个人是叠在一起的
+   群体头像（`groupAvatar` 自己带遮罩）。外圈那道和纸同色的缝把它从背景里托起来。 */
+.ch-empty-art {
+	display: flex;
+	margin-bottom: 20px;
 }
 
-.empty-hint:hover,
-.empty-hint:focus-visible {
-	border-color: var(--accent);
-	background: var(--accent-wash);
+.ch-empty-art .av-g,
+.ch-empty-art .av {
+	display: block;
+	border-radius: 50%;
+	box-shadow: 0 0 0 4px var(--ground);
 }
 
-.empty b {
-	font-size: 16px;
-	line-height: 24px;
+.ch-empty-title {
+	font-size: 15px;
+	line-height: 20px;
 	font-weight: 500;
+	color: var(--ink);
 }
 
-.empty span {
-	font-size: 14px;
-	line-height: 24px;
+.ch-empty-hint {
+	margin-top: 6px;
+	font-size: 13px;
+	line-height: 20px;
 	color: var(--ink-3);
 }
 
-.empty button {
-	margin-top: 2px;
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
-	color: var(--ink-2);
+/* 可以 @ 的人。点一下只是把 `@名字 ` 写进输入框，不直接发 —— 说什么还是我来定。 */
+.ch-empty-people {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: center;
+	gap: 8px;
+	margin-top: 20px;
 }
 
-.empty button:hover {
+.ch-empty-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 7px;
+	height: 32px;
+	padding: 0 12px 0 6px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-pill);
+	background: var(--ground);
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-2);
+	transition: background-color var(--dur-line) ease, border-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.ch-empty-chip:hover {
+	background: var(--raised);
+	border-color: var(--control);
 	color: var(--ink);
+}
+
+.ch-empty-chip:active {
+	background: var(--active);
+}
+
+.ch-empty-av {
+	display: grid;
+	place-items: center;
+	width: 20px;
+	height: 20px;
 }
 
 /* 错误只待在出错的那一块里：一句话 + 一个「重试」文字按钮，不用横幅、不用红底。 */
@@ -1003,24 +1025,31 @@ body[data-layout="bubble"]
    一轮一行，展开是一棵步骤树。**不弹层、不换页**：过程和触发它的那句话
    在同一个流里，读者的眼睛不用离开正文。规则见 docs/DESIGN.md §2.3。 */
 
+/* 一条消息叫醒了几个人就有几行；每行左边是那个人，右边是他的轨迹。 */
 .row-run {
-	display: grid;
-	grid-template-columns: var(--av-lg) minmax(0, 1fr);
-	column-gap: 8px;
-	margin-top: 6px;
-}
-
-/* 左边留出头像那一格：轨迹属于「这一轮」，不属于某条消息，所以不画头像。 */
-.row-run-gutter {
-	grid-column: 1;
-}
-
-.row-run-body {
-	grid-column: 2;
-	min-width: 0;
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
+	margin-top: 6px;
+}
+
+.run-line {
+	display: grid;
+	grid-template-columns: var(--av-lg) minmax(0, 1fr);
+	column-gap: 8px;
+	align-items: start;
+}
+
+/* 24 的头像对着 28 的折叠行：往下让 2px，圆心和名字那行对齐。 */
+.run-av {
+	display: grid;
+	place-items: center;
+	padding-top: 2px;
+}
+
+.run-line > .run {
+	grid-column: 2;
+	min-width: 0;
 	max-width: min(68ch, calc(100% - 76px));
 }
 
@@ -1318,7 +1347,7 @@ body[data-layout="bubble"]
 }
 
 @media (max-width: 620px) {
-	.row-run-body {
+	.run-line > .run {
 		max-width: 100%;
 	}
 }

@@ -297,7 +297,7 @@
 	animation: pop-out 120ms ease-in forwards;
 }
 
-.empty {
+.ch-empty {
 	animation: veil-in 260ms ease-out both;
 }
 
