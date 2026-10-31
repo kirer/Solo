@@ -79,7 +79,11 @@ function renderInline(raw: unknown): string {
 	// 4. 其余先转义，再做强调
 	let html = emphasis(escapeHtml(text));
 
-	// 5. 还原占位符
+	// 5. `@某人` 高亮：前面不能是邮箱/句柄会用的字符（`a@b.com`、`user@host` 不点亮），
+	//    中文里「叫@林越」不空格也点亮。代码里的 `@` 早在第 1 步就进了占位符，不会被误伤。
+	html = html.replace(/(^|[^A-Za-z0-9._%+-])@([^\s@<>，。：；！？、（）()「」『』《》"'*_~`]{1,24})/g, (_whole, lead: string, name: string) => `${lead}<span class="md-at">@${name}</span>`);
+
+	// 6. 还原占位符
 	html = html.replace(new RegExp(`${SLOT}(\\d+)${SLOT}`, "g"), (_whole: string, index: string) => slots[Number(index)] ?? "");
 	return html;
 }

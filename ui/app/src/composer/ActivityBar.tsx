@@ -1,18 +1,20 @@
 /**
- * 活动条：当前频道里有人正在跑时，贴在输入卡正上方的一行。
+ * 活动条：**只在私聊里出现**，贴着输入卡上方，显示这个人此刻在跑的那一轮。
  *
- * 数据只有一处出处：`/api/org` 的 `people[].activity`（会话 live 状态派生）。
+ * 群聊没有它：群聊只留结论，过程在私聊的工作记录里看（DESIGN §2.3）。在群里显示「谁在跑什么」
+ * 等于把过程搬回群聊，而那条路径点进去也只能离开当前频道。
+ *
+ * 数据只有一处出处：`/api/org` 的 `people[].activity`（会话 live 状态派生）；
  * 动作文字取**最近一步的摘要**（`正在跑 npm test`），不写「正在工作」这种空话 ——
  * 那句话没有信息量，而我此刻最想知道的就是它在跑什么（DESIGN §4）。
  *
- * 点整条 = 滚到聊天流里那一轮并展开它。不就地展开：就地展开会把输入卡顶下去，
+ * 点整条 = 滚到工作记录里那一轮并展开它。不就地展开：就地展开会把输入卡顶下去，
  * 我正在打字时页面跳一下是最烦的。
  */
 
 import { useEffect, useState } from "react";
 import type { Turn } from "../api/types.ts";
 import { humanDuration } from "../lib/format.ts";
-import { openWithPerson } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 每秒一跳的「现在」。只在有活动时才挂定时器，没人跑就一点都不动。 */
@@ -55,45 +57,40 @@ function doing(turn: Turn | undefined): { text: string; steps: number } {
 	return { text: last.title, steps: count };
 }
 
-export function ActivityBar(): JSX.Element {
+export function ActivityBar(): JSX.Element | null {
 	const activity = useStore((state) => state.activity);
 	const people = useStore((state) => state.people);
-	const turns = useStore((state) => state.turns);
 	const work = useStore((state) => state.work);
-	const currentId = useStore((state) => state.currentId);
 	const detail = useStore((state) => state.detail);
 
-	const labels = new Map(people.map((actor) => [actor.slug, actor.label]));
-	// 私聊里看的是**这个人**：他在哪个频道干活都算，不必是当前这个房间。
-	const dmPartner =
+	// 群聊里没有活动条：群聊不画过程。判断放在 hooks 之后（React 不许条件调用 hook）。
+	const partner =
 		detail?.channel.kind === "dm" ? detail.members.find((member) => member.slug !== "owner")?.slug : undefined;
 
+	const labels = new Map(people.map((actor) => [actor.slug, actor.label]));
+	const found = partner === undefined ? undefined : activity.get(partner);
+
 	const lines: Line[] = [];
-	if (currentId !== null) {
-		for (const [slug, found] of activity) {
-			if (dmPartner === undefined) {
-				if (found.channelId !== currentId) continue;
-			} else if (slug !== dmPartner) {
-				continue;
-			}
-			// 这一轮就是「这个人被叫醒的那一轮」：群聊按频道分桶，私聊看跨频道的工作记录。
-			const pool = dmPartner === undefined ? [...turns.values()].flat() : work;
-			const list = pool.filter((turn) => turn.slug === slug && turn.status === "running");
-			const turn = list.sort((left, right) => right.startedAt - left.startedAt)[0];
-			const text = doing(turn);
-			lines.push({
-				slug,
-				label: labels.get(slug) ?? slug,
-				text: text.text,
-				since: found.since,
-				seq: turn?.seq ?? null,
-				channelId: turn?.channelId ?? null,
-				steps: text.steps,
-			});
-		}
+	if (partner !== undefined && found !== undefined) {
+		// 私聊里看的是**这个人**：他在哪个频道干活都算，不必是当前这个房间。
+		const turn = work
+			.filter((item) => item.slug === partner && item.status === "running")
+			.sort((left, right) => right.startedAt - left.startedAt)[0];
+		const text = doing(turn);
+		lines.push({
+			slug: partner,
+			label: labels.get(partner) ?? partner,
+			text: text.text,
+			since: found.since,
+			seq: turn?.seq ?? null,
+			channelId: turn?.channelId ?? null,
+			steps: text.steps,
+		});
 	}
 
 	const now = useTick(lines.length > 0);
+	if (partner === undefined) return null;
+
 	const shown = lines.slice(0, 2);
 
 	return (
@@ -105,16 +102,11 @@ export function ActivityBar(): JSX.Element {
 						className="activity-row"
 						key={line.slug}
 						onClick={() => {
-							if (dmPartner !== undefined) {
-								if (line.seq === null || line.channelId === null) return;
-								const key = `w-${line.channelId}-${String(line.seq)}-${line.slug}`;
-								const node = document.querySelector<HTMLElement>(`.row-work[data-key="${key}"] .run-head`);
-								node?.scrollIntoView({ block: "center", behavior: "smooth" });
-								node?.focus({ preventScroll: true });
-								return;
-							}
-							// 群聊里不画过程：点它去这个人的私聊，工作记录在那里。
-							void openWithPerson(line.slug);
+							if (line.seq === null || line.channelId === null) return;
+							const key = `w-${line.channelId}-${String(line.seq)}-${line.slug}`;
+							const node = document.querySelector<HTMLElement>(`.row-work[data-key="${key}"] .run-head`);
+							node?.scrollIntoView({ block: "center", behavior: "smooth" });
+							node?.focus({ preventScroll: true });
 						}}
 					>
 						<span className="activity-dot" aria-hidden="true" />

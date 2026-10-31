@@ -219,7 +219,7 @@ function iconOf(kind: Step["kind"]): JSX.Element {
 	if (kind === "think") return <span className="ico-dot" />;
 	if (kind === "run") {
 		return (
-			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
 				<path d="M5 7l4 4-4 4" />
 				<path d="M12 17h6" />
 			</svg>
@@ -227,7 +227,7 @@ function iconOf(kind: Step["kind"]): JSX.Element {
 	}
 	if (kind === "file-read" || kind === "file-write") {
 		return (
-			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 				<path d="M6 3h8l4 4v14H6z" />
 				<path d="M14 3v4h4" />
 			</svg>
@@ -235,13 +235,13 @@ function iconOf(kind: Step["kind"]): JSX.Element {
 	}
 	if (kind === "say") {
 		return (
-			<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+			<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 				<path d="M4 6h16v10H9l-5 4z" />
 			</svg>
 		);
 	}
 	return (
-		<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+		<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 			<rect x="4" y="4" width="16" height="16" rx="3" />
 			<path d="M9.5 9.5a2.5 2.5 0 1 1 3 2.4v1.6" />
 			<path d="M12 17h.01" />

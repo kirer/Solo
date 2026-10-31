@@ -128,3 +128,26 @@ describe("频道 EventSource 的事件", () => {
 		expect(source).not.toMatch(/createTextNode\(/);
 	});
 });
+
+/**
+ * `@某人` 要有颜色：派活的消息里常常一句里@好几个人，不点亮就要逐字找。
+ * 只认行首或空白之后的 `@`，否则邮箱会被误伤；代码里的 `@` 不点亮（它已经进了占位符）。
+ */
+describe("@ 人的高亮", () => {
+	const css = read("../../ui/app/src/styles/stream.css").replace(/\/\*[\s\S]*?\*\//g, "");
+
+	it("行内 @ 名字包成 md-at", () => {
+		expect(renderMarkdown("@林越 开干")).toContain('<span class="md-at">@林越</span>');
+		expect(renderMarkdown("叫一下 @沈舟，别等")).toContain('<span class="md-at">@沈舟</span>');
+		expect(renderMarkdown("直接叫@林越，开干")).toContain('<span class="md-at">@林越</span>');
+	});
+
+	it("邮箱与行内代码不点亮", () => {
+		expect(renderMarkdown("a@b.com")).not.toContain("md-at");
+		expect(renderMarkdown("`@林越`")).not.toContain("md-at");
+	});
+
+	it("CSS 里有 md-at 的样式", () => {
+		expect(css).toContain(".md .md-at");
+	});
+});

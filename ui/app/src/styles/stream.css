@@ -344,6 +344,15 @@
 	text-decoration-color: var(--accent);
 }
 
+/* `@某人`：一眼看出这句话在叫谁。底色调淡，避免整段话变成彩色。 */
+.md .md-at {
+	padding: 0 3px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--accent) 14%, transparent);
+	color: color-mix(in srgb, var(--accent) 78%, var(--ink));
+	font-weight: 500;
+}
+
 .md blockquote {
 	margin: 8px 0;
 	padding-left: 12px;
@@ -1269,16 +1278,16 @@ body[data-layout="bubble"]
 	display: grid;
 	place-items: center;
 	flex: none;
-	width: 13px;
-	height: 13px;
-	color: var(--ink-3);
+	width: 15px;
+	height: 15px;
+	color: var(--ink-2);
 }
 
 .ico-dot {
-	width: 6px;
-	height: 6px;
+	width: 7px;
+	height: 7px;
 	border-radius: 50%;
-	background: var(--ink-3);
+	background: currentColor;
 }
 
 .step-title {
