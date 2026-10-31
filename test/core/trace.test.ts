@@ -5,6 +5,7 @@
  * 连续思考合并、工具结果并进前一个调用、截断有话说。
  */
 import { describe, expect, it } from "vitest";
+import { groupsOfPerson } from "../../src/core/app/read.ts";
 import { buildTurn, slimTurn, stripAnsi, summaryOf, withoutSteps } from "../../src/core/app/trace.ts";
 import type { EntryRecord } from "../../src/core/runtime/index.ts";
 
@@ -159,5 +160,35 @@ describe("摘要与瘦身", () => {
 
 	it("剥 ANSI", () => {
 		expect(stripAnsi("\u001b[31m红\u001b[0m")).toBe("红");
+	});
+});
+
+describe("跨频道切轮：私聊页的工作记录", () => {
+	const trigger = (channelId: string, seq: number) => entry("core.channel", [], { channelId, seq });
+
+	it("每个 core.channel 都收口，组里带上它发生的频道", () => {
+		const entries = [
+			trigger("team:alpha", 1),
+			assistant([{ type: "thinking", thinking: "嗯" }]),
+			trigger("dm:owner-linyue", 1),
+			assistant([{ type: "thinking", thinking: "嗯" }]),
+		];
+		const groups = groupsOfPerson(entries, 0, Number.MAX_SAFE_INTEGER);
+		expect(groups.map((group) => group.channelId)).toEqual(["team:alpha", "dm:owner-linyue"]);
+		// 两轮各自在下一个 core.channel 处收口。
+		expect(groups[0]!.end).toBe(2);
+		expect(groups[1]!.start).toBe(2);
+	});
+
+	it("窗口按 seq 过滤，但 seq 是频道内序号", () => {
+		const entries = [trigger("a", 5), trigger("b", 2), trigger("a", 9)];
+		expect(groupsOfPerson(entries, 2, 5).map((group) => [group.channelId, group.seq])).toEqual([
+			["a", 5],
+			["b", 2],
+		]);
+	});
+
+	it("没有 channelId 的条目不开组", () => {
+		expect(groupsOfPerson([entry("core.channel", [], { seq: 1 })], 0, 9)).toEqual([]);
 	});
 });

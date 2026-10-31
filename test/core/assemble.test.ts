@@ -225,7 +225,7 @@ describe("播种", () => {
 });
 
 describe("会话只有两种形态与团队频道", () => {
-	test("新人只做三件事：建会话、记名册、进全员群 —— 不建个人频道，也不开私聊", async () => {
+	test("新人做四件事：建会话、记名册、进全员群、开私聊", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
 		await createAgent({ root: agents, name: "林越", manager: "owner" });
@@ -235,9 +235,10 @@ describe("会话只有两种形态与团队频道", () => {
 		try {
 			const shell = await box.assemble(opened);
 			const state = await shell.channels();
-			// 私聊只能我开：装配绝不得凭空造一条两个人频道。
+			// 每个成员一出现就有「我 ↔ 他」的私聊：他的工作过程在那里看。
 			for (const slug of ["林越", "沈舟"]) {
-				expect(state.channels[dmId("owner", slug)]).toBeUndefined();
+				const dm = state.channels[dmId("owner", slug)];
+				expect(dm?.members).toEqual(["owner", slug]);
 			}
 			expect(state.channels[dmId("owner", "owner")]).toBeUndefined();
 			// 但两人都在全员群里（否则没人 @ 得到他们）。

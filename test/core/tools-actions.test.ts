@@ -40,10 +40,13 @@ async function setup(
 	const root = box.root;
 	const agentsRoot = box.agentsRoot;
 	const teamsRoot = box.teamsRoot;
+	// 助理（直接向 owner 汇报的人）与团队成员分开：团队 README 的 `lead` 不能是助理。
+	await mkdir(join(agentsRoot, "知言"), { recursive: true });
+	await writeFile(join(agentsRoot, "知言", "identity.md"), "---\nname: 知言\ntitle: 助理\nmanager: owner\n---\n\n统筹。\n", "utf8");
 	await mkdir(join(agentsRoot, ME, "skills"), { recursive: true });
 	await writeFile(
 		join(agentsRoot, ME, "identity.md"),
-		"---\nname: 沈舟\ntitle: 前端开发\nmanager: owner\nteam: alpha\n---\n\n写小恐龙。\n",
+		"---\nname: 沈舟\ntitle: 前端开发\nmanager: 知言\nteam: alpha\n---\n\n写小恐龙。\n",
 		"utf8",
 	);
 	await writeFile(join(agentsRoot, ME, "memory.md"), "# 记忆\n\n## 端口\n\n部署前先看端口被谁占了。\n", "utf8");
@@ -220,7 +223,11 @@ describe("写盘前先脱敏", () => {
 	it("file 写进团队 README.md 的是马赛克", async () => {
 		const { call, root } = await setup();
 		await withSecret(root);
-		await call("file", { action: "write", path: "teams/alpha/README.md", content: `目标：把网页做到能看。\n\n数据库密码：${KEY}` });
+		await call("file", {
+			action: "write",
+			path: "teams/alpha/README.md",
+			content: `---\nname: alpha\nlead: 沈舟\n---\n\n目标：把网页做到能看。\n\n数据库密码：${KEY}`,
+		});
 		const source = await readFile(join(root, "teams", "alpha", "README.md"), "utf8");
 		expect(source).not.toContain(KEY);
 		expect(source).toContain("[密钥已隐藏]");
@@ -298,10 +305,56 @@ describe("写团队 README 会重投影频道（ADR-097）", () => {
 				throw new Error("频道存储不可用");
 			},
 		});
-		const output = await call("file", { action: "write", path: "teams/alpha/README.md", content: "新目标" });
+		const output = await call("file", {
+			action: "write",
+			path: "teams/alpha/README.md",
+			content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标",
+		});
 		// 不能反过来报「没写进去」：模型会重写一遍，把刚写的正文覆盖掉。
 		expect(output).toContain("已写入 teams/alpha/README.md");
 		expect(output).toContain("团队频道刷新失败");
 		expect(output).toContain("频道存储不可用");
+	});
+});
+
+describe("写团队 README 前校验 lead", () => {
+	it("缺 lead：拒绝，且不落盘", async () => {
+		const { call, root } = await setup();
+		const output = await call("file", { action: "write", path: "teams/alpha/README.md", content: "新目标" });
+		expect(output).toContain("必须写");
+		const source = await readFile(join(root, "teams", "alpha", "README.md"), "utf8");
+		expect(source).not.toContain("新目标");
+	});
+
+	it("lead 查无此人：拒绝，并列出名册里的 slug", async () => {
+		const { call } = await setup();
+		const output = await call("file", {
+			action: "write",
+			path: "teams/alpha/README.md",
+			content: "---\nname: alpha\nlead: 不存在的人\n---\n\n新目标",
+		});
+		expect(output).toContain("不在名册里");
+		expect(output).toContain(ME);
+	});
+
+	it("助理不能当团队管理员：拒绝", async () => {
+		const { call } = await setup();
+		const output = await call("file", {
+			action: "write",
+			path: "teams/alpha/README.md",
+			content: "---\nname: alpha\nlead: 知言\n---\n\n新目标",
+		});
+		expect(output).toContain("不能当团队管理员");
+	});
+
+	it("合法 lead：照常写入", async () => {
+		const { call, root } = await setup();
+		const output = await call("file", {
+			action: "write",
+			path: "teams/alpha/README.md",
+			content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标",
+		});
+		expect(output).toContain("已写入");
+		expect(await readFile(join(root, "teams", "alpha", "README.md"), "utf8")).toContain("新目标");
 	});
 });

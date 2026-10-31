@@ -198,6 +198,31 @@ export async function writeTeam(
 	return teamOf(slug, parseDoc("", text));
 }
 
+/**
+ * 团队 README 的 `lead` 能不能用。返回一句能直接回给模型的话；没问题就是 `undefined`。
+ *
+ * 判据只有三条，都是「文档里的事实」而不是猜测：必须有；必须是名册里真实存在的 slug；
+ * 不能是直接向 owner 汇报的助理 —— 助理是统筹者，不是团队管理员。建团队之前先招一个
+ * 团队成员，是模型该学会的流程（技能「建立团队」里写着），代码只负责不让它蒙混过关。
+ */
+export function leadProblem(input: {
+	readonly lead: string | undefined;
+	readonly slugs: readonly string[];
+	readonly assistants: readonly string[];
+}): string | undefined {
+	const lead = input.lead?.trim();
+	if (lead === undefined || lead === "") {
+		return "团队 README 的 `---` 头里必须写 `lead: <团队管理员的 slug>`。先招一个团队管理员，再把他的 slug 写进 lead。";
+	}
+	if (!input.slugs.includes(lead)) {
+		return `lead 指向的「${lead}」不在名册里。现有 slug：${input.slugs.join("、")}。lead 要写 slug，不是显示名。`;
+	}
+	if (input.assistants.includes(lead)) {
+		return `「${lead}」是直接向我汇报的助理，不能当团队管理员。先招一个团队成员当管理员，再把他的 slug 写进 lead。`;
+	}
+	return undefined;
+}
+
 /** 团队里的 agent（谁在 `identity.md` 里写了 `team: <slug>`）。 */
 export function membersOfTeam(
 	identities: readonly { readonly slug: string; readonly team?: string }[],

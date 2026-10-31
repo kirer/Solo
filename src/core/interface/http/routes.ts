@@ -122,11 +122,21 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
-			// 我和一个人开私聊。界面入口下一轮接，先开后端（ADR-097）。
+			// 确保我和一个人的私聊存在（幂等）。私聊现在由装配 / 招人自动建，这里留作显式入口。
 			pattern: "/api/people/:slug/dm",
 			method: "POST",
 			handler: async ({ response, params }) => {
 				return json(response, await app.chat.openDirectMessage(params.slug ?? ""));
+			},
+		},
+		{
+			// 一个人在所有频道里的轮次（私聊页的工作记录）。折叠版，不带步骤。
+			pattern: "/api/people/:slug/turns",
+			method: "GET",
+			handler: async ({ response, url, params }) => {
+				const from = numberParam(url, "from") ?? 0;
+				const to = numberParam(url, "to") ?? Number.MAX_SAFE_INTEGER;
+				return json(response, await app.read.readPersonTurns(params.slug ?? "", from, to));
 			},
 		},
 		{

@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import type { Turn } from "../api/types.ts";
 import { humanDuration } from "../lib/format.ts";
+import { openWithPerson } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 每秒一跳的「现在」。只在有活动时才挂定时器，没人跑就一点都不动。 */
@@ -31,6 +32,8 @@ type Line = {
 	text: string;
 	since: number;
 	seq: number | null;
+	/** 这一轮发生在哪个频道（私聊页跳转用）。 */
+	channelId: string | null;
 	steps: number;
 };
 
@@ -56,17 +59,27 @@ export function ActivityBar(): JSX.Element {
 	const activity = useStore((state) => state.activity);
 	const people = useStore((state) => state.people);
 	const turns = useStore((state) => state.turns);
+	const work = useStore((state) => state.work);
 	const currentId = useStore((state) => state.currentId);
+	const detail = useStore((state) => state.detail);
 
 	const labels = new Map(people.map((actor) => [actor.slug, actor.label]));
+	// 私聊里看的是**这个人**：他在哪个频道干活都算，不必是当前这个房间。
+	const dmPartner =
+		detail?.channel.kind === "dm" ? detail.members.find((member) => member.slug !== "owner")?.slug : undefined;
 
 	const lines: Line[] = [];
 	if (currentId !== null) {
 		for (const [slug, found] of activity) {
-			if (found.channelId !== currentId) continue;
-			// 这一轮就是「这个人在这个频道被叫醒的那一轮」。
-			const list = [...turns.values()].flat().filter((turn) => turn.slug === slug && turn.status === "running");
-			const turn = list.sort((left, right) => right.seq - left.seq)[0];
+			if (dmPartner === undefined) {
+				if (found.channelId !== currentId) continue;
+			} else if (slug !== dmPartner) {
+				continue;
+			}
+			// 这一轮就是「这个人被叫醒的那一轮」：群聊按频道分桶，私聊看跨频道的工作记录。
+			const pool = dmPartner === undefined ? [...turns.values()].flat() : work;
+			const list = pool.filter((turn) => turn.slug === slug && turn.status === "running");
+			const turn = list.sort((left, right) => right.startedAt - left.startedAt)[0];
 			const text = doing(turn);
 			lines.push({
 				slug,
@@ -74,6 +87,7 @@ export function ActivityBar(): JSX.Element {
 				text: text.text,
 				since: found.since,
 				seq: turn?.seq ?? null,
+				channelId: turn?.channelId ?? null,
 				steps: text.steps,
 			});
 		}
@@ -91,10 +105,16 @@ export function ActivityBar(): JSX.Element {
 						className="activity-row"
 						key={line.slug}
 						onClick={() => {
-							if (line.seq === null) return;
-							const node = document.querySelector<HTMLElement>(`.row-run[data-seq="${String(line.seq)}"] .run-head`);
-							node?.scrollIntoView({ block: "center", behavior: "smooth" });
-							node?.focus({ preventScroll: true });
+							if (dmPartner !== undefined) {
+								if (line.seq === null || line.channelId === null) return;
+								const key = `w-${line.channelId}-${String(line.seq)}-${line.slug}`;
+								const node = document.querySelector<HTMLElement>(`.row-work[data-key="${key}"] .run-head`);
+								node?.scrollIntoView({ block: "center", behavior: "smooth" });
+								node?.focus({ preventScroll: true });
+								return;
+							}
+							// 群聊里不画过程：点它去这个人的私聊，工作记录在那里。
+							void openWithPerson(line.slug);
 						}}
 					>
 						<span className="activity-dot" aria-hidden="true" />

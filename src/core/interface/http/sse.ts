@@ -149,7 +149,12 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 		if (read === undefined || clients === undefined || clients.size === 0) return;
 		let turns: ViewTurn[];
 		try {
-			({ turns } = await read.readTurns(id, 0, Number.MAX_SAFE_INTEGER, true));
+			// 私聊推的是**这个人的**跨频道轮次：他在团队频道里干活，私聊页也要实时看得到。
+			const person = await read.personOfChannel(id);
+			({ turns } =
+				person === undefined
+					? await read.readTurns(id, 0, Number.MAX_SAFE_INTEGER, true)
+					: await read.readPersonTurns(person, 0, Number.MAX_SAFE_INTEGER, true));
 		} catch {
 			return;
 		}

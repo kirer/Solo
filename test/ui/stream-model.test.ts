@@ -9,7 +9,7 @@
  * 「历史过程 kind」那一组。
  */
 import { describe, expect, it } from "vitest";
-import { buildRows } from "../../ui/app/src/stream/model.ts";
+import { buildRows, buildWorkRows } from "../../ui/app/src/stream/model.ts";
 
 /** 固定基准时刻，测试里所有时间都相对它算 —— 不用 Date.now()，断言才不会看运气。 */
 const T = new Date("2026-05-06T12:00:00+08:00").getTime();
@@ -149,45 +149,64 @@ describe("历史过程 kind：过滤，不画成普通行", () => {
 	});
 });
 
-describe("轨迹：run 行挂在触发它的那条消息下面", () => {
-	const turn = (seq: number, slug: string, status = "done") => ({
-		channelId: "c1",
+describe("私聊工作记录：消息与跨频道轮次按时间合排", () => {
+	const turn = (channelId: string, seq: number, startedAt: number, slug = "linyue") => ({
+		channelId,
 		seq,
 		slug,
 		label: slug,
-		status,
-		startedAt: T,
+		status: "done",
+		startedAt,
 		stepCount: 3,
 		summary: "跑了 1 条命令",
 	});
+	const titles = new Map([
+		["dm:owner-linyue", "林越"],
+		["team:alpha", "alpha"],
+	]);
 
-	it("有轨迹的消息后面跟一行 run，里面是那几轮", () => {
-		const turns = new Map([[1, [turn(1, "zhiyan"), turn(1, "linyue")]]]);
-		const rows = buildRows({ messages: [m(1, "say", T)], turns, now: T + MIN });
-		expect(rows.map((row) => row.type)).toEqual(["say", "run"]);
-		const run = rows[1];
-		if (run?.type !== "run") throw new Error("第二行应该是 run");
-		expect(run.seq).toBe(1);
-		expect(run.turns.map((item) => item.slug)).toEqual(["zhiyan", "linyue"]);
-	});
-
-	it("没有轨迹就不多画一行（说了句话不等于干了件大事）", () => {
-		const rows = buildRows({ messages: [m(1, "say", T)], turns: new Map(), now: T + MIN });
+	it("群聊不画轨迹：buildRows 只有消息", () => {
+		const rows = build([m(1, "say", T)]);
 		expect(rows.map((row) => row.type)).toEqual(["say"]);
 	});
 
-	it("轨迹只挂在自己的 seq 上，不会串到隔壁那条消息", () => {
-		const turns = new Map([[2, [turn(2, "zhiyan")]]]);
-		const rows = buildRows({ messages: [m(1, "say", T), m(2, "say", T + SEC)], turns, now: T + MIN });
-		expect(rows.map((row) => row.type)).toEqual(["say", "say", "run"]);
-		const run = rows[2];
-		if (run?.type !== "run") throw new Error("最后一行应该是 run");
-		expect(run.seq).toBe(2);
+	it("工作轮次按 startedAt 插进消息之间，并带上它发生的频道", () => {
+		const rows = buildWorkRows({
+			messages: [m(1, "say", T), m(2, "say", T + 2 * MIN)],
+			work: [turn("team:alpha", 5, T + MIN)],
+			titles,
+			now: T + 60 * MIN,
+		});
+		expect(rows.map((row) => row.type)).toEqual(["say", "work", "say"]);
+		const work = rows[1];
+		if (work?.type !== "work") throw new Error("中间应该是工作行");
+		expect(work.channelTitle).toBe("alpha");
+		expect(work.turn.seq).toBe(5);
 	});
 
-	it("系统 note 也能挂轨迹（它同样会叫醒人）", () => {
-		const turns = new Map([[1, [turn(1, "zhiyan")]]]);
-		const rows = buildRows({ messages: [m(1, "note", T)], turns, now: T + MIN });
-		expect(rows.map((row) => row.type)).toEqual(["note", "run"]);
+	it("跨频道的 seq 会重复，但两轮都画得出来（键带 channelId）", () => {
+		const rows = buildWorkRows({
+			messages: [],
+			work: [turn("dm:owner-linyue", 1, T), turn("team:alpha", 1, T + MIN)],
+			titles,
+			now: T + 60 * MIN,
+		});
+		expect(rows.map((row) => row.type)).toEqual(["work", "work"]);
+		expect(new Set(rows.map((row) => row.key)).size).toBe(2);
+	});
+
+	it("时间分隔属于它下面那条消息：工作行插在分隔之前", () => {
+		const rows = buildWorkRows({
+			messages: [m(1, "say", T), m(2, "say", T + 60 * MIN)],
+			work: [turn("team:alpha", 5, T + 40 * MIN)],
+			titles,
+			now: T + 90 * MIN,
+		});
+		expect(rows.map((row) => row.type)).toEqual(["say", "work", "divider", "say"]);
+	});
+
+	it("没有工作轮次时就是普通消息流", () => {
+		const rows = buildWorkRows({ messages: [m(1, "say", T)], work: [], titles, now: T + MIN });
+		expect(rows.map((row) => row.type)).toEqual(["say"]);
 	});
 });

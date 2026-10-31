@@ -15,7 +15,7 @@ import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { clockTime, copyText, humanBytes } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
-import { buildRows } from "./model.ts";
+import { buildRows, buildWorkRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { RunBlock } from "./RunBlock.tsx";
 import { loadEarlier, setReply } from "../state/store.ts";
@@ -34,7 +34,8 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const hasMore = useStore((state) => state.hasMore);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const people = useStore((state) => state.people);
-	const turns = useStore((state) => state.turns);
+	const channels = useStore((state) => state.channels);
+	const work = useStore((state) => state.work);
 	const [atBottom, setAtBottom] = useState(true);
 
 	const flowRef = useRef<HTMLDivElement | null>(null);
@@ -43,7 +44,12 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	const pinned = useRef(true);
 
 	const messages = detail?.messages ?? [];
-	const rows = useMemo(() => buildRows({ messages, turns, now: Date.now() }), [messages, turns]);
+	const dm = detail?.channel.kind === "dm";
+	const rows = useMemo(() => {
+		if (!dm) return buildRows({ messages, now: Date.now() });
+		const titles = new Map(channels.map((channel) => [channel.id, channel.title]));
+		return buildWorkRows({ messages, work, titles, now: Date.now() });
+	}, [messages, dm, work, channels]);
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string }>();
@@ -211,27 +217,28 @@ function RowView(props: {
 		);
 	}
 	if (row.type === "say") return <SayRow row={row} labels={props.labels} onCopy={props.onCopy} onImage={props.onImage} />;
-	if (row.type === "run") {
+	if (row.type === "work") {
+		const turn = row.turn;
 		return (
-			<div className="row row-run" data-seq={row.seq}>
-				{row.turns.map((turn) => (
-					<div className="run-line" key={turn.slug}>
-						{/* 头像：谁跑的这件事必须先说清楚，再谈他跑了几步。跑到一半时头像也在动。 */}
-						<span
-							className="run-av"
-							aria-hidden="true"
-							dangerouslySetInnerHTML={{
-								__html: avatarSvg({
-									slug: turn.slug,
-									name: turn.label,
-									size: 40,
-									state: turn.status === "running" ? "working" : "idle",
-								}),
-							}}
-						/>
-						<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} />
-					</div>
-				))}
+			<div className="row row-run row-work" data-key={row.key}>
+				{/* 这轮发生在哪个频道：私聊里看的是他干的活，不是这一个房间的事。 */}
+				<span className="work-where">{row.channelTitle}</span>
+				<div className="run-line">
+					{/* 头像：谁跑的这件事必须先说清楚，再谈他跑了几步。跑到一半时头像也在动。 */}
+					<span
+						className="run-av"
+						aria-hidden="true"
+						dangerouslySetInnerHTML={{
+							__html: avatarSvg({
+								slug: turn.slug,
+								name: turn.label,
+								size: 40,
+								state: turn.status === "running" ? "working" : "idle",
+							}),
+						}}
+					/>
+					<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} />
+				</div>
 			</div>
 		);
 	}

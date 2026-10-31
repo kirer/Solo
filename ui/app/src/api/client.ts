@@ -59,6 +59,14 @@ export const getEarlier = (id: string, before: number, limit = 30): Promise<Chan
 export const getTurns = (id: string, from: number, to: number): Promise<{ turns: Turn[] }> =>
 	call(`/api/channels/${encodeURIComponent(id)}/turns?from=${String(from)}&to=${String(to)}`);
 
+/**
+ * 一个人在所有频道里的轮次（私聊页的工作记录）。
+ *
+ * 私聊页要的是「他干了什么」，不是「这个频道里发生了什么」—— 他在团队频道干活也算。
+ */
+export const getPersonTurns = (slug: string, from = 0, to = Number.MAX_SAFE_INTEGER): Promise<{ turns: Turn[] }> =>
+	call(`/api/people/${encodeURIComponent(slug)}/turns?from=${String(from)}&to=${String(to)}`);
+
 /** 一轮的完整轨迹（带步骤）。找不到（没被叫醒 / 条目已被压缩）就是 `null`。 */
 export const getTurn = (id: string, seq: number, slug: string): Promise<{ turn: Turn | null }> =>
 	call(`/api/channels/${encodeURIComponent(id)}/turn?seq=${String(seq)}&slug=${encodeURIComponent(slug)}`);

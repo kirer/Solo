@@ -1,9 +1,11 @@
 /** `file`：读 / 写工作区里的一个文件。 */
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
+import { OWNER_SLUG, managerOf, readAllIdentities } from "../../agent/identity.ts";
 import { SECRETS_FILE, redact } from "../../agent/secrets.ts";
+import { parseDoc, frontOf } from "../../md/doc.ts";
 import { readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
-import { teamSlugOfMemoryPath, teamSlugOfReadmePath } from "../../team/doc.ts";
+import { leadProblem, teamSlugOfMemoryPath, teamSlugOfReadmePath } from "../../team/doc.ts";
 import { confirmedBy } from "../../team/settle.ts";
 import { actionOf, text, type CoreToolDeps } from "./context.ts";
 import { resolveInWorkspace } from "./guards.ts";
@@ -37,10 +39,23 @@ export function createFileTool(deps: CoreToolDeps) {
 				if (args.content === undefined) return text("write 要带 content（写什么）。只想读文件用 action=read。");
 				// 密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
 				const content = redact(args.content, deps.workspaceRoot);
-				await writeTextAt(target, content);
 				// 团队说明是事实，团队频道是它的投影：改了 README 立刻重算一次成员
 				// （否则刚写进去的团队管理员在频道里不存在，成员 @ 不到他）。
 				const team = teamSlugOfReadmePath(args.path);
+				// 写团队 README 前先校验 `lead`：缺了、查无此人、或者写的是助理，都直接拒绝。
+				// 校验必须在落盘之前 —— 写进去再报错，团队频道已经按一个不存在的管理员投影过了。
+				if (team !== undefined) {
+					const all = await readAllIdentities(deps.agentsRoot);
+					const problem = leadProblem({
+						lead: frontOf(parseDoc(args.path, content), "lead"),
+						slugs: all.map((identity) => identity.slug),
+						assistants: all
+							.filter((identity) => managerOf(all, identity.slug) === OWNER_SLUG)
+							.map((identity) => identity.slug),
+					});
+					if (problem !== undefined) return text(problem);
+				}
+				await writeTextAt(target, content);
 				if (team !== undefined && deps.syncTeam !== undefined) {
 					try {
 						await deps.syncTeam(team, ctx);

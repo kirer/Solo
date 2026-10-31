@@ -166,20 +166,46 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	}
 
 	/**
+	 * 一个人**在所有频道**里的轮次（私聊页的工作记录）。
+	 *
+	 * 与 `readTurns` 的区别只有一处：切轮时不按频道过滤 —— 他在团队频道干活、在私聊里
+	 * 被插话，都是这个人的工作记录，按时间排在一起。每轮自带 `channelId`，界面按它显示
+	 * 「这轮发生在哪个频道」。
+	 */
+	async function readPersonTurns(slug: string, from: number, to: number, withSteps = false): Promise<{ turns: ViewTurn[] }> {
+		const turns = await turnsOf(undefined, from, to, slug);
+		return { turns: withSteps ? turns : turns.map(withoutSteps) };
+	}
+
+	/**
+	 * 这个频道是私聊时，对面那个人是谁。
+	 *
+	 * 只有 `chatKind` 认的两人频道才算；群聊返回 `undefined`。SSE 用它决定推「这个频道
+	 * 的轮次」还是「这个人的轮次」。
+	 */
+	async function personOfChannel(id: string): Promise<string | undefined> {
+		const state = await shell.channels();
+		const channel = state.channels[id];
+		if (channel === undefined || chatKind(channel) !== "dm") return undefined;
+		return channel.members.find((slug) => slug !== OWNER_SLUG);
+	}
+
+	/**
 	 * 一轮的切分：会话条目里 `core.channel` 且 `data.channelId/seq` 对上的那条，
 	 * 到**下一条** `core.channel` 之间。
+	 *
+	 * `channelId` 为 `undefined` 时切这个人的**所有**轮次（跨频道），每组自带它发生的频道。
 	 */
-	async function turnsOf(id: string, from: number, to: number, onlySlug?: string): Promise<ViewTurn[]> {
+	async function turnsOf(channelId: string | undefined, from: number, to: number, onlySlug?: string): Promise<ViewTurn[]> {
 		const { directory, channels } = await snapshots.channelSnapshot();
-		const channel = channels.channels[id];
-		if (channel === undefined) return [];
+		if (channelId !== undefined && channels.channels[channelId] === undefined) return [];
 		const titles = new Map(Object.values(channels.channels ?? {}).map((item) => [item.id, item.title]));
 
 		// 回复可能落在别的频道（任务频道），所以按「所有频道的消息」找，不只看当前频道。
 		const said: { channelId: string; seq: number; at: number; fromSlug: string }[] = [];
-		for (const [channelId, list] of Object.entries(channels.messages ?? {})) {
+		for (const [id, list] of Object.entries(channels.messages ?? {})) {
 			for (const message of list) {
-				if (message.from !== "owner") said.push({ channelId, seq: message.seq, at: message.at, fromSlug: message.from });
+				if (message.from !== "owner") said.push({ channelId: id, seq: message.seq, at: message.at, fromSlug: message.from });
 			}
 		}
 
@@ -198,13 +224,25 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				// 会话已回收 / 进程刚重启：这一轮就是看不到，不是错误。
 				continue;
 			}
-			const groups = groupsOf(view.entries, id, from, to);
+			const groups =
+				channelId === undefined
+					? groupsOfPerson(view.entries, from, to)
+					: groupsOf(view.entries, channelId, from, to).map((group) => ({ ...group, channelId }));
 			const running = groups.length > 0 ? (await liveOf(conversationId)) !== undefined : false;
+			/** 同一个频道里，这一组之后的那一组的 seq：回话只可能落在这之间。 */
+			const nextSeqIn = (id: string, seq: number): number => {
+				let next = Number.POSITIVE_INFINITY;
+				for (const group of groups) {
+					if (group.channelId === id && group.seq > seq && group.seq < next) next = group.seq;
+				}
+				return next;
+			};
 			for (const [index, group] of groups.entries()) {
+				const id = group.channelId;
 				const entries = view.entries.slice(group.start + 1, group.end);
 				const trigger = (channels.messages[id] ?? []).find((message) => message.seq === group.seq);
 				const startedAt = trigger?.at ?? 0;
-				const nextStart = groups[index + 1] === undefined ? Number.POSITIVE_INFINITY : groups[index + 1]!.seq;
+				const nextStart = nextSeqIn(id, group.seq);
 				const reply = said
 					.filter((item) => item.fromSlug === slug && item.channelId === id && item.seq > group.seq && item.seq < nextStart)
 					.sort((left, right) => left.seq - right.seq)[0];
@@ -222,7 +260,17 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				);
 			}
 		}
-		return turns.sort((left, right) => left.seq - right.seq || left.slug.localeCompare(right.slug));
+		// 单频道按 seq 排（seq 在频道内单调）；跨频道 seq 不可比，按发生时间排。
+		if (channelId !== undefined) {
+			return turns.sort((left, right) => left.seq - right.seq || left.slug.localeCompare(right.slug));
+		}
+		return turns.sort(
+			(left, right) =>
+				left.startedAt - right.startedAt ||
+				left.channelId.localeCompare(right.channelId) ||
+				left.seq - right.seq ||
+				left.slug.localeCompare(right.slug),
+		);
 	}
 
 	/** 档案页里「他在哪些频道」那一栏：成员表是真相，界面不用自己比。 */
@@ -233,7 +281,18 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 			.map((channel) => ({ id: channel.id, kind: chatKind(channel), title: channel.title }));
 	}
 
-	return { readOrg, readChannelList, readChannelDetail, readAttention, readMentionable, channelsOf, readTurns, readTurn };
+	return {
+		readOrg,
+		readChannelList,
+		readChannelDetail,
+		readAttention,
+		readMentionable,
+		channelsOf,
+		readTurns,
+		readTurn,
+		readPersonTurns,
+		personOfChannel,
+	};
 }
 
 /** 一轮在条目数组里的位置：触发条目下标 → 下一条 `core.channel` 之前。 */
@@ -245,6 +304,31 @@ type Group = { readonly seq: number; readonly start: number; readonly end: numbe
  * 遇到**任何** `core.channel` 都收口 —— 他在团队频道干活时我私聊插一句，是新一轮，
  * 轨迹另起一块；两轮的条目不能混进同一个块。
  */
+/**
+ * 同一个人**跨频道**的切轮：每条 `core.channel` 都收口并开新组，不按频道过滤。
+ *
+ * 组里带上它发生在哪个频道 —— 私聊页要写「这轮在团队频道」。
+ */
+export function groupsOfPerson(entries: readonly EntryRecord[], from: number, to: number): (Group & { readonly channelId: string })[] {
+	const groups: (Group & { readonly channelId: string })[] = [];
+	let current: { seq: number; start: number; end: number; channelId: string } | undefined;
+	for (const [index, entry] of entries.entries()) {
+		if (entry.kind !== "core.channel") continue;
+		if (current !== undefined) {
+			current.end = index;
+			groups.push(current);
+			current = undefined;
+		}
+		const data = entry.data as Record<string, unknown> | undefined;
+		const channelId = typeof data?.["channelId"] === "string" ? data["channelId"] : undefined;
+		const seq = typeof data?.["seq"] === "number" ? data["seq"] : undefined;
+		if (channelId === undefined || seq === undefined || seq < from || seq > to) continue;
+		current = { seq, start: index, end: entries.length, channelId };
+	}
+	if (current !== undefined) groups.push(current);
+	return groups;
+}
+
 export function groupsOf(entries: readonly EntryRecord[], channelId: string, from: number, to: number): Group[] {
 	const groups: Group[] = [];
 	let current: { seq: number; start: number; end: number } | undefined;

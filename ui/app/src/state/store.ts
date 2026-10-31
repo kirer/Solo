@@ -17,6 +17,7 @@ import {
 	getEarlier,
 	getOrg,
 	getPerson,
+	getPersonTurns,
 	getTurn,
 	getTurns,
 	markRead as markReadApi,
@@ -58,6 +59,13 @@ export type State = {
 	 * 折叠版只有摘要（`stepCount` / `summary`）；展开时 `loadTurn` 再拉步骤。
 	 */
 	turns: Map<number, Turn[]>;
+	/**
+	 * 私聊页的工作记录：这个人在**所有频道**里的轮次，按时间排。
+	 *
+	 * 与 `turns` 分开存：`turns` 按频道内的 seq 分桶（群聊的活动条用），跨频道的 seq
+	 * 不可比，混在一起会把 A 频道的轮次挂到 B 频道的消息下面。
+	 */
+	work: Turn[];
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
 	theme: Theme;
@@ -96,6 +104,7 @@ const initial: State = {
 	presence: new Map(),
 	activity: new Map(),
 	turns: new Map(),
+	work: [],
 	conn: { ok: true, lastOkAt: Date.now() },
 	theme: read(THEME_KEY, ["system", "light", "dark"], "system"),
 	side: read(SIDE_KEY, ["open", "rail"], "open"),
@@ -192,8 +201,8 @@ export async function bootstrap(): Promise<void> {
 /**
  * 点侧栏第一格（助理）：先开（或复用）和这个人的私聊，再打开它。
  *
- * 私聊仍然「只能我开」—— 装配不会替任何人建两人频道（`test/core/assemble.test.ts`
- * 守着这条）。所以这条会话不存在时，侧栏画的是一格**入口**，点下去才落成频道。
+ * 每个成员都有私聊（装配 / 招人时自动建）。这里仍然调一次 `openDirectMessage`：
+ * 它是幂等的，用来兜住「侧栏还是旧的」这类中间态。
  */
 export async function openWithPerson(slug: string): Promise<void> {
 	const { id } = await openDirectMessage(slug);
@@ -204,18 +213,24 @@ export async function openWithPerson(slug: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null, turns: new Map() });
+		patch({ currentId: null, detail: null, hasMore: false, reply: null, turns: new Map(), work: [] });
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
-	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false, turns: new Map() });
+	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false, turns: new Map(), work: [] });
 	const done = mark("channel:open");
 	const detail = await getChannel(id);
 	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
 	patch({ detail, hasMore: detail.hasMore });
-	void loadTurns(id, detail.messages);
+	if (detail.channel.kind === "dm") {
+		// 私聊是「这个人的工作记录」：拉他在所有频道里的轮次。
+		const partner = detail.members.find((member) => member.slug !== "owner");
+		if (partner !== undefined) void loadWork(id, partner.slug);
+	} else {
+		void loadTurns(id, detail.messages);
+	}
 	void readToEnd(id, detail.messages);
 }
 
@@ -319,10 +334,40 @@ function bucket(turns: Map<number, Turn[]>, turn: Turn): Map<number, Turn[]> {
 	return next;
 }
 
+/**
+ * 私聊工作记录里的一帧：按 `(channelId, seq, slug)` 覆盖同一轮，其余原样。
+ *
+ * 跨频道的 `seq` 会重复（每个频道自己数），所以不能像 `bucket` 那样只按 seq。
+ */
+function upsertWork(work: readonly Turn[], turn: Turn): Turn[] {
+	const key = `${turn.channelId}:${String(turn.seq)}:${turn.slug}`;
+	const next = work.filter((item) => `${item.channelId}:${String(item.seq)}:${item.slug}` !== key);
+	next.push(turn);
+	return next.sort((left, right) => left.startedAt - right.startedAt);
+}
+
 /** SSE 推来一帧轨迹（`trace` 事件）：覆盖同一 `(seq, slug)`，别的原样。 */
 export function applyTurn(id: string, turn: Turn): void {
 	if (state.currentId !== id) return;
+	// 私聊推的是这个人的跨频道轮次，进工作记录；群聊仍按频道内的 seq 分桶。
+	if (state.detail?.channel.kind === "dm") {
+		patch({ work: upsertWork(state.work, turn) });
+		return;
+	}
 	patch({ turns: bucket(state.turns, turn) });
+}
+
+/** 拉这个人在所有频道里的轮次（私聊页的工作记录）。 */
+async function loadWork(id: string, slug: string): Promise<void> {
+	let result: { turns: Turn[] };
+	try {
+		result = await getPersonTurns(slug);
+	} catch {
+		return;
+	}
+	// 期间又切走了就别覆盖（另一个私聊也满足「kind 是 dm」，所以按频道 id 认）。
+	if (getState().currentId !== id) return;
+	patch({ work: [...result.turns].sort((left, right) => left.startedAt - right.startedAt) });
 }
 
 /**
@@ -363,7 +408,8 @@ export async function loadTurn(turn: Turn): Promise<void> {
 	const { currentId } = state;
 	if (currentId === null || turn.steps !== undefined) return;
 	try {
-		const result = await getTurn(currentId, turn.seq, turn.slug);
+		// 工作记录里的轮次可能发生在别的频道：按它自己的 `channelId` 拉步骤。
+		const result = await getTurn(turn.channelId, turn.seq, turn.slug);
 		const full = result.turn;
 		if (full !== null) {
 			applyTurn(currentId, full);

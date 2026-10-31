@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **19** 条路由（按方法+路径算；按路径去重是 **16** 条 —— `check-boundaries.mjs`
+只有 **20** 条路由（按方法+路径算；按路径去重是 **19** 条 —— `check-boundaries.mjs`
 数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
@@ -24,6 +24,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/channels/:id/read` | 标已读到某条 |
 | `GET` | `/api/attention` | 「找我」：跨频道、需要我本人看一眼的消息 |
 | `GET` | `/api/people/:slug` | 一个人的档案：身份 / 技能 / 记忆概况 / 所在频道 |
+| `GET` | `/api/people/:slug/turns` | 一个人在所有频道里的轮次（私聊页的工作记录，折叠版） |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
@@ -125,7 +126,9 @@ type ViewChannel = {
 `team` / `lead` / `leadLabel` / `doing` 这四个字段上。
 
 **`dm`**：一对一房间，id 是 `dm:<两个 slug 排序后拼接>`，成员就是 `{owner, 那个人}`。
-**私聊只能我开** —— 没有 `ensureDm`，也没有「个人频道」这种东西；agent 不能私下找另一个人。
+**每个成员都由系统建好一条私聊**（`ensureOwnerDm`，装配 / 招人时幂等补齐）—— 他的工作
+过程在那里看。仍然没有「个人频道」，agent 也不能私下找另一个人：房间永远是
+`{owner, 他}`，不是他的私人档案。
 
 `preview` 只取「人说的话」（`chat` / `say` / `question` / `decision` / `report`）：
 `note`（系统留痕）与历史遗留的 `think` / `tool` / `work` / `step` 都不进预览。
@@ -137,16 +140,29 @@ type ViewChannel = {
 { ok: true, id: string }   // id = `dm:<slug>-owner`（排序后拼接）
 ```
 
-**这是唯一的建频道接口**。通用的 `POST /api/channels` 已删：频道要么由装配
-投影出来（全员 `all` / 团队 `team:<slug>`），要么就是这里开的一对一私聊。
+**这是唯一显式的建频道接口**。通用的 `POST /api/channels` 已删：频道要么由装配
+投影出来（全员 `all` / 团队 `team:<slug>` / 每个成员的私聊），要么就是这里开的一对一私聊。
+私聊现在由装配 / 招人自动建好，这个接口仍保留，用来显式确保它在（幂等）。
 
 - 对方必须真的在名册里（`agents/<slug>/identity.md` 存在），否则 `404`；
 - 不能和我自己开 → `400`；slug 为空 → `400`；
 - 已存在则原样返回（幂等，不覆盖标题与成员）；
 - 新房间：成员 `{owner, slug}`、标题 = 对方名字、`wakeOnAll` 为空。
 
-界面入口下一轮接；现在由脚本 / 宿主直接调用（所以它列在 `check-boundaries.mjs` 的
-`NO_CONSUMER_ALLOWED` 里，理由写在那一行）。
+界面侧栏点「和这个人说话」时走它（`store.openWithPerson`）。
+
+## 4.1 `GET /api/people/:slug/turns?from=&to=`（私聊页的工作记录）
+
+```ts
+{ turns: ViewTurn[] }   // 折叠版（不带 steps）；每轮自带 channelId
+```
+
+和 `/api/channels/:id/turns` 的区别：**切轮时不按频道过滤** —— 他在团队频道里干活、
+在私聊里被插话，都算这个人的工作记录，按 `startedAt` 排在一起。`seq` 是频道内序号，
+跨频道不可比，所以排序用时间。`from` / `to` 仍然按 seq 过滤（作用于每一轮自己的频道）。
+
+私聊频道的 `GET /api/channels/:id/stream` 推的 `trace` 事件也是**这个人的跨频道轮次**：
+SSE 先用 `personOfChannel()` 认出私聊，再走 `readPersonTurns`。
 
 ## 5. `GET /api/channels/:id/mentionable`
 

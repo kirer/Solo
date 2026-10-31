@@ -8,7 +8,7 @@
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { chainUp, readAllIdentities, readIdentity, type Identity } from "../agent/identity.ts";
-import { ChannelDoc, OWNER, teamId, type ChannelState } from "./types.ts";
+import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 
@@ -65,6 +65,39 @@ export async function ensureAllChannel(
 				wakeOnAll: [OWNER],
 				at: Date.now(),
 				mode: "merge",
+			}),
+		);
+	}, context);
+}
+
+/**
+ * 保证「我 ↔ 这个人」的私聊存在（幂等）。
+ *
+ * 每个成员都有自己的私聊：**他的工作过程在那里看**，群聊只留结论。私聊仍然只是
+ * 我们两个人的频道 —— 建它的是装配 / 招人，不是 agent 自己；agent 之间不能私下找人。
+ *
+ * 用 `dmId()` 算 id（它会排序），不要拼 `dm:owner-<slug>`：slug 排在 `owner` 前面时
+ * 拼出来的 id 和 `dmId()` 不是同一个，界面上就会多出一个「同一个人」的私聊。
+ */
+export async function ensureOwnerDm(
+	deps: MembershipDeps,
+	slug: string,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<void> {
+	if (slug === OWNER) return;
+	const identity = await readIdentity(deps.agentsRoot, slug);
+	if (identity === undefined) return;
+	await deps.harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		Object.assign(
+			doc,
+			projectChannel(doc, {
+				id: dmId(OWNER, slug),
+				title: identity.name ?? slug,
+				members: [OWNER, slug],
+				wakeOnAll: [],
+				at: Date.now(),
+				mode: "create",
 			}),
 		);
 	}, context);

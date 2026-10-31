@@ -41,6 +41,7 @@ import { wireChannel } from "../channel/wiring.ts";
 import {
 	addToAllChannel,
 	ensureAllChannel,
+	ensureOwnerDm,
 	joinTeamChannel,
 	syncTeamChannel,
 	type MembershipDeps,
@@ -149,6 +150,10 @@ export async function assembleCore(
 		syncTeam: async (team, ctx) => {
 			await syncTeamChannel(membership, team, ctx);
 		},
+		// 招进来的人立刻有私聊：他的工作过程在那里看。
+		ensureDm: async (slug, ctx) => {
+			await ensureOwnerDm(membership, slug, ctx);
+		},
 	};
 	const tools = createCoreTools(toolDeps);
 	const toolsExtension = defineExtension({ name: "core-tools", tools });
@@ -214,6 +219,8 @@ export async function assembleCore(
 				// 已有会话也要补一次团队频道：老工作区里的人在团队频道出现之前建的，
 				// 或者 `identity.md` 里刚补上 `team:`。两个都是幂等的。
 				await joinTeamChannel(membership, slug, ctx);
+				// 私聊同理：老工作区里的人是「私聊要等我开」的时代建的，重启后补上。
+				await ensureOwnerDm(membership, slug, ctx);
 				return found;
 			}
 		}
@@ -253,6 +260,8 @@ export async function assembleCore(
 		// 界面上看起来就是「招了个人但叫不动」。
 		await addToAllChannel(membership, [slug], ctx);
 		await joinTeamChannel(membership, slug, ctx);
+		// 每个成员一出现就有自己的私聊：他的工作过程在那里看，群聊只留结论。
+		await ensureOwnerDm(membership, slug, ctx);
 		return created;
 	}
 
@@ -316,6 +325,8 @@ export async function assembleCore(
 					// 已经开着会话的人也要补一次团队频道：`identity.md` 里刚加上
 					// `team:` 的人，不重扫就永远进不了那个团队的频道（幂等）。
 					await joinTeamChannel(membership, identity.slug, ctx);
+					// `rescan` 不走 `openOne`，私聊要在这里单独补（幂等）。
+					await ensureOwnerDm(membership, identity.slug, ctx);
 					continue;
 				}
 				await openOne(identity.slug, ctx);

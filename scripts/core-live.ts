@@ -20,6 +20,7 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OWNER, dmId } from "../src/core/channel/types.ts";
 import {
 	WAIT_MS,
 	hopDetail,
@@ -316,16 +317,22 @@ async function main(): Promise<void> {
 
 	if (hired !== undefined) {
 		const state = await shell.channels();
-		// 新人自动进全员群（否则没人 @ 得到他）；但**没有**私聊 —— 私聊只能我开。
+		// 新人自动进全员群（否则没人 @ 得到他），并且立刻有「我 ↔ 他」的私聊
+		// —— 他的工作过程在那里看。id 用 dmId 算，slug 排序后 `owner` 不一定在前面。
 		const allChannel = state.channels["all"];
-		const personal = state.channels[`dm:owner-${hired.slug}`];
+		const personal = state.channels[dmId(OWNER, hired.slug)];
 		phases.push({
-			name: "新人自动进全员群，且没有凭空建出的私聊",
-			ok: allChannel !== undefined && allChannel.members.includes(hired.slug) && personal === undefined,
+			name: "新人自动进全员群，且有自己的私聊",
+			ok:
+				allChannel !== undefined &&
+				allChannel.members.includes(hired.slug) &&
+				personal !== undefined &&
+				personal.members.includes(OWNER) &&
+				personal.members.includes(hired.slug),
 			detail:
 				allChannel === undefined
 					? "没有全员群"
-					: `全员群成员 ${allChannel.members.join("、")}${personal === undefined ? "；没有私聊" : "；居然有私聊"}`,
+					: `全员群成员 ${allChannel.members.join("、")}${personal === undefined ? "；没有私聊" : `；私聊成员 ${personal.members.join("、")}`}`,
 		});
 		// 团队频道里有团队管理员（README.md 的 owner）+ 新人。
 		const team = state.channels["team:自测团队"];

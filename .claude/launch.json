@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "drafts",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8791", "--directory", ".superdesign/drafts"],
+      "port": 8791
+    },
+    {
+      "name": "solo",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["start"],
+      "port": 7788
+    }
+  ]
+}

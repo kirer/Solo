@@ -131,6 +131,10 @@ export async function wake(
 		if ((report !== undefined && note !== undefined) || (finish !== undefined && record !== undefined)) {
 			watchSettled(submission, async (settled) => {
 				if (settled.status === "unanswered") {
+					// `aborted` = 被后来的一条消息合并唤醒撤掉了（`coalesceQueue` 只撤「还没开始」的
+					// 排队项）。消息还在频道里，新的那一轮会把它们一起答 —— 这不是「没答上来」，
+					// 写一条 note 只会让人以为他掉了链子（实测：一条频道里连着好几条这种假消息）。
+					if (settled.reason === "aborted") return;
 					if (report === undefined || note === undefined) return;
 					await report({ slug: input.slug, label: note.label, seq: note.seq, reason: settled.reason ?? "unanswered" });
 					return;

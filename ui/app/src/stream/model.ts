@@ -47,15 +47,23 @@ export type Row =
 	  }
 	| { type: "note"; key: string; message: Message }
 	/**
-	 * 一条消息叫醒的那几轮（一个人一行）。挂在**触发它的那条消息下面** —— 读者要的是
-	 * 「我说了这句之后，他做了什么」，不是按时间混排的另一条流。
+	 * 私聊工作记录里的一轮（他在某个频道被叫醒、做了什么）。
+	 *
+	 * 群聊不画这一行：群聊只留结论，过程在他的私聊里看。
 	 */
-	| { type: "run"; key: string; seq: number; turns: readonly Turn[] };
+	| { type: "work"; key: string; turn: Turn; channelTitle: string };
 
 export type BuildInput = {
 	messages: readonly Message[];
-	/** 当前频道里每一轮的轨迹，按触发消息的 seq 分桶。没有就是没有过程可画。 */
-	turns?: ReadonlyMap<number, Turn[]> | undefined;
+	now?: number;
+};
+
+export type WorkInput = {
+	messages: readonly Message[];
+	/** 这个人在所有频道里的轮次（私聊页）。 */
+	work: readonly Turn[];
+	/** 频道 id → 标题：工作行要写「这轮发生在哪个频道」。 */
+	titles: ReadonlyMap<string, string>;
 	now?: number;
 };
 
@@ -64,7 +72,7 @@ function dividerLabel(at: number, now: number): string {
 	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
-export function buildRows({ messages, turns, now = Date.now() }: BuildInput): Row[] {
+export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
 	const rows: Row[] = [];
 	let previous: Message | undefined;
 	let previousSay: Message | undefined;
@@ -73,13 +81,6 @@ export function buildRows({ messages, turns, now = Date.now() }: BuildInput): Ro
 		rows.push({ type: "divider", key: `d-${message.seq}`, label: dividerLabel(message.at, now) });
 		// 分隔之后不再算「同一段」：屏幕上已经断开了。
 		previousSay = undefined;
-	};
-
-	/** 这一条消息叫醒的那几轮，紧跟在它下面。 */
-	const attachTurns = (message: Message): void => {
-		const list = turns?.get(message.seq);
-		if (list === undefined || list.length === 0) return;
-		rows.push({ type: "run", key: `t-${message.seq}`, seq: message.seq, turns: list });
 	};
 
 	for (const message of messages) {
@@ -102,14 +103,12 @@ export function buildRows({ messages, turns, now = Date.now() }: BuildInput): Ro
 				cont: grouped && gap <= CONT_MS,
 				need: isNeed(message),
 			});
-			attachTurns(message);
 			previousSay = message;
 			continue;
 		}
 
 		if (message.kind === "note") {
 			rows.push({ type: "note", key: `n-${message.seq}`, message });
-			attachTurns(message);
 			previousSay = undefined;
 			continue;
 		}
@@ -117,5 +116,39 @@ export function buildRows({ messages, turns, now = Date.now() }: BuildInput): Ro
 		// 未命中的 kind：不画、不占高。（宁可少一行，也不添一种卡片。）
 	}
 
+	return rows;
+}
+
+/** 一行在时间轴上的位置（分隔行没有时刻）。 */
+function atOf(row: Row): number | undefined {
+	return row.type === "say" || row.type === "note" ? row.message.at : undefined;
+}
+
+/**
+ * 私聊页的行模型：**私聊消息 + 这个人在所有频道里的工作轮次**，按时间合在一起。
+ *
+ * 群聊用 `buildRows`（只有消息）；私聊用这个 —— 他是在团队频道里被叫醒干活的，那几轮
+ * 也要出现在这里，读者才不用为了看他干了什么再翻回群聊。
+ *
+ * 插入点按 `startedAt` 找第一条更晚的消息；紧贴在那条消息的时间分隔之前，分隔行才仍然
+ * 属于它下面那条消息。
+ */
+export function buildWorkRows({ messages, work, titles, now = Date.now() }: WorkInput): Row[] {
+	const rows = buildRows({ messages, now });
+	for (const turn of [...work].sort((left, right) => left.startedAt - right.startedAt)) {
+		const row: Row = {
+			type: "work",
+			key: `w-${turn.channelId}-${String(turn.seq)}-${turn.slug}`,
+			turn,
+			channelTitle: titles.get(turn.channelId) ?? turn.channelId,
+		};
+		let at = rows.findIndex((item) => {
+			const time = atOf(item);
+			return time !== undefined && time > turn.startedAt;
+		});
+		if (at === -1) at = rows.length;
+		else if (at > 0 && rows[at - 1]!.type === "divider") at -= 1;
+		rows.splice(at, 0, row);
+	}
 	return rows;
 }

@@ -43,6 +43,8 @@ export function createHireTool(deps: CoreToolDeps) {
 			}).catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
 			// slug 不合法（含 `.`、`.`、`..` 之类）是输入问题，回一句话让它改，别把工具打成异常。
 			if (typeof identity === "string") return text(identity);
+			// 私聊是「他干活的地方」，招到人就建好（幂等）；建失败不影响「人已经招到」。
+			await deps.ensureDm?.(identity.slug, ctx).catch(() => undefined);
 			if (deps.openAgent !== undefined) {
 				const id = await deps.openAgent(identity.slug, ctx);
 				await deps.saveDirectory((value) => ({

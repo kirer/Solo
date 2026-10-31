@@ -35,6 +35,8 @@ export type CoreToolDeps = {
 	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 按团队文件重建它的频道成员（幂等）。 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
+	/** 保证这个人有「我 ↔ 他」的私聊（幂等）。缺省表示不支持（测试里可以不提供）。 */
+	readonly ensureDm?: (slug: string, context: Context) => Promise<void>;
 	/**
 	 * 频道层接线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
 	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、沉淀、我说话共用。

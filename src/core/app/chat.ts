@@ -12,7 +12,8 @@
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { OWNER_SLUG, readIdentity } from "../agent/identity.ts";
 import { ChannelDoc, dmId, type Attachment, type ChannelState } from "../channel/types.ts";
-import { markRead as markReadDoc, projectChannel } from "../channel/rules.ts";
+import { markRead as markReadDoc } from "../channel/rules.ts";
+import { ensureOwnerDm } from "../channel/membership.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,
@@ -109,21 +110,12 @@ export function createChat(shell: CoreServices) {
 		const identity = await readIdentity(shell.agentsRoot, target);
 		if (identity === undefined) throw new AppError("not-found", `没有这个人：${target}`);
 		const id = dmId(OWNER_SLUG, target);
-		await shell.harness.commit(async (tx) => {
-			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-			if (doc.channels[id] !== undefined) return;
-			Object.assign(
-				doc,
-				projectChannel(doc, {
-					id,
-					title: identity.name ?? target,
-					members: [OWNER_SLUG, target],
-					wakeOnAll: [],
-					at: Date.now(),
-					mode: "create",
-				}),
-			);
-		}, BACKGROUND_CONTEXT);
+		// 与装配 / 招人共用同一份实现：私聊现在人人都有，这里只是「确保它在」。
+		await ensureOwnerDm(
+			{ harness: shell.harness, agentsRoot: shell.agentsRoot, teamsRoot: shell.teamsRoot, allChannel: shell.allChannel ?? "all" },
+			target,
+			BACKGROUND_CONTEXT,
+		);
 		return { ok: true, id };
 	}
 

@@ -1033,6 +1033,14 @@ body[data-layout="bubble"]
 	margin-top: 6px;
 }
 
+/* 私聊工作记录：这一轮发生在哪个频道。12px、`--ink-3`，和「3 步」同一档，
+   读者先看见「这是团队频道里的活」，再往下看步骤。 */
+.row-work > .work-where {
+	font-size: 12px;
+	color: var(--ink-3);
+	padding-left: calc(var(--av-lg) + 8px);
+}
+
 .run-line {
 	display: grid;
 	grid-template-columns: var(--av-lg) minmax(0, 1fr);
