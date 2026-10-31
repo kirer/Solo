@@ -18,8 +18,12 @@ export {
 	defineDoc,
 	defineExtension,
 	defineTool,
+	GenerationTask,
+	hook,
 	LiveDoc,
+	ToolTask,
 	type Extension,
+	type HookRegistration,
 	type Registry,
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";

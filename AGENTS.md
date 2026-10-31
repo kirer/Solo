@@ -58,13 +58,13 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             61 文件 / 639 例
-  ├ test/core/    54 文件 / 572 例（纯函数 + 装配）
+test/             62 文件 / 651 例
+  ├ test/core/    55 文件 / 584 例（纯函数 + 装配）
   └ test/ui/      7 文件 / 67 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 74 个 ts / 11694 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 76 个 ts / 11897 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -116,7 +116,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 61 文件 639 例，<3s，必须全绿
+npm test             # 62 文件 651 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -141,7 +141,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 |---|---|
 | 一个不显然的取舍 | `docs/DECISIONS.md` 追加一条 ADR |
 | 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md` + `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
-| 接一个 pi 能力 / 绕一个 pi 做不到的事 | 新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」） |
+| 接一个 pi 能力（如 hooks）/ 绕一个 pi 做不到的事 | 新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」）；新钩子说明挂在哪个扩展上、为什么不能写在工具里 |
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
 | 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `md/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外 |
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |

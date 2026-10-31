@@ -219,6 +219,7 @@ tar xzf backup-20261027.tar.gz
 | 症状 | 先看这个 |
 | --- | --- |
 | 界面能开，但 agent 不说话 | §3 的模型解析；`tasks` 表里 `kind='pi.generation'` 的失败原因 |
+| 这一轮为什么这么慢 / 他到底调没调工具 | `workspace/logs/tools.jsonl`：每次工具调用与每次模型回复各一行（成没成、耗时、token、停止原因） |
 | agent 说话了，但回在别的频道 | `directory.wake` —— 他去「最后被叫到的那个频道」回话；我发的消息必须先把 wake 记下来再唤醒他 |
 | 改了 `identity.md` 没生效 | 提示词每次发送前重新读盘，所以下一条消息就该生效。没生效说明改的是别人的文件 |
 | 启动很慢 | 名册是不是每人一次 commit；`agents/` 里是不是有几百个目录 |
@@ -228,13 +229,14 @@ tar xzf backup-20261027.tar.gz
 
 ### 诊断三处
 
-服务本身的日志**只打 stderr**（没有进程日志文件）。另外有两份结构化日志，都在
-`<workspace>/logs/` 下，都是「单条 4KB、单文件 5MB、满了轮转成 `.1` 一代」：
+服务本身的日志**只打 stderr**（没有进程日志文件）。另外有三份结构化日志，都在
+`<workspace>/logs/` 下，都是「单文件 5MB、满了轮转成 `.1` 一代」（前两份单条再截 4KB）：
 
 | 文件 | 装什么 | 怎么看 |
 | --- | --- | --- |
 | `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 workspace/logs/runtime.jsonl` |
 | `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 workspace/logs/jank.jsonl` |
+| `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 workspace/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
 
 **一眼分辨两类事故**：
 

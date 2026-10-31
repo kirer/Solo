@@ -46,6 +46,7 @@ import {
 	syncTeamChannel,
 	type MembershipDeps,
 } from "../channel/membership.ts";
+import { auditHooks } from "../app/audit.ts";
 import type { CoreServices } from "../app/types.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
@@ -156,7 +157,21 @@ export async function assembleCore(
 		},
 	};
 	const tools = createCoreTools(toolDeps);
-	const toolsExtension = defineExtension({ name: "core-tools", tools });
+	// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
+	// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
+	const toolsExtension = defineExtension({
+		name: "core-tools",
+		tools,
+		hooks: auditHooks({
+			workspaceRoot,
+			slugOf: (conversationId) => {
+				for (const [slug, conversation] of conversations) {
+					if (Number(conversation.id) === conversationId) return slug;
+				}
+				return undefined;
+			},
+		}),
+	});
 
 	/**
 	 * 某人此刻在哪些会话里（提示词「你在组织里的位置」一节要用）。
