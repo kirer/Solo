@@ -12,6 +12,21 @@ import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 
+/**
+ * 一个团队频道的成员：我 + 团队管理员 + 他的整条汇报线 + `team:` 指向它的人 + 助理。
+ *
+ * 助理（`manager: owner`）不进汇报线也能看见每个团队：它是统筹者，不是任何人的上级。
+ */
+export function teamMembers(input: {
+	readonly lead: string | undefined;
+	readonly chain: readonly string[];
+	readonly teammates: readonly string[];
+	readonly assistants: readonly string[];
+}): readonly string[] {
+	const lead = input.lead === undefined || input.lead === "" ? [] : [input.lead];
+	return Array.from(new Set([OWNER, ...lead, ...input.chain, ...input.teammates, ...input.assistants]));
+}
+
 export type MembershipDeps = {
 	readonly harness: Harness;
 	readonly agentsRoot: string;
@@ -136,9 +151,14 @@ export async function syncTeamChannel(
 	]);
 	const lead = doc?.lead;
 	const chain = lead === undefined || lead === "" ? [] : chainUp(all, lead);
-	const members = Array.from(
-		new Set([OWNER, ...(lead === undefined || lead === "" ? [] : [lead]), ...chain, ...membersOfTeam(all, team)]),
-	);
+	const members = teamMembers({
+		lead,
+		chain,
+		teammates: membersOfTeam(all, team),
+		// 助理（直接向我汇报的人）和我一样在每个团队频道里：他是统筹者，要看得见每个
+		// 团队在做什么，团队里的人也随时能 @ 到他。
+		assistants: all.filter((identity) => identity.manager === OWNER).map((identity) => identity.slug),
+	});
 	// 团队频道里**任何人说话都叫醒团队管理员**：这个频道只为这一个团队存在，
 	// 不这样设，成员说「做完了」而没 @ 人，团队管理员就永远收不到（实测里 agent
 	// 因此用 `run sleep 120` 轮询等进度，白烧一轮）。

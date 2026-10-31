@@ -272,6 +272,26 @@ describe("file", () => {
 	});
 });
 
+describe("开新团队只有助理能做", () => {
+	it("团队成员写一个新团队的 README 被拒，不落盘", async () => {
+		const { call, root } = await setup();
+		const output = await call("file", {
+			action: "write",
+			path: "teams/beta/README.md",
+			content: "---\nname: beta\nlead: 沈舟\n---\n\n新团队。",
+		});
+		expect(output).toContain("只有助理能做");
+		expect(await readFile(join(root, "teams", "beta", "README.md"), "utf8").catch(() => "missing")).toBe("missing");
+	});
+
+	it("改已有团队的 README 不受这条限制", async () => {
+		const synced: string[] = [];
+		const { call } = await setup({ syncTeam: async (team: string) => void synced.push(team) });
+		await call("file", { action: "write", path: "teams/alpha/README.md", content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标。" });
+		expect(synced).toEqual(["alpha"]);
+	});
+});
+
 describe("写团队 README 会重投影频道（ADR-097）", () => {
 	it("写 teams/<slug>/README.md 触发 syncTeam，写普通文件不触发", async () => {
 		const synced: string[] = [];

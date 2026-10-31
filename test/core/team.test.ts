@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+	createTeamProblem,
 	leadProblem,
 	listTeams,
 	membersOfTeam,
@@ -10,6 +11,8 @@ import {
 	renderTeamFile,
 	writeTeam,
 } from "../../src/core/team/doc.ts";
+import { teamMembers } from "../../src/core/channel/membership.ts";
+import { writeTextAt } from "../../src/core/runtime/io.ts";
 
 let root = "";
 
@@ -137,5 +140,51 @@ describe("团队管理员校验：写 README 之前的三条判据", () => {
 
 	it("合法的团队成员照常通过", () => {
 		expect(leadProblem({ lead: "林越", ...all })).toBeUndefined();
+	});
+});
+
+describe("建团队只有助理能做", () => {
+	it("助理可以建", () => {
+		expect(createTeamProblem({ self: "知言", assistants: ["知言"] })).toBeUndefined();
+	});
+
+	it("团队成员被拒，并告诉他去找上级", () => {
+		const problem = createTeamProblem({ self: "苏禾", assistants: ["知言"] });
+		expect(problem).toContain("只有助理能做");
+		expect(problem).toContain("上级");
+	});
+});
+
+describe("没有 --- 头的团队档案：拿正文的 # 标题当显示名", () => {
+	it("标题是中文，频道就不会显示拼音目录名", async () => {
+		await writeTextAt(join(root, "juledawanjia", "README.md"), "# 俱乐大玩家\n\n目标：跑通。\n");
+		const read = await readTeam(root, "juledawanjia");
+		expect(read?.name).toBe("俱乐大玩家");
+	});
+
+	it("头和正文都没有名字时才退回 slug", async () => {
+		await writeTextAt(join(root, "bare", "README.md"), "只有正文。\n");
+		expect((await readTeam(root, "bare"))?.name).toBe("bare");
+	});
+});
+
+describe("团队频道成员：助理和我一样在每个团队里", () => {
+	it("助理进成员表，重复的人只算一次", () => {
+		const members = teamMembers({
+			lead: "程一",
+			chain: ["苏禾", "知言", "owner"],
+			teammates: ["程一", "林小满"],
+			assistants: ["知言"],
+		});
+		expect(members).toContain("owner");
+		expect(members).toContain("知言");
+		expect(members.filter((slug) => slug === "知言")).toHaveLength(1);
+	});
+
+	it("没有管理员时也至少是我 + 助理", () => {
+		expect(teamMembers({ lead: undefined, chain: [], teammates: [], assistants: ["知言"] })).toEqual([
+			"owner",
+			"知言",
+		]);
 	});
 });

@@ -56,13 +56,24 @@ export type TeamDoc = {
 
 const STATUSES: readonly TeamStatus[] = ["active", "paused", "done", "archived"];
 
+/**
+ * 正文第一个 `# 标题`。
+ *
+ * 团队档案没写 `---` 头（早期是手写出来的）时，标题就在这一行 —— 拿它当显示名，
+ * 界面上才不会是目录名那样的拼音（实测：`# 俱乐大玩家` 的团队显示成 `juledawanjia`）。
+ */
+function headingOf(body: string): string | undefined {
+	const found = /^#[ \t]+(.+?)[ \t]*$/mu.exec(body);
+	return found?.[1]?.trim() || undefined;
+}
+
 function teamOf(slug: string, doc: Doc): TeamDoc {
 	const header = doc.front;
 	const status = STATUSES.find((item) => item === header.status) ?? "active";
 	const lead = header.lead;
 	return {
 		slug,
-		name: header.name ?? slug,
+		name: header.name ?? headingOf(doc.body) ?? slug,
 		...(lead === undefined ? {} : { lead }),
 		...(header.doing === undefined ? {} : { doing: header.doing }),
 		status,
@@ -221,6 +232,21 @@ export function leadProblem(input: {
 		return `「${lead}」是直接向我汇报的助理，不能当团队管理员。先招一个团队成员当管理员，再把他的 slug 写进 lead。`;
 	}
 	return undefined;
+}
+
+/**
+ * 建团队能不能由这个人做。返回一句能直接回给模型的话；可以建就是 `undefined`。
+ *
+ * 建团队是助理的职权（技能「建立团队」写在助理自己的技能里）：团队成员发现需要新团队，
+ * 该向上级说，由助理建。写新的团队 README 之前校验 —— 成员自己开一个团队，会同时带出
+ * 一个频道、一批被叫醒的人，和一份没人认可的目标。
+ */
+export function createTeamProblem(input: {
+	readonly self: string;
+	readonly assistants: readonly string[];
+}): string | undefined {
+	if (input.assistants.includes(input.self)) return undefined;
+	return `建团队只有助理能做（直接向我汇报的人）。你是「${input.self}」——需要新团队，在你的频道里向上级说，由他来找我。`;
 }
 
 /** 团队里的 agent（谁在 `identity.md` 里写了 `team: <slug>`）。 */

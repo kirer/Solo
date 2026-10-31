@@ -5,9 +5,9 @@ import { OWNER_SLUG, managerOf, readAllIdentities } from "../../agent/identity.t
 import { SECRETS_FILE, redact } from "../../agent/secrets.ts";
 import { parseDoc, frontOf } from "../../md/doc.ts";
 import { readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
-import { leadProblem, teamSlugOfMemoryPath, teamSlugOfReadmePath } from "../../team/doc.ts";
+import { createTeamProblem, leadProblem, readTeam, teamSlugOfMemoryPath, teamSlugOfReadmePath } from "../../team/doc.ts";
 import { confirmedBy } from "../../team/settle.ts";
-import { actionOf, text, type CoreToolDeps } from "./context.ts";
+import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
 import { resolveInWorkspace } from "./guards.ts";
 
 export function createFileTool(deps: CoreToolDeps) {
@@ -25,7 +25,7 @@ export function createFileTool(deps: CoreToolDeps) {
 			offset: Type.Optional(Type.Number({ description: "read 从第几行开始（1 起），默认 1" })),
 			limit: Type.Optional(Type.Number({ description: "read 最多几行，默认 400" })),
 		}),
-		execute: async (args, _api, context) => {
+		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const action = actionOf(args.action, ["read", "write"], "read");
 			if (typeof action !== "string") return text(action);
@@ -46,12 +46,20 @@ export function createFileTool(deps: CoreToolDeps) {
 				// 校验必须在落盘之前 —— 写进去再报错，团队频道已经按一个不存在的管理员投影过了。
 				if (team !== undefined) {
 					const all = await readAllIdentities(deps.agentsRoot);
+					const assistants = all
+						.filter((identity) => managerOf(all, identity.slug) === OWNER_SLUG)
+						.map((identity) => identity.slug);
+					// 开一个新团队只有助理能做；已有团队的 README 谁都能改（改正文不是开摊子）。
+					if ((await readTeam(deps.teamsRoot, team)) === undefined) {
+						const self = await selfOf(deps, Number(api.conversationId), ctx);
+						const problem =
+							self === undefined ? "你还不在名册里，建不了团队。" : createTeamProblem({ self, assistants });
+						if (problem !== undefined) return text(problem);
+					}
 					const problem = leadProblem({
 						lead: frontOf(parseDoc(args.path, content), "lead"),
 						slugs: all.map((identity) => identity.slug),
-						assistants: all
-							.filter((identity) => managerOf(all, identity.slug) === OWNER_SLUG)
-							.map((identity) => identity.slug),
+						assistants,
 					});
 					if (problem !== undefined) return text(problem);
 				}
