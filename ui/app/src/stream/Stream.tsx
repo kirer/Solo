@@ -224,12 +224,12 @@ function RowView(props: {
 								__html: avatarSvg({
 									slug: turn.slug,
 									name: turn.label,
-									size: 24,
+									size: 40,
 									state: turn.status === "running" ? "working" : "idle",
 								}),
 							}}
 						/>
-						<RunBlock turn={turn} />
+						<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} />
 					</div>
 				))}
 			</div>

@@ -1040,61 +1040,104 @@ body[data-layout="bubble"]
 	align-items: start;
 }
 
-/* 24 的头像对着 28 的折叠行：往下让 2px，圆心和名字那行对齐。 */
+/* 和 `say` 行的头像同一格、同一个尺寸、同一个 2px 下让 —— 整列扫下来
+   每一格都是「一个人的头」，不是「一个头像加一条日志」。 */
 .run-av {
 	display: grid;
 	place-items: center;
 	padding-top: 2px;
 }
 
+/* 68ch 是给正文的（一行别超过 68 个字），轨迹不是正文：一行里要塞下
+   步数 + 耗时 + 状态 + 摘要，卡到 68ch 就把摘要截成「写了 1 个…」。
+   气泡自己 `fit-content`，短的仍然是一小块。 */
 .run-line > .run {
 	grid-column: 2;
 	min-width: 0;
-	max-width: min(68ch, calc(100% - 76px));
+	max-width: 100%;
 }
 
 .run {
 	min-width: 0;
 }
 
-/* 折叠行：整行是一个按钮，hover 时整行浅底。 */
-.run-head {
+/* 第一行：这个人。字号、颜色、时间的写法全部照抄 `say` 行的名字行（`.row-head`），
+   否则同一个人在上面那条消息和下面那块轨迹里长得不一样。这一行**不是按钮**。 */
+.run-top {
 	display: flex;
 	align-items: baseline;
 	gap: 6px;
+	min-width: 0;
+	height: 20px;
+}
+
+/* 轨迹气泡：和别人的消息同一个底、同一个圆角。它是一轮的过程，不是系统日志 ——
+   没有底色时它看起来像正文里的脚注，眼睛会跳过去。 */
+.run-bubble {
+	width: fit-content;
+	max-width: 100%;
+	padding: 6px 10px;
+	background: var(--raised);
+	border-radius: var(--r-row);
+}
+
+/* 折叠行：气泡里的第一行，整行是按钮（头像和名字在外面，不跟着折）。
+   hover 底用伪元素往外画 —— 给它加 padding / 负 margin 会吃掉 8px，
+   摘要就被挤出一个「…」（`width: 100%` 与 fit-content 的气泡互相咬）。 */
+.run-head {
+	position: relative;
+	display: flex;
 	width: 100%;
 	min-width: 0;
-	padding: 4px 8px 4px 2px;
+	padding: 0;
 	border: 0;
-	border-radius: var(--r-control);
 	background: transparent;
 	color: var(--ink-2);
 	font: inherit;
-	font-size: 13px;
-	line-height: 20px;
 	text-align: left;
 	cursor: pointer;
 }
 
-.run-head:hover {
+.run-head::before {
+	content: "";
+	position: absolute;
+	inset: -3px -8px;
+	border-radius: var(--r-control);
 	background: var(--run-line);
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity var(--dur-line) ease;
 }
 
-.run-caret {
-	width: 10px;
-	flex: none;
-	font-size: 10px;
-	color: var(--ink-3);
+.run-head:hover::before {
+	opacity: 1;
 }
 
 .run-name {
 	flex: none;
+	font-size: 13px;
+	line-height: 20px;
 	font-weight: 500;
-	color: var(--ink-2);
+	color: var(--ink);
+	white-space: nowrap;
 }
 
-.run-meta {
+.run-role {
+	min-width: 0;
+	overflow: hidden;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--ink-3);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 时间紧跟身份，不靠右 —— 理由同 `.row-time`：靠右会落在 68ch 的边线上，
+   短块时浮在半空。 */
+.run-time {
 	flex: none;
+	margin-left: 2px;
+	padding-left: 2px;
 	font-family: var(--mono);
 	font-size: 10px;
 	line-height: 14px;
@@ -1102,10 +1145,37 @@ body[data-layout="bubble"]
 	font-variant-numeric: tabular-nums;
 }
 
-.run-status {
+/* 第二行：这一轮干了什么。字号比早期版本大一档 —— 它现在在一张气泡里，
+   10px 的等宽字在 `--raised` 底上糊成一片。 */
+.run-bar {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.run-caret {
+	width: 10px;
 	flex: none;
 	font-size: 11px;
-	line-height: 14px;
+	color: var(--ink-3);
+}
+
+.run-meta {
+	flex: none;
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.run-status {
+	flex: none;
+	font-size: 12px;
+	line-height: 18px;
 	color: var(--ink-3);
 }
 
@@ -1126,8 +1196,8 @@ body[data-layout="bubble"]
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-	font-size: 11px;
-	line-height: 14px;
+	font-size: 12px;
+	line-height: 18px;
 	color: var(--ink-3);
 }
 

@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Step, Turn } from "../api/types.ts";
 import { loadTurn } from "../state/store.ts";
-import { copyText, humanDuration } from "../lib/format.ts";
+import { clockTime, copyText, humanDuration } from "../lib/format.ts";
 
 const OPEN_KEY = "solo.trace.open";
 
@@ -39,9 +39,15 @@ function remember(turn: Turn, open: boolean): void {
 	}
 }
 
-/** 一轮的折叠行 + 展开后的步骤树。 */
-export function RunBlock(props: { turn: Turn }): JSX.Element {
-	const { turn } = props;
+/**
+ * 一轮的折叠行 + 展开后的步骤树。
+ *
+ * 折叠行是**两行**：第一行是这个人（名字 + 身份 + 时间），第二行才是这一轮干了什么
+ * （步数 / 状态 / 摘要）。一行塞不下两件事 —— 挤在一行时头像只有 24、名字和「13 步」
+ * 同高，整块读起来像一条日志，不像「林越做了一轮」。
+ */
+export function RunBlock(props: { turn: Turn; role: string }): JSX.Element {
+	const { turn, role } = props;
 	const [open, setOpen] = useState(() => remembered(turn) ?? turn.status === "running");
 	const [stepId, setStepId] = useState<string | null>(null);
 
@@ -70,47 +76,58 @@ export function RunBlock(props: { turn: Turn }): JSX.Element {
 
 	return (
 		<div className="run" data-status={turn.status} data-open={open ? "true" : "false"}>
-			<button
-				type="button"
-				className="run-head"
-				aria-expanded={open}
-				onClick={toggle}
-				onDoubleClick={() => void copyText(`${turn.label} · ${turn.summary}`)}
-			>
-				<span className="run-caret" aria-hidden="true">
-					{open ? "▾" : "▸"}
-				</span>
+			{/* 头一行是这个人，不是按钮：名字和头像不该顺手把轨迹折叠掉。 */}
+			<div className="run-top">
 				<span className="run-name">{turn.label}</span>
-				<span className="run-meta">{turn.stepCount} 步</span>
-				{elapsed === undefined || elapsed <= 0 ? null : <span className="run-meta">{humanDuration(elapsed)}</span>}
-				<span className="run-status" data-tone={status.tone}>
-					{status.text}
-				</span>
-				<span className="run-grow" />
-				<span className="run-summary">{turn.summary}</span>
-			</button>
+				{role === "" ? null : <span className="run-role">{role}</span>}
+				<span className="run-time">{clockTime(turn.startedAt)}</span>
+			</div>
 
-			{open ? (
-				<div className="run-body">
-					{turn.steps === undefined ? (
-						<div className="run-empty">正在读这一轮的过程…</div>
-					) : turn.steps.length === 0 ? (
-						<div className="run-empty">这一轮没有留下过程（条目可能已被压缩）。</div>
-					) : (
-						<div className="run-steps">
-							{turn.steps.map((step) => (
-								<StepRow
-									key={step.id}
-									step={step}
-									open={stepId === step.id}
-									onToggle={() => setStepId((current) => (current === step.id ? null : step.id))}
-								/>
-							))}
-						</div>
-					)}
-					{turn.truncated === true ? <div className="run-empty">步骤太多，只保留前 200 步。</div> : null}
-				</div>
-			) : null}
+			{/* 气泡里才是「这一轮」。点它展开 —— 热区只有这一行，不含上面的头像和名字。 */}
+			<div className="run-bubble">
+				<button
+					type="button"
+					className="run-head"
+					aria-expanded={open}
+					onClick={toggle}
+					onDoubleClick={() => void copyText(`${turn.label} · ${turn.summary}`)}
+				>
+					<span className="run-bar">
+						<span className="run-caret" aria-hidden="true">
+							{open ? "▾" : "▸"}
+						</span>
+						<span className="run-meta">{turn.stepCount} 步</span>
+						{elapsed === undefined || elapsed <= 0 ? null : <span className="run-meta">{humanDuration(elapsed)}</span>}
+						<span className="run-status" data-tone={status.tone}>
+							{status.text}
+						</span>
+						<span className="run-grow" />
+						<span className="run-summary">{turn.summary}</span>
+					</span>
+				</button>
+
+				{open ? (
+					<div className="run-body">
+						{turn.steps === undefined ? (
+							<div className="run-empty">正在读这一轮的过程…</div>
+						) : turn.steps.length === 0 ? (
+							<div className="run-empty">这一轮没有留下过程（条目可能已被压缩）。</div>
+						) : (
+							<div className="run-steps">
+								{turn.steps.map((step) => (
+									<StepRow
+										key={step.id}
+										step={step}
+										open={stepId === step.id}
+										onToggle={() => setStepId((current) => (current === step.id ? null : step.id))}
+									/>
+								))}
+							</div>
+						)}
+						{turn.truncated === true ? <div className="run-empty">步骤太多，只保留前 200 步。</div> : null}
+					</div>
+				) : null}
+			</div>
 		</div>
 	);
 }
