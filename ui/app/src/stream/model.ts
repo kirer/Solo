@@ -51,7 +51,14 @@ export type Row =
 	 *
 	 * 群聊不画这一行：群聊只留结论，过程在他的私聊里看。
 	 */
-	| { type: "work"; key: string; turn: Turn; channelTitle: string };
+	| {
+			type: "work";
+			key: string;
+			turn: Turn;
+			channelTitle: string;
+			/** 紧接上一轮、同一个人、同一个频道：不重画头像和名字。 */
+			grouped: boolean;
+	  };
 
 export type BuildInput = {
 	messages: readonly Message[];
@@ -143,6 +150,7 @@ export function buildWorkRows({ messages, work, titles, now = Date.now() }: Work
 			key: `w-${turn.channelId}-${String(turn.seq)}-${turn.slug}`,
 			turn,
 			channelTitle: titles.get(turn.channelId) ?? turn.channelId,
+			grouped: false,
 		};
 		let at = rows.findIndex((item) => {
 			const time = atOf(item);
@@ -151,6 +159,23 @@ export function buildWorkRows({ messages, work, titles, now = Date.now() }: Work
 		if (at === -1) at = rows.length;
 		else if (at > 0 && rows[at - 1]!.type === "divider") at -= 1;
 		rows.splice(at, 0, row);
+	}
+
+	// 同一个人连着出现的行（他做的事、他说的话）：头像和名字只画一次。
+	// 这一步必须跨行类型算 —— 「跑了一轮」紧接着「他说了什么」是同一个人在说话。
+	let previous: { slug: string; at: number; type: Row["type"] } | undefined;
+	for (const row of rows) {
+		if (row.type === "divider" || row.type === "note") {
+			previous = undefined;
+			continue;
+		}
+		const slug = row.type === "say" ? row.message.fromSlug : row.turn.slug;
+		const at = row.type === "say" ? row.message.at : row.turn.startedAt;
+		const gap = previous === undefined ? Number.NaN : at - previous.at;
+		row.grouped = previous !== undefined && previous.slug === slug && gap >= 0 && gap <= GROUP_MS;
+		// 气泡角只在「连着两句他说的话」之间连起来；中间夹着一轮轨迹时不连。
+		if (row.type === "say") row.cont = row.grouped && previous?.type === "say" && gap <= CONT_MS;
+		previous = { slug, at, type: row.type };
 	}
 	return rows;
 }

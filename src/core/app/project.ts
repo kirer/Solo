@@ -14,6 +14,7 @@
  * 纯函数、无 IO：状态由调用方递进来，所以单测可以直接喂一个假频道。
  */
 import { OWNER_SLUG, labelsOf, type Identity } from "../agent/identity.ts";
+import { memoryDigest, sectionsOf, type MemoryStamp } from "../agent/memory.ts";
 import { conversationFor, labelIn, type DirectoryState } from "../agent/roster.ts";
 import { chatKind, type Channel, type ChannelState, type Message } from "../channel/types.ts";
 import { readMarkOf, unreadCount } from "../channel/rules.ts";
@@ -25,6 +26,7 @@ import type {
 	ViewActor,
 	ViewChannel,
 	ViewChannelDetail,
+	ViewMemoryEntry,
 	ViewMessage,
 	ViewOrg,
 } from "../view/dto.ts";
@@ -340,4 +342,30 @@ export function attentionItems(
 		}
 	}
 	return out.sort((left, right) => right.at - left.at).slice(0, ATTENTION_MAX);
+}
+/**
+ * 记忆文件的概况：有没有、几条、摘要。个人与团队共用一套分段口径（`sectionsOf`），
+ * 所以「几条」在两处永远是同一个数。
+ */
+export function memorySummary(source: string): { exists: boolean; entries: number; digest: string | null } {
+	return { exists: source !== "", entries: sectionsOf(source).length, digest: memoryDigest(source) ?? null };
+}
+
+/**
+ * 记忆全文 → 逐条。
+ *
+ * 有日志（个人记忆的 `.memory-journal.jsonl`）就带上时间与作者；没有就照实给 `null` ——
+ * 不拿「现在」去冒充「当时」（ADR-016）。团队记忆没有日志，全靠这一条。
+ */
+export function memoryEntries(source: string, stamps?: ReadonlyMap<string, MemoryStamp>): ViewMemoryEntry[] {
+	return sectionsOf(source).map((section) => {
+		const stamp = stamps?.get(section.heading);
+		return {
+			heading: section.heading,
+			body: section.body,
+			at: stamp?.at ?? null,
+			by: stamp?.by ?? null,
+			op: stamp?.op ?? null,
+		};
+	});
 }

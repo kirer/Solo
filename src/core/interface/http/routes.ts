@@ -111,6 +111,14 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
+			// 一个团队的档案：README 正文（介绍 / 验收标准）+ 管理员 + 团队记忆。
+			pattern: "/api/teams/:slug",
+			method: "GET",
+			handler: async ({ response, params }) => {
+				return json(response, await app.teams.readTeamProfile(params.slug ?? ""));
+			},
+		},
+		{
 			pattern: "/api/channels",
 			method: "GET",
 			handler: async ({ response }) => json(response, await app.read.readChannelList()),

@@ -46,7 +46,7 @@ function remember(turn: Turn, open: boolean): void {
  * （步数 / 状态 / 摘要）。一行塞不下两件事 —— 挤在一行时头像只有 24、名字和「13 步」
  * 同高，整块读起来像一条日志，不像「林越做了一轮」。
  */
-export function RunBlock(props: { turn: Turn; role: string }): JSX.Element {
+export function RunBlock(props: { turn: Turn; role: string; grouped?: boolean }): JSX.Element {
 	const { turn, role } = props;
 	const [open, setOpen] = useState(() => remembered(turn) ?? turn.status === "running");
 	const [stepId, setStepId] = useState<string | null>(null);
@@ -77,11 +77,13 @@ export function RunBlock(props: { turn: Turn; role: string }): JSX.Element {
 	return (
 		<div className="run" data-status={turn.status} data-open={open ? "true" : "false"}>
 			{/* 头一行是这个人，不是按钮：名字和头像不该顺手把轨迹折叠掉。 */}
-			<div className="run-top">
-				<span className="run-name">{turn.label}</span>
-				{role === "" ? null : <span className="run-role">{role}</span>}
-				<span className="run-time">{clockTime(turn.startedAt)}</span>
-			</div>
+			{props.grouped === true ? null : (
+				<div className="run-top">
+					<span className="run-name">{turn.label}</span>
+					{role === "" ? null : <span className="run-role">{role}</span>}
+					<span className="run-time">{clockTime(turn.startedAt)}</span>
+				</div>
+			)}
 
 			{/* 气泡里才是「这一轮」。点它展开 —— 热区只有这一行，不含上面的头像和名字。 */}
 			<div className="run-bubble">

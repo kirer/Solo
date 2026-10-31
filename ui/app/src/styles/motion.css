@@ -151,7 +151,8 @@
 	   不拉伸成椭圆。 */
 	max-width: 100%;
 	height: auto;
-	border-radius: 50%;
+	/* 圆角方图，不是正圆：设计稿里那是「一张照片」，正圆像社交头像。 */
+	border-radius: 30%;
 	object-fit: cover;
 	transform-origin: 50% 50%;
 	/* 加载出来之前先占住一个纸色的圆，免得刷出一排空洞。 */
@@ -223,6 +224,8 @@
 	position: relative;
 	display: block;
 	flex: none;
+	overflow: hidden;
+	border-radius: 30%;
 }
 
 .av-seat {
@@ -233,6 +236,8 @@
 .av-seat .av {
 	width: 100%;
 	height: 100%;
+	/* 群头像里每个座位仍是圆：四张方图拼在一起会糊成一块。 */
+	border-radius: 50%;
 }
 
 .row[data-hl="true"] .row-body {

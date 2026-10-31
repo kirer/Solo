@@ -6,11 +6,12 @@
  */
 import { dirname, join } from "node:path";
 import { OWNER_SLUG } from "../agent/identity.ts";
-import { appendMemory, memoryDigest, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
+import { appendMemory, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { labelIn, type DirectoryState } from "../agent/roster.ts";
 import { redact } from "../agent/secrets.ts";
 import { listSkills } from "../agent/skills.ts";
 import type { ViewPersonMemory, ViewPersonProfile } from "../view/dto.ts";
+import { memoryEntries, memorySummary } from "./project.ts";
 import { AppError } from "./errors.ts";
 import type { Read } from "./read.ts";
 import type { Snapshots } from "./snapshot.ts";
@@ -63,11 +64,7 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 				scope: skill.scope,
 				overrides: skill.overrides === true,
 			})),
-			memory: {
-				exists: source !== "",
-				entries: sectionsOf(source).length,
-				digest: memoryDigest(source) ?? null,
-			},
+			memory: memorySummary(source),
 			channels: await read.channelsOf(slug),
 		};
 	}
@@ -78,24 +75,14 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		requireSlug(directory, slug);
 		const agentDir = join(shell.agentsRoot, slug);
 		const source = (await readMemory(agentDir)) ?? "";
-		const stamps = await memoryTimeline(agentDir);
+		const summary = memorySummary(source);
 		return {
 			slug,
 			label: labelIn(directory, slug),
-			exists: source !== "",
-			digest: memoryDigest(source) ?? null,
-			// `at`/`by`/`op` 来自 `.memory-journal.jsonl`。手写进 memory.md 的条目没有日志，
-			// 就照实给 `null` —— 不拿「现在」去冒充「当时」（ADR-016）。
-			entries: sectionsOf(source).map((section) => {
-				const stamp = stamps.get(section.heading);
-				return {
-					heading: section.heading,
-					body: section.body,
-					at: stamp?.at ?? null,
-					by: stamp?.by ?? null,
-					op: stamp?.op ?? null,
-				};
-			}),
+			exists: summary.exists,
+			digest: summary.digest,
+			// 时间/作者来自 `.memory-journal.jsonl`；手写的条目没有日志，一律 `null`（ADR-016）。
+			entries: memoryEntries(source, await memoryTimeline(agentDir)),
 			raw: source,
 		};
 	}

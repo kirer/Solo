@@ -12,7 +12,7 @@
 
 import { avatarSvg } from "../lib/avatar.ts";
 import { relTime } from "../lib/format.ts";
-import { openChannel, setNeedMenu, setSettings, setTeam, setTheme } from "../state/store.ts";
+import { openChannel, openWithPerson, setNeedMenu, setSettings, setTeam, setTheme } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Theme } from "../state/store.ts";
 
@@ -108,11 +108,10 @@ function highlight(seq: number): void {
 
 /* ── 设置 ────────────────────────────────────────────────────────────── */
 
-const THEMES: readonly { value: Theme; text: string; hint: string; icon: JSX.Element }[] = [
+const THEMES: readonly { value: Theme; text: string; icon: JSX.Element }[] = [
 	{
 		value: "system",
 		text: "跟随系统",
-		hint: "系统变我就变",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
 				<circle cx="12" cy="12" r="7" />
@@ -123,7 +122,6 @@ const THEMES: readonly { value: Theme; text: string; hint: string; icon: JSX.Ele
 	{
 		value: "light",
 		text: "浅色",
-		hint: "",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
 				<circle cx="12" cy="12" r="4" />
@@ -134,7 +132,6 @@ const THEMES: readonly { value: Theme; text: string; hint: string; icon: JSX.Ele
 	{
 		value: "dark",
 		text: "深色",
-		hint: "",
 		icon: (
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
 				<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" />
@@ -145,7 +142,14 @@ const THEMES: readonly { value: Theme; text: string; hint: string; icon: JSX.Ele
 
 function SettingsSheet(props: { theme: Theme }): JSX.Element {
 	return (
-		<section className="settings" id="settings" role="dialog" aria-modal="true" aria-label="设置">
+		<section
+			className="settings"
+			id="settings"
+			role="dialog"
+			aria-modal="true"
+			aria-label="设置"
+			onClick={() => setSettings(false)}
+		>
 			<div
 				className="settings-panel"
 				onClick={(event) => {
@@ -176,7 +180,6 @@ function SettingsSheet(props: { theme: Theme }): JSX.Element {
 								>
 									<span className="opt-ico">{item.icon}</span>
 									<span className="opt-text">{item.text}</span>
-									{item.hint === "" ? null : <span className="opt-hint">{item.hint}</span>}
 									<span className="opt-tick" aria-hidden="true">
 										✓
 									</span>
@@ -197,8 +200,14 @@ function TeamSheet(): JSX.Element {
 	const presence = useStore((state) => state.presence);
 
 	return (
-		<section className="team" id="team" role="dialog" aria-modal="true" aria-label="团队">
-			<div className="team-panel" id="team-panel">
+		<section className="team" id="team" role="dialog" aria-modal="true" aria-label="团队" onClick={() => setTeam(false)}>
+			<div
+				className="team-panel"
+				id="team-panel"
+				onClick={(event) => {
+					event.stopPropagation();
+				}}
+			>
 				<div className="team-head">
 					<h2>
 						团队 <span className="team-count" id="team-count">{people.length}</span>
@@ -213,7 +222,16 @@ function TeamSheet(): JSX.Element {
 					{people.map((actor) => {
 						const look = presenceOfActor(presence, actor.slug);
 						return (
-							<div key={actor.slug} className="crew">
+							<button
+								type="button"
+								key={actor.slug}
+								className="crew"
+								title={`和 ${actor.label} 私聊`}
+								onClick={() => {
+									setTeam(false);
+									void openWithPerson(actor.slug);
+								}}
+							>
 								<span
 									className="crew-av"
 									dangerouslySetInnerHTML={{
@@ -224,17 +242,15 @@ function TeamSheet(): JSX.Element {
 									<span className="crew-name">{actor.label}</span>
 									<span className="crew-sub">
 										{actor.title}
-										{actor.team === undefined ? "" : ` · ${actor.team}`}
 									</span>
 								</span>
 								<span className="crew-state" data-state={look.state}>
 									{look.label}
 								</span>
-							</div>
+							</button>
 						);
 					})}
 				</div>
-				<div className="team-foot">共 {people.length} 人</div>
 			</div>
 		</section>
 	);

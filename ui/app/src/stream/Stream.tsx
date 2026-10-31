@@ -188,16 +188,17 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 					</div>
 
 				</div>
+				{/* 放在滚动容器**里面**、正文之后：贴在消息区底部，不会掉到输入框上。 */}
+				<button
+					type="button"
+					className="to-bottom"
+					id="to-bottom"
+					hidden={atBottom}
+					onClick={() => toBottom("smooth")}
+				>
+					回到最新
+				</button>
 			</div>
-			<button
-				type="button"
-				className="to-bottom"
-				id="to-bottom"
-				hidden={atBottom}
-				onClick={() => toBottom("smooth")}
-			>
-				回到最新
-			</button>
 		</>
 	);
 }
@@ -209,6 +210,8 @@ function RowView(props: {
 	onImage: (src: string) => void;
 }): JSX.Element {
 	const { row } = props;
+	// 这一轮如果就发生在这条私聊里，「在某某」是废话（你正看着它）；只有跨频道才写。
+	const here = useStore((state) => state.currentId);
 	if (row.type === "divider") {
 		return (
 			<div className="row-divider">
@@ -220,24 +223,26 @@ function RowView(props: {
 	if (row.type === "work") {
 		const turn = row.turn;
 		return (
-			<div className="row row-run row-work" data-key={row.key}>
+			<div className="row row-run row-work" data-key={row.key} data-grouped={row.grouped ? "true" : "false"}>
 				{/* 这轮发生在哪个频道：私聊里看的是他干的活，不是这一个房间的事。 */}
-				<span className="work-where">{row.channelTitle}</span>
+				{row.grouped || turn.channelId === here ? null : <span className="work-where">在{row.channelTitle}</span>}
 				<div className="run-line">
 					{/* 头像：谁跑的这件事必须先说清楚，再谈他跑了几步。跑到一半时头像也在动。 */}
-					<span
-						className="run-av"
-						aria-hidden="true"
-						dangerouslySetInnerHTML={{
-							__html: avatarSvg({
-								slug: turn.slug,
-								name: turn.label,
-								size: 40,
-								state: turn.status === "running" ? "working" : "idle",
-							}),
-						}}
-					/>
-					<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} />
+					{row.grouped ? null : (
+						<span
+							className="run-av"
+							aria-hidden="true"
+							dangerouslySetInnerHTML={{
+								__html: avatarSvg({
+									slug: turn.slug,
+									name: turn.label,
+									size: 40,
+									state: turn.status === "running" ? "working" : "idle",
+								}),
+							}}
+						/>
+					)}
+					<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} grouped={row.grouped} />
 				</div>
 			</div>
 		);
@@ -412,7 +417,7 @@ function Empty(_props: { channelId: string }): JSX.Element {
 	const isDm = detail?.channel.kind === "dm";
 	const other = picks[0]?.label;
 
-	const title = isDm && other !== undefined ? `还没和 ${other} 说过话` : "这个频道还没有消息";
+	const title = isDm && other !== undefined ? `还没和${other}说过话` : "这个频道还没有消息";
 	const hint = isDm
 		? "直接说你想做什么，他会回你。"
 		: picks.length === 0
@@ -421,48 +426,50 @@ function Empty(_props: { channelId: string }): JSX.Element {
 
 	return (
 		<div className="ch-empty">
-			<div
-				className="ch-empty-art"
-				aria-hidden="true"
-				dangerouslySetInnerHTML={{
-					__html:
-						picks.length <= 1
-							? avatarSvg({ slug: picks[0]?.slug ?? "all", name: other ?? "全员", size: 56, state: "idle" })
-							: groupAvatar({ people: picks, size: 56 }),
-				}}
-			/>
-			<p className="ch-empty-title">{title}</p>
-			<p className="ch-empty-hint">{hint}</p>
-			{isDm || picks.length === 0 ? null : (
-				<div className="ch-empty-people">
-					{picks.map((pick) => (
-						<button
-							key={pick.slug}
-							type="button"
-							className="ch-empty-chip"
-							onClick={() => {
-								setReply(null);
-								const input = document.querySelector<HTMLTextAreaElement>("#input");
-								if (input === null) return;
-								input.value = "";
-								input.focus();
-								// 用原生 setter 写值，再派发 input 让 React 的受控组件跟上。
-								const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
-								setter?.call(input, `@${pick.label} `);
-								input.dispatchEvent(new Event("input", { bubbles: true }));
-							}}
-						>
-							<span
-								className="ch-empty-av"
-								dangerouslySetInnerHTML={{
-									__html: avatarSvg({ slug: pick.slug, name: pick.label, size: 20, state: "idle" }),
+			<div className="ch-empty-card">
+				<div
+					className="ch-empty-art"
+					aria-hidden="true"
+					dangerouslySetInnerHTML={{
+						__html:
+							picks.length <= 1
+								? avatarSvg({ slug: picks[0]?.slug ?? "all", name: other ?? "全员", size: 64, state: "idle" })
+								: groupAvatar({ people: picks, size: 64 }),
+					}}
+				/>
+				<p className="ch-empty-title">{title}</p>
+				<p className="ch-empty-hint">{hint}</p>
+				{isDm || picks.length === 0 ? null : (
+					<div className="ch-empty-people">
+						{picks.map((pick) => (
+							<button
+								key={pick.slug}
+								type="button"
+								className="ch-empty-chip"
+								onClick={() => {
+									setReply(null);
+									const input = document.querySelector<HTMLTextAreaElement>("#input");
+									if (input === null) return;
+									input.value = "";
+									input.focus();
+									// 用原生 setter 写值，再派发 input 让 React 的受控组件跟上。
+									const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set;
+									setter?.call(input, `@${pick.label} `);
+									input.dispatchEvent(new Event("input", { bubbles: true }));
 								}}
-							/>
-							{pick.label}
-						</button>
-					))}
-				</div>
-			)}
+							>
+								<span
+									className="ch-empty-av"
+									dangerouslySetInnerHTML={{
+										__html: avatarSvg({ slug: pick.slug, name: pick.label, size: 20, state: "idle" }),
+									}}
+								/>
+								{pick.label}
+							</button>
+						))}
+					</div>
+				)}
+			</div>
 		</div>
 	);
 }

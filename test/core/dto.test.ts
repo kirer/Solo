@@ -110,6 +110,7 @@ describe("view/dto.ts 是唯一权威", () => {
 				"PersonProfile",
 				"SkillInfo",
 				"Step",
+				"TeamProfile",
 				"Turn",
 				"Uploaded",
 			].sort(),

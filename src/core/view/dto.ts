@@ -191,6 +191,21 @@ export type ViewPersonProfile = {
 	channels: { id: string; kind: ViewChannelKind; title: string }[];
 };
 
+/** 一个团队的档案：`teams/<slug>/README.md` 的正文 + 管理员的显示名 + 团队记忆。 */
+export type ViewTeamProfile = {
+	slug: string;
+	name: string;
+	status: string;
+	/** 一句话现状（「谁在做什么」）。没写就不出现。 */
+	doing?: string;
+	lead?: string;
+	/** 管理员的显示名；团队文件里没写 lead 就是空串。 */
+	leadLabel: string;
+	/** README 正文：目标 / 验收标准 / 不做什么 / 当前进展。 */
+	body: string;
+	memory: { exists: boolean; digest: string | null; entries: ViewMemoryEntry[] };
+};
+
 /**
  * 一轮里的一步。
  *

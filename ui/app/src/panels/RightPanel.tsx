@@ -9,12 +9,12 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { getPerson, getPersonMemory, editPersonMemory } from "../api/client.ts";
-import type { MemoryEntry, PersonMemory, PersonProfile } from "../api/types.ts";
+import { editPersonMemory, getPerson, getPersonMemory, getTeam } from "../api/client.ts";
+import type { MemoryEntry, PersonMemory, PersonProfile, TeamProfile } from "../api/types.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { clockTime, dayLabel } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, openPerson, setRight } from "../state/store.ts";
+import { backRight, openChannel, openPerson, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 type Tab = "detail" | "skills" | "memory";
@@ -51,20 +51,7 @@ export function RightPanel(): JSX.Element {
 			{...(open ? {} : { hidden: true })}
 		>
 			<div className="detail-bar">
-				<div className="rail-tabs" role="tablist" aria-label="右侧栏视图">
-					{TABS.map((item) => (
-						<button
-							type="button"
-							key={item.value}
-							role="tab"
-							className="rail-tab"
-							aria-selected={tab === item.value}
-							onClick={() => setTab(item.value)}
-						>
-							{item.text}
-						</button>
-					))}
-				</div>
+				<BackButton />
 				<span className="sheet-grow" />
 				<button
 					type="button"
@@ -80,8 +67,25 @@ export function RightPanel(): JSX.Element {
 				</button>
 			</div>
 			<div className="detail-panel" id="detail-panel">
-				<BackButton />
-				<div className="detail-body" id="detail-body">
+				{/* 身份卡挂在三个 tab 上面：换 tab 换的是「关于这个人的哪一面」，
+				   不是「这是谁」—— 那张卡不该跟着 tab 一起消失。 */}
+				<IdentityCard />
+				<div className="rail-tabs detail-tabs" role="tablist" aria-label="右侧栏视图">
+					{TABS.map((item) => (
+						<button
+							type="button"
+							key={item.value}
+							role="tab"
+							className="rail-tab"
+							aria-selected={tab === item.value}
+							onClick={() => setTab(item.value)}
+						>
+							{item.text}
+						</button>
+					))}
+				</div>
+				{/* key 变了才会重放入场动画：换 tab 是「同一块地方换了一份内容」。 */}
+				<div className="detail-body" id="detail-body" key={tab}>
 					{tab === "detail" ? (
 						<DetailTab />
 					) : tab === "skills" ? (
@@ -105,6 +109,131 @@ function BackButton(): JSX.Element | null {
 	);
 }
 
+/* ── 身份卡 ──────────────────────────────────────────────────────────── */
+
+/**
+ * 这一栏讲的是「谁」：头像、名字、身份，加一行后端真有的数字。
+ *
+ * 卡上只放有出处的字段 —— 状态来自在线表，成员数来自成员表。
+ * 设计稿里还有一列「~1.2s 响应」，那是编的，不画。
+ */
+function IdentityCard(): JSX.Element | null {
+	const person = useStore((state) => state.person);
+	const detail = useStore((state) => state.detail);
+	const presence = useStore((state) => state.presence);
+	// 私聊卡上写的是对面那个人的**职务**（`负责人`），不是「私聊」这两个字 ——
+	// 「私聊」说的是这个频道，卡片说的是这个人。档案只在这时多拉一次。
+	const peerSlug =
+		detail === null || detail.channel.kind !== "dm"
+			? null
+			: (detail.members.find((member) => member.slug !== "owner")?.slug ?? null);
+	const { profile: peerProfile } = useProfile(peerSlug);
+
+	if (person !== null) {
+		const state = presence.get(person.slug)?.state ?? "idle";
+		return (
+			<Card
+				avatar={avatarSvg({ slug: person.slug, name: person.label, size: 96, state: avatarState(state) })}
+				name={person.label}
+				tags={[person.title, ...(person.team === undefined ? [] : [person.team])]}
+				stats={[
+					{ k: "状态", v: stateLabel(state) },
+					{ k: "频道", v: String(person.channels.length) },
+				]}
+			/>
+		);
+	}
+
+	if (detail === null) return null;
+
+	const channel = detail.channel;
+	const members = detail.members.filter((member) => member.slug !== "owner");
+	// 私聊的对面是他；群聊画群头像。私聊才谈得上「状态」，一个频道不会「在想」。
+	const peer = channel.kind === "dm" ? members[0] : undefined;
+	const state = peer === undefined ? "idle" : (presence.get(peer.slug)?.state ?? "idle");
+
+	return (
+		<Card
+			avatar={
+				peer === undefined
+					? groupAvatar({
+							people: members.slice(0, 4).map((member) => ({ slug: member.slug, label: member.label })),
+							size: 96,
+						})
+					: avatarSvg({ slug: peer.slug, name: peer.label, size: 96, state: avatarState(state) })
+			}
+			name={channel.title}
+			tags={
+				peer === undefined
+					? // 不挂团队 slug（`xiaokonglong`）：那是目录名，标题已经写着团队名。
+						[kindLabel(channel.kind)]
+					: [peerProfile?.title ?? ""]
+			}
+			stats={
+				peer === undefined
+					? [
+							{ k: "成员", v: String(members.length + 1) },
+							...(channel.leadLabel === undefined ? [] : [{ k: "团队管理员", v: channel.leadLabel }]),
+						]
+					: peerProfile === null
+						? [{ k: "状态", v: stateLabel(state) }]
+						: [
+								{ k: "状态", v: stateLabel(state) },
+								{ k: "频道", v: String(peerProfile.channels.length) },
+							]
+			}
+		/>
+	);
+}
+
+function Card(props: {
+	avatar: string;
+	name: string;
+	tags: readonly string[];
+	stats: readonly { k: string; v: string }[];
+}): JSX.Element {
+	const tags = props.tags.filter((tag) => tag !== "");
+	return (
+		<div className="detail-card">
+			<span className="detail-av" dangerouslySetInnerHTML={{ __html: props.avatar }} />
+			<span className="detail-ident">
+				<span className="detail-name">{props.name}</span>
+				{tags.length === 0 ? null : (
+					<span className="detail-tags">
+						{tags.map((tag) => (
+							<span key={tag} className="detail-tag">
+								{tag}
+							</span>
+						))}
+					</span>
+				)}
+			</span>
+			{props.stats.length === 0 ? null : (
+				<div className="detail-card-stats" data-count={props.stats.length}>
+					{props.stats.map((stat) => (
+						<span key={stat.k} className="detail-stat">
+							<span className="detail-stat-k">{stat.k}</span>
+							<span className="detail-stat-v">{stat.v}</span>
+						</span>
+					))}
+				</div>
+			)}
+		</div>
+	);
+}
+
+function avatarState(state: string): "idle" | "thinking" | "working" | "done" {
+	if (state === "working" || state === "thinking") return state;
+	return "idle";
+}
+
+function stateLabel(state: string): string {
+	if (state === "working") return "在做";
+	if (state === "thinking") return "在想";
+	if (state === "asleep") return "睡了";
+	return "待命";
+}
+
 /* ── 详情 ────────────────────────────────────────────────────────────── */
 
 function DetailTab(): JSX.Element {
@@ -117,45 +246,17 @@ function DetailTab(): JSX.Element {
 	const channel = detail.channel;
 	const members = detail.members.filter((member) => member.slug !== "owner");
 
+	// 私聊只有一个人可介绍：画他的档案，不画「成员 2 / 我 / 他」这种一对一的废话。
+	if (channel.kind === "dm" && members[0] !== undefined) {
+		return <DmPerson slug={members[0].slug} label={members[0].label} />;
+	}
+
 	return (
 		<div className="detail-sec">
-			<div className="detail-head">
-				<div
-					className="detail-av"
-					dangerouslySetInnerHTML={{
-						__html:
-							channel.kind === "dm"
-								? avatarSvg({
-										slug: members[0]?.slug ?? "owner",
-										name: members[0]?.label ?? "我",
-										size: 44,
-										state: "idle",
-									})
-								: groupAvatar({
-										people: members.slice(0, 4).map((member) => ({ slug: member.slug, label: member.label })),
-										size: 44,
-									}),
-					}}
-				/>
-				<div className="detail-ident">
-					<span className="detail-name">{channel.title}</span>
-					<span className="detail-tags">
-						<span className="detail-tag">{kindLabel(channel.kind)}</span>
-						{channel.team === undefined ? null : <span className="detail-tag">{channel.team}</span>}
-					</span>
-				</div>
-			</div>
-
 			{channel.doing === undefined || channel.doing === "" ? null : (
 				<div className="detail-field">
 					<span className="detail-k">现状</span>
 					<span className="detail-v">{channel.doing}</span>
-				</div>
-			)}
-			{channel.leadLabel === undefined ? null : (
-				<div className="detail-field">
-					<span className="detail-k">团队管理员</span>
-					<span className="detail-v">{channel.leadLabel}</span>
 				</div>
 			)}
 			<div className="detail-sec-head">
@@ -163,6 +264,14 @@ function DetailTab(): JSX.Element {
 			</div>
 			<div className="detail-people">
 				{people.length === 0 ? <p className="detail-empty">名册还没读出来。</p> : null}
+				{/* 我在列表里，但点不动：我没有档案页（channel 的成员表也不含我）。 */}
+				<div className="detail-person-btn is-static">
+					<span
+						className="detail-av"
+						dangerouslySetInnerHTML={{ __html: avatarSvg({ slug: "owner", name: "我", size: 32, state: "idle" }) }}
+					/>
+					<span className="detail-person-name">我</span>
+				</div>
 				{members.map((member) => (
 					<button
 						type="button"
@@ -174,7 +283,7 @@ function DetailTab(): JSX.Element {
 						<span
 							className="detail-av"
 							dangerouslySetInnerHTML={{
-								__html: avatarSvg({ slug: member.slug, name: member.label, size: 28, state: "idle" }),
+								__html: avatarSvg({ slug: member.slug, name: member.label, size: 32, state: "idle" }),
 							}}
 						/>
 						<span className="detail-person-name">{member.label}</span>
@@ -184,43 +293,79 @@ function DetailTab(): JSX.Element {
 					</button>
 				))}
 			</div>
+
+			{channel.team === undefined ? null : <TeamSection slug={channel.team} />}
 		</div>
+	);
+}
+
+/** 团队频道的「这个团队是什么」：README 正文。 */
+function TeamSection(props: { slug: string }): JSX.Element | null {
+	const [team, setTeam] = useState<TeamProfile | null>(null);
+	useEffect(() => {
+		let alive = true;
+		setTeam(null);
+		getTeam(props.slug)
+			.then((next) => {
+				if (alive) setTeam(next);
+			})
+			.catch(() => {});
+		return () => {
+			alive = false;
+		};
+	}, [props.slug]);
+	if (team === null || team.body.trim() === "") return null;
+	return (
+		<>
+			<div className="detail-sec-head">团队介绍</div>
+			<div
+				className="detail-doc"
+				dangerouslySetInnerHTML={{ __html: renderMarkdown(stripTitle(team.body, team.name)) }}
+			/>
+		</>
 	);
 }
 
 function PersonView(props: { person: PersonProfile }): JSX.Element {
 	const { person } = props;
+	// 私聊不进「活跃频道」：那是和他说话的地方，不是他在哪儿活跃；
+	// 列出来还会出现「知言的活跃频道里有知言」这种自己说自己。
+	const rooms = person.channels.filter((channel) => channel.kind !== "dm");
 	return (
 		<div className="detail-sec">
-			<div className="detail-head">
-				<div
+			<div className="detail-sec-head">汇报给</div>
+			<div className="detail-report">
+				<span
 					className="detail-av"
 					dangerouslySetInnerHTML={{
-						__html: avatarSvg({ slug: person.slug, name: person.label, size: 44, state: "idle" }),
+						__html: avatarSvg({ slug: person.manager ?? "owner", name: person.managerLabel, size: 28 }),
 					}}
 				/>
-				<div className="detail-ident">
-					<span className="detail-name">{person.label}</span>
-					<span className="detail-tags">
-						<span className="detail-tag">{person.title}</span>
-						{person.team === undefined ? null : <span className="detail-tag">{person.team}</span>}
-					</span>
-				</div>
+				<span className="detail-report-name">{person.managerLabel}</span>
 			</div>
 
-			<div className="detail-field">
-				<span className="detail-k">汇报给</span>
-				<span className="detail-v">{person.managerLabel}</span>
-			</div>
-
-			{person.channels.length === 0 ? null : (
+			{rooms.length === 0 ? null : (
 				<>
-					<div className="detail-sec-head">在哪些频道</div>
-					<div className="detail-chips">
-						{person.channels.map((channel) => (
-							<span key={channel.id} className="detail-chip">
-								{channel.title}
-							</span>
+					<div className="detail-sec-head">活跃频道</div>
+					<div className="detail-channels">
+						{rooms.map((channel) => (
+							<button
+								type="button"
+								key={channel.id}
+								className="detail-channel"
+								onClick={() => void openChannel(channel.id)}
+							>
+								{/* 群频道没有「某个人」可画，就画一个中性的群组图标。 */}
+								<span className="detail-tile" aria-hidden="true">
+									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+										<circle cx="9" cy="8" r="3.2" />
+										<path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+										<path d="M16 5.5a3.2 3.2 0 0 1 0 6" />
+										<path d="M17.5 13.6A5 5 0 0 1 21 18.5" />
+									</svg>
+								</span>
+								<span className="detail-channel-name">{channel.title}</span>
+							</button>
 						))}
 					</div>
 				</>
@@ -236,19 +381,49 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 					/>
 				</>
 			)}
-
-			<div className="detail-sec-head">技能</div>
-			<SkillList skills={person.skills} />
-
-			<div className="detail-sec-head">记忆</div>
-			<div className="detail-memory">
-				<span className="detail-state">
-					{person.memory.entries === 0 ? "还没有记忆" : `${String(person.memory.entries)} 段`}
-				</span>
-				<span className="detail-v">{person.memory.digest?.split("\n")[0] ?? ""}</span>
-			</div>
 		</div>
 	);
+}
+
+/** 私聊的详情：介绍对面这个人。读不到档案时先画头像和名字，别空着。 */
+function DmPerson(props: { slug: string; label: string }): JSX.Element {
+	const { profile } = useProfile(props.slug);
+	if (profile !== null) return <PersonView person={profile} />;
+	// 档案还没到：身份卡已经画着头像和名字了，这里不重复。
+	return <div className="detail-sec" />;
+}
+
+/** 一个人的档案。`state.person` 里已经有就不用再请求一次。 */
+function useProfile(who: string | null): { profile: PersonProfile | null; error: string } {
+	const storePerson = useStore((state) => state.person);
+	const [profile, setProfile] = useState<PersonProfile | null>(null);
+	const [error, setError] = useState("");
+
+	useEffect(() => {
+		setError("");
+		if (who === null) {
+			setProfile(null);
+			return;
+		}
+		if (storePerson !== null && storePerson.slug === who) {
+			setProfile(storePerson);
+			return;
+		}
+		let alive = true;
+		setProfile(null);
+		getPerson(who)
+			.then((next) => {
+				if (alive) setProfile(next);
+			})
+			.catch((reason: unknown) => {
+				if (alive) setError(reason instanceof Error ? reason.message : "读不到这个人的档案");
+			});
+		return () => {
+			alive = false;
+		};
+	}, [who, storePerson]);
+
+	return { profile, error };
 }
 
 /* ── 技能 ────────────────────────────────────────────────────────────── */
@@ -259,6 +434,21 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
  * 只列**当前频道的成员**（不含我）—— 名册里的人在不在这个频道是后端的事，
  * 这里不自己筛两遍。频道没人时退回名册。
  */
+/**
+ * 这三栏讲的是「谁的东西」：私聊与个人页只讲这个人的，团队频道只讲团队的，
+ * 全员频道只讲全员都会的。频道自己已经说明了这件事，不另存一份状态。
+ */
+type Scope = "personal" | "team" | "all";
+
+function useScope(): Scope {
+	const person = useStore((state) => state.person);
+	const detail = useStore((state) => state.detail);
+	if (person !== null) return "personal";
+	const channel = detail?.channel;
+	if (channel === undefined || channel.kind === "dm") return "personal";
+	return channel.team === undefined ? "all" : "team";
+}
+
 function useWho(): { who: string | null; options: { slug: string; label: string }[]; setWho: (slug: string) => void } {
 	const detail = useStore((state) => state.detail);
 	const people = useStore((state) => state.people);
@@ -278,7 +468,8 @@ function useWho(): { who: string | null; options: { slug: string; label: string 
 }
 
 function WhoPicker(props: { who: string | null; options: { slug: string; label: string }[]; onPick: (slug: string) => void }): JSX.Element | null {
-	if (props.options.length === 0) return null;
+	// 私聊里候选只有一个：名字和下拉都没有意义 —— 这一栏讲的就是对面那个人。
+	if (props.options.length < 2) return null;
 	return (
 		<label className="rail-who">
 			<span className="sr-only">看谁</span>
@@ -290,90 +481,85 @@ function WhoPicker(props: { who: string | null; options: { slug: string; label: 
 				))}
 			</select>
 			<span className="rail-who-caret" aria-hidden="true">
-				▾
+				<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+					<path d="M6 9l6 6 6-6" />
+				</svg>
 			</span>
 		</label>
 	);
 }
 
 function SkillsTab(): JSX.Element {
+	const scope = useScope();
 	const { who, options, setWho } = useWho();
-	const [profile, setProfile] = useState<PersonProfile | null>(null);
-	const [error, setError] = useState("");
-	const storePerson = useStore((state) => state.person);
+	// 团队这一栏没有数据出处，连人都别去读。
+	const { profile, error } = useProfile(scope === "team" ? null : who);
 
-	useEffect(() => {
-		if (who === null) return;
-		if (storePerson !== null && storePerson.slug === who) {
-			setProfile(storePerson);
-			return;
-		}
-		let alive = true;
-		setError("");
-		getPerson(who)
-			.then((next) => {
-				if (alive) setProfile(next);
-			})
-			.catch((reason: unknown) => {
-				if (alive) setError(reason instanceof Error ? reason.message : "读不到这个人的技能");
-			});
-		return () => {
-			alive = false;
-		};
-	}, [who, storePerson]);
-
+	if (scope === "team") return <NoTeamSkills />;
 	if (who === null) return <p className="detail-empty">左边选一个会话，再回来看技能。</p>;
 
-	const skills = profile?.skills ?? [];
-	const personal = skills.filter((skill) => skill.scope === "personal");
-	const shared = skills.filter((skill) => skill.scope === "all");
+	// 只留当前作用域那一层：私聊看他的，全员频道看全员都会的，不混在一起。
+	const skills = (profile?.skills ?? []).filter((skill) => skill.scope === scope);
+	// 不数「会几件事」：这是一个清单，不是仪表盘；几件扫一眼就知道。
+	const head =
+		scope === "all" ? <span>全员都会</span> : options.length > 1 ? <WhoPicker who={who} options={options} onPick={setWho} /> : null;
 
 	return (
-		<div className="detail-sec rail-view">
-			<div className="rail-head">
-				<WhoPicker who={who} options={options} onPick={setWho} />
-				<span className="rail-count">会 {skills.length} 件事</span>
-			</div>
+		<div className="detail-sec rail-view" key={`${scope}:${who}`}>
+			{head === null ? null : <div className="rail-head">{head}</div>}
 			{error === "" ? null : <p className="rail-error">{error}</p>}
 			{profile === null ? (
 				<p className="detail-empty">正在读…</p>
 			) : skills.length === 0 ? (
 				<>
-					<p className="detail-empty">他还没有自己的技能。</p>
-					<p className="rail-hint">技能就是 agents/&lt;slug&gt;/skills/ 下的 SKILL.md</p>
+					<p className="detail-empty">{scope === "personal" ? "他还没有自己的技能。" : "全员还没有共享技能。"}</p>
+					<p className="rail-hint">
+						{scope === "personal"
+							? "技能就是 agents/&lt;slug&gt;/skills/ 下的 SKILL.md"
+							: "全员技能放在 workspace/skills/ 下"}
+					</p>
 				</>
 			) : (
-				<>
-					{personal.length === 0 ? null : (
-						<>
-							<div className="rail-group">个人</div>
-							{personal.map((skill) => (
-								<SkillRow key={skill.name} name={skill.name} scope="个人" description={skill.description} overrides={skill.overrides} />
-							))}
-						</>
-					)}
-					{shared.length === 0 ? null : (
-						<>
-							<div className="rail-group">全员都会</div>
-							{shared.map((skill) => (
-								<SkillRow key={skill.name} name={skill.name} scope="全员" description={skill.description} overrides={false} />
-							))}
-						</>
-					)}
-				</>
+				skills.map((skill) => (
+					<SkillRow
+						key={skill.name}
+						name={skill.name}
+						description={skill.description}
+						overrides={scope === "personal" && skill.overrides}
+					/>
+				))
 			)}
 		</div>
 	);
 }
 
-/** 一行技能：名字 + scope；点开看 description 全文（和 `run` 步骤同一种交互）。 */
-function SkillRow(props: { name: string; scope: string; description: string; overrides: boolean }): JSX.Element {
+/**
+ * 团队频道里的技能栏是空的 —— 技能只有「个人」和「全员」两层目录（`agent/skills.ts`
+ * 的 `SkillScope`）。团队会什么写在 README 和团队记忆里，不在这里编一份假的团队技能。
+ */
+function NoTeamSkills(): JSX.Element {
+	return (
+		<div className="detail-sec rail-view">
+			<div className="rail-head">
+				<span>团队技能</span>
+			</div>
+			<p className="detail-empty">团队没有技能目录。</p>
+			<p className="rail-hint">团队会什么写在团队 README 与团队记忆里</p>
+		</div>
+	);
+}
+
+/**
+ * 一行技能：名字 + 两行描述；点开看全文（和 `run` 步骤同一种交互）。
+ *
+ * 行里不写「个人 / 全员」：这一栏已经按作用域筛过了。
+ */
+function SkillRow(props: { name: string; description: string; overrides: boolean }): JSX.Element {
 	const [open, setOpen] = useState(false);
 	return (
 		<div className="rail-skill" data-open={open ? "true" : "false"}>
 			<button type="button" className="rail-skill-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
 				<span className="rail-skill-name">{props.name}</span>
-				<span className="rail-scope">{props.scope}</span>
 			</button>
 			{props.description === "" ? null : <p className="rail-skill-desc">{props.description}</p>}
 			{props.overrides ? <p className="rail-hint">覆盖全员同名</p> : null}
@@ -381,24 +567,88 @@ function SkillRow(props: { name: string; scope: string; description: string; ove
 	);
 }
 
-function SkillList(props: { skills: PersonProfile["skills"] }): JSX.Element {
-	if (props.skills.length === 0) return <p className="detail-empty">还没有技能。</p>;
+/* ── 记忆 ────────────────────────────────────────────────────────────── */
+
+/**
+ * 记忆：团队频道看团队记忆，其余看人。
+ *
+ * 团队记忆没有任何写入口 —— 它是 `team/settle.ts` 自动沉淀的（DESIGN §5），
+ * 界面上只能看。人手上有「加一条 / 删掉这一条」，那是他自己的记忆。
+ */
+function MemoryTab(): JSX.Element {
+	const scope = useScope();
+	const team = useStore((state) => state.detail?.channel.team);
+	if (scope === "team" && team !== undefined) return <TeamMemory slug={team} />;
+	if (scope === "all") return <AllMemory />;
+	return <PersonMemoryTab />;
+}
+
+/**
+ * 全员没有共享记忆这一份数据：记忆只有「这个人的」和「团队的」两份。
+ * 这一栏只说清楚这件事，不摆一个空列表假装它记得什么。
+ */
+function AllMemory(): JSX.Element {
 	return (
-		<div className="detail-skills">
-			{props.skills.map((skill) => (
-				<div key={skill.name} className="detail-skill">
-					<span className="detail-skill-name">{skill.name}</span>
-					<span className="detail-badge">{skill.scope === "personal" ? "自己的" : "全员"}</span>
-					<span className="detail-skill-desc">{skill.description}</span>
-				</div>
-			))}
+		<div className="detail-sec rail-view">
+			<div className="rail-head">
+				<span>全员记忆</span>
+			</div>
+			<p className="detail-empty">全员没有共享记忆。</p>
+			<p className="rail-hint">每人记自己的，团队记团队的；全员规矩写在 workspace/rules.md</p>
 		</div>
 	);
 }
 
-/* ── 记忆 ────────────────────────────────────────────────────────────── */
+function TeamMemory(props: { slug: string }): JSX.Element {
+	const [team, setTeam] = useState<TeamProfile | null>(null);
+	const [error, setError] = useState("");
 
-function MemoryTab(): JSX.Element {
+	useEffect(() => {
+		let alive = true;
+		setTeam(null);
+		setError("");
+		getTeam(props.slug)
+			.then((next) => {
+				if (alive) setTeam(next);
+			})
+			.catch((reason: unknown) => {
+				if (alive) setError(reason instanceof Error ? reason.message : "读不到团队记忆");
+			});
+		return () => {
+			alive = false;
+		};
+	}, [props.slug]);
+
+	const entries = team?.memory.entries ?? [];
+
+	return (
+		<div className="detail-sec rail-view">
+			<div className="rail-head">
+				<span>团队记忆</span>
+			</div>
+			{error === "" ? null : <p className="rail-error">{error}</p>}
+			{team === null ? (
+				<p className="detail-empty">正在读…</p>
+			) : entries.length === 0 ? (
+				<>
+					<p className="detail-empty">这个团队还没有沉淀出记忆。</p>
+					<p className="rail-hint">收工结算时按 seed/prompt/95-settle.md 的判据自动记</p>
+				</>
+			) : (
+				entries.map((entry) => (
+					<div className="rail-memo" key={entry.heading}>
+						<div className="rail-memo-head">
+							<span className="rail-memo-stamp">{entry.heading}</span>
+						</div>
+						<p className="rail-memo-body">{entry.body}</p>
+					</div>
+				))
+			)}
+		</div>
+	);
+}
+
+function PersonMemoryTab(): JSX.Element {
 	const { who, options, setWho } = useWho();
 	const [data, setData] = useState<PersonMemory | null>(null);
 	const [draft, setDraft] = useState("");
@@ -457,11 +707,12 @@ function MemoryTab(): JSX.Element {
 	};
 
 	return (
-		<div className="detail-sec rail-view">
-			<div className="rail-head">
-				<WhoPicker who={who} options={options} onPick={setWho} />
-				<span className="rail-count">{entries.length} 条记忆</span>
-			</div>
+		<div className="detail-sec rail-view" key={who}>
+			{options.length < 2 ? null : (
+				<div className="rail-head">
+					<WhoPicker who={who} options={options} onPick={setWho} />
+				</div>
+			)}
 
 			{error === "" ? null : <p className="rail-error">{error}</p>}
 			{data === null ? (

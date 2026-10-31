@@ -13,6 +13,7 @@ import { createDiag } from "./diag.ts";
 import { createPeople } from "./people.ts";
 import { createRead } from "./read.ts";
 import { createSnapshots } from "./snapshot.ts";
+import { createTeams } from "./teams.ts";
 import { createUploads } from "./uploads.ts";
 import type { CoreServices } from "./types.ts";
 
@@ -20,10 +21,11 @@ export function createApp(services: CoreServices) {
 	const snapshots = createSnapshots(services);
 	const read = createRead(services, snapshots);
 	const people = createPeople(services, snapshots, read);
+	const teams = createTeams(services);
 	const chat = createChat(services);
 	const uploads = createUploads(services);
 	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
-	return { snapshots, read, people, chat, uploads, diag };
+	return { snapshots, read, people, teams, chat, uploads, diag };
 }
 
 export type App = ReturnType<typeof createApp>;

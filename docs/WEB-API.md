@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **21** 条路由（按方法+路径算；按路径去重是 **20** 条 —— `check-boundaries.mjs`
+只有 **22** 条路由（按方法+路径算；按路径去重是 **21** 条 —— `check-boundaries.mjs`
 数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
@@ -27,6 +27,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `GET` | `/api/people/:slug/turns` | 一个人在所有频道里的轮次（私聊页的工作记录，折叠版） |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
+| `GET` | `/api/teams/:slug` | 一个团队的档案：README 正文 / 管理员 / 团队记忆 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `GET` | `/api/avatar/:seed` | 一个人的头像（SVG，服务端按名字画好） |
@@ -400,6 +401,31 @@ type ViewStep = {
 恰好 `{owner, 一人}`，**不按频道 id 前缀分**。`skills` 来自 `listSkills()`，个人层覆盖全员同名时
 `overrides: true`（界面显示「覆盖全员同名」）。`slug` 必须是名册里存在的 agent 且不是
 `owner`，否则 404。
+
+## 10.1 `GET /api/teams/:slug`
+
+团队频道的「详情」一次取全：`teams/<slug>/README.md` 的正文（目标 / 验收标准 /
+不做什么 / 当前进展）+ 管理员的显示名 + `teams/<slug>/memory.md` 按小节拆开的条目。
+团队没有技能目录，所以这份响应里没有 `skills`。
+
+```ts
+// 响应
+{
+  slug: string, name: string, status: string,
+  doing?: string,                   // README 头的 doing，没写就不出现
+  lead?: string, leadLabel: string, // lead 是 slug，leadLabel 是名册里的显示名
+  body: string,                     // README 正文
+  memory: {
+    exists: boolean, digest: string | null,
+    // at / by / op 恒为 null：团队记忆没有逐条日志，不拿「现在」冒充「当时」（ADR-016）
+    entries: { heading: string, body: string, at: null, by: null, op: null }[]
+  }
+}
+```
+
+`slug` 必须是 `teams/` 下真实存在的目录，否则 404。团队记忆**只读**：它由
+`team/settle.ts` 在收工结算时自动沉淀（判据在 `seed/prompt/95-settle.md`），
+界面上没有增删入口。
 
 ## 11. `GET /api/people/:slug/memory`
 

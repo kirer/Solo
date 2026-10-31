@@ -15,6 +15,7 @@ import type {
 	Org,
 	PersonMemory,
 	PersonProfile,
+	TeamProfile,
 	Turn,
 	Uploaded,
 } from "./types.ts";
@@ -95,6 +96,10 @@ export const getAttention = (): Promise<{ items: AttentionItem[]; unread: number
 /** 某个人的档案。 */
 export const getPerson = (slug: string): Promise<PersonProfile> =>
 	call<PersonProfile>(`/api/people/${encodeURIComponent(slug)}`);
+
+/** 一个团队的档案：README 正文 + 管理员 + 团队记忆。 */
+export const getTeam = (slug: string): Promise<TeamProfile> =>
+	call<TeamProfile>(`/api/teams/${encodeURIComponent(slug)}`);
 
 /** 和一个人开私聊（幂等）。侧栏第一格点下去就是这条。 */
 export const openDirectMessage = (slug: string): Promise<{ ok: true; id: string }> =>

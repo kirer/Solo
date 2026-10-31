@@ -13,14 +13,15 @@
 	scrollbar-gutter: stable;
 }
 
-/* 回到最新：贴在消息区底部中央，压在正文上但只占 32px 高、半透明底，
-   滚到底就自己消失。 */
+/* 回到最新：贴在**消息区**底部中央，压在正文上但只占 32px 高、半透明底，
+   滚到底就自己消失。它是滚动容器的最后一个孩子，用 sticky 钉住 —— 早先用 absolute
+   + `bottom: 12px` 时包含块是整格，按钮直接压在输入框上。 */
 .to-bottom {
-	position: absolute;
-	left: 50%;
+	position: sticky;
 	bottom: 12px;
-	transform: translateX(-50%);
-	display: inline-flex;
+	margin: 0 auto 12px;
+	display: flex;
+	width: fit-content;
 	align-items: center;
 	gap: 6px;
 	height: 30px;
@@ -108,6 +109,20 @@
 	grid-column: 2;
 }
 
+/* 同一个人连发的第二条起，头像与名字行都不再画：谁在说上一行已经写过了，
+   每句都重画一遍，读起来像三个人接力。列宽留着，气泡的左边（或右边）仍对齐。 */
+.row-say[data-grouped="true"] .row-av,
+.row-say[data-grouped="true"]:not([data-need="true"]) .row-head {
+	display: none;
+}
+
+/* 「需要你」挂在名字行里：这一条不管连不连发都得把名字行留下，否则那个标签跟着消失。 */
+.row-say[data-grouped="true"][data-need="true"] .row-name,
+.row-say[data-grouped="true"][data-need="true"] .row-role,
+.row-say[data-grouped="true"][data-need="true"] .row-time {
+	display: none;
+}
+
 /* 半分钟内连着说的几句：一段话，不是一个话题下的一串消息。
    - 间距归零：连发的 2px 在深色下看起来仍是两条
    - 时间戳只留第一个：同一段里出现三个时间戳，读起来像三次发言
@@ -124,14 +139,15 @@
 	margin-top: 4px;
 }
 
+/* 我的气泡嘴在左上角（见下方气泡布局），所以收口也收在左边。 */
 .row-say[data-owner="true"][data-cont="true"] .row-body > .md {
-	border-top-right-radius: 4px;
-	border-bottom-right-radius: 4px;
+	border-start-start-radius: 4px;
+	border-end-start-radius: 4px;
 	margin-top: 2px;
 }
 
 .row-say[data-owner="true"]:has(+ .row-say[data-cont="true"]) .row-body > .md {
-	border-bottom-right-radius: 4px;
+	border-end-start-radius: 4px;
 }
 
 .row-av {
@@ -157,16 +173,16 @@
 }
 
 .row-name {
-	font-size: 13px;
+	font-size: 14px;
 	line-height: 20px;
-	font-weight: 500;
+	font-weight: 600;
 	color: var(--ink);
 	white-space: nowrap;
 }
 
 .row-role {
-	font-size: 11px;
-	line-height: 14px;
+	font-size: 12px;
+	line-height: 16px;
 	color: var(--ink-3);
 	white-space: nowrap;
 	overflow: hidden;
@@ -181,8 +197,8 @@
 	flex: none;
 	padding-left: 2px;
 	font-family: var(--mono);
-	font-size: 10px;
-	line-height: 14px;
+	font-size: 11px;
+	line-height: 16px;
 	color: var(--ink-3);
 	font-variant-numeric: tabular-nums;
 }
@@ -222,17 +238,16 @@
 .row-say[data-owner="true"] .row-body > .md {
 	width: fit-content;
 	max-width: 100%;
-	background: var(--accent-wash);
-	border-radius: var(--r-xl);
-	padding: 10px 16px;
-	line-height: 22px;
+	background: var(--bubble-own);
+	padding: 16px 20px;
+	line-height: 26px;
 }
 
 /* ── say 的正文 ─────────────────────────────────────────────────────── */
 
 .md {
-	font-size: 14px;
-	line-height: 24px;
+	font-size: 15px;
+	line-height: 26px;
 	font-weight: 400;
 	color: var(--ink);
 	/* 长 URL / 长命令必须在这里断开，否则一行就把消息流撑出横向滚动条。 */
@@ -480,9 +495,12 @@
 .row-say .row-body > .md {
 	width: fit-content;
 	max-width: 100%;
-	background: var(--raised);
-	border-radius: var(--r-row);
-	padding: 8px 12px;
+	background: var(--bubble);
+	/* 圆角 16，只有朝外那一角收成 8：气泡的「嘴」朝着头像的另一侧，
+	   这正是消息属于这个人的标记（DESIGN §6）。 */
+	border-radius: var(--r-sheet);
+	border-start-end-radius: var(--r-control);
+	padding: 16px 20px;
 }
 
 /* 我的话靠右：头像换到右边，正文列换到左边，正文自己右对齐。
@@ -548,8 +566,11 @@ body[data-layout="bubble"]
 	display: none;
 }
 
+/* 我的气泡靠右，嘴就换到左边那一角（镜像），否则和别人的话长得一模一样。 */
 .row-say[data-owner="true"] .row-body > .md {
-	background: var(--accent-wash);
+	background: var(--bubble-own);
+	border-start-start-radius: var(--r-control);
+	border-start-end-radius: var(--r-sheet);
 }
 
 /* ── 引用 ───────────────────────────────────────────────────────────── */
@@ -789,26 +810,40 @@ body[data-layout="bubble"]
    整块居中偏上，把下面大半屏留给输入框。 */
 .ch-empty {
 	display: flex;
+	justify-content: center;
+	margin: clamp(48px, 16vh, 160px) auto 0;
+	padding: 0 16px;
+}
+
+/* 空频道是一张「开始说话」的小卡：漂在整片空地里的一行字，读起来像没加载出来。
+   卡面和右侧栏的身份卡同一个做法（`--field` + 0.5px 线 + 大圆角），不另立一套。 */
+.ch-empty-card {
+	display: flex;
 	flex-direction: column;
 	align-items: center;
-	margin: clamp(56px, 20vh, 180px) auto 0;
-	padding: 0 16px;
-	max-width: 40ch;
+	width: 100%;
+	max-width: 320px;
+	padding: 28px 24px 24px;
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-xl);
+	background: var(--field);
 	text-align: center;
 }
 
 /* 这一屏唯一的画面：频道里的人。一个人是 56 的头像，几个人是叠在一起的
-   群体头像（`groupAvatar` 自己带遮罩）。外圈那道和纸同色的缝把它从背景里托起来。 */
+   群体头像（`groupAvatar` 自己带遮罩）。圆角和别处一致（圆角方图，不是正圆），
+   也不加和纸同色的外圈 —— 深色下那圈会变成一道怪光晕。 */
 .ch-empty-art {
 	display: flex;
-	margin-bottom: 20px;
+	margin-bottom: 18px;
 }
 
 .ch-empty-art .av-g,
 .ch-empty-art .av {
 	display: block;
-	border-radius: 50%;
-	box-shadow: 0 0 0 4px var(--ground);
+	width: 64px;
+	height: 64px;
+	border-radius: 30%;
 }
 
 .ch-empty-title {
@@ -838,8 +873,8 @@ body[data-layout="bubble"]
 	display: inline-flex;
 	align-items: center;
 	gap: 7px;
-	height: 32px;
-	padding: 0 12px 0 6px;
+	height: 30px;
+	padding: 0 11px 0 6px;
 	border: 1px solid var(--line);
 	border-radius: var(--r-pill);
 	background: var(--ground);
@@ -1099,8 +1134,7 @@ body[data-layout="bubble"]
 }
 
 /* 折叠行：气泡里的第一行，整行是按钮（头像和名字在外面，不跟着折）。
-   hover 底用伪元素往外画 —— 给它加 padding / 负 margin 会吃掉 8px，
-   摘要就被挤出一个「…」（`width: 100%` 与 fit-content 的气泡互相咬）。 */
+   不给 hover 底：气泡本身已经是一块面，鼠标扫过再亮一小块，看起来像选中了这段字。 */
 .run-head {
 	position: relative;
 	display: flex;
@@ -1113,21 +1147,6 @@ body[data-layout="bubble"]
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
-}
-
-.run-head::before {
-	content: "";
-	position: absolute;
-	inset: -3px -8px;
-	border-radius: var(--r-control);
-	background: var(--run-line);
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity var(--dur-line) ease;
-}
-
-.run-head:hover::before {
-	opacity: 1;
 }
 
 .run-name {
@@ -1156,8 +1175,8 @@ body[data-layout="bubble"]
 	margin-left: 2px;
 	padding-left: 2px;
 	font-family: var(--mono);
-	font-size: 10px;
-	line-height: 14px;
+	font-size: 11px;
+	line-height: 16px;
 	color: var(--ink-3);
 	font-variant-numeric: tabular-nums;
 }

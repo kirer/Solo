@@ -20,6 +20,13 @@
 	--rightbar: 360px;
 }
 
+/* 中等宽度（笔记本分屏那档）：右栏让 60px 出来，正文才不至于一行只放得下六个字。 */
+@media (max-width: 1100px) {
+	.frame[data-right="open"] {
+		--rightbar: 300px;
+	}
+}
+
 /* 收起成 56px 的图标条。宽度换掉之后其余规则全靠这个属性派生。 */
 .frame[data-side="rail"] {
 	--sidebar: 56px;
@@ -215,6 +222,63 @@
 	background: var(--frame);
 }
 
+/* 团队 / 设置放在列表脚下：它们是「管理」，和「现在跟谁说话」不是一类东西。
+   收起成图标条时竖着排。 */
+.side-foot {
+	display: flex;
+	flex-direction: column;
+	flex: none;
+	gap: 2px;
+	margin-top: 6px;
+	padding: 6px 0 0;
+	border-top: 0.5px solid var(--line);
+}
+
+/* 一行一个，和会话行同一种尺寸与内边距：它在列表脚下，就该读起来像列表的一部分。 */
+.side-action {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	width: 100%;
+	min-height: 48px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--r-row);
+	background: transparent;
+	font: inherit;
+	font-size: 14px;
+	line-height: 22px;
+	text-align: left;
+	color: var(--ink-2);
+	cursor: pointer;
+	transition:
+		background-color var(--dur-line) ease,
+		color var(--dur-line) ease;
+}
+
+.side-action:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.side-action svg {
+	flex: none;
+	width: 18px;
+	height: 18px;
+}
+
+/* 收起成图标条：只剩图标，竖着排、居中。 */
+.frame[data-side="rail"] .side-action {
+	justify-content: center;
+	width: 36px;
+	height: 36px;
+	min-height: 36px;
+	margin: 0 auto;
+	padding: 0;
+	/* 文字收起，只留图标。 */
+	font-size: 0;
+}
+
 /* 人栏：每人 40px 一行。这是本产品唯一的独有元素。 */
 .people {
 	display: flex;
@@ -224,6 +288,17 @@
 	overflow-y: auto;
 	padding: 2px 0 8px;
 	scrollbar-gutter: stable;
+}
+
+/* 团队频道名后面那个小绿标：一眼分出「这是团队」和「这是私聊」。 */
+.ch-tag {
+	flex: none;
+	padding: 0 6px;
+	border-radius: 5px;
+	background: color-mix(in oklab, var(--accent) 14%, transparent);
+	font-size: 11px;
+	line-height: 17px;
+	color: var(--accent);
 }
 
 .channels {
@@ -243,8 +318,8 @@
 	column-gap: 8px;
 	align-items: center;
 	width: 100%;
-	min-height: 40px;
-	padding: 6px 9px;
+	min-height: 60px;
+	padding: 8px 10px;
 	border-radius: var(--r-row);
 	text-align: left;
 	/* DSH 只给配色做过渡，尺寸变化才用长曲线。 */
@@ -272,7 +347,7 @@
 .ch-main {
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
+	gap: 2px;
 	min-width: 0;
 }
 
@@ -294,6 +369,12 @@
 	flex: none;
 }
 
+/* 时间推到行尾（设计稿的排法）：名字一行、预览一行，时间只占右上角那一小格，
+   不再和预览挤在第二行里互相截断。 */
+.ch-top .ch-time {
+	margin-left: auto;
+}
+
 /* 第二行：最后一句。列表里没有它就分不清哪个频道真的动了 —— 只有名字和时间时，
    一眼扫过去全是同一批名字。 */
 .ch-sub {
@@ -301,8 +382,8 @@
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
-	font-size: 12px;
-	line-height: 16px;
+	font-size: 14px;
+	line-height: 20px;
 	color: var(--ink-3);
 }
 
@@ -312,14 +393,14 @@
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
-	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
+	font-size: 15px;
+	line-height: 22px;
+	font-weight: 600;
 }
 
 .ch-time {
 	font-size: 12px;
-	line-height: 16px;
+	line-height: 18px;
 	color: var(--ink-3);
 	font-family: var(--mono);
 }
@@ -333,8 +414,8 @@
  */
 .ch-state {
 	flex: none;
-	font-size: 11px;
-	line-height: 14px;
+	font-size: 12px;
+	line-height: 18px;
 	color: var(--ink-3);
 }
 
@@ -395,6 +476,12 @@
 /* logo 行 60 高放不下 logo + 按钮：收起后 logo 让位，只留按钮（点它展开）。 */
 .frame[data-side="rail"] .side-logo .brand-mark {
 	display: none;
+}
+
+/* 收起后只剩一列头像：行高与头像同高，之间必须留出空当，否则连成一根柱子。 */
+.frame[data-side="rail"] .channels {
+	gap: 8px;
+	padding-top: 4px;
 }
 
 .frame[data-side="rail"] .ch {
@@ -477,7 +564,9 @@
 	padding-top: 2px;
 }
 
-.back {
+/* 返回键只在手机上有意义：那里一次只显示一格，返回 = 回到会话列表。
+   桌面侧栏一直在，点它是空操作。 */
+.sheet-back {
 	display: none;
 }
 
@@ -562,17 +651,27 @@
 	overflow: hidden;
 }
 
+/* 和设置弹窗同一个头：48 高、同一条底线、同一个标题字号 —— 两个浮层是一类东西。 */
 .team-head {
 	display: flex;
 	align-items: center;
 	gap: 8px;
-	padding: 12px 12px 8px 20px;
+	height: 48px;
+	padding: 0 8px 0 16px;
+	border-bottom: 0.5px solid var(--line);
+}
+
+/* 关闭按钮永远在头的右端：h2 后面直接跟按钮会贴在标题旁边。 */
+.team-head .icon-btn,
+.settings-head .icon-btn {
+	margin-left: auto;
 }
 
 .team-head h2 {
-	font-size: 16px;
-	line-height: 24px;
-	font-weight: 500;
+	margin: 0;
+	font-size: 15px;
+	line-height: 22px;
+	font-weight: 600;
 }
 
 .team-count {
@@ -586,20 +685,36 @@
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 0 8px 8px;
+	padding: 6px 8px 8px;
 }
 
 .crew {
 	display: grid;
-	grid-template-columns: var(--av-md) minmax(0, 1fr) auto auto;
+	grid-template-columns: var(--av-md) minmax(0, 1fr) auto;
 	column-gap: 10px;
 	align-items: center;
+	width: 100%;
 	padding: 8px 12px;
+	border: 0;
 	border-radius: var(--r-control);
+	background: transparent;
+	font: inherit;
+	text-align: left;
+	color: var(--ink);
+	cursor: pointer;
+	transition: background-color var(--dur-line) ease;
 }
 
 .crew:hover {
 	background: var(--hover);
+}
+
+/* 名字与身份两行：身份另起一行、比名字小一档，挤在一行里会读成「知言负责人」。 */
+.crew-main {
+	display: flex;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
 }
 
 .crew-name {
@@ -608,21 +723,25 @@
 	font-weight: 500;
 }
 
-.crew:hover .crew-mem,
-.crew-mem:focus-visible {
-	opacity: 1;
-}
-
-/* 触屏没有 hover，直接常显。 */
-@media (hover: none) {
-	}
-
-.team-foot {
-	padding: 10px 20px 14px;
-	border-top: 1px solid var(--rule);
+.crew-state {
+	flex: none;
 	font-size: 11px;
 	line-height: 14px;
 	color: var(--ink-3);
+}
+
+.crew-state[data-state="working"],
+.crew-state[data-state="thinking"] {
+	color: var(--live);
+}
+
+.crew-sub {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 
 /* ── 提示条（toast） ───────────────────────────────────────────────── */
@@ -745,7 +864,7 @@
 		display: none;
 	}
 
-	.back {
+	.sheet-back {
 		display: inline-grid;
 	}
 
@@ -799,7 +918,8 @@
 	display: flex;
 	flex-direction: column;
 	border-left: 0.5px solid var(--line);
-	background: var(--field);
+	/* 和左栏同一块底：两条边栏是一层，中间那张纸才是内容。 */
+	background: var(--frame);
 }
 
 /* 收起时 hidden 必须真的不占位：`display: flex` 会盖掉 hidden 的默认规则。 */
@@ -825,10 +945,11 @@
 	outline: none;
 }
 
+/* 宽度跟着列走：列在中等屏上会变窄，写死 360 会把右边一截裁掉。 */
 .detail-panel {
 	flex: 1;
 	min-height: 0;
-	width: 360px;
+	width: 100%;
 	display: flex;
 	flex-direction: column;
 	overflow: hidden;
@@ -842,15 +963,15 @@
 	animation: detail-in 240ms cubic-bezier(0.4, 0, 0.2, 1) 60ms both;
 }
 
-/* 「返回」只在钻下去之后出现（栈底是频道，没有上一层）。 */
+/* 「返回」只在钻下去之后出现（栈底是频道，没有上一层）。现在它站在顶栏里，
+   和右边的关闭按钮同一行 —— 一进一出都在同一个高度上。 */
 .detail-back {
 	appearance: none;
 	flex: none;
 	display: inline-flex;
 	align-items: center;
 	gap: 4px;
-	align-self: flex-start;
-	margin: 10px 0 -6px 14px;
+	margin: 0 0 0 -4px;
 	padding: 4px 8px 4px 5px;
 	border: 0;
 	border-radius: var(--r-control);
@@ -882,16 +1003,87 @@
 	display: flex;
 	flex-direction: column;
 	gap: 18px;
-	padding: 20px 22px 24px;
+	padding: 18px 22px 24px;
 	overflow: auto;
 	overscroll-behavior: contain;
 }
 
-.detail-head {
-	display: grid;
-	grid-template-columns: 56px minmax(0, 1fr) auto;
-	column-gap: 14px;
+/* 身份卡：这一栏讲的是「谁」，三个 tab 都挂在它下面。
+   卡里只有后端真有的东西 —— 状态、成员数、管理员。 */
+.detail-card {
+	flex: none;
+	display: flex;
+	flex-direction: column;
 	align-items: center;
+	gap: 14px;
+	margin: 14px 16px 0;
+	padding: 20px 18px 16px;
+	border: 0.5px solid var(--line);
+	border-radius: 16px;
+	/* 和栏底同色，靠那道线立起来：深色下 --ground 比 --frame 更暗，填上会变成「凹槽」。 */
+	background: var(--frame);
+	text-align: center;
+}
+
+.detail-card .detail-ident {
+	align-items: center;
+}
+
+/* 数字那一行：几列等宽，上面标签下面值。 */
+.detail-card-stats {
+	display: grid;
+	grid-auto-flow: column;
+	grid-auto-columns: minmax(0, 1fr);
+	width: 100%;
+	margin-top: 2px;
+	padding-top: 16px;
+	border-top: 1px solid var(--line);
+}
+
+.detail-card .detail-tag:first-child {
+	background: var(--accent-wash);
+	color: var(--accent);
+}
+
+.detail-stat {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	align-items: center;
+	min-width: 0;
+}
+
+/* 只有一项时不做「标签在上、值在下」—— 一列堆叠会把卡片撑得很空，改成同一行。 */
+.detail-card-stats[data-count="1"] .detail-stat {
+	flex-direction: row;
+	gap: 8px;
+	align-items: baseline;
+	justify-content: center;
+}
+
+.detail-stat-k {
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.detail-stat-v {
+	max-width: 100%;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 15px;
+	line-height: 22px;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+/* tab 条：卡片下面、内容上面的一根横条，选中项靠底边那道 --accent 下划线说话。 */
+.detail-tabs {
+	flex: none;
+	margin-top: 14px;
+	padding: 0 22px;
+	border-bottom: 0.5px solid var(--line);
 }
 
 .detail-av {
@@ -909,8 +1101,8 @@
 .detail-name {
 	margin: 0;
 	font-size: 22px;
-	line-height: 28px;
-	font-weight: 600;
+	line-height: 30px;
+	font-weight: 700;
 	color: var(--ink);
 }
 
@@ -922,11 +1114,11 @@
 }
 
 .detail-tag {
-	padding: 1px 8px;
+	padding: 3px 10px;
 	border-radius: 999px;
 	background: var(--active);
-	font-size: 12px;
-	line-height: 18px;
+	font-size: 13px;
+	line-height: 20px;
 	color: var(--ink-2);
 }
 
@@ -942,25 +1134,32 @@
 .detail-sec {
 	display: flex;
 	flex-direction: column;
-	gap: 8px;
+	gap: 12px;
 	padding-top: 16px;
-	border-top: 1px solid var(--line);
 }
 
 .detail-sec-head {
-	margin: 0;
-	font-size: 12px;
-	line-height: 16px;
+	margin: 6px 0 0;
+	font-size: 13px;
+	line-height: 18px;
 	font-weight: 500;
 	letter-spacing: 0.02em;
 	color: var(--ink-3);
 }
 
+.detail-count {
+	margin-left: 2px;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--ink-2);
+	font-variant-numeric: tabular-nums;
+}
+
 .detail-field {
 	display: flex;
 	gap: 12px;
-	font-size: 13px;
-	line-height: 20px;
+	font-size: 15px;
+	line-height: 24px;
 }
 
 .detail-k {
@@ -974,50 +1173,101 @@
 	min-width: 0;
 }
 
-.detail-chips {
-	display: flex;
-	flex-wrap: wrap;
+/* 频道列表：一行「头像 + 名字」，和「汇报给」同一种读法。
+   比胶囊多一样东西 —— 头像，所以一眼能认出是哪个频道，不用读字。 */
+/* 两列网格：一个群里通常就两三个频道，一行一个会把半栏拖成三行。 */
+.detail-channels {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 	gap: 6px;
 }
 
-.detail-chip {
-	padding: 3px 10px;
-	border: 1px solid var(--line);
-	border-radius: 999px;
+.detail-channel {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	width: 100%;
+	padding: 6px 8px;
+	border: 0;
+	border-radius: 10px;
 	background: transparent;
 	font: inherit;
-	font-size: 12px;
-	line-height: 18px;
-	color: var(--ink-2);
+	font-size: 15px;
+	line-height: 22px;
+	color: var(--ink);
+	text-align: left;
 	cursor: pointer;
+	transition: background-color 120ms ease;
 }
 
-.detail-chip:hover {
+.detail-channel:hover {
 	background: var(--hover);
+}
+
+/* 半个栏宽装不下长频道名：单行省略，名字让位给头像。 */
+.detail-channel-name {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+/* 群频道的头像位：没有「一个人的脸」可画，就画一个中性的群组图标。 */
+.detail-tile {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	border-radius: 9px;
+	background: var(--active);
+	color: var(--ink-2);
+}
+
+/* 「汇报给」那一行：小头像 + 名字，和成员列表同一种读法。 */
+.detail-report {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.detail-report-name {
+	font-size: 15px;
+	line-height: 22px;
 	color: var(--ink);
 }
 
 /* 提示词可以很长，收在一个可滚的框里。底部做一道渐隐 —— macOS 的滚动条是浮层，
    不碰鼠标不出现，被切断的那行看起来像排版坏了（记忆面板踩过同一个坑）。 */
 .detail-doc {
-	max-height: 260px;
+	max-height: 320px;
 	overflow: auto;
 	overscroll-behavior: contain;
 	scrollbar-width: thin;
 	mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
-	padding: 12px 14px;
+	padding: 16px;
 	border: 1px solid var(--line);
-	border-radius: 10px;
+	border-radius: 14px;
 	background: var(--ground);
-	font-size: 13px;
-	line-height: 21px;
+	font-size: 15px;
+	line-height: 26px;
 }
 
-.detail-skills,
-.detail-people {
+.detail-skills {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+/* 成员是「谁在这个频道」，两列才一眼扫完；一列一人会把三行拖成六个标签的长度。 */
+.detail-people {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 4px;
 	margin: 0;
 	padding: 0;
 	list-style: none;
@@ -1055,9 +1305,11 @@
 	color: var(--ink-3);
 }
 
+/* 两列里每格只有 120 上下：名字和身份上下排，横排一定会溢出。 */
 .detail-person-btn {
-	display: flex;
-	gap: 10px;
+	display: grid;
+	grid-template-columns: var(--av-md) minmax(0, 1fr);
+	column-gap: 8px;
 	align-items: center;
 	width: 100%;
 	padding: 6px 8px;
@@ -1068,6 +1320,20 @@
 	text-align: left;
 	cursor: pointer;
 	color: var(--ink);
+}
+
+.detail-person-btn .detail-av {
+	grid-row: 1 / span 2;
+	grid-column: 1;
+}
+
+.detail-person-btn .detail-person-name,
+.detail-person-btn .detail-person-title {
+	grid-column: 2;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 }
 
 .detail-person-btn:hover {
@@ -1166,7 +1432,7 @@
 }
 
 .settings-panel {
-	width: min(400px, calc(100vw - 32px));
+	width: min(520px, calc(100vw - 32px));
 	background: var(--field);
 	border: 0.5px solid var(--line);
 	border-radius: var(--r-sheet);
@@ -1198,7 +1464,7 @@
 }
 
 .settings-section {
-	padding: 16px;
+	padding: 20px;
 }
 
 .settings-section + .settings-section {
@@ -1207,8 +1473,8 @@
 
 .settings-section h3 {
 	margin: 0 0 10px;
-	font-size: 12px;
-	line-height: 16px;
+	font-size: 13px;
+	line-height: 18px;
 	font-weight: 500;
 	letter-spacing: 0.02em;
 	color: var(--ink-3);
@@ -1235,9 +1501,9 @@
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 6px;
-	min-height: 68px;
-	padding: 10px 8px;
+	gap: 8px;
+	min-height: 84px;
+	padding: 12px 10px;
 	border: 0.5px solid var(--line);
 	border-radius: var(--r-row);
 	background: var(--ground);
@@ -1318,15 +1584,6 @@
 	color: var(--ink-3);
 }
 
-@keyframes veil-in {
-	from {
-		opacity: 0;
-	}
-	to {
-		opacity: 1;
-	}
-}
-
 @keyframes sheet-in {
 	from {
 		opacity: 0;
@@ -1366,15 +1623,19 @@
 
 .rail-tab {
 	appearance: none;
+	position: relative;
 	border: 0;
 	background: transparent;
-	padding: 5px 10px;
+	padding: 8px 10px;
 	border-radius: var(--r-control);
 	color: var(--ink-3);
 	font: inherit;
-	font-size: 13px;
-	line-height: 20px;
+	font-size: 15px;
+	line-height: 22px;
 	cursor: pointer;
+	transition:
+		color 120ms ease,
+		background-color 120ms ease;
 }
 
 .rail-tab:hover {
@@ -1382,14 +1643,36 @@
 	color: var(--ink-2);
 }
 
+/* 选中态是一道 1.5px 的下划线，不是填满的胶囊：三个 tab 是同一根横条上的三段字，
+   填充色会把「这里可以点」和「这里是选中」混成同一种声音。 */
 .rail-tab[aria-selected="true"] {
-	background: var(--hover);
 	color: var(--ink);
 	font-weight: 500;
 }
 
+.rail-tab[aria-selected="true"]::after {
+	content: "";
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: -0.5px;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--accent);
+}
+
 .rail-view {
-	gap: 0;
+	gap: 8px;
+	animation: rail-in 160ms ease both;
+}
+
+@keyframes rail-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
 }
 
 .rail-head {
@@ -1429,35 +1712,21 @@
 .rail-who-caret {
 	position: absolute;
 	right: 6px;
+	display: grid;
+	place-items: center;
 	pointer-events: none;
-	font-size: 12px;
-	line-height: 12px;
-	color: var(--ink-3);
-}
-
-.rail-count {
-	margin-left: auto;
-	font-family: var(--mono);
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
-	font-variant-numeric: tabular-nums;
-}
-
-.rail-group {
-	margin: 14px 0 4px;
-	font-size: 11px;
-	line-height: 14px;
 	color: var(--ink-3);
 }
 
 .rail-skill {
-	padding: 8px 6px;
-	border-radius: var(--r-control);
+	padding: 10px 12px;
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-row);
+	background: var(--field);
 }
 
 .rail-skill:hover {
-	background: var(--run-line);
+	border-color: var(--control);
 }
 
 .rail-skill-head {
@@ -1478,14 +1747,6 @@
 	font-size: 13px;
 	line-height: 20px;
 	font-weight: 500;
-}
-
-.rail-scope {
-	margin-left: auto;
-	flex: none;
-	font-size: 11px;
-	line-height: 14px;
-	color: var(--ink-3);
 }
 
 .rail-skill-desc {
@@ -1519,8 +1780,10 @@
 }
 
 .rail-memo {
-	padding: 10px 6px;
-	border-bottom: 1px solid var(--rule);
+	padding: 10px 12px;
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-row);
+	background: var(--field);
 }
 
 .rail-memo-head {

@@ -31,6 +31,7 @@ export function App(): JSX.Element {
 	const workspaceName = useStore((state) => state.workspaceName);
 	const channels = useStore((state) => state.channels);
 	const detail = useStore((state) => state.detail);
+	const people = useStore((state) => state.people);
 	const side = useStore((state) => state.side);
 	const theme = useStore((state) => state.theme);
 	const right = useStore((state) => state.right);
@@ -117,7 +118,13 @@ export function App(): JSX.Element {
 
 	const channel = detail?.channel ?? null;
 	const members = detail?.members ?? [];
-	const sub = channel === null ? "" : headSub(channel.kind, channel.team, channel.leadLabel, members.length);
+	// 私聊的副标题是他本人的职务（频道标题就是他的显示名）；群聊仍然是团队 / 管理员 / 人数。
+	const peerTitle =
+		channel === null || channel.kind !== "dm"
+			? ""
+			: (people.find((person) => person.label === channel.title)?.title ?? "");
+	const sub =
+		peerTitle !== "" ? peerTitle : channel === null ? "" : headSub(channel.kind, channel.leadLabel, members.length);
 	const running = [...presence.values()].some((entry) => entry.state === "thinking" || entry.state === "working");
 
 	return (
@@ -172,34 +179,6 @@ export function App(): JSX.Element {
 					<button
 						type="button"
 						className="icon-btn"
-						id="team-btn"
-						aria-label="团队"
-						title="团队"
-						onClick={() => setTeam(true)}
-					>
-						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-							<circle cx="9" cy="8" r="3.2" />
-							<path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
-							<path d="M16 5.5a3.2 3.2 0 0 1 0 6" />
-							<path d="M17.5 13.6A5 5 0 0 1 21 18.5" />
-						</svg>
-					</button>
-					<button
-						type="button"
-						className="icon-btn"
-						id="settings-btn"
-						aria-label="设置"
-						title="设置"
-						onClick={() => setSettings(true)}
-					>
-						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-							<circle cx="12" cy="12" r="3" />
-							<path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-2.9-1.2l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.11a1.7 1.7 0 0 0 1.2-2.9l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 2.9 1.2l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49.96z" />
-						</svg>
-					</button>
-					<button
-						type="button"
-						className="icon-btn"
 						id="detail-btn"
 						aria-label="详情"
 						title="详情"
@@ -245,9 +224,10 @@ export function App(): JSX.Element {
 	);
 }
 
-/** 顶栏副标题：私聊只写名字（和谁），群聊才补充团队/管理员/人数。 */
-function headSub(kind: ChannelKind, team: string | undefined, leadLabel: string | undefined, count: number): string {
+/** 顶栏副标题：私聊只写名字（和谁），群聊才补充管理员/人数。 */
+function headSub(kind: ChannelKind, leadLabel: string | undefined, count: number): string {
 	if (kind === "dm") return "";
-	const bits = [team, leadLabel === undefined ? undefined : `团队管理员 ${leadLabel}`, `${String(count)} 人`];
+	// 不带团队 slug：「xiaokonglong」是目录名，不是给人看的字；标题已经写着团队名。
+	const bits = [leadLabel === undefined ? undefined : `团队管理员 ${leadLabel}`, `${String(count)} 人`];
 	return bits.filter((bit) => bit !== undefined && bit !== "").join(" · ");
 }

@@ -8,7 +8,7 @@
 
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
-import { openChannel, openWithPerson, setSide } from "../state/store.ts";
+import { openChannel, openWithPerson, setSettings, setSide, setTeam } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Actor, Channel } from "../api/types.ts";
 
@@ -73,6 +73,39 @@ export function Sidebar(): JSX.Element {
 					/>
 				))}
 			</div>
+			{/* 团队与设置放在列表脚下：那是「管理」，不是随手要做的事。 */}
+			<div className="side-foot">
+				<button
+					type="button"
+					className="side-action"
+					id="team-btn"
+					aria-label="团队管理"
+					title="团队管理"
+					onClick={() => setTeam(true)}
+				>
+					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+						<circle cx="9" cy="8" r="3.2" />
+						<path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
+						<path d="M16 5.5a3.2 3.2 0 0 1 0 6" />
+						<path d="M17.5 13.6A5 5 0 0 1 21 18.5" />
+					</svg>
+					团队管理
+				</button>
+				<button
+					type="button"
+					className="side-action"
+					id="settings-btn"
+					aria-label="偏好设置"
+					title="偏好设置"
+					onClick={() => setSettings(true)}
+				>
+					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+						<circle cx="12" cy="12" r="3" />
+						<path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-2.9-1.2l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.11a1.7 1.7 0 0 0 1.2-2.9l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 2.9 1.2l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49.96z" />
+					</svg>
+					偏好设置
+				</button>
+			</div>
 		</aside>
 	);
 }
@@ -99,7 +132,7 @@ function AssistantRow(props: { person: Actor; state: string; onOpen: () => void 
 			<span
 				className="ch-av"
 				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: person.slug, name: person.label, size: 24, state: avatarState(state) }),
+					__html: avatarSvg({ slug: person.slug, name: person.label, size: 36, state: avatarState(state) }),
 				}}
 			/>
 			<span className="ch-main">
@@ -109,10 +142,7 @@ function AssistantRow(props: { person: Actor; state: string; onOpen: () => void 
 						{stateLabel(state)}
 					</span>
 				</span>
-				<span className="ch-sub">
-					<span className="ch-time" />
-					<span className="ch-preview">{person.title}</span>
-				</span>
+				<span className="ch-sub">{person.title}</span>
 			</span>
 		</button>
 	);
@@ -151,15 +181,16 @@ function ChannelRow(props: {
 						person === undefined
 							? groupAvatar({
 									people: groupPeopleOf(channel, props.bySlug),
-									size: 24,
+									size: 36,
 									state: "idle",
 								})
-							: avatarSvg({ slug: person.slug, name: person.label, size: 24, state: avatarState(state) }),
+							: avatarSvg({ slug: person.slug, name: person.label, size: 36, state: avatarState(state) }),
 				}}
 			/>
 			<span className="ch-main">
 				<span className="ch-top">
 					<span className="ch-title">{title}</span>
+					{channel.team === undefined ? null : <span className="ch-tag">团队</span>}
 					{person === undefined ? null : (
 						<span className="ch-state" data-state={state}>
 							{stateLabel(state)}
@@ -170,11 +201,9 @@ function ChannelRow(props: {
 							{badge}
 						</span>
 					) : null}
-				</span>
-				<span className="ch-sub">
 					<span className="ch-time">{channel.lastAt === 0 ? "" : relTime(channel.lastAt)}</span>
-					<span className="ch-preview">{channel.preview}</span>
 				</span>
+				<span className="ch-sub">{channel.preview}</span>
 			</span>
 		</button>
 	);

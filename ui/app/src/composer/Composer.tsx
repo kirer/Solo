@@ -32,6 +32,8 @@ type Candidate = { id: number; label: string; slug: string; title: string };
 export function Composer(props: { toast: (text: string, tone?: "info" | "error") => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const reply = useStore((state) => state.reply);
+	// 私聊里没有「提谁」：对面只有一个人，`@` 只会变成一段多余的字。
+	const isDm = useStore((state) => state.channels.find((channel) => channel.id === state.currentId)?.kind === "dm");
 
 	const [text, setText] = useState("");
 	const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -224,12 +226,16 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 		const value = event.target.value;
 		const caret = event.target.selectionStart ?? value.length;
 		setText(value);
+		if (isDm) {
+			setMention(null);
+			return;
+		}
 		const before = value.slice(0, caret);
 		// 词首的 `@` 就弹：行首、空白、标点都算；中文不写空格也认（`麻烦@林越`）。
 		const found = /(?:^|[^\p{L}\p{N}._-])@([\p{L}\p{N}._-]*)$/u.exec(before);
 		if (found === null) setMention(null);
 		else setMention({ at: before.length - found[1]!.length - 1, query: found[1]! });
-	}, []);
+	}, [isDm]);
 
 	const hint = useMemo(() => {
 		if (reply !== null) return "";
@@ -241,8 +247,10 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 	const placeholder = useMemo(() => {
 		if (hint !== "") return hint;
 		const narrow = typeof window !== "undefined" && window.matchMedia("(max-width: 620px)").matches;
-		return narrow ? "发消息…" : "发消息…（@ 提人，Enter 发送，Shift+Enter 换行）";
-	}, [hint]);
+		if (narrow) return "发消息…";
+		// 私聊不写「@ 提人」：这里提不到别人。
+		return isDm ? "发消息…（Enter 发送，Shift+Enter 换行）" : "发消息…（@ 提人，Enter 发送，Shift+Enter 换行）";
+	}, [hint, isDm]);
 
 	return (
 		<form

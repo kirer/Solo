@@ -217,7 +217,18 @@ export async function openChannel(id: string | null): Promise<void> {
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
-	patch({ currentId: id, detail: null, hasMore: false, reply: null, needMenu: false, turns: new Map(), work: [] });
+	// 人物案不属于任何一个频道：换频道就退回栈底，否则右栏会停在上一个人的档案上。
+	patch({
+		currentId: id,
+		detail: null,
+		hasMore: false,
+		reply: null,
+		needMenu: false,
+		turns: new Map(),
+		work: [],
+		person: null,
+		trail: [{ kind: "channel" }],
+	});
 	const done = mark("channel:open");
 	const detail = await getChannel(id);
 	done();

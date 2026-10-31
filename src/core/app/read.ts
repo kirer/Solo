@@ -155,8 +155,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	 * 一屏十几轮，每轮八步，一次全带会把响应撑到几百 KB。
 	 */
 	async function readTurns(id: string, from: number, to: number, withSteps = false): Promise<{ turns: ViewTurn[] }> {
-		const turns = await turnsOf(id, from, to);
-		return { turns: withSteps ? turns : turns.map(withoutSteps) };
+		return { turns: folded(await turnsOf(id, from, to), withSteps) };
 	}
 
 	/** 一轮的完整轨迹（带步骤）。找不到（没被叫醒 / 条目已被压缩）就是 `null`。 */
@@ -173,8 +172,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	 * 「这轮发生在哪个频道」。
 	 */
 	async function readPersonTurns(slug: string, from: number, to: number, withSteps = false): Promise<{ turns: ViewTurn[] }> {
-		const turns = await turnsOf(undefined, from, to, slug);
-		return { turns: withSteps ? turns : turns.map(withoutSteps) };
+		return { turns: folded(await turnsOf(undefined, from, to, slug), withSteps) };
 	}
 
 	/**
@@ -223,10 +221,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				// 会话已回收 / 进程刚重启：这一轮就是看不到，不是错误。
 				continue;
 			}
-			const groups =
-				channelId === undefined
-					? groupsOfPerson(view.entries, from, to)
-					: groupsOf(view.entries, channelId, from, to).map((group) => ({ ...group, channelId }));
+			const groups = groupsOf(view.entries, from, to, channelId);
 			const running = groups.length > 0 ? (await liveOf(conversationId)) !== undefined : false;
 			/** 同一个频道里，这一组之后的那一组的 seq：回话只可能落在这之间。 */
 			const nextSeqIn = (id: string, seq: number): number => {
@@ -293,6 +288,11 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	};
 }
 
+/** 折叠态只要摘要：一屏十几轮，每轮八步，一次全带会把响应撑到几百 KB。 */
+function folded(turns: ViewTurn[], withSteps: boolean): ViewTurn[] {
+	return withSteps ? turns : turns.map(withoutSteps);
+}
+
 /** 一轮在条目数组里的位置：触发条目下标 → 下一条 `core.channel` 之前。 */
 type Group = { readonly seq: number; readonly start: number; readonly end: number };
 
@@ -301,13 +301,16 @@ type Group = { readonly seq: number; readonly start: number; readonly end: numbe
  *
  * 遇到**任何** `core.channel` 都收口 —— 他在团队频道干活时我私聊插一句，是新一轮，
  * 轨迹另起一块；两轮的条目不能混进同一个块。
- */
-/**
- * 同一个人**跨频道**的切轮：每条 `core.channel` 都收口并开新组，不按频道过滤。
  *
- * 组里带上它发生在哪个频道 —— 私聊页要写「这轮在团队频道」。
+ * `channelId` 不给就切这个人**所有频道**的轮次（私聊页的工作记录），每组自带它发生在
+ * 哪个频道；给了就只看那个频道。
  */
-export function groupsOfPerson(entries: readonly EntryRecord[], from: number, to: number): (Group & { readonly channelId: string })[] {
+export function groupsOf(
+	entries: readonly EntryRecord[],
+	from: number,
+	to: number,
+	channelId?: string,
+): (Group & { readonly channelId: string })[] {
 	const groups: (Group & { readonly channelId: string })[] = [];
 	let current: { seq: number; start: number; end: number; channelId: string } | undefined;
 	for (const [index, entry] of entries.entries()) {
@@ -318,30 +321,12 @@ export function groupsOfPerson(entries: readonly EntryRecord[], from: number, to
 			current = undefined;
 		}
 		const data = entry.data as Record<string, unknown> | undefined;
-		const channelId = typeof data?.["channelId"] === "string" ? data["channelId"] : undefined;
+		const at = typeof data?.["channelId"] === "string" ? data["channelId"] : undefined;
 		const seq = typeof data?.["seq"] === "number" ? data["seq"] : undefined;
-		if (channelId === undefined || seq === undefined || seq < from || seq > to) continue;
-		current = { seq, start: index, end: entries.length, channelId };
-	}
-	if (current !== undefined) groups.push(current);
-	return groups;
-}
-
-export function groupsOf(entries: readonly EntryRecord[], channelId: string, from: number, to: number): Group[] {
-	const groups: Group[] = [];
-	let current: { seq: number; start: number; end: number } | undefined;
-	for (const [index, entry] of entries.entries()) {
-		if (entry.kind !== "core.channel") continue;
-		if (current !== undefined) {
-			current.end = index;
-			groups.push(current);
-			current = undefined;
-		}
-		const data = entry.data as Record<string, unknown> | undefined;
-		if (data?.["channelId"] !== channelId) continue;
-		const seq = typeof data["seq"] === "number" ? data["seq"] : undefined;
-		if (seq === undefined || seq < from || seq > to) continue;
-		current = { seq, start: index, end: entries.length };
+		if (at === undefined || seq === undefined) continue;
+		if (channelId !== undefined && at !== channelId) continue;
+		if (seq < from || seq > to) continue;
+		current = { seq, start: index, end: entries.length, channelId: at };
 	}
 	if (current !== undefined) groups.push(current);
 	return groups;
