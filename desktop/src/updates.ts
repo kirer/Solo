@@ -1,20 +1,27 @@
 /**
- * 升级：`electron-updater` + 自建更新源（`scripts/update-server.ts` 发的那个静态目录）。
+ * 升级：自己拉清单、自己验签、自己装（ADR-029）。
+ *
+ * 为什么不用 `electron-updater`：macOS 那条路是 Squirrel.Mac，换包前要求新旧 `.app`
+ * 同一个 Developer ID 身份 —— 未签名构建的「重启安装」必然失败。Sparkle / Tauri 和
+ * 大多数开源桌面应用走的是另一条：清单用项目自己的密钥签名，包用 zip，进程外替换。
+ * 两个平台同一条路线，只有替换脚本不同（`install.ts`）。
  *
  * 几条刻意的选择：
  * - **不后台下载**：自动检查只查、不下载、不弹窗；下载和安装各要一次明确点击。
  * - **不自动装**：安装要先把后端停干净（它占着 sqlite，还在跑后台命令），所以走
  *   `beforeInstall` 回调，由 `main.ts` 负责收尾顺序。
- * - **macOS 未签名不装**：Squirrel.Mac 换包前会核对新旧 `.app` 的签名身份，没有 Developer ID
- *   证书必然失败。探测到没签名就只提示、给下载地址 —— 让「重启安装」点下去变成应用直接退出
- *   是最糟的结果。
+ * - **验签在解包之前**：清单签名不过就完全不碰这个版本；包再对一遍 sha512。
  */
-import { execFile } from "node:child_process";
-import { app, dialog, shell, type BrowserWindow, type MessageBoxOptions } from "electron";
-import electronUpdater from "electron-updater";
-import { resolveFeedUrl } from "./feed.ts";
-
-const { autoUpdater } = electronUpdater;
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { app, dialog, type BrowserWindow, type MessageBoxOptions } from "electron";
+import { feedUrl } from "./feed.ts";
+import { scheduleInstall } from "./install.ts";
+import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
+import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
 
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 const FIRST_CHECK_DELAY = 30_000;
@@ -27,131 +34,151 @@ export type UpdaterOptions = {
 };
 
 export type Updater = {
-	/** 启动后自动检查（静默：只在有新版本时问）。 */
 	start: () => void;
-	/** 菜单里点「检查更新…」：连「已是最新」「出错」也要说出来。 */
 	checkNow: () => void;
 };
 
-/** 打包后的 macOS 应用是不是 Developer ID 签过名（没签名就装不了更新）。 */
-function canInstallOnThisBuild(): Promise<boolean> {
-	if (process.platform !== "darwin") return Promise.resolve(true);
-	return new Promise((resolve) => {
-		execFile("codesign", ["-dv", "--verbose=2", app.getPath("exe")], (_error, _stdout, stderr) =>
-			resolve(stderr.includes("Authority=Developer ID Application")),
-		);
+const manifestName = (): string => (process.platform === "darwin" ? "latest-mac.json" : "latest-win.json");
+
+async function fetchText(url: string): Promise<string> {
+	const response = await fetch(url);
+	if (!response.ok) throw new Error(`${response.status} ${response.statusText}（${url}）`);
+	return response.text();
+}
+
+/** 下到临时目录，边下边报进度，下完核对 sha512。 */
+async function download(url: string, sha512: string, onProgress: (ratio: number) => void): Promise<string> {
+	const response = await fetch(url);
+	if (!response.ok || response.body === null) throw new Error(`下载失败：${response.status} ${response.statusText}`);
+	const total = Number(response.headers.get("content-length") ?? 0);
+	const dir = await mkdtemp(join(tmpdir(), "solo-update-"));
+	const path = join(dir, "update.zip");
+	const hash = createHash("sha512");
+	const out = createWriteStream(path);
+	let received = 0;
+	for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
+		hash.update(chunk);
+		received += chunk.byteLength;
+		if (!out.write(chunk)) await new Promise<void>((done) => out.once("drain", () => done()));
+		if (total > 0) onProgress(received / total);
+	}
+	await new Promise<void>((done, fail) => {
+		out.once("error", fail);
+		out.end(() => done());
 	});
+	if (hash.digest("base64") !== sha512) {
+		await rm(dir, { recursive: true, force: true });
+		throw new Error("校验失败：下载的包和清单里的 sha512 对不上");
+	}
+	return path;
 }
 
 export function createUpdater(options: UpdaterOptions): Updater {
+	const feed = feedUrl();
 	let manual = false;
-	let timer: ReturnType<typeof setInterval> | undefined;
-	let installable: boolean | undefined;
+	let busy = false;
 
 	const notify = (body: MessageBoxOptions): Promise<number> => {
 		const win = options.window();
-		const shown = win === undefined ? dialog.showMessageBox(body) : dialog.showMessageBox(win, body);
-		return shown.then((result) => result.response);
+		return (win === undefined ? dialog.showMessageBox(body) : dialog.showMessageBox(win, body)).then(
+			(result) => result.response,
+		);
 	};
 
-	autoUpdater.autoDownload = false;
-	autoUpdater.autoInstallOnAppQuit = false;
-	autoUpdater.allowDowngrade = false;
-	autoUpdater.allowPrerelease = false;
+	const installDir = (): string => {
+		const exe = app.getPath("exe");
+		return process.platform === "darwin" ? resolve(exe, "../../..") : dirname(exe);
+	};
 
-	// 运行时用环境变量换更新源：验证本地假 feed 时不必重新打包。
-	const feed = resolveFeedUrl(process.env["SOLO_UPDATE_URL"]);
-	if (feed !== undefined) autoUpdater.setFeedURL({ provider: "generic", url: feed });
-
-	autoUpdater.on("update-available", (info) => {
-		console.log(`[update] 有新版本 ${info.version}（当前 ${app.getVersion()}）`);
-		void (async () => {
+	const check = async (): Promise<void> => {
+		if (busy) return;
+		busy = true;
+		try {
+			if (feed === undefined) throw new Error("更新源地址无效（要 https，本机测试可以用 http://127.0.0.1）");
+			const base = feed.endsWith("/") ? feed : `${feed}/`;
+			const text = await fetchText(`${base}${manifestName()}`);
+			const signature = await fetchText(`${base}${manifestName()}.sig`);
+			if (!verifyManifest(UPDATE_PUBLIC_KEY, text, signature)) throw new Error("清单签名不对：不是用发布密钥签的");
+			const manifest = parseManifest(text);
+			if (manifest === undefined) throw new Error("清单格式不对");
+			const file = fileFor(manifest, process.platform);
+			if (file === undefined) throw new Error(`清单里没有 ${process.platform} 的包`);
+			if (!isNewer(manifest.version, app.getVersion())) {
+				console.log(`[update] 已是最新（${app.getVersion()}）`);
+				if (manual) void notify({ type: "info", message: "已经是最新版本", detail: `当前 ${app.getVersion()}。` });
+				return;
+			}
+			console.log(`[update] 有新版本 ${manifest.version}（当前 ${app.getVersion()}）`);
 			const answered = await notify({
 				type: "info",
-				message: `有新版本 ${info.version}`,
-				detail: `当前是 ${app.getVersion()}。现在下载吗？下载完会再问你一次要不要重启安装。`,
+				message: `有新版本 ${manifest.version}`,
+				detail: `当前是 ${app.getVersion()}。现在下载吗？下载完会再问一次要不要重启安装。`,
 				buttons: ["下载", "稍后"],
 				defaultId: 0,
 				cancelId: 1,
 			});
 			if (answered !== 0) return;
-			await autoUpdater.downloadUpdate();
-		})();
-	});
-
-	autoUpdater.on("download-progress", (progress) => {
-		options.window()?.setProgressBar(Math.max(0, Math.min(1, progress.percent / 100)));
-	});
-
-	autoUpdater.on("update-downloaded", (info) => {
-		void (async () => {
+			const zip = await download(`${base}${file.file}`, file.sha512, (ratio) =>
+				options.window()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
+			);
 			options.window()?.setProgressBar(-1);
-			installable ??= await canInstallOnThisBuild();
-			if (!installable) {
-				// 未签名：装不上。给下载地址，别让用户点了「重启安装」然后看着应用消失。
-				const answered = await notify({
-					type: "warning",
-					message: `新版本 ${info.version} 已下载，但这个构建不能自动安装`,
-					detail: "macOS 只允许同一签名身份的新版本原地替换。去下载页拿新的安装包，拖进「应用程序」覆盖即可。",
-					buttons: ["打开下载页", "稍后"],
-					defaultId: 0,
-					cancelId: 1,
-				});
-				if (answered === 0 && feed !== undefined) await shell.openExternal(feed);
-				return;
-			}
-			const answered = await notify({
+			const install = await notify({
 				type: "info",
-				message: `新版本 ${info.version} 已就绪`,
+				message: `新版本 ${manifest.version} 已下载`,
 				detail: "重启后安装。这期间会先停掉后台（正在跑的事会中断）。",
 				buttons: ["立即重启安装", "稍后"],
 				defaultId: 0,
 				cancelId: 1,
 			});
-			if (answered !== 0) return;
+			if (install !== 0) return;
 			await options.beforeInstall();
-			autoUpdater.quitAndInstall(false, true);
-		})();
-	});
-
-	autoUpdater.on("update-not-available", () => {
-		console.log(`[update] 已是最新（${app.getVersion()}）`);
-		if (!manual) return;
-		manual = false;
-		void notify({ type: "info", message: "已经是最新版本", detail: `当前 ${app.getVersion()}。` });
-	});
-
-	autoUpdater.on("error", (error) => {
-		console.warn(`[update] ${error.message}`);
-		if (!manual) return;
-		manual = false;
-		const feed = resolveFeedUrl(process.env["SOLO_UPDATE_URL"]);
-		void notify({
-			type: "warning",
-			message: "检查更新失败",
-			detail: `${error.message}${feed === undefined ? "" : `\n更新源：${feed}`}`,
-			buttons: ["知道了"],
-		});
-	});
-
-	const check = (): void => {
-		if (!app.isPackaged) {
-			if (manual) void notify({ type: "info", message: "开发态不检查更新", detail: "打包后（desktop:dist:mac）才会。" });
+			const exe = app.getPath("exe");
+			scheduleInstall({
+				pid: process.pid,
+				appPath: installDir(),
+				appDir: installDir(),
+				zipPath: zip,
+				exePath: exe,
+			});
+			app.quit();
+		} catch (error) {
+			console.warn(`[update] ${(error as Error).message}`);
+			if (!manual) return;
+			void notify({
+				type: "warning",
+				message: "检查更新失败",
+				detail: `${(error as Error).message}${feed === undefined ? "" : `\n更新源：${feed}`}`,
+				buttons: ["知道了"],
+			});
+		} finally {
 			manual = false;
+			busy = false;
+		}
+	};
+
+	const guarded = (): void => {
+		if (!app.isPackaged) {
+			if (manual) {
+				void notify({ type: "info", message: "开发态不检查更新", detail: "打包后（desktop:dist:mac）才会。" });
+				manual = false;
+			}
 			return;
 		}
-		void autoUpdater.checkForUpdates().catch(() => undefined);
+		void check();
 	};
 
 	return {
 		start: () => {
-			setTimeout(check, FIRST_CHECK_DELAY).unref();
-			timer = setInterval(check, CHECK_INTERVAL);
-			timer.unref();
+			setTimeout(guarded, FIRST_CHECK_DELAY).unref();
+			setInterval(guarded, CHECK_INTERVAL).unref();
 		},
 		checkNow: () => {
 			manual = true;
-			check();
+			if (app.isPackaged) {
+				void check();
+				return;
+			}
+			guarded();
 		},
 	};
 }

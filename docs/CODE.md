@@ -23,9 +23,10 @@ src/core/
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（全员层）/
                   `plugins/`（示范插件）/ `agents/assistant/`（助理身份 + 个人技能）
-scripts/          七个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
+scripts/          九个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
                   （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表、
-                  自建更新源（update-server，只读静态目录）；真模型共用等待器/证据在 live-support.ts
+                  自建更新源（update-server，只读静态目录）、更新密钥（update-key，跑一次）、
+                  更新清单 + 签名（update-manifest）；真模型共用等待器/证据在 live-support.ts
 ```
 
 **五个层，依赖只能朝一个方向**：
@@ -194,8 +195,11 @@ shell = 装配层，唯一可以同时 import 全部
 | `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS `hiddenInset` 标题栏）、外链交给系统浏览器、退出前先停后端、更新与菜单接线 |
 | `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/core/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
 | `desktop/src/ready-line.ts` | `parseReadyLine`：从 `[core] http://127.0.0.1:<port>/` 认端口（**唯一**的壳 ↔ 内核契约） |
-| `desktop/src/updates.ts` | `electron-updater` 接线：静默检查（启动 30 秒后 + 每 6 小时）、下载与安装各要一次点击、安装前 `beforeInstall` 停后端；macOS 先探签名，没签名只提示下载 |
-| `desktop/src/feed.ts` | `resolveFeedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
+| `desktop/src/updates.ts` | 更新流程（ADR-029）：拉清单 → 验签 → 比版本 → 下载（进度条 + sha512）→ 各要一次点击 → `beforeInstall` 停后端 → 进程外替换 → 自动退出 |
+| `desktop/src/manifest.ts` | 清单的纯函数：`parseManifest` / `verifyManifest`（Ed25519）/ `isNewer` / `fileFor` |
+| `desktop/src/install.ts` | 进程外安装脚本：macOS `sh` + `ditto`，Windows PowerShell `Expand-Archive` + `robocopy /MIR`；失败把旧包挪回来 |
+| `desktop/src/update-key.ts` | 更新公钥（`npm run update:key` 生成；私钥不在仓库） |
+| `desktop/src/feed.ts` | `DEFAULT_FEED_URL` + `resolveFeedUrl` / `feedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
 | `desktop/src/menu.ts` | 菜单：检查更新 / 重启 / 重新加载页面 / 开发者工具 |
 | `desktop/tsconfig.json` | 单独一份（根 tsconfig 的 `rootDir` 是 `src/`），输出 ESM 到 `desktop/dist/` |
 
@@ -243,7 +247,8 @@ shell = 装配层，唯一可以同时 import 全部
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（示范插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/agents/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
 | 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028） |
-| 发布 / 排查桌面端更新 | `scripts/update-server.ts`（只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**：`electron-updater` 自己按清单地址解析相对 URL（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单 |
+| 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |
+| 发布 / 排查桌面端更新 | `scripts/update-server.ts`（只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**、不校验签名，原样发（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单与旧签名 |
 
 ## 4. 启动顺序（第 3 步最容易出错）
 
@@ -304,8 +309,9 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 ## 6. 测试布局
 
-`test/desktop/`（2 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
-`../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）。
+`test/desktop/`（3 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
+`../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）、
+`manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）。
 
 `test/core/`（64 文件，纯函数 + 装配）：
 

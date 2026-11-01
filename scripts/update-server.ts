@@ -21,6 +21,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { extname, join, resolve, sep } from "node:path";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { pipeline } from "node:stream/promises";
+import { pathToFileURL } from "node:url";
 
 export type UpdateServer = {
 	readonly port: number;
@@ -40,7 +41,8 @@ export type UpdateServerOptions = {
 /** 清单必须每次现取（它是「最新版本是谁」的答案），产物文件带版本号、永不改，可以长缓存。 */
 function cacheControlOf(path: string): string {
 	const ext = extname(path).toLowerCase();
-	return ext === ".yml" || ext === ".yaml" || ext === ".json"
+	// 清单和它的签名必须每次现取；产物文件名带版本号，可以永久缓存。
+	return ext === ".yml" || ext === ".yaml" || ext === ".json" || ext === ".sig"
 		? "no-cache"
 		: "public, max-age=31536000, immutable";
 }
@@ -215,4 +217,5 @@ async function main(): Promise<void> {
 	process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-await main();
+// 只有直接跑这个文件才起服务：测试要 import `createUpdateServer`，不能顺手绑 8899。
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

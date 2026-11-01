@@ -18,6 +18,8 @@
 		"live:scenarios": "node --experimental-strip-types scripts/scenario-live.ts",
 		"prompt:check": "node --experimental-strip-types scripts/prompt-check.ts",
 		"update:serve": "node --experimental-strip-types scripts/update-server.ts",
+		"update:key": "node --experimental-strip-types scripts/update-key.ts",
+		"update:manifest": "node --experimental-strip-types scripts/update-manifest.ts",
 		"desktop:build": "tsc -p desktop/tsconfig.json",
 		"desktop:dev": "npm run desktop:build && electron .",
 		"desktop:pack": "npm run desktop:build && electron-builder --dir --publish never",
@@ -32,7 +34,6 @@
 		"@earendil-works/chord": "1.4.0",
 		"@earendil-works/pi-ai": "1.4.0",
 		"@earendil-works/pi-durable": "1.4.0",
-		"electron-updater": "^6.8.11",
 		"react": "^18.3.1",
 		"react-dom": "^18.3.1"
 	},

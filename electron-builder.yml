@@ -1,8 +1,8 @@
-# 桌面端打包（ADR-028）。
+# 桌面端打包（ADR-028 / ADR-029）。
 #
-# 后端不打包、不 transpile：`src/` 的 TS 原样进 asar，用 Electron 自带的 Node 24 直接跑
+# 后端不打包、不 transpile：`src/` 的 TS 原样进包，用 Electron 自带的 Node 24 直接跑
 # （类型擦除已稳定，`node:sqlite` 内置）。`ui/web` 与 `seed/` 一起放进去 —— 后端按
-# `import.meta.url` 向上找它们的相对深度，在 asar 里一像素没变。
+# `import.meta.url` 向上找它们的相对深度。
 appId: com.solo.desktop
 productName: Solo
 artifactName: ${productName}-${version}-${arch}.${ext}
@@ -23,13 +23,8 @@ files:
 # 改成逐文件拷贝，不值当；整份摊在 Resources/app 里一样能跑，排障还更好看。
 asar: false
 
-# 自建更新源（scripts/update-server.ts）。打包时用环境变量给地址：
-#   SOLO_UPDATE_URL=https://你的域名/solo npm run desktop:dist:mac
-# 它会被写进 Resources/app-update.yml，客户端运行时自己读。
-publish:
-  - provider: generic
-    url: ${env.SOLO_UPDATE_URL}
-
+# 更新不再是 electron-updater 的发布通道：清单与签名由 `scripts/update-manifest.ts` 生成，
+# 地址在 `desktop/src/feed.ts`（ADR-029）。所以这里不配 publish。
 mac:
   icon: desktop/icon.png
   category: public.app-category.productivity
@@ -39,7 +34,7 @@ mac:
     - target: zip
       arch: [arm64]
 
-# macOS 的更新载体是 zip（Squirrel.Mac 换包），dmg 只给人手动装。
+# macOS 的更新载体是 zip（装的是整个 .app），dmg 只给人手动装。
 dmg:
   writeUpdateInfo: false
 
@@ -48,9 +43,10 @@ win:
   target:
     - target: nsis
       arch: [x64]
+    - target: zip
+      arch: [x64]
 
 nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
-  differentialPackage: true

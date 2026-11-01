@@ -585,3 +585,27 @@
 - **验收**：`npm run desktop:dev` 出窗口；`npm run desktop:pack` 后 `release/mac-arm64/Solo.app`
   能起、能播种、能说话；`SOLO_UPDATE_URL=http://127.0.0.1:8899/` 指向假 feed 时日志出现
   `[update] 有新版本 …`。`test/desktop/ready-line.test.ts` 守就绪行与更新源地址的判据。
+
+## ADR-029 更新走「自签清单 + zip 替换」，不用 Squirrel / NSIS（取代 ADR-028 第 6 条与「未签名装不了更新」那段）
+
+- **背景**：ADR-028 选了 `electron-updater`。它在 macOS 上落到 Squirrel.Mac，换包前要求新旧
+  `.app` 是同一个 Developer ID 身份 —— 未签名（或无证书的开发机）必然停在「不能自动安装」。
+  实测：2.0.1 下载成功、sha512 校验通过，最后一步被系统拒掉。GitHub 上大量开源桌面应用能自动
+  更新，靠的不是 Apple 签名，而是**应用自己的更新器**（Sparkle 用 Ed25519、Tauri 用 minisign）。
+- **决策**：两个平台走同一条路线，`electron-updater` 从依赖里移除。
+  1. feed 里放每平台一份 JSON 清单（`latest-mac.json` / `latest-win.json`）+ 同名 `.sig`；
+     签名是 Ed25519，**私钥只在发布机**（`~/.solo-update-key.pem`），公钥编进应用
+     （`desktop/src/update-key.ts`，`npm run update:key` 生成）。
+  2. 应用先验清单签名，再比版本（只比数字段），再下载 zip；下完核对清单里的 sha512。
+  3. 安装由**进程外的脚本**做：等应用退出 → 解包 → 把旧包挪开、新包换进去（失败挪回来）→ 重新打开。
+     macOS 是 `sh` + `ditto`；Windows 是 PowerShell `Expand-Archive` + `robocopy /MIR`。
+  4. 更新源地址在 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`，运行时可用 `SOLO_UPDATE_URL` 覆盖；
+     只认 https 或本机 http（同 ADR-028）。
+- **为什么可行**：更新包由应用自己下载，不带浏览器下载才有的 quarantine 标记；替换由外部脚本做，
+  不经过任何系统签名比对。安全边界从「Apple 信任这个二进制」换成「这份清单是发布密钥签的」——
+  这正是 Sparkle / Tauri 的做法。
+- **取舍**：替换逻辑自己维护（换到一半失败要能回滚）；Windows 上的 zip 替换没有安装包，
+  快捷方式仍由首次安装的 NSIS 建立，更新只覆盖程序目录。**Windows 这条在本机没有实机验证过**，
+  首次验证时要盯 `robocopy` 与重启。
+- **验收**：`npm test` 里的 `test/desktop/manifest.test.ts` 守验签、改字、换钥、版本比较与平台取包；
+  端到端是「2.0.0 应用 → feed 上 2.0.1 → 点立即重启安装 → 应用以 2.0.1 重新打开」。

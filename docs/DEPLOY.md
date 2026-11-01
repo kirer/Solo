@@ -315,18 +315,18 @@ curl -s localhost:7788/api/diag | jq
 
 ## 9. 发布更新（自建更新源）
 
-桌面端升级走 `electron-updater` 的 `generic` provider：它只认一份清单（macOS 是
-`latest-mac.yml`，Windows 是 `latest.yml`）和清单里点名的 zip / exe / blockmap。
-清单里写相对路径时，客户端以清单地址为基准拼出绝对地址 —— 所以服务端**原样发文件**就够，
-不改写 URL、不存库、不认账号（ADR-027）。
+桌面端升级读一份 JSON 清单（`latest-mac.json` / `latest-win.json`）和同名的
+`.sig`（Ed25519 签名，`scripts/update-manifest.ts` 生成），再按清单里的文件名去下 zip
+（ADR-029）。服务端**原样发文件**就够：不改写 URL、不校验签名、不存库、不认账号（ADR-027）。
+清单与签名是 `no-cache`，产物按文件名长缓存。
 
 发布机上一个目录、一个只读服务：
 
 ```bash
-# 1. 把 electron-builder 的产物放进一个目录（两个渠道各一份清单，见下）
+# 1. 把产物放进一个目录（清单与签名怎么生成见 §10）
 mkdir -p feed
-cp packages/artifacts/*.zip packages/artifacts/*.exe packages/artifacts/*.blockmap feed/
-cp packages/artifacts/latest*.yml feed/
+cp release/Solo-*-arm64.zip release/Solo-*-x64.zip feed/
+cp release/latest-*.json release/latest-*.json.sig feed/
 
 # 2. 发出去
 npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
@@ -337,8 +337,8 @@ npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
 - `GET /` 列出目录里发布了什么（名字 + 大小），先看它再排查版本问题。
 - 清单 `Cache-Control: no-cache`，产物 `immutable`（文件名带版本号，永不改）。
 - 目录外的路径一律 404（含 `%2e%2e%2f` 这类编码穿越）。
-- 客户端把更新源地址写进打包环境变量（`SOLO_UPDATE_URL`/`app-update.yml`，随桌面端一起定），
-  和这里发的地址保持一致即可。
+- 客户端读地址的顺序：环境变量 `SOLO_UPDATE_URL` → `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`。
+  发版前把默认值改成你的域名（见 §10），和这里发的地址保持一致即可。
 
 **两条发布纪律**（顺序错了客户端会拿到一个点不动的清单）：
 
@@ -362,6 +362,16 @@ npm run desktop:dist:mac   # 出 dmg + zip（zip 是更新载体）
 npm run desktop:dist:win   # 出 NSIS 安装包
 ```
 
+**第一次出 dmg 会卡**：electron-builder 要从 GitHub 下 `dmgbuild-bundle` / `7zip`，直连不通时
+会停在 0 字节。走镜像或本机代理：
+
+```bash
+ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/ npm run desktop:dist:mac
+# 或者 HTTPS_PROXY=http://127.0.0.1:7890 HTTP_PROXY=http://127.0.0.1:7890 npm run desktop:dist:mac
+```
+
+下载过一次会缓存在 `~/Library/Caches/electron-builder/`，之后不再需要。
+
 - **数据在哪**：`app.getPath("userData")/workspace` —— macOS 是
   `~/Library/Application Support/solo/workspace`，Windows 是 `%APPDATA%/solo/workspace`。
   后端日志在 `.../solo/logs/core.log`（超过 5 MB 轮转一代）。**它不认仓库里的 `workspace/`**。
@@ -371,18 +381,33 @@ npm run desktop:dist:win   # 出 NSIS 安装包
 - **改完界面**照旧 `npm run ui:build`，然后在应用里「重新加载页面」（⌘R）—— 不用重启应用。
 - **打包出来的版本号**就是根 `package.json` 的 `version`，`npm version` 改它。
 
-**发布与升级**
+**发布与升级（ADR-029：自签清单 + zip 替换，不用 Squirrel / NSIS 更新）**
+
+不需要 Apple 开发者证书。发布机持有一把 Ed25519 私钥，清单由它签名；应用里只放公钥。
 
 ```bash
-SOLO_UPDATE_URL=https://你的域名/solo npm run desktop:dist:mac
-# 把 release/ 里的 latest-mac.yml + Solo-2.0.0-arm64.zip 放进 feed 目录，见 §9
+# 0) 只做一次：生成密钥对。公钥写进 desktop/src/update-key.ts（要提交），
+#    私钥默认 ~/.solo-update-key.pem，权限 600，别提交、别外传、别丢 —— 丢了老客户端就再也升级不了。
+npm run update:key
+
+# 1) 打包（版本号来自 package.json 的 version）
+npm run desktop:dist:mac     # release/Solo-<版本>-arm64.dmg + .zip
+npm run desktop:dist:win     # release/Solo-<版本>-x64.exe + .zip
+
+# 2) 生成清单 + 签名（每个平台一份）
+npm run update:manifest -- --feed feed --version 2.0.1 \
+  --file darwin=release/Solo-2.0.1-arm64.zip \
+  --file win32=release/Solo-2.0.1-x64.zip
+
+# 3) 把 zip、清单、.sig 一起放进 feed 目录（§9），二进制先传、清单最后传
 ```
 
-地址在打包时写进 `Resources/app-update.yml`；运行时也能用环境变量 `SOLO_UPDATE_URL` 覆盖
-（只认 https，或 http 的本机地址 —— 验证本地假 feed 用）。检查时机：启动 30 秒后一次，
-之后每 6 小时；「检查更新…」在应用菜单里。
-
-**macOS 未签名装不了更新**：Squirrel.Mac 换包前核对新旧 `.app` 的签名身份。没有
-Developer ID 证书时，应用仍会检查、下载，但最后只提示「去下载页」—— 这是系统约束，
-不是 bug。要自动更新就得签：Developer ID Application + 公证。
-Windows 不需要签名即可安装（SmartScreen 会警告）。
+- 应用读清单 `latest-mac.json` / `latest-win.json`，先验 `.sig`、再比版本、再下载、
+  下完核对 sha512。任何一步不过都**不碰**这个版本。
+- 安装由进程外脚本做：等应用退出 → 解包 → 旧包挪开、新包换进去（失败挪回来）→ 重新打开。
+  macOS 用 `sh` + `ditto`，Windows 用 PowerShell `Expand-Archive` + `robocopy /MIR`。
+- 更新源地址：`SOLO_UPDATE_URL` 环境变量优先，否则用 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`
+  （只认 https，或 http 的本机地址）。检查时机：启动 30 秒后一次，之后每 6 小时；
+  「检查更新…」在应用菜单里。
+- **Windows 的 zip 替换没有实机验证过**：快捷方式仍由首次安装的 NSIS 建立，更新只覆盖程序目录。
+- `package.json` 的 `version` 是应用版本，也是清单比较的对象；`dmg` 只给人手动装，更新用 zip。

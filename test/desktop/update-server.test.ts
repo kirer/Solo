@@ -22,6 +22,7 @@ async function feed(): Promise<string> {
 	const dir = await mkdtemp(join(tmpdir(), "core-update-feed-"));
 	dirs.push(dir);
 	await writeFile(join(dir, "latest-mac.yml"), "version: 0.1.0\n", "utf8");
+	await writeFile(join(dir, "latest-mac.json.sig"), "c2ln\n", "utf8");
 	await writeFile(join(dir, "solo-0.1.0.zip"), "zip", "utf8");
 	return dir;
 }
@@ -59,6 +60,9 @@ describe("更新源", () => {
 		const zip = await get(port, "/solo-0.1.0.zip");
 		expect(zip.status).toBe(200);
 		expect(zip.headers["cache-control"]).toContain("immutable");
+
+		// 签名和清单同生共死：换版本就得同时换，缓存住旧的会验过一个旧包。
+		expect((await get(port, "/latest-mac.json.sig")).headers["cache-control"]).toBe("no-cache");
 
 		const index = await get(port, "/");
 		expect(index.body).toContain("latest-mac.yml");
