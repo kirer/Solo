@@ -139,6 +139,27 @@ describe("messageView 的 needsYou", () => {
 		expect(view.needsYou).toBe(true);
 	});
 
+	it("先点了别人、末尾才 @我 的不算找我（那是在给那个人派活）", () => {
+		const state = stateOf([team], {});
+		const text = "@林越 方向变了，放开做一版；改完 @沈舟 复测、@我 报一句新增了什么。";
+		const view = messageView(state, team, message(1, "lin", text, { mentions: ["林越", "沈舟", "owner"] }), directory, "owner");
+		expect("needsYou" in view).toBe(false);
+		expect(attentionItems(stateOf([team], { [team.id]: [message(1, "lin", text, { mentions: ["林越", "沈舟", "owner"] })] }), directory, "owner", AT)).toEqual([]);
+	});
+
+	it("我是第一个被点名的人就算（后面再点别人不影响）", () => {
+		const state = stateOf([team], {});
+		const view = messageView(state, team, message(1, "lin", "@owner 你拍板，@林越 去改", { mentions: ["owner", "林越"] }), directory, "owner");
+		expect(view.needsYou).toBe(true);
+	});
+
+	it("正文里的 `@owner` 投影成 `@我`（模型照规矩原文写 slug 时不露内部名）", () => {
+		const state = stateOf([team], {});
+		const view = messageView(state, team, message(1, "lin", "@owner 没有在跑的东西", { mentions: ["owner"] }), directory, "owner");
+		expect(view.text).toBe("@我 没有在跑的东西");
+		expect(view.needsYou).toBe(true);
+	});
+
 	it("普通汇报不打标记，字段不出现在 JSON 里", () => {
 		const state = stateOf([team], {});
 		const view = messageView(state, team, message(1, "lin", "音效加完了"), directory, "owner");

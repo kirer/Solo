@@ -55,8 +55,18 @@ function hubFor(state: ChannelState) {
 		channelSnapshot: async () => snapshot,
 		snapshot: async () => ({ ...snapshot, teamLeadOf: {}, teamDoingOf: {} }),
 	};
-	const shell = { harness: { subscribeCommits: () => () => undefined }, directory: emptyDirectory() };
-	return createStreamHub(shell as never, snapshots as never);
+	let commits: () => void = () => undefined;
+	const shell = {
+		harness: {
+			subscribeCommits: (listener: () => void) => {
+				commits = listener;
+				return () => undefined;
+			},
+		},
+		directory: emptyDirectory(),
+	};
+	const hub = createStreamHub(shell as never, snapshots as never);
+	return Object.assign(hub, { commit: () => commits() });
 }
 
 /** 等 `prime` / `flush` 那些 `void` 出去的 promise 落地。 */
@@ -163,6 +173,32 @@ describe("组织流", () => {
 		const frames = framesOf(client.chunks);
 		expect(frames).toHaveLength(1);
 		expect(frames[0]!.startsWith("event: org\ndata: ")).toBe(true);
+		client.close();
+		hub.close();
+	});
+
+	test("第二个浏览器接进来也拿得到快照（指纹去重不能吃掉首屏）", async () => {
+		const hub = hubFor(stateOf());
+		const first = fakeResponse();
+		hub.streamOrg(first.response);
+		await settle();
+		const second = fakeResponse();
+		hub.streamOrg(second.response);
+		await settle();
+		expect(framesOf(second.chunks)).toHaveLength(1);
+		first.close();
+		second.close();
+		hub.close();
+	});
+
+	test("内容没变就不重推：提交总线响了也一样", async () => {
+		const hub = hubFor(stateOf());
+		const client = fakeResponse();
+		hub.streamOrg(client.response);
+		await settle();
+		hub.commit();
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(framesOf(client.chunks)).toHaveLength(1);
 		client.close();
 		hub.close();
 	});

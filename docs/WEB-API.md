@@ -55,7 +55,9 @@ data: {"workspace":{...},"people":[...]}
 : ping
 ```
 
-- 任何文档提交都会触发推送，**去抖 120ms**。
+- 任何文档提交都会触发推送，**去抖 120ms**；内容指纹没变就不发。
+- **有人在跑时每秒补推一次**：`activity`（在想 / 在做）来自会话的 live 文档，思考期间
+  不落盘，只靠提交总线会让头像不亮圈。闲下来立刻停。
 - 空闲时每 15s 一个 `: ping` 注释行保活。
 - 每帧是**完整快照**，不是增量。前端收到就重拉需要的列表。
 - 断线由 `EventSource` 自己重连。
@@ -107,7 +109,7 @@ type ViewChannel = {
   title: string;                    // 私聊 = 对方的名字；群聊/团队 = 频道/团队名
   team?: string;                    // 仅团队频道（id 形如 team:<slug>）
   unread: number;
-  mentions: number;                 // 未读里点名提到我的条数
+  mentions: number;                 // 未读里**点名找我**的条数（判据同 needsYou：正文第一个被点名的是我）
   preview: string;                  // 最后一条**人说的话**的第一行，最多 60 字
   lastAt: number;                   // 毫秒时间戳
   lastSeq: number;
@@ -215,10 +217,14 @@ type ViewMessage = {
 
 - `role` 只用三种**能从文件里读出来**的事实，不引身份枚举：我 / 团队管理员（团队
   `README.md` 的 `lead`）/ 成员。
+- `text` 是**显示用**正文：`@owner` 一律投影成 `@我`（`owner` 只是内部 slug，我不叫这个名字），
+  落盘的那份不动 —— 提示词与历史仍是模型自己写的字。
 - `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
 - `replyTo.excerpt` 最多 60 字。
-- `needsYou` 的判据在核心（`view/index.ts` 的 `needsYou`）：**不是我自己发的**、且
-  `mentions` 里有 `owner`。界面不自己猜关键词。
+- `needsYou` 的判据在核心（`app/project.ts` 的 `needsYou`）：**不是我自己发的**，且
+  **正文里第一个被点名的人是我**。界面不自己猜关键词。
+  为什么不是「mentions 里有 owner」：一句话可以顺手提到好几个人 —— 「@林越 放开做，
+  改完 @沈舟 复测、@我 报一句」是派活给林越，里面的 `@我` 是让林越回头找我，不是现在找我。
 - `attachments` **没有附件时不出现这个键**，不要区分「空数组」和「没有」。
 - `kind` 是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
   这些不再产生的消息（不清理旧数据），前端 `buildRows()` 直接过滤掉，不画。
@@ -273,6 +279,9 @@ type ViewMessage = {
   也不进消息表（ADR-001）。步骤没变就不重推（服务端按指纹去重）；单步输出在推送版里
   压到 2 KB，展开那一步时再走 §7.3 拉全文。
 - 任何文档提交去抖 120ms 后推增量，只推订阅了这个频道的连接。
+- **有人在跑时每秒补推一次**（`trace` 与 `org` 都按指纹去重，没变就不发）：运行状态写在
+  会话的 live 文档里，模型思考期间不落盘，只靠提交总线会让进度行停在「正在执行」、
+  头像也不亮圈。闲下来立刻停。
 - 空闲每 15s 一个 `: ping` 注释行保活。
 
 ## 7.2 `GET /api/channels/:id/turns?from=&to=`
@@ -369,8 +378,8 @@ type ViewStep = {
 }
 ```
 
-判定在 `src/core/view/index.ts` 的 `needsYou(message)`：**不是我自己发的**，且
-`mentions` 里有 `owner` —— 也就是**正文显式 @了我**。`kind=decision` 不会再自动
+判定在 `src/core/app/project.ts` 的 `needsYou(message)`：**不是我自己发的**，且
+**正文里第一个被点名的人是我**（别人在先、末尾顺手 @我 的那种是派活给别人，不进）。`kind=decision` 不会再自动
 把我算进来（ADR-009）：助理几乎每条公告都打 decision，自动补会让「找你」被通告淹掉。
 只收「说出口的话」（`chat` / `say` / `question` / `decision` /
 `report`），窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——

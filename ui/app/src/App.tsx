@@ -15,7 +15,7 @@ import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { Stream } from "./stream/Stream.tsx";
 import {
 	openChannel,
-	refreshLists,
+	openWithPerson,
 	setNeedMenu,
 	setRight,
 	setSettings,
@@ -39,7 +39,6 @@ export function App(): JSX.Element {
 	const needMenu = useStore((state) => state.needMenu);
 	const settings = useStore((state) => state.settings);
 	const team = useStore((state) => state.team);
-	const presence = useStore((state) => state.presence);
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
@@ -124,7 +123,8 @@ export function App(): JSX.Element {
 			: (people.find((person) => person.label === channel.title)?.title ?? "");
 	const sub =
 		peerTitle !== "" ? peerTitle : channel === null ? "" : headSub(channel.kind, channel.leadLabel, members.length);
-	const running = [...presence.values()].some((entry) => entry.state === "thinking" || entry.state === "working");
+	// 没选频道时顶栏只剩「找助理」：空屏要有一个明确的下一步，助理就是那个入口。
+	const assistant = people.find((person) => person.manager === "owner");
 
 	return (
 		<div
@@ -161,52 +161,68 @@ export function App(): JSX.Element {
 							连不上，{clockTime(conn.lastOkAt)} 最后一次成功
 						</span>
 					)}
-					<div className="menu-anchor need-anchor">
-						<button
-							type="button"
-							className="need"
-							id="unread-total"
-							data-zero={attentionUnread === 0 ? "true" : "false"}
-							aria-expanded={needMenu}
-							aria-label={`${String(attentionUnread)} 件需要你处理`}
-							onClick={() => setNeedMenu(!needMenu)}
-						>
-							{attentionUnread} 件找你
-						</button>
-						<NeedMenu />
-					</div>
-					<button
-						type="button"
-						className="icon-btn"
-						id="detail-btn"
-						aria-label="详情"
-						title="详情"
-						aria-pressed={right.open}
-						onClick={() => setRight({ open: !right.open })}
-					>
-						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-							<rect x="3" y="4" width="18" height="16" rx="2.5" />
-							<path d="M14 4v16" />
-						</svg>
-					</button>
+					{channel === null ? (
+						assistant === undefined ? null : (
+							<button
+								type="button"
+								className="find-assistant"
+								id="find-assistant"
+								onClick={() => void openWithPerson(assistant.slug)}
+							>
+								找助理
+							</button>
+						)
+					) : (
+						<>
+							<div className="menu-anchor need-anchor">
+								<button
+									type="button"
+									className="need"
+									id="unread-total"
+									data-zero={attentionUnread === 0 ? "true" : "false"}
+									aria-expanded={needMenu}
+									aria-label={`${String(attentionUnread)} 件需要你处理`}
+									onClick={() => setNeedMenu(!needMenu)}
+								>
+									{attentionUnread} 件找你
+								</button>
+								<NeedMenu />
+							</div>
+							<button
+								type="button"
+								className="icon-btn"
+								id="detail-btn"
+								aria-label="详情"
+								title="详情"
+								aria-pressed={right.open}
+								onClick={() => setRight({ open: !right.open })}
+							>
+								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+									<rect x="3" y="4" width="18" height="16" rx="2.5" />
+									<path d="M14 4v16" />
+								</svg>
+							</button>
+						</>
+					)}
 				</div>
 
 				{channel === null ? (
 					<div className="sheet-blank">
-						<div className="blank-mark">Solo</div>
-						<p className="blank-text">
-							{channels.length === 0 ? "还没有会话。" : "左边选一个会话。"}
-							{running ? "现在有人在做活。" : ""}
+						<div className="blank-mark" aria-hidden="true">
+							<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+								<path d="M12 3v18M4.5 7.5 12 12l7.5-4.5M4.5 16.5 12 12l7.5 4.5" />
+							</svg>
+						</div>
+						<p className="blank-title">{channels.length === 0 ? "还没有会话" : "挑一个会话"}</p>
+						<p className="blank-hint">
+							{channels.length === 0 ? "从右上角找助理，让他建人、开团队。" : "左边点一个，或者从右上角找助理。"}
 						</p>
-						<button type="button" className="blank-btn" onClick={() => void refreshLists()}>
-							刷新
-						</button>
 					</div>
 				) : (
 					<Stream onImage={setImage} />
 				)}
 
-				<Composer toast={toast} />
+				{channel === null ? null : <Composer toast={toast} />}
 			</main>
 
 			<RightPanel />

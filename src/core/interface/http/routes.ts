@@ -36,9 +36,14 @@ export type RouteDeps = {
 };
 
 /** 查询参数里的数字：没有 / 不是有限数就是 `undefined`（由 app 决定默认值）。 */
-function numberParam(url: URL, name: string): number | undefined {
-	const raw = Number(url.searchParams.get(name) ?? "");
-	return Number.isFinite(raw) ? raw : undefined;
+export function numberParam(url: URL, name: string): number | undefined {
+	// 没带这个参数就是 `undefined`，不是 0 —— `Number("")` 是 0，`?? 兜底` 就永远不会生效。
+	// 症状：`/api/people/:slug/turns` 不带 `to` 时 `to` 变成 0，窗口退化成空，重启后私聊页
+	// 的工作记录整片消失（运行中靠 SSE 推的帧撑着，所以只有重启才看得见）。
+	const raw = url.searchParams.get(name);
+	if (raw === null || raw.trim() === "") return undefined;
+	const value = Number(raw);
+	return Number.isFinite(value) ? value : undefined;
 }
 
 export function coreRoutes(deps: RouteDeps): readonly Route[] {

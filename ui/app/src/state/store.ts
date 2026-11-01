@@ -177,13 +177,7 @@ export async function bootstrap(): Promise<void> {
 	const org = await getOrg();
 	applyOrg(org);
 	await refreshLists();
-	// 进来就落到「最近有动静的那个频道」——空着中栏等于让人先做一次选择。
-	// 只在宽屏上自动落一个频道：手机上中栏是「第二屏」，一进来就跳进去等于
-	// 让人先按三次返回才能看到列表。
-	const first = getState().channels[0];
-	if (getState().currentId === null && first !== undefined && window.matchMedia("(min-width: 861px)").matches) {
-		void openChannel(first.id);
-	}
+	// 进来不替人选频道：中栏先站着落地页，选不选、进哪个由我定。
 	patch({ ready: true });
 }
 

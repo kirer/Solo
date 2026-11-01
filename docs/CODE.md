@@ -137,7 +137,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `interface/http/network.ts` | 80 | 监听地址：`isWildcardHost` / `isLoopbackHost` / `browserUrlOf` / `lanAddresses` / `lanUrlsOf` |
 | `interface/http/static-assets.ts` | 310 | 静态资源：`serveStatic`（SPA 回退）/ `loadAsset` / `etagFor` / `bodyFor`；按编码区分的 ETag + Last-Modified + `Vary` + br/gzip 协商 + `insideRoot` 越界判断 |
 | `interface/http/origin-guard.ts` | 130 | 来源闸：`hostAllowed` / `originAllowed` / `allowedHostsOf` / `selfOriginsOf`（Host 与 Origin 白名单，默认只给本机） |
-| `interface/http/sse.ts` | 262 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照（带 `activity`），`create` 只推订阅者，`trace` 只推正在跑的那几轮并按指纹去重） |
+| `interface/http/sse.ts` | 422 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照（带 `activity`），`create` 只推订阅者，`trace` 只推正在跑的那几轮并按指纹去重；一次提交后两分钟里每秒补推一次（`wakePulse` / `pulseNow`），运行状态不落盘也不等提交） |
 | `shell/assemble.ts` | 494 | `assembleCore()` —— 扫文件夹 → 开会话 → 绑名册 → 播种全员频道；接线只调一次 `wireChannel`，成员投影只调 `channel/membership.ts`（装配不再自己写业务规则）；`ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板）；`core-tools` 扩展上挂 `app/audit.ts` 的钩子（会话 id → slug 的反查也在这里） |
 | `shell/seed.ts` | 301 | `seedOwnerAssistant`（读 `seed/agents/assistant/identity.md` 建人 + 助理个人层技能，只建一次）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `workspace/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/` |
@@ -259,7 +259,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 64 文件 / 672 例，应该 <3s
+npm test             # 64 文件 / 674 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）

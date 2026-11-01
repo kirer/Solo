@@ -86,6 +86,30 @@ export function encodeEvent(event: SseEvent): string {
 /** 推送去抖（毫秒）：一次提交可能连带几次改动。 */
 const PUSH_DEBOUNCE_MS = 120;
 
+/**
+ * 「有人在做活」时的补推间隔（毫秒）。
+ *
+ * 提交总线只在**文档落盘**时响。可「在跑 / 在想」写在会话的 live 文档里、而且
+ * 模型思考的那几十秒根本不落盘 —— 于是界面会停在「还在跑」「没回话」，头像也不亮圈。
+ * 真出过：一轮已经交付了，进度行还挂着「在跑」；人明明在跑，头像一动不动。
+ * 所以忙的时候按秒补一次，闲下来立刻停（闲着还每秒读一遍快照是纯浪费）。
+ */
+const PULSE_MS = 1_000;
+
+/** 一次提交之后补推多少跳（2 分钟）：够覆盖一整轮，又不会让闲着的页面一直读盘。 */
+const PULSE_BUDGET = 120;
+
+/** 组织快照里界面真的会画的那几格：没变就别推（否则每秒一次全量重渲染）。 */
+function orgSignature(org: ViewOrg): string {
+	const rows = org.people.map((actor) => {
+		const activity =
+			actor.activity === undefined ? "" : `${actor.activity.state}\u0001${String(actor.activity.since)}`;
+		return `${actor.slug}\u0001${actor.label}\u0001${actor.title ?? ""}\u0001${actor.manager ?? ""}\u0001${activity}`;
+	});
+	// 前缀不能省：一个空的 org 拼出来也是空串，会和「还没推过」撞成同一个指纹。
+	return `org:${String(rows.length)}|${rows.join("\u0002")}`;
+}
+
 /** 一次最多推多少条：首屏补齐，以及增量积压时的上界。更早的靠 `/api/channels/:id?before=`。 */
 const PAGE = 60;
 
@@ -99,6 +123,13 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 	const traceSig = new Map<string, string>();
 	/** `频道 → 上一次还在跑的那些轮`：用来在结算时补最后一帧 `done`。 */
 	const traceOpen = new Map<string, ViewTurn[]>();
+	/** 上次推出去的组织快照指纹：没变就不推。 */
+	let orgSig = "";
+	/** 上一份组织快照里有没有人 `activity`（补推只看它和 `traceOpen`）。 */
+	let activity = false;
+	/** 补推定时器与剩余跳数（见 `wakePulse`）。 */
+	let pulse: NodeJS.Timeout | undefined;
+	let budget = 0;
 	let timer: NodeJS.Timeout | undefined;
 
 	/** 写给一组连接；写失败（已断）的顺手摘掉。 */
@@ -180,6 +211,57 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 		broadcast(clients, outgoing.map((turn) => encodeEvent({ type: "trace", turn: slimTurn(turn) })).join(""));
 	}
 
+	/** 推一份组织快照：指纹没变就不推；返回「此刻有没有人在做活」。 */
+	function pushOrg(org: ViewOrg): boolean {
+		activity = org.people.some((actor) => actor.activity !== undefined);
+		const signature = orgSignature(org);
+		if (signature !== orgSig) {
+			orgSig = signature;
+			broadcast(orgClients, encodeEvent({ type: "org", org }));
+		}
+		return activity;
+	}
+
+	/**
+	 * 补推：**有事发生之后的两分钟里**按秒看一眼状态，之后自己停。
+	 *
+	 * 为什么不看「此刻忙不忙」再决定开不开：一轮是怎么开始的 —— 一条消息提交、然后
+	 * 模型开始想。提交那一刻 `activity` 还没写进去，忙态要等我跳过去时才有；等它出现
+	 * 再开表，第一跳可能已经是几十秒后。所以触发点是**提交**和**新连接**，不是忙态。
+	 *
+	 * 为什么要自己停：闲着还每秒读一遍快照是纯浪费。两分钟够覆盖绝大多数一轮；
+	 * 真在跑（`activity` 或 `running`）就每跳把预算重置，长活也不会断。
+	 */
+	function wakePulse(): void {
+		budget = PULSE_BUDGET;
+		if (pulse !== undefined) return;
+		pulse = setInterval(() => {
+			void pulseNow();
+		}, PULSE_MS);
+		pulse.unref?.();
+	}
+
+	function stopPulse(): void {
+		if (pulse === undefined) return;
+		clearInterval(pulse);
+		pulse = undefined;
+	}
+
+	/** 补推一跳：只读状态，指纹没变就什么都不发。 */
+	async function pulseNow(): Promise<void> {
+		if (orgClients.size > 0 && read !== undefined) {
+			try {
+				pushOrg(await read.readOrg());
+			} catch {
+				/* 读不到就当这一跳没发生 */
+			}
+		}
+		for (const id of [...channelClients.keys()]) await pushTrace(id);
+		const running = [...traceOpen.values()].some((turns) => turns.length > 0);
+		budget = activity || running ? PULSE_BUDGET : budget - 1;
+		if (budget <= 0) stopPulse();
+	}
+
 	/** 一次 flush：读一次快照，org 推整份、每个活跃频道推增量。 */
 	async function flush(): Promise<void> {
 		if (orgClients.size === 0 && channelClients.size === 0) return;
@@ -194,7 +276,7 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 			// 有 `read` 时走它：`readOrg` 会补上每个人此刻的 `activity`（在想 / 在做）。
 			// 没有 `read`（测试装配）就退回纯投影 —— 少一个字段，不会错。
 			const org = read === undefined ? orgView(snap.identities, snap.directory) : await read.readOrg();
-			broadcast(orgClients, encodeEvent({ type: "org", org }));
+			pushOrg(org);
 		}
 		for (const id of [...channelClients.keys()]) {
 			pushChannel(id, snap, pushed.get(id) ?? 0);
@@ -205,6 +287,8 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 	/** 排一次推送（去抖，全局一个定时器）。 */
 	function schedule(): void {
 		if (orgClients.size === 0 && channelClients.size === 0) return;
+		// 一次提交 = 一件事正在发生：接下来两分钟按秒补推（见 `wakePulse`）。
+		wakePulse();
 		if (timer !== undefined) return;
 		timer = setTimeout(() => {
 			timer = undefined;
@@ -279,6 +363,8 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 			channelClients.set(id, clients);
 		}
 		openStream(response, clients);
+		// 连上就补推一阵：进来的时候可能已经有人在跑了，提交是几秒前的事。
+		wakePulse();
 		// 连接建立即推补齐（首屏全量；带 since 时只补增量）。
 		void prime(response, id, since);
 		response.on("close", () => {
@@ -291,7 +377,13 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 	}
 
 	function streamOrg(response: ServerResponse): void {
+		// 新来的人手里什么都没有：把指纹清掉，让下一次 flush 一定推一份给他
+		// （按指纹去重是给「推送」用的，不是给「首屏」用的）。
+		orgSig = "";
 		openStream(response, orgClients);
+		response.on("close", () => {
+			if (orgClients.size === 0) orgSig = "";
+		});
 		void flush();
 	}
 
@@ -306,6 +398,8 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 	function close(): void {
 		if (timer !== undefined) clearTimeout(timer);
 		timer = undefined;
+		if (pulse !== undefined) clearInterval(pulse);
+		pulse = undefined;
 		for (const clients of [orgClients, ...channelClients.values()]) {
 			for (const client of clients) {
 				try {

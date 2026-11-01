@@ -57,9 +57,19 @@ export function idOf(directory: DirectoryState, slug: string): number {
 /** 「人说的话」的几种 kind。侧栏预览与「找你」共用 —— 过程投影与系统告警都不算。 */
 const SPOKEN_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
 
+/**
+ * 显示用正文：我只有「我」这一个叫法，`owner` 是内部 slug。
+ * 模型偶尔照规矩原文写出 `@owner`（实测知言这么写过），界面上一律显示成 `@我`。
+ * 只改投影，不改落盘的那份 —— 提示词与历史记录仍是模型自己写的字。
+ */
+const OWNER_TOKEN = /(?<![A-Za-z0-9._%+-])@owner(?![\p{L}\p{N}_-])/gu;
+function spokenText(text: string): string {
+	return text.replace(OWNER_TOKEN, "@我");
+}
+
 /** 一条消息的正文预览：只取第一行、压成一行、最多 60 字。 */
 function previewOf(message: Message | undefined): string {
-	return message === undefined ? "" : excerptOf(message.text, 60);
+	return message === undefined ? "" : excerptOf(spokenText(message.text), 60);
 }
 
 /**
@@ -100,9 +110,10 @@ export function channelList(
 			messages.findLast((item) => SPOKEN_KINDS.has(item.kind)) ??
 			messages.findLast((item) => item.kind !== "note");
 		const unread = unreadCount(state, channel.id, slug);
-		// 「@ 我」的条数：未读里点名提到我的那些。界面上它们比普通未读更红。
+		// 「@ 我」的条数：未读里**点名找我**的那些（判据同 `needsYou`：正文第一个点名的是我）。
+		// 界面上它们比普通未读更红。
 		const mentions = messages.filter(
-			(message) => message.seq > readMarkOf(state, slug, channel.id) && message.mentions.includes(slug),
+			(message) => message.seq > readMarkOf(state, slug, channel.id) && addressedTo(message, slug),
 		).length;
 		const team = channel.id.startsWith("team:") ? channel.id.slice("team:".length) : undefined;
 		const lead = team === undefined ? undefined : teamLeadOf?.(team);
@@ -127,17 +138,23 @@ export function channelList(
 }
 
 /**
- * 「这条要不要我看一眼」。
+ * 这条消息是不是**点名找这个人**：正文里第一个被点名的人就是他。
  *
- * 我自己说的话不算（他不需要提醒自己）。判据只有一条：消息显式 @了我。
+ * 为什么不是「mentions 里有他」：一句话里可以顺手提到好几个人。真实的一条是
+ * 「@林越 方向变了……改完 @沈舟 复测、@我 报一句新增了什么」—— 这条是派活给林越的，
+ * 里面的 `@我` 是**让林越回头找我**，不是现在找我。按「点没点到我」算，它会挂上
+ * 「需要你」、进「找你」列表、侧栏还亮一个数字，全是假的。
  *
- * 旧逻辑用关键词嗅探（「要不要/请确认/等你定」），会把没点我的
- * 普通 @成员 协作消息误标「需要我」—— 这正是 #4 要修的误标。关键词嗅探已移除，
- * 关键词嗅探已删除（连同同名函数），这里只认显式 @owner。
+ * 判据只看顺序：先说谁，就是说给谁。引用回复补进来的作者排在最后，抢不了第一。
  */
+function addressedTo(message: Message, slug: string): boolean {
+	if (message.from === slug) return false;
+	return message.mentions[0] === slug;
+}
+
+/** 「这条要不要我看一眼」。我自己说的话不算（不需要提醒自己）。 */
 function needsYou(message: Message): boolean {
-	if (message.from === OWNER_SLUG) return false;
-	return message.mentions.includes(OWNER_SLUG);
+	return addressedTo(message, OWNER_SLUG);
 }
 
 /** 一条消息的视图。 */
@@ -157,7 +174,7 @@ export function messageView(
 		fromSlug: message.from,
 		fromLabel: labelIn(directory, message.from),
 		kind: message.kind,
-		text: message.text,
+		text: spokenText(message.text),
 		mentions: message.mentions.map((slug) => ({
 			id: idOf(directory, slug),
 			label: labelIn(directory, slug),
@@ -172,7 +189,7 @@ export function messageView(
 						from: idOf(directory, quoted.from),
 						fromSlug: quoted.from,
 						fromLabel: labelIn(directory, quoted.from),
-						excerpt: excerptOf(quoted.text, 60),
+						excerpt: excerptOf(spokenText(quoted.text), 60),
 					},
 				}),
 		read: readMarkOf(state, viewer, channel.id) >= message.seq,
@@ -321,12 +338,8 @@ export function attentionItems(
 			// 它们里的「要不要 / 还是 / 怎么定」是模型的自言自语（实测 60 条里有 40 多条
 			// 是英文内心独白），进来就把这个列表变成噪音。
 			if (!SPOKEN_KINDS.has(message.kind)) continue;
+			// 点名找我的才进（别人在先、末尾顺手 @我 的那种是派活给别人，见 `addressedTo`）。
 			if (!needsYou(message)) continue;
-			// 说给别人听的不进。`needsYou` 的判据（`要不要` / `还是` / `怎么定`）故意宽，
-			// 因为模型忘了 @ 我的代价更高；但在「找你」这个列表里必须再收一道：
-			// 一条消息如果**明确点了别人**而没点我，它就不是找我的。
-			const others = message.mentions.filter((slug) => slug !== viewer);
-			if (others.length > 0 && !message.mentions.includes(viewer)) continue;
 			out.push({
 				channelId: channel.id,
 				channelKind: chatKind(channel),
@@ -336,7 +349,7 @@ export function attentionItems(
 				from: idOf(directory, message.from),
 				fromSlug: message.from,
 				fromLabel: labelIn(directory, message.from),
-				excerpt: excerptOf(message.text, 80),
+				excerpt: excerptOf(spokenText(message.text), 80),
 				read: mark >= message.seq,
 			});
 		}

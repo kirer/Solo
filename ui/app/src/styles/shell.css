@@ -199,6 +199,31 @@
 	display: none;
 }
 
+/* 没选频道时顶栏唯一的动作：去找助理。和「N 件找你」同一档尺寸 —— 落地页的
+   入口不该比内容更沉。 */
+.find-assistant {
+	flex: none;
+	height: 26px;
+	padding: 0 11px;
+	border: 1px solid var(--line);
+	border-radius: var(--r-pill);
+	background: var(--field);
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-2);
+	transition: background-color var(--dur-line) ease, border-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.find-assistant:hover {
+	background: var(--raised);
+	border-color: var(--control);
+	color: var(--ink);
+}
+
+.find-assistant:active {
+	background: var(--active);
+}
+
 .menu-anchor {
 	position: relative;
 	flex: none;
@@ -294,9 +319,10 @@
    这里以前是「待命 / 在做」的状态字，状态改由头像外那圈光表达（见 motion.css 的 .av[data-state]），
    位置腾出来放身份 —— 状态是暂时的，身份是这条行真正的信息。 */
 .ch-role {
-	/* 身份最多占 5.5em（约五个汉字），再长就省略 —— 名字必须比身份先读得到。 */
-	flex: 0 0 auto;
-	max-width: 5.5em;
+	/* 身份吃满名字和时间之间剩下的宽度（原先卡死在 5.5em，六个字以上全被截成
+	   「小恐龙团…」—— 身份只剩半句话就白占了这一行）。挤不开时身份先让位：
+	   名字不参与压缩（`flex: 0 0 auto`），省略的永远先是身份。 */
+	flex: 1 1 auto;
 	min-width: 0;
 	overflow: hidden;
 	white-space: nowrap;
@@ -378,12 +404,16 @@
    早先 `.ch-title` 是 `flex: 1 1 auto`，于是「待命」被推到行尾、和名字隔了一整个频道宽，
    读起来像「待命」属于右边那列时间。 */
 .ch-top .ch-title {
-	flex: 0 1 auto;
+	/* 名字不吃压缩：身份长的时候先省略身份（`flex-shrink: 0` 的对照组见 .ch-role）。
+	   名字自己也有上限，真长到 55% 才轮到它省略。 */
+	flex: 0 0 auto;
+	max-width: 55%;
 }
 
 /* 时间推到行尾（设计稿的排法）：名字一行、预览一行，时间只占右上角那一小格，
    不再和预览挤在第二行里互相截断。 */
 .ch-top .ch-time {
+	flex: none;
 	margin-left: auto;
 }
 
@@ -561,6 +591,46 @@
    桌面侧栏一直在，点它是空操作。 */
 .sheet-back {
 	display: none;
+}
+
+/* 没选频道的落地页：一个标、一句话、一句提示。和空频道卡片同一个语气
+   （圆角方图 + 居中），但这里是整屏，所以不做卡片 —— 一张卡漂在大空地里
+   读起来像加载失败。也不给按钮：入口在右上角（找助理）和左栏。 */
+.sheet-blank {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: 24px 24px 64px;
+	text-align: center;
+	animation: veil-in var(--dur-pop) ease-out both;
+}
+
+.blank-mark {
+	display: grid;
+	place-items: center;
+	width: 56px;
+	height: 56px;
+	margin-bottom: 18px;
+	border: 0.5px solid var(--line);
+	border-radius: 30%;
+	background: var(--field);
+	color: var(--ink-2);
+}
+
+.blank-title {
+	font-size: 15px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.blank-hint {
+	max-width: 280px;
+	margin-top: 6px;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-3);
 }
 
 /* ── 浮层：菜单（顶栏 / ＋） ─────────────────────────────────────────── */

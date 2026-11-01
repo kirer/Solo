@@ -9,7 +9,7 @@
 
 import { useEffect, useRef } from "react";
 import type { Message, Org, Turn } from "../api/types.ts";
-import { applyMessage, applyOrg, applyTurn, refreshLists, setConn } from "../state/store.ts";
+import { applyMessage, applyOrg, applyTurn, getState, refreshLists, setConn } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 /** 打不开就等一等再试，退避到 15 秒封顶：服务重启期间不要每 100ms 打一次。 */
@@ -53,18 +53,24 @@ export function useOrgStream(): void {
 	}, []);
 }
 
-/** 当前频道的消息流。切频道就重连（带上 since，避免把历史整段重推一遍）。 */
+/**
+ * 当前频道的消息流。**只在切频道时重连**，带上 since 避免把历史整段重推一遍。
+ *
+ * 早先的依赖里还有 `lastSeq`：每来一条消息就重连一次。代价是每来一条消息都会
+ * `close()` 掉旧连接，而同一批 flush 里紧跟着的 `trace` 帧（「完成」就是它推的）
+ * 正好在关闭的那一瞬间被丢掉 —— 界面上表现为「已经回复了，进度行还挂着正在执行」。
+ * 所以 since 只在**连上的那一刻**读一次，之后连接不动。
+ */
 export function useChannelStream(): void {
 	const currentId = useCurrentId();
-	const lastSeq = useLastSeq();
-	const key = `${currentId ?? ""}:${lastSeq}`;
 
 	const held = useRef<{ source: EventSource | null }>({ source: null });
 
 	useEffect(() => {
 		if (currentId === null) return;
+		const since = getState().detail?.messages.at(-1)?.seq ?? 0;
 		const source = new EventSource(
-			`/api/channels/${encodeURIComponent(currentId)}/stream${lastSeq > 0 ? `?since=${lastSeq}` : ""}`,
+			`/api/channels/${encodeURIComponent(currentId)}/stream${since > 0 ? `?since=${since}` : ""}`,
 		);
 		held.current.source = source;
 
@@ -82,8 +88,7 @@ export function useChannelStream(): void {
 		});
 
 		return () => source.close();
-		// 只在频道或窗口末尾变化时重连；`lastSeq` 就是「这次要从哪之后开始听」。
-	}, [key]);
+	}, [currentId]);
 }
 
 function parse<T>(event: MessageEvent<string>): T | null {
@@ -96,8 +101,4 @@ function parse<T>(event: MessageEvent<string>): T | null {
 
 function useCurrentId(): string | null {
 	return useStore((state) => state.currentId);
-}
-
-function useLastSeq(): number {
-	return useStore((state) => state.detail?.messages.at(-1)?.seq ?? 0);
 }

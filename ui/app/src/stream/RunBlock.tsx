@@ -137,8 +137,8 @@ export function RunBlock(props: { turn: Turn; role: string; grouped?: boolean })
 }
 
 function statusOf(turn: Turn): { text: string; tone: "ok" | "bad" | "quiet" | "live" } {
-	if (turn.status === "running") return { text: "在跑", tone: "live" };
-	if (turn.status === "done") return { text: "✓ 已交付", tone: "ok" };
+	if (turn.status === "running") return { text: "正在执行", tone: "live" };
+	if (turn.status === "done") return { text: "✓ 完成", tone: "ok" };
 	if (turn.status === "failed") return { text: "✕ 失败", tone: "bad" };
 	return { text: "没回话", tone: "quiet" };
 }
