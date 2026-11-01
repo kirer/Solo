@@ -86,10 +86,15 @@ export type CoreServices = {
 	/**
 	 * 装上的插件（工具 / 提示词 / 路由 / 消息钩子 / 清单）。
 	 *
-	 * 装配时只装一次、之后不变，所以是同步的一份快照，不是函数。
+	 * 重装插件时整份换掉（见 `reloadPlugins`），所以读的人不要把它缓存下来。
 	 * 没有插件时是 `emptyPluginHost`，不是 `undefined` —— 免得每个用到的地方都写分支。
 	 */
 	readonly plugins?: PluginHost;
+	/**
+	 * 重新装一遍插件（开关 / 装 / 卸 / 改了后端代码都走它，不用重启 —— ADR-026）。
+	 * 装完 `plugins` 就是新的那一份。
+	 */
+	reloadPlugins?(): Promise<void>;
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
 	readonly allChannel: string;

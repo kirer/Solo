@@ -7,7 +7,7 @@
  * **四个动作**，每个动作只落一个数组，没有服务查找、没有事件总线。
  *
  * 每个 `tool()` / `prompt()` / `route()` / `on()` 都只有「加进去」一种语义，没有对应的
- * 「删掉」：第一版不做热插拔（关插件 = 重启进程，见 ADR）。
+ * 「删掉」—— 热插拔是**整份重装**：丢掉这个对象、重新唱一遍 `apply`（ADR-026）。
  */
 import { defineTool, Type, type ToolRegistration } from "../runtime/index.ts";
 import type { JsonValue } from "../runtime/index.ts";

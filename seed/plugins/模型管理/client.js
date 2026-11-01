@@ -48,6 +48,7 @@ export default {
 		.pm-btn[data-tone="primary"]:hover { background: var(--ink); color: var(--field); opacity: .86; }
 		.pm-btn[data-tone="danger"] { background: transparent; color: var(--danger, #d9534f); }
 		.pm-btn[data-tone="danger"]:hover { background: color-mix(in oklab, var(--danger, #d9534f) 14%, transparent); }
+		.pm-btn[data-tone="danger"][data-armed="true"] { background: color-mix(in oklab, var(--danger, #d9534f) 18%, transparent); }
 		.pm-btn:disabled { opacity: .45; cursor: default; }
 		/* 展开的编辑区是一张嵌进去的卡：和外面的行不是同一层，眼睛才分得清。 */
 		.pm-body {
@@ -146,6 +147,8 @@ export default {
 			const provider = draft.providers[index];
 			const [probe, setProbe] = useState({ busy: false, error: "", models: [] });
 			const [adding, setAdding] = useState("");
+			/** 「删除」点过一次才真的删：`window.confirm` 在桌面壳里会被吞掉，点了像没反应。 */
+			const [armed, setArmed] = useState(false);
 
 			const runProbe = useCallback(() => {
 				setProbe({ busy: true, error: "", models: [] });
@@ -184,10 +187,18 @@ export default {
 							type: "button",
 							className: "pm-btn",
 							"data-tone": "danger",
-							onClick: onDrop,
-							title: "从配置里删掉这个提供商",
+							"data-armed": armed ? "true" : "false",
+							onClick: () => {
+								if (!armed) {
+									setArmed(true);
+									return;
+								}
+								setArmed(false);
+								onDrop();
+							},
+							title: armed ? "再点一次就删掉" : "从配置里删掉这个提供商",
 						},
-						"删除",
+						armed ? "确认删除" : "删除",
 					),
 				),
 				open
@@ -390,7 +401,6 @@ export default {
 			};
 
 			const dropProvider = (index) => {
-				if (!window.confirm(`删掉「${draft.providers[index].name}」？保存后会从 settings.json 里去掉。`)) return;
 				const next = { ...draft, providers: draft.providers.filter((_, at) => at !== index) };
 				setDraft(next);
 				if (open === draft.providers[index].id) setOpen("");

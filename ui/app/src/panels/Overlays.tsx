@@ -299,13 +299,22 @@ async function readFolder(list: FileList): Promise<PickedFolder> {
 /**
  * 插件浮层：一个文件夹一个插件，装 / 卸就是建 / 删那个文件夹。
  *
- * 三件事都要**重启服务**才真的生效（第一版没有热加载 / 热卸载）—— 这话写在最上面，
- * 点了没反应比没有按钮更糟。
+ * 三个动作都**当场生效**：内核写完文件就重装一遍插件（ADR-026），不用重启。
+ * 所以这里不再写「重启后生效」——说了反而让人以为要等。
  */
 function PluginSheet(): JSX.Element {
 	const [plugins, setPlugins] = useState<readonly Plugin[] | undefined>(undefined);
 	const [problem, setProblem] = useState<string | undefined>(undefined);
 	const [picked, setPicked] = useState<PickedFolder | undefined>(undefined);
+	/** 哪一个的「删除」已经点过一次（第二次才真删）。 */
+	const [armed, setArmed] = useState<string | undefined>(undefined);
+
+	// 举起来的那一下会自己放下：别让它一直摆在那儿等人误点第二下。
+	useEffect(() => {
+		if (armed === undefined) return undefined;
+		const timer = setTimeout(() => setArmed(undefined), 4000);
+		return () => clearTimeout(timer);
+	}, [armed]);
 
 	useEffect(() => {
 		getPlugins()
@@ -356,7 +365,7 @@ function PluginSheet(): JSX.Element {
 				</div>
 				<div className="team-list">
 					<p className="settings-hint">
-						一个文件夹就是一个插件（workspace/plugins/&lt;名字&gt;/）。装、卸、开关都要重启服务才生效；
+						一个文件夹就是一个插件（workspace/plugins/&lt;名字&gt;/）。装、卸、开关当场生效，不用重启；
 						插件的代码跑在本机进程里，等于给了它全部权限 —— 只装自己信得过的。
 					</p>
 					{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
@@ -378,22 +387,32 @@ function PluginSheet(): JSX.Element {
 										{plugin.brings !== undefined ? (
 											<span className="plugin-brings">{bringsText(plugin.brings)}</span>
 										) : plugin.enabled && plugin.error === undefined ? (
-											// 刚装上的还没进这个进程：说清楚「重启才生效」，别让人以为它什么都没带。
-											<span className="plugin-brings">还没加载 · 重启服务后生效</span>
+											// 开着却没带上东西、也没有报错：多半是后端入口还没跑完，重装一次就来。
+											<span className="plugin-brings">还没装上 · 看一眼日志里的 [plugin]</span>
 										) : null}
 									</div>
 									<button
 										type="button"
 										className="plugin-remove"
-										aria-label={`删掉 ${plugin.name}`}
-										title="删掉这个插件（连同它的代码）"
+										data-armed={armed === plugin.slug}
+										aria-label={armed === plugin.slug ? `确认删掉 ${plugin.name}` : `删掉 ${plugin.name}`}
+										title={
+											armed === plugin.slug
+												? "再点一次就删掉，找不回来"
+												: "删掉这个插件（连同它的代码）"
+										}
 										onClick={() => {
-											// 删的是磁盘上的代码，浏览器没法撤销 —— 先问一句再动手。
-											if (!window.confirm(`删掉插件「${plugin.name}」？它在 workspace/plugins/ 里的文件会一起删掉，找不回来。`)) return;
+											// 删的是磁盘上的代码，找不回来 —— 同一个按钮点两次才算数。
+											// 不用 `window.confirm`：桌面壳里那个对话框会被吞掉，点了像没反应（实测踩过）。
+											if (armed !== plugin.slug) {
+												setArmed(plugin.slug);
+												return;
+											}
+											setArmed(undefined);
 											apply(removePlugin(plugin.slug));
 										}}
 									>
-										删除
+										{armed === plugin.slug ? "确认删除" : "删除"}
 									</button>
 									<button
 										type="button"

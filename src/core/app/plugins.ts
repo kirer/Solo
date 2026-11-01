@@ -87,26 +87,29 @@ export function createPlugins(services: CoreServices) {
 		list: rows,
 
 		/**
-		 * 开关一个插件：写回它的 `plugin.md`，并把「现在的样子」还回去。
+		 * 开关一个插件：写回它的 `plugin.md`，**当场重装**，不用重启（ADR-026）。
 		 *
-		 * 返回的那一行已经按新值算过 —— 文件是下一次启动的事实，进程里这一份是现在的事实，
-		 * 两者不同时界面靠「重启后生效」那句话交代清楚。
+		 * 三个动作（开关 / 装 / 卸）之后都要 `reloadPlugins()`：文件是磁盘上的事实，
+		 * 重装之后进程里这一份才跟上；否则界面写着生效了，模型那边一个工具都没多。
 		 */
 		async setEnabled(slug: string, enabled: boolean): Promise<readonly ViewPlugin[]> {
 			if (!isSafeName(slug)) throw new Error(`插件名不合法：${slug}`);
 			await writePluginEnabled(pluginsRoot, slug, enabled);
+			await services.reloadPlugins?.();
 			return rows();
 		},
 
-		/** 装一个插件：把选中的那个文件夹整份搬进 `plugins/<slug>/`。重启之后才真的运行。 */
+		/** 装一个插件：把选中的那个文件夹整份搬进 `plugins/<slug>/`，装完就跑。 */
 		async install(slug: string, files: readonly PluginFile[]): Promise<readonly ViewPlugin[]> {
 			await installPluginFiles(pluginsRoot, slug, files);
+			await services.reloadPlugins?.();
 			return rows();
 		},
 
 		/** 删掉一个插件，连同它的代码。**不可恢复**，界面负责二次确认。 */
 		async remove(slug: string): Promise<readonly ViewPlugin[]> {
 			await removePluginFolder(pluginsRoot, slug);
+			await services.reloadPlugins?.();
 			return rows();
 		},
 

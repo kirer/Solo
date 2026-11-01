@@ -61,7 +61,7 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             71 文件 / 728 例
+test/             72 文件 / 730 例
   ├ test/core/    57 文件 / 607 例（纯函数 + 装配）
   └ test/ui/      7 文件 / 67 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
@@ -121,7 +121,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 71 文件 728 例，<3s，必须全绿
+npm test             # 72 文件 730 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -155,7 +155,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `channel/post.ts` 传线索 + `channel/delivery.ts` 的 `woken` |
 | 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
-| 插件的四个动作 / 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts`、`load.ts`）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `shell/assemble.ts`（装配）+ `interface/http/routes.ts`（五条接口）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件浮层 `panels/Overlays.tsx` 的 `PluginSheet`（开关 / 装 / 删）与 `sidebar/Sidebar.tsx` 的入口 |
+| 插件的四个动作 / 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts`、`load.ts`）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `shell/assemble.ts`（装配 + `reloadPlugins` 热重装，ADR-026）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件浮层 `panels/Overlays.tsx` 的 `PluginSheet`（开关 / 装 / 删）与 `sidebar/Sidebar.tsx` 的入口 |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2–7.3 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/core/app/trace.ts`（纯函数）+ `src/core/app/read.ts` 的 `turnsOf` / `groupsOf` + `test/core/trace.test.ts` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |

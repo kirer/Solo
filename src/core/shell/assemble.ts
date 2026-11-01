@@ -150,7 +150,7 @@ export async function assembleCore(
 	// ── 1.5 装插件 ──────────────────────────────────────────────────
 	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
 	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
-	const plugins = await loadPlugins({
+	let plugins = await loadPlugins({
 		pluginsRoot: join(workspaceRoot, "plugins"),
 		workspace: workspaceRoot,
 		log: (line) => console.log(`[plugin] ${line}`),
@@ -161,7 +161,8 @@ export async function assembleCore(
 	// 团队频道里，就叫这个团队里该负责的人把它沉淀进 `teams/<slug>/memory.md`。
 	// 条件是「形状」（kind），判断是「语义」（模型写什么），分工见 team/settle.ts。
 	// 插件要听消息也走这一个钩子 —— 落盘之后、唤醒之前，只有这一处。
-	const afterPost = makeAfterPost(wiring, options.agentsRoot, options.teamsRoot, plugins.messages);
+	// 传的是取值函数不是数组：插件重装之后，这条钩子要听**新的**那一批（ADR-026）。
+	const afterPost = makeAfterPost(wiring, options.agentsRoot, options.teamsRoot, () => plugins.messages);
 	const toolDeps: CoreToolDeps = {
 		...baseDeps,
 		afterPost,
@@ -175,22 +176,25 @@ export async function assembleCore(
 		},
 	};
 	// 核心七个 + 插件带来的：同一个注册表，没有「谁的工具有特权」这一说。
-	const tools = [...createCoreTools(toolDeps), ...plugins.tools];
-	// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
-	// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
-	const toolsExtension = defineExtension({
-		name: "core-tools",
-		tools,
-		hooks: auditHooks({
-			workspaceRoot,
-			slugOf: (conversationId) => {
-				for (const [slug, conversation] of conversations) {
-					if (Number(conversation.id) === conversationId) return slug;
-				}
-				return undefined;
-			},
-		}),
-	});
+	//
+	// 现造而不是留一份：插件重装时按同名原地换掉这一个扩展（ADR-026），
+	// 会话是按扩展**名字**解析的，所以换上去下一次生成就看得见。
+	const buildToolsExtension = (): Extension =>
+		defineExtension({
+			name: "core-tools",
+			tools: [...createCoreTools(toolDeps), ...plugins.tools],
+			// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
+			// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
+			hooks: auditHooks({
+				workspaceRoot,
+				slugOf: (conversationId) => {
+					for (const [slug, conversation] of conversations) {
+						if (Number(conversation.id) === conversationId) return slug;
+					}
+					return undefined;
+				},
+			}),
+		});
 
 	/**
 	 * 某人此刻在哪些会话里（提示词「你在组织里的位置」一节要用）。
@@ -222,6 +226,7 @@ export async function assembleCore(
 			),
 		});
 
+	let toolsExtension = buildToolsExtension();
 	registry.install(toolsExtension);
 
 	/**
@@ -235,6 +240,27 @@ export async function assembleCore(
 		const extension = await identityExtension(slug);
 		registry.install(extension);
 		return extension;
+	}
+
+	/**
+	 * 重新装一遍插件：开关、装 / 卸、改后端代码都走这里，**不用重启**（ADR-026）。
+	 *
+	 * 三件事，缺一件都叫「看起来装了其实没用」：
+	 * 1. 工具：按同名原地换掉 `core-tools`，会话按名字解析，下一次生成就看得见；
+	 * 2. 提示词：插件段是装的时候拍下来的快照，所以要重装每个人的身份扩展；
+	 * 3. 路由与听消息：那两处每次用时取（`*rest` 兜底里现查、`afterPost` 取的是函数）。
+	 */
+	async function reloadPlugins(): Promise<void> {
+		const next = await loadPlugins({
+			pluginsRoot: join(workspaceRoot, "plugins"),
+			workspace: workspaceRoot,
+			log: (line) => console.log(`[plugin] ${line}`),
+		});
+		plugins = next;
+		for (const error of next.errors) console.warn(`[plugin] 没装上：${error}`);
+		toolsExtension = buildToolsExtension();
+		registry.install(toolsExtension);
+		for (const slug of conversations.keys()) await installIdentity(slug);
 	}
 
 	// ── 2 & 3. 扫文件夹 + 开会话 ──────────────────────────────────
@@ -396,7 +422,11 @@ export async function assembleCore(
 				slug,
 			);
 		},
-		plugins,
+		// getter：插件重装之后，读它的人拿到的就是新的那一份。
+		get plugins() {
+			return plugins;
+		},
+		reloadPlugins,
 		async rescan(ctx: Context = BACKGROUND_CONTEXT): Promise<readonly string[]> {
 			const all = await readAllIdentities(options.agentsRoot);
 			const added: string[] = [];
@@ -460,12 +490,12 @@ function makeAfterPost(
 	wiring: ReturnType<typeof wireChannel>,
 	agentsRoot: string,
 	teamsRoot: string,
-	listeners: readonly PluginListener[] = [],
+	listeners: () => readonly PluginListener[] = () => [],
 ): (message: Message, channelId: string, context: Context) => Promise<void> {
 	return async (message, channelId, context) => {
 		// 插件先听：它们看的是「一条消息刚落地」这件事实，与团队频道无关。
 		// 并发跑、全部 settled —— 一个插件抛错不该让沉降不跑，也不该让投递变慢。
-		await Promise.allSettled(listeners.map(async (listener) => listener(message, channelId)));
+		await Promise.allSettled(listeners().map(async (listener) => listener(message, channelId)));
 		if (!channelId.startsWith("team:")) return;
 		await settleTeam(
 			{

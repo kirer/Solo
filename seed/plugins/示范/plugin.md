@@ -14,4 +14,4 @@ description: 出厂示范插件：一个 clock 工具、一句提示词、左栏
 
 全部插槽见 `docs/DESIGN.md` §2.8；往别的插槽里放东西只要换 `register` 的第一个参数。
 
-改完 `plugin.ts` 要重启进程；改完 `client.js` 刷新页面。关掉这个插件：`enabled: false`。
+改完 `plugin.ts` 当场重装生效（内核盯着 `plugins/` 目录，ADR-026）；改完 `client.js` 刷新页面。关掉这个插件：`enabled: false`。

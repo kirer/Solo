@@ -10,6 +10,7 @@
  *
  * 也不放进 `view/`：那是零 IO 的投影层，它连 `node:*` 都不许 import。
  */
+import { watch, type FSWatcher } from "node:fs";
 import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
@@ -162,4 +163,23 @@ export function createSerialGate(): SerialGate {
 		tail = next.catch(() => undefined);
 		return next;
 	};
+}
+
+/**
+ * 盯一个目录（递归）里发生的变化，返回停止函数。
+ *
+ * 只转交「变了」这件事，不合并：调用方自己 debounce（一次保存常常是好几个事件）。
+ * 盯不上（目录不存在、平台不支持递归 watcher）就返回空函数 —— 那样只是「改完不自动生效」，
+ * 不能让服务启动失败。`unref` 保证这个 watcher 不会把进程吊住。
+ */
+export function watchDirAt(dir: string, onChange: () => void): () => void {
+	let watcher: FSWatcher;
+	try {
+		watcher = watch(dir, { recursive: true }, () => onChange());
+	} catch {
+		return () => undefined;
+	}
+	watcher.on("error", () => undefined);
+	watcher.unref();
+	return () => watcher.close();
 }

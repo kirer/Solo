@@ -1877,6 +1877,12 @@
 	color: var(--danger);
 }
 
+/* 点过一次：变成红色的「确认删除」，第二下才真的删。 */
+.plugin-remove[data-armed="true"] {
+	background: color-mix(in oklab, var(--danger) 14%, transparent);
+	color: var(--danger);
+}
+
 /* 装插件：选一个文件夹，看清楚是哪个再按「安装」。 */
 .plugin-install {
 	display: flex;

@@ -27,7 +27,7 @@ import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../fsx.ts";
 import { loadTemplates, PROMPT_DIR } from "../md/prompt.ts";
-import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
+import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../runtime/io.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {
@@ -128,9 +128,13 @@ async function main(): Promise<void> {
 	let runtime: CoreRuntime | undefined;
 	let shell: CoreShell | undefined;
 	let server: CoreServer | undefined;
+	let stopWatching: () => void = () => undefined;
+	let pending: ReturnType<typeof setTimeout> | undefined;
 
 	const shutdown = async (signal: string): Promise<void> => {
 		console.log(`\n[core] ${signal}，正在关闭…`);
+		clearTimeout(pending);
+		stopWatching();
 		await server?.close();
 		await shell?.close();
 		await runtime?.close();
@@ -160,6 +164,17 @@ async function main(): Promise<void> {
 			shell,
 			port: args.port,
 			host: args.host,
+		});
+		// 插件是磁盘上的一堆文件夹：改了就重装，不用重启（ADR-026）。
+		// 防抖是因为一次保存常常连着好几个事件，而装到一半时文件还没写完。
+		const reload = shell.reloadPlugins;
+		stopWatching = watchDirAt(join(args.workspace, "plugins"), () => {
+			clearTimeout(pending);
+			pending = setTimeout(() => {
+				void Promise.resolve(reload?.()).catch((error: unknown) => {
+					console.warn(`[plugin] 重装失败：${error instanceof Error ? error.message : String(error)}`);
+				});
+			}, 200);
 		});
 		console.log(`[core] ${server.url}`);
 		console.log(`[core] workspace: ${args.workspace}`);

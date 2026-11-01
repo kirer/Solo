@@ -11,6 +11,7 @@
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolRegistration } from "../runtime/index.ts";
+import { mtimeOrUndefined } from "../runtime/io.ts";
 import { createPluginApi, emptySinks, type PluginListener, type PluginRouteSpec } from "./api.ts";
 import { listPluginSlugs, readPluginManifest } from "./manifest.ts";
 
@@ -102,7 +103,11 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 
 		const sinks = emptySinks();
 		try {
-			const module = (await import(pathToFileURL(join(manifest.dir, manifest.server)).href)) as {
+			// `?v=` 是按 mtime 变的：改了 `plugin.ts` 再装一次才真的读到新代码，
+			// 否则命中的是 import 缓存里那份旧的（重装看起来「没反应」）。
+			const entry = join(manifest.dir, manifest.server);
+			const stamp = (await mtimeOrUndefined(entry)) ?? 0;
+			const module = (await import(`${pathToFileURL(entry).href}?v=${stamp}`)) as {
 				apply?: unknown;
 			};
 			if (typeof module.apply !== "function") {

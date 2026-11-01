@@ -11,7 +11,7 @@
  */
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import type { Route, RouteContext } from "./route-match.ts";
+import { matchRoute, type Route, type RouteContext } from "./route-match.ts";
 import type { StreamHub } from "./sse.ts";
 import type { App, MemoryEditBody, PersonModelBody, PostBody } from "../../app/index.ts";
 import { avatarEtag, avatarSvg, clampAvatarSize } from "../../app/avatar.ts";
@@ -48,6 +48,23 @@ export function numberParam(url: URL, name: string): number | undefined {
 
 export function coreRoutes(deps: RouteDeps): readonly Route[] {
 	const { app, hub } = deps;
+
+	/**
+	 * 插件注册的接口 → 路由。
+	 *
+	 * **每次请求现造**：插件可以在运行中重装（ADR-026），表拼死一次就等于「装了要重启」。
+	 */
+	const pluginRoutes = (): readonly Route[] =>
+		app.plugins.routes().map((route) => ({
+			pattern: route.pattern,
+			method: route.method,
+			handler: async ({ request, response, params, url }: RouteContext) => {
+				const query: Record<string, string> = {};
+				for (const [key, value] of url.searchParams) query[key] = value;
+				const body = route.method === "POST" ? await readJson<unknown>(request) : undefined;
+				return json(response, await route.run({ params, query, ...(body === undefined ? {} : { body }) }));
+			},
+		}));
 
 	return [
 		{
@@ -366,23 +383,19 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				response.end(script);
 			},
 		},
-		// 插件自己注册的接口。**排在 `*rest` 前面**：否则一律被静态资源吃掉。
+		// 其余路径：**插件接口**，剩下的交给静态资源；找不到就 404。
+		//
+		// 插件路由在这里现查而不是拼进上面的表：装 / 卸 / 开关插件当场生效，不用重启
+		// （ADR-026）。它们排在静态资源前面 —— 否则 `/api/...` 一律被静态资源吃掉。
 		// 插件路由只有 JSON（GET / POST），发文件和流归核心，插件碰不到。
-		...app.plugins.routes().map((route) => ({
-			pattern: route.pattern,
-			method: route.method,
-			handler: async ({ request, response, params, url }: RouteContext) => {
-				const query: Record<string, string> = {};
-				for (const [key, value] of url.searchParams) query[key] = value;
-				const body = route.method === "POST" ? await readJson<unknown>(request) : undefined;
-				return json(response, await route.run({ params, query, ...(body === undefined ? {} : { body }) }));
-			},
-		})),
-		// 其余路径交给静态资源；找不到就 404（前端据此判断「是不是接口写错了」）。
 		{
 			pattern: "*rest",
-			handler: async ({ request, response, path }) => {
-				return await serveStatic(response, request, deps.uiDir, path);
+			handler: async (context) => {
+				const matched = matchRoute(pluginRoutes(), context.method, context.path);
+				if (matched !== undefined) {
+					return await matched.route.handler({ ...context, params: matched.params });
+				}
+				return await serveStatic(context.response, context.request, deps.uiDir, context.path);
 			},
 		},
 	];

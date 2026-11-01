@@ -81,7 +81,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `runtime/index.ts` | 36 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineTool` / `openCore` / `setupModels` / `compactionSettings` / `Type` |
 | `runtime/open.ts` | 382 | `openCore({databasePath, models, registry, settings?, onReport?}) → {harness, registry, close}`；open 之后先跑 `reconcileZombieTasks()`；`onReport` 把底座的错误出口接成 `RuntimeReport` |
 | `runtime/models.ts` | 272 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；没有就回落到环境变量，再没有就是**没有模型**（`defaultModel: undefined`，ADR-023，不悄悄兜底本地网关）。`syncModels()` 把改过的 `settings.json` 就地重装进运行中的注册表（ADR-025，不重启）。`contextWindow` 取自 pi-ai 的模型目录，取不到回落 `FALLBACK_CONTEXT_WINDOW = 128 * 1024`；`compactionPolicyFor` / `compactionSettings` 按窗口算压缩阈值（reserve 15%、keepRecent 10% 底 8192、background 5%），并按 `provider/model` 出 overrides |
-| `runtime/io.ts` | 153 | 绝对路径的机械 IO：`readTextOrUndefined`（读不到就是 `undefined`，不抛）/ `writeTextAt`（自动建父目录）/ `writeBytesAt`（二进制，同样建父目录）/ `ensureDir` / `existsAt` / `removeDirAt` / `mtimeOrUndefined` / `stampOf`（`mtimeMs:size` 变更戳）/ `appendJsonLine`（可按大小轮转）/ `listDirSorted` / `compareCodePoints` / `byName`（名字排序比较器）/ `createSerialGate`（同一把串行锁）—— 全仓只有这一份 |
+| `runtime/io.ts` | 153 | 绝对路径的机械 IO：`readTextOrUndefined`（读不到就是 `undefined`，不抛）/ `writeTextAt`（自动建父目录）/ `writeBytesAt`（二进制，同样建父目录）/ `ensureDir` / `existsAt` / `removeDirAt` / `mtimeOrUndefined` / `stampOf`（`mtimeMs:size` 变更戳）/ `appendJsonLine`（可按大小轮转）/ `watchDirAt`（递归监听一个目录，返回停止函数；盯不上就是空函数）/ `listDirSorted` / `compareCodePoints` / `byName`（名字排序比较器）/ `createSerialGate`（同一把串行锁）—— 全仓只有这一份 |
 | `runtime/serialize.ts` | 59 | `serializedHarness()` —— 同一进程里所有 `harness.commit` 排队跑（底座的文档代理是按读集覆盖，不排队就会互相吃掉） |
 | `agent/identity.ts` | 224 | `parseIdentity` / `renderIdentityFile` / `readIdentity` / `writeIdentity` / `readAllIdentities` / `reportsOf` / `chainUp` / `managerOf` —— 身份的**读与写都在这里**；招人也在：`uniqueSlug` / `createAgent`（写身份交给 `writeIdentity`；没给正文就写空字符串，不合成任何身份文案）/ `nameOf` / `labelsOf`（slug → 显示名）；头字段只四个：`name` / `title` / `manager` / `team`；`OWNER_SLUG = "owner"` |
 | `agent/rules.ts` | 41 | `loadRules()` / `renderRulesSection()` —— 读 `<workspace>/rules.md` 并排成「## 规矩」一节；缺文件 = 整段不出现 |
@@ -119,7 +119,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/unanswered.ts` | 82 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛） |
 | `plugin/manifest.ts` | 159 | `readPluginManifest` / `listPluginSlugs` —— `plugins/<slug>/plugin.md` 的头（`name` / `description` / `enabled`）+ 目录里有没有 `plugin.ts`（或 `plugin.js`）与 `client.js`；缺清单是一条**错误**不是异常。`writePluginEnabled` 只改 `enabled` 一行；`installPluginFiles` 把界面选中的整个文件夹（`{path, base64}[]`）校验后原样落盘、`removePluginFolder` 删整个目录（装 / 卸，见 CORE §13） |
 | `plugin/api.ts` | 104 | 插件能做的四个动作：`PluginApi`（`tool` / `prompt` / `route` / `on("message")`，外加 `Type` / `text` / `log` / `workspace`）+ `createPluginApi`，每个注册只往 `PluginSinks` 的一个数组里 push |
-| `plugin/load.ts` | 126 | `loadPlugins({pluginsRoot, workspace, log})` → `PluginHost{tools, prompt, routes, messages, plugins, errors}`：按目录名序逐个 `import` 后端入口、`apply(api)`；**隔离**在这里（清单坏 / import 炸 / apply 抛都只留一条错误）；`emptyPluginHost` |
+| `plugin/load.ts` | 130 | `loadPlugins({pluginsRoot, workspace, log})` → `PluginHost{tools, prompt, routes, messages, plugins, errors}`：按目录名序逐个 `import` 后端入口（`?v=<mtime>` 绕开 import 缓存，重装才读得到新代码）、`apply(api)`；**隔离**在这里（清单坏 / import 炸 / apply 抛都只留一条错误）；`emptyPluginHost` |
 | `app/index.ts` | 51 | `createApp(services)` → `{snapshots, read, people, teams, chat, uploads, runs, watch, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
 | `app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」 |
 | `app/snapshot.ts` | 86 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
@@ -127,7 +127,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `app/trace.ts` | 313 | **轨迹派生，纯函数**（ADR-001 / ADR-003）：会话条目 → `ViewTurn`。`buildTurn` / `summaryOf` / `withoutSteps` / `slimTurn` / `stripAnsi`；单轮 200 步、单步输出 8 KB、思考 4 KB 上限；拿不到耗时就不编 |
 | `app/people.ts` | 122 | `createPeople` —— 一个人：档案、记忆的读 / 加 / 改 / 删；`MemoryEditBody`。记忆的 DTO 形状交给 `app/project.ts` 的 `memorySummary` / `memoryEntries` |
 | `app/teams.ts` | 33 | `createTeams` —— 一个团队：`readTeamProfile`（README 正文 + 管理员显示名 + `memory.md` 的全部小节，时间恒为 `null`） |
-| `app/plugins.ts` | 143 | `createPlugins` —— 插件清单（`enabled` 每次从磁盘读，开关才是下次启动的事实；`brings` 是这次进程真注册出来的工具 / 提示词 / 接口 / 监听）/ 开关（`setEnabled` → `plugin/manifest.ts` 的 `writePluginEnabled`）/ 装与删（`install` → `installPluginFiles`、`remove` → `removePluginFolder`）/ 一个插件的前端入口（名字过 `isSafeName`，只发已装上插件声明过的 `client.js`）/ 把 `PluginRouteSpec` 换成接口层认识的 `AppPluginRoute`（含 `body` 的 `unknown → JsonValue` 那一处转换） |
+| `app/plugins.ts` | 143 | `createPlugins` —— 插件清单（`enabled` 每次从磁盘读；`brings` 是这次进程真注册出来的工具 / 提示词 / 接口 / 监听）/ 开关（`setEnabled` → `plugin/manifest.ts` 的 `writePluginEnabled`）/ 装与删（`install` → `installPluginFiles`、`remove` → `removePluginFolder`）；三个动作写完文件都调 `shell.reloadPlugins()`，当场生效（ADR-026）/ 一个插件的前端入口（名字过 `isSafeName`，只发已装上插件声明过的 `client.js`）/ 把 `PluginRouteSpec` 换成接口层认识的 `AppPluginRoute`（含 `body` 的 `unknown → JsonValue` 那一处转换） |
 | `app/project.ts` | 371 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels`；显示名走 `agent/identity.ts`，团队头走 `channel/types.ts` 的 `teamId`。另有记忆投影 `memorySummary` / `memoryEntries`（个人与团队共用；没有 journal 的条目时间给 `null`） |
 | `app/chat.ts` | 169 | 说话用例：`postAsOwner` / `openDirectMessage`（委托 `ensureOwnerDm`，幂等）/ `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界、私聊对象必须在名册里）在这里而不在路由里 |
 | `app/avatar.ts` | 69 | 头像的**画法**：`avatarSvg(seed, size)`（DiceBear `micah`，取景与底色都在这里）/ `avatarEtag` / `clampAvatarSize`。纯函数，没有 IO：路由把字节写出去 |
@@ -145,7 +145,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `interface/http/static-assets.ts` | 310 | 静态资源：`serveStatic`（SPA 回退）/ `loadAsset` / `etagFor` / `bodyFor`；按编码区分的 ETag + Last-Modified + `Vary` + br/gzip 协商 + `insideRoot` 越界判断 |
 | `interface/http/origin-guard.ts` | 130 | 来源闸：`hostAllowed` / `originAllowed` / `allowedHostsOf` / `selfOriginsOf`（Host 与 Origin 白名单，默认只给本机） |
 | `interface/http/sse.ts` | 422 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照（带 `activity`），`create` 只推订阅者，`trace` 只推正在跑的那几轮并按指纹去重；一次提交后两分钟里每秒补推一次（`wakePulse` / `pulseNow`），运行状态不落盘也不等提交） |
-| `shell/assemble.ts` | 524 | `assembleCore()` —— 扫文件夹 → **装插件（工具并进同一个注册表、提示词段与消息钩子一起接）** → 开会话 → 绑名册 → 播种全员频道；接线只调一次 `wireChannel`，成员投影只调 `channel/membership.ts`（装配不再自己写业务规则）；`ownerSpeak` / `makeAfterPost`；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板）；`core-tools` 扩展上挂 `app/audit.ts` 的钩子（会话 id → slug 的反查也在这里） |
+| `shell/assemble.ts` | 524 | `assembleCore()` —— 扫文件夹 → **装插件（工具并进同一个注册表、提示词段与消息钩子一起接）** → 开会话 → 绑名册 → 播种全员频道；接线只调一次 `wireChannel`，成员投影只调 `channel/membership.ts`（装配不再自己写业务规则）；`ownerSpeak` / `makeAfterPost`（监听器取 `() => plugins.messages`，重装后听新的那一批）；`reloadPlugins`（ADR-026：整份重装插件 —— 同名换 `core-tools`、重装每个人的身份扩展）；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板）；`core-tools` 扩展上挂 `app/audit.ts` 的钩子（会话 id → slug 的反查也在这里） |
 | `shell/seed.ts` | 324 | `seedOwnerAssistant`（读 `seed/agents/assistant/identity.md` 建人 + 助理个人层技能，只建一次）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `workspace/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPlugins`（`seed/plugins/*` 整份缺失才拷）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/` |
 | `shell/main.ts` | 171 | 启动：播种规矩 / 提示词模板 / 全员层技能（`seedRules` / `seedPromptTemplates` / `syncAllSkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
@@ -208,7 +208,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改「没明确频道时在哪儿回话」 | `channel/rules.ts` 的 `fallbackChannelId` + `channel/tools/channel-choice.ts` 的 `defaultChannel` | 兜底只找最近活跃的真实频道；**落到私聊就报错**让模型显式给 channel，不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见）。显式 `channel` 认 id，也认**频道名**——提示词里给的是标题，不是 id |
 | 改频道成员怎么来 | `channel/rules.ts` 的 `projectChannel` + `channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` / `ensureOwnerDm` | 成员是 `identity.md` + 团队 `README.md` 的投影；全员 / 重扫用 `merge`，团队用 `replace`。全员频道只是播种一次的普通群，没有特权 |
 | 文件读写 / 名字 / Markdown 头 | `fsx.ts`（工作区相对路径）/ `runtime/io.ts`（绝对路径机械 IO）/ `naming.ts` / `md/doc.ts` | 每个都只有一份实现；直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外，别在业务模块里新开 |
-| 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的四个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`workspace/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在设置浮层（`Overlays.tsx` 的 `PluginsSection`），落盘走 `writePluginEnabled` |
+| 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的四个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`workspace/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在插件浮层（`Overlays.tsx` 的 `PluginSheet`），落盘走 `writePluginEnabled`，写完就重装（ADR-026） |
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/route-match.ts` / `static-assets.ts` / `origin-guard.ts` / `network.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
@@ -269,7 +269,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 71 文件 / 728 例，应该 <3s
+npm test             # 72 文件 / 730 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
