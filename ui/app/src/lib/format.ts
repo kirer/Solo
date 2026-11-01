@@ -189,17 +189,21 @@ export function headParts(channel: ChannelHead | null | undefined): string[] {
 }
 
 /**
- * 会话列表的排序：**知言恒第一**，其余按最后说话时间倒序。
+ * 会话列表的排序：**助理恒第一**，其余按最后说话时间倒序。
  *
  * 为什么要在这里排而不是靠后端顺序：列表每次刷新（含重启后重新拉
- * `/api/channels`）都会重画，`lastAt` 一变知言就沉下去了 —— 我的助理
- * 不该因为「今天没说话」掉到列表底下。所以排序时先比「是不是知言的私聊」，
+ * `/api/channels`）都会重画，`lastAt` 一变助理就沉下去了 —— 我的助理
+ * 不该因为「今天没说话」掉到列表底下。所以排序时先比「是不是助理的私聊」，
  * 再比时间，pin 与刷新顺序无关。
  */
-export const PINNED_SLUG = "知言";
+
+/** 助理 = 直接向我汇报的那个人。名字每次都可能不同，只认汇报关系。 */
+export function assistantSlug(people: readonly { slug: string; manager?: string | undefined }[]): string | undefined {
+	return people.find((person) => person.manager === "owner")?.slug;
+}
 
 /**
- * 排序与置顶只认这三样：`id`（认出「知言的私聊」）、`kind`（只对私聊置顶）、
+ * 排序与置顶只认这三样：`id`（认出「助理的私聊」）、`kind`（只对私聊置顶）、
  * `lastAt`（比时间）。同样不直接要 `Channel`，因为侧栏与搜索结果都往这里塞。
  */export type ChannelPin = {
 	id?: string | undefined;
@@ -207,17 +211,17 @@ export const PINNED_SLUG = "知言";
 	lastAt?: number | undefined;
 };
 
-export function isPinnedChannel(channel: ChannelPin | null | undefined): boolean {
+export function isPinnedChannel(channel: ChannelPin | null | undefined, assistant: string | undefined): boolean {
 	// 形态只看 `kind`（后端按成员推的 dm/group），不再从 id 前缀猜。
-	if (channel?.kind !== "dm") return false;
-	return String(channel.id ?? "").endsWith(`-${PINNED_SLUG}`);
+	if (channel?.kind !== "dm" || assistant === undefined) return false;
+	return String(channel.id ?? "").endsWith(`-${assistant}`);
 }
 
 /** 泛型只为「排完还是原来那种频道对象」，不把字段裁成 `ChannelPin`。 */
-export function sortChannels<T extends ChannelPin>(channels: readonly T[]): T[] {
+export function sortChannels<T extends ChannelPin>(channels: readonly T[], assistant: string | undefined): T[] {
 	return [...channels].sort((left, right) => {
-		const leftPinned = isPinnedChannel(left);
-		const rightPinned = isPinnedChannel(right);
+		const leftPinned = isPinnedChannel(left, assistant);
+		const rightPinned = isPinnedChannel(right, assistant);
 		if (leftPinned !== rightPinned) return leftPinned ? -1 : 1;
 		return (right.lastAt ?? 0) - (left.lastAt ?? 0);
 	});

@@ -325,7 +325,7 @@ export async function seedOwnerAssistant(
 		console.warn(`[core] 没读到 ${SEED_ASSISTANT_IDENTITY}：助理身份会是一份占位正文`);
 	}
 	const name = options.name ?? front(seed, "name") ?? "助理";
-	const title = front(seed, "title") ?? "负责人";
+	const title = front(seed, "title") ?? "助理";
 	const manager = front(seed, "manager") ?? OWNER_SLUG;
 	const team = front(seed, "team");
 	const body = seed?.body;

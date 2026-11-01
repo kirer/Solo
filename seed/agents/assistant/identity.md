@@ -1,6 +1,6 @@
 ---
 name: 知言
-title: 负责人
+title: 助理
 manager: owner
 team: ""
 ---

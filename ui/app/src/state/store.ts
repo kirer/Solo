@@ -25,7 +25,7 @@ import {
 	sendMessage,
 } from "../api/client.ts";
 import type { Actor, AttentionItem, Channel, ChannelDetail, Message, Org, PersonProfile, Turn } from "../api/types.ts";
-import { sortChannels } from "../lib/format.ts";
+import { assistantSlug, sortChannels } from "../lib/format.ts";
 import { mark } from "../lib/jank.ts";
 
 export type Presence = "idle" | "working" | "thinking" | "asleep";
@@ -138,7 +138,7 @@ export async function refreshLists(): Promise<void> {
 	try {
 		const [channels, attention] = await Promise.all([getChannels(), getAttention()]);
 		patch({
-			channels: sortChannels(channels.channels),
+			channels: sortChannels(channels.channels, assistantSlug(state.people)),
 			attention: attention.items,
 			attentionUnread: attention.unread,
 		});

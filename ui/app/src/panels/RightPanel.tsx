@@ -149,7 +149,8 @@ function IdentityCard(): JSX.Element | null {
 	const person = useStore((state) => state.person);
 	const detail = useStore((state) => state.detail);
 	const presence = useStore((state) => state.presence);
-	// 私聊卡上写的是对面那个人的**职务**（`负责人`），不是「私聊」这两个字 ——
+	// 私聊卡上写的是对面那个人的**身份**（`identity.md` 的 `title`，助理是「助理」），
+	// 不是「私聊」这两个字 ——
 	// 「私聊」说的是这个频道，卡片说的是这个人。档案只在这时多拉一次。
 	const peerSlug =
 		detail === null || detail.channel.kind !== "dm"

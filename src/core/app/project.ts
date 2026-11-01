@@ -286,12 +286,10 @@ export function orgView(identities: readonly Identity[], directory: DirectorySta
 		body: identity.body,
 	});
 
-	// 知言（我唯一直接对话的助理）固定排第一（pin to top）：任何成员/团队列表恒首位。
-	const pinned = identities.filter((identity) => identity.slug === "知言");
-	const rest = identities.filter((identity) => identity.slug !== "知言");
+	// 助理（直接向我汇报的那个人）排最前 —— 按汇报关系认，不按名字认。
 	return {
 		workspace: { name: orgName },
-		people: [...pinned.map(toActor), ...nearestOf(rest).map(toActor), ...othersOf(rest).map(toActor)],
+		people: [...nearestOf(identities).map(toActor), ...othersOf(identities).map(toActor)],
 	};
 }
 
