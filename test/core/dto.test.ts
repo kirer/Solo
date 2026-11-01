@@ -158,6 +158,7 @@ describe("投影的输出与 DTO 字段一一对应", () => {
 					"lastAt",
 					"lastSeq",
 					"memberCount",
+					"members",
 				] satisfies (keyof ViewChannel)[]
 			)
 				.slice()

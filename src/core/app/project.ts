@@ -131,6 +131,7 @@ export function channelList(
 			lastAt: last?.at ?? channel.createdAt,
 			lastSeq: last?.seq ?? 0,
 			memberCount: channel.members.length,
+			members: channel.members.filter((slug) => slug !== OWNER_SLUG),
 		});
 	}
 	// 界面期望「最近的在前」。
@@ -194,6 +195,9 @@ export function messageView(
 					},
 				}),
 		read: readMarkOf(state, viewer, channel.id) >= message.seq,
+		...(message.options === undefined || message.options.length === 0
+			? {}
+			: { options: [...message.options] }),
 		// 附件只透传引用（id/name/kind/bytes），文件本体走 `/api/uploads/:id`。
 		// 逐字段重建是为了固定键顺序：这份 JSON 也会进 SSE 与提示词，字节要确定。
 		...(message.attachments === undefined || message.attachments.length === 0
@@ -248,6 +252,7 @@ export function channelDetail(
 			lastAt: last?.at ?? channel.createdAt,
 			lastSeq: last?.seq ?? 0,
 			memberCount: channel.members.length,
+			members: channel.members.filter((slug) => slug !== OWNER_SLUG),
 		},
 		members: channel.members.map((slug) => ({
 			id: idOf(directory, slug),

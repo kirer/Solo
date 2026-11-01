@@ -28,10 +28,10 @@ async function workspace(): Promise<Sandbox> {
 describe("装配", () => {
 	test("每个人都有自己的身份段落，且 key 是 ASCII", async () => {
 		const box = await workspace();
-		const agents = box.agentsRoot;
+		const layout = box.layout;
 		const opened = await box.open();
 		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const slug = await seedOwnerAssistant(layout, { name: "林越" });
 			const shell = await box.assemble(opened);
 			const conversation = shell.conversations.get(slug);
 			expect(conversation).toBeDefined();
@@ -55,10 +55,10 @@ describe("装配", () => {
 
 	test("身份段落读到的是盘上的最新内容", async () => {
 		const box = await workspace();
-		const agents = box.agentsRoot;
+		const layout = box.layout;
 		const opened = await box.open();
 		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const slug = await seedOwnerAssistant(layout, { name: "林越" });
 			const shell = await box.assemble(opened);
 			const conversation = shell.conversations.get(slug);
 			if (conversation === undefined) throw new Error("没有会话");
@@ -71,7 +71,7 @@ describe("装配", () => {
 
 			// 热更新：只改盘上的文件，不重开会话、不重启。
 			await writeFile(
-				join(agents, slug, "identity.md"),
+				join(layout.assistantRoot, slug, "identity.md"),
 				"---\nname: 林越\ntitle: 负责人\n---\n\n你现在只关心一件事：钱。\n",
 				"utf8",
 			);
@@ -94,10 +94,10 @@ describe("装配", () => {
 
 	test("我说话会真的投递到收件人的会话里", async () => {
 		const box = await workspace();
-		const agents = box.agentsRoot;
+		const layout = box.layout;
 		const opened = await box.open();
 		try {
-			const slug = await seedOwnerAssistant(agents, { name: "林越" });
+			const slug = await seedOwnerAssistant(layout, { name: "林越" });
 			const shell = await box.assemble(opened);
 			const { delivery } = await shell.ownerSay({ channelId: "all", text: `@${slug} 在吗` });
 			expect(delivery.failed).toEqual([]);
@@ -124,11 +124,11 @@ describe("装配", () => {
 
 describe("助理身份：组织是文件，不是代码里的字符串", () => {
 	test("播种出来的 identity.md 正文就是 seed 文件里的正文", async () => {
-		const agents = (await workspace()).agentsRoot;
-		const slug = await seedOwnerAssistant(agents, { name: "示例" });
+		const layout = (await workspace()).layout;
+		const slug = await seedOwnerAssistant(layout, { name: "示例" });
 
-		const created = parseDoc("identity.md", await readFile(join(agents, slug, "identity.md"), "utf8"));
-		const seed = parseDoc("identity.md", await readFile(new URL("../../seed/agents/assistant/identity.md", import.meta.url), "utf8"));
+		const created = parseDoc("identity.md", await readFile(join(layout.assistantRoot, slug, "identity.md"), "utf8"));
+		const seed = parseDoc("identity.md", await readFile(new URL("../../seed/assistant/identity.md", import.meta.url), "utf8"));
 
 		// 逐字节相同才说明它是「读文件」，不是代码里又抄了一份。
 		expect(created.body).toBe(seed.body);
@@ -139,9 +139,9 @@ describe("助理身份：组织是文件，不是代码里的字符串", () => {
 	});
 
 	test("改 seed 文件就换一个人的说法：代码里没有第二份正文", async () => {
-		const agents = (await workspace()).agentsRoot;
-		const slug = await seedOwnerAssistant(agents);
-		const created = parseDoc("identity.md", await readFile(join(agents, slug, "identity.md"), "utf8"));
+		const layout = (await workspace()).layout;
+		const slug = await seedOwnerAssistant(layout);
+		const created = parseDoc("identity.md", await readFile(join(layout.assistantRoot, slug, "identity.md"), "utf8"));
 		// 代码里那份旧字面量（V2 的 `me(action=update)` / `read_history(scope=memory)`）不许再出现。
 		expect(created.body).not.toContain("me(action=update)");
 		expect(created.body).not.toContain("read_history(scope=memory)");
@@ -150,40 +150,45 @@ describe("助理身份：组织是文件，不是代码里的字符串", () => {
 
 describe("播种技能", () => {
 	test("全员层技能来自文件，不是代码里的字符串", async () => {
-		const agents = (await workspace()).agentsRoot;
-		const report = await syncAllSkills(agents);
+		const layout = (await workspace()).layout;
+		const report = await syncAllSkills(layout);
 		// `写技能` / `找现成技能` 是所有人都该会的手艺，落在全员层。
 		expect(report.copied).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
-		const skills = await listSkills({ workspace: join(agents, ".."), agents }, "owner");
+		const roots = { workspace: layout.userRoot, agents: layout.agentRoots, teams: layout.teamsRoot };
+		const skills = await listSkills(roots, "owner");
 		expect(skills.map((skill) => skill.name)).toEqual(expect.arrayContaining(["写技能", "找现成技能"]));
-		const body = await readSkill({ workspace: join(agents, ".."), agents }, "owner", "写技能");
+		const body = await readSkill(roots, "owner", "写技能");
 		expect(body?.body).toContain("## 什么时候该写");
 	});
 
 	test("建立团队与招人是助理的个人技能，不进全员层", async () => {
-		const agents = (await workspace()).agentsRoot;
-		// V3 把助理的个人技能挪到 seed/agents/assistant/skills/：一个 agent 的种子内容跟它的目录名走。
-		const copied = await seedPersonalSkills(agents, "助理", "agents/assistant/skills");
+		const box = await workspace();
+		const layout = box.layout;
+		// 助理的个人技能种子跟着助理目录走（`seed/assistant/skills/`）。
+		const assistantDir = join(layout.assistantRoot, "助理");
+		await mkdir(assistantDir, { recursive: true });
+		await writeFile(join(assistantDir, "identity.md"), "---\nname: 助理\n---\n\n统筹。\n", "utf8");
+		const copied = await seedPersonalSkills(assistantDir, "assistant/skills");
 		expect(copied).toEqual(expect.arrayContaining(["建立团队", "招人"]));
 
 		// 全员层不该有它们：招人、建团队是助理的职权，别人本来就不该招人。
-		const synced = await syncAllSkills(agents);
+		const synced = await syncAllSkills(layout);
 		const syncedNames = [...synced.copied, ...synced.updated];
 		expect(syncedNames).not.toContain("建立团队");
 		expect(syncedNames).not.toContain("招人");
 
-		const body = await readSkill({ workspace: join(agents, ".."), agents }, "助理", "建立团队");
+		const body = await readSkill({ workspace: layout.userRoot, agents: layout.agentRoots, teams: layout.teamsRoot }, "助理", "建立团队");
 		expect(body?.body).toContain("## 什么时候建");
 		expect(body?.scope).toBe("personal");
 	});
 
 	test("第二次播种不覆盖用户改过的内容", async () => {
-		const agents = (await workspace()).agentsRoot;
-		await syncAllSkills(agents);
+		const layout = (await workspace()).layout;
+		await syncAllSkills(layout);
 		// 用户改了自己的技能。
-		await writeAllSkill(join(agents, ".."), { name: "写技能", description: "改过", body: "# 我自己的版本" });
-		await syncAllSkills(agents);
-		const body = await readSkill({ workspace: join(agents, ".."), agents }, "owner", "写技能");
+		await writeAllSkill(layout.userRoot, { name: "写技能", description: "改过", body: "# 我自己的版本" });
+		await syncAllSkills(layout);
+		const body = await readSkill({ workspace: layout.userRoot, agents: layout.agentRoots, teams: layout.teamsRoot }, "owner", "写技能");
 		expect(body?.body).toContain("我自己的版本");
 	});
 });

@@ -42,10 +42,26 @@ export type PluginRouteSpec = {
 
 export type PluginListener = (message: Message, channelId: string) => void | Promise<void>;
 
+/**
+ * 一个频道对应的**工作区**。
+ *
+ * 私聊 → 那个人的 `workspace/`；团队频道 → 团队的 `workspace/`；全员频道 → 没有
+ * （它不是谁的工作区）。插件拿到的只是**根目录这一个字符串**：路径守卫、深度上限、
+ * 什么能预览，全在插件里做 —— 内核只负责说清「这个频道的工作区在哪」。
+ */
+export type PluginScope = {
+	readonly kind: "dm" | "group";
+	readonly title: string;
+	/** 绝对路径。 */
+	readonly root: string;
+	/** 给人看的名字：私聊是那个人的名字，团队频道是团队名。 */
+	readonly label: string;
+};
+
 /** 插件拿到的那一个对象。插件源码里不 import 任何东西，全靠它。 */
 export type PluginApi = {
 	readonly slug: string;
-	/** 工作区绝对路径。插件要读写自己的数据时用它（自担越界风险，见 ADR）。 */
+	/** 应用私有的绝对路径（`appRoot`；字段名沿用旧称）。插件读写自己的数据时用它（自担越界风险，见 ADR-036）。 */
 	readonly workspace: string;
 	/** 工具参数 schema 的构造器。 */
 	readonly Type: typeof Type;
@@ -56,6 +72,8 @@ export type PluginApi = {
 	prompt(text: string): void;
 	route(spec: PluginRouteSpec): void;
 	on(event: "message", listener: PluginListener): void;
+	/** 这个频道的工作区；没有（全员频道）或查无此频道 → `undefined`。 */
+	scope(channelId: string): Promise<PluginScope | undefined>;
 	log(line: string): void;
 };
 
@@ -77,6 +95,7 @@ export function createPluginApi(options: {
 	readonly slug: string;
 	readonly workspace: string;
 	readonly sinks: PluginSinks;
+	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
 }): PluginApi {
 	const { slug, workspace, sinks } = options;
 	return {
@@ -97,6 +116,7 @@ export function createPluginApi(options: {
 		on(event, listener) {
 			if (event === "message") sinks.messages.push(listener);
 		},
+		scope: options.scope ?? (async () => undefined),
 		log(line) {
 			sinks.logs.push(line);
 		},

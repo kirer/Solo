@@ -4,4 +4,4 @@
 
 本提示词里的「我」指用户本人；你称呼对方时用「你」。
 
-你的身份正文写在 `agents/{{self.slug}}/identity.md` 的 `---` 之后。
+你的身份正文写在 `{{self.dir}}identity.md` 的 `---` 之后。

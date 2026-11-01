@@ -30,8 +30,8 @@ const PLUGIN = (tool: string) => `
 	}
 `;
 
-async function writeClock(root: string, tool: string, enabled: boolean): Promise<void> {
-	const dir = join(root, "plugins", "clock");
+async function writeClock(pluginsRoot: string, tool: string, enabled: boolean): Promise<void> {
+	const dir = join(pluginsRoot, "clock");
 	await mkdir(dir, { recursive: true });
 	await writeFile(
 		join(dir, "plugin.md"),
@@ -58,7 +58,7 @@ async function boot(tool = "clock_now") {
 	const box = await pool.make("core-plugin-reload-");
 	await mkdir(join(box.agentsRoot, "林越"), { recursive: true });
 	await writeFile(join(box.agentsRoot, "林越", "identity.md"), "---\nname: 林越\ntitle: 工程师\n---\n\n# 林越\n", "utf8");
-	await writeClock(box.root, tool, false);
+	await writeClock(box.layout.pluginsRoot, tool, false);
 
 	const runtime = await box.open();
 	const shell = await box.assemble(runtime);
@@ -77,7 +77,7 @@ describe("插件不重启就生效", () => {
 		expect((await get(port, "/api/p/clock")).status).toBe(404);
 		expect(await shell.promptOf("林越")).not.toContain("时钟插件在跑");
 
-		await writePluginEnabled(join(box.root, "plugins"), "clock", true);
+		await writePluginEnabled(box.layout.pluginsRoot, "clock", true);
 		await shell.reloadPlugins();
 
 		expect(toolNames()).toContain("clock_now");
@@ -87,11 +87,11 @@ describe("插件不重启就生效", () => {
 
 	it("改后端代码再重装：读到的是新代码，不是 import 缓存里那份", async () => {
 		const { box, shell, toolNames } = await boot();
-		await writePluginEnabled(join(box.root, "plugins"), "clock", true);
+		await writePluginEnabled(box.layout.pluginsRoot, "clock", true);
 		await shell.reloadPlugins();
 		expect(toolNames()).toContain("clock_now");
 
-		await writeClock(box.root, "clock_later", true);
+		await writeClock(box.layout.pluginsRoot, "clock_later", true);
 		await shell.reloadPlugins();
 
 		expect(toolNames()).toContain("clock_later");

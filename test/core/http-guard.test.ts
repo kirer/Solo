@@ -61,13 +61,13 @@ afterEach(async () => {
 	await pool.cleanup();
 });
 
-async function setup(): Promise<{ shell: CoreShell; port: number; root: string }> {
+async function setup(): Promise<{ shell: CoreShell; port: number; root: string; layout: import("../../src/core/layout.ts").Layout }> {
 	const box = await pool.make("core-http-guard-");
 	const runtime = await box.open();
 	const shell = await box.assemble(runtime, { defaultModel: { provider: "test", modelId: "test" } });
 	const server = await serveCore({ shell, port: 0 });
 	servers.push(server);
-	return { shell, port: server.port, root: box.root };
+	return { shell, port: server.port, root: box.root, layout: box.layout };
 }
 
 /** 原始 http 请求：需要自己写 Host / Origin / Sec-Fetch-Site，fetch 不让设这些。 */
@@ -270,7 +270,7 @@ describe("④ 正文限长与诊断落盘", () => {
 	});
 
 	it("正常大小的诊断条目落盘，entries 超 4KB 会被截断", async () => {
-		const { port, root } = await setup();
+		const { port, layout } = await setup();
 		const ok = await call(port, {
 			method: "POST",
 			path: "/api/diag",
@@ -279,7 +279,7 @@ describe("④ 正文限长与诊断落盘", () => {
 		});
 		expect(ok.status).toBe(200);
 		const { readFile } = await import("node:fs/promises");
-		const line = (await readFile(join(root, "logs", "jank.jsonl"), "utf8")).trim();
+		const line = (await readFile(join(layout.logsRoot, "jank.jsonl"), "utf8")).trim();
 		const entry = JSON.parse(line) as { entries: string };
 		expect(entry.entries.length).toBeLessThan(4200);
 		expect(entry.entries.endsWith("[截断]")).toBe(true);

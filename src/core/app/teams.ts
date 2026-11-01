@@ -1,7 +1,7 @@
 /**
  * 「团队」的用例：一个团队的档案与记忆。
  *
- * 团队也是文件夹（`workspace/teams/<slug>/`），事实只有两份：`README.md` 与 `memory.md`。
+ * 团队也是文件夹（`<userRoot>/teams/<slug>/`），事实只有两份：`README.md` 与 `memory.md`。
  * 界面要的东西全在这里拼好 —— 它不自己去读盘，也不认识 `teams/<slug>/` 这种路径。
  */
 import { listTeamSkills } from "../agent/skills.ts";
@@ -14,9 +14,9 @@ import type { CoreServices } from "./types.ts";
 
 export function createTeams(shell: CoreServices) {
 	async function readTeamProfile(slug: string): Promise<ViewTeamProfile> {
-		const doc = await readTeam(shell.teamsRoot, slug);
+		const doc = await readTeam(shell.layout.teamsRoot, slug);
 		if (doc === undefined) throw new AppError("not-found", "没有这个团队");
-		const source = (await readTeamMemory(shell.teamsRoot, slug)) ?? "";
+		const source = (await readTeamMemory(shell.layout.teamsRoot, slug)) ?? "";
 		return {
 			slug: doc.slug,
 			name: doc.name,
@@ -25,7 +25,7 @@ export function createTeams(shell: CoreServices) {
 			...(doc.lead === undefined ? {} : { lead: doc.lead }),
 			leadLabel: doc.lead === undefined ? "" : shell.labelOf(doc.lead),
 			body: doc.body,
-			skills: (await listTeamSkills(shell.teamsRoot, doc.slug)).map((skill) => ({
+			skills: (await listTeamSkills(shell.layout.teamsRoot, doc.slug)).map((skill) => ({
 				name: skill.name,
 				description: skill.description,
 				scope: skill.scope,

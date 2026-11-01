@@ -2,7 +2,7 @@
  * 模型管理的前端：在「设置」里多一节「模型」。
  *
  * 它只做表单：读 `GET /api/p/models` 拿到打码后的配置，改完 `POST /api/p/models` 写回
- * `workspace/settings.json`，「获取可用模型」打一次 `POST /api/p/models/probe`。
+ * `<appRoot>/settings.json`，「获取可用模型」打一次 `POST /api/p/models/probe`。
  * 这里只写文件；写完之后内核会在下一次读模型时把它就地装进注册表（ADR-025），不用重启。
  *
  * 版式借的是设置页的公共样式（`.settings-row` / `.settings-desc`，见 DESIGN §1.5）：

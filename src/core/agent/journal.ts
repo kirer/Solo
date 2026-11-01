@@ -1,5 +1,5 @@
 /**
- * 记忆的写入日志：`agents/<slug>/.memory-journal.jsonl`。
+ * 记忆的写入日志：`members/<slug>/.memory-journal.jsonl`。
  *
  * 为什么需要它：`memory.md` 是**当前态**，只留最后一份。它可改是优点（记忆要被改得动），
  * 但「改了没痕迹」是缺点 —— agent 把密钥、一次性中间结论、错的判断写进去之后，

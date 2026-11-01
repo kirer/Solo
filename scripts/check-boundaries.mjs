@@ -121,10 +121,10 @@ const LAYER_RULES = [
 			{ match: /\/shell\//, reason: "插件层不许 import 外壳（shell）" },
 		],
 	},
-	// 根目录两个原语（工作区路径、名字规则）：谁都能用，但它们不许往上够。
+	// 根目录三个原语（工作区路径、名字规则、两个根的布局）：谁都能用，但它们不许往上够。
 	{
-		dirs: ["src/core/fsx.ts", "src/core/naming.ts"],
-		layer: "原语（fsx/naming）",
+		dirs: ["src/core/fsx.ts", "src/core/naming.ts", "src/core/layout.ts"],
+		layer: "原语（fsx/naming/layout）",
 		deny: [
 			{ match: /\/app\//, reason: "原语不许 import 用例层（app）" },
 			{ match: /\/view\//, reason: "原语不许 import 契约层（view）" },

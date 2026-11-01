@@ -19,17 +19,14 @@ import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
 import { redact } from "./secrets.ts";
 import { createFsx } from "../fsx.ts";
+import { agentDirLabel, type Layout } from "../layout.ts";
 import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../md/prompt.ts";
 import { byName } from "../runtime/io.ts";
 import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../md/text.ts";
 
 export type AgentPaths = {
-	/** 工作区根（全员层技能在 `<workspace>/skills/`）。 */
-	readonly workspace: string;
-	/** `workspace/agents`。 */
-	readonly agents: string;
-	/** `workspace/teams`。 */
-	readonly teams: string;
+	/** 两个根的布局：提示词、密钥在 app 根；技能、团队、规矩在用户根。 */
+	readonly layout: Layout;
 	/**
 	 * 这个人此刻在哪些会话里。
 	 *
@@ -108,7 +105,7 @@ function summaryOf(tool: unknown): string {
  * 段落的 key。
  *
  * 底层要求 key 匹配 `^[a-z][a-z0-9_-]*$`（还保留 `instructions` 这个名字），
- * 而 slug 可以是中文（`agents/林越/`），所以这里必须转义：UTF-8 字节的十六进制，
+ * 而 slug 可以是中文（`members/林越/`），所以这里必须转义：UTF-8 字节的十六进制，
  * 前缀补一个字母。结果稳定、唯一、纯 ASCII。
  */
 export function sectionKeyOf(slug: string): string {
@@ -116,7 +113,7 @@ export function sectionKeyOf(slug: string): string {
 }
 
 const identitylessPrompt = (slug: string): string =>
-	`# 你还没有身份文件\n\n目录：\`agents/${slug}/\`。\n`;
+	`# 你还没有身份文件\n\n目录：\`members/${slug}/\`。\n`;
 
 /** `名字（\`slug\`）`—— 名字给人看，slug 给工具用，两个都要。 */
 function withSlug(name: string, slug: string): string {
@@ -176,13 +173,14 @@ async function slotsFor(
 		"self.title": self.title,
 		"self.slug": self.slug,
 		"self.body": self.body,
+		"self.dir": agentDirLabel(paths.layout, self.dir),
 	};
 
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
-	if (need.has("rules")) slots["rules"] = await loadRules(paths.workspace);
+	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);
 
 	const needsRoster = wants("manager", "reports", "chain", "count", "team", "peers", "team.members");
-	const all = needsRoster ? await readAllIdentities(paths.agents) : [];
+	const all = needsRoster ? await readAllIdentities(paths.layout.agentRoots) : [];
 	if (need.has("count")) slots["count"] = all.length;
 	// 位置段这四行**永远有值**：写「（未设置）」会让提示词里出现一句半截的话，模型会自己补。
 	// 「没有上级 / 没有团队」怎么说归模板（`{{manager ?? …}}`），这里只给事实。
@@ -226,7 +224,9 @@ async function slotsFor(
 		slots[name] = tools.some((item) => item.name === tool) ? tool : undefined;
 	}
 	if (need.has("memory")) {
-		const memory = await readMemory(join(paths.agents, slug));
+		// 记忆跟着**身份目录**走：助理在 app 根，成员在用户根。
+		const selfDir = (await readIdentity(paths.layout.agentRoots, slug))?.dir;
+		const memory = selfDir === undefined ? undefined : await readMemory(selfDir);
 		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory);
 	}
 	if (need.has("skills")) {
@@ -236,10 +236,10 @@ async function slotsFor(
 
 	const team = self.team;
 	if (wants("team.brief", "team.members", "team.memory", "team.status", "team.lead", "team.dir")) {
-		Object.assign(slots, team === undefined ? {} : await teamSlots(paths.teams, team));
+		Object.assign(slots, team === undefined ? {} : await teamSlots(paths.layout.teamsRoot, team));
 		const members =
 			team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);
-		const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.teams, team);
+		const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.layout.teamsRoot, team);
 		slots["team.members"] = members === undefined || members.length === 0 ? undefined : members.map((item) => `\`${item}\``).join("、");
 		// 新团队还没有记忆：模板的默认句会说这句真话（`{{team.memory ?? …}}`）。
 		slots["team.memory"] = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
@@ -282,13 +282,13 @@ async function segmentText(
 	const rendered = renderSlots(template.body, slots);
 	for (const issue of rendered.issues) {
 		console.warn(
-			`[core] 提示词插槽没填上：agents/${slug} 的 ${segment} 段 {{${issue.slot}}}（${issue.reason}）`,
+			`[core] 提示词插槽没填上：${slug} 的 ${segment} 段 {{${issue.slot}}}（${issue.reason}）`,
 		);
 	}
 	// 唯一出口：身份、记忆、技能、团队简报都会进这里，密钥在这里统一换掉。
 	// 写入侧（`file` / `remember` / hire）也脱敏，但那是「尽量别写进去」；这一道才是
 	// 保证「已经写进去的也发不出去」的那一道（ADR-034）。
-	return redact(rendered.text.trim(), paths.workspace);
+	return redact(rendered.text.trim(), paths.layout.appRoot);
 }
 
 /**
@@ -309,7 +309,7 @@ export async function renderAgentSection(registry: Registry, paths: AgentPaths, 
 
 /** 技能清单（提示词只要名字 + 一句描述）。团队层技能也在这里 —— 团队会什么他必须知道。 */
 async function promptSkills(paths: AgentPaths, slug: string, team: string | undefined) {
-	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents, teams: paths.teams }, slug, team);
+	const skills = await listSkills({ workspace: paths.layout.userRoot, agents: paths.layout.agentRoots, teams: paths.layout.teamsRoot }, slug, team);
 	return skills.map((skill) => ({
 		name: skill.name,
 		description: skill.description,
@@ -324,8 +324,8 @@ async function promptSkills(paths: AgentPaths, slug: string, team: string | unde
  * 段名来自 `prompt/*.md` 的文件名，不再是一份代码里的常量表：加一段就是加个文件。
  */
 async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: string) {
-	const self = await readIdentity(paths.agents, slug);
-	const templates = await systemTemplates(paths.workspace);
+	const self = await readIdentity(paths.layout.agentRoots, slug);
+	const templates = await systemTemplates(paths.layout.appRoot);
 	const segments: { readonly segment: string; readonly text: string }[] = [];
 	if (self === undefined) {
 		return [{ segment: "who", text: identitylessPrompt(slug) }];
@@ -358,12 +358,12 @@ export async function agentSections(
 	slug: string,
 ): Promise<readonly PromptSection<ToolRegistration>[]> {
 	const base = sectionKeyOf(slug);
-	const templates = await systemTemplates(paths.workspace);
+	const templates = await systemTemplates(paths.layout.appRoot);
 	const sections: PromptSection<ToolRegistration>[] = templates.map((template) => ({
 		key: `${base}-${template.segment}`,
 		tag: false,
 		async render(): Promise<string> {
-			return segmentText(registry, paths, slug, await readIdentity(paths.agents, slug), template.segment, templates);
+			return segmentText(registry, paths, slug, await readIdentity(paths.layout.agentRoots, slug), template.segment, templates);
 		},
 	}));
 	// 插件段：`renderAgentSegments` 里有它，这里就必须有，否则 `promptOf` 和真人读到的
@@ -374,7 +374,7 @@ export async function agentSections(
 			key: `${base}-plugins`,
 			tag: false,
 			async render(): Promise<string> {
-				return redact(extra.map((text) => text.trim()).join("\n\n"), paths.workspace);
+				return redact(extra.map((text) => text.trim()).join("\n\n"), paths.layout.appRoot);
 			},
 		});
 	}

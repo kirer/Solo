@@ -88,7 +88,7 @@ describe("装配", () => {
 		const first = await box.open();
 		let firstId: number | undefined;
 		try {
-			await box.assemble(first, { agentsRoot: agents, teamsRoot: box.teamsRoot });
+			await box.assemble(first);
 			const directory = (await first.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
 			firstId = directory?.slugToConversation["林越"];
 		} finally {
@@ -97,7 +97,7 @@ describe("装配", () => {
 
 		const second = await box.open();
 		try {
-			await box.assemble(second, { agentsRoot: agents, teamsRoot: box.teamsRoot });
+			await box.assemble(second);
 			const directory = (await second.harness.snapshot(DirectoryDoc)) as DirectoryState | undefined;
 			expect(directory?.slugToConversation["林越"]).toBe(firstId);
 		} finally {
@@ -196,9 +196,8 @@ describe("我说话", () => {
 describe("播种", () => {
 	test("种出来的人 manager 就是 owner，且正文写清了职责", async () => {
 		const box = await pool.make("core-assemble-");
-		const agents = box.agentsRoot;
-		const slug = await seedOwnerAssistant(agents, { name: "林越" });
-		const identity = await readIdentity(agents, slug);
+		const slug = await seedOwnerAssistant(box.layout, { name: "林越" });
+		const identity = await readIdentity(box.layout.agentRoots, slug);
 		expect(identity?.manager).toBe("owner");
 		// 正文来自 `seed/agents/assistant/identity.md`（组织是文件）。这里只钉两条不变式：
 		// 它得是**真的写清了职责**（不是占位），且零工具名 —— V3 起工具改名不许让 seed 撒谎。
@@ -210,8 +209,7 @@ describe("播种", () => {
 
 	test("seed 出来的人能被装配扫到", async () => {
 		const box = await pool.make("core-assemble-");
-		const agents = box.agentsRoot;
-		await seedOwnerAssistant(agents, { name: "林越" });
+		await seedOwnerAssistant(box.layout, { name: "林越" });
 
 		const opened = await box.open();
 		try {

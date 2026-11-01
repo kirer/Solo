@@ -2,11 +2,11 @@
  * 播种：把仓库自带的起手技能与「离我最近的那个人」装进工作区。
  *
  * 分两种写入：
- * - **身份**（`agents/<slug>/`）只在工作区空的时候写一次 —— 之后那些文件属于那个人自己。
+ * - **身份**（`members/<slug>/`）只在工作区空的时候写一次 —— 之后那些文件属于那个人自己。
  * - **全员层的规矩与技能**（`rules.md` / `skills/`）每次启动都同步一遍：它们是全员共用的，
  *   以前只在空工作区拷一次，导致 `seed/skills/工作规矩/SKILL.md` 的 1037 字节修正
  *   从来没有进过已在跑的工作区（实测 5766 vs 4729 字节）。同步按 hash 判「用户改过没有」：
- *   没改过的升到新版，改过的原样留着（见 ADR-039）。
+ *   没改过的升到新版，改过的原样留着（见 ADR-031）。
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -17,7 +17,7 @@ import { OWNER_SLUG } from "../agent/identity.ts";
 import { RULES_FILE } from "../agent/rules.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 import { frontOf, parseDoc, type Doc } from "../md/doc.ts";
-import { PROMPT_DIR } from "../md/prompt.ts";
+import type { Layout } from "../layout.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -50,7 +50,7 @@ function hashOf(content: string): string {
 }
 
 /**
- * 把仓库自带的技能同步进工作区的全员层（`<workspace>/skills/`）。
+ * 把仓库自带的技能同步进用户根的全员层（`~/.solo/skills/`）。
  *
  * 每个文件单独判（不是整个技能判）：缺的补上、没改过的升到新版、改过的一动不动。
  * 幂等：内容已经一样就不写，manifest 没变也不写 —— 第二次启动不会碰磁盘。
@@ -58,12 +58,8 @@ function hashOf(content: string): string {
  * 找不到 `seed/skills/` 时静默跳过 —— 打包/部署方式可能不带这个目录，
  * 缺几份起手技能不该让服务起不来。
  */
-export async function syncAllSkills(agentsRoot: string): Promise<SyncReport> {
-	return syncSkillTree(
-		seedPath("skills"),
-		join(dirname(agentsRoot), SKILLS_DIR),
-		join(dirname(agentsRoot), SEED_MANIFEST_FILE),
-	);
+export async function syncAllSkills(layout: Layout): Promise<SyncReport> {
+	return syncSkillTree(seedPath("skills"), layout.skillsRoot, layout.seedManifestFile);
 }
 
 /** 同步入口：`seedSkillsRoot` 下的每个技能目录 → `skillsRoot/<技能>/...`。 */
@@ -163,8 +159,8 @@ async function walkFiles(root: string, prefix: string): Promise<string[]> {
  * 不覆盖的理由和技能不一样：规矩是每轮都进提示词的**活的**文件，我可能亲手改过措辞。
  * 技能有 hash 账本可以判断「改没改」，规矩只有一份文案，没有可靠的基线，所以只补不改。
  */
-export async function seedRules(workspaceRoot: string): Promise<"written" | "exists" | "missing"> {
-	const target = join(workspaceRoot, RULES_FILE);
+export async function seedRules(layout: Layout): Promise<"written" | "exists" | "missing"> {
+	const target = layout.rulesFile;
 	if (await existsAt(target)) return "exists";
 	const source = await readTextOrUndefined(seedPath(RULES_FILE));
 	if (source === undefined) return "missing";
@@ -181,7 +177,7 @@ export async function seedRules(workspaceRoot: string): Promise<"written" | "exi
  * 逐个文件判而不是整目录判：新增一段模板（`85-xxx.md`）应该能补进已经在跑的工作区，
  * 而不是等谁删掉整个目录。
  */
-export async function seedPromptTemplates(workspaceRoot: string): Promise<readonly string[]> {
+export async function seedPromptTemplates(layout: Layout): Promise<readonly string[]> {
 	// 顺序只由文件名决定：目录顺序来自文件系统，不同机器不一样（`listDirSorted` 已排序）。
 	const files = (await listDirSorted(seedPath("prompt")))
 		.filter((entry) => entry.kind === "file" && entry.name.endsWith(".md"))
@@ -189,7 +185,7 @@ export async function seedPromptTemplates(workspaceRoot: string): Promise<readon
 
 	const written: string[] = [];
 	for (const name of files) {
-		const target = join(workspaceRoot, PROMPT_DIR, name);
+		const target = join(layout.promptRoot, name);
 		if (await existsAt(target)) continue;
 		const source = await readTextOrUndefined(join(seedPath("prompt"), name));
 		if (source === undefined) continue;
@@ -210,9 +206,9 @@ export async function seedPromptTemplates(workspaceRoot: string): Promise<readon
  * 之后只看账本 —— 否则「删除」只在这次进程里生效，重启就复活，和界面写的话不符。
  * 代价：老工作区第一次跑这一版时，以前删掉的出厂插件会补回来一次（没有历史可查）。
  */
-export async function seedPlugins(workspaceRoot: string): Promise<readonly string[]> {
+export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 	const root = seedPath("plugins");
-	const manifestPath = join(workspaceRoot, SEED_MANIFEST_FILE);
+	const manifestPath = layout.seedManifestFile;
 	const manifest = await readManifest(manifestPath);
 	const seen = new Set(manifest.plugins);
 	const written: string[] = [];
@@ -225,11 +221,11 @@ export async function seedPlugins(workspaceRoot: string): Promise<readonly strin
 		if (seen.has(name)) continue;
 		seen.add(name);
 		changed = true;
-		if (await existsAt(join(workspaceRoot, "plugins", name))) continue;
+		if (await existsAt(join(layout.pluginsRoot, name))) continue;
 		for (const relpath of await walkFiles(root, name)) {
 			const source = await readTextOrUndefined(join(root, ...relpath.split("/")));
 			if (source === undefined) continue;
-			await writeTextAt(join(workspaceRoot, "plugins", ...relpath.split("/")), source);
+			await writeTextAt(join(layout.pluginsRoot, ...relpath.split("/")), source);
 		}
 		written.push(name);
 	}
@@ -242,15 +238,15 @@ export async function seedPlugins(workspaceRoot: string): Promise<readonly strin
 }
 
 /**
- * 给某一个人的个人层播种技能（`agents/<slug>/skills/`）。
+ * 给某一个人的个人层播种技能（`members/<slug>/skills/`）。
  *
  * 为什么有些技能属于个人还是全员：一份技能属于谁，取决于「谁该为这条做法负责」。
  * 「怎么建团队」「怎么招人」是助理的判断，它自己会迭代 —— 写在全员层就等于宣布全员
  * 都得按助理那一套招人，而实际上别人不该招人。`写技能` / `找现成技能` 反过来是
  * 所有人都该会的手艺，所以它们在全员层。
  */
-export async function seedPersonalSkills(agentsRoot: string, slug: string, folder: string): Promise<readonly string[]> {
-	return copySeedSkills(seedPath(folder), join(agentsRoot, slug, SKILLS_DIR));
+export async function seedPersonalSkills(agentDir: string, folder: string): Promise<readonly string[]> {
+	return copySeedSkills(seedPath(folder), join(agentDir, SKILLS_DIR));
 }
 
 async function copySeedSkills(from: string, skillsRoot: string): Promise<readonly string[]> {
@@ -284,10 +280,10 @@ function seedPath(...segments: readonly string[]): string {
 }
 
 /** 出厂助理身份的路径（相对 `seed/`）。身份是文件，不是代码里的字符串。 */
-export const SEED_ASSISTANT_IDENTITY = "agents/assistant/identity.md";
+export const SEED_ASSISTANT_IDENTITY = "assistant/identity.md";
 
 /** 出厂助理的个人技能目录（相对 `seed/`）。 */
-const SEED_ASSISTANT_SKILLS = "agents/assistant/skills";
+const SEED_ASSISTANT_SKILLS = "assistant/skills";
 
 /** 取一个头字段；文档不存在 = `undefined`。 */
 function front(doc: Doc | undefined, key: string): string | undefined {
@@ -316,7 +312,7 @@ async function readSeedAssistant(): Promise<Doc | undefined> {
  * 现在它和 agent 自己写的身份是同一种东西（同一个文件夹结构），改完下一条消息就生效。
  */
 export async function seedOwnerAssistant(
-	agentsRoot: string,
+	layout: Layout,
 	options: { readonly name?: string } = {},
 ): Promise<string> {
 	const { createAgent } = await import("../agent/identity.ts");
@@ -331,7 +327,7 @@ export async function seedOwnerAssistant(
 	const body = seed?.body;
 
 	const identity = await createAgent({
-		root: agentsRoot,
+		root: layout.assistantRoot,
 		name,
 		title,
 		manager,
@@ -343,9 +339,9 @@ export async function seedOwnerAssistant(
 	//
 	// 两层，各自管各自的事：
 	// - 全员层 `seed/skills/`（`写技能`、`找现成技能`）—— 所有人都该会的手艺。
-	// - 助理自己的 `seed/agents/assistant/skills/`（`建立团队`、`招人`）—— 它的判断，不属于别人。
+	// - 助理自己的 `seed/assistant/skills/`（`建立团队`、`招人`）—— 它的判断，不属于别人。
 	//   招人、建团队是助理的职权，别人本来就不该招人；写进全员层等于宣布全员都这么干。
-	await syncAllSkills(agentsRoot);
-	await seedPersonalSkills(agentsRoot, identity.slug, SEED_ASSISTANT_SKILLS);
+	await syncAllSkills(layout);
+	await seedPersonalSkills(identity.dir, SEED_ASSISTANT_SKILLS);
 	return identity.slug;
 }

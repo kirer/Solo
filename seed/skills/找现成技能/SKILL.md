@@ -22,7 +22,7 @@ description: 缺一门手艺、或者不确定该怎么做一件事时，先去�
 3. 看到合适的就装到一个临时目录：
 
    在 `/tmp/skills-staging` 里跑 `npx skills add <owner/名字> --yes`，再把技能目录拷进全员层
-   `<workspace>/skills/`：`cp -r /tmp/skills-staging/.agents/skills/<名字> <workspace>/skills/`。
+   `~/.solo/skills/`：`cp -r /tmp/skills-staging/.agents/skills/<名字> ~/.solo/skills/`。
 
    装进的是**全员层**，所有人立刻看得见、下一条消息就生效。
 

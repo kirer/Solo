@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SEED_MANIFEST_FILE, seedRules, syncAllSkills } from "../../src/core/shell/seed.ts";
+import { resolveLayout, type Layout } from "../../src/core/layout.ts";
 
 const SKILL = "记忆整理";
 const FILE = "SKILL.md";
@@ -21,7 +22,7 @@ function hashOf(content: string): string {
 }
 
 let root = "";
-let agents = "";
+let layout: Layout;
 let target = "";
 let manifestPath = "";
 
@@ -36,7 +37,8 @@ async function writeManifest(skills: Record<string, Record<string, string>>): Pr
 
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), "core-seed-sync-"));
-	agents = join(root, "agents");
+	// 应用根与用户根合在临时目录里：manifest 与技能都在这个根下，和部署时的相对位置一致。
+	layout = resolveLayout({ appRoot: root, userRoot: root });
 	target = join(root, "skills", SKILL, FILE);
 	manifestPath = join(root, SEED_MANIFEST_FILE);
 });
@@ -47,7 +49,7 @@ afterEach(async () => {
 
 describe("全员层技能：按 hash 同步", () => {
 	it("工作区没有 → 拷过去，并记账", async () => {
-		const report = await syncAllSkills(agents);
+		const report = await syncAllSkills(layout);
 		expect(report.copied).toContain(SKILL);
 		// 这一份是沉淀链路上的必需品：没它 `skills(action=read, name="记忆整理")` 读不到东西。
 		expect(await readFile(target, "utf8")).toBe(await seedContent());
@@ -66,7 +68,7 @@ describe("全员层技能：按 hash 同步", () => {
 		await writeFile(target, old, "utf8");
 		await writeManifest({ [SKILL]: { [FILE]: hashOf(old) } });
 
-		const report = await syncAllSkills(agents);
+		const report = await syncAllSkills(layout);
 		expect(report.updated).toContain(SKILL);
 		expect(await readFile(target, "utf8")).toBe(await seedContent());
 		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
@@ -82,19 +84,19 @@ describe("全员层技能：按 hash 同步", () => {
 		// 账本记的是「上次同步给它的那份」，和现在的内容不一样 = 用户动过。
 		await writeManifest({ [SKILL]: { [FILE]: hashOf("上次同步的那份") } });
 
-		const report = await syncAllSkills(agents);
+		const report = await syncAllSkills(layout);
 		expect(report.kept).toContain(SKILL);
 		expect(report.updated).not.toContain(SKILL);
 		expect(await readFile(target, "utf8")).toBe(mine);
 	});
 
 	it("幂等：第二次跑不写文件", async () => {
-		await syncAllSkills(agents);
+		await syncAllSkills(layout);
 		await new Promise((resolve) => setTimeout(resolve, 15));
 		const before = (await stat(target)).mtimeMs;
 		const manifestBefore = (await stat(manifestPath)).mtimeMs;
 
-		const second = await syncAllSkills(agents);
+		const second = await syncAllSkills(layout);
 		expect(second.copied).toEqual([]);
 		expect(second.updated).toEqual([]);
 		expect((await stat(target)).mtimeMs).toBe(before);
@@ -105,7 +107,7 @@ describe("全员层技能：按 hash 同步", () => {
 		await mkdir(join(root, "skills", SKILL), { recursive: true });
 		await writeFile(target, await seedContent(), "utf8");
 
-		const report = await syncAllSkills(agents);
+		const report = await syncAllSkills(layout);
 		expect(report.kept).toEqual([]);
 		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
 			skills: Record<string, Record<string, string>>;
@@ -116,14 +118,14 @@ describe("全员层技能：按 hash 同步", () => {
 
 describe("规矩文件：只补不改", () => {
 	it("工作区没有 rules.md → 写入；已有（用户改过）→ 不动", async () => {
-		expect(await seedRules(root)).toBe("written");
+		expect(await seedRules(layout)).toBe("written");
 		const written = await readFile(join(root, "rules.md"), "utf8");
 		expect(written).toContain("一两句");
-		expect(await seedRules(root)).toBe("exists");
+		expect(await seedRules(layout)).toBe("exists");
 
 		const mine = "- 我自己的规矩\n";
 		await writeFile(join(root, "rules.md"), mine, "utf8");
-		expect(await seedRules(root)).toBe("exists");
+		expect(await seedRules(layout)).toBe("exists");
 		expect(await readFile(join(root, "rules.md"), "utf8")).toBe(mine);
 	});
 });

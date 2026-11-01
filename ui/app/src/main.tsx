@@ -42,7 +42,7 @@ void bootPlugins().finally(() => {
 
 // 底座上一轮留下的「不正常」报告（任务抛异常 / 重启超限被挂起 / storage 让会话关掉）。
 // 以前这些事在界面上一个字都没有，表现只是「这个人忽然不说话了」；现在至少控制台里有
-// 一句人话（全文在 `workspace/logs/runtime.jsonl`）。
+// 一句人话（全文在 `<appRoot>/logs/runtime.jsonl`）。
 void fetchLastRuntimeReport().then((report) => {
 	if (report !== undefined) console.warn(`[core] 最近一条运行报告（${report.at}）：${report.text}`);
 });

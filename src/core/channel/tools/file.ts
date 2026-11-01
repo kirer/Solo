@@ -1,21 +1,28 @@
 /** `file`：读 / 写工作区里的一个文件。 */
-import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { OWNER_SLUG, managerOf, readAllIdentities } from "../../agent/identity.ts";
-import { SECRETS_FILE, redact } from "../../agent/secrets.ts";
+import { OWNER_SLUG, managerOf, readAllIdentities, readIdentity } from "../../agent/identity.ts";
+import { redact } from "../../agent/secrets.ts";
 import { parseDoc, frontOf } from "../../md/doc.ts";
-import { readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
+import { ensureDir, readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
+import { teamWorkspace } from "../../layout.ts";
 import { createTeamProblem, leadProblem, readTeam, teamSlugOfMemoryPath, teamSlugOfReadmePath } from "../../team/doc.ts";
 import { confirmedBy } from "../../team/settle.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
-import { resolveInWorkspace } from "./guards.ts";
+import { resolveInRoots } from "./guards.ts";
+
+/** `members/<slug>/identity.md` / `assistant/<slug>/identity.md` → slug。别的路径返回 undefined。 */
+function agentSlugOfIdentityPath(path: string): string | undefined {
+	const parts = path.split(/[\\/]/);
+	if (parts.length !== 3 || parts[2] !== "identity.md") return undefined;
+	return parts[0] === "members" || parts[0] === "assistant" ? parts[1] : undefined;
+}
 
 export function createFileTool(deps: CoreToolDeps) {
 	const tool = defineTool({
 		name: "file",
 		description: [
 			"工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。",
-			"路径相对工作区根，`../` 会被拒；读写不了工作区以外的东西。",
+			"路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。",
 			"写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员（改完不用再单独同步）。",
 		].join(""),
 		parameters: Type.Object({
@@ -29,28 +36,33 @@ export function createFileTool(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const action = actionOf(args.action, ["read", "write"], "read");
 			if (typeof action !== "string") return text(action);
-			const target = resolveInWorkspace(deps.workspaceRoot, args.path);
+			const target = resolveInRoots(deps.layout, args.path);
 			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
 			// 密钥文件对 agent 不存在：读出来等于把 key 装进上下文，写回去会把
 			// 人配好的值覆盖成脱敏后的马赛克。它要用 key，由人在 shell 里配、`run` 里用。
-			if (target === join(deps.workspaceRoot, SECRETS_FILE)) return text("这个文件不开放。");
+			if (target === deps.layout.secretsFile) return text("这个文件不开放。");
 
 			if (action === "write") {
 				if (args.content === undefined) return text("write 要带 content（写什么）。只想读文件用 action=read。");
 				// 密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
-				const content = redact(args.content, deps.workspaceRoot);
+				const content = redact(args.content, deps.layout.appRoot);
 				// 团队说明是事实，团队频道是它的投影：改了 README 立刻重算一次成员
 				// （否则刚写进去的团队管理员在频道里不存在，成员 @ 不到他）。
 				const team = teamSlugOfReadmePath(args.path);
+				// 改身份里的 `team` 会换团队频道：新旧两个都要重算（只算新的，旧频道会留一个
+				// 已经不属于它的人；只算旧的，新频道里没有他）。
+				const movedSlug = agentSlugOfIdentityPath(args.path);
+				const oldTeam = movedSlug === undefined ? undefined : (await readIdentity(deps.layout.agentRoots, movedSlug))?.team;
+				const newTeam = movedSlug === undefined ? undefined : frontOf(parseDoc(args.path, content), "team");
 				// 写团队 README 前先校验 `lead`：缺了、查无此人、或者写的是助理，都直接拒绝。
 				// 校验必须在落盘之前 —— 写进去再报错，团队频道已经按一个不存在的管理员投影过了。
 				if (team !== undefined) {
-					const all = await readAllIdentities(deps.agentsRoot);
+					const all = await readAllIdentities(deps.layout.agentRoots);
 					const assistants = all
 						.filter((identity) => managerOf(all, identity.slug) === OWNER_SLUG)
 						.map((identity) => identity.slug);
 					// 开一个新团队只有助理能做；已有团队的 README 谁都能改（改正文不是开摊子）。
-					if ((await readTeam(deps.teamsRoot, team)) === undefined) {
+					if ((await readTeam(deps.layout.teamsRoot, team)) === undefined) {
 						const self = await selfOf(deps, Number(api.conversationId), ctx);
 						const problem =
 							self === undefined ? "你还不在名册里，建不了团队。" : createTeamProblem({ self, assistants });
@@ -63,6 +75,8 @@ export function createFileTool(deps: CoreToolDeps) {
 					});
 					if (problem !== undefined) return text(problem);
 				}
+				// 新团队一有 README 就有自己的工作目录（团队任务在那儿跑，提示词里给了路径）。
+				if (team !== undefined) await ensureDir(teamWorkspace(deps.layout, team));
 				await writeTextAt(target, content);
 				if (team !== undefined && deps.syncTeam !== undefined) {
 					try {
@@ -74,6 +88,11 @@ export function createFileTool(deps: CoreToolDeps) {
 								error instanceof Error ? error.message : String(error)
 							}`,
 						);
+					}
+				}
+				if (movedSlug !== undefined && deps.syncTeam !== undefined) {
+					for (const slug of new Set([oldTeam, newTeam].filter((item): item is string => item !== undefined && item !== ""))) {
+						await deps.syncTeam(slug, ctx).catch(() => undefined);
 					}
 				}
 				// 写团队记忆 = 显式确认这批消息沉淀过了：游标立刻推进，不用再等 mtime 变。

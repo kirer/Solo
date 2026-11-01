@@ -11,17 +11,20 @@ import {
 	type SkillRoots,
 } from "../../src/core/agent/skills.ts";
 
-/** 工作区根：`agents/` 与 `skills/` 都在它下面。 */
+/** 用户根：`members/` 与 `skills/` 都在它下面。 */
 let root = "";
 /** 某个 agent 的目录。 */
 let agent = "";
-/** 两级根目录（全员层 = root/skills，个人层 = root/agents/<slug>/skills）。 */
+/** 两级根目录（全员层 = root/skills，个人层 = 身份的目录下 skills）。 */
 let roots: SkillRoots;
 
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), "core-skills-"));
-	agent = join(root, "agents", "me");
-	roots = { workspace: root, agents: join(root, "agents"), teams: join(root, "teams") };
+	agent = join(root, "members", "me");
+	roots = { workspace: root, agents: join(root, "members"), teams: join(root, "teams") };
+	// 个人层跟着**身份目录**走：有身份才写得了个人技能。
+	await mkdir(agent, { recursive: true });
+	await writeFile(join(agent, "identity.md"), "---\nname: 我\n---\n\n干活。\n", "utf8");
 });
 
 afterEach(async () => {

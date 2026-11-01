@@ -22,7 +22,6 @@
  * ---
  * ```
  */
-import { dirname, join } from "node:path";
 import type { Fsx } from "../fsx.ts";
 import { parseDoc } from "./doc.ts";
 import { hasSlot, renderSlots, type SlotIssue, type Slots } from "./text.ts";
@@ -32,10 +31,7 @@ export type { SlotIssue } from "./text.ts";
 /** 模板目录（相对工作区根）。播种机制把它从 `seed/prompt/` 拷过来。 */
 export const PROMPT_DIR = "prompt";
 
-/** 模板目录的绝对路径。`agentsRoot` 是 `<workspace>/agents`（和 `uploadsRootOf` 同一个约定）。 */
-export function promptDirOf(agentsRoot: string): string {
-	return join(dirname(agentsRoot), PROMPT_DIR);
-}
+
 
 /** 一段的用处：进系统提示词，还是每轮贴在投递正文里。 */
 export type PromptUse = "system" | "delivery";

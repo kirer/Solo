@@ -7,7 +7,7 @@
  * 接口层不许 import `plugin/`（分层规则），所以插件路由在这里换成一份**只有形状**的
  * `AppPluginRoute`：接口层照着它造 `Route`，不认识 `PluginRouteSpec` 这个东西。
  */
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { isSafeName } from "../naming.ts";
 import {
 	installPluginFiles,
@@ -41,7 +41,7 @@ export type AppPluginRoute = {
 };
 
 export function createPlugins(services: CoreServices) {
-	const pluginsRoot = join(dirname(services.agentsRoot), "plugins");
+	const pluginsRoot = services.layout.pluginsRoot;
 
 	/**
 	 * 界面上看到的那份清单：**以磁盘为准**。

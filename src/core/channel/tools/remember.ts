@@ -14,7 +14,7 @@ export function createRememberTool(deps: CoreToolDeps) {
 		name: "remember",
 		description: [
 			"记一条经验。",
-			"scope=personal（默认）写进你自己的记忆（agents/<我>/memory.md）；scope=team 写进所在团队的记忆（teams/<团队>/memory.md，带日期和你的名字）。",
+			"scope=personal（默认）写进你自己的记忆（members/<我>/memory.md）；scope=team 写进所在团队的记忆（teams/<团队>/memory.md，带日期和你的名字）。",
 			"该记什么见技能「记忆整理」。",
 		].join(""),
 		parameters: Type.Object({
@@ -27,9 +27,10 @@ export function createRememberTool(deps: CoreToolDeps) {
 			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
 			if (typeof slug !== "string") return text(slug);
 			// 密钥不能靠模型自觉：它写下来的时候并不觉得那是泄密。落盘前先把真值换掉。
-			const body = redact(args.text, deps.workspaceRoot);
+			const body = redact(args.text, deps.layout.appRoot);
+			// 自己的目录可能是 app 根（助理）也可能是用户根（成员）：按 slug 现查一次。
+			const self = await readIdentity(deps.layout.agentRoots, slug);
 			if (args.scope === "team") {
-				const self = await readIdentity(deps.agentsRoot, slug);
 				const team = (args.team ?? self?.team)?.trim();
 				if (team === undefined || team === "") return text("我不在任何团队里。要记团队的事，先说清是哪个团队。");
 				// slug 会被拼成路径；成员资格决定「谁能写」——两者都不能只信入参。
@@ -38,16 +39,16 @@ export function createRememberTool(deps: CoreToolDeps) {
 				} catch (error) {
 					return text(error instanceof Error ? error.message : String(error));
 				}
-				const lead = (await readTeam(deps.teamsRoot, team))?.lead;
+				const lead = (await readTeam(deps.layout.teamsRoot, team))?.lead;
 				if (self?.team !== team && lead !== slug) {
 					return text(`你不在团队「${team}」里。团队记忆只能由这个团队的人写。`);
 				}
-				await appendTeamMemory(deps.teamsRoot, team, { text: body, by: slug });
+				await appendTeamMemory(deps.layout.teamsRoot, team, { text: body, by: slug });
 				const confirmed = await confirmedBy(deps.harness, team, ctx);
 				const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
 				return text(`已记进团队「${team}」的记忆${tail}。下一条消息就会出现在这个团队的记忆目录里。`);
 			}
-			await appendMemory(join(deps.agentsRoot, slug), body, new Date(), "remember");
+			await appendMemory(self?.dir ?? join(deps.layout.membersRoot, slug), body, new Date(), "remember");
 			return text("已记下。下一条消息的记忆目录里就会出现它。");
 		},
 	});

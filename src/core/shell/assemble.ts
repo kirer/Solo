@@ -5,7 +5,7 @@
  *
  * 1. **装能力包**：注册表是内存态、不持久化，必须先装再开会话（否则重启后所有
  *    agent 都失去工具，而它们自己看不出来）。
- * 2. **扫文件夹**：`agents/<slug>/identity.md` 就是 agent 的全部事实。扫出谁存在。
+ * 2. **扫文件夹**：`members/<slug>/identity.md` 就是 agent 的全部事实。扫出谁存在。
  * 3. **给每个 agent 开会话**：会话 id 是底层分配的，所以要写进名册（`core.directory`）。
  *    已有的会话复用，没有的新建 —— 这样重启不会重复造人。
  * 4. **播种频道**：只有一条全员群（所有人自动加入、仅此一次），其余会话谁需要谁建。
@@ -14,15 +14,15 @@
  * 这里没有「CEO」「CTO」这些字。谁是谁的上级，全在 `identity.md` 的 `manager` 字段里；
  * 谁是「离我最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
  */
-import { dirname, join } from "node:path";
 import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
+import { parseModelRef, setAgentModel } from "../runtime/models.ts";
 import {
 	BACKGROUND_CONTEXT,
 	defineExtension,
 	syncModels,
 	type Context,
 } from "../runtime/index.ts";
-import { labelsOf, readAllIdentities } from "../agent/identity.ts";
+import { labelsOf, readAllIdentities, readIdentity } from "../agent/identity.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
 import { agentSections, renderAgentSection, type ChatRef } from "../agent/sections.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools/index.ts";
@@ -49,15 +49,15 @@ import {
 	type MembershipDeps,
 } from "../channel/membership.ts";
 import { auditHooks } from "../app/audit.ts";
+import { readTeam } from "../team/doc.ts";
 import { loadPlugins, type PluginListener } from "../plugin/index.ts";
 import type { CoreServices } from "../app/types.ts";
+import { teamWorkspace, workspaceOf, type Layout } from "../layout.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 type CoreShellOptions = {
-	/** `workspace/agents`。每个 agent 一个文件夹。 */
-	readonly agentsRoot: string;
-	/** `workspace/teams`。 */
-	readonly teamsRoot: string;
+	/** 两个根的布局：应用私有目录 + 用户目录。 */
+	readonly layout: Layout;
 	/** 全员频道 id。 */
 	readonly allChannel?: string;
 	/**
@@ -104,27 +104,25 @@ export async function assembleCore(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<CoreShell> {
 	const allChannel = options.allChannel ?? "all";
-	// `agents/`、`teams/`、`skills/` 是同级目录，工作区根 = agentsRoot 的父目录。
-	const workspaceRoot = dirname(options.agentsRoot);
+	// 路径只在 `layout.ts` 里拼：以前这里靠 `dirname(agentsRoot)` 推工作区根，
+	// 两个根上线之后那个约定不再成立（而且它一直是隐式的）。
+	const layout = options.layout;
 	// 会话表要在 `baseDeps` 之前声明：收尾器与投递都要用它（先查内存，再查名册）。
 	const conversations = new Map<string, Conversation>();
 
 	// 频道层要的那几根线只在这里接一次：会话在哪、谁叫醒了他、收尾怎么补。
-	const wiring = wireChannel({ harness, agentsRoot: options.agentsRoot, live: () => conversations });
+	const wiring = wireChannel({ harness, layout, live: () => conversations });
 	// 成员投影也是 domain 的事：外壳只决定「什么时候」调，不决定「谁该在频道里」。
 	const membership: MembershipDeps = {
 		harness,
-		agentsRoot: options.agentsRoot,
-		teamsRoot: options.teamsRoot,
+		layout,
 		allChannel,
 	};
 
 	// ── 1. 装能力包 ────────────────────────────────────────────────
 	const baseDeps: CoreToolDeps = {
 		harness,
-		workspaceRoot,
-		agentsRoot: options.agentsRoot,
-		teamsRoot: options.teamsRoot,
+		layout,
 		directory: async (ctx) => (await harness.snapshot(DirectoryDoc, ctx)) ?? emptyDirectory(),
 		saveDirectory: async (change, ctx) => {
 			await harness.commit(async (tx) => {
@@ -145,14 +143,40 @@ export async function assembleCore(
 			}, ctx);
 		},
 		openAgent: async (slug, ctx) => (await openOne(slug, ctx)).id as unknown as number,
+		modelChoices: () => modelChoices(),
+		setModel: (slug, ref, ctx) => setModel(slug, ref, ctx),
 		wiring,
 	};
+	/**
+	 * 插件问「这个频道的工作区在哪」。
+	 *
+	 * 只有两种频道有工作区：私聊是那个人的 `workspace/`，团队频道是团队的 `workspace/`。
+	 * 全员频道没有 —— 它不是谁的工作区。归档的频道也没有：它已经不在列表里了。
+	 */
+	async function pluginScope(channelId: string) {
+		const state = (await wiring.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState | undefined;
+		const channel = state?.channels[channelId];
+		if (channel === undefined || channel.archived === true) return undefined;
+		if (chatKind(channel) === "dm") {
+			const other = channel.members.find((slug) => slug !== OWNER);
+			if (other === undefined) return undefined;
+			const identity = await readIdentity(layout.agentRoots, other);
+			if (identity === undefined) return undefined;
+			return { kind: "dm" as const, title: channel.title, root: workspaceOf(identity.dir), label: identity.name ?? other };
+		}
+		if (!channel.id.startsWith("team:")) return undefined;
+		const team = channel.id.slice("team:".length);
+		const doc = await readTeam(layout.teamsRoot, team);
+		return { kind: "group" as const, title: channel.title, root: teamWorkspace(layout, team), label: doc?.name ?? channel.title };
+	}
+
 	// ── 1.5 装插件 ──────────────────────────────────────────────────
 	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
 	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
 	let plugins = await loadPlugins({
-		pluginsRoot: join(workspaceRoot, "plugins"),
-		workspace: workspaceRoot,
+		pluginsRoot: layout.pluginsRoot,
+		workspace: layout.appRoot,
+		scope: pluginScope,
 		log: (line) => console.log(`[plugin] ${line}`),
 	});
 	for (const error of plugins.errors) console.warn(`[plugin] 没装上：${error}`);
@@ -162,7 +186,7 @@ export async function assembleCore(
 	// 条件是「形状」（kind），判断是「语义」（模型写什么），分工见 team/settle.ts。
 	// 插件要听消息也走这一个钩子 —— 落盘之后、唤醒之前，只有这一处。
 	// 传的是取值函数不是数组：插件重装之后，这条钩子要听**新的**那一批（ADR-026）。
-	const afterPost = makeAfterPost(wiring, options.agentsRoot, options.teamsRoot, () => plugins.messages);
+	const afterPost = makeAfterPost(wiring, layout, () => plugins.messages);
 	const toolDeps: CoreToolDeps = {
 		...baseDeps,
 		afterPost,
@@ -186,7 +210,7 @@ export async function assembleCore(
 			// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
 			// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
 			hooks: auditHooks({
-				workspaceRoot,
+				workspaceRoot: layout.appRoot,
 				slugOf: (conversationId) => {
 					for (const [slug, conversation] of conversations) {
 						if (Number(conversation.id) === conversationId) return slug;
@@ -216,9 +240,7 @@ export async function assembleCore(
 			sections: await agentSections(
 				registry,
 				{
-					workspace: workspaceRoot,
-					agents: options.agentsRoot,
-					teams: options.teamsRoot,
+					layout,
 					chats: chatRefsOf,
 					extraPrompt: plugins.prompt,
 				},
@@ -252,8 +274,9 @@ export async function assembleCore(
 	 */
 	async function reloadPlugins(): Promise<void> {
 		const next = await loadPlugins({
-			pluginsRoot: join(workspaceRoot, "plugins"),
-			workspace: workspaceRoot,
+			pluginsRoot: layout.pluginsRoot,
+			workspace: layout.appRoot,
+			scope: pluginScope,
 			log: (line) => console.log(`[plugin] ${line}`),
 		});
 		plugins = next;
@@ -264,7 +287,7 @@ export async function assembleCore(
 	}
 
 	// ── 2 & 3. 扫文件夹 + 开会话 ──────────────────────────────────
-	const identities = await readAllIdentities(options.agentsRoot);
+	const identities = await readAllIdentities(layout.agentRoots);
 	const directory: DirectoryState = (await harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
 
 	/** 给一个 slug 开会话（内部用：先查名册，再建）。 */
@@ -322,7 +345,7 @@ export async function assembleCore(
 		// 一建出来就进全员频道、团队频道。
 		//
 		// 踩过的坑：`hire` 会立刻开会话，但全员频道的成员是**启动时**按当时的
-		// `agents/` 目录写死的。结果新人存在、会话也存在，却不在频道里 —— 别人
+		// `members/` 目录写死的。结果新人存在、会话也存在，却不在频道里 —— 别人
 		// @ 他，`recipientsOf` 第一规则「@ 的必须是成员」把他过滤掉，消息静默不投递，
 		// 界面上看起来就是「招了个人但叫不动」。
 		await addToAllChannel(membership, [slug], ctx);
@@ -345,7 +368,7 @@ export async function assembleCore(
 	 */
 	async function refreshModels(ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
 		if (options.models === undefined) return;
-		const file = join(workspaceRoot, "settings.json");
+		const file = layout.settingsFile;
 		const stamp = await mtimeOrUndefined(file);
 		if (stamp === undefined || stamp === settingsStamp) return;
 		settingsStamp = stamp;
@@ -362,6 +385,41 @@ export async function assembleCore(
 	/** 这个人该用哪只模型：单独指定的压过默认。都没有就是「没有模型」（ADR-023）。 */
 	function modelFor(slug: string): { readonly provider: string; readonly modelId: string } | undefined {
 		return agentModels?.[slug] ?? defaultModel;
+	}
+
+	/** 能挑的模型（招人时按角色分）。先刷一遍配置：刚在设置里加的提供商要能被看见。 */
+	async function modelChoices(ctx: Context = BACKGROUND_CONTEXT): Promise<{ models: readonly string[]; default?: string }> {
+		await refreshModels(ctx);
+		const models = (options.models?.getModels() ?? []).map((model) => `${model.provider}/${model.id}`);
+		return { models, ...(defaultModel === undefined ? {} : { default: `${defaultModel.provider}/${defaultModel.modelId}` }) };
+	}
+
+	/**
+	 * 给某个人换模型：**当场生效**，并记进 `settings.json` 的 `agentModels`。
+	 *
+	 * 空串 = 跟默认（删掉这条记录）。只认注册表里真有的模型：写一个解析不到的引用，
+	 * 这个人此后每轮都 `no_model`，而界面上只是一句「他这一轮没答上来」。
+	 */
+	async function setModel(slug: string, ref: string, ctx: Context = BACKGROUND_CONTEXT): Promise<{ model: string }> {
+		await refreshModels(ctx);
+		const conversation = conversations.get(slug);
+		if (conversation === undefined) throw new Error(`没有这个人的会话：${slug}`);
+		const value = ref.trim();
+		const wanted = value === "" ? defaultModel : parseModelRef(value);
+		if (wanted === undefined) {
+			throw new Error(value === "" ? "还没有配置默认模型，先配一只" : `模型要写成 提供商/模型：${value}`);
+		}
+		if (options.models !== undefined && options.models.getModel(wanted.provider, wanted.modelId) === undefined) {
+			const available = (await modelChoices(ctx)).models;
+			throw new Error(`没有这个模型：${value}（可选：${available.join("、") || "（还没有配置模型）"}）`);
+		}
+		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+		const next = { ...(agentModels ?? {}) };
+		if (value === "") delete next[slug];
+		else next[slug] = { provider: wanted.provider, modelId: wanted.modelId };
+		agentModels = Object.keys(next).length === 0 ? undefined : next;
+		setAgentModel(layout.settingsFile, slug, value === "" ? null : value);
+		return { model: value };
 	}
 
 	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
@@ -404,6 +462,8 @@ export async function assembleCore(
 			return defaultModel;
 		},
 		refreshModels,
+		setModel,
+		modelChoices,
 		// 沉淀钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
 		afterPost,
 		async syncTeam(team: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
@@ -413,9 +473,7 @@ export async function assembleCore(
 			return renderAgentSection(
 				registry,
 				{
-					workspace: workspaceRoot,
-					agents: options.agentsRoot,
-					teams: options.teamsRoot,
+					layout,
 					chats: chatRefsOf,
 					extraPrompt: plugins.prompt,
 				},
@@ -428,7 +486,7 @@ export async function assembleCore(
 		},
 		reloadPlugins,
 		async rescan(ctx: Context = BACKGROUND_CONTEXT): Promise<readonly string[]> {
-			const all = await readAllIdentities(options.agentsRoot);
+			const all = await readAllIdentities(layout.agentRoots);
 			const added: string[] = [];
 			for (const identity of all) {
 				if (conversations.has(identity.slug)) {
@@ -466,9 +524,8 @@ export async function assembleCore(
 		postAs: (input, ctx) => ownerSpeak(shell, input, ctx),
 		bindings: () => directory,
 		labelOf: (slug) => labelIn(directory, slug),
-		identities: () => readAllIdentities(options.agentsRoot),
-		agentsRoot: options.agentsRoot,
-		teamsRoot: options.teamsRoot,
+		identities: () => readAllIdentities(layout.agentRoots),
+		layout,
 		allChannel,
 		...(options.diag === undefined ? {} : { diag: options.diag }),
 		close: async (ctx?: Context) => {
@@ -488,8 +545,7 @@ export async function assembleCore(
  */
 function makeAfterPost(
 	wiring: ReturnType<typeof wireChannel>,
-	agentsRoot: string,
-	teamsRoot: string,
+	layout: Layout,
 	listeners: () => readonly PluginListener[] = () => [],
 ): (message: Message, channelId: string, context: Context) => Promise<void> {
 	return async (message, channelId, context) => {
@@ -500,8 +556,8 @@ function makeAfterPost(
 		await settleTeam(
 			{
 				wiring,
-				agentsRoot,
-				teamsRoot,
+				agentRoots: layout.agentRoots,
+				teamsRoot: layout.teamsRoot,
 				channelState: async () => (await wiring.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState(),
 				coalesceQueue: (conversationId, keepRequestId) =>
 					coalesceQueue(wiring.harness, conversationId, keepRequestId, context),
@@ -547,7 +603,7 @@ export async function ownerSpeak(
 	const directory = (await shell.harness.snapshot(DirectoryDoc, context)) ?? shell.directory;
 	// 我的话也要过一遍名册：他自己写 `@我`（或者老消息里的 `@我`）时，
 	// 不给名册就只能存成字面 token，界面画得出来、`recipientsOf` 却认不出人。
-	const everyone = await readAllIdentities(shell.agentsRoot);
+	const everyone = await readAllIdentities(shell.layout.agentRoots);
 	const roster = mentionRosterOf(
 		everyone.map((identity) => ({
 			slug: identity.slug,
@@ -559,7 +615,7 @@ export async function ownerSpeak(
 	// 显示名以**当下的** `identity.md` 为准，名册里的 `labels` 只做兜底。
 	const labels = { ...directory.labels, ...labelsOf(everyone) };
 	// 频道层那几根线接一次（先查内存会话表，再查名册）；收尾也用它。
-	const wiring = wireChannel({ harness: shell.harness, agentsRoot: shell.agentsRoot, live: () => shell.conversations });
+	const wiring = wireChannel({ harness: shell.harness, layout: shell.layout, live: () => shell.conversations });
 	const result = await postMessage(
 		{
 			harness: shell.harness,

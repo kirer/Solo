@@ -7,7 +7,7 @@
  * 1. 每个 `action` 都真的能跑通（不是只有默认那个）；
  * 2. 不认识的 `action` 要回一句能自救的话（列出合法值），而不是沉默或抛错。
  */
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
@@ -17,6 +17,7 @@ import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "../../src/co
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
+import { existsAt } from "../../src/core/runtime/io.ts";
 import { sandboxPool } from "./support.ts";
 
 const pool = sandboxPool();
@@ -34,6 +35,7 @@ async function setup(
 	tools: readonly { name: string; execute?: (...args: never[]) => Promise<unknown> }[];
 	call: (name: string, args: Record<string, unknown>) => Promise<string>;
 	root: string;
+	layout: import("../../src/core/layout.ts").Layout;
 	runtime: CoreRuntime;
 }> {
 	const box = await pool.make("core-tools-");
@@ -73,9 +75,7 @@ async function setup(
 
 	const tools = createCoreTools({
 		harness: runtime.harness,
-		workspaceRoot: root,
-		agentsRoot,
-		teamsRoot,
+		layout: box.layout,
 		directory: async () => ({
 			...emptyDirectory(),
 			slugToConversation: { [ME]: CONVERSATION },
@@ -87,6 +87,7 @@ async function setup(
 	} as never);
 
 	return {
+		layout: box.layout,
 		tools: tools as never,
 		call: async (name, args) => {
 			const tool = tools.find((item) => item.name === name);
@@ -190,39 +191,39 @@ describe("read_history", () => {
 describe("写盘前先脱敏", () => {
 	const KEY = "{{SECRET_quvz7n3k}}";
 
-	async function withSecret(root: string): Promise<void> {
-		await writeFile(join(root, ".secrets.json"), JSON.stringify({ FAKE_KEY: KEY }), "utf8");
+	async function withSecret(layout: { readonly secretsFile: string }): Promise<void> {
+		await writeFile(layout.secretsFile, JSON.stringify({ FAKE_KEY: KEY }), "utf8");
 	}
 
 	// V3 删了 `me` / `skills` / `write_team` 三个包装工具，写盘只剩 `file`（+ `remember` / `hire`）。
 	// 脱敏这条契约没变：**任何进提示词的文件的写入口都必须脱敏**，所以改走 `file` 再钉一遍。
 	it("file 写进 identity.md 的是马赛克", async () => {
-		const { call, root } = await setup();
-		await withSecret(root);
-		const output = await call("file", { action: "write", path: `agents/${ME}/identity.md`, content: `---\nname: ${ME}\n---\n\n部署用这个 key：${KEY}` });
+		const { call, root, layout } = await setup();
+		await withSecret(layout);
+		const output = await call("file", { action: "write", path: `members/${ME}/identity.md`, content: `---\nname: ${ME}\n---\n\n部署用这个 key：${KEY}` });
 		expect(output).toContain("已写入");
-		const source = await readFile(join(root, "agents", ME, "identity.md"), "utf8");
+		const source = await readFile(join(root, "members", ME, "identity.md"), "utf8");
 		// identity.md 每轮都进提示词：原值写进去就是**每一轮**都发给模型，不可逆。
 		expect(source).not.toContain(KEY);
 		expect(source).toContain("[密钥已隐藏]");
 	});
 
 	it("file 写进个人 SKILL.md 的是马赛克", async () => {
-		const { call, root } = await setup();
-		await withSecret(root);
+		const { call, root, layout } = await setup();
+		await withSecret(layout);
 		await call("file", {
 			action: "write",
-			path: `agents/${ME}/skills/调接口/SKILL.md`,
+			path: `members/${ME}/skills/调接口/SKILL.md`,
 			content: `---\nname: 调接口\ndescription: 调那个接口时用。\n---\n\ncurl -H 'Authorization: ${KEY}'`,
 		});
-		const source = await readFile(join(root, "agents", ME, "skills", "调接口", "SKILL.md"), "utf8");
+		const source = await readFile(join(root, "members", ME, "skills", "调接口", "SKILL.md"), "utf8");
 		expect(source).not.toContain(KEY);
 		expect(source).toContain("[密钥已隐藏]");
 	});
 
 	it("file 写进团队 README.md 的是马赛克", async () => {
-		const { call, root } = await setup();
-		await withSecret(root);
+		const { call, root, layout } = await setup();
+		await withSecret(layout);
 		await call("file", {
 			action: "write",
 			path: "teams/alpha/README.md",
@@ -234,8 +235,8 @@ describe("写盘前先脱敏", () => {
 	});
 
 	it("remember scope=team 写进 memory.md 的是马赛克", async () => {
-		const { call, root } = await setup();
-		await withSecret(root);
+		const { call, root, layout } = await setup();
+		await withSecret(layout);
 		await call("remember", { scope: "team", text: `以后用这个 key 连库：${KEY}` });
 		const source = await readFile(join(root, "teams", "alpha", "memory.md"), "utf8");
 		expect(source).not.toContain(KEY);
@@ -376,5 +377,69 @@ describe("写团队 README 前校验 lead", () => {
 		});
 		expect(output).toContain("已写入");
 		expect(await readFile(join(root, "teams", "alpha", "README.md"), "utf8")).toContain("新目标");
+	});
+});
+
+describe("hire：招人 / 让人走 / 看模型", () => {
+	it("action=models 列出能挑的模型，并标出默认那只", async () => {
+		const { call } = await setup({
+			modelChoices: async () => ({ models: ["provider/fast", "provider/strong"], default: "provider/strong" }),
+		});
+		const output = await call("hire", { action: "models", name: "" });
+		expect(output).toContain("provider/fast");
+		expect(output).toContain("provider/strong（默认）");
+	});
+
+	it("action=create 带 model 时把 model 交给装配，非法只回一句话、人照样招到", async () => {
+		const assigned: string[] = [];
+		const { call, root } = await setup({
+			setModel: async (_slug: string, ref: string) => {
+				if (ref !== "provider/fast") throw new Error(`没有这个模型：${ref}`);
+				assigned.push(ref);
+				return { model: ref };
+			},
+		});
+		const ok = await call("hire", { name: "顾南", model: "provider/fast" });
+		expect(ok).toContain("模型 provider/fast");
+		expect(assigned).toEqual(["provider/fast"]);
+		const bad = await call("hire", { name: "温言", model: "provider/nope" });
+		expect(bad).toContain("模型没换成");
+		// 模型写不进去不影响「人已经招到」。
+		expect(await existsAt(join(root, "members", "温言", "identity.md"))).toBe(true);
+	});
+
+	it("action=fire 拒绝团队管理员：先交出 lead", async () => {
+		const { call } = await setup();
+		const output = await call("hire", { action: "fire", name: ME });
+		expect(output).toContain("团队管理员");
+	});
+
+	it("action=fire 把目录移到 .retired/，从名册里摘掉（只移不删）", async () => {
+		const { call, root } = await setup();
+		expect(await call("hire", { name: "顾南", team: "alpha" })).toContain("members/");
+		const output = await call("hire", { action: "fire", name: "顾南" });
+		expect(output).toContain("已让");
+		expect(await existsAt(join(root, "members", "顾南"))).toBe(false);
+		const retired = await readdir(join(root, "members", ".retired"));
+		expect(retired.some((name) => name.startsWith("顾南-"))).toBe(true);
+	});
+});
+
+describe("file 写身份：换团队要重投影两次", () => {
+	it("旧团队和新团队各叫一次 syncTeam（加人后团队频道立刻更新）", async () => {
+		const synced: string[] = [];
+		const { call } = await setup({
+			syncTeam: async (team: string) => {
+				synced.push(team);
+			},
+		});
+		const output = await call("file", {
+			action: "write",
+			path: `members/${ME}/identity.md`,
+			content: `---\nname: ${ME}\ntitle: 前端开发\nmanager: 知言\nteam: beta\n---\n\n写小恐龙。\n`,
+		});
+		expect(output).toContain("已写入");
+		// 旧团队 alpha 与人走了之后要重算，新团队 beta 也要重算 —— 少一次就是「加进团队了但频道里没他」。
+		expect(new Set(synced)).toEqual(new Set(["alpha", "beta"]));
 	});
 });

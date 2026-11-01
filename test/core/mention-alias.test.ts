@@ -10,7 +10,7 @@ import { OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { EMPTY_ROSTER, mentionRosterOf, parseMentions, recipientsOf, resolveMention, type MentionAgent } from "../../src/core/channel/mentions.ts";
 import { appendMessage, ensureChannel, speakerBefore } from "../../src/core/channel/rules.ts";
 
-/** 一份贴近真实的名册：`workspace/agents/` 里那几个人的头字段。 */
+/** 一份贴近真实的名册：`members/` 里那几个人的头字段。 */
 const people: readonly MentionAgent[] = [
 	{ slug: "知言", name: "知言", title: "负责人", manager: OWNER },
 	{ slug: "顾南雁", name: "顾南雁", title: "平台负责人", manager: "知言" },

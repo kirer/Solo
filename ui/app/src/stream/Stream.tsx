@@ -29,7 +29,7 @@ const DONE_ICON =
 const REPLY_ICON =
 	'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a7 7 0 0 1 7 7v1"/></svg>';
 
-export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
+export function Stream(props: { onImage: (src: string) => void; onFile: (file: Attachment) => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const detail = useStore((state) => state.detail);
 	const hasMore = useStore((state) => state.hasMore);
@@ -206,7 +206,7 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 					<div className="feed" id="feed" ref={feedRef}>
 						{detail !== null && rows.length === 0 ? <Empty channelId={detail.channel.id} /> : null}
 						{rows.map((row) => (
-							<RowView key={row.key} row={row} labels={labels} onCopy={copy} onImage={props.onImage} />
+							<RowView key={row.key} row={row} labels={labels} onCopy={copy} onImage={props.onImage} onFile={props.onFile} />
 						))}
 					</div>
 
@@ -233,6 +233,7 @@ function RowView(props: {
 	labels: Map<string, { label: string; role: string }>;
 	onCopy: (node: HTMLElement) => void;
 	onImage: (src: string) => void;
+	onFile: (file: Attachment) => void;
 }): JSX.Element {
 	const { row } = props;
 	// 这一轮如果就发生在这条私聊里，「在某某」是废话（你正看着它）；只有跨频道才写。
@@ -244,7 +245,16 @@ function RowView(props: {
 			</div>
 		);
 	}
-	if (row.type === "say") return <SayRow row={row} labels={props.labels} onCopy={props.onCopy} onImage={props.onImage} />;
+	if (row.type === "say")
+		return (
+			<SayRow
+				row={row}
+				labels={props.labels}
+				onCopy={props.onCopy}
+				onImage={props.onImage}
+				onFile={props.onFile}
+			/>
+		);
 	if (row.type === "work") {
 		const turn = row.turn;
 		return (
@@ -307,6 +317,7 @@ function SayRow(props: {
 	labels: Map<string, { label: string; role: string }>;
 	onCopy: (node: HTMLElement) => void;
 	onImage: (src: string) => void;
+	onFile: (file: Attachment) => void;
 }): JSX.Element {
 	const { row } = props;
 	const message = row.message;
@@ -350,7 +361,7 @@ function SayRow(props: {
 					</div>
 				)}
 
-				<Attachments attachments={message.attachments} onImage={props.onImage} />
+				<Attachments attachments={message.attachments} onImage={props.onImage} onFile={props.onFile} />
 
 				<div className="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.text) }} />
 
@@ -386,6 +397,7 @@ function SayRow(props: {
 function Attachments(props: {
 	attachments?: readonly Attachment[] | undefined;
 	onImage: (src: string) => void;
+	onFile: (file: Attachment) => void;
 }): JSX.Element | null {
 	const list = props.attachments ?? [];
 	if (list.length === 0) return null;
@@ -410,7 +422,13 @@ function Attachments(props: {
 			{files.length === 0 ? null : (
 				<div className="attach-files">
 					{files.map((item) => (
-						<a key={item.id} className="attach-file" href={`${uploadUrl(item.id)}?download=1`} download={item.name}>
+						// 点开先看，看不成的（zip、二进制）预览层里会写「点下载」。
+						<button
+							key={item.id}
+							type="button"
+							className="attach-file"
+							onClick={() => props.onFile(item)}
+						>
 							<span className="attach-ico" aria-hidden="true">
 								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
 									<path d="M5 4h9l5 5v11H5z" />
@@ -419,7 +437,7 @@ function Attachments(props: {
 							</span>
 							<span className="attach-name">{item.name}</span>
 							<span className="attach-size">{humanBytes(item.bytes)}</span>
-						</a>
+						</button>
 					))}
 				</div>
 			)}

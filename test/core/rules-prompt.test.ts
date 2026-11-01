@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadRules, renderRulesSection } from "../../src/core/agent/rules.ts";
 import { renderAgentSection } from "../../src/core/agent/sections.ts";
 import { createRegistry } from "../../src/core/runtime/index.ts";
+import { resolveLayout } from "../../src/core/layout.ts";
 import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 
 const RULES = [
@@ -26,14 +27,14 @@ let root = "";
 
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), "core-rules-"));
-	await mkdir(join(root, "agents", "dev"), { recursive: true });
+	await mkdir(join(root, "members", "dev"), { recursive: true });
 	await writeFile(
-		join(root, "agents", "dev", "identity.md"),
+		join(root, "members", "dev", "identity.md"),
 		"---\nname: 林越\ntitle: 开发\nmanager: owner\n---\n\n我写代码。\n",
 		"utf8",
 	);
 	// 提示词模板也要播种：生产里 `main.ts` 先播种再装配。
-	await seedPromptTemplates(root);
+	await seedPromptTemplates(resolveLayout({ appRoot: root, userRoot: root }));
 });
 
 afterEach(async () => {
@@ -43,7 +44,7 @@ afterEach(async () => {
 const render = (): Promise<string> =>
 	renderAgentSection(
 		createRegistry(),
-		{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
+		{ layout: resolveLayout({ appRoot: root, userRoot: root }), chats: async () => [] },
 		"dev",
 	);
 
@@ -104,7 +105,7 @@ describe("密钥：写进记忆也发不出去（ADR-034 的渲染出口）", ()
 		await writeFile(join(root, ".secrets.json"), JSON.stringify({ OPENAI_API_KEY: key }), "utf8");
 		// 直接写进记忆（绕过 remember 的写入脱敏）：这一道守的正是「已经写进去了」。
 		await writeFile(
-			join(root, "agents", "dev", "memory.md"),
+			join(root, "members", "dev", "memory.md"),
 			`# 记忆\n\n## 2026-10-30\n用这个 key 调接口：${key}\n`,
 			"utf8",
 		);

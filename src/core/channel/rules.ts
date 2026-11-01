@@ -110,6 +110,8 @@ export function appendMessage(
 		readonly mention?: readonly string[];
 		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
 		readonly attachments?: readonly Attachment[];
+		/** 要我选的选项。空数组按「没有选项」处理。 */
+		readonly options?: readonly string[];
 	},
 ): { readonly state: ChannelState; readonly message: Message } {
 	const channel = state.channels[channelId];
@@ -155,6 +157,7 @@ export function appendMessage(
 						bytes: item.bytes,
 					})),
 				}),
+		...(input.options === undefined || input.options.length === 0 ? {} : { options: [...input.options] }),
 	};
 
 	return {
@@ -183,6 +186,8 @@ export type ChannelProjection = {
 	readonly wakeOnAll?: readonly string[];
 	readonly at: number;
 	readonly mode: "create" | "merge" | "replace";
+	/** 归档（团队 README 写了 `status: archived`）：列表里不出现，历史还留着。 */
+	readonly archived?: boolean;
 };
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
@@ -196,7 +201,14 @@ export function projectChannel(state: ChannelState, input: ChannelProjection): C
 	const wakeOnAll = [...new Set(input.wakeOnAll ?? [])];
 
 	if (existing === undefined) {
-		const channel: Channel = { id: input.id, title: input.title, members, wakeOnAll, createdAt: input.at };
+		const channel: Channel = {
+			id: input.id,
+			title: input.title,
+			members,
+			wakeOnAll,
+			createdAt: input.at,
+			...(input.archived === true ? { archived: true } : {}),
+		};
 		return { ...state, channels: { ...state.channels, [input.id]: channel } };
 	}
 	if (input.mode === "create") return state;
@@ -210,17 +222,21 @@ export function projectChannel(state: ChannelState, input: ChannelProjection): C
 		};
 	}
 
-	// replace：成员表、唤醒表、标题都以上面这次投影为准；`createdAt` 是历史，保留。
-	if (existing.title === input.title && sameList(existing.members, members) && sameList(existing.wakeOnAll, wakeOnAll)) {
+	// replace：成员表、唤醒表、标题、归档都以上面这次投影为准；`createdAt` 是历史，保留。
+	// 归档只由「团队 README 写了 status: archived」这类文件事实驱动，可以再改回来（取消归档）。
+	const archived = input.archived === true;
+	if (
+		existing.title === input.title &&
+		sameList(existing.members, members) &&
+		sameList(existing.wakeOnAll, wakeOnAll) &&
+		(existing.archived === true) === archived
+	) {
 		return state;
 	}
-	return {
-		...state,
-		channels: {
-			...state.channels,
-			[input.id]: { ...existing, title: input.title, members, wakeOnAll },
-		},
-	};
+	const next: Channel = { ...existing, title: input.title, members, wakeOnAll };
+	if (archived) next.archived = true;
+	else delete next.archived;
+	return { ...state, channels: { ...state.channels, [input.id]: next } };
 }
 
 /** 建频道；已存在时原样返回（幂等）。`projectChannel` 的 `create` 意图。 @internal 仅测试 */

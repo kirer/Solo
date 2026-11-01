@@ -1,5 +1,5 @@
 /**
- * 插件：`workspace/plugins/<slug>/` 一个文件夹 = 一个插件。
+ * 插件：`<appRoot>/plugins/<slug>/` 一个文件夹 = 一个插件。
  *
  * 前后端各一半：
  * - `plugin.ts` 后端，`apply(api)` 里做四件事（工具 / 提示词 / 路由 / 听消息）；

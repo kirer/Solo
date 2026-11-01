@@ -164,7 +164,7 @@ export async function uploadFile(file: File): Promise<Uploaded> {
 /** 附件下载/预览地址。 */
 export const uploadUrl = (id: string): string => `/api/uploads/${encodeURIComponent(id)}`;
 
-/** 浏览器自报卡顿（`workspace/logs/jank.jsonl`）。有意在失败时静默：诊断不该打扰使用。 */
+/** 浏览器自报卡顿（`<appRoot>/logs/jank.jsonl`）。有意在失败时静默：诊断不该打扰使用。 */
 export function reportJank(body: unknown): void {
 	void fetch("/api/diag", {
 		method: "POST",
@@ -178,7 +178,7 @@ export function reportJank(body: unknown): void {
 export const getPlugins = (): Promise<{ plugins: Plugin[] }> => call("/api/plugins");
 
 /**
- * 装一个插件：把选中的那个文件夹整份传上去，服务端原样写进 `workspace/plugins/<slug>/`。
+ * 装一个插件：把选中的那个文件夹整份传上去，服务端原样写进 `<appRoot>/plugins/<slug>/`。
  * **下一次启动**才真的运行。
  */
 export const installPlugin = (
@@ -202,7 +202,7 @@ export const setPluginEnabled = (slug: string, enabled: boolean): Promise<{ plug
 export type LastRuntimeReport = { readonly type: string; readonly at: string; readonly text: string };
 
 /**
- * 底座最近一条「不正常」的运行报告（`workspace/logs/runtime.jsonl` 的最新一条）。
+ * 底座最近一条「不正常」的运行报告（`<appRoot>/logs/runtime.jsonl` 的最新一条）。
  *
  * 拉不到、没有、格式不对都返回 `undefined`：诊断不该让页面报错。
  */

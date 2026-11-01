@@ -25,7 +25,6 @@ import {
 	putUpload,
 	readBounded,
 	readUploadMeta,
-	uploadsRootOf,
 } from "../channel/attachments.ts";
 import type { ViewOk, ViewPost, ViewUploaded } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
@@ -43,7 +42,7 @@ export type PostBody = {
 };
 
 export function createChat(shell: CoreServices) {
-	const uploadsRoot = uploadsRootOf(shell.agentsRoot);
+	const uploadsRoot = shell.layout.uploadsRoot;
 
 	/**
 	 * 我在频道里说话。
@@ -107,12 +106,12 @@ export function createChat(shell: CoreServices) {
 		const target = slug.trim();
 		if (target === "") throw new AppError("bad-request", "需要对方的 slug");
 		if (target === OWNER_SLUG) throw new AppError("bad-request", "不能和我自己开私聊");
-		const identity = await readIdentity(shell.agentsRoot, target);
+		const identity = await readIdentity(shell.layout.agentRoots, target);
 		if (identity === undefined) throw new AppError("not-found", `没有这个人：${target}`);
 		const id = dmId(OWNER_SLUG, target);
 		// 与装配 / 招人共用同一份实现：私聊现在人人都有，这里只是「确保它在」。
 		await ensureOwnerDm(
-			{ harness: shell.harness, agentsRoot: shell.agentsRoot, teamsRoot: shell.teamsRoot, allChannel: shell.allChannel ?? "all" },
+			{ harness: shell.harness, layout: shell.layout, allChannel: shell.allChannel ?? "all" },
 			target,
 			BACKGROUND_CONTEXT,
 		);

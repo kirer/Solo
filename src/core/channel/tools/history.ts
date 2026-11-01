@@ -141,7 +141,7 @@ export function createHistoryTool(deps: CoreToolDeps) {
 			const oldest = found[lines.length - 1];
 			const more = found.length > lines.length || (lines.length >= limit && !exhausted);
 			const tail = more && oldest !== undefined ? `\n\n还有更早的，用 around=${oldest.id} 继续往前。` : "";
-			return text(redact(`${lines.join("\n")}${tail}`, deps.workspaceRoot));
+			return text(redact(`${lines.join("\n")}${tail}`, deps.layout.appRoot));
 		},
 	});
 	return tool;

@@ -5,14 +5,14 @@
  * 而起跑的人还在等 —— 频道里一片空白，和「命令还在跑」长得一模一样。所以重启时必须
  * 把账结掉：活着的杀掉（它还在没人知道的地方占着端口），死掉的照实说。
  */
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { sweepRunJobs } from "../channel/jobs.ts";
 import { OWNER } from "../channel/types.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import type { CoreServices } from "./types.ts";
 
 export function createRuns(shell: CoreServices) {
-	const dir = join(dirname(shell.agentsRoot), "logs", "run");
+	const dir = join(shell.layout.logsRoot, "run");
 
 	/**
 	 * 清一次遗留的后台命令。

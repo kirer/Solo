@@ -5,8 +5,9 @@ node_modules/
 dist/
 *.tsbuildinfo
 
-# 运行时数据（数据库、agents/、projects/、skills/）
+# 运行时数据（应用私有根与用户根；旧的 workspace/ 也不再入库）
 workspace/
+.solo-app/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm

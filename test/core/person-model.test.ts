@@ -32,17 +32,18 @@ const gateway = (models: readonly string[]) => ({
 	models: models.map((id) => ({ id })),
 });
 
-async function boot(): Promise<{ root: string; port: number; shell: Awaited<ReturnType<Awaited<ReturnType<typeof pool.make>>["assemble"]>> }> {
+async function boot(): Promise<{ root: string; layout: import("../../src/core/layout.ts").Layout; port: number; shell: Awaited<ReturnType<Awaited<ReturnType<typeof pool.make>>["assemble"]>> }> {
 	const box = await pool.make("core-person-model-");
 	await mkdir(join(box.agentsRoot, "林越"), { recursive: true });
 	await writeFile(join(box.agentsRoot, "林越", "identity.md"), "---\nname: 林越\ntitle: 工程师\n---\n\n# 林越\n", "utf8");
+	await mkdir(box.layout.appRoot, { recursive: true });
 	await writeFile(
-		join(box.root, "settings.json"),
+		box.layout.settingsFile,
 		`${JSON.stringify({ defaultModel: "magpie/m-one", providers: [gateway(["m-one", "m-two"])] }, null, 2)}\n`,
 		"utf8",
 	);
 
-	const setup = setupModels({}, { workspace: box.root });
+	const setup = setupModels({}, { settingsFile: box.layout.settingsFile });
 	const runtime = await box.open({ models: setup.models });
 	const shell = await box.assemble(runtime, {
 		...(setup.defaultModel === undefined ? {} : { defaultModel: setup.defaultModel }),
@@ -52,7 +53,7 @@ async function boot(): Promise<{ root: string; port: number; shell: Awaited<Retu
 	await shell.rescan();
 	const server = await serveCore({ shell, port: 0 });
 	servers.push(server);
-	return { root: box.root, port: server.port, shell };
+	return { root: box.root, layout: box.layout, port: server.port, shell };
 }
 
 function post(port: number, path: string, body: unknown): Promise<{ status: number; body: string }> {
@@ -101,12 +102,12 @@ describe("现在生效的模型清单", () => {
 
 describe("改 settings.json 不用重启", () => {
 	it("新加的模型下一次读注册表就在（ADR-025），当场能给某个人换上", async () => {
-		const { root, port, shell } = await boot();
+		const { layout, port, shell } = await boot();
 		expect(JSON.parse(await get(port, "/api/models")).models).toEqual(["magpie/m-one", "magpie/m-two"]);
 
 		// 设置页写盘：多一只模型。进程不动，接着读。
 		await writeFile(
-			join(root, "settings.json"),
+			layout.settingsFile,
 			`${JSON.stringify({ defaultModel: "magpie/m-one", providers: [gateway(["m-one", "m-two", "m-three"])] }, null, 2)}\n`,
 			"utf8",
 		);
@@ -120,12 +121,12 @@ describe("改 settings.json 不用重启", () => {
 	});
 
 	it("删掉一家提供商：它从清单里消失，挂着它的人回到默认模型", async () => {
-		const { root, port, shell } = await boot();
+		const { layout, port, shell } = await boot();
 		await post(port, modelPath("林越"), { model: "magpie/m-two" });
 
 		// 只留 m-one：m-two 这一只没了。
 		await writeFile(
-			join(root, "settings.json"),
+			layout.settingsFile,
 			`${JSON.stringify({ defaultModel: "magpie/m-one", providers: [gateway(["m-one"])] }, null, 2)}\n`,
 			"utf8",
 		);
@@ -139,7 +140,7 @@ describe("改 settings.json 不用重启", () => {
 
 describe("给一个人换模型", () => {
 	it("换了当场生效，并记进 settings.json（重启后装配认这一份）", async () => {
-		const { root, port, shell } = await boot();
+		const { layout, port, shell } = await boot();
 
 		const response = await post(port, modelPath("林越"), { model: "magpie/m-two" });
 		expect(response.status).toBe(200);
@@ -149,16 +150,16 @@ describe("给一个人换模型", () => {
 		if (conversation === undefined) throw new Error("没有会话");
 		expect((await conversation.agent(BACKGROUND_CONTEXT)).model).toMatchObject({ provider: "magpie", modelId: "m-two" });
 
-		const settings = JSON.parse(await readFile(join(root, "settings.json"), "utf8")) as {
+		const settings = JSON.parse(await readFile(layout.settingsFile, "utf8")) as {
 			agentModels?: Record<string, string>;
 		};
 		expect(settings.agentModels).toEqual({ 林越: "magpie/m-two" });
 		// 「重启」：再装配一次，这个人用记下来的那一只。
-		expect(setupModels({}, { workspace: root }).agentModels).toEqual({ 林越: { provider: "magpie", modelId: "m-two" } });
+		expect(setupModels({}, { settingsFile: layout.settingsFile }).agentModels).toEqual({ 林越: { provider: "magpie", modelId: "m-two" } });
 	});
 
 	it("空串 = 跟默认：改回默认模型，记录删掉", async () => {
-		const { root, port, shell } = await boot();
+		const { layout, port, shell } = await boot();
 		await post(port, modelPath("林越"), { model: "magpie/m-two" });
 
 		const response = await post(port, modelPath("林越"), { model: "" });
@@ -168,9 +169,9 @@ describe("给一个人换模型", () => {
 		if (conversation === undefined) throw new Error("没有会话");
 		expect((await conversation.agent(BACKGROUND_CONTEXT)).model).toMatchObject({ provider: "magpie", modelId: "m-one" });
 
-		const settings = JSON.parse(await readFile(join(root, "settings.json"), "utf8")) as { agentModels?: unknown };
+		const settings = JSON.parse(await readFile(layout.settingsFile, "utf8")) as { agentModels?: unknown };
 		expect(settings.agentModels).toBeUndefined();
-		expect(setupModels({}, { workspace: root }).agentModels).toBeUndefined();
+		expect(setupModels({}, { settingsFile: layout.settingsFile }).agentModels).toBeUndefined();
 	});
 
 	it("没有的模型 / 没有的写法：拒绝，会话不动", async () => {

@@ -6,7 +6,7 @@
  */
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Message } from "../src/core/channel/types.ts";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels, type Context, type Harness } from "../src/core/runtime/index.ts";
 import type { ModelRef, ModelSetup } from "../src/core/runtime/models.ts";
@@ -16,6 +16,7 @@ import { seedOwnerAssistant, seedPromptTemplates, seedRules } from "../src/core/
 import { createAgent, readAllIdentities, type Identity } from "../src/core/agent/identity.ts";
 import { renderTeamFile, readTeam, listTeams } from "../src/core/team/doc.ts";
 import { createChat } from "../src/core/app/chat.ts";
+import { resolveLayout, type Layout } from "../src/core/layout.ts";
 import { liveConversations } from "../src/core/channel/queue.ts";
 
 export const WAIT_MS = 240_000;
@@ -28,10 +29,10 @@ export const WAIT_MS = 240_000;
  * 不是产品默认。想跑别的模型：设 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`，
  * 或给 `--settings <file>`；给了 `--settings` 还解析不出模型，就直接报错（不悄悄替换）。
  */
-export async function setupLiveModels(root: string, options: { readonly fallbackGateway?: boolean } = {}): Promise<ModelSetup> {
-	const resolved = setupModels(process.env, { workspace: root });
+export async function setupLiveModels(settingsFile: string, options: { readonly fallbackGateway?: boolean } = {}): Promise<ModelSetup> {
+	const resolved = setupModels(process.env, { settingsFile });
 	if (resolved.defaultModel !== undefined) return resolved;
-	if (options.fallbackGateway === false) throw new Error(`没有可用模型：${join(root, "settings.json")} 里解析不出模型`);
+	if (options.fallbackGateway === false) throw new Error(`没有可用模型：${settingsFile} 里解析不出模型`);
 
 	const gateway = {
 		providers: [
@@ -45,8 +46,9 @@ export async function setupLiveModels(root: string, options: { readonly fallback
 			},
 		],
 	};
-	await writeFile(join(root, "settings.json"), `${JSON.stringify(gateway, null, 2)}\n`, "utf8");
-	return setupModels(process.env, { workspace: root });
+	await mkdir(dirname(settingsFile), { recursive: true });
+	await writeFile(settingsFile, `${JSON.stringify(gateway, null, 2)}\n`, "utf8");
+	return setupModels(process.env, { settingsFile });
 }
 
 export type Phase = { readonly name: string; readonly ok: boolean; readonly detail: string };
@@ -61,6 +63,7 @@ export type LiveShell = CoreShell;
 /** 一个临时工作区 + 已装配的核心。`restart()` 之后换成新的 runtime/shell，目录不变。 */
 export type LiveWorld = {
 	readonly root: string;
+	readonly layout: Layout;
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
 	readonly databasePath: string;
@@ -86,25 +89,27 @@ export type OpenWorldOptions = {
 
 async function assemble(world: Omit<LiveWorld, "restart" | "close" | "remove">): Promise<LiveShell> {
 	return assembleCore(world.runtime.harness, world.runtime.registry, {
-		agentsRoot: world.agentsRoot,
-		teamsRoot: world.teamsRoot,
+		layout: world.layout,
 		defaultModel: world.model,
 	});
 }
 
 export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise<LiveWorld> {
 	const root = await mkdtemp(join(tmpdir(), options.prefix ?? "solo-live-"));
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
-	const databasePath = join(root, "core.sqlite");
+	// 应用私有的东西（助理、提示词、库、设置）落在 `.app/`，组织落在临时根里。
+	const layout = resolveLayout({ appRoot: join(root, ".app"), userRoot: root });
+	const agentsRoot = layout.membersRoot;
+	const teamsRoot = layout.teamsRoot;
+	const databasePath = layout.databasePath;
+	await mkdir(layout.assistantRoot, { recursive: true });
 	await mkdir(agentsRoot, { recursive: true });
 	await mkdir(teamsRoot, { recursive: true });
-	await seedRules(root);
-	await seedPromptTemplates(root);
-	const assistantSlug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
-	if (options.settings !== undefined) await copyFile(options.settings, join(root, "settings.json"));
+	await seedRules(layout);
+	await seedPromptTemplates(layout);
+	const assistantSlug = await seedOwnerAssistant(layout, { name: "助理" });
+	if (options.settings !== undefined) await copyFile(options.settings, layout.settingsFile);
 
-	const configured = await setupLiveModels(root, { fallbackGateway: options.settings === undefined });
+	const configured = await setupLiveModels(layout.settingsFile, { fallbackGateway: options.settings === undefined });
 	const model = configured.defaultModel;
 	if (model === undefined) throw new Error("没有可用模型");
 	const runtime = await openCore({
@@ -114,6 +119,7 @@ export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise
 	});
 	const world: LiveWorld = {
 		root,
+		layout,
 		agentsRoot,
 		teamsRoot,
 		databasePath,
@@ -132,8 +138,7 @@ export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise
 			});
 			world.runtime = reopened;
 			world.shell = await assembleCore(reopened.harness, reopened.registry, {
-				agentsRoot,
-				teamsRoot,
+				layout,
 				defaultModel: model,
 			});
 		},
@@ -161,7 +166,7 @@ export async function createLiveAgent(
 	},
 ): Promise<Identity> {
 	const identity = await createAgent({
-		root: world.agentsRoot,
+		root: world.layout.membersRoot,
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
 		...(input.manager === undefined ? {} : { manager: input.manager }),

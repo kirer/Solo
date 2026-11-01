@@ -100,6 +100,28 @@ const PULSE_MS = 1_000;
 const PULSE_BUDGET = 120;
 
 /** 组织快照里界面真的会画的那几格：没变就别推（否则每秒一次全量重渲染）。 */
+/**
+ * 频道投影的指纹：**只装结构字段**（标题、成员、唤醒表、归档），不装 unread / preview。
+ *
+ * 为什么要它：解散团队、开除人、往团队里加人，改的都是频道文档、不一定改到名册 ——
+ * 只看名册的话这些事不会触发一次 org 推送，界面右栏就停在旧样子上（实测）。
+ * 反过来，把未读塞进来会让每来一条消息都推一次全量组织。
+ */
+function channelSignature(channels: ChannelSnapshot["channels"]): string {
+	const rows = Object.values(channels.channels)
+		.map((channel) =>
+			[
+				channel.id,
+				channel.title,
+				channel.archived === true ? "1" : "0",
+				[...channel.members].sort().join(","),
+				[...channel.wakeOnAll].sort().join(","),
+			].join("\u0001"),
+		)
+		.sort();
+	return `ch:${String(rows.length)}|${rows.join("\u0002")}`;
+}
+
 function orgSignature(org: ViewOrg): string {
 	const rows = org.people.map((actor) => {
 		const activity =
@@ -211,10 +233,19 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 		broadcast(clients, outgoing.map((turn) => encodeEvent({ type: "trace", turn: slimTurn(turn) })).join(""));
 	}
 
-	/** 推一份组织快照：指纹没变就不推；返回「此刻有没有人在做活」。 */
-	function pushOrg(org: ViewOrg): boolean {
+	/** 上一次推出去的频道投影指纹（解散团队、加人这类没有消息的变化靠它触发）。 */
+	let channelSig = "";
+
+	/**
+	 * 推一份组织快照：指纹没变就不推；返回「此刻有没有人在做活」。
+	 *
+	 * `channels` 有就一起算进指纹。`flush` 手上有快照，补推只有组织快照 ——
+	 * 补推不看频道是故意的：频道投影只在有提交时才会变，而提交一定会走 `flush`。
+	 */
+	function pushOrg(org: ViewOrg, channels?: ChannelSnapshot["channels"]): boolean {
 		activity = org.people.some((actor) => actor.activity !== undefined);
-		const signature = orgSignature(org);
+		if (channels !== undefined) channelSig = channelSignature(channels);
+		const signature = `${orgSignature(org)}|${channelSig}`;
 		if (signature !== orgSig) {
 			orgSig = signature;
 			broadcast(orgClients, encodeEvent({ type: "org", org }));
@@ -276,7 +307,7 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 			// 有 `read` 时走它：`readOrg` 会补上每个人此刻的 `activity`（在想 / 在做）。
 			// 没有 `read`（测试装配）就退回纯投影 —— 少一个字段，不会错。
 			const org = read === undefined ? orgView(snap.identities, snap.directory) : await read.readOrg();
-			pushOrg(org);
+			pushOrg(org, snap.channels);
 		}
 		for (const id of [...channelClients.keys()]) {
 			pushChannel(id, snap, pushed.get(id) ?? 0);

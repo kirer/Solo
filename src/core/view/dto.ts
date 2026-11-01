@@ -48,6 +48,11 @@ export type ViewChannel = {
 	lastAt: number;
 	lastSeq: number;
 	memberCount: number;
+	/**
+	 * 成员的 slug（**不含我**）：群头像按它画，别拿全名册前四个人凑 ——
+	 * 那会让每个群的头像长成一样，且和这个群里到底有谁无关。
+	 */
+	members: string[];
 };
 
 /** 一条消息里被 @ 的人。 */
@@ -91,6 +96,8 @@ export type ViewMessage = {
 	 * 不用区分「空数组」与「没有」两种差不多的状态。
 	 */
 	attachments?: ViewAttachment[];
+	/** 等我选的选项（2–6 个）。有它就说明这条在等我回答，输入框会换成选项卡。 */
+	options?: string[];
 };
 
 /** 成员。 */
@@ -190,7 +197,7 @@ export type ViewPersonProfile = {
 	skills: ViewSkill[];
 	/** `entries` 是**条数**（档案页只显示概况），全文在 `/api/people/:slug/memory`。 */
 	memory: { exists: boolean; entries: number; digest: string | null };
-	channels: { id: string; kind: ViewChannelKind; title: string }[];
+	channels: { id: string; kind: ViewChannelKind; title: string; members: string[] }[];
 	/** 他此刻用的模型 `provider/modelId`；没有模型（还没配）就是空串。 */
 	model: string;
 };

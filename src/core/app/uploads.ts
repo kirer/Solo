@@ -13,7 +13,6 @@ import {
 	readUploadMeta,
 	sweepOrphanUploads,
 	uploadPathOf,
-	uploadsRootOf,
 } from "../channel/attachments.ts";
 
 /** 取一个附件时要给传输层的东西。 */
@@ -22,24 +21,35 @@ export type UploadForRead = {
 	readonly mime: string;
 	readonly bytes: number;
 	readonly name: string;
-	/** 图片默认内联（点缩略图开大图才能直接显示），其余一律下载。 */
+	/** 浏览器直接显示（图片 / PDF / 文本），而不是下载。 */
 	readonly inline: boolean;
 	readonly disposition: string;
 };
 
 export function createUploads(shell: CoreServices) {
-	const root = uploadsRootOf(shell.agentsRoot);
+	const root = shell.layout.uploadsRoot;
 
-	async function read(id: string, options: { readonly download?: boolean } = {}): Promise<UploadForRead> {
+	/**
+	 * `preview` = 在聊天里点开看一眼：图片 / PDF / 文本内联，其余照旧下载。
+	 *
+	 * HTML **永远按 `text/plain`** 发：附件是同源的，一个自称 HTML 的上传一旦当页面执行，
+	 * 就是自己给自己开了一个 XSS。预览文本也声明编码 —— 中文文件不声明会变乱码。
+	 */
+	async function read(
+		id: string,
+		options: { readonly download?: boolean; readonly preview?: boolean } = {},
+	): Promise<UploadForRead> {
 		// 白名单 id 同时挡住了路径穿越：`../core.sqlite` 在 `:id` 里捕获不到 `/`，
 		// 但 `..%2f` 能被解码回来，所以还是靠 `isUploadId` 再收一道。
 		const path = uploadPathOf(root, id);
 		const meta = await readUploadMeta(root, id);
 		if (path === undefined || meta === undefined) throw new AppError("not-found", "没有这个文件");
-		const inline = options.download !== true && kindOfMime(meta.mime) === "image";
+		const text = meta.mime.startsWith("text/") || meta.mime === "application/pdf";
+		const inline = options.download !== true && (kindOfMime(meta.mime) === "image" || (options.preview === true && text));
+		const mime = inline && options.preview === true && meta.mime.startsWith("text/") ? `${meta.mime}; charset=utf-8` : meta.mime;
 		return {
 			path,
-			mime: meta.mime,
+			mime: inline && options.preview === true && meta.mime === "text/html" ? "text/plain; charset=utf-8" : mime,
 			bytes: meta.bytes,
 			name: meta.name,
 			inline,

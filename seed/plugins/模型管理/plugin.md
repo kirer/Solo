@@ -5,7 +5,7 @@ description: 改模型：在「设置」里增删提供商、填密钥、拉取�
 
 # 模型管理
 
-给「设置」浮层加一节**模型**，改的是 `workspace/settings.json`（字段含义见 `docs/DEPLOY.md` §3）。
+给「设置」浮层加一节**模型**，改的是 `<appRoot>/settings.json`（字段含义见 `docs/DEPLOY.md` §3）。
 
 - 列出每个 provider：名字、地址、协议、有没有密钥（**只显示尾号，不显示完整密钥**）。
 - 「获取可用模型」真的去请求这个 provider 的 `/models`，把返回的 id 列出来让你挑，不用手抄模型名。

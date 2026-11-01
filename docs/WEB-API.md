@@ -33,7 +33,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `GET` | `/api/avatar/:seed` | 一个人的头像（SVG，服务端按名字画好） |
-| `POST` | `/api/diag` | 浏览器自报卡顿，落 `workspace/logs/jank.jsonl` |
+| `POST` | `/api/diag` | 浏览器自报卡顿，落 `<appRoot>/logs/jank.jsonl` |
 | `GET` | `/api/diag` | 最近一条**运行报告**（底座报上来的失败），没有就是 `null` |
 | `GET` | `/api/plugins` | 插件清单：slug / 名字 / 说明 / 开关状态 / 有没有前端入口 / 它带来了什么 / 没装上的原因 |
 | `POST` | `/api/plugins` | 装一个插件：把一整个文件夹（`{ slug, files }`，base64）写进 `plugins/<slug>/` |
@@ -121,6 +121,7 @@ type ViewChannel = {
   lastAt: number;                   // 毫秒时间戳
   lastSeq: number;
   memberCount: number;
+  members: string[];                // 频道成员（**不含我**），按加入顺序；侧栏 / 右栏画群头像用
 }
 ```
 
@@ -155,7 +156,7 @@ type ViewChannel = {
 投影出来（全员 `all` / 团队 `team:<slug>` / 每个成员的私聊），要么就是这里开的一对一私聊。
 私聊现在由装配 / 招人自动建好，这个接口仍保留，用来显式确保它在（幂等）。
 
-- 对方必须真的在名册里（`agents/<slug>/identity.md` 存在），否则 `404`；
+- 对方必须真的在名册里（`members/<slug>/identity.md` 存在），否则 `404`；
 - 不能和我自己开 → `400`；slug 为空 → `400`；
 - 已存在则原样返回（幂等，不覆盖标题与成员）；
 - 新房间：成员 `{owner, slug}`、标题 = 对方名字、`wakeOnAll` 为空。
@@ -212,7 +213,7 @@ type ViewMessage = {
   from: number;          // 会话号；我是 0
   fromSlug: string;
   fromLabel: string;
-  kind: string;          // chat | say | question | decision | report | note | ...
+  kind: string;          // chat | say | question | decision | report | choice | note | ...
   noteOf?: "run";        // 系统留痕的种类：run = 后台命令跑完（界面收成一行，点开看全文）
   text: string;
   mentions: { id: number, label: string, read: boolean, offset: number }[];
@@ -220,6 +221,7 @@ type ViewMessage = {
   read: boolean;         // 从我视角
   needsYou?: true;       // 只在这条需要我本人看一眼时出现
   attachments?: { id: string, name: string, kind: "image" | "file", bytes: number }[];
+  options?: string[];    // 只有 kind: "choice"：等我拍板的 2–6 个选项（正文是问题）
 }
 ```
 
@@ -238,6 +240,9 @@ type ViewMessage = {
   为什么不是「mentions 里有 owner」：一句话可以顺手提到好几个人 —— 「@林越 放开做，
   改完 @沈舟 复测、@我 报一句」是派活给林越，里面的 `@我` 是让林越回头找我，不是现在找我。
 - `attachments` **没有附件时不出现这个键**，不要区分「空数组」和「没有」。
+- `options` 同理：没有选项就没有这个键。**回答不另开接口**：我发的下一条普通消息就是回答
+  （`replyTo` 指向这条）。界面按「最后一条带 `options` 的消息、且它之后我没说过话」判定
+  还在等我（`ui/app/src/composer/choice.ts` 的 `pendingChoice`，纯函数）。
 - `kind` 是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
   这些不再产生的消息（不清理旧数据），前端 `buildRows()` 直接过滤掉，不画。
   消息上**没有** `status` / `pendingFor` / `processing` / `startedAt` 这些过程字段，
@@ -415,7 +420,7 @@ type ViewStep = {
   body: string,                     // identity.md 正文（预置提示词）
   skills: { name: string, description: string, scope: "personal" | "team" | "all", overrides: boolean }[],
   memory: { exists: boolean, entries: number, digest: string | null },
-  channels: { id: string, kind: "dm" | "group", title: string }[],
+  channels: { id: string, kind: "dm" | "group", title: string, members: string[] }[],
   model: string                     // 他此刻用的模型 "provider/modelId"；没有模型就是 ""
 }
 ```
@@ -466,7 +471,7 @@ type ViewStep = {
 ## 10.3 `POST /api/people/:slug/model`
 
 换这个人用的模型。**当场生效**（改的是会话的模型，不用重启），同时记进
-`workspace/settings.json` 的 `agentModels`（slug → `provider/modelId`），重启后装配仍认这一份。
+`<appRoot>/settings.json` 的 `agentModels`（slug → `provider/modelId`），重启后装配仍认这一份。
 
 ```ts
 // 请求
@@ -493,11 +498,11 @@ type ViewStep = {
   raw: string }
 ```
 
-`entries` 按 Markdown 的 `##` 标题拆（标题就是记下的日期）。`raw` 是 `agents/<slug>/memory.md`
+`entries` 按 Markdown 的 `##` 标题拆（标题就是记下的日期）。`raw` 是 `members/<slug>/memory.md`
 全文。`slug` 必须是名册里存在的 agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 老实 404。
 
-`at` / `by` / `op` 是这一节的**来历**，由 `memoryTimeline()` 从 `agents/<slug>/.memory-journal.jsonl`
+`at` / `by` / `op` 是这一节的**来历**，由 `memoryTimeline()` 从 `members/<slug>/.memory-journal.jsonl`
 反推（每行都有写入前后的全文，切段比较即得）：`by` 是 `human` / `remember` / `agent`，
 `op` 是「新加」还是「改过」。手写进 `memory.md`、没有日志的条目一律 `null` ——
 **不拿「现在」冒充「当时」**。
@@ -537,10 +542,12 @@ type ViewStep = {
 - 上限 **25MB**（`UPLOAD_MAX_BYTES`），超过 → 413。一条消息最多 **10 个**附件。
 - `kind` **由服务端按 mime 重算**，不信客户端声明 —— 一个 `.svg` 自称图片后内联执行，
   正是这样被挡住的（`INLINE_IMAGE` 里没有 `svg`）。
-- 落盘在 `<workspace>/uploads/<id>` + `<id>.json`（`{name, mime, bytes, at}`）。一个
+- 落盘在 `<appRoot>/uploads/<id>` + `<id>.json`（`{name, mime, bytes, at}`）。一个
   文件一份元数据，并发写不会互相覆盖。
 - `GET /api/uploads/:id` 图片内联，其余 `Content-Disposition: attachment`；带
-  `?download=1` 强制下载。带 `Cache-Control: immutable` 与
+  `?download=1` 强制下载。带 `?preview=1` 时**能内联的才内联**：图片、PDF、`text/*`
+  按**真实 mime** 发（`Content-Type` 补 charset），**HTML 永远降成 `text/plain`**，
+  其余仍然走附件下载。前端看**响应头**决定怎么画，不看文件名（名字是用户起的）。带 `Cache-Control: immutable` 与
   `X-Content-Type-Options: nosniff`（id 一旦生成内容不变）。
 
 **模型看不见图片内容**：附件在投递正文里只有一行占位。agent 应该说
@@ -597,7 +604,7 @@ type ViewStep = {
 
 ## 13.4 `/api/plugins`（列 / 建 / 删 / 开关 / 前端入口）
 
-插件是 `workspace/plugins/<slug>/` 下的一个文件夹（`plugin.ts` 后端、`client.js` 前端）。
+插件是 `<appRoot>/plugins/<slug>/` 下的一个文件夹（`plugin.ts` 后端、`client.js` 前端）。
 前端启动时**先拉清单，再逐个 `import` 前端入口**，然后才挂载界面 —— 插槽首帧就是满的。
 
 ```json
@@ -633,6 +640,8 @@ export default {
   style: "…",                     // 可选，宿主插进 <head>
   apply(ui) {                     // ui = { h, React, api, store, useStore, register }
     ui.register("sidebar.footer", { id: "clock", component: () => ui.h("div", {}, "…") });
+    // 后端 api（apply 的参数）还有 scope(channelId)：这个频道的工作区根（私聊 → 那个人、
+    // 团队频道 → 团队、全员频道 → undefined）。只有根一个字符串，路径守卫在插件里做。
     // 格子 = { id, label?, icon?, order?, component }：label 是页签文字 / 设置分区名，
     // icon 是设置左栏那个图标（一个 SVG 元素）。能放进哪些位置见 docs/DESIGN.md §2.8
     // 的插槽表；读界面状态用 ui.useStore。

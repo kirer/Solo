@@ -11,6 +11,7 @@ import { chainUp, readAllIdentities, readIdentity, type Identity } from "../agen
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
+import type { Layout } from "../layout.ts";
 
 /**
  * 一个团队频道的成员：我 + 团队管理员 + 他的整条汇报线 + `team:` 指向它的人 + 助理。
@@ -29,8 +30,8 @@ export function teamMembers(input: {
 
 export type MembershipDeps = {
 	readonly harness: Harness;
-	readonly agentsRoot: string;
-	readonly teamsRoot: string;
+	/** 两个根：助理在 app 根、成员在用户根；团队在用户根。 */
+	readonly layout: Layout;
 	/** 全员频道 id（默认 `all`）。 */
 	readonly allChannel: string;
 };
@@ -100,7 +101,7 @@ export async function ensureOwnerDm(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<void> {
 	if (slug === OWNER) return;
-	const identity = await readIdentity(deps.agentsRoot, slug);
+	const identity = await readIdentity(deps.layout.agentRoots, slug);
 	if (identity === undefined) return;
 	await deps.harness.commit(async (tx) => {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
@@ -124,7 +125,7 @@ export async function joinTeamChannel(
 	slug: string,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<void> {
-	const identity = await readIdentity(deps.agentsRoot, slug);
+	const identity = await readIdentity(deps.layout.agentRoots, slug);
 	const team = identity?.team;
 	if (team === undefined || team === "") return;
 	await syncTeamChannel(deps, team, context);
@@ -146,10 +147,13 @@ export async function syncTeamChannel(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<void> {
 	const [doc, all] = await Promise.all([
-		readTeam(deps.teamsRoot, team),
-		readAllIdentities(deps.agentsRoot),
+		readTeam(deps.layout.teamsRoot, team),
+		readAllIdentities(deps.layout.agentRoots),
 	]);
-	const lead = doc?.lead;
+	// README 还没写出来就不建频道：标题只有一个真名（README 的 `name`）。
+	// 先按目录名建一次再改名，界面上就会先闪一段拼音/英文 slug（实测 `xiaokonglong`）。
+	if (doc === undefined) return;
+	const lead = doc.lead;
 	const chain = lead === undefined || lead === "" ? [] : chainUp(all, lead);
 	const members = teamMembers({
 		lead,
@@ -169,7 +173,9 @@ export async function syncTeamChannel(
 			state,
 			projectChannel(state, {
 				id: teamId(team),
-				title: doc?.name ?? team,
+				title: doc.name,
+				// 团队解散 = README 写 `status: archived`：频道归档，历史留着，列表里不再出现。
+				...(doc.status === "archived" ? { archived: true } : {}),
 				members,
 				wakeOnAll,
 				at: Date.now(),

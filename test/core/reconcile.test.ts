@@ -27,7 +27,7 @@ afterEach(() => pool.cleanup());
 /** 库文件路径。schema 由一次开合建出来。 */
 async function database(box: Sandbox): Promise<string> {
 	await (await box.open()).close();
-	return join(box.root, "core.sqlite");
+	return box.layout.databasePath;
 }
 
 describe("重启自愈", () => {

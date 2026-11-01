@@ -5,17 +5,18 @@
 
 ## 0. 一句话
 
-`seed/` 是出厂内容，第一次启动播种进 `workspace/`，之后以 workspace 为准。
+`seed/` 是出厂内容，第一次启动播种进两个根（应用私有的进 `appRoot`，组织的进 `userRoot`），
+之后以磁盘为准。
 代码只负责**排版**和**填插槽**，不负责讲道理。
 
 ## 1. 四个家，各管一段
 
 | 家 | 每轮进上下文 | 写什么 | 上限 | 例子 |
 | --- | --- | --- | --- | --- |
-| `workspace/rules.md` | 是 | **不说就会立刻出错**的硬规矩 | 15 条，一行一条，不带解释 | 「只回叫你的那个频道」「像成员说话：一两句，先给结论」 |
-| `workspace/prompt/*.md` | 是 | 怎么组织信息、怎么用工具（带插槽） | 一段 ≤ 12 行 | 「你的上级：{{manager}}」 |
-| `workspace/skills/<n>/SKILL.md` | 否，查了才读 | 分场景的长做法 | ≤ 4 KB（自律 3 KB），四段 | 拍板链、怎么汇报、怎么建团队 |
-| `workspace/agents/<slug>/identity.md` | 是（正文） | 这个人的职责与边界 | ≤ 20 行 | 「你负责 X；不做 Y」 |
+| `<userRoot>/rules.md` | 是 | **不说就会立刻出错**的硬规矩 | 15 条，一行一条，不带解释 | 「只回叫你的那个频道」「像成员说话：一两句，先给结论」 |
+| `<appRoot>/prompt/*.md` | 是 | 怎么组织信息、怎么用工具（带插槽） | 一段 ≤ 12 行 | 「你的上级：{{manager}}」 |
+| `<userRoot>/skills/<n>/SKILL.md` | 否，查了才读 | 分场景的长做法 | ≤ 4 KB（自律 3 KB），四段 | 拍板链、怎么汇报、怎么建团队 |
+| `<userRoot>/members/<slug>/identity.md` | 是（正文） | 这个人的职责与边界 | ≤ 20 行 | 「你负责 X；不做 Y」 |
 
 **判据**：这句话不说，他下一句就会做错 → `rules`。要分三步做、只在某种场合才用 → `skill`。
 同一层意思出现在两个家里，就是缺陷，必须删掉一个。三条重复的自动检查在
@@ -47,10 +48,10 @@ seed/
     88-task.md                   # 插话时提醒「手上的活属于哪个频道」
     90-interrupted.md            # 插话时的额外一句
     95-settle.md                 # 团队记忆沉淀那一轮的正文（插槽 {{team}} {{pending}} {{candidates}}）
-  agents/
-    assistant/identity.md        # 助理身份（从代码挪出来）
-    assistant/skills/建立团队/SKILL.md
-    assistant/skills/招人/SKILL.md
+  assistant/                     # 助理（知言）：播种进 appRoot/assistant/<slug>/
+    identity.md                  # 助理身份（从代码挪出来）
+    skills/建立团队/SKILL.md
+    skills/招人/SKILL.md
   skills/                        # 全员层：只放「全员都该这么干」的
     工作规矩/SKILL.md             # 和 rules.md 分工：rules 短硬，skill 长细
     记忆整理/SKILL.md
@@ -59,17 +60,19 @@ seed/
     静默复现/SKILL.md             # 报障先在后台复现，复现不出来就不说话
   plugins/                       # 出厂插件：补一次、删了不回来（账本记在 .seed-manifest.json）
     示范/                        # 四个后端动作 + 几个插槽各用一次，照着改的样板
-    模型管理/                    # 设置里的「模型」一节：改 workspace/settings.json（DEPLOY §3）
+    模型管理/                    # 设置里的「模型」一节：改 <appRoot>/settings.json（DEPLOY §3）
+    文件树/                      # 右栏「文件」页签：当前频道那个工作区的目录树 + 预览
 ```
 
 项目专用的手艺不放进 `seed/`：`seed/skills/` 是全员层，会出现在每个人的提示词目录里。
-需要时用技能「找现成技能」现场装进 `workspace/skills/`，或者手工拷一份。
+需要时用技能「找现成技能」现场装进 `~/.solo/skills/`，或者手工拷一份。
 
 ## 3. 插槽表
 
 | 插槽 | 值 | 来源 |
 | --- | --- | --- |
 | `{{self.name}}` `{{self.title}}` `{{self.slug}}` | 自己 | `identity.md` |
+| `{{self.dir}}` | 自己的目录（`assistant/<slug>/` 或 `members/<slug>/`） | `Layout` 的两个根 |
 | `{{manager}}` | 上级的显示名 | `manager` 字段 + 名册 |
 | `{{reports}}` | 向你汇报的人 | 名册反查 |
 | `{{chain}}` | 往上的整条汇报线 | `chainUp` |
@@ -78,7 +81,7 @@ seed/
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
 | `{{count}}` | 全员 agent 数 | 名册 |
-| `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | `agents/<slug>/identity.md` 的正文 |
+| `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | 身份目录里 `identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
 | `{{team.status}}` `{{team.lead}}` `{{team.dir}}` | 团队状态 / 团队管理员 / 目录 | `teams/<slug>/README.md` 的 YAML 头 |
 | `{{team.members}}` | 团队成员的 slug | `teams/<slug>/` 下的 agent |

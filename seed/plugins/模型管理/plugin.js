@@ -1,5 +1,5 @@
 /**
- * 模型管理的后端：三个 JSON 接口，读写 `workspace/settings.json`。
+ * 模型管理的后端：三个 JSON 接口，读写 `<appRoot>/settings.json`。
  *
  * 只做三件事：读出来（密钥打码）、校验后写回去（先写临时文件再换名）、替浏览器去探一次
  * `<baseUrl>/models`。**不改运行中的模型** —— 模型是进程启动时装配的，这里只写文件。
@@ -37,7 +37,7 @@ async function readSettings(workspace) {
 	 * 只用来在界面上说人话 —— 没有配置时就说没有，别让人以为还有一只兜底模型在跑。
 	 */
 function sourceOf(providers) {
-	if (providers.length > 0) return "workspace/settings.json";
+	if (providers.length > 0) return "<appRoot>/settings.json";
 	if (process.env.ANTHROPIC_API_KEY !== undefined) return "环境变量 ANTHROPIC_API_KEY";
 	if (process.env.OPENAI_API_KEY !== undefined) return "环境变量 OPENAI_API_KEY";
 	return "还没有配置模型";

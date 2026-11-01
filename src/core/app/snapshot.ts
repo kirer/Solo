@@ -44,12 +44,12 @@ export function createSnapshots(shell: CoreServices) {
 	let teamsCache: { at: number; stamp: number; value: readonly Team[] } | undefined;
 
 	async function teamsNow(): Promise<readonly Team[]> {
-		const stamp = (await mtimeOrUndefined(shell.teamsRoot)) ?? -1;
+		const stamp = (await mtimeOrUndefined(shell.layout.teamsRoot)) ?? -1;
 		const now = Date.now();
 		if (teamsCache !== undefined && teamsCache.stamp === stamp && now - teamsCache.at < TEAM_CACHE_MS) {
 			return teamsCache.value;
 		}
-		const value = [...(await listTeams(shell.teamsRoot))];
+		const value = [...(await listTeams(shell.layout.teamsRoot))];
 		teamsCache = { at: now, stamp, value };
 		return value;
 	}

@@ -39,7 +39,7 @@ function storedBytes(file: string, kind: string): number {
 
 async function setup(): Promise<{ runtime: CoreRuntime; file: string; channelId: string }> {
 	const box = await pool.make("core-write-");
-	const file = join(box.root, "core.sqlite");
+	const file = box.layout.databasePath;
 	const runtime = await box.open();
 	const channelId = "team:计费";
 	await runtime.harness.commit(async (tx) => {

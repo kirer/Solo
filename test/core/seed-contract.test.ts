@@ -316,7 +316,7 @@ describe("seed/prompt：段落与插槽", () => {
 		const bad: string[] = [];
 		for (const file of await seedMarkdown()) {
 			// identity.md 是名字唯一的家；正文里提自己一律写「你」。
-			if (file.rel.startsWith("agents/") && file.rel.endsWith("identity.md")) continue;
+			if (file.rel.startsWith("assistant/") && file.rel.endsWith("identity.md")) continue;
 			for (const name of HARDCODED_NAMES) {
 				if (file.text.includes(name)) bad.push(`${file.rel}：${name}`);
 			}
@@ -327,7 +327,7 @@ describe("seed/prompt：段落与插槽", () => {
 
 describe("出厂内容：体积与位置", () => {
 	it("助理身份在 seed 里，不在代码里", async () => {
-		const text = await readSeed("agents/assistant/identity.md");
+		const text = await readSeed("assistant/identity.md");
 		expect(text.startsWith("---")).toBe(true);
 		// `team` 是可选的：助理不属于任何团队，别为凑字段编一个。
 		for (const field of ["name", "title", "manager"]) {
@@ -337,8 +337,8 @@ describe("出厂内容：体积与位置", () => {
 		expect(text.split("\n").filter((line) => line.trim() !== "").length).toBeLessThanOrEqual(20);
 	});
 
-	it("V2 的 seed/assistant/ 已搬走（同一个家不留两份）", async () => {
-		expect(await exists("assistant")).toBe(false);
+	it("旧的 seed/agents/ 已搬走（同一个家不留两份）", async () => {
+		expect(await exists("agents")).toBe(false);
 	});
 
 	it("技能体积：工作规矩可用满 4 KB，其余自律 3 KB（契约 §4）", async () => {

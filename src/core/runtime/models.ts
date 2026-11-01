@@ -1,12 +1,12 @@
 /**
- * 模型装配：读 `workspace/settings.json`，注册 provider，返回默认模型。
+ * 模型装配：读 `<appRoot>/settings.json`，注册 provider，返回默认模型。
  *
  * 全部配置在文件里，代码只做一件事：JSON → createProvider → setProvider。
  * 没有「内置三档清单」「网关身份三件套」「自定义模型去重」——那些是外部问题，
  * 写在 settings.json 里，不写在这里。
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Models, Provider } from "@earendil-works/pi-ai";
 import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
 import { stream, streamSimple } from "@earendil-works/pi-ai/api/openai-responses";
@@ -68,6 +68,33 @@ function readSettings(file: string): Settings | undefined {
 	} catch {
 		return undefined;
 	}
+}
+
+/**
+ * 把「某个人用哪只模型」记进 `settings.json`（`value === null` = 删掉这条，跟默认）。
+ *
+ * 写文件是产品行为的一部分：不记的话重启时装配会把他改回默认，界面上看起来就是
+ * 「设置自己变回去」。只动 `agentModels` 这一个字段，别的配置原样保留。
+ */
+export function setAgentModel(settingsFile: string, slug: string, value: string | null): void {
+	let settings: Record<string, unknown> = {};
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(settingsFile, "utf8"));
+		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>;
+	} catch {
+		// 坏文件 / 还没有文件：当成空的写一份新的，下面这一份至少是合法的。
+	}
+	const raw = settings["agentModels"];
+	const agentModels: Record<string, string> = {};
+	if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+		for (const [key, item] of Object.entries(raw)) if (typeof item === "string") agentModels[key] = item;
+	}
+	if (value === null || value.trim() === "") delete agentModels[slug];
+	else agentModels[slug] = value.trim();
+	if (Object.keys(agentModels).length === 0) delete settings["agentModels"];
+	else settings["agentModels"] = agentModels;
+	mkdirSync(dirname(settingsFile), { recursive: true });
+	writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
 }
 
 const APIS = {
@@ -238,7 +265,7 @@ export function syncModels(target: Models, file: string): AppliedModels | undefi
  * 装配模型。
  *
  * 优先级：
- * 1. `workspace/settings.json` 里有 `providers` → 用它
+ * 1. `<appRoot>/settings.json` 里有 `providers` → 用它
  * 2. 环境变量 `ANTHROPIC_API_KEY` → Anthropic
  * 3. 环境变量 `OPENAI_API_KEY` → OpenAI
  * 4. 都没有 → **没有模型**（空注册表、`defaultModel: undefined`）
@@ -249,9 +276,10 @@ export function syncModels(target: Models, file: string): AppliedModels | undefi
  */
 export function setupModels(
 	environment: NodeJS.ProcessEnv = process.env,
-	options: { readonly workspace?: string } = {},
+	options: { readonly workspace?: string; readonly settingsFile?: string } = {},
 ): ModelSetup {
-	const settings = options.workspace === undefined ? undefined : readSettings(join(options.workspace, "settings.json"));
+	const file = options.settingsFile ?? (options.workspace === undefined ? undefined : join(options.workspace, "settings.json"));
+	const settings = file === undefined ? undefined : readSettings(file);
 
 	if (settings?.providers !== undefined && settings.providers.length > 0) {
 		const models = createModels();

@@ -16,9 +16,8 @@ import {
 	wakeOf,
 	type WakeRecord,
 } from "../agent/roster.ts";
-import { promptDirOf } from "../md/prompt.ts";
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
-import { uploadsRootOf } from "./attachments.ts";
+import type { Layout } from "../layout.ts";
 
 export type ChannelWiring = {
 	readonly harness: Harness;
@@ -41,14 +40,15 @@ export type ChannelWiring = {
  */
 export function wireChannel(deps: {
 	readonly harness: Harness;
-	readonly agentsRoot: string;
+	/** 两个根的布局：提示词在 app 根，上传也在 app 根。 */
+	readonly layout: Layout;
 	readonly live?: () => ReadonlyMap<string, Conversation>;
 }): ChannelWiring {
 	const wakeDeps = directoryWake({
 		harness: deps.harness,
 		...(deps.live === undefined ? {} : { live: deps.live }),
 	});
-	const promptDir = promptDirOf(deps.agentsRoot);
+	const promptDir = deps.layout.promptRoot;
 
 	const wakeOfOf = async (slug: string, context: Context = BACKGROUND_CONTEXT): Promise<WakeRecord | undefined> => {
 		const directory = (await deps.harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
@@ -72,7 +72,7 @@ export function wireChannel(deps: {
 	return {
 		harness: deps.harness,
 		promptDir,
-		uploadsRoot: uploadsRootOf(deps.agentsRoot),
+		uploadsRoot: deps.layout.uploadsRoot,
 		finishTurn,
 		conversationOf,
 		rememberWake,

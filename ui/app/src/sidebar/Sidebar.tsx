@@ -193,6 +193,9 @@ function ChannelRow(props: {
 			className="ch"
 			data-channel={channel.id}
 			data-kind={channel.kind}
+			// 行底色：有人点名找我 = 淡红；只是有新消息 = 淡灰；选中态优先（CSS 里写死）。
+			data-need={unread > 0 && channel.mentions > 0 ? "true" : undefined}
+			data-unread={unread > 0 ? "true" : undefined}
 			aria-current={props.active ? "true" : "false"}
 			title={parts.join(" · ")}
 			onClick={props.onOpen}
@@ -218,7 +221,12 @@ function ChannelRow(props: {
 						<span className="ch-role">{person.title}</span>
 					)}
 					{unread > 0 ? (
-						<span className="ch-badge" aria-label={`${String(unread)} 条未读`}>
+						// 红色 = 有消息点名找我；灰色 = 只是有新消息。颜色规则在 CSS（`.ch-badge`）。
+						<span
+							className="ch-badge"
+							data-kind={channel.mentions > 0 ? "mention" : "unread"}
+							aria-label={`${String(unread)} 条未读`}
+						>
 							{badge}
 						</span>
 					) : null}
@@ -248,10 +256,14 @@ function groupPeopleOf(
 	channel: Channel,
 	bySlug: Map<string, { label: string; title: string; slug: string }>,
 ): { slug: string; label: string }[] {
-	// 只有群聊才画群头像（私聊画那个人的脸）。群头像只画得出 4 个座位，多的也没地方放。
-	return channel.kind === "dm"
-		? []
-		: [...bySlug.values()].slice(0, 4).map((person) => ({ slug: person.slug, label: person.label }));
+	// 只有群聊才画群头像（私聊画那个人的脸）。画的是**这个群里真有的人**，按成员表取；
+	// 拿全名册前四个凑会让每个群的头像长成一样，跟群里到底有谁无关（实测的 bug）。
+	// 群头像只画得出 4 个座位，多的也没地方放。
+	return channel.members
+		.map((slug) => bySlug.get(slug))
+		.filter((person): person is { label: string; title: string; slug: string } => person !== undefined)
+		.slice(0, 4)
+		.map((person) => ({ slug: person.slug, label: person.label }));
 }
 
 function avatarState(state: string): "idle" | "thinking" | "working" | "done" {

@@ -360,6 +360,8 @@ function TeamSection(props: { slug: string }): JSX.Element | null {
 
 function PersonView(props: { person: PersonProfile }): JSX.Element {
 	const { person } = props;
+	const people = useStore((state) => state.people);
+	const labels = new Map(people.map((actor) => [actor.slug, actor.label]));
 	// 私聊不进「活跃频道」：那是和他说话的地方，不是他在哪儿活跃；
 	// 列出来还会出现「知言的活跃频道里有知言」这种自己说自己。
 	const rooms = person.channels.filter((channel) => channel.kind !== "dm");
@@ -389,15 +391,20 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 								className="detail-channel"
 								onClick={() => void openChannel(channel.id)}
 							>
-								{/* 群频道没有「某个人」可画，就画一个中性的群组图标。 */}
-								<span className="detail-tile" aria-hidden="true">
-									<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-										<circle cx="9" cy="8" r="3.2" />
-										<path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
-										<path d="M16 5.5a3.2 3.2 0 0 1 0 6" />
-										<path d="M17.5 13.6A5 5 0 0 1 21 18.5" />
-									</svg>
-								</span>
+								{/* 群频道画这个群里真有的人（成员表来），跟我侧栏上的那个头像是同一张。 */}
+								<span
+									className="detail-tile"
+									aria-hidden="true"
+									dangerouslySetInnerHTML={{
+										__html: groupAvatar({
+											people: (channel.members ?? []).map((slug) => ({
+												slug,
+												label: labels.get(slug) ?? slug,
+											})),
+											size: 24,
+										}),
+									}}
+								/>
 								<span className="detail-channel-name">{channel.title}</span>
 							</button>
 						))}
@@ -550,8 +557,8 @@ function SkillsTab(): JSX.Element {
 					<p className="detail-empty">{scope === "personal" ? "他还没有自己的技能。" : "全员还没有共享技能。"}</p>
 					<p className="rail-hint">
 						{scope === "personal"
-							? "技能就是 agents/&lt;slug&gt;/skills/ 下的 SKILL.md"
-							: "全员技能放在 workspace/skills/ 下"}
+							? "技能就是 members/&lt;slug&gt;/skills/ 下的 SKILL.md"
+							: "全员技能放在 ~/.solo/skills/ 下"}
 					</p>
 				</>
 			) : (
@@ -666,7 +673,7 @@ function AllMemory(): JSX.Element {
 				<span>全员记忆</span>
 			</div>
 			<p className="detail-empty">全员没有共享记忆。</p>
-			<p className="rail-hint">每人记自己的，团队记团队的；全员规矩写在 workspace/rules.md</p>
+			<p className="rail-hint">每人记自己的，团队记团队的；全员规矩写在 ~/.solo/rules.md</p>
 		</div>
 	);
 }

@@ -35,19 +35,19 @@ async function openTeam(shell: CoreShell, team: string, members: readonly string
 	}, BACKGROUND_CONTEXT);
 }
 
-const settleDeps = (shell: CoreShell, agentsRoot: string, teamsRoot: string, convOf: (slug: string) => Promise<unknown>) => ({
+const settleDeps = (shell: CoreShell, convOf: (slug: string) => Promise<unknown>) => ({
 	wiring: {
 		harness: shell.harness,
-		// 工作区根 = agents 的上一层；模板目录跟着工作区走。
-		promptDir: join(agentsRoot, "..", "prompt"),
-		uploadsRoot: join(agentsRoot, "..", "uploads"),
+		// 模板与上传都在应用私有根里（`Layout` 一处算完）。
+		promptDir: shell.layout.promptRoot,
+		uploadsRoot: shell.layout.uploadsRoot,
 		conversationOf: async (slug: string) => convOf(slug) as never,
 		rememberWake: async () => undefined,
 		wakeOf: async () => undefined,
 		finishTurn: async () => undefined,
 	},
-	agentsRoot,
-	teamsRoot,
+	agentRoots: shell.layout.agentRoots,
+	teamsRoot: shell.layout.teamsRoot,
 	channelState: () => channelState(shell),
 });
 
@@ -67,7 +67,7 @@ describe("团队记忆自动沉淀", () => {
 
 		// 记忆文件真被写了之后，下一次沉淀检查才推进游标。
 		await appendTeamMemory(teamsRoot, "alpha", { text: "连接池默认调到 20", by: lin.slug });
-		await settleTeam(settleDeps(shell, agentsRoot, teamsRoot, async () => shell.conversations.get(lin.slug)), "alpha");
+		await settleTeam(settleDeps(shell, async () => shell.conversations.get(lin.slug)), "alpha");
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
 		expect(state?.cursors.alpha).toBe(1);
 		expect(state?.waiting?.alpha).toBeUndefined();
@@ -82,7 +82,7 @@ describe("团队记忆自动沉淀", () => {
 
 		await shell.postAs({ channelId: "team:alpha", from: "owner", text: "定了", kind: "decision" });
 		// 已经在等确认，手动再调 settleTeam 不应重复催。
-		const result = await settleTeam(settleDeps(shell, agentsRoot, teamsRoot, async () => shell.conversations.get(lin.slug)), "alpha");
+		const result = await settleTeam(settleDeps(shell, async () => shell.conversations.get(lin.slug)), "alpha");
 		expect(result.asked).toBeUndefined();
 	});
 
@@ -177,7 +177,7 @@ describe("团队记忆自动沉淀", () => {
 			channels.nextSeq["team:alpha"] = 3;
 		}, BACKGROUND_CONTEXT);
 		const failing = { id: 99, submit: async () => { throw new Error("投递失败"); } };
-		const result = await settleTeam(settleDeps(shell, agentsRoot, teamsRoot, async () => failing), "alpha");
+		const result = await settleTeam(settleDeps(shell, async () => failing), "alpha");
 		expect(result.asked?.delivered).toBe(false);
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
 		// 没投出去就不能记「问过」—— 记了就会永远卡在这一条。
@@ -192,7 +192,7 @@ describe("团队记忆自动沉淀", () => {
 		await openTeam(shell, "alpha", [lin.slug]);
 
 		const wakes: { slug: string; channelId: string; seq: number }[] = [];
-		const base = settleDeps(shell, agentsRoot, teamsRoot, async () => shell.conversations.get(lin.slug));
+		const base = settleDeps(shell, async () => shell.conversations.get(lin.slug));
 		const deps = {
 			...base,
 			wiring: {
@@ -221,7 +221,7 @@ describe("团队记忆自动沉淀", () => {
 			doc.nextSeq["team:ghost"] = 2;
 		}, BACKGROUND_CONTEXT);
 
-		const result = await settleTeam(settleDeps(shell, agentsRoot, teamsRoot, async () => undefined), "ghost");
+		const result = await settleTeam(settleDeps(shell, async () => undefined), "ghost");
 		expect(result.asked).toBeUndefined();
 		expect(result.skipped?.team).toBe("ghost");
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;
@@ -246,22 +246,48 @@ describe("团队记忆自动沉淀", () => {
 });
 
 describe("团队频道自动存在", () => {
-	it("agent 开会话时自动进自己的团队频道", async () => {
+	it("有团队 README 时，agent 开会话就进自己的团队频道", async () => {
+		const { shell, agentsRoot, teamsRoot } = await setup();
+		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
+		await writeTeam(teamsRoot, { slug: "alpha", name: "先进制造", lead: lin.slug, body: "目标 X" });
+		await shell.openAgent(lin.slug);
+		const state = await channelState(shell);
+		// 标题只认 README 的 `name`：不先按目录名建一次，界面上就不会闪一下英文 slug。
+		expect(state.channels["team:alpha"]?.title).toBe("先进制造");
+		expect(state.channels["team:alpha"]?.members).toEqual(["owner", lin.slug]);
+	});
+
+	it("README 还没写出来就不建频道（不许先闪 slug）", async () => {
 		const { shell, agentsRoot } = await setup();
 		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
 		await shell.openAgent(lin.slug);
 		const state = await channelState(shell);
-		expect(state.channels["team:alpha"]).toBeDefined();
-		expect(state.channels["team:alpha"]?.members).toEqual(["owner", lin.slug]);
+		expect(state.channels["team:alpha"]).toBeUndefined();
 	});
 
 	it("重复开会话不会重复拉人", async () => {
-		const { shell, agentsRoot } = await setup();
+		const { shell, agentsRoot, teamsRoot } = await setup();
 		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
+		await writeTeam(teamsRoot, { slug: "alpha", name: "先进制造", lead: lin.slug, body: "目标 X" });
 		await shell.openAgent(lin.slug);
 		await shell.openAgent(lin.slug);
 		const state = await channelState(shell);
 		expect(state.channels["team:alpha"]?.members.filter((item) => item === lin.slug)).toHaveLength(1);
+	});
+
+	it("README 写 status: archived 就把频道归档，改回来就取消归档", async () => {
+		const { shell, agentsRoot, teamsRoot } = await setup();
+		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
+		await writeTeam(teamsRoot, { slug: "alpha", name: "先进制造", lead: lin.slug, body: "目标 X" });
+		await shell.openAgent(lin.slug);
+		await writeTeam(teamsRoot, { slug: "alpha", name: "先进制造", lead: lin.slug, body: "目标 X", status: "archived" });
+		await shell.syncTeam("alpha");
+		expect((await channelState(shell)).channels["team:alpha"]?.archived).toBe(true);
+		// 归档是文件事实，不是删除：README 改回 active，频道就回来。
+		// （不传 status 是「沿用文件里已有的」，所以取消归档要明确写 active。）
+		await writeTeam(teamsRoot, { slug: "alpha", name: "先进制造", lead: lin.slug, body: "目标 X", status: "active" });
+		await shell.syncTeam("alpha");
+		expect((await channelState(shell)).channels["team:alpha"]?.archived).toBeUndefined();
 	});
 
 	it("没有团队的人不会凭空多出频道", async () => {
@@ -273,8 +299,9 @@ describe("团队频道自动存在", () => {
 	});
 
 	it("我在团队频道里拍板也触发沉淀", async () => {
-		const { shell, agentsRoot } = await setup();
+		const { shell, agentsRoot, teamsRoot } = await setup();
 		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
+		await writeTeam(teamsRoot, { slug: "alpha", name: "先进制造", lead: lin.slug, body: "目标 X" });
 		await shell.openAgent(lin.slug);
 		await shell.postAs({ channelId: "team:alpha", from: "owner", text: "定了：先做 A", kind: "decision" });
 		const state = (await shell.harness.snapshot(SettleDoc)) as SettleState | undefined;

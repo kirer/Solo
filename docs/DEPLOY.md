@@ -6,31 +6,37 @@
 
 只有一个进程：`src/core/shell/main.ts`。它同时是：
 
-- HTTP 服务（静态界面 `ui/web/` + 19 条 `/api/*` 路由）
+- HTTP 服务（静态界面 `ui/web/` + 29 条 `/api/*` 路由，插件路由另算）
 - agent 运行时（SQLite + 后台任务）
 
 没有反向代理、没有独立数据库服务、**没有鉴权层**。后端没有构建步骤（`node --experimental-strip-types`
 直接跑 TS）；**界面有**：改 `ui/app/` 后必须 `npm run ui:build` 把产物写回 `ui/web/`。
-数据全在 `workspace/`：
+数据分**两个根**（ADR-030）：应用私有的那份跟着安装走，我的组织跟着我走。
 
 ```text
-workspace/
-  core.sqlite            # 频道、消息、会话、名册、沉淀游标（单进程独占锁）
-  settings.json          # 模型接入配置（可选）
-  agents/<slug>/         # 每个人：identity.md / memory.md / skills/
-  teams/<slug>/          # 每个团队：README.md / memory.md
-  skills/                # 全员层技能
-  rules.md               # 全员规矩（每轮都进提示词）
+<appRoot>/                         # 默认 ./.solo-app；桌面端是 userData
+  core.sqlite                      # 频道、消息、会话、名册、沉淀游标（单进程独占锁）
+  settings.json                    # 模型接入配置（可选）
+  assistant/<slug>/                # 助理：identity.md / memory.md / skills/ / workspace/
+  prompt/                          # 提示词模板
+  plugins/                         # 插件（含出厂三个）
+  uploads/  logs/                  # 附件与日志
+
+~/.solo/                           # 用户根（--user-root）
+  members/<slug>/                  # 每个成员：identity.md / memory.md / skills/ / workspace/
+  teams/<slug>/                    # 每个团队：README.md / memory.md / workspace/
+  skills/                          # 全员层技能
+  rules.md                         # 全员规矩（每轮都进提示词）
 ```
 
-**`workspace/` 是唯一的真相**。删掉数据库不会丢掉「人是谁」——从 `agents/` 重建即可；
-反过来删掉 `agents/` 就没救了。备份先备份 `agents/`、`teams/`、`skills/`、`rules.md`。
+**组织（`userRoot`）是唯一的真相**。删掉数据库不会丢掉「人是谁」——从 `members/` 重建即可；
+反过来删掉 `members/` 就没救了。备份先备份 `members/`、`teams/`、`skills/`、`rules.md`。
 
 ## 2. 本机启动
 
 ```bash
 npm start                      # = node --experimental-strip-types src/core/shell/main.ts
-npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
+npm start -- --port 7811 --host 127.0.0.1 --app-root /tmp/aic-app --user-root /tmp/aic-home --no-seed
 ```
 
 参数：
@@ -39,13 +45,14 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 | --- | --- | --- |
 | `--port` | 7788 | 监听端口 |
 | `--host` | 127.0.0.1 | 监听地址；`0.0.0.0` = 局域网可访问 |
-| `--workspace` | `<cwd>/workspace` | 数据目录（数据库、agents、teams、skills、rules.md 都在里面） |
-| `--no-seed` | 关 | 不播种。首次启动且 `agents/` 为空时会自动建一个叫「知言」的人并给两份技能 |
+| `--app-root` | `<cwd>/.solo-app` | 应用私有目录（助理、提示词、插件、`settings.json`、`core.sqlite`、`uploads/`、`logs/`） |
+| `--user-root` | `~/.solo` | 我的组织（`members/`、`teams/`、`skills/`、`rules.md`） |
+| `--no-seed` | 关 | 不播种。首次启动且用户根里还没有人时会自动建一个叫「知言」的助理（住在 `appRoot/assistant/`）并给两份技能 |
 
 启动成功会打印监听地址和局域网地址。Ctrl-C 退出。
 
-**首次启动会做什么**：建 `workspace/` → 同步 `rules.md` 与全员层技能（《写技能》《找现成技能》
-《工作规矩》《记忆整理》，缺的补上、改过的不覆盖）→ 若 `agents/` 里一个人都没有，播种「知言」
+**首次启动会做什么**：建两个根 → 同步 `rules.md` 与全员层技能（《写技能》《找现成技能》
+《工作规矩》《记忆整理》，缺的补上、改过的不覆盖）→ 若用户根里一个人都没有，播种「知言」
 （含《建立团队》《招人》两份个人技能）→ 读模型配置 → 开会话 → 建全员频道。这个过程不产生对外
 请求，模型不可用也能起来（只是 agent 不会回话）。
 
@@ -56,7 +63,7 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 
 优先级（`src/core/runtime/models.ts` 的 `setupModels`）：
 
-1. `workspace/settings.json` 里写了 `providers` → 用它；
+1. `<appRoot>/settings.json` 里写了 `providers` → 用它；
 2. 环境变量 `ANTHROPIC_API_KEY` → Anthropic（默认模型 `claude-sonnet-4-6`）；
 3. 环境变量 `OPENAI_API_KEY` → OpenAI（默认模型 `gpt-5`）；
 4. 都没有 → **没有模型**。服务照常起来、界面照常用，但 agent 不会回话；
@@ -70,7 +77,7 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 ### 本地网关（自己配一份）
 
 本机有 `http://127.0.0.1:3425/v1`（OpenAI Responses 协议）这种网关时，在
-`workspace/settings.json` 里写一份就是了，或者直接在界面「设置 → 模型 → 加一份本地网关」：
+`<appRoot>/settings.json` 里写一份就是了，或者直接在界面「设置 → 模型 → 加一份本地网关」：
 
 ```json
 {
@@ -128,7 +135,7 @@ OPENAI_API_KEY=sk-...    npm start
   发现文件变过，就把它就地重装进注册表（ADR-025）。删掉一家提供商，挂着它的人回到默认。
   唯一还按启动时算的是压缩阈值：新加的模型先用全局兜底窗口，重启一次才对齐它自己的窗口。
 - `api` 可选 `openai-responses`（默认）、`anthropic`、`openai`。
-- `apiKey` 写在这个文件里（**不是**环境变量名），文件在 `workspace/` 下、已 gitignore。
+- `apiKey` 写在这个文件里（**不是**环境变量名），文件在应用根下、已 gitignore。
   本地网关（`127.0.0.1` / `localhost`）可以省略或留空：装配时补占位符 `magpie`。
   远端提供商必须填 —— **空密钥不是「先不填」，是每次都失败**：底座不接受空凭据，
   生成在发请求之前就以 `model_error` 结束（审计里 `stop: error`、`ms: 0`），
@@ -142,7 +149,7 @@ OPENAI_API_KEY=sk-...    npm start
 # 看当前生效的模型
 node --experimental-strip-types -e '
 const {setupModels}=await import("./src/core/runtime/models.ts");
-const m = setupModels(process.env, { workspace: "workspace" });
+const m = setupModels(process.env, { settingsFile: join(appRoot, "settings.json") });
 console.log(m.defaultModel, m.models.getModels().map(x=>`${x.provider}/${x.id}`));'
 ```
 
@@ -174,7 +181,7 @@ npm run live:scenarios -- --rounds=3 --keep-failed
 - `--strict`：行为场景也要 3/3；`--smoke` 只用于 1 轮脚手架检查。
 
 两者都会花 token：`npm run live` 约几分钟；场景套件约 20–40 分钟。报告写在临时目录，
-不入库。两者都在 `mkdtemp` 工作区里跑，不碰 `workspace/` 真实数据。
+不入库。两者都在 `mkdtemp` 的两个根里跑，不碰真实数据。
 
 ## 4. 局域网访问
 
@@ -209,14 +216,15 @@ docker compose down
   （或把网关跑在同一个 compose 网络里，按服务名写）。`COMMANDCODE_BASE_URL` 只管
   `npm run live` 这些脚本，产品本身不读它。
 
-工作区是命名卷 `solo-workspace`。想直接看到文件就改成 bind mount：
+数据是一个命名卷 `ai-company-data`，里面分两个根：`/app/data/app`（应用私有）与
+`/app/data/user`（我的组织）。想直接看到文件就改成 bind mount：
 
 ```yaml
 volumes:
-  - ./workspace:/app/workspace
+  - ./data:/app/data
 ```
 
-Linux 上需要先 `mkdir -p workspace && sudo chown -R 1000:1000 workspace`（容器以
+Linux 上需要先 `mkdir -p data && sudo chown -R 1000:1000 data`（容器以
 `uid 1000` 的 `node` 用户运行）。
 
 镜像用 `node --experimental-strip-types` 直接跑源码，**不需要 `tsc` 构建**。`test/`、
@@ -226,43 +234,43 @@ Linux 上需要先 `mkdir -p workspace && sudo chown -R 1000:1000 workspace`（�
 
 ```bash
 # 备份（数据库要在停服后拷，或者用 sqlite 的在线备份）
-tar czf backup-$(date +%Y%m%d).tar.gz workspace/agents workspace/teams workspace/skills workspace/rules.md
+tar czf backup-$(date +%Y%m%d).tar.gz -C ~/.solo members teams skills rules.md
 
 # 恢复
 tar xzf backup-20261027.tar.gz
 ```
 
-`workspace/agents/`、`teams/`、`skills/` 是纯文本目录，可以直接 `git init` 进版本库
-（仓库根的 `.gitignore` 忽略了 `workspace/`，如果想让它们进版本库要单独建仓库或改忽略）。
+`members/`、`teams/`、`skills/`、`rules.md` 是纯文本目录，可以直接 `git init` 进版本库
+（它们不在仓库里，本来就不会被忽略）。
 
-数据库 `core.sqlite` 里存的是频道消息、会话、名册、沉淀游标。丢了它等于丢掉全部聊天
-记录，但人还在、频道会在下次启动时按 `agents/` + `teams/` 重建（消息没了）。
+数据库 `core.sqlite`（在应用根）里存的是频道消息、会话、名册、沉淀游标。丢了它等于丢掉全部聊天
+记录，但人还在、频道会在下次启动时按 `members/` + `teams/` 重建（消息没了）。
 
 ## 7. 排障
 
 | 症状 | 先看这个 |
 | --- | --- |
 | 界面能开，但 agent 不说话 | §3 的模型解析；`tasks` 表里 `kind='pi.generation'` 的失败原因 |
-| 这一轮为什么这么慢 / 他到底调没调工具 | `workspace/logs/tools.jsonl`：每次工具调用与每次模型回复各一行（成没成、耗时、token、停止原因） |
+| 这一轮为什么这么慢 / 他到底调没调工具 | `<appRoot>/logs/tools.jsonl`：每次工具调用与每次模型回复各一行（成没成、耗时、token、停止原因） |
 | agent 说话了，但回在别的频道 | `directory.wake` —— 他去「最后被叫到的那个频道」回话；我发的消息必须先把 wake 记下来再唤醒他 |
 | 改了 `identity.md` 没生效 | 提示词每次发送前重新读盘，所以下一条消息就该生效。没生效说明改的是别人的文件 |
-| 启动很慢 | 名册是不是每人一次 commit；`agents/` 里是不是有几百个目录 |
-| agent 突然不干活了，日志里什么都没有 | `workspace/logs/runtime.jsonl` 有没有 `task_parked` / `restart_limit`（见下面「诊断三处」） |
+| 启动很慢 | 名册是不是每人一次 commit；`members/` 里是不是有几百个目录 |
+| agent 突然不干活了，日志里什么都没有 | `<appRoot>/logs/runtime.jsonl` 有没有 `task_parked` / `restart_limit`（见下面「诊断三处」） |
 | 报 provider 的 context overflow / 400 too long | 模型的 `contextWindow` 是不是取到了（见下面「压缩」） |
 | 7788 端口被占 | `lsof -nP -iTCP:7788 -sTCP:LISTEN` |
 
 ### 诊断三处
 
 服务本身的日志**只打 stderr**（没有进程日志文件）。另外有三份结构化日志，都在
-`<workspace>/logs/` 下，都是「单文件 5MB、满了轮转成 `.1` 一代」（前两份单条再截 4KB）：
+`<appRoot>/logs/` 下，都是「单文件 5MB、满了轮转成 `.1` 一代」（前两份单条再截 4KB）：
 
 | 文件 | 装什么 | 怎么看 |
 | --- | --- | --- |
-| `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 workspace/logs/runtime.jsonl` |
-| `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 workspace/logs/jank.jsonl` |
-| `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 workspace/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
+| `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 <appRoot>/logs/runtime.jsonl` |
+| `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 <appRoot>/logs/jank.jsonl` |
+| `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 <appRoot>/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
 
-`<workspace>/logs/run/` 是后台命令（`run` 的 `background: true`）的地盘：每条命令一个 `<id>.json` 记录（**跑完就删**，留在那儿的都是没跑完的）+ 一份 `<id>.log` 全文。服务启动时会自动结账（活着的杀掉、死掉的在频道里留一句话），一般不用手动碰；要查「那条命令到底输出了什么」就 `cat` 对应的 `.log`（ADR-013）。
+`<appRoot>/logs/run/` 是后台命令（`run` 的 `background: true`）的地盘：每条命令一个 `<id>.json` 记录（**跑完就删**，留在那儿的都是没跑完的）+ 一份 `<id>.log` 全文。服务启动时会自动结账（活着的杀掉、死掉的在频道里留一句话），一般不用手动碰；要查「那条命令到底输出了什么」就 `cat` 对应的 `.log`（ADR-013）。
 
 **一眼分辨两类事故**：
 
@@ -297,7 +305,7 @@ curl -s localhost:7788/api/diag | jq
 
 所以「128k 回落」的代价是：真·长上下文模型（1M）会被当成 128k 用，压缩来得比需要的早，
 对话里更早出现「我记不清前面了」。症状是 agent 主动 `read_history` 变多。要修不是改代码，
-而是在 `workspace/settings.json` 里把模型写成 pi-ai 目录认得的名字（见 §3）。
+而是在 `<appRoot>/settings.json` 里把模型写成 pi-ai 目录认得的名字（见 §3）。
 
 ## 8. 自动沉淀
 
@@ -372,12 +380,14 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 
 下载过一次会缓存在 `~/Library/Caches/electron-builder/`，之后不再需要。
 
-- **数据在哪**：`app.getPath("userData")/workspace` —— macOS 是
-  `~/Library/Application Support/solo/workspace`，Windows 是 `%APPDATA%/solo/workspace`。
-  后端日志在 `.../solo/logs/core.log`（超过 5 MB 轮转一代）。**它不认仓库里的 `workspace/`**。
+- **数据在哪（两个根）**：应用私有的是 `app.getPath("userData")`（macOS
+  `~/Library/Application Support/solo`，Windows `%APPDATA%/solo`）—— 助理、提示词、插件、
+  `settings.json`、`core.sqlite`、`uploads/`、`logs/` 都在里面；我的组织是 `~/.solo`
+  （`members/`、`teams/`、`skills/`、`rules.md`）。后端日志在 userData 的 `logs/core.log`
+  （超过 5 MB 轮转一代）。**它不认仓库里的 `.solo-app/`**。
 - **端口**：先试 7788（偏好按 origin 存，端口变就丢），被占（比如同时开着 `npm start`）
   自动退到随机端口。
-- **开发态**连 userData 都在临时目录，删掉就干净重来。
+- **开发态**两个根都在临时目录（`solo-desktop-dev-userdata` / `solo-desktop-dev-home`），删掉就干净重来，不碰真实的 `~/.solo`。
 - **改完界面**照旧 `npm run ui:build`，然后在应用里「重新加载页面」（⌘R）—— 不用重启应用。
 - **打包出来的版本号**就是根 `package.json` 的 `version`，`npm version` 改它。
 

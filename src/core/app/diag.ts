@@ -3,10 +3,10 @@
  *
  * 我两次报「agent 在跑的时候页面卡死」，而我在无头 Chrome 里量出来是「长任务 0、
  * 最慢帧 17ms」—— 两边对不上，靠猜猜不完。让浏览器在真卡的时候把「卡了多久、当时
- * 在干什么」写到 `workspace/logs/jank.jsonl`，复现一次就能读。
+ * 在干什么」写到 `<appRoot>/logs/jank.jsonl`，复现一次就能读。
  *
  * 还有第二份日志：底座的**运行报告**（任务抛异常、重启超限被挂起、storage 让整个
- * Session 关掉……）写 `workspace/logs/runtime.jsonl`。它们以前被底座扔掉了，症状
+ * Session 关掉……）写 `<appRoot>/logs/runtime.jsonl`。它们以前被底座扔掉了，症状
  * 是「这个人忽然不说话了」，而日志里一个字都没有。最近一条不正常的报告还会跟着
  * `GET /api/diag` 出去，界面上能看见。
  *

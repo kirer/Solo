@@ -12,6 +12,7 @@ import type { Uploaded } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { humanBytes } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
+import { pendingChoice } from "./choice.ts";
 import { send, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
@@ -47,6 +48,32 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);
 	const dragDepth = useRef(0);
+
+	// 「在等我选」的那一条：有它的时候输入框换成选项卡（回答就是一条带 replyTo 的消息）。
+	const messages = useStore((state) => state.detail?.messages);
+	const pending = useMemo(() => (messages === undefined ? undefined : pendingChoice(messages)), [messages]);
+	const [choice, setChoice] = useState<string | null>(null);
+	const [other, setOther] = useState("");
+	const [useOther, setUseOther] = useState(false);
+
+	/* 换了一条新的选择消息（或者答完了）就把上一轮的选择清掉。 */
+	useEffect(() => {
+		setChoice(null);
+		setOther("");
+		setUseOther(false);
+	}, [pending?.seq]);
+
+	const answer = useCallback(
+		async (value: string) => {
+			if (pending === undefined || value.trim() === "") return;
+			try {
+				await send(value, [], pending.seq);
+			} catch (error) {
+				props.toast(error instanceof Error ? error.message : "发送失败", "error");
+			}
+		},
+		[pending, props],
+	);
 
 	const uploading = drafts.some((draft) => draft.state === "uploading");
 	const canSend = (text.trim() !== "" || drafts.some((draft) => draft.state === "done")) && !uploading;
@@ -347,6 +374,7 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 				</div>
 			)}
 
+			{pending === undefined ? (
 			<div className="composer-card">
 				<div className="menu-anchor">
 					<button
@@ -448,6 +476,60 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 					</svg>
 				</button>
 			</div>
+			) : (
+				<div className="composer-card choice-card" id="choice-card">
+					<div className="choice-head">
+						<span className="choice-from">{pending.fromLabel}</span>
+						<span className="choice-q">{pending.text}</span>
+					</div>
+					<div className="choice-opts" role="radiogroup" aria-label="选择">
+						{pending.options.map((option) => (
+							<label
+								className="choice-opt"
+								key={option}
+								data-active={!useOther && choice === option ? "true" : undefined}
+							>
+								<input
+									type="radio"
+									name="choice"
+									checked={!useOther && choice === option}
+									onChange={() => {
+										setUseOther(false);
+										setChoice(option);
+									}}
+								/>
+								<span className="opt-t">{option}</span>
+							</label>
+						))}
+						<label className="choice-opt" data-active={useOther ? "true" : undefined}>
+							<input type="radio" name="choice" checked={useOther} onChange={() => setUseOther(true)} />
+							<span className="opt-t">其他</span>
+						</label>
+						{useOther ? (
+							<input
+								className="choice-other"
+								autoFocus
+								value={other}
+								placeholder="自己写一个答案"
+								onChange={(event) => setOther(event.target.value)}
+							/>
+						) : null}
+					</div>
+					<div className="choice-actions">
+						<button type="button" className="choice-skip" onClick={() => void answer("跳过")}>
+							跳过
+						</button>
+						<button
+							type="button"
+							className="choice-go"
+							disabled={useOther ? other.trim() === "" : choice === null}
+							onClick={() => void answer(useOther ? other : (choice ?? ""))}
+						>
+							提交
+						</button>
+					</div>
+				</div>
+			)}
 
 			{mention === null ? null : (
 				<div className="mention" id="mention-pop" role="listbox" aria-label="提到谁">

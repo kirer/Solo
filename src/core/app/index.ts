@@ -7,7 +7,6 @@
  *
  * 它也不 import `shell/`（装配）。装配出来的东西由调用方通过 `CoreServices` 递进来。
  */
-import { dirname } from "node:path";
 import { OWNER } from "../channel/types.ts";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
@@ -31,7 +30,7 @@ export function createApp(services: CoreServices) {
 	const chat = createChat(services);
 	const uploads = createUploads(services);
 	const runs = createRuns(services);
-	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
+	const diag = services.diag ?? createDiag(services.layout.appRoot);
 	const models = createModels(services);
 	// 看门狗：底座报上来的异常说进全员频道，别只躺在 logs/runtime.jsonl 里。
 	const watch = createWatch({

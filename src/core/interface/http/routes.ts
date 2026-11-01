@@ -186,7 +186,10 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/uploads/:id",
 			method: "GET",
 			handler: async ({ response, url, params }) => {
-				const file = await app.uploads.read(params.id ?? "", { download: url.searchParams.get("download") === "1" });
+				const file = await app.uploads.read(params.id ?? "", {
+					download: url.searchParams.get("download") === "1",
+					preview: url.searchParams.get("preview") === "1",
+				});
 				response.writeHead(200, {
 					"Content-Type": file.mime,
 					"Content-Length": String(file.bytes),
@@ -286,7 +289,7 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 		},
 		{
 			// 浏览器自己报上来的卡顿（`ui/app/src/lib/jank.ts`）：
-			// 落 `workspace/logs/jank.jsonl`，满了轮转一代。
+			// 落 `<appRoot>/logs/jank.jsonl`，满了轮转一代。
 			pattern: "/api/diag",
 			method: "POST",
 			handler: async ({ request, response }) => {
@@ -309,7 +312,7 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 		},
 		{
 			// 装一个插件：前端把选中的文件夹整个传上来（base64），这里原样落进 `plugins/<slug>/`。
-			// 装 / 卸都只动 `workspace/plugins/`，重启才真的运行。
+			// 装 / 卸都只动 `<appRoot>/plugins/`，重启才真的运行。
 			pattern: "/api/plugins",
 			method: "POST",
 			handler: async ({ request, response }) => {

@@ -31,10 +31,6 @@ export default {
 			color: var(--muted, #888);
 			white-space: nowrap;
 		}
-		.pv-demo-list { display: flex; flex-direction: column; gap: 10px; padding: 4px 2px; }
-		.pv-demo-item { display: flex; flex-direction: column; gap: 2px; }
-		.pv-demo-name { font-size: 13px; font-weight: 600; }
-		.pv-demo-desc { font-size: 12px; color: var(--muted, #888); line-height: 1.5; }
 	`,
 
 	apply(ui) {
@@ -48,40 +44,6 @@ export default {
 				return () => window.clearInterval(timer);
 			}, []);
 			return h("div", { className: "pv-demo-time" }, `示范插件 · ${now.toTimeString().slice(0, 5)}`);
-		}
-
-		/** 右栏页签：把 `/api/plugins` 原样列出来，让人看清这一版的插件系统装上了什么。 */
-		function PluginList() {
-			const [plugins, setPlugins] = React.useState(null);
-			React.useEffect(() => {
-				let live = true;
-				fetch("/api/plugins")
-					.then((response) => response.json())
-					.then((data) => live && setPlugins(data.plugins ?? []))
-					.catch(() => live && setPlugins([]));
-				return () => {
-					live = false;
-				};
-			}, []);
-
-			if (plugins === null) return h("div", { className: "pv-demo-desc" }, "读插件清单…");
-			if (plugins.length === 0) return h("div", { className: "pv-demo-desc" }, "还没有插件。");
-			return h(
-				"div",
-				{ className: "pv-demo-list" },
-				plugins.map((plugin) =>
-					h(
-						"div",
-						{ className: "pv-demo-item", key: plugin.slug },
-						h("span", { className: "pv-demo-name" }, plugin.name ?? plugin.slug),
-						h(
-							"span",
-							{ className: "pv-demo-desc" },
-							plugin.error ?? plugin.description ?? (plugin.enabled ? "" : "已关闭"),
-						),
-					),
-				),
-			);
 		}
 
 		/**
@@ -98,6 +60,5 @@ export default {
 
 		ui.register("sidebar.footer", { id: "clock", component: ClockRow });
 		ui.register("composer.actions", { id: "channel", component: ChannelPill });
-		ui.register("rightPanel.tab", { id: "plugins", label: "插件", order: 200, component: PluginList });
 	},
 };

@@ -20,6 +20,7 @@ type AppendInput = {
 	readonly roster?: MentionRoster;
 	readonly mention?: readonly string[];
 	readonly attachments?: readonly Attachment[];
+	readonly options?: readonly string[];
 };
 
 /**
@@ -55,6 +56,7 @@ export async function appendToChannel(
 			...(input.roster === undefined ? {} : { roster: input.roster }),
 			...(input.mention === undefined ? {} : { mention: input.mention }),
 			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
+			...(input.options === undefined ? {} : { options: input.options }),
 		});
 		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
 		// 新数组」。两者写下去的消息一样，代价差三个数量级（见 `test/core/channel-write.test.ts`）。

@@ -16,6 +16,7 @@ import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import type { ModelSetup } from "../../src/core/runtime/models.ts";
 import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
+import { resolveLayout, type Layout } from "../../src/core/layout.ts";
 import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
 
 /** `openCore` 的选项，除了 `databasePath` / `models` 由 sandbox 默认给。 */
@@ -25,13 +26,15 @@ type OpenOptions = Partial<Parameters<typeof openCore>[0]>;
 type AssembleOptions = Partial<Parameters<typeof assembleCore>[2]>;
 
 export type Sandbox = {
-	/** 工作区根。`agents/`、`teams/` 在它下面。 */
+	/** 用户根。成员、团队、技能、规矩在它下面。 */
 	readonly root: string;
+	readonly layout: Layout;
+	/** 成员根（`userRoot/members`）。助理不在这里，在 `layout.assistantRoot`。 */
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
 	/** 开一个库。同一个 sandbox 可以开多次（同一个 `databasePath` 就是「重启」）。 */
 	open(options?: OpenOptions): Promise<CoreRuntime>;
-	/** 装配。默认用 sandbox 的 `agentsRoot` / `teamsRoot`，能被 options 覆盖。 */
+	/** 装配。默认用 sandbox 的 `layout`，能被 options 覆盖。 */
 	assemble(runtime: CoreRuntime, options?: AssembleOptions): Promise<CoreShell>;
 	/** 播种提示词模板（只有要读提示词的测试需要）。 */
 	seedTemplates(): Promise<void>;
@@ -42,21 +45,26 @@ export type Sandbox = {
 /** 建一个临时工作区。`teams/` 先建好：装配会扫它。 */
 async function sandbox(prefix = "core-"): Promise<Sandbox> {
 	const root = await mkdtemp(join(tmpdir(), prefix));
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
+	// 应用私有的东西落在 `.app/`，组织直接落在临时根里。
+	const layout = resolveLayout({ appRoot: join(root, ".app"), userRoot: root });
+	const agentsRoot = layout.membersRoot;
+	const teamsRoot = layout.teamsRoot;
+	await mkdir(layout.appRoot, { recursive: true });
+	await mkdir(agentsRoot, { recursive: true });
 	await mkdir(teamsRoot, { recursive: true });
 
 	const opened: CoreRuntime[] = [];
 	let configured: ModelSetup | undefined;
-	const setup = (): ModelSetup => (configured ??= setupModels(process.env, { workspace: root }));
+	const setup = (): ModelSetup => (configured ??= setupModels(process.env, { settingsFile: layout.settingsFile }));
 
 	return {
 		root,
+		layout,
 		agentsRoot,
 		teamsRoot,
 		async open(options: OpenOptions = {}) {
 			const runtime = await openCore({
-				databasePath: join(root, "core.sqlite"),
+				databasePath: layout.databasePath,
 				registry: createRegistry(),
 				...options,
 				models: options.models ?? setup().models,
@@ -65,13 +73,9 @@ async function sandbox(prefix = "core-"): Promise<Sandbox> {
 			return runtime;
 		},
 		async assemble(runtime: CoreRuntime, options: AssembleOptions = {}) {
-			return assembleCore(runtime.harness, runtime.registry, {
-				...options,
-				agentsRoot: options.agentsRoot ?? agentsRoot,
-				teamsRoot: options.teamsRoot ?? teamsRoot,
-			});
+			return assembleCore(runtime.harness, runtime.registry, { ...options, layout: options.layout ?? layout });
 		},
-		seedTemplates: () => seedPromptTemplates(root),
+		seedTemplates: () => seedPromptTemplates(layout),
 		async cleanup() {
 			for (const runtime of opened.splice(0).reverse()) await runtime.close().catch(() => undefined);
 			await rm(root, { recursive: true, force: true });

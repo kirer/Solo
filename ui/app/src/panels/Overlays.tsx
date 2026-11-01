@@ -365,7 +365,7 @@ function PluginSheet(): JSX.Element {
 				</div>
 				<div className="team-list">
 					<p className="settings-hint">
-						一个文件夹就是一个插件（workspace/plugins/&lt;名字&gt;/）。装、卸、开关当场生效，不用重启；
+						一个文件夹就是一个插件（应用目录的 plugins/&lt;名字&gt;/）。装、卸、开关当场生效，不用重启；
 						插件的代码跑在本机进程里，等于给了它全部权限 —— 只装自己信得过的。
 					</p>
 					{problem === undefined ? null : <p className="settings-problem">{problem}</p>}

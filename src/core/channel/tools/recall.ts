@@ -3,6 +3,7 @@
  */
 import { join } from "node:path";
 import { readMemory, sectionsOf } from "../../agent/memory.ts";
+import { readIdentity } from "../../agent/identity.ts";
 import { redact } from "../../agent/secrets.ts";
 import { type CoreToolDeps, text } from "./context.ts";
 import { assertTeamSlug } from "../../team/doc.ts";
@@ -17,7 +18,7 @@ import type { Message } from "../types.ts";
 export async function recallText(deps: CoreToolDeps, slug: string, team: string | undefined, keyword: string) {
 	// 记忆是自由文本，密钥可能早就被写进去了。读的时候也要过一遍脱敏 ——
 	// 渲染进提示词的那一路有出口，这一路是「它主动来翻」，同样不能把密钥交出去。
-	const mask = (value: string) => redact(value, deps.workspaceRoot);
+	const mask = (value: string) => redact(value, deps.layout.appRoot);
 	if (team !== undefined && team !== "") {
 		const target = team;
 		try {
@@ -25,7 +26,7 @@ export async function recallText(deps: CoreToolDeps, slug: string, team: string 
 		} catch (error) {
 			return text(error instanceof Error ? error.message : String(error));
 		}
-		const source = await readTeamMemory(deps.teamsRoot, target);
+		const source = await readTeamMemory(deps.layout.teamsRoot, target);
 		if (source === undefined) return text(`团队「${target}」还没有记忆。`);
 		if (keyword === "") return text(mask(source));
 		const sections = teamMemorySections(source).filter(
@@ -35,7 +36,8 @@ export async function recallText(deps: CoreToolDeps, slug: string, team: string 
 		return text(mask(sections.map((section) => `## ${section.heading}\n${section.body}`).join("\n\n")));
 	}
 
-	const source = await readMemory(join(deps.agentsRoot, slug));
+	const dir = (await readIdentity(deps.layout.agentRoots, slug))?.dir ?? join(deps.layout.membersRoot, slug);
+	const source = await readMemory(dir);
 	if (source === undefined) return text("我还没记过任何东西。");
 	if (keyword === "") return text(mask(source));
 	const sections = sectionsOf(source).filter(

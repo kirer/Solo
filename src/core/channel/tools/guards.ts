@@ -4,6 +4,7 @@
  * 这些是「事后反馈」：模型做错了，工具回一句话让它改，而不是抛错。
  */
 import { resolveInOrUndefined } from "../../fsx.ts";
+import { ASSISTANT_DIR, type Layout } from "../../layout.ts";
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 export const SAY_LIMIT = 1_200;
@@ -105,10 +106,27 @@ export function clip(source: string, limit: number): string {
  * 把一个「相对工作区根」的路径解成绝对路径，越界返回 `undefined`。
  *
  * 为什么拦：agent 有 `run`（shell），真想做坏事拦不住 —— 这里拦的不是恶意，是
- * **写错**。`../../agents/别人/identity.md` 这种路径通常是它对自己所在层级搞错了，
+ * **写错**。`../../members/别人/identity.md` 这种路径通常是它对自己所在层级搞错了，
  * 默默写到别人文件夹里比报错更难查。另外静态文件服务本来就有同样的越界判断，
  * 两处规则一致，读代码的人不用猜「这里到底拦不拦」。
  */
 export function resolveInWorkspace(root: string, path: string): string | undefined {
+	return resolveInOrUndefined(root, path);
+}
+
+/**
+ * 两个根上线之后，`file` 的路径按**第一段**决定落到哪个根：
+ *
+ * - `assistant/`、`prompt/`、`plugins/`、`settings.json` → 应用私有目录；
+ * - 其他（`members/`、`teams/`、`skills/`、`rules.md`）→ 用户目录。
+ *
+ * 不能「哪个根先装得下就用哪个」：`members/x` 在 app 根里同样是一条合法路径，
+ * 那样会静默写到错误的地方。
+ */
+const APP_SIDE = new Set([ASSISTANT_DIR, "prompt", "plugins", "settings.json"]);
+
+export function resolveInRoots(layout: Layout, path: string): string | undefined {
+	const first = path.split(/[\\/]/)[0] ?? "";
+	const root = APP_SIDE.has(first) ? layout.appRoot : layout.userRoot;
 	return resolveInOrUndefined(root, path);
 }

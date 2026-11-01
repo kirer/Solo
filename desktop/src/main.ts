@@ -4,12 +4,12 @@
  * 它只管四件事：拉起后端、开窗口、收尾（退出 / 重启 / 装更新时先把后端停干净）、更新。
  * 界面一行都没改 —— 页面从 `http://127.0.0.1:<port>/` 加载，相对路径、SSE、来源闸全都照旧。
  *
- * 数据在 `app.getPath("userData")/workspace`：应用自己的一份，**不碰仓库里的 `workspace/`**
- * （那是真实数据）。开发态连 userData 都放在临时目录，跑坏了删掉即可。
+ * 两个根：应用私有的东西（助理、提示词、内置插件、配置、库）在 `app.getPath("userData")`；
+ * 我的组织（成员、团队、技能、规矩）在 `~/.solo`。开发态两个根都放临时目录，跑坏了删掉即可。
  */
 import { app, BrowserWindow, dialog, shell } from "electron";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { startBackend, type Backend } from "./backend.ts";
 import { installMenu } from "./menu.ts";
 import { createUpdater, type Updater } from "./updates.ts";
@@ -18,9 +18,10 @@ const DEV = !app.isPackaged;
 // userData 决定 SQLite、日志、localStorage 的位置，必须在单实例锁之前定下来。
 if (DEV) app.setPath("userData", join(tmpdir(), "solo-desktop-dev-userdata"));
 
-const userData = app.getPath("userData");
-const workspace = join(userData, "workspace");
-const logFile = join(userData, "logs", "core.log");
+const appRoot = app.getPath("userData");
+// 开发态别写真实的 `~/.solo`：那是正在用的组织。
+const userRoot = DEV ? join(tmpdir(), "solo-desktop-dev-home") : join(homedir(), ".solo");
+const logFile = join(appRoot, "logs", "core.log");
 
 let backend: Backend | undefined;
 let updater: Updater | undefined;
@@ -114,7 +115,8 @@ async function start(): Promise<void> {
 	try {
 		backend = await startBackend({
 			entry: join(app.getAppPath(), "src/core/shell/main.ts"),
-			workspace,
+			appRoot,
+			userRoot,
 			logFile,
 			onLog: (line) => console.log(line),
 		});

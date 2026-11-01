@@ -25,6 +25,7 @@ import {
 	uniqueSlug,
 	writeIdentity,
 } from "../../src/core/agent/identity.ts";
+import { resolveLayout } from "../../src/core/layout.ts";
 import { renderAgentSection } from "../../src/core/agent/sections.ts";
 import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
 import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
@@ -149,7 +150,7 @@ describe("组织架构 = manager 字段", () => {
 });
 
 describe("渲染提示词（V3：模板 + 事实）", () => {
-	/** 搭一个临时工作区（agents/ + teams/ + 播种好的 prompt/），渲染某个人的提示词。 */
+	/** 搭一个临时根（members/ + teams/ + 播种好的 prompt/），渲染某个人的提示词。 */
 	async function renderIn(
 		files: Record<string, string>,
 		slug: string,
@@ -161,18 +162,15 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 			await writeFile(join(root, rel), body, "utf8");
 		}
 		await mkdir(join(root, "teams"), { recursive: true });
-		await seedPromptTemplates(root);
-		return await renderAgentSection(
-			registry,
-			{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
-			slug,
-		);
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		await seedPromptTemplates(layout);
+		return await renderAgentSection(registry, { layout, chats: async () => [] }, slug);
 	}
 
 	const ORG: Record<string, string> = {
-		"agents/ceo/identity.md": "---\nname: 陆沉\nmanager: owner\n---\n管全局。",
-		"agents/cto/identity.md": "---\nname: 周牧\nmanager: ceo\n---\n管技术。",
-		"agents/dev/identity.md": "---\nname: 林越\nmanager: cto\nteam: alpha\n---\n写代码。",
+		"members/ceo/identity.md": "---\nname: 陆沉\nmanager: owner\n---\n管全局。",
+		"members/cto/identity.md": "---\nname: 周牧\nmanager: ceo\n---\n管技术。",
+		"members/dev/identity.md": "---\nname: 林越\nmanager: cto\nteam: alpha\n---\n写代码。",
 		"teams/alpha/README.md": "---\nname: alpha\nlead: dev\n---\n做一个坦克游戏。",
 	};
 
@@ -183,11 +181,11 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 		expect(text).toContain("周牧"); // 直属上级
 		expect(text).toContain("陆沉"); // 上报链的更上面一层
 		expect(text).toContain("做一个坦克游戏。"); // 团队 README
-		expect(text).toContain("agents/dev"); // 目录段
+		expect(text).toContain("members/dev"); // 目录段
 	});
 
 	test("没写身份正文：整段消失，代码不补一句「我是谁」", async () => {
-		const text = await renderIn({ "agents/x/identity.md": "---\nname: 无名\n---\n" }, "x");
+		const text = await renderIn({ "members/x/identity.md": "---\nname: 无名\n---\n" }, "x");
 		expect(text).toContain("# 你叫无名");
 		// 00-who 只留事实（正文在哪个文件），正文段由 `05-body.md` 的 skip-empty 整段吞掉。
 		expect(text).toContain("identity.md");
@@ -229,7 +227,7 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 	});
 
 	test("断链时写「未设置」而不是猜一个上级", async () => {
-		const text = await renderIn({ "agents/x/identity.md": "---\nname: 孤儿\n---\n没人管我。" }, "x");
+		const text = await renderIn({ "members/x/identity.md": "---\nname: 孤儿\n---\n没人管我。" }, "x");
 		expect(text).toContain("未设置");
 		expect(text).not.toContain("你的上级：owner");
 	});
@@ -237,16 +235,13 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 
 test("规矩里的「@我」进了提示词（那是拍板唯一被认的写法）", async () => {
 	const root = await tempDir();
-	await mkdir(join(root, "agents", "林越"), { recursive: true });
-	await writeFile(join(root, "agents", "林越", "identity.md"), "---\nname: 林越\nmanager: owner\n---\n\n写代码。\n");
+	await mkdir(join(root, "members", "林越"), { recursive: true });
+	await writeFile(join(root, "members", "林越", "identity.md"), "---\nname: 林越\nmanager: owner\n---\n\n写代码。\n");
 	await mkdir(join(root, "teams"), { recursive: true });
 	await writeFile(join(root, "rules.md"), "- 要让我拍板的事就用 `@我`，别写 `@owner`。\n");
-	await seedPromptTemplates(root);
-	const text = await renderAgentSection(
-		createRegistry(),
-		{ workspace: root, agents: join(root, "agents"), teams: join(root, "teams"), chats: async () => [] },
-		"林越",
-	);
+	const layout = resolveLayout({ appRoot: root, userRoot: root });
+	await seedPromptTemplates(layout);
+	const text = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "林越");
 	expect(text).toContain("`@我`");
 });
 

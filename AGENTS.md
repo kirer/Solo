@@ -13,18 +13,28 @@
 **组织不是代码里的身份枚举，而是磁盘上的一堆文件夹。**
 
 ```
-workspace/
-  agents/<slug>/identity.md   ← 一个人。YAML 头 4 个字段 + 正文
-  agents/<slug>/memory.md     ← 他的长期记忆
-  agents/<slug>/skills/<n>/   ← 他会的手艺（个人层，覆盖全员同名）
+~/.solo/                        ← 用户根：我的组织（跟着我走）
+  members/<slug>/identity.md    ← 一个人。YAML 头 4 个字段 + 正文
+  members/<slug>/memory.md      ← 他的长期记忆
+  members/<slug>/skills/<n>/    ← 他会的手艺（个人层，覆盖全员同名）
+  members/<slug>/workspace/     ← 他干活的地方
   teams/<slug>/README.md      ← 一个团队：目标 / 验收 / 不做什么 / 当前进展 / 团队管理员
   teams/<slug>/memory.md      ← 团队记忆
   teams/<slug>/skills/<n>/    ← 团队层手艺：这个团队的人都会，同名覆盖全员层
   skills/<n>/SKILL.md         ← 全员层手艺，人人可读
   plugins/<slug>/plugin.md    ← 一个插件：清单 + plugin.ts（后端）+ client.js（前端）
   rules.md                    ← 全员规矩（每轮都进提示词）
+
+<appRoot>/                      ← 应用根：这份安装自带的东西（默认 .solo-app/）
+  assistant/<slug>/           ← 助理（知言）本人，形状同 members/<slug>/
+  prompt/                     ← 提示词模板
+  plugins/                    ← 插件（含出厂三个）
+  settings.json               ← 模型配置
   core.sqlite                 ← 频道消息、会话、名册、沉淀游标
+  uploads/  logs/             ← 附件与日志
 ```
+
+两个根由 `src/core/layout.ts` 拼出来 —— **拼路径只许在这一处**（ADR-030）。
 
 加一个人 = 建一个目录。改一个人的职责 = 改一个 md 文件，**下一条消息就生效**（提示词每次
 发送前重新读盘渲染）。这是整个设计的核心取舍：**语义写在文档里，代码只做机械的事**。
@@ -58,21 +68,21 @@ ui/app/           界面源码（React + TS + Vite）
 ui/web/           构建产物（服务端发这个目录，别手改）
 desktop/          Electron 壳（src/：拉起后端 / 开窗 / 更新 / 菜单）+ 图标
 electron-builder.yml  桌面端打包（mac dmg+zip / win nsis；不用 asar）
-seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进 workspace）
+seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进两个根）
 scripts/          九个入口脚本：check-boundaries（边界）、core-live（真模型冒烟）、
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）、
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             75 文件 / 742 例
-  ├ test/core/    64 文件 / 659 例（纯函数 + 装配）
-  ├ test/ui/      8 文件 / 72 例（界面纯函数与源码约定）
+test/             78 文件 / 765 例
+  ├ test/core/    66 文件 / 677 例（纯函数 + 装配）
+  ├ test/ui/      9 文件 / 77 例（界面纯函数与源码约定）
   └ test/desktop/ 3 文件 / 11 例（更新源、就绪行与更新源地址、清单验签与版本比较）
-workspace/        运行时数据（gitignore）
+.solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
 
-（`src/core` 共 81 个 ts / 12431 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 86 个 ts / 14305 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -86,8 +96,8 @@ workspace/        运行时数据（gitignore）
    `ui/app/src`；白名单只有 `/api/org`，Docker 健康检查用）。加路由没人用 → 要么接上界面、
    要么删掉、要么改白名单并写清理由。
 
-**分层后又收紧了六条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成七组：域 / md /
-plugin / 根原语 / view / app / interface）：
+**分层后又收紧了六条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成八组：域 / md /
+plugin / 根原语 / view / app / desktop / interface）：
 
 - **`view/` 是契约层**：只有 `dto.ts`，一个 import 都不许有（投影已并进 `app/project.ts`）。
 - **`app/` 不许 `node:http`**：用例要能脱离网络直接测。
@@ -126,7 +136,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 75 文件 742 例，<3s，必须全绿
+npm test             # 78 文件 765 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -181,6 +191,11 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表：我 / 助理 / 团队 / 团队管理员 / 成员 / 全员；项目叫 Solo |
 | 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md` |
 | 撞上 pi-durable 做不到的事、或为它写了绕路代码 | `docs/CONCESSIONS.md` 追加一行（只追加；处理完写「已处理 + 日期」） |
+| 两个根（应用私有 / 用户根）/ 加一个要落盘的目录 | `docs/DECISIONS.md` ADR-030 + `docs/CODE.md` §1 | `src/core/layout.ts`（**拼路径只在这里**）+ `scripts/check-boundaries.mjs` 的根原语组 + `test/core/layout.test.ts`；不许在业务模块里 `dirname` 推路径 |
+| 加 / 改一个频道给的「工作区」（插件用） | `docs/DECISIONS.md` ADR-036 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `PluginScope` / `scope()` + `shell/assemble.ts` 的 `pluginScope`；**路径守卫留在插件里**，核心只给根 |
+| 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、强制 `kind=choice` 并 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
+| 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`** |
+| 解散团队 / 开除成员 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`team/doc.ts` + `syncTeam`）；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删）；都不开新工具 |
 | 本文件的表 | `AGENTS.md` |
 
 **文档里的行号会漂。** 优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，
@@ -206,7 +221,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 **不要新增一次性文档**（「XX 轮施工说明」「临时契约」）。一次性的写提交信息；跨迭代有效的
 进 ADR。
 
-**截图不入库。** 需要留证的图放 `workspace/`（已 gitignore）。
+**截图不入库。** 需要留证的图放 `.solo-app/` 或 `~/.solo/`（已 gitignore / 不在仓库里）。
 
 ---
 
@@ -237,4 +252,4 @@ npm start                          # http://127.0.0.1:7788
 npm run check && npm test          # 改完必跑
 ```
 
-`workspace/` 是真实数据，做实验前先用 `--workspace /tmp/xxx` 另起一个。
+`~/.solo` 与 `.solo-app/` 是真实数据，做实验前先用 `--app-root /tmp/x-app --user-root /tmp/x-home` 另起一套。

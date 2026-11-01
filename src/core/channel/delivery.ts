@@ -7,7 +7,7 @@
  * 3. 按固定顺序拼起来。
  *
  * 为什么文案不进代码：这些句子是「行为约束」，改一句不该重新编译、发版。它们和
- * 系统提示词里的模板同源，改 `workspace/prompt/*.md` 下一条消息就生效。
+ * 系统提示词里的模板同源，改 `<appRoot>/prompt/*.md` 下一条消息就生效。
  */
 import { OWNER, chatKind, type Channel, type ChannelState, type Message } from "./types.ts";
 import { deliveryTargets } from "./mentions.ts";

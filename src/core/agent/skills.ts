@@ -4,7 +4,7 @@
  * ```
  * <workspace>/skills/<名字>/SKILL.md                全员层：所有人都看得见
  * <workspace>/teams/<team>/skills/<名字>/...        团队层：这个团队的人看得见
- * <workspace>/agents/<slug>/skills/<名字>/...       个人层：只有他自己看得见
+ * <workspace>/members/<slug>/skills/<名字>/...       个人层：只有他自己看得见
  * ```
  *
  * 上一层**覆盖**下一层：同名时用更靠下的那份（个人 > 团队 > 全员）。这样「全员统一流程」
@@ -18,6 +18,7 @@
  * 这一条对成本很要紧：一个人攒 20 门手艺，常驻的是 20 行描述，不是 20 篇正文。
  */
 import { cp } from "node:fs/promises";
+import { agentDirOf, type AgentRoots } from "./identity.ts";
 import { basename, join } from "node:path";
 import { readDocFile, writeDocFile } from "../md/doc.ts";
 import { skillDirName } from "../naming.ts";
@@ -93,11 +94,17 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 export type SkillRoots = {
 	/** 工作区根：全员层技能在 `<workspace>/skills/`。 */
 	readonly workspace: string;
-	/** `<workspace>/agents`：个人层技能在 `<agents>/<slug>/skills/`。 */
-	readonly agents: string;
+	/** 人的根（助理在 app 根、成员在用户根）：个人层技能在 `<root>/<slug>/skills/`。 */
+	readonly agents: AgentRoots;
 	/** `<workspace>/teams`：团队层技能在 `<teams>/<team>/skills/`。不传就没有团队层。 */
 	readonly teams?: string;
 };
+
+/** 某个人的 `skills/` 目录。查不到这个人就是 `undefined`（不猜目录）。 */
+async function personalSkillsDir(roots: AgentRoots, slug: string): Promise<string | undefined> {
+	const dir = await agentDirOf(roots, slug);
+	return dir === undefined ? undefined : join(dir, SKILLS_DIR);
+}
 
 /** 一个团队的技能（团队层本身，不含全员与个人）。团队详情面板用这一份。 */
 export async function listTeamSkills(teamsRoot: string, team: string): Promise<readonly Skill[]> {
@@ -109,7 +116,8 @@ export async function listSkills(roots: SkillRoots, slug: string, team?: string)
 	const shared = await scanSkillsDir(join(roots.workspace, SKILLS_DIR), "all");
 	const teamSkills =
 		team === undefined || roots.teams === undefined ? [] : await listTeamSkills(roots.teams, team);
-	const personal = await scanSkillsDir(join(roots.agents, slug, SKILLS_DIR), "personal");
+	const personalDir = await personalSkillsDir(roots.agents, slug);
+	const personal = personalDir === undefined ? [] : await scanSkillsDir(personalDir, "personal");
 	const merged = new Map<string, Skill>();
 	// 上面几层有同名 → 这一份是覆盖版。
 	const below = new Set([...shared, ...teamSkills].map((skill) => skill.name));
@@ -174,7 +182,9 @@ export async function writeSkill(
 	slug: string,
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
-	const written = await writeSkillTo(join(roots.agents, slug, SKILLS_DIR), input);
+	const dir = await personalSkillsDir(roots.agents, slug);
+	if (dir === undefined) throw new Error(`没有这个人：${slug}`);
+	const written = await writeSkillTo(dir, input);
 	return { ...written, scope: "personal" };
 }
 

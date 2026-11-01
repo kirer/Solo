@@ -12,6 +12,7 @@ import type { DirectoryState } from "../agent/roster.ts";
 import type { ChannelState, Attachment, Message } from "../channel/types.ts";
 import type { DeliverResult } from "../channel/dispatch.ts";
 import type { Identity } from "../agent/identity.ts";
+import type { Layout } from "../layout.ts";
 import type { PluginHost } from "../plugin/index.ts";
 import type { Diag } from "./diag.ts";
 
@@ -95,8 +96,11 @@ export type CoreServices = {
 	 * 装完 `plugins` 就是新的那一份。
 	 */
 	reloadPlugins?(): Promise<void>;
-	readonly agentsRoot: string;
-	readonly teamsRoot: string;
+	/**
+	 * 两个根的布局：应用私有目录（助理、提示词、插件、配置、库）与用户目录（成员、团队、技能）。
+	 * 用例层要拼路径时**只从这里取**，不要自己 `dirname`。
+	 */
+	readonly layout: Layout;
 	readonly allChannel: string;
 	/**
 	 * 装配好的模型注册表与默认模型。给「单独给某个人换模型」用：先确认那只模型真的
@@ -110,6 +114,16 @@ export type CoreServices = {
 	 * 调一次，否则刚加的模型要等重启才认得。
 	 */
 	refreshModels?(): Promise<void>;
+	/**
+	 * 给某个人换模型：校验（注册表里真有）→ 改会话 → 记进 `settings.json`。
+	 * 空串 = 跟默认。招人和界面上的「换模型」走同一条路，不各写一份写盘逻辑。
+	 */
+	setModel?(slug: string, ref: string, context?: Context): Promise<{ readonly model: string }>;
+	/**
+	 * 现在能选的模型（`provider/modelId`）与默认值。招人时按角色挑，只能从这里挑 ——
+	 * 写一个解析不到的引用，那个人此后每次都 `no_model`。
+	 */
+	modelChoices?(): Promise<{ readonly models: readonly string[]; readonly default?: string }>;
 	/**
 	 * 诊断出口。装配方（`shell/main.ts`）在 `openCore` **之前**就要建好它：底座的
 	 * `onReport` 要往同一个实例里报，两边各建一个就看不到彼此的 `lastReport`。

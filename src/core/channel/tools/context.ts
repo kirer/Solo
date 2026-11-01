@@ -10,21 +10,16 @@ import { type PostDeps } from "../post.ts";
 import { mentionRosterOf, type MentionRoster } from "../mentions.ts";
 import type { ChannelWiring } from "../wiring.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
+import type { Layout } from "../../layout.ts";
 
 /** 工具运行所需的一切。全部由外壳在启动时装配，工具自己不读环境变量。 */
 export type CoreToolDeps = {
 	readonly harness: Harness;
 	/**
-	 * 工作区根。`agents/` 与 `skills/` 都在它下面。
-	 *
-	 * 为什么工具需要它：`npx skills add` 会把技能装到**当前目录**下，所以在哪儿跑
-	 * 决定了装到哪儿。全员层就是工作区根下的 `skills/`。
+	 * 两个根的布局。工具要拼路径时只从这里取：
+	 * 用户的组织在 `layout.userRoot`，应用自带的在 `layout.appRoot`。
 	 */
-	readonly workspaceRoot: string;
-	/** `workspace/agents`。 */
-	readonly agentsRoot: string;
-	/** `workspace/teams`。 */
-	readonly teamsRoot: string;
+	readonly layout: Layout;
 	/** 读名册（slug ↔ 会话）。 */
 	readonly directory: (context: Context) => Promise<DirectoryState>;
 	/** 落一次名册变更。 */
@@ -37,6 +32,10 @@ export type CoreToolDeps = {
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
 	/** 保证这个人有「我 ↔ 他」的私聊（幂等）。缺省表示不支持（测试里可以不提供）。 */
 	readonly ensureDm?: (slug: string, context: Context) => Promise<void>;
+	/** 现在能挑的模型与默认值（招人时按角色分）。 */
+	readonly modelChoices?: () => Promise<{ readonly models: readonly string[]; readonly default?: string }>;
+	/** 给某个人定模型（校验 → 改会话 → 记进 settings.json）。 */
+	readonly setModel?: (slug: string, ref: string, context: Context) => Promise<{ readonly model: string }>;
 	/**
 	 * 频道层接线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
 	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、沉淀、我说话共用。
@@ -94,7 +93,7 @@ export async function selfOrError(
 
 /** 当前名册：`@` 别名解析用。每次现读盘（`say` 不是热路径，且改 `identity.md` 要立刻生效）。 */
 export async function mentionRoster(deps: CoreToolDeps): Promise<MentionRoster> {
-	const all = await readAllIdentities(deps.agentsRoot);
+	const all = await readAllIdentities(deps.layout.agentRoots);
 	return mentionRosterOf(
 		all.map((identity) => ({
 			slug: identity.slug,

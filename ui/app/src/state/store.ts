@@ -146,7 +146,14 @@ export async function refreshLists(): Promise<void> {
 		// 列表里的未读数变了，顶部标题（当前频道）也要跟着变 —— 用 detail 的 channel 覆盖一次。
 		if (state.currentId !== null) {
 			const mine = channels.channels.find((channel) => channel.id === state.currentId);
-			if (mine !== undefined && state.detail !== null) {
+			// 频道没了 = 解散了团队、或私聊被归档：别再把它留在中栏，退回落地页。
+			if (mine === undefined) {
+				void openChannel(null);
+			} else if (state.detail !== null) {
+				// 标题 / 成员数变了（改名、加人、换团队管理员）：整屏重拉，不然顶栏和成员框停在旧样子。
+				if (state.detail.channel.title !== mine.title || state.detail.channel.memberCount !== mine.memberCount) {
+					void reloadDetail(mine.id);
+				}
 				patch({ detail: { ...state.detail, channel: strip(mine) } });
 			}
 		}
@@ -197,6 +204,17 @@ export async function openWithPerson(slug: string): Promise<void> {
 	const { id } = await openDirectMessage(slug);
 	await refreshLists();
 	await openChannel(id);
+}
+
+/** 重拉当前频道的详情。只有频道投影变了才走；期间切走了就不覆盖。 */
+async function reloadDetail(id: string): Promise<void> {
+	try {
+		const detail = await getChannel(id);
+		if (getState().currentId !== id) return;
+		patch({ detail, hasMore: detail.hasMore });
+	} catch {
+		// 拉不到就等下一次组织推送再试，别把当前屏清空。
+	}
 }
 
 export async function openChannel(id: string | null): Promise<void> {
@@ -291,17 +309,22 @@ export function applyMessage(id: string, message: Message): void {
 	done();
 }
 
-export async function send(text: string, attachmentIds: readonly string[] = []): Promise<void> {
+/**
+ * 发一条消息。`replyToSeq` 给我一个「显式引用」的入口：回答选项时正文是选项文字，
+ * 引用必须指向那条选择消息（输入框里手点的引用走 `state.reply`，两者不会同时出现）。
+ */
+export async function send(text: string, attachmentIds: readonly string[] = [], replyToSeq?: number): Promise<void> {
 	const { currentId, reply } = state;
 	if (currentId === null) return;
 	const trimmed = text.trim();
 	if (trimmed === "" && attachmentIds.length === 0) return;
+	const quoted = replyToSeq ?? reply?.seq;
 	patch({ reply: null });
 	const done = mark("send");
 	try {
 		await sendMessage(currentId, {
 			text: trimmed,
-			...(reply === null ? {} : { replyTo: reply.seq }),
+			...(quoted === undefined ? {} : { replyTo: quoted }),
 			...(attachmentIds.length === 0 ? {} : { attachments: [...attachmentIds] }),
 		});
 	} catch (error) {
@@ -320,6 +343,9 @@ async function readToEnd(id: string, messages: readonly Message[]): Promise<void
 	} catch {
 		// 已读失败不该打扰我：下一次进这个频道还会再试一次。
 	}
+	// 已读位置变了就把列表拉一次：徽标上的未读数跟着清掉（不刷新的话它要等下一次
+	// 组织推送才消失 —— 实测「点开频道，红点还在」）。
+	void refreshLists();
 }
 
 /* ── 轨迹（从会话条目派生，不落库：ADR-001） ────────────────────────── */

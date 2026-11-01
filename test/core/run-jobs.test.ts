@@ -165,9 +165,7 @@ describe("run 工具的 background 分支", () => {
 
 		const tools = createCoreTools({
 			harness: runtime.harness,
-			workspaceRoot: box.root,
-			agentsRoot: box.agentsRoot,
-			teamsRoot: box.teamsRoot,
+			layout: box.layout,
 			directory: async () => ({
 				...emptyDirectory(),
 				slugToConversation: { [me]: conversation },
@@ -175,7 +173,7 @@ describe("run 工具的 background 分支", () => {
 				wake: { [String(conversation)]: { channelId, seq: 1, from: OWNER, at: 2 } },
 			}),
 			saveDirectory: async () => undefined,
-			wiring: wireChannel({ harness: runtime.harness, agentsRoot: box.agentsRoot }),
+			wiring: wireChannel({ harness: runtime.harness, layout: box.layout }),
 		} as never);
 		const run = tools.find((item) => item.name === "run");
 		expect(run).toBeDefined();

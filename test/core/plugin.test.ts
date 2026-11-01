@@ -280,7 +280,7 @@ describe("加载", () => {
 		const pool = sandboxPool();
 		try {
 			const box = await pool.make("plugin-shell-");
-			await writePlugin(join(box.root, "plugins"), "demo", {
+			await writePlugin(box.layout.pluginsRoot, "demo", {
 				"plugin.md": "---\nname: demo\n---\n",
 				"plugin.js": `
 					export function apply(api) {

@@ -6,7 +6,7 @@
  * 对不上的原因可能有一堆（GPU 渲染、Retina、机器同时在跑本地模型……），靠猜猜不完。
  *
  * 所以：只在真的卡的时候写一条，攒够 5 秒或页面要走了就发给 `POST /api/diag`，
- * 落在 `workspace/logs/jank.jsonl`。复现一次，我去读日志，不用再让我开 devtools。
+ * 落在 `<appRoot>/logs/jank.jsonl`。复现一次，我去读日志，不用再让我开 devtools。
  *
  * **只在真卡时写**：帧间隔 > `FRAME_GAP_MS` 或长任务 > `TASK_MS`。正常浏览一条都不产生。
  *

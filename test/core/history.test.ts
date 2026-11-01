@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
+import { resolveLayout } from "../../src/core/layout.ts";
 
 /**
  * `read_history` 守的事故：上下文被压成 `pi.compaction` 之后，原文还在 storage 里，
@@ -37,9 +38,7 @@ function harnessOf(fixtures: readonly Fixture[]) {
 async function ask(fixtures: readonly Fixture[], args: Record<string, unknown>): Promise<string> {
 	const tools = createCoreTools({
 		harness: harnessOf(fixtures) as never,
-		workspaceRoot: "/tmp/nowhere-history",
-		agentsRoot: "/tmp/nowhere-history/agents",
-		teamsRoot: "/tmp/nowhere-history/teams",
+		layout: resolveLayout({ appRoot: "/tmp/nowhere-history", userRoot: "/tmp/nowhere-history" }),
 		directory: async () => emptyDirectory(),
 		saveDirectory: async () => undefined,
 	} as never);

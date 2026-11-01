@@ -16,10 +16,14 @@ markdown。改组织 = 改文件 = 下一条消息生效，不重启、不重新
 ## 1. 一个人是什么
 
 ```
-workspace/agents/<slug>/
-  identity.md              ← 他是谁（唯一必需）
-  memory.md                ← 他记住了什么（他自己写、自己改）
-  skills/<名字>/SKILL.md   ← 他会怎么做一件事
+~/.solo/members/<slug>/          ← 我的组织：人、团队、技能、规矩
+  identity.md                    ← 他是谁（唯一必需）
+  memory.md                      ← 他记住了什么（他自己写、自己改）
+  skills/<名字>/SKILL.md         ← 他会怎么做一件事
+  workspace/                     ← 他只在这里干活（见 §5）
+
+<appRoot>/assistant/<slug>/      ← 助理也是一个人，但住在应用私有那一边
+  identity.md / memory.md / skills/ / workspace/
 ```
 
 `identity.md` 只有四个可选的头字段：
@@ -48,7 +52,7 @@ team: demo
 ## 2. 提示词是**投影**
 
 V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplates()` 读
-`workspace/prompt/NN-段名.md`，`renderPrompt()` 把「所有人 + 团队 + 技能目录 + 记忆目录 +
+`<appRoot>/prompt/NN-段名.md`，`renderPrompt()` 把「所有人 + 团队 + 技能目录 + 记忆目录 +
 注册表里的全部工具」填进插槽。代码只剩排版（`src/core/md/prompt.ts`），「怎么说」全在
 `seed/prompt/`。三个性质没变：
 
@@ -121,10 +125,10 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 区分翻对话还是翻记忆），`hire` 收回建人，`file` 收回读写两个工具，`org` 直接删掉（组织架构在
 提示词的「你在组织里的位置」一节里，不在工具里）。**工具总数 17 → 11 → 7**：`teams` /
 `write_team` / `skills` / `me` 四个是「用 `file` 读写某个固定路径 md」的包装，删掉之后
-「改自己 = 写 `agents/<slug>/identity.md`」才真正成立。
+「改自己 = 写 `members/<slug>/identity.md`」才真正成立。
 
 组织架构（谁是谁的上级、谁在哪）不靠工具查：它在提示词的「你在组织里的位置」一节里，
-每次发送前从 `agents/*/identity.md` 现渲染。
+每次发送前从 `members/*/identity.md`（助理在 `assistant/*/`）现渲染。
 
 「层级」不在代码里，在提示词里：某个人的 `identity.md` 写着「你向知言汇报」，他自己
 就知道该找谁。代码只保证事实（谁能收到消息、谁的目录归谁），不保证纪律。
@@ -147,7 +151,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 4. 减去发件人自己。
 
 **引用回复等于 @ 作者**（`appendMessage` 里把被引用者并进 mentions）。`kind` 是语义
-标签（`chat` / `question` / `decision` / `report`），团队频道里的每一条（除系统留痕
+标签（`chat` / `question` / `decision` / `report` / `choice`），团队频道里的每一条（除系统留痕
 `note`）都会进入团队记忆的沉淀队列。
 
 **会话形态由 id 前缀 + 成员一起决定**：`chatKind()` 只把 **`dm:` 前缀且成员恰好
@@ -183,33 +187,54 @@ V3 以前这里靠 6 秒定时器事后猜，现在结算本身就是信号，�
 
 **慢命令不占着一轮**：`run` 的前台最多等 300 秒，`&` / `nohup` 是脱手（起完就不管）。要「跑完告诉我」就用 `background: true` —— 起跑时把频道定下来，跑完由 `channel/jobs.ts` 把结果作为一条 `note` 发回那个频道，并用 `wakeTo` 叫醒起跑的人（`note` 默认谁也不叫，这是它唯一的例外，ADR-013）。最多跑 30 分钟，到点整组杀掉。服务重启时 `app/runs.ts` 把上一轮遗留的活结账：活着的杀掉、死掉的留一句话 —— 「跑完了」是进程内的回调，进程一死它就永远不会来，而等它的人看不出来。
 
+**要我拍板时给选项**：`say` 带 `options`（2–6 个、不重复）时，这条消息落成 `kind: "choice"`，
+并自动把我加进 `mentions` —— 选项是决策，不是「逐条列出」。回答**不新增路由、不新增 kind**：
+我发的下一条消息就是答案（`replyTo` 指向那条），正文就是选项文字。界面的判定是纯函数
+`ui/app/src/composer/choice.ts` 的 `pendingChoice()`（ADR-035）。
+
 **一条消息的长度看频道**：群聊 600 字、私聊 1200 字（`guards.ts` 的 `sayLimitOf`，ADR-014）。超了不落库，回一句「太长了」让它把过程写进文件、只发结论加路径。
 
 ## 5. 文件夹就是边界
 
+**两个根**（ADR-030）：一个是**应用私有**（跟着这台机器上的这份安装走），一个是**我的组织**
+（跟着我走）。拼路径只有 `layout.ts` 一处。
+
 ```
-workspace/
+~/.solo/                        用户根：组织
+  rules.md                      全员规矩
   skills/<名字>/SKILL.md        全员层技能：全员通用（写技能 / 找现成技能 / 工作规矩 / 记忆整理）
-  agents/<slug>/
+  members/<slug>/
     identity.md                 他是谁
     memory.md                   他自己的记忆
-    skills/<名字>/SKILL.md      个人层技能：同名覆盖全员层（知言的建立团队 / 招人）
+    skills/<名字>/SKILL.md      个人层技能：同名覆盖全员层
+    workspace/                  他干活的地方
   teams/<slug>/
     README.md                   要做什么、谁是团队管理员、什么不做
     memory.md                   这个团队发生过什么（团队里的人写，全员能读）
     skills/<名字>/SKILL.md      团队层技能：这个团队的人都会，同名覆盖全员层
+    workspace/                  团队任务干活的地方
+
+<appRoot>/                      应用根：这份安装自带的东西
+  assistant/<slug>/             助理（知言）本人，形状和 members/<slug>/ 一样
+  prompt/                       提示词模板
+  plugins/                      内置插件
+  settings.json                 模型配置
   core.sqlite                   频道消息、名册、沉淀游标
+  uploads/  logs/               附件与日志
 ```
 
+「待在自己的工作区里」是**写在 md 里的纪律**，不是代码闸：代码只保证每个人/每个团队有一个
+`workspace/` 目录，`run` 的默认 cwd 指向调用者自己的那份。
+
 名册（`core.directory`）只是 slug ↔ 会话 id 的缓存，删了能从文件夹重建；**频道消息是
-真历史，删了就没了**。
+真历史，删了就没了**（它在应用根的 `core.sqlite` 里）。
 
 三级不是顺手分层，是**三种不同的变化频率**：全员通用做法几个月改一次、一个人的手艺
 天天加、一个团队的坑一次就踩完。混在一起，改一处就得动全部。
 
 | 归属 | 谁写 | 谁读 | 换了人还在吗 |
 | --- | --- | --- | --- |
-| `agents/<slug>/*` | 他自己 | 他自己 | ✗ 跟着人走 |
+| `members/<slug>/*` | 他自己 | 他自己 | ✗ 跟着人走 |
 | `teams/<slug>/memory.md` | 这个团队的人 | 全员 | ✓ 跟着团队走 |
 | `skills/`（全员层） | 谁都能写（`scope=all`） | 全员 | ✓ |
 
@@ -222,15 +247,15 @@ workspace/
 
 - **`name` + `description` 常驻提示词**，正文按需 `skills(action=read)` 读。一个人攒 20 门手艺，
   常驻的是 20 行描述，不是 20 篇正文 —— 成本上最要紧的一条。
-- agent 自己就能用 `file` 写出一门新技能（`agents/<slug>/skills/<名字>/SKILL.md`），
+- agent 自己就能用 `file` 写出一门新技能（`members/<slug>/skills/<名字>/SKILL.md`），
   也能写团队共用的（`teams/<团队>/skills/<名字>/SKILL.md`）。
-- 技能分三层，**下面的盖住上面的**：全员层 `<workspace>/skills/` → 团队层
-  `teams/<团队>/skills/` → 个人层 `agents/<slug>/skills/`。一个人看到的是三层的并集，
+- 技能分三层，**下面的盖住上面的**：全员层 `<userRoot>/skills/` → 团队层
+  `teams/<团队>/skills/` → 个人层 `members/<slug>/skills/`（助理那层在 `assistant/<slug>/skills/`）。一个人看到的是三层的并集，
   同名只留最靠下的那份，提示词里标「全员通用 / 团队共用 / 你自己写的」。
 - **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
 - 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 全员层，
-  `seed/agents/assistant/skills/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次。
+  `seed/assistant/skills/` → 助理个人层。两份入口都**已存在的不覆盖** —— 播种只该发生一次。
 
 判断边界：「做什么」是身份（`identity.md`），「怎么做」是技能（`skills/`），
 「发生过什么」是记忆（`memory.md`）。三条都不在代码里。
@@ -263,6 +288,10 @@ README 不受这条限制——改正文不是开摊子。
 统筹者汇报；缺了统筹者，「统筹者 ↔ 管理员在团队频道协作」就落不下。
 成员表是事实的投影，用整体替换而非只加不删，避免改名/重建后旧 slug 残留在成员表里变成
 幽灵成员。
+
+**解散团队不写新工具**：把 README 的 `status` 写成 `archived` 就是解散 —— 团队频道被归档
+（从列表消失，消息保留）、`lead` 清空、成员的 `team:` 清空，团队目录与记忆原样留着。
+语义在 md 里，代码只做「README 说它没了」这一件机械的事（ADR-033）。
 
 全员频道（`all`）**不是特权频道**：它只是开机时播种一次的普通群，除了「人人都在
 里面」以外没有任何特殊规则。「什么时候该建一个团队」是判断，写在知言的 `建立团队` 技能里。
@@ -314,7 +343,7 @@ ui/app/src/
   api/        fetch + SSE 客户端与后端类型的镜像
   state/      唯一状态源：一个 store + useStore
   stream/     buildRows() 纯函数算行，Stream.tsx 只负责画
-  composer/   输入卡（@、附件、引用、输入法合成期不误发）
+  composer/   输入卡（@、附件、引用、输入法合成期不误发）；有待我选的选项时换成选项卡
   panels/     右栏（详情）、记忆抽屉、浮层
   sidebar/    左栏频道列表
   lib/        时间 / 头像 / Markdown / 合并消息 / 卡顿记录
@@ -337,6 +366,15 @@ ui/web/       构建产物，服务端发这个目录，别手改
 团队就是一个 `group`：`team:<slug>` 只是它的 id，侧栏另外用 `team` / `leadLabel` / `doing`
 三个字段把它标成团队。
 
+**未读与「等我」分开**：侧栏频道行，`mentions > 0` 的红底是「等我说句话」，只有未读的是
+浅灰底；点开频道 → 已读上报 → 列表重拉，红点当场清。**群头像画真头像**：左栏与右栏的
+「活跃频道」都按 `channel.members` 拼（不是名册前四个），加人 / 换人后图标跟着变。
+
+**附件与文件**：图片点开放大；其余附件点开先预览（按服务端发的真实 `Content-Type`：
+图片 / PDF / `text/*` 内联，HTML 永远降成纯文本，其余说「不能预览，点下载」，ADR-037）。
+右栏的「文件」页签是插件（`seed/plugins/文件树/`）：看当前频道那个工作区的目录树，点开
+预览图片 / markdown / 代码 / HTML（沙箱 iframe）。
+
 消息按 `kind` 决定显示：`chat` 普通发言、`question` 提问、`decision` / `report` 带标签
 （触发团队记忆沉淀）、`note` 系统留痕（灰色淡显）。**过程不再投影到频道**：`think` /
 `tool` / `work` / `step` 这几类消息已经不再生成，历史库里残留的那些由
@@ -349,6 +387,7 @@ ui/web/       构建产物，服务端发这个目录，别手改
 
 ```
 src/core/
+  layout.ts        两个根的全部路径（拼路径只在这里）
   runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
                    models（contextWindow / compaction）/ settings 也在这里
   agent/           identity（他是谁 + 新建一个人）/ sections（提示词九段装配）/ memory
@@ -380,19 +419,19 @@ src/core/
 
 1. 同步 `rules.md` 与全员层技能（`seedRules` / `syncAllSkills`），并自检「记忆整理」
    技能在不在；
-2. 读 `workspace/settings.json` 里的模型，装配 `models` —— 同时从 pi-ai 的模型目录取
+2. 读 `<appRoot>/settings.json` 里的模型，装配 `models` —— 同时从 pi-ai 的模型目录取
    **真实 `contextWindow`**（取不到回落 128k），据此算 compaction 阈值；
-3. `createDiag(workspace)` —— 诊断落盘口（卡顿 `logs/jank.jsonl`、运行报告
+3. `createDiag(<appRoot>/logs)` —— 诊断落盘口（卡顿 `logs/jank.jsonl`、运行报告
    `logs/runtime.jsonl`）；
 4. `openCore({ settings: { compaction }, onReport })` —— 打开 SQLite，并把底座的错误
    出口接成可读的报告：**失败不再静音**（crash-loop 把任务 park 成
    `blocked: restart_limit` 时，`GET /api/diag` 能看见原因）；
-5. `assembleCore()` —— 扫 `agents/` → 每人开一个会话 → 绑名册 → 建全员频道 →
+5. `assembleCore()` —— 扫两个 agent 根（`assistant/` + `members/`）→ 每人开一个会话 → 绑名册 → 建全员频道 →
    按 `identity.md` 的 `team:` 拉进团队频道；
 6. `serveCore()` 起 HTTP + SSE；
 7. 等 Ctrl-C。
 
-`agents/` 为空时播种一个「离我最近的人」（`seedOwnerAssistant()`）—— 这是**唯一**
+用户根里还没有人时播种一个「离我最近的人」（`seedOwnerAssistant()`）—— 这是**唯一**
 一处预置身份的地方，而且只写文件、不写代码。之后它自己 `hire` 别人。
 
 **每个成员开机就有一条私聊。** 装配给每个人补 `ensureOwnerDm`（幂等）：私聊是他的
@@ -421,7 +460,7 @@ src/core/
 
 ## 13. 插件：一个文件夹，前后端各一半
 
-`workspace/plugins/<slug>/` 就是一个插件。它和 agent、团队是同一套形状 —— **加一个能力 =
+`<appRoot>/plugins/<slug>/` 就是一个插件。它和 agent、团队是同一套形状 —— **加一个能力 =
 建一个目录**，不改代码、不重建界面。
 
 ```
@@ -439,6 +478,7 @@ plugins/<slug>/
 | `prompt(text)` | 每个人提示词最后多一段（静态文本；塞时间戳会打穿缓存） |
 | `route({method, pattern, handle})` | 一条 JSON 接口（GET / POST），排在静态兜底之前 |
 | `on("message", …)` | 消息落盘之后、唤醒之前的一个回调 |
+| `scope(channelId)` | 这个频道对应的目录（私聊 → 那个人的 `workspace/`，团队频道 → 团队 `workspace/`，全员频道 → 没有）。核心只给**根**，路径守卫 / 上限 / 拒符号链接都在插件里（ADR-036） |
 
 **前端插槽**（`ui`）：界面上声明好的十几个缺口 —— 左栏头 / 列表上方 / 列表脚下、顶栏、
 消息流上下、输入框右侧、右栏页签与底部、设置里多一节、全屏浮层层。全表见 `docs/DESIGN.md` §2.8。
@@ -456,11 +496,11 @@ plugins/<slug>/
 **隔离**：一个插件清单坏了、`import` 炸了、`apply` 抛了，都只是它自己的一条错误
 （`/api/plugins` 里带 `error`），其它插件照装、服务照起。
 
-**装在界面上**：左栏「团队管理」下面的「插件」列出 `workspace/plugins/` 里的每一个
+**装在界面上**：左栏「团队管理」下面的「插件」列出 `<appRoot>/plugins/` 里的每一个
 （名字、说明、它带来了什么、坏在哪），每行一个开关和一个「删除」，底下是装新插件的地方。
 
 - **装 = 选一个文件夹**：插件的能力全在它自己的 `plugin.ts` / `client.js` 里，所以安装是
-  把一个**已经写好的文件夹**整份搬进 `workspace/plugins/<slug>/`。宿主先校验（名字不重、
+  把一个**已经写好的文件夹**整份搬进 `<appRoot>/plugins/<slug>/`。宿主先校验（名字不重、
   路径不越界、根上有 `plugin.md`）再一次落盘，不合格就一个文件都不写 —— dsh 的
   `inspect → install → 再启用` 也是这个顺序，只是它从包管理器拿，Solo 从磁盘上拿。
 - **卸 = 删那个目录**：不可恢复，界面上二次确认。
@@ -477,7 +517,7 @@ plugins/<slug>/
 代码，信任是前提，不是漏洞 —— 但这意味着**不要装别人给的插件**。
 
 **出厂插件**（`seed/plugins/`）：`示范` 把四个后端动作与几个插槽各用一次；`模型管理` 在「设置」
-里多一节，读写 `workspace/settings.json`（字段见 `docs/DEPLOY.md` §3）—— 它是「插件够不够用」
+里多一节，读写 `<appRoot>/settings.json`（字段见 `docs/DEPLOY.md` §3）—— 它是「插件够不够用」
 的第一块试金石：模型配置是文件 + 表单，没有业务语义，正好不该长在内核里。
 
 **第一版不做**：插件市场、权限。前端 `client.js` 改了不用重启服务，但要**刷新页面**（浏览器里

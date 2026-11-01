@@ -7,6 +7,9 @@ import { OWNER } from "../types.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { clip, MODEL_LIMIT } from "./guards.ts";
+import { readIdentity } from "../../agent/identity.ts";
+import { ensureDir } from "../../runtime/io.ts";
+import { workspaceOf } from "../../layout.ts";
 
 /**
  * 洗掉终端控制序列（颜色、光标）。命令输出里的 `\u001b[90m` 进了提示词和界面就是
@@ -36,7 +39,7 @@ export function createRunTool(deps: CoreToolDeps) {
 		].join(""),
 		parameters: Type.Object({
 			command: Type.String({ description: "要执行的命令" }),
-			cwd: Type.Optional(Type.String({ description: "工作目录，默认工作区根" })),
+			cwd: Type.Optional(Type.String({ description: "工作目录，默认是你自己的 workspace（`members/<你>/workspace`）；写团队的事可以传那个团队的 workspace 路径" })),
 			timeout: Type.Optional(Type.Number({ description: "超时秒数，默认 60" })),
 			background: Type.Optional(
 				Type.Boolean({ description: "丢到后台跑，跑完把结果发回频道并叫醒你（最多 30 分钟）" }),
@@ -46,7 +49,11 @@ export function createRunTool(deps: CoreToolDeps) {
 			const ctx = context ?? BACKGROUND_CONTEXT;
 			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
 			if (typeof slug !== "string") return text(slug);
-			const cwd = args.cwd ?? deps.workspaceRoot;
+			// 默认在**自己的**工作目录里干活：一个人一个目录，互不踩。目录不在就先建。
+			const ownDir = (await readIdentity(deps.layout.agentRoots, slug))?.dir ?? join(deps.layout.membersRoot, slug);
+			const ownWorkspace = workspaceOf(ownDir);
+			await ensureDir(ownWorkspace);
+			const cwd = args.cwd ?? ownWorkspace;
 			const seconds = Math.min(Math.max(args.timeout ?? 60, 1), 300);
 			const command = args.command;
 
@@ -57,7 +64,7 @@ export function createRunTool(deps: CoreToolDeps) {
 				const target = await defaultChannel(deps, state, slug, Number(api.conversationId), undefined, ctx);
 				if ("error" in target) return text(target);
 				const job = await startRunJob({
-					dir: join(deps.workspaceRoot, "logs", "run"),
+					dir: join(deps.layout.logsRoot, "run"),
 					slug,
 					channelId: target.channelId,
 					command,

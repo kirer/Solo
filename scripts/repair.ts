@@ -17,18 +17,21 @@ import { assembleCore } from "../src/core/shell/assemble.ts";
 import { ChannelDoc, teamId } from "../src/core/channel/types.ts";
 import { listTeams } from "../src/core/team/doc.ts";
 import { BACKGROUND_CONTEXT } from "../src/core/runtime/index.ts";
+import { resolveLayout } from "../src/core/layout.ts";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-const workspace = process.env.WORKSPACE ?? "workspace";
-const agentsRoot = `${workspace}/agents`;
-const teamsRoot = `${workspace}/teams`;
-const databasePath = `${workspace}/core.sqlite`;
+// 和 `main.ts` 同一套默认：应用私有目录 + 用户目录（`~/.solo`）。
+const layout = resolveLayout({
+	appRoot: process.env.APP_ROOT ?? ".solo-app",
+	userRoot: process.env.USER_ROOT ?? join(homedir(), ".solo"),
+});
 
 async function main(): Promise<void> {
-	const configured = setupModels(process.env, { workspace });
-	const runtime = await openCore({ databasePath, models: configured.models, registry: createRegistry() });
+	const configured = setupModels(process.env, { settingsFile: layout.settingsFile });
+	const runtime = await openCore({ databasePath: layout.databasePath, models: configured.models, registry: createRegistry() });
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot,
-		teamsRoot,
+		layout,
 		...(configured.defaultModel === undefined ? {} : { defaultModel: configured.defaultModel }),
 	});
 
@@ -56,7 +59,7 @@ async function main(): Promise<void> {
 	console.log(`全员频道：清空了 ${cleared} 条历史消息（频道与成员保留）。`);
 
 	// 2. 每个团队频道按事实重算成员。
-	const teams = await listTeams(teamsRoot);
+	const teams = await listTeams(layout.teamsRoot);
 	for (const team of teams) {
 		const before = (await shell.channels()).channels[teamId(team.slug)]?.members ?? [];
 		await shell.syncTeam(team.slug, ctx);

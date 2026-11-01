@@ -23,8 +23,10 @@ export type Backend = {
 export type BackendOptions = {
 	/** `main.ts` 的绝对路径。 */
 	readonly entry: string;
-	/** 工作区目录（数据都在这儿）。 */
-	readonly workspace: string;
+	/** 应用私有目录：助理、提示词、插件、配置、库。 */
+	readonly appRoot: string;
+	/** 用户目录（`~/.solo`）：成员、团队、技能、规矩。 */
+	readonly userRoot: string;
 	/** 后端 stdout / stderr 落这儿。 */
 	readonly logFile: string;
 	readonly onLog?: (line: string) => void;
@@ -51,7 +53,17 @@ function spawnOnce(
 	return new Promise((resolve, reject) => {
 		const child = spawn(
 			process.execPath,
-			[options.entry, "--port", String(port), "--host", "127.0.0.1", "--workspace", options.workspace],
+			[
+				options.entry,
+				"--port",
+				String(port),
+				"--host",
+				"127.0.0.1",
+				"--app-root",
+				options.appRoot,
+				"--user-root",
+				options.userRoot,
+			],
 			{
 				// ELECTRON_RUN_AS_NODE：让 Electron 可执行文件以 Node 身份跑，
 				// 用户机器上不用另装 node。

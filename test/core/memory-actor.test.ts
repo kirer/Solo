@@ -59,7 +59,7 @@ function post(port: number, path: string, body: unknown): Promise<{ status: numb
 }
 
 async function lastJournal(root: string): Promise<{ by: string; op: string }> {
-	const raw = await readFile(join(root, "agents", "林越", JOURNAL_FILE), "utf8");
+	const raw = await readFile(join(root, "members", "林越", JOURNAL_FILE), "utf8");
 	const lines = raw.trim().split("\n");
 	return JSON.parse(lines[lines.length - 1] ?? "{}") as { by: string; op: string };
 }
@@ -77,7 +77,7 @@ describe("记忆面板的留痕写上真实来源", () => {
 	it("面板删一条：留痕同样是 owner:web", async () => {
 		const { root, port } = await setup();
 		await post(port, `/api/people/${encodeURIComponent("林越")}/memory`, { op: "add", text: "要被删的一条" });
-		const source = await readFile(join(root, "agents", "林越", "memory.md"), "utf8");
+		const source = await readFile(join(root, "members", "林越", "memory.md"), "utf8");
 		const heading = source.split("\n").find((line) => line.startsWith("## "))?.slice(3).trim() ?? "";
 		const forgotten = await post(port, `/api/people/${encodeURIComponent("林越")}/memory`, { op: "forget", heading });
 		expect(forgotten.status).toBe(200);

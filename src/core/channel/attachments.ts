@@ -18,7 +18,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { Attachment } from "../channel/types.ts";
 
 /** 单文件上限。25MB 够放截图与文稿，又不至于一条消息把磁盘塞满。 */
@@ -114,10 +114,7 @@ type UploadMeta = {
 	readonly at: number;
 };
 
-/** 附件根目录：`<workspace>/uploads`。`agentsRoot` 是 `<workspace>/agents`。 */
-export function uploadsRootOf(agentsRoot: string): string {
-	return join(dirname(agentsRoot), "uploads");
-}
+
 
 /** 文件本体路径。id 不合法就给 `undefined`（调用方必须当「没有」处理）。 */
 export function uploadPathOf(root: string, id: string): string | undefined {

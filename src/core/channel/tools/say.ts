@@ -31,16 +31,29 @@ export function createSayTool(deps: CoreToolDeps) {
 						"给这条消息打标签：decision = 拍了板（结论、定了怎么做）；report = 交付了什么。普通发言不要传。",
 				}),
 			),
+			options: Type.Optional(
+				Type.Array(Type.String(), {
+					description:
+						"要我选：2–6 个互不相同的选项。带上它这条就一定会叫醒我，我会在最下面看到一排选项。只在真的需要我拍板时用。",
+				}),
+			),
 		}),
 		execute: async (args, api, context) => sayUnlocked(args, api, context ?? BACKGROUND_CONTEXT),
 	});
 
 	const sayUnlocked = async (
-		args: { text: string; mention?: string; channel?: string; replyTo?: number; kind?: "decision" | "report" },
+		args: {
+			text: string;
+			mention?: string;
+			channel?: string;
+			replyTo?: number;
+			kind?: "decision" | "report";
+			options?: readonly string[];
+		},
 		api: { conversationId: string | number },
 		ctx: Context,
 	): Promise<ReturnType<typeof text>> => {
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。先看 agents/<你>/identity.md，或请上级重新登记你。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。先看 members/<你>/identity.md，或请上级重新登记你。");
 			if (typeof slug !== "string") return text(slug);
 			// 没有「私下发给谁」这个参数：私聊只能我开，agent 只能在已有的频道里说话。
 			// 也不需要专门硬拦 ——「非成员发不进去」已经重定了这条边界。
@@ -93,6 +106,17 @@ export function createSayTool(deps: CoreToolDeps) {
 				);
 			}
 
+			// 要我选：2–6 个、去空白、不重复。带选项就一定会叫醒我，kind 固定成 `choice`
+			// （回答就是普通消息 + replyTo，界面按最后一条没人答过的 choice 画选项卡）。
+			const options = (args.options ?? []).map((item) => item.trim()).filter((item) => item !== "");
+			if (args.options !== undefined) {
+				if (options.length < 2 || options.length > 6) {
+					return text(`选项要 2–6 个（现在是 ${String(options.length)} 个）。真的要我自己想，就别给选项，直接问。`);
+				}
+				if (new Set(options).size !== options.length) return text("选项不要重复：重复的两个选项我分不出该点哪个。");
+			}
+			const choosing = options.length > 0;
+
 			// 带 mention：验证成员、补 @ 前缀、默认 kind=question。
 			// `@我` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。
 			let messageText = args.text;
@@ -121,7 +145,7 @@ export function createSayTool(deps: CoreToolDeps) {
 			// 实测踩过（live 上报链）：团队管理员的这一轮同时被「团队记忆沉淀」叫醒（`quiet`），
 			// 他在这一轮里把话上报给助理 —— 正文写了 @助理，但因为整轮是安静的，消息落成
 			// `note`，`note` 谁也不叫。助理永远收不到，链就断在中间，界面上什么异常都没有。
-			const addressed = typedMentions.length > 0 || (args.mention !== undefined && args.mention !== "");
+			const addressed = choosing || typedMentions.length > 0 || (args.mention !== undefined && args.mention !== "");
 			const wakeOwner = typedMentions.includes(OWNER);
 
 			const result = await postMessage(
@@ -131,11 +155,12 @@ export function createSayTool(deps: CoreToolDeps) {
 					from: slug,
 					text: messageText,
 					at: Date.now(),
+					...(choosing ? { options } : {}),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
-					...(quiet && !addressed ? { kind: "note" } : kind === undefined ? {} : { kind }),
+					...(quiet && !addressed ? { kind: "note" } : choosing ? { kind: "choice" } : kind === undefined ? {} : { kind }),
 					roster,
 					...((() => {
-						const extra = wakeOwner ? [OWNER] : [];
+						const extra = wakeOwner || choosing ? [OWNER] : [];
 						return extra.length === 0 ? {} : { mention: extra };
 					})()),
 				},

@@ -1,5 +1,5 @@
 /**
- * 一个 agent 的身份 = `agents/<slug>/identity.md` 这一份文件。
+ * 一个 agent 的身份 = `members/<slug>/identity.md` 这一份文件。
  *
  * 没有数据库、没有枚举、没有 schema 校验。文件里的 YAML 头只提供**结构化的一点点**
  * （名字、身份标签、上级），正文才是身份。系统不解析正文，只把它放进提示词。
@@ -18,7 +18,8 @@ import {
 	type FrontmatterField,
 } from "../md/doc.ts";
 import { assertName, slugifyName } from "../naming.ts";
-import { listDirSorted } from "../runtime/io.ts";
+import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
+import { workspaceOf } from "../layout.ts";
 
 /** 一个人的身份文件。读写都经 `doc.ts`，格式只有一份。 */
 export const IDENTITY_FILE = "identity.md";
@@ -103,23 +104,58 @@ export async function writeIdentity(
 	return identityOf(safe, dir, parseDoc(path, text));
 }
 
-/** agent 根目录（`workspace/agents`）下的所有子目录。 */
-export async function listAgentSlugs(root: string): Promise<readonly string[]> {
-	const entries = await listDirSorted(root);
-	return entries.filter((entry) => entry.kind === "dir" && !entry.name.startsWith(".")).map((entry) => entry.name);
+/**
+ * 人的根目录：可以是一个，也可以是几个（助理在 app 根、成员在用户根）。
+ * 顺序就是优先级 —— 同一个 slug 出现在两个根里时，前面的那份说了算。
+ */
+export type AgentRoots = string | readonly string[];
+
+function rootList(roots: AgentRoots): readonly string[] {
+	return typeof roots === "string" ? [roots] : roots;
+}
+
+/** 所有根下的子目录，slug 去重（先出现的根优先）。 */
+export async function listAgentSlugs(roots: AgentRoots): Promise<readonly string[]> {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const root of rootList(roots)) {
+		for (const entry of await listDirSorted(root)) {
+			if (entry.kind !== "dir" || entry.name.startsWith(".") || seen.has(entry.name)) continue;
+			seen.add(entry.name);
+			out.push(entry.name);
+		}
+	}
+	return out;
 }
 
 /** 读一份身份；文件不存在返回 undefined（不是错误 —— 缺席是一种正常状态）。 */
-export async function readIdentity(root: string, slug: string): Promise<Identity | undefined> {
-	const dir = join(root, slug);
-	const doc = await readDocFile(join(dir, IDENTITY_FILE));
-	return doc === undefined ? undefined : identityOf(slug, dir, doc);
+export async function readIdentity(roots: AgentRoots, slug: string): Promise<Identity | undefined> {
+	for (const root of rootList(roots)) {
+		const dir = join(root, slug);
+		const doc = await readDocFile(join(dir, IDENTITY_FILE));
+		if (doc !== undefined) return identityOf(slug, dir, doc);
+	}
+	return undefined;
+}
+
+/**
+ * 这个人的目录：有身份就按身份所在根；还没有身份文件时，看哪个根里已经有这个文件夹
+ * （技能、记忆这类东西可能在身份写好之前就存在）。都没有就是 `undefined`。
+ */
+export async function agentDirOf(roots: AgentRoots, slug: string): Promise<string | undefined> {
+	const identity = await readIdentity(roots, slug);
+	if (identity !== undefined) return identity.dir;
+	for (const root of rootList(roots)) {
+		const dir = join(root, slug);
+		if (await existsAt(dir)) return dir;
+	}
+	return undefined;
 }
 
 /** 拿一个还没被占用的 slug：重名就加 `-2`、`-3`。 */
-export async function uniqueSlug(root: string, name: string): Promise<string> {
+export async function uniqueSlug(roots: AgentRoots, name: string): Promise<string> {
 	const base = slugifyName(name);
-	const taken = new Set(await listAgentSlugs(root));
+	const taken = new Set(await listAgentSlugs(roots));
 	if (!taken.has(base)) return base;
 	for (let index = 2; index < 1000; index += 1) {
 		const candidate = `${base}-${index}`;
@@ -129,7 +165,7 @@ export async function uniqueSlug(root: string, name: string): Promise<string> {
 }
 
 export type CreateAgentInput = {
-	/** `workspace/agents`。 */
+	/** 用户根下的 `members`（与助理所在的 `assistant` 一起构成两个扫描根）。 */
 	readonly root: string;
 	/** 显示名。也用来生成 slug（除非显式给了 slug）。 */
 	readonly name: string;
@@ -160,15 +196,18 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	};
 	// 没写正文就写空正文：提示词里那一段由 `05-body.md` 的 `skip-empty` 整段吞掉，
 	// 不在代码里编一段「我是谁」——身份正文归那个人自己（或招他的人）写。
-	return writeIdentity(input.root, slug, header, input.body ?? "");
+	const identity = await writeIdentity(input.root, slug, header, input.body ?? "");
+	// 每人一个自己的工作目录：`run` 不写 cwd 时就在这儿跑（提示词里也是这么说的）。
+	await ensureDir(workspaceOf(identity.dir));
+	return identity;
 }
 
 /** 读全部身份。组织架构就是这份结果。 */
-export async function readAllIdentities(root: string): Promise<readonly Identity[]> {
-	const slugs = await listAgentSlugs(root);
+export async function readAllIdentities(roots: AgentRoots): Promise<readonly Identity[]> {
+	const slugs = await listAgentSlugs(roots);
 	const out: Identity[] = [];
 	for (const slug of slugs) {
-		const identity = await readIdentity(root, slug);
+		const identity = await readIdentity(roots, slug);
 		if (identity !== undefined) out.push(identity);
 	}
 	return out;

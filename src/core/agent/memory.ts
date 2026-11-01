@@ -1,5 +1,5 @@
 /**
- * 记忆 = `agents/<slug>/memory.md`，一份人手写的 Markdown。
+ * 记忆 = `members/<slug>/memory.md`，一份人手写的 Markdown。
  *
  * 为什么不是数据库：记忆的价值在于**被改**。我说「以后别这样」，agent 应该能把
  * 那条改掉或者划掉；写在 Markdown 里，它自己 `skills(action=write)`/直接改文件都行，

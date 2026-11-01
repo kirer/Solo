@@ -46,4 +46,4 @@ export type { JsonObject } from "@earendil-works/pi-durable";
 export { Type } from "@earendil-works/pi-ai";
 export type { Models } from "@earendil-works/pi-ai";
 export { openCore, type RuntimeReport } from "./open.ts";
-export { setupModels, syncModels, compactionSettings } from "./models.ts";
+export { setupModels, syncModels, setAgentModel, compactionSettings } from "./models.ts";

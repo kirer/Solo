@@ -57,6 +57,8 @@ type PostInput = {
 	readonly wakeTo?: readonly string[];
 	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
 	readonly attachments?: readonly Attachment[];
+	/** 要我选的选项（2–6 个）。落库、进界面，投递照常。 */
+	readonly options?: readonly string[];
 };
 
 export type PostDeps = {

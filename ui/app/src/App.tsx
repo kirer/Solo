@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { Attachment } from "./api/types.ts";
 import { Composer } from "./composer/Composer.tsx";
 import { useToasts } from "./hooks/useToasts.ts";
 import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
@@ -13,6 +14,7 @@ import { NeedMenu, Overlays } from "./panels/Overlays.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { Slot } from "./plugin/Slot.tsx";
+import { AttachmentPreview } from "./stream/AttachmentPreview.tsx";
 import { Stream } from "./stream/Stream.tsx";
 import {
 	openChannel,
@@ -45,6 +47,7 @@ export function App(): JSX.Element {
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
+	const [file, setFile] = useState<Attachment | null>(null);
 
 	useOrgStream();
 	useChannelStream();
@@ -225,7 +228,7 @@ export function App(): JSX.Element {
 						</p>
 					</div>
 				) : (
-					<Stream onImage={setImage} />
+					<Stream onImage={setImage} onFile={setFile} />
 				)}
 
 				{channel === null ? null : <Composer toast={toast} />}
@@ -237,6 +240,8 @@ export function App(): JSX.Element {
 
 			{/* 插槽：全屏浮层层 —— 插件要画自己的浮层就从这里进（和灯箱同层）。 */}
 			<Slot name="overlays" />
+
+			<AttachmentPreview file={file} onClose={() => setFile(null)} />
 
 			{image === null ? null : (
 				<div className="lightbox" id="lightbox" role="dialog" aria-modal="true" onClick={() => setImage(null)}>

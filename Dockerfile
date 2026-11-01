@@ -18,19 +18,20 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY tsconfig.json ./
 COPY src ./src
 COPY ui ./ui
+COPY seed ./seed
 COPY scripts ./scripts
 
-# 数据目录：数据库、settings.json、uploads/ 都在这里，必须挂卷持久化
-RUN mkdir -p /app/workspace && chown -R node:node /app
-VOLUME ["/app/workspace"]
+# 数据目录分两个根：app/ 放助手与配置，user/ 放我的组织；两处都要持久化。
+RUN mkdir -p /app/data/app /app/data/user && chown -R node:node /app
+VOLUME ["/app/data"]
 
 ENV PORT=7788
 ENV AI_COMPANY_HOST=0.0.0.0
 EXPOSE 7788
 
-# 非 root 运行。workspace 挂载目录需要对 uid 1000 可写（见 docs/DEPLOY.md）
+# 非 root 运行。/app/data 挂载目录需要对 uid 1000 可写（见 docs/DEPLOY.md）
 USER node
 
 CMD ["node", "--experimental-strip-types", "src/core/shell/main.ts", \
      "--port", "7788", "--host", "0.0.0.0", \
-     "--workspace", "/app/workspace"]
+     "--app-root", "/app/data/app", "--user-root", "/app/data/user"]

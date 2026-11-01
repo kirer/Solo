@@ -55,26 +55,31 @@ async function main(): Promise<void> {
 	};
 	const { BACKGROUND_CONTEXT, createRegistry } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
+	const { resolveLayout } = await import("../src/core/layout.ts");
 	const { assembleCore } = await import("../src/core/shell/assemble.ts");
 	const { seedOwnerAssistant, seedPromptTemplates, seedRules } = await import("../src/core/shell/seed.ts");
 
 	const root = await mkdtemp(join(tmpdir(), "core-live-"));
-	const agentsRoot = join(root, "agents");
-	const teamsRoot = join(root, "teams");
+	// 应用私有的东西（助理、提示词、库、设置）落在 `.app/`，组织落在临时根里。
+	const layout = resolveLayout({ appRoot: join(root, ".app"), userRoot: root });
+	const agentsRoot = layout.membersRoot;
+	const teamsRoot = layout.teamsRoot;
+	await mkdir(layout.assistantRoot, { recursive: true });
 	await mkdir(agentsRoot, { recursive: true });
 	await mkdir(teamsRoot, { recursive: true });
 	console.log(`工作区：${root}`);
 
 	// 和 `main.ts` 启动时同一套播种：规矩、模板、全员层技能、助理身份。
 	// 少了 `prompt/`，V3 的提示词渲染出来是空的 —— 那正是「单测全绿、模型收到半句话」。
-	await seedRules(root);
-	await seedPromptTemplates(root);
-	const slug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
-	console.log(`播种：agents/${slug}`);
+	await seedRules(layout);
+	await seedPromptTemplates(layout);
+	const slug = await seedOwnerAssistant(layout, { name: "助理" });
+	const assistantDir = join(layout.assistantRoot, slug);
+	console.log(`播种：assistant/${slug}`);
 
-	const configured = await setupLiveModels(root);
+	const configured = await setupLiveModels(layout.settingsFile);
 	const runtime = await openCore({
-		databasePath: join(root, "core.sqlite"),
+		databasePath: layout.databasePath,
 		models: configured.models,
 		registry: createRegistry(),
 	});
@@ -83,8 +88,7 @@ async function main(): Promise<void> {
 	console.log(`模型：${picked.provider}/${picked.modelId}`);
 
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
-		agentsRoot,
-		teamsRoot,
+		layout,
 		defaultModel: picked,
 	});
 
@@ -94,7 +98,7 @@ async function main(): Promise<void> {
 		const { renderAgentSection } = await import("../src/core/agent/sections.ts");
 		const prompt = await renderAgentSection(
 			runtime.registry,
-			{ workspace: root, agents: agentsRoot, teams: teamsRoot, chats: async () => [] },
+			{ layout, chats: async () => [] },
 			slug,
 		);
 		console.log(`\n──── system prompt（前 40 行 / 共 ${prompt.split("\n").length} 行）────`);
@@ -103,9 +107,9 @@ async function main(): Promise<void> {
 
 		// delivery 段同样贴出来：它在同步/异步交接处，单测测的是函数、不是链路。
 		const { renderReplyRules } = await import("../src/core/channel/delivery.ts");
-		const { loadTemplates, promptDirOf } = await import("../src/core/md/prompt.ts");
+		const { loadTemplates } = await import("../src/core/md/prompt.ts");
 		const { createFsx } = await import("../src/core/fsx.ts");
-		const delivery = (await loadTemplates(createFsx(promptDirOf(agentsRoot)), ".")).filter(
+		const delivery = (await loadTemplates(createFsx(layout.promptRoot), ".")).filter(
 			(item) => item.use === "delivery",
 		);
 		const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
@@ -150,9 +154,9 @@ async function main(): Promise<void> {
 	});
 
 	// 2. 技能是否出现在提示词里（读的是同一份 render 结果）。
-	await mkdir(join(agentsRoot, slug, "skills", "自测技能"), { recursive: true });
+	await mkdir(join(assistantDir, "skills", "自测技能"), { recursive: true });
 	await (await import("node:fs/promises")).writeFile(
-		join(agentsRoot, slug, "skills", "自测技能", "SKILL.md"),
+		join(assistantDir, "skills", "自测技能", "SKILL.md"),
 		"---\nname: 自测技能\ndescription: 这是实测写入的技能\n---\n\n正文。\n",
 		"utf8",
 	);
@@ -171,7 +175,7 @@ async function main(): Promise<void> {
 		"---\nname: 自测团队\nlead: " + slug + "\nstatus: active\n---\n\n目标：验证团队说明会进提示词。\n",
 		"utf8",
 	);
-	const identityPath = join(agentsRoot, slug, "identity.md");
+	const identityPath = join(assistantDir, "identity.md");
 	const identity = await readFile(identityPath, "utf8");
 	await (await import("node:fs/promises")).writeFile(
 		identityPath,
@@ -198,7 +202,7 @@ async function main(): Promise<void> {
 		text: `@${slug} 用 remember 记一条：「我喜欢结论先行」。记完告诉我。`,
 	});
 	const rememberReply = await waitForReply(shell, "all", slug, rememberAsked.seq, WAIT_MS);
-	const memoryPath = join(agentsRoot, slug, "memory.md");
+	const memoryPath = join(assistantDir, "memory.md");
 	const memoryText = await readFile(memoryPath, "utf8").catch(() => "");
 	phases.push({
 		name: "记忆落盘（remember 真写了文件）",
@@ -291,11 +295,11 @@ async function main(): Promise<void> {
 	// 问题），按消息判断会把「没招人」误判成「招了人」，再让后面的断言全部失真。
 	const { readAllIdentities } = await import("../src/core/agent/identity.ts");
 	const hireDeadline = Date.now() + WAIT_MS;
-	let all = await readAllIdentities(agentsRoot);
+	let all = await readAllIdentities(layout.agentRoots);
 	let hired = all.find((identity) => identity.slug !== slug);
 	while (Date.now() < hireDeadline && hired === undefined) {
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
-		all = await readAllIdentities(agentsRoot);
+		all = await readAllIdentities(layout.agentRoots);
 		hired = all.find((identity) => identity.slug !== slug);
 	}
 	const allAfterHire = (await shell.channels()).messages["all"] ?? [];

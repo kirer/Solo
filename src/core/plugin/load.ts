@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolRegistration } from "../runtime/index.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
-import { createPluginApi, emptySinks, type PluginListener, type PluginRouteSpec } from "./api.ts";
+import { createPluginApi, emptySinks, type PluginListener, type PluginRouteSpec, type PluginScope } from "./api.ts";
 import { listPluginSlugs, readPluginManifest } from "./manifest.ts";
 
 /** 界面上看得见的一条插件。`client` 是浏览器要去 import 的 URL。 */
@@ -54,9 +54,11 @@ export type PluginHost = {
 };
 
 export type LoadOptions = {
-	/** `workspace/plugins`（绝对路径）。不存在 = 没有插件。 */
+	/** `<appRoot>/plugins`（绝对路径）。不存在 = 没有插件。 */
 	readonly pluginsRoot: string;
 	readonly workspace: string;
+	/** 这个频道的工作区（插件 `api.scope` 的实现）。不给就只有「没有」。 */
+	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
 	/** 一行一个事件的出口（默认 `console.log`）。 */
 	readonly log?: (line: string) => void;
 };
@@ -114,7 +116,7 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 				throw new Error(`${manifest.server} 里没有 export function apply(api)`);
 			}
 			await (module.apply as (api: unknown) => unknown)(
-				createPluginApi({ slug, workspace: options.workspace, sinks }),
+				createPluginApi({ slug, workspace: options.workspace, sinks, ...(options.scope === undefined ? {} : { scope: options.scope }) }),
 			);
 		} catch (error) {
 			const reason = `${slug}：${error instanceof Error ? error.message : String(error)}`;

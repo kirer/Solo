@@ -43,7 +43,7 @@ export const SettleDoc = defineDoc<SettleState>({
 type SettleDeps = {
 	/** 频道层的接线：会话在哪、记唤醒、模板目录、答完收尾（`channel/wiring.ts`）。 */
 	readonly wiring: ChannelWiring;
-	readonly agentsRoot: string;
+	readonly agentRoots: readonly string[];
 	readonly teamsRoot: string;
 	readonly channelState: () => Promise<ChannelState>;
 	/** 合并唤醒：和投递同一条路，别让同一个会话排两个唤醒。 */
@@ -87,7 +87,7 @@ export async function settleTeam(
 	try {
 		const [doc, identities] = await Promise.all([
 			readTeam(deps.teamsRoot, team).catch(() => undefined),
-			readAllIdentities(deps.agentsRoot),
+			readAllIdentities(deps.agentRoots),
 		]);
 		const to = settleTarget(doc, channel.members, identities);
 		const waiting = settle.waiting?.[team];

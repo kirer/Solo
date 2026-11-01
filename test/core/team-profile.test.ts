@@ -14,6 +14,7 @@ import { createTeams } from "../../src/core/app/teams.ts";
 import type { CoreServices } from "../../src/core/app/types.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { appendTeamMemory } from "../../src/core/team/memory.ts";
+import { resolveLayout } from "../../src/core/layout.ts";
 
 let root = "";
 
@@ -26,7 +27,10 @@ afterEach(async () => {
 });
 
 function teams() {
-	const shell = { teamsRoot: root, labelOf: (slug: string) => (slug === "林越" ? "林越" : slug) } as unknown as CoreServices;
+	const shell = {
+		layout: resolveLayout({ appRoot: join(root, ".app"), userRoot: root }),
+		labelOf: (slug: string) => (slug === "林越" ? "林越" : slug),
+	} as unknown as CoreServices;
 	return createTeams(shell);
 }
 
@@ -36,7 +40,7 @@ describe("团队档案", () => {
 	});
 
 	test("README 的四个字段都搬过来", async () => {
-		await writeTeam(root, { slug: "demo", name: "演示团队", lead: "林越", doing: "林越在写", body: "# 演示团队\n\n目标是 X。\n" });
+		await writeTeam(join(root, "teams"), { slug: "demo", name: "演示团队", lead: "林越", doing: "林越在写", body: "# 演示团队\n\n目标是 X。\n" });
 		const profile = await teams().readTeamProfile("demo");
 		expect(profile.name).toBe("演示团队");
 		expect(profile.lead).toBe("林越");
@@ -46,17 +50,17 @@ describe("团队档案", () => {
 	});
 
 	test("团队层的技能进档案（`teams/<slug>/skills/`）", async () => {
-		await writeTeam(root, { slug: "demo", name: "演示团队", body: "目标。\n" });
-		await mkdir(join(root, "demo", "skills", "发布"), { recursive: true });
-		await writeFile(join(root, "demo", "skills", "发布", "SKILL.md"), "---\nname: 发布\ndescription: 怎么上线\n---\n\n正文\n", "utf8");
+		await writeTeam(join(root, "teams"), { slug: "demo", name: "演示团队", body: "目标。\n" });
+		await mkdir(join(root, "teams", "demo", "skills", "发布"), { recursive: true });
+		await writeFile(join(root, "teams", "demo", "skills", "发布", "SKILL.md"), "---\nname: 发布\ndescription: 怎么上线\n---\n\n正文\n", "utf8");
 		const profile = await teams().readTeamProfile("demo");
 		expect(profile.skills).toHaveLength(1);
 		expect(profile.skills[0]).toMatchObject({ name: "发布", description: "怎么上线", scope: "team", overrides: false });
 	});
 
 	test("团队记忆按小节拆开，时间留空", async () => {
-		await writeTeam(root, { slug: "demo", name: "演示团队", body: "目标。\n" });
-		await appendTeamMemory(root, "demo", { text: "8080 常驻，别再起第二个。", by: "林越", at: new Date("2026-10-31T00:00:00Z") });
+		await writeTeam(join(root, "teams"), { slug: "demo", name: "演示团队", body: "目标。\n" });
+		await appendTeamMemory(join(root, "teams"), "demo", { text: "8080 常驻，别再起第二个。", by: "林越", at: new Date("2026-10-31T00:00:00Z") });
 		const profile = await teams().readTeamProfile("demo");
 		expect(profile.memory.exists).toBe(true);
 		expect(profile.memory.entries).toHaveLength(1);

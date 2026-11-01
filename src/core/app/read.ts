@@ -267,11 +267,18 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	}
 
 	/** 档案页里「他在哪些频道」那一栏：成员表是真相，界面不用自己比。 */
-	async function channelsOf(slug: string): Promise<{ id: string; kind: "dm" | "group"; title: string }[]> {
+	async function channelsOf(
+		slug: string,
+	): Promise<{ id: string; kind: "dm" | "group"; title: string; members: string[] }[]> {
 		const state = await shell.channels();
 		return Object.values(state.channels ?? {})
 			.filter((channel) => channel.members.includes(slug))
-			.map((channel) => ({ id: channel.id, kind: chatKind(channel), title: channel.title }));
+			.map((channel) => ({
+				id: channel.id,
+				kind: chatKind(channel),
+				title: channel.title,
+				members: channel.members.filter((member) => member !== OWNER_SLUG),
+			}));
 	}
 
 	return {

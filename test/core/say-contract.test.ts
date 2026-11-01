@@ -129,9 +129,7 @@ async function setup(options: {
 
 	const tools = createCoreTools({
 		harness: runtime.harness,
-		workspaceRoot: root,
-		agentsRoot,
-		teamsRoot,
+		layout: box.layout,
 		directory: async () => ({
 			...emptyDirectory(),
 			slugToConversation: { [ME]: CONVERSATION },
@@ -139,7 +137,7 @@ async function setup(options: {
 			wake,
 		}),
 		saveDirectory: async () => undefined,
-		wiring: wireChannel({ harness: runtime.harness, agentsRoot }),
+		wiring: wireChannel({ harness: runtime.harness, layout: box.layout }),
 	} as never);
 	// 每个用例都从「新一轮」开始（真实流程里由 `deliver()` 清）。不清的话，
 	const tool = tools.find((item) => item.name === "say");
@@ -528,4 +526,25 @@ describe("过程话可以连发（「一轮一句结论」已降级为 rules.md 
 		expect(await say({ text: "顺带说一下，我把它记进文档了" })).toContain("已发到");
 	});
 
+});
+
+describe("要我选：带 options", () => {
+	it("2–6 个选项：落 kind=choice、自动叫我、原样存进消息", async () => {
+		const box = await setup();
+		const output = await box.say({ text: "先做哪个？", options: ["首页", "登录页"] });
+		expect(output).toContain("已发到");
+		const state = await box.snapshot();
+		const last = lastOf(state, PROJ);
+		expect(last?.kind).toBe("choice");
+		expect(last?.options).toEqual(["首页", "登录页"]);
+		expect(last?.mentions).toContain(OWNER);
+	});
+
+	it("选项少于 2 个、或多于 6 个、或重复：都不发，回一句能自救的话", async () => {
+		const box = await setup();
+		expect(await box.say({ text: "选一个", options: ["只有一个"] })).toContain("2–6");
+		const seven = ["a", "b", "c", "d", "e", "f", "g"];
+		expect(await box.say({ text: "选一个", options: seven })).toContain("2–6");
+		expect(await box.say({ text: "选一个", options: ["A", "A"] })).toContain("不要重复");
+	});
 });
