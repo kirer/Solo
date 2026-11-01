@@ -19,9 +19,11 @@ import type { Conversation, Extension, Harness, Registry } from "../runtime/inde
 import {
 	BACKGROUND_CONTEXT,
 	defineExtension,
+	syncModels,
 	type Context,
 } from "../runtime/index.ts";
 import { labelsOf, readAllIdentities } from "../agent/identity.ts";
+import { mtimeOrUndefined } from "../runtime/io.ts";
 import { agentSections, renderAgentSection, type ChatRef } from "../agent/sections.ts";
 import { createCoreTools, type CoreToolDeps } from "../channel/tools/index.ts";
 import { mentionRosterOf } from "../channel/mentions.ts";
@@ -243,6 +245,8 @@ export async function assembleCore(
 	async function openOne(slug: string, ctx: Context): Promise<Conversation> {
 		const existing = conversations.get(slug);
 		if (existing !== undefined) return existing;
+		// 开会话前先看一眼 settings.json：刚加的提供商要能立刻用上（ADR-025）。
+		await refreshModels(ctx);
 		const known = directory.slugToConversation[slug];
 		if (known !== undefined) {
 			const found = await harness.conversation(known as never, ctx);
@@ -302,9 +306,36 @@ export async function assembleCore(
 		return created;
 	}
 
+	// 默认模型与个人模型：运行中可以换 —— `settings.json` 一改就就地重装（ADR-025）。
+	let defaultModel = options.defaultModel;
+	let agentModels = options.agentModels;
+	let settingsStamp: number | undefined;
+
+	/**
+	 * `settings.json` 变了就把提供商重新装进注册表（原地 upsert，不用重启）。
+	 *
+	 * 每处「要读模型」的地方先调一次：一次 stat，没变就返回。默认模型换了还要把
+	 * **没单独指定模型的人**重新对齐 —— 他们身上挂的是旧的那一只。
+	 */
+	async function refreshModels(ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
+		if (options.models === undefined) return;
+		const file = join(workspaceRoot, "settings.json");
+		const stamp = await mtimeOrUndefined(file);
+		if (stamp === undefined || stamp === settingsStamp) return;
+		settingsStamp = stamp;
+		const applied = syncModels(options.models, file);
+		if (applied === undefined) return;
+		defaultModel = applied.defaultModel;
+		agentModels = applied.agentModels;
+		for (const [slug, conversation] of conversations) {
+			if (agentModels?.[slug] !== undefined) continue;
+			await applyModel(conversation, slug, ctx).catch(() => undefined);
+		}
+	}
+
 	/** 这个人该用哪只模型：单独指定的压过默认。都没有就是「没有模型」（ADR-023）。 */
 	function modelFor(slug: string): { readonly provider: string; readonly modelId: string } | undefined {
-		return options.agentModels?.[slug] ?? options.defaultModel;
+		return agentModels?.[slug] ?? defaultModel;
 	}
 
 	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
@@ -342,7 +373,11 @@ export async function assembleCore(
 		conversations,
 		directory,
 		...(options.models === undefined ? {} : { models: options.models }),
-		...(options.defaultModel === undefined ? {} : { defaultModel: options.defaultModel }),
+		// getter：默认模型会随 `settings.json` 变，读的人每次都拿当下那一只。
+		get defaultModel() {
+			return defaultModel;
+		},
+		refreshModels,
 		// 沉淀钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
 		afterPost,
 		async syncTeam(team: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {

@@ -154,13 +154,15 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		const conversation = shell.conversations.get(slug);
 		if (conversation === undefined) throw new AppError("not-found", "没有这个人的会话");
 
+		// 刚在设置里加的提供商，先装进注册表再校验（ADR-025）。
+		await shell.refreshModels?.();
 		const value = (body.model ?? "").trim();
 		const wanted = value === "" ? shell.defaultModel : parseModelRef(value);
 		if (wanted === undefined) {
 			throw new AppError("bad-request", value === "" ? "还没有配置默认模型，先配一只" : `模型要写成 提供商/模型：${value}`);
 		}
 		if (shell.models !== undefined && shell.models.getModel(wanted.provider, wanted.modelId) === undefined) {
-			throw new AppError("bad-request", `没有这个模型：${value}（刚加 / 改过的提供商要重启服务才生效）`);
+			throw new AppError("bad-request", `没有这个模型：${value}（看一眼 设置 → 模型 里的提供商和模型目录）`);
 		}
 
 		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, BACKGROUND_CONTEXT);

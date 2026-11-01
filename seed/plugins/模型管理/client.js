@@ -3,7 +3,7 @@
  *
  * 它只做表单：读 `GET /api/p/models` 拿到打码后的配置，改完 `POST /api/p/models` 写回
  * `workspace/settings.json`，「获取可用模型」打一次 `POST /api/p/models/probe`。
- * 真实模型是进程装配的，所以这里只写文件，**保存后要重启服务才生效**。
+ * 这里只写文件；写完之后内核会在下一次读模型时把它就地装进注册表（ADR-025），不用重启。
  *
  * 版式借的是设置页的公共样式（`.settings-row` / `.settings-desc`，见 DESIGN §1.5）：
  * 一行一个设置、左标题右控件，卡片本身只画边框，不再自带标题。
@@ -346,7 +346,7 @@ export default {
 				call("/api/p/models", { defaultModel: target.defaultModel, providers: target.providers })
 					.then((data) => {
 						setDraft(toDraft(data));
-						setState({ busy: false, error: "", done: "已写入 settings.json · 重启服务后生效" });
+						setState({ busy: false, error: "", done: "已写入 settings.json · 已生效" });
 						return true;
 					})
 					.catch((error) => {
@@ -531,6 +531,7 @@ export default {
 
 			const [catalog, setCatalog] = useState(null);
 			const [current, setCurrent] = useState("");
+			const [configured, setConfigured] = useState(0);
 			const [pending, setPending] = useState(0);
 			const [state, setState] = useState({ busy: false, error: "" });
 
@@ -539,13 +540,14 @@ export default {
 				let alive = true;
 				setState({ busy: false, error: "" });
 				// 可选项来自**装配好的注册表**（`/api/models`），不是 settings.json：
-				// 文件里刚加的提供商要重启才进注册表，列出来点了只会 400（实测被这么问过）。
+				// 文件里刚加的提供商，内核读这份清单时会先就地装进注册表（ADR-025），不用等重启。
 				Promise.all([ui.api.getModels(), call("/api/p/models"), ui.api.getPerson(slug)])
 					.then(([live, configured, profile]) => {
 						if (!alive) return;
 						setCatalog(live);
 						// settings.json 里有、注册表里还没有的模型数：一行提示，别让人对着选不了的项发呆。
 						const inFile = configured.providers.reduce((total, provider) => total + provider.models.length, 0);
+						setConfigured(inFile);
 						setPending(Math.max(0, inFile - live.models.length));
 						setCurrent(profile.model ?? "");
 					})
@@ -562,13 +564,20 @@ export default {
 			const choices = catalog.models.map((model) => ({ value: model, label: model }));
 			const fallback = catalog.defaultModel;
 
-			// 一家提供商都没有：没有可选项，说明去哪儿配就行。
+			// 一个能用的都没有：分两种说清楚——真没配，和配了但没装上（地址 / 协议不对）。
+			// 后者写成「还没有配置模型」会把人送去设置页白改一遍（实测被这么问过）。
 			if (choices.length === 0) {
 				return h(
 					"div",
 					{ className: "pm-person" },
 					h("div", { className: "detail-sec-head" }, "模型"),
-					h("p", { className: "pm-msg" }, "还没有配置模型：在 设置 → 模型 里加一份，他才能回话。"),
+					h(
+						"p",
+						{ className: "pm-msg" },
+						configured === 0
+							? "还没有配置模型：在 设置 → 模型 里加一份，他才能回话。"
+							: `settings.json 里配了 ${configured} 个模型，一个都没装上：看一眼 设置 → 模型 里的地址 / 协议。`,
+					),
 				);
 			}
 
@@ -605,10 +614,10 @@ export default {
 					choices.map((choice) => h("option", { key: choice.value, value: choice.value }, choice.label)),
 				),
 				state.error === "" ? null : h("p", { className: "pm-msg", "data-tone": "error" }, state.error),
-				// 文件里配了、注册表里还没有：说清楚要重启，而不是让它在下拉里出现然后 400。
+				// 文件里配了、注册表里没有：说明那一份没装上，而不是让它在下拉里出现然后 400。
 				pending === 0
 					? null
-					: h("p", { className: "pm-msg" }, `settings.json 里还有 ${pending} 个模型没生效：重启服务后才能选。`),
+					: h("p", { className: "pm-msg" }, `settings.json 里还有 ${pending} 个模型没装上：看一眼 设置 → 模型 里的地址 / 协议。`),
 			);
 		}
 

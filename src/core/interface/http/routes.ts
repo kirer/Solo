@@ -93,11 +93,11 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
-			// 现在生效的模型清单：给某个人换模型时只列这些（settings.json 里刚加的提供商
-			// 要重启才进注册表，列出来选不了 —— ADR-021）。
+			// 现在生效的模型清单：给某个人换模型时只列这些。`settings.json` 改过会就地重装
+			// 注册表，所以这里不用重启就是最新的（ADR-025）。
 			pattern: "/api/models",
 			method: "GET",
-			handler: async ({ response }) => json(response, app.models.list()),
+			handler: async ({ response }) => json(response, await app.models.list()),
 		},
 		{
 			// 一个人的全部档案：界面右上角那个「详情」面板一次要的东西都在这。

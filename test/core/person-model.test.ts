@@ -99,6 +99,44 @@ describe("现在生效的模型清单", () => {
 	});
 });
 
+describe("改 settings.json 不用重启", () => {
+	it("新加的模型下一次读注册表就在（ADR-025），当场能给某个人换上", async () => {
+		const { root, port, shell } = await boot();
+		expect(JSON.parse(await get(port, "/api/models")).models).toEqual(["magpie/m-one", "magpie/m-two"]);
+
+		// 设置页写盘：多一只模型。进程不动，接着读。
+		await writeFile(
+			join(root, "settings.json"),
+			`${JSON.stringify({ defaultModel: "magpie/m-one", providers: [gateway(["m-one", "m-two", "m-three"])] }, null, 2)}\n`,
+			"utf8",
+		);
+
+		expect(JSON.parse(await get(port, "/api/models")).models).toContain("magpie/m-three");
+		const response = await post(port, modelPath("林越"), { model: "magpie/m-three" });
+		expect(response.status).toBe(200);
+		const conversation = shell.conversations.get("林越");
+		if (conversation === undefined) throw new Error("没有会话");
+		expect((await conversation.agent(BACKGROUND_CONTEXT)).model).toMatchObject({ modelId: "m-three" });
+	});
+
+	it("删掉一家提供商：它从清单里消失，挂着它的人回到默认模型", async () => {
+		const { root, port, shell } = await boot();
+		await post(port, modelPath("林越"), { model: "magpie/m-two" });
+
+		// 只留 m-one：m-two 这一只没了。
+		await writeFile(
+			join(root, "settings.json"),
+			`${JSON.stringify({ defaultModel: "magpie/m-one", providers: [gateway(["m-one"])] }, null, 2)}\n`,
+			"utf8",
+		);
+
+		expect(JSON.parse(await get(port, "/api/models")).models).toEqual(["magpie/m-one"]);
+		const conversation = shell.conversations.get("林越");
+		if (conversation === undefined) throw new Error("没有会话");
+		expect((await conversation.agent(BACKGROUND_CONTEXT)).model).toMatchObject({ modelId: "m-one" });
+	});
+});
+
 describe("给一个人换模型", () => {
 	it("换了当场生效，并记进 settings.json（重启后装配认这一份）", async () => {
 		const { root, port, shell } = await boot();

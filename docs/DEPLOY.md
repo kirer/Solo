@@ -124,6 +124,9 @@ OPENAI_API_KEY=sk-...    npm start
 - `agentModels`（可选）是 `{ "<slug>": "<provider>/<modelId>" }`：**单独给某个人指定模型**，
   压过 `defaultModel`。界面上在私聊/人物档案的「详情 → 模型」里改，改完当场生效并写进这一项；
   指着已删掉的 provider 的记录会被忽略（按默认走），不让人静默 `no_model`。
+- 改这个文件**不用重启**：内核在下一次读模型时（开新会话、`GET /api/models`、给某个人换模型）
+  发现文件变过，就把它就地重装进注册表（ADR-025）。删掉一家提供商，挂着它的人回到默认。
+  唯一还按启动时算的是压缩阈值：新加的模型先用全局兜底窗口，重启一次才对齐它自己的窗口。
 - `api` 可选 `openai-responses`（默认）、`anthropic`、`openai`。
 - `apiKey` 写在这个文件里（**不是**环境变量名），文件在 `workspace/` 下、已 gitignore。
   本地网关（`127.0.0.1` / `localhost`）可以省略或留空：装配时补占位符 `magpie`。

@@ -98,7 +98,13 @@ export type CoreServices = {
 	 * 存在，再写进会话 —— 写一个解析不到的引用，那个人此后每次都 `no_model`。
 	 */
 	readonly models?: Models;
-	readonly defaultModel?: { readonly provider: string; readonly modelId: string };
+	/** 当下用的默认模型：`settings.json` 改了会变，所以读它、别缓存。 */
+	readonly defaultModel?: { readonly provider: string; readonly modelId: string } | undefined;
+	/**
+	 * `settings.json` 变过就重新装一遍提供商（ADR-025）。改模型配置的用例在**读注册表之前**
+	 * 调一次，否则刚加的模型要等重启才认得。
+	 */
+	refreshModels?(): Promise<void>;
 	/**
 	 * 诊断出口。装配方（`shell/main.ts`）在 `openCore` **之前**就要建好它：底座的
 	 * `onReport` 要往同一个实例里报，两边各建一个就看不到彼此的 `lastReport`。

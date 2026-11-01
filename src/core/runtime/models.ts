@@ -62,9 +62,9 @@ type Settings = {
 };
 
 /** 读 settings.json；坏了返回 undefined（调用方回落环境变量默认）。 */
-function readSettings(workspace: string): Settings | undefined {
+function readSettings(file: string): Settings | undefined {
 	try {
-		return JSON.parse(readFileSync(join(workspace, "settings.json"), "utf8")) as Settings;
+		return JSON.parse(readFileSync(file, "utf8")) as Settings;
 	} catch {
 		return undefined;
 	}
@@ -174,6 +174,66 @@ function usableDefault(models: Models, ref: ModelRef, source: string): ModelRef 
 	return { provider: first.provider, modelId: first.id };
 }
 
+type AppliedModels = {
+	readonly defaultModel: ModelRef;
+	readonly agentModels?: Readonly<Record<string, ModelRef>>;
+};
+
+/** 把一份 settings 装进给定的注册表（原地 `setProvider`），算出默认模型与个人模型。 */
+function applySettings(models: MutableModels, settings: Settings): AppliedModels {
+	let defaultRef: ModelRef | undefined;
+	for (const config of settings.providers ?? []) {
+		models.setProvider(makeProvider(config));
+		if (defaultRef === undefined && config.models.length > 0) {
+			defaultRef = { provider: config.id, modelId: config.models[0]!.id };
+		}
+	}
+	if (settings.defaultModel !== undefined) {
+		defaultRef = parseModelRef(settings.defaultModel) ?? defaultRef;
+	}
+	if (defaultRef === undefined) throw new Error("settings.json 有 providers 但没有模型");
+	// 单独指定的模型：解析不到的（provider 被删了）直接丢掉，按默认走 ——
+	// 留一个解析不到的引用等于那个人每次都 `no_model`。
+	const agentModels: Record<string, ModelRef> = {};
+	for (const [slug, value] of Object.entries(settings.agentModels ?? {})) {
+		const ref = parseModelRef(value);
+		if (ref !== undefined && models.getModel(ref.provider, ref.modelId) !== undefined) agentModels[slug] = ref;
+	}
+	return {
+		defaultModel: usableDefault(models, defaultRef, "settings.json 的 defaultModel"),
+		...(Object.keys(agentModels).length === 0 ? {} : { agentModels }),
+	};
+}
+
+/**
+ * 把 `settings.json` 重新装进**已经在跑的**注册表 —— 加 / 改 / 删提供商不用重启（ADR-025）。
+ *
+ * 为什么原地改就够：`MutableModels.setProvider` 是 upsert，harness 拿的是同一个对象，
+ * 下一个请求就解析得到；在跑的会话只认自己 `configure` 过的那只模型，不受影响。
+ *
+ * 返回装完之后的默认模型与个人模型。三种情况返回 `undefined` 且**什么都不动**：
+ * 文件里没有 providers（环境变量那一路不归它管）、文件读不出来、配置装不上
+ * （比如 defaultModel 指向不存在的模型且一个可用模型都没有）—— 跑着的服务不能
+ * 因为一份坏配置就把全部模型换掉。
+ */
+export function syncModels(target: Models, file: string): AppliedModels | undefined {
+	const settings = readSettings(file);
+	if (settings?.providers === undefined || settings.providers.length === 0) return undefined;
+	// 先装进一份临时注册表：装不上就整份丢弃，旧的还在。
+	const staging = createModels();
+	let applied: AppliedModels;
+	try {
+		applied = applySettings(staging, settings);
+	} catch (error) {
+		console.warn(`[core] settings.json 装不上，继续用原来那份：${(error as Error).message}`);
+		return undefined;
+	}
+	const live = target as MutableModels;
+	live.clearProviders();
+	for (const provider of staging.getProviders()) live.setProvider(provider);
+	return applied;
+}
+
 /**
  * 装配模型。
  *
@@ -191,36 +251,11 @@ export function setupModels(
 	environment: NodeJS.ProcessEnv = process.env,
 	options: { readonly workspace?: string } = {},
 ): ModelSetup {
-	const settings = options.workspace === undefined ? undefined : readSettings(options.workspace);
+	const settings = options.workspace === undefined ? undefined : readSettings(join(options.workspace, "settings.json"));
 
 	if (settings?.providers !== undefined && settings.providers.length > 0) {
 		const models = createModels();
-		let defaultRef: ModelRef | undefined;
-		for (const config of settings.providers) {
-			(models as MutableModels).setProvider(makeProvider(config));
-			if (defaultRef === undefined && config.models.length > 0) {
-				defaultRef = { provider: config.id, modelId: config.models[0]!.id };
-			}
-		}
-		if (settings.defaultModel !== undefined) {
-			const slash = settings.defaultModel.indexOf("/");
-			if (slash > 0) {
-				defaultRef = { provider: settings.defaultModel.slice(0, slash), modelId: settings.defaultModel.slice(slash + 1) };
-			}
-		}
-		if (defaultRef === undefined) throw new Error("settings.json 有 providers 但没有模型");
-		// 单独指定的模型：解析不到的（provider 被删了）直接丢掉，按默认走 ——
-		// 留一个解析不到的引用等于那个人每次都 `no_model`。
-		const agentModels: Record<string, ModelRef> = {};
-		for (const [slug, value] of Object.entries(settings.agentModels ?? {})) {
-			const ref = parseModelRef(value);
-			if (ref !== undefined && models.getModel(ref.provider, ref.modelId) !== undefined) agentModels[slug] = ref;
-		}
-		return {
-			models,
-			defaultModel: usableDefault(models, defaultRef, "settings.json 的 defaultModel"),
-			...(Object.keys(agentModels).length === 0 ? {} : { agentModels }),
-		};
+		return { models, ...applySettings(models, settings) };
 	}
 
 	if (environment.ANTHROPIC_API_KEY !== undefined) {

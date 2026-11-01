@@ -490,3 +490,27 @@
   不让人静默 `no_model`。
 - **验收**：`test/core/person-model.test.ts`（当场生效、写进 settings.json、重启后装配认、
   空串回默认并删记录、没有的模型与没有斜杠的写法 400 且会话不动）。
+
+## ADR-025 改 settings.json 不用重启：就地重装注册表
+
+- **取代**：ADR-021 的「提供商在进程启动时装配、改了要重启」与 ADR-024 末段「全局
+  `defaultModel` / `providers` 仍然要重启」。那两条的前提是「注册表是启动时建死的」，
+  而底座（pi-ai）的 `MutableModels` 本来就支持 `setProvider` / `clearProviders` 原地 upsert，
+  harness 拿的是**同一个对象** —— 前提不成立。
+- **背景**：在设置里加完提供商，详情面板仍然写着「还没有配置模型」，模型下拉是空的。
+  人被送回设置页白改一遍（实测被这么问过一次）。这不是文案问题，是「改了不生效」。
+- **决策**：`runtime/models.ts` 新增 `syncModels(models, file)`：读 `settings.json`，
+  **先装进一份临时注册表**，装得上才 `clearProviders` + 逐个 `setProvider` 到运行中的那份；
+  返回装完之后的 `defaultModel` 与 `agentModels`。装不上（文件里没有 providers / 配置坏到
+  算不出默认模型）返回 `undefined`，旧的那份原样留着 —— 跑着的服务不能被一份坏配置换掉全部模型。
+- **什么时候重装**：不挂文件监听。`shell/assemble.ts` 的 `refreshModels()` 读一次 mtime，
+  变了才重装；它挂在三处「要读模型」的地方 —— `openOne`（开会话前）、`GET /api/models`
+  （`app/models.ts` 的 `list`）、`POST /api/people/:slug/model`（校验之前）。没有轮询，
+  也不用给插件 API 加东西：设置页保存完，界面下一次拉清单就装好了。
+- **默认模型换了怎么办**：`CoreServices.defaultModel` 改成 getter（读的是当下那份），
+  重装后把**没有 `agentModels` 记录的人**重新 `applyModel` 一次；单独指定过的人不动。
+  删掉的提供商同理：挂着它的人回到默认，而不是静默 `no_model`。
+- **代价**：压缩策略（`compactionSettings`）仍按启动时的模型表算，新加的模型用全局兜底
+  （128k 窗口）—— 估小了只是多压几次，不会压坏。真要按新模型窗口压，重启一次即可。
+- **验收**：`test/core/person-model.test.ts`「改 settings.json 不用重启」两条（加一只模型
+  下一次读清单就在、当场能换上；删掉一家提供商后它消失、挂着它的人回到默认）。
