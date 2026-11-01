@@ -554,3 +554,34 @@
 - **纪律**（写进 [DEPLOY](DEPLOY.md) §9）：二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单。
 - **验收**：`test/desktop/update-server.test.ts`（清单不缓存、产物长缓存、根路径可列、
   `../` 与 `%2e%2e%2f` 都 404）。
+
+## ADR-028 桌面端是一个 Electron 壳，后端作为子进程跑同一份源码
+
+- **背景**：ADR-002 早就定了「Electron 加载同一个本地服务，不重写界面」，但没定三件事：
+  后端怎么随包、数据放哪、升级走哪。
+- **决策**：
+  1. **壳只管进程边界**：`desktop/src/` 起一个子进程（`process.execPath` + `ELECTRON_RUN_AS_NODE=1`）、
+     开窗口、加载 `http://127.0.0.1:<port>/?shell=desktop`。它**不 import `src/core/` 一个文件**
+     （`scripts/check-boundaries.mjs` 第 7 条机械化检查），端口靠后端已有的
+     `[core] http://127.0.0.1:<port>/` 那一行认（`desktop/src/ready-line.ts`）。
+  2. **后端不打包、不 transpile**：Electron 自带的 Node 24 已经稳定支持类型擦除、内置 `node:sqlite`，
+     所以 `src/**/*.ts` 原样随包发布；`ui/web` 与 `seed/` 一起放进去，`import.meta.url` 向上找
+     它们的相对深度一像素没变 —— 后端零改动。
+  3. **不用 asar**：播种技能走 `fs.cp(目录, …, {recursive:true})`，而 asar 的 fs 垫片只支持拷文件，
+     拷目录直接 NOT_FOUND。摊在 `Resources/app` 里一样能跑，排障还更好看。
+  4. **端口先试 7788，被占再退 0**：`localStorage`（主题、布局）按 origin 存，端口每次变等于偏好每次丢。
+  5. **数据在 `userData/workspace`**，不认仓库里的 `workspace/`（那是真实数据）。开发态连 userData
+     都放临时目录，跑坏了删掉即可。
+  6. **升级**：`electron-updater` + 自建源（ADR-027），`autoDownload=false`、`autoInstallOnAppQuit=false`、
+     `allowDowngrade=false`；下载与安装各要一次明确点击；安装前先停后端（它占着 sqlite，还在跑后台命令）。
+  7. **标题栏藏进界面里**：macOS `hiddenInset` + `trafficLightPosition`，界面用 `?shell=desktop`
+     给侧栏 logo 行让出 40px 并装好拖拽把手（`ui/app/src/styles/shell.css` 末尾那一段）。
+     Windows 保持系统标题栏 —— 覆盖式按钮要配合右内边距，先不冒险。
+- **未签名的 macOS 构建装不了更新**：Squirrel.Mac 换包前核对新旧 `.app` 的签名身份，没有
+  Developer ID 必然失败。所以壳会先探测签名（`codesign -dv`）：没签名就只提示「去下载页」，
+  不让「重启安装」点下去变成应用直接消失。Windows 不受影响。
+- **取舍**：整包约 390 MB（生产依赖都在里面），换来「用户机器上不需要 node/npm」和「dev 与打包
+  走同一条 spawn 路径」。真要瘦身，再按 `files` 排除用不到的依赖。
+- **验收**：`npm run desktop:dev` 出窗口；`npm run desktop:pack` 后 `release/mac-arm64/Solo.app`
+  能起、能播种、能说话；`SOLO_UPDATE_URL=http://127.0.0.1:8899/` 指向假 feed 时日志出现
+  `[update] 有新版本 …`。`test/desktop/ready-line.test.ts` 守就绪行与更新源地址的判据。

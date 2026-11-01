@@ -19,6 +19,8 @@
  *    用例要能脱离网络被测试（现在 `test/core/` 里就是这样直接调它们的）。
  * 6. `src/core/interface/` 是**唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/`
  *    说话：不许 import `agent|channel|team|runtime` 的内部实现，否则业务会再次长回 handler 里。
+ * 7. `desktop/src/` 是**桌面壳**：不许 import `src/core/` 与 `ui/app/` —— 它与内核之间只有
+ *    进程边界（spawn 后端、认 `[core] http://…` 那一行），与界面之间只有 HTTP。
  */
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -29,7 +31,7 @@ const ROOT = new URL("..", import.meta.url).pathname;
 const RUNTIME_ONLY = ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/chord"];
 
 /** 受检查的目录（相对仓库根）。 */
-const CHECKED_DIRS = ["src/core"];
+const CHECKED_DIRS = ["src/core", "desktop/src"];
 
 async function* walkAll(dir) {
 	let entries;
@@ -144,6 +146,16 @@ const LAYER_RULES = [
 		dirs: ["src/core/app/"],
 		layer: "用例（app）",
 		deny: [{ match: /^node:(http|https)$/, reason: "用例层不许 import node:http —— 传输归 interface/ 管" }],
+	},
+	// 桌面壳：与内核之间只有进程边界（spawn 后端 + 认 stdout 的 `[core] http://…` 那一行）。
+	// 它一旦 import 了 `src/core/`，壳就有了第二份业务语义，「同一份服务」就不成立了。
+	{
+		dirs: ["desktop/src/"],
+		layer: "桌面壳（desktop）",
+		deny: [
+			{ match: /\/src\/core\//, reason: "桌面壳只经进程边界与后端说话，不许 import 内核源码" },
+			{ match: /\/ui\/app\//, reason: "桌面壳不碰界面源码 —— 界面由后端从 ui/web 发给窗口" },
+		],
 	},
 	// 接口：唯一碰 node:http 的地方，但只许经 app/view 说话。
 	{

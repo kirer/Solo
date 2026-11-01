@@ -1,0 +1,12 @@
+{
+	"//": "桌面壳单独一份：根 tsconfig 的 rootDir 是 src/，include 只有 src/**/*.ts。主进程输出 ESM（根 package.json 是 type: module）。",
+	"extends": "../tsconfig.json",
+	"compilerOptions": {
+		"rootDir": "src",
+		"outDir": "dist",
+		"declaration": false,
+		"sourceMap": false
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}

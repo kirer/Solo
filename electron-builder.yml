@@ -1,0 +1,56 @@
+# 桌面端打包（ADR-028）。
+#
+# 后端不打包、不 transpile：`src/` 的 TS 原样进 asar，用 Electron 自带的 Node 24 直接跑
+# （类型擦除已稳定，`node:sqlite` 内置）。`ui/web` 与 `seed/` 一起放进去 —— 后端按
+# `import.meta.url` 向上找它们的相对深度，在 asar 里一像素没变。
+appId: com.solo.desktop
+productName: Solo
+artifactName: ${productName}-${version}-${arch}.${ext}
+
+directories:
+  output: release
+  buildResources: desktop
+
+files:
+  - package.json
+  - desktop/dist/**/*.js
+  - src/**/*.ts
+  - ui/web/**/*
+  - seed/**/*
+
+# 不用 asar：播种技能用的是 `fs.cp(目录, …, {recursive:true})`，而 asar 的 fs 垫片只支持
+# 拷「文件」，拷目录直接 NOT_FOUND（`seed/agents/assistant/skills/建立团队`）。放进 asar 要连带
+# 改成逐文件拷贝，不值当；整份摊在 Resources/app 里一样能跑，排障还更好看。
+asar: false
+
+# 自建更新源（scripts/update-server.ts）。打包时用环境变量给地址：
+#   SOLO_UPDATE_URL=https://你的域名/solo npm run desktop:dist:mac
+# 它会被写进 Resources/app-update.yml，客户端运行时自己读。
+publish:
+  - provider: generic
+    url: ${env.SOLO_UPDATE_URL}
+
+mac:
+  icon: desktop/icon.png
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+
+# macOS 的更新载体是 zip（Squirrel.Mac 换包），dmg 只给人手动装。
+dmg:
+  writeUpdateInfo: false
+
+win:
+  icon: desktop/icon.png
+  target:
+    - target: nsis
+      arch: [x64]
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  differentialPackage: true

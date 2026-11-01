@@ -18,6 +18,12 @@ import "./styles/index.css";
 const host = document.getElementById("root");
 if (host === null) throw new Error("找不到 #root");
 
+// 桌面壳（`desktop/src/main.ts`）用 `?shell=desktop` 加载本页：标题栏藏进界面里，
+// 红绿灯落在侧栏左上角，那几行留白与拖拽把手只在壳里要有（浏览器里不要）。
+if (new URLSearchParams(location.search).get("shell") === "desktop") {
+	document.documentElement.dataset["shell"] = "desktop";
+}
+
 // 卡顿自报要在第一次渲染之前装好，否则首屏那段最长的工作恰好没被观察到。
 installJankMonitor();
 // 代码块的「复制」按钮是 `dangerouslySetInnerHTML` 注入的，只能全局委托一次。

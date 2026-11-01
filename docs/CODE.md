@@ -184,6 +184,21 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/styles/*.css` | 七个样式文件，顺序见 `styles/index.css`（token 先落地）；记忆抽屉并进右栏后 `memory.css` 已删 |
 | `public/fonts/*.woff2` | Montserrat 300/400/500（本地字体，只用于品牌名） |
 
+### 2.3 `desktop/src/`（Electron 主进程，打包配置在 `electron-builder.yml`）
+
+壳只管进程边界与窗口（ADR-028）：不 import `src/core/` 与 `ui/app/`（边界检查第 7 条拦）。
+浏览器与桌面端是**同一份界面**，桌面端只是加载时多一个 `?shell=desktop`。
+
+| 文件 | 职责 |
+| --- | --- |
+| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS `hiddenInset` 标题栏）、外链交给系统浏览器、退出前先停后端、更新与菜单接线 |
+| `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/core/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
+| `desktop/src/ready-line.ts` | `parseReadyLine`：从 `[core] http://127.0.0.1:<port>/` 认端口（**唯一**的壳 ↔ 内核契约） |
+| `desktop/src/updates.ts` | `electron-updater` 接线：静默检查（启动 30 秒后 + 每 6 小时）、下载与安装各要一次点击、安装前 `beforeInstall` 停后端；macOS 先探签名，没签名只提示下载 |
+| `desktop/src/feed.ts` | `resolveFeedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
+| `desktop/src/menu.ts` | 菜单：检查更新 / 重启 / 重新加载页面 / 开发者工具 |
+| `desktop/tsconfig.json` | 单独一份（根 tsconfig 的 `rootDir` 是 `src/`），输出 ESM 到 `desktop/dist/` |
+
 ## 3. 「我想改 X → 动这里」
 
 | 想改什么 | 动这里 | 注意 |
@@ -227,6 +242,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（示范插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/agents/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
+| 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028） |
 | 发布 / 排查桌面端更新 | `scripts/update-server.ts`（只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**：`electron-updater` 自己按清单地址解析相对 URL（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单 |
 
 ## 4. 启动顺序（第 3 步最容易出错）
@@ -288,8 +304,8 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 ## 6. 测试布局
 
-`test/desktop/`（1 文件）：`update-server.test.ts` —— 自建更新源：清单不缓存、产物长缓存、
-根路径可列、`../` 与 `%2e%2e%2f` 都 404。
+`test/desktop/`（2 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
+`../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）。
 
 `test/core/`（64 文件，纯函数 + 装配）：
 

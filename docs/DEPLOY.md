@@ -348,3 +348,41 @@ npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
 
 局限（刻意不做，等真需要再加）：没有上传接口（跨机搬运用 `rsync` / `scp`）、没有鉴权、
 没有 TLS 终止（前面挂 nginx / caddy）、没有 Range 断点续传（客户端整包下载）。
+
+## 10. 桌面应用（Electron）
+
+壳在 `desktop/src/`，打包配置是仓库根的 `electron-builder.yml`。**后端还是同一份源码**：
+壳起一个子进程用 Electron 自带的 Node 跑 `src/core/shell/main.ts`，窗口加载
+`http://127.0.0.1:<port>/?shell=desktop`（ADR-028）。
+
+```bash
+npm run desktop:dev     # 开发：临时 userData + 临时工作区，带开发者工具
+npm run desktop:pack    # 只出目录（release/mac-arm64/Solo.app），验证打包最常用
+npm run desktop:dist:mac   # 出 dmg + zip（zip 是更新载体）
+npm run desktop:dist:win   # 出 NSIS 安装包
+```
+
+- **数据在哪**：`app.getPath("userData")/workspace` —— macOS 是
+  `~/Library/Application Support/solo/workspace`，Windows 是 `%APPDATA%/solo/workspace`。
+  后端日志在 `.../solo/logs/core.log`（超过 5 MB 轮转一代）。**它不认仓库里的 `workspace/`**。
+- **端口**：先试 7788（偏好按 origin 存，端口变就丢），被占（比如同时开着 `npm start`）
+  自动退到随机端口。
+- **开发态**连 userData 都在临时目录，删掉就干净重来。
+- **改完界面**照旧 `npm run ui:build`，然后在应用里「重新加载页面」（⌘R）—— 不用重启应用。
+- **打包出来的版本号**就是根 `package.json` 的 `version`，`npm version` 改它。
+
+**发布与升级**
+
+```bash
+SOLO_UPDATE_URL=https://你的域名/solo npm run desktop:dist:mac
+# 把 release/ 里的 latest-mac.yml + Solo-2.0.0-arm64.zip 放进 feed 目录，见 §9
+```
+
+地址在打包时写进 `Resources/app-update.yml`；运行时也能用环境变量 `SOLO_UPDATE_URL` 覆盖
+（只认 https，或 http 的本机地址 —— 验证本地假 feed 用）。检查时机：启动 30 秒后一次，
+之后每 6 小时；「检查更新…」在应用菜单里。
+
+**macOS 未签名装不了更新**：Squirrel.Mac 换包前核对新旧 `.app` 的签名身份。没有
+Developer ID 证书时，应用仍会检查、下载，但最后只提示「去下载页」—— 这是系统约束，
+不是 bug。要自动更新就得签：Developer ID Application + 公证。
+Windows 不需要签名即可安装（SmartScreen 会警告）。

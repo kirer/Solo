@@ -903,7 +903,7 @@ activity?: {
 | 框架 | **React 18 + TS**（现有） | DSH 用 `react ^18.2.0` + `@vitejs/plugin-react`。不引框架、不引组件库 |
 | 样式 | **手写 CSS + CSS 变量**（现有） | DSH 用「一个 theme 包 + 每个组件一个 `*.module.css`」。我们只抄 theme 那一半：六档字号、三档灰靠全局变量约束，组件样式按区域进 `styles/*.css`，不引 CSS Modules（组件少，加一层文件跳转不值） |
 | 状态 | 现有 `store` + `useSyncExternalStore` | 全部状态就一个对象，不需要状态库 |
-| 桌面端 | **后置**：Electron 壳加载同一个 `http://127.0.0.1:7788` | DSH 也是 Electron 壳（`apps/desktop`）加载本地服务；先保证网页端零平台依赖 |
+| 桌面端 | **已落地**（ADR-028）：Electron 主进程把内核当子进程拉起，窗口加载它发的同一个 origin（`?shell=desktop`） | DSH 也是 Electron 壳加载本地服务；界面零重写，端口由壳分配（7788 被占就换临时端口）。macOS 用 `hiddenInset` 把红绿灯藏进侧栏留白，那几个像素的留白与拖拽把手只在 `?shell=desktop` 下出现（`ui/app/src/styles/shell.css`） |
 
 **抄了 DSH 的什么**：Vite + React 18 的构建组合；「消息流里的工具调用是一等公民」这一行模型
 （DSH 的 `DiffBlock` / `CommandText` / `CodeCard` / `AnimatedRows` 与本文档的
@@ -914,18 +914,11 @@ activity?: {
 （服务定位器、五种事件派发、boot 图、lazy-CJS）—— 插件只能拿到 `h` / `React` / 接口客户端 /
 `register`，看不到别的插件的模块，跨插件协作只经插槽。VFS 预览仍然没抄。
 
-**桌面端不提前做，但要为它留三个口子**（写进 `ui/app/src/platform.ts`，网页端就是普通实现）：
-
-```ts
-export const platform = {
-  storage: { get, set, remove },     // 换成 localStorage / 桌面端配置
-  openExternal: (url: string) => void,
-  copy: (text: string) => Promise<void>,
-};
-```
-
-组件里**不许直接摸 `window.localStorage` / `navigator.clipboard`**，一律走 `platform`。
-这一条是套壳时唯一需要改的地方。
+**套壳没有额外接缝**：窗口加载的就是后端同一个 `http://127.0.0.1:<port>/`，
+`localStorage` / `navigator.clipboard` / 外链在 Electron 里行为一致，所以原先设想的
+`platform.ts` 网关没有建（ADR-028）。唯一为壳而加的是 `html[data-shell="desktop"]`
+那组样式：多出红绿灯需要的顶部留白和 `-webkit-app-region` 拖拽把手 —— 只在壳里生效，
+浏览器里一像素不变。
 
 ### 9.2 目录（重构后）
 
@@ -939,7 +932,6 @@ ui/app/src/
   sidebar/     Sidebar.tsx、ChannelRow.tsx
   composer/    Composer.tsx、MentionMenu.tsx、Attachments.tsx
   panels/      RightRail.tsx（详情/技能/记忆三个视图）、Overlays.tsx、MemoryDrawer.tsx
-  platform.ts  桌面端唯一的口子
   lib/         时间 / 头像 / Markdown / 格式化
   styles/      theme / shell / stream / trace / composer / motion
 ```
@@ -956,8 +948,8 @@ ui/app/src/
 
 - `test/ui/` 加 `trace-model.test.ts`：摘要文案、连续 think 合并、`[PASS]` 不画、
   截断文案、未知工具兜底、steps 上限。
-- `test/ui/` 现有源码约定测试补一条：**`ui/app/src` 里不许出现 `localStorage` 直读**
-  （只允许 `platform.ts`）。
+- 桌面端没有独立测试层：壳的契约（就绪行、更新源地址）在 `test/desktop/`，
+  界面源码约定测试照旧。
 - 纯函数先行：`buildRows()` 与 `buildTrace()` 都不碰 DOM，可以直接喂假数据。
 
 ---
