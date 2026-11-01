@@ -55,6 +55,8 @@ async function setup(options: {
 	colleague?: string;
 	/** 团队频道只有「我 + 他」两个人（按 chatKind 就是私聊形态）。live 第一轮就是这个形状。 */
 	solo?: boolean;
+	/** 再建一个同名的频道，用来验「重名不猜」。 */
+	duplicateTitle?: boolean;
 } = {}): Promise<{
 	say: (args: Record<string, unknown>) => Promise<string>;
 	snapshot: () => Promise<ChannelState>;
@@ -92,6 +94,9 @@ async function setup(options: {
 		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 		Object.assign(doc, ensureChannel(doc, { id: DM, title: ME, members: [OWNER, ME], at: 1 }));
 		Object.assign(doc, ensureChannel(doc, { id: PROJ, title: "小恐龙", members, at: 2 }));
+		if (options.duplicateTitle === true) {
+			Object.assign(doc, ensureChannel(doc, { id: teamId("dino-2"), title: "小恐龙", members, at: 3 }));
+		}
 		// 团队频道里有过消息 → 它是「最近活跃的那个」。
 		const first = appendMessage(doc, PROJ, { from: OWNER, text: "小恐龙做到哪了", at: 10 });
 		doc.messages[PROJ] = [first.message];
@@ -194,6 +199,41 @@ describe("兜底频道", () => {
 	});
 });
 
+describe("频道名也能指定", () => {
+	/**
+	 * 真实事故：知言在私聊里被叫醒，想派活给团队，手上只有「QQ农场」这个名字、
+	 * 没有 `team:qq-farm` 这个 id，于是省略 channel —— 40 条指挥全落在私聊里，
+	 * 团队频道 88 条消息它只发过 2 条，而它以为自己发出去了。
+	 */
+	it("写频道名就落到那个频道（默认本来会回私聊）", async () => {
+		const { say, snapshot } = await setup({ wake: { channelId: DM, seq: 1 } });
+
+		await say({ text: "回给我的结论" });
+		const afterDefault = await snapshot();
+		expect(lastOf(afterDefault, DM)?.text).toContain("回给我的结论");
+
+		const out = await say({ text: "扫码窗口开好了", channel: "小恐龙" });
+		const after = await snapshot();
+		expect(lastOf(after, PROJ)?.text).toContain("扫码窗口开好了");
+		expect(out).toContain("已发到「小恐龙」");
+	});
+
+	it("重名不猜：列出 id 让它自己选", async () => {
+		const { say, snapshot } = await setup({ duplicateTitle: true });
+		const out = await say({ text: "在吗", channel: "小恐龙" });
+		expect(out).toContain("有两个频道都叫「小恐龙」");
+		const after = await snapshot();
+		expect(lastSpoken(after, PROJ, "在吗")).toBeUndefined();
+	});
+
+	it("名字写错：把我在的频道连 id 一起给它", async () => {
+		const { say } = await setup();
+		const out = await say({ text: "在吗", channel: "QQ农场" });
+		expect(out).toContain("没有这个频道");
+		expect(out).toContain(PROJ);
+	});
+});
+
 describe("投递正文带频道 id", () => {
 	it("第一行写清频道 id，模型才知道精确回哪儿", () => {
 		const state = ensureChannel(
@@ -212,7 +252,10 @@ describe("投递正文带频道 id", () => {
 		);
 		const { message } = appendMessage(state, DM, { from: OWNER, text: "怎么样", at: 2 });
 		const body = renderDeliveryWithTemplates({ channel: state.channels[DM]!, message, viewer: ME });
-		expect(body).toContain("要指挥团队，就回团队频道");
+		// 光说「回团队频道」没用：它不知道频道叫什么，只会省略 channel 落回私聊。
+		expect(body).toContain("要指挥团队");
+		expect(body).toContain("`channel`");
+		expect(body).toContain("团队一个字都收不到");
 	});
 });
 
@@ -259,6 +302,14 @@ describe("要我拍板就 @ 我", () => {
 		const { say, snapshot } = await setup();
 		const before = lastOf(await snapshot(), PROJ)?.seq;
 		const reply = await say({ text: "很".repeat(1_201) });
+		expect(reply).toContain("太长了");
+		expect(lastOf(await snapshot(), PROJ)?.seq).toBe(before);
+	});
+
+	it("群聊里的上限比私聊更紧：600 字就该打回去", async () => {
+		const { say, snapshot } = await setup({ colleague: "林越" });
+		const before = lastOf(await snapshot(), PROJ)?.seq;
+		const reply = await say({ text: "很".repeat(700) });
 		expect(reply).toContain("太长了");
 		expect(lastOf(await snapshot(), PROJ)?.seq).toBe(before);
 	});

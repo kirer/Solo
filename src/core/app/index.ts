@@ -12,6 +12,7 @@ import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
 import { createPeople } from "./people.ts";
 import { createRead } from "./read.ts";
+import { createRuns } from "./runs.ts";
 import { createSnapshots } from "./snapshot.ts";
 import { createTeams } from "./teams.ts";
 import { createUploads } from "./uploads.ts";
@@ -24,8 +25,9 @@ export function createApp(services: CoreServices) {
 	const teams = createTeams(services);
 	const chat = createChat(services);
 	const uploads = createUploads(services);
+	const runs = createRuns(services);
 	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
-	return { snapshots, read, people, teams, chat, uploads, diag };
+	return { snapshots, read, people, teams, chat, uploads, runs, diag };
 }
 
 export type App = ReturnType<typeof createApp>;

@@ -138,9 +138,6 @@ function AssistantRow(props: { person: Actor; state: string; onOpen: () => void 
 			<span className="ch-main">
 				<span className="ch-top">
 					<span className="ch-title">{person.label}</span>
-					<span className="ch-state" data-state={state}>
-						{stateLabel(state)}
-					</span>
 				</span>
 				<span className="ch-sub">{person.title}</span>
 			</span>
@@ -191,10 +188,8 @@ function ChannelRow(props: {
 				<span className="ch-top">
 					<span className="ch-title">{title}</span>
 					{channel.team === undefined ? null : <span className="ch-tag">团队</span>}
-					{person === undefined ? null : (
-						<span className="ch-state" data-state={state}>
-							{stateLabel(state)}
-						</span>
+					{person === undefined || person.title === "" ? null : (
+						<span className="ch-role">{person.title}</span>
 					)}
 					{unread > 0 ? (
 						<span className="ch-badge" aria-label={`${String(unread)} 条未读`}>
@@ -237,11 +232,4 @@ function avatarState(state: string): "idle" | "thinking" | "working" | "done" {
 	if (state === "working" || state === "thinking") return state;
 	if (state === "asleep") return "idle";
 	return "idle";
-}
-
-function stateLabel(state: string): string {
-	if (state === "working") return "在做";
-	if (state === "thinking") return "在想";
-	if (state === "asleep") return "睡了";
-	return "待命";
 }

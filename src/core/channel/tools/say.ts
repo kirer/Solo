@@ -1,11 +1,11 @@
 /** `say`：在频道里说话。带 `mention` 就是提问并叫醒对方。 */
 import { BACKGROUND_CONTEXT, Type, defineTool, type Context } from "../../runtime/index.ts";
-import { OWNER } from "../types.ts";
+import { OWNER, chatKind } from "../types.ts";
 import { parseMentions, resolveMention } from "../mentions.ts";
 import { postMessage } from "../post.ts";
 import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel, othersAwoken } from "./channel-choice.ts";
-import { SAY_LIMIT, isPass, monologueOpener } from "./guards.ts";
+import { isPass, monologueOpener, sayLimitOf } from "./guards.ts";
 
 export function createSayTool(deps: CoreToolDeps) {
 	const say = defineTool({
@@ -17,7 +17,12 @@ export function createSayTool(deps: CoreToolDeps) {
 				description: "要说的话。这一轮没有新东西就写 `[PASS]`（这一轮只有你被叫醒时会被拒）。",
 			}),
 			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@我` 指我）。带上会叫醒他。" })),
-			channel: Type.Optional(Type.String({ description: "频道 id，省略 = 我刚被叫醒的那个频道。不在那个频道里的人 @ 不到。" })),
+			channel: Type.Optional(
+				Type.String({
+					description:
+						"频道 id 或频道名（`chats` 能列出你在的），省略 = 我刚被叫醒的那个频道。不在那个频道里的人 @ 不到。",
+				}),
+			),
 			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
 			kind: Type.Optional(
 				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
@@ -38,16 +43,6 @@ export function createSayTool(deps: CoreToolDeps) {
 			if (typeof slug !== "string") return text(slug);
 			// 没有「私下发给谁」这个参数：私聊只能我开，agent 只能在已有的频道里说话。
 			// 也不需要专门硬拦 ——「非成员发不进去」已经重定了这条边界。
-			// 一条频道消息最多 1200 字。
-			//
-			// 线上见过 21,568 字的一条 `say` —— 那不是在说话，是把整个思考过程倒进频道。
-			// 长内容有它的地方（团队文件、记忆、审查记录），频道里只放结论和路径。
-			if (args.text.length > SAY_LIMIT) {
-				return text(
-					`太长了：${args.text.length} 字，一条消息最多 ${SAY_LIMIT} 字。频道里只放结论，` +
-						"把过程或整份内容写进团队文件，再发一句结论加路径。",
-				);
-			}
 			// 内心独白不是发言。
 			//
 			// 规矩里早写了「不用英文写内心独白」，但模型该写还是写（线上 46% 的发言是英文）。
@@ -82,6 +77,18 @@ export function createSayTool(deps: CoreToolDeps) {
 			const roster = await mentionRoster(deps);
 			const channelId = target.channelId;
 			const targetChannel = state.channels[channelId];
+
+			// 一条消息的长度上限**看频道**：群聊只放结论（600 字），私聊可以多说两句（1200）。
+			//
+			// 线上见过 21,568 字的一条 `say` —— 那不是在说话，是把整个思考过程倒进频道。
+			// 长内容有它的地方（团队文件、记忆、审查记录），频道里只放结论和路径。
+			const limit = sayLimitOf(targetChannel === undefined ? "group" : chatKind(targetChannel));
+			if (args.text.length > limit) {
+				return text(
+					`太长了：${args.text.length} 字，${targetChannel?.title ?? channelId} 里一条最多 ${limit} 字。` +
+						"频道里只放结论，把过程或整份内容写进团队文件，再发一句结论加路径。",
+				);
+			}
 
 			// 带 mention：验证成员、补 @ 前缀、默认 kind=question。
 			// `@我` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。

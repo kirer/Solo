@@ -158,7 +158,7 @@ describe("私聊工作记录：消息与跨频道轮次按时间合排", () => {
 		status: "done",
 		startedAt,
 		stepCount: 3,
-		summary: "跑了 1 条命令",
+		summary: "运行 1 条命令",
 	});
 	const titles = new Map([
 		["dm:owner-linyue", "林越"],

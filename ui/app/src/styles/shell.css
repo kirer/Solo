@@ -290,6 +290,22 @@
 	scrollbar-gutter: stable;
 }
 
+/* 私聊行里，名字后面跟的是那个人的身份（前端工程师、负责人……）。
+   这里以前是「待命 / 在做」的状态字，状态改由头像外那圈光表达（见 motion.css 的 .av[data-state]），
+   位置腾出来放身份 —— 状态是暂时的，身份是这条行真正的信息。 */
+.ch-role {
+	/* 身份最多占 5.5em（约五个汉字），再长就省略 —— 名字必须比身份先读得到。 */
+	flex: 0 0 auto;
+	max-width: 5.5em;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
 /* 团队频道名后面那个小绿标：一眼分出「这是团队」和「这是私聊」。 */
 .ch-tag {
 	flex: none;
@@ -365,10 +381,6 @@
 	flex: 0 1 auto;
 }
 
-.ch-top .ch-state {
-	flex: none;
-}
-
 /* 时间推到行尾（设计稿的排法）：名字一行、预览一行，时间只占右上角那一小格，
    不再和预览挤在第二行里互相截断。 */
 .ch-top .ch-time {
@@ -403,25 +415,6 @@
 	line-height: 18px;
 	color: var(--ink-3);
 	font-family: var(--mono);
-}
-
-/*
- * 名字后面那一小段状态。
- *
- * 只有「在想 / 在做」才有颜色：那是唯一会让我改变行为的信息（现在别打断他，
- * 或者正好可以问他）。待命和睡了就用 --ink-3，不占注意力。
- * 状态不出现在群频道行上 —— 一个频道不会「在想」。
- */
-.ch-state {
-	flex: none;
-	font-size: 12px;
-	line-height: 18px;
-	color: var(--ink-3);
-}
-
-.ch-state[data-state="working"],
-.ch-state[data-state="thinking"] {
-	color: var(--live);
 }
 
 /*
@@ -1866,17 +1859,28 @@
 	overflow-wrap: anywhere;
 }
 
-/* 底部输入卡：一行字 + 右侧「添加」。 */
+/* 加一条记忆：写下去的东西会真的进他的 memory.md，所以做成一张小输入卡 ——
+   聚焦时整卡亮一圈，按钮从「淡」变「实」；没写字时按钮是空的，不抢注意力。 */
 .rail-add {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto;
 	align-items: end;
-	gap: 8px;
-	margin-top: 16px;
-	padding: 8px;
+	gap: 6px;
+	margin-top: 14px;
+	padding: 10px 10px 8px 12px;
 	border: 1px solid var(--line);
-	border-radius: var(--r-control);
+	border-radius: 12px;
+	background: color-mix(in oklab, var(--ink) 3%, var(--ground));
+	transition:
+		border-color var(--dur-line) ease,
+		background-color var(--dur-line) ease,
+		box-shadow var(--dur-line) ease;
+}
+
+.rail-add:focus-within {
+	border-color: color-mix(in oklab, var(--accent) 55%, var(--line));
 	background: var(--ground);
+	box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 14%, transparent);
 }
 
 .rail-add textarea {
@@ -1884,7 +1888,7 @@
 	border: 0;
 	background: transparent;
 	resize: none;
-	min-height: 36px;
+	min-height: 40px;
 	max-height: 120px;
 	padding: 2px 4px;
 	color: var(--ink);
@@ -1894,21 +1898,33 @@
 	outline: none;
 }
 
+.rail-add textarea::placeholder {
+	color: var(--ink-3);
+}
+
 .rail-add-btn {
 	appearance: none;
 	border: 0;
-	background: transparent;
-	padding: 4px 6px;
-	border-radius: var(--r-xs);
+	border-radius: 999px;
+	padding: 5px 12px;
+	background: color-mix(in oklab, var(--accent) 14%, transparent);
 	color: var(--accent);
 	font: inherit;
 	font-size: 13px;
-	line-height: 20px;
-	font-weight: 500;
+	line-height: 18px;
+	font-weight: 600;
 	cursor: pointer;
+	transition:
+		background-color var(--dur-line) ease,
+		color var(--dur-line) ease;
+}
+
+.rail-add-btn:not(:disabled):hover {
+	background: color-mix(in oklab, var(--accent) 22%, transparent);
 }
 
 .rail-add-btn:disabled {
+	background: transparent;
 	color: var(--ink-3);
 	cursor: default;
 }

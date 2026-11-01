@@ -142,6 +142,29 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	}, [hasMore, loadingEarlier, rememberAnchor]);
 
 	/**
+	 * 上翻自动补历史：滚到顶部就自己加载，没有按钮。
+	 *
+	 * 两个触发点：滚到离顶 120px 以内，以及「这一屏还没填满但还有更早的」——
+	 * 后者是短频道刚打开时的样子，不补的话会看到一屏空白和一句提示。
+	 * 补完内容还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
+	 */
+	useEffect(() => {
+		const flow = flowRef.current;
+		if (flow === null) return;
+		const maybeLoad = (): void => {
+			const nearTop = flow.scrollTop < 120;
+			const notFilled = flow.scrollHeight <= flow.clientHeight + 40;
+			if ((nearTop || notFilled) && hasMore && !loadingEarlier) onTop();
+		};
+		flow.addEventListener("scroll", maybeLoad, { passive: true });
+		const frame = requestAnimationFrame(maybeLoad);
+		return () => {
+			flow.removeEventListener("scroll", maybeLoad);
+			cancelAnimationFrame(frame);
+		};
+	}, [hasMore, loadingEarlier, onTop, messages]);
+
+	/**
 	 * 双击整行复制正文。
 	 *
 	 * 代码块里的「复制」按钮在 `.md` 里也占文字，所以先拿一份去掉按钮的副本再读
@@ -167,15 +190,11 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 	}, []);
 
 	return (
-		<>
+		<div className="flow-wrap">
 			<div className="flow" id="flow" ref={flowRef}>
 				<div className="flow-inner" id="flow-inner">
-					<div className="flow-top" id="flow-top" data-active={hasMore ? "true" : "false"}>
-						{hasMore ? (
-							<button type="button" className="load-earlier" onClick={onTop} disabled={loadingEarlier}>
-								{loadingEarlier ? "正在读更早的…" : "加载更早的消息"}
-							</button>
-						) : null}
+					<div className="flow-top" id="flow-top" data-active={loadingEarlier ? "true" : "false"}>
+						{loadingEarlier ? <span className="flow-spinner" role="status" aria-label="正在读更早的消息" /> : null}
 					</div>
 
 					{detail === null ? <Skeleton /> : null}
@@ -188,18 +207,18 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 					</div>
 
 				</div>
-				{/* 放在滚动容器**里面**、正文之后：贴在消息区底部，不会掉到输入框上。 */}
-				<button
-					type="button"
-					className="to-bottom"
-					id="to-bottom"
-					hidden={atBottom}
-					onClick={() => toBottom("smooth")}
-				>
-					回到最新
-				</button>
 			</div>
-		</>
+			{/* 在滚动容器**外面**：它一进滚动区就算进 scrollHeight，滚到底永远差它那几十像素。 */}
+			<button
+				type="button"
+				className="to-bottom"
+				id="to-bottom"
+				hidden={atBottom}
+				onClick={() => toBottom("smooth")}
+			>
+				回到最新
+			</button>
+		</div>
 	);
 }
 

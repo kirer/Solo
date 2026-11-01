@@ -1,13 +1,15 @@
 /**
- * 技能（skill）= 一份 `SKILL.md`。两级：
+ * 技能（skill）= 一份 `SKILL.md`。三级：
  *
  * ```
- * <workspace>/skills/<名字>/SKILL.md             全员层：所有人都看得见
- * <workspace>/agents/<slug>/skills/<名字>/...    个人层：只有他自己看得见
+ * <workspace>/skills/<名字>/SKILL.md                全员层：所有人都看得见
+ * <workspace>/teams/<team>/skills/<名字>/...        团队层：这个团队的人看得见
+ * <workspace>/agents/<slug>/skills/<名字>/...       个人层：只有他自己看得见
  * ```
  *
- * 个人层**覆盖**全员层：同名时用个人的。这样「全员统一流程」写全员层，
- * 「我这个人有自己的一套」写个人层，不需要拷贝，也不需要「取消继承」这类开关。
+ * 上一层**覆盖**下一层：同名时用更靠下的那份（个人 > 团队 > 全员）。这样「全员统一流程」
+ * 写全员层，「我们这一摊另有做法」写团队层，「我这个人有自己的一套」写个人层，
+ * 不需要拷贝，也不需要「取消继承」这类开关。
  *
  * 加载策略照搬 Agent Skills 规范（也照搬 pi 的做法）：
  * - `name` + `description` **常驻**提示词，让 agent 知道自己会什么、什么时候该用；
@@ -26,8 +28,8 @@ export const SKILLS_DIR = "skills";
 /** 便携形式：一个目录一份 `SKILL.md`。 */
 export const SKILL_FILE = "SKILL.md";
 
-/** 技能来源。提示词里会标出来 —— 「这是全员共用的」和「这是我自己写的」不是一回事。 */
-export type SkillScope = "all" | "personal";
+/** 技能来源。提示词里会标出来 —— 「全员共用」「这个团队共用」「我自己写的」不是一回事。 */
+export type SkillScope = "all" | "team" | "personal";
 
 export type Skill = {
 	/** 目录名（或单文件时的文件名去掉 `.md`）。稳定标识。 */
@@ -36,9 +38,9 @@ export type Skill = {
 	readonly description: string;
 	/** 技能所在目录（正文里写的相对路径以它为准）。 */
 	readonly dir: string;
-	/** 哪一级的。个人层同名覆盖全员层。 */
+	/** 哪一级的。下面的层同名覆盖上面的层。 */
 	readonly scope: SkillScope;
-	/** 个人层且全员层有同名技能 —— 提示词里要标出来「这是你自己改过的版本」。 */
+	/** 更靠上的层有同名技能 —— 提示词里要标出来「这是覆盖过的版本」。 */
 	readonly overrides?: true;
 };
 
@@ -87,24 +89,38 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 	return found.sort(byName);
 }
 
-/** 技能所在的两级根目录。传一个对象而不是三个字符串，调用点不容易把顺序搞错。 */
+/** 技能所在的各级根目录。传一个对象而不是一串字符串，调用点不容易把顺序搞错。 */
 export type SkillRoots = {
 	/** 工作区根：全员层技能在 `<workspace>/skills/`。 */
 	readonly workspace: string;
 	/** `<workspace>/agents`：个人层技能在 `<agents>/<slug>/skills/`。 */
 	readonly agents: string;
+	/** `<workspace>/teams`：团队层技能在 `<teams>/<team>/skills/`。不传就没有团队层。 */
+	readonly teams?: string;
 };
 
-/** 一个 agent 能看见的全部技能：全员层打底，个人层同名覆盖。 */
-export async function listSkills(roots: SkillRoots, slug: string): Promise<readonly Skill[]> {
+/** 一个团队的技能（团队层本身，不含全员与个人）。团队详情面板用这一份。 */
+export async function listTeamSkills(teamsRoot: string, team: string): Promise<readonly Skill[]> {
+	return scanSkillsDir(join(teamsRoot, team, SKILLS_DIR), "team");
+}
+
+/** 一个 agent 能看见的全部技能：全员层打底，团队层压上，个人层最后覆盖。 */
+export async function listSkills(roots: SkillRoots, slug: string, team?: string): Promise<readonly Skill[]> {
 	const shared = await scanSkillsDir(join(roots.workspace, SKILLS_DIR), "all");
+	const teamSkills =
+		team === undefined || roots.teams === undefined ? [] : await listTeamSkills(roots.teams, team);
 	const personal = await scanSkillsDir(join(roots.agents, slug, SKILLS_DIR), "personal");
 	const merged = new Map<string, Skill>();
-	const sharedNames = new Set(shared.map((skill) => skill.name));
+	// 上面几层有同名 → 这一份是覆盖版。
+	const below = new Set([...shared, ...teamSkills].map((skill) => skill.name));
 	for (const skill of shared) merged.set(skill.name, skill);
-	// 个人层后写 → 同名覆盖。这是「我这个人跟全员不一样」的唯一机制，没有别的开关。
+	// 团队层后写 → 同名覆盖全员层。这是「我们这一摊另有做法」的唯一机制，没有别的开关。
+	for (const skill of teamSkills) {
+		merged.set(skill.name, below.has(skill.name) ? { ...skill, overrides: true } : skill);
+	}
+	// 个人层最后写 → 同名覆盖上面两层。
 	for (const skill of personal) {
-		merged.set(skill.name, sharedNames.has(skill.name) ? { ...skill, overrides: true } : skill);
+		merged.set(skill.name, below.has(skill.name) ? { ...skill, overrides: true } : skill);
 	}
 	return [...merged.values()].sort(byName);
 }
@@ -115,8 +131,13 @@ export async function listSkills(roots: SkillRoots, slug: string): Promise<reado
  * 找不到返回 `undefined`（不抛）：模型调用时拼错一个名字是常事，回一句「没有这门
  * 手艺」比让整轮生成失败有用。
  */
-export async function readSkill(roots: SkillRoots, slug: string, name: string): Promise<SkillBody | undefined> {
-	const hit = (await listSkills(roots, slug)).find((skill) => skill.name === name);
+export async function readSkill(
+	roots: SkillRoots,
+	slug: string,
+	name: string,
+	team?: string,
+): Promise<SkillBody | undefined> {
+	const hit = (await listSkills(roots, slug, team)).find((skill) => skill.name === name);
 	if (hit === undefined) return undefined;
 	// 单文件形式时 `dir` 是 skills/ 本身，文件名得从 name 反推。
 	const doc =

@@ -66,7 +66,7 @@ function titleOf(name: string, args: Json): string {
 	switch (name) {
 		case "run": {
 			const command = asString(args["command"]) ?? "";
-			return `跑了 ${command}`;
+			return `运行 ${command}`;
 		}
 		case "file": {
 			const path = asString(args["path"]) ?? "";
@@ -253,13 +253,13 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 	};
 }
 
-/** 折叠行右端那句确定性摘要：跑了 N 条命令 · 读了 N 个文件 · 写了 N 个文件。 */
+/** 折叠行右端那句确定性摘要：运行 N 条命令 · 读了 N 个文件 · 写了 N 个文件。 */
 export function summaryOf(steps: readonly ViewStep[], facts: Pick<TurnFacts, "startedAt" | "endedAt">): string {
 	const runs = steps.filter((step) => step.kind === "run").length;
 	const reads = steps.filter((step) => step.kind === "file-read").length;
 	const writes = steps.filter((step) => step.kind === "file-write").length;
 	const bits = [
-		runs === 0 ? undefined : `跑了 ${String(runs)} 条命令`,
+		runs === 0 ? undefined : `运行 ${String(runs)} 条命令`,
 		reads === 0 ? undefined : `读了 ${String(reads)} 个文件`,
 		writes === 0 ? undefined : `写了 ${String(writes)} 个文件`,
 	].filter((bit) => bit !== undefined);

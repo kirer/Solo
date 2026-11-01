@@ -56,6 +56,7 @@ seed/
     记忆整理/SKILL.md
     写技能/SKILL.md
     找现成技能/SKILL.md
+    静默复现/SKILL.md             # 报障先在后台复现，复现不出来就不说话
 ```
 
 项目专用的手艺不放进 `seed/`：`seed/skills/` 是全员层，会出现在每个人的提示词目录里。

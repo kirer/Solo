@@ -8,6 +8,14 @@ import { resolveInOrUndefined } from "../../fsx.ts";
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 export const SAY_LIMIT = 1_200;
 
+/** 群聊里的一条上限：一群人都在看的频道，只放结论。私聊还能多说两句。 */
+export const GROUP_SAY_LIMIT = 600;
+
+/** 这个频道里一条消息最多多少字。 */
+export function sayLimitOf(kind: "dm" | "group"): number {
+	return kind === "dm" ? SAY_LIMIT : GROUP_SAY_LIMIT;
+}
+
 /**
  * 「这一轮我不说」。
  *

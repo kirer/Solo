@@ -25,9 +25,28 @@ export async function defaultChannel(
 ): Promise<{ channelId: string } | { error: string }> {
 	if (explicit !== undefined && explicit !== "") {
 		const channel = state.channels[explicit];
-		if (channel === undefined) return { error: `没有这个频道：${explicit}` };
-		if (!channel.members.includes(slug)) return { error: `你不在「${channel.title}」里。` };
-		return { channelId: explicit };
+		if (channel !== undefined) {
+			if (!channel.members.includes(slug)) return { error: `你不在「${channel.title}」里。` };
+			return { channelId: explicit };
+		}
+		// 频道名也认。提示词里给的是**标题**（「群『QQ农场』」），不是 id —— 只认 id 的话，
+		// 模型想发到团队频道时手上根本没有可写的东西，于是省略 channel 落回唤醒的私聊，
+		// 一条派活就躺在私聊里，团队一个字都收不到（真实事故：40 条私聊指挥）。
+		// 只在自己所在的频道里按**全等**找，不做模糊匹配；重名就让它显式给 id。
+		const named = Object.values(state.channels)
+			.filter((candidate) => candidate.title === explicit && candidate.members.includes(slug))
+			.map((candidate) => candidate.id)
+			.sort();
+		const only = named[0];
+		if (named.length === 1 && only !== undefined) return { channelId: only };
+		if (named.length > 1) {
+			return { error: `有两个频道都叫「${explicit}」：${named.join("、")}。写 id，别写名字。` };
+		}
+		const mine = Object.values(state.channels)
+			.filter((candidate) => candidate.members.includes(slug))
+			.map((candidate) => `${candidate.id}「${candidate.title}」`)
+			.sort();
+		return { error: `没有这个频道：${explicit}。你在：${mine.join("、")}。` };
 	}
 	const directory = await deps.directory(context);
 	const wake = wakeOf(directory, conversationId);

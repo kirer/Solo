@@ -238,6 +238,8 @@ tar xzf backup-20261027.tar.gz
 | `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 workspace/logs/jank.jsonl` |
 | `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 workspace/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
 
+`<workspace>/logs/run/` 是后台命令（`run` 的 `background: true`）的地盘：每条命令一个 `<id>.json` 记录（**跑完就删**，留在那儿的都是没跑完的）+ 一份 `<id>.log` 全文。服务启动时会自动结账（活着的杀掉、死掉的在频道里留一句话），一般不用手动碰；要查「那条命令到底输出了什么」就 `cat` 对应的 `.log`（ADR-013）。
+
 **一眼分辨两类事故**：
 
 - `restart_limit` / `task_parked` = 任务连续重启超限被底座挂起了，人还在、频道还在，

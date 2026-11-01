@@ -153,7 +153,7 @@ export type AttentionItem = {
 export type ViewSkill = {
 	name: string;
 	description: string;
-	scope: "personal" | "all";
+	scope: "personal" | "team" | "all";
 	overrides: boolean;
 };
 
@@ -203,6 +203,8 @@ export type ViewTeamProfile = {
 	leadLabel: string;
 	/** README 正文：目标 / 验收标准 / 不做什么 / 当前进展。 */
 	body: string;
+	/** 团队层技能（`teams/<slug>/skills/`），这个团队的人都会。 */
+	skills: ViewSkill[];
 	memory: { exists: boolean; digest: string | null; entries: ViewMemoryEntry[] };
 };
 
@@ -217,12 +219,12 @@ export type ViewStep = {
 	id: string;
 	/** 没有 `say`：说出口的话是频道消息，不进过程。 */
 	kind: "think" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
-	/** 服务端算好的一行人话（`跑了 npm test` / `读了 a.ts`）。 */
+	/** 服务端算好的一行人话（`运行 npm test` / `读了 a.ts`）。 */
 	title: string;
 	status: "running" | "ok" | "failed";
 	/** 毫秒。工具结果的时间戳减去调用的时间戳；拿不到就没有。 */
 	ms?: number;
-	/** 调用开始的时刻（毫秒）。只给进行中的步骤算「已跑了多久」。 */
+	/** 调用开始的时刻（毫秒）。只给进行中的步骤算「已运行多久」。 */
 	startedAt?: number;
 	/** `run`：命令行。 */
 	command?: string;
@@ -261,7 +263,7 @@ export type ViewTurn = {
 	/** 他最终说出口的那条。 */
 	replySeq?: number;
 	stepCount: number;
-	/** 折叠行右端的确定性摘要（`跑了 2 条命令 · 读了 3 个文件`）。 */
+	/** 折叠行右端的确定性摘要（`运行 2 条命令 · 读了 3 个文件`）。 */
 	summary: string;
 	/** 步骤被截断（> 200 步）。 */
 	truncated?: true;

@@ -300,7 +300,7 @@ type ViewTurn = {
   endedAt?: number;             // = 回复消息的 at；还在跑就没有
   replySeq?: number;            // 他最终说出口的那条
   stepCount: number;
-  summary: string;              // 确定性摘要：跑了 N 条命令 · 读了 N 个文件 · 写了 N 个文件
+  summary: string;              // 确定性摘要：运行 N 条命令 · 读了 N 个文件 · 写了 N 个文件
   truncated?: true;             // 步骤超过 200 步
   steps?: ViewStep[];           // 只在 §7.3 与 SSE trace 里出现
 }
@@ -319,7 +319,7 @@ type ViewStep = {
   id: string;                   // 会话条目里的 toolCall id
   kind: "think" | "run" | "file-read" | "file-write" | "chats" | "history" | "remember" | "hire" | "tool";
                                // 没有 say：说出口的话是频道消息，不进过程
-  title: string;                // 服务端算好的一行人话（跑了 npm test / 读了 a.ts）
+  title: string;                // 服务端算好的一行人话（运行 npm test / 读了 a.ts）
   status: "running" | "ok" | "failed";
   ms?: number;                  // 工具结果时间 − 调用时间；拿不到就不出现
   startedAt?: number;
@@ -392,22 +392,23 @@ type ViewStep = {
   manager: string,                  // 我 是 ""
   managerLabel: string,             // 同上
   body: string,                     // identity.md 正文（预置提示词）
-  skills: { name: string, description: string, scope: "personal" | "all", overrides: boolean }[],
+  skills: { name: string, description: string, scope: "personal" | "team" | "all", overrides: boolean }[],
   memory: { exists: boolean, entries: number, digest: string | null },
   channels: { id: string, kind: "dm" | "group", title: string }[]
 }
 ```
 
 `channels` 里的 `kind` 同样是 `chatKind()` 的投影（`dm` / `group`）：私聊只认 `dm:` 前缀 +
-恰好 `{owner, 一人}`，**不按频道 id 前缀分**。`skills` 来自 `listSkills()`，个人层覆盖全员同名时
-`overrides: true`（界面显示「覆盖全员同名」）。`slug` 必须是名册里存在的 agent 且不是
+恰好 `{owner, 一人}`，**不按频道 id 前缀分**。`skills` 来自 `listSkills()`：全员层打底，
+这个人所在团队的团队层压上，个人层最后覆盖；被更靠下的层盖住的那一份带
+`overrides: true`（界面显示「覆盖同名的上层技能」）。`slug` 必须是名册里存在的 agent 且不是
 `owner`，否则 404。
 
 ## 10.1 `GET /api/teams/:slug`
 
 团队频道的「详情」一次取全：`teams/<slug>/README.md` 的正文（目标 / 验收标准 /
-不做什么 / 当前进展）+ 管理员的显示名 + `teams/<slug>/memory.md` 按小节拆开的条目。
-团队没有技能目录，所以这份响应里没有 `skills`。
+不做什么 / 当前进展）+ 管理员的显示名 + 团队层技能（`teams/<slug>/skills/`）+
+`teams/<slug>/memory.md` 按小节拆开的条目。
 
 ```ts
 // 响应
@@ -416,6 +417,7 @@ type ViewStep = {
   doing?: string,                   // README 头的 doing，没写就不出现
   lead?: string, leadLabel: string, // lead 是 slug，leadLabel 是名册里的显示名
   body: string,                     // README 正文
+  skills: { name: string, description: string, scope: "team", overrides: boolean }[],  // 团队层技能
   memory: {
     exists: boolean, digest: string | null,
     // at / by / op 恒为 null：团队记忆没有逐条日志，不拿「现在」冒充「当时」（ADR-016）

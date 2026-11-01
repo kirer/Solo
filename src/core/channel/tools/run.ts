@@ -1,19 +1,37 @@
 /** `run`：执行一条 shell 命令。 */
+import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { RUN_LIMIT_MS, startRunJob, type RunOutcome } from "../jobs.ts";
+import { postMessage } from "../post.ts";
+import { OWNER } from "../types.ts";
+import { defaultChannel } from "./channel-choice.ts";
+import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { clip, MODEL_LIMIT } from "./guards.ts";
+
+/** 后台命令跑完的那条留痕：命令、输出尾巴、怎么结束的。 */
+function renderRunResult(command: string, outcome: RunOutcome): string {
+	const body = outcome.log.trim();
+	const ending = outcome.timedOut
+		? `（超过 ${Math.round(RUN_LIMIT_MS / 60_000)} 分钟，已杀掉；全文在 ${outcome.logPath}）`
+		: `(退出码 ${outcome.code ?? "被信号结束"}；全文在 ${outcome.logPath})`;
+	return [`后台命令跑完了。`, `$ ${command}`, ...(body === "" ? ["（没有输出）"] : [body]), ending].join("\n");
+}
 
 export function createRunTool(deps: CoreToolDeps) {
 	const tool = defineTool({
 		name: "run",
 		description: [
 			"执行一条 shell 命令，返回 stdout / stderr / 退出码。",
-			"以 `&` 结尾或以 `nohup` 开头 = 后台跑，立即返回 PID。",
+			"`background: true` = 丢到后台跑（最多 30 分钟），立刻返回；跑完结果发回这个频道并叫醒你。",
+			"以 `&` 结尾或以 `nohup` 开头 = 纯脱手，立即返回 PID，永远不会有回音。",
 		].join(""),
 		parameters: Type.Object({
 			command: Type.String({ description: "要执行的命令" }),
 			cwd: Type.Optional(Type.String({ description: "工作目录，默认工作区根" })),
 			timeout: Type.Optional(Type.Number({ description: "超时秒数，默认 60" })),
+			background: Type.Optional(
+				Type.Boolean({ description: "丢到后台跑，跑完把结果发回频道并叫醒你（最多 30 分钟）" }),
+			),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
@@ -22,6 +40,48 @@ export function createRunTool(deps: CoreToolDeps) {
 			const cwd = args.cwd ?? deps.workspaceRoot;
 			const seconds = Math.min(Math.max(args.timeout ?? 60, 1), 300);
 			const command = args.command;
+
+			// 异步：起跑就返回，跑完结果回到**起跑的这个频道**并叫醒起跑的人。
+			// 频道必须在起跑时就定下来：等跑完再算「该回哪儿」，唤醒记录早换了。
+			if (args.background === true) {
+				const state = await readState(deps);
+				const target = await defaultChannel(deps, state, slug, Number(api.conversationId), undefined, ctx);
+				if ("error" in target) return text(target);
+				const job = await startRunJob({
+					dir: join(deps.workspaceRoot, "logs", "run"),
+					slug,
+					channelId: target.channelId,
+					command,
+					cwd,
+					onDone: async (outcome) => {
+						const fresh = await readState(deps);
+						await postMessage(
+							postDeps(deps, fresh, BACKGROUND_CONTEXT),
+							{
+								channelId: target.channelId,
+								from: OWNER,
+								text: renderRunResult(command, outcome),
+								at: Date.now(),
+								kind: "note",
+								// 名册要给：`mention` 里的 slug 也要过一遍解析，不给名册会被当成
+								// 「解析不出来的 @」丢掉，消息上就看不出这条结果是给谁的。
+								roster: await mentionRoster(deps),
+								mention: [slug],
+								wakeTo: [slug],
+							},
+							BACKGROUND_CONTEXT,
+						);
+					},
+				});
+				const title = state.channels[target.channelId]?.title ?? target.channelId;
+				return text(
+					[
+						`$ ${command}`,
+						`(后台运行，PID ${job.pid}）`,
+						`跑完结果会发到「${title}」并叫你。这中间你可以干别的，别轮询。`,
+					].join("\n"),
+				);
+			}
 
 			// 后台命令：以 & 结尾或以 nohup 开头 → detached spawn，立即返回 PID。
 			const isBackground = command.trim().endsWith("&") || /^\s*nohup\b/.test(command);

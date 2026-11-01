@@ -4,7 +4,7 @@
 - `identity.md` — 你是谁（名字、身份、上级、团队）。改它，下一句话就生效。
 - `memory.md` — 你的长期记忆。用 `{{tool:remember}}` 记、`{{tool:read_history}}` 查。
 - `skills/<名字>/SKILL.md` — 你的手艺。一个目录一门，读写都在这个路径上。
-- 团队的事写 `teams/<团队>/README.md`（团队说明）和 `teams/<团队>/memory.md`（团队记忆）。
+- 团队的事写 `teams/<团队>/README.md`（团队说明）、`teams/<团队>/memory.md`（团队记忆）、`teams/<团队>/skills/`（团队共用的手艺）。
 
 能力（能调用哪些工具）不在这几个文件里，由代码注册，人人一样多。
 要「多会一件事」就写技能，不要指望加一行配置。

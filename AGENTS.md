@@ -19,6 +19,7 @@ workspace/
   agents/<slug>/skills/<n>/   ← 他会的手艺（个人层，覆盖全员同名）
   teams/<slug>/README.md      ← 一个团队：目标 / 验收 / 不做什么 / 当前进展 / 团队管理员
   teams/<slug>/memory.md      ← 团队记忆
+  teams/<slug>/skills/<n>/    ← 团队层手艺：这个团队的人都会，同名覆盖全员层
   skills/<n>/SKILL.md         ← 全员层手艺，人人可读
   rules.md                    ← 全员规矩（每轮都进提示词）
   core.sqlite                 ← 频道消息、会话、名册、沉淀游标
@@ -44,9 +45,9 @@ src/core/
   runtime/        防腐层：唯一能 import pi-durable / pi-ai / chord 的地方（含 models/compaction）
   agent/          一个人：身份 / 提示词装配（9 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
   team/           一个团队：README.md / memory.md / 自动沉淀
-  channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 7 个工具（tools/）
+  channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 7 个工具（tools/）
   ── 以上四层是 domain（业务事实）──────────────────────────────
-  app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 诊断（不 import node:http）
+  app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 后台命令收尾 / 诊断（不 import node:http）
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/project.ts）
   interface/http/ 唯一 import node:http 的地方：routes / respond（原语）/ route-match（匹配）/
                   origin-guard（来源闸）/ network（网卡）/ static-assets / sse（编解码+hub）
@@ -58,13 +59,13 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             62 文件 / 651 例
-  ├ test/core/    55 文件 / 584 例（纯函数 + 装配）
+test/             63 文件 / 664 例
+  ├ test/core/    56 文件 / 597 例（纯函数 + 装配）
   └ test/ui/      7 文件 / 67 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 76 个 ts / 11897 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 78 个 ts / 12299 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -116,7 +117,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 62 文件 651 例，<3s，必须全绿
+npm test             # 63 文件 664 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -145,7 +146,10 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
 | 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `md/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外 |
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
+| 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/agent/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
+| 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
+| 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2–7.3 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/core/app/trace.ts`（纯函数）+ `src/core/app/read.ts` 的 `turnsOf` / `groupsOf` + `test/core/trace.test.ts` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |
 | 建频道 / 私聊 / 私聊工作记录 | `docs/CORE.md` §4 + `docs/WEB-API.md` + `docs/DESIGN.md` §2.3 | 建频道只有 `channel/membership.ts` 的 `ensureOwnerDm`（装配 / 招人自动建）+ `POST /api/people/:slug/dm`；工作记录是 `app/read.ts` 的 `readPersonTurns` + `ui/app/src/stream/model.ts` 的 `buildWorkRows`；群聊不画过程 |

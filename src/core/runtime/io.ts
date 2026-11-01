@@ -10,7 +10,7 @@
  *
  * 也不放进 `view/`：那是零 IO 的投影层，它连 `node:*` 都不许 import。
  */
-import { appendFile, mkdir, readdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /** 一个目录项。`kind` 是 `readdir` 直接给的，不为判类型多跑一次 `stat`。 */
@@ -32,6 +32,17 @@ export async function readTextOrUndefined(path: string): Promise<string | undefi
 export async function writeTextAt(path: string, text: string): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, text, "utf8");
+}
+
+/** 往一份文本末尾追加（父目录自动建）。后台命令的日志是长出来的，不是一次写完的。 */
+export async function appendTextAt(path: string, text: string): Promise<void> {
+	await mkdir(dirname(path), { recursive: true });
+	await appendFile(path, text, "utf8");
+}
+
+/** 删一个文件。不存在不算错（清扫时别人可能刚删过）。 */
+export async function removeAt(path: string): Promise<void> {
+	await rm(path, { force: true });
 }
 
 /** 建目录（递归）。已经存在不算错。 */

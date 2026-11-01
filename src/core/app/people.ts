@@ -47,8 +47,13 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 	async function readPersonProfile(slug: string): Promise<ViewPersonProfile> {
 		const { identities, directory } = await snapshots.snapshot();
 		requireSlug(directory, slug);
-		const skills = await listSkills({ workspace: dirname(shell.agentsRoot), agents: shell.agentsRoot }, slug);
 		const identity = identities.find((candidate) => candidate.slug === slug);
+		// 团队层技能也是他会的手艺（`teams/<team>/skills/`），档案里一起列出来。
+		const skills = await listSkills(
+			{ workspace: dirname(shell.agentsRoot), agents: shell.agentsRoot, teams: shell.teamsRoot },
+			slug,
+			identity?.team,
+		);
 		const source = (await readMemory(join(shell.agentsRoot, slug))) ?? "";
 		return {
 			slug,

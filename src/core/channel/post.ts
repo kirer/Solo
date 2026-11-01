@@ -45,6 +45,13 @@ type PostInput = {
 	readonly mention?: readonly string[];
 	/** 不想唤醒任何人（比如系统留痕）。缺省会唤醒。 */
 	readonly wake?: false;
+	/**
+	 * 系统留痕也要叫醒谁时用（后台命令跑完，叫起跑的人回来看结果）。
+	 *
+	 * 给了就跳过「谁被 @」的推算：`note` 默认谁也不叫，而这条的收件人不是从正文里
+	 * 解析出来的，是「谁起的这条命令」。
+	 */
+	readonly wakeTo?: readonly string[];
 	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
 	readonly attachments?: readonly Attachment[];
 };
@@ -127,12 +134,14 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	const message = appended.message;
 
 	const liveChannel = channelMeta;
-	if (input.wake === false || input.kind === "note") {
+	// `note` 默认谁也不叫（系统留痕）；显式给了 `wakeTo` 才叫 —— 后台命令跑完，
+	// 起跑的那个人得回来看结果，否则这条结果只是躺在频道里。
+	if (input.wake === false || (input.kind === "note" && input.wakeTo === undefined)) {
 		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
 
 	// 我没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
-	const targets = deliveryTargets(liveChannel, message);
+	const targets = input.wakeTo ?? deliveryTargets(liveChannel, message);
 	if (targets.length === 0) {
 		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}

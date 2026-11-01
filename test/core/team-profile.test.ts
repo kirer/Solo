@@ -6,7 +6,7 @@
  * 2. `lead` 的显示名从**名册**取，不是把 slug 原样印出来。
  * 3. 团队记忆没有逐条日志，时间是 `null` —— 不拿「现在」冒充「当时」。
  */
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -43,6 +43,15 @@ describe("团队档案", () => {
 		expect(profile.leadLabel).toBe("林越");
 		expect(profile.doing).toBe("林越在写");
 		expect(profile.body).toContain("目标是 X");
+	});
+
+	test("团队层的技能进档案（`teams/<slug>/skills/`）", async () => {
+		await writeTeam(root, { slug: "demo", name: "演示团队", body: "目标。\n" });
+		await mkdir(join(root, "demo", "skills", "发布"), { recursive: true });
+		await writeFile(join(root, "demo", "skills", "发布", "SKILL.md"), "---\nname: 发布\ndescription: 怎么上线\n---\n\n正文\n", "utf8");
+		const profile = await teams().readTeamProfile("demo");
+		expect(profile.skills).toHaveLength(1);
+		expect(profile.skills[0]).toMatchObject({ name: "发布", description: "怎么上线", scope: "team", overrides: false });
 	});
 
 	test("团队记忆按小节拆开，时间留空", async () => {

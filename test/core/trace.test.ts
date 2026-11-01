@@ -49,7 +49,7 @@ describe("buildTurn", () => {
 		expect(turn.steps).toHaveLength(1);
 		const step = turn.steps![0]!;
 		expect(step.kind).toBe("run");
-		expect(step.title).toBe("跑了 npm test");
+		expect(step.title).toBe("运行 npm test");
 		expect(step.status).toBe("ok");
 		expect(step.ms).toBe(2200);
 		expect(step.exitCode).toBe(0);
@@ -131,12 +131,12 @@ describe("摘要与瘦身", () => {
 	it("摘要按固定顺序、零项不出现", () => {
 		const summary = summaryOf(
 			[
-				{ id: "1", kind: "run", title: "跑了 a", status: "ok" },
+				{ id: "1", kind: "run", title: "运行 a", status: "ok" },
 				{ id: "2", kind: "file-write", title: "写了 b", status: "ok" },
 			],
 			{ startedAt: 0, endedAt: 1000 },
 		);
-		expect(summary).toBe("跑了 1 条命令 · 写了 1 个文件");
+		expect(summary).toBe("运行 1 条命令 · 写了 1 个文件");
 	});
 
 	it("一步事都没做时写「想了 Ns」", () => {

@@ -111,7 +111,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 | `read_history` | `scope=channel`（默认）翻自己被压缩掉的历史对话（原文还在 storage 里，压缩后模型看不见）；`scope=memory`（或 `personal` / `team`）翻记忆全文 |
 | `remember` | 记一条经验；`scope=team` 写团队记忆 |
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进全员频道与团队频道） |
-| `run` | 执行一条 shell 命令 |
+| `run` | 执行一条 shell 命令；`background: true` = 丢到后台跑（最多 30 分钟），跑完结果回到起跑的那个频道并叫醒起跑的人；`&` / `nohup` 是纯脱手，永远没有回音 |
 | `file` | `action=read` / `write`：工作区里的一个文件 |
 
 合并的口径一句话：`chats` 收回 `read_channel`，`read_history` 收回 `recall`（`scope`
@@ -176,6 +176,10 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 V3 以前这里靠 6 秒定时器事后猜，现在结算本身就是信号，定时器删掉了。
 私聊插话那一轮：私聊已经答过 → 最终正文当作任务的结论回 `task`；否则回 `reply`。
 
+**慢命令不占着一轮**：`run` 的前台最多等 300 秒，`&` / `nohup` 是脱手（起完就不管）。要「跑完告诉我」就用 `background: true` —— 起跑时把频道定下来，跑完由 `channel/jobs.ts` 把结果作为一条 `note` 发回那个频道，并用 `wakeTo` 叫醒起跑的人（`note` 默认谁也不叫，这是它唯一的例外，ADR-013）。最多跑 30 分钟，到点整组杀掉。服务重启时 `app/runs.ts` 把上一轮遗留的活结账：活着的杀掉、死掉的留一句话 —— 「跑完了」是进程内的回调，进程一死它就永远不会来，而等它的人看不出来。
+
+**一条消息的长度看频道**：群聊 600 字、私聊 1200 字（`guards.ts` 的 `sayLimitOf`，ADR-014）。超了不落库，回一句「太长了」让它把过程写进文件、只发结论加路径。
+
 ## 5. 文件夹就是边界
 
 ```
@@ -188,6 +192,7 @@ workspace/
   teams/<slug>/
     README.md                   要做什么、谁是团队管理员、什么不做
     memory.md                   这个团队发生过什么（团队里的人写，全员能读）
+    skills/<名字>/SKILL.md      团队层技能：这个团队的人都会，同名覆盖全员层
   core.sqlite                   频道消息、名册、沉淀游标
 ```
 
@@ -212,8 +217,11 @@ workspace/
 
 - **`name` + `description` 常驻提示词**，正文按需 `skills(action=read)` 读。一个人攒 20 门手艺，
   常驻的是 20 行描述，不是 20 篇正文 —— 成本上最要紧的一条。
-- agent 自己就能 `skills(action=write)` 长出新技能。`scope=personal`（默认）写自己目录，
-  `scope=all` 写工作区根的 `skills/`。同名时个人层覆盖全员层。
+- agent 自己就能用 `file` 写出一门新技能（`agents/<slug>/skills/<名字>/SKILL.md`），
+  也能写团队共用的（`teams/<团队>/skills/<名字>/SKILL.md`）。
+- 技能分三层，**下面的盖住上面的**：全员层 `<workspace>/skills/` → 团队层
+  `teams/<团队>/skills/` → 个人层 `agents/<slug>/skills/`。一个人看到的是三层的并集，
+  同名只留最靠下的那份，提示词里标「全员通用 / 团队共用 / 你自己写的」。
 - **不必自己造技能市场**：`run` 跑 `npx skills find` / `npx skills add`，生态在
   skills.sh 和 GitHub。装完按我们的话重写一遍再用。
 - 技能的正文**不在代码里**。播种源在 `seed/`：`seed/skills/` → 全员层，
@@ -384,9 +392,13 @@ src/core/
 
 - **待办拍板 / 任务 / 成本 / 过程可见**：一个都没有（界面相应位置是空的）。
   「它还在干」这种活性信号打算从 `harness.inspect()` 派生，而不是把思考落库。
-- **看门狗 / 崩溃自愈 / IM 出站**：不为长跑兜底。但「出事了看不出来」这条已经补上一半：
-  `onReport` + `logs/runtime.jsonl` + `GET /api/diag` 能看到最近一次失败的原因，
-  只是**看见了也不会自动救**。
+- **看门狗 / 崩溃自愈 / IM 出站**：不为长跑兜底。「出事了看不出来」这条补上了：
+  `onReport` + `logs/runtime.jsonl` + `GET /api/diag` 能看到最近一次失败的原因，重启时
+  后台命令的账也会结掉（`app/runs.ts`）。缺的是**看见了之后的动作** —— 一个定时醒来、
+  判断「谁没有实质进展」的看门狗 session 还没做。
+- **订阅直通**：团队频道里不 @ 管理员也叫得醒他（`wakeOnAll`），回话跟着唤醒记录走
+  （`defaultChannel`）。但「一个 agent 订阅一件事，后续消息绕过调度直通给他」这层没有 ——
+  现在一个频道里默认只有一个人接话。
 - **模型看图**：附件能上传、能显示，但模型看不见图里的内容。
 - **私聊的工作记录**：`GET /api/people/:slug/turns` 已给，界面在私聊里按时间合并
   「私聊消息 + 他在所有频道里的轮次」；群聊不再画过程。

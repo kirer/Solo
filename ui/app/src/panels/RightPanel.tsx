@@ -245,6 +245,8 @@ function DetailTab(): JSX.Element {
 
 	const channel = detail.channel;
 	const members = detail.members.filter((member) => member.slug !== "owner");
+	// 身份在名册里（`people[].title`），成员表只带机器角色。团队管理员那份身份由角色补。
+	const titles = new Map(people.map((actor) => [actor.slug, actor.title]));
 
 	// 私聊只有一个人可介绍：画他的档案，不画「成员 2 / 我 / 他」这种一对一的废话。
 	if (channel.kind === "dm" && members[0] !== undefined) {
@@ -272,26 +274,27 @@ function DetailTab(): JSX.Element {
 					/>
 					<span className="detail-person-name">我</span>
 				</div>
-				{members.map((member) => (
-					<button
-						type="button"
-						key={member.slug}
-						className="detail-person-btn"
-						data-open-person={member.slug}
-						onClick={() => void openPerson(member.slug)}
-					>
-						<span
-							className="detail-av"
-							dangerouslySetInnerHTML={{
-								__html: avatarSvg({ slug: member.slug, name: member.label, size: 32, state: "idle" }),
-							}}
-						/>
-						<span className="detail-person-name">{member.label}</span>
-						{memberRole(member.role) === "" ? null : (
-							<span className="detail-person-title">{memberRole(member.role)}</span>
-						)}
-					</button>
-				))}
+				{members.map((member) => {
+					const role = titles.get(member.slug) || memberRole(member.role);
+					return (
+						<button
+							type="button"
+							key={member.slug}
+							className="detail-person-btn"
+							data-open-person={member.slug}
+							onClick={() => void openPerson(member.slug)}
+						>
+							<span
+								className="detail-av"
+								dangerouslySetInnerHTML={{
+									__html: avatarSvg({ slug: member.slug, name: member.label, size: 32, state: "idle" }),
+								}}
+							/>
+							<span className="detail-person-name">{member.label}</span>
+							{role === "" ? null : <span className="detail-person-title">{role}</span>}
+						</button>
+					);
+				})}
 			</div>
 
 			{channel.team === undefined ? null : <TeamSection slug={channel.team} />}
@@ -491,11 +494,12 @@ function WhoPicker(props: { who: string | null; options: { slug: string; label: 
 
 function SkillsTab(): JSX.Element {
 	const scope = useScope();
+	const team = useStore((state) => state.detail?.channel.team);
 	const { who, options, setWho } = useWho();
-	// 团队这一栏没有数据出处，连人都别去读。
+	// 团队这一栏看的是团队目录，不读某个人的档案。
 	const { profile, error } = useProfile(scope === "team" ? null : who);
 
-	if (scope === "team") return <NoTeamSkills />;
+	if (scope === "team" && team !== undefined) return <TeamSkills slug={team} />;
 	if (who === null) return <p className="detail-empty">左边选一个会话，再回来看技能。</p>;
 
 	// 只留当前作用域那一层：私聊看他的，全员频道看全员都会的，不混在一起。
@@ -534,17 +538,54 @@ function SkillsTab(): JSX.Element {
 }
 
 /**
- * 团队频道里的技能栏是空的 —— 技能只有「个人」和「全员」两层目录（`agent/skills.ts`
- * 的 `SkillScope`）。团队会什么写在 README 和团队记忆里，不在这里编一份假的团队技能。
+ * 团队频道里的技能：`teams/<slug>/skills/` 这一层（`agent/skills.ts` 的 `SkillScope = "team"`）。
+ * 它盖在全员层上、被个人层盖住 —— 这个团队的人打开提示词就能看见这份清单。
  */
-function NoTeamSkills(): JSX.Element {
+function TeamSkills(props: { slug: string }): JSX.Element {
+	const [team, setTeam] = useState<TeamProfile | null>(null);
+	const [error, setError] = useState("");
+
+	useEffect(() => {
+		let alive = true;
+		setTeam(null);
+		setError("");
+		getTeam(props.slug)
+			.then((next) => {
+				if (alive) setTeam(next);
+			})
+			.catch((reason: unknown) => {
+				if (alive) setError(reason instanceof Error ? reason.message : "读不到团队技能");
+			});
+		return () => {
+			alive = false;
+		};
+	}, [props.slug]);
+
+	const skills = team?.skills ?? [];
+
 	return (
 		<div className="detail-sec rail-view">
 			<div className="rail-head">
 				<span>团队技能</span>
 			</div>
-			<p className="detail-empty">团队没有技能目录。</p>
-			<p className="rail-hint">团队会什么写在团队 README 与团队记忆里</p>
+			{error === "" ? null : <p className="rail-error">{error}</p>}
+			{team === null ? (
+				<p className="detail-empty">正在读…</p>
+			) : skills.length === 0 ? (
+				<>
+					<p className="detail-empty">这个团队还没有自己的技能。</p>
+					<p className="rail-hint">团队技能放在 teams/{props.slug}/skills/ 下</p>
+				</>
+			) : (
+				skills.map((skill) => (
+					<SkillRow
+						key={skill.name}
+						name={skill.name}
+						description={skill.description}
+						overrides={skill.overrides}
+					/>
+				))
+			)}
 		</div>
 	);
 }
@@ -562,7 +603,7 @@ function SkillRow(props: { name: string; description: string; overrides: boolean
 				<span className="rail-skill-name">{props.name}</span>
 			</button>
 			{props.description === "" ? null : <p className="rail-skill-desc">{props.description}</p>}
-			{props.overrides ? <p className="rail-hint">覆盖全员同名</p> : null}
+			{props.overrides ? <p className="rail-hint">覆盖同名的上层技能</p> : null}
 		</div>
 	);
 }
@@ -754,7 +795,7 @@ function PersonMemoryTab(): JSX.Element {
 				<textarea
 					rows={2}
 					value={draft}
-					placeholder="加一条记忆…"
+					placeholder="加一条记忆，⌘↵ 提交"
 					onChange={(event) => setDraft(event.target.value)}
 					onKeyDown={(event) => {
 						if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {

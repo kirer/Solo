@@ -102,6 +102,9 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 
 	// 启动时清一次上传孤儿（审计 P2-3）。失败只记一行，不影响启动。
 	void app.uploads.sweep();
+	// 后台命令的「跑完了」是进程内的回调：上一轮进程一起，结果就永远回不来了。
+	// 重启时把账结掉，频道里留一句话（ADR-013）。
+	void app.runs.sweep();
 
 	if (process.env.SOLO_DEBUG_FROM === "1") {
 		console.warn("[core] 警告：from 可伪造（SOLO_DEBUG_FROM=1），只用于本机调试");

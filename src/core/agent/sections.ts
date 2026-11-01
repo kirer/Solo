@@ -118,15 +118,19 @@ function withSlug(name: string, slug: string): string {
 function skillLine(skill: {
 	readonly name: string;
 	readonly description: string;
-	readonly scope?: "all" | "personal";
+	readonly scope?: "all" | "team" | "personal";
 	readonly overrides?: boolean;
 }): string {
 	const source =
 		skill.scope === "personal"
 			? skill.overrides === true
-				? "（你自己改过的版本，覆盖了全员的同名技能）"
+				? "（你自己改过的版本，覆盖了同名的团队/全员技能）"
 				: "（你自己写的）"
-			: "（全员通用）";
+			: skill.scope === "team"
+				? skill.overrides === true
+					? "（团队改过的版本，覆盖了全员的同名技能）"
+					: "（团队共用）"
+				: "（全员通用）";
 	return `- \`${skill.name}\` — ${skill.description}${source}`;
 }
 
@@ -224,7 +228,7 @@ async function slotsFor(
 		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory);
 	}
 	if (need.has("skills")) {
-		const skills = await promptSkills(paths, slug);
+		const skills = await promptSkills(paths, slug, self.team);
 		slots["skills"] = skills.length === 0 ? undefined : skills.map(skillLine).join("\n");
 	}
 
@@ -303,9 +307,9 @@ export async function renderAgentSection(registry: Registry, paths: AgentPaths, 
 		.join("\n\n");
 }
 
-/** 技能清单（提示词只要名字 + 一句描述）。 */
-async function promptSkills(paths: AgentPaths, slug: string) {
-	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents }, slug);
+/** 技能清单（提示词只要名字 + 一句描述）。团队层技能也在这里 —— 团队会什么他必须知道。 */
+async function promptSkills(paths: AgentPaths, slug: string, team: string | undefined) {
+	const skills = await listSkills({ workspace: paths.workspace, agents: paths.agents, teams: paths.teams }, slug, team);
 	return skills.map((skill) => ({
 		name: skill.name,
 		description: skill.description,

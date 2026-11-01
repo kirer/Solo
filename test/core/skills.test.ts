@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	listSkills,
+	listTeamSkills,
 	readSkill,
 	writeAllSkill,
 	writeSkill,
@@ -20,7 +21,7 @@ let roots: SkillRoots;
 beforeEach(async () => {
 	root = await mkdtemp(join(tmpdir(), "core-skills-"));
 	agent = join(root, "agents", "me");
-	roots = { workspace: root, agents: join(root, "agents") };
+	roots = { workspace: root, agents: join(root, "agents"), teams: join(root, "teams") };
 });
 
 afterEach(async () => {
@@ -124,3 +125,33 @@ describe("技能：全员层与个人层", () => {
 	});
 });
 
+
+describe("技能：团队层", () => {
+	/** 往团队层写一份技能（生产里由 agent 用 `file` 工具写 `teams/<团队>/skills/`）。 */
+	async function writeTeamSkill(team: string, name: string, description: string, body: string): Promise<void> {
+		const dir = join(root, "teams", team, "skills", name);
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}\n`, "utf8");
+	}
+
+	it("团队的人看得见，别的团队看不见", async () => {
+		await writeTeamSkill("dino", "上线", "这个团队的发布流程", "步骤");
+		const mine = await listSkills(roots, "me", "dino");
+		expect(mine.find((skill) => skill.name === "上线")).toMatchObject({ scope: "team", description: "这个团队的发布流程" });
+		expect(await listSkills(roots, "other", "cat")).toEqual([]);
+		expect(await listTeamSkills(join(root, "teams"), "dino")).toHaveLength(1);
+	});
+
+	it("团队层覆盖全员层，个人层再覆盖团队层", async () => {
+		await writeAllSkill(root, { name: "复盘", description: "全员的", body: "全员正文" });
+		await writeTeamSkill("dino", "复盘", "团队的", "团队正文");
+		const team = (await listSkills(roots, "me", "dino")).find((skill) => skill.name === "复盘");
+		expect(team).toMatchObject({ scope: "team", overrides: true });
+		expect((await readSkill(roots, "me", "复盘", "dino"))?.body).toBe("团队正文");
+
+		await writeSkill(roots, "me", { name: "复盘", description: "我自己的", body: "我的正文" });
+		expect((await readSkill(roots, "me", "复盘", "dino"))?.body).toBe("我的正文");
+		// 不在这个团队的人读到的是全员那份。
+		expect((await readSkill(roots, "other", "复盘"))?.body).toBe("全员正文");
+	});
+});

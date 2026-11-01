@@ -168,8 +168,33 @@
 	animation: av-ponder 2.2s ease-in-out infinite;
 }
 
+/* 在做 / 在想：头像外一圈会呼吸的光。侧栏里原来写「在做」的位置已经让给身份，
+   这一圈就是「他正忙，别打断」的唯一提示 —— 所以只在忙的时候有，待命是干净的。 */
+.av[data-state="working"],
+.av[data-state="thinking"] {
+	animation: av-glow 1.8s ease-in-out infinite;
+}
+
 .av[data-state="working"] {
-	animation: av-bob 1.6s ease-in-out infinite;
+	animation:
+		av-bob 1.6s ease-in-out infinite,
+		av-glow 1.6s ease-in-out infinite;
+}
+
+@keyframes av-glow {
+	0%,
+	100% {
+		box-shadow:
+			0 0 0 1px color-mix(in oklab, var(--ink) 10%, transparent),
+			0 0 0 3px color-mix(in oklab, var(--live) 45%, transparent),
+			0 0 10px 1px color-mix(in oklab, var(--live) 20%, transparent);
+	}
+	50% {
+		box-shadow:
+			0 0 0 1px color-mix(in oklab, var(--ink) 10%, transparent),
+			0 0 0 3px color-mix(in oklab, var(--live) 75%, transparent),
+			0 0 16px 3px color-mix(in oklab, var(--live) 34%, transparent);
+	}
 }
 
 .av[data-state="done"] {

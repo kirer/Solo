@@ -5,31 +5,40 @@
  * 这一节决定「信息密度」：能一句话说清的绝不占一张卡，未登记的 kind 一个像素也不画。
  */
 
-.flow {
+/* 消息区 = 滚动容器 + 浮在底部中央的那颗按钮。
+   按钮**必须**在滚动容器外面：它一进滚动区就算进 scrollHeight，滚到底永远差它那几十像素
+   ——「点了回到最新，却还差一截」就是这么来的。 */
+.flow-wrap {
 	position: relative;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.flow {
+	flex: 1;
 	min-height: 0;
 	overflow-y: auto;
 	overscroll-behavior: contain;
 	scrollbar-gutter: stable;
 }
 
-/* 回到最新：贴在**消息区**底部中央，压在正文上但只占 32px 高、半透明底，
-   滚到底就自己消失。它是滚动容器的最后一个孩子，用 sticky 钉住 —— 早先用 absolute
-   + `bottom: 12px` 时包含块是整格，按钮直接压在输入框上。 */
+/* 回到最新：贴在消息区底部中央，滚到底自己消失。 */
 .to-bottom {
-	position: sticky;
+	position: absolute;
+	left: 50%;
 	bottom: 12px;
-	margin: 0 auto 12px;
+	transform: translateX(-50%);
 	display: flex;
-	width: fit-content;
 	align-items: center;
-	gap: 6px;
-	height: 30px;
-	padding: 0 12px 0 10px;
-	border: 1px solid var(--line);
+	gap: 4px;
+	height: 28px;
+	padding: 0 12px;
+	border: 0;
 	border-radius: 999px;
-	background: color-mix(in oklab, var(--paper) 92%, transparent);
-	backdrop-filter: blur(6px);
+	background: color-mix(in oklab, var(--ink) 12%, var(--paper));
+	backdrop-filter: blur(10px);
+	box-shadow: 0 2px 10px rgb(0 0 0 / 28%);
 	color: var(--ink-2);
 	font: inherit;
 	font-size: 12px;
@@ -43,26 +52,29 @@
 	display: none;
 }
 
-.to-bottom:hover {
-	color: var(--ink);
-	border-color: color-mix(in oklab, var(--line) 60%, var(--ink-3));
+.to-bottom::before {
+	content: "";
+	width: 6px;
+	height: 6px;
+	margin-top: -3px;
+	border-right: 1.5px solid currentColor;
+	border-bottom: 1.5px solid currentColor;
+	transform: rotate(45deg);
 }
 
-.to-bottom[data-count]::before {
-	content: attr(data-count);
-	font-variant-numeric: tabular-nums;
-	color: var(--accent);
-	font-weight: 600;
+.to-bottom:hover {
+	color: var(--ink);
+	background: color-mix(in oklab, var(--ink) 18%, var(--paper));
 }
 
 @keyframes to-bottom-in {
 	from {
 		opacity: 0;
-		transform: translate(-50%, 6px);
+		translate: 0 6px;
 	}
 	to {
 		opacity: 1;
-		transform: translate(-50%, 0);
+		translate: 0 0;
 	}
 }
 
@@ -79,9 +91,33 @@
 }
 
 /* 上滑加载的哨兵：给 1px 有高度，零高元素的相交判定在部分浏览器上不稳。 */
+/* 顶上那一条：不再是一句「加载更早的消息」，只有补历史时露出一颗居中的转圈。 */
 #flow-top {
-	height: 1px;
+	display: grid;
+	place-items: center;
+	height: 0;
 	flex: none;
+	overflow: hidden;
+	transition: height var(--dur-line) ease;
+}
+
+#flow-top[data-active="true"] {
+	height: 28px;
+}
+
+.flow-spinner {
+	width: 14px;
+	height: 14px;
+	border: 2px solid color-mix(in oklab, var(--ink) 14%, transparent);
+	border-top-color: var(--ink-3);
+	border-radius: 50%;
+	animation: flow-spin 0.7s linear infinite;
+}
+
+@keyframes flow-spin {
+	to {
+		transform: rotate(360deg);
+	}
 }
 
 /* ── 行的共同骨架 ───────────────────────────────────────────────────── */
@@ -89,6 +125,19 @@
 .row {
 	position: relative;
 	z-index: 0;
+}
+
+/* 日期分隔：它不是一条消息，是「换了一天」的路标 —— 居中、12px、`--ink-3`，
+   上下留够空，安静到扫过去时不打断读消息。 */
+.row-divider {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	margin: 26px 0 18px;
+	font-size: 12px;
+	line-height: 18px;
+	color: var(--ink-3);
+	letter-spacing: 0.02em;
 }
 
 .row-say {
