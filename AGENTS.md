@@ -47,7 +47,7 @@ src/core/
   team/           一个团队：README.md / memory.md / 自动沉淀
   channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 7 个工具（tools/）
   ── 以上四层是 domain（业务事实）──────────────────────────────
-  app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 后台命令收尾 / 诊断（不 import node:http）
+  app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 后台命令收尾 / 看门狗 / 诊断（不 import node:http）
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/project.ts）
   interface/http/ 唯一 import node:http 的地方：routes / respond（原语）/ route-match（匹配）/
                   origin-guard（来源闸）/ network（网卡）/ static-assets / sse（编解码+hub）
@@ -59,13 +59,13 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             63 文件 / 664 例
-  ├ test/core/    56 文件 / 597 例（纯函数 + 装配）
+test/             64 文件 / 672 例
+  ├ test/core/    57 文件 / 605 例（纯函数 + 装配）
   └ test/ui/      7 文件 / 67 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
 ```
 
-（`src/core` 共 78 个 ts / 12299 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/core` 共 81 个 ts / 12431 行；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -117,7 +117,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 63 文件 664 例，<3s，必须全绿
+npm test             # 64 文件 672 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -148,6 +148,8 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
 | 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/agent/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
+| 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
+| 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `channel/post.ts` 传线索 + `channel/delivery.ts` 的 `woken` |
 | 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2–7.3 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/core/app/trace.ts`（纯函数）+ `src/core/app/read.ts` 的 `turnsOf` / `groupsOf` + `test/core/trace.test.ts` |

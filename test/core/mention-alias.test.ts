@@ -8,7 +8,7 @@
 import { describe, expect, test } from "vitest";
 import { OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { EMPTY_ROSTER, mentionRosterOf, parseMentions, recipientsOf, resolveMention, type MentionAgent } from "../../src/core/channel/mentions.ts";
-import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
+import { appendMessage, ensureChannel, speakerBefore } from "../../src/core/channel/rules.ts";
 
 /** 一份贴近真实的名册：`workspace/agents/` 里那几个人的头字段。 */
 const people: readonly MentionAgent[] = [
@@ -146,5 +146,59 @@ describe("我自己发的话也过名册", () => {
 		// 我 @ 自己会被收件人过滤掉，但 mentions 里必须已经是 slug，界面才画得出「谁被叫了」。
 		expect(message.mentions).not.toContain("我");
 		expect(parseMentions(message.text, mentionRosterOf(people))).toContain("owner");
+	});
+});
+
+describe("我在跟谁说话（ADR-015）", () => {
+	/** 我说一句，知言先接、顾南雁也接了。 */
+	function conversation(): { state: ChannelState; seq: number } {
+		let state = ensureChannel(empty(), { id: "all", title: "全员", members: [OWNER, "知言", "顾南雁"], at: 1 });
+		state = appendMessage(state, "all", { from: OWNER, text: "接口先按 v1 做", at: 1 }).state;
+		state = appendMessage(state, "all", { from: "知言", text: "好，我改", at: 2 }).state;
+		const third = appendMessage(state, "all", { from: "顾南雁", text: "v1 我这边能接", at: 3 });
+		return { state: third.state, seq: third.message.seq + 1 };
+	}
+
+	test("我不 @ 人时，叫醒的是**接我上一句话的那个人**，不是最后一个说话的", () => {
+		const { state, seq } = conversation();
+		const { message } = appendMessage(state, "all", { from: OWNER, text: "那就这么定", at: 4 });
+		const speaker = speakerBefore(state, "all", seq);
+		expect(speaker).toBe("知言");
+		expect(recipientsOf(state.channels.all!, message, speaker)).toEqual(["知言"]);
+		// 不给这条线索时退回老行为：第一个非我的成员。
+		expect(recipientsOf(state.channels.all!, message)).toEqual(["知言"]);
+	});
+
+	test("中间夹一条沉淀报告（别的 agent 发的 report）也不改判：还是先接我话的那个人", () => {
+		let state = ensureChannel(empty(), { id: "all", title: "全员", members: [OWNER, "知言", "顾南雁"], at: 1 });
+		state = appendMessage(state, "all", { from: OWNER, text: "@顾南雁 改一下", at: 1 }).state;
+		state = appendMessage(state, "all", { from: "顾南雁", text: "改完了", at: 2 }).state;
+		// 真实服务里这一条就是团队管理员的沉淀报告，它挡在中间。
+		state = appendMessage(state, "all", { from: "知言", text: "记了一条：……", at: 3, kind: "report" }).state;
+		const { message } = appendMessage(state, "all", { from: OWNER, text: "接着说", at: 4 });
+		expect(speakerBefore(state, "all", message.seq)).toBe("顾南雁");
+	});
+
+	test("系统留痕不算接话", () => {
+		let state = ensureChannel(empty(), { id: "all", title: "全员", members: [OWNER, "知言"], at: 1 });
+		state = appendMessage(state, "all", { from: OWNER, text: "在吗", at: 1 }).state;
+		state = appendMessage(state, "all", { from: "知言", text: "#1 没答上来", at: 2, kind: "note" }).state;
+		const { message } = appendMessage(state, "all", { from: OWNER, text: "再看一眼", at: 3 });
+		expect(speakerBefore(state, "all", message.seq)).toBeUndefined();
+	});
+
+	test("我还没说过话 / 紧接着是我自己 → 不算接谁的话，退回第一个成员", () => {
+		let state = ensureChannel(empty(), { id: "all", title: "全员", members: [OWNER, "知言", "顾南雁"], at: 1 });
+		state = appendMessage(state, "all", { from: "顾南雁", text: "做完了", at: 1 }).state;
+		state = appendMessage(state, "all", { from: OWNER, text: "好", at: 2 }).state;
+		const { message } = appendMessage(state, "all", { from: OWNER, text: "再看一下这个", at: 3 });
+		expect(speakerBefore(state, "all", message.seq)).toBeUndefined();
+		expect(recipientsOf(state.channels.all!, message, undefined)).toEqual(["知言"]);
+	});
+
+	test("接我话的人不在这个频道里就不算（换过成员的老频道）", () => {
+		const { state } = conversation();
+		const { message } = appendMessage(state, "all", { from: OWNER, text: "在吗", at: 4 });
+		expect(recipientsOf(state.channels.all!, message, "周砚")).toEqual(["知言"]);
 	});
 });

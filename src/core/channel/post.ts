@@ -18,6 +18,7 @@ import { deliveryTargets } from "./mentions.ts";
 import type { MentionRoster } from "./mentions.ts";
 import type { WakeRecord } from "./turn/record.ts";
 import { appendNote, appendToChannel } from "./write.ts";
+import { speakerBefore } from "./rules.ts";
 import { deliver, type DeliverIssue, type DeliverResult } from "./dispatch.ts";
 import { deliveryPrompt, digestNotice, digestRows } from "./delivery.ts";
 import type { FinishTurn } from "./turn/index.ts";
@@ -141,7 +142,8 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	}
 
 	// 我没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
-	const targets = input.wakeTo ?? deliveryTargets(liveChannel, message);
+	// 我不 @ 人时接上一位说话的（`speakerBefore`），不是固定第一个成员（ADR-015）。
+	const targets = input.wakeTo ?? deliveryTargets(liveChannel, message, speakerBefore(deps.state, liveChannel.id, message.seq));
 	if (targets.length === 0) {
 		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}

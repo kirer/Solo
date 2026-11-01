@@ -8,6 +8,7 @@
  * 它也不 import `shell/`（装配）。装配出来的东西由调用方通过 `CoreServices` 递进来。
  */
 import { dirname } from "node:path";
+import { OWNER } from "../channel/types.ts";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
 import { createPeople } from "./people.ts";
@@ -16,6 +17,7 @@ import { createRuns } from "./runs.ts";
 import { createSnapshots } from "./snapshot.ts";
 import { createTeams } from "./teams.ts";
 import { createUploads } from "./uploads.ts";
+import { createWatch } from "./watch.ts";
 import type { CoreServices } from "./types.ts";
 
 export function createApp(services: CoreServices) {
@@ -27,7 +29,14 @@ export function createApp(services: CoreServices) {
 	const uploads = createUploads(services);
 	const runs = createRuns(services);
 	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
-	return { snapshots, read, people, teams, chat, uploads, runs, diag };
+	// 看门狗：底座报上来的异常说进全员频道，别只躺在 logs/runtime.jsonl 里。
+	const watch = createWatch({
+		onAbnormal: diag.onAbnormal,
+		notify: async (text) => {
+			await services.postAs({ channelId: services.allChannel, from: OWNER, text, kind: "note" });
+		},
+	});
+	return { snapshots, read, people, teams, chat, uploads, runs, watch, diag };
 }
 
 export type App = ReturnType<typeof createApp>;

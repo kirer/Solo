@@ -105,6 +105,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	// 后台命令的「跑完了」是进程内的回调：上一轮进程一起，结果就永远回不来了。
 	// 重启时把账结掉，频道里留一句话（ADR-013）。
 	void app.runs.sweep();
+	// 看门狗：底座报上来的异常说进全员频道（只通报，不自动救）。
+	app.watch.start();
 
 	if (process.env.SOLO_DEBUG_FROM === "1") {
 		console.warn("[core] 警告：from 可伪造（SOLO_DEBUG_FROM=1），只用于本机调试");
@@ -126,6 +128,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		host: boundHost,
 		lanUrls: lanUrlsOf(boundHost, actualPort),
 		async close() {
+			app.watch.stop();
 			unsubscribe();
 			hub.close();
 			await new Promise<void>((resolve) => {

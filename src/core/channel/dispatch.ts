@@ -142,6 +142,7 @@ export async function deliver(
 			channel: options.channel,
 			message: options.message,
 			viewer,
+			woken: options.targets,
 			labelOf: label,
 			interrupted,
 			...(taskChannelTitle === undefined ? {} : { taskChannelTitle }),

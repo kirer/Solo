@@ -5,7 +5,7 @@ import type { Context } from "../../runtime/index.ts";
 import { wakeOf } from "../../agent/roster.ts";
 import { OWNER, chatKind, type ChannelState } from "../types.ts";
 import { deliveryTargets } from "../mentions.ts";
-import { fallbackChannelId } from "../rules.ts";
+import { fallbackChannelId, speakerBefore } from "../rules.ts";
 import type { CoreToolDeps } from "./context.ts";
 
 /**
@@ -94,6 +94,6 @@ export async function othersAwoken(
 	const candidates =
 		message === undefined
 			? channel.members.filter((member) => member !== OWNER)
-			: deliveryTargets(channel, message);
+			: deliveryTargets(channel, message, speakerBefore(state, channel.id, message.seq));
 	return candidates.filter((member) => member !== slug);
 }

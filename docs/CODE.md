@@ -65,7 +65,7 @@ shell = 装配层，唯一可以同时 import 全部
 4. 同步读配置 —— `agent/secrets.ts`、`runtime/models.ts`
 5. 技能目录复制 —— `agent/skills.ts`
 
-## 2. 全量文件（`src/core` 下 72 个 ts，10789 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/core` 下 81 个 ts，12431 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/tools/guards.ts` | 106 | 安全闸与上限：`isPass` / `monologueOpener` / `clip` / `resolveInWorkspace`、`SAY_LIMIT` / `GROUP_SAY_LIMIT` / `sayLimitOf` / `MODEL_LIMIT` |
 | `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），`defaultChannel` 兜底落到私聊**直接报错**。`me` / `skills` / `teams` / `write_team` 已删——它们是「用 `file` 读写某个固定路径 md」的包装。`file` 写 `teams/<slug>/README.md` 后调 `syncTeam` 重投影频道。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
 | `channel/unanswered.ts` | 82 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛） |
-| `app/index.ts` | 51 | `createApp(services)` → `{snapshots, read, people, teams, chat, uploads, runs, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
+| `app/index.ts` | 51 | `createApp(services)` → `{snapshots, read, people, teams, chat, uploads, runs, watch, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
 | `app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」 |
 | `app/snapshot.ts` | 86 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
 | `app/read.ts` | 335 | `createRead` —— 读的入口：每个方法都是「取快照 → 投影（`app/project.ts`）→ 返回 DTO」。另有轨迹四件：`activityMap` / `liveOf`（谁此刻在跑，读 `LiveDoc`）、`readTurns` / `readTurn`（`turnsOf` 按 `core.channel` 切轮）、`readPersonTurns`（跨频道；私聊工作记录）、`personOfChannel`（私聊对面是谁，SSE 用）。纯切轮只有 `groupsOf(entries, from, to, channelId?)` 一个：给了 `channelId` 只切那个频道，不给就切这个人的所有频道 |
@@ -126,7 +126,8 @@ shell = 装配层，唯一可以同时 import 全部
 | `app/avatar.ts` | 69 | 头像的**画法**：`avatarSvg(seed, size)`（DiceBear `micah`，取景与底色都在这里）/ `avatarEtag` / `clampAvatarSize`。纯函数，没有 IO：路由把字节写出去 |
 | `app/uploads.ts` | 76 | 上传语义：`createUploads` —— 收下字节、写元数据、读回时决定内联还是下载。工作区文件树已删，三道闸随它一起走了 |
 | `app/runs.ts` | 46 | 后台命令的收尾：`createRuns` 的 `sweep()` —— 服务启动时把上一轮遗留的后台命令结账，在起跑的那个频道留一条 `note`（谁起的、哪条命令、活着被停掉还是早就结束了）。失败只记一行，不影响启动（ADR-013） |
-| `app/diag.ts` | 127 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
+| `app/diag.ts` | 150 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `onAbnormal()`（订阅异常报告，看门狗用）/ `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
+| `app/watch.ts` | 49 | 看门狗（ADR-016）：`createWatch` 订阅 `diag.onAbnormal`，异常报告一到就在全员频道留一条 `note`（`底座报告：…`），10 分钟最多一条；`serve.ts` 启动 `start()`、关服务 `stop()`。只通报，不自动救 |
 | `app/audit.ts` | 82 | 审计钩子（ADR-010）：`auditHooks(deps)` 返回两个 `HookRegistration`（`ToolTask` 的 `beforeTool` / `afterTool`、`GenerationTask` 的 `afterResponse`），一次工具调用 / 一次模型回复各写一行到 `logs/tools.jsonl`（单文件 5MB 轮转一代）。**只读不改**：不改参数、不拦调用、不改结果；写失败就丢这一行，不反噬调用。装配层把它挂在 `core-tools` 扩展上 —— 那是每个会话都选的扩展 |
 | `app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
 | `view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/project.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
@@ -201,6 +202,8 @@ shell = 装配层，唯一可以同时 import 全部
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/route-match.ts` / `static-assets.ts` / `origin-guard.ts` / `network.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
+| 改「我不 @ 人时谁接话」 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` | 认的是我上一句话之后第一个接话的人（`note` 不算）；我还没说话才退回第一个成员。`renderDelivery` 吃投递层算好的 `woken`，别自己再推一遍（ADR-015） |
+| 改看门狗的判据 / 通报方式 | `app/watch.ts` + `app/diag.ts` 的 `onAbnormal` | 只通报、不自动救；用订阅不用轮询（`lastReport` 只留最新一条，轮询会漏）（ADR-016） |
 | 改后台命令（`run` 的 `background`） | `channel/jobs.ts`（起 / 记 / 收）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo` | 结果回到**起跑的那个频道**，以 `note` 落库、`wakeTo` 叫醒起跑的人（`note` 默认谁也不叫）；最多 30 分钟；输出只回尾巴 8000 字（ADR-013） |
 | 改一条消息的字数上限 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` | 群聊 600 / 私聊 1200，看的是目标频道的 `chatKind`（ADR-014） |
 | 改附件（落盘 / 上限 / 清理） | `channel/attachments.ts`（字节与元数据）+ `app/uploads.ts`（语义：内联还是给路径） | 上限与「先读完再比等于没有上限」都在 `channel/attachments.ts`；别把字节塞进频道文档（教训） |
@@ -256,7 +259,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 57 文件 / 589 例，应该 <3s
+npm test             # 64 文件 / 672 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
@@ -283,7 +286,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `channel-write.test.ts` | 频道写入的字节代价（每写一条花多少字节是契约）；`appendNote` 与普通消息共用写入路径、`nextSeq` 自愈 |
 | `naming.test.ts` | 三种名字共用校验、`owner` 只对 agent 保留、清洗结果一定能过校验、旧 `assertSlug` / `assertTeamSlug` 仍可用 |
 | `dm-channel.test.ts` | `openDirectMessage`：`dm:` id、幂等、拒绝我 / 不存在 / 空 slug |
-| `mention-alias.test.ts` | `@` 别名解析：`@我` 的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底 |
+| `mention-alias.test.ts` | `@` 别名解析：`@我` 的 6 种叫法、CEO/真名/title、垃圾 token 丢弃、老数据兜底；「我在跟谁说话」五条（ADR-015） |
 | `turn.test.ts` | 答了却没说出来：结算收尾的补发判据、两层唤醒记录选频道 |
 | `queue-jump.test.ts` | 我问话插队：只撤同会话 `queued` 项、最多 5 条、我自己排的不让路 |
 | `say-contract.test.ts` | `say` 的落点契约：兜底频道不落私聊、投递正文带频道 id、`decision` 不自动补 `owner`、`[PASS]` 与单人在场不许静音、过程话可连发（「一轮一句结论」已降级为 `rules.md` 约束） |
@@ -315,6 +318,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `history.test.ts` | `read_history` 能翻到被压缩掉的历史 |
 | `attach.test.ts` | `planAttachments`：哪些附件给模型读、怎么读 |
 | `uploads-sweep.test.ts` | `sweepOrphanUploads`：没人引用的附件被清掉 |
+| `watch.test.ts` | 看门狗：异常变一句话、窗口内只报一条、stop 之后不再写频道（ADR-016） |
 | `run-jobs.test.ts` | 后台命令：跑完回调 + 记录删掉、超时杀掉、起不来也回话、重启清扫（活着的杀掉）、`note` 默认不叫醒而 `wakeTo` 才叫醒 |
 | `safety.test.ts` | `resolveInWorkspace`：越界路径一律拒 |
 | `http-guard.test.ts` | `hostAllowed`：Host 头必须是本服务自己 |

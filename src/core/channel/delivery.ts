@@ -107,6 +107,13 @@ export function renderDelivery(options: {
 	readonly message: Message;
 	/** 收件人。用来从「还 @ 了」里剔掉自己——否则每个人都会看到「还 @ 了你」。 */
 	readonly viewer?: string | undefined;
+	/**
+	 * 这条实际会叫醒谁（投递层已经算好的名单）。
+	 *
+	 * 给了就用它，不再自己推一遍：名单里多了一条「接上一位说话的」（ADR-015）之后，
+	 * 两处各推一次就会出现「正文说叫醒甲、实际叫醒乙」。
+	 */
+	readonly woken?: readonly string[];
 	readonly labelOf?: ((slug: string) => string) | undefined;
 	/** 这句是插进一轮正在跑的工作里的。 */
 	readonly interrupted?: boolean;
@@ -131,7 +138,7 @@ export function renderDelivery(options: {
 	const also = others.length === 0 ? "" : `\n这条还 @ 了：${others.map(label).join("、")}`;
 	// 「这条会叫醒谁、你是第几个」和「别人也在看」必须由代码注入：模型看不到投递名单，
 	// 于是两个人被同时叫醒时各写一条重复甚至矛盾的回复，谁也不知道对方也在场。
-	const woken = deliveryTargets(channel, message);
+	const woken = options.woken ?? deliveryTargets(channel, message);
 	const line = [also];
 	if (woken.length > 0) {
 		const position =

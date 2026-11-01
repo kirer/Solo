@@ -80,6 +80,8 @@ function clipReport(report: RuntimeReport): unknown {
 export function createDiag(workspaceRoot: string) {
 	/** 最近一条「不正常」的运行报告（进程内；落盘的全文在 `logs/runtime.jsonl`）。 */
 	let last: { readonly type: string; readonly at: string; readonly text: string } | undefined;
+	/** 谁想知道「出事了」（看门狗）。 */
+	const watchers = new Set<(report: { readonly type: string; readonly at: string; readonly text: string }) => void>();
 
 	/** 落一条诊断。写不进去不该影响任何事。 */
 	async function record(body: { readonly kind?: string; readonly entries?: unknown }): Promise<{ ok: true }> {
@@ -102,6 +104,14 @@ export function createDiag(workspaceRoot: string) {
 	function recordRuntimeReport(report: RuntimeReport): void {
 		if (!BENIGN.has(report.type)) {
 			last = { type: report.type, at: report.at, text: formatRuntimeReport(report) };
+			// 订阅者在这里抛错会把「一次任务失败」升级成别的东西：逐个包住，谁都别想反噬底座。
+			for (const listener of watchers) {
+				try {
+					listener(last);
+				} catch {
+					/* 看门狗自己的问题，不该影响报告本身 */
+				}
+			}
 		}
 		void appendReport(report);
 	}
@@ -116,12 +126,25 @@ export function createDiag(workspaceRoot: string) {
 		}
 	}
 
+	/**
+	 * 订阅「不正常」的报告（看门狗用）。
+	 *
+	 * 为什么不是定时轮询 `lastReport()`：它只留**最新**一条，两次轮询之间来的报告会被
+	 * 悄悄覆盖掉。异常本来就不多，推给订阅者比让它们排队等着被读便宜。
+	 */
+	function onAbnormal(listener: (report: { readonly type: string; readonly at: string; readonly text: string }) => void): () => void {
+		watchers.add(listener);
+		return () => {
+			watchers.delete(listener);
+		};
+	}
+
 	/** 最近一条不正常报告（给 `GET /api/diag`）。没有就是 `undefined`。 */
 	function lastReport(): { readonly type: string; readonly at: string; readonly text: string } | undefined {
 		return last;
 	}
 
-	return { record, recordRuntimeReport, lastReport };
+	return { record, recordRuntimeReport, lastReport, onAbnormal };
 }
 
 export type Diag = ReturnType<typeof createDiag>;

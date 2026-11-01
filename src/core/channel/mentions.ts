@@ -50,7 +50,7 @@ function hasMentionToken(text: string): boolean {
 	return MENTION_TOKEN.test(text);
 }
 
-export function recipientsOf(channel: Channel, message: Message): string[] {
+export function recipientsOf(channel: Channel, message: Message, lastSpeaker?: string): string[] {
 	const targets = new Set<string>();
 	const members = new Set(channel.members);
 
@@ -64,8 +64,15 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
 	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个
 	// 不存在的人」变成「叫了房间里第一个人」—— 我会以为刚才那句没人理。
 	if (message.from === OWNER && message.mentions.length === 0 && !hasMentionToken(message.text)) {
-		const first = channel.members.find((slug) => slug !== OWNER);
-		if (first !== undefined) targets.add(first);
+		// 接上一位说话的：我不 @ 人时叫醒**刚在说话的那个人**，而不是成员表里的第一个。
+		// 这是 dsh「订阅直通」在单会话里的等价物 —— 一件事谁在办，后续就直通给他；
+		// 固定第一个成员的话，我在跟成员乙聊，下一句没 @ 就掉给了团队管理员（ADR-015）。
+		const previous =
+			lastSpeaker !== undefined && lastSpeaker !== message.from && channel.members.includes(lastSpeaker)
+				? lastSpeaker
+				: undefined;
+		const target = previous ?? channel.members.find((slug) => slug !== OWNER);
+		if (target !== undefined) targets.add(target);
 	}
 	for (const slug of channel.wakeOnAll) {
 		if (members.has(slug)) targets.add(slug);
@@ -80,8 +87,8 @@ export function recipientsOf(channel: Channel, message: Message): string[] {
  * 我没有会话 —— 它是人，不是 agent。这个减法以前在三处各写一遍（投递、投递正文、
  * 独白检测），任何一处漏了，我就会出现在「这条会叫醒：」的名单里。
  */
-export function deliveryTargets(channel: Channel, message: Message): string[] {
-	return recipientsOf(channel, message).filter((slug) => slug !== OWNER);
+export function deliveryTargets(channel: Channel, message: Message, lastSpeaker?: string): string[] {
+	return recipientsOf(channel, message, lastSpeaker).filter((slug) => slug !== OWNER);
 }
 
 // ── `@` 解析（原 `alias.ts`）──────────────────────────────────────────────

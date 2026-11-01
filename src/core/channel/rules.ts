@@ -55,6 +55,34 @@ export function channelsOf(state: ChannelState, slug: string): Channel[] {
 }
 
 /**
+ * 「我在跟谁说话」：我上一句话之后，**第一个接话的人**。
+ *
+ * 用来决定「我不 @ 人时，谁接这一句」（ADR-015）。为什么不取「紧挨着的那一条」：
+ * 团队频道里每轮结束都会有一条沉淀报告（也是某个 agent 发的），它会挡在中间 ——
+ * 实测真实服务里，「我 → 乙 → 甲(沉淀) → 我(没 @)」按紧挨着算会掉给甲，而我在跟乙说话。
+ *
+ * 所以判据是：找到我最近一句话，再找它之后的第一个 agent 发言。系统留痕（`note`）不算
+ * 接话 —— 那是机器写的。找不到（我还没说过话、或紧接着是我自己）就返回 `undefined`，
+ * 由调用方退回「第一个非我的成员」。
+ */
+export function speakerBefore(state: ChannelState, channelId: string, seq: number): string | undefined {
+	const before = (state.messages[channelId] ?? []).filter((item) => item.seq < seq);
+	let mine = -1;
+	for (let index = before.length - 1; index >= 0; index -= 1) {
+		if (before[index]?.from === OWNER) {
+			mine = index;
+			break;
+		}
+	}
+	if (mine === -1) return undefined;
+	for (let index = mine + 1; index < before.length; index += 1) {
+		const item = before[index];
+		if (item !== undefined && item.from !== OWNER && item.kind !== "note") return item.from;
+	}
+	return undefined;
+}
+
+/**
  * 追加一条消息，返回新的 state 与落地的消息。
  *
  * 纯函数：seq 分配、mentions 解析、readMarks 都没动（发件人自己的已读位置由
