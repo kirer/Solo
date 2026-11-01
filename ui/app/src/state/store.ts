@@ -65,6 +65,7 @@ export type State = {
 	side: Side;
 	right: { open: boolean };
 	needMenu: boolean;
+	pluginSheet: boolean;
 	settings: boolean;
 	team: boolean;
 	/** 正在引用的那条消息（seq + 摘要），发出去就清空。 */
@@ -79,6 +80,8 @@ const THEME_KEY = "solo.theme";
 const SIDE_KEY = "solo.side";
 
 function read<K extends string>(key: string, allowed: readonly K[], fallback: K): K {
+	// 没有 localStorage 的环境（node 里跑单测、未来的 SSR）读不到就按缺省来：这里只是偏好，不是状态。
+	if (typeof localStorage === "undefined") return fallback;
 	const value = localStorage.getItem(key);
 	return allowed.includes(value as K) ? (value as K) : fallback;
 }
@@ -102,6 +105,7 @@ const initial: State = {
 	side: read(SIDE_KEY, ["open", "rail"], "open"),
 	right: { open: false },
 	needMenu: false,
+	pluginSheet: false,
 	settings: false,
 	team: false,
 	reply: null,
@@ -444,11 +448,16 @@ export function setReply(reply: State["reply"]): void {
 
 /** 三个浮层互斥：打开一个就关掉另一个 —— 同时开着两个，Esc 该关谁变成靠猜。 */
 export function setSettings(open: boolean): void {
-	patch({ settings: open, ...(open ? { needMenu: false } : {}) });
+	patch({ settings: open, ...(open ? { needMenu: false, pluginSheet: false, team: false } : {}) });
 }
 
 export function setTeam(open: boolean): void {
-	patch({ team: open });
+	patch({ team: open, ...(open ? { pluginSheet: false, settings: false } : {}) });
+}
+
+/** 插件浮层（左栏「团队管理」下面那一格）。 */
+export function setPluginSheet(open: boolean): void {
+	patch({ pluginSheet: open, ...(open ? { team: false, settings: false, needMenu: false } : {}) });
 }
 
 export function setNeedMenu(open: boolean): void {

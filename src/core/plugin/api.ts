@@ -1,0 +1,104 @@
+/**
+ * 插件能对后端做的四件事：加一个工具、追加一段提示词、加一条 HTTP 路由、听消息。
+ *
+ * 为什么只有四件：插件是「给组织加能力」，不是「重新实现运行时」。dsh 那边一个插件能
+ * 摸到 `ctx.tools` / `ctx.llm` / `ctx.sessions` 全部服务，代价是插件必须懂 Cordis 的
+ * 服务定位器和瀑布事件；Solo 的形态是「语义写在文档里，代码只做机械的事」，所以给的是
+ * **四个动作**，每个动作只落一个数组，没有服务查找、没有事件总线。
+ *
+ * 每个 `tool()` / `prompt()` / `route()` / `on()` 都只有「加进去」一种语义，没有对应的
+ * 「删掉」：第一版不做热插拔（关插件 = 重启进程，见 ADR）。
+ */
+import { defineTool, Type, type ToolRegistration } from "../runtime/index.ts";
+import type { JsonValue } from "../runtime/index.ts";
+import type { Message } from "../channel/types.ts";
+
+/** 一个工具的形状。与核心那七个工具用的是同一个 `defineTool`。 */
+export type PluginToolSpec = {
+	readonly name: string;
+	readonly description: string;
+	/** 参数 schema，用 `api.Type` 造（插件不需要 import 任何东西）。 */
+	readonly parameters: unknown;
+	readonly execute: (...args: readonly never[]) => unknown;
+};
+
+/** 插件路由收到的请求。**只有 JSON**：不发文件、不设 header、不读原始 body。 */
+export type PluginRequest = {
+	readonly method: "GET" | "POST";
+	/** 路径参数（`/api/p/:id` 里的 `id`）。 */
+	readonly params: Readonly<Record<string, string>>;
+	/** 查询串。 */
+	readonly query: Readonly<Record<string, string>>;
+	/** POST 的 JSON body；没有 body 就是 `undefined`。 */
+	readonly body?: JsonValue;
+};
+
+export type PluginRouteSpec = {
+	readonly method: "GET" | "POST";
+	/** 路径模板，规则同 `interface/http/route-match.ts`（`:name` 捕获一段）。 */
+	readonly pattern: string;
+	handle(request: PluginRequest): Promise<JsonValue>;
+};
+
+export type PluginListener = (message: Message, channelId: string) => void | Promise<void>;
+
+/** 插件拿到的那一个对象。插件源码里不 import 任何东西，全靠它。 */
+export type PluginApi = {
+	readonly slug: string;
+	/** 工作区绝对路径。插件要读写自己的数据时用它（自担越界风险，见 ADR）。 */
+	readonly workspace: string;
+	/** 工具参数 schema 的构造器。 */
+	readonly Type: typeof Type;
+	/** 工具的返回值：**一段自然语言**，不是结构化数据（工具输出是给模型读的）。 */
+	readonly text: (value: string) => { readonly output: readonly { readonly type: "text"; readonly text: string }[] };
+	tool(spec: PluginToolSpec): void;
+	/** 追加一截全员提示词。空串忽略。 */
+	prompt(text: string): void;
+	route(spec: PluginRouteSpec): void;
+	on(event: "message", listener: PluginListener): void;
+	log(line: string): void;
+};
+
+/** 注册落到哪里。加载器建一份，一个插件往里写，`PluginHost` 再收走。 */
+export type PluginSinks = {
+	readonly tools: ToolRegistration[];
+	readonly prompt: string[];
+	readonly routes: PluginRouteSpec[];
+	readonly messages: PluginListener[];
+	readonly logs: string[];
+};
+
+export function emptySinks(): PluginSinks {
+	return { tools: [], prompt: [], routes: [], messages: [], logs: [] };
+}
+
+/** 造一个插件用的 `api`。所有注册只是 push —— 没有副作用，也没有失败路径。 */
+export function createPluginApi(options: {
+	readonly slug: string;
+	readonly workspace: string;
+	readonly sinks: PluginSinks;
+}): PluginApi {
+	const { slug, workspace, sinks } = options;
+	return {
+		slug,
+		workspace,
+		Type,
+		text: (value: string) => ({ output: [{ type: "text" as const, text: value }] }),
+		tool(spec) {
+			sinks.tools.push(defineTool(spec as never) as ToolRegistration);
+		},
+		prompt(text) {
+			const trimmed = text.trim();
+			if (trimmed !== "") sinks.prompt.push(trimmed);
+		},
+		route(spec) {
+			sinks.routes.push(spec);
+		},
+		on(event, listener) {
+			if (event === "message") sinks.messages.push(listener);
+		},
+		log(line) {
+			sinks.logs.push(line);
+		},
+	};
+}

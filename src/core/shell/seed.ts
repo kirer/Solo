@@ -26,6 +26,14 @@ type SeedManifest = {
 	version: 1;
 	/** `技能名` → `技能内相对路径` → 内容 hash（sha256 前 16 位）。 */
 	skills: Record<string, Record<string, string>>;
+	/**
+	 * 出厂插件里**已经在工作区出现过**的目录名。
+	 *
+	 * 只记「见过」不记 hash：插件是一份可执行的代码，我动过它就是我的了。
+	 * 记这一条是为了让「删除」真的删掉 —— 只看目录在不在的话，删掉的出厂插件
+	 * 下次启动会被重新拷回来，界面上的「删除」就成了假的。
+	 */
+	plugins: string[];
 };
 
 /** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
@@ -131,9 +139,9 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 async function readManifest(path: string): Promise<SeedManifest> {
 	try {
 		const raw = JSON.parse((await readTextOrUndefined(path)) ?? "") as Partial<SeedManifest>;
-		return { version: 1, skills: raw.skills ?? {} };
+		return { version: 1, skills: raw.skills ?? {}, plugins: raw.plugins ?? [] };
 	} catch {
-		return { version: 1, skills: {} };
+		return { version: 1, skills: {}, plugins: [] };
 	}
 }
 
@@ -187,6 +195,48 @@ export async function seedPromptTemplates(workspaceRoot: string): Promise<readon
 		if (source === undefined) continue;
 		await writeTextAt(target, source);
 		written.push(name);
+	}
+	return written;
+}
+
+/**
+ * 把出厂的示范插件补进工作区（`<workspace>/plugins/<名字>/`）。
+ *
+ * 判据是**整个目录在不在**，不像技能那样逐文件比 hash：插件是一份可执行的代码，
+ * 我一旦动过它就是「我的插件」了，逐文件覆盖反而会把 `plugin.ts` 换回出厂版、
+ * 留下一个半新半旧的目录。所以：缺了才补，有了整份留着。
+ *
+ * **删掉的不会被塞回来**：见过一次就记进 `.seed-manifest.json`（`plugins`），
+ * 之后只看账本 —— 否则「删除」只在这次进程里生效，重启就复活，和界面写的话不符。
+ * 代价：老工作区第一次跑这一版时，以前删掉的出厂插件会补回来一次（没有历史可查）。
+ */
+export async function seedPlugins(workspaceRoot: string): Promise<readonly string[]> {
+	const root = seedPath("plugins");
+	const manifestPath = join(workspaceRoot, SEED_MANIFEST_FILE);
+	const manifest = await readManifest(manifestPath);
+	const seen = new Set(manifest.plugins);
+	const written: string[] = [];
+	let changed = false;
+
+	for (const entry of await listDirSorted(root)) {
+		if (entry.kind !== "dir") continue;
+		const name = entry.name;
+		// 见过就算了：盘上有 = 我留着 / 改过；盘上没了 = 我删的。两种情况都不该再动手。
+		if (seen.has(name)) continue;
+		seen.add(name);
+		changed = true;
+		if (await existsAt(join(workspaceRoot, "plugins", name))) continue;
+		for (const relpath of await walkFiles(root, name)) {
+			const source = await readTextOrUndefined(join(root, ...relpath.split("/")));
+			if (source === undefined) continue;
+			await writeTextAt(join(workspaceRoot, "plugins", ...relpath.split("/")), source);
+		}
+		written.push(name);
+	}
+
+	if (changed) {
+		manifest.plugins = [...seen].sort();
+		await writeTextAt(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 	}
 	return written;
 }

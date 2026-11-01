@@ -18,6 +18,7 @@ import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows, buildWorkRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { RunBlock } from "./RunBlock.tsx";
+import { Slot } from "../plugin/Slot.tsx";
 import { loadEarlier, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
@@ -199,6 +200,9 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 
 					{detail === null ? <Skeleton /> : null}
 
+					{/* 插槽：消息流顶部（第一条消息上方）。 */}
+					<Slot name="stream.top" />
+
 					<div className="feed" id="feed" ref={feedRef}>
 						{detail !== null && rows.length === 0 ? <Empty channelId={detail.channel.id} /> : null}
 						{rows.map((row) => (
@@ -206,6 +210,8 @@ export function Stream(props: { onImage: (src: string) => void }): JSX.Element {
 						))}
 					</div>
 
+					{/* 插槽：消息流底部（最后一条消息之后，仍在滚动区里）。 */}
+					<Slot name="stream.bottom" />
 				</div>
 			</div>
 			{/* 在滚动容器**外面**：它一进滚动区就算进 scrollHeight，滚到底永远差它那几十像素。 */}
@@ -263,6 +269,25 @@ function RowView(props: {
 					)}
 					<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} grouped={row.grouped} />
 				</div>
+			</div>
+		);
+	}
+	// 后台命令跑完的留痕：正文是一坨终端输出，是给干活那个人看的。我这边收成一行，
+	// 想看就点开 —— 它要是平铺，一屏对话里就插进二十行日志。
+	if (row.message.noteOf === "run") {
+		const [head = "", ...rest] = row.message.text.split("\n");
+		return (
+			<div className="row row-note row-note-run" data-seq={row.message.seq}>
+				<details className="note-fold">
+					<summary>
+						<span className="note-mark" aria-hidden="true">
+							i
+						</span>
+						<span className="note-text">{head}</span>
+						<span className="row-time">{clockTime(row.message.at)}</span>
+					</summary>
+					<pre className="note-body">{rest.join("\n")}</pre>
+				</details>
 			</div>
 		);
 	}

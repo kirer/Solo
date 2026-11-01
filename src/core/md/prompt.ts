@@ -50,6 +50,13 @@ export type PromptTemplate = {
 	readonly use: PromptUse;
 	/** 这个插槽为空 → 整段不出现。`undefined` = 永远出现。 */
 	readonly skipEmpty: string | undefined;
+	/**
+	 * 正文为空时用它顶上（只对 `use: delivery` 有意义）。
+	 *
+	 * 投递层的片段缺失时，句子不能跟着消失 ——「这一轮只有你被叫醒」少一句，模型就可能
+	 * 不说话了。这句兜底也是文案，所以和正文住同一个文件，不写在代码里。
+	 */
+	readonly default: string | undefined;
 	/** 去掉头之后的正文（未填插槽）。 */
 	readonly body: string;
 };
@@ -93,7 +100,15 @@ export function parseTemplate(file: string, source: string): PromptTemplate {
 	if (use !== "system" && use !== "delivery") {
 		throw new Error(`提示词模板的 use 只能是 system / delivery：${file} → ${use}`);
 	}
-	return { file, order, segment, use, skipEmpty: doc.front["skip-empty"], body: doc.body };
+	return {
+		file,
+		order,
+		segment,
+		use,
+		skipEmpty: doc.front["skip-empty"],
+		default: doc.front["default"],
+		body: doc.body,
+	};
 }
 
 /**

@@ -17,11 +17,19 @@ import { createFsx } from "../fsx.ts";
 import { renderSlots, toolSlots, type SlotValue } from "../md/text.ts";
 import { oneLine } from "../md/oneline.ts";
 
-/** 回话规矩的三个条件片段。缺哪份就退回一句事实，不把句子截成「（未设置）」。 */
+/**
+ * 回话规矩的一个条件片段：正文 + 模板自己写的兜底句。
+ *
+ * 兜底句住在同一个 md 的 `default:` 头里（一句文案一个家）：文件被删空时，这句话不能
+ * 跟着消失 —— 少了「这一轮只有你被叫醒」，模型就可能不说话。
+ */
+export type ReplyFragment = { readonly body: string; readonly fallback: string };
+
+/** 回话规矩的三个条件片段。 */
 export type ReplyFragments = {
-	readonly alone: string;
-	readonly shared: string;
-	readonly colleagues: string;
+	readonly alone: ReplyFragment;
+	readonly shared: ReplyFragment;
+	readonly colleagues: ReplyFragment;
 };
 
 /** delivery 段的全部模板：每轮现读，改文件下一条生效。 */
@@ -29,9 +37,9 @@ export type DeliveryPrompt = {
 	readonly reply: string;
 	readonly interrupted: string;
 	readonly settle: string;
-	readonly alone: string;
-	readonly shared: string;
-	readonly colleagues: string;
+	readonly alone: ReplyFragment;
+	readonly shared: ReplyFragment;
+	readonly colleagues: ReplyFragment;
 	readonly dm: string;
 	readonly multi: string;
 	readonly merged: string;
@@ -44,6 +52,11 @@ export type DeliveryPrompt = {
 function fillFragment(template: string, values: Readonly<Record<string, SlotValue>> = {}): string {
 	if (template.trim() === "") return "";
 	return renderSlots(template, { ...toolSlots(template), ...values }).text.trim();
+}
+
+/** 正文优先，正文空/删了就用模板自带的兜底句。 */
+function fillPair(fragment: ReplyFragment, values: Readonly<Record<string, SlotValue>> = {}): string {
+	return fillFragment(fragment.body, values) || fillFragment(fragment.fallback, values);
 }
 
 /** 合并唤醒的尾注。模板缺失时整句不贴。 */
@@ -84,14 +97,14 @@ export function renderReplyRules(options: {
 	// 条件句必须是整行、且一定有值：留空会让 80-reply 渲染成「（未设置）」。
 	const alone =
 		others.length === 0
-			? fillFragment(options.fragments.alone) || "（这一轮只有你被叫醒。）"
-			: fillFragment(options.fragments.shared, { others: others.map(label).join("、") }) ||
-				`（这一轮还有 ${others.map(label).join("、")} 在。）`;
+			? fillPair(options.fragments.alone)
+			: fillPair(options.fragments.shared, { others: others.map(label).join("、") });
+	// 没有同事时贴的也是这份片段的兜底句（`83-colleagues.md` 的 `default:`）：
+	// 「这个频道里只有你和我」和「要问谁就 @ 他」是同一件事的两面，不另开一个文件。
 	const colleagueLine =
 		colleagues.length === 0
-			? "（这个频道里只有你和我。）"
-			: fillFragment(options.fragments.colleagues, { colleagues: colleagues.map(label).join("、") }) ||
-				`（要问 ${colleagues.map(label).join("、")} 就在这个频道 @ 他。）`;
+			? fillFragment(options.fragments.colleagues.fallback)
+			: fillPair(options.fragments.colleagues, { colleagues: colleagues.map(label).join("、") });
 
 	const slots: Record<string, SlotValue> = {
 		...toolSlots(options.template),
@@ -193,13 +206,17 @@ export async function deliveryPrompt(promptDir: string | undefined): Promise<Del
 	const templates = await loadTemplates(createFsx(promptDir), ".");
 	const delivery: readonly PromptTemplate[] = templates.filter((template) => template.use === "delivery");
 	const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
+	const fragmentOf = (segment: string): ReplyFragment => {
+		const template = delivery.find((item) => item.segment === segment);
+		return { body: template?.body ?? "", fallback: template?.default ?? "" };
+	};
 	const prompt: DeliveryPrompt = {
 		reply: bodyOf("reply"),
 		interrupted: bodyOf("interrupted"),
 		settle: bodyOf("settle"),
-		alone: bodyOf("alone"),
-		shared: bodyOf("shared"),
-		colleagues: bodyOf("colleagues"),
+		alone: fragmentOf("alone"),
+		shared: fragmentOf("shared"),
+		colleagues: fragmentOf("colleagues"),
 		dm: bodyOf("dm"),
 		multi: bodyOf("multi"),
 		merged: bodyOf("merged"),
@@ -215,9 +232,9 @@ function emptyDeliveryPrompt(): DeliveryPrompt {
 		reply: "",
 		interrupted: "",
 		settle: "",
-		alone: "",
-		shared: "",
-		colleagues: "",
+		alone: { body: "", fallback: "" },
+		shared: { body: "", fallback: "" },
+		colleagues: { body: "", fallback: "" },
 		dm: "",
 		multi: "",
 		merged: "",

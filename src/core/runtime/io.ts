@@ -34,6 +34,24 @@ export async function writeTextAt(path: string, text: string): Promise<void> {
 	await writeFile(path, text, "utf8");
 }
 
+/**
+ * 原子写：先写 `<path>.tmp` 再换名。写到一半崩掉不会留下半份文件。
+ *
+ * 只给「写坏了等于全员出事」的那类文件用（`workspace/settings.json`）。
+ */
+export async function writeTextAtomicAt(path: string, text: string): Promise<void> {
+	await mkdir(dirname(path), { recursive: true });
+	const temp = `${path}.tmp`;
+	await writeFile(temp, text, "utf8");
+	await rename(temp, path);
+}
+
+/** 写一份**二进制**，父目录自动建。装机（插件文件夹导入）要原样搬图片这类文件。 */
+export async function writeBytesAt(path: string, bytes: Uint8Array): Promise<void> {
+	await mkdir(dirname(path), { recursive: true });
+	await writeFile(path, bytes);
+}
+
 /** 往一份文本末尾追加（父目录自动建）。后台命令的日志是长出来的，不是一次写完的。 */
 export async function appendTextAt(path: string, text: string): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
@@ -43,6 +61,11 @@ export async function appendTextAt(path: string, text: string): Promise<void> {
 /** 删一个文件。不存在不算错（清扫时别人可能刚删过）。 */
 export async function removeAt(path: string): Promise<void> {
 	await rm(path, { force: true });
+}
+
+/** 删一个目录树。不存在不算错。只给「删用户明确点名要删的那一个目录」用。 */
+export async function removeDirAt(path: string): Promise<void> {
+	await rm(path, { recursive: true, force: true });
 }
 
 /** 建目录（递归）。已经存在不算错。 */

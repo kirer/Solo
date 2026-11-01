@@ -54,11 +54,11 @@ export class HttpError extends Error {
 
 export async function readJson<T>(
 	request: IncomingMessage,
-	options: { readonly requireJson?: boolean } = {},
+	options: { readonly requireJson?: boolean; readonly limit?: number } = {},
 ): Promise<T> {
 	// 边读边数：先读完再比上限等于没有上限（一个 4GB 的请求先把内存吃光）。
 	// 超限抛 `UploadTooLargeError`，由 `handle` 翻成 413。
-	const bytes = await readBody(request, JSON_BODY_LIMIT);
+	const bytes = await readBody(request, options.limit ?? JSON_BODY_LIMIT);
 	const text = bytes.toString("utf8").trim();
 	// 有正文就必须声明 `application/json`：浏览器的表单能把合法 JSON 塞进 `text/plain`
 	// 正文（`<input name='{"text":"x","y":"' value='"}'>`），这是 Origin 闸之外最后一条

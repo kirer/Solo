@@ -39,6 +39,8 @@ type PostInput = {
 	readonly text: string;
 	readonly at: number;
 	readonly kind?: string;
+	/** 留痕的种类（`run` = 后台命令跑完）；只对 `note` 有意义，界面据此收成一行。 */
+	readonly noteOf?: string;
 	readonly replyTo?: number;
 	/** 名册：给了就按名册把 `@我` / `@CEO` 落库成规范 slug。 */
 	readonly roster?: MentionRoster;

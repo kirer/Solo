@@ -9,7 +9,7 @@ const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("结算原因翻成人话", () => {
 	test("no_model 说清是配置问题，不是他偷懒", () => {
-		expect(reasonText("no_model")).toContain("模型引用对不上");
+		expect(reasonText("no_model")).toContain("没有可用的模型");
 		expect(reasonText("no_model")).toContain("settings.json");
 	});
 
@@ -29,7 +29,7 @@ describe("结算原因翻成人话", () => {
 describe("频道里的那一行留痕", () => {
 	test("带序号、名字、原因", () => {
 		expect(renderUnanswered(93, "知言", "no_model")).toBe(
-			"#93 叫了 @知言，但他这一轮没答上来：模型引用对不上（`settings.json` 的 `defaultModel` 指向了不存在的模型）。",
+			"#93 叫了 @知言，但他这一轮没答上来：没有可用的模型（还没配，或 `settings.json` 的 `defaultModel` 指向了不存在的模型）——去「设置 → 模型」看一眼。",
 		);
 	});
 });

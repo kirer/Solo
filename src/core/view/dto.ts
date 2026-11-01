@@ -73,6 +73,8 @@ export type ViewMessage = {
 	fromSlug: string;
 	fromLabel: string;
 	kind: string;
+	/** 系统留痕的种类：`run` = 后台命令跑完（界面收成一行，点开看全文）。 */
+	noteOf?: string;
 	text: string;
 	mentions: ViewMention[];
 	replyTo?: ViewReply;
@@ -189,6 +191,8 @@ export type ViewPersonProfile = {
 	/** `entries` 是**条数**（档案页只显示概况），全文在 `/api/people/:slug/memory`。 */
 	memory: { exists: boolean; entries: number; digest: string | null };
 	channels: { id: string; kind: ViewChannelKind; title: string }[];
+	/** 他此刻用的模型 `provider/modelId`；没有模型（还没配）就是空串。 */
+	model: string;
 };
 
 /** 一个团队的档案：`teams/<slug>/README.md` 的正文 + 管理员的显示名 + 团队记忆。 */
@@ -282,6 +286,28 @@ export type ViewActivity = {
 
 /** 上传成功的回执。 */
 export type ViewUploaded = { id: string; name: string; kind: "image" | "file"; bytes: number };
+
+/**
+ * 一个插件。
+ *
+ * `client` 只表示「有前端入口」：地址由界面按 slug 拼（`/api/plugins/<slug>/client.js`）。
+ * 没有它就是纯后端插件。`error` 是它没装上的原因 —— 界面照列，但要让人看出这个没生效。
+ */
+export type ViewPlugin = {
+	slug: string;
+	name: string;
+	description: string;
+	enabled: boolean;
+	client?: true;
+	error?: string;
+	/** 它带来了什么（工具 / 提示词段 / 接口 / 听消息）。没装上或这次没加载时不出现。 */
+	brings?: {
+		tools: readonly string[];
+		prompt: boolean;
+		routes: number;
+		listens: boolean;
+	};
+};
 
 /**
  * 发一条消息的回执。

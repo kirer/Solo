@@ -21,6 +21,7 @@ workspace/
   teams/<slug>/memory.md      ← 团队记忆
   teams/<slug>/skills/<n>/    ← 团队层手艺：这个团队的人都会，同名覆盖全员层
   skills/<n>/SKILL.md         ← 全员层手艺，人人可读
+  plugins/<slug>/plugin.md    ← 一个插件：清单 + plugin.ts（后端）+ client.js（前端）
   rules.md                    ← 全员规矩（每轮都进提示词）
   core.sqlite                 ← 频道消息、会话、名册、沉淀游标
 ```
@@ -46,7 +47,8 @@ src/core/
   agent/          一个人：身份 / 提示词装配（9 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
   team/           一个团队：README.md / memory.md / 自动沉淀
   channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 7 个工具（tools/）
-  ── 以上四层是 domain（业务事实）──────────────────────────────
+  plugin/         插件：清单（manifest）/ 四动作 API（api）/ 加载与隔离（load）
+  ── 以上五层是 domain（业务事实）──────────────────────────────
   app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 后台命令收尾 / 看门狗 / 诊断（不 import node:http）
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/project.ts）
   interface/http/ 唯一 import node:http 的地方：routes / respond（原语）/ route-match（匹配）/
@@ -59,7 +61,7 @@ scripts/          六个入口脚本：check-boundaries（边界）、core-live�
                   scenario-live（多 agent 真模型场景）、repair（改名迁移）、
                   prompt-check（提示词黄金渲染）、prompt-fixture（样例插槽表）；
                   公共等待器与证据落盘在 live-support.ts
-test/             64 文件 / 674 例
+test/             71 文件 / 726 例
   ├ test/core/    57 文件 / 607 例（纯函数 + 装配）
   └ test/ui/      7 文件 / 67 例（界面纯函数与源码约定）
 workspace/        运行时数据（gitignore）
@@ -79,8 +81,8 @@ workspace/        运行时数据（gitignore）
    `ui/app/src`；白名单只有 `/api/org`，Docker 健康检查用）。加路由没人用 → 要么接上界面、
    要么删掉、要么改白名单并写清理由。
 
-**分层后又收紧了五条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成六组：域 / md /
-根原语 / view / app / interface）：
+**分层后又收紧了六条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成七组：域 / md /
+plugin / 根原语 / view / app / interface）：
 
 - **`view/` 是契约层**：只有 `dto.ts`，一个 import 都不许有（投影已并进 `app/project.ts`）。
 - **`app/` 不许 `node:http`**：用例要能脱离网络直接测。
@@ -88,6 +90,8 @@ workspace/        运行时数据（gitignore）
   handler 里）。
 - **`md/` 只能往下看**：可 import `runtime/` 与 `fsx.ts`，不许够 `agent|team|channel|app|view|interface|shell`。
 - **根目录两个原语**（`fsx.ts` / `naming.ts`）不许 import `app|view|interface|shell`。
+- **`plugin/` 只加东西**（工具 / 提示词 / 路由 / 听消息）：不许 import `agent|team|app|view|interface|shell`，
+  产物由 `shell/assemble.ts` 并进注册表。
 
 另外三条容易踩的：
 
@@ -117,7 +121,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 64 文件 674 例，<3s，必须全绿
+npm test             # 71 文件 726 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 16 项，会花 token；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -151,6 +155,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `channel/post.ts` 传线索 + `channel/delivery.ts` 的 `woken` |
 | 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
+| 插件的四个动作 / 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts`、`load.ts`）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `shell/assemble.ts`（装配）+ `interface/http/routes.ts`（五条接口）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件浮层 `panels/Overlays.tsx` 的 `PluginSheet`（开关 / 装 / 删）与 `sidebar/Sidebar.tsx` 的入口 |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2–7.3 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/core/app/trace.ts`（纯函数）+ `src/core/app/read.ts` 的 `turnsOf` / `groupsOf` + `test/core/trace.test.ts` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；文案在 `seed/prompt/88-task.md` |
@@ -165,7 +170,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 头像的画法 / 取景 / 配色 / 尺寸 | `docs/DESIGN.md` §6.5 + `docs/DECISIONS.md`（画风是一条 ADR）+ `docs/WEB-API.md` 的 `/api/avatar/:seed` | `src/core/app/avatar.ts`（唯一的画法，纯函数）+ `ui/app/src/lib/avatar.ts`（种子与尺寸）+ `test/core/avatar.test.ts` |
 | 界面布局 / 行类型 / 轨迹展示 | `docs/DESIGN.md`（决策稿：改之前先说明原决策错在哪）+ 本文件 §2 的「不画后端没有的东西」 |
-| 启动参数 / 部署方式 / 模型接入 | `docs/DEPLOY.md` |
+| 启动参数 / 部署方式 / 模型接入（含给某个人换模型） | `docs/DEPLOY.md` §3 + `docs/DECISIONS.md` ADR-023 / ADR-024 | `src/core/runtime/models.ts`（`setupModels` / `parseModelRef`）+ `shell/assemble.ts` 的 `modelFor` + `app/people.ts` 的 `setPersonModel` + 界面在出厂插件 `seed/plugins/模型管理/`（`rightPanel.detail` 插槽） |
 | 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
 | 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表：我 / 助理 / 团队 / 团队管理员 / 成员 / 全员；项目叫 Solo |
 | 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md` |

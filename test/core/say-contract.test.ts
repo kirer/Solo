@@ -57,6 +57,8 @@ async function setup(options: {
 	solo?: boolean;
 	/** 再建一个同名的频道，用来验「重名不猜」。 */
 	duplicateTitle?: boolean;
+	/** 这一轮是「安静的一轮」（团队记忆沉淀）：说话要落成系统留痕。 */
+	quiet?: boolean;
 } = {}): Promise<{
 	say: (args: Record<string, unknown>) => Promise<string>;
 	snapshot: () => Promise<ChannelState>;
@@ -116,15 +118,12 @@ async function setup(options: {
 	}, BACKGROUND_CONTEXT);
 
 	const wakeSeq = options.wake?.seq ?? wokeSeq;
+	const target = { channelId: options.wake?.channelId ?? PROJ, seq: wakeSeq, from: OWNER, at: 1 };
 	const wake =
 		options.wake !== undefined || wakeSeq !== undefined
 			? {
-					[String(CONVERSATION)]: {
-						channelId: options.wake?.channelId ?? PROJ,
-						seq: wakeSeq,
-						from: OWNER,
-						at: 1,
-					},
+					// 安静的一轮用两层形状（`reply` / `task` + `quiet`），这正是沉淀写进名册的那份。
+					[String(CONVERSATION)]: options.quiet === true ? { reply: target, task: target, quiet: true } : target,
 				}
 			: {};
 
@@ -176,6 +175,31 @@ function lastSpoken(state: ChannelState, channelId: string, text: string): Messa
 	const list = state.messages[channelId] ?? [];
 	return [...list].reverse().find((m) => m.text === text);
 }
+
+describe("安静的一轮（团队记忆沉淀）", () => {
+	it("say 落成系统留痕：不刷群、不计未读、不叫醒人", async () => {
+		const box = await setup({ wake: { channelId: PROJ, seq: 1 }, quiet: true });
+		await box.say({ text: "记了一条：周野不改代码、文件停在 22232，只有真机卡手才重新起一轮。" });
+		const state = await box.snapshot();
+		const last = lastOf(state, PROJ);
+		expect(last?.kind).toBe("note");
+		expect(last?.text).toContain("周野不改代码");
+	});
+
+	it("安静的一轮里 @ 了人：照样叫醒他，不能落成不叫人的留痕", async () => {
+		// live 上报链上踩过：团队管理员的这一轮同时被记忆沉淀叫醒（quiet），他在这一轮里
+		// 把话上报给助理，正文写了 @助理 —— 落成 note 就谁也不叫，链断在中间，界面上没异常。
+		const box = await setup({ wake: { channelId: PROJ, seq: 1 }, quiet: true, colleague: "林越" });
+
+		const answer = await box.say({ text: "@林越 订服务器这事你定", mention: "林越" });
+
+		const state = await box.snapshot();
+		// 这条是「他说的话」，不是系统留痕：安静的一轮没能把它降级成 note。
+		expect(lastSpoken(state, PROJ, "@林越 订服务器这事你定")?.kind).toBe("question");
+		// 而且真的去叫了（这个人还没有会话，于是留下一行「这条不会有人答」的留痕）。
+		expect(answer).toContain("已发到");
+	});
+});
 
 describe("兜底频道", () => {
 	it("私聊先建也不落到私聊：优先我所在的群里最近活跃的那个", async () => {
@@ -455,15 +479,15 @@ describe("每轮附言（怎么回话）", () => {
 	it("条件句来自 prompt/ 片段：换一份片段，输出跟着变", () => {
 		const rules = renderReplyRules({
 			template: "{{reply.alone}}",
-			fragments: { ...SEED_DELIVERY_PROMPT, alone: "（换了一份说法。）" },
+			fragments: { ...SEED_DELIVERY_PROMPT, alone: { body: "（换了一份说法。）", fallback: "" } },
 			woken: ["沈舟"],
 			viewer: "沈舟",
 		});
 		expect(rules).toBe("（换了一份说法。）");
-		// 片段缺失时退回一句事实，不产生「（未设置）」半截句。
+		// 正文删空 → 用同一个 md 的 `default:` 那句，不产生「（未设置）」半截句。
 		const missing = renderReplyRules({
 			template: "{{reply.alone}}",
-			fragments: { ...SEED_DELIVERY_PROMPT, alone: "" },
+			fragments: { ...SEED_DELIVERY_PROMPT, alone: { body: "", fallback: SEED_DELIVERY_PROMPT.alone.fallback } },
 			woken: ["沈舟"],
 			viewer: "沈舟",
 		});

@@ -24,7 +24,7 @@ import { openCore, type CoreRuntime } from "../runtime/open.ts";
 import { setupModels, compactionSettings } from "../runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
-import { seedOwnerAssistant, seedPromptTemplates, seedRules, syncAllSkills } from "./seed.ts";
+import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../fsx.ts";
 import { loadTemplates, PROMPT_DIR } from "../md/prompt.ts";
 import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
@@ -90,6 +90,9 @@ async function main(): Promise<void> {
 		const synced = await syncAllSkills(agentsRoot);
 		const touched = [...synced.copied, ...synced.updated];
 		if (touched.length > 0) console.log(`[core] 同步了全员层技能：${touched.join("、")}`);
+		// 示范插件只在缺失时整份拷进来：插件是可以执行的代码，动过就归改的人。
+		const plugins = await seedPlugins(args.workspace);
+		if (plugins.length > 0) console.log(`[core] 装上了出厂插件：${plugins.join("、")}`);
 	}
 
 	// 启动自检：`team/memory.ts` 的沉淀指令让团队管理员 `skills(action=read, name="记忆整理")`，
@@ -148,7 +151,9 @@ async function main(): Promise<void> {
 		shell = await assembleCore(runtime.harness, registry, {
 			agentsRoot,
 			teamsRoot,
-			defaultModel: models.defaultModel,
+			...(models.defaultModel === undefined ? {} : { defaultModel: models.defaultModel }),
+			...(models.agentModels === undefined ? {} : { agentModels: models.agentModels }),
+			models: models.models,
 			diag,
 		});
 		server = await serveCore({
@@ -159,6 +164,10 @@ async function main(): Promise<void> {
 		console.log(`[core] ${server.url}`);
 		console.log(`[core] workspace: ${args.workspace}`);
 		console.log(`[core] agents: ${(await shell.identities()).map((item) => item.slug).join(", ") || "（无）"}`);
+		// 没有模型不是「坏了」，是「还没配」：说清去哪儿配，别让人对着不说话的界面猜。
+		if (models.defaultModel === undefined) {
+			console.log("[core] 还没有配置模型：设置 → 模型，或写 workspace/settings.json。在那之前没人回得了话。");
+		}
 	} catch (error) {
 		console.error("[core] 启动失败：", error);
 		await server?.close().catch(() => undefined);

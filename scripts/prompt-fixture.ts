@@ -27,10 +27,14 @@ export const SAMPLE_SLOTS = {
 	chain: "示例 → 示例上级 → 我",
 	team: "`demo-team`",
 	peers: "示例同僚（成员）",
-	chats: "「示例项目群」",
+	"chats.groups": "「示例项目群」",
+	"chats.dm": "已开",
 	count: "3",
 
 	"team.brief": "这个团队负责把示例做出来。验收标准：示例能跑。",
+	"team.status": "在做",
+	"team.lead": "示例上级（`boss`）",
+	"team.dir": "teams/demo-team/",
 	"team.members": "`boss`、`member`",
 	"team.memory": "- 示例：踩过一次示例的坑，别再踩",
 
@@ -39,6 +43,7 @@ export const SAMPLE_SLOTS = {
 	memory: "- 示例：第一次上手，先看规矩",
 	skills: "- `工作规矩` — 什么时候用：不确定怎么说话时（全员通用）",
 
+	channel: "team:demo-team",
 	pending: "2",
 	candidates: "- #3 [decision] 示例上级：定了，验收标准是能跑通。\n- #4 [chat] 示例同僚：收到。",
 

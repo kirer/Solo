@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "../src/core/channel/types.ts";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels, type Context, type Harness } from "../src/core/runtime/index.ts";
-import type { ModelRef } from "../src/core/runtime/models.ts";
+import type { ModelRef, ModelSetup } from "../src/core/runtime/models.ts";
 import { openCore, type CoreRuntime } from "../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../src/core/shell/assemble.ts";
 import { seedOwnerAssistant, seedPromptTemplates, seedRules } from "../src/core/shell/seed.ts";
@@ -19,6 +19,35 @@ import { createChat } from "../src/core/app/chat.ts";
 import { liveConversations } from "../src/core/channel/queue.ts";
 
 export const WAIT_MS = 240_000;
+
+/**
+ * 真模型脚本的模型来源。
+ *
+ * 产品默认是「没有模型」（ADR-023）：没配就不响。这套脚本没有模型就跑不了，所以什么都
+ * 没配时它自己往临时工作区写一份**本地网关**的 settings.json —— 这是脚本的配置，
+ * 不是产品默认。想跑别的模型：设 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`，
+ * 或给 `--settings <file>`；给了 `--settings` 还解析不出模型，就直接报错（不悄悄替换）。
+ */
+export async function setupLiveModels(root: string, options: { readonly fallbackGateway?: boolean } = {}): Promise<ModelSetup> {
+	const resolved = setupModels(process.env, { workspace: root });
+	if (resolved.defaultModel !== undefined) return resolved;
+	if (options.fallbackGateway === false) throw new Error(`没有可用模型：${join(root, "settings.json")} 里解析不出模型`);
+
+	const gateway = {
+		providers: [
+			{
+				id: "magpie",
+				name: "本地网关",
+				baseUrl: process.env.COMMANDCODE_BASE_URL ?? "http://127.0.0.1:3425/v1",
+				api: "openai-responses",
+				apiKey: process.env.COMMANDCODE_API_KEY ?? "magpie",
+				models: [{ id: process.env.COMMANDCODE_MODEL_ID ?? "auto/deepseek-v4.1-flash" }],
+			},
+		],
+	};
+	await writeFile(join(root, "settings.json"), `${JSON.stringify(gateway, null, 2)}\n`, "utf8");
+	return setupModels(process.env, { workspace: root });
+}
 
 export type Phase = { readonly name: string; readonly ok: boolean; readonly detail: string };
 
@@ -75,7 +104,9 @@ export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise
 	const assistantSlug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
 	if (options.settings !== undefined) await copyFile(options.settings, join(root, "settings.json"));
 
-	const configured = setupModels(process.env, { workspace: root });
+	const configured = await setupLiveModels(root, { fallbackGateway: options.settings === undefined });
+	const model = configured.defaultModel;
+	if (model === undefined) throw new Error("没有可用模型");
 	const runtime = await openCore({
 		databasePath,
 		models: configured.models,
@@ -86,7 +117,7 @@ export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise
 		agentsRoot,
 		teamsRoot,
 		databasePath,
-		model: configured.defaultModel,
+		model,
 		assistantSlug,
 		runtime,
 		shell: undefined as unknown as CoreShell,
@@ -103,7 +134,7 @@ export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise
 			world.shell = await assembleCore(reopened.harness, reopened.registry, {
 				agentsRoot,
 				teamsRoot,
-				defaultModel: configured.defaultModel,
+				defaultModel: model,
 			});
 		},
 		async close() {

@@ -67,10 +67,17 @@ describe("setupModels 的默认模型", () => {
 		).toThrow(/没有任何可用模型可回落/);
 	});
 
-	it("settings.json 读不出来时回落本地网关", () => {
+	it("settings.json 读不出来 = 没有模型：不悄悄换上本地网关", () => {
+		// 悄悄回落最坏的地方是「看不出来」：界面一切正常，人却不知道自己在用哪只模型。
 		const setup = setupModels({}, { workspace: workspaceWith("坏掉的内容") });
-		expect(setup.defaultModel.provider).toBe("magpie");
-		expect(setup.models.getModel(setup.defaultModel.provider, setup.defaultModel.modelId)).toBeDefined();
+		expect(setup.defaultModel).toBeUndefined();
+		expect(setup.models.getModels()).toEqual([]);
+	});
+
+	it("什么都没配（没有 settings.json、没有密钥）：同样没有模型", () => {
+		const setup = setupModels({}, { workspace: "" });
+		expect(setup.defaultModel).toBeUndefined();
+		expect(setup.models.getModels()).toEqual([]);
 	});
 });
 

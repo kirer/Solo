@@ -8,7 +8,8 @@
 
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
-import { openChannel, openWithPerson, setSettings, setSide, setTeam } from "../state/store.ts";
+import { Slot } from "../plugin/Slot.tsx";
+import { openChannel, openWithPerson, setPluginSheet, setSettings, setSide, setTeam } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Actor, Channel } from "../api/types.ts";
 
@@ -40,6 +41,8 @@ export function Sidebar(): JSX.Element {
 					{workspaceName}
 				</h1>
 				<span className="side-grow" />
+				{/* 插槽：品牌行右侧，收放按钮之前。 */}
+				<Slot name="sidebar.header" />
 				<button
 					type="button"
 					className="icon-btn side-toggle"
@@ -54,6 +57,8 @@ export function Sidebar(): JSX.Element {
 					</svg>
 				</button>
 			</div>
+			{/* 插槽：会话列表上方。 */}
+			<Slot name="sidebar.list.before" />
 			<div className="channels" id="rows" role="list">
 				{nearest === undefined || nearestOpened ? null : (
 					<AssistantRow
@@ -75,6 +80,10 @@ export function Sidebar(): JSX.Element {
 			</div>
 			{/* 团队与设置放在列表脚下：那是「管理」，不是随手要做的事。 */}
 			<div className="side-foot">
+				{/* 插件的地盘：没有插件时它不占一行。 */}
+				<div className="side-slot">
+					<Slot name="sidebar.footer" />
+				</div>
 				<button
 					type="button"
 					className="side-action"
@@ -90,6 +99,19 @@ export function Sidebar(): JSX.Element {
 						<path d="M17.5 13.6A5 5 0 0 1 21 18.5" />
 					</svg>
 					团队管理
+				</button>
+				<button
+					type="button"
+					className="side-action"
+					id="plugins-btn"
+					aria-label="插件"
+					title="插件"
+					onClick={() => setPluginSheet(true)}
+				>
+					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+						<path d="M9 3h6v3.2a2 2 0 0 0 2 2h3.2v5.6H17a2 2 0 0 0-2 2V21H9v-3.2a2 2 0 0 0-2-2H3.8V9.2H7a2 2 0 0 0 2-2z" />
+					</svg>
+					插件
 				</button>
 				<button
 					type="button"

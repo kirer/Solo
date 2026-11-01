@@ -24,6 +24,7 @@ export type {
 	ViewOrg as Org,
 	ViewPersonMemory as PersonMemory,
 	ViewPersonProfile as PersonProfile,
+	ViewPlugin as Plugin,
 	ViewTeamProfile as TeamProfile,
 	ViewSkill as SkillInfo,
 	ViewActivity as Activity,

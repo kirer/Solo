@@ -6,6 +6,7 @@ import { postMessage } from "../post.ts";
 import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel, othersAwoken } from "./channel-choice.ts";
 import { isPass, monologueOpener, sayLimitOf } from "./guards.ts";
+import { wakeOf } from "../../agent/roster.ts";
 
 export function createSayTool(deps: CoreToolDeps) {
 	const say = defineTool({
@@ -72,6 +73,8 @@ export function createSayTool(deps: CoreToolDeps) {
 			}
 
 			const conversationId = Number(api.conversationId);
+			// 安静的一轮（团队记忆沉淀）：说话落成系统留痕 —— 账本不该刷群、不该叫醒人。
+			const quiet = wakeOf(await deps.directory(ctx), conversationId)?.quiet === true;
 			const target = await defaultChannel(deps, state, slug, conversationId, args.channel, ctx);
 			if ("error" in target) return text(target);
 			const roster = await mentionRoster(deps);
@@ -113,6 +116,12 @@ export function createSayTool(deps: CoreToolDeps) {
 			// 成员，「没点别人」就成立，于是每条通告都变成「需要你」（43 条私聊里 13 条）。
 			// 拍板要我看见，就写 @我；标签不代劳（ADR-009）。
 			const typedMentions = parseMentions(messageText, roster);
+			// 点名了谁，就不是「留痕」：安静的一轮里 @ 人一样要把人叫醒。
+			//
+			// 实测踩过（live 上报链）：团队管理员的这一轮同时被「团队记忆沉淀」叫醒（`quiet`），
+			// 他在这一轮里把话上报给助理 —— 正文写了 @助理，但因为整轮是安静的，消息落成
+			// `note`，`note` 谁也不叫。助理永远收不到，链就断在中间，界面上什么异常都没有。
+			const addressed = typedMentions.length > 0 || (args.mention !== undefined && args.mention !== "");
 			const wakeOwner = typedMentions.includes(OWNER);
 
 			const result = await postMessage(
@@ -123,7 +132,7 @@ export function createSayTool(deps: CoreToolDeps) {
 					text: messageText,
 					at: Date.now(),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
-					...(kind === undefined ? {} : { kind }),
+					...(quiet && !addressed ? { kind: "note" } : kind === undefined ? {} : { kind }),
 					roster,
 					...((() => {
 						const extra = wakeOwner ? [OWNER] : [];

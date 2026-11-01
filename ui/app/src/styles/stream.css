@@ -664,12 +664,64 @@ body[data-layout="bubble"]
 	border-left: 1px solid var(--rule);
 }
 
+/* 系统留痕前面那个小「i」：之前没有样式，块级的 div 把正文顶到了下一行。 */
+.note-mark {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 13px;
+	height: 13px;
+	margin-right: 6px;
+	border-radius: 50%;
+	box-shadow: inset 0 0 0 1px var(--rule);
+	color: var(--ink-3);
+	font-size: 9px;
+	line-height: 1;
+	font-style: italic;
+	vertical-align: -1px;
+}
+
 .note-text {
 	font-size: 12px;
 	line-height: 16px;
 	color: var(--ink-3);
 	overflow-wrap: anywhere;
 	text-wrap: pretty;
+}
+
+/* 后台命令的留痕：正文是一坨终端输出，收成一行，点开才看全文。 */
+.note-fold > summary {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	cursor: pointer;
+	list-style: none;
+}
+
+.note-fold > summary::-webkit-details-marker {
+	display: none;
+}
+
+.note-fold > summary:hover .note-text,
+.note-fold[open] > summary .note-text {
+	color: var(--ink-2);
+}
+
+.note-fold > summary .note-text {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.note-body {
+	margin: 6px 0 2px;
+	font-family: var(--mono);
+	font-size: 11.5px;
+	line-height: 18px;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	max-height: 320px;
+	overflow: auto;
 }
 
 /* ── 动作条 ─────────────────────────────────────────────────────────── */

@@ -259,6 +259,19 @@
 	border-top: 0.5px solid var(--line);
 }
 
+/*
+ * 插件的地盘（`sidebar.footer` 插槽）。没有插件时它是空的 —— `:empty` 让那一行高为 0，
+ * 而不是在「团队 / 设置」上面留一条看不见的缝。插件自己带样式，这里只给外部留白。
+ */
+.side-slot {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+.side-slot:empty {
+	display: none;
+}
+
 /* 一行一个，和会话行同一种尺寸与内边距：它在列表脚下，就该读起来像列表的一部分。 */
 .side-action {
 	display: flex;
@@ -725,8 +738,7 @@
 }
 
 /* 关闭按钮永远在头的右端：h2 后面直接跟按钮会贴在标题旁边。 */
-.team-head .icon-btn,
-.settings-head .icon-btn {
+.team-head .icon-btn {
 	margin-left: auto;
 }
 
@@ -1495,7 +1507,10 @@
 }
 
 .settings-panel {
-	width: min(520px, calc(100vw - 32px));
+	display: flex;
+	flex-direction: column;
+	width: min(920px, calc(100vw - 48px));
+	height: min(680px, calc(100vh - 48px));
 	background: var(--field);
 	border: 0.5px solid var(--line);
 	border-radius: var(--r-sheet);
@@ -1504,48 +1519,199 @@
 	animation: sheet-in 200ms cubic-bezier(0.4, 0, 0.2, 1) both;
 }
 
+/* 顶栏横跨两栏：标题在左、关闭在右。分区名在下面那行左栏里，标题不跟着分区重复。 */
 .settings-head {
 	display: flex;
+	flex: none;
 	align-items: center;
 	gap: 8px;
-	height: 48px;
-	padding: 0 8px 0 16px;
-	border-bottom: 0.5px solid var(--line);
+	height: 56px;
+	padding: 0 14px 0 24px;
 }
 
-.settings-head h2 {
+.settings-title {
 	margin: 0;
-	font-size: 15px;
-	line-height: 22px;
+	font-size: 17px;
+	line-height: 24px;
 	font-weight: 600;
 	color: var(--ink);
 }
 
-.settings-body {
+.settings-cols {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+/* 左栏：图标 + 分区名。图标是认路用的，不是装饰。 */
+.settings-nav {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	width: 208px;
+	padding: 0 10px 12px;
+	overflow-y: auto;
+	border-right: 0.5px solid var(--line);
+}
+
+.settings-nav-list {
 	display: flex;
 	flex-direction: column;
+	gap: 2px;
 }
 
-.settings-section {
-	padding: 20px;
+.settings-nav-item {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	height: 38px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 10px;
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 14px;
+	text-align: left;
+	cursor: pointer;
+	transition:
+		background-color 120ms ease,
+		color 120ms ease;
 }
 
-.settings-section + .settings-section {
-	border-top: 0.5px solid var(--line);
+.settings-nav-item:hover {
+	background: var(--hover);
+	color: var(--ink);
 }
 
-.settings-section h3 {
-	margin: 0 0 10px;
-	font-size: 13px;
-	line-height: 18px;
+.settings-nav-item[aria-selected="true"] {
+	background: color-mix(in oklab, var(--ink) 9%, transparent);
+	color: var(--ink);
 	font-weight: 500;
-	letter-spacing: 0.02em;
+}
+
+.settings-nav-ico {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 18px;
+	height: 18px;
 	color: var(--ink-3);
+	transition: color 120ms ease;
+}
+
+.settings-nav-ico svg {
+	width: 17px;
+	height: 17px;
+}
+
+.settings-nav-item[aria-selected="true"] .settings-nav-ico {
+	color: var(--ink);
+}
+
+.settings-main {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.settings-body {
+	flex: 1 1 auto;
+	padding: 22px 28px 28px;
+	overflow: auto;
+	animation: sheet-in 180ms ease both;
+}
+
+/* 分区标题 + 一句说明：标题跟着内容滚，不是固定条。 */
+.settings-h2 {
+	margin: 0;
+	font-size: 17px;
+	line-height: 24px;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.settings-desc {
+	margin: 6px 0 0;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-3);
+}
+
+/* 一行一个设置：左边标题 + 说明，右边控件。分隔线只画在行与行之间。 */
+.settings-row {
+	display: flex;
+	align-items: center;
+	gap: 20px;
+	padding: 16px 0;
+	border-bottom: 0.5px solid var(--line);
+}
+
+.settings-row-main {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.settings-row-label {
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.settings-row-desc {
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.settings-row-ctl {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 8px;
+	margin-left: auto;
+}
+
+@media (max-width: 720px) {
+	.settings-panel {
+		height: min(760px, calc(100vh - 32px));
+	}
+
+	/* 窄屏：左栏折到顶上，变成一行可横滚的分区。 */
+	.settings-cols {
+		flex-direction: column;
+	}
+
+	.settings-head {
+		height: 48px;
+		padding: 0 10px 0 16px;
+	}
+
+	.settings-nav {
+		width: auto;
+		padding: 0 8px 8px;
+		border-right: 0;
+		border-bottom: 0.5px solid var(--line);
+	}
+
+	.settings-nav-list {
+		flex-direction: row;
+		overflow-x: auto;
+	}
+
+	.settings-body {
+		padding: 16px;
+	}
 }
 
 .settings-options {
 	display: grid;
-	gap: 8px;
+	gap: 10px;
+	margin-top: 16px;
 }
 
 .settings-options.is-two {
@@ -1556,28 +1722,28 @@
 	grid-template-columns: repeat(3, 1fr);
 }
 
-/* 每个选项是一张可点的小卡：图标在上、名字在下，选中时底色 + 边线 + 勾。
-   比「一行胶囊 + 一个对勾」好认——布局是「看起来怎么样」，得给它面积。 */
+/* 每个选项是一张可点的大卡：图标在上、名字在下。布局是「看起来怎么样」，得给它面积。 */
 .settings-options .opt {
 	position: relative;
 	display: flex;
 	flex-direction: column;
 	align-items: center;
 	justify-content: center;
-	gap: 8px;
-	min-height: 84px;
-	padding: 12px 10px;
+	gap: 10px;
+	min-height: 104px;
+	padding: 18px 12px;
 	border: 0.5px solid var(--line);
-	border-radius: var(--r-row);
+	border-radius: 12px;
 	background: var(--ground);
 	color: var(--ink-2);
-	font-size: 13px;
-	line-height: 18px;
+	font-size: 14px;
+	line-height: 20px;
 	cursor: pointer;
 	transition:
 		background-color 120ms ease,
 		border-color 120ms ease,
-		color 120ms ease;
+		color 120ms ease,
+		transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .settings-options .opt:hover {
@@ -1585,59 +1751,36 @@
 	color: var(--ink);
 }
 
+.settings-options .opt:active {
+	transform: scale(0.985);
+}
+
 .settings-options .opt[aria-checked="true"] {
-	background: var(--accent-wash);
-	border-color: color-mix(in oklab, var(--accent) 46%, var(--line));
+	background: color-mix(in oklab, var(--ink) 7%, transparent);
+	border-color: color-mix(in oklab, var(--ink) 34%, var(--line));
 	color: var(--ink);
 }
 
 .settings-options .opt-ico {
-	width: 22px;
-	height: 22px;
 	display: grid;
 	place-items: center;
+	width: 26px;
+	height: 26px;
 	color: var(--ink-3);
 	transition: color 120ms ease;
 }
 
 .settings-options .opt-ico svg {
-	width: 20px;
-	height: 20px;
+	width: 22px;
+	height: 22px;
 }
 
 .settings-options .opt[aria-checked="true"] .opt-ico {
-	color: var(--accent);
+	color: var(--ink);
 }
 
 .settings-options .opt-text {
 	font-weight: 500;
-}
-
-/* 勾在右上角：它不占布局宽度，选中与否只靠这一点点亮。 */
-.settings-options .opt-tick {
-	position: absolute;
-	top: 7px;
-	right: 7px;
-	width: 12px;
-	height: 12px;
-	display: grid;
-	place-items: center;
-	color: var(--accent);
-	opacity: 0;
-	transform: scale(0.7);
-	transition:
-		opacity 140ms ease,
-		transform 160ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.settings-options .opt-tick svg {
-	width: 12px;
-	height: 12px;
-}
-
-.settings-options .opt[aria-checked="true"] .opt-tick {
-	opacity: 1;
-	transform: none;
 }
 
 .settings-hint {
@@ -1645,6 +1788,199 @@
 	font-size: 12px;
 	line-height: 18px;
 	color: var(--ink-3);
+}
+
+/* 插件：一行一个，名字 / 说明 / 开关。说明和数据来源见 DESIGN §2.8。 */
+.plugins-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.plugin-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	padding: 10px 12px;
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-row);
+	background: var(--ground);
+}
+
+.plugin-main {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.plugin-name {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 13px;
+	line-height: 18px;
+	color: var(--ink);
+}
+
+/* 名字和目录名不一样时把目录名带上：两个同名插件在界面上必须分得开。 */
+.plugin-slug {
+	font-size: 11px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.plugin-desc,
+.plugin-error,
+.plugin-brings {
+	font-size: 12px;
+	line-height: 17px;
+	color: var(--ink-3);
+}
+
+.plugin-error {
+	color: var(--danger);
+}
+
+/* 「它带来了什么」：装上之后才有的第二行，比说明淡一档。 */
+.plugin-brings {
+	color: var(--ink-3);
+	opacity: 0.85;
+}
+
+/* 关掉的插件整行压暗：一眼看出它现在不干活。 */
+.plugin-row[data-enabled="false"] .plugin-name,
+.plugin-row[data-enabled="false"] .plugin-desc {
+	color: var(--ink-3);
+	opacity: 0.6;
+}
+
+/* 「删除」平时是一行灰字，指上去才变红：它挨着开关，不能比开关更显眼。 */
+.plugin-remove {
+	flex: none;
+	margin-left: auto;
+	padding: 2px 6px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--ink-3);
+	font-size: 12px;
+	line-height: 17px;
+	cursor: pointer;
+	transition: color 120ms ease, background-color 120ms ease;
+}
+
+.plugin-remove:hover {
+	background: var(--hover);
+	color: var(--danger);
+}
+
+/* 装插件：选一个文件夹，看清楚是哪个再按「安装」。 */
+.plugin-install {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+/* 真正的 input 盖在文字上、透明：点哪儿都能唤起选文件夹。 */
+.plugin-pick {
+	position: relative;
+	flex: none;
+}
+
+.plugin-pick input {
+	position: absolute;
+	inset: 0;
+	opacity: 0;
+	cursor: pointer;
+}
+
+.plugin-pick-btn,
+.plugin-install-btn {
+	display: inline-flex;
+	align-items: center;
+	height: 30px;
+	padding: 0 12px;
+	border: 0.5px solid var(--line);
+	border-radius: 8px;
+	background: var(--hover);
+	color: var(--ink-2);
+	font-size: 13px;
+	line-height: 1;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.plugin-pick:hover .plugin-pick-btn,
+.plugin-install-btn:hover {
+	background: var(--line);
+	color: var(--ink);
+}
+
+.plugin-pick-btn {
+	pointer-events: none;
+}
+
+.plugin-install-btn {
+	border-color: var(--ink-2);
+	color: var(--ink);
+}
+
+.plugin-picked {
+	min-width: 0;
+	font-size: 12px;
+	line-height: 17px;
+	color: var(--ink-3);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.plugin-switch {
+	position: relative;
+	flex: none;
+	width: 34px;
+	height: 20px;
+	padding: 0;
+	border: 0.5px solid var(--line);
+	border-radius: 999px;
+	background: var(--hover);
+	cursor: pointer;
+	transition:
+		background-color 140ms ease,
+		border-color 140ms ease;
+}
+
+.plugin-switch[aria-checked="true"] {
+	background: var(--ink-2);
+	border-color: var(--ink-2);
+}
+
+.plugin-knob {
+	position: absolute;
+	top: 2px;
+	left: 2px;
+	width: 14px;
+	height: 14px;
+	border-radius: 50%;
+	background: var(--ground);
+	box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+	transition: transform 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.plugin-switch[aria-checked="true"] .plugin-knob {
+	transform: translateX(14px);
+}
+
+.settings-problem {
+	margin: 8px 0 0;
+	font-size: 12px;
+	line-height: 17px;
+	color: var(--danger);
 }
 
 @keyframes sheet-in {
@@ -1656,10 +1992,6 @@
 		opacity: 1;
 		transform: none;
 	}
-}
-
-.settings-options .opt[aria-checked="true"] .opt-tick {
-	opacity: 1;
 }
 
 /* 详情里的「最近」：一句原文，两行截断（不换行会把这一段撑得比成员列表还高）。 */

@@ -24,12 +24,12 @@ const teamsRoot = `${workspace}/teams`;
 const databasePath = `${workspace}/core.sqlite`;
 
 async function main(): Promise<void> {
-	const models = setupModels(process.env, { workspace }).models;
-	const runtime = await openCore({ databasePath, models, registry: createRegistry() });
+	const configured = setupModels(process.env, { workspace });
+	const runtime = await openCore({ databasePath, models: configured.models, registry: createRegistry() });
 	const shell = await assembleCore(runtime.harness, runtime.registry, {
 		agentsRoot,
 		teamsRoot,
-		defaultModel: setupModels(process.env, { workspace }).defaultModel,
+		...(configured.defaultModel === undefined ? {} : { defaultModel: configured.defaultModel }),
 	});
 
 	const ctx = BACKGROUND_CONTEXT;

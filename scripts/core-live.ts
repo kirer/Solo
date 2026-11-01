@@ -23,6 +23,7 @@ import { join } from "node:path";
 import { OWNER, dmId } from "../src/core/channel/types.ts";
 import {
 	WAIT_MS,
+	setupLiveModels,
 	hopDetail,
 	log,
 	seqBaseline,
@@ -52,7 +53,7 @@ async function main(): Promise<void> {
 		if (args.some((arg) => String(arg).includes("[turn]"))) turnFailed += 1;
 		passWarn(...args);
 	};
-	const { BACKGROUND_CONTEXT, createRegistry, setupModels } = await import("../src/core/runtime/index.ts");
+	const { BACKGROUND_CONTEXT, createRegistry } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
 	const { assembleCore } = await import("../src/core/shell/assemble.ts");
 	const { seedOwnerAssistant, seedPromptTemplates, seedRules } = await import("../src/core/shell/seed.ts");
@@ -71,7 +72,7 @@ async function main(): Promise<void> {
 	const slug = await seedOwnerAssistant(agentsRoot, { name: "助理" });
 	console.log(`播种：agents/${slug}`);
 
-	const configured = setupModels(process.env, { workspace: root });
+	const configured = await setupLiveModels(root);
 	const runtime = await openCore({
 		databasePath: join(root, "core.sqlite"),
 		models: configured.models,
@@ -112,7 +113,11 @@ async function main(): Promise<void> {
 		console.log(
 			renderReplyRules({
 				template: bodyOf("reply"),
-				fragments: { alone: bodyOf("alone"), shared: bodyOf("shared"), colleagues: bodyOf("colleagues") },
+				fragments: {
+					alone: { body: bodyOf("alone"), fallback: "" },
+					shared: { body: bodyOf("shared"), fallback: "" },
+					colleagues: { body: bodyOf("colleagues"), fallback: "" },
+				},
 				woken: [slug],
 				viewer: slug,
 				colleagues: [],

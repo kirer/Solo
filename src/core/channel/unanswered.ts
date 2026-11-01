@@ -39,7 +39,8 @@ type AwaitableSubmission = {
  */
 export function reasonText(reason: string | undefined): string {
 	if (reason === undefined || reason === "") return "没有说明原因";
-	if (reason === "no_model") return "模型引用对不上（`settings.json` 的 `defaultModel` 指向了不存在的模型）";
+	// 两种原因共用 `no_model`：压根没配（ADR-023）和引用解析不到。提示要能指到去哪儿看。
+	if (reason === "no_model") return "没有可用的模型（还没配，或 `settings.json` 的 `defaultModel` 指向了不存在的模型）——去「设置 → 模型」看一眼";
 	if (reason === "aborted") return "这一轮被中断了";
 	if (reason === "run_failed") return "这一轮跑失败了";
 	if (reason === "model_error") return "调模型失败（网关拒了这次请求，通常是模型名、额度或网关本身的问题）";

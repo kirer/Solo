@@ -12,12 +12,18 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { editPersonMemory, getPerson, getPersonMemory, getTeam } from "../api/client.ts";
 import type { MemoryEntry, PersonMemory, PersonProfile, TeamProfile } from "../api/types.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
+import { cellsOf } from "../plugin/registry.ts";
+import { Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { backRight, openChannel, openPerson, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
-type Tab = "detail" | "skills" | "memory";
+/**
+ * 页签。内置三个 + 插件带来的（`plugin:<插件>:<id>`）—— 所以这里是 `string` 不是联合类型。
+ * 插件页签从插槽注册表里读，启动时装完就不再变。
+ */
+type Tab = string;
 
 const TABS: readonly { value: Tab; text: string }[] = [
 	{ value: "detail", text: "详情" },
@@ -40,11 +46,18 @@ export function RightPanel(): JSX.Element {
 		return () => window.clearTimeout(timer);
 	}, [open]);
 
+	// 插件页签：注册表在挂载前就填好了，所以这里不用订阅。
+	const tabs = [
+		...TABS,
+		...cellsOf("rightPanel.tab").map((cell) => ({ value: cell.id, text: cell.label ?? cell.id })),
+	];
+
 	if (!open && !mounted) return <aside className="detail" hidden />;
 
 	return (
 		<aside
 			className="detail"
+
 			id="detail"
 			data-open={open ? "true" : "false"}
 			aria-label="右侧栏"
@@ -71,7 +84,7 @@ export function RightPanel(): JSX.Element {
 				   不是「这是谁」—— 那张卡不该跟着 tab 一起消失。 */}
 				<IdentityCard />
 				<div className="rail-tabs detail-tabs" role="tablist" aria-label="右侧栏视图">
-					{TABS.map((item) => (
+					{tabs.map((item) => (
 						<button
 							type="button"
 							key={item.value}
@@ -90,13 +103,28 @@ export function RightPanel(): JSX.Element {
 						<DetailTab />
 					) : tab === "skills" ? (
 						<SkillsTab />
-					) : (
+					) : tab === "memory" ? (
 						<MemoryTab />
+					) : (
+						<PluginTab id={tab} />
 					)}
 				</div>
+				{/* 插槽：右栏内容底下（换 tab 也在）。 */}
+				<Slot name="rightPanel.bottom" />
 			</div>
 		</aside>
 	);
+}
+
+/**
+ * 插件页签的内容。
+ *
+ * 只按 id 从注册表里取，不缓存组件引用：插件在启动时注册一次，之后这个 id 一直有效。
+ * 取不到（理论上不会）就什么都不画 —— 空白页签比报错页好，至少不吓人。
+ */
+function PluginTab(props: { id: string }): JSX.Element | null {
+	const cell = cellsOf("rightPanel.tab").find((item) => item.id === props.id);
+	return cell === undefined ? null : <cell.component />;
 }
 
 function BackButton(): JSX.Element | null {
@@ -336,6 +364,8 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 	const rooms = person.channels.filter((channel) => channel.kind !== "dm");
 	return (
 		<div className="detail-sec">
+			{/* 插槽：档案最上面（「汇报给」之前）。插件放这一层的设置项，比如「他用的模型」。 */}
+			<Slot name="rightPanel.detail" />
 			<div className="detail-sec-head">汇报给</div>
 			<div className="detail-report">
 				<span

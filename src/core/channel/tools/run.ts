@@ -8,9 +8,18 @@ import { defaultChannel } from "./channel-choice.ts";
 import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { clip, MODEL_LIMIT } from "./guards.ts";
 
+/**
+ * 洗掉终端控制序列（颜色、光标）。命令输出里的 `\u001b[90m` 进了提示词和界面就是
+ * 一坨 `[90m` —— 模型读不懂，我看不懂。
+ */
+const ANSI = /\u001b\[[0-9;?]*[A-Za-z]|\u001b\][^\u0007]*\u0007/g;
+function plain(text: string): string {
+	return text.replace(ANSI, "");
+}
+
 /** 后台命令跑完的那条留痕：命令、输出尾巴、怎么结束的。 */
 function renderRunResult(command: string, outcome: RunOutcome): string {
-	const body = outcome.log.trim();
+	const body = plain(outcome.log).trim();
 	const ending = outcome.timedOut
 		? `（超过 ${Math.round(RUN_LIMIT_MS / 60_000)} 分钟，已杀掉；全文在 ${outcome.logPath}）`
 		: `(退出码 ${outcome.code ?? "被信号结束"}；全文在 ${outcome.logPath})`;
@@ -63,6 +72,7 @@ export function createRunTool(deps: CoreToolDeps) {
 								text: renderRunResult(command, outcome),
 								at: Date.now(),
 								kind: "note",
+								noteOf: "run",
 								// 名册要给：`mention` 里的 slug 也要过一遍解析，不给名册会被当成
 								// 「解析不出来的 @」丢掉，消息上就看不出这条结果是给谁的。
 								roster: await mentionRoster(deps),
@@ -114,10 +124,12 @@ export function createRunTool(deps: CoreToolDeps) {
 				},
 			);
 
+			const out = plain(result.stdout).trim();
+			const err = plain(result.stderr).trim();
 			const buffer = [
 				`$ ${command}`,
-				...(result.stdout.trim() === "" ? [] : [result.stdout.trim()]),
-				...(result.stderr.trim() === "" ? [] : [`[stderr] ${result.stderr.trim()}`]),
+				...(out === "" ? [] : [out]),
+				...(err === "" ? [] : [`[stderr] ${err}`]),
 				...(result.tooMuch ? ["（输出超过 512 KB，后面的被丢弃）"] : []),
 				`(退出码 ${result.code})`,
 			].join("\n");

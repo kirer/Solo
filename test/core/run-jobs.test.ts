@@ -185,12 +185,13 @@ describe("run 工具的 background 分支", () => {
 			return output?.[0]?.text ?? "";
 		};
 
-		const reply = await execute({ command: "echo 跑完了", background: true });
+		// 带颜色的一行：命令输出里的 ANSI 转义不能进频道正文（界面和提示词都会被它污染）。
+		const reply = await execute({ command: "printf '\\033[90m跑完了\\033[0m'", background: true });
 		expect(reply).toContain("后台运行");
 
 		// 跑完是异步的：等频道里出现那条结果，而不是 sleep 猜。
 		const deadline = Date.now() + 10_000;
-		let landed: { kind?: string; from: string; text: string; mentions: readonly string[] } | undefined;
+		let landed: { kind?: string; noteOf?: string; from: string; text: string; mentions: readonly string[] } | undefined;
 		while (Date.now() < deadline && landed === undefined) {
 			const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
 			landed = (state.messages[channelId] ?? []).find((message) => message.text.includes("跑完了") && message.kind === "note");
@@ -198,8 +199,12 @@ describe("run 工具的 background 分支", () => {
 		}
 		expect(landed, "后台命令的结果没有回到频道里").toBeDefined();
 		expect(landed?.from).toBe(OWNER);
-		expect(landed?.text).toContain("echo 跑完了");
+		expect(landed?.text).toContain("跑完了");
 		expect(landed?.text).toContain("退出码 0");
+		// 洗掉了控制序列：正文里一个 `\u001b` 都不该有。
+		expect(landed?.text).not.toContain("\u001b");
+		// 带上种类：界面据此把它收成一行（点开才看全文）。
+		expect(landed?.noteOf).toBe("run");
 		// 起跑的人被记进 mentions：不然这条结果只是躺在频道里。
 		expect(landed?.mentions).toContain(me);
 	});

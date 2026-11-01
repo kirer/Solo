@@ -57,6 +57,9 @@ seed/
     写技能/SKILL.md
     找现成技能/SKILL.md
     静默复现/SKILL.md             # 报障先在后台复现，复现不出来就不说话
+  plugins/                       # 出厂插件：补一次、删了不回来（账本记在 .seed-manifest.json）
+    示范/                        # 四个后端动作 + 几个插槽各用一次，照着改的样板
+    模型管理/                    # 设置里的「模型」一节：改 workspace/settings.json（DEPLOY §3）
 ```
 
 项目专用的手艺不放进 `seed/`：`seed/skills/` 是全员层，会出现在每个人的提示词目录里。
@@ -71,12 +74,13 @@ seed/
 | `{{reports}}` | 向你汇报的人 | 名册反查 |
 | `{{chain}}` | 往上的整条汇报线 | `chainUp` |
 | `{{team}}` `{{peers}}` | 团队 slug / 同团队的人 | `identity.md` + 名册 |
-| `{{chats}}` | 你在哪些群、私聊开没开 | 频道文档 |
+| `{{chats.groups}}` `{{chats.dm}}` | 你在哪些群 / 和我的私聊开没开（`已开`） | 频道文档 |
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
 | `{{count}}` | 全员 agent 数 | 名册 |
 | `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | `agents/<slug>/identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
+| `{{team.status}}` `{{team.lead}}` `{{team.dir}}` | 团队状态 / 团队管理员 / 目录 | `teams/<slug>/README.md` 的 YAML 头 |
 | `{{team.members}}` | 团队成员的 slug | `teams/<slug>/` 下的 agent |
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
 | `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | `81-alone.md` / `82-shared.md`（按收件人数选一份） |
@@ -87,14 +91,18 @@ seed/
 | `{{rows}}` | 未读频道的行列表 | 频道文档 |
 | `{{merged}}` | 这次合并掉的未唤醒条数 | `wake()` 返回值 |
 | `{{task}}` | 插话时他手上那件活所在的频道标题 | 名册里上一次的唤醒记录（`wake.task`） |
+| `{{channel}}` | 沉淀发生在哪个频道（id 明写，模型才知道回哪儿） | 团队频道 id |
 | `{{pending}}` | 这一轮要整理进团队记忆的消息条数 | settle 候选 |
 | `{{candidates}}` | 候选消息列表，一行一条：`#seq [kind] 谁：正文` | 频道消息（`settleCandidates`） |
 | `{{tool:say}}` 等 | 工具名（唯一允许出现工具名的写法） | system 段：注册表实拍；delivery 段：`toolSlots()` 按后缀自解释 |
 
-前 15 个是**单值**：一个名字、一串清单、一个数字（`pending` 是条数）。后 7 个
-（`self.body` / `team.brief` / `team.members` / `team.memory` / `reply.*` / `candidates`）是
-**复合值**：整段文字从别的文件或投递上下文搬过来。它们不违反下面第 2 条——那段文字本来
-就住在那个文件里，模板只负责摆位置，不负责写它。
+大部分是**单值**：一个名字、一串清单、一个数字（`pending` 是条数）。少数是**复合值**
+（`self.body` / `team.brief` / `team.members` / `team.memory` / `reply.*` / `candidates`）：
+整段文字从别的文件或投递上下文搬过来。它们不违反下面第 2 条——那段文字本来就住在那个
+文件里，模板只负责摆位置，不负责写它。
+
+**「这个事实现在没有」怎么说，也归模板**：写 `{{manager ?? 没有人（要拍板的事自己定，或者交给我）}}`。
+代码只给事实，没有就给 `undefined`；默认句写在 md 里（硬规矩 6）。
 
 五条硬规矩：
 
@@ -113,9 +121,15 @@ seed/
    - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues`；
      `81` / `82` 填 `others`；`83` 填 `colleagues`；`84` / `85` 不填；`86` 填 `total` / `rows`；
      `87` 填 `merged`；`88` 填 `task`；`90-interrupted` 只填 `tool:*`；
-     `95-settle` 只填 `team` / `pending` / `candidates` + `tool:*`。
+     `95-settle` 只填 `team` / `channel` / `pending` / `candidates` + `tool:*`。
      往这些段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
      `prompt:check` 用样例表查所有段。
+
+6. **「空的时候怎么说」也写在模板里**：`{{manager ?? 没有人（要拍板的事自己定，或者交给我）}}`。
+   代码只给事实（没有就给 `undefined`），句子归 md。写了默认值的插槽不再报 `unset`——
+   作者已经替这个空做过决定。默认文案里不能有花括号，也不会二次展开。
+   同理，delivery 片段（`81`–`83`）的正文被删空时用**同一个文件的 `default:` 头**顶上：
+   「这一轮只有你被叫醒」少一句，模型就可能不说话，那句话不能只活在代码里。
 
 ## 4. 改写规则
 

@@ -135,9 +135,7 @@ export async function settleTeam(
 		}
 		const label = deps.labelOf?.(to) ?? to;
 		const body = [
-			// 频道 id 明写出来：工具默认在「被叫醒的频道」回话，而沉淀不是某个人 @ 出来的。
-			`你在团队「${team}」的频道（${channel.id}）里整理下面这些还没沉淀的消息。`,
-			renderSettlePrompt(prompt.settle, team, candidates),
+			renderSettlePrompt(prompt.settle, team, channel.id, candidates),
 			renderReplyRules({ template: prompt.reply, fragments: prompt, woken: [to], viewer: to, colleagues: [] }),
 		]
 			.filter((part) => part.trim() !== "")
@@ -164,7 +162,8 @@ export async function settleTeam(
 				// `reply` 和 `task` 是同一条。
 				wakeRecord: (() => {
 					const target = { channelId: channel.id, seq: lastSeq, from: OWNER, at: Date.now() };
-					return { reply: target, task: target };
+					// 沉淀那一句「记了什么」是账本不是对话：落成系统留痕，不刷群、不计未读。
+					return { reply: target, task: target, quiet: true as const };
 				})(),
 			},
 			context,

@@ -4,15 +4,20 @@
  * 灯箱不在这里：图片放大在 `App.tsx`（它拿的是 `Stream` 的 `onImage`）。
  *
  * 规矩只有一条：**同一时刻只开一个**。三处状态（settings/team/needMenu）由
- * `store` 的 `setSettings`/`setTeam`/`setNeedMenu` 互斥，这里只负责画。
+ * `store` 的 `setSettings`/`setTeam`/`setPluginSheet`/`setNeedMenu` 互斥，这里只负责画。
  *
  * 唯一一个不在这里挂的：找你清单（`NeedMenu`）由 `App.tsx` 放进顶栏按钮的
  * `.menu-anchor` 里 —— 它要贴着按钮长，挂在根节点上就只剩猜坐标这一条路。
  */
 
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
+import { getPlugins, installPlugin, removePlugin, setPluginEnabled } from "../api/client.ts";
+import type { Plugin } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
+import { cellsOf } from "../plugin/registry.ts";
 import { relTime } from "../lib/format.ts";
-import { openChannel, openWithPerson, setNeedMenu, setSettings, setTeam, setTheme } from "../state/store.ts";
+import { openChannel, openWithPerson, setNeedMenu, setPluginSheet, setSettings, setTeam, setTheme } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Theme } from "../state/store.ts";
 
@@ -21,12 +26,14 @@ export function Overlays(props: {
 }): JSX.Element {
 	const settings = useStore((state) => state.settings);
 	const team = useStore((state) => state.team);
+	const pluginSheet = useStore((state) => state.pluginSheet);
 	const theme = useStore((state) => state.theme);
 
 	return (
 		<>
 			{settings ? <SettingsSheet theme={theme} /> : null}
 			{team ? <TeamSheet /> : null}
+			{pluginSheet ? <PluginSheet /> : null}
 			<div id="toast-root" className="app-toasts">
 				{props.toasts.map((toast) => (
 					<div key={toast.id} className="chat-toast" data-tone={toast.tone}>
@@ -140,7 +147,36 @@ const THEMES: readonly { value: Theme; text: string; icon: JSX.Element }[] = [
 	},
 ];
 
+/** 左栏「外观」那一格的图标：半个圆 = 明暗。 */
+function AppearanceIcon(): JSX.Element {
+	return (
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+			<circle cx="12" cy="12" r="7.5" />
+			<path d="M12 4.5a7.5 7.5 0 0 1 0 15z" fill="currentColor" stroke="none" />
+		</svg>
+	);
+}
+
+/**
+ * 设置：**左边一列分区，右边是选中那一区的详情**（DESIGN §1.5）。
+ *
+ * 顶栏横跨两栏（标题 + 关闭），下面才分家 —— 和多数桌面应用的设置一样：
+ * 分区名在左、内容在右，标题不跟着每个分区重复。
+ *
+ * 内置分区只有「外观」；插件往 `settings.section` 里注册的每一格都是一格分区，
+ * 名字取 `label`、图标取 `icon`。分区多了也还找得到东西。
+ */
 function SettingsSheet(props: { theme: Theme }): JSX.Element {
+	// 插件分区在挂载前就注册完了（`main.tsx` 先 `bootPlugins()`），这里不订阅。
+	const cells = cellsOf("settings.section");
+	const sections: readonly { id: string; label: string; icon?: ReactNode }[] = [
+		{ id: "appearance", label: "外观", icon: <AppearanceIcon /> },
+		...cells.map((cell) => ({ id: cell.id, label: cell.label ?? cell.id, icon: cell.icon })),
+	];
+	const [current, setCurrent] = useState("appearance");
+	const active = sections.find((section) => section.id === current) ?? sections[0]!;
+	const cell = cells.find((item) => item.id === active.id);
+
 	return (
 		<section
 			className="settings"
@@ -157,35 +193,268 @@ function SettingsSheet(props: { theme: Theme }): JSX.Element {
 				}}
 			>
 				<div className="settings-head">
-					<h2>设置</h2>
+					<h1 className="settings-title">设置</h1>
+					<span className="sheet-grow" />
 					<button type="button" className="icon-btn" aria-label="关闭" onClick={() => setSettings(false)}>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
 							<path d="M6 6l12 12M18 6 6 18" />
 						</svg>
 					</button>
 				</div>
-				<div className="settings-body">
-					<div className="settings-section">
-						<h3>外观</h3>
-						<p className="settings-hint">深色在晚上不刺眼，浅色在白天更清楚。</p>
-						<div className="settings-options is-three" id="theme-options">
-							{THEMES.map((item) => (
+				<div className="settings-cols">
+					<nav className="settings-nav" aria-label="设置分区">
+						<div className="settings-nav-list" role="tablist" aria-orientation="vertical">
+							{sections.map((section) => (
 								<button
 									type="button"
-									key={item.value}
-									className="opt"
-									data-theme-mode={item.value}
-									aria-checked={props.theme === item.value}
-									onClick={() => setTheme(item.value)}
+									key={section.id}
+									role="tab"
+									className="settings-nav-item"
+									aria-selected={active.id === section.id}
+									onClick={() => setCurrent(section.id)}
 								>
-									<span className="opt-ico">{item.icon}</span>
-									<span className="opt-text">{item.text}</span>
-									<span className="opt-tick" aria-hidden="true">
-										✓
-									</span>
+									{/* 没有图标也留这一格：几行字得对在同一条竖线上。 */}
+									<span className="settings-nav-ico">{section.icon ?? null}</span>
+									{section.label}
 								</button>
 							))}
 						</div>
+					</nav>
+					<div className="settings-main">
+						{/* key 变了才重放入场：换分区是「同一块地方换了一份内容」。 */}
+						<div className="settings-body" key={active.id}>
+							<h2 className="settings-h2">{active.label}</h2>
+							{cell === undefined || active.id === "appearance" ? <AppearanceSection theme={props.theme} /> : <cell.component />}
+						</div>
+					</div>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+function AppearanceSection(props: { theme: Theme }): JSX.Element {
+	return (
+		<>
+			<p className="settings-desc">深色在晚上不刺眼，浅色在白天更清楚。</p>
+			<div className="settings-options is-three" id="theme-options">
+				{THEMES.map((item) => (
+					<button
+						type="button"
+						key={item.value}
+						className="opt"
+						data-theme-mode={item.value}
+						aria-checked={props.theme === item.value}
+						onClick={() => setTheme(item.value)}
+					>
+						<span className="opt-ico">{item.icon}</span>
+						<span className="opt-text">{item.text}</span>
+					</button>
+				))}
+			</div>
+		</>
+	);
+}
+
+/* ── 插件 ────────────────────────────────────────────────────────────── */
+
+/** 「它带来了什么」压成一行。全是空的时候说「只有一份说明」。 */
+function bringsText(brings: NonNullable<Plugin["brings"]>): string {
+	const parts = [
+		brings.tools.length === 0 ? undefined : `工具 ${brings.tools.join("、")}`,
+		brings.prompt ? "一段提示词" : undefined,
+		brings.routes === 0 ? undefined : `${String(brings.routes)} 条接口`,
+		brings.listens ? "听消息" : undefined,
+	].filter((part) => part !== undefined);
+	return parts.length === 0 ? "只有一份说明" : `带来：${parts.join(" · ")}`;
+}
+
+/** 一个已经选好、还没装上去的插件文件夹。`path` 是相对文件夹根的路径。 */
+type PickedFolder = { readonly slug: string; readonly files: readonly { path: string; base64: string }[] };
+
+/**
+ * 把用户在文件夹选择框里点中的那一坨文件读成一个可以发出去的东西。
+ *
+ * 浏览器只给 `webkitRelativePath`（`my-plugin/plugin.md`），这里砍掉第一段当 slug、剩下的当相对路径。
+ * base64 是给服务端落二进制用的：插件里可能有图片，按文本传会坏。
+ */
+async function readFolder(list: FileList): Promise<PickedFolder> {
+	const entries = [...list];
+	const first = entries[0]?.webkitRelativePath ?? "";
+	if (first === "" || !first.includes("/")) throw new Error("浏览器没给出文件夹路径，换一个文件夹再试");
+	const slug = first.split("/")[0] ?? "";
+	const files = await Promise.all(
+		entries.map(async (file) => {
+			const bytes = new Uint8Array(await file.arrayBuffer());
+			let binary = "";
+			for (let i = 0; i < bytes.length; i += 0x8000) {
+				binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+			}
+			return { path: file.webkitRelativePath.split("/").slice(1).join("/"), base64: btoa(binary) };
+		}),
+	);
+	return { slug, files };
+}
+
+/**
+ * 插件浮层：一个文件夹一个插件，装 / 卸就是建 / 删那个文件夹。
+ *
+ * 三件事都要**重启服务**才真的生效（第一版没有热加载 / 热卸载）—— 这话写在最上面，
+ * 点了没反应比没有按钮更糟。
+ */
+function PluginSheet(): JSX.Element {
+	const [plugins, setPlugins] = useState<readonly Plugin[] | undefined>(undefined);
+	const [problem, setProblem] = useState<string | undefined>(undefined);
+	const [picked, setPicked] = useState<PickedFolder | undefined>(undefined);
+
+	useEffect(() => {
+		getPlugins()
+			.then((body) => {
+				setPlugins(body.plugins);
+			})
+			.catch((error: Error) => {
+				setProblem(error.message);
+			});
+	}, []);
+
+	/** 三个动作长得一样：拿回新的清单，失败就把后端那句中文摆出来。 */
+	const apply = (action: Promise<{ plugins: Plugin[] }>): void => {
+		action
+			.then((body) => {
+				setPlugins(body.plugins);
+				setProblem(undefined);
+			})
+			.catch((error: Error) => {
+				setProblem(error.message);
+			});
+	};
+
+	return (
+		<section
+			className="team"
+			id="plugins"
+			role="dialog"
+			aria-modal="true"
+			aria-label="插件"
+			onClick={() => setPluginSheet(false)}
+		>
+			<div
+				className="team-panel"
+				onClick={(event) => {
+					event.stopPropagation();
+				}}
+			>
+				<div className="team-head">
+					<h2>
+						插件 <span className="team-count">{plugins?.length ?? 0}</span>
+					</h2>
+					<button type="button" className="icon-btn" aria-label="关闭" onClick={() => setPluginSheet(false)}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+							<path d="M6 6l12 12M18 6 6 18" />
+						</svg>
+					</button>
+				</div>
+				<div className="team-list">
+					<p className="settings-hint">
+						一个文件夹就是一个插件（workspace/plugins/&lt;名字&gt;/）。装、卸、开关都要重启服务才生效；
+						插件的代码跑在本机进程里，等于给了它全部权限 —— 只装自己信得过的。
+					</p>
+					{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
+					<div className="plugins-list" id="plugins-list">
+						{plugins === undefined ? (
+							<p className="settings-hint">正在读插件…</p>
+						) : plugins.length === 0 ? (
+							<p className="settings-hint">还没有插件。下面选一个插件文件夹装进来。</p>
+						) : (
+							plugins.map((plugin) => (
+								<div className="plugin-row" key={plugin.slug} data-enabled={plugin.enabled}>
+									<div className="plugin-main">
+										<span className="plugin-name">
+											{plugin.name}
+											{plugin.slug === plugin.name ? null : <span className="plugin-slug">{plugin.slug}</span>}
+										</span>
+										<span className="plugin-desc">{plugin.description === "" ? "没有说明" : plugin.description}</span>
+										{plugin.error === undefined ? null : <span className="plugin-error">{plugin.error}</span>}
+										{plugin.brings !== undefined ? (
+											<span className="plugin-brings">{bringsText(plugin.brings)}</span>
+										) : plugin.enabled && plugin.error === undefined ? (
+											// 刚装上的还没进这个进程：说清楚「重启才生效」，别让人以为它什么都没带。
+											<span className="plugin-brings">还没加载 · 重启服务后生效</span>
+										) : null}
+									</div>
+									<button
+										type="button"
+										className="plugin-remove"
+										aria-label={`删掉 ${plugin.name}`}
+										title="删掉这个插件（连同它的代码）"
+										onClick={() => {
+											// 删的是磁盘上的代码，浏览器没法撤销 —— 先问一句再动手。
+											if (!window.confirm(`删掉插件「${plugin.name}」？它在 workspace/plugins/ 里的文件会一起删掉，找不回来。`)) return;
+											apply(removePlugin(plugin.slug));
+										}}
+									>
+										删除
+									</button>
+									<button
+										type="button"
+										className="plugin-switch"
+										role="switch"
+										aria-checked={plugin.enabled}
+										aria-label={`${plugin.enabled ? "关掉" : "打开"} ${plugin.name}`}
+										onClick={() => {
+											apply(setPluginEnabled(plugin.slug, !plugin.enabled));
+										}}
+									>
+										<span className="plugin-knob" />
+									</button>
+								</div>
+							))
+						)}
+					</div>
+					<div className="plugin-install">
+						<label className="plugin-pick">
+							<span className="plugin-pick-btn">选择插件文件夹…</span>
+							<input
+								type="file"
+								multiple
+								ref={(node) => {
+									// `webkitdirectory` 不是标准 React 属性，只能挂到 DOM 上：有了它浏览器才让人选**文件夹**。
+									if (node !== null) node.setAttribute("webkitdirectory", "");
+								}}
+								onChange={(event) => {
+									const list = event.target.files;
+									if (list === null || list.length === 0) return;
+									readFolder(list)
+										.then((folder) => {
+											setPicked(folder);
+											setProblem(undefined);
+										})
+										.catch((error: Error) => {
+											setPicked(undefined);
+											setProblem(error.message);
+										});
+									// 允许同一个文件夹再选一次（否则第二次选它不触发 onChange）。
+									event.target.value = "";
+								}}
+							/>
+						</label>
+						{picked === undefined ? null : (
+							<>
+								<span className="plugin-picked" title={picked.files.map((file) => file.path).join("\n")}>
+									已选「{picked.slug}」（{picked.files.length} 个文件）
+								</span>
+								<button
+									type="button"
+									className="plugin-install-btn"
+									onClick={() => {
+										apply(installPlugin(picked.slug, picked.files));
+										setPicked(undefined);
+									}}
+								>
+									安装
+								</button>
+							</>
+						)}
 					</div>
 				</div>
 			</div>

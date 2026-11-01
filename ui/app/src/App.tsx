@@ -12,11 +12,13 @@ import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
 import { NeedMenu, Overlays } from "./panels/Overlays.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
+import { Slot } from "./plugin/Slot.tsx";
 import { Stream } from "./stream/Stream.tsx";
 import {
 	openChannel,
 	openWithPerson,
 	setNeedMenu,
+	setPluginSheet,
 	setRight,
 	setSettings,
 	setTeam,
@@ -39,6 +41,7 @@ export function App(): JSX.Element {
 	const needMenu = useStore((state) => state.needMenu);
 	const settings = useStore((state) => state.settings);
 	const team = useStore((state) => state.team);
+	const pluginSheet = useStore((state) => state.pluginSheet);
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
@@ -70,10 +73,11 @@ export function App(): JSX.Element {
 	const closeTop = useCallback((): boolean => {
 		if (settings) return setSettings(false), true;
 		if (team) return setTeam(false), true;
+		if (pluginSheet) return setPluginSheet(false), true;
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [settings, team, needMenu, right.open]);
+	}, [settings, team, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {
@@ -156,6 +160,8 @@ export function App(): JSX.Element {
 						</span>
 					)}
 					<span className="sheet-grow" />
+					{/* 插槽：顶栏右侧按钮之前。 */}
+					<Slot name="topbar.actions" />
 					{conn.ok ? null : (
 						<span className="conn" id="conn" data-ok="false">
 							连不上，{clockTime(conn.lastOkAt)} 最后一次成功
@@ -228,6 +234,9 @@ export function App(): JSX.Element {
 			<RightPanel />
 
 			<Overlays toasts={toasts} />
+
+			{/* 插槽：全屏浮层层 —— 插件要画自己的浮层就从这里进（和灯箱同层）。 */}
+			<Slot name="overlays" />
 
 			{image === null ? null : (
 				<div className="lightbox" id="lightbox" role="dialog" aria-modal="true" onClick={() => setImage(null)}>

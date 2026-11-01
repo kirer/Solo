@@ -37,6 +37,13 @@ export type AgentPaths = {
 	 * 不给就整段不出现（纯文件场景与旧测试）。
 	 */
 	readonly chats?: (slug: string) => Promise<readonly ChatRef[]>;
+	/**
+	 * 插件追加的提示词，一段一条，顺序 = 插件目录序。
+	 *
+	 * 它是**运行时读进来的**，不是磁盘上的模板文件：插件把自己的说明写在 `plugin.ts` 里，
+	 * 装一次就在每个人的提示词里出现一次。空数组 = 这一段不存在（不写「插件：无」）。
+	 */
+	readonly extraPrompt?: readonly string[];
 };
 
 /** 一个会话的对外形状。`kind` 由成员推（`channel/state.ts` 的 `chatKind`），不存字段。 */
@@ -53,16 +60,21 @@ export type CapabilityLine = {
 };
 
 /**
- * 读团队简报（`teams/<slug>/README.md`）。
+ * 读团队简报（`teams/<slug>/README.md`），拆成插槽。
  *
- * YAML 头里的字段单独摘出来写一行「状态/团队管理员」，因为模型扫一眼就知道该不该
- * 关心这件事，不用自己从正文里推。正文原样给全 —— 团队说明就是它的事实来源。
+ * YAML 头里的字段单独给（模型扫一眼就知道该不该关心这件事），正文原样给全 ——
+ * 团队说明就是它的事实来源。「状态：/团队管理员：/目录：」这些标签在模板里，
+ * 这里只给值；管理员空着就是空着，模板自己写「还没人负责」。
  */
-async function readTeamBrief(teamsRoot: string, team: string): Promise<string | undefined> {
+async function teamSlots(teamsRoot: string, team: string): Promise<Record<string, SlotValue>> {
 	const doc = await readTeam(teamsRoot, team);
-	if (doc === undefined) return undefined;
-	const head = [`状态：${doc.status}`, `团队管理员：${doc.lead ?? "（还没人负责）"}`, `目录：teams/${doc.slug}/`];
-	return `${head.join(" · ")}\n\n${doc.body}`;
+	if (doc === undefined) return { "team.brief": undefined };
+	return {
+		"team.brief": doc.body,
+		"team.status": doc.status,
+		"team.lead": doc.lead,
+		"team.dir": `teams/${doc.slug}/`,
+	};
 }
 
 /**
@@ -106,9 +118,6 @@ export function sectionKeyOf(slug: string): string {
 const identitylessPrompt = (slug: string): string =>
 	`# 你还没有身份文件\n\n目录：\`agents/${slug}/\`。\n`;
 
-/** 空清单怎么写。写「（目前没有）」而不是留空：空串会让一句话只剩半截。 */
-const NOTHING = "（目前没有）";
-
 /** `名字（\`slug\`）`—— 名字给人看，slug 给工具用，两个都要。 */
 function withSlug(name: string, slug: string): string {
 	return `${name}（\`${slug}\`）`;
@@ -134,14 +143,13 @@ function skillLine(skill: {
 	return `- \`${skill.name}\` — ${skill.description}${source}`;
 }
 
-/** 频道一行：在哪些群、和我的私聊开没开。 */
-function chatLine(chats: readonly ChatRef[]): string {
+/** 频道：在哪些群、和我的私聊开没开。标签与「没有时怎么说」都在模板里。 */
+function chatSlots(chats: readonly ChatRef[]): Record<string, SlotValue> {
 	const groups = chats.filter((chat) => chat.kind === "group");
-	const dm = chats.some((chat) => chat.kind === "dm");
-	return [
-		groups.length === 0 ? "没在任何群里" : `群${groups.map((chat) => `「${chat.title}」`).join("、")}`,
-		dm ? "和我的私聊已开" : "和我的私聊没开（私聊只能我开）",
-	].join("；");
+	return {
+		"chats.groups": groups.length === 0 ? undefined : groups.map((chat) => `「${chat.title}」`).join("、"),
+		"chats.dm": chats.some((chat) => chat.kind === "dm") ? "已开" : undefined,
+	};
 }
 
 /**
@@ -177,46 +185,40 @@ async function slotsFor(
 	const all = needsRoster ? await readAllIdentities(paths.agents) : [];
 	if (need.has("count")) slots["count"] = all.length;
 	// 位置段这四行**永远有值**：写「（未设置）」会让提示词里出现一句半截的话，模型会自己补。
-	// 没有上级 / 没有团队本身就是事实，直接说出来。
+	// 「没有上级 / 没有团队」怎么说归模板（`{{manager ?? …}}`），这里只给事实。
 	if (need.has("manager")) {
 		const manager = managerOf(all, self.slug);
 		slots["manager"] =
-			manager === undefined
-				? "没有人（要拍板的事自己定，或者交给我）"
-				: manager === OWNER_SLUG
-					? "我（用户本人）"
-					: withSlug(nameOf(all, manager), manager);
+			manager === undefined ? undefined : manager === OWNER_SLUG ? "我（用户本人）" : withSlug(nameOf(all, manager), manager);
 	}
 	if (need.has("reports")) {
 		const reports = reportsOf(all, self.slug);
 		slots["reports"] =
-			reports.length === 0 ? NOTHING : reports.map((item) => withSlug(item.name ?? item.slug, item.slug)).join("、");
+			reports.length === 0 ? undefined : reports.map((item) => withSlug(item.name ?? item.slug, item.slug)).join("、");
 	}
 	if (need.has("chain")) {
 		const chain = chainUp(all, self.slug);
-		slots["chain"] = chain.length > 1 ? chain.map((item) => nameOf(all, item)).join(" → ") : "只有你和我";
+		slots["chain"] = chain.length > 1 ? chain.map((item) => nameOf(all, item)).join(" → ") : undefined;
 	}
-	if (need.has("team")) slots["team"] = self.team === undefined ? "没在任何团队里" : `\`${self.team}\``;
+	if (need.has("team")) slots["team"] = self.team === undefined ? undefined : `\`${self.team}\``;
 	if (need.has("peers")) {
 		const peers =
 			self.team === undefined ? [] : all.filter((item) => item.team === self.team && item.slug !== self.slug);
 		slots["peers"] =
 			peers.length === 0
-				? "没有同团队的人"
+				? undefined
 				: peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、");
 	}
-	if (need.has("chats")) {
+	if (need.has("chats.groups") || need.has("chats.dm")) {
 		const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
-		slots["chats"] = chats === undefined ? undefined : chatLine(chats);
+		Object.assign(slots, chats === undefined ? {} : chatSlots(chats));
 	}
 	// 模板里唯一允许出现工具名的地方：`{{tool:say}}`。名字从注册表现拍 —— 工具改了名，
 	// 提示词自动跟着变，不会教错。注册表里没有这个名字就留空（渲染成「（未设置）」并 warn）。
 	const tools = wants("tools") || [...need].some((name) => name.startsWith("tool:")) ? registeredTools(registry) : [];
 	if (need.has("tools")) {
 		slots["tools"] =
-			tools.length === 0
-				? "（工具没装上 —— 这是装配故障，不是你的问题。请向我报告。）"
-				: tools.map((tool) => `- \`${tool.name}\` — ${tool.summary}`).join("\n");
+			tools.length === 0 ? undefined : tools.map((tool) => `- \`${tool.name}\` — ${tool.summary}`).join("\n");
 	}
 	for (const name of need) {
 		if (!name.startsWith("tool:")) continue;
@@ -233,16 +235,14 @@ async function slotsFor(
 	}
 
 	const team = self.team;
-	if (wants("team.brief", "team.members", "team.memory")) {
-		const brief = team === undefined ? undefined : await readTeamBrief(paths.teams, team);
+	if (wants("team.brief", "team.members", "team.memory", "team.status", "team.lead", "team.dir")) {
+		Object.assign(slots, team === undefined ? {} : await teamSlots(paths.teams, team));
 		const members =
 			team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);
 		const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.teams, team);
-		slots["team.brief"] = brief;
 		slots["team.members"] = members === undefined || members.length === 0 ? undefined : members.map((item) => `\`${item}\``).join("、");
-		// 新团队还没有记忆：写一句真话，别让模板里出现「（未设置）」。
-		slots["team.memory"] =
-			teamMemory === undefined ? "（这个团队还没有记忆。踩到的坑自己记下来。）" : teamMemoryDigest(teamMemory);
+		// 新团队还没有记忆：模板的默认句会说这句真话（`{{team.memory ?? …}}`）。
+		slots["team.memory"] = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
 	}
 
 	return slots;
@@ -333,6 +333,9 @@ async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: 
 	for (const template of templates) {
 		segments.push({ segment: template.segment, text: await segmentText(registry, paths, slug, self, template.segment, templates) });
 	}
+	// 插件段永远在最后：它加的是「这个组织额外会什么」，不是身份的一部分。
+	const pluginText = (paths.extraPrompt ?? []).map((text) => text.trim()).filter((text) => text !== "").join("\n\n");
+	if (pluginText !== "") segments.push({ segment: "plugins", text: pluginText });
 	return segments;
 }
 
@@ -356,11 +359,24 @@ export async function agentSections(
 ): Promise<readonly PromptSection<ToolRegistration>[]> {
 	const base = sectionKeyOf(slug);
 	const templates = await systemTemplates(paths.workspace);
-	return templates.map((template) => ({
+	const sections: PromptSection<ToolRegistration>[] = templates.map((template) => ({
 		key: `${base}-${template.segment}`,
 		tag: false,
 		async render(): Promise<string> {
 			return segmentText(registry, paths, slug, await readIdentity(paths.agents, slug), template.segment, templates);
 		},
 	}));
+	// 插件段：`renderAgentSegments` 里有它，这里就必须有，否则 `promptOf` 和真人读到的
+	// 提示词不是同一份（自测会满意、模型没看见）。
+	const extra = (paths.extraPrompt ?? []).filter((text) => text.trim() !== "");
+	if (extra.length > 0) {
+		sections.push({
+			key: `${base}-plugins`,
+			tag: false,
+			async render(): Promise<string> {
+				return redact(extra.map((text) => text.trim()).join("\n\n"), paths.workspace);
+			},
+		});
+	}
+	return sections;
 }

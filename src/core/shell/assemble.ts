@@ -14,7 +14,7 @@
  * 这里没有「CEO」「CTO」这些字。谁是谁的上级，全在 `identity.md` 的 `manager` 字段里；
  * 谁是「离我最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
  */
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
 import {
 	BACKGROUND_CONTEXT,
@@ -47,6 +47,7 @@ import {
 	type MembershipDeps,
 } from "../channel/membership.ts";
 import { auditHooks } from "../app/audit.ts";
+import { loadPlugins, type PluginListener } from "../plugin/index.ts";
 import type { CoreServices } from "../app/types.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
@@ -65,6 +66,10 @@ type CoreShellOptions = {
 	 * 统一在这里补：装配时给每个会话对齐一次模型，而不是在每个新建入口里各写一遍。
 	 */
 	readonly defaultModel?: { readonly provider: string; readonly modelId: string };
+	/** 单独给某个人指定的模型（slug → 引用），压过 `defaultModel`。 */
+	readonly agentModels?: Readonly<Record<string, { readonly provider: string; readonly modelId: string }>>;
+	/** 模型注册表：界面改某个人的模型时要先确认那只模型真的存在。 */
+	readonly models?: CoreServices["models"];
 	/**
 	 * 诊断出口。给了就用它（`openCore` 的 `onReport` 已经往里报）；不给就由 `app/`
 	 * 自己建一个。装配要传入**同一个实例**，否则 `lastReport` 不在那条线上。
@@ -140,10 +145,21 @@ export async function assembleCore(
 		openAgent: async (slug, ctx) => (await openOne(slug, ctx)).id as unknown as number,
 		wiring,
 	};
+	// ── 1.5 装插件 ──────────────────────────────────────────────────
+	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
+	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
+	const plugins = await loadPlugins({
+		pluginsRoot: join(workspaceRoot, "plugins"),
+		workspace: workspaceRoot,
+		log: (line) => console.log(`[plugin] ${line}`),
+	});
+	for (const error of plugins.errors) console.warn(`[plugin] 没装上：${error}`);
+
 	// 团队记忆的自动沉淀：一条消息落地后，若它带着 `decision` / `report` 标签且落在
 	// 团队频道里，就叫这个团队里该负责的人把它沉淀进 `teams/<slug>/memory.md`。
 	// 条件是「形状」（kind），判断是「语义」（模型写什么），分工见 team/settle.ts。
-	const afterPost = makeAfterPost(wiring, options.agentsRoot, options.teamsRoot);
+	// 插件要听消息也走这一个钩子 —— 落盘之后、唤醒之前，只有这一处。
+	const afterPost = makeAfterPost(wiring, options.agentsRoot, options.teamsRoot, plugins.messages);
 	const toolDeps: CoreToolDeps = {
 		...baseDeps,
 		afterPost,
@@ -156,7 +172,8 @@ export async function assembleCore(
 			await ensureOwnerDm(membership, slug, ctx);
 		},
 	};
-	const tools = createCoreTools(toolDeps);
+	// 核心七个 + 插件带来的：同一个注册表，没有「谁的工具有特权」这一说。
+	const tools = [...createCoreTools(toolDeps), ...plugins.tools];
 	// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
 	// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
 	const toolsExtension = defineExtension({
@@ -192,7 +209,13 @@ export async function assembleCore(
 			name: `core-identity:${slug}`,
 			sections: await agentSections(
 				registry,
-				{ workspace: workspaceRoot, agents: options.agentsRoot, teams: options.teamsRoot, chats: chatRefsOf },
+				{
+					workspace: workspaceRoot,
+					agents: options.agentsRoot,
+					teams: options.teamsRoot,
+					chats: chatRefsOf,
+					extraPrompt: plugins.prompt,
+				},
 				slug,
 			),
 		});
@@ -226,7 +249,7 @@ export async function assembleCore(
 			if (found !== undefined) {
 				// 已有会话也要补一次模型：老库里可能存着 `no_model`，或者建它的时候
 				// 还没配模型。`configure` 不改已有对话历史，只改这次选用的模型。
-				await applyModel(found, ctx);
+				await applyModel(found, slug, ctx);
 				// 也补一次身份扩展（幂等）：`hire` 时会立刻开会话，那时还没重启，
 				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
 				await installIdentity(slug);
@@ -239,6 +262,7 @@ export async function assembleCore(
 				return found;
 			}
 		}
+		const wanted = modelFor(slug);
 		const created = await harness.createConversation(
 			{
 				ownership: { kind: "ownerless" },
@@ -246,9 +270,7 @@ export async function assembleCore(
 					// 扩展是**按名字选的**：漏了 `core-tools` 这个人就一个工具都没有（实测踩过）。
 					extensions: [toolsExtension, await installIdentity(slug)],
 					// 模型在建会话时一次给全，不要等第一次生成才发现没有模型。
-					...(options.defaultModel === undefined
-						? {}
-						: { model: { provider: options.defaultModel.provider, modelId: options.defaultModel.modelId } }),
+					...(wanted === undefined ? {} : { model: { provider: wanted.provider, modelId: wanted.modelId } }),
 				},
 			},
 			ctx,
@@ -280,22 +302,21 @@ export async function assembleCore(
 		return created;
 	}
 
+	/** 这个人该用哪只模型：单独指定的压过默认。都没有就是「没有模型」（ADR-023）。 */
+	function modelFor(slug: string): { readonly provider: string; readonly modelId: string } | undefined {
+		return options.agentModels?.[slug] ?? options.defaultModel;
+	}
+
 	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
-	async function applyModel(conversation: Conversation, ctx: Context): Promise<void> {
-		if (options.defaultModel === undefined) return;
+	async function applyModel(conversation: Conversation, slug: string, ctx: Context): Promise<void> {
+		const wanted = modelFor(slug);
+		if (wanted === undefined) return;
 		const agent = await conversation.agent(ctx);
 		const current = agent.model;
-		if (
-			current !== undefined &&
-			current.provider === options.defaultModel.provider &&
-			current.modelId === options.defaultModel.modelId
-		) {
+		if (current !== undefined && current.provider === wanted.provider && current.modelId === wanted.modelId) {
 			return;
 		}
-		await conversation.configure(
-			{ model: { provider: options.defaultModel.provider, modelId: options.defaultModel.modelId } },
-			ctx,
-		);
+		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
 	}
 
 	for (const identity of identities) {
@@ -320,6 +341,8 @@ export async function assembleCore(
 		registry,
 		conversations,
 		directory,
+		...(options.models === undefined ? {} : { models: options.models }),
+		...(options.defaultModel === undefined ? {} : { defaultModel: options.defaultModel }),
 		// 沉淀钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
 		afterPost,
 		async syncTeam(team: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
@@ -328,10 +351,17 @@ export async function assembleCore(
 		async promptOf(slug: string): Promise<string> {
 			return renderAgentSection(
 				registry,
-				{ workspace: workspaceRoot, agents: options.agentsRoot, teams: options.teamsRoot, chats: chatRefsOf },
+				{
+					workspace: workspaceRoot,
+					agents: options.agentsRoot,
+					teams: options.teamsRoot,
+					chats: chatRefsOf,
+					extraPrompt: plugins.prompt,
+				},
 				slug,
 			);
 		},
+		plugins,
 		async rescan(ctx: Context = BACKGROUND_CONTEXT): Promise<readonly string[]> {
 			const all = await readAllIdentities(options.agentsRoot);
 			const added: string[] = [];
@@ -395,8 +425,12 @@ function makeAfterPost(
 	wiring: ReturnType<typeof wireChannel>,
 	agentsRoot: string,
 	teamsRoot: string,
+	listeners: readonly PluginListener[] = [],
 ): (message: Message, channelId: string, context: Context) => Promise<void> {
-	return async (_message, channelId, context) => {
+	return async (message, channelId, context) => {
+		// 插件先听：它们看的是「一条消息刚落地」这件事实，与团队频道无关。
+		// 并发跑、全部 settled —— 一个插件抛错不该让沉降不跑，也不该让投递变慢。
+		await Promise.allSettled(listeners.map(async (listener) => listener(message, channelId)));
 		if (!channelId.startsWith("team:")) return;
 		await settleTeam(
 			{

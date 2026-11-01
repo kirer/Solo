@@ -15,6 +15,7 @@ import type {
 	Org,
 	PersonMemory,
 	PersonProfile,
+	Plugin,
 	TeamProfile,
 	Turn,
 	Uploaded,
@@ -105,6 +106,13 @@ export const getTeam = (slug: string): Promise<TeamProfile> =>
 export const openDirectMessage = (slug: string): Promise<{ ok: true; id: string }> =>
 	call(`/api/people/${encodeURIComponent(slug)}/dm`, { method: "POST" });
 
+/** 现在生效的模型（`provider/modelId`）。settings.json 里刚加的提供商要重启才进这里。 */
+export const getModels = (): Promise<{ models: string[]; defaultModel: string }> => call("/api/models");
+
+/** 换某个人的模型（`provider/modelId`；空串 = 跟默认）。当场生效，重启也认。 */
+export const setPersonModel = (slug: string, model: string): Promise<{ model: string }> =>
+	call(`/api/people/${encodeURIComponent(slug)}/model`, { method: "POST", body: JSON.stringify({ model }) });
+
 /** 某个人的记忆。 */
 export const getPersonMemory = (slug: string): Promise<PersonMemory> =>
 	call<PersonMemory>(`/api/people/${encodeURIComponent(slug)}/memory`);
@@ -165,6 +173,30 @@ export function reportJank(body: unknown): void {
 		keepalive: true,
 	}).catch(() => undefined);
 }
+
+/** 插件清单：名字、说明、开着没有、有没有前端入口、坏在哪。 */
+export const getPlugins = (): Promise<{ plugins: Plugin[] }> => call("/api/plugins");
+
+/**
+ * 装一个插件：把选中的那个文件夹整份传上去，服务端原样写进 `workspace/plugins/<slug>/`。
+ * **下一次启动**才真的运行。
+ */
+export const installPlugin = (
+	slug: string,
+	files: readonly { path: string; base64: string }[],
+): Promise<{ plugins: Plugin[] }> =>
+	call("/api/plugins", { method: "POST", body: JSON.stringify({ slug, files }) });
+
+/** 删掉一个插件，连同它的代码。不可恢复。 */
+export const removePlugin = (slug: string): Promise<{ plugins: Plugin[] }> =>
+	call(`/api/plugins/${encodeURIComponent(slug)}`, { method: "DELETE" });
+
+/** 开关一个插件（写回它的 `plugin.md`）。**下一次启动**才真的装上 / 卸下。 */
+export const setPluginEnabled = (slug: string, enabled: boolean): Promise<{ plugins: Plugin[] }> =>
+	call(`/api/plugins/${encodeURIComponent(slug)}/enabled`, {
+		method: "POST",
+		body: JSON.stringify({ enabled }),
+	});
 
 /** 一条运行报告（`GET /api/diag` 的 `lastReport`）。 */
 export type LastRuntimeReport = { readonly type: string; readonly at: string; readonly text: string };

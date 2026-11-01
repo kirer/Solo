@@ -6,6 +6,7 @@
  * 改措辞不会误伤，插槽被删、段被删才会红。
  */
 import { readFile } from "node:fs/promises";
+import { deliveryPrompt } from "../../src/core/channel/delivery.ts";
 import { parseDoc } from "../../src/core/md/doc.ts";
 
 async function body(name: string): Promise<string> {
@@ -31,16 +32,7 @@ export const MULTI_TEMPLATE = await body("85-multi.md");
 export const DIGEST_TEMPLATE = await body("86-digest.md");
 export const MERGED_TEMPLATE = await body("87-merged.md");
 
-/** 一份完整的 delivery 模板，等价于 `deliveryPrompt()` 读 seed 的结果。 */
-export const SEED_DELIVERY_PROMPT = {
-	reply: REPLY_TEMPLATE,
-	interrupted: INTERRUPTED_TEMPLATE,
-	settle: SETTLE_TEMPLATE,
-	alone: ALONE_TEMPLATE,
-	shared: SHARED_TEMPLATE,
-	colleagues: COLLEAGUES_TEMPLATE,
-	dm: DM_TEMPLATE,
-	multi: MULTI_TEMPLATE,
-	merged: MERGED_TEMPLATE,
-	digest: DIGEST_TEMPLATE,
-} as const;
+/** 一份完整的 delivery 模板：直接走生产那条读取路径（含 `default:` 兜底句）。 */
+export const SEED_DELIVERY_PROMPT = await deliveryPrompt(
+	new URL("../../seed/prompt", import.meta.url).pathname,
+);

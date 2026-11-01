@@ -19,8 +19,24 @@ export type ModelRef = { readonly provider: string; readonly modelId: string };
 
 export type ModelSetup = {
 	readonly models: Models;
-	readonly defaultModel: ModelRef;
+	/**
+	 * 会话默认模型。**没配任何模型时是 `undefined`** —— 这时候会话不带模型，
+	 * 第一次生成就会失败，而不是悄悄换一只模型顶上（ADR-023）。
+	 */
+	readonly defaultModel?: ModelRef;
+	/**
+	 * 单独给某个人指定的模型（`settings.json` 的 `agentModels`，slug → `provider/modelId`）。
+	 * 没写的人用 `defaultModel`。
+	 */
+	readonly agentModels?: Readonly<Record<string, ModelRef>>;
 };
+
+/** `"provider/modelId"` → 引用；模型 id 自己可以带斜杠，所以只切第一个。 */
+export function parseModelRef(value: string): ModelRef | undefined {
+	const slash = value.indexOf("/");
+	if (slash <= 0 || slash === value.length - 1) return undefined;
+	return { provider: value.slice(0, slash), modelId: value.slice(slash + 1) };
+}
 
 type ProviderConfig = {
 	readonly id: string;
@@ -41,6 +57,8 @@ type ProviderConfig = {
 type Settings = {
 	readonly defaultModel?: string;
 	readonly providers?: readonly ProviderConfig[];
+	/** slug → `provider/modelId`：这个人单独用哪只模型。 */
+	readonly agentModels?: Readonly<Record<string, string>>;
 };
 
 /** 读 settings.json；坏了返回 undefined（调用方回落环境变量默认）。 */
@@ -82,15 +100,29 @@ function catalogMeta(provider: string, modelId: string): { contextWindow: number
 	return model === undefined ? undefined : { contextWindow: model.contextWindow, maxTokens: model.maxTokens };
 }
 
-/** 用一份 provider 配置构造底层 Provider。 */
+/** 本机地址：本地网关不看密钥，可以省（官方 API 不行）。 */
+const LOCAL_BASE_URL = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$)/;
+
+/**
+ * 用一份 provider 配置构造底层 Provider。
+ *
+ * **空密钥要补一个占位符**：底座不接受空凭据，apiKey 是空串时每次生成立刻失败
+ * （`stop: error`、0ms、请求根本没发出去），界面上只留下「他这一轮没答上来」。
+ * 实测踩过一次：插件里加了一家本地网关、密钥留空，两个 agent 全部哑掉；填上
+ * `magpie` 立刻恢复。本地网关给同样的占位符，远端仍然留空 —— 那里的空密钥是配置错了，
+ * 该失败得早。
+ */
 function makeProvider(config: ProviderConfig): Provider {
 	const apiName = config.api ?? "openai-responses";
 	const api = APIS[apiName as keyof typeof APIS] ?? APIS["openai-responses"];
-	const apiKey = config.apiKey ?? "";
+	const baseUrl = config.baseUrl ?? "http://127.0.0.1:3425/v1";
+	// 缺省和空串都算「没给」：实测写 `"apiKey": ""` 与不写字段一样，每次生成立刻失败。
+	const given = config.apiKey ?? "";
+	const apiKey = given !== "" ? given : LOCAL_BASE_URL.test(baseUrl) ? "magpie" : "";
 	return createProvider({
 		id: config.id,
 		name: config.name ?? config.id,
-		baseUrl: config.baseUrl ?? "http://127.0.0.1:3425/v1",
+		baseUrl,
 		auth: {
 			apiKey: {
 				name: `${config.id} 凭据`,
@@ -106,7 +138,7 @@ function makeProvider(config: ProviderConfig): Provider {
 				type: "chat" as const,
 				api: apiName === "anthropic" ? "anthropic-messages" as const : "openai-responses" as const,
 				provider: config.id,
-				baseUrl: config.baseUrl ?? "http://127.0.0.1:3425/v1",
+				baseUrl,
 				reasoning: m.reasoning ?? true,
 				input: ["text", "image"] as const,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -149,7 +181,11 @@ function usableDefault(models: Models, ref: ModelRef, source: string): ModelRef 
  * 1. `workspace/settings.json` 里有 `providers` → 用它
  * 2. 环境变量 `ANTHROPIC_API_KEY` → Anthropic
  * 3. 环境变量 `OPENAI_API_KEY` → OpenAI
- * 4. 默认 → 本地网关（OpenAI Responses 协议，`http://127.0.0.1:3425/v1`）
+ * 4. 都没有 → **没有模型**（空注册表、`defaultModel: undefined`）
+ *
+ * 第四条原来是「悄悄回落到本地网关」。改掉的理由：没配的人看不出来自己没配 ——
+ * 界面一切正常，只是所有人都在用一只他没选过、也不知道存在的模型。现在宁可
+ * 什么都不响（设置 → 模型里写着「还没有配置模型」），也不替人做这个决定。
  */
 export function setupModels(
 	environment: NodeJS.ProcessEnv = process.env,
@@ -173,7 +209,18 @@ export function setupModels(
 			}
 		}
 		if (defaultRef === undefined) throw new Error("settings.json 有 providers 但没有模型");
-		return { models, defaultModel: usableDefault(models, defaultRef, "settings.json 的 defaultModel") };
+		// 单独指定的模型：解析不到的（provider 被删了）直接丢掉，按默认走 ——
+		// 留一个解析不到的引用等于那个人每次都 `no_model`。
+		const agentModels: Record<string, ModelRef> = {};
+		for (const [slug, value] of Object.entries(settings.agentModels ?? {})) {
+			const ref = parseModelRef(value);
+			if (ref !== undefined && models.getModel(ref.provider, ref.modelId) !== undefined) agentModels[slug] = ref;
+		}
+		return {
+			models,
+			defaultModel: usableDefault(models, defaultRef, "settings.json 的 defaultModel"),
+			...(Object.keys(agentModels).length === 0 ? {} : { agentModels }),
+		};
 	}
 
 	if (environment.ANTHROPIC_API_KEY !== undefined) {
@@ -193,24 +240,8 @@ export function setupModels(
 		};
 	}
 
-	const models = createModels();
-	const provider = makeProvider({
-		id: "magpie",
-		name: "本地网关",
-		baseUrl: environment.COMMANDCODE_BASE_URL ?? "http://127.0.0.1:3425/v1",
-		apiKey: environment.COMMANDCODE_API_KEY ?? "magpie",
-		api: "openai-responses",
-		models: [{ id: environment.COMMANDCODE_MODEL_ID ?? "auto/deepseek-v4.1-flash", reasoning: true }],
-	});
-	(models as MutableModels).setProvider(provider);
-	return {
-		models,
-		defaultModel: usableDefault(
-			models,
-			{ provider: "magpie", modelId: environment.COMMANDCODE_MODEL_ID ?? "auto/deepseek-v4.1-flash" },
-			"本地网关兜底模型",
-		),
-	};
+	// 什么都没配：空注册表 + 没有默认模型。这里不回落任何网关（ADR-023）。
+	return { models: createModels() };
 }
 
 /** 一条压缩策略（形状对齐底座的 `CompactionPolicy`，但不 import 它：这里只产出普通数据）。 */

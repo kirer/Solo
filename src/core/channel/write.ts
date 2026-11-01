@@ -15,6 +15,7 @@ type AppendInput = {
 	readonly text: string;
 	readonly at: number;
 	readonly kind?: string;
+	readonly noteOf?: string;
 	readonly replyTo?: number;
 	readonly roster?: MentionRoster;
 	readonly mention?: readonly string[];
@@ -49,6 +50,7 @@ export async function appendToChannel(
 			text: input.text,
 			at: input.at,
 			...(input.kind === undefined ? {} : { kind: input.kind }),
+			...(input.noteOf === undefined ? {} : { noteOf: input.noteOf }),
 			...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
 			...(input.roster === undefined ? {} : { roster: input.roster }),
 			...(input.mention === undefined ? {} : { mention: input.mention }),

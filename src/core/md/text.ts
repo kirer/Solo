@@ -10,6 +10,9 @@
  * 自己补一个听起来合理的答案（V2 实测补出过不存在的汇报线）。所以填不上就写
  * `（未设置）`，并且把问题**报出去**，让装配层 warn 或者直接失败。
  *
+ * 模板自己知道空的时候该怎么说，就写 `{{名字 ?? 这句话}}`：那句话是文案，归模板管；
+ * 写了默认值就不再报 `unset`（作者已经替这个空做过决定）。
+ *
  * 报出去的东西分两种，因为**该谁去修**不同：
  *
  * - `unknown`：模板写了、装配没给 —— 模板与代码脱节，是缺陷；
@@ -55,12 +58,14 @@ export type Rendered = {
 export type MissingHandler = (name: string) => void;
 
 /**
- * 只认 `{{名字}}`，名字允许 `a-zA-Z0-9_.:-`。
+ * 只认 `{{名字}}` 与 `{{名字 ?? 默认文案}}`，名字允许 `a-zA-Z0-9_.:-`。
  *
  * 允许 `:` 是为了 `{{tool:say}}` —— 契约里工具名只能这么写，别的一律自然语言。
+ * 默认文案是**给「这个事实现在没有」的句子**，写在模板里而不是代码里（一句文案一个家）；
+ * 它不认嵌套花括号，也只在插槽为空时才出现。
  * 不匹配的 `{{` 原样留着，所以模板里可以写插槽语法本身，也不必转义。
  */
-const SLOT = /\{\{\s*([A-Za-z0-9_.:-]+)\s*\}\}/g;
+const SLOT = /\{\{\s*([A-Za-z0-9_.:-]+)\s*(?:\?\?\s*([^{}]*?))?\s*\}\}/g;
 
 /** 一个值怎么落成文本。空串/纯空白按「没有」处理。 */
 export function slotText(value: SlotValue): string {
@@ -108,12 +113,16 @@ export function hasSlot(slots: Slots, name: string): boolean {
  * 渲染一段模板。替换是**单趟**的：值里的 `{{…}}` 不会再被展开一次。
  *
  * 同一个插槽写三遍只报一次，顺序是模板里首次出现的顺序。
+ *
+ * 写了 `?? 默认` 的插槽**不报**：模板作者已经说了「空的时候这句话就该这么说」，
+ * 那不是缺陷。没写的照旧报 `unset` / `unknown`。
  */
 export function renderSlots(template: string, slots: Slots): Rendered {
 	const issues: SlotIssue[] = [];
 	const reported = new Set<string>();
 
-	const text = template.replace(SLOT, (_whole, name: string) => {
+	const text = template.replace(SLOT, (_whole, name: string, fallback: string | undefined) => {
+		if (!hasSlot(slots, name) && fallback !== undefined && fallback.trim() !== "") return fallback;
 		if (!reported.has(name)) {
 			if (!Object.hasOwn(slots, name)) {
 				reported.add(name);

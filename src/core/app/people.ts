@@ -6,6 +6,9 @@
  */
 import { dirname, join } from "node:path";
 import { OWNER_SLUG } from "../agent/identity.ts";
+import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
+import { readTextOrUndefined, writeTextAtomicAt } from "../runtime/io.ts";
+import { parseModelRef } from "../runtime/models.ts";
 import { appendMemory, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
 import { labelIn, type DirectoryState } from "../agent/roster.ts";
 import { redact } from "../agent/secrets.ts";
@@ -25,6 +28,11 @@ import type { CoreServices } from "./types.ts";
  * 这份知识复制到前端，两处早晚不一致。
  */
 
+/** 改某个人的模型：`provider/modelId`；空串 = 跟默认。 */
+export type PersonModelBody = {
+	readonly model?: string;
+};
+
 /** 记忆一次写操作的请求体。 */
 export type MemoryEditBody = {
 	readonly op?: string;
@@ -41,6 +49,14 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		if (!(slug in directory.slugToConversation) || slug === OWNER_SLUG) {
 			throw new AppError("not-found", "没有这个人");
 		}
+	}
+
+	/** 这个人此刻用的模型（`provider/modelId`）；没有模型就是空串。 */
+	async function modelOf(slug: string): Promise<string> {
+		const conversation = shell.conversations.get(slug);
+		if (conversation === undefined) return "";
+		const agent = await conversation.agent(BACKGROUND_CONTEXT);
+		return agent.model === undefined ? "" : `${agent.model.provider}/${agent.model.modelId}`;
 	}
 
 	/** 档案：身份 / 技能 / 记忆概况 / 所在频道。 */
@@ -71,6 +87,7 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 			})),
 			memory: memorySummary(source),
 			channels: await read.channelsOf(slug),
+			model: await modelOf(slug),
 		};
 	}
 
@@ -124,5 +141,50 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		throw new AppError("bad-request", "op 只能是 forget 或 add");
 	}
 
-	return { readPersonProfile, readPersonMemory, editPersonMemory };
+	/**
+	 * 换某个人的模型：**当场生效**（改会话的 `configure`），同时记进 `settings.json` 的
+	 * `agentModels` —— 不记的话重启时装配会把他改回默认，界面上看起来就是「设置自己变回去」。
+	 *
+	 * 空串 = 跟默认（删掉这条记录）。只认注册表里真有的模型：写一个解析不到的引用，
+	 * 这个人此后每轮都 `no_model`，而界面上只是一句「他这一轮没答上来」。
+	 */
+	async function setPersonModel(slug: string, body: PersonModelBody): Promise<{ model: string }> {
+		const { directory } = await snapshots.snapshot();
+		requireSlug(directory, slug);
+		const conversation = shell.conversations.get(slug);
+		if (conversation === undefined) throw new AppError("not-found", "没有这个人的会话");
+
+		const value = (body.model ?? "").trim();
+		const wanted = value === "" ? shell.defaultModel : parseModelRef(value);
+		if (wanted === undefined) {
+			throw new AppError("bad-request", value === "" ? "还没有配置默认模型，先配一只" : `模型要写成 提供商/模型：${value}`);
+		}
+		if (shell.models !== undefined && shell.models.getModel(wanted.provider, wanted.modelId) === undefined) {
+			throw new AppError("bad-request", `没有这个模型：${value}（刚加 / 改过的提供商要重启服务才生效）`);
+		}
+
+		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, BACKGROUND_CONTEXT);
+
+		const file = join(dirname(shell.agentsRoot), "settings.json");
+		let settings: Record<string, unknown> = {};
+		try {
+			const parsed: unknown = JSON.parse((await readTextOrUndefined(file)) ?? "{}");
+			if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>;
+		} catch {
+			// 坏文件：当成空的写一份新的，下面这一份至少是合法的。
+		}
+		const raw = settings["agentModels"];
+		const agentModels: Record<string, string> = {};
+		if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+			for (const [key, item] of Object.entries(raw)) if (typeof item === "string") agentModels[key] = item;
+		}
+		if (value === "") delete agentModels[slug];
+		else agentModels[slug] = value;
+		if (Object.keys(agentModels).length === 0) delete settings["agentModels"];
+		else settings["agentModels"] = agentModels;
+		await writeTextAtomicAt(file, `${JSON.stringify(settings, null, 2)}\n`);
+		return { model: value };
+	}
+
+	return { readPersonProfile, readPersonMemory, editPersonMemory, setPersonModel };
 }

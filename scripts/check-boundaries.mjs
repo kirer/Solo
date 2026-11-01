@@ -106,6 +106,19 @@ const LAYER_RULES = [
 			{ match: /\/shell\//, reason: "文档层不许 import 外壳（shell）" },
 		],
 	},
+	// 插件：只「加东西」（工具 / 提示词 / 路由 / 听消息），不认识用例、投影与传输。
+	{
+		dirs: ["src/core/plugin/"],
+		layer: "插件（plugin）",
+		deny: [
+			{ match: /\/agent\//, reason: "插件层不许 import 领域实现（agent）—— 工具由装配层并进注册表" },
+			{ match: /\/team\//, reason: "插件层不许 import 领域实现（team）" },
+			{ match: /\/app\//, reason: "插件层不许 import 用例层（app）" },
+			{ match: /\/view\//, reason: "插件层不许 import 契约层（view）" },
+			{ match: /\/interface\//, reason: "插件层不许 import 接口层（interface）" },
+			{ match: /\/shell\//, reason: "插件层不许 import 外壳（shell）" },
+		],
+	},
 	// 根目录两个原语（工作区路径、名字规则）：谁都能用，但它们不许往上够。
 	{
 		dirs: ["src/core/fsx.ts", "src/core/naming.ts"],

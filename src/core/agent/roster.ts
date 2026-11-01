@@ -121,7 +121,13 @@ export function directoryWake(deps: {
 				// 写回来就是一次静默丢人。
 				doc.wake = {
 					...plainDirectory(doc).wake,
-					[String(id)]: { reply: { ...wake.reply }, task: { ...wake.task } },
+					[String(id)]: {
+						reply: { ...wake.reply },
+						task: { ...wake.task },
+						// `quiet` 不能丢：写回时只搬 reply/task 的话，沉淀那一轮的「安静」
+						// 就在落盘这一步被抹平了，报账又会变回群里的一条普通消息。
+						...(wake.quiet === true ? { quiet: true as const } : {}),
+					},
 				};
 			}, context);
 		},

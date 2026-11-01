@@ -11,7 +11,9 @@ import { dirname } from "node:path";
 import { OWNER } from "../channel/types.ts";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
+import { createModels } from "./models.ts";
 import { createPeople } from "./people.ts";
+import { createPlugins } from "./plugins.ts";
 import { createRead } from "./read.ts";
 import { createRuns } from "./runs.ts";
 import { createSnapshots } from "./snapshot.ts";
@@ -25,10 +27,12 @@ export function createApp(services: CoreServices) {
 	const read = createRead(services, snapshots);
 	const people = createPeople(services, snapshots, read);
 	const teams = createTeams(services);
+	const plugins = createPlugins(services);
 	const chat = createChat(services);
 	const uploads = createUploads(services);
 	const runs = createRuns(services);
 	const diag = services.diag ?? createDiag(dirname(services.agentsRoot));
+	const models = createModels(services);
 	// 看门狗：底座报上来的异常说进全员频道，别只躺在 logs/runtime.jsonl 里。
 	const watch = createWatch({
 		onAbnormal: diag.onAbnormal,
@@ -36,7 +40,7 @@ export function createApp(services: CoreServices) {
 			await services.postAs({ channelId: services.allChannel, from: OWNER, text, kind: "note" });
 		},
 	});
-	return { snapshots, read, people, teams, chat, uploads, runs, watch, diag };
+	return { snapshots, read, people, teams, plugins, chat, uploads, runs, watch, diag, models };
 }
 
 export type App = ReturnType<typeof createApp>;
@@ -50,8 +54,9 @@ export { AppError } from "./errors.ts";
  */
 export { OWNER_SLUG } from "../agent/identity.ts";
 export type { CoreServices } from "./types.ts";
-export type { MemoryEditBody } from "./people.ts";
+export type { MemoryEditBody, PersonModelBody } from "./people.ts";
 export type { PostBody } from "./chat.ts";
+export type { AppPluginRoute, PluginRouteInput } from "./plugins.ts";
 /**
  * 正文读取：**带宽高的字节流**。
  *

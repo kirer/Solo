@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **22** 条路由（按方法+路径算；按路径去重是 **21** 条 —— `check-boundaries.mjs`
+只有 **24** 条路由（按方法+路径算；按路径去重是 **23** 条 —— `check-boundaries.mjs`
 数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
@@ -27,12 +27,19 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `GET` | `/api/people/:slug/turns` | 一个人在所有频道里的轮次（私聊页的工作记录，折叠版） |
 | `GET` | `/api/people/:slug/memory` | 一个人的记忆全文 + 按小节拆开的条目 |
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
+| `GET` | `/api/models` | 现在生效的模型清单（装配好的注册表）+ 默认模型 |
+| `POST` | `/api/people/:slug/model` | 换这个人用的模型（当场生效，写进 `settings.json` 的 `agentModels`） |
 | `GET` | `/api/teams/:slug` | 一个团队的档案：README 正文 / 管理员 / 团队记忆 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `GET` | `/api/avatar/:seed` | 一个人的头像（SVG，服务端按名字画好） |
 | `POST` | `/api/diag` | 浏览器自报卡顿，落 `workspace/logs/jank.jsonl` |
 | `GET` | `/api/diag` | 最近一条**运行报告**（底座报上来的失败），没有就是 `null` |
+| `GET` | `/api/plugins` | 插件清单：slug / 名字 / 说明 / 开关状态 / 有没有前端入口 / 它带来了什么 / 没装上的原因 |
+| `POST` | `/api/plugins` | 装一个插件：把一整个文件夹（`{ slug, files }`，base64）写进 `plugins/<slug>/` |
+| `DELETE` | `/api/plugins/:slug` | 删掉一个插件（整个目录，不可恢复） |
+| `GET` | `/api/plugins/:slug/client.js` | 一个插件的前端入口（浏览器 `import` 它） |
+| `POST` | `/api/plugins/:slug/enabled` | 开关一个插件（写回 `plugin.md` 的 `enabled`，下次启动生效） |
 | `*` | 其余 | 静态文件（`ui/web/`） |
 
 所有响应都是 JSON（SSE 除外）。失败统一 `{ "error": "人话" }` + 4xx/5xx。
@@ -206,6 +213,7 @@ type ViewMessage = {
   fromSlug: string;
   fromLabel: string;
   kind: string;          // chat | say | question | decision | report | note | ...
+  noteOf?: "run";        // 系统留痕的种类：run = 后台命令跑完（界面收成一行，点开看全文）
   text: string;
   mentions: { id: number, label: string, read: boolean, offset: number }[];
   replyTo?: { seq: number, from: number, fromSlug: string, fromLabel: string, excerpt: string };
@@ -217,6 +225,10 @@ type ViewMessage = {
 
 - `role` 只用三种**能从文件里读出来**的事实，不引身份枚举：我 / 团队管理员（团队
   `README.md` 的 `lead`）/ 成员。
+- `noteOf` 只在 `kind` 是 `note` 时出现，现在只有 `run` 一种：后台命令跑完的留痕正文是
+  命令、输出尾巴和退出码，给干活的那个人看的。界面把它收成一行（`后台命令跑完了。`），
+  点开才看全文 —— 平铺的话一屏对话里会插进几十行日志。命令输出里的终端控制序列在写入
+  前就洗掉了。
 - `text` 是**显示用**正文：`@owner` 一律投影成 `@我`（`owner` 只是内部 slug，我不叫这个名字），
   落盘的那份不动 —— 提示词与历史仍是模型自己写的字。
 - `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
@@ -403,7 +415,8 @@ type ViewStep = {
   body: string,                     // identity.md 正文（预置提示词）
   skills: { name: string, description: string, scope: "personal" | "team" | "all", overrides: boolean }[],
   memory: { exists: boolean, entries: number, digest: string | null },
-  channels: { id: string, kind: "dm" | "group", title: string }[]
+  channels: { id: string, kind: "dm" | "group", title: string }[],
+  model: string                     // 他此刻用的模型 "provider/modelId"；没有模型就是 ""
 }
 ```
 
@@ -438,6 +451,37 @@ type ViewStep = {
 `slug` 必须是 `teams/` 下真实存在的目录，否则 404。团队记忆**只读**：它由
 `team/settle.ts` 在收工结算时自动沉淀（判据在 `seed/prompt/95-settle.md`），
 界面上没有增删入口。
+
+## 10.2 `GET /api/models`
+
+```ts
+// 响应
+{ models: string[], defaultModel: string }   // "provider/modelId"；一个都没有时都是 ""
+```
+
+**现在生效**的那些，不是 `settings.json` 里写的那些：提供商是进程启动时装配进注册表的
+（ADR-021），文件里刚加的那一家要重启才出现在这里。界面上「给某个人换模型」的下拉只列这一份，
+文件里多出来的那些用一句话说「重启服务后才能选」。
+
+## 10.3 `POST /api/people/:slug/model`
+
+换这个人用的模型。**当场生效**（改的是会话的模型，不用重启），同时记进
+`workspace/settings.json` 的 `agentModels`（slug → `provider/modelId`），重启后装配仍认这一份。
+
+```ts
+// 请求
+{ model: string }   // "provider/modelId"；空串 = 跟默认（删掉这条记录）
+
+// 响应
+{ model: string }   // 落定后的值；空串表示跟默认
+```
+
+- 模型 id 自己可以带 `/`：只按**第一个**斜杠切 provider。
+- `model` 必须在装配好的模型注册表里存在，否则 400（写一个解析不到的引用，这个人此后
+  每轮都 `no_model`，界面上只留一句「他这一轮没答上来」）。
+- 空串要改回默认时，得先有默认模型（`settings.json` 的 `defaultModel` 或环境变量），
+  没有就 400。
+- `slug` 必须是名册里的人，否则 404。
 
 ## 11. `GET /api/people/:slug/memory`
 
@@ -550,6 +594,87 @@ type ViewStep = {
   分支做文案。**
 - `task_outdated` **不算异常**（每次启动都会出现），`lastReport` 跳过它。
 - 口径是**快照**，不是流：要持续观察就轮询，或直接 tail 那个 jsonl。
+
+## 13.4 `/api/plugins`（列 / 建 / 删 / 开关 / 前端入口）
+
+插件是 `workspace/plugins/<slug>/` 下的一个文件夹（`plugin.ts` 后端、`client.js` 前端）。
+前端启动时**先拉清单，再逐个 `import` 前端入口**，然后才挂载界面 —— 插槽首帧就是满的。
+
+```json
+{
+  "plugins": [
+    {
+      "slug": "示范", "name": "示范", "description": "出厂示范插件", "enabled": true, "client": true,
+      "brings": { "tools": ["clock"], "prompt": true, "routes": 0, "listens": false }
+    },
+    { "slug": "坏的", "name": "坏的", "description": "", "enabled": false, "error": "插件 坏的 缺少 plugin.md" },
+    { "slug": "刚装的", "name": "刚装", "description": "", "enabled": true }
+  ]
+}
+```
+
+- `client` 只表示**有没有**前端入口，值恒为 `true`；地址由前端按 slug 拼：
+  `/api/plugins/<slug>/client.js`（两边各写一份完整 URL 一定会漂）。
+- `error` 出现 = 这个插件没装上（清单坏 / `import` 失败 / `apply` 抛错）。它照列，但 `enabled` 为 `false`。
+- `enabled: false` 的插件不进后端（没有工具、没有提示词段），前端入口也不会被加载。
+- 清单以**磁盘为准**：目录里有、这次进程没装上的（新建的、关掉的、装失败的）也列出来，
+  它们正是人要知道的。`error` 仍然是这次装载炸在哪。
+- `enabled` **每次从磁盘读**：它是「下一次启动装不装」，不是「这次进程里装上没有」。开关点完
+  刷新页面仍然是新值，实际装上要重启进程 —— 界面上写着这句话。
+- `brings` 是**这次进程里真的注册出来的东西**：`tools` 是工具名，`prompt` 是不是加了提示词段，
+  `routes` 是接口条数，`listens` 是不是听消息。没装上的（刚新建 / 关掉 / 出错 / 还没重启）
+  就**没有这个键** —— 界面据此写「还没加载 · 重启服务后生效」，不假装它什么都没带。
+
+前端入口是一个原生 ESM，内容由插件自己写：
+
+```js
+export default {
+  id: "示范",
+  style: "…",                     // 可选，宿主插进 <head>
+  apply(ui) {                     // ui = { h, React, api, store, useStore, register }
+    ui.register("sidebar.footer", { id: "clock", component: () => ui.h("div", {}, "…") });
+    // 格子 = { id, label?, icon?, order?, component }：label 是页签文字 / 设置分区名，
+    // icon 是设置左栏那个图标（一个 SVG 元素）。能放进哪些位置见 docs/DESIGN.md §2.8
+    // 的插槽表；读界面状态用 ui.useStore。
+  },
+};
+```
+
+### 装与删
+
+```http
+POST   /api/plugins
+{ "slug": "天气", "files": [ { "path": "plugin.md", "base64": "…" }, { "path": "assets/icon.png", "base64": "…" } ] }
+DELETE /api/plugins/天气
+```
+
+装 = 把**一个已经写好的插件文件夹**整份搬进来：`path` 相对文件夹根（用 `/` 分隔），内容一律 base64
+（插件里有图片这类二进制，按文本传会坏）。界面用 `<input type="file" webkitdirectory>` 选文件夹，
+把 `webkitRelativePath` 的第一段当 `slug`、剩下的当 `path`。
+
+校验三条，任一不满足就**一个文件都不写**：名字合法且没有重名；每个 `path` 都在插件目录里面
+（`../`、绝对路径一律 400）；根上有 `plugin.md`（没有清单的东西不是插件）。请求体上限 8 MB。
+**为什么不做「起个名字建空壳」**：插件的能力全在它自己的代码里，空壳装进去什么都不做 ——
+那是占位，不是安装（ADR-018）。
+
+删除 = **整目录递归删掉**，不可恢复；名字先过 `isSafeName`，`..` 与嵌套路径都到不了。
+两个响应都是整个 `{ "plugins": [...] }`。
+
+### 开关
+
+```http
+POST /api/plugins/示范/enabled
+{ "enabled": false }
+```
+
+响应与 `GET /api/plugins` 同一个形状（`{ "plugins": [...] }`），值已经按新状态算过。
+只改 `plugin.md` 头里的 `enabled` 一行，正文与其它字段原样留着；slug 不合法或没有清单 → 400 + `{ error }`。
+
+**下一次启动生效**：这次进程里已经装上的工具 / 路由 / 提示词段不会因为关掉而消失（第一版没有热卸载）。
+
+`client.js` 按 `no-store` 发：改完刷新页面就生效，不用重建 `ui/web/`。
+插件自己注册的接口（`api.route`）是**普通的 JSON 路由**，插在静态兜底之前；
+它们的形状由插件定义，这份文档不管。
 
 ## 14. 静态文件
 

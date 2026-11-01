@@ -43,9 +43,19 @@ export function finalTextOf(entry: EntryRecord | undefined): string | undefined 
 	return said;
 }
 
-/** 这条唤醒之后，他在这个频道里说过话吗？`note` 是系统留痕，不算。 */
-export function spokeAfterWake(list: readonly Message[], slug: string, sinceSeq: number): boolean {
-	return list.some((item) => item.seq > sinceSeq && item.from === slug && item.kind !== "note");
+/**
+ * 这条唤醒之后，他在这个频道里说过话吗？`note` 是系统留痕，一般不算。
+ *
+ * `includeNotes` 给安静的一轮用（团队记忆沉淀）：那一轮的「话」**就是**留痕，不认它
+ * 就会把同一句再补发一遍，频道里出现两条一模一样的账本。
+ */
+export function spokeAfterWake(
+	list: readonly Message[],
+	slug: string,
+	sinceSeq: number,
+	includeNotes = false,
+): boolean {
+	return list.some((item) => item.seq > sinceSeq && item.from === slug && (includeNotes || item.kind !== "note"));
 }
 
 /** 收尾要做的一切（拍平后方便测）。 */
@@ -89,7 +99,7 @@ type TurnDeps = {
  */
 export function turnTarget(state: ChannelState, slug: string, wake: WakeRecord): WakeTarget | undefined {
 	const spoke = (target: WakeTarget): boolean =>
-		spokeAfterWake(state.messages[target.channelId] ?? [], slug, target.seq);
+		spokeAfterWake(state.messages[target.channelId] ?? [], slug, target.seq, wake.quiet === true);
 	// 任务频道已经汇报过：这段正文不是结论，不补。
 	if (spoke(wake.task)) return undefined;
 	// 插话一轮里，私聊已经答过 → 最后这段是任务本身的结论，回任务频道。
@@ -126,7 +136,15 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 					...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 					...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
 				},
-				{ channelId: target.channelId, from: info.slug, text, at: Date.now(), kind: "say", wake: false },
+				{
+					channelId: target.channelId,
+					from: info.slug,
+					text,
+					at: Date.now(),
+					// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人。
+					kind: info.wake.quiet === true ? "note" : "say",
+					wake: false,
+				},
 				context,
 			);
 		} catch (error) {

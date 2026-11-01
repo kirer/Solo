@@ -11,11 +11,11 @@
  */
 import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
-import type { Route } from "./route-match.ts";
+import type { Route, RouteContext } from "./route-match.ts";
 import type { StreamHub } from "./sse.ts";
-import type { App, MemoryEditBody, PostBody } from "../../app/index.ts";
+import type { App, MemoryEditBody, PersonModelBody, PostBody } from "../../app/index.ts";
 import { avatarEtag, avatarSvg, clampAvatarSize } from "../../app/avatar.ts";
-import { json, readJson } from "./respond.ts";
+import { fail, json, readJson } from "./respond.ts";
 import { serveStatic } from "./static-assets.ts";
 
 /**
@@ -93,6 +93,13 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
+			// 现在生效的模型清单：给某个人换模型时只列这些（settings.json 里刚加的提供商
+			// 要重启才进注册表，列出来选不了 —— ADR-021）。
+			pattern: "/api/models",
+			method: "GET",
+			handler: async ({ response }) => json(response, app.models.list()),
+		},
+		{
 			// 一个人的全部档案：界面右上角那个「详情」面板一次要的东西都在这。
 			pattern: "/api/people/:slug",
 			method: "GET",
@@ -113,6 +120,15 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			handler: async ({ request, response, params }) => {
 				const body = await readJson<MemoryEditBody>(request);
 				return json(response, await app.people.editPersonMemory(params.slug ?? "", body, WEB_ACTOR));
+			},
+		},
+		{
+			// 换某个人的模型：当场改会话，并记进 settings.json 的 agentModels（重启也认）。
+			pattern: "/api/people/:slug/model",
+			method: "POST",
+			handler: async ({ request, response, params }) => {
+				const body = await readJson<PersonModelBody>(request);
+				return json(response, await app.people.setPersonModel(params.slug ?? "", body));
 			},
 		},
 		{
@@ -268,6 +284,100 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			method: "GET",
 			handler: ({ response }) => json(response, { lastReport: app.diag.lastReport() ?? null }),
 		},
+		{
+			// 装上的插件。前端启动时先拉这一份，再按 `client` 去 import 各自的前端入口。
+			pattern: "/api/plugins",
+			method: "GET",
+			handler: async ({ response }) => json(response, { plugins: await app.plugins.list() }),
+		},
+		{
+			// 装一个插件：前端把选中的文件夹整个传上来（base64），这里原样落进 `plugins/<slug>/`。
+			// 装 / 卸都只动 `workspace/plugins/`，重启才真的运行。
+			pattern: "/api/plugins",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				// 插件里可能有图片：正文上限按 8 MB 算，比普通 JSON 的 1 MB 宽。
+				const body = await readJson<{ slug?: unknown; files?: unknown }>(request, { limit: 8 << 20 });
+				const files = Array.isArray(body?.files) ? (body.files as readonly { path?: unknown; base64?: unknown }[]) : [];
+				const valid = files.every(
+					(file) => typeof file?.path === "string" && typeof file?.base64 === "string",
+				);
+				if (typeof body?.slug !== "string" || body.slug.trim() === "" || files.length === 0 || !valid) {
+					return fail(response, 400, "要给一个插件名，并且至少带一个文件");
+				}
+				try {
+					return json(
+						response,
+						{
+							plugins: await app.plugins.install(
+								body.slug.trim(),
+								files.map((file) => ({ path: String(file.path), base64: String(file.base64) })),
+							),
+						},
+					);
+				} catch (error) {
+					return fail(response, 400, (error as Error).message);
+				}
+			},
+		},
+		{
+			// 删掉一个插件（整个目录）。不可恢复，界面上有二次确认。
+			pattern: "/api/plugins/:slug",
+			method: "DELETE",
+			handler: async ({ response, params }) => {
+				try {
+					return json(response, { plugins: await app.plugins.remove(params.slug ?? "") });
+				} catch (error) {
+					return fail(response, 400, (error as Error).message);
+				}
+			},
+		},
+		{
+			// 开关插件：写回 `plugin.md` 的 `enabled`。下一次启动生效（第一版没有热卸载）。
+			pattern: "/api/plugins/:slug/enabled",
+			method: "POST",
+			handler: async ({ request, response, params }) => {
+				const body = await readJson<{ enabled?: unknown }>(request);
+				if (typeof body?.enabled !== "boolean") return fail(response, 400, "enabled 要 true 或 false");
+				try {
+					return json(response, { plugins: await app.plugins.setEnabled(params.slug ?? "", body.enabled) });
+				} catch (error) {
+					return fail(response, 400, (error as Error).message);
+				}
+			},
+		},
+		{
+			// 插件的前端入口。磁盘上的文件，改了要立刻生效，所以不缓存。
+			pattern: "/api/plugins/:slug/client.js",
+			method: "GET",
+			handler: async ({ response, params }) => {
+				const script = await app.plugins.clientScript(params.slug ?? "");
+				if (script === undefined) {
+					response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+					response.end("没有这个插件的前端入口");
+					return;
+				}
+				response.writeHead(200, {
+					"Content-Type": "text/javascript; charset=utf-8",
+					"Cache-Control": "no-store",
+					// 浏览器按 JS 执行它，别让内容嗅探改判类型。
+					"X-Content-Type-Options": "nosniff",
+				});
+				response.end(script);
+			},
+		},
+		// 插件自己注册的接口。**排在 `*rest` 前面**：否则一律被静态资源吃掉。
+		// 插件路由只有 JSON（GET / POST），发文件和流归核心，插件碰不到。
+		...app.plugins.routes().map((route) => ({
+			pattern: route.pattern,
+			method: route.method,
+			handler: async ({ request, response, params, url }: RouteContext) => {
+				const query: Record<string, string> = {};
+				for (const [key, value] of url.searchParams) query[key] = value;
+				const body = route.method === "POST" ? await readJson<unknown>(request) : undefined;
+				return json(response, await route.run({ params, query, ...(body === undefined ? {} : { body }) }));
+			},
+		})),
 		// 其余路径交给静态资源；找不到就 404（前端据此判断「是不是接口写错了」）。
 		{
 			pattern: "*rest",

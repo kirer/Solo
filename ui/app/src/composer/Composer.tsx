@@ -11,6 +11,7 @@ import { getMentionable, uploadFile } from "../api/client.ts";
 import type { Uploaded } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { humanBytes } from "../lib/format.ts";
+import { Slot } from "../plugin/Slot.tsx";
 import { send, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
@@ -430,6 +431,9 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 					}}
 					onBlur={() => window.setTimeout(() => setMention(null), 120)}
 				/>
+
+				{/* 插槽：输入框右侧、发送按钮之前。 */}
+				<Slot name="composer.actions" />
 
 				<button
 					type="submit"

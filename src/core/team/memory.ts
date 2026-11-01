@@ -142,11 +142,13 @@ export function settleCandidates(
 export function renderSettlePrompt(
 	template: string,
 	team: string,
+	channel: string,
 	candidates: readonly SettleCandidate[],
 ): string {
 	return renderSlots(template, {
 		...toolSlots(template),
 		team,
+		channel,
 		pending: candidates.length,
 		// 候选消息只做机械排版（谁、第几条、什么标签、说了什么），判断规则不在这里。
 		candidates: candidates

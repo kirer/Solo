@@ -108,6 +108,7 @@ describe("view/dto.ts 是唯一权威", () => {
 				"Org",
 				"PersonMemory",
 				"PersonProfile",
+				"Plugin",
 				"SkillInfo",
 				"Step",
 				"TeamProfile",

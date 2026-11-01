@@ -7,11 +7,12 @@
  *
  * 只放类型，不放实现 —— 实现仍然是 `assemble.ts` 那唯一一处装配点。
  */
-import type { Conversation, Context, Harness, Registry } from "../runtime/index.ts";
+import type { Conversation, Context, Harness, Models, Registry } from "../runtime/index.ts";
 import type { DirectoryState } from "../agent/roster.ts";
 import type { ChannelState, Attachment, Message } from "../channel/types.ts";
 import type { DeliverResult } from "../channel/dispatch.ts";
 import type { Identity } from "../agent/identity.ts";
+import type { PluginHost } from "../plugin/index.ts";
 import type { Diag } from "./diag.ts";
 
 export type CoreServices = {
@@ -82,9 +83,22 @@ export type CoreServices = {
 	 * section 的 `render`，所以拿到的就是模型下次开口时会读到的东西。
 	 */
 	readonly promptOf: (slug: string, context?: Context) => Promise<string>;
+	/**
+	 * 装上的插件（工具 / 提示词 / 路由 / 消息钩子 / 清单）。
+	 *
+	 * 装配时只装一次、之后不变，所以是同步的一份快照，不是函数。
+	 * 没有插件时是 `emptyPluginHost`，不是 `undefined` —— 免得每个用到的地方都写分支。
+	 */
+	readonly plugins?: PluginHost;
 	readonly agentsRoot: string;
 	readonly teamsRoot: string;
 	readonly allChannel: string;
+	/**
+	 * 装配好的模型注册表与默认模型。给「单独给某个人换模型」用：先确认那只模型真的
+	 * 存在，再写进会话 —— 写一个解析不到的引用，那个人此后每次都 `no_model`。
+	 */
+	readonly models?: Models;
+	readonly defaultModel?: { readonly provider: string; readonly modelId: string };
 	/**
 	 * 诊断出口。装配方（`shell/main.ts`）在 `openCore` **之前**就要建好它：底座的
 	 * `onReport` 要往同一个实例里报，两边各建一个就看不到彼此的 `lastReport`。

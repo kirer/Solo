@@ -77,7 +77,7 @@ describe("团队记忆自动沉淀：哪些消息算数", () => {
 			{ seq: 4, from: "lin", text: "连接池默认 5，要调到 20", kind: "decision" },
 			{ seq: 5, from: "zhao", text: "v1 已上线", kind: "report" },
 		];
-		const prompt = renderSettlePrompt(SETTLE_TEMPLATE, "alpha", candidates);
+		const prompt = renderSettlePrompt(SETTLE_TEMPLATE, "alpha", "team:alpha", candidates);
 		// 每条候选都要在：谁、第几条、什么标签、说了什么（多行压成单行）。
 		expect(prompt).toContain("- #4 [decision] lin：连接池默认 5，要调到 20");
 		expect(prompt).toContain("- #5 [report] zhao：v1 已上线");
@@ -92,7 +92,7 @@ describe("团队记忆自动沉淀：哪些消息算数", () => {
 	});
 
 	it("模板为空 = 空串：调用方据此跳过，不退回硬编码散文", () => {
-		expect(renderSettlePrompt("", "alpha", [{ seq: 1, from: "lin", text: "x", kind: "chat" }])).toBe("");
+		expect(renderSettlePrompt("", "alpha", "team:alpha", [{ seq: 1, from: "lin", text: "x", kind: "chat" }])).toBe("");
 	});
 });
 

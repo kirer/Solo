@@ -59,23 +59,36 @@ npm start -- --port 7811 --host 127.0.0.1 --workspace /tmp/aic-dev --no-seed
 1. `workspace/settings.json` 里写了 `providers` → 用它；
 2. 环境变量 `ANTHROPIC_API_KEY` → Anthropic（默认模型 `claude-sonnet-4-6`）；
 3. 环境变量 `OPENAI_API_KEY` → OpenAI（默认模型 `gpt-5`）；
-4. 都没有 → 本地网关（OpenAI Responses 协议，`http://127.0.0.1:3425/v1`，
-   模型 `auto/deepseek-v4.1-flash`）。
+4. 都没有 → **没有模型**。服务照常起来、界面照常用，但 agent 不会回话；
+   启动日志里会写一行「还没有配置模型」（ADR-023）。
 
 配置文件优先于环境变量：只要 `settings.json` 里有非空 `providers[]`，就不会再看环境变量。
 
-### 本地网关（默认）
+**为什么不给一只兜底模型**：以前第 4 条是「悄悄用本地网关」。没配的人看不出来自己没配 ——
+界面一切正常，只是所有人都在用一只他没选过、也不知道存在的模型。现在宁可什么都不响。
 
-```bash
-# 默认就连 http://127.0.0.1:3425/v1，模型 auto/deepseek-v4.1-flash
-npm start
+### 本地网关（自己配一份）
+
+本机有 `http://127.0.0.1:3425/v1`（OpenAI Responses 协议）这种网关时，在
+`workspace/settings.json` 里写一份就是了，或者直接在界面「设置 → 模型 → 加一份本地网关」：
+
+```json
+{
+  "providers": [
+    {
+      "id": "magpie",
+      "name": "本地网关",
+      "baseUrl": "http://127.0.0.1:3425/v1",
+      "api": "openai-responses",
+      "models": [{ "id": "auto/deepseek-v4.1-flash" }]
+    }
+  ]
+}
 ```
 
-需要本机有该网关在跑。换地址：
-
-```bash
-COMMANDCODE_BASE_URL=http://127.0.0.1:3425/v1 npm start
-```
+`npm run live` / `live:scenarios` 这类真模型脚本不走产品这条路：它们在没有配置时
+**自己**往临时工作区写一份本地网关配置（地址可用 `COMMANDCODE_BASE_URL` 改），
+所以 `COMMANDCODE_*` 现在只对脚本有意义。
 
 ### 官方 API
 
@@ -108,9 +121,15 @@ OPENAI_API_KEY=sk-...    npm start
 
 - `providers[]` 每项是一个 provider；`models[]` 用 `id` 指向该 provider 的模型。
 - `defaultModel` 是 `"<provider>/<modelId>"`。不写时用第一个 provider 的第一个模型。
+- `agentModels`（可选）是 `{ "<slug>": "<provider>/<modelId>" }`：**单独给某个人指定模型**，
+  压过 `defaultModel`。界面上在私聊/人物档案的「详情 → 模型」里改，改完当场生效并写进这一项；
+  指着已删掉的 provider 的记录会被忽略（按默认走），不让人静默 `no_model`。
 - `api` 可选 `openai-responses`（默认）、`anthropic`、`openai`。
-- `apiKey` 写在这个文件里（**不是**环境变量名），文件在 `workspace/` 下、已 gitignore；
-  本地网关可以省略。
+- `apiKey` 写在这个文件里（**不是**环境变量名），文件在 `workspace/` 下、已 gitignore。
+  本地网关（`127.0.0.1` / `localhost`）可以省略或留空：装配时补占位符 `magpie`。
+  远端提供商必须填 —— **空密钥不是「先不填」，是每次都失败**：底座不接受空凭据，
+  生成在发请求之前就以 `model_error` 结束（审计里 `stop: error`、`ms: 0`），
+  界面上只留下一条「他这一轮没答上来」。设置里的「模型」那一节会直接拒绝这种保存。
 - `contextWindow` / `maxTokens` 不写时查 pi-ai 的模型目录，查不到按 128k / 32k 保守估算。
 - 名字里带 `/` 的模型 id 不用拆：`id` 本身可以含 `/`，provider 由 `providers[].id` 决定。
 
@@ -182,8 +201,10 @@ docker compose down
 `docker-compose.yml` 里已经处理了两件容易踩的事：
 
 - **`AI_COMPANY_HOST=0.0.0.0`**：容器内必须监听所有网卡，否则宿主机连不上。
-- **`COMMANDCODE_BASE_URL=http://host.docker.internal:3425/v1`**：容器里的
-  `127.0.0.1` 是容器自己，不是宿主机。用本地网关时必须显式指向宿主机。
+- **本地网关的地址要写宿主机**：容器里的 `127.0.0.1` 是容器自己，不是宿主机。
+  用本地网关时在 `settings.json` 的 `baseUrl` 里写 `http://host.docker.internal:3425/v1`
+  （或把网关跑在同一个 compose 网络里，按服务名写）。`COMMANDCODE_BASE_URL` 只管
+  `npm run live` 这些脚本，产品本身不读它。
 
 工作区是命名卷 `solo-workspace`。想直接看到文件就改成 bind mount：
 

@@ -101,6 +101,8 @@ export function appendMessage(
 		readonly text: string;
 		readonly at: number;
 		readonly kind?: string;
+		/** 留痕的种类（`run` = 后台命令跑完），只对 `note` 有意义。 */
+		readonly noteOf?: string;
 		readonly replyTo?: number;
 		/** 名册：给了就按名册解析 `@`（`@我` → `owner`），不给就保留字面 token。 */
 		readonly roster?: MentionRoster;
@@ -139,6 +141,7 @@ export function appendMessage(
 		text: input.text,
 		mentions: mentionList,
 		kind: input.kind ?? "chat",
+		...(input.noteOf === undefined ? {} : { noteOf: input.noteOf }),
 		...(replyTo === undefined ? {} : { replyTo }),
 		...(input.attachments === undefined || input.attachments.length === 0
 			? {}

@@ -174,6 +174,7 @@ export function messageView(
 		fromSlug: message.from,
 		fromLabel: labelIn(directory, message.from),
 		kind: message.kind,
+		...(message.noteOf === undefined ? {} : { noteOf: message.noteOf }),
 		text: spokenText(message.text),
 		mentions: message.mentions.map((slug) => ({
 			id: idOf(directory, slug),
