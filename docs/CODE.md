@@ -23,9 +23,9 @@ src/core/
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（全员层）/
                   `plugins/`（示范插件）/ `agents/assistant/`（助理身份 + 个人技能）
-scripts/          六个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
-                  （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表；
-                  真模型共用等待器/证据在 live-support.ts
+scripts/          七个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
+                  （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表、
+                  自建更新源（update-server，只读静态目录）；真模型共用等待器/证据在 live-support.ts
 ```
 
 **五个层，依赖只能朝一个方向**：
@@ -227,6 +227,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 换模型 / 加自定义模型 | `workspace/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（示范插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/agents/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
+| 发布 / 排查桌面端更新 | `scripts/update-server.ts`（只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**：`electron-updater` 自己按清单地址解析相对 URL（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单 |
 
 ## 4. 启动顺序（第 3 步最容易出错）
 
@@ -269,7 +270,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 72 文件 / 730 例，应该 <3s
+npm test             # 73 文件 / 732 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 16 项，会花 token，只在改行为后跑；连跑两次都要 16/16
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
@@ -287,7 +288,10 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 ## 6. 测试布局
 
-`test/core/`（49 文件，纯函数 + 装配）：
+`test/desktop/`（1 文件）：`update-server.test.ts` —— 自建更新源：清单不缓存、产物长缓存、
+根路径可列、`../` 与 `%2e%2e%2f` 都 404。
+
+`test/core/`（64 文件，纯函数 + 装配）：
 
 | 文件 | 覆盖 |
 | --- | --- |

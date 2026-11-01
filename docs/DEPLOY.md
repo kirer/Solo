@@ -312,3 +312,39 @@ curl -s localhost:7788/api/diag | jq
 
 如果 agent 忙，这个请求会用 `whenBusy: "followUp"` 排在当前这轮之后 —— 记忆整理不该
 打断手头的事。
+
+## 9. 发布更新（自建更新源）
+
+桌面端升级走 `electron-updater` 的 `generic` provider：它只认一份清单（macOS 是
+`latest-mac.yml`，Windows 是 `latest.yml`）和清单里点名的 zip / exe / blockmap。
+清单里写相对路径时，客户端以清单地址为基准拼出绝对地址 —— 所以服务端**原样发文件**就够，
+不改写 URL、不存库、不认账号（ADR-027）。
+
+发布机上一个目录、一个只读服务：
+
+```bash
+# 1. 把 electron-builder 的产物放进一个目录（两个渠道各一份清单，见下）
+mkdir -p feed
+cp packages/artifacts/*.zip packages/artifacts/*.exe packages/artifacts/*.blockmap feed/
+cp packages/artifacts/latest*.yml feed/
+
+# 2. 发出去
+npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
+# [feed] http://127.0.0.1:8899
+# [feed] 目录：/…/feed
+```
+
+- `GET /` 列出目录里发布了什么（名字 + 大小），先看它再排查版本问题。
+- 清单 `Cache-Control: no-cache`，产物 `immutable`（文件名带版本号，永不改）。
+- 目录外的路径一律 404（含 `%2e%2e%2f` 这类编码穿越）。
+- 客户端把更新源地址写进打包环境变量（`SOLO_UPDATE_URL`/`app-update.yml`，随桌面端一起定），
+  和这里发的地址保持一致即可。
+
+**两条发布纪律**（顺序错了客户端会拿到一个点不动的清单）：
+
+1. **二进制先传、清单最后传**：清单一旦能取到，客户端就立刻去下载它点名的文件。
+2. **旧版本产物永不删**：已经装上的老客户端可能还在按上一份清单更新；回滚 = 把旧清单
+   重新盖回去，产物还在才回得去。
+
+局限（刻意不做，等真需要再加）：没有上传接口（跨机搬运用 `rsync` / `scp`）、没有鉴权、
+没有 TLS 终止（前面挂 nginx / caddy）、没有 Range 断点续传（客户端整包下载）。

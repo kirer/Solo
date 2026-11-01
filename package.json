@@ -16,6 +16,7 @@
 		"live": "node --experimental-strip-types scripts/core-live.ts",
 		"live:scenarios": "node --experimental-strip-types scripts/scenario-live.ts",
 		"prompt:check": "node --experimental-strip-types scripts/prompt-check.ts",
+		"update:serve": "node --experimental-strip-types scripts/update-server.ts",
 		"ui:build": "vite build --config ui/app/vite.config.ts",
 		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit"
 	},
