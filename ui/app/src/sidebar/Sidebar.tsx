@@ -32,9 +32,13 @@ export function Sidebar(): JSX.Element {
 	return (
 		<aside className="sidebar" data-side={side}>
 			<div className="side-logo">
+				{/* 品牌标：一颗自己的星，和绕着它转的轨道（和 `desktop/icon.svg` 同一套形状）。 */}
 				<span className="brand-mark" aria-hidden="true">
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-						<path d="M12 3v18M4.5 7.5 12 12l7.5-4.5M4.5 16.5 12 12l7.5 4.5" />
+					<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+						<g transform="rotate(-28 12 12)">
+							<ellipse cx="12" cy="12" rx="8.8" ry="3.5" stroke="currentColor" strokeWidth="1.8" opacity="0.65" />
+						</g>
+						<circle cx="12" cy="12" r="3.3" fill="currentColor" />
 					</svg>
 				</span>
 				<h1 className="brand-name" id="bar-title">

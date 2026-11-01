@@ -618,6 +618,11 @@ v3 的 token 全部保留，**新增四档，只给轨迹用**：
 2. 一个强调色（`--accent`）。成功/失败不上色：成功一律 `--ink-3`，失败才 `--danger`。
 3. 成功一律 `--ink-3`（`✓`），失败才 `--danger`。**不做绿色成功徽章。**
 4. 不许渐变、发光、玻璃。阴影仍然只有输入卡和浮层两处。
+
+**品牌标**：一颗实心圆 + 一条 −28° 的椭圆轨道（「一个人，和绕着他转的团队」）。
+形状只有一个家：`desktop/icon.svg`；侧栏 20px 用同形状的 `currentColor` 版本
+（`ui/app/src/sidebar/Sidebar.tsx` 的 `brand-mark`），favicon 是同一形状的 data URI
+（`ui/app/index.html`）。底色 `#1c1b19`、前景 `#f2e9d8`，不跟界面主题变。
 5. 0.5px 是默认线宽；轨迹树的竖线是 1px `--run-rule`（0.5px 的竖线在 2x 屏上会消失）。
 
 ### 6.2 字

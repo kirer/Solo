@@ -1,5 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+	<!-- Solo：一颗自己的星，和绕着它转的轨道。 -->
 	<rect width="1024" height="1024" rx="228" fill="#1c1b19"/>
-	<circle cx="512" cy="512" r="300" fill="#f2e9d8"/>
-	<circle cx="628" cy="438" r="272" fill="#1c1b19"/>
+	<g transform="rotate(-28 512 512)">
+		<ellipse cx="512" cy="512" rx="332" ry="132" fill="none" stroke="#f2e9d8" stroke-width="30" opacity="0.5"/>
+	</g>
+	<circle cx="512" cy="512" r="140" fill="#f2e9d8"/>
 </svg>
