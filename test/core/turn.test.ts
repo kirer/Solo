@@ -209,6 +209,48 @@ describe("收尾落库", () => {
 		]);
 	});
 
+	it("同一条答案被两条提交各结算一次，只补一次", async () => {
+		// 2026-11-02：报到 + 投递、投递 + 后台命令跑完，两条提交都结算到同一个条目，
+		// 于是频道里并排两条一模一样的话（周岚 #11/#12、沈舟 #15/#16，相隔 1 毫秒）。
+		const runtime = await setup();
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
+		const conversation = conversationWith(answer(42, "地址是 http://127.0.0.1:8080/index.html 。"));
+		await finisher({ slug: SLUG, conversation, answer: 42, wake: wakeOf(CHANNEL, 1) }, BACKGROUND_CONTEXT);
+		await finisher({ slug: SLUG, conversation, answer: 42, wake: wakeOf(CHANNEL, 2) }, BACKGROUND_CONTEXT);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect((state.messages[CHANNEL] ?? []).filter((item) => item.from === SLUG)).toHaveLength(1);
+	});
+
+	it("补发会叫醒被 @ 的人：不叫醒，结论就落进一个没人看的房间", async () => {
+		// 2026-11-02：沈舟的交付结论（@周岚 请验收）由收尾补发进频道，周岚没被叫醒，团队停摆。
+		const runtime = await setup();
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			doc.channels[CHANNEL] = {
+				...doc.channels[CHANNEL]!,
+				members: [...doc.channels[CHANNEL]!.members, "沈舟"],
+			};
+		}, BACKGROUND_CONTEXT);
+		const asked: string[] = [];
+		const finisher = createTurnFinisher({
+			harness: runtime.harness,
+			conversationOf: async (slug) => {
+				asked.push(slug);
+				return undefined;
+			},
+		});
+		await finisher(
+			{
+				slug: SLUG,
+				conversation: conversationWith(answer(42, "@沈舟 交付在 workspace/index.html，请验收。")),
+				answer: 42,
+				wake: wakeOf(CHANNEL),
+			},
+			BACKGROUND_CONTEXT,
+		);
+		expect(asked).toContain("沈舟");
+	});
+
 	it("太短或 [PASS] 的正文不补：残句补进频道只会更吵", async () => {
 		const runtime = await setup();
 		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });

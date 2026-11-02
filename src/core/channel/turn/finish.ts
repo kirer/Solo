@@ -158,6 +158,14 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 		const text = finalTextOf(entry)?.trim();
 		if (text === undefined || text.length < TURN_MIN_CHARS || isPass(text)) return;
 
+		// 同一条答案会被**多条提交**各结算一次（报到 + 投递、投递 + 后台命令跑完），
+		// 每一次收尾都看到同一个条目 —— 只补一次。实测 2026-11-02：频道里并排两条
+		// 一模一样的话（周岚 #11/#12、沈舟 #15/#16），1 毫秒之隔，就是两次收尾。
+		const duplicate = (state.messages[target.channelId] ?? []).some(
+			(item) => item.from === info.slug && item.text.trim() === text,
+		);
+		if (duplicate) return;
+
 		let written: Awaited<ReturnType<typeof postMessage>>;
 		try {
 			written = await postMessage(
@@ -176,9 +184,11 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 					from: info.slug,
 					text,
 					at: Date.now(),
-					// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人。
+					// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人
+					// （`note` 本来就不叫人）。正常一轮的补发**要照常叫醒** —— 他说的是
+					// 「@周岚 请验收」，不叫醒等于把结论发进一个没人看的房间。
+					// 实测 2026-11-02：沈舟的交付结论就是这么落进频道的，周岚没醒，团队停摆。
 					kind: info.wake.quiet === true ? "note" : "say",
-					wake: false,
 				},
 				context,
 			);
