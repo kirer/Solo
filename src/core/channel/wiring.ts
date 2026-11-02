@@ -11,6 +11,7 @@ import type { Conversation, Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import {
 	DirectoryDoc,
+	conversationFor,
 	directoryWake,
 	emptyDirectory,
 	wakeOf,
@@ -30,9 +31,10 @@ export type ChannelWiring = {
 	readonly text?: TextCatalog;
 	/** 一轮答完的收尾（ADR-099）。投递、我说话、沉淀共用这一个。 */
 	readonly finishTurn: FinishTurn;
-	conversationOf: (slug: string, context?: Context) => Promise<Conversation | undefined>;
-	rememberWake: (slug: string, wake: WakeRecord, context?: Context) => Promise<void>;
-	wakeOf: (slug: string, context?: Context) => Promise<WakeRecord | undefined>;
+	/** 会话键（`<slug>` 或 `<slug>#<用途>`）→ 会话。 */
+	conversationOf: (key: string, context?: Context) => Promise<Conversation | undefined>;
+	rememberWake: (key: string, wake: WakeRecord, context?: Context) => Promise<void>;
+	wakeOf: (key: string, context?: Context) => Promise<WakeRecord | undefined>;
 };
 
 /**
@@ -46,24 +48,27 @@ export function wireChannel(deps: {
 	/** 两个根的布局：提示词在 app 根，上传也在 app 根。 */
 	readonly layout: Layout;
 	readonly live?: () => ReadonlyMap<string, Conversation>;
+	/** 会话键找不到时开一条（装配层给）。额外会话懒创建（ADR-050）。 */
+	readonly open?: (key: string, context: Context) => Promise<Conversation | undefined>;
 	/** 机械文案目录（`text/`）。装配时读一次；不给就只留键名。 */
 	readonly text?: TextCatalog;
 }): ChannelWiring {
 	const wakeDeps = directoryWake({
 		harness: deps.harness,
 		...(deps.live === undefined ? {} : { live: deps.live }),
+		...(deps.open === undefined ? {} : { open: deps.open }),
 	});
 	const promptDir = deps.layout.promptRoot;
 
-	const wakeOfOf = async (slug: string, context: Context = BACKGROUND_CONTEXT): Promise<WakeRecord | undefined> => {
+	const wakeOfOf = async (key: string, context: Context = BACKGROUND_CONTEXT): Promise<WakeRecord | undefined> => {
 		const directory = (await deps.harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
-		const id = directory.slugToConversation[slug];
+		const id = conversationFor(directory, key);
 		return id === undefined ? undefined : wakeOf(directory, id);
 	};
-	const conversationOf = (slug: string, context: Context = BACKGROUND_CONTEXT) =>
-		wakeDeps.conversationOf(slug, context);
-	const rememberWake = (slug: string, wake: WakeRecord, context: Context = BACKGROUND_CONTEXT) =>
-		wakeDeps.rememberWake(slug, wake, context);
+	const conversationOf = (key: string, context: Context = BACKGROUND_CONTEXT) =>
+		wakeDeps.conversationOf(key, context);
+	const rememberWake = (key: string, wake: WakeRecord, context: Context = BACKGROUND_CONTEXT) =>
+		wakeDeps.rememberWake(key, wake, context);
 
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,

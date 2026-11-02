@@ -17,7 +17,8 @@
  * - 插话一轮：先答私聊；如果私聊已经答过、任务频道还没汇报，这段正文就是
  *   任务的结论，回 `task`。
  *
- * 已经在目标频道说过话就不补（他调了 `say`，不需要替他重复）。
+ * 已经在目标频道说过话、而且最后那段就是那句话的复述，就不补（他调了 `say`，不需要
+ * 替他重复）。说完之后又干了活的，最后那段是新结论，照补（`saidLast`）。
  */
 import type { Conversation, EntryRecord, Harness } from "../../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../../runtime/index.ts";
@@ -74,9 +75,31 @@ async function answerEntry(
 	conversation: Conversation,
 	answer: unknown,
 	context: Context,
-): Promise<EntryRecord | undefined> {
+): Promise<{ readonly entry: EntryRecord | undefined; readonly page: readonly EntryRecord[] }> {
 	const page = await conversation.entries({ order: "descending" }, 30, undefined, context);
-	return page.items.find((item) => String(item.id) === String(answer));
+	return { entry: page.items.find((item) => String(item.id) === String(answer)), page: page.items };
+}
+
+/**
+ * 这一轮的**最后一个动作**是不是 `say`。
+ *
+ * 是 → 最后那段正文就是那句话换了个说法（模型收工时爱把说过的再说一遍），不再补。
+ * 不是 → 他说完之后又干了活（跑命令、写文件），最后那段是**新的结论**，得补。
+ *
+ * 只认「说过话没有」会把这种结论一起吞掉：实测 2026-11-02，陈默被叫醒只是报个到，
+ * 他顺手把整个游戏写完了，频道里却只有开头那句自我介绍 —— 验收的人什么都不知道。
+ */
+export function saidLast(page: readonly EntryRecord[], answer: EntryRecord | undefined): boolean {
+	const at = answer === undefined ? -1 : page.findIndex((item) => String(item.id) === String(answer.id));
+	for (const entry of at === -1 ? page : page.slice(at)) {
+		for (const message of entry.model ?? []) {
+			if (message.role !== "assistant") continue;
+			for (const block of [...message.content].reverse()) {
+				if (block.type === "toolCall") return block.name === "say";
+			}
+		}
+	}
+	return false;
 }
 
 type TurnDeps = {
@@ -93,20 +116,30 @@ type TurnDeps = {
  * 挑这次正文该落到哪个频道。
  *
  * 返回 `undefined` = 不需要补（已经在目标频道说过话，或那个频道进不去）。
+ *
+ * `restated` = 最后那段正文只是他刚说过那句的复述（见 `saidLast`）。不是复述就说明
+ * 他答完之后又干了活，最后那段是新结论 —— 这时「说过话」不构成不补的理由。
  */
-export function turnTarget(state: ChannelState, slug: string, wake: WakeRecord): WakeTarget | undefined {
+export function turnTarget(
+	state: ChannelState,
+	slug: string,
+	wake: WakeRecord,
+	restated = true,
+): WakeTarget | undefined {
 	// 「这一轮说过话没有」的起点是**这次**唤醒，不是 `task` 记的那个 seq：插话一轮继承的
 	// `task` 可能是很多条之前的（ADR-099），拿它当起点会把上一轮的答案当成这一轮已经汇报过，
 	// 于是这一轮的结论被吞掉（实测 2026-11-02：林越交了地址，频道里一个字都没有）。
 	const since = (target: WakeTarget): number => Math.max(target.seq, wake.reply.seq);
 	const spoke = (target: WakeTarget): boolean =>
 		spokeAfterWake(state.messages[target.channelId] ?? [], slug, since(target));
+	// 说过了，而且最后这段就是那句话的复述：不补。
+	const said = (target: WakeTarget): boolean => spoke(target) && restated;
 	// 任务频道已经汇报过：这段正文不是结论，不补。
-	if (spoke(wake.task)) return undefined;
+	if (said(wake.task)) return undefined;
 	// 插话一轮里，私聊已经答过 → 最后这段是任务本身的结论，回任务频道。
 	if (wake.task.channelId !== wake.reply.channelId && spoke(wake.reply)) return wake.task;
 	// 正常一轮：私聊答过就不再补；没答过就替他答进`reply`。
-	return spoke(wake.reply) ? undefined : wake.reply;
+	return said(wake.reply) ? undefined : wake.reply;
 }
 
 /**
@@ -115,13 +148,13 @@ export function turnTarget(state: ChannelState, slug: string, wake: WakeRecord):
 export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 	return async (info, context = BACKGROUND_CONTEXT) => {
 		const state = (await deps.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
-		const target = turnTarget(state, info.slug, info.wake);
+		const { entry, page } = await answerEntry(info.conversation, info.answer, context);
+		const target = turnTarget(state, info.slug, info.wake, saidLast(page, entry));
 		if (target === undefined) return;
 		const channel = state.channels[target.channelId];
 		// 频道不存在或他不在里面：不替他往进不去的地方说话。
 		if (channel === undefined || !channel.members.includes(info.slug)) return;
 
-		const entry = await answerEntry(info.conversation, info.answer, context);
 		const text = finalTextOf(entry)?.trim();
 		if (text === undefined || text.length < TURN_MIN_CHARS || isPass(text)) return;
 

@@ -14,6 +14,7 @@
  */
 import type { Conversation, InputEntry, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
+import { priorityOf, type WakePriority } from "./queue.ts";
 import { watchSettled } from "./unanswered.ts";
 import type { WakeRecord } from "./turn/record.ts";
 
@@ -29,7 +30,9 @@ export type WakeDeps = {
 	/** slug → 会话。`undefined` = 这个人没有会话（比如我）。 */
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	/** 撤掉这个会话里还没开始的排队项，让新的一条取代它们。返回合并了几条。 */
-	readonly coalesceQueue?: ((conversationId: number, keepRequestId: string) => Promise<number>) | undefined;
+	readonly coalesceQueue?:
+		| ((conversationId: number, keepRequestId: string, incoming: WakePriority) => Promise<number>)
+		| undefined;
 	/** 这一轮没产出时留痕。不传就只写 stderr。 */
 	readonly noteUnanswered?: ((note: WakeNote) => Promise<void> | void) | undefined;
 	/** 记「被谁叫醒」。不传就不记（工具会退到「我最早的那个频道」）。 */
@@ -51,6 +54,12 @@ export type WakeDeps = {
 
 export type WakeInput = {
 	readonly slug: string;
+	/**
+	 * 叫醒的是哪条会话（ADR-050）。缺省 = 主会话（键就是 slug）。
+	 *
+	 * `slug` 仍然是**人**：收尾要按他本人在频道里说没说话来判；会话键只决定投递到哪条历史。
+	 */
+	readonly session?: string | undefined;
 	/** 幂等键：同一条消息重复投递只醒一次（崩溃恢复下的至少一次语义）。 */
 	readonly requestId: string;
 	/**
@@ -91,14 +100,16 @@ export async function wake(
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<WakeResult> {
 	try {
-		const conversation = await deps.conversationOf(input.slug);
+		const session = input.session ?? input.slug;
+		const conversation = await deps.conversationOf(session);
 		if (conversation === undefined) return { status: "skipped" };
 		const conversationId = Number(conversation.id);
 
 		// 先合并、再拼正文：正文里要写「把 N 条并成了这一条」。
+		// 轻重由 `requestId` 自己说明（`settle:` = 记账），不另开字段 —— 多一处能对不上。
 		const merged =
 			input.coalesce && deps.coalesceQueue !== undefined
-				? await deps.coalesceQueue(conversationId, input.requestId).catch(() => 0)
+				? await deps.coalesceQueue(conversationId, input.requestId, priorityOf(input.requestId)).catch(() => 0)
 				: 0;
 
 		const content = input.bodyOf(merged, input.busy === true);
@@ -107,7 +118,7 @@ export async function wake(
 		// 那时它查不到 wake，只能退到「我最早的那个频道」（往往是私聊），于是答在私聊里、
 		// 问的人在原频道什么都看不到。
 		if (deps.rememberWake !== undefined && input.wakeRecord !== undefined) {
-			await deps.rememberWake(input.slug, input.wakeRecord);
+			await deps.rememberWake(session, input.wakeRecord);
 		}
 
 		const submission = await conversation.submit(

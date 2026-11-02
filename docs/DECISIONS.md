@@ -918,3 +918,82 @@
   宁可漏一条「他没答」，也不让每个频道都被灰字填满。
 - **执行**：`ui/app/src/stream/model.ts`（过滤 + 注释）、`test/ui/stream-model.test.ts`
   （留痕不画、`noteOf: "run"` 照旧成行）、`docs/DESIGN.md` §2.1 / §2.5、`docs/CORE.md` §9。
+
+---
+
+## ADR-048 唤醒分轻重：轻的撤不掉重的（团队记忆沉淀不许挤掉投递）
+
+- **背景**：合并唤醒（`channel/queue.ts` 的 `coalesceQueue`）撤掉同一个会话里「还没开始」
+  的排队项，一个会话最多留一个未开始的唤醒。沉淀走的是同一条 `wake()`、也开了
+  `coalesce: true`，于是它能撤掉**任何**排队项，包括真正要人干活的那条投递。
+  实测（2026-11-02，小恐龙团队刚建好）：周野的 `ch:team:xiaokonglong:{3,4,5}:周野`
+  三条投递唤醒全部 `aborted`，最后一次只剩 `settle:xiaokonglong:5` 跑完 ——
+  他醒来只整理了两条记忆，频道里三个人的话一句没答，团队从此不动。
+- **决策**：给唤醒分轻重（`queue.ts` 的 `WakePriority`：`work` / `bookkeeping`），
+  `queuedAhead` / `coalesceQueue` 多一个 `incoming` 参数，规则只有一条 ——
+  **轻的撤不掉重的**。轻重由 `requestId` 前缀判（`priorityOf`）：`settle:` 是记账，
+  其余都是干活。所以沉淀只能撤掉另一个沉淀；反过来投递能撤沉淀 —— 他马上要读整个频道了，
+  沉淀可以等下一批。
+- **为什么不给每条唤醒单独传轻重**：`requestId` 本来就是「谁叫的、为什么叫」的身份，
+  再存一个字段只会多一处能对不上的地方。以后加看门狗通报、插件通知，按轻重进这张表即可。
+- **代价**：沉淀的排队项可能比别的唤醒多活一轮；它本来就有 `waiting` + 游标兜底，
+  重复问一次不会丢东西。
+- **执行**：`src/core/channel/queue.ts`（`WakePriority` / `priorityOf` / `RANK`）、
+  `src/core/channel/wake.ts`（按 `requestId` 判好传给 `coalesceQueue`）、
+  `src/core/channel/post.ts` / `dispatch.ts` / `src/core/team/settle.ts`（签名透传）、
+  `src/shell/assemble.ts`、`test/core/queue-jump.test.ts`、`docs/CORE.md` §8。
+
+---
+
+## ADR-049 收尾补发按「最后一段是不是复述」判，不按「说过话没有」
+
+- **背景**：ADR-099 的收尾在结算后把最终正文补进频道，判据是「这条唤醒之后他说过话没有」。
+  太粗：他说完一句话又接着干活，最后那段是**新结论**，也会被当成「已经说过了」吞掉。
+  实测（2026-11-02，小恐龙团队）：陈默被叫醒只是报个到，顺手把整个游戏写完了，
+  最终正文写着「index.html 已落地……等 @李岚 验收」，频道里只有他开头那句自我介绍 ——
+  验收的人什么都不知道，任务链断在这里。
+- **决策**：加一个结构判据 `saidLast`（`channel/turn/finish.ts`）：从答案条目往前翻，
+  这一轮**最后一个工具调用**是不是 `say`。是 → 最终正文就是那句话换了个说法，不补；
+  不是（跑了命令、写了文件）→ 他说完之后又干了活，最后那段照补。
+- **为什么不按文本相似度**：模型复述时经常改措辞（实测那条沉淀的留痕和最终正文就不一样），
+  按字面比对会漏；「最后一个动作是什么」是确定的，不需要阈值。
+- **代价**：`say` 之后又干活、最后再复述同一句的，会多发一条。这类收尾本来就该少；
+  宁可多一条，也不吞结论。
+- **执行**：`src/core/channel/turn/finish.ts`（`saidLast` + `turnTarget` 的 `restated`）、
+  `test/core/turn.test.ts`、`docs/CORE.md` §4。
+
+---
+
+## ADR-050 一个人可以有多条会话：会话键从「人」变成「人 + 用途」
+
+- **背景**：名册是「slug → 一条会话」（`DirectoryState.slugToConversation`），投递、插话、
+  团队记忆沉淀全部进这一条。于是同一份上下文被两类工作轮流占用：管理员正在读频道、拆活，
+  沉淀的唤醒排进来；ADR-048 只解决了「谁撤掉谁」，没解决「它们本来就该分开」。
+  记账那一轮醒来要重读整个频道，占满一轮的上下文和注意力，和「答人」这件事没有任何共享。
+  DeepSeek 的 `dsh-superagent-prototype` 用的是另一个单位：一个 agent 身份 + **每个工单
+  一条执行会话**（`worker-<ticketId>`），会话只是执行器，状态在工单上，路由器会话只持有摘要。
+- **决策**：会话的键从「人」扩成「人 + 用途」。
+  - 键的形状：`<slug>`（主会话，兼容旧数据）或 `<slug>#<用途>`（额外会话）。
+  - `conversationToSlug` 仍然映射回**人**：工具靠它认「我是谁」，身份、记忆、技能、
+    模型都还是同一个人，只有对话历史分开。
+  - 额外会话**懒创建**：`conversationOf(key)` 找不到就开一条，和 DSH 的 `sessions.ensure`
+    同一个形状。开出来的会话仍然装同一个人的身份扩展和工具包。
+  - 第一步（本次）：团队记忆沉淀用 `<管理员>#settle:<团队>`，不再和投递抢同一条会话。
+- **三步走**：
+  1. **会话键**（本次）：名册多一张 `sessions` 表；`conversationOf` / `rememberWake` /
+     `wakeOf` 按会话键走。
+  2. **记账独立**（本次）：沉淀走管理员自己的第二条会话。它和投递并行，互不排队；
+     `wake` 记录按会话 id 存（本来就如此），`say` 的默认频道天然正确。
+  3. **任务会话**（未做，落地时另开 ADR）：把唤醒记录里的 `task` 提升成 taskId，
+     一个任务一条 `<slug>#task:<id>`，投递按「线程 → 任务」的订阅表决定进哪条。
+     这一步需要先有「这条消息属于哪个任务」的判据，没有更便宜的解法 ——
+     DSH 用的是线程归属 + worker 自己判断 + handback，不是 @ 规则。
+- **为什么不做 DSH 的全套**：每个任务一个工作区在 Solo 里没必要 —— 产出本来就在团队
+  workspace，隔离在对话层就够。路由器/执行器分离 Solo 也已经有：助理和团队管理员就是
+  路由层，`team/settle.ts` 才是那个不该和路由共用会话的「执行器」。
+- **代价**：多一条会话就多一份上下文缓存，token 会涨；目前只有每个团队管理员一条，
+  量可控。界面按 slug 聚合的地方不受影响 —— 额外会话不进 UI 列表，也不进频道成员。
+- **执行**：`src/core/agent/roster.ts`（`sessions` 表 / `personOf` / `sessionKeyOf`）、
+  `src/core/channel/wiring.ts`、`src/core/channel/wake.ts`（`WakeInput.session`）、
+  `src/core/team/settle.ts`、`src/shell/assemble.ts`（`openOne(key)` 懒创建）、
+  `test/core/directory-persist.test.ts`、`test/core/settle-e2e.test.ts`、`docs/CORE.md` §1 / §8。

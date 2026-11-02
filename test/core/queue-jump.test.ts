@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { queuedAhead } from "../../src/core/channel/queue.ts";
+import { priorityOf, queuedAhead } from "../../src/core/channel/queue.ts";
 
 /**
  * 「谁该让路」的判据 —— 现在只有一份（`queuedAhead`）。
@@ -57,5 +57,32 @@ describe("谁该让路（同一会话只留一个未开始项）", () => {
 
 	it("没有排队项时什么都不做", () => {
 		expect(queuedAhead([], 100, "ch:owner:all:9:知言")).toEqual([]);
+	});
+
+	// 记账类的唤醒（团队记忆沉淀）只能撤掉另一个记账，不许撤掉真正要人干活的那条：
+	// 撤掉了，他醒来就只整理记忆、频道里那几条消息一条都没人答（2026-11-02 实测）。
+	it("轻的撤不掉重的：沉淀不挤掉投递", () => {
+		const submissions = [
+			sub(1, 100, "queued", "ch:team:solo:3:周野"),
+			sub(2, 100, "queued", "settle:solo:3"),
+			sub(3, 100, "queued", "settle:solo:4"),
+		];
+		expect(queuedAhead(submissions, 100, "settle:solo:5", 8, "bookkeeping")).toEqual([2, 3]);
+	});
+
+	it("重的能撤轻的：投递醒来要读整个频道，记账可以等下一批", () => {
+		const submissions = [
+			sub(1, 100, "queued", "ch:team:solo:3:周野"),
+			sub(2, 100, "queued", "settle:solo:3"),
+		];
+		expect(queuedAhead(submissions, 100, "ch:team:solo:4:周野", 8, "work")).toEqual([1, 2]);
+	});
+});
+
+describe("唤醒的轻重由 requestId 决定", () => {
+	it("`settle:` 前缀是记账，其余都是干活", () => {
+		expect(priorityOf("settle:solo:5")).toBe("bookkeeping");
+		expect(priorityOf("ch:team:solo:3:周野")).toBe("work");
+		expect(priorityOf(undefined)).toBe("work");
 	});
 });

@@ -7,6 +7,7 @@ import { ensureChannel } from "../../src/core/channel/rules.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";
 import { SettleDoc, confirmedBy, settleTeam, type SettleState } from "../../src/core/team/settle.ts";
 import { appendTeamMemory } from "../../src/core/team/memory.ts";
+import { DirectoryDoc, type DirectoryState } from "../../src/core/agent/roster.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { sandboxPool } from "./support.ts";
 
@@ -208,7 +209,29 @@ describe("团队记忆自动沉淀", () => {
 			doc.waiting = undefined;
 		}, BACKGROUND_CONTEXT);
 		await settleTeam(deps, "alpha");
-		expect(wakes).toEqual([{ slug: lin.slug, channelId: "team:alpha", seq: 1 }]);
+		// 记账走管理员自己的第二条会话（ADR-050）：wake 记在会话键上，人还是他。
+		expect(wakes).toEqual([{ slug: `${lin.slug}#settle:alpha`, channelId: "team:alpha", seq: 1 }]);
+	});
+
+	it("沉淀用管理员自己的另一条会话，不和投递抢同一条历史", async () => {
+		const { shell, agentsRoot, teamsRoot } = await setup();
+		const lin = await createAgent({ root: agentsRoot, name: "林越", team: "alpha" });
+		await shell.openAgent(lin.slug);
+		await writeTeam(teamsRoot, { slug: "alpha", name: "alpha", lead: lin.slug, body: "目标 X" });
+		await openTeam(shell, "alpha", [lin.slug]);
+		await shell.postAs({ channelId: "team:alpha", from: "owner", text: "定了", kind: "decision" });
+
+		const main = shell.conversations.get(lin.slug);
+		const settle = shell.conversations.get(`${lin.slug}#settle:alpha`);
+		expect(main).toBeDefined();
+		expect(settle).toBeDefined();
+		expect(Number(settle!.id)).not.toBe(Number(main!.id));
+
+		// 名册两张表各存各的：主会话没被顶掉，额外会话也反查得到人。
+		const doc = (await shell.harness.snapshot(DirectoryDoc)) as DirectoryState;
+		expect(doc.slugToConversation[lin.slug]).toBe(Number(main!.id));
+		expect(doc.sessions?.[`${lin.slug}#settle:alpha`]).toBe(Number(settle!.id));
+		expect(doc.conversationToSlug[String(settle!.id)]).toBe(lin.slug);
 	});
 
 	it("团队里没人能写时记为 skipped，游标仍推进", async () => {

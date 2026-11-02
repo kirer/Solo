@@ -10,6 +10,7 @@ export { parseWake, type WakeRecord, type WakeTarget } from "./record.ts";
 export {
 	createTurnFinisher,
 	finalTextOf,
+	saidLast,
 	spokeAfterWake,
 	turnTarget,
 	type FinishTurn,

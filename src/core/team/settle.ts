@@ -15,9 +15,11 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { ChannelDoc, OWNER, teamId, type ChannelState } from "../channel/types.ts";
 import { appendNote } from "../channel/write.ts";
 import { deliveryPrompt, renderReplyRules } from "../channel/delivery.ts";
+import type { WakePriority } from "../channel/queue.ts";
 import { wake } from "../channel/wake.ts";
 import { renderUnanswered } from "../channel/unanswered.ts";
 import { readAllIdentities, type Identity } from "../agent/identity.ts";
+import { sessionKeyOf } from "../agent/roster.ts";
 import { readTeam, type TeamDoc } from "./doc.ts";
 import { teamMemoryPath, renderSettlePrompt, settleCandidates } from "./memory.ts";
 import { oneLine } from "../md/oneline.ts";
@@ -47,7 +49,11 @@ type SettleDeps = {
 	readonly teamsRoot: string;
 	readonly channelState: () => Promise<ChannelState>;
 	/** 合并唤醒：和投递同一条路，别让同一个会话排两个唤醒。 */
-	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
+	readonly coalesceQueue?: (
+		conversationId: number,
+		keepRequestId: string,
+		incoming: WakePriority,
+	) => Promise<number>;
 	/** 显示名（留痕用）。 */
 	readonly labelOf?: (slug: string) => string;
 };
@@ -116,7 +122,9 @@ export async function settleTeam(
 			await writeSettle(harness, team, context, { cursor: lastSeq, waiting: null });
 			return { skipped: { team, count: candidates.length } };
 		}
-		const conversation = await conversationOf(to);
+		// 记账走管理员自己的第二条会话（ADR-050）：它和投递并行，不抢同一条历史。
+		const session = sessionKeyOf(to, `settle:${team}`);
+		const conversation = await conversationOf(session);
 		if (conversation === undefined) {
 			// 有团队管理员但没会话：游标照常推进，下次团队管理员醒来读团队频道能看到。
 			await writeSettle(harness, team, context, { cursor: lastSeq, waiting: null });
@@ -152,6 +160,7 @@ export async function settleTeam(
 			},
 			{
 				slug: to,
+				session,
 				requestId: `settle:${team}:${lastSeq}`,
 				coalesce: true,
 				whenBusy: "followUp",

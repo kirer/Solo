@@ -8,6 +8,7 @@ import type { WakeRecord } from "../../src/core/channel/wake.ts";
 import {
 	createTurnFinisher,
 	finalTextOf,
+	saidLast,
 	spokeAfterWake,
 	turnTarget,
 } from "../../src/core/channel/turn/index.ts";
@@ -57,6 +58,30 @@ const answer = (id: number, text: string): EntryRecord =>
 
 const conversationWith = (entry: EntryRecord): Conversation =>
 	({ id: 7, entries: async () => ({ items: [entry] }) }) as unknown as Conversation;
+
+const toolCall = (id: number, name: string): EntryRecord =>
+	({
+		id,
+		kind: "pi.assistant",
+		model: [{ role: "assistant", content: [{ type: "toolCall", id: `t-${id}`, name, arguments: {} }] }],
+	}) as unknown as EntryRecord;
+
+describe("最后一段正文是不是「刚说过那句」的复述", () => {
+	const final = answer(3, "游戏写完了，在 workspace/index.html。");
+
+	it("最后一个动作是 say：复述，不再补", () => {
+		// 条目按时间倒序：最新的是最终正文，再往前是那句 say。
+		expect(saidLast([final, toolCall(2, "say")], final)).toBe(true);
+	});
+
+	it("说完之后又跑了命令：最后那段是新结论", () => {
+		expect(saidLast([final, toolCall(2, "run"), toolCall(1, "say")], final)).toBe(false);
+	});
+
+	it("一轮里一次 say 都没调：照补", () => {
+		expect(saidLast([final, toolCall(2, "run")], final)).toBe(false);
+	});
+});
 
 describe("从条目里取最终正文", () => {
 	it("取最后一个 assistant 文本块（一轮里可能有工具与多段正文）", () => {
@@ -114,6 +139,11 @@ describe("这段正文该落到哪个频道", () => {
 		expect(turnTarget(state({ [CHANNEL]: [say(2)] }), SLUG, wake)).toBeUndefined();
 	});
 
+	it("说过话、但最后又干了活：最后那段是新结论，照样补", () => {
+		const wake = wakeOf(CHANNEL);
+		expect(turnTarget(state({ [CHANNEL]: [say(2)] }), SLUG, wake, false)).toEqual(wake.reply);
+	});
+
 	it("私聊插话：私聊已经答过 → 这段是任务的结论，回任务频道", () => {
 		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
 		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
@@ -155,6 +185,28 @@ describe("收尾落库", () => {
 		expect(last?.text).toBe("跑完了，耗时 45 秒。");
 		// 落库的是真发言，不是投影消息 —— 否则前端会把它当过程行折起来。
 		expect(last?.kind).toBe("say");
+	});
+
+	it("他说过一句、之后又干了活：最后的结论照样落进频道", async () => {
+		// 2026-11-02 陈默：被叫醒只是报个到，顺手把整个游戏写完了，频道里却只有开头那句。
+		const runtime = await setup();
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			doc.messages[CHANNEL] = [{ seq: 2, from: SLUG, at: 2, text: "我先说一句。", mentions: [], kind: "say" }];
+			doc.nextSeq[CHANNEL] = 3;
+		}, BACKGROUND_CONTEXT);
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
+		const final = answer(42, "游戏写完了，在 workspace/index.html。");
+		const conversation = {
+			id: 7,
+			entries: async () => ({ items: [final, toolCall(41, "run"), toolCall(40, "say")] }),
+		} as unknown as Conversation;
+		await finisher({ slug: SLUG, conversation, answer: 42, wake: wakeOf(CHANNEL) }, BACKGROUND_CONTEXT);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect((state.messages[CHANNEL] ?? []).map((item) => item.text)).toEqual([
+			"我先说一句。",
+			"游戏写完了，在 workspace/index.html。",
+		]);
 	});
 
 	it("太短或 [PASS] 的正文不补：残句补进频道只会更吵", async () => {

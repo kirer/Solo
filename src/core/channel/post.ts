@@ -185,8 +185,8 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			// 谁连发几条（我三句、agent 的过程话与追问）都只排一个唤醒，最后一条取代
 			// 前面没开始的那些 —— 消息都在频道里，少的只是重复唤醒。
 			// 这里只撤 `queued`，正在跑的那一轮不碰（撤它会连新消息一起吞掉，实测过）。
-			coalesceQueue: (conversationId, keepRequestId) =>
-				coalesceQueue(deps.harness, conversationId, keepRequestId, context),
+			coalesceQueue: (conversationId, keepRequestId, incoming) =>
+				coalesceQueue(deps.harness, conversationId, keepRequestId, context, incoming),
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),

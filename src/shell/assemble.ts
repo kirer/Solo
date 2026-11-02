@@ -33,9 +33,11 @@ import { postMessage } from "../core/channel/post.ts";
 import { coalesceQueue } from "../core/channel/queue.ts";
 import {
 	DirectoryDoc,
+	conversationFor,
 	emptyDirectory,
 	labelIn,
 	mergeDirectory,
+	personOf,
 	plainDirectory,
 	type DirectoryState,
 } from "../core/agent/roster.ts";
@@ -170,7 +172,14 @@ export async function assembleCore(
 		console.warn(`[core] 没读到文案目录（${layout.textRoot}）：工具描述会是空的`);
 	}
 	// 频道层要的那几根线只在这里接一次：会话在哪、谁叫醒了他、收尾怎么补。
-	const wiring = wireChannel({ harness, layout, live: () => conversations, text });
+	// `open`：会话键找不到时开一条 —— 额外会话（ADR-050）懒创建，第一次用到才建。
+	const wiring = wireChannel({
+		harness,
+		layout,
+		live: () => conversations,
+		open: (key, ctx) => openOne(key, ctx),
+		text,
+	});
 	const baseDeps: CoreToolDeps = {
 		harness,
 		layout,
@@ -251,8 +260,9 @@ export async function assembleCore(
 			hooks: auditHooks({
 				logsRoot: layout.logsRoot,
 				slugOf: (conversationId) => {
-					for (const [slug, conversation] of conversations) {
-						if (Number(conversation.id) === conversationId) return slug;
+					// 额外会话也回人：审计日志里要看的是「谁做的」，不是哪条历史。
+					for (const [key, conversation] of conversations) {
+						if (Number(conversation.id) === conversationId) return personOf(key);
 					}
 					return undefined;
 				},
@@ -323,20 +333,28 @@ export async function assembleCore(
 		for (const error of next.errors) console.warn(`[plugin] 没装上：${error}`);
 		toolsExtension = buildToolsExtension();
 		registry.install(toolsExtension);
-		for (const slug of conversations.keys()) await installIdentity(slug);
+		// 身份扩展按人装：同一个人的主会话和额外会话共用一个 slug。
+		for (const slug of new Set([...conversations.keys()].map(personOf))) await installIdentity(slug);
 	}
 
 	// ── 2 & 3. 扫文件夹 + 开会话 ──────────────────────────────────
 	const identities = await readAllIdentities(layout.agentRoots);
 	const directory: DirectoryState = (await harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
 
-	/** 给一个 slug 开会话（内部用：先查名册，再建）。 */
-	async function openOne(slug: string, ctx: Context): Promise<Conversation> {
-		const existing = conversations.get(slug);
+	/**
+	 * 给一条会话开会话（内部用：先查名册，再建）。
+	 *
+	 * `key` 是会话键（ADR-050）：主会话就是 slug，额外会话是 `<slug>#<用途>`。
+	 * 身份、模型、工具都按 `key` 前面那个人取；频道成员只给主会话补。
+	 */
+	async function openOne(key: string, ctx: Context): Promise<Conversation> {
+		const existing = conversations.get(key);
 		if (existing !== undefined) return existing;
+		const slug = personOf(key);
+		const main = slug === key;
 		// 开会话前先看一眼 settings.json：刚加的提供商要能立刻用上（ADR-025）。
 		await refreshModels(ctx);
-		const known = directory.slugToConversation[slug];
+		const known = conversationFor(directory, key);
 		if (known !== undefined) {
 			const found = await harness.conversation(known as never, ctx);
 			if (found !== undefined) {
@@ -346,12 +364,14 @@ export async function assembleCore(
 				// 也补一次身份扩展（幂等）：`hire` 时会立刻开会话，那时还没重启，
 				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
 				await installIdentity(slug);
-				conversations.set(slug, found);
-				// 已有会话也要补一次团队频道：老工作区里的人在团队频道出现之前建的，
-				// 或者 `identity.md` 里刚补上 `team:`。两个都是幂等的。
-				await joinTeamChannel(membership, slug, ctx);
-				// 私聊同理：老工作区里的人是「私聊要等我开」的时代建的，重启后补上。
-				await ensureOwnerDm(membership, slug, ctx);
+				conversations.set(key, found);
+				if (main) {
+					// 已有会话也要补一次团队频道：老工作区里的人在团队频道出现之前建的，
+					// 或者 `identity.md` 里刚补上 `team:`。两个都是幂等的。
+					await joinTeamChannel(membership, slug, ctx);
+					// 私聊同理：老工作区里的人是「私聊要等我开」的时代建的，重启后补上。
+					await ensureOwnerDm(membership, slug, ctx);
+				}
 				return found;
 			}
 		}
@@ -368,9 +388,10 @@ export async function assembleCore(
 			},
 			ctx,
 		);
-		conversations.set(slug, created);
+		conversations.set(key, created);
 		const id = created.id as unknown as number;
-		directory.slugToConversation[slug] = id;
+		if (main) directory.slugToConversation[slug] = id;
+		else directory.sessions = { ...(directory.sessions ?? {}), [key]: id };
 		directory.conversationToSlug[String(id)] = slug;
 		// **建完会话立刻把映射落盘**：旧代码只改内存，靠启动/`rescan` 的批量提交顺带写下去。
 		// `hire` 走的是 `openAgent`（会创建会话）而不是 `rescan`，中间一旦有别的提交把名册
@@ -379,19 +400,22 @@ export async function assembleCore(
 		await harness.commit(async (tx) => {
 			const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
 			const before = plainDirectory(doc);
-			doc.slugToConversation = { ...before.slugToConversation, [slug]: id };
+			if (main) doc.slugToConversation = { ...before.slugToConversation, [slug]: id };
+			else doc.sessions = { ...(before.sessions ?? {}), [key]: id };
 			doc.conversationToSlug = { ...before.conversationToSlug, [String(id)]: slug };
 		}, ctx);
-		// 一建出来就进全员频道、团队频道。
+		// 一建出来就进全员频道、团队频道（只给主会话）。
 		//
 		// 踩过的坑：`hire` 会立刻开会话，但全员频道的成员是**启动时**按当时的
 		// `members/` 目录写死的。结果新人存在、会话也存在，却不在频道里 —— 别人
 		// @ 他，`recipientsOf` 第一规则「@ 的必须是成员」把他过滤掉，消息静默不投递，
 		// 界面上看起来就是「招了个人但叫不动」。
-		await addToAllChannel(membership, [slug], ctx);
-		await joinTeamChannel(membership, slug, ctx);
-		// 每个成员一出现就有自己的私聊：他的工作过程在那里看，群聊只留结论。
-		await ensureOwnerDm(membership, slug, ctx);
+		if (main) {
+			await addToAllChannel(membership, [slug], ctx);
+			await joinTeamChannel(membership, slug, ctx);
+			// 每个成员一出现就有自己的私聊：他的工作过程在那里看，群聊只留结论。
+			await ensureOwnerDm(membership, slug, ctx);
+		}
 		return created;
 	}
 
@@ -416,7 +440,8 @@ export async function assembleCore(
 		if (applied === undefined) return;
 		defaultModel = applied.defaultModel;
 		agentModels = applied.agentModels;
-		for (const [slug, conversation] of conversations) {
+		for (const [key, conversation] of conversations) {
+			const slug = personOf(key);
 			if (agentModels?.[slug] !== undefined) continue;
 			await applyModel(conversation, slug, ctx).catch(() => undefined);
 		}
@@ -442,8 +467,7 @@ export async function assembleCore(
 	 */
 	async function setModel(slug: string, ref: string, ctx: Context = BACKGROUND_CONTEXT): Promise<{ model: string }> {
 		await refreshModels(ctx);
-		const conversation = conversations.get(slug);
-		if (conversation === undefined) throw new Error(`没有这个人的会话：${slug}`);
+		if (!conversations.has(slug)) throw new Error(`没有这个人的会话：${slug}`);
 		const value = ref.trim();
 		const wanted = value === "" ? defaultModel : parseModelRef(value);
 		if (wanted === undefined) {
@@ -453,7 +477,10 @@ export async function assembleCore(
 			const available = (await modelChoices(ctx)).models;
 			throw new Error(`没有这个模型：${value}（可选：${available.join("、") || "（还没有配置模型）"}）`);
 		}
-		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+		// 他的每一条会话都换：额外会话（ADR-050）也是他本人在跑，模型不该分叉。
+		for (const [key, conversation] of conversations) {
+			if (personOf(key) === slug) await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+		}
 		const next = { ...(agentModels ?? {}) };
 		if (value === "") delete next[slug];
 		else next[slug] = { provider: wanted.provider, modelId: wanted.modelId };
@@ -484,6 +511,7 @@ export async function assembleCore(
 		Object.assign(doc, {
 			slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
 			conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
+			sessions: { ...(doc.sessions ?? {}), ...(directory.sessions ?? {}) },
 			labels: { ...doc.labels, ...labelsOf(identities) },
 		});
 		directory.labels = { ...doc.labels };
@@ -528,6 +556,9 @@ export async function assembleCore(
 			([id]) => Number(id) === conversationId,
 		)?.[1];
 		if (slug === undefined) return;
+		// 只接主会话。额外会话（ADR-050）被打断时不叫人：沉淀有自己的游标和 waiting，
+		// 下一批消息会重新问；把主会话的唤醒记录套到记账上，只会往错的频道留痕。
+		if (directory.slugToConversation[slug] !== conversationId) return;
 		const wake = await wiring.wakeOf(slug, ctx);
 		if (wake === undefined) return;
 		const channel = (await shell.channels(ctx)).channels[wake.task.channelId];
@@ -665,8 +696,10 @@ function makeAfterPost(
 				agentRoots: layout.agentRoots,
 				teamsRoot: layout.teamsRoot,
 				channelState: async () => (await wiring.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState(),
-				coalesceQueue: (conversationId, keepRequestId) =>
-					coalesceQueue(wiring.harness, conversationId, keepRequestId, context),
+				// 轻重由 `wake()` 按 `requestId` 判好传进来：沉淀（记账）挤不掉投递，
+				// 否则管理员醒来就只剩整理记忆，频道里那几条真消息一条都没人答。
+				coalesceQueue: (conversationId, keepRequestId, incoming) =>
+					coalesceQueue(wiring.harness, conversationId, keepRequestId, context, incoming),
 				// 留痕里用 slug：这一层拿不到显示名表，而留痕是给人看位置，不是给人看称呼。
 				labelOf: (slug) => slug,
 			},

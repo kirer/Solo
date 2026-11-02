@@ -12,7 +12,15 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CoreShell } from "../../src/shell/assemble.ts";
-import { DirectoryDoc, mergeDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
+import {
+	DirectoryDoc,
+	conversationFor,
+	mergeDirectory,
+	personOf,
+	sessionKeyOf,
+	slugFor,
+	type DirectoryState,
+} from "../../src/core/agent/roster.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";
@@ -115,5 +123,26 @@ describe("已有名册不被旧快照覆盖", () => {
 
 		const second = await boot(box);
 		expect(second.doc.slugToConversation).toEqual(before);
+	});
+});
+
+describe("会话键：人 + 用途（ADR-050）", () => {
+	it("额外会话读自己的 id，反查仍然是人", () => {
+		const empty: DirectoryState = { slugToConversation: {}, conversationToSlug: {}, sessions: {}, wake: {}, labels: {} };
+		const state: DirectoryState = {
+			slugToConversation: { 甲: 1 },
+			conversationToSlug: { "1": "甲", "2": "甲" },
+			sessions: { "甲#settle:alpha": 2 },
+			wake: {},
+			labels: {},
+		};
+		expect(conversationFor(state, "甲")).toBe(1);
+		expect(conversationFor(state, "甲#settle:alpha")).toBe(2);
+		expect(personOf("甲#settle:alpha")).toBe("甲");
+		expect(personOf("甲")).toBe("甲");
+		expect(sessionKeyOf("甲", "settle:alpha")).toBe("甲#settle:alpha");
+		// 工具靠反查认「我是谁」：额外会话也必须回到人。
+		expect(slugFor(state, 2)).toBe("甲");
+		expect(mergeDirectory(empty, state).sessions).toEqual({ "甲#settle:alpha": 2 });
 	});
 });

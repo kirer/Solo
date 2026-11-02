@@ -5,6 +5,7 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import type { Conversation } from "../runtime/index.ts";
 import { deliveryPrompt, mergedNotice, renderDelivery, type DeliveryPrompt } from "./delivery.ts";
 import { planAttachments } from "./attachments.ts";
+import type { WakePriority } from "./queue.ts";
 import { wake } from "./wake.ts";
 import type { Channel, Message } from "./types.ts";
 import type { WakeRecord, WakeTarget } from "./turn/record.ts";
@@ -105,7 +106,11 @@ type DeliverOptions = {
 	 * 所有发言都走这一条：我插队（撤掉排在他前面的待办）与「同一个人连发只排一个
 	 * 唤醒」是同一件事 —— 都是「这个会话最多留一个未开始的排队项」。
 	 */
-	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
+	readonly coalesceQueue?: (
+		conversationId: number,
+		keepRequestId: string,
+		incoming: WakePriority,
+	) => Promise<number>;
 	/**
 	 * 这一轮什么都没产出时留一句话。
 	 *

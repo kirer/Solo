@@ -14,10 +14,16 @@ import { OWNER_SLUG } from "./identity.ts";
 export type { WakeRecord } from "../channel/turn/record.ts";
 
 export type DirectoryState = {
-	/** slug → 会话 id。 */
+	/** slug → 主会话 id。 */
 	slugToConversation: Record<string, number>;
-	/** 会话 id（字符串）→ slug。反查用。 */
+	/** 会话 id（字符串）→ slug。反查用。额外会话也指向人（工具靠它认「我是谁」）。 */
 	conversationToSlug: Record<string, string>;
+	/**
+	 * 会话键（`<slug>#<用途>`）→ 会话 id。主会话不在这里，仍走 `slugToConversation`。
+	 *
+	 * 一个人可以有多条会话（ADR-050）：身份/记忆/技能/模型只有一份，分开的只是历史。
+	 */
+	sessions?: Record<string, number>;
 	/** 会话 id（字符串）→ 它最后被谁在哪个频道叫醒。工具用它决定「默认在哪儿回话」。 */
 	wake: Record<string, JsonObject>;
 	/**
@@ -34,7 +40,7 @@ export const DirectoryDoc = defineDoc<DirectoryState>({
 	kind: "core.directory",
 	version: 1,
 	scope: "session",
-	initial: () => ({ slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} }),
+	initial: () => ({ slugToConversation: {}, conversationToSlug: {}, sessions: {}, wake: {}, labels: {} }),
 	// 名册也是「每次改动都是增量」的文档：`wake` 每次有人被叫醒就写一次，`labels` 每次
 	// rescan 刷一遍。原来写 `() => false` 的结果是增量永不回收 —— 实测 164 条 delta / 44KB，
 	// 而频道文档只有 13 个。按条数压基线就是确定的回收上界。
@@ -42,7 +48,18 @@ export const DirectoryDoc = defineDoc<DirectoryState>({
 });
 
 export function emptyDirectory(): DirectoryState {
-	return { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
+	return { slugToConversation: {}, conversationToSlug: {}, sessions: {}, wake: {}, labels: {} };
+}
+
+/** 会话键里的人：`林越#settle:demo` → `林越`。主会话的键就是 slug。 */
+export function personOf(key: string): string {
+	const at = key.indexOf("#");
+	return at === -1 ? key : key.slice(0, at);
+}
+
+/** 造一个额外会话的键：`sessionKeyOf("林越", "settle:demo")` → `林越#settle:demo`。 */
+export function sessionKeyOf(slug: string, purpose: string): string {
+	return `${slug}#${purpose}`;
 }
 
 /** slug → 显示名（名册里没有就给 slug 本身；我是「我」）。 */
@@ -61,8 +78,9 @@ export function wakeOf(state: DirectoryState, conversationId: number | string): 
 }
 
 
-export function conversationFor(state: DirectoryState, slug: string): number | undefined {
-	return state.slugToConversation[slug];
+/** 会话键 → 会话 id。主会话查 `slugToConversation`，额外会话查 `sessions`。 */
+export function conversationFor(state: DirectoryState, key: string): number | undefined {
+	return key.includes("#") ? state.sessions?.[key] : state.slugToConversation[key];
 }
 
 export function slugFor(state: DirectoryState, conversationId: number | string): string | undefined {
@@ -80,6 +98,7 @@ export function plainDirectory(source: DirectoryState): DirectoryState {
 	const json = JSON.stringify({
 		slugToConversation: source.slugToConversation ?? {},
 		conversationToSlug: source.conversationToSlug ?? {},
+		sessions: source.sessions ?? {},
 		wake: source.wake ?? {},
 		labels: source.labels ?? {},
 	});
@@ -97,17 +116,18 @@ export function mergeDirectory(base: DirectoryState, live: DirectoryState): Dire
 	return {
 		slugToConversation: { ...base.slugToConversation, ...live.slugToConversation },
 		conversationToSlug: { ...base.conversationToSlug, ...live.conversationToSlug },
+		sessions: { ...(base.sessions ?? {}), ...(live.sessions ?? {}) },
 		wake: base.wake,
 		labels: { ...base.labels, ...live.labels },
 	};
 }
 
-/** 这次运行里给这个人开过的会话 id（没有就 `undefined`）。 */
+/** 这次运行里开过的这条会话的 id（没有就 `undefined`）。`key` 是会话键，不是 slug。 */
 export function liveConversationId(
 	live: (() => ReadonlyMap<string, Conversation>) | undefined,
-	slug: string,
+	key: string,
 ): number | undefined {
-	const found = live?.().get(slug);
+	const found = live?.().get(key);
 	return found === undefined ? undefined : (found.id as unknown as number);
 }
 
@@ -123,31 +143,36 @@ export function liveConversationId(
 export function directoryWake(deps: {
 	readonly harness: Harness;
 	readonly live?: () => ReadonlyMap<string, Conversation>;
+	/** 会话键找不到时开一条（装配层给，额外会话懒创建）。 */
+	readonly open?: (key: string, context: Context) => Promise<Conversation | undefined>;
 }): {
-	readonly conversationOf: (slug: string, context: Context) => Promise<Conversation | undefined>;
-	readonly rememberWake: (slug: string, wake: WakeRecord, context: Context) => Promise<void>;
+	readonly conversationOf: (key: string, context: Context) => Promise<Conversation | undefined>;
+	readonly rememberWake: (key: string, wake: WakeRecord, context: Context) => Promise<void>;
 } {
 	return {
-		async conversationOf(slug, context) {
-			const known = deps.live?.().get(slug);
+		async conversationOf(key, context) {
+			const known = deps.live?.().get(key);
 			if (known !== undefined) return known;
 			const directory = (await deps.harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
-			const id = conversationFor(directory, slug);
-			if (id === undefined) return undefined;
+			const id = conversationFor(directory, key);
+			if (id === undefined) return deps.open?.(key, context);
 			return deps.harness.conversation(id as never, context);
 		},
-		async rememberWake(slug, wake, context = BACKGROUND_CONTEXT) {
+		async rememberWake(key, wake, context = BACKGROUND_CONTEXT) {
 			await deps.harness.commit(async (tx) => {
 				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
 				// 先看这份运行里的会话表，再看文档。
 				// 文档可能落后（实测：三个人的映射只活在内核内存里，落盘那份只有助理，
 				// 于是他们的工具全被拒「你还不在名册里」，叫醒也记不上）。内存里有会话就是人。
-				const id = conversationFor(doc, slug) ?? liveConversationId(deps.live, slug);
+				const id = conversationFor(doc, key) ?? liveConversationId(deps.live, key);
 				if (id === undefined) return;
 				// 文档里缺这条就顺手补上：只读不补的话，下一次提交还会把缺人的那份写回去。
-				if (conversationFor(doc, slug) === undefined) {
-					doc.slugToConversation = { ...doc.slugToConversation, [slug]: id };
-					doc.conversationToSlug = { ...doc.conversationToSlug, [String(id)]: slug };
+				if (conversationFor(doc, key) === undefined) {
+					const person = personOf(key);
+					if (person === key) doc.slugToConversation = { ...doc.slugToConversation, [person]: id };
+					else doc.sessions = { ...(doc.sessions ?? {}), [key]: id };
+					// 额外会话也要反查得到人：工具靠 `conversationToSlug` 认「我是谁」。
+					doc.conversationToSlug = { ...doc.conversationToSlug, [String(id)]: person };
 				}
 				// 只写 `wake` 这一个字段：把整份名册展开再写回去，任何一处覆盖层节点被顺手
 				// 写回来就是一次静默丢人。
