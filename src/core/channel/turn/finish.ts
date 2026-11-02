@@ -22,6 +22,7 @@
  */
 import type { Conversation, EntryRecord, Harness } from "../../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../../runtime/index.ts";
+import { createSerialGate } from "../../runtime/io.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
 import type { WakeRecord, WakeTarget } from "./record.ts";
 import { postMessage, type PostDeps } from "../post.ts";
@@ -146,62 +147,67 @@ export function turnTarget(
  * 造一个收尾器。投递、我说话、沉淀三条路共用同一份 —— 收尾的行为只在这里写一次。
  */
 export function createTurnFinisher(deps: TurnDeps): FinishTurn {
-	return async (info, context = BACKGROUND_CONTEXT) => {
-		const state = (await deps.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
-		const { entry, page } = await answerEntry(info.conversation, info.answer, context);
-		const target = turnTarget(state, info.slug, info.wake, saidLast(page, entry));
-		if (target === undefined) return;
-		const channel = state.channels[target.channelId];
-		// 频道不存在或他不在里面：不替他往进不去的地方说话。
-		if (channel === undefined || !channel.members.includes(info.slug)) return;
+	// 两条提交同时结算会**并发**跑两次收尾（相隔 1 毫秒）：两次都快照到「频道里还没有这句」，
+	// 于是同一句话发两遍（实测 2026-11-02 周楠 #15/#16）。整段串起来，后一次才看得见前一次。
+	const serial = createSerialGate();
+	return (info, context = BACKGROUND_CONTEXT) => serial(() => finishOnce(deps, info, context));
+}
 
-		const text = finalTextOf(entry)?.trim();
-		if (text === undefined || text.length < TURN_MIN_CHARS || isPass(text)) return;
+async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context): Promise<void> {
+	const state = (await deps.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
+	const { entry, page } = await answerEntry(info.conversation, info.answer, context);
+	const target = turnTarget(state, info.slug, info.wake, saidLast(page, entry));
+	if (target === undefined) return;
+	const channel = state.channels[target.channelId];
+	// 频道不存在或他不在里面：不替他往进不去的地方说话。
+	if (channel === undefined || !channel.members.includes(info.slug)) return;
 
-		// 同一条答案会被**多条提交**各结算一次（报到 + 投递、投递 + 后台命令跑完），
-		// 每一次收尾都看到同一个条目 —— 只补一次。实测 2026-11-02：频道里并排两条
-		// 一模一样的话（周岚 #11/#12、沈舟 #15/#16），1 毫秒之隔，就是两次收尾。
-		const duplicate = (state.messages[target.channelId] ?? []).some(
-			(item) => item.from === info.slug && item.text.trim() === text,
+	const text = finalTextOf(entry)?.trim();
+	if (text === undefined || text.length < TURN_MIN_CHARS || isPass(text)) return;
+
+	// 同一条答案会被**多条提交**各结算一次（报到 + 投递、投递 + 后台命令跑完），
+	// 每一次收尾都看到同一个条目 —— 只补一次。实测 2026-11-02：频道里并排两条
+	// 一模一样的话（周岚 #11/#12、沈舟 #15/#16），1 毫秒之隔，就是两次收尾。
+	const duplicate = (state.messages[target.channelId] ?? []).some(
+		(item) => item.from === info.slug && item.text.trim() === text,
+	);
+	if (duplicate) return;
+
+	let written: Awaited<ReturnType<typeof postMessage>>;
+	try {
+		written = await postMessage(
+			{
+				harness: deps.harness,
+				state,
+				conversationOf: deps.conversationOf,
+				...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
+				...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
+				...(deps.text === undefined ? {} : { text: deps.text }),
+				...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+				...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
+			},
+			{
+				channelId: target.channelId,
+				from: info.slug,
+				text,
+				at: Date.now(),
+				// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人
+				// （`note` 本来就不叫人）。正常一轮的补发**要照常叫醒** —— 他说的是
+				// 「@周岚 请验收」，不叫醒等于把结论发进一个没人看的房间。
+				// 实测 2026-11-02：沈舟的交付结论就是这么落进频道的，周岚没醒，团队停摆。
+				kind: info.wake.quiet === true ? "note" : "say",
+			},
+			context,
 		);
-		if (duplicate) return;
-
-		let written: Awaited<ReturnType<typeof postMessage>>;
-		try {
-			written = await postMessage(
-				{
-					harness: deps.harness,
-					state,
-					conversationOf: deps.conversationOf,
-					...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
-					...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
-					...(deps.text === undefined ? {} : { text: deps.text }),
-					...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
-					...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
-				},
-				{
-					channelId: target.channelId,
-					from: info.slug,
-					text,
-					at: Date.now(),
-					// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人
-					// （`note` 本来就不叫人）。正常一轮的补发**要照常叫醒** —— 他说的是
-					// 「@周岚 请验收」，不叫醒等于把结论发进一个没人看的房间。
-					// 实测 2026-11-02：沈舟的交付结论就是这么落进频道的，周岚没醒，团队停摆。
-					kind: info.wake.quiet === true ? "note" : "say",
-				},
-				context,
-			);
-		} catch (error) {
-			// 补发失败 = 内容丢了（他没 `say`，正文只在这个条目里）。必须留一行能被 live 数到的日志。
-			console.warn(
-				`[turn] ${info.slug} 答在会话里但补发失败：${error instanceof Error ? error.message : String(error)}`,
-			);
-			return;
-		}
-		// 留一行日志：这一条是系统替它发的，不是它自己说的。查「谁替我回了」时靠这行定位。
-		console.log(
-			`[turn] ${info.slug} 答在会话里但没说出来，已补发到 ${target.channelId}（唤醒自 #${info.wake.reply.seq}；落成 #${written.message.seq}「${written.message.text.slice(0, 20)}」）`,
+	} catch (error) {
+		// 补发失败 = 内容丢了（他没 `say`，正文只在这个条目里）。必须留一行能被 live 数到的日志。
+		console.warn(
+			`[turn] ${info.slug} 答在会话里但补发失败：${error instanceof Error ? error.message : String(error)}`,
 		);
-	};
+		return;
+	}
+	// 留一行日志：这一条是系统替它发的，不是它自己说的。查「谁替我回了」时靠这行定位。
+	console.log(
+		`[turn] ${info.slug} 答在会话里但没说出来，已补发到 ${target.channelId}（唤醒自 #${info.wake.reply.seq}；落成 #${written.message.seq}「${written.message.text.slice(0, 20)}」）`,
+	);
 }

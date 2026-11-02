@@ -221,6 +221,19 @@ describe("收尾落库", () => {
 		expect((state.messages[CHANNEL] ?? []).filter((item) => item.from === SLUG)).toHaveLength(1);
 	});
 
+	it("两条提交同时结算（并发），也只补一次", async () => {
+		// 2026-11-02 周楠 #15/#16：两次收尾并发跑，都快照到「频道里还没有这句」，相隔 1 毫秒发了两遍。
+		const runtime = await setup();
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
+		const conversation = conversationWith(answer(42, "地址是 http://127.0.0.1:8080/index.html 。"));
+		await Promise.all([
+			finisher({ slug: SLUG, conversation, answer: 42, wake: wakeOf(CHANNEL, 1) }, BACKGROUND_CONTEXT),
+			finisher({ slug: SLUG, conversation, answer: 42, wake: wakeOf(CHANNEL, 2) }, BACKGROUND_CONTEXT),
+		]);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect((state.messages[CHANNEL] ?? []).filter((item) => item.from === SLUG)).toHaveLength(1);
+	});
+
 	it("补发会叫醒被 @ 的人：不叫醒，结论就落进一个没人看的房间", async () => {
 		// 2026-11-02：沈舟的交付结论（@周岚 请验收）由收尾补发进频道，周岚没被叫醒，团队停摆。
 		const runtime = await setup();
