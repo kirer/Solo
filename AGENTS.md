@@ -78,8 +78,8 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             82 文件 / 781 例
-  ├ test/core/    70 文件（纯函数 + 装配）
+test/             83 文件 / 784 例
+  ├ test/core/    71 文件（纯函数 + 装配）
   ├ test/ui/      9 文件（界面纯函数与源码约定）
   └ test/desktop/ 3 文件（更新源、就绪行与更新源地址、清单验签与版本比较）
 .solo-app/ ~/.solo/  运行时数据（gitignore）

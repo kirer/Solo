@@ -68,6 +68,46 @@ export function parseCatalog(path: string, source: string): ReadonlyMap<string, 
 	return entries;
 }
 
+/** 把一份文案切成 `[键, 原始小节]`（含 `## key` 那一行），按文件里的顺序。 */
+function sectionsOf(source: string): readonly (readonly [string, string])[] {
+	const lines = source.replace(/\r\n/g, "\n").split("\n");
+	const sections: [string, string][] = [];
+	let key: string | undefined;
+	let body: string[] = [];
+	const flush = (): void => {
+		if (key !== undefined) sections.push([key, `## ${key}\n${body.join("\n").trim()}`]);
+	};
+	for (const line of lines) {
+		const match = HEADING.exec(line);
+		if (match === null) {
+			if (key !== undefined) body.push(line);
+			continue;
+		}
+		flush();
+		key = match[1];
+		body = [];
+	}
+	flush();
+	return sections;
+}
+
+/**
+ * 把出厂文案里**工作区还没有的键**追加到文件末尾；已有的键一个字不动。
+ *
+ * 为什么不是整份覆盖：`text/` 里的句子是可以被手改的（那是「我的组织」的一部分）。
+ * 为什么不能只补缺失的文件：那样每次新增一个键，老工作区永远拿不到 —— 工具描述变成
+ * 空串，模型看不见任何约束（实测踩过两次，都是手工去补的）。
+ *
+ * 返回 `undefined` = 没有新键，不用写盘。
+ */
+export function appendMissingKeys(current: string, source: string): string | undefined {
+	const have = parseCatalog("current", current);
+	const missing = sectionsOf(source).filter(([key]) => !have.has(key));
+	if (missing.length === 0) return undefined;
+	const tail = missing.map(([, raw]) => raw).join("\n\n");
+	return `${current.replace(/\s+$/, "")}\n\n${tail}\n`;
+}
+
 /** 读一整个目录（`.md`），合成一份目录。同键在第二个文件里出现就抛。 */
 export async function loadTextCatalog(fsx: Fsx, dir: string = TEXT_DIR): Promise<TextCatalog> {
 	const entries = await fsx.list(dir);

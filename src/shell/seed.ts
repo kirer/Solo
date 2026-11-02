@@ -16,6 +16,7 @@ import { SKILLS_DIR, copySkillDir } from "../core/agent/skills.ts";
 import { OWNER_SLUG } from "../core/agent/identity.ts";
 import { RULES_FILE } from "../core/agent/rules.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
+import { appendMissingKeys } from "../core/md/catalog.ts";
 import { frontOf, parseDoc, type Doc } from "../core/md/doc.ts";
 import type { Layout } from "../core/layout.ts";
 
@@ -199,7 +200,8 @@ export async function seedPromptTemplates(layout: Layout): Promise<readonly stri
  * 把出厂文案（`seed/text/*.md`）补进应用私有目录（`<appRoot>/text/`）。
  *
  * 和提示词模板同一条规矩：**只补不改**。文案是模型每一轮都读的话，我可能亲手改过措辞。
- * 逐个文件判，新增一份文案能补进已经在跑的工作区。
+ * 判据落到**键**上：缺文件就整份拷，有文件就只追加它还没有的键 —— 改过的句子不动，
+ * 新加的键也能进已经在跑的工作区。
  */
 export async function seedTextFiles(layout: Layout): Promise<readonly string[]> {
 	const root = seedPath("text");
@@ -209,10 +211,19 @@ export async function seedTextFiles(layout: Layout): Promise<readonly string[]> 
 	const written: string[] = [];
 	for (const name of files) {
 		const target = join(layout.textRoot, name);
-		if (await existsAt(target)) continue;
 		const source = await readTextOrUndefined(join(root, name));
 		if (source === undefined) continue;
-		await writeTextAt(target, source);
+		const current = await readTextOrUndefined(target);
+		if (current === undefined) {
+			await writeTextAt(target, source);
+			written.push(name);
+			continue;
+		}
+		// 已经有这份文件：只把它还没有的键补到末尾（改过的句子不动）。不补的话，每次
+		// 新增一个键老工作区都拿不到，工具描述会变成空串 —— 见 `appendMissingKeys`。
+		const merged = appendMissingKeys(current, source);
+		if (merged === undefined) continue;
+		await writeTextAt(target, merged);
 		written.push(name);
 	}
 	return written;
