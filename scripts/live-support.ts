@@ -11,11 +11,11 @@ import type { Message } from "../src/core/channel/types.ts";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels, type Context, type Harness } from "../src/core/runtime/index.ts";
 import type { ModelRef, ModelSetup } from "../src/core/runtime/models.ts";
 import { openCore, type CoreRuntime } from "../src/core/runtime/open.ts";
-import { assembleCore, type CoreShell } from "../src/core/shell/assemble.ts";
-import { seedOwnerAssistant, seedPromptTemplates, seedRules } from "../src/core/shell/seed.ts";
+import { assembleCore, type CoreShell } from "../src/shell/assemble.ts";
+import { seedOwnerAssistant, seedPromptTemplates, seedRules, seedTextFiles } from "../src/shell/seed.ts";
 import { createAgent, readAllIdentities, type Identity } from "../src/core/agent/identity.ts";
 import { renderTeamFile, readTeam, listTeams } from "../src/core/team/doc.ts";
-import { createChat } from "../src/core/app/chat.ts";
+import { createChat } from "../src/app/chat.ts";
 import { resolveLayout, type Layout } from "../src/core/layout.ts";
 import { liveConversations } from "../src/core/channel/queue.ts";
 
@@ -106,6 +106,7 @@ export async function openLiveWorkspace(options: OpenWorldOptions = {}): Promise
 	await mkdir(teamsRoot, { recursive: true });
 	await seedRules(layout);
 	await seedPromptTemplates(layout);
+	await seedTextFiles(layout);
 	const assistantSlug = await seedOwnerAssistant(layout, { name: "助理" });
 	if (options.settings !== undefined) await copyFile(options.settings, layout.settingsFile);
 

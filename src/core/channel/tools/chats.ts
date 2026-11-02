@@ -7,23 +7,25 @@ import { oneLine } from "../../md/oneline.ts";
 import { actionOf, selfOrError, readState, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { renderLine } from "./recall.ts";
+import { fill } from "../../md/catalog.ts";
 
 export function createChatsTool(deps: CoreToolDeps) {
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(deps.text, key, slots);
 	const tool = defineTool({
 		name: "chats",
-		description:
-			"看会话。`action=list`（默认）列我在的会话：标题、群聊还是私聊、未读数、最后一条；`action=read` 读某个频道的历史消息（读完标已读）。",
+		description: t("chats.description"),
 		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "list（默认）列会话 / read 读消息" })),
-			channel: Type.Optional(Type.String({ description: "频道 id。read 时省略 = 刚叫醒我的那个频道" })),
-			since: Type.Optional(Type.Number({ description: "只要这个序号之后的消息（read）" })),
-			limit: Type.Optional(Type.Number({ description: "最多几条，默认 30，上限 100" })),
+			action: Type.Optional(Type.String({ description: t("chats.param.action") })),
+			channel: Type.Optional(Type.String({ description: t("chats.param.channel") })),
+			since: Type.Optional(Type.Number({ description: t("chats.param.since") })),
+			limit: Type.Optional(Type.Number({ description: t("chats.param.limit") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const action = actionOf(args.action, ["list", "read"], "list");
+			const action = actionOf(args.action, ["list", "read"], "list", "action", deps.text);
 			if (typeof action !== "string") return text(action);
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx);
 			if (typeof slug !== "string") return text(slug);
 			const state = await readState(deps);
 
@@ -34,16 +36,19 @@ export function createChatsTool(deps: CoreToolDeps) {
 					const list = state.messages[channel.id] ?? [];
 					const last = list[list.length - 1];
 					const preview =
-						last === undefined ? "（还没有消息）" : `${last.from}: ${oneLine(last.text, 60)}`;
-					return [
-						`- ${channel.id}「${channel.title}」${chatKind(channel) === "dm" ? "私聊" : "群聊"}` +
-							`${unread === 0 ? "" : ` · ${unread} 条未读`}（${channel.members.length} 人）`,
-						`  ${preview}`,
-					].join("\n");
+						last === undefined ? t("chats.row.empty") : `${last.from}: ${oneLine(last.text, 60)}`;
+					return t("chats.row", {
+						id: channel.id,
+						title: channel.title,
+						kind: t(chatKind(channel) === "dm" ? "chats.row.kind.dm" : "chats.row.kind.group"),
+						unread: unread === 0 ? "" : t("chats.row.unread", { count: unread }),
+						count: channel.members.length,
+						preview,
+					});
 				});
 				const parts = [
-					...(digest === "" ? [] : ["未读消息：", digest]),
-					...(rows.length === 0 ? ["你不在任何频道里。"] : ["", "你的频道：", ...rows]),
+					...(digest === "" ? [] : [t("chats.header.unread"), digest]),
+					...(rows.length === 0 ? [t("chats.none")] : ["", t("chats.header.channels"), ...rows]),
 				];
 				return text(parts.join("\n"));
 			}
@@ -51,7 +56,7 @@ export function createChatsTool(deps: CoreToolDeps) {
 			const target = await defaultChannel(deps, state, slug, Number(api.conversationId), args.channel, ctx);
 			if ("error" in target) return text(target);
 			const channel = state.channels[target.channelId];
-			if (channel === undefined) return text("没有这个频道。");
+			if (channel === undefined) return text(t("chats.channel.missing"));
 			const limit = Math.min(Math.max(args.limit ?? 30, 1), 100);
 			const list = state.messages[channel.id] ?? [];
 			const pool =
@@ -60,12 +65,12 @@ export function createChatsTool(deps: CoreToolDeps) {
 			if (shown.length === 0) {
 				return text(
 					args.since === undefined
-						? `「${channel.title}」里还没有消息。`
-						: `「${channel.title}」在 #${args.since} 之后没有新消息。`,
+						? t("chats.empty", { title: channel.title })
+						: t("chats.empty.since", { title: channel.title, since: args.since }),
 				);
 			}
 			const last = shown[shown.length - 1];
-			const lines = shown.map((message) => renderLine(message));
+			const lines = shown.map((message) => renderLine(message, deps.text));
 			if (last !== undefined) {
 				await deps.harness.commit(async (tx) => {
 					const doc = (await tx.doc(ChannelDoc)) as ChannelState;
@@ -77,10 +82,10 @@ export function createChatsTool(deps: CoreToolDeps) {
 			}
 			return text(
 				[
-					`「${channel.title}」最近 ${shown.length} 条（共 ${list.length} 条）：`,
+					t("chats.read.header", { title: channel.title, shown: shown.length, total: list.length }),
 					...lines,
 					"",
-					`（已标记到 #${last?.seq ?? 0} 为已读）`,
+					t("chats.read.footer", { seq: last?.seq ?? 0 }),
 				].join("\n"),
 			);
 		},

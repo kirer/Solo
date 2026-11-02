@@ -6,7 +6,7 @@
  * 所以只有重启才看得见）。
  */
 import { describe, expect, it } from "vitest";
-import { numberParam } from "../../src/core/interface/http/routes.ts";
+import { numberParam } from "../../src/interface/http/routes.ts";
 
 const url = (query: string) => new URL(`http://x/api${query}`);
 

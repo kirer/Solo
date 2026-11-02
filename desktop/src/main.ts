@@ -21,7 +21,8 @@ if (DEV) app.setPath("userData", join(tmpdir(), "solo-desktop-dev-userdata"));
 const appRoot = app.getPath("userData");
 // 开发态别写真实的 `~/.solo`：那是正在用的组织。
 const userRoot = DEV ? join(tmpdir(), "solo-desktop-dev-home") : join(homedir(), ".solo");
-const logFile = join(appRoot, "logs", "core.log");
+// 日志跟组织数据放在一起（ADR-041）：排查「当时组织里发生了什么」时不用两头找。
+const logFile = join(userRoot, "logs", "core.log");
 
 let backend: Backend | undefined;
 let updater: Updater | undefined;
@@ -114,7 +115,7 @@ async function start(): Promise<void> {
 
 	try {
 		backend = await startBackend({
-			entry: join(app.getAppPath(), "src/core/shell/main.ts"),
+			entry: join(app.getAppPath(), "src/shell/main.ts"),
 			appRoot,
 			userRoot,
 			logFile,

@@ -3,7 +3,7 @@
  *
  * 打包后 Electron 的 Node 是 24.x，类型擦除已经稳定（不需要 `--experimental-strip-types`），
  * `node:sqlite` 也是内置的 —— 所以**不打包、不 transpile、不加原生依赖**：
- * `app.asar/src/core/shell/main.ts` 原地就能跑，`import.meta.url` 向上找 `seed/` 和
+ * `app.asar/src/shell/main.ts` 原地就能跑，`import.meta.url` 向上找 `seed/` 和
  * `ui/web/` 的相对深度也一像素没变。
  *
  * 壳与内核之间只有一条线：**进程边界**。壳不 import `src/core/` 的任何东西
@@ -34,7 +34,7 @@ export type BackendOptions = {
 
 const READY_TIMEOUT = 60_000;
 
-/** 日志文件超过 5 MB 就轮转一代（和 `workspace/logs/` 下的规矩一致）。 */
+/** 日志文件超过 5 MB 就轮转一代（和 `logs/` 下的其它文件同一个规矩）。 */
 function openLog(file: string): ReturnType<typeof createWriteStream> {
 	mkdirSync(dirname(file), { recursive: true });
 	try {

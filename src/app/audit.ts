@@ -1,5 +1,5 @@
 /**
- * 审计：每一次工具调用、每一次模型回复，往 `<appRoot>/logs/tools.jsonl` 写一行。
+ * 审计：每一次工具调用、每一次模型回复，往 `<userRoot>/logs/tools.jsonl` 写一行。
  *
  * 为什么用钩子而不是写在工具里：工具只看得见自己跑成功的那一次。失败的、被拦下的、
  * 框架自己生成的错误结果，工具里一个字都留不下。而排查「他为什么不说话了」的时候，
@@ -9,14 +9,15 @@
  * 建团队权限）留在工具里，那里有 workspaceRoot 和名册，钩子拿不到。
  */
 import { join } from "node:path";
-import { GenerationTask, ToolTask, hook, type HookRegistration } from "../runtime/index.ts";
-import { appendJsonLine } from "../runtime/io.ts";
+import { GenerationTask, ToolTask, hook, type HookRegistration } from "../core/runtime/index.ts";
+import { appendJsonLine } from "../core/runtime/io.ts";
 
 /** 单文件上限；满了轮转成 `.1`（只留一代，审计不是数据仓库）。 */
 const AUDIT_FILE_LIMIT = 5 * 1024 * 1024;
 
 export type AuditDeps = {
-	readonly workspaceRoot: string;
+	/** 日志目录（`<userRoot>/logs/`）。 */
+	readonly logsRoot: string;
 	/** 会话 id → 人的 slug。日志里写 id 没人看得懂，写「苏禾」才看得懂。 */
 	readonly slugOf: (conversationId: number) => string | undefined;
 };
@@ -26,7 +27,7 @@ export type AuditDeps = {
  * 而它是每个会话都选的扩展。
  */
 export function auditHooks(deps: AuditDeps): readonly HookRegistration[] {
-	const file = join(deps.workspaceRoot, "logs", "tools.jsonl");
+	const file = join(deps.logsRoot, "tools.jsonl");
 	/** 工具开始的时刻，按 `callId` 记；`afterTool` 取用时删掉，不攒。 */
 	const started = new Map<string, number>();
 

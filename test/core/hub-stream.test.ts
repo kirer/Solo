@@ -8,12 +8,12 @@
  */
 import { describe, expect, test } from "vitest";
 import type { ServerResponse } from "node:http";
-import { createStreamHub } from "../../src/core/interface/http/sse.ts";
-import { encodeEvent, retryFrame, sseHeaders } from "../../src/core/interface/http/sse.ts";
+import { createStreamHub } from "../../src/interface/http/sse.ts";
+import { encodeEvent, retryFrame, sseHeaders } from "../../src/interface/http/sse.ts";
 import { OWNER_SLUG, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
-import type { ChannelSnapshot } from "../../src/core/app/snapshot.ts";
+import type { ChannelSnapshot } from "../../src/app/snapshot.ts";
 
 const ALL = "all";
 

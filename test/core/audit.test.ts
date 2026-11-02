@@ -8,7 +8,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { auditHooks } from "../../src/core/app/audit.ts";
+import { auditHooks } from "../../src/app/audit.ts";
 
 const dirs: string[] = [];
 
@@ -48,7 +48,7 @@ async function lines(file: string): Promise<Record<string, unknown>[]> {
 describe("审计钩子", () => {
 	it("一次工具调用写一行：谁、哪个工具、成没成、多久", async () => {
 		const root = workspace();
-		const [tools] = auditHooks({ workspaceRoot: root, slugOf: () => "苏禾" });
+		const [tools] = auditHooks({ logsRoot: join(root, "logs"), slugOf: () => "苏禾" });
 		const handlers = tools.handlers as Handlers;
 
 		handlers.beforeTool(call, api);
@@ -62,7 +62,7 @@ describe("审计钩子", () => {
 
 	it("失败的结果标成 ok: false", async () => {
 		const root = workspace();
-		const [tools] = auditHooks({ workspaceRoot: root, slugOf: () => "苏禾" });
+		const [tools] = auditHooks({ logsRoot: join(root, "logs"), slugOf: () => "苏禾" });
 		const handlers = tools.handlers as Handlers;
 
 		handlers.afterTool(call, { isError: true }, api);
@@ -75,7 +75,7 @@ describe("审计钩子", () => {
 
 	it("认不出是谁也照写，只是没有 who", async () => {
 		const root = workspace();
-		const [tools] = auditHooks({ workspaceRoot: root, slugOf: () => undefined });
+		const [tools] = auditHooks({ logsRoot: join(root, "logs"), slugOf: () => undefined });
 		const handlers = tools.handlers as Handlers;
 
 		handlers.afterTool(call, { isError: false }, api);
@@ -87,7 +87,7 @@ describe("审计钩子", () => {
 
 	it("一次模型回复写一行：模型、停止原因、耗时、token", async () => {
 		const root = workspace();
-		const [, generation] = auditHooks({ workspaceRoot: root, slugOf: () => "知言" });
+		const [, generation] = auditHooks({ logsRoot: join(root, "logs"), slugOf: () => "知言" });
 		const handlers = generation.handlers as Handlers;
 
 		handlers.afterResponse(

@@ -5,6 +5,7 @@
  * 正则时，最松的那一处就是路径穿越的入口 —— 这些用例钉住「一份规则 + 两个方向的用法」，
  * 以及旧名字（`assertSlug` / `assertTeamSlug` / `slugify`）仍然可用。
  */
+import { SEED_TEXT } from "./catalog.ts";
 import { describe, expect, test } from "vitest";
 import { assertName, isSafeName, skillDirName, slugifyName } from "../../src/core/naming.ts";
 import { assertTeamSlug } from "../../src/core/team/doc.ts";
@@ -23,21 +24,21 @@ describe("名字字符集", () => {
 
 describe("assertName：校验而非清洗", () => {
 	test("三种名字共用同一套字符判断", () => {
-		expect(assertName("林越", "agent")).toBe("林越");
-		expect(assertName("alpha-2", "team")).toBe("alpha-2");
-		expect(() => assertName("a/b", "skill")).toThrow(/技能名/);
+		expect(assertName("林越", "agent", SEED_TEXT)).toBe("林越");
+		expect(assertName("alpha-2", "team", SEED_TEXT)).toBe("alpha-2");
+		expect(() => assertName("a/b", "skill", SEED_TEXT)).toThrow(/技能名/);
 	});
 
 	test("owner 只能当对话的另一端，不能当 agent", () => {
-		expect(() => assertName("owner", "agent")).toThrow(/slug/);
+		expect(() => assertName("owner", "agent", SEED_TEXT)).toThrow(/slug/);
 		// 团队和技能里没有保留名。
-		expect(assertName("owner", "team")).toBe("owner");
-		expect(assertName("owner", "skill")).toBe("owner");
+		expect(assertName("owner", "team", SEED_TEXT)).toBe("owner");
+		expect(assertName("owner", "skill", SEED_TEXT)).toBe("owner");
 	});
 
 	test("错误文案说清「是什么不能用作名字」", () => {
-		expect(() => assertName("..", "agent")).toThrow(/不能用作slug/);
-		expect(() => assertName("..", "team")).toThrow(/不能用作团队 slug/);
+		expect(() => assertName("..", "agent", SEED_TEXT)).toThrow(/不能用作slug/);
+		expect(() => assertName("..", "team", SEED_TEXT)).toThrow(/不能用作团队 slug/);
 	});
 });
 
@@ -67,7 +68,7 @@ describe("skillDirName：替换而不是拒绝", () => {
 
 describe("团队 slug 用同一套规则，错误文案说清对象", () => {
 	test("assertTeamSlug", () => {
-		expect(assertTeamSlug("alpha")).toBe("alpha");
-		expect(() => assertTeamSlug("a/b")).toThrow(/团队 slug/);
+		expect(assertTeamSlug("alpha", SEED_TEXT)).toBe("alpha");
+		expect(() => assertTeamSlug("a/b", SEED_TEXT)).toThrow(/团队 slug/);
 	});
 });

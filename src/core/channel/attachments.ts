@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Attachment } from "../channel/types.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 
 /** 单文件上限。25MB 够放截图与文稿，又不至于一条消息把磁盘塞满。 */
 export const UPLOAD_MAX_BYTES = 25 * 1024 * 1024;
@@ -272,9 +273,13 @@ export async function readBounded(
  * 提示词里的发言摘要），空正文的消息对模型等于不存在 —— 我发了一张图，agent 什么
  * 都看不到。这份占位是**确定**的（同名同序同字节），并且前端认得这个形状，不会重复画。
  */
-export function placeholderOf(attachments: readonly Attachment[]): string {
+export function placeholderOf(attachments: readonly Attachment[], catalog?: TextCatalog): string {
 	return attachments
-		.map((item) => (item.kind === "image" ? `[图片] ${item.name}` : `[文件] ${item.name}`))
+		.map((item) =>
+			fill(catalog, item.kind === "image" ? "attachments.placeholder.image" : "attachments.placeholder.file", {
+				name: item.name,
+			}),
+		)
 		.join("\n");
 }
 
@@ -344,50 +349,45 @@ function humanBytes(bytes: number): string {
 export async function planAttachments(
 	root: string | undefined,
 	attachments: readonly Attachment[] | undefined,
+	catalog?: TextCatalog,
 ): Promise<AttachmentPlan> {
 	if (attachments === undefined || attachments.length === 0) return NO_ATTACHMENTS;
 
 	const images: InlineImage[] = [];
 	const lines: string[] = [];
 	let totalBytes = 0;
+	const line = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(catalog, key, slots);
 
 	for (const attachment of attachments) {
 		const size = humanBytes(attachment.bytes);
 		if (attachment.kind !== "image") {
-			lines.push(
-				`- 文件「${attachment.name}」（${size}）：用 file(action=read) 读它，path 写 uploads/${attachment.id}`,
-			);
+			lines.push(line("attachments.file", { name: attachment.name, size, id: attachment.id }));
 			continue;
 		}
 		// 图片：能内联就内联，不能就老实说没给。
 		const path = root === undefined ? undefined : uploadPathOf(root, attachment.id);
 		if (path === undefined) {
-			lines.push(`- 图片「${attachment.name}」（${size}）：没有取到文件，别假装看过。`);
+			lines.push(line("attachments.image.missing", { name: attachment.name, size }));
 			continue;
 		}
 		if (attachment.bytes > MAX_INLINE_IMAGE_BYTES) {
-			lines.push(
-				`- 图片「${attachment.name}」（${size}）：太大，没有直接给你看。要细节请我说一句里面的内容，或者裁小一点再发。`,
-			);
+			lines.push(line("attachments.image.too-big", { name: attachment.name, size }));
 			continue;
 		}
 		if (images.length >= MAX_INLINE_IMAGES) {
-			lines.push(
-				`- 图片「${attachment.name}」（${size}）：这条消息图片超过 ${MAX_INLINE_IMAGES} 张，这一张没给你看。`,
-			);
+			lines.push(line("attachments.image.too-many", { name: attachment.name, size, limit: MAX_INLINE_IMAGES }));
 			continue;
 		}
 		if (totalBytes + attachment.bytes > MAX_INLINE_TOTAL_BYTES) {
-			lines.push(
-				`- 图片「${attachment.name}」（${size}）：加上其它图超过单条上限，这一张没给你看。`,
-			);
+			lines.push(line("attachments.image.over-total", { name: attachment.name, size }));
 			continue;
 		}
 		let bytes: Buffer;
 		try {
 			bytes = await readFile(path);
 		} catch {
-			lines.push(`- 图片「${attachment.name}」（${size}）：文件已不在，别假装看过。`);
+			lines.push(line("attachments.image.gone", { name: attachment.name, size }));
 			continue;
 		}
 		const meta = await readUploadMeta(root as string, attachment.id).catch(() => undefined);
@@ -395,7 +395,7 @@ export async function planAttachments(
 		const mimeType = meta?.mime ?? "image/png";
 		images.push({ type: "image", data: bytes.toString("base64"), mimeType });
 		totalBytes += attachment.bytes;
-		lines.push(`- 图片「${attachment.name}」已经直接给你看了。`);
+		lines.push(line("attachments.image.ok", { name: attachment.name }));
 	}
 
 	return { images, lines };

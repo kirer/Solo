@@ -5,8 +5,8 @@
  * 连续思考合并、工具结果并进前一个调用、截断有话说。
  */
 import { describe, expect, it } from "vitest";
-import { groupsOf } from "../../src/core/app/read.ts";
-import { buildTurn, slimTurn, stripAnsi, summaryOf, withoutSteps } from "../../src/core/app/trace.ts";
+import { groupsOf } from "../../src/app/read.ts";
+import { buildTurn, slimTurn, stripAnsi, summaryOf, withoutSteps } from "../../src/app/trace.ts";
 import type { EntryRecord } from "../../src/core/runtime/index.ts";
 
 

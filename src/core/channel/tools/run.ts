@@ -10,6 +10,7 @@ import { clip, MODEL_LIMIT } from "./guards.ts";
 import { readIdentity } from "../../agent/identity.ts";
 import { ensureDir } from "../../runtime/io.ts";
 import { workspaceOf } from "../../layout.ts";
+import { fill, type TextCatalog } from "../../md/catalog.ts";
 
 /**
  * 洗掉终端控制序列（颜色、光标）。命令输出里的 `\u001b[90m` 进了提示词和界面就是
@@ -21,33 +22,39 @@ function plain(text: string): string {
 }
 
 /** 后台命令跑完的那条留痕：命令、输出尾巴、怎么结束的。 */
-function renderRunResult(command: string, outcome: RunOutcome): string {
+function renderRunResult(command: string, outcome: RunOutcome, catalog?: TextCatalog): string {
 	const body = plain(outcome.log).trim();
 	const ending = outcome.timedOut
-		? `（超过 ${Math.round(RUN_LIMIT_MS / 60_000)} 分钟，已杀掉；全文在 ${outcome.logPath}）`
-		: `(退出码 ${outcome.code ?? "被信号结束"}；全文在 ${outcome.logPath})`;
-	return [`后台命令跑完了。`, `$ ${command}`, ...(body === "" ? ["（没有输出）"] : [body]), ending].join("\n");
+		? fill(catalog, "run.result.timeout", {
+				minutes: Math.round(RUN_LIMIT_MS / 60_000),
+				path: outcome.logPath,
+			})
+		: fill(catalog, "run.result.exit", {
+				code: outcome.code ?? fill(catalog, "run.result.signal"),
+				path: outcome.logPath,
+			});
+	return fill(catalog, "run.result.done", {
+		command,
+		body: body === "" ? fill(catalog, "run.result.empty") : body,
+		ending,
+	});
 }
 
 export function createRunTool(deps: CoreToolDeps) {
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(deps.text, key, slots);
 	const tool = defineTool({
 		name: "run",
-		description: [
-			"执行一条 shell 命令，返回 stdout / stderr / 退出码。",
-			"`background: true` = 丢到后台跑（最多 30 分钟），立刻返回；跑完结果发回这个频道并叫醒你。",
-			"以 `&` 结尾或以 `nohup` 开头 = 纯脱手，立即返回 PID，永远不会有回音。",
-		].join(""),
+		description: t("run.description"),
 		parameters: Type.Object({
-			command: Type.String({ description: "要执行的命令" }),
-			cwd: Type.Optional(Type.String({ description: "工作目录，默认是你自己的 workspace（`members/<你>/workspace`）；写团队的事可以传那个团队的 workspace 路径" })),
-			timeout: Type.Optional(Type.Number({ description: "超时秒数，默认 60" })),
-			background: Type.Optional(
-				Type.Boolean({ description: "丢到后台跑，跑完把结果发回频道并叫醒你（最多 30 分钟）" }),
-			),
+			command: Type.String({ description: t("run.param.command") }),
+			cwd: Type.Optional(Type.String({ description: t("run.param.cwd") })),
+			timeout: Type.Optional(Type.Number({ description: t("run.param.timeout") })),
+			background: Type.Optional(Type.Boolean({ description: t("run.param.background") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx);
 			if (typeof slug !== "string") return text(slug);
 			// 默认在**自己的**工作目录里干活：一个人一个目录，互不踩。目录不在就先建。
 			const ownDir = (await readIdentity(deps.layout.agentRoots, slug))?.dir ?? join(deps.layout.membersRoot, slug);
@@ -76,7 +83,7 @@ export function createRunTool(deps: CoreToolDeps) {
 							{
 								channelId: target.channelId,
 								from: OWNER,
-								text: renderRunResult(command, outcome),
+								text: renderRunResult(command, outcome, deps.text),
 								at: Date.now(),
 								kind: "note",
 								noteOf: "run",
@@ -91,13 +98,7 @@ export function createRunTool(deps: CoreToolDeps) {
 					},
 				});
 				const title = state.channels[target.channelId]?.title ?? target.channelId;
-				return text(
-					[
-						`$ ${command}`,
-						`(后台运行，PID ${job.pid}）`,
-						`跑完结果会发到「${title}」并叫你。这中间你可以干别的，别轮询。`,
-					].join("\n"),
-				);
+				return text(t("run.background.started", { command, pid: job.pid, title }));
 			}
 
 			// 后台命令：以 & 结尾或以 nohup 开头 → detached spawn，立即返回 PID。
@@ -113,7 +114,7 @@ export function createRunTool(deps: CoreToolDeps) {
 				});
 				child.unref();
 				const pid = child.pid ?? -1;
-				return text([`$ ${command}`, `(后台运行，PID ${pid}）`].join("\n"));
+				return text(t("run.background.detached", { command, pid }));
 			}
 
 			// 前台命令：等它跑完。
@@ -136,13 +137,13 @@ export function createRunTool(deps: CoreToolDeps) {
 			const buffer = [
 				`$ ${command}`,
 				...(out === "" ? [] : [out]),
-				...(err === "" ? [] : [`[stderr] ${err}`]),
-				...(result.tooMuch ? ["（输出超过 512 KB，后面的被丢弃）"] : []),
-				`(退出码 ${result.code})`,
+				...(err === "" ? [] : [t("run.foreground.stderr", { text: err })]),
+				...(result.tooMuch ? [t("run.foreground.too-much")] : []),
+				t("run.foreground.exit", { code: result.code ?? "?" }),
 			].join("\n");
 			// 剪的尺度：回给模型的是它继续干活要用的，给得宽一些，但**绝不能全量** ——
 			// 一次跑整个测试套件就能把 512 KB 塞进上下文，后面几轮全在付费读它。
-			return text(clip(buffer, MODEL_LIMIT));
+			return text(clip(buffer, MODEL_LIMIT, deps.text));
 		},
 	});
 	return tool;

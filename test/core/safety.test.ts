@@ -1,3 +1,4 @@
+import { SEED_TEXT } from "./catalog.ts";
 import { describe, expect, it } from "vitest";
 import { clip, resolveInWorkspace } from "../../src/core/channel/tools/index.ts";
 
@@ -38,12 +39,12 @@ describe("resolveInWorkspace", () => {
 describe("clip", () => {
 	it("没超限就一个字不动", () => {
 		const source = "短输出";
-		expect(clip(source, 100)).toBe(source);
+		expect(clip(source, 100, SEED_TEXT)).toBe(source);
 	});
 
 	it("超限时留头留尾，并说清楚省略了多少", () => {
 		const source = `${"头".repeat(500)}${"中".repeat(2000)}${"尾".repeat(500)}`;
-		const clipped = clip(source, 1_000);
+		const clipped = clip(source, 1_000, SEED_TEXT);
 		expect(clipped.length).toBeLessThan(1_100);
 		expect(clipped.startsWith("头")).toBe(true);
 		// 尾巴必须保住：命令输出的结论（测试摘要、报错栈）都在结尾。
@@ -53,7 +54,7 @@ describe("clip", () => {
 
 	it("裁剪结果不会因为多次调用而继续塌缩", () => {
 		const source = "x".repeat(10_000);
-		const once = clip(source, 1_000);
-		expect(clip(once, 1_000)).toBe(once);
+		const once = clip(source, 1_000, SEED_TEXT);
+		expect(clip(once, 1_000, SEED_TEXT)).toBe(once);
 	});
 });

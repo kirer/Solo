@@ -13,6 +13,7 @@
  * 写的是「queued and placed submissions」），`unanswered` 是已结算状态，扫不到。
  */
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 
 /** 一次提交结算时的形态。只关心两件事：成没成（`answer` 是什么）、为什么没成。 */
 type SettledLike = {
@@ -37,19 +38,22 @@ type AwaitableSubmission = {
  * 只翻我们真见过的：翻不出来就把原始原因原样贴出来 —— 编一句「未知错误」等于
  * 把唯一的线索丢掉。
  */
-export function reasonText(reason: string | undefined): string {
-	if (reason === undefined || reason === "") return "没有说明原因";
+export function reasonText(reason: string | undefined, catalog?: TextCatalog): string {
+	if (reason === undefined || reason === "") return fill(catalog, "unanswered.reason.none");
 	// 两种原因共用 `no_model`：压根没配（ADR-023）和引用解析不到。提示要能指到去哪儿看。
-	if (reason === "no_model") return "没有可用的模型（还没配，或 `settings.json` 的 `defaultModel` 指向了不存在的模型）——去「设置 → 模型」看一眼";
-	if (reason === "aborted") return "这一轮被中断了";
-	if (reason === "run_failed") return "这一轮跑失败了";
-	if (reason === "model_error") return "调模型失败（网关拒了这次请求，通常是模型名、额度或网关本身的问题）";
-	return reason;
+	const known: Record<string, string> = {
+		no_model: "unanswered.reason.no-model",
+		aborted: "unanswered.reason.aborted",
+		run_failed: "unanswered.reason.run-failed",
+		model_error: "unanswered.reason.model-error",
+	};
+	const key = known[reason];
+	return key === undefined ? reason : fill(catalog, key);
 }
 
 /** 频道里那一行留痕。`#93 叫了 @知言，但他这一轮没答上来：…` */
-export function renderUnanswered(seq: number, label: string, reason: string | undefined): string {
-	return `#${seq} 叫了 @${label}，但他这一轮没答上来：${reasonText(reason)}。`;
+export function renderUnanswered(seq: number, label: string, reason: string | undefined, catalog?: TextCatalog): string {
+	return fill(catalog, "unanswered.line", { seq, label, reason: reasonText(reason, catalog) });
 }
 
 /**

@@ -13,7 +13,7 @@ import {
 	readUploadMeta,
 	sweepOrphanUploads,
 	uploadPathOf,
-} from "../channel/attachments.ts";
+} from "../core/channel/attachments.ts";
 
 /** 取一个附件时要给传输层的东西。 */
 export type UploadForRead = {

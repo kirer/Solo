@@ -29,6 +29,7 @@ import {
 	type FrontmatterField,
 } from "../md/doc.ts";
 import { assertName } from "../naming.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 import { listDirSorted } from "../runtime/io.ts";
 
 export const TEAM_FILE = "README.md";
@@ -112,8 +113,8 @@ export function renderTeamFile(doc: TeamFile): string {
  * 团队 slug 来自 agent 的自由文本（`remember(scope=team)` 的 `team` 参数），
  * 不能只信调用方 —— 这里是唯一的闸。
  */
-export function assertTeamSlug(slug: string): string {
-	return assertName(slug, "team");
+export function assertTeamSlug(slug: string, text?: TextCatalog): string {
+	return assertName(slug, "team", text);
 }
 
 /**
@@ -220,17 +221,14 @@ export function leadProblem(input: {
 	readonly lead: string | undefined;
 	readonly slugs: readonly string[];
 	readonly assistants: readonly string[];
+	readonly text?: TextCatalog;
 }): string | undefined {
 	const lead = input.lead?.trim();
-	if (lead === undefined || lead === "") {
-		return "团队 README 的 `---` 头里必须写 `lead: <团队管理员的 slug>`。先招一个团队管理员，再把他的 slug 写进 lead。";
-	}
+	if (lead === undefined || lead === "") return fill(input.text, "org.team.lead.missing");
 	if (!input.slugs.includes(lead)) {
-		return `lead 指向的「${lead}」不在名册里。现有 slug：${input.slugs.join("、")}。lead 要写 slug，不是显示名。`;
+		return fill(input.text, "org.team.lead.unknown", { slug: lead, slugs: input.slugs.join("、") });
 	}
-	if (input.assistants.includes(lead)) {
-		return `「${lead}」是直接向我汇报的助理，不能当团队管理员。先招一个团队成员当管理员，再把他的 slug 写进 lead。`;
-	}
+	if (input.assistants.includes(lead)) return fill(input.text, "org.team.lead.assistant", { slug: lead });
 	return undefined;
 }
 
@@ -244,9 +242,10 @@ export function leadProblem(input: {
 export function createTeamProblem(input: {
 	readonly self: string;
 	readonly assistants: readonly string[];
+	readonly text?: TextCatalog;
 }): string | undefined {
 	if (input.assistants.includes(input.self)) return undefined;
-	return `建团队只有助理能做（直接向我汇报的人）。你是「${input.self}」——需要新团队，在你的频道里向上级说，由他来找我。`;
+	return fill(input.text, "org.team.create.denied", { slug: input.self });
 }
 
 /** 团队里的 agent（谁在 `identity.md` 里写了 `team: <slug>`）。 */

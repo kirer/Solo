@@ -13,8 +13,8 @@ import {
 	keepAliveFrame,
 	retryFrame,
 	sseHeaders,
-} from "../../src/core/interface/http/sse.ts";
-import type { ViewMessage, ViewOrg } from "../../src/core/view/dto.ts";
+} from "../../src/interface/http/sse.ts";
+import type { ViewMessage, ViewOrg } from "../../src/view/dto.ts";
 
 const AT = 1_700_000_000_000;
 

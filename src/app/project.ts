@@ -13,12 +13,14 @@
  *
  * 纯函数、无 IO：状态由调用方递进来，所以单测可以直接喂一个假频道。
  */
-import { OWNER_SLUG, labelsOf, type Identity } from "../agent/identity.ts";
-import { memoryDigest, sectionsOf, type MemoryStamp } from "../agent/memory.ts";
-import { conversationFor, labelIn, type DirectoryState } from "../agent/roster.ts";
-import { chatKind, type Channel, type ChannelState, type Message } from "../channel/types.ts";
-import { readMarkOf, unreadCount } from "../channel/rules.ts";
-import { excerptOf } from "../md/oneline.ts";
+import { OWNER_SLUG, labelsOf, type Identity } from "../core/agent/identity.ts";
+import { type MemoryStamp } from "../core/agent/memory.ts";
+import { memoryDigest, sectionsOf } from "../core/md/memory.ts";
+import { conversationFor, labelIn, type DirectoryState } from "../core/agent/roster.ts";
+import { chatKind, type Channel, type ChannelState, type Message } from "../core/channel/types.ts";
+import { readMarkOf, unreadCount } from "../core/channel/rules.ts";
+import { excerptOf } from "../core/md/oneline.ts";
+import type { TextCatalog } from "../core/md/catalog.ts";
 import type {
 	AttentionItem,
 	TeamDoingOf,
@@ -364,8 +366,11 @@ export function attentionItems(
  * 记忆文件的概况：有没有、几条、摘要。个人与团队共用一套分段口径（`sectionsOf`），
  * 所以「几条」在两处永远是同一个数。
  */
-export function memorySummary(source: string): { exists: boolean; entries: number; digest: string | null } {
-	return { exists: source !== "", entries: sectionsOf(source).length, digest: memoryDigest(source) ?? null };
+export function memorySummary(
+	source: string,
+	catalog?: TextCatalog,
+): { exists: boolean; entries: number; digest: string | null } {
+	return { exists: source !== "", entries: sectionsOf(source).length, digest: memoryDigest(source, catalog) ?? null };
 }
 
 /**

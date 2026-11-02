@@ -5,7 +5,7 @@ import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { sectionKeyOf } from "../../src/core/agent/sections.ts";
 import { parseDoc } from "../../src/core/md/doc.ts";
-import { seedOwnerAssistant, seedPersonalSkills, syncAllSkills } from "../../src/core/shell/seed.ts";
+import { seedOwnerAssistant, seedPersonalSkills, syncAllSkills } from "../../src/shell/seed.ts";
 import { listSkills, readSkill, writeAllSkill } from "../../src/core/agent/skills.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";
 

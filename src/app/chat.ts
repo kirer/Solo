@@ -9,11 +9,11 @@
  * （P0-4 冒充）、附件 id 必须在磁盘上真存在、已读位置要夹到频道真实上界。这些规则
  * 换成 CLI 或工具调用同样成立，所以它们不属于 HTTP。
  */
-import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { OWNER_SLUG, readIdentity } from "../agent/identity.ts";
-import { ChannelDoc, dmId, type Attachment, type ChannelState } from "../channel/types.ts";
-import { markRead as markReadDoc } from "../channel/rules.ts";
-import { ensureOwnerDm } from "../channel/membership.ts";
+import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
+import { OWNER_SLUG, readIdentity } from "../core/agent/identity.ts";
+import { ChannelDoc, dmId, type Attachment, type ChannelState } from "../core/channel/types.ts";
+import { markRead as markReadDoc } from "../core/channel/rules.ts";
+import { ensureOwnerDm } from "../core/channel/membership.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,
@@ -25,7 +25,7 @@ import {
 	putUpload,
 	readBounded,
 	readUploadMeta,
-} from "../channel/attachments.ts";
+} from "../core/channel/attachments.ts";
 import type { ViewOk, ViewPost, ViewUploaded } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { emptyChannels } from "./snapshot.ts";
@@ -69,7 +69,7 @@ export function createChat(shell: CoreServices) {
 		// 纯附件（没写正文）也允许发：「只有附件」的正文必须是**非空**且确定的，否则下游按
 		// 「正文非空」过滤的地方（接力计数、未读）会把这条消息当成不存在。
 		const typed = (body.text ?? "").trim();
-		const text = typed === "" ? placeholderOf(attachments) : typed;
+		const text = typed === "" ? placeholderOf(attachments, shell.text) : typed;
 		if (text === "") throw new AppError("bad-request", "需要 text 或附件");
 
 		// 发件人：**默认只认我**。这个接口是网页后端，能冒充任何人是审计里的 P0-4：

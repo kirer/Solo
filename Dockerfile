@@ -32,6 +32,6 @@ EXPOSE 7788
 # 非 root 运行。/app/data 挂载目录需要对 uid 1000 可写（见 docs/DEPLOY.md）
 USER node
 
-CMD ["node", "--experimental-strip-types", "src/core/shell/main.ts", \
+CMD ["node", "--experimental-strip-types", "src/shell/main.ts", \
      "--port", "7788", "--host", "0.0.0.0", \
      "--app-root", "/app/data/app", "--user-root", "/app/data/user"]

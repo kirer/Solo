@@ -15,9 +15,9 @@ import { join } from "node:path";
 import { createRegistry, setupModels } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
 import type { ModelSetup } from "../../src/core/runtime/models.ts";
-import { assembleCore, type CoreShell } from "../../src/core/shell/assemble.ts";
+import { assembleCore, type CoreShell } from "../../src/shell/assemble.ts";
 import { resolveLayout, type Layout } from "../../src/core/layout.ts";
-import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
+import { seedPromptTemplates, seedTextFiles } from "../../src/shell/seed.ts";
 
 /** `openCore` 的选项，除了 `databasePath` / `models` 由 sandbox 默认给。 */
 type OpenOptions = Partial<Parameters<typeof openCore>[0]>;
@@ -52,6 +52,9 @@ async function sandbox(prefix = "core-"): Promise<Sandbox> {
 	await mkdir(layout.appRoot, { recursive: true });
 	await mkdir(agentsRoot, { recursive: true });
 	await mkdir(teamsRoot, { recursive: true });
+	// 文案目录（`text/`）是装配时的必需输入：空目录会让工具描述变成空串。
+	// 生产里由 `main.ts` 播种，测试里在这里播一次。
+	await seedTextFiles(layout);
 
 	const opened: CoreRuntime[] = [];
 	let configured: ModelSetup | undefined;

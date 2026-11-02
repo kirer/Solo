@@ -6,9 +6,9 @@
  * 把账结掉：活着的杀掉（它还在没人知道的地方占着端口），死掉的照实说。
  */
 import { join } from "node:path";
-import { sweepRunJobs } from "../channel/jobs.ts";
-import { OWNER } from "../channel/types.ts";
-import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
+import { sweepRunJobs } from "../core/channel/jobs.ts";
+import { OWNER } from "../core/channel/types.ts";
+import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
 import type { CoreServices } from "./types.ts";
 
 export function createRuns(shell: CoreServices) {

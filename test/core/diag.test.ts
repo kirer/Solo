@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createDiag, formatRuntimeReport } from "../../src/core/app/diag.ts";
+import { createDiag, formatRuntimeReport } from "../../src/app/diag.ts";
 import { toRuntimeReport } from "../../src/core/runtime/open.ts";
 
 const dirs: string[] = [];
@@ -75,7 +75,7 @@ describe("运行报告的格式化（纯函数）", () => {
 describe("落盘与 /api/diag 看到的最近一条", () => {
 	it("写进 logs/runtime.jsonl", async () => {
 		const root = workspace();
-		const diag = createDiag(root);
+		const diag = createDiag(join(root, "logs"));
 		diag.recordRuntimeReport({
 			type: "task_parked",
 			at: "2026-01-01T00:00:00.000Z",
@@ -89,7 +89,7 @@ describe("落盘与 /api/diag 看到的最近一条", () => {
 
 	it("最近一条跳过 task_outdated（每次启动都会有的正常现象）", async () => {
 		const root = workspace();
-		const diag = createDiag(root);
+		const diag = createDiag(join(root, "logs"));
 		diag.recordRuntimeReport({ type: "task_outdated", at: "2026-01-01T00:00:00.000Z" });
 		expect(diag.lastReport()).toBeUndefined();
 		diag.recordRuntimeReport({
@@ -108,7 +108,7 @@ describe("落盘与 /api/diag 看到的最近一条", () => {
 
 	it("超长的报告被截到单条上限以内（不静默丢字段）", async () => {
 		const root = workspace();
-		const diag = createDiag(root);
+		const diag = createDiag(join(root, "logs"));
 		diag.recordRuntimeReport({
 			type: "extension_error",
 			at: "2026-01-01T00:00:00.000Z",

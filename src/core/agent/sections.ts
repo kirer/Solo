@@ -13,7 +13,8 @@ import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
 import { chainUp, managerOf, nameOf, readAllIdentities, readIdentity, reportsOf, OWNER_SLUG, type Identity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
-import { memoryDigest, readMemory } from "./memory.ts";
+import { readMemory } from "./memory.ts";
+import { memoryDigest } from "../md/memory.ts";
 import { loadRules } from "./rules.ts";
 import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
@@ -23,6 +24,7 @@ import { agentDirLabel, type Layout } from "../layout.ts";
 import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../md/prompt.ts";
 import { byName } from "../runtime/io.ts";
 import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../md/text.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 
 export type AgentPaths = {
 	/** 两个根的布局：提示词、密钥在 app 根；技能、团队、规矩在用户根。 */
@@ -41,6 +43,8 @@ export type AgentPaths = {
 	 * 装一次就在每个人的提示词里出现一次。空数组 = 这一段不存在（不写「插件：无」）。
 	 */
 	readonly extraPrompt?: readonly string[];
+	/** 机械文案目录（`text/channel.md`）：兜底句与技能来源标签从这里取。 */
+	readonly text?: TextCatalog;
 };
 
 /** 一个会话的对外形状。`kind` 由成员推（`channel/state.ts` 的 `chatKind`），不存字段。 */
@@ -80,25 +84,25 @@ async function teamSlots(teamsRoot: string, team: string): Promise<Record<string
  * 直接拍注册表：注册表里有什么，就是它真能调用的全部。**不**读任何清单文件 ——
  * 清单一旦和注册表不一致，提示词就会撒谎（写着有、调了失败，或者反过来）。
  */
-export function registeredTools(registry: Registry): readonly CapabilityLine[] {
+export function registeredTools(registry: Registry, catalog?: TextCatalog): readonly CapabilityLine[] {
 	const snapshot = registry.snapshot();
 	const lines = new Map<string, CapabilityLine>();
 	for (const { tool } of snapshot.tools()) {
 		const name = (tool as { readonly name?: string }).name;
 		if (name === undefined) continue;
-		lines.set(name, { name, summary: summaryOf(tool) });
+		lines.set(name, { name, summary: summaryOf(tool, catalog) });
 	}
 	return [...lines.values()].sort(byName);
 }
 
-function summaryOf(tool: unknown): string {
+function summaryOf(tool: unknown, catalog?: TextCatalog): string {
 	const description = (tool as { readonly description?: unknown }).description;
 	if (typeof description === "string" && description.trim() !== "") {
 		// 只取第一句：能力清单是索引，不是手册。
 		const first = description.trim().split(/(?<=。)|\.\s/)[0];
 		return (first ?? description).trim();
 	}
-	return "（没有说明）";
+	return fill(catalog, "sections.no-summary");
 }
 
 /**
@@ -112,8 +116,8 @@ export function sectionKeyOf(slug: string): string {
 	return `agent-${Buffer.from(slug, "utf8").toString("hex")}`;
 }
 
-const identitylessPrompt = (slug: string): string =>
-	`# 你还没有身份文件\n\n目录：\`members/${slug}/\`。\n`;
+const identitylessPrompt = (slug: string, catalog?: TextCatalog): string =>
+	fill(catalog, "sections.identityless", { slug });
 
 /** `名字（\`slug\`）`—— 名字给人看，slug 给工具用，两个都要。 */
 function withSlug(name: string, slug: string): string {
@@ -121,31 +125,34 @@ function withSlug(name: string, slug: string): string {
 }
 
 /** 技能一行：名字 — 什么时候用（来源）。正文不在提示词里，读了才知道细节。 */
-function skillLine(skill: {
-	readonly name: string;
-	readonly description: string;
-	readonly scope?: "all" | "team" | "personal";
-	readonly overrides?: boolean;
-}): string {
-	const source =
+function skillLine(
+	skill: {
+		readonly name: string;
+		readonly description: string;
+		readonly scope?: "all" | "team" | "personal";
+		readonly overrides?: boolean;
+	},
+	catalog?: TextCatalog,
+): string {
+	const key =
 		skill.scope === "personal"
 			? skill.overrides === true
-				? "（你自己改过的版本，覆盖了同名的团队/全员技能）"
-				: "（你自己写的）"
+				? "sections.skill.personal-override"
+				: "sections.skill.personal"
 			: skill.scope === "team"
 				? skill.overrides === true
-					? "（团队改过的版本，覆盖了全员的同名技能）"
-					: "（团队共用）"
-				: "（全员通用）";
-	return `- \`${skill.name}\` — ${skill.description}${source}`;
+					? "sections.skill.team-override"
+					: "sections.skill.team"
+				: "sections.skill.all";
+	return `- \`${skill.name}\` — ${skill.description}${fill(catalog, key)}`;
 }
 
 /** 频道：在哪些群、和我的私聊开没开。标签与「没有时怎么说」都在模板里。 */
-function chatSlots(chats: readonly ChatRef[]): Record<string, SlotValue> {
+function chatSlots(chats: readonly ChatRef[], catalog?: TextCatalog): Record<string, SlotValue> {
 	const groups = chats.filter((chat) => chat.kind === "group");
 	return {
 		"chats.groups": groups.length === 0 ? undefined : groups.map((chat) => `「${chat.title}」`).join("、"),
-		"chats.dm": chats.some((chat) => chat.kind === "dm") ? "已开" : undefined,
+		"chats.dm": chats.some((chat) => chat.kind === "dm") ? fill(catalog, "sections.chats.dm") : undefined,
 	};
 }
 
@@ -174,6 +181,10 @@ async function slotsFor(
 		"self.slug": self.slug,
 		"self.body": self.body,
 		"self.dir": agentDirLabel(paths.layout, self.dir),
+		// 两个根的绝对路径。组织文件在哪，模型只能从这里知道；相对路径（`teams/…`）
+		// 在 `run` 里指的是「当前目录下的 teams/」，很容易写进应用根（实测踩过）。
+		"root.user": paths.layout.userRoot,
+		"root.app": paths.layout.appRoot,
 	};
 
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
@@ -187,7 +198,11 @@ async function slotsFor(
 	if (need.has("manager")) {
 		const manager = managerOf(all, self.slug);
 		slots["manager"] =
-			manager === undefined ? undefined : manager === OWNER_SLUG ? "我（用户本人）" : withSlug(nameOf(all, manager), manager);
+			manager === undefined
+				? undefined
+				: manager === OWNER_SLUG
+					? fill(paths.text, "sections.owner")
+					: withSlug(nameOf(all, manager), manager);
 	}
 	if (need.has("reports")) {
 		const reports = reportsOf(all, self.slug);
@@ -205,15 +220,23 @@ async function slotsFor(
 		slots["peers"] =
 			peers.length === 0
 				? undefined
-				: peers.map((item) => `${item.name ?? item.slug}（${item.title ?? "成员"}）`).join("、");
+				: peers
+						.map((item) =>
+							fill(paths.text, "sections.peer", {
+								name: item.name ?? item.slug,
+								title: item.title ?? fill(paths.text, "sections.peer.title"),
+							}),
+						)
+						.join("、");
 	}
 	if (need.has("chats.groups") || need.has("chats.dm")) {
 		const chats = paths.chats === undefined ? undefined : await paths.chats(slug);
-		Object.assign(slots, chats === undefined ? {} : chatSlots(chats));
+		Object.assign(slots, chats === undefined ? {} : chatSlots(chats, paths.text));
 	}
 	// 模板里唯一允许出现工具名的地方：`{{tool:say}}`。名字从注册表现拍 —— 工具改了名，
 	// 提示词自动跟着变，不会教错。注册表里没有这个名字就留空（渲染成「（未设置）」并 warn）。
-	const tools = wants("tools") || [...need].some((name) => name.startsWith("tool:")) ? registeredTools(registry) : [];
+	const tools =
+		wants("tools") || [...need].some((name) => name.startsWith("tool:")) ? registeredTools(registry, paths.text) : [];
 	if (need.has("tools")) {
 		slots["tools"] =
 			tools.length === 0 ? undefined : tools.map((tool) => `- \`${tool.name}\` — ${tool.summary}`).join("\n");
@@ -227,11 +250,12 @@ async function slotsFor(
 		// 记忆跟着**身份目录**走：助理在 app 根，成员在用户根。
 		const selfDir = (await readIdentity(paths.layout.agentRoots, slug))?.dir;
 		const memory = selfDir === undefined ? undefined : await readMemory(selfDir);
-		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory);
+		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory, paths.text);
 	}
 	if (need.has("skills")) {
 		const skills = await promptSkills(paths, slug, self.team);
-		slots["skills"] = skills.length === 0 ? undefined : skills.map(skillLine).join("\n");
+		slots["skills"] =
+			skills.length === 0 ? undefined : skills.map((skill) => skillLine(skill, paths.text)).join("\n");
 	}
 
 	const team = self.team;
@@ -242,7 +266,7 @@ async function slotsFor(
 		const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.layout.teamsRoot, team);
 		slots["team.members"] = members === undefined || members.length === 0 ? undefined : members.map((item) => `\`${item}\``).join("、");
 		// 新团队还没有记忆：模板的默认句会说这句真话（`{{team.memory ?? …}}`）。
-		slots["team.memory"] = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory);
+		slots["team.memory"] = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory, paths.text);
 	}
 
 	return slots;
@@ -273,7 +297,7 @@ async function segmentText(
 	segment: string,
 	templates: readonly PromptTemplate[],
 ): Promise<string> {
-	if (self === undefined) return segment === "who" ? identitylessPrompt(slug) : "";
+	if (self === undefined) return segment === "who" ? identitylessPrompt(slug, paths.text) : "";
 	const template = templates.find((item) => item.segment === segment);
 	if (template === undefined) return "";
 	const slots = await slotsFor(registry, paths, slug, self, template);
@@ -328,7 +352,7 @@ async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: 
 	const templates = await systemTemplates(paths.layout.appRoot);
 	const segments: { readonly segment: string; readonly text: string }[] = [];
 	if (self === undefined) {
-		return [{ segment: "who", text: identitylessPrompt(slug) }];
+		return [{ segment: "who", text: identitylessPrompt(slug, paths.text) }];
 	}
 	for (const template of templates) {
 		segments.push({ segment: template.segment, text: await segmentText(registry, paths, slug, self, template.segment, templates) });

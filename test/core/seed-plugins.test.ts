@@ -9,7 +9,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { SEED_MANIFEST_FILE, seedPlugins } from "../../src/core/shell/seed.ts";
+import { SEED_MANIFEST_FILE, seedPlugins } from "../../src/shell/seed.ts";
 import { resolveLayout } from "../../src/core/layout.ts";
 
 const boxes: string[] = [];

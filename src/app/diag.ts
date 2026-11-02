@@ -3,10 +3,10 @@
  *
  * 我两次报「agent 在跑的时候页面卡死」，而我在无头 Chrome 里量出来是「长任务 0、
  * 最慢帧 17ms」—— 两边对不上，靠猜猜不完。让浏览器在真卡的时候把「卡了多久、当时
- * 在干什么」写到 `<appRoot>/logs/jank.jsonl`，复现一次就能读。
+ * 在干什么」写到 `<userRoot>/logs/jank.jsonl`，复现一次就能读。
  *
  * 还有第二份日志：底座的**运行报告**（任务抛异常、重启超限被挂起、storage 让整个
- * Session 关掉……）写 `<appRoot>/logs/runtime.jsonl`。它们以前被底座扔掉了，症状
+ * Session 关掉……）写 `<userRoot>/logs/runtime.jsonl`。它们以前被底座扔掉了，症状
  * 是「这个人忽然不说话了」，而日志里一个字都没有。最近一条不正常的报告还会跟着
  * `GET /api/diag` 出去，界面上能看见。
  *
@@ -14,8 +14,8 @@
  * 满了就轮转一次。否则一个循环报错的页面能把工作区写爆。
  */
 import { join } from "node:path";
-import type { RuntimeReport } from "../runtime/index.ts";
-import { appendJsonLine } from "../runtime/io.ts";
+import type { RuntimeReport } from "../core/runtime/index.ts";
+import { appendJsonLine } from "../core/runtime/io.ts";
 
 /** 诊断日志单文件上限；超过就轮转成 `.1`（只留一代，诊断不需要历史）。 */
 const DIAG_FILE_LIMIT = 5 * 1024 * 1024;
@@ -77,7 +77,7 @@ function clipReport(report: RuntimeReport): unknown {
 }
 
 
-export function createDiag(workspaceRoot: string) {
+export function createDiag(logsRoot: string) {
 	/** 最近一条「不正常」的运行报告（进程内；落盘的全文在 `logs/runtime.jsonl`）。 */
 	let last: { readonly type: string; readonly at: string; readonly text: string } | undefined;
 	/** 谁想知道「出事了」（看门狗）。 */
@@ -86,7 +86,7 @@ export function createDiag(workspaceRoot: string) {
 	/** 落一条诊断。写不进去不该影响任何事。 */
 	async function record(body: { readonly kind?: string; readonly entries?: unknown }): Promise<{ ok: true }> {
 		try {
-			const file = join(workspaceRoot, "logs", "jank.jsonl");
+			const file = join(logsRoot, "jank.jsonl");
 			const entry = { ...body, entries: clipEntries(body.entries), at: new Date().toISOString() };
 			await appendJsonLine(file, entry, { rotateAt: DIAG_FILE_LIMIT });
 		} catch {
@@ -118,7 +118,7 @@ export function createDiag(workspaceRoot: string) {
 
 	async function appendReport(report: RuntimeReport): Promise<void> {
 		try {
-			const file = join(workspaceRoot, "logs", "runtime.jsonl");
+			const file = join(logsRoot, "runtime.jsonl");
 			await appendJsonLine(file, clipReport(report), { rotateAt: DIAG_FILE_LIMIT });
 		} catch (error) {
 			// 报告写不进盘不许影响进程：它已经在 lastReport 里了。

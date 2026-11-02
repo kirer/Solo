@@ -9,35 +9,17 @@
  * 一定长度后，模型对中段的内容注意力最差）。所以提示词里只放**目录**（每条的
  * 小节标题），要用哪一条由 agent 自己 `read_history(scope=memory)`。
  *
- * ## 机器守的三条底线
- *
- * 模型判断不了这三件事，所以写在代码里（其余都交给它自己）：一条不能太长（否则
- * 一条记忆吃掉整个目录预算）、不能重复、不能是密钥。密钥那条最要紧 —— 记忆会被
- * 拼进每一轮提示词，一条 key 写进来就是永久泄露（`secrets.ts` 是最后一道网，
- * 这里是最前面那道）。
+ * 切段、长度上限、密钥形状、目录预算这些**格式**的事在 `md/memory.ts` —— 团队记忆
+ * （`teams/<slug>/memory.md`）用的是同一份格式，不该由这个文件垄断。
+ * 这里只剩「一个人怎么读写自己的记忆」：追加 / 整篇重写 / 留痕 / 时间线。
  */
 import { join } from "node:path";
 import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
 import { appendJournal } from "./journal.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
+import { entryProblem, problemText, sectionsOf } from "../md/memory.ts";
 
 export const MEMORY_FILE = "memory.md";
-
-/** 提示词里最多列几条标题。超过就只给「还有 N 条」，让它自己 read_history。 */
-export const DIGEST_LIMIT = 12;
-
-/**
- * 硬上限（字符）。`entry` 是**一条**，`main` 是记忆目录在提示词里的预算（不是文件上限）。
- *
- * 为什么不是文件上限：文件写超了只能拒写，而拒写意味着「这条经验丢了」。目录预算
- * 收窄则是无损的 —— 条目还在文件里，`read_history` / `file` 仍读得到。
- */
-export const MEMORY_LIMITS = { entry: 300, main: 4_000 } as const;
-
-export type MemorySection = {
-	/** 小节标题（`## ` 之后那一行）。 */
-	readonly heading: string;
-	readonly body: string;
-};
 
 /** 一次写入的结果。`changed: false` 不是错误，是「这条已经有了」。 */
 export type MemoryWrite = {
@@ -51,78 +33,6 @@ export type MemoryWrite = {
 /** 读全文；不存在时返回 undefined（**不**自动建文件 —— 没记过就是没记过）。 */
 export async function readMemory(agentDir: string): Promise<string | undefined> {
 	return readTextOrUndefined(join(agentDir, MEMORY_FILE));
-}
-
-/**
- * 按 `## ` 切段。第一段（文件开头到第一个 `##` 之前）是标题/导语，不算一条记忆。
- */
-export function sectionsOf(source: string): readonly MemorySection[] {
-	const out: MemorySection[] = [];
-	const lines = source.split("\n");
-	let heading: string | undefined;
-	let buffer: string[] = [];
-	const flush = (): void => {
-		if (heading === undefined) return;
-		out.push({ heading, body: buffer.join("\n").trim() });
-	};
-	for (const line of lines) {
-		if (line.startsWith("## ")) {
-			flush();
-			heading = line.slice(3).trim();
-			buffer = [];
-			continue;
-		}
-		if (heading !== undefined) buffer.push(line);
-	}
-	flush();
-	return out;
-}
-
-/**
- * 删掉一节记忆，重建整篇；没有这一节返回 undefined。
- *
- * 为什么不用「找到标题那一行、把它到下一节之间的行切掉」（旧做法）：那样要求调用方
- * 自己再拼一遍剩余内容，实测把**删中间一节**写成了「后面的节被吞掉」和「同一节出现
- * 两次」两种坏文件 —— 记忆是模型长期唯一的上下文，写坏一次就是永久丢事实。
- *
- * 所以这里只认一个口径：`sectionsOf` 怎么分段，就怎么重建。序言（第一个 `## ` 之前
- * 的标题/导语）原样保留，剩下的节按原顺序拼回。标题按 `trim()` 后比较，与
- * `sectionsOf` 一致 —— 否则「标题带尾随空格」的那节永远删不掉。
- */
-export function removeSection(source: string, heading: string): string | undefined {
-	const wanted = heading.trim();
-	if (wanted === "") return undefined;
-	const sections = sectionsOf(source);
-	if (!sections.some((section) => section.heading === wanted)) return undefined;
-	const lines = source.split("\n");
-	const firstHeading = lines.findIndex((line) => line.startsWith("## "));
-	const preamble = (firstHeading < 0 ? lines : lines.slice(0, firstHeading)).join("\n").trimEnd();
-	const kept = sections.filter((section) => section.heading !== wanted).map((section) => `## ${section.heading}\n${section.body}`);
-	return [preamble, ...kept].filter((part) => part.trim() !== "").join("\n\n").trimEnd();
-}
-
-/** 长得像密钥的东西。宁可误报（让它换个说法），不可漏报（一条 key 写进提示词就撤不回了）。 */
-const SECRET_SHAPES = [
-	/\b(sk-[A-Za-z0-9_-]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|sk_live_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.)/,
-	// 中文里「这是密码：xxxxxxxxxxxx」这种写法：词之后跟 12 位以上不带空白的连续串。
-	/(?:密码|密钥|私钥|口令|token|api[ _-]?key)\s*[:：=＝是]?\s*[^\s]{12,}/i,
-];
-
-/**
- * 这条记忆能不能写。返回人话错误，或 undefined（能写）。
- *
- * 文案是给模型看的：说清「什么不对」和「怎么改」，别只说「invalid」。
- */
-export function entryProblem(text: string): string | undefined {
-	const trimmed = text.trim();
-	if (trimmed === "") return "这条记忆是空的。";
-	if (trimmed.length > MEMORY_LIMITS.entry) {
-		return `这条记忆 ${MEMORY_LIMITS.entry} 字上限，现在 ${trimmed.length} 字。请说得更短，或拆成两条。`;
-	}
-	if (SECRET_SHAPES.some((shape) => shape.test(trimmed))) {
-		return "这看起来是密钥或密码，绝对不能写进记忆。记忆会被拼进每一轮提示词。";
-	}
-	return undefined;
 }
 
 /** 规范化：去首尾空白 + 折叠内部空白。去重只关心「说的是不是同一件事」，不关心怎么换行。 */
@@ -163,15 +73,16 @@ export async function appendMemory(
 	text: string,
 	at: Date = new Date(),
 	by = "agent",
+	catalog?: TextCatalog,
 ): Promise<MemoryWrite> {
 	return serialized(async () => {
-		const before = (await readMemory(agentDir)) ?? "# 记忆\n";
+		const before = (await readMemory(agentDir)) ?? `${fill(catalog, "org.memory.header")}\n`;
 		// 底线在写入这一层强制执行，而不是只靠调用方自觉：`remember` 是模型写的，
 		// 它随时会用别的方式写文件；只要落盘的路只有这一条，规矩就守得住。
 		const problem = entryProblem(text);
-		if (problem !== undefined) return { changed: false, message: problem, source: before };
+		if (problem !== undefined) return { changed: false, message: problemText(problem, text, catalog), source: before };
 		if (alreadyRecorded(before, text)) {
-			return { changed: false, message: "这条记忆已经有了。", source: before };
+			return { changed: false, message: fill(catalog, "org.memory.duplicate"), source: before };
 		}
 		const body = text.trim();
 		const stamp = at.toISOString().slice(0, 10);
@@ -183,48 +94,24 @@ export async function appendMemory(
 				: `${before.trimEnd()}\n\n## ${stamp}\n${body}\n`;
 		await writeTextAt(join(agentDir, MEMORY_FILE), next);
 		await appendJournal(agentDir, { at: at.toISOString(), by, op: "append", before, after: next });
-		return { changed: true, message: "已记下。", source: next };
+		return { changed: true, message: fill(catalog, "org.memory.saved"), source: next };
 	});
 }
 
 /** 整篇替换（agent 想重写自己的记忆时用）。 */
-export async function writeMemory(agentDir: string, source: string, by = "agent"): Promise<MemoryWrite> {
+export async function writeMemory(
+	agentDir: string,
+	source: string,
+	by = "agent",
+	catalog?: TextCatalog,
+): Promise<MemoryWrite> {
 	return serialized(async () => {
 		const before = (await readMemory(agentDir)) ?? "";
 		const next = `${source.trimEnd()}\n`;
 		await writeTextAt(join(agentDir, MEMORY_FILE), next);
 		await appendJournal(agentDir, { at: new Date().toISOString(), by, op: "replace", before, after: next });
-		return { changed: true, message: "已重写。", source: next };
+		return { changed: true, message: fill(catalog, "org.memory.rewritten"), source: next };
 	});
-}
-
-/**
- * 提示词里的记忆目录。
- *
- * 标题重复很常见（同一个日期记了几条），所以带上序号让 agent 知道有几条。
- * 空记忆返回 undefined —— 提示词里出现「你还没有记忆」只是噪音。
- *
- * 取法：从最新往回拿，条数和字符各有一道上限。条数上限防「一百条一行」，字符
- * 上限防「十二条长文」—— 只有一道的活，总有一种记忆能把它打穿。
- */
-export function memoryDigest(source: string): string | undefined {
-	const sections = sectionsOf(source);
-	if (sections.length === 0) return undefined;
-	const lines: string[] = [];
-	let used = 0;
-	for (let index = sections.length - 1; index >= 0; index -= 1) {
-		const section = sections[index];
-		if (section === undefined) break;
-		const first = section.body.split("\n").find((line) => line.trim() !== "") ?? "";
-		const line = `${lines.length + 1}. ${section.heading}${first === "" ? "" : ` — ${first.slice(0, 60)}`}`;
-		// 最新那条无论如何要给出去，否则目录会只剩一句「还有 N 条」。
-		if (lines.length > 0 && (lines.length >= DIGEST_LIMIT || used + line.length > MEMORY_LIMITS.main)) break;
-		lines.unshift(line);
-		used += line.length + 1;
-	}
-	const hidden = sections.length - lines.length;
-	if (hidden > 0) lines.unshift(`（还有 ${hidden} 条更早的没列出）`);
-	return lines.join("\n");
 }
 
 /* ── 时间线：这条记忆是什么时候、被谁、怎么进来的 ─────────────────────── */

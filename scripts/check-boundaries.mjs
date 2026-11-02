@@ -13,11 +13,11 @@
  *    依赖方向只有一条：`shell → interface → {app, view} → 领域 → runtime`。
  * 3. 服务端路由必须有界面消费者（有界面看不见的接口就是死接口）。
  *    前端源码在 `ui/app/src`（React + TS，构建到 `ui/web`），所以查那里。
- * 4. `src/core/view/` 是**契约层**：零 IO（不 import 任何 `node:*`）、不碰 `runtime/`。
+ * 4. `src/view/` 是**契约层**：零 IO（不 import 任何 `node:*`）、不碰 `runtime/`。
  *    它只吃 `ChannelState` / 名册 / DTO 类型，吐界面要的 JSON。一条 `await` 都不该有。
- * 5. `src/core/app/` 是**用例层**：不许 import `node:http` —— 传输是接口层的事，
+ * 5. `src/app/` 是**用例层**：不许 import `node:http` —— 传输是接口层的事，
  *    用例要能脱离网络被测试（现在 `test/core/` 里就是这样直接调它们的）。
- * 6. `src/core/interface/` 是**唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/`
+ * 6. `src/interface/` 是**唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/`
  *    说话：不许 import `agent|channel|team|runtime` 的内部实现，否则业务会再次长回 handler 里。
  * 7. `desktop/src/` 是**桌面壳**：不许 import `src/core/` 与 `ui/app/` —— 它与内核之间只有
  *    进程边界（spawn 后端、认 `[core] http://…` 那一行），与界面之间只有 HTTP。
@@ -30,8 +30,8 @@ const ROOT = new URL("..", import.meta.url).pathname;
 /** 只允许 `src/core/runtime/` 导入的包。 */
 const RUNTIME_ONLY = ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/chord"];
 
-/** 受检查的目录（相对仓库根）。 */
-const CHECKED_DIRS = ["src/core", "desktop/src"];
+/** 受检查的目录（相对仓库根）。`src/core` 是内核，其余四层与它平级（ADR-043）。 */
+const CHECKED_DIRS = ["src/core", "src/app", "src/view", "src/interface", "src/shell", "desktop/src"];
 
 async function* walkAll(dir) {
 	let entries;
@@ -134,7 +134,7 @@ const LAYER_RULES = [
 	},
 	// 契约层：零 IO、零运行时。它必须能被单测直接喂一个假状态。
 	{
-		dirs: ["src/core/view/"],
+		dirs: ["src/view/"],
 		layer: "契约（view）",
 		deny: [
 			{ match: /^node:/, reason: "契约层必须零 IO：不许 import 任何 node:* 内置模块" },
@@ -143,23 +143,23 @@ const LAYER_RULES = [
 	},
 	// 用例：只跟传输层划清界限，文件系统还是要用的（记忆、上传、文件树都是 IO）。
 	{
-		dirs: ["src/core/app/"],
+		dirs: ["src/app/"],
 		layer: "用例（app）",
 		deny: [{ match: /^node:(http|https)$/, reason: "用例层不许 import node:http —— 传输归 interface/ 管" }],
 	},
 	// 桌面壳：与内核之间只有进程边界（spawn 后端 + 认 stdout 的 `[core] http://…` 那一行）。
-	// 它一旦 import 了 `src/core/`，壳就有了第二份业务语义，「同一份服务」就不成立了。
+	// 它一旦 import 了 `src/` 下的任何一层，壳就有了第二份业务语义，「同一份服务」就不成立了。
 	{
 		dirs: ["desktop/src/"],
 		layer: "桌面壳（desktop）",
 		deny: [
-			{ match: /\/src\/core\//, reason: "桌面壳只经进程边界与后端说话，不许 import 内核源码" },
+			{ match: /\/src\/(core|app|view|interface|shell)\//, reason: "桌面壳只经进程边界与后端说话，不许 import 后端源码" },
 			{ match: /\/ui\/app\//, reason: "桌面壳不碰界面源码 —— 界面由后端从 ui/web 发给窗口" },
 		],
 	},
 	// 接口：唯一碰 node:http 的地方，但只许经 app/view 说话。
 	{
-		dirs: ["src/core/interface/"],
+		dirs: ["src/interface/"],
 		layer: "接口（interface）",
 		deny: [
 			{ match: /\/agent\//, reason: "接口层不许直接 import 领域实现（agent）—— 走 app/" },
@@ -179,7 +179,7 @@ for (const dir of CHECKED_DIRS) {
 		const source = await readFile(file, "utf8");
 		const rel = relative(ROOT, file);
 		const isFacade = rel.startsWith("src/core/runtime/");
-		const isShell = rel.startsWith("src/core/shell/");
+		const isShell = rel.startsWith("src/shell/");
 		const rules = LAYER_RULES.filter((rule) => rule.dirs.some((dir) => rel.startsWith(dir)));
 		for (const spec of importSpecifiers(source)) {
 			const offending = RUNTIME_ONLY.find((pkg) => spec === pkg || spec.startsWith(`${pkg}/`));
@@ -207,7 +207,7 @@ for (const dir of CHECKED_DIRS) {
 // **按「方法 + 路径」判，不按路径**：同一路径上 GET 有消费者，不代表 POST 也有。
 // 旧写法只抽 `pattern`，于是 `GET /api/channels` 有消费者就把 `POST /api/channels`
 // （一个谁都没调过的建频道接口）一起放过去了 —— 它与 GET 恰好同路径，藏了好几个月。
-const ROUTE_FILE = "src/core/interface/http/routes.ts";
+const ROUTE_FILE = "src/interface/http/routes.ts";
 const routeSource = await readFile(join(ROOT, ROUTE_FILE), "utf8");
 const routeEntries = [...routeSource.matchAll(/pattern:\s*"(\/api\/[^"]*)"[\s\S]{0,200}?method:\s*"([A-Z]+)"/g)].map(
 	(match) => ({ pattern: match[1], method: match[2] }),

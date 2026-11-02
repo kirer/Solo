@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { CoreShell } from "../../src/core/shell/assemble.ts";
+import type { CoreShell } from "../../src/shell/assemble.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { recipientsOf } from "../../src/core/channel/mentions.ts";
 import { readAllIdentities } from "../../src/core/agent/identity.ts";

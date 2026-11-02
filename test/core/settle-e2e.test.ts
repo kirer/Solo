@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
-import type { CoreShell } from "../../src/core/shell/assemble.ts";
+import type { CoreShell } from "../../src/shell/assemble.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { ensureChannel } from "../../src/core/channel/rules.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";

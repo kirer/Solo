@@ -32,6 +32,9 @@ coverage/
 # Superdesign 画布状态（工具产物，不是文档）
 .superdesign/
 
+# 代码流程图（由 .claude/skills/code-flowmap 生成，不入库）
+code-flow.html
+
 # 桌面端打包产物与本地更新源
 release/
 feed/

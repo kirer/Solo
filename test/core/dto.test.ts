@@ -11,8 +11,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
-import { channelList, messageView, orgView } from "../../src/core/app/project.ts";
-import type { ViewChannel, ViewMessage } from "../../src/core/view/dto.ts";
+import { channelList, messageView, orgView } from "../../src/app/project.ts";
+import type { ViewChannel, ViewMessage } from "../../src/view/dto.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/types.ts";
 
@@ -74,7 +74,7 @@ function keysOf(value: object): string[] {
 
 describe("view/dto.ts 是唯一权威", () => {
 	it("DTO 自己零 import（否则它会从形状长成投影）", async () => {
-		const text = await source("src/core/view/dto.ts");
+		const text = await source("src/view/dto.ts");
 		expect(specifiersOf(text)).toEqual([]);
 		expect(text).not.toMatch(/\bimport\s*\(/);
 		expect(text).not.toMatch(/\brequire\s*\(/);
@@ -83,7 +83,7 @@ describe("view/dto.ts 是唯一权威", () => {
 	it("界面类型文件只再导出 DTO，不重新声明任何形状", async () => {
 		const text = await source("ui/app/src/api/types.ts");
 		expect(declarationsOf(text)).toEqual([]);
-		expect(specifiersOf(text)).toEqual(["../../../../src/core/view/dto.ts"]);
+		expect(specifiersOf(text)).toEqual(["../../../../src/view/dto.ts"]);
 	});
 
 	it("界面用的名字都在 DTO 里（改名就会在这里炸，而不是在运行时显示 undefined）", async () => {

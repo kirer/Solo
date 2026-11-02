@@ -7,8 +7,8 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
-import { createChat } from "../../src/core/app/chat.ts";
-import { AppError } from "../../src/core/app/errors.ts";
+import { createChat } from "../../src/app/chat.ts";
+import { AppError } from "../../src/app/errors.ts";
 import { createAgent } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, chatKind, dmId, type ChannelState } from "../../src/core/channel/types.ts";
 import { sandboxPool } from "./support.ts";

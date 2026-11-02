@@ -1,9 +1,13 @@
 /**
  * 两个根：应用私有目录与用户目录。
  *
- * 为什么要拆：应用自带的东西（助理、提示词、内置插件、配置、数据库、上传、日志）属于**这份安装**，
+ * 为什么要拆：应用自带的东西（助理、提示词、内置插件、配置、数据库、上传）属于**这份安装**，
  * 升级时该跟着换；我的组织（成员、团队、技能、规矩）属于**我**，换机器也要带走。混在一个
  * `workspace/` 里，两者就只能一起备份、一起丢。
+ *
+ * 日志是个例外，放在**用户根**（`<userRoot>/logs/`）：排查问题时它要和组织数据在一起 ——
+ * 一次崩溃、一份审计、一条后台命令的收尾，脱离「当时组织里发生了什么」就没什么用。
+ * 它只是追加写的小文件，跟着用户根走不会成为负担（ADR-041）。
  *
  * 这是**唯一**拼这套路径的地方。以前 `dirname(agentsRoot)` 这种隐式约定散在十二个文件里，
  * 漏一处就是静默降级（没有提示词、没有插件），没有任何一处会报错。
@@ -34,10 +38,13 @@ export type Layout = {
 	readonly skillsRoot: string;
 	readonly rulesFile: string;
 	readonly promptRoot: string;
+	/** 模型看得见的文案（工具描述、拒绝话术、投递头）：`appRoot/text/`。 */
+	readonly textRoot: string;
 	readonly pluginsRoot: string;
 	readonly settingsFile: string;
 	readonly databasePath: string;
 	readonly uploadsRoot: string;
+	/** 日志跟着用户根走（`<userRoot>/logs/`）：排查要和组织数据在一起（ADR-041）。 */
 	readonly logsRoot: string;
 	readonly secretsFile: string;
 	readonly seedManifestFile: string;
@@ -60,11 +67,12 @@ export function resolveLayout(input: { readonly appRoot: string; readonly userRo
 		skillsRoot: join(userRoot, SKILLS_DIR),
 		rulesFile: join(userRoot, "rules.md"),
 		promptRoot: join(appRoot, "prompt"),
+		textRoot: join(appRoot, "text"),
 		pluginsRoot: join(appRoot, "plugins"),
 		settingsFile: join(appRoot, "settings.json"),
 		databasePath: join(appRoot, "core.sqlite"),
 		uploadsRoot: join(appRoot, "uploads"),
-		logsRoot: join(appRoot, "logs"),
+		logsRoot: join(userRoot, "logs"),
 		secretsFile: join(appRoot, ".secrets.json"),
 		seedManifestFile: join(appRoot, ".seed-manifest.json"),
 		agentRoots: [assistantRoot, membersRoot],

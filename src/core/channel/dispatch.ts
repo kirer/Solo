@@ -9,6 +9,7 @@ import { wake } from "./wake.ts";
 import type { Channel, Message } from "./types.ts";
 import type { WakeRecord, WakeTarget } from "./turn/record.ts";
 import type { FinishTurn } from "./turn/index.ts";
+import type { TextCatalog } from "../md/catalog.ts";
 
 export type { WakeRecord } from "./turn/record.ts";
 
@@ -95,6 +96,8 @@ type DeliverOptions = {
 	 * `file` 的路径。不给就退化成正文里一行「[图片] x.png」—— 那是旧行为。
 	 */
 	readonly uploadsRoot?: string;
+	/** 机械文案目录（`text/channel.md`）。投递头与附件说明从这里取。 */
+	readonly text?: TextCatalog;
 	/**
 	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
 	 * 返回合并了几条（0 = 没合并）。不传就不合并。
@@ -136,7 +139,7 @@ export async function deliver(
 	// 回话规矩每轮现读一次（不缓存：改模板要能下一条生效）。所有收件人共用同一份。
 	const prompt = options.prompt ?? (await deliveryPrompt(options.promptDir));
 	// 附件只读一次：所有收件人拿到的是同一份图片内容块。
-	const plan = await planAttachments(options.uploadsRoot, options.message.attachments);
+	const plan = await planAttachments(options.uploadsRoot, options.message.attachments, options.text);
 	const bodyOf = (viewer: string, interrupted: boolean, taskChannelTitle?: string): string =>
 		renderDelivery({
 			channel: options.channel,
@@ -148,6 +151,7 @@ export async function deliver(
 			...(taskChannelTitle === undefined ? {} : { taskChannelTitle }),
 			attachmentLines: plan.lines,
 			prompt,
+			...(options.text === undefined ? {} : { catalog: options.text }),
 		});
 
 	for (const slug of options.targets) {

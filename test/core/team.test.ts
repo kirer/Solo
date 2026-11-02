@@ -1,3 +1,4 @@
+import { SEED_TEXT } from "./catalog.ts";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -123,33 +124,33 @@ describe("团队管理员校验：写 README 之前的三条判据", () => {
 	const all = { slugs: ["林越", "沈舟", "知言"], assistants: ["知言"] };
 
 	it("缺 lead 直接拒绝，并说清先招人", () => {
-		const problem = leadProblem({ lead: undefined, ...all });
+		const problem = leadProblem({ lead: undefined, ...all , text: SEED_TEXT });
 		expect(problem).toContain("必须写");
 		expect(problem).toContain("先招一个团队管理员");
 	});
 
 	it("lead 不在名册里：列出可选 slug", () => {
-		const problem = leadProblem({ lead: "查无此人", ...all });
+		const problem = leadProblem({ lead: "查无此人", ...all , text: SEED_TEXT });
 		expect(problem).toContain("不在名册里");
 		expect(problem).toContain("林越");
 	});
 
 	it("助理不能当团队管理员", () => {
-		expect(leadProblem({ lead: "知言", ...all })).toContain("不能当团队管理员");
+		expect(leadProblem({ lead: "知言", ...all , text: SEED_TEXT })).toContain("不能当团队管理员");
 	});
 
 	it("合法的团队成员照常通过", () => {
-		expect(leadProblem({ lead: "林越", ...all })).toBeUndefined();
+		expect(leadProblem({ lead: "林越", ...all , text: SEED_TEXT })).toBeUndefined();
 	});
 });
 
 describe("建团队只有助理能做", () => {
 	it("助理可以建", () => {
-		expect(createTeamProblem({ self: "知言", assistants: ["知言"] })).toBeUndefined();
+		expect(createTeamProblem({ self: "知言", assistants: ["知言"] , text: SEED_TEXT })).toBeUndefined();
 	});
 
 	it("团队成员被拒，并告诉他去找上级", () => {
-		const problem = createTeamProblem({ self: "苏禾", assistants: ["知言"] });
+		const problem = createTeamProblem({ self: "苏禾", assistants: ["知言"] , text: SEED_TEXT });
 		expect(problem).toContain("只有助理能做");
 		expect(problem).toContain("上级");
 	});

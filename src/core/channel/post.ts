@@ -25,6 +25,7 @@ import type { FinishTurn } from "./turn/index.ts";
 import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
 import { coalesceQueue, liveConversations } from "./queue.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 
 type PostResult = {
 	readonly channel: Channel;
@@ -77,15 +78,26 @@ export type PostDeps = {
 	readonly uploadsRoot?: string;
 	/** 提示词模板目录（`<workspace>/prompt`）。投递要用它贴「怎么回话」那两段。 */
 	readonly promptDir?: string;
+	/** 机械文案目录（`text/`）。投递头、留痕、摘要行从这里取。 */
+	readonly text?: TextCatalog;
 };
 
 /** 投递没成时给我留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
-function renderIssues(seq: number, issues: readonly DeliverIssue[], labelOf: (slug: string) => string): string {
+function renderIssues(
+	seq: number,
+	issues: readonly DeliverIssue[],
+	labelOf: (slug: string) => string,
+	catalog?: TextCatalog,
+): string {
 	return issues
 		.map((issue) =>
 			issue.reason === "failed"
-				? `#${seq} 叫了 @${labelOf(issue.slug)}，投递失败：${issue.detail ?? "未知原因"}。`
-				: `#${seq} 叫了 @${labelOf(issue.slug)}，但它还没有会话（还没被打开过）—— 这条不会有人答。`,
+				? fill(catalog, "post.issue.failed", {
+						seq,
+						label: labelOf(issue.slug),
+						detail: issue.detail ?? fill(catalog, "post.issue.unknown"),
+					})
+				: fill(catalog, "post.issue.skipped", { seq, label: labelOf(issue.slug) }),
 		)
 		.join("\n");
 }
@@ -132,7 +144,7 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	const digestParts = new Map<string, { readonly total: number; readonly rows: readonly string[] }>();
 	for (const slug of channelMeta.members) {
 		if (slug === OWNER) continue;
-		digestParts.set(slug, digestRows(deps.state, slug));
+		digestParts.set(slug, digestRows(deps.state, slug, 5, deps.text));
 	}
 	const appended = await appendToChannel(deps, input, context);
 	if (appended === undefined) throw new Error(`频道不存在：${input.channelId}`);
@@ -186,12 +198,24 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
 			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
 			noteUnanswered: async ({ label, seq, reason }) => {
-				await appendNote(deps, liveChannel.id, renderUnanswered(seq, label, reason), Date.now(), BACKGROUND_CONTEXT);
+				await appendNote(
+					deps,
+					liveChannel.id,
+					renderUnanswered(seq, label, reason, deps.text),
+					Date.now(),
+					BACKGROUND_CONTEXT,
+				);
 			},
 			// 没人被叫醒就说一句：只写 stderr 的话，频道里一片空白，
 			// 我看到的「我说了没人理」和「系统挂了」长得一模一样。
 			notify: async (issues) => {
-				await appendNote(deps, liveChannel.id, renderIssues(message.seq, issues, labelOf), Date.now(), context);
+				await appendNote(
+					deps,
+					liveChannel.id,
+					renderIssues(message.seq, issues, labelOf, deps.text),
+					Date.now(),
+					context,
+				);
 			},
 		},
 		context,

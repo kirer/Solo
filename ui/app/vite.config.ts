@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 /**
  * 前端构建。
  *
- * 产物直接写回 `ui/web/` —— 服务端就是照那个目录发静态资源的（`src/core/shell/serve.ts` 的
+ * 产物直接写回 `ui/web/` —— 服务端就是照那个目录发静态资源的（`src/shell/serve.ts` 的
  * `serveStatic`），所以不需要给它讲「构建目录」这个概念，它一直是「发 ui/web」。
  *
  * - `emptyOutDir: false`：`ui/web/` 里还躺着被上传的附件预览之外的东西吗？没有。

@@ -4,7 +4,7 @@
 
 ## 1. 运行形态
 
-只有一个进程：`src/core/shell/main.ts`。它同时是：
+只有一个进程：`src/shell/main.ts`。它同时是：
 
 - HTTP 服务（静态界面 `ui/web/` + 29 条 `/api/*` 路由，插件路由另算）
 - agent 运行时（SQLite + 后台任务）
@@ -18,15 +18,17 @@
   core.sqlite                      # 频道、消息、会话、名册、沉淀游标（单进程独占锁）
   settings.json                    # 模型接入配置（可选）
   assistant/<slug>/                # 助理：identity.md / memory.md / skills/ / workspace/
-  prompt/                          # 提示词模板
+  prompt/                          # 提示词模板（改完下一条消息生效）
+  text/                            # 工具文案（改完要重启：装配时定型）
   plugins/                         # 插件（含出厂三个）
-  uploads/  logs/                  # 附件与日志
+  uploads/                         # 附件
 
 ~/.solo/                           # 用户根（--user-root）
   members/<slug>/                  # 每个成员：identity.md / memory.md / skills/ / workspace/
   teams/<slug>/                    # 每个团队：README.md / memory.md / workspace/
   skills/                          # 全员层技能
   rules.md                         # 全员规矩（每轮都进提示词）
+  logs/                            # 审计 / 诊断 / 后台命令（ADR-041）
 ```
 
 **组织（`userRoot`）是唯一的真相**。删掉数据库不会丢掉「人是谁」——从 `members/` 重建即可；
@@ -35,7 +37,7 @@
 ## 2. 本机启动
 
 ```bash
-npm start                      # = node --experimental-strip-types src/core/shell/main.ts
+npm start                      # = node --experimental-strip-types src/shell/main.ts
 npm start -- --port 7811 --host 127.0.0.1 --app-root /tmp/aic-app --user-root /tmp/aic-home --no-seed
 ```
 
@@ -45,7 +47,7 @@ npm start -- --port 7811 --host 127.0.0.1 --app-root /tmp/aic-app --user-root /t
 | --- | --- | --- |
 | `--port` | 7788 | 监听端口 |
 | `--host` | 127.0.0.1 | 监听地址；`0.0.0.0` = 局域网可访问 |
-| `--app-root` | `<cwd>/.solo-app` | 应用私有目录（助理、提示词、插件、`settings.json`、`core.sqlite`、`uploads/`、`logs/`） |
+| `--app-root` | `<cwd>/.solo-app` | 应用私有目录（助理、提示词、插件、`settings.json`、`core.sqlite`、`uploads/`） |
 | `--user-root` | `~/.solo` | 我的组织（`members/`、`teams/`、`skills/`、`rules.md`） |
 | `--no-seed` | 关 | 不播种。首次启动且用户根里还没有人时会自动建一个叫「知言」的助理（住在 `appRoot/assistant/`）并给两份技能 |
 
@@ -251,26 +253,26 @@ tar xzf backup-20261027.tar.gz
 | 症状 | 先看这个 |
 | --- | --- |
 | 界面能开，但 agent 不说话 | §3 的模型解析；`tasks` 表里 `kind='pi.generation'` 的失败原因 |
-| 这一轮为什么这么慢 / 他到底调没调工具 | `<appRoot>/logs/tools.jsonl`：每次工具调用与每次模型回复各一行（成没成、耗时、token、停止原因） |
+| 这一轮为什么这么慢 / 他到底调没调工具 | `<userRoot>/logs/tools.jsonl`：每次工具调用与每次模型回复各一行（成没成、耗时、token、停止原因） |
 | agent 说话了，但回在别的频道 | `directory.wake` —— 他去「最后被叫到的那个频道」回话；我发的消息必须先把 wake 记下来再唤醒他 |
 | 改了 `identity.md` 没生效 | 提示词每次发送前重新读盘，所以下一条消息就该生效。没生效说明改的是别人的文件 |
 | 启动很慢 | 名册是不是每人一次 commit；`members/` 里是不是有几百个目录 |
-| agent 突然不干活了，日志里什么都没有 | `<appRoot>/logs/runtime.jsonl` 有没有 `task_parked` / `restart_limit`（见下面「诊断三处」） |
+| agent 突然不干活了，日志里什么都没有 | `<userRoot>/logs/runtime.jsonl` 有没有 `task_parked` / `restart_limit`（见下面「诊断三处」） |
 | 报 provider 的 context overflow / 400 too long | 模型的 `contextWindow` 是不是取到了（见下面「压缩」） |
 | 7788 端口被占 | `lsof -nP -iTCP:7788 -sTCP:LISTEN` |
 
 ### 诊断三处
 
 服务本身的日志**只打 stderr**（没有进程日志文件）。另外有三份结构化日志，都在
-`<appRoot>/logs/` 下，都是「单文件 5MB、满了轮转成 `.1` 一代」（前两份单条再截 4KB）：
+`<userRoot>/logs/` 下，都是「单文件 5MB、满了轮转成 `.1` 一代」（前两份单条再截 4KB）：
 
 | 文件 | 装什么 | 怎么看 |
 | --- | --- | --- |
-| `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 <appRoot>/logs/runtime.jsonl` |
-| `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 <appRoot>/logs/jank.jsonl` |
-| `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 <appRoot>/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
+| `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 <userRoot>/logs/runtime.jsonl` |
+| `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 <userRoot>/logs/jank.jsonl` |
+| `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 <userRoot>/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
 
-`<appRoot>/logs/run/` 是后台命令（`run` 的 `background: true`）的地盘：每条命令一个 `<id>.json` 记录（**跑完就删**，留在那儿的都是没跑完的）+ 一份 `<id>.log` 全文。服务启动时会自动结账（活着的杀掉、死掉的在频道里留一句话），一般不用手动碰；要查「那条命令到底输出了什么」就 `cat` 对应的 `.log`（ADR-013）。
+`<userRoot>/logs/run/` 是后台命令（`run` 的 `background: true`）的地盘：每条命令一个 `<id>.json` 记录（**跑完就删**，留在那儿的都是没跑完的）+ 一份 `<id>.log` 全文。服务启动时会自动结账（活着的杀掉、死掉的在频道里留一句话），一般不用手动碰；要查「那条命令到底输出了什么」就 `cat` 对应的 `.log`（ADR-013）。
 
 **一眼分辨两类事故**：
 
@@ -360,7 +362,7 @@ npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
 ## 10. 桌面应用（Electron）
 
 壳在 `desktop/src/`，打包配置是仓库根的 `electron-builder.yml`。**后端还是同一份源码**：
-壳起一个子进程用 Electron 自带的 Node 跑 `src/core/shell/main.ts`，窗口加载
+壳起一个子进程用 Electron 自带的 Node 跑 `src/shell/main.ts`，窗口加载
 `http://127.0.0.1:<port>/?shell=desktop`（ADR-028）。
 
 ```bash
@@ -382,8 +384,8 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 
 - **数据在哪（两个根）**：应用私有的是 `app.getPath("userData")`（macOS
   `~/Library/Application Support/solo`，Windows `%APPDATA%/solo`）—— 助理、提示词、插件、
-  `settings.json`、`core.sqlite`、`uploads/`、`logs/` 都在里面；我的组织是 `~/.solo`
-  （`members/`、`teams/`、`skills/`、`rules.md`）。后端日志在 userData 的 `logs/core.log`
+  `settings.json`、`core.sqlite`、`uploads/` 都在里面；我的组织是 `~/.solo`
+  （`members/`、`teams/`、`skills/`、`rules.md`、`logs/`）。后端日志在 `~/.solo/logs/core.log`
   （超过 5 MB 轮转一代）。**它不认仓库里的 `.solo-app/`**。
 - **端口**：先试 7788（偏好按 origin 存，端口变就丢），被占（比如同时开着 `npm start`）
   自动退到随机端口。

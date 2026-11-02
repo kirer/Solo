@@ -62,7 +62,7 @@ export type MissingHandler = (name: string) => void;
  *
  * 允许 `:` 是为了 `{{tool:say}}` —— 契约里工具名只能这么写，别的一律自然语言。
  * 默认文案是**给「这个事实现在没有」的句子**，写在模板里而不是代码里（一句文案一个家）；
- * 它不认嵌套花括号，也只在插槽为空时才出现。
+ * 它不认嵌套花括号，也只在插槽为空时才出现。写成 `{{x ?? }}` 表示「空就什么也不写」。
  * 不匹配的 `{{` 原样留着，所以模板里可以写插槽语法本身，也不必转义。
  */
 const SLOT = /\{\{\s*([A-Za-z0-9_.:-]+)\s*(?:\?\?\s*([^{}]*?))?\s*\}\}/g;
@@ -122,7 +122,8 @@ export function renderSlots(template: string, slots: Slots): Rendered {
 	const reported = new Set<string>();
 
 	const text = template.replace(SLOT, (_whole, name: string, fallback: string | undefined) => {
-		if (!hasSlot(slots, name) && fallback !== undefined && fallback.trim() !== "") return fallback;
+		// `??` 后面留空 = 空的时候什么都不写（模板自己决定这一格可以没有）。
+		if (!hasSlot(slots, name) && fallback !== undefined) return fallback;
 		if (!reported.has(name)) {
 			if (!Object.hasOwn(slots, name)) {
 				reported.add(name);

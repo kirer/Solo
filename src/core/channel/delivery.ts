@@ -16,6 +16,7 @@ import { loadTemplates, type PromptTemplate } from "../md/prompt.ts";
 import { createFsx } from "../fsx.ts";
 import { renderSlots, toolSlots, type SlotValue } from "../md/text.ts";
 import { oneLine } from "../md/oneline.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 
 /**
  * 回话规矩的一个条件片段：正文 + 模板自己写的兜底句。
@@ -141,34 +142,40 @@ export function renderDelivery(options: {
 	readonly attachmentLines?: readonly string[];
 	/** 这一轮要用的全部 delivery 模板，由 `deliveryPrompt()` 现读。 */
 	readonly prompt: DeliveryPrompt;
+	/** 机械文案目录（`text/channel.md`）。 */
+	readonly catalog?: TextCatalog;
 }): string {
 	const label = options.labelOf ?? ((slug: string) => slug);
 	const { channel, message, prompt } = options;
-	const quoted = message.replyTo === undefined ? "" : `（回复 #${message.replyTo}）`;
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(options.catalog, key, slots);
+	const quoted = message.replyTo === undefined ? "" : t("delivery.quoted", { seq: message.replyTo });
 	const others = message.mentions.filter(
 		(slug) => slug !== message.from && slug !== options.viewer,
 	);
-	const also = others.length === 0 ? "" : `\n这条还 @ 了：${others.map(label).join("、")}`;
+	const also = others.length === 0 ? "" : `\n${t("delivery.also-mentioned", { names: others.map(label).join("、") })}`;
 	// 「这条会叫醒谁、你是第几个」和「别人也在看」必须由代码注入：模型看不到投递名单，
 	// 于是两个人被同时叫醒时各写一条重复甚至矛盾的回复，谁也不知道对方也在场。
 	const woken = options.woken ?? deliveryTargets(channel, message);
 	const line = [also];
 	if (woken.length > 0) {
 		const position =
-			options.viewer === undefined ? "" : `（你在第 ${woken.indexOf(options.viewer) + 1 || 1} 位）`;
-		line.push(`\n这条会叫醒：${woken.map(label).join("、")}${position}`);
+			options.viewer === undefined ? "" : t("delivery.woken.position", { n: woken.indexOf(options.viewer) + 1 || 1 });
+		line.push(
+			`\n${t("delivery.woken", { names: woken.map(label).join("、"), position })}`,
+		);
 		const multi = woken.length > 1 ? fillFragment(prompt.multi) : "";
 		if (multi !== "") line.push(`\n${multi}`);
 	}
 	return [
 		// 第一行必须带**频道 id**：模型以前只看到标题，于是它只能用 `say` 的缺省频道回话；
 		// 一旦缺省频道猜错（例如猜成私聊），整段对话就跑到别的房间里去了。
-		`【${channel.title}】#${message.seq}（频道 ${channel.id}）${quoted}`,
+		t("delivery.head", { title: channel.title, seq: message.seq, id: channel.id, quoted }),
 		`${label(message.from)}：${message.text}${line.join("")}`,
 		...(isOwnerDm(channel, options.viewer) ? [fillFragment(prompt.dm)].filter((text) => text !== "") : []),
 		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
 			? []
-			: ["", "附件：", ...options.attachmentLines]),
+			: ["", t("delivery.attachments"), ...options.attachmentLines]),
 		// 「怎么回话」每轮贴在最后：它比系统提示词里的同一句规矩有效得多。
 		renderReplyRules({
 			template: prompt.reply,
@@ -248,6 +255,7 @@ export function digestRows(
 	state: ChannelState,
 	slug: string,
 	limit = 5,
+	catalog?: TextCatalog,
 ): { readonly total: number; readonly rows: readonly string[] } {
 	const rows: string[] = [];
 	let total = 0;
@@ -256,8 +264,8 @@ export function digestRows(
 		if (unread === 0) continue;
 		total += unread;
 		const last = tail(state, channel.id, 1)[0];
-		const preview = last === undefined ? "" : ` — ${oneLine(last.text, 60)}`;
-		rows.push(`- ${channel.title}：${unread} 条${preview}`);
+		const preview = last === undefined ? "" : fill(catalog, "delivery.digest.preview", { text: oneLine(last.text, 60) });
+		rows.push(fill(catalog, "delivery.digest.row", { title: channel.title, unread, preview }));
 		if (rows.length >= limit) break;
 	}
 	return { total, rows };

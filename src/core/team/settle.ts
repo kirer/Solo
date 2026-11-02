@@ -78,7 +78,7 @@ export async function settleTeam(
 	skipped?: { team: string; count: number };
 }> {
 	const state = await deps.channelState();
-	const { harness, conversationOf, rememberWake, finishTurn, promptDir } = deps.wiring;
+	const { harness, conversationOf, rememberWake, finishTurn, promptDir, text } = deps.wiring;
 	const channel = state.channels[`team:${team}`];
 	if (channel === undefined) return {};
 
@@ -147,7 +147,7 @@ export async function settleTeam(
 				rememberWake: (slug, wake) => rememberWake(slug, wake),
 				finishTurn,
 				noteUnanswered: async (note) => {
-					await appendTeamNote(harness, team, renderUnanswered(note.seq, note.label, note.reason), context);
+					await appendTeamNote(harness, team, renderUnanswered(note.seq, note.label, note.reason, text), context);
 				},
 			},
 			{

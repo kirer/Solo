@@ -1,3 +1,4 @@
+import { SEED_TEXT } from "./catalog.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, type Conversation } from "../../src/core/runtime/index.ts";
 import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
@@ -64,6 +65,7 @@ async function setup(members: string[], wakeOnAll: string[]) {
 			{
 				harness: runtime.harness,
 				state: await state(),
+				text: SEED_TEXT,
 				conversationOf:
 					input.conversationOf ??
 					(async (slug: string) => {

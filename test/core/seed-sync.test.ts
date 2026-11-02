@@ -11,7 +11,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SEED_MANIFEST_FILE, seedRules, syncAllSkills } from "../../src/core/shell/seed.ts";
+import { SEED_MANIFEST_FILE, seedRules, syncAllSkills } from "../../src/shell/seed.ts";
 import { resolveLayout, type Layout } from "../../src/core/layout.ts";
 
 const SKILL = "记忆整理";

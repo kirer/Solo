@@ -18,6 +18,7 @@ import {
 	type FrontmatterField,
 } from "../md/doc.ts";
 import { assertName, slugifyName } from "../naming.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
 import { workspaceOf } from "../layout.ts";
 
@@ -95,13 +96,14 @@ export async function writeIdentity(
 	slug: string,
 	header: IdentityHeader,
 	body: string,
+	text?: TextCatalog,
 ): Promise<Identity> {
 	// 路径是拼出来的，不能只信调用方：写入口自己过同一道名字闸。
-	const safe = assertName(slug, "agent");
+	const safe = assertName(slug, "agent", text);
 	const dir = join(agentsRoot, safe);
 	const path = join(dir, IDENTITY_FILE);
-	const text = await writeDocFile(path, identityFields(header), body);
-	return identityOf(safe, dir, parseDoc(path, text));
+	const written = await writeDocFile(path, identityFields(header), body);
+	return identityOf(safe, dir, parseDoc(path, written));
 }
 
 /**
@@ -153,7 +155,7 @@ export async function agentDirOf(roots: AgentRoots, slug: string): Promise<strin
 }
 
 /** 拿一个还没被占用的 slug：重名就加 `-2`、`-3`。 */
-export async function uniqueSlug(roots: AgentRoots, name: string): Promise<string> {
+export async function uniqueSlug(roots: AgentRoots, name: string, text?: TextCatalog): Promise<string> {
 	const base = slugifyName(name);
 	const taken = new Set(await listAgentSlugs(roots));
 	if (!taken.has(base)) return base;
@@ -161,7 +163,8 @@ export async function uniqueSlug(roots: AgentRoots, name: string): Promise<strin
 		const candidate = `${base}-${index}`;
 		if (!taken.has(candidate)) return candidate;
 	}
-	throw new Error(`找不到可用名：${base}`);
+	const message = fill(text, "org.name.exhausted", { base });
+	throw new Error(message === "" ? `no free name: ${base}` : message);
 }
 
 export type CreateAgentInput = {
@@ -177,17 +180,19 @@ export type CreateAgentInput = {
 	readonly team?: string;
 	/** 身份正文。空的话提示词里那一段整段消失。 */
 	readonly body?: string;
+	/** 文案目录：名字校验失败时要回一句人话给模型。缺省 = 机械的英文兜底。 */
+	readonly text?: TextCatalog;
 };
 
 /**
  * 新建一个 agent：建目录、写 `identity.md`，返回读回来的身份。
  *
- * **不建会话、不配模型、不进频道。** 那些是外壳的事（`src/core/shell/`），
+ * **不建会话、不配模型、不进频道。** 那些是外壳的事（`src/shell/`），
  * 而且都可以在之后补 —— 文件先存在，人才存在。
  */
 export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	// 显式传入的 slug 由 `writeIdentity` 过同一道名字闸（路径是拼出来的，不能只信调用方）。
-	const slug = input.slug ?? (await uniqueSlug(input.root, input.name));
+	const slug = input.slug ?? (await uniqueSlug(input.root, input.name, input.text));
 	const header: IdentityHeader = {
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
@@ -196,7 +201,7 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	};
 	// 没写正文就写空正文：提示词里那一段由 `05-body.md` 的 `skip-empty` 整段吞掉，
 	// 不在代码里编一段「我是谁」——身份正文归那个人自己（或招他的人）写。
-	const identity = await writeIdentity(input.root, slug, header, input.body ?? "");
+	const identity = await writeIdentity(input.root, slug, header, input.body ?? "", input.text);
 	// 每人一个自己的工作目录：`run` 不写 cwd 时就在这儿跑（提示词里也是这么说的）。
 	await ensureDir(workspaceOf(identity.dir));
 	return identity;

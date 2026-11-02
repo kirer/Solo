@@ -12,12 +12,12 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKILLS_DIR, copySkillDir } from "../agent/skills.ts";
-import { OWNER_SLUG } from "../agent/identity.ts";
-import { RULES_FILE } from "../agent/rules.ts";
-import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
-import { frontOf, parseDoc, type Doc } from "../md/doc.ts";
-import type { Layout } from "../layout.ts";
+import { SKILLS_DIR, copySkillDir } from "../core/agent/skills.ts";
+import { OWNER_SLUG } from "../core/agent/identity.ts";
+import { RULES_FILE } from "../core/agent/rules.ts";
+import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
+import { frontOf, parseDoc, type Doc } from "../core/md/doc.ts";
+import type { Layout } from "../core/layout.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -196,6 +196,29 @@ export async function seedPromptTemplates(layout: Layout): Promise<readonly stri
 }
 
 /**
+ * 把出厂文案（`seed/text/*.md`）补进应用私有目录（`<appRoot>/text/`）。
+ *
+ * 和提示词模板同一条规矩：**只补不改**。文案是模型每一轮都读的话，我可能亲手改过措辞。
+ * 逐个文件判，新增一份文案能补进已经在跑的工作区。
+ */
+export async function seedTextFiles(layout: Layout): Promise<readonly string[]> {
+	const root = seedPath("text");
+	const files = (await listDirSorted(root))
+		.filter((entry) => entry.kind === "file" && entry.name.endsWith(".md"))
+		.map((entry) => entry.name);
+	const written: string[] = [];
+	for (const name of files) {
+		const target = join(layout.textRoot, name);
+		if (await existsAt(target)) continue;
+		const source = await readTextOrUndefined(join(root, name));
+		if (source === undefined) continue;
+		await writeTextAt(target, source);
+		written.push(name);
+	}
+	return written;
+}
+
+/**
  * 把出厂的示范插件补进工作区（`<workspace>/plugins/<名字>/`）。
  *
  * 判据是**整个目录在不在**，不像技能那样逐文件比 hash：插件是一份可执行的代码，
@@ -262,7 +285,7 @@ async function copySeedSkills(from: string, skillsRoot: string): Promise<readonl
 /**
  * 仓库自带的播种目录（`seed/<segments...>`）的真实路径。
  *
- * 用「从本文件往上找」而不是写死绝对路径：`src/core/shell/` 到仓库根是固定深度，
+ * 用「从本文件往上找」而不是写死绝对路径：`src/shell/` 到仓库根是固定深度，
  * 但源码（`src/`）与构建产物（`dist/`）深度不同，所以往上找而不是数层级。
  */
 function seedPath(...segments: readonly string[]): string {
@@ -315,7 +338,7 @@ export async function seedOwnerAssistant(
 	layout: Layout,
 	options: { readonly name?: string } = {},
 ): Promise<string> {
-	const { createAgent } = await import("../agent/identity.ts");
+	const { createAgent } = await import("../core/agent/identity.ts");
 	const seed = await readSeedAssistant();
 	if (seed === undefined) {
 		console.warn(`[core] 没读到 ${SEED_ASSISTANT_IDENTITY}：助理身份会是一份占位正文`);

@@ -5,6 +5,7 @@
  */
 import { resolveInOrUndefined } from "../../fsx.ts";
 import { ASSISTANT_DIR, type Layout } from "../../layout.ts";
+import { fill, type TextCatalog } from "../../md/catalog.ts";
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 export const SAY_LIMIT = 1_200;
@@ -91,11 +92,11 @@ export const MODEL_LIMIT = 8_000;
  * 为什么留尾巴而不是只留头：被剪的几乎都是命令输出，而命令输出的重点在**结尾**
  * （测试摘要、报错栈、退出状态）。只留头会得到一段滚过去的日志和一个看不见的结论。
  */
-export function clip(source: string, limit: number): string {
+export function clip(source: string, limit: number, catalog?: TextCatalog): string {
 	if (source.length <= limit) return source;
 	// 省略标记本身也占长度，所以先把它定下来再分头尾 —— 输出因此**不超过** `limit`，
 	// 于是「已经剪过的文本再剪一次」原样返回（幂等）。否则每过一层就再塌一截。
-	const marker = `\n…（原文 ${source.length} 字，中间省略）…\n`;
+	const marker = `\n${fill(catalog, "tool.clip.marker", { length: source.length })}\n`;
 	const room = Math.max(limit - marker.length, 2);
 	const head = Math.floor(room / 4);
 	const tail = room - head;

@@ -1,12 +1,12 @@
 # 网页 API 契约
 
 前端只按这份写；后端改字段必须同步这里。**代码是唯一事实**，本文档与
-`src/core/interface/http/routes.ts` 冲突时以代码为准，并回来改这份文档。
+`src/interface/http/routes.ts` 冲突时以代码为准，并回来改这份文档。
 
 ## 0. 总览
 
 只有 **24** 条路由（按方法+路径算；按路径去重是 **23** 条 —— `check-boundaries.mjs`
-数的是去重后的路径），全部在 `src/core/interface/http/routes.ts` 的 `routes` 表里声明。
+数的是去重后的路径），全部在 `src/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
 | 方法 | 路径 | 用途 |
@@ -33,7 +33,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `GET` | `/api/avatar/:seed` | 一个人的头像（SVG，服务端按名字画好） |
-| `POST` | `/api/diag` | 浏览器自报卡顿，落 `<appRoot>/logs/jank.jsonl` |
+| `POST` | `/api/diag` | 浏览器自报卡顿，落 `<userRoot>/logs/jank.jsonl` |
 | `GET` | `/api/diag` | 最近一条**运行报告**（底座报上来的失败），没有就是 `null` |
 | `GET` | `/api/plugins` | 插件清单：slug / 名字 / 说明 / 开关状态 / 有没有前端入口 / 它带来了什么 / 没装上的原因 |
 | `POST` | `/api/plugins` | 装一个插件：把一整个文件夹（`{ slug, files }`，base64）写进 `plugins/<slug>/` |
@@ -395,7 +395,7 @@ type ViewStep = {
 }
 ```
 
-判定在 `src/core/app/project.ts` 的 `needsYou(message)`：**不是我自己发的**，且
+判定在 `src/app/project.ts` 的 `needsYou(message)`：**不是我自己发的**，且
 **正文里第一个被点名的人是我**（别人在先、末尾顺手 @我 的那种是派活给别人，不进）。`kind=decision` 不会再自动
 把我算进来（ADR-009）：助理几乎每条公告都打 decision，自动补会让「找你」被通告淹掉。
 只收「说出口的话」（`chat` / `say` / `question` / `decision` /

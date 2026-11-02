@@ -6,6 +6,7 @@ import { moveAt } from "../../runtime/io.ts";
 import { listTeams, readTeam } from "../../team/doc.ts";
 import { ChannelDoc, dmId, type ChannelState } from "../types.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
+import { fill } from "../../md/catalog.ts";
 
 /** 走的人留在 `<membersRoot>/.retired/` 里：**只移不删**，身份文件还能翻回来。 */
 function retiredNameOf(slug: string): string {
@@ -13,42 +14,38 @@ function retiredNameOf(slug: string): string {
 }
 
 export function createHireTool(deps: CoreToolDeps) {
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(deps.text, key, slots);
 	const tool = defineTool({
 		name: "hire",
-		description: [
-			"`action=create`（默认）招一个人：在 members/ 下建文件夹、写 identity.md、给他自己的工作目录。",
-			"`action=fire` 让一个人离开：目录移到 members/.retired/，从频道与名册里移除，私聊归档。",
-			"`action=models` 列出现在能挑的模型（招人前先看一眼，按角色分：协调/汇总用便宜的，复杂开发用强的）。",
-			"写法见技能「招人」。",
-		].join(""),
+		description: t("hire.description"),
 		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "create（默认）/ fire / models" })),
-			name: Type.String({ description: "姓名（create 必填）" }),
-			title: Type.Optional(Type.String({ description: "身份标签，纯展示用" })),
-			manager: Type.Optional(Type.String({ description: "上级的 slug，必须是名册里已有的人；不确定就不传，缺省是你自己" })),
-			team: Type.Optional(Type.String({ description: "所在团队 slug" })),
-			body: Type.Optional(
-				Type.String({
-					description: "identity.md 的正文：①负责什么 ②不做什么 ③怎么汇报 ④做得好是什么样。",
-				}),
-			),
-			model: Type.Optional(
-				Type.String({ description: "他用的模型，写成 提供商/模型。只能从 action=models 列出的里面挑；不传就跟默认。" }),
-			),
+			action: Type.Optional(Type.String({ description: t("hire.param.action") })),
+			name: Type.String({ description: t("hire.param.name") }),
+			title: Type.Optional(Type.String({ description: t("hire.param.title") })),
+			manager: Type.Optional(Type.String({ description: t("hire.param.manager") })),
+			team: Type.Optional(Type.String({ description: t("hire.param.team") })),
+			body: Type.Optional(Type.String({ description: t("hire.param.body") })),
+			model: Type.Optional(Type.String({ description: t("hire.param.model") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const action = actionOf(args.action, ["create", "fire", "models"], "create");
+			const action = actionOf(args.action, ["create", "fire", "models"], "create", "action", deps.text);
 			if (typeof action !== "string") return text(action);
 
 			if (action === "models") {
 				const choices = await deps.modelChoices?.();
-				if (choices === undefined) return text("这一份装配没有模型清单。");
-				const lines = choices.models.map((ref) => `- ${ref}${ref === choices.default ? "（默认）" : ""}`);
+				if (choices === undefined) return text(t("hire.no-models"));
+				const rows = choices.models.map((ref) =>
+					t("hire.models.row", {
+						ref,
+						default: ref === choices.default ? t("hire.models.default") : "",
+					}),
+				);
 				return text(
 					choices.models.length === 0
-						? "还没配任何模型：设置 → 模型，或写应用目录里的 settings.json。"
-						: `能挑的模型：\n${lines.join("\n")}\n\n按角色分：协调、汇总、写文档用便宜的；复杂开发、攻坚用强的。`,
+						? t("hire.models.none")
+						: t("hire.models.list", { rows: rows.join("\n") }),
 				);
 			}
 
@@ -57,19 +54,31 @@ export function createHireTool(deps: CoreToolDeps) {
 			if (action === "fire") {
 				const slug = args.name.trim();
 				const target = all.find((identity) => identity.slug === slug || identity.name === slug);
-				if (target === undefined) return text(`没有这个人：${slug}。现有：${all.map((item) => item.slug).join("、") || "（没有人）"}`);
-				if (target.slug === OWNER_SLUG) return text("那是我，不能开除。");
-				if (target.dir.startsWith(deps.layout.assistantRoot)) return text("它是助理，不能开除。");
+				if (target === undefined) {
+					return text(
+						t("hire.fire.missing", {
+							name: slug,
+							slugs: all.map((item) => item.slug).join("、") || t("hire.nobody"),
+						}),
+					);
+				}
+				if (target.slug === OWNER_SLUG) return text(t("hire.fire.owner"));
+				if (target.dir.startsWith(deps.layout.assistantRoot)) return text(t("hire.fire.assistant"));
 				const reports = all.filter((identity) => identity.manager === target.slug);
 				if (reports.length > 0) {
-					return text(`${target.name} 手下还有人（${reports.map((item) => item.slug).join("、")}），先把他们改派给别人。`);
+					return text(
+						t("hire.fire.reports", {
+							name: target.name,
+							slugs: reports.map((item) => item.slug).join("、"),
+						}),
+					);
 				}
 				const leading = await Promise.all(
 					(await listTeams(deps.layout.teamsRoot)).map(async (team) => ((await readTeam(deps.layout.teamsRoot, team.slug))?.lead === target.slug ? team.slug : undefined)),
 				);
 				const teams = leading.filter((item): item is string => item !== undefined);
 				if (teams.length > 0) {
-					return text(`${target.name} 是团队管理员（${teams.join("、")}），先把团队的 lead 交给别人，再让人走。`);
+					return text(t("hire.fire.leading", { name: target.name, teams: teams.join("、") }));
 				}
 
 				await moveAt(target.dir, `${deps.layout.membersRoot}/.retired/${retiredNameOf(target.slug)}`);
@@ -103,7 +112,7 @@ export function createHireTool(deps: CoreToolDeps) {
 					if (identity.team === undefined) continue;
 					await deps.syncTeam?.(identity.team, ctx).catch(() => undefined);
 				}
-				return text(`已让 ${target.name}（${target.slug}）离开：目录移到 members/.retired/，频道与名册里都不再有他。`);
+				return text(t("hire.fire.done", { name: target.name, slug: target.slug }));
 			}
 
 			// create
@@ -111,7 +120,7 @@ export function createHireTool(deps: CoreToolDeps) {
 			const known = new Set(all.map((item) => item.slug));
 			known.add(OWNER_SLUG);
 			if (!known.has(manager)) {
-				return text(`没有这个上级：${manager}。现有 slug：${[...known].join("、")}。不传 manager 就是你自己。`);
+				return text(t("hire.create.manager-missing", { manager, slugs: [...known].join("、") }));
 			}
 			const identity = await createAgent({
 				root: deps.layout.membersRoot,
@@ -121,6 +130,7 @@ export function createHireTool(deps: CoreToolDeps) {
 				...(args.team === undefined ? {} : { team: args.team }),
 				// 身份正文也会进每一轮提示词，跟 `file` 写盘走同一道脱敏。
 				...(args.body === undefined ? {} : { body: redact(args.body, deps.layout.appRoot) }),
+				...(deps.text === undefined ? {} : { text: deps.text }),
 			}).catch((error: unknown) => (error instanceof Error ? error.message : String(error)));
 			// slug 不合法（含 `.`、`.`、`..` 之类）是输入问题，回一句话让它改，别把工具打成异常。
 			if (typeof identity === "string") return text(identity);
@@ -135,6 +145,15 @@ export function createHireTool(deps: CoreToolDeps) {
 					conversationToSlug: { ...value.conversationToSlug, [String(id)]: identity.slug },
 				}), ctx);
 			}
+			// 团队说明是事实，团队频道是它的投影（`建立团队` 技能的顺序就是先招人、再写 README）。
+			const teamExists =
+				identity.team !== undefined &&
+				identity.team !== "" &&
+				(await readTeam(deps.layout.teamsRoot, identity.team)) !== undefined;
+			// 进团队的人自己报到（ADR-042）。频道还不存在时叫不到人 —— 建团队时会一起叫。
+			if (teamExists) {
+				await deps.announceJoin?.(identity.team as string, [identity.slug], ctx).catch(() => undefined);
+			}
 			// 按角色分模型：只认清单里的；写不进去也不影响人已经招到（回一句话说明）。
 			let modelNote = "";
 			if (args.model !== undefined && args.model.trim() !== "") {
@@ -143,16 +162,21 @@ export function createHireTool(deps: CoreToolDeps) {
 				);
 				modelNote =
 					assigned === undefined
-						? "（这一份装配不支持指定模型）"
+						? t("hire.create.model-unsupported")
 						: typeof assigned === "string"
-							? `（模型没换成：${assigned}）`
-							: `，模型 ${assigned.model}`;
+							? t("hire.create.model-failed", { error: assigned })
+							: t("hire.create.model-ok", { model: assigned.model });
 			}
-			const where = `身份在 members/${identity.slug}/identity.md，工作目录在 members/${identity.slug}/workspace/`;
+			const where = t("hire.create.where", { slug: identity.slug });
+			// 团队说明是事实，团队频道是它的投影（`建立团队` 技能的顺序就是先招人、再写 README）。
+			// 所以这里不拦，只把「频道还不存在」说清楚 —— 不说的话，模型会在一个不存在的频道里
+			// `say`，失败只回到它自己，界面上什么都看不见。
+			const teamNote =
+				args.team === undefined || teamExists ? "" : t("hire.create.team-missing", { team: args.team });
 			return text(
 				id === undefined
-					? `已新建 ${identity.name}（slug: ${identity.slug}）${modelNote}。${where}；重启或外壳扫描后它会开会话。`
-					: `已新建 ${identity.name}（slug: ${identity.slug}），会话 ${id} 已就绪${modelNote}。${where}。`,
+					? t("hire.create.pending", { name: identity.name, slug: identity.slug, model: modelNote, where, teamNote })
+					: t("hire.create.done", { name: identity.name, slug: identity.slug, id, model: modelNote, where, teamNote }),
 			);
 		},
 	});

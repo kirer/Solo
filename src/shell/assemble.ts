@@ -14,32 +14,32 @@
  * 这里没有「CEO」「CTO」这些字。谁是谁的上级，全在 `identity.md` 的 `manager` 字段里；
  * 谁是「离我最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
  */
-import type { Conversation, Extension, Harness, Registry } from "../runtime/index.ts";
-import { parseModelRef, setAgentModel } from "../runtime/models.ts";
+import type { Conversation, Extension, Harness, Registry } from "../core/runtime/index.ts";
+import { parseModelRef, setAgentModel } from "../core/runtime/models.ts";
 import {
 	BACKGROUND_CONTEXT,
 	defineExtension,
 	syncModels,
 	type Context,
-} from "../runtime/index.ts";
-import { labelsOf, readAllIdentities, readIdentity } from "../agent/identity.ts";
-import { mtimeOrUndefined } from "../runtime/io.ts";
-import { agentSections, renderAgentSection, type ChatRef } from "../agent/sections.ts";
-import { createCoreTools, type CoreToolDeps } from "../channel/tools/index.ts";
-import { mentionRosterOf } from "../channel/mentions.ts";
-import { ChannelDoc, OWNER, chatKind, emptyChannelState, type Attachment, type ChannelState, type Message } from "../channel/types.ts";
-import { channelsOf } from "../channel/rules.ts";
-import { postMessage } from "../channel/post.ts";
-import { coalesceQueue } from "../channel/queue.ts";
+} from "../core/runtime/index.ts";
+import { labelsOf, readAllIdentities, readIdentity } from "../core/agent/identity.ts";
+import { mtimeOrUndefined } from "../core/runtime/io.ts";
+import { agentSections, renderAgentSection, type ChatRef } from "../core/agent/sections.ts";
+import { createCoreTools, type CoreToolDeps } from "../core/channel/tools/index.ts";
+import { mentionRosterOf } from "../core/channel/mentions.ts";
+import { ChannelDoc, OWNER, chatKind, emptyChannelState, teamId, type Attachment, type ChannelState, type Message } from "../core/channel/types.ts";
+import { channelsOf } from "../core/channel/rules.ts";
+import { postMessage } from "../core/channel/post.ts";
+import { coalesceQueue } from "../core/channel/queue.ts";
 import {
 	DirectoryDoc,
 	emptyDirectory,
 	labelIn,
 	plainDirectory,
 	type DirectoryState,
-} from "../agent/roster.ts";
-import { settleTeam } from "../team/settle.ts";
-import { wireChannel } from "../channel/wiring.ts";
+} from "../core/agent/roster.ts";
+import { settleTeam } from "../core/team/settle.ts";
+import { wireChannel } from "../core/channel/wiring.ts";
 import {
 	addToAllChannel,
 	ensureAllChannel,
@@ -47,12 +47,14 @@ import {
 	joinTeamChannel,
 	syncTeamChannel,
 	type MembershipDeps,
-} from "../channel/membership.ts";
+} from "../core/channel/membership.ts";
 import { auditHooks } from "../app/audit.ts";
-import { readTeam } from "../team/doc.ts";
-import { loadPlugins, type PluginListener } from "../plugin/index.ts";
+import { readTeam } from "../core/team/doc.ts";
+import { loadPlugins, type PluginListener } from "../core/plugin/index.ts";
 import type { CoreServices } from "../app/types.ts";
-import { teamWorkspace, workspaceOf, type Layout } from "../layout.ts";
+import { teamWorkspace, workspaceOf, type Layout } from "../core/layout.ts";
+import { fill, loadTextCatalog } from "../core/md/catalog.ts";
+import { createFsx } from "../core/fsx.ts";
 
 /** 外壳配置。全部是路径和名字，没有行为开关。 */
 type CoreShellOptions = {
@@ -82,7 +84,7 @@ type CoreShellOptions = {
 /**
  * 装配结果的形状。
  *
- * 类型本体住在 `src/core/app/types.ts`：用例层（app）要拿它当入参，而依赖方向是
+ * 类型本体住在 `src/app/types.ts`：用例层（app）要拿它当入参，而依赖方向是
  * `shell → app`，所以这份形状不能反过来定义在外壳里。这里只留一个别名，
  * 免得老调用方（测试、`main.ts`）全都要改。
  */
@@ -110,8 +112,6 @@ export async function assembleCore(
 	// 会话表要在 `baseDeps` 之前声明：收尾器与投递都要用它（先查内存，再查名册）。
 	const conversations = new Map<string, Conversation>();
 
-	// 频道层要的那几根线只在这里接一次：会话在哪、谁叫醒了他、收尾怎么补。
-	const wiring = wireChannel({ harness, layout, live: () => conversations });
 	// 成员投影也是 domain 的事：外壳只决定「什么时候」调，不决定「谁该在频道里」。
 	const membership: MembershipDeps = {
 		harness,
@@ -120,9 +120,18 @@ export async function assembleCore(
 	};
 
 	// ── 1. 装能力包 ────────────────────────────────────────────────
+	// 工具描述、参数说明、拒绝话术全在 `<appRoot>/text/` 里（`seed/text/` 播种过来）。
+	// 装配时读一次：`defineTool` 的描述是静态的，改文案要重启（和插件一致）。
+	const text = await loadTextCatalog(createFsx(layout.appRoot));
+	if (text.keys().length === 0) {
+		console.warn(`[core] 没读到文案目录（${layout.textRoot}）：工具描述会是空的`);
+	}
+	// 频道层要的那几根线只在这里接一次：会话在哪、谁叫醒了他、收尾怎么补。
+	const wiring = wireChannel({ harness, layout, live: () => conversations, text });
 	const baseDeps: CoreToolDeps = {
 		harness,
 		layout,
+		text,
 		directory: async (ctx) => (await harness.snapshot(DirectoryDoc, ctx)) ?? emptyDirectory(),
 		saveDirectory: async (change, ctx) => {
 			await harness.commit(async (tx) => {
@@ -192,7 +201,11 @@ export async function assembleCore(
 		afterPost,
 		// 团队文件是事实，频道成员是投影。改了 `lead` 就得重投影一次。
 		syncTeam: async (team, ctx) => {
-			await syncTeamChannel(membership, team, ctx);
+			await syncTeamAndAnnounce(team, ctx);
+		},
+		// 招人时 `openAgent` 已经把人加进频道了，「新进的」那条差集算不出来 —— 这里直接点名。
+		announceJoin: async (team, slugs, ctx) => {
+			await announceJoin(team, slugs, ctx);
 		},
 		// 招进来的人立刻有私聊：他的工作过程在那里看。
 		ensureDm: async (slug, ctx) => {
@@ -210,7 +223,7 @@ export async function assembleCore(
 			// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
 			// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
 			hooks: auditHooks({
-				workspaceRoot: layout.appRoot,
+				logsRoot: layout.logsRoot,
 				slugOf: (conversationId) => {
 					for (const [slug, conversation] of conversations) {
 						if (Number(conversation.id) === conversationId) return slug;
@@ -243,6 +256,7 @@ export async function assembleCore(
 					layout,
 					chats: chatRefsOf,
 					extraPrompt: plugins.prompt,
+					text,
 				},
 				slug,
 			),
@@ -451,6 +465,34 @@ export async function assembleCore(
 
 	await ensureAllChannel(membership, identities, context);
 
+	/**
+	 * 重投影一个团队频道，并叫**新进来的人**自己报到（ADR-042）。
+	 *
+	 * 报到是成员自己说的话：一条系统留痕叫醒他们，谁都不用先发言 —— 团队一建好，
+	 * 负责人和成员各自说一句「我是谁、负责什么」。只有这条运行时路径会叫：
+	 * 启动时的 `joinTeamChannel` 不叫，否则每次重启都让全体成员白烧一轮。
+	 */
+	async function syncTeamAndAnnounce(team: string, ctx: Context): Promise<void> {
+		await announceJoin(team, await syncTeamChannel(membership, team, ctx), ctx);
+	}
+
+	/** 叫这些人去团队频道报到：一条系统留痕 + 只叫他们，助理不发言。 */
+	async function announceJoin(team: string, slugs: readonly string[], ctx: Context): Promise<void> {
+		if (slugs.length === 0) return;
+		const channel = (await shell.channels(ctx)).channels[teamId(team)];
+		if (channel === undefined || channel.archived === true) return;
+		await shell.postAs(
+			{
+				channelId: channel.id,
+				from: OWNER,
+				kind: "note",
+				text: fill(shell.text, "membership.joined", { title: channel.title }),
+				wakeTo: slugs,
+			},
+			ctx,
+		);
+	}
+
 	const shell: CoreShell = {
 		harness,
 		registry,
@@ -467,7 +509,7 @@ export async function assembleCore(
 		// 沉淀钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
 		afterPost,
 		async syncTeam(team: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
-			await syncTeamChannel(membership, team, ctx);
+			await syncTeamAndAnnounce(team, ctx);
 		},
 		async promptOf(slug: string): Promise<string> {
 			return renderAgentSection(
@@ -476,6 +518,7 @@ export async function assembleCore(
 					layout,
 					chats: chatRefsOf,
 					extraPrompt: plugins.prompt,
+					text: shell.text,
 				},
 				slug,
 			);
@@ -526,6 +569,7 @@ export async function assembleCore(
 		labelOf: (slug) => labelIn(directory, slug),
 		identities: () => readAllIdentities(layout.agentRoots),
 		layout,
+		text,
 		allChannel,
 		...(options.diag === undefined ? {} : { diag: options.diag }),
 		close: async (ctx?: Context) => {
@@ -591,9 +635,11 @@ export async function ownerSpeak(
 		readonly kind?: string;
 		/** 附件引用（图片会被读成内容块交给模型）。 */
 		readonly attachments?: readonly Attachment[];
+		/** 不按 @ 推算，直接叫醒这几个人（系统留痕叫人时用）。 */
+		readonly wakeTo?: readonly string[];
 	},
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<{ readonly seq: number; readonly delivery: import("../channel/dispatch.ts").DeliverResult }> {
+): Promise<{ readonly seq: number; readonly delivery: import("../core/channel/dispatch.ts").DeliverResult }> {
 	const state = await shell.channels(context);
 	const channel = state.channels[options.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${options.channelId}`);
@@ -615,7 +661,7 @@ export async function ownerSpeak(
 	// 显示名以**当下的** `identity.md` 为准，名册里的 `labels` 只做兜底。
 	const labels = { ...directory.labels, ...labelsOf(everyone) };
 	// 频道层那几根线接一次（先查内存会话表，再查名册）；收尾也用它。
-	const wiring = wireChannel({ harness: shell.harness, layout: shell.layout, live: () => shell.conversations });
+	const wiring = wireChannel({ harness: shell.harness, layout: shell.layout, live: () => shell.conversations, text: shell.text });
 	const result = await postMessage(
 		{
 			harness: shell.harness,
@@ -625,6 +671,7 @@ export async function ownerSpeak(
 			// 附件根跟着工作区走；回话规矩每轮现读一次（改模板下一条消息生效）。
 			uploadsRoot: wiring.uploadsRoot,
 			promptDir: wiring.promptDir,
+			text: shell.text,
 			// 我说话也要记「谁在哪个频道被叫醒」，否则被叫的人回话会落到别的频道。
 			rememberWake: (slug, wake) => wiring.rememberWake(slug, wake, context),
 			// 插话时继承他上一次的 `task`：我在他干活时私聊一句，不覆盖团队频道。
@@ -640,6 +687,7 @@ export async function ownerSpeak(
 			...(options.replyTo === undefined ? {} : { replyTo: options.replyTo }),
 			...(options.kind === undefined ? {} : { kind: options.kind }),
 			...(options.attachments === undefined ? {} : { attachments: options.attachments }),
+			...(options.wakeTo === undefined ? {} : { wakeTo: options.wakeTo }),
 		},
 		context,
 	);

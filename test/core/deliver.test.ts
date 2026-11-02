@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import { deliver } from "../../src/core/channel/dispatch.ts";
 import { queuedAhead } from "../../src/core/channel/queue.ts";
 import { digestNotice, digestRows, renderDelivery } from "../../src/core/channel/delivery.ts";
+import { SEED_TEXT } from "./catalog.ts";
 import { DIGEST_TEMPLATE, INTERRUPTED_TEMPLATE, REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
 
 /**
@@ -9,7 +10,7 @@ import { DIGEST_TEMPLATE, INTERRUPTED_TEMPLATE, REPLY_TEMPLATE, SEED_DELIVERY_PR
  * 默认值等于允许「回话段为空」静默通过，正是这一刀要防的洞。所以这里统一补上 seed 里那份。
  */
 function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDelivery>[0], "prompt">): string {
-	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT });
+	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT, catalog: SEED_TEXT });
 }
 import type { Harness } from "../../src/core/runtime/index.ts";
 import { type ChannelState } from "../../src/core/channel/types.ts";
@@ -106,7 +107,7 @@ describe("投递正文", () => {
 });
 
 function digestOf(state: ChannelState, slug: string): string {
-	const { total, rows } = digestRows(state, slug);
+	const { total, rows } = digestRows(state, slug, 5, SEED_TEXT);
 	return digestNotice(DIGEST_TEMPLATE, total, rows);
 }
 

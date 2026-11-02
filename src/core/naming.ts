@@ -11,6 +11,8 @@
  * - `assertName` / `isSafeName`：对已经算好的名字**校验**，不合法就拒绝。
  */
 
+import { fill, type TextCatalog } from "./md/catalog.ts";
+
 export type NameKind = "agent" | "team" | "skill";
 
 /** 允许的字符：字母、数字（含中文）、`-`、`_`。别的一律不是名字。 */
@@ -32,10 +34,11 @@ export function isSafeName(value: string): boolean {
 }
 
 /** 校验一个名字；不合法抛错。错误文案是给人/模型看的。 */
-export function assertName(value: string, kind: NameKind): string {
+export function assertName(value: string, kind: NameKind, catalog?: TextCatalog): string {
 	if (!isSafeName(value) || RESERVED[kind].includes(value)) {
-		const what = kind === "team" ? "团队 slug" : kind === "skill" ? "技能名" : "slug";
-		throw new Error(`不能用作${what}：${value}。只能用字母、数字、中文、- 和 _。`);
+		const what = fill(catalog, `org.name.what.${kind}`);
+		const message = fill(catalog, "org.name.invalid", { what, value });
+		throw new Error(message === "" ? `invalid ${kind}: ${value}` : message);
 	}
 	return value;
 }

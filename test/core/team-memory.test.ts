@@ -1,3 +1,4 @@
+import { SEED_TEXT } from "./catalog.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +32,7 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 			text: "后端超时是因为连接池默认只有 5。",
 			by: "林越",
 			at: new Date("2026-10-27T03:00:00Z"),
+			catalog: SEED_TEXT,
 		});
 		const source = await readTeamMemory(teams, "alpha");
 		expect(source).toContain("## 2026-10-27 林越");
@@ -69,7 +71,7 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 				at: new Date(`2026-10-2${index}T00:00:00Z`),
 			});
 		}
-		const digest = teamMemoryDigest((await readTeamMemory(teams, "alpha")) ?? "");
+		const digest = teamMemoryDigest((await readTeamMemory(teams, "alpha")) ?? "", SEED_TEXT);
 		expect(digest).toBeDefined();
 		expect(digest).toContain("2026-10-22 林越");
 		expect(digest?.split("\n")).toHaveLength(3);
@@ -89,18 +91,18 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 describe("团队记忆的闸", () => {
 	it("超长条目直接拒写，不做静默截断", async () => {
 		await expect(
-			appendTeamMemory(teams, "alpha", { text: "长".repeat(301) }),
+			appendTeamMemory(teams, "alpha", { text: "长".repeat(301), catalog: SEED_TEXT }),
 		).rejects.toThrow(/上限/);
 		expect(await readTeamMemory(teams, "alpha")).toBeUndefined();
 	});
 
 	it("空条目拒写", async () => {
-		await expect(appendTeamMemory(teams, "alpha", { text: "   " })).rejects.toThrow(/空/);
+		await expect(appendTeamMemory(teams, "alpha", { text: "   ", catalog: SEED_TEXT })).rejects.toThrow(/空/);
 	});
 
 	it("像密钥的内容拒写", async () => {
 		await expect(
-			appendTeamMemory(teams, "alpha", { text: "token 是 sk-abcdefghijklmnopqrstuvwxyz123456" }),
+			appendTeamMemory(teams, "alpha", { text: "token 是 sk-abcdefghijklmnopqrstuvwxyz123456", catalog: SEED_TEXT }),
 		).rejects.toThrow(/密钥|密码/);
 	});
 

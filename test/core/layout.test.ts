@@ -22,10 +22,10 @@ describe("两个根", () => {
 		for (const at of [layout.assistantRoot, layout.promptRoot, layout.pluginsRoot, layout.settingsFile]) {
 			expect(at.startsWith(layout.appRoot)).toBe(true);
 		}
-		for (const at of [layout.databasePath, layout.uploadsRoot, layout.logsRoot, layout.seedManifestFile]) {
+		for (const at of [layout.databasePath, layout.uploadsRoot, layout.seedManifestFile]) {
 			expect(at.startsWith(layout.appRoot)).toBe(true);
 		}
-		for (const at of [layout.membersRoot, layout.teamsRoot, layout.skillsRoot, layout.rulesFile]) {
+		for (const at of [layout.membersRoot, layout.teamsRoot, layout.skillsRoot, layout.rulesFile, layout.logsRoot]) {
 			expect(at.startsWith(layout.userRoot)).toBe(true);
 		}
 	});

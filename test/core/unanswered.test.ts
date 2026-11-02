@@ -1,3 +1,4 @@
+import { SEED_TEXT } from "./catalog.ts";
 import { describe, expect, test } from "vitest";
 import { reasonText, renderUnanswered, watchSettled } from "../../src/core/channel/unanswered.ts";
 
@@ -9,26 +10,26 @@ const settled = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("结算原因翻成人话", () => {
 	test("no_model 说清是配置问题，不是他偷懒", () => {
-		expect(reasonText("no_model")).toContain("没有可用的模型");
-		expect(reasonText("no_model")).toContain("settings.json");
+		expect(reasonText("no_model", SEED_TEXT)).toContain("没有可用的模型");
+		expect(reasonText("no_model", SEED_TEXT)).toContain("settings.json");
 	});
 
 	test("见过的那几个各自翻译", () => {
-		expect(reasonText("aborted")).toBe("这一轮被中断了");
-		expect(reasonText("run_failed")).toBe("这一轮跑失败了");
-		expect(reasonText("model_error")).toContain("调模型失败");
-		expect(reasonText(undefined)).toBe("没有说明原因");
-		expect(reasonText("")).toBe("没有说明原因");
+		expect(reasonText("aborted", SEED_TEXT)).toBe("这一轮被中断了");
+		expect(reasonText("run_failed", SEED_TEXT)).toBe("这一轮跑失败了");
+		expect(reasonText("model_error", SEED_TEXT)).toContain("调模型失败");
+		expect(reasonText(undefined, SEED_TEXT)).toBe("没有说明原因");
+		expect(reasonText("", SEED_TEXT)).toBe("没有说明原因");
 	});
 
 	test("没见过的原样贴出来 —— 编一句「未知错误」等于把唯一线索丢掉", () => {
-		expect(reasonText("quota_exhausted")).toBe("quota_exhausted");
+		expect(reasonText("quota_exhausted", SEED_TEXT)).toBe("quota_exhausted");
 	});
 });
 
 describe("频道里的那一行留痕", () => {
 	test("带序号、名字、原因", () => {
-		expect(renderUnanswered(93, "知言", "no_model")).toBe(
+		expect(renderUnanswered(93, "知言", "no_model", SEED_TEXT)).toBe(
 			"#93 叫了 @知言，但他这一轮没答上来：没有可用的模型（还没配，或 `settings.json` 的 `defaultModel` 指向了不存在的模型）——去「设置 → 模型」看一眼。",
 		);
 	});

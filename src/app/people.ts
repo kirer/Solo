@@ -5,12 +5,13 @@
  * 两者共用的显示名只有 `labelIn` 一处。
  */
 import { join } from "node:path";
-import { OWNER_SLUG, readIdentity } from "../agent/identity.ts";
-import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { appendMemory, memoryTimeline, readMemory, removeSection, sectionsOf, writeMemory } from "../agent/memory.ts";
-import { labelIn, type DirectoryState } from "../agent/roster.ts";
-import { redact } from "../agent/secrets.ts";
-import { listSkills } from "../agent/skills.ts";
+import { OWNER_SLUG, readIdentity } from "../core/agent/identity.ts";
+import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
+import { appendMemory, memoryTimeline, readMemory, writeMemory } from "../core/agent/memory.ts";
+import { removeSection, sectionsOf } from "../core/md/memory.ts";
+import { labelIn, type DirectoryState } from "../core/agent/roster.ts";
+import { redact } from "../core/agent/secrets.ts";
+import { listSkills } from "../core/agent/skills.ts";
 import type { ViewPersonMemory, ViewPersonProfile } from "../view/dto.ts";
 import { memoryEntries, memorySummary } from "./project.ts";
 import { AppError } from "./errors.ts";
@@ -89,7 +90,7 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 				scope: skill.scope,
 				overrides: skill.overrides === true,
 			})),
-			memory: memorySummary(source),
+			memory: memorySummary(source, shell.text),
 			channels: await read.channelsOf(slug),
 			model: await modelOf(slug),
 		};
@@ -101,7 +102,7 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		requireSlug(directory, slug);
 		const agentDir = await agentDirOf(slug);
 		const source = (await readMemory(agentDir)) ?? "";
-		const summary = memorySummary(source);
+		const summary = memorySummary(source, shell.text);
 		return {
 			slug,
 			label: labelIn(directory, slug),
@@ -133,12 +134,18 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 			// 在这里手拼行切片实测会把后面的节写坏（删末节最容易被漏）。
 			const next = removeSection(source, body.heading ?? "");
 			if (next === undefined) throw new AppError("not-found", "没有这一条记忆（可能已经被删掉）");
-			const result = await writeMemory(agentDir, next, actor);
+			const result = await writeMemory(agentDir, next, actor, shell.text);
 			return { ok: true, entries: sectionsOf(result.source).length };
 		}
 		if (body.op === "add") {
 			// 网页上贴进来的这条也会进提示词，跟 agent 自己 `remember` 一样过脱敏。
-			const result = await appendMemory(agentDir, redact(body.text ?? "", shell.layout.appRoot), new Date(), actor);
+			const result = await appendMemory(
+				agentDir,
+				redact(body.text ?? "", shell.layout.appRoot),
+				new Date(),
+				actor,
+				shell.text,
+			);
 			if (!result.changed) throw new AppError("bad-request", result.message);
 			return { ok: true, entries: sectionsOf(result.source).length };
 		}

@@ -9,7 +9,7 @@
 之后以磁盘为准。
 代码只负责**排版**和**填插槽**，不负责讲道理。
 
-## 1. 四个家，各管一段
+## 1. 五个家，各管一段
 
 | 家 | 每轮进上下文 | 写什么 | 上限 | 例子 |
 | --- | --- | --- | --- | --- |
@@ -17,6 +17,7 @@
 | `<appRoot>/prompt/*.md` | 是 | 怎么组织信息、怎么用工具（带插槽） | 一段 ≤ 12 行 | 「你的上级：{{manager}}」 |
 | `<userRoot>/skills/<n>/SKILL.md` | 否，查了才读 | 分场景的长做法 | ≤ 4 KB（自律 3 KB），四段 | 拍板链、怎么汇报、怎么建团队 |
 | `<userRoot>/members/<slug>/identity.md` | 是（正文） | 这个人的职责与边界 | ≤ 20 行 | 「你负责 X；不做 Y」 |
+| `<appRoot>/text/*.md` | 是（工具描述每轮随工具发） | 工具的描述、参数说明、拒绝与回话、投递头、附件说明 | 无行数上限，一句一条 | `say.param.text`、`attachments.image.gone` |
 
 **判据**：这句话不说，他下一句就会做错 → `rules`。要分三步做、只在某种场合才用 → `skill`。
 同一层意思出现在两个家里，就是缺陷，必须删掉一个。三条重复的自动检查在
@@ -27,6 +28,9 @@
 ```
 seed/
   rules.md                       # 15 条以内，每轮都看见
+  text/                          # 机械文案：`## key` 分节，代码里只留键名
+    tools.md                     # 7 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
+    channel.md                   # 投递头 / 附件说明 / 未答留痕 / 提示词兜底句
   prompt/                        # 9 段 + 11 段（每轮贴给模型的回话规矩）
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
     05-body.md                   # {{self.body}}（空则整段消失）
@@ -36,7 +40,7 @@ seed/
     40-tools.md                  # 从注册表实拍，插槽 {{tools}}
     50-memory.md                 # 记忆目录
     60-skills.md                 # 技能目录
-    70-directory.md              # 你的目录（identity/memory/skills 在哪）
+    70-directory.md              # 你的目录（两个根 + identity/memory/skills 在哪）
     80-reply.md                  # 每轮贴在投递正文末尾的「怎么回话」
     81-alone.md                  # 只有你被叫醒时的那一句（投递条件片段）
     82-shared.md                 # 还有别人在场时的那一句
@@ -73,6 +77,7 @@ seed/
 | --- | --- | --- |
 | `{{self.name}}` `{{self.title}}` `{{self.slug}}` | 自己 | `identity.md` |
 | `{{self.dir}}` | 自己的目录（`assistant/<slug>/` 或 `members/<slug>/`） | `Layout` 的两个根 |
+| `{{root.user}}` `{{root.app}}` | 两个根的**绝对路径**（组织 / 程序自带） | `Layout.userRoot` / `Layout.appRoot` |
 | `{{manager}}` | 上级的显示名 | `manager` 字段 + 名册 |
 | `{{reports}}` | 向你汇报的人 | 名册反查 |
 | `{{chain}}` | 往上的整条汇报线 | `chainUp` |
@@ -146,7 +151,9 @@ seed/
 
 ## 5. 验收
 
-- `npm run prompt:check`：seed/prompt 全渲染一遍，未知插槽 0 个，两次渲染逐字节相同。
+- `npm run prompt:check`：seed/prompt 全渲染一遍，未知插槽 0 个，两次渲染逐字节相同；
+  同一支脚本再查 `seed/text/`：代码引用的键都存在、每条文案的插槽都填得上、两遍渲染一致。
+- `test/core/no-hardcoded-text.test.ts`：点名的模块里不许出现中文字符串字面量（注释与日志除外）。
 - `rules.md` 里不出现任何工具名，≤ 15 条。
 - `npm run test` 的 `test/core/seed-contract.test.ts`：一条事实一个家、模板齐全、段 ≤ 12 行、技能 ≤ 4 KB。
 - seed 总体积 < 500 KB。

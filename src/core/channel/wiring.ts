@@ -18,6 +18,7 @@ import {
 } from "../agent/roster.ts";
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
 import type { Layout } from "../layout.ts";
+import type { TextCatalog } from "../md/catalog.ts";
 
 export type ChannelWiring = {
 	readonly harness: Harness;
@@ -25,6 +26,8 @@ export type ChannelWiring = {
 	readonly promptDir: string;
 	/** 附件根（`<workspace>/uploads`）：投递要把图片读成内容块。 */
 	readonly uploadsRoot: string;
+	/** 机械文案目录（`text/`）：投递头、留痕、摘要行从这里取。 */
+	readonly text?: TextCatalog;
 	/** 一轮答完的收尾（ADR-099）。投递、我说话、沉淀共用这一个。 */
 	readonly finishTurn: FinishTurn;
 	conversationOf: (slug: string, context?: Context) => Promise<Conversation | undefined>;
@@ -43,6 +46,8 @@ export function wireChannel(deps: {
 	/** 两个根的布局：提示词在 app 根，上传也在 app 根。 */
 	readonly layout: Layout;
 	readonly live?: () => ReadonlyMap<string, Conversation>;
+	/** 机械文案目录（`text/`）。装配时读一次；不给就只留键名。 */
+	readonly text?: TextCatalog;
 }): ChannelWiring {
 	const wakeDeps = directoryWake({
 		harness: deps.harness,
@@ -63,6 +68,7 @@ export function wireChannel(deps: {
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,
 		promptDir,
+		...(deps.text === undefined ? {} : { text: deps.text }),
 		// 收尾发生在背景上下文里（结算之后），用不到调用方那一轮的覆盖层。
 		conversationOf: (slug) => conversationOf(slug),
 		rememberWake: (slug, wake) => rememberWake(slug, wake),
@@ -73,6 +79,7 @@ export function wireChannel(deps: {
 		harness: deps.harness,
 		promptDir,
 		uploadsRoot: deps.layout.uploadsRoot,
+		...(deps.text === undefined ? {} : { text: deps.text }),
 		finishTurn,
 		conversationOf,
 		rememberWake,

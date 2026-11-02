@@ -140,35 +140,42 @@ export async function joinTeamChannel(
  *
  * 成员表是事实的投影，所以用「精确重算后整体替换」（`replace`）而不是「只加不删」：
  * 只加不删会留下改名后的幽灵成员（实测过）。
+ *
+ * **返回新进来的成员**（不含我和助理）。谁进频道了是这里唯一知道的事，报到的话由
+ * 调用方去说（`assemble.ts` 用一条 `note` 叫醒他们）；这一层只管成员表，不碰消息。
  */
 export async function syncTeamChannel(
 	deps: MembershipDeps,
 	team: string,
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<void> {
+): Promise<readonly string[]> {
 	const [doc, all] = await Promise.all([
 		readTeam(deps.layout.teamsRoot, team),
 		readAllIdentities(deps.layout.agentRoots),
 	]);
 	// README 还没写出来就不建频道：标题只有一个真名（README 的 `name`）。
 	// 先按目录名建一次再改名，界面上就会先闪一段拼音/英文 slug（实测 `xiaokonglong`）。
-	if (doc === undefined) return;
+	if (doc === undefined) return [];
 	const lead = doc.lead;
 	const chain = lead === undefined || lead === "" ? [] : chainUp(all, lead);
+	// 助理（直接向我汇报的人）和我一样在每个团队频道里：他是统筹者，要看得见每个
+	// 团队在做什么，团队里的人也随时能 @ 到他。报到这件事不叫他们 —— 他们不是被招来干活的。
+	const assistants = all.filter((identity) => identity.manager === OWNER).map((identity) => identity.slug);
 	const members = teamMembers({
 		lead,
 		chain,
 		teammates: membersOfTeam(all, team),
-		// 助理（直接向我汇报的人）和我一样在每个团队频道里：他是统筹者，要看得见每个
-		// 团队在做什么，团队里的人也随时能 @ 到他。
-		assistants: all.filter((identity) => identity.manager === OWNER).map((identity) => identity.slug),
+		assistants,
 	});
 	// 团队频道里**任何人说话都叫醒团队管理员**：这个频道只为这一个团队存在，
 	// 不这样设，成员说「做完了」而没 @ 人，团队管理员就永远收不到（实测里 agent
 	// 因此用 `run sleep 120` 轮询等进度，白烧一轮）。
 	const wakeOnAll = lead === undefined || lead === "" ? [] : [lead];
+	const notMe = new Set([OWNER, ...assistants]);
+	const joined: string[] = [];
 	await deps.harness.commit(async (tx) => {
 		const state = (await tx.doc(ChannelDoc)) as ChannelState;
+		const before = state.channels[teamId(team)]?.members ?? [];
 		Object.assign(
 			state,
 			projectChannel(state, {
@@ -182,5 +189,11 @@ export async function syncTeamChannel(
 				mode: "replace",
 			}),
 		);
+		if (doc.status !== "archived") {
+			for (const slug of members) {
+				if (!before.includes(slug) && !notMe.has(slug)) joined.push(slug);
+			}
+		}
 	}, context);
+	return joined;
 }

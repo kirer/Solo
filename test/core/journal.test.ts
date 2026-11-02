@@ -1,3 +1,4 @@
+import { SEED_TEXT } from "./catalog.ts";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,9 +57,9 @@ describe("记忆日志", () => {
 	});
 
 	it("appendMemory 留痕的 before 是写入前的整篇内容", async () => {
-		await appendMemory(root, "第一条", new Date("2026-10-01T00:00:00Z"), "remember");
+		await appendMemory(root, "第一条", new Date("2026-10-01T00:00:00Z"), "remember", SEED_TEXT);
 		const afterFirst = (await readMemory(root)) ?? "";
-		await appendMemory(root, "第二条", new Date("2026-10-02T00:00:00Z"), "remember");
+		await appendMemory(root, "第二条", new Date("2026-10-02T00:00:00Z"), "remember", SEED_TEXT);
 		const entries = await lines();
 		expect(entries).toHaveLength(2);
 		expect(entries[0]?.before).toBe("# 记忆\n");
@@ -68,7 +69,7 @@ describe("记忆日志", () => {
 	});
 
 	it("整篇重写也留痕（op=replace）", async () => {
-		await appendMemory(root, "旧结论");
+		await appendMemory(root, "旧结论", new Date(), "agent", SEED_TEXT);
 		await writeMemory(root, "## 新\n只有这一条", "agent");
 		const entries = await lines();
 		const last = entries[entries.length - 1];

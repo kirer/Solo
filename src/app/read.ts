@@ -5,10 +5,10 @@
  * response，也不做序列化 —— 序列化是 `interface/http` 的事。这样同样的读法能被 SSE、
  * HTTP、以及将来任何别的入口共用一份。
  */
-import { OWNER_SLUG } from "../agent/identity.ts";
-import { chatKind } from "../channel/types.ts";
-import { wakeOf } from "../agent/roster.ts";
-import { BACKGROUND_CONTEXT, LiveDoc, type EntryRecord, type LiveState } from "../runtime/index.ts";
+import { OWNER_SLUG } from "../core/agent/identity.ts";
+import { chatKind } from "../core/channel/types.ts";
+import { wakeOf } from "../core/agent/roster.ts";
+import { BACKGROUND_CONTEXT, LiveDoc, type EntryRecord, type LiveState } from "../core/runtime/index.ts";
 import type { AttentionItem, ViewActivity, ViewChannel, ViewChannelDetail, ViewOrg, ViewTurn } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";

@@ -3,6 +3,7 @@ import { BACKGROUND_CONTEXT, Type, defineTool, type Cursor, type EntryRecord } f
 import { redact } from "../../agent/secrets.ts";
 import { actionOf, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { recallText } from "./recall.ts";
+import { fill, type TextCatalog } from "../../md/catalog.ts";
 
 /** 历史条目里一条消息的收窄视图（结构上只用得到这几个字段）。 */
 type HistoryBlock = { readonly type?: string; readonly text?: string };
@@ -23,17 +24,17 @@ function historyText(model: HistoryModel | undefined): string {
 }
 
 /** 相对时间。模型要判断「这件事是刚说的还是很久以前」，绝对时间戳帮不上忙。 */
-function agoOf(timestamp: unknown, now: number): string {
+function agoOf(timestamp: unknown, now: number, catalog?: TextCatalog): string {
 	const at =
 		typeof timestamp === "number" ? timestamp : typeof timestamp === "string" ? Date.parse(timestamp) : Number.NaN;
-	if (!Number.isFinite(at)) return "时间未知";
+	if (!Number.isFinite(at)) return fill(catalog, "history.ago.unknown");
 	const minutes = Math.round((now - at) / 60_000);
-	if (minutes < 1) return "刚刚";
-	if (minutes < 60) return `${minutes} 分钟前`;
+	if (minutes < 1) return fill(catalog, "history.ago.now");
+	if (minutes < 60) return fill(catalog, "history.ago.minutes", { n: minutes });
 	const hours = Math.round(minutes / 60);
-	if (hours < 24) return `${hours} 小时前`;
+	if (hours < 24) return fill(catalog, "history.ago.hours", { n: hours });
 	const days = Math.round(hours / 24);
-	if (days < 30) return `${days} 天前`;
+	if (days < 30) return fill(catalog, "history.ago.days", { n: days });
 	return new Date(at).toISOString().slice(0, 10);
 }
 
@@ -56,27 +57,22 @@ function agoOf(timestamp: unknown, now: number): string {
 export function createHistoryTool(deps: CoreToolDeps) {
 	const tool = defineTool({
 		name: "read_history",
-		description: [
-			"翻历史。`scope=channel`（默认）查我自己这个会话（上下文被压缩掉的部分也查得到）；",
-			"`scope=memory`（或 personal / team 简写）翻记忆全文，可以只筛包含某个词的段落。",
-		].join(""),
+		description: fill(deps.text, "history.description"),
 		parameters: Type.Object({
-			scope: Type.Optional(
-				Type.String({ description: "channel（默认，对话历史）/ memory（我的记忆）/ team（团队记忆；也可以先写 memory 再给 team）" }),
-			),
-			query: Type.Optional(Type.String({ description: "关键词（不区分大小写），只留包含它的条目 / 段落" })),
-			team: Type.Optional(Type.String({ description: "团队 slug，默认是我所在的团队（scope=team / memory 且要看团队时用）" })),
-			around: Type.Optional(Type.Number({ description: "条目 id（每行开头的 #号）。从这条往前翻（只看对话历史）" })),
-			limit: Type.Optional(Type.Number({ description: "最多几条，默认 12，上限 50（只看对话历史）" })),
+			scope: Type.Optional(Type.String({ description: fill(deps.text, "history.param.scope") })),
+			query: Type.Optional(Type.String({ description: fill(deps.text, "history.param.query") })),
+			team: Type.Optional(Type.String({ description: fill(deps.text, "history.param.team") })),
+			around: Type.Optional(Type.Number({ description: fill(deps.text, "history.param.around") })),
+			limit: Type.Optional(Type.Number({ description: fill(deps.text, "history.param.limit") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const wanted = actionOf(args.scope, ["channel", "memory", "personal", "team"], "channel", "scope");
+			const wanted = actionOf(args.scope, ["channel", "memory", "personal", "team"], "channel", "scope", deps.text);
 			if (typeof wanted !== "string") return text(wanted);
 
 			// 记忆那一半：入参是「谁的记忆 / 哪个团队 / 只留含某词的段落」。
 			if (wanted !== "channel") {
-				const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+				const slug = await selfOrError(deps, Number(api.conversationId), ctx);
 				if (typeof slug !== "string") return text(slug);
 				const keyword = (args.query ?? "").trim();
 				if (wanted === "team") return recallText(deps, slug, args.team, keyword);
@@ -88,7 +84,7 @@ export function createHistoryTool(deps: CoreToolDeps) {
 			const limit = Math.min(Math.max(Math.trunc(args.limit ?? 12), 1), 50);
 			const keyword = (args.query ?? "").trim().toLowerCase();
 			const conversation = await deps.harness.conversation(Number(api.conversationId) as never, ctx);
-			if (conversation === undefined) return text("这个会话还没有任何记录。");
+			if (conversation === undefined) return text(fill(deps.text, "history.empty.conversation"));
 			const now = Date.now();
 			const found: { id: number; line: string }[] = [];
 			let cursor: Cursor | undefined;
@@ -111,9 +107,16 @@ export function createHistoryTool(deps: CoreToolDeps) {
 					const model = entry.model?.[0] as HistoryModel | undefined;
 					const body = historyText(model);
 					if (body === "") continue;
-					const speaker = entry.kind === "pi.compaction" ? "[压缩摘要]" : entry.kind === "pi.user" ? "对方" : "你";
+					const speaker = fill(
+						deps.text,
+						entry.kind === "pi.compaction"
+							? "history.speaker.compaction"
+							: entry.kind === "pi.user"
+								? "history.speaker.other"
+								: "history.speaker.self",
+					);
 					const clipped = body.length > HISTORY_LINE ? `${body.slice(0, HISTORY_LINE)}…` : body;
-					const line = `[#${entry.id} ${agoOf(model?.timestamp, now)}] ${speaker}: ${clipped}`;
+					const line = `[#${entry.id} ${agoOf(model?.timestamp, now, deps.text)}] ${speaker}: ${clipped}`;
 					if (keyword !== "" && !line.toLowerCase().includes(keyword)) continue;
 					found.push({ id: Number(entry.id), line });
 					if (found.length > limit) {
@@ -128,7 +131,7 @@ export function createHistoryTool(deps: CoreToolDeps) {
 				}
 				cursor = page.next;
 			}
-			if (found.length === 0) return text("这个会话里没有匹配的记录。");
+			if (found.length === 0) return text(fill(deps.text, "history.empty.match"));
 			// 新→旧累加，超预算就停：给的是「最近的一段」，不是「全部」——
 			// 历史的价值在于能接着往前翻，不在于一次全拿出来。
 			const lines: string[] = [];
@@ -140,7 +143,8 @@ export function createHistoryTool(deps: CoreToolDeps) {
 			}
 			const oldest = found[lines.length - 1];
 			const more = found.length > lines.length || (lines.length >= limit && !exhausted);
-			const tail = more && oldest !== undefined ? `\n\n还有更早的，用 around=${oldest.id} 继续往前。` : "";
+			const tail =
+				more && oldest !== undefined ? `\n\n${fill(deps.text, "history.more", { id: oldest.id })}` : "";
 			return text(redact(`${lines.join("\n")}${tail}`, deps.layout.appRoot));
 		},
 	});

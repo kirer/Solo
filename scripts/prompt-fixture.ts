@@ -19,6 +19,8 @@ export const SAMPLE_SLOTS = {
 	"self.title": "示例身份",
 	"self.slug": "demo",
 	"self.dir": "members/demo/",
+	"root.user": "/home/example/.solo",
+	"root.app": "/home/example/.solo-app",
 	"self.body": "你负责把示例这件事做完。不做示例之外的事。",
 
 	rules: "- 只在叫你的那个频道回话。\n- 没有新东西就不说。\n- 要拍板的事找上级，别自己定。",
@@ -54,6 +56,8 @@ export const SAMPLE_SLOTS = {
 	"tool:remember": "remember",
 	"tool:read_history": "read_history",
 	"tool:run": "run",
+	"tool:file": "file",
+	"tool:hire": "hire",
 
 	"reply.alone": "（这一轮只有你被叫醒：必须回，回的就是结果。）",
 	"reply.colleagues": "（成员的事就在这个频道说：要问示例同僚就 @ 他。）",

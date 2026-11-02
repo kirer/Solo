@@ -65,6 +65,11 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 
 这一条把「改我自己」和「改组织」变成同一个动作：写文件。
 
+**工具自己说的话也在这条路上。** 7 个工具的描述、每个参数说明、拒绝与成功回话、投递头、
+附件说明，同样不住在代码里：`<appRoot>/text/*.md`（`## key` 分节），代码只留键名
+（`md/catalog.ts` 的 `fill(catalog, "say.refuse.pass")`）。差别只有一点：工具描述在**装配时**
+定型，所以改 `text/tools.md` 要重启；`prompt/*.md` 仍是改完下一条消息生效。
+
 **公共事实是渲染出来的，不是写下来的。** 每个人的提示词里都有「你在组织里的位置」
 （上级、下属、整条汇报线、同一个团队的人、全员人数）。这段不存进 `identity.md` ——
 组织会变，写死的话 agent 会按三周前的架构认真工作，而你看不出来它错了。
@@ -220,7 +225,7 @@ V3 以前这里靠 6 秒定时器事后猜，现在结算本身就是信号，�
   plugins/                      内置插件
   settings.json                 模型配置
   core.sqlite                   频道消息、名册、沉淀游标
-  uploads/  logs/               附件与日志
+  uploads/                      附件
 ```
 
 「待在自己的工作区里」是**写在 md 里的纪律**，不是代码闸：代码只保证每个人/每个团队有一个
@@ -279,8 +284,8 @@ V3 以前这里靠 6 秒定时器事后猜，现在结算本身就是信号，�
 README 不受这条限制——改正文不是开摊子。
 
 **写 README 前校验 `lead`**（`team/doc.ts` 的 `leadProblem`，不通过直接拒绝、不落盘）：
-必须有；必须是名册里真实存在的 slug；不能是直接向我汇报的助理。团队管理员是实际干活、
-交付的人，助理是统筹者 —— 建团队之前先招一个管理员，是技能「建立团队」里的流程，
+必须有；必须是名册里真实存在的 slug；不能是直接向我汇报的助理。团队管理员是带人交付的
+管理岗，助理是统筹者 —— 建团队之前先招一个管理员，是技能「建立团队」里的流程，
 代码只负责不让它蒙混过关。`name` 缺省时退回正文的 `# 标题`，再缺才退回目录名：
 标题是给人看的字，目录名（拼音）只是路径。
 
@@ -288,6 +293,15 @@ README 不受这条限制——改正文不是开摊子。
 统筹者汇报；缺了统筹者，「统筹者 ↔ 管理员在团队频道协作」就落不下。
 成员表是事实的投影，用整体替换而非只加不删，避免改名/重建后旧 slug 残留在成员表里变成
 幽灵成员。
+
+**新进来的人自己报到**（ADR-042）：`syncTeamChannel` 把这次新进频道的成员交出来，
+装配层用一条系统留痕（`membership.joined`）叫醒他们 —— 团队一建好，管理员和执行成员
+各自说一句自己是谁、负责什么，助理**不先说、也不替他们说**。只有运行时的重投影会叫；
+启动时的重投影不叫，否则每次重启全体成员都白烧一轮。
+
+**管理员是纯管理岗**：只做拆解、派活、验收、盯进度，不亲自写代码。这条是技能里的语义
+（`seed/assistant/skills/建立团队|招人`），代码不认识「管理员」这个词，只认 `lead` 与
+`manager` —— 管理员的 `manager` 是助理，执行成员的 `manager` 是管理员。
 
 **解散团队不写新工具**：把 README 的 `status` 写成 `archived` 就是解散 —— 团队频道被归档
 （从列表消失，消息保留）、`lead` 清空、成员的 `team:` 清空，团队目录与记忆原样留着。
@@ -386,17 +400,20 @@ ui/web/       构建产物，服务端发这个目录，别手改
 ## 10. 目录
 
 ```
-src/core/
-  layout.ts        两个根的全部路径（拼路径只在这里）
-  runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
-                   models（contextWindow / compaction）/ settings 也在这里
-  agent/           identity（他是谁 + 新建一个人）/ sections（提示词九段装配）/ memory
-                   skills / roster（slug ↔ 会话 + 两层唤醒记录）/ rules / secrets
-  team/            doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
-  channel/         store（纯规则 + @ 解析）/ post（写一条 + 投递 + 唤醒）
-                   wake（唯一唤醒入口）/ turn（结算收尾）/ attachments（附件）
-                   tools（7 个工具）/ unanswered（结算原因翻成人话）
-  ── 以上是 domain（业务事实）────────────────────────────────
+src/
+  core/            ── domain（业务事实）──────────────────────────
+    layout.ts        两个根的全部路径（拼路径只在这里）
+    fsx.ts / naming.ts
+    runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
+                     models（contextWindow / compaction）/ settings 也在这里
+    md/              markdown / 插槽 / 提示词排版 / 文案目录 / 记忆格式
+    agent/           identity（他是谁 + 新建一个人）/ sections（提示词九段装配）/ memory
+                     skills / roster（slug ↔ 会话 + 两层唤醒记录）/ rules / secrets
+    team/            doc（README.md）/ memory（memory.md）/ settle（自动沉淀）
+    channel/         store（纯规则 + @ 解析）/ post（写一条 + 投递 + 唤醒）
+                     wake（唯一唤醒入口）/ turn（结算收尾）/ attachments（附件）
+                     tools（7 个工具）/ unanswered（结算原因翻成人话）
+    plugin/          清单 / 四动作 API / 加载与隔离
   app/             用例：index（装配）/ types / snapshot / read / people / project（投影）
                    chat / uploads（附件语义）/ diag / errors
                    （不 import node:http，能脱离网络直接测）
@@ -421,7 +438,7 @@ src/core/
    技能在不在；
 2. 读 `<appRoot>/settings.json` 里的模型，装配 `models` —— 同时从 pi-ai 的模型目录取
    **真实 `contextWindow`**（取不到回落 128k），据此算 compaction 阈值；
-3. `createDiag(<appRoot>/logs)` —— 诊断落盘口（卡顿 `logs/jank.jsonl`、运行报告
+3. `createDiag(<userRoot>/logs)` —— 诊断落盘口（卡顿 `logs/jank.jsonl`、运行报告
    `logs/runtime.jsonl`）；
 4. `openCore({ settings: { compaction }, onReport })` —— 打开 SQLite，并把底座的错误
    出口接成可读的报告：**失败不再静音**（crash-loop 把任务 park 成

@@ -8,7 +8,7 @@
  * 3. **种子的差异要看得出来**：两个人画出来不能是同一张图。
  */
 import { describe, expect, test } from "vitest";
-import { AVATAR_DEFAULT, AVATAR_MAX, AVATAR_MIN, avatarEtag, avatarSvg, clampAvatarSize } from "../../src/core/app/avatar.ts";
+import { AVATAR_DEFAULT, AVATAR_MAX, AVATAR_MIN, avatarEtag, avatarSvg, clampAvatarSize } from "../../src/app/avatar.ts";
 
 describe("头像", () => {
 	test("同一个 seed 画出来逐字节相同", () => {

@@ -6,7 +6,7 @@
  * 2. 一个坏循环连着报几十条时，频道里只留一条 —— 看门狗自己变成噪音就没意义了。
  */
 import { describe, expect, it } from "vitest";
-import { createWatch } from "../../src/core/app/watch.ts";
+import { createWatch } from "../../src/app/watch.ts";
 
 function fakeDiag() {
 	const listeners = new Set<(report: { readonly text: string }) => void>();

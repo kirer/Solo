@@ -8,7 +8,7 @@ import { request as httpRequest } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
+import { serveCore, type CoreServer } from "../../src/shell/serve.ts";
 import { JOURNAL_FILE } from "../../src/core/agent/journal.ts";
 import { sandboxPool } from "./support.ts";
 

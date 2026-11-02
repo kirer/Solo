@@ -10,12 +10,12 @@
  * 「一次提交 × 每个活跃频道 × 每个团队」会把磁盘读放大成每秒几十次，而团队文档一秒内
  * 几乎不会变。按 `teams/` 目录 mtime + 250ms 窗口缓存，改了最迟 250ms 后生效。
  */
-import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { mtimeOrUndefined } from "../runtime/io.ts";
-import { listTeams } from "../team/doc.ts";
-import { ChannelDoc, emptyChannelState, type ChannelState } from "../channel/types.ts";
-import type { DirectoryState } from "../agent/roster.ts";
-import type { Identity } from "../agent/identity.ts";
+import { BACKGROUND_CONTEXT, type Context } from "../core/runtime/index.ts";
+import { mtimeOrUndefined } from "../core/runtime/io.ts";
+import { listTeams } from "../core/team/doc.ts";
+import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channel/types.ts";
+import type { DirectoryState } from "../core/agent/roster.ts";
+import type { Identity } from "../core/agent/identity.ts";
 import type { TeamDoingOf, TeamLeadOf } from "../view/dto.ts";
 import { withLabels } from "./project.ts";
 import type { CoreServices } from "./types.ts";

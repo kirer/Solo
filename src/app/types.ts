@@ -7,13 +7,14 @@
  *
  * 只放类型，不放实现 —— 实现仍然是 `assemble.ts` 那唯一一处装配点。
  */
-import type { Conversation, Context, Harness, Models, Registry } from "../runtime/index.ts";
-import type { DirectoryState } from "../agent/roster.ts";
-import type { ChannelState, Attachment, Message } from "../channel/types.ts";
-import type { DeliverResult } from "../channel/dispatch.ts";
-import type { Identity } from "../agent/identity.ts";
-import type { Layout } from "../layout.ts";
-import type { PluginHost } from "../plugin/index.ts";
+import type { Conversation, Context, Harness, Models, Registry } from "../core/runtime/index.ts";
+import type { DirectoryState } from "../core/agent/roster.ts";
+import type { ChannelState, Attachment, Message } from "../core/channel/types.ts";
+import type { DeliverResult } from "../core/channel/dispatch.ts";
+import type { Identity } from "../core/agent/identity.ts";
+import type { Layout } from "../core/layout.ts";
+import type { TextCatalog } from "../core/md/catalog.ts";
+import type { PluginHost } from "../core/plugin/index.ts";
 import type { Diag } from "./diag.ts";
 
 export type CoreServices = {
@@ -66,6 +67,8 @@ export type CoreServices = {
 			readonly kind?: string;
 			/** 附件引用。给了模型就能真的看见这些图片 / 读到这些文件。 */
 			readonly attachments?: readonly Attachment[];
+			/** 不按 @ 推算，直接叫醒这几个人（系统留痕叫人时用）。 */
+			readonly wakeTo?: readonly string[];
 		},
 		context?: Context,
 	) => Promise<{ readonly seq: number; readonly delivery: DeliverResult }>;
@@ -101,6 +104,8 @@ export type CoreServices = {
 	 * 用例层要拼路径时**只从这里取**，不要自己 `dirname`。
 	 */
 	readonly layout: Layout;
+	/** 文案目录（`<appRoot>/text/`）：用例层要回一句话给模型/界面时从这里取。 */
+	readonly text: TextCatalog;
 	readonly allChannel: string;
 	/**
 	 * 装配好的模型注册表与默认模型。给「单独给某个人换模型」用：先确认那只模型真的

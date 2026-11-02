@@ -7,6 +7,7 @@ import { OWNER, chatKind, type ChannelState } from "../types.ts";
 import { deliveryTargets } from "../mentions.ts";
 import { fallbackChannelId, speakerBefore } from "../rules.ts";
 import type { CoreToolDeps } from "./context.ts";
+import { fill } from "../../md/catalog.ts";
 
 /**
  * 「默认在哪儿说话」：刚被叫醒的那个频道 → 我是成员的群里最近活跃的那个 → 我和我的私聊。
@@ -26,7 +27,9 @@ export async function defaultChannel(
 	if (explicit !== undefined && explicit !== "") {
 		const channel = state.channels[explicit];
 		if (channel !== undefined) {
-			if (!channel.members.includes(slug)) return { error: `你不在「${channel.title}」里。` };
+			if (!channel.members.includes(slug)) {
+				return { error: fill(deps.text, "channel.not-member", { title: channel.title }) };
+			}
 			return { channelId: explicit };
 		}
 		// 频道名也认。提示词里给的是**标题**（「群『QQ农场』」），不是 id —— 只认 id 的话，
@@ -40,13 +43,13 @@ export async function defaultChannel(
 		const only = named[0];
 		if (named.length === 1 && only !== undefined) return { channelId: only };
 		if (named.length > 1) {
-			return { error: `有两个频道都叫「${explicit}」：${named.join("、")}。写 id，别写名字。` };
+			return { error: fill(deps.text, "channel.ambiguous", { name: explicit, ids: named.join("、") }) };
 		}
 		const mine = Object.values(state.channels)
 			.filter((candidate) => candidate.members.includes(slug))
 			.map((candidate) => `${candidate.id}「${candidate.title}」`)
 			.sort();
-		return { error: `没有这个频道：${explicit}。你在：${mine.join("、")}。` };
+		return { error: fill(deps.text, "channel.missing", { name: explicit, channels: mine.join("、") }) };
 	}
 	const directory = await deps.directory(context);
 	const wake = wakeOf(directory, conversationId);
@@ -63,7 +66,7 @@ export async function defaultChannel(
 	const fallback = fallbackChannelId(state, slug);
 	const target = state.channels[fallback];
 	if (target === undefined || chatKind(target) === "dm") {
-		return { error: "这一轮没有唤醒记录，不知道该回哪个频道。请显式给 channel（`chats` 能列出你在的频道）。" };
+		return { error: fill(deps.text, "channel.no-wake") };
 	}
 	return { channelId: fallback };
 }

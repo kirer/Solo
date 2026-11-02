@@ -5,6 +5,7 @@
  * 于是回「我读不了图片」。底层 `UserInput` 本来允许图片内容块 —— 是我们的投递层
  * 没把文件读出来。
  */
+import { SEED_TEXT } from "./catalog.ts";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,15 +51,15 @@ async function put(
 
 describe("planAttachments", () => {
 	it("没有附件：空计划", async () => {
-		const plan = await planAttachments(root, undefined);
+		const plan = await planAttachments(root, undefined, SEED_TEXT);
 		expect(plan.images).toEqual([]);
 		expect(plan.lines).toEqual([]);
-		expect((await planAttachments(root, [])).images).toEqual([]);
+		expect((await planAttachments(root, [], SEED_TEXT)).images).toEqual([]);
 	});
 
 	it("图片读成内容块，mime 走磁盘元数据", async () => {
 		const item = await put("a1", { bytes: Buffer.from("png-a") });
-		const plan = await planAttachments(root, [item]);
+		const plan = await planAttachments(root, [item], SEED_TEXT);
 		expect(plan.images).toHaveLength(1);
 		expect(plan.images[0]?.type).toBe("image");
 		expect(plan.images[0]?.mimeType).toBe("image/png");
@@ -68,7 +69,7 @@ describe("planAttachments", () => {
 
 	it("非图片文件不内联，给 file(action=read) 的路径", async () => {
 		const item = await put("b1", { mime: "text/plain" });
-		const plan = await planAttachments(root, [item]);
+		const plan = await planAttachments(root, [item], SEED_TEXT);
 		expect(plan.images).toEqual([]);
 		expect(plan.lines.join("\n")).toContain("uploads/b1");
 		expect(plan.lines.join("\n")).toContain("file(action=read)");
@@ -82,7 +83,7 @@ describe("planAttachments", () => {
 			// 只报大小，不真的写这么大的文件 —— 闸在 readFile 之前就生效。
 			bytes: MAX_INLINE_IMAGE_BYTES + 1,
 		};
-		const plan = await planAttachments(root, [item]);
+		const plan = await planAttachments(root, [item], SEED_TEXT);
 		expect(plan.images).toEqual([]);
 		expect(plan.lines.join("\n")).toContain("没有直接给你看");
 	});
@@ -92,14 +93,14 @@ describe("planAttachments", () => {
 		for (let index = 0; index <= MAX_INLINE_IMAGES; index += 1) {
 			items.push(await put(`c${index}`));
 		}
-		const plan = await planAttachments(root, items);
+		const plan = await planAttachments(root, items, SEED_TEXT);
 		expect(plan.images).toHaveLength(MAX_INLINE_IMAGES);
 		expect(plan.lines.filter((line) => line.includes("没给你看"))).toHaveLength(1);
 	});
 
 	it("本体不见了：不崩，也不假装看过", async () => {
 		const item: Attachment = { id: "gone", name: "gone.png", kind: "image", bytes: 10 };
-		const plan = await planAttachments(root, [item]);
+		const plan = await planAttachments(root, [item], SEED_TEXT);
 		expect(plan.images).toEqual([]);
 		expect(plan.lines.join("\n")).toContain("别假装看过");
 	});
@@ -107,7 +108,7 @@ describe("planAttachments", () => {
 	it("没有附件根：图片不内联，文件也没路径可给", async () => {
 		const image = await put("d1");
 		const file = await put("d2", { mime: "text/plain" });
-		const plan = await planAttachments(undefined, [image, file]);
+		const plan = await planAttachments(undefined, [image, file], SEED_TEXT);
 		expect(plan.images).toEqual([]);
 		expect(plan.lines.join("\n")).toContain("没有取到文件");
 		// 文件那一条也不能凭空编一个能读的路径 —— 但它仍要报出 id，人能自己去看。

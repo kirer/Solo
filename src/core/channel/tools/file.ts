@@ -9,6 +9,7 @@ import { createTeamProblem, leadProblem, readTeam, teamSlugOfMemoryPath, teamSlu
 import { confirmedBy } from "../../team/settle.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
 import { resolveInRoots } from "./guards.ts";
+import { fill } from "../../md/catalog.ts";
 
 /** `members/<slug>/identity.md` / `assistant/<slug>/identity.md` → slug。别的路径返回 undefined。 */
 function agentSlugOfIdentityPath(path: string): string | undefined {
@@ -18,32 +19,30 @@ function agentSlugOfIdentityPath(path: string): string | undefined {
 }
 
 export function createFileTool(deps: CoreToolDeps) {
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(deps.text, key, slots);
 	const tool = defineTool({
 		name: "file",
-		description: [
-			"工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。",
-			"路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。",
-			"写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员（改完不用再单独同步）。",
-		].join(""),
+		description: t("file.description"),
 		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "read（默认）/ write" })),
-			path: Type.String({ description: "文件路径（相对工作区根）" }),
-			content: Type.Optional(Type.String({ description: "write 必填：文件内容" })),
-			offset: Type.Optional(Type.Number({ description: "read 从第几行开始（1 起），默认 1" })),
-			limit: Type.Optional(Type.Number({ description: "read 最多几行，默认 400" })),
+			action: Type.Optional(Type.String({ description: t("file.param.action") })),
+			path: Type.String({ description: t("file.param.path") }),
+			content: Type.Optional(Type.String({ description: t("file.param.content") })),
+			offset: Type.Optional(Type.Number({ description: t("file.param.offset") })),
+			limit: Type.Optional(Type.Number({ description: t("file.param.limit") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const action = actionOf(args.action, ["read", "write"], "read");
+			const action = actionOf(args.action, ["read", "write"], "read", "action", deps.text);
 			if (typeof action !== "string") return text(action);
 			const target = resolveInRoots(deps.layout, args.path);
-			if (target === undefined) return text(`路径在工作区之外：${args.path}`);
+			if (target === undefined) return text(t("file.refuse.outside", { path: args.path }));
 			// 密钥文件对 agent 不存在：读出来等于把 key 装进上下文，写回去会把
 			// 人配好的值覆盖成脱敏后的马赛克。它要用 key，由人在 shell 里配、`run` 里用。
-			if (target === deps.layout.secretsFile) return text("这个文件不开放。");
+			if (target === deps.layout.secretsFile) return text(t("file.refuse.secret"));
 
 			if (action === "write") {
-				if (args.content === undefined) return text("write 要带 content（写什么）。只想读文件用 action=read。");
+				if (args.content === undefined) return text(t("file.refuse.no-content"));
 				// 密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
 				const content = redact(args.content, deps.layout.appRoot);
 				// 团队说明是事实，团队频道是它的投影：改了 README 立刻重算一次成员
@@ -65,13 +64,14 @@ export function createFileTool(deps: CoreToolDeps) {
 					if ((await readTeam(deps.layout.teamsRoot, team)) === undefined) {
 						const self = await selfOf(deps, Number(api.conversationId), ctx);
 						const problem =
-							self === undefined ? "你还不在名册里，建不了团队。" : createTeamProblem({ self, assistants });
+							self === undefined ? t("file.create.no-roster") : createTeamProblem({ self, assistants, ...(deps.text === undefined ? {} : { text: deps.text }) });
 						if (problem !== undefined) return text(problem);
 					}
 					const problem = leadProblem({
 						lead: frontOf(parseDoc(args.path, content), "lead"),
 						slugs: all.map((identity) => identity.slug),
 						assistants,
+						...(deps.text === undefined ? {} : { text: deps.text }),
 					});
 					if (problem !== undefined) return text(problem);
 				}
@@ -84,9 +84,11 @@ export function createFileTool(deps: CoreToolDeps) {
 					} catch (error) {
 						// 写入已经成功，刷新失败不能反过来报「没写进去」—— 否则模型会重写一遍。
 						return text(
-							`已写入 ${args.path}（${content.length} 字），但团队频道刷新失败：${
-								error instanceof Error ? error.message : String(error)
-							}`,
+							t("file.write.sync-failed", {
+								path: args.path,
+								length: content.length,
+								error: error instanceof Error ? error.message : String(error),
+							}),
 						);
 					}
 				}
@@ -105,22 +107,29 @@ export function createFileTool(deps: CoreToolDeps) {
 						);
 					});
 				}
-				return text(`已写入 ${args.path}（${content.length} 字）`);
+				return text(t("file.write.done", { path: args.path, length: content.length }));
 			}
 
 			const source = await readTextOrUndefined(target);
-			if (source === undefined) return text(`文件不存在：${args.path}`);
+			if (source === undefined) return text(t("file.read.missing", { path: args.path }));
 			const rows = source.split("\n");
 			const offset = Math.max(Math.trunc(args.offset ?? 1), 1);
 			const limit = Math.min(Math.max(Math.trunc(args.limit ?? 400), 1), 800);
 			const shown = rows.slice(offset - 1, offset - 1 + limit);
 			const head = shown.join("\n");
 			// 行的尺度和字的尺度都要管：一行十万字的压缩包也是合法的。
-			const clipped = head.length > 8000 ? `${head.slice(0, 8000)}\n…（已截断）` : head;
+			const clipped = head.length > 8000 ? `${head.slice(0, 8000)}\n${t("file.read.truncated")}` : head;
 			const last = offset - 1 + shown.length;
 			if (last >= rows.length && clipped.length === head.length) return text(clipped);
-			const more = last < rows.length ? `，还有，用 offset=${last + 1} 继续` : "";
-			return text(`${clipped}\n（共 ${rows.length} 行、${source.length} 字；这里从第 ${offset} 行起${more}）`);
+			const more = last < rows.length ? t("file.read.more", { next: last + 1 }) : "";
+			return text(
+				`${clipped}\n${t("file.read.footer", {
+					rows: rows.length,
+					chars: source.length,
+					offset,
+					more,
+				})}`,
+			);
 		},
 	});
 	return tool;

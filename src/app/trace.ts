@@ -8,7 +8,7 @@
  * 3. **拿不到就不画。** 没有耗时的步骤不编一个耗时，没有 diff 的不画 diff ——
  *    界面上每个数字都要有出处（AGENTS §2 第 6 条）。
  */
-import type { EntryRecord } from "../runtime/index.ts";
+import type { EntryRecord } from "../core/runtime/index.ts";
 import type { ViewStep, ViewTurn } from "../view/dto.ts";
 
 /** 单轮步骤上限。超出的截断并在轮上标 `truncated`。 */

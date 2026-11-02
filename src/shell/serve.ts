@@ -6,8 +6,8 @@
  * 2. 进程级的东西：端口、Host/Origin 闸、listen/close、启动横幅；
  * 3. 把兜不住的异常翻成 500。
  *
- * 业务在 `src/core/app/`，界面契约在 `src/core/view/`，HTTP 细节在
- * `src/core/interface/http/`。这一层不再认识「一条消息长什么样」。
+ * 业务在 `src/app/`，界面契约在 `src/view/`，HTTP 细节在
+ * `src/interface/http/`。这一层不再认识「一条消息长什么样」。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { browserUrlOf, lanAddresses, lanUrlsOf } from "../interface/http/network.ts";

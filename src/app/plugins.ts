@@ -8,17 +8,17 @@
  * `AppPluginRoute`：接口层照着它造 `Route`，不认识 `PluginRouteSpec` 这个东西。
  */
 import { join } from "node:path";
-import { isSafeName } from "../naming.ts";
+import { isSafeName } from "../core/naming.ts";
 import {
 	installPluginFiles,
 	listPluginSlugs,
 	readPluginManifest,
 	removePluginFolder,
 	writePluginEnabled,
-} from "../plugin/index.ts";
-import type { PluginFile } from "../plugin/index.ts";
-import { readTextOrUndefined } from "../runtime/io.ts";
-import type { JsonValue } from "../runtime/index.ts";
+} from "../core/plugin/index.ts";
+import type { PluginFile } from "../core/plugin/index.ts";
+import { readTextOrUndefined } from "../core/runtime/io.ts";
+import type { JsonValue } from "../core/runtime/index.ts";
 import type { ViewPlugin } from "../view/dto.ts";
 import type { CoreServices } from "./types.ts";
 

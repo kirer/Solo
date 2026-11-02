@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { resolveLayout } from "../../src/core/layout.ts";
@@ -39,6 +40,7 @@ async function ask(fixtures: readonly Fixture[], args: Record<string, unknown>):
 	const tools = createCoreTools({
 		harness: harnessOf(fixtures) as never,
 		layout: resolveLayout({ appRoot: "/tmp/nowhere-history", userRoot: "/tmp/nowhere-history" }),
+		text: SEED_TEXT,
 		directory: async () => emptyDirectory(),
 		saveDirectory: async () => undefined,
 	} as never);

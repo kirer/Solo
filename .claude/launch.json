@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
       "port": 7788
+    },
+    {
+      "name": "flowmap",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8792"],
+      "port": 8792
     }
   ]
 }

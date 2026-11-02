@@ -25,10 +25,10 @@ import {
 	uniqueSlug,
 	writeIdentity,
 } from "../../src/core/agent/identity.ts";
-import { resolveLayout } from "../../src/core/layout.ts";
+import { resolveLayout, type Layout } from "../../src/core/layout.ts";
 import { renderAgentSection } from "../../src/core/agent/sections.ts";
 import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
-import { seedPromptTemplates } from "../../src/core/shell/seed.ts";
+import { seedPromptTemplates } from "../../src/shell/seed.ts";
 
 const dirs: string[] = [];
 
@@ -151,11 +151,7 @@ describe("组织架构 = manager 字段", () => {
 
 describe("渲染提示词（V3：模板 + 事实）", () => {
 	/** 搭一个临时根（members/ + teams/ + 播种好的 prompt/），渲染某个人的提示词。 */
-	async function renderIn(
-		files: Record<string, string>,
-		slug: string,
-		registry = createRegistry(),
-	): Promise<string> {
+	async function rootOf(files: Record<string, string>): Promise<Layout> {
 		const root = await tempDir();
 		for (const [rel, body] of Object.entries(files)) {
 			await mkdir(dirname(join(root, rel)), { recursive: true });
@@ -164,6 +160,15 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 		await mkdir(join(root, "teams"), { recursive: true });
 		const layout = resolveLayout({ appRoot: root, userRoot: root });
 		await seedPromptTemplates(layout);
+		return layout;
+	}
+
+	async function renderIn(
+		files: Record<string, string>,
+		slug: string,
+		registry = createRegistry(),
+	): Promise<string> {
+		const layout = await rootOf(files);
 		return await renderAgentSection(registry, { layout, chats: async () => [] }, slug);
 	}
 
@@ -204,7 +209,11 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 	});
 
 	test("确定性：同样输入逐字节相同", async () => {
-		expect(await renderIn(ORG, "dev")).toBe(await renderIn(ORG, "dev"));
+		// 同一个根渲染两遍。不同沙箱算不同的输入 —— 目录段里有绝对路径，本来就该不一样。
+		const layout = await rootOf(ORG);
+		const once = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "dev");
+		const twice = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "dev");
+		expect(once).toBe(twice);
 	});
 
 	test("工具清单从注册表实拍，不写死的清单", async () => {

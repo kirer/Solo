@@ -738,3 +738,98 @@
 - **执行**：`test/ui/plugin.test.ts`（插槽表与宿主绘制点）、`plugin.test.ts`（清单与装载）。
 - **取舍**：预览不做 markdown 渲染（原文更可信），也不做写操作。
 - **验收**：右栏出现「文件」页签，私聊里看到那个人的 `workspace/`，团队频道里看到团队的。
+
+## ADR-039 模型看得见的话都在 md 里，代码只留键名与机械规则
+
+- **背景**：工具的描述、参数说明、拒绝与回话、投递头、附件说明，以前全是 TS 里的中文字面量。
+  改一句「PASS 什么时候合法」要动 `say.ts` 并重跑五个测试文件；同一件事还在 `rules.md`、
+  技能、工具描述里各写一遍，改一处漏两处；`prompt:check` 也管不到代码里的这些句子。
+- **决策**：新增文案目录 `seed/text/*.md`（`## key` 分节，节体可多行、可带 `{{插槽}}`），
+  启动时只补缺失地播种进 `<appRoot>/text/`；`md/catalog.ts` 读成 `TextCatalog`，装配时
+  放进 `CoreToolDeps.text` / `ChannelWiring.text` / `AgentPaths.text` / `CoreServices.text`。
+  代码里只留键名、数字、正则和条件。键缺失返回空串（工具不能因为一句话没配就坏掉），
+  缺失由 `prompt:check` 直接报出来。
+- **执行**：`test/core/no-hardcoded-text.test.ts`（点名的模块里没有中文字符串字面量）、
+  `scripts/prompt-check.ts` 的文案段（键存在、插槽可填、确定性）、
+  `test/core/seed-contract.test.ts` 的 `ONE_HOME`。
+- **取舍**：工具描述在**装配时**定型，所以改 `text/tools.md` 要重启（和插件一致），
+  不像 `prompt/*.md` 改完下一条消息就生效。投递/附件文案同样在装配时读入 —— 别假装热更新。
+- **验收**：改一句拒绝话术后重启，模型收到的是新句子；删掉一节后 `prompt:check` 报出缺的键名。
+
+## ADR-040 两个根的绝对路径进提示词；`hire` 点明「团队还没有 README」
+
+- **背景**：2026-11-02 实测。助理要建 `xiaokonglong` 团队，把 `teams/xiaokonglong/README.md`
+  和产物写进了 `<appRoot>/teams/`。原因是 `run` 的默认 cwd 在 `<appRoot>/assistant/<slug>/workspace`，
+  向上两级就是应用根，而 `file` 按路径第一段分流 —— 同一个相对路径 `teams/…`，在两边落到
+  不同的地方。团队频道是 README 的投影，于是团队根本不存在；`say` 到不存在的频道失败只回给
+  模型自己，界面上什么都看不见，它在两个根之间猜了二十多步。
+- **决策**：`70-directory.md` 写明两个根、`file` 的分流规则，并给出**绝对路径**
+  （`{{root.user}}` / `{{root.app}}`）；`run` 只说「没有组织含义」。`hire` 带 `team`
+  而那个团队还没有 README 时**不拦**（`建立团队` 技能的顺序就是先招人、再写 README），
+  但在回话里点明「团队频道还不存在、要用 `file` 写 README」。
+- **执行**：`agent/sections.ts` 的 `slotsFor` 填两个绝对路径；`scripts/prompt-fixture.ts`
+  样例值；`test/core/identity.test.ts` 的确定性用例改成**同一个根**渲染两遍；
+  `test/core/tools-actions.test.ts` 的 hire 用例。
+- **取舍**：提示词不再与安装位置无关 —— 同一份模板在不同根下渲染出的字节不同。prompt cache
+  按安装计，不受影响；「同一份输入逐字节相同」仍然成立。
+- **验收**：拿一个空根起服务，让它建团队，写的是 `<userRoot>/teams/…`；`hire` 到一个
+  不存在的团队时，回话里带「还没有 README」。
+
+## ADR-041 日志跟着用户根走（`<userRoot>/logs/`）
+
+- **背景**：日志原来在应用根（`<appRoot>/logs/`）。排查时它总是要和组织数据对照着看 ——
+  「这条审计行是谁调的」「这个后台命令是谁起的、当时在哪个频道」，这些答案都在 `~/.solo`
+  里。两个根分开之后，日志留在应用根意味着换机器只带走组织、带走不了一次现场的留痕。
+- **决策**：`Layout.logsRoot = <userRoot>/logs`。审计（`tools.jsonl`）、诊断（`jank.jsonl` /
+  `runtime.jsonl`）、后台命令（`run/`）、桌面壳的后端日志（`core.log`）都落这儿。
+  其它安装物（库、上传、密钥、配置、提示词、文案、插件、助理）仍在应用根。
+- **执行**：`layout.ts` 一处改；`app/diag.ts` / `app/audit.ts` 的构造参数从 `workspaceRoot`
+  改成 `logsRoot`（避免在调用点再拼一次 `logs`）；`desktop/src/main.ts` 的 `logFile`；
+  `test/core/layout.test.ts` / `roots.test.ts` / `diag.test.ts` / `audit.test.ts`。
+- **取舍**：用户根的体积会随日志增长。四份日志都是「单文件 5MB、轮转一代」，后台命令记录跑完
+  就删，所以增长有界；真要备份组织时把 `logs/` 排除即可。
+- **验收**：起服务后 `~/.solo/logs/` 出现 `tools.jsonl`，`<appRoot>/logs/` 不再新生。
+
+## ADR-042 新进团队频道的人自己报到；团队管理员只做管理
+
+- **背景**：2026-11-02 实测。助理建完团队，按技能在团队频道里发一条欢迎并 `@` 所有人，
+  请他们自我介绍 —— 频道的第一句话永远是助理的，成员只是被叫到才说话；而「管理员」在
+  实测里被写成「开发负责人」，一个人既统筹又交付，没人盯着整体。
+- **决策**：
+  1. **报到由系统叫醒、成员自己说**。`syncTeamChannel` 返回这次新进频道的成员
+     （不含我和直接向我汇报的助理），`shell/assemble.ts` 的 `syncTeamAndAnnounce` 用一条
+     `note`（`membership.joined`）叫醒他们；助理不发言、不替他们介绍。
+     只有**运行时**的重投影（`hire` / 写团队 README / `services.syncTeam`）会叫：
+     启动时的 `joinTeamChannel` 不叫，否则每次重启都让全体成员白烧一轮。
+     招人是个例外：`openAgent` 会顺手把人加进频道，等重投影时「新进的」已经算没了，
+     所以 `hire` 自己点名（`CoreToolDeps.announceJoin`），团队还没有 README 时不叫。
+  2. **团队管理员是纯管理岗**。`建立团队` 与 `招人` 技能改口径：管理员只做拆解、派活、
+     验收、盯进度，不亲自写代码、不做设计；`manager` 是助理；执行成员 `manager` 是管理员。
+  3. **角色语义仍只在 md 里**：代码不认识「管理员」这个词，只知道 `lead` 与 `manager`。
+- **执行**：`channel/membership.ts` 的返回值；`shell/assemble.ts` 的 `syncTeamAndAnnounce` / `announceJoin`
+  与 `ownerSpeak` 的 `wakeTo`；`channel/tools/hire.ts` 的招人分支（`CoreServices.postAs` 同步加这个可选字段）；
+  `seed/text/channel.md` 的 `membership.joined`；`seed/assistant/skills/建立团队|招人`；
+  `test/core/membership.test.ts`。
+- **取舍**：成员被叫醒是**并发**的，报到的先后不固定。要顺序就得排队叫醒，代价是团队
+  一建好要等 N 轮；报到的价值在「每个人说了一句」，不在顺序。
+- **验收**：起服务建一个新团队，团队频道的第一句话来自管理员或成员；再重启一次，
+  没有人被重新叫醒。
+
+## ADR-043 五层平级：`app` / `view` / `interface` / `shell` 搬出 `src/core/`
+
+- **背景**：分层重构后 `src/core/` 里同时装着内核（agent / team / channel / md / runtime / 原语）
+  和它的四个上层（app / view / interface / shell）。于是「core」有两个意思：文档里说
+  「内核不得 import 上层」，而代码路径写着 `src/core/app/…` —— 上层看起来也是内核的一部分。
+  界面的 `ui/app/src/api/types.ts` 再导出 `src/core/view/dto.ts`，也读成「界面依赖内核」。
+- **决策**：四个上层搬到 `src/` 下与 `core/` 平级。`src/core` 从此只表示 domain（业务事实）。
+  `src/` 的五个目录与依赖方向一一对应：`core`（domain）、`app`（用例）、`view`（契约）、
+  `interface`（传输）、`shell`（装配）。分层、依赖方向、边界规则一条没变，变的只是路径。
+- **执行**：`git mv` 四个目录；`src/app/*` 与 `src/shell/*` 对域内的 import 改成 `../core/…`；
+  `scripts/check-boundaries.mjs` 的 `CHECKED_DIRS` 扩成六项（新目录也要受「只有 runtime 能
+  import 底层库」约束），`LAYER_RULES` 的 `dirs` 与 `ROUTE_FILE` 换新路径，桌面壳的禁止项
+  从 `src/core/` 扩成 `src/(core|app|view|interface|shell)/`；`package.json` / `Dockerfile` /
+  `desktop/src/backend.ts` 的入口改为 `src/shell/main.ts`；`.claude/skills/code-flowmap` 的路径表。
+- **历史条目**：ADR-001 起的旧条目里出现的 `src/core/app/…` 等路径是当时的事实，按「只追加
+  不改旧条目」的规矩保留；读它们时按本条的映射换算。
+- **验收**：`npm run check`（边界 8 组、29 条路由）、`npm test`（80 文件 777 例）、
+  `npm run prompt:check` 全绿；`npm run live` 连跑两次 16/16；服务从 `src/shell/main.ts` 起。

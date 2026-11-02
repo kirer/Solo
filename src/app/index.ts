@@ -7,7 +7,7 @@
  *
  * 它也不 import `shell/`（装配）。装配出来的东西由调用方通过 `CoreServices` 递进来。
  */
-import { OWNER } from "../channel/types.ts";
+import { OWNER } from "../core/channel/types.ts";
 import { createChat } from "./chat.ts";
 import { createDiag } from "./diag.ts";
 import { createModels } from "./models.ts";
@@ -30,7 +30,7 @@ export function createApp(services: CoreServices) {
 	const chat = createChat(services);
 	const uploads = createUploads(services);
 	const runs = createRuns(services);
-	const diag = services.diag ?? createDiag(services.layout.appRoot);
+	const diag = services.diag ?? createDiag(services.layout.logsRoot);
 	const models = createModels(services);
 	// 看门狗：底座报上来的异常说进全员频道，别只躺在 logs/runtime.jsonl 里。
 	const watch = createWatch({
@@ -51,7 +51,7 @@ export { AppError } from "./errors.ts";
  * 不能跟着接口层去 import `agent/`（分层规则禁止）。所以由用例层把它转出来：
  * 接口层只认 `app/`，身份的定义仍在 `agent/identity.ts`。
  */
-export { OWNER_SLUG } from "../agent/identity.ts";
+export { OWNER_SLUG } from "../core/agent/identity.ts";
 export type { CoreServices } from "./types.ts";
 export type { MemoryEditBody, PersonModelBody } from "./people.ts";
 export type { PostBody } from "./chat.ts";
@@ -66,4 +66,4 @@ export type { AppPluginRoute, PluginRouteInput } from "./plugins.ts";
  * 只有一个函数，但它是**语义**而不是转发：先读完再比上限等于没有上限
  * （一个 4GB 的请求先把内存吃光），所以必须边读边数。
  */
-export { UploadTooLargeError, readBounded as readBody } from "../channel/attachments.ts";
+export { UploadTooLargeError, readBounded as readBody } from "../core/channel/attachments.ts";

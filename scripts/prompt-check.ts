@@ -13,7 +13,11 @@
  *
  * 用法：`npm run prompt:check`，加 `--print` 顺便把渲染结果打出来。
  */
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import { createFsx } from "../src/core/fsx.ts";
+import { parseCatalog } from "../src/core/md/catalog.ts";
+import { renderSlots, slotsIn } from "../src/core/md/text.ts";
 import { loadTemplates, renderPrompt, PROMPT_DIR } from "../src/core/md/prompt.ts";
 import { SAMPLE_SLOTS } from "./prompt-fixture.ts";
 
@@ -117,4 +121,73 @@ if (failures.length > 0) {
 	process.exit(1);
 }
 
-console.log("\n✓ prompt:check 通过（确定性、插槽、行数、工具名）");
+// ── 文案目录（seed/text/*.md）────────────────────────────────────────────
+// 代码里只留键名。这里守三件事：代码引用的键都真的存在；每条文案的插槽都填得上；
+// 同一份输入渲染两遍逐字节相同（文案进提示词，确定性同样不能破）。
+
+/** 文案键的第一段。只有这些前缀才当成「代码引用了一个文案键」。 */
+const TEXT_NAMESPACES = new Set([
+	"say",
+	"chats",
+	"history",
+	"remember",
+	"hire",
+	"run",
+	"file",
+	"channel",
+	"recall",
+	"org",
+	"tool",
+	"delivery",
+	"attachments",
+	"unanswered",
+	"post",
+	"sections",
+]);
+
+const textKeys = new Map<string, string>();
+for (const name of readdirSync(join(root, "seed/text")).filter((file) => file.endsWith(".md")).sort()) {
+	for (const [key, body] of parseCatalog(name, readFileSync(join(root, "seed/text", name), "utf8"))) {
+		if (textKeys.has(key)) fail(`文案键重复：${key}（${name}）`);
+		textKeys.set(key, body);
+	}
+}
+if (textKeys.size === 0) fail("没读到任何文案：seed/text/*.md");
+
+/** 递归列出 `src/core` 的 ts 文件。 */
+function sourceFiles(dir: string): string[] {
+	const out: string[] = [];
+	for (const entry of readdirSync(join(root, dir), { withFileTypes: true })) {
+		const rel = `${dir}/${entry.name}`;
+		if (entry.isDirectory()) out.push(...sourceFiles(rel));
+		else if (entry.name.endsWith(".ts")) out.push(rel);
+	}
+	return out;
+}
+
+const KEY_REF = /"([a-z][A-Za-z0-9]*(?:\.[A-Za-z0-9_-]+)+)"/g;
+const referenced = new Map<string, string>();
+for (const file of sourceFiles("src/core")) {
+	const source = readFileSync(join(root, file), "utf8");
+	for (const match of source.matchAll(KEY_REF)) {
+		const key = match[1];
+		if (key === undefined) continue;
+		if (!TEXT_NAMESPACES.has(key.split(".")[0] ?? "")) continue;
+		if (!referenced.has(key)) referenced.set(key, file);
+	}
+}
+for (const [key, file] of referenced) {
+	if (!textKeys.has(key)) fail(`${file} 引用了不存在的文案键：${key}`);
+}
+
+for (const [key, body] of textKeys) {
+	const slots = Object.fromEntries(slotsIn(body).map((name) => [name, "x"]));
+	const once = renderSlots(body, slots).text;
+	const twice = renderSlots(body, slots).text;
+	if (once !== twice) fail(`文案 ${key} 两次渲染不一致（确定性被破坏）`);
+	if (once.includes("（未设置）")) fail(`文案 ${key} 的插槽填不上：${slotsIn(body).join("、")}`);
+}
+
+console.log(`\n文案：${textKeys.size} 条（代码引用 ${referenced.size} 条）`);
+
+console.log("\n✓ prompt:check 通过（确定性、插槽、行数、工具名、文案键）");

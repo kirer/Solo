@@ -7,34 +7,27 @@ import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDep
 import { defaultChannel, othersAwoken } from "./channel-choice.ts";
 import { isPass, monologueOpener, sayLimitOf } from "./guards.ts";
 import { wakeOf } from "../../agent/roster.ts";
+import { fill } from "../../md/catalog.ts";
+import type { Slots } from "../../md/text.ts";
 
 export function createSayTool(deps: CoreToolDeps) {
+	const t = (key: string, slots: Slots = {}): string => fill(deps.text, key, slots);
 	const say = defineTool({
 		name: "say",
-		description:
-			"在频道里说话。不带 mention 是一句普通发言（正文里写 @某人 才叫醒他）；带 mention 就一定会叫醒他。",
+		description: t("say.description"),
 		parameters: Type.Object({
-			text: Type.String({
-				description: "要说的话。这一轮没有新东西就写 `[PASS]`（这一轮只有你被叫醒时会被拒）。",
-			}),
-			mention: Type.Optional(Type.String({ description: "@ 谁，写名字或 slug（`@我` 指我）。带上会叫醒他。" })),
-			channel: Type.Optional(
-				Type.String({
-					description:
-						"频道 id 或频道名（`chats` 能列出你在的），省略 = 我刚被叫醒的那个频道。不在那个频道里的人 @ 不到。",
-				}),
-			),
-			replyTo: Type.Optional(Type.Number({ description: "要引用回复的消息序号" })),
+			text: Type.String({ description: t("say.param.text") }),
+			mention: Type.Optional(Type.String({ description: t("say.param.mention") })),
+			channel: Type.Optional(Type.String({ description: t("say.param.channel") })),
+			replyTo: Type.Optional(Type.Number({ description: t("say.param.replyTo") })),
 			kind: Type.Optional(
 				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
-					description:
-						"给这条消息打标签：decision = 拍了板（结论、定了怎么做）；report = 交付了什么。普通发言不要传。",
+					description: t("say.param.kind"),
 				}),
 			),
 			options: Type.Optional(
 				Type.Array(Type.String(), {
-					description:
-						"要我选：2–6 个互不相同的选项。带上它这条就一定会叫醒我，我会在最下面看到一排选项。只在真的需要我拍板时用。",
+					description: t("say.param.options"),
 				}),
 			),
 		}),
@@ -53,7 +46,7 @@ export function createSayTool(deps: CoreToolDeps) {
 		api: { conversationId: string | number },
 		ctx: Context,
 	): Promise<ReturnType<typeof text>> => {
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。先看 members/<你>/identity.md，或请上级重新登记你。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "say.self.missing");
 			if (typeof slug !== "string") return text(slug);
 			// 没有「私下发给谁」这个参数：私聊只能我开，agent 只能在已有的频道里说话。
 			// 也不需要专门硬拦 ——「非成员发不进去」已经重定了这条边界。
@@ -63,10 +56,7 @@ export function createSayTool(deps: CoreToolDeps) {
 			// 这一条必须由代码拦：贴出去的每一句都会出现在我眼前，靠自觉等于没拦。
 			const monologue = monologueOpener(args.text);
 			if (monologue !== undefined) {
-				return text(
-					`这条没发出去：它以「${monologue}」开头，英文占多数 —— 那是你的思考，不是对别人说的话。` +
-						"思考用 think；要对人说话就用中文写结论（谁、做了什么、结果、下一步）。重写一遍。",
-				);
+				return text(t("say.refuse.monologue", { opener: monologue }));
 			}
 			let state = await readState(deps);
 
@@ -76,13 +66,8 @@ export function createSayTool(deps: CoreToolDeps) {
 			// 所以 PASS 只在「这一轮还有别的 agent 被同一条消息叫醒」时成立。
 			if (isPass(args.text)) {
 				const others = await othersAwoken(deps, state, Number(api.conversationId), slug, ctx);
-				if (others.length === 0) {
-					return text(
-						"这一轮只有你被叫醒，没有别人接得住，所以不能 PASS。把结论写出来：" +
-							"谁、做了什么、卡在哪、下一步。几十个字就够，不要写报告。",
-					);
-				}
-				return text(`这一句不说了（这一轮还有 ${others.join("、")} 在）。`);
+				if (others.length === 0) return text(t("say.refuse.pass"));
+				return text(t("say.pass.ok", { others: others.join("、") }));
 			}
 
 			const conversationId = Number(api.conversationId);
@@ -101,8 +86,11 @@ export function createSayTool(deps: CoreToolDeps) {
 			const limit = sayLimitOf(targetChannel === undefined ? "group" : chatKind(targetChannel));
 			if (args.text.length > limit) {
 				return text(
-					`太长了：${args.text.length} 字，${targetChannel?.title ?? channelId} 里一条最多 ${limit} 字。` +
-						"频道里只放结论，把过程或整份内容写进团队文件，再发一句结论加路径。",
+					t("say.refuse.long", {
+						length: args.text.length,
+						channel: targetChannel?.title ?? channelId,
+						limit,
+					}),
 				);
 			}
 
@@ -111,9 +99,9 @@ export function createSayTool(deps: CoreToolDeps) {
 			const options = (args.options ?? []).map((item) => item.trim()).filter((item) => item !== "");
 			if (args.options !== undefined) {
 				if (options.length < 2 || options.length > 6) {
-					return text(`选项要 2–6 个（现在是 ${String(options.length)} 个）。真的要我自己想，就别给选项，直接问。`);
+					return text(t("say.refuse.options.count", { count: options.length }));
 				}
-				if (new Set(options).size !== options.length) return text("选项不要重复：重复的两个选项我分不出该点哪个。");
+				if (new Set(options).size !== options.length) return text(t("say.refuse.options.dup"));
 			}
 			const choosing = options.length > 0;
 
@@ -126,8 +114,13 @@ export function createSayTool(deps: CoreToolDeps) {
 				const typed = args.mention.replace(/^@/, "");
 				const who = resolveMention(typed, roster) ?? typed;
 				if (channel === undefined || !channel.members.includes(who)) {
-					const available = channel?.members.join("、") ?? "";
-					return text(`「${channel?.title ?? target.channelId}」里没有「${typed}」。可以 @：${available}`);
+					return text(
+						t("say.refuse.mention", {
+							channel: channel?.title ?? target.channelId,
+							name: typed,
+							available: channel?.members.join("、") ?? "",
+						}),
+					);
 				}
 				messageText = parseMentions(args.text, roster).includes(who) ? args.text : `@${who} ${args.text}`;
 				kind = args.kind ?? "question";
@@ -169,9 +162,11 @@ export function createSayTool(deps: CoreToolDeps) {
 			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
 			const woke = result.delivery.delivered;
 			return text(
-				`已发到「${result.channel.title}」#${result.message.seq}。${
-					woke.length === 0 ? "没有人被唤醒（这只是一句话）。" : `已唤醒：${woke.join("、")}。`
-				}`,
+				t("say.done", {
+					title: result.channel.title,
+					seq: result.message.seq,
+					woken: woke.length === 0 ? t("say.done.nobody") : t("say.done.woken", { names: woke.join("、") }),
+				}),
 			);
 		};
 	return say;

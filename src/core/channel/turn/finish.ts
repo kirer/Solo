@@ -86,6 +86,7 @@ async function answerEntry(
 type TurnDeps = {
 	readonly harness: Harness;
 	readonly promptDir?: string | undefined;
+	readonly text?: PostDeps["text"];
 	readonly conversationOf: PostDeps["conversationOf"];
 	readonly rememberWake?: PostDeps["rememberWake"];
 	readonly labelOf?: PostDeps["labelOf"];
@@ -133,6 +134,7 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 					conversationOf: deps.conversationOf,
 					...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 					...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
+					...(deps.text === undefined ? {} : { text: deps.text }),
 					...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 					...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
 				},

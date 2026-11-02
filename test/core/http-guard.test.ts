@@ -9,9 +9,9 @@
 import { request as httpRequest } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { hostAllowed, originAllowed } from "../../src/core/interface/http/origin-guard.ts";
-import type { CoreShell } from "../../src/core/shell/assemble.ts";
-import { serveCore, type CoreServer } from "../../src/core/shell/serve.ts";
+import { hostAllowed, originAllowed } from "../../src/interface/http/origin-guard.ts";
+import type { CoreShell } from "../../src/shell/assemble.ts";
+import { serveCore, type CoreServer } from "../../src/shell/serve.ts";
 import { sandboxPool } from "./support.ts";
 
 const SELF = ["http://127.0.0.1:7788", "http://localhost:7788"];

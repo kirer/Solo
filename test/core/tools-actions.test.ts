@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
+import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
@@ -76,6 +77,7 @@ async function setup(
 	const tools = createCoreTools({
 		harness: runtime.harness,
 		layout: box.layout,
+		text: SEED_TEXT,
 		directory: async () => ({
 			...emptyDirectory(),
 			slugToConversation: { [ME]: CONVERSATION },
@@ -406,6 +408,33 @@ describe("hire：招人 / 让人走 / 看模型", () => {
 		expect(bad).toContain("模型没换成");
 		// 模型写不进去不影响「人已经招到」。
 		expect(await existsAt(join(root, "members", "温言", "identity.md"))).toBe(true);
+	});
+
+	it("招进一个还没有 README 的团队：人照招，但明确说「这个团队还没有频道」", async () => {
+		// 建立团队技能的顺序就是先招人、再写 README。所以这里不拦，只把事实说清楚 ——
+		// 不说的话，模型会在一个不存在的频道里 say，失败只回到它自己。
+		const { call } = await setup();
+		const output = await call("hire", { name: "顾南", team: "dino" });
+		expect(output).toContain("已新建");
+		expect(output).toContain("还没有 README");
+		expect(output).toContain("teams/dino/README.md");
+		// 已有 README 的团队不啰嗦这一句。
+		expect(await call("hire", { name: "温言", team: "alpha" })).not.toContain("还没有 README");
+	});
+
+	it("招进已有团队：叫他自己去报到；团队还没有 README 时不叫", async () => {
+		// 新人进频道是 `openAgent` 顺手做的，「新进的」差集算不出来 —— 由招人自己点名。
+		const joined: string[] = [];
+		const { call } = await setup({
+			announceJoin: async (team: string, slugs: readonly string[]) => {
+				joined.push(`${team}:${slugs.join(",")}`);
+			},
+		});
+		await call("hire", { name: "顾南", team: "alpha" });
+		expect(joined).toEqual(["alpha:顾南"]);
+		// 频道还不存在（没有 README）：这时候叫不到人，建团队时才会一起叫。
+		await call("hire", { name: "温言", team: "dino" });
+		expect(joined).toHaveLength(1);
 	});
 
 	it("action=fire 拒绝团队管理员：先交出 lead", async () => {

@@ -13,6 +13,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools, isPass } from "../../src/core/channel/tools/index.ts";
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState, type Message } from "../../src/core/channel/types.ts";
 import { recipientsOf } from "../../src/core/channel/mentions.ts";
@@ -25,7 +26,7 @@ import { REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
  * 静默通过）。这里补 seed 里那一份，断言的是「真的贴进去了」。
  */
 function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDelivery>[0], "prompt">): string {
-	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT });
+	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT, catalog: SEED_TEXT });
 }
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import { wireChannel } from "../../src/core/channel/wiring.ts";
@@ -130,6 +131,7 @@ async function setup(options: {
 	const tools = createCoreTools({
 		harness: runtime.harness,
 		layout: box.layout,
+		text: SEED_TEXT,
 		directory: async () => ({
 			...emptyDirectory(),
 			slugToConversation: { [ME]: CONVERSATION },
@@ -441,16 +443,17 @@ describe("每轮附言（怎么回话）", () => {
 		expect(rules).not.toContain("[PASS]");
 	});
 
-	it("还有别人时：允许 PASS，并且点名是谁", () => {
+	it("还有别人时：点名是谁，PASS 的规则只在 say 的说明里（一个家）", () => {
 		const rules = renderReplyRules({
 			template: REPLY_TEMPLATE,
 			fragments: SEED_DELIVERY_PROMPT,
 			woken: ["沈舟", "陆衡"],
 			viewer: "沈舟",
 		});
-		expect(rules).toContain("[PASS]");
 		expect(rules).toContain("陆衡");
 		expect(rules).not.toContain("必须回");
+		expect(rules).not.toContain("[PASS]");
+		expect(SEED_TEXT.get("say.param.text")).toContain("[PASS]");
 	});
 
 	it("群里有成员时：告诉他们「成员的事在群里说，@ 他」", () => {

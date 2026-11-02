@@ -11,6 +11,7 @@ import { mentionRosterOf, type MentionRoster } from "../mentions.ts";
 import type { ChannelWiring } from "../wiring.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
 import type { Layout } from "../../layout.ts";
+import { fill, type TextCatalog } from "../../md/catalog.ts";
 
 /** 工具运行所需的一切。全部由外壳在启动时装配，工具自己不读环境变量。 */
 export type CoreToolDeps = {
@@ -20,6 +21,11 @@ export type CoreToolDeps = {
 	 * 用户的组织在 `layout.userRoot`，应用自带的在 `layout.appRoot`。
 	 */
 	readonly layout: Layout;
+	/**
+	 * 文案目录（`<appRoot>/text/`）：工具描述、参数说明、拒绝话术全在里面。
+	 * 缺省 = 空目录（测试与老工作区），此时工具只剩机械行为，不会抛。
+	 */
+	readonly text?: TextCatalog;
 	/** 读名册（slug ↔ 会话）。 */
 	readonly directory: (context: Context) => Promise<DirectoryState>;
 	/** 落一次名册变更。 */
@@ -30,6 +36,13 @@ export type CoreToolDeps = {
 	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 按团队文件重建它的频道成员（幂等）。 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
+	/**
+	 * 叫这几个刚进团队频道的人自己报到（一条系统留痕，ADR-042）。
+	 *
+	 * 招人走这条：`openAgent` 会顺手把人加进频道，等 `syncTeam` 时「新进的」已经算没了，
+	 * 所以招人自己说「谁刚进来」。
+	 */
+	readonly announceJoin?: (team: string, slugs: readonly string[], context: Context) => Promise<void>;
 	/** 保证这个人有「我 ↔ 他」的私聊（幂等）。缺省表示不支持（测试里可以不提供）。 */
 	readonly ensureDm?: (slug: string, context: Context) => Promise<void>;
 	/** 现在能挑的模型与默认值（招人时按角色分）。 */
@@ -64,10 +77,16 @@ export function actionOf(
 	allowed: readonly string[],
 	fallback: string,
 	label = "action",
+	catalog?: TextCatalog,
 ): string | { error: string } {
 	if (value === undefined || value.trim() === "") return fallback;
 	if (allowed.includes(value)) return value;
-	return { error: `${label} 只有 ${allowed.join(" / ")}，没有「${value}」。` };
+	const message = fill(catalog, "tool.action.invalid", {
+		label,
+		allowed: allowed.join(" / "),
+		value,
+	});
+	return { error: message === "" ? `${label}: ${value}` : message };
 }
 
 /** 这个工具调用属于哪个 slug。名册里找不到就给一句明确的错误。 */
@@ -85,10 +104,12 @@ export async function selfOrError(
 	deps: CoreToolDeps,
 	conversationId: number,
 	context: Context,
-	hint = "你还不在名册里。",
+	key = "tool.self.missing",
 ): Promise<string | { readonly error: string }> {
 	const slug = await selfOf(deps, conversationId, context);
-	return slug ?? { error: hint };
+	if (slug !== undefined) return slug;
+	const message = fill(deps.text, key);
+	return { error: message === "" ? key : message };
 }
 
 /** 当前名册：`@` 别名解析用。每次现读盘（`say` 不是热路径，且改 `identity.md` 要立刻生效）。 */
@@ -128,6 +149,7 @@ export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Conte
 		state,
 		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：agent 叫醒 agent 也要贴。
 		promptDir: deps.wiring.promptDir,
+		...(deps.text === undefined ? {} : { text: deps.text }),
 		conversationOf: (slug: string) => deps.wiring.conversationOf(slug, context),
 		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算）。
 		rememberWake: (slug, wake) => deps.wiring.rememberWake(slug, wake, context),

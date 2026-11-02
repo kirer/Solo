@@ -8,23 +8,22 @@ import { assertTeamSlug, readTeam } from "../../team/doc.ts";
 import { appendTeamMemory } from "../../team/memory.ts";
 import { confirmedBy } from "../../team/settle.ts";
 import { selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { fill } from "../../md/catalog.ts";
 
 export function createRememberTool(deps: CoreToolDeps) {
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(deps.text, key, slots);
 	const tool = defineTool({
 		name: "remember",
-		description: [
-			"记一条经验。",
-			"scope=personal（默认）写进你自己的记忆（members/<我>/memory.md）；scope=team 写进所在团队的记忆（teams/<团队>/memory.md，带日期和你的名字）。",
-			"该记什么见技能「记忆整理」。",
-		].join(""),
+		description: t("remember.description"),
 		parameters: Type.Object({
-			text: Type.String({ description: "要记的东西。一句话说清一条，几条就调几次。" }),
-			scope: Type.Optional(Type.String({ description: "personal（默认，自己的记忆）或 team（团队记忆）" })),
-			team: Type.Optional(Type.String({ description: "团队 slug；scope=team 时用。默认是我所在的团队" })),
+			text: Type.String({ description: t("remember.param.text") }),
+			scope: Type.Optional(Type.String({ description: t("remember.param.scope") })),
+			team: Type.Optional(Type.String({ description: t("remember.param.team") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const slug = await selfOrError(deps, Number(api.conversationId), ctx, "你还不在名册里。");
+			const slug = await selfOrError(deps, Number(api.conversationId), ctx);
 			if (typeof slug !== "string") return text(slug);
 			// 密钥不能靠模型自觉：它写下来的时候并不觉得那是泄密。落盘前先把真值换掉。
 			const body = redact(args.text, deps.layout.appRoot);
@@ -32,24 +31,30 @@ export function createRememberTool(deps: CoreToolDeps) {
 			const self = await readIdentity(deps.layout.agentRoots, slug);
 			if (args.scope === "team") {
 				const team = (args.team ?? self?.team)?.trim();
-				if (team === undefined || team === "") return text("我不在任何团队里。要记团队的事，先说清是哪个团队。");
+				if (team === undefined || team === "") return text(t("remember.refuse.no-team"));
 				// slug 会被拼成路径；成员资格决定「谁能写」——两者都不能只信入参。
 				try {
-					assertTeamSlug(team);
+					assertTeamSlug(team, deps.text);
 				} catch (error) {
 					return text(error instanceof Error ? error.message : String(error));
 				}
 				const lead = (await readTeam(deps.layout.teamsRoot, team))?.lead;
 				if (self?.team !== team && lead !== slug) {
-					return text(`你不在团队「${team}」里。团队记忆只能由这个团队的人写。`);
+					return text(t("remember.refuse.not-member", { team }));
 				}
-				await appendTeamMemory(deps.layout.teamsRoot, team, { text: body, by: slug });
+				await appendTeamMemory(deps.layout.teamsRoot, team, { text: body, by: slug, ...(deps.text === undefined ? {} : { catalog: deps.text }) });
 				const confirmed = await confirmedBy(deps.harness, team, ctx);
-				const tail = confirmed === 0 ? "" : `（已把 #${confirmed} 之前的结论标记为已沉淀）`;
-				return text(`已记进团队「${team}」的记忆${tail}。下一条消息就会出现在这个团队的记忆目录里。`);
+				const tail = confirmed === 0 ? "" : t("remember.team.tail", { seq: confirmed });
+				return text(t("remember.team.done", { team, tail }));
 			}
-			await appendMemory(self?.dir ?? join(deps.layout.membersRoot, slug), body, new Date(), "remember");
-			return text("已记下。下一条消息的记忆目录里就会出现它。");
+			await appendMemory(
+				self?.dir ?? join(deps.layout.membersRoot, slug),
+				body,
+				new Date(),
+				"remember",
+				deps.text,
+			);
+			return text(t("remember.done"));
 		},
 	});
 	return tool;

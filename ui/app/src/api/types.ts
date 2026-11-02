@@ -1,7 +1,7 @@
 /**
  * 界面看到的接口形状 —— **从后端 DTO 直接再导出，不再手抄**。
  *
- * 权威定义只有一份：`src/core/view/dto.ts`。以前这里是一份手抄镜像，抄漏了编译会错，
+ * 权威定义只有一份：`src/view/dto.ts`。以前这里是一份手抄镜像，抄漏了编译会错，
  * 但「抄多/抄错名字」不会错 —— 于是真出现过 `scope: "own"`（后端是 `"personal"`）、
  * `memory.entries` 被写成数组（后端给的是条数）这类静默漂移。改成 type-only 再导出之后，
  * 后端改字段这里就编译不过，漂移无处可藏。
@@ -31,4 +31,4 @@ export type {
 	ViewStep as Step,
 	ViewTurn as Turn,
 	ViewUploaded as Uploaded,
-} from "../../../../src/core/view/dto.ts";
+} from "../../../../src/view/dto.ts";

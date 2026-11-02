@@ -11,7 +11,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import type { CoreShell } from "../../src/core/shell/assemble.ts";
+import type { CoreShell } from "../../src/shell/assemble.ts";
 import { DirectoryDoc, type DirectoryState } from "../../src/core/agent/roster.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";

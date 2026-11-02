@@ -16,6 +16,7 @@ import { sweepRunJobs, startRunJob, type RunOutcome } from "../../src/core/chann
 import { postMessage } from "../../src/core/channel/post.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
+import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { wireChannel } from "../../src/core/channel/wiring.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
@@ -166,6 +167,7 @@ describe("run 工具的 background 分支", () => {
 		const tools = createCoreTools({
 			harness: runtime.harness,
 			layout: box.layout,
+			text: SEED_TEXT,
 			directory: async () => ({
 				...emptyDirectory(),
 				slugToConversation: { [me]: conversation },

@@ -20,16 +20,16 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs as parseNodeArgs } from "node:util";
-import { createRegistry } from "../runtime/index.ts";
-import { openCore, type CoreRuntime } from "../runtime/open.ts";
-import { setupModels, compactionSettings } from "../runtime/index.ts";
+import { createRegistry } from "../core/runtime/index.ts";
+import { openCore, type CoreRuntime } from "../core/runtime/open.ts";
+import { setupModels, compactionSettings } from "../core/runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
-import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "./seed.ts";
-import { createFsx } from "../fsx.ts";
-import { loadTemplates, PROMPT_DIR } from "../md/prompt.ts";
-import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../runtime/io.ts";
-import { resolveLayout, type Layout } from "../layout.ts";
+import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
+import { createFsx } from "../core/fsx.ts";
+import { loadTemplates, PROMPT_DIR } from "../core/md/prompt.ts";
+import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../core/runtime/io.ts";
+import { resolveLayout, type Layout } from "../core/layout.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 type Args = {
@@ -97,6 +97,9 @@ async function main(): Promise<void> {
 		// 提示词模板同理：缺哪一段补哪一段，改过的不动。
 		const templates = await seedPromptTemplates(layout);
 		if (templates.length > 0) console.log(`[core] 补进了提示词模板：${templates.join("、")}`);
+		// 工具描述与拒绝话术同理：缺哪份补哪份，改过的不动。
+		const texts = await seedTextFiles(layout);
+		if (texts.length > 0) console.log(`[core] 补进了文案：${texts.join("、")}`);
 		const synced = await syncAllSkills(layout);
 		const touched = [...synced.copied, ...synced.updated];
 		if (touched.length > 0) console.log(`[core] 同步了全员层技能：${touched.join("、")}`);
@@ -113,7 +116,7 @@ async function main(): Promise<void> {
 
 	if (args.seed && (await agentCount(layout)) === 0) {
 		const slug = await seedOwnerAssistant(layout);
-		console.log(`[core] 播种了「离我最近的人」：assistant/${slug}/identity.md`);
+		console.log(`[core] 播种了「助手」：assistant/${slug}/identity.md`);
 	}
 
 	// 播种之后立刻断言：system 模板一段都没有 = 播种或部署坏了。
@@ -134,7 +137,7 @@ async function main(): Promise<void> {
 	const registry = createRegistry();
 	// 诊断出口必须在 `openCore` **之前**建：底座的运行报告要写进同一个实例，
 	// 才能和 `GET /api/diag` 看到的是同一条。
-	const diag = createDiag(layout.appRoot);
+	const diag = createDiag(layout.logsRoot);
 	let runtime: CoreRuntime | undefined;
 	let shell: CoreShell | undefined;
 	let server: CoreServer | undefined;

@@ -8,7 +8,7 @@
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
 import { describe, expect, it } from "vitest";
-import { channelDetail, channelList, messageView } from "../../src/core/app/project.ts";
+import { channelDetail, channelList, messageView } from "../../src/app/project.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/types.ts";
 

@@ -56,8 +56,8 @@ async function main(): Promise<void> {
 	const { BACKGROUND_CONTEXT, createRegistry } = await import("../src/core/runtime/index.ts");
 	const { openCore } = await import("../src/core/runtime/open.ts");
 	const { resolveLayout } = await import("../src/core/layout.ts");
-	const { assembleCore } = await import("../src/core/shell/assemble.ts");
-	const { seedOwnerAssistant, seedPromptTemplates, seedRules } = await import("../src/core/shell/seed.ts");
+	const { assembleCore } = await import("../src/shell/assemble.ts");
+	const { seedOwnerAssistant, seedPromptTemplates, seedRules, seedTextFiles } = await import("../src/shell/seed.ts");
 
 	const root = await mkdtemp(join(tmpdir(), "core-live-"));
 	// 应用私有的东西（助理、提示词、库、设置）落在 `.app/`，组织落在临时根里。
@@ -73,6 +73,7 @@ async function main(): Promise<void> {
 	// 少了 `prompt/`，V3 的提示词渲染出来是空的 —— 那正是「单测全绿、模型收到半句话」。
 	await seedRules(layout);
 	await seedPromptTemplates(layout);
+	await seedTextFiles(layout);
 	const slug = await seedOwnerAssistant(layout, { name: "助理" });
 	const assistantDir = join(layout.assistantRoot, slug);
 	console.log(`播种：assistant/${slug}`);

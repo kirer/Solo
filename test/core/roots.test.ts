@@ -9,7 +9,7 @@ import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAgent } from "../../src/core/agent/identity.ts";
-import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "../../src/core/shell/seed.ts";
+import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "../../src/shell/seed.ts";
 import { existsAt } from "../../src/core/runtime/io.ts";
 import { sandboxPool } from "./support.ts";
 
@@ -60,13 +60,13 @@ describe("两个根", () => {
 		expect(await existsAt(join(layout.userRoot, "agents"))).toBe(false);
 	});
 
-	it("库、上传、日志、密钥都在 app 根（换机器只带走用户根）", async () => {
+	it("库、上传、密钥在 app 根；日志跟着用户根走", async () => {
 		const box = await pool.make("core-roots-");
 		const { layout } = box;
-		for (const path of [layout.databasePath, layout.uploadsRoot, layout.logsRoot, layout.secretsFile, layout.settingsFile]) {
+		for (const path of [layout.databasePath, layout.uploadsRoot, layout.secretsFile, layout.settingsFile]) {
 			expect(path.startsWith(layout.appRoot)).toBe(true);
 		}
-		for (const path of [layout.membersRoot, layout.teamsRoot, layout.skillsRoot, layout.rulesFile]) {
+		for (const path of [layout.membersRoot, layout.teamsRoot, layout.skillsRoot, layout.rulesFile, layout.logsRoot]) {
 			expect(path.startsWith(layout.userRoot)).toBe(true);
 			expect(path.startsWith(layout.appRoot)).toBe(false);
 		}
