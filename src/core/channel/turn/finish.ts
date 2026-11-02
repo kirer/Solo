@@ -99,8 +99,12 @@ type TurnDeps = {
  * 返回 `undefined` = 不需要补（已经在目标频道说过话，或那个频道进不去）。
  */
 export function turnTarget(state: ChannelState, slug: string, wake: WakeRecord): WakeTarget | undefined {
+	// 「这一轮说过话没有」的起点是**这次**唤醒，不是 `task` 记的那个 seq：插话一轮继承的
+	// `task` 可能是很多条之前的（ADR-099），拿它当起点会把上一轮的答案当成这一轮已经汇报过，
+	// 于是这一轮的结论被吞掉（实测 2026-11-02：林越交了地址，频道里一个字都没有）。
+	const since = (target: WakeTarget): number => Math.max(target.seq, wake.reply.seq);
 	const spoke = (target: WakeTarget): boolean =>
-		spokeAfterWake(state.messages[target.channelId] ?? [], slug, target.seq, wake.quiet === true);
+		spokeAfterWake(state.messages[target.channelId] ?? [], slug, since(target), wake.quiet === true);
 	// 任务频道已经汇报过：这段正文不是结论，不补。
 	if (spoke(wake.task)) return undefined;
 	// 插话一轮里，私聊已经答过 → 最后这段是任务本身的结论，回任务频道。

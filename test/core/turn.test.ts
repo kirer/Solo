@@ -116,6 +116,20 @@ describe("这段正文该落到哪个频道", () => {
 		expect(turnTarget(state({ [DM]: [say(6)] }), SLUG, { reply, task })).toEqual(task);
 	});
 
+	it("插话一轮继承了很早的 task：上一轮的发言不算这一轮已经汇报过", () => {
+		// 真实数据（2026-11-02，林越）：task 还是团队频道 #1，这次的唤醒是 #18，
+		// #17 是他上一轮的「收到」。旧判据把 #17 当成「任务频道已经汇报过」，结论被吞掉。
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: CHANNEL, seq: 18, from: "沈舟", at: 2 };
+		expect(turnTarget(state({ [CHANNEL]: [say(17)] }), SLUG, { reply, task })).toEqual(reply);
+	});
+
+	it("私聊插话：任务频道上一轮说过话，不影响回私聊", () => {
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
+		expect(turnTarget(state({ [CHANNEL]: [say(2)], [DM]: [] }), SLUG, { reply, task })).toEqual(reply);
+	});
+
 	it("私聊插话：私聊还没答 → 先回私聊", () => {
 		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
 		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
