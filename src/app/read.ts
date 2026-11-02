@@ -8,12 +8,12 @@
 import { OWNER_SLUG } from "../core/agent/identity.ts";
 import { chatKind } from "../core/channel/types.ts";
 import { wakeOf } from "../core/agent/roster.ts";
-import { BACKGROUND_CONTEXT, LiveDoc, type EntryRecord, type LiveState } from "../core/runtime/index.ts";
+import { BACKGROUND_CONTEXT, LiveDoc, type LiveState } from "../core/runtime/index.ts";
 import type { AttentionItem, ViewActivity, ViewChannel, ViewChannelDetail, ViewOrg, ViewTurn } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";
 import type { Snapshots } from "./snapshot.ts";
-import { buildTurn, withoutSteps } from "./trace.ts";
+import { buildTurn, groupsOf, withoutSteps } from "./trace.ts";
 import type { CoreServices } from "./types.ts";
 
 /** 频道列表 + 两个汇总数（侧栏顶部那两个红点）。 */
@@ -298,45 +298,6 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 /** 折叠态只要摘要：一屏十几轮，每轮八步，一次全带会把响应撑到几百 KB。 */
 function folded(turns: ViewTurn[], withSteps: boolean): ViewTurn[] {
 	return withSteps ? turns : turns.map(withoutSteps);
-}
-
-/** 一轮在条目数组里的位置：触发条目下标 → 下一条 `core.channel` 之前。 */
-type Group = { readonly seq: number; readonly start: number; readonly end: number };
-
-/**
- * 把条目按「一次唤醒」切开。
- *
- * 遇到**任何** `core.channel` 都收口 —— 他在团队频道干活时我私聊插一句，是新一轮，
- * 轨迹另起一块；两轮的条目不能混进同一个块。
- *
- * `channelId` 不给就切这个人**所有频道**的轮次（私聊页的工作记录），每组自带它发生在
- * 哪个频道；给了就只看那个频道。
- */
-export function groupsOf(
-	entries: readonly EntryRecord[],
-	from: number,
-	to: number,
-	channelId?: string,
-): (Group & { readonly channelId: string })[] {
-	const groups: (Group & { readonly channelId: string })[] = [];
-	let current: { seq: number; start: number; end: number; channelId: string } | undefined;
-	for (const [index, entry] of entries.entries()) {
-		if (entry.kind !== "core.channel") continue;
-		if (current !== undefined) {
-			current.end = index;
-			groups.push(current);
-			current = undefined;
-		}
-		const data = entry.data as Record<string, unknown> | undefined;
-		const at = typeof data?.["channelId"] === "string" ? data["channelId"] : undefined;
-		const seq = typeof data?.["seq"] === "number" ? data["seq"] : undefined;
-		if (at === undefined || seq === undefined) continue;
-		if (channelId !== undefined && at !== channelId) continue;
-		if (seq < from || seq > to) continue;
-		current = { seq, start: index, end: entries.length, channelId: at };
-	}
-	if (current !== undefined) groups.push(current);
-	return groups;
 }
 
 export type Read = ReturnType<typeof createRead>;

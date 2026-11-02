@@ -11,7 +11,7 @@
  */
 import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
 import { OWNER_SLUG, readIdentity } from "../core/agent/identity.ts";
-import { ChannelDoc, dmId, type Attachment, type ChannelState } from "../core/channel/types.ts";
+import { ChannelDoc, dmId, emptyChannelState, type Attachment, type ChannelState } from "../core/channel/types.ts";
 import { markRead as markReadDoc } from "../core/channel/rules.ts";
 import { ensureOwnerDm } from "../core/channel/membership.ts";
 import {
@@ -28,7 +28,6 @@ import {
 } from "../core/channel/attachments.ts";
 import type { ViewOk, ViewPost, ViewUploaded } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
-import { emptyChannels } from "./snapshot.ts";
 import type { CoreServices } from "./types.ts";
 
 /** `POST /api/channels/:id/messages` 的请求体（字段名就是线上的键名）。 */
@@ -51,7 +50,7 @@ export function createChat(shell: CoreServices) {
 	 * 类别按 mime 重算。信任客户端声明的 kind，等于让一个 `.svg` 自称图片后内联执行。
 	 */
 	async function postAsOwner(channelId: string, body: PostBody): Promise<ViewPost> {
-		const channels = (await shell.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannels();
+		const channels = (await shell.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannelState();
 		if (channels.channels[channelId] === undefined) throw new AppError("not-found", "频道不存在");
 
 		const requested = Array.isArray(body.attachments) ? body.attachments : [];

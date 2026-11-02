@@ -23,11 +23,6 @@ import type { CoreServices } from "./types.ts";
 /** 团队文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
 const TEAM_CACHE_MS = 250;
 
-/** 空频道状态（文档还没写过时用）。 */
-export function emptyChannels(): ChannelState {
-	return emptyChannelState();
-}
-
 export type ChannelSnapshot = {
 	readonly identities: readonly Identity[];
 	readonly directory: DirectoryState;
@@ -57,7 +52,7 @@ export function createSnapshots(shell: CoreServices) {
 	async function channelSnapshot(context: Context = BACKGROUND_CONTEXT): Promise<ChannelSnapshot> {
 		const identities = await shell.identities();
 		const directory = withLabels(shell.bindings(), identities);
-		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannels();
+		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
 		return { identities, directory, channels };
 	}
 

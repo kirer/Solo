@@ -4,7 +4,8 @@
  * 三条纪律：
  * 1. **不落库。** 轨迹是会话条目的投影，频道文档与 SQLite 里都不多一个字段。
  *    想看一轮干了什么，读它的条目；条目被压缩回收了，就说 `null`。
- * 2. **这里是纯函数。** 输入条目数组，输出 `ViewTurn`；怎么读会话在 `read.ts`。
+ * 2. **这里是纯函数。** 输入条目数组，输出 `ViewTurn` 或切好的轮次（`groupsOf`）；
+ *    怎么读会话在 `read.ts`。
  * 3. **拿不到就不画。** 没有耗时的步骤不编一个耗时，没有 diff 的不画 diff ——
  *    界面上每个数字都要有出处（AGENTS §2 第 6 条）。
  */
@@ -30,6 +31,45 @@ function asString(value: unknown): string | undefined {
 
 function asNumber(value: unknown): number | undefined {
 	return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/** 一轮在条目数组里的位置：触发条目下标 → 下一条 `core.channel` 之前。 */
+type Group = { readonly seq: number; readonly start: number; readonly end: number };
+
+/**
+ * 把条目按「一次唤醒」切开。
+ *
+ * 遇到**任何** `core.channel` 都收口 —— 他在团队频道干活时我私聊插一句，是新一轮，
+ * 轨迹另起一块；两轮的条目不能混进同一个块。
+ *
+ * `channelId` 不给就切这个人**所有频道**的轮次（私聊页的工作记录），每组自带它发生在
+ * 哪个频道；给了就只看那个频道。
+ */
+export function groupsOf(
+	entries: readonly EntryRecord[],
+	from: number,
+	to: number,
+	channelId?: string,
+): (Group & { readonly channelId: string })[] {
+	const groups: (Group & { readonly channelId: string })[] = [];
+	let current: { seq: number; start: number; end: number; channelId: string } | undefined;
+	for (const [index, entry] of entries.entries()) {
+		if (entry.kind !== "core.channel") continue;
+		if (current !== undefined) {
+			current.end = index;
+			groups.push(current);
+			current = undefined;
+		}
+		const data = entry.data as Record<string, unknown> | undefined;
+		const at = typeof data?.["channelId"] === "string" ? data["channelId"] : undefined;
+		const seq = typeof data?.["seq"] === "number" ? data["seq"] : undefined;
+		if (at === undefined || seq === undefined) continue;
+		if (channelId !== undefined && at !== channelId) continue;
+		if (seq < from || seq > to) continue;
+		current = { seq, start: index, end: entries.length, channelId: at };
+	}
+	if (current !== undefined) groups.push(current);
+	return groups;
 }
 
 /** 剥掉 ANSI 转义：控制字符进了输出区就是一片乱码。 */
