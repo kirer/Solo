@@ -102,7 +102,12 @@ export async function wake(
 	try {
 		const session = input.session ?? input.slug;
 		const conversation = await deps.conversationOf(session);
-		if (conversation === undefined) return { status: "skipped" };
+		if (conversation === undefined) {
+			// 不叫醒也要留痕：频道里 @ 了人、对方却一个字都没有，得能分清是「叫了没跑」还是
+			// 「压根没叫」（会话没开）。实测 2026-11-02 上报链中间一跳四分钟无提交。
+			console.warn(`[wake] ${input.slug} 没有会话，这条唤醒没提交（${input.requestId}）`);
+			return { status: "skipped" };
+		}
 		const conversationId = Number(conversation.id);
 
 		// 先合并、再拼正文：正文里要写「把 N 条并成了这一条」。
@@ -162,6 +167,9 @@ export async function wake(
 		}
 		return { status: "delivered", merged };
 	} catch (error) {
+		console.warn(
+			`[wake] ${input.slug} 提交失败：${error instanceof Error ? error.message : String(error)}（${input.requestId}）`,
+		);
 		return { status: "failed", detail: error instanceof Error ? error.message : String(error) };
 	}
 }

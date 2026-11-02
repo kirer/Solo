@@ -465,6 +465,14 @@ async function main(): Promise<void> {
 	}
 
 	for (const phase of phases) log(phase);
+
+	// 排查用：每条提交的终态。「四分钟没有一句话」有两种病，光看频道分不出来 ——
+	// `placed` = 这一轮还在跑（模型慢），`unanswered` = 网关报错/被撤，`done` 才是答完了。
+	{
+		const settled = (await runtime.harness.inspect(BACKGROUND_CONTEXT)).submissions;
+		console.log(`\n=== 未结提交：${settled.length} 条`);
+		for (const item of settled) console.log(`  #${item.id} ${item.status} ${item.requestId}`);
+	}
 	// 排查用：把频道全文落一份再退出（`SOLO_LIVE_DUMP=/tmp/x.json`）。
 	// 端到端失败时唯一能回答「他到底说了什么」的就是这份数据；不设就不写、照常删工作区。
 	const dumpPath = process.env.SOLO_LIVE_DUMP;
