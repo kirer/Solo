@@ -1307,6 +1307,11 @@ body[data-layout="bubble"]
 	transition: transform 160ms ease;
 }
 
+/* 0 步的那一轮没有过程可展开：不给箭头，也不给空的展开区。 */
+.run[data-expandable="false"] .run-caret {
+	display: none;
+}
+
 .run[data-open="true"] .run-caret svg {
 	transform: rotate(90deg);
 }

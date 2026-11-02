@@ -350,13 +350,25 @@ async function readToEnd(id: string, messages: readonly Message[]): Promise<void
  * 一帧轨迹并进「按人」的表：同一轮（`channelId + seq`）覆盖，其余原样。
  *
  * 跨频道的 `seq` 会重复（每个频道自己数），所以键里必须带 `channelId`。
+ *
+ * 折叠帧不带 `steps`：已经有步骤的那一轮不能被一次轮询打回「还没读」。
+ * 步骤只会越来越多，所以新帧没有就留着旧的那份。
  */
-function upsertRun(runs: Map<string, Turn[]>, turn: Turn): Map<string, Turn[]> {
+export function upsertRun(runs: Map<string, Turn[]>, turn: Turn): Map<string, Turn[]> {
 	const next = new Map(runs);
+	const old = (next.get(turn.slug) ?? []).find(
+		(item) => item.channelId === turn.channelId && item.seq === turn.seq,
+	);
+	const merged: Turn =
+		old !== undefined && old.steps !== undefined && turn.steps === undefined
+			? old.truncated === true
+				? { ...turn, steps: old.steps, truncated: true }
+				: { ...turn, steps: old.steps }
+			: turn;
 	const list = (next.get(turn.slug) ?? []).filter(
 		(item) => item.channelId !== turn.channelId || item.seq !== turn.seq,
 	);
-	list.push(turn);
+	list.push(merged);
 	list.sort((left, right) => left.startedAt - right.startedAt);
 	next.set(turn.slug, list);
 	return next;

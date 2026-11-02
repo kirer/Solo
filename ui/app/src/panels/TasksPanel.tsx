@@ -50,7 +50,13 @@ export function TasksPanel(): JSX.Element | null {
 		return (running ? 0 : 1) * 1e15 - last;
 	}
 
-	const mine = who === null ? [] : [...(runs.get(who) ?? [])].sort((left, right) => right.startedAt - left.startedAt);
+	// 叫醒了却没动手（0 步、没回话）的一轮不在这儿占一块：它什么也没留下，频道里已经有那句留痕。
+	const mine =
+		who === null
+			? []
+			: [...(runs.get(who) ?? [])]
+					.filter((turn) => !(turn.status === "aborted" && turn.stepCount === 0))
+					.sort((left, right) => right.startedAt - left.startedAt);
 	const runningCount = pool.filter((person) => isRunning(presence.get(person.slug)?.state)).length;
 
 	return (

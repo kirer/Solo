@@ -48,14 +48,16 @@ function remember(turn: Turn, open: boolean): void {
  */
 export function RunBlock(props: { turn: Turn; role: string; grouped?: boolean }): JSX.Element {
 	const { turn, role } = props;
-	const [open, setOpen] = useState(() => remembered(turn) ?? turn.status === "running");
+	// 0 步 = 这一轮没动手（想完直接说话了）：没有过程可展开，就别给一个点了没东西的箭头。
+	const expandable = turn.stepCount > 0;
+	const [open, setOpen] = useState(() => expandable && (remembered(turn) ?? turn.status === "running"));
 	const [stepId, setStepId] = useState<string | null>(null);
 
 	// 默认就展开（还在跑的那一轮）时没人点过折叠行，步骤要在这里补拉一次。
 	// 拉的时候 turn 还是折叠版，store 一 patch 就会换一个新对象 —— 用 ref 记住拉过谁。
 	const asked = useRef<string | null>(null);
 	useEffect(() => {
-		if (!open || turn.steps !== undefined) return;
+		if (!expandable || !open || turn.steps !== undefined) return;
 		const key = `${turn.channelId}:${String(turn.seq)}:${turn.slug}`;
 		if (asked.current === key) return;
 		asked.current = key;
@@ -63,6 +65,7 @@ export function RunBlock(props: { turn: Turn; role: string; grouped?: boolean })
 	}, [open, turn]);
 
 	const toggle = useCallback(() => {
+		if (!expandable) return;
 		setOpen((current) => {
 			const next = !current;
 			remember(turn, next);
@@ -75,7 +78,7 @@ export function RunBlock(props: { turn: Turn; role: string; grouped?: boolean })
 	const status = useMemo(() => statusOf(turn), [turn]);
 
 	return (
-		<div className="run" data-status={turn.status} data-open={open ? "true" : "false"}>
+		<div className="run" data-status={turn.status} data-open={open ? "true" : "false"} data-expandable={expandable ? "true" : "false"}>
 			{/* 头一行是这个人，不是按钮：名字和头像不该顺手把轨迹折叠掉。 */}
 			{props.grouped === true ? null : (
 				<div className="run-top">
@@ -112,9 +115,8 @@ export function RunBlock(props: { turn: Turn; role: string; grouped?: boolean })
 
 				{open ? (
 					<div className="run-body">
-						{turn.steps === undefined ? (
-							<div className="run-empty">正在读这一轮的过程…</div>
-						) : turn.steps.length === 0 ? (
+						{/* 折叠帧不带步骤，正在拉的这一下什么都不画：写「正在读」只会闪一下。 */}
+						{turn.steps === undefined ? null : turn.steps.length === 0 ? (
 							<div className="run-empty">这一轮没有留下过程（条目可能已被压缩）。</div>
 						) : (
 							<div className="run-steps">
