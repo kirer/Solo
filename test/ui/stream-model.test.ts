@@ -24,6 +24,7 @@ type Msg = {
 	fromLabel: string;
 	kind: string;
 	text: string;
+	noteOf?: string;
 };
 
 /** 造一条消息。只填 buildRows 真正读的字段（投影里其余字段它不碰）。 */
@@ -116,12 +117,19 @@ describe("时间分隔", () => {
 });
 
 describe("note 与其余 kind", () => {
-	it("note 单独成行，且打断连发合并", () => {
+	// ADR-047：系统留痕与沉淀账本不进聊天流；后台命令那条折成一行留着。
+	it("系统留痕不画，也不打断连发合并", () => {
 		const rows = build([m(1, "say", T), m(2, "note", T + SEC), m(3, "say", T + 2 * SEC)]);
+		expect(rows.map((row) => row.type)).toEqual(["say", "say"]);
+		const last = rows[1];
+		if (last?.type !== "say") throw new Error("第二行应该是 say");
+		expect(last.grouped).toBe(true);
+	});
+
+	it("后台命令跑完的留痕（noteOf=run）照旧单独成行", () => {
+		const run = { ...m(2, "note", T + SEC), noteOf: "run" };
+		const rows = build([m(1, "say", T), run, m(3, "say", T + 2 * SEC)]);
 		expect(rows.map((row) => row.type)).toEqual(["say", "note", "say"]);
-		const last = rows[2];
-		if (last?.type !== "say") throw new Error("最后一行应该是 say");
-		expect(last.grouped).toBe(false);
 	});
 
 	it("未知 kind 不产生行（不画、不占高）", () => {

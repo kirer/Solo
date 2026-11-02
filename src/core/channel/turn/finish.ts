@@ -44,18 +44,14 @@ export function finalTextOf(entry: EntryRecord | undefined): string | undefined 
 }
 
 /**
- * 这条唤醒之后，他在这个频道里说过话吗？`note` 是系统留痕，一般不算。
+ * 这条唤醒之后，他在这个频道里说过话吗？`note` 也算 —— 留痕是**他**发出来的。
  *
- * `includeNotes` 给安静的一轮用（团队记忆沉淀）：那一轮的「话」**就是**留痕，不认它
- * 就会把同一句再补发一遍，频道里出现两条一模一样的账本。
+ * 以前这里不认 `note`，只有安静的一轮（团队记忆沉淀）才认。结果实测踩了两次：
+ * 他自己写的一条留痕被当成「没说话」，收尾把同一句又补发一遍，频道里并排两条一样的话
+ * （2026-11-02 周野的自我介绍）。别人的留痕（系统报到、我的通知）`from` 不是他，本来就不算。
  */
-export function spokeAfterWake(
-	list: readonly Message[],
-	slug: string,
-	sinceSeq: number,
-	includeNotes = false,
-): boolean {
-	return list.some((item) => item.seq > sinceSeq && item.from === slug && (includeNotes || item.kind !== "note"));
+export function spokeAfterWake(list: readonly Message[], slug: string, sinceSeq: number): boolean {
+	return list.some((item) => item.seq > sinceSeq && item.from === slug);
 }
 
 /** 收尾要做的一切（拍平后方便测）。 */
@@ -104,7 +100,7 @@ export function turnTarget(state: ChannelState, slug: string, wake: WakeRecord):
 	// 于是这一轮的结论被吞掉（实测 2026-11-02：林越交了地址，频道里一个字都没有）。
 	const since = (target: WakeTarget): number => Math.max(target.seq, wake.reply.seq);
 	const spoke = (target: WakeTarget): boolean =>
-		spokeAfterWake(state.messages[target.channelId] ?? [], slug, since(target), wake.quiet === true);
+		spokeAfterWake(state.messages[target.channelId] ?? [], slug, since(target));
 	// 任务频道已经汇报过：这段正文不是结论，不补。
 	if (spoke(wake.task)) return undefined;
 	// 插话一轮里，私聊已经答过 → 最后这段是任务本身的结论，回任务频道。

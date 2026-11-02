@@ -197,7 +197,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 桌面壳 / 打包 / 自动更新 / 更新源 | `docs/DEPLOY.md` §9–10 + `docs/DECISIONS.md` ADR-027 / ADR-028 / ADR-029 | `desktop/src/`（`main.ts` / `backend.ts` / `ready-line.ts` / `updates.ts` / `manifest.ts` / `install.ts` / `update-key.ts` / `feed.ts` / `menu.ts`）+ `electron-builder.yml` + `scripts/update-server.ts` / `update-key.ts` / `update-manifest.ts`；壳与后端只靠 `[core] http://…` 一行说话，不 import 内核与界面源码；更新是「清单验签 → zip → 进程外替换」，不是 Squirrel |
 | 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
 | 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表：我 / 助理 / 团队 / 团队管理员 / 成员 / 全员；项目叫 Solo |
-| 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md` |
+| 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿 / 系统留痕） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md`；留痕不画见 ADR-047，落在 `ui/app/src/stream/model.ts` 的 `buildRows` + `test/ui/stream-model.test.ts` |
 | 撞上 pi-durable 做不到的事、或为它写了绕路代码 | `docs/CONCESSIONS.md` 追加一行（只追加；处理完写「已处理 + 日期」） |
 | 两个根（应用私有 / 用户根）/ 加一个要落盘的目录 | `docs/DECISIONS.md` ADR-030 + `docs/CODE.md` §1 | `src/core/layout.ts`（**拼路径只在这里**）+ `scripts/check-boundaries.mjs` 的根原语组 + `test/core/layout.test.ts`；不许在业务模块里 `dirname` 推路径 |
 | 加 / 改一个频道给的「工作区」（插件用） | `docs/DECISIONS.md` ADR-036 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `PluginScope` / `scope()` + `shell/assemble.ts` 的 `pluginScope`；**路径守卫留在插件里**，核心只给根 |

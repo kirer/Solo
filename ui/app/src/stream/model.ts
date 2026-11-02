@@ -1,8 +1,9 @@
 /**
  * 消息 → 行模型。**纯函数**，输入是消息数组，输出是「屏幕上一行一行是什么」。
  *
- * 这个文件只做两件事：**真实消息怎么排**（时间分隔、一个人半分钟内连发算一段、系统 note
- * 单独一行），以及**正在跑的那一轮**（`live` 行）插在哪儿。
+ * 这个文件只做两件事：**真实消息怎么排**（时间分隔、一个人半分钟内连发算一段），以及
+ * **正在跑的那一轮**（`live` 行）插在哪儿。系统留痕不画（ADR-047），只有后台命令那条
+ * 折成一行。
  *
  * 过程不在这里画：历史轮次进「后台任务」面板（ADR-046）。`live` 行也不是消息 ——
  * 它由正在跑的那一轮派生，跑完就消失，真实回复顶上来。
@@ -80,6 +81,10 @@ export function buildRows({ messages, running = [], now = Date.now() }: BuildInp
 
 	for (const message of messages) {
 		if (LEGACY_PROCESS_KINDS.has(message.kind)) continue;
+		// 系统留痕与沉淀账本不进聊天流（ADR-047）：报到、没答上来、看门狗、记忆记账都是
+		// 灰字，一屏对话里插五六条，读起来像日志。数据还在库里、`chats` 读得到。
+		// 后台命令跑完的留痕例外：它折成一行，点开才是输出。
+		if (message.kind === "note" && message.noteOf !== "run") continue;
 
 		if (previous !== undefined) {
 			const gap = message.at - previous.at;

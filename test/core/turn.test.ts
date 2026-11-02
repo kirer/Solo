@@ -87,8 +87,12 @@ describe("谁说的话算「他说过」", () => {
 		expect(spokeAfterWake([at({ seq: 1 })], SLUG, 1)).toBe(false);
 	});
 
-	it("系统替他记的告警 note 不算", () => {
-		expect(spokeAfterWake([at({ seq: 5, kind: "note" })], SLUG, 1)).toBe(false);
+	it("他自己发的留痕也算（安静的一轮，话就是 note）", () => {
+		expect(spokeAfterWake([at({ seq: 5, kind: "note" })], SLUG, 1)).toBe(true);
+	});
+
+	it("系统写的留痕（我发的告警 / 报到）不算", () => {
+		expect(spokeAfterWake([at({ seq: 5, from: "owner", kind: "note" })], SLUG, 1)).toBe(false);
 	});
 
 	it("别人的发言不算", () => {
