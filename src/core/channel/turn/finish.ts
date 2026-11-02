@@ -146,11 +146,17 @@ export function turnTarget(
 /**
  * 造一个收尾器。投递、我说话、沉淀三条路共用同一份 —— 收尾的行为只在这里写一次。
  */
+/**
+ * 收尾串行闸门 —— **整个进程一份**，不是每个收尾器一份。
+ *
+ * 两条提交同时结算会并发跑两次收尾（相隔 1 毫秒）：两次都快照到「频道里还没有这句」，
+ * 于是同一句话发两遍（实测 2026-11-02 周楠 #15/#16、苏黎 #17/#18）。
+ * 装配会接两次线（主装配 + 插件热重装），每个收尾器一份闸门等于没串 —— 必须共享。
+ */
+const repostGate = createSerialGate();
+
 export function createTurnFinisher(deps: TurnDeps): FinishTurn {
-	// 两条提交同时结算会**并发**跑两次收尾（相隔 1 毫秒）：两次都快照到「频道里还没有这句」，
-	// 于是同一句话发两遍（实测 2026-11-02 周楠 #15/#16）。整段串起来，后一次才看得见前一次。
-	const serial = createSerialGate();
-	return (info, context = BACKGROUND_CONTEXT) => serial(() => finishOnce(deps, info, context));
+	return (info, context = BACKGROUND_CONTEXT) => repostGate(() => finishOnce(deps, info, context));
 }
 
 async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context): Promise<void> {
