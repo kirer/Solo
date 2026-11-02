@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="flowmap-pin" content="__FLOWMAP_PIN__">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Solo 代码流程图</title>
+<title>代码流程图</title>
 <style>
 	:root {
 		color-scheme: light;
@@ -415,8 +415,8 @@
 		<div class="brand">
 			<div class="logo">✦</div>
 			<div>
-				<h1>Solo 代码流程图</h1>
-				<p>模块 → 文件 → 类 / 函数 → 方法 · 左→右即阅读顺序</p>
+				<h1 id="title">代码流程图</h1>
+				<p id="subtitle">模块 → 文件 → 类 / 函数 → 方法 · 左→右即阅读顺序</p>
 			</div>
 			<div class="pin">
 				<span class="sha" id="pin">__PIN__</span>
@@ -558,13 +558,19 @@
 	const KIND = {
 		root: '根', group: '模块', file: '文件', 'function': '函数', class: '类',
 		method: '方法', constructor: '构造', get: 'getter', set: 'setter', object: '对象',
+		struct: '结构体', interface: '接口', enum: '枚举', trait: 'trait', impl: '实现',
+		namespace: '命名空间', module: '模块', type: '类型', macro: '宏',
+		flowroot: '流程', step: '步骤',
 	};
+
+	document.title = `${meta.title || '代码'} · 代码流程图`;
+	document.getElementById('title').textContent = `${meta.title || '代码'} · 代码流程图`;
 
 	/* ── 头部元信息 ─────────────────────────────────────────────── */
 
 	const pinEl = document.getElementById('pin');
-	pinEl.textContent = `${meta.short}${meta.dirty ? ' · 工作区未提交' : ''}`;
-	pinEl.title = meta.pin;
+	pinEl.textContent = meta.pin ? `${meta.short}${meta.dirty ? ' · 工作区未提交' : ''}` : '未固定 commit';
+	pinEl.title = meta.pin || '当前目录不是 git 仓库';
 	document.getElementById('subject').textContent = `${meta.subject} · 生成于 ${meta.generatedAt}`;
 	document.getElementById('subject').title = meta.subject;
 
@@ -610,9 +616,10 @@
 		for (const b of modeEl.querySelectorAll('[data-mode]')) b.classList.toggle('on', b.dataset.mode === state.mode);
 		onlyFilesWrap.classList.toggle('off', state.mode === 'flow');
 		onlyFilesEl.disabled = state.mode === 'flow';
-		brandSub.textContent = state.mode === 'flow'
+		const counts = meta.counts ? ` · ${meta.counts.files} 文件 / ${meta.counts.symbols} 声明 / ${meta.counts.languages} 种语言` : '';
+		brandSub.textContent = (state.mode === 'flow'
 			? '调用流程：入口 → 执行顺序 → 分支 · 左→右即调用顺序'
-			: '模块 → 文件 → 类 / 函数 → 方法 · 左→右即阅读顺序';
+			: '模块 → 文件 → 类 / 函数 → 方法 · 左→右即阅读顺序') + counts;
 		buildLegend();
 	}
 
@@ -707,7 +714,7 @@
 
 		if (node.kind === 'flowroot') {
 			el.innerHTML = `
-				<div class="kicker"><span class="k">FLOW</span><span class="ln">${countSteps(node)} 步</span></div>
+				<div class="kicker"><span class="k">流程</span><span class="ln">${countSteps(node)} 步</span></div>
 				<div class="summary">${esc(node.summary)}</div>
 				<div class="name">${esc(node.name)}</div>
 				<div class="path">入口 ${esc(node.entry)} · ${esc(node.file)}</div>
@@ -737,7 +744,7 @@
 			const n = node.children?.length || 0;
 			const syms = (node.children || []).reduce((a, f) => a + (f.children?.length || 0), 0);
 			el.innerHTML = `
-				<div class="kicker"><span class="k">MODULE</span><span class="ln">${n} 文件 · ${syms} 声明</span></div>
+				<div class="kicker"><span class="k">模块</span><span class="ln">${n} 文件 · ${syms} 声明</span></div>
 				<div class="summary">${esc(node.summary)}</div>
 				<div class="name">${esc(node.name)}</div>
 				<div class="sub">${esc(node.sub || '')}</div>`;
@@ -747,7 +754,7 @@
 		if (node.kind === 'file') {
 			const kids = node.children?.length || 0;
 			el.innerHTML = `
-				<div class="kicker"><span class="k">FILE</span><span class="ln">L${node.line ?? 1}</span>${statusBadge(node)}</div>
+				<div class="kicker"><span class="k">文件</span><span class="ln">L${node.line ?? 1}</span>${statusBadge(node)}</div>
 				<div class="summary">${esc(node.summary)}</div>
 				<div class="row"><span class="name">${esc(node.name)}</span><span class="count">${kids} 声明</span></div>
 				<div class="path">${esc(node.dir || '')}</div>
