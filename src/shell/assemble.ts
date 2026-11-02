@@ -35,6 +35,7 @@ import {
 	DirectoryDoc,
 	emptyDirectory,
 	labelIn,
+	mergeDirectory,
 	plainDirectory,
 	type DirectoryState,
 } from "../core/agent/roster.ts";
@@ -124,6 +125,43 @@ export async function assembleCore(
 		allChannel,
 	};
 
+	/** 落一次名册变更：**只写变化过的字段**，并且先抄成纯数据。 */
+	async function saveDirectoryImpl(
+		change: (state: DirectoryState) => DirectoryState,
+		ctx: Context,
+	): Promise<void> {
+		await harness.commit(async (tx) => {
+			const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+			// 旧写法是 `Object.assign(doc, change({ ...emptyDirectory(), ...doc }))`：
+			// 把「文档代理展开出来的整份状态」原样写回去。展开出来的是**覆盖层的节点**，
+			// 再写回同一个覆盖层，等于拿旧节点覆盖新值 —— 表现就是「名册里少一个人」，
+			// 而且没有任何报错（顾南雁的映射就是这么丢的）。
+			const before = plainDirectory(doc);
+			const after = change(before);
+			for (const key of DIRECTORY_KEYS) {
+				if (JSON.stringify(after[key]) === JSON.stringify(before[key])) continue;
+				// 一个字段一次写：路径式更新，不会连带重写整份名册。
+				doc[key] = after[key] as never;
+			}
+		}, ctx);
+	}
+
+	/**
+	 * 读名册：这次运行里开过的会话 + 落盘那份。
+	 *
+	 * 落盘的映射可能落后（旧库、上一版只写了内存、某次提交丢了）。只读不补的话，
+	 * 下一次提交把缺人的那份原样写回去，重启后这个人就换个新会话、旧历史变孤儿。
+	 * 所以发现落盘缺人就在这里补一次 —— 名册是缓存，这次运行的会话是真话。
+	 */
+	async function directoryNow(ctx: Context): Promise<DirectoryState> {
+		const doc = (await harness.snapshot(DirectoryDoc, ctx)) ?? emptyDirectory();
+		const merged = mergeDirectory(doc, directory);
+		if (Object.keys(merged.slugToConversation).length !== Object.keys(doc.slugToConversation).length) {
+			await saveDirectoryImpl(() => merged, ctx);
+		}
+		return merged;
+	}
+
 	// ── 1. 装能力包 ────────────────────────────────────────────────
 	// 工具描述、参数说明、拒绝话术全在 `<appRoot>/text/` 里（`seed/text/` 播种过来）。
 	// 装配时读一次：`defineTool` 的描述是静态的，改文案要重启（和插件一致）。
@@ -137,25 +175,8 @@ export async function assembleCore(
 		harness,
 		layout,
 		text,
-		directory: async (ctx) => (await harness.snapshot(DirectoryDoc, ctx)) ?? emptyDirectory(),
-		saveDirectory: async (change, ctx) => {
-			await harness.commit(async (tx) => {
-				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-				// **只写变化过的字段**，并且先抄成纯数据。
-				//
-				// 旧写法是 `Object.assign(doc, change({ ...emptyDirectory(), ...doc }))`：
-				// 把「文档代理展开出来的整份状态」原样写回去。展开出来的是**覆盖层的节点**，
-				// 再写回同一个覆盖层，等于拿旧节点覆盖新值 —— 表现就是「名册里少一个人」，
-				// 而且没有任何报错（顾南雁的映射就是这么丢的）。
-				const before = plainDirectory(doc);
-				const after = change(before);
-				for (const key of DIRECTORY_KEYS) {
-					if (JSON.stringify(after[key]) === JSON.stringify(before[key])) continue;
-					// 一个字段一次写：路径式更新，不会连带重写整份名册。
-					doc[key] = after[key] as never;
-				}
-			}, ctx);
-		},
+		directory: (ctx) => directoryNow(ctx),
+		saveDirectory: (change, ctx) => saveDirectoryImpl(change, ctx),
 		openAgent: async (slug, ctx) => (await openOne(slug, ctx)).id as unknown as number,
 		modelChoices: () => modelChoices(),
 		setModel: (slug, ref, ctx) => setModel(slug, ref, ctx),

@@ -87,6 +87,31 @@ export function plainDirectory(source: DirectoryState): DirectoryState {
 }
 
 /**
+ * 落盘的名册 + 这次运行里真实开过的会话。
+ *
+ * 名册是缓存，真相是文件夹与「这次运行开出来的会话」。落盘那份可能落后（旧库、丢过写、
+ * 上一版只写了内存），所以读的时候**内存优先**：只要这次运行里给他开过会话，他就是那个人。
+ * 只在读的时候合并不够 —— 缺的那条会被下一次提交原样写到盘上，所以调用方还要顺手回写。
+ */
+export function mergeDirectory(base: DirectoryState, live: DirectoryState): DirectoryState {
+	return {
+		slugToConversation: { ...base.slugToConversation, ...live.slugToConversation },
+		conversationToSlug: { ...base.conversationToSlug, ...live.conversationToSlug },
+		wake: base.wake,
+		labels: { ...base.labels, ...live.labels },
+	};
+}
+
+/** 这次运行里给这个人开过的会话 id（没有就 `undefined`）。 */
+export function liveConversationId(
+	live: (() => ReadonlyMap<string, Conversation>) | undefined,
+	slug: string,
+): number | undefined {
+	const found = live?.().get(slug);
+	return found === undefined ? undefined : (found.id as unknown as number);
+}
+
+/**
  * 唤醒要用的那两件事：**这个人的会话在哪**、**记下他被谁在哪个频道叫醒**。
  *
  * 投递、我说话、团队沉淀三条路以前各写一份闭包，三份的读法还不完全一样
@@ -114,9 +139,16 @@ export function directoryWake(deps: {
 		async rememberWake(slug, wake, context = BACKGROUND_CONTEXT) {
 			await deps.harness.commit(async (tx) => {
 				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-				// 用**文档里**的映射：刚 `hire` 的人只在文档里有，装配期那份里没有。
-				const id = conversationFor(doc, slug);
+				// 先看这份运行里的会话表，再看文档。
+				// 文档可能落后（实测：三个人的映射只活在内核内存里，落盘那份只有助理，
+				// 于是他们的工具全被拒「你还不在名册里」，叫醒也记不上）。内存里有会话就是人。
+				const id = conversationFor(doc, slug) ?? liveConversationId(deps.live, slug);
 				if (id === undefined) return;
+				// 文档里缺这条就顺手补上：只读不补的话，下一次提交还会把缺人的那份写回去。
+				if (conversationFor(doc, slug) === undefined) {
+					doc.slugToConversation = { ...doc.slugToConversation, [slug]: id };
+					doc.conversationToSlug = { ...doc.conversationToSlug, [String(id)]: slug };
+				}
 				// 只写 `wake` 这一个字段：把整份名册展开再写回去，任何一处覆盖层节点被顺手
 				// 写回来就是一次静默丢人。
 				doc.wake = {

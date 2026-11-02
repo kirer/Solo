@@ -12,8 +12,9 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { CoreShell } from "../../src/shell/assemble.ts";
-import { DirectoryDoc, type DirectoryState } from "../../src/core/agent/roster.ts";
+import { DirectoryDoc, mergeDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";
 
 const pool = sandboxPool();
@@ -56,6 +57,41 @@ describe("加人之后重启：复用同一个会话，不制造孤儿", () => {
 		expect(second.doc.slugToConversation["甲"]).toBe(idA);
 		// 关键断言：重启后**没有**给她新开一个会话（旧行为这里会变一个新 id）。
 		expect(second.doc.slugToConversation["乙"]).toBe(idB);
+	});
+});
+
+describe("落盘的名册落后于这次运行", () => {
+	it("读名册时这次运行开过的会话优先（盘上缺人也不影响认人）", () => {
+		const empty: DirectoryState = { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
+		const live: DirectoryState = {
+			slugToConversation: { 甲: 9 },
+			conversationToSlug: { "9": "甲" },
+			wake: { "9": { reply: { channelId: "all", seq: 1, from: "owner", at: 1 } } },
+			labels: { 甲: "甲" },
+		};
+		const seen = mergeDirectory(empty, live);
+		expect(seen.conversationToSlug["9"]).toBe("甲");
+		expect(seen.slugToConversation["甲"]).toBe(9);
+	});
+
+	it("映射从盘上丢了：叫醒照样记在真实会话上", async () => {
+		const box = await pool.make("core-directory-");
+		await identity(box, "甲");
+		const first = await boot(box);
+		const idA = first.doc.slugToConversation["甲"];
+
+		await first.runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+			doc.slugToConversation = {};
+			doc.conversationToSlug = {};
+		}, BACKGROUND_CONTEXT);
+
+		await first.shell.postAs({ channelId: "all", from: "owner", text: "@甲 在吗" });
+
+		const after = (await first.runtime.harness.snapshot(DirectoryDoc)) as DirectoryState;
+		expect(after.slugToConversation["甲"]).toBe(idA);
+		expect(after.wake[String(idA)]).toBeDefined();
+		await first.runtime.close();
 	});
 });
 

@@ -170,6 +170,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
 | 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/agent/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
+| 名册（slug ↔ 会话 id）怎么读、怎么落盘 | `docs/CORE.md` §1 | `src/core/agent/roster.ts` 的 `mergeDirectory` / `directoryWake`（`rememberWake` 用内存会话兜底并补映射）+ `src/shell/assemble.ts` 的 `directoryNow` / `saveDirectoryImpl` + `test/core/directory-persist.test.ts`；**读的时候内存优先**，别只信落盘那份 |
 | 新进频道的人要不要被叫醒（报到） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-042 | `channel/membership.ts` 的 `syncTeamChannel`（返回新进成员，不含我与助理）+ `shell/assemble.ts` 的 `syncTeamAndAnnounce` 与 `ownerSpeak` 的 `wakeTo`；文案 `seed/text/channel.md` 的 `membership.joined`；`test/core/membership.test.ts` |
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `channel/post.ts` 传线索 + `channel/delivery.ts` 的 `woken` |
