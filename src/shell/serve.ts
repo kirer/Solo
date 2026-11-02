@@ -36,9 +36,19 @@ export type CoreServer = {
 	close(): Promise<void>;
 };
 
+/**
+ * 界面构建产物（`ui/web/`）的默认位置。
+ *
+ * 单独一个函数是为了能被单测钉住：本文件一搬家，层数就变，静态资源会静默 404
+ * （服务起得来、接口正常，只有首页打不开）。
+ */
+export function defaultUiDir(): string {
+	return new URL("../../ui/web", import.meta.url).pathname;
+}
+
 export async function serveCore(options: CoreServeOptions): Promise<CoreServer> {
 	const shell = options.shell;
-	const uiDir = options.uiDir ?? new URL("../../../ui/web", import.meta.url).pathname;
+	const uiDir = options.uiDir ?? defaultUiDir();
 
 	let actualPort = options.port ?? 7788;
 	const boundHost = options.host ?? "127.0.0.1";

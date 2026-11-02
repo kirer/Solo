@@ -73,7 +73,8 @@ class Page {
 			returnByValue: true,
 		});
 		if (result.exceptionDetails !== undefined) {
-			throw new Error(result.exceptionDetails.text ?? "页面里这段 JS 抛错了");
+			const detail = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text;
+			throw new Error(`页面里这段 JS 抛错了：${detail ?? "未知原因"}`);
 		}
 		return result.result?.value;
 	}
