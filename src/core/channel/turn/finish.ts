@@ -26,6 +26,7 @@ import { createSerialGate } from "../../runtime/io.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
 import type { WakeRecord, WakeTarget } from "./record.ts";
 import { postMessage, type PostDeps } from "../post.ts";
+import type { MentionRoster } from "../mentions.ts";
 import { isPass } from "../tools/guards.ts";
 
 /** 从一条 `pi.assistant` 里取出「最终正文」——最后一个 text 块。 */
@@ -104,6 +105,8 @@ type TurnDeps = {
 	readonly harness: Harness;
 	readonly promptDir?: string | undefined;
 	readonly text?: PostDeps["text"];
+	/** 名册：补发时 `@我` 要存成 `owner`，不能存字面 token（见 `ownerSpeak` 同一段说明）。 */
+	readonly roster?: () => Promise<MentionRoster>;
 	readonly conversationOf: PostDeps["conversationOf"];
 	readonly rememberWake?: PostDeps["rememberWake"];
 	readonly labelOf?: PostDeps["labelOf"];
@@ -182,6 +185,10 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 	);
 	if (duplicate) return;
 
+	// 名册只在这一处补：没有它，`@我` 会以字面 token 落进 `mentions`，投递靠
+	// `recipientsOf` 的兜底还能叫醒人，但落盘/接口里的「叫了谁」就是错的。
+	// 读名册失败也别把结论丢了：退回字面 token，投递那边还有兜底。
+	const roster = await deps.roster?.().catch(() => undefined);
 	let written: Awaited<ReturnType<typeof postMessage>>;
 	try {
 		written = await postMessage(
@@ -200,6 +207,7 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 				from: info.slug,
 				text,
 				at: Date.now(),
+				...(roster === undefined ? {} : { roster }),
 				// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人
 				// （`note` 本来就不叫人）。正常一轮的补发**要照常叫醒** —— 他说的是
 				// 「@周岚 请验收」，不叫醒等于把结论发进一个没人看的房间。

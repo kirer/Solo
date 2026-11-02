@@ -18,6 +18,8 @@ import {
 	type WakeRecord,
 } from "../agent/roster.ts";
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
+import { readAllIdentities } from "../agent/identity.ts";
+import { mentionRosterOf } from "./mentions.ts";
 import type { Layout } from "../layout.ts";
 import type { TextCatalog } from "../md/catalog.ts";
 
@@ -74,6 +76,14 @@ export function wireChannel(deps: {
 		harness: deps.harness,
 		promptDir,
 		...(deps.text === undefined ? {} : { text: deps.text }),
+		// 补发也要按名册解析 `@`：跟 `say` / `ownerSpeak` 存下来的 `mentions` 保持同一形状。
+		roster: async () =>
+			mentionRosterOf(
+				(await readAllIdentities(deps.layout.agentRoots)).map((identity) => ({
+					slug: identity.slug,
+					name: identity.name,
+				})),
+			),
 		// 收尾发生在背景上下文里（结算之后），用不到调用方那一轮的覆盖层。
 		conversationOf: (slug) => conversationOf(slug),
 		rememberWake: (slug, wake) => rememberWake(slug, wake),

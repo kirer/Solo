@@ -264,6 +264,28 @@ describe("收尾落库", () => {
 		expect(asked).toContain("沈舟");
 	});
 
+	it("补发按名册解析 @：`@我` 落成 `owner`，不是字面 token", async () => {
+		// 2026-11-02 live：助理的 `@我 …` 由收尾补发，落盘的 mentions 却是 ["我"]，
+		// 「他叫了我」在数据里看不出来（投递靠兜底还能叫醒，落盘/接口里就是错的）。
+		const runtime = await setup();
+		const finisher = createTurnFinisher({
+			harness: runtime.harness,
+			conversationOf: async () => undefined,
+			roster: async () => ({ owner: "owner", agents: [] }),
+		});
+		await finisher(
+			{
+				slug: SLUG,
+				conversation: conversationWith(answer(42, "@我 服务器每月 3000，要你拍板。")),
+				answer: 42,
+				wake: wakeOf(CHANNEL),
+			},
+			BACKGROUND_CONTEXT,
+		);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect((state.messages[CHANNEL] ?? []).at(-1)?.mentions).toEqual(["owner"]);
+	});
+
 	it("短回答照补：他对「你在吗」只答了「在。」，吞掉就是一片沉默", async () => {
 		// 2026-11-02 live：被 @ 的第一轮答了 2 个字，收尾按「太短」吞了，频道里一个字没有。
 		const runtime = await setup();
