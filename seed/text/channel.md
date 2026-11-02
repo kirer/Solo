@@ -83,6 +83,9 @@
 ## membership.joined
 你刚进了「{{title}}」团队频道。用一句话介绍自己：名字、职务、负责什么 —— 发在这里，之后大家才知道 @ 谁。
 
+## turn.interrupted
+服务重启，{{name}} 在 #{{seq}} 之后的那一轮被打断了。接着把它做完 —— 先看频道里还没回的消息，别从头再来。
+
 ## sections.identityless
 # 你还没有身份文件
 

@@ -79,6 +79,11 @@ type CoreShellOptions = {
 	 * 自己建一个。装配要传入**同一个实例**，否则 `lastReport` 不在那条线上。
 	 */
 	readonly diag?: CoreServices["diag"];
+	/**
+	 * 重启时正跑到一半的会话（`openCore` 的 `interrupted`）。装配完把人叫回来接着做
+	 * （ADR-044）；不给 = 不叫（测试与老调用方）。
+	 */
+	readonly interrupted?: readonly number[];
 };
 
 /**
@@ -493,6 +498,34 @@ export async function assembleCore(
 		);
 	}
 
+	/**
+	 * 重启把某人的一轮掐断了：在**他当时干活的那个频道**留一句痕，并把他叫回来接着做
+	 * （ADR-044）。没有唤醒记录（不是被叫醒的）就不猜 —— 宁可不叫，也不乱叫。
+	 */
+	async function resumeInterrupted(conversationId: number, ctx: Context): Promise<void> {
+		const slug = Object.entries(directory.conversationToSlug).find(
+			([id]) => Number(id) === conversationId,
+		)?.[1];
+		if (slug === undefined) return;
+		const wake = await wiring.wakeOf(slug, ctx);
+		if (wake === undefined) return;
+		const channel = (await shell.channels(ctx)).channels[wake.task.channelId];
+		if (channel === undefined || channel.archived === true || !channel.members.includes(slug)) return;
+		await shell.postAs(
+			{
+				channelId: channel.id,
+				from: OWNER,
+				kind: "note",
+				text: fill(shell.text, "turn.interrupted", {
+					name: labelIn(directory, slug),
+					seq: wake.task.seq,
+				}),
+				wakeTo: [slug],
+			},
+			ctx,
+		);
+	}
+
 	const shell: CoreShell = {
 		harness,
 		registry,
@@ -576,6 +609,14 @@ export async function assembleCore(
 			await harness.close(ctx ?? context);
 		},
 	};
+
+	// 重启前被掐断的那几轮：频道里留痕、把人叫回来接着做（ADR-044）。放在最后：
+	// 频道、成员、私聊都得已经建好，不然这一句会落进一个还不存在的地方。
+	for (const conversationId of options.interrupted ?? []) {
+		await resumeInterrupted(conversationId, context).catch((error: unknown) => {
+			console.warn(`[resume] 叫回会话 ${conversationId} 失败：${error instanceof Error ? error.message : String(error)}`);
+		});
+	}
 
 	return shell;
 }

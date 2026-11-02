@@ -171,6 +171,8 @@ async function main(): Promise<void> {
 			...(models.agentModels === undefined ? {} : { agentModels: models.agentModels }),
 			models: models.models,
 			diag,
+			// 重启把谁的一轮掐断了，装配层要把人叫回来接着做（ADR-044）。
+			interrupted: runtime.interrupted,
 		});
 		server = await serveCore({
 			shell,

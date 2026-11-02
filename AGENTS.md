@@ -78,8 +78,8 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             81 文件 / 778 例
-  ├ test/core/    69 文件（纯函数 + 装配）
+test/             82 文件 / 781 例
+  ├ test/core/    70 文件（纯函数 + 装配）
   ├ test/ui/      9 文件（界面纯函数与源码约定）
   └ test/desktop/ 3 文件（更新源、就绪行与更新源地址、清单验签与版本比较）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
@@ -182,6 +182,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 团队频道的详情 / 团队记忆（`GET /api/teams/:slug`） | `docs/WEB-API.md` §10.1 + `docs/DESIGN.md` §1.2 / §5 | `src/app/teams.ts` + `interface/http/routes.ts` + `ui/app/src/panels/RightPanel.tsx`（`TeamSection` / `TeamMemory`）；团队记忆只读，写入口在 `team/settle.ts` |
 | 团队 README 的 `lead` / 建团队权限校验 | `docs/CORE.md` §7 + `docs/CODE.md` §3 | `team/doc.ts` 的 `leadProblem` / `createTeamProblem` + `channel/tools/file.ts` 写分支；校验在落盘之前；开新团队只有助理能做 |
 | 「没答上来」的留痕 | `docs/CORE.md` §4「结算即收尾」 | `channel/wake.ts` 的结算回调：`aborted`（合并唤醒）不留痕；`test/core/wake.test.ts` |
+| 重启打断的那一轮要不要接着做 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-044 | `runtime/open.ts` 的 `reconcileZombieTasks` 返回值（`CoreRuntime.interrupted`）+ `shell/assemble.ts` 的 `resumeInterrupted`（最后一步）+ `shell/main.ts` 传参；文案 `seed/text/channel.md` 的 `turn.interrupted`；`test/core/resume.test.ts` |
 | 新增/修改真模型脚本（`scripts/*-live.ts`、`live-support.ts`） | 本文件 §2 + `docs/CODE.md` 目录与 §3 + `package.json`；等待器只放 `live-support.ts` |
 | 改提示词模板 / 加一段 / 加一个插槽 | `docs/design/SEED-CONTRACT.md` §3 插槽表 + `scripts/prompt-fixture.ts` 样例值 + `docs/CODE.md` §2 文件表；跑 `npm run prompt:check` |
 | 改工具描述 / 参数说明 / 拒绝话术 / 投递头 / 附件说明 | `docs/DECISIONS.md` ADR-039 + `docs/design/SEED-CONTRACT.md` §1 | **改 `seed/text/*.md`，不改代码**（键名照旧的照旧）；代码里加一处新文案就加一个键；改完**重启**（工具描述装配时定型）；`test/core/no-hardcoded-text.test.ts` 会拦代码里的中文 |

@@ -105,6 +105,11 @@ export type CoreRuntime = {
 	readonly harness: Harness;
 	readonly registry: Registry;
 	readonly close: (context?: Context) => Promise<void>;
+	/**
+	 * 重启时正跑到一半、被结算成 `orphaned` 的会话。装配层拿它把人叫回来接着做
+	 * （ADR-044）—— 这一层不认识频道，只报「谁的这一轮断了」。
+	 */
+	readonly interrupted: readonly number[];
 };
 
 /**
@@ -149,13 +154,15 @@ async function scanAllPages<T>(
 	return items;
 }
 
-async function reconcileZombieTasks(harness: Harness, context: Context): Promise<void> {
+async function reconcileZombieTasks(harness: Harness, context: Context): Promise<readonly number[]> {
 	// 调度器 open 时按这些列扫描「活着」的任务。
 	const LIVE = ["pending", "running", "waiting", "sleeping", "completing"] as const;
 	let terminated = 0;
 	let settled = 0;
 	// 被解开「假忙」的会话：它们的积压输入还卡在 inbox 里，等一个人开第一轮。
 	const unblocked = new Set<number>();
+	// 重启时正跑到一半的会话（有 `run`）：它们的这一轮已经没了，装配层要把人叫回来接着做。
+	const interrupted = new Set<number>();
 	try {
 		// 先读一遍未结的输入 submission（任务结算后它们就再也无人处理了）。
 		const pendingSubmissions = (await harness.inspect(context)).submissions.filter(
@@ -216,7 +223,10 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 			// 必须扫**全部会话**而不是只看上面那些残留任务所属的会话：一条活任务都没有、
 			// 只有一条陈旧 `run` 的会话正是最坏的那种（它永远不会报错，只是再也不说话）。
 			for (const item of stale) {
-				if (item.stale) unblocked.add(item.conversationId);
+				if (item.stale) {
+					unblocked.add(item.conversationId);
+					interrupted.add(item.conversationId);
+				}
 				const doc = await tx.doc(LiveDoc, item.conversationId as never);
 				if (doc.run !== undefined) delete doc.run;
 				delete doc.generation;
@@ -263,9 +273,11 @@ async function reconcileZombieTasks(harness: Harness, context: Context): Promise
 	} catch (error) {
 		// 自愈失败也不要挡启动：进程能起来，人能进界面手动处理。
 		console.error("[reconcile] 跳过（不影响启动）：", (error as Error)?.message);
+		return [];
 	}
 	if (terminated > 0) console.error(`[reconcile] 已清掉 ${terminated} 条残留任务（强杀留下、无法恢复的）`);
 	if (settled > 0) console.error(`[reconcile] 已结算 ${settled} 条残留输入`);
+	return [...interrupted];
 }
 
 /** 已完成（terminal）的任务记录保留多久：超过就回收。 */
@@ -373,10 +385,11 @@ export async function openCore(options: OpenCoreOptions, context: Context = BACK
 	const harness = serializedHarness(raw);
 	// 自愈必须在 open 之后、装配之前：此时 Harness 已持有连接，用它的 commit 把
 	// 强杀留下的半截任务树一次结算掉，才能根治 `Task N invocation has ended` 崩溃。
-	await reconcileZombieTasks(harness, context);
+	const interrupted = await reconcileZombieTasks(harness, context);
 	return {
 		harness,
 		registry: options.registry,
 		close: (ctx?: Context) => harness.close(ctx ?? context),
+		interrupted,
 	};
 }
