@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { groupsOf } from "../../src/app/trace.ts";
-import { buildTurn, slimTurn, stripAnsi, summaryOf, withoutSteps } from "../../src/app/trace.ts";
+import { buildTurn, slimTurn, stripAnsi, summaryOf, triggerOf, withoutSteps } from "../../src/app/trace.ts";
 import type { EntryRecord } from "../../src/core/runtime/index.ts";
 
 
@@ -190,5 +190,22 @@ describe("跨频道切轮：私聊页的工作记录", () => {
 
 	it("没有 channelId 的条目不开组", () => {
 		expect(groupsOf([entry("core.channel", [], { seq: 1 })], 0, 9)).toEqual([]);
+	});
+});
+
+describe("triggerOf", () => {
+	it("短消息原样带过来", () => {
+		expect(triggerOf({ from: "owner", text: "@林越 把登录页重做一下" })).toEqual({
+			from: "owner",
+			text: "@林越 把登录页重做一下",
+		});
+	});
+
+	it("超长消息截到 200 字并留一个省略号（面板块头不搬整段正文）", () => {
+		const long = "一".repeat(260);
+		const trigger = triggerOf({ from: "lin", text: long });
+		expect(trigger.text).toHaveLength(201);
+		expect(trigger.text.endsWith("…")).toBe(true);
+		expect(trigger.from).toBe("lin");
 	});
 });

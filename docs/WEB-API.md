@@ -163,15 +163,19 @@ type ViewChannel = {
 
 界面侧栏点「和这个人说话」时走它（`store.openWithPerson`）。
 
-## 4.1 `GET /api/people/:slug/turns?from=&to=`（私聊页的工作记录）
+## 4.1 `GET /api/people/:slug/turns?from=&to=&limit=`（一个人的轮次）
 
 ```ts
-{ turns: ViewTurn[] }   // 折叠版（不带 steps）；每轮自带 channelId
+{ turns: ViewTurn[] }   // 折叠版（不带 steps）；每轮自带 channelId，按 startedAt 倒序
 ```
 
 和 `/api/channels/:id/turns` 的区别：**切轮时不按频道过滤** —— 他在团队频道里干活、
-在私聊里被插话，都算这个人的工作记录，按 `startedAt` 排在一起。`seq` 是频道内序号，
+在私聊里被插话，都算这个人的轮次，按 `startedAt` 排在一起。`seq` 是频道内序号，
 跨频道不可比，所以排序用时间。`from` / `to` 仍然按 seq 过滤（作用于每一轮自己的频道）。
+
+- `limit`：只取最近 N 轮（按 `startedAt` 倒序截断），默认 30，上限 100。后台任务面板用它翻
+  一个人的历史，不需要一次搬完整个人生。
+- 界面：后台任务面板（`docs/DESIGN.md` §2.3）。
 
 私聊频道的 `GET /api/channels/:id/stream` 推的 `trace` 事件也是**这个人的跨频道轮次**：
 SSE 先用 `personOfChannel()` 认出私聊，再走 `readPersonTurns`。
@@ -325,6 +329,10 @@ type ViewTurn = {
   startedAt: number;            // = 触发消息的 at
   endedAt?: number;             // = 回复消息的 at；还在跑就没有
   replySeq?: number;            // 他最终说出口的那条
+  trigger?: {                   // 触发这一轮的消息（任务面板的块头）
+    from: string;               // 发这条消息的人（slug）
+    text: string;               // 正文，截 200 字
+  };
   stepCount: number;
   summary: string;              // 确定性摘要：运行 N 条命令 · 读了 N 个文件 · 写了 N 个文件
   truncated?: true;             // 步骤超过 200 步

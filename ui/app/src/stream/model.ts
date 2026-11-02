@@ -1,9 +1,11 @@
 /**
  * 消息 → 行模型。**纯函数**，输入是消息数组，输出是「屏幕上一行一行是什么」。
  *
- * ADR-081 之后这个文件只剩一件事：**真实消息怎么排** —— 时间分隔、一个人半分钟内连发
- * 算一段（气泡角连起来）、系统 note 单独一行。过程投影（think/tool/work）、step 合并、
- * 占位、草稿、底部活动行都删掉了：数据模型里没有「他正在做什么」，界面也就不画。
+ * 这个文件只做两件事：**真实消息怎么排**（时间分隔、一个人半分钟内连发算一段、系统 note
+ * 单独一行），以及**正在跑的那一轮**（`live` 行）插在哪儿。
+ *
+ * 过程不在这里画：历史轮次进「后台任务」面板（ADR-046）。`live` 行也不是消息 ——
+ * 它由正在跑的那一轮派生，跑完就消失，真实回复顶上来。
  *
  * 两条来自我原话的规矩：
  * 1. **同一人半分钟内连发算一段** —— 气泡角连起来、时间只留第一个；
@@ -47,30 +49,16 @@ export type Row =
 	  }
 	| { type: "note"; key: string; message: Message }
 	/**
-	 * 私聊工作记录里的一轮（他在某个频道被叫醒、做了什么）。
+	 * 正在跑的一轮（派生，不是消息）：他在这个频道被叫醒、还没回话。
 	 *
-	 * 群聊不画这一行：群聊只留结论，过程在他的私聊里看。
+	 * 跑完就消失 —— 真实回复由 `create` 落进来，同一件事不画两条。
 	 */
-	| {
-			type: "work";
-			key: string;
-			turn: Turn;
-			channelTitle: string;
-			/** 紧接上一轮、同一个人、同一个频道：不重画头像和名字。 */
-			grouped: boolean;
-	  };
+	| { type: "live"; key: string; turn: Turn };
 
 export type BuildInput = {
 	messages: readonly Message[];
-	now?: number;
-};
-
-export type WorkInput = {
-	messages: readonly Message[];
-	/** 这个人在所有频道里的轮次（私聊页）。 */
-	work: readonly Turn[];
-	/** 频道 id → 标题：工作行要写「这轮发生在哪个频道」。 */
-	titles: ReadonlyMap<string, string>;
+	/** 这个频道里正在跑、还没回话的轮次（`status === "running"` 且没有 `replySeq`）。 */
+	running?: readonly Turn[];
 	now?: number;
 };
 
@@ -79,7 +67,7 @@ function dividerLabel(at: number, now: number): string {
 	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
-export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
+export function buildRows({ messages, running = [], now = Date.now() }: BuildInput): Row[] {
 	const rows: Row[] = [];
 	let previous: Message | undefined;
 	let previousSay: Message | undefined;
@@ -123,35 +111,31 @@ export function buildRows({ messages, now = Date.now() }: BuildInput): Row[] {
 		// 未命中的 kind：不画、不占高。（宁可少一行，也不添一种卡片。）
 	}
 
-	return rows;
-}
-
-/** 一行在时间轴上的位置（分隔行没有时刻）。 */
-function atOf(row: Row): number | undefined {
-	return row.type === "say" || row.type === "note" ? row.message.at : undefined;
+	return insertLive(rows, messages, running);
 }
 
 /**
- * 私聊页的行模型：**私聊消息 + 这个人在所有频道里的工作轮次**，按时间合在一起。
+ * 把 `live` 行插进消息流：位置就是回复将来会落的地方。
  *
- * 群聊用 `buildRows`（只有消息）；私聊用这个 —— 他是在团队频道里被叫醒干活的，那几轮
- * 也要出现在这里，读者才不用为了看他干了什么再翻回群聊。
- *
- * 插入点按 `startedAt` 找第一条更晚的消息；紧贴在那条消息的时间分隔之前，分隔行才仍然
- * 属于它下面那条消息。
+ * 收掉的判据有两条，缺一不可：
+ * 1. `replySeq` 出现了（服务端认了这一轮已经回话）；
+ * 2. 同一个人在这条触发消息之后**已经说过话** —— `trace` 的结算帧比 `create` 慢半拍时，
+ *    没有这一条就会同时看到占位和真回复。
  */
-export function buildWorkRows({ messages, work, titles, now = Date.now() }: WorkInput): Row[] {
-	const rows = buildRows({ messages, now });
-	for (const turn of [...work].sort((left, right) => left.startedAt - right.startedAt)) {
-		// 只说了话、没做事的一轮不画 work 壳：说的话已经在消息流里，空壳会让人以为他干了件大事。
-		if (turn.stepCount === 0) continue;
-		const row: Row = {
-			type: "work",
-			key: `w-${turn.channelId}-${String(turn.seq)}-${turn.slug}`,
-			turn,
-			channelTitle: titles.get(turn.channelId) ?? turn.channelId,
-			grouped: false,
-		};
+function insertLive(rows: Row[], messages: readonly Message[], running: readonly Turn[]): Row[] {
+	const live = [...running]
+		.filter((turn) => turn.replySeq === undefined)
+		.filter(
+			(turn) =>
+				!messages.some(
+					(message) => message.fromSlug === turn.slug && message.seq > turn.seq && SAY_KINDS.has(message.kind),
+				),
+		)
+		.sort((left, right) => left.startedAt - right.startedAt);
+	if (live.length === 0) return rows;
+
+	for (const turn of live) {
+		const row: Row = { type: "live", key: `l-${turn.channelId}-${String(turn.seq)}-${turn.slug}`, turn };
 		let at = rows.findIndex((item) => {
 			const time = atOf(item);
 			return time !== undefined && time > turn.startedAt;
@@ -160,22 +144,10 @@ export function buildWorkRows({ messages, work, titles, now = Date.now() }: Work
 		else if (at > 0 && rows[at - 1]!.type === "divider") at -= 1;
 		rows.splice(at, 0, row);
 	}
-
-	// 同一个人连着出现的行（他做的事、他说的话）：头像和名字只画一次。
-	// 这一步必须跨行类型算 —— 「跑了一轮」紧接着「他说了什么」是同一个人在说话。
-	let previous: { slug: string; at: number; type: Row["type"] } | undefined;
-	for (const row of rows) {
-		if (row.type === "divider" || row.type === "note") {
-			previous = undefined;
-			continue;
-		}
-		const slug = row.type === "say" ? row.message.fromSlug : row.turn.slug;
-		const at = row.type === "say" ? row.message.at : row.turn.startedAt;
-		const gap = previous === undefined ? Number.NaN : at - previous.at;
-		row.grouped = previous !== undefined && previous.slug === slug && gap >= 0 && gap <= GROUP_MS;
-		// 气泡角只在「连着两句他说的话」之间连起来；中间夹着一轮轨迹时不连。
-		if (row.type === "say") row.cont = row.grouped && previous?.type === "say" && gap <= CONT_MS;
-		previous = { slug, at, type: row.type };
-	}
 	return rows;
+}
+
+/** 一行在时间轴上的位置（分隔行没有时刻）。 */
+function atOf(row: Row): number | undefined {
+	return row.type === "say" || row.type === "note" ? row.message.at : undefined;
 }

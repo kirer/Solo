@@ -13,7 +13,7 @@ import type { AttentionItem, ViewActivity, ViewChannel, ViewChannelDetail, ViewO
 import { AppError } from "./errors.ts";
 import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";
 import type { Snapshots } from "./snapshot.ts";
-import { buildTurn, groupsOf, withoutSteps } from "./trace.ts";
+import { buildTurn, groupsOf, triggerOf, withoutSteps } from "./trace.ts";
 import type { CoreServices } from "./types.ts";
 
 /** 频道列表 + 两个汇总数（侧栏顶部那两个红点）。 */
@@ -171,8 +171,17 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	 * 被插话，都是这个人的工作记录，按时间排在一起。每轮自带 `channelId`，界面按它显示
 	 * 「这轮发生在哪个频道」。
 	 */
-	async function readPersonTurns(slug: string, from: number, to: number, withSteps = false): Promise<{ turns: ViewTurn[] }> {
-		return { turns: folded(await turnsOf(undefined, from, to, slug), withSteps) };
+	async function readPersonTurns(
+		slug: string,
+		from: number,
+		to: number,
+		withSteps = false,
+		limit?: number,
+	): Promise<{ turns: ViewTurn[] }> {
+		const turns = await turnsOf(undefined, from, to, slug);
+		// 面板要「最近 N 轮」：按发生时间倒着截，再交回正序（界面自己倒排）。
+		const recent = limit === undefined ? turns : turns.slice(Math.max(0, turns.length - limit));
+		return { turns: folded(recent, withSteps) };
 	}
 
 	/**
@@ -240,17 +249,16 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				const reply = said
 					.filter((item) => item.fromSlug === slug && item.channelId === id && item.seq > group.seq && item.seq < nextStart)
 					.sort((left, right) => left.seq - right.seq)[0];
-				turns.push(
-					buildTurn(entries, {
-						channelId: id,
-						seq: group.seq,
-						slug,
-						label: shell.labelOf(slug),
-						startedAt,
-						...(reply === undefined ? {} : { endedAt: reply.at, replySeq: reply.seq }),
-						live: running && index === groups.length - 1,
-					}),
-				);
+				const turn = buildTurn(entries, {
+					channelId: id,
+					seq: group.seq,
+					slug,
+					label: shell.labelOf(slug),
+					startedAt,
+					...(reply === undefined ? {} : { endedAt: reply.at, replySeq: reply.seq }),
+					live: running && index === groups.length - 1,
+				});
+				turns.push(trigger === undefined ? turn : { ...turn, trigger: triggerOf(trigger) });
 			}
 		}
 		// 单频道按 seq 排（seq 在频道内单调）；跨频道 seq 不可比，按发生时间排。

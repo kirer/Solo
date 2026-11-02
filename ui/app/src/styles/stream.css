@@ -1573,3 +1573,87 @@ body[data-layout="bubble"]
 		max-width: 100%;
 	}
 }
+
+/* ── 正在跑的那一轮（派生，不是消息：ADR-046）────────────────────────── */
+
+.row-live {
+	display: grid;
+	grid-template-columns: var(--av-lg) minmax(0, 1fr);
+	column-gap: 8px;
+	align-items: start;
+	margin-top: 12px;
+}
+
+.live-av {
+	display: grid;
+	place-items: center;
+	padding-top: 2px;
+}
+
+.live-body {
+	min-width: 0;
+}
+
+/* 「正在做」是状态，不是名字的一部分：用 `--live` 那一档蓝，和头像光圈同一个意思。 */
+.live-tag {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11px;
+	line-height: 14px;
+	color: var(--live);
+}
+
+.live-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+/* 一行字，随帧更新。点它进后台任务面板 —— 所以它是个按钮，但长得像气泡。 */
+.live-bubble {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+	margin-top: 2px;
+	padding: 8px 12px;
+	border: 0;
+	border-radius: var(--r-row);
+	background: var(--raised);
+	color: var(--ink);
+	text-align: left;
+}
+
+.live-bubble:hover {
+	background: var(--hover);
+}
+
+.live-spin {
+	width: 13px;
+	height: 13px;
+	border-radius: 50%;
+	border: 1.6px solid var(--rule);
+	border-top-color: var(--live);
+	animation: live-spin 0.9s linear infinite;
+	flex: none;
+}
+
+.live-what {
+	font-size: 13px;
+	line-height: 20px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.live-meta {
+	margin-left: auto;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--ink-3);
+	white-space: nowrap;
+	flex: none;
+}

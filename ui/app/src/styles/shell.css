@@ -2450,3 +2450,192 @@ html[data-shell="desktop"] .sheet-head .need-anchor,
 html[data-shell="desktop"] .sheet-head .menu {
 	-webkit-app-region: no-drag;
 }
+
+/* ── 后台任务面板：从右侧盖在聊天上（ADR-046）────────────────────────── */
+
+/* 面板按 `.sheet` 定位 —— 它盖住的是这一个频道，不是整个窗口。 */
+.sheet {
+	position: relative;
+}
+
+.tasks-btn {
+	position: relative;
+}
+
+/* 顶栏按钮上的在跑人数：一眼知道「有人在干活」，点开看是谁。 */
+.tasks-badge {
+	position: absolute;
+	top: 2px;
+	right: 2px;
+	min-width: 13px;
+	height: 13px;
+	padding: 0 3px;
+	border-radius: var(--r-pill);
+	background: var(--accent);
+	color: var(--ground);
+	font-family: var(--mono);
+	font-size: 9px;
+	line-height: 13px;
+	font-weight: 600;
+	text-align: center;
+}
+
+.tasks-scrim {
+	position: absolute;
+	inset: 0;
+	z-index: 40;
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: var(--mask);
+	cursor: default;
+	animation: veil-in 160ms ease both;
+}
+
+.tasks-panel {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 41;
+	display: flex;
+	flex-direction: column;
+	width: min(380px, 100%);
+	background: var(--ground);
+	border-left: 0.5px solid var(--line);
+	animation: tasks-in var(--dur-sheet) var(--ease-sheet) both;
+}
+
+.tasks-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 56px;
+	padding: 0 10px 0 18px;
+	border-bottom: 0.5px solid var(--line);
+	flex: none;
+}
+
+.tasks-head h2 {
+	font-size: 15px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+.tasks-count {
+	margin-left: 2px;
+	padding: 1px 7px;
+	border-radius: var(--r-pill);
+	background: var(--mask);
+	font-size: 11px;
+	line-height: 16px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.tasks-count[data-live="true"] {
+	color: var(--live);
+}
+
+.tasks-head .icon-btn {
+	margin-left: auto;
+}
+
+/* 人像条：正在跑的带光圈排前面，其余按最近一轮。横向可滚，人多了不换行。 */
+.tasks-people {
+	display: flex;
+	gap: 4px;
+	padding: 8px 12px;
+	border-bottom: 0.5px solid var(--line);
+	overflow-x: auto;
+	flex: none;
+}
+
+.tasks-person {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 3px;
+	padding: 6px 6px 4px;
+	border: 0;
+	border-radius: var(--r-control);
+	background: transparent;
+	color: var(--ink-3);
+	flex: none;
+}
+
+.tasks-person[data-active="true"] {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.tasks-person[data-live="true"] .tasks-name {
+	color: var(--live);
+}
+
+.tasks-name {
+	font-size: 11px;
+	line-height: 14px;
+	white-space: nowrap;
+}
+
+.tasks-list {
+	flex: 1;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 12px 14px 24px;
+}
+
+.tasks-empty {
+	padding: 24px 4px;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-3);
+}
+
+.tasks-run {
+	margin-bottom: 18px;
+}
+
+.tasks-where {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.tasks-channel {
+	font-weight: 500;
+	color: var(--ink-2);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tasks-when {
+	font-family: var(--mono);
+	font-size: 10px;
+	white-space: nowrap;
+}
+
+/* 块头就是「哪句话触发的」：两行封顶，完整原文去频道里看。 */
+.tasks-trigger {
+	margin: 4px 0 6px;
+	padding-left: 8px;
+	border-left: 2px solid var(--rule);
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-2);
+	overflow: hidden;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+
+@media (max-width: 640px) {
+	.tasks-panel {
+		width: 100%;
+	}
+}

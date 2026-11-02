@@ -218,7 +218,9 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			handler: async ({ response, url, params }) => {
 				const from = numberParam(url, "from") ?? 0;
 				const to = numberParam(url, "to") ?? Number.MAX_SAFE_INTEGER;
-				return json(response, await app.read.readPersonTurns(params.slug ?? "", from, to));
+				// 面板只要最近 N 轮；上限 100，免得一次把整个人的历史搬过来。
+				const limit = Math.min(Math.max(numberParam(url, "limit") ?? 30, 1), 100);
+				return json(response, await app.read.readPersonTurns(params.slug ?? "", from, to, false, limit));
 			},
 		},
 		{

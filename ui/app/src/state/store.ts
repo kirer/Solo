@@ -47,18 +47,12 @@ export type State = {
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
 	/**
-	 * 当前频道里每一轮的轨迹，按触发消息的 seq 分桶（一条消息可以叫醒好几个人）。
+	 * 每个成员最近跑过的轮次，**按人分桶**（`slug → Turn[]`，按发生时间排）。
 	 *
+	 * 群聊与私聊同一张表：聊天流里的 `live` 行与「后台任务」面板都读它。
 	 * 折叠版只有摘要（`stepCount` / `summary`）；展开时 `loadTurn` 再拉步骤。
 	 */
-	turns: Map<number, Turn[]>;
-	/**
-	 * 私聊页的工作记录：这个人在**所有频道**里的轮次，按时间排。
-	 *
-	 * 与 `turns` 分开存：`turns` 按频道内的 seq 分桶（群聊里给消息挂轨迹用），跨频道的 seq
-	 * 不可比，混在一起会把 A 频道的轮次挂到 B 频道的消息下面。
-	 */
-	work: Turn[];
+	runs: Map<string, Turn[]>;
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
 	theme: Theme;
@@ -70,6 +64,8 @@ export type State = {
 	team: boolean;
 	/** 正在引用的那条消息（seq + 摘要），发出去就清空。 */
 	reply: { seq: number; label: string; excerpt: string } | null;
+	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
+	tasks: { open: boolean; who: string | null };
 	/** 右侧栏的返回栈：栈底永远是当前频道。 */
 	trail: RightEntry[];
 	/** 右侧栏正在看的那个人（`null` = 看频道本身）。 */
@@ -98,8 +94,7 @@ const initial: State = {
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
-	turns: new Map(),
-	work: [],
+	runs: new Map(),
 	conn: { ok: true, lastOkAt: Date.now() },
 	theme: read(THEME_KEY, ["system", "light", "dark"], "system"),
 	side: read(SIDE_KEY, ["open", "rail"], "open"),
@@ -109,6 +104,7 @@ const initial: State = {
 	settings: false,
 	team: false,
 	reply: null,
+	tasks: { open: false, who: null },
 	trail: [{ kind: "channel" }],
 	person: null,
 };
@@ -220,7 +216,7 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null, turns: new Map(), work: [] });
+		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null } });
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
@@ -231,8 +227,8 @@ export async function openChannel(id: string | null): Promise<void> {
 		hasMore: false,
 		reply: null,
 		needMenu: false,
-		turns: new Map(),
-		work: [],
+		runs: new Map(),
+		tasks: { open: false, who: null },
 		person: null,
 		trail: [{ kind: "channel" }],
 	});
@@ -243,9 +239,9 @@ export async function openChannel(id: string | null): Promise<void> {
 	if (getState().currentId !== id) return;
 	patch({ detail, hasMore: detail.hasMore });
 	if (detail.channel.kind === "dm") {
-		// 私聊是「这个人的工作记录」：拉他在所有频道里的轮次。
+		// 私聊页看的是对面那个人：把他在所有频道里的轮次拉回来（也是 `live` 行要用的）。
 		const partner = detail.members.find((member) => member.slug !== "owner");
-		if (partner !== undefined) void loadWork(id, partner.slug);
+		if (partner !== undefined) void loadPersonRuns(partner.slug);
 	} else {
 		void loadTurns(id, detail.messages);
 	}
@@ -350,50 +346,43 @@ async function readToEnd(id: string, messages: readonly Message[]): Promise<void
 
 /* ── 轨迹（从会话条目派生，不落库：ADR-001） ────────────────────────── */
 
-/** 一条消息叫醒了几个人，就可能有几轮轨迹 —— 按 seq 分桶，同一人只留最新的一帧。 */
-function bucket(turns: Map<number, Turn[]>, turn: Turn): Map<number, Turn[]> {
-	const next = new Map(turns);
-	const list = (next.get(turn.seq) ?? []).filter((item) => item.slug !== turn.slug);
+/**
+ * 一帧轨迹并进「按人」的表：同一轮（`channelId + seq`）覆盖，其余原样。
+ *
+ * 跨频道的 `seq` 会重复（每个频道自己数），所以键里必须带 `channelId`。
+ */
+function upsertRun(runs: Map<string, Turn[]>, turn: Turn): Map<string, Turn[]> {
+	const next = new Map(runs);
+	const list = (next.get(turn.slug) ?? []).filter(
+		(item) => item.channelId !== turn.channelId || item.seq !== turn.seq,
+	);
 	list.push(turn);
-	list.sort((left, right) => left.label.localeCompare(right.label));
-	next.set(turn.seq, list);
+	list.sort((left, right) => left.startedAt - right.startedAt);
+	next.set(turn.slug, list);
 	return next;
 }
 
-/**
- * 私聊工作记录里的一帧：按 `(channelId, seq, slug)` 覆盖同一轮，其余原样。
- *
- * 跨频道的 `seq` 会重复（每个频道自己数），所以不能像 `bucket` 那样只按 seq。
- */
-function upsertWork(work: readonly Turn[], turn: Turn): Turn[] {
-	const key = `${turn.channelId}:${String(turn.seq)}:${turn.slug}`;
-	const next = work.filter((item) => `${item.channelId}:${String(item.seq)}:${item.slug}` !== key);
-	next.push(turn);
-	return next.sort((left, right) => left.startedAt - right.startedAt);
-}
-
-/** SSE 推来一帧轨迹（`trace` 事件）：覆盖同一 `(seq, slug)`，别的原样。 */
+/** SSE 推来一帧轨迹（`trace` 事件）：群聊与私聊走同一条路。 */
 export function applyTurn(id: string, turn: Turn): void {
 	if (state.currentId !== id) return;
-	// 私聊推的是这个人的跨频道轮次，进工作记录；群聊仍按频道内的 seq 分桶。
-	if (state.detail?.channel.kind === "dm") {
-		patch({ work: upsertWork(state.work, turn) });
-		return;
-	}
-	patch({ turns: bucket(state.turns, turn) });
+	patch({ runs: upsertRun(state.runs, turn) });
 }
 
-/** 拉这个人在所有频道里的轮次（私聊页的工作记录）。 */
-async function loadWork(id: string, slug: string): Promise<void> {
+/**
+ * 拉一个人的轮次（任务面板 / 私聊页）。
+ *
+ * `limit` 只影响这一次请求；已经在这张表里的更早轮次不会被丢掉。
+ */
+export async function loadPersonRuns(slug: string, limit = 30): Promise<void> {
 	let result: { turns: Turn[] };
 	try {
-		result = await getPersonTurns(slug);
+		result = await getPersonTurns(slug, limit);
 	} catch {
 		return;
 	}
-	// 期间又切走了就别覆盖（另一个私聊也满足「kind 是 dm」，所以按频道 id 认）。
-	if (getState().currentId !== id) return;
-	patch({ work: [...result.turns].sort((left, right) => left.startedAt - right.startedAt) });
+	let runs = getState().runs;
+	for (const turn of result.turns) runs = upsertRun(runs, turn);
+	patch({ runs });
 }
 
 /**
@@ -413,16 +402,18 @@ async function loadTurns(id: string, messages: readonly Message[]): Promise<void
 		return;
 	}
 	if (getState().currentId !== id) return;
-	let turns = getState().turns;
-	for (const turn of result.turns) turns = bucket(turns, turn);
-	for (const [seq, list] of getState().turns) {
+	const fresh = new Set(result.turns.map((turn) => `${turn.slug}:${turn.channelId}:${String(turn.seq)}`));
+	let runs = getState().runs;
+	for (const turn of result.turns) runs = upsertRun(runs, turn);
+	// 正在跑的那几轮：SSE 手里那帧比这次 HTTP 新，没被这次结果覆盖就补回去。
+	for (const list of getState().runs.values()) {
 		for (const turn of list) {
-			if (turn.status !== "running") continue;
-			const kept = turns.get(seq)?.some((item) => item.slug === turn.slug) ?? false;
-			if (!kept) turns = bucket(turns, turn);
+			if (turn.status !== "running" || turn.channelId !== id) continue;
+			if (fresh.has(`${turn.slug}:${turn.channelId}:${String(turn.seq)}`)) continue;
+			runs = upsertRun(runs, turn);
 		}
 	}
-	patch({ turns });
+	patch({ runs });
 }
 
 /**
@@ -488,6 +479,50 @@ export function setPluginSheet(open: boolean): void {
 
 export function setNeedMenu(open: boolean): void {
 	patch({ needMenu: open, ...(open ? { settings: false } : {}) });
+}
+
+/**
+ * 「后台任务」面板：打开时默认看这个频道里正在跑的那个人 → 私聊对象 → 最近跑过的那个。
+ *
+ * 传 `slug` 就是点名看谁（点 `live` 行、点人像条都走这里）。
+ */
+export function openTasks(slug?: string): void {
+	const state = getState();
+	const who =
+		slug ??
+		state.tasks.who ??
+		runningSlugs(state).find((item) => inChannel(state, item)) ??
+		dmPartner(state) ??
+		[...state.runs.keys()][0] ??
+		null;
+	patch({ tasks: { open: true, who }, needMenu: false });
+	if (who !== null) void loadPersonRuns(who);
+}
+
+export function setTasksWho(slug: string): void {
+	patch({ tasks: { open: true, who: slug } });
+	void loadPersonRuns(slug);
+}
+
+export function closeTasks(): void {
+	patch({ tasks: { open: false, who: getState().tasks.who } });
+}
+
+/** 正在跑的人（`presence` 是派生状态，这里只做排序用）。 */
+export function runningSlugs(state: State): string[] {
+	return [...state.presence.entries()]
+		.filter(([, value]) => value.state === "working" || value.state === "thinking")
+		.sort((left, right) => left[1].at - right[1].at)
+		.map(([slug]) => slug);
+}
+
+function inChannel(state: State, slug: string): boolean {
+	return state.currentId !== null && (state.runs.get(slug) ?? []).some((turn) => turn.channelId === state.currentId);
+}
+
+function dmPartner(state: State): string | undefined {
+	if (state.detail?.channel.kind !== "dm") return undefined;
+	return state.detail.members.find((member) => member.slug !== "owner")?.slug;
 }
 
 /* ── 右侧栏：详情可以往里钻（频道 → 人 → 再点频道里的人） ────────────── */

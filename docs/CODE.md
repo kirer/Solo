@@ -129,7 +129,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/app/index.ts` | 51 | `createApp(services)` → `{snapshots, read, people, teams, chat, uploads, runs, watch, diag}`；再导出 `OWNER_SLUG` / `AppError` / `CoreServices` / `readBody`（分层规则禁止 interface 层直接 import 领域实现） |
 | `src/app/types.ts` | 94 | `CoreServices` —— 用例层看出去的「装配好的核心」 |
 | `src/app/snapshot.ts` | 81 | `channelSnapshot()`（只读人 + 频道，SSE 增量用它）/ `snapshot()`（再加团队文档推出的两张查表）；团队文档按 `teams/` 目录 mtime + 250ms 窗口缓存 |
-| `src/app/read.ts` | 303 | `createRead` —— 读的入口：每个方法都是「取快照 → 投影（`app/project.ts`）→ 返回 DTO」。另有轨迹四件：`activityMap` / `liveOf`（谁此刻在跑，读 `LiveDoc`）、`readTurns` / `readTurn`（`turnsOf` 按 `core.channel` 切轮）、`readPersonTurns`（跨频道；私聊工作记录）、`personOfChannel`（私聊对面是谁，SSE 用） |
+| `src/app/read.ts` | 303 | `createRead` —— 读的入口：每个方法都是「取快照 → 投影（`app/project.ts`）→ 返回 DTO」。另有轨迹四件：`activityMap` / `liveOf`（谁此刻在跑，读 `LiveDoc`）、`readTurns` / `readTurn`（`turnsOf` 按 `core.channel` 切轮）、`readPersonTurns`（跨频道；后台任务面板）、`personOfChannel`（私聊对面是谁，SSE 用） |
 | `src/app/trace.ts` | 335 | **轨迹派生，纯函数**（ADR-001 / ADR-003）：会话条目 → `ViewTurn`。`buildTurn` / `summaryOf` / `withoutSteps` / `slimTurn` / `stripAnsi`；切轮 `groupsOf(entries, from, to, channelId?)`（给了 `channelId` 只切那个频道，不给就切这个人的所有频道）；单轮 200 步、单步输出 8 KB、思考 4 KB 上限；拿不到耗时就不编 |
 | `src/app/people.ts` | 122 | `createPeople` —— 一个人：档案、记忆的读 / 加 / 改 / 删；`MemoryEditBody`。记忆的 DTO 形状交给 `app/project.ts` 的 `memorySummary` / `memoryEntries` |
 | `src/app/teams.ts` | 33 | `createTeams` —— 一个团队：`readTeamProfile`（README 正文 + 管理员显示名 + `memory.md` 的全部小节，时间恒为 `null`） |
@@ -166,14 +166,16 @@ shell = 装配层，唯一可以同时 import 全部
 | `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
 | `src/main.tsx` | 入口：装样式、`bootstrap()`、**先 `bootPlugins()` 再挂 `<App>`**（插槽首帧就是满的；插件拉不到也照常渲染） |
 | `src/App.tsx` | 外壳装配：三列网格、头部（标题 / 状态 / 找你 / 团队 / 设置 / 详情）、主题与布局落地、键盘（Esc 关浮层、⌘K 开「找你」） |
-| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`/`loadTurn`（轨迹按 `seq` 分桶）、localStorage 两键 |
+| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`（轨迹按 `turn.slug` 分桶进 `runs`，群聊私聊同一条规则）/`loadTurn`/`loadPersonRuns`（后台任务面板）、`openTasks`/`setTasksWho`/`closeTasks`、localStorage 两键 |
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
 | `src/api/types.ts` | **type-only 再导出** `src/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
-| `src/stream/model.ts` | **消息 → 行模型，纯函数**：`buildRows()`（时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行）与 `buildWorkRows()`（私聊页：消息 + 这个人在各频道的工作轮次按时间合排；只有话没做事的一轮不画壳）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
+| `src/stream/model.ts` | **消息 → 行模型，纯函数**：`buildRows({ messages, running, now })` —— 时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行，再插一条 `live` 占位（正在跑、还没回话的那一轮；同一个人已经在这条之后发过言就不插）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
 | `src/stream/RunBlock.tsx` | 一轮的折叠行 + 步骤树。默认「在跑就展开、历史收起」，手动改过记 `localStorage["solo.trace.open"]`；步骤详情按 kind 分四种（命令 / 文件 / 思考 / 说话），同一时间只展开一个 |
 | `src/stream/AttachmentPreview.tsx` | 非图片附件点开看一眼：**按响应头**决定（图片 / PDF → `object URL`，`text/*` → `<pre>`，其余说「不能预览」）。不按文件名判断 —— 名字是用户起的 |
-| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`run` 行交给 `RunBlock`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`） |
+| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`live` 行交给 `LiveRow`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`）。群聊私聊同一条路径 |
+| `src/stream/LiveRow.tsx` | 聊天流里唯一的过程：头像（`working`）+ 一行「最新一步 · N 步 · 耗时」，每秒自走时钟，点它开这个人的任务面板。折叠帧不带步骤时先 `loadTurn`；没有步骤只写「在想…」，绝不编他会说什么（ADR-046） |
+| `src/panels/TasksPanel.tsx` | 后台任务：右上角按钮打开、从右侧盖住聊天滑出（遮罩 / Esc 关）。顶部一排人（在跑的排前），下面是这个人跨频道的轮次，每块第一行是 `trigger`（哪句话触发的）+ 频道 + 时间，第二行复用 `RunBlock`。打开时拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次（只在面板开着时） |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
 | `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（11 个：`sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位 |
@@ -227,7 +229,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 加一个身份字段 | `agent/identity.ts` 的 `IdentityHeader` | 现在是 4 个：`name`/`title`/`manager`/`team`，加之前先问能不能推导 |
 | 改「这条会话是私聊还是群聊」 | `channel/types.ts` 的 `chatKind` | **`dm:` 前缀 + 恰好 `{我, 一人}` 才是私聊**；团队 / 全员频道两个人也永远是群聊。界面的 `kind` 只是它的投影 |
 | 开一个私聊 / 建一个频道 | `channel/membership.ts` 的 `ensureOwnerDm`（装配 / 招人自动建）+ `app/chat.ts` 的 `openDirectMessage` + 路由 `POST /api/people/:slug/dm` | **建频道只有这一份实现**；通用 `POST /api/channels` 已删。其余频道只由装配投影（全员 / 团队 / 每个成员的私聊） |
-| 改私聊工作记录（跨频道轮次 / 实时） | `app/read.ts` 的 `readPersonTurns` / `personOfChannel` + `app/trace.ts` 的 `groupsOf`（不传 `channelId`）+ `interface/http/sse.ts` 的 `pushTrace` + `ui/app/src/stream/model.ts` 的 `buildWorkRows` + `state/store.ts` 的 `work` | 群聊不画过程；私聊按 `startedAt` 合排，跨频道 `seq` 不可比，键必须带 `channelId` |
+| 改后台任务面板 / 聊天里的 `live` 占位 | `app/read.ts` 的 `readPersonTurns`（`limit`）/`personOfChannel` + `app/trace.ts` 的 `groupsOf`/`triggerOf` + `interface/http/sse.ts` 的 `pushTrace` + `ui/app/src/stream/model.ts` 的 `buildRows` + `stream/LiveRow.tsx` + `panels/TasksPanel.tsx` + `state/store.ts` 的 `runs`/`tasks` | 聊天里只有消息（ADR-046）；跨频道 `seq` 不可比，键必须带 `channelId`；占位不落库、刷新就没有 |
 | 改团队 README 的写入校验 | `team/doc.ts` 的 `leadProblem` / `createTeamProblem` + `channel/tools/file.ts` 写分支 | 校验在 `writeTextAt` **之前**；拒绝时不落盘、不 `syncTeam`。助理 = 直接向 owner 汇报的人；开新团队只有助理能做，改已有团队不限 |
 | 加一条审计 / 想看「他调了什么、花了多久、模型为什么停」 | `app/audit.ts`（钩子，写 `logs/tools.jsonl`）+ `shell/assemble.ts` 里挂在哪个扩展上 | 钩子**只读不改**：不改参数、不拦调用、不改结果。要拦的（密钥 / 路径越界 / 建团队权限）留在工具里 —— 钩子拿不到 `workspaceRoot` 和名册。新增钩子先在 `docs/DECISIONS.md` 说明为什么不能用现成日志 |
 | 改谁能被 @ 到 / 什么写法算 @ | `channel/mentions.ts` 的 `recipientsOf`（成员规则）+ `parseMentions`（名字 → slug） | 两件事分开改：成员过滤是安全边界，别名只是翻译。别名只认 `slug` / `name` / `我` / `owner` **精确匹配**；`@CEO`、拼音、title、`@老板` 一律丢弃，不许加回模糊匹配 |

@@ -273,6 +273,13 @@ export type ViewTurn = {
 	endedAt?: number;
 	/** 他最终说出口的那条。 */
 	replySeq?: number;
+	/** 触发这一轮的消息（任务面板的块头）。条目还在但消息已被回收时没有。 */
+	trigger?: {
+		/** 发这条消息的人（slug；`owner` = 我）。 */
+		readonly from: string;
+		/** 正文，截 200 字。 */
+		readonly text: string;
+	};
 	stepCount: number;
 	/** 折叠行右端的确定性摘要（`运行 2 条命令 · 读了 3 个文件`）。 */
 	summary: string;

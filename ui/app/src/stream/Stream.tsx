@@ -3,23 +3,22 @@
  *
  * 这个文件只做三件事：把 `buildRows()` 算出来的行画出来、维护「贴底」与「上翻加载」。
  *
- * ADR-081 之后这里没有过程组、没有占位行、没有草稿行、没有底部活动行 —— 屏幕上只有
- * 真实消息（`say` 与系统 `note`）。「他正在做什么」要看得见的话，只能从读取层派生
- * （`harness.inspect()` 的忙闲），不进消息表。
+ * 屏幕上只有消息（`say` / `note`）和一条**正在跑的占位**（`live` 行，ADR-046）。
+ * 占位是派生出来的：跑完就消失，真实回复顶上来；历史过程进「后台任务」面板。
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Attachment } from "../api/types.ts";
+import type { Attachment, Turn } from "../api/types.ts";
 import { uploadUrl } from "../api/client.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { clockTime, copyText, humanBytes } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
-import { buildRows, buildWorkRows } from "./model.ts";
+import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
-import { RunBlock } from "./RunBlock.tsx";
+import { LiveRow } from "./LiveRow.tsx";
 import { Slot } from "../plugin/Slot.tsx";
-import { loadEarlier, setReply } from "../state/store.ts";
+import { loadEarlier, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const COPY_ICON =
@@ -35,8 +34,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const hasMore = useStore((state) => state.hasMore);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const people = useStore((state) => state.people);
-	const channels = useStore((state) => state.channels);
-	const work = useStore((state) => state.work);
+	const runs = useStore((state) => state.runs);
 	const [atBottom, setAtBottom] = useState(true);
 
 	const flowRef = useRef<HTMLDivElement | null>(null);
@@ -45,12 +43,18 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const pinned = useRef(true);
 
 	const messages = detail?.messages ?? [];
-	const dm = detail?.channel.kind === "dm";
-	const rows = useMemo(() => {
-		if (!dm) return buildRows({ messages, now: Date.now() });
-		const titles = new Map(channels.map((channel) => [channel.id, channel.title]));
-		return buildWorkRows({ messages, work, titles, now: Date.now() });
-	}, [messages, dm, work, channels]);
+	// 这个频道里正在跑、还没回话的那几轮 —— `live` 行只认它们（ADR-046）。
+	const running = useMemo(() => {
+		const out: Turn[] = [];
+		for (const list of runs.values()) {
+			for (const turn of list) {
+				if (turn.channelId !== currentId || turn.status !== "running") continue;
+				out.push(turn);
+			}
+		}
+		return out;
+	}, [runs, currentId]);
+	const rows = useMemo(() => buildRows({ messages, running, now: Date.now() }), [messages, running]);
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string }>();
@@ -236,8 +240,6 @@ function RowView(props: {
 	onFile: (file: Attachment) => void;
 }): JSX.Element {
 	const { row } = props;
-	// 这一轮如果就发生在这条私聊里，「在某某」是废话（你正看着它）；只有跨频道才写。
-	const here = useStore((state) => state.currentId);
 	if (row.type === "divider") {
 		return (
 			<div className="row-divider">
@@ -255,31 +257,9 @@ function RowView(props: {
 				onFile={props.onFile}
 			/>
 		);
-	if (row.type === "work") {
-		const turn = row.turn;
+	if (row.type === "live") {
 		return (
-			<div className="row row-run row-work" data-key={row.key} data-grouped={row.grouped ? "true" : "false"}>
-				{/* 这轮发生在哪个频道：私聊里看的是他干的活，不是这一个房间的事。 */}
-				{row.grouped || turn.channelId === here ? null : <span className="work-where">在{row.channelTitle}</span>}
-				<div className="run-line">
-					{/* 头像：谁跑的这件事必须先说清楚，再谈他跑了几步。跑到一半时头像也在动。 */}
-					{row.grouped ? null : (
-						<span
-							className="run-av"
-							aria-hidden="true"
-							dangerouslySetInnerHTML={{
-								__html: avatarSvg({
-									slug: turn.slug,
-									name: turn.label,
-									size: 40,
-									state: turn.status === "running" ? "working" : "idle",
-								}),
-							}}
-						/>
-					)}
-					<RunBlock turn={turn} role={props.labels.get(turn.slug)?.role ?? ""} grouped={row.grouped} />
-				</div>
-			</div>
+			<LiveRow turn={row.turn} role={props.labels.get(row.turn.slug)?.role ?? ""} onOpen={openTasks} />
 		);
 	}
 	// 后台命令跑完的留痕：正文是一坨终端输出，是给干活那个人看的。我这边收成一行，

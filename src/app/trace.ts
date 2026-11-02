@@ -72,6 +72,16 @@ export function groupsOf(
 	return groups;
 }
 
+/** 任务面板块头的引文：够认出是哪句话就行，完整原文去频道里看。 */
+const TRIGGER_CLIP = 200;
+
+export function triggerOf(message: { readonly from: string; readonly text: string }): { from: string; text: string } {
+	return {
+		from: message.from,
+		text: message.text.length > TRIGGER_CLIP ? `${message.text.slice(0, TRIGGER_CLIP)}…` : message.text,
+	};
+}
+
 /** 剥掉 ANSI 转义：控制字符进了输出区就是一片乱码。 */
 export function stripAnsi(text: string): string {
 	// eslint-disable-next-line no-control-regex

@@ -9,7 +9,7 @@
  * 「历史过程 kind」那一组。
  */
 import { describe, expect, it } from "vitest";
-import { buildRows, buildWorkRows } from "../../ui/app/src/stream/model.ts";
+import { buildRows } from "../../ui/app/src/stream/model.ts";
 
 /** 固定基准时刻，测试里所有时间都相对它算 —— 不用 Date.now()，断言才不会看运气。 */
 const T = new Date("2026-05-06T12:00:00+08:00").getTime();
@@ -149,75 +149,70 @@ describe("历史过程 kind：过滤，不画成普通行", () => {
 	});
 });
 
-describe("私聊工作记录：消息与跨频道轮次按时间合排", () => {
+describe("正在跑的那一轮：live 行（派生，不是消息）", () => {
 	const turn = (channelId: string, seq: number, startedAt: number, slug = "linyue") => ({
 		channelId,
 		seq,
 		slug,
 		label: slug,
-		status: "done",
+		status: "running",
 		startedAt,
 		stepCount: 3,
 		summary: "运行 1 条命令",
 	});
-	const titles = new Map([
-		["dm:owner-linyue", "林越"],
-		["team:alpha", "alpha"],
-	]);
 
-	it("群聊不画轨迹：buildRows 只有消息", () => {
-		const rows = build([m(1, "say", T)]);
+	it("没有人在跑：只有消息", () => {
+		const rows = buildRows({ messages: [m(1, "say", T)], running: [], now: T + MIN });
 		expect(rows.map((row) => row.type)).toEqual(["say"]);
 	});
 
-	it("工作轮次按 startedAt 插进消息之间，并带上它发生的频道", () => {
-		const rows = buildWorkRows({
+	it("跑着的那一轮插在触发消息之后（位置就是回复将来会落的地方）", () => {
+		const rows = buildRows({
 			messages: [m(1, "say", T), m(2, "say", T + 2 * MIN)],
-			work: [turn("team:alpha", 5, T + MIN)],
-			titles,
-			now: T + 60 * MIN,
+			running: [turn("team:alpha", 1, T + MIN)],
+			now: T + 3 * MIN,
 		});
-		expect(rows.map((row) => row.type)).toEqual(["say", "work", "say"]);
-		const work = rows[1];
-		if (work?.type !== "work") throw new Error("中间应该是工作行");
-		expect(work.channelTitle).toBe("alpha");
-		expect(work.turn.seq).toBe(5);
+		expect(rows.map((row) => row.type)).toEqual(["say", "live", "say"]);
+		const live = rows[1];
+		if (live?.type !== "live") throw new Error("中间应该是 live 行");
+		expect(live.turn.seq).toBe(1);
 	});
 
-	it("跨频道的 seq 会重复，但两轮都画得出来（键带 channelId）", () => {
-		const rows = buildWorkRows({
-			messages: [],
-			work: [turn("dm:owner-linyue", 1, T), turn("team:alpha", 1, T + MIN)],
-			titles,
-			now: T + 60 * MIN,
-		});
-		expect(rows.map((row) => row.type)).toEqual(["work", "work"]);
-		expect(new Set(rows.map((row) => row.key)).size).toBe(2);
-	});
-
-	it("只说话了、没做事的一轮不画 work 壳", () => {
-		const rows = buildWorkRows({
+	it("回话之后就不再画：同一件事不能同时出现占位和真回复", () => {
+		const rows = buildRows({
 			messages: [m(1, "say", T)],
-			work: [{ ...turn("dm:owner-linyue", 2, T + MIN), stepCount: 0, summary: "" }],
-			titles,
-			now: T + 60 * MIN,
+			running: [{ ...turn("team:alpha", 1, T + MIN), replySeq: 2, status: "done" }],
+			now: T + 3 * MIN,
 		});
-		// 话已经在消息流里了；空壳会让人以为这一轮干了件大事。
 		expect(rows.map((row) => row.type)).toEqual(["say"]);
 	});
 
-	it("时间分隔属于它下面那条消息：工作行插在分隔之前", () => {
-		const rows = buildWorkRows({
+	it("trace 的结算帧比 create 慢半拍时：他已经说过话，就不再画占位", () => {
+		const rows = buildRows({
+			messages: [m(1, "say", T, "owner"), m(2, "say", T + MIN, "linyue")],
+			running: [turn("team:alpha", 1, T)],
+			now: T + 3 * MIN,
+		});
+		expect(rows.map((row) => row.type)).toEqual(["say", "say"]);
+	});
+
+	it("同时叫醒两个人：两条占位，按开始时间排", () => {
+		const rows = buildRows({
+			messages: [m(1, "say", T, "owner")],
+			running: [turn("team:alpha", 1, T + 2 * SEC, "shen"), turn("team:alpha", 1, T + SEC, "linyue")],
+			now: T + 3 * MIN,
+		});
+		expect(rows.map((row) => row.type)).toEqual(["say", "live", "live"]);
+		const slugs = rows.flatMap((row) => (row.type === "live" ? [row.turn.slug] : []));
+		expect(slugs).toEqual(["linyue", "shen"]);
+	});
+
+	it("时间分隔属于它下面那条消息：占位插在分隔之前", () => {
+		const rows = buildRows({
 			messages: [m(1, "say", T), m(2, "say", T + 60 * MIN)],
-			work: [turn("team:alpha", 5, T + 40 * MIN)],
-			titles,
+			running: [turn("team:alpha", 5, T + 40 * MIN)],
 			now: T + 90 * MIN,
 		});
-		expect(rows.map((row) => row.type)).toEqual(["say", "work", "divider", "say"]);
-	});
-
-	it("没有工作轮次时就是普通消息流", () => {
-		const rows = buildWorkRows({ messages: [m(1, "say", T)], work: [], titles, now: T + MIN });
-		expect(rows.map((row) => row.type)).toEqual(["say"]);
+		expect(rows.map((row) => row.type)).toEqual(["say", "live", "divider", "say"]);
 	});
 });

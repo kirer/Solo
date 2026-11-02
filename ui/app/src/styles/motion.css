@@ -326,6 +326,33 @@
 	display: inline-block;
 }
 
+/* ── 后台任务面板 / 运行中占位（ADR-046）──────────────────────────────── */
+
+@keyframes tasks-in {
+	from {
+		transform: translateX(100%);
+	}
+	to {
+		transform: translateX(0);
+	}
+}
+
+@keyframes live-spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+@keyframes live-pulse {
+	0%,
+	100% {
+		opacity: 1;
+	}
+	50% {
+		opacity: 0.3;
+	}
+}
+
 /* ── 降级 ───────────────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {
@@ -339,6 +366,8 @@
 		scroll-behavior: auto !important;
 	}
 
+	.tasks-panel,
+	.tasks-scrim,
 	.veil,
 	.row-new,
 	.toast,
