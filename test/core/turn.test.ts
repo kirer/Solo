@@ -264,13 +264,21 @@ describe("收尾落库", () => {
 		expect(asked).toContain("沈舟");
 	});
 
-	it("太短或 [PASS] 的正文不补：残句补进频道只会更吵", async () => {
+	it("短回答照补：他对「你在吗」只答了「在。」，吞掉就是一片沉默", async () => {
+		// 2026-11-02 live：被 @ 的第一轮答了 2 个字，收尾按「太短」吞了，频道里一个字没有。
 		const runtime = await setup();
 		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
 		await finisher(
-			{ slug: SLUG, conversation: conversationWith(answer(42, "好的。")), answer: 42, wake: wakeOf(CHANNEL) },
+			{ slug: SLUG, conversation: conversationWith(answer(42, "在。")), answer: 42, wake: wakeOf(CHANNEL) },
 			BACKGROUND_CONTEXT,
 		);
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect((state.messages[CHANNEL] ?? []).map((item) => item.text)).toEqual(["在。"]);
+	});
+
+	it("[PASS] 是哨兵，不补", async () => {
+		const runtime = await setup();
+		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });
 		await finisher(
 			{ slug: SLUG, conversation: conversationWith(answer(43, "[PASS]")), answer: 43, wake: wakeOf(CHANNEL) },
 			BACKGROUND_CONTEXT,

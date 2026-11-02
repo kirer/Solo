@@ -28,9 +28,6 @@ import type { WakeRecord, WakeTarget } from "./record.ts";
 import { postMessage, type PostDeps } from "../post.ts";
 import { isPass } from "../tools/guards.ts";
 
-/** 太短的不补：`好的`、`收到` 之类的残句补进频道只会更吵。 */
-const TURN_MIN_CHARS = 6;
-
 /** 从一条 `pi.assistant` 里取出「最终正文」——最后一个 text 块。 */
 export function finalTextOf(entry: EntryRecord | undefined): string | undefined {
 	if (entry === undefined) return undefined;
@@ -169,7 +166,13 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 	if (channel === undefined || !channel.members.includes(info.slug)) return;
 
 	const text = finalTextOf(entry)?.trim();
-	if (text === undefined || text.length < TURN_MIN_CHARS || isPass(text)) return;
+	// 短回答照补：他对「你在吗」只答了个「在。」，吞掉就是频道里一片沉默。
+	// 只吞哨兵（`[PASS]`）和空正文；重复的那一份由下面的同文判据挡。
+	if (text === undefined || text.length === 0 || isPass(text)) {
+		// 不补也要留痕：live 里「提交 done 但频道里一个字没有」得能分清是没说话还是我们主动吞了。
+		console.log(`[turn] ${info.slug} 不补发：${text === undefined ? "会话里找不到这段正文" : "[PASS] 或空正文"}`);
+		return;
+	}
 
 	// 同一条答案会被**多条提交**各结算一次（报到 + 投递、投递 + 后台命令跑完），
 	// 每一次收尾都看到同一个条目 —— 只补一次。实测 2026-11-02：频道里并排两条
