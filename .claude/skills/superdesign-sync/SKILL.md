@@ -54,7 +54,7 @@ node .claude/skills/superdesign-sync/sync.mjs --origin http://127.0.0.1:7799 --p
 
 改名字等于新建一屏（旧草稿会留在画布上），要保留历史就别改名。
 
-## 三个坑（都已经在代码里处理，改的时候别退回去）
+## 四个坑（都已经在代码里处理，改的时候别退回去）
 
 - **受控输入框**：直接写 `.value` React 看不见，@ 提人的弹窗不会出来。要用原型上的 setter 再派发
   `input` 事件 —— 见 `states.mjs` 的 `typeAt`。
@@ -62,6 +62,9 @@ node .claude/skills/superdesign-sync/sync.mjs --origin http://127.0.0.1:7799 --p
   会和深色一模一样。
 - **系统 note 里可能贴着脚本正文**：`${...}` 和花括号会被导入校验当成没解析的模板而拒稿。
   打包时在 `.note-text` 里换成 HTML 实体，渲染出来还是原字符。
+- **「等我选」会把输入框整个换掉**：某个频道最后一条消息带 `options` 且我还没答时，
+  `#input` 不存在，抓 @ 提人会在 `input.focus()` 上抛错。所以 07-mention 走的是**全员频道**。
+  反过来说，01-group-dark 底部出现选项卡是对的 —— 那是这个 workspace 此刻的真实状态。
 
 ## 不做的事
 

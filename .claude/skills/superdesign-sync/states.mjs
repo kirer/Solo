@@ -32,6 +32,8 @@ const escape = () => `document.dispatchEvent(new KeyboardEvent("keydown",{key:"E
 const click = (selector) => `document.querySelector(${JSON.stringify(selector)})?.click()`;
 const openGroup = `(() => { const row=[...document.querySelectorAll('.ch')].find(x=>x.dataset.kind==='group'); row?.click(); })()`;
 const openDm = `(() => { const row=[...document.querySelectorAll('.ch')].find(x=>x.dataset.kind==='dm'); row?.click(); })()`;
+/** 全员频道：团队频道里可能正挂着「等我选」的选项卡，那时没有输入框，@ 弹窗抓不到。 */
+const openAll = `(() => { const row=[...document.querySelectorAll('.ch')].find(x=>x.textContent.includes('全员')); row?.click(); })()`;
 const tab = (text) =>
 	`(() => { const t=[...document.querySelectorAll('.rail-tab')].find(x=>x.textContent.trim()===${JSON.stringify(text)}); t?.click(); })()`;
 
@@ -91,7 +93,10 @@ export async function capture(page, { origin, grab, wait }) {
 	await page.eval(click("#plus-btn"));
 	await wait(400);
 
-	// @ 提人：靠一段真输入唤出。
+	// @ 提人：靠一段真输入唤出。换到全员频道 —— 团队频道里可能正挂着「等我选」的选项卡，
+	// 那时输入框整个被换掉了（`#input` 不存在），在这里抓会直接抛错。
+	await page.eval(openAll);
+	await wait(2000);
 	await page.eval(typeAt);
 	await wait(900);
 	await grab("07-mention");
