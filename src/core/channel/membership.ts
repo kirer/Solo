@@ -198,7 +198,9 @@ export async function ensureOwnerDm(
 				members: [OWNER, slug],
 				wakeOnAll: [],
 				at: Date.now(),
-				mode: "create",
+				// 用 replace 而不是 create：开除时这条私聊会被摘掉成员并归档，同一个人重新招回来时
+				// `create` 看到频道已存在就什么都不做，他永远没有私聊（实测：招了阿拓，列表里没有）。
+				mode: "replace",
 			}),
 		);
 	}, context);

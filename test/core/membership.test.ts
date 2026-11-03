@@ -8,8 +8,8 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { archiveGoneTeams, createGroup, syncTeamChannel } from "../../src/core/channel/membership.ts";
-import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
+import { archiveGoneTeams, createGroup, ensureOwnerDm, syncTeamChannel } from "../../src/core/channel/membership.ts";
+import { ChannelDoc, OWNER, dmId, type ChannelState } from "../../src/core/channel/types.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { sandboxPool } from "./support.ts";
@@ -57,6 +57,24 @@ describe("团队频道重投影：谁是新来的", () => {
 		const { box, deps } = await setup();
 		await writeTeam(box.teamsRoot, { slug: "alpha", status: "archived", body: "目标：先不做了。" });
 		expect(await syncTeamChannel(deps, "alpha")).toEqual([]);
+	});
+});
+
+describe("私聊：同一个人重新招回来", () => {
+	it("旧私聊被开除时归档、成员摘掉；再招回来要恢复成我和他", async () => {
+		const { deps } = await setup();
+		const id = dmId(OWNER, "程一");
+		await ensureOwnerDm(deps, "程一");
+		// 和 `hire action=fire` 一样：摘掉成员并归档这条私聊。
+		await deps.harness.commit(async (tx) => {
+			const state = (await tx.doc(ChannelDoc)) as ChannelState;
+			const channel = state.channels[id]!;
+			state.channels[id] = { ...channel, members: [OWNER], archived: true };
+		}, BACKGROUND_CONTEXT);
+		await ensureOwnerDm(deps, "程一");
+		const channel = ((await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState).channels[id];
+		expect(channel?.archived).toBeUndefined();
+		expect(channel?.members).toEqual([OWNER, "程一"]);
 	});
 });
 

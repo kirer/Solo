@@ -195,6 +195,10 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 装配投影出来，组群由 `createGroup` 建（`POST /api/channels`）。除此之外没有别的地方能造出
 一个没人投影的房间。
 
+**开除会归档这条私聊**（成员摘掉、历史留着）。同一个人重新招回来时，`ensureOwnerDm` 用
+`replace` 精确恢复成 `{我, 他}` 并取消归档 —— 用 `create` 的话看到频道已存在就什么都不做，
+他会永远没有私聊（实测：招了人，列表里找不到）。
+
 `@` 写的是**名字**，`mentions` 存的是 **slug**：`channel/mentions.ts` 的 `parseMentions` 只认
 `slug` / `name` / `我` / `owner` **精确匹配**，其余（`@CEO`、拼音、title、`@老板`）
 一律丢弃。**成员过滤不动** —— 别名只是翻译，不是放宽边界。`@` 前面只排除 ASCII 字母数字
