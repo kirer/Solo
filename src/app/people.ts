@@ -14,7 +14,7 @@ import { labelIn, type DirectoryState } from "../core/agent/roster.ts";
 import { redact } from "../core/agent/secrets.ts";
 import { listSkills } from "../core/agent/skills.ts";
 import type { ViewPersonMemory, ViewPersonProfile } from "../view/dto.ts";
-import { memoryEntries, memorySummary } from "./project.ts";
+import { memoryEntries } from "./project.ts";
 import { AppError } from "./errors.ts";
 import type { Read } from "./read.ts";
 import type { Snapshots } from "./snapshot.ts";
@@ -76,7 +76,6 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 			slug,
 			identity?.team,
 		);
-		const source = (await readMemory(await agentDirOf(slug))) ?? "";
 		return {
 			slug,
 			label: labelIn(directory, slug),
@@ -90,7 +89,6 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 				scope: skill.scope,
 				overrides: skill.overrides === true,
 			})),
-			memory: memorySummary(source, shell.text),
 			channels: await read.channelsOf(slug),
 			model: await modelOf(slug),
 		};
@@ -102,15 +100,11 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		requireSlug(directory, slug);
 		const agentDir = await agentDirOf(slug);
 		const source = (await readMemory(agentDir)) ?? "";
-		const summary = memorySummary(source, shell.text);
 		return {
 			slug,
 			label: labelIn(directory, slug),
-			exists: summary.exists,
-			digest: summary.digest,
 			// 时间/作者来自 `.memory-journal.jsonl`；手写的条目没有日志，一律 `null`（ADR-016）。
 			entries: memoryEntries(source, await memoryTimeline(agentDir)),
-			raw: source,
 		};
 	}
 

@@ -15,12 +15,11 @@
  */
 import { OWNER_SLUG, labelsOf, type Identity } from "../core/agent/identity.ts";
 import { type MemoryStamp } from "../core/agent/memory.ts";
-import { memoryDigest, sectionsOf } from "../core/md/memory.ts";
+import { sectionsOf } from "../core/md/memory.ts";
 import { conversationFor, labelIn, type DirectoryState } from "../core/agent/roster.ts";
 import { chatKind, spokenKind, type Channel, type ChannelState, type Message } from "../core/channel/types.ts";
 import { readMarkOf, unreadCount } from "../core/channel/rules.ts";
 import { excerptOf } from "../core/md/oneline.ts";
-import type { TextCatalog } from "../core/md/catalog.ts";
 import type {
 	AttentionItem,
 	TeamDoingOf,
@@ -250,7 +249,6 @@ export function channelDetail(
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
 		hasMore: start > 0,
-		serverNow: Date.now(),
 	};
 }
 
@@ -320,7 +318,6 @@ export function attentionItems(
 			if (!needsYou(message)) continue;
 			out.push({
 				channelId: channel.id,
-				channelKind: chatKind(channel),
 				channelTitle: channel.title,
 				seq: message.seq,
 				at: message.at,
@@ -334,17 +331,6 @@ export function attentionItems(
 	}
 	return out.sort((left, right) => right.at - left.at).slice(0, ATTENTION_MAX);
 }
-/**
- * 记忆文件的概况：有没有、几条、摘要。个人与团队共用一套分段口径（`sectionsOf`），
- * 所以「几条」在两处永远是同一个数。
- */
-export function memorySummary(
-	source: string,
-	catalog?: TextCatalog,
-): { exists: boolean; entries: number; digest: string | null } {
-	return { exists: source !== "", entries: sectionsOf(source).length, digest: memoryDigest(source, catalog) ?? null };
-}
-
 /**
  * 记忆全文 → 逐条。
  *

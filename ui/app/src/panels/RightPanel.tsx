@@ -640,8 +640,8 @@ function SkillRow(props: { name: string; description: string; overrides: boolean
 /**
  * 记忆：团队频道看团队记忆，其余看人。
  *
- * 团队记忆没有任何写入口 —— 它是 `team/settle.ts` 自动沉淀的（DESIGN §5），
- * 界面上只能看。人手上有「加一条 / 删掉这一条」，那是他自己的记忆。
+ * 团队记忆在界面上只能看：写入口是 `remember(scope=team)` 与 `file`（ADR-058）。
+ * 人手上有「加一条 / 删掉这一条」，那是他自己的记忆。
  */
 function MemoryTab(): JSX.Element {
 	const scope = useScope();
@@ -699,8 +699,8 @@ function TeamMemory(props: { slug: string }): JSX.Element {
 				<p className="detail-empty">正在读…</p>
 			) : entries.length === 0 ? (
 				<>
-					<p className="detail-empty">这个团队还没有沉淀出记忆。</p>
-					<p className="rail-hint">收工结算时按 seed/prompt/95-settle.md 的判据自动记</p>
+					<p className="detail-empty">这个团队还没有记忆。</p>
+					<p className="rail-hint">成员或助理用 remember(scope=team) 记，也可以直接写 teams/&lt;slug&gt;/memory.md</p>
 				</>
 			) : (
 				entries.map((entry) => (

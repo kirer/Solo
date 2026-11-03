@@ -197,7 +197,6 @@ type ViewChannelDetail = {
   members: ViewMember[];
   messages: ViewMessage[];
   hasMore: boolean;      // 前面还有更早的
-  serverNow: number;     // 毫秒。前端据此算相对时间，避免用本机时钟比服务端时间
 }
 
 type ViewMember = {
@@ -392,7 +391,7 @@ type ViewStep = {
 {
   unread: number,
   items: {
-    channelId: string, channelKind: "dm" | "group", channelTitle: string,
+    channelId: string, channelTitle: string,
     seq: number, at: number,
     from: number, fromSlug: string, fromLabel: string,
     excerpt: string, read: boolean
@@ -422,7 +421,6 @@ type ViewStep = {
   assistant: boolean,               // 是不是助理（文件夹事实，ADR-058）
   body: string,                     // identity.md 正文（预置提示词）
   skills: { name: string, description: string, scope: "personal" | "team" | "all", overrides: boolean }[],
-  memory: { exists: boolean, entries: number, digest: string | null },
   channels: { id: string, kind: "dm" | "group", title: string, members: string[] }[],
   model: string                     // 他此刻用的模型 "provider/modelId"；没有模型就是 ""
 }
@@ -448,7 +446,6 @@ type ViewStep = {
   body: string,                     // README 正文
   skills: { name: string, description: string, scope: "team", overrides: boolean }[],  // 团队层技能
   memory: {
-    exists: boolean, digest: string | null,
     // at / by / op 恒为 null：团队记忆没有逐条日志，不拿「现在」冒充「当时」（ADR-016）
     entries: { heading: string, body: string, at: null, by: null, op: null }[]
   }
@@ -494,15 +491,13 @@ type ViewStep = {
 
 ```ts
 // 响应
-{ slug: string, label: string, exists: boolean, digest: string | null,
+{ slug: string, label: string,
   entries: { heading: string, body: string,
-             at: string | null, by: string | null, op: "add" | "edit" | null }[],
-  raw: string }
+             at: string | null, by: string | null, op: "add" | "edit" | null }[] }
 ```
 
-`entries` 按 Markdown 的 `##` 标题拆（标题就是记下的日期）。`raw` 是 `members/<slug>/memory.md`
-全文。`slug` 必须是名册里存在的 agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
-老实 404。
+`entries` 按 Markdown 的 `##` 标题拆（标题就是记下的日期）。`slug` 必须是名册里存在的
+agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人老实 404。
 
 `at` / `by` / `op` 是这一节的**来历**，由 `memoryTimeline()` 从 `members/<slug>/.memory-journal.jsonl`
 反推（每行都有写入前后的全文，切段比较即得）：`by` 是 `human` / `remember` / `agent`，

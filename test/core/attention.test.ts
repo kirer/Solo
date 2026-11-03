@@ -58,7 +58,6 @@ describe("attentionItems", () => {
 		expect(items).toHaveLength(1);
 		expect(items[0]).toMatchObject({
 			channelId: "team:坦克大战",
-			channelKind: "group",
 			seq: 1,
 			fromSlug: "lin",
 			fromLabel: "林越",

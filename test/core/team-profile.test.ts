@@ -60,7 +60,6 @@ describe("团队档案", () => {
 		await writeTeam(join(root, "teams"), { slug: "demo", name: "演示团队", body: "目标。\n" });
 		await appendTeamMemory(join(root, "teams"), "demo", { text: "8080 常驻，别再起第二个。", by: "林越", at: new Date("2026-10-31T00:00:00Z") });
 		const profile = await teams().readTeamProfile("demo");
-		expect(profile.memory.exists).toBe(true);
 		expect(profile.memory.entries).toHaveLength(1);
 		expect(profile.memory.entries[0]?.body).toContain("8080");
 		expect(profile.memory.entries[0]?.at).toBeNull();

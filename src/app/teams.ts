@@ -9,7 +9,7 @@ import { readTeam } from "../core/team/doc.ts";
 import { readTeamMemory } from "../core/team/memory.ts";
 import type { ViewTeamProfile } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
-import { memoryEntries, memorySummary } from "./project.ts";
+import { memoryEntries } from "./project.ts";
 import type { CoreServices } from "./types.ts";
 
 export function createTeams(shell: CoreServices) {
@@ -30,7 +30,7 @@ export function createTeams(shell: CoreServices) {
 				overrides: skill.overrides === true,
 			})),
 			// 团队记忆没有逐条的日志（`appendTeamMemory` 不写 journal），所以时间是 `null`。
-			memory: { ...memorySummary(source, shell.text), entries: memoryEntries(source) },
+			memory: { entries: memoryEntries(source) },
 		};
 	}
 

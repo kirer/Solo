@@ -109,7 +109,6 @@ export type ViewChannelDetail = {
 	members: ViewMember[];
 	messages: ViewMessage[];
 	hasMore: boolean;
-	serverNow: number;
 };
 
 /**
@@ -146,7 +145,6 @@ export type ViewActor = {
 /** 「找我」列表里的一条。 */
 export type AttentionItem = {
 	channelId: string;
-	channelKind: ViewChannelKind;
 	channelTitle: string;
 	seq: number;
 	at: number;
@@ -175,14 +173,11 @@ export type ViewMemoryEntry = {
 	op: "add" | "edit" | null;
 };
 
-/** 一个人的记忆全文 + 按小节拆开的条目。 */
+/** 一个人的记忆：按小节拆开的条目。 */
 export type ViewPersonMemory = {
 	slug: string;
 	label: string;
-	exists: boolean;
-	digest: string | null;
 	entries: ViewMemoryEntry[];
-	raw: string;
 };
 
 /** 一个人的档案。 */
@@ -194,8 +189,6 @@ export type ViewPersonProfile = {
 	assistant: boolean;
 	body: string;
 	skills: ViewSkill[];
-	/** `entries` 是**条数**（档案页只显示概况），全文在 `/api/people/:slug/memory`。 */
-	memory: { exists: boolean; entries: number; digest: string | null };
 	channels: { id: string; kind: ViewChannelKind; title: string; members: string[] }[];
 	/** 他此刻用的模型 `provider/modelId`；没有模型（还没配）就是空串。 */
 	model: string;
@@ -212,7 +205,7 @@ export type ViewTeamProfile = {
 	body: string;
 	/** 团队层技能（`teams/<slug>/skills/`），这个团队的人都会。 */
 	skills: ViewSkill[];
-	memory: { exists: boolean; digest: string | null; entries: ViewMemoryEntry[] };
+	memory: { entries: ViewMemoryEntry[] };
 };
 
 /**
