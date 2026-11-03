@@ -530,25 +530,38 @@
 	color: var(--ink);
 }
 
+/* 一行一个，竖着排：选项常是一整句话，横排挤成几个胶囊之后谁也读不完，
+   还会把整张卡撑出换行（docs/DESIGN.md §1.5）。竖排之后一行读一条，长短都放得下。 */
 .choice-opts {
 	display: flex;
-	flex-wrap: wrap;
-	gap: 8px;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
 }
 
 .choice-opt {
-	display: inline-flex;
-	align-items: center;
-	gap: 7px;
-	padding: 7px 12px;
+	display: flex;
+	align-items: flex-start;
+	gap: 9px;
+	width: 100%;
+	padding: 8px 12px;
 	border-radius: 10px;
 	background: var(--hover);
 	font-size: 13px;
-	line-height: 18px;
+	line-height: 20px;
 	cursor: pointer;
 	transition:
 		background-color var(--dur-line) ease,
 		color var(--dur-line) ease;
+}
+
+/* 圆点跟着第一行字对齐（长选项会折行，居中的话圆点会漂到两行中间）。 */
+.choice-opt input {
+	margin-top: 3px;
+}
+
+.choice-opt .opt-t {
+	min-width: 0;
 }
 
 .choice-opt:hover {
@@ -566,7 +579,7 @@
 }
 
 .choice-other {
-	flex: 1 1 100%;
+	width: 100%;
 	min-width: 0;
 	padding: 8px 10px;
 	border: 0;
