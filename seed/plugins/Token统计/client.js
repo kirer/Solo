@@ -22,23 +22,31 @@ export default {
 		}
 		.tk-head {
 			display: flex; align-items: center; gap: 10px;
-			min-height: 60px; padding: 8px 16px 8px 8px;
+			min-height: 60px; padding: 8px 16px;
 			border-bottom: 0.5px solid var(--line);
 		}
+		/* 宽屏最左那列一直看得见，点聊天格就能回去，返回键是多余的；
+		   手机底栏离标题远，才留它。和「后台任务」同一口径（tasks-back）。 */
 		.tk-back {
-			display: grid; place-items: center;
+			display: none; place-items: center;
 			width: 36px; height: 36px; padding: 0;
 			border: 0; border-radius: 10px; background: transparent;
 			color: var(--ink-3); cursor: pointer; flex: none;
+		}
+		@media (max-width: 640px) {
+			.tk-head { padding-left: 8px; }
+			.tk-back { display: grid; }
+			/* 一行放不下：副标题先让位，留着时间切换。 */
+			.tk-head p { display: none; }
 		}
 		.tk-back:hover { background: var(--hover); color: var(--ink); }
 		.tk-head h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; }
 		.tk-head p { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-3); }
 		.tk-grow { flex: 1 1 auto; }
-		.tk-ranges { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--raised); }
+		.tk-ranges { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--raised); flex: none; }
 		.tk-range {
 			height: 28px; padding: 0 11px; border: 0; border-radius: 7px;
-			background: transparent; color: var(--ink-3);
+			background: transparent; color: var(--ink-3); white-space: nowrap;
 			font: inherit; font-size: 12.5px; cursor: pointer;
 		}
 		.tk-range:hover { color: var(--ink-2); }

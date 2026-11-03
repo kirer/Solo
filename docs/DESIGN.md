@@ -542,7 +542,7 @@ $ npm test
 | 插槽 | 画在哪 | 数据来源 | 要自己带什么 |
 |---|---|---|---|
 | `rail.item` | 最左一列，排在「插件」下面（`rail-group` 里） | 插件自己的状态 | 一格 `52×52` 的图标按钮（`.rail-item`），名字放 `data-tip`；出厂「Token 统计」在这里 |
-| `app.page` | 插件的**一整屏**：占掉侧栏 + 纸 + 右栏，最左导航还在；同一时间只画 `store.pluginView` 指着的那个插件 | 任意 `/api/*` | 根节点铺满（宿主给 `.plugin-page` 外框）；自己的返回键调 `store.closePluginView()`。出厂「Token 统计」在这里 |
+| `app.page` | 插件的**一整屏**：占掉侧栏 + 纸 + 右栏，最左导航还在；同一时间只画 `store.pluginView` 指着的那个插件 | 任意 `/api/*` | 根节点铺满（宿主给 `.plugin-page` 外框）；返回只有一条：调 `store.closePluginView()`（宽屏点最左那格「聊天」回去，返回键只在 `≤640px` 显示，和后台任务同口径）。出厂「Token 统计」在这里 |
 | `sidebar.header` | 左栏品牌行右侧、收放按钮之前 | 插件自己的状态 | 横排尺寸（宿主那行是 flex） |
 | `sidebar.list.before` | 会话列表上方 | `store.channels` | — |
 | `sidebar.footer` | 左栏列表脚下 | 插件自己的状态 | — |
