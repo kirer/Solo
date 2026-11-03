@@ -104,7 +104,7 @@ export function mergeDirectory(base: DirectoryState, live: DirectoryState): Dire
 }
 
 /** 这次运行里开过的这条会话的 id（没有就 `undefined`）。 */
-export function liveConversationId(
+function liveConversationId(
 	live: (() => ReadonlyMap<string, Conversation>) | undefined,
 	slug: string,
 ): number | undefined {

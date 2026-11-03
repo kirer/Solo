@@ -7,7 +7,7 @@
  * 一条硬规矩：**未知插槽不许静默变空**。
  *
  * 静默空会让提示词里出现「你的团队：」这样一句话的半截 —— 模型不会报错，它会照着半截
- * 自己补一个听起来合理的答案（V2 实测补出过不存在的汇报线）。所以填不上就写
+ * 自己补一个听起来合理的答案（V2 实测补出过不存在的人）。所以填不上就写
  * `（未设置）`，并且把问题**报出去**，让装配层 warn 或者直接失败。
  *
  * 模板自己知道空的时候该怎么说，就写 `{{名字 ?? 这句话}}`：那句话是文案，归模板管；
@@ -18,10 +18,7 @@
  * - `unknown`：模板写了、装配没给 —— 模板与代码脱节，是缺陷；
  * - `unset`：装配给了、现在确实是空的 —— 是事实，不是缺陷（`skip-empty` 靠它整段消失）。
  *
- * 两个入口，一个实现：
- *
- * - `renderSlots` 是**主入口**，返回 `{ text, issues }`（装配层要区分两种错）；
- * - `renderTemplate` 是便捷壳，只返回文本、用回调报名字（投递那两句用它）。
+ * 只有一个入口 `renderSlots`，返回 `{ text, issues }`（装配层要区分两种错）。
  *
  * 三个刻意的性质：
  *
@@ -55,7 +52,6 @@ export type Rendered = {
 };
 
 /** 插槽回调：模板里出现了填不上的名字。装配层拿它 warn / 抛。 */
-export type MissingHandler = (name: string) => void;
 
 /**
  * 只认 `{{名字}}` 与 `{{名字 ?? 默认文案}}`，名字允许 `a-zA-Z0-9_.:-`。
@@ -139,9 +135,3 @@ export function renderSlots(template: string, slots: Slots): Rendered {
 	return { text, issues };
 }
 
-/** 只要文本的便捷壳：填不上的名字走回调（不给回调就是「写（未设置）、不报」）。 @internal 仅测试 */
-export function renderTemplate(template: string, values: Slots, onMissing?: MissingHandler): string {
-	const rendered = renderSlots(template, values);
-	if (onMissing !== undefined) for (const issue of rendered.issues) onMissing(issue.slot);
-	return rendered.text;
-}

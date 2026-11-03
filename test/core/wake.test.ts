@@ -22,8 +22,6 @@ const input = {
 	slug: "林越",
 	requestId: "r1",
 	bodyOf: () => "干活",
-	whenBusy: "steer" as const,
-	coalesce: false,
 	note: { channelId: "team:alpha", seq: 7, label: "林越" },
 };
 

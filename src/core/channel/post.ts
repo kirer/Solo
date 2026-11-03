@@ -232,7 +232,6 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			...(deps.finishTurn === undefined ? {} : { finishTurn: deps.finishTurn }),
 			titleOf: (channelId) => deps.state.channels[channelId]?.title,
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
-			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
 			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
 			noteUnanswered: async ({ label, seq, reason }) => {

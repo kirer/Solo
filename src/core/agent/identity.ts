@@ -59,7 +59,7 @@ function headerOf(front: Readonly<Record<string, string>>): IdentityHeader {
 }
 
 /** 身份头 → 文件里的字段（顺序就是人读到的顺序）。 */
-export function identityFields(header: IdentityHeader): readonly FrontmatterField[] {
+function identityFields(header: IdentityHeader): readonly FrontmatterField[] {
 	return [
 		["name", header.name],
 		["title", header.title],

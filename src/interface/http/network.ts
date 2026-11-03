@@ -30,7 +30,7 @@ export function isWildcardHost(host: string): boolean {
 }
 
 /** 是否是回环地址（只有本机能访问）。 */
-export function isLoopbackHost(host: string): boolean {
+function isLoopbackHost(host: string): boolean {
 	const value = host.trim().toLowerCase();
 	return value === "" || LOOPBACK_HOSTS.has(value) || value.startsWith("127.");
 }

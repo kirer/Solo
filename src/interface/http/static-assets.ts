@@ -139,7 +139,7 @@ export type StaticEncoding = "br" | "gzip" | "identity";
  * png / woff2 / 已压缩的二进制再压只会更慢更大（woff2 内部已有 brotli），
  * 所以按类型白名单而不是"全都压"。
  */
-export function compressible(contentType: string): boolean {
+function compressible(contentType: string): boolean {
 	return /^(?:text\/|application\/(?:json|javascript|xml)|image\/svg\+xml)/.test(contentType);
 }
 
@@ -153,7 +153,7 @@ export function compressible(contentType: string): boolean {
  * - 两个都不可接受时退回 `identity` —— 静态资源永远有 `identity` 表示，
  *   没有"必须压缩否则失败"的理由。
  */
-export function negotiateEncoding(header: string | undefined): StaticEncoding {
+function negotiateEncoding(header: string | undefined): StaticEncoding {
 	if (header === undefined || header.trim() === "") return "identity";
 
 	const weights = new Map<string, number>();
@@ -214,7 +214,7 @@ function hashOf(body: Buffer): string {
  * 用 `stat` 的 `mtimeMs + size` 做戳记，而不是只信内存里的旧条目——
  * 改完 `ui/web/js/*.js` 刷新就能立刻看到，不需要重启服务。
  */
-export async function loadAsset(target: string): Promise<AssetEntry | undefined> {
+async function loadAsset(target: string): Promise<AssetEntry | undefined> {
 	const info = await stat(target).catch(() => undefined);
 	if (info === undefined || !info.isFile()) return undefined;
 
@@ -244,13 +244,13 @@ export async function loadAsset(target: string): Promise<AssetEntry | undefined>
 }
 
 /** 某个编码对应的 ETag（identity 用基础值，压缩表示加后缀）。 */
-export function etagFor(entry: AssetEntry, encoding: StaticEncoding): string {
+function etagFor(entry: AssetEntry, encoding: StaticEncoding): string {
 	if (encoding === "identity") return entry.etag;
 	return `${entry.etag.slice(0, -1)}-${encoding}"`;
 }
 
 /** 取（必要时生成）压缩后的正文。压缩失败时退回 identity，不让请求 500。 */
-export async function bodyFor(
+async function bodyFor(
 	entry: AssetEntry,
 	encoding: StaticEncoding,
 ): Promise<{ readonly body: Buffer; readonly encoding: StaticEncoding }> {
@@ -284,7 +284,7 @@ export async function bodyFor(
  * 弱比较是 RFC 9110 §13.1.2 对 GET 的要求：`W/"x"` 与 `"x"` 视为相同。
  * 这里自己的 ETag 是强形式，客户端的可能被改写为弱形式，必须剥掉 `W/` 再比。
  */
-export function matchesEtag(header: string | undefined, etag: string): boolean {
+function matchesEtag(header: string | undefined, etag: string): boolean {
 	if (header === undefined) return false;
 	if (header.trim() === "*") return true;
 	const target = etag.trim();
@@ -296,7 +296,7 @@ export function matchesEtag(header: string | undefined, etag: string): boolean {
 }
 
 /** `If-Modified-Since` 是否说明客户端已是最新（精度到秒）。 */
-export function notModifiedSince(header: string | undefined, lastModified: string): boolean {
+function notModifiedSince(header: string | undefined, lastModified: string): boolean {
 	if (header === undefined) return false;
 	const since = Date.parse(header);
 	const modified = Date.parse(lastModified);

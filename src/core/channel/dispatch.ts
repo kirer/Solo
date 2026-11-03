@@ -3,7 +3,7 @@
 // （`recipientsOf`），投递正文又由这条消息拼出来。落盘在 `write.ts`，这里只负责叫醒。
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import type { Conversation } from "../runtime/index.ts";
-import { deliveryPrompt, mergedNotice, renderDelivery, type DeliveryPrompt } from "./delivery.ts";
+import { mergedNotice, renderDelivery, type DeliveryPrompt } from "./delivery.ts";
 import { planAttachments } from "./attachments.ts";
 import { wake } from "./wake.ts";
 import type { Channel, Message } from "./types.ts";
@@ -48,8 +48,8 @@ type DeliverOptions = {
 	 * 提前算既对又安全。
 	 */
 	readonly digests: ReadonlyMap<string, string>;
-	/** 已经读好的 delivery 模板；不给就现读一次（`promptDir`）。 */
-	readonly prompt?: DeliveryPrompt;
+	/** 已经读好的 delivery 模板（`postMessage` 每轮现读一份，所有收件人共用）。 */
+	readonly prompt: DeliveryPrompt;
 	readonly channel: Channel;
 	readonly message: Message;
 	/** 要唤醒谁（`recipientsOf` 的结果）。 */
@@ -82,13 +82,6 @@ type DeliverOptions = {
 	 * 就是这么排查了很多轮才定位到投递层的。
 	 */
 	readonly notify?: (issues: readonly DeliverIssue[]) => Promise<void> | void;
-	/**
-	 * 提示词模板目录（`<workspace>/prompt`）。给了才贴「怎么回话」那两段。
-	 *
-	 * 为什么不传工作区根：这一层只该知道「模板在哪」，不该知道工作区长什么样。
-	 * 每轮现读一次（不缓存）—— 缓存一进投递层，改模板就要重启。
-	 */
-	readonly promptDir?: string;
 	/**
 	 * 附件根目录（`<workspace>/uploads`）。
 	 *
@@ -142,8 +135,8 @@ export async function deliver(
 	const mergedList: { slug: string; count: number }[] = [];
 	const issues: DeliverIssue[] = [];
 	const label = options.labelOf ?? ((slug: string) => slug);
-	// 回话规矩每轮现读一次（不缓存：改模板要能下一条生效）。所有收件人共用同一份。
-	const prompt = options.prompt ?? (await deliveryPrompt(options.promptDir));
+	// 回话规矩由调用方每轮现读一份，所有收件人共用（缓存一进投递层，改模板就要重启）。
+	const prompt = options.prompt;
 	// 附件只读一次：所有收件人拿到的是同一份图片内容块。
 	const plan = await planAttachments(options.uploadsRoot, options.message.attachments, options.text);
 	const bodyOf = (viewer: string, interrupted: boolean, taskChannelTitle?: string): string =>
@@ -192,21 +185,13 @@ export async function deliver(
 			{
 				conversationOf: async (target) => (target === slug ? conversation : options.conversationOf(target)),
 				coalesceQueue: options.coalesceQueue,
-				noteUnanswered:
-					options.noteUnanswered === undefined
-						? undefined
-						: async (note) => {
-								await options.noteUnanswered?.({ slug: note.slug, label: note.label, seq: note.seq, reason: note.reason });
-							},
+				noteUnanswered: options.noteUnanswered,
 				rememberWake: options.rememberWake,
 				finishTurn: options.finishTurn,
 			},
 			{
 				slug,
 				requestId,
-				coalesce: true,
-				whenBusy: "steer",
-				busy: options.busy?.has(Number(conversation.id)) === true,
 				bodyOf: (merged) => {
 					// 合并唤醒：告诉它「更早的几条还在频道里，先看一遍」。文案在 87-merged.md。
 					const note = merged === 0 ? "" : mergedNotice(prompt.merged, merged);

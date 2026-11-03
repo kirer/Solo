@@ -30,7 +30,7 @@ beforeEach(async () => {
 	await mkdir(join(root, "members", "dev"), { recursive: true });
 	await writeFile(
 		join(root, "members", "dev", "identity.md"),
-		"---\nname: 林越\ntitle: 开发\nmanager: owner\n---\n\n我写代码。\n",
+		"---\nname: 林越\ntitle: 开发\n---\n\n我写代码。\n",
 		"utf8",
 	);
 	// 提示词模板也要播种：生产里 `main.ts` 先播种再装配。

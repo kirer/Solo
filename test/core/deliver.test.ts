@@ -183,6 +183,7 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 			state = next;
 			const result = await deliver({
 				digests: new Map(),
+				prompt: SEED_DELIVERY_PROMPT,
 				channel: state.channels["team:x"]!,
 				message,
 				targets: ["gu"],
@@ -245,6 +246,7 @@ describe("我连发三条也只排一个唤醒", () => {
 			state = next;
 			const result = await deliver({
 				digests: new Map(),
+				prompt: SEED_DELIVERY_PROMPT,
 				channel: state.channels["team:x"]!,
 				message,
 				targets: ["lin"],

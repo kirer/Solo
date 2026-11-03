@@ -10,7 +10,7 @@
  * 其余（合并排队项、记 wake、没产出留痕、一轮一句的重置）都在这里，只写一遍。
  *
  * 分两步的理由：正文里要写「把 N 条并成了这一条」，所以**必须先合并、再拼正文**。
- * 调用点给的是 `bodyOf(merged, busy)` 而不是拼好的字符串。
+ * 调用点给的是 `bodyOf(merged)` 而不是拼好的字符串。
  */
 import type { Conversation, InputEntry, UserInput } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
@@ -54,24 +54,18 @@ export type WakeInput = {
 	/** 幂等键：同一条消息重复投递只醒一次（崩溃恢复下的至少一次语义）。 */
 	readonly requestId: string;
 	/**
-	 * 他看到的那段正文。`merged` = 这次合并掉了几条没开始的唤醒，`busy` = 他此刻手上有活。
+	 * 他看到的那段正文。`merged` = 这次合并掉了几条没开始的唤醒。
 	 *
 	 * 正文必须由调用点拼：投递要知道「这条还 @ 了谁」、「他手上那件活属于哪个频道」。
 	 * 入口只保证**拼完之后的那些事**一处不落。
 	 */
-	readonly bodyOf: (merged: number, busy: boolean) => string | UserInput;
-	/** 忙的时候怎么插：群里的一句问题不该等整轮答完（`steer`），其余的可以排队（`followUp`）。 */
-	readonly whenBusy: "steer" | "followUp";
-	/** 合并唤醒：同一会话最多留一个「还没开始」的排队项。 */
-	readonly coalesce: boolean;
+	readonly bodyOf: (merged: number) => string | UserInput;
 	/** 这一轮没产出时留痕的位置。`seq` 是「这条消息」的序号。 */
 	readonly note?: { readonly channelId: string; readonly seq: number; readonly label: string } | undefined;
 	/** 投递前记一笔「被谁在哪叫醒」。 */
 	readonly wakeRecord?: WakeRecord | undefined;
 	/** 这条输入的账本条目（`kind` + 数据），诊断用。 */
 	readonly entry?: InputEntry | undefined;
-	/** 他此刻手上有活（要打断他正在干的事）。缺省 = 不知道，当没有。 */
-	readonly busy?: boolean | undefined;
 };
 
 export type WakeResult =
@@ -101,12 +95,13 @@ export async function wake(
 		const conversationId = Number(conversation.id);
 
 		// 先合并、再拼正文：正文里要写「把 N 条并成了这一条」。
+		// 合并唤醒：同一会话最多留一个「还没开始」的排队项。给了撤排队项的那条路才合并。
 		const merged =
-			input.coalesce && deps.coalesceQueue !== undefined
-				? await deps.coalesceQueue(conversationId, input.requestId).catch(() => 0)
-				: 0;
+			deps.coalesceQueue === undefined
+				? 0
+				: await deps.coalesceQueue(conversationId, input.requestId).catch(() => 0);
 
-		const content = input.bodyOf(merged, input.busy === true);
+		const content = input.bodyOf(merged);
 
 		// 先记 wake、再提交：反过来的话有竞态 —— `submit` 一入队对方就可能跑起来，
 		// 那时它查不到 wake，只能退到「我最早的那个频道」（往往是私聊），于是答在私聊里、
@@ -121,7 +116,8 @@ export async function wake(
 				content,
 				requestId: input.requestId,
 				...(input.entry === undefined ? {} : { entry: input.entry }),
-				whenBusy: input.whenBusy,
+				// 投递只有一种插法：打断他正在跑的那一轮（群里的一句问题不该等整轮答完）。
+				whenBusy: "steer",
 			},
 			context,
 		);

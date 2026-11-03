@@ -33,7 +33,7 @@ export type ChannelWiring = {
 	readonly text?: TextCatalog;
 	/** 一轮答完的收尾（ADR-099）。投递、我说话共用这一个。 */
 	readonly finishTurn: FinishTurn;
-	/** 会话键（`<slug>` 或 `<slug>#<用途>`）→ 会话。 */
+	/** 会话键（就是 slug）→ 会话。 */
 	conversationOf: (key: string, context?: Context) => Promise<Conversation | undefined>;
 	rememberWake: (key: string, wake: WakeRecord, context?: Context) => Promise<void>;
 	wakeOf: (key: string, context?: Context) => Promise<WakeRecord | undefined>;
@@ -50,7 +50,7 @@ export function wireChannel(deps: {
 	/** 两个根的布局：提示词在 app 根，上传也在 app 根。 */
 	readonly layout: Layout;
 	readonly live?: () => ReadonlyMap<string, Conversation>;
-	/** 会话键找不到时开一条（装配层给）。额外会话懒创建（ADR-050）。 */
+	/** 会话键找不到时开一条（装配层给）。 */
 	readonly open?: (key: string, context: Context) => Promise<Conversation | undefined>;
 	/** 机械文案目录（`text/`）。装配时读一次；不给就只留键名。 */
 	readonly text?: TextCatalog;

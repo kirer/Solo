@@ -83,7 +83,7 @@ async function teamSlots(teamsRoot: string, team: string): Promise<Record<string
  * 直接拍注册表：注册表里有什么，就是它真能调用的全部。**不**读任何清单文件 ——
  * 清单一旦和注册表不一致，提示词就会撒谎（写着有、调了失败，或者反过来）。
  */
-export function registeredTools(registry: Registry, catalog?: TextCatalog): readonly CapabilityLine[] {
+function registeredTools(registry: Registry, catalog?: TextCatalog): readonly CapabilityLine[] {
 	const snapshot = registry.snapshot();
 	const lines = new Map<string, CapabilityLine>();
 	for (const { tool } of snapshot.tools()) {
@@ -236,9 +236,8 @@ async function slotsFor(
 		slots[name] = tools.some((item) => item.name === tool) ? tool : undefined;
 	}
 	if (need.has("memory")) {
-		// 记忆跟着**身份目录**走：助理在 app 根，成员在用户根。
-		const selfDir = (await readIdentity(paths.layout.agentRoots, slug))?.dir;
-		const memory = selfDir === undefined ? undefined : await readMemory(selfDir);
+		// 记忆跟着**身份目录**走：助理在 app 根，成员在用户根。目录已经在 `self` 上了。
+		const memory = await readMemory(self.dir);
 		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory, paths.text);
 	}
 	if (need.has("skills")) {

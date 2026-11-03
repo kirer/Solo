@@ -326,7 +326,7 @@ function seedPath(...segments: readonly string[]): string {
 }
 
 /** 出厂助理身份的路径（相对 `seed/`）。身份是文件，不是代码里的字符串。 */
-export const SEED_ASSISTANT_IDENTITY = "assistant/identity.md";
+const SEED_ASSISTANT_IDENTITY = "assistant/identity.md";
 
 /** 出厂助理的个人技能目录（相对 `seed/`）。 */
 const SEED_ASSISTANT_SKILLS = "assistant/skills";

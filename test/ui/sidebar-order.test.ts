@@ -5,7 +5,7 @@
  * 全新的列表（lastAt 全变了），所以这里断言的是 sortChannels 这个纯函数：
  * 不管输入顺序、不管时间戳怎么变，助理那一行都在第一位。
  *
- * 「谁是助理」只认汇报关系（`manager` 是我），不认名字 —— 换了名字照样钉。
+ * 「谁是助理」只认目录事实（`assistant` 字段），不认名字 —— 换了名字照样钉。
  */
 import { describe, expect, it } from "vitest";
 import { assistantSlug, isPinnedChannel, sortChannels } from "../../ui/app/src/lib/format.ts";
