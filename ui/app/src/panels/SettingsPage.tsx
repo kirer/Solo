@@ -9,7 +9,7 @@
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { cellsOf } from "../plugin/registry.ts";
-import { setTheme } from "../state/store.ts";
+import { setResetOpen, setTheme } from "../state/store.ts";
 import type { Theme } from "../state/store.ts";
 
 const THEMES: readonly { value: Theme; text: string; icon: JSX.Element }[] = [
@@ -54,6 +54,16 @@ function AppearanceIcon(): JSX.Element {
 	);
 }
 
+/** 「数据」那一格的图标：一个数据库圆柱。 */
+function DataIcon(): JSX.Element {
+	return (
+		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
+			<ellipse cx="12" cy="6" rx="7" ry="3" />
+			<path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+		</svg>
+	);
+}
+
 /**
  * 设置：**左边一列分区，右边是选中那一区的详情**（DESIGN §1.5）。
  *
@@ -70,6 +80,7 @@ export function SettingsPage(props: { theme: Theme }): JSX.Element {
 	const sections: readonly { id: string; label: string; icon?: ReactNode }[] = [
 		{ id: "appearance", label: "外观", icon: <AppearanceIcon /> },
 		...cells.map((cell) => ({ id: cell.id, label: cell.label ?? cell.id, icon: cell.icon })),
+		{ id: "data", label: "数据", icon: <DataIcon /> },
 	];
 	const [current, setCurrent] = useState("appearance");
 	const active = sections.find((section) => section.id === current) ?? sections[0]!;
@@ -107,7 +118,13 @@ export function SettingsPage(props: { theme: Theme }): JSX.Element {
 				</header>
 				{/* key 变了才重放入场：换分区是「同一块地方换了一份内容」。 */}
 				<div className="page-main-body" key={active.id}>
-					{cell === undefined || active.id === "appearance" ? <AppearanceSection theme={props.theme} /> : <cell.component />}
+					{active.id === "appearance" ? (
+						<AppearanceSection theme={props.theme} />
+					) : active.id === "data" ? (
+						<DataSection />
+					) : cell === undefined ? null : (
+						<cell.component />
+					)}
 				</div>
 			</div>
 		</section>
@@ -132,6 +149,34 @@ function AppearanceSection(props: { theme: Theme }): JSX.Element {
 						<span className="opt-text">{item.text}</span>
 					</button>
 				))}
+			</div>
+		</>
+	);
+}
+
+/** 数据：只有一件事 —— 清空一切、回到刚装好的样子。确认浮层在 `Overlays.tsx`。 */
+function DataSection(): JSX.Element {
+	return (
+		<>
+			<p className="settings-desc">清空组织数据，回到刚装好的样子。模型配置会保留。</p>
+			<div className="settings-row">
+				<div className="settings-row-main">
+					<span className="settings-row-label">重置所有数据</span>
+					<span className="settings-row-desc">
+						成员、团队、聊天记录、记忆、技能、附件和日志都会被删掉，找不回来。
+					</span>
+				</div>
+				<div className="settings-row-ctl">
+					<button
+						type="button"
+						className="settings-danger"
+						onClick={() => {
+							setResetOpen(true);
+						}}
+					>
+						重置…
+					</button>
+				</div>
 			</div>
 		</>
 	);

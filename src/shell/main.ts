@@ -24,6 +24,7 @@ import { createRegistry } from "../core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../core/runtime/open.ts";
 import { setupModels, compactionSettings } from "../core/runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
+import { wipeAll } from "../app/reset.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../core/fsx.ts";
@@ -31,6 +32,9 @@ import { loadTemplates, PROMPT_DIR } from "../core/md/prompt.ts";
 import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../core/runtime/io.ts";
 import { resolveLayout, type Layout } from "../core/layout.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
+
+/** 重置完成后用这个退出码退出；桌面壳（`desktop/src/backend.ts`）认它，收到就重开。 */
+const RESET_EXIT_CODE = 75;
 
 type Args = {
 	readonly port: number;
@@ -143,8 +147,10 @@ async function main(): Promise<void> {
 	let server: CoreServer | undefined;
 	let stopWatching: () => void = () => undefined;
 	let pending: ReturnType<typeof setTimeout> | undefined;
+	let resetting = false;
 
 	const shutdown = async (signal: string): Promise<void> => {
+		if (resetting) return;
 		console.log(`\n[core] ${signal}，正在关闭…`);
 		clearTimeout(pending);
 		stopWatching();
@@ -152,6 +158,29 @@ async function main(): Promise<void> {
 		await shell?.close();
 		await runtime?.close();
 		process.exit(0);
+	};
+
+	/**
+	 * 重置：先把服务、库收干净，再删盘。库还开着的时候删不掉 `core.sqlite`，
+	 * 所以删除不能放在接口 handler 里。删完退出，桌面壳会重开整个应用。
+	 */
+	const resetAll = (): void => {
+		if (resetting) return;
+		resetting = true;
+		console.log("[core] 重置：清空所有数据…");
+		void (async () => {
+			clearTimeout(pending);
+			stopWatching();
+			await server?.close();
+			await shell?.close();
+			await runtime?.close();
+			await wipeAll(layout);
+			console.log("[core] 重置完成");
+			process.exit(RESET_EXIT_CODE);
+		})().catch((error: unknown) => {
+			console.error("[core] 重置失败：", error);
+			process.exit(1);
+		});
 	};
 	process.on("SIGINT", () => void shutdown("SIGINT"));
 	process.on("SIGTERM", () => void shutdown("SIGTERM"));
@@ -178,6 +207,7 @@ async function main(): Promise<void> {
 			shell,
 			port: args.port,
 			host: args.host,
+			onReset: resetAll,
 		});
 		// 插件是磁盘上的一堆文件夹：改了就重装，不用重启（ADR-026）。
 		// 防抖是因为一次保存常常连着好几个事件，而装到一半时文件还没写完。

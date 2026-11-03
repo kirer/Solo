@@ -103,6 +103,10 @@ export const openDirectMessage = (slug: string): Promise<{ ok: true; id: string 
 export const createGroup = (title: string, members: readonly string[]): Promise<{ ok: true; id: string }> =>
 	call("/api/channels", { method: "POST", body: JSON.stringify({ title, members }) });
 
+/** 清空所有数据并重启（设置 → 数据）。确认之后后端会自己退出，桌面壳负责重开。 */
+export const resetAllData = (): Promise<{ ok: true; restarting: true }> =>
+	call("/api/reset", { method: "POST", body: JSON.stringify({ confirm: true }) });
+
 /** 现在生效的模型（`provider/modelId`）。settings.json 里刚加的提供商要重启才进这里。 */
 export const getModels = (): Promise<{ models: string[]; defaultModel: string }> => call("/api/models");
 

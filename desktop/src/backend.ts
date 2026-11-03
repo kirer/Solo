@@ -30,6 +30,11 @@ export type BackendOptions = {
 	/** 后端 stdout / stderr 落这儿。 */
 	readonly logFile: string;
 	readonly onLog?: (line: string) => void;
+	/**
+	 * 后端自己退出时通知壳（`stop()` 杀的不算）。重置用退出码 75 表示「重开」，
+	 * 和 `src/shell/main.ts` 的 `RESET_EXIT_CODE` 对齐。
+	 */
+	readonly onExit?: (code: number) => void;
 };
 
 const READY_TIMEOUT = 60_000;
@@ -140,9 +145,15 @@ export async function startBackend(options: BackendOptions): Promise<Backend> {
 	}
 
 	const { child, url } = started;
+	let stopped = false;
+	child.on("exit", (code) => {
+		if (stopped) return;
+		options.onExit?.(code ?? -1);
+	});
 	return {
 		url,
 		stop: async () => {
+			stopped = true;
 			if (child.exitCode !== null) {
 				log.end();
 				return;

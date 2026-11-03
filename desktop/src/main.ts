@@ -15,6 +15,8 @@ import { installMenu } from "./menu.ts";
 import { createUpdater, type Updater } from "./updates.ts";
 
 const DEV = !app.isPackaged;
+/** 和后端 `src/shell/main.ts` 的 `RESET_EXIT_CODE` 对齐：重置完后端以 75 退出（壳不 import 内核）。 */
+const RESET_EXIT_CODE = 75;
 // userData 决定 SQLite、日志、localStorage 的位置，必须在单实例锁之前定下来。
 if (DEV) app.setPath("userData", join(tmpdir(), "solo-desktop-dev-userdata"));
 
@@ -120,6 +122,10 @@ async function start(): Promise<void> {
 			userRoot,
 			logFile,
 			onLog: (line) => console.log(line),
+			// 设置里的「重置所有数据」：后端删完盘会以 75 退出，整个应用重开一遍。
+			onExit: (code) => {
+				if (code === RESET_EXIT_CODE) restart();
+			},
 		});
 	} catch (error) {
 		await dialog.showMessageBox({

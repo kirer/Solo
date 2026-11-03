@@ -81,8 +81,8 @@
 }
 
 .rail-item svg {
-	width: 23px;
-	height: 23px;
+	width: 28px;
+	height: 28px;
 }
 
 .rail-item:hover {
@@ -1393,8 +1393,8 @@
 	}
 
 	.rail-item svg {
-		width: 21px;
-		height: 21px;
+		width: 24px;
+		height: 24px;
 	}
 
 	/* 底栏里的提示朝上出：朝右会跑出屏幕。 */
@@ -1521,6 +1521,19 @@
 .detail[hidden],
 .detail-body[hidden] {
 	display: none;
+}
+
+/* 桌面上这一栏由顶栏那颗「详情」开关，栏里不再留收起键：没有可返回的层级时，
+   这条 56 的抬头整条不画（空着一条横线像漏了东西）。手机上它是整屏浮层，
+   必须留一个出口，所以只在宽屏藏掉关闭键与空抬头。 */
+@media (min-width: 641px) {
+	.detail-bar:not(:has(.detail-back)) {
+		display: none;
+	}
+
+	#detail-close {
+		display: none;
+	}
 }
 
 /* 顶栏和主列标题行同高（56），这样两条横线接得上。 */
@@ -2432,6 +2445,100 @@
 	font-size: 12px;
 	line-height: 17px;
 	color: var(--danger);
+}
+
+/* 设置·数据：危险操作只有这一个，平时是一颗红字按钮，不抢外观那几张卡的注意力。 */
+.settings-danger {
+	height: 32px;
+	padding: 0 14px;
+	border: 0.5px solid color-mix(in oklab, var(--danger) 40%, var(--line));
+	border-radius: var(--r-control);
+	background: transparent;
+	color: var(--danger);
+	font: inherit;
+	font-size: 13px;
+	line-height: 18px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background-color 120ms ease;
+}
+
+.settings-danger:hover {
+	background: color-mix(in oklab, var(--danger) 10%, transparent);
+}
+
+.reset-body {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding: 14px 8px 16px;
+}
+
+.reset-lead {
+	margin: 0;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-2);
+}
+
+.reset-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+	padding-left: 18px;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink-2);
+}
+
+.reset-keep {
+	margin: 4px 0 0;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.reset-done {
+	margin: 4px 0 0;
+	font-size: 13px;
+	line-height: 20px;
+	color: var(--ink);
+}
+
+.reset-actions {
+	padding: 0 8px 4px;
+}
+
+.group-cancel {
+	margin-left: auto;
+	height: 34px;
+	padding: 0 14px;
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-control);
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background-color 120ms ease;
+}
+
+.group-cancel:hover {
+	background: var(--hover);
+}
+
+.group-cancel:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+/* 重置按钮用危险色：和旁边那颗「取消」拉开距离。 */
+.group-submit.is-danger {
+	margin-left: 0;
+	background: var(--danger);
+	color: var(--ground);
 }
 
 @keyframes sheet-in {

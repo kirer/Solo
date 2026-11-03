@@ -64,6 +64,8 @@ export type State = {
 	team: boolean;
 	/** 拉群卡片：填名字、勾人。 */
 	newGroup: boolean;
+	/** 一键重置的确认浮层：设置 → 数据里点开。 */
+	resetOpen: boolean;
 	/** 正在引用的那条消息（seq + 摘要），发出去就清空。 */
 	reply: { seq: number; label: string; excerpt: string } | null;
 	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
@@ -108,6 +110,7 @@ const initial: State = {
 	settings: false,
 	team: false,
 	newGroup: false,
+	resetOpen: false,
 	reply: null,
 	tasks: { open: false, who: null },
 	pluginView: null,
@@ -463,6 +466,8 @@ export function setReply(reply: State["reply"]): void {
 export function setSettings(open: boolean): void {
 	patch({
 		settings: open,
+		// 离开设置（或重新进入）都先把重置确认收掉：它只在设置页里成立。
+		resetOpen: false,
 		...(open
 			? {
 					needMenu: false,
@@ -505,6 +510,14 @@ export function setPluginSheet(open: boolean): void {
 					tasks: { open: false, who: getState().tasks.who },
 				}
 			: {}),
+	});
+}
+
+/** 一键重置的确认浮层。和别的浮层互斥；确认之后应用会自己退出重开。 */
+export function setResetOpen(open: boolean): void {
+	patch({
+		resetOpen: open,
+		...(open ? { needMenu: false, pluginSheet: false, newGroup: false } : {}),
 	});
 }
 

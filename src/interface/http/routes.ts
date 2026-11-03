@@ -33,6 +33,11 @@ export type RouteDeps = {
 	readonly hub: StreamHub;
 	/** 静态资源目录（默认 `ui/web/`）。 */
 	readonly uiDir: string;
+	/**
+	 * 重置已经在用例层确认过了：这里只负责在响应发出去之后关库、删盘、退出。
+	 * 由启动层（`shell/main.ts`）给；测试不给就是「只确认、不真删」。
+	 */
+	readonly onReset?: () => void;
 };
 
 /** 查询参数里的数字：没有 / 不是有限数就是 `undefined`（由 app 决定默认值）。 */
@@ -47,7 +52,7 @@ export function numberParam(url: URL, name: string): number | undefined {
 }
 
 export function coreRoutes(deps: RouteDeps): readonly Route[] {
-	const { app, hub } = deps;
+	const { app, hub, onReset } = deps;
 
 	/**
 	 * 插件注册的接口 → 路由。
@@ -76,6 +81,18 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/org",
 			method: "GET",
 			handler: async ({ response }) => json(response, await app.read.readOrg()),
+		},
+		{
+			// 清空所有数据并重启（设置 → 数据）。确认归用例层；关库删盘是进程级的事，
+			// 所以先把「好」发出去，再交给启动层 —— 库还开着的时候删不掉 core.sqlite。
+			pattern: "/api/reset",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				const body = await readJson<{ confirm?: unknown }>(request);
+				const result = app.reset.request(body?.confirm);
+				json(response, result);
+				setTimeout(() => onReset?.(), 200);
+			},
 		},
 		{
 			// 头像：按名字稳定生成一张插画（同一个人永远同一张脸）。内容由 seed 决定、永不变，

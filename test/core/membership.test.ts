@@ -87,8 +87,13 @@ describe("运行时删掉团队目录：目录监听立刻归档", () => {
 		const server = await serveCore({ shell, port: 0 });
 		try {
 			await rm(join(box.teamsRoot, "alpha"), { recursive: true, force: true });
-			await new Promise((resolve) => setTimeout(resolve, 600));
-			const state = await shell.channels(BACKGROUND_CONTEXT);
+			// 目录事件 + 150ms 合并窗口：等条件成立，别赌固定的 600ms（跑全套时会抖）。
+			const deadline = Date.now() + 3000;
+			let state = await shell.channels(BACKGROUND_CONTEXT);
+			while (state.channels["team:alpha"]?.archived !== true && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 100));
+				state = await shell.channels(BACKGROUND_CONTEXT);
+			}
 			expect(state.channels["team:alpha"]?.archived).toBe(true);
 		} finally {
 			await server.close();

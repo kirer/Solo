@@ -1405,3 +1405,34 @@
 - **验收**：`GET /api/p/tokens` 的 `tokens` = 新输入 + 缓存读 + 缓存写 + 输出；
   `cacheRate` = 缓存读 ÷（新输入 + 缓存读 + 缓存写）；最左一列出现「Token 用量」一格，
   点开能看到总量、每日柱、热力图与两张分组账；没有日志时是空态而不是五百。
+
+## ADR-065 一键重置：删两个根里的数据，保留模型配置，退出让壳重开
+
+- **背景**：试坏一套组织之后只能手删 `~/.solo` 和 `Application Support/solo`，
+  删错一个目录（比如把 `settings.json` 一起带走）应用就再也说不出话。需要设置里
+  一个明确的「回到刚装好」入口。
+- **决策**：
+  1. **删什么**：用户根（`~/.solo`）整个删；应用根只删内核自己的东西 ——
+     `assistant/`、`prompt/`、`text/`、`plugins/`、`uploads/`、`core.sqlite*`、
+     `.seed-manifest.json`。桌面壳的 Chromium 缓存也在应用根里，绝不能整目录删。
+  2. **留什么**：`settings.json` 与 `.secrets.json`。重置是清数据，不是把应用
+     打成不能说话的空壳；模型配置是配置，不是历史。已装插件不保留，出厂插件
+     下次启动按 `seed/` 装回来。
+  3. **怎么做**：`POST /api/reset` 只认 `{ confirm: true }`；handler 先回 200，
+     再把「该重置了」交给 `shell/main.ts`。删除必须在库关掉之后（开着删不掉
+     `core.sqlite`），顺序是：停 watcher → 关服务 → 关壳 → 关库 → `wipeAll` →
+     以退出码 75 退出。
+  4. **怎么回来**：桌面壳（`desktop/src/backend.ts`）监听后端子进程退出，
+     收到 75 就 `app.relaunch()`；壳与内核之间仍然只有进程边界这一条线，
+     两边各写一个常量，不 import。网页版没有壳，退出后手动再起一次。
+- **取舍**：不做进程内重启（关库再开、换端口、重建全部单例），那条路要在
+  `main.ts` 里维护一个可重启的装配循环，且 `port: 0` 时会换 origin、打断
+  localStorage 与 SSE。退出重开还顺带清掉内存里的插件、模型与定时器，
+  更接近「刚装好」这个语义。
+- **执行**：`src/app/reset.ts`、`src/app/index.ts`、`src/interface/http/routes.ts`
+  的 `POST /api/reset`、`src/shell/serve.ts` 的 `onReset`、`src/shell/main.ts` 的
+  `resetAll`、`desktop/src/backend.ts` 的 `onExit`、`desktop/src/main.ts` 的
+  `restart`、`ui/app/src/panels/SettingsPage.tsx` 的 `DataSection`。
+- **验收**：设置 → 数据 → 重置所有数据，确认浮层列出删 / 留；确认后应用自动重开，
+  成员、团队、频道、聊天记录全空，模型配置还在，出厂插件和助理已回来。
+  `test/core/reset.test.ts` 钉住「删什么、留什么、没确认不让重置」。

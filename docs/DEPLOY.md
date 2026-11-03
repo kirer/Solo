@@ -6,7 +6,7 @@
 
 只有一个进程：`src/shell/main.ts`。它同时是：
 
-- HTTP 服务（静态界面 `ui/web/` + 29 条 `/api/*` 路由，插件路由另算）
+- HTTP 服务（静态界面 `ui/web/` + 30 条 `/api/*` 路由，插件路由另算）
 - agent 运行时（SQLite + 后台任务）
 
 没有反向代理、没有独立数据库服务、**没有鉴权层**。后端没有构建步骤（`node --experimental-strip-types`

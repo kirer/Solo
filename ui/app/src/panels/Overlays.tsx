@@ -10,19 +10,23 @@
  */
 
 import { useState } from "react";
+import { resetAllData } from "../api/client.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { relTime } from "../lib/format.ts";
-import { makeGroup, openChannel, setNeedMenu, setNewGroup } from "../state/store.ts";
+import { makeGroup, openChannel, setNeedMenu, setNewGroup, setResetOpen } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 export function Overlays(props: {
 	toasts: readonly { id: number; text: string; tone: "info" | "error" }[];
 }): JSX.Element {
 	const newGroup = useStore((state) => state.newGroup);
+	const resetOpen = useStore((state) => state.resetOpen);
+	const settings = useStore((state) => state.settings);
 
 	return (
 		<>
 			{newGroup ? <GroupSheet /> : null}
+			{resetOpen && settings ? <ResetSheet /> : null}
 			<div id="toast-root" className="app-toasts">
 				{props.toasts.map((toast) => (
 					<div key={toast.id} className="chat-toast" data-tone={toast.tone}>
@@ -230,6 +234,81 @@ function GroupSheet(): JSX.Element {
 							</button>
 						</div>
 					</form>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+/* ── 重置 ────────────────────────────────────────────────────────────── */
+
+/**
+ * 重置所有数据的确认。它是**一次性的危险动作**，所以和拉群一样是浮层，不是第二屏。
+ *
+ * 不做「点两次才生效」：删除范围大、又不可撤销，得把「删什么 / 留什么」写在一屏里，
+ * 让人看清楚再按。确认后后端退出、桌面壳重开，这里只剩一句「正在重新启动…」。
+ */
+function ResetSheet(): JSX.Element {
+	const [busy, setBusy] = useState(false);
+	const [problem, setProblem] = useState<string | undefined>(undefined);
+	const [done, setDone] = useState(false);
+
+	const close = (): void => {
+		if (!busy) setResetOpen(false);
+	};
+
+	const run = (): void => {
+		setBusy(true);
+		setProblem(undefined);
+		resetAllData()
+			.then(() => {
+				setDone(true);
+			})
+			.catch((error: Error) => {
+				setProblem(error.message);
+			})
+			.finally(() => {
+				setBusy(false);
+			});
+	};
+
+	return (
+		<section className="team" role="dialog" aria-modal="true" aria-label="确认重置所有数据" onClick={close}>
+			<div
+				className="team-panel"
+				onClick={(event) => {
+					event.stopPropagation();
+				}}
+			>
+				<div className="team-head">
+					<h2>重置所有数据？</h2>
+					<button type="button" className="icon-btn" aria-label="关闭" disabled={busy} onClick={close}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+							<path d="M6 6l12 12M18 6 6 18" />
+						</svg>
+					</button>
+				</div>
+				<div className="team-list">
+					<div className="reset-body">
+						<p className="reset-lead">下面这些会被删掉，找不回来：</p>
+						<ul className="reset-list">
+							<li>所有成员、团队和频道</li>
+							<li>全部聊天记录、记忆和工作记录</li>
+							<li>技能、上传的附件和日志</li>
+							<li>已装插件（出厂插件会装回来）</li>
+						</ul>
+						<p className="reset-keep">模型配置会保留。重置完成后应用会自动重开。</p>
+						{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
+						{done ? <p className="reset-done">已重置，正在重新启动…</p> : null}
+					</div>
+					<div className="group-actions reset-actions">
+						<button type="button" className="group-cancel" disabled={busy} onClick={close}>
+							取消
+						</button>
+						<button type="button" className="group-submit is-danger" disabled={busy || done} onClick={run}>
+							{busy ? "正在重置…" : "重置所有数据"}
+						</button>
+					</div>
 				</div>
 			</div>
 		</section>

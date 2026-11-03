@@ -28,6 +28,8 @@ type CoreServeOptions = {
 	readonly host?: string;
 	/** 静态资源目录（默认 `ui/web/`）。 */
 	readonly uiDir?: string;
+	/** `/api/reset` 确认之后调用：启动层在这里关库、删盘、退出。 */
+	readonly onReset?: () => void;
 };
 
 export type CoreServer = {
@@ -86,7 +88,12 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	const app = createApp(shell);
 	const hub = createStreamHub(shell, app.snapshots, app.read);
 	const unsubscribe = hub.start();
-	const routes = coreRoutes({ app, hub, uiDir });
+	const routes = coreRoutes({
+		app,
+		hub,
+		uiDir,
+		...(options.onReset === undefined ? {} : { onReset: options.onReset }),
+	});
 
 	/**
 	 * 允许的 Host 头。由**实际监听地址**推出，不是由「用户可能用什么地址打开」猜

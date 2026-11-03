@@ -14,6 +14,7 @@ import { createModels } from "./models.ts";
 import { createPeople } from "./people.ts";
 import { createPlugins } from "./plugins.ts";
 import { createRead } from "./read.ts";
+import { createReset } from "./reset.ts";
 import { createRuns } from "./runs.ts";
 import { createSnapshots } from "./snapshot.ts";
 import { createTeams } from "./teams.ts";
@@ -32,6 +33,7 @@ export function createApp(services: CoreServices) {
 	const runs = createRuns(services);
 	const diag = services.diag ?? createDiag(services.layout.logsRoot);
 	const models = createModels(services);
+	const reset = createReset(services.layout);
 	// 看门狗：底座报上来的异常说进全员频道，别只躺在 logs/runtime.jsonl 里。
 	const watch = createWatch({
 		onAbnormal: diag.onAbnormal,
@@ -39,7 +41,7 @@ export function createApp(services: CoreServices) {
 			await services.postAs({ channelId: services.allChannel, from: OWNER, text, kind: "note" });
 		},
 	});
-	return { snapshots, read, people, teams, plugins, chat, uploads, runs, watch, diag, models };
+	return { snapshots, read, people, teams, plugins, chat, uploads, runs, watch, diag, models, reset };
 }
 
 export type App = ReturnType<typeof createApp>;

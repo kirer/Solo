@@ -29,6 +29,7 @@ import {
 	setNeedMenu,
 	setNewGroup,
 	setPluginSheet,
+	setResetOpen,
 	setRight,
 	setSettings,
 	setTeam,
@@ -53,6 +54,7 @@ export function App(): JSX.Element {
 	const team = useStore((state) => state.team);
 	const pluginSheet = useStore((state) => state.pluginSheet);
 	const newGroup = useStore((state) => state.newGroup);
+	const resetOpen = useStore((state) => state.resetOpen);
 	const tasksOpen = useStore((state) => state.tasks.open);
 	const pluginView = useStore((state) => state.pluginView);
 
@@ -85,6 +87,7 @@ export function App(): JSX.Element {
 
 	/* 键盘只在「没在打字」时接管：Tab 顺序之外不再多抢一个键。 */
 	const closeTop = useCallback((): boolean => {
+		if (resetOpen) return setResetOpen(false), true;
 		if (pluginView !== null) return closePluginView(), true;
 		if (tasksOpen) return closeTasks(), true;
 		if (settings) return setSettings(false), true;
@@ -94,7 +97,7 @@ export function App(): JSX.Element {
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [pluginView, tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
+	}, [resetOpen, pluginView, tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {
