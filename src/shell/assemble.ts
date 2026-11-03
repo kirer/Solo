@@ -546,10 +546,8 @@ export async function ownerSpeak(
 		/** 谁说这句话。缺省是我。 */
 		readonly from?: string;
 		readonly replyTo?: number;
-		/**
-		 * 消息语义标签（`decision` / `report`）。界面用它把拍板与交付标出来。
-		 */
-		readonly kind?: string;
+		/** 唯一的非默认 kind：系统留痕。发言不传。 */
+		readonly kind?: "note";
 		/** 附件引用（图片会被读成内容块交给模型）。 */
 		readonly attachments?: readonly Attachment[];
 		/** 不按 @ 推算，直接叫醒这几个人（系统留痕叫人时用）。 */

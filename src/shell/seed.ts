@@ -229,7 +229,7 @@ export async function seedTextFiles(layout: Layout): Promise<readonly string[]> 
 }
 
 /**
- * 把出厂的示范插件补进工作区（`<workspace>/plugins/<名字>/`）。
+ * 把出厂插件补进工作区（`<workspace>/plugins/<名字>/`）。
  *
  * 判据是**整个目录在不在**，不像技能那样逐文件比 hash：插件是一份可执行的代码，
  * 我一旦动过它就是「我的插件」了，逐文件覆盖反而会把 `plugin.ts` 换回出厂版、

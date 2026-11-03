@@ -256,19 +256,19 @@ describe("投递正文带频道 id", () => {
 });
 
 describe("要我拍板就 @ 我", () => {
-	it("kind=decision 不会自动叫我：只有 @ 我才进 mentions（ADR-009）", async () => {
+	it("不 @ 我就不会自动叫我：只有正文点名才算（ADR-009）", async () => {
 		const { say, snapshot } = await setup();
-		await say({ text: "接口先按 v1 做", kind: "decision" });
+		await say({ text: "接口先按 v1 做" });
 		const state = await snapshot();
 		const message = lastSpoken(state, PROJ, "接口先按 v1 做");
 		expect(message?.mentions).not.toContain(OWNER);
 		expect(recipientsOf(state.channels[PROJ]!, message!)).not.toContain(OWNER);
 	});
 
-	it("kind=decision 但 @ 了成员 → 不补 owner（内部结论不叫我）", async () => {
+	it("@ 了成员 → 不补 owner（内部结论不叫我）", async () => {
 		const { say, snapshot } = await setup({ colleague: "林越" });
 		const line = "@林越 计时先按 at 走，要不要加 startedAt 以后再说";
-		await say({ text: line, kind: "decision" });
+		await say({ text: line });
 		const state = await snapshot();
 		const message = lastSpoken(state, PROJ, line);
 		expect(message?.mentions).toContain("林越");
@@ -504,13 +504,13 @@ describe("过程话可以连发（「一轮一句结论」已降级为 rules.md 
 });
 
 describe("要我选：带 options", () => {
-	it("2–6 个选项：落 kind=choice、自动叫我、原样存进消息", async () => {
+	it("2–6 个选项：自动叫我、原样存进消息", async () => {
 		const box = await setup();
 		const output = await box.say({ text: "先做哪个？", options: ["首页", "登录页"] });
 		expect(output).toContain("已发到");
 		const state = await box.snapshot();
 		const last = lastOf(state, PROJ);
-		expect(last?.kind).toBe("choice");
+		expect(last?.kind).toBe("chat");
 		expect(last?.options).toEqual(["首页", "登录页"]);
 		expect(last?.mentions).toContain(OWNER);
 	});

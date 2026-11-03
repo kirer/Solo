@@ -64,7 +64,7 @@ const dm: Channel = {
 
 const directory = directoryOf({ lin: "林越" });
 const state = stateOf([dm], {
-	[dm.id]: [{ seq: 1, at: AT, from: "lin", kind: "say", text: "改完了", mentions: [], read: false } as never],
+	[dm.id]: [{ seq: 1, at: AT, from: "lin", kind: "chat", text: "改完了", mentions: [], read: false } as never],
 });
 
 /** 投影出来的一个对象，字段集合必须与 DTO 一字不差。 */

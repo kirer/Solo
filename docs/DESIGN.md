@@ -137,8 +137,8 @@ CORE §12 说「以后用 `harness.inspect()` 派生，而不是把思考落库�
 
 **「文件」页签是插件画的**（`seed/plugins/文件树/`）：私聊看那个人的 `workspace/`，团队频道看
 团队的 `workspace/`，全员频道没有工作区就不画这个页签。点开一个文件就地预览：图片 / markdown /
-代码给文本，HTML 放进 `sandbox=""` 的 iframe（永远不执行脚本）。早先「示范」插件也注册过一个
-`rightPanel.tab`（一张死的插件清单），已删 —— 那个页签的位置交给文件树。
+代码给文本，HTML 放进 `sandbox=""` 的 iframe（永远不执行脚本）。`rightPanel.tab` 只给文件树用 ——
+插件清单在「设置 → 插件」里，页签不该只列一张清单。
 
 **详情不重复技能与记忆**：那两样各有自己的 tab。人物档案里只留「汇报给 / 在哪些频道 /
 预置提示词」。「活跃频道」是**两列网格**，每格一个**群组图标（按 `channel.members` 画真头像）+ 频道名**（名字长了单行省略）——
@@ -239,11 +239,11 @@ v3 的结论不变（我的原话：不要分组，直接平铺）。v4 只改�
 
 ## 2. 聊天流：一行是什么
 
-### 2.1 行的种类（定死，未命中的 kind 不画）
+### 2.1 行的种类（定死）
 
 | 行 | 什么时候 | 默认高度 |
 |---|---|---|
-| `say` | 人说的话（`say` / `chat` / `question` / `decision` / `report`） | 一行头 + 正文 |
+| `say` | 人说的话（`kind: "chat"`） | 一行头 + 正文 |
 | `live` | **正在跑的一轮**（派生，不落库）：某个人在这个频道里被叫醒、还没回话 | 一行 |
 | `note` | 系统留痕（**只画后台命令那条**，`noteOf: "run"`；其余不画，ADR-047） | 24px |
 | `divider` | 时间分隔 | 32px |
@@ -523,7 +523,7 @@ $ npm test
   与 `settings.section` 的分区名，`icon`（一个 SVG 元素）只给 `settings.section` 的左栏用。
 - 插件拿到 `ui = { h, React, api, store, useStore, register }`：`store` 是界面状态的快照 +
   动作（`openChannel` / `send` / `getState` …），`useStore` 是宿主那个订阅钩子 ——
-  插件组件靠它跟着界面变（示范插件在输入框旁边显示当前频道名就是这么写的）。
+  插件组件靠它跟着界面变（订阅读到的状态一变，格子就重画）。
 - 插件自带样式的用 `style:` 一段 CSS，宿主插进 `<head>`；宿主只给插槽容器的外部留白，
   不给插件画任何外框。**横排插槽里的东西自己负责尺寸**，否则会把那一行撑开。
 - 插槽由宿主文件声明（`Sidebar.tsx` / `App.tsx` / `Stream.tsx` / `Composer.tsx` /
@@ -821,7 +821,7 @@ v3 的 token 全部保留，**新增四档，只给轨迹用**：
 |---|---|
 | 侧栏频道行、未读、点名 | `GET /api/channels` 的 `ViewChannel` |
 | 侧栏 / 右栏的群头像 | `ViewChannel.members`（不含我）；人物档案的「活跃频道」用 `ViewPersonProfile.channels[].members` |
-| 等我选的选项卡 | `ViewMessage.options`（`kind: "choice"` 的那几条） |
+| 等我选的选项卡 | `ViewMessage.options`（带选项、我还没答的那一条） |
 | 附件的预览 / 下载 | `GET /api/uploads/:id?preview=1` / `?download=1`（按真实 mime 决定 `Content-Type`） |
 | 消息、@、引用、附件、已读 | `GET /api/channels/:id` 的 `ViewMessage` |
 | 新消息 | `GET /api/channels/:id/stream` 的 `create` |
@@ -1051,7 +1051,7 @@ node ~/.pi/agent/skills/design-taste-frontend/scripts/inspect.mjs http://127.0.0
 | 设置弹窗（左栏分区 + 右栏详情；外观） | 保留 | 再加一项「轨迹默认展开」（P2） |
 
 **「需要你」只认点名找我。** 前端用 `message.needsYou`，删掉自己那份第二判断
-（`rows.ts` 的 `isNeed()` 曾经只认 `kind === "question"`，于是 `kind: "decision"`
-的拍板消息不会被标出来）。后端判据是「不是我自己发的 + **正文里第一个被点名的人是我**」——
+（`rows.ts` 的 `isNeed()` 曾经另按消息标签判，和后端漂了：拍板消息不会被标出来）。
+后端判据是「不是我自己发的 + **正文里第一个被点名的人是我**」——
 「@林越 放开做，改完 @沈舟 复测、@我 报一句」是派活给林越，末尾的 `@我` 是让林越
 回头找我，不是现在找我：它不该挂「需要你」、不该进「找你」、也不该在侧栏亮数字。

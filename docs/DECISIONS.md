@@ -1289,3 +1289,36 @@
   `src/core/channel/turn/finish.ts`、`src/core/channel/tools/{index,context}.ts`、
   `src/core/agent/sections.ts`、`src/core/layout.ts`、`src/shell/{seed,main,assemble}.ts`、
   `scripts/prompt-fixture.ts`、`test/core/{tools-actions,prompt-render,seed-contract,shell,no-hardcoded-text}.test.ts`。
+
+## ADR-061 消息只有两种 kind；出厂不再带「示范」插件
+
+- **背景**：写入侧会产出 7 种 `kind`（`chat` / `say` / `question` / `choice` / `decision` /
+  `report` / `note`），Web 接口还允许客户端传任意值。但**行为上只区分两种**：`note` 与
+  非 `note`。`say` 工具的 `kind` 参数只有 `decision` / `report`，没有任何读者；`question` /
+  `choice` 由代码写、也没人读（是否在等我选，判的是 `options`）；前端的 `SAY_KINDS` 只是
+  「不是 note」的另一种写法；`rules.ts` 还在判一个已经跟着工单删掉的 `work`。文档说
+  「按 kind 决定显示」，界面上这几种画法完全一样 —— 这是 ADR-060 那条判据的又一个实例：
+  **没有消费者的概念不上内核**。
+- **决策**：
+  1. 写入侧只允许两种：`chat`（默认）与 `note`（系统留痕）。`say` 去掉 `kind` 参数；
+     收尾补发不再打 `say`；`POST /api/channels/:id/messages` 不再收 `kind`；`write` /
+     `post` / `ownerSpeak` 的类型收成 `readonly kind?: "note"` —— 想加第三种，编译就不过。
+  2. 读侧只有 `channel/types.ts` 的 `spokenKind()` 一个判据：`note` 与旧版本的过程行
+     （`think` / `tool` / `work` / `step`）不算发言。`messageView` 在这里把旧 kind 归一成
+     `chat` / `note`，DTO 类型收成 `"chat" | "note"`；界面不再认识旧 kind（删 `SAY_KINDS`、
+     `LEGACY_PROCESS_KINDS`），未读、侧栏预览、「找你」共用同一个判据。
+  3. 删除 `seed/plugins/示范/`：它默认装上并生效，给每个 agent 多一个 `clock` 工具、
+     每轮提示词多一句、侧栏与输入框各多一块 UI，自己的清单里写着「没有实际用途」。
+     插件的契约在 `src/core/plugin/api.ts` 与 `docs/WEB-API.md` §13.4，不需要一个常驻样板。
+     现网 `<appRoot>/plugins/示范/` 是用户数据，不删。
+- **为什么可以删而不伤行为**：唯一被读的区分是「算不算人说的话」；旧数据在投影层归一，
+  不改库、不迁移。带选项的消息叫醒我靠的是 `options` 自动进 `mentions`，与 kind 无关。
+  `clock` 的能力与 `run` 重叠（`date`），去掉后工具表与提示词各少一条。
+- **代价**：旧数据里的 `choice` 消息以前不进聊天流（只画在输入框上方的选项卡里），归一后
+  作为普通气泡留在记录里 —— 问题本来就该留在记录里，这是修正。只有过程行的旧频道，
+  侧栏预览从「最后一条机器输出」变成空 —— 机器输出不是人话。
+- **执行**：`src/core/channel/{types,rules,write,post}.ts`、`channel/tools/say.ts`、
+  `channel/turn/finish.ts`、`src/app/{project,chat,types}.ts`、`src/view/dto.ts`、
+  `src/shell/{assemble,seed,main}.ts`、`ui/app/src/stream/model.ts`、`seed/text/tools.md`、
+  `seed/plugins/示范/`（删）、`test/core/{say-contract,turn,view,attention,mention-alias,dto}.test.ts`、
+  `test/ui/{stream-model,choice}.test.ts`、`scripts` 无改动。

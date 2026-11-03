@@ -39,13 +39,14 @@ type PostInput = {
 	readonly from: string;
 	readonly text: string;
 	readonly at: number;
-	readonly kind?: string;
+	/** 唯一的非默认 kind：系统留痕。发言不传，落库就是 `chat`。 */
+	readonly kind?: "note";
 	/** 留痕的种类（`run` = 后台命令跑完）；只对 `note` 有意义，界面据此收成一行。 */
 	readonly noteOf?: string;
 	readonly replyTo?: number;
 	/** 名册：给了就按名册把 `@我` / `@CEO` 落库成规范 slug。 */
 	readonly roster?: MentionRoster;
-	/** 正文里没写、但要记进 `mentions` 的 slug（`decision` 自动补 `owner` 走这条）。 */
+	/** 正文里没写、但要记进 `mentions` 的 slug（带 `options` 时要叫醒我）。 */
 	readonly mention?: readonly string[];
 	/** 不想唤醒任何人（比如系统留痕）。缺省会唤醒。 */
 	readonly wake?: false;

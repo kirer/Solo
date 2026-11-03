@@ -46,7 +46,8 @@ export type CoreServices = {
 			readonly channelId: string;
 			readonly text: string;
 			readonly replyTo?: number;
-			readonly kind?: string;
+			/** 唯一的非默认 kind：系统留痕。发言不传。 */
+			readonly kind?: "note";
 			/** 附件引用。给了模型就能真的看见这些图片 / 读到这些文件。 */
 			readonly attachments?: readonly Attachment[];
 		},
@@ -64,7 +65,8 @@ export type CoreServices = {
 			readonly from: string;
 			readonly text: string;
 			readonly replyTo?: number;
-			readonly kind?: string;
+			/** 唯一的非默认 kind：系统留痕。发言不传。 */
+			readonly kind?: "note";
 			/** 附件引用。给了模型就能真的看见这些图片 / 读到这些文件。 */
 			readonly attachments?: readonly Attachment[];
 			/** 不按 @ 推算，直接叫醒这几个人（系统留痕叫人时用）。 */

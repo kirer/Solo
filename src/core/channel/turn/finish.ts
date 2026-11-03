@@ -211,7 +211,6 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 				// 补发**要照常叫醒** —— 他说的是「@周岚 请验收」，不叫醒等于把结论发进
 				// 一个没人看的房间。实测 2026-11-02：沈舟的交付结论就是这么落进频道的，
 				// 周岚没醒，团队停摆。
-				kind: "say",
 			},
 			context,
 		);

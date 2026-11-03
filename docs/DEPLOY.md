@@ -20,7 +20,7 @@
   assistant/<slug>/                # 助理：identity.md / memory.md / skills/ / workspace/
   prompt/                          # 提示词模板（改完下一条消息生效）
   text/                            # 工具文案（改完要重启：装配时定型）
-  plugins/                         # 插件（含出厂三个）
+  plugins/                         # 插件（含出厂两个）
   uploads/                         # 附件
 
 ~/.solo/                           # 用户根（--user-root）

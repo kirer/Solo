@@ -35,7 +35,6 @@ export type PostBody = {
 	readonly text?: string;
 	readonly replyTo?: number;
 	readonly from?: string;
-	readonly kind?: string;
 	/** `["<id>"]` 与 `[{ id }]` 两种写法都收（脚本 / 前端的自然写法不同）。 */
 	readonly attachments?: readonly (string | { readonly id?: unknown })[];
 };
@@ -84,8 +83,6 @@ export function createChat(shell: CoreServices) {
 				from,
 				text,
 				...(typeof body.replyTo === "number" ? { replyTo: body.replyTo } : {}),
-				// 语义标签由说话的人自己声明：团队频道里带 `decision` 的话才会进团队记忆。
-				...(typeof body.kind === "string" && body.kind !== "" ? { kind: body.kind } : {}),
 				...(attachments.length === 0 ? {} : { attachments }),
 			});
 			return { ok: true, seq: result.seq, delivered: result.delivery.delivered, failed: result.delivery.failed };

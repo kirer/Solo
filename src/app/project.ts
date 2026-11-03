@@ -17,7 +17,7 @@ import { OWNER_SLUG, labelsOf, type Identity } from "../core/agent/identity.ts";
 import { type MemoryStamp } from "../core/agent/memory.ts";
 import { memoryDigest, sectionsOf } from "../core/md/memory.ts";
 import { conversationFor, labelIn, type DirectoryState } from "../core/agent/roster.ts";
-import { chatKind, type Channel, type ChannelState, type Message } from "../core/channel/types.ts";
+import { chatKind, spokenKind, type Channel, type ChannelState, type Message } from "../core/channel/types.ts";
 import { readMarkOf, unreadCount } from "../core/channel/rules.ts";
 import { excerptOf } from "../core/md/oneline.ts";
 import type { TextCatalog } from "../core/md/catalog.ts";
@@ -54,9 +54,6 @@ export function idOf(directory: DirectoryState, slug: string): number {
 	if (slug === OWNER_SLUG) return 0;
 	return conversationFor(directory, slug) ?? -1;
 }
-
-/** 「人说的话」的几种 kind。侧栏预览与「找你」共用 —— 过程投影与系统告警都不算。 */
-const SPOKEN_KINDS = new Set(["chat", "say", "question", "decision", "report"]);
 
 /**
  * 显示用正文：我只有「我」这一个叫法，`owner` 是内部 slug。
@@ -97,18 +94,10 @@ export function channelList(
 		if (channel.archived === true) continue;
 		const messages = state.messages[channel.id] ?? [];
 		const last = messages[messages.length - 1];
-		// 侧栏预览只取「人说的话」。两层挑：
-		//
-		// 1. 优先 `SPOKEN_KINDS`（真的在对人说话的那几种）。
-		// 2. 一层都没有时退回「最后一条非 note 的」。
-		//
-		// 为什么要分两层：`work`/`tool` 是运行时记的命令行与工具名，一条频道里
-		// 大量出现（实测侧栏整列显示 `$ cd /Users/kirer/teams/...`）。拿它当预览，
-		// 我扫一眼会以为这个频道里没人说话，全是机器输出 —— 而其实下面就有正常对话。
-		// `note` 是系统告警（接力到上限、投递失败），同理不能当预览。
-		const lastSpoken =
-			messages.findLast((item) => SPOKEN_KINDS.has(item.kind)) ??
-			messages.findLast((item) => item.kind !== "note");
+		// 侧栏预览只取「人说的话」：系统告警与旧版本的过程行（`$ cd …`、工具名）都不是发言，
+		// 拿它们当预览，我扫一眼会以为这个频道里没人说话 —— 而其实下面就有正常对话。
+		// 判据只有 `spokenKind` 一处。
+		const lastSpoken = messages.findLast((item) => spokenKind(item.kind));
 		const unread = unreadCount(state, channel.id, slug);
 		// 「@ 我」的条数：未读里**点名找我**的那些（判据同 `needsYou`：正文第一个点名的是我）。
 		// 界面上它们比普通未读更红。
@@ -172,7 +161,8 @@ export function messageView(
 		from: idOf(directory, message.from),
 		fromSlug: message.from,
 		fromLabel: labelIn(directory, message.from),
-		kind: message.kind,
+		// 界面只认两种 kind：旧数据里的语义标签算发言，过程行算留痕（不画）。
+		kind: spokenKind(message.kind) ? "chat" : "note",
 		...(message.noteOf === undefined ? {} : { noteOf: message.noteOf }),
 		text: spokenText(message.text),
 		mentions: message.mentions.map((slug) => ({
@@ -310,8 +300,6 @@ export function withLabels(directory: DirectoryState, identities: readonly Ident
 const ATTENTION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 const ATTENTION_MAX = 60;
 
-/** 算「发言」的 kind。没写 kind 的老消息按发言算（历史数据里 kind 缺省就是说话）。 */
-
 export function attentionItems(
 	state: ChannelState,
 	directory: DirectoryState,
@@ -324,10 +312,10 @@ export function attentionItems(
 		const mark = readMarkOf(state, viewer, channel.id);
 		for (const message of state.messages[channel.id] ?? []) {
 			if (now - message.at > ATTENTION_WINDOW_MS) continue;
-			// 只收「说出口的话」。历史的过程投影（think / tool / work）和系统 note 不是发言，
+			// 只收「说出口的话」。旧版本的过程投影（think / tool / work）和系统 note 不是发言，
 			// 它们里的「要不要 / 还是 / 怎么定」是模型的自言自语（实测 60 条里有 40 多条
 			// 是英文内心独白），进来就把这个列表变成噪音。
-			if (!SPOKEN_KINDS.has(message.kind)) continue;
+			if (!spokenKind(message.kind)) continue;
 			// 点名找我的才进（别人在先、末尾顺手 @我 的那种是派活给别人，见 `addressedTo`）。
 			if (!needsYou(message)) continue;
 			out.push({

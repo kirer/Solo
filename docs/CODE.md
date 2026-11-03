@@ -24,7 +24,7 @@ src/
   shell/          装配与启动：assemble / main / serve / seed
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（全员层）/
-                  `plugins/`（示范 / 模型管理 / 文件树）/ `assistant/`（助理身份 + 个人技能）
+                  `plugins/`（模型管理 / 文件树）/ `assistant/`（助理身份 + 个人技能）
 scripts/          九个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
                   （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表、
                   自建更新源（update-server，只读静态目录）、更新密钥（update-key，跑一次）、
@@ -119,7 +119,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/tools/channel-choice.ts` | 99 | `defaultChannel`（显式 id 或**频道名** → 唤醒记录 `reply` → 群里最近活跃 → 私聊**报错**）/ `othersAwoken`（同一条消息还叫醒了谁）。频道名只在**自己所在的**频道里按全等找，重名报错列 id，不做模糊匹配（ADR-011） |
 | `channel/tools/recall.ts` | 59 | `recallText`（翻自己 / 团队记忆，出口脱敏）/ `renderLine`（历史一行） |
 | `channel/tools/guards.ts` | 106 | 安全闸与上限：`isPass` / `monologueOpener` / `clip` / `resolveInWorkspace`、`SAY_LIMIT` / `GROUP_SAY_LIMIT` / `sayLimitOf` / `MODEL_LIMIT` |
-| `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），带 `options`（2–6 个）时落 `kind=choice` 并自动 @我（ADR-035）；`defaultChannel` 兜底落到私聊**直接报错**。`hire` 是三个动作：`create`（默认）/ `fire`（只移到 `members/.retired/`）/ `models`（ADR-033）；`create` 带 `team` 而那个团队还没有 README 时，回话里点明「团队频道还不存在」（ADR-040）。`file` 写 `teams/<slug>/README.md` 或 `members/<slug>/identity.md` 后调 `syncTeam` 重投影频道（旧团队与新团队各一次）。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
+| `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），带 `options`（2–6 个）时自动 @我（ADR-035）；`defaultChannel` 兜底落到私聊**直接报错**。`hire` 是三个动作：`create`（默认）/ `fire`（只移到 `members/.retired/`）/ `models`（ADR-033）；`create` 带 `team` 而那个团队还没有 README 时，回话里点明「团队频道还不存在」（ADR-040）。`file` 写 `teams/<slug>/README.md` 或 `members/<slug>/identity.md` 后调 `syncTeam` 重投影频道（旧团队与新团队各一次）。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
 | `channel/unanswered.ts` | 82 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛） |
 | `plugin/manifest.ts` | 159 | `readPluginManifest` / `listPluginSlugs` —— `plugins/<slug>/plugin.md` 的头（`name` / `description` / `enabled`）+ 目录里有没有 `plugin.ts`（或 `plugin.js`）与 `client.js`；缺清单是一条**错误**不是异常。`writePluginEnabled` 只改 `enabled` 一行；`installPluginFiles` 把界面选中的整个文件夹（`{path, base64}[]`）校验后原样落盘、`removePluginFolder` 删整个目录（装 / 卸，见 CORE §13） |
 | `plugin/api.ts` | 165 | 插件的四个动作 + 一个查询：`PluginApi`（`tool` / `prompt` / `route` / `on("message")`，外加 `Type` / `text` / `log` / `workspace`（= 应用根，字段名沿用旧称）/ `scope(channelId)`）+ `createPluginApi`，每个注册只往 `PluginSinks` 的一个数组里 push。`scope` 只回答「这个频道的工作区根在哪」（ADR-036），路径守卫在插件里 |
@@ -168,7 +168,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
 | `src/api/types.ts` | **type-only 再导出** `src/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
-| `src/stream/model.ts` | **消息 → 行模型，纯函数**：`buildRows({ messages, running, now })` —— 时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 单独一行，再插一条 `live` 占位（正在跑、还没回话的那一轮；同一个人已经在这条之后发过言就不插）。历史库里的 `think`/`tool`/`work`/`step` 直接过滤，不画 |
+| `src/stream/model.ts` | **消息 → 行模型，纯函数**：`buildRows({ messages, running, now })` —— 时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 只在带 `noteOf`（后台命令跑完）时画一行，其余不画，再插一条 `live` 占位（正在跑、还没回话的那一轮；同一个人已经在这条之后发过言就不插）。旧 kind 在投影层已归一成 `chat`/`note`（ADR-061），这里不再认历史标签 |
 | `src/stream/RunBlock.tsx` | 一轮的折叠行 + 步骤树。默认「在跑就展开、历史收起」，手动改过记 `localStorage["solo.trace.open"]`；0 步的那一轮不给箭头、也不拉步骤；拉的过程中不画占位字；步骤详情按 kind 分四种（命令 / 文件 / 思考 / 说话），同一时间只展开一个 |
 | `src/stream/AttachmentPreview.tsx` | 非图片附件点开看一眼：**按响应头**决定（图片 / PDF → `object URL`，`text/*` → `<pre>`，其余说「不能预览」）。不按文件名判断 —— 名字是用户起的 |
 | `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`live` 行交给 `LiveRow`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`）。群聊私聊同一条路径 |
@@ -245,7 +245,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改后台命令（`run` 的 `background`） | `channel/jobs.ts`（起 / 记 / 收）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo` | 结果回到**起跑的那个频道**，以 `note` 落库、`wakeTo` 叫醒起跑的人（`note` 默认谁也不叫）；最多 30 分钟；输出只回尾巴 8000 字（ADR-013） |
 | 改一条消息的字数上限 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` | 群聊 600 / 私聊 1200，看的是目标频道的 `chatKind`（ADR-014） |
 | 插件要读某个频道的目录（文件树这类） | `PluginApi.scope(channelId)`（`plugin/api.ts`）+ `shell/assemble.ts` 的 `pluginScope` | 核心只给**根**（私聊 → 那个人的 `workspace/`，团队频道 → 团队 `workspace/`，全员频道 → `undefined`）。路径守卫、大小上限、拒符号链接全在插件里做（ADR-036） |
-| 改「等我选」的判据 / 选项消息 | `channel/types.ts` 的 `Message.options` + `channel/tools/say.ts`（2–6 个、去重、强制 `kind=choice` 并 @我）+ `ui/app/src/composer/choice.ts` + `Composer.tsx` | 回答不新增路由、不新增 `kind`：我发的下一条就是回答（`replyTo` 指向那条）。`say` 的 options 是**决策**，不是「逐条列出」（ADR-035） |
+| 改「等我选」的判据 / 选项消息 | `channel/types.ts` 的 `Message.options` + `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `ui/app/src/composer/choice.ts` + `Composer.tsx` | 回答不新增路由、不打标签：我发的下一条就是回答（`replyTo` 指向那条）。`say` 的 options 是**决策**，不是「逐条列出」（ADR-035） |
 | 改附件（落盘 / 上限 / 清理 / 预览） | `channel/attachments.ts`（字节与元数据）+ `app/uploads.ts`（语义：内联还是给路径） | 上限与「先读完再比等于没有上限」都在 `channel/attachments.ts`；别把字节塞进频道文档（教训）。预览按**真实 mime** 发 `Content-Type`（HTML 永远 `text/plain`），前端看响应头（ADR-037） |
 | 改界面字段 | `view/dto.ts`（先改 `docs/WEB-API.md`）+ 投影在 `app/project.ts` | DTO 是唯一权威，`ui/app/src/api/types.ts` 只是它的 type-only 再导出 —— 改字段界面立刻编译不过。字段必须有前端消费者 |
 | 改界面样式 / 交互 | `ui/app/` | **改完必须 `npm run ui:build`**；文件职责见 §2.2 |
@@ -253,7 +253,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `<appRoot>/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
-| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（示范插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
+| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
 | 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028） |
 | 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |
@@ -300,7 +300,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 82 文件 / 769 例，应该 <3s
+npm test             # 82 文件 / 764 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
@@ -383,7 +383,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 | 文件 | 测什么 |
 | --- | --- |
-| `stream-model.test.ts` | `buildRows()`：同一人连发 `grouped` / `cont` 的口径、时间分隔、历史 `think/tool/work` 被过滤 |
+| `stream-model.test.ts` | `buildRows()`：同一人连发 `grouped` / `cont` 的口径、时间分隔、`note` 只在带 `noteOf` 时画 |
 | `source-contract.test.ts` | 源码里接没接上：代码块复制按钮（生成的 HTML 有按钮 + 启动时装了委托）、设置面板选中态（`aria-checked` 两边一致）、频道 `EventSource` 只注册 `create` / `error` |
 | `sidebar-order.test.ts` | `sortChannels`：侧栏排序 |
 | `unread-badge.test.ts` | `unreadLabel`：未读徽标文案 |

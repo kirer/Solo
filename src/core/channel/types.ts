@@ -46,11 +46,11 @@ export type Message = {
 	/** 引用的那条消息的 seq。 */
 	replyTo?: number;
 	/**
-	 * 消息类别。生成侧只有：`chat` 普通发言、`say`（agent 说的话）、`note` 系统留痕
-	 * （不唤醒、不计未读）、`question` / `decision` / `report` 语义标签。
+	 * 消息类别，只有两种：`chat` 发言、`note` 系统留痕（不唤醒、不计未读）。
 	 *
-	 * 类型是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
-	 * 这些不再产生的 kind（ADR-081 删掉过程投影后不清理旧数据），读取侧按普通行显示。
+	 * 类型是 `string` 而不是联合类型：历史库里还躺着旧版本写过的 kind（`say` / `question` /
+	 * `decision` / `report` / `think` / `tool` / `work` / `step`）。读的时候只经
+	 * `spokenKind` 一处判断，不再写新值（ADR-061）。
 	 */
 	kind: string;
 	/**
@@ -131,6 +131,20 @@ export const ChannelDoc = defineDoc<ChannelState>({
 		return info.deltasSinceBase >= (longChannel ? 16 : 64);
 	},
 });
+
+/** 旧版本写过、现在不再产生的过程行 kind（ADR-081 删掉过程投影后不清理旧数据）。 */
+const LEGACY_PROCESS_KINDS = new Set(["think", "tool", "work", "step"]);
+
+/**
+ * 这条消息算不算「人说的话」。
+ *
+ * 今天只有 `chat` 与 `note` 两种 kind，这个函数本该是一句 `kind !== "note"`；
+ * 多出来的那个集合只服务旧数据 —— 那些过程行不是发言，不能计未读、不能进侧栏预览、
+ * 也不能进「找你」。判断只有这一处，界面拿到的已经是归一过的 `chat` / `note`。
+ */
+export function spokenKind(kind: string): boolean {
+	return kind !== "note" && !LEGACY_PROCESS_KINDS.has(kind);
+}
 
 /** 我的 slug。不是 agent，但出现在成员表里。 */
 export const OWNER = "owner";

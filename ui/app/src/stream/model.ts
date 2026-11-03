@@ -3,7 +3,7 @@
  *
  * 这个文件只做两件事：**真实消息怎么排**（时间分隔、一个人半分钟内连发算一段），以及
  * **正在跑的那一轮**（`live` 行）插在哪儿。系统留痕不画（ADR-047），只有后台命令那条
- * 折成一行。
+ * 折成一行。消息只有 `chat` / `note` 两种 kind —— 旧数据已在投影层归一（ADR-061）。
  *
  * 过程（思考 / 跑命令 / 改文件）**是回复的一部分**：每一轮在它的结论上面留一块折叠的
  * 过程块（`process` 行），答案照旧是一条消息。它们由轨迹派生，不是消息，不落第二份。
@@ -17,18 +17,6 @@
 import { isNeed } from "../rows.ts";
 import type { Message, Turn } from "../api/types.ts";
 import { clockTime, dayLabel, sameDay } from "../lib/format.ts";
-
-/** 说人话的 kind 走 say 行。其余（含历史里的 think/tool/work）不走这一行。 */
-const SAY_KINDS = new Set(["say", "chat", "report", "decision", "question"]);
-
-/**
- * 历史库里还有的「过程行」kind（ADR-081 已停止产生，旧数据不清理）。
- *
- * 处理方式：**直接过滤掉**，不画成普通行。理由：这些是机器执行留痕（`$ ls`、
- * 「读了一个文件」），画成普通消息会被误读成「他说了这句话」，也正好是 ADR-081 要
- * 消除的噪音。它们仍然在库里、`chats(action=read)` 读得到，只是这一屏不显示。
- */
-const LEGACY_PROCESS_KINDS = new Set(["think", "tool", "work", "step"]);
 
 /** 同一个人连续发言：超过这个间隔就不再算「同一段」（头像与名字重画一次）。 */
 const GROUP_MS = 2 * 60 * 1000;
@@ -96,7 +84,6 @@ export function buildRows({ messages, running = [], settled = [], now = Date.now
 	}
 
 	for (const message of messages) {
-		if (LEGACY_PROCESS_KINDS.has(message.kind)) continue;
 		// 系统留痕与沉淀账本不进聊天流（ADR-047）：报到、没答上来、看门狗、记忆记账都是
 		// 灰字，一屏对话里插五六条，读起来像日志。数据还在库里、`chats` 读得到。
 		// 后台命令跑完的留痕例外：它折成一行，点开才是输出。
@@ -108,32 +95,27 @@ export function buildRows({ messages, running = [], settled = [], now = Date.now
 		}
 		previous = message;
 
-		if (SAY_KINDS.has(message.kind)) {
-			// 过程属于这一轮：它画在回复的气泡上面，读者先看怎么做、再看结论。
-			const turn = byReply.get(message.seq);
-			if (turn !== undefined) previousSay = undefined;
-			const gap = previousSay === undefined ? Number.NaN : message.at - previousSay.at;
-			const grouped = previousSay !== undefined && previousSay.fromSlug === message.fromSlug && gap <= GROUP_MS && gap >= 0;
-			rows.push({
-				type: "say",
-				key: `s-${message.seq}`,
-				message,
-				grouped,
-				cont: grouped && gap <= CONT_MS,
-				need: isNeed(message),
-				...(turn === undefined ? {} : { turn }),
-			});
-			previousSay = message;
-			continue;
-		}
-
 		if (message.kind === "note") {
 			rows.push({ type: "note", key: `n-${message.seq}`, message });
 			previousSay = undefined;
 			continue;
 		}
 
-		// 未命中的 kind：不画、不占高。（宁可少一行，也不添一种卡片。）
+		// 过程属于这一轮：它画在回复的气泡上面，读者先看怎么做、再看结论。
+		const turn = byReply.get(message.seq);
+		if (turn !== undefined) previousSay = undefined;
+		const gap = previousSay === undefined ? Number.NaN : message.at - previousSay.at;
+		const grouped = previousSay !== undefined && previousSay.fromSlug === message.fromSlug && gap <= GROUP_MS && gap >= 0;
+		rows.push({
+			type: "say",
+			key: `s-${message.seq}`,
+			message,
+			grouped,
+			cont: grouped && gap <= CONT_MS,
+			need: isNeed(message),
+			...(turn === undefined ? {} : { turn }),
+		});
+		previousSay = message;
 	}
 
 	return insertLive(rows, messages, running);
@@ -153,7 +135,7 @@ function insertLive(rows: Row[], messages: readonly Message[], running: readonly
 		.filter(
 			(turn) =>
 				!messages.some(
-					(message) => message.fromSlug === turn.slug && message.seq > turn.seq && SAY_KINDS.has(message.kind),
+					(message) => message.fromSlug === turn.slug && message.seq > turn.seq && message.kind !== "note",
 				),
 		)
 		.sort((left, right) => left.startedAt - right.startedAt);

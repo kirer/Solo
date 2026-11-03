@@ -14,7 +14,8 @@ type AppendInput = {
 	readonly from: string;
 	readonly text: string;
 	readonly at: number;
-	readonly kind?: string;
+	/** 唯一的非默认 kind：系统留痕。发言不传，落库就是 `chat`。 */
+	readonly kind?: "note";
 	readonly noteOf?: string;
 	readonly replyTo?: number;
 	readonly roster?: MentionRoster;

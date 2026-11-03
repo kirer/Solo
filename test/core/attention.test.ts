@@ -41,7 +41,7 @@ function stateOf(channels: Channel[], messages: Record<string, Message[]>): Chan
 }
 
 function message(seq: number, from: string, text: string, extra: Partial<Message> = {}): Message {
-	return { seq, at: AT - (10 - seq) * 60_000, from, text, mentions: [], kind: "say", ...extra };
+	return { seq, at: AT - (10 - seq) * 60_000, from, text, mentions: [], kind: "chat", ...extra };
 }
 
 const dm: Channel = { id: "dm:owner-lin", title: "林越", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
@@ -52,7 +52,7 @@ describe("attentionItems", () => {
 	it("显式 @ 我的消息进列表，并带上回原频道的锚点", () => {
 		const state = stateOf(
 			[team],
-			{ [team.id]: [message(1, "lin", "@owner 联机要不要加？", { mentions: ["owner"], kind: "question" })] },
+			{ [team.id]: [message(1, "lin", "@owner 联机要不要加？", { mentions: ["owner"], kind: "chat" })] },
 		);
 		const items = attentionItems(state, directory, "owner", AT);
 		expect(items).toHaveLength(1);

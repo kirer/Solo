@@ -19,11 +19,6 @@ export function createSayTool(deps: CoreToolDeps) {
 			mention: Type.Optional(Type.String({ description: t("say.param.mention") })),
 			channel: Type.Optional(Type.String({ description: t("say.param.channel") })),
 			replyTo: Type.Optional(Type.Number({ description: t("say.param.replyTo") })),
-			kind: Type.Optional(
-				Type.Union([Type.Literal("decision"), Type.Literal("report")], {
-					description: t("say.param.kind"),
-				}),
-			),
 			options: Type.Optional(
 				Type.Array(Type.String(), {
 					description: t("say.param.options"),
@@ -39,7 +34,6 @@ export function createSayTool(deps: CoreToolDeps) {
 			mention?: string;
 			channel?: string;
 			replyTo?: number;
-			kind?: "decision" | "report";
 			options?: readonly string[];
 		},
 		api: { conversationId: string | number },
@@ -91,8 +85,8 @@ export function createSayTool(deps: CoreToolDeps) {
 				);
 			}
 
-			// 要我选：2–6 个、去空白、不重复。带选项就一定会叫醒我，kind 固定成 `choice`
-			// （回答就是普通消息 + replyTo，界面按最后一条没人答过的 choice 画选项卡）。
+			// 要我选：2–6 个、去空白、不重复。带选项就一定会叫醒我
+			// （回答就是普通消息 + replyTo，界面按最后一条没人答过的 options 画选项卡）。
 			const options = (args.options ?? []).map((item) => item.trim()).filter((item) => item !== "");
 			if (args.options !== undefined) {
 				if (options.length < 2 || options.length > 6) {
@@ -102,10 +96,9 @@ export function createSayTool(deps: CoreToolDeps) {
 			}
 			const choosing = options.length > 0;
 
-			// 带 mention：验证成员、补 @ 前缀、默认 kind=question。
+			// 带 mention：验证成员、补 @ 前缀。
 			// `@我` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。
 			let messageText = args.text;
-			let kind: string | undefined = args.kind;
 			if (args.mention !== undefined && args.mention !== "") {
 				const channel = targetChannel;
 				const typed = args.mention.replace(/^@/, "");
@@ -120,15 +113,12 @@ export function createSayTool(deps: CoreToolDeps) {
 					);
 				}
 				messageText = parseMentions(args.text, roster).includes(who) ? args.text : `@${who} ${args.text}`;
-				kind = args.kind ?? "question";
 			}
 
 			// 要我拍板只有一条路：**正文显式 @了我**（`@我` / `@owner` 已由 parseMentions 解析命中）。
-			//
-			// 曾经 `decision` 标签也会自动把我加进收件人（「没点别人就算找我」）。实测下来，
-			// 助理几乎每条公告都打 decision，而它常在私聊里对着团队成员派活 —— 那些人不是私聊
-			// 成员，「没点别人」就成立，于是每条通告都变成「需要你」（43 条私聊里 13 条）。
-			// 拍板要我看见，就写 @我；标签不代劳（ADR-009）。
+			// 不按「没点别人就算找我」推算：助理常在私聊里对着团队成员派活，那些人不是私聊
+			// 成员，「没点别人」就成立，于是每条通告都变成「需要你」（实测 43 条私聊里 13 条）。
+			// 拍板要我看见，就写 @我（ADR-009）。
 			const typedMentions = parseMentions(messageText, roster);
 			const wakeOwner = typedMentions.includes(OWNER);
 
@@ -141,7 +131,6 @@ export function createSayTool(deps: CoreToolDeps) {
 					at: Date.now(),
 					...(choosing ? { options } : {}),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
-					...(choosing ? { kind: "choice" } : kind === undefined ? {} : { kind }),
 					roster,
 					...((() => {
 						const extra = wakeOwner || choosing ? [OWNER] : [];

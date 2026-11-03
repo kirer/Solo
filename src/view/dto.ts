@@ -70,7 +70,8 @@ export type ViewMessage = {
 	from: number;
 	fromSlug: string;
 	fromLabel: string;
-	kind: string;
+	/** 只有两种：`chat` 发言、`note` 系统留痕。旧数据的 kind 在投影层已归一（ADR-061）。 */
+	kind: "chat" | "note";
 	/** 系统留痕的种类：`run` = 后台命令跑完（界面收成一行，点开看全文）。 */
 	noteOf?: string;
 	text: string;

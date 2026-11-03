@@ -12,7 +12,7 @@ function msg(part: Partial<Message> & Pick<Message, "seq" | "fromSlug">): Messag
 		at: part.seq,
 		from: part.seq,
 		fromLabel: part.fromSlug,
-		kind: "say",
+		kind: "chat",
 		text: "",
 		mentions: [],
 		read: true,

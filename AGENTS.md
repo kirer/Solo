@@ -29,7 +29,7 @@
 <appRoot>/                      ← 应用根：这份安装自带的东西（默认 .solo-app/）
   assistant/<slug>/           ← 助理（知言）本人，形状同 members/<slug>/
   prompt/                     ← 提示词模板
-  plugins/                    ← 插件（含出厂三个）
+  plugins/                    ← 插件（含出厂两个：模型管理、文件树）
   settings.json               ← 模型配置
   core.sqlite                 ← 频道消息、会话、名册
   uploads/                    ← 附件
@@ -78,7 +78,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             82 文件 / 769 例
+test/             82 文件 / 764 例
   ├ test/core/    69 文件（纯函数 + 装配）
   ├ test/ui/      10 文件（界面纯函数与源码约定）
   └ test/desktop/ 3 文件（更新源、就绪行与更新源地址、清单验签与版本比较）
@@ -139,7 +139,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 82 文件 769 例，<3s，必须全绿
+npm test             # 82 文件 764 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -198,13 +198,13 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 界面布局 / 行类型 / 轨迹展示 | `docs/DESIGN.md`（决策稿：改之前先说明原决策错在哪）+ 本文件 §2 的「不画后端没有的东西」 |
 | 启动参数 / 部署方式 / 模型接入（含给某个人换模型、改配置不用重启） | `docs/DEPLOY.md` §3 + `docs/DECISIONS.md` ADR-023 / ADR-024 / ADR-025 | `src/core/runtime/models.ts`（`setupModels` / `syncModels` / `parseModelRef`）+ `shell/assemble.ts` 的 `modelFor` / `refreshModels` + `app/people.ts` 的 `setPersonModel` + `app/models.ts` 的 `list` + 界面在出厂插件 `seed/plugins/模型管理/`（`rightPanel.detail` 插槽） |
 | 桌面壳 / 打包 / 自动更新 / 更新源 | `docs/DEPLOY.md` §9–10 + `docs/DECISIONS.md` ADR-027 / ADR-028 / ADR-029 | `desktop/src/`（`main.ts` / `backend.ts` / `ready-line.ts` / `updates.ts` / `manifest.ts` / `install.ts` / `update-key.ts` / `feed.ts` / `menu.ts`）+ `electron-builder.yml` + `scripts/update-server.ts` / `update-key.ts` / `update-manifest.ts`；壳与后端只靠 `[core] http://…` 一行说话，不 import 内核与界面源码；更新是「清单验签 → zip → 进程外替换」，不是 Squirrel |
-| 消息 `kind` 新增（`chat` / `say` / `question` / `decision` / `report` / `note`） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
+| 消息 `kind`（只有 `chat` / `note`；旧数据的语义标签在投影层归一） | `docs/CORE.md` §4 + §9 + `docs/WEB-API.md` 的消息 `kind` 说明 |
 | 术语改名（项目→团队、公司→全员、`owner` 只在内部保留） | `docs/CORE.md` + `docs/CODE.md` 的路径 + `docs/WEB-API.md` 的字段名 + 本文件；词表：我 / 助理 / 团队 / 成员 / 全员；项目叫 Solo |
 | 删掉界面上看得见的东西（过程投影 / 占位 / 「正在说」草稿 / 系统留痕） | `docs/CORE.md` §9 + `docs/WEB-API.md` 的消息字段与 SSE 事件表 + `docs/DECISIONS.md`；留痕不画见 ADR-047，落在 `ui/app/src/stream/model.ts` 的 `buildRows` + `test/ui/stream-model.test.ts` |
 | 撞上 pi-durable 做不到的事、或为它写了绕路代码 | `docs/CONCESSIONS.md` 追加一行（只追加；处理完写「已处理 + 日期」） |
 | 两个根（应用私有 / 用户根）/ 加一个要落盘的目录 | `docs/DECISIONS.md` ADR-030 + `docs/CODE.md` §1 | `src/core/layout.ts`（**拼路径只在这里**）+ `scripts/check-boundaries.mjs` 的根原语组 + `test/core/layout.test.ts`；不许在业务模块里 `dirname` 推路径 |
 | 加 / 改一个频道给的「工作区」（插件用） | `docs/DECISIONS.md` ADR-036 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `PluginScope` / `scope()` + `shell/assemble.ts` 的 `pluginScope`；**路径守卫留在插件里**，核心只给根 |
-| 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、强制 `kind=choice` 并 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
+| 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
 | 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`** |
 | 解散团队 / 开除成员 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`team/doc.ts` + `syncTeam`）；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删）；都不开新工具 |
 | 本文件的表 | `AGENTS.md` |

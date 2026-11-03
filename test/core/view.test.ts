@@ -48,7 +48,7 @@ describe("侧栏预览只取人说的话", () => {
 		// 拿最后一条当预览，侧栏整列变成 `$ cd /Users/kirer/teams/...`。
 		const state = stateOf([lin], {
 			[lin.id]: [
-				msg(1, "lin", "say", "前端三项改完了，正在收测试。"),
+				msg(1, "lin", "chat", "前端三项改完了，正在收测试。"),
 				msg(2, "lin", "work", "$ cd /Users/kirer/teams/solo && npm test"),
 				msg(3, "lin", "tool", "run"),
 			],
@@ -57,18 +57,32 @@ describe("侧栏预览只取人说的话", () => {
 		expect(channel.preview).toBe("前端三项改完了，正在收测试。");
 	});
 
-	it("只有过程投影时退回最后一条 —— 预览不能空着", () => {
+	it("只有过程投影时没有预览 —— 机器输出不是人话", () => {
 		const state = stateOf([lin], { [lin.id]: [msg(1, "lin", "work", "跑测试")] });
 		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
-		expect(channel.preview).toBe("跑测试");
+		expect(channel.preview).toBe("");
 	});
 
 	it("系统告警永远不当预览，哪怕它是最新的一条", () => {
 		const state = stateOf([lin], {
-			[lin.id]: [msg(1, "lin", "say", "改完了"), msg(2, "owner", "note", "接力到上限（9 次）")],
+			[lin.id]: [msg(1, "lin", "chat", "改完了"), msg(2, "owner", "note", "接力到上限（9 次）")],
 		});
 		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
 		expect(channel.preview).toBe("改完了");
+	});
+
+	it("旧 kind 在投影层归一：语义标签算发言，过程行算留痕（ADR-061）", () => {
+		const directory = directoryOf({ lin: "林越" });
+		const viewOf = (kind: string) => {
+			const message = msg(1, "lin", kind, "一句话");
+			return messageView(stateOf([lin], { [lin.id]: [message] }), lin, message, directory);
+		};
+		for (const kind of ["chat", "say", "question", "decision", "report"]) {
+			expect(viewOf(kind).kind).toBe("chat");
+		}
+		for (const kind of ["note", "think", "tool", "work", "step"]) {
+			expect(viewOf(kind).kind).toBe("note");
+		}
 	});
 });
 
@@ -177,7 +191,7 @@ describe("私聊里的 @ 红点：统一按未读与 mention 算，不再按消�
 
 	it("私聊里 @ 我照样计数（历史库里残留的过程消息不再特判）", () => {
 		const state = withMessages("dm:owner-gu", [
-			{ from: "gu", text: "@owner 我在群里回你了", kind: "say", mentions: ["owner"] },
+			{ from: "gu", text: "@owner 我在群里回你了", kind: "chat", mentions: ["owner"] },
 		]);
 		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
 		const dm = list.find((c) => c.id === "dm:owner-gu")!;

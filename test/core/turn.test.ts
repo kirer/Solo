@@ -128,7 +128,7 @@ describe("谁说的话算「他说过」", () => {
 describe("这段正文该落到哪个频道", () => {
 	const state = (messages: Record<string, unknown[]>) =>
 		({ channels: {}, messages, nextSeq: {}, readMarks: {}, wake: {} }) as unknown as ChannelState;
-	const say = (seq: number, from = SLUG) => ({ seq, from, text: "x", at: 1, kind: "say", mentions: [] });
+	const say = (seq: number, from = SLUG) => ({ seq, from, text: "x", at: 1, kind: "chat", mentions: [] });
 
 	it("正常一轮：没说过话就回唤醒它的频道", () => {
 		expect(turnTarget(state({ [CHANNEL]: [] }), SLUG, wakeOf(CHANNEL))).toEqual(wakeOf(CHANNEL).reply);
@@ -183,8 +183,8 @@ describe("收尾落库", () => {
 		const last = (state.messages[CHANNEL] ?? []).at(-1);
 		expect(last?.from).toBe(SLUG);
 		expect(last?.text).toBe("跑完了，耗时 45 秒。");
-		// 落库的是真发言，不是投影消息 —— 否则前端会把它当过程行折起来。
-		expect(last?.kind).toBe("say");
+		// 落库的是真发言（`chat`），不是系统留痕 —— 否则前端不会把它画成对话。
+		expect(last?.kind).toBe("chat");
 	});
 
 	it("他说过一句、之后又干了活：最后的结论照样落进频道", async () => {
@@ -192,7 +192,7 @@ describe("收尾落库", () => {
 		const runtime = await setup();
 		await runtime.harness.commit(async (tx) => {
 			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
-			doc.messages[CHANNEL] = [{ seq: 2, from: SLUG, at: 2, text: "我先说一句。", mentions: [], kind: "say" }];
+			doc.messages[CHANNEL] = [{ seq: 2, from: SLUG, at: 2, text: "我先说一句。", mentions: [], kind: "chat" }];
 			doc.nextSeq[CHANNEL] = 3;
 		}, BACKGROUND_CONTEXT);
 		const finisher = createTurnFinisher({ harness: runtime.harness, conversationOf: async () => undefined });

@@ -174,7 +174,7 @@ describe("我在跟谁说话（ADR-015）", () => {
 		state = appendMessage(state, "all", { from: OWNER, text: "@顾南雁 改一下", at: 1 }).state;
 		state = appendMessage(state, "all", { from: "顾南雁", text: "改完了", at: 2 }).state;
 		// 真实服务里这一条就是团队管理员的沉淀报告，它挡在中间。
-		state = appendMessage(state, "all", { from: "知言", text: "记了一条：……", at: 3, kind: "report" }).state;
+		state = appendMessage(state, "all", { from: "知言", text: "记了一条：……", at: 3, kind: "chat" }).state;
 		const { message } = appendMessage(state, "all", { from: OWNER, text: "接着说", at: 4 });
 		expect(speakerBefore(state, "all", message.seq)).toBe("顾南雁");
 	});

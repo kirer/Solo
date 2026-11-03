@@ -103,7 +103,7 @@ async function main(): Promise<void> {
 		const synced = await syncAllSkills(layout);
 		const touched = [...synced.copied, ...synced.updated];
 		if (touched.length > 0) console.log(`[core] 同步了全员层技能：${touched.join("、")}`);
-		// 示范插件只在缺失时整份拷进来：插件是可以执行的代码，动过就归改的人。
+		// 出厂插件只在缺失时整份拷进来：插件是可以执行的代码，动过就归改的人。
 		const plugins = await seedPlugins(layout);
 		if (plugins.length > 0) console.log(`[core] 装上了出厂插件：${plugins.join("、")}`);
 	}

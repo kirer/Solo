@@ -214,7 +214,7 @@ type ViewMessage = {
   from: number;          // 会话号；我是 0
   fromSlug: string;
   fromLabel: string;
-  kind: string;          // chat | say | question | decision | report | choice | note | ...
+  kind: "chat" | "note"; // 发言 / 系统留痕。旧数据的 kind 在投影层已归一（ADR-061）
   noteOf?: "run";        // 系统留痕的种类：run = 后台命令跑完（界面收成一行，点开看全文）
   text: string;
   mentions: { id: number, label: string, read: boolean, offset: number }[];
@@ -222,7 +222,7 @@ type ViewMessage = {
   read: boolean;         // 从我视角
   needsYou?: true;       // 只在这条需要我本人看一眼时出现
   attachments?: { id: string, name: string, kind: "image" | "file", bytes: number }[];
-  options?: string[];    // 只有 kind: "choice"：等我拍板的 2–6 个选项（正文是问题）
+  options?: string[];    // 等我拍板的 2–6 个选项（正文是问题；有没有选项就看这个字段）
 }
 ```
 
@@ -244,8 +244,9 @@ type ViewMessage = {
 - `options` 同理：没有选项就没有这个键。**回答不另开接口**：我发的下一条普通消息就是回答
   （`replyTo` 指向这条）。界面按「最后一条带 `options` 的消息、且它之后我没说过话」判定
   还在等我（`ui/app/src/composer/choice.ts` 的 `pendingChoice`，纯函数）。
-- `kind` 是 `string` 而不是联合类型：历史库里还躺着 `think` / `tool` / `work` / `step`
-  这些不再产生的消息（不清理旧数据），前端 `buildRows()` 直接过滤掉，不画。
+- `kind` 读出来只有 `"chat"` / `"note"` 两种。历史库里的旧标签在投影层归一
+  （ADR-061）：语义标签（`say` / `question` …）算 `chat`，过程行（`think` / `tool` /
+  `work` / `step`）算 `note`。前端 `buildRows()` 只画 `chat` 与带 `noteOf` 的 `note`。
   消息上**没有** `status` / `pendingFor` / `processing` / `startedAt` 这些过程字段，
   占位（pending / processing）整套已经删了。
 - 频道不存在 → 404 `{ error: "频道不存在或无权查看" }`。
@@ -258,7 +259,6 @@ type ViewMessage = {
   text: string,          // 必填，trim 后不能为空（除非带附件）
   replyTo?: number,      // 引用回复的 seq
   from?: string,         // 发件人 slug；**默认忽略**，只有当进程里设了 SOLO_DEBUG_FROM=1 才生效
-  kind?: string,         // 语义标签，省略 = chat
   attachments?: (string | { id: string })[]
                          // 附件 id（先 POST /api/uploads 拿）。两种写法等价：
                          // `["<id>"]` 适合脚本，`[{ id }]` 是前端写法。
@@ -273,14 +273,14 @@ type ViewMessage = {
   身份时需显式开 `SOLO_DEBUG_FROM=1`（启动日志会警告一行）。
 - 频道不存在 → 404。附件 id 对不上（被清理过）→ 400「附件不存在（可能已经被清理），
   重新发一次」。
-- `kind` 由**说话的人自己声明**。团队记忆不按 `kind` 自动整理：谁认为值得记，谁用
-  `remember(scope=team)` 写。
+- 这个接口只写发言（`chat`），不接 `kind`：系统留痕（`note`）只由内核自己写。
+  团队记忆不按消息类别自动整理：谁认为值得记，谁用 `remember(scope=team)` 写。
 - 投递是异步的：`delivered` / `failed` 是本条消息唤醒了几个人，**不是**他们的回答。
 - 前端拿到响应后不要自己插一条消息，等 SSE 推新快照（不制造一条假消息）。
 
 这里**没有**过程投影的 `kind` 了（`think` / `tool` / `say` 投影 / `work`）：运行时不再
-订阅会话提交往频道里写思考或工具卡。历史库里的这些消息还在，读的时候当
-普通消息处理即可。
+订阅会话提交往频道里写思考或工具卡。历史库里的这些消息还在，投影层把过程行归一成
+`note`、语义旧标签归一成 `chat`（ADR-061）。
 
 ## 7.1 `GET /api/channels/:id/stream`
 
@@ -401,10 +401,9 @@ type ViewStep = {
 ```
 
 判定在 `src/app/project.ts` 的 `needsYou(message)`：**不是我自己发的**，且
-**正文里第一个被点名的人是我**（别人在先、末尾顺手 @我 的那种是派活给别人，不进）。`kind=decision` 不会再自动
-把我算进来（ADR-009）：助理几乎每条公告都打 decision，自动补会让「找你」被通告淹掉。
-只收「说出口的话」（`chat` / `say` / `question` / `decision` /
-`report`），窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——
+**正文里第一个被点名的人是我**（别人在先、末尾顺手 @我 的那种是派活给别人，不进）。
+标签不会把我算进来（ADR-009）：只有正文点赞才算。只收发言（`kind: "chat"`），
+窗口 7 天，最多 60 条。已读的也返回（带 `read: true`），前端淡化显示 ——
 我要能回头看「哪些还没理」。
 
 为什么需要它：实测我在 4804 条消息里回了 51 条（**1.06%**）。不是不想理，是**找不到**
@@ -614,8 +613,8 @@ type ViewStep = {
 {
   "plugins": [
     {
-      "slug": "示范", "name": "示范", "description": "出厂示范插件", "enabled": true, "client": true,
-      "brings": { "tools": ["clock"], "prompt": true, "routes": 0, "listens": false }
+      "slug": "天气", "name": "天气", "description": "看今天的天气", "enabled": true, "client": true,
+      "brings": { "tools": ["weather"], "prompt": true, "routes": 0, "listens": false }
     },
     { "slug": "坏的", "name": "坏的", "description": "", "enabled": false, "error": "插件 坏的 缺少 plugin.md" },
     { "slug": "刚装的", "name": "刚装", "description": "", "enabled": true }
@@ -639,10 +638,10 @@ type ViewStep = {
 
 ```js
 export default {
-  id: "示范",
+  id: "天气",
   style: "…",                     // 可选，宿主插进 <head>
   apply(ui) {                     // ui = { h, React, api, store, useStore, register }
-    ui.register("sidebar.footer", { id: "clock", component: () => ui.h("div", {}, "…") });
+    ui.register("sidebar.footer", { id: "today", component: () => ui.h("div", {}, "…") });
     // 后端 api（apply 的参数）还有 scope(channelId)：这个频道的工作区根（私聊 → 那个人、
     // 团队频道 → 团队、全员频道 → undefined）。只有根一个字符串，路径守卫在插件里做。
     // 格子 = { id, label?, icon?, order?, component }：label 是页签文字 / 设置分区名，
@@ -675,7 +674,7 @@ DELETE /api/plugins/天气
 ### 开关
 
 ```http
-POST /api/plugins/示范/enabled
+POST /api/plugins/天气/enabled
 { "enabled": false }
 ```
 

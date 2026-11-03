@@ -4,7 +4,7 @@
  * 全部是纯函数：`post.ts` 负责把结果落进文档，这里只负责算。
  */
 import type { Attachment, Channel, ChannelState, Message } from "./types.ts";
-import { OWNER, chatKind, dmId } from "./types.ts";
+import { OWNER, chatKind, dmId, spokenKind } from "./types.ts";
 import { EMPTY_ROSTER, parseMentions, resolveMention, type MentionRoster } from "./mentions.ts";
 
 /** 某个 slug 在一个频道里读到了哪里。0 表示一条没读。 */
@@ -18,7 +18,7 @@ export function unreadCount(state: ChannelState, channelId: string, slug: string
 	const list = state.messages[channelId] ?? [];
 	let count = 0;
 	for (const message of list) {
-		if (message.seq > mark && message.from !== slug && message.kind !== "note" && message.kind !== "work") count += 1;
+		if (message.seq > mark && message.from !== slug && spokenKind(message.kind)) count += 1;
 	}
 	return count;
 }
@@ -77,7 +77,7 @@ export function speakerBefore(state: ChannelState, channelId: string, seq: numbe
 	if (mine === -1) return undefined;
 	for (let index = mine + 1; index < before.length; index += 1) {
 		const item = before[index];
-		if (item !== undefined && item.from !== OWNER && item.kind !== "note") return item.from;
+		if (item !== undefined && item.from !== OWNER && spokenKind(item.kind)) return item.from;
 	}
 	return undefined;
 }
@@ -106,7 +106,7 @@ export function appendMessage(
 		readonly replyTo?: number;
 		/** 名册：给了就按名册解析 `@`（`@我` → `owner`），不给就保留字面 token。 */
 		readonly roster?: MentionRoster;
-		/** 正文里没写、但要额外记进 `mentions` 的 slug（例如 `decision` 自动补 `owner`）。 */
+		/** 正文里没写、但要额外记进 `mentions` 的 slug（带 `options` 时要叫醒我）。 */
 		readonly mention?: readonly string[];
 		/** 附件引用（本体在磁盘上）。空数组按「没有附件」处理。 */
 		readonly attachments?: readonly Attachment[];
