@@ -31,8 +31,8 @@ export type BackendOptions = {
 	readonly logFile: string;
 	readonly onLog?: (line: string) => void;
 	/**
-	 * 后端自己退出时通知壳（`stop()` 杀的不算）。重置用退出码 75 表示「重开」，
-	 * 和 `src/shell/main.ts` 的 `RESET_EXIT_CODE` 对齐。
+	 * 后端自己退出时通知壳（`stop()` 杀的不算）。重置 / 重启用退出码 75 表示「重开」，
+	 * 和 `src/shell/main.ts` 的 `RELAUNCH_EXIT_CODE` 对齐。
 	 */
 	readonly onExit?: (code: number) => void;
 };

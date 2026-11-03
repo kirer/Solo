@@ -19,9 +19,12 @@ export function Rail(): JSX.Element {
 	// 一格亮不亮看的是「现在是不是那一屏」：五格互斥，谁开着谁亮。
 	const tasks = useStore((state) => state.tasks.open);
 	const team = useStore((state) => state.team);
-	const plugins = useStore((state) => state.pluginSheet || state.pluginView !== null);
+	// 「插件」这一格只管插件清单那一屏；插件自己的页面（`pluginView`）由它自己的
+	// 入口格点亮（`rail.item` 插槽），否则插件页开着时这里会同时亮两格。
+	const plugins = useStore((state) => state.pluginSheet);
+	const pluginPage = useStore((state) => state.pluginView !== null);
 	const settings = useStore((state) => state.settings);
-	const away = tasks || team || plugins || settings;
+	const away = tasks || team || pluginPage || plugins || settings;
 	const running = useStore(
 		(state) =>
 			[...state.presence.values()].filter((value) => value.state === "working" || value.state === "thinking")

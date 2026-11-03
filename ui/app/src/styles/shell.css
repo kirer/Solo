@@ -30,11 +30,6 @@
 	}
 }
 
-/* 收起成 56px 的图标条。宽度换掉之后其余规则全靠这个属性派生。 */
-.frame[data-side="rail"] {
-	--sidebar: 56px;
-}
-
 /* ── 最左那一列：应用级导航 ───────────────────────────────────────────
  *
  * 微信桌面版那种窄条：一排图标，选中的那格有一块浅底。上半截是两屏（聊天 /
@@ -46,8 +41,8 @@
 	flex-direction: column;
 	align-items: center;
 	gap: 2px;
-	/* 第一格和侧栏那行「聊天」同高：两列的头看起来是一条线（它不是品牌区，不画 logo）。
-	   4 + 52/2 = 30，等于 60 高的侧栏头里那行字的中线。 */
+	/* 第一格和侧栏那行「聊天」大致同高：两列的头看起来是一条线（它不是品牌区，不画 logo）。
+	   4 + 52/2 = 30；标题在 14..38，中线 26，差 4px —— 图标比字高一点看着更稳。 */
 	padding: 4px 0 14px;
 	background: var(--frame);
 	border-right: 0.5px solid var(--line);
@@ -213,8 +208,24 @@
 	height: 56px;
 }
 
+/* 和聊天那行抬头同一套尺寸：两屏来回切时，头不该跳一下。
+   靠上、不居中：标题和导航第一格的上沿在同一条线上，屏幕顶上不空一条。 */
 .page-side-head {
-	padding: 0 10px 0 18px;
+	height: 56px;
+	/* 14 / 16 是量出来的：聊天标题在 6（侧栏内边距）+ 8 上、8 + 8 左，
+	   四个屏的标题要落在同一条竖线和同一条基线上。 */
+	padding: 14px 8px 8px 16px;
+	align-items: flex-start;
+}
+
+/* 左栏标题 = 聊天标题：同一个字族、同一个字号、同一条基线；右栏抬头仍是 15，
+   它是正文的标题，不是一列清单的名字。 */
+.page-side-head .page-title {
+	font-family: var(--brand);
+	font-size: 18px;
+	line-height: 24px;
+	font-weight: 600;
+	letter-spacing: 0.04em;
 }
 
 .page-main-head {
@@ -235,12 +246,6 @@
 	min-height: 0;
 	overflow-y: auto;
 	padding: 2px 8px 12px;
-}
-
-.page-side-foot {
-	flex: none;
-	padding: 10px 12px 14px;
-	border-top: 0.5px solid var(--rule);
 }
 
 .page-main {
@@ -310,6 +315,12 @@
 	   不写 `max-height: 46%`：百分比会拿「刚被它撑出来的那一行」当基准，越算越小。 */
 	.page-side-body {
 		max-height: 42vh;
+	}
+
+	/* 刘海屏：标题让出状态栏，和聊天那边同一个口径（`.side-logo`）。 */
+	.page-side-head {
+		height: calc(56px + env(safe-area-inset-top));
+		padding-top: calc(14px + env(safe-area-inset-top));
 	}
 
 	.page-main-head {
@@ -447,12 +458,13 @@
 
 /* ── 侧栏头部：logo 行 + 分段小标题 ─────────────────────────────────── */
 
-/* logo 行 60 高，图标 22、名字 18/600（品牌字 Montserrat，中文回落到系统栈）。 */
+/* 标题行：名字 18/600（品牌字 Montserrat，中文回落到系统栈）。
+   标题靠上、不居中 —— 和导航第一格的上沿齐平，四个屏的头都用这一条线。 */
 .side-logo {
 	display: flex;
-	align-items: center;
+	align-items: flex-start;
 	gap: 8px;
-	height: 60px;
+	height: 56px;
 	padding: 8px 0 8px 8px;
 	flex: none;
 }
@@ -460,19 +472,6 @@
 .side-grow {
 	flex: 1 1 auto;
 	min-width: 0;
-}
-
-/* 收起按钮：只在桌面出现（手机上侧栏本来就是整屏的一个区域，没有「收」这回事）。 */
-.side-toggle {
-	flex: none;
-	width: 28px;
-	height: 28px;
-	margin-right: 4px;
-	color: var(--ink-3);
-}
-
-.side-toggle:hover {
-	color: var(--ink);
 }
 
 .brand-name {
@@ -778,62 +777,6 @@
 .ch-badge[data-kind="mention"] {
 	background: var(--accent);
 	color: var(--ground);
-}
-
-/* ── 收起态（56px 图标条） ───────────────────────────────────────────── */
-
-/* 只留头像：名字、状态、预览、时间全收起来，塞进 title 属性里（见 app.js）。
-   这不是「变小」，是换了一套信息密度 —— 窄栏里放不下两行字。 */
-.frame[data-side="rail"] .brand-name,
-.frame[data-side="rail"] .ch-main,
-.frame[data-side="rail"] .ch-time {
-	display: none;
-}
-
-.frame[data-side="rail"] .side-logo {
-	padding: 8px 0;
-	justify-content: center;
-	gap: 0;
-}
-
-/* 收起后只剩一列头像：行高与头像同高，之间必须留出空当，否则连成一根柱子。 */
-.frame[data-side="rail"] .channels {
-	gap: 8px;
-	padding-top: 4px;
-}
-
-.frame[data-side="rail"] .ch {
-	grid-template-columns: 1fr;
-	place-items: center;
-	width: 36px;
-	height: 36px;
-	min-height: 36px;
-	padding: 0;
-	margin: 0 auto;
-}
-
-.frame[data-side="rail"] .ch-av {
-	place-items: center;
-}
-
-/* 未读在窄栏里退化成一个点：数字放不下，但「有东西」这件事不能丢。 */
-.frame[data-side="rail"] .ch-badge {
-	position: absolute;
-	top: 3px;
-	right: 3px;
-	min-width: 7px;
-	height: 7px;
-	padding: 0;
-	font-size: 0;
-	line-height: 0;
-	color: transparent;
-	overflow: hidden;
-	border-radius: 50%;
-	background: var(--accent);
-}
-
-.frame[data-side="rail"] .ch {
-	position: relative;
 }
 
 /* ── 白纸 ───────────────────────────────────────────────────────────── */
@@ -1415,7 +1358,7 @@
 	   在无刘海设备上 env() 是 0，等价于原来的值。 */
 	.side-logo {
 		padding-top: calc(8px + env(safe-area-inset-top));
-		height: calc(60px + env(safe-area-inset-top));
+		height: calc(56px + env(safe-area-inset-top));
 	}
 
 	.sheet-head {
@@ -1461,14 +1404,6 @@
 
 	.sheet-back {
 		display: inline-grid;
-	}
-
-	.side-toggle {
-		display: none;
-	}
-
-	.frame[data-side="rail"] {
-		--sidebar: 100%;
 	}
 
 	/* 手机上标题必须留在这一行：侧栏那句产品名在另一个区域（列表态）里，
@@ -2310,9 +2245,18 @@
 	color: var(--ink-3);
 }
 
-/* 左栏脚下那块：装插件改的是这一列，不该挤在右栏的正文里。 */
-.page-side-foot .plugin-install {
-	margin-top: 0;
+/* 装插件就是给这一列加一格：标题右边一颗「+」，和聊天那行的拉群同款。 */
+.plugin-add {
+	margin-left: auto;
+	cursor: pointer;
+}
+
+/* 选好文件夹之后那一条：名字 + 「安装」。 */
+.plugin-picked-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 2px 10px 10px;
 }
 
 /* 「删除」平时是一行灰字，指上去才变红：它挨着开关，不能比开关更显眼。 */
@@ -2341,29 +2285,7 @@
 	color: var(--danger);
 }
 
-/* 装插件：选一个文件夹，看清楚是哪个再按「安装」。 */
-.plugin-install {
-	display: flex;
-	align-items: center;
-	flex-wrap: wrap;
-	gap: 8px;
-	margin-top: 12px;
-}
-
-/* 真正的 input 盖在文字上、透明：点哪儿都能唤起选文件夹。 */
-.plugin-pick {
-	position: relative;
-	flex: none;
-}
-
-.plugin-pick input {
-	position: absolute;
-	inset: 0;
-	opacity: 0;
-	cursor: pointer;
-}
-
-.plugin-pick-btn,
+/* 「安装」：看清是哪个插件再按。 */
 .plugin-install-btn {
 	display: inline-flex;
 	align-items: center;
@@ -2898,11 +2820,6 @@ html[data-shell="desktop"] .side-logo {
 	padding-top: 40px;
 	align-items: flex-end;
 	-webkit-app-region: drag;
-}
-
-html[data-shell="desktop"] .frame[data-side="rail"] .side-logo {
-	height: 100px;
-	padding-top: 40px;
 }
 
 /* 最左那列自己就是红绿灯的地盘：顶上 54px 让给三个圆钮（12 的顶距 + 12 的钮 + 间距），

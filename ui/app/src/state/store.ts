@@ -30,8 +30,6 @@ import { mark } from "../lib/jank.ts";
 
 export type Presence = "idle" | "working" | "thinking" | "asleep";
 export type Theme = "system" | "light" | "dark";
-export type Side = "open" | "rail";
-
 export type State = {
 	/** 首屏数据都到齐了才画主界面 —— 半渲染的界面比什么都不画更像坏了。 */
 	ready: boolean;
@@ -56,7 +54,6 @@ export type State = {
 	/** SSE 通不通。`lastOkAt` 用来在断线时显示「最后一次成功」。 */
 	conn: { ok: boolean; lastOkAt: number };
 	theme: Theme;
-	side: Side;
 	right: { open: boolean };
 	needMenu: boolean;
 	pluginSheet: boolean;
@@ -66,6 +63,8 @@ export type State = {
 	newGroup: boolean;
 	/** 一键重置的确认浮层：设置 → 数据里点开。 */
 	resetOpen: boolean;
+	/** 装完带前端的插件后问「要不要重启」：值是插件显示名，`null` 是不问。 */
+	restartOpen: string | null;
 	/** 正在引用的那条消息（seq + 摘要），发出去就清空。 */
 	reply: { seq: number; label: string; excerpt: string } | null;
 	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
@@ -79,7 +78,6 @@ export type State = {
 };
 
 const THEME_KEY = "solo.theme";
-const SIDE_KEY = "solo.side";
 
 function read<K extends string>(key: string, allowed: readonly K[], fallback: K): K {
 	// 没有 localStorage 的环境（node 里跑单测、未来的 SSR）读不到就按缺省来：这里只是偏好，不是状态。
@@ -103,7 +101,6 @@ const initial: State = {
 	runs: new Map(),
 	conn: { ok: true, lastOkAt: Date.now() },
 	theme: read(THEME_KEY, ["system", "light", "dark"], "system"),
-	side: read(SIDE_KEY, ["open", "rail"], "open"),
 	right: { open: false },
 	needMenu: false,
 	pluginSheet: false,
@@ -111,6 +108,7 @@ const initial: State = {
 	team: false,
 	newGroup: false,
 	resetOpen: false,
+	restartOpen: null,
 	reply: null,
 	tasks: { open: false, who: null },
 	pluginView: null,
@@ -444,11 +442,6 @@ export function setTheme(theme: Theme): void {
 	patch({ theme });
 }
 
-export function setSide(side: Side): void {
-	localStorage.setItem(SIDE_KEY, side);
-	patch({ side });
-}
-
 export function setRight(right: Partial<State["right"]>): void {
 	patch({ right: { ...state.right, ...right } });
 }
@@ -468,6 +461,7 @@ export function setSettings(open: boolean): void {
 		settings: open,
 		// 离开设置（或重新进入）都先把重置确认收掉：它只在设置页里成立。
 		resetOpen: false,
+		restartOpen: null,
 		...(open
 			? {
 					needMenu: false,
@@ -486,6 +480,7 @@ export function setTeam(open: boolean): void {
 		team: open,
 		...(open
 			? {
+					restartOpen: null,
 					pluginSheet: false,
 					settings: false,
 					newGroup: false,
@@ -502,6 +497,7 @@ export function setPluginSheet(open: boolean): void {
 		pluginSheet: open,
 		...(open
 			? {
+					restartOpen: null,
 					team: false,
 					settings: false,
 					needMenu: false,
@@ -517,17 +513,29 @@ export function setPluginSheet(open: boolean): void {
 export function setResetOpen(open: boolean): void {
 	patch({
 		resetOpen: open,
-		...(open ? { needMenu: false, pluginSheet: false, newGroup: false } : {}),
+		...(open ? { needMenu: false, pluginSheet: false, newGroup: false, restartOpen: null } : {}),
+	});
+}
+
+/** 装完带前端的插件后的重启询问。和别的浮层互斥；`null` 是关掉。 */
+export function setRestartOpen(plugin: string | null): void {
+	patch({
+		restartOpen: plugin,
+		// 不关插件页：这个浮层就是从那一屏弹出来的，关了会落回聊天。
+		...(plugin === null ? {} : { needMenu: false, newGroup: false, resetOpen: false }),
 	});
 }
 
 /** 拉群卡片。 */
 export function setNewGroup(open: boolean): void {
-	patch({ newGroup: open, ...(open ? { needMenu: false, pluginSheet: false, settings: false, team: false } : {}) });
+	patch({
+		newGroup: open,
+		...(open ? { needMenu: false, pluginSheet: false, settings: false, team: false, restartOpen: null } : {}),
+	});
 }
 
 export function setNeedMenu(open: boolean): void {
-	patch({ needMenu: open, ...(open ? { settings: false, newGroup: false } : {}) });
+	patch({ needMenu: open, ...(open ? { settings: false, newGroup: false, restartOpen: null } : {}) });
 }
 
 /**
@@ -550,6 +558,7 @@ export function openTasks(slug?: string): void {
 	patch({
 		tasks: { open: true, who },
 		needMenu: false,
+		restartOpen: null,
 		pluginView: null,
 		team: false,
 		pluginSheet: false,
@@ -579,6 +588,7 @@ export function openPluginView(slug: string): void {
 	patch({
 		pluginView: slug,
 		tasks: { open: false, who: getState().tasks.who },
+		restartOpen: null,
 		team: false,
 		pluginSheet: false,
 		settings: false,

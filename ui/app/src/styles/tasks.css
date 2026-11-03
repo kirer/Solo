@@ -31,18 +31,22 @@
 
 .tasks-list-head {
 	display: flex;
-	/* 垂直居中，不是 baseline —— 只有一个标题时 baseline 会把它顶到上沿。 */
-	align-items: center;
+	/* 靠上、不居中：和聊天 / 通讯录 / 插件那三屏的标题在同一条线上。 */
+	align-items: flex-start;
 	gap: 8px;
 	height: 56px;
-	padding: 0 16px 0 18px;
+	/* 和聊天 / 通讯录 / 插件的标题同一条竖线和基线（见 shell.css 的 .page-side-head）。 */
+	padding: 14px 16px 8px 16px;
 	flex: none;
 }
 
 .tasks-list-head h2 {
 	margin: 0;
-	font-size: 15px;
+	font-family: var(--brand);
+	font-size: 18px;
+	line-height: 24px;
 	font-weight: 600;
+	letter-spacing: 0.04em;
 	color: var(--ink);
 }
 
@@ -359,12 +363,15 @@
 	display: grid;
 	grid-template-columns: 62px 13px minmax(0, 1fr);
 	column-gap: 10px;
+	align-items: start;
 }
 
+/* 时间、圆点、正文三列共用一条 20 的行：小字号在 20 里自动上下居中，
+   不靠 padding 去猜 —— 猜出来的值换个字号就歪。 */
 .task-step-at {
-	padding-top: 3px;
 	font-family: var(--mono);
 	font-size: 10px;
+	line-height: 20px;
 	color: var(--ink-3);
 	text-align: right;
 	opacity: 0.75;
@@ -418,7 +425,10 @@
 	padding: 0;
 	border: 0;
 	background: transparent;
+	/* 和标题同一个字号：这一行的 strut 也跟着 20 高，baseline 对齐才不会多顶 1.5px。 */
 	font-family: inherit;
+	font-size: 11.5px;
+	line-height: 20px;
 	text-align: left;
 	cursor: pointer;
 }
@@ -431,7 +441,7 @@
 	min-width: 0;
 	font-family: var(--mono);
 	font-size: 11.5px;
-	line-height: 1.65;
+	line-height: 20px;
 	color: var(--ink-2);
 	white-space: nowrap;
 	overflow: hidden;

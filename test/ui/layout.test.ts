@@ -97,41 +97,56 @@ describe("右侧栏", () => {
 	});
 });
 
-describe("侧栏收起", () => {
-	it("收起宽度 56，由 data-side 驱动", () => {
-		expect(blocksOf(shellCss, '.frame[data-side="rail"]').join("\n")).toContain("--sidebar: 56px");
-	});
-
-	it("展开时宽度来自 --sidebar，且换了列宽有过渡", () => {
+describe("侧栏", () => {
+	it("宽度只来自 --sidebar，而且没有收起态了", () => {
 		const frame = blocksOf(shellCss, ".frame").join("\n");
 		expect(frame).toContain("var(--sidebar) minmax(0, 1fr)");
 		expect(frame).toContain("transition: grid-template-columns");
+		// 收起那一套（按钮 / data-side / 56px 图标条）整组删掉了，别让它长回来。
+		expect(shellCss).not.toContain("data-side");
+		expect(shellCss).not.toContain(".side-toggle");
+		expect(sidebarSource).not.toContain("side-toggle");
+		expect(storeSource).not.toContain("SIDE_KEY");
+		expect(appSource).not.toContain("data-side=");
+		// 名字仍然写进 title：换行时那一行只剩脸，得能在悬停里读全。
+		expect(sidebarSource).toContain('title={parts.join(" · ")}');
 	});
+});
 
-	it("收起后藏起名字、预览与时间", () => {
-		for (const part of [".ch-main", ".ch-time", ".brand-name"]) {
-			expect(blocksOf(shellCss, '.frame[data-side="rail"] ' + part).join("\n")).toContain("display: none");
+describe("四屏的标题在同一条线上", () => {
+	it("通讯录 / 插件 / 设置的左栏标题用聊天那套字，靠上排", () => {
+		expect(blocksOf(shellCss, ".side-logo").join("\n")).toContain("align-items: flex-start");
+		expect(blocksOf(shellCss, ".side-logo").join("\n")).toContain("height: 56px");
+		expect(blocksOf(shellCss, ".page-side-head").join("\n")).toContain("align-items: flex-start");
+		for (const needle of ["var(--brand)", "font-size: 18px", "line-height: 24px", "letter-spacing: 0.04em"]) {
+			expect(blocksOf(shellCss, ".page-side-head .page-title").join("\n")).toContain(needle);
+			expect(blocksOf(tasksCss, ".tasks-list-head h2").join("\n")).toContain(needle);
 		}
 	});
 
-	it("收起后每行是 36×36 的方块，未读退化成点", () => {
-		expect(blocksOf(shellCss, '.frame[data-side="rail"] .ch').join("\n")).toContain("width: 36px");
-		const badge = blocksOf(shellCss, '.frame[data-side="rail"] .ch-badge').join("\n");
-		expect(badge).toContain("font-size: 0");
-		expect(badge).toContain("border-radius: 50%");
+	it("插件页的「+」在标题右边，左边不再有脚下那条装插件", () => {
+		const plugins = read("../../ui/app/src/panels/PluginsPage.tsx");
+		const head = plugins.slice(plugins.indexOf('className="page-side-head"'), plugins.indexOf('className="page-side-body"'));
+		expect(head).toContain("plugin-add");
+		expect(head).toContain("webkitdirectory");
+		expect(plugins).not.toContain("page-side-foot");
 	});
 
-	it("手机上不提供收起", () => {
-		expect(shellCss).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.side-toggle\s*\{\s*display: none;/);
+	it("插件自己的那一页开着时，「插件」那格不跟着亮（否则两格同时选中）", () => {
+		const rail = read("../../ui/app/src/sidebar/Rail.tsx");
+		expect(rail).not.toContain("state.pluginSheet || state.pluginView");
+		expect(rail).toContain("const plugins = useStore((state) => state.pluginSheet)");
+		expect(rail).toContain("pluginPage");
 	});
+});
 
-	it("状态存在本地，刷新后保持", () => {
-		expect(storeSource).toContain('const SIDE_KEY = "solo.side"');
-		expect(storeSource).toContain("localStorage.setItem(SIDE_KEY, side)");
-		// `.frame[data-side]` 是这套布局唯一的开关（JS 不碰列宽）。
-		expect(appSource).toContain("data-side={side}");
-		// 收起后名字看不见，必须写进 title，否则那一栏就只剩一堆脸。
-		expect(sidebarSource).toContain('title={parts.join(" · ")}');
+describe("后台任务的一步：时间 / 圆点 / 正文对齐", () => {
+	it("三列同一条 20 高的行，不靠 padding 猜基线", () => {
+		expect(blocksOf(tasksCss, ".task-step").join("\n")).toContain("align-items: start");
+		for (const selector of [".task-step-at", ".task-step-title"]) {
+			expect(blocksOf(tasksCss, selector).join("\n")).toContain("line-height: 20px");
+		}
+		expect(blocksOf(tasksCss, ".task-step-at").join("\n")).not.toContain("padding-top");
 	});
 });
 

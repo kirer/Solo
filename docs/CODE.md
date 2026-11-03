@@ -143,7 +143,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/app/audit.ts` | 82 | 审计钩子（ADR-010）：`auditHooks(deps)` 返回两个 `HookRegistration`（`ToolTask` 的 `beforeTool` / `afterTool`、`GenerationTask` 的 `afterResponse`），一次工具调用 / 一次模型回复各写一行到 `logs/tools.jsonl`（单文件 5MB 轮转一代）。**只读不改**：不改参数、不拦调用、不改结果；写失败就丢这一行，不反噬调用。装配层把它挂在 `core-tools` 扩展上 —— 那是每个会话都选的扩展 |
 | `src/app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
 | `src/view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/project.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
-| `src/interface/http/routes.ts` | 332 | 路由表：30 条 `/api/*`（按方法 + 路径算）+ 插件自己注册的接口 + `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」；`POST /api/reset` 先回 200，再把关库删盘交给启动层（库开着删不掉 `core.sqlite`） |
+| `src/interface/http/routes.ts` | 332 | 路由表：31 条 `/api/*`（按方法 + 路径算）+ 插件自己注册的接口 + `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」；`POST /api/reset` / `POST /api/restart` 先回 200，再把关库删盘 / 关库重开交给启动层 |
 | `src/interface/http/respond.ts` | 100 | HTTP 出口原语：`json` / `fail` / `HttpError` / `readJson`（正文上限 1MB、写接口必须声明 `application/json`）/ `statusOf`（用例原因 → 状态码） |
 | `src/interface/http/route-match.ts` | 131 | 表驱动路由匹配：`Route` / `RouteContext` / `RouteHandler` / `matchRoute`（`:name` 捕获 / `*name` 吃余量），不引入框架 |
 | `src/interface/http/network.ts` | 80 | 监听地址：`isWildcardHost` / `isLoopbackHost` / `browserUrlOf` / `lanAddresses` / `lanUrlsOf` |
@@ -153,7 +153,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/shell/assemble.ts` | 689 | `assembleCore()` —— 扫文件夹 → **装插件（工具并进同一个注册表、提示词段与消息钩子一起接）** → 开会话 → 绑名册 → 播种全员频道；接线只调一次 `wireChannel`，成员投影只调 `channel/membership.ts`（装配不再自己写业务规则）；`syncTeamAndAnnounce`（重投影 + 叫新进频道的人报到，ADR-042）/ `resumeInterrupted`（重启打断的那一轮：留痕 + 叫回来，ADR-044）/ `ownerSpeak`（可带 `wakeTo`）/ `makeAfterPost`（监听器取 `() => plugins.messages`，重装后听新的那一批）；`reloadPlugins`（ADR-026：整份重装插件 —— 同名换 `core-tools`、重装每个人的身份扩展）；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板）；`core-tools` 扩展上挂 `app/audit.ts` 的钩子（会话 id → slug 的反查也在这里） |
 | `src/shell/seed.ts` | 326 | 全部函数都收 `Layout`：`seedOwnerAssistant`（读 `seed/assistant/identity.md` 建到应用根 + 助理个人层技能，只建一次）/ `seedTextFiles`（`seed/text/*.md` 补进 `<appRoot>/text/`：缺文件整份拷，已有文件只追加新键，改过的句子不动）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `<appRoot>/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPlugins`（`seed/plugins/*` 整份缺失才拷）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `src/shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/`；`startTeamReconcile` 盯住 `teams/` 第一层，团队目录被删就立刻归档频道 |
-| `src/shell/main.ts` | 196 | 启动：`--app-root` / `--user-root` 两个根（`resolveLayout` 一处算完，ADR-030）；播种规矩 / 提示词模板 / 全员层技能（`seedRules` / `seedPromptTemplates` / `syncAllSkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在 |
+| `src/shell/main.ts` | 196 | 启动：`--app-root` / `--user-root` 两个根（`resolveLayout` 一处算完，ADR-030）；播种规矩 / 提示词模板 / 全员层技能（`seedRules` / `seedPromptTemplates` / `syncAllSkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在。`restartApp` / `resetAll` 共用 `stopCore`，关库后以退出码 75 退出让桌面壳重开 |
 
 ### 2.2 `ui/app/src/`（React + TS，构建到 `ui/web/`）
 
@@ -178,7 +178,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（14 个：`rail.item` / `app.page` / `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位 |
 | `src/sidebar/Rail.tsx` | 最左 78px 的应用级导航：顺序是聊天 / 通讯录（团队）/ 后台任务 / 插件，再往下是 `rail.item` 插槽；设置单独压在列底。五格各读自己那一屏的开关（`tasks.open` / `team` / `pluginSheet` / `settings`）画 `aria-current`，后台任务那格右上角是在跑人数；`#team-btn` / `#plugins-btn` / `#settings-btn` 各开对应的整屏页（`data-view` 跟着变，不是浮层）。名字在 `data-tip` 里（`.rail-item::after` 画悬停提示，不用 `title`）。桌面壳里这一列同时是窗口红绿灯的地盘（`html[data-shell="desktop"] .rail` 让出顶部并负责拖动）；≤640px 时整列变成底部一条（`shell.css` 的手机段，框给它让出 56px） |
-| `src/sidebar/Sidebar.tsx` | 侧栏：一行「聊天」标题、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览）；列表脚下只有一个 `sidebar.footer` 插槽（团队 / 插件 / 设置在最左那列，见 `Rail.tsx`）。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
+| `src/sidebar/Sidebar.tsx` | 侧栏：一行「聊天」标题（18/600，靠上，与导航第一格齐平；没有收起态）、一列平铺频道（两行：名字+状态 / 预览）；列表脚下只有一个 `sidebar.footer` 插槽（团队 / 插件 / 设置在最左那列，见 `Rail.tsx`）。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |
 | `src/panels/RightPanel.tsx` | 右栏第三列：详情 / 技能 / 记忆（后两个共用一个换人器，只列当前频道成员）+ 插件注册的页签（`rightPanel.tab`）。关的时候等 300ms 过渡再卸载 |
@@ -244,6 +244,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的四个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`<appRoot>/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在插件页（`panels/PluginsPage.tsx`），落盘走 `writePluginEnabled`，写完就重装（ADR-026） |
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
 | 一键重置（设置 → 数据） | `app/reset.ts` 的 `wipeAll` + `interface/http/routes.ts` 的 `POST /api/reset` + `shell/main.ts` 的 `resetAll`（关库 → 删盘 → 退出码 75）+ `desktop/src/backend.ts` 的 `onExit` / `desktop/src/main.ts` 的 `restart` + `ui/app/src/panels/SettingsPage.tsx` 的 `DataSection` | **删除必须在库关掉之后**；`settings.json` / `.secrets.json` 不删；网页版没有壳，退出后要手动再起一次（ADR-065） |
+| 装完带前端的插件要重启 | `interface/http/routes.ts` 的 `POST /api/restart` + `shell/main.ts` 的 `restartApp`（关库 → 退出码 75）+ `ui/app/src/panels/PluginsPage.tsx` / `panels/Overlays.tsx` / `state/store.ts` | 后端插件已经热装，只有前端入口要重新 `import`；桌面壳重开，网页版刷新；不删任何数据（ADR-066） |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/route-match.ts` / `static-assets.ts` / `origin-guard.ts` / `network.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
 | 改「我不 @ 人时谁接话」 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` | 认的是我上一句话之后第一个接话的人（`note` 不算）；我还没说话才退回第一个成员。`renderDelivery` 吃投递层算好的 `woken`，别自己再推一遍（ADR-015） |
@@ -396,7 +397,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `sidebar-order.test.ts` | `sortChannels`：侧栏排序 |
 | `unread-badge.test.ts` | `unreadLabel`：未读徽标文案 |
 | `head-subtitle.test.ts` | `headParts`：顶栏副标题拼装 |
-| `layout.test.ts` | 布局约定（读 CSS / 组件源码）：引用条与附件托盘的居中轨道、右栏三列与收起动画、侧栏收起成图标条、消息正文换行 |
+| `layout.test.ts` | 布局约定（读 CSS / 组件源码）：引用条与附件托盘的居中轨道、右栏三列与收起动画、侧栏（收起态已删，别长回来）、消息正文换行 |
 | `jank.test.ts` | `classifyJank()`：hidden / resumed / foreground 三判；`mark()` 幂等 |
 | `choice.test.ts` | 输入卡的选项卡：`2–6` 个、去重、点选回填 |
 | `plugin.test.ts` | 前端插槽注册表：`SlotName` 表与 `SLOTS` 一致 |

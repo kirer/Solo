@@ -1436,3 +1436,29 @@
 - **验收**：设置 → 数据 → 重置所有数据，确认浮层列出删 / 留；确认后应用自动重开，
   成员、团队、频道、聊天记录全空，模型配置还在，出厂插件和助理已回来。
   `test/core/reset.test.ts` 钉住「删什么、留什么、没确认不让重置」。
+
+## ADR-066 装完带前端的插件：问一句再重开，复用退出码 75
+
+- **背景**：插件后端在装完就热装（ADR-026），工具、提示词、接口立刻能用；但前端
+  `client.js` 只在页面启动时 `import` 一次，插槽也是启动时填一次。于是「装好了却看不见」
+  不是没装上，是界面那一半还没重新加载。用户需要知道这一点，并且自己决定什么时候打断当前工作。
+- **决策**：
+  1. 装成功且 `GET/POST /api/plugins` 返回的插件带 `client: true` 时，插件页起一个确认浮层
+     「「X」已经装好了」；`client` 缺失的纯后端插件不弹 —— 它已经能用了，没必要打断轮次。
+  2. 浮层两个出口：「稍后」只关浮层，插件保持已装；「立即重启」在桌面壳里请求
+     `POST /api/restart`（只认 `{ confirm: true }`），后端回 200 后关服务、关壳、关库，
+     以退出码 75 退出，壳 `app.relaunch()`。网页版没有壳，按钮写「刷新页面」，
+     `location.reload()` 重新走 `bootPlugins`。
+  3. 重启不删任何文件，和重置共用退出码 75；桌面壳不区分两者，都只做 `restart()`。
+- **取舍**：不做进程内热加载前端（要清旧插槽、旧 `<style>`、动态 `import` 缓存，还要处理
+  「注册到一半」的中间态）；整份重开还顺带清掉内存里的定时器与会话，和「刚装好」一致。
+  代价是正在跑的轮次会断，重启后按 ADR-044 接着做。也不做「装完自动重启」—— 安装可能发生在
+  正在回答的时候，必须让人选。
+- **执行**：`src/interface/http/routes.ts` 的 `POST /api/restart`、`src/shell/serve.ts` 的
+  `onRestart`、`src/shell/main.ts` 的 `restartApp`（与 `resetAll` 共用 `stopCore`）、
+  `ui/app/src/panels/PluginsPage.tsx` 的安装回调、`ui/app/src/panels/Overlays.tsx` 的
+  `RestartSheet`、`ui/app/src/state/store.ts` 的 `restartOpen`、`ui/app/src/api/client.ts` 的
+  `restartApp`；桌面壳仍是 `desktop/src/main.ts` 的 `restart`。
+- **验收**：装一个带 `client.js` 的插件 → 退出确认浮层写明生效范围 → 「立即重启」后应用重开、
+  插件入口出现；「稍后」后插件仍在清单里，下次启动出现。纯后端插件装完不弹浮层。
+  `test/core/reset.test.ts` 钉住「没确认不让重启、确认后才交给启动层」。

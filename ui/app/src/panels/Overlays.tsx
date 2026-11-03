@@ -10,10 +10,10 @@
  */
 
 import { useState } from "react";
-import { resetAllData } from "../api/client.ts";
+import { resetAllData, restartApp } from "../api/client.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { relTime } from "../lib/format.ts";
-import { makeGroup, openChannel, setNeedMenu, setNewGroup, setResetOpen } from "../state/store.ts";
+import { makeGroup, openChannel, setNeedMenu, setNewGroup, setResetOpen, setRestartOpen } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 export function Overlays(props: {
@@ -21,12 +21,14 @@ export function Overlays(props: {
 }): JSX.Element {
 	const newGroup = useStore((state) => state.newGroup);
 	const resetOpen = useStore((state) => state.resetOpen);
+	const restartOpen = useStore((state) => state.restartOpen);
 	const settings = useStore((state) => state.settings);
 
 	return (
 		<>
 			{newGroup ? <GroupSheet /> : null}
 			{resetOpen && settings ? <ResetSheet /> : null}
+			{restartOpen === null ? null : <RestartSheet plugin={restartOpen} />}
 			<div id="toast-root" className="app-toasts">
 				{props.toasts.map((toast) => (
 					<div key={toast.id} className="chat-toast" data-tone={toast.tone}>
@@ -307,6 +309,87 @@ function ResetSheet(): JSX.Element {
 						</button>
 						<button type="button" className="group-submit is-danger" disabled={busy || done} onClick={run}>
 							{busy ? "正在重置…" : "重置所有数据"}
+						</button>
+					</div>
+				</div>
+			</div>
+		</section>
+	);
+}
+
+/* ── 装完插件：要不要重启 ────────────────────────────────────────────── */
+
+/**
+ * 带前端的插件装完之后问一句。
+ *
+ * 后端（工具 / 提示词 / 路由）装完当场就重装了（ADR-026），但前端入口只在界面启动时
+ * `import` 一次 —— 不刷新的话，插件带来的页签、按钮一个都不会出现。桌面壳里整份重开
+ * （`app.relaunch()`，后端以退出码 75 退出）；网页版刷新页面就够了。
+ */
+function RestartSheet(props: { readonly plugin: string }): JSX.Element {
+	const [busy, setBusy] = useState(false);
+	const [problem, setProblem] = useState<string | undefined>(undefined);
+	const [done, setDone] = useState(false);
+	// 这个标记由 `main.tsx` 在挂载前写进 `<html data-shell>`；这里读的时候已经在页面上。
+	const desktop = document.documentElement.dataset["shell"] === "desktop";
+
+	const close = (): void => {
+		if (!busy) setRestartOpen(null);
+	};
+
+	const run = (): void => {
+		if (!desktop) {
+			// 网页版没有壳可重开：刷新一次就会重新走 `bootPlugins`。
+			window.location.reload();
+			return;
+		}
+		setBusy(true);
+		setProblem(undefined);
+		restartApp()
+			.then(() => {
+				setDone(true);
+			})
+			.catch((error: Error) => {
+				setProblem(error.message);
+			})
+			.finally(() => {
+				setBusy(false);
+			});
+	};
+
+	return (
+		<section className="team" role="dialog" aria-modal="true" aria-label={desktop ? "重启应用" : "刷新页面"} onClick={close}>
+			<div
+				className="team-panel"
+				onClick={(event) => {
+					event.stopPropagation();
+				}}
+			>
+				<div className="team-head">
+					<h2>{desktop ? "重启应用？" : "刷新页面？"}</h2>
+					<button type="button" className="icon-btn" aria-label="关闭" disabled={busy} onClick={close}>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+							<path d="M6 6l12 12M18 6 6 18" />
+						</svg>
+					</button>
+				</div>
+				<div className="team-list">
+					<div className="reset-body">
+						<p className="reset-lead">「{props.plugin}」已经装好了。</p>
+						<p className="reset-keep">
+							{desktop
+								? "它的界面入口要重启应用才会出现；工具和提示词已经生效。正在跑的轮次会被打断，重启后会接着做。"
+								: "它的界面入口要刷新页面才会出现；工具和提示词已经生效。正在跑的轮次会被打断，刷新后会接着做。"}
+						</p>
+						{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
+						{done ? <p className="reset-done">正在重新启动…</p> : null}
+					</div>
+					<div className="group-actions reset-actions">
+						<button type="button" className="group-cancel" disabled={busy} onClick={close}>
+							稍后
+						</button>
+						<button type="button" className="group-submit" disabled={busy || done} onClick={run}>
+							{busy ? "正在重启…" : desktop ? "立即重启" : "刷新页面"}
 						</button>
 					</div>
 				</div>

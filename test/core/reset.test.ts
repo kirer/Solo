@@ -127,4 +127,46 @@ describe("重置所有数据", () => {
 			await server.close();
 		}
 	});
+
+	it("重启接口：不确认回 400，确认之后才交给启动层重开", async () => {
+		const box = await pool.make("restart-http-");
+		const runtime = await box.open();
+		const shell = await box.assemble(runtime);
+		let restarts = 0;
+		const server = await serveCore({
+			shell,
+			port: 0,
+			onRestart: () => {
+				restarts += 1;
+			},
+		});
+		const post = (body: unknown): Promise<number> =>
+			new Promise((resolve, reject) => {
+				const payload = JSON.stringify(body);
+				const req = httpRequest(
+					{
+						host: "127.0.0.1",
+						port: server.port,
+						method: "POST",
+						path: "/api/restart",
+						headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+					},
+					(response) => {
+						response.resume();
+						response.on("end", () => resolve(response.statusCode ?? 0));
+					},
+				);
+				req.on("error", reject);
+				req.end(payload);
+			});
+		try {
+			expect(await post({})).toBe(400);
+			expect(restarts).toBe(0);
+			expect(await post({ confirm: true })).toBe(200);
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			expect(restarts).toBe(1);
+		} finally {
+			await server.close();
+		}
+	});
 });

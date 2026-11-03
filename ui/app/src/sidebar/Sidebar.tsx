@@ -9,7 +9,7 @@
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
-import { openChannel, openWithPerson, setNewGroup, setSide } from "../state/store.ts";
+import { openChannel, openWithPerson, setNewGroup } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Actor, Channel } from "../api/types.ts";
 
@@ -17,7 +17,6 @@ export function Sidebar(): JSX.Element {
 	const channels = useStore((state) => state.channels);
 	const people = useStore((state) => state.people);
 	const currentId = useStore((state) => state.currentId);
-	const side = useStore((state) => state.side);
 	const presence = useStore((state) => state.presence);
 
 	const bySlug = new Map(people.map((person) => [person.slug, person]));
@@ -29,14 +28,14 @@ export function Sidebar(): JSX.Element {
 		channels.some((channel) => channel.kind === "dm" && channel.title === nearest.label);
 
 	return (
-		<aside className="sidebar" data-side={side}>
+		<aside className="sidebar">
 			<div className="side-logo">
 				{/* 不画品牌标：这一列的头只说明「这里是聊天」，和左边那格图标连成一条线。 */}
 				<h1 className="brand-name" id="bar-title">
 					聊天
 				</h1>
 				<span className="side-grow" />
-				{/* 插槽：品牌行右侧，收放按钮之前。 */}
+				{/* 插槽：品牌行右侧，拉群按钮之前。 */}
 				<Slot name="sidebar.header" />
 				{/* 拉群就在会话列表头顶：它长出来的是一格会话，不是一项「管理」。 */}
 				<button
@@ -49,19 +48,6 @@ export function Sidebar(): JSX.Element {
 				>
 					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
 						<path d="M12 5v14M5 12h14" />
-					</svg>
-				</button>
-				<button
-					type="button"
-					className="icon-btn side-toggle"
-					id="side-toggle"
-					aria-label={side === "rail" ? "展开侧栏" : "收起侧栏"}
-					title={side === "rail" ? "展开侧栏" : "收起侧栏"}
-					onClick={() => setSide(side === "rail" ? "open" : "rail")}
-				>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-						<rect x="3" y="4" width="18" height="16" rx="3" />
-						<path d="M9 4v16" />
 					</svg>
 				</button>
 			</div>

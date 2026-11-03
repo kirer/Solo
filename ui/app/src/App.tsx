@@ -30,6 +30,7 @@ import {
 	setNewGroup,
 	setPluginSheet,
 	setResetOpen,
+	setRestartOpen,
 	setRight,
 	setSettings,
 	setTeam,
@@ -44,7 +45,6 @@ export function App(): JSX.Element {
 	const channels = useStore((state) => state.channels);
 	const detail = useStore((state) => state.detail);
 	const people = useStore((state) => state.people);
-	const side = useStore((state) => state.side);
 	const theme = useStore((state) => state.theme);
 	const right = useStore((state) => state.right);
 	const conn = useStore((state) => state.conn);
@@ -55,6 +55,7 @@ export function App(): JSX.Element {
 	const pluginSheet = useStore((state) => state.pluginSheet);
 	const newGroup = useStore((state) => state.newGroup);
 	const resetOpen = useStore((state) => state.resetOpen);
+	const restartOpen = useStore((state) => state.restartOpen);
 	const tasksOpen = useStore((state) => state.tasks.open);
 	const pluginView = useStore((state) => state.pluginView);
 
@@ -80,14 +81,10 @@ export function App(): JSX.Element {
 		return () => media.removeEventListener("change", apply);
 	}, [theme]);
 
-	useEffect(() => {
-		document.body.dataset["side"] = side;
-		localStorage.setItem("solo.side", side);
-	}, [side]);
-
 	/* 键盘只在「没在打字」时接管：Tab 顺序之外不再多抢一个键。 */
 	const closeTop = useCallback((): boolean => {
 		if (resetOpen) return setResetOpen(false), true;
+		if (restartOpen !== null) return setRestartOpen(null), true;
 		if (pluginView !== null) return closePluginView(), true;
 		if (tasksOpen) return closeTasks(), true;
 		if (settings) return setSettings(false), true;
@@ -97,7 +94,7 @@ export function App(): JSX.Element {
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [resetOpen, pluginView, tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
+	}, [resetOpen, restartOpen, pluginView, tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {
@@ -173,7 +170,6 @@ export function App(): JSX.Element {
 	return (
 		<div
 			className="frame"
-			data-side={side}
 			data-right={right.open ? "open" : "closed"}
 			data-view={view}
 		>

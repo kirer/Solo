@@ -107,6 +107,10 @@ export const createGroup = (title: string, members: readonly string[]): Promise<
 export const resetAllData = (): Promise<{ ok: true; restarting: true }> =>
 	call("/api/reset", { method: "POST", body: JSON.stringify({ confirm: true }) });
 
+/** 重启应用（装完带前端的插件之后）。和重置同一条退出路径，但一个字节都不删。 */
+export const restartApp = (): Promise<{ ok: true; restarting: true }> =>
+	call("/api/restart", { method: "POST", body: JSON.stringify({ confirm: true }) });
+
 /** 现在生效的模型（`provider/modelId`）。settings.json 里刚加的提供商要重启才进这里。 */
 export const getModels = (): Promise<{ models: string[]; defaultModel: string }> => call("/api/models");
 

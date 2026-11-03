@@ -33,8 +33,8 @@ import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../core/runtime/
 import { resolveLayout, type Layout } from "../core/layout.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
-/** 重置完成后用这个退出码退出；桌面壳（`desktop/src/backend.ts`）认它，收到就重开。 */
-const RESET_EXIT_CODE = 75;
+/** 重置 / 重启完成后用这个退出码退出；桌面壳（`desktop/src/backend.ts`）认它，收到就重开。 */
+const RELAUNCH_EXIT_CODE = 75;
 
 type Args = {
 	readonly port: number;
@@ -147,17 +147,41 @@ async function main(): Promise<void> {
 	let server: CoreServer | undefined;
 	let stopWatching: () => void = () => undefined;
 	let pending: ReturnType<typeof setTimeout> | undefined;
-	let resetting = false;
+	let exiting = false;
 
-	const shutdown = async (signal: string): Promise<void> => {
-		if (resetting) return;
-		console.log(`\n[core] ${signal}，正在关闭…`);
+	/** 服务、壳、库按依赖顺序收干净。重启与重置共用；重置要在这一步之后才删盘。 */
+	const stopCore = async (): Promise<void> => {
 		clearTimeout(pending);
 		stopWatching();
 		await server?.close();
 		await shell?.close();
 		await runtime?.close();
+	};
+
+	const shutdown = async (signal: string): Promise<void> => {
+		if (exiting) return;
+		exiting = true;
+		console.log(`\n[core] ${signal}，正在关闭…`);
+		await stopCore();
 		process.exit(0);
+	};
+
+	/**
+	 * 重启：插件的前端入口只在界面启动时 import，装完带界面的插件得重来一遍。
+	 * 退出码与重置相同，桌面壳收到就重开整个应用。
+	 */
+	const restartApp = (): void => {
+		if (exiting) return;
+		exiting = true;
+		console.log("[core] 重启：正在关闭…");
+		void stopCore()
+			.then(() => {
+				process.exit(RELAUNCH_EXIT_CODE);
+			})
+			.catch((error: unknown) => {
+				console.error("[core] 重启失败：", error);
+				process.exit(1);
+			});
 	};
 
 	/**
@@ -165,18 +189,14 @@ async function main(): Promise<void> {
 	 * 所以删除不能放在接口 handler 里。删完退出，桌面壳会重开整个应用。
 	 */
 	const resetAll = (): void => {
-		if (resetting) return;
-		resetting = true;
+		if (exiting) return;
+		exiting = true;
 		console.log("[core] 重置：清空所有数据…");
 		void (async () => {
-			clearTimeout(pending);
-			stopWatching();
-			await server?.close();
-			await shell?.close();
-			await runtime?.close();
+			await stopCore();
 			await wipeAll(layout);
 			console.log("[core] 重置完成");
-			process.exit(RESET_EXIT_CODE);
+			process.exit(RELAUNCH_EXIT_CODE);
 		})().catch((error: unknown) => {
 			console.error("[core] 重置失败：", error);
 			process.exit(1);
@@ -208,6 +228,7 @@ async function main(): Promise<void> {
 			port: args.port,
 			host: args.host,
 			onReset: resetAll,
+			onRestart: restartApp,
 		});
 		// 插件是磁盘上的一堆文件夹：改了就重装，不用重启（ADR-026）。
 		// 防抖是因为一次保存常常连着好几个事件，而装到一半时文件还没写完。

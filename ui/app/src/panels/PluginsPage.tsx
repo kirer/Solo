@@ -2,8 +2,9 @@
  * 插件页：一列插件 + 右边选中那个的详情，和「后台任务」是同一套骨架。
  * 一个文件夹一个插件，装 / 卸就是建 / 删那个文件夹。
  *
- * 三个动作都**当场生效**：内核写完文件就重装一遍插件（ADR-026），不用重启。
- * 所以这里不写「重启后生效」——说了反而让人以为要等。
+ * 后端部分（工具 / 提示词 / 接口）**当场生效**：内核写完文件就重装一遍插件（ADR-026）。
+ * 但前端入口只在界面启动时 `import` 一次，所以带 `client.js` 的插件装完要问一句
+ * 「要不要重启」——不重启的话它的页签、按钮不会出现。
  *
  * 宽度：左栏 288px（和聊天列表一样），右边才是正文。清单长到几十个也认得过来，
  * 因为名字只占一列、开关和删除在正文里，不在每一行里挤三个东西。
@@ -12,6 +13,7 @@
 import { useEffect, useState } from "react";
 import { getPlugins, installPlugin, removePlugin, setPluginEnabled } from "../api/client.ts";
 import type { Plugin } from "../api/types.ts";
+import { setRestartOpen } from "../state/store.ts";
 
 /** 「它带来了什么」压成一行。全是空的时候说「只有一份说明」。 */
 function bringsText(brings: NonNullable<Plugin["brings"]>): string {
@@ -78,11 +80,12 @@ export function PluginsPage(): JSX.Element {
 	}, []);
 
 	/** 三个动作长得一样：拿回新的清单，失败就把后端那句中文摆出来。 */
-	const apply = (action: Promise<{ plugins: Plugin[] }>): void => {
+	const apply = (action: Promise<{ plugins: Plugin[] }>, after?: (plugins: readonly Plugin[]) => void): void => {
 		action
 			.then((body) => {
 				setPlugins(body.plugins);
 				setProblem(undefined);
+				after?.(body.plugins);
 			})
 			.catch((error: Error) => {
 				setProblem(error.message);
@@ -99,9 +102,65 @@ export function PluginsPage(): JSX.Element {
 					<h2 className="page-title">
 						插件 <span className="team-count">{plugins?.length ?? 0}</span>
 					</h2>
+					{/* 装插件就是给这一列加一格：那颗「+」和聊天标题旁的拉群同款、同位置。 */}
+					<label className="icon-btn plugin-add" title="装一个插件（选它的文件夹）">
+						<span className="sr-only">选一个插件文件夹装进来</span>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+							<path d="M12 5v14M5 12h14" />
+						</svg>
+						<input
+							type="file"
+							multiple
+							className="sr-only"
+							ref={(node) => {
+								// `webkitdirectory` 不是标准 React 属性，只能挂到 DOM 上：有了它浏览器才让人选**文件夹**。
+								if (node !== null) node.setAttribute("webkitdirectory", "");
+							}}
+							onChange={(event) => {
+								const list = event.target.files;
+								if (list === null || list.length === 0) return;
+								readFolder(list)
+									.then((folder) => {
+										setPicked(folder);
+										setProblem(undefined);
+									})
+									.catch((error: Error) => {
+										setPicked(undefined);
+										setProblem(error.message);
+									});
+								// 允许同一个文件夹再选一次（否则第二次选它不触发 onChange）。
+								event.target.value = "";
+							}}
+						/>
+					</label>
 				</header>
 
 				<div className="page-side-body">
+					{/* 选好文件夹之后在这里确认：看清是哪个再按「安装」。 */}
+					{picked === undefined ? null : (
+						<div className="plugin-picked-row">
+							<span className="plugin-picked" title={picked.files.map((file) => file.path).join("\n")}>
+								已选「{picked.slug}」（{picked.files.length} 个文件）
+							</span>
+							<button
+								type="button"
+								className="plugin-install-btn"
+								onClick={() => {
+									const slug = picked.slug;
+									apply(installPlugin(slug, picked.files), (list) => {
+										const installed = list.find((plugin) => plugin.slug === slug);
+										// 后端已经热装上了；带前端入口的才需要重开界面。
+										if (installed?.client === true && installed.error === undefined) {
+											setRestartOpen(installed.name);
+										}
+									});
+									setPicked(undefined);
+								}}
+							>
+								安装
+							</button>
+						</div>
+					)}
 					<div className="plugin-nav" id="plugins-list" role="listbox" aria-label="插件清单">
 						{plugins === undefined ? (
 							<p className="page-hint">正在读插件…</p>
@@ -126,55 +185,6 @@ export function PluginsPage(): JSX.Element {
 						)}
 					</div>
 				</div>
-
-				{/* 装插件在左栏脚下：它改的是这一列，不是右栏那个插件。 */}
-				<div className="page-side-foot">
-					<div className="plugin-install">
-						<label className="plugin-pick">
-							<span className="plugin-pick-btn">选择插件文件夹…</span>
-							<input
-								type="file"
-								multiple
-								ref={(node) => {
-									// `webkitdirectory` 不是标准 React 属性，只能挂到 DOM 上：有了它浏览器才让人选**文件夹**。
-									if (node !== null) node.setAttribute("webkitdirectory", "");
-								}}
-								onChange={(event) => {
-									const list = event.target.files;
-									if (list === null || list.length === 0) return;
-									readFolder(list)
-										.then((folder) => {
-											setPicked(folder);
-											setProblem(undefined);
-										})
-										.catch((error: Error) => {
-											setPicked(undefined);
-											setProblem(error.message);
-										});
-									// 允许同一个文件夹再选一次（否则第二次选它不触发 onChange）。
-									event.target.value = "";
-								}}
-							/>
-						</label>
-						{picked === undefined ? null : (
-							<>
-								<span className="plugin-picked" title={picked.files.map((file) => file.path).join("\n")}>
-									已选「{picked.slug}」（{picked.files.length} 个文件）
-								</span>
-								<button
-									type="button"
-									className="plugin-install-btn"
-									onClick={() => {
-										apply(installPlugin(picked.slug, picked.files));
-										setPicked(undefined);
-									}}
-								>
-									安装
-								</button>
-							</>
-						)}
-					</div>
-				</div>
 			</div>
 
 			<div className="page-main">
@@ -183,7 +193,7 @@ export function PluginsPage(): JSX.Element {
 						<p>
 							{plugins === undefined
 								? "正在读插件…"
-								: "还没有插件。从左下角选一个插件文件夹装进来 —— 插件跑在本机进程里，只装自己信得过的。"}
+								: "还没有插件。从标题右边那颗「+」选一个插件文件夹装进来 —— 插件跑在本机进程里，只装自己信得过的。"}
 						</p>
 					</div>
 				) : (

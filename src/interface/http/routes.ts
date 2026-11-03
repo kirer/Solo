@@ -38,6 +38,11 @@ export type RouteDeps = {
 	 * 由启动层（`shell/main.ts`）给；测试不给就是「只确认、不真删」。
 	 */
 	readonly onReset?: () => void;
+	/**
+	 * 重启应用：装完带前端的插件后，界面要重新加载才看得到它的入口。
+	 * 和重置共用一个退出码，桌面壳收到就 `app.relaunch()`。
+	 */
+	readonly onRestart?: () => void;
 };
 
 /** 查询参数里的数字：没有 / 不是有限数就是 `undefined`（由 app 决定默认值）。 */
@@ -52,7 +57,7 @@ export function numberParam(url: URL, name: string): number | undefined {
 }
 
 export function coreRoutes(deps: RouteDeps): readonly Route[] {
-	const { app, hub, onReset } = deps;
+	const { app, hub, onReset, onRestart } = deps;
 
 	/**
 	 * 插件注册的接口 → 路由。
@@ -92,6 +97,18 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				const result = app.reset.request(body?.confirm);
 				json(response, result);
 				setTimeout(() => onReset?.(), 200);
+			},
+		},
+		{
+			// 重启应用：插件前端入口只在启动时 import，装完带界面的插件必须重来一遍。
+			// 和重置走同一条退出路径（退出码 75 → 桌面壳 `app.relaunch()`），但不删任何数据。
+			pattern: "/api/restart",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				const body = await readJson<{ confirm?: unknown }>(request);
+				if (body?.confirm !== true) return fail(response, 400, "重启需要明确确认");
+				json(response, { ok: true, restarting: true });
+				setTimeout(() => onRestart?.(), 200);
 			},
 		},
 		{

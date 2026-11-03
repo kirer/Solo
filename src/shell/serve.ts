@@ -30,6 +30,8 @@ type CoreServeOptions = {
 	readonly uiDir?: string;
 	/** `/api/reset` 确认之后调用：启动层在这里关库、删盘、退出。 */
 	readonly onReset?: () => void;
+	/** `/api/restart` 确认之后调用：启动层关库后以同一个退出码退出，桌面壳重开。 */
+	readonly onRestart?: () => void;
 };
 
 export type CoreServer = {
@@ -93,6 +95,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		hub,
 		uiDir,
 		...(options.onReset === undefined ? {} : { onReset: options.onReset }),
+		...(options.onRestart === undefined ? {} : { onRestart: options.onRestart }),
 	});
 
 	/**
