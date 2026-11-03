@@ -16,7 +16,6 @@ import { listSkills } from "./skills.ts";
 import { readMemory } from "./memory.ts";
 import { memoryDigest } from "../md/memory.ts";
 import { loadRules } from "./rules.ts";
-import { readPolicy, renderPolicy } from "../work/policy.ts";
 import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
 import { redact } from "./secrets.ts";
@@ -188,8 +187,6 @@ async function slotsFor(
 
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);
-	// 派活的策略同理：它和规矩住在一个根里，是「我的」文件，改了下一条消息就生效。
-	if (need.has("policy")) slots["policy"] = renderPolicy(await readPolicy(paths.layout.policyFile));
 
 	const needsRoster = wants("count", "team", "peers", "assistant");
 	const all = needsRoster ? await readAllIdentities(paths.layout.agentRoots) : [];

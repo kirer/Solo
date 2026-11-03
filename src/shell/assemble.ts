@@ -587,8 +587,6 @@ export async function ownerSpeak(
 			uploadsRoot: wiring.uploadsRoot,
 			promptDir: wiring.promptDir,
 			text: shell.text,
-			// 我开口派的活也要立工单：这是「谁派的」最确定的一处。
-			policyFile: shell.layout.policyFile,
 			// 我说话也要记「谁在哪个频道被叫醒」，否则被叫的人回话会落到别的频道。
 			rememberWake: (slug, wake) => wiring.rememberWake(slug, wake, context),
 			// 插话时继承他上一次的 `task`：我在他干活时私聊一句，不覆盖团队频道。

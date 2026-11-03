@@ -92,8 +92,10 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		expect(seed).toContain("一两句");
 		expect(seed).toContain("英文");
 		// 拍不了板直接找我（没有中间层）；组织变动归助理（ADR-058）。
-		expect(seed).toContain("直接 @我");
-		expect(seed).toContain("没有中间层");
+		// 要写成正文里的 `@我`：只写「你」叫不醒我（ADR-060 的真机教训）。
+		expect(seed).toContain("拍不了板");
+		expect(seed).toContain("在正文里 @我");
+		expect(seed).toContain("别让人转话");
 		expect(seed).toContain("只有助理能做");
 		// 「只有助理能直接找我」只对助理成立，家在助理身份里（全局规矩不写个案）。
 		const assistant = await readFile(new URL("../../seed/assistant/identity.md", import.meta.url), "utf8");

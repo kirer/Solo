@@ -28,12 +28,10 @@
 ```
 seed/
   rules.md                       # 15 条以内，每轮都看见
-  policy.md                      # 派活的判据：模式 + 谁能派（播种进 <userRoot>/policy.md）
   text/                          # 机械文案：`## key` 分节，代码里只留键名
-    tools.md                     # 8 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
+    tools.md                     # 7 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
     channel.md                   # 投递头 / 附件说明 / 未答留痕 / 提示词兜底句
-    work.md                      # 派活工具：立工单 / 报进度 / 问人 / 重试 / 收工
-  prompt/                        # 10 段进系统提示词 + 10 段投递时用
+  prompt/                        # 9 段进系统提示词 + 10 段投递时用
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
     05-body.md                   # {{self.body}}（空则整段消失）
     10-rules.md                  # {{rules}}
@@ -52,7 +50,6 @@ seed/
     86-digest.md                 # 未读摘要尾注
     87-merged.md                 # 合并唤醒尾注
     88-task.md                   # 插话时提醒「手上的活属于哪个频道」
-    89-work.md                   # 接活 / 工单 / 什么时候该停下来问（插槽 {{policy}}）
     90-interrupted.md            # 插话时的额外一句
   assistant/                     # 助理（知言）：播种进 appRoot/assistant/<slug>/
     identity.md                  # 助理身份（从代码挪出来）
@@ -85,7 +82,6 @@ seed/
 | `{{chats.groups}}` `{{chats.dm}}` | 你在哪些群 / 和我的私聊开没开（`已开`） | 频道文档 |
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
-| `{{policy}}` | 派活策略（模式 / 两份名单） | `<userRoot>/policy.md`（`work/policy.ts` 的 `renderPolicy`） |
 | `{{count}}` | 全员 agent 数 | 名册 |
 | `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | 身份目录里 `identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
@@ -125,7 +121,7 @@ seed/
      **名字写错不报错**（写 `{{tool:sayy}}` 就渲染成 `sayy`），靠 seed 侧检查把名字和真工具名对一遍。
    - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues`；
      `81` / `82` 填 `others`；`83` 填 `colleagues`；`84` / `85` 不填；`86` 填 `total` / `rows`；
-     `87` 填 `merged`；`88` 填 `task`；`89` 填 `policy`；`90-interrupted` 只填 `tool:*`。
+     `87` 填 `merged`；`88` 填 `task`；`90-interrupted` 只填 `tool:*`。
      往这些段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
      `prompt:check` 用样例表查所有段。
 

@@ -92,12 +92,6 @@ type DeliverOptions = {
 	/** 机械文案目录（`text/channel.md`）。投递头与附件说明从这里取。 */
 	readonly text?: TextCatalog;
 	/**
-	 * 每个人正文后面再补一句（slug → 那一句）。目前只有一种：这一轮记在哪张工单上。
-	 *
-	 * 挂在这里而不是拼进 `renderDelivery`：那一层只认识「这条消息」，不认识工单。
-	 */
-	readonly bodyNotes?: ReadonlyMap<string, string>;
-	/**
 	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
 	 * 返回合并了几条（0 = 没合并）。不传就不合并。
 	 *
@@ -178,9 +172,7 @@ export async function deliver(
 			task.channelId === options.channel.id
 				? undefined
 				: (options.titleOf?.(task.channelId) ?? task.channelId);
-		const baseText = bodyOf(slug, interrupted, taskChannelTitle);
-		const note = options.bodyNotes?.get(slug);
-		const base = note === undefined ? baseText : `${baseText}\n${note}`;
+		const base = bodyOf(slug, interrupted, taskChannelTitle);
 		const result = await wake(
 			{
 				conversationOf: async (target) => (target === slug ? conversation : options.conversationOf(target)),

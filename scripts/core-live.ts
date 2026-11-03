@@ -321,11 +321,12 @@ async function main(): Promise<void> {
 				(owner === undefined || team.members.includes(owner)),
 			detail: team === undefined ? "没有团队频道" : `成员 ${team.members.join("、")}`,
 		});
-		// 拍板的规矩只有 `rules.md` 一个家（ADR-059）：每轮都进提示词，不靠技能转述。
-		// 所以验的是「新人的提示词里就有这条」+ 技能「工作规矩」被列进提示词。
+		// 拍板的规矩只有 `rules.md` 一个家（ADR-060 之后仍然如此）：每轮都进提示词，
+		// 不靠技能转述。验的是「新人的提示词里就有这条」+ 技能「工作规矩」被列进提示词。
+		// 只认两个词，不认整句：措辞会随真机测试改，判据是「有没有讲拍不了板要找我」。
 		const prompt = await shell.promptOf(hired.slug);
 		const listed = prompt.includes("工作规矩");
-		const told = prompt.includes("直接 @我");
+		const told = prompt.includes("拍不了板") && prompt.includes("@我");
 		phases.push({
 			name: "新人拿得到拍板规矩（rules.md + 技能「工作规矩」）",
 			ok: listed && told,
@@ -333,7 +334,7 @@ async function main(): Promise<void> {
 				? "提示词里没列出「工作规矩」技能"
 				: told
 					? "规则正文在提示词里，技能也已列出"
-					: "提示词里没有「直接 @我」这条",
+					: "提示词里没有讲「拍不了板要 @我」的那条",
 		});
 	}
 

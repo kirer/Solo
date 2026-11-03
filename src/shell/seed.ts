@@ -169,19 +169,6 @@ export async function seedRules(layout: Layout): Promise<"written" | "exists" | 
 }
 
 /**
- * 把 `seed/policy.md` 写进用户根（**只在不存在时写**）。
- *
- * 和规矩同一个道理：派活的策略是我天天改的活文件，写一次就够了，之后它属于我。
- */
-export async function seedPolicy(layout: Layout): Promise<"written" | "exists" | "missing"> {
-	if (await existsAt(layout.policyFile)) return "exists";
-	const source = await readTextOrUndefined(seedPath("policy.md"));
-	if (source === undefined) return "missing";
-	await writeTextAt(layout.policyFile, source);
-	return "written";
-}
-
-/**
  * 把出厂的提示词模板（`seed/prompt/*.md`）补进工作区（`<workspace>/prompt/`）。
  *
  * **只补不改**，和 `rules.md` 同一条规矩：模板是每一轮都要进提示词的活文件，我可能亲手

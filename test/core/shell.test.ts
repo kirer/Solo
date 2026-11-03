@@ -38,9 +38,9 @@ describe("装配", () => {
 			if (conversation === undefined) return;
 			const agent = await conversation.agent(BACKGROUND_CONTEXT);
 			// 坑 1：扩展按名字解析，忘了 install 身份扩展 → 会话里一个 section 都没有。
-			// 分段后每人 10 段（一段一个 md）：底座按段做最小 patch，缓存才留得住。
+			// 分段后每人 9 段（一段一个 md）：底座按段做最小 patch，缓存才留得住。
 			expect(agent.sections.map((section) => section.key)).toEqual(
-				["who", "body", "rules", "position", "team", "tools", "memory", "skills", "directory", "work"].map(
+				["who", "body", "rules", "position", "team", "tools", "memory", "skills", "directory"].map(
 					(segment) => `${sectionKeyOf(slug)}-${segment}`,
 				),
 			);

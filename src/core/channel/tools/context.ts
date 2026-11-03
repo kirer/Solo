@@ -145,8 +145,6 @@ export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Conte
 	return {
 		harness: deps.harness,
 		state,
-		// 派活策略：叫醒人之前替他立工单（`work/intake.ts`）。
-		policyFile: deps.layout.policyFile,
 		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：agent 叫醒 agent 也要贴。
 		promptDir: deps.wiring.promptDir,
 		...(deps.text === undefined ? {} : { text: deps.text }),

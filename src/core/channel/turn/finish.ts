@@ -28,7 +28,6 @@ import type { WakeRecord, WakeTarget } from "./record.ts";
 import { postMessage, type PostDeps } from "../post.ts";
 import type { MentionRoster } from "../mentions.ts";
 import { isPass } from "../tools/guards.ts";
-import { closeUntouched } from "../../work/intake.ts";
 
 /** 从一条 `pi.assistant` 里取出「最终正文」——最后一个 text 块。 */
 export function finalTextOf(entry: EntryRecord | undefined): string | undefined {
@@ -104,8 +103,6 @@ export function saidLast(page: readonly EntryRecord[], answer: EntryRecord | und
 
 type TurnDeps = {
 	readonly harness: Harness;
-	/** 派活策略：一轮收尾时让没汇报过的自动工单收工（`work/intake.ts`）。 */
-	readonly policyFile?: string | undefined;
 	readonly promptDir?: string | undefined;
 	readonly text?: PostDeps["text"];
 	/** 名册：补发时 `@我` 要存成 `owner`，不能存字面 token（见 `ownerSpeak` 同一段说明）。 */
@@ -163,14 +160,6 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 }
 
 async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context): Promise<void> {
-	// 先收单：这一轮要是连一次汇报都没有，那张自动立的工单就到此为止（试运行不带账）。
-	if (deps.policyFile !== undefined) {
-		await closeUntouched(
-			{ harness: deps.harness, policyFile: deps.policyFile },
-			{ slug: info.slug, channelId: info.wake.reply.channelId, seq: info.wake.reply.seq },
-			context,
-		).catch(() => undefined);
-	}
 	const state = (await deps.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
 	const { entry, page } = await answerEntry(info.conversation, info.answer, context);
 	const target = turnTarget(state, info.slug, info.wake, saidLast(page, entry));

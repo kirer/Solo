@@ -25,7 +25,7 @@ import { openCore, type CoreRuntime } from "../core/runtime/open.ts";
 import { setupModels, compactionSettings } from "../core/runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
-import { seedOwnerAssistant, seedPlugins, seedPolicy, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
+import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../core/fsx.ts";
 import { loadTemplates, PROMPT_DIR } from "../core/md/prompt.ts";
 import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../core/runtime/io.ts";
@@ -94,9 +94,6 @@ async function main(): Promise<void> {
 		// 工作区。同步按 hash 判断用户改过没有，改过的不动（ADR-031）。
 		const rules = await seedRules(layout);
 		if (rules === "written") console.log(`[core] 写入了全员规矩：${layout.rulesFile}`);
-		// 派活的策略：和规矩一样是我自己的文件，只在缺失时落一份出厂版。
-		const policy = await seedPolicy(layout);
-		if (policy === "written") console.log(`[core] 写入了派活策略：${layout.policyFile}`);
 		// 提示词模板同理：缺哪一段补哪一段，改过的不动。
 		const templates = await seedPromptTemplates(layout);
 		if (templates.length > 0) console.log(`[core] 补进了提示词模板：${templates.join("、")}`);

@@ -175,7 +175,6 @@ const PROMPT_FILES = [
 	"86-digest.md",
 	"87-merged.md",
 	"88-task.md",
-	"89-work.md",
 	"90-interrupted.md",
 ] as const;
 

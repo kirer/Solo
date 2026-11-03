@@ -105,8 +105,8 @@ async function setup(
 	};
 }
 
-describe("工具收敛：注册表只有八个", () => {
-	it("名单是 8 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有七个", () => {
+	it("名单是 7 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
@@ -116,7 +116,6 @@ describe("工具收敛：注册表只有八个", () => {
 			"hire",
 			"run",
 			"file",
-			"work",
 		]);
 	});
 });
@@ -441,49 +440,5 @@ describe("file 写身份：换团队要重投影两次", () => {
 		expect(output).toContain("已写入");
 		// 旧团队 alpha 与人走了之后要重算，新团队 beta 也要重算 —— 少一次就是「加进团队了但频道里没他」。
 		expect(new Set(synced)).toEqual(new Set(["alpha", "beta"]));
-	});
-});
-
-/**
- * `work`：接活。
- *
- * 钉三件事：**闸门在工具里**（策略没放行就不发工单）、工单真的落进文档、
- * 号和阶段在返回里说人话。
- */
-describe("work：接活", () => {
-	it("策略没放行：接不了，但话说得清楚", async () => {
-		const { call } = await setup();
-		const output = await call("work", { action: "open", title: "调连接池", scope: "只改配置" });
-		expect(output).toContain("接不了");
-		expect(output).not.toContain("T1");
-	});
-
-	it("auto + 名单里有我：立上工单，之后能报、能列", async () => {
-		const { call, layout } = await setup();
-		await writeFile(
-			layout.policyFile,
-			"---\nmode: auto\n---\n\n# 谁能派活\n\n## 明确 @ 我 / 私聊\n\n- 所有人\n\n## 不 @ 也能派\n\n- owner\n\n# 规矩\n\n## 只在工作区里改\n\n只改自己的工作区。\n",
-			"utf8",
-		);
-		const opened = await call("work", { action: "open", title: "调连接池", scope: "只改配置" });
-		expect(opened).toContain("T1");
-
-		const reported = await call("work", { action: "report", ticket: "T1", outcome: "ready", text: "调完了" });
-		expect(reported).toContain("等人验收");
-
-		const listed = await call("work", { action: "list" });
-		expect(listed).toContain("T1");
-	});
-
-	it("不认识的工单号：回一句能自救的话", async () => {
-		const { call } = await setup();
-		const output = await call("work", { action: "report", ticket: "T9", outcome: "ready", text: "x" });
-		expect(output).toContain("list");
-	});
-
-	it("不认识的 action：列出合法值", async () => {
-		const { call } = await setup();
-		const output = await call("work", { action: "乱写" });
-		expect(output).toContain("open");
 	});
 });

@@ -58,10 +58,9 @@ src/
                     prompt.ts（提示词拼段）/ catalog.ts（`## key` 文案目录）/
                     memory.ts（记忆格式，个人与团队共用）/ oneline.ts（压成一行）
     runtime/        防腐层：唯一能 import pi-durable / pi-ai / chord 的地方（含 models/compaction）
-    agent/          一个人：身份 / 提示词装配（10 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
+    agent/          一个人：身份 / 提示词装配（9 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
     team/           一个团队：README.md / memory.md
-    work/           派活：策略（policy.md）/ 闸门（纯函数）/ 工单 / 阶段 / 接活（ADR-053 / ADR-055）
-    channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 8 个工具（tools/）
+    channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 7 个工具（tools/）
     plugin/         插件：清单（manifest）/ 四动作 API（api）/ 加载与隔离（load）
   app/            用例：读（快照 / 投影） / 人 / 说话 / 上传 / 后台命令收尾 / 看门狗 / 诊断（不 import node:http）
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/project.ts）
@@ -79,14 +78,14 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             84 文件 / 805 例
-  ├ test/core/    71 文件（纯函数 + 装配）
+test/             82 文件 / 769 例
+  ├ test/core/    69 文件（纯函数 + 装配）
   ├ test/ui/      10 文件（界面纯函数与源码约定）
   └ test/desktop/ 3 文件（更新源、就绪行与更新源地址、清单验签与版本比较）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
 
-（`src/` 共 95 个 ts：core 65 / app 18 / view 1 / interface 7 / shell 4；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/` 共 86 个 ts：core 56 / app 18 / view 1 / interface 7 / shell 4；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -94,7 +93,7 @@ test/             84 文件 / 805 例
 **三条老边界**（一开始就有，`npm run check` 机械化检查，违反即失败）：
 
 1. **只有 `src/core/runtime/` 能 import 底层库**（pi-durable / pi-ai / chord）。
-2. **内核（domain）不得反向 import 上层**：`agent|team|channel|work|runtime` 不许碰
+2. **内核（domain）不得反向 import 上层**：`agent|team|channel|runtime` 不许碰
    `shell/` / `interface/` / `app/` / `view/`。
 3. **每条路由必须在前端有消费者**（`src/interface/http/routes.ts` 的 `pattern` ×
    `ui/app/src`；白名单只有 `/api/org`，Docker 健康检查用）。加路由没人用 → 要么接上界面、
@@ -140,7 +139,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 84 文件 805 例，<3s，必须全绿
+npm test             # 82 文件 769 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -241,8 +240,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 
 | 我要… | 先读 | 再动 |
 |---|---|---|
-| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（8 个；同一件事加 `action`，别开新名字） |
-| 改「谁能派活 / 怎么接活」 | `docs/CORE.md` §14 + `docs/DECISIONS.md` ADR-053 / ADR-055 | **先改 `policy.md`（`<userRoot>/policy.md`，出厂版在 `seed/policy.md`）**：模式与两份名单是 md（规矩在 `rules.md`，ADR-059）；代码只动 `src/core/work/`（`gate.ts` / `policy.ts` / `ticket.ts` / `stage.ts` / `intake.ts`）+ `src/core/channel/tools/work.ts` + `src/core/channel/post.ts`（立单后正文补一句）+ `src/core/channel/turn/finish.ts`（收尾收工）+ `seed/text/work.md` 的 `work.wake.line` + `seed/prompt/89-work.md`；`test/core/work.test.ts` / `test/core/work-intake.test.ts` |
+| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（7 个；同一件事加 `action`，别开新名字） |
 | 教 agent 一套做法 | `seed/skills/` 里现成的技能 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
 | 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/md/prompt.ts` 只剩排版）；加插槽要先登记 §3 并在 `scripts/prompt-fixture.ts` 给样例值 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |

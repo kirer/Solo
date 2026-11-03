@@ -1055,8 +1055,8 @@
 
 ## ADR-053 派活：md 里的策略 + 确定性闸门 + 会留下来的工单（移植 dsh-superagent）
 
-> **第 2、4、5 条里的「规矩」已被 ADR-059 取代**（2026-11）：规矩只有 `rules.md` 一个家，
-> `policy.md` 只剩模式与两份名单；工单不再记「命中的规矩」，`mandateHolds` 只校策略版本。
+> **已被 ADR-060 取代**（2026-11）：整套工单 / 派活删掉了 —— 没有消费端。
+> （第 2、4、5 条里的「规矩」曾先被 ADR-059 取代，现在连 `policy.md` 一起没了。）
 
 - **背景**：V3 里「谁该干什么」全靠每轮现拼的提示词和人的临场判断。没有一张地方记得住
   「这件事是谁派的、按什么授权做的、做到哪一步」。一句话说完就散在消息流里，隔天要它接着做，
@@ -1100,6 +1100,8 @@
 ---
 
 ## ADR-055 立单在代码里，推进在模型里，收工在收尾里（补 ADR-053）
+
+> **已被 ADR-060 取代**（2026-11）：`intakeAll` / `closeUntouched` / `bodyNotes` 全部删除。
 
 - **背景**：ADR-053 把工单交给模型自己 `open`。真模型跑了二十几轮，**它一次都没开**——
   改提示词段、改工具描述、在投递正文里加一句、改策略措辞都不动。但它会用**已经存在的**
@@ -1217,6 +1219,9 @@
 
 ## ADR-059 规矩只有一个家：policy.md 只管谁能派活
 
+> **policy.md 那一半已被 ADR-060 取代**（2026-11）：连策略文件一起删了；「规矩只有
+> `rules.md` 一个家」仍然成立。
+
 - **背景**：项目自己的第一条纪律是「一条事实只能有一个家」（`docs/design/SEED-CONTRACT.md`）。
   但「规矩」有两个家：`rules.md`（每轮进提示词）和 `policy.md` 的 `# 规矩`（进工单授权）。
   后者还长出了一整套第二规则系统：`Rule` 类型、`Policy.rules`、`Gate.rules`、工单上的
@@ -1245,3 +1250,42 @@
   `scripts/prompt-fixture.ts`、`docs/{CORE,CODE}.md`、`docs/design/SEED-CONTRACT.md`。
 - **取代**：ADR-053 第 2、4、5 条里的「规矩」部分；ADR-056 的「交给你的上级」（那一半已由
   ADR-058 取代，这里一并作废）。
+
+---
+
+## ADR-060 没有消费者的概念不上内核：删掉工单 / 派活
+
+- **背景**：ADR-053 / ADR-055 把 dsh-superagent 的域模型（Trigger → Eval → Mandate →
+  Ticket → Report → Stage）搬进了内核：自动立单、工单号进投递正文、七个动作的 `work` 工具、
+  阶段表、200 条判断留痕。做完之后回头看，这套东西**没有任何读它的人**：
+  - `WorkDoc` 只在 `core/work/` 自己的三个文件里读写；
+  - `ticket` 在 `app` / `view` / `interface` / `shell` / `ui` / `scripts` 里 **0 次命中**：
+    没有接口、没有界面、没有一条 live 或场景测试碰它；
+  - 它唯一可见的产物是投递正文末尾那句「这一轮记在 T3 上」，外加一个模型可能调的工具。
+  dsh 里这套模型的消费端是任务面板；我们搬了生产端，没搬消费端。结果是 **~1750 行只写不读的账本**。
+- **决策**：整条删除。
+  1. 删 `src/core/work/`（`types` / `policy` / `gate` / `ticket` / `stage` / `intake` / `index`）、
+     `channel/tools/work.ts`、`seed/policy.md`、`seed/prompt/89-work.md`、`seed/text/work.md`；
+  2. 拆掉接线：`post.ts`（`intakeNotes` / `policyFile`）、`dispatch.ts`（`bodyNotes`）、
+     `turn/finish.ts`（`closeUntouched`）、`tools/context.ts`、`channel/wiring.ts`、
+     `agent/sections.ts`（`{{policy}}` 插槽）、`layout.ts`（`policyFile`）、`shell/seed.ts`
+     （`seedPolicy`）；
+  3. 工具 8 → 7，系统提示词段 10 → 9，系统提示词正文 1837 → 1465 字符。
+- **原则**（写进 `docs/CORE.md`）：**每一块代码要么被界面读、要么被模型读、要么被测试钉住
+  行为。只写不读的账本不是能力，是负债。** 另外：**一个概念不要在两处各有一套生命周期** ——
+  一条消息原来的生命周期是「落库 → 叫醒 → 回话」，工单又造了第二套，两套之间没有消费者。
+- **为什么可以删而不伤行为**：闸门只决定「立不立单」，而单子没人读，所以它今天不改变任何
+  可观察行为；规矩与授权本来就在 `rules.md` 与点名本身。删掉后派活回到它本来的样子：
+  **一条消息 + 一次叫醒**。
+- **代价**：失去「谁派的、按哪一版授权、做到第几步」的落盘记录。以后真要做任务面板，
+  先做消费端，再引入账本。
+- **真机验证（删完之后）**：连跑两次 live，`成员拍不了板，直接找我` 两项都失败了 ——
+  成员把话写在频道里、正文里叫「你」，却不带 `@我`。那一段原来是 `89-work.md` 的
+  「要拍板、要东西、要改范围，用 `ask` 停下来问人」在兜着。修法不是把那段搬回来，而是把
+  规矩写成机制：`rules.md` 的拍板那条改成「**在正文里 `@我`**……光写『你』叫不醒我」。
+  改完两次 live 都是 13/13（收尾 0/7、0/7）。
+- **执行**：`src/core/work/`（删）、`src/core/channel/tools/work.ts`（删）、
+  `seed/{policy.md,prompt/89-work.md,text/work.md}`（删）、`src/core/channel/{post,dispatch,wiring}.ts`、
+  `src/core/channel/turn/finish.ts`、`src/core/channel/tools/{index,context}.ts`、
+  `src/core/agent/sections.ts`、`src/core/layout.ts`、`src/shell/{seed,main,assemble}.ts`、
+  `scripts/prompt-fixture.ts`、`test/core/{tools-actions,prompt-render,seed-contract,shell,no-hardcoded-text}.test.ts`。

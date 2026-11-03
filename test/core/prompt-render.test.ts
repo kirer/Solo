@@ -112,7 +112,6 @@ describe("loadTemplates：排序与去重", () => {
 			"86-digest.md",
 			"87-merged.md",
 			"88-task.md",
-			"89-work.md",
 			"90-interrupted.md",
 		]);
 	});
@@ -226,7 +225,7 @@ describe("seed/prompt 真实渲染（契约 §5 的 prompt:check，测试版）"
 		expect(rendered.text).not.toContain(UNSET);
 	});
 
-	it("系统段 10 段 + 投递段 11 段（回话片段全部来自 md）", async () => {
+	it("系统段 9 段 + 投递段 11 段（回话片段全部来自 md）", async () => {
 		const rendered = await renderPromptDir(createFsx(SEED), SAMPLE, "prompt");
 		expect(rendered.segments.map((segment) => segment.segment)).toEqual([
 			"who",
@@ -238,7 +237,6 @@ describe("seed/prompt 真实渲染（契约 §5 的 prompt:check，测试版）"
 			"memory",
 			"skills",
 			"directory",
-			"work",
 		]);
 		expect(Object.keys(rendered.delivery).sort()).toEqual([
 			"alone",

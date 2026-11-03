@@ -17,7 +17,6 @@ import { describe, expect, it } from "vitest";
 const MODULES = [
 	"src/core/channel/tools/say.ts",
 	"src/core/channel/tools/chats.ts",
-	"src/core/channel/tools/work.ts",
 	"src/core/channel/tools/history.ts",
 	"src/core/channel/tools/remember.ts",
 	"src/core/channel/tools/hire.ts",

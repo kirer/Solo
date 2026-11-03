@@ -75,7 +75,6 @@ export function wireChannel(deps: {
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,
 		promptDir,
-		policyFile: deps.layout.policyFile,
 		...(deps.text === undefined ? {} : { text: deps.text }),
 		// 补发也要按名册解析 `@`：跟 `say` / `ownerSpeak` 存下来的 `mentions` 保持同一形状。
 		roster: async () =>
