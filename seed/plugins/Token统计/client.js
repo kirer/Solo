@@ -1,9 +1,11 @@
 /**
  * Token 统计的前端：最左一列的一格入口 + 一整页用量面板。
  *
- * 入口走 `rail.item` 插槽（和「聊天 / 任务」同一组）；面板走 `overlays` 插槽，
- * 全屏浮层、自己管开关（Esc 与点背景都收）。两份数据都来自后端那一条
- * `GET /api/p/tokens?days=…`，这里只排版，不算账。
+ * 入口走 `rail.item` 插槽（和「聊天 / 任务」同一组）；页面走 `app.page` 插槽 ——
+ * 它是**一整屏**，和「后台任务」并列，不是盖在聊天上的浮层：打开时侧栏、纸、右栏都让位，
+ * 最左那列还在。开关在界面状态里（`store.pluginView`），Esc 由外壳统一收回聊天。
+ *
+ * 两份数据都来自后端那一条 `GET /api/p/tokens?days=…`，这里只排版，不算账。
  *
  * 版式借 dsh-context 的 Context Insights：KPI 条 → 每日用量柱 → 8 周热力图 →
  * 按人 / 按模型两张账。Solo 只有「按调用的 token 与成本」，没有上下文组成，所以
@@ -14,21 +16,22 @@ export default {
 
 	style: `
 		.tk {
-			position: fixed; inset: 0; z-index: 90;
-			display: grid; place-items: center; padding: 24px;
-			background: var(--mask);
-		}
-		.tk-panel {
 			display: flex; flex-direction: column;
-			width: min(1080px, 100%); max-height: min(880px, 100%);
-			background: var(--field); border: 0.5px solid var(--line);
-			border-radius: var(--r-sheet); box-shadow: var(--shadow); overflow: hidden;
+			height: 100%; min-width: 0; min-height: 0;
+			background: var(--ground);
 		}
 		.tk-head {
-			display: flex; align-items: center; gap: 12px;
-			min-height: 60px; padding: 10px 10px 10px 20px;
+			display: flex; align-items: center; gap: 10px;
+			min-height: 60px; padding: 8px 16px 8px 8px;
 			border-bottom: 0.5px solid var(--line);
 		}
+		.tk-back {
+			display: grid; place-items: center;
+			width: 36px; height: 36px; padding: 0;
+			border: 0; border-radius: 10px; background: transparent;
+			color: var(--ink-3); cursor: pointer; flex: none;
+		}
+		.tk-back:hover { background: var(--hover); color: var(--ink); }
 		.tk-head h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; }
 		.tk-head p { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-3); }
 		.tk-grow { flex: 1 1 auto; }
@@ -43,7 +46,8 @@ export default {
 			background: var(--field); color: var(--ink);
 			box-shadow: 0 0 0 0.5px var(--line), 0 1px 2px rgb(0 0 0 / 0.06);
 		}
-		.tk-body { flex: 1 1 auto; overflow: auto; padding: 20px; }
+		.tk-body { flex: 1 1 auto; overflow: auto; padding: 24px clamp(20px, 4vw, 40px) 48px; }
+		.tk-inner { width: 100%; max-width: 1080px; margin: 0 auto; }
 		.tk-loading, .tk-empty {
 			display: grid; place-items: center; min-height: 280px; padding: 24px;
 			color: var(--ink-3); font-size: 13px; text-align: center; line-height: 22px;
@@ -115,22 +119,9 @@ export default {
 	`,
 
 	apply(ui) {
-		const { h, React, register } = ui;
-		const { useCallback, useEffect, useState, useSyncExternalStore } = React;
-
-		/* 入口和面板在两个插槽里，共用一个模块级开关：宿主没给插件传状态，也不需要传。 */
-		let open = false;
-		const listeners = new Set();
-		const setOpen = (next) => {
-			if (open === next) return;
-			open = next;
-			for (const listener of listeners) listener();
-		};
-		const subscribe = (listener) => {
-			listeners.add(listener);
-			return () => listeners.delete(listener);
-		};
-		const useOpen = () => useSyncExternalStore(subscribe, () => open);
+		const { h, React, register, store, useStore } = ui;
+		const { useEffect, useState } = React;
+		const SLUG = "Token统计";
 
 		function compact(value) {
 			const n = Number(value) || 0;
@@ -245,25 +236,12 @@ export default {
 			);
 		}
 
-		function Panel() {
-			const isOpen = useOpen();
+		function Page() {
 			const [days, setDays] = useState(7);
 			const [data, setData] = useState(undefined);
 			const [error, setError] = useState(undefined);
 
-			const close = useCallback(() => setOpen(false), []);
-
 			useEffect(() => {
-				if (!isOpen) return undefined;
-				const onKey = (event) => {
-					if (event.key === "Escape") close();
-				};
-				document.addEventListener("keydown", onKey);
-				return () => document.removeEventListener("keydown", onKey);
-			}, [isOpen, close]);
-
-			useEffect(() => {
-				if (!isOpen) return undefined;
 				let cancelled = false;
 				setError(undefined);
 				fetch(`/api/p/tokens?days=${String(days)}`)
@@ -281,9 +259,7 @@ export default {
 				return () => {
 					cancelled = true;
 				};
-			}, [isOpen, days]);
-
-			if (!isOpen) return null;
+			}, [days]);
 
 			const totals = data?.totals;
 			const inputTokens = totals === undefined ? 0 : totals.input + totals.cache + totals.write;
@@ -295,51 +271,45 @@ export default {
 
 			return h(
 				"section",
-				{
-					className: "tk",
-					role: "dialog",
-					"aria-modal": "true",
-					"aria-label": "Token 用量",
-					onClick: close,
-				},
+				{ className: "tk", "aria-label": "Token 用量" },
 				h(
 					"div",
-					{ className: "tk-panel", onClick: (event) => event.stopPropagation() },
+					{ className: "tk-head" },
+					h(
+						"button",
+						{ type: "button", className: "tk-back", "aria-label": "回到聊天", onClick: () => store.closePluginView() },
+						h(
+							"svg",
+							{ width: 18, height: 18, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
+							h("path", { d: "M15 6l-6 6 6 6" }),
+						),
+					),
+					h("div", null, h("h2", null, "Token 用量"), h("p", null, "本机审计日志 · 按模型调用记账")),
+					h("span", { className: "tk-grow" }),
 					h(
 						"div",
-						{ className: "tk-head" },
-						h("div", null, h("h2", null, "Token 用量"), h("p", null, "本机审计日志 · 按模型调用记账")),
-						h("span", { className: "tk-grow" }),
-						h(
-							"div",
-							{ className: "tk-ranges", role: "group", "aria-label": "时间范围" },
-							ranges.map(([value, text]) =>
-								h(
-									"button",
-									{
-										key: value,
-										type: "button",
-										className: "tk-range",
-										"data-on": days === value ? "true" : "false",
-										onClick: () => setDays(value),
-									},
-									text,
-								),
-							),
-						),
-						h(
-							"button",
-							{ type: "button", className: "icon-btn", "aria-label": "关闭", onClick: close },
+						{ className: "tk-ranges", role: "group", "aria-label": "时间范围" },
+						ranges.map(([value, text]) =>
 							h(
-								"svg",
-								{ width: 16, height: 16, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.7, strokeLinecap: "round" },
-								h("path", { d: "M6 6l12 12M18 6 6 18" }),
+								"button",
+								{
+									key: value,
+									type: "button",
+									className: "tk-range",
+									"data-on": days === value ? "true" : "false",
+									onClick: () => setDays(value),
+								},
+								text,
 							),
 						),
 					),
+				),
+				h(
+					"div",
+					{ className: "tk-body" },
 					h(
 						"div",
-						{ className: "tk-body" },
+						{ className: "tk-inner" },
 						error !== undefined
 							? h("div", { className: "tk-empty tk-error" }, `没读到用量：${error}`)
 							: totals === undefined
@@ -392,7 +362,7 @@ export default {
 		}
 
 		function RailEntry() {
-			const isOpen = useOpen();
+			const active = useStore((state) => state.pluginView === SLUG);
 			return h(
 				"button",
 				{
@@ -401,8 +371,8 @@ export default {
 					id: "rail-tokens",
 					"data-tip": "Token 用量",
 					"aria-label": "Token 用量",
-					"aria-current": isOpen ? "true" : "false",
-					onClick: () => setOpen(!isOpen),
+					"aria-current": active ? "true" : "false",
+					onClick: () => store.openPluginView(SLUG),
 				},
 				h(
 					"svg",
@@ -416,6 +386,6 @@ export default {
 		}
 
 		register("rail.item", { id: "entry", component: RailEntry });
-		register("overlays", { id: "panel", component: Panel });
+		register("app.page", { id: "page", component: Page });
 	},
 };

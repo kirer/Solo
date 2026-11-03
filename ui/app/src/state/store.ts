@@ -68,6 +68,8 @@ export type State = {
 	reply: { seq: number; label: string; excerpt: string } | null;
 	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
 	tasks: { open: boolean; who: string | null };
+	/** 插件占的一整屏（插件 slug；`null` = 没有）。和任务屏互斥，也是 `app.page` 插槽的开关。 */
+	pluginView: string | null;
 	/** 右侧栏的返回栈：栈底永远是当前频道。 */
 	trail: RightEntry[];
 	/** 右侧栏正在看的那个人（`null` = 看频道本身）。 */
@@ -108,6 +110,7 @@ const initial: State = {
 	newGroup: false,
 	reply: null,
 	tasks: { open: false, who: null },
+	pluginView: null,
 	trail: [{ kind: "channel" }],
 	person: null,
 };
@@ -227,7 +230,7 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null } });
+		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null });
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
@@ -240,6 +243,7 @@ export async function openChannel(id: string | null): Promise<void> {
 		needMenu: false,
 		runs: new Map(),
 		tasks: { open: false, who: null },
+		pluginView: null,
 		person: null,
 		trail: [{ kind: "channel" }],
 	});
@@ -455,18 +459,53 @@ export function setReply(reply: State["reply"]): void {
 	patch({ reply });
 }
 
-/** 浮层互斥：打开一个就关掉其它 —— 同时开着两个，Esc 该关谁变成靠猜。 */
+/** 整屏互斥：打开一个就关掉其它 —— 两屏叠着画会互相压住，Esc 该关谁也只能靠猜。 */
 export function setSettings(open: boolean): void {
-	patch({ settings: open, ...(open ? { needMenu: false, pluginSheet: false, team: false, newGroup: false } : {}) });
+	patch({
+		settings: open,
+		...(open
+			? {
+					needMenu: false,
+					pluginSheet: false,
+					team: false,
+					newGroup: false,
+					pluginView: null,
+					tasks: { open: false, who: getState().tasks.who },
+				}
+			: {}),
+	});
 }
 
 export function setTeam(open: boolean): void {
-	patch({ team: open, ...(open ? { pluginSheet: false, settings: false, newGroup: false } : {}) });
+	patch({
+		team: open,
+		...(open
+			? {
+					pluginSheet: false,
+					settings: false,
+					newGroup: false,
+					pluginView: null,
+					tasks: { open: false, who: getState().tasks.who },
+				}
+			: {}),
+	});
 }
 
-/** 插件浮层（左栏「团队管理」下面那一格）。 */
+/** 插件页（左栏那一格，整屏不是浮层）。 */
 export function setPluginSheet(open: boolean): void {
-	patch({ pluginSheet: open, ...(open ? { team: false, settings: false, needMenu: false, newGroup: false } : {}) });
+	patch({
+		pluginSheet: open,
+		...(open
+			? {
+					team: false,
+					settings: false,
+					needMenu: false,
+					newGroup: false,
+					pluginView: null,
+					tasks: { open: false, who: getState().tasks.who },
+				}
+			: {}),
+	});
 }
 
 /** 拉群卡片。 */
@@ -494,7 +533,15 @@ export function openTasks(slug?: string): void {
 		// 还没人跑过、也不在私聊里：挑第一个人，让这一屏一打开就有一列东西可看。
 		state.people.find((actor) => actor.slug !== "owner")?.slug ??
 		null;
-	patch({ tasks: { open: true, who }, needMenu: false });
+	// 第二屏都是一块占满的整屏：打开一个，其它让路（否则两屏叠着画，互相压住）。
+	patch({
+		tasks: { open: true, who },
+		needMenu: false,
+		pluginView: null,
+		team: false,
+		pluginSheet: false,
+		settings: false,
+	});
 	if (who !== null) void loadPersonRuns(who);
 }
 
@@ -504,7 +551,32 @@ export function setTasksWho(slug: string): void {
 }
 
 export function closeTasks(): void {
-	patch({ tasks: { open: false, who: getState().tasks.who } });
+	// 「聊天」那格也走这里：它同时是「离开任何第二屏，回到聊天」。
+	patch({
+		tasks: { open: false, who: getState().tasks.who },
+		pluginView: null,
+		settings: false,
+		team: false,
+		pluginSheet: false,
+	});
+}
+
+/** 打开一个插件页（`app.page` 插槽里 slug 对得上的那一格）。 */
+export function openPluginView(slug: string): void {
+	patch({
+		pluginView: slug,
+		tasks: { open: false, who: getState().tasks.who },
+		team: false,
+		pluginSheet: false,
+		settings: false,
+		needMenu: false,
+		right: { open: false },
+	});
+}
+
+/** 回到聊天。Esc 与插件页自己的返回键都走这里。 */
+export function closePluginView(): void {
+	patch({ pluginView: null });
 }
 
 /** 正在跑的人（`presence` 是派生状态，这里只做排序用）。 */

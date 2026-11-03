@@ -174,14 +174,17 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/stream/LiveRow.tsx` | 聊天流里唯一的过程：头像（`working`）+ 一行「最新一步 · N 步 · 耗时」，每秒自走时钟，点它开这个人的任务面板。折叠帧不带步骤时先 `loadTurn`；没有步骤只写「在想…」，绝不编他会说什么（ADR-046） |
 | `src/panels/TasksPanel.tsx` | 后台任务（应用第二屏，`data-view="tasks"`）：左 300px 是选中那个人跨频道的轮次（人像条 + 四组：正在跑 / 已完成 / 失败 / 没回话），右边是选中那一轮的抬头、`trigger` 引用和步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
-| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（13 个：`rail.item` / `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
+| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（14 个：`rail.item` / `app.page` / `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位 |
-| `src/sidebar/Rail.tsx` | 最左 78px 的应用级导航：顺序是聊天 / 通讯录（团队）/ 后台任务 / 插件，再往下是 `rail.item` 插槽；设置单独压在列底。`aria-current` 直接读 `state.tasks.open`，后台任务那格右上角是在跑人数；`#team-btn` / `#plugins-btn` / `#settings-btn` 各开对应浮层。名字在 `data-tip` 里（`.rail-item::after` 画悬停提示，不用 `title`）。桌面壳里这一列同时是窗口红绿灯的地盘（`html[data-shell="desktop"] .rail` 让出顶部并负责拖动）；≤640px 时整列变成底部一条（`shell.css` 的手机段，框给它让出 56px） |
+| `src/sidebar/Rail.tsx` | 最左 78px 的应用级导航：顺序是聊天 / 通讯录（团队）/ 后台任务 / 插件，再往下是 `rail.item` 插槽；设置单独压在列底。五格各读自己那一屏的开关（`tasks.open` / `team` / `pluginSheet` / `settings`）画 `aria-current`，后台任务那格右上角是在跑人数；`#team-btn` / `#plugins-btn` / `#settings-btn` 各开对应的整屏页（`data-view` 跟着变，不是浮层）。名字在 `data-tip` 里（`.rail-item::after` 画悬停提示，不用 `title`）。桌面壳里这一列同时是窗口红绿灯的地盘（`html[data-shell="desktop"] .rail` 让出顶部并负责拖动）；≤640px 时整列变成底部一条（`shell.css` 的手机段，框给它让出 56px） |
 | `src/sidebar/Sidebar.tsx` | 侧栏：一行「聊天」标题、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览）；列表脚下只有一个 `sidebar.footer` 插槽（团队 / 插件 / 设置在最左那列，见 `Rail.tsx`）。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |
 | `src/panels/RightPanel.tsx` | 右栏第三列：详情 / 技能 / 记忆（后两个共用一个换人器，只列当前频道成员）+ 插件注册的页签（`rightPanel.tab`）。关的时候等 300ms 过渡再卸载 |
-| `src/panels/Overlays.tsx` | 设置、找你清单、团队、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
+| `src/panels/Overlays.tsx` | 真正的浮层：拉群、找你清单、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
+| `src/panels/SettingsPage.tsx` | 设置（第二屏，`data-view="settings"`）：`.page` 两栏 —— 左栏 288 是分区（外观 + 插件注册的 `settings.section`），右栏抬头写分区名 + 正文（限宽 720） |
+| `src/panels/TeamPage.tsx` | 通讯录（第二屏，`data-view="team"`）：`.page` 两栏 —— 左栏 288 一行一个人（脸 / 名字 / 职务 / 此刻在不在忙），整行点了去私聊；**右栏空着**（`.page-main-blank`，手机上直接不画） |
+| `src/panels/PluginsPage.tsx` | 插件（第二屏，`data-view="plugins"`）：`.page` 两栏 —— 左栏 288 是清单（名字 + 开着的小点）与脚下的「从文件夹装」；右栏是选中那个的说明 / 带来了什么 / 目录 + 开关 + 删（同一个按钮点两次）；读 `GET /api/plugins` |
 | `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create` / `trace`）；失败退避 1s→15s；org 事件自带整份快照（`applyOrg`），侧栏与「找你」仍走 `store.refreshLists` |
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
 | `src/lib/avatar.ts` | 头像只拼 `<img src="/api/avatar/…">`（种子取 slug、要 2 倍尺寸）、四种状态、`groupAvatar()` 群组头像（座位 + 挖洞遮罩）。**画在服务端**（`src/app/avatar.ts`），这里不画 |
@@ -237,7 +240,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 改团队频道怎么把消息交给某个人 | `channel/tools/route.ts` + `channel/post.ts` 的 `deliverExisting` + `channel/turn/finish.ts` 的 `saidLast` | 助理专用；不写第二条消息、`noteOf: "route"` 的留痕不画（ADR-047）；已经被 @ 的人不重复叫（ADR-063） |
 | 路径怎么拼 / 两个根 | `layout.ts` 的 `resolveLayout` + `workspaceOf` / `memberWorkspace` / `teamWorkspace` | **拼路径只许在 `layout.ts`**。应用私有（助理、提示词、插件、settings、库、uploads、logs）在 `appRoot`；我的组织（`members/` `teams/` `skills/` `rules.md`）在 `userRoot`（ADR-030） |
 | 文件读写 / 名字 / Markdown 头 | `fsx.ts`（工作区相对路径）/ `runtime/io.ts`（绝对路径机械 IO）/ `naming.ts` / `md/doc.ts` | 每个都只有一份实现；直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外，别在业务模块里新开 |
-| 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的四个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`<appRoot>/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在插件浮层（`Overlays.tsx` 的 `PluginSheet`），落盘走 `writePluginEnabled`，写完就重装（ADR-026） |
+| 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的四个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`<appRoot>/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在插件页（`panels/PluginsPage.tsx`），落盘走 `writePluginEnabled`，写完就重装（ADR-026） |
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/route-match.ts` / `static-assets.ts` / `origin-guard.ts` / `network.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
@@ -302,7 +305,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 84 文件 / 786 例，应该 <3s
+npm test             # 85 文件 / 791 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）

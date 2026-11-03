@@ -157,8 +157,10 @@ describe("消息正文换行", () => {
 });
 
 describe("最左导航与后台任务（第二屏）", () => {
-	it("两屏共用一列导航：data-view 由 tasks.open 驱动", () => {
-		expect(appSource).toContain('data-view={tasksOpen ? "tasks" : "chat"}');
+	it("各屏共用一列导航：data-view 由 tasks / team / plugins / settings 驱动", () => {
+		for (const view of ['"tasks"', '"team"', '"plugins"', '"settings"', '"chat"']) {
+			expect(appSource).toContain(view);
+		}
 		expect(appSource).toContain("<Rail />");
 	});
 
@@ -168,6 +170,8 @@ describe("最左导航与后台任务（第二屏）", () => {
 			expect(rail).toContain(`id="${id}"`);
 		}
 		expect(rail.match(/className="rail-item"/g)?.length).toBe(5);
+		// 五格各有一条选中态：开着的那一屏自己亮，不靠悬停猜。
+		expect(rail.match(/aria-current=/g)?.length).toBe(5);
 		// 顺序写死：聊天 → 通讯录（团队）→ 后台任务 → 插件；设置不在这一段里。
 		const order = ["rail-chat", "team-btn", "rail-tasks", "plugins-btn"].map((id) => rail.indexOf(`id="${id}"`));
 		expect(order).toEqual([...order].sort((left, right) => left - right));
@@ -192,6 +196,48 @@ describe("最左导航与后台任务（第二屏）", () => {
 		expect(sidebar).not.toContain('id="plugins-btn"');
 		expect(sidebar).not.toContain('id="settings-btn"');
 		expect(sidebar).not.toContain("side-action");
+	});
+
+	it("通讯录 / 插件 / 设置是整屏的一页，不是浮层（不盖在聊天上）", () => {
+		const pages: readonly [string, string][] = [
+			["../../ui/app/src/panels/TeamPage.tsx", "page-team"],
+			["../../ui/app/src/panels/PluginsPage.tsx", "page-plugins"],
+			["../../ui/app/src/panels/SettingsPage.tsx", "page-settings"],
+		];
+		for (const [path, id] of pages) {
+			const source = read(path);
+			// 一页 = section.page + 自己的 id；弹窗那套（dialog / aria-modal / 遮罩）一点都不许有。
+			expect(source).toContain(`className="page`);
+			expect(source).toContain(`id="${id}"`);
+			// 同一套骨架：左栏清单 + 右栏正文（通讯录的右栏空着）。
+			expect(source).toContain('className="page-side"');
+			expect(source).toContain('className="page-title"');
+			expect(source).not.toContain('role="dialog"');
+			expect(source).not.toContain("aria-modal");
+				expect(appSource).toContain(`<${path.split("/").pop()!.replace(".tsx", "")}`);
+		}
+		// 拉群还是浮层；设置 / 团队从此不再是。
+		const overlays = read("../../ui/app/src/panels/Overlays.tsx");
+		expect(overlays).toContain('role="dialog"');
+		expect(overlays).not.toContain("SettingsSheet");
+		expect(overlays).not.toContain("TeamSheet");
+		// 三个屏各占两列（导航 + 内容），并且把聊天那三栏藏起来。
+		for (const view of ["team", "plugins", "settings"]) {
+			expect(blocksOf(shellCss, `.frame[data-view="${view}"]`).join("\n")).toContain(
+				"grid-template-columns: var(--rail) minmax(0, 1fr)",
+			);
+		}
+		// 一页 = 左栏清单 + 右栏正文；左栏和聊天列表同宽（288），不跟着侧栏收起。
+		const page = blocksOf(shellCss, ".page").join("\n");
+		expect(page).toContain("--page-list: 288px");
+		expect(page).toContain("grid-template-columns: var(--page-list) minmax(0, 1fr)");
+		expect(page).toContain("min-height: 0");
+		// 通讯录右栏空着：没有假详情，也没有占位卡片。
+		const team = read("../../ui/app/src/panels/TeamPage.tsx");
+		expect(team).toContain("page-main-blank");
+		expect(team).not.toContain("plugin-");
+		// 插件页右栏是选中那个的详情，不是一长条卡片墙。
+		expect(read("../../ui/app/src/panels/PluginsPage.tsx")).toContain('className="page-main-body"');
 	});
 
 	it("后台任务那一屏占掉侧栏 + 纸 + 右栏，不和聊天并存", () => {

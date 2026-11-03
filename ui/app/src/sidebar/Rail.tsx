@@ -16,7 +16,12 @@ import { closeTasks, openTasks, setPluginSheet, setSettings, setTeam } from "../
 import { useStore } from "../state/useStore.ts";
 
 export function Rail(): JSX.Element {
-	const tasksOpen = useStore((state) => state.tasks.open);
+	// 一格亮不亮看的是「现在是不是那一屏」：五格互斥，谁开着谁亮。
+	const tasks = useStore((state) => state.tasks.open);
+	const team = useStore((state) => state.team);
+	const plugins = useStore((state) => state.pluginSheet || state.pluginView !== null);
+	const settings = useStore((state) => state.settings);
+	const away = tasks || team || plugins || settings;
 	const running = useStore(
 		(state) =>
 			[...state.presence.values()].filter((value) => value.state === "working" || value.state === "thinking")
@@ -30,7 +35,7 @@ export function Rail(): JSX.Element {
 					type="button"
 					className="rail-item"
 					id="rail-chat"
-					aria-current={tasksOpen ? "false" : "true"}
+					aria-current={away ? "false" : "true"}
 					data-tip="聊天"
 					aria-label="聊天"
 					onClick={closeTasks}
@@ -45,6 +50,7 @@ export function Rail(): JSX.Element {
 					type="button"
 					className="rail-item"
 					id="team-btn"
+					aria-current={team ? "true" : "false"}
 					data-tip="通讯录"
 					aria-label="通讯录"
 					onClick={() => setTeam(true)}
@@ -61,7 +67,7 @@ export function Rail(): JSX.Element {
 					type="button"
 					className="rail-item"
 					id="rail-tasks"
-					aria-current={tasksOpen ? "true" : "false"}
+					aria-current={tasks ? "true" : "false"}
 					data-tip="任务"
 					aria-label="任务"
 					onClick={() => openTasks()}
@@ -78,6 +84,7 @@ export function Rail(): JSX.Element {
 					type="button"
 					className="rail-item"
 					id="plugins-btn"
+					aria-current={plugins ? "true" : "false"}
 					data-tip="插件"
 					aria-label="插件"
 					onClick={() => setPluginSheet(true)}
@@ -97,6 +104,7 @@ export function Rail(): JSX.Element {
 					type="button"
 					className="rail-item"
 					id="settings-btn"
+					aria-current={settings ? "true" : "false"}
 					data-tip="设置"
 					aria-label="设置"
 					onClick={() => setSettings(true)}

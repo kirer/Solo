@@ -78,7 +78,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             84 文件 / 786 例
+test/             85 文件 / 791 例
   ├ test/core/    71 文件（纯函数 + 装配）
   ├ test/ui/      10 文件（界面纯函数与源码约定）
   └ test/desktop/ 3 文件（更新源、就绪行与更新源地址、清单验签与版本比较）
@@ -139,7 +139,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 84 文件 786 例，<3s，必须全绿
+npm test             # 85 文件 791 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -176,7 +176,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `channel/post.ts` 传线索 + `channel/delivery.ts` 的 `woken` |
 | 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
-| 插件的四个动作 / 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts`、`load.ts`）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `shell/assemble.ts`（装配 + `reloadPlugins` 热重装，ADR-026）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件浮层 `panels/Overlays.tsx` 的 `PluginSheet`（开关 / 装 / 删）与 `sidebar/Rail.tsx` 的入口（`#plugins-btn`，在「后台任务」下面一格） |
+| 插件的四个动作 / 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts`、`load.ts`）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `shell/assemble.ts`（装配 + `reloadPlugins` 热重装，ADR-026）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件页 `panels/PluginsPage.tsx`（开关 / 装 / 删，整屏不是浮层）与 `sidebar/Rail.tsx` 的入口（`#plugins-btn`） |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/app/trace.ts`（纯函数：`groupsOf` 切轮 + `buildTurn` 映射步骤）+ `src/app/read.ts` 的 `turnsOf` + `test/core/trace.test.ts` |
 | 过程画在哪儿（`live` 行 / 任务面板；聊天流**不画**过程块） | `docs/DESIGN.md` §2.3 + `docs/DECISIONS.md` ADR-046 / ADR-062 | `ui/app/src/stream/model.ts` 的 `buildRows`（不再挂 `turn`）+ `stream/Stream.tsx`（不渲染过程块）+ `stream/LiveRow.tsx` + `panels/TasksPanel.tsx`；`test/ui/stream-model.test.ts` |
@@ -208,7 +208,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 两个根（应用私有 / 用户根）/ 加一个要落盘的目录 | `docs/DECISIONS.md` ADR-030 + `docs/CODE.md` §1 | `src/core/layout.ts`（**拼路径只在这里**）+ `scripts/check-boundaries.mjs` 的根原语组 + `test/core/layout.test.ts`；不许在业务模块里 `dirname` 推路径 |
 | 加 / 改一个频道给的「工作区」（插件用） | `docs/DECISIONS.md` ADR-036 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `PluginScope` / `scope()` + `shell/assemble.ts` 的 `pluginScope`；**路径守卫留在插件里**，核心只给根 |
 | 插件要按 token / 成本算账（读审计日志） | `docs/DECISIONS.md` ADR-064 + `docs/CORE.md` §13 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `logsRoot` + `load.ts` / `shell/assemble.ts` 传 `layout.logsRoot` + `app/audit.ts` 记齐 `in/out/cache/write/cost`；出厂消费者 `seed/plugins/Token统计/`，`test/core/token-plugin.test.ts` |
-| 加一个应用级入口（最左一列）/ 插槽 | `docs/DESIGN.md` §1.1 / §2.8 | `ui/app/src/plugin/registry.ts` 的 `SlotName` / `SLOTS` + 宿主 `sidebar/Rail.tsx`；出厂「Token 统计」用它（入口 `rail.item`、面板 `overlays`）；`test/ui/plugin.test.ts` 会查每个插槽都有宿主 |
+| 加一个应用级入口（最左一列）/ 插槽 | `docs/DESIGN.md` §1.1 / §2.8 | `ui/app/src/plugin/registry.ts` 的 `SlotName` / `SLOTS` + 宿主 `sidebar/Rail.tsx`；出厂「Token 统计」用它（入口 `rail.item`、整屏页 `app.page`）；`test/ui/plugin.test.ts` 会查每个插槽都有宿主 |
 | 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
 | 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`** |
 | 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删）；都不开新工具 |

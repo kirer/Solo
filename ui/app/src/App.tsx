@@ -11,6 +11,9 @@ import { Composer } from "./composer/Composer.tsx";
 import { useToasts } from "./hooks/useToasts.ts";
 import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
 import { NeedMenu, Overlays } from "./panels/Overlays.tsx";
+import { PluginsPage } from "./panels/PluginsPage.tsx";
+import { SettingsPage } from "./panels/SettingsPage.tsx";
+import { TeamPage } from "./panels/TeamPage.tsx";
 import { TasksPanel } from "./panels/TasksPanel.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
 import { Rail } from "./sidebar/Rail.tsx";
@@ -19,6 +22,7 @@ import { Slot } from "./plugin/Slot.tsx";
 import { AttachmentPreview } from "./stream/AttachmentPreview.tsx";
 import { Stream } from "./stream/Stream.tsx";
 import {
+	closePluginView,
 	closeTasks,
 	openChannel,
 	openWithPerson,
@@ -50,6 +54,7 @@ export function App(): JSX.Element {
 	const pluginSheet = useStore((state) => state.pluginSheet);
 	const newGroup = useStore((state) => state.newGroup);
 	const tasksOpen = useStore((state) => state.tasks.open);
+	const pluginView = useStore((state) => state.pluginView);
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
@@ -80,6 +85,7 @@ export function App(): JSX.Element {
 
 	/* 键盘只在「没在打字」时接管：Tab 顺序之外不再多抢一个键。 */
 	const closeTop = useCallback((): boolean => {
+		if (pluginView !== null) return closePluginView(), true;
 		if (tasksOpen) return closeTasks(), true;
 		if (settings) return setSettings(false), true;
 		if (team) return setTeam(false), true;
@@ -88,7 +94,7 @@ export function App(): JSX.Element {
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
+	}, [pluginView, tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {
@@ -143,12 +149,30 @@ export function App(): JSX.Element {
 	// 没选频道时顶栏只剩「找助理」：空屏要有一个明确的下一步，助理就是那个入口。
 	const assistant = people.find((person) => person.assistant === true);
 
+	/**
+	 * 现在在哪一屏 —— **只算一次**，`data-view` 和下面按屏画的那几行都读它。
+	 * 分开判断过一次：状态里两屏同时开着时，页面叠着画、互相压住（实测踩过，
+	 * 后台任务和插件页叠成一张）。谁先谁后写在这里，别处不再各判一次。
+	 */
+	const view: "plugin" | "tasks" | "team" | "plugins" | "settings" | "chat" =
+		pluginView !== null
+			? "plugin"
+			: tasksOpen
+				? "tasks"
+				: team
+					? "team"
+					: pluginSheet
+						? "plugins"
+						: settings
+							? "settings"
+							: "chat";
+
 	return (
 		<div
 			className="frame"
 			data-side={side}
 			data-right={right.open ? "open" : "closed"}
-			data-view={tasksOpen ? "tasks" : "chat"}
+			data-view={view}
 		>
 			{/* 最左一列：应用级导航。聊天与后台任务是两屏，共用这一列（docs/DESIGN.md §2.9）。 */}
 			<Rail />
@@ -252,6 +276,19 @@ export function App(): JSX.Element {
 
 			{/* 第二屏：任务不再是盖在聊天上的抽屉，它自己占满中栏与右栏。 */}
 			<TasksPanel />
+
+			{/* 通讯录 / 插件 / 设置：同样是整屏的一页，不盖浮层（docs/DESIGN.md §1.5）。
+			   都读 `view`，同一时刻只画一处。 */}
+			{view === "team" ? <TeamPage /> : null}
+			{view === "plugins" ? <PluginsPage /> : null}
+			{view === "settings" ? <SettingsPage theme={theme} /> : null}
+
+			{/* 第三块整屏：插件占的一页（`app.page` 插槽）。和任务屏一样让出聊天三列。 */}
+			{view === "plugin" ? (
+				<section className="plugin-page" aria-label="插件页面">
+					<Slot name="app.page" />
+				</section>
+			) : null}
 
 			<Overlays toasts={toasts} />
 

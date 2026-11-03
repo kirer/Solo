@@ -44,7 +44,7 @@ describe("代码块的复制按钮", () => {
 });
 
 describe("设置面板的选中态", () => {
-	const overlays = read("../../ui/app/src/panels/Overlays.tsx");
+	const settings = read("../../ui/app/src/panels/SettingsPage.tsx");
 	const css = read("../../ui/app/src/styles/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
 
 	it("CSS 按 aria-checked 画勾", () => {
@@ -52,8 +52,8 @@ describe("设置面板的选中态", () => {
 	});
 
 	it("按钮写的是 aria-checked，不是 aria-pressed", () => {
-		expect(overlays).toContain("aria-checked={props.theme === item.value}");
-		expect(overlays).not.toContain("aria-pressed");
+		expect(settings).toContain("aria-checked={props.theme === item.value}");
+		expect(settings).not.toContain("aria-pressed");
 	});
 });
 

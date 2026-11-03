@@ -1398,8 +1398,10 @@
   这两份装得下的部分。
 - **执行**：`src/core/plugin/{api,load}.ts`、`src/shell/assemble.ts`、`src/app/audit.ts`
   （补记 `write` = `cacheWrite`，否则总 token 偏小）、`seed/plugins/Token统计/`、
-  `test/core/token-plugin.test.ts`。界面入口走新增的 `rail.item` 插槽（`ui/app/src/plugin/
-  registry.ts` + `sidebar/Rail.tsx`），面板走 `overlays` 插槽。
+  `test/core/token-plugin.test.ts`。界面入口走新增的 `rail.item` 插槽，面板走新增的
+  `app.page` 插槽（`ui/app/src/plugin/registry.ts` + `sidebar/Rail.tsx` + `App.tsx`）：
+  **它是一整屏，不是浮层** —— 和「后台任务 / 通讯录 / 插件 / 设置」同一层，
+  `store.pluginView` 决定画哪个插件的那一页。
 - **验收**：`GET /api/p/tokens` 的 `tokens` = 新输入 + 缓存读 + 缓存写 + 输出；
   `cacheRate` = 缓存读 ÷（新输入 + 缓存读 + 缓存写）；最左一列出现「Token 用量」一格，
   点开能看到总量、每日柱、热力图与两张分组账；没有日志时是空态而不是五百。

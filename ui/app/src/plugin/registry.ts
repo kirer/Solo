@@ -23,6 +23,7 @@ import type { Plugin } from "../api/types.ts";
  */
 export type SlotName =
 	| "rail.item"
+	| "app.page"
 	| "sidebar.header"
 	| "sidebar.list.before"
 	| "sidebar.footer"
@@ -45,6 +46,8 @@ export type SlotCell = {
 	readonly icon?: React.ReactNode;
 	/** 小的先渲染，默认 100。 */
 	readonly order?: number;
+	/** 这个格子属于哪个插件（宿主填，插件自己不用写）。`app.page` 靠它决定画哪一页。 */
+	readonly plugin?: string;
 	readonly component: React.ComponentType;
 };
 
@@ -72,6 +75,7 @@ export type Ui = {
 /** 全部插槽。`<Slot name>` 只能用这里的名字（TS 卡着），测试也照这份表查宿主有没有画。 */
 export const SLOTS: readonly SlotName[] = [
 	"rail.item",
+	"app.page",
 	"sidebar.header",
 	"sidebar.list.before",
 	"sidebar.footer",
@@ -133,7 +137,11 @@ export async function bootPlugins(): Promise<void> {
 				style.textContent = definition.style;
 				document.head.appendChild(style);
 			}
-			definition.apply({ ...ui, register: (slot, cell) => register(slot, { ...cell, id: `${plugin.slug}:${cell.id}` }) });
+			definition.apply({
+				...ui,
+				// 格子带上插件 slug：`app.page` 用它决定「这一页现在该不该画」。
+				register: (slot, cell) => register(slot, { ...cell, id: `${plugin.slug}:${cell.id}`, plugin: plugin.slug }),
+			});
 		} catch (error) {
 			console.warn(`[plugin] ${plugin.slug} 的前端没装上：`, error);
 		}
