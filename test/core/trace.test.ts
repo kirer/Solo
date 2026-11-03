@@ -83,6 +83,67 @@ describe("buildTurn", () => {
 		expect(turn.summary).toBe("读了 1 个文件 · 写了 1 个文件");
 	});
 
+	it("file 漏写 action 但带了正文：按写算（和工具一致）", () => {
+		const turn = buildTurn(
+			[
+				assistant([
+					{ type: "toolCall", id: "w", name: "file", arguments: { path: "README.md", content: "# 标题" } },
+				]),
+			],
+			facts(),
+		);
+		expect(turn.steps![0]!.kind).toBe("file-write");
+		expect(turn.steps![0]!.title).toBe("写了 README.md");
+		expect(turn.steps![0]!.added).toBe(1);
+	});
+
+	it("读文件把读到的原文带进步骤（面板点开能看）", () => {
+		const turn = buildTurn(
+			[
+				assistant([{ type: "toolCall", id: "r", name: "file", arguments: { action: "read", path: "README.md" } }]),
+				result("r", "# 小恐龙\n正文"),
+			],
+			facts({ replySeq: 9 }),
+		);
+		expect(turn.steps![0]!.output).toBe("# 小恐龙\n正文");
+	});
+
+	it("记记忆带正文，其他工具带返回文字（面板都有详情）", () => {
+		const turn = buildTurn(
+			[
+				assistant([
+					{ type: "toolCall", id: "m", name: "remember", arguments: { text: "老板只要转达" } },
+					{ type: "toolCall", id: "c", name: "chats", arguments: { action: "read", channel: "c1" } },
+				]),
+				result("m", "已记下。", 2000),
+				result("c", "频道记录", 2000),
+			],
+			facts({ replySeq: 9, endedAt: 5000 }),
+		);
+		expect(turn.steps![0]!.text).toBe("老板只要转达");
+		expect(turn.steps![0]!.output).toBe("已记下。");
+		expect(turn.steps![1]!.output).toBe("频道记录");
+	});
+
+	it("hire 的标题看 action：models 不是招人", () => {
+		const turn = buildTurn(
+			[
+				assistant([
+					{ type: "toolCall", id: "h1", name: "hire", arguments: { action: "models", name: "占位" } },
+					{ type: "toolCall", id: "h2", name: "hire", arguments: { action: "create", name: "阿拓" } },
+					{ type: "toolCall", id: "h3", name: "hire", arguments: { action: "fire", name: "阿拓" } },
+				]),
+			],
+			facts(),
+		);
+		expect(turn.steps!.map((step) => step.title)).toEqual(["看了可用模型", "招了 阿拓", "开除了 阿拓"]);
+	});
+
+	it("频道名跟着轮次走：频道后来归档 / 删掉，面板块头还说得出在哪儿跑的", () => {
+		const turn = buildTurn([], facts({ channelTitle: "小恐龙" }));
+		expect(turn.channelTitle).toBe("小恐龙");
+	});
+
 	it("说话不算过程：say 与正文都不进步骤", () => {
 		const turn = buildTurn(
 			[

@@ -249,8 +249,10 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				const reply = said
 					.filter((item) => item.fromSlug === slug && item.channelId === id && item.seq > group.seq && item.seq < nextStart)
 					.sort((left, right) => left.seq - right.seq)[0];
+				const channelTitle = channels.channels[id]?.title;
 				const turn = buildTurn(entries, {
 					channelId: id,
+					...(channelTitle === undefined ? {} : { channelTitle }),
 					seq: group.seq,
 					slug,
 					label: shell.labelOf(slug),

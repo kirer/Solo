@@ -13,7 +13,7 @@ import { defineTool, Type, type ToolRegistration } from "../runtime/index.ts";
 import type { JsonValue } from "../runtime/index.ts";
 import type { Message } from "../channel/types.ts";
 
-/** 一个工具的形状。与核心那七个工具用的是同一个 `defineTool`。 */
+/** 一个工具的形状。与核心那八个工具用的是同一个 `defineTool`。 */
 export type PluginToolSpec = {
 	readonly name: string;
 	readonly description: string;
@@ -63,6 +63,11 @@ export type PluginApi = {
 	readonly slug: string;
 	/** 应用私有的绝对路径（`appRoot`；字段名沿用旧称）。插件读写自己的数据时用它（自担越界风险，见 ADR-036）。 */
 	readonly workspace: string;
+	/**
+	 * 日志目录的绝对路径（`<userRoot>/logs`）。审计（`tools.jsonl`）在这里，插件要按
+	 * token / 成本 / 耗时算账就读它；路径守卫与解析同样在插件里（ADR-036 的同一个口径）。
+	 */
+	readonly logsRoot: string;
 	/** 工具参数 schema 的构造器。 */
 	readonly Type: typeof Type;
 	/** 工具的返回值：**一段自然语言**，不是结构化数据（工具输出是给模型读的）。 */
@@ -94,13 +99,15 @@ export function emptySinks(): PluginSinks {
 export function createPluginApi(options: {
 	readonly slug: string;
 	readonly workspace: string;
+	readonly logsRoot: string;
 	readonly sinks: PluginSinks;
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
 }): PluginApi {
-	const { slug, workspace, sinks } = options;
+	const { slug, workspace, logsRoot, sinks } = options;
 	return {
 		slug,
 		workspace,
+		logsRoot,
 		Type,
 		text: (value: string) => ({ output: [{ type: "text" as const, text: value }] }),
 		tool(spec) {

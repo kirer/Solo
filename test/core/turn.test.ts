@@ -81,6 +81,11 @@ describe("最后一段正文是不是「刚说过那句」的复述", () => {
 	it("一轮里一次 say 都没调：照补", () => {
 		expect(saidLast([final, toolCall(2, "run")], final)).toBe(false);
 	});
+
+	it("最后一个动作是 route：也算交付过，不再把正文补进频道", () => {
+		// 助理在后台分发完就结束了这一轮，正文是它写给自己看的判断过程（ADR-063）。
+		expect(saidLast([final, toolCall(2, "route")], final)).toBe(true);
+	});
 });
 
 describe("从条目里取最终正文", () => {

@@ -1,8 +1,9 @@
-/** `chats`：列会话，或者读某个频道的历史。 */
+/** `chats`：列会话、读某个频道的历史，或者拉一个群。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
 import { digestRows } from "../delivery.ts";
 import { ChannelDoc, chatKind, type ChannelState } from "../types.ts";
 import { channelsOf, markRead, unreadCount } from "../rules.ts";
+import { createGroup } from "../membership.ts";
 import { oneLine } from "../../md/oneline.ts";
 import { actionOf, selfOrError, readState, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel } from "./channel-choice.ts";
@@ -20,14 +21,43 @@ export function createChatsTool(deps: CoreToolDeps) {
 			channel: Type.Optional(Type.String({ description: t("chats.param.channel") })),
 			since: Type.Optional(Type.Number({ description: t("chats.param.since") })),
 			limit: Type.Optional(Type.Number({ description: t("chats.param.limit") })),
+			title: Type.Optional(Type.String({ description: t("chats.param.title") })),
+			members: Type.Optional(Type.Array(Type.String(), { description: t("chats.param.members") })),
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
-			const action = actionOf(args.action, ["list", "read"], "list", "action", deps.text);
+			const action = actionOf(args.action, ["list", "read", "create"], "list", "action", deps.text);
 			if (typeof action !== "string") return text(action);
 			const slug = await selfOrError(deps, Number(api.conversationId), ctx);
 			if (typeof slug !== "string") return text(slug);
 			const state = await readState(deps);
+
+			if (action === "create") {
+				try {
+					const group = await createGroup(
+						{
+							harness: deps.harness,
+							layout: deps.layout,
+							...(deps.text === undefined ? {} : { text: deps.text }),
+						},
+						{
+							title: (args.title ?? "").trim(),
+							members: Array.isArray(args.members) ? args.members : [],
+							creator: slug,
+						},
+						ctx,
+					);
+					return text(
+						t("chats.create.done", {
+							title: group.title,
+							id: group.id,
+							names: group.members.join("、"),
+						}),
+					);
+				} catch (error) {
+					return text(error instanceof Error ? error.message : String(error));
+				}
+			}
 
 			if (action === "list") {
 				const digest = digestRows(state, slug, 20).rows.join("\n");

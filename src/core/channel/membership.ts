@@ -8,9 +8,12 @@
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../agent/identity.ts";
-import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "./types.ts";
+import { ChannelDoc, OWNER, dmId, groupId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
-import { membersOfTeam, readTeam } from "../team/doc.ts";
+import { mentionRosterOf, resolveMention } from "./mentions.ts";
+import { listTeams, membersOfTeam, readTeam } from "../team/doc.ts";
+import { slugifyName } from "../naming.ts";
+import { fill, type TextCatalog } from "../md/catalog.ts";
 import type { Layout } from "../layout.ts";
 
 /**
@@ -32,7 +35,91 @@ export type MembershipDeps = {
 	readonly layout: Layout;
 	/** 全员频道 id（默认 `all`）。 */
 	readonly allChannel: string;
+	/** 机械文案（建群的拒绝话术）。缺省时只留英文兜底，测试里用。 */
+	readonly text?: TextCatalog;
 };
+
+/**
+ * 建一个组群：没有 README、不沉淀记忆，只是「这些人一起说话」的房间。
+ *
+ * 除了团队频道，群里的**每个人**都会被新消息叫醒（`wakeOnAll = members`）：
+ * 他们自己判断这条跟自己有没有关系，无关就用 `[PASS]` 收手（ADR-063）。
+ * 组群可以只有 agent，也可以把我拉进去；成员名认 slug / 显示名 / `我`。
+ */
+export async function createGroup(
+	deps: Pick<MembershipDeps, "harness" | "layout" | "text">,
+	input: { readonly title: string; readonly members: readonly string[]; readonly creator?: string },
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<{ readonly id: string; readonly title: string; readonly members: readonly string[] }> {
+	const title = input.title.trim();
+	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
+		fill(deps.text, key, slots);
+	if (title === "") throw new Error(t("group.refuse.title") || "group title is required");
+
+	const all = await readAllIdentities(deps.layout.agentRoots);
+	const roster = mentionRosterOf(
+		all.map((identity) => ({ slug: identity.slug, name: identity.name })),
+	);
+	const members: string[] = [];
+	for (const raw of input.members) {
+		const slug = resolveMention(raw, roster);
+		if (slug === undefined) {
+			throw new Error(
+				t("group.refuse.member", { name: raw, names: all.map((identity) => identity.name ?? identity.slug).join("、") }) ||
+					`no such person: ${raw}`,
+			);
+		}
+		if (!members.includes(slug)) members.push(slug);
+	}
+	// 建群的人一定在群里：他建的是自己要说话的地方。
+	if (input.creator !== undefined && !members.includes(input.creator)) members.unshift(input.creator);
+	if (members.length < 2) throw new Error(t("group.refuse.few") || "a group needs at least two people");
+
+	const id = groupId(slugifyName(title));
+	let created = false;
+	await deps.harness.commit(async (tx) => {
+		const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+		if (doc.channels[id] !== undefined) return;
+		Object.assign(
+			doc,
+			projectChannel(doc, {
+				id,
+				title,
+				members,
+				// 群组没有「助理负责分发」：每个人都被叫醒，自己判断要不要接（ADR-063）。
+				wakeOnAll: members,
+				at: Date.now(),
+				mode: "create",
+			}),
+		);
+		created = true;
+	}, context);
+	if (!created) throw new Error(t("group.refuse.exists", { title }) || `group already exists: ${title}`);
+	return { id, title, members };
+}
+
+/**
+ * 团队目录没了（`run rm -rf` / 改名）就把它的频道归档。
+ *
+ * `syncTeamChannel` 只在有人触发重投影时跑 —— 删目录不会触发任何人，于是频道留在列表里，
+ * 点进去是一个已经不存在的团队（实测过）。启动时扫一遍，历史消息留着，只是不再出现。
+ */
+export async function archiveGoneTeams(
+	deps: Pick<MembershipDeps, "harness" | "layout">,
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<void> {
+	const alive = new Set((await listTeams(deps.layout.teamsRoot)).map((team) => team.slug));
+	await deps.harness.commit(async (tx) => {
+		const state = (await tx.doc(ChannelDoc)) as ChannelState;
+		const gone = Object.entries(state.channels).filter(
+			([id, channel]) => id.startsWith("team:") && channel.archived !== true && !alive.has(id.slice("team:".length)),
+		);
+		if (gone.length === 0) return;
+		const channels = { ...state.channels };
+		for (const [id, channel] of gone) channels[id] = { ...channel, archived: true };
+		Object.assign(state, { channels });
+	}, context);
+}
 
 /** 把人加进全员频道（幂等）。频道不存在时什么都不做 —— 它由播种建。 */
 export async function addToAllChannel(

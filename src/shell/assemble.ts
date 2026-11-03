@@ -42,6 +42,7 @@ import {
 import { wireChannel } from "../core/channel/wiring.ts";
 import {
 	addToAllChannel,
+	archiveGoneTeams,
 	ensureAllChannel,
 	ensureOwnerDm,
 	joinTeamChannel,
@@ -195,6 +196,7 @@ export async function assembleCore(
 	let plugins = await loadPlugins({
 		pluginsRoot: layout.pluginsRoot,
 		workspace: layout.appRoot,
+		logsRoot: layout.logsRoot,
 		scope: (channelId) => channelScope(harness, layout, channelId),
 		log: (line) => console.log(`[plugin] ${line}`),
 	});
@@ -286,6 +288,7 @@ export async function assembleCore(
 		const next = await loadPlugins({
 			pluginsRoot: layout.pluginsRoot,
 			workspace: layout.appRoot,
+			logsRoot: layout.logsRoot,
 			scope: (channelId) => channelScope(harness, layout, channelId),
 			log: (line) => console.log(`[plugin] ${line}`),
 		});
@@ -377,6 +380,8 @@ export async function assembleCore(
 	await mergeDirectoryInto(harness, directory, labelsOf(identities), context);
 
 	await ensureAllChannel(membership, identities, context);
+	// 团队目录被删掉（`run rm -rf` / 改名）不会触发任何重投影：启动时兜一次，别让频道残留。
+	await archiveGoneTeams(membership, context);
 
 	/**
 	 * 重投影一个团队频道，并叫**新进来的人**自己报到（ADR-042）。

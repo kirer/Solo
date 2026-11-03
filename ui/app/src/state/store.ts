@@ -11,6 +11,7 @@
  */
 
 import {
+	createGroup as createGroupApi,
 	getAttention,
 	getChannel,
 	getChannels,
@@ -19,7 +20,6 @@ import {
 	getPerson,
 	getPersonTurns,
 	getTurn,
-	getTurns,
 	markRead as markReadApi,
 	openDirectMessage,
 	sendMessage,
@@ -62,6 +62,8 @@ export type State = {
 	pluginSheet: boolean;
 	settings: boolean;
 	team: boolean;
+	/** 拉群卡片：填名字、勾人。 */
+	newGroup: boolean;
 	/** 正在引用的那条消息（seq + 摘要），发出去就清空。 */
 	reply: { seq: number; label: string; excerpt: string } | null;
 	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
@@ -103,6 +105,7 @@ const initial: State = {
 	pluginSheet: false,
 	settings: false,
 	team: false,
+	newGroup: false,
 	reply: null,
 	tasks: { open: false, who: null },
 	trail: [{ kind: "channel" }],
@@ -202,6 +205,14 @@ export async function openWithPerson(slug: string): Promise<void> {
 	await openChannel(id);
 }
 
+/** 我拉一个群：建完刷新侧栏并进去。成员是 slug；我自己由服务端加。 */
+export async function makeGroup(title: string, members: readonly string[]): Promise<void> {
+	const { id } = await createGroupApi(title, members);
+	setNewGroup(false);
+	await refreshLists();
+	await openChannel(id);
+}
+
 /** 重拉当前频道的详情。只有频道投影变了才走；期间切走了就不覆盖。 */
 async function reloadDetail(id: string): Promise<void> {
 	try {
@@ -242,8 +253,6 @@ export async function openChannel(id: string | null): Promise<void> {
 		// 私聊页看的是对面那个人：把他在所有频道里的轮次拉回来（也是 `live` 行要用的）。
 		const partner = detail.members.find((member) => member.slug !== "owner");
 		if (partner !== undefined) void loadPersonRuns(partner.slug);
-	} else {
-		void loadTurns(id, detail.messages);
 	}
 	void readToEnd(id, detail.messages);
 }
@@ -260,7 +269,6 @@ export async function loadEarlier(): Promise<void> {
 	const done = mark("channel:earlier");
 	try {
 		const page = await getEarlier(currentId, earliest);
-		void loadTurns(currentId, page.messages);
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
 		patch({
 			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
@@ -402,37 +410,6 @@ export async function loadPersonRuns(slug: string, limit = 30): Promise<void> {
 }
 
 /**
- * 拉一段消息窗口的轨迹（折叠版，不带步骤）。
- *
- * 已经在跑的那几轮不覆盖：SSE 手里那帧比这次 HTTP 更新。窗口里没有轨迹的消息不会出现
- * 空桶 —— 界面上「这一轮没有过程」与「这一轮的过程还没到」长得不一样。
- */
-async function loadTurns(id: string, messages: readonly Message[]): Promise<void> {
-	const first = messages[0];
-	const last = messages[messages.length - 1];
-	if (first === undefined || last === undefined) return;
-	let result: { turns: Turn[] };
-	try {
-		result = await getTurns(id, first.seq, last.seq);
-	} catch {
-		return;
-	}
-	if (getState().currentId !== id) return;
-	const fresh = new Set(result.turns.map((turn) => `${turn.slug}:${turn.channelId}:${String(turn.seq)}`));
-	let runs = getState().runs;
-	for (const turn of result.turns) runs = upsertRun(runs, turn);
-	// 正在跑的那几轮：SSE 手里那帧比这次 HTTP 新，没被这次结果覆盖就补回去。
-	for (const list of getState().runs.values()) {
-		for (const turn of list) {
-			if (turn.status !== "running" || turn.channelId !== id) continue;
-			if (fresh.has(`${turn.slug}:${turn.channelId}:${String(turn.seq)}`)) continue;
-			runs = upsertRun(runs, turn);
-		}
-	}
-	patch({ runs });
-}
-
-/**
  * 展开一轮：把步骤拉回来（折叠版没有）。
  *
  * 找不到（没被叫醒 / 条目已被压缩）就把步骤记成空数组 —— 「确实没有过程」比一直转圈诚实。
@@ -478,22 +455,27 @@ export function setReply(reply: State["reply"]): void {
 	patch({ reply });
 }
 
-/** 三个浮层互斥：打开一个就关掉另一个 —— 同时开着两个，Esc 该关谁变成靠猜。 */
+/** 浮层互斥：打开一个就关掉其它 —— 同时开着两个，Esc 该关谁变成靠猜。 */
 export function setSettings(open: boolean): void {
-	patch({ settings: open, ...(open ? { needMenu: false, pluginSheet: false, team: false } : {}) });
+	patch({ settings: open, ...(open ? { needMenu: false, pluginSheet: false, team: false, newGroup: false } : {}) });
 }
 
 export function setTeam(open: boolean): void {
-	patch({ team: open, ...(open ? { pluginSheet: false, settings: false } : {}) });
+	patch({ team: open, ...(open ? { pluginSheet: false, settings: false, newGroup: false } : {}) });
 }
 
 /** 插件浮层（左栏「团队管理」下面那一格）。 */
 export function setPluginSheet(open: boolean): void {
-	patch({ pluginSheet: open, ...(open ? { team: false, settings: false, needMenu: false } : {}) });
+	patch({ pluginSheet: open, ...(open ? { team: false, settings: false, needMenu: false, newGroup: false } : {}) });
+}
+
+/** 拉群卡片。 */
+export function setNewGroup(open: boolean): void {
+	patch({ newGroup: open, ...(open ? { needMenu: false, pluginSheet: false, settings: false, team: false } : {}) });
 }
 
 export function setNeedMenu(open: boolean): void {
-	patch({ needMenu: open, ...(open ? { settings: false } : {}) });
+	patch({ needMenu: open, ...(open ? { settings: false, newGroup: false } : {}) });
 }
 
 /**

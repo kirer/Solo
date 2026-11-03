@@ -72,15 +72,20 @@ CORE §12 说「以后用 `harness.inspect()` 派生，而不是把思考落库�
    288           min(100% − 40, clamp(720, 68%, 880))          360
 ```
 
-- **最左 78px 是应用级导航**（`sidebar/Rail.tsx`）：只放两格 ——
-  **聊天**、**后台任务**（顶上不画品牌标：那不是品牌区，它和侧栏那行标题是一条线，
-  多一个标就把这条线断开。品牌在窗口图标与标题里）。**一格只有一枚图标，不写字**（微信桌面版就是这样）：
-  名字放在 `title` 里，悬停才出来；64px 里塞不下四个汉字，挤成两行反而更难认。
-  选中的那格是一块 `--active` 浅底，后台任务那格的右上是
-  在跑人数（`--accent` 小胶囊，0 时不画）。它和侧栏不是一回事：侧栏讲「这个组织里有谁、
-  有哪些频道」，这一列讲「这个应用有几个地方可去」。**两屏共用它**（§2.3 的 `tasks`）：
-  点哪一格，右边整块换掉，不是盖一层抽屉。手机上这一列收起（窄屏没有纵向空间），
-  后台任务那屏自己带一个返回键。
+- **最左 78px 是应用级导航**（`sidebar/Rail.tsx`）：从上到下 **聊天 → 通讯录（团队）→
+  后台任务 → 插件**，插件自己的入口（`rail.item` 插槽）排在它下面；**设置单独压在最底**
+  （最不常用的那颗放最远）。顶上不画品牌标：那不是品牌区，
+  它和侧栏那行标题是一条线，多一个标就把这条线断开。品牌在窗口图标与标题里。
+  **一格只有一枚图标，不写字**（微信桌面版就是这样）：名字在 `data-tip` 里，悬停出头一条
+  自绘提示（`shell.css` 的 `.rail-item::after`，不用 `title` —— 原生提示要等一秒）；
+  78px 里塞不下四个汉字，挤成两行反而更难认。出厂「Token 统计」是 `rail.item` 的第一个
+  消费者：点开是一整页用量面板。
+  选中的那格是一块 `--active` 浅底，
+  后台任务那格的右上是在跑人数（`--accent` 小胶囊，0 时不画）。它和侧栏不是一回事：
+  侧栏讲「这个组织里有谁、有哪些频道」，这一列讲「这个应用有几个地方可去」。
+  **两屏共用它**（§2.3 的 `tasks`）：点哪一格，右边整块换掉，不是盖一层抽屉。
+  手机上这一列变成**底部一条**（五格横排，设置仍在最右；框给它让出 56px）——
+  管理三格搬进来之后，整列藏起来就没处点了。后台任务那屏仍留着自己的返回键。
 - **侧栏 288px**（收起成 56px 图标条：一列 36px 头像，行间留 8px —— 行高等于头像高，
   不留空当就粘成一根柱子），右侧 0.5px `--line`。比 v3 的 260 宽 28px：
   行里要放 36px 头像 + 两行字，260 那一档名字稍长就被省略号吃掉。
@@ -203,24 +208,26 @@ v3 的结论不变（我的原话：不要分组，直接平铺）。v4 只改�
   私聊，所以这一格通常直接是真实会话；私聊还没建出来的那一瞬，这一格是**入口**：
   第二行写他的身份而不是消息预览（没有历史，不能编一句「还没有消息」），
   点下去 `POST /api/people/:slug/dm` 把频道建出来。
+- **品牌行右端有一个「＋」**：点开拉群浮层（§1.5）。它长出来的是一格会话，不是一项
+  「管理」，所以不在列表脚下、和团队 / 插件 / 设置不混在一起。
 - **没有「工作区 / N 人 · N 个会话」那行标题。** 侧栏第一行就是会话列表：
   人数和会话数看列表本身就有，多一行只占高度。
-- **列表脚下是「团队」「设置」两行**：图标 18 + 字 14/22，行高 48、圆角 `--r-row`、左右内边距 10 ——
-  比会话行矮一档（48 对 60），但它读起来仍该是列表里的一行。`--line` 细线隔开。收起成图标条时只剩图标、竖排居中。
-  它们是「管理」，不是随手要做的事，所以不跟会话混在一起；手机上侧栏就是列表那一格，
-  一样够得着。
+- **「团队管理」「插件」「偏好设置」不在这栏里**：它们是应用级的「管理」，
+  和最左那列（§1.1）的聊天 / 后台任务住在同一个竖条上 —— 那三格挤在会话列表脚下时，
+  既像会话又不像，读起来最费劲。列表脚下只剩一个 `sidebar.footer` 插槽（插件的地盘，
+  空时不占一行）。
 
 ### 1.4 主列的三段
 
 1. **标题行 52px**：名字 15/500 + 副标题 12px `--ink-3`（私聊写**他的职务**，从名册取；群聊写人数。**不写团队 slug** —— `xiaokonglong` 是目录名，标题已经写着团队名）+ 右侧两个动作
-   （找你、详情）。团队与设置住在侧栏底部（§1.3）。标题行不画大标题，理由同 v3：
+   （找你、详情）。团队、插件与设置住在最左那列（§1.1）。标题行不画大标题，理由同 v3：
    会把眼睛从消息上拽走。返回键只在手机上出现（≤640px 一次只显示一格），桌面上点它是空操作。
 2. **消息流**：`overflow-anchor: none`，自己管滚动（见 §7.4）。
 3. **输入区**：输入卡（§7）。输入卡上方没有活动条（§4）。
 
-### 1.5 浮层：设置与团队
+### 1.5 浮层：设置、团队、拉群
 
-两个浮层是**同一类东西**，所以共用一套头：标题 15/600、右侧同一个 16px 的 ×。
+三个浮层是**同一类东西**，所以共用一套头：标题 15/600、右侧同一个 16px 的 ×。
 团队的头 48 高、带 0.5px 底线；设置的头 56 高、**横跨两栏**（标题在左、× 在右），
 下面才分栏 —— 分区名只在左栏出现一次，标题不跟着每个分区重复。
 
@@ -241,7 +248,12 @@ v3 的结论不变（我的原话：不要分组，直接平铺）。v4 只改�
 - **团队**：一行一个人，两行字（名字 13/500 + 身份 12 `--ink-3`），右端是状态
   （在想 / 在做 用 `--live`，其余 `--ink-3`）。**整行可点**：点开和这个人的私聊，浮层同时关掉。
   人数只在标题上写一次，底部不再重复一行「共 N 人」。
-- 两个浮层都从中间淡入、上浮 6px 并缩到 0.985（`sheet-in` 200ms）+ 背景 `veil-in` 160ms；
+- **拉群**：群名一行（`maxLength` 40）+ 成员名单（复用 `.crew` 行，右侧一个 18px 圆勾，
+  选中时 `--accent-wash` 底；名单超过 300px 自己滚，建群按钮始终露在外面）。
+  我自己一定在群里，所以至少要选一个人；没选够时按钮 `disabled`（40% 透明），不弹错误。
+  建完直接进那个群，浮层不留在原地「显示结果」。失败（重名 / 人不存在）把后端那句
+  中文摆在按钮上方。
+- 三个浮层都从中间淡入、上浮 6px 并缩到 0.985（`sheet-in` 200ms）+ 背景 `veil-in` 160ms；
   `prefers-reduced-motion` 下不动。`Esc` 关最上面那一层（§7.2）。
 - **点遮罩空白处就关**：× 在头的右端，不是紧跟标题。
 
@@ -311,8 +323,9 @@ v4 把「平铺 / 气泡」的选择收掉了：**所有人都是气泡**。理�
 
 ### 2.3 过程：`live` 行与后台任务（第二屏）
 
-过程有**三个**出口（ADR-046 / ADR-054）：**跑的时候一条占位**；**跑完在回复上面留一块
-折叠行**；**全部**进这个人的任务面板。三处画的是同一个 `RunBlock`，不造第二套展示。
+过程有**两个**出口（ADR-046 / ADR-062）：**跑的时候一条占位**；**全部**进这个人的任务面板。
+聊天流里**不画过程块** —— 那一块和面板是同一份事实，画两遍只会挡消息（ADR-054 已被
+ADR-062 取代）。步骤树只在后台任务面板里画。
 
 #### `live` 行 —— 正在跑的那一句
 
@@ -389,7 +402,7 @@ v4 把「平铺 / 气泡」的选择收掉了：**所有人都是气泡**。理�
 - **0 步的一轮不占一行**：只说了句话、没动过手（包括没回话的），那是聊天不是任务；还在跑的先留着，步数随后才到。
 - Esc 回聊天；手机上这一屏是一条（列表在上、详情在下），列表头上有一个返回键。
 
-**步骤树**（后台任务那屏的明细）：
+**步骤树**（只在后台任务那屏用 —— 聊天流里的过程行已经删了，ADR-062）：
 
 - **说话不进步骤树。** 一轮里说出口的话是那条频道消息；画成步骤会在原文上再抄一遍。
   步骤只有「做」：思考、跑命令、读写文件、翻记录、记记忆、招人、其他工具。
@@ -484,7 +497,7 @@ $ npm test
 
 ### 2.8 插件插槽（`sidebar.footer` / `rightPanel.tab`）与插件开关
 
-左栏「团队管理」下面那一格「插件」（`#plugins-btn`）打开插件浮层（`Overlays.tsx` 的
+最左那列那一格「插件」（`#plugins-btn`）打开插件浮层（`Overlays.tsx` 的
 `PluginSheet`，与「团队管理」同一个浮层样式，不是插槽）。它读 `GET /api/plugins`
 （`name` / `slug` / `description` / `enabled` / `error` / `brings`）：
 
@@ -507,9 +520,10 @@ $ npm test
 
 | 插槽 | 画在哪 | 数据来源 | 要自己带什么 |
 |---|---|---|---|
+| `rail.item` | 最左一列，排在「插件」下面（`rail-group` 里） | 插件自己的状态 | 一格 `52×52` 的图标按钮（`.rail-item`），名字放 `data-tip`；出厂「Token 统计」在这里 |
 | `sidebar.header` | 左栏品牌行右侧、收放按钮之前 | 插件自己的状态 | 横排尺寸（宿主那行是 flex） |
 | `sidebar.list.before` | 会话列表上方 | `store.channels` | — |
-| `sidebar.footer` | 左栏列表脚下、「团队管理」上面 | 插件自己的状态 | — |
+| `sidebar.footer` | 左栏列表脚下 | 插件自己的状态 | — |
 | `topbar.actions` | 对话区顶栏、「N 件找你」之前 | `store.detail` | 横排尺寸 |
 | `stream.top` | 消息流顶部、第一条消息上方（滚动区里） | `store.detail.messages` | 横幅尺寸，别抢滚动 |
 | `stream.bottom` | 消息流底部、最后一条消息之后（滚动区里） | 同上 | 同上 |
@@ -528,7 +542,7 @@ $ npm test
   插件组件靠它跟着界面变（订阅读到的状态一变，格子就重画）。
 - 插件自带样式的用 `style:` 一段 CSS，宿主插进 `<head>`；宿主只给插槽容器的外部留白，
   不给插件画任何外框。**横排插槽里的东西自己负责尺寸**，否则会把那一行撑开。
-- 插槽由宿主文件声明（`Sidebar.tsx` / `App.tsx` / `Stream.tsx` / `Composer.tsx` /
+- 插槽由宿主文件声明（`Rail.tsx` / `Sidebar.tsx` / `App.tsx` / `Stream.tsx` / `Composer.tsx` /
   `RightPanel.tsx` / `Overlays.tsx`），**加一个插槽 = 登记 `SlotName` + 在宿主里画一个 `<Slot>`**；
   插件不能自己造插槽。`test/ui/plugin.test.ts` 会查「每个 `SlotName` 都有一处宿主」。
 
@@ -836,7 +850,7 @@ v3 的 token 全部保留，**新增四档，只给轨迹用**：
 | 后台任务那屏的轮次 | `GET /api/people/:slug/turns?limit=30`（折叠版） |
 | 一轮的步骤 | `GET /api/channels/:id/turn?seq=&slug=`（选中的那一轮才拉） |
 | 「触发的那句话」 | `ViewTurn.trigger`（`from` 按 `GET /api/org` 的 `people[]` 换成名字 / `text`） |
-| 那一轮在哪个频道 / 谁在跑几人 | `GET /api/channels` 的 `ViewChannel.title`（按 `ViewTurn.channelId` 查）/ `GET /api/org` 的 `people[].activity` |
+| 那一轮在哪个频道 / 谁在跑几人 | `GET /api/channels` 的 `ViewChannel.title`（按 `ViewTurn.channelId` 查）；查不到（频道已归档 / 删掉）就用 `ViewTurn.channelTitle`，再没有才显示 id / `GET /api/org` 的 `people[].activity` |
 | 聊天流里的 `live` 行 | 频道 SSE 的 `trace`（`status === "running"`）+ `ViewStep.title` / `stepCount` |
 | 头像 / 名字 / 角色 | `ViewMessage.fromSlug` / `fromLabel` / `ViewMember.role` |
 | 落地页的「找助理」 | `GET /api/org` 的 `people[]` 里 `assistant === true` 那一个（没有这个按钮就不画） |
@@ -848,25 +862,24 @@ v3 的 token 全部保留，**新增四档，只给轨迹用**：
 
 **① 一轮的轨迹**
 
-两条，折叠与展开分开 —— 折叠态只要摘要，展开才要步骤：
+两条：一个人跑过的轮次（列表，折叠）与某一轮的全文（步骤）。聊天流不再画过程块（ADR-062），
+两条都是后台任务那屏的数据源：
 
 ```
-GET /api/channels/:id/turns?from=<seq>&to=<seq>
-→ { turns: ViewTurn[] }            // 这一段消息窗口里每一轮（不带 steps）
+GET /api/people/:slug/turns?from=<seq>&to=<seq>&limit=<n>
+→ { turns: ViewTurn[] }            // 这个人在所有频道里的轮次（任务面板；limit 默认 30、上限 100）
 
 GET /api/channels/:id/turn?seq=<触发这一轮的消息 seq>&slug=<谁>
 → { turn: ViewTurn | null }        // 找不到（那人没被叫醒 / 已过期）就是 null
-
-GET /api/people/:slug/turns?from=<seq>&to=<seq>&limit=<n>
-→ { turns: ViewTurn[] }            // 这个人在所有频道里的轮次（任务面板；limit 默认 30、上限 100）
 ```
 
-一条消息可以叫醒多个人，所以窗口版是**数组**；`(seq, slug)` 才唯一确定一轮。人的版本
-按 `startedAt` 排（跨频道 seq 不可比），每轮自带 `channelId`。
+`(seq, slug)` 才唯一确定一轮；人的版本按 `startedAt` 排（跨频道 seq 不可比），
+每轮自带 `channelId`。
 
 ```ts
 type ViewTurn = {
   channelId: string;
+  channelTitle?: string;           // 频道显示名（归档 / 删掉之后列表查不到，靠它）
   seq: number;                     // 触发这一轮的消息
   slug: string;
   label: string;
@@ -978,12 +991,12 @@ activity?: {
 ui/app/src/
   api/         client.ts（fetch + SSE）、types.ts（从 dto 再导出）
   state/       store.ts、useStore.ts
-  model/       纯函数：rows.ts、stream/model.ts、trace/model.ts
-  stream/      Stream.tsx、SayRow.tsx、NoteRow.tsx、RunBlock.tsx
-  trace/       StepRow.tsx、RunOutput.tsx、FileDiff.tsx、ThinkText.tsx
-  sidebar/     Sidebar.tsx、ChannelRow.tsx
-  composer/    Composer.tsx、MentionMenu.tsx、Attachments.tsx
-  panels/      RightRail.tsx（详情/技能/记忆三个视图）、Overlays.tsx、MemoryDrawer.tsx
+  hooks/       useStreams.ts（两条 SSE 的订阅）
+  stream/      Stream.tsx、model.ts（消息 → 行）、LiveRow.tsx、AttachmentPreview.tsx
+  sidebar/     Rail.tsx（最左导航）、Sidebar.tsx（会话列表）
+  composer/    Composer.tsx、choice.ts、MentionMenu.tsx、Attachments.tsx
+  panels/      TasksPanel.tsx（后台任务）、RightPanel.tsx（详情/技能/记忆）、Overlays.tsx
+  plugin/      registry.ts（插槽表）、Slot.tsx、boot.ts
   lib/         时间 / 头像 / Markdown / 格式化
   styles/      theme / shell / stream / tasks / composer / motion
 ```

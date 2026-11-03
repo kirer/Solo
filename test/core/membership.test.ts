@@ -5,10 +5,10 @@
  * 装配层拿它叫这些人自己报到（ADR-042）。算错的两个方向都很贵：漏了人，他进了团队频道
  * 却从不说话；多算了，每次重启都让全体成员白烧一轮。
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { syncTeamChannel } from "../../src/core/channel/membership.ts";
+import { archiveGoneTeams, createGroup, syncTeamChannel } from "../../src/core/channel/membership.ts";
 import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
@@ -60,6 +60,25 @@ describe("团队频道重投影：谁是新来的", () => {
 	});
 });
 
+describe("团队目录没了：频道归档", () => {
+	it("删掉团队目录后扫一遍把它归档（历史消息还留着）", async () => {
+		const { box, deps } = await setup();
+		await syncTeamChannel(deps, "alpha");
+		await rm(join(box.teamsRoot, "alpha"), { recursive: true, force: true });
+		await archiveGoneTeams(deps);
+		const state = (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect(state.channels["team:alpha"]?.archived).toBe(true);
+	});
+
+	it("团队还在就什么都不改（重启不会误伤）", async () => {
+		const { deps } = await setup();
+		await syncTeamChannel(deps, "alpha");
+		await archiveGoneTeams(deps);
+		const state = (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		expect(state.channels["team:alpha"]?.archived).toBeUndefined();
+	});
+});
+
 describe("装配层：新进来的人被叫去报到", () => {
 	it("重投影一次，团队频道里留下一条报到留痕（助理自己不发言）", async () => {
 		const { box, runtime } = await setup();
@@ -93,5 +112,44 @@ describe("成员表：团队成员和助理都在", () => {
 		expect(members).toContain("程一");
 		expect(members).toContain("林越");
 		expect(members).toContain("知言");
+	});
+});
+
+describe("任意组群（ADR-063）", () => {
+	it("建出来是 group: 开头的普通频道，进来的每个人都会被新消息叫醒", async () => {
+		const { deps } = await setup();
+		const group = await createGroup(deps, { title: "首页改版", members: ["程一", "林越"], creator: OWNER });
+		expect(group.id).toBe("group:首页改版");
+		const state = (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		const channel = state.channels[group.id];
+		expect(channel?.members.sort()).toEqual([OWNER, "程一", "林越"].sort());
+		// 群组不设「助理负责分发」：每个人自己判断要不要接。
+		expect(channel?.wakeOnAll.sort()).toEqual([OWNER, "程一", "林越"].sort());
+	});
+
+	it("建群的人自己在里面（哪怕没写进名单）", async () => {
+		const { deps } = await setup();
+		const group = await createGroup(deps, { title: "两个人", members: ["程一"], creator: OWNER });
+		expect(group.members).toContain(OWNER);
+	});
+
+	it("至少要两个人：只有自己不成群", async () => {
+		const { deps } = await setup();
+		await expect(createGroup(deps, { title: "我自己", members: [], creator: OWNER })).rejects.toThrow();
+	});
+
+	it("不认识的人进不来", async () => {
+		const { deps } = await setup();
+		await expect(
+			createGroup(deps, { title: "幽灵", members: ["程一", "查无此人"], creator: OWNER }),
+		).rejects.toThrow();
+	});
+
+	it("同名群不会建出第二份房间", async () => {
+		const { deps } = await setup();
+		await createGroup(deps, { title: "首页改版", members: ["程一"], creator: OWNER });
+		await expect(
+			createGroup(deps, { title: "首页改版", members: ["林越"], creator: OWNER }),
+		).rejects.toThrow();
 	});
 });

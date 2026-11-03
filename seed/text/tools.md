@@ -66,10 +66,10 @@
 没有人被唤醒（这只是一句话）。
 
 ## chats.description
-看会话。`action=list`（默认）列我在的会话：标题、群聊还是私聊、未读数、最后一条；`action=read` 读某个频道的历史消息（读完标已读）。
+看会话、建群。`action=list`（默认）列我在的会话：标题、群聊还是私聊、未读数、最后一条；`action=read` 读某个频道的历史消息（读完标已读）；`action=create` 用 title + members 拉一个群，我自动在里面。
 
 ## chats.param.action
-list（默认）列会话 / read 读消息
+list（默认）列会话 / read 读消息 / create 拉群
 
 ## chats.param.channel
 频道 id。read 时省略 = 刚叫醒我的那个频道
@@ -79,6 +79,15 @@ list（默认）列会话 / read 读消息
 
 ## chats.param.limit
 最多几条，默认 30，上限 100
+
+## chats.param.title
+群名。建群时必填；同一个名字只能有一个群。
+
+## chats.param.members
+群里还有谁：名字或 slug，一个数组。建群的人自动在群里。
+
+## chats.create.done
+已建群「{{title}}」（{{id}}），成员：{{names}}。在这个群里说话会用 `say` 的 channel 参数。
 
 ## chats.row.kind.dm
 私聊
@@ -449,3 +458,64 @@ slug
 
 ## org.memory.duplicate
 这条记忆已经有了。
+
+
+## group.refuse.title
+群要有名字：写一句 title。
+
+## group.refuse.member
+没有「{{name}}」这个人。可以拉：{{names}}
+
+## group.refuse.few
+群至少要有两个人：你，加上至少一个成员。
+
+## group.refuse.exists
+已经有叫「{{title}}」的群了，换个名字。
+
+## route.description
+助理专用：把频道里的一条消息在后台交给该看的人。他能看到原文，频道里不会出现「转交」这条消息。
+
+## route.param.to
+交给谁（名字或 slug），一个或几个。必须在这个频道里。
+
+## route.param.seq
+转哪一条消息，默认我刚被叫醒的那条。
+
+## route.param.channel
+哪个频道，默认我刚被叫醒的频道。
+
+## route.self.missing
+你还不在名册里。
+
+## route.refuse.not-assistant
+只有助理能用 route：一条消息该给谁看，由助理判断。
+
+## route.refuse.no-seq
+不知道要转哪一条：用 seq 指明。
+
+## route.refuse.missing
+「{{channel}}」里没有 #{{seq}} 这条消息。
+
+## route.refuse.self
+不用转给自己。
+
+## route.refuse.owner
+我不走 route：要我拍板就在正文里 @我。
+
+## route.refuse.target
+「{{name}}」不在「{{channel}}」里。可以转给：{{names}}
+
+## route.refuse.empty
+没有指定要转给谁。
+
+## route.note
+把 #{{seq}} 交给 {{names}} 看。
+
+## route.done
+已把 #{{seq}} 交给：{{names}}。频道里没有留下可见消息。{{failed ?? }}
+
+## route.done.failed
+没叫醒：{{names}}。
+
+## route.done.none
+没有叫醒任何人（{{names}} 还没有会话）。

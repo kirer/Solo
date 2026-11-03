@@ -80,7 +80,10 @@ async function answerEntry(
 }
 
 /**
- * 这一轮的**最后一个动作**是不是 `say`。
+ * 这一轮的**最后一个动作**是不是已经交付了。
+ *
+ * `say` 与 `route` 都算：说话就是交付；`route` 是把消息交给了该看的人，
+ * 频道里不该再多出一段「我把这条转给了谁」（ADR-063）。
  *
  * 是 → 最后那段正文就是那句话换了个说法（模型收工时爱把说过的再说一遍），不再补。
  * 不是 → 他说完之后又干了活（跑命令、写文件），最后那段是**新的结论**，得补。
@@ -94,7 +97,7 @@ export function saidLast(page: readonly EntryRecord[], answer: EntryRecord | und
 		for (const message of entry.model ?? []) {
 			if (message.role !== "assistant") continue;
 			for (const block of [...message.content].reverse()) {
-				if (block.type === "toolCall") return block.name === "say";
+				if (block.type === "toolCall") return block.name === "say" || block.name === "route";
 			}
 		}
 	}

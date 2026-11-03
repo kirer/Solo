@@ -52,8 +52,10 @@ type DeliverOptions = {
 	readonly prompt: DeliveryPrompt;
 	readonly channel: Channel;
 	readonly message: Message;
-	/** 要唤醒谁（`recipientsOf` 的结果）。 */
+	/** 要唤醒谁（`recipientsOf` 的结果，或助理指定的人）。 */
 	readonly targets: readonly string[];
+	/** 助理把这条转给了他（slug）。投递正文里写明，别的什么都不改。 */
+	readonly routedBy?: string;
 	/** slug → 会话。返回 undefined 表示这个人没有会话（比如我）。 */
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	/** 显示名字。缺省用 slug。 */
@@ -140,6 +142,7 @@ export async function deliver(
 			viewer,
 			woken: options.targets,
 			labelOf: label,
+			...(options.routedBy === undefined ? {} : { routedBy: options.routedBy }),
 			interrupted,
 			...(taskChannelTitle === undefined ? {} : { taskChannelTitle }),
 			attachmentLines: plan.lines,

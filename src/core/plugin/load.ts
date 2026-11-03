@@ -57,6 +57,8 @@ export type LoadOptions = {
 	/** `<appRoot>/plugins`（绝对路径）。不存在 = 没有插件。 */
 	readonly pluginsRoot: string;
 	readonly workspace: string;
+	/** `<userRoot>/logs`（绝对路径）。审计日志在这里，插件按 token 算账要读它。 */
+	readonly logsRoot: string;
 	/** 这个频道的工作区（插件 `api.scope` 的实现）。不给就只有「没有」。 */
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
 	/** 一行一个事件的出口（默认 `console.log`）。 */
@@ -116,7 +118,13 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 				throw new Error(`${manifest.server} 里没有 export function apply(api)`);
 			}
 			await (module.apply as (api: unknown) => unknown)(
-				createPluginApi({ slug, workspace: options.workspace, sinks, ...(options.scope === undefined ? {} : { scope: options.scope }) }),
+				createPluginApi({
+					slug,
+					workspace: options.workspace,
+					logsRoot: options.logsRoot,
+					sinks,
+					...(options.scope === undefined ? {} : { scope: options.scope }),
+				}),
 			);
 		} catch (error) {
 			const reason = `${slug}：${error instanceof Error ? error.message : String(error)}`;

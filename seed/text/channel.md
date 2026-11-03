@@ -17,6 +17,9 @@
 ## delivery.woken.position
 （你在第 {{n}} 位）
 
+## delivery.routed
+（{{name}} 让你看这条。）
+
 ## delivery.attachments
 附件：
 

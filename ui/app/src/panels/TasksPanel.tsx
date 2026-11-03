@@ -157,7 +157,7 @@ export function TasksPanel(): JSX.Element {
 											}}
 										>
 											<span className="tasks-row-top">
-												<span className="tasks-row-ch">{titles.get(turn.channelId) ?? turn.channelId}</span>
+												<span className="tasks-row-ch">{titles.get(turn.channelId) ?? turn.channelTitle ?? turn.channelId}</span>
 												<span className="tasks-row-time">{clockTime(turn.startedAt)}</span>
 												<span className="tasks-row-ms">{elapsedOf(turn)}</span>
 											</span>
@@ -190,7 +190,7 @@ export function TasksPanel(): JSX.Element {
 						<span className="task-name">{current.label}</span>
 						<span className="task-role">{people.find((person) => person.slug === current.slug)?.title ?? ""}</span>
 						<span className="task-sep" />
-						<span className="task-ch">{titles.get(current.channelId) ?? current.channelId}</span>
+						<span className="task-ch">{titles.get(current.channelId) ?? current.channelTitle ?? current.channelId}</span>
 						<span className="task-meta">
 							<span>{current.stepCount} 步</span>
 							<span data-tone={toneOf(current)}>{statusOf(current)}</span>

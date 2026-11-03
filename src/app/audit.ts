@@ -74,6 +74,8 @@ export function auditHooks(deps: AuditDeps): readonly HookRegistration[] {
 				in: message.usage.input,
 				out: message.usage.output,
 				cache: message.usage.cacheRead,
+				// 写进缓存的 token 也计费（且通常比读贵）：只记 `cache` 会让「总 token」偏小。
+				write: message.usage.cacheWrite,
 				cost: message.usage.cost.total,
 			});
 		},

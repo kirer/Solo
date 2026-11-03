@@ -111,6 +111,12 @@ function resultText(content: unknown): string {
 	return parts.join("\n");
 }
 
+/** `file` 的默认动作和工具本身一致：给了正文就是写（模型常漏 action）。 */
+function fileActionOf(args: Json): "read" | "write" {
+	const action = asString(args["action"]) ?? (args["content"] === undefined ? "read" : "write");
+	return action === "write" ? "write" : "read";
+}
+
 /** 这个工具调用在这一行上怎么写。 */
 function titleOf(name: string, args: Json): string {
 	switch (name) {
@@ -120,8 +126,7 @@ function titleOf(name: string, args: Json): string {
 		}
 		case "file": {
 			const path = asString(args["path"]) ?? "";
-			const action = asString(args["action"]) ?? "read";
-			return action === "write" ? `写了 ${path}` : `读了 ${path}`;
+			return fileActionOf(args) === "write" ? `写了 ${path}` : `读了 ${path}`;
 		}
 		case "chats":
 			return "翻了频道记录";
@@ -129,8 +134,12 @@ function titleOf(name: string, args: Json): string {
 			return "读了更早的消息";
 		case "remember":
 			return "记了一条";
-		case "hire":
-			return `招了 ${asString(args["name"]) ?? asString(args["slug"]) ?? "一个人"}`;
+		case "hire": {
+			const action = asString(args["action"]) ?? "create";
+			if (action === "models") return "看了可用模型";
+			const who = asString(args["name"]) ?? asString(args["slug"]) ?? "一个人";
+			return action === "fire" ? `开除了 ${who}` : `招了 ${who}`;
+		}
 		default:
 			return name;
 	}
@@ -142,7 +151,7 @@ function kindOf(name: string, args: Json): ViewStep["kind"] | undefined {
 		case "run":
 			return "run";
 		case "file":
-			return (asString(args["action"]) ?? "read") === "write" ? "file-write" : "file-read";
+			return fileActionOf(args) === "write" ? "file-write" : "file-read";
 		case "say":
 			return undefined;
 		case "chats":
@@ -160,6 +169,8 @@ function kindOf(name: string, args: Json): ViewStep["kind"] | undefined {
 
 export type TurnFacts = {
 	readonly channelId: string;
+	/** 频道的显示名（频道后来归档 / 删掉也留着）。 */
+	readonly channelTitle?: string;
 	/** 触发这一轮的消息 seq。 */
 	readonly seq: number;
 	readonly slug: string;
@@ -243,6 +254,11 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 					if (kind === "file-write") {
 						const content = asString(args["content"]) ?? "";
 						step.added = content === "" ? 0 : content.split("\n").length;
+						step.text = clipText(content, MAX_TEXT).text;
+					}
+					if (kind === "remember") {
+						const text = asString(args["text"]) ?? "";
+						if (text !== "") step.text = clipText(text, MAX_TEXT).text;
 					}
 					if (kind === "tool") step.tool = name;
 					if (stamp !== undefined) step.startedAt = stamp;
@@ -264,13 +280,16 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 			const stamp = asNumber(message["timestamp"]);
 			if (stamp !== undefined && step.startedAt !== undefined) step.ms = Math.max(0, stamp - step.startedAt);
 			const text = stripAnsi(resultText(message["content"])).trim();
-			if (step.kind === "run") {
+			// 每个工具都留下它返回的那段话：面板展开就有东西可看，不用猜。
+			if (text !== "") {
 				const clipped = clipText(text, MAX_OUTPUT);
 				step.output = clipped.text;
 				if (clipped.truncated) {
 					step.truncated = true;
 					step.output = `${clipped.text}\n… 共 ${String(text.split("\n").length)} 行，已截断`;
 				}
+			}
+			if (step.kind === "run") {
 				const exit = /退出码\s*(-?\d+)/.exec(text);
 				if (exit !== null) step.exitCode = Number(exit[1]);
 			}
@@ -289,6 +308,7 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 
 	return {
 		channelId: facts.channelId,
+		...(facts.channelTitle === undefined ? {} : { channelTitle: facts.channelTitle }),
 		seq: facts.seq,
 		slug: facts.slug,
 		label: facts.label,

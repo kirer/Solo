@@ -9,7 +9,7 @@
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
-import { openChannel, openWithPerson, setPluginSheet, setSettings, setSide, setTeam } from "../state/store.ts";
+import { openChannel, openWithPerson, setNewGroup, setSide } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Actor, Channel } from "../api/types.ts";
 
@@ -38,6 +38,19 @@ export function Sidebar(): JSX.Element {
 				<span className="side-grow" />
 				{/* 插槽：品牌行右侧，收放按钮之前。 */}
 				<Slot name="sidebar.header" />
+				{/* 拉群就在会话列表头顶：它长出来的是一格会话，不是一项「管理」。 */}
+				<button
+					type="button"
+					className="icon-btn side-new"
+					id="new-group"
+					aria-label="拉群"
+					title="拉群"
+					onClick={() => setNewGroup(true)}
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+						<path d="M12 5v14M5 12h14" />
+					</svg>
+				</button>
 				<button
 					type="button"
 					className="icon-btn side-toggle"
@@ -73,55 +86,11 @@ export function Sidebar(): JSX.Element {
 					/>
 				))}
 			</div>
-			{/* 团队与设置放在列表脚下：那是「管理」，不是随手要做的事。 */}
+			{/* 列表脚下只剩插件的地盘（团队 / 插件 / 设置三格已经搬到最左那列，docs/DESIGN.md §1.1）。 */}
 			<div className="side-foot">
-				{/* 插件的地盘：没有插件时它不占一行。 */}
 				<div className="side-slot">
 					<Slot name="sidebar.footer" />
 				</div>
-				<button
-					type="button"
-					className="side-action"
-					id="team-btn"
-					aria-label="团队管理"
-					title="团队管理"
-					onClick={() => setTeam(true)}
-				>
-					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-						<circle cx="9" cy="8" r="3.2" />
-						<path d="M3.5 19a5.5 5.5 0 0 1 11 0" />
-						<path d="M16 5.5a3.2 3.2 0 0 1 0 6" />
-						<path d="M17.5 13.6A5 5 0 0 1 21 18.5" />
-					</svg>
-					团队管理
-				</button>
-				<button
-					type="button"
-					className="side-action"
-					id="plugins-btn"
-					aria-label="插件"
-					title="插件"
-					onClick={() => setPluginSheet(true)}
-				>
-					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-						<path d="M9 3h6v3.2a2 2 0 0 0 2 2h3.2v5.6H17a2 2 0 0 0-2 2V21H9v-3.2a2 2 0 0 0-2-2H3.8V9.2H7a2 2 0 0 0 2-2z" />
-					</svg>
-					插件
-				</button>
-				<button
-					type="button"
-					className="side-action"
-					id="settings-btn"
-					aria-label="偏好设置"
-					title="偏好设置"
-					onClick={() => setSettings(true)}
-				>
-					<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-						<circle cx="12" cy="12" r="3" />
-						<path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.11a1.7 1.7 0 0 0-2.9-1.2l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 3 15H3a2 2 0 1 1 0-4h.11a1.7 1.7 0 0 0 1.2-2.9l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 3.09V3a2 2 0 1 1 4 0v.11a1.7 1.7 0 0 0 2.9 1.2l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0 1.2 2.9H21a2 2 0 1 1 0 4h-.11a1.7 1.7 0 0 0-1.49.96z" />
-					</svg>
-					偏好设置
-				</button>
 			</div>
 		</aside>
 	);

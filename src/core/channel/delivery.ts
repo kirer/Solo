@@ -128,6 +128,12 @@ export function renderDelivery(options: {
 	 */
 	readonly woken?: readonly string[];
 	readonly labelOf?: ((slug: string) => string) | undefined;
+	/**
+	 * 这条不是按 @ 推出来的，是助理看完之后转给他的（ADR-063）。
+	 *
+	 * 只多一句「谁让你看这条」：原文、回话频道、收尾都照旧。
+	 */
+	readonly routedBy?: string;
 	/** 这句是插进一轮正在跑的工作里的。 */
 	readonly interrupted?: boolean;
 	/**
@@ -171,6 +177,9 @@ export function renderDelivery(options: {
 		// 一旦缺省频道猜错（例如猜成私聊），整段对话就跑到别的房间里去了。
 		t("delivery.head", { title: channel.title, seq: message.seq, id: channel.id, quoted }),
 		`${label(message.from)}：${message.text}${line.join("")}`,
+		...(options.routedBy === undefined || options.routedBy === options.viewer
+			? []
+			: [t("delivery.routed", { name: label(options.routedBy) })]),
 		...(isOwnerDm(channel, options.viewer) ? [fillFragment(prompt.dm)].filter((text) => text !== "") : []),
 		...(options.attachmentLines === undefined || options.attachmentLines.length === 0
 			? []

@@ -164,17 +164,76 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	if (targets.length === 0) {
 		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
 	}
-	// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
-	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
-	const busy = await liveConversations(deps.harness, context).catch(() => new Set<number>());
-	const labelOf = deps.labelOf ?? ((slug: string) => slug);
 	// 模板只读一次：摘要和正文用同一份，改 md 下一条生效。
 	const prompt = await deliveryPrompt(deps.promptDir);
 	// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
 	const digests = new Map(
 		[...digestParts].map(([slug, part]) => [slug, digestNotice(prompt.digest, part.total, part.rows)]),
 	);
-	const delivery = await deliver(
+	const delivery = await deliverTo(deps, { channel: liveChannel, message, targets, digests, prompt }, context);
+	return { channel: liveChannel, message, delivery };
+}
+
+/**
+ * 把一条**已经落在频道里**的消息再交给几个人看 —— 助理的后台分发（ADR-063）。
+ *
+ * 和 `postMessage` 的投递走同一条 `deliver`：不写第二条消息，频道里也就没有
+ * 「助理把这条转给了谁」这种可见的痕。收件人看到的仍是原文，只是多一句是谁转的。
+ *
+ * 调用方给的 `deps.state` 必须是**当下的**频道快照（工具用 `readState` 读）。
+ */
+export async function deliverExisting(
+	deps: PostDeps,
+	input: {
+		readonly channelId: string;
+		readonly seq: number;
+		readonly targets: readonly string[];
+		/** 转交的人（助理的 slug）。投递正文里会写明。 */
+		readonly routedBy?: string;
+	},
+	context: Context = BACKGROUND_CONTEXT,
+): Promise<DeliverResult> {
+	const channel = deps.state.channels[input.channelId];
+	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
+	const message = (deps.state.messages[input.channelId] ?? []).find((item) => item.seq === input.seq);
+	if (message === undefined) throw new Error(`消息不存在：${input.channelId}#${String(input.seq)}`);
+	// 只投给这个房间里的人，且不投给我（我没有会话）。这是第二道闸：调用方已经校验过。
+	// 已经被 @ 的人不重复叫：投递时他们本来就会收到这条，再转一次就是两句。
+	const already = new Set(message.mentions);
+	const targets = [...new Set(input.targets)].filter(
+		(slug) => slug !== OWNER && channel.members.includes(slug) && !already.has(slug),
+	);
+	if (targets.length === 0) return { delivered: [], failed: [], skipped: [] };
+
+	const liveChannel: Channel = { ...channel, members: [...channel.members], wakeOnAll: [...channel.wakeOnAll] };
+	const prompt = await deliveryPrompt(deps.promptDir);
+	const digests = new Map<string, string>();
+	for (const slug of targets) {
+		const part = digestRows(deps.state, slug, 5, deps.text);
+		digests.set(slug, digestNotice(prompt.digest, part.total, part.rows));
+	}
+	return deliverTo(deps, { channel: liveChannel, message, targets, digests, prompt, ...(input.routedBy === undefined ? {} : { routedBy: input.routedBy }) }, context);
+}
+
+/** `postMessage` 与 `deliverExisting` 共用的投递：叫醒、合并、收尾都只在这里写一次。 */
+async function deliverTo(
+	deps: PostDeps,
+	input: {
+		readonly channel: Channel;
+		readonly message: Message;
+		readonly targets: readonly string[];
+		readonly digests: ReadonlyMap<string, string>;
+		readonly prompt: Awaited<ReturnType<typeof deliveryPrompt>>;
+		readonly routedBy?: string;
+	},
+	context: Context,
+): Promise<DeliverResult> {
+	const { channel: liveChannel, message, targets, digests, prompt } = input;
+	// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
+	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
+	const busy = await liveConversations(deps.harness, context).catch(() => new Set<number>());
+	const labelOf = deps.labelOf ?? ((slug: string) => slug);
+	return deliver(
 		{
 			digests,
 			prompt,
@@ -182,6 +241,8 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			message,
 			targets,
 			busy,
+			...(deps.text === undefined ? {} : { text: deps.text }),
+			...(input.routedBy === undefined ? {} : { routedBy: input.routedBy }),
 			// 合并唤醒（也负责我插队）：同一个会话最多留一个「还没开始」的排队项。
 			// 谁连发几条（我三句、agent 的过程话与追问）都只排一个唤醒，最后一条取代
 			// 前面没开始的那些 —— 消息都在频道里，少的只是重复唤醒。
@@ -220,5 +281,4 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 		},
 		context,
 	);
-	return { channel: liveChannel, message, delivery };
 }

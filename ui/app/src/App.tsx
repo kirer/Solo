@@ -23,6 +23,7 @@ import {
 	openChannel,
 	openWithPerson,
 	setNeedMenu,
+	setNewGroup,
 	setPluginSheet,
 	setRight,
 	setSettings,
@@ -47,6 +48,7 @@ export function App(): JSX.Element {
 	const settings = useStore((state) => state.settings);
 	const team = useStore((state) => state.team);
 	const pluginSheet = useStore((state) => state.pluginSheet);
+	const newGroup = useStore((state) => state.newGroup);
 	const tasksOpen = useStore((state) => state.tasks.open);
 
 	const { toasts, toast } = useToasts();
@@ -81,11 +83,12 @@ export function App(): JSX.Element {
 		if (tasksOpen) return closeTasks(), true;
 		if (settings) return setSettings(false), true;
 		if (team) return setTeam(false), true;
+		if (newGroup) return setNewGroup(false), true;
 		if (pluginSheet) return setPluginSheet(false), true;
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [tasksOpen, settings, team, pluginSheet, needMenu, right.open]);
+	}, [tasksOpen, settings, team, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {

@@ -35,10 +35,11 @@
 	--sidebar: 56px;
 }
 
-/* ── 最左那一列：应用级导航（聊天 / 后台任务）────────────────────────
+/* ── 最左那一列：应用级导航 ───────────────────────────────────────────
  *
- * 微信桌面版那种窄条：一排图标，选中的那格有一块浅底。聊天和后台任务是两屏，
- * 共用这一列 —— 切屏不是开抽屉，左边那一格就是位置。
+ * 微信桌面版那种窄条：一排图标，选中的那格有一块浅底。上半截是两屏（聊天 /
+ * 后台任务），下半截是管理（团队 / 插件 / 偏好设置）—— 切屏不是开抽屉，
+ * 左边那一格就是位置；管理贴在列底，偶尔才点一次。
  */
 .rail {
 	display: flex;
@@ -50,6 +51,18 @@
 	padding: 4px 0 14px;
 	background: var(--frame);
 	border-right: 0.5px solid var(--line);
+}
+
+/* 两段：上面是屏，下面是管理。中间的空档靠 `margin-top: auto` 撑开。 */
+.rail-group {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 2px;
+}
+
+.rail-foot {
+	margin-top: auto;
 }
 
 /* 一格只有一枚图标，没有字：名字在 `title` 里，悬停才出来。 */
@@ -80,6 +93,44 @@
 .rail-item[aria-current="true"] {
 	background: var(--active);
 	color: var(--ink);
+}
+
+/* 悬停才出来的名字：一格只有图标，没有字（78px 塞不下四个汉字）。
+   用 `data-tip` 自己画，不靠 `title` —— 原生提示要等一秒、还带不动画，
+   桌面壳里也不稳。`::after` 是绝对定位，不参与那格的对齐。 */
+.rail-item::after {
+	content: attr(data-tip);
+	position: absolute;
+	left: calc(100% + 10px);
+	top: 50%;
+	z-index: 60;
+	padding: 5px 9px;
+	border: 0.5px solid var(--rule);
+	border-radius: 7px;
+	background: var(--field);
+	box-shadow: 0 4px 14px rgb(0 0 0 / 35%);
+	color: var(--ink);
+	font-family: var(--sans);
+	font-weight: 500;
+	font-size: 12px;
+	line-height: 1;
+	white-space: nowrap;
+	opacity: 0;
+	pointer-events: none;
+	transform: translate(-4px, -50%);
+	transition:
+		opacity 90ms ease 120ms,
+		transform 90ms ease 120ms;
+}
+
+.rail-item:not([data-tip])::after {
+	display: none;
+}
+
+.rail-item:hover::after,
+.rail-item:focus-visible::after {
+	opacity: 1;
+	transform: translate(0, -50%);
 }
 
 /* 在跑人数：贴在图标右上角，不占一行字。 */
@@ -321,21 +372,18 @@
 	background: var(--frame);
 }
 
-/* 团队 / 设置放在列表脚下：它们是「管理」，和「现在跟谁说话」不是一类东西。
-   收起成图标条时竖着排。 */
+/* 列表脚下只剩插件的地盘（团队 / 插件 / 设置已经搬到最左那列）。 */
 .side-foot {
 	display: flex;
 	flex-direction: column;
 	flex: none;
 	gap: 2px;
 	margin-top: 6px;
-	padding: 6px 0 0;
-	border-top: 0.5px solid var(--line);
 }
 
 /*
  * 插件的地盘（`sidebar.footer` 插槽）。没有插件时它是空的 —— `:empty` 让那一行高为 0，
- * 而不是在「团队 / 设置」上面留一条看不见的缝。插件自己带样式，这里只给外部留白。
+ * 而不是在列表脚下留一条看不见的缝。插件自己带样式，这里只给外部留白。
  */
 .side-slot {
 	display: flex;
@@ -344,51 +392,6 @@
 }
 .side-slot:empty {
 	display: none;
-}
-
-/* 一行一个，和会话行同一种尺寸与内边距：它在列表脚下，就该读起来像列表的一部分。 */
-.side-action {
-	display: flex;
-	align-items: center;
-	gap: 12px;
-	width: 100%;
-	min-height: 48px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: var(--r-row);
-	background: transparent;
-	font: inherit;
-	font-size: 14px;
-	line-height: 22px;
-	text-align: left;
-	color: var(--ink-2);
-	cursor: pointer;
-	transition:
-		background-color var(--dur-line) ease,
-		color var(--dur-line) ease;
-}
-
-.side-action:hover {
-	background: var(--hover);
-	color: var(--ink);
-}
-
-.side-action svg {
-	flex: none;
-	width: 18px;
-	height: 18px;
-}
-
-/* 收起成图标条：只剩图标，竖着排、居中。 */
-.frame[data-side="rail"] .side-action {
-	justify-content: center;
-	width: 36px;
-	height: 36px;
-	min-height: 36px;
-	margin: 0 auto;
-	padding: 0;
-	/* 文字收起，只留图标。 */
-	font-size: 0;
 }
 
 /* 人栏：每人 40px 一行。这是本产品唯一的独有元素。 */
@@ -904,6 +907,124 @@
 	text-overflow: ellipsis;
 }
 
+/* ── 拉群 ───────────────────────────────────────────────────────────── */
+
+.group-form {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	padding: 8px 4px 4px;
+}
+
+.group-field {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.group-label {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	padding: 0 4px;
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.group-count {
+	margin-left: auto;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
+.group-input {
+	height: 36px;
+	padding: 0 12px;
+	border: 0.5px solid var(--line);
+	border-radius: var(--r-control);
+	background: var(--ground);
+	color: var(--ink);
+	font: inherit;
+	font-size: 14px;
+}
+
+.group-input::placeholder {
+	color: var(--ink-3);
+}
+
+/* 名单能滚：人多时浮层高度不跟着长，建群按钮始终露在外面。 */
+.group-people {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	max-height: 300px;
+	overflow-y: auto;
+	padding: 4px;
+	border: 0.5px solid var(--rule);
+	border-radius: var(--r-row);
+}
+
+.group-people .crew {
+	grid-template-columns: var(--av-md) minmax(0, 1fr) 20px;
+}
+
+.group-people .crew[data-on="true"] {
+	background: var(--accent-wash);
+}
+
+.group-check {
+	display: grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border: 1px solid var(--control);
+	border-radius: var(--r-pill);
+	color: transparent;
+	transition:
+		background-color var(--dur-line) ease,
+		border-color var(--dur-line) ease;
+}
+
+.group-people .crew[data-on="true"] .group-check {
+	border-color: var(--accent);
+	background: var(--accent);
+	color: var(--ground);
+}
+
+.group-actions {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.group-hint {
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.group-submit {
+	margin-left: auto;
+	height: 34px;
+	padding: 0 18px;
+	border: 0;
+	border-radius: var(--r-control);
+	background: var(--accent);
+	color: var(--ground);
+	font: inherit;
+	font-size: 13px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: opacity var(--dur-line) ease;
+}
+
+.group-submit:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
 /* ── 提示条（toast） ───────────────────────────────────────────────── */
 
 #toast-root {
@@ -1042,6 +1163,57 @@
 @media (max-width: 640px) {
 	.frame {
 		grid-template-columns: minmax(0, 1fr);
+		/* 最左那列在手机上是底部一条，不压在内容上：给框让出同等高度。 */
+		padding-bottom: calc(56px + env(safe-area-inset-bottom));
+	}
+
+	/* 最左那列在手机上是**底部一条**：五格图标排一行，聊天 / 后台任务在左，
+	   团队 / 插件 / 设置靠右。它原来是整列藏起来的（第二屏自带返回键），
+	   管理三格搬进来之后藏了就没处点，所以改成横条。 */
+	.rail {
+		position: fixed;
+		z-index: 40;
+		inset: auto 0 0 0;
+		flex-direction: row;
+		gap: 2px;
+		height: calc(56px + env(safe-area-inset-bottom));
+		padding: 0 calc(6px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
+			calc(6px + env(safe-area-inset-left));
+		border-right: 0;
+		border-top: 0.5px solid var(--line);
+	}
+
+	.rail-group {
+		flex-direction: row;
+	}
+
+	.rail-foot {
+		margin-top: 0;
+		margin-left: auto;
+	}
+
+	.rail-item {
+		width: 46px;
+		height: 46px;
+		border-radius: 10px;
+	}
+
+	.rail-item svg {
+		width: 21px;
+		height: 21px;
+	}
+
+	/* 底栏里的提示朝上出：朝右会跑出屏幕。 */
+	.rail-item::after {
+		left: 50%;
+		top: auto;
+		bottom: calc(100% + 8px);
+		transform: translate(-50%, 4px);
+	}
+
+	.rail-item:hover::after,
+	.rail-item:focus-visible::after {
+		transform: translate(-50%, 0);
 	}
 
 	/* 全面屏：`viewport-fit=cover` 声明了就得让出刘海与底部手势条，否则标题行

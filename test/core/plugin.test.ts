@@ -216,7 +216,7 @@ describe("加载", () => {
 		});
 
 		const logs: string[] = [];
-		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), log: (line) => logs.push(line) });
+		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), logsRoot: join(root, "..", "logs"), log: (line) => logs.push(line) });
 
 		expect(host.errors).toEqual([]);
 		expect(host.tools).toHaveLength(1);
@@ -248,7 +248,7 @@ describe("加载", () => {
 			`,
 		});
 
-		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), log: () => {} });
+		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), logsRoot: join(root, "..", "logs"), log: () => {} });
 		expect(host.prompt).toEqual([]);
 		expect(host.plugins[0]).toMatchObject({ slug: "off", enabled: false });
 	});
@@ -265,7 +265,7 @@ describe("加载", () => {
 			"plugin.js": "export function apply(api) { api.prompt('我在。'); }",
 		});
 
-		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), log: () => {} });
+		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), logsRoot: join(root, "..", "logs"), log: () => {} });
 
 		expect(host.prompt).toEqual(["我在。"]);
 		expect(host.errors).toHaveLength(2);
@@ -310,7 +310,7 @@ describe("加载", () => {
 		const root = await pluginsRoot();
 		await writePlugin(root, "ui", { "plugin.md": "ui", "client.js": "export default { apply() {} }" });
 
-		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), log: () => {} });
+		const host = await loadPlugins({ pluginsRoot: root, workspace: join(root, ".."), logsRoot: join(root, "..", "logs"), log: () => {} });
 		expect(host.plugins[0]).toMatchObject({ slug: "ui", client: true });
 	});
 });

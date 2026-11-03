@@ -13,7 +13,7 @@ import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
 import { OWNER_SLUG, readIdentity } from "../core/agent/identity.ts";
 import { ChannelDoc, dmId, emptyChannelState, type Attachment, type ChannelState } from "../core/channel/types.ts";
 import { markRead as markReadDoc } from "../core/channel/rules.ts";
-import { ensureOwnerDm } from "../core/channel/membership.ts";
+import { createGroup as createGroupDoc, ensureOwnerDm } from "../core/channel/membership.ts";
 import {
 	UPLOAD_MAX_BYTES,
 	UPLOAD_PER_MESSAGE,
@@ -92,8 +92,38 @@ export function createChat(shell: CoreServices) {
 	}
 
 	/**
-	 * 我和一个人开私聊（幂等）。**只有这一种建频道的入口** ——
-	 * 通用建频道接口已删：频道要么是装配投影出来的（全员 / 团队），要么是这里。
+	 * 我拉一个群：成员由我指定，我自己一定在群里（ADR-063）。
+	 *
+	 * 组群是普通房间：没有 README、没有团队记忆；每个成员都会被新消息叫醒。
+	 * 和私聊的区别只有形态（`group:` 前缀 + 任意成员），建出来之后就是普通频道。
+	 */
+	async function createGroup(body: {
+		readonly title?: string;
+		readonly members?: readonly string[];
+	}): Promise<{ ok: true; id: string }> {
+		const title = typeof body.title === "string" ? body.title : "";
+		const members = Array.isArray(body.members)
+			? body.members.filter((slug): slug is string => typeof slug === "string" && slug.trim() !== "")
+			: [];
+		try {
+			const group = await createGroupDoc(
+				{
+					harness: shell.harness,
+					layout: shell.layout,
+					text: shell.text,
+				},
+				{ title, members, creator: OWNER_SLUG },
+				BACKGROUND_CONTEXT,
+			);
+			return { ok: true, id: group.id };
+		} catch (error) {
+			throw new AppError("bad-request", error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	/**
+	 * 我和一个人开私聊（幂等）。建频道的入口只有三个：装配投影（全员 / 团队）、
+	 * 这里（私聊）、以及 `createGroup`（我拉群）。
 	 *
 	 * 形态由 id 前缀与成员一起决定：`dm:<两人>`，且 `chatKind` 只认这种形态为私聊。
 	 * 对方必须真的在名册里（不能拿一个不存在的 slug 建出永不可见的房间）。
@@ -160,5 +190,5 @@ export function createChat(shell: CoreServices) {
 		return await putUpload(uploadsRoot, { name, mime, bytes, at: Date.now() });
 	}
 
-	return { postAsOwner, openDirectMessage, markRead, saveUpload, uploadsRoot };
+	return { postAsOwner, createGroup, openDirectMessage, markRead, saveUpload, uploadsRoot };
 }

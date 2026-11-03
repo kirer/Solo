@@ -228,7 +228,7 @@ export type ViewStep = {
 	startedAt?: number;
 	/** `run`：命令行。 */
 	command?: string;
-	/** `run`：输出（≤ 8 KB，已剥 ANSI，尾部带截断说明）。 */
+	/** 工具返回的文字（≤ 8 KB，已剥 ANSI，尾部带截断说明）：命令输出、读到的文件、其他工具的回执。 */
 	output?: string;
 	/** `run`：退出码（能从输出里读到时）。 */
 	exitCode?: number;
@@ -238,7 +238,7 @@ export type ViewStep = {
 	path?: string;
 	/** `file-write`：这次写入的行数。 */
 	added?: number;
-	/** `think` / `say`：正文。 */
+	/** `think` / `remember` / `file-write`：正文（思考、记下的内容、写入的内容）。 */
 	text?: string;
 	/** 未知工具的原名。 */
 	tool?: string;
@@ -252,6 +252,11 @@ export type ViewStep = {
  */
 export type ViewTurn = {
 	channelId: string;
+	/**
+	 * 这一轮发生在哪个频道（显示名）。频道归档 / 目录删掉之后列表里已经没有它了，
+	 * 但历史里的轮次还要说得出「在哪儿跑的」—— 所以名字跟着轮次走。
+	 */
+	channelTitle?: string;
 	/** 触发这一轮的消息 seq。 */
 	seq: number;
 	slug: string;

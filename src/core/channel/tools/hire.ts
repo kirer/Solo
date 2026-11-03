@@ -70,12 +70,14 @@ export function createHireTool(deps: CoreToolDeps) {
 				if (target.dir.startsWith(deps.layout.assistantRoot)) return text(t("hire.fire.assistant"));
 				await moveAt(target.dir, `${deps.layout.membersRoot}/.retired/${retiredNameOf(target.slug)}`);
 				// 从所有频道里移除，并归档我和他的私聊；团队频道再按文件重算一次。
+				// 只剩一个人的组群也归档：一个人不能组群，留着只是一间永远没人的房间。
 				await deps.harness.commit(async (tx) => {
 					const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 					for (const [id, channel] of Object.entries(doc.channels)) {
 						const members = channel.members.filter((item) => item !== target.slug);
 						const wakeOnAll = channel.wakeOnAll.filter((item) => item !== target.slug);
-						const archive = id === dmId(OWNER_SLUG, target.slug);
+						const archive =
+							id === dmId(OWNER_SLUG, target.slug) || (id.startsWith("group:") && members.length < 2);
 						if (members.length === channel.members.length && wakeOnAll.length === channel.wakeOnAll.length && !archive) continue;
 						doc.channels[id] = {
 							...channel,

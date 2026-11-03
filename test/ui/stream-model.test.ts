@@ -1,9 +1,9 @@
 /**
  * 「屏幕上一行一行是什么」—— `ui/app/src/stream/model.ts` 的 `buildRows`。
  *
- * ADR-081 之后这里只剩两件事：**同一人连发算一段**（grouped / cont 两个标记）与
- * **时间分隔**。过程行（think/tool/work）、step 合并、占位、底部活动行全部删掉了：
- * 数据模型里没有「他正在做什么」，界面也就不画。
+ * 这里只剩三件事：**同一人连发算一段**（grouped / cont 两个标记）、**时间分隔**与
+ * **正在跑的那一轮**（`live` 行）。过程（思考 / 命令 / 文件）只进「后台任务」面板，
+ * 聊天流里不画（ADR-062）。
  *
  * 消息只有 `chat` / `note` 两种 kind：旧数据（过程行、旧语义标签）由投影层归一
  * （ADR-061），这一层不需要认识它们。
@@ -199,66 +199,5 @@ describe("正在跑的那一轮：live 行（派生，不是消息）", () => {
 			now: T + 90 * MIN,
 		});
 		expect(rows.map((row) => row.type)).toEqual(["say", "live", "divider", "say"]);
-	});
-});
-
-/**
- * 过程块（`process` 行）：一轮的思考与命令压在它的结论上面。
- *
- * 判据只有一条：**挂在这一轮真正说出口的那条消息上面**（`replySeq`）。
- * 没有过程（0 步）就不出现 —— 宁可少一行，也不给一个点开是空的块。
- */
-describe("过程块挂在它的回复上面", () => {
-	const settled = (seq: number, replySeq: number | undefined, startedAt = T, stepCount = 3) => ({
-		channelId: "team:alpha",
-		seq,
-		slug: "linyue",
-		label: "linyue",
-		status: "done" as const,
-		startedAt,
-		replySeq,
-		stepCount,
-		summary: "运行 1 条命令",
-	});
-
-	it("有过程：先过程、再回复", () => {
-		const rows = buildRows({
-			messages: [m(1, "chat", T, "owner"), m(2, "chat", T + MIN)],
-			settled: [settled(1, 2)],
-			now: T + 5 * MIN,
-		});
-		expect(rows.map((row) => row.type)).toEqual(["say", "say"]);
-		const reply = rows[1];
-		if (reply?.type !== "say") throw new Error("第二条应该是回复");
-		expect(reply.turn?.slug).toBe("linyue");
-	});
-
-	it("0 步：不挂过程块", () => {
-		const rows = buildRows({
-			messages: [m(1, "chat", T, "owner"), m(2, "chat", T + MIN)],
-			settled: [settled(1, 2, T, 0)],
-			now: T + 5 * MIN,
-		});
-		expect(rows.flatMap((row) => (row.type === "say" && row.turn !== undefined ? [row.turn.slug] : []))).toEqual([]);
-	});
-
-	it("没有 replySeq 的不挂（还没说完 / 没回话）", () => {
-		const rows = buildRows({
-			messages: [m(1, "chat", T, "owner"), m(2, "chat", T + MIN)],
-			settled: [settled(1, undefined)],
-			now: T + 5 * MIN,
-		});
-		expect(rows.flatMap((row) => (row.type === "say" && row.turn !== undefined ? [row.turn.slug] : []))).toEqual([]);
-	});
-
-	it("过程块打断连体气泡：后面那条不再算续话", () => {
-		const rows = buildRows({
-			messages: [m(1, "chat", T), m(2, "chat", T + SEC)],
-			settled: [settled(1, 2)],
-			now: T + 5 * MIN,
-		});
-		const last = rows[rows.length - 1];
-		if (last?.type !== "say") throw new Error("最后应该是回复");
-		expect(last.cont).toBe(false);
 	});
 });

@@ -96,7 +96,7 @@ export async function selfOf(deps: CoreToolDeps, conversationId: number, context
 }
 
 /**
- * 「先知道自己是谁」：七个工具的第一句都是这件事，文案只在这里写一次。
+ * 「先知道自己是谁」：八个工具的第一句都是这件事，文案只在这里写一次。
  *
  * 查不到时返回一句能直接回给模型的话（工具不抛错：抛错它看到的是堆栈）。
  */

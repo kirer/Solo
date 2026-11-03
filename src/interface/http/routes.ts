@@ -162,6 +162,15 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			handler: async ({ response }) => json(response, await app.read.readChannelList()),
 		},
 		{
+			// 我拉一个群：成员由我指定，我自己一定在群里（ADR-063）。
+			pattern: "/api/channels",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				const body = await readJson<{ title?: string; members?: readonly string[] }>(request);
+				return json(response, await app.chat.createGroup(body));
+			},
+		},
+		{
 			pattern: "/api/attention",
 			method: "GET",
 			handler: async ({ response }) => json(response, await app.read.readAttention()),
@@ -228,16 +237,6 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			method: "GET",
 			handler: async ({ response, params }) => {
 				return json(response, await app.read.readMentionable(params.id ?? ""));
-			},
-		},
-		{
-			// 一段消息窗口里每一轮的轨迹（**不带步骤**）。折叠行只要摘要。
-			pattern: "/api/channels/:id/turns",
-			method: "GET",
-			handler: async ({ response, url, params }) => {
-				const from = numberParam(url, "from") ?? 0;
-				const to = numberParam(url, "to") ?? Number.MAX_SAFE_INTEGER;
-				return json(response, await app.read.readTurns(params.id ?? "", from, to));
 			},
 		},
 		{

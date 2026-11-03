@@ -1085,6 +1085,8 @@
 
 ## ADR-054 过程回到聊天流：思考与命令画在回复上面（取代 ADR-081 的「过程不画」）
 
+> **已被 ADR-062 取代**（2026-11）：过程只在「后台任务」面板里画，聊天流只留消息与 `live` 行。
+
 - **背景**：ADR-046 / ADR-047 / ADR-081 一路把过程从聊天流里拿掉，理由是那时的过程行是
   **落库的消息**（`think` / `tool` 各一条），一屏里插二十行，看起来像日志。V4 里过程不是
   消息了：`ViewTurn.steps` 由会话条目派生，`RunBlock` 已经在「后台任务」面板里画得很干净
@@ -1322,3 +1324,82 @@
   `src/shell/{assemble,seed,main}.ts`、`ui/app/src/stream/model.ts`、`seed/text/tools.md`、
   `seed/plugins/示范/`（删）、`test/core/{say-contract,turn,view,attention,mention-alias,dto}.test.ts`、
   `test/ui/{stream-model,choice}.test.ts`、`scripts` 无改动。
+
+## ADR-062 过程只进「后台任务」面板，聊天流只留消息（取代 ADR-054）
+
+- **背景**：ADR-054 把一轮的轨迹（思考 / 命令 / 改文件）折叠成一行画在回复上面，理由是
+  「过程和它的回复是一件事」。现在同一份轨迹已经在「后台任务」面板里画得更完整（按人、
+  跨频道、带步骤树），聊天流里那一行只是重复：看消息时它挡视线，看过程时它又不如面板。
+  两处各画一遍，等于同一份事实有两个家。
+- **决策**：聊天流里**不画过程块**。`buildRows` 不再把 `Turn` 挂到 `say` 行上，
+  `Stream.tsx` 不再渲染 `RunBlock`；「正在跑」仍是一条 `live` 行（那是「有人在回你」的
+  提示，不是过程），跑完就消失。过程留在 `app/trace.ts` / `ViewTurn.steps` / SSE `trace` /
+  `GET /api/channels/:id/turn`，由任务面板消费。
+- **代价**：聊天流里看不到「他刚才跑了什么」；要看就开任务面板（侧栏第一列）。
+  这是有意的分工：聊天回答「说了什么」，任务面板回答「做了什么」。
+- **连带删除**：`GET /api/channels/:id/turns`（整页轨迹）只服务聊天流，没有别的消费者；
+  `ViewTurn` 与 `/turn` 保留给面板。`ui/app` 的 `getTurns` / `loadTurns` 一并删掉。
+- **执行**：`ui/app/src/stream/{model,Stream}.tsx`、`ui/app/src/state/store.ts`、
+  `ui/app/src/api/client.ts`、`src/interface/http/routes.ts`、`ui/app/src/styles/stream.css`、
+  `test/ui/stream-model.test.ts`。
+
+## ADR-063 任意组群；团队频道由助理在后台分发；`@` 只用来请求回复
+
+- **背景**：ADR-058 把组织拍平之后，唤醒只剩「谁被 @」「`wakeOnAll` 里的谁」两条机制。
+  这留下三个缺口：
+  1. 只有团队（有 README 的群）和私聊，没有「临时拉几个人说件事」的地方；
+  2. 团队频道里 `wakeOnAll = 助理`：助理每条都醒，但**其他人不会**。助理看完了却没有
+     把手里的消息交给相关的人的办法，团队频道里因此有一半消息没人接；
+  3. `@` 同时承担「提到」和「要你回」两种意思，模型于是给每个名字都加 `@`，投递名单
+     被无关的人撑大，一轮里多醒好几个人。
+- **决策**：
+  1. **任意组群**：频道 id `group:<slug>`，任何成员都能建（`chats action=create`；
+     我走 `POST /api/channels`）。建群的人自动在群里，至少两个人，成员必须真实存在，
+     同名不建第二份。群**没有** README、记忆、负责人：它就是「这些人一起说话」的房间。
+     `wakeOnAll = members` —— 群里每个人都被新消息叫醒，自己判断要不要接（`[PASS]`）。
+     人走了之后只剩一个成员的群自动归档（跟私聊同一条清理规则）。
+  2. **团队频道的后台分发**：`wakeOnAll` 仍是助理。助理读完新消息，用新工具 `route`
+     把那条交给相关的人：`deliverExisting` 复用普通投递（不写第二条消息、频道里不出现
+     「转交」），收件人看到原文，正文多一句「X 让你看这条」。同时写一条
+     `kind: "note", noteOf: "route"` 的隐藏留痕：它是「这一轮已经把消息交出去了」的凭据，
+     收尾据此不再补发（`saidLast` 认 `route`），界面不画（ADR-047）。已经被 `@` 的人
+     不会重复叫（投递时他就收到了）；我、助理自己、不在频道里的人都不能转。
+  3. **`@` 只用来请求回复**：要对方回话才 `@`，只是提到名字就直接写名字。机制不动
+     （`parseMentions` / `recipientsOf` 照旧），改的是 `rules.md`、助理身份与工作规矩技能
+     里的说法 —— 这是「语义写在文档里」的那一半。
+  4. **界面**：侧栏品牌行加一个「＋」→ 拉群浮层（群名 + 成员多选）；建完直接进那个群。
+     会话列表的形态仍由后端 `kind`（`dm` / 群聊）给，前端不自己判。
+- **代价**：
+  - 团队频道里助理是唯一的入口：它漏转一条，那条就没人处理（没有兜底唤醒）。
+    这是「助理负责阅读每一条」的必然代价；`route` 的留痕让漏转可审计。
+  - 群越大，每条消息唤醒的人越多，token 成本按人数线性增长；群是临时协作，不是常态。
+  - `route` 在频道里不可见：人看到的是「某人突然开始说这件事」，不知道是谁让他看的；
+    收件人自己的投递正文里有那一句，别人看不到。
+- **执行**：`src/core/channel/{types,membership,post,dispatch,delivery}.ts`、
+  `channel/tools/{route.ts,chats.ts,hire.ts,index.ts}`、`channel/turn/finish.ts`、
+  `src/app/chat.ts`、`src/interface/http/routes.ts`、`ui/app/src/{sidebar/Sidebar.tsx,
+  panels/Overlays.tsx,state/store.ts,api/client.ts,styles/shell.css}`、
+  `seed/{rules.md,assistant/identity.md,skills/工作规矩/SKILL.md,text/{tools,channel}.md}`、
+  `test/core/{membership,route,tools-actions,turn}.test.ts`。
+
+## ADR-064 插件读审计日志算 token：只给 `logsRoot` 一个根，账在插件里
+
+- **背景**：Token / 成本 / 缓存命中率只有一份来源 —— 审计钩子写的
+  `<userRoot>/logs/tools.jsonl`（ADR-010 / ADR-041）。插件拿到的 `workspace` 是**应用根**，
+  够不到用户根；而「按调用算账」不该长进内核：内核不画界面，也没有别的模块依赖这份账。
+- **决策**：`PluginApi` 增加 `logsRoot`（`<userRoot>/logs` 的绝对路径），装配层传
+  `layout.logsRoot`。和 ADR-036 的 `scope` 同一个口径：**核心只给根**，读哪份文件、
+  怎么容错（坏行跳过、旧行没有 `write` 当 0）、按本地日切天、什么算「计费 Token」，
+  全在插件里做完。出厂插件 `seed/plugins/Token统计/` 是第一个消费者：
+  `GET /api/p/tokens?days=7|30|0` 返回总量、每日、8 周热力图、按人 / 按模型的分组。
+- **取舍**：插件因此能读整个日志目录（包括诊断与后台命令的日志）。这就是 ADR-018 的边界：
+  插件是可信任的本地代码；给它一个根，比给它一条专用接口更省，也更符合「语义写在插件里」。
+  审计日志是 5MB 封顶、只轮转一代的**排障账**，不是数据库 —— 面板里的「全部」也只是
+  这两份装得下的部分。
+- **执行**：`src/core/plugin/{api,load}.ts`、`src/shell/assemble.ts`、`src/app/audit.ts`
+  （补记 `write` = `cacheWrite`，否则总 token 偏小）、`seed/plugins/Token统计/`、
+  `test/core/token-plugin.test.ts`。界面入口走新增的 `rail.item` 插槽（`ui/app/src/plugin/
+  registry.ts` + `sidebar/Rail.tsx`），面板走 `overlays` 插槽。
+- **验收**：`GET /api/p/tokens` 的 `tokens` = 新输入 + 缓存读 + 缓存写 + 输出；
+  `cacheRate` = 缓存读 ÷（新输入 + 缓存读 + 缓存写）；最左一列出现「Token 用量」一格，
+  点开能看到总量、每日柱、热力图与两张分组账；没有日志时是空态而不是五百。

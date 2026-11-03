@@ -105,8 +105,8 @@ async function setup(
 	};
 }
 
-describe("工具收敛：注册表只有七个", () => {
-	it("名单是 7 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有八个", () => {
+	it("名单是 8 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
@@ -114,6 +114,7 @@ describe("工具收敛：注册表只有七个", () => {
 			"read_history",
 			"remember",
 			"hire",
+			"route",
 			"run",
 			"file",
 		]);
@@ -168,6 +169,16 @@ describe("chats", () => {
 		const output = await call("chats", { action: "fetch" });
 		expect(output).toContain("action 只有 list / read");
 		expect(output).toContain("fetch");
+	});
+
+	it("action=create：任何成员都能拉群，自己在里面（ADR-063）", async () => {
+		const { call, runtime } = await setup();
+		const output = await call("chats", { action: "create", title: "小群", members: ["知言"] });
+		expect(output).toContain("已建群「小群」");
+		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		const group = state.channels["group:小群"];
+		expect(group?.members.sort()).toEqual(["知言", ME].sort());
+		expect(group?.wakeOnAll.sort()).toEqual(["知言", ME].sort());
 	});
 });
 

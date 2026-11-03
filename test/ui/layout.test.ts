@@ -162,11 +162,36 @@ describe("最左导航与后台任务（第二屏）", () => {
 		expect(appSource).toContain("<Rail />");
 	});
 
-	it("导航只有两格：聊天、后台任务", () => {
+	it("导航五格：聊天 / 通讯录 / 后台任务 / 插件，设置单独压在最底", () => {
 		const rail = read("../../ui/app/src/sidebar/Rail.tsx");
-		expect(rail).toContain('id="rail-chat"');
-		expect(rail).toContain('id="rail-tasks"');
-		expect(rail.match(/className="rail-item"/g)?.length).toBe(2);
+		for (const id of ["rail-chat", "team-btn", "rail-tasks", "plugins-btn", "settings-btn"]) {
+			expect(rail).toContain(`id="${id}"`);
+		}
+		expect(rail.match(/className="rail-item"/g)?.length).toBe(5);
+		// 顺序写死：聊天 → 通讯录（团队）→ 后台任务 → 插件；设置不在这一段里。
+		const order = ["rail-chat", "team-btn", "rail-tasks", "plugins-btn"].map((id) => rail.indexOf(`id="${id}"`));
+		expect(order).toEqual([...order].sort((left, right) => left - right));
+		// 贴底的那一段只有设置。
+		const foot = rail.slice(rail.indexOf('className="rail-group rail-foot"'));
+		expect(foot).toContain('id="settings-btn"');
+		expect(foot).not.toContain('id="plugins-btn"');
+		expect(foot).not.toContain('id="rail-tasks"');
+		expect(blocksOf(shellCss, ".rail-foot").join("\n")).toContain("margin-top: auto");
+		// 只有图标，名字靠悬停提示：五格各有一条 data-tip，顺序和图标一致。
+		expect(rail).toContain('data-tip="聊天"');
+		expect(rail).toContain('data-tip="通讯录"');
+		expect(rail).toContain('data-tip="任务"');
+		expect(rail).toContain('data-tip="插件"');
+		expect(rail).toContain('data-tip="设置"');
+		expect(blocksOf(shellCss, ".rail-item::after").join("\n")).toContain("attr(data-tip)");
+	});
+
+	it("侧栏脚下不再有团队 / 插件 / 设置三行", () => {
+		const sidebar = read("../../ui/app/src/sidebar/Sidebar.tsx");
+		expect(sidebar).not.toContain('id="team-btn"');
+		expect(sidebar).not.toContain('id="plugins-btn"');
+		expect(sidebar).not.toContain('id="settings-btn"');
+		expect(sidebar).not.toContain("side-action");
 	});
 
 	it("后台任务那一屏占掉侧栏 + 纸 + 右栏，不和聊天并存", () => {
@@ -178,8 +203,12 @@ describe("最左导航与后台任务（第二屏）", () => {
 		}
 	});
 
-	it("手机上导航不占宽度，由第二屏自己的返回键退出", () => {
-		expect(tasksCss).toMatch(/\.frame \.rail \{\s*display: none;/);
+	it("手机上是底部一条：导航不再隐藏，第二屏仍有自己的返回键", () => {
+		// 管理三格搬进导航之后，藏起来就没处点 —— 手机上改成一条横的底栏。
+		const phone = shellCss.slice(shellCss.indexOf("@media (max-width: 640px)"));
+		expect(phone).toMatch(/\.rail \{[\s\S]*?position: fixed;[\s\S]*?flex-direction: row;/);
+		expect(phone).toContain("padding-bottom: calc(56px + env(safe-area-inset-bottom))");
+		expect(shellCss).not.toMatch(/\.frame \.rail \{\s*display: none;/);
 		expect(tasksCss).toContain(".tasks-back");
 	});
 });

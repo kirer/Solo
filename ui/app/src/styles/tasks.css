@@ -12,7 +12,8 @@
 	grid-template-columns: 300px minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
-	height: 100dvh;
+	/* 跟着外壳的框走（手机上框底部还压着一条导航），不要自己写死 100dvh。 */
+	height: 100%;
 	background: var(--ground);
 }
 
@@ -514,11 +515,8 @@
 }
 
 @media (max-width: 640px) {
-	/* 手机上最左边那列导航不占宽度：进出后台任务靠这一屏自己的返回键。 */
-	.frame .rail {
-		display: none;
-	}
-
+	/* 最左那列在手机上是底部一条（见 shell.css），进出后台任务它自己就够了；
+	   这一屏的返回键仍然留着：列表在上的时候，返回键比底栏更近。 */
 	.frame[data-view="tasks"] {
 		grid-template-columns: minmax(0, 1fr);
 	}

@@ -54,14 +54,6 @@ export const getEarlier = (id: string, before: number, limit = 30): Promise<Chan
 	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}&before=${before}`);
 
 /**
- * 一段消息窗口里每一轮的轨迹（**不带步骤**）。
- *
- * 折叠态只要摘要。展开时再拉 `getTurn` —— 一屏十几轮、每轮八步，一次全带会撑到几百 KB。
- */
-export const getTurns = (id: string, from: number, to: number): Promise<{ turns: Turn[] }> =>
-	call(`/api/channels/${encodeURIComponent(id)}/turns?from=${String(from)}&to=${String(to)}`);
-
-/**
  * 一个人在所有频道里的轮次（后台任务面板）。
  *
  * 面板要的是「他干了什么」，不是「这个频道里发生了什么」—— 他在团队频道干活也算。
@@ -77,7 +69,7 @@ export const getTurn = (id: string, seq: number, slug: string): Promise<{ turn: 
 /** 发一条消息（带 `replyTo` 就是引用某条）。 */
 export const sendMessage = (
 	id: string,
-	body: { text: string; replyTo?: number; attachments?: string[]; mention?: string[] },
+	body: { text: string; replyTo?: number; attachments?: string[] },
 ): Promise<{ delivered?: string[]; failed?: string[]; skipped?: string[] }> =>
 	call(`/api/channels/${encodeURIComponent(id)}/messages`, {
 		method: "POST",
@@ -106,6 +98,10 @@ export const getTeam = (slug: string): Promise<TeamProfile> =>
 /** 和一个人开私聊（幂等）。侧栏第一格点下去就是这条。 */
 export const openDirectMessage = (slug: string): Promise<{ ok: true; id: string }> =>
 	call(`/api/people/${encodeURIComponent(slug)}/dm`, { method: "POST" });
+
+/** 我拉一个群：成员由我指定，我自己一定在里面。 */
+export const createGroup = (title: string, members: readonly string[]): Promise<{ ok: true; id: string }> =>
+	call("/api/channels", { method: "POST", body: JSON.stringify({ title, members }) });
 
 /** 现在生效的模型（`provider/modelId`）。settings.json 里刚加的提供商要重启才进这里。 */
 export const getModels = (): Promise<{ models: string[]; defaultModel: string }> => call("/api/models");

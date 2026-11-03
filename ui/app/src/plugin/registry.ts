@@ -22,6 +22,7 @@ import type { Plugin } from "../api/types.ts";
  * 所以插件放在顶栏 / 输入框那种横排里的东西，自己要是横排的尺寸（见 DESIGN §2.8）。
  */
 export type SlotName =
+	| "rail.item"
 	| "sidebar.header"
 	| "sidebar.list.before"
 	| "sidebar.footer"
@@ -70,6 +71,7 @@ export type Ui = {
 
 /** 全部插槽。`<Slot name>` 只能用这里的名字（TS 卡着），测试也照这份表查宿主有没有画。 */
 export const SLOTS: readonly SlotName[] = [
+	"rail.item",
 	"sidebar.header",
 	"sidebar.list.before",
 	"sidebar.footer",

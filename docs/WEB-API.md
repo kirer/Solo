@@ -5,8 +5,8 @@
 
 ## 0. 总览
 
-只有 **24** 条路由（按方法+路径算；按路径去重是 **23** 条 —— `check-boundaries.mjs`
-数的是去重后的路径），全部在 `src/interface/http/routes.ts` 的 `routes` 表里声明。
+只有 **29** 条路由（按方法 + 路径；`check-boundaries.mjs` 的口径），全部在
+`src/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 
 | 方法 | 路径 | 用途 |
@@ -14,10 +14,10 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `GET` | `/api/stream/org` | 组织快照流（SSE） |
 | `GET` | `/api/org` | 组织快照（一次） |
 | `GET` | `/api/channels` | 频道列表 |
-| `POST` | `/api/people/:slug/dm` | 和一个人开私聊（唯一的建频道入口） |
+| `POST` | `/api/channels` | 我拉一个群（`group:` 频道） |
+| `POST` | `/api/people/:slug/dm` | 和一个人开私聊（幂等） |
 | `GET` | `/api/channels/:id/mentionable` | 这个频道能 @ 谁 |
 | `GET` | `/api/channels/:id` | 频道详情（含消息） |
-| `GET` | `/api/channels/:id/turns` | 一段消息窗口里每一轮的轨迹（折叠版，不带步骤） |
 | `GET` | `/api/channels/:id/turn` | 一轮的完整轨迹（带步骤） |
 | `GET` | `/api/channels/:id/stream` | 频道消息流（SSE：`create` 与 `trace`） |
 | `POST` | `/api/channels/:id/messages` | 发一条消息 |
@@ -128,7 +128,7 @@ type ViewChannel = {
 | id + 成员表 | kind |
 | --- | --- |
 | `dm:` 前缀，且恰好两个人、其中一个是 `owner` | `dm` |
-| 其余全部（全员频道、团队频道、多人房间、历史无前缀房间） | `group` |
+| 其余全部（全员频道、团队频道、组群 `group:<slug>`、多人房间、历史无前缀房间） | `group` |
 
 团队频道就是 `team:<slug>` 这个**普通的群**，即使只有我和管理员两个人也永远是 `group`
 —— 它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在
@@ -142,6 +142,23 @@ type ViewChannel = {
 `preview` 只取「人说的话」（`chat` / `say` / `question` / `decision` / `report`）：
 `note`（系统留痕）与历史遗留的 `think` / `tool` / `work` / `step` 都不进预览。
 
+## 3.1 `POST /api/channels`（我拉一个群）
+
+```ts
+// 请求
+{ title: string, members: string[] }   // members = 名字或 slug；我自己由服务端加
+
+// 响应
+{ ok: true, id: string }               // id = `group:<slug>`
+```
+
+- 建出来是一个普通群聊频道（`kind: "group"`），**没有** README、团队记忆、负责人；
+  `wakeOnAll` 是全部成员 —— 群里每个人都会收到新消息，自己判断要不要接（ADR-063）。
+- 至少两个人（我 + 至少一个成员），成员必须真的在名册里；同名（slug 相同）不建第二份。
+- 第一个 `members` 不认识 → `400`，`error` 里列出可以拉的人；标题为空 / 不足两人同样是 `400`。
+- 界面：侧栏品牌行的「＋」→ 拉群浮层（`store.makeGroup`）。
+- agent 侧的同一个动作是 `chats action=create`（任何成员都能拉群）。
+
 ## 4. `POST /api/people/:slug/dm`（新建私聊）
 
 ```ts
@@ -149,9 +166,9 @@ type ViewChannel = {
 { ok: true, id: string }   // id = `dm:<slug>-owner`（排序后拼接）
 ```
 
-**这是唯一显式的建频道接口**。通用的 `POST /api/channels` 已删：频道要么由装配
-投影出来（全员 `all` / 团队 `team:<slug>` / 每个成员的私聊），要么就是这里开的一对一私聊。
-私聊现在由装配 / 招人自动建好，这个接口仍保留，用来显式确保它在（幂等）。
+**建频道的入口只有三个**：装配投影（全员 `all` / 团队 `team:<slug>` / 每个成员的私聊）、
+这里的私聊、以及 §3.1 的 `POST /api/channels`（组群）。私聊现在由装配 / 招人自动建好，
+这个接口仍保留，用来显式确保它在（幂等）。
 
 - 对方必须真的在名册里（`members/<slug>/identity.md` 存在），否则 `404`；
 - 不能和我自己开 → `400`；slug 为空 → `400`；
@@ -166,7 +183,7 @@ type ViewChannel = {
 { turns: ViewTurn[] }   // 折叠版（不带 steps）；每轮自带 channelId，按 startedAt 倒序
 ```
 
-和 `/api/channels/:id/turns` 的区别：**切轮时不按频道过滤** —— 他在团队频道里干活、
+和 `/api/channels/:id/turn`（单轮）的区别：**切轮时不按频道过滤** —— 他在团队频道里干活、
 在私聊里被插话，都算这个人的轮次，按 `startedAt` 排在一起。`seq` 是频道内序号，
 跨频道不可比，所以排序用时间。`from` / `to` 仍然按 seq 过滤（作用于每一轮自己的频道）。
 
@@ -214,7 +231,7 @@ type ViewMessage = {
   fromSlug: string;
   fromLabel: string;
   kind: "chat" | "note"; // 发言 / 系统留痕。旧数据的 kind 在投影层已归一（ADR-061）
-  noteOf?: "run";        // 系统留痕的种类：run = 后台命令跑完（界面收成一行，点开看全文）
+  noteOf?: "run" | "route"; // 系统留痕的种类：run = 后台命令跑完（收成一行）；route = 助理的一次后台分发（不画）
   text: string;
   mentions: { id: number, label: string, read: boolean, offset: number }[];
   replyTo?: { seq: number, from: number, fromSlug: string, fromLabel: string, excerpt: string };
@@ -227,10 +244,11 @@ type ViewMessage = {
 
 - `role` 只用三种**能从文件里读出来**的事实，不引身份枚举：我 / 助理（身份目录在应用根
   的 `assistant/` 下，ADR-058）/ 成员。
-- `noteOf` 只在 `kind` 是 `note` 时出现，现在只有 `run` 一种：后台命令跑完的留痕正文是
-  命令、输出尾巴和退出码，给干活的那个人看的。界面把它收成一行（`后台命令跑完了。`），
-  点开才看全文 —— 平铺的话一屏对话里会插进几十行日志。命令输出里的终端控制序列在写入
-  前就洗掉了。
+- `noteOf` 只在 `kind` 是 `note` 时出现，现在有两种：`run`（后台命令跑完）的正文是命令、
+  输出尾巴和退出码，给干活的那个人看的，界面把它收成一行（`后台命令跑完了。`），点开才看
+  全文 —— 平铺的话一屏对话里会插进几十行日志；命令输出里的终端控制序列在写入前就洗掉了。
+  `route`（助理在后台把某条交给谁看，ADR-063）是**审计留痕**：界面完全不画，只在
+  「这一轮已经把消息交出去了」这件事上被收尾逻辑读（`saidLast`）。
 - `text` 是**显示用**正文：`@owner` 一律投影成 `@我`（`owner` 只是内部 slug，我不叫这个名字），
   落盘的那份不动 —— 提示词与历史仍是模型自己写的字。
 - `mentions[].offset` 是 `@label` 在正文里的位置，`-1` 表示算不出来（前端就不高亮）。
@@ -294,30 +312,31 @@ type ViewMessage = {
 - `draft`（正在说）与 `done`（回复落库）随过程投影一起删掉了；真消息一律走 `create`。
 - `trace` **不是过程投影**：它推的是会话条目派生出的**整轮快照**，不按 token 推（C-007），
   也不进消息表（ADR-001）。步骤没变就不重推（服务端按指纹去重）；单步输出在推送版里
-  压到 2 KB，展开那一步时再走 §7.3 拉全文。
+  压到 2 KB，展开那一步时再走 §7.2 拉全文。聊天流不画过程（ADR-062），`trace` 的消费者
+  是后台任务面板。
 - 任何文档提交去抖 120ms 后推增量，只推订阅了这个频道的连接。
 - **有人在跑时每秒补推一次**（`trace` 与 `org` 都按指纹去重，没变就不发）：运行状态写在
   会话的 live 文档里，模型思考期间不落盘，只靠提交总线会让进度行停在「正在执行」、
   头像也不亮圈。闲下来立刻停。
 - 空闲每 15s 一个 `: ping` 注释行保活。
 
-## 7.2 `GET /api/channels/:id/turns?from=&to=`
+## 7.2 `GET /api/channels/:id/turn?seq=&slug=`
 
-一段消息窗口里**每一轮**的轨迹，折叠版（不带 `steps`）。
+一轮的完整轨迹（带 `steps`）。
 
 ```ts
-// 查询参数：from / to 是消息 seq（含端点）；缺省 = 全部
-{ turns: ViewTurn[] }
+{ turn: ViewTurn | null }       // 找不到就是 null
 ```
 
 - 一轮 = 一次唤醒：会话条目里 `core.channel` 且 `data.channelId/seq` 对上的那条，到**下一条**
   `core.channel` 之间。一条消息可以叫醒多个人 → 同一个 `seq` 会出现多条（按 `slug` 区分）。
-- 找不到（没被叫醒 / 条目已被压缩）就没有那一条，**不是错误**。
-- 折叠版只给 `stepCount` 与 `summary`：一屏十几轮、每轮八步，一次全带会把响应撑到几百 KB。
+- 找不到（没被叫醒 / 条目已被压缩）就是 `null`，**不是错误**。
+- 轨迹只服务后台任务面板与 SSE `trace`；聊天流不画过程（ADR-062）。
 
 ```ts
 type ViewTurn = {
   channelId: string;
+  channelTitle?: string;        // 频道的显示名；频道归档 / 删掉后列表里没有它，轮次仍说得出在哪儿跑
   seq: number;                  // 触发这一轮的消息
   slug: string;
   label: string;
@@ -332,16 +351,8 @@ type ViewTurn = {
   stepCount: number;
   summary: string;              // 确定性摘要：运行 N 条命令 · 读了 N 个文件 · 写了 N 个文件
   truncated?: true;             // 步骤超过 200 步
-  steps?: ViewStep[];           // 只在 §7.3 与 SSE trace 里出现
+  steps?: ViewStep[];           // 只在 §7.2 与 SSE trace 里出现
 }
-```
-
-## 7.3 `GET /api/channels/:id/turn?seq=&slug=`
-
-一轮的完整轨迹（带 `steps`）。
-
-```ts
-{ turn: ViewTurn | null }       // 找不到就是 null
 ```
 
 ```ts
@@ -638,7 +649,8 @@ export default {
   apply(ui) {                     // ui = { h, React, api, store, useStore, register }
     ui.register("sidebar.footer", { id: "today", component: () => ui.h("div", {}, "…") });
     // 后端 api（apply 的参数）还有 scope(channelId)：这个频道的工作区根（私聊 → 那个人、
-    // 团队频道 → 团队、全员频道 → undefined）。只有根一个字符串，路径守卫在插件里做。
+    // 团队频道 → 团队、全员频道 → undefined），以及 logsRoot：`<userRoot>/logs` 的绝对路径
+    // （审计 `tools.jsonl` 在那里，按 token 算账读它，ADR-064）。都只给根，路径守卫在插件里做。
     // 格子 = { id, label?, icon?, order?, component }：label 是页签文字 / 设置分区名，
     // icon 是设置左栏那个图标（一个 SVG 元素）。能放进哪些位置见 docs/DESIGN.md §2.8
     // 的插槽表；读界面状态用 ui.useStore。

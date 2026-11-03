@@ -365,6 +365,14 @@ const buildTeam: Scenario = {
 					channel?.members.join("、") ?? "团队频道不存在",
 				),
 				check("dm-announced", "在私聊里向我宣告", "behavior", announcement !== undefined, announcement?.text.slice(0, 120) ?? "私聊里没有新消息"),
+				// 目录名和成员目录一致用中文（`teams/小恐龙/`），别让模型顺手写成拼音 slug。
+				check(
+					"team-slug-chinese",
+					"团队目录用中文名（和成员目录一致）",
+					"observation",
+					/\p{Script=Han}/u.test(created.slug),
+					`teams/${created.slug}/README.md`,
+				),
 				check("readme-body", "README 正文有验收标准", "observation", created.body.includes("验收"), created.body.slice(0, 100)),
 			],
 		};

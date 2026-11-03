@@ -179,3 +179,11 @@ export function chatKind(channel: Channel): "dm" | "group" {
 export function teamId(team: string): string {
 	return `team:${team}`;
 }
+
+/**
+ * 组群的命名规则。组群没有档案：它只是「这些人一起说话」的房间，
+ * 团队才是有 README 的群（ADR-063）。
+ */
+export function groupId(name: string): string {
+	return `group:${name}`;
+}
