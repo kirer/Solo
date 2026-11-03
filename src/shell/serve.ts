@@ -17,6 +17,8 @@ import { createStreamHub } from "../interface/http/sse.ts";
 import { coreRoutes } from "../interface/http/routes.ts";
 import { fail, statusOf } from "../interface/http/respond.ts";
 import { createApp } from "../app/index.ts";
+import { archiveGoneTeams } from "../core/channel/membership.ts";
+import { mtimeOrUndefined } from "../core/runtime/io.ts";
 import type { CoreShell } from "./assemble.ts";
 
 /** 服务选项。 */
@@ -44,6 +46,36 @@ export type CoreServer = {
  */
 export function defaultUiDir(): string {
 	return new URL("../../ui/web", import.meta.url).pathname;
+}
+
+/**
+ * 团队目录对账的间隔（毫秒）。
+ *
+ * 删团队目录（`run rm -rf`、Finder、改名）**不会产生任何文档提交**，启动时的
+ * `archiveGoneTeams` 只兜得住重启。这里每隔两秒看一眼 `teams/` 的 mtime，变了才
+ * 真去读 —— 常态成本只是一次 stat，删掉之后两秒内频道就归档并从列表消失。
+ */
+const TEAM_SWEEP_MS = 2_000;
+
+/** 盯着 `teams/` 的 mtime，变了就把「目录没了」的团队频道归档。返回停止函数。 */
+function startTeamSweep(shell: CoreShell): () => void {
+	let stamp: number | undefined;
+	let warned = "";
+	const tick = async (): Promise<void> => {
+		const next = (await mtimeOrUndefined(shell.layout.teamsRoot)) ?? -1;
+		if (next === stamp) return;
+		stamp = next;
+		await archiveGoneTeams({ harness: shell.harness, layout: shell.layout });
+	};
+	const timer = setInterval(() => {
+		void tick().catch((error: unknown) => {
+			const text = error instanceof Error ? error.message : String(error);
+			if (text === warned) return;
+			warned = text;
+			process.stderr.write(`[core] 团队对账失败：${text}\n`);
+		});
+	}, TEAM_SWEEP_MS);
+	return () => clearInterval(timer);
 }
 
 export async function serveCore(options: CoreServeOptions): Promise<CoreServer> {
@@ -117,6 +149,8 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	void app.runs.sweep();
 	// 看门狗：底座报上来的异常说进全员频道（只通报，不自动救）。
 	app.watch.start();
+	// 团队目录被删不会提交任何文档：运行时定期对账，别等重启。
+	const stopTeamSweep = startTeamSweep(shell);
 
 	if (process.env.SOLO_DEBUG_FROM === "1") {
 		console.warn("[core] 警告：from 可伪造（SOLO_DEBUG_FROM=1），只用于本机调试");
@@ -139,6 +173,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		lanUrls: lanUrlsOf(boundHost, actualPort),
 		async close() {
 			app.watch.stop();
+			stopTeamSweep();
 			unsubscribe();
 			hub.close();
 			await new Promise<void>((resolve) => {

@@ -359,7 +359,8 @@ README 不受这条限制——改正文不是开摊子。`name` 缺省时退回
 没了」这一件机械的事（ADR-033）。
 
 **团队目录被删也是一样**：`run rm -rf teams/<slug>` 不会触发任何重投影，所以启动时扫一遍
-（`archiveGoneTeams`），把没有 README 的 `team:` 频道归档 —— 历史留着，列表里不再出现。
+（`archiveGoneTeams`），运行中每两秒对一次账（`shell/serve.ts` 的 `startTeamSweep`：只看
+`teams/` 的 mtime，变了才读）—— 把没有 README 的 `team:` 频道归档，历史留着，列表里不再出现。
 人也可以先解散（README 归档）再删目录，两条路通向同一个结果。
 
 全员频道（`all`）**不是特权频道**：它只是开机时播种一次的普通群，除了「人人都在
