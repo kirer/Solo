@@ -31,15 +31,14 @@
  */
 import { parseDoc } from "../md/doc.ts";
 import { readTextOrUndefined } from "../runtime/io.ts";
-import type { AcceptMode, Policy, Rule } from "./types.ts";
+import type { AcceptMode, Policy } from "./types.ts";
 
-/** 默认策略：只认明说的（@ 我 / 私聊 / 追问），一条规矩都没有。 */
+/** 默认策略：只认明说的（@ 我 / 私聊 / 追问）。 */
 export const DEFAULT_POLICY: Policy = {
 	mode: "off",
 	version: "default",
 	addressed: ["*"],
 	inferred: [],
-	rules: [],
 };
 
 const MODES: readonly AcceptMode[] = ["off", "observe", "auto"];
@@ -66,38 +65,24 @@ export function parsePolicy(source: string): Policy {
 	const raw = (doc.front["mode"] ?? "").trim().toLowerCase();
 	const mode: AcceptMode = MODES.includes(raw as AcceptMode) ? (raw as AcceptMode) : DEFAULT_POLICY.mode;
 
-	let section: "addressed" | "inferred" | "rules" | undefined;
+	let section: "addressed" | "inferred" | undefined;
 	const addressed: string[] = [];
 	const inferred: string[] = [];
-	const rules: Rule[] = [];
-	let rule: { id: string; lines: string[] } | undefined;
-
-	const flush = (): void => {
-		if (rule !== undefined) rules.push({ id: rule.id, body: rule.lines.join("\n").trim() });
-		rule = undefined;
-	};
 
 	for (const line of doc.body.split("\n")) {
 		const heading = /^(#{1,2})\s+(.+?)\s*$/.exec(line);
 		if (heading !== null) {
-			flush();
 			const level = heading[1]?.length ?? 1;
 			const title = heading[2] ?? "";
 			if (level === 1) {
-				// 一级标题选段落：名单还是规矩。别的标题把上下文清掉（写到别处去的字不算数）。
-				section = title.includes("规矩") ? "rules" : title.includes("派活") ? "addressed" : undefined;
-			} else if (section === "rules") {
-				rule = { id: title, lines: [] };
+				// 一级标题选段落。别的标题把上下文清掉（写到别处去的字不算数）。
+				section = title.includes("派活") ? "addressed" : undefined;
 			} else if (section !== undefined && title.includes("不")) {
 				// `## 不 @ 也能派` 与 `## 明确 @ 我`：谁不需要点名也能派。
 				section = "inferred";
 			} else if (section !== undefined) {
 				section = "addressed";
 			}
-			continue;
-		}
-		if (rule !== undefined) {
-			rule.lines.push(line);
 			continue;
 		}
 		const item = /^\s*[-*]\s+(.+?)\s*$/.exec(line);
@@ -107,14 +92,11 @@ export function parsePolicy(source: string): Policy {
 		if (section === "inferred") inferred.push(name);
 		else if (section === "addressed") addressed.push(name === "所有人" ? "*" : name);
 	}
-	flush();
-
 	return {
 		mode,
 		version: policyVersion(source),
 		addressed: addressed.length === 0 ? [...DEFAULT_POLICY.addressed] : [...new Set(addressed)],
 		inferred: [...new Set(inferred)],
-		rules: rules.filter((item) => item.id !== "" && item.body !== ""),
 	};
 }
 
@@ -143,12 +125,8 @@ export function renderPolicy(policy: Policy): string {
 			: policy.mode === "observe"
 				? "点名的活接；按规矩推出来的只记下来，不动手"
 				: "只接点名的活（@ 我 / 私聊 / 跟着既有工单追问）";
-	const lines = [`模式：${mode}`, `版本：${policy.version}`, ""];
+	const lines = [`模式：${mode}`, ""];
 	lines.push(`明着派活的人：${policy.addressed.join("、") || "（无）"}`);
 	lines.push(`不 @ 也能派活的人：${policy.inferred.join("、") || "（无）"}`);
-	if (policy.rules.length > 0) {
-		lines.push("", "规矩：");
-		for (const rule of policy.rules) lines.push(`- ${rule.id}：${rule.body.replace(/\s+/g, " ")}`);
-	}
 	return lines.join("\n");
 }

@@ -20,7 +20,6 @@ export type {
 	Policy,
 	Report,
 	ReportOutcome,
-	Rule,
 	Strength,
 	Ticket,
 	Trigger,

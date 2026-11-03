@@ -37,16 +37,6 @@ mode: observe
 ## 不 @ 也能派
 
 - \`owner\`
-
-# 规矩
-
-## 只在工作区里改
-
-动手只改自己的工作区。
-
-## 交付前自己验
-
-改完要跑测试。
 `;
 
 function trigger(over: Partial<Trigger> = {}): Trigger {
@@ -67,7 +57,6 @@ function gate(over: Partial<Gate> = {}): Gate {
 	return {
 		outcome: "accept",
 		strength: "explicit",
-		rules: ["只在工作区里改"],
 		policyVersion: "v1",
 		reason: "点名找我。",
 		...over,
@@ -88,13 +77,11 @@ function opened(policy: Policy = parsePolicy(POLICY_MD)): Ticket {
 }
 
 describe("策略：policy.md 就是判据", () => {
-	it("解析模式、两份名单与规矩", () => {
+	it("解析模式与两份名单", () => {
 		const policy = parsePolicy(POLICY_MD);
 		expect(policy.mode).toBe("observe");
 		expect(policy.addressed).toEqual(["*"]);
 		expect(policy.inferred).toEqual(["owner"]);
-		expect(policy.rules.map((rule) => rule.id)).toEqual(["只在工作区里改", "交付前自己验"]);
-		expect(policy.rules[0]?.body).toBe("动手只改自己的工作区。");
 	});
 
 	it("写坏的模式退回 off，不抛", () => {
@@ -106,14 +93,14 @@ describe("策略：policy.md 就是判据", () => {
 		const a = policyVersion(POLICY_MD);
 		expect(policyVersion(POLICY_MD.replace("\n", "\r\n"))).toBe(a);
 		expect(policyVersion(POLICY_MD + "\n")).toBe(a);
-		expect(policyVersion(POLICY_MD.replace("跑测试", "跑两次测试"))).not.toBe(a);
+		expect(policyVersion(POLICY_MD.replace("owner", "两个 owner"))).not.toBe(a);
 	});
 
-	it("渲染成提示词：模式、名单、规矩都在", () => {
+	it("渲染成提示词：模式与两份名单都在", () => {
 		const text = renderPolicy(parsePolicy(POLICY_MD));
 		expect(text).toContain("只记下来");
 		expect(text).toContain("owner");
-		expect(text).toContain("只在工作区里改");
+		expect(text).not.toContain("版本");
 	});
 });
 
@@ -187,7 +174,7 @@ describe("工单：立、报、问、答、重试、停", () => {
 		for (let index = 0; index < MAX_TICKETS + 5; index += 1) {
 			const next = openTicket(state, {
 				trigger: trigger({ seq: index + 1 }),
-				gate: gate({ outcome: "accept", strength: "explicit", policyVersion: "v", rules: [] }),
+				gate: gate({ outcome: "accept", strength: "explicit", policyVersion: "v" }),
 				title: `第 ${index}`,
 				scope: "只读",
 				assignee: "cto",
@@ -202,7 +189,7 @@ describe("工单：立、报、问、答、重试、停", () => {
 		// 最后一张故意不收：它必须留下。
 		const last = openTicket(state, {
 			trigger: trigger({ seq: 999 }),
-			gate: gate({ outcome: "accept", strength: "explicit", policyVersion: "v", rules: [] }),
+			gate: gate({ outcome: "accept", strength: "explicit", policyVersion: "v" }),
 			title: "还没完",
 			scope: "只读",
 			assignee: "cto",
@@ -308,7 +295,6 @@ describe("工单：立、报、问、答、重试、停", () => {
 				trigger: `c#${String(index)}`,
 				channel: "c",
 				outcome: "ignore",
-				rules: [],
 				reason: "不关我事",
 				at: index,
 			});
@@ -329,13 +315,8 @@ describe("工单：立、报、问、答、重试、停", () => {
 describe("授权会失效", () => {
 	const policy = parsePolicy(POLICY_MD);
 
-	it("规矩还在、版本没变：站得住", () => {
+	it("版本没变：站得住", () => {
 		expect(mandateHolds(opened(policy), policy)).toEqual({ ok: true });
-	});
-
-	it("规矩被删了：停", () => {
-		const holds = mandateHolds(opened(policy), { ...policy, rules: [], version: policy.version });
-		expect(holds.ok).toBe(false);
 	});
 
 	it("策略改过：停（要重新请示）", () => {

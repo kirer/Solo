@@ -4,7 +4,7 @@ import type { Conversation, EntryRecord } from "../../src/core/runtime/index.ts"
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { ensureChannel } from "../../src/core/channel/rules.ts";
-import type { WakeRecord } from "../../src/core/channel/wake.ts";
+import type { WakeRecord } from "../../src/core/channel/turn/record.ts";
 import {
 	createTurnFinisher,
 	finalTextOf,

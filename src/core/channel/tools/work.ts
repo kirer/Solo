@@ -81,7 +81,6 @@ export function createWorkTool(deps: CoreToolDeps) {
 			channel: channelId,
 			outcome: gate.outcome,
 			...(gate.strength === undefined ? {} : { strength: gate.strength }),
-			rules: gate.rules,
 			reason: gate.reason,
 			...(ticket === undefined ? {} : { ticket }),
 			at,

@@ -79,7 +79,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             84 文件 / 806 例
+test/             84 文件 / 805 例
   ├ test/core/    71 文件（纯函数 + 装配）
   ├ test/ui/      10 文件（界面纯函数与源码约定）
   └ test/desktop/ 3 文件（更新源、就绪行与更新源地址、清单验签与版本比较）
@@ -140,7 +140,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 84 文件 806 例，<3s，必须全绿
+npm test             # 84 文件 805 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -183,11 +183,11 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 过程画在哪儿（聊天流里的过程行 / `live` 行 / 任务面板） | `docs/DESIGN.md` §2.3 + `docs/DECISIONS.md` ADR-046 / ADR-054 | `ui/app/src/stream/model.ts`（`say` 行上的 `turn` 键按 `replySeq` 挂）+ `stream/Stream.tsx`（把 `RunBlock` 画在气泡上面）+ `stream/LiveRow.tsx` + `stream/RunBlock.tsx` + `styles/stream.css` 的 `.row-process`；`test/ui/stream-model.test.ts` |
 | 聊天里的运行态（`live` 行）/ 后台任务面板 | `docs/DESIGN.md` §2.3 + `docs/DECISIONS.md` ADR-046 + `docs/WEB-API.md` §4.1 / §7.2 | `ui/app/src/stream/model.ts` 的 `buildRows`（`live` 行）+ `stream/LiveRow.tsx` + `panels/TasksPanel.tsx` + `state/store.ts` 的 `runs` / `tasks` + `App.tsx` 顶栏按钮；`ViewTurn.trigger` 在 `src/view/dto.ts` 与 `app/read.ts` 的 `turnsOf`；`test/ui/stream-model.test.ts` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-049 / ADR-051 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`channel/turn/finish.ts`（`spokeAfterWake` / `saidLast` / `turnTarget` 的 `restated` / 补发前的 `duplicate` 判据）、`channel/dispatch.ts` 的 `wakeOf` / `finishTurn`；**补发是正常发言（要叫醒被 @ 的人）**，且**必须带名册**（`wiring.ts` 的 `roster`）：不带的话 `@我` 会以字面 token 落进 `mentions`，投递靠兜底还能叫人，落盘/接口里的「叫了谁」是错的；文案在 `seed/prompt/88-task.md` |
-| 合并唤醒（谁该让路） | `docs/CORE.md` §8 + `docs/DECISIONS.md` ADR-048 | `channel/queue.ts` 的 `queuedAhead` / `coalesceQueue`（同一会话只留一个未开始项）+ `channel/wake.ts` + 签名透传（`post.ts` / `dispatch.ts` / `shell/assemble.ts`）；`test/core/queue-jump.test.ts` |
+| 合并唤醒（谁该让路） | `docs/CORE.md` §8 + `docs/DECISIONS.md` ADR-048 | `channel/queue.ts` 的 `queuedAhead` / `coalesceQueue`（同一会话只留一个未开始项）+ `channel/dispatch.ts` 的 `wake` + 签名透传（`post.ts` / `dispatch.ts` / `shell/assemble.ts`）；`test/core/queue-jump.test.ts` |
 | 建频道 / 私聊 / 一个人跑过的轮次 | `docs/CORE.md` §4 + `docs/WEB-API.md` + `docs/DESIGN.md` §2.3 | 建频道只有 `channel/membership.ts` 的 `ensureOwnerDm`（装配 / 招人自动建）+ `POST /api/people/:slug/dm`；一个人的轮次是 `app/read.ts` 的 `readPersonTurns`（`limit`）+ `ui/app/src/panels/TasksPanel.tsx`；聊天流里不画过程 |
 | 团队频道的详情 / 团队记忆（`GET /api/teams/:slug`） | `docs/WEB-API.md` §10.1 + `docs/DESIGN.md` §1.2 / §5 | `src/app/teams.ts` + `interface/http/routes.ts` + `ui/app/src/panels/RightPanel.tsx`（`TeamSection` / `TeamMemory`）；团队记忆只读，写入口是 `remember(scope=team)` 与 `file` |
 | 建团队权限校验 | `docs/CORE.md` §7 + `docs/CODE.md` §3 | `team/doc.ts` 的 `createTeamProblem` + `channel/tools/file.ts` 写分支；校验在落盘之前；开新团队只有助理能做（ADR-058，没有 `lead`） |
-| 「没答上来」的留痕 | `docs/CORE.md` §4「结算即收尾」 | `channel/wake.ts` 的结算回调：`aborted`（合并唤醒）不留痕；`test/core/wake.test.ts` |
+| 「没答上来」的留痕 | `docs/CORE.md` §4「结算即收尾」 | `channel/dispatch.ts` 的 `wake` 结算回调：`aborted`（合并唤醒）不留痕；`test/core/wake.test.ts` |
 | 重启打断的那一轮要不要接着做 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-044 | `runtime/open.ts` 的 `reconcileZombieTasks` 返回值（`CoreRuntime.interrupted`）+ `shell/assemble.ts` 的 `resumeInterrupted`（最后一步）+ `shell/main.ts` 传参；文案 `seed/text/channel.md` 的 `turn.interrupted`；`test/core/resume.test.ts` |
 | 新增/修改真模型脚本（`scripts/*-live.ts`、`live-support.ts`） | 本文件 §2 + `docs/CODE.md` 目录与 §3 + `package.json`；等待器只放 `live-support.ts` |
 | 改提示词模板 / 加一段 / 加一个插槽 | `docs/design/SEED-CONTRACT.md` §3 插槽表 + `scripts/prompt-fixture.ts` 样例值 + `docs/CODE.md` §2 文件表；跑 `npm run prompt:check` |
@@ -242,7 +242,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 我要… | 先读 | 再动 |
 |---|---|---|
 | 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（8 个；同一件事加 `action`，别开新名字） |
-| 改「谁能派活 / 怎么接活」 | `docs/CORE.md` §14 + `docs/DECISIONS.md` ADR-053 / ADR-055 | **先改 `policy.md`（`<userRoot>/policy.md`，出厂版在 `seed/policy.md`）**：模式、两份名单、规矩都是 md；代码只动 `src/core/work/`（`gate.ts` / `policy.ts` / `ticket.ts` / `stage.ts` / `intake.ts`）+ `src/core/channel/tools/work.ts` + `src/core/channel/post.ts`（立单后正文补一句）+ `src/core/channel/turn/finish.ts`（收尾收工）+ `seed/text/work.md` 的 `work.wake.line` + `seed/prompt/89-work.md`；`test/core/work.test.ts` / `test/core/work-intake.test.ts` |
+| 改「谁能派活 / 怎么接活」 | `docs/CORE.md` §14 + `docs/DECISIONS.md` ADR-053 / ADR-055 | **先改 `policy.md`（`<userRoot>/policy.md`，出厂版在 `seed/policy.md`）**：模式与两份名单是 md（规矩在 `rules.md`，ADR-059）；代码只动 `src/core/work/`（`gate.ts` / `policy.ts` / `ticket.ts` / `stage.ts` / `intake.ts`）+ `src/core/channel/tools/work.ts` + `src/core/channel/post.ts`（立单后正文补一句）+ `src/core/channel/turn/finish.ts`（收尾收工）+ `seed/text/work.md` 的 `work.wake.line` + `seed/prompt/89-work.md`；`test/core/work.test.ts` / `test/core/work-intake.test.ts` |
 | 教 agent 一套做法 | `seed/skills/` 里现成的技能 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
 | 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/md/prompt.ts` 只剩排版）；加插槽要先登记 §3 并在 `scripts/prompt-fixture.ts` 给样例值 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |

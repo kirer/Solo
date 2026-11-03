@@ -27,14 +27,6 @@ export type Strength = "explicit" | "inferred";
  */
 export type AcceptMode = "off" | "observe" | "auto";
 
-/** 一条写在 `policy.md` 里的规矩。 */
-export type Rule = {
-	/** 小节标题。工单的授权里记的是它 —— 人改文案不改标题，授权就不失效。 */
-	id: string;
-	/** 正文：到底要求做什么。 */
-	body: string;
-};
-
 /** 策略：整份 `policy.md` 解析出来的样子，外加一个内容版本。 */
 export type Policy = {
 	mode: AcceptMode;
@@ -44,7 +36,6 @@ export type Policy = {
 	addressed: string[];
 	/** 不 @ 也允许派活的人。只有他们的话会按规矩被「推出来」。 */
 	inferred: string[];
-	rules: Rule[];
 };
 
 /** 一个够格的触发：一条消息里「像是让我干活」的那部分事实。 */
@@ -70,8 +61,6 @@ export type Gate = {
 	outcome: GateOutcome;
 	/** 只有 `accept` / `observe` 有强度：明说的，还是推出来的。 */
 	strength: Strength | undefined;
-	/** 命中的规矩 id。挂进工单授权，重校验时按它判「这条约定还在不在」。 */
-	rules: string[];
 	/** 判的时候那版策略的版本号。立工单时原样盖章。 */
 	policyVersion: string;
 	/** 为什么是这个结果。给模型读的一句话。 */
@@ -85,8 +74,6 @@ export type Mandate = {
 	strength: Strength;
 	/** 范围：一句话说清这张工单能碰什么。越界要重新请示。 */
 	scope: string;
-	/** 命中的规矩 id。 */
-	rules: string[];
 	/** 谁派的。后续追问只认这个人。 */
 	requester: string;
 	/** 从哪条消息来的。 */
@@ -144,7 +131,6 @@ export type Decision = {
 	outcome: GateOutcome;
 	/** 推出来的是「按规矩」，明说的是「我说了就做」；`ignore` 不写。 */
 	strength?: Strength;
-	rules: string[];
 	reason: string;
 	/** 接出来的工单号（`observe` 没有）。 */
 	ticket?: string;

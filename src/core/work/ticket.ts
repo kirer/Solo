@@ -78,7 +78,6 @@ export function openTicket(state: WorkState, input: OpenInput): Change {
 			policyVersion: input.gate.policyVersion,
 			strength: input.gate.strength,
 			scope: input.scope,
-			rules: [...input.gate.rules],
 			requester: input.trigger.from,
 			trigger: input.trigger.id,
 		},

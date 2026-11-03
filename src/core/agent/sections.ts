@@ -191,7 +191,7 @@ async function slotsFor(
 	// 派活的策略同理：它和规矩住在一个根里，是「我的」文件，改了下一条消息就生效。
 	if (need.has("policy")) slots["policy"] = renderPolicy(await readPolicy(paths.layout.policyFile));
 
-	const needsRoster = wants("count", "team", "peers", "team.members", "assistant");
+	const needsRoster = wants("count", "team", "peers", "assistant");
 	const all = needsRoster ? await readAllIdentities(paths.layout.agentRoots) : [];
 	if (need.has("count")) slots["count"] = all.length;
 	// 「没有团队 / 没有助理」怎么说归模板（`{{… ?? …}}`），这里只给事实。
@@ -247,12 +247,9 @@ async function slotsFor(
 	}
 
 	const team = self.team;
-	if (wants("team.brief", "team.members", "team.memory", "team.status", "team.dir")) {
+	if (wants("team.brief", "team.memory", "team.status", "team.dir")) {
 		Object.assign(slots, team === undefined ? {} : await teamSlots(paths.layout.teamsRoot, team));
-		const members =
-			team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);
 		const teamMemory = team === undefined ? undefined : await readTeamMemory(paths.layout.teamsRoot, team);
-		slots["team.members"] = members === undefined || members.length === 0 ? undefined : members.map((item) => `\`${item}\``).join("、");
 		// 新团队还没有记忆：模板的默认句会说这句真话（`{{team.memory ?? …}}`）。
 		slots["team.memory"] = teamMemory === undefined ? undefined : teamMemoryDigest(teamMemory, paths.text);
 	}

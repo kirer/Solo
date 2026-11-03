@@ -28,7 +28,7 @@
 ```
 seed/
   rules.md                       # 15 条以内，每轮都看见
-  policy.md                      # 派活的判据：模式 + 谁能派 + 规矩（播种进 <userRoot>/policy.md）
+  policy.md                      # 派活的判据：模式 + 谁能派（播种进 <userRoot>/policy.md）
   text/                          # 机械文案：`## key` 分节，代码里只留键名
     tools.md                     # 8 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
     channel.md                   # 投递头 / 附件说明 / 未答留痕 / 提示词兜底句
@@ -37,12 +37,12 @@ seed/
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
     05-body.md                   # {{self.body}}（空则整段消失）
     10-rules.md                  # {{rules}}
-    20-position.md               # 助理 / 团队 / 同团队的人 / 群与私聊
-    30-team.md                   # 团队简报 + 团队记忆目录
+    20-position.md               # 助理 / 团队 / 同团队的人（带 title）/ 群与私聊
+    30-team.md                   # 团队简报 + 团队记忆目录（成员名单在 20-position）
     40-tools.md                  # 从注册表实拍，插槽 {{tools}}
     50-memory.md                 # 记忆目录
     60-skills.md                 # 技能目录
-    70-directory.md              # 你的目录（两个根 + identity/memory/skills 在哪）
+    70-directory.md              # 你的目录（两个根 + `file` 怎么分流 + `run` 在哪跑）
     80-reply.md                  # 每轮贴在投递正文末尾的「怎么回话」
     81-alone.md                  # 只有你被叫醒时的那一句（投递条件片段）
     82-shared.md                 # 还有别人在场时的那一句
@@ -85,12 +85,11 @@ seed/
 | `{{chats.groups}}` `{{chats.dm}}` | 你在哪些群 / 和我的私聊开没开（`已开`） | 频道文档 |
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
-| `{{policy}}` | 派活策略（模式 / 名单 / 规矩） | `<userRoot>/policy.md`（`work/policy.ts` 的 `renderPolicy`） |
+| `{{policy}}` | 派活策略（模式 / 两份名单） | `<userRoot>/policy.md`（`work/policy.ts` 的 `renderPolicy`） |
 | `{{count}}` | 全员 agent 数 | 名册 |
 | `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | 身份目录里 `identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
 | `{{team.status}}` `{{team.dir}}` | 团队状态 / 目录 | `teams/<slug>/README.md` 的 YAML 头与路径 |
-| `{{team.members}}` | 团队成员的 slug | `teams/<slug>/` 下的 agent |
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
 | `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | `81-alone.md` / `82-shared.md`（按收件人数选一份） |
 | `{{reply.colleagues}}` | 「成员的事就在这个频道说，要问谁就 @ 他」 | `83-colleagues.md` |
@@ -103,7 +102,7 @@ seed/
 | `{{tool:say}}` 等 | 工具名（唯一允许出现工具名的写法） | system 段：注册表实拍；delivery 段：`toolSlots()` 按后缀自解释 |
 
 大部分是**单值**：一个名字、一串清单、一个数字（`pending` 是条数）。少数是**复合值**
-（`self.body` / `team.brief` / `team.members` / `team.memory` / `reply.*`）：
+（`self.body` / `team.brief` / `team.memory` / `reply.*`）：
 整段文字从别的文件或投递上下文搬过来。它们不违反下面第 2 条——那段文字本来就住在那个
 文件里，模板只负责摆位置，不负责写它。
 

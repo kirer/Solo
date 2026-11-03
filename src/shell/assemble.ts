@@ -188,28 +188,6 @@ export async function assembleCore(
 		setModel: (slug, ref, ctx) => setModel(slug, ref, ctx),
 		wiring,
 	};
-	/**
-	 * 插件问「这个频道的工作区在哪」。
-	 *
-	 * 只有两种频道有工作区：私聊是那个人的 `workspace/`，团队频道是团队的 `workspace/`。
-	 * 全员频道没有 —— 它不是谁的工作区。归档的频道也没有：它已经不在列表里了。
-	 */
-	async function pluginScope(channelId: string) {
-		const state = (await wiring.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState | undefined;
-		const channel = state?.channels[channelId];
-		if (channel === undefined || channel.archived === true) return undefined;
-		if (chatKind(channel) === "dm") {
-			const other = channel.members.find((slug) => slug !== OWNER);
-			if (other === undefined) return undefined;
-			const identity = await readIdentity(layout.agentRoots, other);
-			if (identity === undefined) return undefined;
-			return { kind: "dm" as const, title: channel.title, root: workspaceOf(identity.dir), label: identity.name ?? other };
-		}
-		if (!channel.id.startsWith("team:")) return undefined;
-		const team = channel.id.slice("team:".length);
-		const doc = await readTeam(layout.teamsRoot, team);
-		return { kind: "group" as const, title: channel.title, root: teamWorkspace(layout, team), label: doc?.name ?? channel.title };
-	}
 
 	// ── 1.5 装插件 ──────────────────────────────────────────────────
 	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
@@ -217,7 +195,7 @@ export async function assembleCore(
 	let plugins = await loadPlugins({
 		pluginsRoot: layout.pluginsRoot,
 		workspace: layout.appRoot,
-		scope: pluginScope,
+		scope: (channelId) => channelScope(harness, layout, channelId),
 		log: (line) => console.log(`[plugin] ${line}`),
 	});
 	for (const error of plugins.errors) console.warn(`[plugin] 没装上：${error}`);
@@ -262,17 +240,6 @@ export async function assembleCore(
 			}),
 		});
 
-	/**
-	 * 某人此刻在哪些会话里（提示词「你在组织里的位置」一节要用）。
-	 *
-	 * 私聊还是群聊由成员推（`chatKind`），不靠 id 前缀 —— `all` 和 `team:x` 在这里
-	 * 都是“群”，没有谁特殊。
-	 */
-	async function chatRefsOf(slug: string): Promise<readonly ChatRef[]> {
-		const state = await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT);
-		if (state === undefined) return [];
-		return channelsOf(state, slug).map((channel) => ({ id: channel.id, title: channel.title, kind: chatKind(channel) }));
-	}
 
 	// 身份段：每个 agent 装的扩展不一样（key 里带 slug），所以这里是一个工厂。
 	// 一个人有 8 段（身份/规矩/位置/团队/能力/记忆/技能/目录），底座按段做最小 patch。
@@ -283,7 +250,7 @@ export async function assembleCore(
 				registry,
 				{
 					layout,
-					chats: chatRefsOf,
+					chats: (slug) => chatRefsOf(harness, slug),
 					extraPrompt: plugins.prompt,
 					text,
 				},
@@ -319,7 +286,7 @@ export async function assembleCore(
 		const next = await loadPlugins({
 			pluginsRoot: layout.pluginsRoot,
 			workspace: layout.appRoot,
-			scope: pluginScope,
+			scope: (channelId) => channelScope(harness, layout, channelId),
 			log: (line) => console.log(`[plugin] ${line}`),
 		});
 		plugins = next;
@@ -399,98 +366,15 @@ export async function assembleCore(
 		return created;
 	}
 
-	// 默认模型与个人模型：运行中可以换 —— `settings.json` 一改就就地重装（ADR-025）。
-	let defaultModel = options.defaultModel;
-	let agentModels = options.agentModels;
-	let settingsStamp: number | undefined;
-
-	/**
-	 * `settings.json` 变了就把提供商重新装进注册表（原地 upsert，不用重启）。
-	 *
-	 * 每处「要读模型」的地方先调一次：一次 stat，没变就返回。默认模型换了还要把
-	 * **没单独指定模型的人**重新对齐 —— 他们身上挂的是旧的那一只。
-	 */
-	async function refreshModels(ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
-		if (options.models === undefined) return;
-		const file = layout.settingsFile;
-		const stamp = await mtimeOrUndefined(file);
-		if (stamp === undefined || stamp === settingsStamp) return;
-		settingsStamp = stamp;
-		const applied = syncModels(options.models, file);
-		if (applied === undefined) return;
-		defaultModel = applied.defaultModel;
-		agentModels = applied.agentModels;
-		for (const [slug, conversation] of conversations) {
-			if (agentModels?.[slug] !== undefined) continue;
-			await applyModel(conversation, slug, ctx).catch(() => undefined);
-		}
-	}
-
-	/** 这个人该用哪只模型：单独指定的压过默认。都没有就是「没有模型」（ADR-023）。 */
-	function modelFor(slug: string): { readonly provider: string; readonly modelId: string } | undefined {
-		return agentModels?.[slug] ?? defaultModel;
-	}
-
-	/** 能挑的模型（招人时按角色分）。先刷一遍配置：刚在设置里加的提供商要能被看见。 */
-	async function modelChoices(ctx: Context = BACKGROUND_CONTEXT): Promise<{ models: readonly string[]; default?: string }> {
-		await refreshModels(ctx);
-		const models = (options.models?.getModels() ?? []).map((model) => `${model.provider}/${model.id}`);
-		return { models, ...(defaultModel === undefined ? {} : { default: `${defaultModel.provider}/${defaultModel.modelId}` }) };
-	}
-
-	/**
-	 * 给某个人换模型：**当场生效**，并记进 `settings.json` 的 `agentModels`。
-	 *
-	 * 空串 = 跟默认（删掉这条记录）。只认注册表里真有的模型：写一个解析不到的引用，
-	 * 这个人此后每轮都 `no_model`，而界面上只是一句「他这一轮没答上来」。
-	 */
-	async function setModel(slug: string, ref: string, ctx: Context = BACKGROUND_CONTEXT): Promise<{ model: string }> {
-		await refreshModels(ctx);
-		if (!conversations.has(slug)) throw new Error(`没有这个人的会话：${slug}`);
-		const value = ref.trim();
-		const wanted = value === "" ? defaultModel : parseModelRef(value);
-		if (wanted === undefined) {
-			throw new Error(value === "" ? "还没有配置默认模型，先配一只" : `模型要写成 提供商/模型：${value}`);
-		}
-		if (options.models !== undefined && options.models.getModel(wanted.provider, wanted.modelId) === undefined) {
-			const available = (await modelChoices(ctx)).models;
-			throw new Error(`没有这个模型：${value}（可选：${available.join("、") || "（还没有配置模型）"}）`);
-		}
-		await conversations.get(slug)?.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
-		const next = { ...(agentModels ?? {}) };
-		if (value === "") delete next[slug];
-		else next[slug] = { provider: wanted.provider, modelId: wanted.modelId };
-		agentModels = Object.keys(next).length === 0 ? undefined : next;
-		setAgentModel(layout.settingsFile, slug, value === "" ? null : value);
-		return { model: value };
-	}
-
-	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
-	async function applyModel(conversation: Conversation, slug: string, ctx: Context): Promise<void> {
-		const wanted = modelFor(slug);
-		if (wanted === undefined) return;
-		const agent = await conversation.agent(ctx);
-		const current = agent.model;
-		if (current !== undefined && current.provider === wanted.provider && current.modelId === wanted.modelId) {
-			return;
-		}
-		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
-	}
+	const modelSwitch = createModelSwitcher({ options, layout, conversations });
+	const { refreshModels, modelFor, modelChoices, setModel, applyModel } = modelSwitch;
 
 	for (const identity of identities) {
 		await openOne(identity.slug, context);
 	}
 
 	// 名册落盘（一次提交，不是每人一次）。
-	await harness.commit(async (tx) => {
-		const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-		Object.assign(doc, {
-			slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
-			conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
-			labels: { ...doc.labels, ...labelsOf(identities) },
-		});
-		directory.labels = { ...doc.labels };
-	}, context);
+	await mergeDirectoryInto(harness, directory, labelsOf(identities), context);
 
 	await ensureAllChannel(membership, identities, context);
 
@@ -558,7 +442,7 @@ export async function assembleCore(
 		...(options.models === undefined ? {} : { models: options.models }),
 		// getter：默认模型会随 `settings.json` 变，读的人每次都拿当下那一只。
 		get defaultModel() {
-			return defaultModel;
+			return modelSwitch.defaultModel;
 		},
 		refreshModels,
 		setModel,
@@ -573,7 +457,7 @@ export async function assembleCore(
 				registry,
 				{
 					layout,
-					chats: chatRefsOf,
+					chats: (slug) => chatRefsOf(harness, slug),
 					extraPrompt: plugins.prompt,
 					text: shell.text,
 				},
@@ -601,16 +485,8 @@ export async function assembleCore(
 				added.push(identity.slug);
 			}
 			if (added.length > 0) {
-				await harness.commit(async (tx) => {
-					const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-					Object.assign(doc, {
-						slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
-						conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
-						// 每次 rescan 都把显示名刷新一遍：`identity.md` 改名后不用清库。
-						labels: { ...doc.labels, ...labelsOf(all) },
-					});
-					directory.labels = { ...doc.labels };
-				}, ctx);
+				// 每次 rescan 都把显示名刷新一遍：`identity.md` 改名后不用清库。
+				await mergeDirectoryInto(harness, directory, labelsOf(all), ctx);
 				// 新人的全员频道成员单独提交一次：`merge` 只加不删，与名册刷新互不影响。
 				await addToAllChannel(membership, added, ctx);
 			}
@@ -736,4 +612,164 @@ export async function ownerSpeak(
 	// 我自己说话也要走这条钩子：我不是 agent，不会走工具层，插件听消息得在这里接上。
 	await shell.afterPost(result.message, options.channelId, context);
 	return { seq: result.message.seq, delivery: result.delivery };
+}
+
+/**
+ * 运行中换模型：`settings.json` 一改就就地重装，不用重启（ADR-025）。
+ *
+ * 从装配里拆出来的理由：这一段只认「配置 + 会话表」，不认频道、插件、工具。
+ * 留在 500 行的装配函数里时，改模型的人要先读完整个装配顺序。
+ */
+function createModelSwitcher(deps: {
+	readonly options: Pick<CoreShellOptions, "models" | "defaultModel" | "agentModels">;
+	readonly layout: Layout;
+	readonly conversations: ReadonlyMap<string, Conversation>;
+}) {
+	const { options, layout, conversations } = deps;
+	let defaultModel = options.defaultModel;
+	let agentModels = options.agentModels;
+	let settingsStamp: number | undefined;
+
+	/**
+	 * `settings.json` 变了就把提供商重新装进注册表（原地 upsert，不用重启）。
+	 *
+	 * 每处「要读模型」的地方先调一次：一次 stat，没变就返回。默认模型换了还要把
+	 * **没单独指定模型的人**重新对齐 —— 他们身上挂的是旧的那一只。
+	 */
+	async function refreshModels(ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
+		if (options.models === undefined) return;
+		const file = layout.settingsFile;
+		const stamp = await mtimeOrUndefined(file);
+		if (stamp === undefined || stamp === settingsStamp) return;
+		settingsStamp = stamp;
+		const applied = syncModels(options.models, file);
+		if (applied === undefined) return;
+		defaultModel = applied.defaultModel;
+		agentModels = applied.agentModels;
+		for (const [slug, conversation] of conversations) {
+			if (agentModels?.[slug] !== undefined) continue;
+			await applyModel(conversation, slug, ctx).catch(() => undefined);
+		}
+	}
+
+	/** 这个人该用哪只模型：单独指定的压过默认。都没有就是「没有模型」（ADR-023）。 */
+	function modelFor(slug: string): { readonly provider: string; readonly modelId: string } | undefined {
+		return agentModels?.[slug] ?? defaultModel;
+	}
+
+	/** 能挑的模型（招人时按角色分）。先刷一遍配置：刚在设置里加的提供商要能被看见。 */
+	async function modelChoices(ctx: Context = BACKGROUND_CONTEXT): Promise<{ models: readonly string[]; default?: string }> {
+		await refreshModels(ctx);
+		const models = (options.models?.getModels() ?? []).map((model) => `${model.provider}/${model.id}`);
+		return { models, ...(defaultModel === undefined ? {} : { default: `${defaultModel.provider}/${defaultModel.modelId}` }) };
+	}
+
+	/**
+	 * 给某个人换模型：**当场生效**，并记进 `settings.json` 的 `agentModels`。
+	 *
+	 * 空串 = 跟默认（删掉这条记录）。只认注册表里真有的模型：写一个解析不到的引用，
+	 * 这个人此后每轮都 `no_model`，而界面上只是一句「他这一轮没答上来」。
+	 */
+	async function setModel(slug: string, ref: string, ctx: Context = BACKGROUND_CONTEXT): Promise<{ model: string }> {
+		await refreshModels(ctx);
+		if (!conversations.has(slug)) throw new Error(`没有这个人的会话：${slug}`);
+		const value = ref.trim();
+		const wanted = value === "" ? defaultModel : parseModelRef(value);
+		if (wanted === undefined) {
+			throw new Error(value === "" ? "还没有配置默认模型，先配一只" : `模型要写成 提供商/模型：${value}`);
+		}
+		if (options.models !== undefined && options.models.getModel(wanted.provider, wanted.modelId) === undefined) {
+			const available = (await modelChoices(ctx)).models;
+			throw new Error(`没有这个模型：${value}（可选：${available.join("、") || "（还没有配置模型）"}）`);
+		}
+		await conversations.get(slug)?.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+		const next = { ...(agentModels ?? {}) };
+		if (value === "") delete next[slug];
+		else next[slug] = { provider: wanted.provider, modelId: wanted.modelId };
+		agentModels = Object.keys(next).length === 0 ? undefined : next;
+		setAgentModel(layout.settingsFile, slug, value === "" ? null : value);
+		return { model: value };
+	}
+
+	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
+	async function applyModel(conversation: Conversation, slug: string, ctx: Context): Promise<void> {
+		const wanted = modelFor(slug);
+		if (wanted === undefined) return;
+		const agent = await conversation.agent(ctx);
+		const current = agent.model;
+		if (current !== undefined && current.provider === wanted.provider && current.modelId === wanted.modelId) {
+			return;
+		}
+		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+	}
+
+	return {
+		refreshModels,
+		modelFor,
+		modelChoices,
+		setModel,
+		applyModel,
+		// getter：读的人每次都拿当下那一只。
+		get defaultModel() {
+			return defaultModel;
+		},
+	};
+}
+
+/**
+ * 把这次运行的名册并进落盘那份（一次提交，路径式写字段）。
+ *
+ * 启动与 `rescan` 走同一段：两处各写一遍时，只要有一处忘了带 `labels`，
+ * 「改了名字界面上还是旧名」就会只在一半的路径上出现。
+ */
+async function mergeDirectoryInto(
+	harness: Harness,
+	directory: DirectoryState,
+	labels: Readonly<Record<string, string>>,
+	context: Context,
+): Promise<void> {
+	await harness.commit(async (tx) => {
+		const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+		Object.assign(doc, {
+			slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
+			conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
+			labels: { ...doc.labels, ...labels },
+		});
+		directory.labels = { ...doc.labels };
+	}, context);
+}
+
+/**
+ * 插件问「这个频道的工作区在哪」。
+ *
+ * 只有两种频道有工作区：私聊是那个人的 `workspace/`，团队频道是团队的 `workspace/`。
+ * 全员频道没有 —— 它不是谁的工作区。归档的频道也没有：它已经不在列表里了。
+ */
+async function channelScope(harness: Harness, layout: Layout, channelId: string) {
+	const state = (await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState | undefined;
+	const channel = state?.channels[channelId];
+	if (channel === undefined || channel.archived === true) return undefined;
+	if (chatKind(channel) === "dm") {
+		const other = channel.members.find((slug) => slug !== OWNER);
+		if (other === undefined) return undefined;
+		const identity = await readIdentity(layout.agentRoots, other);
+		if (identity === undefined) return undefined;
+		return { kind: "dm" as const, title: channel.title, root: workspaceOf(identity.dir), label: identity.name ?? other };
+	}
+	if (!channel.id.startsWith("team:")) return undefined;
+	const team = channel.id.slice("team:".length);
+	const doc = await readTeam(layout.teamsRoot, team);
+	return { kind: "group" as const, title: channel.title, root: teamWorkspace(layout, team), label: doc?.name ?? channel.title };
+}
+
+/**
+ * 某人此刻在哪些会话里（提示词「你在组织里的位置」一节要用）。
+ *
+ * 私聊还是群聊由成员推（`chatKind`），不靠 id 前缀 —— `all` 和 `team:x` 在这里
+ * 都是“群”，没有谁特殊。
+ */
+async function chatRefsOf(harness: Harness, slug: string): Promise<readonly ChatRef[]> {
+	const state = await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT);
+	if (state === undefined) return [];
+	return channelsOf(state, slug).map((channel) => ({ id: channel.id, title: channel.title, kind: chatKind(channel) }));
 }

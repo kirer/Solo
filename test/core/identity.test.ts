@@ -185,9 +185,10 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 		// 曾经这里写的是 `capabilities` 与 `memory/` —— 两个都不存在的路径，
 		// 等于在提示词里告诉 agent「去改一个不存在的文件」，它改完毫无效果。
 		expect(text).not.toContain("`capabilities`");
-		expect(text).toContain("`identity.md`");
-		expect(text).toContain("`memory.md`");
-		expect(text).toContain("skills/<名字>/SKILL.md");
+		// 身份文件那半句在 `00-who` 里；目录段只讲两个根与 `file` 的分流，不重复别段的事实。
+		expect(text).toContain("identity.md");
+		expect(text).toContain("members/<slug>/");
+		expect(text).toContain("teams/<团队>/");
 	});
 
 	test("确定性：同样输入逐字节相同", async () => {

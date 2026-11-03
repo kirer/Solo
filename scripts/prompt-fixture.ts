@@ -36,7 +36,6 @@ export const SAMPLE_SLOTS = {
 	"team.brief": "这个团队负责把示例做出来。验收标准：示例能跑。",
 	"team.status": "在做",
 	"team.dir": "teams/demo-team/",
-	"team.members": "`boss`、`member`",
 	"team.memory": "- 示例：踩过一次示例的坑，别再踩",
 
 	tools: "- `say` — 在当前频道说一句\n- `chats` — 看有哪些频道\n- `file` — 读写文件\n- `run` — 跑命令",

@@ -1055,6 +1055,9 @@
 
 ## ADR-053 派活：md 里的策略 + 确定性闸门 + 会留下来的工单（移植 dsh-superagent）
 
+> **第 2、4、5 条里的「规矩」已被 ADR-059 取代**（2026-11）：规矩只有 `rules.md` 一个家，
+> `policy.md` 只剩模式与两份名单；工单不再记「命中的规矩」，`mandateHolds` 只校策略版本。
+
 - **背景**：V3 里「谁该干什么」全靠每轮现拼的提示词和人的临场判断。没有一张地方记得住
   「这件事是谁派的、按什么授权做的、做到哪一步」。一句话说完就散在消息流里，隔天要它接着做，
   只能靠翻聊天记录猜。dsh-superagent 的原型把这件事拆得很干净：Trigger → Eval →
@@ -1131,6 +1134,9 @@
 
 ## ADR-056 拍不了板：一条规矩，别让两条打架
 
+> **已被 ADR-058 / ADR-059 取代**（2026-11）：没有「上级」这一层，拍不了板直接 `@我`；
+> 这条规矩现在只在 `seed/rules.md` 里，`policy.md` 不再存规矩。
+
 - **背景**：上报链的真实测试（`core:live` 的 9.1–9.3，成员 → 团队管理员 → 助理 → 我）
   一直在 60%–85% 之间抖。查下来不是模型笨，是**规矩自己打架**：一条说「拍不了板的往上走，
   每一跳只 @ 你的上级」，另一条说「要我拍板的事必须 @我」。模型看到「花钱」这件事，按第二条
@@ -1206,3 +1212,36 @@
   `seed/assistant/skills/{建立团队,招人}/SKILL.md`、`test/core/{identity,team,membership,assemble,tools-actions}.test.ts`。
 - **取代**：ADR-005（负责人必须是真成员）、ADR-048（唤醒轻重，只服务沉淀）、ADR-050（额外会话）、
   ADR-015 的负责人分支、ADR-042 的「团队管理员」措辞。
+
+---
+
+## ADR-059 规矩只有一个家：policy.md 只管谁能派活
+
+- **背景**：项目自己的第一条纪律是「一条事实只能有一个家」（`docs/design/SEED-CONTRACT.md`）。
+  但「规矩」有两个家：`rules.md`（每轮进提示词）和 `policy.md` 的 `# 规矩`（进工单授权）。
+  后者还长出了一整套第二规则系统：`Rule` 类型、`Policy.rules`、`Gate.rules`、工单上的
+  `mandate.rules`，以及 `mandateHolds` 里「这条规矩还在不在」的校验。同一句「拍不了板就停下来问」
+  在提示词里出现了四次（`rules.md`、`policy.md`、`89-work.md`、技能「工作规矩」），措辞还各不相同。
+  在提示词内部也有重复：`{{peers}}` 与 `{{team.members}}` 是同一份事实，`70-directory` 复述了
+  `00-who` / `50-memory` / `60-skills` 已经说过的路径，`renderPolicy` 每轮把策略的哈希渲染给模型看。
+- **决策**：
+  1. **硬规矩只在 `rules.md`。** `policy.md` 只剩 `mode` 与两份名单（谁能明着派、谁不 @ 也能派）；
+     `# 规矩` 整节删掉，「动手只改自己的工作区」「交付前自己验」搬进 `rules.md`（仍 ≤15 条）。
+  2. **删掉「规矩即授权」这一层。** `Rule` / `Policy.rules` / `Gate.rules` / `Mandate.rules` /
+     `Decision.rules` 一并消失；`mandateHolds` 只校策略版本 —— 名单或模式变了要重新请示，
+     规矩变了不再影响一张已经立好的工单（规矩本来也不是授权的来源，授权是人点名给的）。
+  3. **提示词去重。** `team.members` 删掉（`peers` 带 title，信息更全）；`70-directory` 只讲
+     两个根、`file` 的分流、`run` 在哪儿跑；`renderPolicy` 不再渲染版本哈希；技能「工作规矩」
+     不再复述 `rules.md` 的原句。
+  4. **结构收敛。** `wake()` 并进 `dispatch.ts`（它只有一个调用方，拆两个文件时「谁负责合并、
+     谁负责记 wake」要在两边各看一遍）；模型开关拆成 `createModelSwitcher`，名册落盘与频道工作区
+     查询提到模块级，`assembleCore` 从 540 行降到 416 行。
+- **代价**：工单上不再写「按哪条规矩授权」，只留策略版本；删掉一条规矩不会再让在跑的工单停下来
+  重新请示。换来的是：规则只有一个家，提示词少 10% 的正文字符，`work/` 少一层状态。
+- **执行**：`seed/rules.md`、`seed/policy.md`、`seed/prompt/{20-position,30-team,70-directory}.md`、
+  `seed/skills/工作规矩/SKILL.md`、`src/core/work/{types,policy,gate,ticket}.ts`、
+  `src/core/channel/tools/work.ts`、`src/core/channel/dispatch.ts`、`src/shell/assemble.ts`、
+  `src/core/agent/sections.ts`、`test/core/{work,wake,identity,text-slots}.test.ts`、
+  `scripts/prompt-fixture.ts`、`docs/{CORE,CODE}.md`、`docs/design/SEED-CONTRACT.md`。
+- **取代**：ADR-053 第 2、4、5 条里的「规矩」部分；ADR-056 的「交给你的上级」（那一半已由
+  ADR-058 取代，这里一并作废）。

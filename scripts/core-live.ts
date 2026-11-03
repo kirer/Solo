@@ -321,19 +321,19 @@ async function main(): Promise<void> {
 				(owner === undefined || team.members.includes(owner)),
 			detail: team === undefined ? "没有团队频道" : `成员 ${team.members.join("、")}`,
 		});
-		// 拍板的规矩写在全员技能「工作规矩」里（不进提示词正文），
-		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文写了直接找我。
+		// 拍板的规矩只有 `rules.md` 一个家（ADR-059）：每轮都进提示词，不靠技能转述。
+		// 所以验的是「新人的提示词里就有这条」+ 技能「工作规矩」被列进提示词。
 		const prompt = await shell.promptOf(hired.slug);
-		const rules = await readFile(join(root, "skills", "工作规矩", "SKILL.md"), "utf8").catch(() => "");
 		const listed = prompt.includes("工作规矩");
+		const told = prompt.includes("直接 @我");
 		phases.push({
-			name: "新人拿得到拍板规矩（全员技能「工作规矩」）",
-			ok: listed && rules.includes("直接 @我"),
-			detail: listed
-				? rules.includes("直接 @我")
-					? "工作规矩已列进提示词，正文写了拍不了板直接找我"
-					: "技能正文里没有「直接 @我」"
-				: "提示词里没列出「工作规矩」技能",
+			name: "新人拿得到拍板规矩（rules.md + 技能「工作规矩」）",
+			ok: listed && told,
+			detail: !listed
+				? "提示词里没列出「工作规矩」技能"
+				: told
+					? "规则正文在提示词里，技能也已列出"
+					: "提示词里没有「直接 @我」这条",
 		});
 	}
 
