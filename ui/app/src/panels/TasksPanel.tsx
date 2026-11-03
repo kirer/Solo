@@ -1,29 +1,39 @@
 /**
- * 后台任务：一个成员跑过的每一轮，从右侧盖在聊天上滑出（ADR-046）。
+ * 后台任务：一屏三处 —— 左栏是导航（在 `sidebar/Rail.tsx`），这里给中间的人 / 轮次
+ * 和一整块「这一轮」。不再是盖在聊天上的抽屉：一轮的过程要摊开写，380px 装不下。
  *
- * 这里只画服务端给的 `ViewTurn`：块头是「哪句话触发的」（`trigger`），下一行是
- * 步数 / 耗时 / 状态 / 摘要，展开是步骤树 —— 复用 `RunBlock`，不造第二套展示。
- *
- * 数据来自 `state.runs`（按人分桶）：SSE 的 `trace` 帧实时并进去，打开时再拉一次最近
- * 30 轮。看的那个人还在跑时每 2 秒补一次（只在面板开着时发生）。
+ * 数据全是服务端给的：列表是 `state.runs`（按人分桶，SSE 的 `trace` 帧实时并进去，
+ * 打开时再拉一次最近 30 轮），右边是选中那一轮的 `ViewTurn` —— 步骤缺了就按
+ * `channelId + seq` 补拉一次，不猜、不补（AGENTS §2 第 6 条）。
  */
-import { useEffect } from "react";
-import type { Turn } from "../api/types.ts";
+
+import { useEffect, useState } from "react";
+import type { Step, Turn } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
-import { clockTime, relTime } from "../lib/format.ts";
-import { RunBlock } from "../stream/RunBlock.tsx";
-import { closeTasks, loadPersonRuns, setTasksWho } from "../state/store.ts";
+import { clockTime, humanDuration, relTime } from "../lib/format.ts";
+import { closeTasks, loadPersonRuns, loadTurn, setTasksWho } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const REFRESH_MS = 2000;
 
-export function TasksPanel(): JSX.Element | null {
+const GROUPS: { label: string; keep: (turn: Turn) => boolean }[] = [
+	{ label: "正在跑", keep: (turn) => turn.status === "running" },
+	{ label: "已完成", keep: (turn) => turn.status === "done" },
+	{ label: "失败", keep: (turn) => turn.status === "failed" },
+	{ label: "没回话", keep: (turn) => turn.status === "aborted" },
+];
+
+export function TasksPanel(): JSX.Element {
 	const open = useStore((state) => state.tasks.open);
 	const who = useStore((state) => state.tasks.who);
 	const runs = useStore((state) => state.runs);
 	const people = useStore((state) => state.people);
 	const presence = useStore((state) => state.presence);
 	const channels = useStore((state) => state.channels);
+	const [pick, setPick] = useState<string | null>(null);
+	const [openStep, setOpenStep] = useState<string | null>(null);
+	/** 哪一组被收起来了（默认全展开：第一眼要看的是「都跑过什么」）。 */
+	const [folded, setFolded] = useState<Record<string, boolean>>({});
 
 	const live = who !== null && isRunning(presence.get(who)?.state);
 
@@ -34,9 +44,8 @@ export function TasksPanel(): JSX.Element | null {
 		return () => clearInterval(id);
 	}, [open, who, live]);
 
-	if (!open) return null;
-
 	const titles = new Map(channels.map((channel) => [channel.id, channel.title]));
+	const names = new Map(people.map((actor) => [actor.slug, actor.label]));
 	const pool = people
 		.filter((actor) => actor.slug !== "owner")
 		.map((actor) => ({ slug: actor.slug, label: actor.label, title: actor.title }))
@@ -50,33 +59,35 @@ export function TasksPanel(): JSX.Element | null {
 		return (running ? 0 : 1) * 1e15 - last;
 	}
 
-	// 叫醒了却没动手（0 步、没回话）的一轮不在这儿占一块：它什么也没留下，频道里已经有那句留痕。
+	// 0 步的一轮不占一块：只说了句话、没动过手，那是聊天不是任务；还在跑的先留着（步数随后才到）。
 	const mine =
 		who === null
 			? []
 			: [...(runs.get(who) ?? [])]
-					.filter((turn) => !(turn.status === "aborted" && turn.stepCount === 0))
+					.filter((turn) => turn.status === "running" || turn.stepCount > 0)
 					.sort((left, right) => right.startedAt - left.startedAt);
+
+	// 选中哪一轮：默认最近的一轮；列表变了（新的一轮进来）就跟着走到最新那轮。
+	const current = mine.find((turn) => keyOf(turn) === pick) ?? mine[0] ?? null;
+
+	useEffect(() => {
+		if (current !== null && current.steps === undefined) void loadTurn(current);
+	}, [current]);
+
 	const runningCount = pool.filter((person) => isRunning(presence.get(person.slug)?.state)).length;
 
+	if (!open) return <></>;
+
 	return (
-		<>
-			<button type="button" className="tasks-scrim" aria-label="关闭后台任务" onClick={closeTasks} />
-			<aside className="tasks-panel" aria-label="后台任务">
-				<header className="tasks-head">
-					<h2>后台任务</h2>
-					{runningCount === 0 ? (
-						<span className="tasks-count">没有人在跑</span>
-					) : (
-						<span className="tasks-count" data-live="true">
-							{runningCount} 个在跑
-						</span>
-					)}
-					<button type="button" className="icon-btn" aria-label="关闭" onClick={closeTasks}>
-						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
-							<path d="M6 6l12 12M18 6L6 18" />
+		<section className="tasks" aria-label="后台任务">
+			<div className="tasks-list">
+				<header className="tasks-list-head">
+					<button type="button" className="tasks-back" id="tasks-back" aria-label="回到聊天" onClick={closeTasks}>
+						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+							<path d="M15 6l-6 6 6 6" />
 						</svg>
 					</button>
+					<h2>后台任务</h2>
 				</header>
 
 				<div className="tasks-people">
@@ -85,10 +96,13 @@ export function TasksPanel(): JSX.Element | null {
 							type="button"
 							key={person.slug}
 							className="tasks-person"
-							data-active={person.slug === who ? "true" : "false"}
+							aria-current={person.slug === who ? "true" : "false"}
 							data-live={isRunning(presence.get(person.slug)?.state) ? "true" : "false"}
 							title={person.label}
-							onClick={() => setTasksWho(person.slug)}
+							onClick={() => {
+								setPick(null);
+								setTasksWho(person.slug);
+							}}
 						>
 							<span
 								aria-hidden="true"
@@ -101,39 +115,223 @@ export function TasksPanel(): JSX.Element | null {
 									}),
 								}}
 							/>
-							<span className="tasks-name">{person.label}</span>
+							<span>{person.label}</span>
 						</button>
 					))}
 				</div>
 
-				<div className="tasks-list">
+				<div className="tasks-rows">
 					{mine.length === 0 ? (
-						<div className="tasks-empty">
+						<p className="tasks-empty">
 							{who === null ? "挑一个人看他跑过什么。" : "这个人还没有跑过任何一轮。"}
-						</div>
+						</p>
 					) : (
-						mine.map((turn) => <RunGroup key={`${turn.channelId}:${String(turn.seq)}`} turn={turn} title={titles.get(turn.channelId) ?? turn.channelId} />)
+						GROUPS.map((group) => {
+							const list = mine.filter(group.keep);
+							if (list.length === 0) return null;
+							const shut = folded[group.label] === true;
+							return (
+								<div key={group.label}>
+									{/* 组头可以点：十三轮全摊开，一屏只装得下四轮。 */}
+									<button
+										type="button"
+										className="tasks-group"
+										aria-expanded={shut ? "false" : "true"}
+										onClick={() => setFolded((now) => ({ ...now, [group.label]: !shut }))}
+									>
+										<svg className="tasks-group-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
+											<path d="M9 5l7 7-7 7" />
+										</svg>
+										{group.label}
+										<span className="tasks-group-n">{list.length}</span>
+									</button>
+									{shut ? null : list.map((turn) => (
+										<button
+											type="button"
+											key={keyOf(turn)}
+											className="tasks-row"
+											aria-selected={current !== null && keyOf(current) === keyOf(turn) ? "true" : "false"}
+											onClick={() => {
+												setPick(keyOf(turn));
+												setOpenStep(null);
+											}}
+										>
+											<span className="tasks-row-top">
+												<span className="tasks-row-ch">{titles.get(turn.channelId) ?? turn.channelId}</span>
+												<span className="tasks-row-time">{clockTime(turn.startedAt)}</span>
+												<span className="tasks-row-ms">{elapsedOf(turn)}</span>
+											</span>
+											<span className="tasks-row-text">{turn.trigger?.text ?? turn.summary}</span>
+										</button>
+									))}
+								</div>
+							);
+						})
 					)}
 				</div>
-			</aside>
-		</>
+
+				{runningCount === 0 ? null : <p className="tasks-foot">{runningCount} 个人在跑</p>}
+			</div>
+
+			{current === null ? (
+				<div className="task-detail task-detail-blank">
+					<p>左边挑一轮看他做了什么。</p>
+				</div>
+			) : (
+				<div className="task-detail">
+					<header className="task-detail-head">
+						<span
+							className="task-av"
+							aria-hidden="true"
+							dangerouslySetInnerHTML={{
+								__html: avatarSvg({ slug: current.slug, name: current.label, size: 52, state: "idle" }),
+							}}
+						/>
+						<span className="task-name">{current.label}</span>
+						<span className="task-role">{people.find((person) => person.slug === current.slug)?.title ?? ""}</span>
+						<span className="task-sep" />
+						<span className="task-ch">{titles.get(current.channelId) ?? current.channelId}</span>
+						<span className="task-meta">
+							<span>{current.stepCount} 步</span>
+							<span data-tone={toneOf(current)}>{statusOf(current)}</span>
+							<span>{elapsedOf(current)}</span>
+						</span>
+					</header>
+
+					<div className="task-body">
+						{current.trigger === undefined ? null : (
+							<>
+								<p className="task-label">触发的那句话</p>
+								<blockquote className="task-quote">
+									<span className="task-quote-from">
+										{names.get(current.trigger.from) ?? current.trigger.from} · {relTime(current.startedAt)}
+									</span>
+									<span className="task-quote-text">{current.trigger.text}</span>
+								</blockquote>
+							</>
+						)}
+
+						<p className="task-label task-label-2">这一轮做了什么</p>
+						{current.steps === undefined ? null : current.steps.length === 0 ? (
+							<p className="task-empty">
+								{current.status === "running" ? "还没动手，正在想。" : "这一轮没有留下过程（条目可能已被压缩）。"}
+							</p>
+						) : (
+							<div className="task-steps">
+								{current.steps.map((step) => (
+									<StepRow
+										key={step.id}
+										step={step}
+										open={openStep === step.id}
+										onToggle={() => setOpenStep((now) => (now === step.id ? null : step.id))}
+									/>
+								))}
+							</div>
+						)}
+						{current.truncated === true ? <p className="task-empty">步骤太多，只保留前 200 步。</p> : null}
+					</div>
+				</div>
+			)}
+		</section>
 	);
 }
 
-/** 一块 = 一轮：哪句话、在哪个频道、什么时候，然后是这一轮本身。 */
-function RunGroup(props: { turn: Turn; title: string }): JSX.Element {
-	const { turn, title } = props;
+/** 一行步骤：时刻、类型、命令（单行截断）、耗时；点开是命令和它吐出来的东西。 */
+function StepRow(props: { step: Step; open: boolean; onToggle: () => void }): JSX.Element {
+	const { step } = props;
+	const detail = detailOf(step);
 	return (
-		<section className="tasks-run" data-status={turn.status}>
-			<div className="tasks-where">
-				<span className="tasks-channel">{title}</span>
-				<span className="tasks-when">{relTime(turn.startedAt)}</span>
-				<span className="tasks-when">{clockTime(turn.startedAt)}</span>
+		<div className="task-step" data-open={props.open ? "true" : "false"}>
+			<span className="task-step-at">{step.startedAt === undefined ? "" : clockTime(step.startedAt)}</span>
+			<span className="task-step-rail" aria-hidden="true">
+				<span className="task-step-dot" />
+			</span>
+			<div className="task-step-body">
+				<button
+					type="button"
+					className="task-step-line"
+					aria-expanded={props.open}
+					disabled={detail === null}
+					onClick={props.onToggle}
+				>
+					{/* `title` 已经是服务端算好的一行人话（「运行 npm test」/「读了 a.ts」），
+					    这里不再拼类型，否则会变成「运行 运行 npm test」。 */}
+					<span className="task-step-title">{step.title}</span>
+					<span className="task-step-ms">
+						{step.ms === undefined ? "" : `${step.status === "failed" ? "✕" : "✓"} ${humanDuration(step.ms)}`}
+					</span>
+				</button>
+				{props.open && detail !== null ? detail : null}
 			</div>
-			{turn.trigger === undefined ? null : <p className="tasks-trigger">{turn.trigger.text}</p>}
-			<RunBlock turn={turn} role="" grouped />
-		</section>
+		</div>
 	);
+}
+
+/** 命令块：`$ 命令` + 输出 + 退出码。别的类型没有机器输出就不展开。 */
+function detailOf(step: Step): JSX.Element | null {
+	if (step.kind === "run") {
+		return (
+			<div className="task-cmd">
+				<span className="task-cmd-in">
+					<em>$</em>
+					{step.command ?? step.title}
+				</span>
+				{step.output === undefined || step.output === "" ? null : (
+					<span className="task-cmd-out">{step.output}</span>
+				)}
+				<span className="task-cmd-foot">
+					退出码 {step.exitCode ?? "—"}
+					{step.ms === undefined ? "" : ` · ${humanDuration(step.ms)}`}
+				</span>
+			</div>
+		);
+	}
+	if (step.kind === "file-read" || step.kind === "file-write") {
+		if (step.path === undefined) return null;
+		// 读：工具返回的文件正文；写：写进去的内容（没有旧文件，不画 diff）。
+		const body = step.kind === "file-read" ? step.output : step.text;
+		return (
+			<div className="task-cmd">
+				<span className="task-cmd-in">
+					<em>{step.kind === "file-write" ? "✎" : "❯"}</em>
+					{step.path}
+					{step.kind === "file-write" && step.added !== undefined ? ` · +${String(step.added)} 行` : ""}
+				</span>
+				{body === undefined || body === "" ? null : <span className="task-cmd-out">{body}</span>}
+			</div>
+		);
+	}
+	if (step.kind === "think") {
+		if (step.text === undefined || step.text === "") return null;
+		return <div className="task-cmd">{<span className="task-cmd-out">{step.text}</span>}</div>;
+	}
+	// 其余工具（记记忆 / 翻记录 / 读历史 / 招人 / 未知）：能展开就展开，优先给人看的正文，其次回执。
+	const body = step.text ?? step.output;
+	if (body === undefined || body === "") return null;
+	return <div className="task-cmd">{<span className="task-cmd-out">{body}</span>}</div>;
+}
+
+function keyOf(turn: Turn): string {
+	return `${turn.channelId}:${String(turn.seq)}`;
+}
+
+function elapsedOf(turn: Turn): string {
+	if (turn.endedAt === undefined) return "";
+	return humanDuration(turn.endedAt - turn.startedAt);
+}
+
+function statusOf(turn: Turn): string {
+	if (turn.status === "running") return "正在执行";
+	if (turn.status === "done") return "✓ 完成";
+	if (turn.status === "failed") return "✕ 失败";
+	return "没回话";
+}
+
+function toneOf(turn: Turn): "ok" | "bad" | "quiet" | "live" {
+	if (turn.status === "running") return "live";
+	if (turn.status === "done") return "ok";
+	if (turn.status === "failed") return "bad";
+	return "quiet";
 }
 
 function isRunning(state: string | undefined): boolean {

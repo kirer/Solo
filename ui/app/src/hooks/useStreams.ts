@@ -80,7 +80,7 @@ export function useChannelStream(): void {
 		});
 		source.addEventListener("trace", (event) => {
 			const turn = parse<Turn>(event);
-			if (turn !== null && typeof turn.seq === "number") applyTurn(currentId, turn);
+			if (turn !== null && typeof turn.seq === "number") applyTurn(turn);
 		});
 		source.addEventListener("error", () => {
 			source.close();

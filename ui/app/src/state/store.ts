@@ -374,9 +374,13 @@ export function upsertRun(runs: Map<string, Turn[]>, turn: Turn): Map<string, Tu
 	return next;
 }
 
-/** SSE 推来一帧轨迹（`trace` 事件）：群聊与私聊走同一条路。 */
-export function applyTurn(id: string, turn: Turn): void {
-	if (state.currentId !== id) return;
+/**
+ * SSE 推来一帧轨迹（`trace` 事件）：群聊与私聊走同一条路。
+ *
+ * 不按「当前频道」过滤：这张表是按人分的，后台任务那屏能看到别的频道里跑过的轮次 ——
+ * 表格自己用 `channelId + seq` 去重，不会混到别的频道那一行上。
+ */
+export function applyTurn(turn: Turn): void {
 	patch({ runs: upsertRun(state.runs, turn) });
 }
 
@@ -434,20 +438,19 @@ async function loadTurns(id: string, messages: readonly Message[]): Promise<void
  * 找不到（没被叫醒 / 条目已被压缩）就把步骤记成空数组 —— 「确实没有过程」比一直转圈诚实。
  */
 export async function loadTurn(turn: Turn): Promise<void> {
-	const { currentId } = state;
-	if (currentId === null || turn.steps !== undefined) return;
+	if (turn.steps !== undefined) return;
 	try {
 		// 工作记录里的轮次可能发生在别的频道：按它自己的 `channelId` 拉步骤。
 		const result = await getTurn(turn.channelId, turn.seq, turn.slug);
 		const full = result.turn;
 		if (full !== null) {
-			applyTurn(currentId, full);
+			applyTurn(full);
 			return;
 		}
 	} catch {
 		// 拉失败就当作没有过程，下次展开还会再试一次。
 	}
-	applyTurn(currentId, { ...turn, steps: [] });
+	applyTurn({ ...turn, steps: [] });
 }
 
 /* ── 界面开关（都落 localStorage） ──────────────────────────────────── */
@@ -506,6 +509,8 @@ export function openTasks(slug?: string): void {
 		runningSlugs(state).find((item) => inChannel(state, item)) ??
 		dmPartner(state) ??
 		[...state.runs.keys()][0] ??
+		// 还没人跑过、也不在私聊里：挑第一个人，让这一屏一打开就有一列东西可看。
+		state.people.find((actor) => actor.slug !== "owner")?.slug ??
 		null;
 	patch({ tasks: { open: true, who }, needMenu: false });
 	if (who !== null) void loadPersonRuns(who);

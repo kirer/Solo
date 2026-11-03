@@ -163,7 +163,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `ui/app/index.html` | 页面骨架 + **首帧定色的内联脚本**（放样式之前，否则先白一下再变深） |
 | `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
 | `src/main.tsx` | 入口：装样式、`bootstrap()`、**先 `bootPlugins()` 再挂 `<App>`**（插槽首帧就是满的；插件拉不到也照常渲染） |
-| `src/App.tsx` | 外壳装配：三列网格、头部（标题 / 状态 / 找你 / 团队 / 设置 / 详情）、主题与布局落地、键盘（Esc 关浮层、⌘K 开「找你」） |
+| `src/App.tsx` | 外壳装配：最左导航 + 三列网格（`data-view` 在「聊天 / 后台任务」两屏之间切）、头部（标题 / 状态 / 找你 / 团队 / 设置 / 详情）、主题与布局落地、键盘（Esc 关浮层、⌘K 开「找你」） |
 | `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`（轨迹按 `turn.slug` 分桶进 `runs`，群聊私聊同一条规则）/`loadTurn`/`loadPersonRuns`（后台任务面板）、`openTasks`/`setTasksWho`/`closeTasks`、localStorage 两键 |
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
@@ -173,10 +173,11 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/stream/AttachmentPreview.tsx` | 非图片附件点开看一眼：**按响应头**决定（图片 / PDF → `object URL`，`text/*` → `<pre>`，其余说「不能预览」）。不按文件名判断 —— 名字是用户起的 |
 | `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`live` 行交给 `LiveRow`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`）。群聊私聊同一条路径 |
 | `src/stream/LiveRow.tsx` | 聊天流里唯一的过程：头像（`working`）+ 一行「最新一步 · N 步 · 耗时」，每秒自走时钟，点它开这个人的任务面板。折叠帧不带步骤时先 `loadTurn`；没有步骤只写「在想…」，绝不编他会说什么（ADR-046） |
-| `src/panels/TasksPanel.tsx` | 后台任务：右上角按钮打开、从右侧盖住聊天滑出（遮罩 / Esc 关）。顶部一排人（在跑的排前），下面是这个人跨频道的轮次，每块第一行是 `trigger`（哪句话触发的）+ 频道 + 时间，第二行复用 `RunBlock`。打开时拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次（只在面板开着时） |
+| `src/panels/TasksPanel.tsx` | 后台任务（应用第二屏，`data-view="tasks"`）：左 300px 是选中那个人跨频道的轮次（人像条 + 四组：正在跑 / 已完成 / 失败 / 没回话），右边是选中那一轮的抬头、`trigger` 引用和步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
 | `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（11 个：`sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位 |
+| `src/sidebar/Rail.tsx` | 最左 78px 的应用级导航：两格图标（聊天 / 后台任务），`aria-current` 直接读 `state.tasks.open`；名字只在 `title` 里，后台任务那格右上角是在跑人数。桌面壳里这一列同时是窗口红绿灯的地盘（`html[data-shell="desktop"] .rail` 让出顶部并负责拖动） |
 | `src/sidebar/Sidebar.tsx` | 侧栏：logo、可收起成 56px 图标条、一列平铺频道（两行：名字+状态 / 预览）；列表脚下有一个 `sidebar.footer` 插槽。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |

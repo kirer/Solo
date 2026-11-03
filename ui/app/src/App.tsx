@@ -13,6 +13,7 @@ import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
 import { NeedMenu, Overlays } from "./panels/Overlays.tsx";
 import { TasksPanel } from "./panels/TasksPanel.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
+import { Rail } from "./sidebar/Rail.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { Slot } from "./plugin/Slot.tsx";
 import { AttachmentPreview } from "./stream/AttachmentPreview.tsx";
@@ -20,7 +21,6 @@ import { Stream } from "./stream/Stream.tsx";
 import {
 	closeTasks,
 	openChannel,
-	openTasks,
 	openWithPerson,
 	setNeedMenu,
 	setPluginSheet,
@@ -48,10 +48,6 @@ export function App(): JSX.Element {
 	const team = useStore((state) => state.team);
 	const pluginSheet = useStore((state) => state.pluginSheet);
 	const tasksOpen = useStore((state) => state.tasks.open);
-	const presence = useStore((state) => state.presence);
-	const runningCount = [...presence.values()].filter(
-		(value) => value.state === "working" || value.state === "thinking",
-	).length;
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
@@ -149,7 +145,11 @@ export function App(): JSX.Element {
 			className="frame"
 			data-side={side}
 			data-right={right.open ? "open" : "closed"}
+			data-view={tasksOpen ? "tasks" : "chat"}
 		>
+			{/* 最左一列：应用级导航。聊天与后台任务是两屏，共用这一列（docs/DESIGN.md §2.9）。 */}
+			<Rail />
+
 			<Sidebar />
 
 			<main className="sheet">
@@ -210,20 +210,6 @@ export function App(): JSX.Element {
 							</div>
 							<button
 								type="button"
-								className="icon-btn tasks-btn"
-								id="tasks-btn"
-								aria-label="后台任务"
-								title="后台任务"
-								aria-pressed={tasksOpen}
-								onClick={() => (tasksOpen ? closeTasks() : openTasks())}
-							>
-								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-									<path d="M4 6h16M4 12h10M4 18h13" />
-								</svg>
-								{runningCount === 0 ? null : <span className="tasks-badge">{runningCount}</span>}
-							</button>
-							<button
-								type="button"
 								className="icon-btn"
 								id="detail-btn"
 								aria-label="详情"
@@ -257,12 +243,12 @@ export function App(): JSX.Element {
 				)}
 
 				{channel === null ? null : <Composer toast={toast} />}
-
-				{/* 盖在聊天上、从右侧滑出；不在三列里，所以不挤窄对话。 */}
-				<TasksPanel />
 			</main>
 
 			<RightPanel />
+
+			{/* 第二屏：任务不再是盖在聊天上的抽屉，它自己占满中栏与右栏。 */}
+			<TasksPanel />
 
 			<Overlays toasts={toasts} />
 

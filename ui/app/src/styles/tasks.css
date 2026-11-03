@@ -1,0 +1,557 @@
+/* ── 后台任务：一屏两栏 ──────────────────────────────────────────────
+ *
+ * 左边是「这个人跑过的轮次」，右边是选中那一轮的过程。骨架照微信桌面版：
+ * 一列列表 + 一整块内容，不是抽屉，也没有卡片。
+ *
+ * 只用现有 token，不新增颜色；层级靠字号、灰阶和一条 0.5px 的线。
+ */
+
+/* 占掉「侧栏 + 纸 + 右栏」那三列（外壳把列数改成两列，见 shell.css）。 */
+.tasks {
+	display: grid;
+	grid-template-columns: 300px minmax(0, 1fr);
+	min-width: 0;
+	min-height: 0;
+	height: 100dvh;
+	background: var(--ground);
+}
+
+/* ── 左栏：人 + 轮次 ─────────────────────────────────────────────── */
+
+.tasks-list {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	/* 没有这一条，列表会把整列撑高、把 `overflow: auto` 变成摆设（flex 子项默认 min-height: auto）。 */
+	min-height: 0;
+	border-right: 0.5px solid var(--line);
+	background: var(--frame);
+}
+
+.tasks-list-head {
+	display: flex;
+	/* 垂直居中，不是 baseline —— 只有一个标题时 baseline 会把它顶到上沿。 */
+	align-items: center;
+	gap: 8px;
+	height: 56px;
+	padding: 0 16px 0 18px;
+	flex: none;
+}
+
+.tasks-list-head h2 {
+	margin: 0;
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.tasks-people {
+	display: flex;
+	gap: 2px;
+	padding: 0 10px 10px;
+	overflow-x: auto;
+	flex: none;
+}
+
+.tasks-person {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 9px 0 4px;
+	border: 0;
+	border-radius: var(--r-pill);
+	background: transparent;
+	color: var(--ink-3);
+	font-family: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.tasks-person:hover {
+	background: var(--hover);
+	color: var(--ink-2);
+}
+
+.tasks-person[aria-current="true"] {
+	background: var(--active);
+	color: var(--ink);
+}
+
+.tasks-person span[aria-hidden] {
+	display: block;
+	width: 20px;
+	height: 20px;
+	border-radius: 50%;
+	overflow: hidden;
+	flex: none;
+}
+
+.tasks-person svg,
+.tasks-person img {
+	display: block;
+	width: 20px;
+	height: 20px;
+}
+
+.tasks-rows {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	padding: 2px 0 24px;
+}
+
+/* 组头是按钮：十三轮全摊开，一屏只装得下四轮。 */
+.tasks-group {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	width: 100%;
+	margin: 0;
+	padding: 14px 18px 6px;
+	border: 0;
+	background: transparent;
+	font-family: var(--mono);
+	font-size: 10px;
+	letter-spacing: 0.1em;
+	color: var(--ink-3);
+	text-align: left;
+	cursor: pointer;
+}
+
+.tasks-group:hover {
+	color: var(--ink-2);
+}
+
+.tasks-group-caret {
+	width: 11px;
+	height: 11px;
+	flex: none;
+	transition: transform 140ms ease;
+}
+
+.tasks-group[aria-expanded="true"] .tasks-group-caret {
+	transform: rotate(90deg);
+}
+
+.tasks-group-n {
+	font-variant-numeric: tabular-nums;
+	opacity: 0.8;
+}
+
+/* 一行 = 一轮。第一行「哪个频道 · 几点 · 跑了多久」，第二行是被叫醒时那句话。 */
+.tasks-row {
+	display: block;
+	width: 100%;
+	padding: 8px 14px 10px 18px;
+	border: 0;
+	background: transparent;
+	text-align: left;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.tasks-row:hover {
+	background: var(--hover);
+}
+
+.tasks-row[aria-selected="true"] {
+	background: var(--active);
+}
+
+.tasks-row-top {
+	display: flex;
+	align-items: baseline;
+	gap: 6px;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
+.tasks-row-ch {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tasks-row-time,
+.tasks-row-ms {
+	font-family: var(--mono);
+	font-size: 10px;
+	opacity: 0.85;
+}
+
+.tasks-row-ms {
+	margin-left: auto;
+	padding-left: 8px;
+}
+
+.tasks-row-text {
+	display: -webkit-box;
+	margin-top: 3px;
+	font-size: 13px;
+	line-height: 1.55;
+	color: var(--ink-2);
+	overflow: hidden;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+}
+
+.tasks-row[aria-selected="true"] .tasks-row-text {
+	color: var(--ink);
+}
+
+.tasks-empty {
+	margin: 0;
+	padding: 12px 18px;
+	font-size: 12.5px;
+	line-height: 1.7;
+	color: var(--ink-3);
+}
+
+.tasks-foot {
+	margin: 0;
+	padding: 10px 18px 14px;
+	border-top: 0.5px solid var(--rule);
+	font-size: 11px;
+	color: var(--ink-3);
+	flex: none;
+}
+
+/* ── 右栏：这一轮 ───────────────────────────────────────────────── */
+
+.task-detail {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	background: var(--ground);
+}
+
+.task-detail-blank {
+	display: grid;
+	place-items: center;
+	font-size: 13px;
+	color: var(--ink-3);
+}
+
+.task-detail-blank p {
+	margin: 0;
+}
+
+.task-detail-head {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	height: 56px;
+	padding: 0 28px;
+	border-bottom: 0.5px solid var(--line);
+	flex: none;
+}
+
+.task-av {
+	display: block;
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	overflow: hidden;
+	flex: none;
+}
+
+.task-av svg,
+.task-av img {
+	display: block;
+	width: 26px;
+	height: 26px;
+}
+
+.task-name {
+	font-size: 13.5px;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.task-role,
+.task-ch {
+	font-size: 11.5px;
+	color: var(--ink-3);
+}
+
+.task-sep {
+	width: 1px;
+	height: 10px;
+	background: var(--line);
+}
+
+.task-meta {
+	margin-left: auto;
+	display: flex;
+	gap: 14px;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+.task-meta [data-tone="ok"] {
+	color: var(--ink-2);
+}
+
+.task-meta [data-tone="bad"] {
+	color: var(--danger);
+}
+
+.task-meta [data-tone="live"] {
+	color: var(--ink);
+}
+
+.task-body {
+	flex: 1;
+	overflow: auto;
+	padding: 26px 32px 48px;
+}
+
+.task-label {
+	margin: 0 0 8px;
+	font-family: var(--mono);
+	font-size: 10px;
+	letter-spacing: 0.12em;
+	color: var(--ink-3);
+}
+
+.task-label-2 {
+	margin-top: 32px;
+}
+
+/* 叫醒他的那句话：左边一根线，像引用，不抢过程。 */
+.task-quote {
+	display: flex;
+	flex-direction: column;
+	margin: 0;
+	max-width: 780px;
+	padding: 2px 0 2px 14px;
+	border-left: 2px solid var(--rule);
+}
+
+.task-quote-from {
+	margin-bottom: 5px;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
+.task-quote-text {
+	font-size: 13px;
+	line-height: 1.8;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+}
+
+/* ── 步骤：时间一列、一根竖线、内容一列 ─────────────────────────── */
+
+.task-steps {
+	max-width: 900px;
+	padding-top: 2px;
+}
+
+.task-step {
+	display: grid;
+	grid-template-columns: 62px 13px minmax(0, 1fr);
+	column-gap: 10px;
+}
+
+.task-step-at {
+	padding-top: 3px;
+	font-family: var(--mono);
+	font-size: 10px;
+	color: var(--ink-3);
+	text-align: right;
+	opacity: 0.75;
+}
+
+.task-step-rail {
+	position: relative;
+}
+
+.task-step-rail::before {
+	content: "";
+	position: absolute;
+	left: 5px;
+	top: 0;
+	bottom: 0;
+	width: 1px;
+	background: var(--rule);
+}
+
+.task-step:last-child .task-step-rail::before {
+	bottom: auto;
+	height: 12px;
+}
+
+.task-step-dot {
+	position: absolute;
+	left: 1.5px;
+	top: 6px;
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--ground);
+	border: 1px solid var(--ink-3);
+}
+
+.task-step[data-open="true"] .task-step-dot {
+	background: var(--ink-3);
+}
+
+.task-step-body {
+	min-width: 0;
+	padding-bottom: 13px;
+}
+
+.task-step-line {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	width: 100%;
+	min-height: 20px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font-family: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.task-step-line:disabled {
+	cursor: default;
+}
+
+.task-step-title {
+	min-width: 0;
+	font-family: var(--mono);
+	font-size: 11.5px;
+	line-height: 1.65;
+	color: var(--ink-2);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.task-step-line:hover .task-step-title {
+	color: var(--ink);
+}
+
+.task-step-ms {
+	flex: none;
+	margin-left: auto;
+	padding-left: 10px;
+	font-family: var(--mono);
+	font-size: 10px;
+	color: var(--ink-3);
+}
+
+/* 机器产物：命令和它吐出来的东西，等宽、单独一块底。 */
+.task-cmd {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 6px 0 0;
+	max-width: 780px;
+	padding: 9px 12px 8px;
+	border: 1px solid var(--rule);
+	border-radius: 8px;
+	background: var(--raised);
+}
+
+.task-cmd-in {
+	font-family: var(--mono);
+	font-size: 10.5px;
+	line-height: 1.8;
+	color: var(--ink-2);
+	word-break: break-all;
+	white-space: pre-wrap;
+}
+
+.task-cmd-in em {
+	margin-right: 6px;
+	font-style: normal;
+	color: var(--ink-3);
+}
+
+.task-cmd-out {
+	font-family: var(--mono);
+	font-size: 10.5px;
+	line-height: 1.75;
+	color: var(--ink-3);
+	white-space: pre-wrap;
+	word-break: break-all;
+	max-height: 320px;
+	overflow: auto;
+}
+
+.task-cmd-foot {
+	font-family: var(--mono);
+	font-size: 10px;
+	color: var(--ink-3);
+	opacity: 0.8;
+}
+
+/* ── 窄屏 ────────────────────────────────────────────────────────── */
+
+/* 手机上从左栏的返回按钮回聊天（桌面靠最左边那格导航）。 */
+.tasks-back {
+	display: none;
+}
+
+@media (max-width: 900px) {
+	.tasks {
+		grid-template-columns: 260px minmax(0, 1fr);
+	}
+
+	.task-body {
+		padding: 20px 20px 40px;
+	}
+}
+
+@media (max-width: 640px) {
+	/* 手机上最左边那列导航不占宽度：进出后台任务靠这一屏自己的返回键。 */
+	.frame .rail {
+		display: none;
+	}
+
+	.frame[data-view="tasks"] {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.tasks {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: minmax(0, 46%) minmax(0, 1fr);
+	}
+
+	.tasks-list {
+		border-right: 0;
+		border-bottom: 0.5px solid var(--line);
+	}
+
+	.tasks-list-head {
+		padding-top: env(safe-area-inset-top);
+		height: calc(52px + env(safe-area-inset-top));
+	}
+
+	.tasks-back {
+		display: inline-grid;
+		place-items: center;
+		width: 30px;
+		height: 30px;
+		margin-right: 2px;
+		border: 0;
+		border-radius: 8px;
+		background: transparent;
+		color: var(--ink-2);
+		cursor: pointer;
+	}
+
+	.task-detail-head {
+		padding: 0 16px;
+	}
+}

@@ -17,6 +17,7 @@ const composerCss = strip(read("../../ui/app/src/styles/composer.css"));
 const shellCss = strip(read("../../ui/app/src/styles/shell.css"));
 const baseCss = strip(read("../../ui/app/src/styles/base.css"));
 const streamCss = strip(read("../../ui/app/src/styles/stream.css"));
+const tasksCss = strip(read("../../ui/app/src/styles/tasks.css"));
 const appSource = read("../../ui/app/src/App.tsx");
 const storeSource = read("../../ui/app/src/state/store.ts");
 const sidebarSource = read("../../ui/app/src/sidebar/Sidebar.tsx");
@@ -61,9 +62,9 @@ describe("引用条与附件托盘的居中轨道", () => {
 });
 
 describe("右侧栏", () => {
-	it("是三列布局，第三列宽度来自 --rightbar", () => {
+	it("是四列布局（导航 + 侧栏 + 纸 + 右栏），第三列宽度来自 --rightbar", () => {
 		expect(blocksOf(shellCss, ".frame").join("\n")).toContain(
-			"grid-template-columns: var(--sidebar) minmax(0, 1fr) var(--rightbar)",
+			"grid-template-columns: var(--rail) var(--sidebar) minmax(0, 1fr) var(--rightbar)",
 		);
 		expect(blocksOf(shellCss, '.frame[data-right="open"]').join("\n")).toContain("--rightbar: 360px");
 	});
@@ -72,9 +73,9 @@ describe("右侧栏", () => {
 		expect(baseCss).toContain("--rightbar: 0px");
 	});
 
-	it("右栏落在第三列，不是 fixed", () => {
+	it("右栏落在第四列（第一列是导航），不是 fixed", () => {
 		const rule = blocksOf(shellCss, ".detail").join("\n");
-		expect(rule).toContain("grid-column: 3");
+		expect(rule).toContain("grid-column: 4");
 		expect(rule).not.toContain("position: fixed");
 	});
 
@@ -103,7 +104,7 @@ describe("侧栏收起", () => {
 
 	it("展开时宽度来自 --sidebar，且换了列宽有过渡", () => {
 		const frame = blocksOf(shellCss, ".frame").join("\n");
-		expect(frame).toContain("grid-template-columns: var(--sidebar)");
+		expect(frame).toContain("var(--sidebar) minmax(0, 1fr)");
 		expect(frame).toContain("transition: grid-template-columns");
 	});
 
@@ -152,5 +153,33 @@ describe("消息正文换行", () => {
 				expect(rule).not.toMatch(/overflow:\s*auto/);
 			}
 		}
+	});
+});
+
+describe("最左导航与后台任务（第二屏）", () => {
+	it("两屏共用一列导航：data-view 由 tasks.open 驱动", () => {
+		expect(appSource).toContain('data-view={tasksOpen ? "tasks" : "chat"}');
+		expect(appSource).toContain("<Rail />");
+	});
+
+	it("导航只有两格：聊天、后台任务", () => {
+		const rail = read("../../ui/app/src/sidebar/Rail.tsx");
+		expect(rail).toContain('id="rail-chat"');
+		expect(rail).toContain('id="rail-tasks"');
+		expect(rail.match(/className="rail-item"/g)?.length).toBe(2);
+	});
+
+	it("后台任务那一屏占掉侧栏 + 纸 + 右栏，不和聊天并存", () => {
+		expect(blocksOf(shellCss, '.frame[data-view="tasks"]').join("\n")).toContain(
+			"grid-template-columns: var(--rail) minmax(0, 1fr)",
+		);
+		for (const part of [".sidebar", ".sheet", ".detail"]) {
+			expect(blocksOf(shellCss, '.frame[data-view="tasks"] ' + part).join("\n")).toContain("display: none");
+		}
+	});
+
+	it("手机上导航不占宽度，由第二屏自己的返回键退出", () => {
+		expect(tasksCss).toMatch(/\.frame \.rail \{\s*display: none;/);
+		expect(tasksCss).toContain(".tasks-back");
 	});
 });

@@ -1,5 +1,5 @@
 /**
- * 左栏：品牌头 + 一列会话。
+ * 左栏：一列会话（头上一行「聊天」，不画品牌标 —— 品牌在窗口标题和图标上）。
  *
  * 只有一个列表，没有分组 —— 我要的是「一眼扫到哪个会话动了」，
  * 分组标题占的是垂直空间，换来的信息量是零（他自己分的组，他记得）。
@@ -15,7 +15,6 @@ import type { Actor, Channel } from "../api/types.ts";
 
 export function Sidebar(): JSX.Element {
 	const channels = useStore((state) => state.channels);
-	const workspaceName = useStore((state) => state.workspaceName);
 	const people = useStore((state) => state.people);
 	const currentId = useStore((state) => state.currentId);
 	const side = useStore((state) => state.side);
@@ -32,17 +31,9 @@ export function Sidebar(): JSX.Element {
 	return (
 		<aside className="sidebar" data-side={side}>
 			<div className="side-logo">
-				{/* 品牌标：一颗自己的星，和绕着它转的轨道（和 `desktop/icon.svg` 同一套形状）。 */}
-				<span className="brand-mark" aria-hidden="true">
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none">
-						<g transform="rotate(-28 12 12)">
-							<ellipse cx="12" cy="12" rx="8.8" ry="3.5" stroke="currentColor" strokeWidth="1.8" opacity="0.65" />
-						</g>
-						<circle cx="12" cy="12" r="3.3" fill="currentColor" />
-					</svg>
-				</span>
+				{/* 不画品牌标：这一列的头只说明「这里是聊天」，和左边那格图标连成一条线。 */}
 				<h1 className="brand-name" id="bar-title">
-					{workspaceName}
+					聊天
 				</h1>
 				<span className="side-grow" />
 				{/* 插槽：品牌行右侧，收放按钮之前。 */}
