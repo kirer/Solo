@@ -1662,3 +1662,58 @@ body[data-layout="bubble"]
 	white-space: nowrap;
 	flex: none;
 }
+
+/* ── 回复上面那块过程 ─────────────────────────────────────────────
+   一轮的思考与命令压在它的结论上面，和回复同一个头像列对齐：先看怎么做、
+   再看说了什么。折叠时只占一行（`run-head` 的样子），点开才是步骤树。
+   这块**不是消息**：它由轨迹派生，展开步骤时才拉正文。 */
+
+.row-process {
+	margin-top: 2px;
+	margin-bottom: 6px;
+	max-width: 100%;
+}
+
+/* 过程块和它下面那条回复之间不留空：它们是一件事的上半截和下半截。 */
+.row-process + .md {
+	margin-top: 2px;
+}
+
+/* 过程块的底色比消息浅一档：它是旁注，不该和正文字一个分量。
+   折叠时下边框不画、下圆角收小 —— 它和下面的回复是同一件事。 */
+.row-process .run-bubble {
+	background: color-mix(in oklab, var(--raised) 70%, transparent);
+	border: 1px solid var(--line);
+	border-bottom-color: transparent;
+	border-radius: 10px 10px 4px 4px;
+	padding: 4px 10px;
+}
+
+.row-process .run[data-open="true"] .run-bubble {
+	border-bottom-color: var(--line);
+	border-radius: 10px;
+	background: var(--raised);
+}
+
+/* 过程块长在 `.row-body` 里（名字行下面），不是 `.row-say` 的兄弟 ——
+   所以「和回复挨着」要按「这一行带过程」选，不能按相邻兄弟选（那条规则永不命中）。 */
+.row-say:has(> .row-body > .row-process) {
+	margin-top: 12px;
+}
+
+.row-say:has(> .row-body > .row-process) > .row-body > .row-head {
+	margin-bottom: 6px;
+}
+
+/* 正在跑的那一条：标题后面跟命令本身（等宽、截断），一行放不下就省略。 */
+.live-cmd {
+	margin-left: 8px;
+	font-family: var(--mono);
+	font-size: 11px;
+	color: var(--ink-3);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	max-width: 34ch;
+	vertical-align: 1px;
+}

@@ -1,9 +1,9 @@
 /** `hire`：招人 / 让人走 / 看能挑哪些模型。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { OWNER_SLUG, createAgent, readAllIdentities } from "../../agent/identity.ts";
+import { OWNER_SLUG, assistantsOf, createAgent, readAllIdentities } from "../../agent/identity.ts";
 import { redact } from "../../agent/secrets.ts";
 import { moveAt } from "../../runtime/io.ts";
-import { listTeams, readTeam } from "../../team/doc.ts";
+import { readTeam } from "../../team/doc.ts";
 import { ChannelDoc, dmId, type ChannelState } from "../types.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
 import { fill } from "../../md/catalog.ts";
@@ -23,7 +23,6 @@ export function createHireTool(deps: CoreToolDeps) {
 			action: Type.Optional(Type.String({ description: t("hire.param.action") })),
 			name: Type.String({ description: t("hire.param.name") }),
 			title: Type.Optional(Type.String({ description: t("hire.param.title") })),
-			manager: Type.Optional(Type.String({ description: t("hire.param.manager") })),
 			team: Type.Optional(Type.String({ description: t("hire.param.team") })),
 			body: Type.Optional(Type.String({ description: t("hire.param.body") })),
 			model: Type.Optional(Type.String({ description: t("hire.param.model") })),
@@ -50,6 +49,11 @@ export function createHireTool(deps: CoreToolDeps) {
 			}
 
 			const all = await readAllIdentities(deps.layout.agentRoots);
+			// 组织变动归助理（ADR-058）：招人、开除都会改别人看见的世界。没有这道闸，
+			// 任何一个 agent 都能把别人开掉。`models` 只是读清单，人人可用。
+			const self = await selfOf(deps, Number(api.conversationId), ctx);
+			if (self === undefined) return text(t("hire.refuse.no-roster"));
+			if (!assistantsOf(deps.layout, all).includes(self)) return text(t("hire.refuse.not-assistant"));
 
 			if (action === "fire") {
 				const slug = args.name.trim();
@@ -64,23 +68,6 @@ export function createHireTool(deps: CoreToolDeps) {
 				}
 				if (target.slug === OWNER_SLUG) return text(t("hire.fire.owner"));
 				if (target.dir.startsWith(deps.layout.assistantRoot)) return text(t("hire.fire.assistant"));
-				const reports = all.filter((identity) => identity.manager === target.slug);
-				if (reports.length > 0) {
-					return text(
-						t("hire.fire.reports", {
-							name: target.name,
-							slugs: reports.map((item) => item.slug).join("、"),
-						}),
-					);
-				}
-				const leading = await Promise.all(
-					(await listTeams(deps.layout.teamsRoot)).map(async (team) => ((await readTeam(deps.layout.teamsRoot, team.slug))?.lead === target.slug ? team.slug : undefined)),
-				);
-				const teams = leading.filter((item): item is string => item !== undefined);
-				if (teams.length > 0) {
-					return text(t("hire.fire.leading", { name: target.name, teams: teams.join("、") }));
-				}
-
 				await moveAt(target.dir, `${deps.layout.membersRoot}/.retired/${retiredNameOf(target.slug)}`);
 				// 从所有频道里移除，并归档我和他的私聊；团队频道再按文件重算一次。
 				await deps.harness.commit(async (tx) => {
@@ -116,17 +103,10 @@ export function createHireTool(deps: CoreToolDeps) {
 			}
 
 			// create
-			const manager = args.manager ?? (await selfOf(deps, Number(api.conversationId), ctx)) ?? OWNER_SLUG;
-			const known = new Set(all.map((item) => item.slug));
-			known.add(OWNER_SLUG);
-			if (!known.has(manager)) {
-				return text(t("hire.create.manager-missing", { manager, slugs: [...known].join("、") }));
-			}
 			const identity = await createAgent({
 				root: deps.layout.membersRoot,
 				name: args.name,
 				...(args.title === undefined ? {} : { title: args.title }),
-				manager,
 				...(args.team === undefined ? {} : { team: args.team }),
 				// 身份正文也会进每一轮提示词，跟 `file` 写盘走同一道脱敏。
 				...(args.body === undefined ? {} : { body: redact(args.body, deps.layout.appRoot) }),

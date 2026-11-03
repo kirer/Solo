@@ -14,7 +14,7 @@
 | 家 | 每轮进上下文 | 写什么 | 上限 | 例子 |
 | --- | --- | --- | --- | --- |
 | `<userRoot>/rules.md` | 是 | **不说就会立刻出错**的硬规矩 | 15 条，一行一条，不带解释 | 「只回叫你的那个频道」「像成员说话：一两句，先给结论」 |
-| `<appRoot>/prompt/*.md` | 是 | 怎么组织信息、怎么用工具（带插槽） | 一段 ≤ 12 行 | 「你的上级：{{manager}}」 |
+| `<appRoot>/prompt/*.md` | 是 | 怎么组织信息、怎么用工具（带插槽） | 一段 ≤ 12 行 | 「助理：{{assistant}}」「同团队的人：{{peers}}」 |
 | `<userRoot>/skills/<n>/SKILL.md` | 否，查了才读 | 分场景的长做法 | ≤ 4 KB（自律 3 KB），四段 | 拍板链、怎么汇报、怎么建团队 |
 | `<userRoot>/members/<slug>/identity.md` | 是（正文） | 这个人的职责与边界 | ≤ 20 行 | 「你负责 X；不做 Y」 |
 | `<appRoot>/text/*.md` | 是（工具描述每轮随工具发） | 工具的描述、参数说明、拒绝与回话、投递头、附件说明 | 无行数上限，一句一条 | `say.param.text`、`attachments.image.gone` |
@@ -28,14 +28,16 @@
 ```
 seed/
   rules.md                       # 15 条以内，每轮都看见
+  policy.md                      # 派活的判据：模式 + 谁能派 + 规矩（播种进 <userRoot>/policy.md）
   text/                          # 机械文案：`## key` 分节，代码里只留键名
-    tools.md                     # 7 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
+    tools.md                     # 8 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
     channel.md                   # 投递头 / 附件说明 / 未答留痕 / 提示词兜底句
-  prompt/                        # 9 段 + 11 段（每轮贴给模型的回话规矩）
+    work.md                      # 派活工具：立工单 / 报进度 / 问人 / 重试 / 收工
+  prompt/                        # 10 段进系统提示词 + 10 段投递时用
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
     05-body.md                   # {{self.body}}（空则整段消失）
     10-rules.md                  # {{rules}}
-    20-position.md               # 上级 / 下属 / 整条链 / 同团队的人
+    20-position.md               # 助理 / 团队 / 同团队的人 / 群与私聊
     30-team.md                   # 团队简报 + 团队记忆目录
     40-tools.md                  # 从注册表实拍，插槽 {{tools}}
     50-memory.md                 # 记忆目录
@@ -50,8 +52,8 @@ seed/
     86-digest.md                 # 未读摘要尾注
     87-merged.md                 # 合并唤醒尾注
     88-task.md                   # 插话时提醒「手上的活属于哪个频道」
+    89-work.md                   # 接活 / 工单 / 什么时候该停下来问（插槽 {{policy}}）
     90-interrupted.md            # 插话时的额外一句
-    95-settle.md                 # 团队记忆沉淀那一轮的正文（插槽 {{team}} {{pending}} {{candidates}}）
   assistant/                     # 助理（知言）：播种进 appRoot/assistant/<slug>/
     identity.md                  # 助理身份（从代码挪出来）
     skills/建立团队/SKILL.md
@@ -78,17 +80,16 @@ seed/
 | `{{self.name}}` `{{self.title}}` `{{self.slug}}` | 自己 | `identity.md` |
 | `{{self.dir}}` | 自己的目录（`assistant/<slug>/` 或 `members/<slug>/`） | `Layout` 的两个根 |
 | `{{root.user}}` `{{root.app}}` | 两个根的**绝对路径**（组织 / 程序自带） | `Layout.userRoot` / `Layout.appRoot` |
-| `{{manager}}` | 上级的显示名 | `manager` 字段 + 名册 |
-| `{{reports}}` | 向你汇报的人 | 名册反查 |
-| `{{chain}}` | 往上的整条汇报线 | `chainUp` |
+| `{{assistant}}` | 助理的显示名（自己就是助理时是「你自己」） | `layout.assistantRoot` 下的身份目录（`assistantsOf`） |
 | `{{team}}` `{{peers}}` | 团队 slug / 同团队的人 | `identity.md` + 名册 |
 | `{{chats.groups}}` `{{chats.dm}}` | 你在哪些群 / 和我的私聊开没开（`已开`） | 频道文档 |
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
+| `{{policy}}` | 派活策略（模式 / 名单 / 规矩） | `<userRoot>/policy.md`（`work/policy.ts` 的 `renderPolicy`） |
 | `{{count}}` | 全员 agent 数 | 名册 |
 | `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | 身份目录里 `identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
-| `{{team.status}}` `{{team.lead}}` `{{team.dir}}` | 团队状态 / 团队管理员 / 目录 | `teams/<slug>/README.md` 的 YAML 头 |
+| `{{team.status}}` `{{team.dir}}` | 团队状态 / 目录 | `teams/<slug>/README.md` 的 YAML 头与路径 |
 | `{{team.members}}` | 团队成员的 slug | `teams/<slug>/` 下的 agent |
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
 | `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | `81-alone.md` / `82-shared.md`（按收件人数选一份） |
@@ -99,17 +100,14 @@ seed/
 | `{{rows}}` | 未读频道的行列表 | 频道文档 |
 | `{{merged}}` | 这次合并掉的未唤醒条数 | `wake()` 返回值 |
 | `{{task}}` | 插话时他手上那件活所在的频道标题 | 名册里上一次的唤醒记录（`wake.task`） |
-| `{{channel}}` | 沉淀发生在哪个频道（id 明写，模型才知道回哪儿） | 团队频道 id |
-| `{{pending}}` | 这一轮要整理进团队记忆的消息条数 | settle 候选 |
-| `{{candidates}}` | 候选消息列表，一行一条：`#seq [kind] 谁：正文` | 频道消息（`settleCandidates`） |
 | `{{tool:say}}` 等 | 工具名（唯一允许出现工具名的写法） | system 段：注册表实拍；delivery 段：`toolSlots()` 按后缀自解释 |
 
 大部分是**单值**：一个名字、一串清单、一个数字（`pending` 是条数）。少数是**复合值**
-（`self.body` / `team.brief` / `team.members` / `team.memory` / `reply.*` / `candidates`）：
+（`self.body` / `team.brief` / `team.members` / `team.memory` / `reply.*`）：
 整段文字从别的文件或投递上下文搬过来。它们不违反下面第 2 条——那段文字本来就住在那个
 文件里，模板只负责摆位置，不负责写它。
 
-**「这个事实现在没有」怎么说，也归模板**：写 `{{manager ?? 没有人（要拍板的事自己定，或者交给我）}}`。
+**「这个事实现在没有」怎么说，也归模板**：写 `{{assistant ?? 还没有助理（要拍板的事直接 @我）}}`。
 代码只给事实，没有就给 `undefined`；默认句写在 md 里（硬规矩 6）。
 
 五条硬规矩：
@@ -119,7 +117,7 @@ seed/
    整段搬来的正文除外，见上）。
 3. **一个 md = 一段 = 一个 cache section**，文件名前缀定序。加一段就是加个文件，不改代码。
    同一组文件必须渲染出**逐字节相同**的提示词，否则 prompt cache 每轮都被打穿。
-4. **整句插槽只许出现在 delivery 段**（`80-reply.md` / `90-interrupted.md` / `95-settle.md`）：`reply.alone` /
+4. **整句插槽只许出现在 delivery 段**（`80-reply.md` / `90-interrupted.md`）：`reply.alone` /
    `reply.colleagues` 是**条件句**（这一轮只有你被叫醒 / 还有 X 在），不是事实值；代码只按条件
    从 `81-alone.md` / `82-shared.md` / `83-colleagues.md` 三份片段里选一份填进去。别的段不许用 `reply.*`。
 5. **delivery 段的插槽面比 system 段窄，用错了会静默变「（未设置）」**：
@@ -128,12 +126,11 @@ seed/
      **名字写错不报错**（写 `{{tool:sayy}}` 就渲染成 `sayy`），靠 seed 侧检查把名字和真工具名对一遍。
    - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues`；
      `81` / `82` 填 `others`；`83` 填 `colleagues`；`84` / `85` 不填；`86` 填 `total` / `rows`；
-     `87` 填 `merged`；`88` 填 `task`；`90-interrupted` 只填 `tool:*`；
-     `95-settle` 只填 `team` / `channel` / `pending` / `candidates` + `tool:*`。
+     `87` 填 `merged`；`88` 填 `task`；`89` 填 `policy`；`90-interrupted` 只填 `tool:*`。
      往这些段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
      `prompt:check` 用样例表查所有段。
 
-6. **「空的时候怎么说」也写在模板里**：`{{manager ?? 没有人（要拍板的事自己定，或者交给我）}}`。
+6. **「空的时候怎么说」也写在模板里**：`{{assistant ?? 还没有助理（要拍板的事直接 @我）}}`。
    代码只给事实（没有就给 `undefined`），句子归 md。写了默认值的插槽不再报 `unset`——
    作者已经替这个空做过决定。默认文案里不能有花括号，也不会二次展开。
    同理，delivery 片段（`81`–`83`）的正文被删空时用**同一个文件的 `default:` 头**顶上：

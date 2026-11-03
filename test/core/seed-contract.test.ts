@@ -175,8 +175,8 @@ const PROMPT_FILES = [
 	"86-digest.md",
 	"87-merged.md",
 	"88-task.md",
+	"89-work.md",
 	"90-interrupted.md",
-	"95-settle.md",
 ] as const;
 
 /** 一段 ≤ 12 行（契约 §1 的表格）。 */
@@ -333,10 +333,10 @@ describe("出厂内容：体积与位置", () => {
 		const text = await readSeed("assistant/identity.md");
 		expect(text.startsWith("---")).toBe(true);
 		// `team` 是可选的：助理不属于任何团队，别为凑字段编一个。
-		for (const field of ["name", "title", "manager"]) {
+		for (const field of ["name", "title"]) {
 			expect(new RegExp(`^${field}:`, "m").test(text), `identity.md 缺 ${field}`).toBe(true);
 		}
-		expect(/^manager:\s*owner\s*$/m.test(text), "助理的上级必须是我（owner）").toBe(true);
+		expect(/^manager:/m.test(text), "助理没有上级（ADR-058）").toBe(false);
 		expect(text.split("\n").filter((line) => line.trim() !== "").length).toBeLessThanOrEqual(20);
 	});
 

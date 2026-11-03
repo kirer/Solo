@@ -5,7 +5,6 @@ import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import type { Conversation } from "../runtime/index.ts";
 import { deliveryPrompt, mergedNotice, renderDelivery, type DeliveryPrompt } from "./delivery.ts";
 import { planAttachments } from "./attachments.ts";
-import type { WakePriority } from "./queue.ts";
 import { wake } from "./wake.ts";
 import type { Channel, Message } from "./types.ts";
 import type { WakeRecord, WakeTarget } from "./turn/record.ts";
@@ -100,17 +99,19 @@ type DeliverOptions = {
 	/** 机械文案目录（`text/channel.md`）。投递头与附件说明从这里取。 */
 	readonly text?: TextCatalog;
 	/**
+	 * 每个人正文后面再补一句（slug → 那一句）。目前只有一种：这一轮记在哪张工单上。
+	 *
+	 * 挂在这里而不是拼进 `renderDelivery`：那一层只认识「这条消息」，不认识工单。
+	 */
+	readonly bodyNotes?: ReadonlyMap<string, string>;
+	/**
 	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
 	 * 返回合并了几条（0 = 没合并）。不传就不合并。
 	 *
 	 * 所有发言都走这一条：我插队（撤掉排在他前面的待办）与「同一个人连发只排一个
 	 * 唤醒」是同一件事 —— 都是「这个会话最多留一个未开始的排队项」。
 	 */
-	readonly coalesceQueue?: (
-		conversationId: number,
-		keepRequestId: string,
-		incoming: WakePriority,
-	) => Promise<number>;
+	readonly coalesceQueue?: (conversationId: number, keepRequestId: string) => Promise<number>;
 	/**
 	 * 这一轮什么都没产出时留一句话。
 	 *
@@ -184,7 +185,9 @@ export async function deliver(
 			task.channelId === options.channel.id
 				? undefined
 				: (options.titleOf?.(task.channelId) ?? task.channelId);
-		const base = bodyOf(slug, interrupted, taskChannelTitle);
+		const baseText = bodyOf(slug, interrupted, taskChannelTitle);
+		const note = options.bodyNotes?.get(slug);
+		const base = note === undefined ? baseText : `${baseText}\n${note}`;
 		const result = await wake(
 			{
 				conversationOf: async (target) => (target === slug ? conversation : options.conversationOf(target)),

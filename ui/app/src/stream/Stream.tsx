@@ -17,6 +17,7 @@ import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
+import { RunBlock } from "./RunBlock.tsx";
 import { Slot } from "../plugin/Slot.tsx";
 import { loadEarlier, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
@@ -54,7 +55,18 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		}
 		return out;
 	}, [runs, currentId]);
-	const rows = useMemo(() => buildRows({ messages, running, now: Date.now() }), [messages, running]);
+	// 已经回话的那几轮：它们的 `replySeq` 决定过程块挂在哪条消息上面。
+	const settled = useMemo(() => {
+		const out: Turn[] = [];
+		for (const list of runs.values()) {
+			for (const turn of list) {
+				if (turn.channelId !== currentId || turn.replySeq === undefined) continue;
+				out.push(turn);
+			}
+		}
+		return out;
+	}, [runs, currentId]);
+	const rows = useMemo(() => buildRows({ messages, running, settled, now: Date.now() }), [messages, running, settled]);
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string }>();
@@ -62,9 +74,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		if (detail !== null) {
 			for (const member of detail.members) {
 				// 名册里没有这个人时（理论上不该发生）用频道的成员表兜底。`role` 是
-				// `owner|lead|member` 三个机器值，只有 `lead` 值得印在名字后面。
+				// `owner|assistant|member` 三个机器值，只有 `assistant` 值得印在名字后面。
 				if (!map.has(member.slug)) {
-					map.set(member.slug, { label: member.label, role: member.role === "lead" ? "团队管理员" : "" });
+					map.set(member.slug, { label: member.label, role: member.role === "assistant" ? "助理" : "" });
 				}
 			}
 		}
@@ -333,6 +345,14 @@ function SayRow(props: {
 					{row.need ? <span className="need-tag">需要你</span> : null}
 					<span className="row-time">{clockTime(message.at)}</span>
 				</div>
+
+				{/* 这一轮怎么做的：思考 / 命令 / 文件，折叠一行，点开是步骤树。
+				    复用后台任务面板那一套（`RunBlock`），不给聊天流再造一份。 */}
+				{row.turn === undefined ? null : (
+					<div className="row-process">
+						<RunBlock turn={row.turn} role={role} grouped />
+					</div>
+				)}
 
 				{message.replyTo === undefined ? null : (
 					<div className="row-quote">

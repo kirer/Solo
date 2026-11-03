@@ -1,11 +1,11 @@
 /**
  * 频道层要的那几根线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
  *
- * 这些东西以前在 `shell/assemble.ts`、`tools/context.ts`、`team/settle.ts`、
+ * 这些东西以前在 `shell/assemble.ts`、`tools/context.ts`、`team/doc.ts`、
  * `ownerSpeak` 里各接一遍 —— 同一份 `directoryWake` 造了三次、收尾器造了两次，
  * 改一处就要记得改四处。现在只在这里接一次，谁要谁拿 `ChannelWiring`。
  *
- * 它只依赖 `harness` 与两个路径，不认识「工具」「沉淀」「我说话」这些用途。
+ * 它只依赖 `harness` 与两个路径，不认识「工具」「我说话」这些用途。
  */
 import type { Conversation, Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
@@ -31,7 +31,7 @@ export type ChannelWiring = {
 	readonly uploadsRoot: string;
 	/** 机械文案目录（`text/`）：投递头、留痕、摘要行从这里取。 */
 	readonly text?: TextCatalog;
-	/** 一轮答完的收尾（ADR-099）。投递、我说话、沉淀共用这一个。 */
+	/** 一轮答完的收尾（ADR-099）。投递、我说话共用这一个。 */
 	readonly finishTurn: FinishTurn;
 	/** 会话键（`<slug>` 或 `<slug>#<用途>`）→ 会话。 */
 	conversationOf: (key: string, context?: Context) => Promise<Conversation | undefined>;
@@ -75,6 +75,7 @@ export function wireChannel(deps: {
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,
 		promptDir,
+		policyFile: deps.layout.policyFile,
 		...(deps.text === undefined ? {} : { text: deps.text }),
 		// 补发也要按名册解析 `@`：跟 `say` / `ownerSpeak` 存下来的 `mentions` 保持同一形状。
 		roster: async () =>

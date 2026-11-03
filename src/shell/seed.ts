@@ -13,7 +13,6 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../core/agent/skills.ts";
-import { OWNER_SLUG } from "../core/agent/identity.ts";
 import { RULES_FILE } from "../core/agent/rules.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
 import { appendMissingKeys } from "../core/md/catalog.ts";
@@ -166,6 +165,19 @@ export async function seedRules(layout: Layout): Promise<"written" | "exists" | 
 	const source = await readTextOrUndefined(seedPath(RULES_FILE));
 	if (source === undefined) return "missing";
 	await writeTextAt(target, source);
+	return "written";
+}
+
+/**
+ * 把 `seed/policy.md` 写进用户根（**只在不存在时写**）。
+ *
+ * 和规矩同一个道理：派活的策略是我天天改的活文件，写一次就够了，之后它属于我。
+ */
+export async function seedPolicy(layout: Layout): Promise<"written" | "exists" | "missing"> {
+	if (await existsAt(layout.policyFile)) return "exists";
+	const source = await readTextOrUndefined(seedPath("policy.md"));
+	if (source === undefined) return "missing";
+	await writeTextAt(layout.policyFile, source);
 	return "written";
 }
 
@@ -338,8 +350,8 @@ async function readSeedAssistant(): Promise<Doc | undefined> {
 /**
  * 给一个工作区播种「我身边的人」。
  *
- * 这是**唯一**一处预置身份的地方，而且只写文件、不写代码：一份 `manager: owner` 的
- * identity.md，正文说清「你是我唯一直接对话的人，其余的人由你按需要创建」。
+ * 这是**唯一**一处预置身份的地方，而且只写文件、不写代码：一份 identity.md，
+ * 正文说清「你是我唯一直接对话的人，其余的人由你按需要创建」。
  * 之后它自己就会建人 —— 那些人的身份是它写的，不是代码写的。
  *
  * V2 的正文是写在这个函数里的字符串字面量：改一句话要改 TS、要重新编译、要重启。
@@ -356,7 +368,6 @@ export async function seedOwnerAssistant(
 	}
 	const name = options.name ?? front(seed, "name") ?? "助理";
 	const title = front(seed, "title") ?? "助理";
-	const manager = front(seed, "manager") ?? OWNER_SLUG;
 	const team = front(seed, "team");
 	const body = seed?.body;
 
@@ -364,7 +375,6 @@ export async function seedOwnerAssistant(
 		root: layout.assistantRoot,
 		name,
 		title,
-		manager,
 		...(team === undefined ? {} : { team }),
 		...(body === undefined || body === "" ? {} : { body }),
 	});

@@ -27,7 +27,6 @@ export type Doc = {
 };
 
 /** 头里的键值对。空值不出现。 */
-export type Frontmatter = Record<string, string>;
 
 /** 头里的一个字段。`undefined` = 这一行不写（空串**照写**，那是调用方的选择）。 */
 export type FrontmatterField = readonly [key: string, value: string | undefined];
@@ -79,7 +78,7 @@ export function renderFrontmatter(fields: readonly FrontmatterField[], body: str
 	return lines.join("\n");
 }
 
-/** 取一个头字段。空串当没有 —— 头里写 `manager:` 与不写 manager 是同一个意思。 */
+/** 取一个头字段。空串当没有 —— 头里写 `title:` 与不写 title 是同一个意思。 */
 export function frontOf(doc: Doc, key: string): string | undefined {
 	const value = doc.front[key];
 	return value === undefined || value === "" ? undefined : value;

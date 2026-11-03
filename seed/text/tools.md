@@ -33,10 +33,10 @@
 ## say.param.options
 要我选：2–6 个互不相同的选项。带上它这条就一定会叫醒我，我会在最下面看到一排选项。
 只在你**直接问我**时用：正文写给我看（在选什么、为什么现在要定），别把对同事说的话和选项混成一条。
-要问的是上级或助理、不是直接问我 —— 别带 options，用 mention 叫醒他；带上就是跳级。
+要问的是助理、不是直接问我 —— 别带 options，用 mention 叫醒他；带上就等于叫醒我。
 
 ## say.self.missing
-你还不在名册里。先看 members/<你>/identity.md，或请上级重新登记你。
+你还不在名册里。先看 members/<你>/identity.md，或请助理重新登记你。
 
 ## say.refuse.monologue
 这条没发出去：它以「{{opener}}」开头，英文占多数 —— 那是你的思考，不是对别人说的话。思考用 think；要对人说话就用中文写结论（谁、做了什么、结果、下一步）。重写一遍。
@@ -195,14 +195,17 @@ personal（默认，自己的记忆）或 team（团队记忆）
 ## remember.team.done
 已记进团队「{{team}}」的记忆{{tail}}。下一条消息就会出现在这个团队的记忆目录里。
 
-## remember.team.tail
-（已把 #{{seq}} 之前的结论标记为已沉淀）
-
 ## remember.done
 已记下。下一条消息的记忆目录里就会出现它。
 
+## hire.refuse.no-roster
+你还不在名册里，招不了人。
+
+## hire.refuse.not-assistant
+招人和开除只有助理能做。你要人，就 @助理 说清要什么样的人、进哪个团队。
+
 ## hire.description
-`action=create`（默认）招一个人：在 members/ 下建文件夹、写 identity.md、给他自己的工作目录。`action=fire` 让一个人离开：目录移到 members/.retired/，从频道与名册里移除，私聊归档。`action=models` 列出现在能挑的模型。写法见技能「招人」。
+`action=create`（默认）招一个人：在 members/ 下建文件夹、写 identity.md、给他自己的工作目录。`action=fire` 让一个人离开：目录移到 members/.retired/，从频道与名册里移除，私聊归档。`action=models` 列出现在能挑的模型。招人与开除只有助理能做。写法见技能「招人」。
 
 ## hire.param.action
 create（默认）/ fire / models
@@ -212,9 +215,6 @@ create（默认）/ fire / models
 
 ## hire.param.title
 身份标签，纯展示用
-
-## hire.param.manager
-上级的 slug，必须是名册里已有的人；不确定就不传，缺省是你自己
 
 ## hire.param.team
 所在团队 slug
@@ -255,17 +255,8 @@ identity.md 的正文：①负责什么 ②不做什么 ③怎么汇报 ④做�
 ## hire.fire.assistant
 它是助理，不能开除。
 
-## hire.fire.reports
-{{name}} 手下还有人（{{slugs}}），先把他们改派给别人。
-
-## hire.fire.leading
-{{name}} 是团队管理员（{{teams}}），先把团队的 lead 交给别人，再让人走。
-
 ## hire.fire.done
 已让 {{name}}（{{slug}}）离开：目录移到 members/.retired/，频道与名册里都不再有他。
-
-## hire.create.manager-missing
-没有这个上级：{{manager}}。现有 slug：{{slugs}}。不传 manager 就是你自己。
 
 ## hire.create.model-unsupported
 （这一份装配不支持指定模型）
@@ -280,7 +271,7 @@ identity.md 的正文：①负责什么 ②不做什么 ③怎么汇报 ④做�
 身份在 members/{{slug}}/identity.md，工作目录在 members/{{slug}}/workspace/
 
 ## hire.create.team-missing
-团队 `{{team}}` 还没有 README（`teams/{{team}}/README.md` 不存在），所以还没有团队频道，他也不会被拉进任何群。用 `file` 把这份 README 写出来（头里写 `name` 和 `lead`），团队频道才会出现。
+团队 `{{team}}` 还没有 README（`teams/{{team}}/README.md` 不存在），所以还没有团队频道，他也不会被拉进任何群。用 `file` 把这份 README 写出来（头里写 `name`），团队频道才会出现。
 
 ## hire.create.done
 已新建 {{name}}（slug: {{slug}}），会话 {{id}} 已就绪{{model}}。{{where}}。{{teamNote}}
@@ -343,7 +334,7 @@ $ {{command}}
 工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员。
 
 ## file.param.action
-read（默认）/ write
+read / write（给了 content 就是 write，不用再写 action）
 
 ## file.param.path
 文件路径（相对工作区根）
@@ -432,17 +423,8 @@ slug
 ## org.name.exhausted
 找不到可用名：{{base}}
 
-## org.team.lead.missing
-团队 README 的 `---` 头里必须写 `lead: <团队管理员的 slug>`。先招一个团队管理员，再把他的 slug 写进 lead。
-
-## org.team.lead.unknown
-lead 指向的「{{slug}}」不在名册里。现有 slug：{{slugs}}。lead 要写 slug，不是显示名。
-
-## org.team.lead.assistant
-「{{slug}}」是直接向我汇报的助理，不能当团队管理员。先招一个团队成员当管理员，再把他的 slug 写进 lead。
-
 ## org.team.create.denied
-建团队只有助理能做（直接向我汇报的人）。你是「{{slug}}」——需要新团队，在你的频道里向上级说，由他来找我。
+建团队只有助理能做。你是「{{slug}}」——需要新团队，在频道里 @助理 说清要做什么。
 
 ## org.memory.empty
 这条记忆是空的。

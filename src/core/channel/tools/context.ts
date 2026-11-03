@@ -32,7 +32,7 @@ export type CoreToolDeps = {
 	readonly saveDirectory: (change: (state: DirectoryState) => DirectoryState, context: Context) => Promise<void>;
 	/** 为某个 slug 建会话并绑定。缺省表示不支持热建（测试里可以不提供）。 */
 	readonly openAgent?: (slug: string, context: Context) => Promise<number>;
-	/** 一条消息落地之后的钩子。外壳用它接「团队记忆自动沉淀」。 */
+	/** 一条消息落地之后的钩子（插件听消息）。 */
 	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 按团队文件重建它的频道成员（幂等）。 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
@@ -51,7 +51,7 @@ export type CoreToolDeps = {
 	readonly setModel?: (slug: string, ref: string, context: Context) => Promise<{ readonly model: string }>;
 	/**
 	 * 频道层接线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
-	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、沉淀、我说话共用。
+	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、我说话共用。
 	 */
 	readonly wiring: ChannelWiring;
 };
@@ -119,8 +119,6 @@ export async function mentionRoster(deps: CoreToolDeps): Promise<MentionRoster> 
 		all.map((identity) => ({
 			slug: identity.slug,
 			name: identity.name,
-			title: identity.title,
-			manager: identity.manager,
 		})),
 	);
 }
@@ -147,6 +145,8 @@ export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Conte
 	return {
 		harness: deps.harness,
 		state,
+		// 派活策略：叫醒人之前替他立工单（`work/intake.ts`）。
+		policyFile: deps.layout.policyFile,
 		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：agent 叫醒 agent 也要贴。
 		promptDir: deps.wiring.promptDir,
 		...(deps.text === undefined ? {} : { text: deps.text }),

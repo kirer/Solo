@@ -11,11 +11,12 @@
  */
 import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
-import { chainUp, managerOf, nameOf, readAllIdentities, readIdentity, reportsOf, OWNER_SLUG, type Identity } from "./identity.ts";
+import { assistantsOf, nameOf, readAllIdentities, readIdentity, type Identity } from "./identity.ts";
 import { listSkills } from "./skills.ts";
 import { readMemory } from "./memory.ts";
 import { memoryDigest } from "../md/memory.ts";
 import { loadRules } from "./rules.ts";
+import { readPolicy, renderPolicy } from "../work/policy.ts";
 import { readTeam } from "../team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
 import { redact } from "./secrets.ts";
@@ -64,8 +65,7 @@ export type CapabilityLine = {
  * 读团队简报（`teams/<slug>/README.md`），拆成插槽。
  *
  * YAML 头里的字段单独给（模型扫一眼就知道该不该关心这件事），正文原样给全 ——
- * 团队说明就是它的事实来源。「状态：/团队管理员：/目录：」这些标签在模板里，
- * 这里只给值；管理员空着就是空着，模板自己写「还没人负责」。
+ * 团队说明就是它的事实来源。「状态：/目录：」这些标签在模板里，这里只给值。
  */
 async function teamSlots(teamsRoot: string, team: string): Promise<Record<string, SlotValue>> {
 	const doc = await readTeam(teamsRoot, team);
@@ -73,7 +73,6 @@ async function teamSlots(teamsRoot: string, team: string): Promise<Record<string
 	return {
 		"team.brief": doc.body,
 		"team.status": doc.status,
-		"team.lead": doc.lead,
 		"team.dir": `teams/${doc.slug}/`,
 	};
 }
@@ -189,29 +188,19 @@ async function slotsFor(
 
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);
+	// 派活的策略同理：它和规矩住在一个根里，是「我的」文件，改了下一条消息就生效。
+	if (need.has("policy")) slots["policy"] = renderPolicy(await readPolicy(paths.layout.policyFile));
 
-	const needsRoster = wants("manager", "reports", "chain", "count", "team", "peers", "team.members");
+	const needsRoster = wants("count", "team", "peers", "team.members", "assistant");
 	const all = needsRoster ? await readAllIdentities(paths.layout.agentRoots) : [];
 	if (need.has("count")) slots["count"] = all.length;
-	// 位置段这四行**永远有值**：写「（未设置）」会让提示词里出现一句半截的话，模型会自己补。
-	// 「没有上级 / 没有团队」怎么说归模板（`{{manager ?? …}}`），这里只给事实。
-	if (need.has("manager")) {
-		const manager = managerOf(all, self.slug);
-		slots["manager"] =
-			manager === undefined
-				? undefined
-				: manager === OWNER_SLUG
-					? fill(paths.text, "sections.owner")
-					: withSlug(nameOf(all, manager), manager);
-	}
-	if (need.has("reports")) {
-		const reports = reportsOf(all, self.slug);
-		slots["reports"] =
-			reports.length === 0 ? undefined : reports.map((item) => withSlug(item.name ?? item.slug, item.slug)).join("、");
-	}
-	if (need.has("chain")) {
-		const chain = chainUp(all, self.slug);
-		slots["chain"] = chain.length > 1 ? chain.map((item) => nameOf(all, item)).join(" → ") : undefined;
+	// 「没有团队 / 没有助理」怎么说归模板（`{{… ?? …}}`），这里只给事实。
+	if (need.has("assistant")) {
+		// 助理是文件夹事实（ADR-058）：自己就是助理时直说，别人看到的是那个能招人的人。
+		const assistants = assistantsOf(paths.layout, all);
+		slots["assistant"] = assistants.includes(self.slug)
+			? fill(paths.text, "sections.assistant.self")
+			: assistants.map((slug) => withSlug(nameOf(all, slug), slug)).join("、") || undefined;
 	}
 	if (need.has("team")) slots["team"] = self.team === undefined ? undefined : `\`${self.team}\``;
 	if (need.has("peers")) {
@@ -259,7 +248,7 @@ async function slotsFor(
 	}
 
 	const team = self.team;
-	if (wants("team.brief", "team.members", "team.memory", "team.status", "team.lead", "team.dir")) {
+	if (wants("team.brief", "team.members", "team.memory", "team.status", "team.dir")) {
 		Object.assign(slots, team === undefined ? {} : await teamSlots(paths.layout.teamsRoot, team));
 		const members =
 			team === undefined ? undefined : all.filter((item) => item.team === team).map((item) => item.slug);

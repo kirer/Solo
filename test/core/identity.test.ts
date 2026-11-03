@@ -3,7 +3,7 @@
  *
  * 这里只验证三件事，它们是整套设计的承重墙：
  * 1. `identity.md` 的 YAML 头 + 正文被正确拆开；
- * 2. 组织架构完全由 `manager` 字段推导（没有枚举、没有数据库）；
+ * 2. 谁是助理是**文件夹事实**：身份目录在应用根的 `assistant/` 下（ADR-058）；
  * 3. 渲染出的提示词**确定**（同样输入逐字节相同）且**不含任何身份文案常量**。
  */
 import { afterEach, describe, expect, test } from "vitest";
@@ -13,8 +13,7 @@ import { join } from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import {
-	OWNER_SLUG,
-	chainUp,
+	assistantsOf,
 	createAgent,
 	parseIdentity,
 	listAgentSlugs,
@@ -46,10 +45,9 @@ async function tempDir(prefix = "core-identity-"): Promise<string> {
 const SAMPLE = `---
 name: 沈知远
 title: 人力
-manager: owner
 ---
 
-我负责招人。用人需求从团队管理员那里来。
+我负责招人。用人需求从我说过要来的人那里来。
 `;
 
 describe("identity.md 解析", () => {
@@ -57,9 +55,8 @@ describe("identity.md 解析", () => {
 		const identity = parseIdentity("shen", "/tmp/x/shen", SAMPLE);
 		expect(identity.name).toBe("沈知远");
 		expect(identity.title).toBe("人力");
-		expect(identity.manager).toBe(OWNER_SLUG);
 		expect(identity.team).toBeUndefined();
-		expect(identity.body).toBe("我负责招人。用人需求从团队管理员那里来。");
+		expect(identity.body).toBe("我负责招人。用人需求从我说过要来的人那里来。");
 	});
 
 	test("没有 YAML 头时整份文件都是正文", () => {
@@ -78,8 +75,8 @@ describe("identity.md 解析", () => {
 describe("身份文件读写只有一处（ADR-096）", () => {
 	test("writeIdentity 写下的字节就是 renderIdentityFile，且读得回", async () => {
 		const root = await tempDir();
-		const header = { name: "沈知远", title: "人力", manager: OWNER_SLUG, team: "alpha" };
-		const body = "我负责招人。\n\n用人需求从团队管理员那里来。";
+		const header = { name: "沈知远", title: "人力", team: "alpha" };
+		const body = "我负责招人。\n\n用人需求从我说过要来的人那里来。";
 		const written = await writeIdentity(root, "shen", header, body);
 
 		expect(await readFile(join(root, "shen", "identity.md"), "utf8")).toBe(renderIdentityFile(header, body));
@@ -93,7 +90,6 @@ describe("身份文件读写只有一处（ADR-096）", () => {
 		const written = await writeIdentity(root, "lin", { name: "林越" }, "写代码。");
 		const source = await readFile(join(root, "lin", "identity.md"), "utf8");
 		expect(source).not.toContain("team:");
-		expect(source).not.toContain("manager:");
 		expect(written).toMatchObject({ slug: "lin", name: "林越", body: "写代码。" });
 	});
 
@@ -115,37 +111,25 @@ async function workspace(files: Record<string, string>): Promise<string> {
 	return root;
 }
 
-describe("组织架构 = manager 字段", () => {
-	test("扫描目录得到全部身份，按 slug 排序", async () => {
-		const root = await workspace({
-			"ceo/identity.md": "---\nname: 陆沉\nmanager: owner\n---\n管全局。",
-			"cto/identity.md": "---\nname: 周牧\nmanager: ceo\n---\n管技术。",
-			"dev/identity.md": "---\nname: 林越\nmanager: cto\nproject: alpha\n---\n写代码。",
-		});
-		const all = await readAllIdentities(root);
-		expect(all.map((item) => item.slug)).toEqual(["ceo", "cto", "dev"]);
-		expect(reportsOf(all, "ceo").map((item) => item.slug)).toEqual(["cto"]);
-		expect(chainUp(all, "dev")).toEqual(["cto", "ceo", OWNER_SLUG]);
-		expect(chainUp(all, "ceo")).toEqual([OWNER_SLUG]);
-		expect(chainUp(all, "nobody")).toEqual([]);
+describe("谁是助理 = 文件夹事实（ADR-058）", () => {
+	test("扫两个根：身份都在，助理只在 assistant/ 下", async () => {
+		const root = await tempDir("core-agents-");
+		await mkdir(join(root, "assistant", "知言"), { recursive: true });
+		await writeFile(join(root, "assistant", "知言", "identity.md"), "---\nname: 知言\n---\n统筹。", "utf8");
+		await mkdir(join(root, "members", "林越"), { recursive: true });
+		await writeFile(join(root, "members", "林越", "identity.md"), "---\nname: 林越\n---\n写代码。", "utf8");
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		const all = await readAllIdentities(layout.agentRoots);
+		expect(all.map((item) => item.slug)).toEqual(["知言", "林越"]);
+		expect(assistantsOf(layout, all)).toEqual(["知言"]);
 	});
 
-	test("断链就地停止，不抛错", async () => {
-		const root = await workspace({
-			"a/identity.md": "---\nmanager: ghost\n---\n甲",
-			"b/identity.md": "---\nmanager: a\n---\n乙",
-		});
-		const all = await readAllIdentities(root);
-		expect(chainUp(all, "b")).toEqual(["a", "ghost"]);
-	});
-
-	test("同名循环不死循环", async () => {
-		const root = await workspace({
-			"a/identity.md": "---\nmanager: b\n---\n甲",
-			"b/identity.md": "---\nmanager: a\n---\n乙",
-		});
-		const all = await readAllIdentities(root);
-		expect(chainUp(all, "a")).toEqual(["b"]);
+	test("没有助理时就是空数组（不是猜一个人）", async () => {
+		const root = await tempDir("core-agents-");
+		await mkdir(join(root, "members", "林越"), { recursive: true });
+		await writeFile(join(root, "members", "林越", "identity.md"), "---\nname: 林越\n---\n写代码。", "utf8");
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		expect(assistantsOf(layout, await readAllIdentities(layout.agentRoots))).toEqual([]);
 	});
 });
 
@@ -173,20 +157,18 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 	}
 
 	const ORG: Record<string, string> = {
-		"members/ceo/identity.md": "---\nname: 陆沉\nmanager: owner\n---\n管全局。",
-		"members/cto/identity.md": "---\nname: 周牧\nmanager: ceo\n---\n管技术。",
-		"members/dev/identity.md": "---\nname: 林越\nmanager: cto\nteam: alpha\n---\n写代码。",
-		"teams/alpha/README.md": "---\nname: alpha\nlead: dev\n---\n做一个坦克游戏。",
+		"assistant/知言/identity.md": "---\nname: 知言\n---\n统筹。",
+		"members/林越/identity.md": "---\nname: 林越\nteam: alpha\n---\n写代码。",
+		"teams/alpha/README.md": "---\nname: alpha\n---\n做一个坦克游戏。",
 	};
 
-	test("全部素材来自文件：名字、正文、汇报线、团队", async () => {
-		const text = await renderIn(ORG, "dev");
+	test("全部素材来自文件：名字、正文、助理、团队", async () => {
+		const text = await renderIn(ORG, "林越");
 		expect(text).toContain("# 你叫林越");
 		expect(text).toContain("写代码。");
-		expect(text).toContain("周牧"); // 直属上级
-		expect(text).toContain("陆沉"); // 上报链的更上面一层
+		expect(text).toContain("知言"); // 助理
 		expect(text).toContain("做一个坦克游戏。"); // 团队 README
-		expect(text).toContain("members/dev"); // 目录段
+		expect(text).toContain("members/林越"); // 目录段
 	});
 
 	test("没写身份正文：整段消失，代码不补一句「我是谁」", async () => {
@@ -199,7 +181,7 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 	});
 
 	test("目录说明不谎报文件：说到的文件必须真的会读", async () => {
-		const text = await renderIn(ORG, "dev");
+		const text = await renderIn(ORG, "林越");
 		// 曾经这里写的是 `capabilities` 与 `memory/` —— 两个都不存在的路径，
 		// 等于在提示词里告诉 agent「去改一个不存在的文件」，它改完毫无效果。
 		expect(text).not.toContain("`capabilities`");
@@ -211,8 +193,8 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 	test("确定性：同样输入逐字节相同", async () => {
 		// 同一个根渲染两遍。不同沙箱算不同的输入 —— 目录段里有绝对路径，本来就该不一样。
 		const layout = await rootOf(ORG);
-		const once = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "dev");
-		const twice = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "dev");
+		const once = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "林越");
+		const twice = await renderAgentSection(createRegistry(), { layout, chats: async () => [] }, "林越");
 		expect(once).toBe(twice);
 	});
 
@@ -227,25 +209,25 @@ describe("渲染提示词（V3：模板 + 事实）", () => {
 				],
 			}),
 		);
-		const text = await renderIn(ORG, "dev", registry);
+		const text = await renderIn(ORG, "林越", registry);
 		expect(text).toContain("`say`");
 		expect(text).toContain("`hire`");
 
 		// 注册表空的时候不能凭空列假工具：直接报装配故障，让故障浮出来。
-		expect(await renderIn(ORG, "dev")).toContain("装配故障");
+		expect(await renderIn(ORG, "林越")).toContain("装配故障");
 	});
 
-	test("断链时写「未设置」而不是猜一个上级", async () => {
+	test("没有助理时写「还没有助理」，不猜一个人", async () => {
 		const text = await renderIn({ "members/x/identity.md": "---\nname: 孤儿\n---\n没人管我。" }, "x");
-		expect(text).toContain("未设置");
-		expect(text).not.toContain("你的上级：owner");
+		expect(text).toContain("还没有助理");
+		expect(text).not.toContain("助理：owner");
 	});
 });
 
 test("规矩里的「@我」进了提示词（那是拍板唯一被认的写法）", async () => {
 	const root = await tempDir();
 	await mkdir(join(root, "members", "林越"), { recursive: true });
-	await writeFile(join(root, "members", "林越", "identity.md"), "---\nname: 林越\nmanager: owner\n---\n\n写代码。\n");
+	await writeFile(join(root, "members", "林越", "identity.md"), "---\nname: 林越\n---\n\n写代码。\n");
 	await mkdir(join(root, "teams"), { recursive: true });
 	await writeFile(join(root, "rules.md"), "- 要让我拍板的事就用 `@我`，别写 `@owner`。\n");
 	const layout = resolveLayout({ appRoot: root, userRoot: root });
@@ -282,7 +264,6 @@ describe("建人（createAgent）", () => {
 		const identity = await readIdentity(agents, "林越");
 		expect(identity?.name).toBe("林越");
 		expect(identity?.title).toBe("技术负责人");
-		expect(identity?.manager).toBe("owner");
 		expect(identity?.team).toBe("alpha");
 		expect(identity?.body).toBe("我管技术。");
 	});
@@ -297,7 +278,7 @@ describe("建人（createAgent）", () => {
 	test("全员人数 = 目录数", async () => {
 		const agents = await tempDir("core-org-");
 		await createAgent({ root: agents, name: "CEO" });
-		await createAgent({ root: agents, name: "CTO", manager: "CEO" });
+		await createAgent({ root: agents, name: "CTO" });
 		expect((await listAgentSlugs(agents)).length).toBe(2);
 		expect((await readAllIdentities(agents)).map((item) => item.slug)).toEqual(["CEO", "CTO"]);
 	});

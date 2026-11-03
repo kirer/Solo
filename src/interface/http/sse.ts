@@ -126,7 +126,7 @@ function orgSignature(org: ViewOrg): string {
 	const rows = org.people.map((actor) => {
 		const activity =
 			actor.activity === undefined ? "" : `${actor.activity.state}\u0001${String(actor.activity.since)}`;
-		return `${actor.slug}\u0001${actor.label}\u0001${actor.title ?? ""}\u0001${actor.manager ?? ""}\u0001${activity}`;
+		return `${actor.slug}\u0001${actor.label}\u0001${actor.title ?? ""}\u0001${actor.assistant === true ? "1" : ""}\u0001${activity}`;
 	});
 	// 前缀不能省：一个空的 org 拼出来也是空串，会和「还没推过」撞成同一个指纹。
 	return `org:${String(rows.length)}|${rows.join("\u0002")}`;
@@ -306,7 +306,7 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 		if (orgClients.size > 0) {
 			// 有 `read` 时走它：`readOrg` 会补上每个人此刻的 `activity`（在想 / 在做）。
 			// 没有 `read`（测试装配）就退回纯投影 —— 少一个字段，不会错。
-			const org = read === undefined ? orgView(snap.identities, snap.directory) : await read.readOrg();
+			const org = read === undefined ? orgView(snap.identities, "Solo", snap.assistants) : await read.readOrg();
 			pushOrg(org, snap.channels);
 		}
 		for (const id of [...channelClients.keys()]) {

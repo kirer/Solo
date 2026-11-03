@@ -163,7 +163,7 @@ export function unreadLabel(count: number): string {
 }
 
 /**
- * 顶栏副标题只用得上这四样：团队在干什么、团队名、团队管理员、人数。
+ * 顶栏副标题只用得上这三样：团队在干什么、团队名、人数。
  *
  * 单独声明而不是直接要 `Channel`：这个投影在私聊、团队频道、搜索结果上都要能跑，
  * 而那些地方手里未必有一条完整的 `Channel`（见 `api/types.ts`）。
@@ -171,7 +171,6 @@ export function unreadLabel(count: number): string {
 export type ChannelHead = {
 	doing?: string | undefined;
 	team?: string | undefined;
-	leadLabel?: string | undefined;
 	memberCount?: number | undefined;
 };
 
@@ -183,7 +182,6 @@ export function headParts(channel: ChannelHead | null | undefined): string[] {
 	// 所以放在最前面；没有就不占位。
 	if (channel.doing) parts.push(String(channel.doing));
 	if (channel.team) parts.push(String(channel.team));
-	if (channel.leadLabel) parts.push(`团队管理员 ${channel.leadLabel}`);
 	if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
 	return parts;
 }
@@ -197,9 +195,9 @@ export function headParts(channel: ChannelHead | null | undefined): string[] {
  * 再比时间，pin 与刷新顺序无关。
  */
 
-/** 助理 = 直接向我汇报的那个人。名字每次都可能不同，只认汇报关系。 */
-export function assistantSlug(people: readonly { slug: string; manager?: string | undefined }[]): string | undefined {
-	return people.find((person) => person.manager === "owner")?.slug;
+/** 助理 = 身份在应用根下的那个人（后端按目录判定，这里只认这个标记）。 */
+export function assistantSlug(people: readonly { slug: string; assistant?: true | undefined }[]): string | undefined {
+	return people.find((person) => person.assistant === true)?.slug;
 }
 
 /**

@@ -21,9 +21,6 @@
  */
 export type ViewChannelKind = "dm" | "group";
 
-/** 「团队归谁负责」的查询函数。真相在 `teams/<slug>/README.md`，不在频道文档里。 */
-export type TeamLeadOf = (team: string) => string | undefined;
-
 /** 「这个团队的一句话现状」的查询函数。来源同上（团队文档的 `doing`）。 */
 export type TeamDoingOf = (team: string) => string | undefined;
 
@@ -31,10 +28,6 @@ export type TeamDoingOf = (team: string) => string | undefined;
 export type ViewChannel = {
 	id: string;
 	kind: ViewChannelKind;
-	/** 仅团队频道有：这个团队归谁负责（`README.md` 的 `lead`）。 */
-	lead?: string;
-	/** 仅团队频道有：团队管理员显示名。 */
-	leadLabel?: string;
 	/**
 	 * 仅团队频道且团队文档写了 `doing` 时有：一句话现状。
 	 * 界面拿它当顶栏副标题的第一段；缺了这个键就什么都不画。
@@ -100,8 +93,14 @@ export type ViewMessage = {
 	options?: string[];
 };
 
-/** 成员。 */
-export type ViewMember = { id: number; slug: string; label: string; role: string; unread: number };
+/** 成员。`role` 只有三种，都是文件里读得出来的事实：我 / 助理 / 成员。 */
+export type ViewMember = {
+	id: number;
+	slug: string;
+	label: string;
+	role: "owner" | "assistant" | "member";
+	unread: number;
+};
 
 /** 频道详情。 */
 export type ViewChannelDetail = {
@@ -132,8 +131,8 @@ export type ViewActor = {
 	label: string;
 	title: string;
 	team?: string;
-	manager?: string;
-	managerLabel?: string;
+	/** 他是助理（身份目录在应用根下）。界面拿它置顶、标「助理」。 */
+	assistant?: true;
 	/** `identity.md` 正文 —— 档案页要显示「他是谁」，只有 slug 不够。 */
 	body: string;
 	/**
@@ -191,8 +190,7 @@ export type ViewPersonProfile = {
 	label: string;
 	title: string;
 	team?: string;
-	manager: string;
-	managerLabel: string;
+	assistant: boolean;
 	body: string;
 	skills: ViewSkill[];
 	/** `entries` 是**条数**（档案页只显示概况），全文在 `/api/people/:slug/memory`。 */
@@ -202,16 +200,13 @@ export type ViewPersonProfile = {
 	model: string;
 };
 
-/** 一个团队的档案：`teams/<slug>/README.md` 的正文 + 管理员的显示名 + 团队记忆。 */
+/** 一个团队的档案：`teams/<slug>/README.md` 的正文 + 团队记忆。 */
 export type ViewTeamProfile = {
 	slug: string;
 	name: string;
 	status: string;
 	/** 一句话现状（「谁在做什么」）。没写就不出现。 */
 	doing?: string;
-	lead?: string;
-	/** 管理员的显示名；团队文件里没写 lead 就是空串。 */
-	leadLabel: string;
 	/** README 正文：目标 / 验收标准 / 不做什么 / 当前进展。 */
 	body: string;
 	/** 团队层技能（`teams/<slug>/skills/`），这个团队的人都会。 */

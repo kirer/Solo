@@ -202,7 +202,6 @@ function IdentityCard(): JSX.Element | null {
 				peer === undefined
 					? [
 							{ k: "成员", v: String(members.length + 1) },
-							...(channel.leadLabel === undefined ? [] : [{ k: "团队管理员", v: channel.leadLabel }]),
 						]
 					: peerProfile === null
 						? [{ k: "状态", v: stateLabel(state) }]
@@ -274,7 +273,7 @@ function DetailTab(): JSX.Element {
 
 	const channel = detail.channel;
 	const members = detail.members.filter((member) => member.slug !== "owner");
-	// 身份在名册里（`people[].title`），成员表只带机器角色。团队管理员那份身份由角色补。
+	// 身份在名册里（`people[].title`），成员表只带机器角色。助理那份身份由角色补。
 	const titles = new Map(people.map((actor) => [actor.slug, actor.title]));
 
 	// 私聊只有一个人可介绍：画他的档案，不画「成员 2 / 我 / 他」这种一对一的废话。
@@ -367,18 +366,8 @@ function PersonView(props: { person: PersonProfile }): JSX.Element {
 	const rooms = person.channels.filter((channel) => channel.kind !== "dm");
 	return (
 		<div className="detail-sec">
-			{/* 插槽：档案最上面（「汇报给」之前）。插件放这一层的设置项，比如「他用的模型」。 */}
+			{/* 插槽：档案最上面。插件放这一层的设置项，比如「他用的模型」。 */}
 			<Slot name="rightPanel.detail" />
-			<div className="detail-sec-head">汇报给</div>
-			<div className="detail-report">
-				<span
-					className="detail-av"
-					dangerouslySetInnerHTML={{
-						__html: avatarSvg({ slug: person.manager ?? "owner", name: person.managerLabel, size: 28 }),
-					}}
-				/>
-				<span className="detail-report-name">{person.managerLabel}</span>
-			</div>
 
 			{rooms.length === 0 ? null : (
 				<>
@@ -866,13 +855,13 @@ function kindLabel(kind: string): string {
 }
 
 /**
- * 成员角色：后端只给三个值（`owner` / `lead` / `member`），界面只画 `lead`。
+ * 成员角色：后端只给三个值（`owner` / `assistant` / `member`），界面只画 `assistant`。
  *
  * 把 `member` 原样印出来等于印了一个英文枚举 —— 它说的是「其余所有人」，
  * 而列表里本来就是其余所有人。我自己的那一行也不在列表里。
  */
 function memberRole(role: string): string {
-	return role === "lead" ? "团队管理员" : "";
+	return role === "assistant" ? "助理" : "";
 }
 
 /** `identity.md` 的第一个 `# 名字` 与上面的标题重复，剥掉它和紧随的空行。 */

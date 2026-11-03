@@ -1,11 +1,11 @@
 /**
  * 全部工具：**只有一套，人人都有。**
  *
- * 这里没有「管理层工具」「成员工具」「团队管理员工具」的分层。按身份发工具包来实现
+ * 这里没有「助理专用工具」和「成员工具」的分层。按身份发工具包来实现
  * 「成员不能越级」，代价是：调一个身份就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
- * 七个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
+ * 八个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
  * 工具的 `action` 枚举，而**不是**几个近义的工具名 —— 名字越多，模型选错的概率越高。
  *
  * | 工具 | 用途 |
@@ -17,6 +17,7 @@
  * | `hire` | 新建一个 agent（写文件夹） |
  * | `run` | 执行命令 |
  * | `file` | `read` / `write` 工作区里的一个文件 |
+ * | `work` | `open` 接活立工单；`report` 报进度；`ask` 问人；`answer` / `retry` / `stop` / `list` |
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
@@ -28,6 +29,7 @@ import { createHistoryTool } from "./history.ts";
 import { createRememberTool } from "./remember.ts";
 import { createRunTool } from "./run.ts";
 import { createSayTool } from "./say.ts";
+import { createWorkTool } from "./work.ts";
 import type { CoreToolDeps } from "./context.ts";
 
 export type { CoreToolDeps } from "./context.ts";
@@ -43,5 +45,6 @@ export function createCoreTools(deps: CoreToolDeps) {
 		createHireTool(deps),
 		createRunTool(deps),
 		createFileTool(deps),
+		createWorkTool(deps),
 	] as readonly ToolRegistration[];
 }

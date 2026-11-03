@@ -146,7 +146,7 @@ export async function refreshLists(): Promise<void> {
 			if (mine === undefined) {
 				void openChannel(null);
 			} else if (state.detail !== null) {
-				// 标题 / 成员数变了（改名、加人、换团队管理员）：整屏重拉，不然顶栏和成员框停在旧样子。
+				// 标题 / 成员数变了（改名、加人）：整屏重拉，不然顶栏和成员框停在旧样子。
 				if (state.detail.channel.title !== mine.title || state.detail.channel.memberCount !== mine.memberCount) {
 					void reloadDetail(mine.id);
 				}

@@ -13,21 +13,20 @@ const team = (extra) => ({
 	kind: "group",
 	title: "Solo",
 	team: "solo",
-	leadLabel: "知言",
 	memberCount: 2,
 	...extra,
 });
 
 describe("headParts", () => {
-	it("团队频道：doing 排在团队名 / 团队管理员 / 人数之前", () => {
+	it("团队频道：doing 排在团队名 / 人数之前", () => {
 		const parts = headParts(team({ doing: "沈舟做服务端、林越做前端" }));
 		expect(parts[0]).toBe("沈舟做服务端、林越做前端");
-		expect(parts).toEqual(["沈舟做服务端、林越做前端", "solo", "团队管理员 知言", "2 人"]);
+		expect(parts).toEqual(["沈舟做服务端、林越做前端", "solo", "2 人"]);
 	});
 
-	it("没有 doing（或空串）时和以前一模一样，不多出分隔点", () => {
-		expect(headParts(team({}))).toEqual(["solo", "团队管理员 知言", "2 人"]);
-		expect(headParts(team({ doing: "" }))).toEqual(["solo", "团队管理员 知言", "2 人"]);
+	it("没有 doing（或空串）时不多出分隔点", () => {
+		expect(headParts(team({}))).toEqual(["solo", "2 人"]);
+		expect(headParts(team({ doing: "" }))).toEqual(["solo", "2 人"]);
 		expect(headParts({ id: "general", kind: "group", title: "全员" })).toEqual([]);
 	});
 });

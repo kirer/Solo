@@ -2,7 +2,7 @@
  * 视图层的约定：**界面看到的东西，必须是文件里的事实**。
  *
  * 这一层最容易出的错不是崩溃，而是「显示得像真的、其实不是」：
- * - 团队频道显示成「3 人」，但团队管理员不在成员表里 → 成员在团队里 @ 不到拍板的人；
+ * - 团队频道显示成「3 人」，但成员表里没有助理 → 成员在团队里 @ 不到人；
  * - 私聊/群聊的区分必须按成员推 —— 看 id 前缀就会把「三人小群」显示成私聊。
  *
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
@@ -94,14 +94,12 @@ describe("频道列表的投影", () => {
 		expect(channel.kind).toBe("group");
 	});
 
-	it("团队频道也是群聊，但仍然带上团队管理员（来自团队文件，不是频道文档）", () => {
+	it("团队频道也是群聊，并带上团队 slug", () => {
 		const state = stateOf([team]);
 		const directory = directoryOf({ lin: "林越", shen: "沈舟" });
-		const [channel] = channelList(state, directory, "owner", (slug) => (slug === "坦克大战" ? "shen" : undefined));
+		const [channel] = channelList(state, directory, "owner");
 		expect(channel.kind).toBe("group");
 		expect(channel.team).toBe("坦克大战");
-		expect(channel.lead).toBe("shen");
-		expect(channel.leadLabel).toBe("沈舟");
 	});
 
 	it("团队频道带上一句话现状 doing（来自团队文件）", () => {
@@ -110,7 +108,6 @@ describe("频道列表的投影", () => {
 			state,
 			directoryOf({ lin: "林越", shen: "沈舟" }),
 			"owner",
-			() => "shen",
 			(slug) => (slug === "坦克大战" ? "沈舟在改 doing 链路" : undefined),
 		);
 		expect(channel.doing).toBe("沈舟在改 doing 链路");
@@ -118,51 +115,46 @@ describe("频道列表的投影", () => {
 
 	it("没有 doing 时列表里不带这个键，非团队频道也不带", () => {
 		const state = stateOf([team, lin]);
-		const list = channelList(state, directoryOf({ lin: "林越" }), "owner", () => undefined, () => undefined);
+		const list = channelList(state, directoryOf({ lin: "林越" }), "owner", () => undefined);
 		expect("doing" in list[0]!).toBe(false);
 		const dm = list.find((channel) => channel.kind === "dm")!;
 		expect("doing" in dm).toBe(false);
 	});
 
-	it("没有团队管理员的团队不编造一个", () => {
+	it("没有 doing 的团队不编造一个", () => {
 		const state = stateOf([team]);
 		const [channel] = channelList(state, directoryOf({}), "owner", () => undefined);
-		expect(channel.lead).toBeUndefined();
-		expect(channel.leadLabel).toBeUndefined();
+		expect("doing" in channel).toBe(false);
 	});
 });
 
 describe("频道详情的投影", () => {
-	it("团队成员的角色：我 / 团队管理员 / 成员三种", () => {
+	it("团队成员的角色：我 / 助理 / 成员三种", () => {
 		const state = stateOf([team]);
 		const detail = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			teamLeadOf: (slug) => (slug === "坦克大战" ? "shen" : undefined),
+			assistants: ["shen"],
 		});
 		const roles = Object.fromEntries(detail.members.map((member) => [member.slug, member.role]));
-		expect(roles).toEqual({ owner: "owner", lin: "member", shen: "lead" });
+		expect(roles).toEqual({ owner: "owner", lin: "member", shen: "assistant" });
 	});
 
 	it("详情也带出 doing；没有就不带这个键", () => {
 		const state = stateOf([team]);
 		const withDoing = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			teamLeadOf: () => "shen",
 			teamDoingOf: () => "沈舟在改 doing 链路",
 		});
 		expect(withDoing.channel.doing).toBe("沈舟在改 doing 链路");
-		const withoutDoing = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			teamLeadOf: () => "shen",
-		});
+		const withoutDoing = channelDetail(state, team, directoryOf({ lin: "林越", shen: "沈舟" }), {});
 		expect("doing" in withoutDoing.channel).toBe(false);
 	});
 
-	it("团队管理员不在成员里时，没人被标成 lead", () => {
+	it("助理不在成员里时，没人被标成助理", () => {
 		const unbalanced = { ...team, members: ["owner", "lin"] };
 		const state = stateOf([unbalanced]);
 		const detail = channelDetail(state, unbalanced, directoryOf({ lin: "林越", shen: "沈舟" }), {
-			teamLeadOf: () => "shen",
+			assistants: ["shen"],
 		});
-		expect(detail.members.some((member) => member.role === "lead")).toBe(false);
-		expect(detail.channel.lead).toBe("shen");
+		expect(detail.members.some((member) => member.role === "assistant")).toBe(false);
 	});
 });
 

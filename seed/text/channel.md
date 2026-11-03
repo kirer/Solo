@@ -120,3 +120,6 @@
 
 ## sections.owner
 我（用户本人）
+
+## sections.assistant.self
+你自己

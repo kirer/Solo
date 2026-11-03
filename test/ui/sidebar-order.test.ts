@@ -62,11 +62,8 @@ describe("sortChannels", () => {
 		expect(isPinnedChannel(channel("dm:owner-知言", "dm", 0), undefined)).toBe(false);
 	});
 
-	it("换名字也认：助理叫什么都按汇报关系钉", () => {
-		const people = [
-			{ slug: "沈岸", manager: "owner" },
-			{ slug: "林骁", manager: "沈岸" },
-		];
+	it("换名字也认：助理叫什么都钉住它的私聊", () => {
+		const people = [{ slug: "林骁" }, { slug: "沈岸", assistant: true as const }];
 		expect(assistantSlug(people)).toBe("沈岸");
 		const out = sortChannels(
 			[channel("general", "group", 9_000), channel("dm:owner-沈岸", "dm", 1)],

@@ -21,6 +21,8 @@ import { appendNote, appendToChannel } from "./write.ts";
 import { speakerBefore } from "./rules.ts";
 import { deliver, type DeliverIssue, type DeliverResult } from "./dispatch.ts";
 import { deliveryPrompt, digestNotice, digestRows } from "./delivery.ts";
+import { intakeAll } from "../work/intake.ts";
+import type { Ticket } from "../work/types.ts";
 import type { FinishTurn } from "./turn/index.ts";
 import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
@@ -80,7 +82,41 @@ export type PostDeps = {
 	readonly promptDir?: string;
 	/** 机械文案目录（`text/`）。投递头、留痕、摘要行从这里取。 */
 	readonly text?: TextCatalog;
+	/**
+	 * 派活策略（`<userRoot>/policy.md`）。给了就在叫醒人之前替他立工单（`work/intake.ts`）。
+	 * 不给 = 不立（系统留痕这些不是「谁派的活」）。
+	 */
+	readonly policyFile?: string;
 };
+
+/**
+ * 叫醒之前先立工单：**「这条消息派了谁」是确定的事实，不该让模型自己记。**
+ *
+ * 只有人能派活、只有闸门放行的才有单子（判据全在 `work/intake.ts` 与 `policy.md`）。
+ * 拿到单子的人，正文末尾多一句「这一轮记在 T3 上」—— 实测模型会照它去 `report`。
+ */
+async function intakeNotes(
+	deps: PostDeps,
+	channel: Channel,
+	message: Message,
+	targets: readonly string[],
+	context: Context,
+): Promise<ReadonlyMap<string, string> | undefined> {
+	if (deps.policyFile === undefined) return undefined;
+	const opened = await intakeAll(
+		{ harness: deps.harness, policyFile: deps.policyFile },
+		channel,
+		message,
+		targets,
+		context,
+	).catch(() => new Map<string, Ticket>());
+	if (opened.size === 0) return undefined;
+	const notes = new Map<string, string>();
+	for (const [slug, ticket] of opened) {
+		notes.set(slug, fill(deps.text, "work.wake.line", { id: ticket.id, title: ticket.title }));
+	}
+	return notes;
+}
 
 /** 投递没成时给我留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
 function renderIssues(
@@ -173,9 +209,11 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 	const digests = new Map(
 		[...digestParts].map(([slug, part]) => [slug, digestNotice(prompt.digest, part.total, part.rows)]),
 	);
+	const bodyNotes = await intakeNotes(deps, liveChannel, message, targets, context);
 	const delivery = await deliver(
 		{
 			digests,
+			...(bodyNotes === undefined ? {} : { bodyNotes }),
 			prompt,
 			channel: liveChannel,
 			message,
@@ -185,8 +223,8 @@ async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Co
 			// 谁连发几条（我三句、agent 的过程话与追问）都只排一个唤醒，最后一条取代
 			// 前面没开始的那些 —— 消息都在频道里，少的只是重复唤醒。
 			// 这里只撤 `queued`，正在跑的那一轮不碰（撤它会连新消息一起吞掉，实测过）。
-			coalesceQueue: (conversationId, keepRequestId, incoming) =>
-				coalesceQueue(deps.harness, conversationId, keepRequestId, context, incoming),
+			coalesceQueue: (conversationId, keepRequestId) =>
+				coalesceQueue(deps.harness, conversationId, keepRequestId, context),
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),

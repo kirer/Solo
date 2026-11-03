@@ -23,11 +23,10 @@ export const SAMPLE_SLOTS = {
 	"root.app": "/home/example/.solo-app",
 	"self.body": "你负责把示例这件事做完。不做示例之外的事。",
 
-	rules: "- 只在叫你的那个频道回话。\n- 没有新东西就不说。\n- 要拍板的事找上级，别自己定。",
+	rules: "- 只在叫你的那个频道回话。\n- 没有新东西就不说。\n- 拍不了板就 @我，别自己定。",
+	policy: "模式：off：只接明说的（@ 我 / 私聊 / 跟着既有工单追问）\n版本：deadbeef\n\n明着派活的人：所有人\n不 @ 也能派活的人：owner\n\n规矩：\n- 只在工作区里改：动手只改自己的工作区。",
 
-	manager: "示例上级（`boss`）",
-	reports: "示例下属（`member`）",
-	chain: "示例 → 示例上级 → 我",
+	assistant: "示例助理（`assistant`）",
 	team: "`demo-team`",
 	peers: "示例同僚（成员）",
 	"chats.groups": "「示例项目群」",
@@ -36,7 +35,6 @@ export const SAMPLE_SLOTS = {
 
 	"team.brief": "这个团队负责把示例做出来。验收标准：示例能跑。",
 	"team.status": "在做",
-	"team.lead": "示例上级（`boss`）",
 	"team.dir": "teams/demo-team/",
 	"team.members": "`boss`、`member`",
 	"team.memory": "- 示例：踩过一次示例的坑，别再踩",
@@ -48,7 +46,6 @@ export const SAMPLE_SLOTS = {
 
 	channel: "team:demo-team",
 	pending: "2",
-	candidates: "- #3 [decision] 示例上级：定了，验收标准是能跑通。\n- #4 [chat] 示例同僚：收到。",
 
 	"tool:say": "say",
 	"tool:chats": "chats",
@@ -58,6 +55,7 @@ export const SAMPLE_SLOTS = {
 	"tool:run": "run",
 	"tool:file": "file",
 	"tool:hire": "hire",
+	"tool:work": "work",
 
 	"reply.alone": "（这一轮只有你被叫醒：必须回，回的就是结果。）",
 	"reply.colleagues": "（成员的事就在这个频道说：要问示例同僚就 @ 他。）",

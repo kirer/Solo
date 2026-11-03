@@ -3,8 +3,8 @@
  *
  * 与新核心的其他部分一致：**团队也是文件夹**，`README.md` 是唯一事实来源。
  * 代码只负责两件事 —— 读写这份文件、按它算出「谁在这个团队里」。至于
- * 「什么时候该立一个团队」「团队该有哪些人」「团队管理员该管到什么程度」，
- * 那些是判断，写在 agent 的技能里（`members/<slug>/skills/建立团队/SKILL.md`），
+ * 「什么时候该立一个团队」「团队该有哪些人」「这个团队的边界在哪」，
+ * 那些是判断，写在 agent 的技能里（`assistant/<slug>/skills/建立团队/SKILL.md`），
  * 不写在这里。
  *
  * 格式与 `identity.md` 对称：可选的 YAML 头 + 正文。
@@ -12,7 +12,6 @@
  * ```markdown
  * ---
  * name: 演示团队
- * lead: 林越
  * status: active
  * ---
  *
@@ -41,8 +40,6 @@ export type TeamDoc = {
 	readonly slug: string;
 	/** 显示名，缺省用 slug。 */
 	readonly name: string;
-	/** 团队管理员（agent 的 slug）。缺省 = 没人负责。 */
-	readonly lead?: string;
 	/**
 	 * 一句话现状（「谁在做什么」）。缺省 = 没写。
 	 *
@@ -71,11 +68,9 @@ function headingOf(body: string): string | undefined {
 function teamOf(slug: string, doc: Doc): TeamDoc {
 	const header = doc.front;
 	const status = STATUSES.find((item) => item === header.status) ?? "active";
-	const lead = header.lead;
 	return {
 		slug,
 		name: header.name ?? headingOf(doc.body) ?? slug,
-		...(lead === undefined ? {} : { lead }),
 		...(header.doing === undefined ? {} : { doing: header.doing }),
 		status,
 		body: doc.body,
@@ -85,7 +80,6 @@ function teamOf(slug: string, doc: Doc): TeamDoc {
 /** 团队说明在文件里的样子（渲染与写盘共用）。 */
 export type TeamFile = {
 	readonly name: string;
-	readonly lead?: string;
 	readonly doing?: string;
 	readonly status?: TeamStatus;
 	readonly body: string;
@@ -95,7 +89,6 @@ function teamFields(doc: TeamFile): readonly FrontmatterField[] {
 	// 空串按「没写」处理（`status` 例外：它是枚举，只在缺省时才不写）。
 	return [
 		["name", doc.name],
-		["lead", doc.lead === "" ? undefined : doc.lead],
 		["doing", doc.doing === "" ? undefined : doc.doing],
 		["status", doc.status],
 	];
@@ -120,27 +113,14 @@ export function assertTeamSlug(slug: string, text?: TextCatalog): string {
 /**
  * `teams/<slug>/README.md` → 团队 slug；别的路径 → `undefined`。
  *
- * 写给 `file` 工具用：团队说明改了，团队频道（成员表是它的投影）必须跟着重算，
- * 否则新写的团队管理员在频道里不存在、成员 @ 不到他。
+ * 写给 `file` 工具用：团队说明改了，团队频道（成员表是它的投影）必须跟着重算 ——
+ * 新建的团队要有频道、改名的要跟着改名、写 `status: archived` 的要把频道归档。
  */
 export function teamSlugOfReadmePath(rel: string): string | undefined {
 	const parts = rel.split(/[\\/]+/u).filter((part) => part !== "" && part !== ".");
 	if (parts.length !== 3) return undefined;
 	const [root, slug, file] = parts;
 	if (root !== "teams" || file !== TEAM_FILE || slug === undefined) return undefined;
-	return slug;
-}
-
-/**
- * `teams/<slug>/memory.md` → 团队 slug。别的路径返回 `undefined`。
- *
- * 写团队记忆是**显式确认**：文件真的变了，沉淀游标就该往前推（不再靠 mtime 猜）。
- */
-export function teamSlugOfMemoryPath(rel: string): string | undefined {
-	const parts = rel.split(/[\\/]+/u).filter((part) => part !== "" && part !== ".");
-	if (parts.length !== 3) return undefined;
-	const [root, slug, file] = parts;
-	if (root !== "teams" || file !== "memory.md" || slug === undefined) return undefined;
 	return slug;
 }
 
@@ -176,18 +156,16 @@ export async function listTeams(teamsRoot: string): Promise<readonly TeamDoc[]> 
 /**
  * 写一份团队说明（整篇替换）。目录不存在就建。
  *
- * **不检查团队管理员是不是真的存在** —— 那是判断，不是这里该管的事。写错了人的名字，
- * `renderAgentPrompt` 会原样告诉团队成员「团队管理员是 X」，而 X 不存在这件事，
- * 由 agent 自己（`teams` / `me`）发现。代码不替它兜。
+ * **不检查团队里有没有人** —— 那是判断，不是这里该管的事。一个空团队在频道里只有
+ * 我和助理，这件事由 agent 自己（看频道成员 / 技能）发现。代码不替它兜。
  */
 export async function writeTeam(
 	teamsRoot: string,
 	input: {
 		readonly slug: string;
 		readonly name?: string;
-		readonly lead?: string;
 		/**
-		 * 一句话现状。**不传 = 沿用文件里已有的**（与 `lead` 同一口径）：
+		 * 一句话现状。**不传 = 沿用文件里已有的**：
 		 * 大多数写入只改正文，调用方没必要把 `doing` 抄一遍，抄漏了就会把它抹掉。
 		 */
 		readonly doing?: string;
@@ -201,7 +179,6 @@ export async function writeTeam(
 	const existing = await readTeam(teamsRoot, slug);
 	const doc = {
 		name: input.name ?? existing?.name ?? slug,
-		...(input.lead === undefined ? (existing?.lead === undefined ? {} : { lead: existing.lead }) : { lead: input.lead }),
 		...(input.doing === undefined ? (existing?.doing === undefined ? {} : { doing: existing.doing }) : { doing: input.doing }),
 		status: input.status ?? existing?.status ?? "active",
 		body: input.body,
@@ -211,32 +188,10 @@ export async function writeTeam(
 }
 
 /**
- * 团队 README 的 `lead` 能不能用。返回一句能直接回给模型的话；没问题就是 `undefined`。
- *
- * 判据只有三条，都是「文档里的事实」而不是猜测：必须有；必须是名册里真实存在的 slug；
- * 不能是直接向 owner 汇报的助理 —— 助理是统筹者，不是团队管理员。建团队之前先招一个
- * 团队成员，是模型该学会的流程（技能「建立团队」里写着），代码只负责不让它蒙混过关。
- */
-export function leadProblem(input: {
-	readonly lead: string | undefined;
-	readonly slugs: readonly string[];
-	readonly assistants: readonly string[];
-	readonly text?: TextCatalog;
-}): string | undefined {
-	const lead = input.lead?.trim();
-	if (lead === undefined || lead === "") return fill(input.text, "org.team.lead.missing");
-	if (!input.slugs.includes(lead)) {
-		return fill(input.text, "org.team.lead.unknown", { slug: lead, slugs: input.slugs.join("、") });
-	}
-	if (input.assistants.includes(lead)) return fill(input.text, "org.team.lead.assistant", { slug: lead });
-	return undefined;
-}
-
-/**
  * 建团队能不能由这个人做。返回一句能直接回给模型的话；可以建就是 `undefined`。
  *
- * 建团队是助理的职权（技能「建立团队」写在助理自己的技能里）：团队成员发现需要新团队，
- * 该向上级说，由助理建。写新的团队 README 之前校验 —— 成员自己开一个团队，会同时带出
+ * 建团队是助理的职权（技能「建立团队」写在助理自己的技能里）：成员发现需要新团队，
+ * 该 @助理，由助理建。写新的团队 README 之前校验 —— 成员自己开一个团队，会同时带出
  * 一个频道、一批被叫醒的人，和一份没人认可的目标。
  */
 export function createTeamProblem(input: {

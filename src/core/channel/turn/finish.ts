@@ -28,6 +28,7 @@ import type { WakeRecord, WakeTarget } from "./record.ts";
 import { postMessage, type PostDeps } from "../post.ts";
 import type { MentionRoster } from "../mentions.ts";
 import { isPass } from "../tools/guards.ts";
+import { closeUntouched } from "../../work/intake.ts";
 
 /** 从一条 `pi.assistant` 里取出「最终正文」——最后一个 text 块。 */
 export function finalTextOf(entry: EntryRecord | undefined): string | undefined {
@@ -46,7 +47,7 @@ export function finalTextOf(entry: EntryRecord | undefined): string | undefined 
 /**
  * 这条唤醒之后，他在这个频道里说过话吗？`note` 也算 —— 留痕是**他**发出来的。
  *
- * 以前这里不认 `note`，只有安静的一轮（团队记忆沉淀）才认。结果实测踩了两次：
+ * 以前这里不认 `note`。结果实测踩了两次：
  * 他自己写的一条留痕被当成「没说话」，收尾把同一句又补发一遍，频道里并排两条一样的话
  * （2026-11-02 周野的自我介绍）。别人的留痕（系统报到、我的通知）`from` 不是他，本来就不算。
  */
@@ -103,6 +104,8 @@ export function saidLast(page: readonly EntryRecord[], answer: EntryRecord | und
 
 type TurnDeps = {
 	readonly harness: Harness;
+	/** 派活策略：一轮收尾时让没汇报过的自动工单收工（`work/intake.ts`）。 */
+	readonly policyFile?: string | undefined;
 	readonly promptDir?: string | undefined;
 	readonly text?: PostDeps["text"];
 	/** 名册：补发时 `@我` 要存成 `owner`，不能存字面 token（见 `ownerSpeak` 同一段说明）。 */
@@ -144,7 +147,7 @@ export function turnTarget(
 }
 
 /**
- * 造一个收尾器。投递、我说话、沉淀三条路共用同一份 —— 收尾的行为只在这里写一次。
+ * 造一个收尾器。投递、我说话两条路共用同一份 —— 收尾的行为只在这里写一次。
  */
 /**
  * 收尾串行闸门 —— **整个进程一份**，不是每个收尾器一份。
@@ -160,6 +163,14 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 }
 
 async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context): Promise<void> {
+	// 先收单：这一轮要是连一次汇报都没有，那张自动立的工单就到此为止（试运行不带账）。
+	if (deps.policyFile !== undefined) {
+		await closeUntouched(
+			{ harness: deps.harness, policyFile: deps.policyFile },
+			{ slug: info.slug, channelId: info.wake.reply.channelId, seq: info.wake.reply.seq },
+			context,
+		).catch(() => undefined);
+	}
 	const state = (await deps.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
 	const { entry, page } = await answerEntry(info.conversation, info.answer, context);
 	const target = turnTarget(state, info.slug, info.wake, saidLast(page, entry));
@@ -208,11 +219,10 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 				text,
 				at: Date.now(),
 				...(roster === undefined ? {} : { roster }),
-				// 安静的一轮（团队记忆沉淀）：补发也走留痕，不刷群、不叫醒人
-				// （`note` 本来就不叫人）。正常一轮的补发**要照常叫醒** —— 他说的是
-				// 「@周岚 请验收」，不叫醒等于把结论发进一个没人看的房间。
-				// 实测 2026-11-02：沈舟的交付结论就是这么落进频道的，周岚没醒，团队停摆。
-				kind: info.wake.quiet === true ? "note" : "say",
+				// 补发**要照常叫醒** —— 他说的是「@周岚 请验收」，不叫醒等于把结论发进
+				// 一个没人看的房间。实测 2026-11-02：沈舟的交付结论就是这么落进频道的，
+				// 周岚没醒，团队停摆。
+				kind: "say",
 			},
 			context,
 		);

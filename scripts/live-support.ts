@@ -161,7 +161,6 @@ export async function createLiveAgent(
 	input: {
 		readonly name: string;
 		readonly title?: string;
-		readonly manager?: string;
 		readonly team?: string;
 		readonly body?: string;
 	},
@@ -170,7 +169,6 @@ export async function createLiveAgent(
 		root: world.layout.membersRoot,
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
-		...(input.manager === undefined ? {} : { manager: input.manager }),
 		...(input.team === undefined ? {} : { team: input.team }),
 		...(input.body === undefined ? {} : { body: input.body }),
 	});
@@ -181,11 +179,11 @@ export async function createLiveAgent(
 /** 代码写一份团队说明并重投影频道（与 `file` 工具写 README 同一条路径）。 */
 export async function createTeamFixture(
 	world: LiveWorld,
-	input: { readonly slug: string; readonly name: string; readonly lead: string; readonly body: string },
+	input: { readonly slug: string; readonly name: string; readonly body: string },
 ): Promise<void> {
 	const dir = join(world.teamsRoot, input.slug);
 	await mkdir(dir, { recursive: true });
-	await writeFile(join(dir, "README.md"), renderTeamFile({ name: input.name, lead: input.lead, status: "active", body: input.body }), "utf8");
+	await writeFile(join(dir, "README.md"), renderTeamFile({ name: input.name, status: "active", body: input.body }), "utf8");
 	await world.shell.syncTeam(input.slug);
 }
 
@@ -295,6 +293,27 @@ export async function seqBaseline(shell: LiveShell): Promise<Record<string, numb
 	return baseline;
 }
 
+/** `from` 在基线之后说的最后一句（截短）。没说话返回 `undefined` —— 和「说了但没 @ 人」分开。 */
+export async function lastSaidBy(
+	shell: LiveShell,
+	from: string,
+	baseline: Readonly<Record<string, number>>,
+): Promise<string | undefined> {
+	const state = await shell.channels();
+	const found: { readonly message: Message; readonly channelId: string }[] = [];
+	for (const [channelId, list] of Object.entries(state.messages)) {
+		const base = baseline[channelId] ?? Number.POSITIVE_INFINITY;
+		for (const message of list) {
+			if (message.seq >= base && message.from === from) found.push({ message, channelId });
+		}
+	}
+	found.sort((left, right) => left.message.at - right.message.at || left.message.seq - right.message.seq);
+	const last = found[found.length - 1];
+	if (last === undefined) return undefined;
+	const text = last.message.text.replace(/\s+/g, " ").trim();
+	return `[${last.message.kind} @${last.channelId}] ${text.length > 120 ? `${text.slice(0, 120)}…` : text}`;
+}
+
 /** 等 `from` 在新消息里 @ 到 `target`；`target !== "owner"` 时把「跳级 @ 我」判成失败。 */
 export async function waitForMention(
 	shell: LiveShell,
@@ -336,7 +355,7 @@ export function hopDetail(
 }
 
 /** 一条唤醒提交的终态。 */
-export type SettleOutcome =
+export type SubmissionOutcome =
 	| { readonly kind: "missing" }
 	| { readonly kind: "pending"; readonly status: string }
 	| { readonly kind: "unanswered"; readonly reason: string }
@@ -351,7 +370,7 @@ export async function waitForSubmission(
 	prefix: string,
 	timeoutMs: number,
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<SettleOutcome> {
+): Promise<SubmissionOutcome> {
 	const deadline = Date.now() + timeoutMs;
 	let id: Parameters<Harness["submission"]>[0] | undefined;
 	let lastStatus = "queued";
@@ -375,13 +394,8 @@ export async function waitForSubmission(
 	return id === undefined ? { kind: "missing" } : { kind: "pending", status: lastStatus };
 }
 
-/** 沉淀那条：`settle:<team>:<seq>`。 */
-export function waitForSettle(harness: Harness, team: string, timeoutMs: number, context: Context = BACKGROUND_CONTEXT): Promise<SettleOutcome> {
-	return waitForSubmission(harness, `settle:${team}:`, timeoutMs, context);
-}
-
 /** 把「提交没结算」翻成一句能直接决定去查哪儿的话。 */
-export function wakeDetail(outcome: SettleOutcome): string {
+export function wakeDetail(outcome: SubmissionOutcome): string {
 	if (outcome.kind === "missing") return "提交没有落地：wake 没提交，或被合并撤掉了";
 	if (outcome.kind === "pending") return `提交一直是 ${outcome.status}，等到超时：没跑`;
 	if (outcome.kind === "unanswered") {
@@ -389,20 +403,6 @@ export function wakeDetail(outcome: SettleOutcome): string {
 	}
 	if (outcome.kind === "gone") return "提交结算后底座查不到记录：底座侧丢了";
 	return "提交 done，但频道里没有它说的话，收尾（turn）也没补上";
-}
-
-/** 把终态翻成一句能直接决定「去改哪儿」的话。 */
-export function settleDetail(outcome: SettleOutcome, wroteIt: boolean, memoryText: string): string {
-	if (outcome.kind === "missing") return "settle 没有提交：没有候选消息 / 找不到团队管理员 / 没有会话 —— 上游没叫，不是模型判断";
-	if (outcome.kind === "pending") {
-		return `唤醒排着没跑（提交一直是 ${outcome.status}，等到超时）：被合并或被吞，不是模型判断`;
-	}
-	if (outcome.kind === "unanswered") {
-		return `提交结算成 unanswered（${outcome.reason === "" ? "没有原因" : outcome.reason}）：底座/网关没产出，不是提示词`;
-	}
-	if (outcome.kind === "gone") return "提交在队列里出现过，结算后底座查不到记录：底座侧丢了，不是提示词";
-	if (!wroteIt) return "提交 done，但 memory.md 一个字没变：模型判断这批不值得记 —— 要改的是沉淀判据（提示词），不是机制";
-	return memoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "";
 }
 
 /** `JSON.stringify` 的 replacer：`harness.inspect()` 里有 bigint。 */

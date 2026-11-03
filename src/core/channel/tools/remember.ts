@@ -4,9 +4,9 @@ import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
 import { readIdentity } from "../../agent/identity.ts";
 import { appendMemory } from "../../agent/memory.ts";
 import { redact } from "../../agent/secrets.ts";
-import { assertTeamSlug, readTeam } from "../../team/doc.ts";
+import { assertTeamSlug } from "../../team/doc.ts";
 import { appendTeamMemory } from "../../team/memory.ts";
-import { confirmedBy } from "../../team/settle.ts";
+import { isAssistantDir } from "../../layout.ts";
 import { selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { fill } from "../../md/catalog.ts";
 
@@ -38,14 +38,13 @@ export function createRememberTool(deps: CoreToolDeps) {
 				} catch (error) {
 					return text(error instanceof Error ? error.message : String(error));
 				}
-				const lead = (await readTeam(deps.layout.teamsRoot, team))?.lead;
-				if (self?.team !== team && lead !== slug) {
+				// 谁能写：这个团队的人，或者助理（它替所有团队记组织级的事）。
+				const assistant = self !== undefined && isAssistantDir(deps.layout, self.dir);
+				if (self?.team !== team && !assistant) {
 					return text(t("remember.refuse.not-member", { team }));
 				}
 				await appendTeamMemory(deps.layout.teamsRoot, team, { text: body, by: slug, ...(deps.text === undefined ? {} : { catalog: deps.text }) });
-				const confirmed = await confirmedBy(deps.harness, team, ctx);
-				const tail = confirmed === 0 ? "" : t("remember.team.tail", { seq: confirmed });
-				return text(t("remember.team.done", { team, tail }));
+				return text(t("remember.team.done", { team }));
 			}
 			await appendMemory(
 				self?.dir ?? join(deps.layout.membersRoot, slug),

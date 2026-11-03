@@ -143,4 +143,3 @@ export function createPlugins(services: CoreServices) {
 	};
 }
 
-export type Plugins = ReturnType<typeof createPlugins>;

@@ -84,8 +84,7 @@ type ViewActor = {
   label: string;        // 显示名（identity.md 的 name）
   title: string;
   team?: string;        // identity.md 的 team（团队 slug）
-  manager?: string;     // slug；undefined = 直接向我汇报
-  managerLabel?: string;
+  assistant?: true;     // 助理（身份目录在应用根 assistant/ 下，ADR-058）
   body: string;         // identity.md 正文（档案页要显示「他是谁」）
   activity?: ViewActivity; // 此刻在干什么；**没有这个键 = 待命**
 }
@@ -110,8 +109,6 @@ type ViewActivity = {
 type ViewChannel = {
   id: string;
   kind: "dm" | "group";             // 由成员表推导，见下
-  lead?: string;                    // 仅团队频道：README.md 的 lead（团队管理员）
-  leadLabel?: string;               // 仅团队频道：团队管理员显示名
   doing?: string;                   // 仅团队频道且写了 doing：一句话现状
   title: string;                    // 私聊 = 对方的名字；群聊/团队 = 频道/团队名
   team?: string;                    // 仅团队频道（id 形如 team:<slug>）
@@ -135,7 +132,7 @@ type ViewChannel = {
 
 团队频道就是 `team:<slug>` 这个**普通的群**，即使只有我和管理员两个人也永远是 `group`
 —— 它和别的群的区别只有「有一份 `teams/<slug>/README.md`」，界面上体现在
-`team` / `lead` / `leadLabel` / `doing` 这四个字段上。
+`team` / `doing` 这两个字段上。
 
 **`dm`**：一对一房间，id 是 `dm:<两个 slug 排序后拼接>`，成员就是 `{owner, 那个人}`。
 **每个成员都由系统建好一条私聊**（`ensureOwnerDm`，装配 / 招人时幂等补齐）—— 他的工作
@@ -207,7 +204,7 @@ type ViewMember = {
   id: number;
   slug: string;
   label: string;
-  role: "owner" | "lead" | "member";   // 我 / 团队管理员 / 成员
+  role: "owner" | "assistant" | "member";   // 我 / 助理 / 成员
   unread: number;
 }
 
@@ -229,8 +226,8 @@ type ViewMessage = {
 }
 ```
 
-- `role` 只用三种**能从文件里读出来**的事实，不引身份枚举：我 / 团队管理员（团队
-  `README.md` 的 `lead`）/ 成员。
+- `role` 只用三种**能从文件里读出来**的事实，不引身份枚举：我 / 助理（身份目录在应用根
+  的 `assistant/` 下，ADR-058）/ 成员。
 - `noteOf` 只在 `kind` 是 `note` 时出现，现在只有 `run` 一种：后台命令跑完的留痕正文是
   命令、输出尾巴和退出码，给干活的那个人看的。界面把它收成一行（`后台命令跑完了。`），
   点开才看全文 —— 平铺的话一屏对话里会插进几十行日志。命令输出里的终端控制序列在写入
@@ -276,8 +273,8 @@ type ViewMessage = {
   身份时需显式开 `SOLO_DEBUG_FROM=1`（启动日志会警告一行）。
 - 频道不存在 → 404。附件 id 对不上（被清理过）→ 400「附件不存在（可能已经被清理），
   重新发一次」。
-- `kind` 由**说话的人自己声明**。团队频道（`team:<slug>`）里的消息会进团队记忆的沉淀
-  队列（`src/core/team/settle.ts`）。
+- `kind` 由**说话的人自己声明**。团队记忆不按 `kind` 自动整理：谁认为值得记，谁用
+  `remember(scope=team)` 写。
 - 投递是异步的：`delivered` / `failed` 是本条消息唤醒了几个人，**不是**他们的回答。
 - 前端拿到响应后不要自己插一条消息，等 SSE 推新快照（不制造一条假消息）。
 
@@ -423,8 +420,7 @@ type ViewStep = {
   slug: string, label: string,
   title: string,                    // identity.md 的 title，没有就是 ""
   team?: string,                    // identity.md 的 team，没有就不出现
-  manager: string,                  // 我 是 ""
-  managerLabel: string,             // 同上
+  assistant: boolean,               // 是不是助理（文件夹事实，ADR-058）
   body: string,                     // identity.md 正文（预置提示词）
   skills: { name: string, description: string, scope: "personal" | "team" | "all", overrides: boolean }[],
   memory: { exists: boolean, entries: number, digest: string | null },
@@ -442,7 +438,7 @@ type ViewStep = {
 ## 10.1 `GET /api/teams/:slug`
 
 团队频道的「详情」一次取全：`teams/<slug>/README.md` 的正文（目标 / 验收标准 /
-不做什么 / 当前进展）+ 管理员的显示名 + 团队层技能（`teams/<slug>/skills/`）+
+不做什么 / 当前进展）+ 团队层技能（`teams/<slug>/skills/`）+
 `teams/<slug>/memory.md` 按小节拆开的条目。
 
 ```ts
@@ -450,7 +446,6 @@ type ViewStep = {
 {
   slug: string, name: string, status: string,
   doing?: string,                   // README 头的 doing，没写就不出现
-  lead?: string, leadLabel: string, // lead 是 slug，leadLabel 是名册里的显示名
   body: string,                     // README 正文
   skills: { name: string, description: string, scope: "team", overrides: boolean }[],  // 团队层技能
   memory: {
@@ -461,8 +456,8 @@ type ViewStep = {
 }
 ```
 
-`slug` 必须是 `teams/` 下真实存在的目录，否则 404。团队记忆**只读**：它由
-`team/settle.ts` 在收工结算时自动沉淀（判据在 `seed/prompt/95-settle.md`），
+`slug` 必须是 `teams/` 下真实存在的目录，否则 404。团队记忆**只读**：写入只有
+`remember(scope=team)`（成员或助理）与直接 `file` 写 `teams/<slug>/memory.md`，
 界面上没有增删入口。
 
 ## 10.2 `GET /api/models`

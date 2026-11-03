@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	createTeamProblem,
-	leadProblem,
 	listTeams,
 	membersOfTeam,
 	readTeam,
@@ -42,23 +41,20 @@ describe("团队：一份 README.md 就是全部事实", () => {
 		const written = await writeTeam(root, {
 			slug: "demo",
 			name: "演示团队",
-			lead: "linyue",
 			status: "active",
 			body: "目标：能跑通。验收：输入 A 得到 B。",
 		});
 		expect(written.name).toBe("演示团队");
-		expect(written.lead).toBe("linyue");
 		expect(written.status).toBe("active");
 
 		const read = await readTeam(root, "demo");
 		expect(read?.body).toBe("目标：能跑通。验收：输入 A 得到 B。");
 	});
 
-	it("重复写只换正文时，name/owner/status 保留", async () => {
-		await writeTeam(root, { slug: "demo", name: "演示", lead: "linyue", status: "paused", body: "v1" });
+	it("重复写只换正文时，name/status 保留", async () => {
+		await writeTeam(root, { slug: "demo", name: "演示", status: "paused", body: "v1" });
 		const second = await writeTeam(root, { slug: "demo", body: "v2" });
 		expect(second.name).toBe("演示");
-		expect(second.lead).toBe("linyue");
 		expect(second.status).toBe("paused");
 		expect(second.body).toBe("v2");
 	});
@@ -84,9 +80,8 @@ describe("团队：一份 README.md 就是全部事实", () => {
 		expect(second.doing).toBe("新");
 	});
 
-	it("缺 owner 时不编造团队管理员（写「没人负责」是渲染层的事）", async () => {
+	it("没写 name 时用 slug，不编一个显示名", async () => {
 		const written = await writeTeam(root, { slug: "solo", body: "只有我一个人做" });
-		expect(written.lead).toBeUndefined();
 		expect(written.name).toBe("solo");
 	});
 
@@ -105,8 +100,8 @@ describe("团队：一份 README.md 就是全部事实", () => {
 	});
 
 	it("renderTeamFile 是唯一格式来源：写盘内容与它逐字节相同", async () => {
-		const text = renderTeamFile({ name: "A", lead: "b", status: "done", body: "正文" });
-		expect(text).toBe("---\nname: A\nlead: b\nstatus: done\n---\n\n正文\n");
+		const text = renderTeamFile({ name: "A", status: "done", body: "正文" });
+		expect(text).toBe("---\nname: A\nstatus: done\n---\n\n正文\n");
 	});
 
 	it("membersOfTeam 按 identity 的 team 字段算成员", () => {
@@ -120,39 +115,15 @@ describe("团队：一份 README.md 就是全部事实", () => {
 	});
 });
 
-describe("团队管理员校验：写 README 之前的三条判据", () => {
-	const all = { slugs: ["林越", "沈舟", "知言"], assistants: ["知言"] };
-
-	it("缺 lead 直接拒绝，并说清先招人", () => {
-		const problem = leadProblem({ lead: undefined, ...all , text: SEED_TEXT });
-		expect(problem).toContain("必须写");
-		expect(problem).toContain("先招一个团队管理员");
-	});
-
-	it("lead 不在名册里：列出可选 slug", () => {
-		const problem = leadProblem({ lead: "查无此人", ...all , text: SEED_TEXT });
-		expect(problem).toContain("不在名册里");
-		expect(problem).toContain("林越");
-	});
-
-	it("助理不能当团队管理员", () => {
-		expect(leadProblem({ lead: "知言", ...all , text: SEED_TEXT })).toContain("不能当团队管理员");
-	});
-
-	it("合法的团队成员照常通过", () => {
-		expect(leadProblem({ lead: "林越", ...all , text: SEED_TEXT })).toBeUndefined();
-	});
-});
-
 describe("建团队只有助理能做", () => {
 	it("助理可以建", () => {
 		expect(createTeamProblem({ self: "知言", assistants: ["知言"] , text: SEED_TEXT })).toBeUndefined();
 	});
 
-	it("团队成员被拒，并告诉他去找上级", () => {
+	it("团队成员被拒，并告诉他去 @ 助理", () => {
 		const problem = createTeamProblem({ self: "苏禾", assistants: ["知言"] , text: SEED_TEXT });
 		expect(problem).toContain("只有助理能做");
-		expect(problem).toContain("上级");
+		expect(problem).toContain("@助理");
 	});
 });
 
@@ -171,21 +142,11 @@ describe("没有 --- 头的团队档案：拿正文的 # 标题当显示名", ()
 
 describe("团队频道成员：助理和我一样在每个团队里", () => {
 	it("助理进成员表，重复的人只算一次", () => {
-		const members = teamMembers({
-			lead: "程一",
-			chain: ["苏禾", "知言", "owner"],
-			teammates: ["程一", "林小满"],
-			assistants: ["知言"],
-		});
-		expect(members).toContain("owner");
-		expect(members).toContain("知言");
-		expect(members.filter((slug) => slug === "知言")).toHaveLength(1);
+		const members = teamMembers({ teammates: ["程一", "林小满"], assistants: ["知言", "知言"] });
+		expect(members).toEqual(["owner", "知言", "程一", "林小满"]);
 	});
 
-	it("没有管理员时也至少是我 + 助理", () => {
-		expect(teamMembers({ lead: undefined, chain: [], teammates: [], assistants: ["知言"] })).toEqual([
-			"owner",
-			"知言",
-		]);
+	it("团队没人时也至少是我 + 助理", () => {
+		expect(teamMembers({ teammates: [], assistants: ["知言"] })).toEqual(["owner", "知言"]);
 	});
 });

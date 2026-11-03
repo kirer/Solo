@@ -30,13 +30,6 @@ export type TextCatalog = {
 	keys(): readonly string[];
 };
 
-/** 空目录：装配没给文案时的兜底（测试、以及文案目录还没播种的老工作区）。 */
-export const EMPTY_CATALOG: TextCatalog = {
-	get: () => "",
-	has: () => false,
-	keys: () => [],
-};
-
 /** 文案目录名（`<appRoot>/text`，相对工作区就是 `text`）。 */
 export const TEXT_DIR = "text";
 

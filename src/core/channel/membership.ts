@@ -7,25 +7,23 @@
  */
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { chainUp, readAllIdentities, readIdentity, type Identity } from "../agent/identity.ts";
+import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../agent/identity.ts";
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { membersOfTeam, readTeam } from "../team/doc.ts";
 import type { Layout } from "../layout.ts";
 
 /**
- * 一个团队频道的成员：我 + 团队管理员 + 他的整条汇报线 + `team:` 指向它的人 + 助理。
+ * 一个团队频道的成员：我 + 助理 + `identity.md` 里 `team:` 指向它的人。
  *
- * 助理（`manager: owner`）不进汇报线也能看见每个团队：它是统筹者，不是任何人的上级。
+ * 没有负责人，也没有汇报线（ADR-058）：团队频道就是这个团队的房间，谁在这个团队谁在。
+ * 助理在每一个团队频道里 —— 它是统筹者，要看得见每个团队在做什么。
  */
 export function teamMembers(input: {
-	readonly lead: string | undefined;
-	readonly chain: readonly string[];
 	readonly teammates: readonly string[];
 	readonly assistants: readonly string[];
 }): readonly string[] {
-	const lead = input.lead === undefined || input.lead === "" ? [] : [input.lead];
-	return Array.from(new Set([OWNER, ...lead, ...input.chain, ...input.teammates, ...input.assistants]));
+	return Array.from(new Set([OWNER, ...input.assistants, ...input.teammates]));
 }
 
 export type MembershipDeps = {
@@ -134,9 +132,8 @@ export async function joinTeamChannel(
 /**
  * 按「团队文件写的事实」重建一个团队频道的成员表（幂等）。
  *
- * 成员 = 我 + 团队管理员 + 团队管理员的整条汇报线（向上到我）+ 所有 `identity.md` 里
- * `team:` 指向它的人。团队管理员在 `teams/<slug>/README.md` 的 `lead` 里 —— 那是文档的
- * 事实，代码照抄，不猜「谁该负责」。
+ * 成员 = 我 + 助理 + 所有 `identity.md` 里 `team:` 指向它的人。谁能进来只有一条判据：
+ * 他的身份文件里写了这个团队。没有负责人，也就不存在「往负责人名下挂人」。
  *
  * 成员表是事实的投影，所以用「精确重算后整体替换」（`replace`）而不是「只加不删」：
  * 只加不删会留下改名后的幽灵成员（实测过）。
@@ -156,21 +153,14 @@ export async function syncTeamChannel(
 	// README 还没写出来就不建频道：标题只有一个真名（README 的 `name`）。
 	// 先按目录名建一次再改名，界面上就会先闪一段拼音/英文 slug（实测 `xiaokonglong`）。
 	if (doc === undefined) return [];
-	const lead = doc.lead;
-	const chain = lead === undefined || lead === "" ? [] : chainUp(all, lead);
-	// 助理（直接向我汇报的人）和我一样在每个团队频道里：他是统筹者，要看得见每个
-	// 团队在做什么，团队里的人也随时能 @ 到他。报到这件事不叫他们 —— 他们不是被招来干活的。
-	const assistants = all.filter((identity) => identity.manager === OWNER).map((identity) => identity.slug);
-	const members = teamMembers({
-		lead,
-		chain,
-		teammates: membersOfTeam(all, team),
-		assistants,
-	});
-	// 团队频道里**任何人说话都叫醒团队管理员**：这个频道只为这一个团队存在，
-	// 不这样设，成员说「做完了」而没 @ 人，团队管理员就永远收不到（实测里 agent
-	// 因此用 `run sleep 120` 轮询等进度，白烧一轮）。
-	const wakeOnAll = lead === undefined || lead === "" ? [] : [lead];
+	// 助理和我一样在每个团队频道里：它是统筹者，要看得见每个团队在做什么，团队里
+	// 的人也随时能 @ 到它。报到这件事不叫它 —— 它不是被招来干活的。
+	const assistants = assistantsOf(deps.layout, all);
+	const members = teamMembers({ teammates: membersOfTeam(all, team), assistants });
+	// 团队频道里**没人被 @ 时叫醒助理**：这个频道只为这一个团队存在，不这样设，
+	// 成员说「做完了」而没 @ 人，就没人接（实测里 agent 因此用 `run sleep 120` 轮询
+	// 等进度，白烧一轮）。接话的是助理，不是「负责人」—— 它本来就该在这里。
+	const wakeOnAll = assistants;
 	const notMe = new Set([OWNER, ...assistants]);
 	const joined: string[] = [];
 	await deps.harness.commit(async (tx) => {

@@ -6,24 +6,17 @@
  */
 import { describe, expect, test } from "vitest";
 import { DirectoryDoc } from "../../src/core/agent/roster.ts";
-import { SettleDoc } from "../../src/core/team/settle.ts";
 import { ChannelDoc } from "../../src/core/channel/types.ts";
 
 const checkpointOf = (token: unknown) =>
 	(token as { definition: { checkpointWhen: (value: unknown, ops: readonly unknown[], info: { deltasSinceBase: number }) => boolean } })
 		.definition.checkpointWhen;
 
-describe("名册 / 沉淀游标：按增量条数压基线", () => {
+describe("名册：按增量条数压基线", () => {
 	test("名册：不到 64 条增量不压，到了就压（不再永不合并）", () => {
 		const checkpoint = checkpointOf(DirectoryDoc);
 		expect(checkpoint({ slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} }, [], { deltasSinceBase: 63 })).toBe(false);
 		expect(checkpoint({ slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} }, [], { deltasSinceBase: 64 })).toBe(true);
-	});
-
-	test("沉淀游标：同样 64 条一次", () => {
-		const checkpoint = checkpointOf(SettleDoc);
-		expect(checkpoint({ cursors: {} }, [], { deltasSinceBase: 63 })).toBe(false);
-		expect(checkpoint({ cursors: {} }, [], { deltasSinceBase: 64 })).toBe(true);
 	});
 
 	test("频道文档仍然有上界：短频道 64、长频道 16（防止每条都压整份历史）", () => {

@@ -6,6 +6,7 @@
  */
 import { join } from "node:path";
 import { OWNER_SLUG, readIdentity } from "../core/agent/identity.ts";
+import { isAssistantDir } from "../core/layout.ts";
 import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
 import { appendMemory, memoryTimeline, readMemory, writeMemory } from "../core/agent/memory.ts";
 import { removeSection, sectionsOf } from "../core/md/memory.ts";
@@ -81,8 +82,7 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 			label: labelIn(directory, slug),
 			title: identity?.title ?? "",
 			...(identity?.team === undefined ? {} : { team: identity.team }),
-			manager: identity?.manager ?? "",
-			managerLabel: identity?.manager === undefined ? "" : labelIn(directory, identity.manager),
+			assistant: identity !== undefined && isAssistantDir(shell.layout, identity.dir),
 			body: identity?.body ?? "",
 			skills: skills.map((skill) => ({
 				name: skill.name,

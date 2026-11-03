@@ -29,8 +29,8 @@ describe("装配", () => {
 	test("扫文件夹建会话，并把 slug↔会话写进名册", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", title: "负责人", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", title: "财务", manager: "林越" });
+		await createAgent({ root: agents, name: "林越", title: "开发" });
+		await createAgent({ root: agents, name: "沈舟", title: "财务" });
 
 		const opened = await box.open();
 		try {
@@ -48,7 +48,7 @@ describe("装配", () => {
 	test("全员频道自动包含所有人和我", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
+		await createAgent({ root: agents, name: "林越" });
 
 		const opened = await box.open();
 		try {
@@ -63,13 +63,13 @@ describe("装配", () => {
 	test("rescan 只为新出现的人开会话", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
+		await createAgent({ root: agents, name: "林越" });
 
 		const opened = await box.open();
 		try {
 			const shell = await box.assemble(opened);
 			const before = shell.conversations.size;
-			await createAgent({ root: agents, name: "沈舟", manager: "林越" });
+			await createAgent({ root: agents, name: "沈舟" });
 			const added = await shell.rescan();
 			expect(added).toEqual(["沈舟"]);
 			expect(shell.conversations.size).toBe(before + 1);
@@ -83,7 +83,7 @@ describe("装配", () => {
 	test("重启不会重复造人（会话 id 复用）", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
+		await createAgent({ root: agents, name: "林越" });
 
 		const first = await box.open();
 		let firstId: number | undefined;
@@ -110,8 +110,8 @@ describe("我说话", () => {
 	test("@ 谁就只叫谁；我自己不被投递（他没有会话）", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越" });
+		await createAgent({ root: agents, name: "林越" });
+		await createAgent({ root: agents, name: "沈舟" });
 
 		const opened = await box.open();
 		try {
@@ -138,7 +138,7 @@ describe("我说话", () => {
 	test("装配之后加的人：@ 得到他，投递摘要里也是名字不是 slug", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
+		await createAgent({ root: agents, name: "林越" });
 
 		const opened = await box.open();
 		try {
@@ -149,7 +149,7 @@ describe("我说话", () => {
 			await mkdir(dir, { recursive: true });
 			await writeFile(
 				join(dir, "identity.md"),
-				"---\nname: 沈舟\ntitle: 前端开发\nmanager: 林越\n---\n\n写小恐龙。\n",
+				"---\nname: 沈舟\ntitle: 前端开发\n---\n\n写小恐龙。\n",
 				"utf8",
 			);
 			// 模拟「另一个进程已经 rescan 过」：频道成员里有他、名册文档里有他的会话映射，
@@ -178,7 +178,7 @@ describe("我说话", () => {
 	test("不 @ 人时按规则唤醒第一个非我成员", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
+		await createAgent({ root: agents, name: "林越" });
 
 		const opened = await box.open();
 		try {
@@ -194,11 +194,11 @@ describe("我说话", () => {
 });
 
 describe("播种", () => {
-	test("种出来的人 manager 就是 owner，且正文写清了职责", async () => {
+	test("种出来的助理住在 assistant/ 下，且正文写清了职责", async () => {
 		const box = await pool.make("core-assemble-");
 		const slug = await seedOwnerAssistant(box.layout, { name: "林越" });
 		const identity = await readIdentity(box.layout.agentRoots, slug);
-		expect(identity?.manager).toBe("owner");
+		expect(identity?.dir.startsWith(box.layout.assistantRoot)).toBe(true);
 		// 正文来自 `seed/agents/assistant/identity.md`（组织是文件）。这里只钉两条不变式：
 		// 它得是**真的写清了职责**（不是占位），且零工具名 —— V3 起工具改名不许让 seed 撒谎。
 		const body = identity?.body ?? "";
@@ -226,8 +226,8 @@ describe("会话只有两种形态与团队频道", () => {
 	test("新人做四件事：建会话、记名册、进全员群、开私聊", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越" });
+		await createAgent({ root: agents, name: "林越" });
+		await createAgent({ root: agents, name: "沈舟" });
 
 		const opened = await box.open();
 		try {
@@ -248,99 +248,64 @@ describe("会话只有两种形态与团队频道", () => {
 		}
 	});
 
-	test("团队管理员、成员、我都进团队频道", async () => {
+	test("助理、成员、我都进团队频道", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
 		const teams = box.teamsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
-		// 团队管理员是林越，但林越自己不在团队里（团队管理员不一定写代码）。
-		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
+		await createAgent({ root: box.layout.assistantRoot, name: "知言", title: "助理" });
+		await createAgent({ root: agents, name: "沈舟", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", body: "# 目标\n能两个人打。" });
 
 		const opened = await box.open();
 		try {
-			const shell = await box.assemble(opened, {
-				agentsRoot: agents,
-				teamsRoot: teams,
-			});
+			const shell = await box.assemble(opened, { agentsRoot: agents, teamsRoot: teams });
 			const state = await shell.channels();
 			const channel = state.channels[teamId("坦克大战")];
-			// 团队管理员不在频道里 → 成员派活 @ 不到他 → 出了问题没人能拍板。
-			expect(channel?.members.sort()).toEqual(["owner", "沈舟", "林越"].sort());
+			// 团队频道 = 我 + 助理 + 这个团队的人；没有负责人这一层。
+			expect(channel?.members.sort()).toEqual(["owner", "沈舟", "知言"].sort());
 			expect(channel?.title).toBe("坦克大战");
 		} finally {
 			await opened.close();
 		}
 	});
 
-	test("团队频道里谁说话都叫醒团队管理员（成员不用 @ 上级）", async () => {
+	test("团队频道里没人被 @ 时叫醒助理（不是「负责人」）", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
 		const teams = box.teamsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
-		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
+		await createAgent({ root: box.layout.assistantRoot, name: "知言", title: "助理" });
+		await createAgent({ root: agents, name: "沈舟", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", body: "# 目标\n能两个人打。" });
 
 		const opened = await box.open();
 		try {
-			const shell = await box.assemble(opened, {
-				agentsRoot: agents,
-				teamsRoot: teams,
-			});
+			const shell = await box.assemble(opened, { agentsRoot: agents, teamsRoot: teams });
 			const state = await shell.channels();
 			const channel = state.channels[teamId("坦克大战")];
-			// 成员在团队频道说「做完了」时通常不会 @ 人。团队管理员收不到 → 只能轮询
-			// （实测里 agent 用 `run sleep 120` 等进度）。所以团队频道要让团队管理员始终醒着。
-			expect(channel?.wakeOnAll).toEqual(["林越"]);
+			// 成员说「做完了」时通常不会 @ 人。助理收不到就只能轮询
+			// （实测里 agent 用 `run sleep 120` 等进度）。所以团队频道让助理始终醒着。
+			expect(channel?.wakeOnAll).toEqual(["知言"]);
 		} finally {
 			await opened.close();
 		}
 	});
 
-	test("改了团队管理员，频道成员跟着变（不需要重启）", async () => {
+	test("人换了团队，频道成员跟着变（不需要重启）", async () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
 		const teams = box.teamsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner", team: "坦克大战" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
-		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
+		await createAgent({ root: agents, name: "林越", team: "坦克大战" });
+		await createAgent({ root: agents, name: "沈舟", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", body: "# 目标\n能两个人打。" });
 
 		const opened = await box.open();
 		try {
-			const shell = await box.assemble(opened, {
-				agentsRoot: agents,
-				teamsRoot: teams,
-			});
-			await writeTeam(teams, { slug: "坦克大战", lead: "沈舟", body: "# 目标\n能两个人打。" });
+			const shell = await box.assemble(opened, { agentsRoot: agents, teamsRoot: teams });
+			// 林越改去别的团队：团队频道按身份文件精确重算。
+			await createAgent({ root: agents, name: "林越", team: "别的" });
 			await shell.syncTeam("坦克大战");
 			const state = await shell.channels();
 			expect(state.channels[teamId("坦克大战")]?.members).toContain("沈舟");
-		} finally {
-			await opened.close();
-		}
-	});
-
-	test("团队频道含团队管理员的整条汇报线（统筹者也进团队频道）", async () => {
-		const box = await pool.make("core-assemble-");
-		const agents = box.agentsRoot;
-		const teams = box.teamsRoot;
-		// 知言：我直接下属（统筹者）；顾南雁：团队管理员，归知言；沈舟：执行成员，归顾南雁。
-		await createAgent({ root: agents, name: "知言", manager: "owner" });
-		await createAgent({ root: agents, name: "顾南雁", manager: "知言", team: "恐龙" });
-		await createAgent({ root: agents, name: "沈舟", manager: "顾南雁", team: "恐龙" });
-		await writeTeam(teams, { slug: "恐龙", lead: "顾南雁", body: "# 目标\n做一只恐龙。" });
-
-		const opened = await box.open();
-		try {
-			const shell = await box.assemble(opened, {
-				agentsRoot: agents,
-				teamsRoot: teams,
-			});
-			const state = await shell.channels();
-			// 团队的成员是事实的投影：我 + 团队管理员(顾南雁) + 其汇报线(知言) + 执行成员(沈舟)。
-			expect(state.channels[teamId("恐龙")]?.members.sort()).toEqual(
-				["owner", "沈舟", "知言", "顾南雁"].sort(),
-			);
 		} finally {
 			await opened.close();
 		}
@@ -350,9 +315,9 @@ describe("会话只有两种形态与团队频道", () => {
 		const box = await pool.make("core-assemble-");
 		const agents = box.agentsRoot;
 		const teams = box.teamsRoot;
-		await createAgent({ root: agents, name: "林越", manager: "owner", team: "坦克大战" });
-		await createAgent({ root: agents, name: "沈舟", manager: "林越", team: "坦克大战" });
-		await writeTeam(teams, { slug: "坦克大战", lead: "林越", body: "# 目标\n能两个人打。" });
+		await createAgent({ root: agents, name: "林越", team: "坦克大战" });
+		await createAgent({ root: agents, name: "沈舟", team: "坦克大战" });
+		await writeTeam(teams, { slug: "坦克大战", body: "# 目标\n能两个人打。" });
 
 		const opened = await box.open();
 		try {

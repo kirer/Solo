@@ -21,7 +21,7 @@
  *
  * 退出码：有 `ERROR` 或机制门失败 → 1；默认行为门要求 2/3 通过，`--strict` 要求全过。
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER, dmId, teamId } from "../src/core/channel/types.ts";
@@ -81,22 +81,14 @@ const interrupt: Scenario = {
 	gate: "behavior",
 	cost: "expensive",
 	async run(world) {
-		const lead = await createLiveAgent(world, {
-			name: "林越",
-			title: "团队管理员",
-			manager: world.assistantSlug,
-			team: "插话团队",
-		});
 		await createTeamFixture(world, {
 			slug: "插话团队",
 			name: "插话团队",
-			lead: lead.slug,
 			body: "目标：验证插话。\n验收标准：私聊先答，结论回到本频道。\n不做：真的部署。\n进展：刚开始。",
 		});
 		const member = await createLiveAgent(world, {
 			name: "沈舟",
 			title: "执行成员",
-			manager: lead.slug,
 			team: "插话团队",
 		});
 		const team = teamId("插话团队");
@@ -200,21 +192,14 @@ const multiWake: Scenario = {
 	gate: "hard",
 	cost: "medium",
 	async run(world) {
-		const lead = await createLiveAgent(world, {
-			name: "林越",
-			title: "团队管理员",
-			manager: world.assistantSlug,
-			team: "多人团队",
-		});
 		await createTeamFixture(world, {
 			slug: "多人团队",
 			name: "多人团队",
-			lead: lead.slug,
 			body: "目标：验证多人同时被叫醒。\n验收标准：各自回答，不重复。\n不做：真的上线。\n进展：刚开始。",
 		});
-		const first = await createLiveAgent(world, { name: "周砚", title: "前端", manager: lead.slug, team: "多人团队" });
-		const second = await createLiveAgent(world, { name: "顾南雁", title: "后端", manager: lead.slug, team: "多人团队" });
-		const third = await createLiveAgent(world, { name: "陆知远", title: "测试", manager: lead.slug, team: "多人团队" });
+		const first = await createLiveAgent(world, { name: "周砚", title: "前端", team: "多人团队" });
+		const second = await createLiveAgent(world, { name: "顾南雁", title: "后端", team: "多人团队" });
+		const third = await createLiveAgent(world, { name: "陆知远", title: "测试", team: "多人团队" });
 		const team = teamId("多人团队");
 
 		const ask = await world.shell.ownerSay({
@@ -233,7 +218,7 @@ const multiWake: Scenario = {
 					"team-members",
 					"团队频道成员完整",
 					"mechanism",
-					channel !== undefined && [OWNER, lead.slug, first.slug, second.slug, third.slug].every((slug) => channel.members.includes(slug)),
+					channel !== undefined && [OWNER, world.assistantSlug, first.slug, second.slug, third.slug].every((slug) => channel.members.includes(slug)),
 					channel?.members.join("、") ?? "团队频道不存在",
 				),
 				check(
@@ -244,10 +229,10 @@ const multiWake: Scenario = {
 					ask.delivery.delivered.join("、") || "（没人）",
 				),
 				check(
-					"delivered-lead",
-					"团队管理员由 wakeOnAll 叫醒",
+					"delivered-assistant",
+					"助理由 wakeOnAll 叫醒",
 					"mechanism",
-					ask.delivery.delivered.includes(lead.slug),
+					ask.delivery.delivered.includes(world.assistantSlug),
 					ask.delivery.delivered.join("、") || "（没人）",
 				),
 				check("first-replied", "成员一在团队频道回答", "behavior", replies.found.has(first.slug), replies.found.get(first.slug)?.text.slice(0, 100) ?? "超时无回话"),
@@ -263,52 +248,45 @@ const multiWake: Scenario = {
 
 const agentToAgent: Scenario = {
 	id: "agent-to-agent",
-	title: "管理员派活给成员、成员回答、管理员汇总",
+	title: "助理派活给成员、成员回答、助理汇总",
 	gate: "hard",
 	cost: "medium",
 	async run(world) {
-		const lead = await createLiveAgent(world, {
-			name: "林越",
-			title: "团队管理员",
-			manager: world.assistantSlug,
-			team: "协作团队",
-		});
+		const assistant = world.assistantSlug;
 		await createTeamFixture(world, {
 			slug: "协作团队",
 			name: "协作团队",
-			lead: lead.slug,
-			body: "目标：验证 agent 之间互相 @。\n验收标准：派活、回答、汇总闭环。\n不做：越级找我。\n进展：刚开始。",
+			body: "目标：验证 agent 之间互相 @。\n验收标准：派活、回答、汇总闭环。\n不做：替成员答。\n进展：刚开始。",
 		});
-		const member = await createLiveAgent(world, { name: "沈舟", title: "前端", manager: lead.slug, team: "协作团队" });
+		const member = await createLiveAgent(world, { name: "沈舟", title: "前端", team: "协作团队" });
 		const team = teamId("协作团队");
 		const baseline = await seqBaseline(world.shell);
 
 		const ask = await world.shell.ownerSay({
 			channelId: team,
-			text: `@${lead.name} 派给${member.name}一件事：用一句话汇报他负责的事。你确认后汇总给助理，不要替他答。`,
+			text: `@${assistant} 派给${member.name}一件事：用一句话汇报他负责的事。你确认后汇总给我，不要替他答。`,
 		});
-		const hop = await waitForMention(world.shell, baseline, lead.slug, member.slug, T());
+		const hop = await waitForMention(world.shell, baseline, assistant, member.slug, T());
 		const memberReply = hop.hit === undefined ? undefined : await waitForReply(world.shell, team, member.slug, hop.hit.seq, T());
 		const summary = await waitForCondition(async () => {
 			const list = (await world.shell.channels()).messages[team] ?? [];
-			return list.find((message) => message.from === lead.slug && message.seq > (memberReply?.seq ?? hop.hit?.seq ?? ask.seq));
+			return list.find((message) => message.from === assistant && message.seq > (memberReply?.seq ?? hop.hit?.seq ?? ask.seq));
 		}, T());
-		const leadMessages = ((await world.shell.channels()).messages[team] ?? []).filter(
-			(message) => message.from === lead.slug && message.seq > ask.seq,
-		);
+		// 助理在成员之后说的话就是「汇总」的那一条；上面已经取到 summary。
+
 
 		return {
 			checks: [
-				check("lead-delivered", "管理员被投递", "mechanism", ask.delivery.delivered.includes(lead.slug), ask.delivery.delivered.join("、") || "（没人）"),
-				check("lead-mentions-member", "管理员 @ 了成员", "behavior", hop.hit !== undefined, hop.hit?.text.slice(0, 120) ?? "管理员没有 @ 成员"),
+				check("assistant-delivered", "助理被投递", "mechanism", ask.delivery.delivered.includes(assistant), ask.delivery.delivered.join("、") || "（没人）"),
+				check("assistant-mentions-member", "助理 @ 了成员", "behavior", hop.hit !== undefined, hop.hit?.text.slice(0, 120) ?? "助理没有 @ 成员"),
 				check("member-replied", "成员在团队频道回答", "behavior", memberReply !== undefined, memberReply?.text.slice(0, 120) ?? "超时无回话"),
-				check("lead-summary", "管理员在成员回答后汇总", "behavior", summary !== undefined, summary?.text.slice(0, 120) ?? "没有汇总"),
+				check("assistant-summary", "助理在成员回答后汇总", "behavior", summary !== undefined, summary?.text.slice(0, 120) ?? "没有汇总"),
 				check(
-					"no-jump",
-					"过程没有越级 @ 我",
+					"member-did-the-work",
+					"成员说的是自己的活，不是替助理答",
 					"behavior",
-					leadMessages.every((message) => !message.mentions.includes(OWNER)),
-					leadMessages.find((message) => message.mentions.includes(OWNER))?.text.slice(0, 100) ?? "没有越级",
+					memberReply !== undefined && !memberReply.text.includes("我不负责"),
+					memberReply?.text.slice(0, 100) ?? "超时无回话",
 				),
 			],
 		};
@@ -319,7 +297,7 @@ const agentToAgent: Scenario = {
 
 const buildTeam: Scenario = {
 	id: "build-team",
-	title: "从零建团队：README、lead、成员的 team、频道投影",
+	title: "从零建团队：README、成员的 team、频道投影",
 	gate: "behavior",
 	cost: "expensive",
 	async run(world) {
@@ -329,10 +307,10 @@ const buildTeam: Scenario = {
 
 		const ask = await world.shell.ownerSay({
 			channelId: dm,
-			text: "帮我建一个新团队，做发布检查：会持续两周、需要两个人、有独立的验收标准。找好团队管理员和执行成员，建完在私聊里一句话告诉我。",
+			text: "帮我建一个新团队，做发布检查：会持续两周、需要两个人、有独立的验收标准。招好执行成员，建完在私聊里一句话告诉我。",
 		});
-		// 判据是「他说建完了」，不是「README 出现了」：README 可能先写一版、再补 frontmatter，
-		// 中间态没有 lead、频道也还没投影。在他回话之前下结论，测到的是半成品。
+		// 判据是「他说建完了」，不是「README 出现了」：README 可能先写一版、再补成员，
+		// 中间态频道也还没投影。在他回话之前下结论，测到的是半成品。
 		const announcement = await waitForReply(world.shell, dm, assistant, ask.seq, T());
 		const created = await waitForCondition(async () => {
 			const teams = await listTeams(world.teamsRoot);
@@ -350,6 +328,7 @@ const buildTeam: Scenario = {
 
 		// 只读：不调用 rescan/syncTeam，验证「写 README + hire」本身就把频道投影出来了。
 		const channel = (await world.shell.channels()).channels[teamId(created.slug)];
+		const readme = await readFile(join(world.teamsRoot, created.slug, "README.md"), "utf8").catch(() => "");
 		const identities = await world.shell.identities();
 		const members = identities.filter((identity) => identity.team === created.slug);
 		const allMembersProjected = members.every((identity) => channel?.members.includes(identity.slug));
@@ -365,25 +344,25 @@ const buildTeam: Scenario = {
 					channel === undefined ? "团队频道不存在" : `成员 ${channel.members.join("、")}；team=${created.slug} 的人 ${members.map((identity) => identity.slug).join("、") || "（无）"}`,
 				),
 				check(
-					"lead-valid",
-					"lead 是名册里的人，且不是助理自己",
-					"behavior",
-					created.lead !== undefined && created.lead !== "" && created.lead !== assistant && identities.some((identity) => identity.slug === created.lead),
-					created.lead ?? "没写 lead",
+					"no-lead",
+					"README 里没有 lead（组织是平的）",
+					"mechanism",
+					!/^lead:/m.test(readme),
+					readme.split("\n").slice(0, 4).join(" / "),
 				),
 				check(
 					"member-in-team",
-					"至少一名执行成员的 team 指向新团队",
+					"至少一名成员的 team 指向新团队",
 					"behavior",
 					members.length >= 1,
 					members.map((identity) => identity.slug).join("、") || "没有成员",
 				),
 				check(
-					"two-people",
-					"至少建出管理员 + 一名执行成员",
-					"behavior",
-					identities.length >= 3,
-					`名册 ${identities.map((identity) => identity.slug).join("、")}`,
+					"channel-has-assistant",
+					"助理在团队频道里",
+					"mechanism",
+					channel?.members.includes(assistant) === true,
+					channel?.members.join("、") ?? "团队频道不存在",
 				),
 				check("dm-announced", "在私聊里向我宣告", "behavior", announcement !== undefined, announcement?.text.slice(0, 120) ?? "私聊里没有新消息"),
 				check("readme-body", "README 正文有验收标准", "observation", created.body.includes("验收"), created.body.slice(0, 100)),

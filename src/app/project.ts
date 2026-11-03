@@ -24,7 +24,6 @@ import type { TextCatalog } from "../core/md/catalog.ts";
 import type {
 	AttentionItem,
 	TeamDoingOf,
-	TeamLeadOf,
 	ViewActor,
 	ViewChannel,
 	ViewChannelDetail,
@@ -91,7 +90,6 @@ export function channelList(
 	state: ChannelState,
 	directory: DirectoryState,
 	slug = OWNER_SLUG,
-	teamLeadOf?: TeamLeadOf,
 	teamDoingOf?: TeamDoingOf,
 ): ViewChannel[] {
 	const out: ViewChannel[] = [];
@@ -118,12 +116,10 @@ export function channelList(
 			(message) => message.seq > readMarkOf(state, slug, channel.id) && addressedTo(message, slug),
 		).length;
 		const team = channel.id.startsWith("team:") ? channel.id.slice("team:".length) : undefined;
-		const lead = team === undefined ? undefined : teamLeadOf?.(team);
 		const doing = team === undefined ? undefined : teamDoingOf?.(team);
 		out.push({
 			id: channel.id,
 			kind: chatKind(channel),
-			...(lead === undefined || lead === "" ? {} : { lead, leadLabel: labelIn(directory, lead) }),
 			...(doing === undefined || doing === "" ? {} : { doing }),
 			title: titleOf(channel, directory),
 			...(team === undefined ? {} : { team }),
@@ -225,7 +221,8 @@ export function channelDetail(
 		readonly limit?: number;
 		readonly before?: number;
 		readonly viewer?: string;
-		readonly teamLeadOf?: TeamLeadOf;
+		/** 助理的 slug（身份目录在应用根下的那些人）。成员角色要靠它标「助理」。 */
+		readonly assistants?: readonly string[];
 		readonly teamDoingOf?: TeamDoingOf;
 	} = {},
 ): ViewChannelDetail {
@@ -238,16 +235,13 @@ export function channelDetail(
 	const page = all.slice(start, end);
 	const last = page[page.length - 1];
 	const teamSlug = channel.id.startsWith("team:") ? channel.id.slice("team:".length) : undefined;
-	const leadSlug = teamSlug === undefined ? undefined : options.teamLeadOf?.(teamSlug);
+	const assistants = new Set(options.assistants ?? []);
 	const doing = teamSlug === undefined ? undefined : options.teamDoingOf?.(teamSlug);
 	// 私聊的标题是那个人的名字（`titleOf` 现算，不读频道里存的那份）。
 	return {
 		channel: {
 			id: channel.id,
 			kind: chatKind(channel),
-			...(leadSlug === undefined || leadSlug === ""
-				? {}
-				: { lead: leadSlug, leadLabel: labelIn(directory, leadSlug) }),
 			...(doing === undefined || doing === "" ? {} : { doing }),
 			title: titleOf(channel, directory),
 			...(teamSlug === undefined ? {} : { team: teamSlug }),
@@ -260,14 +254,8 @@ export function channelDetail(
 			id: idOf(directory, slug),
 			slug,
 			label: labelIn(directory, slug),
-			// `role` 的价值在界面：团队频道里要一眼看出谁是团队管理员。只用三种能从文件里
-			// 读出来的事实（我 / 团队管理员 / 成员），不引身份枚举。
-			role:
-				slug === OWNER_SLUG
-					? "owner"
-					: leadSlug !== undefined && slug === leadSlug
-						? "lead"
-						: "member",
+			// `role` 的价值在界面：一眼看出谁是我、谁是助理。只有三种，都是文件里读得出来的事实。
+			role: slug === OWNER_SLUG ? "owner" : assistants.has(slug) ? "assistant" : "member",
 			unread: unreadCount(state, channel.id, slug),
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
@@ -277,35 +265,31 @@ export function channelDetail(
 }
 
 /**
- * 组织快照。
+ * 组织快照：有谁、谁在哪个团队。
  *
- * 只给「有谁、谁向谁汇报」这两件事。人按「离我最近」优先排序：`manager` 是我的
- * 排最前，其余按报名顺序 —— 界面左侧成员列表直接用这个顺序。
+ * 助理排最前（界面左侧成员列表直接用这个顺序），其余按名册顺序。谁是助理由传进来的
+ * `assistants` 说了算 —— 这个投影不认识文件夹，也不该自己去推谁「离我最近」。
  */
-export function orgView(identities: readonly Identity[], directory: DirectoryState, orgName = "Solo"): ViewOrg {
+export function orgView(
+	identities: readonly Identity[],
+	orgName = "Solo",
+	assistants: readonly string[] = [],
+): ViewOrg {
+	const assistantSet = new Set(assistants);
 	const toActor = (identity: Identity): ViewActor => ({
 		slug: identity.slug,
 		label: identity.name ?? identity.slug,
 		title: identity.title ?? "",
 		...(identity.team === undefined ? {} : { team: identity.team }),
-		...(identity.manager === undefined ? {} : { manager: identity.manager }),
-		...(identity.manager === undefined ? {} : { managerLabel: labelIn(directory, identity.manager) }),
+		...(assistantSet.has(identity.slug) ? { assistant: true as const } : {}),
 		body: identity.body,
 	});
-
-	// 助理（直接向我汇报的那个人）排最前 —— 按汇报关系认，不按名字认。
+	const first = identities.filter((identity) => assistantSet.has(identity.slug));
+	const rest = identities.filter((identity) => !assistantSet.has(identity.slug));
 	return {
 		workspace: { name: orgName },
-		people: [...nearestOf(identities).map(toActor), ...othersOf(identities).map(toActor)],
+		people: [...first,...rest].map(toActor),
 	};
-}
-
-/** 离我最近（manager 是我）的排在前面，其余按原序。 */
-function nearestOf(identities: readonly Identity[]): readonly Identity[] {
-	return identities.filter((identity) => identity.manager === OWNER_SLUG);
-}
-function othersOf(identities: readonly Identity[]): readonly Identity[] {
-	return identities.filter((identity) => identity.manager !== OWNER_SLUG);
 }
 
 /** 名册里补上显示名（核心的 `identity.md` 是唯一事实，名册只是投影）。 */

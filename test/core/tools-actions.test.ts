@@ -27,6 +27,7 @@ afterEach(() => pool.cleanup());
 
 const ME = "沈舟";
 const CONVERSATION = 7;
+const ASSISTANT = 8;
 const DM = dmId(OWNER, ME);
 const TEAM = teamId("alpha");
 
@@ -43,17 +44,17 @@ async function setup(
 	const root = box.root;
 	const agentsRoot = box.agentsRoot;
 	const teamsRoot = box.teamsRoot;
-	// 助理（直接向 owner 汇报的人）与团队成员分开：团队 README 的 `lead` 不能是助理。
-	await mkdir(join(agentsRoot, "知言"), { recursive: true });
-	await writeFile(join(agentsRoot, "知言", "identity.md"), "---\nname: 知言\ntitle: 助理\nmanager: owner\n---\n\n统筹。\n", "utf8");
+	// 助理住在应用根的 `assistant/` 下（文件夹事实，ADR-058）：招人 / 建团队归它。
+	await mkdir(join(box.layout.assistantRoot, "知言"), { recursive: true });
+	await writeFile(join(box.layout.assistantRoot, "知言", "identity.md"), "---\nname: 知言\ntitle: 助理\n---\n\n统筹。\n", "utf8");
 	await mkdir(join(agentsRoot, ME, "skills"), { recursive: true });
 	await writeFile(
 		join(agentsRoot, ME, "identity.md"),
-		"---\nname: 沈舟\ntitle: 前端开发\nmanager: 知言\nteam: alpha\n---\n\n写小恐龙。\n",
+		"---\nname: 沈舟\ntitle: 前端开发\nteam: alpha\n---\n\n写小恐龙。\n",
 		"utf8",
 	);
 	await writeFile(join(agentsRoot, ME, "memory.md"), "# 记忆\n\n## 端口\n\n部署前先看端口被谁占了。\n", "utf8");
-	await writeTeam(teamsRoot, { slug: "alpha", name: "alpha", lead: ME, body: "目标：把网页做到能看。" });
+	await writeTeam(teamsRoot, { slug: "alpha", name: "alpha", body: "目标：把网页做到能看。" });
 	await mkdir(join(root, "skills", "写周报"), { recursive: true });
 	await writeFile(
 		join(root, "skills", "写周报", "SKILL.md"),
@@ -80,8 +81,8 @@ async function setup(
 		text: SEED_TEXT,
 		directory: async () => ({
 			...emptyDirectory(),
-			slugToConversation: { [ME]: CONVERSATION },
-			conversationToSlug: { [String(CONVERSATION)]: ME },
+			slugToConversation: { [ME]: CONVERSATION, 知言: ASSISTANT },
+			conversationToSlug: { [String(CONVERSATION)]: ME, [String(ASSISTANT)]: "知言" },
 			wake: { [String(CONVERSATION)]: { channelId: TEAM, seq: 1, from: OWNER, at: 10 } },
 		}),
 		saveDirectory: async () => undefined,
@@ -91,10 +92,10 @@ async function setup(
 	return {
 		layout: box.layout,
 		tools: tools as never,
-		call: async (name, args) => {
+		call: async (name, args, conversationId = CONVERSATION) => {
 			const tool = tools.find((item) => item.name === name);
 			expect(tool, `没有工具 ${name}`).toBeDefined();
-			const result = (await tool?.execute(args as never, { conversationId: CONVERSATION } as never, BACKGROUND_CONTEXT)) as {
+			const result = (await tool?.execute(args as never, { conversationId } as never, BACKGROUND_CONTEXT)) as {
 				output?: readonly { text?: string }[];
 			};
 			return result?.output?.[0]?.text ?? "";
@@ -104,8 +105,8 @@ async function setup(
 	};
 }
 
-describe("工具收敛：注册表只有七个", () => {
-	it("名单是 7 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有八个", () => {
+	it("名单是 8 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
@@ -115,6 +116,7 @@ describe("工具收敛：注册表只有七个", () => {
 			"hire",
 			"run",
 			"file",
+			"work",
 		]);
 	});
 });
@@ -229,7 +231,7 @@ describe("写盘前先脱敏", () => {
 		await call("file", {
 			action: "write",
 			path: "teams/alpha/README.md",
-			content: `---\nname: alpha\nlead: 沈舟\n---\n\n目标：把网页做到能看。\n\n数据库密码：${KEY}`,
+			content: `---\nname: alpha\n---\n\n目标：把网页做到能看。\n\n数据库密码：${KEY}`,
 		});
 		const source = await readFile(join(root, "teams", "alpha", "README.md"), "utf8");
 		expect(source).not.toContain(KEY);
@@ -262,6 +264,14 @@ describe("file", () => {
 		expect(back).toContain("结论：能跑。");
 	});
 
+	it("漏写 action 但给了 content：按写处理，不报「文件不存在」", async () => {
+		const { call } = await setup();
+		const written = await call("file", { path: "out/漏了.md", content: "结论：能跑。" });
+		expect(written).toContain("已写入 out/漏了.md");
+		const back = await call("file", { path: "out/漏了.md" });
+		expect(back).toContain("结论：能跑。");
+	});
+
 	it("write 不带 content 时说该带什么", async () => {
 		const { call } = await setup();
 		const output = await call("file", { action: "write", path: "out/空.md" });
@@ -281,7 +291,7 @@ describe("开新团队只有助理能做", () => {
 		const output = await call("file", {
 			action: "write",
 			path: "teams/beta/README.md",
-			content: "---\nname: beta\nlead: 沈舟\n---\n\n新团队。",
+			content: "---\nname: beta\n---\n\n新团队。",
 		});
 		expect(output).toContain("只有助理能做");
 		expect(await readFile(join(root, "teams", "beta", "README.md"), "utf8").catch(() => "missing")).toBe("missing");
@@ -290,7 +300,7 @@ describe("开新团队只有助理能做", () => {
 	it("改已有团队的 README 不受这条限制", async () => {
 		const synced: string[] = [];
 		const { call } = await setup({ syncTeam: async (team: string) => void synced.push(team) });
-		await call("file", { action: "write", path: "teams/alpha/README.md", content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标。" });
+		await call("file", { action: "write", path: "teams/alpha/README.md", content: "---\nname: alpha\n---\n\n新目标。" });
 		expect(synced).toEqual(["alpha"]);
 	});
 });
@@ -303,7 +313,7 @@ describe("写团队 README 会重投影频道（ADR-097）", () => {
 				synced.push(team);
 			},
 		});
-		await call("file", { action: "write", path: "teams/alpha/README.md", content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标。" });
+		await call("file", { action: "write", path: "teams/alpha/README.md", content: "---\nname: alpha\n---\n\n新目标。" });
 		expect(synced).toEqual(["alpha"]);
 
 		await call("file", { action: "write", path: "out/日报.md", content: "普通文件" });
@@ -331,54 +341,12 @@ describe("写团队 README 会重投影频道（ADR-097）", () => {
 		const output = await call("file", {
 			action: "write",
 			path: "teams/alpha/README.md",
-			content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标",
+			content: "---\nname: alpha\n---\n\n新目标",
 		});
 		// 不能反过来报「没写进去」：模型会重写一遍，把刚写的正文覆盖掉。
 		expect(output).toContain("已写入 teams/alpha/README.md");
 		expect(output).toContain("团队频道刷新失败");
 		expect(output).toContain("频道存储不可用");
-	});
-});
-
-describe("写团队 README 前校验 lead", () => {
-	it("缺 lead：拒绝，且不落盘", async () => {
-		const { call, root } = await setup();
-		const output = await call("file", { action: "write", path: "teams/alpha/README.md", content: "新目标" });
-		expect(output).toContain("必须写");
-		const source = await readFile(join(root, "teams", "alpha", "README.md"), "utf8");
-		expect(source).not.toContain("新目标");
-	});
-
-	it("lead 查无此人：拒绝，并列出名册里的 slug", async () => {
-		const { call } = await setup();
-		const output = await call("file", {
-			action: "write",
-			path: "teams/alpha/README.md",
-			content: "---\nname: alpha\nlead: 不存在的人\n---\n\n新目标",
-		});
-		expect(output).toContain("不在名册里");
-		expect(output).toContain(ME);
-	});
-
-	it("助理不能当团队管理员：拒绝", async () => {
-		const { call } = await setup();
-		const output = await call("file", {
-			action: "write",
-			path: "teams/alpha/README.md",
-			content: "---\nname: alpha\nlead: 知言\n---\n\n新目标",
-		});
-		expect(output).toContain("不能当团队管理员");
-	});
-
-	it("合法 lead：照常写入", async () => {
-		const { call, root } = await setup();
-		const output = await call("file", {
-			action: "write",
-			path: "teams/alpha/README.md",
-			content: "---\nname: alpha\nlead: 沈舟\n---\n\n新目标",
-		});
-		expect(output).toContain("已写入");
-		expect(await readFile(join(root, "teams", "alpha", "README.md"), "utf8")).toContain("新目标");
 	});
 });
 
@@ -401,10 +369,10 @@ describe("hire：招人 / 让人走 / 看模型", () => {
 				return { model: ref };
 			},
 		});
-		const ok = await call("hire", { name: "顾南", model: "provider/fast" });
+		const ok = await call("hire", { name: "顾南", model: "provider/fast" }, ASSISTANT);
 		expect(ok).toContain("模型 provider/fast");
 		expect(assigned).toEqual(["provider/fast"]);
-		const bad = await call("hire", { name: "温言", model: "provider/nope" });
+		const bad = await call("hire", { name: "温言", model: "provider/nope" }, ASSISTANT);
 		expect(bad).toContain("模型没换成");
 		// 模型写不进去不影响「人已经招到」。
 		expect(await existsAt(join(root, "members", "温言", "identity.md"))).toBe(true);
@@ -414,12 +382,12 @@ describe("hire：招人 / 让人走 / 看模型", () => {
 		// 建立团队技能的顺序就是先招人、再写 README。所以这里不拦，只把事实说清楚 ——
 		// 不说的话，模型会在一个不存在的频道里 say，失败只回到它自己。
 		const { call } = await setup();
-		const output = await call("hire", { name: "顾南", team: "dino" });
+		const output = await call("hire", { name: "顾南", team: "dino" }, ASSISTANT);
 		expect(output).toContain("已新建");
 		expect(output).toContain("还没有 README");
 		expect(output).toContain("teams/dino/README.md");
 		// 已有 README 的团队不啰嗦这一句。
-		expect(await call("hire", { name: "温言", team: "alpha" })).not.toContain("还没有 README");
+		expect(await call("hire", { name: "温言", team: "alpha" }, ASSISTANT)).not.toContain("还没有 README");
 	});
 
 	it("招进已有团队：叫他自己去报到；团队还没有 README 时不叫", async () => {
@@ -430,23 +398,26 @@ describe("hire：招人 / 让人走 / 看模型", () => {
 				joined.push(`${team}:${slugs.join(",")}`);
 			},
 		});
-		await call("hire", { name: "顾南", team: "alpha" });
+		await call("hire", { name: "顾南", team: "alpha" }, ASSISTANT);
 		expect(joined).toEqual(["alpha:顾南"]);
 		// 频道还不存在（没有 README）：这时候叫不到人，建团队时才会一起叫。
-		await call("hire", { name: "温言", team: "dino" });
+		await call("hire", { name: "温言", team: "dino" }, ASSISTANT);
 		expect(joined).toHaveLength(1);
 	});
 
-	it("action=fire 拒绝团队管理员：先交出 lead", async () => {
-		const { call } = await setup();
-		const output = await call("hire", { action: "fire", name: ME });
-		expect(output).toContain("团队管理员");
+	it("招人 / 开除只有助理能做：成员被拒，人还在", async () => {
+		const { call, root } = await setup();
+		expect(await call("hire", { name: "顾南" })).toContain("只有助理能做");
+		// 助理招进来的人，成员开不掉。
+		await call("hire", { name: "顾南" }, ASSISTANT);
+		expect(await call("hire", { action: "fire", name: "顾南" })).toContain("只有助理能做");
+		expect(await existsAt(join(root, "members", "顾南"))).toBe(true);
 	});
 
 	it("action=fire 把目录移到 .retired/，从名册里摘掉（只移不删）", async () => {
 		const { call, root } = await setup();
-		expect(await call("hire", { name: "顾南", team: "alpha" })).toContain("members/");
-		const output = await call("hire", { action: "fire", name: "顾南" });
+		expect(await call("hire", { name: "顾南", team: "alpha" }, ASSISTANT)).toContain("members/");
+		const output = await call("hire", { action: "fire", name: "顾南" }, ASSISTANT);
 		expect(output).toContain("已让");
 		expect(await existsAt(join(root, "members", "顾南"))).toBe(false);
 		const retired = await readdir(join(root, "members", ".retired"));
@@ -465,10 +436,54 @@ describe("file 写身份：换团队要重投影两次", () => {
 		const output = await call("file", {
 			action: "write",
 			path: `members/${ME}/identity.md`,
-			content: `---\nname: ${ME}\ntitle: 前端开发\nmanager: 知言\nteam: beta\n---\n\n写小恐龙。\n`,
+			content: `---\nname: ${ME}\ntitle: 前端开发\nteam: beta\n---\n\n写小恐龙。\n`,
 		});
 		expect(output).toContain("已写入");
 		// 旧团队 alpha 与人走了之后要重算，新团队 beta 也要重算 —— 少一次就是「加进团队了但频道里没他」。
 		expect(new Set(synced)).toEqual(new Set(["alpha", "beta"]));
+	});
+});
+
+/**
+ * `work`：接活。
+ *
+ * 钉三件事：**闸门在工具里**（策略没放行就不发工单）、工单真的落进文档、
+ * 号和阶段在返回里说人话。
+ */
+describe("work：接活", () => {
+	it("策略没放行：接不了，但话说得清楚", async () => {
+		const { call } = await setup();
+		const output = await call("work", { action: "open", title: "调连接池", scope: "只改配置" });
+		expect(output).toContain("接不了");
+		expect(output).not.toContain("T1");
+	});
+
+	it("auto + 名单里有我：立上工单，之后能报、能列", async () => {
+		const { call, layout } = await setup();
+		await writeFile(
+			layout.policyFile,
+			"---\nmode: auto\n---\n\n# 谁能派活\n\n## 明确 @ 我 / 私聊\n\n- 所有人\n\n## 不 @ 也能派\n\n- owner\n\n# 规矩\n\n## 只在工作区里改\n\n只改自己的工作区。\n",
+			"utf8",
+		);
+		const opened = await call("work", { action: "open", title: "调连接池", scope: "只改配置" });
+		expect(opened).toContain("T1");
+
+		const reported = await call("work", { action: "report", ticket: "T1", outcome: "ready", text: "调完了" });
+		expect(reported).toContain("等人验收");
+
+		const listed = await call("work", { action: "list" });
+		expect(listed).toContain("T1");
+	});
+
+	it("不认识的工单号：回一句能自救的话", async () => {
+		const { call } = await setup();
+		const output = await call("work", { action: "report", ticket: "T9", outcome: "ready", text: "x" });
+		expect(output).toContain("list");
+	});
+
+	it("不认识的 action：列出合法值", async () => {
+		const { call } = await setup();
+		const output = await call("work", { action: "乱写" });
+		expect(output).toContain("open");
 	});
 });

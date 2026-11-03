@@ -4,7 +4,7 @@
  * 与个人记忆（`members/<slug>/memory.md`）的区别只有**归属**，写法完全一样：
  * 个人记忆回答「我学到什么」，团队记忆回答「这个摊子上发生过什么」。
  *
- * 为什么必须有团队记忆：团队换人是很正常的（团队管理员离职、成员换团队）。事实如果只写在
+ * 为什么必须有团队记忆：团队换人是很正常的（有人离开、有人换团队）。事实如果只写在
  * 某个人的记忆里，那个人一走就带走了。写在团队目录下，换谁接手都还在 —— 这是团队
  * 与「一堆私人笔记本」的根本区别。
  *
@@ -16,7 +16,6 @@
 import { join } from "node:path";
 import { entryProblem, memoryDigest, problemText, sectionsOf, type MemorySection } from "../md/memory.ts";
 import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
-import { renderSlots, toolSlots } from "../md/text.ts";
 import { assertTeamSlug } from "./doc.ts";
 import { fill, type TextCatalog } from "../md/catalog.ts";
 
@@ -90,71 +89,3 @@ export function teamMemorySections(source: string): readonly MemorySection[] {
 	return sectionsOf(source);
 }
 
-// ── 自动沉淀 ────────────────────────────────────────────────────────────
-
-/**
- * 哪些消息值得进团队记忆：**所有还没看过的新消息**，代码不按 `kind` 也不按语义过滤。
- *
- * 判据只剩两条**形状**判据：
- * 1. 消息在团队频道里（调用方保证）。
- * 2. `seq > since`，且不是「即将被问的那个人」自己说的（把他的话再发回给他没意义）。
- *
- * 为什么去掉「只看 decision/report」：团队频道里大量结论是普通发言，那些永远不会
- * 被沉淀。什么值得写进记忆是模型的判断，代码判只会判错 —— 那条规则写在全员技能
- * 「记忆整理」里，人和 agent 都能改、都能迭代，改它不用改代码。
- * 这里的函数只负责回答「有哪些还没沉淀」。
- */
-
-/** 一条待沉淀的消息。 */
-export type SettleCandidate = {
-	readonly seq: number;
-	readonly from: string;
-	readonly text: string;
-	readonly kind: string;
-};
-
-/**
- * 挑出还没沉淀的消息。纯函数，方便单测。
- *
- * `since` 是上次沉淀到的 seq；缺省 0 表示这个团队一条都没沉淀过。
- * 备注：**发件人是 `owner` 的也留着**——我在团队频道拍板是最该进记忆的东西。
- * `exclude` = 这次要去整理的人；他自己说的话不用再念给他听。
- */
-export function settleCandidates(
-	messages: readonly { readonly seq: number; readonly from: string; readonly text: string; readonly kind: string }[],
-	since: number,
-	exclude?: string,
-): readonly SettleCandidate[] {
-	return messages
-		// `note` 是系统留痕（投递失败、接力到上限、他这一轮没答上来…），不是团队知识。
-		// 把它算成候选会让「系统报了一次错」变成「叫团队管理员再整理一遍记忆」，并且
-		// 因为他没写记忆，游标一直不推进 → 每一轮都会再问一次。
-		.filter((message) => message.kind !== "note")
-		.filter((message) => message.seq > since && message.from !== exclude)
-		.map((message) => ({ seq: message.seq, from: message.from, text: message.text, kind: message.kind }));
-}
-
-/**
- * 给模型的沉淀指令。
- *
- * 判断规则（什么该记、什么不该记、什么时候记、记完怎么回话）**不在代码里**，
- * 写在全员技能「记忆整理」里 —— 那是给模型看的判断规则，人和 agent 都要能改。
- * 这里只做机械的事：把候选消息排成列表、说清记到哪个文件、回哪个频道。
- */
-export function renderSettlePrompt(
-	template: string,
-	team: string,
-	channel: string,
-	candidates: readonly SettleCandidate[],
-): string {
-	return renderSlots(template, {
-		...toolSlots(template),
-		team,
-		channel,
-		pending: candidates.length,
-		// 候选消息只做机械排版（谁、第几条、什么标签、说了什么），判断规则不在这里。
-		candidates: candidates
-			.map((item) => `- #${item.seq} [${item.kind ?? "chat"}] ${item.from}：${item.text.replace(/\s+/g, " ").trim()}`)
-			.join("\n"),
-	}).text.trim();
-}

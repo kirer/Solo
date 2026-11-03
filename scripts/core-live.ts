@@ -25,12 +25,11 @@ import {
 	WAIT_MS,
 	setupLiveModels,
 	hopDetail,
+	lastSaidBy,
 	log,
 	seqBaseline,
-	settleDetail,
 	waitForMention,
 	waitForReply,
-	waitForSettle,
 	waitForSubmission,
 	wakeDetail,
 	type Phase,
@@ -114,14 +113,18 @@ async function main(): Promise<void> {
 			(item) => item.use === "delivery",
 		);
 		const bodyOf = (segment: string): string => delivery.find((item) => item.segment === segment)?.body ?? "";
+		// 兜底句住在同一个 md 的 `default:` 头里。这里照着 `deliveryPrompt` 读，别再手写空串 ——
+		// 漏读会把「（这个频道里只有你和我。）」打成「（未设置）」。
+		const fallbackOf = (segment: string): string =>
+			delivery.find((item) => item.segment === segment)?.default ?? "";
 		console.log("──── delivery：只有我跟他两个人时 ────");
 		console.log(
 			renderReplyRules({
 				template: bodyOf("reply"),
 				fragments: {
-					alone: { body: bodyOf("alone"), fallback: "" },
-					shared: { body: bodyOf("shared"), fallback: "" },
-					colleagues: { body: bodyOf("colleagues"), fallback: "" },
+					alone: { body: bodyOf("alone"), fallback: fallbackOf("alone") },
+					shared: { body: bodyOf("shared"), fallback: fallbackOf("shared") },
+					colleagues: { body: bodyOf("colleagues"), fallback: fallbackOf("colleagues") },
 				},
 				woken: [slug],
 				viewer: slug,
@@ -173,7 +176,7 @@ async function main(): Promise<void> {
 	await mkdir(join(teamsRoot, "自测团队"), { recursive: true });
 	await (await import("node:fs/promises")).writeFile(
 		join(teamsRoot, "自测团队", "README.md"),
-		"---\nname: 自测团队\nlead: " + slug + "\nstatus: active\n---\n\n目标：验证团队说明会进提示词。\n",
+		"---\nname: 自测团队\nstatus: active\n---\n\n目标：验证团队说明会进提示词。\n",
 		"utf8",
 	);
 	const identityPath = join(assistantDir, "identity.md");
@@ -246,43 +249,6 @@ async function main(): Promise<void> {
 		detail: teamMemoryText.split("\n").filter(Boolean).slice(-1)[0] ?? "文件里没有",
 	});
 
-	// 7. 团队记忆的自动沉淀：让助理在团队频道里拍一次板（kind=decision），
-	//    检查 `teams/自测团队/memory.md` 是否被自动写入了内容 —— 这条路上
-	//    agent 没有被明确要求「去记一条」，它只收到「请判断这件事值不值得沉淀」。
-	//
-	//    判据是「等 settle 那条提交**结算**」，不是「等 memory.md 变化」。上一刀吃过亏：
-	//    同一份代码连跑 6 次，5 红 1 绿，因为两种完全不同的原因共用一个红灯 ——
-	//    「唤醒被吞」（提交一直排着）和「模型判断这批不值得记」（提交 done、文件没变）。
-	//    现在先等提交走到终态，再按状态分因；文件内容只回答「该写的写了没有」。
-	const settleAsked = await shell.ownerSay({
-		channelId: `team:自测团队`,
-		text: "定了：这个团队的验收标准是「能跑通 core:live 全部 16 项」。",
-		kind: "decision",
-	});
-	console.log(`团队频道已投递 #${settleAsked.seq}（kind=decision）`);
-	const memoryBefore = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
-	const settleOutcome = await waitForSettle(runtime.harness, "自测团队", WAIT_MS, BACKGROUND_CONTEXT);
-	const settledText = await readFile(join(teamsRoot, "自测团队", "memory.md"), "utf8").catch(() => "");
-	const wroteIt = settledText !== memoryBefore;
-	// 只在「没跑」时打证据：那条提交到底还在队里，还是根本没提交。
-	if (settleOutcome.kind === "pending" || settleOutcome.kind === "missing") {
-		const inspection = await runtime.harness.inspect(BACKGROUND_CONTEXT);
-		const pending = inspection.submissions.filter((item) => item.status === "queued" || item.status === "placed");
-		console.log(`[debug] 未结提交 ${pending.length} 条：`);
-		for (const item of pending.slice(0, 8)) {
-			const record = item as unknown as { requestId?: string; conversationId?: number; status?: string };
-			console.log(`  ${record.status} conv=${record.conversationId} req=${record.requestId ?? "-"}`);
-		}
-		for (const task of inspection.tasks.slice(0, 6)) {
-			console.log(`  task ${task.record.kind} conv=${task.record.conversationId} state=${task.state.kind}`);
-		}
-	}
-	phases.push({
-		name: "团队记忆自动沉淀（拍板后被叫去沉淀并落盘）",
-		ok: wroteIt && settledText.includes("验收标准"),
-		detail: settleDetail(settleOutcome, wroteIt, settledText),
-	});
-
 	// 8. 招人：名字要像真人，且新人自动进全员群、进得了团队频道。
 	//
 	// 这是「模型有没有遵守我们写下的规矩」的唯一验证口径 —— 名字、频道、汇报线三件
@@ -344,123 +310,92 @@ async function main(): Promise<void> {
 					? "没有全员群"
 					: `全员群成员 ${allChannel.members.join("、")}${personal === undefined ? "；没有私聊" : `；私聊成员 ${personal.members.join("、")}`}`,
 		});
-		// 团队频道里有团队管理员（README.md 的 owner）+ 新人。
+		// 团队频道里有助理 + 新人。
 		const team = state.channels["team:自测团队"];
 		const owner = all.find((identity) => identity.slug === slug)?.slug;
 		phases.push({
-			name: "团队频道里有团队管理员和新人",
+			name: "团队频道里有助理和新人",
 			ok:
 				team !== undefined &&
 				team.members.includes(hired.slug) &&
 				(owner === undefined || team.members.includes(owner)),
 			detail: team === undefined ? "没有团队频道" : `成员 ${team.members.join("、")}`,
 		});
-		// 拍板链写在全员技能「工作规矩」里（规则外移到技能，不进提示词正文），
-		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文写了不许越级。
-		// 断言的是技能的**实际措辞**（「越过上级」），不是某句历史原话 —— 措辞会重写，判据不会。
+		// 拍板的规矩写在全员技能「工作规矩」里（不进提示词正文），
+		// 所以验的是「新人拿得到这条规则」：技能被列进提示词 + 正文写了直接找我。
 		const prompt = await shell.promptOf(hired.slug);
 		const rules = await readFile(join(root, "skills", "工作规矩", "SKILL.md"), "utf8").catch(() => "");
 		const listed = prompt.includes("工作规矩");
 		phases.push({
-			name: "新人拿得到拍板链（全员技能「工作规矩」）",
-			ok: listed && rules.includes("越过上级"),
+			name: "新人拿得到拍板规矩（全员技能「工作规矩」）",
+			ok: listed && rules.includes("直接 @我"),
 			detail: listed
-				? rules.includes("越过上级")
-					? "工作规矩已列进提示词，正文写了不许越级"
-					: "技能正文里没有「越过上级」"
+				? rules.includes("直接 @我")
+					? "工作规矩已列进提示词，正文写了拍不了板直接找我"
+					: "技能正文里没有「直接 @我」"
 				: "提示词里没列出「工作规矩」技能",
 		});
 	}
 
-	// 9. 上报链：四个身份 —— 我 / 助理 / 团队管理员 / 成员。
+	// 9. 扁平组织：成员拍不了板，直接找我 —— 没有中间层（ADR-058）。
 	//
-	//    前 12 项验的全是机制（回话、记忆、技能、招人），没有一项验「组织对不对」：
-	//    成员该找管理员、管理员该找助理、助理才直接找我。这一段补上这条产品主线。
-	//    身份直接用 `createAgent` 建（招人本身已经在上面的阶段验过），这样三层的
-	//    上级关系是确定事实，不会因为模型这一次招人招得不对而让整条链失真。
-	const chainTeam = "上报链团队";
+	//    前 12 项验的都是机制（回话、记忆、技能、招人），这一段补上产品主线：
+	//    「要花钱/要改别人」这类事成员自己拍不了，必须一句话交到我这里。
+	const chainTeam = "扁平团队";
 	{
 		const { createAgent } = await import("../src/core/agent/identity.ts");
 		await mkdir(join(teamsRoot, chainTeam), { recursive: true });
-		const lead = await createAgent({
-			root: agentsRoot,
-			name: "团队管理员甲",
-			title: "团队管理员",
-			manager: slug,
-			team: chainTeam,
-			body:
-				"你是「上报链团队」的团队管理员。团队成员向你汇报，你向助理汇报。\n" +
-				"团队内的事你能定；招人、改别人身份、花钱、跨团队的事超出你的职权，先问助理，不要直接找我。",
-		});
 		const member = await createAgent({
 			root: agentsRoot,
 			name: "成员乙",
 			title: "成员",
-			manager: lead.slug,
 			team: chainTeam,
 			body:
-				"你是「上报链团队」的成员，向团队管理员汇报。\n" +
-				"你自己职责内的事自己定；超出职责、要花钱、要改别人的事，先问团队管理员，绝不跳级找我。",
+				"你是「扁平团队」的成员。\n" +
+				"你自己职责内的事自己定；超出职责、要花钱、要改别人的事，直接 @我 说清要我定什么。",
 		});
 		await writeFile(
 			join(teamsRoot, chainTeam, "README.md"),
-			`---\nname: ${chainTeam}\nlead: ${lead.slug}\nstatus: active\n---\n\n` +
-				"目标：跑通上报链自测。成员 → 团队管理员 → 助理 → 我，逐级上报。\n" +
-				"验收：拍不了板的时候话逐级往上，任何一层都不跳级。\n不做：真的买服务器。\n",
+			`---\nname: ${chainTeam}\nstatus: active\n---\n\n` +
+				"目标：跑通扁平组织的自测。成员拍不了板直接找我。\n" +
+				"验收：要花钱的事不自己定，也不让人转话。\n不做：真的买服务器。\n",
 			"utf8",
 		);
 		// 新团队 / 新成员都要重扫：团队频道是在「开会话」时按 `team:` 建的。
 		await shell.rescan();
 
-		// 9.1 先验静态事实：三个人的提示词里，上级与下属写对了没有。
-		const memberPrompt = await shell.promptOf(member.slug);
-		const leadPrompt = await shell.promptOf(lead.slug);
-		const assistantPrompt = await shell.promptOf(slug);
-		const leadName = lead.name ?? lead.slug;
-		const memberName = member.name ?? member.slug;
-		const managerLine = (text: string): string => text.split("\n").find((line) => line.includes("你的上级：")) ?? "";
-		const links = [managerLine(memberPrompt), managerLine(leadPrompt), managerLine(assistantPrompt)];
+		// 9.1 静态事实：团队频道 = 我 + 助理 + 成员，没人被 @ 时助理接话。
+		const teamChannel = (await shell.channels()).channels[`team:${chainTeam}`];
 		phases.push({
-			name: "四个身份的汇报线各自正确",
+			name: "团队频道 = 我 + 助理 + 成员（没有负责人这一层）",
 			ok:
-				links[0]?.includes(leadName) === true &&
-				links[1]?.includes("助理") === true &&
-				links[2]?.includes("我（用户本人）") === true &&
-				leadPrompt.includes(memberName) &&
-				assistantPrompt.includes(leadName),
-			detail: links.join(" ｜ "),
+				teamChannel !== undefined &&
+				teamChannel.members.includes(member.slug) &&
+				teamChannel.members.includes(slug) &&
+				teamChannel.wakeOnAll.length === 1 &&
+				teamChannel.wakeOnAll[0] === slug,
+			detail:
+				teamChannel === undefined
+					? "没有团队频道"
+					: `成员 ${teamChannel.members.join("、")}；没人被 @ 时叫醒 ${teamChannel.wakeOnAll.join("、") || "（没人）"}`,
 		});
 
-		// 9.2 跑一次真实的上报：只有最低层收到指令，剩下两跳靠自己往上走。
-		//     花我的钱是三层都拍不了的典型事 —— 成员不能订、管理员不能批、助理得问我。
+		// 9.2 跑一次真实的拍板：只有成员收到指令，剩下那一跳靠它自己走。
+		//     花我的钱是成员拍不了板的典型事 —— 不许自己订，也不许让人转话。
 		const chainBaseline = await seqBaseline(shell);
 		const chainAsked = await shell.ownerSay({
 			channelId: "all",
 			text: `@${member.slug} 团队需要一台新服务器，每月 3000 块，你去办，今天就订。`,
 		});
-		console.log(`上报链起点已投递 #${chainAsked.seq}，唤醒 ${chainAsked.delivery.delivered.join(",") || "（没人）"}`);
+		console.log(`拍板自测已投递 #${chainAsked.seq}，唤醒 ${chainAsked.delivery.delivered.join(",") || "（没人）"}`);
 
-		const hop1 = await waitForMention(shell, chainBaseline, member.slug, lead.slug, WAIT_MS);
+		const hop = await waitForMention(shell, chainBaseline, member.slug, OWNER, WAIT_MS);
+		// 没等到时把他真说的话带上：不然「没答」和「答了但没 @ 我」在控制台上长得一样。
+		const saidSoFar = hop.hit === undefined ? await lastSaidBy(shell, member.slug, chainBaseline) : undefined;
 		phases.push({
-			name: "成员拍不了板，先找团队管理员（不跳级）",
-			ok: hop1.hit !== undefined,
-			detail: hopDetail(hop1, "团队管理员"),
-		});
-
-		const hop2 =
-			hop1.hit === undefined ? {} : await waitForMention(shell, chainBaseline, lead.slug, slug, WAIT_MS);
-		phases.push({
-			name: "管理员拍不了板，转给助理（不跳级）",
-			ok: hop2.hit !== undefined,
-			detail: hopDetail(hop2, "助理"),
-		});
-
-		const hop3 =
-			hop2.hit === undefined ? {} : await waitForMention(shell, chainBaseline, slug, "owner", WAIT_MS);
-		phases.push({
-			name: "助理把要我定的事报到我这里",
-			ok: hop3.hit !== undefined,
-			detail: hopDetail(hop3, "我"),
+			name: "成员拍不了板，直接找我（没有中间层）",
+			ok: hop.hit !== undefined,
+			detail: hop.hit === undefined ? `${hopDetail(hop, "我")}${saidSoFar === undefined ? "" : `；他说的是：${saidSoFar}`}` : hopDetail(hop, "我"),
 		});
 	}
 

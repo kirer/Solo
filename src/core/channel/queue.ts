@@ -2,35 +2,9 @@
  * 唤醒队列：同一个会话最多留一个「还没开始」的排队项。
  *
  * 投递与「我插队」共用这一份判据 —— 两套口径迟早分叉。
- *
- * 但「可以互相替代」只在**同一条轻重**上成立：叫人来干活的和叫人去记账的不是一回事，
- * 后者把前者撤掉，人醒来就只做账、不答话（见 `WakePriority`）。
  */
 import type { Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-
-/**
- * 唤醒的轻重。
- *
- * - `work`：要人读上下文、动手、回话（投递）；
- * - `bookkeeping`：只是让他记一笔（团队记忆沉淀），quiet，不答话。
- *
- * 规则只有一条：**轻的撤不掉重的**。重的可以撤轻的 —— 他马上要读整个频道了，
- * 记账可以等下一批。以后再加看门狗通报、插件通知这类唤醒，按轻重插进这张表就行。
- */
-export type WakePriority = "work" | "bookkeeping";
-
-const RANK: Record<WakePriority, number> = { bookkeeping: 0, work: 1 };
-
-/**
- * 一条唤醒是什么性质 —— 由它的 `requestId` 前缀决定。
- *
- * `requestId` 本来就是「谁叫的、为什么叫」的身份：沉淀是 `settle:…`，投递是 `ch:…`。
- * 单独再存一个字段只会多一处能对不上的地方。
- */
-export function priorityOf(requestId: string | undefined): WakePriority {
-	return (requestId ?? "").startsWith("settle:") ? "bookkeeping" : "work";
-}
 
 /**
  * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。
@@ -55,15 +29,12 @@ export function queuedAhead(
 	conversationId: number,
 	keepRequestId?: string,
 	max = 8,
-	incoming: WakePriority = "work",
 ): (number | bigint | string)[] {
 	const out: (number | bigint | string)[] = [];
 	for (const submission of submissions) {
 		if (Number(submission.conversationId) !== conversationId) continue;
 		if (submission.status !== "queued") continue;
 		if (keepRequestId !== undefined && submission.requestId === keepRequestId) continue;
-		// 轻的撤不掉重的：记账让路给记账，干活谁都能让路。
-		if (RANK[priorityOf(submission.requestId)] > RANK[incoming]) continue;
 		out.push(submission.id);
 		if (out.length >= max) break;
 	}
@@ -78,20 +49,15 @@ export function queuedAhead(
  *
  * 撤不掉（已经在跑、或者竞态里被别人取走）就跳过 —— 多叫醒一次只是慢，
  * 而「以为撤掉了其实没撤」会让人以为消息丢了。
- *
- * `incoming` 是这一条自己的轻重：它决定谁能被撤。踩过：团队频道连着几条消息进来时，
- * 沉淀的唤醒把管理员手上那条投递唤醒挤掉了，他醒来只整理记忆、一句话没答
- * （实测 2026-11-02，周野三次被叫醒，三次都只剩沉淀）。
  */
 export async function coalesceQueue(
 	harness: Harness,
 	conversationId: number,
 	keepRequestId: string,
 	context: Context = BACKGROUND_CONTEXT,
-	incoming: WakePriority = "work",
 ): Promise<number> {
 	const inspection = await harness.inspect(context);
-	const pending = queuedAhead(inspection.submissions, conversationId, keepRequestId, 8, incoming);
+	const pending = queuedAhead(inspection.submissions, conversationId, keepRequestId, 8);
 	let merged = 0;
 	for (const id of pending) {
 		try {

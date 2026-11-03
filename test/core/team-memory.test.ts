@@ -9,7 +9,6 @@ import {
 	teamMemoryPath,
 	teamMemorySections,
 	readTeamMemory,
-	settleCandidates,
 } from "../../src/core/team/memory.ts";
 
 let teams = "";
@@ -117,15 +116,3 @@ describe("团队记忆的闸", () => {
 	});
 });
 
-describe("沉淀候选", () => {
-	it("系统留痕不是候选 —— 否则「系统报了一次错」会变成「再整理一遍记忆」", () => {
-		const list = settleCandidates(
-			[
-				{ seq: 1, from: "owner", text: "定了：连接池 20", kind: "decision" },
-				{ seq: 2, from: "owner", text: "#1 叫了 @林越，但他这一轮没答上来：model_error。", kind: "note" },
-			],
-			0,
-		);
-		expect(list.map((item) => item.seq)).toEqual([1]);
-	});
-});

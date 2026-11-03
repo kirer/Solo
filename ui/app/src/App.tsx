@@ -29,7 +29,7 @@ import {
 	setTeam,
 } from "./state/store.ts";
 import { useStore } from "./state/useStore.ts";
-import { clockTime } from "./lib/format.ts";
+import { clockTime, headParts, type ChannelHead } from "./lib/format.ts";
 import type { ChannelKind } from "./api/types.ts";
 
 export function App(): JSX.Element {
@@ -132,15 +132,17 @@ export function App(): JSX.Element {
 
 	const channel = detail?.channel ?? null;
 	const members = detail?.members ?? [];
-	// 私聊的副标题是他本人的职务（频道标题就是他的显示名）；群聊仍然是团队 / 管理员 / 人数。
+	// 私聊的副标题是他本人的职务（频道标题就是他的显示名）；群聊是团队 / 人数。
 	const peerTitle =
 		channel === null || channel.kind !== "dm"
 			? ""
 			: (people.find((person) => person.label === channel.title)?.title ?? "");
-	const sub =
-		peerTitle !== "" ? peerTitle : channel === null ? "" : headSub(channel.kind, channel.leadLabel, members.length);
+	// 群聊的副标题：团队在干什么 · 团队名 · 人数，能拿到哪段写哪段（`headParts` 已经按这个顺序拼）。
+	// 人数用 `channel.memberCount`，和侧栏同一个数 —— 拿 `members.length` 会少掉不在名册里的人。
+	const parts = peerTitle !== "" ? [peerTitle] : channel === null ? [] : headSub(channel, members.length);
+	const sub = parts.join(" · ");
 	// 没选频道时顶栏只剩「找助理」：空屏要有一个明确的下一步，助理就是那个入口。
-	const assistant = people.find((person) => person.manager === "owner");
+	const assistant = people.find((person) => person.assistant === true);
 
 	return (
 		<div
@@ -278,10 +280,16 @@ export function App(): JSX.Element {
 	);
 }
 
-/** 顶栏副标题：私聊只写名字（和谁），群聊才补充管理员/人数。 */
-function headSub(kind: ChannelKind, leadLabel: string | undefined, count: number): string {
-	if (kind === "dm") return "";
-	// 不带团队 slug：「xiaokonglong」是目录名，不是给人看的字；标题已经写着团队名。
-	const bits = [leadLabel === undefined ? undefined : `团队管理员 ${leadLabel}`, `${String(count)} 人`];
-	return bits.filter((bit) => bit !== undefined && bit !== "").join(" · ");
+/**
+ * 顶栏副标题：私聊不写（标题就是名字），群聊补充「在干什么 / 团队名 / 人数」。
+ *
+ * 团队名用频道的 `team`（服务端给的就是人能读的名字，不是目录 slug）；没有就不占位。
+ */
+function headSub(channel: ChannelHead & { kind: ChannelKind }, count: number): string[] {
+	if (channel.kind === "dm") return [];
+	return headParts({
+		doing: channel.doing,
+		team: channel.team,
+		memberCount: channel.memberCount ?? count,
+	});
 }

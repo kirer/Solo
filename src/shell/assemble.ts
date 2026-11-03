@@ -11,8 +11,8 @@
  * 4. **播种频道**：只有一条全员群（所有人自动加入、仅此一次），其余会话谁需要谁建。
  *    会话只有两种形态（私聊 / 群聊），由 `chatKind` 按成员推 —— 没有「个人频道」。
  *
- * 这里没有「CEO」「CTO」这些字。谁是谁的上级，全在 `identity.md` 的 `manager` 字段里；
- * 谁是「离我最近的人」，就是 `manager: owner` 的那一个 —— 由文档决定，不由代码决定。
+ * 这里没有「CEO」「CTO」这些字，也没有上下级：组织是平的（ADR-058）。谁在哪个团队
+ * 只看 `identity.md` 的 `team:`；谁是助理只看他的身份目录在不在应用根下。
  */
 import type { Conversation, Extension, Harness, Registry } from "../core/runtime/index.ts";
 import { parseModelRef, setAgentModel } from "../core/runtime/models.ts";
@@ -30,18 +30,15 @@ import { mentionRosterOf } from "../core/channel/mentions.ts";
 import { ChannelDoc, OWNER, chatKind, emptyChannelState, teamId, type Attachment, type ChannelState, type Message } from "../core/channel/types.ts";
 import { channelsOf } from "../core/channel/rules.ts";
 import { postMessage } from "../core/channel/post.ts";
-import { coalesceQueue } from "../core/channel/queue.ts";
 import {
 	DirectoryDoc,
 	conversationFor,
 	emptyDirectory,
 	labelIn,
 	mergeDirectory,
-	personOf,
 	plainDirectory,
 	type DirectoryState,
 } from "../core/agent/roster.ts";
-import { settleTeam } from "../core/team/settle.ts";
 import { wireChannel } from "../core/channel/wiring.ts";
 import {
 	addToAllChannel,
@@ -177,7 +174,7 @@ export async function assembleCore(
 		harness,
 		layout,
 		live: () => conversations,
-		open: (key, ctx) => openOne(key, ctx),
+		open: (slug, ctx) => openOne(slug, ctx),
 		text,
 	});
 	const baseDeps: CoreToolDeps = {
@@ -225,16 +222,13 @@ export async function assembleCore(
 	});
 	for (const error of plugins.errors) console.warn(`[plugin] 没装上：${error}`);
 
-	// 团队记忆的自动沉淀：一条消息落地后，若它带着 `decision` / `report` 标签且落在
-	// 团队频道里，就叫这个团队里该负责的人把它沉淀进 `teams/<slug>/memory.md`。
-	// 条件是「形状」（kind），判断是「语义」（模型写什么），分工见 team/settle.ts。
-	// 插件要听消息也走这一个钩子 —— 落盘之后、唤醒之前，只有这一处。
+	// 插件要听消息走这一个钩子 —— 落盘之后、唤醒之前，只有这一处。
 	// 传的是取值函数不是数组：插件重装之后，这条钩子要听**新的**那一批（ADR-026）。
-	const afterPost = makeAfterPost(wiring, layout, () => plugins.messages);
+	const afterPost = makeAfterPost(() => plugins.messages);
 	const toolDeps: CoreToolDeps = {
 		...baseDeps,
 		afterPost,
-		// 团队文件是事实，频道成员是投影。改了 `lead` 就得重投影一次。
+		// 团队文件是事实，频道成员是投影。改了 README 或身份里的 `team` 就得重投影一次。
 		syncTeam: async (team, ctx) => {
 			await syncTeamAndAnnounce(team, ctx);
 		},
@@ -260,9 +254,8 @@ export async function assembleCore(
 			hooks: auditHooks({
 				logsRoot: layout.logsRoot,
 				slugOf: (conversationId) => {
-					// 额外会话也回人：审计日志里要看的是「谁做的」，不是哪条历史。
-					for (const [key, conversation] of conversations) {
-						if (Number(conversation.id) === conversationId) return personOf(key);
+					for (const [slug, conversation] of conversations) {
+						if (Number(conversation.id) === conversationId) return slug;
 					}
 					return undefined;
 				},
@@ -333,28 +326,21 @@ export async function assembleCore(
 		for (const error of next.errors) console.warn(`[plugin] 没装上：${error}`);
 		toolsExtension = buildToolsExtension();
 		registry.install(toolsExtension);
-		// 身份扩展按人装：同一个人的主会话和额外会话共用一个 slug。
-		for (const slug of new Set([...conversations.keys()].map(personOf))) await installIdentity(slug);
+		// 身份扩展按人装（幂等）。
+		for (const slug of conversations.keys()) await installIdentity(slug);
 	}
 
 	// ── 2 & 3. 扫文件夹 + 开会话 ──────────────────────────────────
 	const identities = await readAllIdentities(layout.agentRoots);
 	const directory: DirectoryState = (await harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
 
-	/**
-	 * 给一条会话开会话（内部用：先查名册，再建）。
-	 *
-	 * `key` 是会话键（ADR-050）：主会话就是 slug，额外会话是 `<slug>#<用途>`。
-	 * 身份、模型、工具都按 `key` 前面那个人取；频道成员只给主会话补。
-	 */
-	async function openOne(key: string, ctx: Context): Promise<Conversation> {
-		const existing = conversations.get(key);
+	/** 给一个人开会话（内部用：先查名册，再建）。 */
+	async function openOne(slug: string, ctx: Context): Promise<Conversation> {
+		const existing = conversations.get(slug);
 		if (existing !== undefined) return existing;
-		const slug = personOf(key);
-		const main = slug === key;
 		// 开会话前先看一眼 settings.json：刚加的提供商要能立刻用上（ADR-025）。
 		await refreshModels(ctx);
-		const known = conversationFor(directory, key);
+		const known = conversationFor(directory, slug);
 		if (known !== undefined) {
 			const found = await harness.conversation(known as never, ctx);
 			if (found !== undefined) {
@@ -364,14 +350,12 @@ export async function assembleCore(
 				// 也补一次身份扩展（幂等）：`hire` 时会立刻开会话，那时还没重启，
 				// 注册表里没有它的身份段落。不补的话它醒过来不知道自己是谁。
 				await installIdentity(slug);
-				conversations.set(key, found);
-				if (main) {
-					// 已有会话也要补一次团队频道：老工作区里的人在团队频道出现之前建的，
-					// 或者 `identity.md` 里刚补上 `team:`。两个都是幂等的。
-					await joinTeamChannel(membership, slug, ctx);
-					// 私聊同理：老工作区里的人是「私聊要等我开」的时代建的，重启后补上。
-					await ensureOwnerDm(membership, slug, ctx);
-				}
+				conversations.set(slug, found);
+				// 已有会话也要补一次团队频道：老工作区里的人在团队频道出现之前建的，
+				// 或者 `identity.md` 里刚补上 `team:`。两个都是幂等的。
+				await joinTeamChannel(membership, slug, ctx);
+				// 私聊同理：老工作区里的人是「私聊要等我开」的时代建的，重启后补上。
+				await ensureOwnerDm(membership, slug, ctx);
 				return found;
 			}
 		}
@@ -388,10 +372,9 @@ export async function assembleCore(
 			},
 			ctx,
 		);
-		conversations.set(key, created);
+		conversations.set(slug, created);
 		const id = created.id as unknown as number;
-		if (main) directory.slugToConversation[slug] = id;
-		else directory.sessions = { ...(directory.sessions ?? {}), [key]: id };
+		directory.slugToConversation[slug] = id;
 		directory.conversationToSlug[String(id)] = slug;
 		// **建完会话立刻把映射落盘**：旧代码只改内存，靠启动/`rescan` 的批量提交顺带写下去。
 		// `hire` 走的是 `openAgent`（会创建会话）而不是 `rescan`，中间一旦有别的提交把名册
@@ -400,22 +383,19 @@ export async function assembleCore(
 		await harness.commit(async (tx) => {
 			const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
 			const before = plainDirectory(doc);
-			if (main) doc.slugToConversation = { ...before.slugToConversation, [slug]: id };
-			else doc.sessions = { ...(before.sessions ?? {}), [key]: id };
+			doc.slugToConversation = { ...before.slugToConversation, [slug]: id };
 			doc.conversationToSlug = { ...before.conversationToSlug, [String(id)]: slug };
 		}, ctx);
-		// 一建出来就进全员频道、团队频道（只给主会话）。
+		// 一建出来就进全员频道、团队频道。
 		//
 		// 踩过的坑：`hire` 会立刻开会话，但全员频道的成员是**启动时**按当时的
 		// `members/` 目录写死的。结果新人存在、会话也存在，却不在频道里 —— 别人
 		// @ 他，`recipientsOf` 第一规则「@ 的必须是成员」把他过滤掉，消息静默不投递，
 		// 界面上看起来就是「招了个人但叫不动」。
-		if (main) {
-			await addToAllChannel(membership, [slug], ctx);
-			await joinTeamChannel(membership, slug, ctx);
-			// 每个成员一出现就有自己的私聊：他的工作过程在那里看，群聊只留结论。
-			await ensureOwnerDm(membership, slug, ctx);
-		}
+		await addToAllChannel(membership, [slug], ctx);
+		await joinTeamChannel(membership, slug, ctx);
+		// 每个成员一出现就有自己的私聊：他的工作过程在那里看，群聊只留结论。
+		await ensureOwnerDm(membership, slug, ctx);
 		return created;
 	}
 
@@ -440,8 +420,7 @@ export async function assembleCore(
 		if (applied === undefined) return;
 		defaultModel = applied.defaultModel;
 		agentModels = applied.agentModels;
-		for (const [key, conversation] of conversations) {
-			const slug = personOf(key);
+		for (const [slug, conversation] of conversations) {
 			if (agentModels?.[slug] !== undefined) continue;
 			await applyModel(conversation, slug, ctx).catch(() => undefined);
 		}
@@ -477,10 +456,7 @@ export async function assembleCore(
 			const available = (await modelChoices(ctx)).models;
 			throw new Error(`没有这个模型：${value}（可选：${available.join("、") || "（还没有配置模型）"}）`);
 		}
-		// 他的每一条会话都换：额外会话（ADR-050）也是他本人在跑，模型不该分叉。
-		for (const [key, conversation] of conversations) {
-			if (personOf(key) === slug) await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
-		}
+		await conversations.get(slug)?.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
 		const next = { ...(agentModels ?? {}) };
 		if (value === "") delete next[slug];
 		else next[slug] = { provider: wanted.provider, modelId: wanted.modelId };
@@ -511,7 +487,6 @@ export async function assembleCore(
 		Object.assign(doc, {
 			slugToConversation: { ...doc.slugToConversation, ...directory.slugToConversation },
 			conversationToSlug: { ...doc.conversationToSlug, ...directory.conversationToSlug },
-			sessions: { ...(doc.sessions ?? {}), ...(directory.sessions ?? {}) },
 			labels: { ...doc.labels, ...labelsOf(identities) },
 		});
 		directory.labels = { ...doc.labels };
@@ -523,7 +498,7 @@ export async function assembleCore(
 	 * 重投影一个团队频道，并叫**新进来的人**自己报到（ADR-042）。
 	 *
 	 * 报到是成员自己说的话：一条系统留痕叫醒他们，谁都不用先发言 —— 团队一建好，
-	 * 负责人和成员各自说一句「我是谁、负责什么」。只有这条运行时路径会叫：
+	 * 新来的成员各自说一句「我是谁、负责什么」。只有这条运行时路径会叫：
 	 * 启动时的 `joinTeamChannel` 不叫，否则每次重启都让全体成员白烧一轮。
 	 */
 	async function syncTeamAndAnnounce(team: string, ctx: Context): Promise<void> {
@@ -556,9 +531,6 @@ export async function assembleCore(
 			([id]) => Number(id) === conversationId,
 		)?.[1];
 		if (slug === undefined) return;
-		// 只接主会话。额外会话（ADR-050）被打断时不叫人：沉淀有自己的游标和 waiting，
-		// 下一批消息会重新问；把主会话的唤醒记录套到记账上，只会往错的频道留痕。
-		if (directory.slugToConversation[slug] !== conversationId) return;
 		const wake = await wiring.wakeOf(slug, ctx);
 		if (wake === undefined) return;
 		const channel = (await shell.channels(ctx)).channels[wake.task.channelId];
@@ -591,7 +563,7 @@ export async function assembleCore(
 		refreshModels,
 		setModel,
 		modelChoices,
-		// 沉淀钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
+		// 落盘钩子只造一个：它是无状态的（读的都是当下的事实），每次发言再造一个纯属浪费。
 		afterPost,
 		async syncTeam(team: string, ctx: Context = BACKGROUND_CONTEXT): Promise<void> {
 			await syncTeamAndAnnounce(team, ctx);
@@ -674,38 +646,13 @@ export async function assembleCore(
 }
 
 
-/**
- * 造「一条消息落地之后」的钩子：团队记忆自动沉淀。
- *
- * 只看一件事：这条消息落在**团队频道**里（形状判据）。哪些消息值得进记忆、什么该记
- * 什么不该记，都由模型按全员技能「记忆整理」判断 —— 代码不按 `kind` 也不按语义拦。
- */
+/** 造「一条消息落地之后」的钩子：插件听消息（落盘之后、唤醒之前，只有这一处）。 */
 function makeAfterPost(
-	wiring: ReturnType<typeof wireChannel>,
-	layout: Layout,
 	listeners: () => readonly PluginListener[] = () => [],
 ): (message: Message, channelId: string, context: Context) => Promise<void> {
-	return async (message, channelId, context) => {
-		// 插件先听：它们看的是「一条消息刚落地」这件事实，与团队频道无关。
-		// 并发跑、全部 settled —— 一个插件抛错不该让沉降不跑，也不该让投递变慢。
+	return async (message, channelId) => {
+		// 并发跑、全部 settled —— 一个插件抛错不该让别的插件不跑，也不该让投递变慢。
 		await Promise.allSettled(listeners().map(async (listener) => listener(message, channelId)));
-		if (!channelId.startsWith("team:")) return;
-		await settleTeam(
-			{
-				wiring,
-				agentRoots: layout.agentRoots,
-				teamsRoot: layout.teamsRoot,
-				channelState: async () => (await wiring.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState(),
-				// 轻重由 `wake()` 按 `requestId` 判好传进来：沉淀（记账）挤不掉投递，
-				// 否则管理员醒来就只剩整理记忆，频道里那几条真消息一条都没人答。
-				coalesceQueue: (conversationId, keepRequestId, incoming) =>
-					coalesceQueue(wiring.harness, conversationId, keepRequestId, context, incoming),
-				// 留痕里用 slug：这一层拿不到显示名表，而留痕是给人看位置，不是给人看称呼。
-				labelOf: (slug) => slug,
-			},
-			channelId.slice("team:".length),
-			context,
-		);
 	};
 }
 
@@ -724,8 +671,7 @@ export async function ownerSpeak(
 		readonly from?: string;
 		readonly replyTo?: number;
 		/**
-		 * 消息语义标签。`decision` / `report` 会被团队记忆自动沉淀（见 `team/settle.ts`）。
-		 * 我在团队频道里拍板时要带上 —— 那是最该进记忆的东西。
+		 * 消息语义标签（`decision` / `report`）。界面用它把拍板与交付标出来。
 		 */
 		readonly kind?: string;
 		/** 附件引用（图片会被读成内容块交给模型）。 */
@@ -749,8 +695,6 @@ export async function ownerSpeak(
 		everyone.map((identity) => ({
 			slug: identity.slug,
 			name: identity.name,
-			title: identity.title,
-			manager: identity.manager,
 		})),
 	);
 	// 显示名以**当下的** `identity.md` 为准，名册里的 `labels` 只做兜底。
@@ -767,6 +711,8 @@ export async function ownerSpeak(
 			uploadsRoot: wiring.uploadsRoot,
 			promptDir: wiring.promptDir,
 			text: shell.text,
+			// 我开口派的活也要立工单：这是「谁派的」最确定的一处。
+			policyFile: shell.layout.policyFile,
 			// 我说话也要记「谁在哪个频道被叫醒」，否则被叫的人回话会落到别的频道。
 			rememberWake: (slug, wake) => wiring.rememberWake(slug, wake, context),
 			// 插话时继承他上一次的 `task`：我在他干活时私聊一句，不覆盖团队频道。
@@ -787,7 +733,7 @@ export async function ownerSpeak(
 		context,
 	);
 
-	// 我在团队频道里拍板也要沉淀：它不是 agent，不会走工具层，这条路径得自己调。
+	// 我自己说话也要走这条钩子：我不是 agent，不会走工具层，插件听消息得在这里接上。
 	await shell.afterPost(result.message, options.channelId, context);
 	return { seq: result.message.seq, delivery: result.delivery };
 }

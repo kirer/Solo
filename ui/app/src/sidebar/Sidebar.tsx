@@ -22,9 +22,9 @@ export function Sidebar(): JSX.Element {
 	const presence = useStore((state) => state.presence);
 
 	const bySlug = new Map(people.map((person) => [person.slug, person]));
-	// 「离我最近的人」= `identity.md` 里 `manager: owner` 的那一个。私聊还没开过时，
-	// 他是侧栏第一格；开过之后那一格由真实频道顶上（`sortChannels` 已经把他钉在最前）。
-	const nearest = people.find((person) => person.manager === "owner");
+	// 助理（身份在应用根下的那个人）。私聊还没开过时，他是侧栏第一格；
+	// 开过之后那一格由真实频道顶上（`sortChannels` 已经把他钉在最前）。
+	const nearest = people.find((person) => person.assistant === true);
 	const nearestOpened =
 		nearest === undefined ||
 		channels.some((channel) => channel.kind === "dm" && channel.title === nearest.label);

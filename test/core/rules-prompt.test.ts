@@ -85,17 +85,16 @@ describe("规矩：workspace/rules.md 进提示词", () => {
 		expect(renderRulesSection(await loadRules(root))).toContain("## 规矩");
 	});
 
-	it("仓库自带的 seed/rules.md 覆盖了八条规矩（其中三条是硬事故）", async () => {
+	it("仓库自带的 seed/rules.md 覆盖了这些硬规矩（其中三条是硬事故）", async () => {
 		const seed = await readFile(new URL("../../seed/rules.md", import.meta.url), "utf8");
 		// 1. 只在该回的频道回；2. 一两句先给结论；3. 不写英文独白。
 		expect(seed).toContain("只在叫你的那个频道回话");
 		expect(seed).toContain("一两句");
 		expect(seed).toContain("英文");
-		// 5. 拿不准问直属上级、别跳级；7. 先说要去找谁；8. 建团队只有助理能做。
-		expect(seed).toContain("先问你的直属上级");
-		expect(seed).toContain("别跳级");
-		expect(seed).toContain("我要去问 X 关于 Y");
-		expect(seed).toContain("建团队只有助理能做");
+		// 拍不了板直接找我（没有中间层）；组织变动归助理（ADR-058）。
+		expect(seed).toContain("直接 @我");
+		expect(seed).toContain("没有中间层");
+		expect(seed).toContain("只有助理能做");
 		// 「只有助理能直接找我」只对助理成立，家在助理身份里（全局规矩不写个案）。
 		const assistant = await readFile(new URL("../../seed/assistant/identity.md", import.meta.url), "utf8");
 		expect(assistant).toContain("@我");

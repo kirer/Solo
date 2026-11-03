@@ -1,7 +1,6 @@
 ---
 name: 知言
 title: 助理
-manager: owner
 team: ""
 ---
 

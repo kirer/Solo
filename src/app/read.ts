@@ -33,8 +33,8 @@ export type MentionCandidate = {
 export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	/** 组织快照。界面的组织图与顶栏都吃这一份。 */
 	async function readOrg(): Promise<ViewOrg> {
-		const { identities, directory } = await snapshots.snapshot();
-		const org = orgView(identities, directory);
+		const { identities, directory, assistants } = await snapshots.snapshot();
+		const org = orgView(identities, "Solo", assistants);
 		const activity = await activityMap(directory);
 		if (activity.size === 0) return org;
 		return {
@@ -90,8 +90,8 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	}
 
 	async function readChannelList(): Promise<ChannelListResult> {
-		const { directory, channels, teamLeadOf, teamDoingOf } = await snapshots.snapshot();
-		const list = channelList(channels, directory, OWNER_SLUG, teamLeadOf, teamDoingOf);
+		const { directory, channels, teamDoingOf } = await snapshots.snapshot();
+		const list = channelList(channels, directory, OWNER_SLUG, teamDoingOf);
 		return {
 			channels: list,
 			unread: {
@@ -106,12 +106,12 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 		id: string,
 		options: { readonly limit?: number | undefined; readonly before?: number | undefined } = {},
 	): Promise<ViewChannelDetail> {
-		const { directory, channels, teamLeadOf, teamDoingOf } = await snapshots.snapshot();
+		const { directory, channels, assistants, teamDoingOf } = await snapshots.snapshot();
 		const channel = channels.channels[id];
 		if (channel === undefined) throw new AppError("not-found", "频道不存在或无权查看");
 		const { limit, before } = options;
 		return channelDetail(channels, channel, directory, {
-			teamLeadOf,
+			assistants,
 			teamDoingOf,
 			...(limit !== undefined && Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 			...(before !== undefined && Number.isFinite(before) && before > 0 ? { before } : {}),

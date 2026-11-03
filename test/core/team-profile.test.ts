@@ -1,9 +1,9 @@
 /**
- * 团队档案（`GET /api/teams/:slug`）：README + 管理员显示名 + 团队记忆。
+ * 团队档案（`GET /api/teams/:slug`）：README + 团队记忆。
  *
  * 只钉三件会悄悄坏掉的事：
  * 1. 没有这个团队 → 404，而不是一份空档案（界面会画出一个没名字的团队）。
- * 2. `lead` 的显示名从**名册**取，不是把 slug 原样印出来。
+ * 2. 头部字段（名字 / 现状 / 状态）原样搬过来，不编造。
  * 3. 团队记忆没有逐条日志，时间是 `null` —— 不拿「现在」冒充「当时」。
  */
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -39,12 +39,10 @@ describe("团队档案", () => {
 		await expect(teams().readTeamProfile("demo")).rejects.toThrow("没有这个团队");
 	});
 
-	test("README 的四个字段都搬过来", async () => {
-		await writeTeam(join(root, "teams"), { slug: "demo", name: "演示团队", lead: "林越", doing: "林越在写", body: "# 演示团队\n\n目标是 X。\n" });
+	test("README 的头部字段都搬过来", async () => {
+		await writeTeam(join(root, "teams"), { slug: "demo", name: "演示团队", doing: "林越在写", body: "# 演示团队\n\n目标是 X。\n" });
 		const profile = await teams().readTeamProfile("demo");
 		expect(profile.name).toBe("演示团队");
-		expect(profile.lead).toBe("林越");
-		expect(profile.leadLabel).toBe("林越");
 		expect(profile.doing).toBe("林越在写");
 		expect(profile.body).toContain("目标是 X");
 	});

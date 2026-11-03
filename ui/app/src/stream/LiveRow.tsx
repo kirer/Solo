@@ -34,6 +34,11 @@ export function LiveRow(props: {
 	const steps = turn.steps ?? [];
 	const latest = [...steps].reverse().find((step) => step.status === "running") ?? steps[steps.length - 1];
 	const what = latest?.title ?? "在想…";
+	// 在跑一条命令时把命令本身写出来：只写「运行命令」等于没说。
+	const detail =
+		latest?.kind === "run" && latest.command !== undefined && latest.command !== ""
+			? latest.command
+			: latest?.path;
 	const elapsed = turn.startedAt > 0 ? humanDuration(now - turn.startedAt) : "";
 
 	return (
@@ -61,7 +66,10 @@ export function LiveRow(props: {
 					title="看他这一轮做了什么"
 				>
 					<span className="live-spin" aria-hidden="true" />
-					<span className="live-what">{what}</span>
+					<span className="live-what">
+						{what}
+						{detail === undefined ? null : <span className="live-cmd">{detail}</span>}
+					</span>
 					<span className="live-meta">
 						{turn.stepCount > 0 ? `${String(turn.stepCount)} 步 · ` : ""}
 						{elapsed}

@@ -25,17 +25,17 @@ async function person(root: string, slug: string, header: string): Promise<void>
 
 async function setup() {
 	const box = await pool.make("membership-");
-	// 助理直接向我汇报；管理员向他汇报，执行成员向管理员汇报。
-	await person(box.agentsRoot, "知言", "title: 助理\nmanager: owner\n");
-	await person(box.agentsRoot, "程一", "title: 团队管理员\nmanager: 知言\nteam: alpha\n");
-	await person(box.agentsRoot, "林越", "title: 测试\nmanager: 程一\nteam: alpha\n");
-	await writeTeam(box.teamsRoot, { slug: "alpha", name: "alpha", lead: "程一", body: "目标：把网页做到能看。" });
+	// 助理住在应用根的 `assistant/` 下（文件夹事实，ADR-058），成员在用户根。
+	await person(box.layout.assistantRoot, "知言", "title: 助理\n");
+	await person(box.agentsRoot, "程一", "title: 开发\nteam: alpha\n");
+	await person(box.agentsRoot, "林越", "title: 测试\nteam: alpha\n");
+	await writeTeam(box.teamsRoot, { slug: "alpha", name: "alpha", body: "目标：把网页做到能看。" });
 	const runtime = await box.open();
 	return { box, runtime, deps: { harness: runtime.harness, layout: box.layout, allChannel: "all" } };
 }
 
 describe("团队频道重投影：谁是新来的", () => {
-	it("第一次投影：管理员和执行成员都是新人，我和助理不算", async () => {
+	it("第一次投影：团队成员都是新人，我和助理不算", async () => {
 		const { deps } = await setup();
 		expect((await syncTeamChannel(deps, "alpha")).sort()).toEqual(["程一", "林越"].sort());
 	});
@@ -49,7 +49,7 @@ describe("团队频道重投影：谁是新来的", () => {
 	it("后来招进来的人单独算新人", async () => {
 		const { box, deps } = await setup();
 		await syncTeamChannel(deps, "alpha");
-		await person(box.agentsRoot, "沈砚", "title: 开发\nmanager: 程一\nteam: alpha\n");
+		await person(box.agentsRoot, "沈砚", "title: 开发\nteam: alpha\n");
 		expect(await syncTeamChannel(deps, "alpha")).toEqual(["沈砚"]);
 	});
 
@@ -65,7 +65,8 @@ describe("装配层：新进来的人被叫去报到", () => {
 		const { box, runtime } = await setup();
 		const shell = await box.assemble(runtime);
 		// 装配时还没有 README，频道不存在；写 README 之后的重投影才是真实路径。
-		await writeTeam(box.teamsRoot, { slug: "beta", name: "Beta", lead: "程一", body: "目标：先做出来。" });
+		await person(box.agentsRoot, "沈砚", "title: 开发\nteam: beta\n");
+		await writeTeam(box.teamsRoot, { slug: "beta", name: "Beta", body: "目标：先做出来。" });
 		await shell.syncTeam("beta");
 		const state = await shell.channels(BACKGROUND_CONTEXT);
 		// 一条留痕叫醒新人：正文里带频道标题，醒来说什么由他们自己决定。
@@ -82,8 +83,8 @@ describe("装配层：新进来的人被叫去报到", () => {
 	});
 });
 
-describe("成员表：管理员和他的执行成员都在，助理只进不算新人", () => {
-	it("频道成员包含我、管理员、执行成员和助理", async () => {
+describe("成员表：团队成员和助理都在", () => {
+	it("频道成员包含我、团队成员和助理", async () => {
 		const { deps } = await setup();
 		await syncTeamChannel(deps, "alpha");
 		const state = (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;

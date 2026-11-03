@@ -37,7 +37,6 @@ export type ReplyFragments = {
 export type DeliveryPrompt = {
 	readonly reply: string;
 	readonly interrupted: string;
-	readonly settle: string;
 	readonly alone: ReplyFragment;
 	readonly shared: ReplyFragment;
 	readonly colleagues: ReplyFragment;
@@ -199,7 +198,7 @@ export function renderDelivery(options: {
 }
 
 /**
- * 读 delivery 段的模板（`80-reply` 起、`95-settle` 等）。
+ * 读 delivery 段的模板（`80-reply`、`85-…` 等）。
  *
  * 缺哪段就空串（调用方整段不贴）：模板是 workspace 里的活文件，可能被改成任意样子，
  * 读不到不该让投递失败 —— 但也不能静默：回话模板缺失就 warn 一次。
@@ -220,7 +219,6 @@ export async function deliveryPrompt(promptDir: string | undefined): Promise<Del
 	const prompt: DeliveryPrompt = {
 		reply: bodyOf("reply"),
 		interrupted: bodyOf("interrupted"),
-		settle: bodyOf("settle"),
 		alone: fragmentOf("alone"),
 		shared: fragmentOf("shared"),
 		colleagues: fragmentOf("colleagues"),
@@ -238,7 +236,6 @@ function emptyDeliveryPrompt(): DeliveryPrompt {
 	return {
 		reply: "",
 		interrupted: "",
-		settle: "",
 		alone: { body: "", fallback: "" },
 		shared: { body: "", fallback: "" },
 		colleagues: { body: "", fallback: "" },

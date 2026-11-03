@@ -66,7 +66,7 @@ export function recipientsOf(channel: Channel, message: Message, lastSpeaker?: s
 	if (message.from === OWNER && message.mentions.length === 0 && !hasMentionToken(message.text)) {
 		// 接上一位说话的：我不 @ 人时叫醒**刚在说话的那个人**，而不是成员表里的第一个。
 		// 这是 dsh「订阅直通」在单会话里的等价物 —— 一件事谁在办，后续就直通给他；
-		// 固定第一个成员的话，我在跟成员乙聊，下一句没 @ 就掉给了团队管理员（ADR-015）。
+		// 固定第一个成员的话，我在跟成员乙聊，下一句没 @ 就掉给了成员表里的第一个人（ADR-015）。
 		const previous =
 			lastSpeaker !== undefined && lastSpeaker !== message.from && channel.members.includes(lastSpeaker)
 				? lastSpeaker

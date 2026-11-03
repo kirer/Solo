@@ -3,7 +3,7 @@ skip-empty: team.brief
 ---
 ## 你的团队：{{team}}
 
-状态：{{team.status ?? 还没有状态}} · 团队管理员：{{team.lead ?? 还没人负责}} · 目录：{{team.dir}}
+状态：{{team.status ?? 还没有状态}} · 目录：{{team.dir}}
 
 {{team.brief}}
 

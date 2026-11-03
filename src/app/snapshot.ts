@@ -4,7 +4,7 @@
  * 两件不同粒度的事都在这里：
  * - `channelSnapshot()`：只读「人 + 频道」。SSE 增量推送用它 —— 推一条消息完全用不到
  *   团队文档，旧版本却每条推送都去串行读一遍全部团队 README（审计 P1-4）。
- * - `snapshot()`：再加上团队文档推出的两张查表函数（谁负责、一句话现状）。
+ * - `snapshot()`：再加上助理表与团队文档推出的一句话现状。
  *
  * 团队文档的短缓存也在这：`listTeams` 是一个团队一次 `readFile`、串行。agent 连续干活时
  * 「一次提交 × 每个活跃频道 × 每个团队」会把磁盘读放大成每秒几十次，而团队文档一秒内
@@ -15,8 +15,8 @@ import { mtimeOrUndefined } from "../core/runtime/io.ts";
 import { listTeams } from "../core/team/doc.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channel/types.ts";
 import type { DirectoryState } from "../core/agent/roster.ts";
-import type { Identity } from "../core/agent/identity.ts";
-import type { TeamDoingOf, TeamLeadOf } from "../view/dto.ts";
+import { assistantsOf, type Identity } from "../core/agent/identity.ts";
+import type { TeamDoingOf } from "../view/dto.ts";
 import { withLabels } from "./project.ts";
 import type { CoreServices } from "./types.ts";
 
@@ -27,10 +27,11 @@ export type ChannelSnapshot = {
 	readonly identities: readonly Identity[];
 	readonly directory: DirectoryState;
 	readonly channels: ChannelState;
+	/** 助理的 slug（身份目录在应用根下）。界面置顶与「助理」标用它。 */
+	readonly assistants: readonly string[];
 };
 
 export type OrgSnapshot = ChannelSnapshot & {
-	readonly teamLeadOf: TeamLeadOf;
 	readonly teamDoingOf: TeamDoingOf;
 };
 
@@ -53,26 +54,24 @@ export function createSnapshots(shell: CoreServices) {
 		const identities = await shell.identities();
 		const directory = withLabels(shell.bindings(), identities);
 		const channels = (await shell.harness.snapshot(ChannelDoc, context)) ?? emptyChannelState();
-		return { identities, directory, channels };
+		return { identities, directory, channels, assistants: assistantsOf(shell.layout, identities) };
 	}
 
 	/**
-	 * 组织快照：名册 + 身份 + 频道 + 团队管理员/现状表。界面的组织图与顶栏都吃这一份。
+	 * 组织快照：名册 + 身份 + 频道 + 助理 + 团队现状表。界面的组织图与顶栏都吃这一份。
 	 *
-	 * 团队管理员的真相在团队 README 里，不在频道文档里。所以这里把它读成查表函数交给
-	 * 视图层 —— 视图层只做投影，不猜谁负责。
+	 * 谁是助理由身份目录决定（`assistantsOf`），团队现状在团队 README 里 —— 这里把它
+	 * 读成查表函数交给视图层，视图层只做投影，不猜谁是谁。
 	 */
 	async function snapshot(context: Context = BACKGROUND_CONTEXT): Promise<OrgSnapshot> {
-		const [{ identities, directory, channels }, teams] = await Promise.all([
+		const [channel, teams] = await Promise.all([
 			channelSnapshot(context),
 			teamsNow(),
 		]);
-		const leads = new Map<string, string | undefined>(teams.map((team) => [team.slug, team.lead]));
-		const teamLeadOf = (team: string) => leads.get(team);
-		// 一句话现状与团队管理员同源（同一份团队文档），所以是同一个快照里的一张表。
+		// 一句话现状来自团队文档，和上面的团队列表是同一个快照。
 		const doings = new Map<string, string | undefined>(teams.map((team) => [team.slug, team.doing]));
 		const teamDoingOf = (team: string) => doings.get(team);
-		return { identities, directory, channels, teamLeadOf, teamDoingOf };
+		return { ...channel, teamDoingOf };
 	}
 
 	return { channelSnapshot, snapshot, teamsNow };

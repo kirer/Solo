@@ -126,23 +126,19 @@ describe("已有名册不被旧快照覆盖", () => {
 	});
 });
 
-describe("会话键：人 + 用途（ADR-050）", () => {
-	it("额外会话读自己的 id，反查仍然是人", () => {
-		const empty: DirectoryState = { slugToConversation: {}, conversationToSlug: {}, sessions: {}, wake: {}, labels: {} };
+describe("会话键就是 slug（ADR-058）", () => {
+	it("slug ↔ 会话 id 一对一，反查回到人", () => {
+		const empty: DirectoryState = { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
 		const state: DirectoryState = {
 			slugToConversation: { 甲: 1 },
-			conversationToSlug: { "1": "甲", "2": "甲" },
-			sessions: { "甲#settle:alpha": 2 },
+			conversationToSlug: { "1": "甲" },
 			wake: {},
 			labels: {},
 		};
 		expect(conversationFor(state, "甲")).toBe(1);
-		expect(conversationFor(state, "甲#settle:alpha")).toBe(2);
-		expect(personOf("甲#settle:alpha")).toBe("甲");
-		expect(personOf("甲")).toBe("甲");
-		expect(sessionKeyOf("甲", "settle:alpha")).toBe("甲#settle:alpha");
-		// 工具靠反查认「我是谁」：额外会话也必须回到人。
-		expect(slugFor(state, 2)).toBe("甲");
-		expect(mergeDirectory(empty, state).sessions).toEqual({ "甲#settle:alpha": 2 });
+		expect(conversationFor(state, "乙")).toBeUndefined();
+		// 工具靠反查认「我是谁」。
+		expect(slugFor(state, 1)).toBe("甲");
+		expect(mergeDirectory(empty, state).slugToConversation).toEqual({ 甲: 1 });
 	});
 });

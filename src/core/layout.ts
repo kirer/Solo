@@ -37,6 +37,8 @@ export type Layout = {
 	readonly teamsRoot: string;
 	readonly skillsRoot: string;
 	readonly rulesFile: string;
+	/** 派活的策略：`<userRoot>/policy.md`。和规矩一样是「我的」东西，跟着组织走。 */
+	readonly policyFile: string;
 	readonly promptRoot: string;
 	/** 模型看得见的文案（工具描述、拒绝话术、投递头）：`appRoot/text/`。 */
 	readonly textRoot: string;
@@ -66,6 +68,7 @@ export function resolveLayout(input: { readonly appRoot: string; readonly userRo
 		teamsRoot: join(userRoot, TEAMS_DIR),
 		skillsRoot: join(userRoot, SKILLS_DIR),
 		rulesFile: join(userRoot, "rules.md"),
+		policyFile: join(userRoot, "policy.md"),
 		promptRoot: join(appRoot, "prompt"),
 		textRoot: join(appRoot, "text"),
 		pluginsRoot: join(appRoot, "plugins"),
@@ -86,8 +89,12 @@ export function resolveLayout(input: { readonly appRoot: string; readonly userRo
  * 私有根里。判断只在这里，别处不要自己拼。
  */
 export function agentDirLabel(layout: Layout, identityDir: string): string {
-	const assistant = identityDir === layout.assistantRoot || identityDir.startsWith(`${layout.assistantRoot}/`);
-	return `${assistant ? ASSISTANT_DIR : MEMBERS_DIR}/${basename(identityDir)}/`;
+	return `${isAssistantDir(layout, identityDir) ? ASSISTANT_DIR : MEMBERS_DIR}/${basename(identityDir)}/`;
+}
+
+/** 这个身份目录是不是助理（应用私有根下）。谁是助理只由这一处判断。 */
+export function isAssistantDir(layout: Layout, identityDir: string): boolean {
+	return identityDir === layout.assistantRoot || identityDir.startsWith(`${layout.assistantRoot}/`);
 }
 
 /** 一个人的工作目录：他的身份目录下的 `workspace/`。 */

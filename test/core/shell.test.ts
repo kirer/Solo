@@ -38,9 +38,9 @@ describe("装配", () => {
 			if (conversation === undefined) return;
 			const agent = await conversation.agent(BACKGROUND_CONTEXT);
 			// 坑 1：扩展按名字解析，忘了 install 身份扩展 → 会话里一个 section 都没有。
-			// 分段后每人 9 段（PROMPT_SEGMENTS）：底座按段做最小 patch，缓存才留得住。
+			// 分段后每人 10 段（一段一个 md）：底座按段做最小 patch，缓存才留得住。
 			expect(agent.sections.map((section) => section.key)).toEqual(
-				["who", "body", "rules", "position", "team", "tools", "memory", "skills", "directory"].map(
+				["who", "body", "rules", "position", "team", "tools", "memory", "skills", "directory", "work"].map(
 					(segment) => `${sectionKeyOf(slug)}-${segment}`,
 				),
 			);
@@ -135,7 +135,8 @@ describe("助理身份：组织是文件，不是代码里的字符串", () => {
 		expect(created.body.length).toBeGreaterThan(80);
 		// 名字可以从参数覆盖，但默认取自文件。
 		expect(created.front["name"]).toBe("示例");
-		expect(created.front["manager"]).toBe("owner");
+		// 组织是平的：助理身份里没有上级（ADR-058）。
+		expect(created.front["manager"]).toBeUndefined();
 	});
 
 	test("改 seed 文件就换一个人的说法：代码里没有第二份正文", async () => {

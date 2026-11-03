@@ -2,11 +2,10 @@
  * 一个 agent 的身份 = `members/<slug>/identity.md` 这一份文件。
  *
  * 没有数据库、没有枚举、没有 schema 校验。文件里的 YAML 头只提供**结构化的一点点**
- * （名字、身份标签、上级），正文才是身份。系统不解析正文，只把它放进提示词。
+ * （名字、身份标签、所在团队），正文才是身份。系统不解析正文，只把它放进提示词。
  *
- * 为什么上级写在文件头而不是数据库：`docs/AGENT.md` §6 把「公共事实」定义为
- * 组织架构，而组织架构的唯一权威来源就是这些文件的 `manager` 字段 —— 扫一遍
- * 目录就是组织架构，改了文件就是改了组织架构，不需要第二条真相。
+ * 组织是平的：没有谁是谁的上级。唯一的位置区别在**文件夹**里 —— 助理住在应用根的
+ * `assistant/` 下，成员住在用户根的 `members/` 下（ADR-058）。
  */
 import { join } from "node:path";
 import {
@@ -20,7 +19,7 @@ import {
 import { assertName, slugifyName } from "../naming.ts";
 import { fill, type TextCatalog } from "../md/catalog.ts";
 import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
-import { workspaceOf } from "../layout.ts";
+import { isAssistantDir, workspaceOf, type Layout } from "../layout.ts";
 
 /** 一个人的身份文件。读写都经 `doc.ts`，格式只有一份。 */
 export const IDENTITY_FILE = "identity.md";
@@ -28,11 +27,9 @@ export const IDENTITY_FILE = "identity.md";
 /** `identity.md` 的 YAML 头。全部可选 —— 缺什么就渲染成「未设置」。 */
 export type IdentityHeader = {
 	readonly name?: string;
-	/** 身份标签，纯展示用。不决定能力，不决定层级。 */
+	/** 身份标签，纯展示用。不决定能力，也不决定位置。 */
 	readonly title?: string;
-	/** 上级的 slug。我本人用 `owner`。 */
-	readonly manager?: string;
-	/** 所在团队 slug；管理层与我不必填。 */
+	/** 所在团队 slug；直接跟我说话的助理不必填。 */
 	readonly team?: string;
 };
 
@@ -52,7 +49,6 @@ function headerOf(front: Readonly<Record<string, string>>): IdentityHeader {
 	return {
 		...(front.name === undefined ? {} : { name: front.name }),
 		...(front.title === undefined ? {} : { title: front.title }),
-		...(front.manager === undefined ? {} : { manager: front.manager }),
 		// 迁移窗口：老工作区还写着 `project:`，改名后仍认它（`scripts/rename-teams.ts` 会改写）。
 		...(front.team === undefined
 			? front.project === undefined
@@ -67,7 +63,6 @@ export function identityFields(header: IdentityHeader): readonly FrontmatterFiel
 	return [
 		["name", header.name],
 		["title", header.title],
-		["manager", header.manager],
 		["team", header.team],
 	];
 }
@@ -175,8 +170,6 @@ export type CreateAgentInput = {
 	/** 想指定的 slug。缺省从 name 生成，重名自动加后缀。 */
 	readonly slug?: string;
 	readonly title?: string;
-	/** 上级的 slug。我是 `owner`。 */
-	readonly manager?: string;
 	readonly team?: string;
 	/** 身份正文。空的话提示词里那一段整段消失。 */
 	readonly body?: string;
@@ -196,7 +189,6 @@ export async function createAgent(input: CreateAgentInput): Promise<Identity> {
 	const header: IdentityHeader = {
 		name: input.name,
 		...(input.title === undefined ? {} : { title: input.title }),
-		...(input.manager === undefined ? {} : { manager: input.manager }),
 		...(input.team === undefined ? {} : { team: input.team }),
 	};
 	// 没写正文就写空正文：提示词里那一段由 `05-body.md` 的 `skip-empty` 整段吞掉，
@@ -236,33 +228,12 @@ export function labelsOf(
 	return out;
 }
 
-/** 某个 agent 的直接下属。 */
-export function reportsOf(all: readonly Identity[], slug: string): readonly Identity[] {
-	return all.filter((identity) => identity.manager === slug);
-}
-
 /**
- * 从某个 agent 往上走到我的整条链，**不含自己，含我**。
+ * 助理：身份目录在应用根 `assistant/` 下的那个人。
  *
- * 用来渲染「你的汇报线」，也用来做「逐级上报」的工具校验。断链（`manager`
- * 指向一个不存在的 slug）时就地停止 —— 渲染出一半的链比报错有用。
+ * 这不是「职位」，是文件夹位置（ADR-058）：它在应用私有根里，跟用户根里的成员不是
+ * 一回事。谁是助理只由这一处判断，别处不要自己拼路径。
  */
-export function chainUp(all: readonly Identity[], slug: string): readonly string[] {
-	const bySlug = new Map(all.map((identity) => [identity.slug, identity]));
-	const chain: string[] = [];
-	const seen = new Set<string>([slug]);
-	let current = bySlug.get(slug)?.manager;
-	while (current !== undefined && !seen.has(current)) {
-		chain.push(current);
-		seen.add(current);
-		if (current === OWNER_SLUG) break;
-		current = bySlug.get(current)?.manager;
-	}
-	return chain;
-}
-
-/** 直接上级。我返回 undefined。断链返回 `undefined` 且 `broken: true`。 */
-export function managerOf(all: readonly Identity[], slug: string): string | undefined {
-	const manager = all.find((identity) => identity.slug === slug)?.manager;
-	return manager === undefined || manager === "" ? undefined : manager;
+export function assistantsOf(layout: Layout, all: readonly Identity[]): string[] {
+	return all.filter((identity) => isAssistantDir(layout, identity.dir)).map((identity) => identity.slug);
 }

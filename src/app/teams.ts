@@ -22,8 +22,6 @@ export function createTeams(shell: CoreServices) {
 			name: doc.name,
 			status: doc.status,
 			...(doc.doing === undefined ? {} : { doing: doc.doing }),
-			...(doc.lead === undefined ? {} : { lead: doc.lead }),
-			leadLabel: doc.lead === undefined ? "" : shell.labelOf(doc.lead),
 			body: doc.body,
 			skills: (await listTeamSkills(shell.layout.teamsRoot, doc.slug)).map((skill) => ({
 				name: skill.name,

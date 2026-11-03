@@ -79,7 +79,7 @@ export async function appendToChannel(
  * 追一条系统留痕到频道。`note` 不唤醒、不计未读（见 `Message.kind`），所以这里不碰
  * 投递层，否则「系统说一下没人被叫醒」会反过来叫醒人。
  *
- * 只要求 `harness`（不需要完整的 `PostDeps`）：沉淀失败时的留痕也走这里。
+ * 只要求 `harness`（不需要完整的 `PostDeps`）：系统留痕（异常报告、报到）也走这里。
  * 频道不存在就什么都不写 —— 没有地方给人看，别造一个孤儿消息。
  */
 export async function appendNote(

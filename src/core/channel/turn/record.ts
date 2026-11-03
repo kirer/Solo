@@ -27,13 +27,6 @@ export type WakeTarget = {
 export type WakeRecord = {
 	readonly reply: WakeTarget;
 	readonly task: WakeTarget;
-	/**
-	 * 这一轮说话要**安静**：`say` 落成系统留痕（`kind: "note"`，不叫醒人、不计未读）。
-	 *
-	 * 现在只有团队记忆沉淀用：整理完报一句「记了什么」，那是账本不是对话，摊在群里
-	 * 就是每条记忆一次刷屏。
-	 */
-	readonly quiet?: true;
 };
 
 function targetOf(raw: unknown): WakeTarget | undefined {
@@ -57,9 +50,7 @@ export function parseWake(raw: unknown): WakeRecord | undefined {
 	const value = raw as Record<string, unknown>;
 	const reply = targetOf(value.reply);
 	const task = targetOf(value.task);
-	if (reply !== undefined && task !== undefined) {
-		return value["quiet"] === true ? { reply, task, quiet: true } : { reply, task };
-	}
+	if (reply !== undefined && task !== undefined) return { reply, task };
 	const legacy = targetOf(value);
 	return legacy === undefined ? undefined : { reply: legacy, task: legacy };
 }
