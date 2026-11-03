@@ -8,7 +8,7 @@
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
 import { describe, expect, it } from "vitest";
-import { channelDetail, channelList, messageView } from "../../src/app/project.ts";
+import { channelDetail, channelList, messageView, withoutGoneTeams } from "../../src/app/project.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/types.ts";
 
@@ -206,5 +206,17 @@ describe("私聊里的 @ 红点：统一按未读与 mention 算，不再按消�
 		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
 		const allChannel = list.find((c) => c.id === "all")!;
 		expect(allChannel.mentions).toBe(1);
+	});
+});
+
+describe("团队目录没了：频道不再投影", () => {
+	const all = { id: "all", title: "全员", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
+
+	it("还在的团队频道保留；目录没了的被过滤，私聊和全员不动", () => {
+		const state = stateOf([lin, team, all]);
+		const kept = withoutGoneTeams(state, new Set(["坦克大战"]));
+		expect(Object.keys(kept.channels).sort()).toEqual(["all", "dm:lin-owner", "team:坦克大战"].sort());
+		const gone = withoutGoneTeams(state, new Set());
+		expect(Object.keys(gone.channels).sort()).toEqual(["all", "dm:lin-owner"].sort());
 	});
 });

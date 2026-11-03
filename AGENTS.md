@@ -211,7 +211,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 加一个应用级入口（最左一列）/ 插槽 | `docs/DESIGN.md` §1.1 / §2.8 | `ui/app/src/plugin/registry.ts` 的 `SlotName` / `SLOTS` + 宿主 `sidebar/Rail.tsx`；出厂「Token 统计」用它（入口 `rail.item`、整屏页 `app.page`）；`test/ui/plugin.test.ts` 会查每个插槽都有宿主 |
 | 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
 | 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`** |
-| 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 + 运行时（`shell/serve.ts` 的 `startTeamSweep`，`teams/` 的 mtime 变了才读）由 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删；私聊归档，重新招回来由 `ensureOwnerDm` 的 `replace` 恢复）；都不开新工具 |
+| 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道，运行时 `shell/serve.ts` 的 `startTeamReconcile` 监听 `teams/` 立刻对账，投影时 `app/project.ts` 的 `withoutGoneTeams` 再按磁盘团队表过滤；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删；私聊归档，重新招回来由 `ensureOwnerDm` 的 `replace` 恢复）；都不开新工具 |
 | 本文件的表 | `AGENTS.md` |
 
 **文档里的行号会漂。** 优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，

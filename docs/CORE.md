@@ -358,10 +358,12 @@ README 不受这条限制——改正文不是开摊子。`name` 缺省时退回
 （从列表消失，消息保留），团队目录与记忆原样留着。语义在 md 里，代码只做「README 说它
 没了」这一件机械的事（ADR-033）。
 
-**团队目录被删也是一样**：`run rm -rf teams/<slug>` 不会触发任何重投影，所以启动时扫一遍
-（`archiveGoneTeams`），运行中每两秒对一次账（`shell/serve.ts` 的 `startTeamSweep`：只看
-`teams/` 的 mtime，变了才读）—— 把没有 README 的 `team:` 频道归档，历史留着，列表里不再出现。
-人也可以先解散（README 归档）再删目录，两条路通向同一个结果。
+**团队目录被删也是一样**：`run rm -rf teams/<slug>` 不会触发任何重投影，所以两头都管：
+启动时扫一遍（`archiveGoneTeams`）把文档里的 `team:` 频道归档；运行时 `shell/serve.ts` 的
+`startTeamReconcile` 用 `watchDirAt` 盯住 `teams/` 的第一层（不递归，团队工作区里的写入
+和频道无关），目录一变就立刻对账；投影时 `app/project.ts` 的 `withoutGoneTeams` 再按磁盘
+团队表过滤一遍。历史留着，不用重启。人也可以先解散（README 归档）再删目录，两条路通向
+同一个结果。
 
 全员频道（`all`）**不是特权频道**：它只是开机时播种一次的普通群，除了「人人都在
 里面」以外没有任何特殊规则。「什么时候该建一个团队」是判断，写在知言的 `建立团队` 技能里。

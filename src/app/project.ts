@@ -81,6 +81,22 @@ function offsetOf(text: string, label: string): number {
 	return at < 0 ? -1 : at;
 }
 
+/**
+ * 团队频道是磁盘上 `teams/<slug>/README.md` 的投影：目录没了，频道就不该再出现。
+ *
+ * 启动时的 `archiveGoneTeams` 只兜落盘；`run rm -rf` / Finder 删目录不会提交任何文档，
+ * 界面不能等重启 —— 每次快照按当下的团队表过滤一次（没有定时器，不读就永远不跑）。
+ */
+export function withoutGoneTeams(state: ChannelState, alive: ReadonlySet<string>): ChannelState {
+	const gone = Object.keys(state.channels).filter(
+		(id) => id.startsWith("team:") && !alive.has(id.slice("team:".length)),
+	);
+	if (gone.length === 0) return state;
+	const channels = { ...state.channels };
+	for (const id of gone) delete channels[id];
+	return { ...state, channels };
+}
+
 /** 频道列表。 */
 export function channelList(
 	state: ChannelState,

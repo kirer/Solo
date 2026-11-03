@@ -160,10 +160,14 @@ export function createSerialGate(): SerialGate {
  * 盯不上（目录不存在、平台不支持递归 watcher）就返回空函数 —— 那样只是「改完不自动生效」，
  * 不能让服务启动失败。`unref` 保证这个 watcher 不会把进程吊住。
  */
-export function watchDirAt(dir: string, onChange: () => void): () => void {
+export function watchDirAt(
+	dir: string,
+	onChange: () => void,
+	options: { readonly recursive?: boolean } = {},
+): () => void {
 	let watcher: FSWatcher;
 	try {
-		watcher = watch(dir, { recursive: true }, () => onChange());
+		watcher = watch(dir, { recursive: options.recursive ?? true }, () => onChange());
 	} catch {
 		return () => undefined;
 	}
