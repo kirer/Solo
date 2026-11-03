@@ -12,6 +12,7 @@ import { archiveGoneTeams, createGroup, ensureOwnerDm, syncTeamChannel } from ".
 import { ChannelDoc, OWNER, dmId, type ChannelState } from "../../src/core/channel/types.ts";
 import { writeTeam } from "../../src/core/team/doc.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import { serveCore } from "../../src/shell/serve.ts";
 import { sandboxPool } from "./support.ts";
 
 const pool = sandboxPool();
@@ -75,6 +76,23 @@ describe("私聊：同一个人重新招回来", () => {
 		const channel = ((await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState).channels[id];
 		expect(channel?.archived).toBeUndefined();
 		expect(channel?.members).toEqual([OWNER, "程一"]);
+	});
+});
+
+describe("运行时删掉团队目录：目录监听立刻归档", () => {
+	it("服务跑着的时候删掉 teams/<slug>，频道在几百毫秒内归档（不用重启）", async () => {
+		const { box, runtime } = await setup();
+		const shell = await box.assemble(runtime);
+		await shell.syncTeam("alpha");
+		const server = await serveCore({ shell, port: 0 });
+		try {
+			await rm(join(box.teamsRoot, "alpha"), { recursive: true, force: true });
+			await new Promise((resolve) => setTimeout(resolve, 600));
+			const state = await shell.channels(BACKGROUND_CONTEXT);
+			expect(state.channels["team:alpha"]?.archived).toBe(true);
+		} finally {
+			await server.close();
+		}
 	});
 });
 
