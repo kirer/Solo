@@ -2812,21 +2812,25 @@
 }
 
 /* ── 桌面壳（Electron，`?shell=desktop`）─────────────────────────────────
-   标题栏藏进界面里（macOS hiddenInset）：红绿灯浮在侧栏左上角，logo 行往下让出
-   40px 让它有地方站；顶栏与 logo 行同时是拖窗口的把手，里面的按钮必须退出拖动，
-   否则点不动。浏览器里没有这些（没有 `data-shell`，一条都不生效）。 */
+   标题栏藏进界面里（macOS hiddenInset）：红绿灯压进「聊天」那一行（顶距 14，见
+   `desktop/src/main.ts` 的 trafficLightPosition），这一行仍是 56 高 —— 和纸的顶栏
+   一样高，三列的头落在同一条线上，窗口顶上不再留一条空带。
+   顶栏与 logo 行同时是拖窗口的把手，里面的按钮必须退出拖动，否则点不动。
+   浏览器里没有这些（没有 `data-shell`，一条都不生效）。 */
+html[data-shell="desktop"] .sidebar {
+	padding-top: 0;
+}
+
 html[data-shell="desktop"] .side-logo {
-	height: 100px;
-	padding-top: 40px;
-	align-items: flex-end;
+	height: 56px;
+	align-items: center;
 	-webkit-app-region: drag;
 }
 
-/* 最左那列自己就是红绿灯的地盘：顶上 54px 让给三个圆钮（12 的顶距 + 12 的钮 + 间距），
-   同时是拖窗把手，导航从它下面开始。54 + 52/2 = 80，和侧栏那行标题（100 高的头里靠下）
-   的中线对齐。 */
+/* 最左那列顶上仍让给三个圆钮（14 顶距 + 12 的钮 + 余量），导航从 32 开始 ——
+   不能让第一格压到红绿灯上。 */
 html[data-shell="desktop"] .rail {
-	padding-top: 54px;
+	padding-top: 32px;
 	-webkit-app-region: drag;
 }
 

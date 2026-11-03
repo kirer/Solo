@@ -43,7 +43,7 @@ function createWindow(url: string): BrowserWindow {
 		// 标题栏藏进界面里（和 DSH 一样）：红绿灯浮在侧栏左上角那块留白上。
 		// Windows 保持系统标题栏 —— 覆盖式按钮要配合界面右内边距，先不冒这个险。
 		...(process.platform === "darwin"
-			? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 20 } }
+			? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 14 } }
 			: {}),
 		webPreferences: {
 			contextIsolation: true,

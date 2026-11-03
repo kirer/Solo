@@ -1025,8 +1025,8 @@ activity?: {
 **套壳没有额外接缝**：窗口加载的就是后端同一个 `http://127.0.0.1:<port>/`，
 `localStorage` / `navigator.clipboard` / 外链在 Electron 里行为一致，所以原先设想的
 `platform.ts` 网关没有建（ADR-028）。唯一为壳而加的是 `html[data-shell="desktop"]`
-那组样式：多出红绿灯需要的顶部留白和 `-webkit-app-region` 拖拽把手 —— 只在壳里生效，
-浏览器里一像素不变。
+那组样式：红绿灯压进「聊天」那一行（那一行仍是 56 高，和纸的顶栏齐平），导航列顶上让出
+32px 给三个圆钮，加上 `-webkit-app-region` 拖拽把手 —— 只在壳里生效，浏览器里一像素不变。
 
 ### 9.2 目录（重构后）
 
