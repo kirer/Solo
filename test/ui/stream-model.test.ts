@@ -103,7 +103,8 @@ describe("时间分隔", () => {
 	});
 
 	it("跨天必插（哪怕只隔 10 分钟）", () => {
-		const midnight = new Date("2026-05-07T00:05:00+08:00").getTime();
+		// 用本地时间构造：CI 跑在 UTC，写死 +08:00 的话这两个时刻会落在同一天。
+		const midnight = new Date(2026, 4, 7, 0, 5, 0).getTime();
 		const before = midnight - 10 * MIN;
 		expect(types([m(1, "chat", before), m(2, "chat", midnight)])).toEqual(["say", "divider", "say"]);
 	});
