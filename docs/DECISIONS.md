@@ -1462,3 +1462,26 @@
 - **验收**：装一个带 `client.js` 的插件 → 退出确认浮层写明生效范围 → 「立即重启」后应用重开、
   插件入口出现；「稍后」后插件仍在清单里，下次启动出现。纯后端插件装完不弹浮层。
   `test/core/reset.test.ts` 钉住「没确认不让重启、确认后才交给启动层」。
+
+## ADR-067 用 GitHub Actions 打包，GitHub Releases 当更新源
+
+- **背景**：打包一直靠发布机上一台 Mac 手动跑 `desktop:dist:mac` / `desktop:dist:win`，
+  再把产物、清单与签名搬进自建静态目录（ADR-027 / ADR-029）。Windows 包本来就是交叉编出来的，
+  再维护一台「发布机」没有必要；而 GitHub Releases 天然带 https、带版本化资产、带「最新版本」
+  的固定地址，正好是 `latest/download/` 能直接喂给现有客户端的那一种。
+- **决策**：
+  1. `.github/workflows/release.yml` 由 `v*` 标签（或手动运行）触发：先跑 `npm run check` +
+     `npm test`，再并行打 macOS arm64（dmg + zip）与 Windows x64（NSIS + zip）。
+  2. 发布任务从仓库 secret `SOLO_UPDATE_KEY` 取 Ed25519 私钥，用现有
+     `scripts/update-manifest.ts` 签 `latest-mac.json` / `latest-win.json`；先建 **draft**
+     release，二进制传完最后才传清单与 `.sig`，最后才正式发布。已经正式发布过的标签拒绝覆盖。
+  3. `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL` 指向
+     `https://github.com/kirer/Solo/releases/latest/download/`；`SOLO_UPDATE_URL` 仍可覆盖，
+     本机 http feed 仍可用于验证升级。
+- **取舍**：私钥从「只存在发布机」变成「发布机 + GitHub secret」；换钥匙仍然等于老客户端再也
+  升级不了，所以两处都要备份。仓库必须公开，未登录的客户端才能直接读 Releases；要私有就回到
+  自建 feed（脚本保留）。`latest/download` 只指向最新**正式**版，回滚只能发一个版本号更高的
+  回滚版本，或者用 `SOLO_UPDATE_URL` 指回旧 feed。
+- **执行**：`.github/workflows/release.yml`、`desktop/src/feed.ts`、`docs/DEPLOY.md` §9–10。
+- **验收**：`git push origin v2.0.8` → Actions 全绿 → Release 里有 dmg / 两个 zip / exe /
+  四份清单文件（两份 JSON + 两份 `.sig`）；装 2.0.7 的桌面端「检查更新」能看到 2.0.8。

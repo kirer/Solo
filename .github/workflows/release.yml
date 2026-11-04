@@ -1,0 +1,157 @@
+name: 打包与发版
+
+# 推 v* 标签（或在 Actions 页面手动运行）→ 检查 → mac arm64 / win x64 并行打包
+# → 用仓库 secret SOLO_UPDATE_KEY 签更新清单 → 发 GitHub Release。
+# 更新源就是本仓库的 Releases；发布顺序是二进制先传、清单最后传（ADR-029 / ADR-067）。
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查签名密钥
+        env:
+          SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+        run: test -n "$SOLO_UPDATE_KEY" || { echo "缺少仓库 secret SOLO_UPDATE_KEY"; exit 1; }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+  build-mac:
+    needs: verify
+    runs-on: macos-14
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run ui:build
+      - run: npm run desktop:dist:mac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac-arm64
+          if-no-files-found: error
+          path: |
+            release/Solo-${{ needs.verify.outputs.version }}-arm64.dmg
+            release/Solo-${{ needs.verify.outputs.version }}-arm64.zip
+
+  build-win:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      - run: npm run ui:build
+      - run: npm run desktop:dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          if-no-files-found: error
+          path: |
+            release/Solo-${{ needs.verify.outputs.version }}-x64.exe
+            release/Solo-${{ needs.verify.outputs.version }}-x64.zip
+
+  publish:
+    needs: [verify, build-mac, build-win]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: 标签与版本必须一致
+        id: tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_REF_TYPE}" != "tag" ]; then
+            TAG="v${VERSION}"
+          fi
+          if [ "$TAG" != "v${VERSION}" ]; then
+            echo "标签 $TAG 和 package.json 的版本 $VERSION 不一致。"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: 签两份更新清单
+        run: |
+          set -euo pipefail
+          if [ -z "${SOLO_UPDATE_KEY:-}" ]; then
+            echo "缺少仓库 secret SOLO_UPDATE_KEY（更新签名私钥）。"
+            exit 1
+          fi
+          printf '%s\n' "$SOLO_UPDATE_KEY" > "$RUNNER_TEMP/solo-update-key.pem"
+          chmod 600 "$RUNNER_TEMP/solo-update-key.pem"
+          mkdir -p feed
+          node --experimental-strip-types scripts/update-manifest.ts \
+            --feed feed --version "$VERSION" \
+            --file darwin="dist/Solo-${VERSION}-arm64.zip" \
+            --file win32="dist/Solo-${VERSION}-x64.zip" \
+            --key "$RUNNER_TEMP/solo-update-key.pem"
+          ls -l dist feed
+      - name: 发版（二进制先传，清单最后传）
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.tag.outputs.tag }}"
+          STATE="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [ "$STATE" = "false" ]; then
+            echo "发布 $TAG 已经正式发布过，拒绝覆盖；要重发请升版本。"
+            exit 1
+          fi
+          if [ -z "$STATE" ]; then
+            gh release create "$TAG" --draft --title "Solo $VERSION" --generate-notes --target "$GITHUB_SHA"
+          fi
+          gh release upload "$TAG" \
+            "dist/Solo-${VERSION}-arm64.dmg" \
+            "dist/Solo-${VERSION}-arm64.zip" \
+            "dist/Solo-${VERSION}-x64.exe" \
+            "dist/Solo-${VERSION}-x64.zip" \
+            --clobber
+          gh release upload "$TAG" \
+            feed/latest-mac.json feed/latest-mac.json.sig \
+            feed/latest-win.json feed/latest-win.json.sig \
+            --clobber
+          gh release edit "$TAG" --draft=false --latest

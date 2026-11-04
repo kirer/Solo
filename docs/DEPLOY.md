@@ -325,6 +325,11 @@ curl -s localhost:7788/api/diag | jq
 （ADR-029）。服务端**原样发文件**就够：不改写 URL、不校验签名、不存库、不认账号（ADR-027）。
 清单与签名是 `no-cache`，产物按文件名长缓存。
 
+**默认源是本仓库的 GitHub Releases**（ADR-067）：`.github/workflows/release.yml` 把两个 zip、
+清单与签名上传成同一个 release 的资产，客户端读
+`https://github.com/kirer/Solo/releases/latest/download/`。下面这套自建静态目录仍然保留，
+内网或不想依赖 GitHub 时用 `SOLO_UPDATE_URL` 指过去即可。
+
 发布机上一个目录、一个只读服务：
 
 ```bash
@@ -409,12 +414,40 @@ npm run update:manifest -- --feed feed --version 2.0.1 \
 # 3) 把 zip、清单、.sig 一起放进 feed 目录（§9），二进制先传、清单最后传
 ```
 
+**GitHub Actions 发版（默认路径，ADR-067）**
+
+第一次只做一次：把发布机上的私钥放进仓库 secret（保存后不会再显示，也不会进日志）：
+
+```bash
+gh secret set SOLO_UPDATE_KEY --repo kirer/Solo < ~/.solo-update-key.pem
+```
+
+之后每次发版就是改版本、推标签：
+
+```bash
+npm version patch --no-git-tag-version   # package.json + package-lock.json 一起改
+git commit -am "chore: 版本 2.0.8"
+git push origin main
+git tag v2.0.8                           # 必须和 package.json 的版本一致
+git push origin v2.0.8                   # 触发 .github/workflows/release.yml
+```
+
+工作流顺序：`npm run check` + `npm test` → mac arm64 / win x64 并行打包 → 建 **draft**
+Release → 先传二进制、最后传清单与 `.sig` → 正式发布。客户端读
+`https://github.com/kirer/Solo/releases/latest/download/`（`desktop/src/feed.ts` 的
+`DEFAULT_FEED_URL`），所以清单一定不能比二进制先可见。手动跑一次用 Actions 页面的
+「Run workflow」，标签取 `package.json` 的版本 `v<版本>`。
+
+- 标签和版本对不上会被工作流拦下；已经正式发布过的标签拒绝覆盖，要重发就升版本。
+- 没有 Apple / Windows 代码签名证书，首次打开会有系统警告（和本地打包一样）。
+
 - 应用读清单 `latest-mac.json` / `latest-win.json`，先验 `.sig`、再比版本、再下载、
   下完核对 sha512。任何一步不过都**不碰**这个版本。
 - 安装由进程外脚本做：等应用退出 → 解包 → 旧包挪开、新包换进去（失败挪回来）→ 重新打开。
   macOS 用 `sh` + `ditto`，Windows 用 PowerShell `Expand-Archive` + `robocopy /MIR`。
 - 更新源地址：`SOLO_UPDATE_URL` 环境变量优先，否则用 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`
-  （只认 https，或 http 的本机地址）。检查时机：启动 30 秒后一次，之后每 6 小时；
+  （默认 `https://github.com/kirer/Solo/releases/latest/download/`；只认 https，或 http 的本机地址）。
+  检查时机：启动 30 秒后一次，之后每 6 小时；
   「检查更新…」在应用菜单里。
 - **Windows 的 zip 替换没有实机验证过**：快捷方式仍由首次安装的 NSIS 建立，更新只覆盖程序目录。
 - `package.json` 的 `version` 是应用版本，也是清单比较的对象；`dmg` 只给人手动装，更新用 zip。

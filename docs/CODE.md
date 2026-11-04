@@ -29,6 +29,8 @@ scripts/          九个入口脚本：边界检查、真模型冒烟（core-liv
                   （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表、
                   自建更新源（update-server，只读静态目录）、更新密钥（update-key，跑一次）、
                   更新清单 + 签名（update-manifest）；真模型共用等待器/证据在 live-support.ts
+.github/workflows/release.yml  GitHub Actions：v* 标签 → 检查 / mac arm64 + win x64 打包 /
+                  签更新清单 / 发 GitHub Release（ADR-067）
 ```
 
 **五个层，依赖只能朝一个方向**（`core/` 就是 domain，四个兄弟目录各是一层）：
@@ -210,7 +212,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `desktop/src/manifest.ts` | 清单的纯函数：`parseManifest` / `verifyManifest`（Ed25519）/ `isNewer` / `fileFor` |
 | `desktop/src/install.ts` | 进程外安装脚本：macOS `sh` + `ditto`，Windows PowerShell `Expand-Archive` + `robocopy /MIR`；失败把旧包挪回来 |
 | `desktop/src/update-key.ts` | 更新公钥（`npm run update:key` 生成；私钥不在仓库） |
-| `desktop/src/feed.ts` | `DEFAULT_FEED_URL` + `resolveFeedUrl` / `feedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
+| `desktop/src/feed.ts` | `DEFAULT_FEED_URL`（GitHub Releases 的 `latest/download/`）+ `resolveFeedUrl` / `feedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
 | `desktop/src/menu.ts` | 菜单：检查更新 / 重启 / 重新加载页面 / 开发者工具 |
 | `desktop/tsconfig.json` | 单独一份（根 tsconfig 的 `rootDir` 是 `src/`），输出 ESM 到 `desktop/dist/` |
 
@@ -263,9 +265,9 @@ shell = 装配层，唯一可以同时 import 全部
 | 换模型 / 加自定义模型 | `<appRoot>/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
-| 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028） |
+| 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；GitHub Actions 发版见 ADR-067 |
 | 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |
-| 发布 / 排查桌面端更新 | `scripts/update-server.ts`（只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**、不校验签名，原样发（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单与旧签名 |
+| 发布 / 排查桌面端更新 | `.github/workflows/release.yml`（默认发 GitHub Release）+ `scripts/update-server.ts`（自建只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**、不校验签名，原样发（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单与旧签名。GitHub 那条路见 ADR-067 |
 
 ## 4. 启动顺序（第 3 步最容易出错）
 
