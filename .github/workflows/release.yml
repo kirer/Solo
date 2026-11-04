@@ -51,7 +51,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run ui:build
-      - run: npm run desktop:dist:mac
+      # dmg 偶尔会在 runner 上 hdiutil: create failed - Device not configured，
+      # 是机器层面的瞬时问题；失败一次就重打一次，别让它挡住已经打好的 zip。
+      - name: 打包（dmg 失败重试一次）
+        run: |
+          set -euo pipefail
+          npm run desktop:dist:mac || {
+            echo "第一次 macOS 打包失败，重试…"
+            npm run desktop:dist:mac
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: mac-arm64
