@@ -57,6 +57,20 @@ export type StartRunInput = {
 /** 杀一整个进程组：`detached` 起的子进程带着自己的一窝 shell，只杀 pid 会留下孤儿。 */
 function killGroup(pid: number | undefined): void {
 	if (pid === undefined || pid <= 0) return;
+	if (process.platform === "win32") {
+		// `process.kill(-pid)` 是 POSIX 的进程组写法，Windows 上没有。用 taskkill 连子树
+		// 一起杀：只杀 cmd 的话，它拉起的 ping / node 还占着输出管道，`close` 永远不来。
+		const killer = spawn("taskkill", ["/pid", String(pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
+		killer.once("error", () => {
+			try {
+				process.kill(pid, "SIGKILL");
+			} catch {
+				/* 已经没了 */
+			}
+		});
+		killer.unref();
+		return;
+	}
 	try {
 		process.kill(-pid, "SIGKILL");
 	} catch {

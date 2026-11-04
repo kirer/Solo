@@ -13,7 +13,9 @@ import { clip, resolveInWorkspace } from "../../src/core/channel/tools/index.ts"
  * 两者都在工具内部，平时只有真跑工具才会执行到 —— 所以单测直接测函数。
  */
 describe("resolveInWorkspace", () => {
-	const root = "/tmp/ws";
+	// 用 resolve 定根：Windows 上裸写 `/tmp/ws` 没有盘符，join 出来是 `\tmp\ws`，
+	// 而 resolveInWorkspace 会补当前盘符，两边对不上。
+	const root = resolve("/tmp/ws");
 
 	it("工作区内的相对路径原样给出", () => {
 		// 期望值用 join/resolve 生成：Windows 上的分隔符是 `\`。
