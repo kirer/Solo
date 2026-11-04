@@ -201,7 +201,8 @@ shell = 装配层，唯一可以同时 import 全部
 ### 2.3 `desktop/src/`（Electron 主进程，打包配置在 `electron-builder.yml`）
 
 壳只管进程边界与窗口（ADR-028）：不 import `src/` 下任何一层与 `ui/app/`（边界检查第 7 条拦）。
-浏览器与桌面端是**同一份界面**，桌面端只是加载时多一个 `?shell=desktop`。
+浏览器与桌面端是**同一份界面**，桌面端只是加载时多一个 `?shell=desktop`。包体积裁剪（语言包 /
+source map / 未使用 provider SDK）见 ADR-068。
 
 | 文件 | 职责 |
 | --- | --- |
@@ -265,7 +266,7 @@ shell = 装配层，唯一可以同时 import 全部
 | 换模型 / 加自定义模型 | `<appRoot>/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
-| 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；GitHub Actions 发版见 ADR-067 |
+| 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；GitHub Actions 发版见 ADR-067；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
 | 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |
 | 发布 / 排查桌面端更新 | `.github/workflows/release.yml`（默认发 GitHub Release）+ `scripts/update-server.ts`（自建只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**、不校验签名，原样发（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单与旧签名。GitHub 那条路见 ADR-067 |
 

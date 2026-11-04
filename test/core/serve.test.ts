@@ -11,6 +11,8 @@ import { defaultUiDir } from "../../src/shell/serve.ts";
 
 describe("serve：界面产物在哪", () => {
 	it("默认 uiDir 指向仓库里的 ui/web/index.html", () => {
+		// Windows 上旧实现用 `URL.pathname` 会得到 `/C:/…`，这个断言会直接红；
+		// 所以它同时是「首页不要静默 404」的跨平台守门。
 		expect(existsSync(join(defaultUiDir(), "index.html"))).toBe(true);
 	});
 });

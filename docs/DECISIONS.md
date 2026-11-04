@@ -1485,3 +1485,35 @@
 - **执行**：`.github/workflows/release.yml`、`desktop/src/feed.ts`、`docs/DEPLOY.md` §9–10。
 - **验收**：`git push origin v2.0.8` → Actions 全绿 → Release 里有 dmg / 两个 zip / exe /
   四份清单文件（两份 JSON + 两份 `.sig`）；装 2.0.7 的桌面端「检查更新」能看到 2.0.8。
+
+## ADR-068 桌面包瘦身：只带用得到的语言、源码映射与 provider
+
+- **背景**：2.0.7 的 Windows 包解包 478 MB、zip 164 MB；macOS `.app` 410 MB。拆开看，
+  Electron 本体（`Solo.exe` / dll / pak / `icudtl.dat`）约 326 MB，是地板的；其余大头不是业务
+  代码，而是 55 个 Electron 语言包 48 MB、`*.map` 24 MB、以及随 `pi-ai` 进来的 Google /
+  Bedrock SDK 链 29 MB。Solo 只支持 `openai-responses` / `anthropic` / `openai` 三种 API，
+  后两家的 SDK 运行时根本走不到；`react` / `react-dom` 也已经被 Vite 打进 `ui/web`。
+- **决策**：
+  1. `electronLanguages` 只留 `en-US` / `zh-CN` / `zh-TW`，原生菜单和对话框够用。
+  2. `files` 排除 `**/*.map`、`openai/src`、`@anthropic-ai/sdk/src` —— 运行时走 dist，
+     `exports` 不指向 `src`；source map 只影响线上排错，仓库里仍保留。
+  3. 排除 Google（`@google/genai`、`protobufjs`、`web-streams-polyfill`、`google-auth-library`、
+     `gaxios`、`node-fetch`、`fetch-blob`）与 Bedrock（`@aws-sdk`、`@smithy`）的 SDK 链。
+     `providers/all` 仍会 import 这两个 provider 模块，但它们的 API 是
+     `lazyApi(() => import(...))`（`google-generative-ai.lazy.js` / `bedrock-converse-stream.lazy.js`），
+     不调用就不会加载 SDK；Solo 的 `APIS` 表也没有它们。
+  4. 排除 `@earendil-works/pi-codemode`、`quickjs-wasi`、`@silvia-odwyer/photon`：Solo 只 import
+     `pi-durable` 根和 `storage/sqlite/node`，没有 import `codemode` / `images` 子路径。
+  5. `react` / `react-dom` 从 `dependencies` 移到 `devDependencies`：界面构建需要，运行时不需要。
+  6. `compression: maximum`：构建慢几分钟，换压缩包小几个百分点。
+- **取舍**：以后要正式支持 Gemini / Bedrock，必须把对应 SDK 从排除项里放回来，否则选中它们会在
+  生成时 `module not found`。排除 source map 后，生产环境的 JS 堆栈看不到源码行；要排错就用
+  仓库里的同一版本重新构建。Electron 本体、`dxcompiler.dll`、`vk_swiftshader.dll`、`ffmpeg.dll`
+  和 `LICENSES.chromium.html` 一律不动：前三个影响 GPU / 媒体兜底，最后一个是法律要求。
+- **执行**：`electron-builder.yml` 的 `files` / `electronLanguages` / `compression`；
+  `package.json` 与 `package-lock.json` 的 `react` / `react-dom` 位置。
+- **验收**（2.0.7 实测）：`Resources/app` 35 MB（原 104 MB），`node_modules` 33 MB（原 101 MB），
+  `locales` 只剩 `en-US.pak` / `zh-CN.pak` / `zh-TW.pak`；macOS `.app` 296 MB（原 410 MB），
+  dmg 106 MB（原 139 MB），zip 116 MB（原 139 MB）；Windows 解包 362 MB（原 478 MB），
+  zip 141 MB（原 164 MB），NSIS 安装包 112 MB（原 130 MB）。瘦身后的打包后端能启动、
+  `/` 返回界面、`/api/org` 与 `/api/models` 正常，`npm run live` 13/13。

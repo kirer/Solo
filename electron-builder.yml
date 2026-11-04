@@ -1,4 +1,4 @@
-# 桌面端打包（ADR-028 / ADR-029）。
+# 桌面端打包（ADR-028 / ADR-029 / ADR-068）。
 #
 # 后端不打包、不 transpile：`src/` 的 TS 原样进包，用 Electron 自带的 Node 24 直接跑
 # （类型擦除已稳定，`node:sqlite` 内置）。`ui/web` 与 `seed/` 一起放进去 —— 后端按
@@ -17,6 +17,33 @@ files:
   - src/**/*.ts
   - ui/web/**/*
   - seed/**/*
+  # 瘦身（ADR-068）：运行时不需要 source map / SDK 的 TS 源码；Google 与 Bedrock
+  # 的 provider 只在 pi-ai 目录里登记，Solo 的 APIS 表没有它们，SDK 又是 lazy import。
+  - "!**/*.map"
+  - "!node_modules/openai/src/**"
+  - "!node_modules/@anthropic-ai/sdk/src/**"
+  - "!node_modules/@google/genai/**"
+  - "!node_modules/@aws-sdk/**"
+  - "!node_modules/@smithy/**"
+  - "!node_modules/protobufjs/**"
+  - "!node_modules/web-streams-polyfill/**"
+  - "!node_modules/google-auth-library/**"
+  - "!node_modules/gaxios/**"
+  - "!node_modules/node-fetch/**"
+  - "!node_modules/fetch-blob/**"
+  - "!node_modules/@earendil-works/pi-codemode/**"
+  - "!node_modules/quickjs-wasi/**"
+  - "!node_modules/@silvia-odwyer/**"
+
+# Electron 只带三种语言：应用界面是中文，原生菜单 / 对话框留简繁和英文兜底。
+# 55 个 .pak 是 48 MB，只留这三个是 1.7 MB。
+electronLanguages:
+  - en-US
+  - zh-CN
+  - zh-TW
+
+# 压缩级别拉满：构建慢几分钟，换压缩包小几个百分点。
+compression: maximum
 
 # 不用 asar：播种技能用的是 `fs.cp(目录, …, {recursive:true})`，而 asar 的 fs 垫片只支持
 # 拷「文件」，拷目录直接 NOT_FOUND（`seed/agents/assistant/skills/建立团队`）。放进 asar 要连带

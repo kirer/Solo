@@ -74,6 +74,8 @@ jobs:
           node-version: 22.19.0
           cache: npm
       - run: npm ci
+      # Windows 上再跑一遍：`defaultUiDir` 这类 `URL.pathname` 的路径差异只有这里会露。
+      - run: npm test
       - run: npm run ui:build
       - run: npm run desktop:dist:win
       - uses: actions/upload-artifact@v4

@@ -15,6 +15,7 @@
  */
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createFsx } from "../src/core/fsx.ts";
 import { parseCatalog } from "../src/core/md/catalog.ts";
 import { renderSlots, slotsIn } from "../src/core/md/text.ts";
@@ -40,7 +41,7 @@ const TOOL_NAMES = new Set([
 
 const MAX_LINES = 12;
 
-const root = new URL("..", import.meta.url).pathname;
+const root = fileURLToPath(new URL("..", import.meta.url));
 const fsx = createFsx(root);
 const failures: string[] = [];
 

@@ -372,6 +372,20 @@ npm run desktop:dist:mac   # 出 dmg + zip（zip 是更新载体）
 npm run desktop:dist:win   # 出 NSIS 安装包
 ```
 
+**包体积（ADR-068）**
+
+`electron-builder.yml` 只保留 `en-US` / `zh-CN` / `zh-TW` 三个 Electron 语言包，排除
+source map、SDK 的 `src/`、Google / Bedrock 的 SDK 链，以及 Solo 没 import 的
+`pi-codemode` / `quickjs-wasi` / `photon`；`react` / `react-dom` 是 devDependencies
+（Vite 已打进 `ui/web`）。2.0.7 实测：Windows 解包 478 → 362 MB、zip 164 → 141 MB、
+NSIS 安装包 130 → 112 MB；macOS `.app` 410 → 296 MB、dmg 139 → 106 MB、zip 139 → 116 MB；
+`Resources/app` 104 → 35 MB（其中 `node_modules` 101 → 33 MB）。
+
+再往下就是 Electron 本体：`Solo.exe` / dll / pak / `icudtl.dat` 约 326 MB。**不要**为了再省
+几十 MB 删 `dxcompiler.dll`、`vk_swiftshader.dll`、`ffmpeg.dll` 或 `LICENSES.chromium.html` ——
+会坏 GPU / 媒体兜底或法律合规。以后要支持 Gemini / Bedrock，先把对应 SDK 从 `files` 的排除项里
+放回来。`compression: maximum` 会让打包慢几分钟，属正常。
+
 **第一次出 dmg 会卡**：electron-builder 要从 GitHub 下 `dmgbuild-bundle` / `7zip`，直连不通时
 会停在 0 字节。走镜像或本机代理：
 
@@ -433,7 +447,8 @@ git push origin v2.0.8                   # 触发 .github/workflows/release.yml
 ```
 
 工作流顺序：`npm run check` + `npm test` → mac arm64 / win x64 并行打包 → 建 **draft**
-Release → 先传二进制、最后传清单与 `.sig` → 正式发布。客户端读
+Release → 先传二进制、最后传清单与 `.sig` → 正式发布。Windows 打包前会再跑一遍
+`npm test`，把 `defaultUiDir` 这类只在 Windows 上暴露的路径问题拦在发布前。客户端读
 `https://github.com/kirer/Solo/releases/latest/download/`（`desktop/src/feed.ts` 的
 `DEFAULT_FEED_URL`），所以清单一定不能比二进制先可见。手动跑一次用 Actions 页面的
 「Run workflow」，标签取 `package.json` 的版本 `v<版本>`。

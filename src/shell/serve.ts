@@ -10,6 +10,7 @@
  * `src/interface/http/`。这一层不再认识「一条消息长什么样」。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { fileURLToPath } from "node:url";
 import { browserUrlOf, lanAddresses, lanUrlsOf } from "../interface/http/network.ts";
 import { allowedHostsOf, hostAllowed, originAllowed, selfOriginsOf } from "../interface/http/origin-guard.ts";
 import { matchRoute } from "../interface/http/route-match.ts";
@@ -47,9 +48,12 @@ export type CoreServer = {
  *
  * 单独一个函数是为了能被单测钉住：本文件一搬家，层数就变，静态资源会静默 404
  * （服务起得来、接口正常，只有首页打不开）。
+ *
+ * **必须用 `fileURLToPath`**：Windows 上 `URL.pathname` 是 `/C:/…`，`path.join`
+ * 之后是一个不存在的路径，表现就是窗口里只剩 `{"error":"未找到"}`。
  */
 export function defaultUiDir(): string {
-	return new URL("../../ui/web", import.meta.url).pathname;
+	return fileURLToPath(new URL("../../ui/web", import.meta.url));
 }
 
 /** 目录事件会连着来（一次删除常常好几个）：合并一下再对账。 */
