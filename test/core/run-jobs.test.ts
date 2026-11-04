@@ -65,7 +65,12 @@ describe("后台命令", () => {
 			startRunJob({ dir, slug: "林越", channelId: "c1", command: LONG_COMMAND, cwd: dir, limitMs: 150, onDone }),
 		);
 		expect(outcome.timedOut).toBe(true);
-		expect(outcome.code).toBeNull();
+		if (process.platform === "win32") {
+			// Windows 没有信号：taskkill 之后 close 报的是退出码，不是 null。
+			expect(outcome.code).not.toBe(0);
+		} else {
+			expect(outcome.code).toBeNull();
+		}
 	});
 
 	it("起不来也算跑完（回一句原因，不是静默消失）", async () => {
