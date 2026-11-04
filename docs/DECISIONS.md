@@ -1553,3 +1553,38 @@
   `test/ui/titlebar.test.ts`（菜单动作与主进程一致、跨整窗、右栏下移、macOS 规则不漏）；
   Windows 手工：拖窗口、双点最大化、贴边分屏、三个系统按钮、浅 / 深色切换、菜单五项、
   `Ctrl+R` / `Ctrl+Shift+I`。macOS 回归：`npm run desktop:dev` 仍是原来的红绿灯位置。
+
+## ADR-070 Windows 更新安装：先握手、用 tar 解包、替换前后核对版本
+
+- **背景**：2.0.9 → 2.0.10 在 Windows 上真实失败：更新包下载完、点「立即重启安装」后应用退出，
+  十分钟没有重新打开；手动再启动仍是 2.0.9。2.0.9 的安装脚本用 `Expand-Archive` +
+  `robocopy /MIR`，只在失败时写日志；主进程不等安装器确认就退出，用户也无法知道是解包慢、
+  文件被占还是脚本根本没起来。`docs/DEPLOY.md` 早就写着「Windows 的 zip 替换没有实机验证过」，
+  这次是第一次真机验收。
+- **决策**：
+  1. **先握手再退出**：安装脚本启动后的第一件事是写 `<zip 目录>/installer-<uuid>.ready`。
+     `scheduleInstall` 等这个文件（10 秒超时）才返回；主进程随后才停后端并 `app.quit()`。
+     安装器没起来（被杀软拦、PowerShell 起不来、job 对象限制）会弹「更新安装器没起来」，
+     应用不退出，而不是无声消失。
+  2. **用系统自带的 `tar.exe` 解包**（`%SystemRoot%\System32\tar.exe`），它比 PowerShell 5.1
+     的 `Expand-Archive` 快一个数量级；没有 `tar.exe` 才退回 `Expand-Archive`。
+  3. **等所有同路径的 `Solo.exe`**：先等主进程 90 秒，再按进程名 + 可执行文件路径等后端 /
+     后台命令 30 秒；仍不走就强制结束。只等主进程 PID 不够 —— 后端也是同一个 exe，文件没解锁
+     时 `robocopy` 会失败，旧版本又被打开，表现和「点了没反应」一样。
+  4. **替换前后都核对版本**：解包后读 `resources/app/package.json`，必须是清单里的新版本；
+     `robocopy` 之后再读安装目录的同一文件，不是新版本就抛错。失败时只有安装目录仍是完整的
+     旧版本才自动打开旧程序；半套文件不启动。日志从第一行开始写 `%TEMP%\solo-update.log`
+     （等待 / 解包 / robocopy 退出码 / 提权 / 版本 / 启动），不再只在 catch 里写。
+  5. **这条修复只对 2.0.11 起的客户端生效**：2.0.9 / 2.0.10 的安装器还是旧代码，必须手动装一次
+     2.0.11 的 `.exe`；之后的更新才走新脚本。
+- **取舍**：`tar.exe` 从 Windows 10 1803 起才有（Electron 本身也只支持 Windows 10+），更老的系统
+  会退回慢路径。强制结束同路径进程会打断正在跑的后台命令 —— 更新对话框已经写明「正在跑的事会中断」。
+  `robocopy /MIR` 仍不是原子替换：如果它在复制中途失败，可能留下混合文件；版本核对能拦住
+  「旧版本静默重开」，但不能替代备份，失败时按提示手动安装。日志里会包含本机路径，只落在
+  `%TEMP%`，不上传。
+- **执行**：`desktop/src/install.ts` 的 `windowsInstallScript` / `scheduleInstall`、
+  `desktop/src/updates.ts` 的安装分支、`test/desktop/install.test.ts`；
+  `docs/DEPLOY.md` §10。
+- **验收**：单测覆盖 ready 文件、tar 优先级、解包 / 替换后的版本核对、旧版本才自动重开；
+  Windows 手工从 2.0.11 升 2.0.12：点安装后应用退出、新版本自动打开，`%TEMP%\solo-update.log`
+  能看到 `tar 解包` → `robocopy 退出码 1` → `安装完成`；失败时能看到 `Solo 更新失败` 弹窗。

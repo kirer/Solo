@@ -466,15 +466,23 @@ Release → 先传二进制、最后传清单与 `.sig` → 正式发布。Windo
 
 - 应用读清单 `latest-mac.json` / `latest-win.json`，先验 `.sig`、再比版本、再下载、
   下完核对 sha512。任何一步不过都**不碰**这个版本。
-- 安装由进程外脚本做：等应用退出 → 解包 → 旧包挪开、新包换进去（失败挪回来）→ 重新打开。
-  macOS 用 `sh` + `ditto`，Windows 用 PowerShell `Expand-Archive` + `robocopy /MIR`。
+- 安装由进程外脚本做：先写 ready 文件（主进程看到才退出）→ 等旧进程 / 同路径 `Solo.exe` 退出 →
+  解包 → 旧包换新（失败挪回来）→ 重新打开。macOS 用 `sh` + `ditto`；Windows 优先用
+  `%SystemRoot%\System32\tar.exe` 解包（比 `Expand-Archive` 快一个数量级），没有才退回后者，
+  再用 `robocopy /MIR`。
+- 解包后和替换后都核对 `resources/app/package.json` 的版本；不是清单里的版本就弹窗中止，
+  不会把半套文件当新版本打开。整个过程从第一行写 `%TEMP%\solo-update.log`（等待 / 解包 /
+  robocopy 退出码 / 提权 / 版本 / 启动），失败时日志路径也写在弹窗里。
 - 重启（`app.relaunch`）前会显式**释放单实例锁**，正常退出则在 `will-quit` 释放；否则新实例
   可能撞上旧进程的锁，静默退出，表现成「点了没反应」。
 - Windows 装在 Program Files 这类普通权限写不进去的目录时，替换失败会走一次 UAC 提权重试；
-  用户拒绝或仍然失败时弹窗说明，并把日志写到 `%TEMP%\solo-update.log`，不再静默打开旧版本。
+  用户拒绝或仍然失败时弹窗说明，不再静默打开旧版本。
 - 更新源地址：`SOLO_UPDATE_URL` 环境变量优先，否则用 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`
   （默认 `https://github.com/kirer/Solo/releases/latest/download/`；只认 https，或 http 的本机地址）。
   检查时机：启动 30 秒后一次，之后每 6 小时；
   「检查更新…」在 macOS 的系统菜单栏 / Windows 标题带的「Solo」菜单里。
-- **Windows 的 zip 替换没有实机验证过**：快捷方式仍由首次安装的 NSIS 建立，更新只覆盖程序目录。
+- **Windows 的 zip 替换：2.0.9 → 2.0.10 实测失败**（安装器十分钟没回来，手动启动仍是旧版本）。
+  2.0.11 起改成 ready 握手 + `tar.exe` 解包 + 替换前后版本核对（ADR-070）；2.0.9 / 2.0.10
+  客户端必须先手动装一次 2.0.11 的 `.exe`，之后的更新才走新脚本。快捷方式仍由首次安装的
+  NSIS 建立，更新只覆盖程序目录。
 - `package.json` 的 `version` 是应用版本，也是清单比较的对象；`dmg` 只给人手动装，更新用 zip。

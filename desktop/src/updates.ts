@@ -138,15 +138,28 @@ export function createUpdater(options: UpdaterOptions): Updater {
 				cancelId: 1,
 			});
 			if (install !== 0) return;
-			await options.beforeInstall();
 			const exe = app.getPath("exe");
-			scheduleInstall({
-				pid: process.pid,
-				appPath: installDir(),
-				appDir: installDir(),
-				zipPath: zip,
-				exePath: exe,
-			});
+			try {
+				// 先确认安装器真的跑起来，再停后端 / 退出；否则用户点完只看到应用关掉。
+				await scheduleInstall({
+					pid: process.pid,
+					appPath: installDir(),
+					appDir: installDir(),
+					zipPath: zip,
+					exePath: exe,
+					version: manifest.version,
+					fromVersion: app.getVersion(),
+				});
+			} catch (error) {
+				await notify({
+					type: "warning",
+					message: "更新安装器没起来",
+					detail: `${(error as Error).message}\n\n应用没有退出，可以再试一次，或下载新版安装包手动安装。`,
+					buttons: ["知道了"],
+				});
+				return;
+			}
+			await options.beforeInstall();
 			app.quit();
 		} catch (error) {
 			console.warn(`[update] ${(error as Error).message}`);

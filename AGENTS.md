@@ -78,7 +78,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             89 文件 / 816 例
+test/             89 文件 / 821 例
   ├ test/core/    72 文件（纯函数 + 装配）
   ├ test/ui/      12 文件（界面纯函数与源码约定）
   └ test/desktop/ 5 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
@@ -139,7 +139,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 89 文件 816 例，<3s，必须全绿
+npm test             # 89 文件 821 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -200,7 +200,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 头像的画法 / 取景 / 配色 / 尺寸 | `docs/DESIGN.md` §6.5 + `docs/DECISIONS.md`（画风是一条 ADR）+ `docs/WEB-API.md` 的 `/api/avatar/:seed` | `src/app/avatar.ts`（唯一的画法，纯函数）+ `ui/app/src/lib/avatar.ts`（种子与尺寸）+ `test/core/avatar.test.ts` |
 | 界面布局 / 行类型 / 轨迹展示 | `docs/DESIGN.md`（决策稿：改之前先说明原决策错在哪）+ 本文件 §2 的「不画后端没有的东西」 |
 | 启动参数 / 部署方式 / 模型接入（含给某个人换模型、改配置不用重启） | `docs/DEPLOY.md` §3 + `docs/DECISIONS.md` ADR-023 / ADR-024 / ADR-025 | `src/core/runtime/models.ts`（`setupModels` / `syncModels` / `parseModelRef`）+ `shell/assemble.ts` 的 `modelFor` / `refreshModels` + `app/people.ts` 的 `setPersonModel` + `app/models.ts` 的 `list` + 界面在出厂插件 `seed/plugins/模型管理/`（`rightPanel.detail` 插槽） |
-| 桌面壳 / 打包 / 自动更新 / 更新源 | `docs/DEPLOY.md` §9–10 + `docs/DECISIONS.md` ADR-027 / ADR-028 / ADR-029 / ADR-068 | `desktop/src/`（`main.ts` / `backend.ts` / `ready-line.ts` / `updates.ts` / `manifest.ts` / `install.ts` / `update-key.ts` / `feed.ts` / `menu.ts`）+ `electron-builder.yml` + `scripts/update-server.ts` / `update-key.ts` / `update-manifest.ts`；壳与后端只靠 `[core] http://…` 一行说话，不 import 内核与界面源码；更新是「清单验签 → zip → 进程外替换」，不是 Squirrel；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
+| 桌面壳 / 打包 / 自动更新 / 更新源 | `docs/DEPLOY.md` §9–10 + `docs/DECISIONS.md` ADR-027 / ADR-028 / ADR-029 / ADR-068 / ADR-070 | `desktop/src/`（`main.ts` / `backend.ts` / `ready-line.ts` / `updates.ts` / `manifest.ts` / `install.ts` / `update-key.ts` / `feed.ts` / `menu.ts`）+ `electron-builder.yml` + `scripts/update-server.ts` / `update-key.ts` / `update-manifest.ts`；壳与后端只靠 `[core] http://…` 一行说话，不 import 内核与界面源码；更新是「清单验签 → zip → 进程外替换」，不是 Squirrel；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
 | Windows 标题带 / 菜单（自绘） | `docs/DESIGN.md` §1.1 / §9.1 + `docs/DECISIONS.md` ADR-069 + `docs/DEPLOY.md` §10 | `desktop/src/window-chrome.ts`（`hidden` + 40px `titleBarOverlay` / macOS `hiddenInset`）+ `desktop/src/preload.cts`（只开 `solo:menu` / `solo:theme`）+ `desktop/src/main.ts` 的 `setupBridge` / `setMenuBarVisibility(false)` + `desktop/src/menu.ts`（原生菜单只留加速键）+ `ui/app/src/titlebar/`（`Titlebar.tsx` / `menu.ts`）+ `ui/app/src/main.tsx` 的 `data-os` + `App.tsx` 的 `windowsShell` 与主题同步 + `styles/shell.css` 末尾；**macOS 的规则必须留在 `[data-os="darwin"]` 下**；窗口真机行为要在 Windows 上手工验收 |
 | 界面首页 404 / 静态资源目录（`ui/web` 在哪） | `docs/DEPLOY.md` §10 + `docs/CODE.md` §2.3 | `src/shell/serve.ts` 的 `defaultUiDir`（**必须用 `fileURLToPath`**：Windows 上 `URL.pathname` 是 `/C:/…`，`path.join` 之后读不到 `index.html`，窗口里只剩 `{"error":"未找到"}`）+ `test/core/serve.test.ts`；Windows 打包前跑 `npm test` |
 | 发版（GitHub Actions）/ 更新源指向 Releases | `docs/DEPLOY.md` §9–10 + `docs/DECISIONS.md` ADR-067 | `.github/workflows/release.yml` + `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL` + `scripts/update-manifest.ts`；标签必须等于 `v<package.json version>`，签名私钥在仓库 secret `SOLO_UPDATE_KEY`；顺序是检查 → 打包 → draft → 二进制 → 清单 → 正式发布；Windows 打包前再跑一遍 `npm test`（`defaultUiDir` 这类平台差异只有 Windows 会露） |

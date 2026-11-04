@@ -65,7 +65,7 @@ src/core/     核心（57 个文件，约 1.07 万行）
 ui/app/       网页界面源码（React + TS + Vite，构建到 ui/web/，改完必须 npm run ui:build）
 seed/         出厂内容：规矩 / 提示词模板 / 技能 / 助理身份 / pool（默认不装的技能）
 scripts/      边界检查 + 真实模型冒烟 / 多 agent 场景 + 提示词黄金渲染
-test/         89 文件 / 816 例
+test/         89 文件 / 821 例
 ```
 
 ## 命令
@@ -74,7 +74,7 @@ test/         89 文件 / 816 例
 | --- | --- |
 | `npm start` | 起服务（`--port` `--host` `--app-root` `--user-root` `--no-seed`） |
 | `npm run check` | 类型检查 + 边界检查（唯 runtime 层能碰底层库、路由必须有前端消费者） |
-| `npm test` | 单测，89 文件 816 例，<3s |
+| `npm test` | 单测，89 文件 821 例，<3s |
 | `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 13 项（会花 token，改行为后跑） |
 | `npm run live:scenarios` | **真实模型**多 agent 场景 6 个 × 3 轮（会花 token；`--list` 看场景） |
@@ -89,7 +89,7 @@ test/         89 文件 / 816 例
 | [docs/CODE](docs/CODE.md) | 代码地图：「我想改 X → 动这里」 |
 | [docs/design/SEED-CONTRACT](docs/design/SEED-CONTRACT.md) | 出厂内容契约：四个家、插槽表、一条事实一个家 |
 | [docs/WEB-API](docs/WEB-API.md) | 网页 API 的完整契约 |
-| [docs/DECISIONS](docs/DECISIONS.md) | 91 条架构决策（每条写了替代方案与理由） |
+| [docs/DECISIONS](docs/DECISIONS.md) | 92 条架构决策（每条写了替代方案与理由） |
 | [docs/DEPLOY](docs/DEPLOY.md) | 部署、局域网、Docker、排障 |
 
 ## 已知不做

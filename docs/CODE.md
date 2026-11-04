@@ -213,9 +213,9 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | `desktop/src/preload.cts` | 沙箱 preload（CommonJS，编译成 `preload.cjs`）：只暴露 `soloDesktop.menu()` / `setTheme()` 两个口；根包是 `type: module`，所以必须 `.cts` + `require("electron")` |
 | `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
 | `desktop/src/ready-line.ts` | `parseReadyLine`：从 `[core] http://127.0.0.1:<port>/` 认端口（**唯一**的壳 ↔ 内核契约） |
-| `desktop/src/updates.ts` | 更新流程（ADR-029）：拉清单 → 验签 → 比版本 → 下载（进度条 + sha512）→ 各要一次点击 → `beforeInstall` 停后端 → 进程外替换 → 自动退出 |
+| `desktop/src/updates.ts` | 更新流程（ADR-029 / ADR-070）：拉清单 → 验签 → 比版本 → 下载（进度条 + sha512）→ 各要一次点击 → 先起安装器并等 ready 文件 → `beforeInstall` 停后端 → 进程外替换 → 自动退出；安装器起不来时保持应用打开并弹错 |
 | `desktop/src/manifest.ts` | 清单的纯函数：`parseManifest` / `verifyManifest`（Ed25519）/ `isNewer` / `fileFor` |
-| `desktop/src/install.ts` | 进程外安装脚本：macOS `sh` + `ditto`，Windows PowerShell `Expand-Archive` + `robocopy /MIR`；失败把旧包挪回来 |
+| `desktop/src/install.ts` | 进程外安装脚本：macOS `sh` + `ditto`；Windows 先写 ready 文件、等主进程与同路径 `Solo.exe` 退出，优先 `tar.exe` 解包（退回 `Expand-Archive`）+ `robocopy /MIR`，解包 / 替换后核对 `package.json` 版本；全过程写 `%TEMP%\solo-update.log` |
 | `desktop/src/update-key.ts` | 更新公钥（`npm run update:key` 生成；私钥不在仓库） |
 | `desktop/src/feed.ts` | `DEFAULT_FEED_URL`（GitHub Releases 的 `latest/download/`）+ `resolveFeedUrl` / `feedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
 | `desktop/src/menu.ts` | 原生菜单：检查更新 / 重启 / 重新加载页面 / 开发者工具。macOS 显示在系统菜单栏；Windows 只装不显示（菜单栏被隐藏），留作 `Ctrl+R` / `Ctrl+Shift+I` 的加速键，界面菜单在 `ui/app/src/titlebar/` |
@@ -315,7 +315,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 89 文件 / 816 例，应该 <3s
+npm test             # 89 文件 / 821 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
@@ -336,7 +336,8 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 `test/desktop/`（5 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
 `../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）、
 `manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）、
-`install.test.ts`（安装脚本：等旧进程退出、失败回滚 / 提权重试、路径引号）、
+`install.test.ts`（安装脚本：等旧进程退出、ready 握手、tar 优先、解包 / 替换后版本核对、
+失败回滚 / 提权重试、路径引号）、
 `window-chrome.test.ts`（窗口标题栏：macOS 红绿灯位置、Windows 覆盖按钮与颜色、别的平台不碰）。
 
 `test/core/`（72 文件，纯函数 + 装配）：
