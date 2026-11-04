@@ -13,7 +13,8 @@ directories:
 
 files:
   - package.json
-  - desktop/dist/**/*.js
+  # 主进程是 .js，preload 是 .cjs（沙箱 preload 只认 CommonJS，见 desktop/src/preload.cts）。
+  - desktop/dist/**/*
   - src/**/*.ts
   - ui/web/**/*
   - seed/**/*

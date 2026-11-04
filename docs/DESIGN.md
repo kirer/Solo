@@ -49,6 +49,10 @@ CORE §12 说「以后用 `harness.inspect()` 派生，而不是把思考落库�
 
 ### 1.1 外壳：三栏，第三栏可关
 
+**Windows 桌面壳在框顶上还有一条 40px 的标题带**（`data-os="win32"`，ADR-069）：菜单
+「Solo / 视图」从系统菜单栏搬进这一条，它同时是拖拽把手；最小化 / 最大化 / 关闭仍由系统画在
+右边。浏览器和 macOS 没有这一条，三栏布局一像素不变。
+
 ```
 ┌──────────┬────────────────────────────────────────┬──────────────────┐
 │ 🗨 聊天   │ 知言  助理 · 在做        ⟨找你 3⟩ ⟨详情⟩│ 详情 │ 技能 │ 记忆 │
@@ -1011,7 +1015,7 @@ activity?: {
 | 框架 | **React 18 + TS**（现有） | DSH 用 `react ^18.2.0` + `@vitejs/plugin-react`。不引框架、不引组件库 |
 | 样式 | **手写 CSS + CSS 变量**（现有） | DSH 用「一个 theme 包 + 每个组件一个 `*.module.css`」。我们只抄 theme 那一半：六档字号、三档灰靠全局变量约束，组件样式按区域进 `styles/*.css`，不引 CSS Modules（组件少，加一层文件跳转不值） |
 | 状态 | 现有 `store` + `useSyncExternalStore` | 全部状态就一个对象，不需要状态库 |
-| 桌面端 | **已落地**（ADR-028）：Electron 主进程把内核当子进程拉起，窗口加载它发的同一个 origin（`?shell=desktop`） | DSH 也是 Electron 壳加载本地服务；界面零重写，端口由壳分配（7788 被占就换临时端口）。macOS 用 `hiddenInset` 把红绿灯藏进侧栏留白，那几个像素的留白与拖拽把手只在 `?shell=desktop` 下出现（`ui/app/src/styles/shell.css`） |
+| 桌面端 | **已落地**（ADR-028 / ADR-069）：Electron 主进程把内核当子进程拉起，窗口加载它发的同一个 origin（`?shell=desktop&platform=…`） | DSH 也是 Electron 壳加载本地服务；界面零重写，端口由壳分配（7788 被占就换临时端口）。macOS 用 `hiddenInset` 把红绿灯藏进侧栏留白；Windows 用 `hidden` + 40px `titleBarOverlay` 藏掉系统标题栏，界面自己画标题带和菜单（`ui/app/src/titlebar/`）。两种壳的留白与拖拽规则按 `data-os` 分开，浏览器里一像素不变 |
 
 **抄了 DSH 的什么**：Vite + React 18 的构建组合；「消息流里的工具调用是一等公民」这一行模型
 （DSH 的 `DiffBlock` / `CommandText` / `CodeCard` / `AnimatedRows` 与本文档的
@@ -1024,9 +1028,11 @@ activity?: {
 
 **套壳没有额外接缝**：窗口加载的就是后端同一个 `http://127.0.0.1:<port>/`，
 `localStorage` / `navigator.clipboard` / 外链在 Electron 里行为一致，所以原先设想的
-`platform.ts` 网关没有建（ADR-028）。唯一为壳而加的是 `html[data-shell="desktop"]`
-那组样式：红绿灯压进「聊天」那一行（那一行仍是 56 高，和纸的顶栏齐平），导航列顶上让出
-32px 给三个圆钮，加上 `-webkit-app-region` 拖拽把手 —— 只在壳里生效，浏览器里一像素不变。
+`platform.ts` 网关没有建（ADR-028）。为壳而加的样式按 `data-os` 分两组：
+macOS（`html[data-shell="desktop"][data-os="darwin"]`）把红绿灯压进「聊天」那一行
+（那一行仍是 56 高，和纸的顶栏齐平），导航列顶上让出 32px 给三个圆钮；
+Windows（`…[data-os="win32"]`）在框顶加一条 40px 标题带，菜单、拖拽把手和右边 140px 的
+系统按钮让位都在里面。两组都只在壳里生效，浏览器里一像素不变。
 
 ### 9.2 目录（重构后）
 
@@ -1037,6 +1043,7 @@ ui/app/src/
   hooks/       useStreams.ts（两条 SSE 的订阅）
   stream/      Stream.tsx、model.ts（消息 → 行）、LiveRow.tsx、AttachmentPreview.tsx
   sidebar/     Rail.tsx（最左导航）、Sidebar.tsx（会话列表）
+  titlebar/    Titlebar.tsx（Windows 桌面壳的标题带）、menu.ts（Solo / 视图两项菜单）
   composer/    Composer.tsx、choice.ts、MentionMenu.tsx、Attachments.tsx
   panels/      TasksPanel.tsx（后台任务）、RightPanel.tsx（详情/技能/记忆）、Overlays.tsx
   plugin/      registry.ts（插槽表）、Slot.tsx、boot.ts
@@ -1056,8 +1063,9 @@ ui/app/src/
 
 - `test/ui/` 加 `trace-model.test.ts`：摘要文案、连续 think 合并、`[PASS]` 不画、
   截断文案、未知工具兜底、steps 上限。
-- 桌面端没有独立测试层：壳的契约（就绪行、更新源地址）在 `test/desktop/`，
-  界面源码约定测试照旧。
+- 桌面端没有独立测试层：壳的契约（就绪行、更新源地址、窗口标题栏选项）在 `test/desktop/`，
+  界面源码约定测试照旧；Windows 标题带在 `test/ui/titlebar.test.ts`（动作与主进程对得上、
+  占第一行、右栏下移、macOS 规则不漏）。
 - 纯函数先行：`buildRows()` 与 `buildTrace()` 都不碰 DOM，可以直接喂假数据。
 
 ---

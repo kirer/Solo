@@ -165,7 +165,7 @@ shell = 装配层，唯一可以同时 import 全部
 | --- | --- |
 | `ui/app/index.html` | 页面骨架 + **首帧定色的内联脚本**（放样式之前，否则先白一下再变深） |
 | `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
-| `src/main.tsx` | 入口：装样式、`bootstrap()`、**先 `bootPlugins()` 再挂 `<App>`**（插槽首帧就是满的；插件拉不到也照常渲染） |
+| `src/main.tsx` | 入口：装样式、`bootstrap()`、**先 `bootPlugins()` 再挂 `<App>`**（插槽首帧就是满的；插件拉不到也照常渲染）；解析 `?shell=desktop&platform=…`，把平台写进 `data-shell` / `data-os`（Windows 标题带与 macOS 红绿灯的样式都只看这两个标记） |
 | `src/App.tsx` | 外壳装配：最左导航 + 三列网格（`data-view` 在「聊天 / 后台任务」两屏之间切）、头部（标题 / 状态 / 找你 / 团队 / 设置 / 详情）、主题与布局落地、键盘（Esc 关浮层、⌘K 开「找你」） |
 | `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`（轨迹按 `turn.slug` 分桶进 `runs`，群聊私聊同一条规则）/`loadTurn`/`loadPersonRuns`（后台任务面板）、`openTasks`/`setTasksWho`/`closeTasks`、localStorage 两键 |
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
@@ -175,11 +175,12 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/stream/AttachmentPreview.tsx` | 非图片附件点开看一眼：**按响应头**决定（图片 / PDF → `object URL`，`text/*` → `<pre>`，其余说「不能预览」）。不按文件名判断 —— 名字是用户起的 |
 | `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`live` 行交给 `LiveRow`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`）。群聊私聊同一条路径 |
 | `src/stream/LiveRow.tsx` | 聊天流里唯一的过程：头像（`working`）+ 一行「最新一步 · N 步 · 耗时」，每秒自走时钟，点它开这个人的任务面板。折叠帧不带步骤时先 `loadTurn`；没有步骤只写「在想…」，绝不编他会说什么（ADR-046） |
+| `src/titlebar/Titlebar.tsx` | Windows 桌面壳的标题带（ADR-069）：菜单「Solo / 视图」、拖拽把手、点别处 / Esc / 失焦收起；动作经 `window.soloDesktop.menu()` 交给主进程。菜单数据在同目录 `menu.ts`（纯数据，单测直接读） |
 | `src/panels/TasksPanel.tsx` | 后台任务（应用第二屏，`data-view="tasks"`）：左 300px 是选中那个人跨频道的轮次（人像条 + 四组：正在跑 / 已完成 / 失败 / 没回话），右边是选中那一轮的抬头、`trigger` 引用和步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
 | `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（14 个：`rail.item` / `app.page` / `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位 |
-| `src/sidebar/Rail.tsx` | 最左 78px 的应用级导航：顺序是聊天 / 通讯录（团队）/ 后台任务 / 插件，再往下是 `rail.item` 插槽；设置单独压在列底。五格各读自己那一屏的开关（`tasks.open` / `team` / `pluginSheet` / `settings`）画 `aria-current`，后台任务那格右上角是在跑人数；`#team-btn` / `#plugins-btn` / `#settings-btn` 各开对应的整屏页（`data-view` 跟着变，不是浮层）。名字在 `data-tip` 里（`.rail-item::after` 画悬停提示，不用 `title`）。桌面壳里这一列同时是窗口红绿灯的地盘（`html[data-shell="desktop"] .rail` 让出顶部并负责拖动）；≤640px 时整列变成底部一条（`shell.css` 的手机段，框给它让出 56px） |
+| `src/sidebar/Rail.tsx` | 最左 78px 的应用级导航：顺序是聊天 / 通讯录（团队）/ 后台任务 / 插件，再往下是 `rail.item` 插槽；设置单独压在列底。五格各读自己那一屏的开关（`tasks.open` / `team` / `pluginSheet` / `settings`）画 `aria-current`，后台任务那格右上角是在跑人数；`#team-btn` / `#plugins-btn` / `#settings-btn` 各开对应的整屏页（`data-view` 跟着变，不是浮层）。名字在 `data-tip` 里（`.rail-item::after` 画悬停提示，不用 `title`）。macOS 桌面壳里这一列同时是窗口红绿灯的地盘（`html[data-shell="desktop"][data-os="darwin"] .rail` 让出顶部并负责拖动）；Windows 的拖拽把手在标题带里，这一列不空出顶部；≤640px 时整列变成底部一条（`shell.css` 的手机段，框给它让出 56px） |
 | `src/sidebar/Sidebar.tsx` | 侧栏：一行「聊天」标题（18/600，靠上，与导航第一格齐平；没有收起态）、一列平铺频道（两行：名字+状态 / 预览）；列表脚下只有一个 `sidebar.footer` 插槽（团队 / 插件 / 设置在最左那列，见 `Rail.tsx`）。第一格是助理：私聊还没开过时画入口（`AssistantRow`），点下去 `store.openWithPerson` 建频道再打开 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条 |
@@ -200,13 +201,16 @@ shell = 装配层，唯一可以同时 import 全部
 
 ### 2.3 `desktop/src/`（Electron 主进程，打包配置在 `electron-builder.yml`）
 
-壳只管进程边界与窗口（ADR-028）：不 import `src/` 下任何一层与 `ui/app/`（边界检查第 7 条拦）。
-浏览器与桌面端是**同一份界面**，桌面端只是加载时多一个 `?shell=desktop`。包体积裁剪（语言包 /
-source map / 未使用 provider SDK）见 ADR-068。
+壳只管进程边界与窗口（ADR-028 / ADR-069）：不 import `src/` 下任何一层与 `ui/app/`（边界检查第 7 条拦）。
+浏览器与桌面端是**同一份界面**，桌面端只是加载时多一个 `?shell=desktop&platform=…`；
+Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出红绿灯的位置。
+包体积裁剪（语言包 / source map / 未使用 provider SDK）见 ADR-068。
 
 | 文件 | 职责 |
 | --- | --- |
-| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS `hiddenInset` 标题栏）、外链交给系统浏览器、退出前先停后端、更新与菜单接线 |
+| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS `hiddenInset`；Windows `hidden` + `titleBarOverlay`）、外链交给系统浏览器、退出前先停后端、更新与菜单接线；Windows 的 `setupBridge` 收标题带动作 / 取色（校验 sender + origin），装完原生菜单后隐藏菜单栏（加速键仍有效） |
+| `desktop/src/window-chrome.ts` | `windowChrome(platform, theme)`：macOS `hiddenInset` + 红绿灯位置；Windows `hidden` + 40px `titleBarOverlay`（颜色与界面的 `--frame` / `--ink` 对齐）。纯函数，单测守 |
+| `desktop/src/preload.cts` | 沙箱 preload（CommonJS，编译成 `preload.cjs`）：只暴露 `soloDesktop.menu()` / `setTheme()` 两个口；根包是 `type: module`，所以必须 `.cts` + `require("electron")` |
 | `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
 | `desktop/src/ready-line.ts` | `parseReadyLine`：从 `[core] http://127.0.0.1:<port>/` 认端口（**唯一**的壳 ↔ 内核契约） |
 | `desktop/src/updates.ts` | 更新流程（ADR-029）：拉清单 → 验签 → 比版本 → 下载（进度条 + sha512）→ 各要一次点击 → `beforeInstall` 停后端 → 进程外替换 → 自动退出 |
@@ -214,8 +218,8 @@ source map / 未使用 provider SDK）见 ADR-068。
 | `desktop/src/install.ts` | 进程外安装脚本：macOS `sh` + `ditto`，Windows PowerShell `Expand-Archive` + `robocopy /MIR`；失败把旧包挪回来 |
 | `desktop/src/update-key.ts` | 更新公钥（`npm run update:key` 生成；私钥不在仓库） |
 | `desktop/src/feed.ts` | `DEFAULT_FEED_URL`（GitHub Releases 的 `latest/download/`）+ `resolveFeedUrl` / `feedUrl`：`SOLO_UPDATE_URL` 只认 https 或本机 http |
-| `desktop/src/menu.ts` | 菜单：检查更新 / 重启 / 重新加载页面 / 开发者工具 |
-| `desktop/tsconfig.json` | 单独一份（根 tsconfig 的 `rootDir` 是 `src/`），输出 ESM 到 `desktop/dist/` |
+| `desktop/src/menu.ts` | 原生菜单：检查更新 / 重启 / 重新加载页面 / 开发者工具。macOS 显示在系统菜单栏；Windows 只装不显示（菜单栏被隐藏），留作 `Ctrl+R` / `Ctrl+Shift+I` 的加速键，界面菜单在 `ui/app/src/titlebar/` |
+| `desktop/tsconfig.json` | 单独一份（根 tsconfig 的 `rootDir` 是 `src/`），主进程输出 ESM、`preload.cts` 输出 CommonJS 到 `desktop/dist/`；`electron-builder.yml` 的 `files` 收整个 `desktop/dist/**/*` |
 
 ## 3. 「我想改 X → 动这里」
 
@@ -266,7 +270,7 @@ source map / 未使用 provider SDK）见 ADR-068。
 | 换模型 / 加自定义模型 | `<appRoot>/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
 | 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
-| 桌面壳 / 打包 / 自动更新 | `desktop/src/`（主进程）+ `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；GitHub Actions 发版见 ADR-067；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
+| 桌面壳 / 打包 / 自动更新 / Windows 标题带 | `desktop/src/`（主进程）+ `desktop/src/window-chrome.ts` / `preload.cts` + `ui/app/src/titlebar/` + `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；Windows 菜单搬进 40px 标题带，原生菜单栏隐藏但保留加速键（ADR-069）；GitHub Actions 发版见 ADR-067；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
 | 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |
 | 发布 / 排查桌面端更新 | `.github/workflows/release.yml`（默认发 GitHub Release）+ `scripts/update-server.ts`（自建只读静态目录）+ `docs/DEPLOY.md` §9 | 服务端**不改写清单**、不校验签名，原样发（ADR-027）。发布顺序是二进制先传、清单最后传；旧产物永不删，回滚 = 换回旧清单与旧签名。GitHub 那条路见 ADR-067 |
 
@@ -311,7 +315,7 @@ source map / 未使用 provider SDK）见 ADR-068。
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 87 文件 / 802 例，应该 <3s
+npm test             # 89 文件 / 816 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
@@ -329,12 +333,13 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 ## 6. 测试布局
 
-`test/desktop/`（4 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
+`test/desktop/`（5 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
 `../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）、
 `manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）、
-`install.test.ts`（安装脚本：等旧进程退出、失败回滚 / 提权重试、路径引号）。
+`install.test.ts`（安装脚本：等旧进程退出、失败回滚 / 提权重试、路径引号）、
+`window-chrome.test.ts`（窗口标题栏：macOS 红绿灯位置、Windows 覆盖按钮与颜色、别的平台不碰）。
 
-`test/core/`（71 文件，纯函数 + 装配）：
+`test/core/`（72 文件，纯函数 + 装配）：
 
 | 文件 | 覆盖 |
 | --- | --- |
@@ -392,7 +397,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `sse.test.ts` | SSE 编解码：一帧的字节形状、多行 JSON 不会被拆行、`retry` / 保活注释 |
 | `tools-actions.test.ts` | 工具收敛：注册表只剩 **8** 个、旧名字一个不剩；`chats` / `read_history` / `file` 各自的 `action` 默认值与非法值报错；写团队 README 触发 `syncTeam`、失败仍算写入成功 |
 
-`test/ui/`（10 文件，前端里能脱离浏览器跑的那部分）：
+`test/ui/`（12 文件，前端里能脱离浏览器跑的那部分）：
 
 | 文件 | 测什么 |
 | --- | --- |
@@ -406,3 +411,5 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `choice.test.ts` | 输入卡的选项卡：`2–6` 个、去重、点选回填 |
 | `plugin.test.ts` | 前端插槽注册表：`SlotName` 表与 `SLOTS` 一致 |
 | `runs.test.ts` | 后台任务面板的行拼装 |
+| `second-screen.test.ts` | 第二屏互斥：任务 / 通讯录 / 插件 / 设置 / 插件页同时只开一处 |
+| `titlebar.test.ts` | Windows 标题带：菜单动作与主进程 `case` 对得上、只跨 `win32` 桌面壳、第一行 40px + 拖拽、右栏与手机断点下移、macOS 规则不漏、类名都在 CSS 里 |

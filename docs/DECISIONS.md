@@ -1517,3 +1517,39 @@
   dmg 106 MB（原 139 MB），zip 116 MB（原 139 MB）；Windows 解包 362 MB（原 478 MB），
   zip 141 MB（原 164 MB），NSIS 安装包 112 MB（原 130 MB）。瘦身后的打包后端能启动、
   `/` 返回界面、`/api/org` 与 `/api/models` 正常，`npm run live` 13/13。
+
+## ADR-069 Windows 的菜单搬进自绘标题带（取代 ADR-028 第 7 条的 Windows 那半）
+
+- **背景**：ADR-028 第 7 条让 Windows 保留系统标题栏，理由是覆盖式窗口按钮需要界面给右边留内边距。
+  代价是窗口顶上占了**两行**：一行系统标题（`Solo`），一行原生菜单（`Solo / 视图`）。菜单里只有
+  检查更新 / 重启 / 退出 / 重新加载 / 开发者工具这几项，却单独吃掉一行高度。
+- **决策**：
+  1. Windows 窗口改 `titleBarStyle: "hidden"` + `titleBarOverlay`：原生标题栏不画，最小化 /
+     最大化 / 关闭仍由系统画在最右边；覆盖高度 40px，颜色跟界面的 `--frame` / `--ink` 对齐
+     （`desktop/src/window-chrome.ts`，纯函数，单测守）。
+  2. 界面在 `?shell=desktop&platform=win32` 下画一条 40px 的标题带（`.frame` 的第一行，
+     `ui/app/src/titlebar/`）：菜单「Solo / 视图」贴在里面。第一个菜单同时当标题用，
+     不再单独画一遍品牌名。标题带是拖拽把手，双点仍是系统的最大化 / 还原；右边固定留 140px
+     给三个系统按钮。浏览器和 macOS 没有这一条。
+  3. **原生 `Menu` 照样安装，但菜单栏隐藏**（`setMenuBarVisibility(false)` +
+     `autoHideMenuBar: false`）。Windows 上隐藏菜单项的加速键仍然有效，所以 `Ctrl+R` /
+     `Ctrl+Shift+I` 不用重写；把 `Menu` 整个去掉反而会丢快捷键。
+  4. 标题带里的菜单动作走一条窄 preload 桥（`desktop/src/preload.cts`）：只开 `solo:menu`
+     与 `solo:theme` 两个口，主进程按「这个窗口 + 这个后端 origin」校验来源。页面里的
+     普通脚本不能借它退出 / 重启应用。
+  5. 主题切换时主进程同步 `setTitleBarOverlay` 的底色与符号色；首帧在 `main.tsx` 里先对一次，
+     不闪。macOS 完全不动：仍是 `hiddenInset` + 红绿灯，桌面壳的拖拽 / 留白规则全部收进
+     `html[data-shell="desktop"][data-os="darwin"]`，不会漏到 Windows。
+- **取舍**：这不是原生菜单 —— 没有 Alt 键菜单导航、没有系统菜单可访问性语义，标题带右键也没有
+  系统菜单；Tab / Esc 和鼠标能用，键盘重度用户会比原生菜单少一档。140px 是按三个系统按钮的宽度估的，
+  某个 Windows 版本 / 主题把按钮画得更宽时会压住一点，改这里以真机为准。Windows 真机无法在本机验证（开发机是 macOS），
+  拖拽 / 贴边 / 最大化 / 高 DPI / 按钮颜色要在 Windows 上手工过一遍。
+- **执行**：`desktop/src/window-chrome.ts`、`desktop/src/preload.cts`、`desktop/src/main.ts`
+  的 `setupBridge` / `windowChrome`、`desktop/tsconfig.json`（`.cts`）、`electron-builder.yml`
+  （`desktop/dist/**/*` 带 `preload.cjs`）、`ui/app/src/titlebar/`、`ui/app/src/main.tsx` 的
+  `data-os`、`ui/app/src/App.tsx` 的标题带与主题同步、`ui/app/src/styles/shell.css` 末尾；
+  `desktop/src/menu.ts` 只改注释（Windows 菜单不再显示）。
+- **验收**：`test/desktop/window-chrome.test.ts`（平台选项 / 覆盖颜色）、
+  `test/ui/titlebar.test.ts`（菜单动作与主进程一致、跨整窗、右栏下移、macOS 规则不漏）；
+  Windows 手工：拖窗口、双点最大化、贴边分屏、三个系统按钮、浅 / 深色切换、菜单五项、
+  `Ctrl+R` / `Ctrl+Shift+I`。macOS 回归：`npm run desktop:dev` 仍是原来的红绿灯位置。

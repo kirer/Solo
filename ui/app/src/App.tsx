@@ -21,6 +21,7 @@ import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { Slot } from "./plugin/Slot.tsx";
 import { AttachmentPreview } from "./stream/AttachmentPreview.tsx";
 import { Stream } from "./stream/Stream.tsx";
+import { Titlebar } from "./titlebar/Titlebar.tsx";
 import {
 	closePluginView,
 	closeTasks,
@@ -74,6 +75,8 @@ export function App(): JSX.Element {
 			const resolved = theme === "system" ? (media.matches ? "dark" : "light") : theme;
 			root.dataset["theme"] = resolved;
 			root.style.colorScheme = resolved;
+			// Windows 的系统窗口按钮也换色（浏览器 / macOS 上没有这座桥，`?.` 跳过）。
+			window.soloDesktop?.setTheme(resolved);
 		};
 		apply();
 		localStorage.setItem("solo.theme", theme);
@@ -127,9 +130,14 @@ export function App(): JSX.Element {
 		document.body.dataset["pane"] = detail === null ? "list" : "chat";
 	}, [detail]);
 
+	// 桌面壳里 Windows 的标题带要跨整窗；它只在 `?shell=desktop&platform=win32` 下存在。
+	const windowsShell =
+		document.documentElement.dataset["shell"] === "desktop" && document.documentElement.dataset["os"] === "win32";
+
 	if (!ready) {
 		return (
 			<div className="frame boot">
+				{windowsShell ? <Titlebar /> : null}
 				<div className="boot-mark">Solo</div>
 			</div>
 		);
@@ -173,6 +181,9 @@ export function App(): JSX.Element {
 			data-right={right.open ? "open" : "closed"}
 			data-view={view}
 		>
+			{/* Windows 桌面壳的标题带（菜单 + 拖拽把手）；别的平台这里是空的。 */}
+			{windowsShell ? <Titlebar /> : null}
+
 			{/* 最左一列：应用级导航。聊天与后台任务是两屏，共用这一列（docs/DESIGN.md §2.9）。 */}
 			<Rail />
 

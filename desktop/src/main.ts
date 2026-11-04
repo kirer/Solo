@@ -7,12 +7,13 @@
  * 两个根：应用私有的东西（助理、提示词、内置插件、配置、库）在 `app.getPath("userData")`；
  * 我的组织（成员、团队、技能、规矩）在 `~/.solo`。开发态两个根都放临时目录，跑坏了删掉即可。
  */
-import { app, BrowserWindow, dialog, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, type IpcMainEvent } from "electron";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBackend, type Backend } from "./backend.ts";
 import { installMenu } from "./menu.ts";
 import { createUpdater, type Updater } from "./updates.ts";
+import { TITLEBAR_COLORS, TITLEBAR_HEIGHT, windowChrome } from "./window-chrome.ts";
 
 const DEV = !app.isPackaged;
 /** 和后端 `src/shell/main.ts` 的 `RELAUNCH_EXIT_CODE` 对齐：重置 / 重启完后端以 75 退出（壳不 import 内核）。 */
@@ -40,12 +41,13 @@ function createWindow(url: string): BrowserWindow {
 		show: false,
 		backgroundColor: "#0f0f10",
 		title: "Solo",
-		// 标题栏藏进界面里（和 DSH 一样）：红绿灯浮在侧栏左上角那块留白上。
-		// Windows 保持系统标题栏 —— 覆盖式按钮要配合界面右内边距，先不冒这个险。
-		...(process.platform === "darwin"
-			? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 18, y: 14 } }
-			: {}),
+		// 标题栏都藏进界面里（ADR-028 / ADR-069）：
+		// macOS 红绿灯浮在侧栏左上角；Windows 原生标题栏不画，界面画一条 40px 的标题带，
+		// 最小化 / 最大化 / 关闭仍由系统画在右边（titleBarOverlay）。
+		...windowChrome(process.platform, nativeTheme.shouldUseDarkColors ? "dark" : "light"),
 		webPreferences: {
+			// 桥只在 Windows 上有用（标题带的菜单动作与取色）；别的平台不装。
+			...(process.platform === "win32" ? { preload: join(app.getAppPath(), "desktop/dist/preload.cjs") } : {}),
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
@@ -72,8 +74,9 @@ function createWindow(url: string): BrowserWindow {
 		window.hide();
 	});
 
-	// `?shell=desktop`：界面据此让出红绿灯的位置、装好拖拽把手（`ui/app/src/main.tsx`）。
-	void window.loadURL(`${url}?shell=desktop`);
+	// `?shell=desktop`：界面据此让出红绿灯的位置、装好拖拽把手；`platform` 决定
+	// Windows 要不要画标题带（`ui/app/src/main.tsx` 落在 `data-os` 上）。
+	void window.loadURL(`${url}?shell=desktop&platform=${process.platform}`);
 	if (DEV) window.webContents.openDevTools({ mode: "detach" });
 	return window;
 }
@@ -90,6 +93,45 @@ function restart(): void {
 		app.releaseSingleInstanceLock();
 		app.relaunch();
 		app.exit(0);
+	});
+}
+
+/**
+ * 标题带的桥（只有 Windows 装）。菜单动作照抄原生菜单那几项；取色让右边三个系统按钮
+ * 跟着界面明暗走。来源只认这个窗口、这个后端 origin —— preload 在页面里，页面里的
+ * 任何脚本都能发消息，不校验就等于把退出 / 重启键交给网页。
+ */
+function setupBridge(window: BrowserWindow): void {
+	const trusted = (event: IpcMainEvent): boolean => {
+		const url = backend?.url;
+		return url !== undefined && event.sender === window.webContents && (event.senderFrame?.url.startsWith(url) ?? false);
+	};
+
+	ipcMain.on("solo:menu", (event, action: unknown) => {
+		if (!trusted(event)) return;
+		switch (action) {
+			case "check-updates":
+				updater?.checkNow();
+				break;
+			case "restart":
+				restart();
+				break;
+			case "quit":
+				void quit();
+				break;
+			case "reload":
+				window.webContents.reload();
+				break;
+			case "toggle-devtools":
+				window.webContents.toggleDevTools();
+				break;
+		}
+	});
+
+	ipcMain.on("solo:theme", (event, theme: unknown) => {
+		if (!trusted(event) || process.platform !== "win32") return;
+		if (theme !== "light" && theme !== "dark") return;
+		window.setTitleBarOverlay({ ...TITLEBAR_COLORS[theme], height: TITLEBAR_HEIGHT });
 	});
 }
 
@@ -156,6 +198,11 @@ async function start(): Promise<void> {
 		},
 	});
 	installMenu({ checkUpdates: () => updater?.checkNow(), restart });
+	if (process.platform === "win32") {
+		// 菜单对象留着给加速键用，但界面上不画那一行 —— 菜单已经搬进标题带。
+		win.setMenuBarVisibility(false);
+		setupBridge(win);
+	}
 	updater.start();
 }
 

@@ -363,7 +363,14 @@ npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
 
 壳在 `desktop/src/`，打包配置是仓库根的 `electron-builder.yml`。**后端还是同一份源码**：
 壳起一个子进程用 Electron 自带的 Node 跑 `src/shell/main.ts`，窗口加载
-`http://127.0.0.1:<port>/?shell=desktop`（ADR-028）。
+`http://127.0.0.1:<port>/?shell=desktop&platform=<platform>`（ADR-028）。
+
+**标题栏**：macOS 是 `hiddenInset`，红绿灯压进侧栏左上角；Windows 是 `hidden` +
+40px `titleBarOverlay`，原生标题栏和菜单栏都不画，界面在顶上画一条 40px 的标题带，
+菜单「Solo / 视图」在里面（ADR-069）。最小化 / 最大化 / 关闭仍是系统的，画在最右边；
+`Ctrl+R` / `Ctrl+Shift+I` 由隐藏的原生菜单继续提供。标题带只在 Windows 桌面壳里出现，
+浏览器与 macOS 不受影响。**Windows 的真机行为（拖拽 / 贴边 / 高 DPI / 按钮颜色）没有在
+本机验证过**，改这块要在 Windows 上手工过一遍。
 
 ```bash
 npm run desktop:dev     # 开发：临时 userData + 临时工作区，带开发者工具
@@ -404,7 +411,8 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 - **端口**：先试 7788（偏好按 origin 存，端口变就丢），被占（比如同时开着 `npm start`）
   自动退到随机端口。
 - **开发态**两个根都在临时目录（`solo-desktop-dev-userdata` / `solo-desktop-dev-home`），删掉就干净重来，不碰真实的 `~/.solo`。
-- **改完界面**照旧 `npm run ui:build`，然后在应用里「重新加载页面」（⌘R）—— 不用重启应用。
+- **改完界面**照旧 `npm run ui:build`，然后在应用里「重新加载页面」（macOS 菜单栏 / Windows
+  标题带的「视图」里，或 `⌘R` / `Ctrl+R`）—— 不用重启应用。
 - **打包出来的版本号**就是根 `package.json` 的 `version`，`npm version` 改它。
 
 **发布与升级（ADR-029：自签清单 + zip 替换，不用 Squirrel / NSIS 更新）**
@@ -467,6 +475,6 @@ Release → 先传二进制、最后传清单与 `.sig` → 正式发布。Windo
 - 更新源地址：`SOLO_UPDATE_URL` 环境变量优先，否则用 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`
   （默认 `https://github.com/kirer/Solo/releases/latest/download/`；只认 https，或 http 的本机地址）。
   检查时机：启动 30 秒后一次，之后每 6 小时；
-  「检查更新…」在应用菜单里。
+  「检查更新…」在 macOS 的系统菜单栏 / Windows 标题带的「Solo」菜单里。
 - **Windows 的 zip 替换没有实机验证过**：快捷方式仍由首次安装的 NSIS 建立，更新只覆盖程序目录。
 - `package.json` 的 `version` 是应用版本，也是清单比较的对象；`dmg` 只给人手动装，更新用 zip。

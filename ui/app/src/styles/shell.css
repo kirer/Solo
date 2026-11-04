@@ -928,6 +928,12 @@
 	opacity: 1;
 }
 
+.menu-sep {
+	height: 1px;
+	margin: 4px 6px;
+	background: var(--line);
+}
+
 /* ── 浮层（拉群）：和设置 / 插件那几屏不是一个东西 ───────────────────── */
 
 .team {
@@ -2812,16 +2818,19 @@
 }
 
 /* ── 桌面壳（Electron，`?shell=desktop`）─────────────────────────────────
-   标题栏藏进界面里（macOS hiddenInset）：红绿灯压进「聊天」那一行（顶距 14，见
-   `desktop/src/main.ts` 的 trafficLightPosition），这一行仍是 56 高 —— 和纸的顶栏
-   一样高，三列的头落在同一条线上，窗口顶上不再留一条空带。
+   浏览器里没有这些（没有 `data-shell` / `data-os`，一条都不生效）。
+
+   macOS（`data-os="darwin"`）：标题栏藏进界面里（hiddenInset），红绿灯压进「聊天」
+   那一行（顶距 14，见 `desktop/src/main.ts` 的 trafficLightPosition），这一行仍是
+   56 高 —— 和纸的顶栏一样高，三列的头落在同一条线上，窗口顶上不再留一条空带。
    顶栏与 logo 行同时是拖窗口的把手，里面的按钮必须退出拖动，否则点不动。
-   浏览器里没有这些（没有 `data-shell`，一条都不生效）。 */
-html[data-shell="desktop"] .sidebar {
+
+   Windows 在下面单独一段：原生标题栏不画，界面自己画一条 40px 的标题带。 */
+html[data-shell="desktop"][data-os="darwin"] .sidebar {
 	padding-top: 0;
 }
 
-html[data-shell="desktop"] .side-logo {
+html[data-shell="desktop"][data-os="darwin"] .side-logo {
 	height: 56px;
 	align-items: center;
 	-webkit-app-region: drag;
@@ -2829,24 +2838,110 @@ html[data-shell="desktop"] .side-logo {
 
 /* 最左那列顶上仍让给三个圆钮（14 顶距 + 12 的钮 + 余量），导航从 32 开始 ——
    不能让第一格压到红绿灯上。 */
-html[data-shell="desktop"] .rail {
+html[data-shell="desktop"][data-os="darwin"] .rail {
 	padding-top: 32px;
 	-webkit-app-region: drag;
 }
 
-html[data-shell="desktop"] .rail-item {
+html[data-shell="desktop"][data-os="darwin"] .rail-item {
 	-webkit-app-region: no-drag;
 }
 
-html[data-shell="desktop"] .sheet-head {
+html[data-shell="desktop"][data-os="darwin"] .sheet-head {
 	-webkit-app-region: drag;
 }
 
-html[data-shell="desktop"] .side-logo button,
-html[data-shell="desktop"] .side-logo .icon-btn,
-html[data-shell="desktop"] .sheet-head button,
-html[data-shell="desktop"] .sheet-head a,
-html[data-shell="desktop"] .sheet-head .need-anchor,
-html[data-shell="desktop"] .sheet-head .menu {
+html[data-shell="desktop"][data-os="darwin"] .side-logo button,
+html[data-shell="desktop"][data-os="darwin"] .side-logo .icon-btn,
+html[data-shell="desktop"][data-os="darwin"] .sheet-head button,
+html[data-shell="desktop"][data-os="darwin"] .sheet-head a,
+html[data-shell="desktop"][data-os="darwin"] .sheet-head .need-anchor,
+html[data-shell="desktop"][data-os="darwin"] .sheet-head .menu {
 	-webkit-app-region: no-drag;
+}
+
+/* ── Windows 桌面壳（`?shell=desktop&platform=win32`）────────────────────
+   原生标题栏藏起来了（titleBarStyle: hidden），最小化 / 最大化 / 关闭由系统覆盖
+   画在最右边（titleBarOverlay，40px 高、颜色跟 `--frame` 对齐）。界面画一条同样
+   40px 的标题带，菜单「Solo / 视图」贴在里面；右边留 140px 给那三个系统按钮。
+   标题带本身就是拖拽把手，双点它仍然是系统的「最大化 / 还原」。 */
+html[data-shell="desktop"][data-os="win32"] .frame {
+	--titlebar-h: 40px;
+	grid-template-rows: var(--titlebar-h) minmax(0, 1fr);
+}
+
+html[data-shell="desktop"][data-os="win32"] .titlebar {
+	grid-column: 1 / -1;
+	grid-row: 1;
+	position: relative;
+	z-index: 80;
+	display: flex;
+	align-items: center;
+	height: var(--titlebar-h);
+	padding: 0 140px 0 10px;
+	background: var(--frame);
+	border-bottom: 0.5px solid var(--line);
+	-webkit-app-region: drag;
+	-webkit-user-select: none;
+}
+
+html[data-shell="desktop"][data-os="win32"] .titlebar-menus {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	-webkit-app-region: no-drag;
+}
+
+html[data-shell="desktop"][data-os="win32"] .titlebar-anchor,
+html[data-shell="desktop"][data-os="win32"] .titlebar-menu {
+	-webkit-app-region: no-drag;
+}
+
+html[data-shell="desktop"][data-os="win32"] .titlebar-menu {
+	height: 28px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: var(--r-control);
+	background: transparent;
+	color: var(--ink-2);
+	font-family: var(--sans);
+	font-size: 12px;
+	line-height: 16px;
+	font-weight: 500;
+	cursor: default;
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+/* 第一个菜单同时是标题：读起来是应用名，点开是 Solo 菜单。 */
+html[data-shell="desktop"][data-os="win32"] .titlebar-menu[data-brand="true"] {
+	color: var(--ink);
+	font-weight: 600;
+	letter-spacing: 0.02em;
+}
+
+html[data-shell="desktop"][data-os="win32"] .titlebar-menu:hover,
+html[data-shell="desktop"][data-os="win32"] .titlebar-menu[aria-expanded="true"] {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+/* 菜单从标题带底下长出来，左缘对齐触发它的那颗按钮（默认的 `.menu` 是右对齐）。 */
+html[data-shell="desktop"][data-os="win32"] .titlebar-pop {
+	left: 0;
+	right: auto;
+	transform-origin: top left;
+	-webkit-app-region: no-drag;
+}
+
+/* 右栏原本写死第 1 行；Windows 多了一条标题带，整列下移到第 2 行。 */
+html[data-shell="desktop"][data-os="win32"] .detail {
+	grid-row: 2;
+}
+
+/* 窗口最窄也有 960px，这条只是兜底：手机断点把侧栏与纸显式放在第 1 行。 */
+@media (max-width: 640px) {
+	html[data-shell="desktop"][data-os="win32"] .sidebar,
+	html[data-shell="desktop"][data-os="win32"] .sheet {
+		grid-row: 2;
+	}
 }

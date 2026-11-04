@@ -18,10 +18,20 @@ import "./styles/index.css";
 const host = document.getElementById("root");
 if (host === null) throw new Error("找不到 #root");
 
-// 桌面壳（`desktop/src/main.ts`）用 `?shell=desktop` 加载本页：标题栏藏进界面里，
-// 红绿灯落在侧栏左上角，那几行留白与拖拽把手只在壳里要有（浏览器里不要）。
-if (new URLSearchParams(location.search).get("shell") === "desktop") {
-	document.documentElement.dataset["shell"] = "desktop";
+// 桌面壳（`desktop/src/main.ts`）用 `?shell=desktop&platform=…` 加载本页：标题栏藏进界面里，
+// macOS 的红绿灯落在侧栏左上角，Windows 则画一条标题带；那几行留白与拖拽把手只在壳里要有
+// （浏览器里不要）。平台写进 `data-os`，CSS 和 `App.tsx` 都只看这一个标记。
+{
+	const params = new URLSearchParams(location.search);
+	if (params.get("shell") === "desktop") {
+		document.documentElement.dataset["shell"] = "desktop";
+		const platform = params.get("platform");
+		if (platform !== null) document.documentElement.dataset["os"] = platform;
+		// 首帧就把系统窗口按钮的颜色对到界面主题上，别等 React 挂完才变。
+		if (platform === "win32") {
+			window.soloDesktop?.setTheme(document.documentElement.dataset["theme"] === "dark" ? "dark" : "light");
+		}
+	}
 }
 
 // 卡顿自报要在第一次渲染之前装好，否则首屏那段最长的工作恰好没被观察到。
