@@ -1,0 +1,3 @@
+# 文本一律 LF：Windows 的 core.autocrlf 会把 seed 的 Markdown 变成 CRLF，
+# 而提示词黄金渲染、frontmatter 解析和测试都按 LF 写。二进制由 Git 自动识别。
+* text=auto eol=lf

@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import {
 	ASSISTANT_DIR,
 	MEMBERS_DIR,
+	isAssistantDir,
 	memberWorkspace,
 	resolveLayout,
 	teamWorkspace,
@@ -43,8 +44,16 @@ describe("两个根", () => {
 
 	it("相对路径先解析成绝对路径", () => {
 		const relativeLayout = resolveLayout({ appRoot: "a", userRoot: "b" });
-		expect(relativeLayout.appRoot.startsWith("/")).toBe(true);
-		expect(relativeLayout.userRoot.startsWith("/")).toBe(true);
+		expect(isAbsolute(relativeLayout.appRoot)).toBe(true);
+		expect(isAbsolute(relativeLayout.userRoot)).toBe(true);
+	});
+
+	it("助理按路径分量判断，Windows 的反斜杠也认", () => {
+		expect(isAssistantDir(layout, join(layout.assistantRoot, "知言"))).toBe(true);
+		expect(isAssistantDir(layout, layout.assistantRoot)).toBe(true);
+		expect(isAssistantDir(layout, join(layout.membersRoot, "知言"))).toBe(false);
+		// 前缀相同但不是同一个目录。
+		expect(isAssistantDir(layout, join(layout.appRoot, "assistant-copy", "知言"))).toBe(false);
 	});
 });
 

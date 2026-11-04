@@ -191,8 +191,9 @@ async function promptFiles(): Promise<readonly string[]> {
 
 /** 去掉 `---` 头：头里是配置（`skip-empty: skills`），不是写给模型看的散文。 */
 function bodyOf(text: string): string {
-	const match = /^---[ \t]*\n[\s\S]*?\n---[ \t]*\n?/.exec(text);
-	return match === null ? text : text.slice(match[0].length);
+	const normalized = text.replace(/\r\n/g, "\n");
+	const match = /^---[ \t]*\n[\s\S]*?\n---[ \t]*\n?/.exec(normalized);
+	return match === null ? normalized : normalized.slice(match[0].length);
 }
 
 /** 名字写死在 seed 里，助理换个名全错。 */

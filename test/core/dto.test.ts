@@ -11,16 +11,18 @@
  */
 import { describe, expect, it } from "vitest";
 import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { channelList, messageView, orgView } from "../../src/app/project.ts";
 import type { ViewChannel, ViewMessage } from "../../src/view/dto.ts";
 import type { DirectoryState } from "../../src/core/agent/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/types.ts";
 
 const AT = 1_700_000_000_000;
-const ROOT = new URL("../../", import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 async function source(rel: string): Promise<string> {
-	return readFile(`${ROOT}${rel}`, "utf8");
+	return readFile(join(ROOT, rel), "utf8");
 }
 
 /** 界面类型文件里所有**声明**（`type X =` / `interface X`）：应当一条都没有。 */

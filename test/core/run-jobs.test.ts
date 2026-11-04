@@ -25,6 +25,9 @@ import { sandboxPool } from "./support.ts";
 
 let dir = "";
 
+/** 能活够久的命令：Windows 没有 `sleep`，用 ping 凑时间。 */
+const LONG_COMMAND = process.platform === "win32" ? "ping -n 60 127.0.0.1" : "sleep 30";
+
 beforeEach(async () => {
 	dir = await mkdtemp(join(tmpdir(), "core-run-"));
 });
@@ -47,18 +50,19 @@ function outcomeOf(start: (onDone: (outcome: RunOutcome) => Promise<void>) => Pr
 describe("后台命令", () => {
 	it("跑完把退出码和输出交回来，记录用完就删", async () => {
 		const outcome = await outcomeOf((onDone) =>
-			startRunJob({ dir, slug: "林越", channelId: "c1", command: "echo 你好", cwd: dir, onDone }),
+			startRunJob({ dir, slug: "林越", channelId: "c1", command: "echo hello", cwd: dir, onDone }),
 		);
 		expect(outcome.code).toBe(0);
 		expect(outcome.timedOut).toBe(false);
-		expect(outcome.log).toContain("你好");
+		// 不用中文：Windows 的 cmd 输出编码会把它变成乱码。
+		expect(outcome.log).toContain("hello");
 		// 记录只在跑的时候存在：留着它，下次启动会把它当成孤儿再报一遍。
 		expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual([]);
 	});
 
 	it("到点就杀掉，并说是超时", async () => {
 		const outcome = await outcomeOf((onDone) =>
-			startRunJob({ dir, slug: "林越", channelId: "c1", command: "sleep 30", cwd: dir, limitMs: 150, onDone }),
+			startRunJob({ dir, slug: "林越", channelId: "c1", command: LONG_COMMAND, cwd: dir, limitMs: 150, onDone }),
 		);
 		expect(outcome.timedOut).toBe(true);
 		expect(outcome.code).toBeNull();
@@ -80,7 +84,7 @@ describe("后台命令", () => {
 			dir,
 			slug: "林越",
 			channelId: "c1",
-			command: "sleep 30",
+			command: LONG_COMMAND,
 			cwd: dir,
 			onDone: async () => undefined,
 		});

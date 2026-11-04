@@ -14,7 +14,7 @@
  *
  * 不 import 任何东西，只拿 `node:path` 拼字符串 —— 它和 `fsx.ts` / `naming.ts` 一样是原语。
  */
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 
 /** 应用私有目录下的固定名字。 */
 export const ASSISTANT_DIR = "assistant";
@@ -89,9 +89,15 @@ export function agentDirLabel(layout: Layout, identityDir: string): string {
 	return `${isAssistantDir(layout, identityDir) ? ASSISTANT_DIR : MEMBERS_DIR}/${basename(identityDir)}/`;
 }
 
-/** 这个身份目录是不是助理（应用私有根下）。谁是助理只由这一处判断。 */
+/**
+ * 这个身份目录是不是助理（应用私有根下）。谁是助理只由这一处判断。
+ *
+ * 用 `relative` 按路径分量判断：Windows 的分隔符是 `\`，写死 `/` 会让助理在 Windows
+ * 上「消失」—— 团队频道里没有助理、没人被 @ 时也醒不来。
+ */
 export function isAssistantDir(layout: Layout, identityDir: string): boolean {
-	return identityDir === layout.assistantRoot || identityDir.startsWith(`${layout.assistantRoot}/`);
+	const rel = relative(layout.assistantRoot, identityDir);
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 /** 一个人的工作目录：他的身份目录下的 `workspace/`。 */

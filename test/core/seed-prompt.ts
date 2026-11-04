@@ -6,6 +6,7 @@
  * 改措辞不会误伤，插槽被删、段被删才会红。
  */
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import { deliveryPrompt } from "../../src/core/channel/delivery.ts";
 import { parseDoc } from "../../src/core/md/doc.ts";
 
@@ -31,5 +32,5 @@ export const MERGED_TEMPLATE = await body("87-merged.md");
 
 /** 一份完整的 delivery 模板：直接走生产那条读取路径（含 `default:` 兜底句）。 */
 export const SEED_DELIVERY_PROMPT = await deliveryPrompt(
-	new URL("../../seed/prompt", import.meta.url).pathname,
+	fileURLToPath(new URL("../../seed/prompt", import.meta.url)),
 );

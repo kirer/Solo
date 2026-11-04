@@ -1,5 +1,6 @@
 import { SEED_TEXT } from "./catalog.ts";
 import { describe, expect, it } from "vitest";
+import { join, resolve } from "node:path";
 import { clip, resolveInWorkspace } from "../../src/core/channel/tools/index.ts";
 
 /**
@@ -15,13 +16,14 @@ describe("resolveInWorkspace", () => {
 	const root = "/tmp/ws";
 
 	it("工作区内的相对路径原样给出", () => {
-		expect(resolveInWorkspace(root, "a.txt")).toBe("/tmp/ws/a.txt");
-		expect(resolveInWorkspace(root, "teams/dino/README.md")).toBe("/tmp/ws/teams/dino/README.md");
-		expect(resolveInWorkspace(root, "./a/../b.txt")).toBe("/tmp/ws/b.txt");
+		// 期望值用 join/resolve 生成：Windows 上的分隔符是 `\`。
+		expect(resolveInWorkspace(root, "a.txt")).toBe(join(root, "a.txt"));
+		expect(resolveInWorkspace(root, "teams/dino/README.md")).toBe(join(root, "teams", "dino", "README.md"));
+		expect(resolveInWorkspace(root, "./a/../b.txt")).toBe(join(root, "b.txt"));
 	});
 
 	it("工作区根本身可以（列出目录时用得到）", () => {
-		expect(resolveInWorkspace(root, ".")).toBe("/tmp/ws");
+		expect(resolveInWorkspace(root, ".")).toBe(resolve(root));
 	});
 
 	it("越界一律拒绝，不返回一个「差不多」的路径", () => {
