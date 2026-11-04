@@ -154,7 +154,9 @@ export async function startBackend(options: BackendOptions): Promise<Backend> {
 		url,
 		stop: async () => {
 			stopped = true;
-			if (child.exitCode !== null) {
+			// 被杀掉的子进程 `exitCode` 是 null、`signalCode` 才有值；只看 exitCode 会让
+			// 第二次 stop() 等一个永远不会再来的 exit 事件，整个应用卡在退出上。
+			if (child.exitCode !== null || child.signalCode !== null) {
 				log.end();
 				return;
 			}

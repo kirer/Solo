@@ -311,7 +311,7 @@ source map / 未使用 provider SDK）见 ADR-068。
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 86 文件 / 798 例，应该 <3s
+npm test             # 87 文件 / 802 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）
@@ -329,9 +329,10 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 ## 6. 测试布局
 
-`test/desktop/`（3 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
+`test/desktop/`（4 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
 `../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）、
-`manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）。
+`manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）、
+`install.test.ts`（安装脚本：等旧进程退出、失败回滚 / 提权重试、路径引号）。
 
 `test/core/`（71 文件，纯函数 + 装配）：
 

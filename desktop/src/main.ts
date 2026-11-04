@@ -87,6 +87,7 @@ async function quit(): Promise<void> {
 function restart(): void {
 	quitting = true;
 	void backend?.stop().finally(() => {
+		app.releaseSingleInstanceLock();
 		app.relaunch();
 		app.exit(0);
 	});
@@ -99,7 +100,9 @@ async function start(): Promise<void> {
 		return;
 	}
 	app.on("second-instance", () => {
-		if (win === undefined) return;
+		// 退出途中窗口已经销毁，但进程还没走完：这时再碰 `win` 会抛
+		// `Object has been destroyed`（Windows 更新后手动重开的那个报错）。
+		if (quitting || win === undefined || win.isDestroyed()) return;
 		if (win.isMinimized()) win.restore();
 		win.show();
 		win.focus();
@@ -107,7 +110,11 @@ async function start(): Promise<void> {
 	app.on("window-all-closed", () => {
 		if (process.platform !== "darwin") void quit();
 	});
-	app.on("activate", () => win?.show());
+	app.on("activate", () => {
+		if (!quitting && win !== undefined && !win.isDestroyed()) win.show();
+	});
+	// 锁尽量留到真退出：放早了，安装更新期间手动重开的新实例会和进程外安装器抢文件。
+	app.on("will-quit", () => app.releaseSingleInstanceLock());
 	// 退出必须先停后端：它是本进程的子进程，只管退出会留下一个占着 7788 和 sqlite 的孤儿。
 	app.on("before-quit", (event) => {
 		if (quitting) return;
@@ -139,7 +146,15 @@ async function start(): Promise<void> {
 	}
 
 	win = createWindow(backend.url);
-	updater = createUpdater({ window: () => win, beforeInstall: async () => void (await backend?.stop()) });
+	updater = createUpdater({
+		window: () => win,
+		beforeInstall: async () => {
+			// 装更新要走到进程退出：先停后端，再让 `updates.ts` 的 `app.quit()` 直接通过
+			// `before-quit`（不然它还会再进来等一次后端）。
+			await backend?.stop().catch(() => undefined);
+			quitting = true;
+		},
+	});
 	installMenu({ checkUpdates: () => updater?.checkNow(), restart });
 	updater.start();
 }

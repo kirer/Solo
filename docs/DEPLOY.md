@@ -440,10 +440,10 @@ gh secret set SOLO_UPDATE_KEY --repo kirer/Solo < ~/.solo-update-key.pem
 
 ```bash
 npm version patch --no-git-tag-version   # package.json + package-lock.json 一起改
-git commit -am "chore: 版本 2.0.8"
+git commit -am "chore: 版本 2.0.9"
 git push origin main
-git tag v2.0.8                           # 必须和 package.json 的版本一致
-git push origin v2.0.8                   # 触发 .github/workflows/release.yml
+git tag v2.0.9                           # 必须和 package.json 的版本一致
+git push origin v2.0.9                   # 触发 .github/workflows/release.yml
 ```
 
 工作流顺序：`npm run check` + `npm test` → mac arm64 / win x64 并行打包 → 建 **draft**
@@ -460,6 +460,10 @@ Release → 先传二进制、最后传清单与 `.sig` → 正式发布。Windo
   下完核对 sha512。任何一步不过都**不碰**这个版本。
 - 安装由进程外脚本做：等应用退出 → 解包 → 旧包挪开、新包换进去（失败挪回来）→ 重新打开。
   macOS 用 `sh` + `ditto`，Windows 用 PowerShell `Expand-Archive` + `robocopy /MIR`。
+- 重启（`app.relaunch`）前会显式**释放单实例锁**，正常退出则在 `will-quit` 释放；否则新实例
+  可能撞上旧进程的锁，静默退出，表现成「点了没反应」。
+- Windows 装在 Program Files 这类普通权限写不进去的目录时，替换失败会走一次 UAC 提权重试；
+  用户拒绝或仍然失败时弹窗说明，并把日志写到 `%TEMP%\solo-update.log`，不再静默打开旧版本。
 - 更新源地址：`SOLO_UPDATE_URL` 环境变量优先，否则用 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`
   （默认 `https://github.com/kirer/Solo/releases/latest/download/`；只认 https，或 http 的本机地址）。
   检查时机：启动 30 秒后一次，之后每 6 小时；

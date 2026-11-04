@@ -78,8 +78,15 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	let manual = false;
 	let busy = false;
 
-	const notify = (body: MessageBoxOptions): Promise<number> => {
+	// 下载和对话框都是异步的，窗口可能已经关了：对销毁的窗口调任何方法都会抛
+	// `Object has been destroyed`，这时退回无父窗口的对话框。
+	const windowNow = (): BrowserWindow | undefined => {
 		const win = options.window();
+		return win === undefined || win.isDestroyed() ? undefined : win;
+	};
+
+	const notify = (body: MessageBoxOptions): Promise<number> => {
+		const win = windowNow();
 		return (win === undefined ? dialog.showMessageBox(body) : dialog.showMessageBox(win, body)).then(
 			(result) => result.response,
 		);
@@ -119,13 +126,13 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			});
 			if (answered !== 0) return;
 			const zip = await download(`${base}${file.file}`, file.sha512, (ratio) =>
-				options.window()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
+				windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
 			);
-			options.window()?.setProgressBar(-1);
+			windowNow()?.setProgressBar(-1);
 			const install = await notify({
 				type: "info",
 				message: `新版本 ${manifest.version} 已下载`,
-				detail: "重启后安装。这期间会先停掉后台（正在跑的事会中断）。",
+				detail: "应用会关闭并自动重开（可能要一两分钟），安装期间请不要手动打开。正在跑的事会中断。",
 				buttons: ["立即重启安装", "稍后"],
 				defaultId: 0,
 				cancelId: 1,
