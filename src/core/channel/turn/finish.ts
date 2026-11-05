@@ -13,11 +13,13 @@ import type { Context, Harness } from "../../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../../runtime/index.ts";
 import type { MentionRoster } from "../mentions.ts";
 import type { PostDeps } from "../post.ts";
+import type { FlowPolicy } from "../types.ts";
 import { createFlow } from "../../flow/index.ts";
 import { createMessageStore } from "../../flow/store.ts";
 import { createTurnRunner } from "../../flow/runner.ts";
 import { defaultRouter } from "../../flow/defaults/router.ts";
 import { defaultSettler } from "../../flow/defaults/settle.ts";
+import { policyRouter, policySettler } from "../../flow/policies.ts";
 import { sharedGates } from "../../flow/gates.ts";
 import type { FinishTurn } from "../../flow/types.ts";
 
@@ -37,15 +39,19 @@ export type TurnDeps = {
 	readonly wakeOf?: PostDeps["wakeOf"];
 	/** 补发也是一条公开消息：插件听消息要跟着走到这里（Phase 1 起）。 */
 	readonly afterPublish?: PostDeps["afterPublish"];
+	/** 插件注册的分发 / 收尾策略：补发也走同一条链。 */
+	readonly policies?: () => readonly FlowPolicy[];
 };
 
 /**
  * 造一个收尾器。投递、我说话两条路共用同一份 —— 收尾的行为只写一次。
  */
 export function createTurnFinisher(deps: TurnDeps): FinishTurn {
+	const policies = deps.policies;
 	const flow = createFlow({
 		store: createMessageStore({ harness: deps.harness }),
-		routers: [defaultRouter()],
+		// 插件策略排在默认规则前面；收尾策略替换默认，弃权/抛错再回退（ADR-080）。
+		routers: [...(policies === undefined ? [] : [policyRouter(policies)]), defaultRouter()],
 		runner: createTurnRunner({
 			harness: deps.harness,
 			conversationOf: deps.conversationOf,
@@ -56,7 +62,7 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			...(deps.text === undefined ? {} : { text: deps.text }),
 		}),
-		settler: defaultSettler(),
+		settler: policies === undefined ? defaultSettler() : policySettler(policies, defaultSettler()),
 		...(deps.roster === undefined ? {} : { roster: deps.roster }),
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
 		gate: sharedGates(),

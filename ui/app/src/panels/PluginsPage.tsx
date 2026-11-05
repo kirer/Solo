@@ -22,6 +22,7 @@ function bringsText(brings: NonNullable<Plugin["brings"]>): string {
 		brings.prompt ? "一段提示词" : undefined,
 		brings.routes === 0 ? undefined : `${String(brings.routes)} 条接口`,
 		brings.listens ? "听消息" : undefined,
+		brings.policies === 0 ? undefined : `${String(brings.policies)} 条分发策略`,
 	].filter((part) => part !== undefined);
 	return parts.length === 0 ? "只有一份说明" : parts.join(" · ");
 }

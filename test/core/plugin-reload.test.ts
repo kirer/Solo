@@ -41,6 +41,30 @@ async function writeClock(pluginsRoot: string, tool: string, enabled: boolean): 
 	await writeFile(join(dir, "plugin.js"), PLUGIN(tool), "utf8");
 }
 
+/** 一条分发策略：`shuffle` 叫醒成员表里的第二个人，`drop` 谁也不叫。 */
+const POLICY_PLUGIN = (mode: "shuffle" | "drop") => `
+	export function apply(api) {
+		api.flow({
+			kind: "router",
+			run(facts) {
+				if ("${mode}" === "drop") return { kind: "drop", reason: "demo" };
+				const agents = facts.channel.members.filter((slug) => slug !== "owner");
+				const target = agents[1];
+				return target === undefined
+					? undefined
+					: { kind: "targets", targets: [target], reason: "demo" };
+			},
+		});
+	}
+`;
+
+async function writePolicy(pluginsRoot: string, mode: "shuffle" | "drop"): Promise<void> {
+	const dir = join(pluginsRoot, "policy");
+	await mkdir(dir, { recursive: true });
+	await writeFile(join(dir, "plugin.md"), "---\nname: 分发策略\n---\n", "utf8");
+	await writeFile(join(dir, "plugin.js"), POLICY_PLUGIN(mode), "utf8");
+}
+
 function get(port: number, path: string): Promise<{ status: number; body: string }> {
 	return new Promise((resolve, reject) => {
 		const req = httpRequest({ host: "127.0.0.1", port, method: "GET", path }, (response) => {
@@ -83,6 +107,34 @@ describe("插件不重启就生效", () => {
 		expect(toolNames()).toContain("clock_now");
 		expect(JSON.parse((await get(port, "/api/p/clock")).body)).toEqual({ tool: "clock_now" });
 		expect(await shell.promptOf("林越")).toContain("时钟插件在跑");
+	});
+
+	it("分发策略：重装后下一次发布立刻换规则", async () => {
+		const box = await pool.make("core-plugin-policy-");
+		for (const name of ["林越", "陈砚"]) {
+			await mkdir(join(box.agentsRoot, name), { recursive: true });
+			await writeFile(join(box.agentsRoot, name, "identity.md"), `---\nname: ${name}\ntitle: 工程师\n---\n\n# ${name}\n`, "utf8");
+		}
+		await writePolicy(box.layout.pluginsRoot, "shuffle");
+
+		const runtime = await box.open();
+		const shell = await box.assemble(runtime);
+		await shell.rescan();
+
+		const channel = (await shell.channels()).channels[shell.allChannel];
+		const agents = (channel?.members ?? []).filter((slug) => slug !== "owner");
+		expect(agents).toHaveLength(2);
+		const [first, second] = agents as [string, string];
+
+		// 默认规则叫的是成员表里的第一个人；插件偏偏叫第二个人。
+		const sent = await shell.postAs({ channelId: shell.allChannel, from: "owner", text: "按策略走" });
+		expect(sent.delivery.delivered).toContain(second);
+		expect(sent.delivery.delivered).not.toContain(first);
+
+		await writePolicy(box.layout.pluginsRoot, "drop");
+		await shell.reloadPlugins?.();
+		const again = await shell.postAs({ channelId: shell.allChannel, from: "owner", text: "按策略走" });
+		expect(again.delivery.delivered).toEqual([]);
 	});
 
 	it("改后端代码再重装：读到的是新代码，不是 import 缓存里那份", async () => {

@@ -192,6 +192,8 @@ export async function assembleCore(
 	// 插件要听消息走这一个钩子 —— 落盘并投递之后，只有这一处。
 	// 传的是取值函数不是数组：插件重装之后，这条钩子要听**新的**那一批（ADR-026）。
 	const afterPost = makeAfterPost(() => plugins.messages);
+	// 分发 / 收尾策略同理：活引用，`reloadPlugins` 换掉 `plugins` 之后下一次发布生效。
+	const policies = () => plugins.flow;
 
 	// ── 1.6 频道接线 ────────────────────────────────────────────────
 	// 频道层要的那几根线只在这里接一次：会话在哪、谁叫醒了他、收尾怎么补。
@@ -203,6 +205,7 @@ export async function assembleCore(
 		open: (slug, ctx) => openOne(slug, ctx),
 		text,
 		afterPublish: afterPost,
+		policies,
 	});
 	const baseDeps: CoreToolDeps = {
 		harness,
@@ -301,7 +304,8 @@ export async function assembleCore(
 	 * 三件事，缺一件都叫「看起来装了其实没用」：
 	 * 1. 工具：按同名原地换掉 `core-tools`，会话按名字解析，下一次生成就看得见；
 	 * 2. 提示词：插件段是装的时候拍下来的快照，所以要重装每个人的身份扩展；
-	 * 3. 路由与听消息：那两处每次用时取（`*rest` 兜底里现查、`afterPost` 取的是函数）。
+	 * 3. 路由 / 听消息 / 分发策略：都按活引用取（`*rest` 兜底里现查、`afterPost` 与
+	 *    `policies` 取的是函数），下一次请求或下一条消息自动用新的那一批。
 	 */
 	async function reloadPlugins(): Promise<void> {
 		const next = await loadPlugins({
@@ -610,7 +614,14 @@ export async function ownerSpeak(
 	// 显示名以**当下的** `identity.md` 为准，名册里的 `labels` 只做兜底。
 	const labels = { ...directory.labels, ...labelsOf(everyone) };
 	// 频道层那几根线接一次（先查内存会话表，再查名册）；收尾也用它。
-	const wiring = wireChannel({ harness: shell.harness, layout: shell.layout, live: () => shell.conversations, text: shell.text });
+	const wiring = wireChannel({
+		harness: shell.harness,
+		layout: shell.layout,
+		live: () => shell.conversations,
+		text: shell.text,
+		// 我说话也要过插件的分发 / 收尾策略；读 getter，重装之后立刻是新的那一批。
+		policies: () => shell.plugins?.flow ?? [],
+	});
 	const result = await postMessage(
 		{
 			harness: shell.harness,
@@ -628,6 +639,8 @@ export async function ownerSpeak(
 			wakeOf: (slug: string) => wiring.wakeOf(slug, context),
 			// 我不是 agent，不会走工具层，插件听消息得在这里接上。发布动作统一调它。
 			afterPublish: shell.afterPost,
+			// 分发策略同样在这里接：我说的话也要过插件那一条链。
+			policies: () => shell.plugins?.flow ?? [],
 		},
 		{
 			channelId: options.channelId,

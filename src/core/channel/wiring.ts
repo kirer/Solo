@@ -20,7 +20,7 @@ import {
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
 import { readAllIdentities } from "../agent/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
-import type { Message } from "./types.ts";
+import type { FlowPolicy, Message } from "./types.ts";
 import type { Layout } from "../layout.ts";
 import type { TextCatalog } from "../md/catalog.ts";
 
@@ -32,6 +32,8 @@ export type ChannelWiring = {
 	readonly uploadsRoot: string;
 	/** 机械文案目录（`text/`）：投递头、留痕、摘要行从这里取。 */
 	readonly text?: TextCatalog;
+	/** 插件注册的分发 / 收尾策略（活引用：重装之后下一次发布用新的）。 */
+	readonly policies?: () => readonly FlowPolicy[];
 	/** 一轮答完的收尾（ADR-099）。投递、我说话共用这一个。 */
 	readonly finishTurn: FinishTurn;
 	/** 会话键（就是 slug）→ 会话。 */
@@ -66,6 +68,8 @@ export function wireChannel(deps: {
 	readonly text?: TextCatalog;
 	/** 一条公开消息落盘并投递之后（插件听消息）。收尾补发也要走到它。 */
 	readonly afterPublish?: (message: Message, channelId: string, context: Context) => Promise<void>;
+	/** 插件注册的分发 / 收尾策略：补发与投递走同一条策略链。 */
+	readonly policies?: () => readonly FlowPolicy[];
 }): ChannelWiring {
 	const wakeDeps = directoryWake({
 		harness: deps.harness,
@@ -107,6 +111,7 @@ export function wireChannel(deps: {
 		wakeTogether,
 		wakeOf: (slug) => wakeOfOf(slug),
 		...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),
+		...(deps.policies === undefined ? {} : { policies: deps.policies }),
 	});
 
 	return {
@@ -114,6 +119,7 @@ export function wireChannel(deps: {
 		promptDir,
 		uploadsRoot: deps.layout.uploadsRoot,
 		...(deps.text === undefined ? {} : { text: deps.text }),
+		...(deps.policies === undefined ? {} : { policies: deps.policies }),
 		finishTurn,
 		conversationOf,
 		rememberWake,

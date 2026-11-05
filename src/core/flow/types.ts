@@ -90,36 +90,16 @@ export type ChannelSnapshot = {
 };
 
 /**
- * 路由需要的全部事实。
- *
- * 插件策略只拿这个形状（Phase 3）：只读事实，拿不到 `Context` / `Harness` /
- * `Conversation`，所以它只能**提议**，不能自己写盘或入队。
+ * 策略形状住在 `channel/types.ts`：插件也要注册策略，而 `plugin/` 不许 import
+ * `flow/`（分层规则）。这里转出去，`flow` 内部与既有调用点仍从这一份拿类型。
  */
-export type RouteFacts = {
-	readonly message: {
-		readonly seq: number;
-		readonly from: string;
-		readonly text: string;
-		readonly kind: "chat" | "note";
-		readonly mentions: readonly string[];
-		readonly replyTo?: number;
-	};
-	readonly channel: {
-		readonly id: string;
-		readonly kind: "dm" | "group";
-		readonly members: readonly string[];
-		readonly wakeOnAll: readonly string[];
-	};
-	/** 我上一句话之后第一个接话的人（`speakerBefore`）。 */
-	readonly lastSpeaker?: string;
-	/** 不干预时内置规则会叫谁；插件可以在此基础上加减。 */
-	readonly defaultTargets: readonly string[];
-};
-
-/** 一个策略的提议：叫这几个人，或者明确不叫。 */
-export type RouteDecision =
-	| { readonly kind: "targets"; readonly targets: readonly string[]; readonly reason: string }
-	| { readonly kind: "drop"; readonly reason: string };
+export type {
+	FlowPolicy,
+	RouteDecision,
+	RouteFacts,
+	SettleDecision,
+	SettleFacts,
+} from "../channel/types.ts";
 
 /** 经过策略与默认值之后、准备交给 core 校验的最终名单。 */
 export type RecipientPlan = {
@@ -150,30 +130,6 @@ export type FinishTurnInfo = {
 };
 
 export type FinishTurn = (info: FinishTurnInfo, context?: Context) => Promise<void>;
-
-/**
- * 收尾判断要看的事实。
- *
- * 与 `RouteFacts` 同一个原则：策略只拿只读事实，写盘与补发由 core 做。
- */
-export type SettleFacts = {
-	readonly slug: string;
-	readonly wake: WakeRecord;
-	/** 判断说过话、判重都要看整个频道状态。 */
-	readonly state: ChannelState;
-	/** 这次答案的最后一段正文（已 trim）；`undefined` = 会话里找不到答案条目。 */
-	readonly text?: string;
-	/** 这一轮最后一个动作是不是 `say` / `route`（`saidLast`）。 */
-	readonly saidLast: boolean;
-};
-
-/** 收尾的提议：补一段正文进某个频道，或者明确不补。 */
-export type SettleDecision =
-	| { readonly kind: "repost"; readonly channelId: string; readonly text: string }
-	| {
-			readonly kind: "silent";
-			readonly reason: "no-entry" | "pass" | "no-target" | "not-member" | "duplicate";
-	  };
 
 /**
  * 一次结算。两种来源，一个入口：

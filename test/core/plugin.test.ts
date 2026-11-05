@@ -193,7 +193,7 @@ describe("装 / 卸", () => {
 });
 
 describe("加载", () => {
-	it("四个动作都收得下", async () => {
+	it("五个动作都收得下", async () => {
 		const root = await pluginsRoot();
 		await writePlugin(root, "demo", {
 			"plugin.md": "---\nname: demo\n---\n",
@@ -210,6 +210,8 @@ describe("加载", () => {
 					api.route({ method: "GET", pattern: "/api/p/demo", handle: async () => ({ ok: true }) });
 					api.on("message", () => {});
 					api.on("别的", () => {});
+					api.flow({ kind: "router", run: () => ({ kind: "targets", targets: ["b"], reason: "demo" }) });
+					api.flow({ kind: "settle", run: () => undefined });
 					api.log("装好了");
 				}
 			`,
@@ -224,6 +226,7 @@ describe("加载", () => {
 		expect(host.prompt).toEqual(["demo 插件在跑。"]);
 		expect(host.routes.map((route) => route.pattern)).toEqual(["/api/p/demo"]);
 		expect(host.messages).toHaveLength(1);
+		expect(host.flow.map((policy) => policy.kind)).toEqual(["router", "settle"]);
 		expect(logs).toEqual(["[plugin demo] 装好了"]);
 		// `brings` 就是界面上那行「它带来了什么」：装完之后才拿得到，所以从 sinks 里数。
 		expect(host.plugins).toEqual([
@@ -232,7 +235,7 @@ describe("加载", () => {
 				name: "demo",
 				description: "",
 				enabled: true,
-				brings: { tools: ["demo_tool"], prompt: true, routes: 1, listens: true },
+				brings: { tools: ["demo_tool"], prompt: true, routes: 1, listens: true, policies: 2 },
 			},
 		]);
 	});

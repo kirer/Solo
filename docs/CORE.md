@@ -583,14 +583,15 @@ plugins/<slug>/
   client.js      前端：export default { apply(ui) }    （可选）
 ```
 
-**后端四个动作**（`api`，插件源码里不 import 任何东西）：
+**后端五个动作**（`api`，插件源码里不 import 任何东西）：
 
 | 动作 | 落了什么 |
 |---|---|
 | `tool({name, description, parameters, execute})` | 一个工具，和核心那七个进同一个注册表 |
 | `prompt(text)` | 每个人提示词最后多一段（静态文本；塞时间戳会打穿缓存） |
 | `route({method, pattern, handle})` | 一条 JSON 接口（GET / POST），排在静态兜底之前 |
-| `on("message", …)` | 消息落盘之后、唤醒之前的一个回调 |
+| `on("message", …)` | 消息落盘并投递之后的一个回调 |
+| `flow({kind: "router" \| "settle", run(facts)})` | 一条分发 / 收尾策略：`router` 排在默认规则之前，`settle` 替换默认收尾。只拿只读事实，只能**提议**；写盘、入队、成员校验、判重仍由 core 做（ADR-080） |
 | `scope(channelId)` | 这个频道对应的目录（私聊 → 那个人的 `workspace/`，团队频道 → 团队 `workspace/`，全员频道 → 没有）。核心只给**根**，路径守卫 / 上限 / 拒符号链接都在插件里（ADR-036） |
 | `logsRoot` | `<userRoot>/logs` 的绝对路径：审计（`tools.jsonl`）在这里，插件要按 token / 成本 / 耗时算账就读它（ADR-064）。和 `scope` 一样，核心只给根 |
 
@@ -604,7 +605,7 @@ plugins/<slug>/
 
 **为什么不是 dsh 那一套**：dsh 的插件能摸到 `ctx.tools` / `ctx.llm` / `ctx.sessions` 全部服务，
 代价是插件必须懂 Cordis 的服务定位器和五种事件派发；Solo 的形态是「语义写在文档里，代码只做
-机械的事」，所以给四个动作、每个动作只落一个数组。前端也简化掉了 boot 图与 lazy-CJS：
+机械的事」，所以给五个动作、每个动作只落一个数组。前端也简化掉了 boot 图与 lazy-CJS：
 插件前端是一个普通 ESM 文件，`/api/plugins` 列出来，页面启动时 `import` 一次。
 插槽是**启动时填一次就不变**的：没有订阅、没有热更新，改插件 = 刷新页面。
 
@@ -622,7 +623,8 @@ plugins/<slug>/
 - **开关**只改 `plugin.md` 头里的 `enabled`。
 - 三件事都**当场生效**：写完文件就重装一遍插件（`shell/assemble.ts` 的 `reloadPlugins`，
   ADR-026）。重装做三件事 —— 按同名换掉 `core-tools` 扩展（会话按名字解析，下一次生成就看得见
-  新工具）、重装每个人的身份扩展（插件段是装的时候拍下来的快照）、接口与消息钩子本来就每次现取。
+  新工具）、重装每个人的身份扩展（插件段是装的时候拍下来的快照）、接口 / 消息钩子 /
+  分发与收尾策略本来就每次现取（策略是活引用，下一次发布就换新的）。
   后端代码也是重装时按 mtime 绕开 `import` 缓存重新读的，所以改了 `plugin.ts` 也立刻生效。
   进程外面动 `plugins/` 目录（手写、`git checkout`）走 `shell/main.ts` 的文件监听，同样不用重启。
   唯一的例外是**前端入口**：`client.js` 只在页面启动时 `import` 一次。装完带前端的插件，

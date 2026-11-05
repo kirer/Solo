@@ -1,5 +1,5 @@
 /**
- * 加载：扫 `plugins/`，一个目录一个插件，把四个动作收成一份 `PluginHost`。
+ * 加载：扫 `plugins/`，一个目录一个插件，把五个动作收成一份 `PluginHost`。
  *
  * **隔离是这一层唯一真正的逻辑**：清单坏了、入口 import 炸了、`apply` 抛了，都只变成
  * 这个插件的一条错误 —— 其它插件照常装，服务照常起。理由是插件由我（或者 agent）自己
@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolRegistration } from "../runtime/index.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
+import type { FlowPolicy } from "../channel/types.ts";
 import { createPluginApi, emptySinks, type PluginListener, type PluginRouteSpec, type PluginScope } from "./api.ts";
 import { listPluginSlugs, readPluginManifest } from "./manifest.ts";
 
@@ -39,6 +40,8 @@ export type PluginSummary = {
 		readonly prompt: boolean;
 		readonly routes: number;
 		readonly listens: boolean;
+		/** 注册了几条分发 / 收尾策略。 */
+		readonly policies: number;
 	};
 };
 
@@ -49,6 +52,8 @@ export type PluginHost = {
 	readonly prompt: readonly string[];
 	readonly routes: readonly PluginRouteSpec[];
 	readonly messages: readonly PluginListener[];
+	/** 插件注册的分发 / 收尾策略，按插件目录序。装配层把它接进 flow。 */
+	readonly flow: readonly FlowPolicy[];
 	readonly plugins: readonly PluginSummary[];
 	readonly errors: readonly string[];
 };
@@ -71,6 +76,7 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 	const prompt: string[] = [];
 	const routes: PluginRouteSpec[] = [];
 	const messages: PluginListener[] = [];
+	const flow: FlowPolicy[] = [];
 	const plugins: PluginSummary[] = [];
 	const errors: string[] = [];
 
@@ -138,6 +144,7 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 		prompt.push(...sinks.prompt);
 		routes.push(...sinks.routes);
 		messages.push(...sinks.messages);
+		flow.push(...sinks.flow);
 		for (const line of sinks.logs) log(`[plugin ${slug}] ${line}`);
 		plugins.push({
 			...summary,
@@ -146,14 +153,15 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 				prompt: sinks.prompt.length > 0,
 				routes: sinks.routes.length,
 				listens: sinks.messages.length > 0,
+				policies: sinks.flow.length,
 			},
 		});
 	}
 
-	return { pluginsRoot: options.pluginsRoot, tools, prompt, routes, messages, plugins, errors };
+	return { pluginsRoot: options.pluginsRoot, tools, prompt, routes, messages, flow, plugins, errors };
 }
 
 /** 没有插件时的那一份：装配与测试都用它，别写 `undefined` 分支。 */
 export function emptyPluginHost(pluginsRoot: string): PluginHost {
-	return { pluginsRoot, tools: [], prompt: [], routes: [], messages: [], plugins: [], errors: [] };
+	return { pluginsRoot, tools: [], prompt: [], routes: [], messages: [], flow: [], plugins: [], errors: [] };
 }

@@ -648,7 +648,7 @@ agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
   "plugins": [
     {
       "slug": "天气", "name": "天气", "description": "看今天的天气", "enabled": true, "client": true,
-      "brings": { "tools": ["weather"], "prompt": true, "routes": 0, "listens": false }
+      "brings": { "tools": ["weather"], "prompt": true, "routes": 0, "listens": false, "policies": 0 }
     },
     { "slug": "坏的", "name": "坏的", "description": "", "enabled": false, "error": "插件 坏的 缺少 plugin.md" },
     { "slug": "刚装的", "name": "刚装", "description": "", "enabled": true }
@@ -665,8 +665,9 @@ agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 - `enabled` **每次从磁盘读**。开关、装、卸三个接口写完文件就重装一遍插件（ADR-026），
   所以这里的 `brings` 紧接着就是新的那一份，不用重启。
 - `brings` 是**这次进程里真的注册出来的东西**：`tools` 是工具名，`prompt` 是不是加了提示词段，
-  `routes` 是接口条数，`listens` 是不是听消息。没装上的（刚新建 / 关掉 / 出错 / 还没重启）
-  就**没有这个键** —— 界面据此写「还没装上 · 看一眼日志」，不假装它什么都没带。
+  `routes` 是接口条数，`listens` 是不是听消息，`policies` 是注册了几条分发 / 收尾策略。
+  没装上的（刚新建 / 关掉 / 出错 / 还没重启）就**没有这个键** —— 界面据此写「还没装上 ·
+  看一眼日志」，不假装它什么都没带。
 
 前端入口是一个原生 ESM，内容由插件自己写：
 

@@ -14,13 +14,14 @@
  */
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import type { ChannelState, Message } from "./types.ts";
+import type { ChannelState, FlowPolicy, Message } from "./types.ts";
 import type { WakeRecord } from "./turn/record.ts";
 import type { TextCatalog } from "../md/catalog.ts";
 import { createFlow } from "../flow/index.ts";
 import { createMessageStore } from "../flow/store.ts";
 import { defaultRouter } from "../flow/defaults/router.ts";
 import { defaultSettler } from "../flow/defaults/settle.ts";
+import { policyRouter, policySettler } from "../flow/policies.ts";
 import { createTurnRunner, type DeliverOptions } from "../flow/runner.ts";
 import { sharedGates } from "../flow/gates.ts";
 import type { Flow, FlowGates } from "../flow/ports.ts";
@@ -52,6 +53,8 @@ export type PostDeps = {
 	readonly afterPublish?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 投递串行闸。缺省 = 进程级一份（旧行为）。 */
 	readonly gate?: FlowGates["publish"];
+	/** 插件注册的分发 / 收尾策略（活引用：重装之后下一次发布用新的）。 */
+	readonly policies?: () => readonly FlowPolicy[];
 };
 
 /**
@@ -62,11 +65,12 @@ export type PostDeps = {
  */
 function flowOf(deps: PostDeps): Flow {
 	const gates = sharedGates();
+	const policies = deps.policies;
 	return createFlow({
 		store: createMessageStore(deps),
-		routers: [defaultRouter()],
+		routers: [...(policies === undefined ? [] : [policyRouter(policies)]), defaultRouter()],
 		runner: createTurnRunner(deps),
-		settler: defaultSettler(),
+		settler: policies === undefined ? defaultSettler() : policySettler(policies, defaultSettler()),
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
 		gate: deps.gate === undefined ? gates : { ...gates, publish: deps.gate },
 	});

@@ -13,6 +13,7 @@
  * 最容易写错、也最需要单测的一段。
  */
 import { defineDoc } from "../runtime/index.ts";
+import type { WakeRecord } from "./turn/record.ts";
 
 /**
  * 一条消息带的一个附件。**只有引用，没有内容。**
@@ -187,3 +188,74 @@ export function teamId(team: string): string {
 export function groupId(name: string): string {
 	return `group:${name}`;
 }
+
+/*
+ * ── 分发与收尾的策略形状（ADR-080）──────────────────────────────────
+ *
+ * 为什么在频道原语里：`plugin/` 不许 import `flow/`（分层规则：策略由装配层注入），
+ * 而插件要注册策略、flow 要消费策略，两边都得看得见这几种形状。它们只有数据，
+ * 没有实现，也不碰 IO —— 放在这里，两边都只 import 这一份。
+ *
+ * 规矩：策略只能**提议**。写盘、入队、成员校验、判重永远由 core 做。
+ */
+
+/** 路由需要的全部事实（只读）。 */
+export type RouteFacts = {
+	readonly message: {
+		readonly seq: number;
+		readonly from: string;
+		readonly text: string;
+		readonly kind: "chat" | "note";
+		readonly mentions: readonly string[];
+		readonly replyTo?: number;
+	};
+	readonly channel: {
+		readonly id: string;
+		readonly kind: "dm" | "group";
+		readonly members: readonly string[];
+		readonly wakeOnAll: readonly string[];
+	};
+	/** 我上一句话之后第一个接话的人（`speakerBefore`）。 */
+	readonly lastSpeaker?: string;
+	/** 不干预时内置规则会叫谁；策略可以在此基础上加减。 */
+	readonly defaultTargets: readonly string[];
+};
+
+/** 一个策略的提议：叫这几个人，或者明确不叫。 */
+export type RouteDecision =
+	| { readonly kind: "targets"; readonly targets: readonly string[]; readonly reason: string }
+	| { readonly kind: "drop"; readonly reason: string };
+
+/** 收尾判断要看的事实（只读）。 */
+export type SettleFacts = {
+	readonly slug: string;
+	readonly wake: WakeRecord;
+	/** 判断说过话、判重都要看整个频道状态。 */
+	readonly state: ChannelState;
+	/** 这次答案的最后一段正文（已 trim）；`undefined` = 会话里找不到答案条目。 */
+	readonly text?: string;
+	/** 这一轮最后一个动作是不是 `say` / `route`（`saidLast`）。 */
+	readonly saidLast: boolean;
+};
+
+/** 收尾的提议：补一段正文进某个频道，或者明确不补。 */
+export type SettleDecision =
+	| { readonly kind: "repost"; readonly channelId: string; readonly text: string }
+	| {
+			readonly kind: "silent";
+			readonly reason: "no-entry" | "pass" | "no-target" | "not-member" | "duplicate";
+	  };
+
+/**
+ * 一条可注册的策略。`router` 参与「叫谁」的链（先注册的先问），
+ * `settle` 替换默认收尾（最后注册的那条生效，弃权或抛错回退默认）。
+ */
+export type FlowPolicy =
+	| {
+			readonly kind: "router";
+			run(facts: RouteFacts): RouteDecision | undefined | Promise<RouteDecision | undefined>;
+	  }
+	| {
+			readonly kind: "settle";
+			run(facts: SettleFacts): SettleDecision | undefined | Promise<SettleDecision | undefined>;
+	  };

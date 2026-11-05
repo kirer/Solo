@@ -1,17 +1,18 @@
 /**
- * 插件能对后端做的四件事：加一个工具、追加一段提示词、加一条 HTTP 路由、听消息。
+ * 插件能对后端做的五件事：加一个工具、追加一段提示词、加一条 HTTP 路由、听消息、
+ * 注册一条分发 / 收尾策略。
  *
- * 为什么只有四件：插件是「给组织加能力」，不是「重新实现运行时」。dsh 那边一个插件能
+ * 为什么只有五件：插件是「给组织加能力」，不是「重新实现运行时」。dsh 那边一个插件能
  * 摸到 `ctx.tools` / `ctx.llm` / `ctx.sessions` 全部服务，代价是插件必须懂 Cordis 的
  * 服务定位器和瀑布事件；Solo 的形态是「语义写在文档里，代码只做机械的事」，所以给的是
- * **四个动作**，每个动作只落一个数组，没有服务查找、没有事件总线。
+ * **五个动作**，每个动作只落一个数组，没有服务查找、没有事件总线。
  *
- * 每个 `tool()` / `prompt()` / `route()` / `on()` 都只有「加进去」一种语义，没有对应的
- * 「删掉」—— 热插拔是**整份重装**：丢掉这个对象、重新唱一遍 `apply`（ADR-026）。
+ * 每个动作都只有「加进去」一种语义，没有对应的「删掉」—— 热插拔是**整份重装**：
+ * 丢掉这个对象、重新唱一遍 `apply`（ADR-026）。策略是活引用，重装后下一次发布生效。
  */
 import { defineTool, Type, type ToolRegistration } from "../runtime/index.ts";
 import type { JsonValue } from "../runtime/index.ts";
-import type { Message } from "../channel/types.ts";
+import type { FlowPolicy, Message } from "../channel/types.ts";
 
 /** 一个工具的形状。与核心那八个工具用的是同一个 `defineTool`。 */
 export type PluginToolSpec = {
@@ -77,6 +78,11 @@ export type PluginApi = {
 	prompt(text: string): void;
 	route(spec: PluginRouteSpec): void;
 	on(event: "message", listener: PluginListener): void;
+	/**
+	 * 注册一条分发 / 收尾策略。只拿只读事实，只能**提议**：
+	 * 写盘、入队、成员校验与判重由 core 做。抛错只跳过这一条。
+	 */
+	flow(policy: FlowPolicy): void;
 	/** 这个频道的工作区；没有（全员频道）或查无此频道 → `undefined`。 */
 	scope(channelId: string): Promise<PluginScope | undefined>;
 	log(line: string): void;
@@ -88,11 +94,12 @@ export type PluginSinks = {
 	readonly prompt: string[];
 	readonly routes: PluginRouteSpec[];
 	readonly messages: PluginListener[];
+	readonly flow: FlowPolicy[];
 	readonly logs: string[];
 };
 
 export function emptySinks(): PluginSinks {
-	return { tools: [], prompt: [], routes: [], messages: [], logs: [] };
+	return { tools: [], prompt: [], routes: [], messages: [], flow: [], logs: [] };
 }
 
 /** 造一个插件用的 `api`。所有注册只是 push —— 没有副作用，也没有失败路径。 */
@@ -122,6 +129,9 @@ export function createPluginApi(options: {
 		},
 		on(event, listener) {
 			if (event === "message") sinks.messages.push(listener);
+		},
+		flow(policy) {
+			sinks.flow.push(policy);
 		},
 		scope: options.scope ?? (async () => undefined),
 		log(line) {

@@ -155,5 +155,6 @@ export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Conte
 		rememberWake: (slug, wake) => deps.wiring.rememberWake(slug, wake, context),
 		...(deps.wiring.wakeTogether === undefined ? {} : { wakeTogether: deps.wiring.wakeTogether }),
 		wakeOf: (slug: string) => deps.wiring.wakeOf(slug, context),
+		...(deps.wiring.policies === undefined ? {} : { policies: deps.wiring.policies }),
 	};
 }

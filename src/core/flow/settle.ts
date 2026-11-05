@@ -64,6 +64,14 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 				return;
 			}
 
+			// 策略只能提议：频道在不在、他是不是成员、正文空不空，core 再核一遍。
+			// 默认收尾本来就查这些；插件替换收尾之后，这一道不能少（ADR-080）。
+			const target = state.channels[decision.channelId];
+			if (target === undefined || !target.members.includes(event.slug) || decision.text.trim() === "") {
+				console.warn(`[flow] 收尾提议被丢弃：${event.slug} 不能往 ${decision.channelId} 发`);
+				return;
+			}
+
 			// 读名册失败也别把结论丢了：退回字面 token，投递那边还有兜底。
 			const roster = deps.roster === undefined ? undefined : await deps.roster().catch(() => undefined);
 			try {

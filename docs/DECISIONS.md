@@ -1901,3 +1901,46 @@
   找不到答案条目 / `unanswered` 只留痕且不进闸）；`turn-report` / `crash-turn-report` /
   `wake` / `unanswered` / `commit-concurrency` 保持绿；`npm run check`、`npm test`
   （98 文件 / 865 例）、`npm run prompt:check`、`npm run live` 两次 13/13。
+
+## ADR-080 插件第五个动作 `flow`：策略可替换，执行仍归 core
+
+- **背景**：ADR-018 把插件限定为四个动作（工具 / 提示词 / 路由 / 听消息），ADR-078 又把
+  消息生命周期收进 `core/flow`，于是「消息该叫醒谁」和「答完要不要补发」成了插件碰不到的
+  内核。实际使用里这两处恰恰最需要按组织习惯调整（比如团队频道按关键词分给某个人、给结论
+  统一加前缀）。但 `scripts/check-boundaries.mjs` 不允许插件层 import `core/flow/` —— 这条
+  边界是对的：插件不该拿到 `Context` / `Harness` / `Conversation`，也不该自己写盘、入队。
+- **决策**：
+  1. **新增第五个动作 `api.flow({kind:"router"|"settle", run(facts)})`**，和其余四个动作一样
+     只往一个数组里 push（`PluginSinks.flow`）；`PluginHost.flow` 暴露给装配层，
+     `PluginSummary.brings.policies` 数给界面看。
+  2. **策略形状放在 `channel/types.ts`**（`RouteFacts` / `RouteDecision` / `SettleFacts` /
+     `SettleDecision` / `FlowPolicy`），`flow/types.ts` 只做转出。插件层允许 import
+     `channel/types.ts`、不许 import `flow/`，这样策略的契约归领域原语，编排仍留在 flow。
+  3. **策略只拿只读事实，只能提议**：`router` 返回 `targets` / `drop` 或 `undefined`；
+     `settle` 返回 `repost` / `silent` 或 `undefined`。拿不到运行时对象，不能写频道、不能
+     入队。提议一律经过 core 校验：频道在不在、他是不是成员、正文空不空（补发时），
+     其余（成员过滤、去重、owner / self、落盘、唤醒、闸门）仍在 `flow` 里做。
+  4. **组合顺序固定**：`router` 策略排在 `defaultRouter()` 之前，按注册顺序问，第一个给出
+     决定的生效（`policyRouter`）；`settle` 是**替换**而不是链，最后注册的那条生效，弃权
+     或抛错回退 `defaultSettler()`（`policySettler`）。理由：默认收尾已经是一个完整判断，
+     多条替换串起来没有明确语义；需要叠加时可以自己组合后注册一条。
+  5. **热替换靠活引用**：装配层传 `() => plugins.flow`，`reloadPlugins` 只替换 `plugins`
+     变量，下一次 `publish` / `settle` 自动读到新数组。没有额外的注册 / 注销协议，也不
+     需要重启。在途的一轮已经捕获了计划，不受影响。
+  6. **三条发消息的路都要看得见策略**：`ChannelWiring.policies` 一路传到工具 `say` / `run`
+     的 `postDeps`、`ownerSpeak` 自己的 `PostDeps`、以及 `turn/finish.ts` 的收尾器；
+     装配层的主接线与 `ownerSpeak` 各传一份。漏掉其中一条，插件就只对部分消息生效。
+- **取舍**：插件 API 从四个动作变成五个，`channel/types.ts` 多了一组面向插件的形状（它本来
+  就是频道的数据契约，不算新的层）；`settle` 不做策略链，表达力比 router 弱，但避免了
+  「谁覆盖谁」的歧义。策略抛错只 warn 并回退，不把一条坏策略升级成投递失败。
+- **执行**：`src/core/channel/types.ts`（策略形状）、`src/core/flow/{types,policies,settle}.ts`、
+  `src/core/plugin/{api,load,index}.ts`、`src/core/channel/{wiring,post}.ts`、
+  `src/core/channel/turn/finish.ts`、`src/core/channel/tools/context.ts`、
+  `src/shell/assemble.ts`（`policies` 活引用 + `ownerSpeak`）、`src/view/dto.ts` 与
+  `ui/app/src/panels/PluginsPage.tsx`（`brings.policies`）；
+  文档 `docs/CORE.md` §13、`docs/CODE.md` §2–§3、`docs/WEB-API.md` §13.4、`AGENTS.md`。
+- **验收**：`test/core/flow-policy.test.ts`（router 先注册先问 / 抛错跳过 / settle 无策略回退 /
+  最后注册生效 / 抛错回退）；`plugin.test.ts`（五个动作、`brings.policies`）；
+  `plugin-reload.test.ts`（重装后下一次发布立刻换规则）；`settle` 的 core 校验留在
+  `flow-settle.test.ts`；`npm run check`、`npm test`（98 文件 / 871 例）、
+  `npm run prompt:check`、`npm run live` 两次 13/13。

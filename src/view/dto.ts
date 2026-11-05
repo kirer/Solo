@@ -323,12 +323,13 @@ export type ViewPlugin = {
 	enabled: boolean;
 	client?: true;
 	error?: string;
-	/** 它带来了什么（工具 / 提示词段 / 接口 / 听消息）。没装上或这次没加载时不出现。 */
+	/** 它带来了什么（工具 / 提示词段 / 接口 / 听消息 / 分发策略）。没装上或这次没加载时不出现。 */
 	brings?: {
 		tools: readonly string[];
 		prompt: boolean;
 		routes: number;
 		listens: boolean;
+		policies: number;
 	};
 };
 
