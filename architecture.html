@@ -1,0 +1,936 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Solo · 架构图</title>
+<style>
+  :root {
+    color-scheme: light;
+    --paper: #f5f2eb;
+    --ink: #1d1c19;
+    --muted: #6c675e;
+    --faint: #928c81;
+    --line: #d9d3c7;
+    --card: #fbf9f4;
+
+    --ui: #e8eef7;
+    --ui-line: #b7c8e0;
+    --iface: #e4efe8;
+    --iface-line: #a9c9b8;
+    --app: #f5eddc;
+    --app-line: #d8c29a;
+    --core: #ece7f4;
+    --core-line: #c3b6d9;
+    --rt: #f7e8e0;
+    --rt-line: #dcb5a1;
+    --base: #eae8e2;
+    --base-line: #c8c3b7;
+
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.65;
+    background-color: var(--paper);
+    background-image:
+      linear-gradient(rgba(29, 28, 25, 0.032) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(29, 28, 25, 0.032) 1px, transparent 1px);
+    background-size: 26px 26px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 44px 40px 56px;
+  }
+
+  /* ---------- header ---------- */
+
+  header.top {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 32px;
+    padding-bottom: 22px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 30px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    margin: 0 0 8px;
+    font-size: 30px;
+    line-height: 1.2;
+    letter-spacing: -0.015em;
+    font-weight: 650;
+  }
+
+  .lede {
+    margin: 0;
+    max-width: 720px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    max-width: 470px;
+  }
+
+  .meta span {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.5);
+    border-radius: 999px;
+    padding: 4px 10px;
+    white-space: nowrap;
+  }
+
+  /* ---------- main grid ---------- */
+
+  .map {
+    display: grid;
+    grid-template-columns: 222px minmax(0, 1fr) 306px;
+    grid-template-areas: "left stack right";
+    gap: 26px;
+    align-items: start;
+  }
+
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .rail.left { grid-area: left; }
+  .rail.right { grid-area: right; }
+
+  .stack {
+    grid-area: stack;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stack-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .stack-head .down {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* ---------- generic card ---------- */
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 13px;
+    padding: 13px 15px;
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.7) inset,
+      0 14px 30px -26px rgba(29, 28, 25, 0.55);
+  }
+
+  .card h3 {
+    margin: 0 0 2px;
+    font-size: 12.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 650;
+  }
+
+  .card p {
+    margin: 6px 0 0;
+    font-size: 12.5px;
+    line-height: 1.62;
+    color: var(--muted);
+  }
+
+  .card code, .layer code {
+    font-family: var(--mono);
+    font-size: 0.92em;
+    color: var(--ink);
+    background: rgba(29, 28, 25, 0.05);
+    border-radius: 4px;
+    padding: 0.5px 4px;
+  }
+
+  .card ul {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+
+  .card ul li::before {
+    content: "·";
+    color: var(--faint);
+    margin-right: 6px;
+  }
+
+  .rail-note {
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: var(--faint);
+    padding: 0 4px;
+  }
+
+  .shell-card {
+    border-color: #cfd6cf;
+    background: linear-gradient(180deg, #f3f6f1, #eef2ec);
+  }
+
+  .desktop-card {
+    border-color: #d6d2c8;
+    background: linear-gradient(180deg, #f4f2ed, #eeece6);
+  }
+
+  /* ---------- layer cards ---------- */
+
+  .layer {
+    position: relative;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--edge);
+    background: var(--bg);
+    border-radius: 13px;
+    padding: 13px 17px 14px;
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.65) inset,
+      0 16px 34px -30px rgba(29, 28, 25, 0.6);
+    transition: transform 160ms ease, box-shadow 160ms ease;
+    animation: rise 420ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+
+  .layer:hover {
+    transform: translateY(-1px);
+    box-shadow:
+      0 1px 0 rgba(255, 255, 255, 0.65) inset,
+      0 20px 38px -30px rgba(29, 28, 25, 0.7);
+  }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(7px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .layer:nth-of-type(1) { animation-delay: 40ms; }
+  .layer:nth-of-type(2) { animation-delay: 100ms; }
+  .layer:nth-of-type(3) { animation-delay: 160ms; }
+  .layer:nth-of-type(4) { animation-delay: 220ms; }
+  .layer:nth-of-type(5) { animation-delay: 280ms; }
+  .layer:nth-of-type(6) { animation-delay: 340ms; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .layer { animation: none; transition: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  .layer-ui { --bg: var(--ui); --edge: var(--ui-line); }
+  .layer-iface { --bg: var(--iface); --edge: var(--iface-line); }
+  .layer-app { --bg: var(--app); --edge: var(--app-line); }
+  .layer-core { --bg: var(--core); --edge: var(--core-line); }
+  .layer-rt { --bg: var(--rt); --edge: var(--rt-line); }
+  .layer-base { --bg: var(--base); --edge: var(--base-line); }
+
+  .layer-head {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 3px;
+  }
+
+  .layer-name {
+    font-size: 16px;
+    font-weight: 680;
+    letter-spacing: -0.01em;
+  }
+
+  .layer-path {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+
+  .layer-count {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--faint);
+    border: 1px solid color-mix(in srgb, var(--edge) 55%, transparent);
+    background: rgba(255, 255, 255, 0.42);
+    border-radius: 999px;
+    padding: 1px 7px;
+    white-space: nowrap;
+  }
+
+  .layer-desc {
+    margin: 2px 0 0;
+    font-size: 12.8px;
+    line-height: 1.62;
+    color: #4f4b44;
+  }
+
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin-top: 9px;
+  }
+
+  .chips span {
+    font-family: var(--mono);
+    font-size: 10.8px;
+    color: #4a463f;
+    background: rgba(255, 255, 255, 0.55);
+    border: 1px solid rgba(29, 28, 25, 0.1);
+    border-radius: 6px;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
+
+  .chips span.strong {
+    background: rgba(29, 28, 25, 0.08);
+    border-color: rgba(29, 28, 25, 0.16);
+    font-weight: 600;
+  }
+
+  .contract {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 9px;
+    padding: 3px 9px;
+    font-family: var(--mono);
+    font-size: 10.8px;
+    color: #4a463f;
+    border: 1px dashed rgba(29, 28, 25, 0.28);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.4);
+  }
+
+  .contract b { font-weight: 650; }
+
+  .layer-note {
+    margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(29, 28, 25, 0.14);
+    font-size: 11.6px;
+    color: var(--muted);
+  }
+
+  .layer-note b { color: var(--ink); font-weight: 620; }
+
+  /* ---------- arrows ---------- */
+
+  .arrow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 0 0 18px;
+    height: 30px;
+    color: var(--faint);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.03em;
+  }
+
+  .arrow::before {
+    content: "";
+    width: 1px;
+    height: 22px;
+    background: linear-gradient(180deg, transparent, #b8b1a4 30%, #b8b1a4 70%, transparent);
+    margin-left: 1px;
+  }
+
+  .arrow .label {
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 8px;
+    white-space: nowrap;
+  }
+
+  .arrow .head { margin-left: auto; margin-right: 6px; font-size: 12px; }
+
+  /* ---------- roots ---------- */
+
+  .roots-card { border-color: #d3cec3; }
+
+  .roots-card h3 { color: var(--ink); }
+
+  .root-block {
+    margin-top: 11px;
+    border-top: 1px dashed rgba(29, 28, 25, 0.16);
+    padding-top: 9px;
+  }
+
+  .root-block:first-of-type { border-top: 0; padding-top: 4px; }
+
+  .root-name {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 11.6px;
+    color: var(--ink);
+  }
+
+  .root-name em {
+    font-style: normal;
+    color: var(--faint);
+    font-size: 10.5px;
+  }
+
+  .tree {
+    margin: 5px 0 0;
+    font-family: var(--mono);
+    font-size: 10.8px;
+    line-height: 1.75;
+    color: var(--muted);
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .tree i { font-style: normal; color: var(--faint); }
+
+  .roots-foot {
+    margin-top: 11px;
+    padding-top: 9px;
+    border-top: 1px solid rgba(29, 28, 25, 0.14);
+    font-size: 11.6px;
+    color: var(--muted);
+  }
+
+  .roots-foot b { color: var(--ink); font-weight: 620; }
+
+  /* ---------- flow ---------- */
+
+  .flow {
+    margin-top: 38px;
+    border-top: 1px solid var(--line);
+    padding-top: 24px;
+  }
+
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+
+  .section-head h2 {
+    margin: 0;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+    font-weight: 650;
+  }
+
+  .section-head span {
+    font-family: var(--mono);
+    font-size: 10.8px;
+    color: var(--faint);
+    letter-spacing: 0.06em;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 10px;
+    counter-reset: step;
+  }
+
+  .step {
+    position: relative;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 11px;
+    padding: 12px 12px 11px;
+    box-shadow: 0 14px 30px -28px rgba(29, 28, 25, 0.6);
+  }
+
+  .step::before {
+    counter-increment: step;
+    content: counter(step);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 19px;
+    height: 19px;
+    border-radius: 50%;
+    background: var(--ink);
+    color: var(--paper);
+    font-family: var(--mono);
+    font-size: 10.5px;
+    margin-bottom: 8px;
+  }
+
+  .step:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    right: -9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #aaa396;
+    font-size: 14px;
+    z-index: 1;
+  }
+
+  .step h4 {
+    margin: 0 0 4px;
+    font-size: 12.8px;
+    font-weight: 650;
+  }
+
+  .step p {
+    margin: 0;
+    font-size: 11.3px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .step code {
+    display: inline-block;
+    margin-top: 6px;
+    font-family: var(--mono);
+    font-size: 10.2px;
+    color: #4a463f;
+    background: rgba(29, 28, 25, 0.05);
+    border-radius: 4px;
+    padding: 1px 5px;
+    word-break: normal;
+    overflow-wrap: anywhere;
+  }
+
+  /* ---------- boundaries ---------- */
+
+  .bounds {
+    margin-top: 32px;
+    display: grid;
+    grid-template-columns: 250px minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+  }
+
+  .bounds h2 {
+    margin: 0 0 4px;
+    font-size: 16px;
+    font-weight: 650;
+  }
+
+  .bounds .sub {
+    font-size: 12px;
+    color: var(--faint);
+    line-height: 1.6;
+  }
+
+  .rules {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px 18px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .rules li {
+    position: relative;
+    padding-left: 15px;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--muted);
+  }
+
+  .rules li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.62em;
+    width: 6px;
+    height: 6px;
+    border-radius: 1px;
+    background: var(--ink);
+    opacity: 0.55;
+  }
+
+  .rules b { color: var(--ink); font-weight: 620; }
+
+  footer {
+    margin-top: 34px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    gap: 20px;
+    color: var(--faint);
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+
+  /* ---------- responsive ---------- */
+
+  @media (max-width: 1120px) {
+    .map {
+      grid-template-columns: minmax(0, 1fr) 300px;
+      grid-template-areas:
+        "stack right"
+        "left left";
+    }
+    .rail.left { flex-direction: row; flex-wrap: wrap; }
+    .rail.left .card { flex: 1 1 260px; }
+    .rail.left .rail-note { flex: 1 0 100%; }
+    .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .step::after { display: none; }
+  }
+
+  @media (max-width: 900px) {
+    .page { padding: 30px 22px 44px; }
+    header.top { flex-direction: column; align-items: flex-start; }
+    .meta { justify-content: flex-start; max-width: none; }
+    .map { grid-template-columns: minmax(0, 1fr); grid-template-areas: "stack" "right" "left"; }
+    .rail.left { flex-direction: column; }
+    .rail.left .card { flex: 1 1 auto; }
+    .bounds { grid-template-columns: minmax(0, 1fr); }
+    .rules { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  @media (max-width: 620px) {
+    .steps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .rules { grid-template-columns: minmax(0, 1fr); }
+    footer { flex-direction: column; }
+  }
+
+  @media print {
+    body { background: #fff; }
+    .page { max-width: none; padding: 0; }
+    .layer, .card, .step { box-shadow: none; animation: none; }
+    .flow, .bounds { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header class="top">
+    <div>
+      <div class="eyebrow">Solo · architecture · 2026-11-05</div>
+      <h1>一个人 + 一个 AI 团队</h1>
+      <p class="lede">
+        组织不是代码里的身份枚举，是磁盘上的一堆文件夹。
+        <strong>语义写在文档里，代码只做机械的事。</strong>
+        加一个人 = 建一个目录；改他的职责 = 改一个 md 文件，下一条消息就生效。
+      </p>
+    </div>
+    <div class="meta">
+      <span>src/ 88 ts</span>
+      <span>89 文件 / 821 例</span>
+      <span>8 个工具</span>
+      <span>71 条 ADR</span>
+    </div>
+  </header>
+
+  <section class="map" aria-label="分层架构">
+
+    <!-- 左栏：装配与外壳 -->
+    <aside class="rail left">
+      <div class="card shell-card">
+        <h3>装配 / 启动</h3>
+        <p><code>src/shell</code>（4）<br>assemble · serve · main · seed</p>
+        <ul>
+          <li>唯一能同时 import 全部分层</li>
+          <li>拼注册表、装插件、起服务</li>
+          <li>业务层不许反向 import 它</li>
+        </ul>
+      </div>
+
+      <div class="card desktop-card">
+        <h3>桌面壳</h3>
+        <p><code>desktop/</code> Electron</p>
+        <ul>
+          <li>拉起后端 · 开窗 · 标题带</li>
+          <li>更新：清单验签 → zip → 进程外替换</li>
+          <li>只靠 <code>[core] http://…</code> 一行说话</li>
+          <li>不 import 内核与界面源码</li>
+        </ul>
+      </div>
+
+      <p class="rail-note">
+        左边两件是「怎么把系统装起来」，不在消息的必经之路上；
+        它们也受边界检查约束。
+      </p>
+    </aside>
+
+    <!-- 中间：分层栈 -->
+    <div class="stack">
+      <div class="stack-head">
+        <span>依赖只朝下</span>
+        <span class="down">interface → app → domain</span>
+      </div>
+
+      <div class="layer layer-ui">
+        <div class="layer-head">
+          <span class="layer-name">界面</span>
+          <span class="layer-path">ui/app → ui/web</span>
+        </div>
+        <p class="layer-desc">
+          React + TypeScript + Vite。聊天流、任务第二屏、设置、插件页。
+          只走 HTTP + SSE，不 import 后端源码；构建产物由 interface 当静态资源发。
+        </p>
+        <div class="chips">
+          <span>聊天流</span><span>任务</span><span>设置</span><span>插件</span><span>标题带</span>
+        </div>
+      </div>
+
+      <div class="arrow"><span class="label">HTTP + SSE</span><span class="head">↓</span></div>
+
+      <div class="layer layer-iface">
+        <div class="layer-head">
+          <span class="layer-name">接口</span>
+          <span class="layer-path">src/interface/http</span>
+          <span class="layer-count">7 个文件</span>
+        </div>
+        <p class="layer-desc">
+          唯一 import <code>node:http</code> 的地方。路由、响应原语、来源闸、网卡、静态资源、SSE。
+          只经 <code>app/</code> 与 <code>view/</code> 说话，不碰领域内部实现。
+        </p>
+        <div class="chips">
+          <span>routes</span><span>respond</span><span>route-match</span><span>origin-guard</span><span>network</span><span>static-assets</span><span>sse</span>
+        </div>
+        <div class="layer-note">
+          每条路由必须在前端有消费者 —— 白名单只有 <code>/api/org</code>（Docker 健康检查）。
+        </div>
+      </div>
+
+      <div class="arrow"><span class="label">只经 app + view</span><span class="head">↓</span></div>
+
+      <div class="layer layer-app">
+        <div class="layer-head">
+          <span class="layer-name">用例</span>
+          <span class="layer-path">src/app</span>
+          <span class="layer-count">19 个文件</span>
+        </div>
+        <p class="layer-desc">
+          把领域能力编排成一个个用例：读与投影、说话、人、团队、上传、插件、模型、
+          后台命令收尾、看门狗、诊断、重置。不 import <code>node:http</code>，能脱离网络直接测。
+        </p>
+        <div class="chips">
+          <span>read / project</span><span>chat</span><span>people</span><span>teams</span><span>uploads</span><span>plugins</span><span>runs</span><span>watch</span><span>reset</span><span>trace</span>
+        </div>
+        <div class="contract"><b>view/dto.ts</b> 契约层 · 零 import · 谁都能用</div>
+      </div>
+
+      <div class="arrow"><span class="label">业务事实</span><span class="head">↓</span></div>
+
+      <div class="layer layer-core">
+        <div class="layer-head">
+          <span class="layer-name">内核 · domain</span>
+          <span class="layer-path">src/core</span>
+          <span class="layer-count">57 个文件（含 runtime）</span>
+        </div>
+        <p class="layer-desc">
+          身份、团队、频道、插件、markdown 流水线。频道里一条消息的落盘、投递、
+          唤醒、队列、结算都在 <code>channel/</code>；工具只有一套，人人都有。
+        </p>
+        <div class="chips">
+          <span class="strong">agent</span><span class="strong">team</span><span class="strong">channel</span><span class="strong">plugin</span><span class="strong">md</span>
+          <span>8 个工具</span>
+        </div>
+        <div class="layer-note">
+          <b>根原语</b>　<code>fsx.ts</code>（工作区相对路径）· <code>layout.ts</code>（两个根的全部路径，拼路径只在这里）· <code>naming.ts</code>（名字 → 目录名）<br>
+          <b>机械 IO</b>　<code>runtime/io.ts</code>　—— 全项目只有 <code>fsx.ts</code> 与它碰 <code>node:fs</code>。
+        </div>
+      </div>
+
+      <div class="arrow"><span class="label">防腐层</span><span class="head">↓</span></div>
+
+      <div class="layer layer-rt">
+        <div class="layer-head">
+          <span class="layer-name">运行时防腐层</span>
+          <span class="layer-path">src/core/runtime</span>
+        </div>
+        <p class="layer-desc">
+          唯一 import <code>pi-durable</code> / <code>pi-ai</code> / <code>chord</code> 的地方。
+          模型装配、压缩、打开数据库都在这里；换底座只动这一层。
+        </p>
+        <div class="chips">
+          <span>models</span><span>compaction</span><span>open</span>
+        </div>
+      </div>
+
+      <div class="arrow"><span class="label">唯一碰底层库</span><span class="head">↓</span></div>
+
+      <div class="layer layer-base">
+        <div class="layer-head">
+          <span class="layer-name">底座</span>
+          <span class="layer-path">@earendil-works/pi-durable@1.5.0</span>
+        </div>
+        <p class="layer-desc">
+          pi-durable（会话 / 消息 / 持久化）· pi-ai（模型调用）· chord ·
+          <code>core.sqlite</code>（频道消息、会话、名册）。
+        </p>
+      </div>
+    </div>
+
+    <!-- 右栏：两个根 -->
+    <aside class="rail right">
+      <div class="card roots-card">
+        <h3>两个根 · 真实数据</h3>
+        <p>路径由 <code>src/core/layout.ts</code> 拼出来（ADR-030）。</p>
+
+        <div class="root-block">
+          <div class="root-name"><span>&lt;appRoot&gt; / .solo-app</span><em>应用私有</em></div>
+          <div class="tree">assistant/    助理「知言」本人
+prompt/       提示词模板
+plugins/      装好的插件
+settings.json 模型配置
+core.sqlite   频道 · 会话 · 名册
+uploads/      附件</div>
+        </div>
+
+        <div class="root-block">
+          <div class="root-name"><span>~/.solo</span><em>跟着我走</em></div>
+          <div class="tree">members/&lt;slug&gt;/
+  identity.md  memory.md
+  skills/      workspace/
+teams/&lt;slug&gt;/
+  README.md    memory.md
+  skills/
+skills/        全员层手艺
+plugins/       插件
+rules.md       全员规矩
+logs/          审计 · 诊断 · 后台命令</div>
+        </div>
+
+        <div class="roots-foot">
+          <b>加一个人 = 建一个目录。</b>
+          提示词每次发送前重新读盘渲染，改文件下一条消息就生效。
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>seed · 出厂内容</h3>
+        <p>规矩 / 9 段提示词 / 技能 / 助理身份 / 出厂插件。首次启动播种进两个根，之后归用户所有。</p>
+      </div>
+
+      <p class="rail-note">
+        左边的分层是代码；右边的文件夹是组织。<code>layout.ts</code> 是两者之间唯一的桥。
+      </p>
+    </aside>
+  </section>
+
+  <!-- 一条消息的路径 -->
+  <section class="flow">
+    <div class="section-head">
+      <h2>一条消息怎么走</h2>
+      <span>from keystroke to stream</span>
+    </div>
+
+    <div class="steps">
+      <div class="step">
+        <h4>输入</h4>
+        <p>我在界面里说一句，界面只发 HTTP。</p>
+        <code>POST /api/<wbr>channels/:id/<wbr>messages</code>
+      </div>
+      <div class="step">
+        <h4>用例</h4>
+        <p>接口把请求交给用例层，handler 里不长业务。</p>
+        <code>app/chat</code>
+      </div>
+      <div class="step">
+        <h4>落盘 · 叫谁</h4>
+        <p>写一条进消息表；投递与队列决定该叫醒谁。</p>
+        <code>post → write → SQLite</code>
+      </div>
+      <div class="step">
+        <h4>唤醒 · 装配</h4>
+        <p>每次从磁盘重新渲染提示词，逐字节确定。</p>
+        <code>9 段 · 读盘渲染</code>
+      </div>
+      <div class="step">
+        <h4>模型 · 工具</h4>
+        <p>模型说话、查历史、记经验、招人、跑命令。</p>
+        <code>say · chats · remember · hire · run · file …</code>
+      </div>
+      <div class="step">
+        <h4>回到界面</h4>
+        <p><code>say</code> 落盘后，SSE 把新消息推给所有在看的人。</p>
+        <code>/api/<wbr>channels/:id/<wbr>stream</code>
+      </div>
+    </div>
+  </section>
+
+  <!-- 边界 -->
+  <section class="bounds">
+    <div>
+      <h2>边界是机械检查的</h2>
+      <p class="sub">
+        <code>npm run check</code> 跑 tsc 与 <code>check-boundaries</code>；
+        违反任何一条即失败。不是靠自觉。
+      </p>
+    </div>
+    <ul class="rules">
+      <li><b>只有 core/runtime 能 import 底层库</b>（pi-durable / pi-ai / chord）</li>
+      <li><b>内核不反向 import 上层</b>：agent / team / channel / runtime 不碰 app / view / interface / shell</li>
+      <li><b>每条路由必须有前端消费者</b>（白名单只有 /api/org）</li>
+      <li><b>view 是契约层</b>：只有 dto.ts，零 import</li>
+      <li><b>app 不 import node:http</b>：用例要能脱离网络直接测</li>
+      <li><b>interface 只经 app 与 view 说话</b>，不 import 领域内部实现</li>
+      <li><b>md 只能往下看</b>：可 import runtime 与 fsx，不许够上层</li>
+      <li><b>根原语不向上</b>：fsx / naming 不 import app / view / interface / shell</li>
+      <li><b>plugin 只加东西</b>：工具 / 提示词 / 路由 / 听消息，由 shell 并进注册表</li>
+    </ul>
+  </section>
+
+  <footer>
+    <span>Solo · 架构投影 · 2026-11-05</span>
+    <span>事实的家：AGENTS.md · docs/CODE.md · docs/CORE.md · docs/DECISIONS.md</span>
+  </footer>
+
+</div>
+</body>
+</html>
