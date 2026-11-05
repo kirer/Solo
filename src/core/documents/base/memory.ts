@@ -3,7 +3,7 @@
  *
  * 个人记忆（`members/<slug>/memory.md`）和团队记忆（`teams/<slug>/memory.md`）是同一份
  * Markdown 格式，只是归属不同 —— 所以这一层不认识「谁」，只认识文本。读写在哪里、
- * 给谁记、什么时候沉淀，分别住在 `person/memory.ts` 与 `team/memory.ts`。
+ * 给谁记、什么时候沉淀，分别住在 `member/memory.ts` 与 `team/memory.ts`。
  *
  * 放在 `documents/base/`：这里只有 Markdown 的机械事（`##` 切段、目录预算、密钥形状），
  * 零 IO、零业务；上面两份实现共用它，但不互相 import。

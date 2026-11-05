@@ -10,7 +10,7 @@
  * 换成 CLI 或工具调用同样成立，所以它们不属于 HTTP。
  */
 import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
-import { OWNER_SLUG, readIdentity } from "../core/documents/person/identity.ts";
+import { OWNER_SLUG, readIdentity } from "../core/documents/member/identity.ts";
 import { ChannelDoc, dmId, emptyChannelState, type Attachment, type ChannelState } from "../core/channel/types.ts";
 import { markRead as markReadDoc } from "../core/channel/rules.ts";
 import { createGroup as createGroupDoc, ensureOwnerDm } from "../core/channel/membership.ts";

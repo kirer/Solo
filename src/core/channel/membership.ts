@@ -7,7 +7,7 @@
  */
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../documents/person/identity.ts";
+import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../documents/member/identity.ts";
 import { ChannelDoc, OWNER, dmId, groupId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { mentionRosterOf, resolveMention } from "./mentions.ts";

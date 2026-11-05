@@ -8,7 +8,7 @@
  * 它存在的唯一理由是「会话 id 不能从文件名推出来」。
  *
  * 住在 `channel/`：它记的是会话 id 与唤醒记录，不是人的档案。只许依赖
- * `./turn/record.ts` 与 `../documents/person/identity.ts`，不许 import wiring/post/flow。
+ * `./turn/record.ts` 与 `../documents/member/identity.ts`，不许 import wiring/post/flow。
  */
 import {
 	BACKGROUND_CONTEXT,
@@ -20,7 +20,7 @@ import {
 	type Tx,
 } from "../runtime/index.ts";
 import { parseWake, type WakeRecord } from "./turn/record.ts";
-import { OWNER_SLUG } from "../documents/person/identity.ts";
+import { OWNER_SLUG } from "../documents/member/identity.ts";
 
 export type { WakeRecord } from "./turn/record.ts";
 

@@ -5,7 +5,7 @@
  * response，也不做序列化 —— 序列化是 `interface/http` 的事。这样同样的读法能被 SSE、
  * HTTP、以及将来任何别的入口共用一份。
  */
-import { OWNER_SLUG } from "../core/documents/person/identity.ts";
+import { OWNER_SLUG } from "../core/documents/member/identity.ts";
 import { chatKind } from "../core/channel/types.ts";
 import { reasonText } from "../core/channel/unanswered.ts";
 import { wakeOf } from "../core/channel/roster.ts";

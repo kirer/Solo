@@ -12,7 +12,7 @@ src/
     naming.ts       名字 → 目录名的唯一规则（agent / 团队 / 技能共用）
     secrets.ts      密钥脱敏（渲染出口的最后一道网）；跨层安全工具，不属于任何人的档案
     documents/      磁盘上的文档：base/（markdown / 记忆格式 / 插槽 / 文案 / 模板，零业务）
-                    与实现（person/ 一个人的身份与记忆、team/ 一个团队的 README 与记忆、
+                    与实现（member/ 一个人的身份与记忆、team/ 一个团队的 README 与记忆、
                     skills · rules · prompt 的三层装配）—— 见 ADR-082
     runtime/io.ts   绝对路径的机械 IO：读 / 写 / 建目录 / 列表 / 串行闸 / 日志行
     runtime/        防腐层：唯一能 import @earendil-works/* 的地方（openCore / models / 恢复）
@@ -64,12 +64,12 @@ shell = 装配层，唯一可以同时 import 全部
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
    不许 import `documents|channel|flow|runtime` 的内部实现（否则业务会再长回 handler 里）。
 7. **`documents/base/` 只能往下看**：可以 import `runtime/` 与 `fsx.ts`，不许 import
-   `person|team|skills|rules|prompt|channel|flow|plugin|app|view|interface|shell`。
+   `member|team|skills|rules|prompt|channel|flow|plugin|app|view|interface|shell`。
    实现依赖基础，不是反过来。
 8. **根目录原语**（`fsx.ts` / `layout.ts` / `naming.ts` / `secrets.ts`）不许 import
    `app|view|interface|shell`。
 9. **`plugin/` 只加东西**（工具 / 提示词 / 路由 / 听消息）：只能用 `documents/base/`，
-   不许 import 文档实现（`documents/person|team|skills|rules|prompt`）、`flow|app|view|interface|shell`。
+   不许 import 文档实现（`documents/member|team|skills|rules|prompt`）、`flow|app|view|interface|shell`。
    它的产物由 `shell/assemble.ts` 并进注册表，插件自己不认识装配。
 
 **直接 `node:fs` 只有五类例外**（其余一律走 `fsx.ts` 或 `runtime/io.ts`）：
@@ -86,7 +86,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 | 层 | 回答什么问题 | 住哪 |
 |---|---|---|
-| **组织投影** | 谁存在、他在哪个团队 / 频道 | `documents/person/identity.ts`（文件夹 → 人）× `channel/roster.ts`（人 → 会话）× `channel/membership.ts`（人 → 频道）。三条都是磁盘事实的投影，没有角色枚举 |
+| **组织投影** | 谁存在、他在哪个团队 / 频道 | `documents/member/identity.ts`（文件夹 → 人）× `channel/roster.ts`（人 → 会话）× `channel/membership.ts`（人 → 频道）。三条都是磁盘事实的投影，没有角色枚举 |
 | **消息生命周期** | 一条消息从哪来、叫醒谁、答完怎么回频道 | `core/flow/`：`publish`（新消息）/ `forward`（转交）/ `settle`（收尾）。顺序固定，读 `flow/publish.ts` 一个函数就够；投递机械在 `flow/runner.ts`，频道门面是 `channel/post.ts` 的 `createChannelFlow` |
 | **边缘** | HTTP / 工具 / 插件 / 宿主入口怎么接进来 | `interface/http/`（网页）、`channel/tools/`（agent 的工具）、`plugin/`（插件五动作）、`shell/wire/speak.ts`（我开口）。它们只调 `app/` 或 `flow` 的门面，不自己拼落盘与投递 |
 
@@ -111,14 +111,14 @@ shell = 装配层，唯一可以同时 import 全部
 | `runtime/io.ts` | 153 | 绝对路径的机械 IO：`readTextOrUndefined`（读不到就是 `undefined`，不抛）/ `writeTextAt`（自动建父目录）/ `writeBytesAt`（二进制，同样建父目录）/ `ensureDir` / `existsAt` / `removeDirAt` / `mtimeOrUndefined` / `stampOf`（`mtimeMs:size` 变更戳）/ `appendJsonLine`（可按大小轮转）/ `watchDirAt`（监听一个目录，默认递归、可关；返回停止函数；盯不上就是空函数）/ `listDirSorted` / `compareCodePoints` / `byName`（名字排序比较器）/ `createSerialGate`（同一把串行锁）—— 全仓只有这一份 |
 | `layout.ts` | 116 | `Layout` / `resolveLayout({appRoot, userRoot})` / `agentDirLabel` / `workspaceOf` / `memberWorkspace` / `teamWorkspace` —— **两个根的路径只在这里拼**（ADR-030）。日志是唯一跟着用户根走的安装物（`logsRoot = <userRoot>/logs`，ADR-041）。零业务 import，只有 `node:path` |
 | `secrets.ts` | 103 | `loadSecrets` / `redactor` / `redact` —— 读 `<appRoot>/.secrets.json`，把密钥的三种形态（原值 / JSON 转义 / URL 编码）从文本里抹掉；跨层安全工具，与 fsx / naming / layout 同级 |
-| `documents/person/identity.ts` | 239 | `parseIdentity` / `renderIdentityFile` / `readIdentity` / `writeIdentity` / `readAllIdentities` / `assistantsOf` —— 身份的**读与写都在这里**；招人也在：`uniqueSlug` / `createAgent`（写身份交给 `writeIdentity`；没给正文就写空字符串，不合成任何身份文案）/ `nameOf` / `labelsOf`（slug → 显示名）；头字段只三个：`name` / `title` / `team`（谁是助理只看目录，ADR-058）；`OWNER_SLUG = "owner"` |
-| `documents/person/journal.ts` | 49 | `appendJournal()` —— `<agentDir>/.memory-journal.jsonl` 追加一行 JSON（谁、何时、append/replace、before/after 全文）；失败只 warn |
-| `documents/person/memory.ts` | 163 | 「一个人怎么读写自己的记忆」：`readMemory` / `appendMemory` / `writeMemory` / `memoryTimeline`；`MEMORY_FILE="memory.md"`；写入去重 + 记一笔 journal，串行与读写机械走 `../base/memory-store.ts`。格式（切段 / 长度 / 密钥 / 目录预算）在 `../base/memory.ts` |
+| `documents/member/identity.ts` | 239 | `parseIdentity` / `renderIdentityFile` / `readIdentity` / `writeIdentity` / `readAllIdentities` / `assistantsOf` —— 身份的**读与写都在这里**；招人也在：`uniqueSlug` / `createAgent`（写身份交给 `writeIdentity`；没给正文就写空字符串，不合成任何身份文案）/ `nameOf` / `labelsOf`（slug → 显示名）；头字段只三个：`name` / `title` / `team`（谁是助理只看目录，ADR-058）；`OWNER_SLUG = "owner"` |
+| `documents/member/journal.ts` | 49 | `appendJournal()` —— `<agentDir>/.memory-journal.jsonl` 追加一行 JSON（谁、何时、append/replace、before/after 全文）；失败只 warn |
+| `documents/member/memory.ts` | 163 | 「一个人怎么读写自己的记忆」：`readMemory` / `appendMemory` / `writeMemory` / `memoryTimeline`；`MEMORY_FILE="memory.md"`；写入去重 + 记一笔 journal，串行与读写机械走 `../base/memory-store.ts`。格式（切段 / 长度 / 密钥 / 目录预算）在 `../base/memory.ts` |
 | `documents/team/doc.ts` | 212 | `teams/<slug>/README.md` 的读写（走 `readDocFile` / `writeDocFile`）；`TeamDoc{slug,name,doing?,status,body}`、`membersOfTeam()`、`createTeamProblem()`（新团队只有助理能开；没有 `lead`，ADR-058）、`readTeam` 的 `name` 缺省退回正文 `# 标题`；`assertTeamSlug()` → `assertName(_, "team")`（读宽容、写严格）；`teamSlugOfReadmePath()` 给 `file` 判断「这次写的是不是团队说明」 |
 | `documents/team/memory.ts` | 95 | `teams/<slug>/memory.md`（格式取自 `../base/memory.ts`，读写机械走 `../base/memory-store.ts`）；写入只有 `appendTeamMemory`（`remember(scope=team)` 与 `file` 调用），每条永远新开一节（标题带日期与记录人）。**没有自动沉淀了**（ADR-058） |
 | `documents/skills.ts` | 220 | 三层技能（全员 → 团队 → 个人，下层覆盖上层）：`listSkills` / `listTeamSkills` / `readSkill` / `writeSkill` / `writeAllSkill` / `copySkillDir`；`SKILL.md` 的读写走 `readDocFile` / `writeDocFile`，目录名走 `skillDirName` |
 | `documents/rules.ts` | 39 | `loadRules()` / `renderRulesSection()` —— 读 `<userRoot>/rules.md` 并排成「## 规矩」一节；缺文件 = 整段不出现 |
-| `documents/prompt.ts` | 388 | `agentSections()`（**async**）—— 每段一个 section key（`<slug>-<segment>`、`tag:false`）；`slotsFor()` 只填**这段模板真用到的**插槽（保住按段懒读）；`registeredTools()`（从注册表实拍工具清单）、`renderAgentSection()`（每次重读盘，含 `rules.md`；出口统一 `redact`）。放包根：它同时认识 `person/` 与 `team/`，是唯一这样的消费者（旧 `agent/sections.ts`） |
+| `documents/prompt.ts` | 388 | `agentSections()`（**async**）—— 每段一个 section key（`<slug>-<segment>`、`tag:false`）；`slotsFor()` 只填**这段模板真用到的**插槽（保住按段懒读）；`registeredTools()`（从注册表实拍工具清单）、`renderAgentSection()`（每次重读盘，含 `rules.md`；出口统一 `redact`）。放包根：它同时认识 `member/` 与 `team/`，是唯一这样的消费者（旧 `agent/sections.ts`） |
 | `channel/types.ts` | 261 | 频道的数据形状：`ChannelDoc`（增量满 64 条压基线，长频道满 16 条）/ `Attachment` / `Message`（含可选的 `attachments` 与 `options`）/ `Channel`（含 `archived`）/ `ChannelState` / `emptyChannelState` / `OWNER` / `dmId` / `teamId` / `chatKind`（**只认 `dm:` 前缀 + 恰好 `{我, 一人}`**，其余一律群聊）；另装**插件能看见的策略形状** `RouteFacts` / `RouteDecision` / `SettleFacts` / `SettleDecision` / `FlowPolicy` —— 放这里是因为插件层允许 import `channel/types.ts`、不许 import `flow/`（ADR-080） |
 | `channel/mentions.ts` | 159 | `@` 解析与收件人：`parseMentions` 只排除 ASCII 字母数字与邮箱符号（中文紧贴 @ 也认）/ `hasMentionToken` / `recipientsOf`（成员过滤 + 「没 @ 人时第一个成员接」+ `wakeOnAll`）/ `deliveryTargets`（收件人减掉我）/ `MentionRoster` / `mentionRosterOf` / `resolveMention`：别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（`@CEO`、拼音、title、`@老板` 一律丢弃） |
 | `channel/rules.ts` | 240 | 频道的**纯规则**：`readMarkOf` / `unreadCount` / `fallbackChannelId`（只找最近活跃的群；一个群都没有就回落 `dm:owner-<slug>`）/ `channelsOf` / `appendMessage` / `projectChannel`（成员投影唯一入口：create / merge / replace）/ `ensureChannel`（= create，仅测试用）/ `markRead` / `tail`。接力上限（原 `relayLimit` / `botHopsSinceOwner`）已删，改由 `rules.md` 里「不等、不轮询」那条约束 |
@@ -166,7 +166,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/app/people.ts` | 122 | `createPeople` —— 一个人：档案、记忆的读 / 加 / 改 / 删；`MemoryEditBody`。记忆的条目形状交给 `app/project.ts` 的 `memoryEntries` |
 | `src/app/teams.ts` | 33 | `createTeams` —— 一个团队：`readTeamProfile`（README 正文 + 管理员显示名 + `memory.md` 的全部小节，时间恒为 `null`） |
 | `src/app/plugins.ts` | 143 | `createPlugins` —— 插件清单（`enabled` 每次从磁盘读；`brings` 是这次进程真注册出来的工具 / 提示词 / 接口 / 监听）/ 开关（`setEnabled` → `plugin/manifest.ts` 的 `writePluginEnabled`）/ 装与删（`install` → `installPluginFiles`、`remove` → `removePluginFolder`）；三个动作写完文件都调 `shell.reloadPlugins()`，当场生效（ADR-026）/ 一个插件的前端入口（名字过 `isSafeName`，只发已装上插件声明过的 `client.js`）/ 把 `PluginRouteSpec` 换成接口层认识的 `AppPluginRoute`（含 `body` 的 `unknown → JsonValue` 那一处转换） |
-| `src/app/project.ts` | 383 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels` / `withoutGoneTeams`（频道带 `members`（不含我）、消息带 `options`）；显示名走 `documents/person/identity.ts`，团队头走 `channel/types.ts` 的 `teamId`。另有记忆投影 `memoryEntries`（个人与团队共用；没有 journal 的条目时间给 `null`） |
+| `src/app/project.ts` | 383 | **投影**（原 `view/index.ts` 并进来）：`idOf` / `titleOf` / `channelList` / `messageView` / `channelDetail` / `orgView` / `attentionItems` / `withLabels` / `withoutGoneTeams`（频道带 `members`（不含我）、消息带 `options`）；显示名走 `documents/member/identity.ts`，团队头走 `channel/types.ts` 的 `teamId`。另有记忆投影 `memoryEntries`（个人与团队共用；没有 journal 的条目时间给 `null`） |
 | `src/app/chat.ts` | 167 | 说话用例：`postAsOwner` / `openDirectMessage`（委托 `ensureOwnerDm`，幂等）/ `markRead`；校验（`from` 只认我、附件必须在盘上、已读夹到上界、私聊对象必须在名册里）在这里而不在路由里 |
 | `src/app/avatar.ts` | 69 | 头像的**画法**：`avatarSvg(seed, size)`（DiceBear `micah`，取景与底色都在这里）/ `avatarEtag` / `clampAvatarSize`。纯函数，没有 IO：路由把字节写出去 |
 | `src/app/uploads.ts` | 92 | 上传语义：`createUploads` —— 收下字节、写元数据、读回时决定内联还是下载；`preview=1` 时图片 / PDF / 文本内联，HTML 永远降成 `text/plain`（ADR-037） |
@@ -274,7 +274,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 工具名要出现在提示词里 | 写 `{{tool:xxx}}`（注册表实拍，工具改名自动跟） | 不许写字面量 —— V2 的 40 处硬编码就是这么烂掉的 |
 | 改「全员都要守的规矩」（先给结论、在哪个频道回话、别写英文独白） | **不要写进 `.ts`**：改 `seed/rules.md`，再同步到 `<userRoot>/rules.md` | 每轮都进提示词的只有这一份；技能正文只在 `60-skills.md` 那段列目录时才进上下文 |
 | 改起手技能的同步行为 | `shell/seed.ts` 的 `syncAllSkills` + `<appRoot>/.seed-manifest.json` | 按 hash 判「用户改过没有」，改过的不覆盖 |
-| 加一个身份字段 | `documents/person/identity.ts` 的 `IdentityHeader` | 现在是 3 个：`name`/`title`/`team`，加之前先问能不能推导 |
+| 加一个身份字段 | `documents/member/identity.ts` 的 `IdentityHeader` | 现在是 3 个：`name`/`title`/`team`，加之前先问能不能推导 |
 | 改「这条会话是私聊还是群聊」 | `channel/types.ts` 的 `chatKind` | **`dm:` 前缀 + 恰好 `{我, 一人}` 才是私聊**；团队 / 全员频道两个人也永远是群聊。界面的 `kind` 只是它的投影 |
 | 开一个私聊 / 建一个群 | `channel/membership.ts` 的 `ensureOwnerDm`（私聊，装配 / 招人自动建）+ `createGroup`（组群）+ `app/chat.ts` 的 `openDirectMessage` / `createGroup` + 路由 `POST /api/people/:slug/dm` / `POST /api/channels` | 私聊只有 `{owner, 他}` 这一种形态；组群没有档案、成员 ≥2、`wakeOnAll = members`。全员 / 团队频道仍只由装配投影 |
 | 改后台任务 / 聊天里的 `live` 占位 | `app/read.ts` 的 `readPersonTurns`（`limit`）/`personOfChannel` + `app/trace.ts` 的 `groupsOf`/`triggerOf` + `interface/http/sse.ts` 的 `pushTrace` + `ui/app/src/stream/model.ts` 的 `buildRows` + `stream/LiveRow.tsx` + `sidebar/Rail.tsx` + `panels/TasksPanel.tsx` + `styles/tasks.css` + `state/store.ts` 的 `runs`/`tasks` | 聊天里只有消息（ADR-046）；跨频道 `seq` 不可比，键必须带 `channelId`；占位不落库、刷新就没有 |

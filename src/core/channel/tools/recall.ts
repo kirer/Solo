@@ -2,9 +2,9 @@
  * 翻记忆与读历史：把「存档」渲染成模型能读的文本。
  */
 import { join } from "node:path";
-import { readMemory } from "../../documents/person/memory.ts";
+import { readMemory } from "../../documents/member/memory.ts";
 import { sectionsOf } from "../../documents/base/memory.ts";
-import { readIdentity } from "../../documents/person/identity.ts";
+import { readIdentity } from "../../documents/member/identity.ts";
 import { redact } from "../../secrets.ts";
 import { type CoreToolDeps, text } from "./context.ts";
 import { assertTeamSlug } from "../../documents/team/doc.ts";

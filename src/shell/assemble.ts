@@ -30,7 +30,7 @@ import type {
 	ToolRegistration,
 } from "../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT, defineExtension, type Context } from "../core/runtime/index.ts";
-import { readAllIdentities } from "../core/documents/person/identity.ts";
+import { readAllIdentities } from "../core/documents/member/identity.ts";
 import { DirectoryDoc, emptyDirectory, labelIn, type DirectoryState } from "../core/channel/roster.ts";
 import { createCoreTools, type CoreToolDeps } from "../core/channel/tools/index.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channel/types.ts";

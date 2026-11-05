@@ -13,7 +13,7 @@ import type { ModelRef, ModelSetup } from "../src/core/runtime/models.ts";
 import { openCore, type CoreRuntime } from "../src/core/runtime/open.ts";
 import { assembleCore, type CoreShell } from "../src/shell/assemble.ts";
 import { seedOwnerAssistant, seedPromptTemplates, seedRules, seedTextFiles } from "../src/shell/seed.ts";
-import { createAgent, readAllIdentities, type Identity } from "../src/core/documents/person/identity.ts";
+import { createAgent, readAllIdentities, type Identity } from "../src/core/documents/member/identity.ts";
 import { renderTeamFile, readTeam, listTeams } from "../src/core/documents/team/doc.ts";
 import { createChat } from "../src/app/chat.ts";
 import { resolveLayout, type Layout } from "../src/core/layout.ts";

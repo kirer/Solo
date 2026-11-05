@@ -8,7 +8,7 @@
  * 3. **字段就是线上的键名。** 改这里的字段名等于改 HTTP 契约 →
  *    先改 `docs/WEB-API.md`，再改这里，再改投影。
  *
- * 反向的约束：核心的领域类型（`channel/state.ts` 的 `Channel`、`documents/person/identity.ts`
+ * 反向的约束：核心的领域类型（`channel/state.ts` 的 `Channel`、`documents/member/identity.ts`
  * 的 `Identity`）**不许**为了界面加字段。「界面要但核心不需要」的东西（数字 id、
  * `kind`、预览、显示名）全部在这一层算出来。
  */

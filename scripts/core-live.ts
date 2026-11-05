@@ -260,7 +260,7 @@ async function main(): Promise<void> {
 	});
 	// 等「人真的建出来了」，不等某一条回话。回话可能串到别的频道去（它答的是上一个
 	// 问题），按消息判断会把「没招人」误判成「招了人」，再让后面的断言全部失真。
-	const { readAllIdentities } = await import("../src/core/documents/person/identity.ts");
+	const { readAllIdentities } = await import("../src/core/documents/member/identity.ts");
 	const hireDeadline = Date.now() + WAIT_MS;
 	let all = await readAllIdentities(layout.agentRoots);
 	let hired = all.find((identity) => identity.slug !== slug);
@@ -344,7 +344,7 @@ async function main(): Promise<void> {
 	//    「要花钱/要改别人」这类事成员自己拍不了，必须一句话交到我这里。
 	const chainTeam = "扁平团队";
 	{
-		const { createAgent } = await import("../src/core/documents/person/identity.ts");
+		const { createAgent } = await import("../src/core/documents/member/identity.ts");
 		await mkdir(join(teamsRoot, chainTeam), { recursive: true });
 		const member = await createAgent({
 			root: agentsRoot,

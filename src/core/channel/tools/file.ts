@@ -1,6 +1,6 @@
 /** `file`：读 / 写工作区里的一个文件。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { assistantsOf, readAllIdentities, readIdentity } from "../../documents/person/identity.ts";
+import { assistantsOf, readAllIdentities, readIdentity } from "../../documents/member/identity.ts";
 import { redact } from "../../secrets.ts";
 import { parseDoc, frontOf } from "../../documents/base/doc.ts";
 import { ensureDir, readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";

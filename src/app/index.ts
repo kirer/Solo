@@ -51,9 +51,9 @@ export { AppError } from "./errors.ts";
  *
  * 接口层要它（SSE 里判断哪条消息该带 `needsYou`、哪条算「我发的」），但它属于身份，
  * 不能跟着接口层去 import `documents/`（分层规则禁止）。所以由用例层把它转出来：
- * 接口层只认 `app/`，身份的定义仍在 `documents/person/identity.ts`。
+ * 接口层只认 `app/`，身份的定义仍在 `documents/member/identity.ts`。
  */
-export { OWNER_SLUG } from "../core/documents/person/identity.ts";
+export { OWNER_SLUG } from "../core/documents/member/identity.ts";
 export type { CoreServices } from "./types.ts";
 export type { MemoryEditBody, PersonModelBody } from "./people.ts";
 export type { PostBody } from "./chat.ts";

@@ -1,8 +1,8 @@
 /** `remember`：记一条经验（个人记忆 / 团队记忆）。 */
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { readIdentity } from "../../documents/person/identity.ts";
-import { appendMemory } from "../../documents/person/memory.ts";
+import { readIdentity } from "../../documents/member/identity.ts";
+import { appendMemory } from "../../documents/member/memory.ts";
 import { redact } from "../../secrets.ts";
 import { assertTeamSlug } from "../../documents/team/doc.ts";
 import { appendTeamMemory } from "../../documents/team/memory.ts";

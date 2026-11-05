@@ -59,9 +59,9 @@ src/
     documents/      磁盘上的文档（ADR-082）：
       base/         markdown + frontmatter（doc）/ 插槽（slots）/ 提示词模板（template）/
                     文案目录（catalog）/ 记忆格式（memory）/ 记忆读写机械（memory-store）/ 压一行（oneline）
-      person/       一个人：身份（identity）/ 记忆（memory）/ 记忆日志（journal）
+      member/       一个人：身份（identity）/ 记忆（memory）/ 记忆日志（journal）
       team/         一个团队：README（doc）/ 记忆（memory）
-      skills.ts     三层技能；rules.ts 全员规矩；prompt.ts 九段提示词装配（同时认识 person 与 team）
+      skills.ts     三层技能；rules.ts 全员规矩；prompt.ts 九段提示词装配（同时认识 member 与 team）
     runtime/        防腐层：唯一能 import pi-durable / pi-ai / pi-schema / chord 的地方
                     （含 models/compaction/工具参数 schema 转发）
     channel/        说话的原语：频道规则 / 写一条 / 投递与队列 / 唤醒 / 名册（roster）/ 附件 / 后台命令（jobs.ts）/ 8 个工具（tools/）
@@ -114,10 +114,10 @@ test/             98 文件 / 872 例
 - **`interface/` 只经 `app/` 与 `view/` 说话**（不许 import 领域内部实现，否则业务会再长回
   handler 里）。
 - **`documents/base/` 只能往下看**：可 import `runtime/` 与 `fsx.ts`，不许够
-  `person|team|skills|rules|prompt|channel|flow|plugin|app|view|interface|shell`（实现依赖基础，不是反过来）。
+  `member|team|skills|rules|prompt|channel|flow|plugin|app|view|interface|shell`（实现依赖基础，不是反过来）。
 - **根目录原语**（`fsx.ts` / `naming.ts` / `layout.ts` / `secrets.ts`）不许 import `app|view|interface|shell`。
 - **`plugin/` 只加东西**（工具 / 提示词 / 路由 / 听消息）：只能用 `documents/base/`，不许 import
-  文档实现（`documents/person|team|skills|rules|prompt`）与 `app|view|interface|shell`，
+  文档实现（`documents/member|team|skills|rules|prompt`）与 `app|view|interface|shell`，
   产物由 `shell/assemble.ts` 并进注册表。
 
 另外三条容易踩的：
@@ -180,7 +180,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/documents/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`channel/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
 | 名册（slug ↔ 会话 id）怎么读、怎么落盘 | `docs/CORE.md` §1 | `src/core/channel/roster.ts` 的 `mergeDirectory` / `directoryWake`（`rememberWake` 用内存会话兜底并补映射）+ `src/shell/wire/directory.ts` 的 `now` / `save`（装配层只做调用）+ `test/core/directory-persist.test.ts`；**读的时候内存优先**，别只信落盘那份 |
-| 谁是助理 / 团队里有哪些人 | `docs/CORE.md` §1 / §7 + `docs/DECISIONS.md` ADR-058 | `src/core/layout.ts` 的 `isAssistantDir`（**按路径分量判断**：Windows 分隔符是 `\`，写死 `/` 会让助理在 Windows 上消失）+ `src/core/documents/person/identity.ts` 的 `assistantsOf` + `src/core/channel/membership.ts` 的 `teamMembers` / `syncTeamChannel`（成员 = 我 + 助理 + `team:` 指向它的人；`wakeOnAll = 助理`）；**只有一个会话键：slug**（ADR-050 已被 ADR-058 取代） |
+| 谁是助理 / 团队里有哪些人 | `docs/CORE.md` §1 / §7 + `docs/DECISIONS.md` ADR-058 | `src/core/layout.ts` 的 `isAssistantDir`（**按路径分量判断**：Windows 分隔符是 `\`，写死 `/` 会让助理在 Windows 上消失）+ `src/core/documents/member/identity.ts` 的 `assistantsOf` + `src/core/channel/membership.ts` 的 `teamMembers` / `syncTeamChannel`（成员 = 我 + 助理 + `team:` 指向它的人；`wakeOnAll = 助理`）；**只有一个会话键：slug**（ADR-050 已被 ADR-058 取代） |
 | 新进频道的人要不要被叫醒（报到） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-042 | `channel/membership.ts` 的 `syncTeamChannel`（返回新进成员，不含我与助理）+ `shell/wire/teams.ts` 的 `sync` / `announce` 与 `shell/wire/speak.ts` 的 `wakeTo`；文案 `seed/text/channel.md` 的 `membership.joined`；`test/core/membership.test.ts` |
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `core/flow/defaults/router.ts` 把两者拼成决定 + `channel/delivery.ts` 的 `woken` |
@@ -266,7 +266,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（8 个；同一件事加 `action`，别开新名字） |
 | 教 agent 一套做法 | `seed/skills/` 里现成的技能 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
 | 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/documents/base/template.ts` 只剩排版）；加插槽要先登记 §3 并在 `scripts/prompt-fixture.ts` 给样例值 |
-| 加身份字段 | `docs/CORE.md` §1 | `src/core/documents/person/identity.ts` 的 `IdentityHeader` |
+| 加身份字段 | `docs/CORE.md` §1 | `src/core/documents/member/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/mentions.ts` 的 `recipientsOf` / `parseMentions` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/types.ts` 的 `chatKind`（只看成员表） |
 | 改频道成员怎么来 | `docs/CORE.md` §4 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |

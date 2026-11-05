@@ -560,7 +560,7 @@ agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 （注意：`ui/app/src/api/client.ts` 的 `editPersonMemory` 把这个响应的类型写成了整份
 `PersonMemory`，与后端不符 —— 界面改完会重新拉一次，所以没出事。以本节的字段为准。）
 
-记忆是**不可信的模型写的**，所以要有人能审、能删。写入走 `src/core/documents/person/memory.ts` 的
+记忆是**不可信的模型写的**，所以要有人能审、能删。写入走 `src/core/documents/member/memory.ts` 的
 同一道闸（`entryProblem`（`documents/base/memory.ts`）拒空/超长/像密钥，`appendMemory`
 串行 + 落 journal），和 agent 自己写没有第二条路。
 

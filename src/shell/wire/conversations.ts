@@ -10,7 +10,7 @@
  * 「频道里有这个人、但他没有会话」的半成品。
  */
 import type { Conversation, Context, Extension, Harness } from "../../core/runtime/index.ts";
-import { labelsOf, type Identity } from "../../core/documents/person/identity.ts";
+import { labelsOf, type Identity } from "../../core/documents/member/identity.ts";
 import { conversationFor, type DirectoryState } from "../../core/channel/roster.ts";
 import {
 	addToAllChannel,

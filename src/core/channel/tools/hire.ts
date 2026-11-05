@@ -1,6 +1,6 @@
 /** `hire`：招人 / 让人走 / 看能挑哪些模型。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { OWNER_SLUG, assistantsOf, createAgent, readAllIdentities } from "../../documents/person/identity.ts";
+import { OWNER_SLUG, assistantsOf, createAgent, readAllIdentities } from "../../documents/member/identity.ts";
 import { redact } from "../../secrets.ts";
 import { moveAt } from "../../runtime/io.ts";
 import { readTeam } from "../../documents/team/doc.ts";

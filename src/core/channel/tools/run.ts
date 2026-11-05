@@ -6,7 +6,7 @@ import { OWNER } from "../types.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { clip, MODEL_LIMIT } from "./guards.ts";
-import { readIdentity } from "../../documents/person/identity.ts";
+import { readIdentity } from "../../documents/member/identity.ts";
 import { ensureDir } from "../../runtime/io.ts";
 import { workspaceOf } from "../../layout.ts";
 import { fill, type TextCatalog } from "../../documents/base/catalog.ts";

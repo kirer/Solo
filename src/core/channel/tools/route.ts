@@ -8,7 +8,7 @@
  * 只有助理能用：转交给谁看是统筹，不是每个人都能替别人决定要读什么。
  */
 import { BACKGROUND_CONTEXT, Type, defineTool, type Context } from "../../runtime/index.ts";
-import { assistantsOf, readAllIdentities } from "../../documents/person/identity.ts";
+import { assistantsOf, readAllIdentities } from "../../documents/member/identity.ts";
 import { wakeOf } from "../roster.ts";
 import { OWNER } from "../types.ts";
 import { appendToChannel } from "../write.ts";

@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { JOURNAL_FILE, appendJournal, journalPath } from "../../src/core/documents/person/journal.ts";
-import { appendMemory, readMemory, writeMemory } from "../../src/core/documents/person/memory.ts";
+import { JOURNAL_FILE, appendJournal, journalPath } from "../../src/core/documents/member/journal.ts";
+import { appendMemory, readMemory, writeMemory } from "../../src/core/documents/member/memory.ts";
 
 /**
  * 记忆留痕。守的是「文件可改」的代价：改得动是优点，改了没痕迹是缺点。

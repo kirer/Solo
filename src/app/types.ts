@@ -11,7 +11,7 @@ import type { Conversation, Context, Harness, Models, Registry } from "../core/r
 import type { DirectoryState } from "../core/channel/roster.ts";
 import type { ChannelState, Attachment, Message } from "../core/channel/types.ts";
 import type { DeliverResult } from "../core/flow/types.ts";
-import type { Identity } from "../core/documents/person/identity.ts";
+import type { Identity } from "../core/documents/member/identity.ts";
 import type { Layout } from "../core/layout.ts";
 import type { TextCatalog } from "../core/documents/base/catalog.ts";
 import type { PluginHost } from "../core/plugin/index.ts";

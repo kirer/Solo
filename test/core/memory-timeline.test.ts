@@ -2,8 +2,8 @@ import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { memoryTimeline } from "../../src/core/documents/person/memory.ts";
-import { journalPath } from "../../src/core/documents/person/journal.ts";
+import { memoryTimeline } from "../../src/core/documents/member/memory.ts";
+import { journalPath } from "../../src/core/documents/member/journal.ts";
 
 let root = "";
 

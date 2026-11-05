@@ -5,7 +5,7 @@
  * 接线只有一份（`wiring.flow`），工具只给「这次读到的频道快照」。
  */
 import { BACKGROUND_CONTEXT, type Context, type Harness } from "../../runtime/index.ts";
-import { readAllIdentities } from "../../documents/person/identity.ts";
+import { readAllIdentities } from "../../documents/member/identity.ts";
 import { slugFor, type DirectoryState } from "../roster.ts";
 import { mentionRosterOf, type MentionRoster } from "../mentions.ts";
 import type { ChannelWiring } from "../wiring.ts";

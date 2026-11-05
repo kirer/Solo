@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { CoreShell } from "../../src/shell/assemble.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { recipientsOf } from "../../src/core/channel/mentions.ts";
-import { readAllIdentities } from "../../src/core/documents/person/identity.ts";
+import { readAllIdentities } from "../../src/core/documents/member/identity.ts";
 
 /**
  * 外壳装配的端到端契约（不调模型）。
@@ -52,7 +52,7 @@ describe("外壳装配", () => {
 		expect(created.length).toBe(0);
 
 		// 直接调用工具层的建人逻辑（与模型调 `hire` 走同一条路）。
-		const { createAgent } = await import("../../src/core/documents/person/identity.ts");
+		const { createAgent } = await import("../../src/core/documents/member/identity.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		const id = await shell.openAgent(identity.slug);
 		expect(id).toBeGreaterThan(0);
@@ -78,7 +78,7 @@ describe("外壳装配", () => {
 		// 结果我在全员频道问、对方在私聊里答，问的人在原频道什么都看不到。
 		const { box, shell } = await setup();
 		const agentsRoot = box.agentsRoot;
-		const { createAgent } = await import("../../src/core/documents/person/identity.ts");
+		const { createAgent } = await import("../../src/core/documents/member/identity.ts");
 		const { DirectoryDoc } = await import("../../src/core/channel/roster.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		const conversationId = await shell.openAgent(identity.slug);
@@ -100,7 +100,7 @@ describe("外壳装配", () => {
 	it("重启后再装配，不会重复建会话，名册与频道保持", async () => {
 		const { box, shell } = await setup();
 		const agentsRoot = box.agentsRoot;
-		const { createAgent } = await import("../../src/core/documents/person/identity.ts");
+		const { createAgent } = await import("../../src/core/documents/member/identity.ts");
 		const identity = await createAgent({ root: agentsRoot, name: "林越", manager: "owner" });
 		await shell.openAgent(identity.slug);
 		const before = await channels(shell);

@@ -13,8 +13,8 @@
  *
  * 纯函数、无 IO：状态由调用方递进来，所以单测可以直接喂一个假频道。
  */
-import { OWNER_SLUG, labelsOf, type Identity } from "../core/documents/person/identity.ts";
-import { type MemoryStamp } from "../core/documents/person/memory.ts";
+import { OWNER_SLUG, labelsOf, type Identity } from "../core/documents/member/identity.ts";
+import { type MemoryStamp } from "../core/documents/member/memory.ts";
 import { sectionsOf } from "../core/documents/base/memory.ts";
 import { conversationFor, labelIn, type DirectoryState } from "../core/channel/roster.ts";
 import { chatKind, spokenKind, type Channel, type ChannelState, type Message } from "../core/channel/types.ts";

@@ -8,7 +8,7 @@
 import type { Context, Harness } from "../../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../../core/runtime/index.ts";
 import { ChannelDoc, OWNER, chatKind, type ChannelState, type FlowPolicy, type Message } from "../../core/channel/types.ts";
-import { readIdentity } from "../../core/documents/person/identity.ts";
+import { readIdentity } from "../../core/documents/member/identity.ts";
 import { readTeam } from "../../core/documents/team/doc.ts";
 import { teamWorkspace, workspaceOf, type Layout } from "../../core/layout.ts";
 import { emptyPluginHost, loadPlugins, type PluginHost } from "../../core/plugin/index.ts";

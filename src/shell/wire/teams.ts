@@ -6,7 +6,7 @@
  * 最后、频道都建好之后叫。
  */
 import type { Context, Harness } from "../../core/runtime/index.ts";
-import { labelsOf, readAllIdentities } from "../../core/documents/person/identity.ts";
+import { labelsOf, readAllIdentities } from "../../core/documents/member/identity.ts";
 import { DirectoryDoc, labelIn, type DirectoryState, type WakeRecord } from "../../core/channel/roster.ts";
 import {
 	ChannelDoc,

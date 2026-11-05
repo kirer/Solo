@@ -18,7 +18,7 @@ import {
 	type WakeRecord,
 } from "./roster.ts";
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
-import { readAllIdentities } from "../documents/person/identity.ts";
+import { readAllIdentities } from "../documents/member/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
 import { createChannelFlow, type ChannelFlow } from "./post.ts";
 import type { FlowPolicy, Message } from "./types.ts";

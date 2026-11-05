@@ -9,7 +9,7 @@ import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { createChat } from "../../src/app/chat.ts";
 import { AppError } from "../../src/app/errors.ts";
-import { createAgent } from "../../src/core/documents/person/identity.ts";
+import { createAgent } from "../../src/core/documents/member/identity.ts";
 import { ChannelDoc, chatKind, dmId, type ChannelState } from "../../src/core/channel/types.ts";
 import { sandboxPool } from "./support.ts";
 

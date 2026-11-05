@@ -11,9 +11,9 @@
  */
 import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
-import { assistantsOf, nameOf, readAllIdentities, readIdentity, type Identity } from "./person/identity.ts";
+import { assistantsOf, nameOf, readAllIdentities, readIdentity, type Identity } from "./member/identity.ts";
 import { listSkills } from "./skills.ts";
-import { readMemory } from "./person/memory.ts";
+import { readMemory } from "./member/memory.ts";
 import { memoryDigest } from "./base/memory.ts";
 import { loadRules } from "./rules.ts";
 import { readTeam } from "./team/doc.ts";

@@ -5,10 +5,10 @@
  * 两者共用的显示名只有 `labelIn` 一处。
  */
 import { join } from "node:path";
-import { OWNER_SLUG, readIdentity } from "../core/documents/person/identity.ts";
+import { OWNER_SLUG, readIdentity } from "../core/documents/member/identity.ts";
 import { isAssistantDir } from "../core/layout.ts";
 import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
-import { appendMemory, memoryTimeline, readMemory, writeMemory } from "../core/documents/person/memory.ts";
+import { appendMemory, memoryTimeline, readMemory, writeMemory } from "../core/documents/member/memory.ts";
 import { removeSection, sectionsOf } from "../core/documents/base/memory.ts";
 import { labelIn, type DirectoryState } from "../core/channel/roster.ts";
 import { redact } from "../core/secrets.ts";

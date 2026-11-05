@@ -1996,10 +1996,10 @@
 - **决策**：
   1. **一个包，两侧**：`src/core/documents/` 下分 `base/`（机械的文档与文本操作，零业务：
      `doc` / `slots` / `template` / `catalog` / `memory` / `memory-store` / `oneline`）与实现
-     （`person/` 一个人的身份、记忆、日志；`team/` 一个团队的 README 与记忆；
+     （`member/` 一个人的身份、记忆、日志；`team/` 一个团队的 README 与记忆；
      `skills.ts` / `rules.ts` / `prompt.ts`）。实现依赖基础，基础不认识实现。
-  2. **`prompt.ts` 放包根**：它是唯一同时 import `person/` 与 `team/` 的文件；放进
-     `person/` 会留下 `person → team` 这条边，「两份并列实现」就不成立了。
+  2. **`prompt.ts` 放包根**：它是唯一同时 import `member/` 与 `team/` 的文件；放进
+     `member/` 会留下 `member → team` 这条边，「两份并列实现」就不成立了。
   3. **`base/memory-store.ts` 只收机械部分**：一条串行链上的「读全文 → 交给 build → 写回」。
      去重、标题格式（个人同日合并 / 团队永远新开）、校验失败是返回还是抛错，仍留在各自
      实现里 —— 两种记忆共用格式，但不共用判断。`base/memory.ts` 只增加对应的纯函数

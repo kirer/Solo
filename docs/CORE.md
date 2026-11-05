@@ -500,7 +500,7 @@ src/
     runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
                      models（contextWindow / compaction）/ settings 也在这里
     documents/       base/：markdown / 插槽 / 提示词模板 / 文案目录 / 记忆格式与读写机械
-                     person/：identity（他是谁 + 新建一个人）/ memory / journal
+                     member/：identity（他是谁 + 新建一个人）/ memory / journal
                      team/：doc（README.md）/ memory（memory.md）
                      skills（三层技能）/ rules（全员规矩）/ prompt（提示词九段装配）
     channel/         post（投递门面 `createChannelFlow`）/ wiring（一根频道接线）/
@@ -523,7 +523,7 @@ src/
 依赖只朝一个方向：`interface → app → domain`，`view` 谁都不依赖（大家都能用它），
 `shell` 是唯一可以同时 import 全部的装配层。
 
-`documents/person/` 与 `documents/team/` 是**两份并列的档案实现**，共用 `documents/base/`
+`documents/member/` 与 `documents/team/` 是**两份并列的档案实现**，共用 `documents/base/`
 的机械层（ADR-082）：团队不是全员的子概念，它是与「人」并列的另一种归属。
 名册不是档案（它记的是会话 id 与唤醒），住在 `channel/`；密钥不是档案（它是渲染出口的
 安全网），住在 `core/` 根。

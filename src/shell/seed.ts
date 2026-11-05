@@ -348,7 +348,7 @@ export async function seedOwnerAssistant(
 	layout: Layout,
 	options: { readonly name?: string } = {},
 ): Promise<string> {
-	const { createAgent } = await import("../core/documents/person/identity.ts");
+	const { createAgent } = await import("../core/documents/member/identity.ts");
 	const seed = await readSeedAssistant();
 	if (seed === undefined) {
 		console.warn(`[core] 没读到 ${SEED_ASSISTANT_IDENTITY}：助理身份会是一份占位正文`);

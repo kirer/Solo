@@ -105,7 +105,7 @@ const LAYER_RULES = [
 		dirs: ["src/core/documents/base/"],
 		layer: "文档基础（documents/base）",
 		deny: [
-			{ match: /\/person\//, reason: "文档基础不许 import 实现（person）—— 实现依赖基础，不是反过来" },
+			{ match: /\/member\//, reason: "文档基础不许 import 实现（member）—— 实现依赖基础，不是反过来" },
 			{ match: /\/team\//, reason: "文档基础不许 import 实现（team）—— 实现依赖基础，不是反过来" },
 			{ match: /\/skills\.ts$/, reason: "文档基础不许 import 实现（skills）" },
 			{ match: /\/rules\.ts$/, reason: "文档基础不许 import 实现（rules）" },
@@ -122,13 +122,13 @@ const LAYER_RULES = [
 	// 文档实现：人、团队、技能、规矩、提示词装配。只认识文档基础，不认识消息与传输。
 	{
 		dirs: [
-			"src/core/documents/person/",
+			"src/core/documents/member/",
 			"src/core/documents/team/",
 			"src/core/documents/skills.ts",
 			"src/core/documents/rules.ts",
 			"src/core/documents/prompt.ts",
 		],
-		layer: "文档实现（documents/person·team·skills·rules·prompt）",
+		layer: "文档实现（documents/member·team·skills·rules·prompt）",
 		deny: [
 			{ match: /\/channel\//, reason: "文档实现不许 import 领域实现（channel）" },
 			{ match: /\/flow\//, reason: "文档实现不许 import 消息生命周期（flow）" },
