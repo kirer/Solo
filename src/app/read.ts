@@ -6,6 +6,7 @@
  * HTTP、以及将来任何别的入口共用一份。
  */
 import { OWNER_SLUG } from "../core/documents/member/identity.ts";
+import { tracesOf } from "../core/channel/tools/presentation.ts";
 import { chatKind } from "../core/channel/types.ts";
 import { reasonText } from "../core/channel/unanswered.ts";
 import { wakeOf } from "../core/channel/roster.ts";
@@ -244,6 +245,8 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	async function turnsOf(channelId: string | undefined, from: number, to: number, onlySlug?: string): Promise<ViewTurn[]> {
 		const { directory, channels } = await snapshots.channelSnapshot();
 		if (channelId !== undefined && channels.channels[channelId] === undefined) return [];
+		// 轨迹的展示由工具在注册时声明；这里拿**当前注册表**（插件重装后跟着变）。
+		const traces = tracesOf(shell.registry.snapshot().tools().map(({ tool }) => tool));
 
 		// 回复可能落在别的频道（任务频道），所以按「所有频道的消息」找，不只看当前频道。
 		const said: { channelId: string; seq: number; at: number; fromSlug: string }[] = [];
@@ -288,16 +291,20 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 					.filter((item) => item.fromSlug === slug && item.channelId === id && item.seq > group.seq && item.seq < nextStart)
 					.sort((left, right) => left.seq - right.seq)[0];
 				const channelTitle = channels.channels[id]?.title;
-				const turn = buildTurn(entries, {
-					channelId: id,
-					...(channelTitle === undefined ? {} : { channelTitle }),
-					seq: group.seq,
-					slug,
-					label: shell.labelOf(slug),
-					startedAt,
-					...(reply === undefined ? {} : { endedAt: reply.at, replySeq: reply.seq }),
-					live: running && index === groups.length - 1,
-				});
+				const turn = buildTurn(
+					entries,
+					{
+						channelId: id,
+						...(channelTitle === undefined ? {} : { channelTitle }),
+						seq: group.seq,
+						slug,
+						label: shell.labelOf(slug),
+						startedAt,
+						...(reply === undefined ? {} : { endedAt: reply.at, replySeq: reply.seq }),
+						live: running && index === groups.length - 1,
+					},
+					traces,
+				);
 				turns.push(trigger === undefined ? turn : { ...turn, trigger: triggerOf(trigger) });
 			}
 		}

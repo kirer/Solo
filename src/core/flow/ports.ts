@@ -22,6 +22,7 @@ import type {
 	RouteFacts,
 	SettleDecision,
 	SettleFacts,
+	SettleResult,
 	Settlement,
 } from "./types.ts";
 
@@ -32,7 +33,7 @@ export type Flow = {
 	/** 已有消息转交：校验 → 扇出入队（助理 `route` 工具用；不留新消息）。 */
 	forward(input: RouteExistingInput, ctx: Context): Promise<DeliverResult>;
 	/** 一轮结算：`done` 决定要不要补发，`unanswered` 只留痕。 */
-	settle(event: Settlement, ctx: Context): Promise<void>;
+	settle(event: Settlement, ctx: Context): Promise<SettleResult>;
 };
 
 /** 消息落盘。publish / forward / settle 共用这一份读法。 */
@@ -94,6 +95,15 @@ export type PublishHooks = {
 };
 
 /**
+ * 运行中出了问题的一条出口。
+ *
+ * core 只描述形状（`kind` 是分类，`detail` 是人话）；接到哪里由装配层定 ——
+ * 不给就 `console.warn`。以前这些错误只留在 console 里，界面上「他就是不回话」
+ * 和「他回话时策略炸了」看起来一模一样。
+ */
+export type FlowReport = (kind: string, detail: string) => void;
+
+/**
  * 串行闸。进程级一份，由装配层传进来 —— 不藏在模块单例里，
  * 否则「谁和谁在同一个闸里」只能靠读 import 才知道。
  */
@@ -115,5 +125,7 @@ export type FlowPorts = {
 	/** 补发时解析 `@` 用的名册；不给就按字面 token 落库。 */
 	readonly roster?: () => Promise<MentionRoster>;
 	readonly hooks?: PublishHooks;
+	/** 策略 / 钩子出问题时的出口；不给就 `console.warn`。 */
+	readonly report?: FlowReport;
 	readonly gate: FlowGates;
 };

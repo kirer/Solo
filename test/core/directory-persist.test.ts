@@ -15,14 +15,13 @@ import type { CoreShell } from "../../src/shell/assemble.ts";
 import {
 	DirectoryDoc,
 	conversationFor,
-	mergeDirectory,
-	personOf,
-	sessionKeyOf,
+	emptyDirectory,
 	slugFor,
 	type DirectoryState,
 } from "../../src/core/channel/roster.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
+import { createDirectoryWire } from "../../src/shell/wire/directory.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";
 
 const pool = sandboxPool();
@@ -68,18 +67,31 @@ describe("加人之后重启：复用同一个会话，不制造孤儿", () => {
 	});
 });
 
-describe("落盘的名册落后于这次运行", () => {
-	it("读名册时这次运行开过的会话优先（盘上缺人也不影响认人）", () => {
-		const empty: DirectoryState = { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
-		const live: DirectoryState = {
-			slugToConversation: { 甲: 9 },
-			conversationToSlug: { "9": "甲" },
-			wake: { "9": { reply: { channelId: "all", seq: 1, from: "owner", at: 1 } } },
-			labels: { 甲: "甲" },
-		};
-		const seen = mergeDirectory(empty, live);
-		expect(seen.conversationToSlug["9"]).toBe("甲");
-		expect(seen.slugToConversation["甲"]).toBe(9);
+describe("名册只有一个真相：落盘那份", () => {
+	it("删掉的映射不会被内存复活", async () => {
+		const box = await pool.make("core-directory-");
+		const runtime = await box.open();
+		const memory = emptyDirectory();
+		const wire = createDirectoryWire({ harness: runtime.harness, directory: memory });
+
+		await wire.bind("甲", 9, BACKGROUND_CONTEXT);
+		expect(memory.slugToConversation["甲"]).toBe(9);
+
+		// 开除：只删这一条。
+		await wire.save(
+			(state) => {
+				const slugToConversation = { ...state.slugToConversation };
+				delete slugToConversation["甲"];
+				return { ...state, slugToConversation, conversationToSlug: {} };
+			},
+			BACKGROUND_CONTEXT,
+		);
+
+		expect(memory.slugToConversation["甲"]).toBeUndefined();
+		expect((await wire.now(BACKGROUND_CONTEXT)).slugToConversation["甲"]).toBeUndefined();
+		const doc = (await runtime.harness.snapshot(DirectoryDoc)) as DirectoryState;
+		expect(doc.slugToConversation["甲"]).toBeUndefined();
+		await runtime.close();
 	});
 
 	it("映射从盘上丢了：叫醒照样记在真实会话上", async () => {
@@ -126,9 +138,28 @@ describe("已有名册不被旧快照覆盖", () => {
 	});
 });
 
+describe("名册 v2 迁移：平铺的唤醒记录拆成两层", () => {
+	it("旧形状的 reply / task 都指向同一条；坏数据丢掉", () => {
+		const legacy = {
+			slugToConversation: { 甲: 7 },
+			conversationToSlug: { "7": "甲" },
+			wake: {
+				"7": { channelId: "team:alpha", seq: 3, from: "owner", at: 10 },
+				"8": { reply: { channelId: "dm:甲", seq: 4, from: "owner", at: 11 }, task: { channelId: "team:alpha", seq: 3, from: "owner", at: 10 } },
+				"9": { channelId: 1 },
+			},
+			labels: {},
+		};
+		const migrated = DirectoryDoc.definition.migrate?.(legacy, 1) as DirectoryState;
+		const flat = { channelId: "team:alpha", seq: 3, from: "owner", at: 10 };
+		expect(migrated.wake["7"]).toEqual({ reply: flat, task: flat });
+		expect(migrated.wake["8"]).toEqual(legacy.wake["8"]);
+		expect(migrated.wake["9"]).toBeUndefined();
+	});
+});
+
 describe("会话键就是 slug（ADR-058）", () => {
 	it("slug ↔ 会话 id 一对一，反查回到人", () => {
-		const empty: DirectoryState = { slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} };
 		const state: DirectoryState = {
 			slugToConversation: { 甲: 1 },
 			conversationToSlug: { "1": "甲" },
@@ -139,6 +170,5 @@ describe("会话键就是 slug（ADR-058）", () => {
 		expect(conversationFor(state, "乙")).toBeUndefined();
 		// 工具靠反查认「我是谁」。
 		expect(slugFor(state, 1)).toBe("甲");
-		expect(mergeDirectory(empty, state).slugToConversation).toEqual({ 甲: 1 });
 	});
 });

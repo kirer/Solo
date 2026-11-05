@@ -94,7 +94,7 @@ describe("技能：目录即事实", () => {
 	});
 
 	it("空的技能名被拒绝", async () => {
-		await expect(writeSkill(roots, { name: "  ", description: "x", body: "y" })).rejects.toThrow();
+		await expect(writeSkill(roots, "me", { name: "  ", description: "x", body: "y" })).rejects.toThrow();
 	});
 });
 

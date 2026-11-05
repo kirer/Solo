@@ -28,26 +28,21 @@ const PROVIDER = {
 };
 
 describe("setupModels 的默认模型", () => {
-	it("settings.json 的 defaultModel 指向不存在的 provider 时改用可用模型，并说清原因", () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-		const setup = setupModels({}, { workspace: workspaceWith({ defaultModel: "commandcode/auto/hy3", providers: [PROVIDER] }) });
-		expect(setup.defaultModel).toEqual({ provider: "magpie", modelId: "auto/deepseek-v4.1-flash" });
-		expect(setup.models.getModel("magpie", "auto/deepseek-v4.1-flash")).toBeDefined();
-		// 静默回落最费时间：界面只表现成「所有人都不说话」，日志里必须能看见。
-		expect(warn).toHaveBeenCalledWith(expect.stringContaining("commandcode/auto/hy3"));
+	it("defaultModel 指向不存在的 provider：报错，不换成另一只模型", () => {
+		expect(() =>
+			setupModels({}, { workspace: workspaceWith({ defaultModel: "commandcode/auto/hy3", providers: [PROVIDER] }) }),
+		).toThrow(/commandcode\/auto\/hy3/);
 	});
 
-	it("provider 对、模型名不对，同样回落", () => {
-		vi.spyOn(console, "warn").mockImplementation(() => undefined);
-		const setup = setupModels({}, { workspace: workspaceWith({ defaultModel: "magpie/auto/hy5", providers: [PROVIDER] }) });
-		expect(setup.defaultModel).toEqual({ provider: "magpie", modelId: "auto/deepseek-v4.1-flash" });
+	it("provider 对、模型名不对：同样报错", () => {
+		expect(() =>
+			setupModels({}, { workspace: workspaceWith({ defaultModel: "magpie/auto/hy5", providers: [PROVIDER] }) }),
+		).toThrow(/magpie\/auto\/hy5/);
 	});
 
-	it("引用是对的就不动它，也不打警告", () => {
-		const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+	it("引用是对的就不动它", () => {
 		const setup = setupModels({}, { workspace: workspaceWith({ defaultModel: "magpie/auto/deepseek-v4.1-flash", providers: [PROVIDER] }) });
 		expect(setup.defaultModel).toEqual({ provider: "magpie", modelId: "auto/deepseek-v4.1-flash" });
-		expect(warn).not.toHaveBeenCalled();
 	});
 
 	it("没写 defaultModel 时用第一个 provider 的第一个模型", () => {
@@ -64,14 +59,12 @@ describe("setupModels 的默认模型", () => {
 		const empty = { ...PROVIDER, models: [] };
 		expect(() =>
 			setupModels({}, { workspace: workspaceWith({ defaultModel: "commandcode/auto/hy3", providers: [empty] }) }),
-		).toThrow(/没有任何可用模型可回落/);
+		).toThrow(/commandcode\/auto\/hy3/);
 	});
 
-	it("settings.json 读不出来 = 没有模型：不悄悄换上本地网关", () => {
-		// 悄悄回落最坏的地方是「看不出来」：界面一切正常，人却不知道自己在用哪只模型。
-		const setup = setupModels({}, { workspace: workspaceWith("坏掉的内容") });
-		expect(setup.defaultModel).toBeUndefined();
-		expect(setup.models.getModels()).toEqual([]);
+	it("settings.json 坏了：报错，不悄悄当成没有配置", () => {
+		// 当成「没有配置」会让人以为只是还没配；真正的坏文件要能看见。
+		expect(() => setupModels({}, { workspace: workspaceWith("坏掉的内容") })).toThrow(/读不出来/);
 	});
 
 	it("什么都没配（没有 settings.json、没有密钥）：同样没有模型", () => {
@@ -85,7 +78,7 @@ describe("上下文窗口：真值优先，取不到才保守", () => {
 	it("pi-ai 目录里有这个模型就用目录的 contextWindow", () => {
 		const settings = {
 			providers: [
-				{ id: "anthropic", api: "anthropic", models: [{ id: "claude-sonnet-4-5" }] },
+				{ id: "anthropic", api: "anthropic", baseUrl: "https://api.anthropic.com/v1", models: [{ id: "claude-sonnet-4-5" }] },
 			],
 		};
 		const setup = setupModels({}, { workspace: workspaceWith(settings) });
@@ -111,7 +104,7 @@ describe("上下文窗口：真值优先，取不到才保守", () => {
 
 describe("压缩策略：阈值跟着窗口走", () => {
 	it("200k 的模型，阻塞阈值明显小于 200k", () => {
-		const settings = { providers: [{ id: "anthropic", api: "anthropic", models: [{ id: "claude-sonnet-4-5" }] }] };
+		const settings = { providers: [{ id: "anthropic", api: "anthropic", baseUrl: "https://api.anthropic.com/v1", models: [{ id: "claude-sonnet-4-5" }] }] };
 		const setup = setupModels({}, { workspace: workspaceWith(settings) });
 		const policy = compactionSettings(setup.models).modelOverrides["anthropic/claude-sonnet-4-5"];
 		expect(policy).toBeDefined();

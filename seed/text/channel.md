@@ -47,6 +47,9 @@
 ## attachments.image.gone
 - 图片「{{name}}」（{{size}}）：文件已不在，别假装看过。
 
+## attachments.image.no-meta
+- 图片「{{name}}」（{{size}}）：读不到它的类型信息，没有直接给你看。
+
 ## attachments.image.ok
 - 图片「{{name}}」已经直接给你看了。
 

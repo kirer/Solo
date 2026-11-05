@@ -3,10 +3,12 @@
  *
  * 分两种写入：
  * - **身份**（`members/<slug>/`）只在工作区空的时候写一次 —— 之后那些文件属于那个人自己。
- * - **全员层的规矩与技能**（`rules.md` / `skills/`）每次启动都同步一遍：它们是全员共用的，
- *   以前只在空工作区拷一次，导致 `seed/skills/工作规矩/SKILL.md` 的 1037 字节修正
- *   从来没有进过已在跑的工作区（实测 5766 vs 4729 字节）。同步按 hash 判「用户改过没有」：
- *   没改过的升到新版，改过的原样留着（见 ADR-031）。
+ * - **全员层的规矩、技能与提示词模板**（`rules.md` / `skills/` / `prompt/`）每次启动都同步
+ *   一遍：它们是全员共用的，以前只在空工作区拷一次，导致 `seed/skills/工作规矩/SKILL.md`
+ *   的 1037 字节修正从来没有进过已在跑的工作区（实测 5766 vs 4729 字节）。
+ *
+ * 同步按 hash 判「用户改过没有」：没改过的升到新版，改过的原样留着（ADR-031）。
+ * 老工作区没有账本，用 `seed-legacy.ts` 的历史 hash 认出厂内容；命中 = 没改过。
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -14,16 +16,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../core/documents/skills.ts";
 import { RULES_FILE } from "../core/documents/rules.ts";
-import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
+import { existsAt, listDirSorted, moveAt, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
 import { appendMissingKeys } from "../core/documents/base/catalog.ts";
 import { frontOf, parseDoc, type Doc } from "../core/documents/base/doc.ts";
 import type { Layout } from "../core/layout.ts";
+import { LEGACY_SEED_HASHES } from "./seed-legacy.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
 
 type SeedManifest = {
-	version: 1;
+	version: 2;
 	/** `技能名` → `技能内相对路径` → 内容 hash（sha256 前 16 位）。 */
 	skills: Record<string, Record<string, string>>;
 	/**
@@ -34,7 +37,18 @@ type SeedManifest = {
 	 * 下次启动会被重新拷回来，界面上的「删除」就成了假的。
 	 */
 	plugins: string[];
+	/**
+	 * 播种文件的逻辑键 → 上次写入的 hash。
+	 *
+	 * 键用工作区里的逻辑位置（`prompt/20-position.md`、`rules.md`），不是绝对路径：
+	 * 账本跟着应用根走，换一台机器不该失效。
+	 */
+	files: Record<string, string>;
 };
+
+function emptyManifest(): SeedManifest {
+	return { version: 2, skills: {}, plugins: [], files: {} };
+}
 
 /** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
 type SyncReport = {
@@ -105,15 +119,15 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 				}
 				continue;
 			}
-			if (recorded[relpath] === currentHash) {
-				// 工作区里的内容还是上次同步给的那份（用户没改过）→ 升到新版。
+			// 账本里的基线 = 用户没改过；没有账本但内容命中历史出厂版本 = 也没改过。
+			// 两条都升到新版；其余情况才是用户自己写的。
+			if (recorded[relpath] === currentHash || (recorded[relpath] === undefined && LEGACY_SEED_HASHES.has(currentHash))) {
 				await writeTextAt(target, source);
 				recorded[relpath] = seedHash;
 				changed = true;
 				touched = true;
 				continue;
 			}
-			// 用户改过（或者这个文件从来不在账本里）：不覆盖，留一句话。
 			keptThis = true;
 			console.warn(`[core] 技能 ${name} 已被本地修改，未覆盖：${relpath}`);
 		}
@@ -133,12 +147,85 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 }
 
 async function readManifest(path: string): Promise<SeedManifest> {
+	const text = await readTextOrUndefined(path);
+	if (text === undefined) return emptyManifest();
+	let raw: Partial<SeedManifest>;
 	try {
-		const raw = JSON.parse((await readTextOrUndefined(path)) ?? "") as Partial<SeedManifest>;
-		return { version: 1, skills: raw.skills ?? {}, plugins: raw.plugins ?? [] };
-	} catch {
-		return { version: 1, skills: {}, plugins: [] };
+		raw = JSON.parse(text) as Partial<SeedManifest>;
+	} catch (error) {
+		// 账本是缓存，坏了不能挡启动；但也不能悄悄当成「全都没改过」然后覆盖用户文件。
+		// 改名留证，下一次按「没有账本」处理（保守：只升级命中历史出厂 hash 的文件）。
+		const backup = `${path}.corrupt-${Date.now()}`;
+		try {
+			await moveAt(path, backup);
+			console.warn(`[core] ${path} 读不出来（${(error as Error).message}），已改名 ${backup}`);
+		} catch (moveError) {
+			console.warn(
+				`[core] ${path} 读不出来（${(error as Error).message}），备份也失败：${(moveError as Error).message}`,
+			);
+		}
+		return emptyManifest();
 	}
+	return {
+		version: 2,
+		skills: raw.skills ?? {},
+		plugins: raw.plugins ?? [],
+		files: raw.files ?? {},
+	};
+}
+
+async function writeManifest(path: string, manifest: SeedManifest): Promise<void> {
+	await writeTextAt(path, `${JSON.stringify(manifest, null, 2)}\n`);
+}
+
+/**
+ * 同步一组「一个源文件 → 一个工作区文件」的播种文件。
+ *
+ * 和技能同一套判据：缺的补、没改过的升级、改过的保留。`key` 是账本里的逻辑位置，
+ * 不随绝对路径变化。返回值里的名字只用于启动日志。
+ */
+async function syncSeedFiles(
+	targets: readonly { readonly key: string; readonly source: string; readonly target: string }[],
+	manifest: SeedManifest,
+	manifestPath: string,
+): Promise<{ readonly written: readonly string[]; readonly updated: readonly string[]; readonly kept: readonly string[] }> {
+	const written: string[] = [];
+	const updated: string[] = [];
+	const kept: string[] = [];
+	let changed = false;
+	for (const item of targets) {
+		const source = await readTextOrUndefined(item.source);
+		if (source === undefined) continue;
+		const seedHash = hashOf(source);
+		const existing = await readTextOrUndefined(item.target);
+		if (existing === undefined) {
+			await writeTextAt(item.target, source);
+			manifest.files[item.key] = seedHash;
+			written.push(item.key);
+			changed = true;
+			continue;
+		}
+		const currentHash = hashOf(existing);
+		if (currentHash === seedHash) {
+			if (manifest.files[item.key] !== seedHash) {
+				manifest.files[item.key] = seedHash;
+				changed = true;
+			}
+			continue;
+		}
+		const recorded = manifest.files[item.key];
+		if (recorded === currentHash || (recorded === undefined && LEGACY_SEED_HASHES.has(currentHash))) {
+			await writeTextAt(item.target, source);
+			manifest.files[item.key] = seedHash;
+			updated.push(item.key);
+			changed = true;
+			continue;
+		}
+		kept.push(item.key);
+		console.warn(`[core] ${item.key} 已被本地修改，未覆盖`);
+	}
+	if (changed) await writeManifest(manifestPath, manifest);
+	return { written, updated, kept };
 }
 
 /** 递归列出目录下的文件（相对路径，`/` 分隔）。读失败 → 空。 */
@@ -154,45 +241,42 @@ async function walkFiles(root: string, prefix: string): Promise<string[]> {
 }
 
 /**
- * 把 `seed/rules.md` 写进工作区（**只在不存在时写**）。
+ * 把 `seed/rules.md` 同步进工作区。
  *
- * 不覆盖的理由和技能不一样：规矩是每轮都进提示词的**活的**文件，我可能亲手改过措辞。
- * 技能有 hash 账本可以判断「改没改」，规矩只有一份文案，没有可靠的基线，所以只补不改。
+ * 和技能同一条判据（同一个账本）：缺的补、没改过的升到新版、改过的原样留着。
+ * 以前规矩「只补不改」，理由是「我可能亲手改过措辞」—— 但那样出厂修正永远进不来
+ * （`seed/rules.md` 改一句，已经在跑的工作区一辈子看不到）。用 hash 账本能同时满足两边。
  */
-export async function seedRules(layout: Layout): Promise<"written" | "exists" | "missing"> {
-	const target = layout.rulesFile;
-	if (await existsAt(target)) return "exists";
-	const source = await readTextOrUndefined(seedPath(RULES_FILE));
-	if (source === undefined) return "missing";
-	await writeTextAt(target, source);
-	return "written";
+export async function seedRules(layout: Layout): Promise<"written" | "updated" | "exists" | "missing"> {
+	const source = seedPath(RULES_FILE);
+	if (!(await existsAt(source))) return "missing";
+	const result = await syncSeedFiles(
+		[{ key: RULES_FILE, source, target: layout.rulesFile }],
+		await readManifest(layout.seedManifestFile),
+		layout.seedManifestFile,
+	);
+	if (result.written.length > 0) return "written";
+	return result.updated.length > 0 ? "updated" : "exists";
 }
 
 /**
- * 把出厂的提示词模板（`seed/prompt/*.md`）补进工作区（`<workspace>/prompt/`）。
+ * 把出厂的提示词模板（`seed/prompt/*.md`）同步进工作区（`<workspace>/prompt/`）。
  *
- * **只补不改**，和 `rules.md` 同一条规矩：模板是每一轮都要进提示词的活文件，我可能亲手
- * 改过措辞。技能有 hash 账本能判断「改没改」，模板没有可靠基线，所以缺了就补、有了不动。
- *
- * 逐个文件判而不是整目录判：新增一段模板（`85-xxx.md`）应该能补进已经在跑的工作区，
- * 而不是等谁删掉整个目录。
+ * 逐文件判而不是整目录判：新增一段模板（`85-xxx.md`）要能补进已经在跑的工作区。
+ * 返回本次写入或升级的文件名（用于启动日志）。
  */
 export async function seedPromptTemplates(layout: Layout): Promise<readonly string[]> {
 	// 顺序只由文件名决定：目录顺序来自文件系统，不同机器不一样（`listDirSorted` 已排序）。
-	const files = (await listDirSorted(seedPath("prompt")))
+	const root = seedPath("prompt");
+	const names = (await listDirSorted(root))
 		.filter((entry) => entry.kind === "file" && entry.name.endsWith(".md"))
 		.map((entry) => entry.name);
-
-	const written: string[] = [];
-	for (const name of files) {
-		const target = join(layout.promptRoot, name);
-		if (await existsAt(target)) continue;
-		const source = await readTextOrUndefined(join(seedPath("prompt"), name));
-		if (source === undefined) continue;
-		await writeTextAt(target, source);
-		written.push(name);
-	}
-	return written;
+	const result = await syncSeedFiles(
+		names.map((name) => ({ key: `prompt/${name}`, source: join(root, name), target: join(layout.promptRoot, name) })),
+		await readManifest(layout.seedManifestFile),
+		layout.seedManifestFile,
+	);
+	return [...result.written, ...result.updated].map((key) => key.slice("prompt/".length));
 }
 
 /**
@@ -286,8 +370,8 @@ async function copySeedSkills(from: string, skillsRoot: string): Promise<readonl
 	const copied: string[] = [];
 	for (const entry of await listDirSorted(from)) {
 		if (entry.kind !== "dir") continue;
-		const written = await copySkillDir(join(from, entry.name), skillsRoot);
-		copied.push(written.name);
+		const result = await copySkillDir(join(from, entry.name), skillsRoot);
+		if (result.copied) copied.push(result.name);
 	}
 	return copied;
 }

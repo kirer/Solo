@@ -242,7 +242,7 @@ type ViewMessage = {
   from: number;          // 会话号；我是 0
   fromSlug: string;
   fromLabel: string;
-  kind: "chat" | "note"; // 发言 / 系统留痕。旧数据的 kind 在投影层已归一（ADR-061）
+  kind: "chat" | "note"; // 发言 / 系统留痕。旧数据的 kind 由频道文档 v2 迁移归一（ADR-085）
   noteOf?: "run" | "route"; // 系统留痕的种类：run = 后台命令跑完（收成一行）；route = 助理的一次后台分发（不画）
   text: string;
   mentions: { id: number, label: string, read: boolean, offset: number }[];
@@ -273,9 +273,10 @@ type ViewMessage = {
 - `options` 同理：没有选项就没有这个键。**回答不另开接口**：我发的下一条普通消息就是回答
   （`replyTo` 指向这条）。界面按「最后一条带 `options` 的消息、且它之后我没说过话」判定
   还在等我（`ui/app/src/composer/choice.ts` 的 `pendingChoice`，纯函数）。
-- `kind` 读出来只有 `"chat"` / `"note"` 两种。历史库里的旧标签在投影层归一
-  （ADR-061）：语义标签（`say` / `question` …）算 `chat`，过程行（`think` / `tool` /
-  `work` / `step`）算 `note`。前端 `buildRows()` 只画 `chat` 与带 `noteOf` 的 `note`。
+- `kind` 读出来只有 `"chat"` / `"note"` 两种。历史库里的旧标签由频道文档 v2 迁移
+  （`migrateMessages`，ADR-085）落成这两种：语义标签（`say` / `question` …）→ `chat`，
+  过程行（`think` / `tool` / `work` / `step`）→ `note`。前端 `buildRows()` 只画 `chat`
+  与带 `noteOf` 的 `note`。
   消息上**没有** `status` / `pendingFor` / `processing` / `startedAt` 这些过程字段，
   占位（pending / processing）整套已经删了。
 - 频道不存在 → 404 `{ error: "频道不存在或无权查看" }`。
@@ -287,7 +288,6 @@ type ViewMessage = {
 {
   text: string,          // 必填，trim 后不能为空（除非带附件）
   replyTo?: number,      // 引用回复的 seq
-  from?: string,         // 发件人 slug；**默认忽略**，只有当进程里设了 SOLO_DEBUG_FROM=1 才生效
   attachments?: (string | { id: string })[]
                          // 附件 id（先 POST /api/uploads 拿）。两种写法等价：
                          // `["<id>"]` 适合脚本，`[{ id }]` 是前端写法。
@@ -298,8 +298,8 @@ type ViewMessage = {
 
 - `text` 为空 → 400；**只有当消息带附件时才可以空**（服务端补一行占位正文，例如
   `[图片] 宽图.png`）。
-- 发件人**默认只认我**。这个接口是网页后端，能冒充任何人是审计里的 P0-4；调试要伪造
-  身份时需显式开 `SOLO_DEBUG_FROM=1`（启动日志会警告一行）。
+- 发件人**只认我**。这个接口是网页后端，能冒充任何人是审计里的 P0-4；请求体里的
+  `from` 不读，也没有调试开关。
 - 频道不存在 → 404。附件 id 对不上（被清理过）→ 400「附件不存在（可能已经被清理），
   重新发一次」。
 - 这个接口只写发言（`chat`），不接 `kind`：系统留痕（`note`）只由内核自己写。
@@ -308,8 +308,8 @@ type ViewMessage = {
 - 前端拿到响应后不要自己插一条消息，等 SSE 推新快照（不制造一条假消息）。
 
 这里**没有**过程投影的 `kind` 了（`think` / `tool` / `say` 投影 / `work`）：运行时不再
-订阅会话提交往频道里写思考或工具卡。历史库里的这些消息还在，投影层把过程行归一成
-`note`、语义旧标签归一成 `chat`（ADR-061）。
+订阅会话提交往频道里写思考或工具卡。历史库里的这些消息还在，第一次读到旧版频道文档时
+由 v2 迁移把过程行落成 `note`、语义旧标签落成 `chat`（ADR-085）。
 
 ## 7.1 `GET /api/channels/:id/stream`
 

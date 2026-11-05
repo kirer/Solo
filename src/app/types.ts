@@ -95,12 +95,12 @@ export type CoreServices = {
 	 * 重装插件时整份换掉（见 `reloadPlugins`），所以读的人不要把它缓存下来。
 	 * 没有插件时是 `emptyPluginHost`，不是 `undefined` —— 免得每个用到的地方都写分支。
 	 */
-	readonly plugins?: PluginHost;
+	readonly plugins: PluginHost;
 	/**
 	 * 重新装一遍插件（开关 / 装 / 卸 / 改了后端代码都走它，不用重启 —— ADR-026）。
 	 * 装完 `plugins` 就是新的那一份。
 	 */
-	reloadPlugins?(): Promise<void>;
+	reloadPlugins(): Promise<void>;
 	/**
 	 * 两个根的布局：应用私有目录（助理、提示词、插件、配置、库）与用户目录（成员、团队、技能）。
 	 * 用例层要拼路径时**只从这里取**，不要自己 `dirname`。
@@ -134,7 +134,8 @@ export type CoreServices = {
 	/**
 	 * 诊断出口。装配方（`shell/main.ts`）在 `openCore` **之前**就要建好它：底座的
 	 * `onReport` 要往同一个实例里报，两边各建一个就看不到彼此的 `lastReport`。
+	 * 必填：`createApp` 不再自己补一个 —— 补出来的那个收不到底座的报告。
 	 */
-	readonly diag?: Diag;
+	readonly diag: Diag;
 	readonly close: (context?: Context) => Promise<void>;
 };

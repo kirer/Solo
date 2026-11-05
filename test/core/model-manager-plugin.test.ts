@@ -148,12 +148,14 @@ describe("模型管理插件", () => {
 		expect(onDisk.providers[0]!.apiKey).toBe("magpie");
 	});
 
-	it("坏掉的 settings.json 被当成空的，不会把服务带崩", async () => {
+	it("坏掉的 settings.json：回一条 error，不当成空配置", async () => {
+		// 当成空配置会把「文件坏了」显示成「还没配」，人照着空表单存一次就抹掉全部提供商。
 		const { workspace, routes } = await boot();
 		await writeFile(join(workspace, "settings.json"), "{ 不是 JSON", "utf8");
 
 		const body = await call(routeOf(routes, "/api/p/models", "GET"));
-		expect(body["providers"]).toEqual([]);
+		expect(body["providers"]).toBeUndefined();
+		expect(String(body["error"])).toContain("不是合法 JSON");
 	});
 
 	it("保存之后装配层认这一份：加进来的提供商就是会话能用的模型", async () => {

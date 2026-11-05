@@ -62,14 +62,14 @@ export function createFileTool(deps: CoreToolDeps) {
 					if ((await readTeam(deps.layout.teamsRoot, team)) === undefined) {
 						const self = await selfOf(deps, Number(api.conversationId), ctx);
 						const problem =
-							self === undefined ? t("file.create.no-roster") : createTeamProblem({ self, assistants, ...(deps.text === undefined ? {} : { text: deps.text }) });
+							self === undefined ? t("file.create.no-roster") : createTeamProblem({ self, assistants, text: deps.text });
 						if (problem !== undefined) return text(problem);
 					}
 				}
 				// 新团队一有 README 就有自己的工作目录（团队任务在那儿跑，提示词里给了路径）。
 				if (team !== undefined) await ensureDir(teamWorkspace(deps.layout, team));
 				await writeTextAt(target, content);
-				if (team !== undefined && deps.syncTeam !== undefined) {
+				if (team !== undefined) {
 					try {
 						await deps.syncTeam(team, ctx);
 					} catch (error) {
@@ -83,12 +83,27 @@ export function createFileTool(deps: CoreToolDeps) {
 						);
 					}
 				}
-				if (movedSlug !== undefined && deps.syncTeam !== undefined) {
+				// 身份里的 `team` 改了：新旧两个团队都要重算。失败说清楚 —— 旧频道里会留一个
+				// 已经不属于它的人，界面上看不出来。
+				const warnings: string[] = [];
+				if (movedSlug !== undefined) {
 					for (const slug of new Set([oldTeam, newTeam].filter((item): item is string => item !== undefined && item !== ""))) {
-						await deps.syncTeam(slug, ctx).catch(() => undefined);
+						try {
+							await deps.syncTeam(slug, ctx);
+						} catch (error) {
+							warnings.push(
+								t("file.write.team-sync-failed", {
+									team: slug,
+									error: error instanceof Error ? error.message : String(error),
+								}),
+							);
+						}
 					}
 				}
-				return text(t("file.write.done", { path: args.path, length: content.length }));
+				return text(
+					t("file.write.done", { path: args.path, length: content.length }) +
+						(warnings.length === 0 ? "" : `\n${warnings.join("\n")}`),
+				);
 			}
 
 			const source = await readTextOrUndefined(target);

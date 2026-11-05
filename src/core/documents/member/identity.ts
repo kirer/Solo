@@ -49,12 +49,8 @@ function headerOf(front: Readonly<Record<string, string>>): IdentityHeader {
 	return {
 		...(front.name === undefined ? {} : { name: front.name }),
 		...(front.title === undefined ? {} : { title: front.title }),
-		// 迁移窗口：老工作区还写着 `project:`，改名后仍认它（`scripts/rename-teams.ts` 会改写）。
-		...(front.team === undefined
-			? front.project === undefined
-				? {}
-				: { team: front.project }
-			: { team: front.team }),
+		// 旧键 `project:` 由启动迁移（`shell/migrate.ts`）改写，读的时候只认 `team:`。
+		...(front.team === undefined ? {} : { team: front.team }),
 	};
 }
 

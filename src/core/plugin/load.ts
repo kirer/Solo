@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ToolRegistration } from "../runtime/index.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
-import type { FlowPolicy } from "../channel/types.ts";
+import type { FlowPolicy, Message } from "../channel/types.ts";
 import { createPluginApi, emptySinks, type PluginListener, type PluginRouteSpec, type PluginScope } from "./api.ts";
 import { listPluginSlugs, readPluginManifest } from "./manifest.ts";
 
@@ -66,12 +66,20 @@ export type LoadOptions = {
 	readonly logsRoot: string;
 	/** 这个频道的工作区（插件 `api.scope` 的实现）。不给就只有「没有」。 */
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
+	/**
+	 * 已经有人用的工具名（核心那八个）。插件注册同名工具 = 整个插件不装，
+	 * 不是「后者覆盖前者」—— 同名工具被静默替换，模型完全看不出来。
+	 */
+	readonly reservedTools?: readonly string[];
 	/** 一行一个事件的出口（默认 `console.log`）。 */
 	readonly log?: (line: string) => void;
+	/** 运行中出错（目前只有听消息抛错）的出口；不给就并进 `log`。 */
+	readonly onError?: (line: string) => void;
 };
 
 export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 	const log = options.log ?? ((line: string) => console.log(line));
+	const failed = options.onError ?? log;
 	const tools: ToolRegistration[] = [];
 	const prompt: string[] = [];
 	const routes: PluginRouteSpec[] = [];
@@ -79,6 +87,9 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 	const flow: FlowPolicy[] = [];
 	const plugins: PluginSummary[] = [];
 	const errors: string[] = [];
+	/** 工具名 → 谁先用（核心 / 插件 slug）。插件之间也不能重名。 */
+	const claimed = new Map<string, string>();
+	for (const name of options.reservedTools ?? []) claimed.set(name, "核心");
 
 	for (const slug of await listPluginSlugs(options.pluginsRoot)) {
 		const read = await readPluginManifest(options.pluginsRoot, slug);
@@ -132,6 +143,21 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 					...(options.scope === undefined ? {} : { scope: options.scope }),
 				}),
 			);
+			// 工具名先全部核一遍，全过才登记：装一半的插件不占用名字，也不进注册表。
+			const names: string[] = [];
+			for (const tool of sinks.tools) {
+				const name = (tool as { name?: string }).name;
+				if (name === undefined || name === "") continue;
+				if (names.includes(name)) throw new Error(`工具名 ${name} 在同一个插件里注册了两次`);
+				const owner = claimed.get(name);
+				if (owner !== undefined) {
+					throw new Error(
+						owner === "核心" ? `工具名 ${name} 和核心工具重名` : `工具名 ${name} 和插件「${owner}」重名`,
+					);
+				}
+				names.push(name);
+			}
+			for (const name of names) claimed.set(name, slug);
 		} catch (error) {
 			const reason = `${slug}：${error instanceof Error ? error.message : String(error)}`;
 			errors.push(reason);
@@ -143,7 +169,16 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 		tools.push(...sinks.tools);
 		prompt.push(...sinks.prompt);
 		routes.push(...sinks.routes);
-		messages.push(...sinks.messages);
+		// 听消息的钩子也做隔离：一个插件抛错只丢它自己这一条，别的照跑，投递不回滚。
+		messages.push(
+			...sinks.messages.map((listener) => async (message: Message, channelId: string): Promise<void> => {
+				try {
+					await listener(message, channelId);
+				} catch (error) {
+					failed(`[plugin ${slug}] 听消息失败：${error instanceof Error ? error.message : String(error)}`);
+				}
+			}),
+		);
 		flow.push(...sinks.flow);
 		for (const line of sinks.logs) log(`[plugin ${slug}] ${line}`);
 		plugins.push({

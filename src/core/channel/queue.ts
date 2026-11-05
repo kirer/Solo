@@ -5,7 +5,7 @@
  */
 import type { Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { TURN_REPORT_TASK } from "./turn/record.ts";
+import { isBookkeeping } from "./bookkeeping.ts";
 
 /**
  * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。
@@ -92,15 +92,16 @@ export async function liveConversations(
 	const busy = new Set<number>();
 	for (const task of inspection.tasks) {
 		if (task.record.background === true) continue;
-		// 收尾任务是系统账务：它在跑不代表模型在干活。把它算进来会让紧随其后的一条
-		// 消息被当成「插话」，模型只答一句、工具活丢掉（ADR-077）。
-		if (task.record.kind === TURN_REPORT_TASK) continue;
+		// 账务任务（收尾等）：它在跑不代表模型在干活。算进来会让紧随其后的一条消息
+		// 被当成「插话」，模型只答一句、工具活丢掉（ADR-077）。哪些算账务由定义方
+		// 登记（`bookkeeping.ts`），这里不认识具体 kind。
+		if (isBookkeeping(task.record.kind)) continue;
 		// 生成答完不会立刻结束：它要等 `afterRun` 的子任务（收尾）跑完，这一段状态是
-		// `waiting`。等的全是收尾任务，就说明模型已经收手了 —— 和上面同一条理由。
+		// `waiting`。等的全是账务任务，就说明模型已经收手了 —— 和上面同一条理由。
 		if (
 			task.state.kind === "waiting" &&
 			task.state.on.length > 0 &&
-			task.state.on.every((id) => kindOf.get(String(id)) === TURN_REPORT_TASK)
+			task.state.on.every((id) => isBookkeeping(kindOf.get(String(id)) ?? ""))
 		) {
 			continue;
 		}

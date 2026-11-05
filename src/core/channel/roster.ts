@@ -19,7 +19,7 @@ import {
 	type JsonObject,
 	type Tx,
 } from "../runtime/index.ts";
-import { parseWake, type WakeRecord } from "./turn/record.ts";
+import { migrateWake, parseWake, type WakeRecord } from "./turn/record.ts";
 import { OWNER_SLUG } from "../documents/member/identity.ts";
 
 export type { WakeRecord } from "./turn/record.ts";
@@ -41,9 +41,27 @@ export type DirectoryState = {
 	labels: Record<string, string>;
 };
 
+/**
+ * v1 → v2：唤醒记录从平铺改成两层（`reply` / `task`，ADR-099）。
+ *
+ * 读的每一处都要记着「旧形状长什么样」；现在在升版本时归一次，`parseWake` 只认
+ * 两层形状。读不出来的记录（坏数据）直接丢掉 —— 唤醒记录是可重建的缓存，不是档案。
+ */
+function migrateWakes(value: JsonObject, fromVersion: number): DirectoryState {
+	if (fromVersion >= 2) return value as unknown as DirectoryState;
+	const state = value as unknown as DirectoryState;
+	const wake: Record<string, JsonObject> = {};
+	for (const [id, raw] of Object.entries(state.wake ?? {})) {
+		const record = migrateWake(raw);
+		if (record !== undefined) wake[id] = { reply: { ...record.reply }, task: { ...record.task } };
+	}
+	return { ...value, wake } as unknown as DirectoryState;
+}
+
 export const DirectoryDoc = defineDoc<DirectoryState>({
 	kind: "core.directory",
-	version: 1,
+	version: 2,
+	migrate: migrateWakes,
 	scope: "session",
 	initial: () => ({ slugToConversation: {}, conversationToSlug: {}, wake: {}, labels: {} }),
 	// 名册也是「每次改动都是增量」的文档：`wake` 每次有人被叫醒就写一次，`labels` 每次
@@ -62,11 +80,7 @@ export function labelIn(directory: DirectoryState, slug: string): string {
 	return directory.labels[slug] ?? slug;
 }
 
-/**
- * 读一次唤醒（`wake` 的值类型是 `JsonObject`，读的时候收窄）。
- *
- * 旧数据是平铺的一层，`parseWake` 会把它的 `reply` / `task` 都当成同一条。
- */
+/** 读一次唤醒（`wake` 的值类型是 `JsonObject`，读的时候收窄；旧形状在 v2 迁移时已归好）。 */
 export function wakeOf(state: DirectoryState, conversationId: number | string): WakeRecord | undefined {
 	return parseWake(state.wake[String(conversationId)]);
 }
@@ -98,22 +112,6 @@ export function plainDirectory(source: DirectoryState): DirectoryState {
 	return JSON.parse(json) as DirectoryState;
 }
 
-/**
- * 落盘的名册 + 这次运行里真实开过的会话。
- *
- * 名册是缓存，真相是文件夹与「这次运行开出来的会话」。落盘那份可能落后（旧库、丢过写、
- * 上一版只写了内存），所以读的时候**内存优先**：只要这次运行里给他开过会话，他就是那个人。
- * 只在读的时候合并不够 —— 缺的那条会被下一次提交原样写到盘上，所以调用方还要顺手回写。
- */
-export function mergeDirectory(base: DirectoryState, live: DirectoryState): DirectoryState {
-	return {
-		slugToConversation: { ...base.slugToConversation, ...live.slugToConversation },
-		conversationToSlug: { ...base.conversationToSlug, ...live.conversationToSlug },
-		wake: base.wake,
-		labels: { ...base.labels, ...live.labels },
-	};
-}
-
 /** 这次运行里开过的这条会话的 id（没有就 `undefined`）。 */
 function liveConversationId(
 	live: (() => ReadonlyMap<string, Conversation>) | undefined,
@@ -129,8 +127,8 @@ function liveConversationId(
  * 投递、我说话两条路以前各写一份闭包，两份的读法还不完全一样
  * （有人先查内存会话表、有人只查文档）。现在只有这一份。
  *
- * `live`：装配期内存里的会话表。名册是异步落盘的，刚 `hire` 出来的人可能还没写进去，
- * 先查内存才不会把「新招的人」静默算成「没有人」。
+ * `live`：装配期内存里的会话表。会话开出来就 `bind` 进名册，所以它只是快路径；
+ * 盘上那条真的丢了时（旧库、手工清过），它也是让这个人还能被叫醒的最后一份证据。
  */
 export function directoryWake(deps: {
 	readonly harness: Harness;
@@ -151,9 +149,8 @@ export function directoryWake(deps: {
 } {
 	const writeWake = async (tx: Tx, slug: string, wake: WakeRecord): Promise<void> => {
 		const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-		// 先看这份运行里的会话表，再看文档。
-		// 文档可能落后（实测：三个人的映射只活在内核内存里，落盘那份只有助理，
-		// 于是他们的工具全被拒「你还不在名册里」，叫醒也记不上）。内存里有会话就是人。
+		// 文档是名册的真相；只有它丢了这条映射时才退回这次运行开过的会话，
+		// 并把映射补进文档（下一次提交不能再把缺人的那份写回去）。
 		const id = conversationFor(doc, slug) ?? liveConversationId(deps.live, slug);
 		if (id === undefined) return;
 		// 文档里缺这条就顺手补上：只读不补的话，下一次提交还会把缺人的那份写回去。

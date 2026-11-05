@@ -176,7 +176,12 @@ describe("run 工具的 background 分支", () => {
 				...emptyDirectory(),
 				slugToConversation: { [me]: conversation },
 				conversationToSlug: { [String(conversation)]: me },
-				wake: { [String(conversation)]: { channelId, seq: 1, from: OWNER, at: 2 } },
+				wake: {
+					[String(conversation)]: {
+						reply: { channelId, seq: 1, from: OWNER, at: 2 },
+						task: { channelId, seq: 1, from: OWNER, at: 2 },
+					},
+				},
 			}),
 			saveDirectory: async () => undefined,
 			wiring: wireChannel({ harness: runtime.harness, layout: box.layout }),

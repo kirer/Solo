@@ -9,8 +9,8 @@
  * 底座问每个选了 `core-tools` 的会话要「收尾任务」，把任务写成这一轮 generation 的
  * 子任务；进程重启后任务还在，`assembleCore` 的 `resume()` 会把它跑完。
  *
- * 任务只做一件事：调传进来的 `finishTurn`。收尾本身是幂等的（同文判据），所以在
- * 「消息落了、终态还没提交」的窗口里重放不会双发。
+ * 任务只做一件事：调传进来的 `finishTurn`，把它的结果落成终态。收尾幂等（按答案条目 id
+ * 判重），所以在「消息落了、终态还没提交」的窗口里重放不会双发；补发失败则终态记 failed。
  */
 import {
 	defineTask,
@@ -78,7 +78,7 @@ export function createTurnReport(finishTurn: FinishTurn): {
 				const reader: EntryReader = {
 					entries: (query, limit, cursor, ctx) => runtime.entries(query, limit, cursor, ctx),
 				};
-				await finishTurn(
+				const result = await finishTurn(
 					{
 						slug: running.input.slug,
 						conversation: reader,
@@ -87,11 +87,19 @@ export function createTurnReport(finishTurn: FinishTurn): {
 					},
 					context,
 				);
+				// 补发失败要把这件任务记成 failed：报 completed 的话，「那一轮补没补上」
+				// 在任务表里永远查不出来，只能去翻 console。
 				await runtime.commit(
-					() => ({
-						status: "terminal",
-						outcome: { status: "completed", result: { answer: running.input.answer } },
-					}),
+					() =>
+						result.kind === "failed"
+							? {
+									status: "terminal",
+									outcome: { status: "failed", error: { message: result.error } },
+								}
+							: {
+									status: "terminal",
+									outcome: { status: "completed", result: { answer: running.input.answer } },
+								},
 					context,
 				);
 			},

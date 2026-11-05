@@ -54,6 +54,8 @@ const ALLOWED = [
 	"`[投递通报失败] ",
 	"`[wake] ",
 	"throw new Error",
+	// 策略失败进诊断出口（`FlowReport` → diag），是运维诊断，不是给模型的话。
+	'failed("policy"',
 	// 上传超限的异常文案：走 HTTP 错误码，不是给模型的。
 	"super(`附件超过上限",
 	// 附件没有文件名时的兜底显示名。

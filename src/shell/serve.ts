@@ -164,10 +164,6 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	// 团队目录被删不会提交任何文档：盯住 teams/，变了立刻对账。
 	const stopTeamReconcile = startTeamReconcile(shell);
 
-	if (process.env.SOLO_DEBUG_FROM === "1") {
-		console.warn("[core] 警告：from 可伪造（SOLO_DEBUG_FROM=1），只用于本机调试");
-	}
-
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);
 		server.listen(actualPort, boundHost, () => {

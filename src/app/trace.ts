@@ -10,6 +10,7 @@
  *    界面上每个数字都要有出处（AGENTS §2 第 6 条）。
  */
 import type { EntryRecord } from "../core/runtime/index.ts";
+import { coreToolTraces, type ToolTrace } from "../core/channel/tools/index.ts";
 import type { ViewStep, ViewTurn } from "../view/dto.ts";
 
 /** 单轮步骤上限。超出的截断并在轮上标 `truncated`。 */
@@ -111,60 +112,27 @@ function resultText(content: unknown): string {
 	return parts.join("\n");
 }
 
-/** `file` 的默认动作和工具本身一致：给了正文就是写（模型常漏 action）。 */
-function fileActionOf(args: Json): "read" | "write" {
-	const action = asString(args["action"]) ?? (args["content"] === undefined ? "read" : "write");
-	return action === "write" ? "write" : "read";
-}
+/** 没有注册表时的默认轨迹表（核心工具）。测试与纯函数调用走这一份。 */
+const DEFAULT_TRACES = coreToolTraces();
 
-/** 这个工具调用在这一行上怎么写。 */
-function titleOf(name: string, args: Json): string {
-	switch (name) {
-		case "run": {
-			const command = asString(args["command"]) ?? "";
-			return `运行 ${command}`;
-		}
-		case "file": {
-			const path = asString(args["path"]) ?? "";
-			return fileActionOf(args) === "write" ? `写了 ${path}` : `读了 ${path}`;
-		}
-		case "chats":
-			return "翻了频道记录";
-		case "read_history":
-			return "读了更早的消息";
-		case "remember":
-			return "记了一条";
-		case "hire": {
-			const action = asString(args["action"]) ?? "create";
-			if (action === "models") return "看了可用模型";
-			const who = asString(args["name"]) ?? asString(args["slug"]) ?? "一个人";
-			return action === "fire" ? `开除了 ${who}` : `招了 ${who}`;
-		}
-		default:
-			return name;
-	}
-}
-
-/** 不知道 / 不该画成步骤的工具返回 `undefined`（`say` 就是：它是消息，不是过程）。 */
-function kindOf(name: string, args: Json): ViewStep["kind"] | undefined {
-	switch (name) {
-		case "run":
-			return "run";
-		case "file":
-			return fileActionOf(args) === "write" ? "file-write" : "file-read";
-		case "say":
-			return undefined;
-		case "chats":
-			return "chats";
-		case "read_history":
-			return "history";
-		case "remember":
-			return "remember";
-		case "hire":
-			return "hire";
-		default:
-			return "tool";
-	}
+/**
+ * 这一步画成什么。
+ *
+ * 展示由工具自己在注册时声明（`core/channel/tools/presentation.ts`），这里只查表 ——
+ * 加工具、改工具的画法都不用回来改投影。没声明过的（插件工具）退回原名：
+ * 不认识不等于不该画。`kind === undefined` 的工具不进过程（`say`：说话就是消息本身）。
+ */
+function stepOf(
+	name: string,
+	args: Json,
+	traces: ReadonlyMap<string, ToolTrace>,
+): { readonly kind: ViewStep["kind"] | undefined; readonly title: string } {
+	const shown = traces.get(name)?.(args);
+	if (shown === undefined) return { kind: "tool", title: name };
+	// 领域的 `TraceKind` 必须能赋给契约层的 `ViewStep["kind"]`；多出一种界面不认识的
+	// 种类，这一行就编不过。
+	const kind: ViewStep["kind"] | undefined = shown.kind;
+	return { kind, title: shown.title };
 }
 
 export type TurnFacts = {
@@ -190,7 +158,11 @@ export type TurnFacts = {
  * `entries` 必须是**这一轮自己的**条目（从触发它的 `core.channel` 之后到下一条之前），
  * 切分在 `read.ts` 做 —— 那里才知道频道文档里哪条消息唤醒了谁。
  */
-export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): ViewTurn {
+export function buildTurn(
+	entries: readonly EntryRecord[],
+	facts: TurnFacts,
+	traces: ReadonlyMap<string, ToolTrace> = DEFAULT_TRACES,
+): ViewTurn {
 	const steps: ViewStep[] = [];
 	/** toolCallId → 步骤下标。工具结果回来时按它并进前一个调用。 */
 	const open = new Map<string, number>();
@@ -240,27 +212,27 @@ export function buildTurn(entries: readonly EntryRecord[], facts: TurnFacts): Vi
 					const name = asString(item["name"]) ?? "tool";
 					const callId = asString(item["id"]) ?? `${String(entry.id)}:${String(steps.length)}`;
 					const args = asObject(item["arguments"]) ?? {};
-					const kind = kindOf(name, args);
+					const shown = stepOf(name, args, traces);
 					// `say` 落成频道里的消息：说话不进过程。
-					if (kind === undefined) continue;
+					if (shown.kind === undefined) continue;
 					const step: ViewStep = {
 						id: callId,
-						kind,
-						title: titleOf(name, args),
+						kind: shown.kind,
+						title: shown.title,
 						status: "running",
 					};
-					if (kind === "run") step.command = asString(args["command"]) ?? "";
-					if (kind === "file-read" || kind === "file-write") step.path = asString(args["path"]) ?? "";
-					if (kind === "file-write") {
+					if (shown.kind === "run") step.command = asString(args["command"]) ?? "";
+					if (shown.kind === "file-read" || shown.kind === "file-write") step.path = asString(args["path"]) ?? "";
+					if (shown.kind === "file-write") {
 						const content = asString(args["content"]) ?? "";
 						step.added = content === "" ? 0 : content.split("\n").length;
 						step.text = clipText(content, MAX_TEXT).text;
 					}
-					if (kind === "remember") {
+					if (shown.kind === "remember") {
 						const text = asString(args["text"]) ?? "";
 						if (text !== "") step.text = clipText(text, MAX_TEXT).text;
 					}
-					if (kind === "tool") step.tool = name;
+					if (shown.kind === "tool") step.tool = name;
 					if (stamp !== undefined) step.startedAt = stamp;
 					push(step);
 					open.set(callId, steps.length - 1);

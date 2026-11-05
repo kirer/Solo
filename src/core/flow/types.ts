@@ -42,6 +42,8 @@ export type PublishInput = {
 	readonly attachments?: readonly Attachment[];
 	/** 要我选的选项（2–6 个）。落库、进界面，投递照常。 */
 	readonly options?: readonly string[];
+	/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
+	readonly sourceEntry?: string;
 };
 
 /** 一条系统留痕：不叫醒、不计未读。 */
@@ -129,7 +131,16 @@ export type FinishTurnInfo = {
 	readonly wake: WakeRecord;
 };
 
-export type FinishTurn = (info: FinishTurnInfo, context: Context) => Promise<void>;
+/** 一次收尾的结果：补发了哪条、为什么没补、或者补发失败（后者要进 durable 终态）。 */
+export type SettleResult =
+	| { readonly kind: "reposted"; readonly message: Message }
+	| {
+			readonly kind: "silent";
+			readonly reason: "no-entry" | "pass" | "no-target" | "not-member" | "duplicate" | "unanswered";
+	  }
+	| { readonly kind: "failed"; readonly error: string };
+
+export type FinishTurn = (info: FinishTurnInfo, context: Context) => Promise<SettleResult>;
 
 /**
  * 一次结算。两种来源，一个入口：

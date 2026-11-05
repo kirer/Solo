@@ -100,7 +100,7 @@ export function appendMessage(
 		readonly from: string;
 		readonly text: string;
 		readonly at: number;
-		readonly kind?: string;
+		readonly kind?: Message["kind"];
 		/** 留痕的种类（`run` = 后台命令跑完），只对 `note` 有意义。 */
 		readonly noteOf?: string;
 		readonly replyTo?: number;
@@ -112,6 +112,8 @@ export function appendMessage(
 		readonly attachments?: readonly Attachment[];
 		/** 要我选的选项。空数组按「没有选项」处理。 */
 		readonly options?: readonly string[];
+		/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
+		readonly sourceEntry?: string;
 	},
 ): { readonly state: ChannelState; readonly message: Message } {
 	const channel = state.channels[channelId];
@@ -158,6 +160,7 @@ export function appendMessage(
 					})),
 				}),
 		...(input.options === undefined || input.options.length === 0 ? {} : { options: [...input.options] }),
+		...(input.sourceEntry === undefined ? {} : { sourceEntry: input.sourceEntry }),
 	};
 
 	return {

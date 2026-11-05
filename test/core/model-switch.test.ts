@@ -90,15 +90,14 @@ describe("改了 settings.json：每个 agent 都跟着换模型", () => {
 		});
 	});
 
-	it("默认模型指向已经删掉的那一家：装配回落到剩下的一家，不是全员没模型", async () => {
+	it("默认模型指向已经删掉的那一家：装配报错，不偷偷换一只", async () => {
 		const box = await pool.make("core-model-switch-");
 		await person(box, "甲");
 
-		// 手改 settings.json 才会出现（插件保存时会挡下来），但文件是给人改的，这条得兜住。
+		// 手改 settings.json 才会出现（插件保存时会挡下来）。换一只顶上更糟：
+		// 人以为在用 A，实际每轮都在用 B。报错里列出可选的那几只，改一行就好。
 		await settings(box, [other(["m-three"])], "magpie/m-two");
-		const setup = setupModels({}, { workspace: box.root });
-		expect(setup.defaultModel).toEqual({ provider: "other", modelId: "m-three" });
-		expect(await modelsAfterRestart(box, setup)).toEqual({ 甲: "other/m-three" });
+		expect(() => setupModels({}, { workspace: box.root })).toThrow(/magpie\/m-two.*other\/m-three/);
 	});
 
 	it("providers 被删空：一个模型都不剩，老会话引用的那只也不存在了", async () => {

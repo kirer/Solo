@@ -23,30 +23,30 @@ export type CoreToolDeps = {
 	readonly layout: Layout;
 	/**
 	 * 文案目录（`<appRoot>/text/`）：工具描述、参数说明、拒绝话术全在里面。
-	 * 缺省 = 空目录（测试与老工作区），此时工具只剩机械行为，不会抛。
+	 *
+	 * 必填：缺了它工具只剩键名，模型读到的全是 `hire.fire.done` 这种字符串 ——
+	 * 宁可装配时报错，也不要上线后才发现（`main.ts` 启动前会先验一遍）。
 	 */
-	readonly text?: TextCatalog;
+	readonly text: TextCatalog;
 	/** 读名册（slug ↔ 会话）。 */
 	readonly directory: (context: Context) => Promise<DirectoryState>;
 	/** 落一次名册变更。 */
 	readonly saveDirectory: (change: (state: DirectoryState) => DirectoryState, context: Context) => Promise<void>;
-	/** 为某个 slug 建会话并绑定。缺省表示不支持热建（测试里可以不提供）。 */
-	readonly openAgent?: (slug: string, context: Context) => Promise<number>;
+	/** 为某个 slug 建会话并绑定。 */
+	readonly openAgent: (slug: string, context: Context) => Promise<number>;
 	/** 按团队文件重建它的频道成员（幂等）。 */
-	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
+	readonly syncTeam: (team: string, context: Context) => Promise<void>;
 	/**
 	 * 叫这几个刚进团队频道的人自己报到（一条系统留痕，ADR-042）。
 	 *
 	 * 招人走这条：`openAgent` 会顺手把人加进频道，等 `syncTeam` 时「新进的」已经算没了，
 	 * 所以招人自己说「谁刚进来」。
 	 */
-	readonly announceJoin?: (team: string, slugs: readonly string[], context: Context) => Promise<void>;
-	/** 保证这个人有「我 ↔ 他」的私聊（幂等）。缺省表示不支持（测试里可以不提供）。 */
-	readonly ensureDm?: (slug: string, context: Context) => Promise<void>;
+	readonly announceJoin: (team: string, slugs: readonly string[], context: Context) => Promise<void>;
 	/** 现在能挑的模型与默认值（招人时按角色分）。 */
-	readonly modelChoices?: () => Promise<{ readonly models: readonly string[]; readonly default?: string }>;
+	readonly modelChoices: () => Promise<{ readonly models: readonly string[]; readonly default?: string }>;
 	/** 给某个人定模型（校验 → 改会话 → 记进 settings.json）。 */
-	readonly setModel?: (slug: string, ref: string, context: Context) => Promise<{ readonly model: string }>;
+	readonly setModel: (slug: string, ref: string, context: Context) => Promise<{ readonly model: string }>;
 	/**
 	 * 频道层接线：投递门面（`wiring.flow`）与会话在哪、答完怎么收尾。
 	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、我说话共用。

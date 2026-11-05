@@ -7,12 +7,22 @@
  */
 import type { Context, Harness } from "../../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../../core/runtime/index.ts";
-import { ChannelDoc, OWNER, chatKind, type ChannelState, type FlowPolicy, type Message } from "../../core/channel/types.ts";
+import {
+	ChannelDoc,
+	OWNER,
+	chatKind,
+	teamOfChannel,
+	type ChannelState,
+	type FlowPolicy,
+	type Message,
+} from "../../core/channel/types.ts";
 import { readIdentity } from "../../core/documents/member/identity.ts";
 import { readTeam } from "../../core/documents/team/doc.ts";
 import { teamWorkspace, workspaceOf, type Layout } from "../../core/layout.ts";
 import { emptyPluginHost, loadPlugins, type PluginHost } from "../../core/plugin/index.ts";
 import type { PluginScope } from "../../core/plugin/api.ts";
+import { coreToolNames } from "../../core/channel/tools/index.ts";
+import type { FlowReport } from "../../core/flow/ports.ts";
 
 export type PluginWire = {
 	host(): PluginHost;
@@ -29,6 +39,8 @@ export type PluginWire = {
 export function createPluginWire(deps: {
 	readonly harness: Harness;
 	readonly layout: Layout;
+	/** 运行中出错的出口（装配层接到 diag）。不给就只留 console。 */
+	readonly report?: FlowReport;
 }): PluginWire {
 	let host = emptyPluginHost(deps.layout.pluginsRoot);
 	const options = () => ({
@@ -36,7 +48,13 @@ export function createPluginWire(deps: {
 		workspace: deps.layout.appRoot,
 		logsRoot: deps.layout.logsRoot,
 		scope: (channelId: string) => channelScope(deps.harness, deps.layout, channelId),
-		log: (line: string) => console.log(`[plugin] ${line}`),
+		// 插件不能和核心工具重名：重名等于把 `say` 换成了别人写的同名函数。
+		reservedTools: coreToolNames(),
+		log: (line: string) => console.log(line),
+		onError: (line: string) => {
+			if (deps.report === undefined) console.warn(`[plugin] ${line}`);
+			else deps.report("plugin", line);
+		},
 	});
 
 	async function load(): Promise<void> {
@@ -50,8 +68,8 @@ export function createPluginWire(deps: {
 		load,
 		reload: load,
 		afterPublish: async (message, channelId) => {
-			// 并发跑、全部 settled —— 一个插件抛错不该让别的插件不跑，也不该让投递变慢。
-			await Promise.allSettled(host.messages.map(async (listener) => listener(message, channelId)));
+			// 并发跑。单条的抛错已经在装载时包成了日志（`load.ts`），这里不会互相拖垮。
+			await Promise.all(host.messages.map(async (listener) => listener(message, channelId)));
 		},
 		policies: () => host.flow,
 	};
@@ -83,8 +101,8 @@ async function channelScope(
 			label: identity.name ?? other,
 		};
 	}
-	if (!channel.id.startsWith("team:")) return undefined;
-	const team = channel.id.slice("team:".length);
+	const team = teamOfChannel(channel.id);
+	if (team === undefined) return undefined;
 	const doc = await readTeam(layout.teamsRoot, team);
 	return {
 		kind: "group" as const,

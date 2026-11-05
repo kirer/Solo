@@ -46,7 +46,7 @@ export function createPublish(ports: PublishPorts): (input: PublishInput, ctx: C
 			// `wakeTo` 是最高优先级：系统知道该叫谁，就不再问策略。
 			const plan =
 				input.wakeTo === undefined
-					? await resolvePlan(routeFactsOf(snapshot.state, channel, message), ports.routers, ctx)
+					? await resolvePlan(routeFactsOf(snapshot.state, channel, message), ports.routers, ctx, ports.report)
 					: { targets: [...input.wakeTo], reason: "wakeTo" };
 			const checked = validatePlan(plan, channel, message);
 			if (checked.targets.length === 0) return empty();

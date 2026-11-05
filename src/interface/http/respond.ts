@@ -74,7 +74,8 @@ export async function readJson<T>(
 	try {
 		return JSON.parse(text) as T;
 	} catch {
-		return {} as T;
+		// 静默当成 `{}` 会让「字段没生效」看起来像业务拒绝：调用方永远查不到是正文坏了。
+		throw new HttpError(400, "正文不是合法 JSON");
 	}
 }
 

@@ -53,7 +53,7 @@ export function createPlugins(services: CoreServices) {
 	 * 目录里有、这次没装的（新建的、关掉的、装失败的）也列出来 —— 它们正是人要知道的。
 	 */
 	const rows = async (): Promise<readonly ViewPlugin[]> => {
-		const loaded = new Map((services.plugins?.plugins ?? []).map((plugin) => [plugin.slug, plugin]));
+		const loaded = new Map((services.plugins.plugins).map((plugin) => [plugin.slug, plugin]));
 		const slugs = [...new Set([...(await listPluginSlugs(pluginsRoot)), ...loaded.keys()])].sort();
 		return Promise.all(
 			slugs.map(async (slug) => {
@@ -95,21 +95,21 @@ export function createPlugins(services: CoreServices) {
 		async setEnabled(slug: string, enabled: boolean): Promise<readonly ViewPlugin[]> {
 			if (!isSafeName(slug)) throw new Error(`插件名不合法：${slug}`);
 			await writePluginEnabled(pluginsRoot, slug, enabled);
-			await services.reloadPlugins?.();
+			await services.reloadPlugins();
 			return rows();
 		},
 
 		/** 装一个插件：把选中的那个文件夹整份搬进 `plugins/<slug>/`，装完就跑。 */
 		async install(slug: string, files: readonly PluginFile[]): Promise<readonly ViewPlugin[]> {
 			await installPluginFiles(pluginsRoot, slug, files);
-			await services.reloadPlugins?.();
+			await services.reloadPlugins();
 			return rows();
 		},
 
 		/** 删掉一个插件，连同它的代码。**不可恢复**，界面负责二次确认。 */
 		async remove(slug: string): Promise<readonly ViewPlugin[]> {
 			await removePluginFolder(pluginsRoot, slug);
-			await services.reloadPlugins?.();
+			await services.reloadPlugins();
 			return rows();
 		},
 
@@ -121,13 +121,13 @@ export function createPlugins(services: CoreServices) {
 		 */
 		async clientScript(slug: string): Promise<string | undefined> {
 			if (!isSafeName(slug)) return undefined;
-			const plugin = services.plugins?.plugins.find((item) => item.slug === slug);
+			const plugin = services.plugins.plugins.find((item) => item.slug === slug);
 			if (plugin === undefined || !plugin.enabled || plugin.client === undefined) return undefined;
 			return readTextOrUndefined(join(pluginsRoot, slug, "client.js"));
 		},
 
 		routes(): readonly AppPluginRoute[] {
-			return (services.plugins?.routes ?? []).map((route) => ({
+			return (services.plugins.routes).map((route) => ({
 				method: route.method,
 				pattern: route.pattern,
 				run: (input) =>

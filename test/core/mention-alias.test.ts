@@ -6,7 +6,7 @@
  * 真名在 `recipientsOf` 的成员过滤里被静默丢弃。
  */
 import { describe, expect, test } from "vitest";
-import { OWNER, type ChannelState } from "../../src/core/channel/types.ts";
+import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { EMPTY_ROSTER, mentionRosterOf, parseMentions, recipientsOf, resolveMention, type MentionAgent } from "../../src/core/channel/mentions.ts";
 import { appendMessage, ensureChannel, speakerBefore } from "../../src/core/channel/rules.ts";
 
@@ -88,19 +88,26 @@ describe("parseMentions：垃圾 token 不再进 mentions", () => {
 	});
 });
 
-describe("recipientsOf：老数据兜底", () => {
-	test("成员表里是 owner，老消息里存的是「我」→ 我被叫醒", () => {
-		const state = channelWith([OWNER, "知言"]);
-		const { message } = appendMessage(state, "all", {
-			from: "知言",
-			text: "@我 这件事要你定",
-			at: 1,
-		});
-		// 这条模拟老数据：mentions 里存的是字面 token。
-		const legacy = { ...message, mentions: ["我"] };
-		expect(recipientsOf(state.channels.all!, legacy)).toEqual([OWNER]);
+describe("频道文档 v2 迁移：老数据归一到两种 kind + 规范 slug", () => {
+	test("旧 kind 归一；字面「我」归一成 owner", () => {
+		const legacy = {
+			channels: {},
+			messages: {
+				all: [
+					{ seq: 1, from: "知言", at: 1, text: "@我 这件事要你定", mentions: ["我"], kind: "say" },
+					{ seq: 2, from: "知言", at: 2, text: "跑测试", mentions: [], kind: "work" },
+				],
+			},
+			nextSeq: { all: 3 },
+			readMarks: {},
+		};
+		const migrated = ChannelDoc.definition.migrate?.(legacy, 1) as ChannelState;
+		expect(migrated.messages.all?.map((message) => message.kind)).toEqual(["chat", "note"]);
+		expect(migrated.messages.all?.[0]?.mentions).toEqual([OWNER]);
 	});
+});
 
+describe("recipientsOf", () => {
 	test("写带名册的 @ 时，落库就是规范 slug", () => {
 		const state = channelWith([OWNER, "知言"]);
 		const { message } = appendMessage(state, "all", {

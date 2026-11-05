@@ -36,8 +36,10 @@ import { createCoreTools, type CoreToolDeps } from "../core/channel/tools/index.
 import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channel/types.ts";
 import { wireChannel } from "../core/channel/wiring.ts";
 import { createTurnReport } from "../core/channel/turn/report.ts";
-import { ensureOwnerDm, type MembershipDeps } from "../core/channel/membership.ts";
+import type { MembershipDeps } from "../core/channel/membership.ts";
+import type { FlowReport } from "../core/flow/ports.ts";
 import { auditHooks } from "../app/audit.ts";
+import { createDiag } from "../app/diag.ts";
 import type { CoreServices } from "../app/types.ts";
 import type { Layout } from "../core/layout.ts";
 import { loadTextCatalog } from "../core/documents/base/catalog.ts";
@@ -69,8 +71,8 @@ type CoreShellOptions = {
 	/** 模型注册表：界面改某个人的模型时要先确认那只模型真的存在。 */
 	readonly models?: CoreServices["models"];
 	/**
-	 * 诊断出口。给了就用它（`openCore` 的 `onReport` 已经往里报）；不给就由 `app/`
-	 * 自己建一个。装配要传入**同一个实例**，否则 `lastReport` 不在那条线上。
+	 * 诊断出口。给了就用它（`openCore` 的 `onReport` 已经往里报）；不给就在装配这里建
+	 * 一个，整个进程只有这一份。装配要传入**同一个实例**，否则 `lastReport` 不在那条线上。
 	 */
 	readonly diag?: CoreServices["diag"];
 	/**
@@ -110,6 +112,16 @@ export async function assembleCore(
 	const layout = options.layout;
 	const conversations = new Map<string, Conversation>();
 	const membership: MembershipDeps = { harness, layout, allChannel };
+	// 整个进程只有这一份诊断出口：底座报告、插件、策略错误都写进同一条线。
+	const diag = options.diag ?? createDiag(layout.logsRoot);
+	/**
+	 * 运行中出错的一条出口：console 留一行（终端能看见），同时进诊断日志（事后能查）。
+	 * 以前插件监听与策略失败只有 console，界面上的症状都是「他就是不回话」。
+	 */
+	const report: FlowReport = (kind, detail) => {
+		console.warn(`[flow] ${detail}`);
+		void diag.record({ kind, entries: detail });
+	};
 
 	// ── 1. 文案与插件 ────────────────────────────────────────────────
 	// 工具描述、参数说明、拒绝话术全在 `<appRoot>/text/` 里（`seed/text/` 播种过来）。
@@ -120,7 +132,7 @@ export async function assembleCore(
 	}
 	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
 	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
-	const pluginWire = createPluginWire({ harness, layout });
+	const pluginWire = createPluginWire({ harness, layout, report });
 	await pluginWire.load();
 
 	// ── 2. 名册、模型、身份 ────────────────────────────────────────
@@ -146,6 +158,7 @@ export async function assembleCore(
 		text,
 		afterPublish: pluginWire.afterPublish,
 		policies: pluginWire.policies,
+		report,
 	});
 
 	let toolsExtension: Extension | undefined;
@@ -188,8 +201,6 @@ export async function assembleCore(
 		syncTeam: (team, ctx) => teamWire.sync(team, ctx),
 		// 招人时 `openAgent` 已经把人加进频道了，「新进的」那条差集算不出来 —— 这里直接点名。
 		announceJoin: (team, slugs, ctx) => teamWire.announce(team, slugs, ctx),
-		// 招进来的人立刻有私聊：他的工作过程在那里看。
-		ensureDm: (slug, ctx) => ensureOwnerDm(membership, slug, ctx),
 		wiring,
 	};
 
@@ -272,7 +283,7 @@ export async function assembleCore(
 		layout,
 		text,
 		allChannel,
-		...(options.diag === undefined ? {} : { diag: options.diag }),
+		diag,
 		// 关两次是正常的（`main.ts` 先关服务、再关运行时）：这里只关一次。
 		close: async (ctx?: Context) => {
 			if (closed) return;

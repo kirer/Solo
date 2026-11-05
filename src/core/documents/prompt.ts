@@ -188,10 +188,7 @@ async function slotsFor(
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);
 
-	// `count` 出厂模板已经不用了，但旧安装的 `prompt/20-position.md` 还在（播种只补缺失文件）。
-	const needsRoster = wants("count", "team", "peers", "assistant");
-	const all = needsRoster ? await readAllIdentities(paths.layout.agentRoots) : [];
-	if (need.has("count")) slots["count"] = all.length;
+	const all = wants("team", "peers", "assistant") ? await readAllIdentities(paths.layout.agentRoots) : [];
 	// 「没有团队 / 没有助理」怎么说归模板（`{{… ?? …}}`），这里只给事实。
 	if (need.has("assistant")) {
 		// 助理是文件夹事实（ADR-058）：自己就是助理时直说，别人看到的是那个能招人的人。
@@ -269,7 +266,7 @@ async function systemTemplates(workspace: string): Promise<readonly PromptTempla
  * 一段的正文。`self` 是已经读过的身份（`undefined` = 还没有身份文件）。
  *
  * 「还没写身份」与「这一段要不要给东西」这两件事只有这一处判断：整段一次渲染
- * （`renderAgentSegments`）与按段渲染（`agentSections`）都走它，否则两边的空段规则
+ * （`renderAgentSection`）与按段渲染（`agentSections`）都走它，否则两边的空段规则
  * 迟早会分叉 —— 分叉的表现是提示词字节变了，缓存被悄悄打穿。
  */
 async function segmentText(
@@ -277,25 +274,60 @@ async function segmentText(
 	paths: AgentPaths,
 	slug: string,
 	self: Identity | undefined,
-	segment: string,
-	templates: readonly PromptTemplate[],
+	template: PromptTemplate,
 ): Promise<string> {
-	if (self === undefined) return segment === "who" ? identitylessPrompt(slug, paths.text) : "";
-	const template = templates.find((item) => item.segment === segment);
-	if (template === undefined) return "";
+	if (self === undefined) return template.segment === "who" ? identitylessPrompt(slug, paths.text) : "";
 	const slots = await slotsFor(registry, paths, slug, self, template);
 	// `skip-empty`：这个事实现在没有 → 整段消失（不写「规矩：（未设置）」，那会被当成许可）。
 	if (template.skipEmpty !== undefined && !hasSlot(slots, template.skipEmpty)) return "";
 	const rendered = renderSlots(template.body, slots);
 	for (const issue of rendered.issues) {
 		console.warn(
-			`[core] 提示词插槽没填上：${slug} 的 ${segment} 段 {{${issue.slot}}}（${issue.reason}）`,
+			`[core] 提示词插槽没填上：${slug} 的 ${template.segment} 段 {{${issue.slot}}}（${issue.reason}）`,
 		);
 	}
 	// 唯一出口：身份、记忆、技能、团队简报都会进这里，密钥在这里统一换掉。
 	// 写入侧（`file` / `remember` / hire）也脱敏，但那是「尽量别写进去」；这一道才是
 	// 保证「已经写进去的也发不出去」的那一道（ADR-034）。
 	return redact(rendered.text.trim(), paths.layout.appRoot);
+}
+
+/** 一段：段名 + 现读现渲染。两条消费路径（整段 / 按段）都吃这一份清单。 */
+type AgentSegment = {
+	readonly segment: string;
+	readonly render: () => Promise<string>;
+};
+
+/**
+ * 某人此刻的提示词段，**按顺序**。段名来自 `prompt/*.md` 的文件名，不再是一份代码里的
+ * 常量表：加一段就是加个文件。
+ *
+ * 这是唯一的段清单：`renderAgentSection`（自测、`promptOf`）和 `agentSections`（模型真
+ * 收到的那份）都从这里来。以前两处各遍历一次模板、各拼一次插件段，空段规则与脱敏
+ * 已经不同了 —— 表现是 `promptOf` 和模型看到的不是同一份字。
+ *
+ * `selfOf` 由调用方决定读几次：整段渲染一次读完；按段渲染每段现读，改身份下一条生效。
+ */
+async function segmentsOf(
+	registry: Registry,
+	paths: AgentPaths,
+	slug: string,
+	selfOf: () => Promise<Identity | undefined>,
+): Promise<readonly AgentSegment[]> {
+	const templates = await systemTemplates(paths.layout.appRoot);
+	const segments: AgentSegment[] = templates.map((template) => ({
+		segment: template.segment,
+		render: async () => segmentText(registry, paths, slug, await selfOf(), template),
+	}));
+	// 插件段永远在最后：它加的是「这个组织额外会什么」，不是身份的一部分。
+	const extra = (paths.extraPrompt ?? []).map((text) => text.trim()).filter((text) => text !== "");
+	if (extra.length > 0) {
+		segments.push({
+			segment: "plugins",
+			render: async () => redact(extra.join("\n\n"), paths.layout.appRoot),
+		});
+	}
+	return segments;
 }
 
 /**
@@ -308,10 +340,14 @@ async function segmentText(
  * 就生效。这是「文档是真理」在运行时的落点，这里退化成一次文件读。
  */
 export async function renderAgentSection(registry: Registry, paths: AgentPaths, slug: string): Promise<string> {
-	return (await renderAgentSegments(registry, paths, slug))
-		.map((segment) => segment.text)
-		.filter((text) => text !== "")
-		.join("\n\n");
+	const self = await readIdentity(paths.layout.agentRoots, slug);
+	const segments = await segmentsOf(registry, paths, slug, async () => self);
+	const texts: string[] = [];
+	for (const segment of segments) {
+		const text = await segment.render();
+		if (text !== "") texts.push(text);
+	}
+	return texts.join("\n\n");
 }
 
 /** 技能清单（提示词只要名字 + 一句描述）。团队层技能也在这里 —— 团队会什么他必须知道。 */
@@ -323,27 +359,6 @@ async function promptSkills(paths: AgentPaths, slug: string, team: string | unde
 		scope: skill.scope,
 		...(skill.overrides === true ? { overrides: true } : {}),
 	}));
-}
-
-/**
- * 渲染某人此刻的提示词，**按稳定段切开**（顺序即拼接顺序 = 模板文件名前缀）。
- *
- * 段名来自 `prompt/*.md` 的文件名，不再是一份代码里的常量表：加一段就是加个文件。
- */
-async function renderAgentSegments(registry: Registry, paths: AgentPaths, slug: string) {
-	const self = await readIdentity(paths.layout.agentRoots, slug);
-	const templates = await systemTemplates(paths.layout.appRoot);
-	const segments: { readonly segment: string; readonly text: string }[] = [];
-	if (self === undefined) {
-		return [{ segment: "who", text: identitylessPrompt(slug, paths.text) }];
-	}
-	for (const template of templates) {
-		segments.push({ segment: template.segment, text: await segmentText(registry, paths, slug, self, template.segment, templates) });
-	}
-	// 插件段永远在最后：它加的是「这个组织额外会什么」，不是身份的一部分。
-	const pluginText = (paths.extraPrompt ?? []).map((text) => text.trim()).filter((text) => text !== "").join("\n\n");
-	if (pluginText !== "") segments.push({ segment: "plugins", text: pluginText });
-	return segments;
 }
 
 /**
@@ -365,25 +380,10 @@ export async function agentSections(
 	slug: string,
 ): Promise<readonly PromptSection<ToolRegistration>[]> {
 	const base = sectionKeyOf(slug);
-	const templates = await systemTemplates(paths.layout.appRoot);
-	const sections: PromptSection<ToolRegistration>[] = templates.map((template) => ({
-		key: `${base}-${template.segment}`,
+	const segments = await segmentsOf(registry, paths, slug, () => readIdentity(paths.layout.agentRoots, slug));
+	return segments.map((segment) => ({
+		key: `${base}-${segment.segment}`,
 		tag: false,
-		async render(): Promise<string> {
-			return segmentText(registry, paths, slug, await readIdentity(paths.layout.agentRoots, slug), template.segment, templates);
-		},
+		render: segment.render,
 	}));
-	// 插件段：`renderAgentSegments` 里有它，这里就必须有，否则 `promptOf` 和真人读到的
-	// 提示词不是同一份（自测会满意、模型没看见）。
-	const extra = (paths.extraPrompt ?? []).filter((text) => text.trim() !== "");
-	if (extra.length > 0) {
-		sections.push({
-			key: `${base}-plugins`,
-			tag: false,
-			async render(): Promise<string> {
-				return redact(extra.map((text) => text.trim()).join("\n\n"), paths.layout.appRoot);
-			},
-		});
-	}
-	return sections;
 }

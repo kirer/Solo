@@ -22,14 +22,30 @@ function settingsPath(workspace) {
 	return join(workspace, "settings.json");
 }
 
-/** 读整个 settings.json：别的键（不认识的那些）要原样写回去。 */
+/**
+ * 读整个 settings.json：别的键（不认识的那些）要原样写回去。
+ *
+ * 文件不存在 = 空配置（首次启动）；文件存在但坏了 = 抛错，**不能当成空文件**。
+ * 当成空文件再写回去，会把全部提供商和默认模型一起抹掉。
+ */
 async function readSettings(workspace) {
+	let raw;
 	try {
-		const parsed = JSON.parse(await readFile(settingsPath(workspace), "utf8"));
-		return typeof parsed === "object" && parsed !== null ? parsed : {};
-	} catch {
-		return {};
+		raw = await readFile(settingsPath(workspace), "utf8");
+	} catch (error) {
+		if (error.code === "ENOENT") return {};
+		throw error;
 	}
+	let parsed;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (error) {
+		throw new Error(`${settingsPath(workspace)} 不是合法 JSON：${error.message}`);
+	}
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		throw new Error(`${settingsPath(workspace)} 顶层必须是一个对象`);
+	}
+	return parsed;
 }
 
 /**
@@ -195,32 +211,42 @@ export async function apply(api) {
 	api.route({
 		method: "GET",
 		pattern: "/api/p/models",
-		handle: async () => view(api.workspace, await readSettings(api.workspace)),
+		handle: async () => {
+			try {
+				return view(api.workspace, await readSettings(api.workspace));
+			} catch (error) {
+				return { error: error instanceof Error ? error.message : String(error) };
+			}
+		},
 	});
 
 	api.route({
 		method: "POST",
 		pattern: "/api/p/models",
 		handle: async (request) => {
-			const body = request.body ?? {};
-			const settings = await readSettings(api.workspace);
-			const cleaned = clean(body.providers, providersOf(settings));
-			if (cleaned.error !== undefined) return { error: cleaned.error };
+			try {
+				const body = request.body ?? {};
+				const settings = await readSettings(api.workspace);
+				const cleaned = clean(body.providers, providersOf(settings));
+				if (cleaned.error !== undefined) return { error: cleaned.error };
 
-			const defaultModel = text(body.defaultModel).trim();
-			const problem = defaultProblem(cleaned.providers, defaultModel);
-			if (problem !== undefined) return { error: problem };
+				const defaultModel = text(body.defaultModel).trim();
+				const problem = defaultProblem(cleaned.providers, defaultModel);
+				if (problem !== undefined) return { error: problem };
 
-			const next = { ...settings, providers: cleaned.providers };
-			if (defaultModel === "") delete next.defaultModel;
-			else next.defaultModel = defaultModel;
+				const next = { ...settings, providers: cleaned.providers };
+				if (defaultModel === "") delete next.defaultModel;
+				else next.defaultModel = defaultModel;
 
-			// 先写临时文件再换名：写到一半崩掉不会留下半份 JSON（这份文件坏了 = 全员不回话）。
-			const temp = `${file}.tmp`;
-			await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-			await rename(temp, file);
-			api.log(`写了 ${file}（${cleaned.providers.length} 个提供商）`);
-			return view(api.workspace, next);
+				// 先写临时文件再换名：写到一半崩掉不会留下半份 JSON（这份文件坏了 = 全员不回话）。
+				const temp = `${file}.tmp`;
+				await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+				await rename(temp, file);
+				api.log(`写了 ${file}（${cleaned.providers.length} 个提供商）`);
+				return view(api.workspace, next);
+			} catch (error) {
+				return { error: error instanceof Error ? error.message : String(error) };
+			}
 		},
 	});
 
@@ -228,14 +254,19 @@ export async function apply(api) {
 		method: "POST",
 		pattern: "/api/p/models/probe",
 		handle: async (request) => {
-			const body = request.body ?? {};
-			const existing = providersOf(await readSettings(api.workspace)).find(
-				(provider) => provider.id === text(body.providerId),
-			);
-			const baseUrl = text(body.baseUrl).trim() || existing?.baseUrl || DEFAULT_BASE_URL;
-			const apiKey = text(body.apiKey).trim() || existing?.apiKey || "";
-			const kind = text(body.api) || existing?.api || "openai-responses";
-			return await probe(baseUrl, apiKey, kind);
+			try {
+				const body = request.body ?? {};
+				const existing = providersOf(await readSettings(api.workspace)).find(
+					(provider) => provider.id === text(body.providerId),
+				);
+				const baseUrl = text(body.baseUrl).trim() || existing?.baseUrl;
+				if (baseUrl === undefined) return { error: "先填一个地址再探测" };
+				const apiKey = text(body.apiKey).trim() || existing?.apiKey || "";
+				const kind = text(body.api) || existing?.api || "openai-responses";
+				return await probe(baseUrl, apiKey, kind);
+			} catch (error) {
+				return { error: error instanceof Error ? error.message : String(error) };
+			}
 		},
 	});
 }

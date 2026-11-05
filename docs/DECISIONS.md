@@ -2024,3 +2024,205 @@
   `docs/WEB-API.md` §12、`docs/README.md`。
 - **验收**：`npm run check`（tsc + 9 组边界）、`npm test`（98 文件 / 872 例）、
   `npm run prompt:check`、`npm run live` 两次 13/13；不改界面，不跑 `ui:build`。
+
+---
+
+## ADR-083 `settings.json` 只有一个写入口，坏文件绝不覆盖
+
+- **背景**：模型装配、给某个人换模型、出厂「模型管理」插件都各自读改写这份文件。旧写法
+  在 JSON 解析失败时把它当成「空配置」，然后整份重写 —— 一个手滑的逗号就能把全部提供商
+  和模型抹掉，而且没有任何报错。这份文件是**用户配置**，不是可以随时重建的缓存。
+- **决策**：
+  1. `src/core/runtime/settings.ts` 是唯一读写口：`readSettingsFile` / `updateSettingsFile` /
+     `setAgentModel`。所有调用方（`runtime/models.ts`、`shell/wire/models.ts`、`app/people.ts`）
+     都经它，不再自己 `readFileSync` + `writeFileSync`。
+  2. **区分「没有」和「坏了」**：文件不存在 = `undefined`（首次启动，可以写新文件）；
+     存在但读不懂 = `SettingsFileError`，必须把这句话交给用户。绝不能当空配置继续。
+  3. 写回是「读 → 只改 change 动过的键 → 临时文件 + rename」。不认识的键原样保留
+     （前向兼容），写到一半崩掉不会留下半份 JSON。
+- **取舍**：坏文件会让启动或切模型**失败**，而不是带着空配置跑起来。这是有意的：静默丢掉
+  用户配置比一次看得见的错误糟得多。同步 IO 保留 —— 这两个调用点都在同步上下文里，文件很小。
+- **执行**：`src/core/runtime/settings.ts`、`runtime/models.ts`、`shell/wire/models.ts`、
+  `app/people.ts`；`docs/CODE.md` §1 的 `node:fs` 例外表加入 `settings.ts`。
+- **验收**：`test/core/{models,model-switch,model-manager-plugin}.test.ts`（坏文件不覆盖、
+  未知键保留、原子写）。
+
+---
+
+## ADR-084 出厂内容共用一本 hash 账本
+
+- **背景**：技能有 `.seed-manifest.json` 按 hash 判「用户改过没有」，但提示词模板与
+  `rules.md` 是「只补不改」—— 出厂修正永远进不来：`seed/rules.md` 改一句，已经在跑的
+  工作区一辈子看不到。三个地方各写各的规矩，判据也不一样。
+- **决策**：提示词模板、规矩、技能**共用一本账**（`<appRoot>/.seed-manifest.json`，按文件
+  内容 hash）：
+  1. 目标不存在 → 拷过去，记账；
+  2. 当前内容 hash == 账本记的 → 没改过，升到新版并记账；
+  3. 当前 hash != 账本记的 → 用户改过，**原样保留**并 warn；
+  4. 老工作区没有账本 → 用 `src/shell/seed-legacy.ts` 的历史 hash 集合判一次；命中 =
+     旧版出厂内容，可以升级。新版本不再往集合里加（账本会记住基线），等不再支持从这些
+     版本升级时整个文件删掉。
+- **例外**：`seed/text/*.md` 仍按**键**只追加（文案是「一个键一句话」，用户改过的句子归他，
+  新键要能进老工作区）—— 它和整文件升级是两件事，不并进账本。
+- **取舍**：用户改过又改回与某个历史版本逐字节相同的内容，会被当成「没改过」升级。
+  无法区分，接受；账本只在真有变化时写盘，启动是幂等的。
+- **执行**：`src/shell/seed.ts` 的 `syncSeedFiles` / `syncSkillTree` / `SEED_MANIFEST_FILE`、
+  `src/shell/seed-legacy.ts`；`test/core/seed-sync.test.ts`。
+
+---
+
+## ADR-085 旧形状靠迁移，读取处不留兼容分支
+
+- **背景**：为了读老数据，读取路径上堆了一串兼容分支：`spokenKind` 维护「哪些旧 kind 算
+  发言」、`recipientsOf` 拿空名册再解析一次字面 `@我`、`parseWake` 兼容平铺的唤醒记录、
+  `headerOf` 同时认 `project:` 与 `team:`。每个读的人都要记住整段历史；漏一处就是静默
+  错投（字面 token 落库、频道里「叫了谁」是错的），而且没人看得出。
+- **决策**：
+  1. **库里的文档**升 version 写 `migrate`：`ChannelDoc` v2 的 `migrateMessages` 把旧 kind
+     归一成 `chat` / `note`、把字面 `@我` / `我` 归一成 `owner`；`DirectoryDoc` v2 的
+     `migrateWakes` 把平铺的唤醒记录拆成 `{reply, task}`。第一次读到旧版本时自动归好。
+  2. **磁盘上的文件**在启动时一次性改写：`src/shell/migrate.ts` 的 `migrateWorkspace` 把身份
+     头的 `project:` 改成 `team:`（已有 `team` 就删掉 `project` 行），正文与其它字段逐字节
+     不动，重复跑不再改。顺序固定在「迁移 → 播种 → 装配」之前。
+  3. **规矩**：加字段就升 version + 写 `migrate`；改文件形状就写启动迁移。**不要在读取处
+     加「两种形状都认」的分支** —— 那等于让每个读者重新学一遍历史。
+- **取舍**：迁移是一次性的、不可逆的写盘（文件）或首次读取开销（文档）。换来的是所有读的
+  代码只认一种形状；老数据的语义在迁移里集中定义一次，测试也只钉那一处。
+- **执行**：`channel/types.ts` 的 `migrateMessages`、`channel/roster.ts` 的 `migrateWakes`、
+  `channel/turn/record.ts` 的 `parseWake`（只认新形状）、`shell/migrate.ts`、`shell/main.ts`；
+  `test/core/{mention-alias,directory-persist,migrate,view}.test.ts`。
+
+---
+
+## ADR-086 名册只有一个真相：落盘那份
+
+- **背景**：旧实现读名册时把内存里的映射「并」到盘上再回写。后果有两个：开除一个人只删了
+  盘上的条目，下一次读又把他从内存并回去（重启后频道和私聊全回来）；新建会话只写内存，
+  中间任何一次「整份名册写回旧值」都会让映射永久丢失（顾南雁丢过一次，22 条历史留在孤儿
+  会话里）。
+- **决策**：`DirectoryDoc` 是唯一真相，内存 `directory` 只是镜像：
+  1. 写：先提交文档（逐字段比较，只写变化过的顶层字段，路径式更新），提交成功后再把结果
+     抄进内存；
+  2. 读：从文档抄一遍（`now`），**不再合并内存**；
+  3. 启动 / `rescan` 只合并 `labels`（显示名），不合并会话映射；
+  4. `openAgent` 建完会话立刻 `bind` 落盘（`hire` 不走 `rescan`，不立刻写就会丢）。
+- **取舍**：每次读多一次文档快照（底座里就是内存表，代价可忽略）；换来「删掉的不会复活、
+  新加的不会丢」这两条能单测钉死的不变量。
+- **执行**：`src/shell/wire/directory.ts` 的 `save` / `now` / `merge` / `bind`、
+  `channel/roster.ts`；`test/core/directory-persist.test.ts`。
+
+---
+
+## ADR-087 收尾是 durable 任务，补发按答案条目去重
+
+- **背景**：宿主侧在结算回调里直接调 `finishTurn`，有两个窗口会在重启时丢结论：答案提交了、
+  回调还没跑；回调跑了、消息还没落盘。模型没调 `say` 时正文只存在会话条目里，丢了就是丢了。
+  另一头，同一条答案会被多条提交各结算一次，并发时都照到「频道里还没有这句」，于是同一句
+  发两遍（实测 2026-11-02 #15/#16、#17/#18）。
+- **决策**：
+  1. 收尾做成 durable task：`core.turn-report`（`channel/turn/report.ts`），由 `afterRun`
+     钩子写成这一轮 generation 的子任务；进程重启后 `resume()` 接着跑完。
+  2. 任务终态如实记录：补发成功 = `completed`（带答案条目 id 的收据）；补发失败 = `failed`；
+     被 Stop / 关库打断 = `aborted`。**不能一律报 completed**，否则「补没补上」永远查不出来。
+  3. `flow.settle` 的 `done` 分支持进程级 `repost` 闸包住「读答案 → 判重 → 补发」；判据是
+     `sourceEntry`（答案条目 id），不是正文 —— 两个人真说了同一句「在。」不该互相吞掉。
+  4. 补发就是一次正常 `publish`：落盘、算人、扇出、钩子全走主线，且必须带名册
+     （`@我` 落成 `owner`，不能存字面 token）。
+- **取舍**：每一轮多一件账务任务（`channel/bookkeeping.ts` 登记，不算「在干活」）；换来
+  重启不丢结论、重放不双发。
+- **执行**：`channel/turn/report.ts`、`flow/settle.ts`、`flow/defaults/settle.ts`、
+  `channel/queue.ts`；`test/core/{turn-report,turn-report-e2e,crash-turn-report,flow-settle}.test.ts`。
+
+---
+
+## ADR-088 写完之后的重投影失败要回到调用方
+
+- **背景**：`file` 写身份 / 团队说明、`hire` 招人之后都要重投影频道。旧写法把这些后续
+  动作的失败只写进 console：模型收到「写好了」，频道里却还是旧成员 —— 界面上看不出异常，
+  下一次 @ 才发现人不在。
+- **决策**：
+  1. 工具结果带 warnings：`file.write.sync-failed` / `file.write.team-sync-failed` /
+     `hire.create.announce-failed`。写盘本身成功了，所以**不回滚**，但模型必须知道后半段
+     没成，能在同一轮里补救或告诉我。
+  2. 装配依赖收紧：`hire` 不再单独收一个 `ensureDm` —— 开会话、建私聊、进全员 / 团队频道
+     统一由 `openAgent` 一次做完，不存在「人建好了、频道还没接上」的半成品路径。
+  3. 装配层建**一份** `diag`，底座报告、插件、策略错误都写进同一条线（见 ADR-091）。
+- **取舍**：模型会多看到一行失败说明；换掉的是「保存成功但状态是旧的」这种无声错误。
+- **执行**：`channel/tools/file.ts`、`channel/tools/hire.ts`、`shell/assemble.ts`、
+  `seed/text/tools.md`；`test/core/tools-actions.test.ts`。
+
+---
+
+## ADR-089 插件工具不覆盖核心工具，监听失败只丢自己
+
+- **背景**：插件工具与核心工具进同一个注册表。同名时旧行为是后者覆盖前者 —— 一个插件
+  注册 `say` 就等于把说话换成了别人写的函数，模型完全看不出来。插件的听消息钩子用
+  `Promise.allSettled` 并发跑，抛错被吞掉，没人知道它坏了。
+- **决策**：
+  1. `loadPlugins` 收 `reservedTools`（核心的 8 个名字）；一个插件的工具名**先全部核一遍，
+     全过才登记**：与核心重名、与先装的插件重名、同一插件内重复，都让**整个插件不装**，
+     错误进插件列表。装一半的插件不占名字、不进注册表。
+  2. 听消息的每个 listener 在装载时包一层：抛错只记这个插件的一条错误（走 `onError` →
+     装配层的 `report` → 诊断），别的插件照跑，投递不回滚。
+  3. `flow` 的策略形状只在 `channel/types.ts` 定义一次，`flow/types.ts` / `flow/ports.ts`
+     只转出 —— 插件层能拿到，领域里没有第二份定义。
+- **取舍**：插件作者必须给工具名加前缀；一个坏插件在插件页里显示为「没装上」，而不是
+  静默半工作。
+- **执行**：`core/plugin/load.ts`、`shell/wire/plugins.ts`、`flow/ports.ts`、`flow/types.ts`；
+  `test/core/{plugin,token-plugin}.test.ts`。
+
+---
+
+## ADR-090 频道 id 收敛到一处，助理判定按路径分量
+
+- **背景**：`id.startsWith("team:")` + `slice` 散在业务代码里，前缀一改就得全仓库找，漏一处
+  就是「频道还在，但认不出它属于谁」。助理判定按字符串包含 `/assistant/`，Windows 的
+  分隔符是 `\`，助理会在 Windows 上「消失」——团队频道里没有助理、没人被 @ 时也醒不来。
+- **决策**：
+  1. `src/core/channel/id.ts` 是**唯一认识频道 id 前缀的地方**：`dmId` / `teamId` / `groupId` /
+     `isDmChannel` / `teamOfChannel` / `isGroupChannel`；`types.ts` 只转出给老调用方。
+  2. `chatKind` 留在 `types.ts`：它除了前缀还要看成员（只有我 + 一个人的团队频道，形状和
+     私聊一样），不属于「id 怎么造」。
+  3. `layout.isAssistantDir` 用 `path.relative` 按路径分量判断，不写死分隔符。
+- **取舍**：多一个 62 行的小模块；换来前缀与助理判定都只有一处可改。
+- **执行**：`channel/id.ts`、`channel/types.ts`、`core/layout.ts`；`test/core/{layout,view}.test.ts`。
+
+---
+
+## ADR-091 策略 / 监听失败进诊断，账务任务自己登记
+
+- **背景**：插件策略抛错、听消息抛错都只有 console；界面上「他就是不回话」和「他回话时
+  策略炸了」看起来一模一样。队列判断「他还在干活」时写死跳过 `core.turn-report`，
+  新增一类收尾 / 摘要任务就要回来改队列。
+- **决策**：
+  1. `FlowPorts.report` 是运行中出错的唯一出口（形状由 core 描述，接到哪里由装配层定）；
+     装配层把它接到 `diag`：console 留一行，同时写 `logs/runtime.jsonl`。插件监听与策略
+     失败都走这条线。
+  2. 账务任务用登记制：任务定义在自己旁边调 `declareBookkeeping(kind)`（`core.turn-report`
+     在 `turn/report.ts` 登记），队列的 `liveConversations` 只问 `isBookkeeping(kind)`。
+     底座没给这个标记（`TaskOptions.background` 只对会话自建任务开放，见
+     `docs/CONCESSIONS.md`），所以登记放在我们这一层。
+- **取舍**：只通报不自动重试 —— 策略坏了应该被人看见并修，而不是被系统悄悄绕过。
+- **执行**：`flow/ports.ts`、`flow/policies.ts`、`plugin/load.ts`、`shell/wire/plugins.ts`、
+  `shell/assemble.ts`、`channel/bookkeeping.ts`、`channel/queue.ts`、`channel/turn/report.ts`；
+  `test/core/{flow-policy,plugin,run-jobs}.test.ts`。
+
+---
+
+## ADR-092 技能带 `sourcePath`，工具自己登记轨迹展示
+
+- **背景**：`readSkill` 拿到技能名后要按三层顺序重新猜它从哪一层读出来；轨迹投影里有一大段
+  `switch (工具名)`，加一个工具就要回来改投影，插件工具只能画成裸名字。提示词装配里还留着
+  一个已经没人用的 `count` 插槽的兼容读取。
+- **决策**：
+  1. `listSkills` 的每一项带 `sourcePath`（它到底从哪一层读出来的），`readSkill` 直接用，
+     不再按名字重猜层。
+  2. 工具在注册时用 `traced(tool, trace)` 声明自己那一行（`channel/tools/presentation.ts`）；
+     `app/trace.ts` 只按名字查表，不认识具体工具。没声明过的（插件工具）退回「原名 + 通用
+     行」——不认识不等于不该画。
+  3. 删掉 `count` 插槽的兼容读取：出厂模板已经不用它，新工作区没有旧模板；老工作区的旧
+     模板由 ADR-084 的账本升级。
+- **取舍**：领域里的 `TraceKind` 必须能赋给契约层的 `ViewStep["kind"]`，由 `app/trace.ts`
+  的赋值处替这条兜底（领域不能 import 契约层）；多一种界面不认识的种类就编不过。
+- **执行**：`documents/skills.ts`、`channel/tools/presentation.ts`、`channel/tools/index.ts`、
+  `app/trace.ts`、`app/read.ts`、`documents/prompt.ts`；`test/core/{skills,trace}.test.ts`。

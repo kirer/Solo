@@ -8,7 +8,7 @@
  * 所以这里逐个断言投影的字段，而不是断言「函数没抛错」。
  */
 import { describe, expect, it } from "vitest";
-import { channelDetail, channelList, messageView, withoutGoneTeams } from "../../src/app/project.ts";
+import { channelDetail, channelList, messageView } from "../../src/app/project.ts";
 import type { DirectoryState } from "../../src/core/channel/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/types.ts";
 
@@ -40,25 +40,25 @@ const lin = { id: "dm:lin-owner", title: "林越", members: ["owner", "lin"], wa
 const team = { id: "team:坦克大战", title: "坦克大战", members: ["owner", "lin", "shen"], wakeOnAll: [], createdAt: AT };
 
 describe("侧栏预览只取人说的话", () => {
-	const msg = (seq: number, from: string, kind: string, text: string) =>
+	const msg = (seq: number, from: string, kind: "chat" | "note", text: string) =>
 		({ seq, at: AT + seq, from, kind, text, mentions: [], read: true }) as never;
 
 	it("最新一条是命令输出时，预览仍显示前一句人话", () => {
-		// 实测现场的形态：林越说了句话，然后连着几条 `work` 记的是命令行。
+		// 实测现场的形态：林越说了句话，然后连着几条留痕记的是命令行。
 		// 拿最后一条当预览，侧栏整列变成 `$ cd /Users/kirer/teams/...`。
 		const state = stateOf([lin], {
 			[lin.id]: [
 				msg(1, "lin", "chat", "前端三项改完了，正在收测试。"),
-				msg(2, "lin", "work", "$ cd /Users/kirer/teams/solo && npm test"),
-				msg(3, "lin", "tool", "run"),
+				msg(2, "lin", "note", "$ cd /Users/kirer/teams/solo && npm test"),
+				msg(3, "lin", "note", "run"),
 			],
 		});
 		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
 		expect(channel.preview).toBe("前端三项改完了，正在收测试。");
 	});
 
-	it("只有过程投影时没有预览 —— 机器输出不是人话", () => {
-		const state = stateOf([lin], { [lin.id]: [msg(1, "lin", "work", "跑测试")] });
+	it("只有留痕时没有预览 —— 机器输出不是人话", () => {
+		const state = stateOf([lin], { [lin.id]: [msg(1, "lin", "note", "跑测试")] });
 		const [channel] = channelList(state, directoryOf({ lin: "林越" }));
 		expect(channel.preview).toBe("");
 	});
@@ -71,18 +71,14 @@ describe("侧栏预览只取人说的话", () => {
 		expect(channel.preview).toBe("改完了");
 	});
 
-	it("旧 kind 在投影层归一：语义标签算发言，过程行算留痕（ADR-061）", () => {
+	it("投影只认两种 kind：chat 是发言，note 是留痕", () => {
 		const directory = directoryOf({ lin: "林越" });
-		const viewOf = (kind: string) => {
+		const viewOf = (kind: "chat" | "note") => {
 			const message = msg(1, "lin", kind, "一句话");
 			return messageView(stateOf([lin], { [lin.id]: [message] }), lin, message, directory);
 		};
-		for (const kind of ["chat", "say", "question", "decision", "report"]) {
-			expect(viewOf(kind).kind).toBe("chat");
-		}
-		for (const kind of ["note", "think", "tool", "work", "step"]) {
-			expect(viewOf(kind).kind).toBe("note");
-		}
+		expect(viewOf("chat").kind).toBe("chat");
+		expect(viewOf("note").kind).toBe("note");
 	});
 });
 
@@ -206,17 +202,5 @@ describe("私聊里的 @ 红点：统一按未读与 mention 算，不再按消�
 		const list = channelList(state, directoryOf({ gu: "顾南雁" }), "owner");
 		const allChannel = list.find((c) => c.id === "all")!;
 		expect(allChannel.mentions).toBe(1);
-	});
-});
-
-describe("团队目录没了：频道不再投影", () => {
-	const all = { id: "all", title: "全员", members: ["owner", "lin"], wakeOnAll: [], createdAt: AT };
-
-	it("还在的团队频道保留；目录没了的被过滤，私聊和全员不动", () => {
-		const state = stateOf([lin, team, all]);
-		const kept = withoutGoneTeams(state, new Set(["坦克大战"]));
-		expect(Object.keys(kept.channels).sort()).toEqual(["all", "dm:lin-owner", "team:坦克大战"].sort());
-		const gone = withoutGoneTeams(state, new Set());
-		expect(Object.keys(gone.channels).sort()).toEqual(["all", "dm:lin-owner"].sort());
 	});
 });

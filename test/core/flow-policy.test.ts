@@ -126,6 +126,24 @@ describe("外部策略（插件注册的那一份）", () => {
 		});
 	});
 
+	it("策略抛错走 report：装配层能把它记进诊断，而不是只留在 console", async () => {
+		const seen: string[] = [];
+		const report = (kind: string, detail: string): void => {
+			seen.push(`${kind}:${detail}`);
+		};
+		const source = (): FlowPolicy[] => [
+			{
+				kind: "router",
+				run: () => {
+					throw new Error("坏了");
+				},
+			},
+		];
+		await resolvePlan(facts, [policyRouter(source, report), defaultRouter()], BACKGROUND_CONTEXT, report);
+		expect(seen.join("\n")).toContain("policy:分发策略失败");
+		expect(seen.join("\n")).toContain("坏了");
+	});
+
 	it("policySettler：没有 settle 策略时走默认收尾", async () => {
 		const settle = policySettler(() => [], defaultSettler());
 		await expect(settle.decide(settleFacts(), BACKGROUND_CONTEXT)).resolves.toEqual({

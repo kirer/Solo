@@ -215,22 +215,6 @@ describe("② 发消息的 from 默认只认我", () => {
 		expect(last?.from).toBe("owner");
 	});
 
-	it("SOLO_DEBUG_FROM=1 时才接受伪造（调试口，启动会警告）", async () => {
-		const { shell, port } = await setup();
-		process.env.SOLO_DEBUG_FROM = "1";
-		try {
-			await call(port, {
-				method: "POST",
-				path: "/api/channels/all/messages",
-				type: "application/json",
-				body: JSON.stringify({ text: "调试", from: "知言" }),
-			});
-		} finally {
-			delete process.env.SOLO_DEBUG_FROM;
-		}
-		const state = await shell.channels();
-		expect((state.messages.all ?? []).at(-1)?.from).toBe("知言");
-	});
 });
 
 describe("③ 已读位置夹到上界（越界请求不能把以后的消息都吃掉）", () => {

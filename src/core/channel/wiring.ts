@@ -22,6 +22,7 @@ import { readAllIdentities } from "../documents/member/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
 import { createChannelFlow, type ChannelFlow } from "./post.ts";
 import type { FlowPolicy, Message } from "./types.ts";
+import type { FlowReport } from "../flow/ports.ts";
 import type { Layout } from "../layout.ts";
 import type { TextCatalog } from "../documents/base/catalog.ts";
 
@@ -76,6 +77,8 @@ export function wireChannel(deps: {
 	readonly afterPublish?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 插件注册的分发 / 收尾策略：补发与投递走同一条策略链。 */
 	readonly policies?: () => readonly FlowPolicy[];
+	/** 策略出问题的出口（装配层接到 diag）。不给就 `console.warn`。 */
+	readonly report?: FlowReport;
 }): ChannelWiring {
 	const wakeDeps = directoryWake({
 		harness: deps.harness,
@@ -98,19 +101,21 @@ export function wireChannel(deps: {
 		submissionOf: (id: SubmissionId, context: Context = BACKGROUND_CONTEXT) =>
 			deps.harness.submission(id, context),
 	};
+	// 补发也要按名册解析 `@`：跟 `say` / `ownerSpeak` 存下来的 `mentions` 保持同一形状。
+	// 收尾与投递共用这一份 —— 两处各写一遍时，漏掉的那一处会把 `@我` 存成字面 token。
+	const roster = async () =>
+		mentionRosterOf(
+			(await readAllIdentities(deps.layout.agentRoots)).map((identity) => ({
+				slug: identity.slug,
+				name: identity.name,
+			})),
+		);
 
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,
 		promptDir,
 		...(deps.text === undefined ? {} : { text: deps.text }),
-		// 补发也要按名册解析 `@`：跟 `say` / `ownerSpeak` 存下来的 `mentions` 保持同一形状。
-		roster: async () =>
-			mentionRosterOf(
-				(await readAllIdentities(deps.layout.agentRoots)).map((identity) => ({
-					slug: identity.slug,
-					name: identity.name,
-				})),
-			),
+		roster,
 		// 收尾发生在背景上下文里（结算之后），用不到调用方那一轮的覆盖层。
 		conversationOf: (slug) => conversationOf(slug),
 		rememberWake: (slug, wake) => rememberWake(slug, wake),
@@ -118,6 +123,7 @@ export function wireChannel(deps: {
 		wakeOf: (slug) => wakeOfOf(slug),
 		...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),
 		...(deps.policies === undefined ? {} : { policies: deps.policies }),
+		...(deps.report === undefined ? {} : { report: deps.report }),
 	});
 
 	const flow = createChannelFlow({
@@ -128,9 +134,11 @@ export function wireChannel(deps: {
 		wakeOf: wakeOfOf,
 		uploadsRoot: deps.layout.uploadsRoot,
 		promptDir,
+		roster,
 		...(deps.text === undefined ? {} : { text: deps.text }),
 		...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),
 		...(deps.policies === undefined ? {} : { policies: deps.policies }),
+		...(deps.report === undefined ? {} : { report: deps.report }),
 	});
 
 	return {

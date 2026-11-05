@@ -8,7 +8,7 @@
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../documents/member/identity.ts";
-import { ChannelDoc, OWNER, dmId, groupId, teamId, type ChannelState } from "./types.ts";
+import { ChannelDoc, OWNER, dmId, groupId, teamId, teamOfChannel, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { mentionRosterOf, resolveMention } from "./mentions.ts";
 import { listTeams, membersOfTeam, readTeam } from "../documents/team/doc.ts";
@@ -111,9 +111,10 @@ export async function archiveGoneTeams(
 	const alive = new Set((await listTeams(deps.layout.teamsRoot)).map((team) => team.slug));
 	await deps.harness.commit(async (tx) => {
 		const state = (await tx.doc(ChannelDoc)) as ChannelState;
-		const gone = Object.entries(state.channels).filter(
-			([id, channel]) => id.startsWith("team:") && channel.archived !== true && !alive.has(id.slice("team:".length)),
-		);
+		const gone = Object.entries(state.channels).filter(([id, channel]) => {
+			const team = teamOfChannel(id);
+			return team !== undefined && channel.archived !== true && !alive.has(team);
+		});
 		if (gone.length === 0) return;
 		const channels = { ...state.channels };
 		for (const [id, channel] of gone) channels[id] = { ...channel, archived: true };

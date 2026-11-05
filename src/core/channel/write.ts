@@ -22,6 +22,8 @@ type AppendInput = {
 	readonly mention?: readonly string[];
 	readonly attachments?: readonly Attachment[];
 	readonly options?: readonly string[];
+	/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
+	readonly sourceEntry?: string;
 };
 
 /**
@@ -58,6 +60,7 @@ export async function appendToChannel(
 			...(input.mention === undefined ? {} : { mention: input.mention }),
 			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
 			...(input.options === undefined ? {} : { options: input.options }),
+			...(input.sourceEntry === undefined ? {} : { sourceEntry: input.sourceEntry }),
 		});
 		// **只有一个元素被追加**，所以必须让文档层看见「数组长了一格」而不是「这个键换了个
 		// 新数组」。两者写下去的消息一样，代价差三个数量级（见 `test/core/channel-write.test.ts`）。

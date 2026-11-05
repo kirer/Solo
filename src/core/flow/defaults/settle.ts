@@ -8,8 +8,7 @@
  * 这里只做**判断**（纯函数 + `defaultSettler`），写盘与补发在 `flow/settle.ts`：
  * 1. 取这一轮的答案条目与最后一段正文；
  * 2. 按两层唤醒记录挑频道（正常一轮回 `reply`，插话一轮可能回 `task`）；
- * 3. 说过话且只是复述 → 不补；说完又干了活 → 照补；
- * 4. 同一句已经在频道里 → 不补（多条提交各结算一次，只补一次）。
+ * 3. 说过话且只是复述 → 不补；说完又干了活 → 照补。
  */
 import type { Context, EntryRecord } from "../../runtime/index.ts";
 import type { ChannelState, Message } from "../../channel/types.ts";
@@ -130,14 +129,8 @@ export function defaultSettler(): Settler {
 				return { kind: "silent", reason: "not-member" };
 			}
 
-			// 同一条答案会被**多条提交**各结算一次（报到 + 投递、投递 + 后台命令跑完），
-			// 每一次收尾都看到同一个条目 —— 只补一次。实测 2026-11-02：频道里并排两条
-			// 一模一样的话（周岚 #11/#12、沈舟 #15/#16），1 毫秒之隔，就是两次收尾。
-			const duplicate = (facts.state.messages[target.channelId] ?? []).some(
-				(item) => item.from === facts.slug && item.text.trim() === facts.text,
-			);
-			if (duplicate) return { kind: "silent", reason: "duplicate" };
-
+			// 判重不在这里：同一答案只补一次是 core 的不变量（`flow/settle.ts` 按答案条目 id
+			// 判），插件换掉收尾策略也绕不过去。
 			return { kind: "repost", channelId: target.channelId, text: facts.text };
 		},
 	};

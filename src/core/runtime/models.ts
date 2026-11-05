@@ -5,8 +5,7 @@
  * 没有「内置三档清单」「网关身份三件套」「自定义模型去重」——那些是外部问题，
  * 写在 settings.json 里，不写在这里。
  */
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { Models, Provider } from "@earendil-works/pi-ai";
 import { createModels, createProvider, type MutableModels } from "@earendil-works/pi-ai/models";
 import { stream, streamSimple } from "@earendil-works/pi-ai/api/openai-responses";
@@ -14,6 +13,7 @@ import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messag
 import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
 import { openaiProvider } from "@earendil-works/pi-ai/providers/openai";
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import { readSettingsFile, updateSettingsFile, type ProviderConfig, type Settings } from "./settings.ts";
 
 export type ModelRef = { readonly provider: string; readonly modelId: string };
 
@@ -38,63 +38,26 @@ export function parseModelRef(value: string): ModelRef | undefined {
 	return { provider: value.slice(0, slash), modelId: value.slice(slash + 1) };
 }
 
-type ProviderConfig = {
-	readonly id: string;
-	readonly name?: string;
-	readonly baseUrl?: string;
-	readonly apiKey?: string;
-	/** `openai-responses` | `anthropic` | `openai`，默认 `openai-responses`。 */
-	readonly api?: string;
-	readonly models: readonly {
-		readonly id: string;
-		readonly name?: string;
-		readonly reasoning?: boolean;
-		readonly contextWindow?: number;
-		readonly maxTokens?: number;
-	}[];
-};
-
-type Settings = {
-	readonly defaultModel?: string;
-	readonly providers?: readonly ProviderConfig[];
-	/** slug → `provider/modelId`：这个人单独用哪只模型。 */
-	readonly agentModels?: Readonly<Record<string, string>>;
-};
-
-/** 读 settings.json；坏了返回 undefined（调用方回落环境变量默认）。 */
-function readSettings(file: string): Settings | undefined {
-	try {
-		return JSON.parse(readFileSync(file, "utf8")) as Settings;
-	} catch {
-		return undefined;
-	}
-}
-
 /**
  * 把「某个人用哪只模型」记进 `settings.json`（`value === null` = 删掉这条，跟默认）。
  *
  * 写文件是产品行为的一部分：不记的话重启时装配会把他改回默认，界面上看起来就是
  * 「设置自己变回去」。只动 `agentModels` 这一个字段，别的配置原样保留。
+ *
+ * 坏文件会抛 `SettingsFileError`：这份文件不能被「当成空的」重写，那会抹掉全部提供商。
  */
 export function setAgentModel(settingsFile: string, slug: string, value: string | null): void {
-	let settings: Record<string, unknown> = {};
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(settingsFile, "utf8"));
-		if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) settings = parsed as Record<string, unknown>;
-	} catch {
-		// 坏文件 / 还没有文件：当成空的写一份新的，下面这一份至少是合法的。
-	}
-	const raw = settings["agentModels"];
-	const agentModels: Record<string, string> = {};
-	if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
-		for (const [key, item] of Object.entries(raw)) if (typeof item === "string") agentModels[key] = item;
-	}
-	if (value === null || value.trim() === "") delete agentModels[slug];
-	else agentModels[slug] = value.trim();
-	if (Object.keys(agentModels).length === 0) delete settings["agentModels"];
-	else settings["agentModels"] = agentModels;
-	mkdirSync(dirname(settingsFile), { recursive: true });
-	writeFileSync(settingsFile, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+	updateSettingsFile(settingsFile, (settings) => {
+		const raw = settings["agentModels"];
+		const agentModels: Record<string, string> = {};
+		if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+			for (const [key, item] of Object.entries(raw)) if (typeof item === "string") agentModels[key] = item;
+		}
+		if (value === null || value.trim() === "") delete agentModels[slug];
+		else agentModels[slug] = value.trim();
+		if (Object.keys(agentModels).length === 0) delete settings["agentModels"];
+		else settings["agentModels"] = agentModels;
+	});
 }
 
 const APIS = {
@@ -141,8 +104,14 @@ const LOCAL_BASE_URL = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/|$
  */
 function makeProvider(config: ProviderConfig): Provider {
 	const apiName = config.api ?? "openai-responses";
-	const api = APIS[apiName as keyof typeof APIS] ?? APIS["openai-responses"];
-	const baseUrl = config.baseUrl ?? "http://127.0.0.1:3425/v1";
+	const api = APIS[apiName as keyof typeof APIS];
+	if (api === undefined) {
+		throw new Error(
+			`settings.json 的提供商 ${config.id} 写了不认识的 api：${apiName}（可选：${Object.keys(APIS).join(" / ")}）`,
+		);
+	}
+	const baseUrl = config.baseUrl?.trim() ?? "";
+	if (baseUrl === "") throw new Error(`settings.json 的提供商 ${config.id} 没写 baseUrl`);
 	// 缺省和空串都算「没给」：实测写 `"apiKey": ""` 与不写字段一样，每次生成立刻失败。
 	const given = config.apiKey ?? "";
 	const apiKey = given !== "" ? given : LOCAL_BASE_URL.test(baseUrl) ? "magpie" : "";
@@ -178,27 +147,20 @@ function makeProvider(config: ProviderConfig): Provider {
 }
 
 /**
- * 确认一个模型引用真的能解析到模型，解析不到就换一个能用的。
+ * 确认一个模型引用真的能解析到模型；解析不到 = 配置错误，直接报出来。
  *
- * **为什么必须有这一步**：这个引用会被写进每一个会话（`conversation.configure`），
- * 一旦它指向不存在的 provider 或 modelId，每次生成都会立刻以 `no_model` 失败，
- * 而失败发生在模型产字之前 —— 界面上只留下一条「开始处理…」，看不出任何异常。
- * 实测踩过两次：一次是 `commandcode/auto/deepseek-v4.1-flash`（provider 改名成 magpie），
- * 一次是 `commandcode/auto/hy3`（settings.json 的 defaultModel 手改错了 provider）。
- * 两次表现完全一样：所有人都像在休息。
+ * **为什么不能悄悄换一只**：这个引用会被写进每一个会话（`conversation.configure`），
+ * 指向不存在的 provider 或 modelId 时每次生成都会立刻以 `no_model` 失败，而失败发生在
+ * 模型产字之前 —— 界面上只留下一条「开始处理…」。实测踩过两次（provider 改名、defaultModel
+ * 手改错），两次表现完全一样：所有人都像在休息。换成另一只模型更糟：人以为自己在用 A，
+ * 实际每轮都在用 B。所以这里只做校验，配错了就报错让人改。
  */
-function usableDefault(models: Models, ref: ModelRef, source: string): ModelRef {
+function requireModel(models: Models, ref: ModelRef, source: string): ModelRef {
 	if (models.getModel(ref.provider, ref.modelId) !== undefined) return ref;
-	const first = models.getModels()[0];
-	if (first === undefined) {
-		throw new Error(
-			`${source} 指向 ${ref.provider}/${ref.modelId}，而这个模型不存在，并且没有任何可用模型可回落`,
-		);
-	}
-	console.warn(
-		`[core] ${source} 指向不存在的模型 ${ref.provider}/${ref.modelId}，改用 ${first.provider}/${first.id}`,
+	const available = models.getModels().map((model) => `${model.provider}/${model.id}`).join("、");
+	throw new Error(
+		`${source} 指向不存在的模型 ${ref.provider}/${ref.modelId}（可选：${available || "还没有配置模型"}）`,
 	);
-	return { provider: first.provider, modelId: first.id };
 }
 
 type AppliedModels = {
@@ -219,15 +181,16 @@ function applySettings(models: MutableModels, settings: Settings): AppliedModels
 		defaultRef = parseModelRef(settings.defaultModel) ?? defaultRef;
 	}
 	if (defaultRef === undefined) throw new Error("settings.json 有 providers 但没有模型");
-	// 单独指定的模型：解析不到的（provider 被删了）直接丢掉，按默认走 ——
-	// 留一个解析不到的引用等于那个人每次都 `no_model`。
+	// 单独指定的模型：解析不到 = 配置写错了。不能悄悄按默认走 —— 那个人会以为自己在用
+	// 指定的模型，实际每轮都在用另一只。启动时直接报出来，让人改 settings.json。
 	const agentModels: Record<string, ModelRef> = {};
 	for (const [slug, value] of Object.entries(settings.agentModels ?? {})) {
 		const ref = parseModelRef(value);
-		if (ref !== undefined && models.getModel(ref.provider, ref.modelId) !== undefined) agentModels[slug] = ref;
+		if (ref === undefined) throw new Error(`settings.json 的 agentModels.${slug} 不是 提供商/模型：${value}`);
+		agentModels[slug] = requireModel(models, ref, `settings.json 的 agentModels.${slug}`);
 	}
 	return {
-		defaultModel: usableDefault(models, defaultRef, "settings.json 的 defaultModel"),
+		defaultModel: requireModel(models, defaultRef, "settings.json 的 defaultModel"),
 		...(Object.keys(agentModels).length === 0 ? {} : { agentModels }),
 	};
 }
@@ -243,8 +206,17 @@ function applySettings(models: MutableModels, settings: Settings): AppliedModels
  * （比如 defaultModel 指向不存在的模型且一个可用模型都没有）—— 跑着的服务不能
  * 因为一份坏配置就把全部模型换掉。
  */
-export function syncModels(target: Models, file: string): AppliedModels | undefined {
-	const settings = readSettings(file);
+export type ModelSync =
+	| { readonly ok: true; readonly applied: AppliedModels }
+	| { readonly ok: false; readonly error: string };
+
+export function syncModels(target: Models, file: string): ModelSync | undefined {
+	let settings: Settings | undefined;
+	try {
+		settings = readSettingsFile(file);
+	} catch (error) {
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
+	}
 	if (settings?.providers === undefined || settings.providers.length === 0) return undefined;
 	// 先装进一份临时注册表：装不上就整份丢弃，旧的还在。
 	const staging = createModels();
@@ -252,13 +224,12 @@ export function syncModels(target: Models, file: string): AppliedModels | undefi
 	try {
 		applied = applySettings(staging, settings);
 	} catch (error) {
-		console.warn(`[core] settings.json 装不上，继续用原来那份：${(error as Error).message}`);
-		return undefined;
+		return { ok: false, error: error instanceof Error ? error.message : String(error) };
 	}
 	const live = target as MutableModels;
 	live.clearProviders();
 	for (const provider of staging.getProviders()) live.setProvider(provider);
-	return applied;
+	return { ok: true, applied };
 }
 
 /**
@@ -279,7 +250,7 @@ export function setupModels(
 	options: { readonly workspace?: string; readonly settingsFile?: string } = {},
 ): ModelSetup {
 	const file = options.settingsFile ?? (options.workspace === undefined ? undefined : join(options.workspace, "settings.json"));
-	const settings = file === undefined ? undefined : readSettings(file);
+	const settings = file === undefined ? undefined : readSettingsFile(file);
 
 	if (settings?.providers !== undefined && settings.providers.length > 0) {
 		const models = createModels();
@@ -291,7 +262,7 @@ export function setupModels(
 		models.setProvider(anthropicProvider());
 		return {
 			models,
-			defaultModel: usableDefault(models, { provider: "anthropic", modelId: "claude-sonnet-4-6" }, "环境变量 ANTHROPIC_API_KEY"),
+			defaultModel: requireModel(models, { provider: "anthropic", modelId: "claude-sonnet-4-6" }, "环境变量 ANTHROPIC_API_KEY"),
 		};
 	}
 	if (environment.OPENAI_API_KEY !== undefined) {
@@ -299,7 +270,7 @@ export function setupModels(
 		models.setProvider(openaiProvider());
 		return {
 			models,
-			defaultModel: usableDefault(models, { provider: "openai", modelId: "gpt-5" }, "环境变量 OPENAI_API_KEY"),
+			defaultModel: requireModel(models, { provider: "openai", modelId: "gpt-5" }, "环境变量 OPENAI_API_KEY"),
 		};
 	}
 

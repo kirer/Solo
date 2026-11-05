@@ -4,7 +4,19 @@
  * 这些函数决定「谁会醒」，是整套系统里最容易写错的一段，所以规则逐条测。
  */
 import { describe, expect, test } from "vitest";
-import { OWNER, chatKind, dmId, ChannelDoc, teamId, type Channel, type ChannelState } from "../../src/core/channel/types.ts";
+import {
+	OWNER,
+	chatKind,
+	dmId,
+	groupId,
+	isDmChannel,
+	isGroupChannel,
+	ChannelDoc,
+	teamId,
+	teamOfChannel,
+	type Channel,
+	type ChannelState,
+} from "../../src/core/channel/types.ts";
 import { deliveryTargets, parseMentions, recipientsOf } from "../../src/core/channel/mentions.ts";
 import { appendMessage, channelsOf, ensureChannel, fallbackChannelId, markRead, projectChannel, tail, unreadCount, type ChannelProjection } from "../../src/core/channel/rules.ts";
 
@@ -39,6 +51,15 @@ describe("频道 id", () => {
 	});
 	test("团队频道", () => {
 		expect(teamId("alpha")).toBe("team:alpha");
+	});
+	test("前缀解析只有一份：认得出，认不出就给 undefined", () => {
+		expect(teamOfChannel(teamId("alpha"))).toBe("alpha");
+		expect(teamOfChannel(groupId("alpha"))).toBeUndefined();
+		expect(teamOfChannel("all")).toBeUndefined();
+		expect(isGroupChannel(groupId("战情室"))).toBe(true);
+		expect(isGroupChannel(teamId("alpha"))).toBe(false);
+		expect(isDmChannel(dmId("owner", "cto"))).toBe(true);
+		expect(isDmChannel("dm")).toBe(false);
 	});
 });
 

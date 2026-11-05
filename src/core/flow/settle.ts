@@ -20,6 +20,7 @@ import type { Context } from "../runtime/index.ts";
 import type { MentionRoster } from "../channel/mentions.ts";
 import { answerEntry, finalTextOf, saidLast } from "./defaults/settle.ts";
 import type { Flow, FlowGates, MessageStore, Settler } from "./ports.ts";
+import type { SettleResult } from "./types.ts";
 
 export type SettleDeps = {
 	readonly store: MessageStore;
@@ -32,14 +33,14 @@ export type SettleDeps = {
 };
 
 export function createSettle(deps: SettleDeps): Flow["settle"] {
-	return async (event, ctx: Context): Promise<void> => {
+	return async (event, ctx: Context): Promise<SettleResult> => {
 		if (event.kind === "unanswered") {
 			// 「叫了他，但他这一轮一个字都没说出来」：频道里至少能看出他回答了没。
 			await deps.store.note({ channelId: event.channelId, text: event.text, at: Date.now() }, ctx);
-			return;
+			return { kind: "silent", reason: "unanswered" };
 		}
 
-		await deps.gate(async () => {
+		return deps.gate(async (): Promise<SettleResult> => {
 			const state = await deps.store.snapshot(ctx);
 			const { entry, page } = await answerEntry(event.entries, event.answer, ctx);
 			const trimmed = finalTextOf(entry)?.trim();
@@ -61,19 +62,29 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 				} else if (decision.reason === "pass") {
 					console.log(`[turn] ${event.slug} 不补发：[PASS] 或空正文`);
 				}
-				return;
+				return { kind: "silent", reason: decision.reason };
 			}
 
 			// 策略只能提议：频道在不在、他是不是成员、正文空不空，core 再核一遍。
 			// 默认收尾本来就查这些；插件替换收尾之后，这一道不能少（ADR-080）。
 			const target = state.channels[decision.channelId];
 			if (target === undefined || !target.members.includes(event.slug) || decision.text.trim() === "") {
-				console.warn(`[flow] 收尾提议被丢弃：${event.slug} 不能往 ${decision.channelId} 发`);
-				return;
+				const error = `收尾提议被丢弃：${event.slug} 不能往 ${decision.channelId} 发`;
+				console.warn(`[flow] ${error}`);
+				return { kind: "failed", error };
 			}
 
-			// 读名册失败也别把结论丢了：退回字面 token，投递那边还有兜底。
-			const roster = deps.roster === undefined ? undefined : await deps.roster().catch(() => undefined);
+			// 同一条答案会被**多条提交**各结算一次（报到 + 投递、投递 + 后台命令跑完）。
+			// 判据是答案条目 id，不是正文：两个人真说了同一句话（「在。」）不该互相吞掉。
+			// 这是 core 的不变量，不交给策略 —— 插件换了收尾也必须只补一次（ADR-080）。
+			const sourceEntry = entry === undefined ? undefined : String(entry.id);
+			if (
+				sourceEntry !== undefined &&
+				(state.messages[decision.channelId] ?? []).some((item) => item.sourceEntry === sourceEntry)
+			) {
+				return { kind: "silent", reason: "duplicate" };
+			}
+
 			try {
 				const written = await deps.publish(
 					{
@@ -81,7 +92,9 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 						from: event.slug,
 						text: decision.text,
 						at: Date.now(),
-						...(roster === undefined ? {} : { roster }),
+						...(sourceEntry === undefined ? {} : { sourceEntry }),
+						// 补发也是正常发言：`@我` 必须按名册落成 slug，不能存字面 token。
+						...(deps.roster === undefined ? {} : { roster: await deps.roster() }),
 					},
 					ctx,
 				);
@@ -89,11 +102,13 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 				console.log(
 					`[turn] ${event.slug} 答在会话里但没说出来，已补发到 ${decision.channelId}（唤醒自 #${event.wake.reply.seq}；落成 #${written.message.seq}「${written.message.text.slice(0, 20)}」）`,
 				);
+				return { kind: "reposted", message: written.message };
 			} catch (error) {
-				// 补发失败 = 内容丢了（他没 `say`，正文只在这个条目里）。必须留一行能被 live 数到的日志。
-				console.warn(
-					`[turn] ${event.slug} 答在会话里但补发失败：${error instanceof Error ? error.message : String(error)}`,
-				);
+				// 补发失败 = 内容丢了（他没 `say`，正文只在这个条目里）。结果交给 durable 收尾，
+				// 让它把这件任务记成 failed —— 不能报 completed，否则「补没补上」永远查不出来。
+				const message = error instanceof Error ? error.message : String(error);
+				console.warn(`[turn] ${event.slug} 答在会话里但补发失败：${message}`);
+				return { kind: "failed", error: message };
 			}
 		});
 	};

@@ -39,6 +39,14 @@ export type Skill = {
 	readonly description: string;
 	/** 技能所在目录（正文里写的相对路径以它为准）。 */
 	readonly dir: string;
+	/**
+	 * 真正装着这份技能的 markdown 文件。
+	 *
+	 * 目录形式是 `<dir>/SKILL.md`，单文件形式是 `<dir>/<名字>.md`。扫描时就定下来：
+	 * 读正文只按这个路径读，不再猜文件名 —— 单文件技能的 frontmatter `name` 和文件名
+	 * 不同时，猜出来的路径根本不存在。
+	 */
+	readonly sourcePath: string;
 	/** 哪一级的。下面的层同名覆盖上面的层。 */
 	readonly scope: SkillScope;
 	/** 更靠上的层有同名技能 —— 提示词里要标出来「这是覆盖过的版本」。 */
@@ -67,22 +75,26 @@ async function scanSkillsDir(skillsRoot: string, scope: SkillScope): Promise<rea
 		if (entry.name.startsWith(".")) continue;
 		if (entry.kind === "dir") {
 			const dir = join(skillsRoot, entry.name);
-			const doc = await readDocFile(join(dir, SKILL_FILE));
+			const sourcePath = join(dir, SKILL_FILE);
+			const doc = await readDocFile(sourcePath);
 			if (doc === undefined) continue;
 			found.push({
 				name: doc.front.name ?? entry.name,
 				description: doc.front.description ?? entry.name,
 				dir,
+				sourcePath,
 				scope,
 			});
 		} else if (entry.kind === "file" && entry.name.endsWith(".md")) {
-			const doc = await readDocFile(join(skillsRoot, entry.name));
+			const sourcePath = join(skillsRoot, entry.name);
+			const doc = await readDocFile(sourcePath);
 			if (doc === undefined) continue;
 			const bare = entry.name.slice(0, -3);
 			found.push({
 				name: doc.front.name ?? bare,
 				description: doc.front.description ?? bare,
 				dir: skillsRoot,
+				sourcePath,
 				scope,
 			});
 		}
@@ -147,9 +159,7 @@ export async function readSkill(
 ): Promise<SkillBody | undefined> {
 	const hit = (await listSkills(roots, slug, team)).find((skill) => skill.name === name);
 	if (hit === undefined) return undefined;
-	// 单文件形式时 `dir` 是 skills/ 本身，文件名得从 name 反推。
-	const doc =
-		(await readDocFile(join(hit.dir, SKILL_FILE))) ?? (await readDocFile(join(hit.dir, `${hit.name}.md`)));
+	const doc = await readDocFile(hit.sourcePath);
 	if (doc === undefined) return undefined;
 	return { ...hit, body: doc.body };
 }
@@ -160,20 +170,22 @@ export async function readSkill(
  */
 async function writeSkillTo(
 	skillsRoot: string,
+	scope: SkillScope,
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
 	const clean = skillDirName(input.name);
 	const description = input.description.trim();
 	const dir = join(skillsRoot, clean);
+	const sourcePath = join(dir, SKILL_FILE);
 	await writeDocFile(
-		join(dir, SKILL_FILE),
+		sourcePath,
 		[
 			["name", clean],
 			["description", description],
 		],
 		input.body,
 	);
-	return { name: clean, description, dir, scope: "personal" };
+	return { name: clean, description, dir, sourcePath, scope };
 }
 
 /** 写进某个人的个人层。 */
@@ -184,8 +196,7 @@ export async function writeSkill(
 ): Promise<Skill> {
 	const dir = await personalSkillsDir(roots.agents, slug);
 	if (dir === undefined) throw new Error(`没有这个人：${slug}`);
-	const written = await writeSkillTo(dir, input);
-	return { ...written, scope: "personal" };
+	return writeSkillTo(dir, "personal", input);
 }
 
 /** 写进全员层（所有 agent 立刻看得见）。 */
@@ -193,8 +204,7 @@ export async function writeAllSkill(
 	workspaceRoot: string,
 	input: { readonly name: string; readonly description: string; readonly body: string },
 ): Promise<Skill> {
-	const written = await writeSkillTo(join(workspaceRoot, SKILLS_DIR), input);
-	return { ...written, scope: "all" };
+	return writeSkillTo(join(workspaceRoot, SKILLS_DIR), "all", input);
 }
 
 /**
@@ -205,16 +215,20 @@ export async function writeAllSkill(
  * 的话，技能里放的那些附带文件就丢了。
  *
  * 目标已存在时不覆盖：播种只该发生一次，之后所有修改都属于用户。
+ *
+ * 返回值只说「拷了没有」，不假装自己读出了一份技能 —— 目标已存在时它可能根本不是
+ * 一份能读的技能，编一个空描述只会让调用方以为播种成功了。
  */
-export async function copySkillDir(fromDir: string, skillsRoot: string): Promise<Skill> {
+export async function copySkillDir(
+	fromDir: string,
+	skillsRoot: string,
+): Promise<{ readonly name: string; readonly copied: boolean }> {
 	const name = basename(fromDir);
 	const dir = join(skillsRoot, name);
-	// 已经存在：读回来报告，不覆盖。
-	if ((await mtimeOrUndefined(dir)) !== undefined) return { name, description: "", dir, scope: "all" };
+	if ((await mtimeOrUndefined(dir)) !== undefined) return { name, copied: false };
 	// `cp` 是这一层唯一保留的直接文件系统调用：技能是**目录**，可能带脚本与模板，
 	// `runtime/io` 不替它做递归拷贝。
 	await ensureDir(skillsRoot);
 	await cp(fromDir, dir, { recursive: true });
-	const doc = await readDocFile(join(dir, SKILL_FILE));
-	return { name, description: doc?.front.description ?? "", dir, scope: "all" };
+	return { name, copied: true };
 }

@@ -24,8 +24,8 @@ const MENTION = /(?<![A-Za-z0-9._%+-])@([\p{L}\p{N}_-]+)/gu;
  * 传了 `roster` 就按名册严格解析：解析不出来的 token（`@import` / `@media` / `@x`）
  * **丢弃**，因为它们在成员表里不存在，留着只是噪音。
  *
- * 不传 `roster` 时保留旧行为（字面 token 原样返回）—— 旧调用点（外壳的留痕、老数据的
- * 重新投递）不因为这一层而改变语义；我的叫法由 `recipientsOf` 的兜底兜住。
+ * 不传 `roster` 时保留字面 token —— 只用于不需要投递的调用点（系统留痕）。会决定
+ * 「叫醒谁」的发言一律传名册，落库的 `mentions` 因此永远是规范 slug。
  */
 export function parseMentions(text: string, roster?: MentionRoster): string[] {
 	const out: string[] = [];
@@ -54,11 +54,10 @@ export function recipientsOf(channel: Channel, message: Message, lastSpeaker?: s
 	const targets = new Set<string>();
 	const members = new Set(channel.members);
 
-	// 兜底再解析一次别名：老数据里存的是字面 token（`@我`），而频道成员里是 `owner`。
+	// `mentions` 落库时已经是规范 slug（写的时候按名册解析，老数据由频道文档 v2 迁移归一）。
 	// 成员过滤规则本身**不动** —— 不是这个房间的人照样 @ 不到（防止拿到别人房间的上下文）。
 	for (const mention of message.mentions) {
-		const slug = members.has(mention) ? mention : resolveMention(mention, EMPTY_ROSTER);
-		if (slug !== undefined && members.has(slug)) targets.add(slug);
+		if (members.has(mention)) targets.add(mention);
 	}
 	// 「我没 @ 人」才让第一个成员接。**判据看正文里有没有 @，不看解析结果**：
 	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个

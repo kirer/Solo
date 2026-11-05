@@ -367,7 +367,7 @@ export async function planAttachments(
 		}
 		// 图片：能内联就内联，不能就老实说没给。
 		const path = root === undefined ? undefined : uploadPathOf(root, attachment.id);
-		if (path === undefined) {
+		if (root === undefined || path === undefined) {
 			lines.push(line("attachments.image.missing", { name: attachment.name, size }));
 			continue;
 		}
@@ -390,10 +390,15 @@ export async function planAttachments(
 			lines.push(line("attachments.image.gone", { name: attachment.name, size }));
 			continue;
 		}
-		const meta = await readUploadMeta(root as string, attachment.id).catch(() => undefined);
 		// mime 从磁盘元数据来（HTTP 上传时写下的），不信文档里那份可以改的副本。
-		const mimeType = meta?.mime ?? "image/png";
-		images.push({ type: "image", data: bytes.toString("base64"), mimeType });
+		// 元数据没了就不内联：猜成 `image/png` 是把一张 JPEG 谎报成 PNG —— 模型那边
+		// 解不出来，我们却以为已经给它看过了。
+		const meta = await readUploadMeta(root, attachment.id);
+		if (meta === undefined) {
+			lines.push(line("attachments.image.no-meta", { name: attachment.name, size }));
+			continue;
+		}
+		images.push({ type: "image", data: bytes.toString("base64"), mimeType: meta.mime });
 		totalBytes += attachment.bytes;
 		lines.push(line("attachments.image.ok", { name: attachment.name }));
 	}

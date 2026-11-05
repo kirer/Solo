@@ -31,20 +31,54 @@ import { createRouteTool } from "./route.ts";
 import { createRunTool } from "./run.ts";
 import { createSayTool } from "./say.ts";
 import type { CoreToolDeps } from "./context.ts";
+import {
+	traced,
+	traceChats,
+	traceFile,
+	traceHire,
+	traceHistory,
+	traceRemember,
+	traceRoute,
+	traceRun,
+	traceSay,
+	tracesOf,
+	type ToolTrace,
+} from "./presentation.ts";
 
 export type { CoreToolDeps } from "./context.ts";
 export { clip, isPass, monologueOpener, resolveInWorkspace } from "./guards.ts";
+export type { ToolTrace } from "./presentation.ts";
 
-/** 建工具。返回一个扩展，装进所有 agent 的会话里。 */
+/**
+ * 建工具。返回一个扩展，装进所有 agent 的会话里。
+ *
+ * 每个工具在**注册这一行**登记它在轨迹里怎么画（`presentation.ts`）：投影层按名字查，
+ * 不认识任何具体工具。
+ */
 export function createCoreTools(deps: CoreToolDeps) {
 	return [
-		createSayTool(deps),
-		createChatsTool(deps),
-		createHistoryTool(deps),
-		createRememberTool(deps),
-		createHireTool(deps),
-		createRouteTool(deps),
-		createRunTool(deps),
-		createFileTool(deps),
+		traced(createSayTool(deps), traceSay),
+		traced(createChatsTool(deps), traceChats),
+		traced(createHistoryTool(deps), traceHistory),
+		traced(createRememberTool(deps), traceRemember),
+		traced(createHireTool(deps), traceHire),
+		traced(createRouteTool(deps), traceRoute),
+		traced(createRunTool(deps), traceRun),
+		traced(createFileTool(deps), traceFile),
 	] as readonly ToolRegistration[];
+}
+
+/** 核心工具的轨迹表。投影层拿它当默认值（生产走注册表，插件工具也能带上）。 */
+export function coreToolTraces(): ReadonlyMap<string, ToolTrace> {
+	return tracesOf(createCoreTools({} as never));
+}
+
+/**
+ * 工具名。插件装载时拿它当保留字：插件工具和核心工具同名，就等于把 `say` 换成了
+ * 别人写的一个同名函数，而模型分不出来。
+ *
+ * 直接问建出来的那八个，不维护第二份名单 —— 加一个工具时不会漏。
+ */
+export function coreToolNames(): readonly string[] {
+	return createCoreTools({} as never).map((tool) => (tool as { name: string }).name);
 }

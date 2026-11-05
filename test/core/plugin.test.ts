@@ -309,6 +309,68 @@ describe("加载", () => {
 		}
 	});
 
+	it("工具名冲突：整个插件不装，核心与插件之间都不许重名", async () => {
+		const root = await pluginsRoot();
+		const plugin = (name: string, word: string) => `
+			export function apply(api) {
+				api.tool({
+					name: ${JSON.stringify(name)},
+					description: "示范",
+					parameters: api.Type.Object({}),
+					execute: async () => api.text(${JSON.stringify(word)}),
+				});
+				api.prompt(${JSON.stringify(word)});
+			}
+		`;
+		await writePlugin(root, "a", { "plugin.md": "---\nname: a\n---\n", "plugin.js": plugin("clash", "a 在。") });
+		await writePlugin(root, "b", { "plugin.md": "---\nname: b\n---\n", "plugin.js": plugin("clash", "b 也来了。") });
+		await writePlugin(root, "c", { "plugin.md": "---\nname: c\n---\n", "plugin.js": plugin("say", "c 想抢 say。") });
+
+		const host = await loadPlugins({
+			pluginsRoot: root,
+			workspace: join(root, ".."),
+			logsRoot: join(root, "..", "logs"),
+			reservedTools: ["say"],
+			log: () => {},
+		});
+
+		// 后装的那个整个不装：它的工具和提示词都不该漏进来。
+		expect(host.tools.map((tool) => (tool as { name?: string }).name)).toEqual(["clash"]);
+		expect(host.prompt).toEqual(["a 在。"]);
+		expect(host.plugins.filter((item) => item.error !== undefined).map((item) => item.slug)).toEqual(["b", "c"]);
+		expect(host.errors.join("\n")).toContain("和插件「a」重名");
+		expect(host.errors.join("\n")).toContain("和核心工具重名");
+	});
+
+	it("一个插件听消息抛错：只留一行，别的插件照跑", async () => {
+		const root = await pluginsRoot();
+		await writePlugin(root, "a", {
+			"plugin.md": "---\nname: a\n---\n",
+			"plugin.js": `export function apply(api) {
+				api.on("message", () => { throw new Error("听消息炸了"); });
+			}`,
+		});
+		await writePlugin(root, "b", {
+			"plugin.md": "---\nname: b\n---\n",
+			"plugin.js": `export function apply(api) {
+				api.on("message", () => { globalThis.__pluginHeard = (globalThis.__pluginHeard ?? 0) + 1; });
+			}`,
+		});
+
+		const lines: string[] = [];
+		const host = await loadPlugins({
+			pluginsRoot: root,
+			workspace: join(root, ".."),
+			logsRoot: join(root, "..", "logs"),
+			log: (line) => lines.push(line),
+		});
+
+		// 不 reject：坏的那条被包成了日志，投递不会被它打断。
+		await Promise.all(host.messages.map((listener) => listener({} as never, "all")));
+		expect(lines.join("\n")).toContain("听消息炸了");
+		expect((globalThis as Record<string, unknown>)["__pluginHeard"]).toBe(1);
+	});
+
 	it("有前端入口就标出来", async () => {
 		const root = await pluginsRoot();
 		await writePlugin(root, "ui", { "plugin.md": "ui", "client.js": "export default { apply() {} }" });

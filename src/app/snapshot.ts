@@ -17,7 +17,7 @@ import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channe
 import type { DirectoryState } from "../core/channel/roster.ts";
 import { assistantsOf, type Identity } from "../core/documents/member/identity.ts";
 import type { TeamDoingOf } from "../view/dto.ts";
-import { withLabels, withoutGoneTeams } from "./project.ts";
+import { withLabels } from "./project.ts";
 import type { CoreServices } from "./types.ts";
 
 /** 团队文档缓存窗口（毫秒）。够合并连续提交，又不至于让界面看见旧数据。 */
@@ -71,9 +71,8 @@ export function createSnapshots(shell: CoreServices) {
 		// 一句话现状来自团队文档，和上面的团队列表是同一个快照。
 		const doings = new Map<string, string | undefined>(teams.map((team) => [team.slug, team.doing]));
 		const teamDoingOf = (team: string) => doings.get(team);
-		// 目录没了的团队频道不再投影：删目录不会提交文档，不能等重启才消失。
-		const alive = new Set(teams.map((team) => team.slug));
-		return { ...channel, channels: withoutGoneTeams(channel.channels, alive), teamDoingOf };
+		// 团队目录没了 → 频道归档，只有 `archiveGoneTeams` 一个地方做（启动 + `teams/` 监听）。
+		return { ...channel, teamDoingOf };
 	}
 
 	return { channelSnapshot, snapshot, teamsNow };

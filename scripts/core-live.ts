@@ -258,13 +258,24 @@ async function main(): Promise<void> {
 		channelId: "all",
 		text: `@${slug} 招一个人进「自测团队」做前端，负责团队频道的界面。用 hire 建，名字用真人的名字（姓+名）。建完告诉我他叫什么。`,
 	});
-	// 等「人真的建出来了」，不等某一条回话。回话可能串到别的频道去（它答的是上一个
+	// 等「招人这件事整个做完」，不等某一条回话。回话可能串到别的频道去（它答的是上一个
 	// 问题），按消息判断会把「没招人」误判成「招了人」，再让后面的断言全部失真。
+	//
+	// 也不能只等身份文件：`createAgent` 先落盘，`openAgent` 才建私聊、进全员群。
+	// 只等文件会在两步之间读到「人有了、频道还没接上」——招人是原子的，读也要按整件事读。
 	const { readAllIdentities } = await import("../src/core/documents/member/identity.ts");
 	const hireDeadline = Date.now() + WAIT_MS;
 	let all = await readAllIdentities(layout.agentRoots);
 	let hired = all.find((identity) => identity.slug !== slug);
-	while (Date.now() < hireDeadline && hired === undefined) {
+	const wired = async (identity: (typeof all)[number] | undefined): Promise<boolean> => {
+		if (identity === undefined) return false;
+		const state = await shell.channels();
+		return (
+			state.channels["all"]?.members.includes(identity.slug) === true &&
+			state.channels[dmId(OWNER, identity.slug)] !== undefined
+		);
+	};
+	while (Date.now() < hireDeadline && !(await wired(hired))) {
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
 		all = await readAllIdentities(layout.agentRoots);
 		hired = all.find((identity) => identity.slug !== slug);

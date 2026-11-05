@@ -96,7 +96,7 @@ async function setup(options: { mentionOther?: boolean } = {}) {
 			text: SEED_TEXT,
 			conversationOf,
 		}),
-		finishTurn: async () => undefined,
+		finishTurn: async () => ({ kind: "silent", reason: "no-target" }),
 		conversationOf,
 		rememberWake: async () => undefined,
 		wakeOf: async () => undefined,
@@ -109,7 +109,12 @@ async function setup(options: { mentionOther?: boolean } = {}) {
 			...emptyDirectory(),
 			slugToConversation: { [ASSISTANT]: ASSISTANT_ID, [ME]: ME_ID, [OTHER]: OTHER_ID },
 			conversationToSlug: { [String(ASSISTANT_ID)]: ASSISTANT, [String(ME_ID)]: ME, [String(OTHER_ID)]: OTHER },
-			wake: { [String(ASSISTANT_ID)]: { channelId: TEAM, seq: 1, from: OWNER, at: 10 } },
+			wake: {
+				[String(ASSISTANT_ID)]: {
+					reply: { channelId: TEAM, seq: 1, from: OWNER, at: 10 },
+					task: { channelId: TEAM, seq: 1, from: OWNER, at: 10 },
+				},
+			},
 		}),
 		saveDirectory: async () => undefined,
 		wiring,

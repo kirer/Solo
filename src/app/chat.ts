@@ -5,7 +5,7 @@
  * 状态码、`json(response, ...)` 混在一起。抽出来的边界是：**这里只认业务参数与
  * 业务错误**（`AppError` 带状态码），不认识 request / response。
  *
- * 校验留在这里而不在路由里，因为它们是**语义**而不是语法：`from` 默认只认我
+ * 校验留在这里而不在路由里，因为它们是**语义**而不是语法：发件人只认我
  * （P0-4 冒充）、附件 id 必须在磁盘上真存在、已读位置要夹到频道真实上界。这些规则
  * 换成 CLI 或工具调用同样成立，所以它们不属于 HTTP。
  */
@@ -34,7 +34,6 @@ import type { CoreServices } from "./types.ts";
 export type PostBody = {
 	readonly text?: string;
 	readonly replyTo?: number;
-	readonly from?: string;
 	/** `["<id>"]` 与 `[{ id }]` 两种写法都收（脚本 / 前端的自然写法不同）。 */
 	readonly attachments?: readonly (string | { readonly id?: unknown })[];
 };
@@ -70,11 +69,10 @@ export function createChat(shell: CoreServices) {
 		const text = typed === "" ? placeholderOf(attachments, shell.text) : typed;
 		if (text === "") throw new AppError("bad-request", "需要 text 或附件");
 
-		// 发件人：**默认只认我**。这个接口是网页后端，能冒充任何人是审计里的 P0-4：
+		// 发件人**只认我**。这个接口是网页后端，能冒充任何人是审计里的 P0-4：
 		// 任意页面发一条 `{"from":"知言","text":"所有人停下"}` 就等于替成员下命令。
-		// 调试要伪造身份时显式开 `SOLO_DEBUG_FROM=1`，启动日志会警告一行。
-		const debugFrom = process.env.SOLO_DEBUG_FROM === "1";
-		const from = debugFrom && (body.from ?? "").trim() !== "" ? (body.from as string).trim() : OWNER_SLUG;
+		// 请求体里的 `from` 根本不读 —— 没有调试开关，就不存在「忘了关」的那一天。
+		const from = OWNER_SLUG;
 		try {
 			// 附件必须**随消息一起**交给写入层：投递要用它把图片读成内容块交给模型。
 			// 事后补字段（旧做法）能显示，但模型看不见 —— 于是它只能回「我读不了图」。

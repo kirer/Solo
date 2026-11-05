@@ -151,7 +151,18 @@ export async function fanOut(options: DeliverOptions, context: Context): Promise
 		});
 
 	for (const slug of options.targets) {
-		const conversation = await options.conversationOf(slug).catch(() => undefined);
+		let conversation: Conversation | undefined;
+		try {
+			conversation = await options.conversationOf(slug);
+		} catch (error) {
+			// 开会话失败不是「这个人没有会话」：前者是系统坏了，后者是本来就不该叫醒。
+			// 混成 skipped 的话，频道里只会显示「没叫」，排查时看不出是故障。
+			const detail = error instanceof Error ? error.message : String(error);
+			process.stderr.write(`[投递失败] ${options.channel.id}#${options.message.seq} → ${slug}: ${detail}\n`);
+			failed.push(slug);
+			issues.push({ slug, reason: "failed", detail });
+			continue;
+		}
 		if (conversation === undefined) {
 			skipped.push(slug);
 			issues.push({ slug, reason: "no-conversation" });
@@ -169,8 +180,21 @@ export async function fanOut(options: DeliverOptions, context: Context): Promise
 			from: options.message.from,
 			at: options.message.at,
 		};
-		const previous = options.wakeOf === undefined ? undefined : await options.wakeOf(slug).catch(() => undefined);
-		const task = interrupted && previous !== undefined ? previous.task : reply;
+		// 只有被打断时才需要上一次的记录（从它继承 `task`），所以只在此时读。
+		// 读不出来就**不猜**：猜成 `reply` 会让私聊里的一句插话把团队频道的活顶掉（ADR-099）。
+		let task: WakeTarget = reply;
+		if (interrupted && options.wakeOf !== undefined) {
+			try {
+				const previous = await options.wakeOf(slug);
+				if (previous !== undefined) task = previous.task;
+			} catch (error) {
+				const detail = error instanceof Error ? error.message : String(error);
+				process.stderr.write(`[投递失败] ${options.channel.id}#${options.message.seq} → ${slug}: ${detail}\n`);
+				failed.push(slug);
+				issues.push({ slug, reason: "failed", detail });
+				continue;
+			}
+		}
 		const taskChannelTitle =
 			task.channelId === options.channel.id
 				? undefined
@@ -337,6 +361,9 @@ export async function enqueue(deps: WakeDeps, input: WakeInput, context: Context
 
 		// 先合并、再拼正文：正文里要写「把 N 条并成了这一条」。
 		// 合并唤醒：同一会话最多留一个「还没开始」的排队项。给了撤排队项的那条路才合并。
+		//
+		// 合并失败只意味着「多留一个排队项」：照常投递，正文说「没合并」。这是账务上的
+		// 冗余，不是消息丢了 —— 为它放弃这次唤醒反而更糟，所以这里保留兜底。
 		const merged =
 			deps.coalesceQueue === undefined
 				? 0
@@ -448,8 +475,9 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 			}
 
 			// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
-			// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
-			const busy = await liveConversations(deps.harness, ctx).catch(() => new Set<number>());
+			// 读不出来就让它抛：不知道谁在忙时，所有人都会少掉「这是插话」那句话，
+			// 模型答完一句就把手上的活丢了 —— 这种静默降级比一次可见的失败更难查。
+			const busy = await liveConversations(deps.harness, ctx);
 			const labelOf = deps.labelOf ?? ((slug: string) => slug);
 
 			return fanOut(

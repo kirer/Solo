@@ -83,9 +83,22 @@ async function setup(
 			...emptyDirectory(),
 			slugToConversation: { [ME]: CONVERSATION, 知言: ASSISTANT },
 			conversationToSlug: { [String(CONVERSATION)]: ME, [String(ASSISTANT)]: "知言" },
-			wake: { [String(CONVERSATION)]: { channelId: TEAM, seq: 1, from: OWNER, at: 10 } },
+			wake: {
+				[String(CONVERSATION)]: {
+					reply: { channelId: TEAM, seq: 1, from: OWNER, at: 10 },
+					task: { channelId: TEAM, seq: 1, from: OWNER, at: 10 },
+				},
+			},
 		}),
 		saveDirectory: async () => undefined,
+		// 招人这条路在装配里是必填项；测试只关心工具说了什么，给它一组能跑的空实现。
+		openAgent: async () => 99,
+		syncTeam: async () => undefined,
+		announceJoin: async () => undefined,
+		modelChoices: async () => ({ models: [] }),
+		setModel: async () => {
+			throw new Error("没有这个模型");
+		},
 		...extra,
 	} as never);
 

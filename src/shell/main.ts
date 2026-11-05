@@ -28,9 +28,11 @@ import { wipeAll } from "../app/reset.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../core/fsx.ts";
+import { loadTextCatalog } from "../core/documents/base/catalog.ts";
 import { loadTemplates, PROMPT_DIR } from "../core/documents/base/template.ts";
 import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../core/runtime/io.ts";
 import { resolveLayout, type Layout } from "../core/layout.ts";
+import { migrateWorkspace } from "./migrate.ts";
 import { serveCore, type CoreServer } from "./serve.ts";
 
 /** 重置 / 重启完成后用这个退出码退出；桌面壳（`desktop/src/backend.ts`）认它，收到就重开。 */
@@ -91,6 +93,9 @@ async function main(): Promise<void> {
 	await ensureDir(layout.assistantRoot);
 	await ensureDir(layout.membersRoot);
 	await ensureDir(layout.teamsRoot);
+	// 先把磁盘上的旧形状改写掉，再播种、装配：读的代码只认一种形状。
+	const migrated = await migrateWorkspace(layout);
+	if (migrated.length > 0) console.log(`[core] 迁移了身份头：${migrated.join("、")}`);
 
 	if (args.seed) {
 		// 规矩与全员层技能**每次启动都同步**（不是「只在空工作区」）：它们是全员共用的文件，
@@ -98,9 +103,10 @@ async function main(): Promise<void> {
 		// 工作区。同步按 hash 判断用户改过没有，改过的不动（ADR-031）。
 		const rules = await seedRules(layout);
 		if (rules === "written") console.log(`[core] 写入了全员规矩：${layout.rulesFile}`);
+		if (rules === "updated") console.log(`[core] 升级了全员规矩：${layout.rulesFile}`);
 		// 提示词模板同理：缺哪一段补哪一段，改过的不动。
 		const templates = await seedPromptTemplates(layout);
-		if (templates.length > 0) console.log(`[core] 补进了提示词模板：${templates.join("、")}`);
+		if (templates.length > 0) console.log(`[core] 同步了提示词模板：${templates.join("、")}`);
 		// 工具描述与拒绝话术同理：缺哪份补哪份，改过的不动。
 		const texts = await seedTextFiles(layout);
 		if (texts.length > 0) console.log(`[core] 补进了文案：${texts.join("、")}`);
@@ -135,6 +141,12 @@ async function main(): Promise<void> {
 		throw new Error(
 			`提示词模板一段都没有：${layout.promptRoot}（播种没跑，或者部署漏了 seed/prompt/）`,
 		);
+	}
+
+	// 文案同理：目录是空的，模型读到的工具描述就是 `hire.fire.done` 这种键名。
+	const text = await loadTextCatalog(createFsx(layout.appRoot));
+	if (text.keys().length === 0) {
+		throw new Error(`文案目录是空的：${layout.textRoot}（播种没跑，或者部署漏了 seed/text/）`);
 	}
 
 	const models = setupModels(process.env, { settingsFile: layout.settingsFile });

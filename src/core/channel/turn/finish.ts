@@ -17,9 +17,7 @@ import type { WakeRecord } from "./record.ts";
 import { createFlow } from "../../flow/index.ts";
 import { createMessageStore } from "../../flow/store.ts";
 import { createTurnRunner } from "../../flow/runner.ts";
-import { defaultRouter } from "../../flow/defaults/router.ts";
-import { defaultSettler } from "../../flow/defaults/settle.ts";
-import { policyRouter, policySettler } from "../../flow/policies.ts";
+import { policyChain } from "../../flow/policies.ts";
 import { sharedGates } from "../../flow/gates.ts";
 import type { FinishTurn } from "../../flow/types.ts";
 
@@ -41,17 +39,20 @@ export type TurnDeps = {
 	readonly afterPublish?: ChannelFlowDeps["afterPublish"];
 	/** 插件注册的分发 / 收尾策略：补发也走同一条链。 */
 	readonly policies?: () => readonly FlowPolicy[];
+	/** 策略出问题的出口（装配层接到 diag）。不给就 `console.warn`。 */
+	readonly report?: ChannelFlowDeps["report"];
 };
 
 /**
  * 造一个收尾器。投递、我说话两条路共用同一份 —— 收尾的行为只写一次。
  */
 export function createTurnFinisher(deps: TurnDeps): FinishTurn {
-	const policies = deps.policies;
+	// 插件策略排在默认规则前面；收尾策略替换默认，弃权/抛错再回退（ADR-080）。
+	const chain = policyChain(deps.policies, deps.report);
 	const flow = createFlow({
 		store: createMessageStore({ harness: deps.harness }),
-		// 插件策略排在默认规则前面；收尾策略替换默认，弃权/抛错再回退（ADR-080）。
-		routers: [...(policies === undefined ? [] : [policyRouter(policies)]), defaultRouter()],
+		routers: chain.routers,
+		...(deps.report === undefined ? {} : { report: deps.report }),
 		runner: createTurnRunner({
 			harness: deps.harness,
 			conversationOf: deps.conversationOf,
@@ -62,7 +63,7 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			...(deps.text === undefined ? {} : { text: deps.text }),
 		}),
-		settler: policies === undefined ? defaultSettler() : policySettler(policies, defaultSettler()),
+		settler: chain.settler,
 		...(deps.roster === undefined ? {} : { roster: deps.roster }),
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
 		gate: sharedGates(),

@@ -32,7 +32,7 @@ async function seedContent(): Promise<string> {
 }
 
 async function writeManifest(skills: Record<string, Record<string, string>>): Promise<void> {
-	await writeFile(manifestPath, `${JSON.stringify({ version: 1, skills }, null, 2)}\n`, "utf8");
+	await writeFile(manifestPath, `${JSON.stringify({ version: 2, skills, plugins: [], files: {} }, null, 2)}\n`, "utf8");
 }
 
 beforeEach(async () => {
@@ -58,7 +58,7 @@ describe("全员层技能：按 hash 同步", () => {
 			version: number;
 			skills: Record<string, Record<string, string>>;
 		};
-		expect(manifest.version).toBe(1);
+		expect(manifest.version).toBe(2);
 		expect(manifest.skills[SKILL]?.[FILE]).toBe(hashOf(await seedContent()));
 	});
 
@@ -116,7 +116,7 @@ describe("全员层技能：按 hash 同步", () => {
 	});
 });
 
-describe("规矩文件：只补不改", () => {
+describe("规矩文件：同一套 hash 判据", () => {
 	it("工作区没有 rules.md → 写入；已有（用户改过）→ 不动", async () => {
 		expect(await seedRules(layout)).toBe("written");
 		const written = await readFile(join(root, "rules.md"), "utf8");
@@ -127,5 +127,25 @@ describe("规矩文件：只补不改", () => {
 		await writeFile(join(root, "rules.md"), mine, "utf8");
 		expect(await seedRules(layout)).toBe("exists");
 		expect(await readFile(join(root, "rules.md"), "utf8")).toBe(mine);
+	});
+
+	it("没改过的老规矩 → 升到新版（出厂修正能进已在跑的工作区）", async () => {
+		const old = "- 旧规矩\n";
+		await writeFile(join(root, "rules.md"), old, "utf8");
+		await writeFile(
+			manifestPath,
+			`${JSON.stringify({ version: 2, skills: {}, plugins: [], files: { "rules.md": hashOf(old) } }, null, 2)}\n`,
+			"utf8",
+		);
+		expect(await seedRules(layout)).toBe("updated");
+		const seed = await readFile(new URL("../../seed/rules.md", import.meta.url), "utf8");
+		expect(await readFile(join(root, "rules.md"), "utf8")).toBe(seed);
+	});
+
+	it("账本坏了：改名留证，不当成「都没改过」硬覆盖", async () => {
+		await writeFile(join(root, "rules.md"), "- 我的规矩\n", "utf8");
+		await writeFile(manifestPath, "{ 坏掉的 JSON", "utf8");
+		expect(await seedRules(layout)).toBe("exists");
+		expect(await readFile(join(root, "rules.md"), "utf8")).toBe("- 我的规矩\n");
 	});
 });

@@ -32,7 +32,7 @@ const wake = {
 	task: { channelId, seq: 1, from: "owner", at: 1 },
 };
 
-const report = createTurnReport(async () => undefined);
+const report = createTurnReport(async () => ({ kind: "silent", reason: "no-target" }));
 const fixture = defineExtension({ name: "turn-report-fixture", tasks: [report.task] });
 const registry = createRegistry();
 registry.install(fixture);
@@ -44,6 +44,11 @@ const conversation = await runtime.harness.createConversation(
 );
 const conversationId = Number(conversation.id);
 
+const answerId = await conversation.commit(
+	(tx) => tx.appendEntry(conversation.id, { kind: "pi.assistant", model: [fauxAssistantMessage(answer)] }),
+	BACKGROUND_CONTEXT,
+);
+
 await runtime.harness.commit(async (tx) => {
 	const doc = (await tx.doc(ChannelDoc)) as ChannelState;
 	doc.channels = {
@@ -53,18 +58,24 @@ await runtime.harness.commit(async (tx) => {
 		[channelId]: [
 			{ seq: 1, from: "owner", at: 1, text: "@林越 在吗", mentions: ["林越"], kind: "chat" },
 			...(process.env.SEED_POSTED === "1"
-				? [{ seq: 2, from: "林越", at: 2, text: answer, mentions: [], kind: "chat" }]
+				? [
+						{
+							seq: 2,
+							from: "林越",
+							at: 2,
+							text: answer,
+							mentions: [],
+							kind: "chat",
+							// 已经补发过的那条：判重靠这个 id，读的时候不能只看正文。
+							sourceEntry: String(answerId.id),
+						},
+					]
 				: []),
 		],
 	};
 	doc.nextSeq = { [channelId]: process.env.SEED_POSTED === "1" ? 3 : 2 };
 	doc.readMarks = {};
 }, BACKGROUND_CONTEXT);
-
-const answerId = await conversation.commit(
-	(tx) => tx.appendEntry(conversation.id, { kind: "pi.assistant", model: [fauxAssistantMessage(answer)] }),
-	BACKGROUND_CONTEXT,
-);
 
 await runtime.harness.commit(async (tx) => {
 	const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;

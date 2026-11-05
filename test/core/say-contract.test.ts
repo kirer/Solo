@@ -121,7 +121,7 @@ async function setup(options: {
 	const wake =
 		options.wake !== undefined || wakeSeq !== undefined
 			? {
-					[String(CONVERSATION)]: target,
+					[String(CONVERSATION)]: { reply: target, task: target },
 				}
 			: {};
 

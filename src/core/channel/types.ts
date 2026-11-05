@@ -12,7 +12,8 @@
  * 规则都放在这个文件里，且都是纯函数 —— 它们决定「谁是唤醒对象」，是整套系统里
  * 最容易写错、也最需要单测的一段。
  */
-import { defineDoc } from "../runtime/index.ts";
+import { defineDoc, type JsonObject } from "../runtime/index.ts";
+import { isDmChannel } from "./id.ts";
 import type { WakeRecord } from "./turn/record.ts";
 
 /**
@@ -49,11 +50,11 @@ export type Message = {
 	/**
 	 * 消息类别，只有两种：`chat` 发言、`note` 系统留痕（不唤醒、不计未读）。
 	 *
-	 * 类型是 `string` 而不是联合类型：历史库里还躺着旧版本写过的 kind（`say` / `question` /
-	 * `decision` / `report` / `think` / `tool` / `work` / `step`）。读的时候只经
-	 * `spokenKind` 一处判断，不再写新值（ADR-061）。
+	 * 历史库里旧版本写过的 kind（`say` / `question` / `decision` / `report` / `think` /
+	 * `tool` / `work` / `step`）在文档升到 v2 时由 `migrateMessages` 归一，读的代码
+	 * 不用再记「哪些算发言」。
 	 */
-	kind: string;
+	kind: "chat" | "note";
 	/**
 	 * 系统留痕是哪一种：`run` = 后台命令跑完。界面据此把它收成一行（点开才看全文），
 	 * 别的 `note` 照旧平铺。没有种类时不写这个键。
@@ -71,6 +72,13 @@ export type Message = {
 	 * 回答就是一条普通消息 + `replyTo` 指向它，正文写选项文字。
 	 */
 	options?: string[];
+	/**
+	 * 这条消息是替哪一条会话答案补发的（`turn.report` 的答案条目 id）。
+	 *
+	 * 一条答案会被多条提交各结算一次；判重靠这个 id，而不是正文相同 —— 两个人真说了
+	 * 一样的话（「在。」「收到。」）不该互相吞掉。只在系统补发时写。
+	 */
+	sourceEntry?: string;
 };
 
 /** 一个频道。 */
@@ -106,9 +114,44 @@ export function emptyChannelState(): ChannelState {
 	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
 }
 
+/**
+ * v1 → v2：把历史上的消息 kind 归一到两种。
+ *
+ * v1 时代 kind 是自由字符串（`say` / `question` / `decision` / `report`，以及 ADR-081
+ * 之前的过程行 `think` / `tool` / `work` / `step`）。读的每一处都得记着「哪些算发言」；
+ * 现在在**升版本的那一刻**归一次，之后 `spokenKind` 只剩一句 `kind !== "note"`。
+ *
+ * 过程行落成 `note`：它们本来就不算发言（不计未读、不当接话人），投影层也一直把
+ * 非发言画成留痕，所以这一改写不改变任何看得到的行为。
+ */
+function migrateMessages(value: JsonObject, fromVersion: number): ChannelState {
+	if (fromVersion >= 2) return value as unknown as ChannelState;
+	const legacyProcess = new Set(["think", "tool", "work", "step"]);
+	// 老数据里 `@我` 存的是字面 token（那时 `parseMentions` 不传名册）。归一成 `owner`，
+	// 投递时就不用再拿一份「只认我」的名册重解析一遍。
+	const ownerTokens = new Set([OWNER, "我"]);
+	const state = value as unknown as ChannelState;
+	const messages: Record<string, Message[]> = {};
+	for (const [id, list] of Object.entries(state.messages ?? {})) {
+		messages[id] = (list ?? []).map((message) => {
+			const kind: unknown = message.kind;
+			const mentions = (message.mentions ?? []).map((token) =>
+				ownerTokens.has(String(token).normalize("NFKC").trim().replace(/^@+/, "").toLowerCase()) ? OWNER : token,
+			);
+			return {
+				...message,
+				kind: kind === "note" ? "note" : legacyProcess.has(String(kind)) ? "note" : "chat",
+				mentions,
+			};
+		});
+	}
+	return { ...value, messages } as unknown as ChannelState;
+}
+
 export const ChannelDoc = defineDoc<ChannelState>({
 	kind: "core.channels",
-	version: 1,
+	version: 2,
+	migrate: migrateMessages,
 	scope: "session",
 	initial: emptyChannelState,
 	// 什么时候把散着的增量压成一条基线。两个理由各占一半：
@@ -133,18 +176,13 @@ export const ChannelDoc = defineDoc<ChannelState>({
 	},
 });
 
-/** 旧版本写过、现在不再产生的过程行 kind（ADR-081 删掉过程投影后不清理旧数据）。 */
-const LEGACY_PROCESS_KINDS = new Set(["think", "tool", "work", "step"]);
-
 /**
- * 这条消息算不算「人说的话」。
+ * 这条消息算不算「人说的话」：`note` 不算（不唤醒、不计未读、不当接话人）。
  *
- * 今天只有 `chat` 与 `note` 两种 kind，这个函数本该是一句 `kind !== "note"`；
- * 多出来的那个集合只服务旧数据 —— 那些过程行不是发言，不能计未读、不能进侧栏预览、
- * 也不能进「找你」。判断只有这一处，界面拿到的已经是归一过的 `chat` / `note`。
+ * 旧数据里的过程行在文档 v2 迁移时已经落成 `note`，这里不再维护第二份名单。
  */
-export function spokenKind(kind: string): boolean {
-	return kind !== "note" && !LEGACY_PROCESS_KINDS.has(kind);
+export function spokenKind(kind: Message["kind"]): boolean {
+	return kind !== "note";
 }
 
 /** 我的 slug。不是 agent，但出现在成员表里。 */
@@ -153,11 +191,8 @@ export const OWNER = "owner";
 /** 我 slug。与 `OWNER` 同值，单独的常量名便于在阅读时区分「常量」与「比较」。 */
 export const OWNER_SLUG = OWNER;
 
-/** 私聊频道的命名规则。双方 slug 排序后拼接，保证 `a-b` 与 `b-a` 是同一个频道。 */
-export function dmId(a: string, b: string): string {
-	const [left, right] = [a, b].sort();
-	return `dm:${left}-${right}`;
-}
+// id 的构造与解析只有一份，在 `id.ts`；这里转出去，老调用方（`import { dmId } from "./types.ts"`）不用改。
+export { dmId, groupId, isDmChannel, isGroupChannel, teamId, teamOfChannel } from "./id.ts";
 
 /**
  * 一条频道是哪种会话：**`dm:` 前缀 + 恰好 `{我, 一个 agent}`** 才是私聊。
@@ -170,23 +205,10 @@ export function dmId(a: string, b: string): string {
  * 频道仍然没有 `kind` 字段 —— 加了就要维护两处事实（成员变了、kind 没变）。
  */
 export function chatKind(channel: Channel): "dm" | "group" {
-	if (!channel.id.startsWith("dm:")) return "group";
+	if (!isDmChannel(channel.id)) return "group";
 	if (channel.members.length !== 2) return "group";
 	if (!channel.members.includes(OWNER)) return "group";
 	return "dm";
-}
-
-/** 团队频道的命名规则。 */
-export function teamId(team: string): string {
-	return `team:${team}`;
-}
-
-/**
- * 组群的命名规则。组群没有档案：它只是「这些人一起说话」的房间，
- * 团队才是有 README 的群（ADR-063）。
- */
-export function groupId(name: string): string {
-	return `group:${name}`;
 }
 
 /*

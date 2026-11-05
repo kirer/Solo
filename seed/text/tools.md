@@ -231,9 +231,6 @@ identity.md 的正文：①负责什么 ②不做什么 ③怎么汇报 ④做�
 ## hire.param.model
 他用的模型，写成 提供商/模型。只能从 action=models 列出的里面挑；不传就跟默认。
 
-## hire.no-models
-这一份装配没有模型清单。
-
 ## hire.models.none
 还没配任何模型：设置 → 模型，或写应用目录里的 settings.json。
 
@@ -264,8 +261,8 @@ identity.md 的正文：①负责什么 ②不做什么 ③怎么汇报 ④做�
 ## hire.fire.done
 已让 {{name}}（{{slug}}）离开：目录移到 members/.retired/，频道与名册里都不再有他。
 
-## hire.create.model-unsupported
-（这一份装配不支持指定模型）
+## hire.fire.sync-failed
+团队 {{team}} 的频道没重算（{{error}}）：里面可能还留着他，重新写一次团队 README 或重启都能修。
 
 ## hire.create.model-failed
 （模型没换成：{{error}}）
@@ -279,11 +276,11 @@ identity.md 的正文：①负责什么 ②不做什么 ③怎么汇报 ④做�
 ## hire.create.team-missing
 团队 `{{team}}` 还没有 README（`teams/{{team}}/README.md` 不存在），所以还没有团队频道，他也不会被拉进任何群。用 `file` 把这份 README 写出来（头里写 `name`），团队频道才会出现。
 
+## hire.create.announce-failed
+{{name}} 进团队频道了，但报到没发出去（{{error}}）：频道里看不见他，必要时让他自己说一句。
+
 ## hire.create.done
 已新建 {{name}}（slug: {{slug}}），会话 {{id}} 已就绪{{model}}。{{where}}。{{teamNote}}
-
-## hire.create.pending
-已新建 {{name}}（slug: {{slug}}）{{model}}。{{where}}；重启或外壳扫描后它会开会话。{{teamNote}}
 
 ## run.description
 执行一条 shell 命令，返回 stdout / stderr / 退出码。`background: true` = 丢到后台跑（最多 30 分钟），立刻返回；跑完结果发回这个频道并叫醒你。以 `&` 结尾或以 `nohup` 开头 = 纯脱手，立即返回 PID，永远不会有回音。
@@ -368,6 +365,9 @@ write 要带 content（写什么）。只想读文件用 action=read。
 
 ## file.write.sync-failed
 已写入 {{path}}（{{length}} 字），但团队频道刷新失败：{{error}}
+
+## file.write.team-sync-failed
+团队 {{team}} 的频道没重算（{{error}}）：里面的成员可能还是旧的。
 
 ## file.read.missing
 文件不存在：{{path}}

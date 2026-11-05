@@ -72,6 +72,7 @@ export type {
 	RouteFacts,
 	SettleDecision,
 	SettleFacts,
+	SettleResult,
 	Settlement,
 } from "./types.ts";
 export { routeFactsOf } from "./defaults/router.ts";

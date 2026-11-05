@@ -205,20 +205,32 @@ async function inspectStartup(
 const TASK_RETENTION_MS = 3 * 24 * 60 * 60_000;
 
 /**
- * 直接开一条 SQLite 连接跑一句 SQL（回收用），完了关掉。表不在 / 没开 JSON1 一律返回
- * `fallback`，不挡启动。
+ * 直接开一条 SQLite 连接跑一句 SQL（回收用），完了关掉。
+ *
+ * 只有两种情况跳过：打不开库（回收不是启动的前提），以及库还是空的（第一次启动，
+ * 表还没建）。SQL 本身执行失败**照常抛** —— 把「表没有 JSON1」「schema 变了」一起
+ * 吞成 0，症状是回收悄悄永不生效，没人看得出来。
  */
-async function withSqlite<T>(databasePath: string, run: (db: DatabaseSync) => T, fallback: T): Promise<T> {
+async function withSqlite<T>(
+	databasePath: string,
+	table: string,
+	run: (db: DatabaseSync) => T,
+	fallback: T,
+): Promise<T> {
 	if (databasePath === ":memory:") return fallback;
 	const { DatabaseSync } = await import("node:sqlite");
-	let db: DatabaseSync | undefined;
+	let db: DatabaseSync;
 	try {
 		db = new DatabaseSync(databasePath);
-		return run(db);
 	} catch {
 		return fallback;
+	}
+	try {
+		const found = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table);
+		if (found === undefined) return fallback;
+		return run(db);
 	} finally {
-		db?.close();
+		db.close();
 	}
 }
 
@@ -233,7 +245,7 @@ async function withSqlite<T>(databasePath: string, run: (db: DatabaseSync) => T,
  */
 export async function pruneTerminalTasks(databasePath: string, retentionMs = TASK_RETENTION_MS): Promise<number> {
 	const sql = "DELETE FROM tasks WHERE status = 'terminal' AND json_extract(record, '$.endedAt') < ?";
-	return withSqlite(databasePath, (db) => Number(db.prepare(sql).run(Date.now() - retentionMs).changes ?? 0), 0);
+	return withSqlite(databasePath, "tasks", (db) => Number(db.prepare(sql).run(Date.now() - retentionMs).changes ?? 0), 0);
 }
 
 /** 每个会话保留多少条「已结算」的 submission 记录。 */
@@ -266,6 +278,7 @@ export async function pruneTerminalSubmissions(
 ): Promise<number> {
 	return withSqlite(
 		databasePath,
+		"submissions",
 		(db) => Number(db.prepare(SUBMISSION_PRUNE_SQL).run(keepPerConversation).changes ?? 0),
 		0,
 	);

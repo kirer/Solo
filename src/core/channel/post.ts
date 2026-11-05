@@ -12,16 +12,15 @@
  */
 import type { Conversation, Context, Harness } from "../runtime/index.ts";
 import type { ChannelState, FlowPolicy, Message } from "./types.ts";
+import type { MentionRoster } from "./mentions.ts";
 import type { WakeRecord } from "./turn/record.ts";
 import type { TextCatalog } from "../documents/base/catalog.ts";
 import { createFlow } from "../flow/index.ts";
 import { createMessageStore } from "../flow/store.ts";
-import { defaultRouter } from "../flow/defaults/router.ts";
-import { defaultSettler } from "../flow/defaults/settle.ts";
-import { policyRouter, policySettler } from "../flow/policies.ts";
+import { policyChain } from "../flow/policies.ts";
 import { createTurnRunner, type DeliverOptions } from "../flow/runner.ts";
 import { sharedGates } from "../flow/gates.ts";
-import type { Flow, FlowGates } from "../flow/ports.ts";
+import type { Flow, FlowGates, FlowReport } from "../flow/ports.ts";
 import type { DeliverResult, PublishInput, PublishResult, RouteExistingInput } from "../flow/types.ts";
 
 export type ChannelFlowDeps = {
@@ -47,6 +46,10 @@ export type ChannelFlowDeps = {
 	readonly gate?: FlowGates["publish"];
 	/** 插件注册的分发 / 收尾策略（活引用：重装之后下一次发布用新的）。 */
 	readonly policies?: () => readonly FlowPolicy[];
+	/** 名册：补发时 `@我` 要落成 `owner`，不能存字面 token。 */
+	readonly roster?: () => Promise<MentionRoster>;
+	/** 策略出问题的出口（装配层接到 diag）。不给就 `console.warn`。 */
+	readonly report?: FlowReport;
 };
 
 /**
@@ -78,13 +81,13 @@ function flowOf(
 	labelOf?: (slug: string) => string,
 ): Flow {
 	const gates = sharedGates();
-	const policies = deps.policies;
+	const chain = policyChain(deps.policies, deps.report);
 	const naming = labelOf ?? deps.labelOf;
 	const rememberWake = deps.rememberWake;
 	const wakeOf = deps.wakeOf;
 	return createFlow({
 		store: createMessageStore({ harness: deps.harness, state }),
-		routers: [...(policies === undefined ? [] : [policyRouter(policies)]), defaultRouter()],
+		routers: chain.routers,
 		runner: createTurnRunner({
 			harness: deps.harness,
 			conversationOf: (slug) => deps.conversationOf(slug, ctx),
@@ -96,7 +99,9 @@ function flowOf(
 			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			...(deps.text === undefined ? {} : { text: deps.text }),
 		}),
-		settler: policies === undefined ? defaultSettler() : policySettler(policies, defaultSettler()),
+		settler: chain.settler,
+		...(deps.roster === undefined ? {} : { roster: deps.roster }),
+		...(deps.report === undefined ? {} : { report: deps.report }),
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
 		gate: deps.gate === undefined ? gates : { ...gates, publish: deps.gate },
 	});

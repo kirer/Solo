@@ -74,7 +74,7 @@ describe("turn-report：不冒充「还在干活」", () => {
 
 describe("turn-report：钩子与任务", () => {
 	test("afterRun 返回一个 runEndTask，input 与名册一致", async () => {
-		const { hook } = createTurnReport(async () => undefined);
+		const { hook } = createTurnReport(async () => ({ kind: "silent", reason: "no-target" }));
 		expect(hook.task).toBe("pi.generation");
 		const afterRun = (hook.handlers as { afterRun: (...args: unknown[]) => Promise<unknown> }).afterRun;
 		const result = (await afterRun(
@@ -87,7 +87,7 @@ describe("turn-report：钩子与任务", () => {
 	});
 
 	test("名册里没人时钩子什么都不要求", async () => {
-		const { hook } = createTurnReport(async () => undefined);
+		const { hook } = createTurnReport(async () => ({ kind: "silent", reason: "no-target" }));
 		const afterRun = (hook.handlers as { afterRun: (...args: unknown[]) => Promise<unknown> }).afterRun;
 		expect(
 			await afterRun(
@@ -102,6 +102,7 @@ describe("turn-report：钩子与任务", () => {
 		const seen: FinishTurnInfo[] = [];
 		const { task } = createTurnReport(async (info) => {
 			seen.push(info);
+			return { kind: "silent", reason: "no-target" };
 		});
 		const input: TurnReportInput = { slug: "林越", answer: "42", wake };
 		const committed: unknown[] = [];
@@ -120,8 +121,27 @@ describe("turn-report：钩子与任务", () => {
 		expect(committed).toEqual([{ status: "terminal", outcome: { status: "completed", result: { answer: "42" } } }]);
 	});
 
+	test("补发失败 → 终态记 failed，不报 completed", async () => {
+		const { task } = createTurnReport(async () => ({ kind: "failed", error: "频道写不进去" }));
+		const committed: unknown[] = [];
+		await task.definition.phases.report(
+			{ input: { slug: "林越", answer: "42", wake }, state: { status: "running", checkpoint: { phase: "report" } } } as never,
+			{
+				entries: async () => ({ items: [] }),
+				commit: async (change: () => unknown) => {
+					committed.push(change());
+				},
+			} as never,
+			{} as never,
+		);
+
+		expect(committed).toEqual([
+			{ status: "terminal", outcome: { status: "failed", error: { message: "频道写不进去" } } },
+		]);
+	});
+
 	test("被中断时提交 aborted", async () => {
-		const { task } = createTurnReport(async () => undefined);
+		const { task } = createTurnReport(async () => ({ kind: "silent", reason: "no-target" }));
 		const committed: unknown[] = [];
 		await task.definition.abort({ input: { slug: "林越", answer: "42", wake } } as never, {
 			commit: async (change: () => unknown) => {

@@ -25,6 +25,8 @@ export function createModelSwitcher(deps: {
 	readonly options: ModelSwitchOptions;
 	readonly layout: Layout;
 	readonly conversations: ReadonlyMap<string, Conversation>;
+	/** 热重装失败时的出口（装配层接 diag）。缺省写一行 console.warn。 */
+	readonly onError?: (message: string) => void;
 }) {
 	const { options, layout, conversations } = deps;
 	let defaultModel = options.defaultModel;
@@ -43,14 +45,27 @@ export function createModelSwitcher(deps: {
 		const stamp = await mtimeOrUndefined(file);
 		if (stamp === undefined || stamp === settingsStamp) return;
 		settingsStamp = stamp;
-		const applied = syncModels(options.models, file);
-		if (applied === undefined) return;
-		defaultModel = applied.defaultModel;
-		agentModels = applied.agentModels;
+		const result = syncModels(options.models, file);
+		if (result === undefined) return;
+		if (!result.ok) {
+			report(`settings.json 装不上，继续用原来那份：${result.error}`);
+			return;
+		}
+		defaultModel = result.applied.defaultModel;
+		agentModels = result.applied.agentModels;
 		for (const [slug, conversation] of conversations) {
 			if (agentModels?.[slug] !== undefined) continue;
-			await applyModel(conversation, slug, ctx).catch(() => undefined);
+			try {
+				await applyModel(conversation, slug, ctx);
+			} catch (error) {
+				report(`会话 ${slug} 换默认模型失败：${error instanceof Error ? error.message : String(error)}`);
+			}
 		}
+	}
+
+	function report(message: string): void {
+		if (deps.onError !== undefined) deps.onError(message);
+		else console.warn(`[core] ${message}`);
 	}
 
 	/** 这个人该用哪只模型：单独指定的压过默认。都没有就是「没有模型」（ADR-023）。 */
