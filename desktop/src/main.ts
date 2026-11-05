@@ -36,8 +36,10 @@ function createWindow(url: string): BrowserWindow {
 	const window = new BrowserWindow({
 		width: 1280,
 		height: 800,
-		minWidth: 960,
-		minHeight: 640,
+		// 界面本来就是单列（ADR-084），窄到手机宽度也成立：窗口可以拉到 375×812
+		// 这样的比例看排版，不用开浏览器模拟器。最小宽度只留红绿灯 + 一列内容的位置。
+		minWidth: 360,
+		minHeight: 560,
 		show: false,
 		backgroundColor: "#0f0f10",
 		title: "Solo",
