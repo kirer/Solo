@@ -40,6 +40,7 @@ import {
 	type DirectoryState,
 } from "../core/agent/roster.ts";
 import { wireChannel } from "../core/channel/wiring.ts";
+import { createTurnReport } from "../core/channel/turn/report.ts";
 import {
 	addToAllChannel,
 	archiveGoneTeams,
@@ -81,10 +82,15 @@ type CoreShellOptions = {
 	 */
 	readonly diag?: CoreServices["diag"];
 	/**
-	 * 重启时正跑到一半的会话（`openCore` 的 `interrupted`）。装配完把人叫回来接着做
-	 * （ADR-044）；不给 = 不叫（测试与老调用方）。
+	 * 重启时正跑到一半的会话（`openCore` 的 `interrupted`）。装配完在频道里留一句痕，
+	 * 再由底座重放这一轮（ADR-044 / ADR-074）；不给 = 不处理（测试与老调用方）。
 	 */
 	readonly interrupted?: readonly number[];
+	/**
+	 * 有排队输入、却没有活着的一轮来取它的会话（`openCore` 的 `backlog`）。
+	 * 装配完各发一条 `continue`，把 inbox 里的排队项带进新的一轮。
+	 */
+	readonly backlog?: readonly number[];
 };
 
 /**
@@ -225,22 +231,30 @@ export async function assembleCore(
 	//
 	// 现造而不是留一份：插件重装时按同名原地换掉这一个扩展（ADR-026），
 	// 会话是按扩展**名字**解析的，所以换上去下一次生成就看得见。
-	const buildToolsExtension = (): Extension =>
-		defineExtension({
+	const buildToolsExtension = (): Extension => {
+		// 答完写回频道：`afterRun` 钩子 + durable task（ADR-077）。和工具挂在同一个
+		// 扩展上 —— 每个会话都选 `core-tools`，所以不需要给已经存在的会话补选扩展。
+		const turnReport = createTurnReport(wiring.finishTurn);
+		return defineExtension({
 			name: "core-tools",
 			tools: [...createCoreTools(toolDeps), ...plugins.tools],
+			tasks: [turnReport.task],
 			// 审计挂在工具包上：它是每个会话都选的扩展，所以「装一次 = 全都在审」。
 			// 钩子拿不到名册，只能拿会话 id，所以这里给一个反查。
-			hooks: auditHooks({
-				logsRoot: layout.logsRoot,
-				slugOf: (conversationId) => {
-					for (const [slug, conversation] of conversations) {
-						if (Number(conversation.id) === conversationId) return slug;
-					}
-					return undefined;
-				},
-			}),
+			hooks: [
+				...auditHooks({
+					logsRoot: layout.logsRoot,
+					slugOf: (conversationId) => {
+						for (const [slug, conversation] of conversations) {
+							if (Number(conversation.id) === conversationId) return slug;
+						}
+						return undefined;
+					},
+				}),
+				turnReport.hook,
+			],
 		});
+	};
 
 
 	// 身份段：每个 agent 装的扩展不一样（key 里带 slug），所以这里是一个工厂。
@@ -412,10 +426,12 @@ export async function assembleCore(
 	}
 
 	/**
-	 * 重启把某人的一轮掐断了：在**他当时干活的那个频道**留一句痕，并把他叫回来接着做
-	 * （ADR-044）。没有唤醒记录（不是被叫醒的）就不猜 —— 宁可不叫，也不乱叫。
+	 * 重启把某人的一轮掐断了：在**他当时干活的那个频道**留一句痕（ADR-044）。
+	 * 只留痕、不叫醒 —— 这一轮由底座在 `resume()` 后按 checkpoint 重放（ADR-074）；
+	 * 再发一条消息叫他，只会往正在重放的那一轮里又塞一条输入。
+	 * 没有唤醒记录（不是被叫醒的）就不猜：宁可不写，也不乱写。
 	 */
-	async function resumeInterrupted(conversationId: number, ctx: Context): Promise<void> {
+	async function noteInterrupted(conversationId: number, ctx: Context): Promise<void> {
 		const slug = Object.entries(directory.conversationToSlug).find(
 			([id]) => Number(id) === conversationId,
 		)?.[1];
@@ -433,7 +449,6 @@ export async function assembleCore(
 					name: labelIn(directory, slug),
 					seq: wake.task.seq,
 				}),
-				wakeTo: [slug],
 			},
 			ctx,
 		);
@@ -515,11 +530,22 @@ export async function assembleCore(
 		},
 	};
 
-	// 重启前被掐断的那几轮：频道里留痕、把人叫回来接着做（ADR-044）。放在最后：
-	// 频道、成员、私聊都得已经建好，不然这一句会落进一个还不存在的地方。
+	// 重启前被掐断的那几轮：频道里留痕（ADR-044）。放在最后：频道、成员、私聊
+	// 都得已经建好，不然这一句会落进一个还不存在的地方。
 	for (const conversationId of options.interrupted ?? []) {
-		await resumeInterrupted(conversationId, context).catch((error: unknown) => {
-			console.warn(`[resume] 叫回会话 ${conversationId} 失败：${error instanceof Error ? error.message : String(error)}`);
+		await noteInterrupted(conversationId, context).catch((error: unknown) => {
+			console.warn(`[resume] 给会话 ${conversationId} 留痕失败：${error instanceof Error ? error.message : String(error)}`);
+		});
+	}
+	// 底座的重放也在装配之后：任务一开跑就要用工具、技能、插件，而这些刚装好。
+	// 没有这一步，被强杀的一轮会一直停在 pending，直到下一条输入把调度叫醒。
+	harness.resume();
+	for (const conversationId of options.backlog ?? []) {
+		const conversation = await harness.conversation(conversationId as never, context);
+		if (conversation === undefined) continue;
+		await conversation.submit({ type: "continue" }, context).catch((error: unknown) => {
+			// `ConversationBusy`：replay 已经接上了；`nothing_to_answer` 由底座结算，不抛。
+			console.warn(`[resume] 会话 ${conversationId} 的积压没能接上：${error instanceof Error ? error.message : String(error)}`);
 		});
 	}
 
@@ -592,9 +618,9 @@ export async function ownerSpeak(
 			text: shell.text,
 			// 我说话也要记「谁在哪个频道被叫醒」，否则被叫的人回话会落到别的频道。
 			rememberWake: (slug, wake) => wiring.rememberWake(slug, wake, context),
+			...(wiring.wakeTogether === undefined ? {} : { wakeTogether: wiring.wakeTogether }),
 			// 插话时继承他上一次的 `task`：我在他干活时私聊一句，不覆盖团队频道。
 			wakeOf: (slug: string) => wiring.wakeOf(slug, context),
-			finishTurn: wiring.finishTurn,
 		},
 		{
 			channelId: options.channelId,

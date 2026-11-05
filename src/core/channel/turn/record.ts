@@ -7,6 +7,15 @@
  * 只做两件事：定义形状、把名册里存着的值读回来（含旧数据兼容）。
  */
 
+/**
+ * durable 收尾任务的 kind（定义在 `turn/report.ts`）。
+ *
+ * 投递判断「他手上还有活吗」时会跳过它：收尾是系统账务，不是模型还在干活。
+ * 不跳过的话，答完到终态提交之间的几毫秒里来的下一条消息会被当成「插话」，
+ * 模型只答一句就收手，工具活整个丢掉（实测 2026-11-05 三次 live 里丢了 2–3 项）。
+ */
+export const TURN_REPORT_TASK = "core.turn-report";
+
 /** 一条消息在某个频道里的位置。 */
 export type WakeTarget = {
 	readonly channelId: string;

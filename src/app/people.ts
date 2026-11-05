@@ -163,5 +163,23 @@ export function createPeople(shell: CoreServices, snapshots: Snapshots, read: Re
 		}
 	}
 
-	return { readPersonProfile, readPersonMemory, editPersonMemory, setPersonModel };
+	/**
+	 * 让他把最近这一轮接着做完：1.5.0 的 `continue` —— 不新增一条用户消息，直接在
+	 * 当前上下文上再跑一轮（上下文停在工具结果上时从结果继续；停在一条回答上时
+	 * 底座会结算成 `nothing_to_answer`，界面按「没东西可答」处理）。
+	 */
+	async function continuePerson(slug: string): Promise<{ ok: true }> {
+		const { directory } = await snapshots.snapshot();
+		requireSlug(directory, slug);
+		const conversation = shell.conversations.get(slug);
+		if (conversation === undefined) throw new AppError("not-found", "这个人还没有会话");
+		try {
+			await conversation.submit({ type: "continue" }, BACKGROUND_CONTEXT);
+		} catch (error) {
+			throw new AppError("bad-request", error instanceof Error ? error.message : String(error));
+		}
+		return { ok: true };
+	}
+
+	return { readPersonProfile, readPersonMemory, editPersonMemory, setPersonModel, continuePerson };
 }

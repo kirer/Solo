@@ -118,6 +118,10 @@ export const getModels = (): Promise<{ models: string[]; defaultModel: string }>
 export const setPersonModel = (slug: string, model: string): Promise<{ model: string }> =>
 	call(`/api/people/${encodeURIComponent(slug)}/model`, { method: "POST", body: JSON.stringify({ model }) });
 
+/** 让他把最近这一轮接着做完（1.5.0 的 continue，不新增一条用户消息）。 */
+export const continuePerson = (slug: string): Promise<{ ok: true }> =>
+	call(`/api/people/${encodeURIComponent(slug)}/continue`, { method: "POST" });
+
 /** 某个人的记忆。 */
 export const getPersonMemory = (slug: string): Promise<PersonMemory> =>
 	call<PersonMemory>(`/api/people/${encodeURIComponent(slug)}/memory`);

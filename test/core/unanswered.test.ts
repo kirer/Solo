@@ -1,8 +1,10 @@
 import { SEED_TEXT } from "./catalog.ts";
 import { describe, expect, test } from "vitest";
-import { reasonText, renderUnanswered, watchSettled } from "../../src/core/channel/unanswered.ts";
+import { clipFailureDetail, reasonText, renderUnanswered, watchSettled } from "../../src/core/channel/unanswered.ts";
 
-function submission(result: () => Promise<{ status: string; reason?: string; answer?: unknown }>) {
+// `detail` 来自底座的 `JsonValue`：字符串是常态，对象也要能压成一行。
+
+function submission(result: () => Promise<{ status: string; reason?: string; detail?: string; answer?: unknown }>) {
 	return { wait: async () => result() };
 }
 
@@ -18,6 +20,14 @@ describe("结算原因翻成人话", () => {
 		expect(reasonText("aborted", SEED_TEXT)).toBe("这一轮被中断了");
 		expect(reasonText("run_failed", SEED_TEXT)).toBe("这一轮跑失败了");
 		expect(reasonText("model_error", SEED_TEXT)).toContain("调模型失败");
+		expect(reasonText("interrupted", SEED_TEXT)).toContain("重启");
+		expect(reasonText("restart_limit", SEED_TEXT)).toContain("放弃");
+		expect(reasonText("nothing_to_answer", SEED_TEXT)).toContain("没有需要回答");
+		expect(reasonText("turn_limit", SEED_TEXT)).toContain("轮数");
+		expect(reasonText("faulted", SEED_TEXT)).toContain("异常");
+		expect(reasonText("orphaned", SEED_TEXT)).toContain("找不到");
+		expect(reasonText("reset", SEED_TEXT)).toContain("重置");
+		expect(reasonText("restart", SEED_TEXT)).toContain("重启");
 		expect(reasonText(undefined, SEED_TEXT)).toBe("没有说明原因");
 		expect(reasonText("", SEED_TEXT)).toBe("没有说明原因");
 	});
@@ -32,6 +42,19 @@ describe("频道里的那一行留痕", () => {
 		expect(renderUnanswered(93, "知言", "no_model", SEED_TEXT)).toBe(
 			"#93 叫了 @知言，但他这一轮没答上来：没有可用的模型（还没配，或 `settings.json` 的 `defaultModel` 指向了不存在的模型）——去「设置 → 模型」看一眼。",
 		);
+	});
+
+	test("带细节：压成一行、截到 200 字，附在原因后面", () => {
+		expect(renderUnanswered(1, "林越", "model_error", SEED_TEXT, "gateway\n  502")).toBe(
+			"#1 叫了 @林越，但他这一轮没答上来：调模型失败（网关拒了这次请求，通常是模型名、额度或网关本身的问题）（gateway 502）。",
+		);
+		expect(renderUnanswered(1, "林越", "model_error", SEED_TEXT, "")).not.toContain("（）");
+	});
+
+	test("细节截断：只留前 200 字，别把频道写爆", () => {
+		expect(clipFailureDetail("x".repeat(500))?.length).toBe(201);
+		expect(clipFailureDetail("  ")).toBeUndefined();
+		expect(clipFailureDetail(undefined)).toBeUndefined();
 	});
 });
 
@@ -56,6 +79,15 @@ describe("后台等结算", () => {
 		});
 		await settled();
 		expect(answer).toBe(42);
+	});
+
+	test("unanswered 的细节不丢（模型错误正文是排查的唯一线索）", async () => {
+		let detail: string | undefined;
+		watchSettled(submission(async () => ({ status: "unanswered", reason: "model_error", detail: "502" })), async (settled) => {
+			detail = settled.status === "unanswered" ? settled.detail : undefined;
+		});
+		await settled();
+		expect(detail).toBe("502");
 	});
 
 	test("等待自己失败（库关了、进程在退）不往外抛", async () => {

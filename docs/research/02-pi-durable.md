@@ -603,7 +603,7 @@ README 首行："Experimental. The API changes without notice between releases."
 - **我们实际用到的迁移**：`src/core/runtime/index.ts` 的 `Type.*` 门面、`open.ts` 的
   `toRuntimeReport(report)`、`interface/http/sse.ts` 的 `observeCommits`；详见 ADR-071。
 - **1.5.0 新增、尚未采用**：`maxTurns`、`continue` submission、`runFailure`、`readOnly`、
-  `whenBusy: "steer"` / `whenIdle: "reject"`、`beforeProviderRequest`、`afterRun`、`ConversationTranscript`。
+  `whenIdle: "reject"`（`whenBusy: "steer"` 1.4.0 已有、我们已在用）、`beforeProviderRequest`、`afterRun`、`ConversationTranscript`。
   它们对 Solo 的价值见 ADR-071「取舍」。
 
 ## 附录：实际执行的验证清单

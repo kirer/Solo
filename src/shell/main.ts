@@ -220,8 +220,10 @@ async function main(): Promise<void> {
 			...(models.agentModels === undefined ? {} : { agentModels: models.agentModels }),
 			models: models.models,
 			diag,
-			// 重启把谁的一轮掐断了，装配层要把人叫回来接着做（ADR-044）。
+			// 重启把谁的一轮掐断了：留痕 + 交给底座重放（ADR-044 / ADR-074）。
 			interrupted: runtime.interrupted,
+			// 排队输入却没有人来取：装配完发 continue 接上。
+			backlog: runtime.backlog,
 		});
 		server = await serveCore({
 			shell,

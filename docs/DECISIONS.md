@@ -1611,10 +1611,11 @@
      120ms 去抖和按频道推增量都不变。观察者在新版里晚一个微任务、只拿**已落盘**的提交，
      对 120ms 的 UI 推送没有影响。
   5. **不为了「有新能力」而改行为**。1.5.0 的 `maxTurns`、`continue`、`runFailure`、
-     `readOnly`、`whenBusy: "steer"` / `whenIdle: "reject"`、`beforeProviderRequest`、
-     `afterRun`、`ConversationTranscript` 都先记在案，等有具体需求再接：`maxTurns` 会截断
-     合法长活；`continue` 要先有「重试这一轮」的产品入口；`steer` 要重排频道投递（C-008）；
-     `readOnly` 只在多进程看同一份库时才有意义，而底座本来就不支持多进程同写。
+     `readOnly`、`whenIdle: "reject"`（与已有的 `whenBusy: "steer"` 合成一次 admission）、
+     `beforeProviderRequest`、`afterRun`、`ConversationTranscript` 都先记在案，等有具体需求
+     再接：`maxTurns` 会截断合法长活，没有 continue 入口时会把活停住；`continue` 要先有
+     「重试这一轮」的产品入口；`readOnly` 只在多进程看同一份库时才有意义，而底座本来就不
+     支持多进程同写。`wake` 从 1.4.0 起就用 `whenBusy: "steer"`，不需要重接。
   6. **`pi.live` 的空闲判据继续用 `run !== undefined`**：新版失败后会保留 `runFailure`，
      不能再拿「文档是不是空对象」判空闲；我们的自愈也继续删 `run`（`runFailure` 留着无害）。
 - **取舍**：门面只映射我们用到的六个构造器 —— 将来工具需要 `union` / 枚举 / 嵌套开放对象，
@@ -1632,3 +1633,190 @@
 - **验收**：`npm run check`、`npm test`（89 文件 / 821 例）、`npm run prompt:check` 全绿；
   `npm run live` 连跑两次都 13/13；用真实数据副本启动，`pi.live` 自动迁到 version 3，
   `/api/org`、频道详情正常。
+
+## ADR-072 失败可见：`runFailure` 单独投影，不塞进 `activity`，也不把留痕画进聊天
+
+- **背景**：1.5.0 在 `pi.live.runFailure` 里留下「这一轮为什么没答上来」（`reason` + `detail`），
+  但 Solo 只在频道里写一条系统留痕；而 ADR-047 又规定系统留痕不进聊天流。结果是：模型
+  配错、网关 502、工具轮数超限这些真失败，界面上和「他还没说话」长得一模一样。1.5.0 新增的
+  `interrupted` / `restart_limit` / `nothing_to_answer` / `turn_limit` / `faulted` / `orphaned` /
+  `reset` 也都没有文案，只会把原始英文原因贴出来。
+- **决策**：
+  1. **失败是人的状态，不是「正在做」的一种**。`ViewActivity` 仍然只有 `thinking` / `working`；
+     `ViewActor` 新增独立的 `lastFailure?: { reason, detail?, text }`。`text` 由服务端按
+     `text/channel.md` 翻好，界面直接画，不在两份地方各写一套原因表。
+  2. **不把 `failed` 塞进 `activity`**：`sse.ts` 的 1 秒补推用「有人 `activity`」当还有活，
+     失败会一直留在 `runFailure` 里直到下一轮开始；塞进去会让补推永不停止。`orgSignature`
+     把 `lastFailure` 拼进指纹，失败出现 / 消失仍能实时推给界面。
+  3. **只有 `run === undefined` 时才读 `runFailure`**：`afterFailedRun: "continue"` 启动的
+     下一轮可能在同一份 `pi.live` 里还带着上一次失败，那时以「在跑」为准。
+  4. **`detail` 压成一行、截 200 字**进频道留痕；完整错误仍在 `logs/runtime.jsonl` 与会话条目里。
+     新增的原因键覆盖 1.5.0 的全部 `RunFailureReason`，外加 Solo 自己的 `run_failed` / `restart`。
+  5. **`nothing_to_answer` 不留痕**：上下文本来就以一条回答结尾，continue 没东西可答，不是
+     「他掉了链子」。和 `aborted`（被合并唤醒撤掉）同等对待。
+  6. **`task_interrupted` 按 `reason` 分文案**：`restart_limit` 是「连续重启超限，已结束」，
+     `interrupted` 是「任务被重启打断，已结束」；两者都带上 `restarts`。旧文案把单次崩溃
+     也说成「连续超限」，会把人带到错误的排查方向。
+- **取舍**：失败卡放在「后台任务」第二屏的人名旁与详情顶部，不放进聊天流，也不新增路由 ——
+  这正是 ADR-047 的延续；代价是不打开第二屏时只能看到人名旁一个 5px 红点。失败卡只显示
+  最近一轮，历史失败仍在每一轮的 `ViewTurn.status = "failed"` 里。
+- **执行**：`src/core/channel/unanswered.ts`（原因表 / `detail` 裁剪 / `watchSettled`）、
+  `src/core/channel/dispatch.ts`（`WakeNote.detail`、`nothing_to_answer` 过滤）、
+  `src/core/channel/post.ts`（留痕透传）、`seed/text/channel.md`（原因文案）、
+  `src/app/diag.ts`（`reportLabel` + `restarts`）、`src/app/read.ts`（`liveMaps` / `liveOf`）、
+  `src/view/dto.ts`（`ViewLastFailure`）、`src/interface/http/sse.ts`（组织指纹）、
+  `ui/app/src/panels/TasksPanel.tsx` + `styles/tasks.css`（红点 / 失败卡）。
+- **验收**：`test/core/unanswered.test.ts`、`test/core/wake.test.ts`、`test/core/diag.test.ts`；
+  `npm run check`、`npm test`、`npm run ui:build`；真机看一次失败卡（无模型或网关错误）。
+
+## ADR-073 最大限度依赖 1.5.0：先删掉自己写的并发保证（取代 ADR-071 决策 5）
+
+- **背景**：ADR-071 升级到 1.5.0 时采取的立场是「不为了有新能力而改行为」，于是底座已经
+  提供的排序、恢复、失败结算仍然由 Solo 自己再保证一遍。最典型的是
+  `runtime/serialize.ts` 的 `serializedHarness`：它把同一进程里**所有** `harness.commit`
+  串行化，起因是 1.4.x 的文档代理按读集覆盖，不排队会互相吃掉（真实事故是一条 `say`
+  报 `Cannot use a settled overlay`，但消息其实已经写进去，模型重试后频道里出现两条一样的话）。
+  1.5.0 的 group commit 已经把「同一份文档 / 同一个键的 commit」排进同一个 job 队列，
+  不同文档可以并行；再包一层全局串行只会把并行度重新压回 1。
+- **决策**：
+  1. **底座已经保证的事，Solo 不再保证**。`openCore` 直接使用 `DurableHarness.open` 返回的
+     句柄；删除 `serializedHarness` 与 `test/core/serialize-commit.test.ts`。
+  2. **并发底线改由裸 harness 测试守**：`test/core/commit-concurrency.test.ts` 不经过投递层，
+     直接并发调用 `appendToChannel` / `rememberWake`，断言同一文档 30 个并发追加一条不少、
+     seq 连续、前一个 commit 在事务里等待时后一个会排队（而不是撞覆盖层），以及频道与名册
+     两份文档并行写时各自完整。
+  3. **保留 `post.ts` 的串行闸**：它保护的不是 commit，而是 commit **之前**对频道元数据、
+     摘要、收件人的 `snapshot` 读与队列合并。group commit 只管提交，不管提交外的「读—算—提交」
+     竞态；等这段读搬进事务（`submit(tx)` 那一阶段）再单独评估，不在这一条里顺手删。
+  4. **保留 `finish.ts` 的 `repostGate`**：它防的是同一轮里宿主与模型各补发一次，与存储层
+     的并发无关。
+  5. **后续阶段按同一原则逐条接**：`continue` 取代假输入、`submit(tx)` 原子唤醒、
+     `afterRun` durable 收尾、`maxTurns` 都要有自己的验收门（单测 + 两次 `live` + 场景），
+     不一次性全开。
+- **取舍**：group commit 的收益是不同文档的 write 可以并行，同文档仍然串行；所以延迟不会
+  变差，吞吐只在「多人同时写不同文档」时变好。真正的风险是此后有人依赖「全局串行」这个
+  不存在的保证 —— 所以边界写在测试里，而不是写在注释里。
+- **执行**：`src/core/runtime/open.ts`（去掉包装）、删除 `src/core/runtime/serialize.ts` 与
+  `test/core/serialize-commit.test.ts`、新增 `test/core/commit-concurrency.test.ts`；
+  文档同步 `docs/CODE.md` 文件表、`docs/CONCESSIONS.md` C-010、`AGENTS.md` §3.3。
+- **验收**：`npm run check`、`npm test`、`npm run prompt:check`；并发用例连续跑多次不抖；
+  真模型路径（`live` 两次 + `live:scenarios --rounds=1 --smoke`）无重复消息。
+
+## ADR-074 重启打断的那一轮由底座重放，Solo 只清理悬空标记
+
+- **背景**：1.4.x 的 `reconcileZombieTasks` 在启动时把所有非终态任务一并结算成失败，再用
+  一条「接着做」的假输入把会话叫醒。1.5.0 的调度器在 open 时自己把 `running` 翻回 `pending`、
+  `restarts + 1`，`resume()` 之后按 checkpoint 继续；被崩溃切断的一次请求按一次失败重试计，
+  超过 `settings.restartLimit` 才以 `restart_limit` / `interrupted` 结束。再来一遍 Solo 的
+  强杀不仅多余，还会把底座本来能续跑的一轮直接判死。
+- **决策**：
+  1. **启动不结算任务**：`runtime/open.ts` 的 `inspectStartup` 只做底座不做的三件事 ——
+     报出「有 generation 任务的 `restarts > 0`」的会话、清掉 `run` 指向一个**不存在**的任务
+     的悬空标记（连同 `generation` / `tools` / `nestedTools`，把该轮的输入结算为
+     `unanswered/restart` 并放回队列）、找出没人取的 queued submission。
+     仍然存在的任务一律不动：`afterRun` 正在跑的那一轮也是非终态，误杀会让收尾永远不来。
+  2. **留痕不叫醒**：装配层对被打断的会话只写一条 `turn.interrupted` note，然后
+     `harness.resume()`。重放由底座做，Solo 不再提交任何「继续」输入。
+  3. **真崩溃守门**：`test/fixtures/crash-child.ts` 在子进程里起一个会挂起的任务，
+     父进程 `SIGKILL` 后重开，断言任务回到 `pending`、`restarts >= 1`，`resume()` 后跑完
+     （`test/core/crash-replay.test.ts`）。
+- **取舍**：重放是 at-least-once —— 崩溃前已经发生的工具副作用可能再做一次（写文件、发消息）。
+  Solo 的工具本来就按「幂等键 / 至少一次」设计，这一条把代价写明，不假装 exactly-once。
+  重放还会再花一次模型调用的 token；收益是「服务重启后活还在」，这是用户真正要的。
+- **执行**：`src/core/runtime/open.ts`（`inspectStartup`）、`src/shell/assemble.ts`
+  （`noteInterrupted` + `harness.resume()`）、`src/shell/main.ts` 传参；文案
+  `seed/text/channel.md` 的 `turn.interrupted`；测试 `test/core/{resume,reconcile,crash-replay}.test.ts`。
+- **验收**：`npm run check`、`npm test`、`npm run prompt:check`、`npm run live` 两次 13/13。
+
+## ADR-075 「继续这一轮」用 `continue`，不自动重试
+
+- **背景**：模型失败（`model_error`）、服务重启（`interrupted`）之后，频道里只有一条 note，
+  人看不到「还能不能接着做」，也没有入口。旧恢复路径用一条假用户输入叫醒，模型会把那句
+  假话当成新任务来答。
+- **决策**：
+  1. **启动恢复用 `continue`**：`inspectStartup` 找出的 backlog（queued submission 没有
+     对应 run / 正在跑的生成）在 `harness.resume()` 之后逐个
+     `conversation.submit({ type: "continue" })`。不再伪造用户消息；`nothing_to_answer`
+     或 `ConversationBusy` 就放弃这一次（消息仍在频道，下一轮会看到未读摘要）。
+  2. **手动继续是一个用例，不是一条通用「重跑」**：`POST /api/people/:slug/continue`
+     （`src/app/people.ts` 的 `continuePerson`）只对一个人的主会话提交 `continue`。
+     界面的失败卡给「继续这一轮」，`no_model` / `nothing_to_answer` 不显示 —— 前者要人去改
+     配置，后者本来就没有可答的东西，点了只会再失败一次。
+  3. **不打开 `afterFailedRun: "continue"`**：失败后自动重试会在配置坏掉时刷屏；是否接着做
+     由人决定。等有明确需要再单独评估。
+- **取舍**：按钮只能续跑「上下文还在」的失败；进程重启后上下文仍在盘上，所以它也覆盖重启。
+  它不能修模型配置、不能补回已被合并唤醒撤掉的输入 —— 文案不承诺这些。
+- **执行**：`src/core/runtime/open.ts`（`backlog`）、`src/shell/assemble.ts`（提交 continue）、
+  `src/app/people.ts`、`src/interface/http/routes.ts`、`ui/app/src/api/client.ts`、
+  `ui/app/src/panels/TasksPanel.tsx`（失败卡）；文档 `docs/WEB-API.md` §10.4、
+  `docs/DESIGN.md` §8、`docs/CORE.md` §4。
+- **验收**：`test/core/resume.test.ts`（backlog → continue）、`test/core/read*.test.ts`；
+  `npm run check`、`npm test`、`npm run ui:build`；`npm run live` 两次。
+
+## ADR-076 记 wake 与入队同一个 commit
+
+- **背景**：投递原来先单独提交一次名册（记「他被谁在哪个频道叫醒」），再提交输入。两次
+  commit 之间会话可能已经开跑：它查不到 wake，只能退到「我最早的那个频道」（往往是私聊），
+  于是问在群里、答在私聊。注释里一直写着「先记 wake、再提交」，但那只是把窗口缩小，没有关掉。
+- **决策**：
+  1. 1.5.0 的 `Conversation.submit(tx, draft)` 允许在调用方的 commit 里准入。投递走
+     `conversation.commit(async (tx) => { rememberWakeTx(tx, …); return conversation.submit(tx, draft); })`：
+     名册的 wake 与排队项要么一起落盘，要么一起没有。
+  2. **先写文档、再准入**：准入是这次 commit 的第一次表写，之后同一事务不能再读表
+     （`ReadAfterWrite`）；名册写只碰文档，放在前面是唯一合法顺序。
+  3. **句柄在 commit 之后取回**：事务形式只返回 `SubmissionId`，收尾等待用
+     `harness.submission(id, context)` 重新拿 `Submission`。取不回来时投递仍算成功（已经在盘上），
+     只少这一轮的收尾监听，并写 stderr。
+  4. **保留退路**：没有接上 `wakeTogether` 的调用方（测试替身、旧路径）仍走
+     「先 `rememberWake`、再 `submit`」；生产装配只有 `wiring.ts` 一处接线。
+- **取舍**：每次投递多一次 `submission()` 查询；换掉的是一个真实出现过的错频道回答。
+  多收件人仍是每人一个 commit（一次 commit 只能一次准入），group commit 会把它们批量落盘。
+- **执行**：`src/core/agent/roster.ts`（`rememberWakeTx`）、`src/core/channel/wiring.ts`
+  （`wakeTogether`）、`src/core/channel/dispatch.ts`（`wake`）、`src/core/channel/post.ts`、
+  `src/core/channel/turn/finish.ts`（补发也叫醒，同样走原子路径）、
+  `src/core/channel/tools/context.ts`、`src/shell/assemble.ts`。
+- **验收**：`test/core/wake.test.ts`（同 commit、抛错两个都不落、退路顺序）、
+  `test/core/directory-persist.test.ts`（真 harness 上 wake 仍在）、`npm run live` 两次。
+
+## ADR-077 答完写回频道做成 durable task（`afterRun`），删掉宿主的结算回调收尾
+
+- **背景**：模型经常在最后一个回合把结论写进正文、一次 `say` 都不调，所以「答完替他说」
+  是频道里能不能看到结论的最后一跳。旧实现挂在 `watchSettled` 的 `done` 回调上：答案提交
+  与回调执行之间、回调执行与消息落盘之间各有一个窗口，进程在这两个窗口里死掉，结论就
+  永远留在会话条目里 —— 而重启恢复只重放 generation，不会重放宿主的一段 `Promise` 回调。
+- **决策**：
+  1. **收尾改成 durable task**：`src/core/channel/turn/report.ts` 用 `defineTask` 定义
+     `core.turn-report`，输入只有三样：`slug`、这一轮的 `RunSummary.answer`、唤醒记录。
+     任务唯一的行为是调现有的 `finishTurn`（判据、`[PASS]` 过滤、同文去重、补发叫醒都不变）。
+  2. **接在 `afterRun` 上**：钩子从名册反查「这条会话是谁、最后被谁在哪个频道叫醒」，返回
+     `runEndTask(task, input)`。任务与钩子挂在 `core-tools` 这个**每个会话都已选中**的扩展上
+     —— 新钩子不需要给老会话补选扩展，也不需要新建扩展名。任务本身按名字进注册表，
+     `assembleCore` 重启后 `resume()` 时能重新解析到同一份定义。
+  3. **删掉宿主补发**：`dispatch.ts` 的结算回调只留「没答上来」留痕；`finishTurn` 从
+     `DeliverOptions` / `PostDeps` 里移除，`post.ts`、`tools/context.ts`、`assemble.ts` 不再
+     往下传。收尾只有一个触发点，避免双发。
+  4. **幂等靠同文判据，不靠 exactly-once**：任务在「消息已落盘、终态没提交」时被重放，
+     `finishOnce` 会看到频道里已有同一句而跳过。底座保证的是至少一次，收尾自己保证不重复。
+  5. **行为边界**：钩子只在**答完**（`answer` / `terminate`）时触发，失败与中止不触发；
+     没有唤醒记录的 run（手动 `continue`、子会话）不收尾。名册里最后一条 wake 是这一轮
+     该回的地方 —— 和旧路径相比，`continue` 产生的答案现在也会写回最后说话的地方，
+     这是「答完就写回频道」的本来含义。
+  6. **收尾不算「还在干活」**：`liveConversations` 跳过两类活任务 —— `core.turn-report`
+     本身，以及「只等收尾任务」的 `waiting` 生成。答完之后底座会让 generation 停在
+     `waiting`，等 `afterRun` 的子任务跑完才结束；这一段里模型已经收手了，只是账还没记完。
+     不跳过的话，紧随其后的消息会被写成「这是插话，不是新任务」，模型只答一句就收手，
+     工具活整个丢掉（实测 2026-11-05：三次 `live` 里丢了 2–3 项）。
+- **取舍**：收尾任务让 generation 多挂几毫秒，但投递判据把这一段排除在外，所以新输入
+  不会因此被当成插话；换来的是任何时刻被杀都能补上结论。任务记录会随轮次增长，由底座的
+  `pruneTerminalTasks`（3 天）回收。
+- **执行**：`src/core/channel/turn/report.ts`（任务 + 钩子 + 输入投影）、
+  `src/core/channel/turn/finish.ts`（`FinishTurnInfo` 只要 `EntryReader`，`TaskRuntime` 也满足）、
+  `src/core/runtime/index.ts`（转发 `runEndTask` / `Task` / `RunSummary`）、
+  `src/shell/assemble.ts`（`core-tools` 的 `tasks` / `hooks`）、
+  `src/core/channel/{dispatch,post,queue}.ts`、`src/core/channel/turn/record.ts`
+  （`TURN_REPORT_TASK`）、`src/core/channel/tools/context.ts`。
+- **验收**：`test/core/turn-report.test.ts`（输入投影、钩子、终态收据）、
+  `test/core/turn-report-e2e.test.ts`（faux 模型走完唤醒 → 答完 → 补发）、
+  `test/core/crash-turn-report.test.ts`（真 `SIGKILL`：pending 任务重启后跑完；
+  消息已落盘时不双发）；`npm run check`、`npm test`、`npm run prompt:check`、
+  `npm run live` 两次 13/13、`live:scenarios --rounds=1 --smoke`。

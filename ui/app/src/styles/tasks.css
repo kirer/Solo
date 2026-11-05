@@ -100,6 +100,15 @@
 	height: 20px;
 }
 
+/* 上一轮没答上来：只在人停下时亮一点红，不抢「正在跑」的呼吸点。 */
+.tasks-person-bad {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--danger);
+	flex: none;
+}
+
 .tasks-rows {
 	flex: 1;
 	min-height: 0;
@@ -243,6 +252,88 @@
 
 .task-detail-blank p {
 	margin: 0;
+}
+
+.task-detail-blank .task-failure {
+	margin: 0;
+	max-width: 420px;
+}
+
+/* 最近一轮没答上来。失败原因来自 `ViewActor.lastFailure`，不是猜的。 */
+.task-failure {
+	margin: 16px 28px 0;
+	padding: 12px 14px;
+	border: 0.5px solid color-mix(in oklab, var(--danger) 34%, var(--line));
+	border-radius: var(--r);
+	background: color-mix(in oklab, var(--danger) 6%, transparent);
+	flex: none;
+}
+
+.task-failure-k {
+	display: block;
+	font-family: var(--mono);
+	font-size: 10px;
+	line-height: 1.4;
+	letter-spacing: 0.12em;
+	color: var(--danger);
+}
+
+.task-failure-text {
+	margin: 6px 0 0;
+	font-size: 13px;
+	line-height: 1.65;
+	color: var(--ink-2);
+	text-wrap: pretty;
+}
+
+.task-failure-detail {
+	margin: 6px 0 0;
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 1.6;
+	color: var(--ink-3);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.task-failure-actions {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-top: 10px;
+}
+
+.task-failure-go {
+	padding: 5px 12px;
+	border: 0.5px solid color-mix(in oklab, var(--danger) 42%, var(--line));
+	border-radius: 999px;
+	background: var(--surface);
+	color: var(--danger);
+	font: inherit;
+	font-size: 12px;
+	line-height: 1.4;
+	cursor: pointer;
+	transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.task-failure-go:hover:not(:disabled) {
+	background: color-mix(in oklab, var(--danger) 10%, var(--surface));
+	border-color: color-mix(in oklab, var(--danger) 62%, var(--line));
+}
+
+.task-failure-go:active:not(:disabled) {
+	transform: scale(0.97);
+}
+
+.task-failure-go:disabled {
+	opacity: 0.55;
+	cursor: default;
+}
+
+.task-failure-error {
+	font-size: 11px;
+	line-height: 1.5;
+	color: var(--danger);
 }
 
 .task-detail-head {

@@ -17,10 +17,12 @@ export {
 	createRegistry,
 	defineDoc,
 	defineExtension,
+	defineTask,
 	defineTool,
 	GenerationTask,
 	hook,
 	LiveDoc,
+	runEndTask,
 	ToolTask,
 	type Extension,
 	type HookRegistration,
@@ -28,7 +30,21 @@ export {
 	type ToolRegistration,
 } from "@earendil-works/pi-durable";
 
-export type { Conversation, Cursor, EntryRecord, Harness, InputEntry, PromptSection, UserInput } from "@earendil-works/pi-durable";
+export type {
+	Conversation,
+	Cursor,
+	EntryRecord,
+	Harness,
+	InputEntry,
+	InputSubmissionDraft,
+	PromptSection,
+	RunSummary,
+	Submission,
+	SubmissionId,
+	Task,
+	Tx,
+	UserInput,
+} from "@earendil-works/pi-durable";
 
 /**
  * 会话的 live 状态（`run` / `generation` / `tools`）。

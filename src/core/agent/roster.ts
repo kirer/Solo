@@ -7,7 +7,15 @@
  * 它是**可重建的缓存**，不是真相：真相是文件夹。删掉它，重启后按文件夹重建即可；
  * 它存在的唯一理由是「会话 id 不能从文件名推出来」。
  */
-import { BACKGROUND_CONTEXT, defineDoc, type Conversation, type Context, type Harness, type JsonObject } from "../runtime/index.ts";
+import {
+	BACKGROUND_CONTEXT,
+	defineDoc,
+	type Conversation,
+	type Context,
+	type Harness,
+	type JsonObject,
+	type Tx,
+} from "../runtime/index.ts";
 import { parseWake, type WakeRecord } from "../channel/turn/record.ts";
 import { OWNER_SLUG } from "./identity.ts";
 
@@ -129,7 +137,38 @@ export function directoryWake(deps: {
 }): {
 	readonly conversationOf: (slug: string, context: Context) => Promise<Conversation | undefined>;
 	readonly rememberWake: (slug: string, wake: WakeRecord, context: Context) => Promise<void>;
+	/**
+	 * 同一个 `rememberWake`，但写进调用方的 commit。
+	 *
+	 * 投递要「记 wake」和「入队」原子完成（ADR-076）：`submit` 一提交对方就可能开跑，
+	 * 那时名下没有 wake，他只能退到最早那个频道去答。同一个 commit 里先写文档再准入，
+	 * 两个结果要么都在、要么都不在。
+	 */
+	readonly rememberWakeTx: (tx: Tx, slug: string, wake: WakeRecord) => Promise<void>;
 } {
+	const writeWake = async (tx: Tx, slug: string, wake: WakeRecord): Promise<void> => {
+		const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
+		// 先看这份运行里的会话表，再看文档。
+		// 文档可能落后（实测：三个人的映射只活在内核内存里，落盘那份只有助理，
+		// 于是他们的工具全被拒「你还不在名册里」，叫醒也记不上）。内存里有会话就是人。
+		const id = conversationFor(doc, slug) ?? liveConversationId(deps.live, slug);
+		if (id === undefined) return;
+		// 文档里缺这条就顺手补上：只读不补的话，下一次提交还会把缺人的那份写回去。
+		if (conversationFor(doc, slug) === undefined) {
+			doc.slugToConversation = { ...doc.slugToConversation, [slug]: id };
+			doc.conversationToSlug = { ...doc.conversationToSlug, [String(id)]: slug };
+		}
+		// 只写 `wake` 这一个字段：把整份名册展开再写回去，任何一处覆盖层节点被顺手
+		// 写回来就是一次静默丢人。
+		doc.wake = {
+			...plainDirectory(doc).wake,
+			[String(id)]: {
+				reply: { ...wake.reply },
+				task: { ...wake.task },
+			},
+		};
+	};
+
 	return {
 		async conversationOf(slug, context) {
 			const known = deps.live?.().get(slug);
@@ -140,28 +179,8 @@ export function directoryWake(deps: {
 			return deps.harness.conversation(id as never, context);
 		},
 		async rememberWake(slug, wake, context = BACKGROUND_CONTEXT) {
-			await deps.harness.commit(async (tx) => {
-				const doc = (await tx.doc(DirectoryDoc)) as DirectoryState;
-				// 先看这份运行里的会话表，再看文档。
-				// 文档可能落后（实测：三个人的映射只活在内核内存里，落盘那份只有助理，
-				// 于是他们的工具全被拒「你还不在名册里」，叫醒也记不上）。内存里有会话就是人。
-				const id = conversationFor(doc, slug) ?? liveConversationId(deps.live, slug);
-				if (id === undefined) return;
-				// 文档里缺这条就顺手补上：只读不补的话，下一次提交还会把缺人的那份写回去。
-				if (conversationFor(doc, slug) === undefined) {
-					doc.slugToConversation = { ...doc.slugToConversation, [slug]: id };
-					doc.conversationToSlug = { ...doc.conversationToSlug, [String(id)]: slug };
-				}
-				// 只写 `wake` 这一个字段：把整份名册展开再写回去，任何一处覆盖层节点被顺手
-				// 写回来就是一次静默丢人。
-				doc.wake = {
-					...plainDirectory(doc).wake,
-					[String(id)]: {
-						reply: { ...wake.reply },
-						task: { ...wake.task },
-					},
-				};
-			}, context);
+			await deps.harness.commit((tx) => writeWake(tx, slug, wake), context);
 		},
+		rememberWakeTx: writeWake,
 	};
 }

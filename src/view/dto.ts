@@ -140,6 +140,11 @@ export type ViewActor = {
 	 * 由会话的 live 状态派生，结算即消失。
 	 */
 	activity?: ViewActivity;
+	/**
+	 * 最近一次没答上来的原因。**没有这个键 = 没有失败**。
+	 * 有 `activity` 时以 activity 为准（新的一轮可能还带着上一次失败，失败不是当下状态）。
+	 */
+	lastFailure?: ViewLastFailure;
 };
 
 /** 「找我」列表里的一条。 */
@@ -290,6 +295,16 @@ export type ViewActivity = {
 	since: number;
 	/** 这一轮在哪个频道。 */
 	channelId?: string;
+};
+
+/**
+ * 最近一次没答上来的原因。`reason` 是底座的原始原因（`model_error` 等），
+ * `text` 是服务端按文案目录翻好的一句人话，界面直接画；`detail` 是底座给的细节。
+ */
+export type ViewLastFailure = {
+	reason: string;
+	detail?: string;
+	text: string;
 };
 
 /** 上传成功的回执。 */

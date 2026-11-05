@@ -7,9 +7,18 @@
  */
 import { OWNER_SLUG } from "../core/agent/identity.ts";
 import { chatKind } from "../core/channel/types.ts";
+import { reasonText } from "../core/channel/unanswered.ts";
 import { wakeOf } from "../core/agent/roster.ts";
 import { BACKGROUND_CONTEXT, LiveDoc, type LiveState } from "../core/runtime/index.ts";
-import type { AttentionItem, ViewActivity, ViewChannel, ViewChannelDetail, ViewOrg, ViewTurn } from "../view/dto.ts";
+import type {
+	AttentionItem,
+	ViewActivity,
+	ViewChannel,
+	ViewChannelDetail,
+	ViewLastFailure,
+	ViewOrg,
+	ViewTurn,
+} from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";
 import type { Snapshots } from "./snapshot.ts";
@@ -35,58 +44,87 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	async function readOrg(): Promise<ViewOrg> {
 		const { identities, directory, assistants } = await snapshots.snapshot();
 		const org = orgView(identities, "Solo", assistants);
-		const activity = await activityMap(directory);
-		if (activity.size === 0) return org;
+		const { activity, failure } = await liveMaps(directory);
+		if (activity.size === 0 && failure.size === 0) return org;
 		return {
 			...org,
 			people: org.people.map((actor) => {
-				const found = activity.get(actor.slug);
-				return found === undefined ? actor : { ...actor, activity: found };
+				const live = activity.get(actor.slug);
+				const lastFailure = failure.get(actor.slug);
+				if (live === undefined && lastFailure === undefined) return actor;
+				return {
+					...actor,
+					...(live === undefined ? {} : { activity: live }),
+					...(lastFailure === undefined ? {} : { lastFailure }),
+				};
 			}),
 		};
 	}
 
 	/**
-	 * 谁此刻在干什么。
+	 * 谁此刻在干什么、谁最近没答上来。
 	 *
 	 * 出处只有一处：会话的 live 文档。`run` 在 = 忙；`generation` 在 = 在想；
-	 * `tools` 里有 running 的调用 = 在做。**不读消息、不猜**（ADR-001）。
+	 * `tools` 里有 running 的调用 = 在做。`run` 不在而 `runFailure` 在 = 上一轮没答上来。
+	 * **不读消息、不猜**（ADR-001）。
 	 *
 	 * `since` 用唤醒记录里那条消息的时间 —— 它是这一轮真正的开始，不是「刚刚看到」。
 	 */
-	async function activityMap(directory: Awaited<ReturnType<Snapshots["snapshot"]>>["directory"]): Promise<Map<string, ViewActivity>> {
-		const out = new Map<string, ViewActivity>();
+	async function liveMaps(
+		directory: Awaited<ReturnType<Snapshots["snapshot"]>>["directory"],
+	): Promise<{ activity: Map<string, ViewActivity>; failure: Map<string, ViewLastFailure> }> {
+		const activity = new Map<string, ViewActivity>();
+		const failure = new Map<string, ViewLastFailure>();
 		const entries = Object.entries(directory.slugToConversation ?? {});
-		if (entries.length === 0) return out;
+		if (entries.length === 0) return { activity, failure };
 		await Promise.all(
 			entries.map(async ([slug, id]) => {
-				const state = await liveOf(id);
-				if (state === undefined) return;
+				const live = await liveOf(id);
+				if (live === undefined) return;
 				const wake = wakeOf(directory, id);
-				out.set(slug, {
-					state,
-					since: wake?.reply.at ?? Date.now(),
-					...(wake === undefined ? {} : { channelId: wake.reply.channelId }),
-				});
+				if (live.state !== undefined) {
+					activity.set(slug, {
+						state: live.state,
+						since: wake?.reply.at ?? Date.now(),
+						...(wake === undefined ? {} : { channelId: wake.reply.channelId }),
+					});
+				}
+				if (live.failure !== undefined) {
+					failure.set(slug, {
+						reason: live.failure.reason,
+						text: reasonText(live.failure.reason, shell.text),
+						...(live.failure.detail === undefined ? {} : { detail: live.failure.detail }),
+					});
+				}
 			}),
 		);
-		return out;
+		return { activity, failure };
 	}
 
-	/** 一个会话此刻在不在跑，跑在哪个阶段。 */
-	async function liveOf(id: number): Promise<ViewActivity["state"] | undefined> {
+	/** 一个会话此刻在不在跑（跑在哪个阶段），以及上一轮失败的原因。 */
+	async function liveOf(id: number): Promise<
+		| { readonly state?: ViewActivity["state"]; readonly failure?: { readonly reason: string; readonly detail?: string } }
+		| undefined
+	> {
 		let live: LiveState | undefined;
 		try {
 			live = await shell.harness.snapshot(LiveDoc, id as never, BACKGROUND_CONTEXT);
 		} catch {
 			return undefined;
 		}
-		if (live?.run === undefined) return undefined;
+		if (live === undefined) return undefined;
+		if (live.run === undefined) {
+			const failed = live.runFailure;
+			if (failed === undefined) return undefined;
+			return {
+				failure: { reason: failed.reason, ...(failed.detail === undefined ? {} : { detail: failed.detail }) },
+			};
+		}
 		const tools = live.tools ?? [];
-		if (tools.some((slot) => slot.status === "running")) return "working";
-		if (live.generation !== undefined) return "thinking";
+		if (tools.some((slot) => slot.status === "running")) return { state: "working" };
+		if (live.generation !== undefined) return { state: "thinking" };
 		// `run` 在、既没在生成也没有工具在跑 = 正在把结果写回频道。
-		return "working";
+		return { state: "working" };
 	}
 
 	async function readChannelList(): Promise<ChannelListResult> {
@@ -231,7 +269,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				continue;
 			}
 			const groups = groupsOf(view.entries, from, to, channelId);
-			const running = groups.length > 0 ? (await liveOf(conversationId)) !== undefined : false;
+			const running = groups.length > 0 ? (await liveOf(conversationId))?.state !== undefined : false;
 			/** 同一个频道里，这一组之后的那一组的 seq：回话只可能落在这之间。 */
 			const nextSeqIn = (id: string, seq: number): number => {
 				let next = Number.POSITIVE_INFINITY;

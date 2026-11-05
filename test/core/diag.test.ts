@@ -62,6 +62,22 @@ describe("运行报告的格式化（纯函数）", () => {
 		expect(text).toContain("重启超限");
 	});
 
+	it("task_interrupted 按 reason 分文案：连续超限 vs 单次打断", () => {
+		const base = {
+			type: "task_interrupted",
+			at: "2026-01-01T00:00:00.000Z",
+			task: { id: "t-1", kind: "generation", conversationId: 7 },
+			restarts: 5,
+		};
+		const limited = formatRuntimeReport({ ...base, reason: "restart_limit" });
+		expect(limited).toContain("连续重启超限");
+		expect(limited).toContain("连续 5 次");
+		const interrupted = formatRuntimeReport({ ...base, reason: "interrupted", restarts: 1 });
+		expect(interrupted).toContain("任务被重启打断，已结束");
+		expect(interrupted).not.toContain("超限");
+		expect(interrupted).toContain("连续 1 次");
+	});
+
 	it("没有附加信息时只给一句人话", () => {
 		expect(formatRuntimeReport({ type: "storage_failed", at: "2026-01-01T00:00:00.000Z" })).toBe(
 			"底座的会话失败（storage 等致命错误）",

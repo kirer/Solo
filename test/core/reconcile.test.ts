@@ -55,37 +55,49 @@ describe("重启自愈", () => {
 		expect(live?.run).toBeUndefined();
 	});
 
-	it("不动另一个活着的进程的 run（同库双进程时不能互相踩）", async () => {
+	it("run 指向一条还在（哪怕 terminal）的任务：不动 —— 可能是答完还在跑 afterRun", async () => {
 		const box = await pool.make("core-reconcile-");
-
 		const first = await box.open();
 		const conversation = await first.harness.createConversation(
 			{ ownership: { kind: "ownerless" }, agent: { extensions: [] } },
 			BACKGROUND_CONTEXT,
 		);
+		await first.close();
 
-		await first.harness.commit(async (tx) => {
-			const live = await tx.doc(LiveDoc, conversation.id);
-			live.run = { taskId: 999_999, inputs: [] };
-		}, BACKGROUND_CONTEXT);
+		const db = new DatabaseSync(box.layout.databasePath);
+		try {
+			const record = {
+				id: 999_998,
+				conversationId: Number(conversation.id),
+				kind: "pi.generation",
+				version: 2,
+				input: {},
+				background: false,
+				abortRequested: false,
+				endedAt: Date.now(),
+				state: { status: "terminal", outcome: { status: "completed", result: {} } },
+			};
+			db.prepare(
+				"INSERT INTO tasks (id, conversation_id, kind, status, abort_requested, background, record) VALUES (?, ?, ?, ?, 0, 0, ?)",
+			).run("999998", Number(conversation.id), "pi.generation", "terminal", JSON.stringify(record));
+		} finally {
+			db.close();
+		}
 
-		// 同一个库上再开一个（模拟「另一个进程正拿着这个会话」）：它的自愈会摘掉
-		// 上面那条陈旧 run，但只要我们自己的任务还活着就不该动。
 		const second = await box.open();
 		await second.harness.commit(async (tx) => {
 			const live = await tx.doc(LiveDoc, conversation.id);
-			live.run = { taskId: 999_998, inputs: [] };
+			live.run = { taskId: 999_998 as never, inputs: [] };
 		}, BACKGROUND_CONTEXT);
+		await second.close();
 
-		// 第三刀：再开一次，999_998 仍然是「不存在」→ 也该清。这条断言守的是
-		// 「只清陈旧指针」这个判据本身没有被写反。
 		const third = await box.open();
-		expect((await third.harness.snapshot(LiveDoc, conversation.id))?.run).toBeUndefined();
+		expect((await third.harness.snapshot(LiveDoc, conversation.id))?.run).toBeDefined();
 	});
 });
 
-describe("A2 启动自愈真的跑完了", () => {
-	it("有到一半的输入时，重开不再报「写表后读表」，且不会把排队中的输入撤掉", async () => {
+describe("A2 启动检查真的跑完了", () => {
+	it("排队中的输入原样留着，并被报成 backlog（等装配层发 continue 接上）", async () => {
 		const box = await pool.make("core-reconcile-");
 		await mkdir(join(box.agentsRoot, "甲"), { recursive: true });
 		await writeFile(join(box.agentsRoot, "甲", "identity.md"), "---\nname: 甲\n---\n\n# 甲\n", "utf8");
@@ -107,12 +119,14 @@ describe("A2 启动自愈真的跑完了", () => {
 			const abort = vi.spyOn(proto, "abortSubmission");
 			const second = await box.open();
 			// 恢复时**一条排队输入都不许撤**：`queued` 是内容完好、还没被取走的输入，
-			// 撤掉就是把我崩溃前说的话静默吞掉。崩溃前正在跑的那条则会记成 unanswered。
+			// 撤掉就是把我崩溃前说的话静默吞掉。底座重放会取走它。
 			expect(abort).not.toHaveBeenCalled();
 			abort.mockRestore();
 			const inspection = await second.harness.inspect();
 			const zombie = inspection.submissions.find((item) => item.requestId === "test:zombie");
-			expect(zombie === undefined || zombie.status === "unanswered" || zombie.status === "done").toBe(true);
+			// 没被撤掉；`placed` 说明它已经被那一轮取走、跟着 generation 一起等重放。
+			expect(["queued", "placed"]).toContain(zombie?.status);
+			expect(second.backlog).not.toContain(Number(conversation?.id));
 		} finally {
 			spy.mockRestore();
 		}

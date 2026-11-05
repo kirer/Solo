@@ -71,8 +71,35 @@
 ## unanswered.reason.model-error
 调模型失败（网关拒了这次请求，通常是模型名、额度或网关本身的问题）
 
+## unanswered.reason.interrupted
+这一轮被重启打断了（模型正在回答时进程停了）
+
+## unanswered.reason.restart-limit
+这一轮连续被重启打断，已经放弃
+
+## unanswered.reason.nothing-to-answer
+这一轮没有需要回答的内容（上下文停在一条已经答完的消息上）
+
+## unanswered.reason.turn-limit
+这一轮的工具轮数到了上限
+
+## unanswered.reason.faulted
+这一轮的任务异常退出
+
+## unanswered.reason.orphaned
+这一轮的任务在重启后找不到承接它的定义
+
+## unanswered.reason.reset
+这一轮被一次重置打断了
+
+## unanswered.reason.restart
+进程重启，这一轮没跑完
+
 ## unanswered.line
-#{{seq}} 叫了 @{{label}}，但他这一轮没答上来：{{reason}}。
+#{{seq}} 叫了 @{{label}}，但他这一轮没答上来：{{reason}}{{detail ?? }}。
+
+## unanswered.detail
+（{{detail}}）
 
 ## post.issue.failed
 #{{seq}} 叫了 @{{label}}，投递失败：{{detail}}。
@@ -87,7 +114,7 @@
 你刚进了「{{title}}」团队频道。用一句话介绍自己：名字、职务、负责什么 —— 发在这里，之后大家才知道 @ 谁。
 
 ## turn.interrupted
-服务重启，{{name}} 在 #{{seq}} 之后的那一轮被打断了。接着把它做完 —— 先看频道里还没回的消息，别从头再来。
+服务重启，{{name}} 在 #{{seq}} 之后的那一轮被打断了。
 
 ## sections.identityless
 # 你还没有身份文件

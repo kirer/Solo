@@ -54,10 +54,14 @@ export function spokeAfterWake(list: readonly Message[], slug: string, sinceSeq:
 	return list.some((item) => item.seq > sinceSeq && item.from === slug);
 }
 
+/** 收尾只要读这次回答的最近条目：`Conversation` 与 task 的 `runtime` 都满足。 */
+export type EntryReader = Pick<Conversation, "entries">;
+
 /** 收尾要做的一切（拍平后方便测）。 */
 export type FinishTurnInfo = {
 	readonly slug: string;
-	readonly conversation: Conversation;
+	/** 只用来取答案条目；宿主路径给会话，durable task 给 `TaskRuntime`。 */
+	readonly conversation: EntryReader;
 	readonly answer: unknown;
 	readonly wake: WakeRecord;
 };
@@ -71,7 +75,7 @@ export type FinishTurn = (info: FinishTurnInfo, context?: Context) => Promise<vo
  * （结算就发生在它之后）。找不到就是 `undefined`，收尾跳过。
  */
 async function answerEntry(
-	conversation: Conversation,
+	conversation: EntryReader,
 	answer: unknown,
 	context: Context,
 ): Promise<{ readonly entry: EntryRecord | undefined; readonly page: readonly EntryRecord[] }> {
@@ -112,6 +116,8 @@ type TurnDeps = {
 	readonly roster?: () => Promise<MentionRoster>;
 	readonly conversationOf: PostDeps["conversationOf"];
 	readonly rememberWake?: PostDeps["rememberWake"];
+	/** 原子唤醒：补发叫醒别人时，wake 与入队同一个 commit（ADR-076）。 */
+	readonly wakeTogether?: PostDeps["wakeTogether"];
 	readonly labelOf?: PostDeps["labelOf"];
 	readonly wakeOf?: PostDeps["wakeOf"];
 };
@@ -203,6 +209,7 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 				...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 				...(deps.text === undefined ? {} : { text: deps.text }),
 				...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+				...(deps.wakeTogether === undefined ? {} : { wakeTogether: deps.wakeTogether }),
 				...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
 			},
 			{

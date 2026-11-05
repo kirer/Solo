@@ -30,7 +30,7 @@ const REPORT_ENTRY_LIMIT = 4 * 1024;
 const REPORT_LABELS: Record<string, string> = {
 	storage_failed: "底座的会话失败（storage 等致命错误）",
 	task_faulted: "任务抛出异常",
-	task_interrupted: "任务连续重启超限，已结束",
+	task_interrupted: "任务被重启打断",
 	migration_failed: "任务状态迁移失败，任务被卡住",
 	task_outdated: "任务按旧定义继续跑（定义被卸载或换成不兼容的）",
 	task_error: "任务运行时报错",
@@ -38,6 +38,17 @@ const REPORT_LABELS: Record<string, string> = {
 	host_error: "宿主回调报错",
 	listener_error: "监听器报错",
 };
+
+/**
+ * `task_interrupted` 有两种原因（1.5.0）：连续重启超限、或模型回答时宿主反复停。
+ * 两者都让任务结束，但不是同一件事 —— 前者该查循环重启，后者该查进程/机器。
+ */
+function reportLabel(report: RuntimeReport): string {
+	if (report.type === "task_interrupted") {
+		return report.reason === "restart_limit" ? "任务连续重启超限，已结束" : "任务被重启打断，已结束";
+	}
+	return REPORT_LABELS[report.type] ?? report.type;
+}
 
 /**
  * 哪些报告算「正常现象」，不该占着界面上的「最近一条」。
@@ -49,13 +60,14 @@ const BENIGN = new Set<string>(["task_outdated"]);
 
 /** 一条运行报告 → 一行看得懂的话。纯函数：出问题时要把这句话贴给人看。 */
 export function formatRuntimeReport(report: RuntimeReport): string {
-	const label = REPORT_LABELS[report.type] ?? report.type;
+	const label = reportLabel(report);
 	const where: string[] = [];
 	if (report.task !== undefined) where.push(`任务 \`${report.task.kind}\`#${report.task.id}`);
 	if (report.conversationId !== undefined) where.push(`会话 ${report.conversationId}`);
 	if (report.extension !== undefined) where.push(`扩展 ${report.extension}`);
 	if (report.callback !== undefined) where.push(`回调 ${report.callback}`);
 	if (report.reason !== undefined) where.push(`原因 ${report.reason}`);
+	if (report.restarts !== undefined) where.push(`连续 ${String(report.restarts)} 次`);
 	const head = where.length === 0 ? label : `${label}（${where.join("，")}）`;
 	return report.message === undefined || report.message === "" ? head : `${head}：${report.message}`;
 }

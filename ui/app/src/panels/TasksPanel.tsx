@@ -8,10 +8,11 @@
  */
 
 import { useEffect, useState } from "react";
-import type { Step, Turn } from "../api/types.ts";
+import type { Actor, Step, Turn } from "../api/types.ts";
+import { continuePerson } from "../api/client.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { clockTime, humanDuration, relTime } from "../lib/format.ts";
-import { closeTasks, loadPersonRuns, loadTurn, setTasksWho } from "../state/store.ts";
+import { closeTasks, loadPersonRuns, loadTurn, refreshLists, setTasksWho } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const REFRESH_MS = 2000;
@@ -46,6 +47,8 @@ export function TasksPanel(): JSX.Element {
 
 	const titles = new Map(channels.map((channel) => [channel.id, channel.title]));
 	const names = new Map(people.map((actor) => [actor.slug, actor.label]));
+	const failures = new Map(people.map((actor) => [actor.slug, actor.lastFailure]));
+	const failure = who === null ? undefined : failures.get(who);
 	const pool = people
 		.filter((actor) => actor.slug !== "owner")
 		.map((actor) => ({ slug: actor.slug, label: actor.label, title: actor.title }))
@@ -115,6 +118,9 @@ export function TasksPanel(): JSX.Element {
 									}),
 								}}
 							/>
+							{failures.get(person.slug) !== undefined && !isRunning(presence.get(person.slug)?.state) ? (
+								<span className="tasks-person-bad" aria-hidden="true" />
+							) : null}
 							<span>{person.label}</span>
 						</button>
 					))}
@@ -175,7 +181,11 @@ export function TasksPanel(): JSX.Element {
 
 			{current === null ? (
 				<div className="task-detail task-detail-blank">
-					<p>左边挑一轮看他做了什么。</p>
+					{failure === undefined || who === null ? (
+						<p>左边挑一轮看他做了什么。</p>
+					) : (
+						<FailureCard slug={who} failure={failure} />
+					)}
 				</div>
 			) : (
 				<div className="task-detail">
@@ -197,6 +207,8 @@ export function TasksPanel(): JSX.Element {
 							<span>{elapsedOf(current)}</span>
 						</span>
 					</header>
+
+					{failure === undefined || who === null ? null : <FailureCard slug={who} failure={failure} />}
 
 					<div className="task-body">
 						{current.trigger === undefined ? null : (
@@ -233,6 +245,48 @@ export function TasksPanel(): JSX.Element {
 				</div>
 			)}
 		</section>
+	);
+}
+
+/**
+ * 最近一轮没答上来。系统留痕不进聊天流（ADR-047），失败要在这里被看见：
+ * reason 由服务端按文案目录翻好人话，detail 是底座给的原文。
+ *
+ * 「继续」走 1.5.0 的 `continue`：不新增一条用户消息，直接在当前上下文上再跑一轮。
+ * `no_model`（没配模型）与 `nothing_to_answer`（没东西可答）不给按钮 —— 按了也不会变。
+ */
+function FailureCard(props: { slug: string; failure: NonNullable<Actor["lastFailure"]> }): JSX.Element {
+	const [pending, setPending] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const retryable = props.failure.reason !== "no_model" && props.failure.reason !== "nothing_to_answer";
+
+	async function resume(): Promise<void> {
+		setPending(true);
+		setError(null);
+		try {
+			await continuePerson(props.slug);
+			await Promise.all([refreshLists(), loadPersonRuns(props.slug)]);
+		} catch (caught) {
+			setError(caught instanceof Error ? caught.message : String(caught));
+		} finally {
+			setPending(false);
+		}
+	}
+
+	return (
+		<div className="task-failure" role="status">
+			<span className="task-failure-k">最近一轮没答上来</span>
+			<p className="task-failure-text">{props.failure.text}</p>
+			{props.failure.detail === undefined ? null : <p className="task-failure-detail">{props.failure.detail}</p>}
+			{retryable ? (
+				<div className="task-failure-actions">
+					<button type="button" className="task-failure-go" disabled={pending} onClick={() => void resume()}>
+						{pending ? "正在继续…" : "继续这一轮"}
+					</button>
+					{error === null ? null : <span className="task-failure-error">{error}</span>}
+				</div>
+			) : null}
+		</div>
 	);
 }
 

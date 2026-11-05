@@ -5,6 +5,7 @@
  */
 import type { Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
+import { TURN_REPORT_TASK } from "./turn/record.ts";
 
 /**
  * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。
@@ -78,16 +79,31 @@ export async function coalesceQueue(
  * 哪些会话此刻手上有活。
  *
  * 用 `harness.inspect()`（只读、不写、不跑任务）取「活着的任务」，按会话聚合，
- * 排掉后台任务 —— 后台任务是代理自己的账本，不算「打断它正在干的事」。
+ * 排掉两类「不是模型在干活」的：后台任务（代理自己的账本），以及收尾任务与只等
+ * 收尾任务的 generation（答完之后的系统账务，ADR-077）。
  */
 export async function liveConversations(
 	harness: Harness,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<Set<number>> {
 	const inspection = await harness.inspect(context);
+	const kindOf = new Map<string, string>();
+	for (const task of inspection.tasks) kindOf.set(String(task.record.id), task.record.kind);
 	const busy = new Set<number>();
 	for (const task of inspection.tasks) {
 		if (task.record.background === true) continue;
+		// 收尾任务是系统账务：它在跑不代表模型在干活。把它算进来会让紧随其后的一条
+		// 消息被当成「插话」，模型只答一句、工具活丢掉（ADR-077）。
+		if (task.record.kind === TURN_REPORT_TASK) continue;
+		// 生成答完不会立刻结束：它要等 `afterRun` 的子任务（收尾）跑完，这一段状态是
+		// `waiting`。等的全是收尾任务，就说明模型已经收手了 —— 和上面同一条理由。
+		if (
+			task.state.kind === "waiting" &&
+			task.state.on.length > 0 &&
+			task.state.on.every((id) => kindOf.get(String(id)) === TURN_REPORT_TASK)
+		) {
+			continue;
+		}
 		busy.add(Number(task.record.conversationId));
 	}
 	return busy;

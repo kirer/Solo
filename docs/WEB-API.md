@@ -29,6 +29,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/people/:slug/memory` | 删掉一条记忆 / 加一条 |
 | `GET` | `/api/models` | 现在生效的模型清单（装配好的注册表）+ 默认模型 |
 | `POST` | `/api/people/:slug/model` | 换这个人用的模型（当场生效，写进 `settings.json` 的 `agentModels`） |
+| `POST` | `/api/people/:slug/continue` | 让他把最近这一轮接着做完（1.5.0 的 `continue`，不新增用户消息） |
 | `GET` | `/api/teams/:slug` | 一个团队的档案：README 正文 / 管理员 / 团队记忆 |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
@@ -89,6 +90,15 @@ type ViewActor = {
   assistant?: true;     // 助理（身份目录在应用根 assistant/ 下，ADR-058）
   body: string;         // identity.md 正文（档案页要显示「他是谁」）
   activity?: ViewActivity; // 此刻在干什么；**没有这个键 = 待命**
+  lastFailure?: ViewLastFailure; // 最近一轮没答上来；**没有这个键 = 没有失败**
+}
+
+// 失败不是「正在做」的一种，所以不放进 activity（ADR-072）。
+// 只有 live.run === undefined 时才读 runFailure；有 activity 时以 activity 为准。
+type ViewLastFailure = {
+  reason: string;       // 底座原因：model_error / no_model / interrupted / restart_limit / …
+  detail?: string;      // 底座给的细节（模型错误正文、被什么打断、工具轮数）
+  text: string;         // 服务端按 text/channel.md 翻好的一句人话
 }
 
 // 由会话的 live 状态派生（run / generation / running 的工具），结算即消失。
@@ -499,6 +509,22 @@ type ViewStep = {
 - 空串要改回默认时，得先有默认模型（`settings.json` 的 `defaultModel` 或环境变量），
   没有就 400。
 - `slug` 必须是名册里的人，否则 404。
+
+## 10.4 `POST /api/people/:slug/continue`
+
+让这个人把最近这一轮接着做完：底座的 `continue` —— **不新增一条用户消息**，直接在
+当前上下文上再跑一轮。上下文停在工具结果上时从结果继续；停在一条回答上时底座结算成
+`nothing_to_answer`（界面不该给这种失败卡按钮）。失败卡上的「继续这一轮」调它。
+
+```ts
+// 请求：无 body
+// 响应
+{ ok: true }
+```
+
+- `slug` 必须是名册里的人，否则 404；没有会话也是 404。
+- 他正在跑一轮时底座拒绝（`ConversationBusy`），回 400，界面把原文显示在按钮旁。
+- 不判断「有没有东西可答」：那是底座的结算，不是路由的猜测。
 
 ## 11. `GET /api/people/:slug/memory`
 

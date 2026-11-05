@@ -183,6 +183,14 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
+			// 失败卡上的「继续」：1.5.0 的 continue，不新增一条用户消息。
+			pattern: "/api/people/:slug/continue",
+			method: "POST",
+			handler: async ({ response, params }) => {
+				return json(response, await app.people.continuePerson(params.slug ?? ""));
+			},
+		},
+		{
 			// 一个团队的档案：README 正文（介绍 / 验收标准）+ 管理员 + 团队记忆。
 			pattern: "/api/teams/:slug",
 			method: "GET",

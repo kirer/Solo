@@ -194,7 +194,14 @@ export async function openDm(world: LiveWorld, slug: string): Promise<string> {
 	return opened.id;
 }
 
-/** 轮询频道，直到出现某个人发的消息。 */
+/**
+ * 轮询频道，等他这一轮**收工**，然后取他最后一句回话。
+ *
+ * 只看「第一条回话」会提前放行：模型常先发一条过程话（「我先记一下」），真正做完的
+ * 回话在它后面；下一阶段于是拿到上一阶段的答案，一错错一串。收工的判据是「他的会话
+ * 没有活任务、也没有未结算的提交」—— 答完的收尾任务也在这里面，所以补发的那一句
+ * 一定已经落进频道（ADR-077）。
+ */
 export async function waitForReply(
 	shell: LiveShell,
 	channelId: string,
@@ -203,14 +210,31 @@ export async function waitForReply(
 	timeoutMs: number,
 ): Promise<{ readonly seq: number; readonly text: string } | undefined> {
 	const deadline = Date.now() + timeoutMs;
+	const conversationId = shell.conversations.get(fromSlug)?.id;
+	let last: { readonly seq: number; readonly text: string } | undefined;
 	while (Date.now() < deadline) {
 		const state = await shell.channels();
-		const list = state.messages[channelId] ?? [];
-		const hit = list.find((message) => message.seq > afterSeq && message.from === fromSlug);
-		if (hit !== undefined) return { seq: hit.seq, text: hit.text };
-		await sleep(1_000);
+		const hits = (state.messages[channelId] ?? []).filter(
+			(message) => message.seq > afterSeq && message.from === fromSlug,
+		);
+		const hit = hits.at(-1);
+		if (hit !== undefined) {
+			last = { seq: hit.seq, text: hit.text };
+			if (conversationId === undefined) return last;
+			const inspection = await shell.harness.inspect(BACKGROUND_CONTEXT).catch(() => undefined);
+			const busy =
+				inspection !== undefined &&
+				(inspection.tasks.some((task) => Number(task.record.conversationId) === Number(conversationId)) ||
+					inspection.submissions.some(
+						(item) =>
+							Number(item.conversationId) === Number(conversationId) &&
+							(item.status === "queued" || item.status === "placed"),
+					));
+			if (!busy) return last;
+		}
+		await sleep(500);
 	}
-	return undefined;
+	return last;
 }
 
 /** 等一组人都在同一个频道里说话（多人被叫醒的场景）。 */

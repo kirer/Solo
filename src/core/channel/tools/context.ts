@@ -151,7 +151,7 @@ export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Conte
 		conversationOf: (slug: string) => deps.wiring.conversationOf(slug, context),
 		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算）。
 		rememberWake: (slug, wake) => deps.wiring.rememberWake(slug, wake, context),
+		...(deps.wiring.wakeTogether === undefined ? {} : { wakeTogether: deps.wiring.wakeTogether }),
 		wakeOf: (slug: string) => deps.wiring.wakeOf(slug, context),
-		finishTurn: deps.wiring.finishTurn,
 	};
 }

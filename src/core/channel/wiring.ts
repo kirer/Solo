@@ -7,7 +7,7 @@
  *
  * 它只依赖 `harness` 与两个路径，不认识「工具」「我说话」这些用途。
  */
-import type { Conversation, Context, Harness } from "../runtime/index.ts";
+import type { Conversation, Context, Harness, Submission, SubmissionId, Tx } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import {
 	DirectoryDoc,
@@ -37,6 +37,15 @@ export type ChannelWiring = {
 	conversationOf: (key: string, context?: Context) => Promise<Conversation | undefined>;
 	rememberWake: (key: string, wake: WakeRecord, context?: Context) => Promise<void>;
 	wakeOf: (key: string, context?: Context) => Promise<WakeRecord | undefined>;
+	/**
+	 * 原子唤醒：名册的 wake 与「这条输入入队」写进同一个 commit（ADR-076）。
+	 *
+	 * `submissionOf` 是 commit 之后重新拿句柄用的：事务形式只给 id，不给可等待的句柄。
+	 */
+	readonly wakeTogether?: {
+		readonly rememberWake: (tx: Tx, key: string, wake: WakeRecord) => Promise<void>;
+		readonly submissionOf: (id: SubmissionId, context?: Context) => Promise<Submission | undefined>;
+	};
 };
 
 /**
@@ -71,6 +80,11 @@ export function wireChannel(deps: {
 		wakeDeps.conversationOf(key, context);
 	const rememberWake = (key: string, wake: WakeRecord, context: Context = BACKGROUND_CONTEXT) =>
 		wakeDeps.rememberWake(key, wake, context);
+	const wakeTogether = {
+		rememberWake: wakeDeps.rememberWakeTx,
+		submissionOf: (id: SubmissionId, context: Context = BACKGROUND_CONTEXT) =>
+			deps.harness.submission(id, context),
+	};
 
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,
@@ -87,6 +101,7 @@ export function wireChannel(deps: {
 		// 收尾发生在背景上下文里（结算之后），用不到调用方那一轮的覆盖层。
 		conversationOf: (slug) => conversationOf(slug),
 		rememberWake: (slug, wake) => rememberWake(slug, wake),
+		wakeTogether,
 		wakeOf: (slug) => wakeOfOf(slug),
 	});
 
@@ -99,5 +114,6 @@ export function wireChannel(deps: {
 		conversationOf,
 		rememberWake,
 		wakeOf: wakeOfOf,
+		wakeTogether,
 	};
 }

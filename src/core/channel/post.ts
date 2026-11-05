@@ -19,9 +19,8 @@ import type { MentionRoster } from "./mentions.ts";
 import type { WakeRecord } from "./turn/record.ts";
 import { appendNote, appendToChannel } from "./write.ts";
 import { speakerBefore } from "./rules.ts";
-import { deliver, type DeliverIssue, type DeliverResult } from "./dispatch.ts";
+import { deliver, type DeliverIssue, type DeliverOptions, type DeliverResult } from "./dispatch.ts";
 import { deliveryPrompt, digestNotice, digestRows } from "./delivery.ts";
-import type { FinishTurn } from "./turn/index.ts";
 import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
 import { coalesceQueue, liveConversations } from "./queue.ts";
@@ -69,10 +68,10 @@ export type PostDeps = {
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	readonly labelOf?: (slug: string) => string;
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/** 原子唤醒：wake 与入队同一个 commit（ADR-076）。 */
+	readonly wakeTogether?: DeliverOptions["wakeTogether"];
 	/** 读上一次的唤醒记录：忙的时候要在它上面保留 `task`（私聊插话不覆盖任务频道）。 */
 	readonly wakeOf?: (slug: string) => Promise<WakeRecord | undefined>;
-	/** 一轮正常答完时的收尾（最终回答自动成消息）。 */
-	readonly finishTurn?: FinishTurn;
 	/** 频道 id → 标题（收尾/插话文案里说清「回哪儿」）。 */
 	readonly titleOf?: (channelId: string) => string | undefined;
 	/** 附件根目录。给了模型就能真的看见消息里的图片。 */
@@ -252,17 +251,17 @@ async function deliverTo(
 			conversationOf: deps.conversationOf,
 			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
 			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+			...(deps.wakeTogether === undefined ? {} : { wakeTogether: deps.wakeTogether }),
 			...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
-			...(deps.finishTurn === undefined ? {} : { finishTurn: deps.finishTurn }),
 			titleOf: (channelId) => deps.state.channels[channelId]?.title,
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
 			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
 			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
-			noteUnanswered: async ({ label, seq, reason }) => {
+			noteUnanswered: async ({ label, seq, reason, detail }) => {
 				await appendNote(
 					deps,
 					liveChannel.id,
-					renderUnanswered(seq, label, reason, deps.text),
+					renderUnanswered(seq, label, reason, deps.text, detail),
 					Date.now(),
 					BACKGROUND_CONTEXT,
 				);

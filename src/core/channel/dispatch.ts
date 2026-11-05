@@ -3,12 +3,19 @@
 // （`recipientsOf`），投递正文又由这条消息拼出来。落盘在 `write.ts`，这里只负责叫醒。
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import { watchSettled } from "./unanswered.ts";
-import type { Conversation, InputEntry, UserInput } from "../runtime/index.ts";
+import type {
+	Conversation,
+	InputEntry,
+	InputSubmissionDraft,
+	Submission,
+	SubmissionId,
+	Tx,
+	UserInput,
+} from "../runtime/index.ts";
 import { mergedNotice, renderDelivery, type DeliveryPrompt } from "./delivery.ts";
 import { planAttachments } from "./attachments.ts";
 import type { Channel, Message } from "./types.ts";
 import type { WakeRecord, WakeTarget } from "./turn/record.ts";
-import type { FinishTurn } from "./turn/index.ts";
 import type { TextCatalog } from "../md/catalog.ts";
 
 export type { WakeRecord } from "./turn/record.ts";
@@ -37,7 +44,7 @@ export type DeliverIssue = {
 	readonly detail?: string;
 };
 
-type DeliverOptions = {
+export type DeliverOptions = {
 	/**
 	 * 每个人各自的未读摘要，**在调用方提交之前**就算好。
 	 *
@@ -62,10 +69,16 @@ type DeliverOptions = {
 	readonly labelOf?: (slug: string) => string;
 	/** 记住「被谁叫醒」。缺省不记。 */
 	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	/**
+	 * 原子唤醒：wake 与入队同一个 commit。给了就优先走这条，`rememberWake` 只当退路。
+	 * 两个字段是一对 —— commit 后事务形式只还 id，句柄要另外取回来等待。
+	 */
+	readonly wakeTogether?: {
+		readonly rememberWake: (tx: Tx, slug: string, wake: WakeRecord) => Promise<void>;
+		readonly submissionOf: (id: SubmissionId) => Promise<Submission | undefined>;
+	};
 	/** 读上一次的唤醒记录：忙的时候从它里面继承 `task`。缺省当没有（`task = reply`）。 */
 	readonly wakeOf?: (slug: string) => Promise<WakeRecord | undefined>;
-	/** 一轮正常答完时的收尾。缺省不补发。 */
-	readonly finishTurn?: FinishTurn;
 	/** 频道 id → 标题。插话文案里用标题说「回去哪个频道」。缺省直接用 id。 */
 	readonly titleOf?: (channelId: string) => string | undefined;
 	/**
@@ -112,6 +125,7 @@ type DeliverOptions = {
 		readonly label: string;
 		readonly seq: number;
 		readonly reason: string | undefined;
+		readonly detail?: unknown;
 	}) => Promise<void>;
 };
 
@@ -182,7 +196,7 @@ export async function deliver(
 				coalesceQueue: options.coalesceQueue,
 				noteUnanswered: options.noteUnanswered,
 				rememberWake: options.rememberWake,
-				finishTurn: options.finishTurn,
+				wakeTogether: options.wakeTogether,
 			},
 			{
 				slug,
@@ -272,6 +286,8 @@ export type WakeNote = {
 	readonly label: string;
 	readonly seq: number;
 	readonly reason: string;
+	/** 底座给的原因细节（模型错误正文、被什么打断、工具轮数）；压成一行再落频道。 */
+	readonly detail?: unknown;
 };
 
 export type WakeDeps = {
@@ -283,18 +299,12 @@ export type WakeDeps = {
 	readonly noteUnanswered?: ((note: WakeNote) => Promise<void> | void) | undefined;
 	/** 记「被谁叫醒」。不传就不记（工具会退到「我最早的那个频道」）。 */
 	readonly rememberWake?: ((slug: string, wake: WakeRecord) => Promise<void>) | undefined;
-	/**
-	 * 这一轮正常结算（`done`）时收尾：模型经常把结论写在最后一段正文里、一次 `say`
-	 * 都不调。这里按唤醒记录把它替他说进频道（ADR-099）。
-	 */
-	readonly finishTurn?:
-		| ((info: {
-				readonly slug: string;
-				readonly conversation: Conversation;
-				readonly conversationId: number;
-				readonly answer: unknown;
-				readonly wake: WakeRecord;
-		  }) => Promise<void>)
+	/** 原子唤醒：wake 与入队同一个 commit（ADR-076）。不传就退回「先记 wake、再提交」。 */
+	readonly wakeTogether?:
+		| {
+				readonly rememberWake: (tx: Tx, slug: string, wake: WakeRecord) => Promise<void>;
+				readonly submissionOf: (id: SubmissionId) => Promise<Submission | undefined>;
+		  }
 		| undefined;
 };
 
@@ -352,50 +362,62 @@ export async function wake(
 
 		const content = input.bodyOf(merged);
 
-		// 先记 wake、再提交：反过来的话有竞态 —— `submit` 一入队对方就可能跑起来，
+		const draft: InputSubmissionDraft = {
+			type: "input",
+			content,
+			requestId: input.requestId,
+			...(input.entry === undefined ? {} : { entry: input.entry }),
+			// 投递只有一种插法：打断他正在跑的那一轮（群里的一句问题不该等整轮答完）。
+			whenBusy: "steer",
+		};
+
+		// 先有 wake、才有排队项：反过来的话有竞态 —— `submit` 一入队对方就可能跑起来，
 		// 那时它查不到 wake，只能退到「我最早的那个频道」（往往是私聊），于是答在私聊里、
-		// 问的人在原频道什么都看不到。
-		if (deps.rememberWake !== undefined && input.wakeRecord !== undefined) {
-			await deps.rememberWake(input.slug, input.wakeRecord);
+		// 问的人在原频道什么都看不到。1.5.0 的 `submit(tx)` 让这两件事落在同一个 commit 里
+		// （ADR-076）；只有没接上原子路径的调用方才退回「先单独记、再提交」。
+		const together = deps.wakeTogether;
+		let submission: Submission;
+		if (together !== undefined && input.wakeRecord !== undefined) {
+			const record = input.wakeRecord;
+			const submissionId = await conversation.commit(async (tx) => {
+				// 先写文档（只碰 doc），再准入。准入就是这张表的第一次写，之后不能再读表。
+				await together.rememberWake(tx, input.slug, record);
+				return conversation.submit(tx, draft);
+			}, context);
+			const resumed = await together.submissionOf(submissionId);
+			if (resumed === undefined) {
+				// 提交已经在盘上了，只是句柄没取回来。不能报 failed（会让调用方以为没入队）；
+				// 只是这一轮没人盯着收尾。
+				console.warn(`[wake] ${input.slug} 拿到了提交 id，却取不回句柄（${input.requestId}）`);
+				return { status: "delivered", merged };
+			}
+			submission = resumed;
+		} else {
+			if (deps.rememberWake !== undefined && input.wakeRecord !== undefined) {
+				await deps.rememberWake(input.slug, input.wakeRecord);
+			}
+			submission = await conversation.submit(draft, context);
 		}
 
-		const submission = await conversation.submit(
-			{
-				type: "input",
-				content,
-				requestId: input.requestId,
-				...(input.entry === undefined ? {} : { entry: input.entry }),
-				// 投递只有一种插法：打断他正在跑的那一轮（群里的一句问题不该等整轮答完）。
-				whenBusy: "steer",
-			},
-			context,
-		);
-
-		// 这一轮结算时一次收尾，两条路：
-		// - 一个字都没产出 → 留一行痕，频道里至少能看出「他回答了没」；
-		// - 正常答完 → 把最终正文按唤醒记录替他说出去（模型漏调 `say` 的兜底）。
+		// 这一轮结算时留痕：一个字都没产出 → 频道里留一行，至少能看出「他回答了没」。
+		// 正常答完的收尾不在这里：它是 durable task（`turn/report.ts`），进程被杀也能跑完。
 		const report = deps.noteUnanswered;
 		const note = input.note;
-		const finish = deps.finishTurn;
-		const record = input.wakeRecord;
-		if ((report !== undefined && note !== undefined) || (finish !== undefined && record !== undefined)) {
+		if (report !== undefined && note !== undefined) {
 			watchSettled(submission, async (settled) => {
-				if (settled.status === "unanswered") {
-					// `aborted` = 被后来的一条消息合并唤醒撤掉了（`coalesceQueue` 只撤「还没开始」的
-					// 排队项）。消息还在频道里，新的那一轮会把它们一起答 —— 这不是「没答上来」，
-					// 写一条 note 只会让人以为他掉了链子（实测：一条频道里连着好几条这种假消息）。
-					if (settled.reason === "aborted") return;
-					if (report === undefined || note === undefined) return;
-					await report({ slug: input.slug, label: note.label, seq: note.seq, reason: settled.reason ?? "unanswered" });
-					return;
-				}
-				if (finish === undefined || record === undefined) return;
-				await finish({
+				if (settled.status !== "unanswered") return;
+				// 两种「不是没答上来」：
+				// - `aborted`：被后来的一条消息合并唤醒撤掉了（`coalesceQueue` 只撤「还没开始」的
+				//   排队项）。消息还在频道里，新的那一轮会把它们一起答。
+				// - `nothing_to_answer`：上下文本来就以一条回答结尾，continue 没东西可答。
+				// 写一条 note 只会让人以为他掉了链子（实测：一条频道里连着好几条这种假消息）。
+				if (settled.reason === "aborted" || settled.reason === "nothing_to_answer") return;
+				await report({
 					slug: input.slug,
-					conversation,
-					conversationId,
-					answer: settled.answer,
-					wake: record,
+					label: note.label,
+					seq: note.seq,
+					reason: settled.reason ?? "unanswered",
+					...(settled.detail === undefined ? {} : { detail: settled.detail }),
 				});
 			});
 		}

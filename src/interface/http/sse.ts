@@ -126,7 +126,11 @@ function orgSignature(org: ViewOrg): string {
 	const rows = org.people.map((actor) => {
 		const activity =
 			actor.activity === undefined ? "" : `${actor.activity.state}\u0001${String(actor.activity.since)}`;
-		return `${actor.slug}\u0001${actor.label}\u0001${actor.title ?? ""}\u0001${actor.assistant === true ? "1" : ""}\u0001${activity}`;
+		const failure =
+			actor.lastFailure === undefined
+				? ""
+				: `${actor.lastFailure.reason}\u0001${actor.lastFailure.text}\u0001${actor.lastFailure.detail ?? ""}`;
+		return `${actor.slug}\u0001${actor.label}\u0001${actor.title ?? ""}\u0001${actor.assistant === true ? "1" : ""}\u0001${activity}\u0001${failure}`;
 	});
 	// 前缀不能省：一个空的 org 拼出来也是空串，会和「还没推过」撞成同一个指纹。
 	return `org:${String(rows.length)}|${rows.join("\u0002")}`;

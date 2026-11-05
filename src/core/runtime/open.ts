@@ -13,18 +13,8 @@ import {
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
-import type { JsonValue } from "@earendil-works/chord";
 import type { DatabaseSync } from "node:sqlite";
-import type { Cursor, Registry, SubmissionId, TaskRecord } from "@earendil-works/pi-durable";
-import { serializedHarness } from "./serialize.ts";
-
-/**
- * `Tx.setTask` 在运行时存在（调度器 open 恢复时正是用它），但没进公开的 `Tx` 类型。
- * 这里按结构声明出用到的那一个方法，避免去 import 库的私有模块。
- */
-type TaskWriter = {
-	setTask(value: TaskRecord<JsonValue, JsonValue, JsonValue>): void;
-};
+import type { Cursor, Registry, SubmissionId, TaskId } from "@earendil-works/pi-durable";
 
 export type OpenCoreOptions = {
 	/** SQLite 文件路径。 */
@@ -110,38 +100,14 @@ export type CoreRuntime = {
 	readonly registry: Registry;
 	readonly close: (context?: Context) => Promise<void>;
 	/**
-	 * 重启时正跑到一半、被结算成 `orphaned` 的会话。装配层拿它把人叫回来接着做
-	 * （ADR-044）—— 这一层不认识频道，只报「谁的这一轮断了」。
+	 * 上一次进程停下时正在跑一轮的会话。装配层拿它留一句痕；这一轮由底座自己重放
+	 * （ADR-044 / ADR-074）。
 	 */
 	readonly interrupted: readonly number[];
+	/** 有排队输入、却没有活着的一轮来取它的会话。装配完由宿主发一条 `continue` 接上。 */
+	readonly backlog: readonly number[];
 };
 
-/**
- * 自愈：把被 `kill -9`（或任何没走 `harness.close` 的退出）留下的半截任务树清干净。
- *
- * 根因（实测确诊）：
- * `Harness.open` 会加载所有「非终态」任务并尝试恢复。一次强杀会把一棵任务树留在
- * 半截：父任务 `waiting` 在子任务上，子任务 `running`，还有一条 `placed` 的输入
- * submission。恢复时调度器重放这些任务，但它们背后的模型调用/工具调用早就随进程
- * 一起没了，于是抛 `Task N invocation has ended`；而且是**异步的未处理拒绝**，
- * 会把整个进程崩掉。库一直脏，下次启动照样崩。
- *
- * 为什么旧方案都无效（实测）：
- * - 直接 `UPDATE tasks SET status='terminal'`（另一条 SQLite 连接）：改动被 Harness
- *   自己的连接/页缓存覆盖，而且它只改 `record` 不改 `status` 列，列仍然是脏的。
- * - 基于 `harness.inspect()` 的 `conversation.reset()`：`inspect` 读的是调度器的
- *   **内存活映射**，open 之后还没 reconcile，里面是空的，永远看不到僵尸。
- *
- * 修法：open 之后、装配之前，用 Harness 自己的 **一次 commit** 把所有非终态任务
- * 就地结算成 `terminal`（`orphaned`/`restart`），并在同一次自愈里撤销所有未结的
- * 输入 submission。必须在同一个事务里一次做完：只终结父任务会级联把子任务改回
- * `pending`，它们仍然会重放、仍然会崩（实测）。走 Harness 自身连接与事务，无竞态。
- *
- * 还有一处必须一起清：会话的 `pi.live` 文档。它里面的 `run` 是「这个会话忙不忙」
- * 的唯一判据（入库检查就是 `busy = live.run !== undefined`）。强杀时 `run` 留在那里，
- * 而它指向的 generation 任务已经是 terminal —— 于是这个会话**永远被当成忙**，
- * 之后的每一条输入都被塞进 `queued` 再也无人取（实测：私聊几十条消息全哑）。
- */
 /**
  * 把一个 `scan*` 接口的所有页读全（库一次只给一页；只读第一页会让后面的僵尸永远清不掉）。
  */
@@ -158,130 +124,81 @@ async function scanAllPages<T>(
 	return items;
 }
 
-async function reconcileZombieTasks(harness: Harness, context: Context): Promise<readonly number[]> {
-	// 调度器 open 时按这些列扫描「活着」的任务。
-	const LIVE = ["pending", "running", "waiting", "sleeping", "completing"] as const;
-	let terminated = 0;
-	let settled = 0;
-	// 被解开「假忙」的会话：它们的积压输入还卡在 inbox 里，等一个人开第一轮。
-	const unblocked = new Set<number>();
-	// 重启时正跑到一半的会话（有 `run`）：它们的这一轮已经没了，装配层要把人叫回来接着做。
+/**
+ * 启动检查：**不再替底座结算任务**。
+ *
+ * 1.4.x 时代这里会把所有非终态任务强杀成 `orphaned`，因为底座重放会抛
+ * `Task N invocation has ended`。1.5.0 的调度器自己会在 open 时把 `running` 改回
+ * `pending` 并计一次 restart，重放时按 checkpoint 继续；连续被切断超过 `restartLimit`
+ * 才结束，并在 `pi.live.runFailure` 留下 `restart_limit` / `interrupted`（ADR-072 已能显示）。
+ * 再抢着杀只会把本来能续上的一轮变成「没答上来」。
+ *
+ * 这里只剩两件底座不管的事：
+ * - `run` 指向一条**根本不存在**的任务（旧数据 / 损坏）。任务还在的一律不动 ——
+ *   答完但还在跑 `afterRun` 的 run 也指向一条 terminal generation，不能按「terminal」判死。
+ * - 排队输入没有活着的一轮来取（崩溃恰好发生在上一轮结算之后、下一轮开始之前）。
+ *   交给装配层发 `continue`，它会把 inbox 里的排队项一起带进这一轮。
+ */
+async function inspectStartup(
+	harness: Harness,
+	context: Context,
+): Promise<{ interrupted: readonly number[]; backlog: readonly number[] }> {
+	const inspection = await harness.inspect(context);
 	const interrupted = new Set<number>();
-	try {
-		// 先读一遍未结的输入 submission（任务结算后它们就再也无人处理了）。
-		const pendingSubmissions = (await harness.inspect(context)).submissions.filter(
-			(submission) => submission.status === "queued" || submission.status === "placed",
-		);
+	for (const task of inspection.tasks) {
+		if (task.record.kind !== "pi.generation") continue;
+		// open 把「上次退出时还在 running」的任务改成 pending 并 +1；改过状态的任务会清零。
+		if ((task.record.restarts ?? 0) > 0) interrupted.add(task.record.conversationId);
+	}
 
-		// 一次 commit 里把整棵残留任务树全部结算成 terminal。分开做会被级联改回 pending。
-		terminated = await harness.commit(async (tx) => {
-			// **先把所有表扫完，再开始写。**
-			//
-			// 旧版本在这里踩过一个一直没人发现的坑：先 `setTask` 写任务，再 `scanConversations`
-			// 扫会话 —— pi-durable 明确禁止「写表之后再读表」，于是整个 commit 抛错、
-			// 被外层 catch 吞成一行警告，结果是**这套自愈从上线起一次都没真正跑过**
-			// （实测每次启动都打 `Tx.scanConversations() cannot read tables after the first table write`），
-			// 僵尸任务与残留输入一直挂在库里（`submissions` 里 2 条 unanswered 从 10-29 挂到现在）。
-			// 必须翻页：`scan*` 一次只给一页。早先只读第一页（256 条），某个状态超过 256 条时
-			// 后面的僵尸永远清不掉，每次启动都重建一次崩溃。
-			const live = [];
-			for (const status of LIVE) {
-				live.push(...(await scanAllPages((limit, cursor) => tx.scanTasks({ status }, limit, cursor))));
-			}
+	// 扫一遍所有会话的 `pi.live.run`（只读的 commit）。
+	const runs: { conversationId: number; taskId: TaskId; inputs: readonly SubmissionId[] }[] = [];
+	await harness.commit(async (tx) => {
+		for (const conversation of await scanAllPages((limit, cursor) => tx.scanConversations({}, limit, cursor))) {
+			const doc = await tx.doc(LiveDoc, conversation.id);
+			if (doc.run === undefined) continue;
+			runs.push({ conversationId: conversation.id, taskId: doc.run.taskId, inputs: doc.run.inputs });
+		}
+	}, context);
 
-			// 会话 + 每个会话的 `pi.live`（也是读）：判断那一条 `run` 是不是已经没人收尾了。
-			const stale: { conversationId: number; runInputs: readonly SubmissionId[]; stale: boolean }[] = [];
-			for (const conversation of await scanAllPages((limit, cursor) => tx.scanConversations({}, limit, cursor))) {
-				const doc = await tx.doc(LiveDoc, conversation.id);
-				const run = doc.run;
-				// **只要有 `run` 就算陈旧**：这次 commit 会把所有活着状态的任务统统结算成
-				// terminal（上面 `live`），所以它的 owner 也一样会死。旧判断只看
-				// 「owner 不存在或已 terminal」，owner 还是 `running` 时判成「不陈旧」，
-				// 于是它服务的排队输入被 `abortSubmission` 撤掉、也没人补占位 ——
-				// 我崩溃前说的话就这样被静默吞了（实测：私聊里几十条全没）。
-				stale.push({
-					conversationId: conversation.id,
-					runInputs: run?.inputs ?? [],
-					stale: run !== undefined,
-				});
-			}
-			for (const id of stale.filter((item) => item.stale).flatMap((item) => item.runInputs)) {
-				tx.settleSubmission(id, { status: "unanswered", reason: "restart" });
-				settled += 1;
-			}
-
-			// ── 以上全是读，从这里开始写 ──
-			let count = 0;
-			for (const task of live) {
-				if (task.state?.status === "terminal") continue;
-				// terminal 分支不许带 checkpoint / memos，库内 withState 也是这么剥的。
-				const { checkpoint: _checkpoint, ...rest } = task.state as unknown as Record<string, unknown>;
-				(tx as unknown as TaskWriter).setTask({
-					...task,
-					state: { ...rest, status: "terminal", outcome: { status: "orphaned", reason: "restart" } },
-				} as TaskRecord<JsonValue, JsonValue, JsonValue>);
-				count += 1;
-			}
-
-			// 清掉所有会话的「忙」标记（见函数头注释：不清就等于让这个会话永远哑掉）。
-			// 必须扫**全部会话**而不是只看上面那些残留任务所属的会话：一条活任务都没有、
-			// 只有一条陈旧 `run` 的会话正是最坏的那种（它永远不会报错，只是再也不说话）。
-			for (const item of stale) {
-				if (item.stale) {
-					unblocked.add(item.conversationId);
-					interrupted.add(item.conversationId);
+	// 只有「run 指着的任务根本不存在」才清；任务在（哪怕 terminal）就交给底座。
+	const gone: typeof runs = [];
+	for (const run of runs) {
+		if ((await harness.getTask(run.taskId, context)) !== undefined) continue;
+		gone.push(run);
+	}
+	if (gone.length > 0) {
+		await harness.commit(async (tx) => {
+			for (const run of gone) {
+				const doc = await tx.doc(LiveDoc, run.conversationId as never);
+				if (doc.run === undefined) continue;
+				for (const input of doc.run.inputs) {
+					tx.settleSubmission(input, { status: "unanswered", reason: "restart" });
 				}
-				const doc = await tx.doc(LiveDoc, item.conversationId as never);
-				if (doc.run !== undefined) delete doc.run;
+				delete doc.run;
 				delete doc.generation;
 				delete doc.tools;
 				delete doc.nestedTools;
 			}
-			return count;
 		}, context);
-
-		// **排队中的输入一条都不撤**。`queued` = 还躺在 inbox 里、从未被这一轮取走，
-		// 它的内容完好，撤掉就是把我崩溃前说的话静默吞掉（实测：私聊里几十条全没）。
-		// 之前只对「被解开假忙」的会话放行，可那个集合只包含有 `run` 标记的会话；
-		// 没有标记的会话里排队的东西同样能续上——下面统一补一句占位输入把它们踢起来。
-		const placed = pendingSubmissions.filter(
-			(submission) => submission.status === "placed" && !unblocked.has(submission.conversationId),
-		);
-		if (placed.length > 0) {
-			await harness.commit(async (tx) => {
-				for (const submission of placed) {
-					tx.settleSubmission(submission.id, { status: "unanswered", reason: "restart" });
-				}
-			}, context);
-			settled += placed.length;
-		}
-
-		// 解开假忙之后，那个会话里积压的输入仍然躺在 inbox 里：入库时 `busy` 为真，所以
-		// 它们从未触发 `startRun`，而 inbox 只在「一轮结束」的边界上被取走。没有活着
-		// 的一轮，就没人来取。这里补一句占位输入把它自己踢起来——不用猜那些积压的正文，
-		// 一次 `admitSubmission` 会把 inbox 里所有排队项一起放进这一轮。
-		const backlog = pendingSubmissions.filter((submission) => submission.status === "queued");
-		for (const conversationId of new Set(backlog.map((submission) => submission.conversationId))) {
-			const conversation = await harness.conversation(conversationId, context);
-			if (conversation === undefined) continue;
-			await conversation.submit(
-				{
-					type: "input",
-					content: "（重启前积压的消息已恢复，请处理上面还没回的消息）",
-					requestId: `reconcile:${conversationId}`,
-				},
-				context,
-			);
-			unblocked.delete(conversationId);
-		}
-	} catch (error) {
-		// 自愈失败也不要挡启动：进程能起来，人能进界面手动处理。
-		console.error("[reconcile] 跳过（不影响启动）：", (error as Error)?.message);
-		return [];
+		console.error(`[reconcile] ${gone.length} 个会话的 run 指向不存在的任务，已结算为「没答上来」`);
 	}
-	if (terminated > 0) console.error(`[reconcile] 已清掉 ${terminated} 条残留任务（强杀留下、无法恢复的）`);
-	if (settled > 0) console.error(`[reconcile] 已结算 ${settled} 条残留输入`);
-	return [...interrupted];
+
+	const goneIds = new Set(gone.map((run) => run.conversationId));
+	const runOf = new Set(runs.filter((run) => !goneIds.has(run.conversationId)).map((run) => run.conversationId));
+	const liveGeneration = new Set(
+		inspection.tasks
+			.filter((task) => task.record.kind === "pi.generation" && task.state.kind !== "blocked")
+			.map((task) => task.record.conversationId),
+	);
+	const backlog = new Set<number>();
+	for (const submission of inspection.submissions) {
+		if (submission.status !== "queued") continue;
+		if (runOf.has(submission.conversationId) || liveGeneration.has(submission.conversationId)) continue;
+		backlog.add(submission.conversationId);
+	}
+
+	return { interrupted: [...interrupted], backlog: [...backlog] };
 }
 
 /** 已完成（terminal）的任务记录保留多久：超过就回收。 */
@@ -381,17 +298,16 @@ export async function openCore(options: OpenCoreOptions, context: Context = BACK
 		},
 		context,
 	);
-	// 所有写都走这一个闸：同进程并发的 commit 会让底层读覆盖层失效，而**失败的那次
-	// 其实已经写进去了** —— 模型以为没发出去于是重发，频道里出现两条一模一样的话。
-	// 详见 `runtime/serialize.ts`。
-	const harness = serializedHarness(raw);
-	// 自愈必须在 open 之后、装配之前：此时 Harness 已持有连接，用它的 commit 把
-	// 强杀留下的半截任务树一次结算掉，才能根治 `Task N invocation has ended` 崩溃。
-	const interrupted = await reconcileZombieTasks(harness, context);
+	// 1.5.0 的 group commit 自己会把同一份文档的 commit 排队（不同文档并行），
+	// Solo 不再包一层全局串行。见 `test/core/commit-concurrency.test.ts`。
+	// 启动检查必须在 open 之后、装配之前：此时底座已经把上次 `running` 的任务改回
+	// `pending`（并计了 restart），我们只读它留下的现场。
+	const startup = await inspectStartup(raw, context);
 	return {
-		harness,
+		harness: raw,
 		registry: options.registry,
-		close: (ctx?: Context) => harness.close(ctx ?? context),
-		interrupted,
+		close: (ctx?: Context) => raw.close(ctx ?? context),
+		interrupted: startup.interrupted,
+		backlog: startup.backlog,
 	};
 }

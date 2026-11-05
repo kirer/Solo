@@ -897,6 +897,8 @@ v3 的 token 全部保留，**新增四档，只给轨迹用**：
 | 后台任务那屏的轮次 | `GET /api/people/:slug/turns?limit=30`（折叠版） |
 | 一轮的步骤 | `GET /api/channels/:id/turn?seq=&slug=`（选中的那一轮才拉） |
 | 「触发的那句话」 | `ViewTurn.trigger`（`from` 按 `GET /api/org` 的 `people[]` 换成名字 / `text`） |
+| 人最近一轮失败的卡 / 人名旁红点 | `GET /api/org` 的 `people[].lastFailure`（`text` 已由服务端翻好；`detail` 是底座原文）；失败不进聊天流（ADR-047 / ADR-072） |
+| 失败卡上的「继续这一轮」 | `POST /api/people/:slug/continue`（1.5.0 的 `continue`，不新增用户消息）；`no_model` / `nothing_to_answer` 不画按钮（按了也不会变）；成功后重拉 `GET /api/org` 与这个人的轮次 |
 | 那一轮在哪个频道 / 谁在跑几人 | `GET /api/channels` 的 `ViewChannel.title`（按 `ViewTurn.channelId` 查）；查不到（频道已归档 / 删掉）就用 `ViewTurn.channelTitle`，再没有才显示 id / `GET /api/org` 的 `people[].activity` |
 | 聊天流里的 `live` 行 | 频道 SSE 的 `trace`（`status === "running"`）+ `ViewStep.title` / `stepCount` |
 | 头像 / 名字 / 角色 | `ViewMessage.fromSlug` / `fromLabel` / `ViewMember.role` |
