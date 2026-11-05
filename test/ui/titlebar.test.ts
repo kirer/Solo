@@ -95,11 +95,11 @@ describe("Windows 标题带的布局", () => {
 		expect(css).toContain(win(".plugin-page"));
 	});
 
-	it("macOS 那组拖拽 / 让位规则只给 darwin，不漏到 Windows", () => {
-		// 所有桌面壳选择器都必须带 data-os；否则 Windows 也会拿到红绿灯的 32px 顶部留白。
+	it("桌面壳的样式只给 Windows；macOS 不再为红绿灯让位", () => {
+		// 所有桌面壳选择器都必须带 data-os；否则浏览器里也会拿到标题带的留白。
 		expect(css).not.toMatch(/html\[data-shell="desktop"\](?!\[data-os=)/);
-		expect(css).toContain('html[data-shell="desktop"][data-os="darwin"] .sheet-head');
-		expect(css).toContain('html[data-shell="desktop"][data-os="darwin"] .detail-bar');
+		// macOS 用系统标题栏（ADR-088）：那一组 84px 让位 / 拖拽规则已删。
+		expect(css).not.toContain('[data-os="darwin"]');
 		expect(css).not.toContain('.rail {');
 	});
 

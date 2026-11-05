@@ -1,8 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-	<!-- Solo：一颗自己的星，和绕着它转的轨道。 -->
-	<rect width="1024" height="1024" rx="228" fill="#1c1b19"/>
-	<g transform="rotate(-28 512 512)">
-		<ellipse cx="512" cy="512" rx="332" ry="132" fill="none" stroke="#f2e9d8" stroke-width="30" opacity="0.5"/>
-	</g>
-	<circle cx="512" cy="512" r="140" fill="#f2e9d8"/>
+	<!-- Solo：一个手写的 S，右下角一颗蓝点（与界面里的 brandMarkSvg 同形）。 -->
+	<rect width="1024" height="1024" rx="304" fill="#20242B"/>
+	<path d="M646.4 278.4c-32-60.8-166.4-67.2-227.2 6.4-67.2 78.4-11.2 153.6 81.6 193.6 107.2 46.4 136 156.8 38.4 227.2-92.8 64-214.4 20.8-238.4-60.8" fill="none" stroke="#F2E3C9" stroke-width="108.8" stroke-linecap="round"/>
+	<circle cx="771.2" cy="716.8" r="92.8" fill="#93AECE"/>
 </svg>

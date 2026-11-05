@@ -1,9 +1,8 @@
 /**
  * 一键重置的边界：删什么、留什么。
  *
- * 这一步不可撤销，判据只能钉在文件上：组织数据必须真的消失；模型配置与壳自己的
- * 缓存必须留下 —— 多删一个 `settings.json`，重置完就没人能回话；少删一份成员目录，
- * 「清空历史」就是假的。
+ * 这一步不可撤销，判据只能钉在文件上：组织数据、模型配置与密钥必须真的消失
+ * （重启后进引导页，ADR-089）；壳自己的缓存留下。少删一份成员目录，「清空历史」就是假的。
  */
 import { request as httpRequest } from "node:http";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -31,7 +30,7 @@ async function write(path: string, text = "x"): Promise<void> {
 }
 
 describe("重置所有数据", () => {
-	it("删掉两个根里的组织数据，留下模型配置和应用根里不属于内核的东西", async () => {
+	it("删掉两个根里的组织数据与模型配置，留下应用根里不属于内核的东西", async () => {
 		const box = await pool.make("reset-");
 		const { layout } = box;
 		await write(join(layout.membersRoot, "林越", "identity.md"));
@@ -59,13 +58,14 @@ describe("重置所有数据", () => {
 		expect(await existsAt(layout.assistantRoot)).toBe(false);
 		expect(await existsAt(layout.promptRoot)).toBe(false);
 		expect(await existsAt(layout.uploadsRoot)).toBe(false);
-		// 配置留下；壳的缓存不是内核的东西，不碰。
-		expect(await existsAt(layout.settingsFile)).toBe(true);
-		expect(await existsAt(layout.secretsFile)).toBe(true);
+		// 模型配置和密钥也一起清掉（ADR-089）：重启后没有模型，界面进引导页。
+		expect(await existsAt(layout.settingsFile)).toBe(false);
+		expect(await existsAt(layout.secretsFile)).toBe(false);
+		// 壳的缓存不是内核的东西，不碰。
 		expect(await existsAt(join(layout.appRoot, "Cache", "data.bin"))).toBe(true);
 	});
 
-	it("两个根是同一个目录时，settings.json 也不会被带走", async () => {
+	it("两个根是同一个目录时，settings.json 一样会被清掉", async () => {
 		const root = await mkdtemp(join(tmpdir(), "reset-one-"));
 		extraRoots.push(root);
 		const layout = resolveLayout({ appRoot: root, userRoot: root });
@@ -75,7 +75,7 @@ describe("重置所有数据", () => {
 
 		await wipeAll(layout);
 
-		expect(await existsAt(layout.settingsFile)).toBe(true);
+		expect(await existsAt(layout.settingsFile)).toBe(false);
 		expect(await existsAt(layout.membersRoot)).toBe(false);
 		expect(await existsAt(layout.databasePath)).toBe(false);
 	});

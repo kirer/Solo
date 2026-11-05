@@ -100,10 +100,12 @@
 	--shadow: 0 8px 24px rgb(0 0 0 / 0.12), 0 2px 6px rgb(0 0 0 / 0.06);
 	--inset: 8px;
 	--sidebar: 268px;
-	/* 应用标识：最深的一块底，只给最左上角那个圆角方用。 */
-	--rail-mark-bg: rgb(32 36 43);
-	--rail-mark-ink: rgb(242 227 201);
-	--rail-mark-dot: rgb(147 174 206);
+	/* 应用标识（一个 S 加一个点）：只给助理头像与引导页那一格用。 */
+	--rail-mark-bg: rgb(255 255 255);
+	--rail-mark-ink: rgb(27 30 36);
+	--rail-mark-dot: rgb(62 99 162);
+	/* 浅色底上白方块会和纸粘在一起，给它一条 1px 的边。 */
+	--rail-mark-line: rgb(0 0 0 / 0.12);
 	/* 右栏宽度。必须是 0 而不是「不定义」——`grid-template-columns` 里的 `var()` 解析失败
 	   会让整条声明作废，三列直接塌成一列（症状：侧栏和中栏叠在一起）。 */
 	--rightbar: 0px;
@@ -179,6 +181,11 @@
 	--mask: rgb(0 0 0 / 0.5);
 	--mask-strong: rgb(0 0 0 / 0.78);
 	--shadow: 0 10px 32px rgb(0 0 0 / 0.5), 0 2px 8px rgb(0 0 0 / 0.3);
+	/* 标识在深色下反过来：浅底浅墨，点在深底上才看得清。 */
+	--rail-mark-bg: rgb(32 36 43);
+	--rail-mark-ink: rgb(242 227 201);
+	--rail-mark-dot: rgb(147 174 206);
+	--rail-mark-line: transparent;
 }
 
 /* ── 重置 ───────────────────────────────────────────────────────────── */

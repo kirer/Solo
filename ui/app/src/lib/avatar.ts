@@ -53,8 +53,8 @@ export function avatarSvg({ slug, name, size = 24, state = "idle", assistant = f
 }
 
 /**
- * 应用标识：助理的脸就是程序的 logo（同一张 SVG，和窗口图标、最左上角那格一致）。
- * 小到 20px 也认得出来 —— 深底上一颗星和一道轨道，不是一张要看清细节的脸。
+ * 应用标识：助理的脸就是程序的 logo（同一张 SVG，和窗口图标一致）。
+ * 小到 20px 也认得出来 —— 一个 S 加一颗点，不是一张要看清细节的脸。
  */
 function markSvg(px: number, state: AvatarState): string {
 	const key = `mark|${String(px)}|${state}`;

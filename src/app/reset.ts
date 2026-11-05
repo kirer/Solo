@@ -4,8 +4,10 @@
  * 真正的删除必须在库关掉之后做（`core.sqlite` 还在进程手里）；这里只提供
  * 「确认」和「删哪些」两件事，什么时候调用由启动层（`shell/main.ts`）决定。
  *
- * 保留 `settings.json` 与 `.secrets.json`：重置是清数据，不是把应用打成
- * 一个连模型都没有的空壳。已装插件不保留 —— 出厂插件会在下次启动时播种回来。
+ * **`settings.json` 与 `.secrets.json` 也删**（ADR-089，取代 ADR-065 的「保留配置」）：
+ * 重置是「回到刚装好的样子」，包括没有模型 —— 重启后 `GET /api/models` 是空的，
+ * 界面进引导页（ADR-085）。只留桌面壳自己的缓存，那是壳的东西，不是内核的。
+ * 已装插件不保留 —— 出厂插件会在下次启动时播种回来。
  */
 import { join, relative, resolve, sep } from "node:path";
 import type { Layout } from "../core/layout.ts";
@@ -23,24 +25,27 @@ function appOwnedDirs(layout: Layout): readonly string[] {
 	];
 }
 
-/** 应用根里由内核拥有的文件：库（连同 WAL）与播种账本。 */
+/** 应用根里由内核拥有的文件：库（连同 WAL）、播种账本、模型配置与密钥。 */
 function appOwnedFiles(layout: Layout): readonly string[] {
 	return [
 		layout.databasePath,
 		`${layout.databasePath}-wal`,
 		`${layout.databasePath}-shm`,
 		layout.seedManifestFile,
+		layout.settingsFile,
+		layout.secretsFile,
 	];
 }
 
-/** 两个根恰好是同一个目录（单目录部署 / 测试）时，只删用户数据，`settings.json` 得留下。 */
+/** 两个根恰好是同一个目录（单目录部署 / 测试）时，先删用户数据；应用根的文件在 `appOwnedFiles` 里删。 */
 function userOwnedPaths(layout: Layout): readonly string[] {
 	return [layout.membersRoot, layout.teamsRoot, layout.skillsRoot, layout.logsRoot];
 }
 
 /**
  * 用户根整个删掉。只有一种例外：应用根与用户根相同、或藏在用户根里面
- * （测试、单目录部署）—— 那就只删应用根以外的条目，别把 `settings.json` 一起带走。
+ * （测试、单目录部署）—— 那就只删用户根自己的条目，应用根那几个文件交给
+ * `appOwnedFiles`（顺序无所谓，两边不重叠）。
  */
 async function wipeUserRoot(layout: Layout): Promise<void> {
 	const user = resolve(layout.userRoot);

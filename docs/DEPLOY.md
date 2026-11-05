@@ -368,7 +368,8 @@ npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
 壳起一个子进程用 Electron 自带的 Node 跑 `src/shell/main.ts`，窗口加载
 `http://127.0.0.1:<port>/?shell=desktop&platform=<platform>`（ADR-028）。
 
-**标题栏**：macOS 是 `hiddenInset`，红绿灯压进侧栏左上角；Windows 是 `hidden` +
+**标题栏**：macOS 用系统标题栏，红绿灯与窗口标题单独占顶上一条，界面从它下面开始
+（ADR-088）；Windows 是 `hidden` +
 40px `titleBarOverlay`，原生标题栏和菜单栏都不画，界面在顶上画一条 40px 的标题带，
 菜单「Solo / 视图」在里面（ADR-069）。最小化 / 最大化 / 关闭仍是系统的，画在最右边；
 `Ctrl+R` / `Ctrl+Shift+I` 由隐藏的原生菜单继续提供。标题带只在 Windows 桌面壳里出现，

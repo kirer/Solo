@@ -2873,41 +2873,10 @@ body[data-pane="chat"] .sidebar {
 /* ── 桌面壳（Electron，`?shell=desktop`）─────────────────────────────────
    浏览器里没有这些（没有 `data-shell` / `data-os`，一条都不生效）。
 
-   macOS（`data-os="darwin"`）：标题栏藏进界面里（hiddenInset），红绿灯压进「聊天」
-   那一行（顶距 14，见 `desktop/src/main.ts` 的 trafficLightPosition），这一行仍是
-   56 高 —— 和纸的顶栏一样高，三列的头落在同一条线上，窗口顶上不再留一条空带。
-   顶栏与 logo 行同时是拖窗口的把手，里面的按钮必须退出拖动，否则点不动。
+   macOS（`data-os="darwin"`）：用系统自带的标题栏 —— 红绿灯和标题在窗口顶上单独一条，
+   不压进界面（ADR-088）。界面从标题栏下面开始，所以这里不需要留白、也不需要拖拽把手。
 
    Windows 在下面单独一段：原生标题栏不画，界面自己画一条 40px 的标题带。 */
-html[data-shell="desktop"][data-os="darwin"] .sidebar {
-	padding-top: 0;
-}
-
-html[data-shell="desktop"][data-os="darwin"] .side-logo {
-	height: 56px;
-	align-items: center;
-	padding-left: 84px;
-	-webkit-app-region: drag;
-}
-
-/* 红绿灯现在压在每一屏的抬头左边（没有最左那一列了）：让出它们那一截。 */
-html[data-shell="desktop"][data-os="darwin"] .sheet-head,
-html[data-shell="desktop"][data-os="darwin"] .nav,
-html[data-shell="desktop"][data-os="darwin"] .detail-bar {
-	padding-left: 84px;
-	-webkit-app-region: drag;
-}
-
-html[data-shell="desktop"][data-os="darwin"] .side-logo button,
-html[data-shell="desktop"][data-os="darwin"] .side-logo .icon-btn,
-html[data-shell="desktop"][data-os="darwin"] .sheet-head button,
-html[data-shell="desktop"][data-os="darwin"] .sheet-head a,
-html[data-shell="desktop"][data-os="darwin"] .sheet-head .need-anchor,
-html[data-shell="desktop"][data-os="darwin"] .sheet-head .menu,
-html[data-shell="desktop"][data-os="darwin"] .nav button,
-html[data-shell="desktop"][data-os="darwin"] .detail-bar button {
-	-webkit-app-region: no-drag;
-}
 
 /* ── Windows 桌面壳（`?shell=desktop&platform=win32`）────────────────────
    原生标题栏藏起来了（titleBarStyle: hidden），最小化 / 最大化 / 关闭由系统覆盖

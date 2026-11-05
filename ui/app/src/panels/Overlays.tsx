@@ -303,9 +303,10 @@ function ResetSheet(): JSX.Element {
 							<li>所有成员、团队和频道</li>
 							<li>全部聊天记录、记忆和工作记录</li>
 							<li>技能、上传的附件和日志</li>
+							<li>模型配置和密钥（重开后要重新接一次）</li>
 							<li>已装插件（出厂插件会装回来）</li>
 						</ul>
-						<p className="reset-keep">模型配置会保留。重置完成后应用会自动重开。</p>
+						<p className="reset-keep">重置完成后应用会自动重开，从引导页开始。</p>
 						{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
 						{done ? <p className="reset-done">已重置，正在重新启动…</p> : null}
 					</div>

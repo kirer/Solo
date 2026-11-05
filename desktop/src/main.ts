@@ -43,9 +43,8 @@ function createWindow(url: string): BrowserWindow {
 		show: false,
 		backgroundColor: "#0f0f10",
 		title: "Solo",
-		// 标题栏都藏进界面里（ADR-028 / ADR-069）：
-		// macOS 红绿灯浮在侧栏左上角；Windows 原生标题栏不画，界面画一条 40px 的标题带，
-		// 最小化 / 最大化 / 关闭仍由系统画在右边（titleBarOverlay）。
+		// macOS 用系统标题栏（ADR-088）；Windows 原生标题栏不画，界面画一条 40px 的标题带，
+		// 最小化 / 最大化 / 关闭仍由系统画在右边（titleBarOverlay，ADR-028 / ADR-069）。
 		...windowChrome(process.platform, nativeTheme.shouldUseDarkColors ? "dark" : "light"),
 		webPreferences: {
 			// 桥只在 Windows 上有用（标题带的菜单动作与取色）；别的平台不装。

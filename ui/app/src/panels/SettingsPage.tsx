@@ -274,7 +274,7 @@ function DataRow(): JSX.Element {
 			</RowIcon>
 			<span className="set-main">
 				<span className="set-label">重置所有数据</span>
-				<span className="set-desc">成员、团队、聊天、记忆、技能、附件和日志都会删掉，找不回来</span>
+				<span className="set-desc">成员、团队、聊天、记忆、技能、附件、日志和模型配置都会删掉，找不回来</span>
 			</span>
 			<span className="set-chev" aria-hidden="true">
 				<svg width="8" height="13" viewBox="0 0 8 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">

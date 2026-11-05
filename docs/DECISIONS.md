@@ -2157,3 +2157,38 @@
   `ui/app/src/panels/SettingsPage.tsx`、`ui/app/src/api/client.ts`、`styles/shell.css`；
   桌面 `desktop/src/updates.ts`、`desktop/src/update-proxy.ts`、`desktop/src/main.ts`；
   测试 `test/core/preferences.test.ts`、`test/desktop/update-proxy.test.ts`。
+
+## ADR-088 macOS 用系统标题栏，红绿灯不再压进界面
+
+- **背景**：`hiddenInset` + 界面让出顶部 84px 的做法，在 macOS 上把红绿灯画进了
+  侧栏里，和「Solo」标识、拖拽把手挤在一起；拉窄窗口时红绿灯直接压在列表上。
+  用户的要求是：标题单独放顶上，不要融进程序。
+- **决策**：
+  1. **macOS 不设窗口选项**（`windowChrome("darwin")` 返回 `{}`）：系统画标题栏，
+     红绿灯与窗口标题占顶上单独一条，界面从标题栏下面开始。
+  2. **界面不再为红绿灯让位**：`shell.css` 里 `[data-os="darwin"]` 的 84px 内边距、
+     拖拽区、`-webkit-app-region` 规则全部删掉 —— 那是 `hiddenInset` 的补偿，
+     留着会多出一条空白。
+  3. **Windows 不变**：`hidden` + `titleBarOverlay` + 界面自绘 40px 标题带（ADR-069）。
+- **取舍**：标题栏高度由系统决定，窗口内容区比原来少一条；换来的是红绿灯位置、
+  全屏、缩放行为全部交给系统，不再跟着界面滚动。
+- **执行**：`desktop/src/window-chrome.ts`、`desktop/src/main.ts`、
+  `ui/app/src/styles/shell.css`、`test/desktop/window-chrome.test.ts`；
+  文档 `docs/DESIGN.md` §9.1、`docs/DEPLOY.md` §10。
+
+## ADR-089 重置连模型配置一起清，回到引导页（取代 ADR-065 的「保留 settings.json」）
+
+- **背景**：ADR-065 的重置保留了 `settings.json`（模型配置与密钥）。但重置的语义是
+  「回到刚装好的样子」，而刚装好的样子是**没有模型** —— 界面靠「模型清单为空」
+  进引导页（ADR-085）。保留配置的结果是：重置后一切空白，却跳过引导，界面停在
+  一个发不出话的界面上。用户报的就是这个。
+- **决策**：
+  1. `appOwnedFiles` 加上 `settings.json` 与 `.secrets.json`：重置后模型清单为空，
+     下次启动直接进引导页。
+  2. 桌面壳自己的缓存（Electron 的 `userData` 下非内核文件、localStorage）不在删除
+     范围内 —— 那是壳的东西，删不删不影响「组织」。
+  3. 已装插件仍不保留：出厂插件下次启动时播种回来。
+- **取舍**：重置要重新填一次接口与密钥。这正是「重装」的意思，界面上的确认文案
+  已经把「不可恢复」写清楚了。
+- **执行**：`src/app/reset.ts`、`test/core/reset.test.ts`；文档 `docs/WEB-API.md` §13.5、
+  `docs/DESIGN.md` §1.5、`docs/CODE.md` 与 `AGENTS.md` 的一键重置一行。

@@ -175,7 +175,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/app/runs.ts` | 46 | 后台命令的收尾：`createRuns` 的 `sweep()` —— 服务启动时把上一轮遗留的后台命令结账，在起跑的那个频道留一条 `note`（谁起的、哪条命令、活着被停掉还是早就结束了）。失败只记一行，不影响启动（ADR-013） |
 | `src/app/diag.ts` | 150 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `onAbnormal()`（订阅异常报告，看门狗用）/ `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
 | `src/app/watch.ts` | 49 | 看门狗（ADR-016）：`createWatch` 订阅 `diag.onAbnormal`，异常报告一到就在全员频道留一条 `note`（`底座报告：…`），10 分钟最多一条；`serve.ts` 启动 `start()`、关服务 `stop()`。只通报，不自动救 |
-| `src/app/reset.ts` | 70 | 一键重置（ADR-065）：`createReset` 的 `request(confirm)` 只认 `true`；`wipeAll(layout)` 删两个根里的组织数据 —— 用户根整个删，应用根只删内核自己的目录 / 库 / 播种账本，**保留 `settings.json` 与 `.secrets.json`**；两个根相同时只删用户数据。真正的删除由 `shell/main.ts` 在关库之后调用，删完以退出码 75 退出让桌面壳重开 |
+| `src/app/reset.ts` | 87 | 一键重置（ADR-089，取代 ADR-065）：`createReset` 的 `request(confirm)` 只认 `true`；`wipeAll(layout)` 删两个根里的组织数据 —— 用户根整个删，应用根删内核自己的目录 / 库 / 播种账本，**连 `settings.json` 与 `.secrets.json` 一起删**（重开进引导页）；两个根相同时只删用户数据。真正的删除由 `shell/main.ts` 在关库之后调用，删完以退出码 75 退出让桌面壳重开 |
 | `src/app/audit.ts` | 82 | 审计钩子（ADR-010）：`auditHooks(deps)` 返回两个 `HookRegistration`（`ToolTask` 的 `beforeTool` / `afterTool`、`GenerationTask` 的 `afterResponse`），一次工具调用 / 一次模型回复各写一行到 `logs/tools.jsonl`（单文件 5MB 轮转一代）。**只读不改**：不改参数、不拦调用、不改结果；写失败就丢这一行，不反噬调用。装配层把它挂在 `core-tools` 扩展上 —— 那是每个会话都选的扩展 |
 | `src/app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
 | `src/view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/project.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
@@ -252,8 +252,8 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 | 文件 | 职责 |
 | --- | --- |
-| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS `hiddenInset`；Windows `hidden` + `titleBarOverlay`）、外链交给系统浏览器、退出前先停后端、更新与菜单接线；Windows 的 `setupBridge` 收标题带动作 / 取色（校验 sender + origin），装完原生菜单后隐藏菜单栏（加速键仍有效） |
-| `desktop/src/window-chrome.ts` | `windowChrome(platform, theme)`：macOS `hiddenInset` + 红绿灯位置；Windows `hidden` + 40px `titleBarOverlay`（颜色与界面的 `--frame` / `--ink` 对齐）。纯函数，单测守 |
+| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS 用系统标题栏，ADR-088；Windows `hidden` + `titleBarOverlay`）、外链交给系统浏览器、退出前先停后端、更新与菜单接线；Windows 的 `setupBridge` 收标题带动作 / 取色（校验 sender + origin），装完原生菜单后隐藏菜单栏（加速键仍有效） |
+| `desktop/src/window-chrome.ts` | `windowChrome(platform, theme)`：macOS 返回 `{}`（系统标题栏，ADR-088）；Windows `hidden` + 40px `titleBarOverlay`（颜色与界面的 `--frame` / `--ink` 对齐）。纯函数，单测守 |
 | `desktop/src/preload.cts` | 沙箱 preload（CommonJS，编译成 `preload.cjs`）：只暴露 `soloDesktop.menu()` / `setTheme()` 两个口；根包是 `type: module`，所以必须 `.cts` + `require("electron")` |
 | `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
 | `desktop/src/ready-line.ts` | `parseReadyLine`：从 `[core] http://127.0.0.1:<port>/` 认端口（**唯一**的壳 ↔ 内核契约） |
@@ -297,7 +297,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的五个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`<appRoot>/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线（`flow` 这根是 `() => plugins.flow`）；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在插件页（`panels/PluginsPage.tsx`），落盘走 `writePluginEnabled`，写完就重装（ADR-026） |
 | 加一条 HTTP 路由 | `interface/http/routes.ts` 的 `routes` 表 + `app/` 里的一次用例调用 + `ui/app/src/api/client.ts` 里的消费者 | handler 只做「解析 → 调 app → 序列化」，≤30 行；业务校验属于 `app/`。没有消费者边界检查会失败 |
 | 第一次打开 / 接上模型（稿子 10–12） | `app/setup.ts` 的 `check` / `save` + 路由 `POST /api/setup`、`/api/setup/probe` + `ui/app/src/panels/SetupPage.tsx` + `state/store.ts` 的 `bootstrap`（`getModels()` 空才引导）与 `setupStep` + `stream/Starters.tsx` + `styles/onboarding.css` | 引导住在核心里而不是插件里（插件要等模型配好才谈得上换）；密钥与模型管理插件同一处（`settings.json`），不另开一个家（ADR-085） |
-| 一键重置（设置 → 数据） | `app/reset.ts` 的 `wipeAll` + `interface/http/routes.ts` 的 `POST /api/reset` + `shell/main.ts` 的 `resetAll`（关库 → 删盘 → 退出码 75）+ `desktop/src/backend.ts` 的 `onExit` / `desktop/src/main.ts` 的 `restart` + `ui/app/src/panels/SettingsPage.tsx` 的 `DataSection` | **删除必须在库关掉之后**；`settings.json` / `.secrets.json` 不删；网页版没有壳，退出后要手动再起一次（ADR-065） |
+| 一键重置（设置 → 数据） | `app/reset.ts` 的 `wipeAll` + `interface/http/routes.ts` 的 `POST /api/reset` + `shell/main.ts` 的 `resetAll`（关库 → 删盘 → 退出码 75）+ `desktop/src/backend.ts` 的 `onExit` / `desktop/src/main.ts` 的 `restart` + `ui/app/src/panels/SettingsPage.tsx` 的 `DataSection` | **删除必须在库关掉之后**；`settings.json` / `.secrets.json` 也删（ADR-089）；网页版没有壳，退出后要手动再起一次 |
 | 装完带前端的插件要重启 | `interface/http/routes.ts` 的 `POST /api/restart` + `shell/main.ts` 的 `restartApp`（关库 → 退出码 75）+ `ui/app/src/panels/PluginsPage.tsx` / `panels/Overlays.tsx` / `state/store.ts` | 后端插件已经热装，只有前端入口要重新 `import`；桌面壳重开，网页版刷新；不删任何数据（ADR-066） |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/route-match.ts` / `static-assets.ts` / `origin-guard.ts` / `network.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
@@ -385,7 +385,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 `manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）、
 `install.test.ts`（安装脚本：等旧进程退出、ready 握手、tar 优先、解包 / 替换后版本核对、
 失败回滚 / 提权重试、路径引号）、
-`window-chrome.test.ts`（窗口标题栏：macOS 红绿灯位置、Windows 覆盖按钮与颜色、别的平台不碰）、
+`window-chrome.test.ts`（窗口标题栏：macOS 不碰窗口选项、Windows 覆盖按钮与颜色、别的平台不碰）、
 `update-proxy.test.ts`（更新代理：去空格、空串 / 缺键 / 坏文件都当直连）。
 
 `test/core/`（83 文件，纯函数 + 装配）：

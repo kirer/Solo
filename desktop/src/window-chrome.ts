@@ -1,5 +1,6 @@
 /**
- * 窗口的「外壳」：标题栏怎么藏、系统窗口按钮什么颜色。
+ * 窗口的「外壳」：标题栏怎么藏、系统窗口按钮什么颜色。macOS 一律用系统标题栏，
+ * 所以它这里什么都不设（ADR-088）。
  *
  * 单独一份纯函数是为了能在 node 里测（`test/desktop/window-chrome.test.ts`）：
  * 真正的 `BrowserWindow` 只有 Electron 里才有，选错了平台选项在 mac 上又看不出来。
@@ -18,15 +19,12 @@ export const TITLEBAR_COLORS = {
 
 export type TitlebarTheme = keyof typeof TITLEBAR_COLORS;
 
-type WindowChrome = Pick<
-	BrowserWindowConstructorOptions,
-	"titleBarStyle" | "titleBarOverlay" | "trafficLightPosition" | "autoHideMenuBar"
->;
+type WindowChrome = Pick<BrowserWindowConstructorOptions, "titleBarStyle" | "titleBarOverlay" | "autoHideMenuBar">;
 
 export function windowChrome(platform: NodeJS.Platform, theme: TitlebarTheme): WindowChrome {
 	if (platform === "darwin") {
-		// 红绿灯压进侧栏左上角那一块留白（界面那边让出 32px 的顶部）。
-		return { titleBarStyle: "hiddenInset", trafficLightPosition: { x: 18, y: 14 } };
+		// 系统自带标题栏：红绿灯与标题在窗口顶上单独一条，不压进界面（ADR-088）。
+		return {};
 	}
 	if (platform === "win32") {
 		// hidden + titleBarOverlay：原生标题栏不画，最小化 / 最大化 / 关闭仍由系统画在最右边。

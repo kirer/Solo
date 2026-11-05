@@ -8,11 +8,9 @@ import { describe, expect, it } from "vitest";
 import { TITLEBAR_COLORS, TITLEBAR_HEIGHT, windowChrome } from "../../desktop/src/window-chrome.ts";
 
 describe("桌面窗口的标题栏", () => {
-	it("macOS 仍是 hiddenInset，红绿灯位置不变", () => {
-		expect(windowChrome("darwin", "light")).toEqual({
-			titleBarStyle: "hiddenInset",
-			trafficLightPosition: { x: 18, y: 14 },
-		});
+	it("macOS 用系统标题栏，不碰窗口选项", () => {
+		// 红绿灯和标题单独占顶上一条，不压进界面（ADR-088）。
+		expect(windowChrome("darwin", "light")).toEqual({});
 	});
 
 	it("Windows 藏起原生标题栏，系统窗口按钮覆盖在最右边", () => {
