@@ -10,6 +10,9 @@
  */
 import type { Attachment, Channel, ChannelState, Message } from "../channel/types.ts";
 import type { MentionRoster } from "../channel/mentions.ts";
+import type { WakeRecord } from "../channel/turn/record.ts";
+import type { Conversation, EntryRecord } from "../runtime/index.ts";
+import type { Context } from "../runtime/index.ts";
 
 /** 一次公开写入：一条新消息 + 它要不要唤醒谁。 */
 export type PublishInput = {
@@ -132,4 +135,63 @@ export type RouteExistingInput = {
 	readonly targets: readonly string[];
 	/** 转交的人（助理的 slug）。投递正文里会写明。 */
 	readonly routedBy?: string;
+};
+
+/** 收尾要读这次回答的最近条目：`Conversation` 与 task 的 `runtime` 都满足。 */
+export type EntryReader = Pick<Conversation, "entries">;
+
+/** 收尾要做的一切（拍平后方便测）。 */
+export type FinishTurnInfo = {
+	readonly slug: string;
+	/** 只用来取答案条目；宿主路径给会话，durable task 给 `TaskRuntime`。 */
+	readonly conversation: EntryReader;
+	readonly answer: unknown;
+	readonly wake: WakeRecord;
+};
+
+export type FinishTurn = (info: FinishTurnInfo, context?: Context) => Promise<void>;
+
+/**
+ * 收尾判断要看的事实。
+ *
+ * 与 `RouteFacts` 同一个原则：策略只拿只读事实，写盘与补发由 core 做。
+ */
+export type SettleFacts = {
+	readonly slug: string;
+	readonly wake: WakeRecord;
+	/** 判断说过话、判重都要看整个频道状态。 */
+	readonly state: ChannelState;
+	/** 这次答案的最后一段正文（已 trim）；`undefined` = 会话里找不到答案条目。 */
+	readonly text?: string;
+	/** 这一轮最后一个动作是不是 `say` / `route`（`saidLast`）。 */
+	readonly saidLast: boolean;
+};
+
+/** 收尾的提议：补一段正文进某个频道，或者明确不补。 */
+export type SettleDecision =
+	| { readonly kind: "repost"; readonly channelId: string; readonly text: string }
+	| {
+			readonly kind: "silent";
+			readonly reason: "no-entry" | "pass" | "no-target" | "not-member" | "duplicate";
+	  };
+
+/**
+ * 一次结算。两种来源，一个入口：
+ * - `done`：durable 收尾任务（`turn/report.ts`）给的答案；
+ * - `unanswered`：投递后台等到的失败（`runner.ts` 的结算回调），只留痕。
+ */
+export type Settlement =
+	| {
+			readonly kind: "done";
+			readonly slug: string;
+			readonly answer: unknown;
+			readonly wake: WakeRecord;
+			readonly entries: EntryReader;
+	  }
+	| { readonly kind: "unanswered"; readonly channelId: string; readonly text: string };
+
+/** 收尾判断产出的条目（`answerEntry` 的返回）。 */
+export type AnswerEntry = {
+	readonly entry: EntryRecord | undefined;
+	readonly page: readonly EntryRecord[];
 };

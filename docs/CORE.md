@@ -216,7 +216,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 （往往是私聊），于是问在群里、答在私聊。要么都在，要么都不在。
 
 **结算即收尾**：一次提交结算成 `done` 时，若他**在这条唤醒之后没在目标频道说过话**，
-`channel/turn/finish.ts` 就把答案条目里的最后一段正文替他说进频道；`unanswered` 则留一行痕。
+`core/flow/settle.ts` 就把答案条目里的最后一段正文替他说进频道；`unanswered` 则留一行痕。
 **收尾本身是一件 durable task**（ADR-077）：`afterRun` 在答案提交、输入结算 `done` 之后
 创建 `core.turn-report`，把「这条会话是谁、这一轮的答案条目、该回哪个频道」写进任务输入。
 进程在「答案已提交、消息还没落盘」的任何时刻被杀，重启后 `resume()` 都会把任务跑完；
@@ -264,7 +264,7 @@ V3 以前这里靠 6 秒定时器事后猜，现在结算本身就是信号，�
 
 ### 一条消息的一生（代码）
 
-主线只有两个动作，都在 `src/core/flow/`：
+主线只有三个动作，都在 `src/core/flow/`：
 
 ```
 publish   新消息：读频道快照 → 落盘（appendToChannel）→ 算事实（lastSpeaker / defaultTargets）
@@ -273,12 +273,15 @@ publish   新消息：读频道快照 → 落盘（appendToChannel）→ 算事�
           → 闸外 afterPublish（插件听消息；抛错不影响这条消息）
 forward   已有消息：读 → 按 seq 找 → 去掉已被 @ 的人 → 校验 → 扇出（带 routedBy），
           不写第二条消息
+settle    一轮结算：done → 取答案条目、问收尾策略（要不要补、补到哪儿）→ 补发就是一次
+          publish；unanswered → 只往频道里留一行痕
 ```
 
 `wakeTo`（后台命令的结果）跳过策略链；`note` 没 `wakeTo` 时默认谁也不叫。读—算—写—扇出
-在串行闸里（ADR-073），插件钩子在闸外。`channel/post.ts` 只是旧入口的薄壳，
-`channel/dispatch.ts` 已并入 `flow/runner.ts`（ADR-078）。**结算后要不要补发仍由
-`channel/turn/finish.ts` 判断**；搬进 `flow/settle.ts` 是下一步。
+在 `publish` 闸里（ADR-073），收尾的「读答案 → 判重 → 补发」在 `repost` 闸里（ADR-079），插件钩子在
+闸外。`channel/post.ts` 是旧入口的薄壳，`channel/turn/finish.ts` 也只是把 `TurnDeps`
+拼成 flow 再取 `settle`；判断（`saidLast` / `turnTarget` / 同文）在
+`flow/defaults/settle.ts`（ADR-078 / ADR-079）。
 
 ## 5. 文件夹就是边界
 

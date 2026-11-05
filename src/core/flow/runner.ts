@@ -482,13 +482,15 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 					titleOf: (channelId) => state.channels[channelId]?.title,
 					...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
 					// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
-					// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
+					// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线 ——
+					// 写盘走 `settle({kind:"unanswered"})`，与 done 分支同一个入口。
 					noteUnanswered: async ({ label, seq, reason, detail }) => {
-						await appendNote(
-							{ harness: deps.harness },
-							channel.id,
-							renderUnanswered(seq, label, reason, deps.text, detail),
-							Date.now(),
+						await args.settle(
+							{
+								kind: "unanswered",
+								channelId: channel.id,
+								text: renderUnanswered(seq, label, reason, deps.text, detail),
+							},
 							BACKGROUND_CONTEXT,
 						);
 					},

@@ -7,7 +7,7 @@
  *
  * 两件事仍然留在这里：
  * 1. `PostDeps` —— 本次调用用的频道快照与接线；
- * 2. 进程级的发布串行闸 —— 旧调用点没有显式注入闸门时的默认值（ADR-073）。
+ * 2. 旧调用点没有显式注入闸门时的默认值（`flow/gates.ts` 的进程级共享闸，ADR-073）。
  *    新代码可以经 `gate` 传一份自己的；装配层在 Phase 4 接管它。
  *
  * 依赖方向：`channel/post.ts → flow`，`flow` 不 import 这个文件。
@@ -16,12 +16,13 @@ import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
 import type { ChannelState, Message } from "./types.ts";
 import type { WakeRecord } from "./turn/record.ts";
-import { createSerialGate } from "../runtime/io.ts";
 import type { TextCatalog } from "../md/catalog.ts";
 import { createFlow } from "../flow/index.ts";
 import { createMessageStore } from "../flow/store.ts";
 import { defaultRouter } from "../flow/defaults/router.ts";
+import { defaultSettler } from "../flow/defaults/settle.ts";
 import { createTurnRunner, type DeliverOptions } from "../flow/runner.ts";
+import { sharedGates } from "../flow/gates.ts";
 import type { Flow, FlowGates } from "../flow/ports.ts";
 import type { DeliverResult, PublishInput, PublishResult, RouteExistingInput } from "../flow/types.ts";
 
@@ -54,26 +55,20 @@ export type PostDeps = {
 };
 
 /**
- * 频道写入的串行闸。
+ * 把这一次调用的依赖接成 flow。对象很薄，每次现造；没有隐藏的第二份状态。
  *
- * 为什么需要：同一个进程里所有 agent 的 `say` 是**并发**的，而它们都往同一个
- * `ChannelDoc` 上 commit。实测撞出过这个：两个 `say` 同时进来，其中一个 commit 拿到
- * 已被释放的读覆盖层，报 `Cannot use a settled overlay` —— 而那条消息**已经写进去了**，
- * 于是模型看到报错就重试，频道里出现两条一模一样的「在。」。
- *
- * 串行化的代价是频道写入排队（毫秒级，一次 commit），换来的是「一次调用 = 一条消息」
- * 这条最基本的保证。
+ * 闸门默认取进程级共享的那一份（`flow/gates.ts`）：同一个进程里所有 agent 的 `say`
+ * 是**并发**的，而它们都往同一个 `ChannelDoc` 上 commit —— 各建一把锁等于没串。
  */
-const serialized = createSerialGate();
-
-/** 把这一次调用的依赖接成 flow。对象很薄，每次现造；没有隐藏的第二份状态。 */
 function flowOf(deps: PostDeps): Flow {
+	const gates = sharedGates();
 	return createFlow({
 		store: createMessageStore(deps),
 		routers: [defaultRouter()],
 		runner: createTurnRunner(deps),
+		settler: defaultSettler(),
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
-		gate: deps.gate ?? serialized,
+		gate: deps.gate === undefined ? gates : { ...gates, publish: deps.gate },
 	});
 }
 

@@ -6,11 +6,13 @@
  * 必须是这个房间的人、不能是我、不能是发件人自己、已经被 @ 的人不重复叫。
  */
 import type { Context } from "../runtime/index.ts";
-import type { FlowPorts } from "./ports.ts";
+import type { Flow, FlowPorts } from "./ports.ts";
 import type { DeliverResult, RouteExistingInput } from "./types.ts";
 import { validatePlan } from "./validate.ts";
 
-export function createForward(ports: FlowPorts): (input: RouteExistingInput, ctx: Context) => Promise<DeliverResult> {
+type ForwardPorts = FlowPorts & { readonly settle: Flow["settle"] };
+
+export function createForward(ports: ForwardPorts): (input: RouteExistingInput, ctx: Context) => Promise<DeliverResult> {
 	return async (input, ctx) => {
 		const snapshot = await ports.store.read(input.channelId, ctx);
 		if (snapshot === undefined) throw new Error(`频道不存在：${input.channelId}`);
@@ -35,6 +37,7 @@ export function createForward(ports: FlowPorts): (input: RouteExistingInput, ctx
 			plan,
 			...(input.routedBy === undefined ? {} : { routedBy: input.routedBy }),
 			ctx,
+			settle: ports.settle,
 		});
 	};
 }

@@ -1860,3 +1860,44 @@
   闸外钩子；`forward` 不写不钩）、`flow-invariants.test.ts`（校验）、`flow-policy.test.ts`
   （first-defined-wins、`drop`、回退）；`npm run check`、`npm test`（97 文件 / 860 例）、
   `npm run prompt:check`、`npm run live` 两次 13/13（`[turn]` 各 1 次）。
+
+## ADR-079 结算收尾收进 `flow.settle`：一个入口、两条来源，判断与机械分家
+
+- **背景**：ADR-078 把「消息落盘后叫醒谁」收进了 `core/flow`，但「一轮结束之后怎么办」
+  仍分两条路：`done` 走 durable `afterRun → core.turn-report → finishOnce`，`unanswered`
+  走投递时挂的 `watchSettled → appendNote`；判断（取正文 / `saidLast` / `turnTarget` /
+  同文判据）与读答案、补发、日志混在 238 行的 `channel/turn/finish.ts` 里，找「答完发生
+  了什么」的人通常只看到其中一条。ADR-078 的暂缓项 5 说这一阶段搬进 `flow/settle.ts`，
+  这里兑现。
+- **决策**：
+  1. **`flow.settle(event)` 是结算的唯一入口**，`Settlement` 只有两种：
+     `{kind:"done", slug, answer, wake, entries}` 与 `{kind:"unanswered", channelId, text}`。
+     `done`：持 `repost` 闸 → 读当前频道快照 → 取答案条目 → 问 `Settler` → 要补就调一次
+     `publish`（补发是正常发言：算人、叫醒、钩子、名册都走同一条主线）。`unanswered`：
+     只 `store.note` 一行留痕，**不进闸** —— 它不和补发抢。
+  2. **判断搬进 `flow/defaults/settle.ts`**（`finalTextOf` / `spokeAfterWake` /
+     `answerEntry` / `saidLast` / `turnTarget` / `defaultSettler()`），逻辑逐字搬家，不重写。
+     默认收尾的四条「不补」理由显式化成 `SettleDecision.reason`：`no-entry` / `pass` /
+     `no-target` / `not-member`（含同文去重判为 `duplicate`）。
+  3. **`channel/turn/finish.ts` 降为薄壳**：保留 `createTurnFinisher` 这个名字（`wiring.ts`
+     与测试按它接线），内部把 `TurnDeps` 拼成 `createFlow(...)` 再取 `flow.settle`。
+     纯函数从 `flow/defaults/settle.ts` 转出，命名不变。
+  4. **两把进程级闸收进 `flow/gates.ts`**：`publish`（ADR-073）与 `repost`（ADR-069 /
+     原 `finish.ts` 的模块单例）由 `sharedGates()` 提供一份，`channel/post.ts` 与收尾薄壳
+     共用。`settle` 持 `repost` 后再调 `publish`（再取 `publish`），**锁序固定为
+     `repost → publish`，反方向不存在**，写在 `flow/settle.ts` 头注释里。
+  5. **`MessageStore` 增加 `snapshot()`**：flow 只造一次也要读当前盘面；`postMessage` 的
+     调用方给了快照就直接用，保留原来的快路径。
+- **取舍**：`channel/` 里多了一条 `finish.ts → flow` 的引用（domain 组内部的单向依赖，
+  `check-boundaries` 允许）；`flow` 与 `settle` 互相需要，`createFlow` 用一个中转解开，
+  真正调用时两边都已装好。没有引入新状态：`Message` / `WakeRecord` / `Submission` 仍是
+  唯一事实。
+- **执行**：`src/core/flow/{settle,index}.ts`、`src/core/flow/defaults/settle.ts`、
+  `src/core/flow/gates.ts`、`src/core/flow/{types,ports,store,publish,forward}.ts`、
+  `src/core/flow/runner.ts`（`noteUnanswered` 改调 `settle`）、
+  `src/core/channel/turn/{finish,index}.ts`、`src/core/channel/post.ts`；
+  文档 `docs/CORE.md` §4、`docs/CODE.md` §1–§3、`docs/CONCESSIONS.md` C-010、`AGENTS.md`。
+- **验收**：`test/core/flow-settle.test.ts`（补发 / 同文不补 / `[PASS]` 与空正文不补 /
+  找不到答案条目 / `unanswered` 只留痕且不进闸）；`turn-report` / `crash-turn-report` /
+  `wake` / `unanswered` / `commit-concurrency` 保持绿；`npm run check`、`npm test`
+  （98 文件 / 865 例）、`npm run prompt:check`、`npm run live` 两次 13/13。

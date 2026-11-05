@@ -15,15 +15,18 @@
  * 本身（底座 group commit 已经按文档排队），而是 commit 之前的读和随后的算。
  */
 import type { Context } from "../runtime/index.ts";
-import type { FlowPorts } from "./ports.ts";
+import type { Flow, FlowPorts } from "./ports.ts";
 import type { PublishInput, PublishResult } from "./types.ts";
 import { routeFactsOf } from "./defaults/router.ts";
 import { resolvePlan } from "./policies.ts";
 import { validatePlan } from "./validate.ts";
 
-export function createPublish(ports: FlowPorts): (input: PublishInput, ctx: Context) => Promise<PublishResult> {
+/** 发布还要把 `settle` 递给投递：没答上来的留痕走同一个入口。 */
+export type PublishPorts = FlowPorts & { readonly settle: Flow["settle"] };
+
+export function createPublish(ports: PublishPorts): (input: PublishInput, ctx: Context) => Promise<PublishResult> {
 	return async (input, ctx) => {
-		const result = await ports.gate(async (): Promise<PublishResult> => {
+		const result = await ports.gate.publish(async (): Promise<PublishResult> => {
 			const snapshot = await ports.store.read(input.channelId, ctx);
 			if (snapshot === undefined) throw new Error(`频道不存在：${input.channelId}`);
 			const appended = await ports.store.append(input, ctx);
@@ -54,6 +57,7 @@ export function createPublish(ports: FlowPorts): (input: PublishInput, ctx: Cont
 				message,
 				plan: checked,
 				ctx,
+				settle: ports.settle,
 			});
 			return { channel, message, delivery };
 		});

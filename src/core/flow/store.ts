@@ -7,6 +7,7 @@
  * `tools/context.ts` 的 `readState` 注释）。
  */
 import type { Context, Harness } from "../runtime/index.ts";
+import { ChannelDoc, emptyChannelState } from "../channel/types.ts";
 import type { Channel, ChannelState, Message } from "../channel/types.ts";
 import { appendNote, appendToChannel } from "../channel/write.ts";
 import type { MessageStore } from "./ports.ts";
@@ -14,15 +15,25 @@ import type { ChannelSnapshot, NoteInput, PublishInput } from "./types.ts";
 
 export function createMessageStore(deps: {
 	readonly harness: Harness;
-	/** 本次调用读到的频道快照（提交之后仍可读的纯数据）。 */
-	readonly state: ChannelState;
+	/**
+	 * 本次调用读到的频道快照（提交之后仍可读的纯数据）。
+	 *
+	 * 不给就每次现读：收尾（`settle`）发生在结算之后，没有「本次调用的快照」可用，
+	 * 必须读当下的盘。
+	 */
+	readonly state?: ChannelState;
 }): MessageStore {
+	const snapshot = async (ctx: Context): Promise<ChannelState> =>
+		deps.state ?? ((await deps.harness.snapshot(ChannelDoc, ctx)) ?? emptyChannelState());
+
 	return {
-		async read(channelId: string, _ctx: Context): Promise<ChannelSnapshot | undefined> {
-			const channel = deps.state.channels[channelId];
+		snapshot,
+		async read(channelId: string, ctx: Context): Promise<ChannelSnapshot | undefined> {
+			const state = await snapshot(ctx);
+			const channel = state.channels[channelId];
 			if (channel === undefined) return undefined;
 			return {
-				state: deps.state,
+				state,
 				channel: { ...channel, members: [...channel.members], wakeOnAll: [...channel.wakeOnAll] },
 			};
 		},

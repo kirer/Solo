@@ -9,6 +9,7 @@ import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { createFlow } from "../../src/core/flow/index.ts";
 import type { FlowPorts, MessageStore, Router } from "../../src/core/flow/ports.ts";
 import { defaultRouter } from "../../src/core/flow/defaults/router.ts";
+import { defaultSettler } from "../../src/core/flow/defaults/settle.ts";
 import type { Channel, ChannelState, Message } from "../../src/core/channel/types.ts";
 
 function makeWorld() {
@@ -33,6 +34,9 @@ function makeWorld() {
 		fanOutReason: undefined as string | undefined,
 	};
 	const store: MessageStore = {
+		async snapshot() {
+			return state;
+		},
 		async read() {
 			return { state, channel };
 		},
@@ -53,7 +57,8 @@ function makeWorld() {
 	const ports = (routers: readonly Router[] = [defaultRouter()]): FlowPorts => ({
 		store,
 		routers,
-		gate: (fn) => fn(),
+		settler: defaultSettler(),
+		gate: { publish: (fn) => fn(), repost: (fn) => fn() },
 		runner: {
 			async fanOut(args) {
 				calls.fanOut += 1;

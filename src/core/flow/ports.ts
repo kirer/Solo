@@ -9,6 +9,7 @@
  */
 import type { Context } from "../runtime/index.ts";
 import type { Channel, ChannelState, Message } from "../channel/types.ts";
+import type { MentionRoster } from "../channel/mentions.ts";
 import type {
 	ChannelSnapshot,
 	DeliverResult,
@@ -19,18 +20,25 @@ import type {
 	RouteDecision,
 	RouteExistingInput,
 	RouteFacts,
+	SettleDecision,
+	SettleFacts,
+	Settlement,
 } from "./types.ts";
 
-/** 后端主线的三个动作。Phase 1 只有前两个；`settle` 在 Phase 2 加进来。 */
+/** 后端主线的三个动作。 */
 export type Flow = {
 	/** 新消息：落盘 → 算收件人 → 扇出入队 → 钩子。 */
 	publish(input: PublishInput, ctx: Context): Promise<PublishResult>;
 	/** 已有消息转交：校验 → 扇出入队（助理 `route` 工具用；不留新消息）。 */
 	forward(input: RouteExistingInput, ctx: Context): Promise<DeliverResult>;
+	/** 一轮结算：`done` 决定要不要补发，`unanswered` 只留痕。 */
+	settle(event: Settlement, ctx: Context): Promise<void>;
 };
 
 /** 消息落盘。publish / forward / settle 共用这一份读法。 */
 export type MessageStore = {
+	/** 读整份频道状态。频道不存在也要给（判断「目标频道没了」用）。 */
+	snapshot(ctx: Context): Promise<ChannelState>;
 	/** 读频道快照。频道不存在返回 `undefined`。 */
 	read(channelId: string, ctx: Context): Promise<ChannelSnapshot | undefined>;
 	/** 追加一条消息。频道不存在返回 `undefined`。 */
@@ -62,11 +70,22 @@ export type FanOutArgs = {
 	/** 转交的人（slug）。给了就在投递正文里写明。 */
 	readonly routedBy?: string;
 	readonly ctx: Context;
+	/** 「这一轮没答上来」的留痕入口（`settle({kind:"unanswered"})`）。 */
+	readonly settle: Flow["settle"];
 };
 
 /** 把一份名单变成入队、唤醒记录、合并排队项、没产出留痕。 */
 export type TurnRunner = {
 	fanOut(args: FanOutArgs): Promise<DeliverResult>;
+};
+
+/**
+ * 收尾策略：看事实，提议补不补、补到哪儿。
+ *
+ * 与 `Router` 同一个原则：它只提议。写盘、找频道、判重、补发都由 core 做。
+ */
+export type Settler = {
+	decide(facts: SettleFacts, ctx: Context): Promise<SettleDecision>;
 };
 
 /** 一条消息落盘并投递之后。插件听消息只挂在这里。 */
@@ -79,7 +98,10 @@ export type PublishHooks = {
  * 否则「谁和谁在同一个闸里」只能靠读 import 才知道。
  */
 export type FlowGates = {
+	/** 保护 commit 之前的「读—算—写—扇出」（ADR-073）。 */
 	publish<T>(fn: () => Promise<T>): Promise<T>;
+	/** 保护「读答案 → 判重 → 补发」整段（ADR-073 的收尾那一半）。 */
+	repost<T>(fn: () => Promise<T>): Promise<T>;
 };
 
 /** `createFlow` 的全部依赖。 */
@@ -88,6 +110,10 @@ export type FlowPorts = {
 	/** 按顺序问；第一个给出决定的生效。最后一个通常是内置规则。 */
 	readonly routers: readonly Router[];
 	readonly runner: TurnRunner;
+	/** 收尾策略（默认 `defaults/settle.ts` 的 `defaultSettler`）。 */
+	readonly settler: Settler;
+	/** 补发时解析 `@` 用的名册；不给就按字面 token 落库。 */
+	readonly roster?: () => Promise<MentionRoster>;
 	readonly hooks?: PublishHooks;
-	readonly gate: FlowGates["publish"];
+	readonly gate: FlowGates;
 };

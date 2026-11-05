@@ -9,6 +9,7 @@ import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { createFlow } from "../../src/core/flow/index.ts";
 import type { FlowPorts, MessageStore } from "../../src/core/flow/ports.ts";
 import { defaultRouter } from "../../src/core/flow/defaults/router.ts";
+import { defaultSettler } from "../../src/core/flow/defaults/settle.ts";
 import type { Channel, ChannelState, Message } from "../../src/core/channel/types.ts";
 
 const channel: Channel = {
@@ -35,6 +36,9 @@ const state: ChannelState = {
 
 function makePorts(events: string[]): FlowPorts {
 	const store: MessageStore = {
+		async snapshot() {
+			return state;
+		},
 		async read() {
 			events.push("read");
 			return { state, channel };
@@ -53,11 +57,15 @@ function makePorts(events: string[]): FlowPorts {
 	return {
 		store,
 		routers: [defaultRouter()],
-		gate: async (fn) => {
-			events.push("gate:start");
-			const result = await fn();
-			events.push("gate:end");
-			return result;
+		settler: defaultSettler(),
+		gate: {
+			publish: async (fn) => {
+				events.push("gate:start");
+				const result = await fn();
+				events.push("gate:end");
+				return result;
+			},
+			repost: (fn) => fn(),
 		},
 		runner: {
 			async fanOut(args) {
