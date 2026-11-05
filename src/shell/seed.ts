@@ -151,7 +151,7 @@ async function readManifest(path: string): Promise<SeedManifest> {
 	if (text === undefined) return emptyManifest();
 	let raw: Partial<SeedManifest>;
 	try {
-		raw = JSON.parse(text) as Partial<SeedManifest>;
+		raw = parseManifest(text);
 	} catch (error) {
 		// 账本是缓存，坏了不能挡启动；但也不能悄悄当成「全都没改过」然后覆盖用户文件。
 		// 改名留证，下一次按「没有账本」处理（保守：只升级命中历史出厂 hash 的文件）。
@@ -172,6 +172,38 @@ async function readManifest(path: string): Promise<SeedManifest> {
 		plugins: raw.plugins ?? [],
 		files: raw.files ?? {},
 	};
+}
+
+/**
+ * 账本的形状校验。只认对象 / 数组：任何一层不对都当成坏账本（走备份，不当成空账本
+ * 覆盖用户文件）。`JSON.parse` 成功不等于账本可用 —— `null` 也会成功。
+ */
+function parseManifest(text: string): Partial<SeedManifest> {
+	const parsed: unknown = JSON.parse(text);
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("顶层必须是对象");
+	const value = parsed as Record<string, unknown>;
+	const record = (raw: unknown, name: string): Record<string, unknown> => {
+		if (raw === undefined) return {};
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) throw new Error(`${name} 必须是对象`);
+		return raw as Record<string, unknown>;
+	};
+	const strings = (raw: unknown, name: string): Record<string, string> => {
+		const out: Record<string, string> = {};
+		for (const [key, item] of Object.entries(record(raw, name))) {
+			if (typeof item !== "string") throw new Error(`${name}.${key} 必须是字符串`);
+			out[key] = item;
+		}
+		return out;
+	};
+	const skills: Record<string, Record<string, string>> = {};
+	for (const [name, item] of Object.entries(record(value["skills"], "skills"))) {
+		skills[name] = strings(item, `skills.${name}`);
+	}
+	const plugins = value["plugins"];
+	if (plugins !== undefined && (!Array.isArray(plugins) || plugins.some((item) => typeof item !== "string"))) {
+		throw new Error("plugins 必须是字符串数组");
+	}
+	return { skills, plugins: plugins ?? [], files: strings(value["files"], "files") };
 }
 
 async function writeManifest(path: string, manifest: SeedManifest): Promise<void> {

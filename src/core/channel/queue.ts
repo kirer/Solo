@@ -5,7 +5,12 @@
  */
 import type { Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { isBookkeeping } from "./bookkeeping.ts";
+import { declareBookkeeping, isBookkeeping } from "./bookkeeping.ts";
+import { TURN_REPORT_TASK } from "./turn/record.ts";
+
+// 账务 kind 在**消费方**登记：任何入口只要用 `liveConversations` 就一定加载了这份文件，
+// 不再依赖「碰巧有人 import 过任务定义」的传递关系。新增账务任务在这里补一行。
+declareBookkeeping(TURN_REPORT_TASK);
 
 /**
  * 同一个会话里「还没开始」的排队项 —— 可以被这一条合并唤醒的那些。

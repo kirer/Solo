@@ -475,9 +475,14 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 			}
 
 			// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
-			// 读不出来就让它抛：不知道谁在忙时，所有人都会少掉「这是插话」那句话，
-			// 模型答完一句就把手上的活丢了 —— 这种静默降级比一次可见的失败更难查。
-			const busy = await liveConversations(deps.harness, ctx);
+			// 读不出来就按「没人忙」继续：消息已经在 `publish` 里落盘了，这里再抛会让
+			// 整次发布失败，模型收到错误后重试 —— 频道里就多出第二条一模一样的消息。
+			const busy = await liveConversations(deps.harness, ctx).catch((error: unknown) => {
+				console.warn(
+					`[wake] 读队列失败，按「没人忙」投递：${error instanceof Error ? error.message : String(error)}`,
+				);
+				return new Set<number>();
+			});
 			const labelOf = deps.labelOf ?? ((slug: string) => slug);
 
 			return fanOut(

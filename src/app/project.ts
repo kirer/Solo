@@ -88,6 +88,22 @@ function offsetOf(text: string, label: string): number {
 	return at < 0 ? -1 : at;
 }
 
+/**
+ * 团队目录没了的团队频道不再投影：删目录不会提交文档，不能等重启才消失。
+ *
+ * `teams/` 的监听只看第一层，README 被删 / 改坏时不会触发 `archiveGoneTeams`，
+ * 所以读取时也要按团队表滤一遍（`archiveGoneTeams` 仍负责真正归档）。
+ */
+export function withoutGoneTeams(state: ChannelState, alive: ReadonlySet<string>): ChannelState {
+	const gone = Object.keys(state.channels).filter(
+		(id) => id.startsWith("team:") && !alive.has(id.slice("team:".length)),
+	);
+	if (gone.length === 0) return state;
+	const channels = { ...state.channels };
+	for (const id of gone) delete channels[id];
+	return { ...state, channels };
+}
+
 /** 频道列表。 */
 export function channelList(
 	state: ChannelState,

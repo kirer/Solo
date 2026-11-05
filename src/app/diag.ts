@@ -128,6 +128,25 @@ export function createDiag(logsRoot: string) {
 		void appendReport(report);
 	}
 
+	/**
+	 * 收一条流程侧的失败（插件策略 / 监听抛错）。
+	 *
+	 * 和底座报告走同一条线：写 `logs/runtime.jsonl`、更新 `lastReport`、通知看门狗。
+	 * 只写 `jank.jsonl` 的话，界面上看不到、看门狗也不知道（ADR-091）。
+	 */
+	function recordFlow(kind: string, message: string): void {
+		const report: RuntimeReport = { type: kind, at: new Date().toISOString(), message };
+		last = { type: kind, at: report.at, text: formatRuntimeReport(report) };
+		for (const listener of watchers) {
+			try {
+				listener(last);
+			} catch {
+				/* 看门狗自己的问题，不该影响报告本身 */
+			}
+		}
+		void appendReport(report);
+	}
+
 	async function appendReport(report: RuntimeReport): Promise<void> {
 		try {
 			const file = join(logsRoot, "runtime.jsonl");
@@ -156,7 +175,7 @@ export function createDiag(logsRoot: string) {
 		return last;
 	}
 
-	return { record, recordRuntimeReport, lastReport, onAbnormal };
+	return { record, recordFlow, recordRuntimeReport, lastReport, onAbnormal };
 }
 
 export type Diag = ReturnType<typeof createDiag>;

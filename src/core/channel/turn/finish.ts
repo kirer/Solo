@@ -1,7 +1,7 @@
 /**
  * 收尾的旧入口：现在只是 `core/flow` 的一层薄壳。
  *
- * 判断（取正文、`saidLast`、`turnTarget`、同文判据）在
+ * 判断（取正文、`saidLast`、`turnTarget`、按答案条目 id 判重）在
  * `flow/defaults/settle.ts`；读答案、补发在 `flow/settle.ts`。这里保留
  * `createTurnFinisher` 这个名字，是因为 `wiring.ts` 与测试按它接线 —— 它把
  * `TurnDeps` 拼成一个 flow，再取 `settle`。

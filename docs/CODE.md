@@ -138,7 +138,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `flow/store.ts` | 50 | `createMessageStore({harness, state})`：`snapshot` 读当前频道文档（给了调用方快照就直接用）、`read` 走 `snapshot`、`append`（`appendToChannel`）、`note`（`appendNote`） |
 | `flow/gates.ts` | 21 | `sharedGates()`：进程级两把串行闸单例 —— `publish`（ADR-073 的读—算—提交）与 `repost`（ADR-079 的补发去重），装配层与 `channel/post.ts` 共用一份 |
 | `flow/defaults/router.ts` | 48 | `routeFactsOf(state, channel, message)`（`lastSpeaker` = `speakerBefore`，`defaultTargets` = `deliveryTargets`）与 `defaultRouter()`（照 `defaultTargets` 叫） |
-| `flow/defaults/settle.ts` | 144 | 默认收尾判断：`finalTextOf` / `spokeAfterWake` / `answerEntry` / `saidLast`（认 `say` 与 `route`）/ `turnTarget`（`restated`）/ `defaultSettler()` 四条不补的理由（找不到正文 / `[PASS]` 或空 / 没有目标 / 非成员或同文） |
+| `flow/defaults/settle.ts` | 144 | 默认收尾判断：`finalTextOf` / `spokeAfterWake` / `answerEntry` / `saidLast`（认 `say` 与 `route`）/ `turnTarget`（`restated`）/ `defaultSettler()` 四条不补的理由（找不到正文 / `[PASS]` 或空 / 没有目标 / 非成员或答案条目重复） |
 | `flow/index.ts` | 80 | `createFlow(ports)` 组装 `publish` / `forward` / `settle`（publish ↔ settle 的循环用中转解开）；再导出类型与 `routeFactsOf` / `resolvePlan` / `validatePlan` / 默认收尾的纯函数 |
 | `channel/delivery.ts` | 287 | 投递正文的**排版**：`renderDelivery` / `renderReplyRules` / `digestRows` / `digestNotice` / `deliveryText`（reply / interrupted / task 系统模板 + 八个 delivery 片段；`alone` / `shared` / `colleagues` 带模板自写的 `default:` 兜底句）/ `mergedNotice`。文案全在 `seed/prompt/*.md`，这里只按条件选片段、填名字；`routedBy` 给助理转来的那条加一句「X 让你看这条」（ADR-063） |
 | `channel/bookkeeping.ts` | 22 | 账务任务登记：`declareBookkeeping(kind)` / `isBookkeeping(kind)`。任务定义在自己旁边登记一行（`core.turn-report` 在 `turn/report.ts` 里登记），队列据此判断「他还在干活」—— 底座没给这个标记（`TaskOptions.background` 只对会话自建任务开放，见 `docs/CONCESSIONS.md`），但新增一类收尾 / 摘要任务不用改队列 |

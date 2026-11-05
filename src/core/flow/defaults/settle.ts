@@ -118,7 +118,7 @@ export function defaultSettler(): Settler {
 		async decide(facts: SettleFacts): Promise<SettleDecision> {
 			if (facts.text === undefined) return { kind: "silent", reason: "no-entry" };
 			// 短回答照补：他对「你在吗」只答了个「在。」，吞掉就是频道里一片沉默。
-			// 只吞哨兵（`[PASS]`）和空正文；重复的那一份由下面的同文判据挡。
+			// 只吞哨兵（`[PASS]`）和空正文；重复的那一份由 `flow/settle.ts` 按答案条目 id 挡。
 			if (facts.text.length === 0 || isPass(facts.text)) return { kind: "silent", reason: "pass" };
 
 			const target = turnTarget(facts.state, facts.slug, facts.wake, facts.saidLast);

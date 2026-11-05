@@ -85,6 +85,9 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 				return { kind: "silent", reason: "duplicate" };
 			}
 
+			// 补发也是正常发言：`@我` 必须按名册落成 slug，不能存字面 token。
+			// 名册读不出来就退回字面 token 照发 —— 丢一句的代价远大于叫错人。
+			const roster = deps.roster === undefined ? undefined : await deps.roster().catch(() => undefined);
 			try {
 				const written = await deps.publish(
 					{
@@ -93,8 +96,7 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 						text: decision.text,
 						at: Date.now(),
 						...(sourceEntry === undefined ? {} : { sourceEntry }),
-						// 补发也是正常发言：`@我` 必须按名册落成 slug，不能存字面 token。
-						...(deps.roster === undefined ? {} : { roster: await deps.roster() }),
+						...(roster === undefined ? {} : { roster }),
 					},
 					ctx,
 				);

@@ -120,7 +120,7 @@ export async function assembleCore(
 	 */
 	const report: FlowReport = (kind, detail) => {
 		console.warn(`[flow] ${detail}`);
-		void diag.record({ kind, entries: detail });
+		diag.recordFlow(kind, detail);
 	};
 
 	// ── 1. 文案与插件 ────────────────────────────────────────────────

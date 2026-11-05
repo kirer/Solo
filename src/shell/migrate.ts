@@ -59,11 +59,14 @@ async function migrateProjectField(path: string): Promise<boolean> {
 	const doc = parseDoc(path, source);
 	if (doc.front["project"] === undefined) return false;
 	const lines = source.split("\n");
-	const index = lines.findIndex((line) => /^project\s*:/.test(line));
+	// 只在头里找：`parseDoc` 接受缩进的键，正文里恰好有一行 `project:` 时不能改错地方。
+	const headEnd = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+	const limit = headEnd < 0 ? 0 : headEnd;
+	const index = lines.findIndex((line, at) => at < limit && /^\s*project\s*:/.test(line));
 	if (index < 0) return false;
 	const line = lines[index]!;
 	if (doc.front["team"] === undefined) {
-		lines[index] = line.replace(/^project(\s*:)/, "team$1");
+		lines[index] = line.replace(/^(\s*)project(\s*:)/, "$1team$2");
 	} else {
 		lines.splice(index, 1);
 	}

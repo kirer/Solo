@@ -168,12 +168,14 @@ export function buildTurn(
 	const open = new Map<string, number>();
 	let truncated = facts.truncated === true;
 
-	const push = (step: ViewStep): void => {
+	/** 追加一步，返回它的下标；超过上限返回 -1（调用方不能拿它去 `open`）。 */
+	const push = (step: ViewStep): number => {
 		if (steps.length >= MAX_STEPS) {
 			truncated = true;
-			return;
+			return -1;
 		}
 		steps.push(step);
+		return steps.length - 1;
 	};
 
 	for (const entry of entries) {
@@ -234,8 +236,9 @@ export function buildTurn(
 					}
 					if (shown.kind === "tool") step.tool = name;
 					if (stamp !== undefined) step.startedAt = stamp;
-					push(step);
-					open.set(callId, steps.length - 1);
+					const index = push(step);
+					// 被截断的那一步没有下标：映射到上一步会让它的结果覆盖上一步的轨迹。
+					if (index >= 0) open.set(callId, index);
 				}
 			}
 			continue;

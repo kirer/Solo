@@ -17,17 +17,6 @@ function retiredNameOf(slug: string): string {
 export function createHireTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
 		fill(deps.text, key, slots);
-	/** 写已经成功、后续投影失败的那些步骤：记下来一起回给模型，不能悄悄吞掉。 */
-	const warnings: string[] = [];
-	const failed = (
-		key: string,
-		error: unknown,
-		slots: Record<string, string | number | undefined> = {},
-	): void => {
-		warnings.push(t(key, { ...slots, error: error instanceof Error ? error.message : String(error) }));
-	};
-	/** 主结果照常给，后面逐行附上「哪一步没成」。 */
-	const withWarnings = (body: string): string => (warnings.length === 0 ? body : `${body}\n${warnings.join("\n")}`);
 	const tool = defineTool({
 		name: "hire",
 		description: t("hire.description"),
@@ -41,6 +30,19 @@ export function createHireTool(deps: CoreToolDeps) {
 		}),
 		execute: async (args, api, context) => {
 			const ctx = context ?? BACKGROUND_CONTEXT;
+			// 工具全进程只建一次：警告必须每次调用现开一份，否则一次失败会被之后所有
+			// hire / fire 的结果重复带上，而且数组只增不减。
+			const warnings: string[] = [];
+			const failed = (
+				key: string,
+				error: unknown,
+				slots: Record<string, string | number | undefined> = {},
+			): void => {
+				warnings.push(t(key, { ...slots, error: error instanceof Error ? error.message : String(error) }));
+			};
+			/** 主结果照常给，后面逐行附上「哪一步没成」。 */
+			const withWarnings = (body: string): string =>
+				warnings.length === 0 ? body : `${body}\n${warnings.join("\n")}`;
 			const action = actionOf(args.action, ["create", "fire", "models"], "create", "action", deps.text);
 			if (typeof action !== "string") return text(action);
 

@@ -188,7 +188,11 @@ async function slotsFor(
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);
 
-	const all = wants("team", "peers", "assistant") ? await readAllIdentities(paths.layout.agentRoots) : [];
+	// `count` 出厂模板已经不用了，但用户改过、账本保留的旧 `20-position.md` 里还可能有。
+	const all = wants("count", "team", "peers", "assistant")
+		? await readAllIdentities(paths.layout.agentRoots)
+		: [];
+	if (need.has("count")) slots["count"] = all.length;
 	// 「没有团队 / 没有助理」怎么说归模板（`{{… ?? …}}`），这里只给事实。
 	if (need.has("assistant")) {
 		// 助理是文件夹事实（ADR-058）：自己就是助理时直说，别人看到的是那个能招人的人。

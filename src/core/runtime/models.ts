@@ -110,8 +110,8 @@ function makeProvider(config: ProviderConfig): Provider {
 			`settings.json 的提供商 ${config.id} 写了不认识的 api：${apiName}（可选：${Object.keys(APIS).join(" / ")}）`,
 		);
 	}
-	const baseUrl = config.baseUrl?.trim() ?? "";
-	if (baseUrl === "") throw new Error(`settings.json 的提供商 ${config.id} 没写 baseUrl`);
+	// 没写地址 = 早先的本地网关默认值。模型管理插件保存时总会写出来，这一条只兜老配置。
+	const baseUrl = config.baseUrl?.trim() || "http://127.0.0.1:3425/v1";
 	// 缺省和空串都算「没给」：实测写 `"apiKey": ""` 与不写字段一样，每次生成立刻失败。
 	const given = config.apiKey ?? "";
 	const apiKey = given !== "" ? given : LOCAL_BASE_URL.test(baseUrl) ? "magpie" : "";
@@ -181,13 +181,16 @@ function applySettings(models: MutableModels, settings: Settings): AppliedModels
 		defaultRef = parseModelRef(settings.defaultModel) ?? defaultRef;
 	}
 	if (defaultRef === undefined) throw new Error("settings.json 有 providers 但没有模型");
-	// 单独指定的模型：解析不到 = 配置写错了。不能悄悄按默认走 —— 那个人会以为自己在用
-	// 指定的模型，实际每轮都在用另一只。启动时直接报出来，让人改 settings.json。
+	// 单独指定的模型：指向已删 provider / 已删模型的记录当作过期，按默认走（DEPLOY §3）。
+	// 一条残留不能让整个应用起不来 —— 界面删 provider 时不一定清得掉这一项。
 	const agentModels: Record<string, ModelRef> = {};
 	for (const [slug, value] of Object.entries(settings.agentModels ?? {})) {
 		const ref = parseModelRef(value);
-		if (ref === undefined) throw new Error(`settings.json 的 agentModels.${slug} 不是 提供商/模型：${value}`);
-		agentModels[slug] = requireModel(models, ref, `settings.json 的 agentModels.${slug}`);
+		if (ref === undefined || models.getModel(ref.provider, ref.modelId) === undefined) {
+			console.warn(`[core] settings.json 的 agentModels.${slug} 指向不存在的模型（${value}），按默认走`);
+			continue;
+		}
+		agentModels[slug] = ref;
 	}
 	return {
 		defaultModel: requireModel(models, defaultRef, "settings.json 的 defaultModel"),

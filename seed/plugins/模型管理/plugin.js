@@ -22,6 +22,9 @@ function settingsPath(workspace) {
 	return join(workspace, "settings.json");
 }
 
+/** 临时文件名序号：和核心的写入口并发时互不覆盖。 */
+let writeSeq = 0;
+
 /**
  * 读整个 settings.json：别的键（不认识的那些）要原样写回去。
  *
@@ -155,7 +158,8 @@ function clean(drafts, existing) {
 		providers.push({
 			id,
 			...(typeof raw.name === "string" && raw.name.trim() !== "" ? { name: raw.name.trim() } : {}),
-			...(baseUrl === undefined ? {} : { baseUrl }),
+			// 总是写出来：核心按这一项构造 provider，省掉它等于存了一份装不上的配置。
+			baseUrl: url,
 			...(api === undefined ? {} : { api }),
 			apiKey,
 			models,
@@ -238,8 +242,23 @@ export async function apply(api) {
 				if (defaultModel === "") delete next.defaultModel;
 				else next.defaultModel = defaultModel;
 
+				// 指着已删 provider / 已删模型的记录一并清掉：核心会把它当成过期按默认走，
+				// 留着只会在文件里越积越多，删一家 provider 看起来就像没删干净。
+				const known = new Map(cleaned.providers.map((provider) => [provider.id, new Set(provider.models.map((model) => model.id))]));
+				const agentModels = {};
+				const saved = typeof settings.agentModels === "object" && settings.agentModels !== null ? settings.agentModels : {};
+				for (const [slug, ref] of Object.entries(saved)) {
+					if (typeof ref !== "string") continue;
+					const slash = ref.indexOf("/");
+					if (slash <= 0) continue;
+					if (known.get(ref.slice(0, slash))?.has(ref.slice(slash + 1)) === true) agentModels[slug] = ref;
+				}
+				if (Object.keys(agentModels).length === 0) delete next.agentModels;
+				else next.agentModels = agentModels;
+
 				// 先写临时文件再换名：写到一半崩掉不会留下半份 JSON（这份文件坏了 = 全员不回话）。
-				const temp = `${file}.tmp`;
+				// 文件名带序号：核心的 `setAgentModel` 也会写这份文件，同名 `.tmp` 会互相覆盖。
+				const temp = `${file}.${process.pid}.${writeSeq++}.tmp`;
 				await writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
 				await rename(temp, file);
 				api.log(`写了 ${file}（${cleaned.providers.length} 个提供商）`);

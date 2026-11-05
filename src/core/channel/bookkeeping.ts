@@ -6,8 +6,8 @@
  *
  * 为什么要有这一份登记，而不是在队列里写死 kind：底座没给这个标记 ——
  * `TaskOptions.background` 只对会话自建的任务开放，`afterRun` 子任务设不了
- * （见 `docs/CONCESSIONS.md`）。所以由任务定义在自己旁边登记一行；新增一类收尾 /
- * 摘要任务时不用改队列。
+ * （见 `docs/CONCESSIONS.md`）。所以由**消费方**（`queue.ts`）在加载时登记自己认识的
+ * 账务 kind —— 不用依赖某个模块「碰巧被 import 过」的传递副作用。
  */
 const kinds = new Set<string>();
 

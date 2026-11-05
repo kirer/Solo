@@ -2198,8 +2198,8 @@
   1. `FlowPorts.report` 是运行中出错的唯一出口（形状由 core 描述，接到哪里由装配层定）；
      装配层把它接到 `diag`：console 留一行，同时写 `logs/runtime.jsonl`。插件监听与策略
      失败都走这条线。
-  2. 账务任务用登记制：任务定义在自己旁边调 `declareBookkeeping(kind)`（`core.turn-report`
-     在 `turn/report.ts` 登记），队列的 `liveConversations` 只问 `isBookkeeping(kind)`。
+  2. 账务任务用登记制：`declareBookkeeping(kind)` 由消费方 `queue.ts` 在加载时调用
+     （`core.turn-report` 就登记在那里），队列的 `liveConversations` 只问 `isBookkeeping(kind)`。
      底座没给这个标记（`TaskOptions.background` 只对会话自建任务开放，见
      `docs/CONCESSIONS.md`），所以登记放在我们这一层。
 - **取舍**：只通报不自动重试 —— 策略坏了应该被人看见并修，而不是被系统悄悄绕过。
@@ -2220,9 +2220,23 @@
   2. 工具在注册时用 `traced(tool, trace)` 声明自己那一行（`channel/tools/presentation.ts`）；
      `app/trace.ts` 只按名字查表，不认识具体工具。没声明过的（插件工具）退回「原名 + 通用
      行」——不认识不等于不该画。
-  3. 删掉 `count` 插槽的兼容读取：出厂模板已经不用它，新工作区没有旧模板；老工作区的旧
-     模板由 ADR-084 的账本升级。
+  3. `count` 插槽保留填充：出厂模板已经不用它，但账本会保留用户改过的旧
+     `prompt/20-position.md`（ADR-084），那些模板里的 `{{count}}` 不能渲染成「（未设置）」。
 - **取舍**：领域里的 `TraceKind` 必须能赋给契约层的 `ViewStep["kind"]`，由 `app/trace.ts`
   的赋值处替这条兜底（领域不能 import 契约层）；多一种界面不认识的种类就编不过。
 - **执行**：`documents/skills.ts`、`channel/tools/presentation.ts`、`channel/tools/index.ts`、
   `app/trace.ts`、`app/read.ts`、`documents/prompt.ts`；`test/core/{skills,trace}.test.ts`。
+
+---
+
+## ADR-093 明确取代：正文去重改为答案条目判重，旧形状只靠迁移
+
+- **背景**：ADR-051 的「补发前比对正文」与 ADR-061 的「投影层归一、不改库不迁移」都已被
+  后来的实现取代（ADR-087 / ADR-085），但旧条目没有标注，读者按旧 ADR 改回去会和 core 的
+  不变量打架。
+- **决策**：
+  1. **ADR-087 取代 ADR-051 的去重判据**：补发前比对的是答案条目 id（`sourceEntry`），
+     不是正文。ADR-051 里「为什么不按提交 id 去重」那一段不再成立。
+  2. **ADR-085 取代 ADR-061**：旧形状（消息 kind、字面 `@我`、平铺 wake、身份头 `project:`）
+     一律在迁移里一次性归一，读取处不留兼容分支。
+- **取舍**：旧 ADR 保留原文（只追加、不改历史）；以本条为准。
