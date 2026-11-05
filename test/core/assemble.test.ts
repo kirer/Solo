@@ -11,7 +11,6 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
-import { ownerSpeak } from "../../src/shell/assemble.ts";
 import { seedOwnerAssistant } from "../../src/shell/seed.ts";
 import { readIdentity } from "../../src/core/agent/identity.ts";
 import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
@@ -116,7 +115,7 @@ describe("我说话", () => {
 		const opened = await box.open();
 		try {
 			const shell = await box.assemble(opened);
-			const sent = await ownerSpeak(shell, { channelId: "all", text: "@林越 停掉所有任务" });
+			const sent = await shell.ownerSay({ channelId: "all", text: "@林越 停掉所有任务" });
 			expect(sent.seq).toBe(1);
 
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
@@ -163,7 +162,7 @@ describe("我说话", () => {
 				doc.slugToConversation = { ...doc.slugToConversation, shenzhou: 4242 };
 				doc.conversationToSlug = { ...doc.conversationToSlug, "4242": "shenzhou" };
 			}, BACKGROUND_CONTEXT);
-			const sent = await ownerSpeak(shell, { channelId: "all", text: "@沈舟 看下首页" });
+			const sent = await shell.ownerSay({ channelId: "all", text: "@沈舟 看下首页" });
 			expect(sent.seq).toBe(1);
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
 			expect(state.messages.all?.[0]?.mentions).toEqual(["shenzhou"]);
@@ -183,10 +182,30 @@ describe("我说话", () => {
 		const opened = await box.open();
 		try {
 			const shell = await box.assemble(opened);
-			await ownerSpeak(shell, { channelId: "all", text: "有人吗" });
+			await shell.ownerSay({ channelId: "all", text: "有人吗" });
 			const state = (await opened.harness.snapshot(ChannelDoc)) as ChannelState;
 			expect(state.messages.all?.[0]?.mentions).toEqual([]);
 			// 收件人规则在 state.ts 的单测里已覆盖；这里只确认消息落了盘。
+		} finally {
+			await opened.close();
+		}
+	});
+
+	test("壳关两次只关一次库：关闭是幂等的", async () => {
+		const box = await pool.make("core-assemble-close-");
+		await createAgent({ root: box.agentsRoot, name: "林越" });
+		const opened = await box.open();
+		const shell = await box.assemble(opened);
+		let closes = 0;
+		const close = opened.harness.close.bind(opened.harness);
+		(opened.harness as { close: unknown }).close = async (...args: unknown[]) => {
+			closes += 1;
+			return close(...(args as Parameters<typeof close>));
+		};
+		try {
+			await shell.close();
+			await shell.close();
+			expect(closes).toBe(1);
 		} finally {
 			await opened.close();
 		}

@@ -71,7 +71,7 @@ src/
   view/           契约层：只有 dto.ts，零 import（投影已并进 app/project.ts）
   interface/http/ 唯一 import node:http 的地方：routes / respond（原语）/ route-match（匹配）/
                   origin-guard（来源闸）/ network（网卡）/ static-assets / sse（编解码+hub）
-  shell/          装配与启动：assemble / serve / main / seed
+  shell/          装配与启动：assemble（只做组合）/ wire/（七段接线）/ serve / main / seed
 ui/app/           界面源码（React + TS + Vite）
 ui/web/           构建产物（服务端发这个目录，别手改）
 desktop/          Electron 壳（src/：拉起后端 / 开窗 / 标题栏 / 更新 / 菜单 / preload）+ 图标
@@ -83,14 +83,14 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             98 文件 / 871 例
+test/             98 文件 / 872 例
   ├ test/core/    81 文件（纯函数 + 装配）
   ├ test/ui/      12 文件（界面纯函数与源码约定）
   └ test/desktop/ 5 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
 
-（`src/` 共 100 个 ts：core 69 / app 19 / view 1 / interface 7 / shell 4；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/` 共 107 个 ts：core 69 / app 19 / view 1 / interface 7 / shell 11；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -144,7 +144,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 98 文件 871 例，<3s，必须全绿
+npm test             # 98 文件 872 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -175,13 +175,13 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
 | 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/agent/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
 | 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
-| 名册（slug ↔ 会话 id）怎么读、怎么落盘 | `docs/CORE.md` §1 | `src/core/agent/roster.ts` 的 `mergeDirectory` / `directoryWake`（`rememberWake` 用内存会话兜底并补映射）+ `src/shell/assemble.ts` 的 `directoryNow` / `saveDirectoryImpl` + `test/core/directory-persist.test.ts`；**读的时候内存优先**，别只信落盘那份 |
+| 名册（slug ↔ 会话 id）怎么读、怎么落盘 | `docs/CORE.md` §1 | `src/core/agent/roster.ts` 的 `mergeDirectory` / `directoryWake`（`rememberWake` 用内存会话兜底并补映射）+ `src/shell/wire/directory.ts` 的 `now` / `save`（装配层只做调用）+ `test/core/directory-persist.test.ts`；**读的时候内存优先**，别只信落盘那份 |
 | 谁是助理 / 团队里有哪些人 | `docs/CORE.md` §1 / §7 + `docs/DECISIONS.md` ADR-058 | `src/core/layout.ts` 的 `isAssistantDir`（**按路径分量判断**：Windows 分隔符是 `\`，写死 `/` 会让助理在 Windows 上消失）+ `src/core/agent/identity.ts` 的 `assistantsOf` + `src/core/channel/membership.ts` 的 `teamMembers` / `syncTeamChannel`（成员 = 我 + 助理 + `team:` 指向它的人；`wakeOnAll = 助理`）；**只有一个会话键：slug**（ADR-050 已被 ADR-058 取代） |
-| 新进频道的人要不要被叫醒（报到） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-042 | `channel/membership.ts` 的 `syncTeamChannel`（返回新进成员，不含我与助理）+ `shell/assemble.ts` 的 `syncTeamAndAnnounce` 与 `ownerSpeak` 的 `wakeTo`；文案 `seed/text/channel.md` 的 `membership.joined`；`test/core/membership.test.ts` |
+| 新进频道的人要不要被叫醒（报到） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-042 | `channel/membership.ts` 的 `syncTeamChannel`（返回新进成员，不含我与助理）+ `shell/wire/teams.ts` 的 `sync` / `announce` 与 `shell/wire/speak.ts` 的 `wakeTo`；文案 `seed/text/channel.md` 的 `membership.joined`；`test/core/membership.test.ts` |
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `core/flow/defaults/router.ts` 把两者拼成决定 + `channel/delivery.ts` 的 `woken` |
 | 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
-| 插件的五个动作（tool / prompt / route / on / `flow`）/ 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 / ADR-080 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts` 的 `flow`、`load.ts` 的 `PluginHost.flow` / `brings.policies`）+ `src/core/channel/types.ts` 的策略形状 + `src/core/flow/policies.ts` 的 `policyRouter` / `policySettler` + `shell/assemble.ts`（装配 + `reloadPlugins` 热重装，ADR-026；`policies = () => plugins.flow` 是活引用）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件页 `panels/PluginsPage.tsx`（开关 / 装 / 删，整屏不是浮层）与 `sidebar/Rail.tsx` 的入口（`#plugins-btn`） |
+| 插件的五个动作（tool / prompt / route / on / `flow`）/ 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 / ADR-080 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts` 的 `flow`、`load.ts` 的 `PluginHost.flow` / `brings.policies`）+ `src/core/channel/types.ts` 的策略形状 + `src/core/flow/policies.ts` 的 `policyRouter` / `policySettler` + `shell/wire/plugins.ts`（装 / 重装 + 听消息 + 策略活引用）与 `shell/assemble.ts`（`reloadPlugins` 热重装，ADR-026）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 插件页 `panels/PluginsPage.tsx`（开关 / 装 / 删，整屏不是浮层）与 `sidebar/Rail.tsx` 的入口（`#plugins-btn`） |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/app/trace.ts`（纯函数：`groupsOf` 切轮 + `buildTurn` 映射步骤）+ `src/app/read.ts` 的 `turnsOf` + `test/core/trace.test.ts` |
 | 过程画在哪儿（`live` 行 / 任务面板；聊天流**不画**过程块） | `docs/DESIGN.md` §2.3 + `docs/DECISIONS.md` ADR-046 / ADR-062 | `ui/app/src/stream/model.ts` 的 `buildRows`（不再挂 `turn`）+ `stream/Stream.tsx`（不渲染过程块）+ `stream/LiveRow.tsx` + `panels/TasksPanel.tsx`；`test/ui/stream-model.test.ts` |
@@ -190,8 +190,8 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | `@` 什么时候用（要回复才 @） | `docs/CORE.md` §4 | `seed/rules.md` + `seed/skills/工作规矩/SKILL.md` + `seed/assistant/identity.md`（机制不动：`parseMentions` / `recipientsOf`） |
 | 聊天里的运行态（`live` 行）/ 后台任务（应用第二屏） | `docs/DESIGN.md` §1.1 / §2.3 + `docs/DECISIONS.md` ADR-046 + `docs/WEB-API.md` §4.1 / §7.2 | `ui/app/src/stream/model.ts` 的 `buildRows`（`live` 行）+ `stream/LiveRow.tsx` + `panels/TasksPanel.tsx` + `styles/tasks.css` + `state/store.ts` 的 `runs` / `tasks`（`applyTurn` 不按当前频道过滤）+ `sidebar/Rail.tsx` + `App.tsx` 的 `data-view`；`ViewTurn.trigger` 在 `src/view/dto.ts` 与 `app/read.ts` 的 `turnsOf`；`test/ui/stream-model.test.ts` |
 | 改「插话回哪儿 / 一轮答完自动补发」 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-049 / ADR-051 / ADR-077 | `channel/turn/record.ts` 的 `WakeRecord` / `parseWake`、`core/flow/defaults/settle.ts`（`spokeAfterWake` / `saidLast` / `turnTarget` 的 `restated` / 补发前的 `duplicate` 判据）、`core/flow/settle.ts`（读答案 → 判重 → 补发，`repost` 闸在这里）、`channel/turn/report.ts`（durable 收尾的输入与任务）、`core/flow/runner.ts` 的 `wakeOf`；**补发是正常发言（要叫醒被 @ 的人）**，且**必须带名册**（`wiring.ts` 的 `roster`）：不带的话 `@我` 会以字面 token 落进 `mentions`，投递靠兜底还能叫人，落盘/接口里的「叫了谁」是错的；文案在 `seed/prompt/88-task.md` |
-| 答完写回频道靠什么触发（收尾持久化） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-077 | `channel/turn/report.ts`（`core.turn-report` 任务 + `afterRun` 钩子，挂进 `core-tools`）+ `core/flow/settle.ts`（done 分支：判据 / 同文去重 / 补发）+ `core/flow/defaults/settle.ts`（判断）+ `shell/assemble.ts`；`core/flow/runner.ts` 的结算回调只留「没答上来」（走 `settle({kind:"unanswered"})`），**不要再加宿主侧补发**；`channel/queue.ts` 的 `liveConversations` 不算收尾任务与只等收尾的生成（否则紧随其后的消息被当成插话）；`test/core/{turn-report,turn-report-e2e,crash-turn-report}.test.ts` |
-| 合并唤醒（谁该让路） | `docs/CORE.md` §8 + `docs/DECISIONS.md` ADR-048 | `channel/queue.ts` 的 `queuedAhead` / `coalesceQueue`（同一会话只留一个未开始项）+ `core/flow/runner.ts` 的 `wake` + 签名透传（`publish.ts` / `runner.ts` / `shell/assemble.ts`）；`test/core/queue-jump.test.ts` |
+| 答完写回频道靠什么触发（收尾持久化） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-077 | `channel/turn/report.ts`（`core.turn-report` 任务 + `afterRun` 钩子，挂进 `core-tools`）+ `core/flow/settle.ts`（done 分支：判据 / 同文去重 / 补发）+ `core/flow/defaults/settle.ts`（判断）+ `shell/assemble.ts` 与 `shell/wire/conversations.ts`（挂进 `core-tools`）；`core/flow/runner.ts` 的结算回调只留「没答上来」（走 `settle({kind:"unanswered"})`），**不要再加宿主侧补发**；`channel/queue.ts` 的 `liveConversations` 不算收尾任务与只等收尾的生成（否则紧随其后的消息被当成插话）；`test/core/{turn-report,turn-report-e2e,crash-turn-report}.test.ts` |
+| 合并唤醒（谁该让路） | `docs/CORE.md` §8 + `docs/DECISIONS.md` ADR-048 | `channel/queue.ts` 的 `queuedAhead` / `coalesceQueue`（同一会话只留一个未开始项）+ `core/flow/runner.ts` 的 `wake` + 签名透传（`publish.ts` / `runner.ts` / `shell/assemble.ts` / `shell/wire/conversations.ts`）；`test/core/queue-jump.test.ts` |
 | 同进程的写并发（要不要自己串行 commit） | `docs/DECISIONS.md` ADR-073 + `docs/CONCESSIONS.md` C-010 | 底座 group commit 管同一文档的 commit；`openCore` 直接用裸 harness（**没有** `serializedHarness` 了）。`core/flow/publish.ts` 取 `gate.publish` 保护 commit **之前**的读—算—提交，`core/flow/settle.ts` 取 `gate.repost` 防两次收尾各补一遍（两把闸的进程级默认实现在 `core/flow/gates.ts`），**别顺手删**；`test/core/commit-concurrency.test.ts` |
 | 记 wake 与入队要不要原子（唤醒竞态） | `docs/DECISIONS.md` ADR-076 | `agent/roster.ts` 的 `rememberWakeTx` + `channel/wiring.ts` 的 `wakeTogether` + `core/flow/runner.ts` 的 `wake`（先写文档、再 `conversation.submit(tx, draft)`，commit 后用 `harness.submission(id)` 取回句柄）；**准入是这次 commit 的第一次表写，之后不能再读表**；`publish.ts` / `turn/finish.ts`（补发）/ `tools/context.ts` / `shell/assemble.ts` 只做透传；`test/core/wake.test.ts` |
 | 建频道 / 私聊 / 一个人跑过的轮次 | `docs/CORE.md` §4 + `docs/WEB-API.md` + `docs/DESIGN.md` §2.3 | 建频道只有 `channel/membership.ts` 的 `ensureOwnerDm`（装配 / 招人自动建）+ `POST /api/people/:slug/dm`；一个人的轮次是 `app/read.ts` 的 `readPersonTurns`（`limit`）+ `ui/app/src/panels/TasksPanel.tsx` + `ui/app/src/sidebar/Rail.tsx`（第二屏的入口）；聊天流里不画过程 |

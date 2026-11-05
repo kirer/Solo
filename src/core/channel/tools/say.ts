@@ -2,8 +2,7 @@
 import { BACKGROUND_CONTEXT, Type, defineTool, type Context } from "../../runtime/index.ts";
 import { OWNER, chatKind } from "../types.ts";
 import { parseMentions, resolveMention } from "../mentions.ts";
-import { postMessage } from "../post.ts";
-import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel, othersAwoken } from "./channel-choice.ts";
 import { isPass, monologueOpener, sayLimitOf } from "./guards.ts";
 import { fill } from "../../md/catalog.ts";
@@ -122,8 +121,8 @@ export function createSayTool(deps: CoreToolDeps) {
 			const typedMentions = parseMentions(messageText, roster);
 			const wakeOwner = typedMentions.includes(OWNER);
 
-			const result = await postMessage(
-				postDeps(deps, state, ctx),
+			const result = await deps.wiring.flow.publish(
+				state,
 				{
 					channelId,
 					from: slug,

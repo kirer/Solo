@@ -19,11 +19,11 @@ src/
     channel/        说话的**领域原语**：频道规则 / 落盘 / 队列 / 唤醒记录 / 附件 / 8 个工具（tools/）
     flow/           一条消息的一生：`publish`（写一条）/ `forward`（转交）/ `settle`（结算收尾）/
                     策略链 / 校验 / 投递 / 两把闸
-    plugin/         插件：`plugins/<slug>/` 的清单、四动作 API + `scope`、加载与隔离
+    plugin/         插件：`plugins/<slug>/` 的清单、五动作 API + `scope`、加载与隔离
   app/            用例：读（含投影） / 人 / 说话 / 上传 / 诊断 / 重置（不 import node:http）
   view/           契约层：只有 `dto.ts`，零 import（投影已并进 `app/project.ts`）
   interface/http/ 唯一 import node:http 的地方：路由表 / 原语 / 匹配 / 来源闸 / 网卡 / 静态资源 / SSE
-  shell/          装配与启动：assemble / main / serve / seed
+  shell/          装配与启动：assemble（只做组合）/ wire/（七段接线）/ main / serve / seed
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（全员层）/
                   `plugins/`（模型管理 / 文件树 / Token 统计）/ `assistant/`（助理身份 + 个人技能）
@@ -76,7 +76,19 @@ shell = 装配层，唯一可以同时 import 全部
 4. 同步读配置 —— `agent/secrets.ts`、`runtime/models.ts`
 5. 技能目录复制 —— `agent/skills.ts`
 
-## 2. 全量文件（`src/` 下 100 个 ts：core 69 / app 19 / view 1 / interface 7 / shell 4，约 16000 行；行数会漂，以表里的职责为准）
+### 1.1 后端的三层主线
+
+读后端**只读这三个层次**，别从工具文件和路由文件开始：
+
+| 层 | 回答什么问题 | 住哪 |
+|---|---|---|
+| **组织投影** | 谁存在、他在哪个团队 / 频道 | `agent/identity.ts`（文件夹 → 人）× `agent/roster.ts`（人 → 会话）× `channel/membership.ts`（人 → 频道）。三条都是磁盘事实的投影，没有角色枚举 |
+| **消息生命周期** | 一条消息从哪来、叫醒谁、答完怎么回频道 | `core/flow/`：`publish`（新消息）/ `forward`（转交）/ `settle`（收尾）。顺序固定，读 `flow/publish.ts` 一个函数就够；投递机械在 `flow/runner.ts`，频道门面是 `channel/post.ts` 的 `createChannelFlow` |
+| **边缘** | HTTP / 工具 / 插件 / 宿主入口怎么接进来 | `interface/http/`（网页）、`channel/tools/`（agent 的工具）、`plugin/`（插件五动作）、`shell/wire/speak.ts`（我开口）。它们只调 `app/` 或 `flow` 的门面，不自己拼落盘与投递 |
+
+装配只发生在 `shell/assemble.ts`：它按顺序把这三层接起来，本身不写业务规则。
+
+## 2. 全量文件（`src/` 下 107 个 ts：core 69 / app 19 / view 1 / interface 7 / shell 11，约 16000 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -107,7 +119,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/mentions.ts` | 159 | `@` 解析与收件人：`parseMentions` 只排除 ASCII 字母数字与邮箱符号（中文紧贴 @ 也认）/ `hasMentionToken` / `recipientsOf`（成员过滤 + 「没 @ 人时第一个成员接」+ `wakeOnAll`）/ `deliveryTargets`（收件人减掉我）/ `MentionRoster` / `mentionRosterOf` / `resolveMention`：别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（`@CEO`、拼音、title、`@老板` 一律丢弃） |
 | `channel/rules.ts` | 240 | 频道的**纯规则**：`readMarkOf` / `unreadCount` / `fallbackChannelId`（只找最近活跃的群；一个群都没有就回落 `dm:owner-<slug>`）/ `channelsOf` / `appendMessage` / `projectChannel`（成员投影唯一入口：create / merge / replace）/ `ensureChannel`（= create，仅测试用）/ `markRead` / `tail`。接力上限（原 `relayLimit` / `botHopsSinceOwner`）已删，改由 `rules.md` 里「不等、不轮询」那条约束 |
 | `channel/write.ts` | 90 | `appendToChannel()` —— **消息落盘**的唯一实现（频道存在性、`nextSeq` 自愈、按路径 push；原样透传 `attachments` / `options`）；`appendNote()` 系统留痕；只落盘，不叫醒人 |
-| `channel/post.ts` | 108 | 旧入口的**薄壳**：`PostDeps` → `createFlow(...)`（store + `policyRouter` + 默认 router + runner + `policySettler` + 默认收尾 + 注入的钩子/闸），`postMessage()` / `deliverExisting()` 只转调 `flow.publish` / `flow.forward`；`policies` 是活引用，插件重装后下一次发布自动用新的（ADR-080）；进程级串行闸在 `flow/gates.ts`（ADR-078） |
+| `channel/post.ts` | 110 | **频道层的投递门面**：`ChannelFlowDeps` → `createChannelFlow(...)`，对外只有 `publish(state, input, ctx)` / `forward(state, input, ctx)`。它只做两件 channel 才知道的事：把调用方读到的频道快照交给 store、把插件策略接在默认规则前后；`policies` 是活引用，插件重装后下一次发布自动用新的（ADR-080）；进程级串行闸在 `flow/gates.ts`（ADR-078） |
 | `flow/types.ts` | 153 | 形状：`PublishInput` / `NoteInput` / `PublishResult` / `DeliverResult` / `DeliverIssue` / `ChannelSnapshot` / `RecipientPlan` / `RouteExistingInput`；收尾：`Settlement`（`done` / `unanswered`）/ `FinishTurnInfo` / `EntryReader`。策略形状（`RouteFacts` / `RouteDecision` / `SettleFacts` / `SettleDecision` / `FlowPolicy`）**不在这里定义**，只从 `channel/types.ts` 转出 —— 插件层要能拿到它们 |
 | `flow/ports.ts` | 119 | 端口：`Flow`（`publish` / `forward` / `settle`）/ `MessageStore`（含 `snapshot`）/ `Router` / `TurnRunner`（`fanOut`）/ `Settler`（`decide`）/ `PublishHooks`（`afterPublish`）/ `FlowGates`（`publish` + `repost`）/ `FlowPorts` |
 | `flow/publish.ts` | 77 | **主线**：闸内「读快照 → 落盘 → 算事实 → 策略链 → 校验 → 扇出」，闸外 `afterPublish`（抛错只 warn）。优先级：`wake:false` / `note` 无 `wakeTo` 不叫 → `wakeTo` → 策略链 → `facts.defaultTargets` |
@@ -132,11 +144,11 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/turn/index.ts` | 17 | 这一层对外的出口：唤醒记录类型 + 收尾 |
 | `channel/jobs.ts` | 200 | 后台命令：`startRunJob()` 起一条 detached 命令（stdout/stderr 收尾巴、30 分钟到点整组杀掉、跑完回调 `onDone`）、`sweepRunJobs()` 启动时清上一轮的遗留（活着的杀掉、记录删掉）。记录 `logs/run/<id>.json`、全文 `logs/run/<id>.log`（ADR-013） |
 | `channel/tools/index.ts` | 53 | `createCoreTools` —— 组合下面 8 个 builder，并再导出 `isPass` / `monologueOpener` / `clip` / `resolveInWorkspace` / `CoreToolDeps`。**8 个工具**：`say` / `chats` / `read_history` / `remember` / `hire` / `route` / `run` / `file` |
-| `channel/tools/context.ts` | 157 | 工具的运行环境：`CoreToolDeps`、`text` / `actionOf` / `selfOf` / `selfOrError` / `mentionRoster` / `readState` / `postDeps`（投递依赖组装） |
+| `channel/tools/context.ts` | 142 | 工具的运行环境：`CoreToolDeps`、`text` / `actionOf` / `selfOf` / `selfOrError` / `mentionRoster` / `readState`。投递不在工具层组装：统一走 `wiring.flow`（`channel/post.ts`） |
 | `channel/tools/channel-choice.ts` | 99 | `defaultChannel`（显式 id 或**频道名** → 唤醒记录 `reply` → 群里最近活跃 → 私聊**报错**）/ `othersAwoken`（同一条消息还叫醒了谁）。频道名只在**自己所在的**频道里按全等找，重名报错列 id，不做模糊匹配（ADR-011） |
 | `channel/tools/recall.ts` | 59 | `recallText`（翻自己 / 团队记忆，出口脱敏）/ `renderLine`（历史一行） |
 | `channel/tools/guards.ts` | 106 | 安全闸与上限：`isPass` / `monologueOpener` / `clip` / `resolveInWorkspace`、`SAY_LIMIT` / `GROUP_SAY_LIMIT` / `sayLimitOf` / `MODEL_LIMIT` |
-| `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `route.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`route` 是助理专用：把频道里的一条消息在后台交给该看的人（`deliverExisting`），写 `noteOf: "route"` 的隐藏留痕；不转给我 / 自己 / 非成员 / 已被 @ 的人（ADR-063）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），带 `options`（2–6 个）时自动 @我（ADR-035）；`defaultChannel` 兜底落到私聊**直接报错**。`hire` 是三个动作：`create`（默认）/ `fire`（只移到 `members/.retired/`）/ `models`（ADR-033）；`create` 带 `team` 而那个团队还没有 README 时，回话里点明「团队频道还不存在」（ADR-040）。`file` 写 `teams/<slug>/README.md` 或 `members/<slug>/identity.md` 后调 `syncTeam` 重投影频道（旧团队与新团队各一次）。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
+| `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `route.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`route` 是助理专用：把频道里的一条消息在后台交给该看的人（`wiring.flow.forward`），写 `noteOf: "route"` 的隐藏留痕；不转给我 / 自己 / 非成员 / 已被 @ 的人（ADR-063）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），带 `options`（2–6 个）时自动 @我（ADR-035）；`defaultChannel` 兜底落到私聊**直接报错**。`hire` 是三个动作：`create`（默认）/ `fire`（只移到 `members/.retired/`）/ `models`（ADR-033）；`create` 带 `team` 而那个团队还没有 README 时，回话里点明「团队频道还不存在」（ADR-040）。`file` 写 `teams/<slug>/README.md` 或 `members/<slug>/identity.md` 后调 `syncTeam` 重投影频道（旧团队与新团队各一次）。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
 | `channel/unanswered.ts` | 82 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛） |
 | `plugin/manifest.ts` | 159 | `readPluginManifest` / `listPluginSlugs` —— `plugins/<slug>/plugin.md` 的头（`name` / `description` / `enabled`）+ 目录里有没有 `plugin.ts`（或 `plugin.js`）与 `client.js`；缺清单是一条**错误**不是异常。`writePluginEnabled` 只改 `enabled` 一行；`installPluginFiles` 把界面选中的整个文件夹（`{path, base64}[]`）校验后原样落盘、`removePluginFolder` 删整个目录（装 / 卸，见 CORE §13） |
 | `plugin/api.ts` | 141 | 插件的**五个动作** + 一个查询：`PluginApi`（`tool` / `prompt` / `route` / `on("message")` / `flow(policy)`，外加 `Type` / `text` / `log` / `workspace`（= 应用根，字段名沿用旧称）/ `logsRoot`（= 用户根的 `logs/`）/ `scope(channelId)`）+ `createPluginApi`，每个注册只往 `PluginSinks` 的一个数组里 push。`flow` 只收 `FlowPolicy`（`router` 排默认规则之前，`settle` 替换默认收尾），策略拿到的是只读事实，只能提议（ADR-080）。`scope` 只回答「这个频道的工作区根在哪」（ADR-036）；`logsRoot` 给审计账用（ADR-064），路径守卫在插件里 |
@@ -167,7 +179,14 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/interface/http/static-assets.ts` | 310 | 静态资源：`serveStatic`（SPA 回退）/ `loadAsset` / `etagFor` / `bodyFor`；按编码区分的 ETag + Last-Modified + `Vary` + br/gzip 协商 + `insideRoot` 越界判断 |
 | `src/interface/http/origin-guard.ts` | 130 | 来源闸：`hostAllowed` / `originAllowed` / `allowedHostsOf` / `selfOriginsOf`（Host 与 Origin 白名单，默认只给本机） |
 | `src/interface/http/sse.ts` | 447 | SSE 两半都在这里：编解码纯函数（`encodeEvent` / `retryFrame` / `keepAliveFrame`，唯一能脱离 socket 单测的部分）**和**有状态的 `createStreamHub`（连接集合、120ms 去抖、每连接每频道游标；`org` 推整份快照（带 `activity`），`create` 只推订阅者，`trace` 只推正在跑的那几轮并按指纹去重；一次提交后两分钟里每秒补推一次（`wakePulse` / `pulseNow`），运行状态不落盘也不等提交） |
-| `src/shell/assemble.ts` | 820 | `assembleCore()` —— 扫文件夹 → **装插件（工具并进同一个注册表、提示词段 / 消息钩子 / 分发收尾策略一起接）** → 开会话 → 绑名册 → 播种全员频道；接线只调一次 `wireChannel`，成员投影只调 `channel/membership.ts`（装配不再自己写业务规则）；`policies = () => plugins.flow` 是活引用（主接线与 `ownerSpeak` 各传一份，重装后下一次发布即换）；`syncTeamAndAnnounce`（重投影 + 叫新进频道的人报到，ADR-042）/ `noteInterrupted` + `harness.resume()`（重启打断的那一轮：留痕，由底座重放；backlog 用 `continue` 续跑，ADR-074 / ADR-075）/ `ownerSpeak`（可带 `wakeTo`）/ `makeAfterPost`（监听器取 `() => plugins.messages`，重装后听新的那一批）；`reloadPlugins`（ADR-026：整份重装插件 —— 同名换 `core-tools`、重装每个人的身份扩展）；`identityExtension` / `installIdentity` 是 async（身份段要 await 读模板）；`core-tools` 扩展上挂 `app/audit.ts` 的钩子和 `channel/turn/report.ts` 的 `afterRun` / `core.turn-report` 任务（会话 id → slug 的反查也在这里） |
+| `src/shell/assemble.ts` | 336 | `assembleCore()` —— **只做组合与顺序**：文案 → 插件 → 名册 / 模型 / 身份 → `wireChannel`（投递门面只有一份）→ 工具包 → 扫文件夹开会话 → 重启留痕 / backlog。具体动作在 `shell/wire/`（见下）；`reloadPlugins`（ADR-026）只做「重装插件 → 同名换 `core-tools` → 重装每个人的身份扩展」；`core-tools` 扩展上挂 `app/audit.ts` 的钩子和 `channel/turn/report.ts` 的 `afterRun` / `core.turn-report` 任务；`close` 幂等（库只由运行时关一次） |
+| `src/shell/wire/plugins.ts` | 95 | 插件接线：`loadPlugins` 的装 / 重装、听消息钩子（`Promise.allSettled`，一个插件坏不影响别的）、分发策略活引用、`channelScope`（私聊 → 那个人的 `workspace/`，团队 → 团队 `workspace/`） |
+| `src/shell/wire/conversations.ts` | 139 | 开会话：`open`（复用名册里的 / 新建；补模型、身份扩展、全员 / 团队 / 私聊成员；建完立刻 bind 名册）、`start`（启动扫描 + 名册落盘 + 全员频道 + 归档已删团队）、`rescan`（新人开会话并进频道） |
+| `src/shell/wire/identities.ts` | 72 | 身份段工厂：`extensionFor` / `install` / `promptOf`。扩展按名字解析，所以每人一份；提示词每次现读文件渲染（改 md 立刻生效） |
+| `src/shell/wire/models.ts` | 118 | 模型切换：`refreshModels`（settings.json 变了就地重装，ADR-025）/ `modelFor` / `modelChoices` / `setModel` / `applyModel` |
+| `src/shell/wire/directory.ts` | 91 | 名册落盘：`save`（逐字段比、路径式写）/ `now`（内存优先，缺人补齐）/ `merge`（启动与 rescan 共用）/ `bind`（新建会话立刻写映射） |
+| `src/shell/wire/teams.ts` | 108 | 团队频道的两句系统留痕：`sync`（重投影成员 + 叫新进的人报到，ADR-042）/ `announce` / `noteInterrupted`（重启打断的那一轮留痕，ADR-044） |
+| `src/shell/wire/speak.ts` | 76 | `createSpeak()` —— 我开口：读当下名册与显示名，调同一个 `flow.publish`；语义与 agent 的 `say` 完全一致 |
 | `src/shell/seed.ts` | 326 | 全部函数都收 `Layout`：`seedOwnerAssistant`（读 `seed/assistant/identity.md` 建到应用根 + 助理个人层技能，只建一次）/ `seedTextFiles`（`seed/text/*.md` 补进 `<appRoot>/text/`：缺文件整份拷，已有文件只追加新键，改过的句子不动）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `<appRoot>/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPlugins`（`seed/plugins/*` 整份缺失才拷）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `src/shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/`；`startTeamReconcile` 盯住 `teams/` 第一层，团队目录被删就立刻归档频道 |
 | `src/shell/main.ts` | 196 | 启动：`--app-root` / `--user-root` 两个根（`resolveLayout` 一处算完，ADR-030）；播种规矩 / 提示词模板 / 全员层技能（`seedRules` / `seedPromptTemplates` / `syncAllSkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在。`restartApp` / `resetAll` 共用 `stopCore`，关库后以退出码 75 退出让桌面壳重开 |

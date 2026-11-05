@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, type Conversation } from "../../src/core/runtime/index.ts";
 import { sweepRunJobs, startRunJob, type RunOutcome } from "../../src/core/channel/jobs.ts";
-import { postMessage } from "../../src/core/channel/post.ts";
+import { createChannelFlow } from "../../src/core/channel/post.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { SEED_TEXT } from "./catalog.ts";
@@ -127,13 +127,13 @@ describe("note 的唤醒", () => {
 		}, BACKGROUND_CONTEXT);
 		const submitted: string[] = [];
 		const state = async () => (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
-		const result = await postMessage(
-			{
-				harness: runtime.harness,
-				state: await state(),
-				conversationOf: async () =>
-					({ id: "1", submit: async (input: { content: string }) => void submitted.push(input.content) }) as unknown as Conversation,
-			},
+		const flow = createChannelFlow({
+			harness: runtime.harness,
+			conversationOf: async () =>
+				({ id: "1", submit: async (input: { content: string }) => void submitted.push(input.content) }) as unknown as Conversation,
+		});
+		const result = await flow.publish(
+			await state(),
 			{ channelId: "c1", from: OWNER, text: "@a 留痕", at: 2, kind: "note" },
 			BACKGROUND_CONTEXT,
 		);
@@ -141,13 +141,8 @@ describe("note 的唤醒", () => {
 		expect(submitted).toEqual([]);
 
 		// 同一句话，显式给了收件人：他就该被叫醒。
-		const woken = await postMessage(
-			{
-				harness: runtime.harness,
-				state: await state(),
-				conversationOf: async () =>
-					({ id: "1", submit: async (input: { content: string }) => void submitted.push(input.content) }) as unknown as Conversation,
-			},
+		const woken = await flow.publish(
+			await state(),
 			{ channelId: "c1", from: OWNER, text: "后台命令跑完了", at: 3, kind: "note", wakeTo: ["a"] },
 			BACKGROUND_CONTEXT,
 		);

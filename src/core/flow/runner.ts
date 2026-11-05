@@ -124,10 +124,7 @@ export type DeliverOptions = {
  * `requestId` 由「频道 + seq + slug」拼成：同一条消息重复投递会被底层去重，
  * 这是崩溃恢复下的至少一次语义想要的。
  */
-export async function deliver(
-	options: DeliverOptions,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<DeliverResult> {
+export async function deliver(options: DeliverOptions, context: Context): Promise<DeliverResult> {
 	const delivered: string[] = [];
 	const failed: string[] = [];
 	const skipped: string[] = [];
@@ -327,11 +324,7 @@ export type WakeResult =
  * 失败不抛：消息不会丢，对方下次醒来会看到未读摘要。但**没产出会留痕**（`note`），
  * 否则频道里一片空白，我看到的「我说了没人回」和「系统挂了」长得一模一样。
  */
-export async function wake(
-	deps: WakeDeps,
-	input: WakeInput,
-	context: Context = BACKGROUND_CONTEXT,
-): Promise<WakeResult> {
+export async function wake(deps: WakeDeps, input: WakeInput, context: Context): Promise<WakeResult> {
 	try {
 		const conversation = await deps.conversationOf(input.slug);
 		if (conversation === undefined) {

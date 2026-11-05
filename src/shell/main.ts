@@ -149,12 +149,16 @@ async function main(): Promise<void> {
 	let pending: ReturnType<typeof setTimeout> | undefined;
 	let exiting = false;
 
-	/** 服务、壳、库按依赖顺序收干净。重启与重置共用；重置要在这一步之后才删盘。 */
+	/**
+	 * 服务、库按依赖顺序收干净。重启与重置共用；重置要在这一步之后才删盘。
+	 *
+	 * 库只由运行时关（`shell` 与 `runtime` 拿的是同一个 harness）：两处都关是
+	 * 同一件事做两遍，第二次会在已经关掉的库上再退一遍。
+	 */
 	const stopCore = async (): Promise<void> => {
 		clearTimeout(pending);
 		stopWatching();
 		await server?.close();
-		await shell?.close();
 		await runtime?.close();
 	};
 
@@ -254,7 +258,6 @@ async function main(): Promise<void> {
 	} catch (error) {
 		console.error("[core] 启动失败：", error);
 		await server?.close().catch(() => undefined);
-		await shell?.close().catch(() => undefined);
 		await runtime?.close().catch(() => undefined);
 		process.exit(1);
 	}

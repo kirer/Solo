@@ -12,7 +12,7 @@ import { DIGEST_TEMPLATE, INTERRUPTED_TEMPLATE, REPLY_TEMPLATE, SEED_DELIVERY_PR
 function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDelivery>[0], "prompt">): string {
 	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT, catalog: SEED_TEXT });
 }
-import type { Harness } from "../../src/core/runtime/index.ts";
+import { BACKGROUND_CONTEXT, type Harness } from "../../src/core/runtime/index.ts";
 import { type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 
@@ -197,7 +197,7 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 					}
 					return merged;
 				},
-			});
+			}, BACKGROUND_CONTEXT);
 			bodies.push(String(result.merged?.[0]?.count ?? 0));
 		}
 
@@ -253,7 +253,7 @@ describe("我连发三条也只排一个唤醒", () => {
 				conversationOf: async () => conversation as never,
 				// 我插队与「连发合并」现在同一条路（`coalesceQueue`）。
 				coalesceQueue,
-			});
+			}, BACKGROUND_CONTEXT);
 			mergedCounts.push(result.merged?.[0]?.count ?? 0);
 		}
 

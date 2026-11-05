@@ -1,15 +1,15 @@
 /**
- * 工具的运行环境：装配给它们的那张依赖表，以及「我是谁 / 读状态 / 组装投递」。
+ * 工具的运行环境：装配给它们的那张依赖表，以及「我是谁 / 读状态」。
  *
- * 工具自己不读环境变量、不碰 `process`：需要什么全从这里拿。
+ * 工具自己不读环境变量、不碰 `process`：需要什么全从这里拿。投递不在这里组装 ——
+ * 接线只有一份（`wiring.flow`），工具只给「这次读到的频道快照」。
  */
 import { BACKGROUND_CONTEXT, type Context, type Harness } from "../../runtime/index.ts";
 import { readAllIdentities } from "../../agent/identity.ts";
 import { slugFor, type DirectoryState } from "../../agent/roster.ts";
-import { type PostDeps } from "../post.ts";
 import { mentionRosterOf, type MentionRoster } from "../mentions.ts";
 import type { ChannelWiring } from "../wiring.ts";
-import { ChannelDoc, emptyChannelState, type ChannelState, type Message } from "../types.ts";
+import { ChannelDoc, emptyChannelState, type ChannelState } from "../types.ts";
 import type { Layout } from "../../layout.ts";
 import { fill, type TextCatalog } from "../../md/catalog.ts";
 
@@ -32,8 +32,6 @@ export type CoreToolDeps = {
 	readonly saveDirectory: (change: (state: DirectoryState) => DirectoryState, context: Context) => Promise<void>;
 	/** 为某个 slug 建会话并绑定。缺省表示不支持热建（测试里可以不提供）。 */
 	readonly openAgent?: (slug: string, context: Context) => Promise<number>;
-	/** 一条消息落地之后的钩子（插件听消息）。 */
-	readonly afterPost?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 按团队文件重建它的频道成员（幂等）。 */
 	readonly syncTeam?: (team: string, context: Context) => Promise<void>;
 	/**
@@ -50,7 +48,7 @@ export type CoreToolDeps = {
 	/** 给某个人定模型（校验 → 改会话 → 记进 settings.json）。 */
 	readonly setModel?: (slug: string, ref: string, context: Context) => Promise<{ readonly model: string }>;
 	/**
-	 * 频道层接线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
+	 * 频道层接线：投递门面（`wiring.flow`）与会话在哪、答完怎么收尾。
 	 * 由 `channel/wiring.ts` 的 `wireChannel` 造一次，工具、我说话共用。
 	 */
 	readonly wiring: ChannelWiring;
@@ -140,21 +138,3 @@ export async function readState(deps: CoreToolDeps): Promise<ChannelState> {
 	return (await deps.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannelState();
 }
 
-/** 组装一次投递的全部依赖（`say` 共用）。接线只有一份（`wiring.ts`），这里只补本次的 state。 */
-export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Context): PostDeps {
-	return {
-		harness: deps.harness,
-		state,
-		// 回话规矩（`prompt/80-reply.md` 等）每轮现读：agent 叫醒 agent 也要贴。
-		promptDir: deps.wiring.promptDir,
-		...(deps.text === undefined ? {} : { text: deps.text }),
-		conversationOf: (slug: string) => deps.wiring.conversationOf(slug, context),
-		// 不给 `labelOf`：投递层的缺省就是恒等（显示名由 `deliver` 那一层自己算）。
-		// 插件听消息跟着发布走：补发、后台命令回执都算一条公开消息（Phase 1 起）。
-		...(deps.afterPost === undefined ? {} : { afterPublish: deps.afterPost }),
-		rememberWake: (slug, wake) => deps.wiring.rememberWake(slug, wake, context),
-		...(deps.wiring.wakeTogether === undefined ? {} : { wakeTogether: deps.wiring.wakeTogether }),
-		wakeOf: (slug: string) => deps.wiring.wakeOf(slug, context),
-		...(deps.wiring.policies === undefined ? {} : { policies: deps.wiring.policies }),
-	};
-}

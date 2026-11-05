@@ -15,6 +15,7 @@ import { ChannelDoc, OWNER, teamId, type ChannelState } from "../../src/core/cha
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { emptyDirectory } from "../../src/core/agent/roster.ts";
 import type { ChannelWiring } from "../../src/core/channel/wiring.ts";
+import { createChannelFlow } from "../../src/core/channel/post.ts";
 import { SEED_TEXT } from "./catalog.ts";
 import { sandboxPool } from "./support.ts";
 
@@ -77,18 +78,26 @@ async function setup(options: { mentionOther?: boolean } = {}) {
 			return {};
 		},
 	});
+	const conversationOf = async (key: string) =>
+		key === ME
+			? (conversation(ME_ID, ME) as never)
+			: key === OTHER
+				? (conversation(OTHER_ID, OTHER) as never)
+				: undefined;
 	const wiring: ChannelWiring = {
 		harness: runtime.harness,
 		promptDir: box.layout.promptRoot,
 		uploadsRoot: box.layout.uploadsRoot,
 		text: SEED_TEXT,
+		flow: createChannelFlow({
+			harness: runtime.harness,
+			promptDir: box.layout.promptRoot,
+			uploadsRoot: box.layout.uploadsRoot,
+			text: SEED_TEXT,
+			conversationOf,
+		}),
 		finishTurn: async () => undefined,
-		conversationOf: async (key: string) =>
-			key === ME
-				? (conversation(ME_ID, ME) as never)
-				: key === OTHER
-					? (conversation(OTHER_ID, OTHER) as never)
-					: undefined,
+		conversationOf,
 		rememberWake: async () => undefined,
 		wakeOf: async () => undefined,
 	};

@@ -12,10 +12,9 @@ import { assistantsOf, readAllIdentities } from "../../agent/identity.ts";
 import { wakeOf } from "../../agent/roster.ts";
 import { OWNER } from "../types.ts";
 import { appendToChannel } from "../write.ts";
-import { deliverExisting } from "../post.ts";
 import { resolveMention } from "../mentions.ts";
 import { defaultChannel } from "./channel-choice.ts";
-import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { fill } from "../../md/catalog.ts";
 
 export function createRouteTool(deps: CoreToolDeps) {
@@ -89,8 +88,8 @@ export function createRouteTool(deps: CoreToolDeps) {
 				ctx,
 			);
 
-			const delivery = await deliverExisting(
-				postDeps(deps, state, ctx),
+			const delivery = await deps.wiring.flow.forward(
+				state,
 				{ channelId: channel.id, seq, targets, routedBy: slug },
 				ctx,
 			);

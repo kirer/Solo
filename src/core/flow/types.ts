@@ -129,7 +129,7 @@ export type FinishTurnInfo = {
 	readonly wake: WakeRecord;
 };
 
-export type FinishTurn = (info: FinishTurnInfo, context?: Context) => Promise<void>;
+export type FinishTurn = (info: FinishTurnInfo, context: Context) => Promise<void>;
 
 /**
  * 一次结算。两种来源，一个入口：

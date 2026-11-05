@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT, type Conversation } from "../../src/core/runtime/index.ts";
 import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
-import { postMessage } from "../../src/core/channel/post.ts";
+import { createChannelFlow } from "../../src/core/channel/post.ts";
 import { sandboxPool } from "./support.ts";
 
 /**
@@ -61,18 +61,17 @@ async function setup(members: string[], wakeOnAll: string[]) {
 		wake?: false;
 		conversationOf?: (slug: string) => Promise<Conversation | undefined>;
 	}) =>
-		postMessage(
-			{
-				harness: runtime.harness,
-				state: await state(),
-				text: SEED_TEXT,
-				conversationOf:
-					input.conversationOf ??
-					(async (slug: string) => {
-						const known = fakes.get(slug);
-						return known === undefined ? undefined : known.conversation;
-					}),
-			},
+		createChannelFlow({
+			harness: runtime.harness,
+			text: SEED_TEXT,
+			conversationOf:
+				input.conversationOf ??
+				(async (slug: string) => {
+					const known = fakes.get(slug);
+					return known === undefined ? undefined : known.conversation;
+				}),
+		}).publish(
+			await state(),
 			{
 				channelId,
 				from: input.from,

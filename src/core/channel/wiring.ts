@@ -20,6 +20,7 @@ import {
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
 import { readAllIdentities } from "../agent/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
+import { createChannelFlow, type ChannelFlow } from "./post.ts";
 import type { FlowPolicy, Message } from "./types.ts";
 import type { Layout } from "../layout.ts";
 import type { TextCatalog } from "../md/catalog.ts";
@@ -32,8 +33,13 @@ export type ChannelWiring = {
 	readonly uploadsRoot: string;
 	/** 机械文案目录（`text/`）：投递头、留痕、摘要行从这里取。 */
 	readonly text?: TextCatalog;
-	/** 插件注册的分发 / 收尾策略（活引用：重装之后下一次发布用新的）。 */
-	readonly policies?: () => readonly FlowPolicy[];
+	/**
+	 * 投递门面：工具、我说话、系统留痕共用这一个。
+	 *
+	 * 接线（会话在哪、谁叫醒了他、模板在哪）只在这里接一次，调用方只给「这次读到的
+	 * 频道快照」和输入。
+	 */
+	readonly flow: ChannelFlow;
 	/** 一轮答完的收尾（ADR-099）。投递、我说话共用这一个。 */
 	readonly finishTurn: FinishTurn;
 	/** 会话键（就是 slug）→ 会话。 */
@@ -114,12 +120,25 @@ export function wireChannel(deps: {
 		...(deps.policies === undefined ? {} : { policies: deps.policies }),
 	});
 
+	const flow = createChannelFlow({
+		harness: deps.harness,
+		conversationOf,
+		rememberWake,
+		wakeTogether,
+		wakeOf: wakeOfOf,
+		uploadsRoot: deps.layout.uploadsRoot,
+		promptDir,
+		...(deps.text === undefined ? {} : { text: deps.text }),
+		...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),
+		...(deps.policies === undefined ? {} : { policies: deps.policies }),
+	});
+
 	return {
 		harness: deps.harness,
 		promptDir,
 		uploadsRoot: deps.layout.uploadsRoot,
 		...(deps.text === undefined ? {} : { text: deps.text }),
-		...(deps.policies === undefined ? {} : { policies: deps.policies }),
+		flow,
 		finishTurn,
 		conversationOf,
 		rememberWake,

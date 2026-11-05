@@ -2,10 +2,9 @@
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
 import { RUN_LIMIT_MS, startRunJob, type RunOutcome } from "../jobs.ts";
-import { postMessage } from "../post.ts";
 import { OWNER } from "../types.ts";
 import { defaultChannel } from "./channel-choice.ts";
-import { mentionRoster, postDeps, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
+import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { clip, MODEL_LIMIT } from "./guards.ts";
 import { readIdentity } from "../../agent/identity.ts";
 import { ensureDir } from "../../runtime/io.ts";
@@ -78,8 +77,8 @@ export function createRunTool(deps: CoreToolDeps) {
 					cwd,
 					onDone: async (outcome) => {
 						const fresh = await readState(deps);
-						await postMessage(
-							postDeps(deps, fresh, BACKGROUND_CONTEXT),
+						await deps.wiring.flow.publish(
+							fresh,
 							{
 								channelId: target.channelId,
 								from: OWNER,

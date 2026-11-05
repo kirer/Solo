@@ -9,11 +9,11 @@
  * 补发就是一次正常的 `publish`：落盘、算人、扇出、插件钩子走的是同一条主线；
  * `repost` 闸与 `publish` 闸都是进程级共享的（`flow/gates.ts`）。
  */
-import type { Context, Harness } from "../../runtime/index.ts";
-import { BACKGROUND_CONTEXT } from "../../runtime/index.ts";
+import type { Conversation, Harness } from "../../runtime/index.ts";
 import type { MentionRoster } from "../mentions.ts";
-import type { PostDeps } from "../post.ts";
+import type { ChannelFlowDeps } from "../post.ts";
 import type { FlowPolicy } from "../types.ts";
+import type { WakeRecord } from "./record.ts";
 import { createFlow } from "../../flow/index.ts";
 import { createMessageStore } from "../../flow/store.ts";
 import { createTurnRunner } from "../../flow/runner.ts";
@@ -28,17 +28,17 @@ export type { EntryReader, FinishTurn, FinishTurnInfo } from "../../flow/types.t
 export type TurnDeps = {
 	readonly harness: Harness;
 	readonly promptDir?: string | undefined;
-	readonly text?: PostDeps["text"];
+	readonly text?: ChannelFlowDeps["text"];
 	/** 名册：补发时 `@我` 要存成 `owner`，不能存字面 token（见 `ownerSpeak` 同一段说明）。 */
 	readonly roster?: () => Promise<MentionRoster>;
-	readonly conversationOf: PostDeps["conversationOf"];
-	readonly rememberWake?: PostDeps["rememberWake"];
+	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
+	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
 	/** 原子唤醒：补发叫醒别人时，wake 与入队同一个 commit（ADR-076）。 */
-	readonly wakeTogether?: PostDeps["wakeTogether"];
-	readonly labelOf?: PostDeps["labelOf"];
-	readonly wakeOf?: PostDeps["wakeOf"];
+	readonly wakeTogether?: ChannelFlowDeps["wakeTogether"];
+	readonly labelOf?: ChannelFlowDeps["labelOf"];
+	readonly wakeOf?: (slug: string) => Promise<WakeRecord | undefined>;
 	/** 补发也是一条公开消息：插件听消息要跟着走到这里（Phase 1 起）。 */
-	readonly afterPublish?: PostDeps["afterPublish"];
+	readonly afterPublish?: ChannelFlowDeps["afterPublish"];
 	/** 插件注册的分发 / 收尾策略：补发也走同一条链。 */
 	readonly policies?: () => readonly FlowPolicy[];
 };
@@ -67,7 +67,7 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
 		gate: sharedGates(),
 	});
-	return (info, context: Context = BACKGROUND_CONTEXT) =>
+	return (info, context) =>
 		flow.settle(
 			{
 				kind: "done",

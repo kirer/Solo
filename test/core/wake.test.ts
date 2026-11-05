@@ -8,6 +8,7 @@
  * 在「投递一条消息之后频道里会多什么」。
  */
 import { describe, expect, test } from "vitest";
+import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { deliver, wake, type WakeNote } from "../../src/core/flow/runner.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import type { ChannelState } from "../../src/core/channel/types.ts";
@@ -39,7 +40,7 @@ function delivery(
 		targets: ["林越"],
 		conversationOf: async () => fixtureOf.conversation as never,
 		...extra,
-	});
+	}, BACKGROUND_CONTEXT);
 }
 
 const wakeRecord = {
@@ -88,6 +89,7 @@ describe("记 wake 与入队原子（ADR-076）", () => {
 				},
 			},
 			wakeInput,
+			BACKGROUND_CONTEXT,
 		);
 		expect(result).toEqual({ status: "delivered", merged: 0 });
 		expect(order).toEqual(["commit", "wake:tx:林越", "admit:tx", "committed", "handle:9"]);
@@ -114,6 +116,7 @@ describe("记 wake 与入队原子（ADR-076）", () => {
 				},
 			},
 			wakeInput,
+			BACKGROUND_CONTEXT,
 		);
 		expect(result.status).toBe("failed");
 		expect(admitted).toBe(false);
@@ -136,6 +139,7 @@ describe("记 wake 与入队原子（ADR-076）", () => {
 				},
 			},
 			wakeInput,
+			BACKGROUND_CONTEXT,
 		);
 		expect(result.status).toBe("delivered");
 		expect(order).toEqual(["remember", "submit"]);

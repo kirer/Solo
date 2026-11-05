@@ -5,7 +5,7 @@ import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
-import { postMessage } from "../../src/core/channel/post.ts";
+import { createChannelFlow } from "../../src/core/channel/post.ts";
 import { appendNote } from "../../src/core/channel/write.ts";
 import { sandboxPool } from "./support.ts";
 
@@ -64,11 +64,10 @@ describe("频道写入的字节代价", () => {
 
 		for (let index = 0; index < 40; index += 1) {
 			const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
-			await postMessage(
-				{ harness: runtime.harness, state, conversationOf: async () => undefined },
-				{ channelId, from: "林越", text, at: 100 + index, wake: false },
-				BACKGROUND_CONTEXT,
-			);
+			await createChannelFlow({
+				harness: runtime.harness,
+				conversationOf: async () => undefined,
+			}).publish(state, { channelId, from: "林越", text, at: 100 + index, wake: false }, BACKGROUND_CONTEXT);
 		}
 
 		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
@@ -84,8 +83,11 @@ describe("频道写入的字节代价", () => {
 		// 触发点：`deltasSinceBase >= 64`。
 		for (let index = 0; index < 70; index += 1) {
 			const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
-			await postMessage(
-				{ harness: runtime.harness, state, conversationOf: async () => undefined },
+			await createChannelFlow({
+				harness: runtime.harness,
+				conversationOf: async () => undefined,
+			}).publish(
+				state,
 				{ channelId, from: "林越", text: `第 ${index} 条`, at: 200 + index, wake: false },
 				BACKGROUND_CONTEXT,
 			);
@@ -139,11 +141,10 @@ describe("系统留痕与普通消息走同一条写入路径（ADR-096）", () 
 		await appendNote({ harness: runtime.harness }, channelId, "留痕", 300, BACKGROUND_CONTEXT);
 
 		const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
-		await postMessage(
-			{ harness: runtime.harness, state, conversationOf: async () => undefined },
-			{ channelId, from: "林越", text: "正式回复", at: 301, wake: false },
-			BACKGROUND_CONTEXT,
-		);
+		await createChannelFlow({
+			harness: runtime.harness,
+			conversationOf: async () => undefined,
+		}).publish(state, { channelId, from: "林越", text: "正式回复", at: 301, wake: false }, BACKGROUND_CONTEXT);
 
 		const after = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
 		expect((after.messages[channelId] ?? []).map((item) => item.seq)).toEqual([1, 2]);
@@ -170,11 +171,10 @@ describe("并发写入", () => {
 		const { runtime, channelId } = await setup();
 		const send = async (from: string, text: string) => {
 			const state = (await runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
-			return postMessage(
-				{ harness: runtime.harness, state, conversationOf: async () => undefined },
-				{ channelId, from, text, at: 200, wake: false },
-				BACKGROUND_CONTEXT,
-			);
+			return createChannelFlow({
+				harness: runtime.harness,
+				conversationOf: async () => undefined,
+			}).publish(state, { channelId, from, text, at: 200, wake: false }, BACKGROUND_CONTEXT);
 		};
 		await Promise.all([send("林越", "并发一"), send("林越", "并发二"), send("林越", "并发三")]);
 
