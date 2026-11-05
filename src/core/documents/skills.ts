@@ -18,9 +18,9 @@
  * 这一条对成本很要紧：一个人攒 20 门手艺，常驻的是 20 行描述，不是 20 篇正文。
  */
 import { cp } from "node:fs/promises";
-import { agentDirOf, type AgentRoots } from "./identity.ts";
+import { agentDirOf, type AgentRoots } from "./person/identity.ts";
 import { basename, join } from "node:path";
-import { readDocFile, writeDocFile } from "../md/doc.ts";
+import { readDocFile, writeDocFile } from "./base/doc.ts";
 import { skillDirName } from "../naming.ts";
 import { byName, ensureDir, listDirSorted, mtimeOrUndefined } from "../runtime/io.ts";
 

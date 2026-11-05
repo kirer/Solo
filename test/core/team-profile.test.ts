@@ -12,8 +12,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createTeams } from "../../src/app/teams.ts";
 import type { CoreServices } from "../../src/app/types.ts";
-import { writeTeam } from "../../src/core/team/doc.ts";
-import { appendTeamMemory } from "../../src/core/team/memory.ts";
+import { writeTeam } from "../../src/core/documents/team/doc.ts";
+import { appendTeamMemory } from "../../src/core/documents/team/memory.ts";
 import { resolveLayout } from "../../src/core/layout.ts";
 
 let root = "";

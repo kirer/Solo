@@ -9,15 +9,22 @@
  * 一定长度后，模型对中段的内容注意力最差）。所以提示词里只放**目录**（每条的
  * 小节标题），要用哪一条由 agent 自己 `read_history(scope=memory)`。
  *
- * 切段、长度上限、密钥形状、目录预算这些**格式**的事在 `md/memory.ts` —— 团队记忆
+ * 切段、长度上限、密钥形状、目录预算这些**格式**的事在 `../base/memory.ts` —— 团队记忆
  * （`teams/<slug>/memory.md`）用的是同一份格式，不该由这个文件垄断。
  * 这里只剩「一个人怎么读写自己的记忆」：追加 / 整篇重写 / 留痕 / 时间线。
  */
 import { join } from "node:path";
-import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
+import { readTextOrUndefined } from "../../runtime/io.ts";
 import { appendJournal } from "./journal.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
-import { entryProblem, problemText, sectionsOf } from "../md/memory.ts";
+import { fill, type TextCatalog } from "../base/catalog.ts";
+import {
+	alreadyRecorded,
+	appendOrExtendLastSection,
+	entryProblem,
+	problemText,
+	sectionsOf,
+} from "../base/memory.ts";
+import { createMemoryStore, type MemoryUpdate } from "../base/memory-store.ts";
 
 export const MEMORY_FILE = "memory.md";
 
@@ -30,37 +37,18 @@ export type MemoryWrite = {
 	readonly source: string;
 };
 
-/** 读全文；不存在时返回 undefined（**不**自动建文件 —— 没记过就是没记过）。 */
-export async function readMemory(agentDir: string): Promise<string | undefined> {
-	return readTextOrUndefined(join(agentDir, MEMORY_FILE));
-}
-
-/** 规范化：去首尾空白 + 折叠内部空白。去重只关心「说的是不是同一件事」，不关心怎么换行。 */
-function normalized(text: string): string {
-	return text.trim().replace(/\s+/g, " ");
-}
-
-/**
- * 这条内容是不是已经记过了。
- *
- * 既比整段（一条记忆一个正文）也比每一行（同一天的几条并在一个小节里）。
- * 重复记忆的代价不是磁盘，是**挤掉一条真正不同的**：目录只有那么点预算。
- */
-function alreadyRecorded(source: string, text: string): boolean {
-	const target = normalized(text);
-	return sectionsOf(source).some(
-		(section) =>
-			normalized(section.body) === target || section.body.split("\n").some((line) => normalized(line) === target),
-	);
-}
-
 /**
  * 写操作串成一条链。
  *
  * 读 → 拼 → 写 不是原子的：两个工具调用并发跑，后写的那个会用旧的 `existing` 覆盖
  * 掉前一个刚追加的条目（丢了，而且没有任何迹象）。链只保证顺序，不保证跨进程。
  */
-const serialized = createSerialGate();
+const store = createMemoryStore();
+
+/** 读全文；不存在时返回 undefined（**不**自动建文件 —— 没记过就是没记过）。 */
+export async function readMemory(agentDir: string): Promise<string | undefined> {
+	return store.read(join(agentDir, MEMORY_FILE));
+}
 
 /**
  * 追加一条（带日期小节）。`by` 是「谁写的」，只进 journal，不进正文。
@@ -75,27 +63,32 @@ export async function appendMemory(
 	by = "agent",
 	catalog?: TextCatalog,
 ): Promise<MemoryWrite> {
-	return serialized(async () => {
-		const before = (await readMemory(agentDir)) ?? `${fill(catalog, "org.memory.header")}\n`;
-		// 底线在写入这一层强制执行，而不是只靠调用方自觉：`remember` 是模型写的，
-		// 它随时会用别的方式写文件；只要落盘的路只有这一条，规矩就守得住。
-		const problem = entryProblem(text);
-		if (problem !== undefined) return { changed: false, message: problemText(problem, text, catalog), source: before };
-		if (alreadyRecorded(before, text)) {
-			return { changed: false, message: fill(catalog, "org.memory.duplicate"), source: before };
-		}
-		const body = text.trim();
-		const stamp = at.toISOString().slice(0, 10);
-		const sections = sectionsOf(before);
-		const last = sections[sections.length - 1];
-		const next =
-			last !== undefined && last.heading === stamp
-				? `${before.trimEnd()}\n${body}\n`
-				: `${before.trimEnd()}\n\n## ${stamp}\n${body}\n`;
-		await writeTextAt(join(agentDir, MEMORY_FILE), next);
-		await appendJournal(agentDir, { at: at.toISOString(), by, op: "append", before, after: next });
-		return { changed: true, message: fill(catalog, "org.memory.saved"), source: next };
-	});
+	const fallback = `${fill(catalog, "org.memory.header")}\n`;
+	return store.update(
+		join(agentDir, MEMORY_FILE),
+		(beforeSource): MemoryUpdate<MemoryWrite> => {
+			const before = beforeSource ?? fallback;
+			// 底线在写入这一层强制执行，而不是只靠调用方自觉：`remember` 是模型写的，
+			// 它随时会用别的方式写文件；只要落盘的路只有这一条，规矩就守得住。
+			const problem = entryProblem(text);
+			if (problem !== undefined) {
+				return {
+					next: undefined,
+					result: { changed: false, message: problemText(problem, text, catalog), source: before },
+				};
+			}
+			if (alreadyRecorded(before, text)) {
+				return {
+					next: undefined,
+					result: { changed: false, message: fill(catalog, "org.memory.duplicate"), source: before },
+				};
+			}
+			const next = appendOrExtendLastSection(before, at.toISOString().slice(0, 10), text);
+			return { next, result: { changed: true, message: fill(catalog, "org.memory.saved"), source: next } };
+		},
+		({ before, after }) =>
+			appendJournal(agentDir, { at: at.toISOString(), by, op: "append", before: before ?? fallback, after }),
+	);
 }
 
 /** 整篇替换（agent 想重写自己的记忆时用）。 */
@@ -105,13 +98,15 @@ export async function writeMemory(
 	by = "agent",
 	catalog?: TextCatalog,
 ): Promise<MemoryWrite> {
-	return serialized(async () => {
-		const before = (await readMemory(agentDir)) ?? "";
-		const next = `${source.trimEnd()}\n`;
-		await writeTextAt(join(agentDir, MEMORY_FILE), next);
-		await appendJournal(agentDir, { at: new Date().toISOString(), by, op: "replace", before, after: next });
-		return { changed: true, message: fill(catalog, "org.memory.rewritten"), source: next };
-	});
+	return store.update(
+		join(agentDir, MEMORY_FILE),
+		() => {
+			const next = `${source.trimEnd()}\n`;
+			return { next, result: { changed: true, message: fill(catalog, "org.memory.rewritten"), source: next } };
+		},
+		({ before, after }) =>
+			appendJournal(agentDir, { at: new Date().toISOString(), by, op: "replace", before: before ?? "", after }),
+	);
 }
 
 /* ── 时间线：这条记忆是什么时候、被谁、怎么进来的 ─────────────────────── */

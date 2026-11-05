@@ -3,7 +3,7 @@
  *
  * 审计发现：`seed/skills/工作规矩/SKILL.md` 5766 字节 vs `workspace/skills/工作规矩/SKILL.md`
  * 4729 字节 —— 1037 字节的规则修正从没生效；`seed/skills/记忆整理/` 干脆没被拷过去，而
- * `team/memory.ts` 让 agent `skills(action=read, name="记忆整理")`。所以同步改成每次启动都跑，
+ * `documents/team/memory.ts` 让 agent `skills(action=read, name="记忆整理")`。所以同步改成每次启动都跑，
  * 用 `.seed-manifest.json` 里记的 hash 分辨「用户改过没有」。
  */
 import { createHash } from "node:crypto";

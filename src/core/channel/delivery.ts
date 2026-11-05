@@ -12,11 +12,11 @@
 import { OWNER, chatKind, type Channel, type ChannelState, type Message } from "./types.ts";
 import { deliveryTargets } from "./mentions.ts";
 import { channelsOf, tail, unreadCount } from "./rules.ts";
-import { loadTemplates, type PromptTemplate } from "../md/prompt.ts";
+import { loadTemplates, type PromptTemplate } from "../documents/base/template.ts";
 import { createFsx } from "../fsx.ts";
-import { renderSlots, toolSlots, type SlotValue } from "../md/text.ts";
-import { oneLine } from "../md/oneline.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
+import { renderSlots, toolSlots, type SlotValue } from "../documents/base/slots.ts";
+import { oneLine } from "../documents/base/oneline.ts";
+import { fill, type TextCatalog } from "../documents/base/catalog.ts";
 
 /**
  * 回话规矩的一个条件片段：正文 + 模板自己写的兜底句。

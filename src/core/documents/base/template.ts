@@ -22,11 +22,11 @@
  * ---
  * ```
  */
-import type { Fsx } from "../fsx.ts";
+import type { Fsx } from "../../fsx.ts";
 import { parseDoc } from "./doc.ts";
-import { hasSlot, renderSlots, type SlotIssue, type Slots } from "./text.ts";
+import { hasSlot, renderSlots, type SlotIssue, type Slots } from "./slots.ts";
 
-export type { SlotIssue } from "./text.ts";
+export type { SlotIssue } from "./slots.ts";
 
 /** 模板目录（相对工作区根）。播种机制把它从 `seed/prompt/` 拷过来。 */
 export const PROMPT_DIR = "prompt";

@@ -12,8 +12,8 @@
  * - 问题里区分 `unknown`（模板写了、装配没给 → 改代码）与 `unset`（给了、现在为空 → 事实）。
  */
 import { describe, expect, it } from "vitest";
-import { parseTemplate, renderPrompt } from "../../src/core/md/prompt.ts";
-import { hasSlot, slotText, type Slots } from "../../src/core/md/text.ts";
+import { parseTemplate, renderPrompt } from "../../src/core/documents/base/template.ts";
+import { hasSlot, slotText, type Slots } from "../../src/core/documents/base/slots.ts";
 
 /** 契约里写死的那个字面量。测试钉字面量，不钉符号名（符号改过名）。 */
 const NOT_SET = "（未设置）";

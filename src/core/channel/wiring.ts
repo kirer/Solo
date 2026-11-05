@@ -1,7 +1,7 @@
 /**
  * 频道层要的那几根线：会话在哪、谁叫醒了他、模板在哪、答完怎么收尾。
  *
- * 这些东西以前在 `shell/assemble.ts`、`tools/context.ts`、`team/doc.ts`、
+ * 这些东西以前在 `shell/assemble.ts`、`tools/context.ts`、`documents/team/doc.ts`、
  * `ownerSpeak` 里各接一遍 —— 同一份 `directoryWake` 造了三次、收尾器造了两次，
  * 改一处就要记得改四处。现在只在这里接一次，谁要谁拿 `ChannelWiring`。
  *
@@ -16,14 +16,14 @@ import {
 	emptyDirectory,
 	wakeOf,
 	type WakeRecord,
-} from "../agent/roster.ts";
+} from "./roster.ts";
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
-import { readAllIdentities } from "../agent/identity.ts";
+import { readAllIdentities } from "../documents/person/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
 import { createChannelFlow, type ChannelFlow } from "./post.ts";
 import type { FlowPolicy, Message } from "./types.ts";
 import type { Layout } from "../layout.ts";
-import type { TextCatalog } from "../md/catalog.ts";
+import type { TextCatalog } from "../documents/base/catalog.ts";
 
 export type ChannelWiring = {
 	readonly harness: Harness;

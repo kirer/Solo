@@ -19,8 +19,8 @@
  *
  * 文件按名字排序读 —— 文案不影响确定性，但重复键必须能复现地报出来。
  */
-import type { Fsx } from "../fsx.ts";
-import { renderSlots, type Slots } from "./text.ts";
+import type { Fsx } from "../../fsx.ts";
+import { renderSlots, type Slots } from "./slots.ts";
 
 /** 一份文案目录。键是 `say.description` 这种点分名字。 */
 export type TextCatalog = {

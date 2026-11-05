@@ -19,8 +19,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SAMPLE_SLOTS } from "../../scripts/prompt-fixture.ts";
 import { createFsx } from "../../src/core/fsx.ts";
-import { loadTemplates, parseTemplate, renderPrompt, renderPromptDir, type PromptTemplate } from "../../src/core/md/prompt.ts";
-import { UNSET } from "../../src/core/md/text.ts";
+import { loadTemplates, parseTemplate, renderPrompt, renderPromptDir, type PromptTemplate } from "../../src/core/documents/base/template.ts";
+import { UNSET } from "../../src/core/documents/base/slots.ts";
 
 const SEED = fileURLToPath(new URL("../../seed/", import.meta.url));
 const CONTRACT = fileURLToPath(new URL("../../docs/design/SEED-CONTRACT.md", import.meta.url));

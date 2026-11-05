@@ -9,7 +9,7 @@ import {
 	writeAllSkill,
 	writeSkill,
 	type SkillRoots,
-} from "../../src/core/agent/skills.ts";
+} from "../../src/core/documents/skills.ts";
 
 /** 用户根：`members/` 与 `skills/` 都在它下面。 */
 let root = "";

@@ -5,13 +5,13 @@
  * 接线只有一份（`wiring.flow`），工具只给「这次读到的频道快照」。
  */
 import { BACKGROUND_CONTEXT, type Context, type Harness } from "../../runtime/index.ts";
-import { readAllIdentities } from "../../agent/identity.ts";
-import { slugFor, type DirectoryState } from "../../agent/roster.ts";
+import { readAllIdentities } from "../../documents/person/identity.ts";
+import { slugFor, type DirectoryState } from "../roster.ts";
 import { mentionRosterOf, type MentionRoster } from "../mentions.ts";
 import type { ChannelWiring } from "../wiring.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState } from "../types.ts";
 import type { Layout } from "../../layout.ts";
-import { fill, type TextCatalog } from "../../md/catalog.ts";
+import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
 
 /** 工具运行所需的一切。全部由外壳在启动时装配，工具自己不读环境变量。 */
 export type CoreToolDeps = {

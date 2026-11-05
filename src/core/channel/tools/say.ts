@@ -5,8 +5,8 @@ import { parseMentions, resolveMention } from "../mentions.ts";
 import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel, othersAwoken } from "./channel-choice.ts";
 import { isPass, monologueOpener, sayLimitOf } from "./guards.ts";
-import { fill } from "../../md/catalog.ts";
-import type { Slots } from "../../md/text.ts";
+import { fill } from "../../documents/base/catalog.ts";
+import type { Slots } from "../../documents/base/slots.ts";
 
 export function createSayTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Slots = {}): string => fill(deps.text, key, slots);

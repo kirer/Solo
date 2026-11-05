@@ -5,7 +5,7 @@
  * 而服务起得来、测试全绿，只有行为慢慢变差。实测踩过两次，都是手工去补的。
  */
 import { describe, expect, it } from "vitest";
-import { appendMissingKeys, parseCatalog } from "../../src/core/md/catalog.ts";
+import { appendMissingKeys, parseCatalog } from "../../src/core/documents/base/catalog.ts";
 
 const SEED = `# 文案
 

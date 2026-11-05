@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { archiveGoneTeams, createGroup, ensureOwnerDm, syncTeamChannel } from "../../src/core/channel/membership.ts";
 import { ChannelDoc, OWNER, dmId, type ChannelState } from "../../src/core/channel/types.ts";
-import { writeTeam } from "../../src/core/team/doc.ts";
+import { writeTeam } from "../../src/core/documents/team/doc.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { serveCore } from "../../src/shell/serve.ts";
 import { sandboxPool } from "./support.ts";

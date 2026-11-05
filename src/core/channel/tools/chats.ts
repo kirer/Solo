@@ -4,11 +4,11 @@ import { digestRows } from "../delivery.ts";
 import { ChannelDoc, chatKind, type ChannelState } from "../types.ts";
 import { channelsOf, markRead, unreadCount } from "../rules.ts";
 import { createGroup } from "../membership.ts";
-import { oneLine } from "../../md/oneline.ts";
+import { oneLine } from "../../documents/base/oneline.ts";
 import { actionOf, selfOrError, readState, text, type CoreToolDeps } from "./context.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { renderLine } from "./recall.ts";
-import { fill } from "../../md/catalog.ts";
+import { fill } from "../../documents/base/catalog.ts";
 
 export function createChatsTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>

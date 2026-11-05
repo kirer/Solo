@@ -25,7 +25,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OWNER, dmId, teamId } from "../src/core/channel/types.ts";
-import { listTeams } from "../src/core/team/doc.ts";
+import { listTeams } from "../src/core/documents/team/doc.ts";
 import {
 	WAIT_MS,
 	aggregateRounds,

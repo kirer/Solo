@@ -13,7 +13,7 @@
  * 写的是「queued and placed submissions」），`unanswered` 是已结算状态，扫不到。
  */
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
+import { fill, type TextCatalog } from "../documents/base/catalog.ts";
 
 /** 一次提交结算时的形态。只关心三件事：成没成（`answer` 是什么）、为什么没成、细节。 */
 type SettledLike = {

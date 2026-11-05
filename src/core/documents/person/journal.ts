@@ -12,7 +12,7 @@
  * 而且并发写数组会互相覆盖。
  */
 import { join } from "node:path";
-import { appendJsonLine } from "../runtime/io.ts";
+import { appendJsonLine } from "../../runtime/io.ts";
 
 export const JOURNAL_FILE = ".memory-journal.jsonl";
 

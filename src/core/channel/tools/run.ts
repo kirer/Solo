@@ -6,10 +6,10 @@ import { OWNER } from "../types.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { clip, MODEL_LIMIT } from "./guards.ts";
-import { readIdentity } from "../../agent/identity.ts";
+import { readIdentity } from "../../documents/person/identity.ts";
 import { ensureDir } from "../../runtime/io.ts";
 import { workspaceOf } from "../../layout.ts";
-import { fill, type TextCatalog } from "../../md/catalog.ts";
+import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
 
 /**
  * 洗掉终端控制序列（颜色、光标）。命令输出里的 `\u001b[90m` 进了提示词和界面就是

@@ -9,7 +9,7 @@ import {
 	teamMemoryPath,
 	teamMemorySections,
 	readTeamMemory,
-} from "../../src/core/team/memory.ts";
+} from "../../src/core/documents/team/memory.ts";
 
 let teams = "";
 

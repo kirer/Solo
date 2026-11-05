@@ -8,7 +8,7 @@
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createAgent } from "../../src/core/agent/identity.ts";
+import { createAgent } from "../../src/core/documents/person/identity.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "../../src/shell/seed.ts";
 import { existsAt } from "../../src/core/runtime/io.ts";
 import { sandboxPool } from "./support.ts";

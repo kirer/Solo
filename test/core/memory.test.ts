@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SEED_TEXT } from "./catalog.ts";
-import { appendMemory, readMemory, writeMemory } from "../../src/core/agent/memory.ts";
+import { appendMemory, readMemory, writeMemory } from "../../src/core/documents/person/memory.ts";
 import {
 	DIGEST_LIMIT,
 	MEMORY_LIMITS,
@@ -11,7 +11,7 @@ import {
 	memoryDigest,
 	problemText,
 	sectionsOf,
-} from "../../src/core/md/memory.ts";
+} from "../../src/core/documents/base/memory.ts";
 
 let root = "";
 

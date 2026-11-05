@@ -5,14 +5,14 @@
  * 两者共用的显示名只有 `labelIn` 一处。
  */
 import { join } from "node:path";
-import { OWNER_SLUG, readIdentity } from "../core/agent/identity.ts";
+import { OWNER_SLUG, readIdentity } from "../core/documents/person/identity.ts";
 import { isAssistantDir } from "../core/layout.ts";
 import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
-import { appendMemory, memoryTimeline, readMemory, writeMemory } from "../core/agent/memory.ts";
-import { removeSection, sectionsOf } from "../core/md/memory.ts";
-import { labelIn, type DirectoryState } from "../core/agent/roster.ts";
-import { redact } from "../core/agent/secrets.ts";
-import { listSkills } from "../core/agent/skills.ts";
+import { appendMemory, memoryTimeline, readMemory, writeMemory } from "../core/documents/person/memory.ts";
+import { removeSection, sectionsOf } from "../core/documents/base/memory.ts";
+import { labelIn, type DirectoryState } from "../core/channel/roster.ts";
+import { redact } from "../core/secrets.ts";
+import { listSkills } from "../core/documents/skills.ts";
 import type { ViewPersonMemory, ViewPersonProfile } from "../view/dto.ts";
 import { memoryEntries } from "./project.ts";
 import { AppError } from "./errors.ts";

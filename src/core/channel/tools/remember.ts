@@ -1,14 +1,14 @@
 /** `remember`：记一条经验（个人记忆 / 团队记忆）。 */
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { readIdentity } from "../../agent/identity.ts";
-import { appendMemory } from "../../agent/memory.ts";
-import { redact } from "../../agent/secrets.ts";
-import { assertTeamSlug } from "../../team/doc.ts";
-import { appendTeamMemory } from "../../team/memory.ts";
+import { readIdentity } from "../../documents/person/identity.ts";
+import { appendMemory } from "../../documents/person/memory.ts";
+import { redact } from "../../secrets.ts";
+import { assertTeamSlug } from "../../documents/team/doc.ts";
+import { appendTeamMemory } from "../../documents/team/memory.ts";
 import { isAssistantDir } from "../../layout.ts";
 import { selfOrError, text, type CoreToolDeps } from "./context.ts";
-import { fill } from "../../md/catalog.ts";
+import { fill } from "../../documents/base/catalog.ts";
 
 export function createRememberTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>

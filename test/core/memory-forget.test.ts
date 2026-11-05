@@ -5,7 +5,7 @@
  * 在**删末节**时留下一段重复正文 —— 两种都是静默的数据损坏，断言「条数对了」查不出来。
  */
 import { describe, expect, it } from "vitest";
-import { removeSection, sectionsOf } from "../../src/core/md/memory.ts";
+import { removeSection, sectionsOf } from "../../src/core/documents/base/memory.ts";
 
 const DOC = ["# 记忆", "", "## A", "甲", "", "## B", "乙一", "乙二", "", "## C", "丙", ""].join("\n");
 

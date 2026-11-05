@@ -7,7 +7,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { parseCatalog, type TextCatalog } from "../../src/core/md/catalog.ts";
+import { parseCatalog, type TextCatalog } from "../../src/core/documents/base/catalog.ts";
 
 const DIR = fileURLToPath(new URL("../../seed/text/", import.meta.url));
 

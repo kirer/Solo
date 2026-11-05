@@ -24,8 +24,8 @@ import { deliveryText, digestNotice, digestRows, mergedNotice, renderDelivery, t
 import { planAttachments } from "../channel/attachments.ts";
 import type { Channel, Message } from "../channel/types.ts";
 import type { WakeRecord, WakeTarget } from "../channel/turn/record.ts";
-import type { TextCatalog } from "../md/catalog.ts";
-import { fill } from "../md/catalog.ts";
+import type { TextCatalog } from "../documents/base/catalog.ts";
+import { fill } from "../documents/base/catalog.ts";
 import { appendNote } from "../channel/write.ts";
 import { coalesceQueue, liveConversations } from "../channel/queue.ts";
 import type { DeliverIssue, DeliverResult } from "./types.ts";

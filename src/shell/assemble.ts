@@ -30,8 +30,8 @@ import type {
 	ToolRegistration,
 } from "../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT, defineExtension, type Context } from "../core/runtime/index.ts";
-import { readAllIdentities } from "../core/agent/identity.ts";
-import { DirectoryDoc, emptyDirectory, labelIn, type DirectoryState } from "../core/agent/roster.ts";
+import { readAllIdentities } from "../core/documents/person/identity.ts";
+import { DirectoryDoc, emptyDirectory, labelIn, type DirectoryState } from "../core/channel/roster.ts";
 import { createCoreTools, type CoreToolDeps } from "../core/channel/tools/index.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channel/types.ts";
 import { wireChannel } from "../core/channel/wiring.ts";
@@ -40,7 +40,7 @@ import { ensureOwnerDm, type MembershipDeps } from "../core/channel/membership.t
 import { auditHooks } from "../app/audit.ts";
 import type { CoreServices } from "../app/types.ts";
 import type { Layout } from "../core/layout.ts";
-import { loadTextCatalog } from "../core/md/catalog.ts";
+import { loadTextCatalog } from "../core/documents/base/catalog.ts";
 import { createFsx } from "../core/fsx.ts";
 import { createConversationWire } from "./wire/conversations.ts";
 import { createDirectoryWire } from "./wire/directory.ts";

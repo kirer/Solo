@@ -1,14 +1,14 @@
 /** `file`：读 / 写工作区里的一个文件。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { assistantsOf, readAllIdentities, readIdentity } from "../../agent/identity.ts";
-import { redact } from "../../agent/secrets.ts";
-import { parseDoc, frontOf } from "../../md/doc.ts";
+import { assistantsOf, readAllIdentities, readIdentity } from "../../documents/person/identity.ts";
+import { redact } from "../../secrets.ts";
+import { parseDoc, frontOf } from "../../documents/base/doc.ts";
 import { ensureDir, readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
 import { teamWorkspace } from "../../layout.ts";
-import { createTeamProblem, readTeam, teamSlugOfReadmePath } from "../../team/doc.ts";
+import { createTeamProblem, readTeam, teamSlugOfReadmePath } from "../../documents/team/doc.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
 import { resolveInRoots } from "./guards.ts";
-import { fill } from "../../md/catalog.ts";
+import { fill } from "../../documents/base/catalog.ts";
 
 /** `members/<slug>/identity.md` / `assistant/<slug>/identity.md` → slug。别的路径返回 undefined。 */
 function agentSlugOfIdentityPath(path: string): string | undefined {

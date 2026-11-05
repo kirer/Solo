@@ -8,7 +8,7 @@
  * 六条规定（前三条规定是原本就有的，后三条是分层重构后加的）：
  *
  * 1. `src/core/runtime/` 之外，任何文件不得 import 那四个包。
- * 2. 内核（`agent|channel|team|runtime`）不得反向 import 外壳（`shell`），
+ * 2. 内核（`documents|channel|flow|runtime`）不得反向 import 外壳（`shell`），
  *    也不得 import 用例层（`app`）、投影层（`view`）、接口层（`interface`）。
  *    依赖方向只有一条：`shell → interface → {app, view} → 领域 → runtime`。
  * 3. 服务端路由必须有界面消费者（有界面看不见的接口就是死接口）。
@@ -18,7 +18,7 @@
  * 5. `src/app/` 是**用例层**：不许 import `node:http` —— 传输是接口层的事，
  *    用例要能脱离网络被测试（现在 `test/core/` 里就是这样直接调它们的）。
  * 6. `src/interface/` 是**唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/`
- *    说话：不许 import `agent|channel|team|runtime` 的内部实现，否则业务会再次长回 handler 里。
+ *    说话：不许 import `documents|channel|flow|runtime` 的内部实现，否则业务会再次长回 handler 里。
  * 7. `desktop/src/` 是**桌面壳**：不许 import `src/core/` 与 `ui/app/` —— 它与内核之间只有
  *    进程边界（spawn 后端、认 `[core] http://…` 那一行），与界面之间只有 HTTP。
  */
@@ -91,8 +91,8 @@ function importSpecifiers(source) {
 const LAYER_RULES = [
 	// 域的各目录：不许往上够到外壳、接口、用例、投影。
 	{
-		dirs: ["src/core/agent/", "src/core/channel/", "src/core/flow/", "src/core/team/", "src/core/runtime/"],
-		layer: "领域（agent/channel/flow/team/work/runtime）",
+		dirs: ["src/core/documents/", "src/core/channel/", "src/core/flow/", "src/core/runtime/"],
+		layer: "领域（documents/channel/flow/runtime）",
 		deny: [
 			{ match: /\/shell\//, reason: "内核不得 import 外壳（shell）" },
 			{ match: /\/interface\//, reason: "内核不得 import 接口层（interface）" },
@@ -100,19 +100,39 @@ const LAYER_RULES = [
 			{ match: /\/view\//, reason: "内核不得 import 契约层（view）" },
 		],
 	},
-	// 文档流水线：markdown 解析、插槽渲染、提示词排版。它只有机械 IO，不碰任何业务。
+	// 文档基础：markdown 解析、记忆格式、插槽渲染、文案目录、提示词模板。只有机械 IO，不碰业务。
 	{
-		dirs: ["src/core/md/"],
-		layer: "文档（md）",
+		dirs: ["src/core/documents/base/"],
+		layer: "文档基础（documents/base）",
 		deny: [
-			{ match: /\/agent\//, reason: "文档层不许 import 领域实现（agent）" },
-			{ match: /\/channel\//, reason: "文档层不许 import 领域实现（channel）" },
-			{ match: /\/flow\//, reason: "文档层不许 import 消息生命周期（flow）" },
-			{ match: /\/team\//, reason: "文档层不许 import 领域实现（team）" },
-			{ match: /\/app\//, reason: "文档层不许 import 用例层（app）" },
-			{ match: /\/view\//, reason: "文档层不许 import 契约层（view）" },
-			{ match: /\/interface\//, reason: "文档层不许 import 接口层（interface）" },
-			{ match: /\/shell\//, reason: "文档层不许 import 外壳（shell）" },
+			{ match: /\/person\//, reason: "文档基础不许 import 实现（person）—— 实现依赖基础，不是反过来" },
+			{ match: /\/team\//, reason: "文档基础不许 import 实现（team）—— 实现依赖基础，不是反过来" },
+			{ match: /\/skills\.ts$/, reason: "文档基础不许 import 实现（skills）" },
+			{ match: /\/rules\.ts$/, reason: "文档基础不许 import 实现（rules）" },
+			{ match: /\/prompt\.ts$/, reason: "文档基础不许 import 装配（prompt）" },
+			{ match: /\/channel\//, reason: "文档基础不许 import 领域实现（channel）" },
+			{ match: /\/flow\//, reason: "文档基础不许 import 消息生命周期（flow）" },
+			{ match: /\/plugin\//, reason: "文档基础不许 import 插件（plugin）" },
+			{ match: /\/app\//, reason: "文档基础不许 import 用例层（app）" },
+			{ match: /\/view\//, reason: "文档基础不许 import 契约层（view）" },
+			{ match: /\/interface\//, reason: "文档基础不许 import 接口层（interface）" },
+			{ match: /\/shell\//, reason: "文档基础不许 import 外壳（shell）" },
+		],
+	},
+	// 文档实现：人、团队、技能、规矩、提示词装配。只认识文档基础，不认识消息与传输。
+	{
+		dirs: [
+			"src/core/documents/person/",
+			"src/core/documents/team/",
+			"src/core/documents/skills.ts",
+			"src/core/documents/rules.ts",
+			"src/core/documents/prompt.ts",
+		],
+		layer: "文档实现（documents/person·team·skills·rules·prompt）",
+		deny: [
+			{ match: /\/channel\//, reason: "文档实现不许 import 领域实现（channel）" },
+			{ match: /\/flow\//, reason: "文档实现不许 import 消息生命周期（flow）" },
+			{ match: /\/plugin\//, reason: "文档实现不许 import 插件（plugin）" },
 		],
 	},
 	// 插件：只「加东西」（工具 / 提示词 / 路由 / 听消息），不认识用例、投影与传输。
@@ -120,19 +140,18 @@ const LAYER_RULES = [
 		dirs: ["src/core/plugin/"],
 		layer: "插件（plugin）",
 		deny: [
-			{ match: /\/agent\//, reason: "插件层不许 import 领域实现（agent）—— 工具由装配层并进注册表" },
+			{ match: /\/documents\/(?!base\/)/, reason: "插件层只许用文档基础（documents/base）—— 档案实现由装配层注入" },
 			{ match: /\/flow\//, reason: "插件层不许 import 消息生命周期（flow）—— 策略由装配层注入" },
-			{ match: /\/team\//, reason: "插件层不许 import 领域实现（team）" },
 			{ match: /\/app\//, reason: "插件层不许 import 用例层（app）" },
 			{ match: /\/view\//, reason: "插件层不许 import 契约层（view）" },
 			{ match: /\/interface\//, reason: "插件层不许 import 接口层（interface）" },
 			{ match: /\/shell\//, reason: "插件层不许 import 外壳（shell）" },
 		],
 	},
-	// 根目录三个原语（工作区路径、名字规则、两个根的布局）：谁都能用，但它们不许往上够。
+	// 根目录原语（工作区路径、名字规则、两个根的布局、密钥脱敏）：谁都能用，但它们不许往上够。
 	{
-		dirs: ["src/core/fsx.ts", "src/core/naming.ts", "src/core/layout.ts"],
-		layer: "原语（fsx/naming/layout）",
+		dirs: ["src/core/fsx.ts", "src/core/naming.ts", "src/core/layout.ts", "src/core/secrets.ts"],
+		layer: "原语（fsx/naming/layout/secrets）",
 		deny: [
 			{ match: /\/app\//, reason: "原语不许 import 用例层（app）" },
 			{ match: /\/view\//, reason: "原语不许 import 契约层（view）" },
@@ -170,10 +189,9 @@ const LAYER_RULES = [
 		dirs: ["src/interface/"],
 		layer: "接口（interface）",
 		deny: [
-			{ match: /\/agent\//, reason: "接口层不许直接 import 领域实现（agent）—— 走 app/" },
+			{ match: /\/documents\//, reason: "接口层不许直接 import 文档实现（documents）—— 走 app/" },
 			{ match: /\/channel\//, reason: "接口层不许直接 import 领域实现（channel）—— 走 app/" },
 			{ match: /\/flow\//, reason: "接口层不许直接 import 消息生命周期（flow）—— 走 app/" },
-			{ match: /\/team\//, reason: "接口层不许直接 import 领域实现（team）—— 走 app/" },
 			{ match: /\/runtime\//, reason: "接口层不许直接 import 运行时（runtime）—— 走 app/" },
 			// 注意：`../app/` 与 `../view/` 里含有 `app/`、`view/` 字样，但本规则只拦域目录，
 			// 所以这两条依赖不被误伤。
@@ -198,7 +216,7 @@ for (const dir of CHECKED_DIRS) {
 			}
 			// 内核不得反向依赖外壳：解析后的相对路径里出现 `/shell/` 就是违规
 			if (!isShell && /\/shell\//.test(spec)) {
-				violations.push({ file: rel, spec, reason: "内核（agent/team/channel）不得 import 外壳（shell）" });
+				violations.push({ file: rel, spec, reason: "内核（documents/channel/flow）不得 import 外壳（shell）" });
 				continue;
 			}
 			for (const rule of rules) {

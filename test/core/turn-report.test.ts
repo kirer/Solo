@@ -11,7 +11,7 @@ import {
 	type TurnReportInput,
 	type TurnReportState,
 } from "../../src/core/channel/turn/report.ts";
-import { emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
+import { emptyDirectory, type DirectoryState } from "../../src/core/channel/roster.ts";
 import { liveConversations } from "../../src/core/channel/queue.ts";
 import { TURN_REPORT_TASK } from "../../src/core/channel/turn/record.ts";
 import type { FinishTurnInfo } from "../../src/core/channel/turn/finish.ts";

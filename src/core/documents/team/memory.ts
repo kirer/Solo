@@ -14,10 +14,17 @@
  * 谁能读：全员。理由同上 —— 记忆是资产，藏起来只会重复踩坑。
  */
 import { join } from "node:path";
-import { entryProblem, memoryDigest, problemText, sectionsOf, type MemorySection } from "../md/memory.ts";
-import { createSerialGate, readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
+import {
+	appendNewSection,
+	entryProblem,
+	memoryDigest,
+	problemText,
+	sectionsOf,
+	type MemorySection,
+} from "../base/memory.ts";
+import { createMemoryStore } from "../base/memory-store.ts";
 import { assertTeamSlug } from "./doc.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
+import { fill, type TextCatalog } from "../base/catalog.ts";
 
 export const TEAM_MEMORY_FILE = "memory.md";
 
@@ -26,21 +33,22 @@ export function teamMemoryPath(teamsRoot: string, team: string): string {
 	return join(teamsRoot, assertTeamSlug(team), TEAM_MEMORY_FILE);
 }
 
+/**
+ * 写团队记忆的串行闸（与个人记忆同一个理由：`appendTeamMemory` 是「读全文 → 拼 → 写回」，
+ * 两个 agent 同时追加就会丢一条。团队频道里本来就常有两个人同时被叫醒）。
+ * 个人与团队各一条链：它们写的是不同文件夹，没有共享状态。
+ */
+const store = createMemoryStore();
+
 /** 读全文；不存在返回 undefined（没记过就是没记过，不自动建空文件）。 */
 export async function readTeamMemory(teamsRoot: string, team: string): Promise<string | undefined> {
 	// 与 `readTeam` 同一个口径：读是尽力而为，坏 slug 等于「这个团队没有记忆」。
 	try {
-		return await readTextOrUndefined(teamMemoryPath(teamsRoot, team));
+		return await store.read(teamMemoryPath(teamsRoot, team));
 	} catch {
 		return undefined;
 	}
 }
-
-/**
- * 写团队记忆的串行闸（与个人记忆同一个理由：`appendTeamMemory` 是「读全文 → 拼 → 写回」，
- * 两个 agent 同时追加就会丢一条。团队频道里本来就常有两个人同时被叫醒）。
- */
-const serialized = createSerialGate();
 
 /**
  * 追加一条。小节标题带日期**和记录人**：「2026-10-27 林越」。看到是谁写的，后来的争议才有地方追。
@@ -60,17 +68,13 @@ export async function appendTeamMemory(
 	if (problem !== undefined) throw new Error(problemText(problem, input.text, input.catalog));
 	// 写是拼路径：坏 slug 一律拒绝（`readTeamMemory` 的宽容只适用于读）。
 	assertTeamSlug(team, input.catalog);
-	return serialized(async () => {
-		const path = teamMemoryPath(teamsRoot, team);
-		const existing =
-			(await readTeamMemory(teamsRoot, team)) ??
-			`${fill(input.catalog, "org.memory.team-header", { team })}\n`;
+	const fallback = `${fill(input.catalog, "org.memory.team-header", { team })}\n`;
+	return store.update(teamMemoryPath(teamsRoot, team), (source) => {
 		const stamp = (input.at ?? new Date()).toISOString().slice(0, 10);
 		const who = input.by === undefined ? "" : ` ${input.by}`;
-		const next = `${existing.trimEnd()}\n\n## ${stamp}${who}\n${input.text.trim()}\n`;
+		const next = appendNewSection(source ?? fallback, `${stamp}${who}`, input.text);
 		// 目录可能还不存在：团队记忆可以先于 `README.md` 写下（先记一条再补说明是常见的）。
-		await writeTextAt(path, next);
-		return next;
+		return { next, result: next };
 	});
 }
 

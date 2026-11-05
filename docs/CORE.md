@@ -55,7 +55,7 @@ team: demo
 
 V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplates()` 读
 `<appRoot>/prompt/NN-段名.md`，`renderPrompt()` 把「所有人 + 团队 + 技能目录 + 记忆目录 +
-注册表里的全部工具」填进插槽。代码只剩排版（`src/core/md/prompt.ts`），「怎么说」全在
+注册表里的全部工具」填进插槽。代码只剩排版（`src/core/documents/base/template.ts`），「怎么说」全在
 `seed/prompt/`。三个性质没变：
 
 - **确定性**：同一组文件逐字节相同 —— 为了 prompt cache 不被打穿（cacheRead 便宜一个
@@ -69,7 +69,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 
 **工具自己说的话也在这条路上。** 8 个工具的描述、每个参数说明、拒绝与成功回话、投递头、
 附件说明，同样不住在代码里：`<appRoot>/text/*.md`（`## key` 分节），代码只留键名
-（`md/catalog.ts` 的 `fill(catalog, "say.refuse.pass")`）。差别只有一点：工具描述在**装配时**
+（`documents/base/catalog.ts` 的 `fill(catalog, "say.refuse.pass")`）。差别只有一点：工具描述在**装配时**
 定型，所以改 `text/tools.md` 要重启；`prompt/*.md` 仍是改完下一条消息生效。
 
 **公共事实是渲染出来的，不是写下来的。** 每个人的提示词里都有「你在组织里的位置」
@@ -376,7 +376,7 @@ settle    一轮结算：done → 取答案条目、问收尾策略（要不要�
 频道里；不这样设，agent 又会用 `run sleep 120` 轮询等进度（实测）。助理漏转一条，那条就
 没人处理 —— 这是「助理负责阅读每一条」的代价，留痕让它可审计。
 
-**开一个新团队只有助理能做**（`team/doc.ts` 的 `createTeamProblem`，写在 `file` 写
+**开一个新团队只有助理能做**（`documents/team/doc.ts` 的 `createTeamProblem`，写在 `file` 写
 团队 README 之前）：成员发现需要新团队，在频道里 `@助理` 说清要做什么。改**已有**团队的
 README 不受这条限制——改正文不是开摊子。`name` 缺省时退回正文的 `# 标题`，再缺才退回
 目录名：标题是给人看的字，目录名（拼音）只是路径。
@@ -496,17 +496,18 @@ ui/web/       构建产物，服务端发这个目录，别手改
 src/
   core/            ── domain（业务事实）──────────────────────────
     layout.ts        两个根的全部路径（拼路径只在这里）
-    fsx.ts / naming.ts
+    fsx.ts / naming.ts / secrets.ts（密钥脱敏）
     runtime/         openCore + 防腐层（唯一能 import pi-durable / pi-ai 的地方）
                      models（contextWindow / compaction）/ settings 也在这里
-    md/              markdown / 插槽 / 提示词排版 / 文案目录 / 记忆格式
-    agent/           identity（他是谁 + 新建一个人）/ sections（提示词九段装配）/ memory
-                     skills / roster（slug ↔ 会话 + 两层唤醒记录）/ rules / secrets
-    team/            doc（README.md）/ memory（memory.md）
+    documents/       base/：markdown / 插槽 / 提示词模板 / 文案目录 / 记忆格式与读写机械
+                     person/：identity（他是谁 + 新建一个人）/ memory / journal
+                     team/：doc（README.md）/ memory（memory.md）
+                     skills（三层技能）/ rules（全员规矩）/ prompt（提示词九段装配）
     channel/         post（投递门面 `createChannelFlow`）/ wiring（一根频道接线）/
                      write（落盘）/ rules / mentions / queue（合并唤醒）/ delivery（投递正文）/
-                     membership（成员投影）/ attachments / jobs（后台命令）/
-                     turn（结算收尾 + durable 补发）/ tools（8 个工具）/ unanswered
+                     membership（成员投影）/ roster（slug ↔ 会话 + 两层唤醒记录）/
+                     attachments / jobs（后台命令）/ turn（结算收尾 + durable 补发）/
+                     tools（8 个工具）/ unanswered
     flow/            publish / forward / settle + runner（入队机械）/ store / policies /
                      validate / gates；入口只有 index.ts
     plugin/          清单 / 五动作 API / 加载与隔离
@@ -522,8 +523,10 @@ src/
 依赖只朝一个方向：`interface → app → domain`，`view` 谁都不依赖（大家都能用它），
 `shell` 是唯一可以同时 import 全部的装配层。
 
-`team/` 与 `agent/`、`channel/` **平级**：团队不是全员的子概念，它是与「人」并列的
-另一种归属。
+`documents/person/` 与 `documents/team/` 是**两份并列的档案实现**，共用 `documents/base/`
+的机械层（ADR-082）：团队不是全员的子概念，它是与「人」并列的另一种归属。
+名册不是档案（它记的是会话 id 与唤醒），住在 `channel/`；密钥不是档案（它是渲染出口的
+安全网），住在 `core/` 根。
 
 ## 11. 开机做了什么
 

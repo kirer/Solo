@@ -12,11 +12,11 @@ import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKILLS_DIR, copySkillDir } from "../core/agent/skills.ts";
-import { RULES_FILE } from "../core/agent/rules.ts";
+import { SKILLS_DIR, copySkillDir } from "../core/documents/skills.ts";
+import { RULES_FILE } from "../core/documents/rules.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
-import { appendMissingKeys } from "../core/md/catalog.ts";
-import { frontOf, parseDoc, type Doc } from "../core/md/doc.ts";
+import { appendMissingKeys } from "../core/documents/base/catalog.ts";
+import { frontOf, parseDoc, type Doc } from "../core/documents/base/doc.ts";
 import type { Layout } from "../core/layout.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
@@ -348,7 +348,7 @@ export async function seedOwnerAssistant(
 	layout: Layout,
 	options: { readonly name?: string } = {},
 ): Promise<string> {
-	const { createAgent } = await import("../core/agent/identity.ts");
+	const { createAgent } = await import("../core/documents/person/identity.ts");
 	const seed = await readSeedAssistant();
 	if (seed === undefined) {
 		console.warn(`[core] 没读到 ${SEED_ASSISTANT_IDENTITY}：助理身份会是一份占位正文`);

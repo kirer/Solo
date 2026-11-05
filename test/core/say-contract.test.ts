@@ -28,7 +28,7 @@ import { REPLY_TEMPLATE, SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
 function renderDeliveryWithTemplates(options: Omit<Parameters<typeof renderDelivery>[0], "prompt">): string {
 	return renderDelivery({ ...options, prompt: SEED_DELIVERY_PROMPT, catalog: SEED_TEXT });
 }
-import { emptyDirectory } from "../../src/core/agent/roster.ts";
+import { emptyDirectory } from "../../src/core/channel/roster.ts";
 import { wireChannel } from "../../src/core/channel/wiring.ts";
 import { sandboxPool } from "./support.ts";
 

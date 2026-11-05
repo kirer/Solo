@@ -28,7 +28,7 @@ import { wipeAll } from "../app/reset.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../core/fsx.ts";
-import { loadTemplates, PROMPT_DIR } from "../core/md/prompt.ts";
+import { loadTemplates, PROMPT_DIR } from "../core/documents/base/template.ts";
 import { ensureDir, existsAt, listDirSorted, watchDirAt } from "../core/runtime/io.ts";
 import { resolveLayout, type Layout } from "../core/layout.ts";
 import { serveCore, type CoreServer } from "./serve.ts";

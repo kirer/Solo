@@ -13,10 +13,12 @@
  * 参与对话」。要真需要某个 key，由人在 shell 里配、由 `run` 在进程里用。
  *
  * 密钥放 `<workspace>/.secrets.json`，一个扁平的 `{ "NAME": "value" }`。
+ *
+ * 它是跨层安全工具，不属于任何一个人的档案，所以住在 `core/` 根（与 fsx/naming/layout 同级）。
  */
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { stampOf } from "../runtime/io.ts";
+import { stampOf } from "./runtime/io.ts";
 
 export const SECRETS_FILE = ".secrets.json";
 

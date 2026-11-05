@@ -22,7 +22,7 @@ import {
 	type RunSummary,
 	type Task,
 } from "../../runtime/index.ts";
-import { DirectoryDoc, emptyDirectory, slugFor, wakeOf, type DirectoryState } from "../../agent/roster.ts";
+import { DirectoryDoc, emptyDirectory, slugFor, wakeOf, type DirectoryState } from "../roster.ts";
 import type { EntryReader, FinishTurn } from "./finish.ts";
 import { TURN_REPORT_TASK, type WakeRecord } from "./record.ts";
 

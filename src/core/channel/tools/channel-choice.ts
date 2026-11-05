@@ -2,12 +2,12 @@
  * 「这一轮在哪儿说」与「这一轮还有谁在说」：两个都靠唤醒记录判。
  */
 import type { Context } from "../../runtime/index.ts";
-import { wakeOf } from "../../agent/roster.ts";
+import { wakeOf } from "../roster.ts";
 import { OWNER, chatKind, type ChannelState } from "../types.ts";
 import { deliveryTargets } from "../mentions.ts";
 import { fallbackChannelId, speakerBefore } from "../rules.ts";
 import type { CoreToolDeps } from "./context.ts";
-import { fill } from "../../md/catalog.ts";
+import { fill } from "../../documents/base/catalog.ts";
 
 /**
  * 「默认在哪儿说话」：刚被叫醒的那个频道 → 我是成员的群里最近活跃的那个 → 我和我的私聊。

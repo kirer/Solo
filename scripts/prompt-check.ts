@@ -17,9 +17,9 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFsx } from "../src/core/fsx.ts";
-import { parseCatalog } from "../src/core/md/catalog.ts";
-import { renderSlots, slotsIn } from "../src/core/md/text.ts";
-import { loadTemplates, renderPrompt, PROMPT_DIR } from "../src/core/md/prompt.ts";
+import { parseCatalog } from "../src/core/documents/base/catalog.ts";
+import { renderSlots, slotsIn } from "../src/core/documents/base/slots.ts";
+import { loadTemplates, renderPrompt, PROMPT_DIR } from "../src/core/documents/base/template.ts";
 import { SAMPLE_SLOTS } from "./prompt-fixture.ts";
 
 /** V2 与 V3 用过的工具名。模板里出现它们 = 文案绑死了实现。 */

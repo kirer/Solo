@@ -12,11 +12,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { seedOwnerAssistant } from "../../src/shell/seed.ts";
-import { readIdentity } from "../../src/core/agent/identity.ts";
+import { readIdentity } from "../../src/core/documents/person/identity.ts";
 import { ChannelDoc, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
-import { writeTeam } from "../../src/core/team/doc.ts";
-import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/agent/roster.ts";
-import { createAgent } from "../../src/core/agent/identity.ts";
+import { writeTeam } from "../../src/core/documents/team/doc.ts";
+import { DirectoryDoc, emptyDirectory, type DirectoryState } from "../../src/core/channel/roster.ts";
+import { createAgent } from "../../src/core/documents/person/identity.ts";
 
 import { sandboxPool } from "./support.ts";
 

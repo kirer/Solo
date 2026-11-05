@@ -3,10 +3,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
-import { sectionKeyOf } from "../../src/core/agent/sections.ts";
-import { parseDoc } from "../../src/core/md/doc.ts";
+import { sectionKeyOf } from "../../src/core/documents/prompt.ts";
+import { parseDoc } from "../../src/core/documents/base/doc.ts";
 import { seedOwnerAssistant, seedPersonalSkills, syncAllSkills } from "../../src/shell/seed.ts";
-import { listSkills, readSkill, writeAllSkill } from "../../src/core/agent/skills.ts";
+import { listSkills, readSkill, writeAllSkill } from "../../src/core/documents/skills.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";
 
 const pool = sandboxPool();

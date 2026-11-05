@@ -7,13 +7,13 @@
  */
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
-import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../agent/identity.ts";
+import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../documents/person/identity.ts";
 import { ChannelDoc, OWNER, dmId, groupId, teamId, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { mentionRosterOf, resolveMention } from "./mentions.ts";
-import { listTeams, membersOfTeam, readTeam } from "../team/doc.ts";
+import { listTeams, membersOfTeam, readTeam } from "../documents/team/doc.ts";
 import { slugifyName } from "../naming.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
+import { fill, type TextCatalog } from "../documents/base/catalog.ts";
 import type { Layout } from "../layout.ts";
 
 /**

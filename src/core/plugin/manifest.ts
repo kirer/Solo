@@ -11,7 +11,7 @@
  * 没有哪个文件就是「只有另一半」的插件 —— 纯前端 / 纯后端都是合法的。
  */
 import { join } from "node:path";
-import { parseDoc, readDocFile, writeDocFile, type FrontmatterField } from "../md/doc.ts";
+import { parseDoc, readDocFile, writeDocFile, type FrontmatterField } from "../documents/base/doc.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, removeDirAt, writeBytesAt } from "../runtime/io.ts";
 import { isSafeName } from "../naming.ts";
 

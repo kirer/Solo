@@ -8,7 +8,7 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { deliveryText } from "../../src/core/channel/delivery.ts";
-import { parseDoc } from "../../src/core/md/doc.ts";
+import { parseDoc } from "../../src/core/documents/base/doc.ts";
 
 async function body(name: string): Promise<string> {
 	const source = await readFile(new URL(`../../seed/prompt/${name}`, import.meta.url), "utf8");

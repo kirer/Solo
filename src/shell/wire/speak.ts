@@ -6,8 +6,8 @@
  * 只做「我是谁、名册是哪一份」，投递本身交给装配好的那一个 `flow`。
  */
 import type { Context, Harness } from "../../core/runtime/index.ts";
-import { labelsOf, readAllIdentities } from "../../core/agent/identity.ts";
-import { DirectoryDoc, labelIn, type DirectoryState } from "../../core/agent/roster.ts";
+import { labelsOf, readAllIdentities } from "../../core/documents/person/identity.ts";
+import { DirectoryDoc, labelIn, type DirectoryState } from "../../core/channel/roster.ts";
 import { mentionRosterOf } from "../../core/channel/mentions.ts";
 import { ChannelDoc, OWNER, emptyChannelState, type Attachment } from "../../core/channel/types.ts";
 import type { ChannelFlow } from "../../core/channel/post.ts";

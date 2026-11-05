@@ -13,13 +13,13 @@
  *
  * 纯函数、无 IO：状态由调用方递进来，所以单测可以直接喂一个假频道。
  */
-import { OWNER_SLUG, labelsOf, type Identity } from "../core/agent/identity.ts";
-import { type MemoryStamp } from "../core/agent/memory.ts";
-import { sectionsOf } from "../core/md/memory.ts";
-import { conversationFor, labelIn, type DirectoryState } from "../core/agent/roster.ts";
+import { OWNER_SLUG, labelsOf, type Identity } from "../core/documents/person/identity.ts";
+import { type MemoryStamp } from "../core/documents/person/memory.ts";
+import { sectionsOf } from "../core/documents/base/memory.ts";
+import { conversationFor, labelIn, type DirectoryState } from "../core/channel/roster.ts";
 import { chatKind, spokenKind, type Channel, type ChannelState, type Message } from "../core/channel/types.ts";
 import { readMarkOf, unreadCount } from "../core/channel/rules.ts";
-import { excerptOf } from "../core/md/oneline.ts";
+import { excerptOf } from "../core/documents/base/oneline.ts";
 import type {
 	AttentionItem,
 	TeamDoingOf,

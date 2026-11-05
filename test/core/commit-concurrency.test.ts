@@ -17,7 +17,7 @@ import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendToChannel } from "../../src/core/channel/write.ts";
 import { ensureChannel } from "../../src/core/channel/rules.ts";
-import { DirectoryDoc, directoryWake, type DirectoryState } from "../../src/core/agent/roster.ts";
+import { DirectoryDoc, directoryWake, type DirectoryState } from "../../src/core/channel/roster.ts";
 import { sandboxPool } from "./support.ts";
 
 const pool = sandboxPool();

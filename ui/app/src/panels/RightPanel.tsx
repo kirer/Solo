@@ -565,7 +565,7 @@ function SkillsTab(): JSX.Element {
 }
 
 /**
- * 团队频道里的技能：`teams/<slug>/skills/` 这一层（`agent/skills.ts` 的 `SkillScope = "team"`）。
+ * 团队频道里的技能：`teams/<slug>/skills/` 这一层（`documents/skills.ts` 的 `SkillScope = "team"`）。
  * 它盖在全员层上、被个人层盖住 —— 这个团队的人打开提示词就能看见这份清单。
  */
 function TeamSkills(props: { slug: string }): JSX.Element {

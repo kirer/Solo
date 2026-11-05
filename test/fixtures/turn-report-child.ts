@@ -19,7 +19,7 @@ import {
 	openCore,
 } from "../../src/core/runtime/index.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
-import { DirectoryDoc, type DirectoryState } from "../../src/core/agent/roster.ts";
+import { DirectoryDoc, type DirectoryState } from "../../src/core/channel/roster.ts";
 import { createTurnReport } from "../../src/core/channel/turn/report.ts";
 
 const databasePath = process.env.CRASH_DB;

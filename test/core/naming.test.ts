@@ -8,7 +8,7 @@
 import { SEED_TEXT } from "./catalog.ts";
 import { describe, expect, test } from "vitest";
 import { assertName, isSafeName, skillDirName, slugifyName } from "../../src/core/naming.ts";
-import { assertTeamSlug } from "../../src/core/team/doc.ts";
+import { assertTeamSlug } from "../../src/core/documents/team/doc.ts";
 
 describe("名字字符集", () => {
 	test("字母、数字、中文、- 和 _ 是名字", () => {

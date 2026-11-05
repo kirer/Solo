@@ -4,9 +4,9 @@
  * 团队也是文件夹（`<userRoot>/teams/<slug>/`），事实只有两份：`README.md` 与 `memory.md`。
  * 界面要的东西全在这里拼好 —— 它不自己去读盘，也不认识 `teams/<slug>/` 这种路径。
  */
-import { listTeamSkills } from "../core/agent/skills.ts";
-import { readTeam } from "../core/team/doc.ts";
-import { readTeamMemory } from "../core/team/memory.ts";
+import { listTeamSkills } from "../core/documents/skills.ts";
+import { readTeam } from "../core/documents/team/doc.ts";
+import { readTeamMemory } from "../core/documents/team/memory.ts";
 import type { ViewTeamProfile } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
 import { memoryEntries } from "./project.ts";

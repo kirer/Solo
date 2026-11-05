@@ -1,12 +1,12 @@
 /** `hire`：招人 / 让人走 / 看能挑哪些模型。 */
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { OWNER_SLUG, assistantsOf, createAgent, readAllIdentities } from "../../agent/identity.ts";
-import { redact } from "../../agent/secrets.ts";
+import { OWNER_SLUG, assistantsOf, createAgent, readAllIdentities } from "../../documents/person/identity.ts";
+import { redact } from "../../secrets.ts";
 import { moveAt } from "../../runtime/io.ts";
-import { readTeam } from "../../team/doc.ts";
+import { readTeam } from "../../documents/team/doc.ts";
 import { ChannelDoc, dmId, type ChannelState } from "../types.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
-import { fill } from "../../md/catalog.ts";
+import { fill } from "../../documents/base/catalog.ts";
 
 /** 走的人留在 `<membersRoot>/.retired/` 里：**只移不删**，身份文件还能翻回来。 */
 function retiredNameOf(slug: string): string {

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SECRETS_FILE, loadSecrets, redact, redactor } from "../../src/core/agent/secrets.ts";
+import { SECRETS_FILE, loadSecrets, redact, redactor } from "../../src/core/secrets.ts";
 
 /**
  * 密钥不进提示词。守的是一个不可逆的泄露：`identity.md` / 技能 / 记忆每一轮都会

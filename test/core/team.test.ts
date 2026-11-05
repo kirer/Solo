@@ -10,7 +10,7 @@ import {
 	readTeam,
 	renderTeamFile,
 	writeTeam,
-} from "../../src/core/team/doc.ts";
+} from "../../src/core/documents/team/doc.ts";
 import { teamMembers } from "../../src/core/channel/membership.ts";
 import { writeTextAt } from "../../src/core/runtime/io.ts";
 

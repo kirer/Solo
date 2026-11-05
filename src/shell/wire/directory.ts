@@ -12,7 +12,7 @@ import {
 	mergeDirectory,
 	plainDirectory,
 	type DirectoryState,
-} from "../../core/agent/roster.ts";
+} from "../../core/channel/roster.ts";
 
 /** 名册的顶层字段（写回去时要逐字段比，不能整份替换）。 */
 const DIRECTORY_KEYS = ["slugToConversation", "conversationToSlug", "wake", "labels"] as const;

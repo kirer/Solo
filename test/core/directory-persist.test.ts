@@ -20,7 +20,7 @@ import {
 	sessionKeyOf,
 	slugFor,
 	type DirectoryState,
-} from "../../src/core/agent/roster.ts";
+} from "../../src/core/channel/roster.ts";
 import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";

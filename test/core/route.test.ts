@@ -13,7 +13,7 @@ import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { ChannelDoc, OWNER, teamId, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
-import { emptyDirectory } from "../../src/core/agent/roster.ts";
+import { emptyDirectory } from "../../src/core/channel/roster.ts";
 import type { ChannelWiring } from "../../src/core/channel/wiring.ts";
 import { createChannelFlow } from "../../src/core/channel/post.ts";
 import { SEED_TEXT } from "./catalog.ts";

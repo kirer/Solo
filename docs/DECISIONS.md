@@ -1983,3 +1983,44 @@
 - **验收**：`test/core/assemble.test.ts`（关两次只关一次库）；`npm run check`、`npm test`
   （98 文件 / 872 例）、`npm run prompt:check`；临时根目录启动冒烟；Phase 5 收尾时
   `npm run live` 两次 13/13 与 `live:scenarios -- --rounds=1 --smoke`。
+
+---
+
+## ADR-082 文档收进 `core/documents`：基础 + 各自的实现
+
+- **背景**：`src/core/agent`、`src/core/team`、`src/core/md` 三个包读起来别扭：它们处理的
+  都是磁盘上的文档（`identity.md` / `memory.md` / `README.md` / `SKILL.md` / `rules.md` /
+  提示词模板 / 文案目录），却被拆成三个平级目录。`md/doc.ts` 已经是「一份 markdown 文档」
+  的公共基础，但它的实现（人、团队、技能、规矩）住在另外两个包里；`agent/` 还混进了
+  名册（会话 id 与唤醒记录）和密钥脱敏（跨层安全网）—— 这两样都不是任何人的档案。
+- **决策**：
+  1. **一个包，两侧**：`src/core/documents/` 下分 `base/`（机械的文档与文本操作，零业务：
+     `doc` / `slots` / `template` / `catalog` / `memory` / `memory-store` / `oneline`）与实现
+     （`person/` 一个人的身份、记忆、日志；`team/` 一个团队的 README 与记忆；
+     `skills.ts` / `rules.ts` / `prompt.ts`）。实现依赖基础，基础不认识实现。
+  2. **`prompt.ts` 放包根**：它是唯一同时 import `person/` 与 `team/` 的文件；放进
+     `person/` 会留下 `person → team` 这条边，「两份并列实现」就不成立了。
+  3. **`base/memory-store.ts` 只收机械部分**：一条串行链上的「读全文 → 交给 build → 写回」。
+     去重、标题格式（个人同日合并 / 团队永远新开）、校验失败是返回还是抛错，仍留在各自
+     实现里 —— 两种记忆共用格式，但不共用判断。`base/memory.ts` 只增加对应的纯函数
+     （`alreadyRecorded` / `appendNewSection` / `appendOrExtendLastSection`）。
+  4. **名册归 `channel/roster.ts`**：它记的是 slug ↔ 会话 id 与唤醒记录，真相是文件夹，
+     属于消息系统；这样也去掉了 `documents → channel` 的反向依赖。
+  5. **密钥归 `src/core/secrets.ts`**：渲染出口的跨层安全网，与 `fsx` / `naming` / `layout`
+     同级，不属于任何人的档案。
+  6. **边界规则 8 组变 9 组**：域（`documents|channel|flow|runtime`）/ **文档基础**
+     （不许 import 任何实现与上层）/ **文档实现**（不许 import channel / flow / plugin）/
+     plugin / 根原语（加入 `secrets.ts`）/ view / app / desktop / interface。插件只许用
+     `documents/base/`（负向前瞻 `/documents/(?!base/)`），不给通用 allowlist —— 那会误伤
+     `node:*`、`./api.ts`、`channel/types.ts` 与 `runtime/*`。
+- **取舍**：不引入泛型 `DocKind<T>` 框架，也不把记忆 store 做成一组开关 —— 团队的标题回退、
+  技能的三层覆盖、人的多根扫描正是业务本身，塞进配置只会变成一堆开关。对外导出、函数签名、
+  落盘格式与提示词文案**一律不变**；只改文件位置、相对 import 与文档。历史 ADR 里的旧路径
+  不重写（它们记录的是当时的事实）。
+- **执行**：`src/core/documents/**`（原 `core/md/*`、`core/agent/{identity,memory,journal,skills,rules,sections}.ts`、
+  `core/team/{doc,memory}.ts` 迁入并改名 `slots` / `template` / `prompt`）、
+  `src/core/channel/roster.ts`、`src/core/secrets.ts`、`scripts/check-boundaries.mjs`（9 组）；
+  文档 `AGENTS.md` §1–§3、`docs/CODE.md` §1–§3、`docs/CORE.md` §2 / §7 / §10、
+  `docs/WEB-API.md` §12、`docs/README.md`。
+- **验收**：`npm run check`（tsc + 9 组边界）、`npm test`（98 文件 / 872 例）、
+  `npm run prompt:check`、`npm run live` 两次 13/13；不改界面，不跑 `ui:build`。

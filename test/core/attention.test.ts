@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { attentionItems, messageView } from "../../src/app/project.ts";
-import type { DirectoryState } from "../../src/core/agent/roster.ts";
+import type { DirectoryState } from "../../src/core/channel/roster.ts";
 import type { Channel, ChannelState, Message } from "../../src/core/channel/types.ts";
 
 const AT = 1_700_000_000_000;

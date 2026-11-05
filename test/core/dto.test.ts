@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { channelList, messageView, orgView } from "../../src/app/project.ts";
 import type { ViewChannel, ViewMessage } from "../../src/view/dto.ts";
-import type { DirectoryState } from "../../src/core/agent/roster.ts";
+import type { DirectoryState } from "../../src/core/channel/roster.ts";
 import type { Channel, ChannelState } from "../../src/core/channel/types.ts";
 
 const AT = 1_700_000_000_000;

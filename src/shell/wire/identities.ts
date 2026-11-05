@@ -10,11 +10,11 @@
  */
 import type { Extension, Harness, Registry, Context } from "../../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT, defineExtension } from "../../core/runtime/index.ts";
-import { agentSections, renderAgentSection, type ChatRef } from "../../core/agent/sections.ts";
+import { agentSections, renderAgentSection, type ChatRef } from "../../core/documents/prompt.ts";
 import { ChannelDoc, chatKind } from "../../core/channel/types.ts";
 import { channelsOf } from "../../core/channel/rules.ts";
 import type { Layout } from "../../core/layout.ts";
-import type { TextCatalog } from "../../core/md/catalog.ts";
+import type { TextCatalog } from "../../core/documents/base/catalog.ts";
 
 export type IdentityWire = {
 	extensionFor(slug: string): Promise<Extension>;

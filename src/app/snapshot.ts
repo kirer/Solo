@@ -12,10 +12,10 @@
  */
 import { BACKGROUND_CONTEXT, type Context } from "../core/runtime/index.ts";
 import { mtimeOrUndefined } from "../core/runtime/io.ts";
-import { listTeams } from "../core/team/doc.ts";
+import { listTeams } from "../core/documents/team/doc.ts";
 import { ChannelDoc, emptyChannelState, type ChannelState } from "../core/channel/types.ts";
-import type { DirectoryState } from "../core/agent/roster.ts";
-import { assistantsOf, type Identity } from "../core/agent/identity.ts";
+import type { DirectoryState } from "../core/channel/roster.ts";
+import { assistantsOf, type Identity } from "../core/documents/person/identity.ts";
 import type { TeamDoingOf } from "../view/dto.ts";
 import { withLabels, withoutGoneTeams } from "./project.ts";
 import type { CoreServices } from "./types.ts";

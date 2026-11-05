@@ -11,20 +11,20 @@
  */
 import { join } from "node:path";
 import { type PromptSection, type Registry, type ToolRegistration } from "../runtime/index.ts";
-import { assistantsOf, nameOf, readAllIdentities, readIdentity, type Identity } from "./identity.ts";
+import { assistantsOf, nameOf, readAllIdentities, readIdentity, type Identity } from "./person/identity.ts";
 import { listSkills } from "./skills.ts";
-import { readMemory } from "./memory.ts";
-import { memoryDigest } from "../md/memory.ts";
+import { readMemory } from "./person/memory.ts";
+import { memoryDigest } from "./base/memory.ts";
 import { loadRules } from "./rules.ts";
-import { readTeam } from "../team/doc.ts";
-import { teamMemoryDigest, readTeamMemory } from "../team/memory.ts";
-import { redact } from "./secrets.ts";
+import { readTeam } from "./team/doc.ts";
+import { teamMemoryDigest, readTeamMemory } from "./team/memory.ts";
+import { redact } from "../secrets.ts";
 import { createFsx } from "../fsx.ts";
 import { agentDirLabel, type Layout } from "../layout.ts";
-import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "../md/prompt.ts";
+import { loadTemplates, PROMPT_DIR, type PromptTemplate } from "./base/template.ts";
 import { byName } from "../runtime/io.ts";
-import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "../md/text.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
+import { hasSlot, renderSlots, slotsIn, type Slots, type SlotValue } from "./base/slots.ts";
+import { fill, type TextCatalog } from "./base/catalog.ts";
 
 export type AgentPaths = {
 	/** 两个根的布局：提示词、密钥在 app 根；技能、团队、规矩在用户根。 */

@@ -2,18 +2,17 @@
  * 记忆文件的**格式**：怎么切段、一条多长、什么不能写、提示词里给多少目录。
  *
  * 个人记忆（`members/<slug>/memory.md`）和团队记忆（`teams/<slug>/memory.md`）是同一份
- * Markdown 格式，只是归属不同 —— 所以这一层不认识「谁」，只认识文本。读写在哪、给谁记、
- * 什么时候沉淀，分别住在 `agent/memory.ts` 与 `team/memory.ts`。
+ * Markdown 格式，只是归属不同 —— 所以这一层不认识「谁」，只认识文本。读写在哪里、
+ * 给谁记、什么时候沉淀，分别住在 `person/memory.ts` 与 `team/memory.ts`。
  *
- * 为什么放在 `md/`：这里只有 Markdown 的机械事（`##` 切段、目录预算、密钥形状），
- * 零 IO、零业务；放进来之后团队记忆不必反向 import 个人记忆，两个域之间那条双向依赖
- * （agent → team、team → agent）就断了。
+ * 放在 `documents/base/`：这里只有 Markdown 的机械事（`##` 切段、目录预算、密钥形状），
+ * 零 IO、零业务；上面两份实现共用它，但不互相 import。
  *
  * ## 机器守的三条底线
  *
  * 模型判断不了这三件事，所以写在代码里（其余都交给它自己）：一条不能太长（否则
  * 一条记忆吃掉整个目录预算）、不能是密钥、目录要截断。密钥那条最要紧 —— 记忆会被
- * 拼进每一轮提示词，一条 key 写进来就是永久泄露（`agent/secrets.ts` 是最后一道网，
+ * 拼进每一轮提示词，一条 key 写进来就是永久泄露（`core/secrets.ts` 是最后一道网，
  * 这里是最前面那道）。
  */
 import { fill, type TextCatalog } from "./catalog.ts";
@@ -58,6 +57,44 @@ export function sectionsOf(source: string): readonly MemorySection[] {
 	}
 	flush();
 	return out;
+}
+
+/** 规范化：去首尾空白 + 折叠内部空白。去重只关心「说的是不是同一件事」。 */
+function normalized(text: string): string {
+	return text.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * 这条内容是不是已经记过了。
+ *
+ * 既比整段（一条记忆一个正文）也比每一行（同一天的几条并在一个小节里）。
+ * 重复记忆的代价不是磁盘，是**挤掉一条真正不同的**：目录只有那么点预算。
+ */
+export function alreadyRecorded(source: string, text: string): boolean {
+	const target = normalized(text);
+	return sectionsOf(source).some(
+		(section) =>
+			normalized(section.body) === target || section.body.split("\n").some((line) => normalized(line) === target),
+	);
+}
+
+/** 新开一节（团队记忆：每条都带日期和记录人，永远新开）。 */
+export function appendNewSection(source: string, heading: string, body: string): string {
+	return `${source.trimEnd()}\n\n## ${heading}\n${body.trim()}\n`;
+}
+
+/**
+ * 最后一节同名时接在它后面，否则新开（个人记忆：同一天的第二条并进当天小节）。
+ *
+ * 提示词里的记忆目录是**按小节**列的，一天开一堆小节，12 条的窗口几天就用完了。
+ */
+export function appendOrExtendLastSection(source: string, heading: string, body: string): string {
+	const sections = sectionsOf(source);
+	const last = sections[sections.length - 1];
+	const text = body.trim();
+	return last !== undefined && last.heading === heading
+		? `${source.trimEnd()}\n${text}\n`
+		: `${source.trimEnd()}\n\n## ${heading}\n${text}\n`;
 }
 
 /**

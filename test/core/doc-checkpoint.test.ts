@@ -5,7 +5,7 @@
  * 增量永不合并：实测名册 164 条 delta / 44KB，而频道文档只有 13 个。
  */
 import { describe, expect, test } from "vitest";
-import { DirectoryDoc } from "../../src/core/agent/roster.ts";
+import { DirectoryDoc } from "../../src/core/channel/roster.ts";
 import { ChannelDoc } from "../../src/core/channel/types.ts";
 
 const checkpointOf = (token: unknown) =>

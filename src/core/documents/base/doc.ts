@@ -18,7 +18,7 @@
  *
  * `path` 是相对工作区的路径（写回去时原样用）。
  */
-import { readTextOrUndefined, writeTextAt } from "../runtime/io.ts";
+import { readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
 
 export type Doc = {
 	readonly path: string;

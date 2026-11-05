@@ -95,7 +95,7 @@ async function main(): Promise<void> {
 	// 把**真模型收到的** system prompt 打出来：单测全绿、模型收到半句话，是提示词外置
 	// 最典型的翻车方式，光看段数和字符数看不出来。
 	{
-		const { renderAgentSection } = await import("../src/core/agent/sections.ts");
+		const { renderAgentSection } = await import("../src/core/documents/prompt.ts");
 		const prompt = await renderAgentSection(
 			runtime.registry,
 			{ layout, chats: async () => [] },
@@ -107,7 +107,7 @@ async function main(): Promise<void> {
 
 		// delivery 段同样贴出来：它在同步/异步交接处，单测测的是函数、不是链路。
 		const { renderReplyRules } = await import("../src/core/channel/delivery.ts");
-		const { loadTemplates } = await import("../src/core/md/prompt.ts");
+		const { loadTemplates } = await import("../src/core/documents/base/template.ts");
 		const { createFsx } = await import("../src/core/fsx.ts");
 		const delivery = (await loadTemplates(createFsx(layout.promptRoot), ".")).filter(
 			(item) => item.use === "delivery",
@@ -260,7 +260,7 @@ async function main(): Promise<void> {
 	});
 	// 等「人真的建出来了」，不等某一条回话。回话可能串到别的频道去（它答的是上一个
 	// 问题），按消息判断会把「没招人」误判成「招了人」，再让后面的断言全部失真。
-	const { readAllIdentities } = await import("../src/core/agent/identity.ts");
+	const { readAllIdentities } = await import("../src/core/documents/person/identity.ts");
 	const hireDeadline = Date.now() + WAIT_MS;
 	let all = await readAllIdentities(layout.agentRoots);
 	let hired = all.find((identity) => identity.slug !== slug);
@@ -344,7 +344,7 @@ async function main(): Promise<void> {
 	//    「要花钱/要改别人」这类事成员自己拍不了，必须一句话交到我这里。
 	const chainTeam = "扁平团队";
 	{
-		const { createAgent } = await import("../src/core/agent/identity.ts");
+		const { createAgent } = await import("../src/core/documents/person/identity.ts");
 		await mkdir(join(teamsRoot, chainTeam), { recursive: true });
 		const member = await createAgent({
 			root: agentsRoot,

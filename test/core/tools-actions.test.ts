@@ -16,8 +16,8 @@ import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { ChannelDoc, OWNER, dmId, teamId, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
-import { emptyDirectory } from "../../src/core/agent/roster.ts";
-import { writeTeam } from "../../src/core/team/doc.ts";
+import { emptyDirectory } from "../../src/core/channel/roster.ts";
+import { writeTeam } from "../../src/core/documents/team/doc.ts";
 import { existsAt } from "../../src/core/runtime/io.ts";
 import { sandboxPool } from "./support.ts";
 

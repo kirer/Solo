@@ -5,7 +5,7 @@
  */
 import { resolveInOrUndefined } from "../../fsx.ts";
 import { ASSISTANT_DIR, type Layout } from "../../layout.ts";
-import { fill, type TextCatalog } from "../../md/catalog.ts";
+import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
 export const SAY_LIMIT = 1_200;

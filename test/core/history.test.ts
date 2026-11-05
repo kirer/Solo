@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
-import { emptyDirectory } from "../../src/core/agent/roster.ts";
+import { emptyDirectory } from "../../src/core/channel/roster.ts";
 import { resolveLayout } from "../../src/core/layout.ts";
 
 /**

@@ -6,6 +6,9 @@
  *
  * 它是**可重建的缓存**，不是真相：真相是文件夹。删掉它，重启后按文件夹重建即可；
  * 它存在的唯一理由是「会话 id 不能从文件名推出来」。
+ *
+ * 住在 `channel/`：它记的是会话 id 与唤醒记录，不是人的档案。只许依赖
+ * `./turn/record.ts` 与 `../documents/person/identity.ts`，不许 import wiring/post/flow。
  */
 import {
 	BACKGROUND_CONTEXT,
@@ -16,10 +19,10 @@ import {
 	type JsonObject,
 	type Tx,
 } from "../runtime/index.ts";
-import { parseWake, type WakeRecord } from "../channel/turn/record.ts";
-import { OWNER_SLUG } from "./identity.ts";
+import { parseWake, type WakeRecord } from "./turn/record.ts";
+import { OWNER_SLUG } from "../documents/person/identity.ts";
 
-export type { WakeRecord } from "../channel/turn/record.ts";
+export type { WakeRecord } from "./turn/record.ts";
 
 export type DirectoryState = {
 	/** slug → 主会话 id。 */

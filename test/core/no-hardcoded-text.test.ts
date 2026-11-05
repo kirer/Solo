@@ -7,7 +7,7 @@
  *
  * 白名单只有三类：
  * 1. `console.*` / `throw new Error(...)`：运维诊断，不是给模型看的；
- * 2. 渲染哨兵（`md/text.ts` 的 `（未设置）`、`agent/secrets.ts` 的 `[密钥已隐藏]`）；
+ * 2. 渲染哨兵（`documents/base/slots.ts` 的 `（未设置）`、`core/secrets.ts` 的 `[密钥已隐藏]`）；
  * 3. 显示名的默认值（没有文件名的附件叫「附件」、owner 的显示名叫「我」）。
  */
 import { readFile } from "node:fs/promises";
@@ -34,11 +34,11 @@ const MODULES = [
 	"src/core/flow/forward.ts",
 	"src/core/flow/runner.ts",
 	"src/core/flow/policies.ts",
-	"src/core/agent/sections.ts",
-	"src/core/agent/memory.ts",
-	"src/core/agent/identity.ts",
-	"src/core/team/doc.ts",
-	"src/core/team/memory.ts",
+	"src/core/documents/prompt.ts",
+	"src/core/documents/person/memory.ts",
+	"src/core/documents/person/identity.ts",
+	"src/core/documents/team/doc.ts",
+	"src/core/documents/team/memory.ts",
 	"src/core/naming.ts",
 ];
 

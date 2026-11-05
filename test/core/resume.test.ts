@@ -15,7 +15,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BACKGROUND_CONTEXT, LiveDoc } from "../../src/core/runtime/index.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
-import { writeTeam } from "../../src/core/team/doc.ts";
+import { writeTeam } from "../../src/core/documents/team/doc.ts";
 import { sandboxPool, type Sandbox } from "./support.ts";
 
 const pool = sandboxPool();

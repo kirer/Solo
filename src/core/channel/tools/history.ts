@@ -1,9 +1,9 @@
 /** `read_history`：翻自己的对话（含被压缩的），或者翻记忆。 */
 import { BACKGROUND_CONTEXT, Type, defineTool, type Cursor, type EntryRecord } from "../../runtime/index.ts";
-import { redact } from "../../agent/secrets.ts";
+import { redact } from "../../secrets.ts";
 import { actionOf, selfOrError, text, type CoreToolDeps } from "./context.ts";
 import { recallText } from "./recall.ts";
-import { fill, type TextCatalog } from "../../md/catalog.ts";
+import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
 
 /** 历史条目里一条消息的收窄视图（结构上只用得到这几个字段）。 */
 type HistoryBlock = { readonly type?: string; readonly text?: string };

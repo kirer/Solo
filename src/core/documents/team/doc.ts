@@ -26,10 +26,10 @@ import {
 	writeDocFile,
 	type Doc,
 	type FrontmatterField,
-} from "../md/doc.ts";
-import { assertName } from "../naming.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
-import { listDirSorted } from "../runtime/io.ts";
+} from "../base/doc.ts";
+import { assertName } from "../../naming.ts";
+import { fill, type TextCatalog } from "../base/catalog.ts";
+import { listDirSorted } from "../../runtime/io.ts";
 
 export const TEAM_FILE = "README.md";
 

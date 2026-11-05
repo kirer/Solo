@@ -8,14 +8,14 @@
  * 只有助理能用：转交给谁看是统筹，不是每个人都能替别人决定要读什么。
  */
 import { BACKGROUND_CONTEXT, Type, defineTool, type Context } from "../../runtime/index.ts";
-import { assistantsOf, readAllIdentities } from "../../agent/identity.ts";
-import { wakeOf } from "../../agent/roster.ts";
+import { assistantsOf, readAllIdentities } from "../../documents/person/identity.ts";
+import { wakeOf } from "../roster.ts";
 import { OWNER } from "../types.ts";
 import { appendToChannel } from "../write.ts";
 import { resolveMention } from "../mentions.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
-import { fill } from "../../md/catalog.ts";
+import { fill } from "../../documents/base/catalog.ts";
 
 export function createRouteTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>

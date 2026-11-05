@@ -54,15 +54,17 @@ src/
     fsx.ts          工作区内的相对路径入口（越界抛错）；全项目只有它和 runtime/io.ts 碰 node:fs
     layout.ts       两个根的全部路径（拼路径只在这里）
     naming.ts       名字 → 目录名的唯一规则（agent / 团队 / 技能共用）
+    secrets.ts      密钥脱敏（渲染出口的最后一道网）；跨层安全工具，不属于任何人的档案
     runtime/io.ts   绝对路径的机械 IO（读 / 写 / 建目录 / 列表 / 串行闸 / 日志行）
-    md/             文档流水线：doc.ts（markdown + frontmatter）/ text.ts（插槽渲染）/
-                    prompt.ts（提示词拼段）/ catalog.ts（`## key` 文案目录）/
-                    memory.ts（记忆格式，个人与团队共用）/ oneline.ts（压成一行）
+    documents/      磁盘上的文档（ADR-082）：
+      base/         markdown + frontmatter（doc）/ 插槽（slots）/ 提示词模板（template）/
+                    文案目录（catalog）/ 记忆格式（memory）/ 记忆读写机械（memory-store）/ 压一行（oneline）
+      person/       一个人：身份（identity）/ 记忆（memory）/ 记忆日志（journal）
+      team/         一个团队：README（doc）/ 记忆（memory）
+      skills.ts     三层技能；rules.ts 全员规矩；prompt.ts 九段提示词装配（同时认识 person 与 team）
     runtime/        防腐层：唯一能 import pi-durable / pi-ai / pi-schema / chord 的地方
                     （含 models/compaction/工具参数 schema 转发）
-    agent/          一个人：身份 / 提示词装配（9 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
-    team/           一个团队：README.md / memory.md
-    channel/        说话的原语：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 8 个工具（tools/）
+    channel/        说话的原语：频道规则 / 写一条 / 投递与队列 / 唤醒 / 名册（roster）/ 附件 / 后台命令（jobs.ts）/ 8 个工具（tools/）
     flow/           一条消息的一生：publish（落盘→算人→扇出→钩子）/ forward（已有消息转交）/
                     settle（答完补发 / 没答上来留痕）/ runner（投递机械）/ store / policies /
                     validate / gates；入口只有 index.ts
@@ -90,7 +92,7 @@ test/             98 文件 / 872 例
 .solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
 
-（`src/` 共 107 个 ts：core 69 / app 19 / view 1 / interface 7 / shell 11；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/` 共 108 个 ts：core 70 / app 19 / view 1 / interface 7 / shell 11；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -98,22 +100,24 @@ test/             98 文件 / 872 例
 **三条老边界**（一开始就有，`npm run check` 机械化检查，违反即失败）：
 
 1. **只有 `src/core/runtime/` 能 import 底层库**（pi-durable / pi-ai / pi-schema / chord）。
-2. **内核（domain）不得反向 import 上层**：`agent|team|channel|flow|runtime` 不许碰
+2. **内核（domain）不得反向 import 上层**：`documents|channel|flow|runtime` 不许碰
    `shell/` / `interface/` / `app/` / `view/`。
 3. **每条路由必须在前端有消费者**（`src/interface/http/routes.ts` 的 `pattern` ×
    `ui/app/src`；白名单只有 `/api/org`，Docker 健康检查用）。加路由没人用 → 要么接上界面、
    要么删掉、要么改白名单并写清理由。
 
-**分层后又收紧了六条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成八组：域 / md /
-plugin / 根原语 / view / app / desktop / interface）：
+**分层后又收紧了六条**（脚本自己的编号是「六条规定」，`LAYER_RULES` 落成九组：域 / 文档基础 /
+文档实现 / plugin / 根原语 / view / app / desktop / interface）：
 
 - **`view/` 是契约层**：只有 `dto.ts`，一个 import 都不许有（投影已并进 `app/project.ts`）。
 - **`app/` 不许 `node:http`**：用例要能脱离网络直接测。
 - **`interface/` 只经 `app/` 与 `view/` 说话**（不许 import 领域内部实现，否则业务会再长回
   handler 里）。
-- **`md/` 只能往下看**：可 import `runtime/` 与 `fsx.ts`，不许够 `agent|team|channel|app|view|interface|shell`。
-- **根目录两个原语**（`fsx.ts` / `naming.ts`）不许 import `app|view|interface|shell`。
-- **`plugin/` 只加东西**（工具 / 提示词 / 路由 / 听消息）：不许 import `agent|team|app|view|interface|shell`，
+- **`documents/base/` 只能往下看**：可 import `runtime/` 与 `fsx.ts`，不许够
+  `person|team|skills|rules|prompt|channel|flow|plugin|app|view|interface|shell`（实现依赖基础，不是反过来）。
+- **根目录原语**（`fsx.ts` / `naming.ts` / `layout.ts` / `secrets.ts`）不许 import `app|view|interface|shell`。
+- **`plugin/` 只加东西**（工具 / 提示词 / 路由 / 听消息）：只能用 `documents/base/`，不许 import
+  文档实现（`documents/person|team|skills|rules|prompt`）与 `app|view|interface|shell`，
   产物由 `shell/assemble.ts` 并进注册表。
 
 另外三条容易踩的：
@@ -171,12 +175,12 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 改架构分层（新目录 / 依赖方向 / 边界规则） | `docs/DECISIONS.md` + `docs/CODE.md` §1 + 本文件 §2 + `scripts/check-boundaries.mjs` |
 | 接一个 pi 能力（如 hooks）/ 绕一个 pi 做不到的事 | 新 ADR + `docs/CONCESSIONS.md`（绕路就追加一行，处理完标「已处理 + 日期」）；新钩子说明挂在哪个扩展上、为什么不能写在工具里 |
 | 文件/模块的位置、职责 | `docs/CODE.md` 的文件表与「改 X 动这里」表 |
-| 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `md/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外 |
+| 新增一处文件读写 | 走 `fsx.ts`（工作区相对路径）或 `runtime/io.ts`（绝对路径机械 IO）；markdown 文档再用 `documents/base/doc.ts` 的 `readDocFile` / `writeDocFile`（解析 + 落盘配对）。直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外 |
 | 改名字校验（agent / 团队 / 技能的 slug） | `src/core/naming.ts`（唯一一份）；`test/core/naming.test.ts` |
-| 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/agent/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
-| 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`agent/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
-| 名册（slug ↔ 会话 id）怎么读、怎么落盘 | `docs/CORE.md` §1 | `src/core/agent/roster.ts` 的 `mergeDirectory` / `directoryWake`（`rememberWake` 用内存会话兜底并补映射）+ `src/shell/wire/directory.ts` 的 `now` / `save`（装配层只做调用）+ `test/core/directory-persist.test.ts`；**读的时候内存优先**，别只信落盘那份 |
-| 谁是助理 / 团队里有哪些人 | `docs/CORE.md` §1 / §7 + `docs/DECISIONS.md` ADR-058 | `src/core/layout.ts` 的 `isAssistantDir`（**按路径分量判断**：Windows 分隔符是 `\`，写死 `/` 会让助理在 Windows 上消失）+ `src/core/agent/identity.ts` 的 `assistantsOf` + `src/core/channel/membership.ts` 的 `teamMembers` / `syncTeamChannel`（成员 = 我 + 助理 + `team:` 指向它的人；`wakeOnAll = 助理`）；**只有一个会话键：slug**（ADR-050 已被 ADR-058 取代） |
+| 改技能的层数 / 查找顺序（全员 / 团队 / 个人谁盖谁） | `docs/CORE.md` §6 + `docs/CODE.md` 的文件表 | `src/core/documents/skills.ts`（`SkillScope` 与 `listSkills` 的合并顺序）；`test/core/skills.test.ts`；界面在 `ui/app/src/panels/RightPanel.tsx` 的 `SkillsTab` / `TeamSkills` |
+| 改频道成员投影 / 消息落盘 / 唤醒依赖 / 收件人 | `channel/rules.ts` 的 `projectChannel`、`channel/write.ts` 的 `appendToChannel`、`channel/roster.ts` 的 `directoryWake`、`channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` |
+| 名册（slug ↔ 会话 id）怎么读、怎么落盘 | `docs/CORE.md` §1 | `src/core/channel/roster.ts` 的 `mergeDirectory` / `directoryWake`（`rememberWake` 用内存会话兜底并补映射）+ `src/shell/wire/directory.ts` 的 `now` / `save`（装配层只做调用）+ `test/core/directory-persist.test.ts`；**读的时候内存优先**，别只信落盘那份 |
+| 谁是助理 / 团队里有哪些人 | `docs/CORE.md` §1 / §7 + `docs/DECISIONS.md` ADR-058 | `src/core/layout.ts` 的 `isAssistantDir`（**按路径分量判断**：Windows 分隔符是 `\`，写死 `/` 会让助理在 Windows 上消失）+ `src/core/documents/person/identity.ts` 的 `assistantsOf` + `src/core/channel/membership.ts` 的 `teamMembers` / `syncTeamChannel`（成员 = 我 + 助理 + `team:` 指向它的人；`wakeOnAll = 助理`）；**只有一个会话键：slug**（ADR-050 已被 ADR-058 取代） |
 | 新进频道的人要不要被叫醒（报到） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-042 | `channel/membership.ts` 的 `syncTeamChannel`（返回新进成员，不含我与助理）+ `shell/wire/teams.ts` 的 `sync` / `announce` 与 `shell/wire/speak.ts` 的 `wakeTo`；文案 `seed/text/channel.md` 的 `membership.joined`；`test/core/membership.test.ts` |
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets` + `core/flow/defaults/router.ts` 把两者拼成决定 + `channel/delivery.ts` 的 `woken` |
@@ -193,10 +197,10 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 答完写回频道靠什么触发（收尾持久化） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-077 | `channel/turn/report.ts`（`core.turn-report` 任务 + `afterRun` 钩子，挂进 `core-tools`）+ `core/flow/settle.ts`（done 分支：判据 / 同文去重 / 补发）+ `core/flow/defaults/settle.ts`（判断）+ `shell/assemble.ts` 与 `shell/wire/conversations.ts`（挂进 `core-tools`）；`core/flow/runner.ts` 的结算回调只留「没答上来」（走 `settle({kind:"unanswered"})`），**不要再加宿主侧补发**；`channel/queue.ts` 的 `liveConversations` 不算收尾任务与只等收尾的生成（否则紧随其后的消息被当成插话）；`test/core/{turn-report,turn-report-e2e,crash-turn-report}.test.ts` |
 | 合并唤醒（谁该让路） | `docs/CORE.md` §8 + `docs/DECISIONS.md` ADR-048 | `channel/queue.ts` 的 `queuedAhead` / `coalesceQueue`（同一会话只留一个未开始项）+ `core/flow/runner.ts` 的 `enqueue` + 签名透传（`publish.ts` / `runner.ts` / `shell/assemble.ts` / `shell/wire/conversations.ts`）；`test/core/queue-jump.test.ts` |
 | 同进程的写并发（要不要自己串行 commit） | `docs/DECISIONS.md` ADR-073 + `docs/CONCESSIONS.md` C-010 | 底座 group commit 管同一文档的 commit；`openCore` 直接用裸 harness（**没有** `serializedHarness` 了）。`core/flow/publish.ts` 取 `gate.publish` 保护 commit **之前**的读—算—提交，`core/flow/settle.ts` 取 `gate.repost` 防两次收尾各补一遍（两把闸的进程级默认实现在 `core/flow/gates.ts`），**别顺手删**；`test/core/commit-concurrency.test.ts` |
-| 记 wake 与入队要不要原子（唤醒竞态） | `docs/DECISIONS.md` ADR-076 | `agent/roster.ts` 的 `rememberWakeTx` + `channel/wiring.ts` 的 `wakeTogether` + `core/flow/runner.ts` 的 `enqueue`（先写文档、再 `conversation.submit(tx, draft)`，commit 后用 `harness.submission(id)` 取回句柄）；**准入是这次 commit 的第一次表写，之后不能再读表**；`publish.ts` / `turn/finish.ts`（补发）/ `tools/context.ts` / `shell/assemble.ts` 只做透传；`test/core/wake.test.ts` |
+| 记 wake 与入队要不要原子（唤醒竞态） | `docs/DECISIONS.md` ADR-076 | `channel/roster.ts` 的 `rememberWakeTx` + `channel/wiring.ts` 的 `wakeTogether` + `core/flow/runner.ts` 的 `enqueue`（先写文档、再 `conversation.submit(tx, draft)`，commit 后用 `harness.submission(id)` 取回句柄）；**准入是这次 commit 的第一次表写，之后不能再读表**；`publish.ts` / `turn/finish.ts`（补发）/ `tools/context.ts` / `shell/assemble.ts` 只做透传；`test/core/wake.test.ts` |
 | 建频道 / 私聊 / 一个人跑过的轮次 | `docs/CORE.md` §4 + `docs/WEB-API.md` + `docs/DESIGN.md` §2.3 | 建频道只有 `channel/membership.ts` 的 `ensureOwnerDm`（装配 / 招人自动建）+ `POST /api/people/:slug/dm`；一个人的轮次是 `app/read.ts` 的 `readPersonTurns`（`limit`）+ `ui/app/src/panels/TasksPanel.tsx` + `ui/app/src/sidebar/Rail.tsx`（第二屏的入口）；聊天流里不画过程 |
 | 团队频道的详情 / 团队记忆（`GET /api/teams/:slug`） | `docs/WEB-API.md` §10.1 + `docs/DESIGN.md` §1.2 / §5 | `src/app/teams.ts` + `interface/http/routes.ts` + `ui/app/src/panels/RightPanel.tsx`（`TeamSection` / `TeamMemory`）；团队记忆只读，写入口是 `remember(scope=team)` 与 `file` |
-| 建团队权限校验 | `docs/CORE.md` §7 + `docs/CODE.md` §3 | `team/doc.ts` 的 `createTeamProblem` + `channel/tools/file.ts` 写分支；校验在落盘之前；开新团队只有助理能做（ADR-058，没有 `lead`） |
+| 建团队权限校验 | `docs/CORE.md` §7 + `docs/CODE.md` §3 | `documents/team/doc.ts` 的 `createTeamProblem` + `channel/tools/file.ts` 写分支；校验在落盘之前；开新团队只有助理能做（ADR-058，没有 `lead`） |
 | 「没答上来」的留痕 | `docs/CORE.md` §4「结算即收尾」 | `core/flow/runner.ts` 的 `enqueue` 结算回调（`aborted`（合并唤醒）与 `nothing_to_answer` 不留痕）→ `core/flow/settle.ts` 的 `unanswered` 分支只写一行 `note`、不进 `repost` 闸；`test/core/{wake,flow-settle}.test.ts` |
 | 失败可见（`runFailure` / 失败卡 / 原因文案 / 继续按钮） | `docs/CORE.md` §9 + `docs/DESIGN.md` §8 + `docs/WEB-API.md` §2 / §10.4 + `docs/DECISIONS.md` ADR-072 / ADR-075 | `src/core/channel/unanswered.ts`（原因表 + `detail` 裁剪）、`core/flow/runner.ts` 的 `WakeNote` / `noteUnanswered`、`seed/text/channel.md`、`src/app/diag.ts` 的 `reportLabel`、`src/app/read.ts` 的 `liveOf` / `liveMaps`、`src/view/dto.ts` 的 `ViewLastFailure`、`src/interface/http/sse.ts` 的 `orgSignature`、`ui/app/src/panels/TasksPanel.tsx` + `ui/app/src/styles/tasks.css`；「继续」走 `app/people.ts` 的 `continuePerson` + `POST /api/people/:slug/continue` + `ui/app/src/api/client.ts`；`test/core/{unanswered,wake,diag}.test.ts` |
 | 重启打断的那一轮要不要接着做 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-044 / ADR-074 | `runtime/open.ts` 的 `inspectStartup` 返回值（`CoreRuntime.interrupted` / `backlog`）+ `shell/wire/teams.ts` 的 `noteInterrupted` 与 `shell/assemble.ts` 的 `harness.resume()` / `continue`（最后一步）+ `shell/main.ts` 传参；文案 `seed/text/channel.md` 的 `turn.interrupted`；`test/core/{resume,reconcile,crash-replay}.test.ts`（后者真 `kill -9`，fixture 在 `test/fixtures/crash-*`） |
@@ -223,7 +227,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 加一个应用级入口（最左一列）/ 插槽 | `docs/DESIGN.md` §1.1 / §2.8 | `ui/app/src/plugin/registry.ts` 的 `SlotName` / `SLOTS` + 宿主 `sidebar/Rail.tsx`；出厂「Token 统计」用它（入口 `rail.item`、整屏页 `app.page`）；`test/ui/plugin.test.ts` 会查每个插槽都有宿主 |
 | 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
 | 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`** |
-| 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道，运行时 `shell/serve.ts` 的 `startTeamReconcile` 监听 `teams/` 立刻对账，投影时 `app/project.ts` 的 `withoutGoneTeams` 再按磁盘团队表过滤；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删；私聊归档，重新招回来由 `ensureOwnerDm` 的 `replace` 恢复）；都不开新工具 |
+| 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`documents/team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道，运行时 `shell/serve.ts` 的 `startTeamReconcile` 监听 `teams/` 立刻对账，投影时 `app/project.ts` 的 `withoutGoneTeams` 再按磁盘团队表过滤；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删；私聊归档，重新招回来由 `ensureOwnerDm` 的 `replace` 恢复）；都不开新工具 |
 | 一键重置（设置 → 数据）/ 清空历史 | `docs/WEB-API.md` §13.5 + `docs/DESIGN.md` §1.5 + `docs/CODE.md` + `docs/DECISIONS.md` ADR-065 | `src/app/reset.ts` 的 `wipeAll`（**库关掉之后才删**；保留 `settings.json` / `.secrets.json`）+ `interface/http/routes.ts` 的 `POST /api/reset` + `src/shell/main.ts` 的 `resetAll`（关库 → 删盘 → 退出码 75）+ `desktop/src/backend.ts` 的 `onExit` / `desktop/src/main.ts` 的 `restart` + `ui/app/src/panels/SettingsPage.tsx` 的 `DataSection`；`test/core/reset.test.ts` |
 | 装完带前端的插件问要不要重启 | `docs/WEB-API.md` §13.4 / §13.6 + `docs/DESIGN.md` §2.8 + `docs/DECISIONS.md` ADR-066 | `interface/http/routes.ts` 的 `POST /api/restart` + `shell/serve.ts` 的 `onRestart` + `shell/main.ts` 的 `restartApp`（关库 → 退出码 75）+ `ui/app/src/panels/PluginsPage.tsx`（装完按 `client` 决定弹不弹）/ `panels/Overlays.tsx` 的 `RestartSheet` / `state/store.ts` 的 `restartOpen` / `api/client.ts` 的 `restartApp`；桌面壳 `desktop/src/main.ts` 的 `restart`；`test/core/reset.test.ts` |
 | 本文件的表 | `AGENTS.md` |
@@ -261,14 +265,14 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 |---|---|---|
 | 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（8 个；同一件事加 `action`，别开新名字） |
 | 教 agent 一套做法 | `seed/skills/` 里现成的技能 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
-| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/md/prompt.ts` 只剩排版）；加插槽要先登记 §3 并在 `scripts/prompt-fixture.ts` 给样例值 |
-| 加身份字段 | `docs/CORE.md` §1 | `src/core/agent/identity.ts` 的 `IdentityHeader` |
+| 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/documents/base/template.ts` 只剩排版）；加插槽要先登记 §3 并在 `scripts/prompt-fixture.ts` 给样例值 |
+| 加身份字段 | `docs/CORE.md` §1 | `src/core/documents/person/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/mentions.ts` 的 `recipientsOf` / `parseMentions` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/types.ts` 的 `chatKind`（只看成员表） |
 | 改频道成员怎么来 | `docs/CORE.md` §4 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
 | 改界面 | `docs/DESIGN.md` + `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/view/dto.ts`；新元素必须在 DESIGN §8 的数据来源表里指到字段 |
-| 改团队记忆 | `docs/CORE.md` §8 | 机制在 `src/core/team/memory.ts`；写入口是 `remember(scope=team)` 与 `file`（**没有自动沉淀了**，ADR-058） |
+| 改团队记忆 | `docs/CORE.md` §8 | 机制在 `src/core/documents/team/memory.ts`；写入口是 `remember(scope=team)` 与 `file`（**没有自动沉淀了**，ADR-058） |
 | 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` + 一条新 ADR |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |
 

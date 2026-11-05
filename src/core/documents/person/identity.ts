@@ -15,11 +15,11 @@ import {
 	writeDocFile,
 	type Doc,
 	type FrontmatterField,
-} from "../md/doc.ts";
-import { assertName, slugifyName } from "../naming.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
-import { ensureDir, existsAt, listDirSorted } from "../runtime/io.ts";
-import { isAssistantDir, workspaceOf, type Layout } from "../layout.ts";
+} from "../base/doc.ts";
+import { assertName, slugifyName } from "../../naming.ts";
+import { fill, type TextCatalog } from "../base/catalog.ts";
+import { ensureDir, existsAt, listDirSorted } from "../../runtime/io.ts";
+import { isAssistantDir, workspaceOf, type Layout } from "../../layout.ts";
 
 /** 一个人的身份文件。读写都经 `doc.ts`，格式只有一份。 */
 export const IDENTITY_FILE = "identity.md";

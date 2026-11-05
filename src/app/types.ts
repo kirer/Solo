@@ -8,12 +8,12 @@
  * 只放类型，不放实现 —— 实现仍然是 `assemble.ts` 那唯一一处装配点。
  */
 import type { Conversation, Context, Harness, Models, Registry } from "../core/runtime/index.ts";
-import type { DirectoryState } from "../core/agent/roster.ts";
+import type { DirectoryState } from "../core/channel/roster.ts";
 import type { ChannelState, Attachment, Message } from "../core/channel/types.ts";
 import type { DeliverResult } from "../core/flow/types.ts";
-import type { Identity } from "../core/agent/identity.ts";
+import type { Identity } from "../core/documents/person/identity.ts";
 import type { Layout } from "../core/layout.ts";
-import type { TextCatalog } from "../core/md/catalog.ts";
+import type { TextCatalog } from "../core/documents/base/catalog.ts";
 import type { PluginHost } from "../core/plugin/index.ts";
 import type { Diag } from "./diag.ts";
 

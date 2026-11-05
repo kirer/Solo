@@ -11,7 +11,7 @@
  * - `assertName` / `isSafeName`：对已经算好的名字**校验**，不合法就拒绝。
  */
 
-import { fill, type TextCatalog } from "./md/catalog.ts";
+import { fill, type TextCatalog } from "./documents/base/catalog.ts";
 
 export type NameKind = "agent" | "team" | "skill";
 
@@ -19,7 +19,7 @@ export type NameKind = "agent" | "team" | "skill";
 const NAME = /^[\p{L}\p{N}_-]+$/u;
 
 /**
- * 保留名：`owner` 是对话的另一端，不是 agent（见 `agent/identity.ts` 的 `OWNER_SLUG`）。
+ * 保留名：`owner` 是对话的另一端，不是 agent（见 `documents/person/identity.ts` 的 `OWNER_SLUG`）。
  * 写在这里而不是 import 过来，是因为 `naming.ts` 不能依赖任何领域模块。
  */
 const RESERVED: Record<NameKind, readonly string[]> = {

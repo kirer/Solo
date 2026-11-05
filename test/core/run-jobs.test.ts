@@ -19,7 +19,7 @@ import { ChannelDoc, OWNER, type ChannelState } from "../../src/core/channel/typ
 import { SEED_TEXT } from "./catalog.ts";
 import { createCoreTools } from "../../src/core/channel/tools/index.ts";
 import { wireChannel } from "../../src/core/channel/wiring.ts";
-import { emptyDirectory } from "../../src/core/agent/roster.ts";
+import { emptyDirectory } from "../../src/core/channel/roster.ts";
 import { dmId } from "../../src/core/channel/types.ts";
 import { sandboxPool } from "./support.ts";
 

@@ -13,7 +13,7 @@
 import type { Conversation, Context, Harness } from "../runtime/index.ts";
 import type { ChannelState, FlowPolicy, Message } from "./types.ts";
 import type { WakeRecord } from "./turn/record.ts";
-import type { TextCatalog } from "../md/catalog.ts";
+import type { TextCatalog } from "../documents/base/catalog.ts";
 import { createFlow } from "../flow/index.ts";
 import { createMessageStore } from "../flow/store.ts";
 import { defaultRouter } from "../flow/defaults/router.ts";

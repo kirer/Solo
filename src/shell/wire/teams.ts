@@ -6,8 +6,8 @@
  * 最后、频道都建好之后叫。
  */
 import type { Context, Harness } from "../../core/runtime/index.ts";
-import { labelsOf, readAllIdentities } from "../../core/agent/identity.ts";
-import { DirectoryDoc, labelIn, type DirectoryState, type WakeRecord } from "../../core/agent/roster.ts";
+import { labelsOf, readAllIdentities } from "../../core/documents/person/identity.ts";
+import { DirectoryDoc, labelIn, type DirectoryState, type WakeRecord } from "../../core/channel/roster.ts";
 import {
 	ChannelDoc,
 	OWNER,
@@ -16,7 +16,7 @@ import {
 	type ChannelState,
 } from "../../core/channel/types.ts";
 import { syncTeamChannel, type MembershipDeps } from "../../core/channel/membership.ts";
-import { fill, type TextCatalog } from "../../core/md/catalog.ts";
+import { fill, type TextCatalog } from "../../core/documents/base/catalog.ts";
 import type { ChannelFlow } from "../../core/channel/post.ts";
 
 export type TeamWire = {

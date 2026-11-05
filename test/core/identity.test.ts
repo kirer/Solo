@@ -23,9 +23,9 @@ import {
 	reportsOf,
 	uniqueSlug,
 	writeIdentity,
-} from "../../src/core/agent/identity.ts";
+} from "../../src/core/documents/person/identity.ts";
 import { resolveLayout, type Layout } from "../../src/core/layout.ts";
-import { renderAgentSection } from "../../src/core/agent/sections.ts";
+import { renderAgentSection } from "../../src/core/documents/prompt.ts";
 import { createRegistry, defineExtension, defineTool, Type } from "../../src/core/runtime/index.ts";
 import { seedPromptTemplates } from "../../src/shell/seed.ts";
 

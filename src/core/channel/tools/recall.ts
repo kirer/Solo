@@ -2,15 +2,15 @@
  * 翻记忆与读历史：把「存档」渲染成模型能读的文本。
  */
 import { join } from "node:path";
-import { readMemory } from "../../agent/memory.ts";
-import { sectionsOf } from "../../md/memory.ts";
-import { readIdentity } from "../../agent/identity.ts";
-import { redact } from "../../agent/secrets.ts";
+import { readMemory } from "../../documents/person/memory.ts";
+import { sectionsOf } from "../../documents/base/memory.ts";
+import { readIdentity } from "../../documents/person/identity.ts";
+import { redact } from "../../secrets.ts";
 import { type CoreToolDeps, text } from "./context.ts";
-import { assertTeamSlug } from "../../team/doc.ts";
-import { readTeamMemory, teamMemorySections } from "../../team/memory.ts";
+import { assertTeamSlug } from "../../documents/team/doc.ts";
+import { readTeamMemory, teamMemorySections } from "../../documents/team/memory.ts";
 import type { Message } from "../types.ts";
-import { fill, type TextCatalog } from "../../md/catalog.ts";
+import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
 
 /**
  * 翻记忆全文（ADR-084 合并进来的那一半）。
