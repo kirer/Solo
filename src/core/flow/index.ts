@@ -19,7 +19,7 @@
  * - `ports.ts` / `types.ts` —— 依赖与数据形状。
  *
  * 依赖方向：`flow → channel/{types,mentions,rules,write,delivery,queue,...}`。
- * `channel/post.ts` 是旧调用点留下的薄壳，它调 `flow`；`flow` 不调它。
+ * `channel/post.ts` 是频道的投递门面（`createChannelFlow`），它调 `flow`；`flow` 不调它。
  */
 import type { Flow, FlowPorts } from "./ports.ts";
 import { createForward } from "./forward.ts";

@@ -1944,3 +1944,42 @@
   `plugin-reload.test.ts`（重装后下一次发布立刻换规则）；`settle` 的 core 校验留在
   `flow-settle.test.ts`；`npm run check`、`npm test`（98 文件 / 871 例）、
   `npm run prompt:check`、`npm run live` 两次 13/13。
+
+---
+
+## ADR-081 装配拆成 `shell/wire`，全应用只有一个投递门面
+
+- **背景**：ADR-078 把消息生命周期收进 `core/flow`、ADR-080 让插件能替换分发与收尾策略，
+  但装配层还留着一份平行接线：`shell/assemble.ts` 820 行里混着开会话、装插件、名册落盘、
+  模型切换与团队留痕；我说话走 `ownerSpeak`，它每次自己 `wireChannel(...)` 再拼一份
+  `PostDeps`。后果是 ADR-080 第 6 条写的「三条发消息的路都要看得见策略」只能靠人记 ——
+  漏接一条，插件就只对部分消息生效。另外 `deliver` / `wake` / `finishTurn` 上带
+  `BACKGROUND_CONTEXT` 默认值，调用方在哪个事务里调用是隐式的。
+- **决策**：
+  1. **`shell/assemble.ts` 只做组合与顺序**，具体接线拆到 `shell/wire/` 七份：
+     `plugins`（装 / 重装 / 听消息 / 策略活引用）、`conversations`（扫文件夹、开会话、
+     进频道、写名册）、`identities`（提示词段）、`models`（模型切换）、`directory`
+     （名册落盘）、`teams`（报到 / 重启留痕）、`speak`（我开口）。
+  2. **投递门面只有一份**：`wireChannel` 造出的 `ChannelWiring.flow` 同时交给工具
+     （`say` / `route` / `run`）、宿主发言（`speak`）、团队留痕（`teams`）与收尾
+     （`finishTurn`）。谁都不再自己拼 `PostDeps`；插件钩子与策略因此对每条公开消息生效。
+  3. **`ChannelFlow.publish` 收本次调用的频道快照**（`publish(state, input, ctx)`）：
+     工具先读、门面再交给 flow。提交之后再读同一份覆盖层会报
+     `Cannot use a settled overlay`，所以快照必须由调用方在提交前读好。
+  4. **`Context` 显式传递**：`deliver`（现 `fanOut`）/ `wake`（现 `enqueue`）/
+     `finishTurn` 去掉默认值；谁在什么事务里调用，由调用方写出来。内部只有「没答上来」
+     的留痕仍用 `BACKGROUND_CONTEXT`（那是 durable task 自己的后台结算）。
+  5. **关库只由运行时负责**：`shell.close()` 幂等，`main.ts` 不再先关壳再关运行时；
+     加一条断言测试锁住「关两次只关一次库」。
+- **取舍**：`wire/` 是 `shell/` 里的新目录，不是新分层（shell 本来就是唯一可 import 全部的
+  装配层）；`flowOf` 每次调用现造一个薄对象（没有隐藏状态，也避免把快照钉在闭包里）；
+  两把串行闸仍是进程级（ADR-073 / ADR-078），只是从模块单例变成装配注入。内部改名
+  `deliver → fanOut`、`wake → enqueue`、`deliveryPrompt → deliveryText`，落盘与接口不变。
+- **执行**：`src/shell/assemble.ts`、`src/shell/wire/{plugins,conversations,identities,models,directory,teams,speak}.ts`、
+  `src/core/channel/post.ts`（`createChannelFlow`）、`src/core/channel/wiring.ts`（`flow`）、
+  `src/core/channel/tools/{context,say,route,run}.ts`、`src/core/channel/turn/finish.ts`、
+  `src/core/flow/{runner,types}.ts`、`src/shell/main.ts`；
+  文档 `docs/CODE.md` §1.1 / §2、`AGENTS.md` §2 / §3.3。
+- **验收**：`test/core/assemble.test.ts`（关两次只关一次库）；`npm run check`、`npm test`
+  （98 文件 / 872 例）、`npm run prompt:check`；临时根目录启动冒烟；Phase 5 收尾时
+  `npm run live` 两次 13/13 与 `live:scenarios -- --rounds=1 --smoke`。

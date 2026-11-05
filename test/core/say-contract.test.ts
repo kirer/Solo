@@ -138,7 +138,7 @@ async function setup(options: {
 		saveDirectory: async () => undefined,
 		wiring: wireChannel({ harness: runtime.harness, layout: box.layout }),
 	} as never);
-	// 每个用例都从「新一轮」开始（真实流程里由 `deliver()` 清）。不清的话，
+	// 每个用例都从「新一轮」开始（真实流程里由 `fanOut()` 清）。不清的话，
 	const tool = tools.find((item) => item.name === "say");
 	expect(tool).toBeDefined();
 

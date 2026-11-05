@@ -279,7 +279,7 @@ settle    一轮结算：done → 取答案条目、问收尾策略（要不要�
 
 `wakeTo`（后台命令的结果）跳过策略链；`note` 没 `wakeTo` 时默认谁也不叫。读—算—写—扇出
 在 `publish` 闸里（ADR-073），收尾的「读答案 → 判重 → 补发」在 `repost` 闸里（ADR-079），插件钩子在
-闸外。`channel/post.ts` 是旧入口的薄壳，`channel/turn/finish.ts` 也只是把 `TurnDeps`
+闸外。`channel/post.ts` 是投递门面（`createChannelFlow`），`channel/turn/finish.ts` 也只是把 `TurnDeps`
 拼成 flow 再取 `settle`；判断（`saidLast` / `turnTarget` / 同文）在
 `flow/defaults/settle.ts`（ADR-078 / ADR-079）。
 
@@ -503,18 +503,20 @@ src/
     agent/           identity（他是谁 + 新建一个人）/ sections（提示词九段装配）/ memory
                      skills / roster（slug ↔ 会话 + 两层唤醒记录）/ rules / secrets
     team/            doc（README.md）/ memory（memory.md）
-    channel/         store（纯规则 + @ 解析）/ post（写一条 + 投递 + 唤醒）
-                     wake（唯一唤醒入口）/ turn（结算收尾 + durable 补发）/ attachments（附件）
-                     tools（8 个工具）/ unanswered（结算原因翻成人话）
-    plugin/          清单 / 四动作 API / 加载与隔离
+    channel/         post（投递门面 `createChannelFlow`）/ wiring（一根频道接线）/
+                     write（落盘）/ rules / mentions / queue（合并唤醒）/ delivery（投递正文）/
+                     membership（成员投影）/ attachments / jobs（后台命令）/
+                     turn（结算收尾 + durable 补发）/ tools（8 个工具）/ unanswered
+    flow/            publish / forward / settle + runner（入队机械）/ store / policies /
+                     validate / gates；入口只有 index.ts
+    plugin/          清单 / 五动作 API / 加载与隔离
   app/             用例：index（装配）/ types / snapshot / read / people / project（投影）
                    chat / uploads（附件语义）/ diag / errors
                    （不 import node:http，能脱离网络直接测）
   view/            dto.ts 一处定义界面吃的 JSON —— **契约层**，零 import
-  interface/http/  唯一 import node:http 的地方：routes（路由表）
-                   server（原语 + 匹配 + 来源闸 + 静态资源）/ sse（编解码 + hub）
-  shell/           assemble（扫文件夹 → 开会话 → 建频道）/ serve（装配顺序 + 监听）
-                   main（启动）/ seed
+  interface/http/  唯一 import node:http 的地方：routes / respond / route-match /
+                   origin-guard / network / static-assets / sse（编解码 + hub）
+  shell/           assemble（只做组合与顺序）/ wire（七段接线）/ serve / main / seed
 ```
 
 依赖只朝一个方向：`interface → app → domain`，`view` 谁都不依赖（大家都能用它），

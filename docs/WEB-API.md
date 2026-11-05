@@ -5,7 +5,7 @@
 
 ## 0. 总览
 
-只有 **29** 条路由（按方法 + 路径；`check-boundaries.mjs` 的口径），全部在
+只有 **32** 条路由（按方法 + 路径；`check-boundaries.mjs` 的口径），全部在
 `src/interface/http/routes.ts` 的 `routes` 表里声明。
 handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」，业务校验不在这一层。
 

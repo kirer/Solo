@@ -7,7 +7,7 @@
  */
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { deliveryPrompt } from "../../src/core/channel/delivery.ts";
+import { deliveryText } from "../../src/core/channel/delivery.ts";
 import { parseDoc } from "../../src/core/md/doc.ts";
 
 async function body(name: string): Promise<string> {
@@ -31,6 +31,6 @@ export const DIGEST_TEMPLATE = await body("86-digest.md");
 export const MERGED_TEMPLATE = await body("87-merged.md");
 
 /** 一份完整的 delivery 模板：直接走生产那条读取路径（含 `default:` 兜底句）。 */
-export const SEED_DELIVERY_PROMPT = await deliveryPrompt(
+export const SEED_DELIVERY_PROMPT = await deliveryText(
 	fileURLToPath(new URL("../../seed/prompt", import.meta.url)),
 );

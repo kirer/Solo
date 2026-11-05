@@ -4,12 +4,12 @@
  * 合并唤醒会撤掉「还没开始」的排队项，那些消息并没有丢 —— 新的那一轮会把它们一起答。
  * 被撤的提交按 `unanswered/aborted` 结算，但它**不是**「没答上来」，不能留痕。
  *
- * 这里走 `deliver()` 这一条公开的路，不直接调内部步骤：叫醒是它的一个阶段，判据要钉
+ * 这里走 `fanOut()` 这一条公开的路，不直接调内部步骤：叫醒是它的一个阶段，判据要钉
  * 在「投递一条消息之后频道里会多什么」。
  */
 import { describe, expect, test } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
-import { deliver, wake, type WakeNote } from "../../src/core/flow/runner.ts";
+import { enqueue, fanOut, type WakeNote } from "../../src/core/flow/runner.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import type { ChannelState } from "../../src/core/channel/types.ts";
 import { SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";
@@ -29,9 +29,9 @@ function fixture(settle: { status: string; reason?: string; detail?: string; ans
 
 function delivery(
 	fixtureOf: ReturnType<typeof fixture>,
-	extra: Pick<Parameters<typeof deliver>[0], "noteUnanswered">,
+	extra: Pick<Parameters<typeof fanOut>[0], "noteUnanswered">,
 ) {
-	return deliver({
+	return fanOut({
 		digests: new Map(),
 		prompt: SEED_DELIVERY_PROMPT,
 		text: SEED_TEXT,
@@ -75,7 +75,7 @@ describe("记 wake 与入队原子（ADR-076）", () => {
 				return { id: 9 };
 			},
 		};
-		const result = await wake(
+		const result = await enqueue(
 			{
 				conversationOf: async () => conversation as never,
 				wakeTogether: {
@@ -97,7 +97,7 @@ describe("记 wake 与入队原子（ADR-076）", () => {
 
 	test("准入之前抛错：两个都不落", async () => {
 		let admitted = false;
-		const result = await wake(
+		const result = await enqueue(
 			{
 				conversationOf: async () =>
 					({
@@ -124,7 +124,7 @@ describe("记 wake 与入队原子（ADR-076）", () => {
 
 	test("没接原子路径时仍是先记 wake、再提交", async () => {
 		const order: string[] = [];
-		const result = await wake(
+		const result = await enqueue(
 			{
 				conversationOf: async () =>
 					({

@@ -91,7 +91,7 @@ function importSpecifiers(source) {
 const LAYER_RULES = [
 	// 域的各目录：不许往上够到外壳、接口、用例、投影。
 	{
-		dirs: ["src/core/agent/", "src/core/channel/", "src/core/flow/", "src/core/team/", "src/core/work/", "src/core/runtime/"],
+		dirs: ["src/core/agent/", "src/core/channel/", "src/core/flow/", "src/core/team/", "src/core/runtime/"],
 		layer: "领域（agent/channel/flow/team/work/runtime）",
 		deny: [
 			{ match: /\/shell\//, reason: "内核不得 import 外壳（shell）" },

@@ -5,7 +5,7 @@
 //
 // 这个文件有两种读法，取决于你在查什么：
 // - 只想知道「一次发布怎么变成若干次入队」→ 看文件末尾的 `createTurnRunner`；
-// - 想改一次入队的细节（合并、唤醒记录、失败留痕）→ 看 `deliver` / `wake`。
+// - 想改一次入队的细节（合并、唤醒记录、失败留痕）→ 看 `fanOut` / `enqueue`。
 import { BACKGROUND_CONTEXT, type Context, type Harness } from "../runtime/index.ts";
 import {
 	watchSettled,
@@ -20,7 +20,7 @@ import type {
 	Tx,
 	UserInput,
 } from "../runtime/index.ts";
-import { deliveryPrompt, digestNotice, digestRows, mergedNotice, renderDelivery, type DeliveryPrompt } from "../channel/delivery.ts";
+import { deliveryText, digestNotice, digestRows, mergedNotice, renderDelivery, type DeliveryPrompt } from "../channel/delivery.ts";
 import { planAttachments } from "../channel/attachments.ts";
 import type { Channel, Message } from "../channel/types.ts";
 import type { WakeRecord, WakeTarget } from "../channel/turn/record.ts";
@@ -124,7 +124,7 @@ export type DeliverOptions = {
  * `requestId` 由「频道 + seq + slug」拼成：同一条消息重复投递会被底层去重，
  * 这是崩溃恢复下的至少一次语义想要的。
  */
-export async function deliver(options: DeliverOptions, context: Context): Promise<DeliverResult> {
+export async function fanOut(options: DeliverOptions, context: Context): Promise<DeliverResult> {
 	const delivered: string[] = [];
 	const failed: string[] = [];
 	const skipped: string[] = [];
@@ -176,7 +176,7 @@ export async function deliver(options: DeliverOptions, context: Context): Promis
 				? undefined
 				: (options.titleOf?.(task.channelId) ?? task.channelId);
 		const base = bodyOf(slug, interrupted, taskChannelTitle);
-		const result = await wake(
+		const result = await enqueue(
 			{
 				conversationOf: async (target) => (target === slug ? conversation : options.conversationOf(target)),
 				coalesceQueue: options.coalesceQueue,
@@ -324,7 +324,7 @@ export type WakeResult =
  * 失败不抛：消息不会丢，对方下次醒来会看到未读摘要。但**没产出会留痕**（`note`），
  * 否则频道里一片空白，我看到的「我说了没人回」和「系统挂了」长得一模一样。
  */
-export async function wake(deps: WakeDeps, input: WakeInput, context: Context): Promise<WakeResult> {
+export async function enqueue(deps: WakeDeps, input: WakeInput, context: Context): Promise<WakeResult> {
 	try {
 		const conversation = await deps.conversationOf(input.slug);
 		if (conversation === undefined) {
@@ -428,7 +428,7 @@ export type RunnerDeps = {
 };
 
 /**
- * 把一份名单变成入队：算摘要、读模板、取忙闲，然后逐条 `deliver`。
+ * 把一份名单变成入队：算摘要、读模板、取忙闲，然后逐条 `fanOut`。
  *
  * 摘要用**写之前**的 `state`（publish 传进来的那份快照）：新消息已经在频道里了，
  * 再算进未读数会重复。这一步放在提交之后也没关系 —— 快照是纯数据，不是事务覆盖层。
@@ -440,7 +440,7 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 			if (plan.targets.length === 0) return { delivered: [], failed: [], skipped: [] };
 
 			// 模板只读一次：摘要和正文用同一份，改 md 下一条生效。
-			const prompt = await deliveryPrompt(deps.promptDir);
+			const prompt = await deliveryText(deps.promptDir);
 			const digests = new Map<string, string>();
 			for (const slug of plan.targets) {
 				const part = digestRows(state, slug, 5, deps.text);
@@ -452,7 +452,7 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 			const busy = await liveConversations(deps.harness, ctx).catch(() => new Set<number>());
 			const labelOf = deps.labelOf ?? ((slug: string) => slug);
 
-			return deliver(
+			return fanOut(
 				{
 					digests,
 					prompt,
@@ -506,7 +506,7 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 }
 
 /** 投递没成时给我留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
-export function renderIssues(
+function renderIssues(
 	seq: number,
 	issues: readonly DeliverIssue[],
 	labelOf: (slug: string) => string,

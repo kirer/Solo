@@ -145,7 +145,7 @@ export function renderDelivery(options: {
 	readonly taskChannelTitle?: string | undefined;
 	/** 附件说明（`planAttachments` 的 `lines`）。没有附件时为空。 */
 	readonly attachmentLines?: readonly string[];
-	/** 这一轮要用的全部 delivery 模板，由 `deliveryPrompt()` 现读。 */
+	/** 这一轮要用的全部 delivery 模板，由 `deliveryText()` 现读。 */
 	readonly prompt: DeliveryPrompt;
 	/** 机械文案目录（`text/channel.md`）。 */
 	readonly catalog?: TextCatalog;
@@ -212,7 +212,7 @@ export function renderDelivery(options: {
  * 缺哪段就空串（调用方整段不贴）：模板是 workspace 里的活文件，可能被改成任意样子，
  * 读不到不该让投递失败 —— 但也不能静默：回话模板缺失就 warn 一次。
  */
-export async function deliveryPrompt(promptDir: string | undefined): Promise<DeliveryPrompt> {
+export async function deliveryText(promptDir: string | undefined): Promise<DeliveryPrompt> {
 	if (promptDir === undefined) {
 		console.warn("[core] 投递没拿到模板目录（prompt/）：回话规矩不会贴");
 		return emptyDeliveryPrompt();

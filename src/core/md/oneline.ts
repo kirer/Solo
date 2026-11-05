@@ -1,7 +1,7 @@
 /**
  * 把一段可能带换行的正文压成一行，给列表预览、频道留痕、投递摘要用。
  *
- * 只有这一份实现：以前散在 `channel/tools.ts`、`channel/deliver.ts`、
+ * 只有这一份实现：以前散在 `channel/tools.ts`、`channel/deliver.ts`（现 `flow/runner.ts`）、
  * `team/memory.ts`、`view/index.ts` 五处，规则还各不相同（有的截 `max` 再加省略号，
  * 出来的长度是 `max + 1`）。统一取**最严格**的那条：折叠空白 → 去首尾空格 →
  * 超长则 `slice(0, max - 1) + "…"`，**结果长度永不超过 `max`**。

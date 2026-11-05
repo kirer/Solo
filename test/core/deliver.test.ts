@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { deliver } from "../../src/core/flow/runner.ts";
+import { fanOut } from "../../src/core/flow/runner.ts";
 import { queuedAhead } from "../../src/core/channel/queue.ts";
 import { digestNotice, digestRows, renderDelivery } from "../../src/core/channel/delivery.ts";
 import { SEED_TEXT } from "./catalog.ts";
@@ -181,7 +181,7 @@ describe("合并唤醒：同一会话最多一个未开始的排队项", () => {
 		for (const text of ["第一条", "第二条", "第三条"]) {
 			const { state: next, message } = appendMessage(state, "team:x", { from: "lin", text, at: Date.now() });
 			state = next;
-			const result = await deliver({
+			const result = await fanOut({
 				digests: new Map(),
 				prompt: SEED_DELIVERY_PROMPT,
 				channel: state.channels["team:x"]!,
@@ -244,7 +244,7 @@ describe("我连发三条也只排一个唤醒", () => {
 		for (const text of ["第一句", "第二句", "第三句"]) {
 			const { state: next, message } = appendMessage(state, "team:x", { from: "owner", text, at: Date.now() });
 			state = next;
-			const result = await deliver({
+			const result = await fanOut({
 				digests: new Map(),
 				prompt: SEED_DELIVERY_PROMPT,
 				channel: state.channels["team:x"]!,
