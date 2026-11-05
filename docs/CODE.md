@@ -16,7 +16,8 @@ src/
     runtime/        防腐层：唯一能 import @earendil-works/* 的地方（openCore / models / 恢复）
     agent/          一个人：身份 / 提示词 / 记忆 / 技能 / 名册
     team/           一个团队：README.md / memory.md
-    channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 8 个工具（tools/）
+    channel/        说话的**领域原语**：频道规则 / 落盘 / 队列 / 唤醒记录 / 附件 / 8 个工具（tools/）
+    flow/           一条消息的一生：`publish`（写一条）/ `forward`（转交）/ 策略链 / 校验 / 投递
     plugin/         插件：`plugins/<slug>/` 的清单、四动作 API + `scope`、加载与隔离
   app/            用例：读（含投影） / 人 / 说话 / 上传 / 诊断 / 重置（不 import node:http）
   view/           契约层：只有 `dto.ts`，零 import（投影已并进 `app/project.ts`）
@@ -37,7 +38,7 @@ scripts/          九个入口脚本：边界检查、真模型冒烟（core-liv
 **五个层，依赖只能朝一个方向**（`core/` 就是 domain，四个兄弟目录各是一层）：
 
 ```
-interface  →  app  →  core/（agent | channel | team | runtime）
+interface  →  app  →  core/（agent | channel | flow | team | runtime）
      ↘         ↓
        view（契约层：只有 dto.ts，零 import）
 shell = 装配层，唯一可以同时 import 全部
@@ -46,20 +47,20 @@ shell = 装配层，唯一可以同时 import 全部
 **三条边界**（一开始就有，`scripts/check-boundaries.mjs` 机械化，违反即 `npm run check` 失败）：
 
 1. 只有 `src/core/runtime/` 能 import pi-durable / pi-ai / chord / pi-schema。
-2. 内核（`agent|team|channel`）不得反向 import `shell/` —— 依赖只能 `shell → 内核`。
+2. 内核（`agent|team|channel|flow`）不得反向 import `shell/` —— 依赖只能 `shell → 内核`。
 3. `interface/http/routes.ts` 的每条「方法 + 路径」必须在 `ui/app/src` 里有消费者（白名单：
    `GET /api/org`，Docker 健康检查用；`POST /api/people/:slug/dm`，界面入口下一轮接）。
    同路径的 GET 不能替没人调过的 POST 顶包。
 
 **分层重构后同一脚本又收紧了五条**（它文件头自己编号是「六条规定」；`LAYER_RULES` 落成
-**八组**：域（`agent|channel|team|runtime`）/ md / plugin / 根原语 / view / app / desktop / interface —— 多出来的是把第 2 条扩成「域也不许向上够
+**八组**：域（`agent|channel|flow|team|runtime`）/ md / plugin / 根原语 / view / app / desktop / interface —— 多出来的是把第 2 条扩成「域也不许向上够
 `app` / `view` / `interface`」，以及给根目录补的两条）：
 
 4. **`view/` 是契约层**：只有 `dto.ts`，一个 import 都不许有（投影已并进 `app/project.ts`；
    检查脚本第 2 组的目标仍是 `src/view/`，合并后目录里只剩这一个文件）。
 5. **`app/` 不许 import `node:http`** —— 用例要能脱离网络被直接测试。
 6. **`interface/` 是唯一碰 `node:http` 的地方**，但它只许经 `app/` 与 `view/` 说话：
-   不许 import `agent|channel|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
+   不许 import `agent|channel|flow|team|runtime` 的内部实现（否则业务会再长回 handler 里）。
 7. **`md/` 只能往下看**：可以 import `runtime/` 与 `fsx.ts`，不许 import
    `agent|team|channel|app|view|interface|shell`。
 8. **根目录原语**（`fsx.ts` / `layout.ts` / `naming.ts`）不许 import `app|view|interface|shell`。
@@ -74,7 +75,7 @@ shell = 装配层，唯一可以同时 import 全部
 4. 同步读配置 —— `agent/secrets.ts`、`runtime/models.ts`
 5. 技能目录复制 —— `agent/skills.ts`
 
-## 2. 全量文件（`src/` 下 88 个 ts：core 57 / app 19 / view 1 / interface 7 / shell 4，约 14800 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/` 下 97 个 ts：core 66 / app 19 / view 1 / interface 7 / shell 4，约 15800 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -105,8 +106,17 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/mentions.ts` | 159 | `@` 解析与收件人：`parseMentions` 只排除 ASCII 字母数字与邮箱符号（中文紧贴 @ 也认）/ `hasMentionToken` / `recipientsOf`（成员过滤 + 「没 @ 人时第一个成员接」+ `wakeOnAll`）/ `deliveryTargets`（收件人减掉我）/ `MentionRoster` / `mentionRosterOf` / `resolveMention`：别名只认 `slug` / `name` / `我` / `owner` **精确匹配**（`@CEO`、拼音、title、`@老板` 一律丢弃） |
 | `channel/rules.ts` | 240 | 频道的**纯规则**：`readMarkOf` / `unreadCount` / `fallbackChannelId`（只找最近活跃的群；一个群都没有就回落 `dm:owner-<slug>`）/ `channelsOf` / `appendMessage` / `projectChannel`（成员投影唯一入口：create / merge / replace）/ `ensureChannel`（= create，仅测试用）/ `markRead` / `tail`。接力上限（原 `relayLimit` / `botHopsSinceOwner`）已删，改由 `rules.md` 里「不等、不轮询」那条约束 |
 | `channel/write.ts` | 90 | `appendToChannel()` —— **消息落盘**的唯一实现（频道存在性、`nextSeq` 自愈、按路径 push；原样透传 `attachments` / `options`）；`appendNote()` 系统留痕；只落盘，不叫醒人 |
-| `channel/post.ts` | 283 | `postMessage()` 写一条 + 唤醒（落库与唤醒必须成对）；`deliverExisting()` 把**已经落库**的一条再交给几个人（助理的后台分发，不写第二条消息）；串行闸；`PostDeps` / `PostInput`。落盘交给 `write.ts`，逐条投递交给 `dispatch.ts` |
-| `channel/dispatch.ts` | 431 | `deliver()`（唯一跨 agent 原语）：逐条投递、两层唤醒记录、合并唤醒、失败通报；`DeliverResult` / `DeliverIssue` / `DeliverOptions`。叫醒（`wake`）在同文件：合并排队项；`wakeTogether` 给了就把「记两层 wake + 准入」放进同一个 commit（ADR-076），没给才退回两次提交；结算只留「没答上来」的痕，**答完的补发不在这里**（durable task，ADR-077），正文用 `bodyOf(merged)` 回调给 |
+| `channel/post.ts` | 109 | 旧入口的**薄壳**：`PostDeps` → `createFlow(...)`（store + 默认 router + runner + 注入的钩子/闸），`postMessage()` / `deliverExisting()` 只转调 `flow.publish` / `flow.forward`；进程级串行闸 `serialized` 暂时留在这里当默认值（ADR-078） |
+| `flow/types.ts` | 135 | 形状：`PublishInput` / `NoteInput` / `PublishResult` / `DeliverResult` / `DeliverIssue` / `ChannelSnapshot` / `RouteFacts` / `RouteDecision` / `RecipientPlan` / `RouteExistingInput` |
+| `flow/ports.ts` | 93 | 端口：`Flow`（`publish` / `forward`）/ `MessageStore` / `Router` / `TurnRunner`（`fanOut`）/ `PublishHooks`（`afterPublish`）/ `FlowGates`（`publish`）/ `FlowPorts` |
+| `flow/publish.ts` | 73 | **主线**：闸内「读快照 → 落盘 → 算事实 → 策略链 → 校验 → 扇出」，闸外 `afterPublish`（抛错只 warn）。优先级：`wake:false` / `note` 无 `wakeTo` 不叫 → `wakeTo` → 策略链 → `facts.defaultTargets` |
+| `flow/forward.ts` | 40 | 转交**已经落盘**的一条：读快照 → 按 `seq` 找 → 去掉已被 @ 的人 → 校验 → 扇出（带 `routedBy`）；不写第二条消息、不调公开钩子 |
+| `flow/runner.ts` | 531 | 投递机械（原 `channel/dispatch.ts`）：`deliver()` 逐条投递、两层唤醒记录、合并唤醒、失败通报；`wake()` 合并排队项，`wakeTogether` 给了就把「记两层 wake + 准入」放进同一个 commit（ADR-076）；结算只留「没答上来」，**答完的补发不在这里**（ADR-077）；`createTurnRunner(deps)` 先算 digest / busy 再进 `deliver` |
+| `flow/policies.ts` | 31 | `resolvePlan(facts, routers, ctx)`：按顺序问策略，第一个给决定的生效；抛错只跳过并 warn；都弃权用 `facts.defaultTargets`（reason 记 `defaultTargets`） |
+| `flow/validate.ts` | 21 | `validatePlan(plan, channel, message)`：去重、滤掉我 / 发件人 / 非成员。策略只能提议，core 决定谁真的被叫 |
+| `flow/store.ts` | 39 | `createMessageStore({harness, state})`：`read` 返回调用方那份快照、`append`（`appendToChannel`）、`note`（`appendNote`） |
+| `flow/defaults/router.ts` | 48 | `routeFactsOf(state, channel, message)`（`lastSpeaker` = `speakerBefore`，`defaultTargets` = `deliveryTargets`）与 `defaultRouter()`（照 `defaultTargets` 叫） |
+| `flow/index.ts` | 53 | `createFlow(ports)` 只组装 `publish` / `forward`；再导出类型与 `routeFactsOf` / `resolvePlan` / `validatePlan` |
 | `channel/delivery.ts` | 273 | 投递正文的**排版**：`renderDelivery` / `renderReplyRules` / `digestRows` / `digestNotice` / `deliveryPrompt`（reply / interrupted / task 系统模板 + 八个 delivery 片段；`alone` / `shared` / `colleagues` 带模板自写的 `default:` 兜底句）/ `mergedNotice`。文案全在 `seed/prompt/*.md`，这里只按条件选片段、填名字；`routedBy` 给助理转来的那条加一句「X 让你看这条」（ADR-063） |
 | `channel/queue.ts` | 109 | 唤醒队列：`queuedAhead`（同会话还没开始的排队项）/ `coalesceQueue`（合并成最多一个）/ `liveConversations`（「他还在干活」的判据；跳过 `core.turn-report` 与只等收尾的 `waiting` 生成，ADR-077） |
 | `channel/attachments.ts` | 405 | 附件（原 `uploads.ts` + `attach.ts` 合并）：`putUpload` / `readUploadMeta` / `sweepOrphanUploads`（单文件一份元数据，频道文档里只存 id）/ `kindOfMime` / `mimeOf` / `nameFrom` / `contentDisposition` / `readBounded`（边读边数——先读完再比上限等于没有上限）/ `placeholderOf`（附件 → 模型能看到的那几行） |
@@ -246,7 +256,8 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 改「要我拍板就 @ 我」 | `channel/tools/say.ts` | 只有一种情形把 `owner` 加进 `mentions`：**正文显式 @我**。补的是 `mentions`，**不改正文**；关键词嗅探与「`decision` 自动补 owner」都已删（ADR-009） |
 | 改「没明确频道时在哪儿回话」 | `channel/rules.ts` 的 `fallbackChannelId` + `channel/tools/channel-choice.ts` 的 `defaultChannel` | 兜底只找最近活跃的真实频道；**落到私聊就报错**让模型显式给 channel，不静默写进一个不存在的频道（这条踩过：话写成功了，频道里谁都看不见）。显式 `channel` 认 id，也认**频道名**——提示词里给的是标题，不是 id |
 | 改频道成员怎么来 | `channel/rules.ts` 的 `projectChannel` + `channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` / `ensureOwnerDm` | 成员是 `identity.md` + 团队 `README.md` 的投影；全员 / 重扫用 `merge`，团队用 `replace`。全员频道只是播种一次的普通群，没有特权 |
-| 改团队频道怎么把消息交给某个人 | `channel/tools/route.ts` + `channel/post.ts` 的 `deliverExisting` + `channel/turn/finish.ts` 的 `saidLast` | 助理专用；不写第二条消息、`noteOf: "route"` 的留痕不画（ADR-047）；已经被 @ 的人不重复叫（ADR-063） |
+| 改「一条消息落盘后叫醒谁 / 什么顺序」 | `core/flow/publish.ts`（主线顺序）+ `flow/policies.ts`（策略链）+ `flow/validate.ts`（最后校验）+ `flow/runner.ts`（扇出与合并） | 闸内读—算—写—扇出，`afterPublish` 在闸外；`wakeTo` 跳过策略，`note` 默认不叫人；策略抛错回退默认（ADR-078） |
+| 改团队频道怎么把消息交给某个人 | `channel/tools/route.ts` + `core/flow/forward.ts` + `channel/turn/finish.ts` 的 `saidLast` | 助理专用；不写第二条消息、`noteOf: "route"` 的留痕不画（ADR-047）；已经被 @ 的人不重复叫（ADR-063） |
 | 路径怎么拼 / 两个根 | `layout.ts` 的 `resolveLayout` + `workspaceOf` / `memberWorkspace` / `teamWorkspace` | **拼路径只许在 `layout.ts`**。应用私有（助理、提示词、插件、settings、库、uploads、logs）在 `appRoot`；我的组织（`members/` `teams/` `skills/` `rules.md`）在 `userRoot`（ADR-030） |
 | 文件读写 / 名字 / Markdown 头 | `fsx.ts`（工作区相对路径）/ `runtime/io.ts`（绝对路径机械 IO）/ `naming.ts` / `md/doc.ts` | 每个都只有一份实现；直接 `node:fs` 只允许 `docs/CODE.md` §1 列的五类例外，别在业务模块里新开 |
 | 加一个插件 / 改插件能做什么 | `src/core/plugin/`（`api.ts` 的四个动作、`manifest.ts` 的清单字段）+ `shell/assemble.ts` 的装配 + `ui/app/src/plugin/registry.ts` 的 `SlotName` | 插件是**运行时数据**（`<appRoot>/plugins/`，gitignore），不是代码；加动作 = 改 `PluginApi` + 装配里多接一根线；加插槽 = 登记 `SlotName` + 在宿主里画 `<Slot>`（ADR-018）。开关在插件页（`panels/PluginsPage.tsx`），落盘走 `writePluginEnabled`，写完就重装（ADR-026） |
@@ -255,9 +266,9 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 装完带前端的插件要重启 | `interface/http/routes.ts` 的 `POST /api/restart` + `shell/main.ts` 的 `restartApp`（关库 → 退出码 75）+ `ui/app/src/panels/PluginsPage.tsx` / `panels/Overlays.tsx` / `state/store.ts` | 后端插件已经热装，只有前端入口要重新 `import`；桌面壳重开，网页版刷新；不删任何数据（ADR-066） |
 | 改路由匹配 / 静态资源 / 来源闸 / 网卡 | `interface/http/route-match.ts` / `static-assets.ts` / `origin-guard.ts` / `network.ts` | 表驱动匹配（`:name` / `*name`）、ETag 与压缩协商、Host·Origin 闸都在这里；别自己拼 `writeHead`，走 `json` / `fail` 四个出口 |
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
-| 改「我不 @ 人时谁接话」 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` | 认的是我上一句话之后第一个接话的人（`note` 不算）；我还没说话才退回第一个成员。`renderDelivery` 吃投递层算好的 `woken`，别自己再推一遍（ADR-015） |
+| 改「我不 @ 人时谁接话」 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` + `core/flow/defaults/router.ts` 的 `routeFactsOf` | 认的是我上一句话之后第一个接话的人（`note` 不算）；我还没说话才退回第一个成员。`renderDelivery` 吃投递层算好的 `woken`，别自己再推一遍（ADR-015） |
 | 改看门狗的判据 / 通报方式 | `app/watch.ts` + `app/diag.ts` 的 `onAbnormal` | 只通报、不自动救；用订阅不用轮询（`lastReport` 只留最新一条，轮询会漏）（ADR-016） |
-| 改后台命令（`run` 的 `background`） | `channel/jobs.ts`（起 / 记 / 收）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `channel/post.ts` 的 `wakeTo` | 结果回到**起跑的那个频道**，以 `note` 落库、`wakeTo` 叫醒起跑的人（`note` 默认谁也不叫）；最多 30 分钟；输出只回尾巴 8000 字（ADR-013） |
+| 改后台命令（`run` 的 `background`） | `channel/jobs.ts`（起 / 记 / 收）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo` | 结果回到**起跑的那个频道**，以 `note` 落库、`wakeTo` 叫醒起跑的人（`note` 默认谁也不叫）；最多 30 分钟；输出只回尾巴 8000 字（ADR-013） |
 | 改一条消息的字数上限 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` | 群聊 600 / 私聊 1200，看的是目标频道的 `chatKind`（ADR-014） |
 | 插件要读某个频道的目录（文件树这类） | `PluginApi.scope(channelId)`（`plugin/api.ts`）+ `shell/assemble.ts` 的 `pluginScope` | 核心只给**根**（私聊 → 那个人的 `workspace/`，团队频道 → 团队 `workspace/`，全员频道 → `undefined`）。路径守卫、大小上限、拒符号链接全在插件里做（ADR-036） |
 | 插件要按 token / 成本算账（Token 统计这类） | `PluginApi.logsRoot`（`plugin/api.ts`）+ `shell/assemble.ts` 的 `loadPlugins` 传 `layout.logsRoot` | 读的是审计 `tools.jsonl`（ADR-010 的钩子）：每次模型回复一行，`in` / `out` / `cache` / `write` / `cost` / `ms`。只有两份（5MB 轮转一代），别把它当数据库（ADR-064） |
@@ -316,7 +327,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 93 文件 / 842 例，应该 <3s
+npm test             # 97 文件 / 860 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）

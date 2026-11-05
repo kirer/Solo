@@ -1,8 +1,16 @@
 // ── 投递编排 ───────────────────────────────────────────────────────────────
 // 「写一条消息」与「把它交给该看的人」是一次写入的两半：收件人由消息本身算出来
-// （`recipientsOf`），投递正文又由这条消息拼出来。落盘在 `write.ts`，这里只负责叫醒。
-import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { watchSettled } from "./unanswered.ts";
+// （`recipientsOf`），投递正文又由这条消息拼出来。落盘在 `channel/write.ts`，这里
+// 只负责叫醒。
+//
+// 这个文件有两种读法，取决于你在查什么：
+// - 只想知道「一次发布怎么变成若干次入队」→ 看文件末尾的 `createTurnRunner`；
+// - 想改一次入队的细节（合并、唤醒记录、失败留痕）→ 看 `deliver` / `wake`。
+import { BACKGROUND_CONTEXT, type Context, type Harness } from "../runtime/index.ts";
+import {
+	watchSettled,
+	renderUnanswered,
+} from "../channel/unanswered.ts";
 import type {
 	Conversation,
 	InputEntry,
@@ -12,37 +20,18 @@ import type {
 	Tx,
 	UserInput,
 } from "../runtime/index.ts";
-import { mergedNotice, renderDelivery, type DeliveryPrompt } from "./delivery.ts";
-import { planAttachments } from "./attachments.ts";
-import type { Channel, Message } from "./types.ts";
-import type { WakeRecord, WakeTarget } from "./turn/record.ts";
+import { deliveryPrompt, digestNotice, digestRows, mergedNotice, renderDelivery, type DeliveryPrompt } from "../channel/delivery.ts";
+import { planAttachments } from "../channel/attachments.ts";
+import type { Channel, Message } from "../channel/types.ts";
+import type { WakeRecord, WakeTarget } from "../channel/turn/record.ts";
 import type { TextCatalog } from "../md/catalog.ts";
+import { fill } from "../md/catalog.ts";
+import { appendNote } from "../channel/write.ts";
+import { coalesceQueue, liveConversations } from "../channel/queue.ts";
+import type { DeliverIssue, DeliverResult } from "./types.ts";
+import type { FanOutArgs, TurnRunner } from "./ports.ts";
 
-export type { WakeRecord } from "./turn/record.ts";
-
-export type DeliverResult = {
-	/** 真的进了队列的 slug。不代表已读。 */
-	readonly delivered: string[];
-	/** 连队列都没进的 slug（消息仍在频道里）。 */
-	readonly failed: string[];
-	/** 没有会话、或就是我本人，跳过的 slug。 */
-	readonly skipped: string[];
-	/**
-	 * 这次合并唤醒的账：谁本来已经有一条「还没开始」的排队项，被这一条取代了。
-	 *
-	 * 消息一条都没删（都在频道里），少掉的只是**重复的唤醒**。
-	 */
-	readonly merged?: readonly { readonly slug: string; readonly count: number }[];
-};
-
-/** 一个「叫了但没人会答」的收件人。拼成频道里的 `note` 用，我才能看见系统做了什么。 */
-export type DeliverIssue = {
-	readonly slug: string;
-	/** 「还没有会话」还是「投递抛错」。两者文案不同，不能糊成一句。 */
-	readonly reason: "no-conversation" | "failed";
-	/** 抛错时的简短原因。 */
-	readonly detail?: string;
-};
+export type { WakeRecord } from "../channel/turn/record.ts";
 
 export type DeliverOptions = {
 	/**
@@ -55,7 +44,7 @@ export type DeliverOptions = {
 	 * 提前算既对又安全。
 	 */
 	readonly digests: ReadonlyMap<string, string>;
-	/** 已经读好的 delivery 模板（`postMessage` 每轮现读一份，所有收件人共用）。 */
+	/** 已经读好的 delivery 模板（`publish` 每轮现读一份，所有收件人共用）。 */
 	readonly prompt: DeliveryPrompt;
 	readonly channel: Channel;
 	readonly message: Message;
@@ -428,4 +417,115 @@ export async function wake(
 		);
 		return { status: "failed", detail: error instanceof Error ? error.message : String(error) };
 	}
+}
+
+// ── 一次发布 → 若干次入队 ─────────────────────────────────────────────────
+
+/** `createTurnRunner` 要的全部接线。字段与 `channel/post.ts` 的 `PostDeps` 同形。 */
+export type RunnerDeps = {
+	readonly harness: Harness;
+	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
+	readonly labelOf?: (slug: string) => string;
+	readonly rememberWake?: (slug: string, wake: WakeRecord) => Promise<void>;
+	readonly wakeTogether?: DeliverOptions["wakeTogether"];
+	readonly wakeOf?: (slug: string) => Promise<WakeRecord | undefined>;
+	readonly uploadsRoot?: string;
+	readonly promptDir?: string;
+	readonly text?: TextCatalog;
+};
+
+/**
+ * 把一份名单变成入队：算摘要、读模板、取忙闲，然后逐条 `deliver`。
+ *
+ * 摘要用**写之前**的 `state`（publish 传进来的那份快照）：新消息已经在频道里了，
+ * 再算进未读数会重复。这一步放在提交之后也没关系 —— 快照是纯数据，不是事务覆盖层。
+ */
+export function createTurnRunner(deps: RunnerDeps): TurnRunner {
+	return {
+		async fanOut(args: FanOutArgs): Promise<DeliverResult> {
+			const { state, channel, message, plan, routedBy, ctx } = args;
+			if (plan.targets.length === 0) return { delivered: [], failed: [], skipped: [] };
+
+			// 模板只读一次：摘要和正文用同一份，改 md 下一条生效。
+			const prompt = await deliveryPrompt(deps.promptDir);
+			const digests = new Map<string, string>();
+			for (const slug of plan.targets) {
+				const part = digestRows(state, slug, 5, deps.text);
+				digests.set(slug, digestNotice(prompt.digest, part.total, part.rows));
+			}
+
+			// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
+			// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
+			const busy = await liveConversations(deps.harness, ctx).catch(() => new Set<number>());
+			const labelOf = deps.labelOf ?? ((slug: string) => slug);
+
+			return deliver(
+				{
+					digests,
+					prompt,
+					channel,
+					message,
+					targets: plan.targets,
+					busy,
+					...(deps.text === undefined ? {} : { text: deps.text }),
+					...(routedBy === undefined ? {} : { routedBy }),
+					// 合并唤醒（也负责我插队）：同一个会话最多留一个「还没开始」的排队项。
+					// 谁连发几条（我三句、agent 的过程话与追问）都只排一个唤醒，最后一条取代
+					// 前面没开始的那些 —— 消息都在频道里，少的只是重复唤醒。
+					coalesceQueue: (conversationId, keepRequestId) =>
+						coalesceQueue(deps.harness, conversationId, keepRequestId, ctx),
+					conversationOf: deps.conversationOf,
+					...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
+					...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
+					...(deps.wakeTogether === undefined ? {} : { wakeTogether: deps.wakeTogether }),
+					...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
+					titleOf: (channelId) => state.channels[channelId]?.title,
+					...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
+					// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
+					// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
+					noteUnanswered: async ({ label, seq, reason, detail }) => {
+						await appendNote(
+							{ harness: deps.harness },
+							channel.id,
+							renderUnanswered(seq, label, reason, deps.text, detail),
+							Date.now(),
+							BACKGROUND_CONTEXT,
+						);
+					},
+					// 没人被叫醒就说一句：只写 stderr 的话，频道里一片空白，
+					// 我看到的「我说了没人理」和「系统挂了」长得一模一样。
+					notify: async (issues) => {
+						await appendNote(
+							{ harness: deps.harness },
+							channel.id,
+							renderIssues(message.seq, issues, labelOf, deps.text),
+							Date.now(),
+							ctx,
+						);
+					},
+				},
+				ctx,
+			);
+		},
+	};
+}
+
+/** 投递没成时给我留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
+export function renderIssues(
+	seq: number,
+	issues: readonly DeliverIssue[],
+	labelOf: (slug: string) => string,
+	catalog?: TextCatalog,
+): string {
+	return issues
+		.map((issue) =>
+			issue.reason === "failed"
+				? fill(catalog, "post.issue.failed", {
+						seq,
+						label: labelOf(issue.slug),
+						detail: issue.detail ?? fill(catalog, "post.issue.unknown"),
+					})
+				: fill(catalog, "post.issue.skipped", { seq, label: labelOf(issue.slug) }),
+		)
+		.join("\n");
 }

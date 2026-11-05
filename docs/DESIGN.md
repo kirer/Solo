@@ -28,7 +28,7 @@ v3 把「像不像一个原生聊天应用」做对了，但它回答不了这�
 轨迹**不写进频道、不进 SQLite、不发草稿**。它从底层会话条目现算：
 
 - 每条投递都往会话里写一条 `kind: "core.channel"` 的条目，`data` 里带
-  `{channelId, seq, from, text, mentions}`（`channel/dispatch.ts`）；
+  `{channelId, seq, from, text, mentions}`（`core/flow/runner.ts`）；
 - 所以**一轮 = 从这条条目到下一条 `core.channel` 条目之间的全部条目**；
 - 助手消息里有 `thinking` / `text` / `toolCall` 三种内容块，工具结果是一条
   `ToolResultMessage` —— 全部躺在会话里，读一次就有。

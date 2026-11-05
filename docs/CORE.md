@@ -262,6 +262,24 @@ V3 以前这里靠 6 秒定时器事后猜，现在结算本身就是信号，�
 
 **一条消息的长度看频道**：群聊 600 字、私聊 1200 字（`guards.ts` 的 `sayLimitOf`，ADR-014）。超了不落库，回一句「太长了」让它把过程写进文件、只发结论加路径。
 
+### 一条消息的一生（代码）
+
+主线只有两个动作，都在 `src/core/flow/`：
+
+```
+publish   新消息：读频道快照 → 落盘（appendToChannel）→ 算事实（lastSpeaker / defaultTargets）
+          → 问策略链（第一个给决定的生效；都弃权就用 defaultTargets）→ 校验（去重，滤掉我 /
+          发件人 / 非成员）→ 逐人扇出（runner：合并排队项 + 写两层 wake + 准入同一 commit）
+          → 闸外 afterPublish（插件听消息；抛错不影响这条消息）
+forward   已有消息：读 → 按 seq 找 → 去掉已被 @ 的人 → 校验 → 扇出（带 routedBy），
+          不写第二条消息
+```
+
+`wakeTo`（后台命令的结果）跳过策略链；`note` 没 `wakeTo` 时默认谁也不叫。读—算—写—扇出
+在串行闸里（ADR-073），插件钩子在闸外。`channel/post.ts` 只是旧入口的薄壳，
+`channel/dispatch.ts` 已并入 `flow/runner.ts`（ADR-078）。**结算后要不要补发仍由
+`channel/turn/finish.ts` 判断**；搬进 `flow/settle.ts` 是下一步。
+
 ## 5. 文件夹就是边界
 
 **两个根**（ADR-030）：一个是**应用私有**（跟着这台机器上的这份安装走），一个是**我的组织**

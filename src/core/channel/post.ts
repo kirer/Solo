@@ -1,69 +1,36 @@
 /**
- * 发消息：落库 + 唤醒，成对完成。
+ * 发消息的旧入口：现在只是 `core/flow` 的一层薄壳。
  *
- * 这是新核心里唯一「写频道」的入口。落库与唤醒必须在同一个地方做，否则会出现
- * 两种静默失败：
+ * 真正的编排在 `core/flow/publish.ts`（读一个函数就懂主线：落盘 → 算人 → 扇出 →
+ * 钩子）。这里保留 `postMessage` / `deliverExisting` 两个名字，是因为工具、收尾、
+ * 外壳与测试都按这两个入口调用；把调用点一次全换掉只会让 diff 盖住行为变化。
  *
- * - **存了没叫**（消息在，人不知道）——踩过一次：`say` 不解析正文里的
- *   `@`，CPO 用 `say` 发了「@CEO 团队已建好」，CEO 从来没被唤醒，团队静默停摆。
- * - **叫了没存**（人醒来看不到东西）——不会报错，只会让 agent 反复「你说什么？」。
+ * 两件事仍然留在这里：
+ * 1. `PostDeps` —— 本次调用用的频道快照与接线；
+ * 2. 进程级的发布串行闸 —— 旧调用点没有显式注入闸门时的默认值（ADR-073）。
+ *    新代码可以经 `gate` 传一份自己的；装配层在 Phase 4 接管它。
  *
- * 所以 `postMessage` 里三件事固定这个顺序：解析 @ → 写文档（`write.ts`）→
- * 唤醒收件人（`dispatch.ts`）。
+ * 依赖方向：`channel/post.ts → flow`，`flow` 不 import 这个文件。
  */
 import type { Conversation, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT, type Context } from "../runtime/index.ts";
-import { OWNER, type Attachment, type Channel, type ChannelState, type Message } from "./types.ts";
-import { deliveryTargets } from "./mentions.ts";
-import type { MentionRoster } from "./mentions.ts";
+import type { ChannelState, Message } from "./types.ts";
 import type { WakeRecord } from "./turn/record.ts";
-import { appendNote, appendToChannel } from "./write.ts";
-import { speakerBefore } from "./rules.ts";
-import { deliver, type DeliverIssue, type DeliverOptions, type DeliverResult } from "./dispatch.ts";
-import { deliveryPrompt, digestNotice, digestRows } from "./delivery.ts";
-import { renderUnanswered } from "./unanswered.ts";
 import { createSerialGate } from "../runtime/io.ts";
-import { coalesceQueue, liveConversations } from "./queue.ts";
-import { fill, type TextCatalog } from "../md/catalog.ts";
+import type { TextCatalog } from "../md/catalog.ts";
+import { createFlow } from "../flow/index.ts";
+import { createMessageStore } from "../flow/store.ts";
+import { defaultRouter } from "../flow/defaults/router.ts";
+import { createTurnRunner, type DeliverOptions } from "../flow/runner.ts";
+import type { Flow, FlowGates } from "../flow/ports.ts";
+import type { DeliverResult, PublishInput, PublishResult, RouteExistingInput } from "../flow/types.ts";
 
-type PostResult = {
-	readonly channel: Channel;
-	readonly message: Message;
-	/** 没唤醒任何人时是空数组。 */
-	readonly delivery: DeliverResult;
-};
-
-type PostInput = {
-	readonly channelId: string;
-	readonly from: string;
-	readonly text: string;
-	readonly at: number;
-	/** 唯一的非默认 kind：系统留痕。发言不传，落库就是 `chat`。 */
-	readonly kind?: "note";
-	/** 留痕的种类（`run` = 后台命令跑完）；只对 `note` 有意义，界面据此收成一行。 */
-	readonly noteOf?: string;
-	readonly replyTo?: number;
-	/** 名册：给了就按名册把 `@我` / `@CEO` 落库成规范 slug。 */
-	readonly roster?: MentionRoster;
-	/** 正文里没写、但要记进 `mentions` 的 slug（带 `options` 时要叫醒我）。 */
-	readonly mention?: readonly string[];
-	/** 不想唤醒任何人（比如系统留痕）。缺省会唤醒。 */
-	readonly wake?: false;
-	/**
-	 * 系统留痕也要叫醒谁时用（后台命令跑完，叫起跑的人回来看结果）。
-	 *
-	 * 给了就跳过「谁被 @」的推算：`note` 默认谁也不叫，而这条的收件人不是从正文里
-	 * 解析出来的，是「谁起的这条命令」。
-	 */
-	readonly wakeTo?: readonly string[];
-	/** 附件引用。必须在这里给（不是事后补），否则投递时还不知道有图，模型就看不见。 */
-	readonly attachments?: readonly Attachment[];
-	/** 要我选的选项（2–6 个）。落库、进界面，投递照常。 */
-	readonly options?: readonly string[];
-};
+export type PostInput = PublishInput;
+export type PostResult = PublishResult;
 
 export type PostDeps = {
 	readonly harness: Harness;
+	/** 本次调用的频道快照（提交之后仍可读的纯数据）。 */
 	readonly state: ChannelState;
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
 	readonly labelOf?: (slug: string) => string;
@@ -80,27 +47,11 @@ export type PostDeps = {
 	readonly promptDir?: string;
 	/** 机械文案目录（`text/`）。投递头、留痕、摘要行从这里取。 */
 	readonly text?: TextCatalog;
+	/** 一条公开消息落盘并投递之后（插件听消息）。缺省不调。 */
+	readonly afterPublish?: (message: Message, channelId: string, context: Context) => Promise<void>;
+	/** 投递串行闸。缺省 = 进程级一份（旧行为）。 */
+	readonly gate?: FlowGates["publish"];
 };
-
-/** 投递没成时给我留一句话。分开列，不糊成一句：两种原因的处置完全不同。 */
-function renderIssues(
-	seq: number,
-	issues: readonly DeliverIssue[],
-	labelOf: (slug: string) => string,
-	catalog?: TextCatalog,
-): string {
-	return issues
-		.map((issue) =>
-			issue.reason === "failed"
-				? fill(catalog, "post.issue.failed", {
-						seq,
-						label: labelOf(issue.slug),
-						detail: issue.detail ?? fill(catalog, "post.issue.unknown"),
-					})
-				: fill(catalog, "post.issue.skipped", { seq, label: labelOf(issue.slug) }),
-		)
-		.join("\n");
-}
 
 /**
  * 频道写入的串行闸。
@@ -115,6 +66,17 @@ function renderIssues(
  */
 const serialized = createSerialGate();
 
+/** 把这一次调用的依赖接成 flow。对象很薄，每次现造；没有隐藏的第二份状态。 */
+function flowOf(deps: PostDeps): Flow {
+	return createFlow({
+		store: createMessageStore(deps),
+		routers: [defaultRouter()],
+		runner: createTurnRunner(deps),
+		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
+		gate: deps.gate ?? serialized,
+	});
+}
+
 /**
  * 写一条消息并唤醒该唤醒的人。
  *
@@ -127,157 +89,21 @@ export async function postMessage(
 	input: PostInput,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<PostResult> {
-	return serialized(() => postMessageUnlocked(deps, input, context));
-}
-
-async function postMessageUnlocked(deps: PostDeps, input: PostInput, context: Context): Promise<PostResult> {
-	const channel = deps.state.channels[input.channelId];
-	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
-
-	// 提交之前先把「后面还要读到的东西」抄成纯数据：提交一关，读覆盖层就释放了，
-	// 而成员列表、wakeOnAll、各人未读都要在提交之后才用得上。
-	const channelMeta: Channel = {
-		...channel,
-		members: [...channel.members],
-		wakeOnAll: [...channel.wakeOnAll],
-	};
-	const digestParts = new Map<string, { readonly total: number; readonly rows: readonly string[] }>();
-	for (const slug of channelMeta.members) {
-		if (slug === OWNER) continue;
-		digestParts.set(slug, digestRows(deps.state, slug, 5, deps.text));
-	}
-	const appended = await appendToChannel(deps, input, context);
-	if (appended === undefined) throw new Error(`频道不存在：${input.channelId}`);
-	const message = appended.message;
-
-	const liveChannel = channelMeta;
-	// `note` 默认谁也不叫（系统留痕）；显式给了 `wakeTo` 才叫 —— 后台命令跑完，
-	// 起跑的那个人得回来看结果，否则这条结果只是躺在频道里。
-	if (input.wake === false || (input.kind === "note" && input.wakeTo === undefined)) {
-		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
-	}
-
-	// 我没有会话：它是「人」，不是 agent。`deliver` 会把它算进 skipped。
-	// 我不 @ 人时接上一位说话的（`speakerBefore`），不是固定第一个成员（ADR-015）。
-	const targets = input.wakeTo ?? deliveryTargets(liveChannel, message, speakerBefore(deps.state, liveChannel.id, message.seq));
-	if (targets.length === 0) {
-		return { channel: liveChannel, message, delivery: { delivered: [], failed: [], skipped: [] } };
-	}
-	// 模板只读一次：摘要和正文用同一份，改 md 下一条生效。
-	const prompt = await deliveryPrompt(deps.promptDir);
-	// 摘要用**写之前**的 state：这条新消息已经在正文里了，再算进未读数会重复。
-	const digests = new Map(
-		[...digestParts].map(([slug, part]) => [slug, digestNotice(prompt.digest, part.total, part.rows)]),
-	);
-	const delivery = await deliverTo(deps, { channel: liveChannel, message, targets, digests, prompt }, context);
-	return { channel: liveChannel, message, delivery };
+	return flowOf(deps).publish(input, context);
 }
 
 /**
  * 把一条**已经落在频道里**的消息再交给几个人看 —— 助理的后台分发（ADR-063）。
  *
- * 和 `postMessage` 的投递走同一条 `deliver`：不写第二条消息，频道里也就没有
+ * 和 `postMessage` 的投递走同一条 `flow.forward`：不写第二条消息，频道里也就没有
  * 「助理把这条转给了谁」这种可见的痕。收件人看到的仍是原文，只是多一句是谁转的。
  *
  * 调用方给的 `deps.state` 必须是**当下的**频道快照（工具用 `readState` 读）。
  */
 export async function deliverExisting(
 	deps: PostDeps,
-	input: {
-		readonly channelId: string;
-		readonly seq: number;
-		readonly targets: readonly string[];
-		/** 转交的人（助理的 slug）。投递正文里会写明。 */
-		readonly routedBy?: string;
-	},
+	input: RouteExistingInput,
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<DeliverResult> {
-	const channel = deps.state.channels[input.channelId];
-	if (channel === undefined) throw new Error(`频道不存在：${input.channelId}`);
-	const message = (deps.state.messages[input.channelId] ?? []).find((item) => item.seq === input.seq);
-	if (message === undefined) throw new Error(`消息不存在：${input.channelId}#${String(input.seq)}`);
-	// 只投给这个房间里的人，且不投给我（我没有会话）。这是第二道闸：调用方已经校验过。
-	// 已经被 @ 的人不重复叫：投递时他们本来就会收到这条，再转一次就是两句。
-	const already = new Set(message.mentions);
-	const targets = [...new Set(input.targets)].filter(
-		(slug) => slug !== OWNER && channel.members.includes(slug) && !already.has(slug),
-	);
-	if (targets.length === 0) return { delivered: [], failed: [], skipped: [] };
-
-	const liveChannel: Channel = { ...channel, members: [...channel.members], wakeOnAll: [...channel.wakeOnAll] };
-	const prompt = await deliveryPrompt(deps.promptDir);
-	const digests = new Map<string, string>();
-	for (const slug of targets) {
-		const part = digestRows(deps.state, slug, 5, deps.text);
-		digests.set(slug, digestNotice(prompt.digest, part.total, part.rows));
-	}
-	return deliverTo(deps, { channel: liveChannel, message, targets, digests, prompt, ...(input.routedBy === undefined ? {} : { routedBy: input.routedBy }) }, context);
-}
-
-/** `postMessage` 与 `deliverExisting` 共用的投递：叫醒、合并、收尾都只在这里写一次。 */
-async function deliverTo(
-	deps: PostDeps,
-	input: {
-		readonly channel: Channel;
-		readonly message: Message;
-		readonly targets: readonly string[];
-		readonly digests: ReadonlyMap<string, string>;
-		readonly prompt: Awaited<ReturnType<typeof deliveryPrompt>>;
-		readonly routedBy?: string;
-	},
-	context: Context,
-): Promise<DeliverResult> {
-	const { channel: liveChannel, message, targets, digests, prompt } = input;
-	// 谁手上还有活：投递会打断他，正文要说明「这是插话，不是新任务」。
-	// 取不到就当没人忙 —— 宁可少一句话，也不能让每次投递都失败。
-	const busy = await liveConversations(deps.harness, context).catch(() => new Set<number>());
-	const labelOf = deps.labelOf ?? ((slug: string) => slug);
-	return deliver(
-		{
-			digests,
-			prompt,
-			channel: liveChannel,
-			message,
-			targets,
-			busy,
-			...(deps.text === undefined ? {} : { text: deps.text }),
-			...(input.routedBy === undefined ? {} : { routedBy: input.routedBy }),
-			// 合并唤醒（也负责我插队）：同一个会话最多留一个「还没开始」的排队项。
-			// 谁连发几条（我三句、agent 的过程话与追问）都只排一个唤醒，最后一条取代
-			// 前面没开始的那些 —— 消息都在频道里，少的只是重复唤醒。
-			// 这里只撤 `queued`，正在跑的那一轮不碰（撤它会连新消息一起吞掉，实测过）。
-			coalesceQueue: (conversationId, keepRequestId) =>
-				coalesceQueue(deps.harness, conversationId, keepRequestId, context),
-			conversationOf: deps.conversationOf,
-			...(deps.labelOf === undefined ? {} : { labelOf: deps.labelOf }),
-			...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
-			...(deps.wakeTogether === undefined ? {} : { wakeTogether: deps.wakeTogether }),
-			...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
-			titleOf: (channelId) => deps.state.channels[channelId]?.title,
-			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
-			// 这一轮他一个字都没产出（最常见的是模型引用失效）：留一行，别让频道里
-			// 只剩一条占位「开始处理…」。等待在后台，不占投递这条线。
-			noteUnanswered: async ({ label, seq, reason, detail }) => {
-				await appendNote(
-					deps,
-					liveChannel.id,
-					renderUnanswered(seq, label, reason, deps.text, detail),
-					Date.now(),
-					BACKGROUND_CONTEXT,
-				);
-			},
-			// 没人被叫醒就说一句：只写 stderr 的话，频道里一片空白，
-			// 我看到的「我说了没人理」和「系统挂了」长得一模一样。
-			notify: async (issues) => {
-				await appendNote(
-					deps,
-					liveChannel.id,
-					renderIssues(message.seq, issues, labelOf, deps.text),
-					Date.now(),
-					context,
-				);
-			},
-		},
-		context,
-	);
+	return flowOf(deps).forward(input, context);
 }

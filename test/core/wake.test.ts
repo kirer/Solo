@@ -8,7 +8,7 @@
  * 在「投递一条消息之后频道里会多什么」。
  */
 import { describe, expect, test } from "vitest";
-import { deliver, wake, type WakeNote } from "../../src/core/channel/dispatch.ts";
+import { deliver, wake, type WakeNote } from "../../src/core/flow/runner.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import type { ChannelState } from "../../src/core/channel/types.ts";
 import { SEED_DELIVERY_PROMPT } from "./seed-prompt.ts";

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { deliver } from "../../src/core/channel/dispatch.ts";
+import { deliver } from "../../src/core/flow/runner.ts";
 import { queuedAhead } from "../../src/core/channel/queue.ts";
 import { digestNotice, digestRows, renderDelivery } from "../../src/core/channel/delivery.ts";
 import { SEED_TEXT } from "./catalog.ts";

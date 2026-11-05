@@ -139,7 +139,6 @@ export function createSayTool(deps: CoreToolDeps) {
 				},
 				ctx,
 			);
-			if (deps.afterPost !== undefined) await deps.afterPost(result.message, channelId, ctx);
 			const woke = result.delivery.delivered;
 			return text(
 				t("say.done", {

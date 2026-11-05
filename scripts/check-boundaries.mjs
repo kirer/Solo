@@ -89,10 +89,10 @@ function importSpecifiers(source) {
  * 唯一要小心的是「同一个词出现在别的层名里」，所以每段都带两侧 `/`。
  */
 const LAYER_RULES = [
-	// 域的四个目录：不许往上够到外壳、接口、用例、投影。
+	// 域的各目录：不许往上够到外壳、接口、用例、投影。
 	{
-		dirs: ["src/core/agent/", "src/core/channel/", "src/core/team/", "src/core/work/", "src/core/runtime/"],
-		layer: "领域（agent/channel/team/work/runtime）",
+		dirs: ["src/core/agent/", "src/core/channel/", "src/core/flow/", "src/core/team/", "src/core/work/", "src/core/runtime/"],
+		layer: "领域（agent/channel/flow/team/work/runtime）",
 		deny: [
 			{ match: /\/shell\//, reason: "内核不得 import 外壳（shell）" },
 			{ match: /\/interface\//, reason: "内核不得 import 接口层（interface）" },
@@ -107,6 +107,7 @@ const LAYER_RULES = [
 		deny: [
 			{ match: /\/agent\//, reason: "文档层不许 import 领域实现（agent）" },
 			{ match: /\/channel\//, reason: "文档层不许 import 领域实现（channel）" },
+			{ match: /\/flow\//, reason: "文档层不许 import 消息生命周期（flow）" },
 			{ match: /\/team\//, reason: "文档层不许 import 领域实现（team）" },
 			{ match: /\/app\//, reason: "文档层不许 import 用例层（app）" },
 			{ match: /\/view\//, reason: "文档层不许 import 契约层（view）" },
@@ -120,6 +121,7 @@ const LAYER_RULES = [
 		layer: "插件（plugin）",
 		deny: [
 			{ match: /\/agent\//, reason: "插件层不许 import 领域实现（agent）—— 工具由装配层并进注册表" },
+			{ match: /\/flow\//, reason: "插件层不许 import 消息生命周期（flow）—— 策略由装配层注入" },
 			{ match: /\/team\//, reason: "插件层不许 import 领域实现（team）" },
 			{ match: /\/app\//, reason: "插件层不许 import 用例层（app）" },
 			{ match: /\/view\//, reason: "插件层不许 import 契约层（view）" },
@@ -170,6 +172,7 @@ const LAYER_RULES = [
 		deny: [
 			{ match: /\/agent\//, reason: "接口层不许直接 import 领域实现（agent）—— 走 app/" },
 			{ match: /\/channel\//, reason: "接口层不许直接 import 领域实现（channel）—— 走 app/" },
+			{ match: /\/flow\//, reason: "接口层不许直接 import 消息生命周期（flow）—— 走 app/" },
 			{ match: /\/team\//, reason: "接口层不许直接 import 领域实现（team）—— 走 app/" },
 			{ match: /\/runtime\//, reason: "接口层不许直接 import 运行时（runtime）—— 走 app/" },
 			// 注意：`../app/` 与 `../view/` 里含有 `app/`、`view/` 字样，但本规则只拦域目录，

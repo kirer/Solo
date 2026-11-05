@@ -30,6 +30,10 @@ const MODULES = [
 	"src/core/channel/attachments.ts",
 	"src/core/channel/unanswered.ts",
 	"src/core/channel/post.ts",
+	"src/core/flow/publish.ts",
+	"src/core/flow/forward.ts",
+	"src/core/flow/runner.ts",
+	"src/core/flow/policies.ts",
 	"src/core/agent/sections.ts",
 	"src/core/agent/memory.ts",
 	"src/core/agent/identity.ts",
@@ -45,6 +49,10 @@ const ALLOWED = [
 	// 多行日志的续行：前缀已经说明了它是 stderr。
 	"`[core] ",
 	"`[沉淀] ",
+	"`[flow] ",
+	"`[投递失败] ",
+	"`[投递通报失败] ",
+	"`[wake] ",
 	"throw new Error",
 	// 上传超限的异常文案：走 HTTP 错误码，不是给模型的。
 	"super(`附件超过上限",

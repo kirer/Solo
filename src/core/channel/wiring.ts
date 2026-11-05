@@ -20,6 +20,7 @@ import {
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
 import { readAllIdentities } from "../agent/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
+import type { Message } from "./types.ts";
 import type { Layout } from "../layout.ts";
 import type { TextCatalog } from "../md/catalog.ts";
 
@@ -63,6 +64,8 @@ export function wireChannel(deps: {
 	readonly open?: (key: string, context: Context) => Promise<Conversation | undefined>;
 	/** 机械文案目录（`text/`）。装配时读一次；不给就只留键名。 */
 	readonly text?: TextCatalog;
+	/** 一条公开消息落盘并投递之后（插件听消息）。收尾补发也要走到它。 */
+	readonly afterPublish?: (message: Message, channelId: string, context: Context) => Promise<void>;
 }): ChannelWiring {
 	const wakeDeps = directoryWake({
 		harness: deps.harness,
@@ -103,6 +106,7 @@ export function wireChannel(deps: {
 		rememberWake: (slug, wake) => rememberWake(slug, wake),
 		wakeTogether,
 		wakeOf: (slug) => wakeOfOf(slug),
+		...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),
 	});
 
 	return {

@@ -149,7 +149,9 @@ export function postDeps(deps: CoreToolDeps, state: ChannelState, context: Conte
 		promptDir: deps.wiring.promptDir,
 		...(deps.text === undefined ? {} : { text: deps.text }),
 		conversationOf: (slug: string) => deps.wiring.conversationOf(slug, context),
-		// 不给 `labelOf`：`post.ts` 的缺省就是恒等（显示名由 `deliver` 那一层自己算）。
+		// 不给 `labelOf`：投递层的缺省就是恒等（显示名由 `deliver` 那一层自己算）。
+		// 插件听消息跟着发布走：补发、后台命令回执都算一条公开消息（Phase 1 起）。
+		...(deps.afterPost === undefined ? {} : { afterPublish: deps.afterPost }),
 		rememberWake: (slug, wake) => deps.wiring.rememberWake(slug, wake, context),
 		...(deps.wiring.wakeTogether === undefined ? {} : { wakeTogether: deps.wiring.wakeTogether }),
 		wakeOf: (slug: string) => deps.wiring.wakeOf(slug, context),

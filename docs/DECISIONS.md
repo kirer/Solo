@@ -1820,3 +1820,43 @@
   `test/core/crash-turn-report.test.ts`（真 `SIGKILL`：pending 任务重启后跑完；
   消息已落盘时不双发）；`npm run check`、`npm test`、`npm run prompt:check`、
   `npm run live` 两次 13/13、`live:scenarios --rounds=1 --smoke`。
+
+## ADR-078 消息生命周期收进 `src/core/flow`：主线只有 `publish` / `forward`
+
+- **背景**：「一条消息落盘之后谁被叫醒」原来散在三个文件里 —— `channel/post.ts` 的
+  `postMessageUnlocked` 又落盘又定规则（`note` 不叫人、没 `@` 时接上一说话人、`wakeTo`
+  覆盖），`channel/dispatch.ts` 的 `deliver` / `wake` 又把扇出、合并队列、写 wake、`submit`
+  揉在一起；读代码的人看不到一条消息从落盘到入队的完整顺序。`afterPost` 也不对称：
+  `say` / `ownerSpeak` 调，补发与后台命令的回执不调，和「每条消息都通知插件」的承诺不符。
+- **决策**：
+  1. **建 `src/core/flow/`（domain 的新兄弟目录）**，对外只暴露 `createFlow(ports)` 的
+     `publish` / `forward`。`publish` 的固定顺序是：闸内「读快照 → 落盘 → 算事实
+     （`lastSpeaker` / `defaultTargets`）→ 策略链 → 校验（去重，滤掉我 / 发件人 / 非成员）
+     → 逐人扇出」，闸外 `afterPublish`（抛错只 warn，不影响这条消息）。`forward` 只读、
+     校验、扇出，不写第二条消息。
+  2. **策略优先级固定**：`wake: false` / `note` 无 `wakeTo` 不叫 → `wakeTo` → 策略链
+     （第一个返回决定的生效，抛错跳过）→ `facts.defaultTargets`。策略只能**提议**，谁真的
+     被叫仍由 `validate` 决定。
+  3. **`channel/dispatch.ts` 并入 `flow/runner.ts`**（`deliver` / `wake` / 结算回调原样搬家）；
+     `channel/post.ts` 降为旧入口的薄壳：把 `PostDeps` 拼成 `createFlow(...)` 再转调。
+     落盘、频道规则、投递正文排版仍留在 `channel/`。
+  4. **`afterPublish` 覆盖每条公开消息**：`say`、我说话、补发、后台命令的回执都调用一次；
+     `route` 的隐藏留痕（`store.note`）不算 publish，不通知插件。这是有意的行为变化：
+     插件第一次真正看到补发与后台回执。
+  5. **暂缓项写在这里，免得下一阶段忘掉**：进程级串行闸仍以 `channel/post.ts` 的模块单例
+     作默认值（Phase 4 挪进装配注入）；结算后是否补发仍由 `channel/turn/finish.ts` 判断
+     （Phase 2 搬进 `flow/settle.ts`）；插件 `flow` 动作（Phase 3）。
+- **取舍**：多了一层端口（`MessageStore` / `Router` / `TurnRunner` / `PublishHooks` /
+  `FlowGates`），但每个端口都有默认实现、现有测试或已知的未来消费者，不是第二套生命周期
+  —— `Message` / `WakeRecord` / `Submission` 仍是唯一事实，`flow` 不建账本（ADR-060 的教训）。
+  代价是调用方要多传一个 `gate`，以及 `post.ts` 与 `flow` 之间有一次薄壳跳转。
+- **执行**：`src/core/flow/{index,types,ports,publish,forward,runner,policies,validate,store}.ts`、
+  `src/core/flow/defaults/router.ts`、`src/core/channel/{post,wiring}.ts`、
+  `src/core/channel/turn/finish.ts`、`src/core/channel/tools/{context,say}.ts`、
+  `src/shell/assemble.ts`、`src/app/types.ts`、`scripts/check-boundaries.mjs`（域加 `flow`、
+  接口层禁直接 import `flow`）。
+- **验收**：`test/core/flow-publish.test.ts`（分支：默认规则 / `note` / `wake:false` /
+  `wakeTo` / 越界过滤 / 钩子错误隔离 / 频道被删）、`flow-order.test.ts`（闸内读—写—扇出、
+  闸外钩子；`forward` 不写不钩）、`flow-invariants.test.ts`（校验）、`flow-policy.test.ts`
+  （first-defined-wins、`drop`、回退）；`npm run check`、`npm test`（97 文件 / 860 例）、
+  `npm run prompt:check`、`npm run live` 两次 13/13（`[turn]` 各 1 次）。

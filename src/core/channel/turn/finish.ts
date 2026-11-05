@@ -120,6 +120,8 @@ type TurnDeps = {
 	readonly wakeTogether?: PostDeps["wakeTogether"];
 	readonly labelOf?: PostDeps["labelOf"];
 	readonly wakeOf?: PostDeps["wakeOf"];
+	/** 补发也是一条公开消息：插件听消息要跟着走到这里（Phase 1 起）。 */
+	readonly afterPublish?: PostDeps["afterPublish"];
 };
 
 /**
@@ -211,6 +213,7 @@ async function finishOnce(deps: TurnDeps, info: FinishTurnInfo, context: Context
 				...(deps.rememberWake === undefined ? {} : { rememberWake: deps.rememberWake }),
 				...(deps.wakeTogether === undefined ? {} : { wakeTogether: deps.wakeTogether }),
 				...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
+				...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),
 			},
 			{
 				channelId: target.channelId,

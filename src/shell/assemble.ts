@@ -175,6 +175,25 @@ export async function assembleCore(
 	if (text.keys().length === 0) {
 		console.warn(`[core] 没读到文案目录（${layout.textRoot}）：工具描述会是空的`);
 	}
+	// ── 1.5 装插件 ──────────────────────────────────────────────────
+	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
+	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
+	//
+	// 放在频道接线之前：收尾补发也要经过「消息落地」这一个钩子，而钩子由接线交给收尾器。
+	let plugins = await loadPlugins({
+		pluginsRoot: layout.pluginsRoot,
+		workspace: layout.appRoot,
+		logsRoot: layout.logsRoot,
+		scope: (channelId) => channelScope(harness, layout, channelId),
+		log: (line) => console.log(`[plugin] ${line}`),
+	});
+	for (const error of plugins.errors) console.warn(`[plugin] 没装上：${error}`);
+
+	// 插件要听消息走这一个钩子 —— 落盘并投递之后，只有这一处。
+	// 传的是取值函数不是数组：插件重装之后，这条钩子要听**新的**那一批（ADR-026）。
+	const afterPost = makeAfterPost(() => plugins.messages);
+
+	// ── 1.6 频道接线 ────────────────────────────────────────────────
 	// 频道层要的那几根线只在这里接一次：会话在哪、谁叫醒了他、收尾怎么补。
 	// `open`：会话键找不到时开一条 —— 额外会话（ADR-050）懒创建，第一次用到才建。
 	const wiring = wireChannel({
@@ -183,6 +202,7 @@ export async function assembleCore(
 		live: () => conversations,
 		open: (slug, ctx) => openOne(slug, ctx),
 		text,
+		afterPublish: afterPost,
 	});
 	const baseDeps: CoreToolDeps = {
 		harness,
@@ -196,21 +216,6 @@ export async function assembleCore(
 		wiring,
 	};
 
-	// ── 1.5 装插件 ──────────────────────────────────────────────────
-	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
-	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
-	let plugins = await loadPlugins({
-		pluginsRoot: layout.pluginsRoot,
-		workspace: layout.appRoot,
-		logsRoot: layout.logsRoot,
-		scope: (channelId) => channelScope(harness, layout, channelId),
-		log: (line) => console.log(`[plugin] ${line}`),
-	});
-	for (const error of plugins.errors) console.warn(`[plugin] 没装上：${error}`);
-
-	// 插件要听消息走这一个钩子 —— 落盘之后、唤醒之前，只有这一处。
-	// 传的是取值函数不是数组：插件重装之后，这条钩子要听**新的**那一批（ADR-026）。
-	const afterPost = makeAfterPost(() => plugins.messages);
 	const toolDeps: CoreToolDeps = {
 		...baseDeps,
 		afterPost,
@@ -585,7 +590,7 @@ export async function ownerSpeak(
 		readonly wakeTo?: readonly string[];
 	},
 	context: Context = BACKGROUND_CONTEXT,
-): Promise<{ readonly seq: number; readonly delivery: import("../core/channel/dispatch.ts").DeliverResult }> {
+): Promise<{ readonly seq: number; readonly delivery: import("../core/flow/types.ts").DeliverResult }> {
 	const state = await shell.channels(context);
 	const channel = state.channels[options.channelId];
 	if (channel === undefined) throw new Error(`频道不存在：${options.channelId}`);
@@ -621,6 +626,8 @@ export async function ownerSpeak(
 			...(wiring.wakeTogether === undefined ? {} : { wakeTogether: wiring.wakeTogether }),
 			// 插话时继承他上一次的 `task`：我在他干活时私聊一句，不覆盖团队频道。
 			wakeOf: (slug: string) => wiring.wakeOf(slug, context),
+			// 我不是 agent，不会走工具层，插件听消息得在这里接上。发布动作统一调它。
+			afterPublish: shell.afterPost,
 		},
 		{
 			channelId: options.channelId,
@@ -636,8 +643,6 @@ export async function ownerSpeak(
 		context,
 	);
 
-	// 我自己说话也要走这条钩子：我不是 agent，不会走工具层，插件听消息得在这里接上。
-	await shell.afterPost(result.message, options.channelId, context);
 	return { seq: result.message.seq, delivery: result.delivery };
 }
 

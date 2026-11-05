@@ -10,7 +10,7 @@
 import type { Conversation, Context, Harness, Models, Registry } from "../core/runtime/index.ts";
 import type { DirectoryState } from "../core/agent/roster.ts";
 import type { ChannelState, Attachment, Message } from "../core/channel/types.ts";
-import type { DeliverResult } from "../core/channel/dispatch.ts";
+import type { DeliverResult } from "../core/flow/types.ts";
 import type { Identity } from "../core/agent/identity.ts";
 import type { Layout } from "../core/layout.ts";
 import type { TextCatalog } from "../core/md/catalog.ts";
