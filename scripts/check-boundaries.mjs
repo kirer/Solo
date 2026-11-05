@@ -2,12 +2,12 @@
 /**
  * 边界检查：业务层与界面层不得直接导入底层运行时库。
  *
- * 底层库（@earendil-works/pi-durable、pi-ai、chord）标注为 experimental，
+ * 底层库（@earendil-works/pi-durable、pi-ai、chord、pi-schema）标注为 experimental，
  * 破坏性变更必须只影响 `src/core/runtime/`（唯一防腐层）。
  *
  * 六条规定（前三条规定是原本就有的，后三条是分层重构后加的）：
  *
- * 1. `src/core/runtime/` 之外，任何文件不得 import 那三个包。
+ * 1. `src/core/runtime/` 之外，任何文件不得 import 那四个包。
  * 2. 内核（`agent|channel|team|runtime`）不得反向 import 外壳（`shell`），
  *    也不得 import 用例层（`app`）、投影层（`view`）、接口层（`interface`）。
  *    依赖方向只有一条：`shell → interface → {app, view} → 领域 → runtime`。
@@ -29,7 +29,12 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 /** 只允许 `src/core/runtime/` 导入的包。 */
-const RUNTIME_ONLY = ["@earendil-works/pi-durable", "@earendil-works/pi-ai", "@earendil-works/chord"];
+const RUNTIME_ONLY = [
+	"@earendil-works/pi-durable",
+	"@earendil-works/pi-ai",
+	"@earendil-works/chord",
+	"@earendil-works/pi-schema",
+];
 
 /** 受检查的目录（相对仓库根）。`src/core` 是内核，其余四层与它平级（ADR-043）。 */
 const CHECKED_DIRS = ["src/core", "src/app", "src/view", "src/interface", "src/shell", "desktop/src"];

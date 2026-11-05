@@ -496,7 +496,7 @@ src/
    `logs/runtime.jsonl`）；
 4. `openCore({ settings: { compaction }, onReport })` —— 打开 SQLite，并把底座的错误
    出口接成可读的报告：**失败不再静音**（crash-loop 把任务 park 成
-   `blocked: restart_limit` 时，`GET /api/diag` 能看见原因）；
+   `task_interrupted`（原因 `restart_limit`）时，`GET /api/diag` 能看见原因）；
 5. `assembleCore()` —— 扫两个 agent 根（`assistant/` + `members/`）→ 每人开一个会话 → 绑名册 → 建全员频道 →
    按 `identity.md` 的 `team:` 拉进团队频道；
 6. `serveCore()` 起 HTTP + SSE；

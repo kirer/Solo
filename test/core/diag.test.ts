@@ -23,7 +23,7 @@ describe("运行报告：底座 → 可落盘的形状", () => {
 	it("把任务与错误摊平，堆栈只留三行", () => {
 		const error = new Error("storage reset");
 		error.stack = "a\nb\nc\nd\ne";
-		const report = toRuntimeReport(error, { type: "task_faulted", task: TASK, reason: "restart_limit" });
+		const report = toRuntimeReport({ kind: "task_faulted", task: TASK, reason: "restart_limit", error });
 		expect(report.type).toBe("task_faulted");
 		expect(report.message).toBe("storage reset");
 		expect(report.stack).toBe("a\nb\nc");
@@ -33,15 +33,16 @@ describe("运行报告：底座 → 可落盘的形状", () => {
 		expect(Number.isNaN(Date.parse(report.at))).toBe(false);
 	});
 
-	it("没有错误对象的报告（task_parked）也不炸", () => {
-		const report = toRuntimeReport(undefined, { type: "task_parked", task: TASK });
+	it("没有错误对象的报告（task_interrupted）也不炸", () => {
+		const report = toRuntimeReport({ kind: "task_interrupted", task: TASK, reason: "restart_limit", restarts: 5, error: undefined });
 		expect(report.message).toBeUndefined();
 		expect(report.stack).toBeUndefined();
-		expect(report.type).toBe("task_parked");
+		expect(report.type).toBe("task_interrupted");
+		expect(report.restarts).toBe(5);
 	});
 
 	it("宿主回调报告带上回调名", () => {
-		const report = toRuntimeReport(new Error("boom"), { type: "host_error", callback: "models" });
+		const report = toRuntimeReport({ kind: "host_error", callback: "models", error: new Error("boom") });
 		expect(report.callback).toBe("models");
 	});
 });
@@ -62,7 +63,7 @@ describe("运行报告的格式化（纯函数）", () => {
 	});
 
 	it("没有附加信息时只给一句人话", () => {
-		expect(formatRuntimeReport({ type: "session_failed", at: "2026-01-01T00:00:00.000Z" })).toBe(
+		expect(formatRuntimeReport({ type: "storage_failed", at: "2026-01-01T00:00:00.000Z" })).toBe(
 			"底座的会话失败（storage 等致命错误）",
 		);
 	});
@@ -77,13 +78,13 @@ describe("落盘与 /api/diag 看到的最近一条", () => {
 		const root = workspace();
 		const diag = createDiag(join(root, "logs"));
 		diag.recordRuntimeReport({
-			type: "task_parked",
+			type: "task_interrupted",
 			at: "2026-01-01T00:00:00.000Z",
 			task: { id: "t-2", kind: "generation", conversationId: 3 },
 		});
 		const file = join(root, "logs", "runtime.jsonl");
 		await vi.waitFor(() => {
-			expect(readFileSync(file, "utf8")).toContain('"type":"task_parked"');
+			expect(readFileSync(file, "utf8")).toContain('"type":"task_interrupted"');
 		});
 	});
 

@@ -43,7 +43,24 @@ export type { JsonValue } from "@earendil-works/chord";
 /** 文档根的类型（底层要求是 JSON 对象，不是任意 JSON 值）。 */
 export type { JsonObject } from "@earendil-works/pi-durable";
 
-export { Type } from "@earendil-works/pi-ai";
+import { arr, bool, num, obj, opt, str } from "@earendil-works/pi-schema";
+
+/**
+ * 工具参数 schema 的构造器。
+ *
+ * 1.5.0 起 `pi-ai` 不再转发 TypeBox，`pi-durable` 用 `pi-schema` 校验工具参数。
+ * 这里保留原来的 `Type.*` 名字，工具定义与插件 API 不用跟着改；只映射我们用到的六个。
+ * `obj` 默认是闭合对象（多传的参数会被拒），这正是工具参数想要的。
+ */
+export const Type = {
+	Object: obj,
+	String: str,
+	Number: num,
+	Boolean: bool,
+	Array: arr,
+	Optional: opt,
+} as const;
+
 export type { Models } from "@earendil-works/pi-ai";
 export { openCore, type RuntimeReport } from "./open.ts";
 export { setupModels, syncModels, setAgentModel, compactionSettings } from "./models.ts";

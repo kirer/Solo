@@ -1588,3 +1588,47 @@
 - **验收**：单测覆盖 ready 文件、tar 优先级、解包 / 替换后的版本核对、旧版本才自动重开；
   Windows 手工从 2.0.11 升 2.0.12：点安装后应用退出、新版本自动打开，`%TEMP%\solo-update.log`
   能看到 `tar 解包` → `robocopy 退出码 1` → `安装完成`；失败时能看到 `Solo 更新失败` 弹窗。
+
+## ADR-071 pi-durable 1.4.0 → 1.5.0 直升：schema 门面 + 报告适配 + 不急着用新能力
+
+- **背景**：`@earendil-works/pi-durable` 1.5.0（2026-11-02）是一个破坏性 minor：工具参数
+  schema 改由 `@earendil-works/pi-schema` 校验，`pi-ai` 根不再转发 TypeBox 的 `Type`；
+  `onReport` 从一个错误对象改成一整条带 `kind` 的 `Report`；`subscribeCommits()` 换成
+  `observeCommits()`；`task_parked` / `session_failed` 改叫 `task_interrupted` /
+  `storage_failed`，连续重启超限不再 park 等 `retryTask`，而是结束任务并报告。我们的
+  8 个工具文件里的 46 处 `Type.*`、报告落盘、SSE 提交订阅都踩在破口上。这次直接在当前分支升级（不开
+  分支），先弄清变更与可用新能力。
+- **决策**：
+  1. **四个包一起锁 `1.5.0`**（`pi-durable` / `pi-ai` / `chord` / `pi-schema`，无 `^`）。
+  2. **`Type.*` 门面留在 `src/core/runtime/index.ts`**：把 `Object/String/Number/Boolean/
+     Array/Optional` 六个名字映射到 pi-schema 的 `obj/str/num/bool/arr/opt`。工具定义与
+     插件 API（`api.Type`）一行不改；`pi-schema` 仍然只有防腐层能 import。`obj` 默认闭合
+     （多传参数会被拒），正是工具参数要的语义。
+  3. **报告只在一个地方翻译**：`toRuntimeReport(report)` 把 `Report` 摊平成 `RuntimeReport`
+     （`type` = `report.kind`，错误正文 / 堆栈 / 任务 / `reason` / `callback` / `restarts`）。
+     `app/diag.ts` 的文案表跟着换成九个新 `kind`。上层仍然只认自己的形状，不 import 底座类型。
+  4. **SSE 订阅改成同步观察者**：`harness.observeCommits({ advance, end })`，`detach()` 取消；
+     120ms 去抖和按频道推增量都不变。观察者在新版里晚一个微任务、只拿**已落盘**的提交，
+     对 120ms 的 UI 推送没有影响。
+  5. **不为了「有新能力」而改行为**。1.5.0 的 `maxTurns`、`continue`、`runFailure`、
+     `readOnly`、`whenBusy: "steer"` / `whenIdle: "reject"`、`beforeProviderRequest`、
+     `afterRun`、`ConversationTranscript` 都先记在案，等有具体需求再接：`maxTurns` 会截断
+     合法长活；`continue` 要先有「重试这一轮」的产品入口；`steer` 要重排频道投递（C-008）；
+     `readOnly` 只在多进程看同一份库时才有意义，而底座本来就不支持多进程同写。
+  6. **`pi.live` 的空闲判据继续用 `run !== undefined`**：新版失败后会保留 `runFailure`，
+     不能再拿「文档是不是空对象」判空闲；我们的自愈也继续删 `run`（`runFailure` 留着无害）。
+- **取舍**：门面只映射我们用到的六个构造器 —— 将来工具需要 `union` / 枚举 / 嵌套开放对象，
+  要在防腐层补，而不是让工具文件直接 import `pi-schema`（那会破边界）。1.5.0 的组提交、
+  无存储读、进度延迟落盘能显著降低存储往返，但我们的 `serializedHarness` 本来就串行化
+  同进程写入，收益会小一些；进度最多晚 1 秒落盘，SSE 的 1 秒补推已经覆盖这个窗口。
+  升级后工具参数由 pi-schema 校验（错误话术与 TypeBox 不同），必须用真模型跑两遍
+  `live`，单测看不见模型是否还会正确调工具。
+- **执行**：`package.json` / `package-lock.json`、`src/core/runtime/index.ts`（schema 门面）、
+  `src/core/runtime/open.ts`（`toRuntimeReport` / `safeReport`）、`src/interface/http/sse.ts`
+  （`observeCommits`）、`src/app/diag.ts`（报告文案）、`scripts/check-boundaries.mjs`
+  （`RUNTIME_ONLY` 加 `pi-schema`）、`test/core/diag.test.ts`；
+  文档同步 `AGENTS.md` §1–2、`docs/DEPLOY.md` §7、`docs/WEB-API.md` §13.2、`docs/CORE.md` §11、
+  `docs/research/02-pi-durable.md` 的升级注记。
+- **验收**：`npm run check`、`npm test`（89 文件 / 821 例）、`npm run prompt:check` 全绿；
+  `npm run live` 连跑两次都 13/13；用真实数据副本启动，`pi.live` 自动迁到 version 3，
+  `/api/org`、频道详情正常。

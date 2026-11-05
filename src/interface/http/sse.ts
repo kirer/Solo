@@ -422,7 +422,12 @@ export function createStreamHub(shell: CoreServices, snapshots: Snapshots, read?
 	 * 订阅提交。任何文档提交都推一次：新消息、新 agent、改名，界面都会跟着变。
 	 */
 	function start(): () => void {
-		return shell.harness.subscribeCommits(() => schedule());
+		// 1.5.0：subscribeCommits 换成同步观察者，detach 取代返回的取消函数。
+		const observation = shell.harness.observeCommits({
+			advance: () => schedule(),
+			end: () => undefined,
+		});
+		return () => observation.detach();
 	}
 
 	/** 收摊：停定时器、断所有连接。 */

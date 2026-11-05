@@ -598,14 +598,14 @@ agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 不需要人去读日志文件。
 
 ```json
-{ "lastReport": { "type": "task_parked", "at": "2026-10-30T12:03:11.412Z",
-                  "text": "任务 \"daily-digest\" 被挂起：任务连续重启超限，已挂起" } }
+{ "lastReport": { "type": "task_interrupted", "at": "2026-11-05T12:03:11.412Z",
+                  "text": "任务连续重启超限，已结束（任务 `generation`#t-1，原因 restart_limit）" } }
 ```
 
 - **只有三个键**：`type` / `at` / `text`（`app/diag.ts` 的 `lastReport()` 原样转出）。
   任务信息是写进 `text` 的，没有单独的 `task` 字段。
 - 没有报告时是 `{ "lastReport": null }` —— 前端据此显示「暂无异常」，不要把它当失败。
-- `type` 是底座的原名（`task_parked` / `session_failed` / `task_faulted` /
+- `type` 是底座的原名（`task_interrupted` / `storage_failed` / `task_faulted` /
   `migration_failed` / `extension_error` / `host_error` / `listener_error` / …），
   `text` 是已经写成中文的人话。**前端不认识新 `type` 时显示 `text`，不要按 `type`
   分支做文案。**

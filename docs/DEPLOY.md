@@ -257,7 +257,7 @@ tar xzf backup-20261027.tar.gz
 | agent 说话了，但回在别的频道 | `directory.wake` —— 他去「最后被叫到的那个频道」回话；我发的消息必须先把 wake 记下来再唤醒他 |
 | 改了 `identity.md` 没生效 | 提示词每次发送前重新读盘，所以下一条消息就该生效。没生效说明改的是别人的文件 |
 | 启动很慢 | 名册是不是每人一次 commit；`members/` 里是不是有几百个目录 |
-| agent 突然不干活了，日志里什么都没有 | `<userRoot>/logs/runtime.jsonl` 有没有 `task_parked` / `restart_limit`（见下面「诊断三处」） |
+| agent 突然不干活了，日志里什么都没有 | `<userRoot>/logs/runtime.jsonl` 有没有 `task_interrupted` / `restart_limit`（见下面「诊断三处」） |
 | 报 provider 的 context overflow / 400 too long | 模型的 `contextWindow` 是不是取到了（见下面「压缩」） |
 | 7788 端口被占 | `lsof -nP -iTCP:7788 -sTCP:LISTEN` |
 
@@ -268,7 +268,7 @@ tar xzf backup-20261027.tar.gz
 
 | 文件 | 装什么 | 怎么看 |
 | --- | --- | --- |
-| `runtime.jsonl` | 底座报上来的**运行报告**：`task_parked`（连续重启超限被挂起）、`session_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `at` / `kind` / `message`（中文人话）/ 可选任务 | `tail -n 5 <userRoot>/logs/runtime.jsonl` |
+| `runtime.jsonl` | 底座报上来的**运行报告**：`task_interrupted`（连续重启超限，任务已结束）、`storage_failed`、`task_faulted`、`migration_failed`、`extension_error` 等，每条带 `type` / `at` / `message`（中文人话）/ 可选任务 | `tail -n 5 <userRoot>/logs/runtime.jsonl` |
 | `jank.jsonl` | 浏览器自报的卡顿（长帧 > 240ms、长任务 > 200ms），带当时在干什么、是否切了后台 | `tail -n 5 <userRoot>/logs/jank.jsonl` |
 | `tools.jsonl` | 审计（ADR-010）：每次工具调用一行（谁、哪个工具、成没成、耗时）、每次模型回复一行（模型、停止原因、耗时、输入/输出/缓存 token、成本） | `tail -n 20 <userRoot>/logs/tools.jsonl`；`grep '"ok":false'` 看失败的工具 |
 
@@ -276,8 +276,9 @@ tar xzf backup-20261027.tar.gz
 
 **一眼分辨两类事故**：
 
-- `restart_limit` / `task_parked` = 任务连续重启超限被底座挂起了，人还在、频道还在，
-  但那个人此后不会再有输出。要么查 `message` 里的原因，要么让他重做。
+- `restart_limit` / `task_interrupted` = 任务连续重启超限，底座把这一轮结束了（1.5.0
+  起不再挂起等 `retryTask`）。人还在、频道还在，但这一轮不会有输出；查 `report.reason`
+  与 `restarts`，或者让他重做。
 - `storage` / `migration_failed` = 库或迁移出了问题，这类不看日志就是瞎的。
 
 不想 `ssh` 进去读文件时，直接问接口（`lastReport` 是最近一条**非良性**报告，没有就是
@@ -285,8 +286,8 @@ tar xzf backup-20261027.tar.gz
 
 ```bash
 curl -s localhost:7788/api/diag | jq
-# {"lastReport":{"type":"task_parked","at":"2026-10-30T12:03:11.412Z",
-#                "text":"任务 \"daily-digest\" 被挂起：任务连续重启超限，已挂起"}}
+# {"lastReport":{"type":"task_interrupted","at":"2026-11-05T12:03:11.412Z",
+#                "text":"任务连续重启超限，已结束（任务 `generation`#t-1，原因 restart_limit）"}}
 ```
 
 字段只有 `type` / `at` / `text` 三个（契约见 [WEB-API](WEB-API.md) §14.2）。

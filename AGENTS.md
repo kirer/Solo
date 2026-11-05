@@ -40,7 +40,8 @@
 加一个人 = 建一个目录。改一个人的职责 = 改一个 md 文件，**下一条消息就生效**（提示词每次
 发送前重新读盘渲染）。这是整个设计的核心取舍：**语义写在文档里，代码只做机械的事**。
 
-技术地基：`@earendil-works/pi-durable@1.4.0`（experimental，每个 minor 都可能破坏性变更）。
+技术地基：`@earendil-works/pi-durable@1.5.0`（experimental，每个 minor 都可能破坏性变更；
+1.4→1.5 的改动见 ADR-071）。
 界面是 `ui/app/` 的 React + TypeScript，Vite 构建到 `ui/web/`（**改完界面必须 `npm run ui:build`**）。
 
 ---
@@ -57,7 +58,8 @@ src/
     md/             文档流水线：doc.ts（markdown + frontmatter）/ text.ts（插槽渲染）/
                     prompt.ts（提示词拼段）/ catalog.ts（`## key` 文案目录）/
                     memory.ts（记忆格式，个人与团队共用）/ oneline.ts（压成一行）
-    runtime/        防腐层：唯一能 import pi-durable / pi-ai / chord 的地方（含 models/compaction）
+    runtime/        防腐层：唯一能 import pi-durable / pi-ai / pi-schema / chord 的地方
+                    （含 models/compaction/工具参数 schema 转发）
     agent/          一个人：身份 / 提示词装配（9 段，正文在 seed/prompt）/ 记忆 / 技能 / 名册
     team/           一个团队：README.md / memory.md
     channel/        说话：频道规则 / 写一条 / 投递与队列 / 唤醒 / 附件 / 后台命令（jobs.ts）/ 8 个工具（tools/）
@@ -92,7 +94,7 @@ test/             89 文件 / 821 例
 
 **三条老边界**（一开始就有，`npm run check` 机械化检查，违反即失败）：
 
-1. **只有 `src/core/runtime/` 能 import 底层库**（pi-durable / pi-ai / chord）。
+1. **只有 `src/core/runtime/` 能 import 底层库**（pi-durable / pi-ai / pi-schema / chord）。
 2. **内核（domain）不得反向 import 上层**：`agent|team|channel|runtime` 不许碰
    `shell/` / `interface/` / `app/` / `view/`。
 3. **每条路由必须在前端有消费者**（`src/interface/http/routes.ts` 的 `pattern` ×
@@ -260,7 +262,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
 | 改界面 | `docs/DESIGN.md` + `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/view/dto.ts`；新元素必须在 DESIGN §8 的数据来源表里指到字段 |
 | 改团队记忆 | `docs/CORE.md` §8 | 机制在 `src/core/team/memory.ts`；写入口是 `remember(scope=team)` 与 `file`（**没有自动沉淀了**，ADR-058） |
-| 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` |
+| 换 / 升级 pi-durable | `docs/research/02-pi-durable` | `src/core/runtime/` + `test/core/` + 一条新 ADR |
 | 部署 / 排障 | `docs/DEPLOY.md` | — |
 
 ---

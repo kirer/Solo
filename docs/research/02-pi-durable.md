@@ -1,6 +1,6 @@
 # Pi Durable 深度调研
 
-> 对象：`@earendil-works/pi-durable` v1.4.0（2026-10-21，MIT）。方法：原文 + 全部外链 + npm registry + GitHub 源码/spec/CHANGELOG + **本地安装并实跑 11 个验证脚本**（正文标"实测"者均为本机结果，Node v26.12.0 / macOS）。
+> 对象：`@earendil-works/pi-durable` v1.4.0（2026-10-21，MIT；**当前依赖已是 1.5.0，见文末升级注记**）。方法：原文 + 全部外链 + npm registry + GitHub 源码/spec/CHANGELOG + **本地安装并实跑 11 个验证脚本**（正文标"实测"者均为本机结果，Node v26.12.0 / macOS）。
 > 来源：发布文 <https://earendil.com/posts/pi-durable/>｜配套 <https://earendil.com/posts/pi-1-0/>、<https://earendil.com/posts/what-is-a-harness/>、<https://earendil.com/posts/pi-durable-on-cloudflare/>｜README <https://github.com/earendil-works/pi/blob/main/packages/durable/README.md>｜规范 <https://github.com/earendil-works/pi/blob/main/packages/durable/docs/spec.md>（5594 行）｜示例 <https://github.com/earendil-works/pi/tree/main/packages/durable/test/examples>（31 个）｜CHANGELOG <https://github.com/earendil-works/pi/blob/main/packages/durable/CHANGELOG.md>｜npm <https://www.npmjs.com/package/@earendil-works/pi-durable>｜Cloudflare 参考实现 <https://github.com/earendil-works/pi-durable-cloudflare>
 
 ---
@@ -562,7 +562,7 @@ README 首行："Experimental. The API changes without notice between releases."
 目录：src/runtime/（防腐层：open/registry/env/recover）→ src/company/（业务）→ src/server/（watch 转发 + submit 接消息）
 ```
 
-纪律：① **锁精确版本** `"1.4.0"`（三包同版本，无 `^`）；② **只读 v1.4.0 tag 的文档**，不读 `main`；③ **写契约测试**（8 个封装各 1-2 个集成测试，用 `fauxProvider` 不需真 key），升级前必跑；④ 只在有明确收益时升级、每次读 CHANGELOG 的 Breaking Changes、SQLite schema 迁移前备份（v2 不可回滚）；⑤ **绝不自行实现 Storage**（确需 Postgres 先跑 `registerStorageConformance`）；⑥ **所有 tool 显式声明 `replay`**，有外部副作用的绝不设 `safe`，各自做幂等 key；⑦ **所有 tool/hook/task 尊重 abort signal**，否则 `close()` 挂住；⑧ **必须实现的宿主逻辑**：`harness.closed` 失败即 reopen、启动 `inspect()` 巡检 `restart_limit` + `retryTask()` + 告警、`onReport` 全量分类接住、`settings.progress` 按存储延迟调（远程可放宽到 500ms）。
+纪律：① **锁精确版本** `"1.5.0"`（三包同版本，无 `^`）；② **只读 v1.5.0 tag 的文档**，不读 `main`；③ **写契约测试**（8 个封装各 1-2 个集成测试，用 `fauxProvider` 不需真 key），升级前必跑；④ 只在有明确收益时升级、每次读 CHANGELOG 的 Breaking Changes、SQLite schema 迁移前备份（v2 不可回滚）；⑤ **绝不自行实现 Storage**（确需 Postgres 先跑 `registerStorageConformance`）；⑥ **所有 tool 显式声明 `replay`**，有外部副作用的绝不设 `safe`，各自做幂等 key；⑦ **所有 tool/hook/task 尊重 abort signal**，否则 `close()` 挂住；⑧ **必须实现的宿主逻辑**：`harness.closed` 失败即 reopen、启动 `inspect()` 巡检 `restart_limit` + `retryTask()` + 告警、`onReport` 全量分类接住、`settings.progress` 按存储延迟调（远程可放宽到 500ms）。
 
 ### 8.3 落地里程碑
 
@@ -591,6 +591,20 @@ README 首行："Experimental. The API changes without notice between releases."
 > **值得作为"一人公司"的运行时地基**——它把 durable execution、多会话并发、fork/inbox/ownership、分层成本记账这些最难且最易出隐性 bug 的部分做对了，并经 Cloudflare 生产场景验证。但它**不是平台也不是应用**：UI、鉴权、领域建模、预算硬控、cron、报表全部自建，experimental 的 API 意味着必须用"防腐层 + 锁版本 + 契约测试"隔离变更风险。能接受这套纪律，它是当前开源选项里最贴合"多角色 AI 公司"语义的基座；不能接受则应退回保守方案（`pi-coding-agent` SDK + 自建持久层），代价是重新面对崩溃恢复与并发一致性的复杂度。
 
 ---
+
+## 1.5.0 升级注记（2026-11-05）
+
+- **依赖**：`pi-durable` / `pi-ai` / `chord` / `pi-schema` 全部锁 `1.5.0`。`typebox` 不再是传递依赖。
+- **本文正文的时效**：§ 一到 § 八是 1.4.0 的调研结论。1.5.0 里以下说法已经变了：
+  `task_parked` / `retryTask` 的 park 语义没有了（连续重启超限由 `task_interrupted` 报告，任务结束）；
+  `session_failed` 改叫 `storage_failed`；`subscribeCommits` 换成 `observeCommits`；
+  `watchEvents()` 被删，改用会话视图 / `ConversationTranscript`；`pi.live` 失败后保留 `runFailure`；
+  工具参数 schema 走 `pi-schema`（`obj` / `str` / `num` / `bool` / `arr` / `opt`），不再从 `pi-ai` 拿 TypeBox。
+- **我们实际用到的迁移**：`src/core/runtime/index.ts` 的 `Type.*` 门面、`open.ts` 的
+  `toRuntimeReport(report)`、`interface/http/sse.ts` 的 `observeCommits`；详见 ADR-071。
+- **1.5.0 新增、尚未采用**：`maxTurns`、`continue` submission、`runFailure`、`readOnly`、
+  `whenBusy: "steer"` / `whenIdle: "reject"`、`beforeProviderRequest`、`afterRun`、`ConversationTranscript`。
+  它们对 Solo 的价值见 ADR-071「取舍」。
 
 ## 附录：实际执行的验证清单
 

@@ -44,7 +44,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 **三条边界**（一开始就有，`scripts/check-boundaries.mjs` 机械化，违反即 `npm run check` 失败）：
 
-1. 只有 `src/core/runtime/` 能 import pi-durable / pi-ai / chord。
+1. 只有 `src/core/runtime/` 能 import pi-durable / pi-ai / chord / pi-schema。
 2. 内核（`agent|team|channel`）不得反向 import `shell/` —— 依赖只能 `shell → 内核`。
 3. `interface/http/routes.ts` 的每条「方法 + 路径」必须在 `ui/app/src` 里有消费者（白名单：
    `GET /api/org`，Docker 健康检查用；`POST /api/people/:slug/dm`，界面入口下一轮接）。

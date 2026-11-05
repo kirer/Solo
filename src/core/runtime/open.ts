@@ -9,7 +9,7 @@ import {
 	LiveDoc,
 	type Harness,
 	type HarnessSettings,
-	type ReportInfo,
+	type Report,
 } from "@earendil-works/pi-durable";
 import { openNodeSqliteStorage } from "@earendil-works/pi-durable/storage/sqlite/node";
 import { BACKGROUND_CONTEXT, type Context } from "@earendil-works/chord/context";
@@ -48,16 +48,16 @@ export type OpenCoreOptions = {
 /**
  * 一条运行报告，**已经摊平成可落盘的普通数据**。
  *
- * 为什么不直接把底座的 `ReportInfo` 递出去：它是 pi-durable 的类型，而按边界规则
+ * 为什么不直接把底座的 `Report` 递出去：它是 pi-durable 的类型，而按边界规则
  * 只有 `runtime/` 能碰那个包。这里做一次翻译，上层（`app/diag.ts` 落盘 + 界面）
  * 就只认这个自己的形状。
  */
 export type RuntimeReport = {
-	/** 报告种类，与底座 `ReportInfo.type` 同名。 */
+	/** 报告种类，与底座 `Report.kind` 同名。 */
 	readonly type: string;
 	/** 落盘时间（ISO）。底座不提供时间戳，由这里补。 */
 	readonly at: string;
-	/** 错误正文（可能没有：比如 `task_parked` 是「没有错误对象」的那种报告）。 */
+	/** 错误正文（有些报告没有错误对象，比如 `task_interrupted`）。 */
 	readonly message?: string;
 	/** 错误堆栈前三行：定位用，不要整段。 */
 	readonly stack?: string;
@@ -65,39 +65,43 @@ export type RuntimeReport = {
 	readonly task?: { readonly id: string; readonly kind: string; readonly conversationId: number };
 	/** 哪个扩展的代码出的问题。 */
 	readonly extension?: string;
-	/** 子原因（`threw` / `restart_limit` / `missing_task` / `incompatible_task`）。 */
+	/** 子原因（`threw` / `restart_limit` / `interrupted` / `missing_task` / `task_too_old` / …）。 */
 	readonly reason?: string;
 	/** 哪个宿主回调抛的（`now` / `settings` / `models` / …）。 */
 	readonly callback?: string;
 	/** 不在任务里时，涉及哪个会话。 */
 	readonly conversationId?: number;
+	/** 任务连续被重启打断的次数（`task_interrupted` 带）。 */
+	readonly restarts?: number;
 };
 
 /** 堆栈只留三行：够看出在哪一层炸的，又不会把日志写爆。 */
 const STACK_LINES = 3;
 
-/** 把底座的 `ReportInfo` 翻成可落盘的形状。纯函数。 */
-export function toRuntimeReport(error: unknown, info: ReportInfo): RuntimeReport {
-	const task = "task" in info && info.task !== undefined ? info.task : undefined;
+/** 把底座的一条 `Report` 翻成可落盘的形状。纯函数。 */
+export function toRuntimeReport(report: Report): RuntimeReport {
+	const error = report.error;
+	const task = "task" in report && report.task !== undefined ? report.task : undefined;
 	const message = error instanceof Error ? error.message : typeof error === "string" ? error : undefined;
 	const stack =
 		error instanceof Error && error.stack !== undefined
 			? error.stack.split("\n").slice(0, STACK_LINES).join("\n")
 			: undefined;
 	return {
-		type: info.type,
+		type: report.kind,
 		at: new Date().toISOString(),
 		...(message === undefined || message === "" ? {} : { message }),
 		...(stack === undefined ? {} : { stack }),
 		...(task === undefined
 			? {}
 			: { task: { id: String(task.id), kind: task.kind, conversationId: task.conversationId as unknown as number } }),
-		...("extension" in info && info.extension !== undefined ? { extension: String(info.extension) } : {}),
-		...("reason" in info && info.reason !== undefined ? { reason: String(info.reason) } : {}),
-		...("callback" in info && info.callback !== undefined ? { callback: String(info.callback) } : {}),
-		...("conversationId" in info && info.conversationId !== undefined
-			? { conversationId: info.conversationId as unknown as number }
+		...("extension" in report && report.extension !== undefined ? { extension: String(report.extension) } : {}),
+		...("reason" in report && report.reason !== undefined ? { reason: String(report.reason) } : {}),
+		...("callback" in report && report.callback !== undefined ? { callback: String(report.callback) } : {}),
+		...("conversationId" in report && report.conversationId !== undefined
+			? { conversationId: report.conversationId as unknown as number }
 			: {}),
+		...("restarts" in report && report.restarts !== undefined ? { restarts: report.restarts } : {}),
 	};
 }
 
@@ -351,12 +355,10 @@ export async function pruneTerminalSubmissions(
 }
 
 /** 报告出口自己不许抛：它会连累底座把「一次任务失败」升级成别的后果。 */
-function safeReport(
-	report: ((value: RuntimeReport) => void) | undefined,
-): (error: unknown, info: ReportInfo) => void {
-	return (error, info) => {
+function safeReport(sink: ((value: RuntimeReport) => void) | undefined): (report: Report) => void {
+	return (report) => {
 		try {
-			report?.(toRuntimeReport(error, info));
+			sink?.(toRuntimeReport(report));
 		} catch (reportError) {
 			console.error("[core] 运行报告没处理掉：", (reportError as Error)?.message);
 		}

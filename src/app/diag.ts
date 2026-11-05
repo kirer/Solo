@@ -26,11 +26,11 @@ const DIAG_ENTRY_LIMIT = 4 * 1024;
 /** 运行报告单条上限（`stack` 可能很长，所以先量再写）。 */
 const REPORT_ENTRY_LIMIT = 4 * 1024;
 
-/** 报告种类 → 人话。写法与底座 `ReportInfo.type` 一一对应，缺一个就退回原名。 */
+/** 报告种类 → 人话。写法与底座 `Report.kind` 一一对应，缺一个就退回原名。 */
 const REPORT_LABELS: Record<string, string> = {
-	session_failed: "底座的会话失败（storage 等致命错误）",
+	storage_failed: "底座的会话失败（storage 等致命错误）",
 	task_faulted: "任务抛出异常",
-	task_parked: "任务连续重启超限，已挂起",
+	task_interrupted: "任务连续重启超限，已结束",
 	migration_failed: "任务状态迁移失败，任务被卡住",
 	task_outdated: "任务按旧定义继续跑（定义被卸载或换成不兼容的）",
 	task_error: "任务运行时报错",

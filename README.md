@@ -54,7 +54,7 @@ src/core/     核心（57 个文件，约 1.07 万行）
   fsx.ts      工作区内的相对路径入口（与 runtime/io.ts 是唯二碰 node:fs 的地方）
   naming.ts   名字 → 目录名的唯一规则（agent / 团队 / 技能共用）
   md/         markdown 流水线：doc（frontmatter）/ text（插槽）/ prompt（模板拼段）/ oneline
-  runtime/    防腐层：唯一 import pi-durable / pi-ai 的地方 + 模型装配
+  runtime/    防腐层：唯一 import pi-durable / pi-ai / pi-schema 的地方 + 模型装配
   agent/      一个人：身份 / 提示词装配 / 记忆 / 技能 / 名册（含两层唤醒记录）
   team/       一个团队：README.md / memory.md
   channel/    说话：频道规则 / 写一条（含投递） / 唤醒 / 收尾 / 附件 / 8 个工具
