@@ -747,11 +747,13 @@ body[data-layout="bubble"]
 	transition: opacity 80ms ease, visibility 80ms ease;
 }
 
-/* 悬停桥：只补那 6px 的缝，不盖正文 —— 没有它，鼠标移到按钮上会经过缝而闪掉。 */
+/* 悬停桥：只补那 6px 的缝，不盖正文 —— 没有它，鼠标移到按钮上会经过缝而闪掉。
+   右侧不伸出去：伸出去的那 8px 会把 .row-body 的 scrollWidth 撑宽，窄窗口里
+   变成一条横向滚动条。 */
 .row-tools::after {
 	content: "";
 	position: absolute;
-	inset: -8px -8px -8px 0;
+	inset: -8px 0 -8px 0;
 	z-index: -1;
 }
 
@@ -769,8 +771,9 @@ body[data-layout="bubble"]
 	margin-right: 6px;
 }
 
+/* 我的行按钮在左边，缝在按钮右边：桥往右补，同样不往左伸出去。 */
 .row-say[data-owner="true"] .row-tools::after {
-	inset: -8px 0 -8px -8px;
+	inset: -8px -8px -8px 0;
 }
 
 .tool {
@@ -1045,6 +1048,15 @@ body[data-layout="bubble"]
 
 	.sk-bar {
 		max-width: min(68ch, calc(100% - 34px));
+	}
+}
+
+/* 窄窗口但还有鼠标（桌面端拉到手机比例）：动作条仍然是绝对定位挂在正文右边，
+   34px 留白放不下它（6 + 两个 28 的按钮），会把消息区撑出一条横向滚动条。
+   触屏没有这个问题 —— 那里的按钮回到文档流里（见 `@media (hover: none)`）。 */
+@media (max-width: 900px) and (hover: hover) {
+	.row-body {
+		max-width: min(68ch, calc(100% - 76px));
 	}
 }
 

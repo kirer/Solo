@@ -190,7 +190,20 @@ export function App(): JSX.Element {
 					{/* 三格：左门、居中的名字、右门。名字必须真居中（稿子 01 / 04），
 					    所以左右各占一列 1fr —— 右边多一颗按钮也不会把名字挤偏。 */}
 					<div className="sheet-head-left">
-						{assistantChat ? null : (
+						{assistantChat ? (
+							<button
+								type="button"
+								className="icon-btn"
+								id="list-btn"
+								aria-label="对话"
+								title="对话"
+								onClick={() => void openChannel(null)}
+							>
+								<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+									<path d="M20.5 11.6c0 3.9-3.8 7-8.5 7-1 0-2-.15-2.9-.42L4 20l1.3-3.9A6.5 6.5 0 0 1 3.5 11.6c0-3.9 3.8-7 8.5-7s8.5 3.1 8.5 7Z" />
+								</svg>
+							</button>
+						) : (
 							<button
 								type="button"
 								className="icon-btn sheet-back"
@@ -226,18 +239,6 @@ export function App(): JSX.Element {
 					)}
 					{assistantChat ? (
 						<>
-							<button
-								type="button"
-								className="icon-btn"
-								id="list-btn"
-								aria-label="对话"
-								title="对话"
-								onClick={() => void openChannel(null)}
-							>
-								<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-									<path d="M20.5 11.6c0 3.9-3.8 7-8.5 7-1 0-2-.15-2.9-.42L4 20l1.3-3.9A6.5 6.5 0 0 1 3.5 11.6c0-3.9 3.8-7 8.5-7s8.5 3.1 8.5 7Z" />
-								</svg>
-							</button>
 							<button
 								type="button"
 								className="icon-btn"
