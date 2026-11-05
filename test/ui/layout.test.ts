@@ -2,7 +2,7 @@
  * 布局约定：node 里没有布局引擎，所以读 CSS / 组件源码断言「这条规则还在」。
  *
  * 四个方向合在一个文件里，因为它们是同一种测试、同一套读法：输入框的居中轨道、
- * 右侧栏的三列、侧栏收起、消息正文的折行。每个 describe 开头的注释写着它是为了
+ * 一列到底的骨架、整屏页、消息正文的折行。每个 describe 开头的注释写着它是为了
  * 防哪一次回归 —— 断言的是「规则在不在、有没有被改回去」，像素留给手工验收。
  */
 import { readFileSync } from "node:fs";
@@ -22,6 +22,8 @@ const appSource = read("../../ui/app/src/App.tsx");
 const storeSource = read("../../ui/app/src/state/store.ts");
 const sidebarSource = read("../../ui/app/src/sidebar/Sidebar.tsx");
 const rightPanelSource = read("../../ui/app/src/panels/RightPanel.tsx");
+const settingsSource = read("../../ui/app/src/panels/SettingsPage.tsx");
+const pluginsSource = read("../../ui/app/src/panels/PluginsPage.tsx");
 
 /**
  * 取某个选择器的**所有**规则块（一个选择器可能在文件里出现多次，还可能在逗号组里）。
@@ -61,92 +63,134 @@ describe("引用条与附件托盘的居中轨道", () => {
 	});
 });
 
-describe("右侧栏", () => {
-	it("是四列布局（导航 + 侧栏 + 纸 + 右栏），第三列宽度来自 --rightbar", () => {
-		expect(blocksOf(shellCss, ".frame").join("\n")).toContain(
-			"grid-template-columns: var(--rail) var(--sidebar) minmax(0, 1fr) var(--rightbar)",
-		);
-		expect(blocksOf(shellCss, '.frame[data-right="open"]').join("\n")).toContain("--rightbar: 360px");
-	});
-
-	it("--rightbar 有一个 0 的定义（否则整条声明作废）", () => {
-		expect(baseCss).toContain("--rightbar: 0px");
-	});
-
-	it("右栏落在第四列（第一列是导航），不是 fixed", () => {
-		const rule = blocksOf(shellCss, ".detail").join("\n");
-		expect(rule).toContain("grid-column: 4");
-		expect(rule).not.toContain("position: fixed");
-	});
-
-	it("收起时 hidden 真的不占位", () => {
-		expect(shellCss).toMatch(/\.detail\[hidden\],\s*\n\s*\.detail-body\[hidden\]\s*\{\s*\n\s*display: none;/);
-	});
-
-	it("动画：列 300ms，内容 240ms 且带 60ms 延迟", () => {
-		expect(blocksOf(shellCss, ".frame").join("\n")).toContain("transition: grid-template-columns 300ms");
-		const content = blocksOf(shellCss, ".detail-panel > .detail-body").join("\n");
-		expect(content).toContain("animation: detail-in 240ms");
-		expect(content).toContain("60ms both");
-	});
-
-	it("关闭要等滑完再 hidden（否则动画被剪掉）", () => {
-		// `.frame[data-right]` 由 App.tsx 渲染；关的时候先让列宽过渡跑完，再真正卸载内容。
-		expect(appSource).toContain('data-right={right.open ? "open" : "closed"}');
-		expect(rightPanelSource).toContain("window.setTimeout(() => setMounted(false), 300)");
-	});
-});
-
-describe("侧栏", () => {
-	it("宽度只来自 --sidebar，而且没有收起态了", () => {
-		const frame = blocksOf(shellCss, ".frame").join("\n");
-		expect(frame).toContain("var(--sidebar) minmax(0, 1fr)");
-		expect(frame).toContain("transition: grid-template-columns");
-		// 收起那一套（按钮 / data-side / 56px 图标条）整组删掉了，别让它长回来。
-		expect(shellCss).not.toContain("data-side");
-		expect(shellCss).not.toContain(".side-toggle");
-		expect(sidebarSource).not.toContain("side-toggle");
-		expect(storeSource).not.toContain("SIDE_KEY");
-		expect(appSource).not.toContain("data-side=");
-		// 名字仍然写进 title：换行时那一行只剩脸，得能在悬停里读全。
-		expect(sidebarSource).toContain('title={parts.join(" · ")}');
-	});
-});
-
-describe("四屏的标题在同一条线上", () => {
-	it("通讯录 / 插件 / 设置的左栏标题用聊天那套字，靠上排", () => {
-		expect(blocksOf(shellCss, ".side-logo").join("\n")).toContain("align-items: flex-start");
-		expect(blocksOf(shellCss, ".side-logo").join("\n")).toContain("height: 56px");
-		expect(blocksOf(shellCss, ".page-side-head").join("\n")).toContain("align-items: flex-start");
-		for (const needle of ["var(--brand)", "font-size: 18px", "line-height: 24px", "letter-spacing: 0.04em"]) {
-			expect(blocksOf(shellCss, ".page-side-head .page-title").join("\n")).toContain(needle);
-			expect(blocksOf(tasksCss, ".tasks-list-head h2").join("\n")).toContain(needle);
+describe("一列到底的骨架（手机稿，桌面上也照这个来）", () => {
+	it("框只有一列，内容最宽 860 居中", () => {
+		expect(blocksOf(shellCss, ".frame").join("\n")).toContain("grid-template-columns: minmax(0, 1fr)");
+		// 最左那一列导航整组删掉了，别让它长回来。
+		expect(shellCss).not.toContain("--rail");
+		expect(appSource).not.toContain("<Rail");
+		expect(appSource).not.toContain("data-right");
+		for (const selector of [".sidebar", ".sheet", ".page", ".detail-panel"]) {
+			const blocks = blocksOf(shellCss, selector).join("\n");
+			expect(blocks).toContain("max-width: 860px");
+			expect(blocks).toContain("margin: 0 auto");
 		}
 	});
 
-	it("插件页的「+」在标题右边，左边不再有脚下那条装插件", () => {
-		const plugins = read("../../ui/app/src/panels/PluginsPage.tsx");
-		const head = plugins.slice(plugins.indexOf('className="page-side-head"'), plugins.indexOf('className="page-side-body"'));
+	it("列表与对话叠在同一格，靠 body[data-pane] 互斥", () => {
+		const stacked = shellCss.slice(shellCss.indexOf(".sidebar,\n.sheet {"), shellCss.indexOf("body[data-pane"));
+		expect(stacked).toContain("grid-column: 1");
+		expect(stacked).toContain("grid-row: 1");
+		expect(shellCss).toMatch(/body\[data-pane="list"\] \.sheet \{\s*\n\s*display: none;/);
+		expect(shellCss).toMatch(/body\[data-pane="chat"\] \.sidebar \{\s*\n\s*display: none;/);
+		expect(appSource).toContain('document.body.dataset["pane"] = detail === null ? "list" : "chat"');
+	});
+
+	it("资料 / 后台任务是一整屏，不占列、不挤压", () => {
+		expect(shellCss).toMatch(/\.detail \{[^}]*position: fixed;[^}]*inset: 0;[^}]*z-index: 60;/);
+		expect(blocksOf(shellCss, ".detail").join("\n")).not.toContain("grid-column");
+	});
+
+	it("首屏是和助理的对话；没有助理才停在列表", () => {
+		expect(storeSource).toContain("person.assistant === true");
+		expect(storeSource).toContain("await openChannel(dm.id)");
+	});
+});
+
+describe("顶栏的门", () => {
+	it("助理那屏没有返回，门是「对话 / 设置」", () => {
+		expect(appSource).toContain("assistantChat");
+		expect(appSource).toContain('id="list-btn"');
+		expect(appSource).toContain('id="sheet-settings"');
+	});
+
+	it("别的对话：返回列表 + 资料与后台任务", () => {
+		expect(appSource).toContain('id="back"');
+		expect(appSource).toContain('id="detail-btn"');
+		expect(appSource).toContain("openChannel(null)");
+	});
+
+	it("对话抬头三格：名字真居中；助理那屏没有状态行", () => {
+		expect(blocksOf(shellCss, ".sheet-head").join("\n")).toContain(
+			"grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr)",
+		);
+		expect(blocksOf(shellCss, ".sheet-head-main").join("\n")).toContain("text-align: center");
+		expect(appSource).toContain('sub === "" || assistantChat');
+	});
+
+	it("列表这一屏能回到助理，标题就叫对话", () => {
+		expect(sidebarSource).toContain('id="list-back"');
+		expect(sidebarSource).toContain("对话");
+		expect(sidebarSource).toContain('id="new-group"');
+	});
+
+	it("列表脚下不再有团队 / 插件 / 设置三行", () => {
+		expect(sidebarSource).not.toContain('id="team-btn"');
+		expect(sidebarSource).not.toContain('id="plugins-btn"');
+		expect(sidebarSource).not.toContain('id="settings-btn"');
+		expect(sidebarSource).not.toContain("side-action");
+	});
+});
+
+describe("整屏页：一列往下读", () => {
+	it("设置与插件都是整屏一页，不是浮层", () => {
+		const pages: readonly [string, string, string][] = [
+			["../../ui/app/src/panels/PluginsPage.tsx", "page-plugins", "page"],
+			["../../ui/app/src/panels/SettingsPage.tsx", "page-settings", "page"],
+		];
+		for (const [path, id] of pages) {
+			const source = read(path);
+			expect(source).toContain(`className="page"`);
+			expect(source).toContain(`id="${id}"`);
+			expect(source).toContain('className="nav"');
+			expect(source).toContain('className="nav-title"');
+			expect(source).not.toContain('role="dialog"');
+			expect(source).not.toContain("aria-modal");
+			expect(appSource).toContain(`<${path.split("/").pop()!.replace(".tsx", "")}`);
+		}
+		// 一页一列：没有左栏清单，也没有右栏正文。
+		const page = blocksOf(shellCss, ".page").join("\n");
+		expect(page).toContain("flex-direction: column");
+		expect(shellCss).not.toContain(".page-side");
+		expect(shellCss).not.toContain(".page-main");
+		expect(settingsSource).toContain('className="set-scroll"');
+		expect(settingsSource).toContain('id="settings-back"');
+		expect(pluginsSource).toContain('id="plugins-back"');
+	});
+
+	it("插件页的「+」在标题右边，装的是文件夹", () => {
+		const head = pluginsSource.slice(pluginsSource.indexOf('className="nav"'), pluginsSource.indexOf('className="set-scroll"'));
 		expect(head).toContain("plugin-add");
 		expect(head).toContain("webkitdirectory");
-		expect(plugins).not.toContain("page-side-foot");
+		expect(pluginsSource).not.toContain("page-side-foot");
 	});
 
-	it("插件自己的那一页开着时，「插件」那格不跟着亮（否则两格同时选中）", () => {
-		const rail = read("../../ui/app/src/sidebar/Rail.tsx");
-		expect(rail).not.toContain("state.pluginSheet || state.pluginView");
-		expect(rail).toContain("const plugins = useStore((state) => state.pluginSheet)");
-		expect(rail).toContain("pluginPage");
+	it("插件那一页不另浮一颗返回：出口就在插件自己画的标题栏里", () => {
+		expect(appSource).toContain('<Slot name="app.page" />');
+		expect(appSource).not.toContain('id="plugin-exit"');
+		expect(shellCss).not.toContain(".page-exit");
+	});
+
+	it("后台任务是右栏的一态，不是另一屏", () => {
+		expect(appSource).not.toContain("<TasksPanel");
+		expect(rightPanelSource).toContain("<TasksView");
+		expect(rightPanelSource).toContain('data-tasks={tasksOpen ? "true" : "false"}');
+		expect(tasksCss).toContain(".tasks-row");
+		expect(tasksCss).not.toContain(".tasks-list-head");
 	});
 });
 
-describe("后台任务的一步：时间 / 圆点 / 正文对齐", () => {
-	it("三列同一条 20 高的行，不靠 padding 猜基线", () => {
+describe("后台任务的一步：时刻 / 圆点 / 正文对齐", () => {
+	it("圆点与正文同一基线，行高只写一处", () => {
 		expect(blocksOf(tasksCss, ".task-step").join("\n")).toContain("align-items: start");
-		for (const selector of [".task-step-at", ".task-step-title"]) {
-			expect(blocksOf(tasksCss, selector).join("\n")).toContain("line-height: 20px");
-		}
-		expect(blocksOf(tasksCss, ".task-step-at").join("\n")).not.toContain("padding-top");
+		expect(blocksOf(tasksCss, ".task-step-title").join("\n")).toContain("line-height: 22px");
+		expect(blocksOf(tasksCss, ".task-step-line").join("\n")).toContain("min-height: 22px");
+	});
+
+	it("展开的步骤就在那一行里，不是另起一张卡", () => {
+		expect(tasksCss).toContain(".tasks-open");
+		expect(tasksCss).not.toContain(".tasks-two");
+		expect(tasksCss).not.toContain(".tasks-list");
 	});
 });
 
@@ -171,105 +215,38 @@ describe("消息正文换行", () => {
 	});
 });
 
-describe("最左导航与后台任务（第二屏）", () => {
-	it("各屏共用一列导航：data-view 由 tasks / team / plugins / settings 驱动", () => {
-		for (const view of ['"tasks"', '"team"', '"plugins"', '"settings"', '"chat"']) {
-			expect(appSource).toContain(view);
-		}
-		expect(appSource).toContain("<Rail />");
+describe("手机与桌面是同一份摆法", () => {
+	it("全面屏还是让出刘海与手势条", () => {
+		expect(shellCss).toContain("env(safe-area-inset-top)");
+		expect(shellCss).toContain("env(safe-area-inset-bottom)");
+		expect(blocksOf(baseCss, ":root").join("\n")).toContain("--sidebar");
 	});
 
-	it("导航五格：聊天 / 通讯录 / 后台任务 / 插件，设置单独压在最底", () => {
-		const rail = read("../../ui/app/src/sidebar/Rail.tsx");
-		for (const id of ["rail-chat", "team-btn", "rail-tasks", "plugins-btn", "settings-btn"]) {
-			expect(rail).toContain(`id="${id}"`);
-		}
-		expect(rail.match(/className="rail-item"/g)?.length).toBe(5);
-		// 五格各有一条选中态：开着的那一屏自己亮，不靠悬停猜。
-		expect(rail.match(/aria-current=/g)?.length).toBe(5);
-		// 顺序写死：聊天 → 通讯录（团队）→ 后台任务 → 插件；设置不在这一段里。
-		const order = ["rail-chat", "team-btn", "rail-tasks", "plugins-btn"].map((id) => rail.indexOf(`id="${id}"`));
-		expect(order).toEqual([...order].sort((left, right) => left - right));
-		// 贴底的那一段只有设置。
-		const foot = rail.slice(rail.indexOf('className="rail-group rail-foot"'));
-		expect(foot).toContain('id="settings-btn"');
-		expect(foot).not.toContain('id="plugins-btn"');
-		expect(foot).not.toContain('id="rail-tasks"');
-		expect(blocksOf(shellCss, ".rail-foot").join("\n")).toContain("margin-top: auto");
-		// 只有图标，名字靠悬停提示：五格各有一条 data-tip，顺序和图标一致。
-		expect(rail).toContain('data-tip="聊天"');
-		expect(rail).toContain('data-tip="通讯录"');
-		expect(rail).toContain('data-tip="任务"');
-		expect(rail).toContain('data-tip="插件"');
-		expect(rail).toContain('data-tip="设置"');
-		expect(blocksOf(shellCss, ".rail-item::after").join("\n")).toContain("attr(data-tip)");
+	it("设置只在助理那屏：列表头没有设置按钮，多一个搜索框", () => {
+		expect(appSource).toContain('id="sheet-settings"');
+		expect(sidebarSource).not.toContain('id="side-settings"');
+		expect(sidebarSource).toContain('id="chat-search"');
+		expect(sidebarSource).toContain("搜索对话");
 	});
 
-	it("侧栏脚下不再有团队 / 插件 / 设置三行", () => {
-		const sidebar = read("../../ui/app/src/sidebar/Sidebar.tsx");
-		expect(sidebar).not.toContain('id="team-btn"');
-		expect(sidebar).not.toContain('id="plugins-btn"');
-		expect(sidebar).not.toContain('id="settings-btn"');
-		expect(sidebar).not.toContain("side-action");
-	});
-
-	it("通讯录 / 插件 / 设置是整屏的一页，不是浮层（不盖在聊天上）", () => {
-		const pages: readonly [string, string][] = [
-			["../../ui/app/src/panels/TeamPage.tsx", "page-team"],
-			["../../ui/app/src/panels/PluginsPage.tsx", "page-plugins"],
-			["../../ui/app/src/panels/SettingsPage.tsx", "page-settings"],
-		];
-		for (const [path, id] of pages) {
-			const source = read(path);
-			// 一页 = section.page + 自己的 id；弹窗那套（dialog / aria-modal / 遮罩）一点都不许有。
-			expect(source).toContain(`className="page`);
-			expect(source).toContain(`id="${id}"`);
-			// 同一套骨架：左栏清单 + 右栏正文（通讯录的右栏空着）。
-			expect(source).toContain('className="page-side"');
-			expect(source).toContain('className="page-title"');
-			expect(source).not.toContain('role="dialog"');
-			expect(source).not.toContain("aria-modal");
-				expect(appSource).toContain(`<${path.split("/").pop()!.replace(".tsx", "")}`);
-		}
-		// 拉群还是浮层；设置 / 团队从此不再是。
-		const overlays = read("../../ui/app/src/panels/Overlays.tsx");
-		expect(overlays).toContain('role="dialog"');
-		expect(overlays).not.toContain("SettingsSheet");
-		expect(overlays).not.toContain("TeamSheet");
-		// 三个屏各占两列（导航 + 内容），并且把聊天那三栏藏起来。
-		for (const view of ["team", "plugins", "settings"]) {
-			expect(blocksOf(shellCss, `.frame[data-view="${view}"]`).join("\n")).toContain(
-				"grid-template-columns: var(--rail) minmax(0, 1fr)",
-			);
-		}
-		// 一页 = 左栏清单 + 右栏正文；左栏和聊天列表同宽（288），不跟着侧栏收起。
-		const page = blocksOf(shellCss, ".page").join("\n");
-		expect(page).toContain("--page-list: 288px");
-		expect(page).toContain("grid-template-columns: var(--page-list) minmax(0, 1fr)");
-		expect(page).toContain("min-height: 0");
-		// 通讯录右栏空着：没有假详情，也没有占位卡片。
-		const team = read("../../ui/app/src/panels/TeamPage.tsx");
-		expect(team).toContain("page-main-blank");
-		expect(team).not.toContain("plugin-");
-		// 插件页右栏是选中那个的详情，不是一长条卡片墙。
-		expect(read("../../ui/app/src/panels/PluginsPage.tsx")).toContain('className="page-main-body"');
-	});
-
-	it("后台任务那一屏占掉侧栏 + 纸 + 右栏，不和聊天并存", () => {
-		expect(blocksOf(shellCss, '.frame[data-view="tasks"]').join("\n")).toContain(
-			"grid-template-columns: var(--rail) minmax(0, 1fr)",
-		);
-		for (const part of [".sidebar", ".sheet", ".detail"]) {
-			expect(blocksOf(shellCss, '.frame[data-view="tasks"] ' + part).join("\n")).toContain("display: none");
+	it("列表一行一条细线，标题栏下面不画线", () => {
+		expect(blocksOf(shellCss, ".ch + .ch::before").join("\n")).toContain("height: 0.5px");
+		for (const selector of [".sheet-head", ".nav", ".detail-bar"]) {
+			expect(blocksOf(shellCss, selector).join("\n")).not.toContain("border-bottom");
 		}
 	});
 
-	it("手机上是底部一条：导航不再隐藏，第二屏仍有自己的返回键", () => {
-		// 管理三格搬进导航之后，藏起来就没处点 —— 手机上改成一条横的底栏。
-		const phone = shellCss.slice(shellCss.indexOf("@media (max-width: 640px)"));
-		expect(phone).toMatch(/\.rail \{[\s\S]*?position: fixed;[\s\S]*?flex-direction: row;/);
-		expect(phone).toContain("padding-bottom: calc(56px + env(safe-area-inset-bottom))");
-		expect(shellCss).not.toMatch(/\.frame \.rail \{\s*display: none;/);
-		expect(tasksCss).toContain(".tasks-back");
+	it("引用条再长也撑不宽整张纸：纸的隐式列钉死在可用宽度", () => {
+		// 实测事故：引用一条长消息后，nowrap 的引文把 .sheet 的隐式列（auto = max-content）
+		// 撑到 772px，手机上整屏消息被裁掉右半截。
+		expect(blocksOf(shellCss, ".sheet").join("\n")).toContain("grid-template-columns: minmax(0, 1fr)");
+		expect(blocksOf(composerCss, ".reply").join("\n")).toContain("min-width: 0");
+	});
+
+	it("换屏有动画：进来的那一屏都会浮进来", () => {
+		const animated = blocksOf(shellCss, ".sidebar").join("\n");
+		expect(animated).toContain("animation: page-in");
+		expect(shellCss).toContain("@keyframes page-in");
+		expect(shellCss).toContain(".detail-panel > .tasks");
 	});
 });

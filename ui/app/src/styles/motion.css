@@ -161,6 +161,25 @@
 	box-shadow: 0 0 0 1px color-mix(in oklab, var(--ink) 10%, transparent);
 }
 
+/* 助理的脸是应用标识，不是插画：深底 + 一笔浅色的 S，自己带方角，不套照片的纸色与边。
+   群头像的座位会把它裁成圆，这里把圆角收回来，标识才不会缺角。 */
+.av-mark {
+	border-radius: 26%;
+	background: transparent;
+	box-shadow: none;
+	overflow: hidden;
+}
+
+.av-mark svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.av-seat .av-mark {
+	border-radius: 26%;
+}
+
 /* 三种状态三种动法：思考是歪头、干活是点头、交付是一次回弹。
    插画内部的结构 CSS 够不到（它是 `<img>`），所以动的只能是整张脸 —— 幅度压小，
    一屏几十张一起点头才不晕。 */

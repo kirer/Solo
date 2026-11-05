@@ -6,6 +6,7 @@
  * 一行要么是一个人（私聊），要么是一群人（群聊）—— 形态由后端 `kind` 给。
  */
 
+import { useState } from "react";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { headParts, relTime, unreadLabel } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
@@ -18,21 +19,51 @@ export function Sidebar(): JSX.Element {
 	const people = useStore((state) => state.people);
 	const currentId = useStore((state) => state.currentId);
 	const presence = useStore((state) => state.presence);
+	/** 列表头顶的搜索（稿子 02）：只在名字与预览里找，不搜历史正文。 */
+	const [query, setQuery] = useState("");
+	const needle = query.trim().toLowerCase();
 
-	const bySlug = new Map(people.map((person) => [person.slug, person]));
+	const bySlug = new Map(
+		people.map((person) => [
+			person.slug,
+			{
+				label: person.label,
+				title: person.title,
+				slug: person.slug,
+				assistant: person.assistant === true,
+			},
+		]),
+	);
 	// 助理（身份在应用根下的那个人）。私聊还没开过时，他是侧栏第一格；
 	// 开过之后那一格由真实频道顶上（`sortChannels` 已经把他钉在最前）。
 	const nearest = people.find((person) => person.assistant === true);
 	const nearestOpened =
 		nearest === undefined ||
 		channels.some((channel) => channel.kind === "dm" && channel.title === nearest.label);
+	const matches = (text: string): boolean => needle === "" || text.toLowerCase().includes(needle);
+	const shown = channels.filter((channel) => matches(channel.title) || matches(channel.preview));
+	const showAssistant = nearest !== undefined && !nearestOpened && matches(nearest.label);
 
 	return (
 		<aside className="sidebar">
-			<div className="side-logo">
-				{/* 不画品牌标：这一列的头只说明「这里是聊天」，和左边那格图标连成一条线。 */}
-				<h1 className="brand-name" id="bar-title">
-					聊天
+			<header className="side-logo">
+				{/* 首屏是助理那屏（稿子 01），从这里能回去；没有助理就不画箭头，它本来就在最上面。 */}
+				{nearest === undefined ? null : (
+					<button
+						type="button"
+						className="icon-btn side-back"
+						id="list-back"
+						aria-label="回到助理"
+						title="回到助理"
+						onClick={() => void openWithPerson(nearest.slug)}
+					>
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+							<path d="M14.5 5.5 8 12l6.5 6.5" />
+						</svg>
+					</button>
+				)}
+				<h1 className="side-title" id="bar-title">
+					对话
 				</h1>
 				<span className="side-grow" />
 				{/* 插槽：品牌行右侧，拉群按钮之前。 */}
@@ -50,18 +81,35 @@ export function Sidebar(): JSX.Element {
 						<path d="M12 5v14M5 12h14" />
 					</svg>
 				</button>
+			</header>
+			{/* 搜对话（稿子 02）：按名字与预览筛这一列，不搜历史。 */}
+			<div className="side-search">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
+					<circle cx="10.8" cy="10.8" r="6.3" />
+					<path d="m15.6 15.6 4 4" />
+				</svg>
+				<input
+					id="chat-search"
+					type="search"
+					autoComplete="off"
+					placeholder="搜索对话"
+					aria-label="搜索对话"
+					value={query}
+					onChange={(event) => setQuery(event.target.value)}
+				/>
 			</div>
 			{/* 插槽：会话列表上方。 */}
 			<Slot name="sidebar.list.before" />
 			<div className="channels" id="rows" role="list">
-				{nearest === undefined || nearestOpened ? null : (
+				{showAssistant && nearest !== undefined ? (
 					<AssistantRow
 						person={nearest}
 						state={presence.get(nearest.slug)?.state ?? "idle"}
 						onOpen={() => void openWithPerson(nearest.slug)}
 					/>
-				)}
-				{channels.map((channel) => (
+				) : null}
+				{shown.length === 0 && !showAssistant ? <p className="side-empty">没有匹配的对话</p> : null}
+				{shown.map((channel) => (
 					<ChannelRow
 						key={channel.id}
 						channel={channel}
@@ -104,7 +152,13 @@ function AssistantRow(props: { person: Actor; state: string; onOpen: () => void 
 			<span
 				className="ch-av"
 				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: person.slug, name: person.label, size: 36, state: avatarState(state) }),
+					__html: avatarSvg({
+						slug: person.slug,
+						name: person.label,
+						size: 36,
+						state: avatarState(state),
+						assistant: person.assistant === true,
+					}),
 				}}
 			/>
 			<span className="ch-main">
@@ -121,7 +175,7 @@ function ChannelRow(props: {
 	channel: Channel;
 	active: boolean;
 	presence: Map<string, { state: string; at: number }>;
-	bySlug: Map<string, { label: string; title: string; slug: string }>;
+	bySlug: Map<string, { label: string; title: string; slug: string; assistant: boolean }>;
 	onOpen: () => void;
 }): JSX.Element {
 	const { channel } = props;
@@ -156,7 +210,13 @@ function ChannelRow(props: {
 									size: 36,
 									state: "idle",
 								})
-							: avatarSvg({ slug: person.slug, name: person.label, size: 36, state: avatarState(state) }),
+							: avatarSvg({
+									slug: person.slug,
+									name: person.label,
+									size: 36,
+									state: avatarState(state),
+									assistant: person.assistant === true,
+								}),
 				}}
 			/>
 			<span className="ch-main">
@@ -190,8 +250,8 @@ function ChannelRow(props: {
  */
 function peerOf(
 	channel: Channel,
-	bySlug: Map<string, { label: string; title: string; slug: string }>,
-): { label: string; title: string; slug: string } | undefined {
+	bySlug: Map<string, { label: string; title: string; slug: string; assistant: boolean }>,
+): { label: string; title: string; slug: string; assistant: boolean } | undefined {
 	for (const person of bySlug.values()) {
 		if (person.label === channel.title) return person;
 	}
@@ -200,16 +260,19 @@ function peerOf(
 
 function groupPeopleOf(
 	channel: Channel,
-	bySlug: Map<string, { label: string; title: string; slug: string }>,
-): { slug: string; label: string }[] {
+	bySlug: Map<string, { label: string; title: string; slug: string; assistant: boolean }>,
+): { slug: string; label: string; assistant: boolean }[] {
 	// 只有群聊才画群头像（私聊画那个人的脸）。画的是**这个群里真有的人**，按成员表取；
 	// 拿全名册前四个凑会让每个群的头像长成一样，跟群里到底有谁无关（实测的 bug）。
 	// 群头像只画得出 4 个座位，多的也没地方放。
 	return channel.members
 		.map((slug) => bySlug.get(slug))
-		.filter((person): person is { label: string; title: string; slug: string } => person !== undefined)
+		.filter(
+			(person): person is { label: string; title: string; slug: string; assistant: boolean } =>
+				person !== undefined,
+		)
 		.slice(0, 4)
-		.map((person) => ({ slug: person.slug, label: person.label }));
+		.map((person) => ({ slug: person.slug, label: person.label, assistant: person.assistant }));
 }
 
 function avatarState(state: string): "idle" | "thinking" | "working" | "done" {

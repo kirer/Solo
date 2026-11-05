@@ -27,8 +27,8 @@
 	gap: 6px;
 	min-height: 52px;
 	/* 输入卡跟着消息列走，宽一点到「列宽 + 32」就住 —— 否则在宽屏上它会长到
-	   1180px，和上面 755px 的正文完全不对齐。 */
-	max-width: calc(min(calc(100% - 32px), clamp(680px, 64%, 920px)) + 32px);
+	   1180px，和上面 640px 的正文完全不对齐（§13.7）。 */
+	max-width: calc(min(calc(100% - 32px), 640px) + 32px);
 	margin: 0 auto;
 	/* 上下等距：三个控件都落在 34px 的同一行里，文字与图标才在同一条中线上。 */
 	padding: 9px 8px 9px 10px;
@@ -190,12 +190,11 @@
 	/* width 必须写死 100%：flex 列里 `margin: auto` 会让它按内容收缩，
 	   只是看着居中，实际宽度跟输入卡对不上。 */
 	width: 100%;
-	/* 64% 那一项要按「composer 内容宽」算：卡片里 64% 是相对 (100% - 2*pad)，
-	   引用条在外面，直接写 64% 会按整张 sheet 算，宽屏下就比卡片宽一截。 */
-	max-width: calc(
-		min(calc(100% - 2 * var(--composer-pad, 16px) - 32px), clamp(680px, calc((100% - 2 * var(--composer-pad, 16px)) * 0.64), 920px)) +
-			32px
-	);
+	/* 它是 flex 列里的一项：不写 min-width: 0，自动最小宽度 = 那行 nowrap 引文的
+	   min-content（一整条长消息），整列被撑到 700px 以上、手机上整屏横向跑出去。 */
+	min-width: 0;
+	/* 和消息列同一条轨道：640 是列宽，外面再让出卡片那 32px。 */
+	max-width: calc(min(calc(100% - 2 * var(--composer-pad, 16px) - 32px), 640px) + 32px);
 	margin: 0 auto;
 	padding: 6px var(--pad);
 	border-bottom: 1px solid var(--line);
@@ -212,6 +211,13 @@
 }
 
 .reply-text b {
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+/* 名字和引文之间留一口气：`Solo团队技能…` 会粘成一个词。 */
+.reply-who {
+	margin-right: 6px;
 	font-weight: 500;
 	color: var(--ink-2);
 }
@@ -362,7 +368,7 @@
 	/* 和输入卡同一条轨道：托盘在 composer 内容盒里，卡片的宽度公式直接照抄，
 	   左右各留出卡片那 32px，别让预览块比输入卡还靠左。 */
 	width: 100%;
-	max-width: calc(min(calc(100% - 32px), clamp(680px, 64%, 920px)) + 32px);
+	max-width: calc(min(calc(100% - 32px), 640px) + 32px);
 	margin: 0 auto;
 	padding: 0 0 8px;
 }

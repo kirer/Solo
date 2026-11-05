@@ -34,8 +34,15 @@ type Candidate = { id: number; label: string; slug: string; title: string };
 export function Composer(props: { toast: (text: string, tone?: "info" | "error") => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const reply = useStore((state) => state.reply);
+	// 助理的脸是应用标识（不是插画），候选里也要认出来 —— 只读名册，不加接口字段。
+	const assistants = new Set(
+		useStore((state) => state.people)
+			.filter((person) => person.assistant === true)
+			.map((person) => person.slug),
+	);
 	// 私聊里没有「提谁」：对面只有一个人，`@` 只会变成一段多余的字。
-	const isDm = useStore((state) => state.channels.find((channel) => channel.id === state.currentId)?.kind === "dm");
+	const channel = useStore((state) => state.channels.find((item) => item.id === state.currentId));
+	const isDm = channel?.kind === "dm";
 
 	const [text, setText] = useState("");
 	const [drafts, setDrafts] = useState<Draft[]>([]);
@@ -271,14 +278,13 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 		return "";
 	}, [reply, drafts.length]);
 
-	// 窄屏上那句提示会被切掉半截（「…Enter 发送,」），所以窄屏只说「发消息…」。
+	// 两端同一句占位（稿子 01 / 04）：私聊写「给谁」，群聊写「发到哪」。
+	// 键盘提示只在电脑上成立，手机放不下 —— 两端既然同一份摆法，就不写它。
 	const placeholder = useMemo(() => {
 		if (hint !== "") return hint;
-		const narrow = typeof window !== "undefined" && window.matchMedia("(max-width: 620px)").matches;
-		if (narrow) return "发消息…";
-		// 私聊不写「@ 提人」：这里提不到别人。
-		return isDm ? "发消息…（Enter 发送，Shift+Enter 换行）" : "发消息…（@ 提人，Enter 发送，Shift+Enter 换行）";
-	}, [hint, isDm]);
+		if (channel === undefined) return "说点什么…";
+		return isDm ? `给 ${channel.title} 说点什么…` : `发到 ${channel.title}…`;
+	}, [hint, channel, isDm]);
 
 	return (
 		<form
@@ -555,7 +561,13 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 										className="mention-av"
 										aria-hidden="true"
 										dangerouslySetInnerHTML={{
-											__html: avatarSvg({ slug: candidate.slug, name: candidate.label, size: 20, state: "idle" }),
+											__html: avatarSvg({
+												slug: candidate.slug,
+												name: candidate.label,
+												size: 20,
+												state: "idle",
+												assistant: assistants.has(candidate.slug),
+											}),
 										}}
 									/>
 									<span className="mention-name">{candidate.label}</span>

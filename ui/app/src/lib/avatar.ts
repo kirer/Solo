@@ -14,6 +14,8 @@
  * 脸的状态。只影响 `data-state`，由 CSS（`motion.css` 的 `.av[data-state=…]`）决定动不动：
  * 认得的只有 thinking / working / done，其余一律静止。
  */
+import { brandMarkSvg } from "./brand.ts";
+
 type AvatarState = "idle" | "thinking" | "working" | "done";
 
 /** 画一张脸要的输入。`slug` 定脸，`name` 只在没 slug 时当退路。 */
@@ -22,6 +24,8 @@ type AvatarSpec = {
 	name?: string | undefined;
 	size?: number | undefined;
 	state?: AvatarState | undefined;
+	/** 助理画应用自己的标识，不画插画脸（它不是「一个人」，是这个应用）。 */
+	assistant?: boolean | undefined;
 };
 
 /** 同一组输入的字符串是常量：一屏几十行就是几十张脸，不必每行拼一遍。 */
@@ -31,9 +35,10 @@ const CACHE = new Map<string, string>();
  * @param spec 见 {@link AvatarSpec}
  * @returns 一个 `<img>` 字符串（消费者的 `__html` 直接塞进去）
  */
-export function avatarSvg({ slug, name, size = 24, state = "idle" }: AvatarSpec): string {
+export function avatarSvg({ slug, name, size = 24, state = "idle", assistant = false }: AvatarSpec): string {
 	const seed = slug || name || "anon";
 	const px = Math.max(1, Math.round(size));
+	if (assistant) return markSvg(px, state);
 	const cacheKey = `${seed}|${px}|${state}`;
 	const hit = CACHE.get(cacheKey);
 	if (hit !== undefined) return hit;
@@ -45,6 +50,21 @@ export function avatarSvg({ slug, name, size = 24, state = "idle" }: AvatarSpec)
 	)}" alt="" aria-hidden="true" decoding="async" draggable="false">`;
 	CACHE.set(cacheKey, img);
 	return img;
+}
+
+/**
+ * 应用标识：助理的脸就是程序的 logo（同一张 SVG，和窗口图标、最左上角那格一致）。
+ * 小到 20px 也认得出来 —— 深底上一颗星和一道轨道，不是一张要看清细节的脸。
+ */
+function markSvg(px: number, state: AvatarState): string {
+	const key = `mark|${String(px)}|${state}`;
+	const hit = CACHE.get(key);
+	if (hit !== undefined) return hit;
+	const html = `<span class="av av-mark" data-state="${state}" style="width:${String(px)}px;height:${String(
+		px,
+	)}px" aria-hidden="true">${brandMarkSvg(px)}</span>`;
+	CACHE.set(key, html);
+	return html;
 }
 
 /** 一个座位：左上角坐标与直径，单位 px（相对群头像的边长盒）。 */
@@ -83,6 +103,7 @@ function seatsFor(count: number, size: number): Seat[] {
 type AvatarPerson = {
 	slug?: string | undefined;
 	label?: string | undefined;
+	assistant?: boolean | undefined;
 };
 
 /** 群头像的输入。`people` 按顺序坐，超过 4 个的不画（见 groupAvatar 的小尺寸规则）。 */
@@ -110,6 +131,7 @@ export function groupAvatar({ people = [], size = 24, state = "idle" }: GroupAva
 			name: only.label,
 			size,
 			state,
+			assistant: only.assistant,
 		})}</span>`;
 	}
 
@@ -134,7 +156,13 @@ export function groupAvatar({ people = [], size = 24, state = "idle" }: GroupAva
 			: "";
 		return `<span class="av-seat" style="left:${seat.x}px;top:${seat.y}px;width:${seat.d}px;height:${
 			seat.d
-		}px;${mask}">${avatarSvg({ slug: person.slug, name: person.label, size: seat.d, state })}</span>`;
+		}px;${mask}">${avatarSvg({
+			slug: person.slug,
+			name: person.label,
+			size: seat.d,
+			state,
+			assistant: person.assistant,
+		})}</span>`;
 	});
 
 	return `<span class="av-g" style="width:${size}px;height:${size}px">${parts.join("")}</span>`;

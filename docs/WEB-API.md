@@ -759,6 +759,53 @@ POST /api/plugins/天气/enabled
   网页版没有壳，刷新页面即可（前端入口会重新加载）。
 - 正在跑的轮次会被打断；重启后 `assembleCore` 按 ADR-044 把被打断的人叫回来接着做。
 
+## 13.7 `/api/setup`（第一次打开：接上模型）
+
+`GET /api/models` 回来是**空数组**时，界面进引导（ADR-085）。这两条只在那一刻用；
+之后换模型走设置里的模型管理插件。
+
+```json
+// POST /api/setup/probe
+{ "choice": "custom", "apiKey": "sk-…", "baseUrl": "http://127.0.0.1:3425/v1", "model": "" }
+```
+
+- `choice` 只有三个：`opus` / `sonnet` / `custom`。前两个固定用
+  `anthropic/claude-opus-5-5`、`anthropic/claude-sonnet-5-5`，`baseUrl` 由服务端给。
+- 成功：`{ "ok": true, "ms": 1200, "models": ["auto/deepseek-v4.1-flash", …] }`。
+  探测地址是 `<baseUrl>/v1/models`（Anthropic）或 `<baseUrl>/models`（OpenAI 兼容），
+  只取 `{data:[…]}` 或 `{models:[…]}` 里的 `id`，最多 200 个。
+- 探的是「列模型」接口，所以**可以不填 `model`**：正是要用它挑。
+- 失败：`400 { "error": "连不上 http://…：…" }`。前两个选项必须带 `apiKey`；
+  `custom` 的远端必须带密钥，本机地址（`127.0.0.1` / `localhost`）可以留空（存成占位符）。
+
+```json
+// POST /api/setup
+{ "choice": "opus", "apiKey": "sk-ant-…" }
+```
+
+- 写 `<appRoot>/settings.json` 的 `providers`（同 id 的旧条目被替换，其它提供商原样保留）
+  与 `defaultModel`，然后调用 `refreshModels()` **当场生效**（ADR-025），回 `{ "defaultModel": "anthropic/claude-opus-5-5" }`。
+- 校验比探测严：`custom` 必须给 `baseUrl`（`http(s)://`）与 `model`。
+- 密钥和模型管理插件存的是同一处（`settings.json`）；界面上只显示尾号。
+
+## 13.8 `/api/preferences`（界面偏好：更新代理）
+
+```json
+// GET /api/preferences
+{ "updateProxy": "http://127.0.0.1:7890" }   // 没配就是 ""
+```
+
+```json
+// POST /api/preferences
+{ "updateProxy": "http://127.0.0.1:7890" }   // 空串 = 直连，键会被删掉
+```
+
+- 写 `<appRoot>/settings.json` 的 `updateProxy`，**只动这一个键**（ADR-087）。
+- 校验：空串，或 `http://` / `https://` / `socks5://` 开头；否则
+  `400 { "error": "代理地址要以 http:// 或 socks5:// 开头…" }`。
+- 消费者只有桌面壳的更新器（`desktop/src/update-proxy.ts`）；**模型调用不走它**。
+  网页版里这一项存下来不生效（下载由浏览器自己走系统代理）。
+
 ## 14. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`shell/serve.ts` 的 `uiDir` 默认值，

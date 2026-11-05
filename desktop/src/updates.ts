@@ -17,11 +17,12 @@ import { createWriteStream } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { app, dialog, type BrowserWindow, type MessageBoxOptions } from "electron";
+import { app, dialog, session, type BrowserWindow, type MessageBoxOptions } from "electron";
 import { feedUrl } from "./feed.ts";
 import { scheduleInstall } from "./install.ts";
 import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
 import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
+import { readUpdateProxy } from "./update-proxy.ts";
 
 const CHECK_INTERVAL = 6 * 60 * 60 * 1000;
 const FIRST_CHECK_DELAY = 30_000;
@@ -31,6 +32,8 @@ export type UpdaterOptions = {
 	window: () => BrowserWindow | undefined;
 	/** 安装前收尾（停后端）。返回之后才会退出重启。 */
 	beforeInstall: () => Promise<void>;
+	/** `settings.json`：每次检查更新前读一遍 `updateProxy`（改了不用重启）。 */
+	settingsFile: string;
 };
 
 export type Updater = {
@@ -40,15 +43,28 @@ export type Updater = {
 
 const manifestName = (): string => (process.platform === "darwin" ? "latest-mac.json" : "latest-win.json");
 
-async function fetchText(url: string): Promise<string> {
-	const response = await fetch(url);
+/** 有代理就换一条会话走它；没有就直连。用独立分区，别碰界面那条会话的代理。 */
+async function fetchUpdate(url: string, proxy: string | undefined): Promise<Response> {
+	if (proxy === undefined) return fetch(url);
+	const ses = session.fromPartition("solo-update");
+	await ses.setProxy({ proxyRules: proxy });
+	return (await ses.fetch(url)) as unknown as Response;
+}
+
+async function fetchText(url: string, proxy: string | undefined): Promise<string> {
+	const response = await fetchUpdate(url, proxy);
 	if (!response.ok) throw new Error(`${response.status} ${response.statusText}（${url}）`);
 	return response.text();
 }
 
 /** 下到临时目录，边下边报进度，下完核对 sha512。 */
-async function download(url: string, sha512: string, onProgress: (ratio: number) => void): Promise<string> {
-	const response = await fetch(url);
+async function download(
+	url: string,
+	sha512: string,
+	onProgress: (ratio: number) => void,
+	proxy: string | undefined,
+): Promise<string> {
+	const response = await fetchUpdate(url, proxy);
 	if (!response.ok || response.body === null) throw new Error(`下载失败：${response.status} ${response.statusText}`);
 	const total = Number(response.headers.get("content-length") ?? 0);
 	const dir = await mkdtemp(join(tmpdir(), "solo-update-"));
@@ -103,8 +119,10 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		try {
 			if (feed === undefined) throw new Error("更新源地址无效（要 https，本机测试可以用 http://127.0.0.1）");
 			const base = feed.endsWith("/") ? feed : `${feed}/`;
-			const text = await fetchText(`${base}${manifestName()}`);
-			const signature = await fetchText(`${base}${manifestName()}.sig`);
+			// 每次检查都重读：用户在设置里改了代理，下一次（或手动「检查更新」）就生效。
+			const proxy = readUpdateProxy(options.settingsFile);
+			const text = await fetchText(`${base}${manifestName()}`, proxy);
+			const signature = await fetchText(`${base}${manifestName()}.sig`, proxy);
 			if (!verifyManifest(UPDATE_PUBLIC_KEY, text, signature)) throw new Error("清单签名不对：不是用发布密钥签的");
 			const manifest = parseManifest(text);
 			if (manifest === undefined) throw new Error("清单格式不对");
@@ -125,8 +143,11 @@ export function createUpdater(options: UpdaterOptions): Updater {
 				cancelId: 1,
 			});
 			if (answered !== 0) return;
-			const zip = await download(`${base}${file.file}`, file.sha512, (ratio) =>
-				windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
+			const zip = await download(
+				`${base}${file.file}`,
+				file.sha512,
+				(ratio) => windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
+				proxy,
 			);
 			windowNow()?.setProgressBar(-1);
 			const install = await notify({

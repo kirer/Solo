@@ -1,5 +1,5 @@
 /**
- * 第二屏互斥：任务 / 通讯录 / 插件 / 设置 / 插件页都是**占满整块**的屏，
+ * 第二屏互斥：任务 / 插件 / 设置 / 插件页都是**占满整块**的屏，
  * 同一时刻只能画一处 —— 两处同时开着会叠在一起互相压住（真实踩过：
  * 后台任务和插件页叠成一张，两个导航格同时亮着）。
  *
@@ -13,7 +13,6 @@ import {
 	openTasks,
 	setPluginSheet,
 	setSettings,
-	setTeam,
 	getState,
 } from "../../ui/app/src/state/store.ts";
 
@@ -22,7 +21,6 @@ const open = (): string[] => {
 	const state = getState();
 	return [
 		state.tasks.open ? "tasks" : undefined,
-		state.team ? "team" : undefined,
 		state.pluginSheet ? "plugins" : undefined,
 		state.settings ? "settings" : undefined,
 		state.pluginView !== null ? "plugin" : undefined,
@@ -35,15 +33,15 @@ beforeEach(() => {
 });
 
 describe("第二屏互斥", () => {
-	it("开任务屏，把其它三屏关掉", () => {
+	it("开任务（右栏的一态），把其它屏关掉", () => {
 		setPluginSheet(true);
 		expect(open()).toEqual(["plugins"]);
 		openTasks();
 		expect(open()).toEqual(["tasks"]);
 	});
 
-	it("开通讯录 / 插件 / 设置，都把任务屏关掉", () => {
-		for (const turn of [() => setTeam(true), () => setPluginSheet(true), () => setSettings(true)]) {
+	it("开插件 / 设置，都把任务屏关掉", () => {
+		for (const turn of [() => setPluginSheet(true), () => setSettings(true)]) {
 			openTasks();
 			expect(open()).toEqual(["tasks"]);
 			turn();
@@ -54,8 +52,6 @@ describe("第二屏互斥", () => {
 
 	it("三屏之间也互斥，打开一个只留一个", () => {
 		openTasks();
-		setTeam(true);
-		expect(open()).toEqual(["team"]);
 		setPluginSheet(true);
 		expect(open()).toEqual(["plugins"]);
 		setSettings(true);

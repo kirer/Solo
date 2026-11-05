@@ -133,6 +133,40 @@ describe("recipientsOf", () => {
 	});
 });
 
+describe("团队频道：@ 了谁就只叫谁，没人 @ 才到助理", () => {
+	/** 团队频道：成员 = 我 + 助理 + 干活的人；`wakeOnAll` 只有助理。 */
+	const team = () =>
+		ensureChannel(empty(), {
+			id: "team:小恐龙",
+			title: "小恐龙",
+			members: [OWNER, "知言", "林越"],
+			wakeOnAll: ["知言"],
+			at: 1,
+		});
+	const say = (state: ChannelState, text: string, from: string = OWNER) =>
+		appendMessage(state, "team:小恐龙", { from, text, at: 1, roster }).message;
+	const channelOf = (state: ChannelState) => state.channels["team:小恐龙"]!;
+
+	test("@林越：只有林越，助理不插话（哪怕它总在听）", () => {
+		const state = team();
+		const message = say(state, "@林越 创建团队技能，随便做点儿什么");
+		expect(message.mentions).toEqual(["林越"]);
+		expect(recipientsOf(channelOf(state), message, "知言")).toEqual(["林越"]);
+	});
+
+	test("不 @ 人：只叫助理，不再叫上一位说话的", () => {
+		const state = team();
+		const message = say(state, "团队记录下，以后运行都使用 8000 端口。");
+		expect(recipientsOf(channelOf(state), message, "林越")).toEqual(["知言"]);
+	});
+
+	test("成员不 @ 人说完一句：回到助理（它决定要不要转给谁）", () => {
+		const state = team();
+		const message = say(state, "做好了，地址是 192.168.1.71:8000", "林越");
+		expect(recipientsOf(channelOf(state), message)).toEqual(["知言"]);
+	});
+});
+
 describe("我（我的称呼）", () => {
 	test("@我 解析成 owner，@我 也还认", () => {
 		expect(resolveMention("@我", EMPTY_ROSTER)).toBe("owner");

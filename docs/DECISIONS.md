@@ -2025,218 +2025,135 @@
 - **验收**：`npm run check`（tsc + 9 组边界）、`npm test`（98 文件 / 872 例）、
   `npm run prompt:check`、`npm run live` 两次 13/13；不改界面，不跑 `ui:build`。
 
----
+## ADR-083 v6 落地：右栏收成一张表，后台任务成为右栏的一态；助理是 Solo，脸是应用标识
 
-## ADR-083 `settings.json` 只有一个写入口，坏文件绝不覆盖
-
-- **背景**：模型装配、给某个人换模型、出厂「模型管理」插件都各自读改写这份文件。旧写法
-  在 JSON 解析失败时把它当成「空配置」，然后整份重写 —— 一个手滑的逗号就能把全部提供商
-  和模型抹掉，而且没有任何报错。这份文件是**用户配置**，不是可以随时重建的缓存。
+- **背景**：v6 稿（`docs/DESIGN.md` §13）定了两件与代码冲突的事：① 右栏从「详情 / 技能 /
+  记忆 / 插件页签」四个 tab 收成**一张平铺表**，顺序写死，插件不再各占一个 tab；② 后台任务
+  不再是独立第二屏 —— 桌面上它替换右栏内容（聊天与侧栏不动），手机上它铺满 `.detail`。
+  同时「通讯录」整屏没有入口了（团队与成员就是侧栏的行 + 右栏的团队资料）。另一件事是定位：
+  助理从「一个叫知言的同事」升格成**应用本身（Solo）**，脸就是程序的 logo，不再是插画头像。
 - **决策**：
-  1. `src/core/runtime/settings.ts` 是唯一读写口：`readSettingsFile` / `updateSettingsFile` /
-     `setAgentModel`。所有调用方（`runtime/models.ts`、`shell/wire/models.ts`、`app/people.ts`）
-     都经它，不再自己 `readFileSync` + `writeFileSync`。
-  2. **区分「没有」和「坏了」**：文件不存在 = `undefined`（首次启动，可以写新文件）；
-     存在但读不懂 = `SettingsFileError`，必须把这句话交给用户。绝不能当空配置继续。
-  3. 写回是「读 → 只改 change 动过的键 → 临时文件 + rename」。不认识的键原样保留
-     （前向兼容），写到一半崩掉不会留下半份 JSON。
-- **取舍**：坏文件会让启动或切模型**失败**，而不是带着空配置跑起来。这是有意的：静默丢掉
-  用户配置比一次看得见的错误糟得多。同步 IO 保留 —— 这两个调用点都在同步上下文里，文件很小。
-- **执行**：`src/core/runtime/settings.ts`、`runtime/models.ts`、`shell/wire/models.ts`、
-  `app/people.ts`；`docs/CODE.md` §1 的 `node:fs` 例外表加入 `settings.ts`。
-- **验收**：`test/core/{models,model-switch,model-manager-plugin}.test.ts`（坏文件不覆盖、
-  未知键保留、原子写）。
+  1. **右栏只有一列行**：身份 → 统计 → 模型 → 预置词 → 记忆 → 技能（+ 插件 `rightPanel.tab`
+     的行）→ 后台任务。行是按钮，点开就地展开；不再有页签条。`rightPanel.detail` 插槽留在
+     「模型」行展开后的面板里（出厂「模型管理」在这里放换模型控件），避免与表里的模型值重复。
+  2. **`TeamPage.tsx` 删除**：`data-view` 只剩 `chat / plugins / settings / plugin`，最左
+     一列只剩「聊天 / 插件 / 设置（贴底）」，顶上是标识（回聊天）。
+  3. **任务不新增屏**：`openTasks()` 打开右栏并置 `tasks.open`；`<TasksView>` 画在
+     `.detail` 里，`data-tasks` 决定抬头写「后台任务」。手机端 `.detail` 本来就是 fixed
+     整屏，所以同一份组件覆盖两端；`closeTasks()` 在手机上同时收起右栏。
+  4. **助理的脸**：`ui/app/src/lib/brand.ts` 的 `brandMarkSvg()` 是唯一一份标识（与
+     `desktop/icon.svg` 同形），最左那格、助理头像、群头像里的助理座位都用它。判定只认
+     `ViewActor.assistant` / `ViewMember.role === "assistant"`，不按名字猜。服务端
+     `/api/avatar/:seed` 不变（它只知道 seed，不知道角色）。
+  5. **已有的安装**：`seed/assistant/identity.md` 的 `name` 改成 `Solo`；启动迁移
+     `src/shell/migrate.ts` 只把应用根下那个人的 `name: 知言` 改为 `Solo`，目录名（slug）
+     与频道 / 名册 / 历史不动 —— slug 是这些数据的键，改它要迁一整套。
+- **取舍**：插件失去「各占一个右栏页签」的能力，只能按行挂在表里；换来的是同一个人在任何
+  入口看到的字段与顺序都一样。助理的标识画在前端（内联 SVG），服务端头像路由保持纯函数；
+  代价是插件或外部直接取 `/api/avatar/<助理 slug>` 会拿到插画脸。
+- **执行**：`ui/app/src/{App.tsx,sidebar/{Rail,Sidebar}.tsx,panels/{RightPanel,TasksPanel}.tsx,
+  stream/{Stream,LiveRow}.tsx,composer/Composer.tsx,lib/{avatar,brand}.ts}`、
+  `styles/{shell,base,tasks,motion,stream}.css`、`seed/assistant/identity.md`、
+  `src/shell/migrate.ts`；测试 `test/ui/{layout,second-screen,plugin}.test.ts`、
+  `test/core/migrate.test.ts`；文档 `AGENTS.md` §3.3、`docs/CODE.md`、`docs/DESIGN.md` §13.7。
+- **验收**：`npm run check`、`npm test`（99 文件 / 884 例）、`npm run prompt:check`、
+  `npm run ui:build`；桌面与 390 宽手机各看一遍（列表 / 私聊 / 全员 / 资料 / 任务 / 设置）。
 
----
+## ADR-084 只留一套摆法：全端按手机稿的单列骨架，右栏变成整屏
 
-## ADR-084 出厂内容共用一本 hash 账本
-
-- **背景**：技能有 `.seed-manifest.json` 按 hash 判「用户改过没有」，但提示词模板与
-  `rules.md` 是「只补不改」—— 出厂修正永远进不来：`seed/rules.md` 改一句，已经在跑的
-  工作区一辈子看不到。三个地方各写各的规矩，判据也不一样。
-- **决策**：提示词模板、规矩、技能**共用一本账**（`<appRoot>/.seed-manifest.json`，按文件
-  内容 hash）：
-  1. 目标不存在 → 拷过去，记账；
-  2. 当前内容 hash == 账本记的 → 没改过，升到新版并记账；
-  3. 当前 hash != 账本记的 → 用户改过，**原样保留**并 warn；
-  4. 老工作区没有账本 → 用 `src/shell/seed-legacy.ts` 的历史 hash 集合判一次；命中 =
-     旧版出厂内容，可以升级。新版本不再往集合里加（账本会记住基线），等不再支持从这些
-     版本升级时整个文件删掉。
-- **例外**：`seed/text/*.md` 仍按**键**只追加（文案是「一个键一句话」，用户改过的句子归他，
-  新键要能进老工作区）—— 它和整文件升级是两件事，不并进账本。
-- **取舍**：用户改过又改回与某个历史版本逐字节相同的内容，会被当成「没改过」升级。
-  无法区分，接受；账本只在真有变化时写盘，启动是幂等的。
-- **执行**：`src/shell/seed.ts` 的 `syncSeedFiles` / `syncSkillTree` / `SEED_MANIFEST_FILE`、
-  `src/shell/seed-legacy.ts`；`test/core/seed-sync.test.ts`。
-
----
-
-## ADR-085 旧形状靠迁移，读取处不留兼容分支
-
-- **背景**：为了读老数据，读取路径上堆了一串兼容分支：`spokenKind` 维护「哪些旧 kind 算
-  发言」、`recipientsOf` 拿空名册再解析一次字面 `@我`、`parseWake` 兼容平铺的唤醒记录、
-  `headerOf` 同时认 `project:` 与 `team:`。每个读的人都要记住整段历史；漏一处就是静默
-  错投（字面 token 落库、频道里「叫了谁」是错的），而且没人看得出。
+- **背景**：v6 稿给了两套摆法（桌面三列 + 手机单列）。桌面那套落地后连出两个问题：
+  右栏占第四列时，窄窗口把中列压到几十像素；改成浮层后又和空频道卡片抢层级。
+  实际用起来，「左导航 + 侧栏 + 纸 + 右栏」在窗口不宽时处处要让位，而手机那套
+  （一屏只放一件事、往下钻、返回上一层）在两边都成立。用户拍板：**桌面也按手机稿做。**
 - **决策**：
-  1. **库里的文档**升 version 写 `migrate`：`ChannelDoc` v2 的 `migrateMessages` 把旧 kind
-     归一成 `chat` / `note`、把字面 `@我` / `我` 归一成 `owner`；`DirectoryDoc` v2 的
-     `migrateWakes` 把平铺的唤醒记录拆成 `{reply, task}`。第一次读到旧版本时自动归好。
-  2. **磁盘上的文件**在启动时一次性改写：`src/shell/migrate.ts` 的 `migrateWorkspace` 把身份
-     头的 `project:` 改成 `team:`（已有 `team` 就删掉 `project` 行），正文与其它字段逐字节
-     不动，重复跑不再改。顺序固定在「迁移 → 播种 → 装配」之前。
-  3. **规矩**：加字段就升 version + 写 `migrate`；改文件形状就写启动迁移。**不要在读取处
-     加「两种形状都认」的分支** —— 那等于让每个读者重新学一遍历史。
-- **取舍**：迁移是一次性的、不可逆的写盘（文件）或首次读取开销（文档）。换来的是所有读的
-  代码只认一种形状；老数据的语义在迁移里集中定义一次，测试也只钉那一处。
-- **执行**：`channel/types.ts` 的 `migrateMessages`、`channel/roster.ts` 的 `migrateWakes`、
-  `channel/turn/record.ts` 的 `parseWake`（只认新形状）、`shell/migrate.ts`、`shell/main.ts`；
-  `test/core/{mention-alias,directory-persist,migrate,view}.test.ts`。
+  1. **一列到底**：`.frame` 只有一列；列表（`Sidebar`）与对话（`sheet`）叠在同一格，
+     `body[data-pane]` 决定谁可见；宽窗口里这一列最宽 **860** 居中。
+  2. **导航不再是最左那一列**：`Rail.tsx` 删除。首屏是和助理的对话（稿子 01），
+     两颗门在标题栏（对话 / 设置）；别的对话是「返回 + 名字 + 资料」；列表这屏
+     「返回 + 对话 + 拉群 + 设置」。插件注册的 `rail.item` 入口改挂在设置页里。
+  3. **资料 / 后台任务是整屏**（`.detail` 固定 `inset: 0`），从对话右上那颗人像进，
+     左上角「返回」回对话；不再是 372 的浮层，也不再占列。
+  4. **设置 / 插件页一列往下读**（稿子 05）：分区不再做左栏清单，改成卡片组；
+     设置里的「插件」一行进插件页，返回落在设置上。
+  5. **输入卡两端同一张**：占位写「给 <名字> 说点什么…」/「发到 <频道>…」，
+     不再写 Enter / Shift+Enter 那句小字（手机放不下，桌面就不该多一样）。
+  6. **桌面壳让位**：macOS 红绿灯压在每一屏抬头左边（`padding-left: 84`）；
+     Windows 的 40px 标题带下移列表 / 对话 / 整屏页到第 2 行。
+- **取舍**：宽窗口里两边会留白（860 之外是底色），换来的是任何窗口宽度下都不压缩、
+  不叠层。插件失去「最左那格入口」的位置，只能注册成设置里的一行，但它仍然点得开整屏。
+- **执行**：`ui/app/src/{App.tsx,sidebar/{Sidebar}.tsx,panels/{RightPanel,SettingsPage,PluginsPage,TasksPanel}.tsx,
+  composer/Composer.tsx,state/store.ts}`、`styles/shell.css`；删除 `sidebar/Rail.tsx`；
+  测试 `test/ui/{layout,titlebar,source-contract}.test.ts`；文档 `docs/DESIGN.md` §13。
+- **验收**：`npm run check`、`npm test`、`npm run ui:build`；浏览器按 **375×812** 手机尺寸
+  逐屏看（首屏 / 列表 / 群聊 / 私聊 / 资料 / 后台任务 / 设置 / 插件 / 插件页）。
 
----
+## ADR-085 第一次打开有引导：没模型就先接模型，引导住在核心里
 
-## ADR-086 名册只有一个真相：落盘那份
-
-- **背景**：旧实现读名册时把内存里的映射「并」到盘上再回写。后果有两个：开除一个人只删了
-  盘上的条目，下一次读又把他从内存并回去（重启后频道和私聊全回来）；新建会话只写内存，
-  中间任何一次「整份名册写回旧值」都会让映射永久丢失（顾南雁丢过一次，22 条历史留在孤儿
-  会话里）。
-- **决策**：`DirectoryDoc` 是唯一真相，内存 `directory` 只是镜像：
-  1. 写：先提交文档（逐字段比较，只写变化过的顶层字段，路径式更新），提交成功后再把结果
-     抄进内存；
-  2. 读：从文档抄一遍（`now`），**不再合并内存**；
-  3. 启动 / `rescan` 只合并 `labels`（显示名），不合并会话映射；
-  4. `openAgent` 建完会话立刻 `bind` 落盘（`hire` 不走 `rescan`，不立刻写就会丢）。
-- **取舍**：每次读多一次文档快照（底座里就是内存表，代价可忽略）；换来「删掉的不会复活、
-  新加的不会丢」这两条能单测钉死的不变量。
-- **执行**：`src/shell/wire/directory.ts` 的 `save` / `now` / `merge` / `bind`、
-  `channel/roster.ts`；`test/core/directory-persist.test.ts`。
-
----
-
-## ADR-087 收尾是 durable 任务，补发按答案条目去重
-
-- **背景**：宿主侧在结算回调里直接调 `finishTurn`，有两个窗口会在重启时丢结论：答案提交了、
-  回调还没跑；回调跑了、消息还没落盘。模型没调 `say` 时正文只存在会话条目里，丢了就是丢了。
-  另一头，同一条答案会被多条提交各结算一次，并发时都照到「频道里还没有这句」，于是同一句
-  发两遍（实测 2026-11-02 #15/#16、#17/#18）。
+- **背景**：一台刚装好的机器上 `settings.json` 里没有 `providers`，内核按 ADR-023
+  不回落任何网关 —— 于是界面正常、人也在，但**谁都说不了话**，只在日志里留一句
+  「还没有配置模型」。v6 稿把这段补成三屏：10 欢迎、11 接上模型、12 刚装好的第一句。
 - **决策**：
-  1. 收尾做成 durable task：`core.turn-report`（`channel/turn/report.ts`），由 `afterRun`
-     钩子写成这一轮 generation 的子任务；进程重启后 `resume()` 接着跑完。
-  2. 任务终态如实记录：补发成功 = `completed`（带答案条目 id 的收据）；补发失败 = `failed`；
-     被 Stop / 关库打断 = `aborted`。**不能一律报 completed**，否则「补没补上」永远查不出来。
-  3. `flow.settle` 的 `done` 分支持进程级 `repost` 闸包住「读答案 → 判重 → 补发」；判据是
-     `sourceEntry`（答案条目 id），不是正文 —— 两个人真说了同一句「在。」不该互相吞掉。
-  4. 补发就是一次正常 `publish`：落盘、算人、扇出、钩子全走主线，且必须带名册
-     （`@我` 落成 `owner`，不能存字面 token）。
-- **取舍**：每一轮多一件账务任务（`channel/bookkeeping.ts` 登记，不算「在干活」）；换来
-  重启不丢结论、重放不双发。
-- **执行**：`channel/turn/report.ts`、`flow/settle.ts`、`flow/defaults/settle.ts`、
-  `channel/queue.ts`；`test/core/{turn-report,turn-report-e2e,crash-turn-report,flow-settle}.test.ts`。
+  1. **判据只有一个**：`GET /api/models` 回来是空数组 → 进引导（`bootstrap`）。
+     不用「有没有走过引导」的标记位：配好模型就是唯一的真相，把配置删光的人也会再看到它。
+  2. **引导住在 `app/setup.ts`，不是插件**。它发生在插件加载之前 —— 模型管理插件
+     也要先有一只模型才谈得上「换」。写盘仍走 `updateSettingsFile`（与插件同一条路），
+     写完调 `refreshModels()` 就地生效（ADR-025）。
+  3. **两个接口**：`POST /api/setup/probe` 只探（返回耗时 + 这家列出的模型 id），
+     `POST /api/setup` 才写。把「获取模型」做成探一次再选，是因为没人记得住模型 id；
+     拉不到清单时同一行还能手打，探失败不挡输入。
+  4. **三个选项固定**：Opus 5.5 / Sonnet 5.5 用 pi-ai 目录里的 `claude-opus-5-5`、
+     `claude-sonnet-5-5`；第三项是任何 OpenAI 兼容地址。预设之外一律走「自定义接口」。
+  5. **密钥仍存在 `settings.json`**（模型管理插件一直如此），不另开 `.secrets.json`：
+     两处存密钥就会有「哪一份在生效」的问题。界面上那句提示因此写「只存在本机」，
+     不承诺具体文件名。
+  6. **首屏那三条建议是 UI 文案**（稿子 12），点了走同一条 `send`；它们不是后端数据，
+     只在「组织里只有助理一个人」时出现。
+- **取舍**：预设的模型 id 会在上游改名时过期 —— 那时换模型走设置里的模型管理，
+  引导只在第一次出现，不该成为第二条配置入口。空模型清单也可能是「配置坏了」，
+  但那种情况本来就发不出话，引导比空白界面更接近下一步。
+- **执行**：`src/app/setup.ts`、`src/app/index.ts`、`src/interface/http/routes.ts`；
+  界面 `ui/app/src/panels/SetupPage.tsx`、`stream/Starters.tsx`、`state/store.ts`、
+  `App.tsx`、`styles/onboarding.css`、`api/client.ts`；插件
+  `seed/plugins/模型管理/client.js`（同一次把设置里的模型表单收成「一行点开」）。
+  文档 `docs/WEB-API.md` §13.7、`docs/DESIGN.md` §13.7、`docs/CODE.md`。
+- **验收**：`npm run check`、`npm run ui:build`；浏览器按 **375×812** 走一遍
+  空模型 → 欢迎 → 接上模型（自定义接口 + 获取模型）→ 助理首屏三条建议。
 
----
+## ADR-086 团队频道：@ 了谁就只叫谁；没人 @ 才交给助理
 
-## ADR-088 写完之后的重投影失败要回到调用方
-
-- **背景**：`file` 写身份 / 团队说明、`hire` 招人之后都要重投影频道。旧写法把这些后续
-  动作的失败只写进 console：模型收到「写好了」，频道里却还是旧成员 —— 界面上看不出异常，
-  下一次 @ 才发现人不在。
+- **背景**：团队频道的唤醒表是「助理」（`wakeOnAll = assistants`，ADR-063），实现里
+  `recipientsOf` 每一条消息都无条件把 `wakeOnAll` 加进收件人。于是我在团队频道
+  `@林越 做技能`，助理也被叫醒并回了一轮 —— 频道里两条回话、两套结论；不 @ 人时
+  又同时叫醒「上一位发言人」和助理，也是两条。
 - **决策**：
-  1. 工具结果带 warnings：`file.write.sync-failed` / `file.write.team-sync-failed` /
-     `hire.create.announce-failed`。写盘本身成功了，所以**不回滚**，但模型必须知道后半段
-     没成，能在同一轮里补救或告诉我。
-  2. 装配依赖收紧：`hire` 不再单独收一个 `ensureDm` —— 开会话、建私聊、进全员 / 团队频道
-     统一由 `openAgent` 一次做完，不存在「人建好了、频道还没接上」的半成品路径。
-  3. 装配层建**一份** `diag`，底座报告、插件、策略错误都写进同一条线（见 ADR-091）。
-- **取舍**：模型会多看到一行失败说明；换掉的是「保存成功但状态是旧的」这种无声错误。
-- **执行**：`channel/tools/file.ts`、`channel/tools/hire.ts`、`shell/assemble.ts`、
-  `seed/text/tools.md`；`test/core/tools-actions.test.ts`。
+  1. **直接 @ 优先**：团队频道里消息一旦解析出成员内的 `@`，收件人就只有这些人，
+     不再加 `wakeOnAll`。点名已经是一次路由，助理不该再替我做一遍。
+  2. **没人 @ 才到助理**：团队频道没有 `@` 时只叫醒 `wakeOnAll`（助理），**不再**
+     回落「上一位发言人」—— 那是私聊 / 全员频道的规则（ADR-015），在团队频道会和
+     助理分工撞车。助理收到后用 `route` 决定交给谁，或自己答。
+  3. **组群不动**：`wakeOnAll = members` 的群仍然是「每条都到、各自 `[PASS]`」
+     （ADR-063）；这条只管 `team:` 频道（`teamOfChannel` 能认出 id）。
+- **取舍**：助理不再「看得到」团队频道里被 @ 的消息，除非被点名。它本来也不需要
+  读每一条 —— 分发的前提是「没人指定收件人」。
+- **执行**：`src/core/channel/mentions.ts` 的 `recipientsOf`；`test/core/mention-alias.test.ts`
+  新增三条（@ 只叫那个人 / 不 @ 只叫助理 / 成员说话回到助理）。
 
----
+## ADR-087 更新代理单独一项：只给桌面版下载安装包用，模型不走
 
-## ADR-089 插件工具不覆盖核心工具，监听失败只丢自己
-
-- **背景**：插件工具与核心工具进同一个注册表。同名时旧行为是后者覆盖前者 —— 一个插件
-  注册 `say` 就等于把说话换成了别人写的函数，模型完全看不出来。插件的听消息钩子用
-  `Promise.allSettled` 并发跑，抛错被吞掉，没人知道它坏了。
+- **背景**：这台机器直连 GitHub 经常超时，下载新版安装包需要走本机代理
+  （`http://127.0.0.1:7890`）。但模型接口不走代理也能用，隐式全局代理反而会让
+  模型请求绕一圈。
 - **决策**：
-  1. `loadPlugins` 收 `reservedTools`（核心的 8 个名字）；一个插件的工具名**先全部核一遍，
-     全过才登记**：与核心重名、与先装的插件重名、同一插件内重复，都让**整个插件不装**，
-     错误进插件列表。装一半的插件不占名字、不进注册表。
-  2. 听消息的每个 listener 在装载时包一层：抛错只记这个插件的一条错误（走 `onError` →
-     装配层的 `report` → 诊断），别的插件照跑，投递不回滚。
-  3. `flow` 的策略形状只在 `channel/types.ts` 定义一次，`flow/types.ts` / `flow/ports.ts`
-     只转出 —— 插件层能拿到，领域里没有第二份定义。
-- **取舍**：插件作者必须给工具名加前缀；一个坏插件在插件页里显示为「没装上」，而不是
-  静默半工作。
-- **执行**：`core/plugin/load.ts`、`shell/wire/plugins.ts`、`flow/ports.ts`、`flow/types.ts`；
-  `test/core/{plugin,token-plugin}.test.ts`。
-
----
-
-## ADR-090 频道 id 收敛到一处，助理判定按路径分量
-
-- **背景**：`id.startsWith("team:")` + `slice` 散在业务代码里，前缀一改就得全仓库找，漏一处
-  就是「频道还在，但认不出它属于谁」。助理判定按字符串包含 `/assistant/`，Windows 的
-  分隔符是 `\`，助理会在 Windows 上「消失」——团队频道里没有助理、没人被 @ 时也醒不来。
-- **决策**：
-  1. `src/core/channel/id.ts` 是**唯一认识频道 id 前缀的地方**：`dmId` / `teamId` / `groupId` /
-     `isDmChannel` / `teamOfChannel` / `isGroupChannel`；`types.ts` 只转出给老调用方。
-  2. `chatKind` 留在 `types.ts`：它除了前缀还要看成员（只有我 + 一个人的团队频道，形状和
-     私聊一样），不属于「id 怎么造」。
-  3. `layout.isAssistantDir` 用 `path.relative` 按路径分量判断，不写死分隔符。
-- **取舍**：多一个 62 行的小模块；换来前缀与助理判定都只有一处可改。
-- **执行**：`channel/id.ts`、`channel/types.ts`、`core/layout.ts`；`test/core/{layout,view}.test.ts`。
-
----
-
-## ADR-091 策略 / 监听失败进诊断，账务任务自己登记
-
-- **背景**：插件策略抛错、听消息抛错都只有 console；界面上「他就是不回话」和「他回话时
-  策略炸了」看起来一模一样。队列判断「他还在干活」时写死跳过 `core.turn-report`，
-  新增一类收尾 / 摘要任务就要回来改队列。
-- **决策**：
-  1. `FlowPorts.report` 是运行中出错的唯一出口（形状由 core 描述，接到哪里由装配层定）；
-     装配层把它接到 `diag`：console 留一行，同时写 `logs/runtime.jsonl`。插件监听与策略
-     失败都走这条线。
-  2. 账务任务用登记制：`declareBookkeeping(kind)` 由消费方 `queue.ts` 在加载时调用
-     （`core.turn-report` 就登记在那里），队列的 `liveConversations` 只问 `isBookkeeping(kind)`。
-     底座没给这个标记（`TaskOptions.background` 只对会话自建任务开放，见
-     `docs/CONCESSIONS.md`），所以登记放在我们这一层。
-- **取舍**：只通报不自动重试 —— 策略坏了应该被人看见并修，而不是被系统悄悄绕过。
-- **执行**：`flow/ports.ts`、`flow/policies.ts`、`plugin/load.ts`、`shell/wire/plugins.ts`、
-  `shell/assemble.ts`、`channel/bookkeeping.ts`、`channel/queue.ts`、`channel/turn/report.ts`；
-  `test/core/{flow-policy,plugin,run-jobs}.test.ts`。
-
----
-
-## ADR-092 技能带 `sourcePath`，工具自己登记轨迹展示
-
-- **背景**：`readSkill` 拿到技能名后要按三层顺序重新猜它从哪一层读出来；轨迹投影里有一大段
-  `switch (工具名)`，加一个工具就要回来改投影，插件工具只能画成裸名字。提示词装配里还留着
-  一个已经没人用的 `count` 插槽的兼容读取。
-- **决策**：
-  1. `listSkills` 的每一项带 `sourcePath`（它到底从哪一层读出来的），`readSkill` 直接用，
-     不再按名字重猜层。
-  2. 工具在注册时用 `traced(tool, trace)` 声明自己那一行（`channel/tools/presentation.ts`）；
-     `app/trace.ts` 只按名字查表，不认识具体工具。没声明过的（插件工具）退回「原名 + 通用
-     行」——不认识不等于不该画。
-  3. `count` 插槽保留填充：出厂模板已经不用它，但账本会保留用户改过的旧
-     `prompt/20-position.md`（ADR-084），那些模板里的 `{{count}}` 不能渲染成「（未设置）」。
-- **取舍**：领域里的 `TraceKind` 必须能赋给契约层的 `ViewStep["kind"]`，由 `app/trace.ts`
-  的赋值处替这条兜底（领域不能 import 契约层）；多一种界面不认识的种类就编不过。
-- **执行**：`documents/skills.ts`、`channel/tools/presentation.ts`、`channel/tools/index.ts`、
-  `app/trace.ts`、`app/read.ts`、`documents/prompt.ts`；`test/core/{skills,trace}.test.ts`。
-
----
-
-## ADR-093 明确取代：正文去重改为答案条目判重，旧形状只靠迁移
-
-- **背景**：ADR-051 的「补发前比对正文」与 ADR-061 的「投影层归一、不改库不迁移」都已被
-  后来的实现取代（ADR-087 / ADR-085），但旧条目没有标注，读者按旧 ADR 改回去会和 core 的
-  不变量打架。
-- **决策**：
-  1. **ADR-087 取代 ADR-051 的去重判据**：补发前比对的是答案条目 id（`sourceEntry`），
-     不是正文。ADR-051 里「为什么不按提交 id 去重」那一段不再成立。
-  2. **ADR-085 取代 ADR-061**：旧形状（消息 kind、字面 `@我`、平铺 wake、身份头 `project:`）
-     一律在迁移里一次性归一，读取处不留兼容分支。
-- **取舍**：旧 ADR 保留原文（只追加、不改历史）；以本条为准。
+  1. **一个键**：`settings.json` 的 `updateProxy`（空 / 没有 = 直连），由
+     `app/preferences.ts` 读写，界面在「设置 → 更新」里一行输入。
+  2. **只有桌面壳读它**：`desktop/src/update-proxy.ts` 每次检查更新前重读一遍，
+     走一个独立会话（`session.fromPartition("solo-update")` + `setProxy`）下载
+     清单和包；界面那条会话和后端 `fetch` 都不碰。
+  3. **不写进 `providers`**：代理不是模型配置，混在一起会出现「换模型顺手换了网络路径」。
+- **取舍**：网页版（非桌面壳）里这一项存下来也不生效 —— 它的下载由浏览器自己走
+  系统代理。界面上写清楚「只用于桌面版下载新版安装包」。
+- **执行**：`src/app/preferences.ts`、`src/app/index.ts`、`src/core/runtime/settings.ts`、
+  `src/interface/http/routes.ts`（`GET/POST /api/preferences`）、
+  `ui/app/src/panels/SettingsPage.tsx`、`ui/app/src/api/client.ts`、`styles/shell.css`；
+  桌面 `desktop/src/updates.ts`、`desktop/src/update-proxy.ts`、`desktop/src/main.ts`；
+  测试 `test/core/preferences.test.ts`、`test/desktop/update-proxy.test.ts`。

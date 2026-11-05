@@ -64,3 +64,32 @@ describe("身份头 project: → team:", () => {
 		expect(await readFile(retired, "utf8")).toContain("team: alpha");
 	});
 });
+
+describe("助理的显示名 知言 → Solo", () => {
+	it("只改应用根下那个人的 name，成员与正文不动", async () => {
+		const root = await box();
+		const layout = resolveLayout({ appRoot: join(root, "app"), userRoot: join(root, "home") });
+		const assistant = await identity(
+			layout.assistantRoot,
+			"知言",
+			"---\nname: 知言\ntitle: 助理\nteam: \"\"\n---\n\n正文里的 知言 不动。\n",
+		);
+		const sameNameMember = await identity(
+			layout.membersRoot,
+			"知言",
+			"---\nname: 知言\ntitle: 工程师\n---\n\n成员。\n",
+		);
+
+		const changed = await migrateWorkspace(layout);
+
+		expect(changed).toEqual([assistant]);
+		expect(await readFile(assistant, "utf8")).toBe(
+			"---\nname: Solo\ntitle: 助理\nteam: \"\"\n---\n\n正文里的 知言 不动。\n",
+		);
+		expect(await readFile(sameNameMember, "utf8")).toBe(
+			"---\nname: 知言\ntitle: 工程师\n---\n\n成员。\n",
+		);
+		// 幂等。
+		expect(await migrateWorkspace(layout)).toEqual([]);
+	});
+});

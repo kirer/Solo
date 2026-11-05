@@ -1,0 +1,420 @@
+/* 第一次打开：欢迎 / 接上模型（稿子 10 / 11），以及刚装好那三条建议（稿子 12）。
+   尺寸全部按 375×812 的手机稿写；桌面宽窗口里仍走 `.page` 的 860 居中。 */
+
+/* ── 10 · 欢迎 ─────────────────────────────────────────────────────── */
+
+.setup-welcome {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	min-height: 0;
+	padding: 0 28px 40px;
+	text-align: center;
+}
+
+.setup-mark {
+	display: block;
+	width: 96px;
+	height: 96px;
+}
+
+.setup-mark svg {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.setup-welcome h1 {
+	margin: 22px 0 0;
+	font-family: var(--brand);
+	font-size: 30px;
+	line-height: 38px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	color: var(--ink);
+}
+
+.setup-welcome p {
+	margin: 10px 0 0;
+	color: var(--ink-3);
+	font-size: 14px;
+	line-height: 23px;
+	text-wrap: pretty;
+}
+
+.setup-points {
+	display: flex;
+	flex-direction: column;
+	gap: 14px;
+	width: 100%;
+	margin-top: 30px;
+	text-align: left;
+}
+
+.setup-point {
+	display: flex;
+	align-items: flex-start;
+	gap: 11px;
+	color: var(--ink-2);
+	font-size: 13px;
+	line-height: 20px;
+}
+
+.setup-point b {
+	color: var(--ink);
+	font-weight: 600;
+}
+
+/* ── 11 · 接上模型 ─────────────────────────────────────────────────── */
+
+.setup-body {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 20px;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 16px 16px 20px;
+	overscroll-behavior: contain;
+}
+
+.setup-lead {
+	padding: 0 2px;
+	color: var(--ink-3);
+	font-size: 12.5px;
+	line-height: 19px;
+	text-wrap: pretty;
+}
+
+.setup-card {
+	overflow: hidden;
+	border: 0.5px solid var(--line);
+	border-radius: 14px;
+	background: var(--card);
+}
+
+.setup-opt {
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	width: 100%;
+	min-height: 58px;
+	padding: 0 16px;
+	border: 0;
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+	transition: background-color var(--dur-line) ease;
+}
+
+.setup-opt + .setup-opt {
+	box-shadow: inset 0 0.5px 0 var(--line);
+}
+
+.setup-opt:hover {
+	background: var(--hover);
+}
+
+.setup-radio {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	box-shadow: inset 0 0 0 1.5px var(--control);
+	transition: box-shadow var(--dur-line) ease;
+}
+
+.setup-opt[data-on="true"] .setup-radio {
+	box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+.setup-opt[data-on="true"] .setup-radio::after {
+	content: "";
+	width: 9px;
+	height: 9px;
+	border-radius: 50%;
+	background: var(--accent);
+}
+
+.setup-main {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 1px;
+	min-width: 0;
+}
+
+.setup-label {
+	display: block;
+	font-size: 14.5px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.setup-sub {
+	display: block;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.setup-pill {
+	flex: none;
+	padding: 1px 6px;
+	border-radius: 5px;
+	background: var(--accent-wash);
+	color: var(--accent);
+	font-size: 9.5px;
+	line-height: 15px;
+}
+
+/* 一行输入：标签在左，输入框在右。 */
+.setup-field {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	min-height: 52px;
+	padding: 0 14px;
+}
+
+.setup-field + .setup-field {
+	box-shadow: inset 0 0.5px 0 var(--line);
+}
+
+.setup-field .setup-label {
+	flex: none;
+	font-size: 14.5px;
+	font-weight: 400;
+	line-height: 20px;
+	color: var(--ink);
+}
+
+.setup-input {
+	flex: 1 1 auto;
+	min-width: 0;
+	height: 34px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 8px;
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	font-size: 13.5px;
+	text-align: right;
+}
+
+.setup-input::placeholder {
+	color: var(--ink-3);
+}
+
+.setup-input:focus {
+	outline: none;
+	background: var(--raised);
+	text-align: left;
+}
+
+/* 「模型」行尾那颗小按钮：去问这家有哪些模型。 */
+.setup-fetch {
+	flex: none;
+	height: 28px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--hover);
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.setup-fetch:hover:not(:disabled) {
+	background: color-mix(in oklab, var(--ink) 14%, transparent);
+	color: var(--ink);
+}
+
+.setup-fetch:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
+/* 拿回来的模型清单：一个一个小胶囊，点一下就填进上一行。 */
+.setup-picks {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	max-height: 156px;
+	overflow-y: auto;
+	padding: 0 14px 12px;
+	overscroll-behavior: contain;
+}
+
+.setup-chip {
+	max-width: 100%;
+	overflow: hidden;
+	padding: 5px 9px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--hover);
+	color: var(--ink-2);
+	font: inherit;
+	font-family: var(--mono);
+	font-size: 11.5px;
+	line-height: 15px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	cursor: pointer;
+	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
+}
+
+.setup-chip:hover {
+	color: var(--ink);
+}
+
+.setup-chip[data-on="true"] {
+	background: var(--accent-wash);
+	color: var(--accent);
+}
+
+.setup-status {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 0 2px;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	line-height: 16px;
+}
+
+.setup-status[data-tone="error"] {
+	color: var(--danger);
+}
+
+.setup-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: var(--accent);
+}
+
+/* 底部那一颗主按钮：两步共用。 */
+.setup-foot {
+	flex: none;
+	padding: 0 16px calc(30px + env(safe-area-inset-bottom));
+}
+
+.setup-primary {
+	display: grid;
+	place-items: center;
+	width: 100%;
+	height: 50px;
+	border: 0;
+	border-radius: 14px;
+	background: var(--accent);
+	color: #fff;
+	font: inherit;
+	font-size: 15px;
+	font-weight: 600;
+	cursor: pointer;
+	transition: opacity var(--dur-line) ease;
+}
+
+.setup-primary:hover:not(:disabled) {
+	opacity: 0.9;
+}
+
+.setup-primary:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.setup-hint {
+	margin-top: 12px;
+	text-align: center;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	line-height: 16px;
+}
+
+/* 抬头两行：标题下面那一句说明。 */
+.nav-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.nav-main .nav-title {
+	margin: 0 0 0 2px;
+}
+
+.nav-sub {
+	margin: 1px 0 0 2px;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	line-height: 16px;
+}
+
+/* ── 12 · 刚装好的三条建议 ─────────────────────────────────────────── */
+
+.starters {
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	gap: 8px;
+	padding: 4px 16px 10px;
+}
+
+.starter {
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	padding: 13px 14px;
+	border: 0;
+	border-radius: 13px;
+	background: var(--card);
+	box-shadow: 0 0 0 0.5px var(--rule);
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 13.5px;
+	line-height: 20px;
+	text-align: left;
+	cursor: pointer;
+	transition: background-color var(--dur-line) ease, transform var(--dur-tap) var(--ease-tap);
+}
+
+.starter:hover:not(:disabled) {
+	background: var(--raised);
+}
+
+.starter:active:not(:disabled) {
+	transform: scale(0.99);
+}
+
+.starter:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.starter-ic {
+	display: grid;
+	flex: none;
+	place-items: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 8px;
+	background: var(--accent-wash);
+	color: var(--accent);
+}
+
+.starter-arrow {
+	margin-left: auto;
+	flex: none;
+	color: var(--ink-3);
+	opacity: 0.6;
+}

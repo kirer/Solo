@@ -8,7 +8,7 @@
  */
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Attachment, Turn } from "../api/types.ts";
+import type { Attachment, Message, Turn } from "../api/types.ts";
 import { uploadUrl } from "../api/client.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { clockTime, copyText, humanBytes } from "../lib/format.ts";
@@ -18,7 +18,7 @@ import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
 import { Slot } from "../plugin/Slot.tsx";
-import { loadEarlier, openTasks, setReply } from "../state/store.ts";
+import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const COPY_ICON =
@@ -36,6 +36,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const people = useStore((state) => state.people);
 	const runs = useStore((state) => state.runs);
 	const [atBottom, setAtBottom] = useState(true);
+	/** 点开的那条消息（复制 / 引用 / 看人）。点外面或「取消」收起。 */
+	const [picked, setPicked] = useState<{ message: Message; name: string } | null>(null);
 
 	const flowRef = useRef<HTMLDivElement | null>(null);
 	const feedRef = useRef<HTMLDivElement | null>(null);
@@ -57,14 +59,20 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const rows = useMemo(() => buildRows({ messages, running, now: Date.now() }), [messages, running]);
 
 	const labels = useMemo(() => {
-		const map = new Map<string, { label: string; role: string }>();
-		for (const actor of people) map.set(actor.slug, { label: actor.label, role: actor.title });
+		const map = new Map<string, { label: string; role: string; assistant: boolean }>();
+		for (const actor of people) {
+			map.set(actor.slug, { label: actor.label, role: actor.title, assistant: actor.assistant === true });
+		}
 		if (detail !== null) {
 			for (const member of detail.members) {
 				// 名册里没有这个人时（理论上不该发生）用频道的成员表兜底。`role` 是
 				// `owner|assistant|member` 三个机器值，只有 `assistant` 值得印在名字后面。
 				if (!map.has(member.slug)) {
-					map.set(member.slug, { label: member.label, role: member.role === "assistant" ? "助理" : "" });
+					map.set(member.slug, {
+						label: member.label,
+						role: member.role === "assistant" ? "助理" : "",
+						assistant: member.role === "assistant",
+					});
 				}
 			}
 		}
@@ -210,7 +218,15 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 					<div className="feed" id="feed" ref={feedRef}>
 						{detail !== null && rows.length === 0 ? <Empty channelId={detail.channel.id} /> : null}
 						{rows.map((row) => (
-							<RowView key={row.key} row={row} labels={labels} onCopy={copy} onImage={props.onImage} onFile={props.onFile} />
+							<RowView
+								key={row.key}
+								row={row}
+								labels={labels}
+								onCopy={copy}
+								onPick={(message, name) => setPicked({ message, name })}
+								onImage={props.onImage}
+								onFile={props.onFile}
+							/>
 						))}
 					</div>
 
@@ -218,6 +234,77 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 					<Slot name="stream.bottom" />
 				</div>
 			</div>
+			{/* 点一条消息：底下压一层，动作从底部升上来（稿子 19）。 */}
+			{picked === null ? null : (
+				<div className="press" role="dialog" aria-modal="true" onClick={() => setPicked(null)}>
+					<div className="asheet" onClick={(event) => event.stopPropagation()}>
+						<div className="asheet-quote">
+							<div className="asheet-who">
+								{picked.name} · {clockTime(picked.message.at)}
+							</div>
+							<div className="asheet-text">{picked.message.text}</div>
+						</div>
+						<button
+							type="button"
+							className="arow"
+							onClick={() => {
+								void copyText(picked.message.text);
+								setPicked(null);
+							}}
+						>
+							<span className="ai" aria-hidden="true">
+								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+									<rect x="8.5" y="8.5" width="11.5" height="11.5" rx="2.5" />
+									<path d="M15.5 8.5v-2a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7.5a2 2 0 0 0 2 2h2" />
+								</svg>
+							</span>
+							复制文字
+						</button>
+						<button
+							type="button"
+							className="arow"
+							onClick={() => {
+								setReply({
+									seq: picked.message.seq,
+									label: picked.name,
+									excerpt: picked.message.text.slice(0, 60),
+								});
+								setPicked(null);
+							}}
+						>
+							<span className="ai" aria-hidden="true">
+								<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+									<path d="M9.5 7 4 12l5.5 5" />
+									<path d="M4 12h9.5a5.5 5.5 0 0 1 5.5 5.5V19" />
+								</svg>
+							</span>
+							引用回复
+						</button>
+						{picked.message.fromSlug === "owner" ? null : (
+							<button
+								type="button"
+								className="arow"
+								onClick={() => {
+									void openPerson(picked.message.fromSlug);
+									setPicked(null);
+								}}
+							>
+								<span className="ai" aria-hidden="true">
+									<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+										<circle cx="12" cy="8.2" r="3.4" />
+										<path d="M5 20c.6-3.6 3.5-5.6 7-5.6s6.4 2 7 5.6" />
+									</svg>
+								</span>
+								看看是谁 · {picked.name}
+							</button>
+						)}
+					</div>
+					<button type="button" className="acancel" onClick={() => setPicked(null)}>
+						取消
+					</button>
+				</div>
+			)}
+
 			{/* 在滚动容器**外面**：它一进滚动区就算进 scrollHeight，滚到底永远差它那几十像素。 */}
 			<button
 				type="button"
@@ -234,8 +321,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 
 function RowView(props: {
 	row: Row;
-	labels: Map<string, { label: string; role: string }>;
+	labels: Map<string, { label: string; role: string; assistant: boolean }>;
 	onCopy: (node: HTMLElement) => void;
+	onPick: (message: Message, name: string) => void;
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
 }): JSX.Element {
@@ -253,13 +341,19 @@ function RowView(props: {
 				row={row}
 				labels={props.labels}
 				onCopy={props.onCopy}
+				onPick={props.onPick}
 				onImage={props.onImage}
 				onFile={props.onFile}
 			/>
 		);
 	if (row.type === "live") {
 		return (
-			<LiveRow turn={row.turn} role={props.labels.get(row.turn.slug)?.role ?? ""} onOpen={openTasks} />
+			<LiveRow
+				turn={row.turn}
+				role={props.labels.get(row.turn.slug)?.role ?? ""}
+				assistant={props.labels.get(row.turn.slug)?.assistant === true}
+				onOpen={openTasks}
+			/>
 		);
 	}
 	// 后台命令跑完的留痕：正文是一坨终端输出，是给干活那个人看的。我这边收成一行，
@@ -294,8 +388,9 @@ function RowView(props: {
 
 function SayRow(props: {
 	row: Extract<Row, { type: "say" }>;
-	labels: Map<string, { label: string; role: string }>;
+	labels: Map<string, { label: string; role: string; assistant: boolean }>;
 	onCopy: (node: HTMLElement) => void;
+	onPick: (message: Message, name: string) => void;
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
 }): JSX.Element {
@@ -320,13 +415,50 @@ function SayRow(props: {
 				props.onCopy(node);
 			}}
 		>
+			{owner ? (
+				<div
+					className="row-av"
+					dangerouslySetInnerHTML={{
+						__html: avatarSvg({
+							slug: message.fromSlug,
+							name,
+							size: 40,
+							state: "idle",
+							assistant: known?.assistant === true,
+						}),
+					}}
+				/>
+			) : (
+				<button
+					type="button"
+					className="row-av"
+					aria-label={`看 ${name} 的资料`}
+					title={`看 ${name} 的资料`}
+					onClick={(event) => {
+						event.stopPropagation();
+						void openPerson(message.fromSlug);
+					}}
+					dangerouslySetInnerHTML={{
+						__html: avatarSvg({
+							slug: message.fromSlug,
+							name,
+							size: 40,
+							state: "idle",
+							assistant: known?.assistant === true,
+						}),
+					}}
+				/>
+			)}
 			<div
-				className="row-av"
-				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: message.fromSlug, name, size: 40, state: "idle" }),
+				className="row-body"
+				onClick={(event) => {
+					// 链接、按钮、代码块里的东西各有各的用处；选了字也别弹层。
+					const target = event.target;
+					if (target instanceof Element && target.closest("a, button, summary, pre, input, textarea") !== null) return;
+					if ((window.getSelection()?.toString() ?? "") !== "") return;
+					props.onPick(message, name);
 				}}
-			/>
-			<div className="row-body">
+			>
 				<div className="row-head">
 					<span className="row-name">{name}</span>
 					{role === "" ? null : <span className="row-role">{role}</span>}
@@ -452,10 +584,20 @@ function Empty(_props: { channelId: string }): JSX.Element {
 	const people = useStore((state) => state.people);
 	const detail = useStore((state) => state.detail);
 	const members = (detail?.members ?? []).filter((member) => member.slug !== "owner");
-	const fallback = people.slice(0, 4).map((actor) => ({ slug: actor.slug, label: actor.label }));
-	const picks = (members.length > 0 ? members : fallback)
-		.slice(0, 4)
-		.map((member) => ({ slug: member.slug, label: member.label }));
+	const fallback = people.slice(0, 4).map((actor) => ({
+		slug: actor.slug,
+		label: actor.label,
+		assistant: actor.assistant === true,
+	}));
+	const picks = (
+		members.length > 0
+			? members.map((member) => ({
+					slug: member.slug,
+					label: member.label,
+					assistant: member.role === "assistant",
+				}))
+			: fallback
+	).slice(0, 4);
 	const isDm = detail?.channel.kind === "dm";
 	const other = picks[0]?.label;
 
@@ -475,7 +617,13 @@ function Empty(_props: { channelId: string }): JSX.Element {
 					dangerouslySetInnerHTML={{
 						__html:
 							picks.length <= 1
-								? avatarSvg({ slug: picks[0]?.slug ?? "all", name: other ?? "全员", size: 64, state: "idle" })
+								? avatarSvg({
+										slug: picks[0]?.slug ?? "all",
+										name: other ?? "全员",
+										size: 64,
+										state: "idle",
+										assistant: picks[0]?.assistant === true,
+									})
 								: groupAvatar({ people: picks, size: 64 }),
 					}}
 				/>
@@ -503,7 +651,13 @@ function Empty(_props: { channelId: string }): JSX.Element {
 								<span
 									className="ch-empty-av"
 									dangerouslySetInnerHTML={{
-										__html: avatarSvg({ slug: pick.slug, name: pick.label, size: 20, state: "idle" }),
+										__html: avatarSvg({
+											slug: pick.slug,
+											name: pick.label,
+											size: 20,
+											state: "idle",
+											assistant: pick.assistant,
+										}),
 									}}
 								/>
 								{pick.label}

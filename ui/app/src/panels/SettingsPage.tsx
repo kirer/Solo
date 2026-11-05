@@ -1,15 +1,16 @@
 /**
- * 设置：应用的第二屏，不是浮层。
+ * 设置：一列往下读的一页（稿子 05）。
  *
- * 左边是分区（外观 + 插件注册进来的 `settings.section`），右边是内容。
- * 分成「页」而不是弹窗的理由写在 docs/DESIGN.md §1.5：点左列那一格就换一整屏，
- * 关掉它靠 Esc 或再点一次「聊天」，不需要一个只为关闭存在的 ×。
+ * 外观、插件自己注册的分区（如「模型」）、插件、用量、数据 —— 全在一条滚动线上，
+ * 每件事一张卡；插件那一节收起时只占一行。不切左栏、不开弹窗。手机上这一页本来就是整屏，
+ * 桌面上照同一份摆（§13.1）—— 一屏只讲一件事，多的往下滚。
  */
 
-import { useState } from "react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { getPreferences, savePreferences } from "../api/client.ts";
 import { cellsOf } from "../plugin/registry.ts";
-import { setResetOpen, setTheme } from "../state/store.ts";
+import { Slot } from "../plugin/Slot.tsx";
+import { setPluginSheet, setResetOpen, setSettings, setTheme } from "../state/store.ts";
 import type { Theme } from "../state/store.ts";
 
 const THEMES: readonly { value: Theme; text: string; icon: JSX.Element }[] = [
@@ -44,144 +45,242 @@ const THEMES: readonly { value: Theme; text: string; icon: JSX.Element }[] = [
 	},
 ];
 
-/** 左栏「外观」那一格的图标：半个圆 = 明暗。 */
-function AppearanceIcon(): JSX.Element {
+function BackIcon(): JSX.Element {
 	return (
-		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-			<circle cx="12" cy="12" r="7.5" />
-			<path d="M12 4.5a7.5 7.5 0 0 1 0 15z" fill="currentColor" stroke="none" />
+		<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+			<path d="M14.5 5.5 8 12l6.5 6.5" />
 		</svg>
 	);
 }
 
-/** 「数据」那一格的图标：一个数据库圆柱。 */
-function DataIcon(): JSX.Element {
+/** 行首的图标：27 的方块里一枚 16 的线稿（稿子 05 的 `.sico`）。 */
+function RowIcon(props: { children: ReactNode }): JSX.Element {
 	return (
-		<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6">
-			<ellipse cx="12" cy="6" rx="7" ry="3" />
-			<path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
-		</svg>
+		<span className="set-ico" aria-hidden="true">
+			{props.children}
+		</span>
 	);
 }
 
-/**
- * 设置：**左边一列分区，右边是选中那一区的详情**（DESIGN §1.5）。
- *
- * 和通讯录、插件、后台任务是同一套骨架：左栏 288px，右栏才是正文。
- * 分区名在左、内容在右，标题不跟着每个分区重复；右栏正文限宽，
- * 一行不留出一千像素的空白。
- *
- * 内置分区只有「外观」；插件往 `settings.section` 里注册的每一格都是一格分区，
- * 名字取 `label`、图标取 `icon`。分区多了也还找得到东西。
- */
+const IconPlugin = (): JSX.Element => (
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+		<path d="M10 4h4v2.2a2 2 0 1 0 4 0V4h2v6h-2.2a2 2 0 1 0 0 4H20v6h-6v-2.2a2 2 0 1 0-4 0V20H4v-6h2.2a2 2 0 1 0 0-4H4V4h6z" />
+	</svg>
+);
+
+const IconUpdate = (): JSX.Element => (
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+		<path d="M12 4v10" />
+		<path d="m8 10 4 4 4-4" />
+		<path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+	</svg>
+);
+
+const IconTheme = (): JSX.Element => (
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+		<circle cx="12" cy="12" r="7" />
+		<path d="M12 5a7 7 0 0 0 0 14z" fill="currentColor" stroke="none" />
+	</svg>
+);
+
+const IconDatabase = (): JSX.Element => (
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+		<ellipse cx="12" cy="6" rx="7" ry="3" />
+		<path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6" />
+		<path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6" />
+	</svg>
+);
+
+/** 一张卡：一行标题 + 内容。卡与卡之间是同一条间距。 */
+function Group(props: { title?: string; children: ReactNode }): JSX.Element {
+	return (
+		<section className="set-group">
+			{props.title === undefined ? null : <h2 className="set-title">{props.title}</h2>}
+			<div className="set-card">{props.children}</div>
+		</section>
+	);
+}
+
 export function SettingsPage(props: { theme: Theme }): JSX.Element {
 	// 插件分区在挂载前就注册完了（`main.tsx` 先 `bootPlugins()`），这里不订阅。
 	const cells = cellsOf("settings.section");
-	const sections: readonly { id: string; label: string; icon?: ReactNode }[] = [
-		{ id: "appearance", label: "外观", icon: <AppearanceIcon /> },
-		...cells.map((cell) => ({ id: cell.id, label: cell.label ?? cell.id, icon: cell.icon })),
-		{ id: "data", label: "数据", icon: <DataIcon /> },
-	];
-	const [current, setCurrent] = useState("appearance");
-	const active = sections.find((section) => section.id === current) ?? sections[0]!;
-	const cell = cells.find((item) => item.id === active.id);
 
 	return (
 		<section className="page" id="page-settings" aria-label="设置">
-			<div className="page-side">
-				<header className="page-side-head">
-					<h2 className="page-title">设置</h2>
-				</header>
-				<nav className="page-side-body" aria-label="设置分区">
-					<div className="settings-nav-list" role="tablist" aria-orientation="vertical">
-						{sections.map((section) => (
-							<button
-								type="button"
-								key={section.id}
-								role="tab"
-								className="settings-nav-item"
-								aria-selected={active.id === section.id}
-								onClick={() => setCurrent(section.id)}
-							>
-								{/* 没有图标也留这一格：几行字得对在同一条竖线上。 */}
-								<span className="settings-nav-ico">{section.icon ?? null}</span>
-								{section.label}
-							</button>
-						))}
-					</div>
-				</nav>
-			</div>
+			<header className="nav">
+				<button type="button" className="icon-btn" id="settings-back" aria-label="返回" onClick={() => setSettings(false)}>
+					<BackIcon />
+				</button>
+				<h1 className="nav-title">设置</h1>
+			</header>
 
-			<div className="page-main">
-				<header className="page-main-head">
-					<h2 className="page-title">{active.label}</h2>
-				</header>
-				{/* key 变了才重放入场：换分区是「同一块地方换了一份内容」。 */}
-				<div className="page-main-body" key={active.id}>
-					{active.id === "appearance" ? (
-						<AppearanceSection theme={props.theme} />
-					) : active.id === "data" ? (
-						<DataSection />
-					) : cell === undefined ? null : (
-						<cell.component />
-					)}
-				</div>
+			<div className="set-scroll">
+				<Group>
+					<ThemeRow theme={props.theme} />
+				</Group>
+
+				{/* 插件自己注册的一节（`settings.section`）：收成一行，放在「插件」上面。 */}
+				{cells.length === 0 ? null : (
+					<Group>
+						{cells.map((cell) => (
+							<div className="set-cell" key={cell.id}>
+								<cell.component />
+							</div>
+						))}
+					</Group>
+				)}
+
+				<Group>
+					<button type="button" className="set-row" onClick={() => setPluginSheet(true)}>
+						<RowIcon>
+							<IconPlugin />
+						</RowIcon>
+						<span className="set-main">
+							<span className="set-label">插件</span>
+							<span className="set-desc">装一个插件就是放一个文件夹，装完当场生效</span>
+						</span>
+						<span className="set-chev" aria-hidden="true">
+							<svg width="8" height="13" viewBox="0 0 8 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+								<path d="m1.5 1.5 5 5-5 5" />
+							</svg>
+						</span>
+					</button>
+					{/* 插件注册的应用级入口（`rail.item`）：没有最左那一列了，这些格子落在设置里。 */}
+					<div className="set-tools">
+						<Slot name="rail.item" />
+					</div>
+				</Group>
+
+				<Group title="更新">
+					<UpdateProxyRow />
+				</Group>
+
+				<Group>
+					<DataRow />
+				</Group>
+
 			</div>
 		</section>
 	);
 }
 
-function AppearanceSection(props: { theme: Theme }): JSX.Element {
+function ThemeRow(props: { theme: Theme }): JSX.Element {
 	return (
-		<>
-			<p className="settings-desc">深色在晚上不刺眼，浅色在白天更清楚。</p>
-			<div className="settings-options is-three" id="theme-options">
+		<div className="set-row is-static">
+			<RowIcon>
+				<IconTheme />
+			</RowIcon>
+			<span className="set-main">
+				<span className="set-label">主题</span>
+			</span>
+			<div className="seg" id="theme-options">
 				{THEMES.map((item) => (
 					<button
 						type="button"
 						key={item.value}
-						className="opt"
+						className="seg-item"
 						data-theme-mode={item.value}
 						aria-checked={props.theme === item.value}
 						onClick={() => setTheme(item.value)}
 					>
-						<span className="opt-ico">{item.icon}</span>
-						<span className="opt-text">{item.text}</span>
+						{item.text}
 					</button>
 				))}
 			</div>
-		</>
+		</div>
+	);
+}
+
+/**
+ * 更新代理：桌面版下载新版安装包时走它（GitHub 直连经常不通）。
+ *
+ * 只影响「下载更新」这一条路 —— 模型调用不走这个代理（用户明确要求的边界）。
+ * 存进 `settings.json` 的 `updateProxy`，桌面壳每次检查更新前读一遍，所以不用重启。
+ */
+function UpdateProxyRow(): JSX.Element {
+	const [value, setValue] = useState("");
+	const [saved, setSaved] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		let alive = true;
+		getPreferences()
+			.then((prefs) => {
+				if (!alive) return;
+				setValue(prefs.updateProxy);
+				setSaved(prefs.updateProxy);
+			})
+			.catch(() => undefined);
+		return () => {
+			alive = false;
+		};
+	}, []);
+
+	const commit = async (): Promise<void> => {
+		if (busy || value.trim() === saved) return;
+		setBusy(true);
+		setError(null);
+		try {
+			const prefs = await savePreferences(value.trim());
+			setValue(prefs.updateProxy);
+			setSaved(prefs.updateProxy);
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : String(reason));
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	return (
+		<div className="set-proxy">
+			<div className="setup-field">
+				<RowIcon>
+					<IconUpdate />
+				</RowIcon>
+				<span className="setup-label">更新代理</span>
+				<input
+					className="setup-input"
+					type="text"
+					inputMode="url"
+					autoComplete="off"
+					spellCheck={false}
+					aria-label="更新代理"
+					placeholder="不用代理就留空"
+					value={value}
+					onChange={(event) => setValue(event.target.value)}
+					onBlur={() => void commit()}
+					onKeyDown={(event) => {
+						if (event.key === "Enter") event.currentTarget.blur();
+					}}
+				/>
+				<button type="button" className="set-save" disabled={busy || value.trim() === saved} onClick={() => void commit()}>
+					保存
+				</button>
+			</div>
+			<p className="set-note" data-error={error === null ? "false" : "true"}>
+				{error ?? "只用于桌面版下载新版安装包；模型调用不走这个代理。"}
+			</p>
+		</div>
 	);
 }
 
 /** 数据：只有一件事 —— 清空一切、回到刚装好的样子。确认浮层在 `Overlays.tsx`。 */
-function DataSection(): JSX.Element {
+function DataRow(): JSX.Element {
 	return (
-		<>
-			<p className="settings-desc">清空组织数据，回到刚装好的样子。模型配置会保留。</p>
-			<div className="settings-row">
-				<div className="settings-row-main">
-					<span className="settings-row-label">重置所有数据</span>
-					<span className="settings-row-desc">
-						成员、团队、聊天记录、记忆、技能、附件和日志都会被删掉，找不回来。
-					</span>
-				</div>
-				<div className="settings-row-ctl">
-					<button
-						type="button"
-						className="settings-danger"
-						onClick={() => {
-							setResetOpen(true);
-						}}
-					>
-						重置…
-					</button>
-				</div>
-			</div>
-		</>
+		<button type="button" className="set-row is-danger" onClick={() => setResetOpen(true)}>
+			<RowIcon>
+				<IconDatabase />
+			</RowIcon>
+			<span className="set-main">
+				<span className="set-label">重置所有数据</span>
+				<span className="set-desc">成员、团队、聊天、记忆、技能、附件和日志都会删掉，找不回来</span>
+			</span>
+			<span className="set-chev" aria-hidden="true">
+				<svg width="8" height="13" viewBox="0 0 8 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+					<path d="m1.5 1.5 5 5-5 5" />
+				</svg>
+			</span>
+		</button>
 	);
 }
-
-/* ── 插件 ────────────────────────────────────────────────────────────── */
-
-/** 「它带来了什么」压成一行。全是空的时候说「只有一份说明」。 */

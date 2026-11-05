@@ -15,9 +15,10 @@ import { loadTurn } from "../state/store.ts";
 export function LiveRow(props: {
 	turn: Turn;
 	role: string;
+	assistant: boolean;
 	onOpen: (slug: string) => void;
 }): JSX.Element {
-	const { turn, role, onOpen } = props;
+	const { turn, role, assistant, onOpen } = props;
 	const [now, setNow] = useState(() => Date.now());
 
 	// 耗时在走：服务端每秒补推一帧，但两帧之间也要动，否则像卡住了。
@@ -47,7 +48,13 @@ export function LiveRow(props: {
 				className="live-av"
 				aria-hidden="true"
 				dangerouslySetInnerHTML={{
-					__html: avatarSvg({ slug: turn.slug, name: turn.label, size: 40, state: "working" }),
+					__html: avatarSvg({
+						slug: turn.slug,
+						name: turn.label,
+						size: 40,
+						state: "working",
+						assistant,
+					}),
 				}}
 			/>
 			<div className="live-body">

@@ -1,9 +1,11 @@
 /**
- * 后台任务：一屏三处 —— 左栏是导航（在 `sidebar/Rail.tsx`），这里给中间的人 / 轮次
- * 和一整块「这一轮」。不再是盖在聊天上的抽屉：一轮的过程要摊开写，380px 装不下。
+ * 后台任务：一个人的轮次清单，点一条就地展开步骤（docs/DESIGN.md §2.3 / §13.3）。
+ *
+ * 桌面上它是右栏的一态（资料表最后一行点进来）；手机上右栏铺满整屏，所以这里是
+ * **同一列**：列表在上、展开在行里，不是并排两栏。两端逐项相同。
  *
  * 数据全是服务端给的：列表是 `state.runs`（按人分桶，SSE 的 `trace` 帧实时并进去，
- * 打开时再拉一次最近 30 轮），右边是选中那一轮的 `ViewTurn` —— 步骤缺了就按
+ * 打开时再拉一次最近 30 轮），展开那一轮的 `ViewTurn` 步骤缺了就按
  * `channelId + seq` 补拉一次，不猜、不补（AGENTS §2 第 6 条）。
  */
 
@@ -12,20 +14,12 @@ import type { Actor, Step, Turn } from "../api/types.ts";
 import { continuePerson } from "../api/client.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { clockTime, humanDuration, relTime } from "../lib/format.ts";
-import { closeTasks, loadPersonRuns, loadTurn, refreshLists, setTasksWho } from "../state/store.ts";
+import { loadPersonRuns, loadTurn, refreshLists } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const REFRESH_MS = 2000;
 
-const GROUPS: { label: string; keep: (turn: Turn) => boolean }[] = [
-	{ label: "正在跑", keep: (turn) => turn.status === "running" },
-	{ label: "已完成", keep: (turn) => turn.status === "done" },
-	{ label: "失败", keep: (turn) => turn.status === "failed" },
-	{ label: "没回话", keep: (turn) => turn.status === "aborted" },
-];
-
-export function TasksPanel(): JSX.Element {
-	const open = useStore((state) => state.tasks.open);
+export function TasksView(): JSX.Element {
 	const who = useStore((state) => state.tasks.who);
 	const runs = useStore((state) => state.runs);
 	const people = useStore((state) => state.people);
@@ -33,36 +27,22 @@ export function TasksPanel(): JSX.Element {
 	const channels = useStore((state) => state.channels);
 	const [pick, setPick] = useState<string | null>(null);
 	const [openStep, setOpenStep] = useState<string | null>(null);
-	/** 哪一组被收起来了（默认全展开：第一眼要看的是「都跑过什么」）。 */
-	const [folded, setFolded] = useState<Record<string, boolean>>({});
 
 	const live = who !== null && isRunning(presence.get(who)?.state);
 
 	// 看的那个人还在跑：列表会变（新的一轮、步数、结算），每 2 秒补一次；停下来就不拉。
 	useEffect(() => {
-		if (!open || who === null || !live) return;
+		if (who === null || !live) return;
 		const id = setInterval(() => void loadPersonRuns(who), REFRESH_MS);
 		return () => clearInterval(id);
-	}, [open, who, live]);
+	}, [who, live]);
 
 	const titles = new Map(channels.map((channel) => [channel.id, channel.title]));
-	const names = new Map(people.map((actor) => [actor.slug, actor.label]));
-	const failures = new Map(people.map((actor) => [actor.slug, actor.lastFailure]));
-	const failure = who === null ? undefined : failures.get(who);
-	const pool = people
-		.filter((actor) => actor.slug !== "owner")
-		.map((actor) => ({ slug: actor.slug, label: actor.label, title: actor.title }))
-		.sort((left, right) => rank(left.slug) - rank(right.slug) || left.label.localeCompare(right.label));
+	const actor = who === null ? undefined : people.find((person) => person.slug === who);
+	const failure = actor?.lastFailure;
 
-	// 正在跑的排前面，其余按最近一轮倒序；一轮都没跑过的垫底。
-	function rank(slug: string): number {
-		const running = isRunning(presence.get(slug)?.state);
-		const list = runs.get(slug);
-		const last = list === undefined ? 0 : (list[list.length - 1]?.startedAt ?? 0);
-		return (running ? 0 : 1) * 1e15 - last;
-	}
-
-	// 0 步的一轮不占一块：只说了句话、没动过手，那是聊天不是任务；还在跑的先留着（步数随后才到）。
+	// 0 步的一轮不占一行：只说了句话、没动过手（包括没回话的），那是聊天不是任务；
+	// 还在跑的先留着（步数随后才到）。
 	const mine =
 		who === null
 			? []
@@ -70,181 +50,136 @@ export function TasksPanel(): JSX.Element {
 					.filter((turn) => turn.status === "running" || turn.stepCount > 0)
 					.sort((left, right) => right.startedAt - left.startedAt);
 
-	// 选中哪一轮：默认最近的一轮；列表变了（新的一轮进来）就跟着走到最新那轮。
-	const current = mine.find((turn) => keyOf(turn) === pick) ?? mine[0] ?? null;
+	const open = mine.find((turn) => keyOf(turn) === pick) ?? null;
 
 	useEffect(() => {
-		if (current !== null && current.steps === undefined) void loadTurn(current);
-	}, [current]);
+		if (open !== null && open.steps === undefined) void loadTurn(open);
+	}, [open]);
 
-	const runningCount = pool.filter((person) => isRunning(presence.get(person.slug)?.state)).length;
-
-	if (!open) return <></>;
+	const groups = groupByDay(mine);
 
 	return (
-		<section className="tasks" aria-label="后台任务">
-			<div className="tasks-list">
-				<header className="tasks-list-head">
-					<button type="button" className="tasks-back" id="tasks-back" aria-label="回到聊天" onClick={closeTasks}>
-						<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-							<path d="M15 6l-6 6 6 6" />
-						</svg>
-					</button>
-					<h2>后台任务</h2>
-				</header>
-
-				<div className="tasks-people">
-					{pool.map((person) => (
-						<button
-							type="button"
-							key={person.slug}
-							className="tasks-person"
-							aria-current={person.slug === who ? "true" : "false"}
-							data-live={isRunning(presence.get(person.slug)?.state) ? "true" : "false"}
-							title={person.label}
-							onClick={() => {
-								setPick(null);
-								setTasksWho(person.slug);
-							}}
-						>
-							<span
-								aria-hidden="true"
-								dangerouslySetInnerHTML={{
-									__html: avatarSvg({
-										slug: person.slug,
-										name: person.label,
-										size: 32,
-										state: isRunning(presence.get(person.slug)?.state) ? "working" : "idle",
-									}),
-								}}
-							/>
-							{failures.get(person.slug) !== undefined && !isRunning(presence.get(person.slug)?.state) ? (
-								<span className="tasks-person-bad" aria-hidden="true" />
-							) : null}
-							<span>{person.label}</span>
-						</button>
-					))}
+		<div className="tasks">
+			{who === null ? null : (
+				<div className="tasks-who">
+					<span
+						className="tasks-av"
+						aria-hidden="true"
+						dangerouslySetInnerHTML={{
+							__html: avatarSvg({
+								slug: who,
+								name: actor?.label ?? who,
+								size: 28,
+								state: live ? "working" : "idle",
+								assistant: actor?.assistant === true,
+							}),
+						}}
+					/>
+					<span className="tasks-who-main">
+						<span className="tasks-who-name">{actor?.label ?? who}</span>
+						<span className="tasks-who-meta">{runsLine(mine, live)}</span>
+					</span>
+					<span className="tasks-who-n">{mine.length} 轮</span>
 				</div>
+			)}
 
-				<div className="tasks-rows">
-					{mine.length === 0 ? (
-						<p className="tasks-empty">
-							{who === null ? "挑一个人看他跑过什么。" : "这个人还没有跑过任何一轮。"}
-						</p>
-					) : (
-						GROUPS.map((group) => {
-							const list = mine.filter(group.keep);
-							if (list.length === 0) return null;
-							const shut = folded[group.label] === true;
-							return (
-								<div key={group.label}>
-									{/* 组头可以点：十三轮全摊开，一屏只装得下四轮。 */}
-									<button
-										type="button"
-										className="tasks-group"
-										aria-expanded={shut ? "false" : "true"}
-										onClick={() => setFolded((now) => ({ ...now, [group.label]: !shut }))}
-									>
-										<svg className="tasks-group-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round">
-											<path d="M9 5l7 7-7 7" />
-										</svg>
-										{group.label}
-										<span className="tasks-group-n">{list.length}</span>
-									</button>
-									{shut ? null : list.map((turn) => (
+			{failure === undefined || who === null || live ? null : (
+				<FailureCard slug={who} failure={failure} />
+			)}
+
+			<div className="tasks-rows">
+				{mine.length === 0 ? (
+					<p className="tasks-empty">{who === null ? "挑一个人看他跑过什么。" : "这个人还没有跑过任何一轮。"}</p>
+				) : (
+					groups.map((group) => (
+						<div key={group.label}>
+							<div className="tasks-day">
+								{group.label}
+								<span className="n">{group.list.length} 轮</span>
+							</div>
+							{group.list.map((turn) => {
+								const isOpen = open !== null && keyOf(open) === keyOf(turn);
+								return (
+									<div className="tasks-item" key={keyOf(turn)} data-open={isOpen ? "true" : "false"}>
 										<button
 											type="button"
-											key={keyOf(turn)}
 											className="tasks-row"
-											aria-selected={current !== null && keyOf(current) === keyOf(turn) ? "true" : "false"}
+											data-live={turn.status === "running" ? "true" : "false"}
+											data-fail={turn.status === "failed" ? "true" : "false"}
+											data-on={isOpen ? "true" : "false"}
+											aria-expanded={isOpen}
 											onClick={() => {
-												setPick(keyOf(turn));
+												setPick(isOpen ? null : keyOf(turn));
 												setOpenStep(null);
 											}}
 										>
-											<span className="tasks-row-top">
-												<span className="tasks-row-ch">{titles.get(turn.channelId) ?? turn.channelTitle ?? turn.channelId}</span>
-												<span className="tasks-row-time">{clockTime(turn.startedAt)}</span>
-												<span className="tasks-row-ms">{elapsedOf(turn)}</span>
+											<span className="tasks-dot" aria-hidden="true" />
+											<span className="tasks-main">
+												<span className="tasks-top">
+													<span className="tasks-ch">
+														{titles.get(turn.channelId) ?? turn.channelTitle ?? turn.channelId}
+													</span>
+													<span className="tasks-time">{clockTime(turn.startedAt)}</span>
+													<span className="tasks-ms">{statusOf(turn)}</span>
+												</span>
+												<span className="tasks-text">{turn.trigger?.text ?? turn.summary}</span>
 											</span>
-											<span className="tasks-row-text">{turn.trigger?.text ?? turn.summary}</span>
+											<svg className="tasks-chev" width="8" height="13" viewBox="0 0 8 13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+												<path d="m1.5 1.5 5 5-5 5" />
+											</svg>
 										</button>
-									))}
-								</div>
-							);
-						})
-					)}
-				</div>
-
-				{runningCount === 0 ? null : <p className="tasks-foot">{runningCount} 个人在跑</p>}
+										{isOpen ? (
+											<div className="tasks-open">
+												{turn.trigger === undefined ? null : (
+													<span className="tasks-quote">
+														<span
+															className="tasks-quote-av"
+															aria-hidden="true"
+															dangerouslySetInnerHTML={{
+																__html: avatarSvg({
+																	slug: turn.trigger.from,
+																	name: turn.trigger.from === "owner" ? "我" : (people.find((person) => person.slug === turn.trigger?.from)?.label ?? turn.trigger.from),
+																	size: 20,
+																}),
+															}}
+														/>
+														<span className="tasks-quote-body">
+															<span className="tasks-quote-who">
+																叫醒他的那句话 · {turn.trigger.from === "owner" ? "我" : (people.find((person) => person.slug === turn.trigger?.from)?.label ?? turn.trigger.from)}{" "}
+																{clockTime(turn.startedAt)}
+															</span>
+															<span className="tasks-quote-text">{turn.trigger.text}</span>
+														</span>
+													</span>
+												)}
+												<p className="tasks-label">
+													过程 · {turn.stepCount} 步{elapsedOf(turn) === "" ? "" : ` · ${elapsedOf(turn)}`}
+												</p>
+												{turn.steps === undefined ? null : turn.steps.length === 0 ? (
+													<p className="tasks-empty">{turn.status === "running" ? "还没动手，正在想。" : "这一轮没有留下过程（条目可能已被压缩）。"}</p>
+												) : (
+													<div className="tasks-steps">
+														{turn.steps.map((step) => (
+															<StepRow
+																key={step.id}
+																step={step}
+																open={openStep === step.id}
+																onToggle={() => setOpenStep((now) => (now === step.id ? null : step.id))}
+															/>
+														))}
+													</div>
+												)}
+												{turn.truncated === true ? <p className="tasks-empty">步骤太多，只保留前 200 步。</p> : null}
+											</div>
+										) : null}
+									</div>
+								);
+							})}
+						</div>
+					))
+				)}
 			</div>
-
-			{current === null ? (
-				<div className="task-detail task-detail-blank">
-					{failure === undefined || who === null ? (
-						<p>左边挑一轮看他做了什么。</p>
-					) : (
-						<FailureCard slug={who} failure={failure} />
-					)}
-				</div>
-			) : (
-				<div className="task-detail">
-					<header className="task-detail-head">
-						<span
-							className="task-av"
-							aria-hidden="true"
-							dangerouslySetInnerHTML={{
-								__html: avatarSvg({ slug: current.slug, name: current.label, size: 52, state: "idle" }),
-							}}
-						/>
-						<span className="task-name">{current.label}</span>
-						<span className="task-role">{people.find((person) => person.slug === current.slug)?.title ?? ""}</span>
-						<span className="task-sep" />
-						<span className="task-ch">{titles.get(current.channelId) ?? current.channelTitle ?? current.channelId}</span>
-						<span className="task-meta">
-							<span>{current.stepCount} 步</span>
-							<span data-tone={toneOf(current)}>{statusOf(current)}</span>
-							<span>{elapsedOf(current)}</span>
-						</span>
-					</header>
-
-					{failure === undefined || who === null ? null : <FailureCard slug={who} failure={failure} />}
-
-					<div className="task-body">
-						{current.trigger === undefined ? null : (
-							<>
-								<p className="task-label">触发的那句话</p>
-								<blockquote className="task-quote">
-									<span className="task-quote-from">
-										{names.get(current.trigger.from) ?? current.trigger.from} · {relTime(current.startedAt)}
-									</span>
-									<span className="task-quote-text">{current.trigger.text}</span>
-								</blockquote>
-							</>
-						)}
-
-						<p className="task-label task-label-2">这一轮做了什么</p>
-						{current.steps === undefined ? null : current.steps.length === 0 ? (
-							<p className="task-empty">
-								{current.status === "running" ? "还没动手，正在想。" : "这一轮没有留下过程（条目可能已被压缩）。"}
-							</p>
-						) : (
-							<div className="task-steps">
-								{current.steps.map((step) => (
-									<StepRow
-										key={step.id}
-										step={step}
-										open={openStep === step.id}
-										onToggle={() => setOpenStep((now) => (now === step.id ? null : step.id))}
-									/>
-								))}
-							</div>
-						)}
-						{current.truncated === true ? <p className="task-empty">步骤太多，只保留前 200 步。</p> : null}
-					</div>
-				</div>
-			)}
-		</section>
+		</div>
 	);
 }
 
@@ -295,8 +230,11 @@ function StepRow(props: { step: Step; open: boolean; onToggle: () => void }): JS
 	const { step } = props;
 	const detail = detailOf(step);
 	return (
-		<div className="task-step" data-open={props.open ? "true" : "false"}>
-			<span className="task-step-at">{step.startedAt === undefined ? "" : clockTime(step.startedAt)}</span>
+		<div
+			className="task-step"
+			data-open={props.open ? "true" : "false"}
+			data-fail={step.status === "failed" ? "true" : "false"}
+		>
 			<span className="task-step-rail" aria-hidden="true">
 				<span className="task-step-dot" />
 			</span>
@@ -310,6 +248,7 @@ function StepRow(props: { step: Step; open: boolean; onToggle: () => void }): JS
 				>
 					{/* `title` 已经是服务端算好的一行人话（「运行 npm test」/「读了 a.ts」），
 					    这里不再拼类型，否则会变成「运行 运行 npm test」。 */}
+					<span className="task-step-at">{step.startedAt === undefined ? "" : clockTime(step.startedAt)}</span>
 					<span className="task-step-title">{step.title}</span>
 					<span className="task-step-ms">
 						{step.ms === undefined ? "" : `${step.status === "failed" ? "✕" : "✓"} ${humanDuration(step.ms)}`}
@@ -357,12 +296,49 @@ function detailOf(step: Step): JSX.Element | null {
 	}
 	if (step.kind === "think") {
 		if (step.text === undefined || step.text === "") return null;
-		return <div className="task-cmd">{<span className="task-cmd-out">{step.text}</span>}</div>;
+		return (
+			<div className="task-cmd">
+				<span className="task-cmd-out">{step.text}</span>
+			</div>
+		);
 	}
 	// 其余工具（记记忆 / 翻记录 / 读历史 / 招人 / 未知）：能展开就展开，优先给人看的正文，其次回执。
 	const body = step.text ?? step.output;
 	if (body === undefined || body === "") return null;
-	return <div className="task-cmd">{<span className="task-cmd-out">{body}</span>}</div>;
+	return (
+		<div className="task-cmd">
+			<span className="task-cmd-out">{body}</span>
+		</div>
+	);
+}
+
+/** 按天分组：今天 / 昨天 / 更早。一轮都不画日期（「今天」是这一栏的默认分组）。 */
+function groupByDay(turns: readonly Turn[]): { label: string; list: Turn[] }[] {
+	const today = new Date();
+	today.setHours(0, 0, 0, 0);
+	const start = today.getTime();
+	const yesterday = start - 86_400_000;
+	const buckets: { label: string; keep: (turn: Turn) => boolean }[] = [
+		{ label: "今天", keep: (turn) => turn.startedAt >= start },
+		{ label: "昨天", keep: (turn) => turn.startedAt >= yesterday && turn.startedAt < start },
+		{ label: "更早", keep: (turn) => turn.startedAt < yesterday },
+	];
+	return buckets
+		.map((bucket) => ({ label: bucket.label, list: turns.filter(bucket.keep) }))
+		.filter((group) => group.list.length > 0);
+}
+
+function runsLine(turns: readonly Turn[], live: boolean): string {
+	// 一轮都没有时别写「0 轮 · 共 0s」：那不是统计，是一句空话。
+	if (turns.length === 0) return live ? "正在跑" : "还没跑过";
+	const total = turns.reduce((sum, turn) => sum + (turn.endedAt === undefined ? 0 : turn.endedAt - turn.startedAt), 0);
+	const last = turns[0]?.startedAt;
+	const parts = [
+		live ? "正在跑" : `${String(turns.length)} 轮`,
+		`共 ${humanDuration(total)}`,
+		last === undefined ? undefined : `最近 ${relTime(last)}`,
+	];
+	return parts.filter((part) => part !== undefined).join(" · ");
 }
 
 function keyOf(turn: Turn): string {
@@ -375,17 +351,10 @@ function elapsedOf(turn: Turn): string {
 }
 
 function statusOf(turn: Turn): string {
-	if (turn.status === "running") return "正在执行";
-	if (turn.status === "done") return "✓ 完成";
-	if (turn.status === "failed") return "✕ 失败";
+	if (turn.status === "running") return "跑着";
+	if (turn.status === "done") return elapsedOf(turn);
+	if (turn.status === "failed") return "失败";
 	return "没回话";
-}
-
-function toneOf(turn: Turn): "ok" | "bad" | "quiet" | "live" {
-	if (turn.status === "running") return "live";
-	if (turn.status === "done") return "ok";
-	if (turn.status === "failed") return "bad";
-	return "quiet";
 }
 
 function isRunning(state: string | undefined): boolean {

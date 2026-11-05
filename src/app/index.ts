@@ -12,9 +12,11 @@ import { createChat } from "./chat.ts";
 import { createModels } from "./models.ts";
 import { createPeople } from "./people.ts";
 import { createPlugins } from "./plugins.ts";
+import { createPreferences } from "./preferences.ts";
 import { createRead } from "./read.ts";
 import { createReset } from "./reset.ts";
 import { createRuns } from "./runs.ts";
+import { createSetup } from "./setup.ts";
 import { createSnapshots } from "./snapshot.ts";
 import { createTeams } from "./teams.ts";
 import { createUploads } from "./uploads.ts";
@@ -32,6 +34,8 @@ export function createApp(services: CoreServices) {
 	const runs = createRuns(services);
 	const diag = services.diag;
 	const models = createModels(services);
+	const setup = createSetup(services);
+	const preferences = createPreferences(services);
 	const reset = createReset(services.layout);
 	// 看门狗：底座报上来的异常说进全员频道，别只躺在 logs/runtime.jsonl 里。
 	const watch = createWatch({
@@ -40,7 +44,7 @@ export function createApp(services: CoreServices) {
 			await services.postAs({ channelId: services.allChannel, from: OWNER, text, kind: "note" });
 		},
 	});
-	return { snapshots, read, people, teams, plugins, chat, uploads, runs, watch, diag, models, reset };
+	return { snapshots, read, people, teams, plugins, chat, uploads, runs, watch, diag, models, setup, preferences, reset };
 }
 
 export type App = ReturnType<typeof createApp>;

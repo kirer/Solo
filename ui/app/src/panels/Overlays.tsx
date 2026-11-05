@@ -1,7 +1,7 @@
 /**
  * 真正的浮层：拉群、找你清单、toast。
  *
- * 设置 / 通讯录 / 插件不在这里 —— 它们是应用的第二屏（`SettingsPage` / `TeamPage` /
+ * 设置 / 插件不在这里 —— 它们是应用的第二屏（`SettingsPage` /
  * `PluginsPage`），点左列那一格换一整屏，不盖在聊天上（docs/DESIGN.md §1.5）。
  *
  * 规矩只有一条：**同一时刻只开一个**。状态由 store 的 `setNeedMenu`/`setNewGroup`
@@ -209,7 +209,13 @@ function GroupSheet(): JSX.Element {
 											<span
 												className="crew-av"
 												dangerouslySetInnerHTML={{
-													__html: avatarSvg({ slug: actor.slug, name: actor.label, size: 32, state: "idle" }),
+													__html: avatarSvg({
+														slug: actor.slug,
+														name: actor.label,
+														size: 32,
+														state: "idle",
+														assistant: actor.assistant === true,
+													}),
 												}}
 											/>
 											<span className="crew-main">

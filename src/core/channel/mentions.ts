@@ -4,7 +4,7 @@
  * 判据只有名字（slug / name / 我），没有模糊别名 —— 谁都能被 @ 到的代价是
  * 一个词撞上某人的 title 就把消息投给他（见文件末尾那段说明）。
  */
-import { OWNER, type Channel, type Message } from "./types.ts";
+import { OWNER, teamOfChannel, type Channel, type Message } from "./types.ts";
 
 /**
  * 从正文里解析 `@slug`。slug 允许字母、数字、中文、`-`、`_`。
@@ -59,10 +59,20 @@ export function recipientsOf(channel: Channel, message: Message, lastSpeaker?: s
 	for (const mention of message.mentions) {
 		if (members.has(mention)) targets.add(mention);
 	}
+	// 团队频道：**@ 了谁就只叫谁**，助理不插话。`wakeOnAll` 在这里的语义是「没人 @ 时
+	// 替团队守着、决定交给谁」（ADR-063），不是「每条都答」—— 我已直接点名，路由已经
+	// 由我做完，助理再答一遍就是两条回话、两套结论（实测：@林越 做技能，助理也接了一轮）。
+	const team = teamOfChannel(channel.id) !== undefined;
+	if (team && targets.size > 0) {
+		targets.delete(message.from);
+		return [...targets];
+	}
 	// 「我没 @ 人」才让第一个成员接。**判据看正文里有没有 @，不看解析结果**：
 	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个
 	// 不存在的人」变成「叫了房间里第一个人」—— 我会以为刚才那句没人理。
-	if (message.from === OWNER && message.mentions.length === 0 && !hasMentionToken(message.text)) {
+	// 团队频道不走这条：没人 @ 时接话的是助理（`wakeOnAll`），不是上一位发言人 ——
+	// 否则助理和成员各答一遍，同一个问题两套答案。
+	if (!team && message.from === OWNER && message.mentions.length === 0 && !hasMentionToken(message.text)) {
 		// 接上一位说话的：我不 @ 人时叫醒**刚在说话的那个人**，而不是成员表里的第一个。
 		// 这是 dsh「订阅直通」在单会话里的等价物 —— 一件事谁在办，后续就直通给他；
 		// 固定第一个成员的话，我在跟成员乙聊，下一句没 @ 就掉给了成员表里的第一个人（ADR-015）。

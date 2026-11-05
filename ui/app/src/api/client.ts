@@ -114,6 +114,34 @@ export const restartApp = (): Promise<{ ok: true; restarting: true }> =>
 /** 现在生效的模型（`provider/modelId`）。settings.json 里刚加的提供商要重启才进这里。 */
 export const getModels = (): Promise<{ models: string[]; defaultModel: string }> => call("/api/models");
 
+/** 界面偏好（现在只有更新代理）：存在 settings.json，桌面壳下载新版时读它。 */
+export type Preferences = { updateProxy: string };
+
+export const getPreferences = (): Promise<Preferences> => call("/api/preferences");
+
+export const savePreferences = (updateProxy: string): Promise<Preferences> =>
+	call("/api/preferences", { method: "POST", body: JSON.stringify({ updateProxy }) });
+
+/** 第一次打开时选中的那一个（和后端 `app/setup.ts` 的三种一一对应）。 */
+export type SetupChoice = "opus" | "sonnet" | "custom";
+
+export type SetupBody = {
+	choice: SetupChoice;
+	/** 远端接口必填；本机地址可以不填（存成占位符）。 */
+	apiKey: string;
+	/** 只有 `custom` 看这两项。 */
+	baseUrl?: string;
+	model?: string;
+};
+
+/** 只探接口：成功回耗时（毫秒）与它有哪些模型，失败抛出后端那句人话。 */
+export const probeSetup = (body: SetupBody): Promise<{ ok: true; ms: number; models: string[] }> =>
+	call("/api/setup/probe", { method: "POST", body: JSON.stringify(body) });
+
+/** 接上模型：写进 `settings.json`，当场生效。 */
+export const saveSetup = (body: SetupBody): Promise<{ defaultModel: string }> =>
+	call("/api/setup", { method: "POST", body: JSON.stringify(body) });
+
 /** 换某个人的模型（`provider/modelId`；空串 = 跟默认）。当场生效，重启也认。 */
 export const setPersonModel = (slug: string, model: string): Promise<{ model: string }> =>
 	call(`/api/people/${encodeURIComponent(slug)}/model`, { method: "POST", body: JSON.stringify({ model }) });

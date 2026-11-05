@@ -1,5 +1,5 @@
 ---
-name: 知言
+name: Solo
 title: 助理
 team: ""
 ---

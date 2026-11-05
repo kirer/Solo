@@ -16,6 +16,7 @@ import {
 	getChannel,
 	getChannels,
 	getEarlier,
+	getModels,
 	getOrg,
 	getPerson,
 	getPersonTurns,
@@ -58,7 +59,6 @@ export type State = {
 	needMenu: boolean;
 	pluginSheet: boolean;
 	settings: boolean;
-	team: boolean;
 	/** 拉群卡片：填名字、勾人。 */
 	newGroup: boolean;
 	/** 一键重置的确认浮层：设置 → 数据里点开。 */
@@ -75,6 +75,11 @@ export type State = {
 	trail: RightEntry[];
 	/** 右侧栏正在看的那个人（`null` = 看频道本身）。 */
 	person: PersonProfile | null;
+	/**
+	 * 第一次打开的引导：`null` = 不引导。这台机器一只模型都没有时停在 `welcome`，
+	 * 「开始」进 `model`（稿子 10 / 11）；接上模型之后回到聊天，不再出现。
+	 */
+	setupStep: "welcome" | "model" | null;
 };
 
 const THEME_KEY = "solo.theme";
@@ -105,7 +110,6 @@ const initial: State = {
 	needMenu: false,
 	pluginSheet: false,
 	settings: false,
-	team: false,
 	newGroup: false,
 	resetOpen: false,
 	restartOpen: null,
@@ -114,6 +118,7 @@ const initial: State = {
 	pluginView: null,
 	trail: [{ kind: "channel" }],
 	person: null,
+	setupStep: null,
 };
 
 let state: State = initial;
@@ -187,12 +192,37 @@ export function applyOrg(org: Org): void {
 	patch({ workspaceName: org.workspace.name, people: org.people, presence });
 }
 
+/** 引导的两步进出（稿子 10 / 11）。接上模型之后由 `bootstrap` 清掉。 */
+export function setSetupStep(step: "welcome" | "model" | null): void {
+	patch({ setupStep: step });
+}
+
 export async function bootstrap(): Promise<void> {
 	const org = await getOrg();
 	applyOrg(org);
+	// 一台还没接过模型的机器：先引导（稿子 10 / 11）。直接放进来只会得到一个
+	// 「发得出话、但没有一只模型在跑」的界面。列不出来不代表没配，别把人拦在引导里。
+	let configured = true;
+	try {
+		configured = (await getModels()).models.length > 0;
+	} catch {
+		configured = true;
+	}
+	if (!configured) {
+		patch({ ready: true, setupStep: "welcome" });
+		return;
+	}
 	await refreshLists();
-	// 进来不替人选频道：中栏先站着落地页，选不选、进哪个由我定。
+	patch({ setupStep: null });
+	// 首屏是和助理的那个对话（稿子 01）：这一屏本来就能直接说话，
+	// 列表是它的第二屏。没有助理（组织还没建起来）就先停在列表。
+	const assistant = org.people.find((person) => person.assistant === true);
+	const dm = state.channels.find(
+		(channel) => channel.kind === "dm" && assistant !== undefined && channel.title === assistant.label,
+	);
 	patch({ ready: true });
+	if (dm !== undefined) await openChannel(dm.id);
+	else if (assistant !== undefined) await openWithPerson(assistant.slug);
 }
 
 /* ── 频道 ───────────────────────────────────────────────────────────── */
@@ -466,7 +496,6 @@ export function setSettings(open: boolean): void {
 			? {
 					needMenu: false,
 					pluginSheet: false,
-					team: false,
 					newGroup: false,
 					pluginView: null,
 					tasks: { open: false, who: getState().tasks.who },
@@ -475,21 +504,6 @@ export function setSettings(open: boolean): void {
 	});
 }
 
-export function setTeam(open: boolean): void {
-	patch({
-		team: open,
-		...(open
-			? {
-					restartOpen: null,
-					pluginSheet: false,
-					settings: false,
-					newGroup: false,
-					pluginView: null,
-					tasks: { open: false, who: getState().tasks.who },
-				}
-			: {}),
-	});
-}
 
 /** 插件页（左栏那一格，整屏不是浮层）。 */
 export function setPluginSheet(open: boolean): void {
@@ -498,8 +512,7 @@ export function setPluginSheet(open: boolean): void {
 		...(open
 			? {
 					restartOpen: null,
-					team: false,
-					settings: false,
+					// 设置里那一行进插件：回来还落在设置上（插件页的返回就是这一层）。
 					needMenu: false,
 					newGroup: false,
 					pluginView: null,
@@ -530,7 +543,7 @@ export function setRestartOpen(plugin: string | null): void {
 export function setNewGroup(open: boolean): void {
 	patch({
 		newGroup: open,
-		...(open ? { needMenu: false, pluginSheet: false, settings: false, team: false, restartOpen: null } : {}),
+		...(open ? { needMenu: false, pluginSheet: false, settings: false, restartOpen: null } : {}),
 	});
 }
 
@@ -554,13 +567,14 @@ export function openTasks(slug?: string): void {
 		// 还没人跑过、也不在私聊里：挑第一个人，让这一屏一打开就有一列东西可看。
 		state.people.find((actor) => actor.slug !== "owner")?.slug ??
 		null;
-	// 第二屏都是一块占满的整屏：打开一个，其它让路（否则两屏叠着画，互相压住）。
+	// 后台任务是右栏的一态（桌面）或那一层整屏浮层（手机）：右栏必须打开，
+	// 其余整屏让路（§13.3）。
 	patch({
 		tasks: { open: true, who },
+		right: { open: true },
 		needMenu: false,
 		restartOpen: null,
 		pluginView: null,
-		team: false,
 		pluginSheet: false,
 		settings: false,
 	});
@@ -574,12 +588,15 @@ export function setTasksWho(slug: string): void {
 
 export function closeTasks(): void {
 	// 「聊天」那格也走这里：它同时是「离开任何第二屏，回到聊天」。
+	// 手机：任务就是整屏那层浮层，退出它等于收起右栏；桌面：回到资料表，右栏不动。
+	const mobile =
+		typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
 	patch({
 		tasks: { open: false, who: getState().tasks.who },
 		pluginView: null,
 		settings: false,
-		team: false,
 		pluginSheet: false,
+		...(mobile ? { right: { open: false } } : {}),
 	});
 }
 
@@ -589,7 +606,6 @@ export function openPluginView(slug: string): void {
 		pluginView: slug,
 		tasks: { open: false, who: getState().tasks.who },
 		restartOpen: null,
-		team: false,
 		pluginSheet: false,
 		settings: false,
 		needMenu: false,

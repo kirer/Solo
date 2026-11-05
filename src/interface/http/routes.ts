@@ -151,6 +151,35 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			handler: async ({ response }) => json(response, await app.models.list()),
 		},
 		{
+			// 界面偏好（现在只有更新代理）：写进 settings.json，桌面壳下次检查更新时读它。
+			pattern: "/api/preferences",
+			method: "GET",
+			handler: async ({ response }) => json(response, await app.preferences.read()),
+		},
+		{
+			pattern: "/api/preferences",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				return json(response, await app.preferences.save(await readJson<unknown>(request)));
+			},
+		},
+		{
+			// 第一次打开：探一次接口通不通。只探不写，界面拿它画「已连通」。
+			pattern: "/api/setup/probe",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				return json(response, await app.setup.check(await readJson<unknown>(request)));
+			},
+		},
+		{
+			// 第一次打开：把选中的模型写进 `settings.json`，当场生效（ADR-025）。
+			pattern: "/api/setup",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				return json(response, await app.setup.save(await readJson<unknown>(request)));
+			},
+		},
+		{
 			// 一个人的全部档案：界面右上角那个「详情」面板一次要的东西都在这。
 			pattern: "/api/people/:slug",
 			method: "GET",

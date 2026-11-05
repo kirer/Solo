@@ -6,163 +6,49 @@
  */
 
 .frame {
-	/* 78 = 桌面壳里红绿灯那一排（三个 12px 圆 + 间距，从左边 20 起）正好装得下；
-	   图标也跟着大一号，64 那档只有 20px，在 2x 屏上小得像装饰。 */
-	--rail: 78px;
+	/* 一列到底（稿子的手机骨架，桌面上也照这个来）：一屏只放一件事，
+	   列表与对话靠 body[data-pane] 互斥，资料 / 任务 / 设置各占一次整屏。 */
 	display: grid;
-	grid-template-columns: var(--rail) var(--sidebar) minmax(0, 1fr) var(--rightbar);
+	grid-template-columns: minmax(0, 1fr);
 	height: 100dvh;
 	background: var(--ground);
-	/* 收起/展开是整列在滑，不是把内容挤变形：DSH 用 0.3s 的 ease-in-out。 */
-	transition: grid-template-columns 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* 右栏展开时中列让位：0 ↔ 360。用列宽过渡而不是 transform，
-   因为要真的把正文挤窄 —— 盖住的浮层在写长消息时是灾难。 */
-.frame[data-right="open"] {
-	--rightbar: 360px;
+/* 换屏有动画：进来的那一屏淡入、从下面浮 6px（列表 ↔ 对话、整屏页、资料 / 任务）。
+   `display` 由 none 变回来时动画会重跑，所以每次换页都看得见，不用额外加状态。 */
+.sidebar,
+.sheet,
+.page,
+.plugin-page,
+.detail-panel > .prof,
+.detail-panel > .tasks {
+	animation: page-in 220ms var(--ease-line) both;
 }
 
-/* 中等宽度（笔记本分屏那档）：右栏让 60px 出来，正文才不至于一行只放得下六个字。 */
-@media (max-width: 1100px) {
-	.frame[data-right="open"] {
-		--rightbar: 300px;
+@keyframes page-in {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
 	}
 }
 
-/* ── 最左那一列：应用级导航 ───────────────────────────────────────────
- *
- * 微信桌面版那种窄条：一排图标，选中的那格有一块浅底。上半截是两屏（聊天 /
- * 后台任务），下半截是管理（团队 / 插件 / 偏好设置）—— 切屏不是开抽屉，
- * 左边那一格就是位置；管理贴在列底，偶尔才点一次。
- */
-.rail {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 2px;
-	/* 第一格和侧栏那行「聊天」大致同高：两列的头看起来是一条线（它不是品牌区，不画 logo）。
-	   4 + 52/2 = 30；标题在 14..38，中线 26，差 4px —— 图标比字高一点看着更稳。 */
-	padding: 4px 0 14px;
-	background: var(--frame);
-	border-right: 0.5px solid var(--line);
+/* 宽窗口里不给内容铺满整张屏：一列 860 居中，读起来和手机上一样长。 */
+.sidebar,
+.sheet,
+.page,
+.plugin-page,
+.detail-bar,
+.detail-panel {
+	width: 100%;
+	max-width: 860px;
+	margin: 0 auto;
 }
 
-/* 两段：上面是屏，下面是管理。中间的空档靠 `margin-top: auto` 撑开。 */
-.rail-group {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 2px;
-}
-
-.rail-foot {
-	margin-top: auto;
-}
-
-/* 一格只有一枚图标，没有字：名字在 `title` 里，悬停才出来。 */
-.rail-item {
-	position: relative;
-	display: grid;
-	place-items: center;
-	width: 52px;
-	height: 52px;
-	padding: 0;
-	border: 0;
-	border-radius: 12px;
-	background: transparent;
-	color: var(--ink-3);
-	cursor: pointer;
-}
-
-.rail-item svg {
-	width: 28px;
-	height: 28px;
-}
-
-.rail-item:hover {
-	background: var(--hover);
-	color: var(--ink-2);
-}
-
-.rail-item[aria-current="true"] {
-	background: var(--active);
-	color: var(--ink);
-}
-
-/* 悬停才出来的名字：一格只有图标，没有字（78px 塞不下四个汉字）。
-   用 `data-tip` 自己画，不靠 `title` —— 原生提示要等一秒、还带不动画，
-   桌面壳里也不稳。`::after` 是绝对定位，不参与那格的对齐。 */
-.rail-item::after {
-	content: attr(data-tip);
-	position: absolute;
-	left: calc(100% + 10px);
-	top: 50%;
-	z-index: 60;
-	padding: 5px 9px;
-	border: 0.5px solid var(--rule);
-	border-radius: 7px;
-	background: var(--field);
-	box-shadow: 0 4px 14px rgb(0 0 0 / 35%);
-	color: var(--ink);
-	font-family: var(--sans);
-	font-weight: 500;
-	font-size: 12px;
-	line-height: 1;
-	white-space: nowrap;
-	opacity: 0;
-	pointer-events: none;
-	transform: translate(-4px, -50%);
-	transition:
-		opacity 90ms ease 120ms,
-		transform 90ms ease 120ms;
-}
-
-.rail-item:not([data-tip])::after {
-	display: none;
-}
-
-.rail-item:hover::after,
-.rail-item:focus-visible::after {
-	opacity: 1;
-	transform: translate(0, -50%);
-}
-
-/* 在跑人数：贴在图标右上角，不占一行字。 */
-.rail-badge {
-	position: absolute;
-	top: 6px;
-	right: 6px;
-	min-width: 13px;
-	height: 13px;
-	padding: 0 3px;
-	border-radius: var(--r-pill);
-	background: var(--accent);
-	color: var(--ground);
-	font-family: var(--mono);
-	font-size: 9px;
-	line-height: 13px;
-	font-weight: 600;
-	text-align: center;
-}
-
-/* 后台任务是另一屏：它占掉原来「侧栏 + 纸 + 右栏」的位置，不和聊天并存。 */
-/* 除聊天之外的每一屏（任务 / 通讯录 / 插件 / 设置 / 插件自己的页）都是同一条规则：
-   占掉「侧栏 + 纸 + 右栏」，只留最左那列导航，不和聊天并存。 */
-.frame[data-view="tasks"],
-.frame[data-view="team"],
-.frame[data-view="plugins"],
-.frame[data-view="settings"],
-.frame[data-view="plugin"] {
-	grid-template-columns: var(--rail) minmax(0, 1fr);
-}
-
-.frame[data-view="tasks"] .sidebar,
-.frame[data-view="tasks"] .sheet,
-.frame[data-view="tasks"] .detail,
-.frame[data-view="team"] .sidebar,
-.frame[data-view="team"] .sheet,
-.frame[data-view="team"] .detail,
+/* 整屏那几页（插件 / 设置 / 插件自己的页）不和聊天并存。 */
 .frame[data-view="plugins"] .sidebar,
 .frame[data-view="plugins"] .sheet,
 .frame[data-view="plugins"] .detail,
@@ -175,170 +61,294 @@
 	display: none;
 }
 
-/* 第二屏的骨架：左栏是「这一屏有哪些东西」，右栏是选中那一个的正文。
-   左栏 288 = 聊天列表的宽度（--sidebar 的桌面值）：同一个人的脸和名字，在聊天
-   和通讯录里落在同一条竖线上。通讯录的右栏就是空着 —— 在那儿点一行是去私聊，
-   没有「某个人的详情」可看（docs/DESIGN.md §1.5）。 */
+/* 整屏那几页（设置 / 插件 / 插件自己的页）：一列往下读（稿子 05）。
+   宽窗口里仍是 860 居中（见文件上方 `.page` 的公共规则）。 */
 .page {
-	/* 写死 288 而不是用 --sidebar：侧栏收起时聊天列表会变窄，通讯录不该跟着缩。 */
-	--page-list: 288px;
-	display: grid;
-	grid-template-columns: var(--page-list) minmax(0, 1fr);
+	display: flex;
+	flex-direction: column;
 	min-width: 0;
 	min-height: 0;
 	height: 100%;
 	background: var(--ground);
 }
 
-.page-side {
-	display: flex;
-	flex-direction: column;
-	min-width: 0;
-	min-height: 0;
-	border-right: 0.5px solid var(--line);
-	background: var(--frame);
-}
-
-.page-side-head,
-.page-main-head {
+/* 整屏页的抬头：返回 + 标题 + 右侧动作。和聊天那行同一个高度。 */
+.nav {
 	display: flex;
 	flex: none;
 	align-items: center;
-	gap: 8px;
+	gap: 6px;
 	height: 56px;
+	padding: 0 12px 0 8px;
 }
 
-/* 和聊天那行抬头同一套尺寸：两屏来回切时，头不该跳一下。
-   靠上、不居中：标题和导航第一格的上沿在同一条线上，屏幕顶上不空一条。 */
-.page-side-head {
-	height: 56px;
-	/* 14 / 16 是量出来的：聊天标题在 6（侧栏内边距）+ 8 上、8 + 8 左，
-	   四个屏的标题要落在同一条竖线和同一条基线上。 */
-	padding: 14px 8px 8px 16px;
-	align-items: flex-start;
-}
-
-/* 左栏标题 = 聊天标题：同一个字族、同一个字号、同一条基线；右栏抬头仍是 15，
-   它是正文的标题，不是一列清单的名字。 */
-.page-side-head .page-title {
+.nav-title {
+	margin: 0 auto 0 2px;
 	font-family: var(--brand);
 	font-size: 18px;
 	line-height: 24px;
 	font-weight: 600;
 	letter-spacing: 0.04em;
-}
-
-.page-main-head {
-	padding: 0 28px;
-	border-bottom: 0.5px solid var(--line);
-}
-
-.page-title {
-	margin: 0;
-	font-size: 15px;
-	line-height: 22px;
-	font-weight: 600;
 	color: var(--ink);
 }
 
-.page-side-body {
+.set-scroll {
+	display: flex;
 	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 18px;
 	min-height: 0;
 	overflow-y: auto;
-	padding: 2px 8px 12px;
+	padding: 20px 16px calc(32px + env(safe-area-inset-bottom));
+	overscroll-behavior: contain;
 }
 
-.page-main {
+.set-group {
 	display: flex;
 	flex-direction: column;
-	min-width: 0;
-	min-height: 0;
-	background: var(--ground);
+	gap: 8px;
 }
 
-/* 正文限宽：一行不留出一千像素的空白，读起来才不飘。 */
-.page-main-body {
+.set-title {
+	margin: 0;
+	padding-left: 4px;
+	font-size: 11.5px;
+	line-height: 16px;
+	font-weight: 500;
+	color: var(--ink-3);
+}
+
+.set-card {
+	overflow: hidden;
+	border: 0.5px solid var(--line);
+	border-radius: 14px;
+	background: var(--card);
+}
+
+/* 一行：左主右值。可点的用 button，不可点的用 div.is-static —— 长得一样。 */
+.set-row {
+	position: relative;
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	width: 100%;
+	min-height: 53px;
+	padding: 9px 14px;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: start;
+	cursor: pointer;
+	transition: background-color 120ms ease;
+}
+
+.set-row.is-static {
+	cursor: default;
+}
+
+button.set-row:hover,
+button.set-row:focus-visible {
+	background: var(--hover);
+}
+
+.set-row.is-danger .set-label {
+	color: var(--danger, #ff6b6b);
+}
+
+/* 行间细线从图标右边起，和稿子 05 / 06 一样不穿到图标下面。 */
+.set-row + .set-row::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 52px;
+	height: 0.5px;
+	background: var(--rule);
+}
+
+/* 图标格：27 的方块（稿子 05 的 `.sico`）。 */
+.set-ico {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 27px;
+	height: 27px;
+	border-radius: 7px;
+	background: var(--raised);
+	color: var(--ink-2);
+}
+
+.set-ico svg {
+	width: 16px;
+	height: 16px;
+}
+
+.set-row.is-danger .set-ico {
+	color: var(--danger, #ff6b6b);
+}
+
+.set-main {
+	display: flex;
 	flex: 1 1 auto;
-	min-height: 0;
-	max-width: 720px;
-	overflow-y: auto;
-	padding: 20px 28px 32px;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
 }
 
-/* 右栏头上的动作（开关 / 删除）贴右。 */
-.page-main-acts {
+.set-label {
+	font-size: 14.5px;
+	line-height: 20px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.set-desc {
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.set-chev {
+	display: grid;
+	flex: none;
+	place-items: center;
+	color: var(--ink-3);
+}
+
+.set-cell,
+.set-tools {
+	position: relative;
+}
+
+/* 卡里的第二条起：细线从图标右边起（和行间线同一个起点）。 */
+.set-cell::before,
+.set-tools::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 52px;
+	height: 0.5px;
+	background: var(--rule);
+}
+
+.set-cell {
+	padding: 12px 14px;
+}
+
+/* 插件那一节现在单独成卡（在「插件」上面）：整张卡里只有它时，顶上不该多一条线。 */
+.set-card > .set-cell:first-child::before {
+	display: none;
+}
+
+/* 更新代理：一行输入 + 一颗保存；说明在下面一行小字里。 */
+.set-proxy {
+	display: flex;
+	flex-direction: column;
+}
+
+.set-save {
+	flex: none;
+	height: 28px;
+	padding: 0 12px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--hover);
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+	transition: background-color 120ms ease, color 120ms ease;
+}
+
+.set-save:hover:not(:disabled) {
+	background: var(--raised);
+	color: var(--ink);
+}
+
+.set-save:disabled {
+	opacity: 0.4;
+	cursor: default;
+}
+
+.set-note {
+	margin: 0;
+	padding: 0 14px 12px;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.set-note[data-error="true"] {
+	color: var(--danger, #ff6b6b);
+}
+
+/* 插件注册的应用级入口（`rail.item`）：这一列里它是一行，不是一颗方图标。 */
+.set-tools:empty {
+	display: none;
+}
+
+.set-tools .rail-item {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 11px;
+	width: 100%;
+	min-height: 53px;
+	height: auto;
+	padding: 9px 14px;
+	border-radius: 0;
+}
+
+/* 插件注册的入口和上面几行同一套：图标也住一枚 27 的方块里。 */
+.set-tools .rail-item svg {
+	flex: none;
+	width: 27px;
+	height: 27px;
+	padding: 5.5px;
+	border-radius: 7px;
+	background: var(--raised);
+	color: var(--ink-2);
+}
+
+.set-tools .rail-item::after {
+	content: attr(data-tip);
+	position: static;
+	transform: none;
+	opacity: 1;
+	background: none;
+	color: var(--ink);
+	font-size: 14.5px;
+	line-height: 20px;
+	font-weight: 500;
+}
+
+/* 三选一：和稿子 05 的胶囊分段一样。 */
+.seg {
 	display: flex;
 	flex: none;
-	align-items: center;
-	gap: 10px;
-	margin-left: auto;
+	gap: 2px;
+	padding: 2px;
+	border-radius: 9px;
+	background: var(--frame);
 }
 
-/* 右栏空着 / 没东西可选的那一屏。空就是空，不摆假内容。 */
-.page-main-blank {
-	display: grid;
-	flex: 1 1 auto;
-	place-items: center;
-	padding: 24px;
-}
-
-.page-main-blank p {
-	max-width: 360px;
-	margin: 0;
-	font-size: 13px;
-	line-height: 1.7;
-	color: var(--ink-3);
-	text-align: center;
-}
-
-.page-hint {
-	margin: 0;
-	padding: 10px;
+.seg-item {
+	padding: 4px 10px;
+	border: 0;
+	border-radius: 7px;
+	background: none;
+	color: var(--ink-2);
+	font: inherit;
 	font-size: 12px;
-	line-height: 17px;
-	color: var(--ink-3);
+	line-height: 16px;
+	cursor: pointer;
 }
 
-/* 手机：一屏只剩一列，左栏折到上面（清单还能滚），右栏在下面。 */
-@media (max-width: 640px) {
-	.page {
-		grid-template-columns: minmax(0, 1fr);
-		grid-template-rows: auto minmax(0, 1fr);
-	}
-
-	.page-side {
-		border-right: 0;
-		border-bottom: 0.5px solid var(--line);
-	}
-
-	/* 清单按内容高，最多占四成多一点；再多就在自己那一格里滚，不把正文顶出屏幕。
-	   不写 `max-height: 46%`：百分比会拿「刚被它撑出来的那一行」当基准，越算越小。 */
-	.page-side-body {
-		max-height: 42vh;
-	}
-
-	/* 刘海屏：标题让出状态栏，和聊天那边同一个口径（`.side-logo`）。 */
-	.page-side-head {
-		height: calc(56px + env(safe-area-inset-top));
-		padding-top: calc(14px + env(safe-area-inset-top));
-	}
-
-	.page-main-head {
-		padding: 0 16px;
-	}
-
-	.page-main-body {
-		padding: 16px;
-	}
-
-	/* 通讯录右栏本来就空着，手机上不必再分半屏给它。 */
-	.page-single {
-		grid-template-rows: minmax(0, 1fr);
-	}
-
-	.page-single .page-main {
-		display: none;
-	}
+.seg-item[aria-checked="true"] {
+	background: var(--active);
+	color: var(--ink);
 }
 
 .plugin-page {
@@ -358,9 +368,7 @@
 /* 手机上最左那列是底部一条（见 640px 那段），它不再占一列：
    所有第二屏（含插件自己的页）都只剩内容那一列。 */
 @media (max-width: 640px) {
-	.frame[data-view="tasks"],
-	.frame[data-view="team"],
-	.frame[data-view="plugins"],
+			.frame[data-view="plugins"],
 	.frame[data-view="settings"],
 	.frame[data-view="plugin"] {
 		grid-template-columns: minmax(0, 1fr);
@@ -371,12 +379,6 @@
 	.frame {
 		transition: none;
 	}
-}
-
-/* 分界线只有一条：侧栏右侧 0.5px。发丝线在高 DPI 上才是「高级感」的来源，
-   1px 会显得像表格边框。 */
-.sidebar {
-	border-right: 0.5px solid var(--line);
 }
 
 /* 「找你」清单：一张窄卡，不是弹窗。每条 3 行压成 2 行（上面「频道 · 谁」，
@@ -462,11 +464,15 @@
    标题靠上、不居中 —— 和导航第一格的上沿齐平，四个屏的头都用这一条线。 */
 .side-logo {
 	display: flex;
-	align-items: flex-start;
-	gap: 8px;
+	align-items: center;
+	gap: 6px;
 	height: 56px;
-	padding: 8px 0 8px 8px;
+	padding: 0 0 0 6px;
 	flex: none;
+}
+
+.side-back {
+	margin-right: 2px;
 }
 
 .side-grow {
@@ -474,7 +480,8 @@
 	min-width: 0;
 }
 
-.brand-name {
+.brand-name,
+.side-title {
 	font-family: var(--brand);
 	font-size: 18px;
 	line-height: 24px;
@@ -565,6 +572,22 @@
 	background: var(--frame);
 }
 
+/* 一屏只有一件事（稿子的手机骨架，桌面上也一样）：列表与对话叠在同一格里，
+   body[data-pane] 决定谁可见。 */
+.sidebar,
+.sheet {
+	grid-column: 1;
+	grid-row: 1;
+}
+
+body[data-pane="list"] .sheet {
+	display: none;
+}
+
+body[data-pane="chat"] .sidebar {
+	display: none;
+}
+
 /* 列表脚下只剩插件的地盘（团队 / 插件 / 设置已经搬到最左那列）。 */
 .side-foot {
 	display: flex;
@@ -626,15 +649,68 @@
 	color: var(--accent);
 }
 
+/* 搜索：会话列表头顶那一行（稿子 02）。 */
+.side-search {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 7px;
+	height: 36px;
+	margin: 2px 2px 8px;
+	padding: 0 11px;
+	border-radius: 10px;
+	background: var(--hover);
+	color: var(--ink-3);
+}
+
+.side-search input {
+	flex: 1 1 auto;
+	min-width: 0;
+	border: 0;
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	font-size: 13.5px;
+	line-height: 20px;
+	outline: none;
+}
+
+.side-search input::placeholder {
+	color: var(--ink-3);
+}
+
+/* 搜不到时说一句，别留一片空白让人以为列表加载坏了。 */
+.side-empty {
+	margin: 18px 12px;
+	color: var(--ink-3);
+	font-size: 12.5px;
+	line-height: 18px;
+	text-align: center;
+}
+
 .channels {
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
 	display: flex;
 	flex-direction: column;
-	gap: 1px;
 	padding-bottom: 8px;
 	scrollbar-gutter: stable;
+}
+
+/* 一行与一行之间一条内缩的细线（稿子 02：从文字左边起，不切头像）。 */
+.ch {
+	position: relative;
+}
+
+.ch + .ch::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	right: 10px;
+	left: 54px;
+	height: 0.5px;
+	background: var(--line);
 }
 
 .ch {
@@ -784,26 +860,57 @@
 .sheet {
 	display: grid;
 	grid-template-rows: auto minmax(0, 1fr) auto auto;
+	/* 隐式列默认是 `auto`（= max-content）：引用条里一行 nowrap 的引文就能把整张纸
+	   撑到 770px，手机上所有消息被裁掉右半截。列宽必须钉死在可用宽度上。 */
+	grid-template-columns: minmax(0, 1fr);
 	min-width: 0;
 	min-height: 0;
+	/* 窗口窄、右栏又开着时中列只剩几十像素：空频道那张卡有 `min-content` 宽，
+	   不裁就会画到右栏上面（实测）。裁掉的是溢出，不是内容 —— 正文自己有滚动。 */
+	overflow: hidden;
+	/* 好让下面那条容器查询按「中列」而不是「窗口」判断。 */
+	container-type: inline-size;
 	background: var(--ground);
 }
 
+/* 三格：左门 / 居中的名字 / 右门。左右各 1fr，名字才是真居中（稿子 01 / 04）。 */
 .sheet-head {
-	display: flex;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
 	align-items: center;
-	gap: 10px;
+	column-gap: 6px;
 	min-width: 0;
 	height: 56px;
-	padding: 0 16px 0 20px;
-	border-bottom: 0.5px solid var(--line);
+	padding: 0 10px;
+	/* 标题栏下面不画线（稿子 01）：那一行不是一张卡的头，留一条线只是把屏幕切开。 */
 	flex: none;
 }
 
+.sheet-head-left,
+.sheet-head-right {
+	display: flex;
+	align-items: center;
+	min-width: 0;
+}
+
+.sheet-head-right {
+	justify-content: flex-end;
+	gap: 2px;
+}
+
+.sheet-head-main {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	min-width: 0;
+	gap: 1px;
+	text-align: center;
+}
+
 .pane-title {
-	font-size: 15px;
-	line-height: 20px;
-	font-weight: 500;
+	font-size: 17px;
+	line-height: 22px;
+	font-weight: 600;
 	letter-spacing: 0;
 	white-space: nowrap;
 	overflow: hidden;
@@ -818,17 +925,26 @@
 	overflow: hidden;
 	white-space: nowrap;
 	text-overflow: ellipsis;
-	font-size: 12px;
-	line-height: 16px;
+	gap: 6px;
+	font-size: 11.5px;
+	line-height: 15px;
 	color: var(--ink-3);
-	align-self: center;
-	padding-top: 2px;
+	justify-content: center;
 }
 
-/* 返回键只在手机上有意义：那里一次只显示一格，返回 = 回到会话列表。
-   桌面侧栏一直在，点它是空操作。 */
-.sheet-back {
-	display: none;
+/* 状态行前面那颗小灯：和稿子 03 / 04 的 presence 一样。 */
+.presence-dot {
+	flex: none;
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+
+.sheet-back,
+.side-back {
+	display: inline-grid;
 }
 
 /* 没选频道的落地页：一个标、一句话、一句提示。和空频道卡片同一个语气
@@ -1306,57 +1422,6 @@
 @media (max-width: 640px) {
 	.frame {
 		grid-template-columns: minmax(0, 1fr);
-		/* 最左那列在手机上是底部一条，不压在内容上：给框让出同等高度。 */
-		padding-bottom: calc(56px + env(safe-area-inset-bottom));
-	}
-
-	/* 最左那列在手机上是**底部一条**：五格图标排一行，聊天 / 后台任务在左，
-	   团队 / 插件 / 设置靠右。它原来是整列藏起来的（第二屏自带返回键），
-	   管理三格搬进来之后藏了就没处点，所以改成横条。 */
-	.rail {
-		position: fixed;
-		z-index: 40;
-		inset: auto 0 0 0;
-		flex-direction: row;
-		gap: 2px;
-		height: calc(56px + env(safe-area-inset-bottom));
-		padding: 0 calc(6px + env(safe-area-inset-right)) env(safe-area-inset-bottom)
-			calc(6px + env(safe-area-inset-left));
-		border-right: 0;
-		border-top: 0.5px solid var(--line);
-	}
-
-	.rail-group {
-		flex-direction: row;
-	}
-
-	.rail-foot {
-		margin-top: 0;
-		margin-left: auto;
-	}
-
-	.rail-item {
-		width: 46px;
-		height: 46px;
-		border-radius: 10px;
-	}
-
-	.rail-item svg {
-		width: 24px;
-		height: 24px;
-	}
-
-	/* 底栏里的提示朝上出：朝右会跑出屏幕。 */
-	.rail-item::after {
-		left: 50%;
-		top: auto;
-		bottom: calc(100% + 8px);
-		transform: translate(-50%, 4px);
-	}
-
-	.rail-item:hover::after,
-	.rail-item:focus-visible::after {
-		transform: translate(-50%, 0);
 	}
 
 	/* 全面屏：`viewport-fit=cover` 声明了就得让出刘海与底部手势条，否则标题行
@@ -1368,10 +1433,16 @@
 	}
 
 	.sheet-head {
-		padding: env(safe-area-inset-top) calc(12px + env(safe-area-inset-right)) 0
-			calc(16px + env(safe-area-inset-left));
-		height: calc(56px + env(safe-area-inset-top));
+		height: calc(52px + env(safe-area-inset-top));
+		padding: env(safe-area-inset-top) calc(10px + env(safe-area-inset-right)) 0
+			calc(10px + env(safe-area-inset-left));
 		gap: 6px;
+	}
+
+	.nav {
+		height: calc(52px + env(safe-area-inset-top));
+		padding: env(safe-area-inset-top) calc(10px + env(safe-area-inset-right)) 0
+			calc(10px + env(safe-area-inset-left));
 	}
 
 	/* 手机上一次只占满那一格：两张都放在同一格，靠 body[data-pane] 决定谁可见。 */
@@ -1412,21 +1483,6 @@
 		display: inline-grid;
 	}
 
-	/* 手机上标题必须留在这一行：侧栏那句产品名在另一个区域（列表态）里，
-	   进了会话就看不见了 —— 不留标题的话返回键旁边一片空白。 */
-	.sheet-head {
-		height: 48px;
-		padding: 0 10px 0 8px;
-	}
-
-	.pane-title {
-		display: block;
-	}
-
-	.sheet-sub {
-		display: none;
-	}
-
 	.team {
 		padding: 0;
 	}
@@ -1445,16 +1501,18 @@
 	}
 }
 
-/* 右侧栏 = 第四列（第一列是导航）。列宽由 --rightbar 过渡，内容自己滑进来（见 .detail-panel > * 的动画）。 */
+/* 右侧栏 = 桌面上的浮层（≥641 固定 372，见上方；≤640 整屏）。里面内容自己滑进来
+   （见 .detail-panel > * 的动画）。 */
 .detail {
-	grid-column: 4;
-	grid-row: 1;
+	/* 资料 / 后台任务是一整屏（稿子 06 / 07 / 23），两端同一层：盖住底下那一屏，
+	   不占列、不挤压 —— 宽窗口里内容还是 860 居中（见 `.detail-panel` 上面那条规则）。 */
+	position: fixed;
+	inset: 0;
+	z-index: 60;
 	min-width: 0;
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
-	border-left: 0.5px solid var(--line);
-	/* 和左栏同一块底：两条边栏是一层，中间那张纸才是内容。 */
 	background: var(--frame);
 }
 
@@ -1467,15 +1525,8 @@
 /* 桌面上这一栏由顶栏那颗「详情」开关，栏里不再留收起键：没有可返回的层级时，
    这条 56 的抬头整条不画（空着一条横线像漏了东西）。手机上它是整屏浮层，
    必须留一个出口，所以只在宽屏藏掉关闭键与空抬头。 */
-@media (min-width: 641px) {
-	.detail-bar:not(:has(.detail-back)) {
-		display: none;
-	}
-
-	#detail-close {
-		display: none;
-	}
-}
+/* 栏顶那颗 × 一直在：窗口窄的时候顶栏的「详情」会被中列挤掉，
+   收起键不能只挂在顶栏上（实测）。 */
 
 /* 顶栏和主列标题行同高（56），这样两条横线接得上。 */
 .detail-bar {
@@ -1485,7 +1536,6 @@
 	align-items: center;
 	gap: 8px;
 	padding: 0 8px 0 10px;
-	border-bottom: 0.5px solid var(--line);
 }
 
 /* tabindex=-1 只是为了能接焦点（Esc/读屏），不是可点控件 —— 不画焦点环。 */
@@ -1940,8 +1990,7 @@
 }
 
 @media (max-width: 640px) {
-	/* 手机上「右边一条」只有 390px 宽，直接铺满整屏才放得下提示词：
-	   退回浮层，列宽不参与（--rightbar 在手机上是 0）。 */
+	/* 手机上「右边一条」只有 390px 宽，直接铺满整屏才放得下提示词。 */
 	.detail {
 		position: fixed;
 		inset: 0;
@@ -2034,14 +2083,18 @@
 /* 一行一个设置：左边标题 + 说明，右边控件。分隔线只画在行与行之间。 */
 .settings-row {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: 20px;
+	gap: 12px 20px;
 	padding: 16px 0;
 	border-bottom: 0.5px solid var(--line);
 }
 
+/* 插件往设置里塞的行也在这一列宽里（以前是 720 的正文栏）：控件放不下就换一行，
+   别把左边的说明挤成一字一行。 */
 .settings-row-main {
 	display: flex;
+	flex: 1 1 240px;
 	flex-direction: column;
 	gap: 4px;
 	min-width: 0;
@@ -2833,21 +2886,15 @@ html[data-shell="desktop"][data-os="darwin"] .sidebar {
 html[data-shell="desktop"][data-os="darwin"] .side-logo {
 	height: 56px;
 	align-items: center;
+	padding-left: 84px;
 	-webkit-app-region: drag;
 }
 
-/* 最左那列顶上仍让给三个圆钮（14 顶距 + 12 的钮 + 余量），导航从 32 开始 ——
-   不能让第一格压到红绿灯上。 */
-html[data-shell="desktop"][data-os="darwin"] .rail {
-	padding-top: 32px;
-	-webkit-app-region: drag;
-}
-
-html[data-shell="desktop"][data-os="darwin"] .rail-item {
-	-webkit-app-region: no-drag;
-}
-
-html[data-shell="desktop"][data-os="darwin"] .sheet-head {
+/* 红绿灯现在压在每一屏的抬头左边（没有最左那一列了）：让出它们那一截。 */
+html[data-shell="desktop"][data-os="darwin"] .sheet-head,
+html[data-shell="desktop"][data-os="darwin"] .nav,
+html[data-shell="desktop"][data-os="darwin"] .detail-bar {
+	padding-left: 84px;
 	-webkit-app-region: drag;
 }
 
@@ -2856,7 +2903,9 @@ html[data-shell="desktop"][data-os="darwin"] .side-logo .icon-btn,
 html[data-shell="desktop"][data-os="darwin"] .sheet-head button,
 html[data-shell="desktop"][data-os="darwin"] .sheet-head a,
 html[data-shell="desktop"][data-os="darwin"] .sheet-head .need-anchor,
-html[data-shell="desktop"][data-os="darwin"] .sheet-head .menu {
+html[data-shell="desktop"][data-os="darwin"] .sheet-head .menu,
+html[data-shell="desktop"][data-os="darwin"] .nav button,
+html[data-shell="desktop"][data-os="darwin"] .detail-bar button {
 	-webkit-app-region: no-drag;
 }
 
@@ -2933,15 +2982,463 @@ html[data-shell="desktop"][data-os="win32"] .titlebar-pop {
 	-webkit-app-region: no-drag;
 }
 
-/* 右栏原本写死第 1 行；Windows 多了一条标题带，整列下移到第 2 行。 */
-html[data-shell="desktop"][data-os="win32"] .detail {
+/* Windows 多了一条标题带：列表与对话都下移到第 2 行。 */
+html[data-shell="desktop"][data-os="win32"] .sidebar,
+html[data-shell="desktop"][data-os="win32"] .sheet,
+html[data-shell="desktop"][data-os="win32"] .page,
+html[data-shell="desktop"][data-os="win32"] .plugin-page {
 	grid-row: 2;
 }
 
-/* 窗口最窄也有 960px，这条只是兜底：手机断点把侧栏与纸显式放在第 1 行。 */
+/* ── 右栏的资料表（docs/DESIGN.md §13.2） ──────────────────────────────
+ *
+ * 一张平铺的表，顺序固定；桌面上 372px，手机上整屏。层级只靠字号、灰阶和一条
+ * 0.5px 的线：身份 → 统计 → 分组卡片（模型 / 预置词 / 记忆 / 技能 / 后台任务）。
+ */
+
+.detail-title {
+	margin: 0;
+	font-size: 14.5px;
+	line-height: 20px;
+	font-weight: 600;
+	color: var(--ink);
+}
+
+.prof {
+	flex: 1;
+	min-height: 0;
+	overflow: auto;
+	overscroll-behavior: contain;
+	padding: 0 16px calc(20px + env(safe-area-inset-bottom));
+}
+
+.prof-empty {
+	margin: 0;
+	padding: 16px;
+	font-size: 12.5px;
+	line-height: 1.7;
+	color: var(--ink-3);
+}
+
+/* 身份一栏居中（稿子 06 / 08）：大头像、名字、身份、一行统计。 */
+.prof-who {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 8px 20px 0;
+	text-align: center;
+}
+
+.prof-av {
+	display: block;
+	flex: none;
+	width: 72px;
+	height: 72px;
+	border-radius: 22px;
+	overflow: hidden;
+	box-shadow: 0 0 0 0.5px var(--line);
+}
+
+.prof-av svg,
+.prof-av img {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.prof-name {
+	max-width: 100%;
+	margin-top: 12px;
+	font-size: 20px;
+	line-height: 26px;
+	font-weight: 600;
+	color: var(--ink);
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.prof-role {
+	max-width: 100%;
+	margin-top: 3px;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+/* 统计行只写字和一条竖线，不做仪表盘。 */
+.prof-stats {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	margin-top: 10px;
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.prof-stats b {
+	font-weight: 500;
+	color: var(--ink-2);
+}
+
+.prof-stats i {
+	width: 1px;
+	height: 9px;
+	background: var(--line);
+}
+
+.prof-card {
+	margin-top: 16px;
+	border-radius: 11px;
+	background: var(--card);
+	box-shadow: inset 0 0 0 0.5px var(--rule);
+	overflow: hidden;
+}
+
+.prof-row {
+	display: flex;
+	align-items: center;
+	gap: 11px;
+	width: 100%;
+	min-height: 53px;
+	padding: 9px 14px;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	text-align: left;
+	cursor: default;
+}
+
+button.prof-row {
+	cursor: pointer;
+	transition: background-color 110ms ease;
+}
+
+button.prof-row:hover {
+	background: var(--hover);
+}
+
+/* 行间细线从左缘 53px 起（27 的图标格 + 11 的间距 + 14 的内边距），不穿到图标下面。 */
+.prof-row + .prof-row {
+	position: relative;
+}
+
+.prof-row + .prof-row::before {
+	content: "";
+	position: absolute;
+	top: 0;
+	right: 0;
+	left: 52px;
+	height: 0.5px;
+	background: var(--rule);
+}
+
+/* 图标是一枚 27 的方块（稿子 06 的 `.sico`），不是一枚裸线稿。 */
+.prof-row-ico {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 27px;
+	height: 27px;
+	border-radius: 7px;
+	background: var(--raised);
+	color: var(--ink-2);
+}
+
+.prof-row-ico svg {
+	width: 16px;
+	height: 16px;
+}
+
+.prof-row-main {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	flex: 1;
+}
+
+.prof-row-title {
+	font-size: 14.5px;
+	line-height: 20px;
+	color: var(--ink);
+}
+
+.prof-row-sub {
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.prof-row-val {
+	flex: none;
+	max-width: 45%;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	font-size: 12.5px;
+	line-height: 18px;
+	color: var(--ink-3);
+}
+
+.prof-row-val[data-mono="true"] {
+	font-family: var(--mono);
+	font-size: 11px;
+}
+
+.prof-chev {
+	flex: none;
+	color: var(--ink-3);
+	opacity: 0.7;
+	transition: transform 140ms var(--ease-line);
+}
+
+.prof-chev[data-open="true"] {
+	transform: rotate(90deg);
+}
+
+/* 展开的那一段在卡片里面：一条 0.5px 的线隔开，不另起一张卡。 */
+.prof-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 10px 12px 12px;
+	border-top: 0.5px solid var(--rule);
+	animation: prof-open 160ms var(--ease-line) both;
+}
+
+@keyframes prof-open {
+	from {
+		opacity: 0;
+		transform: translateY(-2px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+.prof-note {
+	margin: 0;
+	font-size: 11.5px;
+	line-height: 17px;
+	color: var(--ink-3);
+}
+
+.prof-doc {
+	max-height: 280px;
+	overflow: auto;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	font-size: 12.5px;
+	line-height: 20px;
+	color: var(--ink-2);
+}
+
+.prof-item {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 7px 8px;
+	border-radius: 8px;
+	background: var(--hover);
+}
+
+.prof-item-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.prof-item-grow {
+	flex: 1;
+}
+
+.prof-item-name {
+	font-size: 12.5px;
+	line-height: 18px;
+	font-weight: 500;
+	color: var(--ink);
+}
+
+.prof-item-k {
+	font-family: var(--mono);
+	font-size: 10.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.prof-item-sub {
+	font-size: 11.5px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.prof-item-body {
+	font-size: 12.5px;
+	line-height: 19px;
+	color: var(--ink-2);
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.prof-item-more {
+	position: relative;
+	width: 22px;
+	height: 20px;
+	padding: 0;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--ink-3);
+	font-size: 14px;
+	line-height: 20px;
+	cursor: pointer;
+}
+
+.prof-item-more:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.prof-item-menu {
+	position: absolute;
+	right: 8px;
+	z-index: 5;
+	display: flex;
+	flex-direction: column;
+	min-width: 130px;
+	padding: 4px;
+	border: 0.5px solid var(--rule);
+	border-radius: 9px;
+	background: var(--field);
+	box-shadow: var(--shadow);
+	transform: translateY(20px);
+}
+
+.prof-item-menu button {
+	padding: 6px 8px;
+	border: 0;
+	border-radius: 6px;
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 12.5px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.prof-item-menu button:hover {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.prof-item-del {
+	color: var(--danger) !important;
+}
+
+.prof-add {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.prof-add textarea {
+	width: 100%;
+	padding: 8px 10px;
+	border: 0.5px solid var(--rule);
+	border-radius: 9px;
+	background: var(--ground);
+	color: var(--ink);
+	font: inherit;
+	font-size: 12.5px;
+	line-height: 18px;
+	resize: vertical;
+}
+
+.prof-add-btn {
+	align-self: flex-end;
+	padding: 5px 12px;
+	border: 0;
+	border-radius: var(--r-pill);
+	background: var(--active);
+	color: var(--ink);
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.prof-add-btn:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+/* 成员卡：一行四格，头像 52，名字在下面（稿子 08）。 */
+.prof-grid {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 16px 8px;
+	padding: 14px 8px;
+}
+
+.prof-cell {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	font: inherit;
+	cursor: pointer;
+}
+
+.prof-cell.is-static {
+	cursor: default;
+}
+
+.prof-cell-av {
+	display: block;
+	flex: none;
+	width: 52px;
+	height: 52px;
+	border-radius: 30%;
+	overflow: hidden;
+	box-shadow: 0 0 0 0.5px var(--line);
+}
+
+.prof-cell-av svg,
+.prof-cell-av img {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.prof-cell-name {
+	max-width: 100%;
+	overflow: hidden;
+	font-size: 12.5px;
+	line-height: 17px;
+	font-weight: 500;
+	color: var(--ink);
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.detail-back ~ .detail-title {
+	margin-left: -4px;
+}
+
 @media (max-width: 640px) {
-	html[data-shell="desktop"][data-os="win32"] .sidebar,
-	html[data-shell="desktop"][data-os="win32"] .sheet {
-		grid-row: 2;
+	.prof {
+		padding: 16px 16px calc(32px + env(safe-area-inset-bottom));
 	}
 }

@@ -5,28 +5,49 @@
  * `<appRoot>/settings.json`，「获取可用模型」打一次 `POST /api/p/models/probe`。
  * 这里只写文件；写完之后内核会在下一次读模型时把它就地装进注册表（ADR-025），不用重启。
  *
- * 版式借的是设置页的公共样式（`.settings-row` / `.settings-desc`，见 DESIGN §1.5）：
- * 一行一个设置、左标题右控件，卡片本身只画边框，不再自带标题。
+ * 版式借的是设置页的公共样式（`.settings-row`，见 DESIGN §1.5）：
+ * 一行一个设置、左标题右控件，卡片本身只画边框，不再自带标题；提供商收起成一行，
+ * 点开才展开表单。
  */
 export default {
 	id: "模型管理",
 
 	style: `
-		.pm { display: flex; flex-direction: column; }
+		/* 宿主那一格有 12/14 的内边距；这一条自己铺满整张卡，收起时就是一行设置。 */
+		.pm { display: flex; flex-direction: column; margin: -12px -14px; }
+		.pm-panel { padding: 0 14px 14px; }
+		.pm-cur {
+			margin-left: auto; overflow: hidden; max-width: 60%;
+			font-size: 12.5px; line-height: 18px; color: var(--ink-3);
+			text-overflow: ellipsis; white-space: nowrap;
+		}
 		/* 第一行自带一条上线：正文说明和设置行之间要有一条分界，不能只有行间线。 */
-		.pm-default { margin-top: 18px; border-top: 0.5px solid var(--line); }
+		/* 默认模型：一行放下，左标题右下拉（全屏设置里纵向空间最贵）。 */
+		.pm-default { gap: 12px; padding: 2px 0 14px; box-shadow: 0 0.5px 0 var(--line); flex-wrap: nowrap; }
+		.pm-default .settings-row-main { flex: 0 0 auto; }
+		.pm-default .settings-row-ctl { flex: 1 1 auto; min-width: 0; }
+		.pm-default .pm-select { width: 100%; max-width: none; }
 		.pm-select {
 			height: 36px; padding: 0 34px 0 12px; max-width: 280px;
 			border: 0.5px solid var(--line); border-radius: 10px;
 			background: var(--ground); color: var(--ink); font: inherit; font-size: 13px;
 		}
-		.pm-list { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+		.pm-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 		.pm-card {
 			border: 0.5px solid var(--line); border-radius: 12px; background: var(--ground);
 			transition: border-color 140ms ease;
 		}
 		.pm-card[data-open="true"] { border-color: color-mix(in oklab, var(--ink) 24%, var(--line)); }
-		.pm-row { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 0 12px 0 16px; }
+		/* 收起时只有一行：名字 + 状态 + 展开箭头。整行可点。 */
+		.pm-row {
+			display: flex; align-items: center; gap: 10px; width: 100%;
+			min-height: 52px; padding: 0 12px 0 16px;
+			border: 0; background: transparent; color: inherit; font: inherit; text-align: left;
+			cursor: pointer; transition: background-color 120ms ease;
+		}
+		.pm-row:hover { background: var(--hover); }
+		.pm-chev { flex: none; color: var(--ink-3); transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1); }
+		.pm-card[data-open="true"] .pm-chev { transform: rotate(90deg); }
 		.pm-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
 		.pm-dot[data-ok="true"] { background: #3fa66b; }
 		.pm-name { font-size: 14px; font-weight: 500; color: var(--ink); }
@@ -174,31 +195,16 @@ export default {
 				"div",
 				{ className: "pm-card", "data-open": open ? "true" : "false" },
 				h(
-					"div",
-					{ className: "pm-row" },
+					"button",
+					{ type: "button", className: "pm-row", "aria-expanded": open ? "true" : "false", onClick: onToggle },
 					h("span", { className: "pm-dot", "data-ok": provider.hasKey || provider.apiKey !== "" ? "true" : "false" }),
 					h("span", { className: "pm-name" }, provider.name || provider.id),
 					provider.name === provider.id ? null : h("span", { className: "pm-tag" }, provider.id),
 					h("span", { className: "pm-spacer" }),
-					h("button", { type: "button", className: "pm-btn", onClick: onToggle }, open ? "收起" : "编辑"),
 					h(
-						"button",
-						{
-							type: "button",
-							className: "pm-btn",
-							"data-tone": "danger",
-							"data-armed": armed ? "true" : "false",
-							onClick: () => {
-								if (!armed) {
-									setArmed(true);
-									return;
-								}
-								setArmed(false);
-								onDrop();
-							},
-							title: armed ? "再点一次就删掉" : "从配置里删掉这个提供商",
-						},
-						armed ? "确认删除" : "删除",
+						"svg",
+						{ className: "pm-chev", width: 8, height: 13, viewBox: "0 0 8 13", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round" },
+						h("path", { d: "m1.5 1.5 5 5-5 5" }),
 					),
 				),
 				open
@@ -317,6 +323,24 @@ export default {
 							h(
 								"div",
 								{ className: "pm-foot" },
+								h(
+									"button",
+									{
+										type: "button",
+										className: "pm-btn",
+										"data-tone": "danger",
+										"data-armed": armed ? "true" : "false",
+										onClick: () => {
+											if (!armed) {
+												setArmed(true);
+												return;
+											}
+											setArmed(false);
+											onDrop();
+										},
+									},
+									armed ? "确认删除" : "删除",
+								),
 								h("span", { className: "pm-spacer" }),
 								h("button", { type: "button", className: "pm-btn", "data-tone": "ghost", onClick: onCancel }, "取消"),
 								h(
@@ -332,6 +356,8 @@ export default {
 
 		function ModelSettings() {
 			const [draft, setDraft] = useState(null);
+			/** 整个「模型」条目展开没有：收起时设置里只占一行。 */
+			const [show, setShow] = useState(false);
 			const [open, setOpen] = useState("");
 			const [state, setState] = useState({ busy: false, error: "", done: "" });
 
@@ -407,10 +433,6 @@ export default {
 				void submit(next);
 			};
 
-			// 分区名（「模型」）由设置的左栏和标题给，这里只说现在生效的是哪一路。
-			const source = draft === null ? "" : `现在生效的是：${draft.source ?? ""}。`;
-			const desc = h("p", { className: "settings-desc" }, "填入各提供商的 API 密钥即可使用其模型。", source);
-
 			// 清单为空时给一个起手：照现在生效的那一路先摆一份出来，改地址 / 换模型都从这上面改。
 			const starter =
 				draft !== null && draft.providers.length === 0 && draft.suggested !== undefined
@@ -420,7 +442,7 @@ export default {
 							h(
 								"div",
 								{ className: "pm-start-main" },
-								h("p", null, "还没有配置模型：在那之前没人回得了话。本地网关最省事，先把这一份加进来；用环境变量里的密钥就得在这里重新填一次。"),
+								h("p", null, "还没有配置模型。先用本地网关起手，或自己填一份。"),
 							),
 							h("span", { className: "pm-spacer" }),
 							h(
@@ -442,35 +464,65 @@ export default {
 						)
 					: null;
 
-			if (draft === null) {
-				return h(
-					"div",
-					{ className: "pm" },
-					desc,
-					state.error === "" ? null : h("p", { className: "pm-msg", "data-tone": "error" }, state.error),
-				);
-			}
-
-			const choices = draft.providers.flatMap((provider) =>
+			const choices = (draft === null ? [] : draft.providers).flatMap((provider) =>
 				provider.models.map((model) => ({
 					value: `${provider.id}/${model}`,
 					label: `${provider.name || provider.id} · ${model}`,
 				})),
 			);
 
+			// 收起时那一行右边写现在生效的是哪只；展开才看得见表单。
+			const current =
+				draft === null
+					? ""
+					: draft.defaultModel === ""
+						? "自动"
+						: (choices.find((choice) => choice.value === draft.defaultModel)?.label ?? draft.defaultModel);
+
+			const head = h(
+				"button",
+				{
+					type: "button",
+					className: "set-row",
+					"aria-expanded": show ? "true" : "false",
+					onClick: () => setShow(!show),
+				},
+				h("span", { className: "set-ico", "aria-hidden": "true" }, icon),
+				h("span", { className: "set-main" }, h("span", { className: "set-label" }, "模型")),
+				h("span", { className: "pm-cur" }, current),
+				h(
+					"span",
+					{ className: "set-chev", "aria-hidden": "true" },
+					h(
+						"svg",
+						{ width: 8, height: 13, viewBox: "0 0 8 13", fill: "none", stroke: "currentColor", "stroke-width": 1.6, "stroke-linecap": "round" },
+						h("path", { d: "m1.5 1.5 5 5-5 5" }),
+					),
+				),
+			);
+
+			if (draft === null) {
+				return h(
+					"div",
+					{ className: "pm" },
+					head,
+					state.error === "" ? null : h("p", { className: "pm-msg", "data-tone": "error" }, state.error),
+				);
+			}
+
+			if (!show) return h("div", { className: "pm" }, head);
+
 			return h(
 				"div",
 				{ className: "pm" },
-				desc,
+				head,
 				h(
 					"div",
-					{ className: "settings-row pm-default" },
+					{ className: "pm-panel" },
 					h(
-						"div",
-						{ className: "settings-row-main" },
-						h("span", { className: "settings-row-label" }, "默认模型"),
-						h("span", { className: "settings-row-desc" }, "没说用哪个时，全员都用这一只；不选就是第一家提供的第一个模型。"),
-					),
+					"div",
+					{ className: "settings-row pm-default" },
+					h("div", { className: "settings-row-main" }, h("span", { className: "settings-row-label" }, "默认模型")),
 					h(
 						"div",
 						{ className: "settings-row-ctl" },
@@ -518,6 +570,7 @@ export default {
 				h("button", { type: "button", className: "pm-add", onClick: addProvider }, "+ 添加模型提供商"),
 				state.error === "" ? null : h("p", { className: "pm-msg", "data-tone": "error" }, state.error),
 				state.done === "" ? null : h("p", { className: "pm-msg" }, state.done),
+				),
 			);
 		}
 

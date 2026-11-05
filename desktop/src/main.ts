@@ -190,6 +190,7 @@ async function start(): Promise<void> {
 	win = createWindow(backend.url);
 	updater = createUpdater({
 		window: () => win,
+		settingsFile: join(appRoot, "settings.json"),
 		beforeInstall: async () => {
 			// 装更新要走到进程退出：先停后端，再让 `updates.ts` 的 `app.quit()` 直接通过
 			// `before-quit`（不然它还会再进来等一次后端）。

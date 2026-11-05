@@ -23,19 +23,16 @@ export default {
 		.tk-head {
 			display: flex; align-items: center; gap: 10px;
 			min-height: 60px; padding: 8px 16px;
-			border-bottom: 0.5px solid var(--line);
 		}
-		/* 宽屏最左那列一直看得见，点聊天格就能回去，返回键是多余的；
-		   手机底栏离标题远，才留它。和「后台任务」同一口径（tasks-back）。 */
+		/* 插件页面靠自己的抬头回去（宿主不再另浮一颗返回）：两端都画。 */
 		.tk-back {
-			display: none; place-items: center;
+			display: grid; place-items: center;
 			width: 36px; height: 36px; padding: 0;
 			border: 0; border-radius: 10px; background: transparent;
 			color: var(--ink-3); cursor: pointer; flex: none;
 		}
 		@media (max-width: 640px) {
 			.tk-head { padding-left: 8px; }
-			.tk-back { display: grid; }
 			/* 一行放不下：副标题先让位，留着时间切换。 */
 			.tk-head p { display: none; }
 		}

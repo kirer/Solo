@@ -51,7 +51,7 @@ seed/
     87-merged.md                 # 合并唤醒尾注
     88-task.md                   # 插话时提醒「手上的活属于哪个频道」
     90-interrupted.md            # 插话时的额外一句
-  assistant/                     # 助理（知言）：播种进 appRoot/assistant/<slug>/
+  assistant/                     # 助理（Solo）：播种进 appRoot/assistant/<slug>/
     identity.md                  # 助理身份（从代码挪出来）
     skills/建立团队/SKILL.md
     skills/招人/SKILL.md

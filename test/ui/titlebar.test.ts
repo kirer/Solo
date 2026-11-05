@@ -52,7 +52,7 @@ describe("Windows 标题带的菜单", () => {
 		const app = read("../../ui/app/src/App.tsx");
 		expect(app).toContain('document.documentElement.dataset["os"] === "win32"');
 		// 首屏与正常界面都画（启动时也要能拖窗口）。
-		expect(app.match(/<Titlebar \/>/g)).toHaveLength(2);
+		expect(app.match(/<Titlebar \/>/g)).toHaveLength(3);
 	});
 
 	it("preload 只开菜单与取色两个口", () => {
@@ -88,19 +88,19 @@ describe("Windows 标题带的布局", () => {
 		expect(pop).toContain("transform-origin: top left");
 	});
 
-	it("右栏下移到第二行，手机断点的侧栏 / 纸也下移", () => {
-		expect(blocksOf(css, win(".detail")).join("\n")).toContain("grid-row: 2");
-		// 手机那条在 @media 里，`blocksOf` 的正则会把媒体查询的壳当成规则吃掉，直接对整段。
-		expect(css).toMatch(
-			/@media \(max-width: 640px\) \{\s*html\[data-shell="desktop"\]\[data-os="win32"\] \.sidebar,\s*html\[data-shell="desktop"\]\[data-os="win32"\] \.sheet \{\s*grid-row: 2;/,
-		);
+	it("标题带下面才是内容：列表 / 对话 / 整屏页都下移到第二行", () => {
+		const rows = blocksOf(css, win(".sidebar")).join("\n") + blocksOf(css, win(".sheet")).join("\n");
+		expect(rows).toContain("grid-row: 2");
+		expect(css).toContain(win(".page"));
+		expect(css).toContain(win(".plugin-page"));
 	});
 
 	it("macOS 那组拖拽 / 让位规则只给 darwin，不漏到 Windows", () => {
 		// 所有桌面壳选择器都必须带 data-os；否则 Windows 也会拿到红绿灯的 32px 顶部留白。
 		expect(css).not.toMatch(/html\[data-shell="desktop"\](?!\[data-os=)/);
-		expect(css).toContain('html[data-shell="desktop"][data-os="darwin"] .rail');
 		expect(css).toContain('html[data-shell="desktop"][data-os="darwin"] .sheet-head');
+		expect(css).toContain('html[data-shell="desktop"][data-os="darwin"] .detail-bar');
+		expect(css).not.toContain('.rail {');
 	});
 
 	it("Titlebar.tsx 用到的类名都在 CSS 里", () => {

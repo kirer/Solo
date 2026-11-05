@@ -48,7 +48,7 @@ describe("设置面板的选中态", () => {
 	const css = read("../../ui/app/src/styles/shell.css").replace(/\/\*[\s\S]*?\*\//g, "");
 
 	it("CSS 按 aria-checked 画勾", () => {
-		expect(css).toContain('.settings-options .opt[aria-checked="true"]');
+		expect(css).toContain('.seg-item[aria-checked="true"]');
 	});
 
 	it("按钮写的是 aria-checked，不是 aria-pressed", () => {

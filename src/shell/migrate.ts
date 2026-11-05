@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { parseDoc } from "../core/documents/base/doc.ts";
 import { IDENTITY_FILE } from "../core/documents/member/identity.ts";
 import { listDirSorted, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
-import type { Layout } from "../core/layout.ts";
+import { isAssistantDir, type Layout } from "../core/layout.ts";
 
 /**
  * 跑一遍全部文件迁移，返回改过的文件（绝对路径）。幂等：没有旧形状就什么都不写。
@@ -22,10 +22,16 @@ import type { Layout } from "../core/layout.ts";
  */
 export async function migrateWorkspace(layout: Layout): Promise<readonly string[]> {
 	const changed: string[] = [];
+	// 同一个文件可能被两条迁移各改一次：记一次就够了（调用方拿它播报「改了哪些文件」）。
+	const add = (path: string): void => {
+		if (!changed.includes(path)) changed.push(path);
+	};
 	for (const root of layout.agentRoots) {
 		for (const dir of await personDirs(root)) {
 			const path = join(dir, IDENTITY_FILE);
-			if (await migrateProjectField(path)) changed.push(path);
+			if (await migrateProjectField(path)) add(path);
+			// 助理升格成「Solo」：只改应用根下那一个人，目录名（slug）与频道/名册保持不动。
+			if (isAssistantDir(layout, dir) && (await migrateAssistantName(path))) add(path);
 		}
 	}
 	return changed;
@@ -70,6 +76,25 @@ async function migrateProjectField(path: string): Promise<boolean> {
 	} else {
 		lines.splice(index, 1);
 	}
+	await writeTextAt(path, lines.join("\n"));
+	return true;
+}
+
+/**
+ * 助理的显示名 `知言` → `Solo`（2026-11 的定位调整：他不再是「一个同事」，是这个应用本身）。
+ *
+ * 只动 `identity.md` 头里的 `name:`；目录名（slug）是频道、名册、历史的键，改它要迁移
+ * 一整套数据，而界面上显示的是 `name`。只认旧的这一个值，改过名的原样留着。
+ */
+async function migrateAssistantName(path: string): Promise<boolean> {
+	const source = await readTextOrUndefined(path);
+	if (source === undefined) return false;
+	const lines = source.split("\n");
+	const headEnd = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+	const limit = headEnd < 0 ? 0 : headEnd;
+	const index = lines.findIndex((line, at) => at < limit && /^\s*name\s*:\s*知言\s*$/.test(line));
+	if (index < 0) return false;
+	lines[index] = lines[index]!.replace(/知言\s*$/, "Solo");
 	await writeTextAt(path, lines.join("\n"));
 	return true;
 }

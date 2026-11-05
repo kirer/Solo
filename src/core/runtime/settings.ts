@@ -26,6 +26,8 @@ export type ProviderConfig = {
 
 export type Settings = {
 	readonly defaultModel?: string;
+	/** 更新代理（如 `http://127.0.0.1:7890`）：只给桌面版下载新版安装包用，模型不走它。 */
+	readonly updateProxy?: string;
 	readonly providers?: readonly ProviderConfig[];
 	/** slug → `provider/modelId`：这个人单独用哪只模型。 */
 	readonly agentModels?: Readonly<Record<string, string>>;
@@ -52,6 +54,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function shapeProblem(settings: Record<string, unknown>): string | undefined {
 	if (settings["defaultModel"] !== undefined && typeof settings["defaultModel"] !== "string") {
 		return "defaultModel 必须是字符串";
+	}
+	if (settings["updateProxy"] !== undefined && typeof settings["updateProxy"] !== "string") {
+		return "updateProxy 必须是字符串";
 	}
 	const agentModels = settings["agentModels"];
 	if (agentModels !== undefined) {
