@@ -11,7 +11,7 @@
  */
 
 /**
- * 契约 §4 的 12 个插槽 + 6 个必需的复合值（`self.body` / `team.*` / `reply.*`）。
+ * 契约 §3 的全部插槽 + delivery 片段的条件值（`self.body` / `team.*` / `reply.*`）。
  * 键就是模板里写的那个名字；值一律是字符串，方便测试直接当 values 用。
  */
 export const SAMPLE_SLOTS = {
@@ -30,7 +30,6 @@ export const SAMPLE_SLOTS = {
 	peers: "示例同僚（成员）",
 	"chats.groups": "「示例项目群」",
 	"chats.dm": "已开",
-	count: "3",
 
 	"team.brief": "这个团队负责把示例做出来。验收标准：示例能跑。",
 	"team.status": "在做",

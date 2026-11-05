@@ -5,4 +5,4 @@ skip-empty: skills
 
 {{skills}}
 
-要用哪一门，按它的来源读 `SKILL.md`：全员在 `skills/`、团队在 `teams/<团队>/skills/`、你自己的在 `{{self.dir}}skills/`。缺什么手艺就照同一个格式写一份（做法见技能「写技能」）。
+要用哪一门就读它的 `SKILL.md`（全员 `skills/`、团队 `teams/<团队>/skills/`、自己 `{{self.dir}}skills/`）；写新的照同样格式，做法见技能「写技能」。

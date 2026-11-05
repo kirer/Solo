@@ -77,13 +77,13 @@ describe("投递正文", () => {
 		const { message } = appendMessage(state, "g", { from: "owner", text: "@cto @cfo 一起看", at: 1 });
 		const forCfo = renderDeliveryWithTemplates({ channel: state.channels.g!, message, viewer: "cfo" });
 		expect(forCfo).toContain("这条会叫醒：cto、cfo（你在第 2 位）");
-		expect(forCfo).toContain("别人也在看这条。动手前先说一句你接哪一块");
-		// 只叫醒一个人时不写「别人也在看」——那是假话。
+		expect(forCfo).toContain("动手前先说一句你接哪一块");
+		// 只叫醒一个人时不写「还有别人」——那是假话。
 		const solo = stateWith({ id: "s", title: "S", members: ["owner", "cto"] });
 		const soloMessage = appendMessage(solo, "s", { from: "owner", text: "@cto 看一下", at: 1 }).message;
 		const single = renderDeliveryWithTemplates({ channel: solo.channels.s!, message: soloMessage, viewer: "cto" });
 		expect(single).toContain("这条会叫醒：cto（你在第 1 位）");
-		expect(single).not.toContain("别人也在看这条");
+		expect(single).not.toContain("动手前先说一句你接哪一块");
 	});
 
 	test("只有我和团队管理员的团队频道不写私聊文案（成员形状不是判据）", () => {

@@ -188,6 +188,7 @@ async function slotsFor(
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);
 
+	// `count` 出厂模板已经不用了，但旧安装的 `prompt/20-position.md` 还在（播种只补缺失文件）。
 	const needsRoster = wants("count", "team", "peers", "assistant");
 	const all = needsRoster ? await readAllIdentities(paths.layout.agentRoots) : [];
 	if (need.has("count")) slots["count"] = all.length;

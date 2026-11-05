@@ -81,13 +81,12 @@ seed/
 | `{{chats.groups}}` `{{chats.dm}}` | 你在哪些群 / 和我的私聊开没开（`已开`） | 频道文档 |
 | `{{skills}}` `{{memory}}` `{{tools}}` | 目录清单（只有名字和一句话） | 磁盘 / 注册表 |
 | `{{rules}}` | `rules.md` 正文 | 文件 |
-| `{{count}}` | 全员 agent 数 | 名册 |
 | `{{self.body}}` | 自己的身份正文（frontmatter 之后那段） | 身份目录里 `identity.md` 的正文 |
 | `{{team.brief}}` | 团队简报：目标 / 验收 / 不做 / 进展 | `teams/<slug>/README.md` 的正文 |
 | `{{team.status}}` `{{team.dir}}` | 团队状态 / 目录 | `teams/<slug>/README.md` 的 YAML 头与路径 |
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
 | `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | `81-alone.md` / `82-shared.md`（按收件人数选一份） |
-| `{{reply.colleagues}}` | 「成员的事就在这个频道说，要问谁就 @ 他」 | `83-colleagues.md` |
+| `{{reply.colleagues}}` | 「要问谁就在这个频道 @ 他」 | `83-colleagues.md` |
 | `{{others}}` | 同一轮还被叫醒的其他人 | 投递名单（除自己） |
 | `{{colleagues}}` | 同频道里除我和收件人之外的成员 | 频道成员表 |
 | `{{total}}` | 别的频道未读总数 | 频道文档 |
@@ -132,7 +131,7 @@ seed/
 
 ## 4. 改写规则
 
-- 工具名不写死：要么走 `{{tool:xxx}}`，要么写成自然语言（「发一条过程话」），参数细节交给工具自己的 description。
+- 工具名不写死：要么走 `{{tool:xxx}}`，要么写成自然语言（「发一条过程话」），参数细节交给工具自己的 description。例外是 `file` 的根分流与 `run` 没有组织含义（ADR-040）：这两句必须在 `70-directory.md` 里，光靠 description 挡住过真实的串根事故。
 - 人名不写死：一律 `{{self.name}}`，或直接写「你」。
 - 每个技能 ≤ 4 KB（`工作规矩` 是唯一被反复读的，用满上限；其余技能自律在 3 KB 以内），
   正文四段：**什么时候用 / 怎么做 / 怎么算做对了 / 踩过的坑**。缺第三段等于没写。

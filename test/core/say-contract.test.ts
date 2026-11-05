@@ -249,9 +249,9 @@ describe("投递正文带频道 id", () => {
 		const { message } = appendMessage(state, DM, { from: OWNER, text: "怎么样", at: 2 });
 		const body = renderDeliveryWithTemplates({ channel: state.channels[DM]!, message, viewer: ME });
 		// 光说「回团队频道」没用：它不知道频道叫什么，只会省略 channel 落回私聊。
-		expect(body).toContain("要指挥团队");
+		expect(body).toContain("要团队做事");
 		expect(body).toContain("`channel`");
-		expect(body).toContain("团队一个字都收不到");
+		expect(body).toContain("只有我看得见");
 	});
 });
 
@@ -428,7 +428,7 @@ describe("每轮附言（怎么回话）", () => {
 		expect(SEED_TEXT.get("say.param.text")).toContain("[PASS]");
 	});
 
-	it("群里有成员时：告诉他们「成员的事在群里说，@ 他」", () => {
+	it("群里有成员时：告诉他们「要问谁就在群里 @ 他」", () => {
 		const withColleague = renderReplyRules({
 			template: REPLY_TEMPLATE,
 			fragments: SEED_DELIVERY_PROMPT,
@@ -436,7 +436,7 @@ describe("每轮附言（怎么回话）", () => {
 			viewer: "沈舟",
 			colleagues: ["陆衡"],
 		});
-		expect(withColleague).toContain("成员的事就在这个频道说");
+		expect(withColleague).toContain("要问 陆衡 就在这个频道 @ 他");
 		expect(withColleague).toContain("陆衡");
 		// 私聊里没有第三方，不该提「去找成员」
 		const without = renderReplyRules({
@@ -446,7 +446,7 @@ describe("每轮附言（怎么回话）", () => {
 			viewer: "沈舟",
 			colleagues: [],
 		});
-		expect(without).not.toContain("成员的事就在这个频道说");
+		expect(without).not.toContain("要问 陆衡 就在这个频道 @ 他");
 	});
 
 	it("条件句来自 prompt/ 片段：换一份片段，输出跟着变", () => {
@@ -476,7 +476,7 @@ describe("每轮附言（怎么回话）", () => {
 			message,
 			viewer: ME,
 		});
-		expect(body).toContain("像成员发消息");
+		expect(body).toContain("说结论");
 		expect(body).toContain("只有你被叫醒");
 	});
 });
