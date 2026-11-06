@@ -50,6 +50,24 @@ function hasMentionToken(text: string): boolean {
 	return MENTION_TOKEN.test(text);
 }
 
+/**
+ * 频道显式写了「没人 @ 时谁接话」时的那份名单。
+ *
+ * 只排除发件人；我（`owner`）留着，由 `deliveryTargets` 统一减掉 —— 与
+ * `wakeOnAll` 那条路的形状保持一致，否则两处口径各差一个人。
+ */
+function responderTargets(channel: Channel, message: Message): string[] {
+	const responder = channel.responder;
+	if (responder === undefined) return [];
+	if (responder.kind === "mentions") return [];
+	if (responder.kind === "everyone") {
+		return channel.members.filter((slug) => slug !== message.from);
+	}
+	// lead 写了不在房间里的人（频道改过成员）：不投递，也不拿第一个人顶上 ——
+	// 那是我配置错了，静默换人比没人回更难查。
+	return channel.members.includes(responder.slug) && responder.slug !== message.from ? [responder.slug] : [];
+}
+
 export function recipientsOf(channel: Channel, message: Message, lastSpeaker?: string): string[] {
 	const targets = new Set<string>();
 	const members = new Set(channel.members);
@@ -66,6 +84,11 @@ export function recipientsOf(channel: Channel, message: Message, lastSpeaker?: s
 	if (team && targets.size > 0) {
 		targets.delete(message.from);
 		return [...targets];
+	}
+	// 频道自己写了接话规则：@ 已经在上面的分支处理完，这里只管「没人 @」。
+	// 判据与下面那条一样看正文里有没有 @ 动作 —— `@nobody` 不该掉给规则里的人。
+	if (channel.responder !== undefined && message.mentions.length === 0 && !hasMentionToken(message.text)) {
+		return responderTargets(channel, message);
 	}
 	// 「我没 @ 人」才让第一个成员接。**判据看正文里有没有 @，不看解析结果**：
 	// 过名册之后 `@nobody` 会解析成空数组，若按 mentions.length 判就会把「你叫了一个

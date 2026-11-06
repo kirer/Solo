@@ -20,6 +20,9 @@
 ## delivery.routed
 （{{name}} 让你看这条。）
 
+## delivery.bulletin
+（这个频道的共享指令：{{text}}）
+
 ## delivery.attachments
 附件：
 

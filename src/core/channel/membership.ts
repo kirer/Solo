@@ -8,7 +8,7 @@
 import type { Context, Harness } from "../runtime/index.ts";
 import { BACKGROUND_CONTEXT } from "../runtime/index.ts";
 import { assistantsOf, readAllIdentities, readIdentity, type Identity } from "../documents/member/identity.ts";
-import { ChannelDoc, OWNER, dmId, groupId, teamId, teamOfChannel, type ChannelState } from "./types.ts";
+import { ChannelDoc, OWNER, dmId, groupId, teamId, teamOfChannel, type ChannelResponder, type ChannelState } from "./types.ts";
 import { projectChannel } from "./rules.ts";
 import { mentionRosterOf, resolveMention } from "./mentions.ts";
 import { listTeams, membersOfTeam, readTeam } from "../documents/team/doc.ts";
@@ -48,7 +48,14 @@ export type MembershipDeps = {
  */
 export async function createGroup(
 	deps: Pick<MembershipDeps, "harness" | "layout" | "text">,
-	input: { readonly title: string; readonly members: readonly string[]; readonly creator?: string },
+	input: {
+		readonly title: string;
+		readonly members: readonly string[];
+		readonly creator?: string;
+		/** 建群时一起定的共享指令与接话规则（可后改，见 `PATCH /api/channels/:id`）。 */
+		readonly bulletin?: string;
+		readonly responder?: ChannelResponder;
+	},
 	context: Context = BACKGROUND_CONTEXT,
 ): Promise<{ readonly id: string; readonly title: string; readonly members: readonly string[] }> {
 	const title = input.title.trim();
@@ -74,6 +81,9 @@ export async function createGroup(
 	// 建群的人一定在群里：他建的是自己要说话的地方。
 	if (input.creator !== undefined && !members.includes(input.creator)) members.unshift(input.creator);
 	if (members.length < 2) throw new Error(t("group.refuse.few") || "a group needs at least two people");
+	if (input.responder?.kind === "lead" && !members.includes(input.responder.slug)) {
+		throw new Error(t("group.refuse.responder", { name: input.responder.slug }) || `not a member: ${input.responder.slug}`);
+	}
 
 	const id = groupId(slugifyName(title));
 	let created = false;
@@ -90,6 +100,8 @@ export async function createGroup(
 				wakeOnAll: members,
 				at: Date.now(),
 				mode: "create",
+				...(input.bulletin === undefined ? {} : { bulletin: input.bulletin }),
+				...(input.responder === undefined ? {} : { responder: input.responder }),
 			}),
 		);
 		created = true;

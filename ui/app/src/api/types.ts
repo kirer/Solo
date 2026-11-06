@@ -17,6 +17,7 @@ export type {
 	ViewChannel as Channel,
 	ViewChannelDetail as ChannelDetail,
 	ViewChannelKind as ChannelKind,
+	ViewChannelResponder as ChannelResponder,
 	ViewMember as Member,
 	ViewMemoryEntry as MemoryEntry,
 	ViewMention as Mention,

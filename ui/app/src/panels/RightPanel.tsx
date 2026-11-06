@@ -10,14 +10,14 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { editPersonMemory, getPerson, getPersonMemory, getPersonTurns, getTeam } from "../api/client.ts";
-import type { MemoryEntry, PersonMemory, PersonProfile, TeamProfile, Turn } from "../api/types.ts";
+import { editPersonMemory, getPerson, getPersonMemory, getPersonTurns, getTeam, updateChannel } from "../api/client.ts";
+import type { ChannelDetail, ChannelResponder, MemoryEntry, PersonMemory, PersonProfile, TeamProfile, Turn } from "../api/types.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, closeTasks, openPerson, openTasks, setRight } from "../state/store.ts";
+import { backRight, closeTasks, openPerson, openTasks, refreshDetail, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { TasksView } from "./TasksPanel.tsx";
 
@@ -91,8 +91,10 @@ function ProfileView(): JSX.Element {
 		const peer = detail.members.find((member) => member.slug !== "owner");
 		if (peer !== undefined) return <PersonPanel slug={peer.slug} />;
 	}
-	if (channel.team !== undefined) return <TeamPanel slug={channel.team} members={detail.members} title={channel.title} />;
-	return <AllPanel id={channel.id} members={detail.members} title={channel.title} />;
+	if (channel.team !== undefined) {
+		return <TeamPanel slug={channel.team} channel={channel} members={detail.members} title={channel.title} />;
+	}
+	return <AllPanel id={channel.id} channel={channel} members={detail.members} title={channel.title} />;
 }
 
 /** 一个人的资料表。`fallback` 是 store 里已经有的档案，省一次请求。 */
@@ -279,7 +281,12 @@ function turnsLine(turns: readonly Turn[]): string {
 }
 
 /** 团队频道：身份 → 统计 → 成员 → 团队介绍 / 记忆 / 技能。 */
-function TeamPanel(props: { slug: string; members: readonly { slug: string; label: string; role: string }[]; title: string }): JSX.Element {
+function TeamPanel(props: {
+	slug: string;
+	channel: ChannelDetail["channel"];
+	members: readonly { slug: string; label: string; role: string }[];
+	title: string;
+}): JSX.Element {
 	const { team, error } = useTeam(props.slug);
 	const [openRow, setOpenRow] = useState<string | null>(null);
 	const members = props.members;
@@ -387,6 +394,8 @@ function TeamPanel(props: { slug: string; members: readonly { slug: string; labe
 					</div>
 				) : null}
 			</div>
+
+			<ChannelSettings key={props.channel.id} channel={props.channel} members={members} />
 		</div>
 	);
 }
@@ -394,6 +403,7 @@ function TeamPanel(props: { slug: string; members: readonly { slug: string; labe
 /** 群聊：没有团队文档。全员频道多一行共享技能，拉起来的群只有成员。 */
 function AllPanel(props: {
 	id: string;
+	channel: ChannelDetail["channel"];
 	members: readonly { slug: string; label: string; role: string }[];
 	title: string;
 }): JSX.Element {
@@ -457,8 +467,142 @@ function AllPanel(props: {
 					) : null}
 				</div>
 			) : null}
+
+			<ChannelSettings key={props.channel.id} channel={props.channel} members={props.members} />
 		</div>
 	);
+}
+
+/**
+ * 频道的两个设置：共享指令（每轮贴在投递正文里）与没人 `@` 时谁接话。
+ *
+ * 两者都跟着频道走、下一条消息生效，所以放在这个房间的资料页里，而不是全局设置。
+ * `@` 永远优先于接话规则 —— 规则只回答「没人点名时谁接」。
+ */
+function ChannelSettings(props: {
+	channel: ChannelDetail["channel"];
+	members: readonly { slug: string; label: string; role: string }[];
+}): JSX.Element {
+	const { channel } = props;
+	const [openRow, setOpenRow] = useState<string | null>(null);
+	const [bulletin, setBulletin] = useState(channel.bulletin ?? "");
+	const [responder, setResponder] = useState(responderKey(channel.responder));
+	const [busy, setBusy] = useState(false);
+	const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
+
+	const savedBulletin = channel.bulletin ?? "";
+	const savedResponder = responderKey(channel.responder);
+	const dirty = bulletin.trim() !== savedBulletin || responder !== savedResponder;
+	const isTeam = channel.team !== undefined;
+	const candidates = props.members.filter((member) => member.slug !== "owner");
+
+	async function save(): Promise<void> {
+		setBusy(true);
+		setNote(null);
+		try {
+			await updateChannel(channel.id, {
+				bulletin: bulletin.trim() === "" ? null : bulletin.trim(),
+				responder: responder === "default" ? null : responderOf(responder),
+			});
+			await refreshDetail();
+			setNote({ text: "已保存，下一条消息生效。", error: false });
+		} catch (error) {
+			setNote({ text: error instanceof Error ? error.message : String(error), error: true });
+		} finally {
+			setBusy(false);
+		}
+	}
+
+	const foot = (
+		<div className="prof-add-foot">
+			{note === null ? null : (
+				<p className="prof-note" data-error={note.error ? "true" : "false"}>
+					{note.text}
+				</p>
+			)}
+			<span className="prof-item-grow" />
+			<button type="button" className="prof-add-btn" disabled={busy || !dirty} onClick={() => void save()}>
+				{busy ? "保存中…" : "保存"}
+			</button>
+		</div>
+	);
+
+	return (
+		<div className="prof-card">
+			<Row
+				icon={<IconDoc />}
+				title="共享指令"
+				sub="每轮都贴给他们，像这个房间的长期约定"
+				value={savedBulletin === "" ? "未写" : `${String(savedBulletin.length)} 字`}
+				onClick={() => setOpenRow(openRow === "bulletin" ? null : "bulletin")}
+				open={openRow === "bulletin"}
+			/>
+			{openRow === "bulletin" ? (
+				<div className="prof-panel">
+					<div className="prof-add">
+						<textarea
+							rows={5}
+							value={bulletin}
+							maxLength={12000}
+							placeholder="这个房间的长期约定：只讨论上线；回话先说进度；改代码前先看一眼 docs/…"
+							onChange={(event) => setBulletin(event.target.value)}
+						/>
+						<p className="prof-note">
+							{bulletin.trim() === "" ? "空着就是不贴。" : `${String(bulletin.trim().length)} / 12000 字`}
+						</p>
+						{foot}
+					</div>
+				</div>
+			) : null}
+
+			<Row
+				icon={<IconPulse />}
+				title="接话规则"
+				sub={isTeam ? "没人 @ 时谁接：团队默认叫助理" : "没人 @ 时谁接：默认接上一位说话的"}
+				value={responderLabel(responder, props.members)}
+				onClick={() => setOpenRow(openRow === "responder" ? null : "responder")}
+				open={openRow === "responder"}
+			/>
+			{openRow === "responder" ? (
+				<div className="prof-panel">
+					<div className="prof-add">
+						<select value={responder} onChange={(event) => setResponder(event.target.value)}>
+							<option value="default">默认（{isTeam ? "叫助理" : "接上一位说话的"}）</option>
+							<option value="mentions">只有被 @ 的人才接</option>
+							<option value="everyone">房间里的人人都接</option>
+							{candidates.map((member) => (
+								<option value={`lead:${member.slug}`} key={member.slug}>
+									固定由 {member.label} 接
+								</option>
+							))}
+						</select>
+						<p className="prof-note">不管选哪个，@ 了人都听 @ 的；这条只管没人点名的时候。</p>
+						{foot}
+					</div>
+				</div>
+			) : null}
+		</div>
+	);
+}
+
+/** 下拉框的键：`default` / `mentions` / `everyone` / `lead:<slug>`。 */
+function responderKey(responder: ChannelResponder | undefined): string {
+	if (responder === undefined) return "default";
+	if (responder.kind === "lead") return `lead:${responder.slug}`;
+	return responder.kind;
+}
+
+function responderOf(key: string): ChannelResponder {
+	if (key.startsWith("lead:")) return { kind: "lead", slug: key.slice(5) };
+	return key === "everyone" ? { kind: "everyone" } : { kind: "mentions" };
+}
+
+function responderLabel(key: string, members: readonly { slug: string; label: string }[]): string {
+	if (key === "default") return "默认";
+	if (key === "everyone") return "所有人";
+	if (key === "mentions") return "只有 @ 的人";
+	const slug = key.slice(5);
+	return `${members.find((member) => member.slug === slug)?.label ?? slug} 接`;
 }
 
 /** 成员一行四格：头像 + 名字，点开是他的资料；我自己那一格不跳。 */

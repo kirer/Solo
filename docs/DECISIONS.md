@@ -2277,3 +2277,28 @@
   `test/core/deliver.test.ts`；契约 `docs/design/SEED-CONTRACT.md` §3；实测
   `scripts/core-live.ts` 第 9 段（成员 @助理 → 助理交到我手里，私聊也算）与
   `scripts/live-support.ts` 的 `waitForOwnerReached`。
+
+## ADR-095 频道自己的共享指令与「没人 @ 时谁接」
+
+- **背景**：频道里的规矩以前只有两种落法：写进 `seed/rules.md`（全员，跟人走）或写进团队
+  README（跟团队走）。但「这个房间怎么用」既不是人的属性，也不是团队的属性 —— 一个临时拉的
+  群、一个只讨论上线的团队频道，需要自己的一份约定。同时，谁接话只能由频道形态推（团队叫
+  助理、全员接上一位），拉群则是「全部成员都醒、自己判断要不要接」；没有一种说法能让一个群
+  指定「由某个人接」或「只有被 @ 的人接」。
+- **决策**：频道文档加两个可选字段（`Channel.bulletin` / `Channel.responder`），缺省时行为
+  与以前逐字节相同：
+  - `bulletin`：这个频道的共享指令（≤12,000 字），每轮由 `renderDelivery` 贴在投递正文里
+    （`delivery.bulletin`），**不进系统提示词** —— 它是房间的，不是人的；改完下一条消息生效。
+  - `responder`：`lead:<slug>` / `mentions` / `everyone`。只在**没人 `@`** 时生效：
+    `@` 永远优先（正文里有 `@` 但解析不出人也走老路 —— 那是我叫错人了，不该被悄悄转走）。
+    `lead` 不在房间里时谁都不叫，不拿第一个人顶上。
+- **取舍**：不做 OpenMausBot 那种 `auto`（用小模型判断该谁接）。它要多一次模型调用、一个
+  阈值和一个失败兜底，而收益只是省掉一次点选；等真有人嫌选规则麻烦再加，规则表本身不用动。
+  共享指令跟着每条消息贴，长频道会多花一点 token —— 上限 12,000 字，且只贴这个频道的那一份。
+- **执行**：`src/core/channel/types.ts` 的 `ChannelResponder`；`channel/mentions.ts` 的
+  `responderTargets`（`recipientsOf` 里的规则分支）；`channel/delivery.ts` 的 bulletin 行与
+  `seed/text/channel.md` 的 `delivery.bulletin`；`channel/membership.ts` 的 `createGroup`；
+  `app/chat.ts` 的 `bulletinOf` / `parseResponder` / `updateChannel` 与
+  `PATCH /api/channels/:id`；`src/view/dto.ts` 的 `ViewChannelResponder`；界面
+  `ui/app/src/panels/RightPanel.tsx` 的 `ChannelSettings`；
+  `test/core/{channel-responder,channel-settings,deliver}.test.ts`。

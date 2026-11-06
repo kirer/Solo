@@ -261,6 +261,8 @@ export function channelDetail(
 			lastSeq: last?.seq ?? 0,
 			memberCount: channel.members.length,
 			members: channel.members.filter((slug) => slug !== OWNER_SLUG),
+			...(channel.bulletin === undefined ? {} : { bulletin: channel.bulletin }),
+			...(channel.responder === undefined ? {} : { responder: channel.responder }),
 		},
 		members: channel.members.map((slug) => ({
 			id: idOf(directory, slug),

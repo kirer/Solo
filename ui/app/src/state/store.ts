@@ -247,6 +247,12 @@ export async function makeGroup(title: string, members: readonly string[]): Prom
 	await openChannel(id);
 }
 
+/** 频道设置改完之后重拉详情（SSE 也会推，但界面自己发起的改动别等它）。 */
+export async function refreshDetail(): Promise<void> {
+	const id = getState().currentId;
+	if (id !== null) await reloadDetail(id);
+}
+
 /** 重拉当前频道的详情。只有频道投影变了才走；期间切走了就不覆盖。 */
 async function reloadDetail(id: string): Promise<void> {
 	try {

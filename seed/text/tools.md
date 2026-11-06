@@ -472,6 +472,9 @@ slug
 ## group.refuse.exists
 已经有叫「{{title}}」的群了，换个名字。
 
+## group.refuse.responder
+接话的人「{{name}}」不在这个群里。
+
 ## route.description
 助理专用：把频道里的一条消息在后台交给该看的人。他能看到原文，频道里不会出现「转交」这条消息。
 

@@ -105,6 +105,18 @@ describe("投递正文", () => {
 		expect(inDm).toContain("这是你和我的私聊");
 	});
 
+	test("频道的共享指令贴在消息后面；没写就一行都不多", () => {
+		const state = stateWith({ id: "g", title: "G", members: ["owner", "cto"] });
+		const { message } = appendMessage(state, "g", { from: "owner", text: "上线吧", at: 1 });
+		const plain = renderDeliveryWithTemplates({ channel: state.channels.g!, message });
+		expect(plain).not.toContain("共享指令");
+		const text = renderDeliveryWithTemplates({
+			channel: { ...state.channels.g!, bulletin: "这个频道只讨论上线，别聊别的。" },
+			message,
+		});
+		expect(text).toContain("这个频道的共享指令：这个频道只讨论上线，别聊别的。");
+	});
+
 	test("助理的结论回我的私聊，团队频道只留派活和进展", () => {
 		// 实测 2026-11-06：林柯交付后，Solo 把结论说在团队频道里，我的私聊一条都没收到。
 		// 80-reply 的「回这个频道」盖过了身份里的「做完在私聊里说清楚」。

@@ -3319,7 +3319,8 @@ button.prof-row:hover {
 	gap: 6px;
 }
 
-.prof-add textarea {
+.prof-add textarea,
+.prof-add select {
 	width: 100%;
 	padding: 8px 10px;
 	border: 0.5px solid var(--rule);
@@ -3329,7 +3330,20 @@ button.prof-row:hover {
 	font: inherit;
 	font-size: 12.5px;
 	line-height: 18px;
+}
+
+.prof-add textarea {
 	resize: vertical;
+}
+
+.prof-add-foot {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.prof-add-foot .prof-note[data-error="true"] {
+	color: var(--danger);
 }
 
 .prof-add-btn {

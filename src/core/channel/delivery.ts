@@ -202,6 +202,10 @@ export function renderDelivery(options: {
 		// 一旦缺省频道猜错（例如猜成私聊），整段对话就跑到别的房间里去了。
 		t("delivery.head", { title: channel.title, seq: message.seq, id: channel.id, quoted }),
 		`${label(message.from)}：${message.text}${line.join("")}`,
+		// 这个频道的共享指令：每轮都贴，紧跟在消息后面（先知道「谁说了什么」，再看「这个房间的规矩」）。
+		...(channel.bulletin === undefined || channel.bulletin.trim() === ""
+			? []
+			: [t("delivery.bulletin", { text: channel.bulletin.trim() })]),
 		...(options.routedBy === undefined || options.routedBy === options.viewer
 			? []
 			: [t("delivery.routed", { name: label(options.routedBy) })]),

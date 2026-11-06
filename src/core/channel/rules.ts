@@ -3,7 +3,7 @@
  *
  * 全部是纯函数：`post.ts` 负责把结果落进文档，这里只负责算。
  */
-import type { Attachment, Channel, ChannelState, Message } from "./types.ts";
+import type { Attachment, Channel, ChannelResponder, ChannelState, Message } from "./types.ts";
 import { OWNER, chatKind, dmId, spokenKind } from "./types.ts";
 import { EMPTY_ROSTER, parseMentions, resolveMention, type MentionRoster } from "./mentions.ts";
 
@@ -191,6 +191,9 @@ export type ChannelProjection = {
 	readonly mode: "create" | "merge" | "replace";
 	/** 归档（团队 README 写了 `status: archived`）：列表里不出现，历史还留着。 */
 	readonly archived?: boolean;
+	/** 只在 `create` 时写：建群时一起定的共享指令与接话规则。 */
+	readonly bulletin?: string;
+	readonly responder?: ChannelResponder;
 };
 
 function sameList(a: readonly string[], b: readonly string[]): boolean {
@@ -211,6 +214,8 @@ export function projectChannel(state: ChannelState, input: ChannelProjection): C
 			wakeOnAll,
 			createdAt: input.at,
 			...(input.archived === true ? { archived: true } : {}),
+			...(input.bulletin === undefined ? {} : { bulletin: input.bulletin }),
+			...(input.responder === undefined ? {} : { responder: input.responder }),
 		};
 		return { ...state, channels: { ...state.channels, [input.id]: channel } };
 	}

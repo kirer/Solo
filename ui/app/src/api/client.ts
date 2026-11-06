@@ -12,6 +12,7 @@ import type {
 	AttentionItem,
 	Channel,
 	ChannelDetail,
+	ChannelResponder,
 	Org,
 	PersonMemory,
 	PersonProfile,
@@ -102,6 +103,13 @@ export const openDirectMessage = (slug: string): Promise<{ ok: true; id: string 
 /** 我拉一个群：成员由我指定，我自己一定在里面。 */
 export const createGroup = (title: string, members: readonly string[]): Promise<{ ok: true; id: string }> =>
 	call("/api/channels", { method: "POST", body: JSON.stringify({ title, members }) });
+
+/** 改频道的共享指令与接话规则。`null` = 清掉（回到默认），缺省 = 不动。 */
+export const updateChannel = (
+	id: string,
+	body: { bulletin?: string | null; responder?: ChannelResponder | null },
+): Promise<{ ok: true }> =>
+	call(`/api/channels/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(body) });
 
 /** 清空所有数据并重启（设置 → 数据）。确认之后后端会自己退出，桌面壳负责重开。 */
 export const resetAllData = (): Promise<{ ok: true; restarting: true }> =>

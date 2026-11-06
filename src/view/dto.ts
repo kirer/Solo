@@ -103,9 +103,23 @@ export type ViewMember = {
 	unread: number;
 };
 
+/**
+ * 这个频道没人 @ 时谁接话。缺省 = 老行为（团队频道叫助理、全员频道接上一位）。
+ * `@` 永远优先于它。
+ */
+export type ViewChannelResponder =
+	| { kind: "lead"; slug: string }
+	| { kind: "mentions" }
+	| { kind: "everyone" };
+
 /** 频道详情。 */
 export type ViewChannelDetail = {
-	channel: Omit<ViewChannel, "unread" | "mentions" | "preview">;
+	channel: Omit<ViewChannel, "unread" | "mentions" | "preview"> & {
+		/** 这个频道的共享指令：每轮贴在投递正文里。没写就不出现。 */
+		bulletin?: string;
+		/** 接话规则。没写就不出现（界面显示为「默认」）。 */
+		responder?: ViewChannelResponder;
+	};
 	members: ViewMember[];
 	messages: ViewMessage[];
 	hasMore: boolean;

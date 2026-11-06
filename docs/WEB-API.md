@@ -158,11 +158,18 @@ type ViewChannel = {
 
 ```ts
 // 请求
-{ title: string, members: string[] }   // members = 名字或 slug；我自己由服务端加
+{
+  title: string,
+  members: string[],                    // 名字或 slug；我自己由服务端加
+  bulletin?: string,                    // 共享指令，≤12,000 字（trim 后空串 = 不写）
+  responder?: { kind: "lead", slug } | { kind: "mentions" } | { kind: "everyone" },
+}
 
 // 响应
 { ok: true, id: string }               // id = `group:<slug>`
 ```
+
+`responder` 的 `lead` 必须是这个群的成员（建群时按解析后的成员表校验，否则 `400`）。
 
 - 建出来是一个普通群聊频道（`kind: "group"`），**没有** README、团队记忆、负责人；
   `wakeOnAll` 是全部成员 —— 群里每个人都会收到新消息，自己判断要不要接（ADR-063）。
@@ -170,6 +177,27 @@ type ViewChannel = {
 - 第一个 `members` 不认识 → `400`，`error` 里列出可以拉的人；标题为空 / 不足两人同样是 `400`。
 - 界面：侧栏品牌行的「＋」→ 拉群浮层（`store.makeGroup`）。
 - agent 侧的同一个动作是 `chats action=create`（任何成员都能拉群）。
+
+## 3.2 `PATCH /api/channels/:id`（改共享指令与接话规则）
+
+```ts
+// 请求：缺省 = 不动，null = 清掉（回到默认）
+{
+  bulletin?: string | null,
+  responder?: { kind: "lead", slug } | { kind: "mentions" } | { kind: "everyone" } | null,
+}
+
+// 响应
+{ ok: true }
+```
+
+- 只有 `group:` / `team:` / `all` 这类频道有这两样；私聊 → `400`（它只有两个人，接话没有
+  第二种可能），频道不存在 → `404`。
+- `bulletin` 超过 12,000 字 → `400`；`responder.kind = "lead"` 且 slug 不是这个频道的成员
+  → `400`，并且**一个字段都不写**（校验在 `commit` 之前）。
+- 改完下一条消息生效：共享指令每轮由 `renderDelivery` 贴进投递正文，接话规则在
+  `recipientsOf` 里算「没人 `@` 时谁接」——`@` 永远优先。
+- 界面：右栏频道资料页的「共享指令」「接话规则」两行（`RightPanel` 的 `ChannelSettings`）。
 
 ## 4. `POST /api/people/:slug/dm`（新建私聊）
 
@@ -222,7 +250,10 @@ Query：`limit`（默认 60，夹在 1..200）、`before`（seq，往前翻页�
 
 ```ts
 type ViewChannelDetail = {
-  channel: Omit<ViewChannel, "unread" | "mentions" | "preview">;
+  channel: Omit<ViewChannel, "unread" | "mentions" | "preview"> & {
+    bulletin?: string;                                   // 共享指令，没写就不出现
+    responder?: { kind: "lead", slug } | { kind: "mentions" } | { kind: "everyone" };  // 没写 = 默认
+  };
   members: ViewMember[];
   messages: ViewMessage[];
   hasMore: boolean;      // 前面还有更早的

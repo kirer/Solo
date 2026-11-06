@@ -11,7 +11,7 @@
  */
 import { BACKGROUND_CONTEXT } from "../core/runtime/index.ts";
 import { OWNER_SLUG, readIdentity } from "../core/documents/member/identity.ts";
-import { ChannelDoc, dmId, emptyChannelState, type Attachment, type ChannelState } from "../core/channel/types.ts";
+import { ChannelDoc, chatKind, dmId, emptyChannelState, type Attachment, type ChannelResponder, type ChannelState } from "../core/channel/types.ts";
 import { markRead as markReadDoc } from "../core/channel/rules.ts";
 import { createGroup as createGroupDoc, ensureOwnerDm } from "../core/channel/membership.ts";
 import {
@@ -31,6 +31,33 @@ import { AppError } from "./errors.ts";
 import type { CoreServices } from "./types.ts";
 
 /** `POST /api/channels/:id/messages` 的请求体（字段名就是线上的键名）。 */
+/** 共享指令的字数上限。与频道文档一起走，改这里就是改契约。 */
+const BULLETIN_MAX = 12_000;
+
+/** `undefined` = 没给 / 清掉；`null` = 不合法；字符串 = 新值。 */
+function bulletinOf(value: unknown): string | undefined | null {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "string") return null;
+	const text = value.trim();
+	if (text === "") return undefined;
+	return text.length > BULLETIN_MAX ? null : text;
+}
+
+/** `undefined` = 没给 / 清掉；`null` = 不合法。`members` 给了就校验 lead 在不在里面。 */
+function parseResponder(
+	value: unknown,
+	members: readonly string[] | undefined,
+): ChannelResponder | undefined | null {
+	if (value === undefined || value === null) return undefined;
+	if (typeof value !== "object" || Array.isArray(value)) return null;
+	const kind = (value as { kind?: unknown }).kind;
+	if (kind === "mentions" || kind === "everyone") return { kind };
+	const slug = (value as { slug?: unknown }).slug;
+	if (kind !== "lead" || typeof slug !== "string" || slug.trim() === "") return null;
+	if (members !== undefined && !members.includes(slug)) return null;
+	return { kind: "lead", slug };
+}
+
 export type PostBody = {
 	readonly text?: string;
 	readonly replyTo?: number;
@@ -98,11 +125,21 @@ export function createChat(shell: CoreServices) {
 	async function createGroup(body: {
 		readonly title?: string;
 		readonly members?: readonly string[];
+		readonly bulletin?: unknown;
+		readonly responder?: unknown;
 	}): Promise<{ ok: true; id: string }> {
 		const title = typeof body.title === "string" ? body.title : "";
 		const members = Array.isArray(body.members)
 			? body.members.filter((slug): slug is string => typeof slug === "string" && slug.trim() !== "")
 			: [];
+		const bulletin = bulletinOf(body.bulletin);
+		if (bulletin === null) throw new AppError("bad-request", `共享指令最多 ${BULLETIN_MAX} 字`);
+		// 建群时还不知道 slug 会不会被解析（`members` 可以是显示名），lead 的成员校验
+		// 交给 `createGroupDoc`：它在解析完之后手里才有真正的成员表。
+		const responder = body.responder === undefined || body.responder === null
+			? undefined
+			: parseResponder(body.responder, undefined);
+		if (responder === null) throw new AppError("bad-request", "接话规则不合法");
 		try {
 			const group = await createGroupDoc(
 				{
@@ -110,13 +147,57 @@ export function createChat(shell: CoreServices) {
 					layout: shell.layout,
 					text: shell.text,
 				},
-				{ title, members, creator: OWNER_SLUG },
+				{
+					title,
+					members,
+					creator: OWNER_SLUG,
+					...(bulletin === undefined ? {} : { bulletin }),
+					...(responder === undefined ? {} : { responder }),
+				},
 				BACKGROUND_CONTEXT,
 			);
 			return { ok: true, id: group.id };
 		} catch (error) {
 			throw new AppError("bad-request", error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	/**
+	 * 改一个频道的共享指令与接话规则。
+	 *
+	 * `null` = 清掉（回到老行为），缺省 = 不动。私聊没有这两样：它只有两个人，
+	 * 接话规则没有第二种可能。
+	 */
+	async function updateChannel(
+		channelId: string,
+		body: { readonly bulletin?: unknown; readonly responder?: unknown },
+	): Promise<{ ok: true }> {
+		const snapshot = (await shell.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannelState();
+		const channel = snapshot.channels[channelId];
+		if (channel === undefined) throw new AppError("not-found", "频道不存在");
+		if (chatKind(channel) === "dm") throw new AppError("bad-request", "私聊没有共享指令和接话规则");
+
+		const bulletin = bulletinOf(body.bulletin);
+		if (bulletin === null) throw new AppError("bad-request", `共享指令最多 ${BULLETIN_MAX} 字`);
+		const responder = parseResponder(body.responder, channel.members);
+		if (responder === null) throw new AppError("bad-request", "接话规则不合法：lead 必须是这个频道的成员");
+
+		await shell.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const current = doc.channels[channelId];
+			if (current === undefined) return;
+			const next = { ...current };
+			if (body.bulletin !== undefined) {
+				if (bulletin === undefined) delete next.bulletin;
+				else next.bulletin = bulletin;
+			}
+			if (body.responder !== undefined) {
+				if (responder === undefined) delete next.responder;
+				else next.responder = responder;
+			}
+			Object.assign(doc, { channels: { ...doc.channels, [channelId]: next } });
+		}, BACKGROUND_CONTEXT);
+		return { ok: true };
 	}
 
 	/**
@@ -188,5 +269,5 @@ export function createChat(shell: CoreServices) {
 		return await putUpload(uploadsRoot, { name, mime, bytes, at: Date.now() });
 	}
 
-	return { postAsOwner, createGroup, openDirectMessage, markRead, saveUpload, uploadsRoot };
+	return { postAsOwner, createGroup, updateChannel, openDirectMessage, markRead, saveUpload, uploadsRoot };
 }

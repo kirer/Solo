@@ -103,6 +103,7 @@ describe("view/dto.ts 是唯一权威", () => {
 				"Channel",
 				"ChannelDetail",
 				"ChannelKind",
+				"ChannelResponder",
 				"Member",
 				"MemoryEntry",
 				"Mention",

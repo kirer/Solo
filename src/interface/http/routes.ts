@@ -237,7 +237,12 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/channels",
 			method: "POST",
 			handler: async ({ request, response }) => {
-				const body = await readJson<{ title?: string; members?: readonly string[] }>(request);
+				const body = await readJson<{
+					title?: string;
+					members?: readonly string[];
+					bulletin?: unknown;
+					responder?: unknown;
+				}>(request);
 				return json(response, await app.chat.createGroup(body));
 			},
 		},
@@ -329,6 +334,15 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 					before: numberParam(url, "before"),
 				});
 				return json(response, detail);
+			},
+		},
+		{
+			// 改频道的共享指令 / 接话规则。`null` 清掉，缺省不动。
+			pattern: "/api/channels/:id",
+			method: "PATCH",
+			handler: async ({ request, response, params }) => {
+				const body = await readJson<{ bulletin?: unknown; responder?: unknown }>(request);
+				return json(response, await app.chat.updateChannel(params.id ?? "", body));
 			},
 		},
 		{

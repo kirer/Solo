@@ -81,6 +81,23 @@ export type Message = {
 	sourceEntry?: string;
 };
 
+/**
+ * 没人 @ 时谁接话。
+ *
+ * **可选**：不写就是老行为 —— 团队频道由 `wakeOnAll` 守着（助理接），别的频道叫醒
+ * 「接上一位说话的」。写了就以它为准；`@` 永远优先于它。
+ *
+ * 为什么不是枚举 + 一堆布尔：三种形态各自需要的事实不同（lead 要一个人、everyone
+ * 不需要人），判别联合让「lead 没写人」在类型上就不存在。
+ */
+export type ChannelResponder =
+	/** 固定一个人接（必须是成员）。 */
+	| { readonly kind: "lead"; readonly slug: string }
+	/** 没人 @ 就没人接。 */
+	| { readonly kind: "mentions" }
+	/** 这个频道里除发件人和我之外的成员都接。 */
+	| { readonly kind: "everyone" };
+
 /** 一个频道。 */
 export type Channel = {
 	/** 频道 id：`general` / `team:alpha` / `dm:owner-cto` 之类，由建频道的人自己起。 */
@@ -98,6 +115,14 @@ export type Channel = {
 	wakeOnAll: string[];
 	createdAt: number;
 	archived?: true;
+	/**
+	 * 这个频道的共享指令（≤12,000 字）。每轮贴在投递正文里，和 delivery 的其它文案
+	 * 同一处渲染 —— 不进系统提示词：那是按人渲染的，频道是按消息变的，塞进去会让
+	 * prompt cache 按频道碎裂。
+	 */
+	bulletin?: string;
+	/** 没人 @ 时谁接话。不写 = 老行为（见 `ChannelResponder`）。 */
+	responder?: ChannelResponder;
 };
 
 export type ChannelState = {
