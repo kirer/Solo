@@ -9,7 +9,7 @@
 import type { Context, Harness } from "../runtime/index.ts";
 import { ChannelDoc, emptyChannelState } from "../channel/types.ts";
 import type { Channel, ChannelState, Message } from "../channel/types.ts";
-import { appendNote, appendToChannel } from "../channel/write.ts";
+import { appendNote, appendToChannel, plainChannel } from "../channel/write.ts";
 import type { MessageStore } from "./ports.ts";
 import type { ChannelSnapshot, NoteInput, PublishInput } from "./types.ts";
 
@@ -32,10 +32,7 @@ export function createMessageStore(deps: {
 			const state = await snapshot(ctx);
 			const channel = state.channels[channelId];
 			if (channel === undefined) return undefined;
-			return {
-				state,
-				channel: { ...channel, members: [...channel.members], wakeOnAll: [...channel.wakeOnAll] },
-			};
+			return { state, channel: plainChannel(channel) };
 		},
 		async append(
 			input: PublishInput,

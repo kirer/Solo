@@ -85,7 +85,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             104 文件 / 920 例
+test/             104 文件 / 921 例
   ├ test/core/    83 文件（纯函数 + 装配）
   ├ test/ui/      12 文件（界面纯函数与源码约定）
   └ test/desktop/ 6 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
@@ -148,7 +148,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 104 文件 920 例，<3s，必须全绿
+npm test             # 104 文件 921 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -273,7 +273,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/documents/member/identity.ts` 的 `IdentityHeader` |
 | 改谁能被 @ 到 / 谁被叫醒 | `docs/CORE.md` §4 | `src/core/channel/mentions.ts` 的 `recipientsOf` / `parseMentions` |
 | 改「这条会话算私聊还是群聊」 | `docs/CORE.md` §4 | `src/core/channel/types.ts` 的 `chatKind`（只看成员表） |
-| 频道自己的共享指令 / 「没人 `@` 时谁接」 | `docs/CORE.md` §4 + `docs/WEB-API.md` §3.1 / §3.2 / §6 + `docs/DESIGN.md` §13.2 + `docs/DECISIONS.md` ADR-095 | `src/core/channel/types.ts` 的 `ChannelResponder` / `Channel.bulletin` / `Channel.responder` + `channel/mentions.ts` 的 `responderTargets`（`recipientsOf` 里 `@` 优先）+ `channel/delivery.ts` 的 bulletin 行（文案 `seed/text/channel.md` 的 `delivery.bulletin`）+ `channel/membership.ts` 的 `createGroup` + `app/chat.ts` 的 `bulletinOf` / `parseResponder` / `updateChannel` + 路由 `PATCH /api/channels/:id` + `src/view/dto.ts` 的 `ViewChannelResponder` + `ui/app/src/panels/RightPanel.tsx` 的 `ChannelSettings`；`test/core/{channel-responder,channel-settings,deliver}.test.ts` |
+| 频道自己的共享指令 / 「没人 `@` 时谁接」 | `docs/CORE.md` §4 + `docs/WEB-API.md` §3.1 / §3.2 / §6 + `docs/DESIGN.md` §13.2 + `docs/DECISIONS.md` ADR-095 | `src/core/channel/types.ts` 的 `ChannelResponder` / `Channel.bulletin` / `Channel.responder` + `channel/mentions.ts` 的 `responderTargets`（`recipientsOf` 里 `@` 优先）+ `channel/write.ts` 的 `plainChannel`（事务代理抄成纯对象，否则投递读 `responder` 会抛 settled overlay）+ `channel/delivery.ts` 的 bulletin 行（文案 `seed/text/channel.md` 的 `delivery.bulletin`）+ `channel/membership.ts` 的 `createGroup` + `app/chat.ts` 的 `bulletinOf` / `parseResponder` / `updateChannel` + 路由 `PATCH /api/channels/:id` + `src/view/dto.ts` 的 `ViewChannelResponder` + `ui/app/src/panels/RightPanel.tsx` 的 `ChannelSettings`；`test/core/{channel-responder,channel-settings,deliver}.test.ts` |
 | 改频道成员怎么来 | `docs/CORE.md` §4 | `src/core/channel/membership.ts` 的 `joinTeamChannel` / `syncTeamChannel` / `addToAllChannel` |
 | 加一条 HTTP 路由 | `docs/WEB-API.md` | `src/interface/http/routes.ts` 的 `routes` 表 + `app/` 一个用例 + `ui/app/src/api/client.ts` 的消费者 |
 | 改界面 | `docs/DESIGN.md` + `docs/WEB-API.md` + `docs/CORE.md` §9 | `ui/app/`，改完 `npm run ui:build`；后端字段先改 `src/view/dto.ts`；新元素必须在 DESIGN §8 的数据来源表里指到字段 |

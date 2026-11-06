@@ -6,7 +6,8 @@ import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { createChannelFlow } from "../../src/core/channel/post.ts";
-import { appendNote } from "../../src/core/channel/write.ts";
+import { appendNote, appendToChannel } from "../../src/core/channel/write.ts";
+import { deliveryTargets } from "../../src/core/channel/mentions.ts";
 import { sandboxPool } from "./support.ts";
 
 /**
@@ -184,5 +185,27 @@ describe("并发写入", () => {
 		expect(texts).toEqual(["并发一", "并发三", "并发二"]);
 		const seqs = messages.map((item) => item.seq);
 		expect(new Set(seqs).size).toBe(seqs.length);
+	});
+});
+
+describe("交出去的频道是纯对象", () => {
+	it("带 responder 的频道，commit 之后还能读（事务代理已经关掉）", async () => {
+		// 真实事故：`responder` 是嵌套值，只抄 `{ ...channel }` 会把事务里的代理带出去；
+		// 投递在 commit 之后读它，抛 `Cannot use a settled overlay`，消息发出去但没人被叫醒。
+		const { runtime, channelId } = await setup();
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const channel = doc.channels[channelId];
+			if (channel !== undefined) channel.responder = { kind: "lead", slug: "林越" };
+		}, BACKGROUND_CONTEXT);
+
+		const appended = await appendToChannel(
+			{ harness: runtime.harness },
+			{ channelId, from: "owner", text: "上线了吗", at: 2 },
+			BACKGROUND_CONTEXT,
+		);
+		expect(appended).toBeDefined();
+		expect(appended?.channel.responder).toEqual({ kind: "lead", slug: "林越" });
+		expect(deliveryTargets(appended!.channel, appended!.message)).toEqual(["林越"]);
 	});
 });

@@ -2296,7 +2296,8 @@
   阈值和一个失败兜底，而收益只是省掉一次点选；等真有人嫌选规则麻烦再加，规则表本身不用动。
   共享指令跟着每条消息贴，长频道会多花一点 token —— 上限 12,000 字，且只贴这个频道的那一份。
 - **执行**：`src/core/channel/types.ts` 的 `ChannelResponder`；`channel/mentions.ts` 的
-  `responderTargets`（`recipientsOf` 里的规则分支）；`channel/delivery.ts` 的 bulletin 行与
+  `responderTargets`（`recipientsOf` 里的规则分支）；`channel/write.ts` 的 `plainChannel`（事务代理抄成纯对象，否则投递读
+  `responder` 会抛 settled overlay）；`channel/delivery.ts` 的 bulletin 行与
   `seed/text/channel.md` 的 `delivery.bulletin`；`channel/membership.ts` 的 `createGroup`；
   `app/chat.ts` 的 `bulletinOf` / `parseResponder` / `updateChannel` 与
   `PATCH /api/channels/:id`；`src/view/dto.ts` 的 `ViewChannelResponder`；界面

@@ -27,6 +27,22 @@ type AppendInput = {
 };
 
 /**
+ * 把事务/文档代理里读出来的频道抄成纯对象。
+ *
+ * 事务一关就不能再读代理（`Cannot use a settled overlay`），而投递在 commit **之后**
+ * 才拿这个频道算人。`members` / `wakeOnAll` / `responder` 都是嵌套值，必须逐个抄 ——
+ * 只写 `{ ...channel }` 会把它们的代理带出去。
+ */
+export function plainChannel(channel: Channel): Channel {
+	return {
+		...channel,
+		members: [...channel.members],
+		wakeOnAll: [...channel.wakeOnAll],
+		...(channel.responder === undefined ? {} : { responder: { ...channel.responder } }),
+	};
+}
+
+/**
  * 消息落盘的**唯一**实现：一次 commit，一次路径式 push。
  *
  * `postMessage`（说话）与 `appendNote`（系统留痕）都走这里。以前各写一份，其中
@@ -72,7 +88,7 @@ export async function appendToChannel(
 		doc.nextSeq[input.channelId] = next.message.seq + 1;
 		// 抄成纯对象再交出去：事务一关就不能再读代理（`Cannot use a settled overlay`）。
 		appended = {
-			channel: { ...channel, members: [...channel.members], wakeOnAll: [...channel.wakeOnAll] },
+			channel: plainChannel(channel),
 			message: JSON.parse(JSON.stringify(next.message)) as Message,
 		};
 	}, context);
