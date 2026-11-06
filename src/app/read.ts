@@ -320,9 +320,12 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 				const trigger = (channels.messages[id] ?? []).find((message) => message.seq === group.seq);
 				const startedAt = trigger?.at ?? 0;
 				const nextStart = nextSeqIn(id, group.seq);
-				const reply = said
+				// 取这一组里的**最后**一句：他可能中途先报一句进度再接着干（重启接着做时
+				// 尤其常见），拿第一句当「答完」会把时长和状态都记早。
+				const replies = said
 					.filter((item) => item.fromSlug === slug && item.channelId === id && item.seq > group.seq && item.seq < nextStart)
-					.sort((left, right) => left.seq - right.seq)[0];
+					.sort((left, right) => left.seq - right.seq);
+				const reply = replies[replies.length - 1];
 				const channelTitle = channels.channels[id]?.title;
 				const turn = buildTurn(
 					entries,

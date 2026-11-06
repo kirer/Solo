@@ -30,7 +30,7 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 		await appendTeamMemory(teams, "alpha", {
 			text: "后端超时是因为连接池默认只有 5。",
 			by: "林越",
-			at: new Date("2026-10-27T03:00:00Z"),
+			at: new Date(2026, 9, 27, 11, 0),
 			catalog: SEED_TEXT,
 		});
 		const source = await readTeamMemory(teams, "alpha");
@@ -40,8 +40,8 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 	});
 
 	it("第二条追加在末尾，第一条不丢", async () => {
-		await appendTeamMemory(teams, "alpha", { text: "第一条", at: new Date("2026-10-26T00:00:00Z") });
-		await appendTeamMemory(teams, "alpha", { text: "第二条", at: new Date("2026-10-27T00:00:00Z") });
+		await appendTeamMemory(teams, "alpha", { text: "第一条", at: new Date(2026, 9, 26, 10, 0) });
+		await appendTeamMemory(teams, "alpha", { text: "第二条", at: new Date(2026, 9, 27, 10, 0) });
 		const sections = teamMemorySections((await readTeamMemory(teams, "alpha")) ?? "");
 		expect(sections).toHaveLength(2);
 		expect(sections[0]?.body).toBe("第一条");
@@ -49,7 +49,7 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 	});
 
 	it("不带 by 时标题只有日期", async () => {
-		await appendTeamMemory(teams, "alpha", { text: "x", at: new Date("2026-10-27T00:00:00Z") });
+		await appendTeamMemory(teams, "alpha", { text: "x", at: new Date(2026, 9, 27, 10, 0) });
 		const source = await readTeamMemory(teams, "alpha");
 		expect(source).toContain("## 2026-10-27\n");
 	});
@@ -67,7 +67,7 @@ describe("团队记忆：teams/<slug>/memory.md", () => {
 			await appendTeamMemory(teams, "alpha", {
 				text: `第 ${index} 条的正文，这句话不该整段进提示词。`,
 				by: "林越",
-				at: new Date(`2026-10-2${index}T00:00:00Z`),
+				at: new Date(2026, 9, 22 + index, 10, 0),
 			});
 		}
 		const digest = teamMemoryDigest((await readTeamMemory(teams, "alpha")) ?? "", SEED_TEXT);

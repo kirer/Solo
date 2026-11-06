@@ -162,7 +162,7 @@ export async function refreshLists(): Promise<void> {
 				if (state.detail.channel.title !== mine.title || state.detail.channel.memberCount !== mine.memberCount) {
 					void reloadDetail(mine.id);
 				}
-				patch({ detail: { ...state.detail, channel: strip(mine) } });
+				patch({ detail: { ...state.detail, channel: withSettings(strip(mine), state.detail.channel) } });
 			}
 		}
 	} catch {
@@ -174,6 +174,22 @@ export async function refreshLists(): Promise<void> {
 function strip(channel: Channel): ChannelDetail["channel"] {
 	const { unread: _unread, mentions: _mentions, preview: _preview, ...rest } = channel;
 	return rest;
+}
+
+/**
+ * 列表项覆盖详情时，把只存在于详情里的两样带回来。
+ *
+ * `/api/channels` 的列表项不带共享指令与接话规则（它们只在详情里，也不该跟着侧栏
+ * 每条都传一遍）。少了这一步，每次组织推送都会把右栏打回「未写 / 默认」—— 接口
+ * 里明明有值，界面显示没有。
+ */
+export function withSettings(next: ChannelDetail["channel"], prev: ChannelDetail["channel"]): ChannelDetail["channel"] {
+	if (next.id !== prev.id) return next;
+	return {
+		...next,
+		...(prev.bulletin === undefined ? {} : { bulletin: prev.bulletin }),
+		...(prev.responder === undefined ? {} : { responder: prev.responder }),
+	};
 }
 
 /**

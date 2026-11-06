@@ -64,4 +64,28 @@ describe("轮次：压缩之后还在", () => {
 		const { turns } = await read.readPersonTurns("叶程", 0, Number.MAX_SAFE_INTEGER, false);
 		expect(turns).toEqual([]);
 	});
+
+	it("中途报过进度：结束时间取最后一句，不取第一句", async () => {
+		// 真实事故：一轮里先说了句「开始逐条复核」，35 秒后才说结论；结束时间被记成
+		// 2.4 秒，任务面板的时长和「已交付」都早了。
+		const snapshots = {
+			channelSnapshot: async () => ({
+				directory: { slugToConversation: { 叶程: 7 }, conversationToSlug: { "7": "叶程" }, wake: {}, labels: {} },
+				channels: {
+					channels: {},
+					messages: {
+						"team:小恐龙": [
+							{ seq: 5, at: 1_000, from: "owner", kind: "chat", text: "第 5 句" },
+							{ seq: 6, at: 2_000, from: "叶程", kind: "chat", text: "先跑一遍" },
+							{ seq: 8, at: 36_000, from: "叶程", kind: "chat", text: "结论" },
+						],
+					},
+				},
+			}),
+		};
+		const read = createRead(shellOf(fixture) as never, snapshots as never);
+		const { turns } = await read.readPersonTurns("叶程", 0, Number.MAX_SAFE_INTEGER, false);
+		expect(turns[0]?.replySeq).toBe(8);
+		expect(turns[0]?.endedAt).toBe(36_000);
+	});
 });

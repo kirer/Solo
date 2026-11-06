@@ -19,7 +19,7 @@ import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { backRight, closeTasks, openPerson, openTasks, refreshDetail, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
-import { TasksView } from "./TasksPanel.tsx";
+import { TasksView, workTurns } from "./TasksPanel.tsx";
 
 export function RightPanel(): JSX.Element {
 	const open = useStore((state) => state.right.open);
@@ -109,6 +109,8 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 	const rawState = presence.get(props.slug)?.state ?? actor?.activity ?? "idle";
 	const state = String(rawState);
 	const turns = useTurns(props.slug);
+	// 后台任务那一屏只列动过手的轮次（`workTurns`），这里数同一份，免得进去少了几轮。
+	const tasks = turns === undefined ? undefined : workTurns(turns);
 	const memoryCount = useMemoryCount(props.slug);
 	const skillCount = profile?.skills.length ?? 0;
 	const pluginCells = cellsOf("rightPanel.tab");
@@ -227,8 +229,8 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 				<Row
 					icon={<IconPulse />}
 					title="后台任务"
-					sub={turns === undefined ? "" : turnsLine(turns)}
-					value={turns === undefined ? "" : `${String(turns.length)} 轮`}
+					sub={tasks === undefined ? "" : turnsLine(tasks)}
+					value={tasks === undefined ? "" : `${String(tasks.length)} 轮`}
 					onClick={() => openTasks(props.slug)}
 				/>
 			</div>
@@ -493,7 +495,9 @@ function ChannelSettings(props: {
 	const savedBulletin = channel.bulletin ?? "";
 	const savedResponder = responderKey(channel.responder);
 	const dirty = bulletin.trim() !== savedBulletin || responder !== savedResponder;
-	const isTeam = channel.team !== undefined;
+	// 缺省行为跟着房间形态走（ADR-095）：团队叫助理、群里人人接、全员叫助理。
+	// 写错一句「接上一位说话的」会让人以为群里只有一个人会答。
+	const fallback = channel.id.startsWith("group:") ? "人人都接" : "叫助理";
 	const candidates = props.members.filter((member) => member.slug !== "owner");
 
 	async function save(): Promise<void> {
@@ -558,7 +562,7 @@ function ChannelSettings(props: {
 			<Row
 				icon={<IconPulse />}
 				title="接话规则"
-				sub={isTeam ? "没人 @ 时谁接：团队默认叫助理" : "没人 @ 时谁接：默认接上一位说话的"}
+				sub={`没人 @ 时谁接：默认${fallback}`}
 				value={responderLabel(responder, props.members)}
 				onClick={() => setOpenRow(openRow === "responder" ? null : "responder")}
 				open={openRow === "responder"}
@@ -567,7 +571,7 @@ function ChannelSettings(props: {
 				<div className="prof-panel">
 					<div className="prof-add">
 						<select value={responder} onChange={(event) => setResponder(event.target.value)}>
-							<option value="default">默认（{isTeam ? "叫助理" : "接上一位说话的"}）</option>
+							<option value="default">默认（{fallback}）</option>
 							<option value="mentions">只有被 @ 的人才接</option>
 							<option value="everyone">房间里的人人都接</option>
 							{candidates.map((member) => (

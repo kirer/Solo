@@ -16,6 +16,7 @@
 import { join } from "node:path";
 import {
 	appendNewSection,
+	dayOf,
 	entryProblem,
 	memoryDigest,
 	problemText,
@@ -70,7 +71,7 @@ export async function appendTeamMemory(
 	assertTeamSlug(team, input.catalog);
 	const fallback = `${fill(input.catalog, "org.memory.team-header", { team })}\n`;
 	return store.update(teamMemoryPath(teamsRoot, team), (source) => {
-		const stamp = (input.at ?? new Date()).toISOString().slice(0, 10);
+		const stamp = dayOf(input.at ?? new Date());
 		const who = input.by === undefined ? "" : ` ${input.by}`;
 		const next = appendNewSection(source ?? fallback, `${stamp}${who}`, input.text);
 		// 目录可能还不存在：团队记忆可以先于 `README.md` 写下（先记一条再补说明是常见的）。

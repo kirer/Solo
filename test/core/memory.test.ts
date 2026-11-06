@@ -29,7 +29,7 @@ describe("记忆：一份可以随手改的 Markdown", () => {
 	});
 
 	it("追加一条后能读回，带日期小节", async () => {
-		await appendMemory(root, "招人时先问「要判断还是要执行」", new Date("2026-10-27T00:00:00Z"));
+		await appendMemory(root, "招人时先问「要判断还是要执行」", new Date(2026, 9, 27, 10, 0));
 		const source = await readMemory(root);
 		expect(source).toContain("## 2026-10-27");
 		expect(source).toContain("招人时先问");
@@ -131,9 +131,17 @@ describe("记忆的底线", () => {
 		expect(source).toContain("第三条");
 	});
 
+	it("日期小节用本地日历日，凌晨写的一条不能落到昨天", async () => {
+		// 真实事故：东八区 02:15 记下的一条，标题是前一天的 `## 2026-11-06`。
+		await appendMemory(root, "凌晨记的一条", new Date(2026, 10, 7, 2, 15));
+		const source = (await readMemory(root)) ?? "";
+		expect(source).toContain("## 2026-11-07");
+		expect(source).not.toContain("## 2026-11-06");
+	});
+
 	it("同一天的第二条并进当天的小节，不再新开一个同名标题", async () => {
-		await appendMemory(root, "上午的结论", new Date("2026-10-27T01:00:00Z"));
-		await appendMemory(root, "下午的结论", new Date("2026-10-27T09:00:00Z"));
+		await appendMemory(root, "上午的结论", new Date(2026, 9, 27, 1, 0));
+		await appendMemory(root, "下午的结论", new Date(2026, 9, 27, 9, 0));
 		const source = (await readMemory(root)) ?? "";
 		expect(source.split("## 2026-10-27").length - 1).toBe(1);
 		expect(source).toContain("上午的结论");

@@ -19,6 +19,14 @@ import { useStore } from "../state/useStore.ts";
 
 const REFRESH_MS = 2000;
 
+/**
+ * 任务表的一行 = 动过手的一轮。0 步的（只说了句话、没回话的）是聊天不是任务；
+ * 还在跑的先留着（步数随后才到）。资料页那行「N 轮」也用它数，两处不能各算各的。
+ */
+export function workTurns(turns: readonly Turn[]): Turn[] {
+	return turns.filter((turn) => turn.status === "running" || turn.stepCount > 0);
+}
+
 export function TasksView(): JSX.Element {
 	const who = useStore((state) => state.tasks.who);
 	const runs = useStore((state) => state.runs);
@@ -41,14 +49,10 @@ export function TasksView(): JSX.Element {
 	const actor = who === null ? undefined : people.find((person) => person.slug === who);
 	const failure = actor?.lastFailure;
 
-	// 0 步的一轮不占一行：只说了句话、没动过手（包括没回话的），那是聊天不是任务；
-	// 还在跑的先留着（步数随后才到）。
 	const mine =
 		who === null
 			? []
-			: [...(runs.get(who) ?? [])]
-					.filter((turn) => turn.status === "running" || turn.stepCount > 0)
-					.sort((left, right) => right.startedAt - left.startedAt);
+			: workTurns(runs.get(who) ?? []).sort((left, right) => right.startedAt - left.startedAt);
 
 	const open = mine.find((turn) => keyOf(turn) === pick) ?? null;
 

@@ -78,6 +78,18 @@ export function alreadyRecorded(source: string, text: string): boolean {
 	);
 }
 
+/**
+ * 本地日历日（`YYYY-MM-DD`），记忆小节的标题用它。
+ *
+ * 不能用 `toISOString().slice(0, 10)`：那是 UTC 日，东八区 0–8 点记下的一条会落到
+ * 昨天的小节里（凌晨写记忆 → 标题显示前一天）。
+ */
+export function dayOf(at: Date): string {
+	const month = String(at.getMonth() + 1).padStart(2, "0");
+	const day = String(at.getDate()).padStart(2, "0");
+	return `${at.getFullYear()}-${month}-${day}`;
+}
+
 /** 新开一节（团队记忆：每条都带日期和记录人，永远新开）。 */
 export function appendNewSection(source: string, heading: string, body: string): string {
 	return `${source.trimEnd()}\n\n## ${heading}\n${body.trim()}\n`;

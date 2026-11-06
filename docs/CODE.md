@@ -362,7 +362,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 104 文件 / 921 例，应该 <3s
+npm test             # 106 文件 / 929 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）

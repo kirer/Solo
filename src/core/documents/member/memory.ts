@@ -20,6 +20,7 @@ import { fill, type TextCatalog } from "../base/catalog.ts";
 import {
 	alreadyRecorded,
 	appendOrExtendLastSection,
+	dayOf,
 	entryProblem,
 	problemText,
 	sectionsOf,
@@ -83,7 +84,7 @@ export async function appendMemory(
 					result: { changed: false, message: fill(catalog, "org.memory.duplicate"), source: before },
 				};
 			}
-			const next = appendOrExtendLastSection(before, at.toISOString().slice(0, 10), text);
+			const next = appendOrExtendLastSection(before, dayOf(at), text);
 			return { next, result: { changed: true, message: fill(catalog, "org.memory.saved"), source: next } };
 		},
 		({ before, after }) =>
