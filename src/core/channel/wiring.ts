@@ -18,7 +18,7 @@ import {
 	type WakeRecord,
 } from "./roster.ts";
 import { createTurnFinisher, type FinishTurn } from "./turn/index.ts";
-import { readAllIdentities } from "../documents/member/identity.ts";
+import { assistantsOf, readAllIdentities } from "../documents/member/identity.ts";
 import { mentionRosterOf } from "./mentions.ts";
 import { createChannelFlow, type ChannelFlow } from "./post.ts";
 import type { FlowPolicy, Message } from "./types.ts";
@@ -86,6 +86,8 @@ export function wireChannel(deps: {
 		...(deps.open === undefined ? {} : { open: deps.open }),
 	});
 	const promptDir = deps.layout.promptRoot;
+	// 助理的结论回我的私聊（投递正文每轮据此选 `91-where-assistant.md`）。
+	const assistants = async () => assistantsOf(deps.layout, await readAllIdentities(deps.layout.agentRoots));
 
 	const wakeOfOf = async (key: string, context: Context = BACKGROUND_CONTEXT): Promise<WakeRecord | undefined> => {
 		const directory = (await deps.harness.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
@@ -114,6 +116,7 @@ export function wireChannel(deps: {
 	const finishTurn = createTurnFinisher({
 		harness: deps.harness,
 		promptDir,
+		assistants,
 		...(deps.text === undefined ? {} : { text: deps.text }),
 		roster,
 		// 收尾发生在背景上下文里（结算之后），用不到调用方那一轮的覆盖层。
@@ -134,6 +137,7 @@ export function wireChannel(deps: {
 		wakeOf: wakeOfOf,
 		uploadsRoot: deps.layout.uploadsRoot,
 		promptDir,
+		assistants,
 		roster,
 		...(deps.text === undefined ? {} : { text: deps.text }),
 		...(deps.afterPublish === undefined ? {} : { afterPublish: deps.afterPublish }),

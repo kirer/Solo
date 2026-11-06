@@ -7,7 +7,7 @@
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { Message } from "../src/core/channel/types.ts";
+import { dmId, OWNER, type Message } from "../src/core/channel/types.ts";
 import { BACKGROUND_CONTEXT, createRegistry, setupModels, type Context, type Harness } from "../src/core/runtime/index.ts";
 import type { ModelRef, ModelSetup } from "../src/core/runtime/models.ts";
 import { openCore, type CoreRuntime } from "../src/core/runtime/open.ts";
@@ -363,6 +363,32 @@ export async function waitForMention(
 		}
 		const hit = messages.find((message) => message.mentions.includes(target));
 		if (hit !== undefined) return { hit };
+		await sleep(1_000);
+	}
+	return {};
+}
+
+/**
+ * 等 `from` 把话交到我手里：在任何频道 @我，或者直接发进我和他的私聊（ADR-094 之后
+ * 助理的结论走后者，私聊里不需要 `@`，所以不能只看 `mentions`）。
+ */
+export async function waitForOwnerReached(
+	shell: LiveShell,
+	baseline: Readonly<Record<string, number>>,
+	from: string,
+	timeoutMs: number,
+): Promise<{ readonly hit?: Message; readonly channelId?: string }> {
+	const dm = dmId(from, OWNER);
+	const deadline = Date.now() + timeoutMs;
+	while (Date.now() < deadline) {
+		const state = await shell.channels();
+		for (const [channelId, list] of Object.entries(state.messages)) {
+			const base = baseline[channelId] ?? Number.POSITIVE_INFINITY;
+			for (const message of list) {
+				if (message.seq < base || message.from !== from) continue;
+				if (channelId === dm || message.mentions.includes(OWNER)) return { hit: message, channelId };
+			}
+		}
 		await sleep(1_000);
 	}
 	return {};

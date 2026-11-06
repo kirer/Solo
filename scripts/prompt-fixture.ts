@@ -56,6 +56,8 @@ export const SAMPLE_SLOTS = {
 
 	"reply.alone": "（这一轮只有你被叫醒：必须回，回的就是结果。）",
 	"reply.colleagues": "（成员的事就在这个频道说：要问示例同僚就 @ 他。）",
+	"reply.where": "（回话用 say 发到这个频道，回话时省略频道参数。）",
+	dm: "dm:demo-owner",
 
 	// delivery 片段里的条件事实（81–87）。
 	others: "示例同僚",

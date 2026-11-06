@@ -27,6 +27,8 @@ export type TurnDeps = {
 	readonly harness: Harness;
 	readonly promptDir?: string | undefined;
 	readonly text?: ChannelFlowDeps["text"];
+	/** 谁是助理（slug）：补发时助理的结论同样回我的私聊。 */
+	readonly assistants?: ChannelFlowDeps["assistants"];
 	/** 名册：补发时 `@我` 要存成 `owner`，不能存字面 token（见 `ownerSpeak` 同一段说明）。 */
 	readonly roster?: () => Promise<MentionRoster>;
 	readonly conversationOf: (slug: string) => Promise<Conversation | undefined>;
@@ -62,6 +64,7 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 			...(deps.wakeOf === undefined ? {} : { wakeOf: deps.wakeOf }),
 			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			...(deps.text === undefined ? {} : { text: deps.text }),
+			...(deps.assistants === undefined ? {} : { assistants: deps.assistants }),
 		}),
 		settler: chain.settler,
 		...(deps.roster === undefined ? {} : { roster: deps.roster }),

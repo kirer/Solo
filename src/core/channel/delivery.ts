@@ -10,6 +10,7 @@
  * 系统提示词里的模板同源，改 `<appRoot>/prompt/*.md` 下一条消息就生效。
  */
 import { OWNER, chatKind, type Channel, type ChannelState, type Message } from "./types.ts";
+import { dmId } from "./id.ts";
 import { deliveryTargets } from "./mentions.ts";
 import { channelsOf, tail, unreadCount } from "./rules.ts";
 import { loadTemplates, type PromptTemplate } from "../documents/base/template.ts";
@@ -26,11 +27,14 @@ import { fill, type TextCatalog } from "../documents/base/catalog.ts";
  */
 export type ReplyFragment = { readonly body: string; readonly fallback: string };
 
-/** 回话规矩的三个条件片段。 */
+/** 回话规矩的条件片段。 */
 export type ReplyFragments = {
 	readonly alone: ReplyFragment;
 	readonly shared: ReplyFragment;
 	readonly colleagues: ReplyFragment;
+	/** 「回话发哪儿」：普通成员发这个频道，助理发我的私聊（`91-where-assistant.md`）。 */
+	readonly where: ReplyFragment;
+	readonly whereAssistant: ReplyFragment;
 };
 
 /** delivery 段的全部模板：每轮现读，改文件下一条生效。 */
@@ -40,6 +44,9 @@ export type DeliveryPrompt = {
 	readonly alone: ReplyFragment;
 	readonly shared: ReplyFragment;
 	readonly colleagues: ReplyFragment;
+	/** 回话发哪儿：`89-where.md` 给成员，`91-where-assistant.md` 给助理（结论回我的私聊）。 */
+	readonly where: ReplyFragment;
+	readonly whereAssistant: ReplyFragment;
 	readonly dm: string;
 	readonly multi: string;
 	readonly merged: string;
@@ -88,6 +95,15 @@ export function renderReplyRules(options: {
 	/** `prompt/80-reply.md` 的正文。空串 = 没有模板（整段不贴）。 */
 	readonly template: string;
 	readonly fragments: ReplyFragments;
+	/**
+	 * 收件人是助理。
+	 *
+	 * 助理在团队频道里只是统筹者：结论回我的私聊（`dm:<助理>-owner`），团队频道只留
+	 * 派活和进展。和 `seed/assistant/identity.md` 的「做完在跟我的私聊里说清楚」同一条
+	 * 规矩，这里每轮贴在生成点上 —— 否则 80-reply 的「回这个频道」会盖过身份里的那句。
+	 * 只在「别人叫醒他」时给：我直接问他的那一轮仍在原频道答（判断在 `renderDelivery`）。
+	 */
+	readonly assistant?: boolean | undefined;
 }): string {
 	if (options.template.trim() === "") return "";
 	const others = options.woken.filter((slug) => slug !== options.viewer);
@@ -106,10 +122,17 @@ export function renderReplyRules(options: {
 			? fillFragment(options.fragments.colleagues.fallback)
 			: fillPair(options.fragments.colleagues, { colleagues: colleagues.map(label).join("、") });
 
+	// 回话发哪儿：成员发这个频道；助理发我的私聊，频道里只留派活与进展。
+	const where =
+		options.assistant === true && options.viewer !== undefined
+			? fillPair(options.fragments.whereAssistant, { dm: dmId(options.viewer, OWNER) })
+			: fillPair(options.fragments.where);
+
 	const slots: Record<string, SlotValue> = {
 		...toolSlots(options.template),
 		"reply.alone": alone,
 		"reply.colleagues": colleagueLine,
+		"reply.where": where,
 	};
 	return renderSlots(options.template, slots).text.trim();
 }
@@ -120,6 +143,8 @@ export function renderDelivery(options: {
 	readonly message: Message;
 	/** 收件人。用来从「还 @ 了」里剔掉自己——否则每个人都会看到「还 @ 了你」。 */
 	readonly viewer?: string | undefined;
+	/** 收件人是助理：结论回我的私聊（见 `renderReplyRules`）。 */
+	readonly assistant?: boolean | undefined;
 	/**
 	 * 这条实际会叫醒谁（投递层已经算好的名单）。
 	 *
@@ -190,6 +215,11 @@ export function renderDelivery(options: {
 			fragments: prompt,
 			woken,
 			viewer: options.viewer,
+			// 助理那句只在「别人叫醒他」时贴：我直接问他的话，就在这个频道答；
+			// 跟我的私聊里本来就已经是「回私聊」了。
+			...(options.assistant === true && message.from !== OWNER && !isOwnerDm(channel, options.viewer)
+				? { assistant: true }
+				: {}),
 			labelOf: label,
 			// 只在群聊里说「成员的事在群里说」：私聊里没有第三方，提了反而让它去找人。
 			colleagues:
@@ -231,6 +261,8 @@ export async function deliveryText(promptDir: string | undefined): Promise<Deliv
 		alone: fragmentOf("alone"),
 		shared: fragmentOf("shared"),
 		colleagues: fragmentOf("colleagues"),
+		where: fragmentOf("where"),
+		whereAssistant: fragmentOf("where-assistant"),
 		dm: bodyOf("dm"),
 		multi: bodyOf("multi"),
 		merged: bodyOf("merged"),
@@ -248,6 +280,8 @@ function emptyDeliveryPrompt(): DeliveryPrompt {
 		alone: { body: "", fallback: "" },
 		shared: { body: "", fallback: "" },
 		colleagues: { body: "", fallback: "" },
+		where: { body: "", fallback: "" },
+		whereAssistant: { body: "", fallback: "" },
 		dm: "",
 		multi: "",
 		merged: "",

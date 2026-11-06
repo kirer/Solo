@@ -95,6 +95,8 @@ export type DeliverOptions = {
 	readonly uploadsRoot?: string;
 	/** 机械文案目录（`text/channel.md`）。投递头与附件说明从这里取。 */
 	readonly text?: TextCatalog;
+	/** 谁是助理（slug）。助理的结论回我的私聊，不在团队频道里收尾。 */
+	readonly assistants?: readonly string[];
 	/**
 	 * 合并唤醒：撤掉这个会话里「还没开始」的排队项，让新的一条取代它们。
 	 * 返回合并了几条（0 = 没合并）。不传就不合并。
@@ -140,6 +142,7 @@ export async function fanOut(options: DeliverOptions, context: Context): Promise
 			channel: options.channel,
 			message: options.message,
 			viewer,
+			...(options.assistants?.includes(viewer) === true ? { assistant: true } : {}),
 			woken: options.targets,
 			labelOf: label,
 			...(options.routedBy === undefined ? {} : { routedBy: options.routedBy }),
@@ -226,6 +229,7 @@ export async function fanOut(options: DeliverOptions, context: Context): Promise
 						channelTitle: options.channel.title,
 						seq: options.message.seq,
 						from: options.message.from,
+						at: options.message.at,
 						text: options.message.text.slice(0, 400),
 						mentions: [...options.message.mentions],
 					},
@@ -452,6 +456,8 @@ export type RunnerDeps = {
 	readonly uploadsRoot?: string;
 	readonly promptDir?: string;
 	readonly text?: TextCatalog;
+	/** 谁是助理（slug）。每轮现读：改身份目录下一条消息生效。 */
+	readonly assistants?: () => Promise<readonly string[]>;
 };
 
 /**
@@ -468,6 +474,7 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 
 			// 模板只读一次：摘要和正文用同一份，改 md 下一条生效。
 			const prompt = await deliveryText(deps.promptDir);
+			const assistants = deps.assistants === undefined ? undefined : await deps.assistants();
 			const digests = new Map<string, string>();
 			for (const slug of plan.targets) {
 				const part = digestRows(state, slug, 5, deps.text);
@@ -493,6 +500,7 @@ export function createTurnRunner(deps: RunnerDeps): TurnRunner {
 					message,
 					targets: plan.targets,
 					busy,
+					...(assistants === undefined ? {} : { assistants }),
 					...(deps.text === undefined ? {} : { text: deps.text }),
 					...(routedBy === undefined ? {} : { routedBy }),
 					// 合并唤醒（也负责我插队）：同一个会话最多留一个「还没开始」的排队项。

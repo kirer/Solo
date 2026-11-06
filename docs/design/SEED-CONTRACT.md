@@ -31,7 +31,7 @@ seed/
   text/                          # 机械文案：`## key` 分节，代码里只留键名
     tools.md                     # 8 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
     channel.md                   # 投递头 / 附件说明 / 未答留痕 / 提示词兜底句
-  prompt/                        # 9 段进系统提示词 + 10 段投递时用
+  prompt/                        # 9 段进系统提示词 + 12 段投递时用
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
     05-body.md                   # {{self.body}}（空则整段消失）
     10-rules.md                  # {{rules}}
@@ -50,7 +50,9 @@ seed/
     86-digest.md                 # 未读摘要尾注
     87-merged.md                 # 合并唤醒尾注
     88-task.md                   # 插话时提醒「手上的活属于哪个频道」
+    89-where.md                  # 回话发哪儿（成员：这个频道）
     90-interrupted.md            # 插话时的额外一句
+    91-where-assistant.md        # 回话发哪儿（助理：结论回我的私聊）
   assistant/                     # 助理（Solo）：播种进 appRoot/assistant/<slug>/
     identity.md                  # 助理身份（从代码挪出来）
     skills/建立团队/SKILL.md
@@ -88,6 +90,8 @@ seed/
 | `{{team.memory}}` | 团队记忆目录（小节标题，正文另读） | `teams/<slug>/memory.md` 的 digest |
 | `{{reply.alone}}` | 「这一轮只有你被叫醒：必须回，回的就是结果」 | `81-alone.md` / `82-shared.md`（按收件人数选一份） |
 | `{{reply.colleagues}}` | 「要问谁就在这个频道 @ 他」 | `83-colleagues.md` |
+| `{{reply.where}}` | 「回话发哪儿」：成员发这个频道；助理把结论发我的私聊 | `89-where.md` / `91-where-assistant.md`（按收件人是不是助理选一份） |
+| `{{dm}}` | 收件人与我的私聊频道 id（`dm:<助理>-owner`） | 频道 id 规则（`dmId`） |
 | `{{others}}` | 同一轮还被叫醒的其他人 | 投递名单（除自己） |
 | `{{colleagues}}` | 同频道里除我和收件人之外的成员 | 频道成员表 |
 | `{{total}}` | 别的频道未读总数 | 频道文档 |
@@ -112,15 +116,16 @@ seed/
 3. **一个 md = 一段 = 一个 cache section**，文件名前缀定序。加一段就是加个文件，不改代码。
    同一组文件必须渲染出**逐字节相同**的提示词，否则 prompt cache 每轮都被打穿。
 4. **整句插槽只许出现在 delivery 段**（`80-reply.md` / `90-interrupted.md`）：`reply.alone` /
-   `reply.colleagues` 是**条件句**（这一轮只有你被叫醒 / 还有 X 在），不是事实值；代码只按条件
-   从 `81-alone.md` / `82-shared.md` / `83-colleagues.md` 三份片段里选一份填进去。别的段不许用 `reply.*`。
+   `reply.colleagues` / `reply.where` 是**条件句**（这一轮只有你被叫醒 / 还有 X 在），不是事实值；代码只按条件
+   从 `81-alone.md` / `82-shared.md` / `83-colleagues.md` / `89-where.md` / `91-where-assistant.md`
+   里选一份填进去。别的段不许用 `reply.*`。
 5. **delivery 段的插槽面比 system 段窄，用错了会静默变「（未设置）」**：
    - `tool:*` 两段都能用，但机制不同 —— system 段从**注册表实拍**（工具改名自动跟），delivery 段
      没有注册表可查，由 `toolSlots(template)` **按后缀自解释**（`{{tool:say}}` → `say`）。代价是
      **名字写错不报错**（写 `{{tool:sayy}}` 就渲染成 `sayy`），靠 seed 侧检查把名字和真工具名对一遍。
-   - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues`；
+   - 非 `tool:*` 的插槽各有各的填充面：`80-reply` 只填 `reply.alone` / `reply.colleagues` / `reply.where`；
      `81` / `82` 填 `others`；`83` 填 `colleagues`；`84` / `85` 不填；`86` 填 `total` / `rows`；
-     `87` 填 `merged`；`88` 填 `task`；`90-interrupted` 只填 `tool:*`。
+     `87` 填 `merged`；`88` 填 `task`；`89` 不填；`90-interrupted` 只填 `tool:*`；`91` 填 `dm`。
      往这些段里加别的插槽，必须同时在填充处给值，否则模型看到的是「（未设置）」——
      `prompt:check` 用样例表查所有段。
 

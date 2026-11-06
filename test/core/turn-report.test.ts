@@ -31,10 +31,39 @@ function directoryWith(mapping: Partial<DirectoryState>): DirectoryState {
 	};
 }
 
+/** 唤醒条目：开跑时放进去的那条 `core.channel`。 */
+const wakeEntry = {
+	id: 1,
+	conversationId: 7,
+	kind: "core.channel",
+	data: { channelId: "team:alpha", seq: 2, from: "owner", at: 9, text: "上工", mentions: [] },
+} as never;
+
 describe("turn-report：名册 → 任务输入", () => {
 	test("会话能反查到人、也有唤醒记录时，三样都带上", () => {
 		const input = turnReportInputFor({ answer: "42" }, directoryWith({}), 7);
 		expect(input).toEqual({ slug: "林越", answer: "42", wake });
+	});
+
+	test("跑动期间名册的 reply 被新消息覆盖：以开跑那条条目为准", () => {
+		// 实测 2026-11-06：林柯答完自我介绍，频道里又来一条派活，名册的 reply 变成 4；
+		// 收尾按 4 找「他说过话没有」找不到 seq 2 那句，同一段又补发一遍。
+		const overwritten = directoryWith({
+			wake: { "7": { reply: { channelId: "team:alpha", seq: 4, from: "Solo", at: 11 }, task: wake.task } },
+		});
+		const input = turnReportInputFor({ answer: "42" }, overwritten, 7, wakeEntry);
+		expect(input?.wake.reply).toEqual({ channelId: "team:alpha", seq: 2, from: "owner", at: 9 });
+		// `task` 仍然取自名册（插话一轮继承的那份）。
+		expect(input?.wake.task).toEqual(wake.task);
+	});
+
+	test("第一条不是唤醒条目（继续 / 压缩）→ 退回名册的 reply", () => {
+		const input = turnReportInputFor({ answer: "42" }, directoryWith({}), 7, {
+			id: 9,
+			conversationId: 7,
+			kind: "pi.user",
+		} as never);
+		expect(input?.wake).toEqual(wake);
 	});
 
 	test("名册里没有这个人（子会话、压缩任务）→ 不收尾", () => {
@@ -79,11 +108,16 @@ describe("turn-report：钩子与任务", () => {
 		const afterRun = (hook.handlers as { afterRun: (...args: unknown[]) => Promise<unknown> }).afterRun;
 		const result = (await afterRun(
 			{ answer: "42", reason: "answer", first: "1", last: "1" },
-			{ conversationId: 7, snapshot: async () => directoryWith({}) },
+			{ conversationId: 7, snapshot: async () => directoryWith({}), entry: async () => wakeEntry },
 			{},
 		)) as { tasks: { input: TurnReportInput }[] } | undefined;
 		expect(result?.tasks).toHaveLength(1);
-		expect(result?.tasks[0]?.input).toEqual({ slug: "林越", answer: "42", wake });
+		// `reply` 取自开跑那条条目（不是名册里此刻的）；`task` 仍来自名册。
+		expect(result?.tasks[0]?.input).toEqual({
+			slug: "林越",
+			answer: "42",
+			wake: { reply: { channelId: "team:alpha", seq: 2, from: "owner", at: 9 }, task: wake.task },
+		});
 	});
 
 	test("名册里没人时钩子什么都不要求", async () => {
@@ -92,7 +126,7 @@ describe("turn-report：钩子与任务", () => {
 		expect(
 			await afterRun(
 				{ answer: "42", reason: "answer", first: "1", last: "1" },
-				{ conversationId: 99, snapshot: async () => directoryWith({}) },
+				{ conversationId: 99, snapshot: async () => directoryWith({}), entry: async () => undefined },
 				{},
 			),
 		).toBeUndefined();

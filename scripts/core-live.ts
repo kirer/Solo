@@ -24,11 +24,11 @@ import { OWNER, dmId } from "../src/core/channel/types.ts";
 import {
 	WAIT_MS,
 	setupLiveModels,
-	hopDetail,
 	lastSaidBy,
 	log,
 	seqBaseline,
 	waitForMention,
+	waitForOwnerReached,
 	waitForReply,
 	waitForSubmission,
 	wakeDetail,
@@ -125,6 +125,8 @@ async function main(): Promise<void> {
 					alone: { body: bodyOf("alone"), fallback: fallbackOf("alone") },
 					shared: { body: bodyOf("shared"), fallback: fallbackOf("shared") },
 					colleagues: { body: bodyOf("colleagues"), fallback: fallbackOf("colleagues") },
+					where: { body: bodyOf("where"), fallback: fallbackOf("where") },
+					whereAssistant: { body: bodyOf("where-assistant"), fallback: fallbackOf("where-assistant") },
 				},
 				woken: [slug],
 				viewer: slug,
@@ -401,13 +403,28 @@ async function main(): Promise<void> {
 		});
 		console.log(`拍板自测已投递 #${chainAsked.seq}，唤醒 ${chainAsked.delivery.delivered.join(",") || "（没人）"}`);
 
-		const hop = await waitForMention(shell, chainBaseline, member.slug, OWNER, WAIT_MS);
-		// 没等到时把他真说的话带上：不然「没答」和「答了但没 @ 我」在控制台上长得一样。
-		const saidSoFar = hop.hit === undefined ? await lastSaidBy(shell, member.slug, chainBaseline) : undefined;
+		// ADR-091：成员先 @助理，助理再把结论交给我（私聊或 @我）。两跳任一跳到我就算过；
+		// 只在成员那一跳等，会把「按规矩交给助理」误判成「没交上来」。
+		const direct = await waitForMention(shell, chainBaseline, member.slug, OWNER, 20_000);
+		const toAssistant =
+			direct.hit === undefined
+				? await waitForMention(shell, chainBaseline, member.slug, slug, 20_000)
+				: undefined;
+		const escalated =
+			direct.hit !== undefined
+				? { hit: direct.hit, channelId: "（成员直接找我）" }
+				: await waitForOwnerReached(shell, chainBaseline, slug, WAIT_MS);
+		// 没等到时把他真说的话带上：不然「没答」和「答了但没交上来」在控制台上长得一样。
+		const saidSoFar =
+			escalated.hit === undefined ? await lastSaidBy(shell, member.slug, chainBaseline) : undefined;
+		const chainDetail =
+			escalated.hit === undefined
+				? `等待超时：没有把话交给我${toAssistant?.hit === undefined ? "（也没有 @助理）" : "（已 @助理，但助理没交上来）"}${saidSoFar === undefined ? "" : `；他说的是：${saidSoFar}`}`
+				: `${direct.hit === undefined ? "成员 @助理 → " : ""}助理在 ${escalated.channelId}：${escalated.hit.text.slice(0, 110)}`;
 		phases.push({
-			name: "成员拍不了板，直接找我（没有中间层）",
-			ok: hop.hit !== undefined,
-			detail: hop.hit === undefined ? `${hopDetail(hop, "我")}${saidSoFar === undefined ? "" : `；他说的是：${saidSoFar}`}` : hopDetail(hop, "我"),
+			name: "成员拍不了板，交给助理、助理交给我",
+			ok: escalated.hit !== undefined,
+			detail: chainDetail,
 		});
 	}
 

@@ -18,13 +18,14 @@ import {
 	hook,
 	runEndTask,
 	type Context,
+	type EntryRecord,
 	type HookRegistration,
 	type RunSummary,
 	type Task,
 } from "../../runtime/index.ts";
 import { DirectoryDoc, emptyDirectory, slugFor, wakeOf, type DirectoryState } from "../roster.ts";
 import type { EntryReader, FinishTurn } from "./finish.ts";
-import { TURN_REPORT_TASK, type WakeRecord } from "./record.ts";
+import { TURN_REPORT_TASK, type WakeRecord, type WakeTarget } from "./record.ts";
 
 export type TurnReportInput = {
 	readonly slug: string;
@@ -43,20 +44,39 @@ export type TurnReportResult = { readonly answer: string };
  *
  * 名册是唯一能反查「这条会话是谁」的地方；没有唤醒记录说明这一轮不是被消息叫起来的
  * （例如手动继续），没有可回的地方，不收尾。
+ *
+ * **`reply` 以开跑时放进去的那条输入条目为准**（`run.first`），不是名册里此刻的 `reply`：
+ * 跑动期间新到的消息会把名册里的 `reply` 覆盖成更新的 seq，收尾再按它找「他说过话没有」
+ * 就找不到刚说的那句，于是同一段又补发一遍（实测 2026-11-06：林柯答完自我介绍，
+ * Solo 的派活紧接着到，频道里并排两条自我介绍）。条目不是唤醒（继续 / 压缩）时才退回名册。
  */
 export function turnReportInputFor(
 	run: Pick<RunSummary, "answer">,
 	directory: DirectoryState,
 	conversationId: number | string,
+	first?: EntryRecord | undefined,
 ): TurnReportInput | undefined {
 	const slug = slugFor(directory, conversationId);
 	const wake = wakeOf(directory, conversationId);
 	if (slug === undefined || wake === undefined) return undefined;
+	const reply = replyOf(first) ?? wake.reply;
 	return {
 		slug,
 		answer: String(run.answer),
-		wake: { reply: { ...wake.reply }, task: { ...wake.task } },
+		wake: { reply: { ...reply }, task: { ...wake.task } },
 	};
+}
+
+/** 唤醒条目（`core.channel`）里的「这条消息在哪儿」。 */
+function replyOf(entry: EntryRecord | undefined): WakeTarget | undefined {
+	if (entry === undefined || entry.kind !== "core.channel") return undefined;
+	const data = entry.data as Record<string, unknown> | undefined;
+	const channelId = typeof data?.["channelId"] === "string" ? data["channelId"] : undefined;
+	const seq = typeof data?.["seq"] === "number" ? data["seq"] : undefined;
+	const from = typeof data?.["from"] === "string" ? data["from"] : undefined;
+	if (channelId === undefined || seq === undefined || from === undefined) return undefined;
+	const at = typeof data?.["at"] === "number" ? data["at"] : 0;
+	return { channelId, seq, from, at };
 }
 
 /**
@@ -114,7 +134,8 @@ export function createTurnReport(finishTurn: FinishTurn): {
 	const registration: HookRegistration = hook(GenerationTask, {
 		afterRun: async (run, api, context: Context) => {
 			const directory = (await api.snapshot(DirectoryDoc, context)) ?? emptyDirectory();
-			const input = turnReportInputFor(run, directory, api.conversationId);
+			const first = await api.entry(run.first, context);
+			const input = turnReportInputFor(run, directory, api.conversationId, first);
 			if (input === undefined) return undefined;
 			return { tasks: [runEndTask(task, input)] };
 		},

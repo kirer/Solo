@@ -40,6 +40,8 @@ export type ChannelFlowDeps = {
 	readonly promptDir?: string;
 	/** 机械文案目录（`text/`）。投递头、留痕、摘要行从这里取。 */
 	readonly text?: TextCatalog;
+	/** 谁是助理（slug）。助理的结论回我的私聊（`91-where-assistant.md`）。 */
+	readonly assistants?: () => Promise<readonly string[]>;
 	/** 一条公开消息落盘并投递之后（插件听消息）。缺省不调。 */
 	readonly afterPublish?: (message: Message, channelId: string, context: Context) => Promise<void>;
 	/** 投递串行闸。缺省 = 进程级一份（ADR-073）。 */
@@ -98,6 +100,7 @@ function flowOf(
 			...(deps.uploadsRoot === undefined ? {} : { uploadsRoot: deps.uploadsRoot }),
 			...(deps.promptDir === undefined ? {} : { promptDir: deps.promptDir }),
 			...(deps.text === undefined ? {} : { text: deps.text }),
+			...(deps.assistants === undefined ? {} : { assistants: deps.assistants }),
 		}),
 		settler: chain.settler,
 		...(deps.roster === undefined ? {} : { roster: deps.roster }),

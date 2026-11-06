@@ -84,7 +84,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 00-who → 10-rules → 20-position → 30-team → 40-tools → 50-memory → 60-skills → 70-directory
 ```
 
-另有三段 `use: delivery`（`80-reply` / `88-task` / `90-interrupted`）**不进系统提示词**：
+另有若干段 `use: delivery`（`80-reply` / `89-where` / `91-where-assistant` / `88-task` / `90-interrupted` 等）**不进系统提示词**：
 它们是某一轮贴给模型的话，由调用方每轮 `await` 读一次、当参数传给纯函数（不缓存，改模板下一条
 消息就生效）。`88-task` 是插话那一轮贴给模型的正文。
 

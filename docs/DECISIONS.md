@@ -2243,3 +2243,37 @@
 - **取舍**：每次开面板要多读几页条目（本机 SQLite，可接受）；比窗口更早的一轮打不开。
   不这么做的话，压缩会让人物页看起来「什么都没干」，而这正是要修的症状。
 - **执行**：`src/app/read.ts` 的 `recentEntries` + `turnsOf`；`test/core/turns-compaction.test.ts`。
+
+## ADR-093 收尾按「开跑时的那条唤醒」判断，不按名册里此刻的 reply
+
+- **背景**：实测 2026-11-06 两次同一症状 —— 叶程、林柯都做了两遍自我介绍。林柯那次：
+  他答完自我介绍（频道 #2），Solo 的派活（#3）在收尾任务跑起来之前落到同一频道，
+  名册里他的 `reply` 被覆盖成 #3；收尾按 #3 找「这条唤醒之后他说过话没有」，看不到 #2，
+  于是把正文又补发一遍（#4）。
+- **决策**：`afterRun` 先读这一轮的第一条条目（`run.first`，就是开跑时放进去的那条
+  `core.channel`），用它还原 `reply`；名册只提供 `slug` 与 `task`。第一条不是唤醒条目
+  （继续 / 压缩 / 手动触发）时才退回名册的 `reply`。唤醒条目里补上 `at`，好还原完整的目标。
+- **取舍**：多读一条条目。换来的是「这一轮到底是被哪句话叫起来的」有了唯一出处，
+  不再受跑动期间新消息的影响。
+- **执行**：`src/core/flow/runner.ts`（条目里写 `at`）、`src/core/channel/turn/report.ts`
+  的 `turnReportInputFor` / `replyOf`；`test/core/turn-report.test.ts`。
+
+## ADR-094 助理的结论回我的私聊，团队频道只留派活与进展
+
+- **背景**：实测 2026-11-06，林柯在团队频道交付后，Solo 把结论（部署地址）说在了团队
+  频道里，我的私聊一条都没收到。它那一轮的 `say` 没写 `channel`，于是落在被叫醒的频道。
+  根因是每轮贴在投递正文末尾的 `80-reply.md` 写着「回话用 say 发到这个频道，省略频道
+  参数」—— 这句贴着生成点，盖过了 `assistant/identity.md` 里「做完在跟我的私聊里说清楚」。
+- **决策**：「回话发哪儿」从 `80-reply.md` 的固定句变成一个条件片段（`{{reply.where}}`）：
+  成员用 `89-where.md`（回这个频道），助理用 `91-where-assistant.md`（结论用 `say` 把
+  `channel` 写成 `dm:<助理>-owner`，频道里只留派活与进展）。我直接问他的那一轮仍在原频道答
+  （`message.from === owner` 时贴成员那句）；跟我的私聊里本来就已经是「回私聊」，不贴。
+  是不是助理由投递层按身份目录现读（`assistantsOf`），不靠模型自觉。
+- **取舍**：多一次身份目录读（每轮投递一次，几个 md）。换来的是「结论一定会进私聊」不再
+  依赖模型记得身份里那句话 —— 上一版就是它被投递文案压住了。
+- **执行**：`src/core/channel/delivery.ts` 的 `renderReplyRules` / `renderDelivery`、
+  `src/core/flow/runner.ts` 的 `DeliverOptions.assistants`、`src/core/channel/wiring.ts`
+  的 `assistants`、`seed/prompt/80-reply.md` / `89-where.md` / `91-where-assistant.md`；
+  `test/core/deliver.test.ts`；契约 `docs/design/SEED-CONTRACT.md` §3；实测
+  `scripts/core-live.ts` 第 9 段（成员 @助理 → 助理交到我手里，私聊也算）与
+  `scripts/live-support.ts` 的 `waitForOwnerReached`。

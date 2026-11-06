@@ -104,6 +104,34 @@ describe("投递正文", () => {
 		});
 		expect(inDm).toContain("这是你和我的私聊");
 	});
+
+	test("助理的结论回我的私聊，团队频道只留派活和进展", () => {
+		// 实测 2026-11-06：林柯交付后，Solo 把结论说在团队频道里，我的私聊一条都没收到。
+		// 80-reply 的「回这个频道」盖过了身份里的「做完在私聊里说清楚」。
+		const team = stateWith({ id: "team:x", title: "X", members: ["owner", "Solo", "lin"] });
+		const message = appendMessage(team, "team:x", { from: "lin", text: "交付了", at: 1 }).message;
+		const forAssistant = renderDeliveryWithTemplates({
+			channel: team.channels["team:x"]!,
+			message,
+			viewer: "Solo",
+			assistant: true,
+		});
+		expect(forAssistant).toContain("dm:Solo-owner");
+		// 我直接问他的话，就在这个频道答：那句只针对「别人交给他的事」。
+		const fromOwner = appendMessage(team, "team:x", { from: "owner", text: "@Solo 在吗", at: 2 }).message;
+		const asked = renderDeliveryWithTemplates({
+			channel: team.channels["team:x"]!,
+			message: fromOwner,
+			viewer: "Solo",
+			assistant: true,
+		});
+		expect(asked).not.toContain("dm:Solo-owner");
+		expect(asked).toContain("发到这个频道");
+		// 成员照旧回这个频道：助理那句不能漏给所有人。
+		const forMember = renderDeliveryWithTemplates({ channel: team.channels["team:x"]!, message, viewer: "lin" });
+		expect(forMember).not.toContain("dm:Solo-owner");
+		expect(forMember).toContain("发到这个频道");
+	});
 });
 
 function digestOf(state: ChannelState, slug: string): string {
