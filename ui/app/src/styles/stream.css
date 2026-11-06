@@ -1,6 +1,6 @@
 /**
  * 消息流：四种行（say / event / note / 附件）+ 时间分隔 + 骨架
- * + 空态 + 错误 + 活动行 + 动作条。
+ * + 空态 + 错误 + 活动行。
  *
  * 这一节决定「信息密度」：能一句话说清的绝不占一张卡，未登记的 kind 一个像素也不画。
  */
@@ -164,10 +164,9 @@
 	display: none;
 }
 
-/* 「需要你」挂在名字行里：这一条不管连不连发都得把名字行留下，否则那个标签跟着消失。 */
-.row-say[data-grouped="true"][data-need="true"] .row-name,
-.row-say[data-grouped="true"][data-need="true"] .row-role,
-.row-say[data-grouped="true"][data-need="true"] .row-time {
+/* 「需要你」挂在名字行里：这一条不管连不连发都得把名字行留下，否则标签只剩自己、
+   读不出是谁在找。名字和时间留着，只省掉角色。 */
+.row-say[data-grouped="true"][data-need="true"] .row-role {
 	display: none;
 }
 
@@ -213,12 +212,10 @@
 	opacity: 0.85;
 }
 
-/* 76px = 6 间距 + 28 + 8 + 28（两个 28px 按钮、8px 间隔）。动作条绝对定位在这条
-   留白里，永不遮正文 —— 所以正文不需要 hover 时让位。 */
 .row-body {
 	position: relative;
 	min-width: 0;
-	max-width: calc(100% - 76px);
+	max-width: 100%;
 }
 
 .row-head {
@@ -260,28 +257,15 @@
 	font-variant-numeric: tabular-nums;
 }
 
-/* 「需要你」：左侧 2px --accent 竖线 + 12px 文字标签，没有底色。 */
-.row[data-need="true"]::before {
-	content: "";
-	position: absolute;
-	left: -12px;
-	top: 4px;
-	bottom: 4px;
-	width: 2px;
-	border-radius: 1px;
-	background: var(--accent);
-}
+/* 「需要你」：只有名字行里那个 12px 文字标签，消息块左侧不画竖线。 */
 
-/* 「需要你」：名字与角色之后的一个强调词，前面一条小竖线把它和角色分开，
-   不再是一个独立的药丸 —— 药丸会被读成按钮。 */
+/* 「需要你」：名字行里的一个强调词，不画竖线、不做药丸 —— 药丸会被读成按钮。 */
 .need-tag {
 	flex: none;
 	font-size: 12px;
 	line-height: 16px;
 	font-weight: 500;
 	color: var(--accent);
-	padding-inline-start: 7px;
-	border-inline-start: 1px solid color-mix(in oklab, var(--accent) 40%, transparent);
 }
 
 /*
@@ -585,7 +569,7 @@
 	display: flex;
 	flex-direction: column;
 	align-items: flex-end;
-	max-width: min(68ch, calc(100% - 76px));
+	max-width: min(68ch, 100%);
 }
 
 .row-say[data-owner="true"] .row-head {
@@ -594,12 +578,6 @@
 
 .row-say[data-owner="true"] .row-body > .md {
 	text-align: left;
-}
-
-/* 我气泡自己带底色，动作条要落在气泡右下角外侧，别压住气泡的圆角。 */
-.row-say[data-owner="true"] .row-tools {
-	left: auto;
-	right: 100%;
 }
 
 .row-say .row-body > .md > :last-child {
@@ -732,121 +710,6 @@ body[data-layout="bubble"]
 	overflow: auto;
 }
 
-/* ── 动作条 ─────────────────────────────────────────────────────────── */
-
-.row-tools {
-	position: absolute;
-	left: 100%;
-	top: 2px;
-	margin-left: 6px;
-	display: flex;
-	gap: 8px;
-	opacity: 0;
-	visibility: hidden;
-	/* 80ms、只动透明度：鼠标划过一条消息时不许引起任何位移。 */
-	transition: opacity 80ms ease, visibility 80ms ease;
-}
-
-/* 悬停桥：只补那 6px 的缝，不盖正文 —— 没有它，鼠标移到按钮上会经过缝而闪掉。
-   右侧不伸出去：伸出去的那 8px 会把 .row-body 的 scrollWidth 撑宽，窄窗口里
-   变成一条横向滚动条。 */
-.row-tools::after {
-	content: "";
-	position: absolute;
-	inset: -8px 0 -8px 0;
-	z-index: -1;
-}
-
-.row:hover > .row-body > .row-tools,
-.row:focus-within > .row-body > .row-tools {
-	opacity: 1;
-	visibility: visible;
-}
-
-/* 我自己的行整宽，工具条挪到左侧，不然会出屏。 */
-.row-say[data-owner="true"] .row-tools {
-	left: auto;
-	right: 100%;
-	margin-left: 0;
-	margin-right: 6px;
-}
-
-/* 我的行按钮在左边，缝在按钮右边：桥往右补，同样不往左伸出去。 */
-.row-say[data-owner="true"] .row-tools::after {
-	inset: -8px -8px -8px 0;
-}
-
-.tool {
-	display: inline-grid;
-	place-items: center;
-	width: 28px;
-	height: 28px;
-	border-radius: var(--r-control);
-	color: var(--ink-3);
-	transition: background-color var(--dur-line) ease, color var(--dur-line) ease;
-}
-
-.tool:hover {
-	background: var(--hover);
-	color: var(--ink);
-}
-
-.tool:active {
-	background: var(--active);
-}
-
-.tool:focus-visible {
-	outline-offset: -2px;
-}
-
-.tool svg {
-	width: 15px;
-	height: 15px;
-}
-
-.tool[data-done="true"] {
-	color: var(--accent);
-}
-
-/* 触屏没有 hover：常驻、小一号、弱色。
-   而且必须**回到文档流**里 —— 桌面上它是 `left: 100%` 挂到正文右侧那 76px 留白里，
-   手机上正文占满宽度，绝对定位会让按钮跑出屏幕、压住别人的字（实测 390 宽时
-   复制/回复图标卡在屏幕最左边，正好盖住头像）。放到正文下面一行最省事。 */
-@media (hover: none) {
-	/* 常驻会把每一条消息下面都挂一排图标，一整屏下来全是按钮，正文反而看不清。
-	   所以默认藏起来，**点这条消息**才出（`data-tools="true"`，见 app.js 的 tapRow）。 */
-	.row-tools,
-	.row-say[data-owner="true"] .row-tools {
-		position: static;
-		left: auto;
-		right: auto;
-		display: none;
-		justify-content: flex-end;
-		margin: 2px 0 2px;
-		opacity: 1;
-		visibility: visible;
-	}
-
-	.row[data-tools="true"] > .row-body > .row-tools {
-		display: flex;
-	}
-
-	/* 被点开的那条轻轻浮起来一点，让人知道「现在这条是选中的」。 */
-	.row[data-tools="true"] > .row-body {
-		position: relative;
-	}
-
-	.row-tools::after {
-		display: none;
-	}
-
-	.tool {
-		width: 20px;
-		height: 20px;
-		color: var(--ink-3);
-	}
-}
-
 /* ── 骨架：与最终行同尺寸的灰色实心条，不做 shimmer ────────────────── */
 
 .skel {
@@ -884,7 +747,7 @@ body[data-layout="bubble"]
 	height: 24px;
 	border-radius: 4px;
 	background: color-mix(in srgb, var(--ink) 7%, transparent);
-	max-width: min(68ch, calc(100% - 76px));
+	max-width: min(68ch, 100%);
 }
 
 .sk-body .sk-bar:nth-child(1) {
@@ -1041,25 +904,6 @@ body[data-layout="bubble"]
 	text-decoration: underline;
 }
 
-@media (max-width: 900px) {
-	.row-body {
-		max-width: min(68ch, calc(100% - 34px));
-	}
-
-	.sk-bar {
-		max-width: min(68ch, calc(100% - 34px));
-	}
-}
-
-/* 窄窗口但还有鼠标（桌面端拉到手机比例）：动作条仍然是绝对定位挂在正文右边，
-   34px 留白放不下它（6 + 两个 28 的按钮），会把消息区撑出一条横向滚动条。
-   触屏没有这个问题 —— 那里的按钮回到文档流里（见 `@media (hover: none)`）。 */
-@media (max-width: 900px) and (hover: hover) {
-	.row-body {
-		max-width: min(68ch, calc(100% - 76px));
-	}
-}
-
 /* ── 消息里的附件 ───────────────────────────────────────────────────── */
 
 /* 图片：最多四列，一行内等比缩放。用 grid 而不是 flex-wrap，
@@ -1185,7 +1029,7 @@ body[data-layout="bubble"]
 /* 平铺布局里附件跟着正文的宽度走，不要比正文还宽。 */
 .attach-grid,
 .attach-files {
-	max-width: min(68ch, calc(100% - 76px));
+	max-width: min(68ch, 100%);
 }
 
 /* ── 正在跑的那一轮（派生，不是消息：ADR-046）────────────────────────── */

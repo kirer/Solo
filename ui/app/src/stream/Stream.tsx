@@ -21,12 +21,6 @@ import { Slot } from "../plugin/Slot.tsx";
 import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
-const COPY_ICON =
-	'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 5H6a2 2 0 0 0-2 2v9"/></svg>';
-const DONE_ICON =
-	'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>';
-const REPLY_ICON =
-	'<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7 4 12l5 5"/><path d="M4 12h9a7 7 0 0 1 7 7v1"/></svg>';
 
 export function Stream(props: { onImage: (src: string) => void; onFile: (file: Attachment) => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
@@ -189,17 +183,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		if (clean instanceof HTMLElement) {
 			for (const button of clean.querySelectorAll(`.${CODE_COPY_CLASS}`)) button.remove();
 		}
-		void copyText(clean?.textContent ?? "").then((ok) => {
-			if (!ok) return;
-			const button = node.querySelector<HTMLElement>('[data-act="copy"]');
-			if (button === null) return;
-			button.dataset["done"] = "true";
-			button.innerHTML = DONE_ICON;
-			window.setTimeout(() => {
-				delete button.dataset["done"];
-				button.innerHTML = COPY_ICON;
-			}, 1200);
-		});
+		void copyText(clean?.textContent ?? "");
 	}, []);
 
 	return (
@@ -476,31 +460,6 @@ function SayRow(props: {
 				<Attachments attachments={message.attachments} onImage={props.onImage} onFile={props.onFile} />
 
 				<div className="md" dangerouslySetInnerHTML={{ __html: renderMarkdown(message.text) }} />
-
-				<div className="row-tools">
-					<button
-						type="button"
-						className="tool"
-						data-act="copy"
-						aria-label="复制这条"
-						title="复制"
-						dangerouslySetInnerHTML={{ __html: COPY_ICON }}
-						onClick={(event) => {
-							event.stopPropagation();
-							const node = event.currentTarget.closest(".row");
-							if (node instanceof HTMLElement) props.onCopy(node);
-						}}
-					/>
-					<button
-						type="button"
-						className="tool"
-						data-act="reply"
-						aria-label="引用这条"
-						title="引用"
-						dangerouslySetInnerHTML={{ __html: REPLY_ICON }}
-						onClick={() => setReply({ seq: message.seq, label: name, excerpt: message.text.slice(0, 60) })}
-					/>
-				</div>
 			</div>
 		</div>
 	);

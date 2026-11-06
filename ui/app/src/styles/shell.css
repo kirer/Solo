@@ -740,8 +740,9 @@ body[data-pane="chat"] .sidebar {
 	background: var(--active);
 }
 
-/* 行底色：有消息点名找我 = 淡红（要我看一眼）；只是有新消息 = 淡灰。
-   选中态压过它们 —— 我正在看这个频道，不该再被自己的行底色抢注意力。
+/* 行底色只给「有人点名找我」= 淡红（要我看一眼）。普通未读不上底色 ——
+   一屏十几条都没读时整列全灰，选中的那一行反而看不出来；未读靠徽标上的数字说。
+   选中态压过红底 —— 我正在看这个频道，不该再被自己的行底色抢注意力。
    用 `:not([aria-current="true"])` 而不是调顺序：`aria-current` 的规则在上面，
    同权重下后写的会赢，顺序一改就反转了。 */
 .ch[data-need="true"]:not([aria-current="true"]) {
@@ -750,10 +751,6 @@ body[data-pane="chat"] .sidebar {
 
 .ch[data-need="true"]:not([aria-current="true"]):hover {
 	background: color-mix(in oklab, var(--danger) 14%, transparent);
-}
-
-.ch[data-unread="true"]:not([data-need="true"]):not([aria-current="true"]) {
-	background: var(--hover);
 }
 
 .ch-av {
