@@ -163,14 +163,13 @@ export function unreadLabel(count: number): string {
 }
 
 /**
- * 顶栏副标题只用得上这三样：团队在干什么、团队名、人数。
+ * 顶栏副标题只用得上这两样：团队在干什么、人数。
  *
  * 单独声明而不是直接要 `Channel`：这个投影在私聊、团队频道、搜索结果上都要能跑，
  * 而那些地方手里未必有一条完整的 `Channel`（见 `api/types.ts`）。
  */
 export type ChannelHead = {
 	doing?: string | undefined;
-	team?: string | undefined;
 	memberCount?: number | undefined;
 };
 
@@ -178,10 +177,10 @@ export type ChannelHead = {
 export function headParts(channel: ChannelHead | null | undefined): string[] {
 	if (!channel) return [];
 	const parts: string[] = [];
-	// doing 是「这个团队现在在干什么」，比团队名更能回答「我该不该点进去」，
+	// doing 是「这个团队现在在干什么」，比人数更能回答「我该不该点进去」，
 	// 所以放在最前面；没有就不占位。
 	if (channel.doing) parts.push(String(channel.doing));
-	if (channel.team) parts.push(String(channel.team));
+	// 不写团队 slug：标题已经是团队名，`weekly` 只是目录名（DESIGN §1.4）。
 	if (channel.memberCount) parts.push(`${channel.memberCount} 人`);
 	return parts;
 }

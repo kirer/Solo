@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createAgent } from "../../src/core/documents/member/identity.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "../../src/shell/seed.ts";
 import { existsAt } from "../../src/core/runtime/io.ts";
+import { resolveInRoots } from "../../src/core/channel/tools/guards.ts";
 import { sandboxPool } from "./support.ts";
 
 const pool = sandboxPool();
@@ -60,8 +61,7 @@ describe("两个根", () => {
 		expect(await existsAt(join(layout.userRoot, "agents"))).toBe(false);
 	});
 
-	it("库、上传、密钥在 app 根；日志跟着用户根走", async () => {
-		const box = await pool.make("core-roots-");
+	it("库、上传、密钥在 app 根；日志跟着用户根走", async () => {		const box = await pool.make("core-roots-");
 		const { layout } = box;
 		for (const path of [layout.databasePath, layout.uploadsRoot, layout.secretsFile, layout.settingsFile]) {
 			expect(path.startsWith(layout.appRoot)).toBe(true);
@@ -70,5 +70,14 @@ describe("两个根", () => {
 			expect(path.startsWith(layout.userRoot)).toBe(true);
 			expect(path.startsWith(layout.appRoot)).toBe(false);
 		}
+	});
+
+	it("投递行里的 uploads/<id> 落到 app 根的附件目录，谁读都一样", async () => {
+		const box = await pool.make("core-roots-");
+		const { layout } = box;
+		// 附件本体在 <appRoot>/uploads；投递行让模型按 `uploads/<id>` 读。
+		// 归到用户根的话每个收到附件的人都会读成「文件不存在」（实测群里发生过）。
+		expect(resolveInRoots(layout, "uploads/abc-123")).toBe(join(layout.uploadsRoot, "abc-123"));
+		expect(resolveInRoots(layout, "uploads/../../outside")).toBeUndefined();
 	});
 });

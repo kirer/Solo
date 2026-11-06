@@ -118,18 +118,27 @@ export function createRunTool(deps: CoreToolDeps) {
 
 			// 前台命令：等它跑完。
 			const { exec } = await import("node:child_process");
-			const result = await new Promise<{ stdout: string; stderr: string; code: number | null; tooMuch: boolean }>(
-				(resolve) => {
-					exec(command, { cwd, timeout: seconds * 1000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
-						resolve({
-							stdout: stdout.toString(),
-							stderr: stderr.toString(),
-							code: error === null ? 0 : error.code ?? -1,
-							tooMuch: (error as { code?: string } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-						});
+			const result = await new Promise<{
+				stdout: string;
+				stderr: string;
+				code: number | null;
+				tooMuch: boolean;
+				timedOut: boolean;
+				signal: string | null;
+			}>((resolve) => {
+				exec(command, { cwd, timeout: seconds * 1000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
+					const failure = error as { code?: string | number | null; killed?: boolean; signal?: string | null } | null;
+					resolve({
+						stdout: stdout.toString(),
+						stderr: stderr.toString(),
+						code: error === null ? 0 : typeof failure?.code === "number" ? failure.code : -1,
+						tooMuch: failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
+						// `exec` 超时会自己杀掉子进程：`killed` 只在这一条路上为真。
+						timedOut: failure?.killed === true,
+						signal: failure?.signal ?? null,
 					});
-				},
-			);
+				});
+			});
 
 			const out = plain(result.stdout).trim();
 			const err = plain(result.stderr).trim();
@@ -138,7 +147,13 @@ export function createRunTool(deps: CoreToolDeps) {
 				...(out === "" ? [] : [out]),
 				...(err === "" ? [] : [t("run.foreground.stderr", { text: err })]),
 				...(result.tooMuch ? [t("run.foreground.too-much")] : []),
-				t("run.foreground.exit", { code: result.code ?? "?" }),
+				// 被超时杀掉时要明说是超时、以及下一次怎么放宽 —— 只说「退出码 ?」，
+				// 模型会当成命令坏了去换写法（实测有人改成后台再跑一遍）。
+				result.timedOut
+					? t("run.foreground.timeout", { seconds })
+					: result.signal !== null
+						? t("run.foreground.signal", { signal: result.signal })
+						: t("run.foreground.exit", { code: result.code ?? "?" }),
 			].join("\n");
 			// 剪的尺度：回给模型的是它继续干活要用的，给得宽一些，但**绝不能全量** ——
 			// 一次跑整个测试套件就能把 512 KB 塞进上下文，后面几轮全在付费读它。

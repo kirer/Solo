@@ -55,7 +55,8 @@
 	/* 字：label-primary / secondary / tertiary */
 	--ink: rgb(15 17 21);
 	--ink-2: rgb(97 102 107);
-	--ink-3: rgb(129 133 140);
+	/* 三级字：白底 4.84:1、侧栏 4.63:1 —— 12px 说明文字也要过 AA（原来的 129 只有 3.7）。 */
+	--ink-3: rgb(110 114 120);
 
 	/* 强调：deepseek-500（浅）/ deepseek-400（深），只有它和它的淡底是彩色的 */
 	--accent: rgb(65 118 230);

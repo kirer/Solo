@@ -303,7 +303,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 改 SSE（事件形状 / 去抖 / 游标） | `interface/http/sse.ts` | 编解码是纯函数（`encodeEvent` 等）、有状态那半是 `createStreamHub`；先看 `test/core/sse.test.ts` 与 `hub-stream.test.ts` |
 | 改「我不 @ 人时谁接话」 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` + `core/flow/defaults/router.ts` 的 `routeFactsOf` | 认的是我上一句话之后第一个接话的人（`note` 不算）；我还没说话才退回第一个成员。`renderDelivery` 吃投递层算好的 `woken`，别自己再推一遍（ADR-015） |
 | 改看门狗的判据 / 通报方式 | `app/watch.ts` + `app/diag.ts` 的 `onAbnormal` | 只通报、不自动救；用订阅不用轮询（`lastReport` 只留最新一条，轮询会漏）（ADR-016） |
-| 改后台命令（`run` 的 `background`） | `channel/jobs.ts`（起 / 记 / 收）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo` | 结果回到**起跑的那个频道**，以 `note` 落库、`wakeTo` 叫醒起跑的人（`note` 默认谁也不叫）；最多 30 分钟；输出只回尾巴 8000 字（ADR-013） |
+| 改后台命令（`run` 的 `background`） | `channel/jobs.ts`（起 / 记 / 收）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo` | 结果回到**起跑的那个频道**，以 `note` 落库、`wakeTo` 叫醒起跑的人（`note` 默认谁也不叫）；最多 30 分钟；输出只回尾巴 8000 字（ADR-013）；前台默认 60 秒、最大 300，超时要回「超时被杀 + 怎么放宽」（`run.foreground.timeout`） |
 | 改一条消息的字数上限 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` | 群聊 600 / 私聊 1200，看的是目标频道的 `chatKind`（ADR-014） |
 | 插件要读某个频道的目录（文件树这类） | `PluginApi.scope(channelId)`（`plugin/api.ts`）+ `shell/wire/plugins.ts` 的 `channelScope` | 核心只给**根**（私聊 → 那个人的 `workspace/`，团队频道 → 团队 `workspace/`，全员频道 → `undefined`）。路径守卫、大小上限、拒符号链接全在插件里做（ADR-036） |
 | 插件要按 token / 成本算账（Token 统计这类） | `PluginApi.logsRoot`（`plugin/api.ts`）+ `shell/wire/plugins.ts` 的 `load` 传 `layout.logsRoot` | 读的是审计 `tools.jsonl`（ADR-010 的钩子）：每次模型回复一行，`in` / `out` / `cache` / `write` / `cost` / `ms`。只有两份（5MB 轮转一代），别把它当数据库（ADR-064） |
@@ -362,7 +362,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 106 文件 / 929 例，应该 <3s
+npm test             # 106 文件 / 931 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）

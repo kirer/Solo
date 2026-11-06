@@ -118,13 +118,16 @@ export function resolveInWorkspace(root: string, path: string): string | undefin
 /**
  * 两个根上线之后，`file` 的路径按**第一段**决定落到哪个根：
  *
- * - `assistant/`、`prompt/`、`plugins/`、`settings.json` → 应用私有目录；
+ * - `assistant/`、`prompt/`、`plugins/`、`settings.json`、`uploads/` → 应用私有目录；
  * - 其他（`members/`、`teams/`、`skills/`、`rules.md`）→ 用户目录。
+ *
+ * `uploads/` 必须在应用侧：附件本体落在 `<appRoot>/uploads`，投递行让模型按
+ * `uploads/<id>` 去读 —— 归到用户根会读成「文件不存在」，群里每个人都会说没收到附件。
  *
  * 不能「哪个根先装得下就用哪个」：`members/x` 在 app 根里同样是一条合法路径，
  * 那样会静默写到错误的地方。
  */
-const APP_SIDE = new Set([ASSISTANT_DIR, "prompt", "plugins", "settings.json"]);
+const APP_SIDE = new Set([ASSISTANT_DIR, "prompt", "plugins", "settings.json", "uploads"]);
 
 export function resolveInRoots(layout: Layout, path: string): string | undefined {
 	const first = path.split(/[\\/]/)[0] ?? "";

@@ -85,7 +85,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             106 文件 / 929 例
+test/             106 文件 / 931 例
   ├ test/core/    83 文件（纯函数 + 装配）
   ├ test/ui/      12 文件（界面纯函数与源码约定）
   └ test/desktop/ 6 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
@@ -148,7 +148,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 106 文件 929 例，<3s，必须全绿
+npm test             # 106 文件 931 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -184,7 +184,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 新进频道的人要不要被叫醒（报到） | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-042 | `channel/membership.ts` 的 `syncTeamChannel`（返回新进成员，不含我与助理）+ `shell/wire/teams.ts` 的 `sync` / `announce` 与 `shell/wire/speak.ts` 的 `wakeTo`；文案 `seed/text/channel.md` 的 `membership.joined`；`test/core/membership.test.ts` |
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 / 团队频道里 @ 了谁 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 / ADR-086 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets`（**团队频道：有 `@` 只叫被点名的人、助理不插话；没人 `@` 只叫助理**）+ `core/flow/defaults/router.ts` 把两者拼成决定 + `channel/delivery.ts` 的 `woken`；`test/core/mention-alias.test.ts` |
-| 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路） |
+| 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs`）+ `channel/tools/run.ts` 的 background 分支 + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路）；**前台超时要说「超时」并给放宽办法**（`run.foreground.timeout`，默认 60 秒、最大 300），只说「退出码 ?」模型会当成命令坏了去换写法 |
 | 插件的五个动作（tool / prompt / route / on / `flow`）/ 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 / ADR-080 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts` 的 `flow`、`load.ts` 的 `PluginHost.flow` / `brings.policies`）+ `src/core/channel/types.ts` 的策略形状 + `src/core/flow/policies.ts` 的 `policyRouter` / `policySettler` + `shell/wire/plugins.ts`（装 / 重装 + 听消息 + 策略活引用）与 `shell/assemble.ts`（`reloadPlugins` 热重装，ADR-026）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ 整屏页 `panels/{SettingsPage,PluginsPage}.tsx`（设置里的「插件」一行进清单，`.nav` 抬头带返回） |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/app/trace.ts`（纯函数：`groupsOf` 切轮 + `buildTurn` 映射步骤）+ `src/app/read.ts` 的 `turnsOf`（`endedAt` / `replySeq` 取这一组的**最后**一句：中途报进度再接着干时，第一句不是收尾）+ `test/core/{trace,turns-compaction}.test.ts` |
@@ -230,7 +230,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 插件要按 token / 成本算账（读审计日志） | `docs/DECISIONS.md` ADR-064 + `docs/CORE.md` §13 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `logsRoot` + `load.ts` / `shell/wire/plugins.ts` 传 `layout.logsRoot` + `app/audit.ts` 记齐 `in/out/cache/write/cost`；出厂消费者 `seed/plugins/Token统计/`，`test/core/token-plugin.test.ts` |
 | 加一个应用级入口 / 插槽 | `docs/DESIGN.md` §13.3 / §2.8 + `docs/DECISIONS.md` ADR-084 | `ui/app/src/plugin/registry.ts` 的 `SlotName` / `SLOTS` + 宿主 `panels/SettingsPage.tsx`（`rail.item` 在设置页的 `.set-tools` 里画成一行）；出厂「Token 统计」用它（入口 `rail.item`、整屏页 `app.page`）；`test/ui/plugin.test.ts` 会查每个插槽都有宿主 |
 | 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 | `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035） |
-| 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`** |
+| 附件预览（内联还是下载） | `docs/DECISIONS.md` ADR-037 + `docs/WEB-API.md` §13 | `app/uploads.ts` 的 `read({preview})` + `routes.ts` 的 `?preview=1` + `ui/app/src/stream/AttachmentPreview.tsx`；**按真实 mime 发 `Content-Type`，HTML 永远 `text/plain`**；附件本体在 `<appRoot>/uploads`，投递行让模型按 `uploads/<id>` 读 —— `channel/tools/guards.ts` 的 `APP_SIDE` 必须含 `uploads`，否则每个收到附件的人都读成「文件不存在」 |
 | 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`documents/team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道，运行时 `shell/serve.ts` 的 `startTeamReconcile` 监听 `teams/` 立刻对账，投影时 `app/project.ts` 的 `withoutGoneTeams` 再按磁盘团队表过滤；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删；私聊归档，重新招回来由 `ensureOwnerDm` 的 `replace` 恢复）；都不开新工具 |
 | 一键重置（设置 → 数据）/ 清空历史 | `docs/WEB-API.md` §13.5 + `docs/DESIGN.md` §1.5 + `docs/CODE.md` + `docs/DECISIONS.md` ADR-089（取代 ADR-065） | `src/app/reset.ts` 的 `wipeAll`（**库关掉之后才删**；`settings.json` / `.secrets.json` 也删，重开进引导页）+ `interface/http/routes.ts` 的 `POST /api/reset` + `src/shell/main.ts` 的 `resetAll`（关库 → 删盘 → 退出码 75）+ `desktop/src/backend.ts` 的 `onExit` / `desktop/src/main.ts` 的 `restart` + `ui/app/src/panels/SettingsPage.tsx` 的 `DataSection`；`test/core/reset.test.ts` |
 | 装完带前端的插件问要不要重启 | `docs/WEB-API.md` §13.4 / §13.6 + `docs/DESIGN.md` §2.8 + `docs/DECISIONS.md` ADR-066 | `interface/http/routes.ts` 的 `POST /api/restart` + `shell/serve.ts` 的 `onRestart` + `shell/main.ts` 的 `restartApp`（关库 → 退出码 75）+ `ui/app/src/panels/PluginsPage.tsx`（装完按 `client` 决定弹不弹）/ `panels/Overlays.tsx` 的 `RestartSheet` / `state/store.ts` 的 `restartOpen` / `api/client.ts` 的 `restartApp`；桌面壳 `desktop/src/main.ts` 的 `restart`；`test/core/reset.test.ts` |

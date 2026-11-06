@@ -217,4 +217,46 @@ describe("run 工具的 background 分支", () => {
 		// 起跑的人被记进 mentions：不然这条结果只是躺在频道里。
 		expect(landed?.mentions).toContain(me);
 	});
+
+	it("前台超时要说「超时」并给放宽的办法，不是「退出码 ?」", async () => {
+		const box = await pool.make("core-run-timeout-");
+		const me = "沈舟";
+		const conversation = 7;
+		await mkdir(join(box.agentsRoot, me), { recursive: true });
+		await writeFile(join(box.agentsRoot, me, "identity.md"), "---\nname: 沈舟\n---\n\n干活。\n", "utf8");
+		const runtime = await box.open();
+		const channelId = dmId(OWNER, me);
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			Object.assign(doc, ensureChannel(doc, { id: channelId, title: "沈舟", members: [OWNER, me], at: 1 }));
+		}, BACKGROUND_CONTEXT);
+		const tools = createCoreTools({
+			harness: runtime.harness,
+			layout: box.layout,
+			text: SEED_TEXT,
+			directory: async () => ({
+				...emptyDirectory(),
+				slugToConversation: { [me]: conversation },
+				conversationToSlug: { [String(conversation)]: me },
+				wake: {
+					[String(conversation)]: {
+						reply: { channelId, seq: 1, from: OWNER, at: 2 },
+						task: { channelId, seq: 1, from: OWNER, at: 2 },
+					},
+				},
+			}),
+			saveDirectory: async () => undefined,
+			wiring: wireChannel({ harness: runtime.harness, layout: box.layout }),
+		} as never);
+		const run = tools.find((item) => item.name === "run");
+		const result = await run?.execute(
+			{ command: LONG_COMMAND, timeout: 1 } as never,
+			{ conversationId: conversation } as never,
+			BACKGROUND_CONTEXT,
+		);
+		const output = (result?.output as readonly { text?: string }[] | undefined)?.[0]?.text ?? "";
+		// 模型被超时打断时得知道「是超时，不是命令坏了」，否则它会换写法重跑。
+		expect(output).toContain("超时");
+		expect(output).toContain("timeout");
+	});
 });

@@ -157,7 +157,7 @@ export function App(): JSX.Element {
 		channel === null || channel.kind !== "dm"
 			? ""
 			: (people.find((person) => person.label === channel.title)?.title ?? "");
-	// 群聊的副标题：团队在干什么 · 团队名 · 人数，能拿到哪段写哪段（`headParts` 已经按这个顺序拼）。
+	// 群聊的副标题：团队在干什么 · 人数，能拿到哪段写哪段（`headParts` 已经按这个顺序拼）。
 	// 人数用 `channel.memberCount`，和侧栏同一个数 —— 拿 `members.length` 会少掉不在名册里的人。
 	const parts = peerTitle !== "" ? [peerTitle] : channel === null ? [] : headSub(channel, members.length);
 	const sub = parts.join(" · ");
@@ -344,15 +344,14 @@ export function App(): JSX.Element {
 }
 
 /**
- * 顶栏副标题：私聊不写（标题就是名字），群聊补充「在干什么 / 团队名 / 人数」。
+ * 顶栏副标题：私聊不写（标题就是名字），群聊补充「在干什么 / 人数」。
  *
- * 团队名用频道的 `team`（服务端给的就是人能读的名字，不是目录 slug）；没有就不占位。
+ * 团队名不重复写：标题已经是它，`channel.team` 是目录 slug（DESIGN §1.4）。
  */
 function headSub(channel: ChannelHead & { kind: ChannelKind }, count: number): string[] {
 	if (channel.kind === "dm") return [];
 	return headParts({
 		doing: channel.doing,
-		team: channel.team,
 		memberCount: channel.memberCount ?? count,
 	});
 }

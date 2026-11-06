@@ -6,8 +6,8 @@
  * 吃过一次「一条消息重写整个频道」（189 条消息涨到 27 MB，见 ADR-027）。所以：
  *
  * ```
- * <workspace>/uploads/<id>        ← 文件本体（id = randomUUID）
- * <workspace>/uploads/<id>.json   ← { name, mime, bytes, at }
+ * <appRoot>/uploads/<id>        ← 文件本体（id = randomUUID）
+ * <appRoot>/uploads/<id>.json   ← { name, mime, bytes, at }
  * ```
  *
  * 元数据单独一个文件而不是一个总索引：索引要么频繁重写成大 JSON，要么在并发上传时
