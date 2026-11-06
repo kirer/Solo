@@ -3,7 +3,8 @@ skip-empty: team.brief
 ---
 ## 你的团队：{{team}}
 
-状态：{{team.status ?? 还没有状态}} · 目录：{{team.dir}}
+状态：{{team.status ?? 还没有状态}}
+目录：`{{root.user}}/{{team.dir}}` · 工作区：`{{root.user}}/{{team.dir}}workspace/` · 团队技能：`{{root.user}}/{{team.dir}}skills/`
 
 {{team.brief}}
 

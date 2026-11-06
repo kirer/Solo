@@ -851,7 +851,7 @@ body[data-pane="chat"] .sidebar {
 
 /* 有人点你：唯一需要打断我的那种未读，用强调色。其余用中性灰。 */
 .ch-badge[data-kind="mention"] {
-	background: var(--accent);
+	background: var(--accent-solid);
 	color: var(--ground);
 }
 
@@ -1248,7 +1248,7 @@ body[data-pane="chat"] .sidebar {
 
 .group-people .crew[data-on="true"] .group-check {
 	border-color: var(--accent);
-	background: var(--accent);
+	background: var(--accent-solid);
 	color: var(--ground);
 }
 
@@ -1270,7 +1270,7 @@ body[data-pane="chat"] .sidebar {
 	padding: 0 18px;
 	border: 0;
 	border-radius: var(--r-control);
-	background: var(--accent);
+	background: var(--accent-solid);
 	color: var(--ground);
 	font: inherit;
 	font-size: 13px;

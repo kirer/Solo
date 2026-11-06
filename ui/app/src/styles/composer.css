@@ -96,17 +96,17 @@
 	padding: 0;
 	border: 0;
 	border-radius: var(--r-pill);
-	background: var(--accent);
+	background: var(--accent-solid);
 	color: #fff;
 	transition: background-color var(--dur-line) ease, opacity var(--dur-line) ease;
 }
 
 .send:hover:not(:disabled) {
-	background: color-mix(in srgb, var(--accent) 84%, #fff);
+	background: color-mix(in srgb, var(--accent-solid) 84%, #fff);
 }
 
 .send:disabled {
-	background: var(--accent);
+	background: var(--accent-solid);
 	opacity: 0.4;
 	cursor: default;
 }
@@ -623,7 +623,7 @@
 }
 
 .choice-go {
-	background: var(--accent);
+	background: var(--accent-solid);
 	color: var(--ground);
 }
 

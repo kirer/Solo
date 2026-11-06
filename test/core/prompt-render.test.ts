@@ -20,7 +20,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SAMPLE_SLOTS } from "../../scripts/prompt-fixture.ts";
 import { createFsx } from "../../src/core/fsx.ts";
 import { loadTemplates, parseTemplate, renderPrompt, renderPromptDir, type PromptTemplate } from "../../src/core/documents/base/template.ts";
-import { UNSET } from "../../src/core/documents/base/slots.ts";
+import { UNSET, renderSlots } from "../../src/core/documents/base/slots.ts";
+import { todayIso } from "../../src/core/documents/prompt.ts";
 
 const SEED = fileURLToPath(new URL("../../seed/", import.meta.url));
 const CONTRACT = fileURLToPath(new URL("../../docs/design/SEED-CONTRACT.md", import.meta.url));
@@ -283,5 +284,22 @@ describe("seed/prompt 真实渲染（契约 §5 的 prompt:check，测试版）"
 			`契约 §3 没有登记这些插槽，写模板的人只能猜：${undocumented.join("、")}\n` +
 				"补进 §3 的插槽表（值 + 来源），或者从模板里删掉。",
 		).toEqual([]);
+	});
+});
+
+describe("{{date}}：模型也得知道今天几号", () => {
+	it("是本地时区的 YYYY-MM-DD，补零", () => {
+		expect(todayIso(new Date(2026, 0, 5))).toBe("2026-01-05");
+		expect(todayIso(new Date(2026, 10, 6))).toBe("2026-11-06");
+	});
+
+	it("seed 的 00-who 段渲染出这一天，而不是让模型猜", async () => {
+		// 病根（ADR-090）：模板里没有日期，模型把 2026-11-06 写成 2026-01-01，
+		// 写进团队 README 与记忆正文，和小节标题打架。
+		const templates = await loadTemplates(createFsx(SEED), "prompt");
+		const who = templates.find((item) => item.segment === "who");
+		expect(who, "seed/prompt/00-who.md 不见了").toBeDefined();
+		const text = renderSlots(who!.body, { ...SAMPLE, date: "2026-11-06" }).text;
+		expect(text).toContain("今天是 2026-11-06");
 	});
 });

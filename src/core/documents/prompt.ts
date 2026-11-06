@@ -155,6 +155,18 @@ function chatSlots(chats: readonly ChatRef[], catalog?: TextCatalog): Record<str
 }
 
 /**
+ * 今天的日期（`YYYY-MM-DD`，本地时区）。
+ *
+ * 为什么要有：模型不知道今天是几号，写进 `README.md` / 记忆里的日期只能瞎编 ——
+ * 实测把 2026-11-06 写成 2026-01-01，团队页上日期和小节标题互相打架。
+ * **一天之内不变**，所以它不会打穿 prompt cache（ADR-090）。
+ */
+export function todayIso(now: Date = new Date()): string {
+	const pad = (value: number): string => String(value).padStart(2, "0");
+	return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+}
+
+/**
  * 这一段用得到的插槽 → 值。
  *
  * **只填这段模板真的写到的名字**（`slotsIn`）：一次生成要渲染 8 段，全填一遍等于每段都把
@@ -184,6 +196,9 @@ async function slotsFor(
 		"root.user": paths.layout.userRoot,
 		"root.app": paths.layout.appRoot,
 	};
+
+	// 今天的日期。只在这段模板真的写到时才给（懒填的规矩和别的插槽一样）。
+	if (need.has("date")) slots["date"] = todayIso();
 
 	// 规矩是全员层文件，读不到就当没有：不能让一次文件缺失拖垮整段提示词。
 	if (need.has("rules")) slots["rules"] = await loadRules(paths.layout.userRoot);

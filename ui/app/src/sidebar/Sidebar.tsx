@@ -12,7 +12,7 @@ import { headParts, relTime, unreadLabel } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
 import { openChannel, openWithPerson, setNewGroup } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
-import type { Actor, Channel } from "../api/types.ts";
+import type { Channel } from "../api/types.ts";
 
 export function Sidebar(): JSX.Element {
 	const channels = useStore((state) => state.channels);
@@ -34,15 +34,15 @@ export function Sidebar(): JSX.Element {
 			},
 		]),
 	);
-	// 助理（身份在应用根下的那个人）。私聊还没开过时，他是侧栏第一格；
-	// 开过之后那一格由真实频道顶上（`sortChannels` 已经把他钉在最前）。
+	// 助理（身份在应用根下的那个人）。**他不在列表里**：和助理的对话就是首屏，
+	// 从列表抬头的返回箭头回去，不在这一列里和自己重复一格。
 	const nearest = people.find((person) => person.assistant === true);
-	const nearestOpened =
-		nearest === undefined ||
-		channels.some((channel) => channel.kind === "dm" && channel.title === nearest.label);
+	const isAssistantDm = (channel: Channel): boolean =>
+		nearest !== undefined && channel.kind === "dm" && channel.members.includes(nearest.slug);
 	const matches = (text: string): boolean => needle === "" || text.toLowerCase().includes(needle);
-	const shown = channels.filter((channel) => matches(channel.title) || matches(channel.preview));
-	const showAssistant = nearest !== undefined && !nearestOpened && matches(nearest.label);
+	const shown = channels.filter(
+		(channel) => !isAssistantDm(channel) && (matches(channel.title) || matches(channel.preview)),
+	);
 
 	return (
 		<aside className="sidebar">
@@ -101,14 +101,7 @@ export function Sidebar(): JSX.Element {
 			{/* 插槽：会话列表上方。 */}
 			<Slot name="sidebar.list.before" />
 			<div className="channels" id="rows" role="list">
-				{showAssistant && nearest !== undefined ? (
-					<AssistantRow
-						person={nearest}
-						state={presence.get(nearest.slug)?.state ?? "idle"}
-						onOpen={() => void openWithPerson(nearest.slug)}
-					/>
-				) : null}
-				{shown.length === 0 && !showAssistant ? <p className="side-empty">没有匹配的对话</p> : null}
+				{shown.length === 0 ? <p className="side-empty">没有匹配的对话</p> : null}
 				{shown.map((channel) => (
 					<ChannelRow
 						key={channel.id}
@@ -127,47 +120,6 @@ export function Sidebar(): JSX.Element {
 				</div>
 			</div>
 		</aside>
-	);
-}
-
-/**
- * 助理那一格：私聊还没开过时的入口。
- *
- * 它**不是一条会话**（没有频道 id、没有消息），所以第二行写的是他的身份而不是预览 ——
- * 不能编一句「还没有消息」假装那里有历史。点下去才真的建频道（`openWithPerson`）。
- */
-function AssistantRow(props: { person: Actor; state: string; onOpen: () => void }): JSX.Element {
-	const { person, state } = props;
-	return (
-		<button
-			type="button"
-			role="listitem"
-			className="ch"
-			data-entry="assistant"
-			data-kind="dm"
-			aria-current="false"
-			title={person.title}
-			onClick={props.onOpen}
-		>
-			<span
-				className="ch-av"
-				dangerouslySetInnerHTML={{
-					__html: avatarSvg({
-						slug: person.slug,
-						name: person.label,
-						size: 36,
-						state: avatarState(state),
-						assistant: person.assistant === true,
-					}),
-				}}
-			/>
-			<span className="ch-main">
-				<span className="ch-top">
-					<span className="ch-title">{person.label}</span>
-				</span>
-				<span className="ch-sub">{person.title}</span>
-			</span>
-		</button>
 	);
 }
 

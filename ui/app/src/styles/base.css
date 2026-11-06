@@ -59,6 +59,8 @@
 
 	/* 强调：deepseek-500（浅）/ deepseek-400（深），只有它和它的淡底是彩色的 */
 	--accent: rgb(65 118 230);
+	/* 填满的按钮底。深色下 --accent 是链接那种亮蓝，白字压上去像不可点，所以分开。 */
+	--accent-solid: var(--accent);
 	--accent-wash: rgb(237 243 254);
 	--live: rgb(65 118 230);
 	--warn: rgb(245 158 11);
@@ -169,6 +171,8 @@
 	--ink-3: rgb(173 178 184);
 	/* 强调：link / state-business 都是 deepseek-400；气泡底是 bluish-850 */
 	--accent: rgb(122 170 255);
+	/* 主按钮的底：深一档，白字才有 5:1，也不像「禁用」 */
+	--accent-solid: rgb(52 108 224);
 	--accent-wash: rgb(68 68 70);
 	--live: rgb(122 170 255);
 	--warn: rgb(247 173 49);

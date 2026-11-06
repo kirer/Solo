@@ -10,7 +10,14 @@ import { tracesOf } from "../core/channel/tools/presentation.ts";
 import { chatKind } from "../core/channel/types.ts";
 import { reasonText } from "../core/channel/unanswered.ts";
 import { wakeOf } from "../core/channel/roster.ts";
-import { BACKGROUND_CONTEXT, LiveDoc, type LiveState } from "../core/runtime/index.ts";
+import {
+	BACKGROUND_CONTEXT,
+	LiveDoc,
+	type Conversation,
+	type Cursor,
+	type EntryRecord,
+	type LiveState,
+} from "../core/runtime/index.ts";
 import type {
 	AttentionItem,
 	ViewActivity,
@@ -39,6 +46,32 @@ export type MentionCandidate = {
 	readonly slug: string;
 	readonly title: string;
 };
+
+/** 面板最多看 30 轮；多留一点余量。 */
+const TURN_WINDOW = 40;
+const TURN_PAGE = 200;
+/** 一轮能有上千条工具条目，翻到这里就停。 */
+const TURN_CAP = 4000;
+
+/**
+ * 一个人的最近条目，正序。
+ *
+ * 不能用 `conversation.context()`：那是**压缩之后**的活动上下文，`pi.compaction` 一出现，
+ * 之前的 `core.channel` 就全没了，界面上的轮次跟着消失 —— 看起来像「他什么都没干」。
+ * 原文一直在 storage 里，这里从新往旧翻，攒够 `TURN_WINDOW` 轮就停。
+ */
+async function recentEntries(conversation: Conversation): Promise<EntryRecord[]> {
+	const out: EntryRecord[] = [];
+	let cursor: Cursor | undefined;
+	let groups = 0;
+	do {
+		const page = await conversation.entries({ order: "descending" }, TURN_PAGE, cursor, BACKGROUND_CONTEXT);
+		out.push(...(page.items as readonly EntryRecord[]));
+		for (const entry of page.items) if (entry.kind === "core.channel") groups += 1;
+		cursor = page.next;
+	} while (cursor !== undefined && groups < TURN_WINDOW && out.length < TURN_CAP);
+	return out.reverse();
+}
 
 export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	/** 组织快照。界面的组织图与顶栏都吃这一份。 */
@@ -262,16 +295,16 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 
 		const turns: ViewTurn[] = [];
 		for (const [slug, conversationId] of people) {
-			let view;
+			let history: readonly EntryRecord[];
 			try {
 				const conversation = await shell.harness.conversation(conversationId as never, BACKGROUND_CONTEXT);
 				if (conversation === undefined) continue;
-				view = await conversation.context(BACKGROUND_CONTEXT);
+				history = await recentEntries(conversation);
 			} catch {
 				// 会话已回收 / 进程刚重启：这一轮就是看不到，不是错误。
 				continue;
 			}
-			const groups = groupsOf(view.entries, from, to, channelId);
+			const groups = groupsOf(history, from, to, channelId);
 			const running = groups.length > 0 ? (await liveOf(conversationId))?.state !== undefined : false;
 			/** 同一个频道里，这一组之后的那一组的 seq：回话只可能落在这之间。 */
 			const nextSeqIn = (id: string, seq: number): number => {
@@ -283,7 +316,7 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 			};
 			for (const [index, group] of groups.entries()) {
 				const id = group.channelId;
-				const entries = view.entries.slice(group.start + 1, group.end);
+				const entries = history.slice(group.start + 1, group.end);
 				const trigger = (channels.messages[id] ?? []).find((message) => message.seq === group.seq);
 				const startedAt = trigger?.at ?? 0;
 				const nextStart = nextSeqIn(id, group.seq);

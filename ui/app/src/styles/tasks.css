@@ -27,8 +27,8 @@
 .tasks-av {
 	display: block;
 	flex: none;
-	width: 28px;
-	height: 28px;
+	width: 32px;
+	height: 32px;
 	border-radius: 30%;
 	overflow: hidden;
 }
@@ -107,7 +107,7 @@
 	position: absolute;
 	top: 0;
 	right: 0;
-	left: 36px;
+	left: 18px;
 	height: 0.5px;
 	background: var(--rule);
 }
@@ -128,25 +128,6 @@
 	font: inherit;
 	text-align: left;
 	cursor: pointer;
-}
-
-.tasks-dot {
-	flex: none;
-	width: 7px;
-	height: 7px;
-	margin-top: 6px;
-	border: 1px solid var(--ink-3);
-	border-radius: 50%;
-}
-
-.tasks-row[data-live="true"] .tasks-dot {
-	border-color: var(--accent);
-	background: var(--accent);
-}
-
-.tasks-row[data-fail="true"] .tasks-dot {
-	border-color: var(--danger);
-	background: var(--danger);
 }
 
 .tasks-main {
@@ -189,6 +170,44 @@
 	font-size: 10px;
 }
 
+/* 正在跑：稿子 07 的红点 + 字，跟在时刻后面；右端换成步数（跑完才显示耗时）。 */
+.tasks-live {
+	display: flex;
+	flex: none;
+	align-items: center;
+	gap: 5px;
+	color: var(--accent);
+	font-size: 11px;
+	font-weight: 500;
+}
+
+.tasks-live .pulse {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--accent);
+	box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+/* 展开的最后一行：这一轮怎么收的（稿子 07 的 tfoot）。 */
+.tasks-foot {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin-top: 10px;
+	font-size: 10.5px;
+	line-height: 15px;
+	color: var(--ink-3);
+}
+
+.tasks-foot .ok {
+	color: var(--accent);
+}
+
+.tasks-foot[data-fail="true"] .ok {
+	color: var(--danger);
+}
+
 .tasks-text {
 	display: -webkit-box;
 	margin-top: 3px;
@@ -221,7 +240,7 @@
 
 /* 展开：在选中那一行下面接着走，不再包一层卡。 */
 .tasks-open {
-	padding: 11px 18px 14px 36px;
+	padding: 11px 18px 14px;
 	border-top: 0.5px solid var(--rule);
 	animation: tasks-open 160ms var(--ease-line) both;
 }
@@ -250,8 +269,8 @@
 	display: block;
 	flex: none;
 	margin-top: 1px;
-	width: 20px;
-	height: 20px;
+	width: 24px;
+	height: 24px;
 	border-radius: 30%;
 	overflow: hidden;
 }
@@ -390,13 +409,16 @@
 	opacity: 0.5;
 }
 
-/* 展开态里标题整句读得完（稿子 07 的 `.topen .step-title`）：路径长就折行，不截。 */
+/* 标题一行：一条 `run` 的正文能有上千字符，整段铺开会把整列步骤挤没。
+   想看全文点开这一步（`task-step-line` 就是那个开关）。 */
 .task-step-title {
 	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
 	font-size: 13px;
 	line-height: 22px;
 	color: var(--ink-2);
-	overflow-wrap: anywhere;
 }
 
 .task-step-line:hover .task-step-title {

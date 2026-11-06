@@ -113,14 +113,21 @@ export function TasksView(): JSX.Element {
 												setOpenStep(null);
 											}}
 										>
-											<span className="tasks-dot" aria-hidden="true" />
 											<span className="tasks-main">
 												<span className="tasks-top">
 													<span className="tasks-ch">
 														{titles.get(turn.channelId) ?? turn.channelTitle ?? turn.channelId}
 													</span>
 													<span className="tasks-time">{clockTime(turn.startedAt)}</span>
-													<span className="tasks-ms">{statusOf(turn)}</span>
+													{turn.status === "running" ? (
+														<span className="tasks-live">
+															<span className="pulse" aria-hidden="true" />
+															正在跑
+														</span>
+													) : null}
+													<span className="tasks-ms">
+														{turn.status === "running" ? `${String(turn.stepCount)} 步` : statusOf(turn)}
+													</span>
 												</span>
 												<span className="tasks-text">{turn.trigger?.text ?? turn.summary}</span>
 											</span>
@@ -170,6 +177,12 @@ export function TasksView(): JSX.Element {
 													</div>
 												)}
 												{turn.truncated === true ? <p className="tasks-empty">步骤太多，只保留前 200 步。</p> : null}
+												<p className="tasks-foot" data-fail={turn.status === "failed" ? "true" : "false"}>
+													<span className="ok" aria-hidden="true">
+														●
+													</span>
+													{footOf(turn)}
+												</p>
 											</div>
 										) : null}
 									</div>
@@ -354,7 +367,16 @@ function statusOf(turn: Turn): string {
 	if (turn.status === "running") return "跑着";
 	if (turn.status === "done") return elapsedOf(turn);
 	if (turn.status === "failed") return "失败";
-	return "没回话";
+	// `aborted` 是合并唤醒（ADR-048）：后来的消息接管了这一轮，不是他赖着不回。
+	return "被新消息合并";
+}
+
+/** 展开的最后一行：这一轮怎么收的（稿子 07 的 tfoot）。 */
+function footOf(turn: Turn): string {
+	if (turn.status === "running") return "还在跑";
+	if (turn.status === "aborted") return "被新消息合并，这一轮没跑完";
+	const at = turn.endedAt === undefined ? "" : ` · ${clockTime(turn.endedAt)}`;
+	return turn.status === "failed" ? `没答上来${at}` : `已交付${at}`;
 }
 
 function isRunning(state: string | undefined): boolean {

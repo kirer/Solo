@@ -1,7 +1,8 @@
 /**
  * 刚装好的第一屏：还没别人时，给三句能直接发出去的话（稿子 12）。
  *
- * 只在这个组织里**一个人都没有**（只剩助理）时出现。点了就是替我发这条消息 ——
+ * 只在这个组织里**一个人都没有**（只剩助理）、**而且这个频道还一句话都没说过**时出现。
+ * 说过话它就是多余的一屏引导。点了就是替我发这条消息 ——
  * 走的是和输入框同一条 `send`，不是另一套发消息逻辑。
  */
 
@@ -40,8 +41,9 @@ const onlyAssistant = (state: State): boolean => state.people.every((person) => 
 
 export function Starters(props: { toast: (text: string, tone?: "info" | "error") => void }): JSX.Element | null {
 	const alone = useStore(onlyAssistant);
+	const spoken = useStore((state) => (state.detail?.messages.length ?? 0) > 0);
 	const [busy, setBusy] = useState(false);
-	if (!alone) return null;
+	if (!alone || spoken) return null;
 
 	async function pick(text: string): Promise<void> {
 		if (busy) return;

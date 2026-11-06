@@ -342,7 +342,8 @@ type ViewMessage = {
 
 - 一轮 = 一次唤醒：会话条目里 `core.channel` 且 `data.channelId/seq` 对上的那条，到**下一条**
   `core.channel` 之间。一条消息可以叫醒多个人 → 同一个 `seq` 会出现多条（按 `slug` 区分）。
-- 找不到（没被叫醒 / 条目已被压缩）就是 `null`，**不是错误**。
+- 切轮读的是**原文历史**（`conversation.entries`，压缩留下的条目也在，ADR-092）；
+  找不到（没被叫醒 / 比面板窗口更早）就是 `null`，**不是错误**。
 - 轨迹只服务后台任务面板与 SSE `trace`；聊天流不画过程（ADR-062）。
 
 ```ts

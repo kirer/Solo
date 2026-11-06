@@ -76,6 +76,7 @@ seed/
 | `{{self.name}}` `{{self.title}}` `{{self.slug}}` | 自己 | `identity.md` |
 | `{{self.dir}}` | 自己的目录（`assistant/<slug>/` 或 `members/<slug>/`） | `Layout` 的两个根 |
 | `{{root.user}}` `{{root.app}}` | 两个根的**绝对路径**（组织 / 程序自带） | `Layout.userRoot` / `Layout.appRoot` |
+| `{{date}}` | 今天的日期（`YYYY-MM-DD`，本地时区；一天内不变） | 系统时钟 |
 | `{{assistant}}` | 助理的显示名（自己就是助理时是「你自己」） | `layout.assistantRoot` 下的身份目录（`assistantsOf`） |
 | `{{team}}` `{{peers}}` | 团队 slug / 同团队的人 | `identity.md` + 名册 |
 | `{{chats.groups}}` `{{chats.dm}}` | 你在哪些群 / 和我的私聊开没开（`已开`） | 频道文档 |

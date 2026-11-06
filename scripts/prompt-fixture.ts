@@ -19,6 +19,7 @@ export const SAMPLE_SLOTS = {
 	"self.title": "示例身份",
 	"self.slug": "demo",
 	"self.dir": "members/demo/",
+	date: "2026-11-06",
 	"root.user": "/home/example/.solo",
 	"root.app": "/home/example/.solo-app",
 	"self.body": "你负责把示例这件事做完。不做示例之外的事。",

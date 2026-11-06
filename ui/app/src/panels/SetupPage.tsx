@@ -78,7 +78,6 @@ function WelcomeStep(): JSX.Element {
 				<button type="button" className="setup-primary" onClick={() => setSetupStep("model")}>
 					开始
 				</button>
-				<div className="setup-hint">下一步：接一个模型，大约一分钟</div>
 			</div>
 		</>
 	);
@@ -276,7 +275,6 @@ function ModelStep(): JSX.Element {
 				<button type="button" className="setup-primary" disabled={!ready || busy} onClick={() => void finish()}>
 					{busy ? "正在接上…" : "就用这个"}
 				</button>
-				<div className="setup-hint">密钥只存在本机，不会上传</div>
 			</div>
 		</>
 	);
