@@ -4,6 +4,7 @@
  * 真窗口只有 Electron 里才有；这里守的是「摆哪儿、坏了怎么办」：
  * 默认贴右上、拖不出屏幕、换屏幕后不落到看不见的地方、状态文件读不懂就当没有。
  */
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	clampOrbBounds,
@@ -59,6 +60,6 @@ describe("悬浮窗的状态文件", () => {
 	});
 
 	it("状态文件放在应用私有根里", () => {
-		expect(orbStatePath("/tmp/app")).toBe("/tmp/app/orb-window.json");
+		expect(orbStatePath("/tmp/app")).toBe(join("/tmp/app", "orb-window.json"));
 	});
 });
