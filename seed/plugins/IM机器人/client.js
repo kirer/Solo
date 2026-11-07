@@ -96,11 +96,18 @@ export default {
 	id: SLUG,
 
 	style: `
+		/* 一整页定高：宿主弹窗的高度跟着内容走，几个渠道的表单长短不一，
+		   不定高就会在来回切渠道、数据落地时「啪」地跳一下（和插件清单 340px 同一个道理）。
+		   内容长了在 .im-main 里滚。 */
 		.im {
 			display: flex; flex-direction: column;
-			height: 100%; min-width: 0; min-height: 0;
+			height: min(660px, calc(100dvh - 140px));
+			min-width: 0; min-height: 0;
 			background: var(--frame); container-type: inline-size;
 		}
+		/* 右栏里那一页、窄窗口的整屏弹窗：宿主本身有确定高度，铺满即可。 */
+		.im[data-host="panel"] { height: 100%; }
+		@media (max-width: 900px) { .im { height: 100%; } }
 		.im-top {
 			display: flex; flex: none; align-items: center; gap: 8px;
 			min-height: 62px; padding: 0 14px 0 18px;
@@ -817,7 +824,7 @@ export default {
 
 			return h(
 				"section",
-				{ className: "im", "aria-label": "IM 机器人" },
+				{ className: "im", "data-host": inPanel ? "panel" : "modal", "aria-label": "IM 机器人" },
 				h(
 					"div",
 					{ className: "im-top", "data-host": inPanel ? "panel" : "modal" },
