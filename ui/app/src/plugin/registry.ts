@@ -23,26 +23,24 @@ import type { Plugin } from "../api/types.ts";
  * 所以插件放在顶栏 / 输入框那种横排里的东西，自己要是横排的尺寸（见 DESIGN §2.8）。
  */
 export type SlotName =
-	| "rail.item"
+	| "app.entry"
 	| "app.page"
 	| "dock"
-	| "sidebar.header"
-	| "sidebar.list.before"
+	| "overlays"
+	| "settings.section"
+	| "sidebar.top"
 	| "sidebar.footer"
 	| "topbar.actions"
-	| "stream.top"
-	| "stream.bottom"
+	| "stream.banner"
 	| "composer.actions"
-	| "rightPanel.tab"
+	| "rightPanel.row"
 	| "rightPanel.detail"
-	| "rightPanel.bottom"
-	| "settings.section"
-	| "overlays";
+	| "rightPanel.bottom";
 
 export type SlotCell = {
 	/** 同一插槽里唯一。重复 id 的注册被忽略（StrictMode、重复 boot 都不会画两遍）。 */
 	readonly id: string;
-	/** `rightPanel.tab` 的页签文字；`settings.section` 的分区名。别的插槽用不到。 */
+	/** `rightPanel.row` 那一行的文字；`settings.section` 的分区名。别的插槽用不到。 */
 	readonly label?: string;
 	/** `settings.section` 左栏那一格前面的图标（一个 SVG 元素）。不画就只留文字。 */
 	readonly icon?: React.ReactNode;
@@ -50,10 +48,10 @@ export type SlotCell = {
 	readonly order?: number;
 	/** 这个格子属于哪个插件（宿主填，插件自己不用写）。`app.page` / `dock` 靠它决定画哪一页。 */
 	readonly plugin?: string;
-	/** 画什么。`rightPanel.tab` 里只给 `onOpen` 的格子没有组件（点一行开一整页）。 */
+	/** 画什么。`rightPanel.row` 里只给 `onOpen` 的格子没有组件（点一行开一整页）。 */
 	readonly component?: React.ComponentType;
 	/**
-	 * `rightPanel.tab`：点这一行干什么。不给就按老规矩在本栏里展开组件；
+	 * `rightPanel.row`：点这一行干什么。不给就按老规矩在本栏里展开组件；
 	 * 给了就交给插件（比如打开 `app.page` 的一整页），本栏不再展开。
 	 */
 	readonly onOpen?: () => void;
@@ -84,21 +82,23 @@ export type Ui = {
 
 /** 全部插槽。`<Slot name>` 只能用这里的名字（TS 卡着），测试也照这份表查宿主有没有画。 */
 export const SLOTS: readonly SlotName[] = [
-	"rail.item",
+	// 应用级：入口、整页、右栏工作台、全屏浮层、设置里的一节
+	"app.entry",
 	"app.page",
 	"dock",
-	"sidebar.header",
-	"sidebar.list.before",
-	"sidebar.footer",
-	"topbar.actions",
-	"stream.top",
-	"stream.bottom",
-	"composer.actions",
-	"rightPanel.tab",
-	"rightPanel.detail",
-	"rightPanel.bottom",
-	"settings.section",
 	"overlays",
+	"settings.section",
+	// 对话列：头顶一条、脚下一条
+	"sidebar.top",
+	"sidebar.footer",
+	// 对话区：顶栏、消息流横幅、输入框
+	"topbar.actions",
+	"stream.banner",
+	"composer.actions",
+	// 资料栏：最上面一块、表里一行、末尾一张卡
+	"rightPanel.detail",
+	"rightPanel.row",
+	"rightPanel.bottom",
 ];
 const cells = new Map<SlotName, SlotCell[]>(SLOTS.map((name) => [name, []]));
 

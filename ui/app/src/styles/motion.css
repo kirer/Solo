@@ -10,6 +10,23 @@
 
 /* ── 入场 / 退场 ────────────────────────────────────────────────────── */
 
+/* 纯透明度：右栏开 / 关、右栏里换页用它 —— 位移和模糊留给「一整屏的层级变化」，
+   同一栏里换内容只该「换」不该「动」。 */
+@keyframes fade-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+
+@keyframes fade-out {
+	to {
+		opacity: 0;
+	}
+}
+
 @keyframes veil-in {
 	from {
 		opacity: 0;

@@ -66,8 +66,6 @@ export function Sidebar(): JSX.Element {
 					对话
 				</h1>
 				<span className="side-grow" />
-				{/* 插槽：品牌行右侧，拉群按钮之前。 */}
-				<Slot name="sidebar.header" />
 				{/* 拉群就在会话列表头顶：它长出来的是一格会话，不是一项「管理」。 */}
 				<button
 					type="button"
@@ -98,8 +96,8 @@ export function Sidebar(): JSX.Element {
 					onChange={(event) => setQuery(event.target.value)}
 				/>
 			</div>
-			{/* 插槽：会话列表上方。 */}
-			<Slot name="sidebar.list.before" />
+			{/* 插槽：会话列表头顶一条（搜索框下面、列表上面）。 */}
+			<Slot name="sidebar.top" />
 			<div className="channels" id="rows" role="list">
 				{shown.length === 0 ? <p className="side-empty">没有匹配的对话</p> : null}
 				{shown.map((channel) => (

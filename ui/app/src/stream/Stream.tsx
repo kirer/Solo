@@ -225,8 +225,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 
 					{detail === null ? <Skeleton /> : null}
 
-					{/* 插槽：消息流顶部（第一条消息上方）。 */}
-					<Slot name="stream.top" />
+					{/* 插槽：消息流顶上一条横幅（第一条消息上方，仍在滚动区里）。 */}
+					<Slot name="stream.banner" />
 
 					<div className="feed" id="feed" ref={feedRef}>
 						{hero === null ? null : <SoloHero hero={hero} />}
@@ -244,8 +244,6 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 						))}
 					</div>
 
-					{/* 插槽：消息流底部（最后一条消息之后，仍在滚动区里）。 */}
-					<Slot name="stream.bottom" />
 				</div>
 			</div>
 			{/* 点一条消息：底下压一层，动作从底部升上来（稿子 19）。 */}

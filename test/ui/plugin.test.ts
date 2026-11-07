@@ -28,8 +28,8 @@ describe("插槽注册表", () => {
 	});
 
 	it("两个插槽互不串台", () => {
-		register("rightPanel.tab", { id: "页签", label: "插件", component: nobody });
-		expect(cellsOf("rightPanel.tab").map((cell) => cell.id)).toEqual(["页签"]);
+		register("rightPanel.row", { id: "页签", label: "插件", component: nobody });
+		expect(cellsOf("rightPanel.row").map((cell) => cell.id)).toEqual(["页签"]);
 		expect(cellsOf("sidebar.footer").map((cell) => cell.id)).not.toContain("页签");
 	});
 });
@@ -45,7 +45,7 @@ function uiSources(dir: string): string[] {
 
 describe("插槽与宿主对得上", () => {
 	// 声明了名字却没画 `<Slot>` 的插槽，插件注册进去会静默消失 —— 这比 TS 报错难查得多。
-	// 两种宿主都算：`<Slot name>`（大多数）与直接读注册表的特殊插槽（`rightPanel.tab` 是页签条）。
+	// 两种宿主都算：`<Slot name>`（大多数）与直接读注册表的特殊插槽（`rightPanel.row` 是资料表里的行）。
 	it("每个 SlotName 在界面里都有宿主", () => {
 		const root = fileURLToPath(new URL("../../ui/app/src", import.meta.url));
 		const source = uiSources(root)

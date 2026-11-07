@@ -7,7 +7,7 @@
  * 两个根：应用私有的东西（助理、提示词、内置插件、配置、库）在 `app.getPath("userData")`；
  * 我的组织（成员、团队、技能、规矩）在 `~/.solo`。开发态两个根都放临时目录，跑坏了删掉即可。
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell, type IpcMainEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, shell, type IpcMainEvent } from "electron";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBackend, type Backend } from "./backend.ts";
@@ -33,11 +33,13 @@ let win: BrowserWindow | undefined;
 let quitting = false;
 
 function createWindow(url: string): BrowserWindow {
+	// 小屏幕（1280×800 那类笔记本）上别把窗口开到屏幕外面去。
+	const area = screen.getPrimaryDisplay().workAreaSize;
 	const window = new BrowserWindow({
-		// 界面是单列（ADR-084），开窗就是手机比例：375×812。想放宽直接拖，
-		// 最小宽度只留红绿灯 + 一列内容的位置。
-		width: 375,
-		height: 812,
+		// 桌面默认给一个「宽窗口」：右边能同时放下对话与资料栏（≥901 是两栏那一档），
+		// 不再一开窗就是手机比例。窄到 360 仍是单列（ADR-084），直接拖小也不会坏。
+		width: Math.min(1180, area.width - 80),
+		height: Math.min(820, area.height - 80),
 		minWidth: 360,
 		minHeight: 560,
 		show: false,

@@ -6,8 +6,8 @@
  * 都在这里覆盖，组件仍用原来的类名，逻辑一行没动。
  *
  * 三档宽度（desk.css 的规矩）：
- *   ≥1181  最左一列 + 对话列 + 纸 + 资料列
- *   ≤1180  资料列让位（手机上它本来就是钻下去的一页）
+ *   ≥901   最左一列 + 对话列 + 纸；资料列 / 工作台浮在纸上（ADR-098）
+ *   ≤900   资料列铺满整屏（它本来就是钻下去的一页）
  *   ≤900   对话列让位、最左一列收起，标题行换成手机那两颗粒
  */
 
@@ -978,7 +978,8 @@
 	place-items: center;
 	width: 34px;
 	height: 34px;
-	border-radius: 50%;
+	/* 触屏上它会被撑成 56×38：圆角得跟随形状，不然是个椭圆。 */
+	border-radius: var(--r-pill);
 	background: var(--accent-fill);
 	color: var(--on-accent);
 }
@@ -1089,22 +1090,41 @@
 
 /* ── 资料列 ─────────────────────────────────────────────────────────── */
 
+/* 宽窗口里它浮在纸上，不改正文宽度（用户要的「覆盖，不是拓展」）。 */
 .detail {
-	position: static;
-	inset: auto;
-	z-index: auto;
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	left: auto;
+	z-index: 45;
 	display: flex;
 	flex: none;
 	flex-direction: column;
-	width: 348px;
-	max-width: none;
+	/* 拖过就用拖出来的宽度（资料 / 任务 / 工作台同一份）。 */
+	width: var(--panel-w, 348px);
+	max-width: 100%;
 	min-height: 0;
 	margin: 0;
 	overflow: hidden;
 	border-left: 0.5px solid var(--rule);
 	background: var(--frame);
-	/* `hidden` 切回来会重放：开资料列时淡进来，不再「啪」地出现。 */
-	animation: veil-in 180ms ease-out both;
+	box-shadow: -20px 0 48px rgb(0 0 0 / 0.34);
+	/* 开 / 关都只淡（`fade-in` / `fade-out` 在文件末尾那一组，关的时候靠 `data-open`）。 */
+	animation: fade-in 150ms ease both;
+}
+
+
+/* 工作台铺满这一栏：它自己是一列（标签页在上，内容在下面滚）。 */
+.detail-dock {
+	display: flex;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
+.detail-dock > * {
+	flex: 1 1 auto;
+	min-width: 0;
 }
 
 /* 窄窗口里它是整屏一层（稿子 06 / 07 / 23）。 */
@@ -1153,14 +1173,16 @@
 	border: 0;
 }
 
+/* 这一栏的标题：和弹窗 / 聊天抬头同一套（正文墨色、600），不再是一枚小号等宽标签 ——
+   它下面就是一张表，抬头得先立得住。手机那套（15/600）在 ≤900 里，形状一致。 */
 .detail-title {
 	margin: 0;
-	color: var(--ink-3);
-	font-family: var(--mono);
-	font-size: 10.5px;
-	line-height: 14px;
-	font-weight: 400;
-	letter-spacing: 0.12em;
+	color: var(--ink);
+	font-family: var(--sans);
+	font-size: 14px;
+	line-height: 20px;
+	font-weight: 600;
+	letter-spacing: 0;
 }
 
 .detail-panel {
@@ -1250,7 +1272,23 @@
 }
 
 .modal-wide {
-	width: 1040px;
+	width: 800px;
+}
+
+/* 弹窗里的一层：设置清单 / 插件清单 / 插件页。壳（`.modal`）不换，只换这一层 ——
+   宽高的过渡由 `SettingsPage` 的 WAAPI FLIP 补（ADR-106），这里只补一点透明度。 */
+.modal-level {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-height: 0;
+	animation: fade-in 160ms ease both;
+}
+
+/* 插件清单是一张定高的「书」：插件数要到接口回来才知道，跟着内容长就是开页闪一下。
+   定高之后先开、后开都是一个尺寸，插件多了里面自己滚。 */
+.modal-level[data-level="plugins"] {
+	height: 340px;
 }
 
 /* 拉群 / 重置 / 重启：同一张弹窗的壳（稿子 05 那一套）。 */
@@ -1356,11 +1394,11 @@
 	overflow: hidden;
 }
 
-.set-body .group {
+.set-body .set-group {
 	margin: 0;
 }
 
-.set-body .group + .group {
+.set-body .set-group + .set-group {
 	margin-top: 16px;
 }
 
@@ -1633,7 +1671,7 @@
 
 .pl-list {
 	flex: none;
-	width: 300px;
+	width: 260px;
 	padding: 10px 10px 16px;
 	overflow-y: auto;
 	border-right: 0.5px solid var(--rule);
@@ -1647,10 +1685,6 @@
 	padding: 9px 12px;
 	border-radius: 10px;
 	text-align: left;
-}
-
-.pl-item:hover {
-	background: var(--hover);
 }
 
 .pl-item[data-on="true"] {
@@ -1921,18 +1955,10 @@
 
 /* ── 三档宽度 ───────────────────────────────────────────────────────── */
 
-/* 不够宽的时候资料列让位；要用就浮在纸上面，不当第四列硬挤。 */
-@media (min-width: 901px) and (max-width: 1180px) {
-	.detail:not([hidden]) {
-		position: absolute;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		z-index: 15;
-		width: 348px;
-		max-width: 100%;
-		background: var(--frame);
-		box-shadow: -16px 0 40px rgb(0 0 0 / 0.35);
+/* 宽窗口里列表就在左边：聊天抬头那颗「返回对话列表」是多此一举。 */
+@media (min-width: 901px) {
+	.sheet-back {
+		display: none;
 	}
 }
 
@@ -1952,11 +1978,6 @@
 		display: flex;
 		width: 100%;
 		border-right: 0;
-	}
-
-	/* 列表是根屏：没有上一层可回。 */
-	body[data-pane="list"] .side-back {
-		display: none;
 	}
 
 	.side-logo {
@@ -2055,7 +2076,7 @@
 		padding: 6px 0 26px;
 	}
 
-	.set-body .group {
+	.set-body .set-group {
 		margin: 0 12px;
 	}
 
@@ -2323,31 +2344,15 @@
 	}
 }
 
-/* ── 右侧工作台（`dock` 插槽，和对话并排的一整列） ─────────────────── */
-
-/* 形状照 agent harness 的右栏：对话还在，右半边是带标签页的工作台。
-   资料列这时让位 —— 一屏只并排一件事。 */
-.dock {
-	display: flex;
-	flex: 0 0 clamp(360px, 36vw, 680px);
-	min-width: 0;
-	min-height: 0;
-	border-left: 0.5px solid var(--rule);
-	background: var(--frame);
-	animation: dock-in 200ms var(--ease-sheet) both;
-}
-
-/* 插件画的那一列铺满整块：不然内容多宽就多宽，右边留一条空的。 */
-.dock > * {
-	flex: 1 1 auto;
-	min-width: 0;
-}
+/* ── 右侧工作台（`dock` 插槽，占右栏那一层） ─────────────────────────── */
 
 /* 左边线可以拖：线本身 0.5px，抓手往外扩 8px 才好点中（照 agent harness 的分隔条）。 */
 .dock-grip {
-	position: relative;
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 0;
 	z-index: 2;
-	flex: 0 0 0;
 	width: 0;
 	cursor: col-resize;
 	touch-action: none;
@@ -2375,36 +2380,80 @@
 	background: var(--accent);
 }
 
-@keyframes dock-in {
-	from {
-		opacity: 0;
-		transform: translateX(14px);
-	}
-	to {
-		opacity: 1;
-		transform: none;
-	}
-}
-
-/* 1280 上下：工作台一开，列表先让位（一列 320 换一块 500 的文件树更划算）。 */
-@media (max-width: 1280px) {
-	.frame[data-dock="true"] .sidebar {
-		display: none;
-	}
-}
-
 @media (max-width: 900px) {
 	.dock-grip {
 		display: none;
 	}
+}
 
-	.dock {
-		position: fixed;
-		inset: 0;
-		z-index: 20;
-		flex: none;
-		width: 100%;
-		border-left: 0;
-		animation: none;
-	}
+/* 调试：`?slots=1` 时把每个插槽占地画出来（`plugin/Slot.tsx` 的 MARK）。红框只在这一参数下出现。 */
+.slot-mark {
+	position: relative;
+	min-width: 8px;
+	min-height: 8px;
+	outline: 1px dashed #e5484d;
+	outline-offset: -1px;
+	border-radius: 3px;
+}
+.slot-mark:empty {
+	min-width: 22px;
+	min-height: 22px;
+}
+.slot-mark::before {
+	content: attr(data-slot);
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 4;
+	padding: 1px 3px;
+	border-radius: 0 0 3px 0;
+	background: #e5484d;
+	color: #fff;
+	font: 9px/1.2 var(--mono);
+	letter-spacing: 0.02em;
+	pointer-events: none;
+}
+
+/* ── 右栏的动效：只有淡，没有滑动 ───────────────────────────────────── */
+/* 开：淡进来；关：`data-open="false"` 淡出去（`RightPanel` 留 300ms 再卸）。
+   以前开是 `veil-in`（带 6px 模糊）、关是直接消失，两个方向不对称。 */
+.detail {
+	animation: fade-in 150ms ease both;
+}
+
+.detail[data-open="false"] {
+	animation: fade-out 140ms ease both;
+	pointer-events: none;
+}
+
+/* 栏里换一层（资料 ↔ 后台任务 ↔ 工作台 ↔ 插件页）：容器带 key，重挂时淡一下。 */
+.detail-dock,
+.detail-panel {
+	animation: fade-in 160ms ease both;
+}
+
+/* 资料表的展开 / 收起：高度走 grid 的 0fr → 1fr，配一点透明度；收起时内容由 `Fold`
+   留 180ms 再卸，所以两个方向都看得见（原来只有开有动画，关是瞬间消失）。 */
+.prof-fold {
+	display: grid;
+	grid-template-rows: 0fr;
+	opacity: 0;
+	transition:
+		grid-template-rows 180ms var(--ease-line),
+		opacity 140ms ease;
+}
+
+.prof-fold[data-open="true"] {
+	grid-template-rows: 1fr;
+	opacity: 1;
+}
+
+.prof-fold-in {
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* 折叠自己负责「怎么出现」，里面那一段不再单独播一次入场。 */
+.prof-fold .prof-panel {
+	animation: none;
 }

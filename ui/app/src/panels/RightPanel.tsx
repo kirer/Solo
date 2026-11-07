@@ -9,15 +9,15 @@
  * 后台任务也借用这一层（§13.3）。
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { editPersonMemory, getPerson, getPersonMemory, getPersonTurns, getTeam, updateChannel } from "../api/client.ts";
 import type { ChannelDetail, ChannelResponder, MemoryEntry, PersonMemory, PersonProfile, TeamProfile, Turn } from "../api/types.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
 import { cellsOf, type SlotCell } from "../plugin/registry.ts";
-import { Slot } from "../plugin/Slot.tsx";
+import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, closeTasks, openPerson, openTasks, refreshDetail, setRight } from "../state/store.ts";
+import { backRight, closeDock, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
 
@@ -25,6 +25,9 @@ export function RightPanel(): JSX.Element {
 	const open = useStore((state) => state.right.open);
 	const tasksOpen = useStore((state) => state.tasks.open);
 	const trail = useStore((state) => state.trail);
+	const dock = useStore((state) => state.dock);
+	const rightPage = useStore((state) => state.rightPage);
+	const dockWidth = useStore((state) => state.dockWidth);
 	const [mounted, setMounted] = useState(open);
 
 	useEffect(() => {
@@ -39,39 +42,111 @@ export function RightPanel(): JSX.Element {
 
 	if (!open && !mounted) return <aside className="detail" hidden />;
 
+	// 这一栏是一叠纸：工作台 / 后台任务 / 资料页各有上一层，返回就退一张。
+	const back = (): void => {
+		if (dock !== null) closeDock();
+		else if (rightPage !== null) closeRightPage();
+		else if (tasksOpen) closeTasks();
+		else if (trail.length > 1) backRight();
+		else setRight({ open: false });
+	};
+	const pageCell = rightPage === null ? undefined : cellsOf("app.page").find((cell) => cell.plugin === rightPage);
+	const title = dock !== null ? "工作台" : rightPage !== null ? (pageCell?.label ?? rightPage) : tasksOpen ? "后台任务" : "资料";
+	// 这一栏永远有出口：标题条那颗返回 / 关闭在每一层都在（宽窗口里顶栏那颗「资料」
+	// 常被这一栏自己盖住，不能只指望它）。
+
 	return (
 		<aside
 			className="detail"
 			id="detail"
 			data-open={open ? "true" : "false"}
 			data-tasks={tasksOpen ? "true" : "false"}
-			aria-label={tasksOpen ? "后台任务" : "资料"}
-			{...(open ? {} : { hidden: true })}
+			data-dock={dock === null ? "false" : "true"}
+			data-page={rightPage === null ? "false" : "true"}
+			aria-label={title}
+			style={dockWidth === null ? undefined : ({ "--panel-w": `${String(dockWidth)}px` } as CSSProperties)}
+			// 关的时候留在 DOM 里淡出（`data-open="false"` + transition），卸不卸由上面那个 300ms 计时决定。
+			aria-hidden={open ? undefined : "true"}
 		>
+			{/* 这一栏一直可以拖宽（双击回默认）：资料和工作台用同一个宽度，换页不跳。 */}
+			<PanelGrip width={dockWidth} />
 			<div className="detail-bar">
-				{/* 这一屏和聊天一样是「钻下去的一层」：出口是左上角的返回，不是一颗 ×。 */}
-				<button
-					type="button"
-					className="icon-btn"
-					id="detail-close"
-					aria-label="返回聊天"
-					title="返回"
-					onClick={() =>
-						tasksOpen ? closeTasks() : trail.length > 1 ? backRight() : setRight({ open: false })
-					}
-				>
+				{/* 这一栏和聊天一样是「钻下去的一层」：出口是左上角的返回，不是一颗 ×。 */}
+				<button type="button" className="icon-btn" id="detail-close" aria-label="返回" title="返回" onClick={back}>
 					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
 						<path d="M14.5 5.5 8 12l6.5 6.5" />
 					</svg>
 				</button>
-				<h2 className="detail-title">{tasksOpen ? "后台任务" : "资料"}</h2>
+				<h2 className="detail-title">{title}</h2>
 				<span className="sheet-grow" />
 			</div>
-			<div className="detail-panel" id="detail-panel">
-				{tasksOpen ? <TasksView /> : <ProfileView />}
-				<Slot name="rightPanel.bottom" />
-			</div>
+			{dock !== null ? (
+				<div className="detail-dock" key="dock" aria-label="工作台">
+					<Slot name="dock" />
+				</div>
+			) : rightPage !== null ? (
+				<div className="detail-dock" key={`page:${rightPage}`} aria-label={title}>
+					<Slot name="app.page" page={rightPage} />
+				</div>
+			) : (
+				<div className="detail-panel" id="detail-panel" key={tasksOpen ? "tasks" : "profile"}>
+					{tasksOpen ? <TasksView /> : <ProfileView />}
+					<Slot name="rightPanel.bottom" />
+				</div>
+			)}
 		</aside>
+	);
+}
+
+/**
+ * 右栏的左边线：拖它改宽度，双击回默认。
+ *
+ * 宽度是这一栏的，不是某一页的 —— 资料、后台任务、工作台共用同一个值，
+ * 换页时宽度不跳。形状照 agent harness 的分隔条：线是 0.5px 的，抓手往外扩
+ * 8px 才好点中；拖的时候整页都是 `col-resize`，指针跑快了也不闪。
+ */
+function PanelGrip({ width }: { width: number | null }): JSX.Element {
+	const dragging = useRef(false);
+
+	const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		const grip = event.currentTarget;
+		const startX = event.clientX;
+		const panel = grip.parentElement;
+		const start = width ?? panel?.getBoundingClientRect().width ?? 520;
+		dragging.current = true;
+		document.body.style.cursor = "col-resize";
+		document.body.style.userSelect = "none";
+
+		const move = (ev: PointerEvent): void => {
+			if (!dragging.current) return;
+			// 左边至少给对话留 420：拖到底也不能把正文盖满。
+			const most = Math.max(320, window.innerWidth - 420);
+			setDockWidth(Math.min(most, Math.max(320, start - (ev.clientX - startX))));
+		};
+		const up = (): void => {
+			dragging.current = false;
+			window.removeEventListener("pointermove", move);
+			window.removeEventListener("pointerup", up);
+			window.removeEventListener("pointercancel", up);
+			document.body.style.cursor = "";
+			document.body.style.userSelect = "";
+		};
+		window.addEventListener("pointermove", move);
+		window.addEventListener("pointerup", up);
+		window.addEventListener("pointercancel", up);
+	};
+
+	return (
+		<div
+			className="dock-grip"
+			role="separator"
+			aria-orientation="vertical"
+			aria-label="调整右栏宽度"
+			onPointerDown={onPointerDown}
+			onDoubleClick={() => setDockWidth(null)}
+		/>
 	);
 }
 
@@ -83,7 +158,8 @@ function ProfileView(): JSX.Element {
 
 	// 打开的是某个人的档案页：整栏讲他。
 	if (person !== null) return <PersonPanel slug={person.slug} fallback={person} />;
-	if (detail === null) return <p className="prof-empty">左边选一个会话。</p>;
+	// 没选频道时宿主不画这一栏（`App.tsx` 的门），这里只是兜底。
+	if (detail === null) return <></>;
 
 	const channel = detail.channel;
 	// 私聊：整栏讲对面那个人，和档案页同一张表。
@@ -144,13 +220,13 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 					onClick={profile === undefined ? undefined : () => setOpenRow(openRow === "model" ? null : "model")}
 					open={openRow === "model"}
 				/>
-				{openRow === "model" ? (
+				<Fold open={openRow === "model"}>
 					<div className="prof-panel">
 						{/* 插槽：模型管理插件在这里放「给他换模型」的控件；没装就只剩下面那句说明。 */}
 						<Slot name="rightPanel.detail" />
 						<p className="prof-note">每轮按这里配的模型跑；插件页的「模型管理」里也能改。</p>
 					</div>
-				) : null}
+				</Fold>
 				<Row
 					icon={<IconDoc />}
 					title="预置词"
@@ -160,7 +236,7 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 					onClick={() => setOpenRow(openRow === "prompt" ? null : "prompt")}
 					open={openRow === "prompt"}
 				/>
-				{openRow === "prompt" ? (
+				<Fold open={openRow === "prompt"}>
 					<div className="prof-panel">
 						{profile === undefined ? (
 							<p className="prof-note">正在读…</p>
@@ -170,7 +246,7 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 							<div className="prof-doc" dangerouslySetInnerHTML={{ __html: renderMarkdown(stripTitle(profile.body, profile.label)) }} />
 						)}
 					</div>
-				) : null}
+				</Fold>
 			</div>
 
 			<div className="prof-card">
@@ -182,7 +258,9 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 					onClick={() => setOpenRow(openRow === "memory" ? null : "memory")}
 					open={openRow === "memory"}
 				/>
-				{openRow === "memory" ? <MemoryPanel slug={props.slug} /> : null}
+				<Fold open={openRow === "memory"}>
+					<MemoryPanel slug={props.slug} />
+				</Fold>
 				<Row
 					icon={<IconStar />}
 					title="技能"
@@ -191,7 +269,7 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 					onClick={() => setOpenRow(openRow === "skills" ? null : "skills")}
 					open={openRow === "skills"}
 				/>
-				{openRow === "skills" ? (
+				<Fold open={openRow === "skills"}>
 					<div className="prof-panel">
 						{profile === undefined ? (
 							<p className="prof-note">正在读…</p>
@@ -207,7 +285,7 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 							))
 						)}
 					</div>
-				) : null}
+				</Fold>
 				<PluginRows openRow={openRow} setOpenRow={setOpenRow} />
 			</div>
 
@@ -231,7 +309,7 @@ function PluginSlot(props: { id: string; cells: readonly SlotCell[] }): JSX.Elem
 }
 
 /**
- * 插件往资料表里加的行（`rightPanel.tab`）。
+ * 插件往资料表里加的行（`rightPanel.row`）。
  *
  * 两种格子：给 `onOpen` 的点一行交给插件（「工作空间」开一整页），没给的按老规矩
  * 在本栏里展开组件。人、团队两种资料表共用这一份，免得插件只出现在一边。
@@ -240,11 +318,12 @@ function PluginRows(props: {
 	openRow: string | null;
 	setOpenRow: (id: string | null) => void;
 }): JSX.Element | null {
-	const cells = cellsOf("rightPanel.tab");
+	const cells = cellsOf("rightPanel.row");
 	if (cells.length === 0) return null;
 	const inline = props.openRow === null ? undefined : cells.find((cell) => cell.id === props.openRow && cell.component !== undefined);
 	return (
 		<>
+			{SLOT_MARK ? <div className="slot-mark" data-slot="rightPanel.row" /> : null}
 			{cells.map((cell) => (
 				<Row
 					key={cell.id}
@@ -824,6 +903,29 @@ function Row(props: {
 		<button type="button" className="prof-row" aria-expanded={props.open === true} onClick={props.onClick}>
 			{content}
 		</button>
+	);
+}
+
+/**
+ * 资料表里展开的那一格：**两个方向**都有动画。
+ *
+ * 关上时内容先留 180ms（和 CSS 的折叠时长一致）再卸，否则收起就是「啪」地消失；
+ * 高度走 grid 的 `0fr → 1fr`，不碰 `height`（motion.css 第三条纪律）。
+ */
+function Fold(props: { open: boolean; children: ReactNode }): JSX.Element {
+	const [alive, setAlive] = useState(props.open);
+	useEffect(() => {
+		if (props.open) {
+			setAlive(true);
+			return;
+		}
+		const timer = window.setTimeout(() => setAlive(false), 180);
+		return () => window.clearTimeout(timer);
+	}, [props.open]);
+	return (
+		<div className="prof-fold" data-open={props.open ? "true" : "false"}>
+			<div className="prof-fold-in">{alive ? props.children : null}</div>
+		</div>
 	);
 }
 

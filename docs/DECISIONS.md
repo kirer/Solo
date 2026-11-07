@@ -2359,3 +2359,184 @@
   账本的 `pluginFiles`（`<appRoot>/.seed-manifest.json`）、`src/shell/seed-legacy.ts` 的
   `LEGACY_PLUGIN_HASHES`（`git log --all -- seed/plugins` 生成）、
   `test/core/seed-plugins.test.ts`。
+
+## ADR-098 右栏是覆盖层；工作台是右栏的一层（取代 ADR-096 的「并排一列」）
+
+- **背景**：ADR-096 把工作台做成和对话**并排的第五块**，并且宽窗口下右栏是真实的第四列。
+  用下来两处都不对：一是宽窗口开右栏时正文被挤窄（读一屏消息在跳宽），二是从资料页进
+  「工作空间」会另开一整列、资料页同时消失，回不去，也没有「返回刚才那一屏」的路。
+  用户的判断是：右栏是**盖上来的一层**，工作台是这一层里的下一页。
+- **决策**：
+  - 宽窗口（≥901）`.detail` 用 `position: absolute` 贴右沿浮在纸上，不再占 flex 宽度；
+    正文宽度不变。窄窗口仍然是整屏一层（`position: fixed; inset: 0`）。
+  - 工作台不再另开一列：`dock` 非空时右栏标题变「工作台」，内容换成 `dock` 插槽；
+    返回键（`#detail-close`）先收起工作台、回到资料页，右栏本身不关。
+    `openDock` 顺带把 `right.open` 置真。插件自己的「收起」仍调 `store.closeDock()`。
+  - 工作台那一层要宽：默认 `clamp(380px, 42vw, 720px)`，左边线仍可拖（宽度记在
+    `store.dockWidth`，拖过的用拖的）。≤900 铺满整屏，不画抓手。（这一条的默认宽度已被
+    ADR-102 改成和资料页共用 348。）
+  - ADR-096 的其余部分（标签页、树和内容分页、webview、外链接管）不变。
+- **取舍**：右栏盖在正文上会遮住右侧一条消息；这是要的（一屏只做一件事），比正文变窄好。
+  不做半透明蒙层：底下那屏还能读，点它也不会关右栏（要关就走返回键）。
+- **执行**：`styles/v6.css` 的 `.detail` / `.detail-dock` / `.dock-grip`、
+  `panels/RightPanel.tsx`（`DockGrip` 与 `dock` 分支、返回栈）、
+  `state/store.ts` 的 `openDock` / `closeDock`、`App.tsx` 去掉 `.dock` 一列；
+  ADR-084 的「四列」骨架其余不变。同一批还修了三处：窄屏列表补回返回键、
+  宽窗口隐藏聊天区「返回列表」、设置页分组间距（`.set-group`）与发送键圆角。
+
+## ADR-099 设置是那张弹窗的壳：插件清单与插件页开在它里面
+
+- **背景**：设置里点「插件」或「Token 用量」，界面会**关掉设置**、另起一层浮层（插件清单
+  自己一层 `overlay`，插件页是整屏的 `.plugin-page`）。视觉上像跳到了另一个应用：底色、
+  圆角、关闭方式都不一样，而且「返回」回到的是设置、不是刚才那一条。
+- **决策**：
+  - **设置那张 648 的弹窗是唯一的外壳**。插件清单（`pluginSheet`）与插件自己的页
+    （`pluginView`，`app.page` 插槽）都画在这层浮层里，宽度各自 1040（`.modal-wide`）。
+  - 打开任一层都把 `settings` 置真（清单 / 页都靠它显示外壳），并关掉任务屏；
+    `App.tsx` 的 `data-view` 只有「聊天 / 设置」两种，不再有「插件 / 插件页」两屏。
+  - **返回只退一层**：插件页的返回（插件自己画的 `.nav` 调 `closePluginView()`）回设置的
+    清单；清单的返回（`setPluginSheet(false)`）回设置的列表；× 与 Esc 先把上面那层收掉，
+    再按一次才关设置。清单的 × 直接关整个设置（`setSettings(false)`）。
+  - 深链接 / 状态只需要 `settings`、`pluginSheet`、`pluginView` 三个布尔/字符串，
+    不再有第四种「整屏」。
+- **取舍**：插件页原本是「占满整块的第二屏」，现在被框进一张 1040 的弹窗里；插件自己画的
+  抬头照旧（宿主不另浮返回），只是外层换成了同一张卡。这样三个入口（列表 / 清单 / 用量）
+  的关闭与返回是一致的，代价是插件页拿不到整屏宽度（1040 已经比正文 660 宽不少）。
+- **执行**：`ui/app/src/panels/SettingsPage.tsx`（按 `pluginSheet` / `pluginView` 换内容）、
+  `panels/PluginsPage.tsx`（`embedded` 时不画自己的 `overlay`；× 走 `setSettings(false)`）、
+  `ui/app/src/App.tsx`（去掉 `.plugin-page` 与 `view === "plugin"`）、
+  `state/store.ts` 的 `openPluginView` / `setPluginSheet`（都置 `settings: true`）、
+  `styles/v6.css` / `styles/shell.css`（`.plugin-page` 不再使用）、
+  `test/ui/{layout,second-screen}.test.ts`。同一批：右栏在没有选中频道时不再画一张空栏
+  （标题条那件事后来被 ADR-103 推翻，右栏每一层都画）。
+
+## ADR-100 右栏不跟着频道自动开
+
+- **背景**：`openChannel` 在 ≥1181 的宽窗口里每次切换频道都自动把资料列打开（ADR-084 的
+  「资料列常驻」）。实际用起来是：点一个频道→右边弹一层资料→要看对话还得再关一次；
+  手机上更糟，右栏是整屏一层，点频道直接看到资料页而不是那个对话。
+- **决策**：切频道**不动** `right.open`；右栏只由三处打开：顶栏那颗「资料」、资料页里的
+  「工作台」一行、`rightPanel.tab` 类入口。切频道时右栏若本来就开着，保持开着（看的是新频道
+  的资料），不主动关。
+- **取舍**：少了一屏「一边对话一边看人」的默认布局，宽窗口首屏右侧会空出一块。用一件事换
+  一件事：点开的动作要和它打开的东西对得上。
+- **执行**：`ui/app/src/state/store.ts` 的 `openChannel`（去掉 ≥1181 的 `right.open` 分支）。
+
+## ADR-101 工作台不再自己画「收起」键
+
+- **背景**：ADR-098 把工作台改成右栏的一层之后，右栏标题条已经有一颗返回（收工作台、回资料页），
+  插件又在标签条右边画了一颗 `dk-fold`（「收起工作台」）。同一件事两个出口，挨着内容还占位置。
+- **决策**：出厂「文件树」删掉 `dk-fold`，标签条右边只留 `+`（开始页）。收起工作台只有一处：
+  右栏标题条的返回，或 Esc。`dock` 插槽的契约不变（插件想自己画出口仍然可以），只是出厂插件
+  不再画。
+- **执行**：`seed/plugins/文件树/client.js`（按钮、`.dk-fold` 样式、`fold` 图形一起删）；
+  `docs/DESIGN.md` §2.8 / §13.12。出厂插件按整目录 hash 升级（ADR-097），没动过的安装会跟着改。
+
+## ADR-102 右栏只有一份宽度，三层共用、一直可拖（取代 ADR-098 的「工作台那一层要宽」）
+
+- **背景**：ADR-098 让工作台那一层按窗口给一个更宽的默认值（`clamp(380px, 42vw, 720px)`），
+  资料页仍是 348，而且只有工作台能拖。用起来是：从资料点进「工作空间」，栏**自己变宽**，
+  内容跟着跳一下；在资料页想拉宽也拉不了。
+- **决策**：右栏是一个容器，宽度是**容器的属性**，不是某一页的：`store.dockWidth` 一份，
+  资料 / 后台任务 / 工作台都读它，默认 348，左边线在所有状态下都能拖（双击回默认），
+  ≤900 铺满整屏、不画抓手。换页只在容器里换内容，宽度不动。
+- **取舍**：工作台一进去只有 348 宽，文件树要自己拖宽才舒服；比每次换页跳一下强，而且宽度
+  一次拖好会一直记得（`localStorage` 的 `solo.dockWidth`）。
+- **执行**：`ui/app/src/panels/RightPanel.tsx`（`PanelGrip` 一直画、`--panel-w` 一直带）、
+  `ui/app/src/styles/v6.css` 的 `.detail { width: var(--panel-w, 348px) }`、
+  `ui/app/src/state/store.ts` 的 `dockWidth` 注释。设置弹窗那条「容器 + 栈」的形状不变
+  （ADR-099），同一个思路。
+
+## ADR-103 右栏每一层都画标题条（取代 ADR-099 末尾的「根不画」）
+
+- **背景**：ADR-099 顺手把宽窗口里右栏的**根**（资料 / 后台任务那一层）的标题条藏了，理由是
+  顶栏那颗「资料」就是开关。实际用起来：这一栏浮在纸上，宽度一拖宽就把顶栏那颗按钮盖住了；
+  助理那屏（Solo 的信纸）顶栏根本没有那颗按钮，只剩设置。结果是右栏开着一层资料、**没有任何
+  看得见的出口**，只能靠 Esc 或把栏拖窄。
+- **决策**：标题条的返回 / 关闭在右栏的每一层都画，不按 `data-back` 藏。根那一层它做的是
+  「关掉右栏」，有上一层（工作台 / 后台任务 / 钻进去的某个人）时是「退一张」。另外，进入
+  助理那屏（它没有「资料」开关）时把右栏收起来。
+- **取舍**：宽窗口里右栏顶上多一条 62px 的抬头，少了一点「整块内容」的观感；换的是任何状态
+  下都有明确出口，不靠记住 Esc。
+- **执行**：`ui/app/src/panels/RightPanel.tsx`（删 `data-back`，标题条无条件画）、
+  `ui/app/src/styles/v6.css`（删 `.detail[data-back="false"] .detail-bar { display: none }`）、
+  `ui/app/src/state/store.ts` 的 `openChannel`（进助理私聊时 `right.open: false`）。
+
+## ADR-104 插件页也能推入右栏那一层（同一格，两个容器）
+
+- **背景**：ADR-099 把插件页（`app.page`）收进了设置那张 1040 弹窗，从设置 / 最左那列进去
+  是对的。但资料页里的 Token 用量卡写的是「在 Token 统计里看全部」—— 就在右栏里，点一下
+  却跳出一张盖住整屏的弹窗，还得再关回来；右栏本来就已经是「一个容器 + 一叠纸」（ADR-102）。
+- **决策**：右栏这一叠纸多一层 `store.rightPage`（插件 slug）。插件往右栏里推页调
+  `store.openRightPage(slug)`，右栏标题条给标题（格子的 `label`）与返回；弹窗那条路
+  （`pluginView`）照旧。`<Slot name="app.page">` 多一个可选 `page`：右栏用它盖掉全局的
+  `pluginView`，两个容器互不抢。插件能读到 `store.rightPage === 自己的 slug`，据此收掉
+  自己画的返回；页面的**排版按自己占多宽**走容器查询（`container-type: inline-size`，
+  `@container (max-width: 620px)` 换成两列指标 / 压扁抬头），同一段 CSS 在弹窗、右栏、
+  手机上都是对的（`data-host="panel"` 只用来收掉重复的标题，不参与排版）。
+- **取舍**：同一页要写一点「我在哪个容器里」的样式（窄、抬头压扁）；换来的是从卡片点进去
+  不丢上下文，也不在右栏里再开一张弹窗。
+- **执行**：`ui/app/src/state/store.ts`（`rightPage` / `openRightPage` / `closeRightPage`，
+  切频道、开工作台、开弹窗页时清掉）、`panels/RightPanel.tsx`（`data-page` 层、标题取格子
+  `label`、`back()` 先退它）、`plugin/Slot.tsx` 的 `page` 参数、`App.tsx` 的 `closeTop`、
+  出厂「Token 统计」的 `client.js`（`tk-me-foot` → `openRightPage`，`Page` 的 `inPanel`）。
+
+## ADR-105 收一次插槽表：13 个，名字照位置说（改名 3、合并 2、删 1）
+
+- **背景**：插槽是照着「界面有哪几块」一路加出来的，一共 15 个，其中三个名字已经和现实对不上：
+  `rail.item` 早就画在**设置页**里（最左那一列 64px，只放导航，§13.11 明确不塞插件）；`rightPanel.tab`
+  早没有页签条了，它现在是资料表里的一行；`stream.top` 叫「顶」，其实是滚动区里的一条横幅。
+  另外 `sidebar.header`（品牌行右侧、和拉群挤一排）与 `sidebar.list.before`（搜索框和列表之间）
+  是两块挨着的空位，谁也说不清该用哪个；`stream.bottom` 与 `stream.banner` 对称但没人需要。
+- **决策**：
+  - **改名**：`rail.item` → `app.entry`（应用级入口，宿主在设置里，一行一个）；`rightPanel.tab` →
+    `rightPanel.row`（资料表里的一行）；`stream.top` → `stream.banner`（消息流顶上一条横幅）。
+  - **合并**：`sidebar.header` + `sidebar.list.before` → `sidebar.top`（搜索框下面、列表上面一条）。
+  - **删除**：`stream.bottom`（要「最后一条之后」的东西，先用 `composer.actions` 或 `overlays`）。
+  - 出厂插件跟着改：Token 统计的入口类名 `rail-item` → `app-entry`、注册 `app.entry`；
+    文件树注册 `rightPanel.row`。
+- **取舍**：第三方插件如果注册过这三个旧名字，会静默不出现（`register` 对未知插槽不报错）。
+  现在没有任何已知的第三方消费者，趁插件系统刚落地一次收干净，比以后带着两张名字表好。
+- **执行**：`ui/app/src/plugin/registry.ts`（`SlotName` / `SLOTS` 与注释）、`Sidebar.tsx`（删两处、
+  换 `sidebar.top`）、`Stream.tsx`（换 `stream.banner`、删 `stream.bottom`）、`RightPanel.tsx`、
+  `SettingsPage.tsx`、`styles/shell.css`（`.set-tools .app-entry`）、`seed/plugins/{Token统计,文件树}/`、
+  `test/ui/plugin.test.ts`；表在 `docs/DESIGN.md` §2.8。
+
+## ADR-106 设置那张弹窗的三层共用一张壳，换层时宽高补间（取代 ADR-099 的「三种返回各自起一张」）
+
+- **背景**：ADR-099 让设置清单（648）、插件清单（1040）、插件页（1040）都开在「设置那张弹窗里」，
+  但实现是三个分支各 `return` 一棵 `overlay + modal` —— 换层时整张弹窗重挂：宽度从 648 跳到
+  1040、高度也一步到位，视觉上是「啪」地换了一张卡，不是同一张卡长大了。
+- **决策**：这三层共用**一个** `.overlay + .modal` 外壳，只换里面那一层（`.modal-level`，带 `key`
+  和一点透明度）。宽度由 `modal-wide` 类切（648 ↔ 1040）；换层后量一次新尺寸，用 WAAPI 把
+  宽高从**换之前**的量补到现在（220ms）—— 对 `height` 写 transition 违反 motion.css 的纪律，
+  FLIP 是它明确允许的替代。`prefers-reduced-motion` 时不做补间。
+- **取舍**：换层那一瞬间新内容的排版是按**目标宽度**算的，动画期间会被拉伸一下（宽度在长）；
+  换来的是同一张卡连续地长大，而不是两张卡互相替换。插件页的「返回」仍由插件自己画
+  （弹窗这条路的出口没变）。
+- **执行**：`ui/app/src/panels/SettingsPage.tsx`（唯一外壳 + `useLayoutEffect` 的 FLIP、
+  `aria-label` 随层变）、`panels/PluginsPage.tsx`（只画 `.modal-head` + `.modal-body`，
+  不再自带 `.overlay` / `.modal`，删掉 `embedded` 参数）、`styles/v6.css` 的 `.modal-level`；
+  `test/ui/layout.test.ts`。
+
+## ADR-107 插件那两层弹窗收窄到 800、插件清单不画 ✕，插件页加载时先摆同高的骨架
+
+- **背景**：ADR-099 把插件清单与插件页塞进 1040 宽的弹窗，比正文（660）宽一大截，实际用起来
+  「一屏里横着六格 KPI + 三张卡」并不好读；清单页右上那颗 ✕ 与左上那颗「返回设置」也是一件事
+  画了两遍。另外插件页的数据是异步来的：先按「正在算账…」那点高度落定，数据一到整张弹窗从
+  三百多「啪」地涨到七百多 —— 用户看到的是页面闪一下。
+- **决策**：
+  - `.modal-wide` 从 1040 收到 **800**（插件清单左栏同时从 300 收到 260）；插件页的内边距与
+    `max-width` 跟着收，窄屏那两档（容器查询 620 / 视口 900）不变。
+  - 插件清单与插件页的抬头**不画 ✕**：出口是清单的左箭头（回设置）与 Esc / 点浮层外面
+    （关整张）。设置清单那一层仍有 ✕。
+  - 插件清单那一层**定高 340**（`.modal-level[data-level="plugins"]`）：插件数要等接口才知道，
+    跟着内容长就是开页闪一下；插件多了在框里自己滚（手机上仍是整屏）。插件条目**只在选中时**
+    带底色，鼠标划过不再铺灰底。
+  - 插件页数据没到之前摆**同高骨架**（同一套类：KPI 格、128px 柱区、62 格热力图、三行表），
+    宽弹窗里骨架与真内容的高度逐像素相同，数据到达只是内容换掉，弹窗不再二次长高。
+- **取舍**：骨架按「宽弹窗」的量排（热力图 62 格 = 8 行、表 3 行）；窄屏堆叠时表格行数不同会
+  差几十像素，但窄屏（≤900 视口）弹窗本来就是铺满整屏、右栏那一层高度固定，不产生跳动。
+- **执行**：`ui/app/src/styles/v6.css`（`.modal-wide` / `.pl-list`）、`panels/PluginsPage.tsx`
+  （删 ✕）、`seed/plugins/Token统计/client.js`（`Skeleton`、`.tk-body` 内边距、`.tk-inner`
+  的 `max-width: 860`）；`docs/DESIGN.md` §2.8 / §13（宽度与出口）。

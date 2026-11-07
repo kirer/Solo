@@ -207,7 +207,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `ui/app/index.html` | 页面骨架 + **首帧定色的内联脚本**（放样式之前，否则先白一下再变深） |
 | `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
 | `src/main.tsx` | 入口：装样式、`bootstrap()`、**先 `bootPlugins()` 再挂 `<App>`**（插槽首帧就是满的；插件拉不到也照常渲染）；解析 `?shell=desktop&platform=…`，把平台写进 `data-shell` / `data-os`（Windows 标题带与 macOS 红绿灯的样式都只看这两个标记） |
-| `src/App.tsx` | 外壳装配：**一列到底**（ADR-084）—— `Sidebar` 与 `sheet` 叠在同一格，靠 `body[data-pane]` 切列表 / 对话；`data-view` 切聊天 / 设置 / 插件 / 插件页；`data-dock` 记工作台开着（右侧一列 `.dock`，资料列让位，≤1280 列表让位；左边线的 `DockGrip` 拖动改宽度，双击回默认）。对话抬头按「助理那屏（对话 + 设置）」与「别的对话（返回 + 名字 + 资料）」画；整屏页（含插件自己的 `app.page`）都由页面自己画 `.nav`，出口就是那颗返回（不再另浮一颗）。主题、Esc 关浮层、⌘K 开「找你」 |
+| `src/App.tsx` | 外壳装配：**一列到底**（ADR-084）—— `Sidebar` 与 `sheet` 叠在同一格，靠 `body[data-pane]` 切列表 / 对话；`data-view` 切聊天 / 设置（插件清单与插件页都开在设置的弹窗里，ADR-099）；`data-dock` 记工作台开着（工作台是右栏的一层，在 `RightPanel` 里画；左边线的 `DockGrip` 拖动改宽度，双击回默认）。对话抬头按「助理那屏（对话 + 设置）」与「别的对话（返回 + 名字 + 资料）」画；整屏页（含插件自己的 `app.page`）都由页面自己画 `.nav`，出口就是那颗返回（不再另浮一颗）。主题、Esc 关浮层、⌘K 开「找你」 |
 | `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`（轨迹按 `turn.slug` 分桶进 `runs`，群聊私聊同一条规则）/`loadTurn`/`loadPersonRuns`（后台任务面板）、`openTasks`/`setTasksWho`/`closeTasks`、`openDock`/`closeDock`/`setDockWidth`（右侧工作台，宽度记 `dockWidth`）、`openBrowser`/`closeBrowser`（外链请求）、localStorage 三键 |
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
@@ -219,19 +219,19 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/titlebar/Titlebar.tsx` | Windows 桌面壳的标题带（ADR-069）：菜单「Solo / 视图」、拖拽把手、点别处 / Esc / 失焦收起；动作经 `window.soloDesktop.menu()` 交给主进程。菜单数据在同目录 `menu.ts`（纯数据，单测直接读） |
 | `src/panels/TasksPanel.tsx` | 后台任务 = **右栏的一态**（桌面，`data-tasks="true"`）/ `.detail` 铺满整屏（手机），导出 `TasksView`：上面是谁（头像 + 一行统计），下面是一列按天分组的轮次；点一条就地展开 `trigger` 引用与步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
-| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（15 个：`rail.item` / `app.page`（弹窗整页）/ `dock`（右侧工作台一列）/ `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）、`store` / `useStore`（界面状态）与 `markdown`（宿主的渲染器，插件别自己拼 HTML）。格子的 `component` 可省：只给 `onOpen` 的格子是**一行入口**（点它开插件自己的整页），`rightPanel.tab` 靠这个把 348 宽的资料列让给一整页。失败只 `console.warn` |
+| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（13 个：`app.entry`（应用级入口）/ `app.page`（整页，弹窗或右栏）/ `dock`（右侧工作台）/ `overlays` / `settings.section` / `sidebar.top` / `sidebar.footer` / `topbar.actions` / `stream.banner` / `composer.actions` / `rightPanel.detail` / `rightPanel.row` / `rightPanel.bottom`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）、`store` / `useStore`（界面状态）与 `markdown`（宿主的渲染器，插件别自己拼 HTML）。格子的 `component` 可省：只给 `onOpen` 的格子是**一行入口**（点它开插件自己的整页；`app.page` 开在设置弹窗里），`rightPanel.row` 靠这个把资料列让给工作台那一层。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位。没有 `component` 的格子（只有 `onOpen`）在这里跳过。`app.page` / `dock` 只画当前打开的那一个插件 |
-| ~~`src/sidebar/Rail.tsx`~~ | **已删除**（ADR-084）：最左导航整列不再存在，一屏只放一件事。应用级入口改在设置页：`rail.item` 插槽的宿主在 `SettingsPage`（`.set-tools`，插件那一行下面） |
+| ~~`src/sidebar/Rail.tsx`~~ | **已删除**（ADR-084）：最左导航整列不再存在，一屏只放一件事。应用级入口改在设置页：`app.entry` 插槽的宿主在 `SettingsPage`（`.set-tools`，插件那一行下面） |
 | `src/sidebar/Sidebar.tsx` | 列表那一屏（和对话同一格，`body[data-pane]` 互斥）：抬头是「返回助理（`#list-back`）+ 对话 + 拉群（`#new-group`）」，头下一行搜索（`#chat-search`，按名字与预览筛），再下面一列平铺频道（两行：名字+身份/团队 / 预览），行与行之间一条内缩细线。设置只在助理那屏（不在列表抬头）。**助理不在这一列**（和助理的对话就是首屏，回它靠抬头的 `#list-back`）；列表脚下只留 `sidebar.footer` 插槽 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条。占位两端同一句：「给 <名字> 说点什么…」/「发到 <频道>…」，不再写键盘提示 |
-| `src/panels/RightPanel.tsx` | 资料 / 后台任务那一整屏（`.detail` 固定 `inset: 0`，内容 860 居中）：一张平铺的资料表，顺序写死 —— 身份 → 统计 → 模型 → 预置词 → 记忆 → 技能（+ 插件 `rightPanel.tab` 的行）→ 后台任务；行点开就地展开，没有页签条。左上角「返回」按 `trail` 决定：还有上一层就 `backRight()`，否则收起回对话。`tasks.open` 为真时整屏换成 `TasksView`（抬头写「后台任务」）。`rightPanel.detail` 插槽在「模型」行展开的面板里。关的时候等 300ms 过渡再卸载 |
+| `src/panels/RightPanel.tsx` | 右栏那一层（≥901 贴右沿浮在纸上，≤900 整屏铺满；ADR-098）：工作台（`dock` 插槽，带 `DockGrip`）/ 后台任务 / 资料页三选一 —— 一张平铺的资料表，顺序写死 —— 身份 → 统计 → 模型 → 预置词 → 记忆 → 技能（+ 插件 `rightPanel.row` 的行）→ 后台任务；行点开就地展开，没有页签条。左上角「返回」按 `trail` 决定：还有上一层就 `backRight()`，否则收起回对话。`tasks.open` 为真时整屏换成 `TasksView`（抬头写「后台任务」）。`rightPanel.detail` 插槽在「模型」行展开的面板里。关的时候等 300ms 过渡再卸载 |
 | `src/panels/Browser.tsx` | 内置浏览器**兜底**（没有工作台插件时才用；正常情况下外链开在 `dock` 的浏览器页签里）：地址栏可改 / 刷新 / 「系统浏览器」，正文里点到的外链就开在这里。站内地址（与 `location.origin` 同源）不内嵌，直接给一句提示 —— 同源页面嵌进来能碰到宿主。内嵌得成不成是站点说了算（`X-Frame-Options` / `frame-ancestors`），所以「系统浏览器」那颗键一直在 |
 | `src/panels/Overlays.tsx` | 真正的浮层：拉群、找你清单、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
-| `src/panels/SettingsPage.tsx` | 设置（整屏页，`data-view="settings"`）：一列往下读（稿子 05）—— `.nav`（返回 + 设置）后面是 `.set-scroll` 的卡片组：主题分段、插件注册的 `settings.section`（「模型」收成一行，放在插件上面）、插件一行（进 `PluginsPage`）+ `rail.item` 插槽、重置数据。不再有左栏清单 |
+| `src/panels/SettingsPage.tsx` | 设置（`overlay` + 648 的 `modal`）：一列往下读 —— 主题分段、插件注册的 `settings.section`（「模型」收成一行）、插件一行 + `app.entry` 插槽、更新代理、重置数据。**插件清单与插件的整页（`app.page`）也在这张弹窗里**，而且共用**同一张壳**：`pluginSheet` / `pluginView` 只换里面的 `.modal-level`，宽度切 `modal-wide`（648 ↔ 800），换层后用 WAAPI 补间宽高（ADR-106）；返回落回设置清单（ADR-099） |
 | `src/panels/SetupPage.tsx` | 第一次打开（稿子 10 / 11，ADR-085）：`welcome` 一屏（标识 + 三句 + 开始）、`model` 一屏（Opus / Sonnet / 自定义三个单选、地址 / 模型 / 密钥、`获取模型` 拉清单再选或手打、`就用这个`）。判据在 `store.bootstrap`：`GET /api/models` 是空数组才进来 |
 | `src/stream/Starters.tsx` | 刚装好的三条建议（稿子 12）：组织里只剩助理一个人时出现在输入框上方，点了走 `store.send` 发出去 |
-| `src/panels/PluginsPage.tsx` | 插件（整屏页，`data-view="plugins"`）：一列插件卡片（名字 / 说明 / 带来了什么 / 目录 / 开关 / 删两次），标题旁「+ 从文件夹装」；返回落在设置页（`setPluginSheet(false)` 不清 `settings`）；读 `GET /api/plugins` |
+| `src/panels/PluginsPage.tsx` | 插件清单（只在设置那张弹窗的 `.modal-level` 里画 `.modal-head` + `.modal-body`，外壳归 `SettingsPage`；ADR-106）：一列插件卡片（名字 / 说明 / 带来了什么 / 目录 / 开关 / 删两次），标题旁「+ 从文件夹装」；返回落在设置清单（`setPluginSheet(false)`），× 关的是整个设置（`setSettings(false)`）；读 `GET /api/plugins` |
 | `src/hooks/useStreams.ts` | org 与频道两条 SSE（`org` / `create` / `trace`）；失败退避 1s→15s；org 事件自带整份快照（`applyOrg`），侧栏与「找你」仍走 `store.refreshLists` |
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
 | `src/lib/avatar.ts` | 头像只拼 `<img src="/api/avatar/…">`（种子取 slug、要 2 倍尺寸）、四种状态、`groupAvatar()` 群组头像（座位 + 挖洞遮罩）。**插画画在服务端**（`src/app/avatar.ts`）；`assistant: true` 时改画 `brandMarkSvg`（助理的脸是应用标识，不是插画） |
@@ -466,5 +466,5 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `choice.test.ts` | 输入卡的选项卡：`2–6` 个、去重、点选回填 |
 | `plugin.test.ts` | 前端插槽注册表：`SlotName` 表与 `SLOTS` 一致 |
 | `runs.test.ts` | 后台任务面板的行拼装 |
-| `second-screen.test.ts` | 第二屏互斥：任务 / 插件 / 设置 / 插件页同时只开一处 |
+| `second-screen.test.ts` | 设置的层叠：设置是壳，插件清单 / 插件页压在它上面；开任一层都让任务让路，关只退一层 |
 | `titlebar.test.ts` | Windows 标题带：菜单动作与主进程 `case` 对得上、只跨 `win32` 桌面壳、第一行 40px + 拖拽、右栏与手机断点下移、macOS 规则不漏、类名都在 CSS 里 |

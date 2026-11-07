@@ -284,12 +284,12 @@ button.set-row:focus-visible {
 	color: var(--danger, #ff6b6b);
 }
 
-/* 插件注册的应用级入口（`rail.item`）：这一列里它是一行，不是一颗方图标。 */
+/* 插件注册的应用级入口（`app.entry`）：设置里它就是一行，不是一颗方图标。 */
 .set-tools:empty {
 	display: none;
 }
 
-.set-tools .rail-item {
+.set-tools .app-entry {
 	display: flex;
 	align-items: center;
 	justify-content: flex-start;
@@ -302,7 +302,7 @@ button.set-row:focus-visible {
 }
 
 /* 插件注册的入口和上面几行同一套：图标也住一枚 27 的方块里。 */
-.set-tools .rail-item svg {
+.set-tools .app-entry svg {
 	flex: none;
 	width: 27px;
 	height: 27px;
@@ -312,7 +312,7 @@ button.set-row:focus-visible {
 	color: var(--ink-2);
 }
 
-.set-tools .rail-item::after {
+.set-tools .app-entry::after {
 	content: attr(data-tip);
 	position: static;
 	transform: none;
@@ -2976,14 +2976,6 @@ html[data-shell="desktop"][data-os="win32"] .plugin-page {
 	overflow: auto;
 	overscroll-behavior: contain;
 	padding: 0 16px calc(20px + env(safe-area-inset-bottom));
-}
-
-.prof-empty {
-	margin: 0;
-	padding: 16px;
-	font-size: 12.5px;
-	line-height: 1.7;
-	color: var(--ink-3);
 }
 
 /* 身份一栏居中（稿子 06 / 08）：大头像、名字、身份、一行统计。 */

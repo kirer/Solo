@@ -5,10 +5,12 @@
  * 每件事一张卡；插件那一节收起时只占一行。
  */
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { getPreferences, savePreferences } from "../api/client.ts";
 import { cellsOf } from "../plugin/registry.ts";
-import { Slot } from "../plugin/Slot.tsx";
+import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
+import { useStore } from "../state/useStore.ts";
+import { PluginsPage } from "./PluginsPage.tsx";
 import { setPluginSheet, setResetOpen, setSettings, setTheme } from "../state/store.ts";
 import type { Theme } from "../state/store.ts";
 
@@ -86,64 +88,115 @@ function Group(props: { children: ReactNode }): JSX.Element {
 export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.Element {
 	// 插件分区在挂载前就注册完了（`main.tsx` 先 `bootPlugins()`），这里不订阅。
 	const cells = cellsOf("settings.section").filter((cell) => cell.component !== undefined);
+	// 三层共用**同一张弹窗**：清单（648）→ 插件清单 / 插件页（1040）只是换里面那一层，
+	// 壳不重挂，宽高才谈得上过渡（ADR-106）。
+	const pluginsOpen = useStore((state) => state.pluginSheet);
+	const pluginPage = useStore((state) => state.pluginView);
+	const level: "list" | "plugins" | "page" = pluginsOpen ? "plugins" : pluginPage === null ? "list" : "page";
+	const wide = level !== "list";
+
+	const frame = useRef<HTMLDivElement>(null);
+	const size = useRef<{ w: number; h: number } | null>(null);
+	const label = level === "plugins" ? "插件" : level === "page" ? "插件页面" : "设置";
+
+	// 换层时量一次「换之前」的宽高，再用 WAAPI 从旧尺寸补到新尺寸 —— 不加过渡动画
+	// 就是「啪」地跳一下；对 height 写 transition 又违反 motion.css 的纪律（用 FLIP 补）。
+	useLayoutEffect(() => {
+		const el = frame.current;
+		if (el === null) return;
+		const rect = el.getBoundingClientRect();
+		const next = { w: rect.width, h: rect.height };
+		const from = size.current;
+		size.current = next;
+		if (from === null) return;
+		if (Math.abs(from.w - next.w) < 1 && Math.abs(from.h - next.h) < 1) return;
+		// WAAPI 不受 motion.css 那条 `prefers-reduced-motion` 规则管，自己让开。
+		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+		el.animate(
+			[
+				{ width: `${String(from.w)}px`, height: `${String(from.h)}px` },
+				{ width: `${String(next.w)}px`, height: `${String(next.h)}px` },
+			],
+			{ duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" },
+		);
+	}, [level]);
 
 	return (
-		<div className="overlay" data-leaving={props.leaving === true ? "true" : "false"} role="presentation" onMouseDown={(event) => {
-			if (event.target === event.currentTarget) setSettings(false);
-		}}>
-			<div className="modal" role="dialog" aria-modal="true" aria-label="设置">
-				<header className="modal-head">
-					<span className="modal-title">设置</span>
-					<button type="button" className="icon-btn modal-close" aria-label="关闭" onClick={() => setSettings(false)}>
-						<CloseIcon />
-					</button>
-				</header>
+		<div
+			className="overlay"
+			data-leaving={props.leaving === true ? "true" : "false"}
+			role="presentation"
+			onMouseDown={(event) => {
+				if (event.target === event.currentTarget) setSettings(false);
+			}}
+		>
+			<div ref={frame} className={wide ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-label={label}>
+				{/* 换一层就重挂一次，配一点透明度：内容跟着尺寸一起换，而不是先跳再淡。 */}
+				<div className="modal-level" data-level={level} key={level}>
+					{level === "plugins" ? (
+						<PluginsPage />
+					) : level === "page" ? (
+						<div className="modal-body modal-flush">
+							<Slot name="app.page" />
+						</div>
+					) : (
+						<>
+							<header className="modal-head">
+								<span className="modal-title">设置</span>
+								<button type="button" className="icon-btn modal-close" aria-label="关闭" onClick={() => setSettings(false)}>
+									<CloseIcon />
+								</button>
+							</header>
 
-				<div className="modal-body">
-					<div className="set-body">
-						<Group>
-							<ThemeRow theme={props.theme} />
-						</Group>
+							<div className="modal-body">
+								<div className="set-body">
+									<Group>
+										<ThemeRow theme={props.theme} />
+									</Group>
 
-						{/* 插件自己注册的一节（`settings.section`）：收成一行，放在「插件」上面。 */}
-						{cells.length === 0 ? null : (
-							<Group>
-								{cells.map((cell) => {
-									const Component = cell.component;
-									return Component === undefined ? null : (
-										<div className="set-cell" key={cell.id}>
-											<Component />
+									{/* 插件自己注册的一节（`settings.section`）：收成一行，放在「插件」上面。 */}
+									{cells.length === 0 ? null : (
+										<Group>
+											{SLOT_MARK ? <div className="slot-mark" data-slot="settings.section" /> : null}
+											{cells.map((cell) => {
+												const Component = cell.component;
+												return Component === undefined ? null : (
+													<div className="set-cell" key={cell.id}>
+														<Component />
+													</div>
+												);
+											})}
+										</Group>
+									)}
+
+									<Group>
+										<button type="button" className="set-row" onClick={() => setPluginSheet(true)}>
+											<RowIcon>
+												<IconPlugin />
+											</RowIcon>
+											<span className="set-main">
+												<span className="set-label">插件</span>
+												<span className="set-desc">装一个插件就是放一个文件夹，装完当场生效</span>
+											</span>
+											<Chevron />
+										</button>
+										{/* 插件注册的应用级入口（`app.entry`）：落在设置里，一行一个（手机上也只有这一处）。 */}
+										<div className="set-tools">
+											<Slot name="app.entry" />
 										</div>
-									);
-								})}
-							</Group>
-						)}
+									</Group>
 
-						<Group>
-							<button type="button" className="set-row" onClick={() => setPluginSheet(true)}>
-								<RowIcon>
-									<IconPlugin />
-								</RowIcon>
-								<span className="set-main">
-									<span className="set-label">插件</span>
-									<span className="set-desc">装一个插件就是放一个文件夹，装完当场生效</span>
-								</span>
-								<Chevron />
-							</button>
-							{/* 插件注册的应用级入口（`rail.item`）：落在设置里，与插件行同形。 */}
-							<div className="set-tools">
-								<Slot name="rail.item" />
+									<Group>
+										<UpdateProxyRow />
+									</Group>
+
+									<Group>
+										<DataRow />
+									</Group>
+								</div>
 							</div>
-						</Group>
-
-						<Group>
-							<UpdateProxyRow />
-						</Group>
-
-						<Group>
-							<DataRow />
-						</Group>
-					</div>
+						</>
+					)}
 				</div>
 			</div>
 		</div>

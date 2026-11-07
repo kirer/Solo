@@ -134,18 +134,20 @@ describe("顶栏的门", () => {
 
 describe("整屏页：桌面上是弹窗，窄窗口里铺满", () => {
 	it("设置与插件都是盖在聊天上的一张弹窗", () => {
-		for (const source of [pluginsSource, settingsSource]) {
-			expect(source).toContain('className="overlay"');
-			expect(source).toContain('role="dialog"');
-			expect(source).toContain('aria-modal="true"');
-			expect(source).toContain('className="modal-head"');
-			expect(source).toContain('className="modal-title"');
-		}
-		expect(pluginsSource).toContain('className="modal modal-wide"');
-		expect(settingsSource).toContain('className="modal"');
+		// 三层（设置清单 / 插件清单 / 插件页）共用同一张 `.modal`：壳在设置里画一次，
+		// 插件页只画「里面那一层」（ADR-106）。
+		expect(settingsSource).toContain('role="dialog"');
+		expect(settingsSource).toContain('aria-modal="true"');
+		expect(settingsSource).toContain('"modal modal-wide"');
+		expect(settingsSource).toContain('className="modal-level"');
+		expect(pluginsSource).toContain('className="modal-head"');
+		expect(pluginsSource).toContain('className="modal-title"');
 		expect(pluginsSource).toContain('id="plugins-back"');
-		expect(appSource).toContain("<PluginsPage");
+		expect(pluginsSource).not.toContain('className="modal modal-wide"');
+		// 插件清单与插件自己的页都开在设置那张弹窗里（ADR-099）：只有一个外壳在画它们。
+		expect(appSource).not.toContain("<PluginsPage");
 		expect(appSource).toContain("<SettingsPage");
+		expect(settingsSource).toContain("<PluginsPage />");
 	});
 
 	it("插件页的「+」在标题右边，装的是文件夹", () => {
@@ -156,9 +158,15 @@ describe("整屏页：桌面上是弹窗，窄窗口里铺满", () => {
 	});
 
 	it("插件那一页不另浮一颗返回：出口就在插件自己画的标题栏里", () => {
-		expect(appSource).toContain('<Slot name="app.page" />');
+		expect(settingsSource).toContain('<Slot name="app.page" />');
 		expect(appSource).not.toContain('id="plugin-exit"');
 		expect(shellCss).not.toContain(".page-exit");
+	});
+
+	it("插件页也能推到右栏里（不弹窗）：同一格，右栏自己那一层", () => {
+		expect(rightPanelSource).toContain('<Slot name="app.page" page={rightPage} />');
+		expect(rightPanelSource).toContain('data-page={rightPage === null ? "false" : "true"}');
+		expect(rightPanelSource).toContain("closeRightPage()");
 	});
 
 	it("后台任务是右栏的一态，不是另一屏", () => {

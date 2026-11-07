@@ -1,8 +1,8 @@
 /**
  * Token 统计的前端：设置里的一行入口 + 一整页用量面板。
  *
- * 入口走 `rail.item` 插槽（设置页的 `.set-tools` 里画成一行）；页面走 `app.page` 插槽 ——
- * 外壳把它摆成一张 1040 宽的弹窗（窄窗口铺满），底下的对话还在（v6 稿子 D14）。
+ * 入口走 `app.entry` 插槽（设置页的 `.set-tools` 里画成一行）；页面走 `app.page` 插槽 ——
+ * 外壳把它摆成一张 800 宽的弹窗（窄窗口铺满），底下的对话还在（v6 稿子 D14）。
  * 开关在界面状态里（`store.pluginView`），Esc 由外壳统一收回聊天。
  *
  * 两份数据都来自后端那一条 `GET /api/p/tokens?days=…`，这里只排版，不算账。
@@ -36,6 +36,11 @@ export default {
 		.tk-head h2 { margin: 0; font-size: 15px; line-height: 21px; font-weight: 600; }
 		.tk-head p { margin: 1px 0 0; font-size: 11px; line-height: 15px; color: var(--ink-3); }
 		.tk-grow { flex: 1 1 auto; }
+		/* 这一页只写一份，按**自己占多宽**排（容器查询）：设置那张 800 弹窗里是宽的，
+		   右栏 348、手机上 375 是窄的，两边看同一段 CSS，不靠宿主告诉它「我在哪」。 */
+		.tk { container-type: inline-size; }
+		/* 右栏的标题条已经写着「Token 用量」，这一页在哪儿由宿主决定：那一层的抬头不重复写。 */
+		.tk-head[data-host="panel"] h2 { display: none; }
 		.tk-ranges { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--raised); flex: none; }
 		.tk-range {
 			height: 28px; padding: 0 11px; border: 0; border-radius: 7px;
@@ -48,9 +53,9 @@ export default {
 			background: var(--field); color: var(--ink);
 			box-shadow: 0 0 0 0.5px var(--line), 0 1px 2px rgb(0 0 0 / 0.06);
 		}
-		.tk-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 22px clamp(20px, 4vw, 40px) 30px; }
-		.tk-inner { width: 100%; max-width: 1080px; margin: 0 auto; }
-		.tk-loading, .tk-empty {
+		.tk-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 18px clamp(16px, 3vw, 32px) 26px; }
+		.tk-inner { width: 100%; max-width: 860px; margin: 0 auto; }
+		.tk-empty {
 			display: grid; place-items: center; min-height: 280px; padding: 24px;
 			color: var(--ink-3); font-size: 13px; text-align: center; line-height: 22px;
 		}
@@ -164,6 +169,18 @@ export default {
 			.tk-bottom { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 			/* 手机上不放 8 周热力图：窄屏里会糊成一片，「谁花了多少」更要紧（DESIGN §13.11）。 */
 			.tk-heat-sec { display: none; }
+		}
+		@container (max-width: 620px) {
+			.tk-head { min-height: 0; padding: 8px 12px; gap: 6px 8px; flex-wrap: wrap; }
+			.tk-head p, .tk-head .tk-grow { display: none; }
+			.tk-head .tk-ranges { margin-left: auto; }
+			.tk-range { height: 26px; padding: 0 8px; font-size: 12px; }
+			.tk-body { padding: 14px 14px 22px; }
+			.tk-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+			.tk-sec { margin-top: 20px; }
+			.tk-bars { height: 74px; gap: 3px; }
+			/* 三段（热力图 / 按人 / 按模型）竖着排：并排时每张只有一百来像素，数字全被切。 */
+			.tk-bottom { grid-template-columns: minmax(0, 1fr); gap: 20px; }
 		}
 	`,
 
@@ -301,7 +318,82 @@ export default {
 			);
 		}
 
+		/**
+		 * 数据没到之前先把骨架摆出来：和真内容用同一套类，高度一模一样。
+		 * 否则弹窗先按「正在算账…」那么矮落定，数据一到再「啪」地涨成七百多 —— 就是那一下闪。
+		 * 格子数是照着真内容排的（热力图 62 格 = 8 行、柱状图 7 根、表 3 行），差一两行也由
+		 * 热力图那张卡托住（下排 align-items: start，高度取最高那张）。
+		 */
+		function Skeleton() {
+			const bars = [0, 1, 2, 3, 4, 5, 6];
+			const cells = Array.from({ length: 62 }, (_, index) => index);
+			const kpis = ["计费 Token", "输入（含缓存）", "输出", "缓存命中率", "预估成本", "模型调用"];
+			const table = (title) =>
+				h(
+					"div",
+					null,
+					h("div", { className: "tk-sec-head" }, h("h3", null, title), h("span", null, "计费 Token")),
+					h(
+						"div",
+						{ className: "tk-card" },
+						h("div", { className: "tk-row", "data-head": "true" }, ["人", "Token", "命中", "成本"].map((text) => h("span", { key: text }, text))),
+						[0, 1, 2].map((row) => h("div", { key: row, className: "tk-row" }, [0, 1, 2, 3].map((cell) => h("span", { key: cell }, "—")))),
+					),
+				);
+			return h(
+				React.Fragment,
+				null,
+				h(
+					"div",
+					{ className: "tk-kpis" },
+					kpis.map((label) => h("div", { key: label, className: "tk-kpi" }, h("b", null, "—"), h("span", null, label))),
+				),
+				h("p", { className: "tk-meta" }, "正在算账…"),
+				h(
+					"div",
+					{ className: "tk-sec" },
+					h("div", { className: "tk-sec-head" }, h("h3", null, "每日用量")),
+					h(
+						"div",
+						{ className: "tk-chart" },
+						h(
+							"div",
+							{ className: "tk-bars" },
+							bars.map((index) => h("div", { key: index, className: "tk-col", "data-zero": "true" }, h("div", { className: "tk-bar" }))),
+						),
+						// 轴上的空标签要给一个不换行空格：空 span 没有行盒，骨架会矮 11px。
+						h("div", { className: "tk-axis" }, bars.map((index) => h("span", { key: index }, " "))),
+					),
+				),
+				h(
+					"div",
+					{ className: "tk-sec tk-bottom" },
+					h(
+						"div",
+						{ className: "tk-heat-sec" },
+						h("div", { className: "tk-sec-head" }, h("h3", null, "活动热力图"), h("span", null, "最近 8 周")),
+						h(
+							"div",
+							{ className: "tk-card tk-heat-card" },
+							h("div", { className: "tk-heat" }, cells.map((index) => h("i", { key: index, className: "tk-cell" }))),
+							h(
+								"div",
+								{ className: "tk-legend" },
+								h("span", null, "少"),
+								[0, 1, 2, 3, 4].map((n) => h("i", { key: n, "data-level": String(n) })),
+								h("span", null, "多"),
+							),
+						),
+					),
+					table("按人"),
+					table("按模型"),
+				),
+			);
+		}
+
 		function Page() {
+			// 两次打开这一页：设置弹窗里（整页）或右栏里推入的那一层。右栏里出口是右栏的返回键。
+			const inPanel = useStore((state) => state.rightPage === SLUG);
 			const [days, setDays] = useState(7);
 			const [data, setData] = useState(undefined);
 			const [error, setError] = useState(undefined);
@@ -339,8 +431,10 @@ export default {
 				{ className: "tk", "aria-label": "Token 用量" },
 				h(
 					"div",
-					{ className: "tk-head" },
-					h(
+					{ className: "tk-head", "data-host": inPanel ? "panel" : "modal" },
+					inPanel
+						? null
+						: h(
 						"button",
 						{ type: "button", className: "tk-back", "aria-label": "回到聊天", onClick: () => store.closePluginView() },
 						h(
@@ -378,7 +472,7 @@ export default {
 						error !== undefined
 							? h("div", { className: "tk-empty tk-error" }, `没读到用量：${error}`)
 							: totals === undefined
-								? h("div", { className: "tk-loading" }, "正在算账…")
+								? h(Skeleton)
 								: data.empty
 									? h(
 											"div",
@@ -497,7 +591,7 @@ export default {
 					),
 					h(
 						"button",
-						{ type: "button", className: "tk-me-foot", onClick: () => store.openPluginView(SLUG) },
+						{ type: "button", className: "tk-me-foot", onClick: () => store.openRightPage(SLUG) },
 						`${String(mine.totals.requests)} 次调用 · 在 Token 统计里看全部`,
 						h(
 							"svg",
@@ -509,13 +603,13 @@ export default {
 			);
 		}
 
-		function RailEntry() {
+		function EntryRow() {
 			const active = useStore((state) => state.pluginView === SLUG);
 			return h(
 				"button",
 				{
 					type: "button",
-					className: "rail-item",
+					className: "app-entry",
 					id: "rail-tokens",
 					"data-tip": "Token 用量",
 					"aria-label": "Token 用量",
@@ -533,8 +627,8 @@ export default {
 			);
 		}
 
-		register("rail.item", { id: "entry", component: RailEntry });
-		register("app.page", { id: "page", component: Page });
+		register("app.entry", { id: "entry", component: EntryRow });
+		register("app.page", { id: "page", label: "Token 用量", component: Page });
 		register("rightPanel.bottom", { id: "usage", component: PersonUsage });
 	},
 };

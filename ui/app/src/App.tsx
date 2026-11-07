@@ -5,14 +5,13 @@
  * 任何一条消息长什么样，去 `stream/`；任何一条频道长什么样，去 `sidebar/`。
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Attachment } from "./api/types.ts";
 import { Browser } from "./panels/Browser.tsx";
 import { Composer } from "./composer/Composer.tsx";
 import { useToasts } from "./hooks/useToasts.ts";
 import { useChannelStream, useOrgStream } from "./hooks/useStreams.ts";
 import { NeedMenu, Overlays } from "./panels/Overlays.tsx";
-import { PluginsPage } from "./panels/PluginsPage.tsx";
 import { SettingsPage } from "./panels/SettingsPage.tsx";
 import { RightPanel } from "./panels/RightPanel.tsx";
 import { SetupPage } from "./panels/SetupPage.tsx";
@@ -27,6 +26,7 @@ import {
 	closeBrowser,
 	closeDock,
 	closePluginView,
+	closeRightPage,
 	closeTasks,
 	openChannel,
 	openWithPerson,
@@ -34,7 +34,6 @@ import {
 	setNewGroup,
 	setPluginSheet,
 	setResetOpen,
-	setDockWidth,
 	setRestartOpen,
 	setRight,
 	setSettings,
@@ -64,7 +63,7 @@ export function App(): JSX.Element {
 	const pluginView = useStore((state) => state.pluginView);
 	const browser = useStore((state) => state.browser);
 	const dock = useStore((state) => state.dock);
-	const dockWidth = useStore((state) => state.dockWidth);
+	const rightPage = useStore((state) => state.rightPage);
 	const setupStep = useStore((state) => state.setupStep);
 
 	const { toasts, toast } = useToasts();
@@ -97,15 +96,17 @@ export function App(): JSX.Element {
 		if (restartOpen !== null) return setRestartOpen(null), true;
 		if (browser !== null && dock === null) return closeBrowser(), true;
 		if (dock !== null) return closeDock(), true;
+		if (rightPage !== null) return closeRightPage(), true;
+		// 插件页 / 插件清单是设置里的下一层：先退一层，再关设置。
 		if (pluginView !== null) return closePluginView(), true;
+		if (pluginSheet) return setPluginSheet(false), true;
 		if (tasksOpen) return closeTasks(), true;
 		if (settings) return setSettings(false), true;
 		if (newGroup) return setNewGroup(false), true;
-		if (pluginSheet) return setPluginSheet(false), true;
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [resetOpen, restartOpen, browser, dock, pluginView, tasksOpen, settings, newGroup, pluginSheet, needMenu, right.open]);
+	}, [resetOpen, restartOpen, browser, dock, rightPage, pluginView, tasksOpen, settings, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {
@@ -143,13 +144,12 @@ export function App(): JSX.Element {
 	 * 分开判断过一次：状态里两屏同时开着时，页面叠着画、互相压住（实测踩过，
 	 * 后台任务和插件页叠成一张）。谁先谁后写在这里，别处不再各判一次。
 	 */
-	const view: "plugin" | "plugins" | "settings" | "chat" =
-		pluginView !== null ? "plugin" : pluginSheet ? "plugins" : settings ? "settings" : "chat";
+	// 插件页 / 插件清单都开在设置那张弹窗里（同一个容器，返回回到设置的清单）。
+	const view: "settings" | "chat" = settings ? "settings" : "chat";
 
-	// 设置 / 插件关掉时多留 170ms，让弹窗先淡出去再卸（`.overlay[data-leaving]` 在 v6.css）。
-	const overlayView: "settings" | "plugins" | null =
-		view === "settings" || view === "plugins" ? view : null;
-	const [overlayShown, setOverlayShown] = useState<"settings" | "plugins" | null>(overlayView);
+	// 设置关掉时多留 170ms，让弹窗先淡出去再卸（`.overlay[data-leaving]` 在 v6.css）。
+	const overlayView: "settings" | null = view === "settings" ? "settings" : null;
+	const [overlayShown, setOverlayShown] = useState<"settings" | null>(overlayView);
 	const [overlayLeaving, setOverlayLeaving] = useState(false);
 	useEffect(() => {
 		if (overlayView !== null) {
@@ -404,36 +404,14 @@ export function App(): JSX.Element {
 					{channel === null ? null : <Composer toast={toast} />}
 				</main>
 
-				{/* 资料列：资料，或它的一态「后台任务」（v6 桌面稿 D02 / D04）。
-				    工作台开着时让位 —— 一屏只并排一件事（它自己就是一整列）。 */}
-				{dock === null ? <RightPanel /> : null}
-
-				{/* 右侧工作台：和对话并排的一整列（`dock` 插槽），不是弹窗。 */}
-				{dock === null ? null : (
-					<>
-						<DockGrip width={dockWidth} />
-						<section
-							className="dock"
-							style={dockWidth === null ? undefined : { flexBasis: `${dockWidth}px` }}
-							aria-label="工作台"
-						>
-							<Slot name="dock" />
-						</section>
-					</>
-				)}
+				{/* 右栏：资料 / 它的另一态「后台任务」/ 它的下一层「工作台」。
+				    宽窗口里它浮在纸上，不挤正文（DESIGN §13.3）。
+				    没选频道时它没有内容可说 —— 不画一张空的栏，提示留在纸上那屏。 */}
+				{channel === null ? null : <RightPanel />}
 			</div>
 
 			{/* 插件 / 设置：桌面是一张弹窗，底下的 Solo 页还在（v6 D05 / D11 / D12）。 */}
-			{overlayShown === "plugins" ? <PluginsPage leaving={overlayLeaving} /> : null}
 			{overlayShown === "settings" ? <SettingsPage theme={theme} leaving={overlayLeaving} /> : null}
-
-			{/* 第三块整屏：插件占的一页（`app.page` 插槽）。 */}
-			{view === "plugin" ? (
-				<section className="plugin-page" aria-label="插件页面">
-					{/* 出口在插件自己画的 `.nav` 里（同一颗返回，不再另浮一颗）。 */}
-					<Slot name="app.page" />
-				</section>
-			) : null}
 
 			{/* 内置浏览器只在**没有工作台插件**时兜底（正常情况下外链开在工作台的标签页里）。 */}
 			{browser !== null && dock === null && cellsOf("dock").length === 0 ? <Browser url={browser} /> : null}
@@ -451,57 +429,6 @@ export function App(): JSX.Element {
 				</div>
 			)}
 		</div>
-	);
-}
-
-/**
- * 工作台左边线：拖它改宽度，双击回默认。
- *
- * 形状照 agent harness 的分隔条：线是 0.5px 的，抓手往外扩 8px 才好点中；
- * 拖的时候整页都是 `col-resize`，指针跑快了也不闪。
- */
-function DockGrip({ width }: { width: number | null }): JSX.Element {
-	const dragging = useRef(false);
-
-	const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
-		if (event.button !== 0) return;
-		event.preventDefault();
-		const grip = event.currentTarget;
-		const startX = event.clientX;
-		const pane = grip.nextElementSibling as HTMLElement | null;
-		const start = width ?? pane?.getBoundingClientRect().width ?? 520;
-		dragging.current = true;
-		document.body.style.cursor = "col-resize";
-		document.body.style.userSelect = "none";
-
-		const move = (ev: PointerEvent): void => {
-			if (!dragging.current) return;
-			// 右边至少给对话留 420：拖到底也不能把正文挤没。
-			const most = Math.max(320, window.innerWidth - 420);
-			setDockWidth(Math.min(most, Math.max(320, start - (ev.clientX - startX))));
-		};
-		const up = (): void => {
-			dragging.current = false;
-			window.removeEventListener("pointermove", move);
-			window.removeEventListener("pointerup", up);
-			window.removeEventListener("pointercancel", up);
-			document.body.style.cursor = "";
-			document.body.style.userSelect = "";
-		};
-		window.addEventListener("pointermove", move);
-		window.addEventListener("pointerup", up);
-		window.addEventListener("pointercancel", up);
-	};
-
-	return (
-		<div
-			className="dock-grip"
-			role="separator"
-			aria-orientation="vertical"
-			aria-label="调整工作台宽度"
-			onPointerDown={onPointerDown}
-			onDoubleClick={() => setDockWidth(null)}
-		/>
 	);
 }
 

@@ -51,15 +51,11 @@ async function readFolder(list: FileList): Promise<PickedFolder> {
 	return { slug, files };
 }
 
-function CloseIcon(): JSX.Element {
-	return (
-		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-			<path d="m6 6 12 12M18 6 6 18" />
-		</svg>
-	);
-}
-
-export function PluginsPage(props: { leaving?: boolean }): JSX.Element {
+/**
+ * 插件清单。开在设置的弹窗里（`embedded`）：同一个容器、同一层浮层，
+ * 返回落回设置的清单；× 关的是整个设置。
+ */
+export function PluginsPage(): JSX.Element {
 	const [plugins, setPlugins] = useState<readonly Plugin[] | undefined>(undefined);
 	const [problem, setProblem] = useState<string | undefined>(undefined);
 	const [picked, setPicked] = useState<PickedFolder | undefined>(undefined);
@@ -100,11 +96,9 @@ export function PluginsPage(props: { leaving?: boolean }): JSX.Element {
 	const list = plugins ?? [];
 	const current = list.find((plugin) => plugin.slug === selected) ?? list[0];
 
+	// 只画「弹窗里面那一层」：外面的 `.overlay` / `.modal` 归宿主（设置那张，ADR-106）。
 	return (
-		<div className="overlay" data-leaving={props.leaving === true ? "true" : "false"} role="presentation" onMouseDown={(event) => {
-			if (event.target === event.currentTarget) setPluginSheet(false);
-		}}>
-			<div className="modal modal-wide" role="dialog" aria-modal="true" aria-label="插件">
+		<>
 				<header className="modal-head">
 					<button type="button" className="icon-btn" id="plugins-back" aria-label="返回设置" onClick={() => setPluginSheet(false)}>
 						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -146,9 +140,6 @@ export function PluginsPage(props: { leaving?: boolean }): JSX.Element {
 							}}
 						/>
 					</label>
-					<button type="button" className="icon-btn modal-close" aria-label="关闭" onClick={() => setPluginSheet(false)}>
-						<CloseIcon />
-					</button>
 				</header>
 
 				<div className="modal-body modal-flush">
@@ -279,7 +270,6 @@ export function PluginsPage(props: { leaving?: boolean }): JSX.Element {
 						</section>
 					</div>
 				</div>
-			</div>
-		</div>
+		</>
 	);
 }

@@ -50,14 +50,14 @@ export default {
 			color: var(--ink-3); font: inherit; font-size: 13px; line-height: 1; cursor: pointer;
 		}
 		.dk-x:hover { background: var(--active); color: var(--ink); }
-		.dk-plus, .dk-fold {
+		.dk-plus {
 			display: grid; place-items: center; flex: none;
 			width: 28px; height: 28px; padding: 0;
 			border: 0; border-radius: 8px; background: transparent;
 			color: var(--ink-3); cursor: pointer;
 			transition: background-color 120ms ease, color 120ms ease;
 		}
-		.dk-plus:hover, .dk-fold:hover { background: var(--hover); color: var(--ink); }
+		.dk-plus:hover { background: var(--hover); color: var(--ink); }
 
 		.dk-body { flex: 1 1 auto; min-height: 0; display: flex; }
 		.dk-pane { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; min-height: 0; }
@@ -251,7 +251,6 @@ export default {
 				external: [h("path", { key: "a", d: "M14 4.5h5.5V10" }), h("path", { key: "b", d: "M19 5l-8 8" }), h("path", { key: "c", d: "M18 14.5v4A1.5 1.5 0 0 1 16.5 20h-11A1.5 1.5 0 0 1 4 18.5v-11A1.5 1.5 0 0 1 5.5 6h4" })],
 				globe: [h("circle", { key: "a", cx: 12, cy: 12, r: 8 }), h("path", { key: "b", d: "M4 12h16M12 4c2.2 2.3 3.3 5 3.3 8s-1.1 5.7-3.3 8c-2.2-2.3-3.3-5-3.3-8S9.8 6.3 12 4Z" })],
 				compass: [h("circle", { key: "a", cx: 12, cy: 12, r: 8.5 }), h("path", { key: "b", d: "M15.2 8.8l-1.6 4.4-4.4 1.6 1.6-4.4Z" })],
-				fold: h("path", { key: "p", d: "M13 6l-5 6 5 6" }),
 			};
 			return h(
 				"svg",
@@ -629,13 +628,12 @@ export default {
 						),
 						h("button", { type: "button", className: "dk-plus", title: "开始", "aria-label": "开始", onClick: openStart }, h(Glyph, { name: "plus", size: 15 })),
 					),
-					h("button", { type: "button", className: "dk-fold", title: "收起工作台", "aria-label": "收起工作台", onClick: () => store.closeDock() }, h(Glyph, { name: "fold", size: 16 })),
 				),
 				h("div", { className: "dk-body" }, tab === undefined ? null : tab.kind === FILES ? filesPane() : tab.kind === "file" ? filePane(tab) : tab.kind === WEB ? webPane(tab) : startPane()),
 			);
 		}
 
-		ui.register("rightPanel.tab", {
+		ui.register("rightPanel.row", {
 			id: "files",
 			label: "工作空间",
 			order: 50,
