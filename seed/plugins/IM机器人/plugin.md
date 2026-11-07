@@ -6,7 +6,9 @@ description: 把 IM 接进助理私聊：Telegram 主动拉取 / 自定义 Webho
 # IM 机器人
 
 参考 [dsh-im](https://github.com/xmanrui/dsh-im) 的形态，按 Solo 的插件契约做的一版：
-**一个设置入口，管所有机器人**；每个机器人独立配置、独立开关、独立状态。
+**设置里一个入口，点开是一整页** —— 左边一排渠道（Telegram / 飞书 / 钉钉 / 企业微信 / 自定义），
+右边是已接入的机器人卡片；每个机器人独立配置、独立开关、独立状态。渠道是从 Webhook 地址
+认出来的（`feishu.cn` / `dingtalk.com` / `qyapi.weixin.qq.com`），不单独落一个字段。
 
 ## 接的是什么
 
