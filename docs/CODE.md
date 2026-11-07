@@ -313,7 +313,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 改一条消息的字数上限 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` | 群聊 600 / 私聊 1200，看的是目标频道的 `chatKind`（ADR-014） |
 | 插件要读某个频道的目录（文件树这类） | `PluginApi.scope(channelId)`（`plugin/api.ts`）+ `shell/wire/plugins.ts` 的 `channelScope` | 核心只给**根**（私聊 → 那个人的 `workspace/`，团队频道 → 团队 `workspace/`，全员频道 → `undefined`）。路径守卫、大小上限、拒符号链接全在插件里做（ADR-036） |
 | 插件要按 token / 成本算账（Token 统计这类） | `PluginApi.logsRoot`（`plugin/api.ts`）+ `shell/wire/plugins.ts` 的 `load` 传 `layout.logsRoot` | 读的是审计 `tools.jsonl`（ADR-010 的钩子）：每次模型回复一行，`in` / `out` / `cache` / `write` / `cost` / `ms`。只有两份（5MB 轮转一代），别把它当数据库（ADR-064） |
-| 插件要接外部消息 / 以我的身份说话（IM 桥这类） | `PluginApi.channels` / `post`（`plugin/api.ts`）+ `shell/wire/plugins.ts` 的 `channelList` + `shell/assemble.ts` 的晚绑 `pluginPost` | `channels()` 只给 `{id,title,kind,members}`（不含消息）；`post({channelId,text})` 走 `createSpeak`，与界面打字同一条路、发件人固定是 `owner`（ADR-115）。出厂消费者 `seed/plugins/IM机器人/`：Telegram 主动拉取 / Webhook 收发，配置在 `<appRoot>/im/bots.json`，别写进插件目录（ADR-097） |
+| 插件要接外部消息 / 以我的身份说话（IM 桥这类） | `PluginApi.channels` / `post`（`plugin/api.ts`）+ `shell/wire/plugins.ts` 的 `channelList` + `shell/assemble.ts` 的晚绑 `pluginPost` | `channels()` 只给 `{id,title,kind,members}`（不含消息）；`post({channelId,text})` 走 `createSpeak`，与界面打字同一条路、发件人固定是 `owner`（ADR-115）。出厂消费者 `seed/plugins/IM机器人/`：微信扫码登录 + 主动拉取 / Telegram 主动拉取 / Webhook 收发，配置在 `<appRoot>/im/bots.json`，别写进插件目录（ADR-097）；二维码矩阵由插件目录里的 `qrcode.mjs`（MIT，qrcode-generator）算，只对腾讯域名的地址出码（ADR-117） |
 | 改「等我选」的判据 / 选项消息 | `channel/types.ts` 的 `Message.options` + `channel/tools/say.ts`（2–6 个、去重、自动 @我）+ `ui/app/src/composer/choice.ts` + `Composer.tsx` | 回答不新增路由、不打标签：我发的下一条就是回答（`replyTo` 指向那条）。`say` 的 options 是**决策**，不是「逐条列出」（ADR-035） |
 | 改附件（落盘 / 上限 / 清理 / 预览） | `channel/attachments.ts`（字节与元数据）+ `app/uploads.ts`（语义：内联还是给路径） | 上限与「先读完再比等于没有上限」都在 `channel/attachments.ts`；别把字节塞进频道文档（教训）。预览按**真实 mime** 发 `Content-Type`（HTML 永远 `text/plain`），前端看响应头（ADR-037） |
 | 改界面字段 | `view/dto.ts`（先改 `docs/WEB-API.md`）+ 投影在 `app/project.ts` | DTO 是唯一权威，`ui/app/src/api/types.ts` 只是它的 type-only 再导出 —— 改字段界面立刻编译不过。字段必须有前端消费者 |
@@ -419,7 +419,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `skills.test.ts` | 三层覆盖、拷贝不覆盖、frontmatter |
 | `models.test.ts` | `setupModels` 的默认模型（没有配置 = 没有模型，ADR-023） |
 | `token-plugin.test.ts` | 出厂「Token 统计」的口径：计费 Token = 新输入 + 缓存读 + 缓存写 + 输出、命中率分母、坏行 / 非模型行跳过、旧行缺 `write` 当 0、空日志是空态（ADR-064） |
-| `im-plugin.test.ts` | 出厂「IM 机器人」：认助理私聊、Webhook 收消息带来源进私聊、token 不对 / 白名单外拒收、助理回复只送回最近说话的聊天（别的频道与我自己的话不出门）、配置写 `<appRoot>/im/bots.json` 而不是插件目录（ADR-115） |
+| `im-plugin.test.ts` | 出厂「IM 机器人」：认助理私聊、Webhook 收消息带来源进私聊、token 不对 / 白名单外拒收、助理回复只送回最近说话的聊天（别的频道与我自己的话不出门）、配置写 `<appRoot>/im/bots.json` 而不是插件目录（ADR-115）、微信扫码换凭据 → 拉取 → 用 `context_token` 回话、扫码地址不是腾讯域名就拒绝出码（ADR-117） |
 | `orb-plugin.test.ts` | 出厂「悬浮球」是**纯前端**：装得上、不注册工具 / 路由 / 提示词，前端只往 `overlays` 一个插槽注册（交互与数据都在助理私聊那一条上） |
 | `model-switch.test.ts` | 改 `settings.json` 后**每个会话**都换到新模型（装配层逐个读 `agent.model`） |
 | `person-model.test.ts` | 给一个人换模型：当场生效、写进 `settings.json` 的 `agentModels`、重启后装配认、空串回默认、没有的模型 400 |

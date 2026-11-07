@@ -13,6 +13,14 @@ const SLUG = "IM机器人";
 /** 能接的渠道。`brand` 不落盘：Webhook 是看地址认出来的，Telegram 看 platform。 */
 const BRANDS = [
 	{
+		id: "weixin",
+		name: "微信",
+		platform: "weixin",
+		color: "#07c160",
+		hint: "扫码登录你的微信",
+		placeholder: "我的微信",
+	},
+	{
 		id: "telegram",
 		name: "Telegram",
 		platform: "telegram",
@@ -55,6 +63,7 @@ const BRANDS = [
 ];
 
 function brandOf(bot) {
+	if (bot.platform === "weixin") return "weixin";
 	if (bot.platform === "telegram") return "telegram";
 	const url = bot.webhookUrl ?? "";
 	if (url.includes("feishu.cn") || url.includes("larksuite")) return "feishu";
@@ -68,6 +77,7 @@ function brandById(id) {
 }
 
 const BRAND_PATHS = {
+	weixin: "M20 11.2a7.6 7.6 0 0 1-11.2 6.8L4 19.5l1.4-4.4A7.6 7.6 0 1 1 20 11.2ZM8.8 10.2h.01M14 10.2h.01",
 	telegram: "M21 4 3.6 10.8c-.7.3-.7 1.2 0 1.5l4.6 1.6 1.7 5.2c.2.7 1.1.8 1.5.2l2.5-3.2 4.6 3.4c.6.4 1.4.1 1.6-.6L23 4.9c.2-.8-.6-1.4-1.3-1.1Z",
 	feishu: "M4.5 5.5h15v13h-15zM4.5 10h15M9 5.5v13",
 	dingtalk: "M13 3 5 14h5l-1 7 8-11h-5l1-7Z",
@@ -135,7 +145,6 @@ export default {
 		.im-main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 16px clamp(14px, 2.4vw, 24px) 26px; }
 		.im-main-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
 		.im-main-head h3 { margin: 0; font-size: 13px; line-height: 18px; font-weight: 600; }
-		.im-main-head .im-add { margin-left: auto; flex: none; white-space: nowrap; }
 		.im-note {
 			margin: 0 0 12px; padding: 9px 11px; border-radius: 9px;
 			background: var(--raised); color: var(--ink-3);
@@ -147,9 +156,8 @@ export default {
 		.im-row {
 			display: flex; align-items: center; gap: 11px; width: 100%;
 			min-height: 62px; padding: 10px 14px;
-			border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+			border: 0; background: transparent; color: inherit; font: inherit; text-align: left;
 		}
-		.im-row:hover { background: var(--hover); }
 		.im-logo { display: grid; place-items: center; flex: none; border-radius: 9px; }
 		.im-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 		.im-title b { font-size: 14px; line-height: 19px; font-weight: 500; color: var(--ink); }
@@ -168,8 +176,6 @@ export default {
 		.im-pill[data-status="error"] { color: var(--danger, #ec1313); }
 		.im-pill[data-status="error"] i { background: var(--danger, #ec1313); }
 		.im-when { flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-		.im-chev { flex: none; color: var(--ink-3); transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1); }
-		.im-card[data-open="true"] .im-chev { transform: rotate(90deg); }
 		.im-card-body { padding: 0 14px 14px; display: flex; flex-direction: column; gap: 12px; }
 		.im-block {
 			display: flex; flex-direction: column; gap: 8px;
@@ -201,6 +207,15 @@ export default {
 		.im-msg { margin: 0; font-size: 12px; line-height: 18px; color: var(--ink-3); }
 		.im-msg[data-tone="error"] { color: var(--danger, #ec1313); }
 		.im-msg[data-tone="ok"] { color: #3fa66b; }
+		.im-qr {
+			display: flex; align-items: center; gap: 16px;
+			padding: 14px 12px; border-radius: 10px; background: var(--raised);
+		}
+		.im-qr canvas { display: block; flex: none; border-radius: 8px; background: #fff; }
+		.im-qr-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+		.im-qr-copy b { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--ink); }
+		.im-qr-copy span { font-size: 12px; line-height: 18px; color: var(--ink-3); }
+		.im-qr-copy .im-btn { align-self: flex-start; margin-top: 2px; }
 		.im-chats { display: flex; flex-wrap: wrap; gap: 6px; }
 		.im-chat {
 			padding: 3px 8px; border-radius: 6px; background: var(--field);
@@ -225,6 +240,7 @@ export default {
 			.im-rail-title { display: none; }
 			.im-tab { width: auto; flex: none; padding: 0 10px; }
 			.im-main { padding: 12px 12px 22px; }
+			.im-qr { flex-direction: column; align-items: flex-start; }
 			.im-two { grid-template-columns: 1fr; }
 			.im-when { display: none; }
 			.im-kv > span { width: 64px; }
@@ -274,6 +290,7 @@ export default {
 
 		/** 卡片头上那一行灰字：凭据尾号，或者发消息的那个地址。 */
 		const credential = (bot) => {
+			if (bot.platform === "weixin") return bot.accountId === "" ? "还没登录" : `已扫码登录 · ${bot.accountId}`;
 			if (bot.platform === "telegram") return bot.tokenHint === "" ? "还没填 Bot Token" : `Bot Token ${bot.tokenHint}`;
 			if (bot.webhookUrl === "") return "还没填 Webhook 地址";
 			return bot.webhookUrl.replace(/^https?:\/\//, "").split("?")[0];
@@ -282,6 +299,35 @@ export default {
 		function Fields(props) {
 			const { brand, form, set, bot } = props;
 			const placeholder = (value) => (bot?.tokenHint ? `已保存（尾号 ${bot.tokenHint.slice(-4)}），留空不改` : value);
+			// 微信是扫码换来的，没有要填的凭据；也没有群聊，所以只有名字和白名单。
+			if (brand.platform === "weixin") {
+				return h(
+					React.Fragment,
+					null,
+					h(
+						"label",
+						{ className: "im-field" },
+						h("span", null, "名字"),
+						h("input", {
+							className: "im-input",
+							value: form.name,
+							placeholder: "我的微信",
+							onChange: (event) => set({ name: event.target.value }),
+						}),
+					),
+					h(
+						"label",
+						{ className: "im-field" },
+						h("span", null, "私聊白名单（留空 = 谁都能聊）"),
+						h("input", {
+							className: "im-input",
+							value: form.allow,
+							placeholder: "逗号分隔的微信用户 id",
+							onChange: (event) => set({ allow: event.target.value }),
+						}),
+					),
+				);
+			}
 			return h(
 				React.Fragment,
 				null,
@@ -366,7 +412,7 @@ export default {
 		}
 
 		function Card(props) {
-			const { bot, assistant, assistantModel, open, onToggle, onChanged } = props;
+			const { bot, assistant, assistantModel, onChanged } = props;
 			const [form, setForm] = useState(null);
 			const [busy, setBusy] = useState(false);
 			const [msg, setMsg] = useState({ text: "", tone: "" });
@@ -425,10 +471,10 @@ export default {
 
 			return h(
 				"div",
-				{ className: "im-card", "data-open": open ? "true" : "false" },
+				{ className: "im-card", "data-open": "true" },
 				h(
-					"button",
-					{ type: "button", className: "im-row", onClick: onToggle, "aria-expanded": open },
+					"div",
+					{ className: "im-row" },
 					h(BrandIcon, { brand: brand.id }),
 					h(
 						"span",
@@ -443,15 +489,8 @@ export default {
 						h("i"),
 						statusText(bot),
 					),
-					h(
-						"svg",
-						{ className: "im-chev", width: 14, height: 14, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round", strokeLinejoin: "round" },
-						h("path", { d: "m9 6 6 6-6 6" }),
-					),
 				),
-				!open
-					? null
-					: h(
+				h(
 							"div",
 							{ className: "im-card-body" },
 							h(
@@ -464,6 +503,14 @@ export default {
 									h("span", null, "助理模型"),
 									h("b", null, assistantModel === "" ? "跟默认" : assistantModel),
 								),
+								bot.platform === "weixin"
+									? h(
+											"div",
+											{ className: "im-kv" },
+											h("span", null, "微信账号"),
+											h("b", null, bot.accountId === "" ? "还没登录" : bot.accountId),
+										)
+									: null,
 								h("div", { className: "im-kv" }, h("span", null, "回复窗口"), h("b", null, "最近说话的聊天 · 2 分钟内")),
 								h(
 									"div",
@@ -565,7 +612,108 @@ export default {
 						"div",
 						{ className: "im-actions" },
 						h("button", { type: "button", className: "im-btn", "data-primary": "true", disabled: busy, onClick: save }, "接入"),
-						h("button", { type: "button", className: "im-btn", disabled: busy, onClick: props.onDone }, "取消"),
+					),
+					error === "" ? null : h("p", { className: "im-msg", "data-tone": "error" }, error),
+				),
+			);
+		}
+
+		/** 二维码方阵 → canvas：后端只传 0/1，不传图片、不外发扫码地址。 */
+		function QrCanvas(props) {
+			const { qr, px } = props;
+			const size = px ?? 168;
+			const ref = React.useRef(null);
+			useEffect(() => {
+				const canvas = ref.current;
+				if (canvas === null || qr === null) return;
+				const dpr = window.devicePixelRatio || 1;
+				canvas.width = Math.round(size * dpr);
+				canvas.height = Math.round(size * dpr);
+				const ctx = canvas.getContext("2d");
+				if (ctx === null) return;
+				ctx.fillStyle = "#ffffff";
+				ctx.fillRect(0, 0, canvas.width, canvas.height);
+				const quiet = 4;
+				const cell = (size * dpr) / (qr.size + quiet * 2);
+				ctx.fillStyle = "#111111";
+				for (let y = 0; y < qr.size; y += 1) {
+					for (let x = 0; x < qr.size; x += 1) {
+						if (qr.bits[y * qr.size + x] !== "1") continue;
+						ctx.fillRect(Math.floor((x + quiet) * cell), Math.floor((y + quiet) * cell), Math.ceil(cell), Math.ceil(cell));
+					}
+				}
+			}, [qr, size]);
+			return h("canvas", { ref, style: { width: `${String(size)}px`, height: `${String(size)}px` } });
+		}
+
+		/**
+		 * 微信没有可填的凭据：一进这个渠道就生成二维码，扫完自动落成一条机器人。
+		 * 过期或出错就换一张。
+		 */
+		function WeixinLogin(props) {
+			const [attempt, setAttempt] = useState(null);
+			const [error, setError] = useState("");
+			const [busy, setBusy] = useState(false);
+
+			const start = () => {
+				setBusy(true);
+				setError("");
+				setAttempt(null);
+				call("/api/p/im/weixin/login", {})
+					.then((next) => setAttempt(next))
+					.catch((err) => setError(err.message))
+					.finally(() => setBusy(false));
+			};
+
+			useEffect(start, []);
+
+			const done = attempt !== null && (attempt.status === "expired" || attempt.status === "failed");
+			const waiting = attempt !== null && !done && attempt.status !== "confirmed";
+
+			useEffect(() => {
+				if (!waiting) return undefined;
+				const timer = setTimeout(() => {
+					call(`/api/p/im/weixin/login/${encodeURIComponent(attempt.id)}`)
+						.then((next) => {
+							setAttempt(next);
+							if (next.status === "confirmed") props.onDone();
+						})
+						.catch((err) => {
+							setError(err.message);
+							setAttempt({ ...attempt, status: "failed", error: err.message });
+						});
+				}, 1500);
+				return () => clearTimeout(timer);
+			}, [attempt, waiting]);
+
+			const title = attempt === null ? "正在生成二维码…" : attempt.status === "scanned" ? "扫到了，在手机上点确认" : "用微信扫一扫";
+			const hint = done
+				? (attempt.error === "" ? "重新生成一个二维码" : attempt.error)
+				: "扫完这个码，你的微信就能和助理聊天了。只收文字。";
+
+			return h(
+				"div",
+				{ className: "im-card" },
+				h(
+					"div",
+					{ className: "im-card-body", style: { paddingTop: "14px" } },
+					h(
+						"div",
+						{ className: "im-main-head", style: { margin: 0 } },
+						h(BrandIcon, { brand: "weixin", size: 26 }),
+						h("h3", null, "接入微信"),
+					),
+					h(
+						"div",
+						{ className: "im-qr" },
+						waiting ? h(QrCanvas, { qr: attempt.qr }) : null,
+						h(
+							"div",
+							{ className: "im-qr-copy" },
+							h("b", null, busy ? "正在生成二维码…" : done ? "二维码过期了" : title),
+							h("span", null, hint),
+							done ? h("button", { type: "button", className: "im-btn", disabled: busy, onClick: start }, "重新生成二维码") : null,
+						),
 					),
 					error === "" ? null : h("p", { className: "im-msg", "data-tone": "error" }, error),
 				),
@@ -578,8 +726,6 @@ export default {
 			const [assistantModel, setAssistantModel] = useState("");
 			const [error, setError] = useState("");
 			const [brand, setBrand] = useState(BRANDS[0].id);
-			const [adding, setAdding] = useState(false);
-			const [openId, setOpenId] = useState("");
 
 			const load = () => {
 				call("/api/p/im")
@@ -599,6 +745,7 @@ export default {
 			const bots = data?.bots ?? [];
 			const running = bots.filter((bot) => bot.enabled && bot.status === "running").length;
 			const shown = bots.filter((bot) => brandOf(bot) === brand);
+			const current = brandById(brand);
 
 			return h(
 				"section",
@@ -634,10 +781,7 @@ export default {
 									type: "button",
 									className: "im-tab",
 									"data-on": brand === item.id ? "true" : "false",
-									onClick: () => {
-										setBrand(item.id);
-										setAdding(false);
-									},
+									onClick: () => setBrand(item.id),
 								},
 								h(BrandIcon, { brand: item.id, size: 22 }),
 								h("b", null, item.name),
@@ -647,16 +791,7 @@ export default {
 					h(
 						"div",
 						{ className: "im-main" },
-						h(
-							"div",
-							{ className: "im-main-head" },
-							h("h3", null, "已接入的机器人"),
-							h(
-								"button",
-								{ type: "button", className: "im-btn im-add", "data-primary": "true", onClick: () => setAdding(true), disabled: adding },
-								"接入机器人",
-							),
-						),
+						shown.length === 0 ? null : h("div", { className: "im-main-head" }, h("h3", null, current.name)),
 						data === null
 							? h("p", { className: "im-empty" }, error === "" ? "读取中…" : error)
 							: h(
@@ -672,27 +807,19 @@ export default {
 									h(
 										"div",
 										{ className: "im-list" },
-										adding ? h(AddCard, { brandId: brand, onDone: () => { setAdding(false); load(); } }) : null,
-										shown.length === 0 && !adding
-											? h(
-													"p",
-													{ className: "im-empty" },
-													`还没有${brandById(brand).name}机器人。点右上角「接入机器人」${
-														brand === "telegram" ? "，只要一个 Bot Token" : "，填它的 Webhook 地址"
-													}。`,
+										shown.length > 0
+											? shown.map((bot) =>
+													h(Card, {
+														key: bot.id,
+														bot,
+														assistant: data.assistant,
+														assistantModel,
+														onChanged: load,
+													}),
 												)
-											: null,
-										shown.map((bot) =>
-											h(Card, {
-												key: bot.id,
-												bot,
-												assistant: data.assistant,
-												assistantModel,
-												open: openId === bot.id,
-												onToggle: () => setOpenId(openId === bot.id ? "" : bot.id),
-												onChanged: load,
-											}),
-										),
+											: current.platform === "weixin"
+												? h(WeixinLogin, { onDone: load })
+												: h(AddCard, { brandId: brand, onDone: load }),
 									),
 								),
 					),

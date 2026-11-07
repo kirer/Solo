@@ -17,9 +17,10 @@
  *
  * 只收文字：图片 / 文件 / 语音第一版不做，收到就忽略（并在状态里留一行原因）。
  */
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import qrcode from "./qrcode.mjs";
 
 const SLUG = "IM机器人";
 const DATA_DIR = "im";
@@ -33,7 +34,16 @@ const MAX_SEND = 3800;
 const WEBHOOK_TIMEOUT = 15_000;
 const STATE_KEY = Symbol.for("solo.im.runtime");
 
+/** 微信个人号：腾讯 iLink 那套扫码协议（和 dsh-im 同一条路），只做一对一文字。 */
+const WEIXIN_QR_BASE = "https://ilinkai.weixin.qq.com/";
+const WEIXIN_VERSION = "2.4.6";
+const WEIXIN_APP_ID = "bot";
+const WEIXIN_CLIENT_VERSION = String((2 << 16) | (4 << 8) | 6);
+const WEIXIN_POLL_TIMEOUT = 35_000;
+const WEIXIN_LOGIN_TTL = 5 * 60_000;
+
 const PLATFORMS = {
+	weixin: { name: "微信", needs: "scan" },
 	telegram: { name: "Telegram", needs: "token" },
 	webhook: { name: "Webhook", needs: "webhookUrl" },
 };
@@ -75,8 +85,12 @@ async function writeBots(workspace, bots) {
 	await rename(tmp, path);
 }
 
+function platformOf(value) {
+	return value === "webhook" || value === "weixin" ? value : "telegram";
+}
+
 function normalizeBot(row) {
-	const platform = row.platform === "webhook" ? "webhook" : "telegram";
+	const platform = platformOf(row.platform);
 	return {
 		id: typeof row.id === "string" && row.id !== "" ? row.id : `b_${randomUUID().slice(0, 8)}`,
 		name: typeof row.name === "string" && row.name.trim() !== "" ? row.name.trim() : platformName(platform),
@@ -84,6 +98,12 @@ function normalizeBot(row) {
 		enabled: row.enabled !== false,
 		token: typeof row.token === "string" ? row.token : "",
 		webhookUrl: typeof row.webhookUrl === "string" ? row.webhookUrl : "",
+		/** 微信扫码换来的三样：服务地址、它的机器人 id、扫码的人。 */
+		baseUrl: typeof row.baseUrl === "string" ? row.baseUrl : "",
+		accountId: typeof row.accountId === "string" ? row.accountId : "",
+		ownerUserId: typeof row.ownerUserId === "string" ? row.ownerUserId : "",
+		/** getupdates 的游标：重启后从上次的位置接着收，不重放。 */
+		buf: typeof row.buf === "string" ? row.buf : "",
 		mode: row.mode === "all" ? "all" : "mention",
 		allow: Array.isArray(row.allow) ? row.allow.map((item) => String(item).trim()).filter(Boolean) : [],
 		createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now(),
@@ -91,9 +111,13 @@ function normalizeBot(row) {
 }
 
 function problemOf(input, existing) {
-	const platform = input.platform === "webhook" ? "webhook" : "telegram";
+	const platform = platformOf(input.platform);
 	const token = typeof input.token === "string" ? input.token.trim() : "";
 	const webhookUrl = typeof input.webhookUrl === "string" ? input.webhookUrl.trim() : "";
+	if (platform === "weixin") {
+		const effective = token !== "" ? token : (existing?.token ?? "");
+		if (effective === "") return "微信要先扫码登录";
+	}
 	if (platform === "telegram") {
 		// 留空 = 沿用已保存的那一份（和「模型管理」同一个规矩）。
 		const effective = token !== "" ? token : (existing?.token ?? "");
@@ -111,7 +135,7 @@ function problemOf(input, existing) {
 }
 
 function botFromInput(input, existing) {
-	const platform = input.platform === "webhook" ? "webhook" : "telegram";
+	const platform = platformOf(input.platform);
 	const token = typeof input.token === "string" ? input.token.trim() : "";
 	const webhookUrl = typeof input.webhookUrl === "string" ? input.webhookUrl.trim() : "";
 	return normalizeBot({
@@ -121,6 +145,11 @@ function botFromInput(input, existing) {
 		enabled: input.enabled === undefined ? (existing?.enabled ?? true) : input.enabled === true,
 		token: token !== "" ? token : (existing?.token ?? ""),
 		webhookUrl: webhookUrl !== "" ? webhookUrl : (existing?.webhookUrl ?? ""),
+		// 微信这三样是扫码换来的，界面上不填：保存名字 / 白名单时原样留住。
+		baseUrl: existing?.baseUrl ?? "",
+		accountId: existing?.accountId ?? "",
+		ownerUserId: existing?.ownerUserId ?? "",
+		buf: existing?.buf ?? "",
 		mode: input.mode === "all" ? "all" : input.mode === "mention" ? "mention" : (existing?.mode ?? "mention"),
 		allow: Array.isArray(input.allow) ? input.allow : (existing?.allow ?? []),
 		createdAt: existing?.createdAt ?? Date.now(),
@@ -155,8 +184,8 @@ function createRuntime(bot, manager) {
 			this.status = "error";
 			this.lastError = textOf(error);
 		},
-		remember(chatId, label) {
-			this.chats.set(chatId, { label, at: Date.now() });
+		remember(chatId, label, contextToken) {
+			this.chats.set(chatId, { label, at: Date.now(), contextToken: contextToken ?? "" });
 			// 只留最近 20 个，免得配置页面越看越长。
 			if (this.chats.size > 20) {
 				const oldest = [...this.chats.entries()].sort((left, right) => left[1].at - right[1].at)[0];
@@ -169,6 +198,7 @@ function createRuntime(bot, manager) {
 		},
 		async send(chatId, text) {
 			if (this.bot.platform === "telegram") return sendTelegram(this, chatId, text);
+			if (this.bot.platform === "weixin") return sendWeixin(this, chatId, text);
 			return sendWebhook(this.bot, text);
 		},
 	};
@@ -233,6 +263,14 @@ function createManager(api) {
 			telegramLoop(runtime).catch((error) => {
 				if (runtime.alive) runtime.fail(error);
 			});
+		} else if (bot.platform === "weixin") {
+			if (bot.token === "") {
+				runtime.fail("微信登录凭据没了：删掉这个机器人，重新扫码");
+			} else {
+				weixinLoop(runtime).catch((error) => {
+					if (runtime.alive) runtime.fail(error);
+				});
+			}
 		} else {
 			// Webhook 渠道没有要一直跑的连接：收消息走路由，这里只是把它标成可用。
 			runtime.ok(bot.webhookUrl === "" ? "还没填 Webhook 地址" : "等消息");
@@ -244,6 +282,157 @@ function createManager(api) {
 		const runtime = runtimes.get(id);
 		if (runtime !== undefined) runtime.stop();
 		runtimes.delete(id);
+	}
+
+	/**
+	 * 微信的登录是一条扫码流程，不是填一张表：这里只留最近的几次尝试，
+	 * 扫码成功就把凭据落成一条普通机器人（和 Telegram 一样存进 bots.json）。
+	 */
+	const logins = new Map();
+	let loginSeq = 0;
+
+	function publicLogin(record) {
+		return {
+			id: record.id,
+			status: record.status,
+			url: record.url,
+			qr: record.qr,
+			error: record.error,
+			botId: record.botId,
+			expiresAt: record.expiresAt,
+		};
+	}
+
+	function stopLogin(record) {
+		record.controller.abort();
+	}
+
+	async function activateWeixin(record, body) {
+		const token = typeof body.bot_token === "string" ? body.bot_token.trim() : "";
+		const accountId = typeof body.ilink_bot_id === "string" ? body.ilink_bot_id.trim() : "";
+		const ownerUserId = typeof body.ilink_user_id === "string" ? body.ilink_user_id.trim() : "";
+		if (token === "" || accountId === "") throw new Error("微信授权成功，但返回的凭据不完整");
+		const baseUrl = weixinBaseOf(body.baseurl === undefined ? record.baseUrl : body.baseurl);
+		const existing = bots.find((bot) => bot.platform === "weixin" && bot.accountId === accountId);
+		const next = normalizeBot({
+			...(existing ?? {}),
+			id: existing?.id ?? `b_${randomUUID().slice(0, 8)}`,
+			name: existing?.name ?? "我的微信",
+			platform: "weixin",
+			token,
+			baseUrl,
+			accountId,
+			ownerUserId,
+			buf: "",
+			enabled: true,
+		});
+		const index = bots.findIndex((bot) => bot.id === next.id);
+		if (index >= 0) bots[index] = next;
+		else bots.push(next);
+		await writeBots(api.workspace, bots);
+		stopBot(next.id);
+		launch(next);
+		record.status = "confirmed";
+		record.botId = next.id;
+		record.error = "";
+		return next;
+	}
+
+	async function pollWeixinLogin(record) {
+		while (!record.controller.signal.aborted && Date.now() < record.expiresAt) {
+			const body = await wxCall(
+				{ token: "" },
+				"GET",
+				`ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(record.qrcode)}`,
+				undefined,
+				record.controller.signal,
+				WEIXIN_POLL_TIMEOUT,
+			);
+			const status = typeof body?.status === "string" ? body.status : "";
+			if (status === "wait") {
+				record.status = "wait";
+			} else if (status === "scaned") {
+				record.status = "scanned";
+			} else if (status === "scaned_but_redirect") {
+				record.baseUrl = weixinBaseOf(body.redirect_host ?? record.baseUrl);
+				record.status = "scanned";
+			} else if (status === "confirmed") {
+				await activateWeixin(record, body);
+				return;
+			} else if (status === "expired") {
+				record.status = "expired";
+				record.error = "二维码过期了，重新生成一个";
+				return;
+			} else if (status === "verify_code_blocked") {
+				record.status = "failed";
+				record.error = "配对码错太多次，重新生成二维码";
+				return;
+			} else if (status === "binded_redirect") {
+				record.status = "failed";
+				record.error = "这个微信号已经绑过机器人了：先删掉旧的那条再扫";
+				return;
+			} else if (status === "need_verifycode") {
+				record.status = "failed";
+				record.error = "微信要配对码，这一版先不支持";
+				return;
+			}
+		}
+		if (record.status !== "confirmed") {
+			record.status = "expired";
+			record.error = "二维码过期了，重新生成一个";
+		}
+	}
+
+	async function startWeixinLogin() {
+		for (const record of logins.values()) stopLogin(record);
+		logins.clear();
+		const body = await wxCall(
+			{ token: "" },
+			"POST",
+			"ilink/bot/get_bot_qrcode?bot_type=3",
+			{ local_token_list: [] },
+			undefined,
+			10_000,
+		);
+		const code = providerCode(body);
+		if (code !== "") throw new Error(`微信服务拒绝了二维码申请（${code}）`);
+		const token = typeof body?.qrcode === "string" ? body.qrcode : "";
+		const url = weixinQrUrl(body?.qrcode_img_content);
+		if (token === "") throw new Error("微信服务没有返回二维码");
+		if (url === "") throw new Error("微信服务返回的扫码地址不可信");
+		const record = {
+			id: `w_${String(++loginSeq)}_${randomUUID().slice(0, 6)}`,
+			qrcode: token,
+			url,
+			qr: qrMatrix(url),
+			status: "wait",
+			error: "",
+			botId: "",
+			baseUrl: WEIXIN_QR_BASE,
+			expiresAt: Date.now() + WEIXIN_LOGIN_TTL,
+			controller: new AbortController(),
+		};
+		logins.set(record.id, record);
+		pollWeixinLogin(record).catch((error) => {
+			if (record.controller.signal.aborted) return;
+			record.status = "failed";
+			record.error = textOf(error);
+		});
+		return publicLogin(record);
+	}
+
+	function weixinLoginStatus(id) {
+		const record = logins.get(id);
+		if (record === undefined) throw new Error("这次扫码已经结束，重新生成二维码");
+		return publicLogin(record);
+	}
+
+	/** getupdates 的游标：隔一段才落一次盘，重启后不重放已经收过的消息。 */
+	async function saveBuf(id, buf) {
+		const bot = bots.find((row) => row.id === id);
+		if (bot === undefined || bot.buf === buf) return;
+		bot.buf = buf;
+		await writeBots(api.workspace, bots);
 	}
 
 	const manager = {
@@ -269,6 +458,8 @@ function createManager(api) {
 		stop() {
 			closed = true;
 			for (const id of [...runtimes.keys()]) stopBot(id);
+			for (const record of logins.values()) stopLogin(record);
+			logins.clear();
 		},
 		get closed() {
 			return closed;
@@ -289,6 +480,7 @@ function createManager(api) {
 						allow: bot.allow,
 						tokenHint: bot.token === "" ? "" : `…${bot.token.slice(-4)}`,
 						webhookUrl: bot.webhookUrl,
+						accountId: bot.accountId,
 						status: runtime?.status ?? (bot.enabled ? "starting" : "stopped"),
 						detail: runtime?.detail ?? "",
 						lastError: runtime?.lastError ?? "",
@@ -320,6 +512,16 @@ function createManager(api) {
 			bots = bots.filter((bot) => bot.id !== id);
 			await writeBots(api.workspace, bots);
 			stopBot(id);
+		},
+		/** 微信扫码：开一次新的，或者读某一次的进度。 */
+		async weixinLoginStart() {
+			return startWeixinLogin();
+		},
+		weixinLoginStatus(id) {
+			return weixinLoginStatus(id);
+		},
+		async rememberBuf(id, buf) {
+			await saveBuf(id, buf);
 		},
 		async test(id) {
 			await ensureAssistant();
@@ -386,7 +588,11 @@ async function deliver(runtime, input) {
 	const source = input.chatTitle === ""
 		? `[IM · ${platformName(runtime.bot.platform)} · ${input.name}]`
 		: `[IM · ${platformName(runtime.bot.platform)} · ${input.chatTitle} · ${input.name}]`;
-	runtime.remember(input.chatId, input.chatTitle === "" ? input.name : `${input.chatTitle} · ${input.name}`);
+	runtime.remember(
+		input.chatId,
+		input.chatTitle === "" ? input.name : `${input.chatTitle} · ${input.name}`,
+		input.contextToken,
+	);
 	runtime.lastInboundAt = Date.now();
 	runtime.replyUntil = Date.now() + REPLY_WINDOW;
 	await runtime.manager.api.post({ channelId: runtime.manager.assistant.channelId, text: `${source} ${input.text}` });
@@ -507,6 +713,202 @@ async function sendWebhook(bot, text) {
 	}
 }
 
+// ── 微信（腾讯 iLink） ─────────────────────────────────────────────────
+
+const WEIXIN_BASE_INFO = { channel_version: WEIXIN_VERSION, bot_agent: "Solo/1.0" };
+
+/** 腾讯的域名：收到什么地址都先过这一道，别把凭据送去别处、也别把别的地址画成二维码。 */
+function weixinHost(value) {
+	const host = value.hostname;
+	return host === "weixin.qq.com" || host.endsWith(".weixin.qq.com")
+		|| host === "wechat.com" || host.endsWith(".wechat.com");
+}
+
+function weixinBaseOf(value) {
+	const raw = typeof value === "string" ? value.trim() : "";
+	if (raw === "") return WEIXIN_QR_BASE;
+	let url;
+	try {
+		url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+	} catch {
+		return WEIXIN_QR_BASE;
+	}
+	if (url.protocol !== "https:" || !weixinHost(url)) return WEIXIN_QR_BASE;
+	url.pathname = url.pathname.endsWith("/") ? url.pathname : `${url.pathname}/`;
+	url.search = "";
+	url.hash = "";
+	return url.toString();
+}
+
+/** 二维码里装的就是这个地址：不是 https + 腾讯域名就不画。 */
+function weixinQrUrl(value) {
+	let url;
+	try {
+		url = new URL(value);
+	} catch {
+		return "";
+	}
+	return url.protocol === "https:" && weixinHost(url) ? url.toString() : "";
+}
+
+/** `ret` / `errcode` 非 0 就是平台拒了。 */
+function providerCode(body) {
+	const code = body?.errcode ?? body?.ret ?? 0;
+	const text = String(code);
+	return text === "0" || text === "" ? "" : text;
+}
+
+async function wxCall(bot, method, endpoint, body, signal, timeoutMs) {
+	const url = new URL(endpoint, weixinBaseOf(bot.baseUrl));
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), timeoutMs ?? 15_000);
+	const relay = () => controller.abort();
+	if (signal?.aborted) controller.abort();
+	signal?.addEventListener("abort", relay, { once: true });
+	try {
+		const response = await fetch(url, {
+			method,
+			headers: {
+				"iLink-App-Id": WEIXIN_APP_ID,
+				"iLink-App-ClientVersion": WEIXIN_CLIENT_VERSION,
+				...(bot.token === ""
+					? {}
+					: {
+							"content-type": "application/json",
+							AuthorizationType: "ilink_bot_token",
+							"X-WECHAT-UIN": Buffer.from(String(randomBytes(4).readUInt32BE(0)), "utf8").toString("base64"),
+							Authorization: `Bearer ${bot.token}`,
+						}),
+			},
+			...(body === undefined ? {} : { body: JSON.stringify(body) }),
+			signal: controller.signal,
+		});
+		if (!response.ok) throw new Error(`微信服务回了 HTTP ${String(response.status)}`);
+		return await response.json();
+	} finally {
+		clearTimeout(timer);
+		signal?.removeEventListener("abort", relay);
+	}
+}
+
+/** 二维码只传一个方阵（0/1），由界面自己画：不引入图片编码，也不外发地址。 */
+function qrMatrix(text) {
+	const code = qrcode(0, "M");
+	code.addData(text, "Byte");
+	code.make();
+	const size = code.getModuleCount();
+	let bits = "";
+	for (let y = 0; y < size; y += 1) {
+		for (let x = 0; x < size; x += 1) bits += code.isDark(y, x) ? "1" : "0";
+	}
+	return { size, bits };
+}
+
+function weixinTextOf(message) {
+	for (const item of message?.item_list ?? []) {
+		if (item?.type === 1 && typeof item.text_item?.text === "string") {
+			const text = item.text_item.text.trim();
+			if (text !== "") return text;
+		}
+		if (item?.type === 3 && typeof item.voice_item?.text === "string") {
+			const text = item.voice_item.text.trim();
+			if (text !== "") return text;
+		}
+	}
+	return "";
+}
+
+async function weixinLoop(runtime) {
+	const { bot, controller } = runtime;
+	runtime.ok("已连上微信");
+	let buf = typeof bot.buf === "string" ? bot.buf : "";
+	while (runtime.alive) {
+		let body;
+		try {
+			body = await wxCall(
+				bot,
+				"POST",
+				"ilink/bot/getupdates",
+				{ get_updates_buf: buf, base_info: WEIXIN_BASE_INFO },
+				controller.signal,
+				WEIXIN_POLL_TIMEOUT,
+			);
+		} catch (error) {
+			if (!runtime.alive) return;
+			runtime.fail(`微信消息同步断了：${textOf(error)}`);
+			await sleep(3000);
+			continue;
+		}
+		if (!runtime.alive) return;
+		const code = providerCode(body);
+		if (code === "-14") {
+			runtime.fail("微信登录凭据失效了：删掉这个机器人，重新扫码");
+			return;
+		}
+		if (code !== "") {
+			runtime.fail(`微信消息同步被拒（${code}）`);
+			await sleep(3000);
+			continue;
+		}
+		if (runtime.status === "error") runtime.ok("已连上微信");
+		for (const message of body?.msgs ?? []) {
+			await onWeixinMessage(runtime, message).catch((error) => {
+				runtime.lastError = `收消息失败：${textOf(error)}`;
+			});
+		}
+		const next = typeof body?.get_updates_buf === "string" ? body.get_updates_buf : "";
+		if (next !== "" && next !== buf) {
+			buf = next;
+			await runtime.manager.rememberBuf(bot.id, next).catch(() => {});
+		}
+	}
+}
+
+async function onWeixinMessage(runtime, message) {
+	// message_type 2 = 机器人自己发出去的，别把它当成新消息再送回来。
+	if (message?.message_type === 2) return;
+	const from = typeof message?.from_user_id === "string" ? message.from_user_id.trim() : "";
+	if (from === "") return;
+	const text = weixinTextOf(message);
+	if (text === "") return;
+	if (!allowed(runtime.bot, from)) return;
+	await deliver(runtime, {
+		chatId: from,
+		userId: from,
+		name: from,
+		chatTitle: "",
+		text,
+		contextToken: typeof message.context_token === "string" ? message.context_token : "",
+	});
+}
+
+async function sendWeixin(runtime, chatId, text) {
+	const contextToken = runtime.chats.get(chatId)?.contextToken ?? "";
+	for (const chunk of splitText(text)) {
+		const body = await wxCall(
+			runtime.bot,
+			"POST",
+			"ilink/bot/sendmessage",
+			{
+				msg: {
+					from_user_id: "",
+					to_user_id: chatId,
+					client_id: `solo-weixin-${randomUUID()}`,
+					message_type: 2,
+					message_state: 2,
+					item_list: [{ type: 1, text_item: { text: chunk } }],
+					...(contextToken === "" ? {} : { context_token: contextToken }),
+				},
+				base_info: WEIXIN_BASE_INFO,
+			},
+			runtime.controller.signal,
+			20_000,
+		);
+		const code = providerCode(body);
+		if (code !== "") throw new Error(`微信拒收（${code}）`);
+	}
+}
+
 /** 平台一条消息都有上限：按 3800 字切，尽量在换行处断。 */
 function splitText(text) {
 	const rows = [];
@@ -556,6 +958,18 @@ export async function apply(api) {
 			await manager.remove(params.id ?? "");
 			return manager.snapshot();
 		},
+	});
+
+	api.route({
+		method: "POST",
+		pattern: "/api/p/im/weixin/login",
+		handle: async () => manager.weixinLoginStart(),
+	});
+
+	api.route({
+		method: "GET",
+		pattern: "/api/p/im/weixin/login/:id",
+		handle: async ({ params }) => manager.weixinLoginStatus(params.id ?? ""),
 	});
 
 	api.route({

@@ -2692,3 +2692,31 @@
   `load.ts` 的 `LoadOptions`、`src/shell/wire/plugins.ts` 的 `channelList`、
   `src/shell/assemble.ts` 的晚绑 `pluginPost`；出厂消费者 `seed/plugins/IM机器人/`，
   `test/core/im-plugin.test.ts`；`docs/CORE.md` §13、`docs/WEB-API.md` §13.4、`AGENTS.md` §3.3。
+
+## ADR-117 IM 桥加微信：扫码登录（腾讯 iLink），二维码是本机算的
+
+- **背景**：IM 桥第一版只有 Telegram 与自定义 Webhook，微信是用户最关心的渠道。
+  微信没有「填一个 Token 就能收消息」的路子；dsh-im 用的是腾讯 iLink 的机器人扫码协议：
+  `get_bot_qrcode` 拿二维码 → 轮询 `get_qrcode_status` → `confirmed` 时换回
+  `bot_token` / `ilink_bot_id` / `baseurl`，之后 `getupdates` 长轮询收、`sendmessage` 发。
+- **决策**：
+  1. **扫码不是一个表单**：进「微信」渠道就生成二维码，扫完自动落成一条普通机器人
+     （凭据仍写 `<appRoot>/im/bots.json`，与 Telegram 同一种记录）。
+     界面上的「接入机器人」按钮删了：渠道没有机器人就直接显示要填的东西（微信直接出码），
+     有机器人就展开显示已经填好的信息。
+  2. **二维码由后端算矩阵、前端用 canvas 画**。插件不能 import 应用的依赖（桌面打包后
+     `appRoot/plugins` 下没有 `node_modules`），所以把 MIT 的 qrcode-generator 作为
+     插件目录自己的 `qrcode.mjs`；接口只传 `{size, bits}`，不传图片、不外发扫码地址。
+  3. **只认腾讯域名**：`qrcode_img_content` 必须是 https 且落在 `*.weixin.qq.com` /
+     `*.wechat.com`，否则拒绝出码；`baseurl` 过同一道，不把 Bearer 发去别处。
+  4. **收**：`getupdates` 长轮询，游标 `get_updates_buf` 跟着机器人记录落盘（重启不重放）；
+     `message_type === 2` 是自己发出去的回声，忽略。**回**：`sendmessage` 带上这条聊天最近一条
+     消息里的 `context_token`。
+  5. 回复路由仍走原有规则（最近说话的聊天 + 两分钟窗口），微信也不例外。
+- **取舍**：iLink 是腾讯给微信机器人用的接口，没有公开稳定文档，字段跟着 dsh-im 的实现走；
+  `-14`（凭据失效）只能提示「删掉这个机器人重新扫码」，不做自动续期。图片 / 文件 / 语音
+  第一版不做。
+- **执行**：`seed/plugins/IM机器人/plugin.js`（`weixinLoop` / `onWeixinMessage` / `sendWeixin` /
+  `startWeixinLogin` / `pollWeixinLogin` / `weixinBaseOf` / `weixinQrUrl`）、
+  `seed/plugins/IM机器人/qrcode.mjs`、同目录 `client.js` 的 `WeixinLogin` / `QrCanvas`、
+  `test/core/im-plugin.test.ts`；`docs/CORE.md` §13、`docs/CODE.md`、`AGENTS.md` §3.3。

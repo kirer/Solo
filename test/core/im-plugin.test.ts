@@ -178,6 +178,125 @@ describe("IM 机器人", () => {
 		expect(inPlugin).toBe("");
 	});
 
+	it("微信：扫完码把凭据落成机器人，之后用 context_token 回话", async () => {
+		const calls: { url: string; body: Record<string, unknown> }[] = [];
+		let polls = 0;
+		vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
+			const text = String(url);
+			const body = init?.body === undefined ? {} : (JSON.parse(init.body) as Record<string, unknown>);
+			if (text.includes("get_bot_qrcode")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						ret: 0,
+						qrcode: "qr-token",
+						qrcode_img_content: "https://liteapp.weixin.qq.com/q/7GiQu1?qrcode=qr-token&bot_type=3",
+					}),
+				};
+			}
+			if (text.includes("get_qrcode_status")) {
+				return {
+					ok: true,
+					status: 200,
+					json: async () => ({
+						status: "confirmed",
+						bot_token: "wx-token",
+						ilink_bot_id: "bot-1",
+						ilink_user_id: "user-1",
+						baseurl: "https://ilinkai.weixin.qq.com",
+					}),
+				};
+			}
+			if (text.includes("getupdates")) {
+				polls += 1;
+				if (polls === 1) {
+					return {
+						ok: true,
+						status: 200,
+						json: async () => ({
+							ret: 0,
+							msgs: [
+								{
+									message_type: 1,
+									from_user_id: "wx_u1",
+									context_token: "ctx-1",
+									item_list: [{ type: 1, text_item: { text: "在吗" } }],
+								},
+							],
+							get_updates_buf: "buf-2",
+						}),
+					};
+				}
+				throw new Error("offline");
+			}
+			if (text.includes("sendmessage")) {
+				calls.push({ url: text, body });
+				return { ok: true, status: 200, json: async () => ({ ret: 0 }) };
+			}
+			return { ok: true, status: 200, json: async () => ({}) };
+		});
+
+		const { host, posts, workspace } = await boot([]);
+		const started = (await route(host, "/api/p/im/weixin/login").handle({
+			method: "POST",
+			params: {},
+			query: {},
+		})) as { id: string; status: string; qr: { size: number; bits: string } };
+		expect(["wait", "confirmed"]).toContain(started.status);
+		expect(started.qr.size).toBeGreaterThan(20);
+		expect(started.qr.bits.length).toBe(started.qr.size ** 2);
+
+		const login = route(host, "/api/p/im/weixin/login/:id");
+		await vi.waitFor(async () => {
+			const status = (await login.handle({
+				method: "GET",
+				params: { id: started.id },
+				query: {},
+			})) as { status: string; botId: string };
+			expect(status.status).toBe("confirmed");
+			expect(status.botId).not.toBe("");
+		});
+
+		const saved = JSON.parse(await readFile(join(workspace, "im", "bots.json"), "utf8")) as {
+			bots: { platform: string; token: string; accountId: string; baseUrl: string }[];
+		};
+		expect(saved.bots[0]).toMatchObject({
+			platform: "weixin",
+			token: "wx-token",
+			accountId: "bot-1",
+			baseUrl: "https://ilinkai.weixin.qq.com/",
+		});
+
+		// 微信里说的话进助理私聊，带着来源前缀。
+		await vi.waitFor(() => expect(posts.length).toBe(1));
+		expect(posts[0]?.text).toContain("[IM · 微信 · wx_u1] 在吗");
+
+		// 助理的回答回到那个聊天，并带上这一轮的 context_token。
+		const listener = host.messages[0];
+		if (listener === undefined) throw new Error("没有听消息");
+		await listener(
+			{ seq: 1, from: "知言", at: Date.now(), text: "在的", mentions: [], kind: "chat" },
+			DM.id,
+		);
+		await vi.waitFor(() => expect(calls.length).toBe(1));
+		const msg = calls[0]?.body.msg as Record<string, unknown>;
+		expect(msg).toMatchObject({ to_user_id: "wx_u1", context_token: "ctx-1" });
+		expect(JSON.stringify((msg.item_list as unknown[])[0])).toContain("在的");
+	});
+
+	it("微信返回的扫码地址不是腾讯域名就不画二维码", async () => {
+		vi.stubGlobal("fetch", async () => ({
+			ok: true,
+			status: 200,
+			json: async () => ({ ret: 0, qrcode: "qr-token", qrcode_img_content: "https://evil.test/qr?qrcode=1" }),
+		}));
+		const { host } = await boot([]);
+		await expect(
+			route(host, "/api/p/im/weixin/login").handle({ method: "POST", params: {}, query: {} }),
+		).rejects.toThrow("不可信");
+	});
+
 	it("Webhook 机器人没有接入口令就不收：建的时候当场拒", async () => {
 		const { host } = await boot([]);
 		await expect(

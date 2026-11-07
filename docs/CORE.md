@@ -668,9 +668,11 @@ plugins/<slug>/
 （字段见 `docs/DEPLOY.md` §3）—— 它是「插件够不够用」的第一块试金石：模型配置是文件 + 表单，
 没有业务语义，正好不该长在内核里。`文件树` 把当前频道的工作区开成一整页（资料表里一行入口）。
 `Token 统计` 读审计日志算每个成员 / 每只模型的用量（`api.logsRoot`，ADR-064）。
-`IM机器人` 把 IM（Telegram / 自定义 Webhook）接进**助理私聊**：收到的消息用 `api.post`
+`IM机器人` 把 IM（微信 / Telegram / 自定义 Webhook）接进**助理私聊**：收到的消息用 `api.post`
 以我的身份落进去，助理的回复用 `api.on("message")` 送回原聊天；机器人清单与凭据在
-`<appRoot>/im/bots.json`，不放进插件目录（ADR-115）。
+`<appRoot>/im/bots.json`，不放进插件目录（ADR-115）。微信走腾讯 iLink 的扫码登录：
+一进页面就出二维码，扫完凭据（`bot_token` / `base_url`）由插件自己存下，之后主动拉取
+`getupdates`、用消息里的 `context_token` 回话（ADR-117）。
 `悬浮球` 是**纯前端**的一条小路：一颗贴边的球，悬停展开「助理私聊」的最近消息与输入框
 （交互参考 dsh-orb，但不带第二个进程、不做 Computer Use）—— 它没有自己的会话与账本，
 发的就是那条私聊。要写新插件，契约在
