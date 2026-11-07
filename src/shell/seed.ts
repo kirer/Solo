@@ -16,11 +16,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../core/documents/skills.ts";
 import { RULES_FILE } from "../core/documents/rules.ts";
-import { existsAt, listDirSorted, moveAt, readTextOrUndefined, writeTextAt } from "../core/runtime/io.ts";
+import { existsAt, listDirSorted, moveAt, readTextOrUndefined, removeAt, writeTextAt } from "../core/runtime/io.ts";
 import { appendMissingKeys } from "../core/documents/base/catalog.ts";
 import { frontOf, parseDoc, type Doc } from "../core/documents/base/doc.ts";
 import type { Layout } from "../core/layout.ts";
-import { LEGACY_SEED_HASHES } from "./seed-legacy.ts";
+import { LEGACY_PLUGIN_HASHES, LEGACY_SEED_HASHES } from "./seed-legacy.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -32,11 +32,18 @@ type SeedManifest = {
 	/**
 	 * 出厂插件里**已经在工作区出现过**的目录名。
 	 *
-	 * 只记「见过」不记 hash：插件是一份可执行的代码，我动过它就是我的了。
 	 * 记这一条是为了让「删除」真的删掉 —— 只看目录在不在的话，删掉的出厂插件
 	 * 下次启动会被重新拷回来，界面上的「删除」就成了假的。
 	 */
 	plugins: string[];
+	/**
+	 * 出厂插件 → 目录内相对路径 → 上次播种时的 hash。
+	 *
+	 * 判据是**整个目录**：每个文件都和上次播种时一样，才算「没人动过」，才整份升到新版；
+	 * 只要有一个文件不同（改了 / 多了 / 少了），整份留着 —— 插件是可执行的代码，
+	 * 半新半旧比旧版更糟。没有这一条，出厂的插件修正永远进不来（ADR-097）。
+	 */
+	pluginFiles: Record<string, Record<string, string>>;
 	/**
 	 * 播种文件的逻辑键 → 上次写入的 hash。
 	 *
@@ -47,7 +54,7 @@ type SeedManifest = {
 };
 
 function emptyManifest(): SeedManifest {
-	return { version: 2, skills: {}, plugins: [], files: {} };
+	return { version: 2, skills: {}, plugins: [], pluginFiles: {}, files: {} };
 }
 
 /** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
@@ -170,6 +177,7 @@ async function readManifest(path: string): Promise<SeedManifest> {
 		version: 2,
 		skills: raw.skills ?? {},
 		plugins: raw.plugins ?? [],
+		pluginFiles: raw.pluginFiles ?? {},
 		files: raw.files ?? {},
 	};
 }
@@ -203,7 +211,11 @@ function parseManifest(text: string): Partial<SeedManifest> {
 	if (plugins !== undefined && (!Array.isArray(plugins) || plugins.some((item) => typeof item !== "string"))) {
 		throw new Error("plugins 必须是字符串数组");
 	}
-	return { skills, plugins: plugins ?? [], files: strings(value["files"], "files") };
+	const pluginFiles: Record<string, Record<string, string>> = {};
+	for (const [name, item] of Object.entries(record(value["pluginFiles"], "pluginFiles"))) {
+		pluginFiles[name] = strings(item, `pluginFiles.${name}`);
+	}
+	return { skills, plugins: plugins ?? [], pluginFiles, files: strings(value["files"], "files") };
 }
 
 async function writeManifest(path: string, manifest: SeedManifest): Promise<void> {
@@ -347,13 +359,13 @@ export async function seedTextFiles(layout: Layout): Promise<readonly string[]> 
 /**
  * 把出厂插件补进工作区（`<workspace>/plugins/<名字>/`）。
  *
- * 判据是**整个目录在不在**，不像技能那样逐文件比 hash：插件是一份可执行的代码，
- * 我一旦动过它就是「我的插件」了，逐文件覆盖反而会把 `plugin.ts` 换回出厂版、
- * 留下一个半新半旧的目录。所以：缺了才补，有了整份留着。
+ * 判据是**整个目录**（不是逐文件）：缺了整份补；盘上有、且每个文件都和上次播种时一样
+ * （没人动过），整份升到新版；只要有一个文件不同，整份留着 —— 插件是可执行的代码，
+ * 半新半旧比旧版更糟，动了就归改的人。
  *
  * **删掉的不会被塞回来**：见过一次就记进 `.seed-manifest.json`（`plugins`），
  * 之后只看账本 —— 否则「删除」只在这次进程里生效，重启就复活，和界面写的话不符。
- * 代价：老工作区第一次跑这一版时，以前删掉的出厂插件会补回来一次（没有历史可查）。
+ * 老账本没有 `pluginFiles`（不知道动没动过）：这次只记基线、不动手（ADR-097）。
  */
 export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 	const root = seedPath("plugins");
@@ -366,17 +378,44 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 	for (const entry of await listDirSorted(root)) {
 		if (entry.kind !== "dir") continue;
 		const name = entry.name;
-		// 见过就算了：盘上有 = 我留着 / 改过；盘上没了 = 我删的。两种情况都不该再动手。
-		if (seen.has(name)) continue;
-		seen.add(name);
-		changed = true;
-		if (await existsAt(join(layout.pluginsRoot, name))) continue;
-		for (const relpath of await walkFiles(root, name)) {
-			const source = await readTextOrUndefined(join(root, ...relpath.split("/")));
-			if (source === undefined) continue;
-			await writeTextAt(join(layout.pluginsRoot, ...relpath.split("/")), source);
+		const target = join(layout.pluginsRoot, name);
+		const seed = await pluginFiles(join(root, name));
+		const record = manifest.pluginFiles[name];
+
+		if (!(await existsAt(target))) {
+			// 盘上没有：见过 = 我删的，不再补；没见过 = 第一次装。
+			if (seen.has(name)) continue;
+			seen.add(name);
+			changed = true;
+			await mirrorPlugin(target, seed, new Set());
+			manifest.pluginFiles[name] = hashesOf(seed);
+			written.push(name);
+			continue;
 		}
-		written.push(name);
+
+		// 盘上有：先认它是不是「上次播种时那份原样」。
+		const files = await pluginFiles(target);
+		const current = hashesOf(files);
+		// 老账本只记过「见过」：整份都命中历史出厂 hash、文件名也和当前出厂一致 = 没改过。
+		const legacy =
+			record === undefined &&
+			sameFileNames(files, seed) &&
+			Object.values(current).every((hash) => LEGACY_PLUGIN_HASHES.has(hash));
+		const untouched = record === undefined ? legacy : sameHashes(current, record);
+		if (!seen.has(name) || !untouched) {
+			// 第一次见（老账本 / 手工放进去的）或我改过：记下基线，一个字节都不动。
+			seen.add(name);
+			manifest.pluginFiles[name] = current;
+			changed = true;
+			continue;
+		}
+
+		// 没人动过：整份对齐 seed（改的写、删的删）。
+		const touched = await mirrorPlugin(target, seed, new Set(Object.keys(record ?? {})));
+		const next = hashesOf(seed);
+		if (touched || !sameHashes(next, record ?? {})) changed = true;
+		manifest.pluginFiles[name] = next;
+		if (touched) written.push(name);
 	}
 
 	if (changed) {
@@ -384,6 +423,50 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 		await writeTextAt(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 	}
 	return written;
+}
+
+/** 一个插件目录里的文本文件：相对路径（`/` 分隔）→ 内容。读不出来的跳过。 */
+async function pluginFiles(root: string): Promise<Map<string, string>> {
+	const out = new Map<string, string>();
+	for (const relpath of await walkFiles(root, "")) {
+		const content = await readTextOrUndefined(join(root, ...relpath.split("/")));
+		if (content !== undefined) out.set(relpath, content);
+	}
+	return out;
+}
+
+function hashesOf(files: Map<string, string>): Record<string, string> {
+	const out: Record<string, string> = {};
+	for (const [relpath, content] of files) out[relpath] = hashOf(content);
+	return out;
+}
+
+function sameFileNames(left: Map<string, string>, right: Map<string, string>): boolean {
+	if (left.size !== right.size) return false;
+	return [...left.keys()].every((key) => right.has(key));
+}
+
+function sameHashes(left: Record<string, string>, right: Record<string, string>): boolean {
+	const keys = Object.keys(left);
+	if (keys.length !== Object.keys(right).length) return false;
+	return keys.every((key) => right[key] === left[key]);
+}
+
+/** 让目标目录和 seed 一模一样：内容不同的写、seed 里没有的删。返回是否动过磁盘。 */
+async function mirrorPlugin(target: string, seed: Map<string, string>, before: Set<string>): Promise<boolean> {
+	let touched = false;
+	for (const [relpath, content] of seed) {
+		const path = join(target, ...relpath.split("/"));
+		if ((await readTextOrUndefined(path)) === content) continue;
+		await writeTextAt(path, content);
+		touched = true;
+	}
+	for (const relpath of before) {
+		if (seed.has(relpath)) continue;
+		await removeAt(join(target, ...relpath.split("/")));
+		touched = true;
+	}
+	return touched;
 }
 
 /**

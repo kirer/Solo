@@ -1,13 +1,10 @@
 /**
- * 插件页：一列插件 + 右边选中那个的详情，和「后台任务」是同一套骨架。
- * 一个文件夹一个插件，装 / 卸就是建 / 删那个文件夹。
+ * 插件页：左边是文件夹，右边是选中那个的全部（v6 稿子 D11 / 24）。
  *
+ * 一个文件夹一个插件，装 / 卸就是建 / 删那个文件夹。
  * 后端部分（工具 / 提示词 / 接口）**当场生效**：内核写完文件就重装一遍插件（ADR-026）。
  * 但前端入口只在界面启动时 `import` 一次，所以带 `client.js` 的插件装完要问一句
  * 「要不要重启」——不重启的话它的页签、按钮不会出现。
- *
- * 宽度：左栏 268px（和聊天列表一样），右边才是正文。清单长到几十个也认得过来，
- * 因为名字只占一列、开关和删除在正文里，不在每一行里挤三个东西。
  */
 
 import { useEffect, useState } from "react";
@@ -54,10 +51,19 @@ async function readFolder(list: FileList): Promise<PickedFolder> {
 	return { slug, files };
 }
 
-export function PluginsPage(): JSX.Element {
+function CloseIcon(): JSX.Element {
+	return (
+		<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
+			<path d="m6 6 12 12M18 6 6 18" />
+		</svg>
+	);
+}
+
+export function PluginsPage(props: { leaving?: boolean }): JSX.Element {
 	const [plugins, setPlugins] = useState<readonly Plugin[] | undefined>(undefined);
 	const [problem, setProblem] = useState<string | undefined>(undefined);
 	const [picked, setPicked] = useState<PickedFolder | undefined>(undefined);
+	const [selected, setSelected] = useState<string | undefined>(undefined);
 	/** 哪一个的「删除」已经点过一次（第二次才真删）。 */
 	const [armed, setArmed] = useState<string | undefined>(undefined);
 
@@ -91,149 +97,189 @@ export function PluginsPage(): JSX.Element {
 			});
 	};
 
+	const list = plugins ?? [];
+	const current = list.find((plugin) => plugin.slug === selected) ?? list[0];
+
 	return (
-		<section className="page" id="page-plugins" aria-label="插件">
-			<header className="nav">
-				<button
-					type="button"
-					className="icon-btn"
-					id="plugins-back"
-					aria-label="返回设置"
-					onClick={() => setPluginSheet(false)}
-				>
-					<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-						<path d="M14.5 5.5 8 12l6.5 6.5" />
-					</svg>
-				</button>
-				<h1 className="nav-title">
-					插件 <span className="team-count">{plugins?.length ?? 0}</span>
-				</h1>
-				{/* 装插件就是选一个文件夹：那颗「+」和列表标题旁的同款、同位置。 */}
-				<label className="icon-btn plugin-add" title="装一个插件（选它的文件夹）">
-					<span className="sr-only">选一个插件文件夹装进来</span>
-					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-						<path d="M12 5v14M5 12h14" />
-					</svg>
-					<input
-						type="file"
-						multiple
-						className="sr-only"
-						ref={(node) => {
-							// `webkitdirectory` 不是标准 React 属性，只能挂到 DOM 上：有了它浏览器才让人选**文件夹**。
-							if (node !== null) node.setAttribute("webkitdirectory", "");
-						}}
-						onChange={(event) => {
-							const list = event.target.files;
-							if (list === null || list.length === 0) return;
-							readFolder(list)
-								.then((folder) => {
-									setPicked(folder);
-									setProblem(undefined);
-								})
-								.catch((error: Error) => {
-									setPicked(undefined);
-									setProblem(error.message);
-								});
-							// 允许同一个文件夹再选一次（否则第二次选它不触发 onChange）。
-							event.target.value = "";
-						}}
-					/>
-				</label>
-			</header>
-
-			<div className="set-scroll">
-				{picked === undefined ? null : (
-					<div className="set-group">
-						<div className="set-card plugin-picked-row">
-							<span className="plugin-picked" title={picked.files.map((file) => file.path).join("\n")}>
-								已选「{picked.slug}」（{picked.files.length} 个文件）
-							</span>
-							<button
-								type="button"
-								className="plugin-install-btn"
-								onClick={() => {
-									const slug = picked.slug;
-									apply(installPlugin(slug, picked.files), (list) => {
-										const installed = list.find((plugin) => plugin.slug === slug);
-										// 后端已经热装上了；带前端入口的才需要重开界面。
-										if (installed?.client === true && installed.error === undefined) {
-											setRestartOpen(installed.name);
-										}
+		<div className="overlay" data-leaving={props.leaving === true ? "true" : "false"} role="presentation" onMouseDown={(event) => {
+			if (event.target === event.currentTarget) setPluginSheet(false);
+		}}>
+			<div className="modal modal-wide" role="dialog" aria-modal="true" aria-label="插件">
+				<header className="modal-head">
+					<button type="button" className="icon-btn" id="plugins-back" aria-label="返回设置" onClick={() => setPluginSheet(false)}>
+						<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+							<path d="M14.5 5.5 8 12l6.5 6.5" />
+						</svg>
+					</button>
+					<h1 className="modal-title">
+						插件 <span className="nav-count">{list.length}</span>
+					</h1>
+					<span className="head-grow" />
+					<label className="pl-add" title="装一个插件（选它的文件夹）">
+						<span className="sr-only">选一个插件文件夹装进来</span>
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+							<path d="M12 5.5v13M5.5 12h13" />
+						</svg>
+						<span>装一个插件</span>
+						<input
+							type="file"
+							multiple
+							className="sr-only"
+							ref={(node) => {
+								// `webkitdirectory` 不是标准 React 属性，只能挂到 DOM 上：有了它浏览器才让人选**文件夹**。
+								if (node !== null) node.setAttribute("webkitdirectory", "");
+							}}
+							onChange={(event) => {
+								const files = event.target.files;
+								if (files === null || files.length === 0) return;
+								readFolder(files)
+									.then((folder) => {
+										setPicked(folder);
+										setProblem(undefined);
+									})
+									.catch((error: Error) => {
+										setPicked(undefined);
+										setProblem(error.message);
 									});
-									setPicked(undefined);
-								}}
-							>
-								安装
-							</button>
-						</div>
-					</div>
-				)}
+								// 允许同一个文件夹再选一次（否则第二次选它不触发 onChange）。
+								event.target.value = "";
+							}}
+						/>
+					</label>
+					<button type="button" className="icon-btn modal-close" aria-label="关闭" onClick={() => setPluginSheet(false)}>
+						<CloseIcon />
+					</button>
+				</header>
 
-				{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
+				<div className="modal-body modal-flush">
+					<div className="pl-body">
+						<aside className="pl-list" aria-label="插件清单">
+							{picked === undefined ? null : (
+								<button type="button" className="pl-item" data-on="true" onClick={() => setSelected(undefined)}>
+									<span className="n">装「{picked.slug}」<i className="dot" /></span>
+									<span className="s">{picked.files.length} 个文件 · 还没装</span>
+								</button>
+							)}
+							{plugins === undefined ? <p className="page-hint">正在读插件…</p> : null}
+							{plugins !== undefined && list.length === 0 && picked === undefined ? (
+								<p className="page-hint">还没有插件。</p>
+							) : null}
+							{list.map((plugin) => (
+								<button
+									type="button"
+									key={plugin.slug}
+									className="pl-item"
+									data-on={current?.slug === plugin.slug ? "true" : "false"}
+									onClick={() => setSelected(plugin.slug)}
+								>
+									<span className="n">
+										{plugin.name}
+										<i className="dot" data-off={plugin.enabled ? "false" : "true"} />
+									</span>
+									<span className="s">
+										{plugin.brings !== undefined ? bringsText(plugin.brings) : plugin.enabled ? "还没装上" : "关着"}
+									</span>
+								</button>
+							))}
+						</aside>
 
-				{plugins === undefined ? (
-					<p className="page-hint">正在读插件…</p>
-				) : plugins.length === 0 ? (
-					<p className="page-hint">还没有插件。从右上角那颗「+」选一个插件文件夹装进来 —— 插件跑在本机进程里，只装自己信得过的。</p>
-				) : (
-					plugins.map((plugin) => (
-						<section className="set-group" key={plugin.slug}>
-							<div className="set-card plugin-card" data-enabled={plugin.enabled}>
-								<div className="plugin-card-head">
-									<span className="plugin-card-name">{plugin.name}</span>
-									{plugin.slug === plugin.name ? null : <span className="plugin-slug">{plugin.slug}</span>}
-									<span className="plugin-card-grow" />
-									<button
-										type="button"
-										className="plugin-switch"
-										role="switch"
-										aria-checked={plugin.enabled}
-										aria-label={`${plugin.enabled ? "关掉" : "打开"} ${plugin.name}`}
-										onClick={() => apply(setPluginEnabled(plugin.slug, !plugin.enabled))}
-									>
-										<span className="plugin-knob" />
-									</button>
-								</div>
-								<p className="plugin-detail-desc">
-									{plugin.description === "" ? "没有说明" : plugin.description}
-								</p>
-								<dl className="plugin-facts">
-									<dt>带来</dt>
-									<dd>
-										{plugin.brings !== undefined
-											? bringsText(plugin.brings)
-											: plugin.enabled
-												? "还没装上 · 看一眼日志里的 [plugin]"
-												: "关着，不干活"}
-									</dd>
-									<dt>目录</dt>
-									<dd className="plugin-detail-dir">plugins/{plugin.slug}/</dd>
-								</dl>
-								{plugin.error === undefined ? null : <p className="settings-problem">{plugin.error}</p>}
-								<div className="plugin-card-foot">
-									<button
-										type="button"
-										className="plugin-remove"
-										data-armed={armed === plugin.slug}
-										aria-label={armed === plugin.slug ? `确认删掉 ${plugin.name}` : `删掉 ${plugin.name}`}
-										onClick={() => {
-											// 删的是磁盘上的代码，找不回来 —— 同一个按钮点两次才算数。
-											if (armed !== plugin.slug) {
-												setArmed(plugin.slug);
-												return;
-											}
-											setArmed(undefined);
-											apply(removePlugin(plugin.slug));
-										}}
-									>
-										{armed === plugin.slug ? "再点一次就删掉" : "删除"}
-									</button>
-								</div>
+						<section className="pl-detail" aria-label="插件详情">
+							<div className="pl-in">
+								{problem === undefined ? null : <p className="settings-problem">{problem}</p>}
+
+								{picked === undefined ? null : (
+									<div className="plugin-card">
+										<div className="plugin-head">
+											<span className="plugin-name">装「{picked.slug}」</span>
+										</div>
+										<p className="plugin-desc" title={picked.files.map((file) => file.path).join("\n")}>
+											选了 {picked.files.length} 个文件。装完后端当场生效；带前端的插件会问你要不要重开界面。
+										</p>
+										<div className="plugin-foot">
+											<span className="note">装之前先看一眼目录：插件跑在本机进程里。</span>
+											<button
+												type="button"
+												className="plugin-install-btn"
+												onClick={() => {
+													const slug = picked.slug;
+													apply(installPlugin(slug, picked.files), (next) => {
+														const installed = next.find((plugin) => plugin.slug === slug);
+														// 后端已经热装上了；带前端入口的才需要重开界面。
+														if (installed?.client === true && installed.error === undefined) {
+															setRestartOpen(installed.name);
+														}
+													});
+													setPicked(undefined);
+												}}
+											>
+												安装
+											</button>
+										</div>
+									</div>
+								)}
+
+								{current === undefined ? null : (
+									<div className="plugin-card">
+										<div className="plugin-head">
+											<span className="plugin-name">{current.name}</span>
+											{current.slug === current.name ? null : <span className="plugin-slug">{current.slug}</span>}
+											<button
+												type="button"
+												className="plugin-switch"
+												data-on={current.enabled ? "true" : "false"}
+												role="switch"
+												aria-checked={current.enabled}
+												aria-label={`${current.enabled ? "关掉" : "打开"} ${current.name}`}
+												onClick={() => apply(setPluginEnabled(current.slug, !current.enabled))}
+											>
+												<span className="knob" />
+											</button>
+										</div>
+										<p className="plugin-desc">{current.description === "" ? "没有说明" : current.description}</p>
+										<dl className="plugin-facts">
+											<dt>带来</dt>
+											<dd>
+												{current.brings !== undefined
+													? bringsText(current.brings)
+													: current.enabled
+														? "还没装上 · 看一眼日志里的 [plugin]"
+														: "关着，不干活"}
+											</dd>
+											<dt>目录</dt>
+											<dd className="mono">plugins/{current.slug}/</dd>
+										</dl>
+										{current.error === undefined ? null : <p className="settings-problem">{current.error}</p>}
+										<div className="plugin-foot">
+											<span className="note">
+												{current.enabled ? "后端已生效；前端入口随界面启动装载" : "关着：后端与前端入口都不干活"}
+											</span>
+											<button
+												type="button"
+												className="plugin-remove"
+												data-armed={armed === current.slug ? "true" : "false"}
+												aria-label={armed === current.slug ? `确认删掉 ${current.name}` : `删掉 ${current.name}`}
+												onClick={() => {
+													// 删的是磁盘上的代码，找不回来 —— 同一个按钮点两次才算数。
+													if (armed !== current.slug) {
+														setArmed(current.slug);
+														return;
+													}
+													setArmed(undefined);
+													apply(removePlugin(current.slug));
+												}}
+											>
+												{armed === current.slug ? "再点一次就删掉" : "删除"}
+											</button>
+										</div>
+									</div>
+								)}
+
+								<p className="page-hint">装一个插件就是选一个文件夹。插件跑在本机进程里，只装自己信得过的。</p>
 							</div>
 						</section>
-					))
-				)}
+					</div>
+				</div>
 			</div>
-		</section>
+		</div>
 	);
 }

@@ -180,6 +180,31 @@ export function apply(api) {
 				heatmap.push({ date: day, tokens: total.tokens });
 			}
 
+			// 资料页底部那一格（`rightPanel.bottom`）：`who` 是 slug，看的是**近 7 天**，
+			// 与上面选中的档位无关 —— 那一格写死了「近 7 天」。
+			const who = typeof request.query.who === "string" ? request.query.who : "";
+			let person;
+			if (who !== "") {
+				const mine = records.filter((row) => row.who === who && row.at >= today - 6 * DAY_MS);
+				const mineByDay = new Map();
+				for (const row of mine) {
+					const key = dayKey(row.at);
+					const bucket = mineByDay.get(key) ?? emptyTotals();
+					addTo(bucket, row);
+					mineByDay.set(key, bucket);
+				}
+				const personDaily = [];
+				for (let offset = 6; offset >= 0; offset -= 1) {
+					const day = dayKey(today - offset * DAY_MS);
+					personDaily.push({ date: day, tokens: (mineByDay.get(day) ?? emptyTotals()).tokens });
+				}
+				person = {
+					who,
+					daily: personDaily,
+					totals: finish(mine.reduce((total, row) => (addTo(total, row), total), emptyTotals())),
+				};
+			}
+
 			return {
 				range: { days, from: firstDay, to: lastDay },
 				totals: finish(inRange.reduce((total, row) => (addTo(total, row), total), emptyTotals())),
@@ -188,6 +213,7 @@ export function apply(api) {
 				people: groupOf(inRange, (row) => row.who),
 				models: groupOf(inRange, (row) => row.model),
 				empty: records.length === 0,
+				...(person === undefined ? {} : { person }),
 			};
 		},
 	});

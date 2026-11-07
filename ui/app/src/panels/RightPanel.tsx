@@ -113,7 +113,6 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 	const tasks = turns === undefined ? undefined : workTurns(turns);
 	const memoryCount = useMemoryCount(props.slug);
 	const skillCount = profile?.skills.length ?? 0;
-	const pluginCells = cellsOf("rightPanel.tab");
 
 	return (
 		<div className="prof" key={props.slug}>
@@ -209,20 +208,7 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 						)}
 					</div>
 				) : null}
-				{pluginCells.map((cell) => (
-					<Row
-						key={cell.id}
-						icon={<IconPlug />}
-						title={cell.label ?? cell.id}
-						onClick={() => setOpenRow(openRow === cell.id ? null : cell.id)}
-						open={openRow === cell.id}
-					/>
-				))}
-				{openRow !== null && pluginCells.some((cell) => cell.id === openRow) ? (
-					<div className="prof-panel">
-						<PluginSlot id={openRow} cells={pluginCells} />
-					</div>
-				) : null}
+				<PluginRows openRow={openRow} setOpenRow={setOpenRow} />
 			</div>
 
 			<div className="prof-card">
@@ -240,7 +226,43 @@ function PersonPanel(props: { slug: string; fallback?: PersonProfile }): JSX.Ele
 
 function PluginSlot(props: { id: string; cells: readonly SlotCell[] }): JSX.Element | null {
 	const cell = props.cells.find((item) => item.id === props.id);
-	return cell === undefined ? null : <cell.component />;
+	const Component = cell?.component;
+	return Component === undefined ? null : <Component />;
+}
+
+/**
+ * 插件往资料表里加的行（`rightPanel.tab`）。
+ *
+ * 两种格子：给 `onOpen` 的点一行交给插件（「工作空间」开一整页），没给的按老规矩
+ * 在本栏里展开组件。人、团队两种资料表共用这一份，免得插件只出现在一边。
+ */
+function PluginRows(props: {
+	openRow: string | null;
+	setOpenRow: (id: string | null) => void;
+}): JSX.Element | null {
+	const cells = cellsOf("rightPanel.tab");
+	if (cells.length === 0) return null;
+	const inline = props.openRow === null ? undefined : cells.find((cell) => cell.id === props.openRow && cell.component !== undefined);
+	return (
+		<>
+			{cells.map((cell) => (
+				<Row
+					key={cell.id}
+					icon={<IconPlug />}
+					title={cell.label ?? cell.id}
+					onClick={() =>
+						cell.onOpen === undefined ? props.setOpenRow(props.openRow === cell.id ? null : cell.id) : cell.onOpen()
+					}
+					open={cell.onOpen === undefined && props.openRow === cell.id}
+				/>
+			))}
+			{inline === undefined ? null : (
+				<div className="prof-panel">
+					<PluginSlot id={inline.id} cells={cells} />
+				</div>
+			)}
+		</>
+	);
 }
 
 /** 一行统计：今天 N 轮 · 共 Xm · 最近 …（现算，不新增接口）。 */
@@ -395,6 +417,7 @@ function TeamPanel(props: {
 						)}
 					</div>
 				) : null}
+				<PluginRows openRow={openRow} setOpenRow={setOpenRow} />
 			</div>
 
 			<ChannelSettings key={props.channel.id} channel={props.channel} members={members} />

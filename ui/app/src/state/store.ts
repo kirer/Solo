@@ -71,6 +71,12 @@ export type State = {
 	tasks: { open: boolean; who: string | null };
 	/** 插件占的一整屏（插件 slug；`null` = 没有）。和任务屏互斥，也是 `app.page` 插槽的开关。 */
 	pluginView: string | null;
+	/** 右侧工作台开着看哪个插件（`null` = 没有）。`dock` 插槽的开关，和对话并排。 */
+	dock: string | null;
+	/** 工作台拖出来的宽度（px）；`null` = 没拖过，用响应式的默认宽度。 */
+	dockWidth: number | null;
+	/** 内置浏览器开着看哪个地址（`null` = 关着）。正文里点外链就开在这里。 */
+	browser: string | null;
 	/** 右侧栏的返回栈：栈底永远是当前频道。 */
 	trail: RightEntry[];
 	/** 右侧栏正在看的那个人（`null` = 看频道本身）。 */
@@ -83,12 +89,20 @@ export type State = {
 };
 
 const THEME_KEY = "solo.theme";
+const DOCK_WIDTH_KEY = "solo.dockWidth";
 
 function read<K extends string>(key: string, allowed: readonly K[], fallback: K): K {
 	// 没有 localStorage 的环境（node 里跑单测、未来的 SSR）读不到就按缺省来：这里只是偏好，不是状态。
 	if (typeof localStorage === "undefined") return fallback;
 	const value = localStorage.getItem(key);
 	return allowed.includes(value as K) ? (value as K) : fallback;
+}
+
+/** 拖过的宽度：读得到、是正数才算数（旧值坏了就回到默认宽度，不报错）。 */
+function readDockWidth(): number | null {
+	if (typeof localStorage === "undefined") return null;
+	const value = Number(localStorage.getItem(DOCK_WIDTH_KEY));
+	return Number.isFinite(value) && value > 0 ? value : null;
 }
 
 const initial: State = {
@@ -116,6 +130,9 @@ const initial: State = {
 	reply: null,
 	tasks: { open: false, who: null },
 	pluginView: null,
+	dock: null,
+	dockWidth: readDockWidth(),
+	browser: null,
 	trail: [{ kind: "channel" }],
 	person: null,
 	setupStep: null,
@@ -306,6 +323,12 @@ export async function openChannel(id: string | null): Promise<void> {
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
 	patch({ detail, hasMore: detail.hasMore });
+	// 宽屏上资料列常驻（稿子 D02）；助理那封信不并排（稿子 D01），窄屏也别自动挡路。
+	const assistantName = getState().people.find((person) => person.assistant === true)?.label;
+	const letter = detail.channel.kind === "dm" && detail.channel.title === assistantName;
+	if (!letter && typeof window !== "undefined" && window.matchMedia("(min-width: 1181px)").matches) {
+		patch({ right: { open: true } });
+	}
 	if (detail.channel.kind === "dm") {
 		// 私聊页看的是对面那个人：把他在所有频道里的轮次拉回来（也是 `live` 行要用的）。
 		const partner = detail.members.find((member) => member.slug !== "owner");
@@ -626,6 +649,7 @@ export function closeTasks(): void {
 export function openPluginView(slug: string): void {
 	patch({
 		pluginView: slug,
+		dock: null,
 		tasks: { open: false, who: getState().tasks.who },
 		restartOpen: null,
 		pluginSheet: false,
@@ -638,6 +662,32 @@ export function openPluginView(slug: string): void {
 /** 回到聊天。Esc 与插件页自己的返回键都走这里。 */
 export function closePluginView(): void {
 	patch({ pluginView: null });
+}
+
+/** 打开右侧工作台（和对话并排，不是弹窗）。 */
+export function openDock(slug: string): void {
+	patch({ dock: slug, tasks: { open: false, who: getState().tasks.who }, right: { open: false }, settings: false, pluginSheet: false, pluginView: null });
+}
+
+export function closeDock(): void {
+	patch({ dock: null });
+}
+
+/** 拖工作台的左边线：宽度记进偏好，下次打开还是这么宽。`null` 回到默认宽度。 */
+export function setDockWidth(width: number | null): void {
+	patch({ dockWidth: width });
+	if (typeof localStorage === "undefined") return;
+	if (width === null) localStorage.removeItem(DOCK_WIDTH_KEY);
+	else localStorage.setItem(DOCK_WIDTH_KEY, String(Math.round(width)));
+}
+
+/** 在 Solo 里开一个外链（正文里点链接、内置浏览器里改地址都走这里）。 */
+export function openBrowser(url: string): void {
+	patch({ browser: url });
+}
+
+export function closeBrowser(): void {
+	patch({ browser: null });
 }
 
 /** 正在跑的人（`presence` 是派生状态，这里只做排序用）。 */

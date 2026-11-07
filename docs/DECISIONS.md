@@ -2303,3 +2303,59 @@
   `PATCH /api/channels/:id`；`src/view/dto.ts` 的 `ViewChannelResponder`；界面
   `ui/app/src/panels/RightPanel.tsx` 的 `ChannelSettings`；
   `test/core/{channel-responder,channel-settings,deliver}.test.ts`。
+
+## ADR-096 工作台是右侧一列标签页；正文外链开在里面
+
+- **背景**：agent 干活都落在工作区（`members/<slug>/workspace/`、`teams/<slug>/workspace/`），
+  以前只有模型自己能看，我这边只能从消息里猜。第一稿把文件树塞进 348 宽的资料列，
+  树和预览各剩几行；正文里的文档链接点一下跳去系统浏览器，回来还得自己找位置。
+- **决策**：照 agent harness 的右栏做**一列并排的工作台**（`dock` 插槽）：
+  - 对话不消失，右半边是标签页：`文件`（目录树）/ 每个打开的文件一页 / 浏览器页 / 开始页。
+    资料列让位（一屏只并排一件事）；≤1280 列表也让位，≤900 铺满整屏。
+  - **树和内容是两页**，不是左右分栏 —— 挤在一列里两边都读不了。
+  - **左边线可拖**（320 起、给对话留 420、双击回默认），宽度记进 `localStorage`；
+    插件画的那一列铺满整块。固定宽度在一台机器上总有一边不对，harness 的分隔条
+    就是这个形状（0.5px 线 + 8px 抓手 + `col-resize`）。
+  - 插件格子只给 `onOpen`、不给 `component` 也能用（`rightPanel.tab` 的一行入口）。
+  - 预览按内容分：markdown 走宿主渲染器（插件经 `ui.markdown` 拿）、HTML 进
+    `sandbox=""` 的 iframe、图片给 data URL。
+  - **网页页签在桌面壳里用 `<webview>`**：iframe 挡不住站点的 `X-Frame-Options` /
+    `frame-ancestors`（百度、GitHub 都拒），白屏不是 bug 是站点拦的；webview 是独立进程，
+    不受这一条限制（harness 的内置浏览器也是 Electron 的这一层）。壳里开
+    `webviewTag: true`，并在 `will-attach-webview` 里去掉 preload、关 node、开 sandbox、
+    只放行 `http(s)`；网页版没有 webview，退回 iframe 并在页面上写明白屏的原因。
+  - 正文里的 `http(s)` 外链，**普通左键在工作台里开**；⌘/Ctrl/Shift/Alt 点与中键不接管。
+    与 `location.origin` 同源的地址不内嵌（同源 + `allow-same-origin` 等于没沙箱）。
+- **取舍**：不做「内嵌失败自动转系统浏览器」的探测（跨域 iframe 的失败在浏览器里看不出来，
+  只会白屏），改成「在系统浏览器打开」那颗键一直在。开始页只放工作区文件和浏览器两件
+  Solo 真有的东西，不画终端 / 上下文 / Agent 浏览器。也不给工作区加写权限：写由模型走工具做，
+  界面只读，少一条「界面和模型同时改一个文件」的路。
+- **执行**：插件 `seed/plugins/文件树/{plugin.js,client.js}`（`inside()` 双重 realpath、
+  隐藏目录不列、软链接不跟、1 MB / 图片 8 MB / 400 条 / 3 层；`root` 给界面显示路径）；
+  `ui/app/src/plugin/{registry.ts,Slot.tsx}` 的 `dock` / `onOpen` / `component` / `ui.markdown`；
+  `App.tsx` 的 `.dock` 一列、`DockGrip`（拖宽度）与 `RightPanel` 让位；`state/store.ts` 的
+  `dock` / `dockWidth` / `setDockWidth` / `openDock` / `closeDock` / `browser`；`lib/links.ts` 的 `builtinLink` / `installLinkBrowser`；
+  `panels/Browser.tsx` 只作没有工作台插件时的兜底；`styles/v6.css` 的 `.dock`；
+  `desktop/src/main.ts` 的 `webviewTag` 与 `will-attach-webview`；
+  `test/core/files-plugin.test.ts`、`test/ui/links.test.ts`；设计稿 `docs/DESIGN.md` §13.12。
+
+## ADR-097 出厂插件：没动过就跟着版本升级
+
+- **背景**：出厂插件以前只按「目录在不在」判 —— 缺了才补，有了整份留着。理由是插件是
+  可执行的代码，动过就归改的人。代价是**出厂的插件修正永远进不来**：已经在跑的安装
+  （`<appRoot>/plugins/<名字>/`）里那份 `文件树` 还是装的时候那一版，新版带上来的
+  工作台、webview 全落不到它身上。技能、规矩、提示词模板早就按 hash 判「改没改过」了，
+  只有插件停在「补一次」。
+- **决策**：插件也按 hash 判，但判的是**整个目录**，不是逐文件：
+  - 盘上没有：没见过就整份补，见过（我删的）就不补 —— 和以前一样；
+  - 盘上有、账本里有基线：每个文件的 hash 都和上次播种时一样（没人动过）→ 整份对齐新版
+    （改的写、删的删）；有一个文件不同 → 整份留着，一个字节都不动；
+  - 老账本（只有 `plugins` 没有 `pluginFiles`）：整份都命中 `LEGACY_PLUGIN_HASHES`
+    （历史上出现过的出厂内容）且文件名和当前出厂一致 = 没改过 → 这一次就升上去；
+    否则只记基线、不动手。
+  - 为什么整目录而不是逐文件：逐文件覆盖会把 `plugin.js` 换回出厂版、留下半新半旧的目录，
+    比不升更糟。动了插件的人，整份归他。
+- **执行**：`src/shell/seed.ts` 的 `seedPlugins` / `pluginFiles` / `mirrorPlugin`、
+  账本的 `pluginFiles`（`<appRoot>/.seed-manifest.json`）、`src/shell/seed-legacy.ts` 的
+  `LEGACY_PLUGIN_HASHES`（`git log --all -- seed/plugins` 生成）、
+  `test/core/seed-plugins.test.ts`。

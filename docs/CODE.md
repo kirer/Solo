@@ -194,7 +194,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/shell/wire/directory.ts` | 91 | 名册落盘：`save`（逐字段比、路径式写）/ `now`（内存优先，缺人补齐）/ `merge`（启动与 rescan 共用）/ `bind`（新建会话立刻写映射） |
 | `src/shell/wire/teams.ts` | 108 | 团队频道的两句系统留痕：`sync`（重投影成员 + 叫新进的人报到，ADR-042）/ `announce` / `noteInterrupted`（重启打断的那一轮留痕，ADR-044） |
 | `src/shell/wire/speak.ts` | 76 | `createSpeak()` —— 我开口：读当下名册与显示名，调同一个 `flow.publish`；语义与 agent 的 `say` 完全一致 |
-| `src/shell/seed.ts` | 326 | 全部函数都收 `Layout`：`seedOwnerAssistant`（读 `seed/assistant/identity.md` 建到应用根 + 助理个人层技能，只建一次）/ `seedTextFiles`（`seed/text/*.md` 补进 `<appRoot>/text/`：缺文件整份拷，已有文件只追加新键，改过的句子不动）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `<appRoot>/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPlugins`（`seed/plugins/*` 整份缺失才拷）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
+| `src/shell/seed.ts` | 326 | 全部函数都收 `Layout`：`seedOwnerAssistant`（读 `seed/assistant/identity.md` 建到应用根 + 助理个人层技能，只建一次）/ `seedTextFiles`（`seed/text/*.md` 补进 `<appRoot>/text/`：缺文件整份拷，已有文件只追加新键，改过的句子不动）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `<appRoot>/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPlugins`（`seed/plugins/*`：缺了整份补；盘上那份和上次播种一模一样就整份升到新版，动过一个文件就整份留着；删了的不补）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `src/shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/`；`startTeamReconcile` 盯住 `teams/` 第一层，团队目录被删就立刻归档频道 |
 | `src/shell/main.ts` | 196 | 启动：`--app-root` / `--user-root` 两个根（`resolveLayout` 一处算完，ADR-030）；播种规矩 / 提示词模板 / 全员层技能（`seedRules` / `seedPromptTemplates` / `syncAllSkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在。`restartApp` / `resetAll` 共用 `stopCore`，关库后以退出码 75 退出让桌面壳重开 |
 
@@ -207,8 +207,8 @@ shell = 装配层，唯一可以同时 import 全部
 | `ui/app/index.html` | 页面骨架 + **首帧定色的内联脚本**（放样式之前，否则先白一下再变深） |
 | `ui/app/vite.config.ts` | 构建配置。`outDir: "../web"`、`emptyOutDir: false`（清空会在出错时连 index.html 一起删掉） |
 | `src/main.tsx` | 入口：装样式、`bootstrap()`、**先 `bootPlugins()` 再挂 `<App>`**（插槽首帧就是满的；插件拉不到也照常渲染）；解析 `?shell=desktop&platform=…`，把平台写进 `data-shell` / `data-os`（Windows 标题带与 macOS 红绿灯的样式都只看这两个标记） |
-| `src/App.tsx` | 外壳装配：**一列到底**（ADR-084）—— `Sidebar` 与 `sheet` 叠在同一格，靠 `body[data-pane]` 切列表 / 对话；`data-view` 切聊天 / 设置 / 插件 / 插件页。对话抬头按「助理那屏（对话 + 设置）」与「别的对话（返回 + 名字 + 资料）」画；整屏页（含插件自己的 `app.page`）都由页面自己画 `.nav`，出口就是那颗返回（不再另浮一颗）。主题、Esc 关浮层、⌘K 开「找你」 |
-| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`（轨迹按 `turn.slug` 分桶进 `runs`，群聊私聊同一条规则）/`loadTurn`/`loadPersonRuns`（后台任务面板）、`openTasks`/`setTasksWho`/`closeTasks`、localStorage 两键 |
+| `src/App.tsx` | 外壳装配：**一列到底**（ADR-084）—— `Sidebar` 与 `sheet` 叠在同一格，靠 `body[data-pane]` 切列表 / 对话；`data-view` 切聊天 / 设置 / 插件 / 插件页；`data-dock` 记工作台开着（右侧一列 `.dock`，资料列让位，≤1280 列表让位；左边线的 `DockGrip` 拖动改宽度，双击回默认）。对话抬头按「助理那屏（对话 + 设置）」与「别的对话（返回 + 名字 + 资料）」画；整屏页（含插件自己的 `app.page`）都由页面自己画 `.nav`，出口就是那颗返回（不再另浮一颗）。主题、Esc 关浮层、⌘K 开「找你」 |
+| `src/state/store.ts` | **唯一状态源**（`useSyncExternalStore`）。拉数据、SSE 打补丁、`openChannel`/`loadEarlier`/`applyMessage`、`applyOrg`（人 + `activity`）、`applyTurn`（轨迹按 `turn.slug` 分桶进 `runs`，群聊私聊同一条规则）/`loadTurn`/`loadPersonRuns`（后台任务面板）、`openTasks`/`setTasksWho`/`closeTasks`、`openDock`/`closeDock`/`setDockWidth`（右侧工作台，宽度记 `dockWidth`）、`openBrowser`/`closeBrowser`（外链请求）、localStorage 三键 |
 | `src/state/useStore.ts` | 40 行薄封装。**选择器必须外部声明**，否则每次渲染都是新函数 → 无限重渲染 |
 | `src/api/client.ts` | 全部 `fetch` 包装。**每个后端路由必须在这里有消费者**（边界检查会扫 `ui/app/src`） |
 | `src/api/types.ts` | **type-only 再导出** `src/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
@@ -219,13 +219,14 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/titlebar/Titlebar.tsx` | Windows 桌面壳的标题带（ADR-069）：菜单「Solo / 视图」、拖拽把手、点别处 / Esc / 失焦收起；动作经 `window.soloDesktop.menu()` 交给主进程。菜单数据在同目录 `menu.ts`（纯数据，单测直接读） |
 | `src/panels/TasksPanel.tsx` | 后台任务 = **右栏的一态**（桌面，`data-tasks="true"`）/ `.detail` 铺满整屏（手机），导出 `TasksView`：上面是谁（头像 + 一行统计），下面是一列按天分组的轮次；点一条就地展开 `trigger` 引用与步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
-| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（14 个：`rail.item` / `app.page` / `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）与 `store` / `useStore`（界面状态）。失败只 `console.warn` |
-| `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位 |
+| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（15 个：`rail.item` / `app.page`（弹窗整页）/ `dock`（右侧工作台一列）/ `sidebar.*` / `topbar.actions` / `stream.*` / `composer.actions` / `rightPanel.*` / `settings.section` / `overlays`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）、`store` / `useStore`（界面状态）与 `markdown`（宿主的渲染器，插件别自己拼 HTML）。格子的 `component` 可省：只给 `onOpen` 的格子是**一行入口**（点它开插件自己的整页），`rightPanel.tab` 靠这个把 348 宽的资料列让给一整页。失败只 `console.warn` |
+| `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位。没有 `component` 的格子（只有 `onOpen`）在这里跳过。`app.page` / `dock` 只画当前打开的那一个插件 |
 | ~~`src/sidebar/Rail.tsx`~~ | **已删除**（ADR-084）：最左导航整列不再存在，一屏只放一件事。应用级入口改在设置页：`rail.item` 插槽的宿主在 `SettingsPage`（`.set-tools`，插件那一行下面） |
 | `src/sidebar/Sidebar.tsx` | 列表那一屏（和对话同一格，`body[data-pane]` 互斥）：抬头是「返回助理（`#list-back`）+ 对话 + 拉群（`#new-group`）」，头下一行搜索（`#chat-search`，按名字与预览筛），再下面一列平铺频道（两行：名字+身份/团队 / 预览），行与行之间一条内缩细线。设置只在助理那屏（不在列表抬头）。**助理不在这一列**（和助理的对话就是首屏，回它靠抬头的 `#list-back`）；列表脚下只留 `sidebar.footer` 插槽 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条。占位两端同一句：「给 <名字> 说点什么…」/「发到 <频道>…」，不再写键盘提示 |
 | `src/panels/RightPanel.tsx` | 资料 / 后台任务那一整屏（`.detail` 固定 `inset: 0`，内容 860 居中）：一张平铺的资料表，顺序写死 —— 身份 → 统计 → 模型 → 预置词 → 记忆 → 技能（+ 插件 `rightPanel.tab` 的行）→ 后台任务；行点开就地展开，没有页签条。左上角「返回」按 `trail` 决定：还有上一层就 `backRight()`，否则收起回对话。`tasks.open` 为真时整屏换成 `TasksView`（抬头写「后台任务」）。`rightPanel.detail` 插槽在「模型」行展开的面板里。关的时候等 300ms 过渡再卸载 |
+| `src/panels/Browser.tsx` | 内置浏览器**兜底**（没有工作台插件时才用；正常情况下外链开在 `dock` 的浏览器页签里）：地址栏可改 / 刷新 / 「系统浏览器」，正文里点到的外链就开在这里。站内地址（与 `location.origin` 同源）不内嵌，直接给一句提示 —— 同源页面嵌进来能碰到宿主。内嵌得成不成是站点说了算（`X-Frame-Options` / `frame-ancestors`），所以「系统浏览器」那颗键一直在 |
 | `src/panels/Overlays.tsx` | 真正的浮层：拉群、找你清单、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
 | `src/panels/SettingsPage.tsx` | 设置（整屏页，`data-view="settings"`）：一列往下读（稿子 05）—— `.nav`（返回 + 设置）后面是 `.set-scroll` 的卡片组：主题分段、插件注册的 `settings.section`（「模型」收成一行，放在插件上面）、插件一行（进 `PluginsPage`）+ `rail.item` 插槽、重置数据。不再有左栏清单 |
 | `src/panels/SetupPage.tsx` | 第一次打开（稿子 10 / 11，ADR-085）：`welcome` 一屏（标识 + 三句 + 开始）、`model` 一屏（Opus / Sonnet / 自定义三个单选、地址 / 模型 / 密钥、`获取模型` 拉清单再选或手打、`就用这个`）。判据在 `store.bootstrap`：`GET /api/models` 是空数组才进来 |
@@ -237,10 +238,12 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/lib/brand.ts` | `brandMarkSvg(size)`：应用标识的唯一一份（与 `desktop/icon.svg` 同形）。最左那格、助理头像、群头像的助理座位共用；颜色走 `--rail-mark-*` |
 | `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼** |
 | `src/lib/copy-code.ts` | 代码块「复制」：`CODE_COPY_CLASS` 一处定义，`installCodeCopy()` 在 `main.tsx` 装一次全局委托（正文是 `dangerouslySetInnerHTML` 注入的，React 事件接不到里面的按钮） |
+| `src/lib/links.ts` | 正文外链的落点：`builtinLink(href)` 只认 `http(s)://`（站内路径 / 锚点 / `mailto:` 都不算），`installLinkBrowser(open)` 在 `main.tsx` 装一次全局委托 —— **只接管普通左键**，⌘/Ctrl/Shift/Alt 点与中键照旧交给浏览器 |
 | `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanDuration`（`<1s` / `3.2s` / `1m 12s`）、`humanBytes`、`unreadLabel`、`copyText` |
 | `src/lib/jank.ts` | 卡顿自报：长帧 > 240ms / 长任务 > 200ms 才记一条，`mark(label)` 标「当时在干什么」，攒够 5 秒或 `pagehide` 发 `POST /api/diag` |
 | `src/styles/onboarding.css` | 第一次打开的两屏与三条建议（稿子 10 / 11 / 12）；尺寸按 375×812 |
-| `src/styles/*.css` | 八个样式文件，顺序见 `styles/index.css`（token 先落地）；记忆抽屉并进右栏后 `memory.css` 已删 |
+| `src/styles/*.css` | 九个样式文件，顺序见 `styles/index.css`（token 先落地）；记忆抽屉并进右栏后 `memory.css` 已删 |
+| `src/styles/v6.css` | v6 稿子的覆盖层，**最后**导入（同选择器以它为准）：四列桌面骨架（rail 64 / 列表 320 / 纸 / 资料 348）、Solo 信纸页、设置与插件弹窗、≤900 的窄屏摆法。新稿子再变只改这一份，别回头改 `shell.css` 的旧值 |
 | `public/fonts/*.woff2` | Montserrat 300/400/500（本地字体，只用于品牌名） |
 
 ### 2.3 `desktop/src/`（Electron 主进程，打包配置在 `electron-builder.yml`）
@@ -280,6 +283,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 工具名要出现在提示词里 | 写 `{{tool:xxx}}`（注册表实拍，工具改名自动跟） | 不许写字面量 —— V2 的 40 处硬编码就是这么烂掉的 |
 | 改「全员都要守的规矩」（先给结论、在哪个频道回话、别写英文独白） | **不要写进 `.ts`**：改 `seed/rules.md`，再同步到 `<userRoot>/rules.md` | 每轮都进提示词的只有这一份；技能正文只在 `60-skills.md` 那段列目录时才进上下文 |
 | 改起手技能的同步行为 | `shell/seed.ts` 的 `syncAllSkills` + `<appRoot>/.seed-manifest.json` | 按 hash 判「用户改过没有」，改过的不覆盖 |
+| 改出厂插件的同步行为 | `shell/seed.ts` 的 `seedPlugins` + `pluginFiles` 账本 + `seed-legacy.ts` 的 `LEGACY_PLUGIN_HASHES` | 判据是**整个目录**（ADR-097）；老账本按历史 hash 认出厂内容 |
 | 加一个身份字段 | `documents/member/identity.ts` 的 `IdentityHeader` | 现在是 3 个：`name`/`title`/`team`，加之前先问能不能推导 |
 | 改「这条会话是私聊还是群聊」 | `channel/types.ts` 的 `chatKind` | **`dm:` 前缀 + 恰好 `{我, 一人}` 才是私聊**；团队 / 全员频道两个人也永远是群聊。界面的 `kind` 只是它的投影 |
 | 开一个私聊 / 建一个群 / 改频道设置 | `channel/membership.ts` 的 `ensureOwnerDm`（私聊，装配 / 招人自动建）+ `createGroup`（组群）+ `app/chat.ts` 的 `openDirectMessage` / `createGroup` / `updateChannel` + 路由 `POST /api/people/:slug/dm` / `POST /api/channels` / `PATCH /api/channels/:id` | 私聊只有 `{owner, 他}` 这一种形态；组群没有档案、成员 ≥2、`wakeOnAll = members`。共享指令与接话规则跟频道走（ADR-095），私聊没有。全员 / 团队频道仍只由装配投影 |
@@ -315,7 +319,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `<appRoot>/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
-| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件，整份缺失才拷）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
+| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件：缺了补、没动过的升、动过的留着）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
 | 桌面壳 / 打包 / 自动更新 / Windows 标题带 | `desktop/src/`（主进程）+ `desktop/src/window-chrome.ts` / `preload.cts` + `ui/app/src/titlebar/` + `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；Windows 菜单搬进 40px 标题带，原生菜单栏隐藏但保留加速键（ADR-069）；GitHub Actions 发版见 ADR-067；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
 | 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |

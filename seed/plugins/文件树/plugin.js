@@ -11,6 +11,8 @@ import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 const MAX_BYTES = 1024 * 1024;
+/** 图片单独放宽：截图常过 1 MB，但再大就别塞进 JSON 了。 */
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const MAX_ENTRIES = 400;
 const MAX_DEPTH = 3;
 
@@ -90,11 +92,13 @@ export function apply(api) {
 				return {
 					kind: "tree",
 					label: scope.label,
+					// 界面上的路径行要显示「这是哪个目录」：给根，别让前端猜。
+					root: scope.root,
 					entries: await childrenOf(base, base, "", 1),
 				};
 			} catch (error) {
 				// 工作区目录还没建（新招的人还没干过活）：空树，不是错误。
-				return { kind: "tree", label: scope.label, entries: [], note: errorText(error) };
+				return { kind: "tree", label: scope.label, root: scope.root, entries: [], note: errorText(error) };
 			}
 		},
 	});
@@ -112,21 +116,25 @@ export function apply(api) {
 				const info = await lstat(real);
 				if (info.isSymbolicLink()) return { kind: "error", text: "软链接不预览" };
 				if (!info.isFile()) return { kind: "error", text: "不是文件" };
-				if (info.size > MAX_BYTES) return { kind: "error", text: `文件太大（${String(info.size)} 字节，上限 1 MB）` };
 				const name = path.split("/").pop() ?? path;
+				const limit = IMAGE.test(name) ? MAX_IMAGE_BYTES : MAX_BYTES;
+				if (info.size > limit) {
+					return { kind: "error", text: `文件太大（${String(info.size)} 字节，上限 ${String(Math.round(limit / 1024 / 1024))} MB）` };
+				}
 				const bytes = await readFile(real);
+				const meta = { name, path, size: info.size, mtime: info.mtimeMs };
 				if (IMAGE.test(name)) {
 					const mime = name.toLowerCase().endsWith(".svg") ? "image/svg+xml" : `image/${(name.split(".").pop() ?? "png").toLowerCase()}`;
-					return { kind: "image", name, dataUrl: `data:${mime};base64,${bytes.toString("base64")}` };
+					return { kind: "image", ...meta, dataUrl: `data:${mime};base64,${bytes.toString("base64")}` };
 				}
 				// 非文本一律不猜：给一句人话，别把二进制塞进 JSON。
 				// 没有扩展名的文件（`LICENSE`、`Makefile`）按文本读。
 				const known = HTML.test(name) || MARKDOWN.test(name) || TEXT.test(name);
-				if (!known && /\./.test(name)) return { kind: "binary", name, bytes: info.size };
+				if (!known && /\./.test(name)) return { kind: "binary", ...meta };
 				const text = bytes.toString("utf8");
-				if (HTML.test(name)) return { kind: "html", name, text };
-				if (MARKDOWN.test(name)) return { kind: "markdown", name, text };
-				return { kind: "text", name, text };
+				if (HTML.test(name)) return { kind: "html", ...meta, text };
+				if (MARKDOWN.test(name)) return { kind: "markdown", ...meta, text };
+				return { kind: "text", ...meta, text };
 			} catch (error) {
 				return { kind: "error", text: errorText(error) };
 			}

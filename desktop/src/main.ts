@@ -52,7 +52,19 @@ function createWindow(url: string): BrowserWindow {
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
+			// 内置浏览器（工作台的网页页签）用 `<webview>`：iframe 挡不住站点的
+			// `X-Frame-Options`（百度、GitHub 都拒），webview 是独立进程，不受这一条限制。
+			webviewTag: true,
 		},
+	});
+
+	// webview 里装的是外面的网页：不给 preload、不给 node，只许 http(s)。
+	window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+		delete webPreferences.preload;
+		webPreferences.nodeIntegration = false;
+		webPreferences.contextIsolation = true;
+		webPreferences.sandbox = true;
+		if (!/^https?:\/\//i.test(params.src ?? "")) event.preventDefault();
 	});
 	window.once("ready-to-show", () => window.show());
 

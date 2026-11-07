@@ -11,6 +11,7 @@
 import * as React from "react";
 import * as client from "../api/client.ts";
 import * as store from "../state/store.ts";
+import { renderMarkdown } from "../lib/markdown.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Plugin } from "../api/types.ts";
 
@@ -24,6 +25,7 @@ import type { Plugin } from "../api/types.ts";
 export type SlotName =
 	| "rail.item"
 	| "app.page"
+	| "dock"
 	| "sidebar.header"
 	| "sidebar.list.before"
 	| "sidebar.footer"
@@ -46,9 +48,15 @@ export type SlotCell = {
 	readonly icon?: React.ReactNode;
 	/** 小的先渲染，默认 100。 */
 	readonly order?: number;
-	/** 这个格子属于哪个插件（宿主填，插件自己不用写）。`app.page` 靠它决定画哪一页。 */
+	/** 这个格子属于哪个插件（宿主填，插件自己不用写）。`app.page` / `dock` 靠它决定画哪一页。 */
 	readonly plugin?: string;
-	readonly component: React.ComponentType;
+	/** 画什么。`rightPanel.tab` 里只给 `onOpen` 的格子没有组件（点一行开一整页）。 */
+	readonly component?: React.ComponentType;
+	/**
+	 * `rightPanel.tab`：点这一行干什么。不给就按老规矩在本栏里展开组件；
+	 * 给了就交给插件（比如打开 `app.page` 的一整页），本栏不再展开。
+	 */
+	readonly onOpen?: () => void;
 };
 
 /** 插件前端入口的默认导出。 */
@@ -69,6 +77,8 @@ export type Ui = {
 	readonly store: typeof store;
 	/** `store` 之上的那个订阅钩子 —— 插件组件在 `component` 里用它读当前频道 / 消息。 */
 	readonly useStore: typeof useStore;
+	/** 消息正文那套最小 Markdown 渲染（文件预览里画 `.md` 用同一份）。 */
+	readonly markdown: typeof renderMarkdown;
 	register(slot: SlotName, cell: SlotCell): void;
 };
 
@@ -76,6 +86,7 @@ export type Ui = {
 export const SLOTS: readonly SlotName[] = [
 	"rail.item",
 	"app.page",
+	"dock",
 	"sidebar.header",
 	"sidebar.list.before",
 	"sidebar.footer",
@@ -103,7 +114,7 @@ export function cellsOf(slot: SlotName): readonly SlotCell[] {
 	return cells.get(slot) ?? [];
 }
 
-const ui: Ui = { h: React.createElement, React, api: client, store, useStore, register };
+const ui: Ui = { h: React.createElement, React, api: client, store, useStore, markdown: renderMarkdown, register };
 
 /**
  * 拉插件清单，逐个 `import` 它的前端入口并 `apply`。

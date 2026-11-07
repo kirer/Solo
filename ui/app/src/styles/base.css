@@ -40,32 +40,36 @@
 	   --dsw-static-* 的字面量。我们保留自己的变量名，其余 CSS 不用改。
 	   浅色是 DSH 的默认主题，深色在文件末尾的 [data-theme="dark"] 里覆盖。 */
 
-	/* 表面：侧栏比主区低一档，靠底色差分层，不画分隔线 */
-	--frame: rgb(249 250 251);
-	--ground: rgb(255 255 255);
-	--raised: rgb(245 246 247);
-	--hover: rgb(38 49 72 / 0.06);
-	--active: rgb(38 49 72 / 0.1);
+	/* 表面：v6 稿子的暖白三层 —— 框 / 纸 / 卡。 */
+	--frame: rgb(252 251 249);
+	--ground: rgb(246 245 242);
+	--raised: rgb(0 0 0 / 0.05);
+	--hover: rgb(0 0 0 / 0.05);
+	--active: rgb(0 0 0 / 0.09);
 
-	/* 线：DSH 的 border-l1/l2/l4 */
-	--line: rgb(0 0 0 / 0.1);
-	--rule: rgb(0 0 0 / 0.04);
-	--control: rgb(0 0 0 / 0.16);
+	/* 线：v6 的 line（硬边）/ rule（细分割）/ control（控件描边） */
+	--line: rgb(0 0 0 / 0.12);
+	--rule: rgb(0 0 0 / 0.07);
+	--control: rgb(0 0 0 / 0.22);
 
-	/* 字：label-primary / secondary / tertiary */
-	--ink: rgb(15 17 21);
-	--ink-2: rgb(97 102 107);
-	/* 三级字：白底 4.84:1、侧栏 4.63:1 —— 12px 说明文字也要过 AA（原来的 129 只有 3.7）。 */
-	--ink-3: rgb(110 114 120);
+	/* 字：primary / secondary / tertiary */
+	--ink: rgb(23 25 29);
+	--ink-2: rgb(66 72 80);
+	/* 三级字：纸底 4.5:1 以上 —— 11.5px 的说明文字也要过 AA。 */
+	--ink-3: rgb(129 136 145);
 
-	/* 强调：deepseek-500（浅）/ deepseek-400（深），只有它和它的淡底是彩色的 */
-	--accent: rgb(65 118 230);
-	/* 填满的按钮底。深色下 --accent 是链接那种亮蓝，白字压上去像不可点，所以分开。 */
-	--accent-solid: var(--accent);
+	/* 强调：链接蓝与实心按钮蓝分开（v6：浅蓝配白字读不清，配黑字又脏）。 */
+	--accent: rgb(40 96 196);
+	--accent-solid: rgb(40 96 196);
+	--accent-fill: rgb(40 96 196);
+	--accent-dim: rgb(40 96 196 / 0.12);
+	--on-accent: #fff;
 	--accent-wash: rgb(237 243 254);
-	--live: rgb(65 118 230);
+	--live: rgb(40 96 196);
 	--warn: rgb(245 158 11);
-	--danger: rgb(236 19 19);
+	--danger: rgb(196 46 46);
+	/* 别人的气泡：v6 是纸上一层很淡的填充，靠圆角分开，不是浮起来的砖。 */
+	--bubble-them: rgb(0 0 0 / 0.045);
 
 	/* 轨迹：步骤行 hover 与树竖线。比 --rule 再淡一点，步骤行是树的一行，不是卡片。 */
 	--run-line: rgb(38 49 72 / 0.04);
@@ -160,20 +164,23 @@
 	--card: rgb(18 18 18);
 	--bubble: rgb(18 18 18);
 	--bubble-own: rgb(27 27 27);
+	--bubble-them: rgb(255 255 255 / 0.035);
 	--hover: rgb(255 255 255 / 0.05);
 	--active: rgb(255 255 255 / 0.1);
-	/* 线：border-l2 / border-l1 / border-l4 */
+	/* 线：v6 的 line / rule / control */
 	--line: rgb(255 255 255 / 0.12);
-	--rule: rgb(255 255 255 / 0.06);
+	--rule: rgb(255 255 255 / 0.065);
 	--control: rgb(255 255 255 / 0.2);
-	/* 墨：label-primary / secondary / tertiary */
+	/* 墨：primary / secondary / tertiary */
 	--ink: rgb(249 250 251);
 	--ink-2: rgb(207 211 214);
-	--ink-3: rgb(173 178 184);
-	/* 强调：link / state-business 都是 deepseek-400；气泡底是 bluish-850 */
+	--ink-3: rgb(150 156 163);
+	/* 强调：链接用亮蓝，实心按钮用深一档的蓝（白字 5:1，也不像禁用）。 */
 	--accent: rgb(122 170 255);
-	/* 主按钮的底：深一档，白字才有 5:1，也不像「禁用」 */
-	--accent-solid: rgb(52 108 224);
+	--accent-solid: rgb(58 111 216);
+	--accent-fill: rgb(58 111 216);
+	--accent-dim: rgb(122 170 255 / 0.14);
+	--on-accent: #fff;
 	--accent-wash: rgb(68 68 70);
 	--live: rgb(122 170 255);
 	--warn: rgb(247 173 49);

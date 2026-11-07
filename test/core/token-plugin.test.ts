@@ -30,6 +30,11 @@ type Summary = {
 	people: readonly { key: string; tokens: number }[];
 	models: readonly { key: string; tokens: number }[];
 	empty: boolean;
+	person?: {
+		who: string;
+		daily: readonly { date: string; tokens: number }[];
+		totals: { requests: number; tokens: number; cost: number; cacheRate: number };
+	};
 };
 
 const DAY = 86_400_000;
@@ -95,6 +100,39 @@ describe("Token 统计的账", () => {
 		expect(data.daily).toHaveLength(7);
 		expect(data.daily.at(-1)?.tokens).toBe(470);
 		expect(data.heatmap).toHaveLength(56);
+	});
+
+	it("资料页那一格：只算这个人，且固定近 7 天（与选中档位无关）", async () => {
+		const now = Date.now();
+		const row = (at: number, who: string, input: number, output: number, cache: number, write: number) => ({
+			at: new Date(at).toISOString(),
+			kind: "model",
+			who,
+			model: "m",
+			in: input,
+			out: output,
+			cache,
+			write,
+			cost: 0.01,
+			ms: 1000,
+		});
+		const route = await boot([
+			row(now, "知言", 100, 20, 300, 50),
+			row(now - DAY, "知言", 10, 5, 0, 0),
+			row(now, "阿拓", 1, 1, 0, 0),
+			// 九天前的那条不在「近 7 天」里。
+			row(now - 9 * DAY, "知言", 999, 0, 0, 0),
+		]);
+
+		const data = (await route.handle({ method: "GET", params: {}, query: { days: "30", who: "知言" } })) as Summary;
+		expect(data.person?.who).toBe("知言");
+		expect(data.person?.daily).toHaveLength(7);
+		expect(data.person?.daily.at(-1)?.tokens).toBe(470);
+		expect(data.person?.totals).toMatchObject({ requests: 2, tokens: 485 });
+
+		// 不传 `who` 就没有这一格。
+		const plain = await summaryOf(route, "7");
+		expect(plain.person).toBeUndefined();
 	});
 
 	it("没有日志时有空态，而不是五百", async () => {

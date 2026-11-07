@@ -2,7 +2,7 @@
  * Token 统计的前端：设置里的一行入口 + 一整页用量面板。
  *
  * 入口走 `rail.item` 插槽（设置页的 `.set-tools` 里画成一行）；页面走 `app.page` 插槽 ——
- * 它是**一整屏**，和「后台任务」并列，不是盖在聊天上的浮层：打开时侧栏、纸、右栏都让位。
+ * 外壳把它摆成一张 1040 宽的弹窗（窄窗口铺满），底下的对话还在（v6 稿子 D14）。
  * 开关在界面状态里（`store.pluginView`），Esc 由外壳统一收回聊天。
  *
  * 两份数据都来自后端那一条 `GET /api/p/tokens?days=…`，这里只排版，不算账。
@@ -18,67 +18,65 @@ export default {
 		.tk {
 			display: flex; flex-direction: column;
 			height: 100%; min-width: 0; min-height: 0;
-			background: var(--ground);
+			background: var(--frame);
 		}
 		.tk-head {
-			display: flex; align-items: center; gap: 10px;
-			min-height: 60px; padding: 8px 16px;
+			display: flex; flex: none; align-items: center; gap: 8px;
+			min-height: 62px; padding: 0 14px 0 18px;
+			border-bottom: 0.5px solid var(--rule);
 		}
 		/* 插件页面靠自己的抬头回去（宿主不再另浮一颗返回）：两端都画。 */
 		.tk-back {
 			display: grid; place-items: center;
-			width: 36px; height: 36px; padding: 0;
-			border: 0; border-radius: 10px; background: transparent;
+			width: 28px; height: 28px; padding: 0;
+			border: 0; border-radius: 8px; background: transparent;
 			color: var(--ink-3); cursor: pointer; flex: none;
 		}
-		@media (max-width: 640px) {
-			.tk-head { padding-left: 8px; }
-			/* 一行放不下：副标题先让位，留着时间切换。 */
-			.tk-head p { display: none; }
-		}
 		.tk-back:hover { background: var(--hover); color: var(--ink); }
-		.tk-head h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 600; }
-		.tk-head p { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+		.tk-head h2 { margin: 0; font-size: 15px; line-height: 21px; font-weight: 600; }
+		.tk-head p { margin: 1px 0 0; font-size: 11px; line-height: 15px; color: var(--ink-3); }
 		.tk-grow { flex: 1 1 auto; }
 		.tk-ranges { display: flex; gap: 2px; padding: 3px; border-radius: 9px; background: var(--raised); flex: none; }
 		.tk-range {
 			height: 28px; padding: 0 11px; border: 0; border-radius: 7px;
 			background: transparent; color: var(--ink-3); white-space: nowrap;
 			font: inherit; font-size: 12.5px; cursor: pointer;
+			transition: background-color 120ms ease, color 120ms ease, box-shadow 120ms ease;
 		}
 		.tk-range:hover { color: var(--ink-2); }
 		.tk-range[data-on="true"] {
 			background: var(--field); color: var(--ink);
 			box-shadow: 0 0 0 0.5px var(--line), 0 1px 2px rgb(0 0 0 / 0.06);
 		}
-		.tk-body { flex: 1 1 auto; overflow: auto; padding: 24px clamp(20px, 4vw, 40px) 48px; }
+		.tk-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 22px clamp(20px, 4vw, 40px) 30px; }
 		.tk-inner { width: 100%; max-width: 1080px; margin: 0 auto; }
 		.tk-loading, .tk-empty {
 			display: grid; place-items: center; min-height: 280px; padding: 24px;
 			color: var(--ink-3); font-size: 13px; text-align: center; line-height: 22px;
 		}
 		.tk-error { color: var(--danger, #ec1313); }
-		.tk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-		.tk-kpi {
-			padding: 14px 16px 13px; border: 0.5px solid var(--line);
-			border-radius: 12px; background: var(--ground); min-width: 0;
+		.tk-kpis {
+			display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+			gap: 0.5px; overflow: hidden; border-radius: 14px;
+			background: var(--rule); box-shadow: 0 0 0 0.5px var(--rule);
 		}
+		.tk-kpi { display: flex; flex-direction: column; gap: 1px; min-width: 0; padding: 12px 14px; background: var(--card); }
 		.tk-kpi b {
-			display: block; font-size: 24px; line-height: 30px; font-weight: 600;
-			letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+			font-size: 16.5px; line-height: 22px; font-weight: 600;
+			letter-spacing: -0.01em; font-variant-numeric: tabular-nums;
 			white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 		}
-		.tk-kpi span { display: block; margin-top: 2px; font-size: 12px; line-height: 16px; color: var(--ink-3); }
-		.tk-meta { margin: 12px 0 0; font-size: 12px; line-height: 18px; color: var(--ink-3); }
+		.tk-kpi span { font-size: 10.5px; line-height: 14px; color: var(--ink-3); }
+		.tk-meta { margin: 9px 0 0; font-size: 11px; line-height: 16px; color: var(--ink-3); }
 		.tk-sec { margin-top: 24px; }
 		.tk-sec-head { display: flex; align-items: baseline; gap: 8px; margin: 0 0 10px; }
 		.tk-sec-head h3 { margin: 0; font-size: 13px; line-height: 18px; font-weight: 600; }
-		.tk-sec-head span { font-size: 12px; line-height: 18px; color: var(--ink-3); }
-		.tk-chart {
-			padding: 14px 16px 10px; border: 0.5px solid var(--line);
-			border-radius: 12px; background: var(--ground);
+		.tk-sec-head span {
+			margin-left: auto; color: var(--ink-3);
+			font-family: var(--mono); font-size: 9.5px; line-height: 14px;
 		}
-		.tk-bars { display: flex; align-items: flex-end; gap: 2px; height: 132px; overflow-x: auto; overflow-y: hidden; }
+		.tk-chart { padding: 14px 16px 10px; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 0.5px var(--rule); }
+		.tk-bars { display: flex; align-items: flex-end; gap: 4px; height: 128px; overflow-x: auto; overflow-y: hidden; }
 		.tk-col {
 			flex: 1 1 0; min-width: 5px; height: 100%;
 			display: flex; flex-direction: column; justify-content: flex-end;
@@ -89,16 +87,17 @@ export default {
 		}
 		.tk-col:hover .tk-bar { opacity: 1; }
 		.tk-col[data-zero="true"] .tk-bar { background: var(--line); opacity: 1; }
-		.tk-axis { display: flex; gap: 2px; margin-top: 6px; }
+		.tk-axis { display: flex; gap: 4px; margin-top: 6px; }
 		.tk-axis span {
-			flex: 1 1 0; min-width: 5px; font-size: 10px; line-height: 14px;
+			flex: 1 1 0; min-width: 5px;
+			font-family: var(--mono); font-size: 8.5px; line-height: 11px;
 			color: var(--ink-3); text-align: center; white-space: nowrap; overflow: hidden;
 		}
 		.tk-heat {
-			display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 11px);
-			gap: 3px; overflow-x: auto; padding: 2px 0;
+			display: grid; grid-template-columns: repeat(8, 24px); grid-template-rows: repeat(7, 24px);
+			justify-content: space-between; gap: 4px; overflow-x: auto; padding: 2px 0;
 		}
-		.tk-cell { width: 11px; height: 11px; border-radius: 2.5px; background: var(--rule); }
+		.tk-cell { width: 24px; height: 24px; border-radius: 2.5px; background: var(--rule); }
 		.tk-cell[data-level="1"] { background: color-mix(in oklab, var(--accent) 26%, transparent); }
 		.tk-cell[data-level="2"] { background: color-mix(in oklab, var(--accent) 48%, transparent); }
 		.tk-cell[data-level="3"] { background: color-mix(in oklab, var(--accent) 72%, transparent); }
@@ -109,18 +108,63 @@ export default {
 		.tk-legend i[data-level="2"] { background: color-mix(in oklab, var(--accent) 48%, transparent); }
 		.tk-legend i[data-level="3"] { background: color-mix(in oklab, var(--accent) 72%, transparent); }
 		.tk-legend i[data-level="4"] { background: var(--accent); }
-		.tk-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-		@media (max-width: 820px) { .tk-tables { grid-template-columns: 1fr; } }
-		.tk-card { border: 0.5px solid var(--line); border-radius: 12px; background: var(--ground); overflow: hidden; }
+		.tk-bottom {
+			display: grid; grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.09fr) minmax(0, 1.09fr);
+			gap: 16px; align-items: start;
+		}
+		.tk-card { border-radius: 12px; background: var(--card); box-shadow: 0 0 0 0.5px var(--rule); overflow: hidden; }
+		.tk-heat-card { padding: 14px; }
 		.tk-row {
-			display: grid; grid-template-columns: minmax(0, 1fr) 78px 62px 64px;
-			align-items: center; gap: 8px; padding: 9px 14px;
+			display: grid; grid-template-columns: minmax(0, 1fr) 52px 42px 46px;
+			align-items: center; gap: 6px; padding: 8px 12px;
 			border-top: 0.5px solid var(--rule); font-size: 12.5px; line-height: 18px;
 		}
-		.tk-row[data-head="true"] { border-top: 0; color: var(--ink-3); font-size: 11.5px; }
-		.tk-row > span { text-align: right; font-variant-numeric: tabular-nums; }
+		.tk-row[data-head="true"] { border-top: 0; color: var(--ink-3); font-size: 10.5px; }
+		.tk-row > span { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
 		.tk-row > span:first-child { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
-		.tk-row[data-head="true"] > span:first-child { color: var(--ink-3); }
+		.tk-row[data-head="true"] > span { color: var(--ink-3); }
+		.tk-who { display: flex; align-items: center; gap: 7px; min-width: 0; }
+		.tk-who img { flex: none; width: 18px; height: 18px; border-radius: 50%; }
+		.tk-who span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+		/* 资料页最底下一格（rightPanel.bottom，稿子 D10）：宿主不给内边距，卡片自己带。 */
+		.tk-me-card {
+			margin: 16px 12px 0; border-radius: 14px; overflow: hidden;
+			background: var(--card); box-shadow: inset 0 0 0 0.5px var(--rule);
+			animation: expand-in 220ms var(--ease-line) both;
+		}
+		.tk-me { padding: 11px 14px 0; }
+		.tk-me-head { display: flex; align-items: baseline; gap: 6px; }
+		.tk-me-head .slabel { font-size: 13.5px; font-weight: 500; }
+		.tk-me-head .sval { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+		.tk-me-bars { display: flex; align-items: flex-end; gap: 3px; height: 30px; margin: 9px 0; }
+		.tk-me-bars i { flex: 1; border-radius: 2px 2px 1px 1px; background: var(--accent); opacity: 0.75; }
+		.tk-me-bars i[data-zero="true"] { background: var(--rule); opacity: 1; }
+		.tk-me-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-bottom: 9px; }
+		.tk-me-stats b {
+			display: block; font-size: 12.5px; font-weight: 600; line-height: 17px;
+			font-variant-numeric: tabular-nums;
+		}
+		.tk-me-stats span { display: block; color: var(--ink-3); font-size: 10px; line-height: 14px; }
+		.tk-me-foot {
+			display: flex; align-items: center; width: calc(100% + 28px); margin: 0 -14px;
+			padding: 9px 14px; border: 0; border-top: 0.5px solid var(--rule);
+			background: none; color: var(--ink-3); font: inherit; font-size: 11.5px; line-height: 16px;
+			text-align: left; cursor: pointer;
+		}
+		.tk-me-foot:hover { color: var(--ink-2); }
+		.tk-me-foot svg { margin-left: auto; flex: none; }
+		@media (max-width: 900px) {
+			.tk-head { min-height: 56px; padding: 0 12px; }
+			.tk-head p { display: none; }
+			.tk-body { padding: 8px 0 22px; }
+			.tk-inner { padding: 0 16px; }
+			.tk-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+			.tk-sec { margin-top: 20px; }
+			.tk-bars { height: 74px; gap: 3px; }
+			.tk-bottom { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+			/* 手机上不放 8 周热力图：窄屏里会糊成一片，「谁花了多少」更要紧（DESIGN §13.11）。 */
+			.tk-heat-sec { display: none; }
+		}
 	`,
 
 	apply(ui) {
@@ -199,7 +243,7 @@ export default {
 			const pad = Array.from({ length: lead }, (_, index) => h("i", { key: `pad-${String(index)}`, className: "tk-cell" }));
 			return h(
 				"div",
-				null,
+				{ className: "tk-card tk-heat-card" },
 				h(
 					"div",
 					{ className: "tk-heat" },
@@ -223,19 +267,35 @@ export default {
 			);
 		}
 
-		function Table({ title, rows, head }) {
+		function Table({ title, note, rows, head }) {
 			return h(
 				"div",
-				{ className: "tk-card" },
-				h("div", { className: "tk-row", "data-head": "true" }, head.map((text, index) => h("span", { key: text }, index === 0 ? title : text))),
-				rows.map((row) =>
-					h(
-						"div",
-						{ key: row.key, className: "tk-row" },
-						h("span", { title: row.key }, row.key),
-						h("span", null, compact(row.tokens)),
-						h("span", null, percent(row.cacheRate)),
-						h("span", null, money(row.cost)),
+				null,
+				h("div", { className: "tk-sec-head" }, h("h3", null, title), h("span", null, note)),
+				h(
+					"div",
+					{ className: "tk-card" },
+					h("div", { className: "tk-row", "data-head": "true" }, head.map((text) => h("span", { key: text }, text))),
+					rows.map((row) =>
+						h(
+							"div",
+							{ key: row.key, className: "tk-row" },
+							h(
+								"span",
+								{ title: row.key },
+								title === "按人"
+									? h(
+											"span",
+											{ className: "tk-who" },
+											h("img", { src: `/api/avatar/${encodeURIComponent(row.key)}?size=36`, alt: "" }),
+											h("span", null, row.key),
+										)
+									: row.key,
+							),
+							h("span", null, compact(row.tokens)),
+							h("span", null, percent(row.cacheRate)),
+							h("span", null, money(row.cost)),
+						),
 					),
 				),
 			);
@@ -336,11 +396,12 @@ export default {
 												h("div", { className: "tk-kpi" }, h("b", null, compact(totals.output)), h("span", null, "输出")),
 												h("div", { className: "tk-kpi" }, h("b", null, percent(totals.cacheRate)), h("span", null, "缓存命中率")),
 												h("div", { className: "tk-kpi" }, h("b", null, money(totals.cost)), h("span", null, "预估成本")),
+												h("div", { className: "tk-kpi" }, h("b", null, String(totals.requests)), h("span", null, "模型调用")),
 											),
 											h(
 												"p",
 												{ className: "tk-meta" },
-												`${String(totals.requests)} 次模型调用 · 耗时 ${duration(totals.ms)} · 缓存读 ${compact(totals.cache)} / 写 ${compact(totals.write)}`,
+												`耗时 ${duration(totals.ms)} · 缓存读 ${compact(totals.cache)} / 写 ${compact(totals.write)}`,
 											),
 											h(
 												"div",
@@ -350,17 +411,99 @@ export default {
 											),
 											h(
 												"div",
-												{ className: "tk-sec" },
-												h("div", { className: "tk-sec-head" }, h("h3", null, "活动热力图"), h("span", null, "最近 8 周")),
-												h(Heatmap, { heatmap: data.heatmap }),
-											),
-											h(
-												"div",
-												{ className: "tk-sec tk-tables" },
-												h(Table, { title: "按人", rows: data.people, head: ["按人", "Token", "命中", "成本"] }),
-												h(Table, { title: "按模型", rows: data.models, head: ["按模型", "Token", "命中", "成本"] }),
+												{ className: "tk-sec tk-bottom" },
+												h(
+													"div",
+													{ className: "tk-heat-sec" },
+													h("div", { className: "tk-sec-head" }, h("h3", null, "活动热力图"), h("span", null, "最近 8 周")),
+													h(Heatmap, { heatmap: data.heatmap }),
+												),
+												h(Table, { title: "按人", note: "计费 Token", rows: data.people, head: ["人", "Token", "命中", "成本"] }),
+												h(Table, { title: "按模型", note: "计费 Token", rows: data.models, head: ["模型", "Token", "命中", "成本"] }),
 											),
 										),
+					),
+				),
+			);
+		}
+
+		/**
+		 * 资料页最底下一格：**这个人的**近 7 天用量（稿子 D10）。
+		 * 谁被打开就查谁（`who` 是 slug）；团队频道和后台任务那一态不画。
+		 */
+		function PersonUsage() {
+			const person = useStore((state) => state.person);
+			const detail = useStore((state) => state.detail);
+			const tasksOpen = useStore((state) => state.tasks.open);
+			const who =
+				person !== null
+					? person.slug
+					: detail !== null && detail.channel.kind === "dm"
+						? (detail.members.find((member) => member.label === detail.channel.title)?.slug ?? "")
+						: "";
+			const [data, setData] = useState(undefined);
+
+			useEffect(() => {
+				if (who === "") return;
+				let cancelled = false;
+				setData(undefined);
+				fetch(`/api/p/tokens?days=7&who=${encodeURIComponent(who)}`)
+					.then((response) => (response.ok ? response.json() : undefined))
+					.then((payload) => {
+						if (!cancelled) setData(payload);
+					})
+					.catch(() => {
+						if (!cancelled) setData(undefined);
+					});
+				return () => {
+					cancelled = true;
+				};
+			}, [who]);
+
+			const mine = data?.person;
+			if (tasksOpen || who === "" || mine === undefined || mine.totals.requests === 0) return null;
+			const max = mine.daily.reduce((top, day) => Math.max(top, day.tokens), 0);
+
+			return h(
+				"div",
+				{ className: "tk-me-card" },
+				h(
+					"div",
+					{ className: "tk-me" },
+					h(
+						"div",
+						{ className: "tk-me-head" },
+						h("span", { className: "slabel" }, "Token 用量"),
+						h("span", { className: "sval" }, "近 7 天"),
+					),
+					h(
+						"div",
+						{ className: "tk-me-bars" },
+						mine.daily.map((day) =>
+							h("i", {
+								key: day.date,
+								"data-zero": day.tokens === 0 ? "true" : "false",
+								style: { height: max === 0 ? "2px" : `${String(Math.max(4, (day.tokens / max) * 100))}%` },
+								title: `${day.date} · ${compact(day.tokens)} token`,
+							}),
+						),
+					),
+					h(
+						"div",
+						{ className: "tk-me-stats" },
+						h("div", null, h("b", null, compact(mine.totals.tokens)), h("span", null, "Token")),
+						h("div", null, h("b", null, money(mine.totals.cost)), h("span", null, "成本")),
+						h("div", null, h("b", null, percent(mine.totals.cacheRate)), h("span", null, "缓存命中")),
+					),
+					h(
+						"button",
+						{ type: "button", className: "tk-me-foot", onClick: () => store.openPluginView(SLUG) },
+						`${String(mine.totals.requests)} 次调用 · 在 Token 统计里看全部`,
+						h(
+							"svg",
+							{ width: 8, height: 13, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 1.6, strokeLinecap: "round", strokeLinejoin: "round" },
+							h("path", { d: "m9 5 6 7-6 7" }),
+						),
 					),
 				),
 			);
@@ -392,5 +535,6 @@ export default {
 
 		register("rail.item", { id: "entry", component: RailEntry });
 		register("app.page", { id: "page", component: Page });
+		register("rightPanel.bottom", { id: "usage", component: PersonUsage });
 	},
 };

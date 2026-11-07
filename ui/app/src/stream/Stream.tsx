@@ -11,7 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Attachment, Message, Turn } from "../api/types.ts";
 import { uploadUrl } from "../api/client.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
-import { clockTime, copyText, humanBytes } from "../lib/format.ts";
+import { clockTime, copyText, humanBytes, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows } from "./model.ts";
@@ -29,6 +29,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const people = useStore((state) => state.people);
 	const runs = useStore((state) => state.runs);
+	const presence = useStore((state) => state.presence);
 	const [atBottom, setAtBottom] = useState(true);
 	/** 点开的那条消息（复制 / 引用 / 看人）。点外面或「取消」收起。 */
 	const [picked, setPicked] = useState<{ message: Message; name: string } | null>(null);
@@ -72,6 +73,33 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		}
 		return map;
 	}, [people, detail]);
+
+	// 和助理这一页是「信纸」（v6 D01）：抬头是他，不是一条消息。
+	const hero = useMemo(() => {
+		const assistant = people.find((person) => person.assistant === true);
+		if (detail === null || assistant === undefined) return null;
+		if (detail.channel.kind !== "dm" || detail.channel.title !== assistant.label) return null;
+		const all = (runs.get(assistant.slug) ?? []).filter((turn) => turn.status === "running" || turn.stepCount > 0);
+		const startOfDay = new Date();
+		startOfDay.setHours(0, 0, 0, 0);
+		const today = all.filter((turn) => turn.startedAt >= startOfDay.getTime());
+		const total = today.reduce((sum, turn) => sum + (turn.endedAt === undefined ? 0 : turn.endedAt - turn.startedAt), 0);
+		const last = today.reduce<number | undefined>(
+			(best, turn) => (best === undefined || turn.startedAt > best ? turn.startedAt : best),
+			undefined,
+		);
+		const parts = [
+			`今天 ${String(today.length)} 轮`,
+			total === 0 ? undefined : `共 ${humanDuration(total)}`,
+			last === undefined ? undefined : `最近 ${relTime(last)}`,
+		].filter((part) => part !== undefined);
+		return {
+			slug: assistant.slug,
+			name: assistant.label,
+			state: presence.get(assistant.slug)?.state ?? "idle",
+			meta: parts.join(" · "),
+		};
+	}, [people, detail, runs, presence]);
 
 	/* ── 贴底与位置保持 ─────────────────────────────────────────── */
 
@@ -187,7 +215,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	}, []);
 
 	return (
-		<div className="flow-wrap">
+		// 换频道就重挂一次，整块消息流淡上来（`.flow-wrap` 的入场动画在 v6.css）。
+		<div className="flow-wrap" key={detail?.channel.id ?? "none"}>
 			<div className="flow" id="flow" ref={flowRef}>
 				<div className="flow-inner" id="flow-inner">
 					<div className="flow-top" id="flow-top" data-active={loadingEarlier ? "true" : "false"}>
@@ -200,6 +229,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 					<Slot name="stream.top" />
 
 					<div className="feed" id="feed" ref={feedRef}>
+						{hero === null ? null : <SoloHero hero={hero} />}
 						{detail !== null && rows.length === 0 ? <Empty channelId={detail.channel.id} /> : null}
 						{rows.map((row) => (
 							<RowView
@@ -513,6 +543,30 @@ function Attachments(props: {
 				</div>
 			)}
 		</>
+	);
+}
+
+/** 和助理那一页的抬头（v6 D01）：标识 + 名字 + 状态 + 今天跑了多少。 */
+function SoloHero(props: { hero: { slug: string; name: string; state: string; meta: string } }): JSX.Element {
+	const state = props.hero.state === "working" ? "在做" : props.hero.state === "thinking" ? "在想" : "待命";
+	return (
+		<div className="solo-hero">
+			<span
+				className="solo-hero-mark"
+				aria-hidden="true"
+				dangerouslySetInnerHTML={{
+					__html: avatarSvg({ slug: props.hero.slug, name: props.hero.name, size: 64, state: "idle", assistant: true }),
+				}}
+			/>
+			<div className="solo-hero-name">{props.hero.name}</div>
+			<div className="solo-hero-sub">
+				<span className="presence">
+					<span className="dot" />
+					助理 · {state}
+				</span>
+			</div>
+			<div className="solo-hero-meta">{props.hero.meta}</div>
+		</div>
 	);
 }
 

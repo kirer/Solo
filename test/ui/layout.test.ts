@@ -132,35 +132,25 @@ describe("顶栏的门", () => {
 	});
 });
 
-describe("整屏页：一列往下读", () => {
-	it("设置与插件都是整屏一页，不是浮层", () => {
-		const pages: readonly [string, string, string][] = [
-			["../../ui/app/src/panels/PluginsPage.tsx", "page-plugins", "page"],
-			["../../ui/app/src/panels/SettingsPage.tsx", "page-settings", "page"],
-		];
-		for (const [path, id] of pages) {
-			const source = read(path);
-			expect(source).toContain(`className="page"`);
-			expect(source).toContain(`id="${id}"`);
-			expect(source).toContain('className="nav"');
-			expect(source).toContain('className="nav-title"');
-			expect(source).not.toContain('role="dialog"');
-			expect(source).not.toContain("aria-modal");
-			expect(appSource).toContain(`<${path.split("/").pop()!.replace(".tsx", "")}`);
+describe("整屏页：桌面上是弹窗，窄窗口里铺满", () => {
+	it("设置与插件都是盖在聊天上的一张弹窗", () => {
+		for (const source of [pluginsSource, settingsSource]) {
+			expect(source).toContain('className="overlay"');
+			expect(source).toContain('role="dialog"');
+			expect(source).toContain('aria-modal="true"');
+			expect(source).toContain('className="modal-head"');
+			expect(source).toContain('className="modal-title"');
 		}
-		// 一页一列：没有左栏清单，也没有右栏正文。
-		const page = blocksOf(shellCss, ".page").join("\n");
-		expect(page).toContain("flex-direction: column");
-		expect(shellCss).not.toContain(".page-side");
-		expect(shellCss).not.toContain(".page-main");
-		expect(settingsSource).toContain('className="set-scroll"');
-		expect(settingsSource).toContain('id="settings-back"');
+		expect(pluginsSource).toContain('className="modal modal-wide"');
+		expect(settingsSource).toContain('className="modal"');
 		expect(pluginsSource).toContain('id="plugins-back"');
+		expect(appSource).toContain("<PluginsPage");
+		expect(appSource).toContain("<SettingsPage");
 	});
 
 	it("插件页的「+」在标题右边，装的是文件夹", () => {
-		const head = pluginsSource.slice(pluginsSource.indexOf('className="nav"'), pluginsSource.indexOf('className="set-scroll"'));
-		expect(head).toContain("plugin-add");
+		const head = pluginsSource.slice(pluginsSource.indexOf('className="modal-head"'), pluginsSource.indexOf('className="modal-body"'));
+		expect(head).toContain("pl-add");
 		expect(head).toContain("webkitdirectory");
 		expect(pluginsSource).not.toContain("page-side-foot");
 	});

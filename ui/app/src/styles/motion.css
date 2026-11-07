@@ -4,7 +4,7 @@
  * 三条纪律：
  *   1. 入场带 blur(6px)→0，退场带 blur(2–3px) —— 模糊比位移更「贵」，也更像真的在下沉/浮起。
  *   2. 永远不对 height 做 transition（用 max-height 或 WAAPI 的 FLIP 补偿）。
- *   3. 时长和曲线优先取 --dur-*/--ease-*（由 js/motion.js 用弹簧采样写入），
+ *   3. 时长和曲线优先取 `--dur-*` / `--ease-*`（由 js/motion.js 用弹簧采样写入），
  *      这里只写死交互微动效的固定时长。
  */
 
@@ -82,6 +82,25 @@
 	to {
 		opacity: 1;
 		transform: none;
+	}
+}
+
+/* 展开一格（资料表的一行、选择卡）：从上面落下来，比整屏入场轻一档。 */
+@keyframes expand-in {
+	from {
+		opacity: 0;
+		transform: translateY(-4px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+/* 弹窗退场：和 `dialog-sink` 同一支，但只淡出、不缩，收得比进场快。 */
+@keyframes veil-out {
+	to {
+		opacity: 0;
 	}
 }
 

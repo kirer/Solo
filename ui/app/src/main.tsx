@@ -8,11 +8,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
-import { bootstrap } from "./state/store.ts";
+import { bootstrap, openBrowser, openDock } from "./state/store.ts";
+import { installLinkBrowser } from "./lib/links.ts";
 import { fetchLastRuntimeReport } from "./api/client.ts";
 import { installJankMonitor } from "./lib/jank.ts";
 import { installCodeCopy } from "./lib/copy-code.ts";
-import { bootPlugins } from "./plugin/registry.ts";
+import { bootPlugins, cellsOf } from "./plugin/registry.ts";
 import "./styles/index.css";
 
 const host = document.getElementById("root");
@@ -38,6 +39,12 @@ if (host === null) throw new Error("找不到 #root");
 installJankMonitor();
 // 代码块的「复制」按钮是 `dangerouslySetInnerHTML` 注入的，只能全局委托一次。
 installCodeCopy();
+// 正文里的外链同理：全局委托一次，普通左键在 Solo 里开（⌘/Ctrl 点照旧交给系统）。
+installLinkBrowser((url) => {
+	openBrowser(url);
+	const cell = cellsOf("dock")[0];
+	if (cell !== undefined && cell.plugin !== undefined) openDock(cell.plugin);
+});
 void bootstrap();
 
 // 插件先装、组件后挂：插槽在首帧就是满的，不会「先空一下再长出来」。
