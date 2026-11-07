@@ -96,9 +96,8 @@ export default {
 			min-height: 62px; padding: 0 14px 0 18px;
 			border-bottom: 0.5px solid var(--rule);
 		}
-		/* 宽屏里设置那张弹窗自己有出口，这一页的返回只留给窄屏（同 Token 用量）。 */
 		.im-back {
-			display: none; place-items: center;
+			display: grid; place-items: center;
 			width: 28px; height: 28px; padding: 0; flex: none;
 			border: 0; border-radius: 8px; background: transparent;
 			color: var(--ink-3); cursor: pointer;
@@ -133,20 +132,9 @@ export default {
 		.im-tab:hover { background: var(--hover); }
 		.im-tab[data-on="true"] { background: var(--raised); color: var(--ink); }
 		.im-tab b { font-weight: 500; }
-		.im-tab .im-count {
-			margin-left: auto; min-width: 18px; padding: 0 5px; height: 18px;
-			display: grid; place-items: center; border-radius: 6px;
-			background: var(--hover); color: var(--ink-3); font-size: 10.5px;
-		}
-		.im-tab[data-on="true"] .im-count { background: var(--field); color: var(--ink-2); }
-		.im-tab-all {
-			display: grid; place-items: center; width: 22px; height: 22px; flex: none;
-			border-radius: 7px; background: var(--raised); color: var(--ink-3);
-		}
 		.im-main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 16px clamp(14px, 2.4vw, 24px) 26px; }
 		.im-main-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
 		.im-main-head h3 { margin: 0; font-size: 13px; line-height: 18px; font-weight: 600; }
-		.im-main-head .im-sub { font-size: 11px; color: var(--ink-3); }
 		.im-main-head .im-add { margin-left: auto; flex: none; white-space: nowrap; }
 		.im-note {
 			margin: 0 0 12px; padding: 9px 11px; border-radius: 9px;
@@ -228,7 +216,6 @@ export default {
 			.im-top { min-height: 0; padding: 10px 12px; flex-wrap: wrap; gap: 6px 8px; }
 			.im-top p, .im-top .im-grow { display: none; }
 			.im-top .im-online { margin-left: auto; }
-			.im-back { display: grid; }
 			.im-split { flex-direction: column; }
 			.im-rail {
 				flex-direction: row; width: auto; gap: 4px; padding: 8px 10px;
@@ -237,7 +224,6 @@ export default {
 			}
 			.im-rail-title { display: none; }
 			.im-tab { width: auto; flex: none; padding: 0 10px; }
-			.im-tab .im-count { display: none; }
 			.im-main { padding: 12px 12px 22px; }
 			.im-two { grid-template-columns: 1fr; }
 			.im-when { display: none; }
@@ -591,7 +577,7 @@ export default {
 			const [data, setData] = useState(null);
 			const [assistantModel, setAssistantModel] = useState("");
 			const [error, setError] = useState("");
-			const [brand, setBrand] = useState("all");
+			const [brand, setBrand] = useState(BRANDS[0].id);
 			const [adding, setAdding] = useState(false);
 			const [openId, setOpenId] = useState("");
 
@@ -611,10 +597,8 @@ export default {
 			}, [data]);
 
 			const bots = data?.bots ?? [];
-			const countOf = (id) => bots.filter((bot) => brandOf(bot) === id).length;
 			const running = bots.filter((bot) => bot.enabled && bot.status === "running").length;
-			const shown = brand === "all" ? bots : bots.filter((bot) => brandOf(bot) === brand);
-			const addBrand = brand === "all" ? "telegram" : brand;
+			const shown = bots.filter((bot) => brandOf(bot) === brand);
 
 			return h(
 				"section",
@@ -633,7 +617,7 @@ export default {
 					),
 					h("div", null, h("h2", null, "IM 机器人"), h("p", null, "IM 里的消息进助理私聊，回复送回原聊天")),
 					h("span", { className: "im-grow" }),
-					h("span", { className: "im-online" }, h("i"), `${String(running)} / ${String(bots.length)} 在跑`),
+					bots.length === 0 ? null : h("span", { className: "im-online" }, h("i"), `${String(running)} / ${String(bots.length)} 在跑`),
 				),
 				h(
 					"div",
@@ -642,21 +626,6 @@ export default {
 						"nav",
 						{ className: "im-rail", "aria-label": "渠道" },
 						h("span", { className: "im-rail-title" }, "渠道"),
-						h(
-							"button",
-							{ type: "button", className: "im-tab", "data-on": brand === "all" ? "true" : "false", onClick: () => setBrand("all") },
-							h(
-								"span",
-								{ className: "im-tab-all" },
-								h(
-									"svg",
-									{ width: 12, height: 12, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round" },
-									h("path", { d: "M4 6h16M4 12h16M4 18h16" }),
-								),
-							),
-							h("b", null, "全部"),
-							h("span", { className: "im-count" }, String(bots.length)),
-						),
 						BRANDS.map((item) =>
 							h(
 								"button",
@@ -672,7 +641,6 @@ export default {
 								},
 								h(BrandIcon, { brand: item.id, size: 22 }),
 								h("b", null, item.name),
-								h("span", { className: "im-count" }, String(countOf(item.id))),
 							),
 						),
 					),
@@ -683,7 +651,6 @@ export default {
 							"div",
 							{ className: "im-main-head" },
 							h("h3", null, "已接入的机器人"),
-							h("span", { className: "im-sub" }, brand === "all" ? "" : brandById(brand).name),
 							h(
 								"button",
 								{ type: "button", className: "im-btn im-add", "data-primary": "true", onClick: () => setAdding(true), disabled: adding },
@@ -705,14 +672,14 @@ export default {
 									h(
 										"div",
 										{ className: "im-list" },
-										adding ? h(AddCard, { brandId: addBrand, onDone: () => { setAdding(false); load(); } }) : null,
+										adding ? h(AddCard, { brandId: brand, onDone: () => { setAdding(false); load(); } }) : null,
 										shown.length === 0 && !adding
 											? h(
 													"p",
 													{ className: "im-empty" },
-													brand === "all"
-														? "还没有机器人。点右上角「接入机器人」；Telegram 只要一个 Bot Token，飞书 / 钉钉 / 企业微信填它们的 Webhook 地址。"
-														: `还没有${brandById(brand).name}机器人。`,
+													`还没有${brandById(brand).name}机器人。点右上角「接入机器人」${
+														brand === "telegram" ? "，只要一个 Bot Token" : "，填它的 Webhook 地址"
+													}。`,
 												)
 											: null,
 										shown.map((bot) =>
