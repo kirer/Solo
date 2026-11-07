@@ -48,10 +48,11 @@ export function LiveRow(props: {
 				className="live-av"
 				aria-hidden="true"
 				dangerouslySetInnerHTML={{
+					// 跟消息行的头像同尺寸（v6 一列 32）：大了会把名字行挤到气泡边上。
 					__html: avatarSvg({
 						slug: turn.slug,
 						name: turn.label,
-						size: 40,
+						size: 32,
 						state: "working",
 						assistant,
 					}),

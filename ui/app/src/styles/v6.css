@@ -842,22 +842,50 @@
 	line-height: 18px;
 }
 
-/* 正在回：和消息同一列。 */
+/* 正在回：和消息同一列。名字行在上、气泡在下（DESIGN §2.3）。 */
 .row-live {
 	display: grid;
 	grid-template-columns: 32px minmax(0, 1fr);
 	column-gap: 10px;
-	align-items: center;
+	align-items: start;
 	margin-top: 17px;
+}
+
+.live-av {
+	width: 32px;
+	height: 32px;
+	padding-top: 0;
+}
+
+.live-av svg,
+.live-av .av {
+	width: 32px;
+	height: 32px;
 }
 
 .live-body {
 	display: flex;
-	align-items: center;
-	gap: 7px;
+	flex-direction: column;
+	align-items: flex-start;
+	min-width: 0;
+	gap: 3px;
 	color: var(--ink-3);
 	font-size: 12.5px;
 	line-height: 18px;
+}
+
+.live-body .live-head {
+	margin-bottom: 0;
+}
+
+.live-bubble {
+	max-width: 100%;
+	min-width: 0;
+}
+
+/* 长标题要能缩到省略号，不然它会把 `5 步 · 9.1s` 挤出气泡。 */
+.live-bubble .live-what {
+	min-width: 0;
 }
 
 .live-tag {
