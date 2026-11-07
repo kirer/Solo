@@ -76,7 +76,8 @@ describe("文件树", () => {
 		expect(result.kind).toBe("tree");
 		expect(result.label).toBe("测试");
 		// 界面上的路径行读它（绝对路径）：给的是工作区根，不是猜的。
-		expect(result.root?.endsWith("/space")).toBe(true);
+		// 比的是「最后一段」，Windows 的分隔符是 `\`。
+		expect(result.root?.split(/[\\/]/).at(-1)).toBe("space");
 		const names = (result.entries ?? []).map((entry) => entry.name);
 		expect(names).toEqual(["src", "escape.txt", "README.md"]);
 		expect((result.entries ?? []).find((entry) => entry.name === "src")?.children?.[0]?.name).toBe("main.ts");

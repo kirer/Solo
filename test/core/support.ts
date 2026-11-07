@@ -81,7 +81,8 @@ async function sandbox(prefix = "core-"): Promise<Sandbox> {
 		seedTemplates: () => seedPromptTemplates(layout),
 		async cleanup() {
 			for (const runtime of opened.splice(0).reverse()) await runtime.close().catch(() => undefined);
-			await rm(root, { recursive: true, force: true });
+			// Windows 上刚被杀的子进程还会攥着 cwd 一小会儿，直接删是 EBUSY。
+			await rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 		},
 	};
 }
