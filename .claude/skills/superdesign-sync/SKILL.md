@@ -42,6 +42,18 @@ node .claude/skills/superdesign-sync/sync.mjs --origin http://127.0.0.1:7799 --p
 | `sync.mjs` | 编排：构建 → 抓 → 打包 → 推；读写 `.superdesign/sync.json` |
 | `states.mjs` | 画布上有哪几屏、每屏怎么走到（点哪个按钮、切哪个页签、什么主题和视口） |
 | `cdp.mjs` | 零依赖 CDP 客户端：Node 22+ 自带的 `WebSocket` 驱动本机 Chrome，不用装 puppeteer |
+| `push-drafts.mjs` | **推手写设计稿**（`.superdesign/drafts/v6/`），不是真界面：内嵌样式表、头像转 data URI，按 `SCREENS` 一屏一草稿推上去 |
+
+**推设计稿**（稿子在 `.superdesign/drafts/v6/`，和跑起来的界面是两回事）：
+
+```bash
+node .claude/skills/superdesign-sync/push-drafts.mjs            # 只打包，看清单
+node .claude/skills/superdesign-sync/push-drafts.mjs --push     # 打包 + 推
+```
+
+项目 id 放 `.superdesign/v6-project.json`（`{ "projectId": "…" }`，或 `--project` 传），
+每屏的 `draftId` 记在 `.superdesign/v6-sync.json`；已推过的走 `--into` 出**新版本**。
+`SCREENS` 里的名字就是文件名，**改名字等于在画布上多一屏**。稿子本身在 `.gitignore` 里，不入库。
 
 状态在 `.superdesign/sync.json`（已 gitignore）：`projectId`、每屏的 `draftId` 与 `version`、
 `lastCommit`。每次全量推送后记下当时的 commit，下次开跑先打印「上次同步之后界面改了哪几个文件」。
