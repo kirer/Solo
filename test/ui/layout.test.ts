@@ -241,10 +241,12 @@ describe("手机与桌面是同一份摆法", () => {
 		expect(blocksOf(composerCss, ".reply").join("\n")).toContain("min-width: 0");
 	});
 
-	it("换屏有动画：进来的那一屏都会浮进来", () => {
+	it("换屏有动画：进来的那一屏横向滑进来，返回时从左边滑", () => {
 		const animated = blocksOf(shellCss, ".sidebar").join("\n");
-		expect(animated).toContain("animation: page-in");
-		expect(shellCss).toContain("@keyframes page-in");
+		expect(animated).toContain("animation: slide-in-right");
+		// 方向由 `App` 的 `data-nav` 决定：退回那一层换成 slide-in-left。
+		expect(shellCss).toContain('[data-nav="back"] .sidebar');
+		expect(shellCss).toContain("animation-name: slide-in-left");
 		expect(shellCss).toContain(".detail-panel > .tasks");
 	});
 });

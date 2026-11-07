@@ -14,6 +14,7 @@ import { fetchLastRuntimeReport } from "./api/client.ts";
 import { installJankMonitor } from "./lib/jank.ts";
 import { installCodeCopy } from "./lib/copy-code.ts";
 import { bootPlugins, cellsOf } from "./plugin/registry.ts";
+import { OrbWindow } from "./orb/OrbWindow.tsx";
 import "./styles/index.css";
 
 const host = document.getElementById("root");
@@ -22,16 +23,23 @@ if (host === null) throw new Error("找不到 #root");
 // 桌面壳（`desktop/src/main.ts`）用 `?shell=desktop&platform=…` 加载本页：标题栏藏进界面里，
 // macOS 的红绿灯落在侧栏左上角，Windows 则画一条标题带；那几行留白与拖拽把手只在壳里要有
 // （浏览器里不要）。平台写进 `data-os`，CSS 和 `App.tsx` 都只看这一个标记。
+const params = new URLSearchParams(location.search);
+/** 桌面壳的第二扇窗（`?orb=1`）：只画悬浮球，见 `desktop/src/orb-window.ts`。 */
+const orbWindow = params.get("orb") === "1";
 {
-	const params = new URLSearchParams(location.search);
 	if (params.get("shell") === "desktop") {
 		document.documentElement.dataset["shell"] = "desktop";
 		const platform = params.get("platform");
 		if (platform !== null) document.documentElement.dataset["os"] = platform;
+		// 主窗口里不再画球：桌面壳有自己的悬浮窗，球只在一处（ADR-116）。
+		document.documentElement.dataset["orb"] = orbWindow ? "window" : "none";
 		// 首帧就把系统窗口按钮的颜色对到界面主题上，别等 React 挂完才变。
 		if (platform === "win32") {
 			window.soloDesktop?.setTheme(document.documentElement.dataset["theme"] === "dark" ? "dark" : "light");
 		}
+	} else {
+		// 浏览器里没有第二扇窗，球照旧长在页面里。
+		document.documentElement.dataset["orb"] = "inline";
 	}
 }
 
@@ -56,7 +64,7 @@ void bootstrap();
 void bootPlugins().finally(() => {
 	createRoot(host).render(
 		<StrictMode>
-			<App />
+			{orbWindow ? <OrbWindow /> : <App />}
 		</StrictMode>,
 	);
 });

@@ -626,7 +626,8 @@ plugins/<slug>/
 左栏头 / 列表上方 / 列表脚下、顶栏、消息流上下、输入框右侧、右栏页签与底部、设置里多一节、
 全屏浮层层。全表见 `docs/DESIGN.md` §2.8。
 插件拿到的是 `h`（`React.createElement`）、`React`、现有的接口客户端、界面状态 `store` /
-`useStore` 和 `register`，看不到别的插件的模块 —— 跨插件协作只经插槽。
+`useStore`、正文的 `markdown`、应用标识 `brandMarkSvg` 和 `register`，看不到别的插件的模块 ——
+跨插件协作只经插槽。
 「能改哪里都」的做法是**把缺口声明出来**，不是让插件往 DOM 上贴东西：插件永远不用猜别人的类名，
 宿主也不用为插件留一个万能钩子。
 
@@ -673,9 +674,24 @@ plugins/<slug>/
 `<appRoot>/im/bots.json`，不放进插件目录（ADR-115）。微信走腾讯 iLink 的扫码登录：
 一进页面就出二维码，扫完凭据（`bot_token` / `base_url`）由插件自己存下，之后主动拉取
 `getupdates`、用消息里的 `context_token` 回话（ADR-117）。
-`悬浮球` 是**纯前端**的一条小路：一颗贴边的球，悬停展开「助理私聊」的最近消息与输入框
+`悬浮球` 是贴边的一条小路：一颗球，悬停展开「助理私聊」的最近消息、输入框和一支麦克风
 （交互参考 dsh-orb，但不带第二个进程、不做 Computer Use）—— 它没有自己的会话与账本，
-发的就是那条私聊。要写新插件，契约在
+发的就是那条私聊。语音是它的主用法：录音交给本机的 `SpeechAnalyzer` 端侧模型转成文字
+（`plugin.js` 一条 `POST /api/orb/transcribe`，第一次用 `swiftc` 编 `asr.swift`），
+助理的回复默认用本地的 Kokoro 神经音色读出来（sherpa-onnx + Kokoro-82M，Apache-2.0；模型约
+346 MB，第一次用时下到 `<appRoot>/voice/tts/kokoro-zh`，面板里给下载行）—— 八个中文音色
+（`sid` 45–52）在**设置 → 悬浮球语音**里换，连同语速与朗读开关；那一页是插件用
+`app.entry` / `app.page` 自己加的，没长在宿主的设置代码里。同一页还能把播报换成
+**千问云端**（阿里云百炼 `qwen3-tts-flash-realtime`，48 个系统音色含方言，要自己的
+API Key，Key 只存 `<appRoot>/orb/voice.json`、不回给前端）；默认仍是本机，选了云端就不再
+静默回退（没填 Key 时明说 `needKey`）。本机也能**被唤醒词叫醒**：sherpa-onnx
+`KeywordSpotter`（约 5 MB，下到 `<appRoot>/voice/kws-zh`）在面板关着时听 16 kHz 音频，
+命中「你好索罗 / 你好助理 / 小索」就开面板并自动收音；没开这个开关就不常开麦克风。
+两套播报都不用系统 `speechSynthesis`，那是拼接合成，念什么都机械；本机引擎的音频不出本机
+（ADR-113、ADR-118、ADR-119）。
+桌面壳里它在**自己的透明窗**里（ADR-116）：窗口置顶、透明的地方点击穿透，拖球就是挪窗，
+位置记在 `<appRoot>/orb-window.json`；菜单栏图标左键一下开关它。浏览器里仍长在页面内，
+桌面主窗口不画球 —— 球只在一处。要写新插件，契约在
 `src/core/plugin/api.ts` 与 `docs/WEB-API.md` §13.4，不必先装一个样板。
 
 **第一版不做**：插件市场、权限。前端 `client.js` 改了不用重启服务，但要**刷新页面**（浏览器里

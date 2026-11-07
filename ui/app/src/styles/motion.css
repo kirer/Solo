@@ -27,6 +27,68 @@
 	}
 }
 
+/* 换屏：横向滑动。推入（进下一屏）从右进来，退回（返回上一屏）从左进来；
+   方向由 `App` 的 `data-nav` 决定，见 shell.css / v6.css 的用法。 */
+@keyframes slide-in-right {
+	from {
+		opacity: 0;
+		transform: translateX(24px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes slide-in-left {
+	from {
+		opacity: 0;
+		transform: translateX(-24px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes slide-out-right {
+	to {
+		opacity: 0;
+		transform: translateX(24px);
+	}
+}
+
+/* 整屏推入（窄屏上「一屏换一屏」用）：整块从屏幕外滑进来，和 iOS 的 push 一样。
+   桌面上的列并排，滑整屏会太夸张，所以只在小屏用这一组。 */
+@keyframes slide-in-right-full {
+	from {
+		opacity: 0.4;
+		transform: translateX(100%);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes slide-in-left-full {
+	from {
+		opacity: 0.4;
+		transform: translateX(-100%);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
+}
+
+@keyframes slide-out-right-full {
+	to {
+		opacity: 0;
+		transform: translateX(100%);
+	}
+}
+
 @keyframes veil-in {
 	from {
 		opacity: 0;

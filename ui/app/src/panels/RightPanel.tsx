@@ -9,10 +9,12 @@
  * 后台任务也借用这一层（§13.3）。
  */
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { editPersonMemory, getPerson, getPersonMemory, getPersonTurns, getTeam, updateChannel } from "../api/client.ts";
 import type { ChannelDetail, ChannelResponder, MemoryEntry, PersonMemory, PersonProfile, TeamProfile, Turn } from "../api/types.ts";
 import { avatarSvg, groupAvatar } from "../lib/avatar.ts";
+import { SelectField, TextAreaField } from "../lib/field.tsx";
+import { Fold } from "../lib/fold.tsx";
 import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
@@ -40,6 +42,22 @@ export function RightPanel(): JSX.Element {
 		// 关：等过渡跑完再真正卸载，否则直接「啪」地消失。
 		const timer = window.setTimeout(() => setMounted(false), 300);
 		return () => window.clearTimeout(timer);
+	}, [open]);
+
+	// 点/摸右栏以外的地方（中间的消息、左边的列表、输入框）就收起来 ——
+	// 它是一张浮在纸上的临时页，不是常驻的一列。顶栏那两颗「资料」除外：
+	// 它们自己负责开合，不然按下先被这里关掉、抬手又被它重新打开。
+	useEffect(() => {
+		if (!open) return;
+		const onDown = (event: PointerEvent): void => {
+			const target = event.target;
+			if (!(target instanceof Element)) return;
+			if (target.closest("aside.detail") !== null) return;
+			if (target.closest('[aria-label="资料与后台任务"], [aria-label="资料"]') !== null) return;
+			setRight({ open: false });
+		};
+		document.addEventListener("pointerdown", onDown, true);
+		return () => document.removeEventListener("pointerdown", onDown, true);
 	}, [open]);
 
 	if (!open && !mounted) return <aside className="detail" hidden />;
@@ -663,7 +681,7 @@ function ChannelSettings(props: {
 			{openRow === "bulletin" ? (
 				<div className="prof-panel">
 					<div className="prof-add">
-						<textarea
+						<TextAreaField
 							rows={5}
 							value={bulletin}
 							maxLength={12000}
@@ -689,7 +707,7 @@ function ChannelSettings(props: {
 			{openRow === "responder" ? (
 				<div className="prof-panel">
 					<div className="prof-add">
-						<select value={responder} onChange={(event) => setResponder(event.target.value)}>
+						<SelectField value={responder} onChange={(event) => setResponder(event.target.value)}>
 							<option value="default">默认（{fallback}）</option>
 							<option value="mentions">只有被 @ 的人才接</option>
 							<option value="everyone">房间里的人人都接</option>
@@ -698,7 +716,7 @@ function ChannelSettings(props: {
 									固定由 {member.label} 接
 								</option>
 							))}
-						</select>
+						</SelectField>
 						<p className="prof-note">不管选哪个，@ 了人都听 @ 的；这条只管没人点名的时候。</p>
 						{foot}
 					</div>
@@ -864,7 +882,7 @@ function MemoryPanel(props: { slug: string }): JSX.Element {
 				))
 			)}
 			<div className="prof-add">
-				<textarea
+				<TextAreaField
 					rows={2}
 					value={draft}
 					placeholder="加一条记忆，⌘↵ 提交"
@@ -920,29 +938,6 @@ function Row(props: {
 		<button type="button" className="prof-row" aria-expanded={props.open === true} onClick={props.onClick}>
 			{content}
 		</button>
-	);
-}
-
-/**
- * 资料表里展开的那一格：**两个方向**都有动画。
- *
- * 关上时内容先留 180ms（和 CSS 的折叠时长一致）再卸，否则收起就是「啪」地消失；
- * 高度走 grid 的 `0fr → 1fr`，不碰 `height`（motion.css 第三条纪律）。
- */
-function Fold(props: { open: boolean; children: ReactNode }): JSX.Element {
-	const [alive, setAlive] = useState(props.open);
-	useEffect(() => {
-		if (props.open) {
-			setAlive(true);
-			return;
-		}
-		const timer = window.setTimeout(() => setAlive(false), 180);
-		return () => window.clearTimeout(timer);
-	}, [props.open]);
-	return (
-		<div className="prof-fold" data-open={props.open ? "true" : "false"}>
-			<div className="prof-fold-in">{alive ? props.children : null}</div>
-		</div>
 	);
 }
 

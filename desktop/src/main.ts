@@ -7,11 +7,34 @@
  * 两个根：应用私有的东西（助理、提示词、内置插件、配置、库）在 `app.getPath("userData")`；
  * 我的组织（成员、团队、技能、规矩）在 `~/.solo`。开发态两个根都放临时目录，跑坏了删掉即可。
  */
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, screen, shell, type IpcMainEvent } from "electron";
+import {
+	app,
+	BrowserWindow,
+	dialog,
+	ipcMain,
+	Menu,
+	nativeImage,
+	nativeTheme,
+	screen,
+	shell,
+	Tray,
+	type IpcMainEvent,
+} from "electron";
+import { readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { startBackend, type Backend } from "./backend.ts";
 import { installMenu } from "./menu.ts";
+import {
+	clampOrbBounds,
+	defaultOrbBounds,
+	fitOrbBounds,
+	ORB_SIZE,
+	orbStatePath,
+	parseOrbState,
+	serializeOrbState,
+	type OrbState,
+} from "./orb-window.ts";
 import { createUpdater, type Updater } from "./updates.ts";
 import { TITLEBAR_COLORS, TITLEBAR_HEIGHT, windowChrome } from "./window-chrome.ts";
 
@@ -30,6 +53,9 @@ const logFile = join(userRoot, "logs", "core.log");
 let backend: Backend | undefined;
 let updater: Updater | undefined;
 let win: BrowserWindow | undefined;
+let orbWin: BrowserWindow | undefined;
+let tray: Tray | undefined;
+let orbState: OrbState | undefined;
 let quitting = false;
 
 function createWindow(url: string): BrowserWindow {
@@ -84,9 +110,14 @@ function createWindow(url: string): BrowserWindow {
 
 	// macOS：关窗口不退出（agent 还在干活），下次点 Dock 图标回来。真正退出走 Cmd+Q。
 	window.on("close", (event) => {
-		if (quitting || process.platform !== "darwin") return;
-		event.preventDefault();
-		window.hide();
+		if (quitting) return;
+		if (process.platform === "darwin") {
+			event.preventDefault();
+			window.hide();
+			return;
+		}
+		// 别的平台关主窗口就是退出：独立悬浮窗不能把进程留在后台（托盘图标还在）。
+		if (orbWin !== undefined && !orbWin.isDestroyed()) orbWin.close();
 	});
 
 	// `?shell=desktop`：界面据此让出红绿灯的位置、装好拖拽把手；`platform` 决定
@@ -96,8 +127,218 @@ function createWindow(url: string): BrowserWindow {
 	return window;
 }
 
+/** 悬浮窗的可用区：拖到哪块屏幕上，就按那块屏幕算边界。 */
+function areaFor(window: BrowserWindow): Electron.Rectangle {
+	return screen.getDisplayMatching(window.getBounds()).workArea;
+}
+
+function readOrbState(): OrbState | undefined {
+	try {
+		return parseOrbState(readFileSync(orbStatePath(appRoot), "utf8"));
+	} catch {
+		return undefined;
+	}
+}
+
+/** 位置存不下来只影响「下次开在哪」，不该拦住启动。 */
+function writeOrbState(state: OrbState): void {
+	try {
+		writeFileSync(orbStatePath(appRoot), serializeOrbState(state), "utf8");
+	} catch {
+		// 只在这一轮里生效。
+	}
+}
+
+/**
+ * 独立悬浮窗（ADR-116）：透明、无边框、置顶、不占 Dock。
+ *
+ * 加载的是同一个界面，只是带 `?orb=1` —— 那一页只画插件的 `overlays` 插槽，
+ * 插件据此把球画成窗口里的固定位置（拖动交给主进程挪窗口）。
+ * 透明区域默认点击穿透；鼠标移进球里时界面再打开命中。
+ */
+function createOrbWindow(url: string): BrowserWindow {
+	const saved = readOrbState();
+	const savedBounds =
+		saved === undefined ? undefined : { x: saved.x, y: saved.y, width: ORB_SIZE.width, height: ORB_SIZE.height };
+	const display = savedBounds === undefined ? screen.getPrimaryDisplay() : screen.getDisplayMatching(savedBounds);
+	const bounds = saved === undefined ? defaultOrbBounds(display.workArea) : fitOrbBounds(saved, display.workArea);
+	orbState = { ...bounds, visible: saved?.visible ?? true };
+
+	const window = new BrowserWindow({
+		...bounds,
+		width: ORB_SIZE.width,
+		height: ORB_SIZE.height,
+		show: false,
+		frame: false,
+		transparent: true,
+		backgroundColor: "#00000000",
+		hasShadow: false,
+		resizable: false,
+		minimizable: false,
+		maximizable: false,
+		fullscreenable: false,
+		skipTaskbar: true,
+		alwaysOnTop: true,
+		// 第一次点球就能用：不必先点一下把窗口叫活。
+		acceptFirstMouse: true,
+		webPreferences: {
+			preload: join(app.getAppPath(), "desktop/dist/orb-preload.cjs"),
+			contextIsolation: true,
+			nodeIntegration: false,
+			sandbox: true,
+		},
+	});
+
+	window.setAlwaysOnTop(true, "floating");
+	if (process.platform === "darwin") window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+	window.setIgnoreMouseEvents(true, { forward: true });
+
+	window.once("ready-to-show", () => {
+		if (orbState?.visible !== false) window.showInactive();
+	});
+	window.on("closed", () => {
+		orbWin = undefined;
+	});
+
+	// 和主窗口一样：外链交给系统浏览器，页面不许离开后端这一份 origin。
+	window.webContents.setWindowOpenHandler(({ url: target }) => {
+		if (target.startsWith("http://") || target.startsWith("https://")) void shell.openExternal(target);
+		return { action: "deny" };
+	});
+	window.webContents.on("will-navigate", (event, target) => {
+		if (target.startsWith(url)) return;
+		event.preventDefault();
+		if (target.startsWith("http")) void shell.openExternal(target);
+	});
+
+	void window.loadURL(`${url}?orb=1&shell=desktop&platform=${process.platform}`);
+	return window;
+}
+
+/**
+ * 悬浮窗的桥。来源只认这扇窗、这个后端 origin —— preload 在页面里，
+ * 页面里的任何脚本都能发消息，不校验就等于把「挪窗口 / 藏起来」交给网页。
+ */
+function setupOrbBridge(window: BrowserWindow): void {
+	const trusted = (event: IpcMainEvent): boolean => {
+		const url = backend?.url;
+		return (
+			url !== undefined &&
+			!window.isDestroyed() &&
+			event.sender === window.webContents &&
+			(event.senderFrame?.url.startsWith(url) ?? false)
+		);
+	};
+
+	ipcMain.on("orb:interactive", (event, on: unknown) => {
+		if (!trusted(event)) return;
+		window.setIgnoreMouseEvents(on !== true, { forward: true });
+	});
+
+	ipcMain.on("orb:drag", (event, dx: unknown, dy: unknown) => {
+		if (!trusted(event)) return;
+		if (typeof dx !== "number" || typeof dy !== "number" || !Number.isFinite(dx) || !Number.isFinite(dy)) return;
+		// 一次拖太远是坏消息（或脚本）：夹到 200px，窗口不会一帧飞出屏幕。
+		const step = (value: number): number => Math.max(-200, Math.min(200, Math.round(value)));
+		const position = window.getPosition();
+		const next = clampOrbBounds({ x: (position[0] ?? 0) + step(dx), y: (position[1] ?? 0) + step(dy) }, areaFor(window));
+		window.setPosition(next.x, next.y);
+		if (orbState !== undefined) orbState = { ...orbState, x: next.x, y: next.y };
+	});
+
+	ipcMain.on("orb:drag-end", (event) => {
+		const state = orbState;
+		if (!trusted(event) || state === undefined) return;
+		const position = window.getPosition();
+		orbState = { ...state, x: position[0] ?? state.x, y: position[1] ?? state.y };
+		writeOrbState(orbState);
+	});
+
+	ipcMain.on("orb:recenter", (event) => {
+		if (!trusted(event)) return;
+		const bounds = defaultOrbBounds(screen.getPrimaryDisplay().workArea);
+		window.setPosition(bounds.x, bounds.y);
+		orbState = { ...bounds, visible: true };
+		writeOrbState(orbState);
+	});
+
+	ipcMain.on("orb:hide", (event) => {
+		if (!trusted(event)) return;
+		hideOrb();
+	});
+}
+
+function showOrb(): void {
+	if (orbWin === undefined || orbWin.isDestroyed()) return;
+	orbWin.showInactive();
+	if (orbState !== undefined) {
+		orbState = { ...orbState, visible: true };
+		writeOrbState(orbState);
+	}
+}
+
+function hideOrb(): void {
+	if (orbWin === undefined || orbWin.isDestroyed()) return;
+	orbWin.hide();
+	// 藏起来的时候把命中关回去：下次打开时透明区域照旧穿过去。
+	orbWin.setIgnoreMouseEvents(true, { forward: true });
+	if (orbState !== undefined) {
+		orbState = { ...orbState, visible: false };
+		writeOrbState(orbState);
+	}
+}
+
+function toggleOrb(): void {
+	if (orbWin === undefined || orbWin.isDestroyed()) return;
+	if (orbWin.isVisible()) hideOrb();
+	else showOrb();
+}
+
+/** macOS 要一张「模板图」（只取 alpha，系统自己上色）；别的平台用应用图标缩一个。 */
+function trayIcon(): Electron.NativeImage {
+	const dir = join(app.getAppPath(), "desktop");
+	if (process.platform === "darwin") {
+		const image = nativeImage.createFromPath(join(dir, "trayTemplate.png"));
+		if (!image.isEmpty()) {
+			image.setTemplateImage(true);
+			return image;
+		}
+	}
+	const fallback = nativeImage.createFromPath(join(dir, "icon.png"));
+	return fallback.isEmpty() ? nativeImage.createEmpty() : fallback.resize({ width: 16, height: 16 });
+}
+
+/** 菜单每次现建：勾选状态跟着窗口此刻的可见性走。 */
+function trayMenu(): Menu {
+	return Menu.buildFromTemplate([
+		{ label: orbWin?.isVisible() === true ? "隐藏悬浮球" : "显示悬浮球", click: toggleOrb },
+		{
+			label: "打开 Solo",
+			click: () => {
+				if (win === undefined || win.isDestroyed()) return;
+				win.show();
+				win.focus();
+			},
+		},
+		{ type: "separator" },
+		{ label: "退出 Solo", click: () => void quit() },
+	]);
+}
+
+/** 菜单栏 / 托盘图标：左键一下开关悬浮球，右键是菜单（ADR-116）。 */
+function createTray(): Tray {
+	const next = new Tray(trayIcon());
+	next.setToolTip("Solo");
+	if (process.platform === "darwin") next.setIgnoreDoubleClickEvents(true);
+	next.on("click", toggleOrb);
+	next.on("right-click", () => next.popUpContextMenu(trayMenu()));
+	return next;
+}
+
 async function quit(): Promise<void> {
 	quitting = true;
+	tray?.destroy();
+	tray = undefined;
 	await backend?.stop().catch(() => undefined);
 	app.quit();
 }
@@ -203,6 +444,10 @@ async function start(): Promise<void> {
 	}
 
 	win = createWindow(backend.url);
+	// 悬浮球是同一进程里的第二扇窗（不是第二个进程）：同一个 origin，SSE / 语音权限照旧。
+	orbWin = createOrbWindow(backend.url);
+	setupOrbBridge(orbWin);
+	tray = createTray();
 	updater = createUpdater({
 		window: () => win,
 		settingsFile: join(appRoot, "settings.json"),

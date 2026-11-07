@@ -1,0 +1,63 @@
+/**
+ * 表单控件（输入 / 多行 / 下拉）的唯一一份外观。
+ *
+ * 宿主用 `lib/field.tsx` 的组件；插件不能 import 组件，但宿主样式是全局的，
+ * 插件直接写同样的 `.ui-*` 类名即可（出厂「模型管理」就是这么做）。
+ */
+
+.ui-input,
+.ui-select,
+.ui-textarea {
+	display: block;
+	width: 100%;
+	min-width: 0;
+	border: 0.5px solid var(--rule);
+	border-radius: 9px;
+	background: var(--raised);
+	color: var(--ink);
+	font: inherit;
+	font-size: 12.5px;
+	line-height: 18px;
+	transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.ui-input,
+.ui-select {
+	height: 34px;
+	padding: 0 11px;
+}
+
+/* 下拉自带的箭头贴着右边：右边留出他自己的位置，文字不贴上去。 */
+.ui-select {
+	padding-right: 10px;
+}
+
+.ui-textarea {
+	padding: 8px 10px;
+	resize: vertical;
+}
+
+.ui-input::placeholder,
+.ui-textarea::placeholder {
+	color: var(--ink-3);
+}
+
+.ui-input:hover,
+.ui-select:hover,
+.ui-textarea:hover {
+	border-color: var(--line);
+}
+
+.ui-input:focus,
+.ui-select:focus,
+.ui-textarea:focus {
+	outline: none;
+	border-color: color-mix(in oklab, var(--ink) 30%, var(--line));
+	box-shadow: 0 0 0 3px color-mix(in oklab, var(--ink) 7%, transparent);
+}
+
+.ui-input:disabled,
+.ui-select:disabled,
+.ui-textarea:disabled {
+	opacity: 0.55;
+}

@@ -1,0 +1,809 @@
+/**
+ * 悬浮球的后端：把一段录音转成文字。
+ *
+ * 只做一件事 —— 面板上的麦克风录完，前端把音频 base64 发到 `/api/orb/transcribe`，
+ * 这里落成临时文件，交给系统自带的端侧模型（macOS 26 的 SpeechAnalyzer，见 asr.swift）
+ * 转写，回一行文字。**音频不出本机**：不接云端 STT、不要 API key、不留存档。
+ *
+ * 第一次转写会做两件事（都在本机）：
+ * - 用 `swiftc` 把 asr.swift 编到临时目录（要有 Xcode 命令行工具）；
+ * - 让系统下载一次对应语言的语音模型（之后一直命中本地）。
+ *
+ * 转写是串行的：同时来两段只会排队，不会抢着编译 / 抢着用模型。
+ */
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { createWriteStream } from "node:fs";
+import {
+	DEFAULT_QWEN_SPEED,
+	DEFAULT_QWEN_VOICE,
+	QWEN_SPEED_MAX,
+	QWEN_SPEED_MIN,
+	QWEN_VOICES,
+	clampQwenSpeed,
+	isQwenVoice,
+	synthesizeQwen,
+} from "./qwen.js";
+import { access, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
+
+const SOURCE = fileURLToPath(new URL("./asr.swift", import.meta.url));
+/** base64 的长度上限：整条 JSON 还要过接口层 1 MB 的闸。 */
+const MAX_AUDIO = 900_000;
+
+function run(command, args, timeout) {
+	return new Promise((resolve, reject) => {
+		execFile(command, args, { timeout, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => {
+			if (error !== null) {
+				error.stderr = stderr;
+				reject(error);
+				return;
+			}
+			resolve({ stdout, stderr });
+		});
+	});
+}
+
+async function exists(path) {
+	try {
+		await access(path);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+let build = null;
+
+/** 编译好的转写器；同一份源码只编一次。`SOLO_ASR_BIN` 可以指到现成的二进制。 */
+async function helper() {
+	const override = process.env.SOLO_ASR_BIN;
+	if (override !== undefined && override !== "") return override;
+
+	const source = await readFile(SOURCE, "utf8");
+	const dir = join(tmpdir(), "solo-orb-asr", createHash("sha256").update(source).digest("hex").slice(0, 12));
+	const bin = join(dir, "solo-asr");
+	if (await exists(bin)) return bin;
+	if (build === null) {
+		build = (async () => {
+			await mkdir(dir, { recursive: true });
+			try {
+				await run("swiftc", ["-O", "-parse-as-library", SOURCE, "-o", bin], 180_000);
+			} catch (error) {
+				if (error.code === "ENOENT") throw new Error("转写要先装 Xcode 命令行工具：xcode-select --install");
+				const detail = String(error.stderr ?? error.message).trim().split("\n").slice(-2).join(" ");
+				throw new Error(`编译本地转写器失败：${detail}`);
+			}
+			if (!(await exists(bin))) throw new Error("编译本地转写器失败：没有产出可执行文件");
+			return bin;
+		})().finally(() => {
+			build = null;
+		});
+	}
+	return build;
+}
+
+/** webm / ogg 系统读不了，用 ffmpeg 换成 16k 单声道 wav。 */
+async function toWav(input, dir) {
+	const out = join(dir, "voice.wav");
+	try {
+		await run("ffmpeg", ["-y", "-loglevel", "error", "-i", input, "-ac", "1", "-ar", "16000", out], 60_000);
+	} catch (error) {
+		if (error.code === "ENOENT") throw new Error("这段录音是 webm，转写要先装 ffmpeg（brew install ffmpeg）");
+		throw new Error(`音频转换失败：${String(error.stderr ?? error.message).trim()}`);
+	}
+	return out;
+}
+
+function extensionOf(mime) {
+	if (mime.includes("webm")) return "webm";
+	if (mime.includes("ogg")) return "ogg";
+	if (mime.includes("wav")) return "wav";
+	if (mime.includes("mpeg")) return "mp3";
+	return "m4a";
+}
+
+/**
+ * 端侧模型按词吐结果，中文之间会带空格（「你好 ，今天」）。只收中文两侧的空格，
+ * 英文单词之间的空格留着。
+ */
+function tidy(text) {
+	return text
+		.replace(/\s+([，。！？；：、）》」』】…—])/gu, "$1")
+		.replace(/([（《「『【])\s+/gu, "$1")
+		.replace(/([㐀-鿿])\s+(?=[㐀-鿿])/gu, "$1")
+		.trim();
+}
+
+async function transcribe(body) {
+	const audio = typeof body?.audio === "string" ? body.audio : "";
+	if (audio === "") return { error: "没有收到录音" };
+	if (audio.length > MAX_AUDIO) return { error: "这段录音太长了（上限约 30 秒）" };
+
+	const bytes = Buffer.from(audio, "base64");
+	if (bytes.length < 1_000) return { error: "录音太短，没听清" };
+
+	const mime = typeof body?.mime === "string" ? body.mime : "audio/mp4";
+	const raw = typeof body?.lang === "string" ? body.lang : "zh-CN";
+	const lang = /^[a-zA-Z-]{2,16}$/u.test(raw) ? raw : "zh-CN";
+
+	const dir = await mkdtemp(join(tmpdir(), "solo-orb-audio-"));
+	try {
+		const extension = extensionOf(mime);
+		const saved = join(dir, `voice.${extension}`);
+		await writeFile(saved, bytes);
+		const input = extension === "webm" || extension === "ogg" ? await toWav(saved, dir) : saved;
+
+		const bin = await helper();
+		const { stdout } = await run(bin, [input, lang], 240_000);
+		const text = tidy(stdout);
+		return text === "" ? { error: "没听清，再说一次？" } : { text };
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
+}
+
+// ── 播报：本地 Kokoro 神经音色（Apache-2.0，可商用） ─────────────────────
+//
+// sherpa-onnx + Kokoro-82M v1.0 多语种模型。系统朗读那档（speechSynthesis）不要了：
+// 它读中文是拼接合成，怎么挑音色都机械。这里不用 Matcha —— 那份中文模型训练自
+// Baker 数据集，数据集声明仅限非商业用途（见 ADR-118）。
+//
+// 模型不进仓库、也不进插件目录（插件目录按 hash 整份同步，ADR-097），第一次用的
+// 时候下到 `<appRoot>/voice/tts/kokoro-zh`，约 346 MB。
+
+const TTS_DIR = "voice/tts/kokoro-zh";
+const KOKORO_REV = "f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b";
+/** hf-mirror 先走（国内快），huggingface.co 兜底。 */
+const TTS_MIRRORS = ["https://hf-mirror.com", "https://huggingface.co"];
+/**
+ * Kokoro v1.0 里的中文音色：八个，四女四男。`sid` 是 `voices.bin` 里的 speaker id，
+ * 换音色只换这个数。默认 `zf_xiaoxiao`。
+ */
+const VOICES = [
+	{ id: 45, name: "zf_xiaobei", label: "晓北", note: "女声 · 轻" },
+	{ id: 46, name: "zf_xiaoni", label: "晓妮", note: "女声 · 亮" },
+	{ id: 47, name: "zf_xiaoxiao", label: "晓晓", note: "女声 · 稳（默认）" },
+	{ id: 48, name: "zf_xiaoyi", label: "晓伊", note: "女声 · 软" },
+	{ id: 49, name: "zm_yunjian", label: "云健", note: "男声 · 沉" },
+	{ id: 50, name: "zm_yunxi", label: "云希", note: "男声 · 清" },
+	{ id: 51, name: "zm_yunxia", label: "云夏", note: "男声 · 温" },
+	{ id: 52, name: "zm_yunyang", label: "云扬", note: "男声 · 亮" },
+];
+const KOKORO_SID = 47;
+/** 全部钉在固定 revision 上：`main` 会漂，hash 就对不上了。 */
+const TTS_FILES = [
+	{
+		name: "model.onnx",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/model.onnx`,
+		bytes: 325_560_556,
+		sha256: "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+	},
+	{
+		name: "voices.bin",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/voices.bin`,
+		bytes: 28_200_960,
+		sha256: "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+	},
+	{
+		name: "tokens.txt",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/tokens.txt`,
+		bytes: 687,
+		sha256: "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+	},
+	{
+		name: "lexicon-zh.txt",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/lexicon-zh.txt`,
+		bytes: 2_365_182,
+		sha256: "902bc2d20ac7c449c5ecbbbb23c89d12119c03ed5b8ed27f114f0260c9e35229",
+	},
+	{
+		name: "lexicon-us-en.txt",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/lexicon-us-en.txt`,
+		bytes: 5_956_885,
+		sha256: "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+	},
+	{
+		name: "date-zh.fst",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/date-zh.fst`,
+		bytes: 59_154,
+		sha256: "eb8aa079ae3cb81d8f4404992f39d61a0cb990947512b5b8d1e54d1f6980e718",
+	},
+	{
+		name: "number-zh.fst",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/number-zh.fst`,
+		bytes: 64_482,
+		sha256: "743f402181fcfebf76cc2f0546b71fa26476e626fbe4e460fb7b4c3a7a8bd5bd",
+	},
+	{
+		name: "phone-zh.fst",
+		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/phone-zh.fst`,
+		bytes: 88_630,
+		sha256: "1ac2b6fa56b1442320c4de7db08353bab8963a2b57f365eebcdd3a2d3562f8d7",
+	},
+];
+const TTS_BYTES = TTS_FILES.reduce((sum, file) => sum + file.bytes, 0);
+
+let ttsRoot = "";
+let log = () => {};
+let engine;
+const ttsState = { downloading: false, progress: 0, error: "" };
+
+async function hasModel() {
+	for (const file of TTS_FILES) {
+		try {
+			const info = await stat(join(ttsRoot, file.name));
+			if (info.size !== file.bytes) return false;
+		} catch {
+			return false;
+		}
+	}
+	return true;
+}
+
+/**
+ * 从应用安装目录解析 sherpa-onnx-node。
+ *
+ * 插件住在 `<appRoot>/plugins/<slug>/`（桌面端就是 userData），往上一路找 node_modules
+ * 找不到依赖；后端入口在 `<install>/src/shell/main.ts`，所以按 `process.argv[1]` 倒推
+ * 安装根，再退到 cwd 和插件自己的目录。
+ */
+function loadSherpa() {
+	const roots = [];
+	const entry = process.argv[1];
+	if (typeof entry === "string" && entry !== "") roots.push(resolve(dirname(entry), "..", ".."));
+	roots.push(process.cwd(), dirname(fileURLToPath(import.meta.url)));
+	for (const root of roots) {
+		try {
+			return createRequire(join(root, "package.json"))("sherpa-onnx-node");
+		} catch (error) {
+			if (error?.code !== "MODULE_NOT_FOUND") throw error;
+		}
+	}
+	throw new Error("语音运行时没装好（sherpa-onnx-node）");
+}
+
+function tts() {
+	if (engine !== undefined) return engine;
+	const sherpa = loadSherpa();
+	engine = new sherpa.OfflineTts({
+		model: {
+			kokoro: {
+				model: join(ttsRoot, "model.onnx"),
+				voices: join(ttsRoot, "voices.bin"),
+				tokens: join(ttsRoot, "tokens.txt"),
+				lexicon: [join(ttsRoot, "lexicon-us-en.txt"), join(ttsRoot, "lexicon-zh.txt")].join(","),
+			},
+			numThreads: 8,
+			provider: "cpu",
+		},
+		maxNumSentences: 1,
+		silenceScale: 0.2,
+		ruleFsts: ["date-zh.fst", "number-zh.fst", "phone-zh.fst"].map((name) => join(ttsRoot, name)).join(","),
+	});
+	return engine;
+}
+
+function encodeWav(samples, sampleRate) {
+	const data = Buffer.alloc(samples.length * 2);
+	for (let index = 0; index < samples.length; index += 1) {
+		const value = Math.max(-1, Math.min(1, samples[index] ?? 0));
+		data.writeInt16LE(Math.round(value * 32_767), index * 2);
+	}
+	const header = Buffer.alloc(44);
+	header.write("RIFF", 0);
+	header.writeUInt32LE(36 + data.length, 4);
+	header.write("WAVE", 8);
+	header.write("fmt ", 12);
+	header.writeUInt32LE(16, 16);
+	header.writeUInt16LE(1, 20);
+	header.writeUInt16LE(1, 22);
+	header.writeUInt32LE(sampleRate, 24);
+	header.writeUInt32LE(sampleRate * 2, 28);
+	header.writeUInt16LE(2, 32);
+	header.writeUInt16LE(16, 34);
+	header.write("data", 36);
+	header.writeUInt32LE(data.length, 40);
+	return Buffer.concat([header, data]).toString("base64");
+}
+
+/**
+ * 合成一段。Electron-as-node 里 `generate()` 会抛 "External buffers are not allowed"，
+ * 只能走 `generateAsync` 的进度回调；它结束时常带一句 "TTS settlement failed"，
+ * 但音频已经完整交出来了 —— 有 chunk 就照用。
+ */
+async function synth(text, speed, sid) {
+	const model = tts();
+	const chunks = [];
+	let sampleRate = 22_050;
+	let failed = "";
+	try {
+		const audio = await model.generateAsync({
+			text,
+			sid,
+			speed,
+			onProgress: (info) => {
+				if (info.samples && info.samples.length > 0) chunks.push(Float32Array.from(info.samples));
+				return 1;
+			},
+		});
+		if (Number(audio.sampleRate) > 0) sampleRate = Number(audio.sampleRate);
+		if (chunks.length === 0 && audio.samples && audio.samples.length > 0) chunks.push(Float32Array.from(audio.samples));
+	} catch (error) {
+		failed = error instanceof Error ? error.message : String(error);
+	}
+	if (chunks.length === 0) throw new Error(failed === "" ? "没有合成出声音" : failed);
+	if (failed !== "" && !/settlement/iu.test(failed)) throw new Error(failed);
+	let total = 0;
+	for (const chunk of chunks) total += chunk.length;
+	const samples = new Float32Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		samples.set(chunk, offset);
+		offset += chunk.length;
+	}
+	return encodeWav(samples, sampleRate);
+}
+
+async function fetchModelFile(origin, file, onBytes) {
+	const response = await fetch(`${origin}/${file.path}`);
+	if (!response.ok || response.body === null) throw new Error(`下载失败 HTTP ${String(response.status)}`);
+	const part = join(ttsRoot, `${file.name}.part`);
+	const hash = createHash("sha256");
+	let received = 0;
+	const stream = Readable.fromWeb(response.body);
+	stream.on("data", (chunk) => {
+		hash.update(chunk);
+		received += chunk.length;
+		onBytes(received);
+	});
+	await pipeline(stream, createWriteStream(part));
+	if (received !== file.bytes) {
+		await rm(part, { force: true });
+		throw new Error(`${file.name} 大小不对（${String(received)}）`);
+	}
+	if (hash.digest("hex") !== file.sha256) {
+		await rm(part, { force: true });
+		throw new Error(`${file.name} 校验不对`);
+	}
+	await rename(part, join(ttsRoot, file.name));
+}
+
+async function downloadModel() {
+	if (ttsState.downloading) return;
+	ttsState.downloading = true;
+	ttsState.progress = 0;
+	ttsState.error = "";
+	try {
+		await mkdir(ttsRoot, { recursive: true });
+		let done = 0;
+		for (const file of TTS_FILES) {
+			try {
+				const info = await stat(join(ttsRoot, file.name));
+				if (info.size === file.bytes) {
+					done += file.bytes;
+					ttsState.progress = done / TTS_BYTES;
+					continue;
+				}
+			} catch {
+				// 还没有，下面去下。
+			}
+			let last = "";
+			let ok = false;
+			for (const origin of TTS_MIRRORS) {
+				try {
+					await fetchModelFile(origin, file, (received) => {
+						ttsState.progress = (done + Math.min(received, file.bytes)) / TTS_BYTES;
+					});
+					ok = true;
+					break;
+				} catch (error) {
+					last = error instanceof Error ? error.message : String(error);
+				}
+			}
+			if (!ok) throw new Error(last === "" ? "下载失败" : last);
+			done += file.bytes;
+			ttsState.progress = done / TTS_BYTES;
+		}
+		ttsState.progress = 1;
+	} catch (error) {
+		ttsState.error = error instanceof Error ? error.message : String(error);
+		log(`语音模型下载失败：${ttsState.error}`);
+	} finally {
+		ttsState.downloading = false;
+	}
+}
+
+async function voiceStatus() {
+	return {
+		present: await hasModel(),
+		downloading: ttsState.downloading,
+		progress: ttsState.progress,
+		error: ttsState.error,
+		bytes: TTS_BYTES,
+		default: KOKORO_SID,
+		voices: VOICES.map((voice) => ({ id: voice.id, name: voice.name, label: voice.label, note: voice.note })),
+	};
+}
+
+let speakChain = Promise.resolve();
+
+function serialSpeak(task) {
+	const next = speakChain.then(task, task);
+	speakChain = next.then(
+		() => undefined,
+		() => undefined,
+	);
+	return next;
+}
+
+// ── 播报用哪一套：本地 Kokoro / 千问云端（阿里云百炼） ───────────────────
+//
+// 照 dsh-orb-cordis 的商用方案：设置里选一种，Key 存在本机的语音配置里
+// （`<appRoot>/orb/voice.json`，不进插件目录，也不进日志）。选了千问就不回退本地。
+
+const SPEECH_FILE = "orb/voice.json";
+const SPEECH_DEFAULT = {
+	engine: "local",
+	apiKey: "",
+	qwenVoice: DEFAULT_QWEN_VOICE,
+	qwenSpeed: DEFAULT_QWEN_SPEED,
+};
+let speechRoot = "";
+
+function tidySpeech(raw) {
+	const value = typeof raw === "object" && raw !== null ? raw : {};
+	return {
+		engine: value.engine === "qwen" ? "qwen" : "local",
+		apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+		qwenVoice: isQwenVoice(value.qwenVoice) ? value.qwenVoice : DEFAULT_QWEN_VOICE,
+		qwenSpeed: clampQwenSpeed(value.qwenSpeed ?? DEFAULT_QWEN_SPEED),
+	};
+}
+
+async function readSpeech() {
+	try {
+		return tidySpeech(JSON.parse(await readFile(join(speechRoot, SPEECH_FILE), "utf8")));
+	} catch {
+		return { ...SPEECH_DEFAULT };
+	}
+}
+
+async function writeSpeech(next) {
+	const file = join(speechRoot, SPEECH_FILE);
+	await mkdir(dirname(file), { recursive: true });
+	await writeFile(`${file}.tmp`, JSON.stringify(next, null, 2));
+	await rename(`${file}.tmp`, file);
+	return next;
+}
+
+async function speechStatus() {
+	const speech = await readSpeech();
+	return {
+		engine: speech.engine,
+		hasKey: speech.apiKey.trim() !== "",
+		qwenVoice: speech.qwenVoice,
+		qwenSpeed: speech.qwenSpeed,
+		voices: QWEN_VOICES,
+		defaultVoice: DEFAULT_QWEN_VOICE,
+		speedMin: QWEN_SPEED_MIN,
+		speedMax: QWEN_SPEED_MAX,
+	};
+}
+
+/** 设置页一次改几项：Key 只在明确给了字符串时才动（空串 = 清掉）。 */
+async function saveSpeech(body) {
+	const old = await readSpeech();
+	const next = {
+		engine: body?.engine === "qwen" || body?.engine === "local" ? body.engine : old.engine,
+		apiKey: typeof body?.apiKey === "string" ? body.apiKey.trim() : old.apiKey,
+		qwenVoice: isQwenVoice(body?.qwenVoice) ? body.qwenVoice : old.qwenVoice,
+		qwenSpeed: body?.qwenSpeed === undefined ? old.qwenSpeed : clampQwenSpeed(body.qwenSpeed),
+	};
+	await writeSpeech(next);
+	return speechStatus();
+}
+
+// ── 唤醒词：本地 sherpa-onnx KWS（wenetspeech 3.3M，约 4.8 MB） ────────────
+//
+// 关键词是拼音（`n ǐ h ǎo s uǒ l uó` = 你好 Solo）。模型小、常听不费电；
+// 只为「点一下才听」留个例外，唤醒后立刻把麦克风交给录音，不常开。
+
+const WAKE_DIR = "voice/kws-zh";
+const WAKE_BASE = "https://modelscope.cn/models/pkufool/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/resolve/master";
+const WAKE_KEYWORDS = [
+	"n ǐ h ǎo s uǒ l uó @你好Solo",
+	"n ǐ h ǎo zh ù l ǐ @你好助理",
+	"x iǎo s uǒ @小索",
+].join("\n") + "\n";
+const WAKE_FILES = [
+	{
+		name: "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+		bytes: 4_807_159,
+		sha256: "017af32f2c0138f931d05fbc009ee864295e910aff304f77d2f563815fc834fb",
+	},
+	{
+		name: "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+		bytes: 181_025,
+		sha256: "fe53b8d6a07bc5373d1770649025a5a985c8fb3dab70323386a1b73aacba0546",
+	},
+	{
+		name: "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx",
+		bytes: 65_208,
+		sha256: "431de10b554f134ef8af320feea2db337e641290449a3d3f6cb6e5f5fd2c9c3d",
+	},
+	{ name: "tokens.txt", bytes: 1_627, sha256: "72316508d9119696145abc6f1f8cdc46287535c34e5ce7e595f845cb1499cf2e" },
+];
+const WAKE_BYTES = WAKE_FILES.reduce((sum, file) => sum + file.bytes, 0);
+let wakeRoot = "";
+const wakeState = { downloading: false, progress: 0, error: "" };
+let spotter;
+let wakeStream;
+
+async function hasWakeModel() {
+	for (const file of WAKE_FILES) {
+		try {
+			const info = await stat(join(wakeRoot, file.name));
+			if (info.size !== file.bytes) return false;
+		} catch {
+			return false;
+		}
+	}
+	return true;
+}
+
+async function fetchWakeFile(file, onBytes) {
+	const response = await fetch(`${WAKE_BASE}/${file.name}`);
+	if (!response.ok || response.body === null) throw new Error(`下载失败 HTTP ${String(response.status)}`);
+	const part = join(wakeRoot, `${file.name}.part`);
+	const hash = createHash("sha256");
+	let received = 0;
+	const stream = Readable.fromWeb(response.body);
+	stream.on("data", (chunk) => {
+		hash.update(chunk);
+		received += chunk.length;
+		onBytes(received);
+	});
+	await pipeline(stream, createWriteStream(part));
+	if (received !== file.bytes) {
+		await rm(part, { force: true });
+		throw new Error(`${file.name} 大小不对（${String(received)}）`);
+	}
+	if (hash.digest("hex") !== file.sha256) {
+		await rm(part, { force: true });
+		throw new Error(`${file.name} 校验不对`);
+	}
+	await rename(part, join(wakeRoot, file.name));
+}
+
+async function downloadWake() {
+	if (wakeState.downloading) return;
+	wakeState.downloading = true;
+	wakeState.progress = 0;
+	wakeState.error = "";
+	try {
+		await mkdir(wakeRoot, { recursive: true });
+		await writeFile(join(wakeRoot, "keywords.txt"), WAKE_KEYWORDS);
+		let done = 0;
+		for (const file of WAKE_FILES) {
+			try {
+				const info = await stat(join(wakeRoot, file.name));
+				if (info.size === file.bytes) {
+					done += file.bytes;
+					wakeState.progress = done / WAKE_BYTES;
+					continue;
+				}
+			} catch {
+				// 还没有，下面去下。
+			}
+			await fetchWakeFile(file, (received) => {
+				wakeState.progress = (done + Math.min(received, file.bytes)) / WAKE_BYTES;
+			});
+			done += file.bytes;
+			wakeState.progress = done / WAKE_BYTES;
+		}
+		wakeState.progress = 1;
+	} catch (error) {
+		wakeState.error = error instanceof Error ? error.message : String(error);
+		log(`唤醒模型下载失败：${wakeState.error}`);
+	} finally {
+		wakeState.downloading = false;
+	}
+}
+
+async function wakeStatus() {
+	return {
+		present: await hasWakeModel(),
+		downloading: wakeState.downloading,
+		progress: wakeState.progress,
+		error: wakeState.error,
+		bytes: WAKE_BYTES,
+	};
+}
+
+async function wakeSpotter() {
+	if (spotter !== undefined) return spotter;
+	const sherpa = loadSherpa();
+	const keywords = join(wakeRoot, "keywords.txt");
+	await writeFile(keywords, WAKE_KEYWORDS);
+	spotter = new sherpa.KeywordSpotter({
+		featConfig: { sampleRate: 16_000, featureDim: 80 },
+		modelConfig: {
+			transducer: {
+				encoder: join(wakeRoot, WAKE_FILES[0].name),
+				decoder: join(wakeRoot, WAKE_FILES[1].name),
+				joiner: join(wakeRoot, WAKE_FILES[2].name),
+			},
+			tokens: join(wakeRoot, "tokens.txt"),
+			numThreads: 1,
+			provider: "cpu",
+		},
+		keywordsFile: keywords,
+		keywordsScore: 1.0,
+		keywordsThreshold: 0.25,
+	});
+	return spotter;
+}
+
+/** 吃一段 16 kHz 浮点 PCM（base64 的 Float32），回这一小段里有没有叫醒。 */
+async function feedWake(samples, reset) {
+	const kws = await wakeSpotter();
+	if (wakeStream === undefined) wakeStream = kws.createStream();
+	if (reset) {
+		kws.reset(wakeStream);
+		return { hit: false };
+	}
+	wakeStream.acceptWaveform({ samples, sampleRate: 16_000 });
+	const hits = [];
+	while (kws.isReady(wakeStream)) {
+		kws.decode(wakeStream);
+		const keyword = kws.getResult(wakeStream).keyword;
+		if (typeof keyword === "string" && keyword !== "") hits.push(keyword);
+	}
+	if (hits.length > 0) {
+		kws.reset(wakeStream);
+		return { hit: true, keyword: hits[0] };
+	}
+	return { hit: false };
+}
+
+let chain = Promise.resolve();
+
+/** 串行：两段录音同时到，第二段等第一段转完。 */
+function serial(task) {
+	const next = chain.then(task, task);
+	chain = next.then(
+		() => undefined,
+		() => undefined,
+	);
+	return next;
+}
+
+export function apply(api) {
+	ttsRoot = join(api.workspace, TTS_DIR);
+	speechRoot = api.workspace;
+	wakeRoot = join(api.workspace, WAKE_DIR);
+	log = (line) => {
+		api.log(line);
+	};
+	api.route({
+		method: "GET",
+		pattern: "/api/orb/voice",
+		handle: async () => voiceStatus(),
+	});
+	api.route({
+		method: "POST",
+		pattern: "/api/orb/voice",
+		handle: async () => {
+			void downloadModel();
+			return voiceStatus();
+		},
+	});
+	api.route({
+		method: "GET",
+		pattern: "/api/orb/speech",
+		handle: async () => speechStatus(),
+	});
+	api.route({
+		method: "POST",
+		pattern: "/api/orb/speech",
+		handle: async (request) => {
+			try {
+				return await saveSpeech(request.body);
+			} catch (error) {
+				return { error: error instanceof Error ? error.message : String(error) };
+			}
+		},
+	});
+	api.route({
+		method: "POST",
+		pattern: "/api/orb/speak",
+		handle: async (request) =>
+			serialSpeak(async () => {
+				try {
+					const raw = typeof request.body?.text === "string" ? request.body.text : "";
+					const text = raw.trim();
+					if (text === "") return { error: "没有要念的字" };
+					const speech = await readSpeech();
+					if (speech.engine === "qwen") {
+						if (speech.apiKey.trim() === "") return { error: "千问还没填 API Key", needKey: true };
+						if (text.length > 1_000) return { error: "这句太长了（上限 1000 字）" };
+						const wav = await synthesizeQwen({
+							text,
+							apiKey: speech.apiKey,
+							voice: speech.qwenVoice,
+							speed: speech.qwenSpeed,
+						});
+						return { wav, engine: "qwen" };
+					}
+					if (!(await hasModel())) return { error: "语音模型还没下载", needModel: true };
+					if (text.length > 400) return { error: "这句太长了（上限 400 字）" };
+					const speedRaw = Number(request.body?.speed ?? 1);
+					const speed = Number.isFinite(speedRaw) ? Math.min(2, Math.max(0.5, speedRaw)) : 1;
+					const sidRaw = Number(request.body?.sid ?? KOKORO_SID);
+					const sid = VOICES.some((voice) => voice.id === sidRaw) ? sidRaw : KOKORO_SID;
+					return { wav: await synth(text, speed, sid), engine: "local" };
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					log(`朗读没成：${message}`);
+					return { error: message };
+				}
+			}),
+	});
+	api.route({
+		method: "GET",
+		pattern: "/api/orb/wake",
+		handle: async () => wakeStatus(),
+	});
+	api.route({
+		method: "POST",
+		pattern: "/api/orb/wake",
+		handle: async () => {
+			void downloadWake();
+			return wakeStatus();
+		},
+	});
+	api.route({
+		method: "POST",
+		pattern: "/api/orb/kws",
+		handle: async (request) =>
+			serial(async () => {
+				try {
+					const reset = request.body?.reset === true;
+					if (!reset && !(await hasWakeModel())) return { error: "唤醒模型还没下载", needModel: true };
+					if (reset) return await feedWake(new Float32Array(0), true);
+					const raw = typeof request.body?.samples === "string" ? request.body.samples : "";
+					if (raw === "") return { hit: false };
+					const bytes = Buffer.from(raw, "base64");
+					const copy = new Uint8Array(bytes.length);
+					copy.set(bytes);
+					return await feedWake(new Float32Array(copy.buffer, 0, Math.floor(copy.length / 4)), false);
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					log(`唤醒没成：${message}`);
+					return { error: message };
+				}
+			}),
+	});
+	api.route({
+		method: "POST",
+		pattern: "/api/orb/transcribe",
+		handle: async (request) =>
+			serial(async () => {
+				try {
+					const result = await transcribe(request.body);
+					if (result.error !== undefined) api.log(`转写没成：${result.error}`);
+					return result;
+				} catch (error) {
+					const message = error instanceof Error ? error.message : String(error);
+					api.log(`转写没成：${message}`);
+					return { error: message };
+				}
+			}),
+	});
+}

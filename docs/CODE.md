@@ -220,7 +220,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/titlebar/Titlebar.tsx` | Windows 桌面壳的标题带（ADR-069）：菜单「Solo / 视图」、拖拽把手、点别处 / Esc / 失焦收起；动作经 `window.soloDesktop.menu()` 交给主进程。菜单数据在同目录 `menu.ts`（纯数据，单测直接读） |
 | `src/panels/TasksPanel.tsx` | 后台任务 = **右栏的一态**（桌面，`data-tasks="true"`）/ `.detail` 铺满整屏（手机），导出 `TasksView`：上面是谁（头像 + 一行统计），下面是一列按天分组的轮次；点一条就地展开 `trigger` 引用与步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
 | `src/rows.ts` | 只剩 `isNeed()`：这条要不要我处理（顶栏「N 件找你」与左侧 2px 竖线的唯一来源） |
-| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（13 个：`app.entry`（应用级入口）/ `app.page`（整页，弹窗或右栏）/ `dock`（右侧工作台）/ `overlays` / `settings.section` / `sidebar.top` / `sidebar.footer` / `topbar.actions` / `stream.banner` / `composer.actions` / `rightPanel.detail` / `rightPanel.row` / `rightPanel.bottom`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）、`store` / `useStore`（界面状态）与 `markdown`（宿主的渲染器，插件别自己拼 HTML）。格子的 `component` 可省：只给 `onOpen` 的格子是**一行入口**（点它开插件自己的整页；`app.page` 开在设置弹窗里），`rightPanel.row` 靠这个把资料列让给工作台那一层。失败只 `console.warn` |
+| `src/plugin/registry.ts` | 前端插槽：`SlotName` / `SLOTS`（13 个：`app.entry`（应用级入口）/ `app.page`（整页，弹窗或右栏）/ `dock`（右侧工作台）/ `overlays` / `settings.section` / `sidebar.top` / `sidebar.footer` / `topbar.actions` / `stream.banner` / `composer.actions` / `rightPanel.detail` / `rightPanel.row` / `rightPanel.bottom`，位置表在 DESIGN §2.8）、`register` / `cellsOf`、`bootPlugins()`（`GET /api/plugins` → 逐个 `import` `/api/plugins/<slug>/client.js` → `apply(ui)`，注入 `style`）。`ui` 里带 `api`（接口客户端）、`store` / `useStore`（界面状态）、`markdown`（宿主的渲染器，插件别自己拼 HTML）与 `brandMarkSvg`（应用标识的唯一那份，画「助理 / Solo 本身」用它）。格子的 `component` 可省：只给 `onOpen` 的格子是**一行入口**（点它开插件自己的整页；`app.page` 开在设置弹窗里），`rightPanel.row` 靠这个把资料列让给工作台那一层。失败只 `console.warn` |
 | `src/plugin/Slot.tsx` | `<Slot name>`：把注册表里的格子画出来；没有插件时返回 `null`，不占位。没有 `component` 的格子（只有 `onOpen`）在这里跳过。`app.page` / `dock` 只画当前打开的那一个插件 |
 | ~~`src/sidebar/Rail.tsx`~~ | **已删除**（ADR-084）：最左导航整列不再存在，一屏只放一件事。应用级入口改在设置页：`app.entry` 插槽的宿主在 `SettingsPage`（`.set-tools`，插件那一行下面） |
 | `src/sidebar/Sidebar.tsx` | 列表那一屏（和对话同一格，`body[data-pane]` 互斥）：抬头是「返回助理（`#list-back`）+ 对话 + 拉群（`#new-group`）」，头下一行搜索（`#chat-search`，按名字与预览筛），再下面一列平铺频道（两行：名字+身份/团队 / 预览），行与行之间一条内缩细线。设置只在助理那屏（不在列表抬头）。**助理不在这一列**（和助理的对话就是首屏，回它靠抬头的 `#list-back`）；列表脚下只留 `sidebar.footer` 插槽 |
@@ -231,6 +231,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/panels/Browser.tsx` | 内置浏览器**兜底**（没有工作台插件时才用；正常情况下外链开在 `dock` 的浏览器页签里）：地址栏可改 / 刷新 / 「系统浏览器」，正文里点到的外链就开在这里。站内地址（与 `location.origin` 同源）不内嵌，直接给一句提示 —— 同源页面嵌进来能碰到宿主。内嵌得成不成是站点说了算（`X-Frame-Options` / `frame-ancestors`），所以「系统浏览器」那颗键一直在 |
 | `src/panels/Overlays.tsx` | 真正的浮层：拉群、找你清单、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
 | `src/panels/SettingsPage.tsx` | 设置（`overlay` + 648 的 `modal`）：一列往下读 —— 主题分段、插件注册的 `settings.section`（「模型」收成一行）、插件一行 + `app.entry` 插槽、更新代理、重置数据。**插件清单与插件的整页（`app.page`）也在这张弹窗里**，而且共用**同一张壳**：`pluginSheet` / `pluginView` 只换里面的 `.modal-level`，宽度切 `modal-wide`（648 ↔ 800），换层后用 WAAPI 补间宽高（ADR-106）；返回落回设置清单（ADR-099） |
+| `src/orb/OrbWindow.tsx` | 独立悬浮窗那一页（`?orb=1`，ADR-116）：只画 `<Slot name="overlays" />`，数据与插件照常由 `bootstrap()` / `bootPlugins()` 拉起，不画 `<App>` |
 | `src/panels/SetupPage.tsx` | 第一次打开（稿子 10 / 11，ADR-085）：`welcome` 一屏（标识 + 三句 + 开始）、`model` 一屏（Opus / Sonnet / 自定义三个单选、地址 / 模型 / 密钥、`获取模型` 拉清单再选或手打、`就用这个`）。判据在 `store.bootstrap`：`GET /api/models` 是空数组才进来 |
 | `src/stream/Starters.tsx` | 刚装好的三条建议（稿子 12）：组织里只剩助理一个人时出现在输入框上方，点了走 `store.send` 发出去 |
 | `src/panels/PluginsPage.tsx` | 插件清单（只在设置那张弹窗的 `.modal-level` 里画 `.modal-head` + `.modal-body`，外壳归 `SettingsPage`；ADR-106）：一列插件卡片（名字 / 说明 / 带来了什么 / 目录 / 开关 / 删两次），标题旁「+ 从文件夹装」；返回落在设置清单（`setPluginSheet(false)`），× 关的是整个设置（`setSettings(false)`）；读 `GET /api/plugins` |
@@ -243,8 +244,9 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/lib/links.ts` | 正文外链的落点：`builtinLink(href)` 只认 `http(s)://`（站内路径 / 锚点 / `mailto:` 都不算），`installLinkBrowser(open)` 在 `main.tsx` 装一次全局委托 —— **只接管普通左键**，⌘/Ctrl/Shift/Alt 点与中键照旧交给浏览器。`installPathPreview(open)` 同一次装：点 `[data-path]` 开右栏的文件预览层（不跳页） |
 | `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanDuration`（`<1s` / `3.2s` / `1m 12s`）、`humanBytes`、`unreadLabel`、`copyText` |
 | `src/lib/jank.ts` | 卡顿自报：长帧 > 240ms / 长任务 > 200ms 才记一条，`mark(label)` 标「当时在干什么」，攒够 5 秒或 `pagehide` 发 `POST /api/diag` |
+| `src/lib/field.tsx` | 表单控件的唯一一套：`TextField` / `TextAreaField` / `SelectField`（类名 `.ui-input` / `.ui-textarea` / `.ui-select`，样式在 `styles/field.css`）。插件不能 import 组件，直接写这三个类名（出厂「模型管理」） |
 | `src/styles/onboarding.css` | 第一次打开的两屏与三条建议（稿子 10 / 11 / 12）；尺寸按 375×812 |
-| `src/styles/*.css` | 九个样式文件，顺序见 `styles/index.css`（token 先落地）；记忆抽屉并进右栏后 `memory.css` 已删 |
+| `src/styles/*.css` | 十一个样式文件，顺序见 `styles/index.css`（token 先落地，`field.css` 是表单控件，`v6.css` 覆盖摆法，`orb.css` 管独立悬浮窗的透明底）；记忆抽屉并进右栏后 `memory.css` 已删 |
 | `src/styles/v6.css` | v6 稿子的覆盖层，**最后**导入（同选择器以它为准）：四列桌面骨架（rail 64 / 列表 320 / 纸 / 资料 348）、Solo 信纸页、设置与插件弹窗、≤900 的窄屏摆法。新稿子再变只改这一份，别回头改 `shell.css` 的旧值 |
 | `public/fonts/*.woff2` | Montserrat 300/400/500（本地字体，只用于品牌名） |
 
@@ -257,7 +259,9 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 | 文件 | 职责 |
 | --- | --- |
-| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS 用系统标题栏，ADR-088；Windows `hidden` + `titleBarOverlay`）、外链交给系统浏览器、退出前先停后端、更新与菜单接线；Windows 的 `setupBridge` 收标题带动作 / 取色（校验 sender + origin），装完原生菜单后隐藏菜单栏（加速键仍有效） |
+| `desktop/src/main.ts` | 应用生命周期：单实例锁、拉起后端、开窗口（macOS 用系统标题栏，ADR-088；Windows `hidden` + `titleBarOverlay`）、外链交给系统浏览器、退出前先停后端、更新与菜单接线；Windows 的 `setupBridge` 收标题带动作 / 取色（校验 sender + origin），装完原生菜单后隐藏菜单栏（加速键仍有效）；独立悬浮窗 `createOrbWindow` / `setupOrbBridge` 与菜单栏图标 `createTray`（ADR-116） |
+| `desktop/src/orb-window.ts` | 悬浮窗的纯函数：`ORB_SIZE`（380×520）、`defaultOrbBounds`（贴右上）、`clampOrbBounds` / `fitOrbBounds`（拖不出屏幕、换屏回默认）、`parseOrbState` / `serializeOrbState` / `orbStatePath`（`<appRoot>/orb-window.json`）。单测守 |
+| `desktop/src/orb-preload.cts` | 悬浮窗的沙箱 preload（编译成 `orb-preload.cjs`）：只暴露 `soloOrb.setInteractive / dragBy / dragEnd / recenter / hide`；主进程按 sender + origin 校验（ADR-116） |
 | `desktop/src/window-chrome.ts` | `windowChrome(platform, theme)`：macOS 返回 `{}`（系统标题栏，ADR-088）；Windows `hidden` + 40px `titleBarOverlay`（颜色与界面的 `--frame` / `--ink` 对齐）。纯函数，单测守 |
 | `desktop/src/preload.cts` | 沙箱 preload（CommonJS，编译成 `preload.cjs`）：只暴露 `soloDesktop.menu()` / `setTheme()` 两个口；根包是 `type: module`，所以必须 `.cts` + `require("electron")` |
 | `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
@@ -278,7 +282,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 加一个工具（能力） | `channel/tools/` 里对应的模块加共用件（`context.ts` / `channel-choice.ts` / `recall.ts` / `guards.ts`）、新工具一个 builder 文件，再登记进 `channel/tools/index.ts` 的 `createCoreTools` | 工具 description 只写参数语义和机械后果，行为要求引用技能 / 规矩；同一件事的几种做法用一个 `action` 枚举，不要开新工具名（现在是 8 个）；加完数一遍总数 |
 | 加一个真模型场景 | `scripts/scenario-live.ts` 的 `SCENARIOS` 注册表（`id` / `title` / `gate` / `cost` / `run`） | 搭建用代码（`createLiveAgent` / `createTeamFixture` / `openDm`），模型只负责被观察的行为；等待与证据只走 `scripts/live-support.ts`；`mechanism` 失败按代码查、`behavior` 失败按提示词查 |
 | 教 agent 一套做法 | **不要写代码**，写 `seed/skills/<名字>/SKILL.md`（团队层写 `teams/<团队>/skills/<名字>/SKILL.md`，个人层写 `members/<slug>/skills/<名字>/SKILL.md`（助理是 `assistant/<slug>/skills/`）） | `seed/skills/` 的现成技能 |
-| 改一句工具描述 / 拒绝话术 / 投递头 | `seed/text/*.md`（`## key` 分节，装配时读进 `TextCatalog`） | **不要改代码**；代码里只留键名。改完重启（工具描述在装配时定型）。加新文案就加一个键，`prompt:check` 会查「代码引用的键都存在」。新键会随启动自动追加进老工作区；**改已有键的措辞不会**（只补不改，改过的句子归我），要改就得动 `<appRoot>/text/` 里那一份 |
+| 改一句工具描述 / 拒绝话术 / 投递头 | `seed/text/*.md`（`## key` 分节，装配时读进 `TextCatalog`） | **不要改代码**；代码里只留键名。改完重启（工具描述在装配时定型）。加新文案就加一个键，`prompt:check` 会查「代码引用的键都存在」。新键与**改过措辞的键**都会随启动进老工作区（按键升级，ADR-114）；我亲手改过的那个键留着不动 |
 | 改一段提示词的**措辞** | `seed/prompt/NN-段名.md`（播种进 `<appRoot>/prompt/`，之后以磁盘为准） | 改文案不用改代码、不用重启，下一条消息生效。一个 md = 一段 = 一个 cache section，文件名前缀定序 |
 | 加一段提示词 / 改段落顺序 | 在 `seed/prompt/` 加 `NN-段名.md` + `scripts/prompt-fixture.ts` 补它用到的样例插槽 | 顺序是语义（规矩在能力前面），改顺序会触发一次性整块重写；确定性是硬要求，`npm run prompt:check` 会拦 |
 | 加一个插槽 | `docs/design/SEED-CONTRACT.md` §3 登记（值 + 来源）+ `scripts/prompt-fixture.ts` 给样例值 + 装配层填值 | 插槽表是唯一权威；未知插槽渲染成「（未设置）」并报出来，不许静默变空；「空的时候怎么说」用 `{{x ?? 默认句}}` 写在模板里，不要写回代码 |
@@ -387,8 +391,9 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 
 ## 6. 测试布局
 
-`test/desktop/`（6 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
+`test/desktop/`（7 文件）：`update-server.test.ts`（更新源：清单不缓存、产物长缓存、根路径可列、
 `../` 与 `%2e%2e%2f` 都 404）、`ready-line.test.ts`（就绪行与更新源地址的判据）、
+`orb-window.test.ts`（悬浮窗默认贴右上、拖不出屏幕、换屏回默认、状态文件坏了当没有）、
 `manifest.test.ts`（清单验签：改字、换签、换钥都不过；版本比较；平台取包）、
 `install.test.ts`（安装脚本：等旧进程退出、ready 握手、tar 优先、解包 / 替换后版本核对、
 失败回滚 / 提权重试、路径引号）、
@@ -420,7 +425,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `models.test.ts` | `setupModels` 的默认模型（没有配置 = 没有模型，ADR-023） |
 | `token-plugin.test.ts` | 出厂「Token 统计」的口径：计费 Token = 新输入 + 缓存读 + 缓存写 + 输出、命中率分母、坏行 / 非模型行跳过、旧行缺 `write` 当 0、空日志是空态（ADR-064） |
 | `im-plugin.test.ts` | 出厂「IM 机器人」：认助理私聊、Webhook 收消息带来源进私聊、token 不对 / 白名单外拒收、助理回复只送回最近说话的聊天（别的频道与我自己的话不出门）、配置写 `<appRoot>/im/bots.json` 而不是插件目录（ADR-115）、微信扫码换凭据 → 拉取 → 用 `context_token` 回话、扫码地址不是腾讯域名就拒绝出码（ADR-117） |
-| `orb-plugin.test.ts` | 出厂「悬浮球」是**纯前端**：装得上、不注册工具 / 路由 / 提示词，前端只往 `overlays` 一个插槽注册（交互与数据都在助理私聊那一条上） |
+| `orb-plugin.test.ts` | 出厂「悬浮球」：装得上、只加语音那九条路由（`POST /api/orb/transcribe`、`GET·POST /api/orb/voice`、`POST /api/orb/speak`、`GET·POST /api/orb/speech`、`GET·POST /api/orb/wake`、`POST /api/orb/kws`；不加工具 / 提示词 / 听消息 / 策略），空录音与超长录音被拒、模型没下时朗读报 `needModel`、`GET /api/orb/voice` 一并给出八个中文音色（`sid` 45–52）；播报引擎默认本机、千问的 Key 存下但不回给前端、没 Key 时 `needKey`；唤醒模型没下时 `needModel`；前端只往 `overlays` / `app.entry` / `app.page` 三个已有插槽注册、不碰系统 `speechSynthesis`（交互、语音与数据都在助理私聊那一条上；设置里的「悬浮球语音」是 `app.entry` + `app.page`） |
 | `model-switch.test.ts` | 改 `settings.json` 后**每个会话**都换到新模型（装配层逐个读 `agent.model`） |
 | `person-model.test.ts` | 给一个人换模型：当场生效、写进 `settings.json` 的 `agentModels`、重启后装配认、空串回默认、没有的模型 400 |
 | `team.test.ts` | 团队 README 的读写、`doing` / `membersOfTeam` / 建团队权限 |

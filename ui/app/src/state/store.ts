@@ -83,6 +83,11 @@ export type State = {
 	browser: string | null;
 	/** 右侧栏的返回栈：栈底永远是当前频道。 */
 	trail: RightEntry[];
+	/**
+	 * 这一屏是推入还是退回。只管换屏动画的方向（`App` 写成 `data-nav`，CSS 据此选
+	 * `slide-in-right` / `slide-in-left`）；不参与任何数据判断。
+	 */
+	nav: "fwd" | "back";
 	/** 右侧栏正在看的那个人（`null` = 看频道本身）。 */
 	person: PersonProfile | null;
 	/**
@@ -140,6 +145,7 @@ const initial: State = {
 	dockWidth: readDockWidth(),
 	browser: null,
 	trail: [{ kind: "channel" }],
+	nav: "fwd",
 	person: null,
 	setupStep: null,
 };
@@ -306,7 +312,7 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null });
+		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
@@ -324,6 +330,7 @@ export async function openChannel(id: string | null): Promise<void> {
 		rightFile: null,
 		person: null,
 		trail: [{ kind: "channel" }],
+		nav: "fwd",
 		// 手机上资料是一整屏：切频道时它若还开着，会直接挡住刚点开的这个对话。
 		...(typeof window !== "undefined" && window.matchMedia("(max-width: 900px)").matches
 			? { right: { open: false } }
@@ -531,7 +538,10 @@ export function setTheme(theme: Theme): void {
 }
 
 export function setRight(right: Partial<State["right"]>): void {
-	patch({ right: { ...state.right, ...right } });
+	patch({
+		right: { ...state.right, ...right },
+		...(right.open === true ? { nav: "fwd" as const } : right.open === false ? { nav: "back" as const } : {}),
+	});
 }
 
 export function setConn(ok: boolean): void {
@@ -547,6 +557,7 @@ export function setReply(reply: State["reply"]): void {
 export function setSettings(open: boolean): void {
 	patch({
 		settings: open,
+		nav: open ? "fwd" : "back",
 		// 离开设置（或重新进入）都先把重置确认收掉：它只在设置页里成立。
 		resetOpen: false,
 		restartOpen: null,
@@ -567,6 +578,7 @@ export function setSettings(open: boolean): void {
 export function setPluginSheet(open: boolean): void {
 	patch({
 		pluginSheet: open,
+		nav: open ? "fwd" : "back",
 		...(open
 			? {
 					restartOpen: null,
@@ -629,6 +641,7 @@ export function openTasks(slug?: string): void {
 	// 后台任务是右栏的一态（桌面）或那一层整屏浮层（手机）：右栏必须打开，
 	// 其余整屏让路（§13.3）。
 	patch({
+		nav: "fwd",
 		tasks: { open: true, who },
 		right: { open: true },
 		needMenu: false,
@@ -651,6 +664,7 @@ export function closeTasks(): void {
 	const mobile =
 		typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
 	patch({
+		nav: "back",
 		tasks: { open: false, who: getState().tasks.who },
 		pluginView: null,
 		settings: false,
@@ -662,6 +676,7 @@ export function closeTasks(): void {
 /** 打开一个插件页（`app.page` 插槽里 slug 对得上的那一格）。 */
 export function openPluginView(slug: string): void {
 	patch({
+		nav: "fwd",
 		pluginView: slug,
 		dock: null,
 		rightPage: null,
@@ -678,37 +693,37 @@ export function openPluginView(slug: string): void {
 
 /** 回到聊天。Esc 与插件页自己的返回键都走这里。 */
 export function closePluginView(): void {
-	patch({ pluginView: null });
+	patch({ pluginView: null, nav: "back" });
 }
 
 /** 打开右侧工作台：占右栏那一层（不是另开一列，也不占正文宽度）。 */
 export function openDock(slug: string): void {
-	patch({ dock: slug, rightPage: null, rightFile: null, tasks: { open: false, who: getState().tasks.who }, right: { open: true }, settings: false, pluginSheet: false, pluginView: null });
+	patch({ nav: "fwd", dock: slug, rightPage: null, rightFile: null, tasks: { open: false, who: getState().tasks.who }, right: { open: true }, settings: false, pluginSheet: false, pluginView: null });
 }
 
 /** 收起工作台：回右栏的上一层（资料页），右栏本身不关。 */
 export function closeDock(): void {
-	patch({ dock: null });
+	patch({ dock: null, nav: "back" });
 }
 
 /** 在右栏里推入一个插件页（不弹窗）：占右栏那一层，返回退回资料页。 */
 export function openRightPage(slug: string): void {
-	patch({ rightPage: slug, dock: null, pluginView: null, rightFile: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+	patch({ nav: "fwd", rightPage: slug, dock: null, pluginView: null, rightFile: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
 }
 
 /** 收起右栏里的插件页：回资料页，右栏本身不关。 */
 export function closeRightPage(): void {
-	patch({ rightPage: null });
+	patch({ rightPage: null, nav: "back" });
 }
 
 /** 在右栏里推入一份文件预览（正文里点到的相对路径）：和插件页同一层，返回退回资料页。 */
 export function openRightFile(path: string): void {
-	patch({ rightFile: path, rightPage: null, dock: null, pluginView: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+	patch({ nav: "fwd", rightFile: path, rightPage: null, dock: null, pluginView: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
 }
 
 /** 收起右栏里的文件预览：回资料页，右栏本身不关。 */
 export function closeRightFile(): void {
-	patch({ rightFile: null });
+	patch({ rightFile: null, nav: "back" });
 }
 
 /** 拖右栏的左边线：宽度记进偏好，换页 / 下次打开还是这么宽。`null` 回到默认 348。 */
@@ -754,10 +769,34 @@ export type RightEntry = { kind: "channel" } | { kind: "person"; slug: string };
 export async function openPerson(slug: string): Promise<void> {
 	try {
 		const profile = await getPerson(slug);
-		patch({ person: profile, trail: [...state.trail, { kind: "person", slug }], right: { open: true } });
+		// 私聊里点的就是对面那个人：这一屏本来就是他的资料表，不再压一层 ——
+		// 否则「返回」第一次看起来什么都没变，要按两次才回到聊天。
+		const peer =
+			state.detail !== null &&
+			state.detail.channel.kind === "dm" &&
+			state.detail.members.some((member) => member.slug === slug && member.slug !== "owner");
+		if (peer) {
+			patch({ nav: "fwd", right: { open: true } });
+			return;
+		}
+		// 右栏本来关着（群里点头像）：人物案就是这一层的根，「返回」直接收起，
+		// 不该先退到「群的资料页」再退一次。
+		const trail: RightEntry[] =
+			state.right.open === false ? [{ kind: "person", slug }] : [...state.trail, { kind: "person", slug }];
+		patch({ nav: "fwd", person: profile, trail, right: { open: true } });
 	} catch (error) {
 		throw error;
 	}
+}
+
+/**
+ * 顶栏那颗「资料」：永远是这个频道自己的资料表。
+ *
+ * 刚才点过头像、钻进过某个人的人物案时，`person` 和 `trail` 还停在那儿 ——
+ * 不重置的话，再点「资料」看到的还是那个人的档案，像开错了页。
+ */
+export function openChannelInfo(): void {
+	patch({ nav: "fwd", person: null, trail: [{ kind: "channel" }], right: { open: true } });
 }
 
 /** 退一层。栈底是频道，再退就只剩频道本身（仍然显示，不打空）。 */
@@ -766,10 +805,10 @@ export function backRight(): void {
 	const trail = state.trail.slice(0, -1);
 	const last = trail[trail.length - 1];
 	if (last === undefined || last.kind === "channel") {
-		patch({ trail, person: null });
+		patch({ nav: "back", trail, person: null });
 		return;
 	}
 	void getPerson(last.slug)
-		.then((profile) => patch({ trail, person: profile }))
-		.catch(() => patch({ trail, person: null }));
+		.then((profile) => patch({ nav: "back", trail, person: profile }))
+		.catch(() => patch({ nav: "back", trail, person: null }));
 }

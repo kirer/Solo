@@ -1,0 +1,17 @@
+/* 独立悬浮窗（`?orb=1`，ADR-116）：整页透明，只留插件自己画的那一层。
+ *
+ * 主窗口照旧是不透明的纸；这扇窗只有球和展开的面板，其余像素要让桌面透过来。
+ * 放在最后导入，盖掉 base / v6 给 body 与 #root 的底色。 */
+html[data-orb="window"],
+html[data-orb="window"] body,
+html[data-orb="window"] #root {
+	background: transparent !important;
+}
+
+html[data-orb="window"] body {
+	overflow: hidden;
+}
+
+html[data-orb="window"] #root {
+	height: 100%;
+}

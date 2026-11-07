@@ -11,6 +11,7 @@
 import * as React from "react";
 import * as client from "../api/client.ts";
 import * as store from "../state/store.ts";
+import { brandMarkSvg } from "../lib/brand.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
 import { useStore } from "../state/useStore.ts";
 import type { Plugin } from "../api/types.ts";
@@ -77,6 +78,8 @@ export type Ui = {
 	readonly useStore: typeof useStore;
 	/** 消息正文那套最小 Markdown 渲染（文件预览里画 `.md` 用同一份）。 */
 	readonly markdown: typeof renderMarkdown;
+	/** 应用标识（S + 蓝点）的唯一那份 SVG。助理的球面 / 头像用它，不要插件另画一个。 */
+	readonly brandMarkSvg: typeof brandMarkSvg;
 	register(slot: SlotName, cell: SlotCell): void;
 };
 
@@ -114,7 +117,16 @@ export function cellsOf(slot: SlotName): readonly SlotCell[] {
 	return cells.get(slot) ?? [];
 }
 
-const ui: Ui = { h: React.createElement, React, api: client, store, useStore, markdown: renderMarkdown, register };
+const ui: Ui = {
+	h: React.createElement,
+	React,
+	api: client,
+	store,
+	useStore,
+	markdown: renderMarkdown,
+	brandMarkSvg,
+	register,
+};
 
 /**
  * 拉插件清单，逐个 `import` 它的前端入口并 `apply`。

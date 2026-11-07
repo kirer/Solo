@@ -15,6 +15,10 @@ files:
   - package.json
   # 主进程是 .js，preload 是 .cjs（沙箱 preload 只认 CommonJS，见 desktop/src/preload.cts）。
   - desktop/dist/**/*
+  # 菜单栏图标（模板图：macOS 只取 alpha 自己上色）与别的平台用的应用图标。
+  - desktop/trayTemplate.png
+  - desktop/trayTemplate@2x.png
+  - desktop/icon.png
   - src/**/*.ts
   - ui/web/**/*
   - seed/**/*
@@ -56,6 +60,10 @@ asar: false
 mac:
   icon: desktop/icon.png
   category: public.app-category.productivity
+  # 悬浮球要录一段话、在本机转成文字。没有这两个键，macOS 会在 TCC 那一步直接杀掉进程。
+  extendInfo:
+    NSMicrophoneUsageDescription: 悬浮球要用麦克风把你说的话录下来，交给本机转写。
+    NSSpeechRecognitionUsageDescription: 在本机把录音转成文字，发给助理。
   target:
     - target: dmg
       arch: [arm64]

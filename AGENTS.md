@@ -76,7 +76,7 @@ src/
   shell/          装配与启动：assemble（只做组合）/ wire/（七段接线）/ serve / main / seed
 ui/app/           界面源码（React + TS + Vite）
 ui/web/           构建产物（服务端发这个目录，别手改）
-desktop/          Electron 壳（src/：拉起后端 / 开窗 / 标题栏 / 更新 / 菜单 / preload）+ 图标
+desktop/          Electron 壳（src/：拉起后端 / 开窗 / 标题栏 / 更新 / 菜单 / 悬浮球窗与托盘 / preload）+ 图标与托盘模板图
 electron-builder.yml  桌面端打包（mac dmg+zip / win nsis；不用 asar）
 seed/             出厂内容：规矩 / 提示词模板 / 技能 / 助理身份（播种进两个根）
 scripts/          九个入口脚本：check-boundaries（边界）、core-live（真模型冒烟）、
@@ -85,10 +85,10 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             111 文件 / 975 例
-  ├ test/core/    90 文件（纯函数 + 装配）
+test/             112 文件 / 988 例
+  ├ test/core/    91 文件（纯函数 + 装配）
   ├ test/ui/      15 文件（界面纯函数与源码约定）
-  └ test/desktop/ 6 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
+  └ test/desktop/ 7 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏、悬浮窗位置）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
 
@@ -148,7 +148,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 111 文件 975 例，<3s，必须全绿
+npm test             # 112 文件 988 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -185,6 +185,8 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 看门狗（异常报告进频道） | `docs/CORE.md` §12 + `docs/DECISIONS.md` ADR-016 | `app/watch.ts`（`createWatch`）+ `app/diag.ts` 的 `onAbnormal` + `shell/serve.ts` 的 `start()` / `stop()`；只通报不自动救 |
 | 我不 @ 人时谁接话 / 团队频道里 @ 了谁 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-015 / ADR-086 | `channel/rules.ts` 的 `speakerBefore` + `channel/mentions.ts` 的 `recipientsOf` / `deliveryTargets`（**团队频道：有 `@` 只叫被点名的人、助理不插话；没人 `@` 只叫助理**）+ `core/flow/defaults/router.ts` 把两者拼成决定 + `channel/delivery.ts` 的 `woken`；`test/core/mention-alias.test.ts` |
 | 后台命令（`run` 的 `background`）/ 重启清孤儿 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-013 | `channel/jobs.ts`（起 / 记 / 收 + `sweepRunJobs` + `killGroup`）+ `channel/tools/run.ts` 的 background 分支与前台 spawn + `app/runs.ts`（启动清扫）+ `core/flow/publish.ts` 的 `wakeTo`（`note` 要叫醒人只有这一条路）；**前台超时要说「超时」并给放宽办法**（`run.foreground.timeout`，默认 60 秒、最大 300），只说「退出码 ?」模型会当成命令坏了去换写法；**前台不用 `exec`**：Windows 上它超时只杀 `cmd.exe`，子进程攥着管道会让超时一直拖下去 |
+| 悬浮球的语音（点麦克风说话 / 自动朗读 / 本地转写 / 本地神经音色 / 云端播报 / 唤醒词） | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-113 / ADR-118 / ADR-119 + `docs/DESIGN.md` §2.8 / §13.11 | `seed/plugins/悬浮球/`（`client.js` 的录音、切片队列播报与下载行、`VoicePage` 的引擎与唤醒段、`Orb` 的唤醒循环；`plugin.js` 的 `POST /api/orb/transcribe` / `GET·POST /api/orb/voice` / `POST /api/orb/speak`（`{ text, speed, sid }`，音色 45–52）/ `GET·POST /api/orb/speech`（本机或千问，Key 存在 `<appRoot>/orb/voice.json`、只回 `hasKey`）/ `GET·POST /api/orb/wake` / `POST /api/orb/kws`；`qwen.js` 的百炼实时协议；`asr.swift` 的端侧转写）+ `package.json` 的 `sherpa-onnx-node` + `electron-builder.yml` 的 `mac.extendInfo`（麦克风 / 语音识别用途说明，打包版缺了会被 TCC 杀掉）+ `test/core/orb-plugin.test.ts`；转写要 macOS 26 + Xcode 命令行工具，webm 录音要 ffmpeg；播报模型约 346 MB（Kokoro-82M，Apache-2.0），首次用时下到 `<appRoot>/voice/tts/kokoro-zh`（钉 revision + sha256，先 hf-mirror）；唤醒模型约 5 MB，下到 `<appRoot>/voice/kws-zh`（关键词是中文拼音，英文 Solo 识别不到）；千问是**默认关的云端选项**，要用户自己的 Key，**不要用系统 `speechSynthesis`，也不要用非商用许可的 Matcha 中文模型** |
+| 桌面端的悬浮球窗口 / 菜单栏图标 | `docs/DECISIONS.md` ADR-116 + `docs/CORE.md` §13 + `docs/DEPLOY.md` §10 + `docs/DESIGN.md` §2.8 + `docs/CODE.md` §2.3 | `desktop/src/main.ts`（`createOrbWindow` / `setupOrbBridge` / `createTray` / `toggleOrb`）+ `desktop/src/orb-window.ts`（默认位置 / 夹边界 / 状态文件）+ `desktop/src/orb-preload.cts`（`soloOrb`）+ `desktop/trayTemplate*.png` + `electron-builder.yml` 的 `files` + `ui/app/src/main.tsx` 的 `?orb=1` + `ui/app/src/orb/OrbWindow.tsx` + `ui/app/src/styles/orb.css` + `seed/plugins/悬浮球/client.js` 的 `WINDOW_MODE`；球只在一处（浏览器 `inline` / 主窗口 `none` / 独立窗 `window`）；`test/desktop/orb-window.test.ts` |
 | 插件的五个动作（tool / prompt / route / on / `flow`）/ 前端插槽（`SlotName` 表）/ 装与卸 | `docs/CORE.md` §13 + `docs/DECISIONS.md` ADR-018 / ADR-019 / ADR-080 + `docs/WEB-API.md` §13.4 + `docs/DESIGN.md` §2.8 | `src/core/plugin/`（`manifest.ts` 的 `readPluginManifest` / `writePluginEnabled`、`api.ts` 的 `flow`、`load.ts` 的 `PluginHost.flow` / `brings.policies`）+ `src/core/channel/types.ts` 的策略形状 + `src/core/flow/policies.ts` 的 `policyRouter` / `policySettler` + `shell/wire/plugins.ts`（装 / 重装 + 听消息 + 策略活引用）与 `shell/assemble.ts`（`reloadPlugins` 热重装，ADR-026）+ `app/plugins.ts`（清单 + 开关 + 装 / 卸）+ `interface/http/routes.ts`（五条接口；插件接口在 `*rest` 兜底里现查）+ `ui/app/src/plugin/`（`registry.ts` 的 `SlotName` / `SLOTS` / `Slot.tsx`）+ 画插槽的六个界面文件（`sidebar/Sidebar.tsx` / `App.tsx` / `stream/Stream.tsx` / `composer/Composer.tsx` / `panels/RightPanel.tsx` / `panels/Overlays.tsx`）+ `panels/{SettingsPage,PluginsPage}.tsx`（设置里的「插件」一行进清单；清单与 `app.page` 都开在设置那张 800 弹窗里，返回回清单，ADR-099）+ 右栏里的那一页：`store.rightPage` / `openRightPage` / `closeRightPage` + `RightPanel.tsx` 的 `data-page` 层与 `<Slot name="app.page" page={rightPage} />`（ADR-104） |
 | 一条消息的字数上限（群聊 / 私聊不同） | `docs/CORE.md` §9 | `channel/tools/guards.ts` 的 `sayLimitOf` + `channel/tools/say.ts` |
 | 改轨迹（切轮 / 摘要 / 步骤映射 / 接口形状） | `docs/WEB-API.md` §7.2 + `docs/DESIGN.md` §2.3 / §8.2 + ADR-001 / ADR-003 | `src/app/trace.ts`（纯函数：`groupsOf` 切轮 + `buildTurn` 映射步骤）+ `src/app/read.ts` 的 `turnsOf`（`endedAt` / `replySeq` 取这一组的**最后**一句：中途报进度再接着干时，第一句不是收尾）+ `test/core/{trace,turns-compaction}.test.ts` |
@@ -212,7 +214,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |
 | 头像的画法 / 取景 / 配色 / 尺寸 | `docs/DESIGN.md` §6.5 + `docs/DECISIONS.md` ADR-083 + `docs/WEB-API.md` 的 `/api/avatar/:seed` | 插画：`src/app/avatar.ts`（唯一的画法，纯函数）+ `ui/app/src/lib/avatar.ts`（种子与尺寸）+ `test/core/avatar.test.ts`；**助理例外**：`assistant: true` 画 `ui/app/src/lib/brand.ts` 的标识（与 `desktop/icon.svg` 同形），传参在各调用点的 `assistant` 标记；名字在 `seed/assistant/identity.md`，旧安装由 `src/shell/migrate.ts` 只改 `name`（slug 不动） |
-| 骨架（rail / 列表 / 纸 / 资料；设置与插件是弹窗） | `docs/DESIGN.md` §13.1 / §13.3 / §13.7 + `docs/DECISIONS.md` ADR-084 | `ui/app/src/App.tsx`（`data-view` / `data-letter`；助理那屏的门、别的对话的返回 / 资料）+ `panels/RightPanel.tsx`（≥901 贴右沿浮在纸上、≤900 整屏，ADR-098；一张平铺表、`data-tasks` 切 `TasksView`、`dock` 非空时换成工作台；`rightPanel.row` / `rightPanel.detail` / `dock` 插槽宿主）+ `panels/TasksPanel.tsx` + `state/store.ts`（`openTasks` / `closeTasks`；`bootstrap` 首屏开助理私聊）+ `panels/{SettingsPage,PluginsPage}.tsx`（`overlay` + `modal`，窄屏铺满；插件清单 / 插件页压在设置这一层上，ADR-099）+ **`styles/v6.css`（最后导入的覆盖层：浮起来的右栏、弹窗、≤900 摆法；改版先改这里）** + `styles/shell.css`（旧单列与 `body[data-pane]` 仍在）+ `lib/brand.ts`；`test/ui/{layout,second-screen,plugin,titlebar}.test.ts` |
+| 骨架（rail / 列表 / 纸 / 资料；设置与插件是弹窗，弹窗高度随内容补间） | `docs/DESIGN.md` §13.1 / §13.3 / §13.7 + `docs/DECISIONS.md` ADR-084 / ADR-106 / ADR-120 | `ui/app/src/App.tsx`（`data-view` / `data-letter`；助理那屏的门、别的对话的返回 / 资料）+ `panels/RightPanel.tsx`（≥901 贴右沿浮在纸上、≤900 整屏，ADR-098；一张平铺表、`data-tasks` 切 `TasksView`、`dock` 非空时换成工作台；`rightPanel.row` / `rightPanel.detail` / `dock` 插槽宿主）+ `panels/TasksPanel.tsx` + `state/store.ts`（`openTasks` / `closeTasks`；`bootstrap` 首屏开助理私聊）+ `panels/{SettingsPage,PluginsPage}.tsx`（`overlay` + `modal`，窄屏铺满；插件清单 / 插件页压在设置这一层上，ADR-099；**弹窗高度由宿主补间**：`MutationObserver` + WAAPI，插件页 460–560，插件别自己动 `.modal` —— ADR-120）+ **`styles/v6.css`（最后导入的覆盖层：浮起来的右栏、弹窗、≤900 摆法；改版先改这里）** + `styles/shell.css`（旧单列与 `body[data-pane]` 仍在）+ `lib/brand.ts`；`test/ui/{layout,second-screen,plugin,titlebar}.test.ts` |
 | 界面布局 / 行类型 / 轨迹展示 / 手机与桌面的摆法 | `docs/DESIGN.md`（决策稿：改之前先说明原决策错在哪；§13 是「一份内容表、两套摆法」与稿子的位置）+ 本文件 §2 的「不画后端没有的东西」 |
 | 第一次打开 / 接上模型（稿子 10–12） | `docs/DECISIONS.md` ADR-085 + `docs/WEB-API.md` §13.7 + `docs/DESIGN.md` §13.9 | `src/app/setup.ts`（`check` 只探并回模型清单、`save` 写 `settings.json` 并 `refreshModels`）+ `src/interface/http/routes.ts`（`POST /api/setup`、`/api/setup/probe`）+ `ui/app/src/panels/SetupPage.tsx` + `state/store.ts` 的 `bootstrap` / `setupStep` + `stream/Starters.tsx` + `styles/onboarding.css`；判据只有一个：`GET /api/models` 是空数组 |
 | 启动参数 / 部署方式 / 模型接入（含给某个人换模型、改配置不用重启） | `docs/DEPLOY.md` §3 + `docs/DECISIONS.md` ADR-023 / ADR-024 / ADR-025 | `src/core/runtime/models.ts`（`setupModels` / `syncModels` / `parseModelRef`）+ `shell/wire/models.ts` 的 `modelFor` / `refreshModels` + `app/people.ts` 的 `setPersonModel` + `app/models.ts` 的 `list` + 界面在出厂插件 `seed/plugins/模型管理/`（`rightPanel.detail` 插槽） |

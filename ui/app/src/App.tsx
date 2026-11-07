@@ -30,6 +30,7 @@ import {
 	closeRightPage,
 	closeTasks,
 	openChannel,
+	openChannelInfo,
 	openWithPerson,
 	setNeedMenu,
 	setNewGroup,
@@ -67,6 +68,7 @@ export function App(): JSX.Element {
 	const rightPage = useStore((state) => state.rightPage);
 	const rightFile = useStore((state) => state.rightFile);
 	const setupStep = useStore((state) => state.setupStep);
+	const nav = useStore((state) => state.nav);
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
@@ -213,7 +215,7 @@ export function App(): JSX.Element {
 	const listOpen = detail === null || !assistantChat;
 
 	return (
-		<div className="frame" data-view={view} data-dock={dock === null ? "false" : "true"} data-letter={assistantChat ? "true" : "false"}>
+		<div className="frame" data-view={view} data-dock={dock === null ? "false" : "true"} data-letter={assistantChat ? "true" : "false"} data-nav={nav}>
 			{/* Windows 桌面壳的标题带（菜单 + 拖拽把手）；别的平台这里是空的。 */}
 			{windowsShell ? <Titlebar /> : null}
 
@@ -320,7 +322,6 @@ export function App(): JSX.Element {
 							{/* 助理是首屏（稿子 01）：抬头只有名字，没有状态行。 */}
 							{sub === "" || assistantChat ? null : (
 								<span className="sheet-sub" id="pane-sub">
-									<i className="presence-dot" aria-hidden="true" />
 									{sub}
 								</span>
 							)}
@@ -373,7 +374,7 @@ export function App(): JSX.Element {
 										aria-label="资料与后台任务"
 										title="资料与后台任务"
 										aria-pressed={right.open}
-										onClick={() => setRight({ open: !right.open })}
+										onClick={() => (right.open ? setRight({ open: false }) : openChannelInfo())}
 									>
 										<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 											<circle cx="12" cy="8.2" r="3.6" />

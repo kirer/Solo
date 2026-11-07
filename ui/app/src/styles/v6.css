@@ -503,15 +503,6 @@
 	text-overflow: ellipsis;
 }
 
-.presence-dot {
-	flex: none;
-	width: 5px;
-	height: 5px;
-	border-radius: 50%;
-	background: var(--accent);
-	box-shadow: 0 0 0 3px var(--accent-dim);
-}
-
 .sheet-grow {
 	flex: 1;
 }
@@ -660,11 +651,11 @@
 	letter-spacing: 0.005em;
 }
 
-/* 一条消息：32 的头像 + 10 的缝 + 正文。 */
+/* 一条消息：32 的头像 + 14 的缝 + 正文。 */
 .row-say {
 	display: grid;
 	grid-template-columns: 32px minmax(0, 1fr);
-	column-gap: 10px;
+	column-gap: 14px;
 	align-items: start;
 	margin-top: 17px;
 }
@@ -765,7 +756,7 @@
 	display: table;
 	max-width: 100%;
 	padding: 8px 13px 9px;
-	border-radius: 17px 17px 17px 7px;
+	border-radius: 0 17px 17px 17px;
 	background: var(--bubble-them);
 	color: var(--ink-2);
 	font-size: 15px;
@@ -781,7 +772,7 @@
 	display: flex;
 	justify-content: flex-end;
 	align-items: flex-start;
-	gap: 10px;
+	gap: 14px;
 }
 
 .row-say[data-owner="true"] .row-av {
@@ -802,8 +793,7 @@
 	display: table;
 	max-width: 460px;
 	padding: 9px 13px;
-	border-radius: 17px;
-	border-bottom-right-radius: 7px;
+	border-radius: 17px 0 17px 17px;
 	background: var(--raised);
 	color: var(--ink);
 	font-size: 15px;
@@ -917,6 +907,42 @@
 	border-radius: 0;
 	background: none;
 	box-shadow: none;
+}
+
+/* 引导三句和输入卡走同一条轨道：宽屏居中到 660（letter 720），窄屏留同一圈内边距。 */
+.starters {
+	width: 100%;
+	max-width: 660px;
+	margin: 0 auto;
+	padding: 4px 0 10px;
+}
+
+.frame[data-letter="true"] .starters {
+	max-width: 720px;
+}
+
+@media (max-width: 900px) {
+	.starters {
+		max-width: none;
+		padding-inline: 14px;
+	}
+}
+
+/* 点消息后的动作层、@ 弹窗都和输入卡走同一条轨道：宽屏居中到 660，窄屏留同一圈内边距。 */
+.press {
+	padding-inline: max(14px, calc((100% - 660px) / 2));
+}
+
+.mention {
+	left: max(14px, calc((100% - 660px) / 2));
+}
+
+.frame[data-letter="true"] .press {
+	padding-inline: max(14px, calc((100% - 720px) / 2));
+}
+
+.frame[data-letter="true"] .mention {
+	left: max(14px, calc((100% - 720px) / 2));
 }
 
 .composer-card {
@@ -1083,9 +1109,9 @@
 	line-height: 18px;
 }
 
-/* 换频道：整块消息流淡上来（Stream 上挂了 `key`，换一个频道就重挂一次）。 */
+/* 换频道：整块消息流从右边滑进来（Stream 上挂了 `key`，换一个频道就重挂一次）。 */
 .flow-wrap {
-	animation: page-in 240ms var(--ease-line) both;
+	animation: slide-in-right 220ms var(--ease-line) both;
 }
 
 /* ── 资料列 ─────────────────────────────────────────────────────────── */
@@ -1110,8 +1136,8 @@
 	border-left: 0.5px solid var(--rule);
 	background: var(--frame);
 	box-shadow: -20px 0 48px rgb(0 0 0 / 0.34);
-	/* 开 / 关都只淡（`fade-in` / `fade-out` 在文件末尾那一组，关的时候靠 `data-open`）。 */
-	animation: fade-in 150ms ease both;
+	/* 开：从右边滑进来；关：滑回右边（`data-open`，在文件末尾那一组）。 */
+	animation: slide-in-right 180ms var(--ease-line) both;
 }
 
 
@@ -1324,7 +1350,9 @@
 	flex-direction: column;
 	width: 648px;
 	max-width: calc(100% - 80px);
-	max-height: calc(100% - 24px);
+	/* 高度跟着内容走；离窗口上下沿留一点，别顶到边。换层 / 内容变了由
+	   `SettingsPage` 的 WAAPI FLIP 补间（ADR-106 / ADR-120）。 */
+	max-height: calc(100% - 96px);
 	overflow: hidden;
 	border-radius: 16px;
 	background: var(--frame);
@@ -1334,6 +1362,13 @@
 
 .modal-wide {
 	width: 800px;
+}
+
+/* 插件页是一整页、里面自己滚：桌面上一张开满整屏又重又压人，内容再高也就 560；
+   太矮又会一打开只剩一条缝 —— 给个 460 的下限。内容在上下限之间时按内容走。 */
+.modal[data-level="page"] {
+	min-height: min(460px, calc(100% - 96px));
+	max-height: min(560px, calc(100% - 96px));
 }
 
 /* 弹窗里的一层：设置清单 / 插件清单 / 插件页。壳（`.modal`）不换，只换这一层 ——
@@ -1470,6 +1505,13 @@
 	overflow: hidden;
 }
 
+/* 插件页的根节点（.im / .ov / .tk）：`height: 100%` 在「高度由 flex 决定」的父级里
+   解析不出来，这里直接让它把那一格吃满，页面自己的滚动区才有确定的高度。 */
+.modal-body.modal-flush > * {
+	flex: 1 1 auto;
+	min-height: 0;
+}
+
 .set-body .set-group {
 	margin: 0;
 }
@@ -1568,6 +1610,7 @@
 	place-items: center;
 	color: var(--ink-3);
 	opacity: 0.75;
+	transition: transform 140ms var(--ease-line);
 }
 
 .set-row.is-danger .set-label,
@@ -1627,11 +1670,12 @@
 }
 
 .set-proxy .chev-up {
-	transform: rotate(180deg);
+	transform: rotate(90deg);
 }
 
+/* 展开只有一行：输入框 + 保存，左右和卡片的留白对齐，不另起一块底色。 */
 .set-proxy-body {
-	padding: 2px 14px 14px 52px;
+	padding: 4px 14px 14px;
 }
 
 .set-proxy-field {
@@ -1642,23 +1686,34 @@
 .set-proxy-field .setup-input {
 	flex: 1;
 	min-width: 0;
-	height: 38px;
+	height: 34px;
 	padding: 0 11px;
-	border: 0.5px solid var(--line);
-	border-radius: 10px;
-	background: var(--ground);
+	border: 0.5px solid var(--rule);
+	border-radius: 9px;
+	background: var(--raised);
 	color: var(--ink);
 	font-family: var(--mono);
 	font-size: 12px;
+	transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.set-proxy-field .setup-input:hover {
+	border-color: var(--line);
+}
+
+.set-proxy-field .setup-input:focus {
+	outline: none;
+	border-color: color-mix(in oklab, var(--ink) 30%, var(--line));
+	box-shadow: 0 0 0 3px color-mix(in oklab, var(--ink) 7%, transparent);
 }
 
 .set-proxy-field .set-save {
 	display: flex;
 	flex: none;
 	align-items: center;
-	height: 38px;
-	padding: 0 14px;
-	border-radius: 10px;
+	height: 34px;
+	padding: 0 13px;
+	border-radius: 9px;
 	background: var(--accent-fill);
 	color: var(--on-accent);
 	font-size: 12.5px;
@@ -1724,14 +1779,12 @@
 	display: flex;
 	flex: none;
 	align-items: center;
-	gap: 6px;
+	justify-content: center;
+	width: 30px;
 	height: 30px;
-	padding: 0 12px;
 	border-radius: 9px;
 	background: var(--raised);
 	color: var(--ink-2);
-	font-size: 12.5px;
-	line-height: 16px;
 }
 
 .pl-add:hover {
@@ -1966,15 +2019,6 @@
 	line-height: 16px;
 }
 
-.nav-count {
-	margin-left: 2px;
-	color: var(--ink-3);
-	font-family: var(--sans);
-	font-size: 13px;
-	font-weight: 500;
-	letter-spacing: 0;
-}
-
 .settings-problem {
 	margin: 10px 14px;
 	color: var(--danger);
@@ -2134,10 +2178,12 @@
 	}
 
 	.modal,
-	.modal-wide {
+	.modal-wide,
+	.modal[data-level="page"] {
 		width: 100%;
 		max-width: none;
 		height: 100%;
+		min-height: 0;
 		max-height: none;
 		border-radius: 0;
 		box-shadow: none;
@@ -2396,6 +2442,49 @@
 }
 
 @media (max-width: 900px) {
+	/* 窄屏上弹窗就是一整屏，算「换屏」：整屏从右边推进来、退回时推回去。 */
+	.overlay {
+		animation: fade-in 160ms ease both;
+	}
+
+	.modal {
+		animation: slide-in-right-full 260ms var(--ease-line) both;
+	}
+
+	.overlay[data-leaving="true"] {
+		animation: fade-out 180ms ease both;
+	}
+
+	.overlay[data-leaving="true"] .modal {
+		animation: slide-out-right-full 200ms var(--ease-line) both;
+	}
+
+	/* 窄屏上列表和对话互斥，是一次真正的「换一屏」：整屏推入 / 退回。 */
+	.sheet,
+	.sidebar,
+	.page,
+	.plugin-page,
+	.flow-wrap {
+		animation: slide-in-right-full 260ms var(--ease-line) both;
+	}
+
+	[data-nav="back"] .sheet,
+	[data-nav="back"] .sidebar,
+	[data-nav="back"] .page,
+	[data-nav="back"] .plugin-page,
+	[data-nav="back"] .flow-wrap {
+		animation-name: slide-in-left-full;
+	}
+
+	/* 设置里换一级（清单 ↔ 插件清单 ↔ 插件页 / Token 用量）也占满整屏：同样推入 / 退回。 */
+	.modal-level {
+		animation: slide-in-right-full 260ms var(--ease-line) both;
+	}
+
+	[data-nav="back"] .modal-level {
+		animation-name: slide-in-left-full;
+	}
+
 	.browser-veil {
 		background: var(--frame);
 	}
@@ -2490,27 +2579,33 @@
 	pointer-events: none;
 }
 
-/* ── 右栏的动效：只有淡，没有滑动 ───────────────────────────────────── */
-/* 开：淡进来；关：`data-open="false"` 淡出去（`RightPanel` 留 300ms 再卸）。
-   以前开是 `veil-in`（带 6px 模糊）、关是直接消失，两个方向不对称。 */
+/* ── 右栏的动效：开从右边滑进来，关滑回右边 ─────────────────────────── */
+/* `RightPanel` 关的时候留 300ms 再卸，所以退场也看得见。 */
 .detail {
-	animation: fade-in 150ms ease both;
+	animation: slide-in-right 180ms var(--ease-line) both;
 }
 
+/* 退回（关掉右栏）：滑回右边。 */
 .detail[data-open="false"] {
-	animation: fade-out 140ms ease both;
+	animation: slide-out-right 150ms var(--ease-line) both;
 	pointer-events: none;
 }
 
-/* 栏里换一层（资料 ↔ 后台任务 ↔ 工作台 ↔ 插件页）：容器带 key，重挂时淡一下。 */
+/* 栏里换一层（资料 ↔ 后台任务 ↔ 工作台 ↔ 插件页）：容器带 key，重挂时滑一下。 */
 .detail-dock,
 .detail-panel {
-	animation: fade-in 160ms ease both;
+	animation: slide-in-right 200ms var(--ease-line) both;
 }
 
-/* 资料表的展开 / 收起：高度走 grid 的 0fr → 1fr，配一点透明度；收起时内容由 `Fold`
-   留 180ms 再卸，所以两个方向都看得见（原来只有开有动画，关是瞬间消失）。 */
-.prof-fold {
+/* 返回上一层的这一格：从左边进来。 */
+[data-nav="back"] .detail-dock,
+[data-nav="back"] .detail-panel {
+	animation-name: slide-in-left;
+}
+
+/* 展开 / 收起（资料表的行、设置里的行、插件自己的展开区都是这一套）：高度走 grid 的
+   0fr → 1fr，配一点透明度；收起时内容由 `Fold` 留 180ms 再卸，两个方向都看得见。 */
+.fold {
 	display: grid;
 	grid-template-rows: 0fr;
 	opacity: 0;
@@ -2519,17 +2614,17 @@
 		opacity 140ms ease;
 }
 
-.prof-fold[data-open="true"] {
+.fold[data-open="true"] {
 	grid-template-rows: 1fr;
 	opacity: 1;
 }
 
-.prof-fold-in {
+.fold-in {
 	min-height: 0;
 	overflow: hidden;
 }
 
 /* 折叠自己负责「怎么出现」，里面那一段不再单独播一次入场。 */
-.prof-fold .prof-panel {
+.fold .prof-panel {
 	animation: none;
 }

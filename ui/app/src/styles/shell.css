@@ -22,18 +22,17 @@
 .plugin-page,
 .detail-panel > .prof,
 .detail-panel > .tasks {
-	animation: page-in 220ms var(--ease-line) both;
+	animation: slide-in-right 220ms var(--ease-line) both;
 }
 
-@keyframes page-in {
-	from {
-		opacity: 0;
-		transform: translateY(6px);
-	}
-	to {
-		opacity: 1;
-		transform: none;
-	}
+/* 返回：从左边进来（方向由 `data-nav` 决定）。 */
+[data-nav="back"] .sidebar,
+[data-nav="back"] .sheet,
+[data-nav="back"] .page,
+[data-nav="back"] .plugin-page,
+[data-nav="back"] .detail-panel > .prof,
+[data-nav="back"] .detail-panel > .tasks {
+	animation-name: slide-in-left;
 }
 
 /* 宽窗口里不给内容铺满整张屏：一列 860 居中，读起来和手机上一样长。 */
@@ -222,8 +221,7 @@ button.set-row:focus-visible {
 }
 
 /* 卡里的第二条起：细线从图标右边起（和行间线同一个起点）。 */
-.set-cell::before,
-.set-tools::before {
+.set-cell::before {
 	content: "";
 	position: absolute;
 	top: 0;
@@ -927,16 +925,6 @@ body[data-pane="chat"] .sidebar {
 	line-height: 15px;
 	color: var(--ink-3);
 	justify-content: center;
-}
-
-/* 状态行前面那颗小灯：和稿子 03 / 04 的 presence 一样。 */
-.presence-dot {
-	flex: none;
-	width: 5px;
-	height: 5px;
-	border-radius: 50%;
-	background: var(--accent);
-	box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
 }
 
 .sheet-back,
@@ -3306,23 +3294,6 @@ button.prof-row:hover {
 	display: flex;
 	flex-direction: column;
 	gap: 6px;
-}
-
-.prof-add textarea,
-.prof-add select {
-	width: 100%;
-	padding: 8px 10px;
-	border: 0.5px solid var(--rule);
-	border-radius: 9px;
-	background: var(--ground);
-	color: var(--ink);
-	font: inherit;
-	font-size: 12.5px;
-	line-height: 18px;
-}
-
-.prof-add textarea {
-	resize: vertical;
 }
 
 .prof-add-foot {

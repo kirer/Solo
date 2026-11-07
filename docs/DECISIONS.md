@@ -2650,6 +2650,30 @@
   `seed/prompt/91-where-assistant.md`、`test/core/say-contract.test.ts`（成员被拒 / 助理照发，
   setup 新增 `assistants` 选项）；`docs/CORE.md` §4、`AGENTS.md` §3.3 的 options 行。
 
+## ADR-113 悬浮球的语音对话：转写走系统端侧模型，朗读走系统语音，都不出本机
+
+- **背景**：悬浮球第一版只有文字，而它参考的 dsh-orb 的核心是「说一句、听它答」。补语音时
+  摆着三条路：
+  1. 浏览器 `SpeechRecognition` —— Electron 不带 Google 的语音服务密钥，实际拿不到结果；
+  2. 模型网关的 `/v1/audio/transcriptions` —— 接口在，但当前 provider 只配了文字模型，
+     没有 whisper / transcribe 可路由；
+  3. 本机跑 whisper —— 用户机器上没有，装一个 + 下模型比功能本身还重。
+- **决策**：
+  - **转写**用 macOS 26 的 `SpeechAnalyzer`（`SpeechTranscriber` 端侧模型）。源码
+    `seed/plugins/悬浮球/asr.swift`，插件后端第一次转写时用 `swiftc` 编到临时目录（按源码
+    hash 缓存），之后复用。录音由前端 `MediaRecorder` 采，优先 mp4/AAC，退 webm（需要 ffmpeg）。
+  - **朗读**用系统 `speechSynthesis`，优先中文音色；不做服务端 TTS。
+  - **不做唤醒词**：常开麦克风换一个「你好 XX」不值得；点面板上的麦克风才听，Esc 取消。
+  - 音频只在「前端 → 本机插件路由 → 临时文件 → 本机转写器」之间走，转写完立即删文件；
+    不接云端 STT、不要 API key、不留存档。
+- **取舍**：要 macOS 26、Xcode 命令行工具（只为了编译那个 60 行的 Swift 入口），第一次转写
+  系统要下一次语音模型；换来的是零配置、离线、无密钥。旧系统 / 没装命令行工具时，
+  面板上给一句能照着做的错误，而不是静默失败。
+- **执行**：`seed/plugins/悬浮球/{client.js,plugin.js,asr.swift}`、`POST /api/orb/transcribe`、
+  `electron-builder.yml` 的 `extendInfo`（`NSMicrophoneUsageDescription` /
+  `NSSpeechRecognitionUsageDescription`，打包版没有这两个键会被 TCC 直接杀掉）、
+  `test/core/orb-plugin.test.ts`（只加一条路由；空录音 / 超长录音被拒）。
+
 ## ADR-114 出厂文案按键升级：没改过的跟到新版，改过的留着
 
 - **背景**：2026-11-08 桌面端更新到 2.2.1 之后，`say.param.options` 里新加的
@@ -2693,6 +2717,79 @@
   `src/shell/assemble.ts` 的晚绑 `pluginPost`；出厂消费者 `seed/plugins/IM机器人/`，
   `test/core/im-plugin.test.ts`；`docs/CORE.md` §13、`docs/WEB-API.md` §13.4、`AGENTS.md` §3.3。
 
+## ADR-116 悬浮球在桌面端是一扇独立的透明窗，菜单栏图标一下开关
+
+- **背景**：悬浮球原来长在主界面的 `overlays` 插槽里，只有 Solo 窗口在前台才看得见。
+  想要的是「在桌面上随手拖、随时说一句」，参考的 dsh-orb 为此起了一个 helper 进程
+  + 自己的 Electron 壳。Solo 的壳已经在了，为这一点再起一套进程 / userData / 后端只会多
+  一条要同步的生命周期。
+- **决策**：
+  1. **第二扇 `BrowserWindow`**，不是第二个进程：同一个 Electron 应用、同一个后端 origin。
+     透明、无边框、置顶（`floating`）、不占 Dock / 任务栏、`setVisibleOnAllWorkspaces`。
+     加载同一个界面加 `?orb=1`，那一页只画插件的 `overlays` 插槽（`OrbWindow`），
+     不画 `<App>`。SSE、频道数据、麦克风权限、`localStorage` 全都照旧。
+  2. **透明区域点击穿透**：窗口默认 `setIgnoreMouseEvents(true, { forward: true })`；
+     鼠标移进球 / 面板时前端报 `setInteractive(true)`，移开 140ms 后关掉。
+  3. **拖球 = 挪窗**：前端不再改自己的 `right / top`，而是把这一下的屏幕增量报给主进程
+     （`orb:drag`），由主进程 `setPosition` 并按当前屏幕的可用区夹边界；松手落盘到
+     `<appRoot>/orb-window.json`（位置 + 是否显示）。拖太远的单步夹到 200px。
+  4. **菜单栏 / 托盘图标**：左键一下开关悬浮窗；右键菜单「显示 / 隐藏悬浮球、打开 Solo、
+     退出」。macOS 用模板图（只取 alpha），别的平台用应用图标缩到 16px。
+  5. 球只在一处：浏览器里仍是页面内的 `inline`；桌面主窗口标 `none`；独立窗标 `window`
+     （`<html data-orb>`，插件据此换拖动方式和菜单项）。
+- **取舍**：不用 NSPanel / helper 进程，换来的是零复制的一套生命周期；代价是这扇窗仍属于
+  Solo 这个应用（Dock 里有 Solo、权限跟着 Solo），不是系统级常驻小工具。悬浮窗没有厚玻璃
+  / vibrancy：透明窗叠系统材质在各版本 macOS 上表现不一，保持纯透明最稳。
+- **执行**：`desktop/src/main.ts`（`createOrbWindow` / `setupOrbBridge` / `createTray` /
+  `showOrb` / `hideOrb` / `toggleOrb`）、`desktop/src/orb-window.ts`（默认位置 / 夹边界 /
+  状态读写，纯函数）、`desktop/src/orb-preload.cts`（`window.soloOrb`）、
+  `desktop/trayTemplate*.png`、`electron-builder.yml` 的 `files` 三条；
+  `ui/app/src/main.tsx` 的 `?orb=1`、`ui/app/src/orb/OrbWindow.tsx`、
+  `ui/app/src/styles/orb.css`、`ui/app/src/desktop.d.ts`；`seed/plugins/悬浮球/client.js`
+  的 `WINDOW_MODE`；`test/desktop/orb-window.test.ts`；`docs/CORE.md` §13、
+  `docs/DEPLOY.md` §10、`AGENTS.md` §3.3。
+
+## ADR-118 播报用本地神经音色（Kokoro，Apache-2.0），不再用 macOS 系统朗读
+
+- **背景**：悬浮球的「听」原来是 `speechSynthesis`。它是系统那套拼接合成，挑到「婷婷」
+  也还是一句一句念的机器味；挑错时更糟 —— 系统音色表里排在最前的是 Eddy、Grandma 这类
+  角色音。参考项目 dsh-orb-cordis 的播报根本不是系统 TTS：本地 Matcha 神经模型（sherpa-onnx
+  + matcha-icefall-zh-baker 声学模型 + vocos 声码器），可选再走千问云端。
+- **决策**：
+  1. **换成同一套本地神经 TTS**：`sherpa-onnx-node`（按平台装 `sherpa-onnx-darwin-arm64`
+     等预编译包）+ Kokoro-82M v1.0 多语种模型（Apache-2.0，可商用；中文女声
+     `zf_xiaoxiao`）。合成在本机，音频不出机器，不需要 API Key。
+  2. **模型不进安装包**：首次使用时下到 `<appRoot>/voice/tts/kokoro-zh`（约 346 MB）。
+     每个文件钉死 Hugging Face 的 revision 与 sha256，先走 `hf-mirror.com`，失败才走
+     `huggingface.co`；下完校验大小与摘要再改名落盘。没下不发声音，面板里给一行下载
+     （带进度），不弹窗、不阻塞录音。
+  3. **合成的形状**：插件加两条路由 —— `GET/POST /api/orb/voice`（在不在 / 开始下载 /
+     进度 / 音色表）与 `POST /api/orb/speak`（`{ text, speed, sid }` → `{ wav }`，base64 的
+     16-bit PCM WAV）。前端把回复切成 ≤160 字的小片，一片一片请求并排队播放，第一片先出声；
+     面板一收就清队列、停播。
+  4. **音色可换，入口在设置里**：Kokoro v1.0 的中文音色一共八个（`sid` 45–52，四女四男），
+     `sid` 随请求走，不合法就落回默认 47。插件用宿主已有的 `app.entry` / `app.page` 插槽
+     在**设置**里加一行「悬浮球语音」（朗读开关 / 八个音色 / 语速 / 模型下载 / 试听），
+     不去改 `SettingsPage.tsx`；挑完写本机 `localStorage["solo.orb"]`，面板下一句就照新的念。
+     桌面主窗口不画球，但这一页两边都要有，所以 `overlays` 的注册按窗口模式跳过，
+     `app.entry` / `app.page` 始终注册。
+  5. **Electron-as-node 的坑**：同步 `generate()` 在 Electron 里抛
+     "External buffers are not allowed"，只能用 `generateAsync` 的进度回调收 PCM；它结束
+     时常带一句 "TTS settlement failed"，但音频已经完整 —— 有 chunk 就照用（写进代码注释）。
+- **取舍**：多了 34 MB 的运行时依赖和约 346 MB 的模型下载，换来的是不再机械的声音、完全离线、可商用。
+  不做云端 TTS（千问等）作为出厂路径：它要 API Key、要联网、音频出机器，和语音那条
+  「都在本机」的说法冲突；要做也只能是默认关的可选项。
+- **许可证**：最初照参考实现接的是 `matcha-icefall-zh-baker`，但那份模型训练自 Baker
+  数据集，数据集声明**仅限非商业用途**，不能随 Solo 商用发布。换成 Kokoro-82M（模型
+  Apache-2.0），中文音色用 `zf_xiaoxiao`；代价是下载从 130 MB 涨到约 346 MB。
+  参考实现里的 Matcha 只用来对齐「本地神经音色」这个做法，不用它的模型。
+- **执行**：`seed/plugins/悬浮球/plugin.js`（`TTS_FILES` / `downloadModel` / `synth` /
+  `encodeWav` / 三条路由）、`seed/plugins/悬浮球/client.js`（`splitSpeech` / `speakText` /
+  `playNext` / `stopAudio` / `downloadVoice` 与 `.orb-model` 下载行；`VoiceEntry` /
+  `VoicePage` 两个字幕走 `app.entry` / `app.page`）、`package.json` 的
+  `sherpa-onnx-node`；`docs/CORE.md` §13、`docs/DESIGN.md` §2.8、
+  `seed/plugins/悬浮球/plugin.md`、`AGENTS.md` §3.3。
+
 ## ADR-117 IM 桥加微信：扫码登录（腾讯 iLink），二维码是本机算的
 
 - **背景**：IM 桥第一版只有 Telegram 与自定义 Webhook，微信是用户最关心的渠道。
@@ -2720,3 +2817,77 @@
   `startWeixinLogin` / `pollWeixinLogin` / `weixinBaseOf` / `weixinQrUrl`）、
   `seed/plugins/IM机器人/qrcode.mjs`、同目录 `client.js` 的 `WeixinLogin` / `QrCanvas`、
   `test/core/im-plugin.test.ts`；`docs/CORE.md` §13、`docs/CODE.md`、`AGENTS.md` §3.3。
+
+## ADR-119 悬浮球可以换成千问云端播报，也可以被唤醒词叫醒
+
+- **背景**：ADR-118 把播报从系统 `speechSynthesis` 换成了本机 Kokoro，并把云端 TTS
+  留在「默认关的可选项」边界上。八个 Kokoro 中文音色试听下来都不够用（用户原话：
+  「都不行，都很难听」），参考项目 dsh-orb-cordis 的商用方案其实是**阿里云百炼的
+  `qwen3-tts-flash-realtime`**：自带 48 个系统音色（含方言），自然度明显更高，代价是要
+  API Key、要联网、合成的文字会发到阿里云。同时球还缺一个「手不用离开」的入口。
+- **决策**：
+  1. **播报引擎是一个显式开关，默认仍是本机**。设置 → 悬浮球语音 第一段是两张卡
+     （本机 Kokoro / 千问云端），选了才切；没填 Key 就选千问，朗读会回
+     `{ error: "千问还没填 API Key", needKey: true }`，**不静默回退本机**（免得人以为
+     切成功了）。Key 存在 `<appRoot>/orb/voice.json`，只回 `hasKey`，不回原文、不进日志、
+     不进报错文案（ADR-039 的同一道网）。
+  2. **千问只走它自己的实时协议，不引 SDK**：`wss://dashscope.aliyuncs.com/api-ws/v1/realtime`
+     → `session.update`（`mode: server_commit`、`voice`、`speech_rate`、`response_format: pcm`）
+     → `session.updated` → `input_text_buffer.append` + `session.finish` →
+     `response.audio.delta`（base64，24 kHz 16-bit PCM）→ `session.finished`。PCM 收齐后
+     封成 WAV 返回（`seed/plugins/悬浮球/qwen.js`）；连接 10 s 超时、首音 3 s 超时、空闲 30 s
+     超时，还没出过声音的超时换连接重试两次。音频仍是一问一答，不做边收边放。
+  3. **音色与语速跟着引擎走**：本机是 `sid` 45–52 + 0.7–1.5×（存 `localStorage`）；
+     千问是 48 个系统音色（38 普通话 / 多语种 + 10 方言，默认 `Cherry` / 芊悦）+ 0.5–2×，
+     存在 `<appRoot>/orb/voice.json`。两套偏好不互相覆盖。
+  4. **唤醒词在本机听，永远一条路**：sherpa-onnx 的 `KeywordSpotter`
+     （`sherpa-onnx-kws-zipformer-wenetspeech-3.3M`，int8 约 5 MB，第一次用时下到
+     `<appRoot>/voice/kws-zh`）。关键词表是拼音 token：
+     `n ǐ h ǎo s uǒ l uó @你好Solo`、`n ǐ h ǎo zh ù l ǐ @你好助理`、`x iǎo s uǒ @小索`。
+     前端 `AudioContext({sampleRate: 16000})` 收 Float32，按块 base64 POST 到
+     `POST /api/orb/kws`，命中就开面板并自动开始录音。**只用中文拼音**：英文 `Solo`
+     在这套 wenetspeech 声学模型上识别不到（`s o l o` / ARPAbet 都试过），所以
+     「你好 Solo」的显示词对应的是「你好索罗」的拼音 —— 界面文案里写清「喊成『你好索罗』也认」。
+     唤醒模型与播报模型分开下载、分开开关，球上没开唤醒词就不常开麦克风。
+  5. **设置页仍然是插件自己的那一页**（`app.entry` / `app.page`），只是内容从「八个音色」
+     扩成四段：播报引擎 → 朗读 → （本机音色 / 千问 Key + 音色 + 语速）→ 唤醒词。
+     页头副标题跟着引擎变：本机是「说的、听的都在本机」，千问是「听的是千问云端的声音，
+     说的仍在本机转写」—— 别在云端模式下还说全在本机。
+- **取舍**：云端多一个 Key、一段联网、一次文字外发；换来自然得多的中文声音。默认不选它，
+  离线安装仍然完整可用。唤醒词常开麦克风只在用户自己打开时发生，转写仍走本机端侧模型。
+- **执行**：`seed/plugins/悬浮球/plugin.js`（`SPEECH_FILE` / `readSpeech` / `speechStatus` /
+  `saveSpeech`、`WAKE_FILES` / `downloadWake` / `wakeSpotter` / `feedWake`、四条新路由
+  `GET·POST /api/orb/speech`、`GET·POST /api/orb/wake`、`POST /api/orb/kws`）、
+  `seed/plugins/悬浮球/qwen.js`（`QWEN_VOICES` / `synthesizeQwen`）、
+  `seed/plugins/悬浮球/client.js`（`VoicePage` 的引擎段与唤醒段、`Orb` 的唤醒循环
+  `startWake` / `woke`）、`test/core/orb-plugin.test.ts`；`docs/CORE.md` §13、
+  `docs/DESIGN.md` §2.8 / §13.11、`seed/plugins/悬浮球/plugin.md`、`AGENTS.md` §3.3。
+
+## ADR-120 设置弹窗的高度由宿主补间：插件页 460–560，内容一变就顺过去
+
+- **背景**：ADR-106 的补间只覆盖「换层」（设置清单 → 插件清单 → 插件页），不管层内内容变化。
+  IM 机器人页切渠道、数据落地、二维码回来时高度都不一样，整张弹窗会「啪」地跳；上一版
+  干脆把页面定成 660 高 —— 不跳了，但桌面上一进来就是个大空盒子。
+- **决策**：
+  1. **高度仍由内容决定，补间放在宿主**。`SettingsPage` 除了换层那一下补宽高，还在
+     `.modal-level` 上挂 `MutationObserver`（外加 `resize`）：内容一变，下一帧量一次新高度，
+     用 WAAPI 从旧高补到新高（220ms、`cubic-bezier(0.2, 0.7, 0.3, 1)`，和 ADR-106 同一套）。
+     动画跑着的时候再来变化先记下，落定后再补一次，不来回掐断。
+  2. **插件不要自己去动宿主的 `.modal`**。上一版让 IM 插件 `closest(".modal")` 自己补间，
+     每个插件都这么做就成了 N 份重复代码，还会和宿主的补间抢同一个属性；现在插件只画
+     自己那一页（铺满宿主给的那一格），高度的事宿主管。
+  3. **桌面上的插件页是 460–560**：内容在中间时按内容走；比 460 矮（比如 IM 微信页）给
+     460，免得一打开只剩一条缝；比 560 高（Token、悬浮球语音）给 560，里面自己滚。
+     设置清单与插件清单不套这个区间：清单本身就是内容高度（插件清单仍是定高 340）。
+  4. **铺满的那一格要能解析**：插件页根节点写 `height: 100%` 时，父级是 flex 分配的
+     高度，百分比解析不出来（实测插件页只有内容高、底下空一截）。宿主给
+     `.modal-body.modal-flush > *` 加 `flex: 1 1 auto; min-height: 0`，页面自己的滚动区
+     才有确定高度。
+- **取舍**：高度与内容联动，弹窗不再是一块固定的大板；代价是内容变化频繁时会有连续补间
+  （每次 220ms），宿主用「动画期间只记 dirty、落定再补」压住。`prefers-reduced-motion` 下
+  直接跳，不补。
+- **执行**：`ui/app/src/panels/SettingsPage.tsx`（`settle` / `moving` / `dirty`、
+  `MutationObserver`、`data-level`）、`ui/app/src/styles/v6.css`（`.modal` 的
+  `max-height`、`.modal[data-level="page"]` 的 460–560、`.modal-body.modal-flush > *`）、
+  `seed/plugins/IM机器人/client.js`（撤掉插件自己那套补间、回到 `height: 100%`）；
+  `docs/DESIGN.md` §2.8 / §13.7、`AGENTS.md` §3.3。

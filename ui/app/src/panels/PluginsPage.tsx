@@ -105,16 +105,13 @@ export function PluginsPage(): JSX.Element {
 							<path d="M14.5 5.5 8 12l6.5 6.5" />
 						</svg>
 					</button>
-					<h1 className="modal-title">
-						插件 <span className="nav-count">{list.length}</span>
-					</h1>
+					<h1 className="modal-title">插件</h1>
 					<span className="head-grow" />
 					<label className="pl-add" title="装一个插件（选它的文件夹）">
 						<span className="sr-only">选一个插件文件夹装进来</span>
 						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
 							<path d="M12 5.5v13M5.5 12h13" />
 						</svg>
-						<span>装一个插件</span>
 						<input
 							type="file"
 							multiple

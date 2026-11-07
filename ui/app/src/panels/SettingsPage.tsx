@@ -7,6 +7,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { getPreferences, savePreferences } from "../api/client.ts";
+import { Fold } from "../lib/fold.tsx";
 import { cellsOf } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { useStore } from "../state/useStore.ts";
@@ -97,11 +98,15 @@ export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.El
 
 	const frame = useRef<HTMLDivElement>(null);
 	const size = useRef<{ w: number; h: number } | null>(null);
+	// 高度动画跑着的时候又来了变化：先记下，等这一趟落定再补一次，别把动画来回掐断。
+	const moving = useRef(false);
+	const dirty = useRef(false);
 	const label = level === "plugins" ? "插件" : level === "page" ? "插件页面" : "设置";
 
-	// 换层时量一次「换之前」的宽高，再用 WAAPI 从旧尺寸补到新尺寸 —— 不加过渡动画
-	// 就是「啪」地跳一下；对 height 写 transition 又违反 motion.css 的纪律（用 FLIP 补）。
-	useLayoutEffect(() => {
+	const still = (): boolean => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	/** 记下当前尺寸；和上一次不同就从上一次补间过来（WAAPI FLIP，motion.css 允许的唯一写法）。 */
+	const settle = useRef((width: boolean) => {
 		const el = frame.current;
 		if (el === null) return;
 		const rect = el.getBoundingClientRect();
@@ -110,15 +115,54 @@ export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.El
 		size.current = next;
 		if (from === null) return;
 		if (Math.abs(from.w - next.w) < 1 && Math.abs(from.h - next.h) < 1) return;
-		// WAAPI 不受 motion.css 那条 `prefers-reduced-motion` 规则管，自己让开。
-		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-		el.animate(
-			[
-				{ width: `${String(from.w)}px`, height: `${String(from.h)}px` },
-				{ width: `${String(next.w)}px`, height: `${String(next.h)}px` },
-			],
-			{ duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" },
-		);
+		if (still()) return;
+		moving.current = true;
+		const keyframes = width
+			? [
+					{ width: `${String(from.w)}px`, height: `${String(from.h)}px` },
+					{ width: `${String(next.w)}px`, height: `${String(next.h)}px` },
+				]
+			: [{ height: `${String(from.h)}px` }, { height: `${String(next.h)}px` }];
+		const animation = el.animate(keyframes, { duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" });
+		animation.addEventListener("finish", () => {
+			moving.current = false;
+			if (!dirty.current) return;
+			dirty.current = false;
+			// 动画期间内容又变过：按落定后的真实高度再补一次。
+			settle.current(false);
+		});
+	});
+
+	// 换层：宽度要一起补（648 ↔ 800）。高度也在这里补第一下。
+	useLayoutEffect(() => {
+		settle.current(true);
+	}, [level]);
+
+	// 同一层里内容变高变矮（插件数据落地、渠道切换、折叠展开）：只补高度。
+	// 监听 DOM 变异而不是订阅某个状态 —— 插件页是别人的代码，宿主不知道它在什么时候换了内容。
+	useEffect(() => {
+		const el = frame.current;
+		const inner = el?.querySelector(".modal-level");
+		if (el === null || inner === null || inner === undefined) return;
+		let raf = 0;
+		const poke = (): void => {
+			cancelAnimationFrame(raf);
+			raf = requestAnimationFrame(() => {
+				if (moving.current) {
+					dirty.current = true;
+					return;
+				}
+				settle.current(false);
+			});
+		};
+		const observer = new MutationObserver(poke);
+		observer.observe(inner, { childList: true, subtree: true, characterData: true, attributes: true });
+		window.addEventListener("resize", poke);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", poke);
+			cancelAnimationFrame(raf);
+		};
 	}, [level]);
 
 	return (
@@ -130,7 +174,14 @@ export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.El
 				if (event.target === event.currentTarget) setSettings(false);
 			}}
 		>
-			<div ref={frame} className={wide ? "modal modal-wide" : "modal"} role="dialog" aria-modal="true" aria-label={label}>
+			<div
+				ref={frame}
+				className={wide ? "modal modal-wide" : "modal"}
+				data-level={level}
+				role="dialog"
+				aria-modal="true"
+				aria-label={label}
+			>
 				{/* 换一层就重挂一次，配一点透明度：内容跟着尺寸一起换，而不是先跳再淡。 */}
 				<div className="modal-level" data-level={level} key={level}>
 					{level === "plugins" ? (
@@ -295,7 +346,7 @@ function UpdateProxyRow(): JSX.Element {
 				<span className="set-proxy-value">{shown}</span>
 				<Chevron up={open} />
 			</button>
-			{open ? (
+			<Fold open={open}>
 				<div className="set-proxy-body">
 					<div className="set-proxy-field">
 						<input
@@ -321,11 +372,13 @@ function UpdateProxyRow(): JSX.Element {
 							保存
 						</button>
 					</div>
-					<p className="set-note" data-error={error === null ? "false" : "true"}>
-						{error ?? "模型调用不走这个代理。"}
-					</p>
+					{error === null ? null : (
+						<p className="set-note" data-error="true">
+							{error}
+						</p>
+					)}
 				</div>
-			) : null}
+			</Fold>
 		</div>
 	);
 }

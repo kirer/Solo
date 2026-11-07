@@ -15,82 +15,80 @@ export default {
 	style: `
 		/* 宿主那一格有 12/14 的内边距；这一条自己铺满整张卡，收起时就是一行设置。 */
 		.pm { display: flex; flex-direction: column; margin: -12px -14px; }
-		.pm-panel { padding: 0 14px 14px; }
+		.pm-panel { padding: 0 14px 12px; }
 		.pm-cur {
 			margin-left: auto; overflow: hidden; max-width: 60%;
 			font-size: 12.5px; line-height: 18px; color: var(--ink-3);
 			text-overflow: ellipsis; white-space: nowrap;
 		}
-		/* 第一行自带一条上线：正文说明和设置行之间要有一条分界，不能只有行间线。 */
-		/* 默认模型：一行放下，左标题右下拉（全屏设置里纵向空间最贵）。 */
-		.pm-default { gap: 12px; padding: 2px 0 14px; box-shadow: 0 0.5px 0 var(--line); flex-wrap: nowrap; }
+		/* 默认模型：标签在左、下拉在右；一行放得下就别铺满整行。 */
+		.pm-default {
+			gap: 12px; padding: 4px 0 12px; flex-wrap: nowrap;
+			border-bottom: 0.5px solid var(--rule);
+		}
 		.pm-default .settings-row-main { flex: 0 0 auto; }
 		.pm-default .settings-row-ctl { flex: 1 1 auto; min-width: 0; }
-		.pm-default .pm-select { width: 100%; max-width: none; }
-		.pm-select {
-			height: 36px; padding: 0 34px 0 12px; max-width: 280px;
-			border: 0.5px solid var(--line); border-radius: 10px;
-			background: var(--ground); color: var(--ink); font: inherit; font-size: 13px;
-		}
-		.pm-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+		/* 输入 / 下拉直接用宿主的 .ui-*（styles/field.css，和设置页同一副样子）；
+		   这里只管这一行里它怎么摆。下拉收到内容宽，箭头就不会吊在很远的右边。 */
+		.pm-default .ui-select { margin-left: auto; width: auto; max-width: 300px; }
+
+		.pm-list { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
 		.pm-card {
-			border: 0.5px solid var(--line); border-radius: 12px; background: var(--ground);
-			transition: border-color 140ms ease;
+			border-radius: 10px; background: transparent;
+			box-shadow: inset 0 0 0 0.5px var(--rule);
+			transition: background-color 150ms ease, box-shadow 150ms ease;
 		}
-		.pm-card[data-open="true"] { border-color: color-mix(in oklab, var(--ink) 24%, var(--line)); }
+		.pm-card:hover { background: var(--hover); box-shadow: inset 0 0 0 0.5px var(--line); }
+		.pm-card[data-open="true"] {
+			background: color-mix(in oklab, var(--ink) 3%, transparent);
+			box-shadow: inset 0 0 0 0.5px var(--line);
+		}
 		/* 收起时只有一行：名字 + 状态 + 展开箭头。整行可点。 */
 		.pm-row {
-			display: flex; align-items: center; gap: 10px; width: 100%;
-			min-height: 52px; padding: 0 12px 0 16px;
+			display: flex; align-items: center; gap: 9px; width: 100%;
+			min-height: 46px; padding: 0 12px 0 13px;
 			border: 0; background: transparent; color: inherit; font: inherit; text-align: left;
-			cursor: pointer; transition: background-color 120ms ease;
+			cursor: pointer;
 		}
-		.pm-row:hover { background: var(--hover); }
-		.pm-chev { flex: none; color: var(--ink-3); transition: transform 160ms cubic-bezier(0.32, 0.72, 0, 1); }
-		.pm-card[data-open="true"] .pm-chev { transform: rotate(90deg); }
-		.pm-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
+		.pm-chev {
+			flex: none; color: var(--ink-3);
+			transition: transform 180ms var(--ease-line), color 150ms ease;
+		}
+		.pm-card[data-open="true"] .pm-chev { transform: rotate(90deg); color: var(--ink-2); }
+		.pm-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink-3); flex: none; }
 		.pm-dot[data-ok="true"] { background: #3fa66b; }
-		.pm-name { font-size: 14px; font-weight: 500; color: var(--ink); }
+		.pm-name { font-size: 13.5px; font-weight: 500; color: var(--ink); }
 		.pm-tag {
-			display: inline-flex; align-items: center; height: 22px; padding: 0 8px;
-			border-radius: 6px; background: var(--hover); color: var(--ink-3);
-			font-size: 11px; font-family: ui-monospace, monospace;
+			display: inline-flex; align-items: center; height: 20px; padding: 0 7px;
+			border-radius: 5px; background: var(--hover); color: var(--ink-3);
+			font-size: 10.5px; font-family: ui-monospace, monospace;
 		}
 		.pm-spacer { flex: 1 1 auto; }
 		.pm-btn {
-			height: 30px; padding: 0 12px; border: 0; border-radius: 8px;
+			height: 28px; padding: 0 11px; border: 0; border-radius: 8px;
 			background: var(--hover); color: var(--ink-2);
-			font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
-			transition: background-color 120ms ease, color 120ms ease;
+			font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap;
+			transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
 		}
 		.pm-btn:hover { background: color-mix(in oklab, var(--ink) 14%, transparent); color: var(--ink); }
 		.pm-btn[data-tone="ghost"] { background: transparent; box-shadow: inset 0 0 0 0.5px var(--line); }
+		.pm-btn[data-tone="ghost"]:hover { background: var(--hover); }
 		.pm-btn[data-tone="primary"] { background: var(--ink); color: var(--field); }
-		.pm-btn[data-tone="primary"]:hover { background: var(--ink); color: var(--field); opacity: .86; }
+		.pm-btn[data-tone="primary"]:hover { background: var(--ink); color: var(--field); opacity: 0.86; }
 		.pm-btn[data-tone="danger"] { background: transparent; color: var(--danger, #d9534f); }
 		.pm-btn[data-tone="danger"]:hover { background: color-mix(in oklab, var(--danger, #d9534f) 14%, transparent); }
 		.pm-btn[data-tone="danger"][data-armed="true"] { background: color-mix(in oklab, var(--danger, #d9534f) 18%, transparent); }
-		.pm-btn:disabled { opacity: .45; cursor: default; }
-		/* 展开的编辑区是一张嵌进去的卡：和外面的行不是同一层，眼睛才分得清。 */
+		.pm-btn:disabled { opacity: 0.45; cursor: default; }
+		/* 展开的编辑区：不另起一张卡，一条细线隔开就够了（展开 / 收起由宿主的 .fold 管）。 */
 		.pm-body {
-			display: flex; flex-direction: column; gap: 14px;
-			margin: 0 10px 10px; padding: 16px;
-			border-radius: 10px; background: color-mix(in oklab, var(--ink) 4%, transparent);
-			animation: pm-drop 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-		}
-		@keyframes pm-drop {
-			from { opacity: 0; transform: translateY(-4px); }
-			to { opacity: 1; transform: none; }
+			display: flex; flex-direction: column; gap: 13px;
+			margin: 0 13px; padding: 13px 0 15px;
+			border-top: 0.5px solid var(--rule);
 		}
 		.pm-field { display: flex; flex-direction: column; gap: 6px; }
-		.pm-label { font-size: 13px; line-height: 17px; color: var(--ink-3); }
-		.pm-input {
-			height: 36px; padding: 0 12px; border: 0.5px solid var(--line); border-radius: 10px;
-			background: var(--field); color: var(--ink); font: inherit; font-size: 13px; min-width: 0;
-		}
-		.pm-input:focus, .pm-select:focus { outline: none; border-color: color-mix(in oklab, var(--ink) 40%, var(--line)); }
+		.pm-label { font-size: 12px; line-height: 16px; color: var(--ink-3); }
 		.pm-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-		.pm-row-inline .pm-btn { height: 36px; }
+		.pm-row-inline .pm-btn { height: 34px; }
 		.pm-chip {
 			display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 10px;
 			border-radius: 999px; background: var(--hover);
@@ -106,27 +104,25 @@ export default {
 		}
 		.pm-pick button:hover { color: var(--ink); border-color: color-mix(in oklab, var(--ink) 44%, transparent); }
 		.pm-foot { display: flex; align-items: center; gap: 8px; }
+		/* 「加一家」是个小动作，不该占一整条横幅：一行文字按钮，靠左。 */
 		.pm-add {
-			margin-top: 14px; height: 48px;
-			border: 0.5px dashed color-mix(in oklab, var(--ink) 26%, transparent); border-radius: 12px;
-			background: transparent; color: var(--ink-2); font: inherit; font-size: 13px; cursor: pointer;
-			transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+			align-self: flex-start; margin-top: 8px; height: 32px; padding: 0 11px 0 9px;
+			border: 0; border-radius: 8px; background: transparent;
+			color: var(--ink-3); font: inherit; font-size: 12.5px; cursor: pointer;
+			transition: background-color 140ms ease, color 140ms ease;
 		}
-		.pm-add:hover {
-			background: var(--hover); color: var(--ink);
-			border-color: color-mix(in oklab, var(--ink) 44%, transparent);
-		}
+		.pm-add:hover { background: var(--hover); color: var(--ink); }
 		.pm-start {
-			display: flex; align-items: center; gap: 16px; margin-top: 18px; padding: 14px 16px;
-			border: 0.5px solid var(--line); border-radius: 12px; background: var(--ground);
+			display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 12px 13px;
+			border-radius: 10px; background: color-mix(in oklab, var(--ink) 3%, transparent);
 		}
 		.pm-start p { margin: 0; font-size: 12.5px; line-height: 18px; color: var(--ink-3); }
-		.pm-msg { margin: 10px 0 0; font-size: 12.5px; line-height: 18px; color: var(--ink-3); }
+		.pm-msg { margin: 8px 0 0; font-size: 12.5px; line-height: 18px; color: var(--ink-3); }
 		.pm-msg[data-tone="error"] { color: var(--danger, #d9534f); }
 		/* 右栏详情最上面那一行：他此刻用哪只模型。 */
 		.pm-person { display: flex; flex-direction: column; gap: 8px; margin: 0 0 18px; }
 		.pm-person .detail-sec-head { margin: 0; }
-		.pm-person .pm-select { width: 100%; max-width: none; }
+		.pm-person .ui-select { width: 100%; max-width: none; }
 		.pm-person .pm-msg { margin: 0; }
 	`,
 
@@ -170,6 +166,16 @@ export default {
 			const [adding, setAdding] = useState("");
 			/** 「删除」点过一次才真的删：`window.confirm` 在桌面壳里会被吞掉，点了像没反应。 */
 			const [armed, setArmed] = useState(false);
+			/** 展开 / 收起两个方向都有动画：收起时内容留 180ms 再卸（和宿主 `.fold` 同一步长）。 */
+			const [alive, setAlive] = useState(open);
+			useEffect(() => {
+				if (open) {
+					setAlive(true);
+					return;
+				}
+				const timer = setTimeout(() => setAlive(false), 180);
+				return () => clearTimeout(timer);
+			}, [open]);
 
 			const runProbe = useCallback(() => {
 				setProbe({ busy: true, error: "", models: [] });
@@ -207,14 +213,20 @@ export default {
 						h("path", { d: "m1.5 1.5 5 5-5 5" }),
 					),
 				),
-				open
-					? h(
+				h(
+					"div",
+					{ className: "fold", "data-open": open ? "true" : "false" },
+					h(
+						"div",
+						{ className: "fold-in" },
+						alive
+							? h(
 							"div",
 							{ className: "pm-body" },
 							field(
 								"显示名称",
 								h("input", {
-									className: "pm-input",
+									className: "ui-input",
 									value: provider.name,
 									onChange: (event) => onPatch(index, { name: event.target.value }),
 								}),
@@ -222,7 +234,7 @@ export default {
 							field(
 								"API 地址",
 								h("input", {
-									className: "pm-input",
+									className: "ui-input",
 									value: provider.baseUrl,
 									placeholder: "http://127.0.0.1:3425/v1",
 									onChange: (event) => onPatch(index, { baseUrl: event.target.value }),
@@ -233,7 +245,7 @@ export default {
 								h(
 									"select",
 									{
-										className: "pm-select",
+										className: "ui-select",
 										value: provider.api,
 										onChange: (event) => onPatch(index, { api: event.target.value }),
 									},
@@ -245,7 +257,7 @@ export default {
 							field(
 								"API 密钥",
 								h("input", {
-									className: "pm-input",
+									className: "ui-input",
 									type: "password",
 									autoComplete: "off",
 									value: provider.apiKey,
@@ -284,7 +296,7 @@ export default {
 									"div",
 									{ className: "pm-chips pm-row-inline", style: { marginTop: "8px" } },
 									h("input", {
-										className: "pm-input",
+										className: "ui-input",
 										style: { width: "220px" },
 										value: adding,
 										placeholder: "手动加一个模型 id",
@@ -350,7 +362,9 @@ export default {
 								),
 							),
 						)
-					: null,
+							: null,
+					),
+				),
 			);
 		}
 
@@ -360,6 +374,16 @@ export default {
 			const [show, setShow] = useState(false);
 			const [open, setOpen] = useState("");
 			const [state, setState] = useState({ busy: false, error: "", done: "" });
+			/** 整个「模型」展开 / 收起：收起时内容留 180ms 再卸（和宿主 `.fold` 同一步长）。 */
+			const [alive, setAlive] = useState(false);
+			useEffect(() => {
+				if (show) {
+					setAlive(true);
+					return;
+				}
+				const timer = setTimeout(() => setAlive(false), 180);
+				return () => clearTimeout(timer);
+			}, [show]);
 
 			useEffect(() => {
 				let live = true;
@@ -510,13 +534,18 @@ export default {
 				);
 			}
 
-			if (!show) return h("div", { className: "pm" }, head);
-
 			return h(
 				"div",
 				{ className: "pm" },
 				head,
 				h(
+					"div",
+					{ className: "fold", "data-open": show ? "true" : "false" },
+					h(
+						"div",
+						{ className: "fold-in" },
+						alive
+							? h(
 					"div",
 					{ className: "pm-panel" },
 					h(
@@ -529,7 +558,7 @@ export default {
 						h(
 							"select",
 							{
-								className: "pm-select",
+								className: "ui-select",
 								value: draft.defaultModel,
 								disabled: state.busy,
 								onChange: (event) => {
@@ -570,6 +599,9 @@ export default {
 				h("button", { type: "button", className: "pm-add", onClick: addProvider }, "+ 添加模型提供商"),
 				state.error === "" ? null : h("p", { className: "pm-msg", "data-tone": "error" }, state.error),
 				state.done === "" ? null : h("p", { className: "pm-msg" }, state.done),
+				)
+							: null,
+					),
 				),
 			);
 		}
@@ -666,7 +698,7 @@ export default {
 				h(
 					"select",
 					{
-						className: "pm-select",
+						className: "ui-select",
 						value,
 						disabled: state.busy,
 						"aria-label": "他用的模型",

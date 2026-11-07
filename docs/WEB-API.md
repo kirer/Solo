@@ -707,7 +707,7 @@ agent（且不是 `owner`）—— 这既挡路径穿越，也让不存在的人
 export default {
   id: "天气",
   style: "…",                     // 可选，宿主插进 <head>
-  apply(ui) {                     // ui = { h, React, api, store, useStore, register }
+  apply(ui) {                     // ui = { h, React, api, store, useStore, markdown, brandMarkSvg, register }
     ui.register("sidebar.footer", { id: "today", component: () => ui.h("div", {}, "…") });
     // 后端 api（apply 的参数）还有 scope(channelId)：这个频道的工作区根（私聊 → 那个人、
     // 团队频道 → 团队、全员频道 → undefined），以及 logsRoot：`<userRoot>/logs` 的绝对路径

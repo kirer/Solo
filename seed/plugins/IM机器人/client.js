@@ -259,7 +259,7 @@ export default {
 
 	apply(ui) {
 		const { h, React, register, store, useStore } = ui;
-		const { useEffect, useLayoutEffect, useState } = React;
+		const { useEffect, useState } = React;
 
 		/**
 		 * 微信这次扫码跨渠道切换留着：来回点一下渠道不该重新要一张码
@@ -790,64 +790,6 @@ export default {
 			const [brand, setBrand] = useState(BRANDS[0].id);
 
 			const mainRef = React.useRef(null);
-			const rootRef = React.useRef(null);
-
-			// 弹窗的高度跟着内容走（默认就一小块，不撑满）：切渠道、数据落地、二维码回来，
-			// 内容一变高度就「啪」地跳。这里跟宿主的换层补间一样用 WAAPI 从旧高补到新高
-			// （ADR-106 的同一套做法），只补高度；换层时宽度也在变，那一下由宿主自己的 FLIP 管。
-			const modalRef = React.useRef(null);
-			const prevRef = React.useRef(null);
-			const animRef = React.useRef(null);
-			const sync = React.useCallback(() => {
-				const modal = modalRef.current;
-				if (modal === null) return;
-				// 动画换成新的先量「此刻画面上的高度」，取消后才量得到自然高度。
-				let visual = null;
-				if (animRef.current !== null) {
-					visual = modal.offsetHeight;
-					animRef.current.cancel();
-					animRef.current = null;
-				}
-				const next = { w: modal.offsetWidth, h: modal.offsetHeight };
-				const prev = prevRef.current;
-				prevRef.current = next;
-				if (prev === null || next.w !== prev.w) return;
-				const fromH = visual ?? prev.h;
-				if (Math.abs(next.h - fromH) < 1) return;
-				if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-				const anim = modal.animate(
-					[{ height: `${String(fromH)}px` }, { height: `${String(next.h)}px` }],
-					{ duration: 220, easing: "cubic-bezier(0.2, 0.7, 0.3, 1)" },
-				);
-				animRef.current = anim;
-				anim.addEventListener("finish", () => {
-					if (animRef.current === anim) animRef.current = null;
-					prevRef.current = { w: modal.offsetWidth, h: modal.offsetHeight };
-				});
-				anim.addEventListener("cancel", () => {
-					if (animRef.current === anim) animRef.current = null;
-				});
-			}, []);
-			useEffect(() => {
-				const root = rootRef.current;
-				const modal = root === null ? null : root.closest(".modal");
-				if (modal === null) return undefined;
-				modalRef.current = modal;
-				prevRef.current = { w: modal.offsetWidth, h: modal.offsetHeight };
-				// 动画自己也会改高度：跑着的时候别把回调当成新内容（切渠道走下面的布局效应）。
-				const observer = new ResizeObserver(() => {
-					if (animRef.current === null) sync();
-				});
-				observer.observe(modal);
-				return () => {
-					observer.disconnect();
-					modalRef.current = null;
-					if (animRef.current !== null) animRef.current.cancel();
-				};
-			}, [sync]);
-			// 换渠道 / 数据落地在提交后、绘制前就补，不让新高度先露一帧。
-			useLayoutEffect(sync, [brand, data, sync]);
-
 			const load = () => {
 				call("/api/p/im")
 					.then((body) => setData(body))
@@ -874,7 +816,7 @@ export default {
 
 			return h(
 				"section",
-				{ className: "im", "aria-label": "IM 机器人", ref: rootRef },
+				{ className: "im", "aria-label": "IM 机器人" },
 				h(
 					"div",
 					{ className: "im-top", "data-host": inPanel ? "panel" : "modal" },

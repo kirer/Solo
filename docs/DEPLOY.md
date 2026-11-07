@@ -377,6 +377,13 @@ npm run update:serve -- --dir feed --port 8899 --host 0.0.0.0
 界面本来就是单列（ADR-084），窄到 375×812 也成立，不用开浏览器模拟器看排版。**Windows 的真机行为（拖拽 / 贴边 / 高 DPI / 按钮颜色）没有在
 本机验证过**，改这块要在 Windows 上手工过一遍。
 
+**悬浮球（ADR-116）**：壳多开一扇透明窗，加载 `?orb=1` —— 那一页只画插件的 `overlays`
+插槽。窗口置顶、跨桌面、不占 Dock / 任务栏；透明的地方点击穿透，鼠标移进球 / 面板里才接
+点击；拖球由 `orb:drag` 把屏幕增量报给壳，位置存在 `<appRoot>/orb-window.json`。
+菜单栏 / 托盘图标（macOS 用模板图 `desktop/trayTemplate*.png`）左键一下开关悬浮球，
+右键是菜单（显示 / 隐藏悬浮球、打开 Solo、退出）。macOS 关主窗口后悬浮球留着；
+Windows / Linux 关主窗口即退出（悬浮窗不会把进程留在后台）。
+
 ```bash
 npm run desktop:dev     # 开发：临时 userData + 临时工作区，带开发者工具
 npm run desktop:pack    # 只出目录（release/mac-arm64/Solo.app），验证打包最常用
