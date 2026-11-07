@@ -339,6 +339,9 @@ $ {{command}}
 ## run.foreground.signal
 （被信号 {{signal}} 结束）
 
+## run.foreground.spawn-failed
+（命令没起来：{{text}}）
+
 ## file.description
 工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员。
 

@@ -55,7 +55,7 @@ export type StartRunInput = {
 };
 
 /** 杀一整个进程组：`detached` 起的子进程带着自己的一窝 shell，只杀 pid 会留下孤儿。 */
-function killGroup(pid: number | undefined): void {
+export function killGroup(pid: number | undefined): void {
 	if (pid === undefined || pid <= 0) return;
 	if (process.platform === "win32") {
 		// `process.kill(-pid)` 是 POSIX 的进程组写法，Windows 上没有。用 taskkill 连子树

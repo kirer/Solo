@@ -1,7 +1,7 @@
 /** `run`：执行一条 shell 命令。 */
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
-import { RUN_LIMIT_MS, startRunJob, type RunOutcome } from "../jobs.ts";
+import { RUN_LIMIT_MS, killGroup, startRunJob, type RunOutcome } from "../jobs.ts";
 import { OWNER } from "../types.ts";
 import { defaultChannel } from "./channel-choice.ts";
 import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
@@ -15,6 +15,9 @@ import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
  * 洗掉终端控制序列（颜色、光标）。命令输出里的 `\u001b[90m` 进了提示词和界面就是
  * 一坨 `[90m` —— 模型读不懂，我看不懂。
  */
+/** 前台命令最多收这么多输出（字符）；超了就杀掉并说「输出太多」。 */
+const MAX_BUFFER = 512 * 1024;
+
 const ANSI = /\u001b\[[0-9;?]*[A-Za-z]|\u001b\][^\u0007]*\u0007/g;
 function plain(text: string): string {
 	return text.replace(ANSI, "");
@@ -116,8 +119,10 @@ export function createRunTool(deps: CoreToolDeps) {
 				return text(t("run.background.detached", { command, pid }));
 			}
 
-			// 前台命令：等它跑完。
-			const { exec } = await import("node:child_process");
+			// 前台命令：等它跑完。用 spawn + 自己杀进程组，不用 `exec`：
+			// Windows 上 `exec` 超时只杀 `cmd.exe`，它拉起的 ping / node 还攥着输出管道，
+			// 回调要等子进程自己结束才来 —— 1 秒的超时能挂成 60 秒（实测把整轮卡死）。
+			const { spawn } = await import("node:child_process");
 			const result = await new Promise<{
 				stdout: string;
 				stderr: string;
@@ -126,18 +131,55 @@ export function createRunTool(deps: CoreToolDeps) {
 				timedOut: boolean;
 				signal: string | null;
 			}>((resolve) => {
-				exec(command, { cwd, timeout: seconds * 1000, maxBuffer: 512 * 1024 }, (error, stdout, stderr) => {
-					const failure = error as { code?: string | number | null; killed?: boolean; signal?: string | null } | null;
-					resolve({
-						stdout: stdout.toString(),
-						stderr: stderr.toString(),
-						code: error === null ? 0 : typeof failure?.code === "number" ? failure.code : -1,
-						tooMuch: failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER",
-						// `exec` 超时会自己杀掉子进程：`killed` 只在这一条路上为真。
-						timedOut: failure?.killed === true,
-						signal: failure?.signal ?? null,
-					});
+				const child = spawn(command, {
+					shell: true,
+					cwd,
+					detached: true,
+					windowsHide: true,
+					stdio: ["ignore", "pipe", "pipe"],
 				});
+				let stdout = "";
+				let stderr = "";
+				let tooMuch = false;
+				let timedOut = false;
+				let settled = false;
+				let timer: ReturnType<typeof setTimeout> | undefined;
+				let hard: ReturnType<typeof setTimeout> | undefined;
+				const finish = (code: number | null, signal: string | null): void => {
+					if (settled) return;
+					settled = true;
+					if (timer !== undefined) clearTimeout(timer);
+					if (hard !== undefined) clearTimeout(hard);
+					resolve({ stdout, stderr, code, tooMuch, timedOut, signal });
+				};
+				// 杀整组（不是只杀 shell）；管道万一还不关，3 秒后自己收工。
+				const stop = (): void => {
+					if (settled || hard !== undefined) return;
+					killGroup(child.pid);
+					hard = setTimeout(() => finish(null, "SIGKILL"), 3_000);
+					hard.unref();
+				};
+				const collect = (chunk: Buffer, into: "out" | "err"): void => {
+					if (tooMuch) return;
+					if (into === "out") stdout += chunk.toString();
+					else stderr += chunk.toString();
+					if (stdout.length + stderr.length > MAX_BUFFER) {
+						tooMuch = true;
+						stop();
+					}
+				};
+				child.stdout?.on("data", (chunk: Buffer) => collect(chunk, "out"));
+				child.stderr?.on("data", (chunk: Buffer) => collect(chunk, "err"));
+				child.once("error", (error: Error) => {
+					stderr += t("run.foreground.spawn-failed", { text: error.message });
+					finish(null, null);
+				});
+				child.once("close", (code, signal) => finish(code, signal));
+				timer = setTimeout(() => {
+					timedOut = true;
+					stop();
+				}, seconds * 1000);
+				timer.unref();
 			});
 
 			const out = plain(result.stdout).trim();
