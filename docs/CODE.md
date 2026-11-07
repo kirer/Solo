@@ -27,7 +27,7 @@ src/
   shell/          装配与启动：assemble（只做组合）/ wire/（七段接线）/ main / serve / seed
 ui/app/           界面源码（React + TS + Vite；构建产物 `ui/web/`）
 seed/             出厂内容：`rules.md` / `prompt/`（插槽模板）/ `skills/`（全员层）/
-                  `plugins/`（模型管理 / 文件树 / Token 统计）/ `assistant/`（助理身份 + 个人技能）
+                  `plugins/`（模型管理 / 文件树 / Token 统计 / 悬浮球）/ `assistant/`（助理身份 + 个人技能）
 scripts/          九个入口脚本：边界检查、真模型冒烟（core-live）、多 agent 真模型场景
                   （scenario-live）、team 改名迁移、提示词黄金渲染、渲染样例插槽表、
                   自建更新源（update-server，只读静态目录）、更新密钥（update-key，跑一次）、
@@ -418,6 +418,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `skills.test.ts` | 三层覆盖、拷贝不覆盖、frontmatter |
 | `models.test.ts` | `setupModels` 的默认模型（没有配置 = 没有模型，ADR-023） |
 | `token-plugin.test.ts` | 出厂「Token 统计」的口径：计费 Token = 新输入 + 缓存读 + 缓存写 + 输出、命中率分母、坏行 / 非模型行跳过、旧行缺 `write` 当 0、空日志是空态（ADR-064） |
+| `orb-plugin.test.ts` | 出厂「悬浮球」是**纯前端**：装得上、不注册工具 / 路由 / 提示词，前端只往 `overlays` 一个插槽注册（交互与数据都在助理私聊那一条上） |
 | `model-switch.test.ts` | 改 `settings.json` 后**每个会话**都换到新模型（装配层逐个读 `agent.model`） |
 | `person-model.test.ts` | 给一个人换模型：当场生效、写进 `settings.json` 的 `agentModels`、重启后装配认、空串回默认、没有的模型 400 |
 | `team.test.ts` | 团队 README 的读写、`doing` / `membersOfTeam` / 建团队权限 |

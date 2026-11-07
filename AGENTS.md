@@ -29,7 +29,7 @@
 <appRoot>/                      ← 应用根：这份安装自带的东西（默认 .solo-app/）
   assistant/<slug>/           ← 助理（Solo）本人，形状同 members/<slug>/
   prompt/                     ← 提示词模板
-  plugins/                    ← 插件（含出厂两个：模型管理、文件树）
+  plugins/                    ← 插件（出厂四个：模型管理、文件树、Token 统计、悬浮球）
   settings.json               ← 模型配置
   core.sqlite                 ← 频道消息、会话、名册
   uploads/                    ← 附件
@@ -85,9 +85,9 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             109 文件 / 954 例
-  ├ test/core/    83 文件（纯函数 + 装配）
-  ├ test/ui/      12 文件（界面纯函数与源码约定）
+test/             110 文件 / 962 例
+  ├ test/core/    89 文件（纯函数 + 装配）
+  ├ test/ui/      15 文件（界面纯函数与源码约定）
   └ test/desktop/ 6 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
@@ -148,7 +148,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 109 文件 954 例，<3s，必须全绿
+npm test             # 110 文件 962 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
