@@ -20,7 +20,7 @@ import { readIdentity } from "../../core/documents/member/identity.ts";
 import { readTeam } from "../../core/documents/team/doc.ts";
 import { teamWorkspace, workspaceOf, type Layout } from "../../core/layout.ts";
 import { emptyPluginHost, loadPlugins, type PluginHost } from "../../core/plugin/index.ts";
-import type { PluginScope } from "../../core/plugin/api.ts";
+import type { PluginChannel, PluginScope } from "../../core/plugin/api.ts";
 import { coreToolNames } from "../../core/channel/tools/index.ts";
 import type { FlowReport } from "../../core/flow/ports.ts";
 
@@ -39,6 +39,8 @@ export type PluginWire = {
 export function createPluginWire(deps: {
 	readonly harness: Harness;
 	readonly layout: Layout;
+	/** 以我的身份发言。装配层晚绑到 `speak` 上（它在这之后才造出来）。 */
+	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
 	/** 运行中出错的出口（装配层接到 diag）。不给就只留 console。 */
 	readonly report?: FlowReport;
 }): PluginWire {
@@ -48,6 +50,8 @@ export function createPluginWire(deps: {
 		workspace: deps.layout.appRoot,
 		logsRoot: deps.layout.logsRoot,
 		scope: (channelId: string) => channelScope(deps.harness, deps.layout, channelId),
+		channels: () => channelList(deps.harness),
+		...(deps.post === undefined ? {} : { post: deps.post }),
 		// 插件不能和核心工具重名：重名等于把 `say` 换成了别人写的同名函数。
 		reservedTools: coreToolNames(),
 		log: (line: string) => console.log(line),
@@ -73,6 +77,21 @@ export function createPluginWire(deps: {
 		},
 		policies: () => host.flow,
 	};
+}
+
+/** 插件要认频道时看到的那一份：只有 id / 标题 / 私聊还是群聊 / 成员。按 id 排，稳定。 */
+async function channelList(harness: Harness): Promise<readonly PluginChannel[]> {
+	const state = (await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState | undefined;
+	if (state === undefined) return [];
+	return Object.values(state.channels)
+		.filter((channel) => channel.archived !== true)
+		.map((channel) => ({
+			id: channel.id,
+			title: channel.title,
+			kind: chatKind(channel),
+			members: [...channel.members],
+		}))
+		.sort((left, right) => left.id.localeCompare(right.id));
 }
 
 /**

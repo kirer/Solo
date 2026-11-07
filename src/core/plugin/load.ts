@@ -13,7 +13,14 @@ import { pathToFileURL } from "node:url";
 import type { ToolRegistration } from "../runtime/index.ts";
 import { mtimeOrUndefined } from "../runtime/io.ts";
 import type { FlowPolicy, Message } from "../channel/types.ts";
-import { createPluginApi, emptySinks, type PluginListener, type PluginRouteSpec, type PluginScope } from "./api.ts";
+import {
+	createPluginApi,
+	emptySinks,
+	type PluginChannel,
+	type PluginListener,
+	type PluginRouteSpec,
+	type PluginScope,
+} from "./api.ts";
 import { listPluginSlugs, readPluginManifest } from "./manifest.ts";
 
 /** 界面上看得见的一条插件。`client` 是浏览器要去 import 的 URL。 */
@@ -66,6 +73,10 @@ export type LoadOptions = {
 	readonly logsRoot: string;
 	/** 这个频道的工作区（插件 `api.scope` 的实现）。不给就只有「没有」。 */
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
+	/** 频道清单（插件 `api.channels` 的实现）。不给就是空表。 */
+	readonly channels?: () => Promise<readonly PluginChannel[]>;
+	/** 以我的身份发言（插件 `api.post` 的实现）。不给就抛错。 */
+	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
 	/**
 	 * 已经有人用的工具名（核心那八个）。插件注册同名工具 = 整个插件不装，
 	 * 不是「后者覆盖前者」—— 同名工具被静默替换，模型完全看不出来。
@@ -141,6 +152,8 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 					logsRoot: options.logsRoot,
 					sinks,
 					...(options.scope === undefined ? {} : { scope: options.scope }),
+					...(options.channels === undefined ? {} : { channels: options.channels }),
+					...(options.post === undefined ? {} : { post: options.post }),
 				}),
 			);
 			// 工具名先全部核一遍，全过才登记：装一半的插件不占用名字，也不进注册表。

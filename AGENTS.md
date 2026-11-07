@@ -29,7 +29,7 @@
 <appRoot>/                      ← 应用根：这份安装自带的东西（默认 .solo-app/）
   assistant/<slug>/           ← 助理（Solo）本人，形状同 members/<slug>/
   prompt/                     ← 提示词模板
-  plugins/                    ← 插件（出厂四个：模型管理、文件树、Token 统计、悬浮球）
+  plugins/                    ← 插件（出厂五个：模型管理、文件树、Token 统计、悬浮球、IM 机器人）
   settings.json               ← 模型配置
   core.sqlite                 ← 频道消息、会话、名册
   uploads/                    ← 附件
@@ -85,8 +85,8 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             110 文件 / 968 例
-  ├ test/core/    89 文件（纯函数 + 装配）
+test/             111 文件 / 975 例
+  ├ test/core/    90 文件（纯函数 + 装配）
   ├ test/ui/      15 文件（界面纯函数与源码约定）
   └ test/desktop/ 6 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
@@ -148,7 +148,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 110 文件 968 例，<3s，必须全绿
+npm test             # 111 文件 975 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -229,6 +229,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 两个根（应用私有 / 用户根）/ 加一个要落盘的目录 | `docs/DECISIONS.md` ADR-030 + `docs/CODE.md` §1 | `src/core/layout.ts`（**拼路径只在这里**）+ `scripts/check-boundaries.mjs` 的根原语组 + `test/core/layout.test.ts`；不许在业务模块里 `dirname` 推路径 |
 | 加 / 改一个频道给的「工作区」（插件用） | `docs/DECISIONS.md` ADR-036 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `PluginScope` / `scope()` + `shell/wire/plugins.ts` 的 `channelScope`；**路径守卫留在插件里**，核心只给根 |
 | 插件要按 token / 成本算账（读审计日志） | `docs/DECISIONS.md` ADR-064 + `docs/CORE.md` §13 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `logsRoot` + `load.ts` / `shell/wire/plugins.ts` 传 `layout.logsRoot` + `app/audit.ts` 记齐 `in/out/cache/write/cost`；出厂消费者 `seed/plugins/Token统计/`，`test/core/token-plugin.test.ts` |
+| 插件要接外部消息 / 以我的身份说话（IM 桥） | `docs/DECISIONS.md` ADR-115 + `docs/CORE.md` §13 + `docs/WEB-API.md` §13.4 | `src/core/plugin/api.ts` 的 `PluginChannel` / `channels` / `post` + `load.ts` 的透传 + `shell/wire/plugins.ts` 的 `channelList` + `shell/assemble.ts` 的晚绑 `pluginPost`；出厂消费者 `seed/plugins/IM机器人/`（Telegram 主动拉取 / 自定义 Webhook），`test/core/im-plugin.test.ts`；配置在 `<appRoot>/im/bots.json`，**别写进插件目录**（出厂升级按目录 hash，ADR-097） |
 | 右侧工作台（资料表那一行「工作空间」：标签页里翻目录 / 看文件 / 开浏览器）/ 正文外链开在哪 | `docs/DESIGN.md` §13.12 / §2.8 + `docs/CORE.md` §13 + ADR-036 / ADR-096 / ADR-098 | 插件 `seed/plugins/文件树/`（后端 `plugin.js` 的 `inside()` 双重 realpath + 大小上限 + `root`；前端 `client.js` 注册 `rightPanel.row` 的 `onOpen` 与 `dock`）；宿主那边是 `ui/app/src/plugin/registry.ts` 的 `dock` / `SlotCell.onOpen` / 可选 `component` / `ui.markdown`、`plugin/Slot.tsx`、`panels/RightPanel.tsx` 的 `dock` 分支与 `DockGrip`（拖左边线改宽度，工作台替换右栏、返回回资料页）、`App.tsx` 的 `data-dock`、`state/store.ts` 的 `dock` / `dockWidth` / `setDockWidth` / `openDock` / `closeDock`、`styles/v6.css` 的 `.detail-dock` / `.dock-grip`；外链在 `ui/app/src/lib/links.ts` 的 `builtinLink` / `installLinkBrowser`（`main.tsx` 装一次）+ `panels/Browser.tsx`（没有工作台插件时兜底）；网页本体桌面壳里是 `<webview>`（`desktop/src/main.ts` 的 `webviewTag` + `will-attach-webview` 加固），网页版退回 iframe 并写明原因；`test/core/files-plugin.test.ts`、`test/ui/links.test.ts` |
 | 加一个应用级入口 / 插槽 | `docs/DESIGN.md` §13.3 / §2.8 + `docs/DECISIONS.md` ADR-084 | `ui/app/src/plugin/registry.ts` 的 `SlotName` / `SLOTS` + 宿主 `panels/SettingsPage.tsx`（`app.entry` 在设置页的 `.set-tools` 里画成一行）；出厂「Token 统计」用它（入口 `app.entry`、页是 `app.page`：从设置开是弹窗，从右栏的用量卡点进去是推在右栏里，ADR-104）；`test/ui/plugin.test.ts` 会查每个插槽都有宿主 |
 | 等我选的消息（`options`）/ 输入卡的选项卡 | `docs/CORE.md` §4 + `docs/WEB-API.md` §6 + `docs/DECISIONS.md` ADR-111 / ADR-112 | `channel/tools/say.ts`（2–6 个、去重、自动 @我；**正文点了别人就拒发；只有助理能带**）+ `channel/types.ts` / `rules.ts` / `write.ts` / `post.ts` + `ui/app/src/composer/choice.ts`（纯函数）+ `Composer.tsx`；**回答不新增路由**（ADR-035）；`test/core/say-contract.test.ts` |

@@ -59,6 +59,21 @@ export type PluginScope = {
 	readonly label: string;
 };
 
+/**
+ * 插件看得见的一个频道。
+ *
+ * 只给「认出它」要用的四个字段：id / 标题 / 私聊还是群聊 / 成员 slug。没有消息、
+ * 没有工作区、没有内部字段 —— 插件要读消息内容走 `on("message")`，要工作区走 `scope`。
+ * 给这份清单是为了让「把外面的话带进来」的插件能找到自己的目标频道（比如助理私聊），
+ * 而不是在插件里复述 `dm:owner-<slug>` 这种 id 拼法。
+ */
+export type PluginChannel = {
+	readonly id: string;
+	readonly title: string;
+	readonly kind: "dm" | "group";
+	readonly members: readonly string[];
+};
+
 /** 插件拿到的那一个对象。插件源码里不 import 任何东西，全靠它。 */
 export type PluginApi = {
 	readonly slug: string;
@@ -85,6 +100,15 @@ export type PluginApi = {
 	flow(policy: FlowPolicy): void;
 	/** 这个频道的工作区；没有（全员频道）或查无此频道 → `undefined`。 */
 	scope(channelId: string): Promise<PluginScope | undefined>;
+	/** 全部没归档的频道，按 id 排。只读事实，不含消息。 */
+	channels(): Promise<readonly PluginChannel[]>;
+	/**
+	 * 以**我的**身份在一个频道里说一句（和界面里打字走同一条路：同一套 @ 解析、
+	 * 同一套投递与唤醒）。插件不能冒充别人 —— 发件人固定是我。
+	 *
+	 * 抛错 = 没发出去（频道不存在、正文为空……）。调用方自己决定要不要重试。
+	 */
+	post(input: { readonly channelId: string; readonly text: string }): Promise<void>;
 	log(line: string): void;
 };
 
@@ -109,6 +133,8 @@ export function createPluginApi(options: {
 	readonly logsRoot: string;
 	readonly sinks: PluginSinks;
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
+	readonly channels?: () => Promise<readonly PluginChannel[]>;
+	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
 }): PluginApi {
 	const { slug, workspace, logsRoot, sinks } = options;
 	return {
@@ -134,6 +160,12 @@ export function createPluginApi(options: {
 			sinks.flow.push(policy);
 		},
 		scope: options.scope ?? (async () => undefined),
+		channels: options.channels ?? (async () => []),
+		post:
+			options.post ??
+			(async () => {
+				throw new Error("这个宿主不让插件发言");
+			}),
 		log(line) {
 			sinks.logs.push(line);
 		},

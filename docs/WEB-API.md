@@ -712,6 +712,8 @@ export default {
     // 后端 api（apply 的参数）还有 scope(channelId)：这个频道的工作区根（私聊 → 那个人、
     // 团队频道 → 团队、全员频道 → undefined），以及 logsRoot：`<userRoot>/logs` 的绝对路径
     // （审计 `tools.jsonl` 在那里，按 token 算账读它，ADR-064）。都只给根，路径守卫在插件里做。
+    // 另外两个：channels() 给没归档频道的 { id, title, kind, members }（只读事实），
+    // post({ channelId, text }) 以我的身份在那个频道里说一句（与界面打字同一条路，ADR-115）。
     // 格子 = { id, label?, icon?, order?, component }：label 是页签文字 / 设置分区名，
     // icon 是设置左栏那个图标（一个 SVG 元素）。能放进哪些位置见 docs/DESIGN.md §2.8
     // 的插槽表；读界面状态用 ui.useStore。

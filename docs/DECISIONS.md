@@ -2671,3 +2671,24 @@
   `appendMissingKeys`）、`src/shell/seed.ts` 的 `seedTextFiles` + 账本 `textKeys`、
   `src/shell/seed-legacy.ts` 的 `LEGACY_TEXT_KEYS`、`test/core/catalog-merge.test.ts`、
   `test/core/seed-sync.test.ts`；`docs/CODE.md` 的文件表与「改一句工具描述」行。
+
+## ADR-115 插件可以「以我的身份发言」和「看频道清单」：IM 桥只能这么接
+
+- **背景**：要做 dsh-im 那一类插件（IM 里的消息进 Solo，助理的回复回 IM）。现有五个动作
+  里没有一条能把**外面的话带进来**：`route` 只能回 JSON，`on("message")` 只能看已经落盘
+  的消息，`flow` 只能提议分发。前端能发消息（悬浮球走 `POST /api/channels/:id/messages`），
+  但 IM 的收消息必须在后端（页面关着也要收）。
+- **决策**：给插件 API 加两个**读 / 说**，不加新的写盘能力：
+  1. `channels()` —— 没归档频道的 `{ id, title, kind, members }`，只读事实，不含消息。
+     插件要认「助理私聊」靠它，而不是在插件里复述 `dm:owner-<slug>` 的拼法。
+  2. `post({ channelId, text })` —— 以**我**的身份在一个频道里说一句。与界面里打字
+     完全同一条路（`createSpeak` → `flow.publish`：同一套 @ 解析、投递、唤醒），
+     发件人固定是 `owner`，插件不能冒充别人。
+  装配层用晚绑把 `post` 接到 `speak` 上（`speak` 依赖 flow，在插件装载之后才造出来）。
+- **取舍**：插件从「只加能力」变成「也能替我说话」。风险是插件可以代我发言；但插件本来就
+  是本机全权限代码（CORE §13「没有沙箱」），这条只是把已经在界面里存在的能力挪到后端。
+  反过来，不开这个口子，IM 这类桥只能在插件里自己拼 HTTP 或直接写库 —— 两条都更糟。
+- **执行**：`src/core/plugin/api.ts` 的 `PluginChannel` / `channels` / `post`、
+  `load.ts` 的 `LoadOptions`、`src/shell/wire/plugins.ts` 的 `channelList`、
+  `src/shell/assemble.ts` 的晚绑 `pluginPost`；出厂消费者 `seed/plugins/IM机器人/`，
+  `test/core/im-plugin.test.ts`；`docs/CORE.md` §13、`docs/WEB-API.md` §13.4、`AGENTS.md` §3.3。

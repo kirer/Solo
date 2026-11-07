@@ -132,7 +132,18 @@ export async function assembleCore(
 	}
 	// 插件在开会话**之前**装：工具要进同一个注册表（否则会话建出来时它还不存在，
 	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
-	const pluginWire = createPluginWire({ harness, layout, report });
+	// 插件发言的出口：`speak` 依赖 flow，要等下面才造得出来，所以这里先留一个晚绑的钩子。
+	// 插件只会在运行中调用它（IM 收消息、定时任务），那时装配已经结束。
+	let pluginPost: ((input: { readonly channelId: string; readonly text: string }) => Promise<void>) | undefined;
+	const pluginWire = createPluginWire({
+		harness,
+		layout,
+		report,
+		post: async (input) => {
+			if (pluginPost === undefined) throw new Error("插件发言的出口还没接上");
+			await pluginPost(input);
+		},
+	});
 	await pluginWire.load();
 
 	// ── 2. 名册、模型、身份 ────────────────────────────────────────
@@ -243,6 +254,9 @@ export async function assembleCore(
 		directory,
 		flow: wiring.flow,
 	});
+	pluginPost = async (input) => {
+		await speak({ channelId: input.channelId, text: input.text }, BACKGROUND_CONTEXT);
+	};
 
 	// ── 5. 扫描与开会话 ────────────────────────────────────────────
 	await conversationWire.start(context);
