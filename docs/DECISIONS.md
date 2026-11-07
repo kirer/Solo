@@ -2608,3 +2608,21 @@
   与 `assistants` 透传、`channel/turn/finish.ts`、`seed/prompt/89-where.md`、
   `test/core/turn.test.ts`（新增助理两条与复述一条，原「私聊已经答过 → 回任务频道」改成
   `restated=false` 的用例）；`docs/CODE.md` 的 `flow/defaults/settle.ts` 行。
+
+## ADR-111 `options` 只画给我：点了别人的选项消息直接拒发
+
+- **背景**：2026-11-07 桌面端，成员「周砚生」在 `team:短剧流水线` 发了两条
+  「@Solo 方向要你定」，各带 3 个选项，选项卡却弹在了我的输入框上。数据里
+  `mentions: ["Solo", "owner"]` —— `owner` 不是他写的，是 `say` 自动补的。
+- **原因**：`options` 在系统里只有一个含义：**问我、给我画选项卡**。带选项的 `say` 无条件把
+  `owner` 加进 `mentions`（ADR-009 的拍板兜底），界面 `pendingChoice()` 又只看「最后一条带
+  options 的消息」，不看它 @ 了谁。于是「让助理拍板」被静默改写成「让老板拍板」。
+- **决策**：正文显式点了别人（解析后的 `mentions` 非空且不含 `owner`）又带 `options` → 拒发，
+  回一句说明：要同事做选择，把选项写进正文并用 `mention` 叫醒他；要问我，正文写 `@我`。
+  校验放在 `say` 落盘之前，和「选项 2–6 个 / 不重复」同一层。
+- **不做**：不给 agent 之间造选项卡（agent 没有输入框，答复本来就是一条 `say` + `replyTo`）；
+  不改界面的 `pendingChoice()` —— 拒发之后不会再有这种数据，旧消息等我回一句就消失。
+- **执行**：`src/core/channel/tools/say.ts`（`choosing && typedMentions.length > 0 && !wakeOwner`）、
+  `seed/text/tools.md` 的 `say.refuse.options.others`（`say.param.options` 同步写明会被拒）、
+  `test/core/say-contract.test.ts` 两条（@别人被拒 / @我照发）；`docs/CORE.md` §4、
+  `AGENTS.md` §3.3 的 options 行。

@@ -515,6 +515,26 @@ describe("要我选：带 options", () => {
 		expect(last?.mentions).toContain(OWNER);
 	});
 
+	it("选项是问我的：点了别人还带 options 就不发，别把问题弹给我", async () => {
+		// 2026-11-07 桌面端实测：周砚生「@Solo 方向要你定」带三个选项，选项卡弹到了我这儿。
+		const box = await setup({ colleague: "周砚生" });
+		const output = await box.say({ text: "@周砚生 方向要你定", options: ["先跑 A", "停下等 v4"] });
+		expect(output).toContain("选项卡");
+		expect(output).toContain("周砚生");
+		const withOptions = () =>
+			box.snapshot().then((state) => Object.values(state.messages).flat().filter((item) => item.options !== undefined));
+		expect(await withOptions()).toHaveLength(0);
+	});
+
+	it("正文里 @了我：照样带选项发出去，回给同事的那句不影响", async () => {
+		const box = await setup({ colleague: "周砚生" });
+		const output = await box.say({ text: "@我 @周砚生 你俩看下，我来定", options: ["A", "B"] });
+		expect(output).toContain("已发到");
+		const state = await box.snapshot();
+		const withOptions = Object.values(state.messages).flat().filter((item) => item.options !== undefined);
+		expect(withOptions.at(-1)?.options).toEqual(["A", "B"]);
+	});
+
 	it("选项少于 2 个、或多于 6 个、或重复：都不发，回一句能自救的话", async () => {
 		const box = await setup();
 		expect(await box.say({ text: "选一个", options: ["只有一个"] })).toContain("2–6");

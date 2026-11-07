@@ -121,6 +121,13 @@ export function createSayTool(deps: CoreToolDeps) {
 			const typedMentions = parseMentions(messageText, roster);
 			const wakeOwner = typedMentions.includes(OWNER);
 
+			// 带选项的消息画的是**我的**选项卡（`ui/app/src/composer/choice.ts`），而且一定会叫醒我。
+			// 点的是别人就别带：发出去只会变成「老板，你定」。2026-11-07 实测：周砚生
+			// 「@Solo 方向要你定」带三个选项，选项卡弹到了我这儿。
+			if (choosing && typedMentions.length > 0 && !wakeOwner) {
+				return text(t("say.refuse.options.others", { names: typedMentions.join("、") }));
+			}
+
 			const result = await deps.wiring.flow.publish(
 				state,
 				{
