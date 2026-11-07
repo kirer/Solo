@@ -56,6 +56,8 @@ async function setup(options: {
 	colleague?: string;
 	/** 团队频道只有「我 + 他」两个人（按 chatKind 就是私聊形态）。live 第一轮就是这个形状。 */
 	solo?: boolean;
+	/** 这些 slug 是助理（身份写在 `assistant/` 下）：只有助理能带 options 问我。 */
+	assistants?: readonly string[];
 	/** 再建一个同名的频道，用来验「重名不猜」。 */
 	duplicateTitle?: boolean;
 } = {}): Promise<{
@@ -66,12 +68,20 @@ async function setup(options: {
 	const root = box.root;
 	const agentsRoot = box.agentsRoot;
 	const teamsRoot = box.teamsRoot;
-	await mkdir(join(agentsRoot, ME), { recursive: true });
-	await writeFile(
-		join(agentsRoot, ME, "identity.md"),
-		"---\nname: 沈舟\ntitle: 前端开发\nmanager: owner\n---\n\n写小恐龙。\n",
-		"utf8",
-	);
+	const assistants = options.assistants ?? [];
+	for (const slug of assistants) {
+		const dir = join(box.layout.assistantRoot, slug);
+		await mkdir(dir, { recursive: true });
+		await writeFile(join(dir, "identity.md"), `---\nname: ${slug}\ntitle: 助理\n---\n\n统筹。\n`, "utf8");
+	}
+	if (!assistants.includes(ME)) {
+		await mkdir(join(agentsRoot, ME), { recursive: true });
+		await writeFile(
+			join(agentsRoot, ME, "identity.md"),
+			"---\nname: 沈舟\ntitle: 前端开发\nmanager: owner\n---\n\n写小恐龙。\n",
+			"utf8",
+		);
+	}
 	if (options.colleague !== undefined) {
 		// 成员必须真的在名册里，`parseMentions` 才会把 `@林越` 解析成 slug。
 		await mkdir(join(agentsRoot, options.colleague), { recursive: true });
@@ -505,7 +515,7 @@ describe("过程话可以连发（「一轮一句结论」已降级为 rules.md 
 
 describe("要我选：带 options", () => {
 	it("2–6 个选项：自动叫我、原样存进消息", async () => {
-		const box = await setup();
+		const box = await setup({ assistants: [ME] });
 		const output = await box.say({ text: "先做哪个？", options: ["首页", "登录页"] });
 		expect(output).toContain("已发到");
 		const state = await box.snapshot();
@@ -517,7 +527,7 @@ describe("要我选：带 options", () => {
 
 	it("选项是问我的：点了别人还带 options 就不发，别把问题弹给我", async () => {
 		// 2026-11-07 桌面端实测：周砚生「@Solo 方向要你定」带三个选项，选项卡弹到了我这儿。
-		const box = await setup({ colleague: "周砚生" });
+		const box = await setup({ colleague: "周砚生", assistants: [ME] });
 		const output = await box.say({ text: "@周砚生 方向要你定", options: ["先跑 A", "停下等 v4"] });
 		expect(output).toContain("选项卡");
 		expect(output).toContain("周砚生");
@@ -527,12 +537,23 @@ describe("要我选：带 options", () => {
 	});
 
 	it("正文里 @了我：照样带选项发出去，回给同事的那句不影响", async () => {
-		const box = await setup({ colleague: "周砚生" });
+		const box = await setup({ colleague: "周砚生", assistants: [ME] });
 		const output = await box.say({ text: "@我 @周砚生 你俩看下，我来定", options: ["A", "B"] });
 		expect(output).toContain("已发到");
 		const state = await box.snapshot();
 		const withOptions = Object.values(state.messages).flat().filter((item) => item.options !== undefined);
 		expect(withOptions.at(-1)?.options).toEqual(["A", "B"]);
+	});
+
+	it("成员不能拿选项问我：先 @助理，让它汇总", async () => {
+		// 2026-11-07 桌面端实测：祁远在团队频道甩来四个走法让我挑（超预算的事），
+		// 而这件事本该由助理汇总成一句话再问我（rules.md：拍不了板的 @助理）。
+		const box = await setup({ assistants: ["Solo"] });
+		const output = await box.say({ text: "超预算了，你挑一个", options: ["跳过两镜", "改上限"] });
+		expect(output).toContain("只能由助理");
+		expect(output).toContain("Solo");
+		const state = await box.snapshot();
+		expect(Object.values(state.messages).flat().filter((item) => item.options !== undefined)).toHaveLength(0);
 	});
 
 	it("选项少于 2 个、或多于 6 个、或重复：都不发，回一句能自救的话", async () => {

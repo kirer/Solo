@@ -1,5 +1,6 @@
 /** `say`：在频道里说话。带 `mention` 就是提问并叫醒对方。 */
 import { BACKGROUND_CONTEXT, Type, defineTool, type Context } from "../../runtime/index.ts";
+import { assistantsOf, readAllIdentities } from "../../documents/member/identity.ts";
 import { OWNER, chatKind } from "../types.ts";
 import { parseMentions, resolveMention } from "../mentions.ts";
 import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "./context.ts";
@@ -94,6 +95,16 @@ export function createSayTool(deps: CoreToolDeps) {
 				if (new Set(options).size !== options.length) return text(t("say.refuse.options.dup"));
 			}
 			const choosing = options.length > 0;
+
+			// 拍板是助理的事（`seed/rules.md`：拍不了板的 @助理，它自己拍不了再 @我）。
+			// 成员直接带选项问，等于把原始问题甩到我面前 —— 2026-11-07 实测：祁远在团队频道
+			// 甩来四个走法让我挑，而这件事本该由助理汇总成一句话再问我（ADR-112）。
+			if (choosing) {
+				const assistants = assistantsOf(deps.layout, await readAllIdentities(deps.layout.agentRoots));
+				if (assistants.length > 0 && !assistants.includes(slug)) {
+					return text(t("say.refuse.options.member", { assistant: assistants.join("、") }));
+				}
+			}
 
 			// 带 mention：验证成员、补 @ 前缀。
 			// `@我` / `@CEO` 这类叫法要先解析成 slug，否则成员校验会直接报「没有这个人」。

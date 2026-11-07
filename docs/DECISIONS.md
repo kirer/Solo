@@ -2626,3 +2626,26 @@
   `seed/text/tools.md` 的 `say.refuse.options.others`（`say.param.options` 同步写明会被拒）、
   `test/core/say-contract.test.ts` 两条（@别人被拒 / @我照发）；`docs/CORE.md` §4、
   `AGENTS.md` §3.3 的 options 行。
+
+## ADR-112 拍板只有一层：成员的选项消息拒发，助理不把群里的进展复述进私聊
+
+- **背景**：2026-11-07 桌面端两件事连着发生。
+  1. 祁远在 `team:短剧流水线` 直接甩来「超预算了，三个走法你挑一个」＋4 个选项，
+     选项卡弹到了我这儿 —— 而 `seed/rules.md` 写的是「拍不了板的 @助理，助理自己拍不了
+     再 @我」，同一件事本该由助理汇总成一句话再问我。
+  2. 同一小时里，助理把团队频道已经交代过的事又原样复述进我的私聊（「批了，他先去充
+     10 元…」），群里有同一条（#303），私聊这条只是副本 —— `seed/assistant/identity.md`
+     早就写了「应声和别人的进度转述一律不发」，被每轮贴在生成点的 `91-where-assistant.md`
+     「结论发私聊」盖过去了（和 ADR-094 的成因一样：贴着生成点的那句最响）。
+- **决策**：
+  1. `say` 带 `options` 时，发话人不是助理 → **拒发**（组织里没有助理时照旧放行，
+     否则没人能问）。选项是拍板链最上面那一层的动作，成员要拍板先 `@助理`。
+  2. `91-where-assistant.md` 把「结论」说清楚：谁交付了什么、成没成、要我拍板的结果；
+     **派活和进展说在团队频道**；同一件事只说一次，群里交代或播报过的不要复述到私聊。
+- **取舍**：成员失去了「直接弹选项卡问老板」的能力。换来的是拍板链只有一层：成员 →
+  助理 → 我，问题被汇总一次再上来，不会同一件事被问两遍（`工作规矩` 里原本就要求这样）。
+  助理问我的选项卡不受影响（ADR-035 的回答路径不变）。
+- **执行**：`src/core/channel/tools/say.ts`（`assistantsOf` + `readAllIdentities` 现读，
+  `say.refuse.options.member`）、`seed/text/tools.md`（`say.param.options` 写明只有助理能带）、
+  `seed/prompt/91-where-assistant.md`、`test/core/say-contract.test.ts`（成员被拒 / 助理照发，
+  setup 新增 `assistants` 选项）；`docs/CORE.md` §4、`AGENTS.md` §3.3 的 options 行。
