@@ -142,7 +142,12 @@ export default {
 		.im-tab:hover { background: var(--hover); }
 		.im-tab[data-on="true"] { background: var(--raised); color: var(--ink); }
 		.im-tab b { font-weight: 500; }
-		.im-main { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; padding: 16px clamp(14px, 2.4vw, 24px) 26px; }
+		.im-main {
+			flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto;
+			/* 渠道换来换去时内容高矮不同：滚动条一出一进会让整页横跳一下。 */
+			scrollbar-gutter: stable;
+			padding: 16px clamp(14px, 2.4vw, 24px) 26px;
+		}
 		.im-main-head { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
 		.im-main-head h3 { margin: 0; font-size: 13px; line-height: 18px; font-weight: 600; }
 		.im-note {
@@ -212,6 +217,11 @@ export default {
 			padding: 14px 12px; border-radius: 10px; background: var(--raised);
 		}
 		.im-qr canvas { display: block; flex: none; border-radius: 8px; background: #fff; }
+		/* 二维码还没到时先占住这块：卡片不该先塌一下再长出来。 */
+		.im-qr-hold {
+			width: 168px; height: 168px; flex: none; border-radius: 8px;
+			background: var(--field); box-shadow: inset 0 0 0 0.5px var(--rule);
+		}
 		.im-qr-copy { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 		.im-qr-copy b { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--ink); }
 		.im-qr-copy span { font-size: 12px; line-height: 18px; color: var(--ink-3); }
@@ -250,6 +260,18 @@ export default {
 	apply(ui) {
 		const { h, React, register, store, useStore } = ui;
 		const { useEffect, useState } = React;
+
+		/**
+		 * 微信这次扫码跨渠道切换留着：来回点一下渠道不该重新要一张码
+		 * （重新要会把上一张作废，手机上正扫着的那张就白扫了）。
+		 */
+		let weixinAttempt = null;
+		const weixinLive = (attempt) =>
+			attempt !== null &&
+			attempt.status !== "expired" &&
+			attempt.status !== "failed" &&
+			attempt.status !== "confirmed" &&
+			attempt.expiresAt > Date.now();
 
 		async function call(path, body) {
 			const response = await fetch(path, {
@@ -620,7 +642,7 @@ export default {
 
 		/** 二维码方阵 → canvas：后端只传 0/1，不传图片、不外发扫码地址。 */
 		function QrCanvas(props) {
-			const { qr, px } = props;
+			const { qr, px, dim } = props;
 			const size = px ?? 168;
 			const ref = React.useRef(null);
 			useEffect(() => {
@@ -642,8 +664,11 @@ export default {
 						ctx.fillRect(Math.floor((x + quiet) * cell), Math.floor((y + quiet) * cell), Math.ceil(cell), Math.ceil(cell));
 					}
 				}
-			}, [qr, size]);
-			return h("canvas", { ref, style: { width: `${String(size)}px`, height: `${String(size)}px` } });
+			}, [qr.size, qr.bits, size]);
+			return h("canvas", {
+				ref,
+				style: { width: `${String(size)}px`, height: `${String(size)}px`, opacity: dim === true ? "0.16" : "1" },
+			});
 		}
 
 		/**
@@ -651,40 +676,75 @@ export default {
 		 * 过期或出错就换一张。
 		 */
 		function WeixinLogin(props) {
-			const [attempt, setAttempt] = useState(null);
+			const cached = weixinLive(weixinAttempt) ? weixinAttempt : null;
+			const [attempt, setAttemptState] = useState(cached);
 			const [error, setError] = useState("");
-			const [busy, setBusy] = useState(false);
+			const [busy, setBusy] = useState(cached === null);
+			const attemptRef = React.useRef(attempt);
+
+			const setAttempt = (next) => {
+				attemptRef.current = next;
+				weixinAttempt = next;
+				setAttemptState(next);
+			};
 
 			const start = () => {
 				setBusy(true);
 				setError("");
-				setAttempt(null);
 				call("/api/p/im/weixin/login", {})
 					.then((next) => setAttempt(next))
 					.catch((err) => setError(err.message))
 					.finally(() => setBusy(false));
 			};
 
-			useEffect(start, []);
+			// 回到这个渠道时，上一次还没过期的码直接接着用：不再要一张新的。
+			useEffect(() => {
+				if (cached === null) start();
+			}, []);
 
 			const done = attempt !== null && (attempt.status === "expired" || attempt.status === "failed");
 			const waiting = attempt !== null && !done && attempt.status !== "confirmed";
 
+			// 状态没变就不 set：每次轮询都换一个新对象，二维码会跟着重画、整块跟着重渲染。
 			useEffect(() => {
-				if (!waiting) return undefined;
-				const timer = setTimeout(() => {
-					call(`/api/p/im/weixin/login/${encodeURIComponent(attempt.id)}`)
+				if (!waiting || attempt === null) return undefined;
+				const id = attempt.id;
+				let stopped = false;
+				const tick = () => {
+					call(`/api/p/im/weixin/login/${encodeURIComponent(id)}`)
 						.then((next) => {
+							if (stopped) return;
+							const prev = attemptRef.current;
+							if (next.status === "confirmed") {
+								weixinAttempt = null;
+								attemptRef.current = next;
+								setAttemptState(next);
+								props.onDone();
+								return;
+							}
+							if (
+								prev !== null &&
+								prev.status === next.status &&
+								prev.error === next.error &&
+								prev.expiresAt === next.expiresAt
+							) {
+								return;
+							}
 							setAttempt(next);
-							if (next.status === "confirmed") props.onDone();
 						})
 						.catch((err) => {
+							if (stopped) return;
 							setError(err.message);
-							setAttempt({ ...attempt, status: "failed", error: err.message });
+							const prev = attemptRef.current;
+							if (prev !== null) setAttempt({ ...prev, status: "failed", error: err.message });
 						});
-				}, 1500);
-				return () => clearTimeout(timer);
-			}, [attempt, waiting]);
+				};
+				const timer = setInterval(tick, 1500);
+				return () => {
+					stopped = true;
+					clearInterval(timer);
+				};
+			}, [attempt === null ? "" : attempt.id, waiting]);
 
 			const title = attempt === null ? "正在生成二维码…" : attempt.status === "scanned" ? "扫到了，在手机上点确认" : "用微信扫一扫";
 			const hint = done
@@ -706,7 +766,9 @@ export default {
 					h(
 						"div",
 						{ className: "im-qr" },
-						waiting ? h(QrCanvas, { qr: attempt.qr }) : null,
+						attempt !== null && attempt.qr !== undefined
+							? h(QrCanvas, { qr: attempt.qr, dim: done })
+							: h("div", { className: "im-qr-hold" }),
 						h(
 							"div",
 							{ className: "im-qr-copy" },
@@ -727,12 +789,18 @@ export default {
 			const [error, setError] = useState("");
 			const [brand, setBrand] = useState(BRANDS[0].id);
 
+			const mainRef = React.useRef(null);
+
 			const load = () => {
 				call("/api/p/im")
 					.then((body) => setData(body))
 					.catch((err) => setError(err.message));
 			};
 			useEffect(load, []);
+			// 换渠道回到顶上：不然这一个渠道滚到一半，切过去还停在半中间。
+			useEffect(() => {
+				if (mainRef.current !== null) mainRef.current.scrollTop = 0;
+			}, [brand]);
 			// 卡片上那一行「助理模型」：助理自己用哪个模型（模型管理里改），只读。
 			useEffect(() => {
 				const slug = data?.assistant?.slug;
@@ -790,7 +858,7 @@ export default {
 					),
 					h(
 						"div",
-						{ className: "im-main" },
+						{ className: "im-main", ref: mainRef },
 						shown.length === 0 ? null : h("div", { className: "im-main-head" }, h("h3", null, current.name)),
 						data === null
 							? h("p", { className: "im-empty" }, error === "" ? "读取中…" : error)
