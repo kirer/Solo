@@ -11,7 +11,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SEED_MANIFEST_FILE, seedRules, syncAllSkills } from "../../src/shell/seed.ts";
+import { SEED_MANIFEST_FILE, seedRules, seedTextFiles, syncAllSkills } from "../../src/shell/seed.ts";
+import { parseCatalog } from "../../src/core/documents/base/catalog.ts";
 import { resolveLayout, type Layout } from "../../src/core/layout.ts";
 
 const SKILL = "记忆整理";
@@ -147,5 +148,33 @@ describe("规矩文件：同一套 hash 判据", () => {
 		await writeFile(manifestPath, "{ 坏掉的 JSON", "utf8");
 		expect(await seedRules(layout)).toBe("exists");
 		expect(await readFile(join(root, "rules.md"), "utf8")).toBe("- 我的规矩\n");
+	});
+});
+
+describe("出厂文案：按键升级（ADR-114）", () => {
+	const KEY = "say.param.options";
+	const file = (): string => join(layout.textRoot, "tools.md");
+	const valueOf = async (): Promise<string | undefined> =>
+		parseCatalog("tools.md", await readFile(file(), "utf8")).get(KEY);
+
+	it("账本记着的旧值（没改过）→ 升到新版；用户改过的留着", async () => {
+		await seedTextFiles(layout);
+		const fresh = (await valueOf()) as string;
+		// 模拟老工作区：值停在上一版，账本记的正是那个旧值。
+		const old = "上一版的措辞。";
+		await writeFile(file(), (await readFile(file(), "utf8")).replace(fresh, old), "utf8");
+		const manifest = JSON.parse(await readFile(manifestPath, "utf8")) as {
+			textKeys: Record<string, string>;
+		};
+		manifest.textKeys[`tools.md:${KEY}`] = hashOf(old);
+		await writeFile(manifestPath, JSON.stringify(manifest), "utf8");
+
+		await seedTextFiles(layout);
+		expect(await valueOf()).toBe(fresh);
+
+		// 再改成我自己的话：账本对不上，同步不该盖掉。
+		await writeFile(file(), (await readFile(file(), "utf8")).replace(fresh, "我自己改的措辞。"), "utf8");
+		await seedTextFiles(layout);
+		expect(await valueOf()).toBe("我自己改的措辞。");
 	});
 });

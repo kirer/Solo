@@ -101,7 +101,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `documents/base/doc.ts` | 112 | `parseDoc` / `renderFrontmatter` / `frontOf`，以及文件级的一对 `readDocFile` / `writeDocFile`（读文件→解析、头+正文→写盘）—— identity / 团队 README / SKILL / rules / memory 全是 `{path, front, body}`；原 `agent/frontmatter.ts` 已并进来。头只认单行 `key: value`（多行值不解析也不丢）；读入统一换行 |
 | `documents/base/slots.ts` | 137 | `renderSlots`（返回 `{text, issues}`，装配层要区分两种错）/ `slotsIn` / `hasSlot` / `toolSlots`（delivery 段没有注册表可查，`{{tool:say}}` 按后缀自解释——名字写错不报错，靠 seed 侧检查兜）；`UNSET`（「（未设置）」）；`unknown`（模板写了、装配没给 = 缺陷）与 `unset`（给了、现在确实是空 = 事实）分开报；`{{x ?? 默认句}}`：空时用模板自带的句子、不报 `unset`（作者已替这个空做过决定）；不二次展开、纯函数 |
 | `documents/base/template.ts` | 179 | `PROMPT_DIR` / `parseTemplate` / `loadTemplates` / `renderPrompt` / `renderPromptDir`：文件名 `NN-段名.md` 定序（不合法直接抛，顺序是语义）；`skip-empty` 为空则整段消失；`use: delivery` 不进系统提示词；`default:` 是 delivery 片段正文被删空时的兜底句（和正文住同一个文件）；模板缓存只允许落在 async 边界上，不跨轮复用 |
-| `documents/base/catalog.ts` | 129 | `loadTextCatalog(fsx)` / `parseCatalog` / `fill(catalog, key, slots)` / `appendMissingKeys(current, source)`（升级时只追加新键）：`seed/text/*.md` 的 `## key` 分节读成 `TextCatalog`；键缺失返回空串（工具不因一句话没配就坏），重复键抛错；节体只去首尾空行（首行缩进是文案的一部分） |
+| `documents/base/catalog.ts` | 129 | `loadTextCatalog(fsx)` / `parseCatalog` / `fill(catalog, key, slots)` / `mergeCatalog(current, source, {seeded, legacy, hash})`（按键升级：没改过的升、改过的留、缺的追加，ADR-114）：`seed/text/*.md` 的 `## key` 分节读成 `TextCatalog`；键缺失返回空串（工具不因一句话没配就坏），重复键抛错；节体只去首尾空行（首行缩进是文案的一部分） |
 | `documents/base/memory.ts` | 176 | 记忆文件的**格式**（个人与团队共用，零 IO）：`sectionsOf` / `alreadyRecorded` / `appendNewSection` / `appendOrExtendLastSection` / `removeSection` / `entryProblem` / `problemText` / `memoryDigest`；`DIGEST_LIMIT=12`、`MEMORY_LIMITS={entry:300, main:4_000}`、密钥形状。实现只差「谁记、怎么记」，格式只有这一份 |
 | `documents/base/memory-store.ts` | 48 | `createMemoryStore(gate?)` → `{read, update}`：一条串行链上的「读全文 → 交给 build → 写回」；build 返回 `next: undefined` = 这次不写盘（校验失败 / 重复），`onWritten` 在写盘后执行（个人拿它记 journal）。去重、标题格式、校验失败是返回还是抛错**都不在这里**，留在个人 / 团队的实现里 |
 | `documents/base/oneline.ts` | 23 | `oneLine(text, max)` 折成一行 + 超长截断；`excerptOf(text, max)` 取第一行非空再压 —— 频道摘要、投递预览、团队记忆、界面副标题共用 |
@@ -195,7 +195,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/shell/wire/directory.ts` | 91 | 名册落盘：`save`（逐字段比、路径式写）/ `now`（内存优先，缺人补齐）/ `merge`（启动与 rescan 共用）/ `bind`（新建会话立刻写映射） |
 | `src/shell/wire/teams.ts` | 108 | 团队频道的两句系统留痕：`sync`（重投影成员 + 叫新进的人报到，ADR-042）/ `announce` / `noteInterrupted`（重启打断的那一轮留痕，ADR-044） |
 | `src/shell/wire/speak.ts` | 76 | `createSpeak()` —— 我开口：读当下名册与显示名，调同一个 `flow.publish`；语义与 agent 的 `say` 完全一致 |
-| `src/shell/seed.ts` | 326 | 全部函数都收 `Layout`：`seedOwnerAssistant`（读 `seed/assistant/identity.md` 建到应用根 + 助理个人层技能，只建一次）/ `seedTextFiles`（`seed/text/*.md` 补进 `<appRoot>/text/`：缺文件整份拷，已有文件只追加新键，改过的句子不动）/ `seedPromptTemplates`（`seed/prompt/*.md` 只补不改地补进 `<appRoot>/prompt/`）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，只补不改）/ `seedPlugins`（`seed/plugins/*`：缺了整份补；盘上那份和上次播种一模一样就整份升到新版，动过一个文件就整份留着；删了的不补）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
+| `src/shell/seed.ts` | 326 | 全部函数都收 `Layout`：`seedOwnerAssistant`（读 `seed/assistant/identity.md` 建到应用根 + 助理个人层技能，只建一次）/ `seedTextFiles`（`seed/text/*.md` 同步进 `<appRoot>/text/`：缺文件整份拷，已有文件按**键**升级，改过的键不动）/ `seedPromptTemplates`（`seed/prompt/*.md` 按 hash 同步进 `<appRoot>/prompt/`：没改过的升、改过的留）/ `syncAllSkills`（全员层技能按 hash 同步）/ `seedRules`（`rules.md`，按 hash 同步）/ `seedPlugins`（`seed/plugins/*`：缺了整份补；盘上那份和上次播种一模一样就整份升到新版，动过一个文件就整份留着；删了的不补）/ `seedPersonalSkills`；常量 `SEED_ASSISTANT_IDENTITY` / `SEED_ASSISTANT_SKILLS` |
 | `src/shell/serve.ts` | 134 | `serveCore()` —— 只留装配顺序、进程级的东西（端口 / Host·Origin 闸 / listen·close / 启动横幅）、把兜不住的异常翻成 500；路由与 SSE 都在 `interface/http/`；`startTeamReconcile` 盯住 `teams/` 第一层，团队目录被删就立刻归档频道 |
 | `src/shell/main.ts` | 196 | 启动：`--app-root` / `--user-root` 两个根（`resolveLayout` 一处算完，ADR-030）；播种规矩 / 提示词模板 / 全员层技能（`seedRules` / `seedPromptTemplates` / `syncAllSkills`）→ 必要时建人 → 读模型 → `createDiag` → `openCore({settings: {compaction}, onReport})` → `assembleCore` → `serveCore` → 等 Ctrl-C；并自检「记忆整理」技能在不在。`restartApp` / `resetAll` 共用 `stopCore`，关库后以退出码 75 退出让桌面壳重开 |
 
@@ -321,7 +321,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | 改「上翻看历史 / 回到最新」 | `ui/app/src/stream/Stream.tsx` 的 `rememberAnchor` / `toBottom` 与 `state/store.ts` 的 `loadEarlier` | 补历史**只往前面插**、用锚点行按回原位，别改回整列重建 |
 | 改「什么该记、什么不该记」 | `seed/skills/记忆整理/SKILL.md` —— **不要写代码** | 提示词只说「按那份技能整理」 |
 | 换模型 / 加自定义模型 | `<appRoot>/settings.json` 的 `models`；代码在 `runtime/models.ts` | 别复活「内置模型覆盖」机制 |
-| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，只补不改）/ `seedPromptTemplates`（`seed/prompt/`，只补不改）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件：缺了补、没动过的升、动过的留着）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩与提示词模板只补不改（可能被用户亲手改过）；技能按 hash 判断改没改；助理身份只建一次 |
+| 播种出厂内容 | `shell/seed.ts`：`seedRules`（规矩，按 hash 同步）/ `seedPromptTemplates`（`seed/prompt/`，按 hash 同步）/ `seedTextFiles`（`seed/text/`，按键同步）/ `syncAllSkills`（全员层技能，按 hash 同步）/ `seedPlugins`（出厂插件：缺了补、没动过的升、动过的留着）/ `seedOwnerAssistant`（助理身份读 `seed/assistant/identity.md`）/ `seedPersonalSkills` | 规矩、提示词模板、出厂文案都按 hash 判断改没改（没改过的升级、改过的留着）；技能按 hash；助理身份每次启动按出厂重写 |
 | 改 seed 出厂内容的规矩 | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts` | 一条事实一个家、`rules.md` ≤15 条零工具名、技能 ≤4 KB —— 这些是机械验收，改 seed 前先读契约 |
 | 桌面壳 / 打包 / 自动更新 / Windows 标题带 | `desktop/src/`（主进程）+ `desktop/src/window-chrome.ts` / `preload.cts` + `ui/app/src/titlebar/` + `electron-builder.yml` + `.github/workflows/release.yml` + `docs/DEPLOY.md` §10 | 壳不 import 内核与界面源码，只认 `[core] http://…` 那一行；不用 asar（`fs.cp` 拷目录在 asar 里不支持）（ADR-028）；Windows 菜单搬进 40px 标题带，原生菜单栏隐藏但保留加速键（ADR-069）；GitHub Actions 发版见 ADR-067；包体积裁剪见 ADR-068（`files` 排除项 / `electronLanguages` / `compression`，`react` / `react-dom` 在 devDependencies） |
 | 桌面端更新（验签 / 版本 / 替换） | `desktop/src/manifest.ts`（验签、比版本）+ `updates.ts`（流程）+ `install.ts`（进程外替换）+ `scripts/update-manifest.ts` | 不用 Squirrel / electron-updater：macOS 未签名装不上（ADR-029）。私钥只在发布机，公钥是 `desktop/src/update-key.ts`；换钥匙 = 老客户端再也升不了。失败必须能回滚（旧包挪回来） |
@@ -432,7 +432,7 @@ npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3
 | `attention.test.ts` | 「找你」（`GET /api/attention`）：只收点名 @我的、排除我自己发的、7 天窗口、已读带标记 |
 | `rules-prompt.test.ts` | 规矩进提示词（走装配层同一个 `renderAgentSection()`）：位置在身份后能力前、缺了整段消失、确定性、`loadRules` 读盘、`seed/rules.md` 覆盖硬规矩 |
 | `monologue.test.ts` | 内心独白拦截：英文计划式开场拦住、中文汇报里夹英文不拦、太短不判 |
-| `seed-sync.test.ts` | 全员层技能同步（缺的补上 / 未改的更新 / 改过的不动 / 幂等 / manifest / `rules.md` 只补不改） |
+| `seed-sync.test.ts` | 全员层技能同步（缺的补上 / 未改的更新 / 改过的不动 / 幂等 / manifest / `rules.md` 按 hash 同步 / 出厂文案按键升级） |
 | `unanswered.test.ts` | 结算原因翻成人话 |
 | `wake.test.ts` | 结算收尾：`aborted`（合并唤醒）不留痕，`no_model` 留痕，`done` 走收尾 |
 | `history.test.ts` | `read_history` 能翻到被压缩掉的历史 |

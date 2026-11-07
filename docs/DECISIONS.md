@@ -2649,3 +2649,25 @@
   `say.refuse.options.member`）、`seed/text/tools.md`（`say.param.options` 写明只有助理能带）、
   `seed/prompt/91-where-assistant.md`、`test/core/say-contract.test.ts`（成员被拒 / 助理照发，
   setup 新增 `assistants` 选项）；`docs/CORE.md` §4、`AGENTS.md` §3.3 的 options 行。
+
+## ADR-114 出厂文案按键升级：没改过的跟到新版，改过的留着
+
+- **背景**：2026-11-08 桌面端更新到 2.2.1 之后，`say.param.options` 里新加的
+  「只有助理能带 options」读不到 —— 老工作区里那一句还是 2.2.0 的。原因不是没播种，
+  而是 `seedTextFiles` 是「只补不改」：缺的键追加，已有的键一个字不动。于是**改过措辞的
+  键永远进不了已经在跑的工作区**（ADR-031 早就用 hash 账本解决了 prompt / rules / 技能
+  的同一个问题，文案是最后一个漏网的）。
+- **决策**：文案按**键**同步，判据与 prompt / rules 同一套：
+  1. 当前值 == 出厂值 → 不动；
+  2. 账本（`.seed-manifest.json` 的 `textKeys`，键是 `<文件名>:<文案键>`）记着「上次写进去
+     的就是这个值」→ 没改过，覆盖成新版；
+  3. 账本里没有这条，但值命中历史出厂 hash（`seed-legacy.ts` 的 `LEGACY_TEXT_KEYS`）→
+     老工作区，覆盖成新版；
+  4. 以上都不成立 → 用户改过，原样留着。
+  只换该换的那一节，文件排版（小节之间的空行、说明文字）不动。
+- **取舍**：账本多一份 `textKeys`（每个键一个 hash），`seed-legacy.ts` 多一份历史值 hash
+  （288 条）。换来的是「更新完所有出厂修正自动生效」，同时保留「我亲手改过的句子不被盖掉」。
+- **执行**：`src/core/documents/base/catalog.ts` 的 `mergeCatalog`（替换
+  `appendMissingKeys`）、`src/shell/seed.ts` 的 `seedTextFiles` + 账本 `textKeys`、
+  `src/shell/seed-legacy.ts` 的 `LEGACY_TEXT_KEYS`、`test/core/catalog-merge.test.ts`、
+  `test/core/seed-sync.test.ts`；`docs/CODE.md` 的文件表与「改一句工具描述」行。

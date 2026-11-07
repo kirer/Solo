@@ -85,7 +85,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             110 文件 / 962 例
+test/             110 文件 / 968 例
   ├ test/core/    89 文件（纯函数 + 装配）
   ├ test/ui/      15 文件（界面纯函数与源码约定）
   └ test/desktop/ 6 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏）
@@ -148,7 +148,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 110 文件 962 例，<3s，必须全绿
+npm test             # 110 文件 968 例，<3s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -207,7 +207,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 重启打断的那一轮要不要接着做 | `docs/CORE.md` §4 + `docs/DECISIONS.md` ADR-044 / ADR-074 | `runtime/open.ts` 的 `inspectStartup` 返回值（`CoreRuntime.interrupted` / `backlog`）+ `shell/wire/teams.ts` 的 `noteInterrupted` 与 `shell/assemble.ts` 的 `harness.resume()` / `continue`（最后一步）+ `shell/main.ts` 传参；文案 `seed/text/channel.md` 的 `turn.interrupted`；`test/core/{resume,reconcile,crash-replay}.test.ts`（后者真 `kill -9`，fixture 在 `test/fixtures/crash-*`） |
 | 新增/修改真模型脚本（`scripts/*-live.ts`、`live-support.ts`） | 本文件 §2 + `docs/CODE.md` 目录与 §3 + `package.json`；等待器只放 `live-support.ts` |
 | 改提示词模板 / 加一段 / 加一个插槽 | `docs/design/SEED-CONTRACT.md` §3 插槽表 + `scripts/prompt-fixture.ts` 样例值 + `docs/CODE.md` §2 文件表；跑 `npm run prompt:check` |
-| 改工具描述 / 参数说明 / 拒绝话术 / 投递头 / 附件说明 | `docs/DECISIONS.md` ADR-039 + `docs/design/SEED-CONTRACT.md` §1 | **改 `seed/text/*.md`，不改代码**（键名照旧的照旧）；代码里加一处新文案就加一个键；改完**重启**（工具描述装配时定型）；`test/core/no-hardcoded-text.test.ts` 会拦代码里的中文 |
+| 改工具描述 / 参数说明 / 拒绝话术 / 投递头 / 附件说明 | `docs/DECISIONS.md` ADR-039 + `docs/design/SEED-CONTRACT.md` §1 | **改 `seed/text/*.md`，不改代码**（键名照旧的照旧）；代码里加一处新文案就加一个键；改完**重启**（工具描述装配时定型）；老工作区按**键**升级，改过的键留着（ADR-114）；`test/core/no-hardcoded-text.test.ts` 会拦代码里的中文 |
 | 改 seed 出厂内容（规矩 / 技能 / 助理身份 / 出厂插件） | `docs/design/SEED-CONTRACT.md` + `test/core/seed-contract.test.ts`（一条事实一个家、≤15 条、零工具名、技能 ≤4 KB）；出厂插件的同步在 `src/shell/seed.ts` 的 `seedPlugins`（整目录 hash，ADR-097）+ `test/core/seed-plugins.test.ts` |
 | 概念（组织怎么表示、提示词怎么来、记忆怎么进） | `docs/CORE.md` |
 | HTTP 接口字段 | `docs/WEB-API.md`（**先改文档，再改代码**） |

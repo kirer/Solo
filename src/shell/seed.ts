@@ -17,10 +17,10 @@ import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../core/documents/skills.ts";
 import { RULES_FILE } from "../core/documents/rules.ts";
 import { existsAt, listDirSorted, moveAt, readTextOrUndefined, removeAt, writeTextAt } from "../core/runtime/io.ts";
-import { appendMissingKeys } from "../core/documents/base/catalog.ts";
+import { mergeCatalog, parseCatalog } from "../core/documents/base/catalog.ts";
 import { frontOf, parseDoc, type Doc } from "../core/documents/base/doc.ts";
 import type { Layout } from "../core/layout.ts";
-import { LEGACY_PLUGIN_HASHES, LEGACY_SEED_HASHES } from "./seed-legacy.ts";
+import { LEGACY_PLUGIN_HASHES, LEGACY_SEED_HASHES, LEGACY_TEXT_KEYS } from "./seed-legacy.ts";
 
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
@@ -51,10 +51,17 @@ type SeedManifest = {
 	 * 账本跟着应用根走，换一台机器不该失效。
 	 */
 	files: Record<string, string>;
+	/**
+	 * 出厂文案 → 上次播种时每个键写进去的值 hash。
+	 *
+	 * 键是 `<文件名>:<文案键>`（`tools.md:say.param.options`）。文案按**键**升级：
+	 * 没改过的键跟到新版，改过的键留着（ADR-114）。
+	 */
+	textKeys: Record<string, string>;
 };
 
 function emptyManifest(): SeedManifest {
-	return { version: 2, skills: {}, plugins: [], pluginFiles: {}, files: {} };
+	return { version: 2, skills: {}, plugins: [], pluginFiles: {}, files: {}, textKeys: {} };
 }
 
 /** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
@@ -179,6 +186,7 @@ async function readManifest(path: string): Promise<SeedManifest> {
 		plugins: raw.plugins ?? [],
 		pluginFiles: raw.pluginFiles ?? {},
 		files: raw.files ?? {},
+		textKeys: raw.textKeys ?? {},
 	};
 }
 
@@ -215,7 +223,13 @@ function parseManifest(text: string): Partial<SeedManifest> {
 	for (const [name, item] of Object.entries(record(value["pluginFiles"], "pluginFiles"))) {
 		pluginFiles[name] = strings(item, `pluginFiles.${name}`);
 	}
-	return { skills, plugins: plugins ?? [], pluginFiles, files: strings(value["files"], "files") };
+	return {
+		skills,
+		plugins: plugins ?? [],
+		pluginFiles,
+		files: strings(value["files"], "files"),
+		textKeys: strings(value["textKeys"], "textKeys"),
+	};
 }
 
 async function writeManifest(path: string, manifest: SeedManifest): Promise<void> {
@@ -324,18 +338,20 @@ export async function seedPromptTemplates(layout: Layout): Promise<readonly stri
 }
 
 /**
- * 把出厂文案（`seed/text/*.md`）补进应用私有目录（`<appRoot>/text/`）。
+ * 把出厂文案（`seed/text/*.md`）同步进应用私有目录（`<appRoot>/text/`）。
  *
- * 和提示词模板同一条规矩：**只补不改**。文案是模型每一轮都读的话，我可能亲手改过措辞。
- * 判据落到**键**上：缺文件就整份拷，有文件就只追加它还没有的键 —— 改过的句子不动，
- * 新加的键也能进已经在跑的工作区。
+ * 判据落到**键**上，和 prompt / rules 同一套（ADR-031 / ADR-114）：没改过的键跟到新版、
+ * 改过的键原样留着、缺的键追加。以前是「只补不改」，结果改过措辞的键永远进不来 ——
+ * 2026-11-08 实测，`say.param.options` 的新说法在已经在跑的工作区里读不到。
  */
 export async function seedTextFiles(layout: Layout): Promise<readonly string[]> {
 	const root = seedPath("text");
 	const files = (await listDirSorted(root))
 		.filter((entry) => entry.kind === "file" && entry.name.endsWith(".md"))
 		.map((entry) => entry.name);
+	const manifest = await readManifest(layout.seedManifestFile);
 	const written: string[] = [];
+	let ledgerChanged = false;
 	for (const name of files) {
 		const target = join(layout.textRoot, name);
 		const source = await readTextOrUndefined(join(root, name));
@@ -343,16 +359,29 @@ export async function seedTextFiles(layout: Layout): Promise<readonly string[]> 
 		const current = await readTextOrUndefined(target);
 		if (current === undefined) {
 			await writeTextAt(target, source);
+			for (const [key, value] of parseCatalog(name, source)) manifest.textKeys[`${name}:${key}`] = hashOf(value);
 			written.push(name);
+			ledgerChanged = true;
 			continue;
 		}
-		// 已经有这份文件：只把它还没有的键补到末尾（改过的句子不动）。不补的话，每次
-		// 新增一个键老工作区都拿不到，工具描述会变成空串 —— 见 `appendMissingKeys`。
-		const merged = appendMissingKeys(current, source);
+		const prefix = `${name}:`;
+		const seeded = new Map(
+			Object.entries(manifest.textKeys)
+				.filter(([key]) => key.startsWith(prefix))
+				.map(([key, hash]) => [key.slice(prefix.length), hash] as const),
+		);
+		const merged = mergeCatalog(current, source, {
+			seeded,
+			legacy: (valueHash) => LEGACY_TEXT_KEYS.has(valueHash),
+			hash: hashOf,
+		});
 		if (merged === undefined) continue;
-		await writeTextAt(target, merged);
+		await writeTextAt(target, merged.text);
+		for (const [key, hash] of merged.seeded) manifest.textKeys[`${name}:${key}`] = hash;
 		written.push(name);
+		ledgerChanged = true;
 	}
+	if (ledgerChanged) await writeManifest(layout.seedManifestFile, manifest);
 	return written;
 }
 

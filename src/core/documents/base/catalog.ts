@@ -85,20 +85,92 @@ function sectionsOf(source: string): readonly (readonly [string, string])[] {
 }
 
 /**
- * 把出厂文案里**工作区还没有的键**追加到文件末尾；已有的键一个字不动。
+ * 按**键**把出厂文案同步进工作区：没改过的升到新版、改过的原样留着、缺的追加。
  *
- * 为什么不是整份覆盖：`text/` 里的句子是可以被手改的（那是「我的组织」的一部分）。
- * 为什么不能只补缺失的文件：那样每次新增一个键，老工作区永远拿不到 —— 工具描述变成
- * 空串，模型看不见任何约束（实测踩过两次，都是手工去补的）。
+ * 以前是「只补不改」：已有的键一个字不动。结果是出厂修正永远进不来 —— 2026-11-08
+ * 实测，`say.param.options` 改了措辞，已经在跑的工作区永远读旧句（ADR-114）。
  *
- * 返回 `undefined` = 没有新键，不用写盘。
+ * 判据与 prompt / rules 同一套（ADR-031）：
+ * - 当前值 == 出厂值 → 不用动；
+ * - 账本（`seeded`）里记着「上次写进去的就是这个值」→ 没改过，覆盖成新版；
+ * - 账本里没有这条，但这个值命中历史出厂 hash（`legacy`）→ 老工作区，覆盖成新版；
+ * - 以上都不成立 → 用户改过，原样留着。
+ *
+ * 返回 `undefined` = 文件不用动。`seeded` 里是合并后与出厂一致的键（写回账本）。
  */
-export function appendMissingKeys(current: string, source: string): string | undefined {
-	const have = parseCatalog("current", current);
-	const missing = sectionsOf(source).filter(([key]) => !have.has(key));
-	if (missing.length === 0) return undefined;
-	const tail = missing.map(([, raw]) => raw).join("\n\n");
-	return `${current.replace(/\s+$/, "")}\n\n${tail}\n`;
+export function mergeCatalog(
+	current: string,
+	source: string,
+	options: {
+		/** 账本：键 → 上次播种时写进去的值 hash。 */
+		readonly seeded: ReadonlyMap<string, string>;
+		/** 账本里没有这条时，判断这个值是不是历史出厂内容。 */
+		readonly legacy: (valueHash: string) => boolean;
+		readonly hash: (value: string) => string;
+	},
+): { readonly text: string; readonly seeded: ReadonlyMap<string, string> } | undefined {
+	const before = parseCatalog("current", current);
+	const after = parseCatalog("seed", source);
+	const sourceRaw = new Map(sectionsOf(source));
+	const seeded = new Map<string, string>();
+	let text = "";
+	let cursor = 0;
+	let changed = false;
+	for (const span of headingSpans(current)) {
+		text += current.slice(cursor, span.start);
+		cursor = span.end;
+		const oldRaw = current.slice(span.start, span.end);
+		const next = after.get(span.key);
+		if (next === undefined) {
+			text += oldRaw;
+			continue;
+		}
+		const now = before.get(span.key) ?? "";
+		const mine = options.seeded.get(span.key);
+		const unmodified =
+			now === next ||
+			(mine !== undefined ? mine === options.hash(now) : options.legacy(options.hash(now)));
+		if (!unmodified) {
+			text += oldRaw;
+			continue;
+		}
+		seeded.set(span.key, options.hash(next));
+		const raw = sourceRaw.get(span.key);
+		if (raw === undefined) {
+			text += oldRaw;
+			continue;
+		}
+		// 保留这一节后面原有的空行：小节之间怎么隔开是文件的排版，不归同步管。
+		const replacement = `${raw}${oldRaw.slice(oldRaw.trimEnd().length)}`;
+		if (replacement !== oldRaw) changed = true;
+		text += replacement;
+	}
+	text += current.slice(cursor);
+
+	const missing = [...sourceRaw].filter(([key]) => !before.has(key));
+	if (missing.length > 0) {
+		text = `${text.replace(/\s+$/, "")}\n\n${missing.map(([, raw]) => raw).join("\n\n")}\n`;
+		changed = true;
+		for (const [key] of missing) seeded.set(key, options.hash(after.get(key) ?? ""));
+	}
+	return changed ? { text, seeded } : undefined;
+}
+
+/** 每个 `## key` 小节在原文里的位置：从标题行到下一个标题行之前。 */
+function headingSpans(source: string): readonly { readonly key: string; readonly start: number; readonly end: number }[] {
+	const spans: { key: string; start: number; end: number }[] = [];
+	let offset = 0;
+	let current: { key: string; start: number } | undefined;
+	for (const line of source.split("\n")) {
+		const match = HEADING.exec(line);
+		if (match !== null) {
+			if (current !== undefined) spans.push({ ...current, end: offset });
+			current = { key: match[1] ?? "", start: offset };
+		}
+		offset += line.length + 1;
+	}
+	if (current !== undefined) spans.push({ ...current, end: source.length });
+	return spans;
 }
 
 /** 读一整个目录（`.md`），合成一份目录。同键在第二个文件里出现就抛。 */
