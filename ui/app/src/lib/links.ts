@@ -10,6 +10,26 @@ export function builtinLink(href: string): boolean {
 	return /^https?:\/\//i.test(href.trim());
 }
 
+/**
+ * 正文里的文件路径（`` `teams/x/a.md` ``、`[周报](teams/x/a.md)`）：点开是右栏的预览层。
+ *
+ * 和上面那条分开装：外链是「跳出去看」，路径是「在 Solo 里看」，两者不共用一条判断。
+ */
+export function installPathPreview(open: (path: string) => void): void {
+	document.addEventListener("click", (event) => {
+		if (event.defaultPrevented) return;
+		if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+		const target = event.target;
+		if (!(target instanceof Element)) return;
+		const node = target.closest("[data-path]");
+		if (node === null) return;
+		const path = node.getAttribute("data-path") ?? "";
+		if (path === "") return;
+		event.preventDefault();
+		open(path);
+	});
+}
+
 export function installLinkBrowser(open: (url: string) => void): void {
 	document.addEventListener("click", (event) => {
 		if (event.defaultPrevented) return;

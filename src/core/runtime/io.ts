@@ -11,7 +11,7 @@
  * 也不放进 `view/`：那是零 IO 的投影层，它连 `node:*` 都不许 import。
  */
 import { watch, type FSWatcher } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /** 一个目录项。`kind` 是 `readdir` 直接给的，不为判类型多跑一次 `stat`。 */
@@ -70,6 +70,25 @@ export async function existsAt(path: string): Promise<boolean> {
 /** 文件版本戳：`mtimeMs:size`。同一次写入要么同时改这两样，要么都不改。 */
 export function stampOf(info: { readonly mtimeMs: number; readonly size: number }): string {
 	return `${info.mtimeMs}:${info.size}`;
+}
+
+/** 一份**普通文件**的体量与修改时间。目录 / 不存在 / 没权限 = `undefined`。 */
+export async function fileStatAt(path: string): Promise<{ readonly size: number; readonly mtimeMs: number } | undefined> {
+	try {
+		const info = await stat(path);
+		return info.isFile() ? { size: info.size, mtimeMs: info.mtimeMs } : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+/** 解析完软链接的真实路径。不存在 / 没权限 = `undefined`。 */
+export async function realPathOrUndefined(path: string): Promise<string | undefined> {
+	try {
+		return await realpath(path);
+	} catch {
+		return undefined;
+	}
 }
 
 /** 修改时间（毫秒）。不存在 = `undefined`。 */

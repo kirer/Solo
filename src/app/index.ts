@@ -9,6 +9,7 @@
  */
 import { OWNER } from "../core/channel/types.ts";
 import { createChat } from "./chat.ts";
+import { createFiles } from "./files.ts";
 import { createModels } from "./models.ts";
 import { createPeople } from "./people.ts";
 import { createPlugins } from "./plugins.ts";
@@ -31,6 +32,7 @@ export function createApp(services: CoreServices) {
 	const plugins = createPlugins(services);
 	const chat = createChat(services);
 	const uploads = createUploads(services);
+	const files = createFiles(services.layout);
 	const runs = createRuns(services);
 	const diag = services.diag;
 	const models = createModels(services);
@@ -44,7 +46,7 @@ export function createApp(services: CoreServices) {
 			await services.postAs({ channelId: services.allChannel, from: OWNER, text, kind: "note" });
 		},
 	});
-	return { snapshots, read, people, teams, plugins, chat, uploads, runs, watch, diag, models, setup, preferences, reset };
+	return { snapshots, read, people, teams, plugins, chat, uploads, files, runs, watch, diag, models, setup, preferences, reset };
 }
 
 export type App = ReturnType<typeof createApp>;

@@ -25,6 +25,8 @@ import type { SettleResult } from "./types.ts";
 export type SettleDeps = {
 	readonly store: MessageStore;
 	readonly settler: Settler;
+	/** 谁是助理（slug）。每轮现读：改身份目录下一条消息生效。 */
+	readonly assistants?: () => Promise<readonly string[]>;
 	/** 补发就是一次 publish：主线只有这一条写盘—算人—扇出的路。 */
 	readonly publish: Flow["publish"];
 	/** 补发时 `@我` 要按名册落成 `owner`，不能存字面 token。 */
@@ -44,11 +46,20 @@ export function createSettle(deps: SettleDeps): Flow["settle"] {
 			const state = await deps.store.snapshot(ctx);
 			const { entry, page } = await answerEntry(event.entries, event.answer, ctx);
 			const trimmed = finalTextOf(entry)?.trim();
+			// 读不出来就按「不是助理」走：身份目录坏了不该让收尾整条失败。
+			const assistant =
+				deps.assistants === undefined
+					? false
+					: await deps.assistants().then(
+							(slugs) => slugs.includes(event.slug),
+							() => false,
+						);
 			const decision = await deps.settler.decide(
 				{
 					slug: event.slug,
 					wake: event.wake,
 					state,
+					...(assistant ? { assistant: true } : {}),
 					...(trimmed === undefined ? {} : { text: trimmed }),
 					saidLast: saidLast(page, entry),
 				},

@@ -95,6 +95,7 @@ export function turnTarget(
 	slug: string,
 	wake: WakeRecord,
 	restated = true,
+	assistant = false,
 ): WakeTarget | undefined {
 	// 「这一轮说过话没有」的起点是**这次**唤醒，不是 `task` 记的那个 seq：插话一轮继承的
 	// `task` 可能是很多条之前的（ADR-099），拿它当起点会把上一轮的答案当成这一轮已经汇报过，
@@ -106,7 +107,19 @@ export function turnTarget(
 	const said = (target: WakeTarget): boolean => spoke(target) && restated;
 	// 任务频道已经汇报过：这段正文不是结论，不补。
 	if (said(wake.task)) return undefined;
-	// 插话一轮里，私聊已经答过 → 最后这段是任务本身的结论，回任务频道。
+	// 助理的结论回我的私聊，团队频道里只留它自己显式发出去的派活与进展（ADR-094）。
+	// 插话一轮（私聊问一句、手上还有团队活）里不替它往任务频道补 —— 2026-11-07 实测：
+	// 老板问「怎么像打了马赛克」，Solo 在私聊答完，同一段话被补进了「小恐龙」团队频道，
+	// 群里的人只能问「你在这个群里说这话干嘛」。回答过 → 不补；没答过 → 回私聊。
+	if (assistant && wake.task.channelId !== wake.reply.channelId) {
+		return said(wake.reply) ? undefined : wake.reply;
+	}
+	// 插话一轮里，私聊答过**又接着干了活** → 最后这段是任务本身的结论，回任务频道。
+	// 私聊答过、最后这段只是那句的复述（`restated`）→ 不补：2026-11-07 的实测里，
+	// 老板在私聊问「怎么字幕打了马赛克」，Solo 在私聊答完，收尾把同一句又发进
+	// 「小恐龙」团队频道（`said(wake.reply)` 为真、`task` 是那个团队）—— 群里一头雾水。
+	// 判据和上面「说过话且只是复述」完全一样，只是频道不同。
+	if (wake.task.channelId !== wake.reply.channelId && said(wake.reply)) return undefined;
 	if (wake.task.channelId !== wake.reply.channelId && spoke(wake.reply)) return wake.task;
 	// 正常一轮：私聊答过就不再补；没答过就替他答进`reply`。
 	return said(wake.reply) ? undefined : wake.reply;
@@ -121,7 +134,7 @@ export function defaultSettler(): Settler {
 			// 只吞哨兵（`[PASS]`）和空正文；重复的那一份由 `flow/settle.ts` 按答案条目 id 挡。
 			if (facts.text.length === 0 || isPass(facts.text)) return { kind: "silent", reason: "pass" };
 
-			const target = turnTarget(facts.state, facts.slug, facts.wake, facts.saidLast);
+			const target = turnTarget(facts.state, facts.slug, facts.wake, facts.saidLast, facts.assistant === true);
 			if (target === undefined) return { kind: "silent", reason: "no-target" };
 			const channel = facts.state.channels[target.channelId];
 			// 频道不存在或他不在里面：不替他往进不去的地方说话。

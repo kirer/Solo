@@ -283,6 +283,8 @@ export type SettleFacts = {
 	readonly text?: string;
 	/** 这一轮最后一个动作是不是 `say` / `route`（`saidLast`）。 */
 	readonly saidLast: boolean;
+	/** 收尾的人是助理。助理在团队频道里只留派活与进展，结论不靠收尾补进任务频道（ADR-110）。 */
+	readonly assistant?: boolean;
 };
 
 /** 收尾的提议：补一段正文进某个频道，或者明确不补。 */

@@ -75,6 +75,8 @@ export type State = {
 	dock: string | null;
 	/** 右栏里翻到的插件页（`app.page` 那一格；`null` = 没有）。右栏这一叠纸的上一层，不是弹窗。 */
 	rightPage: string | null;
+	/** 右栏里推入的文件预览（正文里点的那个相对路径；`null` = 没有）。与插件页同一层。 */
+	rightFile: string | null;
 	/** 右栏拖出来的宽度（px，资料 / 任务 / 工作台共用）；`null` = 没拖过，348。 */
 	dockWidth: number | null;
 	/** 内置浏览器开着看哪个地址（`null` = 关着）。正文里点外链就开在这里。 */
@@ -134,6 +136,7 @@ const initial: State = {
 	pluginView: null,
 	dock: null,
 	rightPage: null,
+	rightFile: null,
 	dockWidth: readDockWidth(),
 	browser: null,
 	trail: [{ kind: "channel" }],
@@ -303,7 +306,7 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null });
+		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null });
 		return;
 	}
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
@@ -318,6 +321,7 @@ export async function openChannel(id: string | null): Promise<void> {
 		tasks: { open: false, who: null },
 		pluginView: null,
 		rightPage: null,
+		rightFile: null,
 		person: null,
 		trail: [{ kind: "channel" }],
 		// 手机上资料是一整屏：切频道时它若还开着，会直接挡住刚点开的这个对话。
@@ -661,6 +665,7 @@ export function openPluginView(slug: string): void {
 		pluginView: slug,
 		dock: null,
 		rightPage: null,
+		rightFile: null,
 		tasks: { open: false, who: getState().tasks.who },
 		restartOpen: null,
 		pluginSheet: false,
@@ -678,7 +683,7 @@ export function closePluginView(): void {
 
 /** 打开右侧工作台：占右栏那一层（不是另开一列，也不占正文宽度）。 */
 export function openDock(slug: string): void {
-	patch({ dock: slug, rightPage: null, tasks: { open: false, who: getState().tasks.who }, right: { open: true }, settings: false, pluginSheet: false, pluginView: null });
+	patch({ dock: slug, rightPage: null, rightFile: null, tasks: { open: false, who: getState().tasks.who }, right: { open: true }, settings: false, pluginSheet: false, pluginView: null });
 }
 
 /** 收起工作台：回右栏的上一层（资料页），右栏本身不关。 */
@@ -688,12 +693,22 @@ export function closeDock(): void {
 
 /** 在右栏里推入一个插件页（不弹窗）：占右栏那一层，返回退回资料页。 */
 export function openRightPage(slug: string): void {
-	patch({ rightPage: slug, dock: null, pluginView: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+	patch({ rightPage: slug, dock: null, pluginView: null, rightFile: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
 }
 
 /** 收起右栏里的插件页：回资料页，右栏本身不关。 */
 export function closeRightPage(): void {
 	patch({ rightPage: null });
+}
+
+/** 在右栏里推入一份文件预览（正文里点到的相对路径）：和插件页同一层，返回退回资料页。 */
+export function openRightFile(path: string): void {
+	patch({ rightFile: path, rightPage: null, dock: null, pluginView: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+}
+
+/** 收起右栏里的文件预览：回资料页，右栏本身不关。 */
+export function closeRightFile(): void {
+	patch({ rightFile: null });
 }
 
 /** 拖右栏的左边线：宽度记进偏好，换页 / 下次打开还是这么宽。`null` 回到默认 348。 */

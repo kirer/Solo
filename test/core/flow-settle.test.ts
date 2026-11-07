@@ -42,7 +42,10 @@ const entriesOf = (items: EntryRecord[]) => ({
 	entries: async () => ({ items }),
 });
 
-function makeWorld(existing: readonly Message[] = [], options: { readonly failPublish?: boolean } = {}) {
+function makeWorld(
+	existing: readonly Message[] = [],
+	options: { readonly failPublish?: boolean; readonly assistants?: readonly string[] } = {},
+) {
 	const state: ChannelState = {
 		channels: { [CHANNEL]: channel },
 		messages: { [CHANNEL]: [...existing] },
@@ -68,6 +71,7 @@ function makeWorld(existing: readonly Message[] = [], options: { readonly failPu
 	const settle = createSettle({
 		store,
 		settler: defaultSettler(),
+		...(options.assistants === undefined ? {} : { assistants: async () => options.assistants ?? [] }),
 		publish: async (input) => {
 			calls.publish.push(input);
 			if (options.failPublish === true) throw new Error("频道写不进去");

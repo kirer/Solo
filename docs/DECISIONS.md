@@ -2540,3 +2540,71 @@
 - **执行**：`ui/app/src/styles/v6.css`（`.modal-wide` / `.pl-list`）、`panels/PluginsPage.tsx`
   （删 ✕）、`seed/plugins/Token统计/client.js`（`Skeleton`、`.tk-body` 内边距、`.tk-inner`
   的 `max-width: 860`）；`docs/DESIGN.md` §2.8 / §13（宽度与出口）。
+
+## ADR-108 窄窗口里弹窗的出口放左上角返回，宽窗口才用右上角 ✕
+
+- **背景**：设置那张弹窗窄到 ≤900 是整页（铺满、无浮层感），右上角还挂一颗 ✕，和对话页 /
+  插件清单左上角的返回不是一套；手机上「×」也离拇指最远。
+- **决策**：设置清单那一层同时画**返回（左）**与 **✕（右）**，CSS 按宽度留一个：≤900 只留返回
+  （关掉整张设置、回对话），>900 只留 ✕。插件清单本来就只有左上返回，插件页由插件自己画，
+  三层的出口写法一致。
+- **取舍**：宽窗口里不再出现返回（那是「上一层」的语义，宽窗口的知识点只有「关」）。
+- **执行**：`ui/app/src/panels/SettingsPage.tsx` 的 `.modal-back` / `.modal-close`、
+  `styles/v6.css` 的 `@media (max-width: 900px)`；`docs/DESIGN.md` §13。
+
+## ADR-109 正文里的链接 / 文件 / 图片：三样各开各的地方
+
+- **背景**：模型在正文里写的东西一直是死文本 —— GitHub 地址要手动复制，`teams/x/a.md`
+  只能去工作台里翻，贴进来的图只能看见缩略尺寸。用户要「点了就能看」。这里有三条路可走：
+  全部开系统浏览器 / 全部开新页面 / 各按内容给最合适的落点。
+- **决策**：
+  - **`http(s)` 链接**（含裸写的 URL，不只是 `[]()`）→ 内置浏览器：桌面壳里是工作台那一层的
+    `<webview>`，网页版退回 iframe（`installLinkBrowser`，ADR-096）。只接管普通左键。
+  - **文件路径**（反引号里的、相对链接里的、正文里裸写的 `teams/x/a.md`）→ **右栏推入一层**
+    （`store.rightFile` + `panels/FilePreview.tsx`），和插件页同一叠纸；浏览器不跳页。
+  - **图片**（`![](url)` 与附件缩略图）→ 灯箱（已有的 `.md-img img` 点击）。
+  - 路径只在**说得清是文件**时才点亮：带斜杠，或 `名字.扩展名`；`npm run check`、`v2.1.0`、
+    `2026/11/07` 不算。裸路径的起头只认空白 / 左括号 / 冒号 / 逗号，句中的半个词不点亮。
+  - 后端**一条只读路由** `GET /api/files/preview?path=`：两个根（用户根 → 应用根）都认，
+    只认相对路径，`realpath` 之后判越界，隐藏文件 / `..` / `~` / 绝对路径不认，自家的
+    `settings.json` / `.secrets.json` / `core.sqlite` / 播种清单回「不开放预览」。认得
+    图片 / PDF / 文本三类，**一律按响应头判断怎么画**；HTML / SVG 降成 `text/plain`，
+    认不出回 415 并说一句话。
+- **取舍**：不另做「下载」与「编辑器」；不引第三方 markdown 库（渲染器仍是先转义再拼的那份）。
+  裸路径难免有点误伤（`github.com/a/b.md` 会被当成站内文件），但代价只是那一层里一句
+  「找不到这个文件」，比一律不可点好。
+- **执行**：`src/app/files.ts`、`src/core/runtime/io.ts`（`fileStatAt` / `realPathOrUndefined`）、
+  `interface/http/routes.ts`、`ui/app/src/lib/markdown.ts`（`pathOf` / 裸路径 / 裸 URL）、
+  `lib/links.ts`（`installPathPreview`）、`state/store.ts`（`rightFile`）、
+  `panels/{FilePreview,RightPanel}.tsx`、`App.tsx` 的 `closeTop`、`stream/Stream.tsx`（图片）、
+  `styles/{v6,stream}.css`；`docs/WEB-API.md` §13.9、`docs/DESIGN.md` §2.3 / §13.3、
+  `docs/CODE.md` 的文件表；`test/core/files.test.ts`、`test/ui/source-contract.test.ts`。
+
+## ADR-110 插话一轮的「私聊已答过」只在答完又干了活时才补进任务频道
+
+- **背景**：2026-11-07 桌面端实测，Solo 把给老板的话发进了「小恐龙」团队频道，群里的人莫名其妙，
+  老板连问两次「你在这个群里说这话干嘛」。数据对得上：19:45:08 老板在私聊问「我想了解下 AI
+  短剧」；19:45:16 Solo 在私聊答了；19:45:21 同一段话又出现在 `team:小恐龙`。19:52 那两句
+  「字幕像打了马赛克」的解释也是同样的路径进了团队频道。
+- **原因**：那条私聊消息是**插话**（他正在跑团队频道的一轮），唤醒记录是 `reply=私聊` /
+  `task=团队`。收尾的 `turnTarget` 第二条写的是「插话一轮里，私聊已经答过 → 最后这段是任务
+  本身的结论，回任务频道」，**没有看 `restated`**。可模型收工时最常见的动作就是把刚说过的那
+  句换个说法再当正文 —— 于是同一段话被当成「团队任务的结论」补进了团队频道。
+- **决策**：
+  1. 这条分支先判 `said(wake.reply)`（在那个频道说过话**且**最后这段只是复述）→ 不补；
+     只有「说过了、之后又干了活」（`restated === false`）才回任务频道。
+  2. **助理例外**：收尾拿到「谁是助理」（名册现读）后，插话一轮的 `task ≠ reply` 时
+     **绝不往任务频道补**——答过就静默，没答过就回私聊。助理在团队频道里的每一句都是它
+     自己显式 `say` 出去的派活与进展（ADR-094），不需要收尾替它补；实测里模型答完还会
+     接着干活（`restated` 为 false），所以只改第一条挡不住这类事故。
+  3. 把 `seed/prompt/89-where.md` 改成「回答哪条消息，就把 `channel` 写成那个消息的频道
+     （省略 = 发到最近一条叫醒你的消息那儿）」—— 多条频道同时有动静时，省略频道就是把话
+     发到别人那儿（同日 19:52 的两句就是这样进了团队频道）。
+- **取舍**：真正的「私聊插话结束、团队活干完」仍然回任务频道（`restated=false` 那条路不变）；
+  代价是模型若在私聊答完又做了一点点活、但最后那段其实是复述，会少补一条进团队频道 ——
+  宁可让团队少看到一条重复的话，也不要让它看到一句只对老板说的话。
+- **执行**：`src/core/flow/defaults/settle.ts` 的 `turnTarget`（`assistant` 参数）、
+  `flow/settle.ts` / `flow/ports.ts` / `flow/index.ts` / `channel/types.ts` 的 `SettleFacts`
+  与 `assistants` 透传、`channel/turn/finish.ts`、`seed/prompt/89-where.md`、
+  `test/core/turn.test.ts`（新增助理两条与复述一条，原「私聊已经答过 → 回任务频道」改成
+  `restated=false` 的用例）；`docs/CODE.md` 的 `flow/defaults/settle.ts` 行。

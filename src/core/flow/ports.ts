@@ -122,6 +122,8 @@ export type FlowPorts = {
 	readonly runner: TurnRunner;
 	/** 收尾策略（默认 `defaults/settle.ts` 的 `defaultSettler`）。 */
 	readonly settler: Settler;
+	/** 谁是助理（slug）。收尾据此决定「插话一轮要不要往任务频道补」（ADR-110）。 */
+	readonly assistants?: () => Promise<readonly string[]>;
 	/** 补发时解析 `@` 用的名册；不给就按字面 token 落库。 */
 	readonly roster?: () => Promise<MentionRoster>;
 	readonly hooks?: PublishHooks;

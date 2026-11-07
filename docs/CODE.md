@@ -108,7 +108,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `runtime/index.ts` | 82 | 防腐层再导出：`BACKGROUND_CONTEXT` / `createRegistry` / `defineDoc` / `defineExtension` / `defineTool` / `defineTask` / `hook` / `runEndTask` / `GenerationTask` / `openCore` / `setupModels` / `compactionSettings` / `Type`，以及 `Task` / `RunSummary` / `Submission` 等类型 |
 | `runtime/open.ts` | 313 | `openCore({databasePath, models, registry, settings?, onReport?}) → {harness, registry, close, interrupted, backlog}`；open 之后跑 `inspectStartup()`：**不结算任务**（1.5.0 自己重放），只报出被切断的 generation 会话、清掉指向不存在任务的 `run`、找出没人取的排队输入（ADR-074）；`onReport` 把底座的错误出口接成 `RuntimeReport` |
 | `runtime/models.ts` | 272 | `setupModels()`：读 `settings.json` 的 `providers` 数组 → `createProvider` → `setProvider`；没有就回落到环境变量，再没有就是**没有模型**（`defaultModel: undefined`，ADR-023，不悄悄兜底本地网关）。`syncModels()` 把改过的 `settings.json` 就地重装进运行中的注册表（ADR-025，不重启）。`contextWindow` 取自 pi-ai 的模型目录，取不到回落 `FALLBACK_CONTEXT_WINDOW = 128 * 1024`；`compactionPolicyFor` / `compactionSettings` 按窗口算压缩阈值（reserve 15%、keepRecent 10% 底 8192、background 5%），并按 `provider/model` 出 overrides |
-| `runtime/io.ts` | 153 | 绝对路径的机械 IO：`readTextOrUndefined`（读不到就是 `undefined`，不抛）/ `writeTextAt`（自动建父目录）/ `writeBytesAt`（二进制，同样建父目录）/ `ensureDir` / `existsAt` / `removeDirAt` / `mtimeOrUndefined` / `stampOf`（`mtimeMs:size` 变更戳）/ `appendJsonLine`（可按大小轮转）/ `watchDirAt`（监听一个目录，默认递归、可关；返回停止函数；盯不上就是空函数）/ `listDirSorted` / `compareCodePoints` / `byName`（名字排序比较器）/ `createSerialGate`（同一把串行锁）—— 全仓只有这一份 |
+| `runtime/io.ts` | 165 | 绝对路径的机械 IO：`readTextOrUndefined`（读不到就是 `undefined`，不抛）/ `writeTextAt`（自动建父目录）/ `writeBytesAt`（二进制，同样建父目录）/ `ensureDir` / `existsAt` / `removeDirAt` / `mtimeOrUndefined` / `stampOf`（`mtimeMs:size` 变更戳）/ `appendJsonLine`（可按大小轮转）/ `watchDirAt`（监听一个目录，默认递归、可关；返回停止函数；盯不上就是空函数）/ `listDirSorted` / `compareCodePoints` / `byName`（名字排序比较器）/ `createSerialGate`（同一把串行锁）/ `fileStatAt`（是文件才给 `size` + `mtimeMs`）/ `realPathOrUndefined`（解析软链接，解析不了就是 `undefined`）—— 全仓只有这一份 |
 | `layout.ts` | 116 | `Layout` / `resolveLayout({appRoot, userRoot})` / `agentDirLabel` / `workspaceOf` / `memberWorkspace` / `teamWorkspace` —— **两个根的路径只在这里拼**（ADR-030）。日志是唯一跟着用户根走的安装物（`logsRoot = <userRoot>/logs`，ADR-041）。零业务 import，只有 `node:path` |
 | `secrets.ts` | 103 | `loadSecrets` / `redactor` / `redact` —— 读 `<appRoot>/.secrets.json`，把密钥的三种形态（原值 / JSON 转义 / URL 编码）从文本里抹掉；跨层安全工具，与 fsx / naming / layout 同级 |
 | `documents/member/identity.ts` | 239 | `parseIdentity` / `renderIdentityFile` / `readIdentity` / `writeIdentity` / `readAllIdentities` / `assistantsOf` —— 身份的**读与写都在这里**；招人也在：`uniqueSlug` / `createAgent`（写身份交给 `writeIdentity`；没给正文就写空字符串，不合成任何身份文案）/ `nameOf` / `labelsOf`（slug → 显示名）；头字段只三个：`name` / `title` / `team`（谁是助理只看目录，ADR-058）；`OWNER_SLUG = "owner"` |
@@ -135,7 +135,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `flow/store.ts` | 50 | `createMessageStore({harness, state})`：`snapshot` 读当前频道文档（给了调用方快照就直接用）、`read` 走 `snapshot`、`append`（`appendToChannel`）、`note`（`appendNote`） |
 | `flow/gates.ts` | 21 | `sharedGates()`：进程级两把串行闸单例 —— `publish`（ADR-073 的读—算—提交）与 `repost`（ADR-079 的补发去重），装配层与 `channel/post.ts` 共用一份 |
 | `flow/defaults/router.ts` | 48 | `routeFactsOf(state, channel, message)`（`lastSpeaker` = `speakerBefore`，`defaultTargets` = `deliveryTargets`）与 `defaultRouter()`（照 `defaultTargets` 叫） |
-| `flow/defaults/settle.ts` | 144 | 默认收尾判断：`finalTextOf` / `spokeAfterWake` / `answerEntry` / `saidLast`（认 `say` 与 `route`）/ `turnTarget`（`restated`）/ `defaultSettler()` 四条不补的理由（找不到正文 / `[PASS]` 或空 / 没有目标 / 非成员或同文） |
+| `flow/defaults/settle.ts` | 144 | 默认收尾判断：`finalTextOf` / `spokeAfterWake` / `answerEntry` / `saidLast`（认 `say` 与 `route`）/ `turnTarget`（`restated`）/ `defaultSettler()` 四条不补的理由（找不到正文 / `[PASS]` 或空 / 没有目标 / 非成员或同文）。插话一轮里「私聊已答过」只有在**答完又干了活**（`restated=false`）时才把正文补进任务频道；只是复述就不补；**助理**的插话一轮一律不往任务频道补（回私聊，ADR-110） |
 | `flow/index.ts` | 80 | `createFlow(ports)` 组装 `publish` / `forward` / `settle`（publish ↔ settle 的循环用中转解开）；再导出类型与 `routeFactsOf` / `resolvePlan` / `validatePlan` / 默认收尾的纯函数 |
 | `channel/delivery.ts` | 287 | 投递正文的**排版**：`renderDelivery` / `renderReplyRules` / `digestRows` / `digestNotice` / `deliveryText`（reply / interrupted / task 系统模板 + 八个 delivery 片段；`alone` / `shared` / `colleagues` 带模板自写的 `default:` 兜底句）/ `mergedNotice`。文案全在 `seed/prompt/*.md`，这里只按条件选片段、填名字；`routedBy` 给助理转来的那条加一句「X 让你看这条」（ADR-063） |
 | `channel/queue.ts` | 109 | 唤醒队列：`queuedAhead`（同会话还没开始的排队项）/ `coalesceQueue`（合并成最多一个）/ `liveConversations`（「他还在干活」的判据；跳过 `core.turn-report` 与只等收尾的 `waiting` 生成，ADR-077） |
@@ -172,6 +172,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/app/preferences.ts` | 39 | 界面偏好（ADR-087）：`createPreferences` —— `read()` / `save(body)`，只读写 `settings.json` 的 `updateProxy`（空串 = 直连、键删掉），其它键原样保留；校验 `http(s)://` / `socks5://`。**模型调用不走它**，消费者只有桌面壳的更新器 |
 | `src/app/avatar.ts` | 69 | 头像的**画法**：`avatarSvg(seed, size)`（DiceBear `micah`，取景与底色都在这里）/ `avatarEtag` / `clampAvatarSize`。纯函数，没有 IO：路由把字节写出去 |
 | `src/app/uploads.ts` | 92 | 上传语义：`createUploads` —— 收下字节、写元数据、读回时决定内联还是下载；`preview=1` 时图片 / PDF / 文本内联，HTML 永远降成 `text/plain`（ADR-037） |
+| `src/app/files.ts` | 116 | 正文里点到的文件（ADR-109）：`createFiles(layout)` 的 `preview(path)` —— 两个根（用户根 → 应用根）都认，只认相对路径，`realpath` 之后再判越界，隐藏文件 / `..` / 绝对路径不认，`settings.json` / `.secrets.json` / `core.sqlite` / 播种清单回「不开放预览」；认得图片 / PDF / 文本三类，HTML 与 SVG 一律降成 `text/plain`，其余 415 |
 | `src/app/runs.ts` | 46 | 后台命令的收尾：`createRuns` 的 `sweep()` —— 服务启动时把上一轮遗留的后台命令结账，在起跑的那个频道留一条 `note`（谁起的、哪条命令、活着被停掉还是早就结束了）。失败只记一行，不影响启动（ADR-013） |
 | `src/app/diag.ts` | 150 | `record()`（卡顿落 `logs/jank.jsonl`）/ `recordRuntimeReport()` / `lastReport()` / `onAbnormal()`（订阅异常报告，看门狗用）/ `formatRuntimeReport()`；运行报告落 `logs/runtime.jsonl`，`task_outdated` 算良性。单条 4KB、单文件 5MB 轮转一代（`appendJsonLine` 的 `rotateAt`） |
 | `src/app/watch.ts` | 49 | 看门狗（ADR-016）：`createWatch` 订阅 `diag.onAbnormal`，异常报告一到就在全员频道留一条 `note`（`底座报告：…`），10 分钟最多一条；`serve.ts` 启动 `start()`、关服务 `stop()`。只通报，不自动救 |
@@ -179,7 +180,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/app/audit.ts` | 82 | 审计钩子（ADR-010）：`auditHooks(deps)` 返回两个 `HookRegistration`（`ToolTask` 的 `beforeTool` / `afterTool`、`GenerationTask` 的 `afterResponse`），一次工具调用 / 一次模型回复各写一行到 `logs/tools.jsonl`（单文件 5MB 轮转一代）。**只读不改**：不改参数、不拦调用、不改结果；写失败就丢这一行，不反噬调用。装配层把它挂在 `core-tools` 扩展上 —— 那是每个会话都选的扩展 |
 | `src/app/errors.ts` | 20 | `AppError` + 五个 reason（`bad-request` / `forbidden` / `not-found` / `too-large` / `internal`），**刻意不带状态码**：说「找不到」，不说 404 |
 | `src/view/dto.ts` | 201 | **界面吃的每种 JSON 只在这里定义一次**：零 import、零函数、零 IO —— 它是**契约层**（投影已并进 `app/project.ts`）；`ui/app/src/api/types.ts` 只是 type-only 再导出它 |
-| `src/interface/http/routes.ts` | 348 | 路由表：34 条 `/api/*`（按方法 + 路径算）+ 插件自己注册的接口 + `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」；`POST /api/reset` / `POST /api/restart` 先回 200，再把关库删盘 / 关库重开交给启动层 |
+| `src/interface/http/routes.ts` | 348 | 路由表：38 条 `/api/*`（按方法 + 路径算）+ 插件自己注册的接口 + `*rest` 静态兜底。handler 只做「解析参数 → 调 `app/` → 序列化」；`POST /api/reset` / `POST /api/restart` 先回 200，再把关库删盘 / 关库重开交给启动层 |
 | `src/interface/http/respond.ts` | 100 | HTTP 出口原语：`json` / `fail` / `HttpError` / `readJson`（正文上限 1MB、写接口必须声明 `application/json`）/ `statusOf`（用例原因 → 状态码） |
 | `src/interface/http/route-match.ts` | 131 | 表驱动路由匹配：`Route` / `RouteContext` / `RouteHandler` / `matchRoute`（`:name` 捕获 / `*name` 吃余量），不引入框架 |
 | `src/interface/http/network.ts` | 80 | 监听地址：`isWildcardHost` / `isLoopbackHost` / `browserUrlOf` / `lanAddresses` / `lanUrlsOf` |
@@ -214,7 +215,7 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/api/types.ts` | **type-only 再导出** `src/view/dto.ts`：后端改字段这里就编译不过。权威定义只有那一份，不要在这儿加后端没有的字段 |
 | `src/stream/model.ts` | **消息 → 行模型，纯函数**：`buildRows({ messages, running, now })` —— 时间分隔、同一人两分钟内算一段 / 半分钟内连发合并气泡、`note` 只在带 `noteOf`（后台命令跑完）时画一行，其余不画，再插一条 `live` 占位（正在跑、还没回话的那一轮；同一个人已经在这条之后发过言就不插）。旧 kind 在投影层已归一成 `chat`/`note`（ADR-061），这里不再认历史标签 |
 | `src/stream/AttachmentPreview.tsx` | 非图片附件点开看一眼：**按响应头**决定（图片 / PDF → `object URL`，`text/*` → `<pre>`，其余说「不能预览」）。不按文件名判断 —— 名字是用户起的 |
-| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`live` 行交给 `LiveRow`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`）。群聊私聊同一条路径 |
+| `src/stream/Stream.tsx` | 把行画出来 + 贴底/上翻/回到最新；`live` 行交给 `LiveRow`；空频道画 `Empty`（头像 + 一句话 + 可点的 `@名字`）。群聊私聊同一条路径。点引用块（`button.row-quote`）由 `jumpTo` 滚到被引用那条（`data-seq`）并加 `.row-flash` 亮 1.6 秒，找不到就不动 |
 | `src/stream/LiveRow.tsx` | 聊天流里唯一的过程：头像（`working`）+ 一行「最新一步 · N 步 · 耗时」，每秒自走时钟，点它开这个人的任务面板。折叠帧不带步骤时先 `loadTurn`；没有步骤只写「在想…」，绝不编他会说什么（ADR-046） |
 | `src/titlebar/Titlebar.tsx` | Windows 桌面壳的标题带（ADR-069）：菜单「Solo / 视图」、拖拽把手、点别处 / Esc / 失焦收起；动作经 `window.soloDesktop.menu()` 交给主进程。菜单数据在同目录 `menu.ts`（纯数据，单测直接读） |
 | `src/panels/TasksPanel.tsx` | 后台任务 = **右栏的一态**（桌面，`data-tasks="true"`）/ `.detail` 铺满整屏（手机），导出 `TasksView`：上面是谁（头像 + 一行统计），下面是一列按天分组的轮次；点一条就地展开 `trigger` 引用与步骤时间轴（`run` / `file-*` / `think` 点开是等宽的命令块）。选人拉 `getPersonTurns(slug, 30)`，这个人在跑时每 2 秒补一次；选中那轮没步骤时 `loadTurn` 补拉 |
@@ -225,7 +226,8 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/sidebar/Sidebar.tsx` | 列表那一屏（和对话同一格，`body[data-pane]` 互斥）：抬头是「返回助理（`#list-back`）+ 对话 + 拉群（`#new-group`）」，头下一行搜索（`#chat-search`，按名字与预览筛），再下面一列平铺频道（两行：名字+身份/团队 / 预览），行与行之间一条内缩细线。设置只在助理那屏（不在列表抬头）。**助理不在这一列**（和助理的对话就是首屏，回它靠抬头的 `#list-back`）；列表脚下只留 `sidebar.footer` 插槽 |
 | `src/composer/choice.ts` | **纯函数** `pendingChoice()`：最后一条带 `options` 的消息、且它之后我没说过话 —— 就是「还在等我选」。回答不另开路由，我发的下一条就是回答（`replyTo` 指向它） |
 | `src/composer/Composer.tsx` | 输入卡：自增高、Enter/Shift+Enter、**中文输入法合成期不误发**、@ 弹层（280px、6 行、头像 + 身份 + `@slug`）、附件队列、拖拽、粘贴、引用条。占位两端同一句：「给 <名字> 说点什么…」/「发到 <频道>…」，不再写键盘提示 |
-| `src/panels/RightPanel.tsx` | 右栏那一层（≥901 贴右沿浮在纸上，≤900 整屏铺满；ADR-098）：工作台（`dock` 插槽，带 `DockGrip`）/ 后台任务 / 资料页三选一 —— 一张平铺的资料表，顺序写死 —— 身份 → 统计 → 模型 → 预置词 → 记忆 → 技能（+ 插件 `rightPanel.row` 的行）→ 后台任务；行点开就地展开，没有页签条。左上角「返回」按 `trail` 决定：还有上一层就 `backRight()`，否则收起回对话。`tasks.open` 为真时整屏换成 `TasksView`（抬头写「后台任务」）。`rightPanel.detail` 插槽在「模型」行展开的面板里。关的时候等 300ms 过渡再卸载 |
+| `src/panels/RightPanel.tsx` | 右栏那一层（≥901 贴右沿浮在纸上，≤900 整屏铺满；ADR-098）：工作台（`dock` 插槽，带 `DockGrip`）/ 文件预览（`rightFile`）/ 后台任务 / 资料页三选一 —— 一张平铺的资料表，顺序写死 —— 身份 → 统计 → 模型 → 预置词 → 记忆 → 技能（+ 插件 `rightPanel.row` 的行）→ 后台任务；行点开就地展开，没有页签条。左上角「返回」按 `trail` 决定：还有上一层就 `backRight()`，否则收起回对话。`tasks.open` 为真时整屏换成 `TasksView`（抬头写「后台任务」）。`rightPanel.detail` 插槽在「模型」行展开的面板里。关的时候等 300ms 过渡再卸载 |
+| `src/panels/FilePreview.tsx` | 正文里点到的文件 → 右栏推入的一层（`rightFile`，和插件页同一叠纸；ADR-109）：拉 `GET /api/files/preview?path=`，**按响应的 `Content-Type` 决定怎么画**（图片 `<img>` / PDF `<iframe sandbox>` / 其余 `<pre>`）；404 / 415 把后端那句话原样摆出来，不把它做成死链接 |
 | `src/panels/Browser.tsx` | 内置浏览器**兜底**（没有工作台插件时才用；正常情况下外链开在 `dock` 的浏览器页签里）：地址栏可改 / 刷新 / 「系统浏览器」，正文里点到的外链就开在这里。站内地址（与 `location.origin` 同源）不内嵌，直接给一句提示 —— 同源页面嵌进来能碰到宿主。内嵌得成不成是站点说了算（`X-Frame-Options` / `frame-ancestors`），所以「系统浏览器」那颗键一直在 |
 | `src/panels/Overlays.tsx` | 真正的浮层：拉群、找你清单、toast。**同一时刻只开一个**（图片灯箱在 `App.tsx`）。`NeedMenu` 由 `App.tsx` 放进顶栏按钮的 `.menu-anchor` 里渲染 —— 菜单要贴着按钮长 |
 | `src/panels/SettingsPage.tsx` | 设置（`overlay` + 648 的 `modal`）：一列往下读 —— 主题分段、插件注册的 `settings.section`（「模型」收成一行）、插件一行 + `app.entry` 插槽、更新代理、重置数据。**插件清单与插件的整页（`app.page`）也在这张弹窗里**，而且共用**同一张壳**：`pluginSheet` / `pluginView` 只换里面的 `.modal-level`，宽度切 `modal-wide`（648 ↔ 800），换层后用 WAAPI 补间宽高（ADR-106）；返回落回设置清单（ADR-099） |
@@ -236,9 +238,9 @@ shell = 装配层，唯一可以同时 import 全部
 | `src/hooks/useToasts.ts` | 三条上限 / 3.6 秒 |
 | `src/lib/avatar.ts` | 头像只拼 `<img src="/api/avatar/…">`（种子取 slug、要 2 倍尺寸）、四种状态、`groupAvatar()` 群组头像（座位 + 挖洞遮罩）。**插画画在服务端**（`src/app/avatar.ts`）；`assistant: true` 时改画 `brandMarkSvg`（助理的脸是应用标识，不是插画） |
 | `src/lib/brand.ts` | `brandMarkSvg(size)`：应用标识的唯一一份（与 `desktop/icon.svg` 同形）。最左那格、助理头像、群头像的助理座位共用；颜色走 `--rail-mark-*` |
-| `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼** |
+| `src/lib/markdown.ts` | `renderMarkdown()` —— 最小 Markdown，**先转义再拼**。正文里的位置都能点：裸 URL 认成外链；行内代码 / 相对链接 / 裸写的 `teams/x/a.md` 都带 `data-path`（`pathOf` 只认带斜杠或 `名字.扩展名` 的一段，版本号、命令、日期不点亮） |
 | `src/lib/copy-code.ts` | 代码块「复制」：`CODE_COPY_CLASS` 一处定义，`installCodeCopy()` 在 `main.tsx` 装一次全局委托（正文是 `dangerouslySetInnerHTML` 注入的，React 事件接不到里面的按钮） |
-| `src/lib/links.ts` | 正文外链的落点：`builtinLink(href)` 只认 `http(s)://`（站内路径 / 锚点 / `mailto:` 都不算），`installLinkBrowser(open)` 在 `main.tsx` 装一次全局委托 —— **只接管普通左键**，⌘/Ctrl/Shift/Alt 点与中键照旧交给浏览器 |
+| `src/lib/links.ts` | 正文外链的落点：`builtinLink(href)` 只认 `http(s)://`（站内路径 / 锚点 / `mailto:` 都不算），`installLinkBrowser(open)` 在 `main.tsx` 装一次全局委托 —— **只接管普通左键**，⌘/Ctrl/Shift/Alt 点与中键照旧交给浏览器。`installPathPreview(open)` 同一次装：点 `[data-path]` 开右栏的文件预览层（不跳页） |
 | `src/lib/format.ts` | 转义、相对时间、`clockTime` / `dayLabel`、`humanDuration`（`<1s` / `3.2s` / `1m 12s`）、`humanBytes`、`unreadLabel`、`copyText` |
 | `src/lib/jank.ts` | 卡顿自报：长帧 > 240ms / 长任务 > 200ms 才记一条，`mark(label)` 标「当时在干什么」，攒够 5 秒或 `pagehide` 发 `POST /api/diag` |
 | `src/styles/onboarding.css` | 第一次打开的两屏与三条建议（稿子 10 / 11 / 12）；尺寸按 375×812 |
@@ -366,7 +368,7 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 106 文件 / 931 例，应该 <3s
+npm test             # 109 文件 / 954 例，应该 <3s
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 真实模型端到端 13 项，会花 token，只在改行为后跑；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=3   # 多 agent 场景 6 个 × 3 轮（硬 3/3、行为 2/3）

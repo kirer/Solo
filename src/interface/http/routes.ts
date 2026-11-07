@@ -266,6 +266,24 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				return json(response, uploaded);
 			},
 		},
+		// 消息里点到的文件：读一眼（图片 / PDF / 文本）。没有就 404，不能预览就 415，
+		// 两种都由界面把后端那句话原样摆出来 —— 别让一句路径变成一个死链接。
+		{
+			pattern: "/api/files/preview",
+			method: "GET",
+			handler: async ({ response, url }) => {
+				const file = await app.files.preview(url.searchParams.get("path") ?? "");
+				if (file.kind === "none") return fail(response, file.status, file.reason);
+				response.writeHead(200, {
+					"Content-Type": file.mime,
+					"Content-Length": String(file.size),
+					// 文件随时会改，不做长缓存；同源内容不许被嗅探成 HTML。
+					"Cache-Control": "no-cache",
+					"X-Content-Type-Options": "nosniff",
+				});
+				return await pipeline(createReadStream(file.path), response);
+			},
+		},
 		// 取附件：图片内联（点缩略图开大图才能直接显示），其余一律下载。
 		{
 			pattern: "/api/uploads/:id",

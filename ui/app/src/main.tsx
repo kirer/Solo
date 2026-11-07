@@ -8,8 +8,8 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
-import { bootstrap, openBrowser, openDock } from "./state/store.ts";
-import { installLinkBrowser } from "./lib/links.ts";
+import { bootstrap, openBrowser, openDock, openRightFile } from "./state/store.ts";
+import { installLinkBrowser, installPathPreview } from "./lib/links.ts";
 import { fetchLastRuntimeReport } from "./api/client.ts";
 import { installJankMonitor } from "./lib/jank.ts";
 import { installCodeCopy } from "./lib/copy-code.ts";
@@ -44,6 +44,10 @@ installLinkBrowser((url) => {
 	openBrowser(url);
 	const cell = cellsOf("dock")[0];
 	if (cell !== undefined && cell.plugin !== undefined) openDock(cell.plugin);
+});
+// 正文里的文件路径：点开是右栏的预览层（和插件页同一叠纸，返回回资料页）。
+installPathPreview((path) => {
+	openRightFile(path);
 });
 void bootstrap();
 

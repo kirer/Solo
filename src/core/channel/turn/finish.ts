@@ -67,6 +67,7 @@ export function createTurnFinisher(deps: TurnDeps): FinishTurn {
 			...(deps.assistants === undefined ? {} : { assistants: deps.assistants }),
 		}),
 		settler: chain.settler,
+		...(deps.assistants === undefined ? {} : { assistants: deps.assistants }),
 		...(deps.roster === undefined ? {} : { roster: deps.roster }),
 		...(deps.afterPublish === undefined ? {} : { hooks: { afterPublish: deps.afterPublish } }),
 		gate: sharedGates(),

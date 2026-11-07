@@ -33,6 +33,7 @@ export function createFlow(ports: FlowPorts): Flow {
 	const settle = createSettle({
 		store: ports.store,
 		settler: ports.settler,
+		...(ports.assistants === undefined ? {} : { assistants: ports.assistants }),
 		publish: (input, ctx) => {
 			if (publish === undefined) throw new Error("flow 尚未组装完成");
 			return publish(input, ctx);

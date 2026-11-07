@@ -17,8 +17,9 @@ import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, closeDock, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight } from "../state/store.ts";
+import { backRight, closeDock, closeRightFile, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
+import { FilePreview } from "./FilePreview.tsx";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
 
 export function RightPanel(): JSX.Element {
@@ -27,6 +28,7 @@ export function RightPanel(): JSX.Element {
 	const trail = useStore((state) => state.trail);
 	const dock = useStore((state) => state.dock);
 	const rightPage = useStore((state) => state.rightPage);
+	const rightFile = useStore((state) => state.rightFile);
 	const dockWidth = useStore((state) => state.dockWidth);
 	const [mounted, setMounted] = useState(open);
 
@@ -46,12 +48,23 @@ export function RightPanel(): JSX.Element {
 	const back = (): void => {
 		if (dock !== null) closeDock();
 		else if (rightPage !== null) closeRightPage();
+		else if (rightFile !== null) closeRightFile();
 		else if (tasksOpen) closeTasks();
 		else if (trail.length > 1) backRight();
 		else setRight({ open: false });
 	};
 	const pageCell = rightPage === null ? undefined : cellsOf("app.page").find((cell) => cell.plugin === rightPage);
-	const title = dock !== null ? "工作台" : rightPage !== null ? (pageCell?.label ?? rightPage) : tasksOpen ? "后台任务" : "资料";
+	const fileName = rightFile === null ? "" : (rightFile.split("/").pop() ?? rightFile);
+	const title =
+		dock !== null
+			? "工作台"
+			: rightPage !== null
+				? (pageCell?.label ?? rightPage)
+				: rightFile !== null
+					? fileName
+					: tasksOpen
+						? "后台任务"
+						: "资料";
 	// 这一栏永远有出口：标题条那颗返回 / 关闭在每一层都在（宽窗口里顶栏那颗「资料」
 	// 常被这一栏自己盖住，不能只指望它）。
 
@@ -87,6 +100,10 @@ export function RightPanel(): JSX.Element {
 			) : rightPage !== null ? (
 				<div className="detail-dock" key={`page:${rightPage}`} aria-label={title}>
 					<Slot name="app.page" page={rightPage} />
+				</div>
+			) : rightFile !== null ? (
+				<div className="detail-dock" key={`file:${rightFile}`} aria-label={title}>
+					<FilePreview path={rightFile} />
 				</div>
 			) : (
 				<div className="detail-panel" id="detail-panel" key={tasksOpen ? "tasks" : "profile"}>

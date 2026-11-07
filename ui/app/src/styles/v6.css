@@ -1127,6 +1127,67 @@
 	min-width: 0;
 }
 
+/* ── 正文里点到的文件（右栏推入的那一层） ───────────────────────────── */
+
+.fp {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	min-width: 0;
+	min-height: 0;
+	padding: 12px 14px 16px;
+	overflow: auto;
+}
+
+.fp-path {
+	margin: 0 0 10px;
+	color: var(--ink-3);
+	font-size: 10.5px;
+	line-height: 15px;
+	overflow-wrap: anywhere;
+}
+
+.fp-note {
+	margin: 24px 4px;
+	color: var(--ink-3);
+	font-size: 12.5px;
+	line-height: 20px;
+}
+
+.fp-note[data-error="true"] {
+	color: var(--danger, #ec1313);
+}
+
+.fp-image {
+	max-width: 100%;
+	height: auto;
+	border-radius: 10px;
+	background: var(--raised);
+}
+
+.fp-pdf {
+	flex: 1 1 auto;
+	width: 100%;
+	min-height: 70vh;
+	border: 0;
+	border-radius: 10px;
+	background: var(--raised);
+}
+
+.fp-text {
+	margin: 0;
+	padding: 12px 14px;
+	overflow: auto;
+	border-radius: 10px;
+	background: var(--raised);
+	color: var(--ink-2);
+	font-family: var(--mono);
+	font-size: 12px;
+	line-height: 19px;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
 /* 窄窗口里它是整屏一层（稿子 06 / 07 / 23）。 */
 @media (max-width: 900px) {
 	.detail {
@@ -1375,6 +1436,21 @@
 .modal-close:hover {
 	background: var(--hover);
 	color: var(--ink);
+}
+
+/* 窄窗口里弹窗是整页，出口放回左上角（和对话页 / 插件清单一致）；宽窗口才用右上那颗 ✕。 */
+.modal-back {
+	display: none;
+}
+
+@media (max-width: 900px) {
+	.modal-back {
+		display: inline-grid;
+	}
+
+	.modal-close {
+		display: none;
+	}
 }
 
 .modal-body {

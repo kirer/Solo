@@ -151,3 +151,49 @@ describe("@ 人的高亮", () => {
 		expect(css).toContain(".md .md-at");
 	});
 });
+
+/**
+ * 正文里的链接与文件路径：模型常常直接贴 `https://…` 或 `teams/x/a.md`，
+ * 前者要能点开内置浏览器，后者要能点开右栏的预览层。
+ */
+describe("正文里的链接与路径", () => {
+	it("裸 URL 变成外链（行首 / 空格 / 括号后面才算）", () => {
+		const html = renderMarkdown("仓库在 https://github.com/cloudai-x/threejs-skills 里");
+		expect(html).toContain('href="https://github.com/cloudai-x/threejs-skills"');
+		expect(renderMarkdown("看（https://a.dev/x）。")).toContain('href="https://a.dev/x"');
+	});
+
+	it("句末的标点不算 URL 的一部分", () => {
+		const html = renderMarkdown("见 https://a.dev/x。");
+		expect(html).toContain('href="https://a.dev/x"');
+		expect(html).not.toContain("a.dev/x%E3%80%82");
+	});
+
+	it("javascript: 之类的仍然不变成链接", () => {
+		expect(renderMarkdown("[点我](javascript:alert(1))")).not.toContain("<a ");
+	});
+
+	it("像文件的 code 带 data-path，普通 code 不带", () => {
+		expect(renderMarkdown("`teams/weekly/workspace/report.md`")).toContain('data-path="teams/weekly/workspace/report.md"');
+		expect(renderMarkdown("`company.sqlite`")).toContain('data-path="company.sqlite"');
+		expect(renderMarkdown("`npm run check`")).not.toContain("data-path");
+		expect(renderMarkdown("`@林越`")).not.toContain("data-path");
+		// 版本号不是文件
+		expect(renderMarkdown("`v2.1.0`")).not.toContain("data-path");
+	});
+
+	it("正文里裸写的路径也点亮（不要求反引号）", () => {
+		const html = renderMarkdown("第一份周报出来了：teams/weekly/workspace/report.md，约 900 字。");
+		expect(html).toContain('data-path="teams/weekly/workspace/report.md"');
+		// 句子里不像文件的东西不点亮
+		expect(renderMarkdown("今天是 2026/11/07，按 2/3 算。")).not.toContain("data-path");
+		expect(renderMarkdown("跑 `npm run check` 即可。")).not.toContain("data-path");
+	});
+
+	it("相对路径的 Markdown 链接也不跳页，而是可预览", () => {
+		const html = renderMarkdown("[周报](teams/weekly/workspace/report.md)");
+		expect(html).toContain('class="md-path"');
+		expect(html).toContain('data-path="teams/weekly/workspace/report.md"');
+		expect(html).not.toContain('href="teams/weekly/workspace/report.md"');
+	});
+});

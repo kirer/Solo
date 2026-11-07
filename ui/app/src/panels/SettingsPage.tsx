@@ -142,6 +142,13 @@ export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.El
 					) : (
 						<>
 							<header className="modal-head">
+								{/* 窄窗口里这张弹窗就是整页：出口是左上角那颗返回（和对话页一样）；
+								    宽窗口里才用右上角那颗 ✕。两个都在，CSS 按宽度留一个。 */}
+								<button type="button" className="icon-btn modal-back" aria-label="返回对话" onClick={() => setSettings(false)}>
+									<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+										<path d="M14.5 5.5 8 12l6.5 6.5" />
+									</svg>
+								</button>
 								<span className="modal-title">设置</span>
 								<button type="button" className="icon-btn modal-close" aria-label="关闭" onClick={() => setSettings(false)}>
 									<CloseIcon />

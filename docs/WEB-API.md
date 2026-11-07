@@ -839,6 +839,32 @@ POST /api/plugins/天气/enabled
 - 消费者只有桌面壳的更新器（`desktop/src/update-proxy.ts`）；**模型调用不走它**。
   网页版里这一项存下来不生效（下载由浏览器自己走系统代理）。
 
+## 13.9 `GET /api/files/preview?path=`（正文里点到的文件）
+
+消息正文里的路径（`` `teams/x/workspace/a.md` ``、`[周报](teams/x/a.md)`、以及裸写的
+`teams/x/a.md`）点开时读这一条。**不另开下载接口**：认得就吐原字节，认不得就说一句话。
+
+```
+GET /api/files/preview?path=teams%2Fweekly%2Fworkspace%2Freport.md
+→ 200 text/plain; charset=utf-8        （文本）
+→ 200 image/png / application/pdf      （图片 / PDF）
+→ 404 { "error": "找不到这个文件" }     （没有、目录、隐藏文件、往上走、绝对路径、`~`）
+→ 415 { "error": "这种格式不支持预览" } （有，但不是这三类；太大也是 415 并说明上限）
+```
+
+- **两个根都认**：先 `<userRoot>`（`teams/…`、`members/…`、`skills/…`），再
+  `<appRoot>`（`uploads/…`、`plugins/…`）；只认相对路径。
+- **解析完软链接再判越界**（`realpath` + `relative`），字符串前缀挡不住工作区里指向
+  外部的软链接。
+- **自家的密钥 / 库 / 播种清单不开放**：`settings.json`、`.secrets.json`、`core.sqlite`、
+  播种清单 → 404「这个文件不开放预览」。
+- 认得三类：图片（png / jpg / jpeg / gif / webp / bmp / avif，≤ 8 MB）、PDF（≤ 16 MB）、
+  文本（按扩展名白名单 + 无扩展名，≤ 1 MB）。**文本一律 `text/plain`** —— HTML / SVG
+  会在同源里执行脚本。
+- 响应头：`Content-Length`、`Cache-Control: no-cache`、`X-Content-Type-Options: nosniff`。
+- 消费者只有一个：`ui/app/src/panels/FilePreview.tsx`（右栏推入的一层），**按响应的
+  `Content-Type` 决定怎么画，不看扩展名**；失败时把 `error` 原样摆出来。
+
 ## 14. 静态文件
 
 其余所有路径都当静态文件处理，根目录是 `ui/web/`（`shell/serve.ts` 的 `uiDir` 默认值，

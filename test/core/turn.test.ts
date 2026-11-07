@@ -149,10 +149,35 @@ describe("这段正文该落到哪个频道", () => {
 		expect(turnTarget(state({ [CHANNEL]: [say(2)] }), SLUG, wake, false)).toEqual(wake.reply);
 	});
 
-	it("私聊插话：私聊已经答过 → 这段是任务的结论，回任务频道", () => {
+	it("私聊插话：私聊已经答过、这段只是复述 → 不再往任务频道补一份", () => {
+		// 2026-11-07 实测：老板在私聊问「字幕怎么像打了马赛克」，Solo 在私聊答完，
+		// 收尾又把同一段话发进「小恐龙」团队频道，群里的人莫名其妙。
 		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
 		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
-		expect(turnTarget(state({ [DM]: [say(6)] }), SLUG, { reply, task })).toEqual(task);
+		expect(turnTarget(state({ [DM]: [say(6)] }), SLUG, { reply, task })).toBeUndefined();
+	});
+
+	it("私聊插话：私聊答过之后又干了活 → 最后这段是任务的结论，回任务频道", () => {
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
+		expect(turnTarget(state({ [DM]: [say(6)] }), SLUG, { reply, task }, false)).toEqual(task);
+	});
+
+	it("助理的插话一轮：私聊答过了就绝不往团队频道补（哪怕答完又干了活）", () => {
+		// 2026-11-07 桌面端实测：同一段给老板的话进了「小恐龙」团队频道。
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
+		const state_ = state({ [DM]: [say(6)] });
+		// 这一轮只是复述 → 哪儿都不补。
+		expect(turnTarget(state_, SLUG, { reply, task }, true, true)).toBeUndefined();
+		// 答完又干了活 → 正文是新的结论，宁可再回一次私聊，也不进团队频道。
+		expect(turnTarget(state_, SLUG, { reply, task }, false, true)).toEqual(reply);
+	});
+
+	it("助理的插话一轮：私聊还没答 → 回私聊，不碰团队频道", () => {
+		const task = { channelId: CHANNEL, seq: 1, from: "owner", at: 1 };
+		const reply = { channelId: DM, seq: 5, from: "owner", at: 2 };
+		expect(turnTarget(state({ [DM]: [] }), SLUG, { reply, task }, false, true)).toEqual(reply);
 	});
 
 	it("插话一轮继承了很早的 task：上一轮的发言不算这一轮已经汇报过", () => {

@@ -23,7 +23,30 @@ function safeUrl(raw: unknown): string {
 	if (value === "") return "";
 	// 协议相对链接（//host）会跳到站外，直接拒绝；站内路径只允许单个斜杠
 	if (value.startsWith("//")) return "";
-	return /^(https?:\/\/|mailto:|\/|#|\.{1,2}\/)/i.test(value) ? value : "";
+	// 带协议的只认 http(s) / mailto；其余（javascript:、data:…）一律不要。
+	if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+		return /^(https?:\/\/|mailto:)/i.test(value) ? value : "";
+	}
+	// 剩下的都是相对写法（`teams/x.md`、`/`、`#`）：是不是能点由 `pathOf` 再判一次。
+	return value;
+}
+
+/**
+ * 一段文字像不像「这个仓库里的一个文件」。
+ *
+ * 命中的才变成可点的路径：带斜杠的相对路径（`teams/x/workspace/a.md`），或者一个
+ * `名字.扩展名`。协议 / 绝对路径 / 带空格的一律不算 —— 宁可少点一个，也别让
+ * `v2.1.0`、`node:fs` 这种东西变成死链接。
+ */
+function pathOf(raw: string): string {
+	const value = raw.trim();
+	if (value === "" || value.length > 200) return "";
+	if (value.startsWith("/") || value.startsWith("~")) return "";
+	if (value.includes("..") || /\s/.test(value)) return "";
+	if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return "";
+	const slashy = /^[^/`'"：:]+(?:\/[^/`'"：:]+)+$/.test(value);
+	const filey = /^[A-Za-z0-9_.@-]+\.[a-z]{1,6}$/.test(value);
+	return slashy || filey ? value : "";
 }
 
 function emphasis(text: string): string {
@@ -42,7 +65,13 @@ function renderInline(raw: unknown): string {
 
 	// 1. 行内代码（代码里的一切都不再解释）
 	text = text.replace(/`([^`\n]+)`/g, (_whole: string, code: string) => {
-		slots.push(`<code>${escapeHtml(code)}</code>`);
+		const path = pathOf(code);
+		// 像文件的那一段 code 多带一个 `data-path`：点它是「预览这个文件」，不是选字。
+		slots.push(
+			path === ""
+				? `<code>${escapeHtml(code)}</code>`
+				: `<code class="md-path" data-path="${escapeAttr(path)}" title="点击预览">${escapeHtml(code)}</code>`,
+		);
 		return `${SLOT}${slots.length - 1}${SLOT}`;
 	});
 
@@ -63,11 +92,21 @@ function renderInline(raw: unknown): string {
 		return `${SLOT}${slots.length - 1}${SLOT}`;
 	});
 
-	// 3. 链接：只允许安全协议，文本重新转义
+	// 3. 链接：只允许安全协议，文本重新转义。相对路径（`[周报](teams/x/report.md)`）
+	//    不跳出页面，而是标成可预览的文件。
 	text = text.replace(/\[([^\]]*)\]\(([^)\s]+)\)/g, (whole: string, label: string, url: string) => {
 		const href = safeUrl(url);
 		if (href === "") {
 			slots.push(escapeHtml(whole));
+			return `${SLOT}${slots.length - 1}${SLOT}`;
+		}
+		if (!/^(?:https?:\/\/|mailto:)/i.test(href)) {
+			const path = pathOf(href);
+			slots.push(
+				path === ""
+					? escapeHtml(whole)
+					: `<a class="md-path" data-path="${escapeAttr(path)}" href="#" title="点击预览">${escapeHtml(label)}</a>`,
+			);
 			return `${SLOT}${slots.length - 1}${SLOT}`;
 		}
 		slots.push(
@@ -75,6 +114,30 @@ function renderInline(raw: unknown): string {
 		);
 		return `${SLOT}${slots.length - 1}${SLOT}`;
 	});
+
+	// 3.5 裸 URL：模型常常直接贴 `https://…`，没有 `[]()` 也得能点（点了开内置浏览器）。
+	//     只认行首 / 空格 / 左括号后面的，别把句子中间的半个词当成链接。
+	text = text.replace(/(^|[\s(（\[【])(https?:\/\/[^\s<>"'`]+)/g, (_whole: string, lead: string, raw: string) => {
+		// 句末标点不算 URL 的一部分（中文句号、右括号最常见）。
+		const url = raw.replace(/[)）\]】。，、；：！？,.;:!?]+$/, "");
+		const trailing = raw.slice(url.length);
+		if (url.length <= "https://".length) return `${lead}${raw}`;
+		slots.push(`<a href="${escapeAttr(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`);
+		return `${lead}${SLOT}${slots.length - 1}${SLOT}${trailing}`;
+	});
+
+	// 3.6 裸路径：模型写「第一份周报在 teams/x/workspace/report.md，约…」时并不包反引号。
+	//     只认空格 / 左括号后、带斜杠、以 1–6 位扩展名结尾的一段；后面紧跟着路径字符的不算
+	//     （`a/b/c.ts:42` 的行号留在外面）。宁可少点亮一个，也别把正文变成一片死链接。
+	text = text.replace(
+		/(^|[\s(（\[【：:，,、])((?:[A-Za-z0-9_.@+\-一-龥]+\/)+[A-Za-z0-9_.@+\-一-龥]*\.[a-z]{1,6})(?![A-Za-z0-9_./-])/g,
+		(_whole: string, lead: string, raw: string) => {
+			const path = pathOf(raw);
+			if (path === "") return `${lead}${raw}`;
+			slots.push(`<a class="md-path" data-path="${escapeAttr(path)}" href="#" title="点击预览">${escapeHtml(raw)}</a>`);
+			return `${lead}${SLOT}${slots.length - 1}${SLOT}`;
+		},
+	);
 
 	// 4. 其余先转义，再做强调
 	let html = emphasis(escapeHtml(text));

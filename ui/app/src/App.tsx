@@ -26,6 +26,7 @@ import {
 	closeBrowser,
 	closeDock,
 	closePluginView,
+	closeRightFile,
 	closeRightPage,
 	closeTasks,
 	openChannel,
@@ -64,6 +65,7 @@ export function App(): JSX.Element {
 	const browser = useStore((state) => state.browser);
 	const dock = useStore((state) => state.dock);
 	const rightPage = useStore((state) => state.rightPage);
+	const rightFile = useStore((state) => state.rightFile);
 	const setupStep = useStore((state) => state.setupStep);
 
 	const { toasts, toast } = useToasts();
@@ -97,6 +99,7 @@ export function App(): JSX.Element {
 		if (browser !== null && dock === null) return closeBrowser(), true;
 		if (dock !== null) return closeDock(), true;
 		if (rightPage !== null) return closeRightPage(), true;
+		if (rightFile !== null) return closeRightFile(), true;
 		// 插件页 / 插件清单是设置里的下一层：先退一层，再关设置。
 		if (pluginView !== null) return closePluginView(), true;
 		if (pluginSheet) return setPluginSheet(false), true;
@@ -106,7 +109,7 @@ export function App(): JSX.Element {
 		if (needMenu) return setNeedMenu(false), true;
 		if (right.open) return setRight({ open: false }), true;
 		return false;
-	}, [resetOpen, restartOpen, browser, dock, rightPage, pluginView, tasksOpen, settings, newGroup, pluginSheet, needMenu, right.open]);
+	}, [resetOpen, restartOpen, browser, dock, rightPage, rightFile, pluginView, tasksOpen, settings, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {

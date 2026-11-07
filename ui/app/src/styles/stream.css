@@ -357,6 +357,22 @@
 	color: var(--ink-2);
 }
 
+/* 正文里认出来的文件路径：还是一段 code 的样子，但点得动（开了右栏的预览层）。 */
+.md code.md-path,
+.md a.md-path {
+	color: var(--accent-ink, var(--accent));
+	text-decoration: underline;
+	text-decoration-style: dotted;
+	text-decoration-thickness: 1px;
+	text-underline-offset: 2px;
+	cursor: pointer;
+}
+
+.md code.md-path:hover,
+.md a.md-path:hover {
+	background: var(--hover);
+}
+
 /*
  * 代码块折行，不横向滚。
  *
@@ -609,6 +625,17 @@ body[data-layout="bubble"]
 }
 
 /* ── 引用 ───────────────────────────────────────────────────────────── */
+
+/* 引用是按钮（点了跳到被引用那条），画法仍由下面几条决定。 */
+button.row-quote {
+	padding: 0;
+	border: 0;
+	background: none;
+	font: inherit;
+	color: inherit;
+	text-align: left;
+	cursor: pointer;
+}
 
 .row-quote {
 	display: flex;
@@ -1238,4 +1265,25 @@ body[data-layout="bubble"]
 
 .acancel:hover {
 	background: var(--hover);
+}
+
+/* 从引用跳过去：被引用的那条亮一下（跳转后 1.6s 撤掉，与 Stream 的计时一致）。 */
+.row-flash .md {
+	animation: row-flash 1.6s ease-out;
+}
+
+@keyframes row-flash {
+	0%,
+	45% {
+		background-color: var(--accent-dim);
+	}
+	100% {
+		background-color: transparent;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.row-flash .md {
+		animation: none;
+	}
 }

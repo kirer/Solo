@@ -209,6 +209,9 @@ export async function uploadFile(file: File): Promise<Uploaded> {
 /** 附件下载/预览地址。 */
 export const uploadUrl = (id: string): string => `/api/uploads/${encodeURIComponent(id)}`;
 
+/** 正文里那份文件的预览地址（后端只认相对路径，两个根都试）。 */
+export const filePreviewUrl = (path: string): string => `/api/files/preview?path=${encodeURIComponent(path)}`;
+
 /** 浏览器自报卡顿（`<appRoot>/logs/jank.jsonl`）。有意在失败时静默：诊断不该打扰使用。 */
 export function reportJank(body: unknown): void {
 	void fetch("/api/diag", {

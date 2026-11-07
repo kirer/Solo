@@ -214,6 +214,23 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		void copyText(clean?.textContent ?? "");
 	}, []);
 
+	/**
+	 * 点引用的那一行 → 滚到被引用的那条消息，并亮一下。
+	 *
+	 * 只在这一屏已渲染的消息里找（`data-seq`）：被引用的话要是早于已加载的历史，
+	 * 就什么都不做 —— 宁可不跳，也别把「没找到」画成一条错误。
+	 */
+	const jumpTo = useCallback((seq: number, node: HTMLElement): void => {
+		const target = node.closest(".feed")?.querySelector(`[data-seq="${seq}"]`);
+		if (!(target instanceof HTMLElement)) return;
+		target.scrollIntoView({ block: "center", behavior: "smooth" });
+		target.classList.remove("row-flash");
+		// 重新触发动画：先移除再加回来，同一帧里要读一次布局
+		void target.offsetWidth;
+		target.classList.add("row-flash");
+		window.setTimeout(() => target.classList.remove("row-flash"), 1600);
+	}, []);
+
 	return (
 		// 换频道就重挂一次，整块消息流淡上来（`.flow-wrap` 的入场动画在 v6.css）。
 		<div className="flow-wrap" key={detail?.channel.id ?? "none"}>
@@ -240,6 +257,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 								onPick={(message, name) => setPicked({ message, name })}
 								onImage={props.onImage}
 								onFile={props.onFile}
+								onJump={jumpTo}
 							/>
 						))}
 					</div>
@@ -338,6 +356,7 @@ function RowView(props: {
 	onPick: (message: Message, name: string) => void;
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
+	onJump: (seq: number, node: HTMLElement) => void;
 }): JSX.Element {
 	const { row } = props;
 	if (row.type === "divider") {
@@ -356,6 +375,7 @@ function RowView(props: {
 				onPick={props.onPick}
 				onImage={props.onImage}
 				onFile={props.onFile}
+				onJump={props.onJump}
 			/>
 		);
 	if (row.type === "live") {
@@ -405,6 +425,7 @@ function SayRow(props: {
 	onPick: (message: Message, name: string) => void;
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
+	onJump: (seq: number, node: HTMLElement) => void;
 }): JSX.Element {
 	const { row } = props;
 	const message = row.message;
@@ -466,6 +487,12 @@ function SayRow(props: {
 				onClick={(event) => {
 					// 链接、按钮、代码块里的东西各有各的用处；选了字也别弹层。
 					const target = event.target;
+					// 正文里贴的图：点一下开大图（和附件缩略图同一个灯箱），别落到「看这个人的资料」。
+					const picture = target instanceof Element ? target.closest(".md-img img") : null;
+					if (picture instanceof HTMLImageElement) {
+						props.onImage(picture.src);
+						return;
+					}
 					if (target instanceof Element && target.closest("a, button, summary, pre, input, textarea") !== null) return;
 					if ((window.getSelection()?.toString() ?? "") !== "") return;
 					props.onPick(message, name);
@@ -479,10 +506,21 @@ function SayRow(props: {
 				</div>
 
 				{message.replyTo === undefined ? null : (
-					<div className="row-quote">
+					<button
+						type="button"
+						className="row-quote"
+						title="跳到这条消息"
+						onClick={(event) => {
+							// 别冒到整行：点引用是「跳过去」，不是开动作层。
+							event.stopPropagation();
+							const reply = message.replyTo;
+							if (reply === undefined) return;
+							props.onJump(reply.seq, event.currentTarget);
+						}}
+					>
 						<span className="row-quote-who">{message.replyTo.fromLabel}</span>
 						<span className="row-quote-text">{message.replyTo.excerpt}</span>
-					</div>
+					</button>
 				)}
 
 				<Attachments attachments={message.attachments} onImage={props.onImage} onFile={props.onFile} />
