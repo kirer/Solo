@@ -93,22 +93,25 @@ describe("悬浮球", () => {
 
 	it("解不开的录音在进转写器之前就报错，不把它喂进去挂着", async () => {
 		// 用一个假 afconvert：跑起来就失败（真机上的残缺容器也是这样 —— 报错、退出码非零、
-		// 还落下个空产物），这样在 Linux 的 CI 上也验的是「解不开」而不是「没有 afconvert」。
+		// 还落下个空产物），这样在各平台的 CI 上都验的是「解不开」而不是「没有 afconvert」。
 		const fakeBin = await mkdtemp(join(tmpdir(), "fake-afconvert-"));
 		boxes.push(fakeBin);
-		const fake = join(fakeBin, "afconvert");
 		const size = "\"$5\"";
-		await writeFile(
-			fake,
-			`#!/bin/sh\n: > ${size}\necho "Error: couldn't set destination file's estimated duration ('off?')" >&2\nexit 1\n`,
-			"utf8",
-		);
+		// 假工具得**在各个平台上都跑得起来**：Linux / macOS 是 sh，Windows 的 Git bash 跑不了
+		// 无扩展名的 sh 脚本（会落到 CreateProcess 直接 ENOENT，于是这条用例验的是「没这个工具」
+		// 而不是「解不开」）。所以按平台给后缀，Windows 用 .cmd。
+		const fake = process.platform === "win32" ? join(fakeBin, "afconvert.cmd") : join(fakeBin, "afconvert");
+		const body =
+			process.platform === "win32"
+				? `@echo off\r\ntype nul > ${size}\r\necho Error: couldn't set destination file's estimated duration ('off?') 1>&2\r\nexit /b 1\r\n`
+				: `#!/bin/sh\n: > ${size}\necho "Error: couldn't set destination file's estimated duration ('off?')" >&2\nexit 1\n`;
+		await writeFile(fake, body, "utf8");
 		await chmod(fake, 0o755);
 		try {
 			const host = await boot({ afconvert: fake });
-		const route = host.routes.find((item) => item.pattern === "/api/orb/transcribe");
-		expect(route).toBeDefined();
-		// 2 KB 的垃圾字节：过得了「>= 1 KB」那道闸，但 afconvert 打不开。
+			const route = host.routes.find((item) => item.pattern === "/api/orb/transcribe");
+			expect(route).toBeDefined();
+			// 2 KB 的垃圾字节：过得了「>= 1 KB」那道闸，但 afconvert 打不开。
 			const junk = Buffer.alloc(2_048, 0x5a).toString("base64");
 			const result = await route?.handle({ method: "POST", params: {}, query: {}, body: { audio: junk, mime: "audio/mp4" } });
 			expect(result?.error).toMatch(/解不开/u);
