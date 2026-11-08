@@ -11,7 +11,7 @@
  *
  * 转写是串行的：同时来两段只会排队，不会抢着编译 / 抢着用模型。
  */
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createWriteStream } from "node:fs";
 import {
@@ -35,17 +35,99 @@ import { fileURLToPath } from "node:url";
 const SOURCE = fileURLToPath(new URL("./asr.swift", import.meta.url));
 /** base64 的长度上限：整条 JSON 还要过接口层 1 MB 的闸。 */
 const MAX_AUDIO = 900_000;
+/** 转写的硬超时：超时 SIGKILL 掉转写器、回错误，不许无限挂着把 serial() 队列堵死。 */
+const ASR_TIMEOUT = 30_000;
+/** 规范化的死线：afconvert 自己也可能卡在坏容器上。 */
+const CONVERT_TIMEOUT = 15_000;
+const MAX_OUT = 2 * 1024 * 1024;
 
+/**
+ * 起一个子进程，**自己**看表：到点杀、并且一定 settle。
+ *
+ * 为什么不信 `execFile` 的 `timeout`：那个超时只在进程真的收得到信号、真的走掉时才算数。
+ * solo-asr 打开解不开的音频时，AVAudioFile 抛错之后进程既不退出也不响应 SIGTERM，
+ * 回调于是永远不回来 —— 父进程那条 promise 不 settle，`serial()` 整条链就跟着排死。
+ * 这里三点都自己兜：SIGKILL 杀**进程组**（`detached` 起、`-pid` 杀，连带它可能起的子进程）、
+ * `exit` 之后再兜一次、外加一个「必须 settle」的闸。
+ */
 function run(command, args, timeout) {
 	return new Promise((resolve, reject) => {
-		execFile(command, args, { timeout, maxBuffer: 2 * 1024 * 1024 }, (error, stdout, stderr) => {
-			if (error !== null) {
-				error.stderr = stderr;
-				reject(error);
+		const child = spawn(command, args, { detached: true, stdio: ["ignore", "pipe", "pipe"] });
+		const out = [];
+		const err = [];
+		let bytes = 0;
+		let settled = false;
+		let killedByTimeout = false;
+		let seat = 0;
+
+		const settle = (error, stdout, stderr) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(seat);
+			if (error === null) resolve({ stdout, stderr });
+			else reject(error);
+		};
+		const kill = () => {
+			killedByTimeout = true;
+			try {
+				// 整个进程组一起杀：负 pid。杀不掉（ENOENT / ESRCH）就当它已经走了。
+				process.kill(-child.pid, "SIGKILL");
+			} catch {
+				try {
+					child.kill("SIGKILL");
+				} catch {
+					/* 已经不在了 */
+				}
+			}
+		};
+
+		seat = setTimeout(() => {
+			kill();
+			// 杀完立刻 reject：不指望 child 的 exit 事件 —— 那正是这次不可靠的东西。
+			const error = new Error(`转写超时：${String(Math.round(timeout / 1000))} 秒没有结果`);
+			error.timedOut = true;
+			error.stderr = Buffer.concat(err).toString("utf8");
+			settle(error, "", error.stderr);
+		}, timeout);
+
+		child.stdout.on("data", (chunk) => {
+			bytes += chunk.length;
+			if (bytes > MAX_OUT) {
+				kill();
+				settle(new Error("转写输出太大"), "", "");
 				return;
 			}
-			resolve({ stdout, stderr });
+			out.push(chunk);
 		});
+		child.stderr.on("data", (chunk) => {
+			err.push(chunk);
+		});
+		child.on("error", (error) => {
+			error.stderr = Buffer.concat(err).toString("utf8");
+			settle(error, "", error.stderr);
+		});
+		child.on("close", (code, signal) => {
+			const stderr = Buffer.concat(err).toString("utf8");
+			if (code === 0) {
+				settle(null, Buffer.concat(out).toString("utf8"), stderr);
+				return;
+			}
+			const error = new Error(
+				killedByTimeout ? `转写超时：${String(Math.round(timeout / 1000))} 秒没有结果` : `命令失败：${command}（${String(signal ?? code)}）`,
+			);
+			error.code = code;
+			error.signal = signal;
+			error.timedOut = killedByTimeout;
+			error.stderr = stderr;
+			settle(error, "", stderr);
+		});
+		// 兜底：进程既不给 close 也不给 error（理论上不会，但这一条是「队列不许被堵」的底）。
+		// 比 timeout 晚 5 秒才轮到；settle 幂等，先到的那个说了算。
+		setTimeout(() => {
+			if (settled) return;
+			kill();
+			settle(new Error("转写进程没有回应"), "", Buffer.concat(err).toString("utf8"));
+		}, timeout + 5_000).unref();
 	});
 }
 
@@ -88,14 +170,33 @@ async function helper() {
 	return build;
 }
 
-/** webm / ogg 系统读不了，用 ffmpeg 换成 16k 单声道 wav。 */
+/**
+ * 进转写器之前一律换成 16k 单声道 wav：容器/编码是什么都不猜。
+ *
+ * 用系统自带的 afconvert（macOS 上没有 ffmpeg 也能跑），不引入新依赖。解不开的文件就在
+ * 这一步明确报错 —— 坏文件不进 solo-asr，它打不开的时候是不退出的（见 ASR_TIMEOUT）。
+ */
 async function toWav(input, dir) {
 	const out = join(dir, "voice.wav");
 	try {
-		await run("ffmpeg", ["-y", "-loglevel", "error", "-i", input, "-ac", "1", "-ar", "16000", out], 60_000);
+		await run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16", "-c", "1", input, out], CONVERT_TIMEOUT);
 	} catch (error) {
-		if (error.code === "ENOENT") throw new Error("这段录音是 webm，转写要先装 ffmpeg（brew install ffmpeg）");
-		throw new Error(`音频转换失败：${String(error.stderr ?? error.message).trim()}`);
+		if (error.code === "ENOENT") throw new Error("转写要用系统自带的 afconvert（/usr/bin/afconvert），这台机器上没有");
+		throw new Error(`这段录音解不开：${String(error.stderr ?? error.message).trim()}`);
+	}
+	// 退出码 0 也不许盲信：afconvert 对残缺容器会出现「报完错还是落下个空 wav」的情形。
+	// 产物不存在 / 没有音频帧，就在这一步判死，绝不把空 wav 喂给 solo-asr（它打不开就不退出）。
+	const size = await stat(out).then((info) => info.size, () => 0);
+	const header = await readFile(out).then((bytes) => bytes.subarray(0, 44), () => Buffer.alloc(0));
+	const riff = header.length >= 12 && header.toString("latin1", 0, 4) === "RIFF" && header.toString("latin1", 8, 12) === "WAVE";
+	const dataBytes = header.length >= 44 ? header.readUInt32LE(40) : 0;
+	if (size <= 44 || !riff || dataBytes === 0) throw new Error("这段录音解不开：转换后没有音频数据");
+	// 再核一遍这确实是有内容的 PCM：aiff / 32 位浮点这类「afconvert 认得、solo-asr 不认」的产物也在这里拦掉。
+	const bits = header.length >= 44 ? header.readUInt16LE(34) : 0;
+	const format = header.length >= 44 ? header.readUInt16LE(20) : 0;
+	const channels = header.length >= 44 ? header.readUInt16LE(22) : 0;
+	if (format !== 1 || bits === 0 || channels === 0 || dataBytes % (channels * (bits / 8)) !== 0) {
+		throw new Error("这段录音解不开：转换出来的不是干净的 16 位 PCM");
 	}
 	return out;
 }
@@ -137,10 +238,11 @@ async function transcribe(body) {
 		const extension = extensionOf(mime);
 		const saved = join(dir, `voice.${extension}`);
 		await writeFile(saved, bytes);
-		const input = extension === "webm" || extension === "ogg" ? await toWav(saved, dir) : saved;
+		// 一律先规范成 16k 单声道 wav 再喂转写器（容器/编码不猜；解不开就在这一步明确报错）。
+		const input = await toWav(saved, dir);
 
 		const bin = await helper();
-		const { stdout } = await run(bin, [input, lang], 240_000);
+		const { stdout } = await run(bin, [input, lang], ASR_TIMEOUT);
 		const text = tidy(stdout);
 		return text === "" ? { error: "没听清，再说一次？" } : { text };
 	} finally {

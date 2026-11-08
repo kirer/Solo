@@ -79,6 +79,17 @@ describe("悬浮球", () => {
 		expect(huge).toEqual({ error: "这段录音太长了（上限约 30 秒）" });
 	});
 
+	it("解不开的录音在进转写器之前就报错，不把它喂进去挂着", async () => {
+		const host = await boot();
+		const route = host.routes.find((item) => item.pattern === "/api/orb/transcribe");
+		expect(route).toBeDefined();
+		// 2 KB 的垃圾字节：过得了「>= 1 KB」那道闸，但 afconvert 打不开。
+		const junk = Buffer.alloc(2_048, 0x5a).toString("base64");
+		const result = await route?.handle({ method: "POST", params: {}, query: {}, body: { audio: junk, mime: "audio/mp4" } });
+		expect(result?.error).toMatch(/解不开/u);
+		expect(result?.text).toBeUndefined();
+	});
+
 	it("模型没下时朗读不硬来：报 needModel，并说清多大", async () => {
 		const host = await boot();
 		const status = host.routes.find((item) => item.method === "GET" && item.pattern === "/api/orb/voice");

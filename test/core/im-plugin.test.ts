@@ -124,7 +124,7 @@ describe("IM 机器人", () => {
 		expect(posts).toEqual([]);
 	});
 
-	it("助理的回复送回最近说话的那个聊天，别处的话不出门", async () => {
+	it("私聊里的话送回最近说话的那个聊天：我自己说的也送，IM 回显不送，别处的话不出门", async () => {
 		const calls: { url: string; body: unknown }[] = [];
 		vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
 			calls.push({ url: String(url), body: JSON.parse(init?.body ?? "{}") });
@@ -152,7 +152,7 @@ describe("IM 机器人", () => {
 		// 别的频道：不送。
 		await listener(said("别处的话", "team:alpha"), "team:alpha");
 		expect(calls).toEqual([]);
-		// 我自己说的话：不送（否则等于把 IM 里的原话再回一遍）。
+		// 桥自己带进来的那行回显（`api.post` 以我的身份落进私聊）：不送，否则 IM 里自说自话。
 		await listener(said("[IM · Webhook · 张三] 在吗", DM.id, "owner"), DM.id);
 		expect(calls).toEqual([]);
 
@@ -160,6 +160,11 @@ describe("IM 机器人", () => {
 		expect(calls.length).toBe(1);
 		expect(calls[0]?.url).toBe("https://example.test/hook");
 		expect(JSON.stringify(calls[0]?.body)).toContain("在的，马上看。");
+
+		// 桌面端我自己说的话：也送（老板定的：桌面端跟助理聊的内容要同步到微信那边）。
+		await listener(said("桌面端发一句", DM.id, "owner"), DM.id);
+		expect(calls.length).toBe(2);
+		expect(JSON.stringify(calls[1]?.body)).toContain("桌面端发一句");
 	});
 
 	it("保存机器人写进 appRoot/im，不写进插件目录", async () => {

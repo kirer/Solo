@@ -399,10 +399,16 @@ export default {
 			return pieces.filter((piece) => piece !== "");
 		}
 
-		/** 录音格式：优先 mp4/AAC（系统能直接读，体积也小），退到 webm。 */
+		/**
+		 * 录音格式：**不要 audio/mp4**。
+		 *
+		 * Electron 的 MediaRecorder 在 mimeType audio/mp4 + audioBitsPerSecond 下录出来的是
+		 * mp4f 容器里一条 opus/48k 的残轨（索引不全），AVFoundation 打不开，转写器那头不退出。
+		 * 这里只按「容器干净」排：wav 最省事，其次 webm（后端用 afconvert / 转写前统一规范化）。
+		 */
 		function pickMime() {
 			if (typeof MediaRecorder === "undefined") return "";
-			const candidates = ["audio/mp4", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
+			const candidates = ["audio/wav", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
 			return (
 				candidates.find((type) => {
 					try {
@@ -979,7 +985,7 @@ export default {
 				if (cancelledRef.current) return;
 
 				const type = mime === "" ? pickMime() : mime;
-				const blob = new Blob(chunks, { type: type === "" ? "audio/mp4" : type });
+				const blob = new Blob(chunks, { type: type === "" ? "audio/webm" : type });
 				if (blob.size < 1500) {
 					setError("太短了，没听清");
 					return;
@@ -988,10 +994,12 @@ export default {
 				setError("");
 				try {
 					const audio = await blobToBase64(blob);
+					// 前端也掐一道：后端 30 秒硬超时，这里 45 秒兜底（转写 + 上传都在里面）。
 					const response = await fetch("/api/orb/transcribe", {
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({ audio, mime: type, lang: navigator.language || "zh-CN" }),
+						signal: AbortSignal.timeout(45_000),
 					});
 					const data = await response.json().catch(() => ({}));
 					if (!response.ok) throw new Error(data?.error ?? `转写接口 ${String(response.status)}`);
@@ -1033,7 +1041,8 @@ export default {
 					const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 					streamRef.current = stream;
 					const mime = pickMime();
-					const recorder = new MediaRecorder(stream, mime === "" ? undefined : { mimeType: mime, audioBitsPerSecond: 32_000 });
+					// 不给 audioBitsPerSecond：32k 那档正是把 mp4 录成残轨的原因之一，编码器用默认码率。
+					const recorder = new MediaRecorder(stream, mime === "" ? undefined : { mimeType: mime });
 					chunksRef.current = [];
 					cancelledRef.current = false;
 					recorder.ondataavailable = (event) => {

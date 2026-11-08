@@ -25,10 +25,14 @@ import qrcode from "./qrcode.mjs";
 const SLUG = "IM机器人";
 const DATA_DIR = "im";
 const BOTS_FILE = "bots.json";
-/** 助理在私聊里回复后，多久之内算「在回这条 IM 消息」。 */
-const REPLY_WINDOW = 120_000;
-/** 回复送出去之后，再留一小段给同一轮的后续消息。 */
-const REPLY_TAIL = 30_000;
+/**
+ * 我在助理私聊里说的话，什么时候送回 IM。
+ *
+ * 老板定的：**不再有 120 秒窗口**，也不再按 `from === "owner"` 把「我自己说的」全挡掉 ——
+ * 桌面端跟助理聊的内容也要同步出去。唯一还要挡的是桥自己带进来的那一行回显
+ * （`deliver()` 用 `api.post` 以我的身份落进私聊，`from` 也是 `owner`，见 ECHO_PREFIX）。
+ */
+const ECHO_PREFIX = "[IM · ";
 const POLL_TIMEOUT = 25;
 const MAX_SEND = 3800;
 const WEBHOOK_TIMEOUT = 15_000;
@@ -166,7 +170,6 @@ function createRuntime(bot, manager) {
 		detail: "",
 		lastError: "",
 		lastInboundAt: 0,
-		replyUntil: 0,
 		alive: true,
 		controller: new AbortController(),
 		chats: new Map(),
@@ -548,21 +551,24 @@ function createManager(api) {
 				text: typeof input.text === "string" ? input.text.trim() : "",
 			});
 		},
-		/** 助理私聊里的一条消息 → 等回复的那些 IM 聊天。 */
+		/**
+		 * 助理私聊里的一条消息 → 最近说话的那个 IM 聊天。
+		 *
+		 * 桌面端（我）说的话也要送出去；只有桥自己发的那行 IM 回显不送（否则等于自说自话）。
+		 */
 		async onMessage(message, channelId) {
 			await ensureAssistant();
 			if (assistant === null || channelId !== assistant.channelId) return;
-			if (message.kind !== "chat" || message.from === "owner") return;
+			if (message.kind !== "chat") return;
 			const body = message.text.trim();
 			if (body === "") return;
-			const now = Date.now();
+			if (body.startsWith(ECHO_PREFIX)) return;
 			for (const runtime of runtimes.values()) {
-				if (!runtime.alive || runtime.replyUntil === 0 || now > runtime.replyUntil) continue;
+				if (!runtime.alive) continue;
 				const chat = runtime.lastChat();
 				if (chat === undefined) continue;
 				try {
 					await runtime.send(chat[0], body);
-					runtime.replyUntil = now + REPLY_TAIL;
 				} catch (error) {
 					runtime.lastError = `回复没送出去：${textOf(error)}`;
 				}
@@ -586,15 +592,14 @@ async function deliver(runtime, input) {
 	if (!allowed(runtime.bot, input.userId)) return;
 	if (runtime.manager.assistant === null) throw new Error("Solo 里还没有助理私聊");
 	const source = input.chatTitle === ""
-		? `[IM · ${platformName(runtime.bot.platform)} · ${input.name}]`
-		: `[IM · ${platformName(runtime.bot.platform)} · ${input.chatTitle} · ${input.name}]`;
+		? `${ECHO_PREFIX}${platformName(runtime.bot.platform)} · ${input.name}]`
+		: `${ECHO_PREFIX}${platformName(runtime.bot.platform)} · ${input.chatTitle} · ${input.name}]`;
 	runtime.remember(
 		input.chatId,
 		input.chatTitle === "" ? input.name : `${input.chatTitle} · ${input.name}`,
 		input.contextToken,
 	);
 	runtime.lastInboundAt = Date.now();
-	runtime.replyUntil = Date.now() + REPLY_WINDOW;
 	await runtime.manager.api.post({ channelId: runtime.manager.assistant.channelId, text: `${source} ${input.text}` });
 }
 
