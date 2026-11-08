@@ -34,7 +34,8 @@ import { fileURLToPath } from "node:url";
 
 const SOURCE = fileURLToPath(new URL("./asr.swift", import.meta.url));
 /** base64 的长度上限：整条 JSON 还要过接口层 1 MB 的闸。 */
-const MAX_AUDIO = 900_000;
+// 30 秒 16 kHz 单声道 16 位 WAV ≈ 960 KB，base64 之后 ≈ 1.28 MB 字符。
+const MAX_AUDIO = 1_400_000;
 /** 转写的硬超时：超时 SIGKILL 掉转写器、回错误，不许无限挂着把 serial() 队列堵死。 */
 const ASR_TIMEOUT = 30_000;
 /** 规范化的死线：afconvert 自己也可能卡在坏容器上。 */
@@ -613,13 +614,13 @@ async function saveSpeech(body) {
 
 // ── 唤醒词：本地 sherpa-onnx KWS（wenetspeech 3.3M，约 4.8 MB） ────────────
 //
-// 关键词是拼音（`n ǐ h ǎo s uǒ l uó` = 你好 Solo）。模型小、常听不费电；
+// 关键词是拼音（`n ǐ h ǎo s uǒ l uó` = 你好索罗）。模型小、常听不费电；
 // 只为「点一下才听」留个例外，唤醒后立刻把麦克风交给录音，不常开。
 
 const WAKE_DIR = "voice/kws-zh";
 const WAKE_BASE = "https://modelscope.cn/models/pkufool/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/resolve/master";
 const WAKE_KEYWORDS = [
-	"n ǐ h ǎo s uǒ l uó @你好Solo",
+	"n ǐ h ǎo s uǒ l uó @你好索罗",
 	"n ǐ h ǎo zh ù l ǐ @你好助理",
 	"x iǎo s uǒ @小索",
 ].join("\n") + "\n";

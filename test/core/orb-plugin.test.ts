@@ -86,7 +86,7 @@ describe("悬浮球", () => {
 			method: "POST",
 			params: {},
 			query: {},
-			body: { audio: "A".repeat(900_001), mime: "audio/mp4" },
+			body: { audio: "A".repeat(1_400_001), mime: "audio/wav" },
 		});
 		expect(huge).toEqual({ error: "这段录音太长了（上限约 30 秒）" });
 	});
@@ -201,6 +201,15 @@ describe("悬浮球", () => {
 		const source = await readFile(join(SEED, "client.js"), "utf8");
 		expect(source).not.toMatch(/speechSynthesis/u);
 		expect(source).toMatch(/\/api\/orb\/speak/u);
+	});
+
+	it("录音在前端就封成 WAV：不交给 MediaRecorder", async () => {
+		const source = await readFile(join(SEED, "client.js"), "utf8");
+		// Chromium 的 MediaRecorder 只肯录 webm+opus，macOS 自带的 afconvert 打不开
+		// （报 `Couldn't open input file ('typ?')`），所以录音直接收 PCM、前端封 WAV。
+		expect(source).not.toMatch(/new MediaRecorder/u);
+		expect(source).toMatch(/createScriptProcessor/u);
+		expect(source).toMatch(/mime: "audio\/wav"/u);
 	});
 
 	it("只放进宿主已有的插槽，不自己 import 别的模块", async () => {

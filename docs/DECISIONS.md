@@ -2843,11 +2843,11 @@
   4. **唤醒词在本机听，永远一条路**：sherpa-onnx 的 `KeywordSpotter`
      （`sherpa-onnx-kws-zipformer-wenetspeech-3.3M`，int8 约 5 MB，第一次用时下到
      `<appRoot>/voice/kws-zh`）。关键词表是拼音 token：
-     `n ǐ h ǎo s uǒ l uó @你好Solo`、`n ǐ h ǎo zh ù l ǐ @你好助理`、`x iǎo s uǒ @小索`。
+     `n ǐ h ǎo s uǒ l uó @你好索罗`、`n ǐ h ǎo zh ù l ǐ @你好助理`、`x iǎo s uǒ @小索`。
      前端 `AudioContext({sampleRate: 16000})` 收 Float32，按块 base64 POST 到
      `POST /api/orb/kws`，命中就开面板并自动开始录音。**只用中文拼音**：英文 `Solo`
      在这套 wenetspeech 声学模型上识别不到（`s o l o` / ARPAbet 都试过），所以
-     「你好 Solo」的显示词对应的是「你好索罗」的拼音 —— 界面文案里写清「喊成『你好索罗』也认」。
+     所以界面上的唤醒词一律写「你好索罗」，不能写成英文 Solo —— 喊英文名它认不出。
      唤醒模型与播报模型分开下载、分开开关，球上没开唤醒词就不常开麦克风。
   5. **设置页仍然是插件自己的那一页**（`app.entry` / `app.page`），只是内容从「八个音色」
      扩成四段：播报引擎 → 朗读 → （本机音色 / 千问 Key + 音色 + 语速）→ 唤醒词。
@@ -2891,3 +2891,27 @@
   `max-height`、`.modal[data-level="page"]` 的 460–560、`.modal-body.modal-flush > *`）、
   `seed/plugins/IM机器人/client.js`（撤掉插件自己那套补间、回到 `height: 100%`）；
   `docs/DESIGN.md` §2.8 / §13.7、`AGENTS.md` §3.3。
+
+## ADR-121 悬浮球录音在前端封 16 kHz 单声道 WAV，不交给 MediaRecorder
+
+- **背景**：用户点麦克风说话报 `这段录音解不开：Error: Couldn't open input file ('typ?')`。
+  原因是 `MediaRecorder` 在 Chromium / Electron 上只肯录 `audio/webm;codecs=opus`
+  （`audio/wav`、`audio/ogg` 都报不支持），而后端规范化用的是 macOS 自带的 `afconvert`，
+  它认不出 WebM，'typ?' 就是「不认识的容器类型」。文档里曾写「退到 webm，需要 ffmpeg
+  先转 wav」，但依赖里没有 ffmpeg，那条路实际上不存在。
+- **决策**：
+  1. **录音改在浏览器里直接收 PCM**：`getUserMedia` → `AudioContext({sampleRate: 16000})`
+     （拿不到就按设备原生采样率）→ `ScriptProcessor` 收 `Float32Array`，停录时拼起来、
+     线性重采样到 16 kHz、封成 16-bit 单声道 WAV，base64 发给 `/api/orb/transcribe`。
+     后端仍用 `afconvert` 做一次规范化，但它拿到的已经是干净 WAV，没有容器可坏。
+  2. **不再引入 ffmpeg**：这一段链路只依赖系统自带的 `afconvert` 和端侧转写器。
+  3. **长度上限按新格式重算**：30 秒 16 kHz 单声道 16 位 WAV 约 960 KB，base64 之后约
+     128 万字符，`MAX_AUDIO` 从 900 000 提到 1 400 000（原来那档只有约 21 秒，30 秒的
+     录音会被判「太长」）。
+- **取舍**：前端多一些收 PCM 的代码，换来一个不依赖编码器容器、在任何 Chromium 版本上
+  都一样的结果；采样率在浏览器侧固定，后端 `afconvert` 只剩兜底一道。
+- **执行**：`seed/plugins/悬浮球/client.js`（`wavBytes` / `at16k` / `bytesToBase64`、
+  `startRecording` / `finishRecording`；`recorderRef` 里换成一个 `{ state, stop() }`
+  的采集对象，卸载与 Esc 的调用点不用改）、`seed/plugins/悬浮球/plugin.js` 的
+  `MAX_AUDIO`、`seed/plugins/悬浮球/plugin.md`、`test/core/orb-plugin.test.ts`
+  （不再出现 `new MediaRecorder`、发 `mime: "audio/wav"`、超长用例按新上限）。

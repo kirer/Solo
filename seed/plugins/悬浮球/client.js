@@ -400,37 +400,66 @@ export default {
 		}
 
 		/**
-		 * 录音格式：**不要 audio/mp4**。
+		 * 录音不走 MediaRecorder。
 		 *
-		 * Electron 的 MediaRecorder 在 mimeType audio/mp4 + audioBitsPerSecond 下录出来的是
-		 * mp4f 容器里一条 opus/48k 的残轨（索引不全），AVFoundation 打不开，转写器那头不退出。
-		 * 这里只按「容器干净」排：wav 最省事，其次 webm（后端用 afconvert / 转写前统一规范化）。
+		 * Chromium / Electron 只肯录 webm+opus（wav / ogg 都报不支持），而后端规范化用的
+		 * macOS 自带 afconvert 打不开 webm，症状是 `Couldn't open input file ('typ?')`。
+		 * 这里直接收 WebAudio 的 PCM，前端封成 16-bit 单声道 WAV —— 到后端没有任何容器可坏。
 		 */
-		function pickMime() {
-			if (typeof MediaRecorder === "undefined") return "";
-			const candidates = ["audio/wav", "audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"];
-			return (
-				candidates.find((type) => {
-					try {
-						return MediaRecorder.isTypeSupported(type);
-					} catch {
-						return false;
-					}
-				}) ?? ""
-			);
+		const TARGET_RATE = 16000;
+
+		/** Float32 PCM → 16 kHz 单声道 16-bit WAV。 */
+		function wavBytes(samples, sampleRate) {
+			const bytes = new Uint8Array(44 + samples.length * 2);
+			const view = new DataView(bytes.buffer);
+			const ascii = (offset, text) => {
+				for (let index = 0; index < text.length; index += 1) bytes[offset + index] = text.charCodeAt(index);
+			};
+			const dataBytes = samples.length * 2;
+			ascii(0, "RIFF");
+			view.setUint32(4, 36 + dataBytes, true);
+			ascii(8, "WAVE");
+			ascii(12, "fmt ");
+			view.setUint32(16, 16, true);
+			view.setUint16(20, 1, true);
+			view.setUint16(22, 1, true);
+			view.setUint32(24, sampleRate, true);
+			view.setUint32(28, sampleRate * 2, true);
+			view.setUint16(32, 2, true);
+			view.setUint16(34, 16, true);
+			ascii(36, "data");
+			view.setUint32(40, dataBytes, true);
+			for (let index = 0; index < samples.length; index += 1) {
+				const value = Math.max(-1, Math.min(1, samples[index]));
+				view.setInt16(44 + index * 2, value < 0 ? value * 0x8000 : value * 0x7fff, true);
+			}
+			return bytes;
 		}
 
-		function blobToBase64(blob) {
-			return new Promise((resolve, reject) => {
-				const reader = new FileReader();
-				reader.onload = () => {
-					const result = String(reader.result ?? "");
-					const comma = result.indexOf(",");
-					resolve(comma === -1 ? "" : result.slice(comma + 1));
-				};
-				reader.onerror = () => reject(reader.error ?? new Error("读不出录音"));
-				reader.readAsDataURL(blob);
-			});
+		/** 线性重采样到 16 kHz（浏览器拿到 44.1k / 48k 时兜底；已经是 16k 就原样返回）。 */
+		function at16k(samples, rate) {
+			if (!Number.isFinite(rate) || rate <= 0 || Math.abs(rate - TARGET_RATE) < 1) return samples;
+			const ratio = rate / TARGET_RATE;
+			const length = Math.max(1, Math.floor(samples.length / ratio));
+			const out = new Float32Array(length);
+			for (let index = 0; index < length; index += 1) {
+				const at = index * ratio;
+				const left = Math.floor(at);
+				const right = Math.min(samples.length - 1, left + 1);
+				const mix = at - left;
+				out[index] = samples[left] * (1 - mix) + samples[right] * mix;
+			}
+			return out;
+		}
+
+		/** Uint8Array → base64（分块拼，别用一个巨大的字符串把内存顶住）。 */
+		function bytesToBase64(bytes) {
+			let binary = "";
+			const step = 0x8000;
+			for (let at = 0; at < bytes.length; at += step) {
+				binary += String.fromCharCode.apply(null, bytes.subarray(at, Math.min(bytes.length, at + step)));
+			}
+			return btoa(binary);
 		}
 
 		const icon = (children) =>
@@ -973,7 +1002,7 @@ export default {
 				await sendText(draft);
 			};
 
-			const finishRecording = async (mime) => {
+			const finishRecording = async (sampleRate) => {
 				clearInterval(tickRef.current);
 				tickRef.current = 0;
 				setRecording(false);
@@ -984,21 +1013,32 @@ export default {
 				chunksRef.current = [];
 				if (cancelledRef.current) return;
 
-				const type = mime === "" ? pickMime() : mime;
-				const blob = new Blob(chunks, { type: type === "" ? "audio/webm" : type });
-				if (blob.size < 1500) {
+				let total = 0;
+				for (const chunk of chunks) total += chunk.length;
+				if (total < TARGET_RATE * 0.3) {
 					setError("太短了，没听清");
 					return;
 				}
+				const merged = new Float32Array(total);
+				let offset = 0;
+				for (const chunk of chunks) {
+					merged.set(chunk, offset);
+					offset += chunk.length;
+				}
+				const pcm = at16k(merged, sampleRate);
+				const wav = wavBytes(pcm, TARGET_RATE);
 				setTranscribing(true);
 				setError("");
 				try {
-					const audio = await blobToBase64(blob);
 					// 前端也掐一道：后端 30 秒硬超时，这里 45 秒兜底（转写 + 上传都在里面）。
 					const response = await fetch("/api/orb/transcribe", {
 						method: "POST",
 						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ audio, mime: type, lang: navigator.language || "zh-CN" }),
+						body: JSON.stringify({
+							audio: bytesToBase64(wav),
+							mime: "audio/wav",
+							lang: navigator.language || "zh-CN",
+						}),
 						signal: AbortSignal.timeout(45_000),
 					});
 					const data = await response.json().catch(() => ({}));
@@ -1040,16 +1080,47 @@ export default {
 				try {
 					const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 					streamRef.current = stream;
-					const mime = pickMime();
-					// 不给 audioBitsPerSecond：32k 那档正是把 mp4 录成残轨的原因之一，编码器用默认码率。
-					const recorder = new MediaRecorder(stream, mime === "" ? undefined : { mimeType: mime });
+					// 一路直收 PCM：先要 16 kHz，拿不到就按设备原生采样率录，落 WAV 之前再重采样。
+					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
+					let ctx;
+					try {
+						ctx = new AudioCtx({ sampleRate: TARGET_RATE });
+					} catch {
+						ctx = new AudioCtx();
+					}
+					await ctx.resume().catch(() => undefined);
+					const source = ctx.createMediaStreamSource(stream);
+					const node = ctx.createScriptProcessor(4096, 1, 1);
+					const mute = ctx.createGain();
+					mute.gain.value = 0;
 					chunksRef.current = [];
 					cancelledRef.current = false;
-					recorder.ondataavailable = (event) => {
-						if (event.data.size > 0) chunksRef.current.push(event.data);
+					// 调用点和 MediaRecorder 一样：`state` + `stop()`。
+					const capture = {
+						state: "recording",
+						stop() {
+							if (capture.state === "inactive") return;
+							capture.state = "inactive";
+							node.onaudioprocess = null;
+							try {
+								source.disconnect();
+								node.disconnect();
+								mute.disconnect();
+							} catch {
+								/* 已经断开了 */
+							}
+							void ctx.close().catch(() => undefined);
+							void finishRecording(ctx.sampleRate);
+						},
 					};
-					recorder.onstop = () => void finishRecording(recorder.mimeType);
-					recorderRef.current = recorder;
+					node.onaudioprocess = (event) => {
+						if (recorderRef.current !== capture) return;
+						chunksRef.current.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+					};
+					source.connect(node);
+					node.connect(mute);
+					mute.connect(ctx.destination);
+					recorderRef.current = capture;
 					setElapsed(0);
 					const startedAt = Date.now();
 					tickRef.current = window.setInterval(() => {
@@ -1057,7 +1128,6 @@ export default {
 						setElapsed(seconds);
 						if (seconds >= 30) stopRecording(false);
 					}, 250);
-					recorder.start();
 					setRecording(true);
 					// 说话时把正在读的那句掐掉，别录到自己。
 					stopAudio();
@@ -1086,12 +1156,15 @@ export default {
 				if (!next) stopAudio();
 			};
 
-			// ── 唤醒词：面板关着的时候常听一小段，听到「你好 Solo」就开面板收话 ──
+			// ── 唤醒词：面板关着的时候常听一小段，听到「你好索罗」就开面板收话 ──
 			//
 			// 只用本机 KWS（wenetspeech 3.3M），16 kHz 分片送 `/api/orb/kws`；
 			// 叫醒后先放掉麦克风，再走原来那套录音。设置里关掉就彻底不碰麦克风。
+			// 开不成（模型没下、没麦克风权限、浏览器不让后台发音）要把原因说出来 ——
+			// 静默失败时用户只会看到「唤醒词叫不醒」。
 
 			const [wakeOn, setWakeOn] = useState(prefs.wake === true);
+			const [wakeFail, setWakeFail] = useState("");
 			const wakeRef = useRef(null);
 			const wakeBusyRef = useRef(false);
 			const wakeCheckedRef = useRef(0);
@@ -1114,17 +1187,48 @@ export default {
 
 			const startWake = async () => {
 				if (wakeRef.current !== null || wakeBusyRef.current) return;
-				if (Date.now() - wakeCheckedRef.current < 15_000) return;
+				// 失败也接着试：模型下载完、权限点过之后，下一拍就该听上（5 秒一次，别打麦克风）。
+				if (Date.now() - wakeCheckedRef.current < 5_000) return;
 				wakeBusyRef.current = true;
 				wakeCheckedRef.current = Date.now();
 				try {
-					const status = await fetch("/api/orb/wake").then((response) => response.json());
-					if (status?.present !== true) return;
-					if (typeof navigator === "undefined" || navigator.mediaDevices?.getUserMedia === undefined) return;
-					const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+					const status = await fetch("/api/orb/wake")
+						.then((response) => response.json())
+						.catch(() => null);
+					if (status?.present !== true) {
+						setWakeFail(status?.downloading === true ? "唤醒模型正在下载" : "唤醒模型还没下载");
+						// 开着唤醒词却缺模型（换机器、上次没下完）：自己接着下，别等人去设置里点。
+						if (status?.downloading !== true) void fetch("/api/orb/wake", { method: "POST" }).catch(() => undefined);
+						return;
+					}
+					if (typeof navigator === "undefined" || navigator.mediaDevices?.getUserMedia === undefined) {
+						setWakeFail("这个环境没有麦克风");
+						return;
+					}
+					let stream;
+					try {
+						stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+					} catch (error_) {
+						const name = error_?.name;
+						setWakeFail(
+							name === "NotAllowedError" || name === "SecurityError"
+								? "麦克风没权限"
+								: name === "NotFoundError"
+									? "没找到麦克风"
+									: "麦克风打不开",
+						);
+						return;
+					}
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
 					const ctx = new AudioCtx({ sampleRate: 16_000 });
-					await ctx.resume();
+					await ctx.resume().catch(() => undefined);
+					// 没跑起来的 AudioContext 不会出声，也就永远收不到音频：说清楚，别假装在听。
+					if (ctx.state !== "running") {
+						for (const track of stream.getTracks()) track.stop();
+						void ctx.close().catch(() => undefined);
+						setWakeFail("浏览器没让后台听麦克风");
+						return;
+					}
 					const source = ctx.createMediaStreamSource(stream);
 					const node = ctx.createScriptProcessor(4096, 1, 1);
 					const mute = ctx.createGain();
@@ -1149,8 +1253,9 @@ export default {
 					node.connect(mute);
 					mute.connect(ctx.destination);
 					wakeRef.current = state;
+					setWakeFail("");
 				} catch {
-					// 没给麦克风权限就安静地不唤醒；面板里的麦克风照旧能用。
+					setWakeFail("唤醒没开成");
 				} finally {
 					wakeBusyRef.current = false;
 				}
@@ -1191,7 +1296,12 @@ export default {
 					id: "orb-ball",
 					"aria-label": unread > 0 ? `助理（${String(unread)} 条未读）` : "助理",
 					"aria-expanded": open,
-					"data-tip": wakeOn ? "说「你好 Solo」叫醒，或点一下" : "跟助理说一句",
+					"data-tip":
+						wakeOn && wakeFail === ""
+							? "说「你好索罗」叫醒，或点一下"
+							: wakeOn
+								? `唤醒没开成：${wakeFail}`
+								: "跟助理说一句",
 					onClick,
 					onPointerDown,
 					onPointerMove,
@@ -1960,8 +2070,8 @@ export default {
 								h(
 									"div",
 									{ className: "ov-row-main" },
-									h("b", null, "说「你好 Solo」叫醒"),
-									h("span", null, "面板关着时常听一小段；叫醒后自动开面板收音。喊成「你好索罗」也认"),
+									h("b", null, "说「你好索罗」叫醒"),
+									h("span", null, "面板关着时常听一小段；叫醒后自动开面板收音。这个模型只认中文发音，「你好 Solo」念英文认不出"),
 								),
 								h(
 									"button",
