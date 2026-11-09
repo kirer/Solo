@@ -414,6 +414,9 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
 ```
 
 下载过一次会缓存在 `~/Library/Caches/electron-builder/`，之后不再需要。
+**CI 里已经这么做了**：`.github/workflows/release.yml` 顶上的 `ELECTRON_BUILDER_BINARIES_MIRROR`
+就是同一个镜像（2026-11-09 的 2.3.4 打包连挂两轮 504 之后加的）。Electron 本体仍走
+`ELECTRON_MIRROR` 的默认源。
 
 - **数据在哪（两个根）**：应用私有的是 `app.getPath("userData")`（macOS
   `~/Library/Application Support/solo`，Windows `%APPDATA%/solo`）—— 助理、提示词、插件、
