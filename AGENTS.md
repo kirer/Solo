@@ -1,8 +1,28 @@
 # AGENTS.md
 
 > **任何 AI agent（Claude Code / Codex / Cursor / pi / 别的）在本仓库工作前先读这一份。**
-> 它只写三件事：**这是什么**、**改代码前后必须做什么**、**要动某处该读哪份文档**。
+> 它只写四件事：**这是什么**、**在哪个分支干活、怎么发版**（§0）、
+> **改代码前后必须做什么**（§3）、**要动某处该读哪份文档**（§5）。
 > 文档地图见 [`docs/README.md`](docs/README.md)。**改完行为必须同步改本文档 §3.3 的表**，这是硬要求。
+
+---
+
+## 0. 分支与发版（接手先看）
+
+- **唯一开发分支是 `master`**，它也是 `kirer/Solo` 的默认分支。历史分支 `V4` 已并入
+  `master` 并删除；`main` / `V2` / `V3` 只作存档，**不要在上面开发，也不要往上面推**。
+- 日常就在 `master` 上改、在 `master` 上提交；大改动可以先开短分支，合回 `master` 后立刻删掉。
+- 发版是「升版本 → 打 `v<版本>` 标签 → 推标签」，推标签即触发 GitHub Actions 打包发版。
+  完整步骤写在 [README.md](README.md) 的「发版」一节，要点：
+  - `package.json` 的 `version` 与标签必须一致（`v2.3.4` ↔ `2.3.4`），否则 publish 拒绝；
+  - 改过 `ui/app/` 先 `npm run ui:build`，把 `ui/web/` 的产物一起提交；改过 agent 行为先跑
+    `npm run live`（两次 13/13）；
+  - 版本只增不减，已正式发布的标签拒绝覆盖；要重发就升版本，不要覆盖旧 Release；
+  - 打包失败（多半是 CI 下载 Electron / electron-builder 辅助包时 5xx）不走代码：看
+    Actions 里哪个 job 红，`gh run rerun <id> --failed` 或删标签重建再推。CI 已用 npmmirror
+    的只读镜像取辅助包（`ELECTRON_BUILDER_BINARIES_MIRROR`）。
+- 更新清单与签名在 publish job 里生成（密钥是仓库 secret `SOLO_UPDATE_KEY`，私钥不入库；
+  本地要生成用 `npm run update:key` / `update:manifest`，见 [docs/DEPLOY](docs/DEPLOY.md) §10）。
 
 ---
 
@@ -85,7 +105,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             112 文件 / 990 例
+test/             114 文件 / 996 例
   ├ test/core/    91 文件（纯函数 + 装配）
   ├ test/ui/      15 文件（界面纯函数与源码约定）
   └ test/desktop/ 7 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏、悬浮窗位置）
@@ -148,7 +168,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 112 文件 990 例，<3s，必须全绿
+npm test             # 114 文件 996 例，<5s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -162,7 +182,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
   两个 bug 叠在一起（我发消息时漏记「他在哪个频道被叫到」+ 记的时机在一轮已经开跑之后），
   症状是「我在全员频道问，对方在私聊里答」，单测完全看不见。单测测的是纯函数和装配，
   **只有真模型能测出「沟通会不会跑偏」**。
-- **改了界面不用跑任何构建**，但要看一眼：起服务刷新，或截图。
+- **改了界面必须 `npm run ui:build`**（服务端发的是 `ui/web/` 的产物，产物一起提交），并且看一眼：起服务刷新，或截图。
 - 端口被占先 `lsof -nP -iTCP:7788 -sTCP:LISTEN`：被杀的 node 进程会继续占端口回 404，
   症状是「服务起来了但所有接口 404」。
 - 真实模型测试**不要在会话里前台跑**（几十秒到几分钟），用 `nohup ... &` 后台跑再看日志。
