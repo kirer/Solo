@@ -21,6 +21,7 @@ import { app, dialog, session, type BrowserWindow, type MessageBoxOptions } from
 import { feedUrl } from "./feed.ts";
 import { scheduleInstall } from "./install.ts";
 import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
+import { assetHeaders, assetUrlOf, latestReleaseApi } from "./release-assets.ts";
 import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
 import { readUpdateProxy } from "./update-proxy.ts";
 
@@ -45,16 +46,60 @@ const manifestName = (): string => (process.platform === "darwin" ? "latest-mac.
 
 /** 有代理就换一条会话走它；没有就直连。用独立分区，别碰界面那条会话的代理。 */
 async function fetchUpdate(url: string, proxy: string | undefined): Promise<Response> {
-	if (proxy === undefined) return fetch(url);
+	const headers = assetHeaders(url);
+	const init: RequestInit = headers === undefined ? {} : { headers };
+	if (proxy === undefined) return fetch(url, init);
 	const ses = session.fromPartition("solo-update");
 	await ses.setProxy({ proxyRules: proxy });
-	return (await ses.fetch(url)) as unknown as Response;
+	return (await ses.fetch(url, init)) as unknown as Response;
+}
+
+const ATTEMPTS = 3;
+
+/**
+ * 路上抖一下很常见（网关 504、连接被掐）：5xx / 429 / 网络错误等一下重试两次；
+ * 4xx（404 之类）直接报 —— 那不是抖，是地址或权限不对。下载包也走它：
+ * 只对「还没开始下」的那次请求重试，不重下一半的包。
+ */
+async function requestOk(url: string, proxy: string | undefined): Promise<Response> {
+	let last: Error | undefined;
+	for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+		let response: Response | undefined;
+		try {
+			response = await fetchUpdate(url, proxy);
+		} catch (error) {
+			last = error instanceof Error ? error : new Error(String(error));
+		}
+		if (response !== undefined) {
+			if (response.ok) return response;
+			last = new Error(`${response.status} ${response.statusText}（${url}）`);
+			if (response.status < 500 && response.status !== 429) throw last;
+		}
+		if (attempt < ATTEMPTS - 1) await new Promise<void>((done) => setTimeout(done, 600 * (attempt + 1)));
+	}
+	throw last ?? new Error(`请求失败（${url}）`);
 }
 
 async function fetchText(url: string, proxy: string | undefined): Promise<string> {
-	const response = await fetchUpdate(url, proxy);
-	if (!response.ok) throw new Error(`${response.status} ${response.statusText}（${url}）`);
-	return response.text();
+	return (await requestOk(url, proxy)).text();
+}
+
+/**
+ * 资产地址：GitHub 源优先问 `api.github.com` 要直链（`github.com/.../download/` 在
+ * 有些网络里连不上，API 和资产域却能到）；API 不通就退回原地址。每个检查只问一次 API。
+ */
+async function assetUrls(feed: string, proxy: string | undefined): Promise<(name: string) => Promise<string>> {
+	const base = feed.endsWith("/") ? feed : `${feed}/`;
+	const api = latestReleaseApi(base);
+	if (api === undefined) return async (name) => `${base}${name}`;
+	let release: unknown;
+	try {
+		release = JSON.parse(await fetchText(api, proxy)) as unknown;
+	} catch (error) {
+		console.warn(`[update] 取资产直链失败，退回 ${base}：${(error as Error).message}`);
+		release = undefined;
+	}
+	return async (name) => assetUrlOf(release, base, name);
 }
 
 /** 下到临时目录，边下边报进度，下完核对 sha512。 */
@@ -64,8 +109,8 @@ async function download(
 	onProgress: (ratio: number) => void,
 	proxy: string | undefined,
 ): Promise<string> {
-	const response = await fetchUpdate(url, proxy);
-	if (!response.ok || response.body === null) throw new Error(`下载失败：${response.status} ${response.statusText}`);
+	const response = await requestOk(url, proxy);
+	if (response.body === null) throw new Error("下载失败：没有响应体");
 	const total = Number(response.headers.get("content-length") ?? 0);
 	const dir = await mkdtemp(join(tmpdir(), "solo-update-"));
 	const path = join(dir, "update.zip");
@@ -121,8 +166,9 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			const base = feed.endsWith("/") ? feed : `${feed}/`;
 			// 每次检查都重读：用户在设置里改了代理，下一次（或手动「检查更新」）就生效。
 			const proxy = readUpdateProxy(options.settingsFile);
-			const text = await fetchText(`${base}${manifestName()}`, proxy);
-			const signature = await fetchText(`${base}${manifestName()}.sig`, proxy);
+			const asset = await assetUrls(base, proxy);
+			const text = await fetchText(await asset(manifestName()), proxy);
+			const signature = await fetchText(await asset(`${manifestName()}.sig`), proxy);
 			if (!verifyManifest(UPDATE_PUBLIC_KEY, text, signature)) throw new Error("清单签名不对：不是用发布密钥签的");
 			const manifest = parseManifest(text);
 			if (manifest === undefined) throw new Error("清单格式不对");
@@ -144,7 +190,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			});
 			if (answered !== 0) return;
 			const zip = await download(
-				`${base}${file.file}`,
+				await asset(file.file),
 				file.sha512,
 				(ratio) => windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
 				proxy,

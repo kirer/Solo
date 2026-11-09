@@ -497,6 +497,11 @@ Release → 先传二进制、最后传清单与 `.sig` → 正式发布。Windo
 - **macOS 左上角没菜单栏 / Dock 里没图标**：进程被系统注册成了 `UIElement`（accessory）。
   悬浮球的全空间置顶（`setVisibleOnAllWorkspaces(…, { visibleOnFullScreen: true })`）会触发它，
   所以 `main.ts` 的 `regularApp()` 在开窗前、建球后各要一次 `regular`（ADR-122）。
+- **清单和包从哪儿取**：源还是 `…/releases/latest/download/`，但每次检查先问一次
+  `api.github.com/repos/<owner>/<repo>/releases/latest`，按资产名换成
+  `…/releases/assets/<id>`（带 `Accept: application/octet-stream`）再下 ——
+  `github.com` 连不上而 `api.github.com` 能连的网络里，这才能更新（ADR-123）。API 不通就退回原地址；
+  5xx / 429 / 网络错误重试两次。
 - **下载走代理**：设置 → 更新 → 「更新代理」写 `settings.json` 的 `updateProxy`
   （如 `http://127.0.0.1:7890`，空 = 直连）。壳每次检查更新前重读这个键，用独立会话
   （`solo-update` 分区）下载清单和包 —— **只给更新用**，模型调用不走它（ADR-087）。

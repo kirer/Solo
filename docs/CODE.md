@@ -263,10 +263,11 @@ Windows 多画一条 40px 标题带（菜单 + 拖拽把手），macOS 多让出
 | `desktop/src/orb-window.ts` | 悬浮窗的纯函数：`ORB_SIZE`（380×520）、`defaultOrbBounds`（贴右上）、`clampOrbBounds` / `fitOrbBounds`（拖不出屏幕、换屏回默认）、`parseOrbState` / `serializeOrbState` / `orbStatePath`（`<appRoot>/orb-window.json`）。单测守 |
 | `desktop/src/orb-preload.cts` | 悬浮窗的沙箱 preload（编译成 `orb-preload.cjs`）：只暴露 `soloOrb.setInteractive / dragBy / dragEnd / recenter / hide`；主进程按 sender + origin 校验（ADR-116） |
 | `desktop/src/window-chrome.ts` | `windowChrome(platform, theme)`：macOS 返回 `{}`（系统标题栏，ADR-088）；Windows `hidden` + 40px `titleBarOverlay`（颜色与界面的 `--frame` / `--ink` 对齐）。纯函数，单测守 |
-| `desktop/src/preload.cts` | 沙箱 preload（CommonJS，编译成 `preload.cjs`）：只暴露 `soloDesktop.menu()` / `setTheme()` 两个口；根包是 `type: module`，所以必须 `.cts` + `require("electron")` |
+| `desktop/src/preload.cts` | 沙箱 preload（CommonJS，编译成 `preload.cjs`）：只暴露 `soloDesktop.menu()` / `setTheme()` / `version()` 三个口（两个平台都装，ADR-122）；根包是 `type: module`，所以必须 `.cts` + `require("electron")` |
 | `desktop/src/backend.ts` | `startBackend` —— 用 `process.execPath` + `ELECTRON_RUN_AS_NODE=1` 跑 `src/shell/main.ts`；先试 7788、被占退 0；日志落 `userData/logs/core.log`（5 MB 轮转）；`stop()` 是 SIGTERM → 5 秒 → SIGKILL |
 | `desktop/src/ready-line.ts` | `parseReadyLine`：从 `[core] http://127.0.0.1:<port>/` 认端口（**唯一**的壳 ↔ 内核契约） |
-| `desktop/src/updates.ts` | 更新流程（ADR-029 / ADR-070）：拉清单 → 验签 → 比版本 → 下载（进度条 + sha512）→ 各要一次点击 → 先起安装器并等 ready 文件 → `beforeInstall` 停后端 → 进程外替换 → 自动退出；安装器起不来时保持应用打开并弹错 |
+| `desktop/src/updates.ts` | 更新流程（ADR-029 / ADR-070 / ADR-123）：拉清单 → 验签 → 比版本 → 下载（进度条 + sha512）→ 各要一次点击 → 先起安装器并等 ready 文件 → `beforeInstall` 停后端 → 进程外替换 → 自动退出；安装器起不来时保持应用打开并弹错。`requestOk` 对 5xx / 429 / 网络错误重试两次，`assetUrls` 每次检查只问一次 API |
+| `desktop/src/release-assets.ts` | 更新资产的纯函数：`githubRepoOf` / `latestReleaseApi` / `assetUrlOf`（GitHub 源换成 `api.github.com/.../releases/assets/<id>`，挑不到退回源地址）/ `assetHeaders`（资产接口要 `Accept: application/octet-stream`）。单测 `test/desktop/release-assets.test.ts` |
 | `desktop/src/manifest.ts` | 清单的纯函数：`parseManifest` / `verifyManifest`（Ed25519）/ `isNewer` / `fileFor` |
 | `desktop/src/install.ts` | 进程外安装脚本：macOS `sh` + `ditto`；Windows 先写 ready 文件、等主进程与同路径 `Solo.exe` 退出，优先 `tar.exe` 解包（退回 `Expand-Archive`）+ `robocopy /MIR`，解包 / 替换后核对 `package.json` 版本；全过程写 `%TEMP%\solo-update.log` |
 | `desktop/src/update-proxy.ts` | `readUpdateProxy(settingsFile)`：读 `settings.json` 的 `updateProxy`（空 / 缺失 / 坏文件 = 直连）。纯 Node，能单测；`updates.ts` 每次检查更新前重读 |

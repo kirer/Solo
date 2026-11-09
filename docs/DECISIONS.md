@@ -2932,3 +2932,23 @@
 不再只在 `win32` 下装、`desktop/src/preload.cts` 的 `version`、`ui/app/src/panels/SettingsPage.tsx`
 的 `UpdateCheckRow`（浏览器里没有桥，只说「网页版没有自动更新」）。真正的更新逻辑不动：
 还是清单验签 → 下载 → 进程外替换（ADR-027 / ADR-029 / ADR-070）。
+
+## ADR-123 检查更新走 `api.github.com` 的资产接口，并给「路上抖一下」两次重试
+
+**决定**：更新源还是 GitHub Releases 的 `…/releases/latest/download/`（ADR-029 / ADR-067），
+但抓清单、签名和包时**先问一次 `/releases/latest`**，按资产名换成
+`api.github.com/.../releases/assets/<id>`（带 `Accept: application/octet-stream`）。
+每条请求对 5xx / 429 / 网络错误重试两次（600ms、1200ms 退避）；4xx 直接报。
+
+**为什么**：2026-11-09 点「检查更新」实际撞上 `504`，地址是
+`github.com/kirer/Solo/releases/latest/download/latest-mac.json.sig`。同一台机器上
+`api.github.com` 与 `objects.githubusercontent.com` 都能连、`github.com` 时通时不通 ——
+`/releases/latest/download/` 的整条链要先到 `github.com` 才能被 302 到资产域。
+换成 API 的资产地址后，最后一跳是 `api.github.com` 302 到 `objects.githubusercontent.com`，
+两个域都能到，实测 200（清单 235 B、zip 的 range 请求 206）。
+顺带：发布刚建好的头几分钟，`latest/download` 的资产可能要等 CDN 铺开，重试也挡得住这种 5xx。
+API 不通时退回原来的直链（有些网络反过来），自建更新源完全不走这一段。
+
+**执行**：`desktop/src/release-assets.ts`（`githubRepoOf` / `latestReleaseApi` / `assetUrlOf` /
+`assetHeaders`，纯函数）+ `desktop/src/updates.ts`（`requestOk` 重试、`assetUrls` 每次检查只问
+一次 API、`download` 也走 `requestOk`）+ `test/desktop/release-assets.test.ts`。
