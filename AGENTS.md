@@ -9,9 +9,9 @@
 
 ## 0. 分支与发版（接手先看）
 
-- **唯一开发分支是 `master`**，它也是 `kirer/Solo` 的默认分支。历史分支 `V4` 已并入
-  `master` 并删除；`main` / `V2` / `V3` 只作存档，**不要在上面开发，也不要往上面推**。
-- 日常就在 `master` 上改、在 `master` 上提交；大改动可以先开短分支，合回 `master` 后立刻删掉。
+- **唯一开发分支是 `main`**，它也是 `kirer/Solo` 的默认分支。历史分支 `V4` 和旧的 `master`
+  都已并入 `main` 并删除；`V2` / `V3` 只作存档，**不要在上面开发，也不要往上面推**。
+- 日常就在 `main` 上改、在 `main` 上提交；大改动可以先开短分支，合回 `main` 后立刻删掉。
 - 发版是「升版本 → 打 `v<版本>` 标签 → 推标签」，推标签即触发 GitHub Actions 打包发版。
   完整步骤写在 [README.md](README.md) 的「发版」一节，要点：
   - `package.json` 的 `version` 与标签必须一致（`v2.3.4` ↔ `2.3.4`），否则 publish 拒绝；
@@ -105,7 +105,7 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             114 文件 / 996 例
+test/             114 文件 / 1006 例
   ├ test/core/    91 文件（纯函数 + 装配）
   ├ test/ui/      15 文件（界面纯函数与源码约定）
   └ test/desktop/ 7 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏、悬浮窗位置）
@@ -168,7 +168,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 114 文件 996 例，<5s，必须全绿
+npm test             # 114 文件 1006 例，<5s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟

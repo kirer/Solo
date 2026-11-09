@@ -69,7 +69,7 @@ ui/app/        网页界面源码（React + TS + Vite），构建产物在 ui/we
 desktop/       Electron 壳：拉起后端 / 开窗 / 悬浮球窗与托盘 / 自动更新 / 打包
 seed/          出厂内容：规矩 / 提示词模板 / 技能 / 助理身份 / 出厂插件
 scripts/       边界检查 / 真模型冒烟与场景 / 提示词黄金渲染 / 更新清单与签名 / 改名迁移
-test/          114 文件 / 996 例（core 纯函数与装配、ui 纯函数与源码约定、desktop 更新与窗口）
+test/          114 文件 / 1006 例（core 纯函数与装配、ui 纯函数与源码约定、desktop 更新与窗口）
 docs/          概念、代码地图、界面稿、决策（ADR）、接口、部署、出厂契约
 ```
 
@@ -82,7 +82,7 @@ README 里的数字会漂，别拿它当准绳。
 | --- | --- |
 | `npm start` | 起服务（`--port` `--host` `--app-root` `--user-root` `--no-seed`） |
 | `npm run check` | 四份 tsc（根 / scripts / desktop / ui）+ 边界检查（唯 runtime 能碰底层库、分层不越界、路由必须有前端消费者） |
-| `npm test` | 单测，114 文件 996 例，<5s |
+| `npm test` | 单测，114 文件 1006 例，<5s |
 | `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 13 项（会花 token；改了 agent 行为要连跑两次 13/13） |
 | `npm run live:scenarios` | **真实模型**多 agent 场景（会花 token；`--list` 看场景） |
@@ -95,9 +95,9 @@ README 里的数字会漂，别拿它当准绳。
 
 ## 分支与协作
 
-- **唯一开发分支是 `master`**（`kirer/Solo` 的默认分支）。历史分支 `V4` 已并入并删除；
-  `main` / `V2` / `V3` 等旧分支只作存档，不要在上面开发。
-- 小改动直接提交到 `master`；大改动可以开短分支、合回 `master` 后再删。
+- **唯一开发分支是 `main`**（`kirer/Solo` 的默认分支）。历史分支 `V4` 和旧的 `master` 都已并入并删除；
+  `V2` / `V3` 等旧分支只作存档，不要在上面开发。
+- 小改动直接提交到 `main`；大改动可以开短分支、合回 `main` 后再删。
 - 提交信息写「改了什么、为什么」；一次改动一套提交，别把不相干的混在一起。
 - 文档同步是硬要求：改了行为就同步 `docs/` 与 AGENTS 那张表（见 AGENTS §3.3）。
 
@@ -117,7 +117,7 @@ git add -A && git commit -m "chore: 发版 X.Y.Z——一句话"
 
 # 3. 打标签并推送（推标签就会触发打包发版）
 git tag -a vX.Y.Z -m "Solo X.Y.Z"
-git push origin master
+git push origin main
 git push origin vX.Y.Z
 ```
 
@@ -139,7 +139,7 @@ git push origin vX.Y.Z
   `publish` 红看日志里的清单签名与版本一致性检查。
 - 重跑：`gh run rerun <run-id> --failed`（token 没权限时）删掉标签重建再推：
   `git tag -f -a vX.Y.Z -m "Solo X.Y.Z" && git push -f origin vX.Y.Z`。
-- 打包只是发安装包，**不会**动 `master` 的代码；Release 正式发布后拒绝覆盖，必须升版本。
+- 打包只是发安装包，**不会**动 `main` 的代码；Release 正式发布后拒绝覆盖，必须升版本。
 
 更多部署 / 局域网 / Docker / 排障见 [docs/DEPLOY](docs/DEPLOY.md) §9–10。
 
