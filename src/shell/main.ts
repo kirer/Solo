@@ -189,7 +189,8 @@ async function main(): Promise<void> {
 	const restartApp = (): void => {
 		if (exiting) return;
 		exiting = true;
-		console.log("[core] 重启：正在关闭…");
+		// 谁点的：`/api/restart` 只有界面在调（装完带界面的插件 / 设置里的重启）。
+		console.log("[core] 重启：正在关闭…（来源=界面 POST /api/restart）");
 		void stopCore()
 			.then(() => {
 				process.exit(RELAUNCH_EXIT_CODE);
@@ -207,7 +208,7 @@ async function main(): Promise<void> {
 	const resetAll = (): void => {
 		if (exiting) return;
 		exiting = true;
-		console.log("[core] 重置：清空所有数据…");
+		console.log("[core] 重置：清空所有数据…（来源=界面 POST /api/reset）");
 		void (async () => {
 			await stopCore();
 			await wipeAll(layout);

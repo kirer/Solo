@@ -21,10 +21,11 @@ import {
 	type IpcMainEvent,
 	type IpcMainInvokeEvent,
 } from "electron";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { startBackend, type Backend } from "./backend.ts";
+import { appendLog, startBackend, type Backend } from "./backend.ts";
+import { describeLaunch } from "./backend-log.ts";
 import { installMenu } from "./menu.ts";
 import {
 	clampOrbBounds,
@@ -58,6 +59,15 @@ let orbWin: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let orbState: OrbState | undefined;
 let quitting = false;
+/**
+ * 本次重开是谁发起的：写进日志的第一行。
+ *
+ * 为什么落到文件而不是环境变量：`app.relaunch()` 只收 `args` / `execPath`，递不了环境
+ * （Electron 的 `RelaunchOptions` 就这两个字段）。`--user-data-dir` 也不能用：同一个
+ * 目录的第二个实例会撞单实例锁，重启直接变「什么都没发生」。所以退成一个小文件：
+ * 重启前写，下一次启动读完就删。
+ */
+const LAUNCH_REASON_FILE = join(app.getPath("userData"), "launch-reason.txt");
 
 function createWindow(url: string): BrowserWindow {
 	// 小屏幕（1280×800 那类笔记本）上别把窗口开到屏幕外面去。
@@ -349,13 +359,34 @@ async function quit(): Promise<void> {
 	app.quit();
 }
 
-function restart(): void {
+/**
+ * 重开整个应用。`reason` 落在 `LAUNCH_REASON_FILE` 里，下一次启动读出来写进日志第一行 ——
+ * 出事时第一句话就是「这次是谁点的重开」，省得对着一份不知道被谁掐断的日志猜。
+ */
+function restart(reason: string): void {
 	quitting = true;
+	appendLog(logFile, `[shell] 重启：发起者=${reason}`);
+	try {
+		writeFileSync(LAUNCH_REASON_FILE, reason);
+	} catch {
+		// 写不进去就退化成「没有发起者记录」：重启本身不能因此失败。
+	}
 	void backend?.stop().finally(() => {
 		app.releaseSingleInstanceLock();
 		app.relaunch();
 		app.exit(0);
 	});
+}
+
+/** 上一次重启留下的发起者（没有就当成「用户自己开的」），读完即删。 */
+function takeLaunchReason(): string {
+	try {
+		const reason = readFileSync(LAUNCH_REASON_FILE, "utf8").trim();
+		rmSync(LAUNCH_REASON_FILE, { force: true });
+		return reason === "" ? "用户打开应用（没有重启来源）" : reason;
+	} catch {
+		return "用户打开应用（没有重启来源）";
+	}
 }
 
 /**
@@ -376,7 +407,7 @@ function setupBridge(window: BrowserWindow): void {
 				updater?.checkNow();
 				break;
 			case "restart":
-				restart();
+				restart("界面标题带「重启」");
 				break;
 			case "quit":
 				void quit();
@@ -435,6 +466,16 @@ async function start(): Promise<void> {
 		void quit();
 	});
 
+	// 日志的第一行：这次是谁、什么版本、哪个进程。没有发起者记录就是「用户自己开的」。
+	appendLog(
+		logFile,
+		describeLaunch({
+			reason: takeLaunchReason(),
+			version: app.getVersion(),
+			userRoot,
+			pid: process.pid,
+		}),
+	);
 	try {
 		backend = await startBackend({
 			entry: join(app.getAppPath(), "src/shell/main.ts"),
@@ -443,8 +484,9 @@ async function start(): Promise<void> {
 			logFile,
 			onLog: (line) => console.log(line),
 			// 设置里的「重置所有数据」和装完插件后的「重启」：后端以 75 退出，整个应用重开一遍。
+			// 具体是哪一件由后端自己写进日志（它在收请求的那一头，知道 `/api/restart` 还是 `/api/reset`）。
 			onExit: (code) => {
-				if (code === RELAUNCH_EXIT_CODE) restart();
+				if (code === RELAUNCH_EXIT_CODE) restart("后端以退出码 75 退出（重置或界面重启）");
 			},
 		});
 	} catch (error) {
@@ -476,7 +518,7 @@ async function start(): Promise<void> {
 			quitting = true;
 		},
 	});
-	installMenu({ checkUpdates: () => updater?.checkNow(), restart });
+	installMenu({ checkUpdates: () => updater?.checkNow(), restart: () => restart("菜单「重启」") });
 	setupBridge(win);
 	if (process.platform === "win32") {
 		// 菜单对象留着给加速键用，但界面上不画那一行 —— 菜单已经搬进标题带。

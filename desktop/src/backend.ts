@@ -10,8 +10,9 @@
  * （`scripts/check-boundaries.mjs` 会拦），只认 `[core] http://…` 这一行（`ready-line.ts`）。
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, createWriteStream, mkdirSync, renameSync, statSync } from "node:fs";
 import { dirname } from "node:path";
+import { createLineStamper, describeExit, stamp } from "./backend-log.ts";
 import { parseReadyLine } from "./ready-line.ts";
 
 export type Backend = {
@@ -48,6 +49,21 @@ function openLog(file: string): ReturnType<typeof createWriteStream> {
 		// 第一次跑：文件还不存在，正常。
 	}
 	return createWriteStream(file, { flags: "a" });
+}
+
+/**
+ * 往同一份日志里写一行壳自己的记录（启动、重启原因）。
+ *
+ * `main.ts` 那边只在启动 / 重启这两个瞬间写，用 append 就够；**这也不会和
+ * `startBackend` 的流打架**：写上来的都是 O_APPEND 整行，行边界不会被截断。
+ */
+export function appendLog(file: string, line: string): void {
+	try {
+		mkdirSync(dirname(file), { recursive: true });
+		appendFileSync(file, `${stamp(new Date())} ${line}\n`);
+	} catch {
+		// 日志写不进去不该拦住启动：能不能开机比留不留痕重要。
+	}
 }
 
 function spawnOnce(
@@ -87,13 +103,15 @@ function spawnOnce(
 			reject(new Error("后端 60 秒还没起来"));
 		}, READY_TIMEOUT);
 
-		/** 逐行读一个流：落日志，顺便等就绪那一行。 */
+		/** 逐行读一个流：落日志（每行带时间戳），顺便等就绪那一行。 */
 		const read = (stream: NodeJS.ReadableStream | null, echo: boolean): void => {
 			if (stream === null) return;
+			const stamper = createLineStamper((text) => log.write(text));
+			stream.on("end", () => stamper.flush());
 			let buffer = "";
 			stream.setEncoding("utf8");
 			stream.on("data", (chunk: string) => {
-				log.write(chunk);
+				stamper.push(chunk);
 				buffer += chunk;
 				const lines = buffer.split("\n");
 				buffer = lines.pop() ?? "";
@@ -146,7 +164,9 @@ export async function startBackend(options: BackendOptions): Promise<Backend> {
 
 	const { child, url } = started;
 	let stopped = false;
-	child.on("exit", (code) => {
+	child.on("exit", (code, signal) => {
+		// 退出码和信号一起写：这两个合起来才看得出「自己挂的」还是「被杀的」。
+		log.write(`${stamp(new Date())} ${describeExit(code, signal, stopped)}\n`);
 		if (stopped) return;
 		options.onExit?.(code ?? -1);
 	});
