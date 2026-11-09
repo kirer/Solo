@@ -17,6 +17,12 @@ concurrency:
   group: release
   cancel-in-progress: false
 
+# electron-builder 的辅助包（dmgbuild、7zip、winCodeSign、nsis）平时从 github.com 的
+# releases 下；2026-11-09 连挂两轮 504。走 npmmirror 的只读镜像（和 npm 同一个源），
+# runner 在境外也照常能取。
+env:
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
 jobs:
   verify:
     runs-on: ubuntu-latest
