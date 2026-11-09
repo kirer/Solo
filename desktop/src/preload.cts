@@ -11,4 +11,6 @@ const { contextBridge, ipcRenderer } = require("electron") as typeof import("ele
 contextBridge.exposeInMainWorld("soloDesktop", {
 	menu: (action: string) => ipcRenderer.send("solo:menu", action),
 	setTheme: (theme: "light" | "dark") => ipcRenderer.send("solo:theme", theme),
+	/** 设置页要显示「当前版本」（`app.getVersion()` 在主进程那边）。 */
+	version: () => ipcRenderer.invoke("solo:version"),
 });

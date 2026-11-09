@@ -492,7 +492,11 @@ Release → 先传二进制、最后传清单与 `.sig` → 正式发布。Windo
 - 更新源地址：`SOLO_UPDATE_URL` 环境变量优先，否则用 `desktop/src/feed.ts` 的 `DEFAULT_FEED_URL`
   （默认 `https://github.com/kirer/Solo/releases/latest/download/`；只认 https，或 http 的本机地址）。
   检查时机：启动 30 秒后一次，之后每 6 小时；
-  「检查更新…」在 macOS 的系统菜单栏 / Windows 标题带的「Solo」菜单里。
+  「检查更新…」在 macOS 的系统菜单栏 / Windows 标题带的「Solo」菜单里，也在设置 → 「检查更新」
+  （那一行显示当前版本，按钮发同一个动作；浏览器里没有桌面壳，只说明一句）。
+- **macOS 左上角没菜单栏 / Dock 里没图标**：进程被系统注册成了 `UIElement`（accessory）。
+  悬浮球的全空间置顶（`setVisibleOnAllWorkspaces(…, { visibleOnFullScreen: true })`）会触发它，
+  所以 `main.ts` 的 `regularApp()` 在开窗前、建球后各要一次 `regular`（ADR-122）。
 - **下载走代理**：设置 → 更新 → 「更新代理」写 `settings.json` 的 `updateProxy`
   （如 `http://127.0.0.1:7890`，空 = 直连）。壳每次检查更新前重读这个键，用独立会话
   （`solo-update` 分区）下载清单和包 —— **只给更新用**，模型调用不走它（ADR-087）。

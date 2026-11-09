@@ -19,6 +19,7 @@ import {
 	shell,
 	Tray,
 	type IpcMainEvent,
+	type IpcMainInvokeEvent,
 } from "electron";
 import { readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -75,8 +76,8 @@ function createWindow(url: string): BrowserWindow {
 		// 最小化 / 最大化 / 关闭仍由系统画在右边（titleBarOverlay，ADR-028 / ADR-069）。
 		...windowChrome(process.platform, nativeTheme.shouldUseDarkColors ? "dark" : "light"),
 		webPreferences: {
-			// 桥只在 Windows 上有用（标题带的菜单动作与取色）；别的平台不装。
-			...(process.platform === "win32" ? { preload: join(app.getAppPath(), "desktop/dist/preload.cjs") } : {}),
+			// 菜单动作两边都要（设置里的「检查更新」也走它）；只有取色那条主进程认 Windows。
+			preload: join(app.getAppPath(), "desktop/dist/preload.cjs"),
 			contextIsolation: true,
 			nodeIntegration: false,
 			sandbox: true,
@@ -94,7 +95,12 @@ function createWindow(url: string): BrowserWindow {
 		webPreferences.sandbox = true;
 		if (!/^https?:\/\//i.test(params.src ?? "")) event.preventDefault();
 	});
-	window.once("ready-to-show", () => window.show());
+	window.once("ready-to-show", () => {
+		window.show();
+		// macOS 上 `show()` 不一定把应用叫到前台：悬浮球那扇 `showInactive` 的窗子一开，
+		// 主窗口虽然看得见，菜单栏（左上角）却还留在上一个应用那儿。启动时显式激活一次。
+		if (process.platform === "darwin") app.focus({ steal: true });
+	});
 
 	// 页面里的外链一律交给系统浏览器；不在这里开新窗口（也没有 preload 可以借）。
 	window.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -353,12 +359,12 @@ function restart(): void {
 }
 
 /**
- * 标题带的桥（只有 Windows 装）。菜单动作照抄原生菜单那几项；取色让右边三个系统按钮
- * 跟着界面明暗走。来源只认这个窗口、这个后端 origin —— preload 在页面里，页面里的
- * 任何脚本都能发消息，不校验就等于把退出 / 重启键交给网页。
+ * 页面的桥（两边都装）。菜单动作照抄原生菜单那几项（Windows 的标题带、macOS 设置里的
+ * 「检查更新」都走它）；取色只有 Windows 认。来源只认这个窗口、这个后端 origin ——
+ * preload 在页面里，页面里的任何脚本都能发消息，不校验就等于把退出 / 重启键交给网页。
  */
 function setupBridge(window: BrowserWindow): void {
-	const trusted = (event: IpcMainEvent): boolean => {
+	const trusted = (event: IpcMainEvent | IpcMainInvokeEvent): boolean => {
 		const url = backend?.url;
 		return url !== undefined && event.sender === window.webContents && (event.senderFrame?.url.startsWith(url) ?? false);
 	};
@@ -384,6 +390,9 @@ function setupBridge(window: BrowserWindow): void {
 		}
 	});
 
+	// 设置里显示「当前版本」：只有主进程知道版本号。
+	ipcMain.handle("solo:version", (event) => (trusted(event) ? app.getVersion() : ""));
+
 	ipcMain.on("solo:theme", (event, theme: unknown) => {
 		if (!trusted(event) || process.platform !== "win32") return;
 		if (theme !== "light" && theme !== "dark") return;
@@ -391,7 +400,13 @@ function setupBridge(window: BrowserWindow): void {
 	});
 }
 
+/** macOS 上必须是「普通应用」：UIElement 没有 Dock 图标，左上角也没有菜单栏（ADR-121）。 */
+function regularApp(): void {
+	if (process.platform === "darwin") app.setActivationPolicy("regular");
+}
+
 async function start(): Promise<void> {
+	regularApp();
 	// 第二个实例只负责把已有窗口叫到前面：两个后端连同一个 core.sqlite 会抢锁。
 	if (!app.requestSingleInstanceLock()) {
 		app.quit();
@@ -446,6 +461,9 @@ async function start(): Promise<void> {
 	win = createWindow(backend.url);
 	// 悬浮球是同一进程里的第二扇窗（不是第二个进程）：同一个 origin，SSE / 语音权限照旧。
 	orbWin = createOrbWindow(backend.url);
+	// 悬浮球的 `setVisibleOnAllWorkspaces(…, { visibleOnFullScreen: true })` 会让 macOS 把
+	// 进程重新注册成 UIElement（Dock 图标和左上角菜单栏一起消失）—— 开头那次声明被它盖掉了。
+	regularApp();
 	setupOrbBridge(orbWin);
 	tray = createTray();
 	updater = createUpdater({
@@ -459,10 +477,10 @@ async function start(): Promise<void> {
 		},
 	});
 	installMenu({ checkUpdates: () => updater?.checkNow(), restart });
+	setupBridge(win);
 	if (process.platform === "win32") {
 		// 菜单对象留着给加速键用，但界面上不画那一行 —— 菜单已经搬进标题带。
 		win.setMenuBarVisibility(false);
-		setupBridge(win);
 	}
 	updater.start();
 }

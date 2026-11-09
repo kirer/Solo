@@ -2915,3 +2915,20 @@
   的采集对象，卸载与 Esc 的调用点不用改）、`seed/plugins/悬浮球/plugin.js` 的
   `MAX_AUDIO`、`seed/plugins/悬浮球/plugin.md`、`test/core/orb-plugin.test.ts`
   （不再出现 `new MediaRecorder`、发 `mime: "audio/wav"`、超长用例按新上限）。
+
+## ADR-122 macOS 上钉死「普通应用」：悬浮球的全空间置顶会把进程变成 UIElement
+
+**决定**：`desktop/src/main.ts` 在启动时和建完悬浮球窗之后各调一次 `app.setActivationPolicy("regular")`
+（`regularApp()`）。设置页加一行「检查更新」，走同一个桥（`solo:menu` 的 `check-updates`）和
+`solo:version`（`app.getVersion()`），所以 preload 与 `setupBridge` 改成两个平台都装。
+
+**为什么**：悬浮球窗要浮在全屏应用上面，用了
+`setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`。这一句在 macOS 上会让 Electron
+把进程注册成 `UIElement`（accessory）：窗口还在，**Dock 图标和左上角的菜单栏一起消失**，
+只剩右侧的托盘图标。启动时在开窗前声明一次不够 —— 建悬浮球窗时会被这次置顶调用盖掉，
+所以建完再要一次。为什么不是去掉全空间置顶：全屏里也要能叫出球，这是悬浮球的前提。
+
+**执行**：`desktop/src/main.ts` 的 `regularApp()`（开窗前、建球后各一次）、`setupBridge(win)`
+不再只在 `win32` 下装、`desktop/src/preload.cts` 的 `version`、`ui/app/src/panels/SettingsPage.tsx`
+的 `UpdateCheckRow`（浏览器里没有桥，只说「网页版没有自动更新」）。真正的更新逻辑不动：
+还是清单验签 → 下载 → 进程外替换（ADR-027 / ADR-029 / ADR-070）。

@@ -2628,3 +2628,30 @@
 .fold .prof-panel {
 	animation: none;
 }
+
+/* 设置行右边的小按钮（「检查更新 → 检查」）：和字段同一套底与描边，按下去缩一点。 */
+.set-action {
+	flex: none;
+	height: 28px;
+	padding: 0 12px;
+	border: 0.5px solid var(--rule);
+	border-radius: 8px;
+	background: var(--raised);
+	color: var(--ink);
+	font: inherit;
+	font-size: 13px;
+	cursor: pointer;
+	transition:
+		background-color 120ms ease,
+		border-color 120ms ease,
+		transform 90ms ease;
+}
+
+.set-action:hover {
+	background: var(--hover);
+	border-color: var(--line);
+}
+
+.set-action:active {
+	transform: scale(0.97);
+}
