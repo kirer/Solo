@@ -31,6 +31,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/people/:slug/model` | 换这个人用的模型（当场生效，写进 `settings.json` 的 `agentModels`） |
 | `POST` | `/api/people/:slug/continue` | 让他把最近这一轮接着做完（1.5.0 的 `continue`，不新增用户消息） |
 | `GET` | `/api/teams/:slug` | 一个团队的档案：README 正文 / 管理员 / 团队记忆 |
+| `POST` | `/api/files/stage` | 把正文里一个路径转成待发附件（走预览那套校验） |
 | `POST` | `/api/uploads` | 上传一个文件，拿回 id |
 | `GET` | `/api/uploads/:id` | 取回这个文件（图片内联，其余下载） |
 | `GET` | `/api/avatar/:seed` | 一个人的头像（SVG，服务端按名字画好） |
@@ -864,8 +865,27 @@ GET /api/files/preview?path=teams%2Fweekly%2Fworkspace%2Freport.md
   文本（按扩展名白名单 + 无扩展名，≤ 1 MB）。**文本一律 `text/plain`** —— HTML / SVG
   会在同源里执行脚本。
 - 响应头：`Content-Length`、`Cache-Control: no-cache`、`X-Content-Type-Options: nosniff`。
-- 消费者只有一个：`ui/app/src/panels/FilePreview.tsx`（右栏推入的一层），**按响应的
-  `Content-Type` 决定怎么画，不看扩展名**；失败时把 `error` 原样摆出来。
+- 消费者有两个：`ui/app/src/panels/FilePreview.tsx`（右栏推入的一层）和正文渲染
+  （`ui/app/src/lib/markdown.ts`：**图片后缀的路径直接画成 `<img>`**，其余仍是可点的
+  `.md-path`；读不出来由 `links.ts` 的 `installBrokenImages` 换成一句能点的提示）。
+  两处都**按响应的 `Content-Type` 决定怎么画，不看扩展名**；失败时把 `error` 原样摆出来。
+
+## 13.10 `POST /api/files/stage`（把正文里的一个路径转成待发附件）
+
+```
+POST /api/files/stage   body: { "path": "teams/weekly/workspace/report.md" }
+→ 200 { "id": "staged-<uuid>", "name": "report.md", "kind": "file", "bytes": 1234 }
+→ 404 { "error": "找不到这个文件" }   （没有、目录、隐藏文件、往上走、绝对路径、`~`、自家密钥与库）
+→ 400 { "error": "这种格式不支持预览" }（有，但不是 `preview` 认的那三类）
+```
+
+- **校验完全走 `GET /api/files/preview` 那一套**（两个根、`realpath` 判越界、密钥与库不开放、
+  三类格式各自的上限）—— 这里不新写任何一条路径规矩，也不放宽任何一条。
+- 产出的就是**一个普通附件**：落在 `<appRoot>/uploads/<id>` + `<id>.json`，`id` 带 `staged-`
+  前缀，因此 `GET /api/uploads/:id` 读得到；发出去以后和手选上传的附件没有区别。
+- 没人引用的 `staged-` 与普通孤儿一样，由启动时的 `sweep` 按 10 分钟宽限收走。
+- 消费者：`ui/app/src/panels/FilePreview.tsx` 的「转成附件发出去」→ `state/store.ts` 的
+  `staged` 交接 → `composer/Composer.tsx` 收进附件队列。
 
 ## 14. 静态文件
 

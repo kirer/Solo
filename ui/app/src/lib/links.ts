@@ -1,3 +1,4 @@
+import { MD_IMAGE_FAIL_CLASS } from "./markdown.ts";
 /**
  * 正文里的外链：默认在 Solo 里开，而不是跳走。
  *
@@ -28,6 +29,37 @@ export function installPathPreview(open: (path: string) => void): void {
 		event.preventDefault();
 		open(path);
 	});
+}
+
+/**
+ * 正文里的本地图片（`` `teams/x/a.png` `` 画成的那张）：读不出来时别留一个破图。
+ *
+ * `img` 的 `error` 不冒泡，所以用捕获阶段在 `document` 上听一次。换成一个可点的
+ * 「看不了，点这里去右栏」——路径本身没变，点下去还是走 `openRightFile`，由后端说
+ * 到底是找不到还是不支持。
+ */
+export function installBrokenImages(open: (path: string) => void): void {
+	document.addEventListener(
+		"error",
+		(event) => {
+			const target = event.target;
+			if (!(target instanceof HTMLImageElement)) return;
+			const holder = target.closest(".md-img");
+			if (holder === null) return;
+			const path = target.getAttribute("title") ?? target.getAttribute("alt") ?? "";
+			const label = path === "" ? "这张图看不了，点这里" : `${path} 看不了，点这里`;
+			const button = document.createElement("button");
+			button.type = "button";
+			button.className = MD_IMAGE_FAIL_CLASS;
+			button.textContent = label;
+			button.addEventListener("click", (click) => {
+				click.preventDefault();
+				if (path !== "") open(path);
+			});
+			holder.replaceChildren(button);
+		},
+		true,
+	);
 }
 
 export function installLinkBrowser(open: (url: string) => void): void {

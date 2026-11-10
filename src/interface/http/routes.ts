@@ -266,6 +266,17 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				return json(response, uploaded);
 			},
 		},
+		// 正文里的一个路径 → 待发附件（老板 2026-11-10）：发出去之前只活在附件目录里，
+		// 没人引用就由 `sweep` 收走。路径校验走的是同一条 `files.preview`，没放宽。
+		{
+			pattern: "/api/files/stage",
+			method: "POST",
+			handler: async ({ request, response, url }) => {
+				const body = await readJson<{ path?: unknown }>(request).catch(() => undefined);
+				const path = typeof body?.path === "string" ? body.path : (url.searchParams.get("path") ?? "");
+				return json(response, await app.uploads.stage(path));
+			},
+		},
 		// 消息里点到的文件：读一眼（图片 / PDF / 文本）。没有就 404，不能预览就 415，
 		// 两种都由界面把后端那句话原样摆出来 —— 别让一句路径变成一个死链接。
 		{

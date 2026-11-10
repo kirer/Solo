@@ -49,6 +49,33 @@ function pathOf(raw: string): string {
 	return slashy || filey ? value : "";
 }
 
+/**
+ * 一段路径**看起来是不是这张图**：图片后缀才内联，其余照旧「点了去右栏看」。
+ *
+ * 只看后缀，不看文件在不在 —— 生成 HTML 时没有 IO。真的不认识这份字节也没关系：
+ * `/api/files/preview` 回的不是 `image/*` 时 `img` 会 onError，外面挂一层
+ * 「看不了，点这里」的兜底（见 `Stream.tsx` 的 `installBrokenImages`）。
+ * 这一步只决定「要不要把路径画成图」，**不放宽任何校验**：路径能不能读仍然由
+ * `src/app/files.ts` 的三条硬线说了算。
+ */
+const IMAGE_SUFFIX = /\.(?:png|jpe?g|gif|webp|bmp|avif)$/i;
+
+function imagePathOf(raw: string): string {
+	const path = pathOf(raw);
+	return path !== "" && IMAGE_SUFFIX.test(path) ? path : "";
+}
+
+/**
+ * 正文里「看起来是图」的路径统一长这样：外层 `.md-img` 承担样式与「点击放大」的落点
+ * （和 `![alt](url)` 那条同一个类名），`data-path` 让点击仍然能落到右栏预览上。
+ */
+export const MD_IMAGE_FAIL_CLASS = "md-img-fail";
+
+/** 本地图也走同一条预览接口（它比 `<a href>` 多一层：三条硬底线在后端）。 */
+function filePreviewUrl(path: string): string {
+	return `/api/files/preview?path=${encodeURIComponent(path)}`;
+}
+
 function emphasis(text: string): string {
 	return text
 		.replace(/~~([^~\n]+?)~~/g, "<del>$1</del>")
@@ -65,6 +92,14 @@ function renderInline(raw: unknown): string {
 
 	// 1. 行内代码（代码里的一切都不再解释）
 	text = text.replace(/`([^`\n]+)`/g, (_whole: string, code: string) => {
+		const image = imagePathOf(code);
+		// 图片路径直接画成图（老板 2026-11-10）：`\`a/b.png\`` 就是那张图，不再只是可点的一行字。
+		if (image !== "") {
+			slots.push(
+				`<span class="md-img"><img src="${escapeAttr(filePreviewUrl(image))}" alt="${escapeAttr(image)}" title="${escapeAttr(image)}" loading="lazy" decoding="async"></span>`,
+			);
+			return `${SLOT}${slots.length - 1}${SLOT}`;
+		}
 		const path = pathOf(code);
 		// 像文件的那一段 code 多带一个 `data-path`：点它是「预览这个文件」，不是选字。
 		slots.push(
@@ -101,6 +136,13 @@ function renderInline(raw: unknown): string {
 			return `${SLOT}${slots.length - 1}${SLOT}`;
 		}
 		if (!/^(?:https?:\/\/|mailto:)/i.test(href)) {
+			const image = imagePathOf(href);
+			if (image !== "") {
+				slots.push(
+					`<span class="md-img"><img src="${escapeAttr(filePreviewUrl(image))}" alt="${escapeAttr(label)}" title="${escapeAttr(image)}" loading="lazy" decoding="async"></span>`,
+				);
+				return `${SLOT}${slots.length - 1}${SLOT}`;
+			}
 			const path = pathOf(href);
 			slots.push(
 				path === ""
@@ -132,6 +174,14 @@ function renderInline(raw: unknown): string {
 	text = text.replace(
 		/(^|[\s(（\[【：:，,、])((?:[A-Za-z0-9_.@+\-一-龥]+\/)+[A-Za-z0-9_.@+\-一-龥]*\.[a-z]{1,6})(?![A-Za-z0-9_./-])/g,
 		(_whole: string, lead: string, raw: string) => {
+			const image = imagePathOf(raw);
+			// 一段独占的图片路径（`teams/x/workspace/shot.png`）就画成图；其余照旧是可点的路径。
+			if (image !== "") {
+				slots.push(
+					`<span class="md-img"><img src="${escapeAttr(filePreviewUrl(image))}" alt="${escapeAttr(image)}" title="${escapeAttr(image)}" loading="lazy" decoding="async"></span>`,
+				);
+				return `${lead}${SLOT}${slots.length - 1}${SLOT}`;
+			}
 			const path = pathOf(raw);
 			if (path === "") return `${lead}${raw}`;
 			slots.push(`<a class="md-path" data-path="${escapeAttr(path)}" href="#" title="点击预览">${escapeHtml(raw)}</a>`);

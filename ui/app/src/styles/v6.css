@@ -1173,6 +1173,43 @@
 	overflow-wrap: anywhere;
 }
 
+/* 路径下面那行动作：把这份文件转成附件发出去（老板 2026-11-10）。 */
+.fp-actions {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 0 0 10px;
+}
+
+.fp-stage {
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	font-size: 12px;
+	line-height: 24px;
+	padding: 0 12px;
+	cursor: pointer;
+}
+
+.fp-stage:hover:not(:disabled) {
+	background: var(--hover);
+	color: var(--ink);
+}
+
+.fp-stage:disabled {
+	cursor: default;
+	opacity: 0.55;
+}
+
+.fp-stage-note {
+	color: var(--danger, #ec1313);
+	font-size: 11.5px;
+	line-height: 16px;
+}
+
 .fp-note {
 	margin: 24px 4px;
 	color: var(--ink-3);

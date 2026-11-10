@@ -9,7 +9,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
 import { bootstrap, openBrowser, openDock, openRightFile } from "./state/store.ts";
-import { installLinkBrowser, installPathPreview } from "./lib/links.ts";
+import { installBrokenImages, installLinkBrowser, installPathPreview } from "./lib/links.ts";
 import { fetchLastRuntimeReport } from "./api/client.ts";
 import { installJankMonitor } from "./lib/jank.ts";
 import { installCodeCopy } from "./lib/copy-code.ts";
@@ -55,6 +55,10 @@ installLinkBrowser((url) => {
 });
 // 正文里的文件路径：点开是右栏的预览层（和插件页同一叠纸，返回回资料页）。
 installPathPreview((path) => {
+	openRightFile(path);
+});
+// 正文里画出来的本地图：读不出来时换成一句能点的提示，别留破图。
+installBrokenImages((path) => {
 	openRightFile(path);
 });
 void bootstrap();

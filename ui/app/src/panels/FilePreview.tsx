@@ -6,7 +6,8 @@
  * 认不出的、没有的、太大的，都把它那句话原样摆出来 —— 一个路径不该变成死链接。
  */
 import { useEffect, useState } from "react";
-import { filePreviewUrl } from "../api/client.ts";
+import { filePreviewUrl, stageFile } from "../api/client.ts";
+import { stageToComposer } from "../state/store.ts";
 
 type State =
 	| { readonly kind: "loading" }
@@ -16,6 +17,8 @@ type State =
 
 export function FilePreview(props: { readonly path: string }): JSX.Element {
 	const [state, setState] = useState<State>({ kind: "loading" });
+	/** 「转成附件」的状态：空闲 / 转着 / 上一次失败的那句话。 */
+	const [staging, setStaging] = useState<{ readonly busy: boolean; readonly error: string }>({ busy: false, error: "" });
 
 	useEffect(() => {
 		let live = true;
@@ -53,6 +56,31 @@ export function FilePreview(props: { readonly path: string }): JSX.Element {
 	return (
 		<div className="fp" aria-label={props.path}>
 			<p className="fp-path mono">{props.path}</p>
+			{/* 路径 → 附件（老板 2026-11-10）：点了就进输入卡的队列，可以发到任何频道。
+			    能不能转由后端说了算 —— 它是一个普通附件，和手选上传的没区别。 */}
+			<div className="fp-actions">
+				<button
+					type="button"
+					className="fp-stage"
+					disabled={staging.busy || state.kind === "note"}
+					onClick={() => {
+						if (staging.busy) return;
+						setStaging({ busy: true, error: "" });
+						stageFile(props.path)
+							.then((uploaded) => {
+								setStaging({ busy: false, error: "" });
+								stageToComposer({ path: props.path, id: uploaded.id, name: uploaded.name, kind: uploaded.kind, bytes: uploaded.bytes });
+							})
+							.catch((error: unknown) => {
+								const text = error instanceof Error ? error.message : String(error);
+								setStaging({ busy: false, error: text });
+							});
+					}}
+				>
+					{staging.busy ? "转成附件…" : "转成附件发出去"}
+				</button>
+				{staging.error === "" ? null : <span className="fp-stage-note">{staging.error}</span>}
+			</div>
 			{state.kind === "loading" ? <p className="fp-note">读文件…</p> : null}
 			{state.kind === "note" ? <p className="fp-note" data-error={state.error ? "true" : "false"}>{state.text}</p> : null}
 			{state.kind === "image" ? <img className="fp-image" src={state.url} alt={props.path} /> : null}

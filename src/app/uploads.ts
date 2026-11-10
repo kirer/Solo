@@ -5,15 +5,29 @@
  * 分界线照旧：**app 决定「这个 id 是什么、该不该内联、叫什么名字」**，
  * 传输层只负责把字节推出去。
  */
+import { randomUUID } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
+import { basename } from "node:path";
+import { createFiles } from "./files.ts";
 import type { CoreServices } from "./types.ts";
 import { AppError } from "./errors.ts";
 import {
 	contentDisposition,
 	kindOfMime,
+	putUpload,
 	readUploadMeta,
 	sweepOrphanUploads,
 	uploadPathOf,
 } from "../core/channel/attachments.ts";
+
+/**
+ * 「把正文里这个路径转成附件」用的前缀。
+ *
+ * 生成的是**真的一个附件**（同一个目录、同一份元数据），只是名字带前缀：发出去之前它
+ * 没人引用，`sweep` 会照旧收走；发出去以后消息里引用的是它的 id，和手选上传的没区别。
+ * 前缀的作用只有一个 —— 让 `read` 知道「这个能在还没发的时候预览」。
+ */
+export const STAGED_PREFIX = "staged-";
 
 /** 取一个附件时要给传输层的东西。 */
 export type UploadForRead = {
@@ -28,6 +42,8 @@ export type UploadForRead = {
 
 export function createUploads(shell: CoreServices) {
 	const root = shell.layout.uploadsRoot;
+	/** 转附件时走的是同一条预览/校验：路径规矩只有一份。 */
+	const files = createFiles(shell.layout);
 
 	/**
 	 * `preview` = 在聊天里点开看一眼：图片 / PDF / 文本内联，其余照旧下载。
@@ -82,5 +98,32 @@ export function createUploads(shell: CoreServices) {
 		}
 	}
 
-	return { root, read, sweep };
+	/**
+	 * 把正文里的一个路径转成一个**待发附件**。
+	 *
+	 * 两个必须：①**先过 `files.preview`**，路径校验一条都不新写 —— 那三条硬线（相对路径、
+	 * 不许 `..`、隐藏文件与自家密钥不给看）本来就在那儿，绕开它等于开了第二个后门；
+	 * ②只搬 `preview` 认的字节（文本 / 图片 / PDF，各有大小上限），认不出的不搬 ——
+	 * 转成附件以后，界面就要负责把它画出来，画不了的东西别往队列里放。
+	 *
+	 * id 带 `STAGED_PREFIX`：发出去之前没人引用，`sweep` 到点会收走，不会一直占磁盘。
+	 */
+	async function stage(path: string): Promise<{ readonly id: string; readonly name: string; readonly kind: "image" | "file"; readonly bytes: number }> {
+		const file = await files.preview(path);
+		// 认不出的格式与找不到分开说：前者是「换不了」，后者是「没这个文件」。
+		if (file.kind === "none") throw new AppError(file.status === 415 ? "bad-request" : "not-found", file.reason);
+		let bytes: Uint8Array;
+		try {
+			bytes = await readFile(file.path);
+		} catch {
+			throw new AppError("not-found", "这个文件读不出来");
+		}
+		// 读完再看一眼大小：`preview` 判的是它 `stat` 那一刻的大小，中间被改大就不搬。
+		const now = await stat(file.path).catch(() => undefined);
+		if (now === undefined || now.size !== bytes.byteLength) throw new AppError("bad-request", "文件正在变，稍后再试");
+		const name = basename(file.name) === "" ? "附件" : file.name;
+		return await putUpload(root, { id: STAGED_PREFIX + randomUUID(), name, mime: file.mime, bytes, at: Date.now() });
+	}
+
+	return { root, read, stage, sweep };
 }

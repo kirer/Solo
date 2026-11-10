@@ -1393,6 +1393,13 @@ body[data-pane="chat"] .sidebar {
 	color: var(--ink-3);
 }
 
+/* 代码附件的语言标：和正文代码块的角标同一颗，只是这里没有「复制」（上面已有下载）。 */
+.attach-view-lang {
+	padding: 0 2px 6px;
+	font-size: 11px;
+	color: var(--ink-3);
+}
+
 /* ── 窄屏 ───────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {

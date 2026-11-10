@@ -7,13 +7,13 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getMentionable, uploadFile } from "../api/client.ts";
+import { getMentionable, uploadFile, uploadUrl } from "../api/client.ts";
 import type { Uploaded } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { humanBytes } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
 import { pendingChoice } from "./choice.ts";
-import { send, setReply } from "../state/store.ts";
+import { send, setReply, takeStaged } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -51,6 +51,32 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 	const [mention, setMention] = useState<{ at: number; query: string } | null>(null);
 	const [candidates, setCandidates] = useState<Candidate[]>([]);
 	const [pick, setPick] = useState(0);
+
+	// 右栏预览层点「转成附件发出去」：接过来放进队列（已经是上传好的附件，不用再传）。
+	// 交接是一次性的，`takeStaged()` 取完就清，不会重复加。
+	const staged = useStore((state) => state.staged);
+	useEffect(() => {
+		if (staged === null) return;
+		const taken = takeStaged();
+		if (taken === null) return;
+		setDrafts((current) => {
+			if (current.length >= MAX_PER_MESSAGE) {
+				props.toast(`一条消息最多带 ${String(MAX_PER_MESSAGE)} 个附件`, "error");
+				return current;
+			}
+			return [
+				...current,
+				{
+					key: `staged-${taken.id}`,
+					name: taken.name,
+					kind: taken.kind,
+					preview: taken.kind === "image" ? uploadUrl(taken.id) : "",
+					state: "done" as const,
+					uploaded: { id: taken.id, name: taken.name, kind: taken.kind, bytes: taken.bytes },
+				},
+			];
+		});
+	}, [staged, props]);
 
 	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);

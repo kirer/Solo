@@ -126,17 +126,31 @@ function metaPathOf(root: string, id: string): string | undefined {
 	return isUploadId(id) ? join(root, `${id}.json`) : undefined;
 }
 
-/** 落一个新附件，返回频道文档里要存的那条引用。 */
+/**
+ * 落一个新附件，返回频道文档里要存的那条引用。
+ *
+ * `id` 只有服务端自己生成时才会传（「把这个路径转成附件」用，见 `src/app/uploads.ts`）；
+ * 一律仍要过 `isUploadId` 白名单，别让调用方成为一个新入口。
+ */
 export async function putUpload(
 	root: string,
-	input: { readonly name: string; readonly mime: string; readonly bytes: Uint8Array; readonly at: number },
+	input: {
+		readonly name: string;
+		/** 存下来的 mime 一律是裸类型：`text/plain; charset=utf-8` 这类参数由读的时候再生。 */
+		readonly mime: string;
+		readonly bytes: Uint8Array;
+		readonly at: number;
+		readonly id?: string;
+	},
 ): Promise<Attachment> {
-	const id = randomUUID();
+	const id = input.id ?? randomUUID();
+	if (!isUploadId(id)) throw new Error(`附件 id 不合法：${id}`);
 	await mkdir(root, { recursive: true });
 	await writeFile(join(root, id), input.bytes);
 	const meta: UploadMeta = {
 		name: safeName(input.name),
-		mime: input.mime,
+		// 参数（`; charset=…`）不存：存了以后 `read` 再加一次就成了 `charset=utf-8; charset=utf-8`。
+		mime: mimeOf(input.mime),
 		bytes: input.bytes.byteLength,
 		at: input.at,
 	};

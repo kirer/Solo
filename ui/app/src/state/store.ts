@@ -77,6 +77,13 @@ export type State = {
 	rightPage: string | null;
 	/** 右栏里推入的文件预览（正文里点的那个相对路径；`null` = 没有）。与插件页同一层。 */
 	rightFile: string | null;
+	/**
+	 * 从正文里「转成附件」的那个文件（右栏预览层点的那颗按钮）。
+	 *
+	 * 只作一次性交接：输入卡看见它就把它塞进附件队列，然后 `takeStaged()` 清空。
+	 * 为什么不直接改 Composer 的 state：那个 state 在输入卡里，右栏碰不到它。
+	 */
+	staged: { readonly path: string; readonly id: string; readonly name: string; readonly kind: "image" | "file"; readonly bytes: number } | null;
 	/** 右栏拖出来的宽度（px，资料 / 任务 / 工作台共用）；`null` = 没拖过，348。 */
 	dockWidth: number | null;
 	/** 内置浏览器开着看哪个地址（`null` = 关着）。正文里点外链就开在这里。 */
@@ -142,6 +149,7 @@ const initial: State = {
 	dock: null,
 	rightPage: null,
 	rightFile: null,
+	staged: null,
 	dockWidth: readDockWidth(),
 	browser: null,
 	trail: [{ kind: "channel" }],
@@ -719,6 +727,22 @@ export function closeRightPage(): void {
 /** 在右栏里推入一份文件预览（正文里点到的相对路径）：和插件页同一层，返回退回资料页。 */
 export function openRightFile(path: string): void {
 	patch({ nav: "fwd", rightFile: path, rightPage: null, dock: null, pluginView: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+}
+
+/**
+ * 右栏预览层里点「转成附件」：把这个待发附件交给输入卡。
+ *
+ * 交接完顺手收起预览层 —— 附件已经进了输入卡的队列，原地留着一层纸只会挡住要发的话。
+ */
+export function stageToComposer(file: { readonly path: string; readonly id: string; readonly name: string; readonly kind: "image" | "file"; readonly bytes: number }): void {
+	patch({ staged: file, rightFile: null, nav: "back" });
+}
+
+/** 输入卡取走交接（取一次就清）：返回 `null` 表示没有待接的。 */
+export function takeStaged(): State["staged"] {
+	const pending = getState().staged;
+	if (pending !== null) patch({ staged: null });
+	return pending;
 }
 
 /** 收起右栏里的文件预览：回资料页，右栏本身不关。 */

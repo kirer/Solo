@@ -527,6 +527,22 @@
 	cursor: zoom-in;
 }
 
+/* 正文里画出来的本地图读不出来时（文件没了 / 不是真图）：不留破图，换成一句能点的。 */
+.md-img-fail {
+	border: 1px dashed var(--line);
+	border-radius: var(--r-row);
+	background: transparent;
+	color: var(--ink-2);
+	font: inherit;
+	padding: 6px 10px;
+	cursor: pointer;
+	text-align: left;
+}
+
+.md-img-fail:hover {
+	background: var(--hover);
+}
+
 .md-task {
 	display: flex;
 	align-items: flex-start;

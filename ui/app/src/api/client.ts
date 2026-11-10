@@ -209,6 +209,29 @@ export async function uploadFile(file: File): Promise<Uploaded> {
 /** 附件下载/预览地址。 */
 export const uploadUrl = (id: string): string => `/api/uploads/${encodeURIComponent(id)}`;
 
+/**
+ * 把正文里的一个路径转成待发附件。
+ *
+ * 这是「路径 → 附件」的唯一入口：路径校验在后端那条 `files.preview` 里，客户端不判。
+ * 转完拿到的是一个普通附件（`{id,name,kind,bytes}`），和手选上传的一模一样。
+ */
+export async function stageFile(path: string): Promise<Uploaded> {
+	const response = await fetch("/api/files/stage", {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ path }),
+	});
+	if (response.ok) return (await response.json()) as Uploaded;
+	let message = `转成附件失败（${String(response.status)}）`;
+	try {
+		const body = (await response.json()) as { error?: unknown };
+		if (typeof body.error === "string") message = body.error;
+	} catch {
+		// 保留兜底
+	}
+	throw new Error(message);
+}
+
 /** 正文里那份文件的预览地址（后端只认相对路径，两个根都试）。 */
 export const filePreviewUrl = (path: string): string => `/api/files/preview?path=${encodeURIComponent(path)}`;
 
