@@ -33,6 +33,11 @@ const MIME: Record<string, string> = {
 	".ico": "image/x-icon",
 	".woff2": "font/woff2",
 	".map": "application/json; charset=utf-8",
+	// WebAssembly.instantiateStreaming 只在 MIME 是 application/wasm 时肯直接编译；
+	// 缺这一条会退成 ArrayBuffer 那一版，慢一截还多一份内存。
+	".wasm": "application/wasm",
+	// 第三方声明（设置 → 关于）就是 markdown 原文，按纯文本发，直链点开能直接看。
+	".md": "text/markdown; charset=utf-8",
 };
 
 /**

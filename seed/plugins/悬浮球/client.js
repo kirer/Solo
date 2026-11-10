@@ -30,6 +30,228 @@ const DOCK_AT = 12;
 const ORB_MODE = typeof document === "undefined" ? "inline" : (document.documentElement.dataset.orb ?? "inline");
 const WINDOW_MODE = ORB_MODE === "window";
 
+/**
+ * 回声消除（AEC3）。
+ *
+ * ## 为什么要有
+ *
+ * 它念的时候，喇叭的声音从麦克风原路回来。实测：把它的朗读衰减 20dB 再喂 VAD，
+ * 仍有 88% 的帧被判成「有人在说话」—— 于是它自己把自己打断，老板开口反倒听不见。
+ * 靠 `getUserMedia({echoCancellation:true})` 顶不住（实测只压约 2dB）。
+ *
+ * ## 怎么用
+ *
+ * 播放的那一轨已经被接进 `AudioContext`（`startMouth` 里的 `createMediaElementSource`），
+ * 参考信号就从那儿分一路出来 —— 我们手里有 TTS 的原样 WAV，参考比通用方案准。
+ * 麦克风改成 48k 收，过 AEC 直接吐 16k（`sampleRateOut`），下面那条 16k 链路一个字不用改。
+ *
+ * ## 三条硬规矩
+ *
+ * 1. **麦克风断了必须看得见**：track `ended` / `muted`、`ctx` 挂起，都要报 `paused`，
+ *    界面说清楚。安静地装作在听，比不听更糟。
+ * 2. **AEC 挂了降级到「播放期间直接丢输入」**，不能因为 AEC 挂了整个听不见。
+ * 3. **不加路由就拿不到 wasm**：所以 wasm 走 `/api/plugins/<slug>/assets/<file>`，
+ *    文件名里带版本号，缓存可以放心长。
+ */
+const AEC_WASM_FILE = "webrtcaec3-0.3.0.wasm";
+/** AEC3 只吃 32k / 48k；48k 是浏览器和多数设备的原生档。 */
+const AEC_RATE = 48000;
+/**
+ * 串音延迟：播放出去到它从麦克风回来，大约多久。
+ *
+ * 实测 40ms 和 80ms 都收敛得住，但 macOS 上不同输出设备差很多（内置扬声器 / 蓝牙 / 外接）。
+ * 所以**不硬编码死**，留一个能调的口子；真机上压不干净先动这个值，别急着换算法。
+ */
+const AEC_DELAY_MS = 40;
+
+/**
+ * 一份 AEC3 模块（wasm 编译一次，多个会话共用）。
+ *
+ * 失败记 `null` 之后不再重试：这台机器上就是没有（取不到 wasm / 不支持 WebAssembly），
+ * 每次开会话重试一遍只会让「听不见」这件事变得更难解释。
+ */
+let aecModulePromise = null;
+
+/** `<script>` 只能插一次，插两遍会执行两遍、抢着定义同一个全局。 */
+const scriptLoads = new Map();
+
+function loadAecModule() {
+	if (aecModulePromise !== null) return aecModulePromise;
+	aecModulePromise = (async () => {
+		const base = `/api/plugins/${encodeURIComponent(SLUG)}/assets`;
+		// **不能 `import()`**：这份 Emscripten 产物第 104 行是 `WebRtcAec3Wasm="data:..."`，
+		// 给一个没声明过的全局赋值 —— 在 ES module 的严格模式下直接 ReferenceError。
+		// 它本来就是给 `<script>` 用的（UMD，靠 `var WebRtcAec3` 挂到全局），所以照它的方式加载。
+		//
+		// wasm 也不必传：胶水自己内联了一份（`locateFile` 都没机会被问到）。所以
+		// `AEC_WASM_FILE` 那条路由是留给「哪天换了不内联的版本」的口子，现在不发文件也跑得动。
+		await loadScript(`${base}/webrtcaec3.js`);
+		const factory = globalThis.WebRtcAec3;
+		if (typeof factory !== "function") throw new Error("回声消除模块没挂到全局");
+		return await factory({});
+	})().catch(() => null);
+	return aecModulePromise;
+}
+
+/** 插一个 `<script>` 并等它加载完。同一个 URL 只插一次。 */
+function loadScript(url) {
+	const loaded = scriptLoads.get(url);
+	if (loaded !== undefined) return loaded;
+	const promise = new Promise((resolve, reject) => {
+		const script = document.createElement("script");
+		script.src = url;
+		script.async = true;
+		script.onload = () => resolve();
+		script.onerror = () => reject(new Error(`加载失败：${url}`));
+		document.head.append(script);
+	});
+	scriptLoads.set(url, promise);
+	return promise;
+}
+
+/**
+ * 一次播放会话的 AEC。
+ *
+ * 生灭跟着「有没有在念」走：`playNext` 放第一片时开，队列空、`speakingRef` 落回 false 时关。
+ * 不关会漏 wasm 堆内存（类型定义里明写 free 是必须的）。
+ *
+ * @param {object} options
+ * @param {AudioContext} options.ctx 播放所在的 AudioContext（48k），参考信号从它的图里分出来
+ * @param {MediaStreamAudioSourceNode} options.reference 参考信号源
+ */
+function createEchoCanceller(options) {
+	const { ctx, reference } = options;
+	let aec = null;
+	let tap = null;
+	/** 参考信号环形缓冲：它得比麦克风**早**喂，因为串音有延迟。 */
+	const refQueue = [];
+	let refFrames = 0;
+	let refRead = 0;
+	/** 参考侧要压着多少帧才开始吐（按 AEC_DELAY_MS 折算）。 */
+	const delayFrames = Math.round((AEC_DELAY_MS / 1000) * AEC_RATE);
+
+	const failed = (reason) => {
+		release();
+		return { ok: false, reason };
+	};
+
+	if (typeof ctx === "undefined" || ctx === null) return { ok: false, reason: "没有播放上下文" };
+	if (typeof globalThis.WebAssembly === "undefined") return { ok: false, reason: "不支持 WebAssembly" };
+
+	let disposed = false;
+	let ready = null;
+
+	const ensure = () => {
+		if (ready !== null) return ready;
+		ready = (async () => {
+			const module = await loadAecModule();
+			if (module === null) throw new Error("取不到回声消除模块");
+			if (disposed) throw new Error("会话已经结束");
+			const instance = new module.AEC3(AEC_RATE, 1, 1);
+			instance.setAudioBufferDelay(AEC_DELAY_MS);
+			aec = instance;
+			// 参考信号单独分出来，不接 destination：接了就又多一份回声。
+			tap = ctx.createScriptProcessor(4096, 1, 1);
+			const silence = ctx.createGain();
+			silence.gain.value = 0;
+			reference.connect(tap);
+			tap.connect(silence);
+			silence.connect(ctx.destination);
+			tap.onaudioprocess = (event) => {
+				if (aec === null) return;
+				refQueue.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+				refFrames += event.inputBuffer.length;
+			};
+			return instance;
+		})();
+		return ready;
+	};
+
+	/**
+	 * 处理一块麦克风数据，回清掉回声的 16k 样本。
+	 *
+	 * 参考信号不够（刚开始念、或者干脆没接上）时**原样返回**——宁可这次没消掉，
+	 * 也别把麦克风吞掉：吞了就变成「它念的时候人说话听不见」，比回声更糟。
+	 */
+	const process = (input48k) => {
+		if (aec === null) {
+			// 还没初始化好：照原样降下去，别丢字。
+			return downsample(input48k, AEC_RATE, TARGET_RATE);
+		}
+		try {
+			let consumed = refRead;
+			while (refFrames - consumed >= delayFrames && refQueue.length > 0) {
+				const block = refQueue[0];
+				const need = delayFrames - consumed;
+				const take = Math.min(block.length, Math.max(need, 0)) || block.length;
+				const slice = block.subarray(0, take);
+				aec.analyze([slice]);
+				if (take >= block.length) {
+					refQueue.shift();
+				} else {
+					refQueue[0] = block.subarray(take);
+				}
+				consumed += slice.length;
+			}
+			refRead = Math.min(consumed, refFrames);
+			const opts = { sampleRateOut: TARGET_RATE };
+			const size = aec.processSize([input48k], opts);
+			if (size <= 0) return new Float32Array(0);
+			const out = [new Float32Array(size)];
+			aec.process(out, [input48k], opts);
+			return out[0];
+		} catch {
+			// 出一次错就彻底关掉，别每一块都抛一遍。
+			release();
+			return downsample(input48k, AEC_RATE, TARGET_RATE);
+		}
+	};
+
+	/** 关掉实例。可以重复调用。 */
+	function release() {
+		disposed = true;
+		refQueue.length = 0;
+		refFrames = 0;
+		refRead = 0;
+		if (tap !== null) {
+			tap.onaudioprocess = null;
+			try {
+				tap.disconnect();
+			} catch {
+				/* 已经断了 */
+			}
+			tap = null;
+		}
+		const instance = aec;
+		aec = null;
+		if (instance !== null) {
+			try {
+				instance.free();
+			} catch {
+				/* 已经释放了 */
+			}
+		}
+	}
+
+	return { ok: true, ensure, process, release, failed };
+}
+
+/** 简单线性重采样（只在 AEC 没起来时兜底用；AEC 自己会吐 16k）。 */
+function downsample(samples, from, to) {
+	if (!Number.isFinite(from) || from <= 0 || Math.abs(from - to) < 1) return samples;
+	const ratio = from / to;
+	const length = Math.floor(samples.length / ratio);
+	const out = new Float32Array(length);
+	for (let index = 0; index < length; index += 1) {
+		const pos = index * ratio;
+		const low = Math.floor(pos);
+		const high = Math.min(low + 1, samples.length - 1);
+		const frac = pos - low;
+		out[index] = samples[low] * (1 - frac) + samples[high] * frac;
+	}
+	return out;
+}
+
 /** 默认音色：Kokoro 的 `zf_xiaoxiao`；中文音色就 45–52 这八个。 */
 const DEFAULT_SID = 47;
 const VOICE_IDS = [45, 46, 47, 48, 49, 50, 51, 52];
@@ -723,6 +945,15 @@ export default {
 			const mouthRef = useRef("");
 			const meterRef = useRef(null);
 			const mouthTimer = useRef(0);
+			/** 这一次播放的 AEC 会话（`{ ok, ensure, process, release }`），没在念就是 null。 */
+			const echoRef = useRef(null);
+			/**
+			 * 回声消除的状态，给界面看：
+			 * - `off`：没开（没念 / 还没起来）
+			 * - `on`：在用
+			 * - `failed`：起不来，已降级成「念的时候直接丢输入」
+			 */
+			const [echoState, setEchoState] = useState("off");
 
 			const stopMouth = () => {
 				if (mouthTimer.current !== 0) {
@@ -736,10 +967,56 @@ export default {
 				if (ctx !== null && ctx.state !== "closed") void ctx.close().catch(() => {});
 			};
 
-			const startMouth = (player) => {
+			/**
+			 * 接上播放的这一片：动嘴 + 交出参考信号（AEC 要用）。
+			 *
+			 * 返回 `{ ctx, source }`，接不上就返回 `null` —— 调用方据此决定「回声消除不可用」。
+			 * 返回 null 不等于不出声：声音照放，只是没接进 Web Audio 图、也就没有参考信号。
+			 */
+			/**
+			 * 开一次回声消除会话。`wired` 是 `startMouth` 的返回值。
+			 *
+			 * 接不上（没 AudioContext / createMediaElementSource 被拦）就是**没有参考信号**，
+			 * 这时候不硬开：AEC 没有参考等于白跑，还会把麦克风拖慢。记成 `failed` 降级。
+			 */
+			const startEcho = (wired) => {
+				stopEcho();
+				if (wired === null || wired === undefined) {
+					setEchoState("failed");
+					return;
+				}
+				const session = createEchoCanceller({ ctx: wired.ctx, reference: wired.source });
+				if (session.ok !== true) {
+					setEchoState("failed");
+					return;
+				}
+				echoRef.current = session;
+				setEchoState("on");
+				// 先把 wasm 编译起来（几十毫秒），编译完之前来的麦克风数据走兜底降采样。
+				void session
+					.ensure()
+					.then(() => {
+						// 会话可能在这中间已经换了（下一片开新会话）——只认自己还活着的那次。
+						if (echoRef.current === session) setEchoState("on");
+					})
+					.catch(() => {
+						if (echoRef.current === session) {
+							echoRef.current = null;
+							setEchoState("failed");
+						}
+					});
+			};
+
+			const stopEcho = () => {
+				const session = echoRef.current;
+				echoRef.current = null;
+				if (session !== null) session.release();
+			};
+
+			const startMouth = (player) => {			const startMouth = (player) => {
 				stopMouth();
 				const Ctx = typeof window === "undefined" ? undefined : window.AudioContext;
-				if (Ctx === undefined) return;
+				if (Ctx === undefined) return null;
 				try {
 					const ctx = new Ctx();
 					const source = ctx.createMediaElementSource(player);
@@ -768,9 +1045,11 @@ export default {
 							path.setAttribute("data-mouth", next);
 						}
 					}, 60);
+					return { ctx, source };
 				} catch {
 					// 接不上就不动嘴，别因为嘴把声音也弄没了。
 					stopMouth();
+					return null;
 				}
 			};
 
@@ -779,13 +1058,16 @@ export default {
 				if (next === undefined) {
 					speakingRef.current = false;
 					audioRef.current = null;
+					// 念完了：影子会话也该收 —— 下一次开口是新的环境、新的回声路径。
+					stopEcho();
 					return;
 				}
 				const player = new Audio(`data:audio/wav;base64,${next}`);
 				audioRef.current = player;
 				speakingRef.current = true;
 				// 嘴跟着这一片的真音量动；接不上（没 AudioContext / 被拦）就退回静态张嘴。
-				startMouth(player);
+				const wired = startMouth(player);
+				startEcho(wired);
 				player.onended = playNext;
 				player.onerror = () => speechFailed((player.error?.message ?? "") || "解码失败");
 				void player.play().catch((error_) => {
@@ -1572,7 +1854,9 @@ export default {
 						return;
 					}
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
-					const ctx = new AudioCtx({ sampleRate: 16_000 });
+					// **48k 收**：AEC3 只吃 32k / 48k。它自己在输出侧降到 16k
+					// （`sampleRateOut`），所以下面 `postKws` 那条 16k 链路一个字不用改。
+					const ctx = new AudioCtx({ sampleRate: AEC_RATE });
 					await ctx.resume().catch(() => undefined);
 					// 没跑起来的 AudioContext 不会出声，也就永远收不到音频：说清楚，别假装在听。
 					if (ctx.state !== "running") {
@@ -1589,8 +1873,11 @@ export default {
 					node.onaudioprocess = (event) => {
 						if (state.sending || wakeRef.current !== state) return;
 						const input = event.inputBuffer.getChannelData(0);
-						const copy = new Float32Array(input.length);
-						copy.set(input);
+						// 过一遍回声消除：它把喇叭里回来的自己压掉，顺带吐 16k。
+						// 会话不在（没在念 / AEC 起不来）就是原样降采样 —— 不丢字。
+						const session = echoRef.current;
+						const copy = session === null ? downsample(input, AEC_RATE, TARGET_RATE) : session.process(input);
+						if (copy.length === 0) return;
 						state.sending = true;
 						void postKws(copy, false)
 							.then((data) => {

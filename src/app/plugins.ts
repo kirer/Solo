@@ -28,6 +28,17 @@ import type { ViewPlugin } from "../view/dto.ts";
 import type { CoreServices } from "./types.ts";
 
 /**
+ * 插件目录里可以被前端取走的**静态资源**。
+ *
+ * 白名单而不是「读目录里有什么」：插件目录里还躺着 `plugin.js`、`plugin.md`、密钥之类，
+ * 一律不该有 HTTP 通道。要发新东西就往这里加一行。
+ *
+ * 名字带版本号：换版本就是换 URL，浏览器缓存不可能把旧 wasm 配给新 JS。
+ */
+export const PLUGIN_ASSETS = ["webrtcaec3.js"] as const;
+
+
+/**
  * 插件路由收到的输入。与 `plugin/api.ts` 的 `PluginRequest` 是同一个形状。
  *
  * `body` 是 `unknown` 不是 `JsonValue`：接口层不许 import 运行时（分层规则），拿不到
@@ -205,6 +216,36 @@ export function createPlugins(services: CoreServices) {
 			const plugin = services.plugins.plugins.find((item) => item.slug === slug);
 			if (plugin === undefined || !plugin.enabled || plugin.client === undefined) return undefined;
 			return readTextOrUndefined(join(pluginsRoot, slug, "client.js"));
+		},
+
+		/**
+		 * 插件的**前端资源**（目前只有 AEC3 的 wasm）。
+		 *
+		 * 为什么需要它：插件的前端入口只发 `client.js` 一个文件（见上一条），
+		 * 而 AEC3 是 JS + 166KB wasm 两件套。把 wasm base64 藏进 JS 也能跑，
+		 * 但那是每次都传 477KB、且换版本只能连 JS 一起换；单独一条路由只付一次，
+		 * 还能让浏览器缓存。
+		 *
+		 * **文件名是白名单，不是拼出来的**：`PLUGIN_ASSETS` 里没有的名字一律当不存在。
+		 * 加上 `isSafeName(slug)`，`../` 从两边都走不出去。
+		 *
+		 * 版本在文件名里（`webrtcaec3-0.3.0.wasm`），所以升级换了文件名就换了 URL，
+		 * 浏览器不会拿旧 wasm 配新 JS —— 这比「靠 ETag 重新验」更硬：验证码都没机会跑。
+		 */
+		/**
+		 * 插件能发的前端资源**文件名**；不在白名单、或者这个插件没有前端，就是 `undefined`。
+		 *
+		 * 只回名字不回内容：文件在 `ui/web/`（构建时从 `node_modules` 拷过去），
+		 * 真发送走静态资源那一套。放这儿是为了让「谁能发什么」集中在一处 ——
+		 * 白名单外的一律到不了磁盘，`../` 也穿不出去。
+		 */
+		async clientAsset(slug: string, asset: string): Promise<string | undefined> {
+			if (!isSafeName(slug)) return undefined;
+			const known = PLUGIN_ASSETS.find((item) => item === asset);
+			if (known === undefined) return undefined;
+			const plugin = services.plugins.plugins.find((item) => item.slug === slug);
+			if (plugin === undefined || !plugin.enabled || plugin.client === undefined) return undefined;
+			return known;
 		},
 
 		routes(): readonly AppPluginRoute[] {

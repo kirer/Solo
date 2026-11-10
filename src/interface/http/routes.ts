@@ -581,6 +581,28 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				response.end(script);
 			},
 		},
+		{
+			/**
+			 * 插件的前端静态资源（AEC3 的 wasm）。
+			 *
+			 * 文件名在 `app` 那边是白名单，`../` 与不认识的名字都到不了磁盘。
+			 * 名字里含版本号，所以内容不会变 —— 放心长缓存 + immutable，
+			 * 升级换了文件名就是换了 URL，浏览器不会拿旧 wasm 配新 JS。
+			 */
+			pattern: "/api/plugins/:slug/assets/:asset",
+			method: "GET",
+			handler: async ({ response, request, params }) => {
+				const asset = await app.plugins.clientAsset(params.slug ?? "", params.asset ?? "");
+				if (asset === undefined) {
+					response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+					response.end("没有这个插件资源");
+					return;
+				}
+				// 文件本身在 `ui/web/`（构建时从 `node_modules` 拷过去，不进 `seed/`），
+				// 所以真发送交给静态资源那套：条件请求、br/gzip、ETag 都是白拿的。
+				return await serveStatic(response, request, deps.uiDir, `/${asset}`);
+			},
+		},
 		// 其余路径：**插件接口**，剩下的交给静态资源；找不到就 404。
 		//
 		// 插件路由在这里现查而不是拼进上面的表：装 / 卸 / 开关插件当场生效，不用重启

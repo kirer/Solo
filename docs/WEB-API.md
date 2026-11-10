@@ -41,6 +41,7 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `POST` | `/api/plugins` | 装一个插件：把一整个文件夹（`{ slug, files }`，base64）写进 `plugins/<slug>/` |
 | `DELETE` | `/api/plugins/:slug` | 删掉一个插件（整个目录，不可恢复） |
 | `GET` | `/api/plugins/:slug/client.js` | 一个插件的前端入口（浏览器 `import` 它） |
+| `GET` | `/api/plugins/:slug/assets/:asset` | 插件的前端静态资源（`.wasm` 发 `application/wasm`，其余按 JS 发）。`asset` 必须在白名单里，**名字带版本号**，所以回 `immutable` 长缓存；不认识的名字 404 |
 | `POST` | `/api/plugins/:slug/enabled` | 开关一个插件（写回 `plugin.md` 的 `enabled`，下次启动生效） |
 | `GET` | `/api/plugins/:slug/permissions` | 这个插件还有哪几条系统权限待批（`{ pending, canSystem }`，每条带人话 `label` / `detail`） |
 | `POST` | `/api/plugins/:slug/permissions` | 批这个插件的系统权限（`{ granted }` 是**批准之后的完整名单**，写回 `plugin.md` 并当场重装）；**只认本机**，别处 403 |

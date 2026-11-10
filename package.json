@@ -25,9 +25,10 @@
 		"desktop:pack": "npm run desktop:build && electron-builder --dir --publish never",
 		"desktop:dist:mac": "npm run desktop:build && electron-builder --mac --arm64 --publish never",
 		"desktop:dist:win": "npm run desktop:build && electron-builder --win --x64 --publish never",
-		"ui:build": "npm run ui:third-party && vite build --config ui/app/vite.config.ts",
+		"ui:build": "npm run ui:third-party && npm run ui:assets && vite build --config ui/app/vite.config.ts",
 		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit",
-		"ui:third-party": "node --experimental-strip-types scripts/third-party.ts"
+		"ui:third-party": "node --experimental-strip-types scripts/third-party.ts",
+		"ui:assets": "node --experimental-strip-types scripts/plugin-assets.ts"
 	},
 	"dependencies": {
 		"@dicebear/collection": "^9.4.2",
@@ -36,6 +37,7 @@
 		"@earendil-works/pi-ai": "1.5.0",
 		"@earendil-works/pi-durable": "1.5.0",
 		"@earendil-works/pi-schema": "1.5.0",
+		"@ennuicastr/webrtcaec3.js": "0.3.0",
 		"sherpa-onnx-node": "^2.0.1"
 	},
 	"devDependencies": {
