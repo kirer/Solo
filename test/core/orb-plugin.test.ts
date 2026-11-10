@@ -224,6 +224,29 @@ describe("悬浮球", () => {
 		expect(source).toMatch(/if \(!speakOn \|\| ORB_MODE === "inline"\) return;/u);
 	});
 
+	// 老板 2026-11-10：念的应该是「有人跟他说话」，不是把我们改代码的过程播给他。
+	// 以前团队频道里每条助理回复都念，结果把 SIGTERM、osascript、reinstall 播出来。
+	it("只念跟老板有关的：私聊、或者点名找他的那条", async () => {
+		const code = await codeLines();
+		// 私聊那份（`inDm`）整条念；别的会话只念 `needsYou`（核心算的，只认显式 @）。
+		expect(code).toMatch(/const inDm = /u);
+		expect(code).toMatch(/isAssistantChat\(message\) && message\.needsYou === true/u);
+	});
+
+	// 老板 2026-11-10：面板收起 = 他在干别的，才更需要被叫。收起时也得拉私聊。
+	it("收起面板也拉私聊：轮询的触发条件里没有 `open`", async () => {
+		const code = await codeLines();
+		expect(code).not.toMatch(/if \(!open \|\| dmId === null/u);
+		expect(code).toMatch(/if \(dmId === null \|\| currentId === dmId\) return undefined;/u);
+	});
+
+	it("念什么不跟当前打开的频道走：数据源是私聊那份", async () => {
+		const code = await codeLines();
+		// 拿 `shown` 当数据源的话，面板停在团队频道时读不到私聊，收起后更读不到。
+		expect(code).toMatch(/const inDm = \[\.\.\.dmMessages\.values\(\)\]\.filter\(isAssistantChat\)/u);
+		expect(code).toMatch(/liveDetail\?\.messages/u);
+	});
+
 	it("合成回来时不看面板开没开：收起不丢这一片", async () => {
 		const source = await readFile(join(SEED, "client.js"), "utf8");
 		// 以前这里 `if (!openRef.current) return;`：跑到一半收起面板，回来的 wav 直接扔了。

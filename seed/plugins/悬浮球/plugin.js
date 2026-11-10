@@ -334,7 +334,6 @@ const TTS_BYTES = TTS_FILES.reduce((sum, file) => sum + file.bytes, 0);
 
 let ttsRoot = "";
 let log = () => {};
-let engine;
 const ttsState = { downloading: false, progress: 0, error: "" };
 
 async function hasModel() {
@@ -371,25 +370,78 @@ function loadSherpa() {
 	throw new Error("语音运行时没装好（sherpa-onnx-node）");
 }
 
-function tts() {
-	if (engine !== undefined) return engine;
-	const sherpa = loadSherpa();
-	engine = new sherpa.OfflineTts({
-		model: {
-			kokoro: {
-				model: join(ttsRoot, "model.onnx"),
-				voices: join(ttsRoot, "voices.bin"),
-				tokens: join(ttsRoot, "tokens.txt"),
-				lexicon: [join(ttsRoot, "lexicon-us-en.txt"), join(ttsRoot, "lexicon-zh.txt")].join(","),
-			},
-			numThreads: 8,
-			provider: "cpu",
-		},
-		maxNumSentences: 1,
-		silenceScale: 0.2,
-		ruleFsts: ["date-zh.fst", "number-zh.fst", "phone-zh.fst"].map((name) => join(ttsRoot, name)).join(","),
+/**
+ * 合成一句。**模型不留在后端进程里**：交给一次性子进程 `tts-worker.js`，
+ * 它建模型、念完、退出，346MB 随进程一起还给系统。
+ *
+ * 为什么必须这样：`sherpa-onnx.node` 只导出 `create*`，一个 `destroy`/`free`
+ * 都没有（翻过符号表），`OfflineTts` 建出来后没有任何办法释放。留在后端就是常驻。
+ *
+ * 代价：每句多一次模型加载，实测 575ms 加载 + 241ms 合成。
+ * 旧的常驻写法省掉这 575ms，代价是后端起机就吃 346MB 到关机。
+ */
+function synthInWorker(text, speed, sid) {
+	return new Promise((settle, rejectPromise) => {
+		const worker = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "tts-worker.js")], {
+			stdio: ["pipe", "pipe", "pipe"],
+			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+		});
+		let out = "";
+		let err = "";
+		let settled = false;
+		// 这里**不能** kill：worker 是念完自己 exit 的，这时 stdout 可能还在往管道里灌，
+		// kill 会把剩下的字节截掉（实测卡在 64KB 管道缓冲）。只清定时器和兑现 Promise。
+		const finish = (value) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			settle(value);
+		};
+		const fail = (error) => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			worker.kill();
+			rejectPromise(error);
+		};
+		// 载模型 + 合成一起给 120 秒：慢机器上第一句可能久一点，但不能永远挂着。
+		const timer = setTimeout(() => {
+			fail(new Error("语音合成超时（120 秒）"));
+		}, 120_000);
+		worker.stdout.setEncoding("utf8");
+		worker.stdout.on("data", (chunk) => {
+			out += chunk;
+		});
+		worker.stderr.setEncoding("utf8");
+		worker.stderr.on("data", (chunk) => {
+			err += chunk;
+		});
+		worker.on("error", (error) => {
+			fail(error);
+		});
+		// 用 close 而不是 exit：exit 可能早于 stdout 读干净，超长的一行 JSON 会被截半。
+		// 只在 stdout 的 "end" 之后取结果：单行 JSON 可能几百 KB，管道缓冲只有 64KB，
+		// 先到 close 就读到半截（实测正好卡在 65536 字节）。`end` 之后再等 close 就没意义了。
+		worker.stdout.on("end", () => {
+			const lines = out.trim().split("\n");
+			const line = lines[lines.length - 1] ?? "";
+			if (line === "") {
+				finish({ error: err.trim() === "" ? "语音进程没说话就退了" : err.trim() });
+				return;
+			}
+			try {
+				finish(JSON.parse(line));
+			} catch {
+				finish({ error: `语音进程回了看不懂的东西：${line.slice(0, 200)}` });
+			}
+		});
+		// 进程没了但 stdout 没 end（崩了 / 被系统杀了）：给个能看懂的错，别让请求挂着。
+		worker.on("close", () => {
+			if (settled) return;
+			finish({ error: err.trim() === "" ? "语音进程没说话就退了" : err.trim() });
+		});
+		worker.stdin.end(JSON.stringify({ text, speed, sid, ttsRoot, numThreads: 8 }));
 	});
-	return engine;
 }
 
 function encodeWav(samples, sampleRate) {
@@ -421,36 +473,9 @@ function encodeWav(samples, sampleRate) {
  * 但音频已经完整交出来了 —— 有 chunk 就照用。
  */
 async function synth(text, speed, sid) {
-	const model = tts();
-	const chunks = [];
-	let sampleRate = 22_050;
-	let failed = "";
-	try {
-		const audio = await model.generateAsync({
-			text,
-			sid,
-			speed,
-			onProgress: (info) => {
-				if (info.samples && info.samples.length > 0) chunks.push(Float32Array.from(info.samples));
-				return 1;
-			},
-		});
-		if (Number(audio.sampleRate) > 0) sampleRate = Number(audio.sampleRate);
-		if (chunks.length === 0 && audio.samples && audio.samples.length > 0) chunks.push(Float32Array.from(audio.samples));
-	} catch (error) {
-		failed = error instanceof Error ? error.message : String(error);
-	}
-	if (chunks.length === 0) throw new Error(failed === "" ? "没有合成出声音" : failed);
-	if (failed !== "" && !/settlement/iu.test(failed)) throw new Error(failed);
-	let total = 0;
-	for (const chunk of chunks) total += chunk.length;
-	const samples = new Float32Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		samples.set(chunk, offset);
-		offset += chunk.length;
-	}
-	return encodeWav(samples, sampleRate);
+	const result = await synthInWorker(text, speed, sid);
+	if (typeof result?.wav === "string" && result.wav !== "") return result.wav;
+	throw new Error(typeof result?.error === "string" && result.error !== "" ? result.error : "没有合成出声音");
 }
 
 async function fetchModelFile(origin, file, onBytes) {

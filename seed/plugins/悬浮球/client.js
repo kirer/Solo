@@ -744,9 +744,12 @@ export default {
 				setMenu(false);
 			};
 
-			// 打开期间补消息：正在看这条私聊时 store 已经在推，不用再拉。
+			// 补私聊消息：正在看这条私聊时 store 已经在推，不用再拉。
+			//
+			// **收起面板也照拉**（老板 2026-11-10）：这个开关叫「收着也要念」，可收起时恰恰
+			// 没人拉私聊，最该响的时候一声不响。面板收起 = 老板在干别的，才更需要被叫。
 			useEffect(() => {
-				if (!open || dmId === null || currentId === dmId) return undefined;
+				if (dmId === null || currentId === dmId) return undefined;
 				let alive = true;
 				const pull = async () => {
 					try {
@@ -762,7 +765,7 @@ export default {
 					alive = false;
 					clearInterval(timer);
 				};
-			}, [open, dmId, currentId]);
+			}, [dmId, currentId]);
 
 			// 新消息来了滚到底 —— 和聊天区同一条规矩：打开着才追。
 			useEffect(() => {
@@ -784,10 +787,38 @@ export default {
 			}, []);
 
 			// 助理的新回复自动读出来。第一次只记基线：打开时不会把旧消息全念一遍。
+			//
+			// **只念跟老板有关的**（老板 2026-11-10）：私聊里的助理回复，加上任意会话里点名
+			// 找老板的那条（`needsYou`，判据在核心里，只认显式 @）。成员之间在团队频道里
+			// 干活的技术对话不念 —— 以前全念，结果把 SIGTERM、osascript、reinstall 这些
+			// 内部术语播给老板听，那是噪音不是内容。
 			useEffect(() => {
 				const slug = assistant?.slug;
-				const all = shown?.messages ?? [];
-				const chats = slug === undefined ? [] : all.filter((message) => message.kind === "chat" && message.fromSlug === slug);
+				// 念什么跟着「老板私聊」走，跟面板上正开着哪个频道无关：
+				// `detail` 就是那条私聊（收起时也由上面那个轮询在补），`shown` 是屏幕上
+				// 正在看的那份——停在团队频道时它压根不含私聊，拿它当数据源，收起 / 切走后
+				// 私聊的回复就永远念不到。
+				if (slug === undefined) {
+					// 没准备好助理时什么都不念，但基线照记（否则准备好那一刻会把历史全倒一遍）。
+					primedRef.current = true;
+					return;
+				}
+				const isAssistantChat = (message) => message.kind === "chat" && message.fromSlug === slug;
+				// 私聊那份消息：正看着私聊时 store 在推（`liveDetail`），其余时候靠上面那个轮询
+				// 拉进 `detail`。两份都可能最新，按 seq 合并，谁新用谁。
+				const dmMessages = new Map();
+				for (const message of [...(liveDetail?.messages ?? []), ...(detail?.messages ?? [])]) {
+					dmMessages.set(message.seq, message);
+				}
+				// 私聊里助理说的：整条念（那是有人跟老板说话）。
+				const inDm = [...dmMessages.values()].filter(isAssistantChat);
+				// 别的会话里点名找老板的：只念这一条（`needsYou` 由核心算，只认显式 @）。
+				const named = (shown?.messages ?? []).filter(
+					(message) => isAssistantChat(message) && message.needsYou === true,
+				);
+				const bySeq = new Map();
+				for (const message of [...inDm, ...named]) bySeq.set(message.seq, message);
+				const chats = [...bySeq.values()];
 				if (!primedRef.current) {
 					for (const message of chats) spokenRef.current.add(message.seq);
 					primedRef.current = true;
@@ -800,7 +831,8 @@ export default {
 				// 网页版（inline）不后台念：那一屏可能根本没在看，出声会打扰；桌面独立窗才念。
 				if (!speakOn || ORB_MODE === "inline") return;
 				for (const message of fresh) void speakText(message.text);
-			}, [shown, speakOn, open, assistant]);
+				// eslint-disable-next-line react-hooks/exhaustive-deps
+			}, [shown, speakOn, open, assistant, detail, liveDetail]);
 
 			// 卸载：录音、麦克风、朗读一起收掉。
 			useEffect(
