@@ -222,11 +222,33 @@ describe("悬浮球", () => {
 		const source = await readFile(join(SEED, "client.js"), "utf8");
 		// 以前是 `if (!speakOn || !open) return;` —— 收着就一句不念，还没有任何痕迹。
 		// 注释里会引用这句旧代码，所以只看真正的代码行。
-		expect(await codeLines()).not.toMatch(/!speakOn\s*\|\|\s*!open/u);
+		const code = await codeLines();
+		expect(code).not.toMatch(/!speakOn\s*\|\|\s*!open/u);
 		// 2026-11-11 老板：主界面那颗球点了「打开朗读」也不出声，因为这里还挡着
-		// `|| ORB_MODE === "inline"`。挡声音的只能是开关本身，不是「你在哪扇窗里」。
-		expect(source).not.toMatch(/ORB_MODE === "inline"\) return;/u);
-		expect(source).toMatch(/if \(!speakOn\) return;/u);
+		// `ORB_MODE === "inline"`。挡声音的只能是开关本身，不是「你在哪扇窗里」。
+		//
+		// **必须比 `codeLines()`，不能比 `source`**（程砚 2026-11-11 提的）：注释里就引着
+		// 那句旧代码，拿整份源码比等于什么都没钉 —— 改回旧写法照样过。
+		// 反过来的方向也放宽一点：只要代码里出现 `ORB_MODE === "inline"` 就算退回去，
+		// 不管它写成大括号、`return undefined` 还是塞进别的条件里。
+		expect(code).not.toMatch(/ORB_MODE === "inline"/u);
+		expect(code).toMatch(/if \(!speakOn\) return;/u);
+	});
+
+	// 老板 2026-11-11：老库里存着 `speak:false` 的人，升上来还是哑的 —— 那个 false 是**旧版默认值**
+	// 写下去的，不是他点的。分不出就一刀切翻开会违背用户选择，所以往后存都带 `touched`：
+	// 只迁「没标记 + 正好是旧默认值 false」这一种。
+	it("老库的 `speak:false` 迁成开，但人自己关过的不动", async () => {
+		const source = await readFile(join(SEED, "client.js"), "utf8");
+		const code = await codeLines();
+		// 判据：没有 touched 标记 + 存的正好是 false。
+		expect(code).toMatch(/value\?\.touched !== true && value\?\.speak === false/u);
+		// 迁移只把「没标记的 false」翻成开，别的照旧按存的走。
+		expect(code).toMatch(/speak: legacy \? true : value\?\.speak !== false/u);
+		// 存盘时盖上标记，这样迁完往后都算「人动过的」，不会迁第二次。
+		expect(code).toMatch(/JSON\.stringify\(\{ \.\.\.readPrefs\(\), \.\.\.next, touched: true \}\)/u);
+		// 默认值本身还是开（没存过就开）。
+		expect(source).toMatch(/speak: true/u);
 	});
 
 	// 老板 2026-11-10：念的应该是「有人跟他说话」，不是把我们改代码的过程播给他。

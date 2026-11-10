@@ -279,13 +279,19 @@ function readPrefs() {
 		const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(PREF_KEY);
 		if (raw === null) return fallback;
 		const value = JSON.parse(raw);
+		// 老库里的 `speak:false` 不是他点的，是**旧版默认值**写下去的（2.9.3 前后才把默认改开）。
+		// 光看 `false` 分不出来，所以往后每次存都盖一个 `touched` 标记：老板真点过开关，
+		// 那一次是经 `toggleSpeak` → `savePrefs` 写进去的，一定会带 `touched:true`。
+		// 迁移只认「没有这个标记的老数据 + 存的正好是旧默认值 false」这一种：
+		// 有标记的 false 是他自己的选择，不动；迁移完往后都带标记，不会迁第二次。
+		const legacy = value?.touched !== true && value?.speak === false;
 		return {
 			right: Number.isFinite(value?.right) ? value.right : 18,
 			top: Number.isFinite(value?.top) ? value.top : null,
 			docked: value?.docked === true,
-			// 没存过就是开；只有明确关过（`false`）才算关 —— 老用户存下的是 `speak:false`
-			// 那一次，那也是他自己的选择，不动。
-			speak: value?.speak !== false,
+			// 没存过就是开；只有明确关过（`false`）才算关。老库里那种「没标记的 false」按
+			// 旧默认值算，迁成开（见上）；带标记的 `false` 才是他自己关的。
+			speak: legacy ? true : value?.speak !== false,
 			wake: value?.wake === true,
 			// 常驻听默认关：麦克风一直开着是件要用户点头的事，第一次得他自己打开（开了会记住）。
 			listen: value?.listen === true,
@@ -299,7 +305,9 @@ function readPrefs() {
 
 function savePrefs(next) {
 	try {
-		if (typeof localStorage !== "undefined") localStorage.setItem(PREF_KEY, JSON.stringify({ ...readPrefs(), ...next }));
+		// `touched: true` 是「人动过这套设置」的标记，只给迁移用（见 `readPrefs` 里那段）：
+		// 有标记的 `speak:false` 是他自己关的，没标记的才可能是旧默认值。
+		if (typeof localStorage !== "undefined") localStorage.setItem(PREF_KEY, JSON.stringify({ ...readPrefs(), ...next, touched: true }));
 	} catch {
 		// 存不了就只在这次里生效，不影响用。
 	}
