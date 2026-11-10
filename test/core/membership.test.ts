@@ -101,6 +101,29 @@ describe("运行时删掉团队目录：目录监听立刻归档", () => {
 	});
 });
 
+describe("目录事件漏了（fs.watch 在 macOS 上会漏）", () => {
+	it("兜底对账照样把没了的团队归档，不会拖到重启", async () => {
+		const { box, runtime } = await setup();
+		const shell = await box.assemble(runtime);
+		await shell.syncTeam("alpha");
+		// 把兜底调成 50ms：这条验的是「事件一条都不来」时还有什么兜着，
+		// 所以故意不依赖 fs.watch —— 万一它真发了事件，兜底也照样会归档，断言不变。
+		const server = await serveCore({ shell, port: 0, teamReconcileFallbackMs: 50 });
+		try {
+			await rm(join(box.teamsRoot, "alpha"), { recursive: true, force: true });
+			const deadline = Date.now() + 3000;
+			let state = await shell.channels(BACKGROUND_CONTEXT);
+			while (state.channels["team:alpha"]?.archived !== true && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 50));
+				state = await shell.channels(BACKGROUND_CONTEXT);
+			}
+			expect(state.channels["team:alpha"]?.archived).toBe(true);
+		} finally {
+			await server.close();
+		}
+	});
+});
+
 describe("团队目录没了：频道归档", () => {
 	it("删掉团队目录后扫一遍把它归档（历史消息还留着）", async () => {
 		const { box, deps } = await setup();

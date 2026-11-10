@@ -33,6 +33,11 @@ type CoreServeOptions = {
 	readonly onReset?: () => void;
 	/** `/api/restart` 确认之后调用：启动层关库后以同一个退出码退出，桌面壳重开。 */
 	readonly onRestart?: () => void;
+	/**
+	 * 团队目录对账的兜底间隔（默认 30 秒）。只给测试调小用：
+	 * 正常路径靠 `fs.watch` 立刻触发，兜底是「事件漏了」时的那条腿。
+	 */
+	readonly teamReconcileFallbackMs?: number;
 };
 
 export type CoreServer = {
@@ -69,26 +74,40 @@ const UPLOAD_SWEEP_MS = 30 * 60_000;
 const TEAM_RECONCILE_MS = 150;
 
 /**
+ * `fs.watch` 会漏事件 —— macOS 上子目录被 `rm -rf` 掉，事件有时压根不来（负载一高就更明显）。
+ * 只靠它，用户删了团队目录得等重启才归档。低频兜底扫一遍：一次 `readdir` 而已，30 秒不心疼。
+ */
+const TEAM_RECONCILE_FALLBACK_MS = 30_000;
+
+/**
  * 团队目录被删 / 改名不会提交任何文档，启动时的 `archiveGoneTeams` 只兜得住重启。
  * 盯住 `teams/` 的第一层并立刻对账 —— 不递归：团队工作区里的文件写入很密，和频道无关。
  */
-function startTeamReconcile(shell: CoreShell): () => void {
+function startTeamReconcile(shell: CoreShell, fallbackMs: number = TEAM_RECONCILE_FALLBACK_MS): () => void {
 	let timer: ReturnType<typeof setTimeout> | undefined;
-	const stopWatch = watchDirAt(
-		shell.layout.teamsRoot,
-		() => {
-			if (timer !== undefined) clearTimeout(timer);
-			timer = setTimeout(() => {
-				timer = undefined;
-				void archiveGoneTeams({ harness: shell.harness, layout: shell.layout }).catch((error: unknown) => {
-					process.stderr.write(`[core] 团队对账失败：${error instanceof Error ? error.message : String(error)}\n`);
-				});
-			}, TEAM_RECONCILE_MS);
-		},
-		{ recursive: false },
-	);
+	/** 立刻对账（不合并）。 */
+	const run = (): void => {
+		void archiveGoneTeams({ harness: shell.harness, layout: shell.layout }).catch((error: unknown) => {
+			process.stderr.write(`[core] 团队对账失败：${error instanceof Error ? error.message : String(error)}\n`);
+		});
+	};
+	/** 目录事件会连着来：合并成一个窗口再跑，别一次删除对账十遍。 */
+	const debounced = (): void => {
+		if (timer !== undefined) clearTimeout(timer);
+		timer = setTimeout(() => {
+			timer = undefined;
+			run();
+		}, TEAM_RECONCILE_MS);
+	};
+	const stopWatch = watchDirAt(shell.layout.teamsRoot, debounced, { recursive: false });
+	// 兜底：万一目录事件漏了，这一遍照样会把没了的团队归档。
+	// 走 `run` 而不是 `debounced` —— 否则兜底间隔比合并窗口短时，每次都会把待办的那次清掉，
+	// 永远等不到触发（兜底自己把自己饿死）。
+	const fallback = setInterval(run, fallbackMs);
+	fallback.unref();
 	return () => {
 		stopWatch();
+		clearInterval(fallback);
 		if (timer !== undefined) clearTimeout(timer);
 	};
 }
@@ -176,7 +195,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 	// 看门狗：底座报上来的异常说进全员频道（只通报，不自动救）。
 	app.watch.start();
 	// 团队目录被删不会提交任何文档：盯住 teams/，变了立刻对账。
-	const stopTeamReconcile = startTeamReconcile(shell);
+	const stopTeamReconcile = startTeamReconcile(shell, options.teamReconcileFallbackMs);
 
 	await new Promise<void>((resolve, reject) => {
 		server.once("error", reject);

@@ -38,3 +38,6 @@ code-flow.html
 release/
 feed/
 desktop/dist/
+
+# `npm run check` 在某些 shell 里会留下的空文件：不该进版本库
+-c
