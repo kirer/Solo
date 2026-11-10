@@ -84,7 +84,11 @@ describe("运行时删掉团队目录：目录监听立刻归档", () => {
 		const { box, runtime } = await setup();
 		const shell = await box.assemble(runtime);
 		await shell.syncTeam("alpha");
-		const server = await serveCore({ shell, port: 0 });
+		// 兜底显式调成 1 秒：这条测试等 3 秒，生产默认兜底是 30 秒 —— 光靠事件当然快，
+		// 但 fs.watch 在 macOS 上会漏，漏的时候只能等兜底，30 秒远在 3 秒窗口外，必红。
+		// 传 1 秒让两条路（事件 / 兜底）都落在等待窗口里，测的才是「一定会归档」。
+		// **生产的 30 秒不许跟着改**：那是低频兜底对账的节奏，跟这条测试无关。
+		const server = await serveCore({ shell, port: 0, teamReconcileFallbackMs: 1000 });
 		try {
 			await rm(join(box.teamsRoot, "alpha"), { recursive: true, force: true });
 			// 目录事件 + 150ms 合并窗口：等条件成立，别赌固定的 600ms（跑全套时会抖）。

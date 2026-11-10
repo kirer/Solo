@@ -24,6 +24,21 @@ afterEach(async () => {
 	for (const root of extraRoots.splice(0)) await rm(root, { recursive: true, force: true });
 });
 
+/**
+ * 等条件成立，最多等 5 秒。
+ *
+ * 别用「等固定时长」：这条路是 `setTimeout(200)` 之后才回调，写死等 300ms 只留 100ms
+ * 余量，并行跑全套时定时器一挤就红 —— 红的不是坏掉的功能，是这次跑得慢。轮询条件
+ * 则慢到多慢都不误判，真的没回调也照样超时失败。
+ */
+async function waitFor(check: () => boolean, what: string): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (!check()) {
+		if (Date.now() > deadline) throw new Error(`等了 5 秒还没成：${what}`);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+	}
+}
+
 async function write(path: string, text = "x"): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
 	await writeFile(path, text, "utf8");
@@ -121,7 +136,10 @@ describe("重置所有数据", () => {
 		try {
 			expect(await post({})).toBe(400);
 			expect(await post({ confirm: true })).toBe(200);
-			await new Promise((resolve) => setTimeout(resolve, 300));
+			// 等条件成立，别赌固定时长：接口先把「好」发出去，再 `setTimeout(200)` 才调
+			// `onReset`（库还开着的时候删不掉 core.sqlite）。以前这里写死等 300ms —— 余量
+			// 只有 100ms，并行跑全套时定时器一挤就红。
+			await waitFor(() => resets === 1, "等 onReset 被调用");
 			expect(resets).toBe(1);
 		} finally {
 			await server.close();
