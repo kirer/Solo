@@ -8,6 +8,7 @@
  * 转写本身要系统模型和 swiftc，单测不碰；这里只守「输入不合格时它拒绝得干净」，
  * 以及那条路由的地址（前端写死了 `/api/orb/transcribe`，路由必须是纯 ASCII）。
  */
+import { spawn } from "node:child_process";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -245,6 +246,42 @@ describe("悬浮球", () => {
 		// 拿 `shown` 当数据源的话，面板停在团队频道时读不到私聊，收起后更读不到。
 		expect(code).toMatch(/const inDm = \[\.\.\.dmMessages\.values\(\)\]\.filter\(isAssistantChat\)/u);
 		expect(code).toMatch(/liveDetail\?\.messages/u);
+	});
+
+	// 季衡 2026-11-10：双击启动的桌面版语音整体哑，报「语音运行时没装好」，其实装得好好的。
+	// 根因：worker 自己按 cwd / 插件目录猜安装根，而 Finder 起的主进程 cwd 是 `/`，全落空。
+	// 修法是把安装根经 env 递给 worker。这条从 `/` 起、插件复制到仓库外，才验得出 env 真起作用。
+	it("worker 靠 env 找到安装根，不靠 cwd", async () => {
+		const box = await mkdtemp(join(tmpdir(), "tts-cwd-"));
+		boxes.push(box);
+		// 插件复制到仓库外：兜底那几处「往上两级」就落不到本仓库的 node_modules 上了。
+		const plugin = join(box, "plugins", "悬浮球");
+		await mkdir(join(box, "plugins"), { recursive: true });
+		await cp(SEED, plugin, { recursive: true });
+		const worker = join(plugin, "tts-worker.js");
+
+		const run = (env) =>
+			new Promise((done) => {
+				const child = spawn(process.execPath, [worker], {
+					cwd: "/",
+					env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", ...env },
+					stdio: ["pipe", "pipe", "pipe"],
+				});
+				let out = "";
+				child.stdout.on("data", (chunk) => (out += chunk));
+				child.on("close", () => done(out));
+				child.stdin.end(JSON.stringify({ text: "", speed: 1, sid: 47 }));
+			});
+
+		// 递了根：模块找得到，往下走会撞上「模型没下」，而不是「找不到运行时」。
+		const handed = JSON.parse(await run({ SOLO_SHERPA_ROOT: fileURLToPath(new URL("../..", import.meta.url)) }));
+		expect(String(handed.error ?? "")).not.toMatch(/找不到 sherpa-onnx-node/u);
+
+		// 没递根、cwd 又是 `/`：必须明说是找不到运行时，并且把找过的路径报出来。
+		const missing = JSON.parse(await run({ SOLO_SHERPA_ROOT: "" }));
+		expect(String(missing.error ?? "")).toMatch(/找不到 sherpa-onnx-node/u);
+		// 文案别把人往错的方向带：不是「没装好」，说清是安装不完整、重装能修。
+		expect(String(missing.error ?? "")).toMatch(/重装/u);
 	});
 
 	it("合成回来时不看面板开没开：收起不丢这一片", async () => {

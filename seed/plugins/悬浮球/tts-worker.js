@@ -16,20 +16,33 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** 跟主进程里那份 `loadSherpa` 同一套找法：从安装根倒推 node_modules。 */
+/**
+ * 找到 sherpa-onnx-node。
+ *
+ * **第一顺位是主进程递过来的 `SOLO_SHERPA_ROOT`**：worker 的 `argv[1]` 是插件目录、
+ * cwd 跟着启动它的 App 走（Finder 双击起的是 `/`），自己猜那几处会全落空 ——
+ * 之前语音整体哑、却报「运行时没装好」就是这个。剩下几处只在手动跑（比如单测、
+ * 命令行直接调）时兜底。
+ */
 function loadSherpa() {
 	const roots = [];
-	const entry = process.argv[1];
-	if (typeof entry === "string" && entry !== "") roots.push(resolve(dirname(entry), "..", ".."));
-	roots.push(process.cwd(), dirname(fileURLToPath(import.meta.url)));
+	const handed = process.env.SOLO_SHERPA_ROOT;
+	if (handed !== undefined && handed !== "") roots.push(handed);
+	roots.push(process.cwd(), resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."));
+	const tried = [];
 	for (const root of roots) {
 		try {
 			return createRequire(join(root, "package.json"))("sherpa-onnx-node");
 		} catch (error) {
 			if (error?.code !== "MODULE_NOT_FOUND") throw error;
+			tried.push(root);
 		}
 	}
-	throw new Error("语音运行时没装好（sherpa-onnx-node）");
+	// 说清楚找过哪儿：光说「没装好」会把好端端装着的包判成没装，把人往错的方向带。
+	throw new Error(
+		`语音运行时没装好：找不到 sherpa-onnx-node（找过 ${tried.join("、") || "（无可用路径）"}）。` +
+			"这是程序安装不完整，重装 Solo 能修好。",
+	);
 }
 
 function encodeWav(samples, sampleRate) {

@@ -349,25 +349,38 @@ async function hasModel() {
 }
 
 /**
- * 从应用安装目录解析 sherpa-onnx-node。
+ * 找一个能 `require("sherpa-onnx-node")` 的根，返回 `{ root, sherpa }`。
  *
  * 插件住在 `<appRoot>/plugins/<slug>/`（桌面端就是 userData），往上一路找 node_modules
  * 找不到依赖；后端入口在 `<install>/src/shell/main.ts`，所以按 `process.argv[1]` 倒推
  * 安装根，再退到 cwd 和插件自己的目录。
+ *
+ * **找到的根要传给子进程**：`tts-worker.js` 是另一个进程，它的 `argv[1]` 是插件目录、
+ * cwd 跟着启动它的 App 走（Finder 双击起的是 `/`），同样的找法在那边会全落空 ——
+ * 那就是「桌面版语音整体哑、却报运行时没装好」的由来。
  */
-function loadSherpa() {
+function findSherpaRoot() {
 	const roots = [];
 	const entry = process.argv[1];
 	if (typeof entry === "string" && entry !== "") roots.push(resolve(dirname(entry), "..", ".."));
 	roots.push(process.cwd(), dirname(fileURLToPath(import.meta.url)));
+	// 应用包里依赖在 `Contents/Resources/app/node_modules`，比入口再上两级也可能对不上。
+	const appRoot = process.env.SOLO_APP_ROOT;
+	if (appRoot !== undefined && appRoot !== "") roots.push(appRoot);
 	for (const root of roots) {
 		try {
-			return createRequire(join(root, "package.json"))("sherpa-onnx-node");
+			return { root, sherpa: createRequire(join(root, "package.json"))("sherpa-onnx-node") };
 		} catch (error) {
 			if (error?.code !== "MODULE_NOT_FOUND") throw error;
 		}
 	}
-	throw new Error("语音运行时没装好（sherpa-onnx-node）");
+	return null;
+}
+
+function loadSherpa() {
+	const found = findSherpaRoot();
+	if (found === null) throw new Error("语音运行时没装好（sherpa-onnx-node）");
+	return found.sherpa;
 }
 
 /**
@@ -382,9 +395,16 @@ function loadSherpa() {
  */
 function synthInWorker(text, speed, sid) {
 	return new Promise((settle, rejectPromise) => {
+		// 把找到的安装根显式交给子进程：worker 自己的 `argv[1]` 是插件目录，cwd 是 App 的
+		// （Finder 双击起的是 `/`），它自己找必然落空 —— 桌面版语音整体哑就是这么来的。
+		const found = findSherpaRoot();
 		const worker = spawn(process.execPath, [join(dirname(fileURLToPath(import.meta.url)), "tts-worker.js")], {
 			stdio: ["pipe", "pipe", "pipe"],
-			env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+			env: {
+				...process.env,
+				ELECTRON_RUN_AS_NODE: "1",
+				...(found === null ? {} : { SOLO_SHERPA_ROOT: found.root }),
+			},
 		});
 		let out = "";
 		let err = "";
