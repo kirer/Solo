@@ -23,6 +23,12 @@ describe("右栏宽度夹取", () => {
 		expect(clampDockWidth(1200, 1280)).toBe(1280 - DOCK_KEEP_MAIN);
 	});
 
+	it("1920 上存到上限 1500，换到 1280 的屏：收到 860，盖不满整列对话", () => {
+		// 季衡报的就是这条：拖到上下限之内的 1500 是合法的，换屏之后才越界。
+		expect(clampDockWidth(1500, 1920)).toBe(1500);
+		expect(clampDockWidth(1500, 1280)).toBe(1280 - DOCK_KEEP_MAIN);
+	});
+
 	it("窗口窄到连下限都放不下：仍保 320，不返回负数", () => {
 		expect(clampDockWidth(500, 400)).toBe(DOCK_MIN);
 		expect(clampDockWidth(500, 100)).toBe(DOCK_MIN);

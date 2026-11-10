@@ -19,7 +19,7 @@ import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, clampDockWidth, closeDock, closeRightFile, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight } from "../state/store.ts";
+import { backRight, clampDockWidth, closeDock, closeRightFile, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight, getState } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { FilePreview } from "./FilePreview.tsx";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
@@ -43,6 +43,20 @@ export function RightPanel(): JSX.Element {
 		const timer = window.setTimeout(() => setMounted(false), 300);
 		return () => window.clearTimeout(timer);
 	}, [open]);
+
+	// 窗口变窄（拔了外接屏、把窗口拖小）时把已存的宽度再夹一次：拖拽只在拖的那一刻夹，
+	// 存的数是在别的窗口尺寸下算出来的。1920 上存的 1500 换到 1280 会把整列对话盖死。
+	useEffect(() => {
+		const onResize = (): void => {
+			const now = getState().dockWidth;
+			if (now === null) return;
+			const fitted = clampDockWidth(now, window.innerWidth);
+			// 只有真的越界才写回：每次 resize 都写盘会把偏好刷成噪声。
+			if (fitted !== now) setDockWidth(fitted);
+		};
+		window.addEventListener("resize", onResize);
+		return () => window.removeEventListener("resize", onResize);
+	}, []);
 
 	// 点/摸右栏以外的地方（中间的消息、左边的列表、输入框）就收起来 ——
 	// 它是一张浮在纸上的临时页，不是常驻的一列。顶栏那两颗「资料」除外：
@@ -95,7 +109,12 @@ export function RightPanel(): JSX.Element {
 			data-dock={dock === null ? "false" : "true"}
 			data-page={rightPage === null ? "false" : "true"}
 			aria-label={title}
-			style={dockWidth === null ? undefined : ({ "--panel-w": `${String(dockWidth)}px` } as CSSProperties)}
+			// 渲染前再夹一次：`resize` 有延迟，窄窗口的首帧也得先放得下。
+			style={
+				dockWidth === null
+					? undefined
+					: ({ "--panel-w": `${String(clampDockWidth(dockWidth, typeof window === "undefined" ? dockWidth : window.innerWidth))}px` } as CSSProperties)
+			}
 			// 关的时候留在 DOM 里淡出（`data-open="false"` + transition），卸不卸由上面那个 300ms 计时决定。
 			aria-hidden={open ? undefined : "true"}
 		>
