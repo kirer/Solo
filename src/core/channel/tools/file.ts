@@ -3,14 +3,15 @@ import { BACKGROUND_CONTEXT, Type, defineTool } from "../../runtime/index.ts";
 import { assistantsOf, readAllIdentities, readIdentity } from "../../documents/member/identity.ts";
 import { redact } from "../../secrets.ts";
 import { parseDoc, frontOf } from "../../documents/base/doc.ts";
-import { ensureDir, readTextOrUndefined, writeTextAt } from "../../runtime/io.ts";
+import { ensureDir, readTextOrUndefined, sizeOrUndefined, writeTextAtomic } from "../../runtime/io.ts";
 import { teamWorkspace } from "../../layout.ts";
 import { createTeamProblem, readTeam, teamSlugOfReadmePath } from "../../documents/team/doc.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
 import { resolveInRoots } from "./guards.ts";
 import { fill } from "../../documents/base/catalog.ts";
 
-/** `members/<slug>/identity.md` / `assistant/<slug>/identity.md` → slug。别的路径返回 undefined。 */
+/**
+ /** `members/<slug>/identity.md` / `assistant/<slug>/identity.md` → slug。别的路径返回 undefined。 */
 function agentSlugOfIdentityPath(path: string): string | undefined {
 	const parts = path.split(/[\\/]/);
 	if (parts.length !== 3 || parts[2] !== "identity.md") return undefined;
@@ -20,6 +21,18 @@ function agentSlugOfIdentityPath(path: string): string | undefined {
 export function createFileTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
 		fill(deps.text, key, slots);
+
+	/**
+	 * 回执里的「原 N → 现 M 字节」。
+	 *
+	 * 报字节而不是字数：界面上看不出来的差别（少了个换行、中文变成半角），字节数会立刻对不上。
+	 * 新文件不写「原 0」，写「新建」—— 「原 0」看着像「原来是空的」，那是另一回事。
+	 * 文案走 `text` 而不是写死在这儿：这些字会原样回给模型看，要能改、要能被测试钉住。
+	 */
+	const sizesOf = (wrote: { before: number | undefined; after: number }): string =>
+		wrote.before === undefined
+			? t("file.size.created", { after: wrote.after })
+			: t("file.size.rewritten", { before: wrote.before, after: wrote.after });
 	const tool = defineTool({
 		name: "file",
 		description: t("file.description"),
@@ -44,6 +57,15 @@ export function createFileTool(deps: CoreToolDeps) {
 
 			if (action === "write") {
 				if (args.content === undefined) return text(t("file.refuse.no-content"));
+				// 空正文 + 目标已有内容 = 一次静默的清空。「传空正文」是模型漏参数和手误最常见的形状，
+				// 而写空文件本身几乎没有人真的需要 —— 真需要就显式删，那条路径有记录。
+				// 目标不存在或本来是空文件时放行：那时写空是真的在「建一个空文件」。
+				if (args.content === "" && (await sizeOrUndefined(target)) !== undefined) {
+					const was = await sizeOrUndefined(target);
+					if (was !== undefined && was > 0) {
+						return text(t("file.refuse.empty-overwrite", { path: args.path, size: t("file.size.value", { bytes: was }) }));
+					}
+				}
 				// 密钥一旦落进 identity.md / SKILL.md，就永久进了每一轮提示词的 system 段。
 				const content = redact(args.content, deps.layout.appRoot);
 				// 团队说明是事实，团队频道是它的投影：改了 README 立刻重算一次成员
@@ -68,7 +90,16 @@ export function createFileTool(deps: CoreToolDeps) {
 				}
 				// 新团队一有 README 就有自己的工作目录（团队任务在那儿跑，提示词里给了路径）。
 				if (team !== undefined) await ensureDir(teamWorkspace(deps.layout, team));
-				await writeTextAt(target, content);
+				// 原子替换 + 读回核对：写坏了当场知道，不留半截文件。原文在 rename 之前一直完好。
+				const wrote = await writeTextAtomic(target, content).catch((error: unknown) => error as Error);
+				if (wrote instanceof Error) {
+					return text(
+						t("file.write.broken", {
+							path: args.path,
+							error: wrote.message,
+						}),
+					);
+				}
 				if (team !== undefined) {
 					try {
 						await deps.syncTeam(team, ctx);
@@ -78,6 +109,7 @@ export function createFileTool(deps: CoreToolDeps) {
 							t("file.write.sync-failed", {
 								path: args.path,
 								length: content.length,
+								sizes: sizesOf(wrote),
 								error: error instanceof Error ? error.message : String(error),
 							}),
 						);
@@ -101,7 +133,7 @@ export function createFileTool(deps: CoreToolDeps) {
 					}
 				}
 				return text(
-					t("file.write.done", { path: args.path, length: content.length }) +
+					t("file.write.done", { path: args.path, length: content.length, sizes: sizesOf(wrote) }) +
 						(warnings.length === 0 ? "" : `\n${warnings.join("\n")}`),
 				);
 			}

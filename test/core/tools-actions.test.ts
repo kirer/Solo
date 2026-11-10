@@ -7,7 +7,7 @@
  * 1. 每个 `action` 都真的能跑通（不是只有默认那个）；
  * 2. 不认识的 `action` 要回一句能自救的话（列出合法值），而不是沉默或抛错。
  */
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
@@ -175,6 +175,106 @@ describe("chats", () => {
 		}, BACKGROUND_CONTEXT);
 		// 游标被写成「以后全已读」的话，这个红点永远不会再出现。
 		expect(await call("chats", {})).toContain("1 条未读");
+	});
+
+	it("写完报出「原 N → 现 M 字节」，新建报「新建」", async () => {
+		const { call } = await setup();
+		// 新建：没有「原」，说「新建」。
+		const first = await call("file", { action: "write", path: "out/字节.md", content: "第一版" });
+		expect(first).toContain("新建");
+		const firstBytes = Buffer.byteLength("第一版", "utf8");
+		expect(first).toContain(`${String(firstBytes)} 字节`);
+
+		// 覆写：原 → 现，两边都是字节数。
+		const next = "第二版长一点";
+		const second = await call("file", { action: "write", path: "out/字节.md", content: next });
+		const nextBytes = Buffer.byteLength(next, "utf8");
+		expect(second).toContain(`原 ${String(firstBytes)} → 现 ${String(nextBytes)} 字节`);
+	});
+
+	it("空正文 + 目标非空：拒绝，文件原样不动", async () => {
+		const { call, root } = await setup();
+		const original = "# 缺陷清单\n\n这份东西丢了就没了。\n";
+		await call("file", { action: "write", path: "out/清单.md", content: original });
+		const before = Buffer.byteLength(original, "utf8");
+
+		const refused = await call("file", { action: "write", path: "out/清单.md", content: "" });
+		// 报明「现在多少字节」，别只说「不许」。
+		expect(refused).toContain(`${String(before)} 字节`);
+		expect(refused).not.toContain("已写入");
+
+		// 原件必须还在盘上，一个字节都不能少。
+		const onDisk = await readFile(join(root, "out/清单.md"), "utf8");
+		expect(onDisk).toBe(original);
+	});
+
+	it("空正文 + 目标是新的或本来就是空文件：放行（那是在建空文件）", async () => {
+		const { call, root } = await setup();
+		// 文件本来不存在。
+		const fresh = await call("file", { action: "write", path: "out/新空.md", content: "" });
+		expect(fresh).toContain("已写入");
+		expect(await readFile(join(root, "out/新空.md"), "utf8")).toBe("");
+		// 已经是空文件，再写一次空：不该被挡（挡了就写不出空文件了）。
+		const again = await call("file", { action: "write", path: "out/新空.md", content: "" });
+		expect(again).toContain("已写入");
+	});
+
+	it("写到一半坏掉：原件还在，内容一个字节没变", async () => {
+		const { call, root } = await setup();
+		const original = "原件内容，不能被半截写坏\n".repeat(10);
+		const path = "out/要坏.md";
+		await call("file", { action: "write", path, content: original });
+		const before = Buffer.byteLength(original, "utf8");
+
+		// 在「临时文件写好、还没换上去」那一瞬注入失败 —— 这正是崩溃的位置。
+		const io = await import("../../src/core/runtime/io.ts");
+		io.setAtomicWriteFault(() => Promise.reject(new Error("写到一半崩了")));
+		try {
+			await expect(io.writeTextAtomic(join(root, path), "新内容")).rejects.toThrow("写到一半崩了");
+		} finally {
+			io.setAtomicWriteFault(undefined);
+		}
+
+		// 关键断言：目标文件还是原来那一份完整的，不是半截、不是空的。
+		const onDisk = await readFile(join(root, path), "utf8");
+		expect(onDisk).toBe(original);
+		expect(Buffer.byteLength(onDisk, "utf8")).toBe(before);
+	});
+
+	it("文件工具走的是原子写：中途崩了，报告「没写进去」，原件还在", async () => {
+		const { call, root } = await setup();
+		const original = "这份不能丢。\n".repeat(20);
+		const path = "out/经工具写.md";
+		await call("file", { action: "write", path, content: original });
+
+		const io = await import("../../src/core/runtime/io.ts");
+		io.setAtomicWriteFault(() => Promise.reject(new Error("盘满了")));
+		try {
+			const refused = await call("file", { action: "write", path, content: "半截内容" });
+			// 不能回「已写入」骗人。
+			expect(refused).not.toContain("已写入");
+			expect(refused).toContain("没写进去");
+		} finally {
+			io.setAtomicWriteFault(undefined);
+		}
+
+		expect(await readFile(join(root, path), "utf8")).toBe(original);
+	});
+
+	it("写失败不留临时文件", async () => {
+		const { call, root } = await setup();
+		await call("file", { action: "write", path: "out/有临时.md", content: "原样" });
+
+		const io = await import("../../src/core/runtime/io.ts");
+		io.setAtomicWriteFault(() => Promise.reject(new Error("崩了")));
+		try {
+			await io.writeTextAtomic(join(root, "out/有临时.md"), "新").catch(() => undefined);
+		} finally {
+			io.setAtomicWriteFault(undefined);
+		}
+
+		const leftovers = (await readdir(join(root, "out"))).filter((name) => name.includes(".tmp"));
+		expect(leftovers).toEqual([]);
 	});
 
 	it("不认识的 action 列出合法值", async () => {

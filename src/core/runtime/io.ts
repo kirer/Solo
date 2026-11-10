@@ -35,6 +35,81 @@ export async function writeTextAt(path: string, text: string): Promise<void> {
 	await writeFile(path, text, "utf8");
 }
 
+/**
+ * 测试专用：在临时文件写好、换上去之前插一次失败。
+ *
+ * 为什么需要它：要验「写到一半崩掉，原件还在」，就得真的让流程在那一刻断。
+ * 靠给目录改权限造失败不可靠（root 跑测试时权限位不生效），靠写进目录也不对
+ * （那在更早的地方就被拒了，根本没走到这）。所以留一个可注入的点。
+ *
+ * 生产走的是模块顶层那个 `undefined` —— 没人调 `setAtomicWriteFault` 就永远不触发。
+ */
+let faultAfterTempWrite: (() => Promise<void>) | undefined;
+
+/** 给测试用：设 / 清那个注入点。传 `undefined` 就清掉。 */
+export function setAtomicWriteFault(fault: (() => Promise<void>) | undefined): void {
+	faultAfterTempWrite = fault;
+}
+
+/** 一次原子替换的结果：替换前后的字节数，坏掉时是 `undefined`。 */
+export type AtomicWriteResult = {
+	/** 写之前那个文件多大。文件本来不存在 = `undefined`。 */
+	readonly before: number | undefined;
+	/** 写之后再读回来有多大。 */
+	readonly after: number;
+};
+
+/**
+ * 原子写一份文本：先写同目录的临时文件，落盘后 `rename` 换成目标，再把目标读回来核字节数。
+ *
+ * 为什么不直接 `writeFile`：`writeFile` 一上手就把目标截断。中途崩了（进程被杀、盘满、
+ * 传进来的是空串）留下一份**半截或 0 字节**的文件，原件已经没了 —— 这就是
+ * 「`file write` 传空正文把 10572 字节写成 1 字节」那次事故的形状。
+ *
+ * 临时文件必须和目标**同目录**：跨盘 rename 不是原子的，还会退化成「复制 + 删」。
+ *
+ * 读回来核对是多一层保险：`rename` 成功不等于内容对（写盘时盘满了、底层悄悄短写）。
+ * 发现对不上就抛 —— 调用方据此报「写坏了」，而不是回一句「已写入」骗人。
+ */
+export async function writeTextAtomic(path: string, text: string): Promise<AtomicWriteResult> {
+	const dir = dirname(path);
+	await mkdir(dir, { recursive: true });
+	const before = await sizeOrUndefined(path);
+	// 临时名带 pid + 随机串：同一个目录里两个 agent 同时写，不会互相踩掉临时文件。
+	const temp = `${path}.${String(process.pid)}.${Math.random().toString(36).slice(2, 10)}.tmp`;
+	try {
+		await writeFile(temp, text, "utf8");
+		// 测试钩子：在「临时文件已落地、还没换上去」这一瞬插一次失败。
+		// 这里才是真正危险的位置 —— 直接 `writeFile` 到目标的话，读的人已经看到半截了。
+		// 生产里 `faultAfterTempWrite` 是 `undefined`，这一行什么都不做。
+		await faultAfterTempWrite?.();
+		await rename(temp, path);
+	} catch (error) {
+		// 临时文件可能已经建出来了：留着会在工作区里长出一堆 `.tmp`。清掉再抛。
+		await rm(temp, { force: true }).catch(() => undefined);
+		throw error;
+	}
+	const written = await readFile(path, "utf8").catch(() => undefined);
+	if (written !== text) {
+		throw new Error(
+			`写进去读回来对不上：${path}（应为 ${String(Buffer.byteLength(text, "utf8"))} 字节，实为 ${String(
+				written === undefined ? "读不出来" : `${String(Buffer.byteLength(written, "utf8"))} 字节`,
+			)}）`,
+		);
+	}
+	return { before, after: Buffer.byteLength(text, "utf8") };
+}
+
+/** 文件多大。不存在 = `undefined`（不是 0：0 是「存在且空」，两件事）。 */
+export async function sizeOrUndefined(path: string): Promise<number | undefined> {
+	try {
+		const info = await stat(path);
+		return info.isFile() ? info.size : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 /** 写一份**二进制**，父目录自动建。装机（插件文件夹导入）要原样搬图片这类文件。 */
 export async function writeBytesAt(path: string, bytes: Uint8Array): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });

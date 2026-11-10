@@ -377,11 +377,28 @@ read 最多几行，默认 400
 ## file.refuse.no-content
 write 要带 content（写什么）。只想读文件用 action=read。
 
+## file.refuse.empty-overwrite
+不写：{{path}} 现在 {{size}}，正文是空的。空正文会把整份清掉，这不是一次误操作就赔得起的事。真要清空，先写明要清到什么样，或者用 `run` 删掉重建。
+
+## file.size.value
+{{bytes}} 字节
+
+## file.size.rewritten
+原 {{before}} → 现 {{after}} 字节
+
+## file.size.created
+新建 {{after}} 字节
+
 ## file.write.done
-已写入 {{path}}（{{length}} 字）
+已写入 {{path}}（{{length}} 字，{{sizes}}）
+
+## file.write.broken
+没写进去：{{path}}。{{error}}
+
+原文没动，仍是你上一次写下的那一版。别重试同样的内容，先看错误里的字节数差。
 
 ## file.write.sync-failed
-已写入 {{path}}（{{length}} 字），但团队频道刷新失败：{{error}}
+已写入 {{path}}（{{length}} 字，{{sizes}}），但团队频道刷新失败：{{error}}
 
 ## file.write.team-sync-failed
 团队 {{team}} 的频道没重算（{{error}}）：里面的成员可能还是旧的。
