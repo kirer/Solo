@@ -4,7 +4,7 @@
  * 三条安全线都要钉住：引用真相是频道文档、太新的不动（可能是正在上传）、非附件名不碰。
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -64,5 +64,51 @@ describe("sweepOrphanUploads", () => {
 	it("目录不存在时安静返回（第一次启动还没人传过文件）", async () => {
 		const result = await sweepOrphanUploads(join(root, "nope"), new Set(), Date.now());
 		expect(result).toEqual({ scanned: 0, removed: 0, keptRecent: 0 });
+	});
+});
+
+describe("待发附件（季衡 R3）", () => {
+	async function putStaged(id: string, ageMs: number): Promise<void> {
+		await put(id);
+		const at = new Date(Date.now() - ageMs);
+		await utimes(join(root, id), at, at);
+		await utimes(join(root, `${id}.json`), at, at);
+	}
+
+	it("没被点名的待发一个都不动：它可能正挂在输入框里，没有任何消息引用它", async () => {
+		const staged = "staged-" + randomUUID();
+		await putStaged(staged, 60 * 60_000);
+		const result = await sweepOrphanUploads(root, new Set(), Date.now());
+		expect(result.removed).toBe(0);
+		expect((await readdir(root)).sort()).toEqual([staged, `${staged}.json`].sort());
+	});
+
+	it("点名了、又放了够久的待发才回收", async () => {
+		const staged = "staged-" + randomUUID();
+		await putStaged(staged, 2 * 24 * 60 * 60_000);
+		const result = await sweepOrphanUploads(root, new Set(), Date.now(), {
+			staged: { only: new Set([staged]) },
+		});
+		expect(result.removed).toBe(1);
+		expect(await readdir(root)).toEqual([]);
+	});
+
+	it("点名了但刚放下：不动（可能是界面刚丢又拖回来）", async () => {
+		const staged = "staged-" + randomUUID();
+		await putStaged(staged, 1_000);
+		const result = await sweepOrphanUploads(root, new Set(), Date.now(), {
+			staged: { only: new Set([staged]) },
+		});
+		expect(result.removed).toBe(0);
+		expect(result.keptRecent).toBeGreaterThan(0);
+	});
+
+	it("点名了、但已经被引用（草稿又报上来了）：不动", async () => {
+		const staged = "staged-" + randomUUID();
+		await putStaged(staged, 2 * 24 * 60 * 60_000);
+		const result = await sweepOrphanUploads(root, new Set([staged]), Date.now(), {
+			staged: { only: new Set([staged]) },
+		});
+		expect(result.removed).toBe(0);
 	});
 });

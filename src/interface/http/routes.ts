@@ -278,6 +278,29 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				return json(response, await app.uploads.stage(path));
 			},
 		},
+		// 待发附件的「我还在用」自报（季衡 R3）：界面把挂在草稿上的 id 全量报上来，后端据此
+		// 决定哪些能回收。只认 `staged-` 前缀，别的 id 写不进状态文件。
+		{
+			pattern: "/api/uploads/draft",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				const body = await readJson<{ ids?: unknown }>(request).catch(() => undefined);
+				const ids = Array.isArray(body?.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
+				await app.uploads.draftFiles(ids);
+				return json(response, { ok: true });
+			},
+		},
+		// 丢掉了（删草稿 / 点叉）：立刻删盘，不等下一轮扫。幂等。
+		{
+			pattern: "/api/uploads/drop",
+			method: "POST",
+			handler: async ({ request, response }) => {
+				const body = await readJson<{ ids?: unknown }>(request).catch(() => undefined);
+				const ids = Array.isArray(body?.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
+				await app.uploads.drop(ids);
+				return json(response, { ok: true });
+			},
+		},
 		// 消息里点到的文件：读一眼（图片 / PDF / 文本）。没有就 404，不能预览就 415，
 		// 两种都由界面把后端那句话原样摆出来 —— 别让一句路径变成一个死链接。
 		{

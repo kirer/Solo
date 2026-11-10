@@ -250,6 +250,14 @@ const NO_CONSUMER_ALLOWED = new Map([
 		"POST /api/people/:slug/dm",
 		"私聊入口后端先行（ADR-097）：界面入口下一轮接，现在由脚本 / 宿主直接调用",
 	],
+	[
+		"POST /api/uploads/draft",
+		"待发附件自报（季衡 R3）：后端先行，Composer 那一轮接（沈迟）；不接也不坏，只是回收退化成按时间兜底",
+	],
+	[
+		"POST /api/uploads/drop",
+		"丢掉待发立刻删盘（季衡 R1）：同上，Composer 接上之前由 sweep 兜底回收",
+	],
 ]);
 
 let consumerCorpus = "";

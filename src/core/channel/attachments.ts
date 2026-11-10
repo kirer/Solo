@@ -210,14 +210,26 @@ export async function readUploadMeta(root: string, id: string): Promise<UploadMe
  * 2. **太新的不动**：`minAgeMs` 之内的文件可能是正在上传的（写本体和写元数据之间），
  *    删了就是把人正在发的图弄丢；
  * 3. 只认 `isUploadId` 的纯文件名，别的（`.DS_Store`、子目录）一律不碰。
+ *
+ * 待发附件（`options.staged`，季衡 R3）走另一条钟：正在用的待发**没有消息引用它**，
+ * 拿上面第一条去判就一定会被收走。所以：
+ * - 调用方用 `only` 指定「这一轮允许回收的那几个」（它自己判过：界面已经不要了）；
+ * - 没被指定的待发一个都不动，哪怕看着像孤儿 —— 它可能正挂在某个输入框里；
+ * - 被指定的还要再过一遍 `staleMs`（默认 24 小时），刚放下的不删。
  */
 export async function sweepOrphanUploads(
 	root: string,
 	referenced: ReadonlySet<string>,
 	now: number,
-	options: { readonly minAgeMs?: number } = {},
+	options: {
+		readonly minAgeMs?: number;
+		readonly staged?: { readonly staleMs?: number; readonly only?: ReadonlySet<string> };
+	} = {},
 ): Promise<{ scanned: number; removed: number; keptRecent: number }> {
 	const minAgeMs = options.minAgeMs ?? 10 * 60_000;
+	const stagedStaleMs = options.staged?.staleMs ?? 24 * 60 * 60_000;
+	const stagedOnly = options.staged?.only;
+	const isStaged = (id: string): boolean => id.startsWith("staged-");
 	let scanned = 0;
 	let removed = 0;
 	let keptRecent = 0;
@@ -230,12 +242,21 @@ export async function sweepOrphanUploads(
 	for (const name of names) {
 		const id = name.endsWith(".json") ? name.slice(0, -".json".length) : name;
 		if (!isUploadId(id)) continue;
+		// 待发的 id 首字母就不同，`isUploadId` 得认得出来（见 `isUploadId` 的实现）。
 		scanned += 1;
 		if (referenced.has(id)) continue;
 		const info = await stat(join(root, name)).catch(() => null);
 		// 只删**普通文件**：同名目录（`sub` 也符合 id 白名单）删不掉，算进「已删」会骗人。
 		if (info === null || !info.isFile()) continue;
-		if (now - info.mtimeMs < minAgeMs) {
+		const ageMs = now - info.mtimeMs;
+		if (isStaged(id)) {
+			// 没被点名的待发一律留着：它可能正挂在某个输入框里，没有任何文档会引用它。
+			if (stagedOnly === undefined || !stagedOnly.has(id)) continue;
+			if (ageMs < stagedStaleMs) {
+				keptRecent += 1;
+				continue;
+			}
+		} else if (ageMs < minAgeMs) {
 			keptRecent += 1;
 			continue;
 		}

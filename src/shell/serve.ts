@@ -56,6 +56,15 @@ export function defaultUiDir(): string {
 	return fileURLToPath(new URL("../../ui/web", import.meta.url));
 }
 
+/**
+ * 上传孤儿多久扫一次。
+ *
+ * 十五条钟够短（没人引用 + 过了空闲期的文件半小时内一定回收），又够长（一次 `readdir`
+ * 加几十个 `stat`，半小时一次对 I/O 毫无存在感）。删草稿这种「我刚丢掉」的不用等它，
+ * 界面走 `/api/uploads/drop` 当场删。
+ */
+const UPLOAD_SWEEP_MS = 30 * 60_000;
+
 /** 目录事件会连着来（一次删除常常好几个）：合并一下再对账。 */
 const TEAM_RECONCILE_MS = 150;
 
@@ -154,8 +163,13 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		});
 	});
 
-	// 启动时清一次上传孤儿（审计 P2-3）。失败只记一行，不影响启动。
+	// 上传孤儿清理（审计 P2-3，季衡 R1）：**不只是启动跑一次**。
+	// 以前只在启动时扫一遍，删掉的草稿、发失败的字节要等下次重启才回收 —— 长跑的进程里
+	// 磁盘只涨不落。现在启动扫一次，之后每 `UPLOAD_SWEEP_MS` 再扫一次；`unref` 掉，
+	// 别让这个定时器把进程钉住（关服务时不用特意清它）。
 	void app.uploads.sweep();
+	const uploadSweepTimer = setInterval(() => void app.uploads.sweep(), UPLOAD_SWEEP_MS);
+	uploadSweepTimer.unref?.();
 	// 后台命令的「跑完了」是进程内的回调：上一轮进程一起，结果就永远回不来了。
 	// 重启时把账结掉，频道里留一句话（ADR-013）。
 	void app.runs.sweep();
@@ -180,6 +194,7 @@ export async function serveCore(options: CoreServeOptions): Promise<CoreServer> 
 		host: boundHost,
 		lanUrls: lanUrlsOf(boundHost, actualPort),
 		async close() {
+			clearInterval(uploadSweepTimer);
 			app.watch.stop();
 			stopTeamReconcile();
 			unsubscribe();

@@ -6,8 +6,8 @@
  * 传输层只负责把字节推出去。
  */
 import { randomUUID } from "node:crypto";
-import { readFile, stat } from "node:fs/promises";
-import { basename } from "node:path";
+import { readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import { createFiles } from "./files.ts";
 import type { CoreServices } from "./types.ts";
 import { AppError } from "./errors.ts";
@@ -23,11 +23,72 @@ import {
 /**
  * 「把正文里这个路径转成附件」用的前缀。
  *
- * 生成的是**真的一个附件**（同一个目录、同一份元数据），只是名字带前缀：发出去之前它
- * 没人引用，`sweep` 会照旧收走；发出去以后消息里引用的是它的 id，和手选上传的没区别。
- * 前缀的作用只有一个 —— 让 `read` 知道「这个能在还没发的时候预览」。
+ * 生成的是**真的一个附件**（同一个目录、同一份元数据），只是名字带前缀。前缀的作用是让
+ * `read` 知道「这个能在还没发的时候预览」，同时告诉 `sweep` 这一份**有人正在用**。
+ *
+ * 待发的不许被 `sweep` 收走（季衡 R3）：输入框里那个附件没有任何消息引用它，按「没人引用
+ * 就删」的规矩 10 分钟就被清掉，界面上只剩一个点不开的空壳，草稿恢复也跟着废。
+ * 所以待发的只有在「被显式丢掉」之后才进入孤儿：`drop` 记下的 id 进墓碑，`draftFiles`
+ * 写下的清单（防刷新丢东西）在墓碑到期前也算引用；墓碑过期以后就是普通孤儿，照常回收。
  */
 export const STAGED_PREFIX = "staged-";
+
+/** 当前事实的真相文件：`drop` 记墓碑、`draftFiles` 记正在用的 id。两者都在附件目录里。 */
+const STAGED_STATE_FILE = "staged-state.json";
+
+/** 墓碑留多久：够跨过一个浏览器刷新（刷新时 `draftFiles` 会把引用重新写回来）。 */
+const TOMBSTONE_MS = 30 * 60_000;
+
+/** 待发附件的回收年龄：待发不会被上面那条 minAge 规则收走，它有自己的钟。 */
+const STAGED_STALE_MS = 24 * 60 * 60_000;
+
+type StagedState = {
+	/** id → 丢掉的时刻。过了墓碑期这条就自动失效，不用另外清。 */
+	readonly dropped: Readonly<Record<string, number>>;
+	/** 界面上还挂在草稿里的 id（某个输入框还显示着它）。 */
+	readonly drafts: readonly string[];
+};
+
+/** 只有 `staged-` 开头的才记：别的 id 进状态文件等于给人一份能写到别处的清单。 */
+function isStagedId(value: unknown): value is string {
+	return typeof value === "string" && value.startsWith(STAGED_PREFIX) && !value.includes("/") && !value.includes("..");
+}
+
+/** 读状态文件：没有、坏了、类型不对一律当空 —— 这只是清理用的线索，不是业务状态。 */
+async function readStagedState(root: string): Promise<StagedState> {
+	try {
+		const raw = await readFile(join(root, STAGED_STATE_FILE), "utf8");
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null) return { dropped: {}, drafts: [] };
+		const record = parsed as { dropped?: unknown; drafts?: unknown };
+		const dropped: Record<string, number> = {};
+		if (typeof record.dropped === "object" && record.dropped !== null) {
+			for (const [id, at] of Object.entries(record.dropped)) {
+				if (isStagedId(id) && typeof at === "number" && Number.isFinite(at)) dropped[id] = at;
+			}
+		}
+		const drafts = Array.isArray(record.drafts) ? record.drafts.filter(isStagedId) : [];
+		return { dropped, drafts };
+	} catch {
+		return { dropped: {}, drafts: [] };
+	}
+}
+
+/** 写状态文件：先写临时文件再 `rename`，写一半断电也不会留下半截 JSON。 */
+async function writeStagedState(root: string, state: StagedState): Promise<void> {
+	const body = `${JSON.stringify(state, null, "\t")}\n`;
+	const temp = join(root, `${STAGED_STATE_FILE}.tmp`);
+	await writeFile(temp, body, "utf8");
+	await rename(temp, join(root, STAGED_STATE_FILE));
+}
+
+/** 顺手删掉一个附件的本体与元数据；本来就不在也算成功（`drop` 是幂等的）。 */
+async function removeUpload(root: string, id: string): Promise<void> {
+	const path = uploadPathOf(root, id);
+	if (path === undefined) return;
+	await unlink(path).catch(() => undefined);
+	await unlink(`${path}.json`).catch(() => undefined);
+}
 
 /** 取一个附件时要给传输层的东西。 */
 export type UploadForRead = {
@@ -79,23 +140,101 @@ export function createUploads(shell: CoreServices) {
 	 * 引用真相是频道文档里的 `attachments`：一条消息引用过的 id 一个都不动，其余超过
 	 * 10 分钟的（避免误删正在上传的那半套）删掉。失败只记一行，不影响启动 ——
 	 * 清不掉只是占点磁盘。
+	 *
+	 * 待发附件（`staged-`）另算（季衡 R3）：界面正在用的（`draftFiles` 报上来的）一个不动；
+	 * 被 `drop` 掉、或早就不在界面上、又放了 24 小时的，才回收。判据在两次扫之间会变
+	 * （界面随时丢弃、刷新随时重报），所以真删之前再读一次状态文件，翻回去了就不删。
 	 */
 	async function sweep(): Promise<void> {
 		try {
 			const state = await shell.channels();
-			const referenced = new Set<string>();
+			const messageIds = new Set<string>();
 			for (const list of Object.values(state.messages ?? {})) {
 				for (const message of list) {
-					for (const attachment of message.attachments ?? []) referenced.add(attachment.id);
+					for (const attachment of message.attachments ?? []) messageIds.add(attachment.id);
 				}
 			}
-			const result = await sweepOrphanUploads(root, referenced, Date.now());
+			const candidates = await stagedCandidates();
+			// 删之前再读一次：候选里已经重新被界面认领的（刷新重报 / 又拖回来了）放过。
+			const fresh = await readStagedState(root);
+			const revive = new Set<string>(fresh.drafts);
+			const result = await sweepOrphanUploads(root, new Set([...messageIds, ...revive]), Date.now(), {
+				staged: { staleMs: STAGED_STALE_MS, only: candidates },
+			});
+			// 过了墓碑期、又不在草稿里的墓碑不再有用，顺手清掉。
+			const now = Date.now();
+			const kept = Object.entries(fresh.dropped).filter(([, at]) => now - at < TOMBSTONE_MS);
+			if (kept.length !== Object.keys(fresh.dropped).length) {
+				await writeStagedState(root, { dropped: Object.fromEntries(kept), drafts: fresh.drafts }).catch(() => undefined);
+			}
 			if (result.removed > 0) {
 				console.log(`[core] 清掉 ${result.removed} 个没人引用的上传文件（扫描 ${result.scanned} 个）`);
 			}
 		} catch {
 			/* 清理失败不影响启动 */
 		}
+	}
+
+	/** 哪些待发附件可以回收：被丢掉（墓碑里）或者不在任何草稿里、并且放了够久。 */
+	async function stagedCandidates(): Promise<Set<string>> {
+		const state = await readStagedState(root);
+		let names: string[];
+		try {
+			names = await readdir(root);
+		} catch {
+			return new Set();
+		}
+		const drafts = new Set(state.drafts);
+		const now = Date.now();
+		const candidates = new Set<string>();
+		for (const name of names) {
+			if (name.endsWith(".json")) continue;
+			if (!isStagedId(name)) continue;
+			const droppedAt = state.dropped[name];
+			if (drafts.has(name)) continue;
+			if (droppedAt === undefined) {
+				// 没被显式丢掉、也不在草稿里：可能是界面还没报上来。只用时间兜底，别急着删。
+				const info = await stat(join(root, name)).catch(() => undefined);
+				if (info !== undefined && now - info.mtimeMs >= STAGED_STALE_MS) candidates.add(name);
+				continue;
+			}
+			candidates.add(name);
+		}
+		return candidates;
+	}
+
+	/**
+	 * 界面上把这个待发附件丢掉了（删草稿、点叉）：立刻删盘，别等下一轮扫。
+	 *
+	 * 先记墓碑再删：两次请求撞在一起（这边刚放下、那边 `draftFiles` 又把它报成在用），
+	 * 墓碑让 `sweep` 知道「这一份已经有人明确不要了」。删不掉就留着当墓碑，下一轮扫再删。
+	 */
+	async function drop(ids: readonly string[]): Promise<void> {
+		const live = ids.filter(isStagedId);
+		if (live.length === 0) return;
+		const state = await readStagedState(root);
+		const now = Date.now();
+		const dropped: Record<string, number> = { ...state.dropped };
+		for (const id of live) dropped[id] = now;
+		const drafts = state.drafts.filter((id) => !live.includes(id));
+		await writeStagedState(root, { dropped, drafts });
+		for (const id of live) await removeUpload(root, id);
+	}
+
+	/**
+	 * 界面报一次「我现在挂在草稿上的待发附件是这些」。
+	 *
+	 * 为什么要有：重启、断网、浏览器崩掉之后，界面手上的清单和盘上的文件对不上。全量上报
+	 * 一次，后端就知道哪些还活着、哪些早没人要了 —— 不用猜。不在清单里的**不立即删**，
+	 * 交给 `sweep` 按年纪回收，免得两个窗口各报一份时互相踩。
+	 */
+	async function draftFiles(ids: readonly string[]): Promise<void> {
+		const live = [...new Set(ids.filter(isStagedId))];
+		const state = await readStagedState(root);
+		const dropped: Record<string, number> = { ...state.dropped };
+		// 又被认领回来的不算丢过了。
+		for (const id of live) delete dropped[id];
+		await writeStagedState(root, { dropped, drafts: live });
 	}
 
 	/**
@@ -106,7 +245,8 @@ export function createUploads(shell: CoreServices) {
 	 * ②只搬 `preview` 认的字节（文本 / 图片 / PDF，各有大小上限），认不出的不搬 ——
 	 * 转成附件以后，界面就要负责把它画出来，画不了的东西别往队列里放。
 	 *
-	 * id 带 `STAGED_PREFIX`：发出去之前没人引用，`sweep` 到点会收走，不会一直占磁盘。
+	 * id 带 `STAGED_PREFIX`：发出去之前没有消息引用它，所以它靠 `draftFiles` / `drop` 自报
+	 * 「还在用」；界面明确丢掉之后立刻删盘，没人报又放了很久的由 `sweep` 兜底回收。
 	 */
 	async function stage(path: string): Promise<{ readonly id: string; readonly name: string; readonly kind: "image" | "file"; readonly bytes: number }> {
 		const file = await files.preview(path);
@@ -125,5 +265,5 @@ export function createUploads(shell: CoreServices) {
 		return await putUpload(root, { id: STAGED_PREFIX + randomUUID(), name, mime: file.mime, bytes, at: Date.now() });
 	}
 
-	return { root, read, stage, sweep };
+	return { root, read, stage, drop, draftFiles, sweep };
 }
