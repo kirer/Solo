@@ -73,10 +73,21 @@ export function stampOf(info: { readonly mtimeMs: number; readonly size: number 
 }
 
 /** 一份**普通文件**的体量与修改时间。目录 / 不存在 / 没权限 = `undefined`。 */
-export async function fileStatAt(path: string): Promise<{ readonly size: number; readonly mtimeMs: number } | undefined> {
+/**
+ * 看一个路径是什么：文件 / 目录 / 不存在。
+ *
+ * **目录也要回**（`isFile: false`），不能一起当成「不存在」：界面上点一个目录，
+ * 报「找不到这个文件」是在说谎 —— 它明明在那儿，只是点不了。区分留给调用方说。
+ * 别的种类（套接字、设备）按「不存在」处理：预览不了，也没什么可说的。
+ */
+export async function fileStatAt(
+	path: string,
+): Promise<{ readonly size: number; readonly mtimeMs: number; readonly isFile: boolean } | undefined> {
 	try {
 		const info = await stat(path);
-		return info.isFile() ? { size: info.size, mtimeMs: info.mtimeMs } : undefined;
+		if (info.isFile()) return { size: info.size, mtimeMs: info.mtimeMs, isFile: true };
+		if (info.isDirectory()) return { size: 0, mtimeMs: info.mtimeMs, isFile: false };
+		return undefined;
 	} catch {
 		return undefined;
 	}

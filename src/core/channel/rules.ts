@@ -114,6 +114,8 @@ export function appendMessage(
 		readonly options?: readonly string[];
 		/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
 		readonly sourceEntry?: string;
+		/** 这条是人亲手打的，原样带到 `Message.human`。 */
+		readonly human?: boolean;
 	},
 ): { readonly state: ChannelState; readonly message: Message } {
 	const channel = state.channels[channelId];
@@ -161,6 +163,7 @@ export function appendMessage(
 				}),
 		...(input.options === undefined || input.options.length === 0 ? {} : { options: [...input.options] }),
 		...(input.sourceEntry === undefined ? {} : { sourceEntry: input.sourceEntry }),
+		...(input.human === true ? { human: true } : {}),
 	};
 
 	return {

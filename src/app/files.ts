@@ -131,8 +131,14 @@ export function createFiles(layout: Layout) {
 
 		const blocked = await denyList();
 		/** 命中了就按格式说清楚：图片 / PDF / 文本各一档。 */
-		const describe = (real: string, info: { readonly size: number }): FilePreview => {
+		const describe = (
+			real: string,
+			info: { readonly size: number; readonly isFile?: boolean },
+		): FilePreview => {
 			const name = basename(real);
+			// 目录：说「这是一个目录」，别说「找不到这个文件」—— 它明明就在那儿，
+			// 只是没有内容可预览。报错文案是在告诉人发生了什么，不能拿「不存在」糊弄。
+			if (info.isFile === false) return none(name, "这是一个目录", 415);
 			const ext = extOf(name);
 			if (ext in IMAGE_MIME) {
 				if (info.size > MAX_IMAGE) return none(name, "图片太大（超过 8 MB），到工作台里看", 415);
@@ -159,6 +165,7 @@ export function createFiles(layout: Layout) {
 			if (blocked.includes(real)) return none(basename(real), "这个文件不开放预览");
 			const info = await fileStatAt(real);
 			if (info === undefined) return undefined;
+			// 绝对路径：目录就直说，别当「不存在」。
 			return describe(real, info);
 		}
 
@@ -180,9 +187,18 @@ export function createFiles(layout: Layout) {
 			if (!inside(base, real)) continue;
 			if (blocked.includes(real)) return none(basename(real), "这个文件不开放预览");
 			const info = await fileStatAt(real);
-			// 目录：换下一个根再试一次，都不行就是「找不到」。
-			if (info === undefined) continue;
+			// 目录：换下一个根再试一次 —— 同名目录在别的根里可能是真文件。
+			if (info === undefined || info.isFile === false) continue;
 			return describe(real, info);
+		}
+		// 相对路径一个根都没解出文件：如果它在某个根里确实是个目录，就照实说。
+		for (const root of roots) {
+			const base = await realPathOrUndefined(root);
+			if (base === undefined) continue;
+			const real = await realPathOrUndefined(resolve(base, raw));
+			if (real === undefined || !inside(base, real)) continue;
+			const info = await fileStatAt(real);
+			if (info !== undefined && info.isFile === false) return describe(real, info);
 		}
 		return undefined;
 	}

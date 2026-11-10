@@ -44,6 +44,8 @@ export type PublishInput = {
 	readonly options?: readonly string[];
 	/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
 	readonly sourceEntry?: string;
+	/** 这条是人亲手打的（入口打的标记），透传到 `Message.human`。 */
+	readonly human?: boolean;
 };
 
 /** 一条系统留痕：不叫醒、不计未读。 */

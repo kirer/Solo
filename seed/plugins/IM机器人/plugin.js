@@ -33,12 +33,15 @@ const BOTS_FILE = "bots.json";
  * （`deliver()` 用 `api.post` 以我的身份落进私聊，`from` 也是 `owner`，见 ECHO_PREFIX）。
  */
 const ECHO_PREFIX = "[IM · ";
-/** 我自己的 slug（和 core 的 `OWNER_SLUG` 同值）。插件不 import core，所以这里写一份。 */
-const OWNER_SLUG = "owner";
-/** 推到 IM 那边时，桌面来的话前面加这个，好跟「别处发来的」分开。 */
-const DESKTOP_PREFIX = "[桌面] ";
+
 const POLL_TIMEOUT = 25;
-const MAX_SEND = 3800;
+/**
+ * 一片最多多少**字节**（UTF-8）。以前这里是 3800，含义是「字符」——
+ * 中文一个字 3 字节，3800 字切出来一片 11400 字节，企业微信上限 2048，
+ * 于是一个 700 字以上的中文回复整条都发不出去，`lastError` 只留一句 HTTP 400。
+ * 现在按字节切：中文上限 ≈ 680 字，英文 ≈ 2000 字，两边都在限制内。
+ */
+const MAX_SEND_BYTES = 2000;
 const WEBHOOK_TIMEOUT = 15_000;
 const STATE_KEY = Symbol.for("solo.im.runtime");
 
@@ -75,22 +78,10 @@ function hasOptions(message) {
  * 编号用 `1.` `2.` 而不是 `①②`：手机上手打回去最省事，也最好认。
  */
 function outboundText(message, body) {
-	const mark = DESKTOP_PREFIX + authorOf(message);
-	const lines = hasOptions(message)
-		? ["", ...message.options.map((option, index) => `${index + 1}. ${String(option).trim()}`)]
-		: [];
-	return `${mark}${body}${lines.length === 0 ? "" : `\n${lines.join("\n")}`}`;
-}
-
-/**
- * 谁说的。桌面端的话标上发件人，微信那边才分得清是助理还是团队里的人。
- *
- * `Message` 上只有 slug（没有显示名字段），就照它写 —— 总比不标好，
- * 助理的 slug 在私聊里是 `Solo` 这种，人一眼认得出来。
- */
-function authorOf(message) {
-	const from = typeof message.from === "string" ? message.from : "";
-	return from === "" ? "" : `${from}：`;
+	// 不加油漆：老板明确要「跟微信里说的一样」，前缀只会让两边对不上。
+	if (!hasOptions(message)) return body;
+	const lines = message.options.map((option, index) => `${index + 1}. ${String(option).trim()}`);
+	return `${body}\n\n${lines.join("\n")}`;
 }
 
 /** 记下「哪个聊天正等着选哪一条」：微信回来的编号要能对到那条消息上。 */
@@ -675,9 +666,10 @@ function createManager(api) {
 			await ensureAssistant();
 			if (assistant === null || channelId !== assistant.channelId) return;
 			if (message.kind !== "chat") return;
-			// 我在桌面打的字不推：那是我自己写的，我清楚；推到微信只会刷屏。
-			// 判据是 `from`（发件人 slug），`owner` 就是我本人 —— 只有助理 / 成员说的话才出去。
-			if (message.from === OWNER_SLUG) return;
+			// 助理 / 成员说的话才推到微信。人亲手打的那条不推（他自己写的，推过去只剩刷屏）。
+			// 判据是 `human` 标记，不是 `from`：后端所有「我说话」都写 `from: "owner"`
+			// （防冒充），只看 from 会把助理的回复也一起挡掉 —— 那是反的。
+			if (message.human === true) return;
 			const body = message.text.trim();
 			if (body === "") return;
 			if (body.startsWith(ECHO_PREFIX)) return;
@@ -1052,17 +1044,82 @@ async function sendWeixin(runtime, chatId, text) {
 }
 
 /** 平台一条消息都有上限：按 3800 字切，尽量在换行处断。 */
+/**
+ * 按**字节**切，不是按字符。
+ *
+ * 为什么不能按 `length`：`"中".length === 1`，UTF-8 里却是 3 字节。以前按 3800 个
+ * 字符切，中文一片能到 11400 字节，超过平台上限，整条被拒 —— 而且是从 700 字左右
+ * 就开始，老板问个稍长的问题就中。
+ *
+ * 切点优先落在换行上（别把一句话劈两半），但**绝不超过字节上限**；
+ * 每片切完自己再核一遍字节数，超了就往前收 —— 这道复核是为了防「代理对
+ * （emoji、生僻字）被切一半」那类算漏。
+ */
 function splitText(text) {
 	const rows = [];
 	let rest = text;
-	while (rest.length > MAX_SEND) {
-		const cut = rest.lastIndexOf("\n", MAX_SEND);
-		const at = cut > MAX_SEND / 2 ? cut : MAX_SEND;
-		rows.push(rest.slice(0, at));
-		rest = rest.slice(at).replace(/^\n+/, "");
+	while (byteLength(rest) > MAX_SEND_BYTES) {
+		// 先按字节贪心找到能放下的最大前缀（按码点走，不会劈开代理对）。
+		let used = 0;
+		let at = 0;
+		for (const char of rest) {
+			const size = byteLength(char);
+			if (used + size > MAX_SEND_BYTES) break;
+			used += size;
+			at += char.length;
+		}
+		if (at === 0) break; // 一个字符都放不下：理论上不会有，别死循环。
+		// 这一段里如果能退到换行处就退，读起来整齐；但退过头（不到一半）就不退。
+		const cut = rest.lastIndexOf("\n", at - 1);
+		const piece = cut >= at / 2 ? rest.slice(0, cut) : rest.slice(0, at);
+		rows.push(piece);
+		rest = rest.slice(piece.length).replace(/^\n+/, "");
 	}
 	if (rest !== "") rows.push(rest);
-	return rows.length === 0 ? [""] : rows;
+	const trimmed = rows.filter((row) => row !== "");
+	// 最后再核一遍：任何一片超字节上限都是我们的错，宁可多切一片也别让整条被拒。
+	const checked = [];
+	for (const row of trimmed) {
+		if (byteLength(row) <= MAX_SEND_BYTES) {
+			checked.push(row);
+			continue;
+		}
+		for (const piece of hardSplit(row)) checked.push(piece);
+	}
+	return checked.length === 0 ? [""] : checked;
+}
+
+/** 一个字符串占几个 UTF-8 字节（不依赖 Buffer：插件跑在浏览器 / 无 Node 的环境里）。 */
+function byteLength(text) {
+	let bytes = 0;
+	for (const char of text) {
+		const point = char.codePointAt(0) ?? 0;
+		if (point <= 0x7f) bytes += 1;
+		else if (point <= 0x7ff) bytes += 2;
+		else if (point <= 0xffff) bytes += 3;
+		else bytes += 4;
+	}
+	return bytes;
+}
+
+/** 兜底硬切：只在上面那轮复核发现某片还是超了的时候用。 */
+function hardSplit(text) {
+	const rows = [];
+	let rest = text;
+	while (rest !== "") {
+		let used = 0;
+		let at = 0;
+		for (const char of rest) {
+			const size = byteLength(char);
+			if (used + size > MAX_SEND_BYTES) break;
+			used += size;
+			at += char.length;
+		}
+		if (at === 0) break;
+		rows.push(rest.slice(0, at));
+		rest = rest.slice(at);
+	}
+	return rows;
 }
 
 // ── 插件入口 ───────────────────────────────────────────────────────────

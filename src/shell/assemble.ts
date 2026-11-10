@@ -291,7 +291,12 @@ export async function assembleCore(
 			}
 		}
 		await speak(
-			{ channelId: input.channelId, text: input.text, ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }) },
+			{
+				channelId: input.channelId,
+				text: input.text,
+				// 插件说话＝代理说的，永远不带 `human`：它替我说话的时候不能冒充我本人。
+				...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
+			},
 			BACKGROUND_CONTEXT,
 		);
 	};

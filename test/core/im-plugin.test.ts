@@ -150,13 +150,14 @@ describe("IM 机器人", () => {
 
 		const listener = host.messages[0];
 		if (listener === undefined) throw new Error("没有听消息");
-		const said = (text: string, channelId = DM.id, from = "知言"): Message => ({
+		const said = (text: string, channelId = DM.id, from = "知言", human = false): Message => ({
 			seq: 1,
 			from,
 			at: Date.now(),
 			text,
 			mentions: [],
 			kind: "chat",
+			...(human ? { human: true } : {}),
 		});
 		// 别的频道：不送。
 		await listener(said("别处的话", "team:alpha"), "team:alpha");
@@ -169,17 +170,18 @@ describe("IM 机器人", () => {
 		expect(calls.length).toBe(1);
 		expect(calls[0]?.url).toBe("https://example.test/hook");
 		expect(JSON.stringify(calls[0]?.body)).toContain("在的，马上看。");
-		// 推过去的要标出来自桌面。
-		expect(JSON.stringify(calls[0]?.body)).toContain("[桌面]");
+		// 不加前缀：老板要的是「跟微信里说的一样」。
+		expect(JSON.stringify(calls[0]?.body)).not.toContain("[桌面]");
 
-		// 我在桌面自己打的字：不送。那是我自己写的，我清楚；推过去只会刷屏。
-		await listener(said("桌面端发一句", DM.id, "owner"), DM.id);
+		// 我在桌面自己打的字（`human`）：不送。那是我自己写的，推过去只会刷屏。
+		await listener(said("桌面端发一句", DM.id, "owner", true), DM.id);
 		expect(calls.length).toBe(1);
 
-		// 团队里的成员在助理私聊说话（正常不会，但判据是「是不是我」而不是「是不是助理」）：送。
-		await listener(said("叶决插一句", DM.id, "ye-jue"), DM.id);
+		// 助理的回复 `from` 也是 `owner`（后端所有「我说话」都写 owner），但**没有** human：
+		// 这才是要推的那一类 —— 以前按 from 判，把助理的话一起挡了，方向是反的。
+		await listener(said("助理的回复", DM.id, "owner"), DM.id);
 		expect(calls.length).toBe(2);
-		expect(JSON.stringify(calls[1]?.body)).toContain("叶决插一句");
+		expect(JSON.stringify(calls[1]?.body)).toContain("助理的回复");
 	});
 
 	it("保存机器人写进 appRoot/im，不写进插件目录", async () => {
@@ -363,7 +365,7 @@ describe("IM 机器人", () => {
 		expect(JSON.stringify(calls[0]?.body)).toContain("重启之后这一句还出得去");
 	});
 
-	it("整条链路：微信进来一句，助理回的话出去、老板自己打的不出去，且带来源标识", async () => {
+	it("整条链路：微信进来一句，助理回的话出去、人亲手打的不出去，内容不加前缀", async () => {
 		// 这条走完整链路：入站先让插件记住「跟谁在聊」，再分别喂老板 / 助理的消息，
 		// 看推出去的内容。工位上就能验，不用碰老板的机器。
 		const calls: { url: string; body: { text?: { content?: string } } }[] = [];
@@ -384,34 +386,36 @@ describe("IM 机器人", () => {
 
 		const listener = host.messages[0];
 		if (listener === undefined) throw new Error("没有听消息");
-		const said = (text: string, from: string): Message => ({
+		const said = (text: string, from: string, human = false): Message => ({
 			seq: 1,
 			from,
 			at: Date.now(),
 			text,
 			mentions: [],
 			kind: "chat",
+			...(human ? { human: true } : {}),
 		});
 
-		// ② 老板在桌面自己打的字：一条都不出去（他自己写的，推过去只剩刷屏）。
-		await listener(said("我看下", "owner"), DM.id);
+		// ② 老板在桌面自己打的字（human）：一条都不出去（他自己写的，推过去只剩刷屏）。
+		await listener(said("我看下", "owner", true), DM.id);
 		expect(calls).toEqual([]);
 
-		// ③ 助理说的：出去，而且看得出是桌面上说的。
-		await listener(said("没挂，是网络抖了一下", "Solo"), DM.id);
+		// ③ 助理的回复：出去。`from` 同样是 `owner`，但没有 human —— 这就是关键区别。
+		await listener(said("没挂，是网络抖了一下", "owner"), DM.id);
 		expect(calls.length).toBe(1);
 		const pushed = calls[0]?.body.text?.content ?? "";
-		expect(pushed).toContain("没挂，是网络抖了一下");
-		expect(pushed).toContain("[桌面]");
-		expect(pushed).toContain("Solo");
+		// 正文原样，不加前缀（老板要「跟微信里说的一样」）。
+		expect(pushed).toBe("没挂，是网络抖了一下");
 
-		// ④ 老板再说一句：还是不出门（别把老板的话当成助理的推出去）。
-		await listener(said("那就好", "owner"), DM.id);
+		// ④ 老板再说一句：还是不出门（别把他自己打的推出去）。
+		await listener(said("那就好", "owner", true), DM.id);
 		expect(calls.length).toBe(1);
 	});
 
-	it("我在桌面打的字不推到微信：那是我自己写的", async () => {
-		// 老板自己打的话推过去只会刷屏 —— 判据是发件人是不是我（`from === "owner"`）。
+	it("人亲手打的字不推到微信，助理的回复照推：判据是 human 不是 from", async () => {
+		// 老板自己打的话推过去只会刷屏 —— 判据是 `human` 标记。
+		// 不能看 `from`：后端所有「我说话」都写 `from: "owner"`（防冒充），
+		// 只看 from 会把助理的回复一起挡掉，那就成了「一句都到不了微信」。
 		const calls: { url: string; body: unknown }[] = [];
 		vi.stubGlobal("fetch", async (url: string, init?: { body?: string }) => {
 			calls.push({ url: String(url), body: JSON.parse(init?.body ?? "{}") });
@@ -426,28 +430,68 @@ describe("IM 机器人", () => {
 		});
 		const listener = host.messages[0];
 		if (listener === undefined) throw new Error("没有听消息");
-		const said = (text: string, from: string): Message => ({
+		const said = (text: string, from: string, human = false): Message => ({
 			seq: 1,
 			from,
 			at: Date.now(),
 			text,
 			mentions: [],
 			kind: "chat",
+			...(human ? { human: true } : {}),
 		});
 
-		// 我打的：一条都不出去。
-		await listener(said("这是我在桌面打的", "owner"), DM.id);
+		// 我打的（human）：一条都不出去。
+		await listener(said("这是我在桌面打的", "owner", true), DM.id);
 		expect(calls).toEqual([]);
 
-		// 助理说的：出去，而且标明来自桌面。
-		await listener(said("这是助理说的", "Solo"), DM.id);
+		// 助理的回复：出去，正文原样、不加前缀。
+		await listener(said("这是助理说的", "owner"), DM.id);
 		expect(calls.length).toBe(1);
-		expect(JSON.stringify(calls[0]?.body)).toContain("这是助理说的");
-		expect(JSON.stringify(calls[0]?.body)).toContain("[桌面]");
+		expect(calls[0]?.body.text?.content).toBe("这是助理说的");
 
 		// 我打的还是不出门。
-		await listener(said("我再说一句", "owner"), DM.id);
+		await listener(said("我再说一句", "owner", true), DM.id);
 		expect(calls.length).toBe(1);
+	});
+
+	it("长中文回复按字节切片：每片都不超 2048 字节，一条都不丢", async () => {
+		// 以前按 `length`（字符）切，中文一个字 3 字节，3800 字一片是 11400 字节，
+		// 超过企业微信 2048 上限 → 整条被拒。700 字以上就中。
+		const calls: { body: string }[] = [];
+		vi.stubGlobal("fetch", async (_url: string, init?: { body?: string }) => {
+			calls.push({ body: String(init?.body ?? "") });
+			return { ok: true, status: 200, json: async () => ({}) };
+		});
+		const { host } = await boot([WEBHOOK_BOT]);
+		await route(host, "/api/p/im/in/:id").handle({
+			method: "POST",
+			params: { id: "b1" },
+			query: { token: "secret" },
+			body: { chatId: "c1", userId: "u1", name: "张三", text: "在吗" },
+		});
+		const listener = host.messages[0];
+		if (listener === undefined) throw new Error("没有听消息");
+
+		// 3600 个中文字 ≈ 10800 字节，以前按字符切是 1 片（直接被拒），现在应切成 ≥6 片。
+		const long = "这是一句很长的中文回复。".repeat(300);
+		expect(long.length).toBeGreaterThan(3000);
+		await listener(
+			{ seq: 1, from: "Solo", at: Date.now(), text: long, mentions: [], kind: "chat" },
+			DM.id,
+		);
+
+		expect(calls.length).toBeGreaterThan(1);
+		for (const call of calls) {
+			const sent = JSON.parse(call.body) as { text?: { content?: string } };
+			const content = sent.text?.content ?? "";
+			// 每片实际正文的 UTF-8 字节数必须在平台上限以内。
+			expect(Buffer.byteLength(content, "utf8")).toBeLessThanOrEqual(2048);
+		}
+		// 一个字都不能丢：拼回去和原文一致（切片处会吃掉换行，这里没有换行）。
+		const joined = calls
+			.map((call) => (JSON.parse(call.body) as { text?: { content?: string } }).text?.content ?? "")
+			.join("");
+		expect(joined).toBe(long);
 	});
 
 	it("带选项的消息推到微信是普通文字，选项编号列出来", async () => {

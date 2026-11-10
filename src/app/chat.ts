@@ -107,6 +107,9 @@ export function createChat(shell: CoreServices) {
 				channelId,
 				from,
 				text,
+				// 这条是人在输入框里亲手打的 —— 打上标记，插件才知道「这是本人说的」。
+				// `from` 仍然是写死的 `owner`（防冒充不动），两者是两件事：谁发的 ≠ 谁打的。
+				human: true,
 				...(typeof body.replyTo === "number" ? { replyTo: body.replyTo } : {}),
 				...(attachments.length === 0 ? {} : { attachments }),
 			});

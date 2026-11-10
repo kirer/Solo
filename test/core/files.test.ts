@@ -76,10 +76,23 @@ describe("正文里点到的文件", () => {
 		expect(await files.preview(join(layout.teamsRoot, "..", "..", "..", "etc", "passwd"))).toMatchObject({ status: 404 });
 	});
 
-	it("认不出的格式回 415，找不到回 404", async () => {
+	it("认不出的格式回 415，找不到回 404，目录直说它是目录", async () => {
 		expect(await files.preview("teams/weekly/workspace/raw.bin")).toMatchObject({ kind: "none", status: 415 });
 		expect(await files.preview("teams/weekly/workspace/nope.md")).toMatchObject({ kind: "none", status: 404 });
-		expect(await files.preview("teams/weekly/workspace")).toMatchObject({ kind: "none", status: 404 });
+		// 目录不是「找不到」：它在那儿，只是没内容可预览。报 405 太笼统，用 415 说「这不能预览」，
+		// 文案里点明是目录 —— 界面上点一个文件夹，看到「找不到这个文件」会以为文件没了。
+		expect(await files.preview("teams/weekly/workspace")).toMatchObject({
+			kind: "none",
+			status: 415,
+			reason: "这是一个目录",
+		});
+	});
+
+	it("绝对路径指到目录，也说这是一个目录", async () => {
+		expect(await files.preview(join(layout.teamsRoot, "weekly", "workspace"))).toMatchObject({
+			kind: "none",
+			reason: "这是一个目录",
+		});
 	});
 });
 

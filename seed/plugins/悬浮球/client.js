@@ -816,16 +816,23 @@ export default {
 				const named = (shown?.messages ?? []).filter(
 					(message) => isAssistantChat(message) && message.needsYou === true,
 				);
-				const bySeq = new Map();
-				for (const message of [...inDm, ...named]) bySeq.set(message.seq, message);
-				const chats = [...bySeq.values()];
+				// 键必须是 `频道:序号`，**不能只用序号**：seq 是频道内自增的，每条聊天都从 1
+				// 开始数。换私聊 / 换会话时，新频道里排第 3 的那条会撞上老频道第 3 条的键，
+				// 于是被判成「念过了」跳过，或者反过来把旧的又念一遍——就是老板听到的
+				// 「换私聊把旧回复重念一遍」。频道名跟着消息走，轨道才知道它属于哪。
+				const tracks = [
+					...inDm.map((message) => ({ chatId: dmId, message })),
+					...named.map((message) => ({ chatId: shown?.id ?? "", message })),
+				];
+				const seenKey = (track) => `${track.chatId ?? ""}:${track.message.seq}`;
 				if (!primedRef.current) {
-					for (const message of chats) spokenRef.current.add(message.seq);
+					for (const track of tracks) spokenRef.current.add(seenKey(track));
 					primedRef.current = true;
 					return;
 				}
-				const fresh = chats.filter((message) => !spokenRef.current.has(message.seq));
-				for (const message of chats) spokenRef.current.add(message.seq);
+				const fresh = tracks.filter((track) => !spokenRef.current.has(seenKey(track)));
+				for (const track of tracks) spokenRef.current.add(seenKey(track));
+				const chats = tracks.map((track) => track.message);
 				// 只看开关，不看面板开没开：以前这里是 `if (!speakOn || !open) return`，
 				// 面板收着（默认状态）就等于「朗读开着却一句都不念」，而且一点痕迹都不留。
 				// 网页版（inline）不后台念：那一屏可能根本没在看，出声会打扰；桌面独立窗才念。

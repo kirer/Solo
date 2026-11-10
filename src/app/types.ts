@@ -71,6 +71,11 @@ export type CoreServices = {
 			readonly attachments?: readonly Attachment[];
 			/** 不按 @ 推算，直接叫醒这几个人（系统留痕叫人时用）。 */
 			readonly wakeTo?: readonly string[];
+			/**
+			 * 这句是**人亲手打的**。只有「我这边的输入框」能传 `true`：
+			 * 代理 / 工具替我说话一律不传，否则插件分不清谁说的。
+			 */
+			readonly human?: boolean;
 		},
 		context?: Context,
 	) => Promise<{ readonly seq: number; readonly delivery: DeliverResult }>;

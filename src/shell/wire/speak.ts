@@ -25,6 +25,8 @@ export type SpeakOptions = {
 	readonly attachments?: readonly Attachment[];
 	/** 不按 @ 推算，直接叫醒这几个人（系统留痕叫人时用）。 */
 	readonly wakeTo?: readonly string[];
+	/** 这句是人亲手打的（界面输入框）。插件靠它区分「我亲自说的」和「代理替我发的」。 */
+	readonly human?: boolean;
 };
 
 export type SpeakDeps = {
@@ -67,6 +69,7 @@ export function createSpeak(deps: SpeakDeps) {
 				...(options.kind === undefined ? {} : { kind: options.kind }),
 				...(options.attachments === undefined ? {} : { attachments: options.attachments }),
 				...(options.wakeTo === undefined ? {} : { wakeTo: options.wakeTo }),
+				...(options.human === undefined ? {} : { human: options.human }),
 			},
 			context,
 			(slug) => labelIn({ ...directory, labels }, slug),
