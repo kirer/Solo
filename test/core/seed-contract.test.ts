@@ -13,6 +13,7 @@
  * **这是 V3 的验收门，不是 V2 的回归测试。** 在搬完之前它会红，红的就是还没做完的活；
  * 不要为了让这个文件变绿去放宽断言——要改的是 seed，不是这里。
  */
+import { execFile } from "node:child_process";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -42,6 +43,44 @@ async function walk(rel = ""): Promise<readonly string[]> {
 
 async function readSeed(rel: string): Promise<string> {
 	return readFile(join(SEED, rel), "utf8");
+}
+
+/**
+ * 两条**体积**断言量的是 `HEAD` 里的 seed，不是工作区。
+ *
+ * 为什么：这两条要守的是「出厂内容别长胖」，而工作区是个随手会多出东西的地方 ——
+ * 临时放一份声明、拷一个二进制进去试，都会让它们变红，红的却不是要守的那件事。
+ * 反过来，真长了胖的东西在 `HEAD` 里也在，照样拦得住。
+ *
+ * 其余断言仍量工作区：它们守的是「现在这份 seed 长什么样」（文件名、一句话一个家），
+ * 看得见还没提交的改动才是有用的。
+ */
+async function walkCommitted(): Promise<readonly string[]> {
+	// `-z`：不加它，中文路径会被 git 转义成 `"\346\202\254..."` 再包一层引号，
+	// 拿回来的名字和磁盘上的对不上（`交接` 那次就是这么翻车的）。
+	const out = await git(["ls-tree", "-r", "--name-only", "-z", "HEAD", "seed/"]);
+	return out
+		.split("\0")
+		.filter((line) => line !== "")
+		.map((line) => line.slice("seed/".length));
+}
+
+async function readCommitted(rel: string): Promise<string> {
+	return await git(["show", `HEAD:seed/${rel}`]);
+}
+
+/** 跑一条 git 只读命令。仓库在 seed 的上两层。 */
+async function git(args: readonly string[]): Promise<string> {
+	const repo = fileURLToPath(new URL("../..", import.meta.url));
+	return await new Promise<string>((resolve, reject) => {
+		execFile("git", args, { cwd: repo, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+			if (error !== null) {
+				reject(new Error(`git ${args.join(" ")} 失败：${error.message}`));
+				return;
+			}
+			resolve(stdout);
+		});
+	});
 }
 
 let cache: readonly SeedFile[] | undefined;
@@ -348,10 +387,10 @@ describe("出厂内容：体积与位置", () => {
 		// 上限是 2026-10-30 定的：`工作规矩` 是唯一被反复读、且承载四个身份模型的那个
 		// 技能，为凑 3 KB 砍内容是本末倒置。其余技能照旧自律 —— 超了说明该拆或该挪进 prompt。
 		const big: string[] = [];
-		for (const rel of await walk()) {
+		for (const rel of await walkCommitted()) {
 			if (!rel.endsWith("SKILL.md")) continue;
 			const limit = rel === "skills/工作规矩/SKILL.md" ? 4 * 1024 : 3 * 1024;
-			const size = byteLength(await readSeed(rel));
+			const size = byteLength(await readCommitted(rel));
 			if (size > limit) big.push(`${rel}：${size} B（上限 ${limit / 1024} KB）`);
 		}
 		expect(big).toEqual([]);
@@ -359,8 +398,8 @@ describe("出厂内容：体积与位置", () => {
 
 	it("seed 总体积 < 500 KB", async () => {
 		let total = 0;
-		for (const rel of await walk()) {
-			total += byteLength(await readSeed(rel));
+		for (const rel of await walkCommitted()) {
+			total += byteLength(await readCommitted(rel));
 		}
 		expect(total, `现在 ${(total / 1024).toFixed(0)} KB`).toBeLessThan(500 * 1024);
 	});
