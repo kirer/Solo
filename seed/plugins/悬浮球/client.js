@@ -272,7 +272,9 @@ const VOICE_IDS = [45, 46, 47, 48, 49, 50, 51, 52];
 
 /** 位置、贴边、朗读开关与音色记在本机：换个屏幕再打开，还是你上次的那一套。 */
 function readPrefs() {
-	const fallback = { right: 18, top: null, docked: false, speak: false, wake: false, listen: false, sid: DEFAULT_SID, speed: 1 };
+	// 朗读**默认开**（老板 2026-11-11）：气泡都冒出来了、却没声音，这不合理。
+	// 以前默认关，结果升级完的人一句都听不到，还以为坏了。关掉会记住（`speak: false`）。
+	const fallback = { right: 18, top: null, docked: false, speak: true, wake: false, listen: false, sid: DEFAULT_SID, speed: 1 };
 	try {
 		const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(PREF_KEY);
 		if (raw === null) return fallback;
@@ -281,7 +283,9 @@ function readPrefs() {
 			right: Number.isFinite(value?.right) ? value.right : 18,
 			top: Number.isFinite(value?.top) ? value.top : null,
 			docked: value?.docked === true,
-			speak: value?.speak === true,
+			// 没存过就是开；只有明确关过（`false`）才算关 —— 老用户存下的是 `speak:false`
+			// 那一次，那也是他自己的选择，不动。
+			speak: value?.speak !== false,
 			wake: value?.wake === true,
 			// 常驻听默认关：麦克风一直开着是件要用户点头的事，第一次得他自己打开（开了会记住）。
 			listen: value?.listen === true,
