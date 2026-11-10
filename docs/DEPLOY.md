@@ -497,6 +497,31 @@ done
 CI（`.github/workflows/release.yml`）里这几步都在，走 Actions 不会被这条绊到；
 **本地打包才需要人记**。
 
+### seed 插件怎么进了用户目录（查「升级后没变」先看这里，别先怀疑播种）
+
+出厂插件在 `seed/plugins/<名字>/`，启动时由 `src/shell/seed.ts:418` `seedPlugins()` 补进
+`<user-root>/plugins/<名字>/`。判据是**整个目录按文件 hash 比对**，不是版本号、不是时间：
+
+- 账本 `<user-root>/.seed-manifest.json` 的 `pluginFiles[名字]` 记着上次播种每个文件的 hash。
+- 盘上每个文件都对得上账本 = 没人动过（`untouched`）→ **整份对齐 seed**（改的写、多出的删）。
+- 只要有一个文件对不上 = 用户改过 → **一个字节都不动**，只把基线更新成用户的版本。
+- 盘上没有这个目录：除非记在 `removed`（用户走过「删除」入口），否则当意外丢失，补回整份。
+
+**用户自己改过的插件不会被覆盖**，这是故意的：插件是可执行代码，半新半旧比旧版更糟。
+
+所以遇到「升级完重启还是老样子」，先量这三处的 sha 是不是同一个：
+
+```bash
+shasum -a 256 ~/Library/Application\ Support/solo/plugins/<名字>/<文件>
+shasum -a 256 /Applications/Solo.app/Contents/Resources/app/seed/plugins/<名字>/<文件>
+shasum -a 256 seed/plugins/<名字>/<文件>   # 仓库；注意先 git status 看改动提交了没
+```
+
+三个一样 → 播种没问题，问题是**包里那份 seed 本来就是旧的**（改动没提交，或者没进包）。
+2026-11-11 就撞过一次：工作区里 658 增 404 删的新悬浮球一直没提交，2.9.2 的包内置的
+仍是 2.9.1 那份，app 内置 seed 与用户目录都是 `50e1e982…`，只有工作区是 `b30fad30…`。
+**先怀疑「没发出去」，别去翻播种逻辑。**
+
 **发布与升级（ADR-029：自签清单 + zip 替换，不用 Squirrel / NSIS 更新）**
 
 不需要 Apple 开发者证书。发布机持有一把 Ed25519 私钥，清单由它签名；应用里只放公钥。
