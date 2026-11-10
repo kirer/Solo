@@ -542,13 +542,15 @@ export default {
 			const cancelledRef = useRef(false);
 			/** 已经念过的消息序号：轮询与 SSE 会重复给同一条，别念两遍。 */
 			const spokenRef = useRef(new Set());
+			/** 最近一次「念不出来」的原因：面板收着时没人看得见，打开面板要能补上这一句。 */
+			const speechProblemRef = useRef("");
 			const primedRef = useRef(false);
-			/** 播报队列：合成好的 wav 一片接一片播，收起面板就清空。 */
+			/** 播报队列：合成好的 wav 一片接一片播。面板收着也照播（老板 2026-11-09：收着也要念）。 */
 			const queueRef = useRef([]);
 			const audioRef = useRef(null);
 			const speakingRef = useRef(false);
 			const voicePollRef = useRef(0);
-			/** 合成是异步的：面板一收就不再把回来的那片排进队列。 */
+			/** 面板开着没有：只决定「报错往哪儿写」，不再决定「念不念」。 */
 			const openRef = useRef(false);
 
 			const fetchVoice = async () => {
@@ -574,6 +576,37 @@ export default {
 				}
 			};
 
+			/**
+			 * 念不出来就说出来：面板开着写进面板，收着就攒着，下次打开补在显眼处。
+			 * 以前这些分支全是 `return` —— 用户只看到「开关是开的」，别的什么都没有。
+			 */
+			const reportSpeech = (why) => {
+				const line = `没念出来：${why}`;
+				speechProblemRef.current = line;
+				if (openRef.current) setError(line);
+				console.warn(`[${SLUG}] ${line}`);
+			};
+
+			/**
+			 * 播不出来就说出来。
+			 *
+			 * 以前 `player.onerror = playNext`：解码失败被当成「这段念完了」，一路静音跳完，
+			 * 用户只看到开关亮着、一句话都没有，日志里也查不到。现在停掉这一片、记一句，
+			 * 再接着放后面的（后面的也许只是这一片坏了）。
+			 */
+			const speechFailed = (why) => {
+				queueRef.current = [];
+				const player = audioRef.current;
+				audioRef.current = null;
+				speakingRef.current = false;
+				if (player !== null) {
+					player.onended = null;
+					player.onerror = null;
+					player.pause();
+				}
+				reportSpeech(`${why}（音频没能播放，检查系统输出设备）`);
+			};
+
 			const playNext = () => {
 				const next = queueRef.current.shift();
 				if (next === undefined) {
@@ -585,10 +618,11 @@ export default {
 				audioRef.current = player;
 				speakingRef.current = true;
 				player.onended = playNext;
-				player.onerror = playNext;
-				void player.play().catch(() => {
-					player.onerror = null;
-					playNext();
+				player.onerror = () => speechFailed((player.error?.message ?? "") || "解码失败");
+				void player.play().catch((error_) => {
+					// NotAllowedError = 浏览器不给自动放（没有用户手势）：这也要说出来，
+					// 否则「开关开着却没有声音」又变成一件只能猜的事。
+					speechFailed(error_ instanceof Error ? error_.message : String(error_));
 				});
 			};
 
@@ -606,15 +640,22 @@ export default {
 							body: JSON.stringify({ text: piece, speed: prefs.speed, sid: prefs.sid }),
 						});
 						const data = await response.json().catch(() => ({}));
-						if (!openRef.current) return;
+						// 面板收着也照样念：以前这里 `if (!openRef.current) return`，
+						// 合成回来时面板刚收起，这一片就静默丢了 —— 老板听到的「开关开着没声音」。
 						if (typeof data?.wav === "string") {
 							queueRef.current.push(data.wav);
 							if (!speakingRef.current) playNext();
 							continue;
 						}
-						if (data?.needModel === true) void fetchVoice();
+						if (data?.needModel === true) {
+							void fetchVoice();
+							reportSpeech(`还没下载语音模型（${SLUG} 设置 → 语音）`);
+							return;
+						}
+						reportSpeech(typeof data?.error === "string" ? data.error : "没合成出来");
 						return;
-					} catch {
+					} catch (error_) {
+						reportSpeech(error_ instanceof Error ? error_.message : String(error_));
 						return;
 					}
 				}
@@ -691,13 +732,13 @@ export default {
 
 			const closeAll = () => {
 				cancelHover();
-				// 收起面板就停：正在录的丢掉，正在读的掐掉。
+				// 收起面板：正在录的丢掉（麦克风不能让它在后台开着），
+				// 但**正在念的不掐**——面板收起也要念完（老板 2026-11-09 定的）。
 				const recorder = recorderRef.current;
 				if (recorder !== null && recorder.state !== "inactive") {
 					cancelledRef.current = true;
 					recorder.stop();
 				}
-				stopAudio();
 				setOpen(false);
 				setPinned(false);
 				setMenu(false);
@@ -729,10 +770,12 @@ export default {
 				if (open && node !== null) node.scrollTop = node.scrollHeight;
 			}, [open, messages.length, dmId]);
 
-			// 面板收起就不再出声：朗读是「当面说话」，不是后台播报。
+			// 面板收起也接着念（老板 2026-11-09：收着也要念）。念不出来时攒在
+			// `speechProblemRef` 里，下次打开面板补一句——收着的时候没人看得见，但话不能丢。
 			useEffect(() => {
-				if (open) return;
-				stopAudio();
+				if (!open) return;
+				const problem = speechProblemRef.current;
+				if (problem !== "") setError(problem);
 			}, [open]);
 
 			// 语音模型在不在：装一次问一次，没下的话面板里给一行下载。
@@ -752,7 +795,10 @@ export default {
 				}
 				const fresh = chats.filter((message) => !spokenRef.current.has(message.seq));
 				for (const message of chats) spokenRef.current.add(message.seq);
-				if (!speakOn || !open) return;
+				// 只看开关，不看面板开没开：以前这里是 `if (!speakOn || !open) return`，
+				// 面板收着（默认状态）就等于「朗读开着却一句都不念」，而且一点痕迹都不留。
+				// 网页版（inline）不后台念：那一屏可能根本没在看，出声会打扰；桌面独立窗才念。
+				if (!speakOn || ORB_MODE === "inline") return;
 				for (const message of fresh) void speakText(message.text);
 			}, [shown, speakOn, open, assistant]);
 

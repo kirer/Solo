@@ -24,6 +24,18 @@ afterEach(async () => {
 const SEED = fileURLToPath(new URL("../../seed/plugins/悬浮球", import.meta.url));
 
 /**
+ * `client.js` 里**真正的代码行**：注释里会引用「以前长什么样」的旧代码，
+ * 拿整份源码去 `not.toMatch` 会连带把注释也匹配上，测的就不是代码了。
+ */
+async function codeLines(): Promise<string> {
+	const source = await readFile(join(SEED, "client.js"), "utf8");
+	return source
+		.split("\n")
+		.filter((line) => !/^\s*(\/\/|\*|\/\*)/u.test(line))
+		.join("\n");
+}
+
+/**
  * 起一份悬浮球。
  *
  * `afconvert` 指到的路径可以在副本里换掉：真机上 afconvert 是 `/usr/bin/afconvert`，
@@ -201,6 +213,41 @@ describe("悬浮球", () => {
 		const source = await readFile(join(SEED, "client.js"), "utf8");
 		expect(source).not.toMatch(/speechSynthesis/u);
 		expect(source).toMatch(/\/api\/orb\/speak/u);
+	});
+
+	// 老板 2026-11-09：面板收着也要念。诊断见 `teams/Solo/workspace/诊断-播报没声音-2026-11-09.md`。
+	it("面板收着也念：朗读的触发条件里没有 `open`", async () => {
+		const source = await readFile(join(SEED, "client.js"), "utf8");
+		// 以前是 `if (!speakOn || !open) return;` —— 收着就一句不念，还没有任何痕迹。
+		// 注释里会引用这句旧代码，所以只看真正的代码行。
+		expect(await codeLines()).not.toMatch(/!speakOn\s*\|\|\s*!open/u);
+		expect(source).toMatch(/if \(!speakOn \|\| ORB_MODE === "inline"\) return;/u);
+	});
+
+	it("合成回来时不看面板开没开：收起不丢这一片", async () => {
+		const source = await readFile(join(SEED, "client.js"), "utf8");
+		// 以前这里 `if (!openRef.current) return;`：跑到一半收起面板，回来的 wav 直接扔了。
+		expect(source).not.toMatch(/if \(!openRef\.current\) return;/u);
+	});
+
+	it("收起面板不掐正在念的：closeAll 里没有 stopAudio", async () => {
+		const source = await readFile(join(SEED, "client.js"), "utf8");
+		const closeAll = source.slice(source.indexOf("const closeAll = () => {"));
+		const body = closeAll.slice(0, closeAll.indexOf("setMenu(false);"));
+		expect(body).not.toMatch(/stopAudio\(\)/u);
+		// 录音还是要停：麦克风不能跟着面板收到后台去。
+		expect(body).toMatch(/recorder\.stop\(\)/u);
+	});
+
+	it("播放失败要说出来，不能当成念完了静默跳过", async () => {
+		const source = await readFile(join(SEED, "client.js"), "utf8");
+		// 以前 `player.onerror = playNext`：解码失败被当成「这段播完了」，一路静音跳完。
+		expect(await codeLines()).not.toMatch(/player\.onerror = playNext/u);
+		expect(source).toMatch(/player\.onerror = \(\) => speechFailed\(/u);
+		expect(source).toMatch(/speechFailed\(/u);
+		// 念不出来要有字：面板开着写进面板，收着攒在 speechProblemRef，下次打开补一句。
+		expect(source).toMatch(/speechProblemRef\.current = line/u);
+		expect(source).toMatch(/没念出来：/u);
 	});
 
 	it("录音在前端就封成 WAV：不交给 MediaRecorder", async () => {
