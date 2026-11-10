@@ -17,6 +17,7 @@ import {
 	putUpload,
 	readUploadMeta,
 	sweepOrphanUploads,
+	UPLOAD_MAX_BYTES,
 	uploadPathOf,
 } from "../core/channel/attachments.ts";
 
@@ -252,6 +253,11 @@ export function createUploads(shell: CoreServices) {
 		const file = await files.preview(path);
 		// 认不出的格式与找不到分开说：前者是「换不了」，后者是「没这个文件」。
 		if (file.kind === "none") throw new AppError(file.status === 415 ? "bad-request" : "not-found", file.reason);
+		// 放开了绝对路径之后，`/etc/passwd`、`/var/log/…` 这类都能点到「转成附件」——
+		// 先按 `preview` 给的大小挡一道，别为了一个 4GB 的日志把内存吃光。
+		if (file.size > UPLOAD_MAX_BYTES) {
+			throw new AppError("too-large", `单个附件最大 ${Math.round(UPLOAD_MAX_BYTES / 1024 / 1024)}MB，这个太大了`);
+		}
 		let bytes: Uint8Array;
 		try {
 			bytes = await readFile(file.path);

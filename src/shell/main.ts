@@ -17,8 +17,10 @@
  * 目标只有一个：**能跑，能被人看见在跑什么**。加回任何一样之前先问
  * 「不修它，系统会不会停摆」，答案是否就别加。
  */
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 import { createRegistry } from "../core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../core/runtime/open.ts";
@@ -88,9 +90,30 @@ async function agentCount(layout: Layout): Promise<number> {
 }
 
 
+/**
+ * 源码仓库在哪：`<repo>/src/shell/main.ts` 往上两级就是仓库根。
+ *
+ * 为什么用 `import.meta.url` 而不是 `process.cwd()`：桌面壳从 `/Applications` 启动，
+ * cwd 是 `/`，拿 cwd 猜仓库会猜到一个八竿子打不着的地方 —— 猜错的后果是「仓库相对路径
+ * 点开全变找不到」，而且一声不响。装好的应用里这两级是 `Resources/app/`，那里就是
+ * 源码树，同一个算法照样对。只有 `.git` 在才算数，别的（散装目录）不当仓库根。
+ *
+ * 找不着就返回 `undefined`：`files.preview` 退回只认两个根，别拿一个瞎猜的目录当根。
+ */
+async function projectRootOf(): Promise<string | undefined> {
+	const here = fileURLToPath(new URL("../..", import.meta.url));
+	try {
+		const info = await stat(join(here, ".git"));
+		return info.isDirectory() || info.isFile() ? here : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 async function main(): Promise<void> {
 	const args = parseArgs(process.argv.slice(2));
-	const layout = resolveLayout({ appRoot: args.appRoot, userRoot: args.userRoot });
+	const projectRoot = await projectRootOf();
+	const layout = resolveLayout({ appRoot: args.appRoot, userRoot: args.userRoot, projectRoot });
 	await ensureDir(layout.assistantRoot);
 	await ensureDir(layout.membersRoot);
 	await ensureDir(layout.teamsRoot);

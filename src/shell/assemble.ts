@@ -146,7 +146,13 @@ export async function assembleCore(
 	// 那个人下次重启前都用不上）。一个坏插件只留一条错误，不影响启动。
 	// 插件发言的出口：`speak` 依赖 flow，要等下面才造得出来，所以这里先留一个晚绑的钩子。
 	// 插件只会在运行中调用它（IM 收消息、定时任务），那时装配已经结束。
-	let pluginPost: ((input: { readonly channelId: string; readonly text: string }) => Promise<void>) | undefined;
+	let pluginPost:
+		| ((input: {
+				readonly channelId: string;
+				readonly text: string;
+				readonly replyTo?: number;
+		  }) => Promise<void>)
+		| undefined;
 	const pluginWire = createPluginWire({
 		harness,
 		layout,
@@ -268,7 +274,26 @@ export async function assembleCore(
 		flow: wiring.flow,
 	});
 	pluginPost = async (input) => {
-		await speak({ channelId: input.channelId, text: input.text }, BACKGROUND_CONTEXT);
+		// `replyTo` 只认这个频道里真实存在的消息：`speak` 自己会把 seq 解析成消息，
+		// 传一个不存在的 seq 或者别的频道的 seq，进来的就是错的东西。这里先挡一道，
+		// 不让插件的口子变成「往任意频道投递」的后门。
+		if (input.replyTo !== undefined) {
+			const state = (await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) ?? emptyChannelState();
+			const channel = state.channels[input.channelId];
+			if (channel === undefined) throw new Error(`没有这个频道：${input.channelId}`);
+			const known = (state.messages[input.channelId] ?? []).some(
+				(message) => message.seq === input.replyTo,
+			);
+			if (!known) {
+				throw new Error(
+					`replyTo 指的这条消息不在频道 ${input.channelId} 里：${String(input.replyTo)}`,
+				);
+			}
+		}
+		await speak(
+			{ channelId: input.channelId, text: input.text, ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }) },
+			BACKGROUND_CONTEXT,
+		);
 	};
 
 	// ── 5. 扫描与开会话 ────────────────────────────────────────────

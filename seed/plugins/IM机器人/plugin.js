@@ -33,6 +33,10 @@ const BOTS_FILE = "bots.json";
  * （`deliver()` 用 `api.post` 以我的身份落进私聊，`from` 也是 `owner`，见 ECHO_PREFIX）。
  */
 const ECHO_PREFIX = "[IM · ";
+/** 我自己的 slug（和 core 的 `OWNER_SLUG` 同值）。插件不 import core，所以这里写一份。 */
+const OWNER_SLUG = "owner";
+/** 推到 IM 那边时，桌面来的话前面加这个，好跟「别处发来的」分开。 */
+const DESKTOP_PREFIX = "[桌面] ";
 const POLL_TIMEOUT = 25;
 const MAX_SEND = 3800;
 const WEBHOOK_TIMEOUT = 15_000;
@@ -56,6 +60,62 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function textOf(error) {
 	return error instanceof Error ? error.message : String(error);
+}
+
+// ── 选项消息 ───────────────────────────────────────────────────────────
+
+function hasOptions(message) {
+	return Array.isArray(message.options) && message.options.length > 0;
+}
+
+/**
+ * 带选项的那条推到微信长什么样。
+ *
+ * 微信里画不出选项卡，选项不铺开就等于丢了 —— 老板只会看到问题、看不到能选什么。
+ * 编号用 `1.` `2.` 而不是 `①②`：手机上手打回去最省事，也最好认。
+ */
+function outboundText(message, body) {
+	const mark = DESKTOP_PREFIX + authorOf(message);
+	const lines = hasOptions(message)
+		? ["", ...message.options.map((option, index) => `${index + 1}. ${String(option).trim()}`)]
+		: [];
+	return `${mark}${body}${lines.length === 0 ? "" : `\n${lines.join("\n")}`}`;
+}
+
+/**
+ * 谁说的。桌面端的话标上发件人，微信那边才分得清是助理还是团队里的人。
+ *
+ * `Message` 上只有 slug（没有显示名字段），就照它写 —— 总比不标好，
+ * 助理的 slug 在私聊里是 `Solo` 这种，人一眼认得出来。
+ */
+function authorOf(message) {
+	const from = typeof message.from === "string" ? message.from : "";
+	return from === "" ? "" : `${from}：`;
+}
+
+/** 记下「哪个聊天正等着选哪一条」：微信回来的编号要能对到那条消息上。 */
+function pendingOf(message) {
+	return {
+		channelId: message.channelId ?? "",
+		seq: typeof message.seq === "number" ? message.seq : 0,
+		options: message.options.map((option) => String(option).trim()),
+		at: Date.now(),
+	};
+}
+
+/**
+ * 微信回过来的正文如果是一个编号，把它翻成「选了第几项」。
+ *
+ * 只认纯编号（`2`、「2」、「2.」都算），别的一概当普通消息 —— 老板打「1 和 2 都行」
+ * 那是他自己的想法，不是选项，不能被吞掉当成选 1。
+ */
+function choiceOf(text, pending) {
+	if (pending === undefined) return undefined;
+	const match = /^\s*[（(]?\s*(\d{1,2})\s*[.、)）]?\s*$/.exec(text);
+	if (match === null) return undefined;
+	const index = Number(match[1]) - 1;
+	if (!Number.isInteger(index) || index < 0 || index >= pending.options.length) return undefined;
+	return { index, option: pending.options[index] };
 }
 
 function platformName(platform) {
@@ -108,6 +168,24 @@ function normalizeBot(row) {
 		ownerUserId: typeof row.ownerUserId === "string" ? row.ownerUserId : "",
 		/** getupdates 的游标：重启后从上次的位置接着收，不重放。 */
 		buf: typeof row.buf === "string" ? row.buf : "",
+		/**
+		 * 最近说过话的那几个聊天，落盘。
+		 *
+		 * 为什么必须落盘：回话靠「最近说话的那个聊天」路由（`lastChat()`），而这个表过去只在
+		 * **收到**消息时才填。应用重启一次它就空了，于是桌面端我说的话一条也发不出去 ——
+		 * 不报错、不提示，要等下一条微信消息进来才恢复（实测 #439 之后连丢 6 条）。
+		 */
+		chats: Array.isArray(row.chats)
+			? row.chats
+					.filter((item) => item !== null && typeof item === "object" && typeof item.id === "string" && item.id !== "")
+					.map((item) => ({
+						id: item.id,
+						label: typeof item.label === "string" ? item.label : item.id,
+						at: typeof item.at === "number" ? item.at : 0,
+						contextToken: typeof item.contextToken === "string" ? item.contextToken : "",
+					}))
+					.slice(0, 20)
+			: [],
 		mode: row.mode === "all" ? "all" : "mention",
 		allow: Array.isArray(row.allow) ? row.allow.map((item) => String(item).trim()).filter(Boolean) : [],
 		createdAt: typeof row.createdAt === "number" ? row.createdAt : Date.now(),
@@ -154,6 +232,9 @@ function botFromInput(input, existing) {
 		accountId: existing?.accountId ?? "",
 		ownerUserId: existing?.ownerUserId ?? "",
 		buf: existing?.buf ?? "",
+		// 「最近说话的聊天」也是攒下来的运行状态：改个名字 / 白名单不能把它清掉，
+		// 否则下一次重启就又要「等一条新消息」才恢复回话。
+		chats: existing?.chats ?? [],
 		mode: input.mode === "all" ? "all" : input.mode === "mention" ? "mention" : (existing?.mode ?? "mention"),
 		allow: Array.isArray(input.allow) ? input.allow : (existing?.allow ?? []),
 		createdAt: existing?.createdAt ?? Date.now(),
@@ -173,6 +254,8 @@ function createRuntime(bot, manager) {
 		alive: true,
 		controller: new AbortController(),
 		chats: new Map(),
+		/** 每个聊天「正等着的那个选择」：chatId → 那条带 options 的消息。 */
+		pending: new Map(),
 		me: null,
 		stop() {
 			this.alive = false;
@@ -194,6 +277,9 @@ function createRuntime(bot, manager) {
 				const oldest = [...this.chats.entries()].sort((left, right) => left[1].at - right[1].at)[0];
 				if (oldest !== undefined) this.chats.delete(oldest[0]);
 			}
+			// 落盘：重启之后 `lastChat()` 还得能答上来，否则桌面端的话全被静默丢掉。
+			// 不 await —— 收消息的循环不该为一次配置写入停一下；失败也只影响「重启后要等一条新消息」。
+			this.manager.rememberChats(this.bot.id, this.chats);
 		},
 		lastChat() {
 			const rows = [...this.chats.entries()].sort((left, right) => right[1].at - left[1].at);
@@ -253,6 +339,11 @@ function createManager(api) {
 
 	function launch(bot) {
 		const runtime = createRuntime(bot, manager);
+		// 把上次落盘的聊天装回来：重启之后「最近说话的那个聊天」还得在，
+		// 否则桌面端我说的话没有去处，一条也发不出去（不报错、不提示）。
+		for (const chat of bot.chats ?? []) {
+			runtime.chats.set(chat.id, { label: chat.label, at: chat.at, contextToken: chat.contextToken ?? "" });
+		}
 		runtimes.set(bot.id, runtime);
 		if (!bot.enabled) {
 			runtime.status = "stopped";
@@ -438,11 +529,35 @@ function createManager(api) {
 		await writeBots(api.workspace, bots);
 	}
 
+	/**
+	 * 「最近说过话的聊天」落盘：重启之后桌面端我说的话还能找到去处。
+	 *
+	 * 和 `buf` 分开写：`buf` 很少变（有游标才变），这里是每收一条就动一次，
+	 * 合在一起会让收消息的循环被配置写入拖住。
+	 */
+	async function rememberChats(id, chats) {
+		const bot = bots.find((row) => row.id === id);
+		if (bot === undefined) return;
+		const next = [...chats.entries()]
+			.map(([chatId, chat]) => ({
+				id: chatId,
+				label: chat.label,
+				at: chat.at,
+				contextToken: chat.contextToken ?? "",
+			}))
+			.sort((left, right) => right.at - left.at)
+			.slice(0, 20);
+		if (JSON.stringify(bot.chats ?? []) === JSON.stringify(next)) return;
+		bot.chats = next;
+		await writeBots(api.workspace, bots).catch(() => {});
+	}
+
 	const manager = {
 		/** 收消息那边要的：助理私聊与 `api.post`。 */
 		get assistant() {
 			return assistant;
 		},
+		rememberChats,
 		get api() {
 			return api;
 		},
@@ -560,15 +675,21 @@ function createManager(api) {
 			await ensureAssistant();
 			if (assistant === null || channelId !== assistant.channelId) return;
 			if (message.kind !== "chat") return;
+			// 我在桌面打的字不推：那是我自己写的，我清楚；推到微信只会刷屏。
+			// 判据是 `from`（发件人 slug），`owner` 就是我本人 —— 只有助理 / 成员说的话才出去。
+			if (message.from === OWNER_SLUG) return;
 			const body = message.text.trim();
 			if (body === "") return;
 			if (body.startsWith(ECHO_PREFIX)) return;
+			const outgoing = outboundText(message, body);
 			for (const runtime of runtimes.values()) {
 				if (!runtime.alive) continue;
 				const chat = runtime.lastChat();
 				if (chat === undefined) continue;
 				try {
-					await runtime.send(chat[0], body);
+					await runtime.send(chat[0], outgoing);
+					// 记下「这条带选项的消息推到哪个聊天了」：微信回来的编号要能对到它。
+					if (hasOptions(message)) runtime.pending.set(chat[0], pendingOf(message));
 				} catch (error) {
 					runtime.lastError = `回复没送出去：${textOf(error)}`;
 				}
@@ -600,7 +721,23 @@ async function deliver(runtime, input) {
 		input.contextToken,
 	);
 	runtime.lastInboundAt = Date.now();
-	await runtime.manager.api.post({ channelId: runtime.manager.assistant.channelId, text: `${source} ${input.text}` });
+	const channelId = runtime.manager.assistant.channelId;
+
+	// 回的是一个编号、而且这个聊天正等着选 → 那就是「选了第几项」，不是一句闲聊。
+	// 必须带 `replyTo` 指回那条消息：界面认选择只看这个，不带就只是又说了句话。
+	const pending = runtime.pending.get(input.chatId);
+	const choice = choiceOf(input.text, pending);
+	if (choice !== undefined && pending !== undefined) {
+		runtime.pending.delete(input.chatId);
+		await runtime.manager.api.post({
+			channelId,
+			text: choice.option,
+			replyTo: pending.seq,
+		});
+		return;
+	}
+
+	await runtime.manager.api.post({ channelId, text: `${source} ${input.text}` });
 }
 
 async function tgCall(bot, method, params, signal) {

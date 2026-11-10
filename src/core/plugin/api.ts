@@ -148,8 +148,16 @@ export type PluginApi = {
 	 * 同一套投递与唤醒）。插件不能冒充别人 —— 发件人固定是我。
 	 *
 	 * 抛错 = 没发出去（频道不存在、正文为空……）。调用方自己决定要不要重试。
+	 *
+	 * `replyTo` 与 `speak` / `postAs` 同义同形：引用**同一个频道里已有的某条消息**。
+	 * 只认这个频道里真实存在的 seq —— 跨频道或不存在的 id 一律抛错，不让它变成
+	 * 往别处投递的后门。
 	 */
-	post(input: { readonly channelId: string; readonly text: string }): Promise<void>;
+	post(input: {
+		readonly channelId: string;
+		readonly text: string;
+		readonly replyTo?: number;
+	}): Promise<void>;
 	log(line: string): void;
 };
 
@@ -175,7 +183,11 @@ export function createPluginApi(options: {
 	readonly sinks: PluginSinks;
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
 	readonly channels?: () => Promise<readonly PluginChannel[]>;
-	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
+	readonly post?: (input: {
+		readonly channelId: string;
+		readonly text: string;
+		readonly replyTo?: number;
+	}) => Promise<void>;
 	/**
 	 * 系统动作的执行器（`plugin/system.ts` 造的）。不给 = 这个插件一个动作都做不了，
 	 * `act` 一律抛错 —— 网页版后端没有 Electron 的 shell，就是这一种。

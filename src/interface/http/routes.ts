@@ -315,6 +315,9 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 					// 文件随时会改，不做长缓存；同源内容不许被嗅探成 HTML。
 					"Cache-Control": "no-cache",
 					"X-Content-Type-Options": "nosniff",
+					// `路径:77` 的行号：走响应头而不是塞进正文，正文还是原样的文件内容。
+					// 只读预览，界面拿到行号自己去定位。
+					...(file.line === undefined ? {} : { "X-Solo-Line": String(file.line) }),
 				});
 				return await pipeline(createReadStream(file.path), response);
 			},

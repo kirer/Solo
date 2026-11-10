@@ -59,11 +59,19 @@ describe("路径转附件", () => {
 		expect(read.mime).toBe("text/plain; charset=utf-8");
 	});
 
-	it("往上走 / 绝对路径 / 隐藏文件 / 自家密钥一律转不了，且没落下任何文件", async () => {
-		for (const path of ["../etc/passwd", "/etc/passwd", ".hidden.md", "settings.json"]) {
+	it("往上走 / 隐藏文件 / 自家密钥一律转不了，且没落下任何文件", async () => {
+		for (const path of ["../etc/passwd", "teams/../../etc/passwd", ".hidden.md", "settings.json"]) {
 			await expect(uploads.stage(path)).rejects.toThrow();
 		}
 		expect(await uploadNames()).toEqual([]);
+	});
+
+	it("绝对路径现在也能转成附件（老板 2026-11-10 放开），但复制的是字节、不动原文件", async () => {
+		const source = join(layout.teamsRoot, "weekly", "workspace", "report.md");
+		const staged = await uploads.stage(source);
+		expect(staged.name).toBe("report.md");
+		const read = await uploads.read(staged.id, { preview: true });
+		expect(read.name).toBe("report.md");
 	});
 
 	it("认不出的格式（422 档）也不搬 —— 转成附件就得画得出来", async () => {

@@ -50,10 +50,25 @@ export type Layout = {
 	readonly seedManifestFile: string;
 	/** 扫人时按这个顺序：助理在前，成员在后。 */
 	readonly agentRoots: readonly [string, string];
+	/**
+	 * 源码仓库根（可选）。只用于「把一句话里的路径解成文件」—— 仓库相对路径
+	 * （`src/app/files.ts`）就是这么找到的。它**不是**一个可写的根，也不播种任何东西。
+	 */
+	readonly projectRoot: string | undefined;
 };
 
-/** 把一个根拆成全部位置。`appRoot` 与 `userRoot` 允许相同（测试和单机部署都这么用）。 */
-export function resolveLayout(input: { readonly appRoot: string; readonly userRoot: string }): Layout {
+/**
+ * 把一个根拆成全部位置。`appRoot` 与 `userRoot` 允许相同（测试和单机部署都这么用）。
+ *
+ * `projectRoot`：**源码仓库**在哪。它不参与任何拼盘，只给「点开一个路径」用 ——
+ * 模型报出来的路径常常是仓库相对的（`src/app/files.ts:77`），没有它这些路径一个都点不开。
+ * 不传就**没有**这个根：`files.preview` 只认两个根，行为退回老样子。
+ */
+export function resolveLayout(input: {
+	readonly appRoot: string;
+	readonly userRoot: string;
+	readonly projectRoot?: string | undefined;
+}): Layout {
 	const appRoot = resolve(input.appRoot);
 	const userRoot = resolve(input.userRoot);
 	const assistantRoot = join(appRoot, ASSISTANT_DIR);
@@ -76,6 +91,7 @@ export function resolveLayout(input: { readonly appRoot: string; readonly userRo
 		secretsFile: join(appRoot, ".secrets.json"),
 		seedManifestFile: join(appRoot, ".seed-manifest.json"),
 		agentRoots: [assistantRoot, membersRoot],
+		projectRoot: input.projectRoot === undefined || input.projectRoot === "" ? undefined : resolve(input.projectRoot),
 	};
 }
 
