@@ -12,8 +12,10 @@ import {
 	getPluginPermissions,
 	getPlugins,
 	grantPluginPermissions,
+	getRemovedPlugins,
 	installPlugin,
 	removePlugin,
+	restorePlugin,
 	setPluginEnabled,
 	type PluginPermissionAsk,
 } from "../api/client.ts";
@@ -87,6 +89,20 @@ export function PluginsPage(): JSX.Element {
 				setProblem(error.message);
 			});
 	}, []);
+
+	/**
+	 * 自己删掉的出厂插件。
+	 *
+	 * 删掉之后不偷偷塞回来（播种只补「意外丢失」那种），所以这里得有一个明确的
+	 * 装回入口 —— 否则老板哪天真想用了就死在那儿。清单变化后重读一次。
+	 */
+	const [removed, setRemoved] = useState<readonly string[]>([]);
+	const reloadRemoved = (): void => {
+		getRemovedPlugins()
+			.then((body) => setRemoved(body.removed))
+			.catch(() => setRemoved([]));
+	};
+	useEffect(reloadRemoved, [plugins]);
 
 	/** 三个动作长得一样：拿回新的清单，失败就把后端那句中文摆出来。 */
 	const apply = (action: Promise<{ plugins: Plugin[] }>, after?: (plugins: readonly Plugin[]) => void): void => {
@@ -204,6 +220,29 @@ export function PluginsPage(): JSX.Element {
 									</span>
 								</button>
 							))}
+							{removed.length === 0 ? null : (
+								<div className="pl-removed">
+									<p className="pl-removed-head">已删掉的出厂插件</p>
+									{/* 一个个按钮，不放主列表里：它们不在盘上，混进清单会让人以为还装着。 */}
+									{removed.map((name) => (
+										<button
+											type="button"
+											key={name}
+											className="pl-removed-item"
+											title={`把「${name}」装回来`}
+											onClick={() => {
+												apply(restorePlugin(name), (next) => {
+													const back = next.find((plugin) => plugin.slug === name);
+													if (back?.client === true && back.error === undefined) setRestartOpen(back.name);
+												});
+											}}
+										>
+											{name}
+											<span className="pl-removed-btn">装回来</span>
+										</button>
+									))}
+								</div>
+							)}
 						</aside>
 
 						<section className="pl-detail" aria-label="插件详情">

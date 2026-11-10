@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SKILLS_DIR, copySkillDir } from "../core/documents/skills.ts";
 import { RULES_FILE } from "../core/documents/rules.ts";
+import { isSafeName } from "../core/naming.ts";
 import { existsAt, listDirSorted, moveAt, readTextOrUndefined, removeAt, writeTextAt } from "../core/runtime/io.ts";
 import { mergeCatalog, parseCatalog } from "../core/documents/base/catalog.ts";
 import { frontOf, parseDoc, type Doc } from "../core/documents/base/doc.ts";
@@ -45,6 +46,16 @@ type SeedManifest = {
 	 */
 	pluginFiles: Record<string, Record<string, string>>;
 	/**
+	 * 用户**自己删掉**的出厂插件名。
+	 *
+	 * 和 `plugins`（「见过」）分开：见过只说明「装过」，说明不了「谁弄没的」——
+	 * 目录被手删、迁移丢了、应用重装没带过来，都长成同一个样子。早先拿「见过」
+	 * 当「我删的」，结果删除一旦发生就永久死了：重装应用补不回，界面上也没有装回来的路。
+	 *
+	 * 现在只有走过「删除」入口的才记在这里。没记的一律当意外丢失，下次启动补回。
+	 */
+	removed: string[];
+	/**
 	 * 播种文件的逻辑键 → 上次写入的 hash。
 	 *
 	 * 键用工作区里的逻辑位置（`prompt/20-position.md`、`rules.md`），不是绝对路径：
@@ -61,7 +72,7 @@ type SeedManifest = {
 };
 
 function emptyManifest(): SeedManifest {
-	return { version: 2, skills: {}, plugins: [], pluginFiles: {}, files: {}, textKeys: {} };
+	return { version: 2, skills: {}, plugins: [], pluginFiles: {}, removed: [], files: {}, textKeys: {} };
 }
 
 /** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
@@ -185,6 +196,7 @@ async function readManifest(path: string): Promise<SeedManifest> {
 		skills: raw.skills ?? {},
 		plugins: raw.plugins ?? [],
 		pluginFiles: raw.pluginFiles ?? {},
+		removed: raw.removed ?? [],
 		files: raw.files ?? {},
 		textKeys: raw.textKeys ?? {},
 	};
@@ -223,10 +235,17 @@ function parseManifest(text: string): Partial<SeedManifest> {
 	for (const [name, item] of Object.entries(record(value["pluginFiles"], "pluginFiles"))) {
 		pluginFiles[name] = strings(item, `pluginFiles.${name}`);
 	}
+	// 白名单式的解析：这里没列出来的字段会被丢掉，所以加字段**必须**同时加在这里
+	// （否则读出来的账本永远少这一项 —— `removed` 第一次就是这么被吞掉的）。
+	const removed = value["removed"];
+	if (removed !== undefined && (!Array.isArray(removed) || removed.some((item) => typeof item !== "string"))) {
+		throw new Error("removed 必须是字符串数组");
+	}
 	return {
 		skills,
 		plugins: plugins ?? [],
 		pluginFiles,
+		removed: removed ?? [],
 		files: strings(value["files"], "files"),
 		textKeys: strings(value["textKeys"], "textKeys"),
 	};
@@ -401,6 +420,7 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 	const manifestPath = layout.seedManifestFile;
 	const manifest = await readManifest(manifestPath);
 	const seen = new Set(manifest.plugins);
+	const removed = new Set(manifest.removed);
 	const written: string[] = [];
 	let changed = false;
 
@@ -412,15 +432,20 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 		const record = manifest.pluginFiles[name];
 
 		if (!(await existsAt(target))) {
-			// 盘上没有：见过 = 我删的，不再补；没见过 = 第一次装。
-			if (seen.has(name)) continue;
+			// 盘上没有：只有走过「删除」入口的才算是用户删的，不再补。
+			// 没记在 `removed` 里的一律当意外丢失（手删目录、迁移、重装没带过来），补回。
+			if (removed.has(name)) continue;
 			seen.add(name);
+			removed.delete(name);
 			changed = true;
 			await mirrorPlugin(target, seed, new Set());
 			manifest.pluginFiles[name] = hashesOf(seed);
 			written.push(name);
 			continue;
 		}
+
+		// 盘上又有了（用户自己放回来 / 走过「装回」）：不再是「删掉的」。
+		if (removed.delete(name)) changed = true;
 
 		// 盘上有：先认它是不是「上次播种时那份原样」。
 		const files = await pluginFiles(target);
@@ -449,9 +474,68 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 
 	if (changed) {
 		manifest.plugins = [...seen].sort();
+		manifest.removed = [...removed].sort();
 		await writeTextAt(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 	}
 	return written;
+}
+
+/** 这个名字在不在出厂那份里（`seed/plugins/<名字>/` 存在就是）。 */
+export async function isShippedPlugin(layout: Layout, name: string): Promise<boolean> {
+	void layout;
+	if (!isSafeName(name)) return false;
+	return existsAt(join(seedPath("plugins"), name));
+}
+
+/**
+ * 记一笔「用户把这个出厂插件删了」。
+ *
+ * 只记出厂就有的那些：自己装进去的插件删了就是删了，不该出现在「装回来」里
+ * （出厂没有那份代码，装不回来）。
+ */
+export async function markRemoved(layout: Layout, name: string): Promise<void> {
+	if (!isSafeName(name)) return;
+	if (!(await existsAt(join(seedPath("plugins"), name)))) return;
+	const manifestPath = layout.seedManifestFile;
+	const manifest = await readManifest(manifestPath);
+	if (manifest.removed.includes(name)) return;
+	const next = { ...manifest, removed: [...manifest.removed, name].sort() };
+	await writeTextAt(manifestPath, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+/**
+ * 用户自己删掉的出厂插件（界面上「装回来」能挑的）。
+ *
+ * 从账本读，不扫盘：盘上没有的出厂插件分两种 —— 删掉的、意外丢的，只有账本分得清。
+ */
+export async function removedPlugins(layout: Layout): Promise<readonly string[]> {
+	const manifest = await readManifest(layout.seedManifestFile);
+	const root = seedPath("plugins");
+	const shipped = new Set((await listDirSorted(root)).filter((entry) => entry.kind === "dir").map((entry) => entry.name));
+	return manifest.removed.filter((name) => shipped.has(name)).sort();
+}
+
+/**
+ * 把一个被删掉的出厂插件装回来。
+ *
+ * 只认账本里记着「删过」的：没删过的传进来什么都不做（返回 false），免得把它当成
+ * 一条绕过正常安装、往插件目录里写代码的路。装回用的是出厂那份，不是旧账本里的 hash。
+ */
+export async function restorePlugin(layout: Layout, name: string): Promise<boolean> {
+	if (!isSafeName(name)) return false;
+	const source = join(seedPath("plugins"), name);
+	if (!(await existsAt(source))) return false;
+	const manifestPath = layout.seedManifestFile;
+	const manifest = await readManifest(manifestPath);
+	if (!manifest.removed.includes(name)) return false;
+	await mirrorPlugin(join(layout.pluginsRoot, name), await pluginFiles(source), new Set());
+	const seen = new Set([...manifest.plugins, name]);
+	const removed = new Set(manifest.removed.filter((item) => item !== name));
+	await writeTextAt(
+		manifestPath,
+		`${JSON.stringify({ ...manifest, plugins: [...seen].sort(), removed: [...removed].sort(), pluginFiles: { ...manifest.pluginFiles, [name]: hashesOf(await pluginFiles(source)) } }, null, 2)}\n`,
+	);
+	return true;
 }
 
 /** 一个插件目录里的文本文件：相对路径（`/` 分隔）→ 内容。读不出来的跳过。 */

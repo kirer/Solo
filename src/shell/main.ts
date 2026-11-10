@@ -27,7 +27,7 @@ import { createDiag } from "../app/diag.ts";
 import { wipeAll } from "../app/reset.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { createDesktopActor } from "./wire/system.ts";
-import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
+import { isShippedPlugin, markRemoved, removedPlugins, restorePlugin, seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../core/fsx.ts";
 import { loadTextCatalog } from "../core/documents/base/catalog.ts";
 import { loadTemplates, PROMPT_DIR } from "../core/documents/base/template.ts";
@@ -238,6 +238,14 @@ async function main(): Promise<void> {
 			...(models.agentModels === undefined ? {} : { agentModels: models.agentModels }),
 			models: models.models,
 			diag,
+			// 出厂插件账本：删的时候记一笔、装回的时候读它。不给的话播种分不清
+			// 「用户删的」和「意外丢的」，删掉的就永远补不回来了。
+			seededPlugins: {
+				markRemoved: (name) => markRemoved(layout, name),
+				removed: () => removedPlugins(layout),
+				restore: (name) => restorePlugin(layout, name),
+				isShipped: (name) => isShippedPlugin(layout, name),
+			},
 			// 重启把谁的一轮掐断了：留痕 + 交给底座重放（ADR-044 / ADR-074）。
 			interrupted: runtime.interrupted,
 			// 排队输入却没有人来取：装配完发 continue 接上。

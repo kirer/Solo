@@ -90,6 +90,13 @@ type CoreShellOptions = {
 	 * `api.system.act` 一律抛「这个宿主不支持」。
 	 */
 	readonly system?: CoreServices["system"];
+	/**
+	 * 出厂插件账本（谁被删过、怎么装回来）。
+	 *
+	 * 由 `main.ts` 注入：删插件要记一笔，不然播种会把用户删掉的原样补回来；
+	 * 装回入口也要读这本账。不给 = 不记账、也没有装回入口（测试与老调用方）。
+	 */
+	readonly seededPlugins?: CoreServices["seededPlugins"];
 };
 
 /**
@@ -305,6 +312,7 @@ export async function assembleCore(
 		allChannel,
 		diag,
 		...(options.system === undefined ? {} : { system: options.system }),
+		...(options.seededPlugins === undefined ? {} : { seededPlugins: options.seededPlugins }),
 		// 关两次是正常的（`main.ts` 先关服务、再关运行时）：这里只关一次。
 		close: async (ctx?: Context) => {
 			if (closed) return;

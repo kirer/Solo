@@ -115,6 +115,22 @@ export type CoreServices = {
 	 * 用例层要拼路径时**只从这里取**，不要自己 `dirname`。
 	 */
 	readonly layout: Layout;
+	/**
+	 * 出厂插件账本（谁被用户删过、怎么装回来）。
+	 *
+	 * 由外壳装配时注入，不在这里 import `shell/` —— 依赖方向只有 `shell → app` 一条。
+	 * 没有它（单测 / 精简装配）时，删掉的插件不会记进账本，装回入口也不出现。
+	 */
+	readonly seededPlugins?: {
+		/** 记一笔「用户删了这个出厂插件」。 */
+		readonly markRemoved: (name: string) => Promise<void>;
+		/** 用户删掉的出厂插件名（界面上「装回来」能挑的）。 */
+		readonly removed: () => Promise<readonly string[]>;
+		/** 把删掉的出厂插件装回来（用出厂那份）。装上了返回 true。 */
+		readonly restore: (name: string) => Promise<boolean>;
+		/** 这个名字在不在出厂那份里（决定「删了还能不能装回来」，也决定日志怎么写）。 */
+		readonly isShipped: (name: string) => Promise<boolean>;
+	};
 	/** 文案目录（`<appRoot>/text/`）：用例层要回一句话给模型/界面时从这里取。 */
 	readonly text: TextCatalog;
 	readonly allChannel: string;

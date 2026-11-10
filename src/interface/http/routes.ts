@@ -492,6 +492,24 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			},
 		},
 		{
+			// 用户自己删掉的出厂插件：界面上「装回来」能挑这些（不是盘上所有缺的）。
+			pattern: "/api/plugins/removed",
+			method: "GET",
+			handler: async ({ response }) => json(response, { removed: await app.plugins.removed() }),
+		},
+		{
+			// 把删掉的出厂插件装回来（用出厂那份）。装完重新加载，返回的是新的插件清单。
+			pattern: "/api/plugins/:slug/restore",
+			method: "POST",
+			handler: async ({ response, params }) => {
+				try {
+					return json(response, { plugins: await app.plugins.restore(params.slug ?? "") });
+				} catch (error) {
+					return fail(response, 400, (error as Error).message);
+				}
+			},
+		},
+		{
 			// 开关插件：写回 `plugin.md` 的 `enabled`。下一次启动生效（第一版没有热卸载）。
 			pattern: "/api/plugins/:slug/enabled",
 			method: "POST",

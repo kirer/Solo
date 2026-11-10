@@ -162,7 +162,34 @@ export function createPlugins(services: CoreServices) {
 
 		/** 删掉一个插件，连同它的代码。**不可恢复**，界面负责二次确认。 */
 		async remove(slug: string): Promise<readonly ViewPlugin[]> {
+			// 先问清楚「是不是出厂那份」，再动手删 —— 删完就问不出来了。
+			// 这一问决定两件事：账本记不记（决定会不会被播种补回）、日志里怎么描述。
+			const shipped = (await services.seededPlugins?.isShipped(slug)) === true;
 			await removePluginFolder(pluginsRoot, slug);
+			// 记一笔「用户删的」：不然下次启动播种会当成意外丢失、原样补回来，
+			// 界面上的「删除」又变成假的。只有走过这里的才算，手删目录的不算。
+			if (shipped) await services.seededPlugins?.markRemoved(slug);
+			// 留一笔：删插件是不可恢复的动作，事后要能回答「什么时候、删了什么、还能不能装回来」。
+			// 之前这里一句日志都没有 —— 老板删掉悬浮球之后，翻遍日志也找不着痕迹。
+			services.diag.recordFlow(
+				"plugin",
+				shipped
+					? `删掉了出厂插件「${slug}」（可以在插件页装回来）`
+					: `删掉了自己装的插件「${slug}」（出厂没有这份，装不回来了）`,
+			);
+			await services.reloadPlugins();
+			return rows();
+		},
+
+		/** 用户删掉的出厂插件：界面上「装回来」能挑这些。没有账本时是空的。 */
+		async removed(): Promise<readonly string[]> {
+			return (await services.seededPlugins?.removed()) ?? [];
+		},
+
+		/** 把删掉的出厂插件装回来（用出厂那份）。装上了就重新加载。 */
+		async restore(slug: string): Promise<readonly ViewPlugin[]> {
+			if ((await services.seededPlugins?.restore(slug)) !== true) return rows();
+			services.diag.recordFlow("plugin", `把删掉的出厂插件「${slug}」装回来了（用出厂那份）`);
 			await services.reloadPlugins();
 			return rows();
 		},

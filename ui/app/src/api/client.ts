@@ -262,6 +262,18 @@ export const installPlugin = (
 export const removePlugin = (slug: string): Promise<{ plugins: Plugin[] }> =>
 	call(`/api/plugins/${encodeURIComponent(slug)}`, { method: "DELETE" });
 
+/**
+ * 用户自己删掉的出厂插件。
+ *
+ * 只有走过「删除」入口的才算：手删目录、迁移丢了、重装没带过来的不算 ——
+ * 那些下次启动会自动补回，不该出现在这个列表里。
+ */
+export const getRemovedPlugins = (): Promise<{ removed: string[] }> => call("/api/plugins/removed");
+
+/** 把删掉的出厂插件装回来（用出厂那份）。装完当场重新加载。 */
+export const restorePlugin = (slug: string): Promise<{ plugins: Plugin[] }> =>
+	call(`/api/plugins/${encodeURIComponent(slug)}/restore`, { method: "POST" });
+
 /** 开关一个插件（写回它的 `plugin.md`）。**下一次启动**才真的装上 / 卸下。 */
 export const setPluginEnabled = (slug: string, enabled: boolean): Promise<{ plugins: Plugin[] }> =>
 	call(`/api/plugins/${encodeURIComponent(slug)}/enabled`, {
