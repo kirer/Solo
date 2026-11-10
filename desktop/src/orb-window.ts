@@ -7,8 +7,29 @@
  */
 import { join } from "node:path";
 
-/** 窗口比球大一圈：面板展开时也在窗口里，透明的地方点击直接穿过去。 */
-export const ORB_SIZE = { width: 380, height: 520 } as const;
+/**
+ * 窗口比球大一圈：面板展开时也在窗口里，透明的地方点击直接穿过去。
+ *
+ * 宽 420 是给面板让的：贴右边缘 MARGIN=12 + 间距 8 + 面板 320 + 右边留 8 = 348，
+ * 再加窗口左边必须容下那颗 80 宽的球和它自己的边距，380 差一点，420 才够。
+ *
+ * 高 612 也是给面板让的：球 top20 + 球高 96 + 间距 16 + 面板 480 = 612。
+ * 540 时下面只余 408，面板矮了 72px 才放得下。多出来的 72 全落在球下方，不压到球。
+ * 屏高是够的：13 寸可用区 945、外接 1024，最小的一档也还剩 333 的余量。
+ */
+export const ORB_SIZE = { width: 420, height: 612 } as const;
+
+/**
+ * 加宽后右边要多让出来的那一截：现在不需要了，留个 0 说清原因。
+ *
+ * 担心的是「窗一宽，贴在右上角的球往左跳」。算一遍就知道不会：
+ * 默认位置是 x = 可用区宽 − 窗宽 − MARGIN，右边缘 = 可用区宽 − MARGIN ——
+ * 跟窗宽无关。窗从 380 加宽到 420，x 少 40、右边缘不动，球的屏幕位置一点没变。
+ *
+ * 真加补偿反而把它推坏：x 多 40，右边缘就跑到屏幕外 40px，球跟着往右跳。
+ * 所以这里必须是 0；留着这个常量是为了让下一个人别再「补」一次。
+ */
+export const ORB_GROWTH = 0;
 
 /** 屏幕可用区（`screen.getPrimaryDisplay().workArea`）：macOS 上已经扣掉菜单栏。 */
 export type OrbArea = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -21,10 +42,15 @@ function clamp(value: number, low: number, high: number): number {
 	return Math.min(high, Math.max(low, value));
 }
 
-/** 默认贴右上角：窗口里的球也靠右上，所以球落在屏幕右上、菜单栏下面。 */
+/**
+ * 默认贴右上角：窗口里的球也靠右上，所以球落在屏幕右上、菜单栏下面。
+ *
+ * 定位是「拿窗宽从右边减」，所以右边缘固定在 `可用区右 − MARGIN`，
+ * 改窗宽只让窗口从左边长出去，球的屏幕位置不变。
+ */
 export function defaultOrbBounds(area: OrbArea): OrbBounds {
 	return {
-		x: area.x + Math.max(0, area.width - ORB_SIZE.width - MARGIN),
+		x: area.x + Math.max(0, area.width - ORB_SIZE.width - MARGIN + ORB_GROWTH),
 		y: area.y + MARGIN,
 	};
 }
