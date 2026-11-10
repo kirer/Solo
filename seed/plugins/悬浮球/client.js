@@ -527,6 +527,15 @@ export default {
 			const [transcribing, setTranscribing] = useState(false);
 			/** 本地语音模型的状态（`GET /api/orb/voice`）：没下就显示一行下载。 */
 			const [voice, setVoice] = useState(null);
+			/**
+			 * 最近一次「没念出来」的原话，**收着面板也挂在球上**。
+			 *
+			 * 以前 `reportSpeech` 只往 `speechProblemRef` 里攒，等老板下次打开面板才补一句。
+			 * 可「收着也要念」恰恰是老板不看面板的时候 —— 他不打开，就永远不知道是哑的。
+			 * 2.8.0 上「一个字都听不到」就是这么一声不响地哑了：自动播放被拒，
+			 * 日志里有 `NotAllowedError`，界面上什么都没有。
+			 */
+			const [speechProblem, setSpeechProblem] = useState("");
 
 			const drag = useRef(null);
 			const skipClick = useRef(false);
@@ -549,6 +558,17 @@ export default {
 			const queueRef = useRef([]);
 			const audioRef = useRef(null);
 			const speakingRef = useRef(false);
+			/**
+			 * 合成是**串行**的，而且只留一个待念的（老板 2026-11-10）。
+			 *
+			 * `tts-worker.js` 每念一句就是一个独立进程，各自要把 310MB 的模型读进来。
+			 * 以前这里是 `for (...) void speakText(...)`：几条新消息一起来就并发起好几个
+			 * worker，CPU 冲到 700%、内存 630MB，整台机器跟着卡。
+			 * 现在同一时刻只有一个在合成；期间又来的排进这一个槽位，槽位里已有就丢掉
+			 * —— 攒着的那句早就没意义了，人也不会想听十句过期播报。
+			 */
+			const synthesizingRef = useRef(false);
+			const pendingRef = useRef(null);
 			const voicePollRef = useRef(0);
 			/** 面板开着没有：只决定「报错往哪儿写」，不再决定「念不念」。 */
 			const openRef = useRef(false);
@@ -566,6 +586,7 @@ export default {
 
 			const stopAudio = () => {
 				queueRef.current = [];
+				pendingRef.current = null;
 				speakingRef.current = false;
 				const player = audioRef.current;
 				audioRef.current = null;
@@ -583,6 +604,8 @@ export default {
 			const reportSpeech = (why) => {
 				const line = `没念出来：${why}`;
 				speechProblemRef.current = line;
+				// 不管面板开没开都写到球上（见 `speechProblem` 那条注释）；开着时另外写进面板。
+				setSpeechProblem(line);
 				if (openRef.current) setError(line);
 				console.warn(`[${SLUG}] ${line}`);
 			};
@@ -604,7 +627,15 @@ export default {
 					player.onerror = null;
 					player.pause();
 				}
-				reportSpeech(`${why}（音频没能播放，检查系统输出设备）`);
+				// 自动播放被拒跟「没有输出设备」完全是两回事，别把人带去查音箱。
+				// 原文长这样：`NotAllowedError: play() failed because the user didn't interact
+				// with the document first.` 壳里已经用 `autoplayPolicy` 放开了；万一还撞上，
+				// 说明那扇窗没带上这个设置，说清楚比说「检查输出设备」有用得多。
+				reportSpeech(
+					why.includes("NotAllowedError") || why.includes("didn't interact")
+						? "系统不允许自动出声（这扇窗没被允许自动播放）"
+						: `${why}（音频没能播放，检查系统输出设备）`,
+				);
 			};
 
 			const playNext = () => {
@@ -626,8 +657,39 @@ export default {
 				});
 			};
 
+			/**
+			 * 排一句要念的话。
+			 *
+			 * **不是 async、不返回 Promise**：调用方就是 `for` 循环里一路甩过来，这里只
+			 * 往槽位里放一句就走。真正合成交给 `drainSpeech` 串着跑 —— 见 `synthesizingRef`。
+			 */
+			const speakText = (raw) => {
+				const text = plainText(raw).slice(0, 1200);
+				if (text === "") return;
+				// 正在念的那句之后**只留一个位置，而且是直接覆盖、不是排队**：连来 4 条
+				// 只会念第 1 条和最后那条第 4 条，中间两条直接丢。这是故意的——攒着的
+				// 播报早就过期了，没人想听四条历史。别当 bug 改回队列。
+				pendingRef.current = text;
+				if (!synthesizingRef.current) void drainSpeech();
+			};
+
+			/** 把槽位里的句子一句一句合成掉；同一时刻只有一个在跑。 */
+			const drainSpeech = async () => {
+				if (synthesizingRef.current) return;
+				synthesizingRef.current = true;
+				try {
+					while (pendingRef.current !== null) {
+						const next = pendingRef.current;
+						pendingRef.current = null;
+						await synthesize(next);
+					}
+				} finally {
+					synthesizingRef.current = false;
+				}
+			};
+
 			/** 本地神经音色念一句：切成小片合成，第一片先出声。 */
-			const speakText = async (raw) => {
+			const synthesize = async (raw) => {
 				const text = plainText(raw).slice(0, 1200);
 				if (text === "") return;
 				// 音色与语速每次现读：设置里刚改完，下一句就照新的念，不用重开面板。
@@ -744,12 +806,15 @@ export default {
 				setMenu(false);
 			};
 
-			// 补私聊消息：正在看这条私聊时 store 已经在推，不用再拉。
+			// 补私聊消息。**不管 `currentId` 是不是这条私聊都要拉**（老板 2026-11-10）：
+			// 原先这里写着「正在看私聊时 store 已经在推，不用再拉」，可悬浮窗是独立的一扇窗，
+			// 它自己的 `store.detail` 是空的，主窗口那份不会流过来——结果是 `currentId` 正好
+			// 停在私聊上时，这里一次都不拉，`fresh` 恒空，一句都不念。
 			//
-			// **收起面板也照拉**（老板 2026-11-10）：这个开关叫「收着也要念」，可收起时恰恰
-			// 没人拉私聊，最该响的时候一声不响。面板收起 = 老板在干别的，才更需要被叫。
+			// **收起面板也照拉**：这个开关叫「收着也要念」，可收起时恰恰没人拉私聊，
+			// 最该响的时候一声不响。面板收起 = 老板在干别的，才更需要被叫。
 			useEffect(() => {
-				if (dmId === null || currentId === dmId) return undefined;
+				if (dmId === null) return undefined;
 				let alive = true;
 				const pull = async () => {
 					try {
@@ -837,7 +902,14 @@ export default {
 				// 面板收着（默认状态）就等于「朗读开着却一句都不念」，而且一点痕迹都不留。
 				// 网页版（inline）不后台念：那一屏可能根本没在看，出声会打扰；桌面独立窗才念。
 				if (!speakOn || ORB_MODE === "inline") return;
-				for (const message of fresh) void speakText(message.text);
+				// 这里**不是**并发起一串合成：`speakText` 只往槽位里塞一句，真正的合成由
+				// `drainSpeech` 串着跑，槽位里只留一个待念的，多的直接丢（见 `synthesizingRef`）。
+				// 以前是 `for (...) void speakText(...)`，几条消息一起来就起好几个 310MB 的
+				// worker，CPU 700%、内存 630MB。
+				// `fresh` 里装的是 `{ chatId, message }`（轨道），不是消息本身。以前这里写
+				// `speakText(message.text)`，取的是轨道上的 `text` —— 永远是 undefined，
+				// `plainText` 把它 `String()` 成 "undefined"，后端照合成，老板就听见念「undefined」。
+				for (const track of fresh) speakText(track.message.text);
 				// eslint-disable-next-line react-hooks/exhaustive-deps
 			}, [shown, speakOn, open, assistant, detail, liveDetail]);
 
@@ -1382,11 +1454,14 @@ export default {
 					"aria-label": unread > 0 ? `助理（${String(unread)} 条未读）` : "助理",
 					"aria-expanded": open,
 					"data-tip":
-						wakeOn && wakeFail === ""
-							? "说「你好索罗」叫醒，或点一下"
-							: wakeOn
-								? `唤醒没开成：${wakeFail}`
-								: "跟助理说一句",
+						// 哑了就先说哑了：唤醒提示再准，也比不上「刚才那句没念出来」要紧。
+						speechProblem !== ""
+							? `${speechProblem}（点开看怎么办）`
+							: wakeOn && wakeFail === ""
+								? "说「你好索罗」叫醒，或点一下"
+								: wakeOn
+									? `唤醒没开成：${wakeFail}`
+									: "跟助理说一句",
 					onClick,
 					onPointerDown,
 					onPointerMove,

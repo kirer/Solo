@@ -238,7 +238,24 @@ describe("悬浮球", () => {
 	it("收起面板也拉私聊：轮询的触发条件里没有 `open`", async () => {
 		const code = await codeLines();
 		expect(code).not.toMatch(/if \(!open \|\| dmId === null/u);
-		expect(code).toMatch(/if \(dmId === null \|\| currentId === dmId\) return undefined;/u);
+	});
+
+	// 老板 2026-11-10：播放出来的是「undefined」这个词本身。`fresh` 里装的是轨道
+	// `{ chatId, message }`，不是消息本身；写成 `speakText(message.text)` 取的是轨道上的
+	// `text`，永远 undefined，`plainText` 把它 String() 成 "undefined"，后端照合成。
+	it("念的是消息正文：取 track.message.text，不是 track.text", async () => {
+		const code = await codeLines();
+		expect(code).toMatch(/for \(const track of fresh\) speakText\(track\.message\.text\);/u);
+		expect(code).not.toMatch(/for \(const message of fresh\)/u);
+	});
+
+	// 老板 2026-11-10：`currentId === dmId` 时也得拉。悬浮窗是独立的一扇窗，它自己的
+	// `store.detail` 是空的，主窗口那份流不过来——留着这半个条件，`currentId` 一停在
+	// 私聊上就一次都不拉，`fresh` 恒空，一句都不念（就是老板听不到声音的那次）。
+	it("正看着私聊时也拉：轮询的触发条件里没有 `currentId === dmId`", async () => {
+		const code = await codeLines();
+		expect(code).not.toMatch(/currentId === dmId\) return undefined;/u);
+		expect(code).toMatch(/if \(dmId === null\) return undefined;/u);
 	});
 
 	it("念什么不跟当前打开的频道走：数据源是私聊那份", async () => {
@@ -282,6 +299,21 @@ describe("悬浮球", () => {
 		expect(String(missing.error ?? "")).toMatch(/找不到 sherpa-onnx-node/u);
 		// 文案别把人往错的方向带：不是「没装好」，说清是安装不完整、重装能修。
 		expect(String(missing.error ?? "")).toMatch(/重装/u);
+	});
+
+	// 老板 2026-11-10：几条消息一起进来会并发起好几个 tts-worker（每个读 310MB 模型），
+	// CPU 冲到 700%。合成必须串行，待念的只留一个，后面的丢。
+	it("合成串行：不并发起多个，待念只留一个", async () => {
+		const code = await codeLines();
+		// 不能再有「for 里 void speakText」那种甩出去就不管的写法。
+		expect(code).not.toMatch(/void speakText\(/u);
+		// 串行靠这三个：正在合成的标记、一个待念槽位、串着跑的循环。
+		expect(code).toMatch(/synthesizingRef = useRef\(false\)/u);
+		expect(code).toMatch(/pendingRef = useRef\(null\)/u);
+		expect(code).toMatch(/while \(pendingRef\.current !== null\)/u);
+		// speakText 只登记、不 await 合成：它同步返回。
+		expect(code).not.toMatch(/const speakText = async/u);
+		expect(code).toMatch(/const speakText = \(raw\) =>/u);
 	});
 
 	it("合成回来时不看面板开没开：收起不丢这一片", async () => {
