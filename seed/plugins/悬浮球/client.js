@@ -16,7 +16,9 @@
 const SLUG = "悬浮球";
 const PREF_KEY = "solo.orb";
 /** 球的直径（px）。拖动与贴边的计算都用它。 */
-const BALL = 46;
+const BALL = 80;
+/** 小人实际占的高度（画布 80×96，人本身到脚下阴影为止）。摆面板要按这个算，不能按 80。 */
+const BALL_H = 96;
 /** 拖过右缘多近算「贴边」。 */
 const DOCK_AT = 12;
 /**
@@ -99,33 +101,63 @@ export default {
 	style: `
 		/* 整块浮在最上层：只有球和面板接事件，别的地方不挡点击。 */
 		.orb { position: fixed; z-index: 70; pointer-events: none; }
-		/* 球面就是应用的标识（S + 蓝点，与窗口图标同形）。深底固定：
-		   桌面壁纸什么颜色都认得出来，也一眼看出是 Solo 而不是一颗渐变球。 */
+		/* 球面是一个站着的小人（纸片），不再是一颗抽象球或一块标识方块。
+		   选「纸上低对比 + 一颗蓝点」是因为它要在壁纸上待一整天：安静时几乎不动，
+		   不跟屏幕上别的东西抢注意力；一开口，姿态和嘴自己说话。 */
 		.orb-ball {
-			--rail-mark-bg: #20242b;
-			--rail-mark-ink: #f2e3c9;
-			--rail-mark-dot: #93aece;
-			--rail-mark-line: rgb(255 255 255 / 0.08);
+			--orb-paper: #f7f4ee;
+			--orb-ink: #23262b;
+			--orb-line: #c9c2b4;
+			--orb-dot: #7d9cc4;
 			pointer-events: auto;
 			position: relative;
 			display: grid; place-items: center;
-			width: 46px; height: 46px; padding: 0;
-			border: 0; border-radius: 13px;
+			width: 80px; height: 96px; padding: 0;
+			border: 0; border-radius: 16px;
 			background: transparent;
-			box-shadow: 0 12px 30px rgb(0 0 0 / 0.32), 0 2px 8px rgb(0 0 0 / 0.18);
+			/* 阴影落在脚下，不围一圈：围一圈就成了「球」，不是「站在屏幕上的人」。 */
+			box-shadow: none;
+			filter: drop-shadow(0 10px 14px rgb(0 0 0 / 0.26));
 			cursor: grab; touch-action: none;
-			transition: transform 160ms ease, box-shadow 160ms ease;
+			transition: transform 160ms ease, filter 160ms ease;
 		}
-		.orb-ball:hover { transform: scale(1.05); box-shadow: 0 16px 36px rgb(0 0 0 / 0.36), 0 2px 8px rgb(0 0 0 / 0.2); }
+		.orb-ball:hover { transform: scale(1.05); filter: drop-shadow(0 14px 18px rgb(0 0 0 / 0.3)); }
+		/* 嘴上/眼睛上的颜色不从主题继承：投影和面板底色会把深色换成浅色，人就糊了。 */
+		.orb-mark .orb-mouth, .orb-mark .orb-pupils circle { stroke: var(--orb-ink); }
+		.orb-mark .orb-mouth[data-mouth="open4"] { stroke-width: 2.4; }
 		.orb-ball:active { cursor: grabbing; }
 		.orb[data-open="true"] .orb-ball { cursor: pointer; }
 		/* 贴边：只留一条边。悬停滑出来，松手不动它就还回去 —— 和 dsh 那颗球一个意思。 */
-		.orb[data-docked="true"] .orb-ball { transform: translateX(34px); }
+		.orb[data-docked="true"] .orb-ball { transform: translateX(68px); }
 		.orb[data-docked="true"] .orb-ball:hover { transform: none; }
 
-		/* 标识填满球面；SVG 自己带圆角底，按钮只负责阴影与命中。 */
-		.orb-mark { display: block; width: 46px; height: 46px; border-radius: 13px; overflow: hidden; }
-		.orb-mark svg { display: block; width: 100%; height: 100%; }
+		/* 小人填满球面；SVG 自己带身体，按钮只负责阴影与命中。 */
+		.orb-mark { display: block; width: 80px; height: 96px; overflow: visible; }
+		.orb-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+		/* 呼吸、眨眼：安静时也有一点点活着的感觉，但幅度压到 1px 级，不烦人。 */
+		.orb-mark .orb-breath { animation: orb-breath 8s ease-in-out infinite; }
+		@keyframes orb-breath { 0%, 100% { transform: none; } 45% { transform: translateY(-1px); } }
+		.orb-mark .orb-eye {
+			transform-origin: center; transform-box: fill-box;
+			animation: orb-blink 20s ease-in-out infinite;
+		}
+		@keyframes orb-blink { 0%, 92%, 100% { transform: scaleY(1); } 93.6% { transform: scaleY(0.08); } 95.2% { transform: scaleY(1); } }
+		/* 在听：头偏一点、眼睛微睁、耳朵边两圈往里收的弧。 */
+		.orb-mark[data-view="listen"] { transform: rotate(-3deg); }
+		.orb-mark[data-view="listen"] .orb-eyes { transform: scale(1.12); transform-origin: 50% 40%; }
+		.orb-mark .orb-arc { opacity: 0; animation: orb-arc 1.4s ease-out infinite; }
+		.orb-mark .orb-arc + .orb-arc { animation-delay: 0.7s; }
+		@keyframes orb-arc { 0% { opacity: 0.1; } 30% { opacity: 0.7; } 100% { opacity: 0; } }
+		/* 在想：目光上抬左右扫，一只手在敲，头顶蓝点明暗。 */
+		.orb-mark[data-view="think"] .orb-pupils { animation: orb-scan 2.4s ease-in-out infinite; }
+		@keyframes orb-scan { 0% { transform: translate(-1.2px, -2.4px); } 50% { transform: translate(1.2px, -2.4px); } 100% { transform: translate(-1.2px, -2.4px); } }
+		.orb-mark[data-view="think"] .orb-hand { animation: orb-tap 1s ease-in-out infinite; transform-origin: 50% 0; }
+		@keyframes orb-tap { 0%, 100% { transform: none; } 25% { transform: rotate(-8deg) translateY(-1px); } 50% { transform: none; } 75% { transform: rotate(-8deg) translateY(-1px); } }
+		.orb-mark[data-view="think"] .orb-dot { animation: orb-glim 1.1s ease-in-out infinite; }
+		@keyframes orb-glim { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+		/* 在念：轻微点头；嘴的档位由 JS 每帧写（真机跟 AnalyserNode 的音量）。 */
+		.orb-mark[data-view="speak"] { animation: orb-nod 0.5s ease-in-out infinite; }
+		@keyframes orb-nod { 0%, 100% { transform: none; } 50% { transform: translateY(-1px) rotate(0.6deg); } }
 		/* 正在跑：一圈转着的弧，圆角跟着球面走，不是圆环。只在这一轮里存在，结算即消失。 */
 		.orb-ring {
 			position: absolute; inset: -5px; border-radius: 18px; padding: 2px;
@@ -138,6 +170,13 @@ export default {
 			pointer-events: none;
 		}
 		@keyframes orb-spin { to { transform: rotate(360deg); } }
+		/* 「没念出来」的红点：跟未读角标抢同一个角会叠住，所以让到左下。 */
+		.orb-badge.orb-alert {
+			top: auto; right: auto; bottom: 2px; left: -4px;
+			background: var(--danger, #c0503c); color: #fff;
+			font-weight: 700; padding: 0;
+			box-shadow: 0 2px 6px rgb(0 0 0 / 0.28);
+		}
 		.orb-badge {
 			position: absolute; top: -3px; right: -3px;
 			min-width: 17px; height: 17px; padding: 0 4px;
@@ -162,7 +201,8 @@ export default {
 		}
 		@keyframes orb-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 		@media (prefers-reduced-motion: reduce) {
-			.orb-ball, .orb-panel, .orb-ring, .orb-icon[data-rec="true"] { transition: none; animation: none; }
+			.orb-ball, .orb-panel, .orb-ring, .orb-icon[data-rec="true"],
+			.orb-mark, .orb-mark * { transition: none; animation: none; }
 		}
 
 		.orb-head {
@@ -172,6 +212,7 @@ export default {
 		/* 面板抬头的小标识：主题色跟着纸走（和助理头像同一份），干活时一圈微光。 */
 		.orb-face { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
 		.orb-face svg { display: block; }
+		.orb-face .orb-eye { animation: none; }
 		.orb-face[data-busy="true"] { filter: drop-shadow(0 0 5px var(--accent)); }
 		.orb-who { display: flex; flex-direction: column; min-width: 0; }
 		.orb-who b { font-size: 12.5px; line-height: 17px; font-weight: 600; color: var(--ink); }
@@ -360,11 +401,49 @@ export default {
 	`,
 
 	apply(ui) {
+		/** 嘴的六个形状。前端挑档和 SVG 初值共用这一份，别两处各写一遍。 */
+		const MOUTH_D = {
+			flat: "M38 40 h4.5",
+			o: "M39.2 38.6 a1.7 2 0 1 1 3.4 0 a1.7 2 0 1 1 -3.4 0",
+			smile: "M37.6 39.6 q2.7 2 5.3 0",
+			open1: "M37.8 38.9 a2.8 1.1 0 1 1 5.2 0 a2.8 1.1 0 1 1 -5.2 0",
+			open2: "M37.6 38.9 a3.0 1.9 0 1 1 5.6 0 a3.0 1.9 0 1 1 -5.6 0",
+			open3: "M37.4 38.9 a3.2 2.6 0 1 1 6.0 0 a3.2 2.6 0 1 1 -6.0 0",
+			open4: "M37.2 38.9 a3.4 3.3 0 1 1 6.4 0 a3.4 3.3 0 1 1 -6.4 0",
+		};
+
 		const { h, React, api, store, useStore, brandMarkSvg } = ui;
 		const { useEffect, useRef, useState } = React;
 
 		/** 独立窗的桥（`desktop/src/orb-preload.cts`）；浏览器里没有，调用全是 no-op。 */
 		const bridge = () => (typeof window === "undefined" ? undefined : window.soloOrb);
+
+		/**
+		 * 小人：一个站着的人，四种看法（安静 / 在听 / 在想 / 在念）。
+		 * 内联 SVG + CSS 动画：透明窗里 canvas 抠透明会出杂点，逐帧图要多几十份资源；
+		 * SVG 跟主题一起缩放，嘴只是一个 d 属性，念的时候每帧改它。
+		 */
+		function personSvg(size, view) {
+			const mouth =
+				view === "speak" ? MOUTH_D.open2 : view === "think" ? MOUTH_D.smile : view === "listen" ? MOUTH_D.o : MOUTH_D.flat;
+			return `<svg viewBox="0 0 80 96" width="${String(size)}" height="${String(Math.round((size * 96) / 80))}" aria-hidden="true">
+	<ellipse cx="40" cy="92" rx="17" ry="3.4" fill="rgb(0 0 0 / 0.16)"/>
+	<g class="orb-breath">
+		<path class="orb-body" d="M40 60 q-11 1 -12 12 q0 10 2 14 h7 l1 -14 h4 l1 14 h7 q2 -4 2 -14 q-1 -11 -12 -12Z" fill="var(--orb-paper)" stroke="var(--orb-line)" stroke-width="1.3" stroke-linejoin="round"/>
+		<path class="orb-limb" d="M28.5 62 q-6 3 -6.5 10 q-.4 5 2 6 q2.6 1 3.4 -2 q1.2 -7 4 -10Z" fill="var(--orb-paper)" stroke="var(--orb-line)" stroke-width="1.3" stroke-linejoin="round"/>
+		<path class="orb-limb" d="M51.5 62 q6 3 6.5 10 q.4 5 -2 6 q-2.6 1 -3.4 -2 q-1.2 -7 -4 -10Z" fill="var(--orb-paper)" stroke="var(--orb-line)" stroke-width="1.3" stroke-linejoin="round"/>
+		${view === "think" ? '<path class="orb-hand" d="M29 52 q-6 4 -2 9 q3 3 6 -1" fill="var(--orb-paper)" stroke="var(--orb-line)" stroke-width="1.3" stroke-linejoin="round"/>' : ""}
+		<circle class="orb-head" cx="40" cy="38" r="15.5" fill="var(--orb-paper)" stroke="var(--orb-line)" stroke-width="1.3"/>
+		<circle class="orb-dot" cx="49.4" cy="25.4" r="3.6" fill="var(--orb-dot)"/>
+		<g class="orb-eyes"><g class="orb-pupils">
+			<g class="orb-eye"><circle cx="35.2" cy="36" r="1.75" fill="var(--orb-ink)"/></g>
+			<g class="orb-eye"><circle cx="44.8" cy="36" r="1.75" fill="var(--orb-ink)"/></g>
+		</g></g>
+		<path class="orb-mouth" d="${mouth}" fill="none" stroke="var(--orb-ink)" stroke-width="2.1" stroke-linecap="round" data-mouth="${view === "speak" ? "open2" : "flat"}"/>
+		${view === "listen" ? '<path class="orb-arc" d="M13 34 q-2.4 5 0 10" fill="none" stroke="var(--orb-ink)" stroke-width="1.8" stroke-linecap="round"/><path class="orb-arc" d="M9.4 31.6 q-3.4 7.4 0 14.8" fill="none" stroke="var(--orb-ink)" stroke-width="1.8" stroke-linecap="round"/>' : ""}
+	</g>
+</svg>`;
+		}
 
 		/** 读之前把 Markdown 记号剥掉：念出来的是话，不是符号。 */
 		function plainText(text) {
@@ -595,6 +674,7 @@ export default {
 					player.onerror = null;
 					player.pause();
 				}
+				stopMouth();
 			};
 
 			/**
@@ -627,6 +707,7 @@ export default {
 					player.onerror = null;
 					player.pause();
 				}
+				stopMouth();
 				// 自动播放被拒跟「没有输出设备」完全是两回事，别把人带去查音箱。
 				// 原文长这样：`NotAllowedError: play() failed because the user didn't interact
 				// with the document first.` 壳里已经用 `autoplayPolicy` 放开了；万一还撞上，
@@ -636,6 +717,61 @@ export default {
 						? "系统不允许自动出声（这扇窗没被允许自动播放）"
 						: `${why}（音频没能播放，检查系统输出设备）`,
 				);
+			};
+
+			/** 嘴跟真音量：分析正在播的那片，每 60ms 读一次 RMS 挑档；只在播放时跑。 */
+			const mouthRef = useRef("");
+			const meterRef = useRef(null);
+			const mouthTimer = useRef(0);
+
+			const stopMouth = () => {
+				if (mouthTimer.current !== 0) {
+					clearInterval(mouthTimer.current);
+					mouthTimer.current = 0;
+				}
+				const ctx = meterRef.current;
+				meterRef.current = null;
+				mouthRef.current = "";
+				// 必须真 close()：不关就是一直挂在默认输出设备上（macOS 上能看见它一直在响）。
+				if (ctx !== null && ctx.state !== "closed") void ctx.close().catch(() => {});
+			};
+
+			const startMouth = (player) => {
+				stopMouth();
+				const Ctx = typeof window === "undefined" ? undefined : window.AudioContext;
+				if (Ctx === undefined) return;
+				try {
+					const ctx = new Ctx();
+					const source = ctx.createMediaElementSource(player);
+					const analyser = ctx.createAnalyser();
+					analyser.fftSize = 512;
+					source.connect(analyser);
+					analyser.connect(ctx.destination);
+					const bins = new Uint8Array(analyser.frequencyBinCount);
+					meterRef.current = ctx;
+					mouthTimer.current = window.setInterval(() => {
+						analyser.getByteTimeDomainData(bins);
+						let sum = 0;
+						for (const value of bins) {
+							const v = (value - 128) / 128;
+							sum += v * v;
+						}
+						const rms = Math.sqrt(sum / bins.length);
+						// 四档：安静 0.02 以下闭嘴，往上依次张开；阈值是听着调出来的，不是拍的。
+						const next = rms < 0.02 ? "open1" : rms < 0.05 ? "open2" : rms < 0.1 ? "open3" : "open4";
+						if (next === mouthRef.current) return;
+						mouthRef.current = next;
+						// 直接改 DOM 的 d：每 60ms 一次重渲染不划算，嘴只是一个属性。
+						const path = document.querySelector(".orb-mark .orb-mouth");
+						if (path !== null) {
+							path.setAttribute("d", MOUTH_D[next]);
+							path.setAttribute("data-mouth", next);
+						}
+					}, 60);
+				} catch {
+					// 接不上就不动嘴，别因为嘴把声音也弄没了。
+					stopMouth();
+				}
 			};
 
 			const playNext = () => {
@@ -648,6 +784,8 @@ export default {
 				const player = new Audio(`data:audio/wav;base64,${next}`);
 				audioRef.current = player;
 				speakingRef.current = true;
+				// 嘴跟着这一片的真音量动；接不上（没 AudioContext / 被拦）就退回静态张嘴。
+				startMouth(player);
 				player.onended = playNext;
 				player.onerror = () => speechFailed((player.error?.message ?? "") || "解码失败");
 				void player.play().catch((error_) => {
@@ -749,24 +887,81 @@ export default {
 			const activity = assistant?.activity;
 			const busy = activity !== undefined;
 			const unread = dm?.unread ?? 0;
+			// 小人摆哪个姿势：正在念 > 在想 / 正在干活 > 安静。
+			// 「在听」这一版还到不了 —— 唤醒还是「按住才听」，等常驻听落地才接得上。
+			const look = speakingRef.current ? "speak" : busy ? "think" : "idle";
 
-			// 面板跟着球走，但整块留在窗口里：球在右边时面板在左，球挪到中间 / 左边
-			// 就换到右边，两边都不够就贴边（375 宽下会盖住球，球画在后面，仍点得到）。
+			// 面板跟着球走，整块留在窗口里，**而且绝不压在小人身上**。
+			// 横位放不下就换方向：挪到小人的上方或下方，横位不再跟球抢。
+			// 跟窗宽无关：独立窗、手机网页、外接屏走同一套判断。
 			const viewport =
 				typeof window === "undefined" ? { width: 375, height: 812 } : { width: window.innerWidth, height: window.innerHeight };
-			const panelWidth = Math.min(320, viewport.width - 84);
 			const panelHeight = Math.min(480, viewport.height - 32);
 			const orbLeft = viewport.width - right - BALL;
-			const place = (width, height) => {
-				const gap = 8;
-				let left = orbLeft - gap - width;
-				if (left < 8) left = orbLeft + BALL + gap;
-				left = clamp(left, 8, Math.max(8, viewport.width - width - 8));
-				const placedTop = clamp(top, 8, Math.max(8, viewport.height - height - 8));
-				return { left: `${String(left - orbLeft)}px`, top: `${String(placedTop - top)}px` };
+			const orbTop = top;
+			/** 面板宽度：空间够就是 320（抬头那行要放得下头像和名字）；窄到 375 也不能低于 232。 */
+			const panelWidth = Math.min(320, Math.max(232, viewport.width - 96));
+			const gap = 8;
+			const edge = 8;
+
+			/** 面板落在哪（相对球）。优先级：右边 → 左边 → 上方 → 下方；全放不下才压矮。 */
+			const panelAt = (() => {
+				const rightOfOrb = orbLeft + BALL + gap;
+				const leftOfOrb = orbLeft - gap - panelWidth;
+				const alignedTop = clamp(orbTop, edge, Math.max(edge, viewport.height - panelHeight - edge));
+				// 横位要验矩形而不是只验宽度：顶对齐球后被窗口底部夹上来时，宽度算得下也会压到人。
+				const fitsBeside = (left) => {
+					const panelY = orbTop + (alignedTop - orbTop);
+					const panelX = orbLeft + (left - orbLeft);
+					const overlapX = Math.min(panelX + panelWidth, orbLeft + BALL) - Math.max(panelX, orbLeft);
+					const overlapY = Math.min(panelY + panelHeight, orbTop + BALL_H) - Math.max(panelY, orbTop);
+					return overlapX <= 0 || overlapY <= 0;
+				};
+				if (rightOfOrb + panelWidth <= viewport.width - edge && fitsBeside(rightOfOrb)) {
+					return { left: rightOfOrb - orbLeft, top: alignedTop - orbTop, height: panelHeight };
+				}
+				if (leftOfOrb >= edge && fitsBeside(leftOfOrb)) {
+					return { left: leftOfOrb - orbLeft, top: alignedTop - orbTop, height: panelHeight };
+				}
+				// 竖位：横向贴着球但收进窗口（抬头不会被切掉），纵向在小人上面或下面。
+				const lineLeft = clamp(orbLeft, edge, Math.max(edge, viewport.width - panelWidth - edge));
+				const above = orbTop - gap - panelHeight;
+				if (above >= edge) return { left: lineLeft - orbLeft, top: above - orbTop, height: panelHeight };
+				const below = orbTop + BALL_H + gap;
+				if (below + panelHeight <= viewport.height - edge) {
+					return { left: lineLeft - orbLeft, top: below - orbTop, height: panelHeight };
+				}
+				// 全放不下：挑上下里更大的那一块，面板自己变矮（极端尺寸才走到）。
+				const roomAbove = orbTop - gap - edge;
+				const roomBelow = viewport.height - edge - (orbTop + BALL_H + gap);
+				const room = Math.min(panelHeight, Math.max(120, Math.max(roomAbove, roomBelow)));
+				return roomAbove >= roomBelow
+					? { left: lineLeft - orbLeft, top: edge - orbTop, height: room }
+					: { left: lineLeft - orbLeft, top: orbTop + BALL_H + gap - orbTop, height: room };
+			})();
+
+			const panelPlace = {
+				left: `${String(panelAt.left)}px`,
+				top: `${String(panelAt.top)}px`,
+				maxHeight: `${String(panelAt.height)}px`,
 			};
-			const panelPlace = place(panelWidth, panelHeight);
-			const menuPlace = place(148, 148);
+			/** 右键菜单 148 宽：右边放得下就在右边，否则跟着面板换到左边 / 上下，不压小人。 */
+			const menuPlace = (() => {
+				const besideOrb = orbLeft + BALL + gap + 148 <= viewport.width - edge;
+				if (besideOrb) {
+					return {
+						left: `${String(BALL + gap)}px`,
+						top: `${String(clamp(orbTop, edge, Math.max(edge, viewport.height - 156)) - orbTop)}px`,
+					};
+				}
+				const lineLeft = clamp(orbLeft, edge, Math.max(edge, viewport.width - 148 - edge));
+				const above = orbTop - gap - 148;
+				if (above >= edge) return { left: `${String(lineLeft - orbLeft)}px`, top: `${String(above - orbTop)}px` };
+				return {
+					left: `${String(lineLeft - orbLeft)}px`,
+					top: `${String(orbTop + BALL_H + gap - orbTop)}px`,
+				};
+			})();
 
 			const cancelHover = () => {
 				if (hoverTimer.current !== 0) {
@@ -1472,12 +1667,15 @@ export default {
 					onPointerLeave: leave,
 				},
 				busy ? h("span", { className: "orb-ring", "aria-hidden": "true" }) : null,
-				// 球面就是应用标识（同一份 SVG）：不另画一颗渐变球。
+				// 球面是一个站着的小人（同一份 SVG 也画在面板抬头）：不另画一颗渐变球。
 				h("span", {
 					className: "orb-mark",
+					"data-view": look,
 					"aria-hidden": "true",
-					dangerouslySetInnerHTML: { __html: brandMarkSvg(46) },
+					dangerouslySetInnerHTML: { __html: personSvg(80, look) },
 				}),
+				// 「没念出来」挂一个可见的红点：以前只写在悬停提示里，老板不看提示就永远不知道是哑的。
+				speechProblem === "" ? null : h("span", { className: "orb-badge orb-alert", "aria-hidden": "true" }, "!"),
 				unread > 0 ? h("span", { className: "orb-badge" }, unread > 99 ? "99+" : String(unread)) : null,
 			);
 
@@ -1527,7 +1725,7 @@ export default {
 							className: "orb-panel",
 							role: "dialog",
 							"aria-label": "助理",
-							style: { ...panelPlace, width: `${String(panelWidth)}px`, maxHeight: `${String(panelHeight)}px` },
+							style: { ...panelPlace, width: `${String(panelWidth)}px` },
 							onPointerEnter: enter,
 							onPointerLeave: leave,
 						},
@@ -1538,7 +1736,7 @@ export default {
 							className: "orb-face",
 							"data-busy": busy ? "true" : "false",
 							"aria-hidden": "true",
-							dangerouslySetInnerHTML: { __html: brandMarkSvg(22) },
+							dangerouslySetInnerHTML: { __html: personSvg(22, look) },
 						}),
 							h(
 								"div",
