@@ -621,6 +621,11 @@ plugins/<slug>/
 | `channels()` | 没归档频道的 `{ id, title, kind, members }`：只读事实、不含消息。插件要认目标频道（比如助理私聊）靠它，不自己在插件里拼频道 id（ADR-115） |
 | `post({ channelId, text })` | 以**我**的身份在一个频道里说一句，和界面里打字完全同一条路（同一套 @ 解析、投递、唤醒）；发件人固定是 `owner`。IM 桥这类「把外面的话带进来」的插件靠它（ADR-115） |
 | `logsRoot` | `<userRoot>/logs` 的绝对路径：审计（`tools.jsonl`）在这里，插件要按 token / 成本 / 耗时算账就读它（ADR-064）。和 `scope` 一样，核心只给根 |
+| `system.act({ action, channelId, path?, text? })` | **碰系统**：`system.reveal` / `system.open` 收工作区相对路径，`system.copyText` 收 `text`。清单里要写 `permissions:`、人还得批过（`granted:`），否则抛错、不降级。绝对路径由内核拼，`realpath` 复判、软链接不跟、只收文件、出工作区就拒。每次落一条审计（ADR-124） |
+
+**插件这一层从头到尾拿不到可用的绝对路径**：`scope` 给根是为了让它自己读文件树，`system.act`
+收的是相对路径，绝对路径在 `resolveInside` 里才被拼出来、才被交给宿主。**没有 exec，也没有
+`system.openUrl`** —— 这两个一加，上面那些校验就都成了装饰。
 
 **前端插槽**（`ui`）：界面上声明好的十几个缺口 —— 最左导航的一格、插件自己的整屏页、
 左栏头 / 列表上方 / 列表脚下、顶栏、消息流上下、输入框右侧、右栏页签与底部、设置里多一节、

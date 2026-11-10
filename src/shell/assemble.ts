@@ -85,6 +85,11 @@ type CoreShellOptions = {
 	 * 装配完各发一条 `continue`，把 inbox 里的排队项带进新的一轮。
 	 */
 	readonly backlog?: readonly number[];
+	/**
+	 * 桌面壳的系统动作（Electron 的 `shell` / `clipboard`）。网页版没有，不给 = 插件的
+	 * `api.system.act` 一律抛「这个宿主不支持」。
+	 */
+	readonly system?: CoreServices["system"];
 };
 
 /**
@@ -139,6 +144,7 @@ export async function assembleCore(
 		harness,
 		layout,
 		report,
+		...(options.system === undefined ? {} : { system: options.system }),
 		post: async (input) => {
 			if (pluginPost === undefined) throw new Error("插件发言的出口还没接上");
 			await pluginPost(input);
@@ -298,6 +304,7 @@ export async function assembleCore(
 		text,
 		allChannel,
 		diag,
+		...(options.system === undefined ? {} : { system: options.system }),
 		// 关两次是正常的（`main.ts` 先关服务、再关运行时）：这里只关一次。
 		close: async (ctx?: Context) => {
 			if (closed) return;

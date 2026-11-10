@@ -2952,3 +2952,34 @@ API 不通时退回原来的直链（有些网络反过来），自建更新源�
 **执行**：`desktop/src/release-assets.ts`（`githubRepoOf` / `latestReleaseApi` / `assetUrlOf` /
 `assetHeaders`，纯函数）+ `desktop/src/updates.ts`（`requestOk` 重试、`assetUrls` 每次检查只问
 一次 API、`download` 也走 `requestOk`）+ `test/desktop/release-assets.test.ts`。
+
+## ADR-124 插件要碰系统，得先声明、再让人批一次；宿主替它做，路径永远由内核拼
+
+**背景**：文件树的「在访达里显示 / 用系统默认程序打开」一直做不了 —— `api.scope()` 只给工作区的
+根，插件的 `api` 里没有任何调 shell 的口子，宿主的桥也只有 `menu` / `setTheme` / `version`。
+根子上的问题不是「少一个动作」，而是**插件等于可信代码**：装上就能干任何事，没有边界，也没有痕迹
+（顾行 `设计-插件系统权限-2026-11-10.md`）。
+
+**决定**：
+
+1. **权限名是动作，不是目标**。`system.reveal` / `system.copyText` / `system.open` 三个，`openUrl` 不做。
+   插件表达不出任意路径、任意命令，作用域内建：永远是「当前频道工作区里、已校验的一个文件」。
+   **没有 exec 类的动作**，这是这套机制唯一的边界，加一个就作废。
+2. **绝对路径不从插件手里过**。插件只报工作区相对路径，内核拼绝对路径；`realpath` 复判、软链接不跟
+   （指出去就拒）、只收文件不收目录、出工作区就拒。`..` / `.` / `~` / 绝对路径 / 反斜杠 / NUL 一律拒。
+3. **默认全不给**。清单里没写、写了没批，`api.system.act` 就抛错 —— **不静默降级成「什么都没发生」**。
+   静默会让人以为插件坏了，去查别的地方。
+4. **批准是一次性的、写回文档的**（与 `enabled` 同口径，ADR-018）。记在 `plugin.md` 的 `granted:` 里，
+   `pending = declared - granted`。界面点「全部批准」和手改那一行是同一件事。插件升级新增的权限要重问；
+   删掉再要回来的也要重问。
+5. **跨进程走已有的父子 stdio 管道，不开新端口**。只有桌面壳手里有 Electron 的 `shell` / `clipboard`，
+   管道天然只有两头能说话，免守来源。网页版没这条管道：`api.system.act` 抛「这个宿主不支持」，不假装做完。
+6. **批准只认本机**。局域网里打开页面批不了（`fromThisMachine`，非本机 403）。
+7. **每次动作都落审计**：`<logsRoot>/tools.jsonl` 里一条 `{at, kind:"plugin-system", plugin, action, path?, ok, reason?}`，
+   失败的也记（带原因），这样「哪个插件、什么动作、什么时候、开没开成」查得到。
+8. **出厂插件的 `granted:` 必须留空**。预写好等于替老板批了，「装时弹一次确认」就空转了。
+
+**执行**：`src/core/plugin/permissions.ts` + `system.ts` + `manifest.ts` 的 `writePluginGrants` +
+`load.ts`（不认识的权限名整插件不装）+ `app/plugins.ts` 的 `grant` + `interface/http/routes.ts` 的两条
+权限接口 + `local-origin.ts` + `shell/wire/system.ts` + `desktop/src/system-bridge.ts` + 
+`ui/app/src/panels/PluginsPage.tsx` 的权限卡 + `seed/plugins/文件树/`；`test/core/plugin-system.test.ts`。

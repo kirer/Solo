@@ -102,6 +102,15 @@ export type CoreServices = {
 	 */
 	reloadPlugins(): Promise<void>;
 	/**
+	 * 这个宿主能不能做系统动作（桌面壳给的那两个函数）。
+	 *
+	 * 界面要按它决定「批权限」那颗按钮显不显示：网页版后端做不了，批了也只是个摆设。
+	 */
+	readonly system?: {
+		readonly act: (action: "reveal" | "open", absolutePath: string) => Promise<void>;
+		readonly copyText: (text: string) => Promise<void>;
+	};
+	/**
 	 * 两个根的布局：应用私有目录（助理、提示词、插件、配置、库）与用户目录（成员、团队、技能）。
 	 * 用例层要拼路径时**只从这里取**，不要自己 `dirname`。
 	 */

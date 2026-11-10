@@ -1,6 +1,10 @@
 /**
- * 插件能对后端做的五件事：加一个工具、追加一段提示词、加一条 HTTP 路由、听消息、
- * 注册一条分发 / 收尾策略。
+ * 插件能对后端做的六件事：加一个工具、追加一段提示词、加一条 HTTP 路由、听消息、
+ * 注册一条分发 / 收尾策略、**请宿主替它做一个系统动作**（`system.act`）。
+ *
+ * 第六件是唯一一件「会伸到应用外面」的：所以它不叫 `exec`、不收路径、默认关着 ——
+ * 插件只能说出「动作名 + 当前频道 + 工作区里的相对路径」，绝对路径与执行都由内核包办
+ * （见 `permissions.ts` 与 `system.ts`）。
  *
  * 为什么只有五件：插件是「给组织加能力」，不是「重新实现运行时」。dsh 那边一个插件能
  * 摸到 `ctx.tools` / `ctx.llm` / `ctx.sessions` 全部服务，代价是插件必须懂 Cordis 的
@@ -74,6 +78,37 @@ export type PluginChannel = {
 	readonly members: readonly string[];
 };
 
+/**
+ * 插件能请宿主做的系统动作。**动作名是固定的三个**，参数只有频道与相对路径。
+ *
+ * 为什么不是 `exec(command)`：`run` 工具已经让模型能执行命令，那条路有审批与审计；
+ * 给插件一个没审批的 exec，等于让每个插件都变成 `run`。这里给的是**分类好的动词**，
+ * 每个动词的作用域内建 —— 插件表达不出「任意路径」，也表达不出「任意命令」。
+ */
+export type PluginSystem = {
+	/**
+	 * 做一个系统动作。**要在 `plugin.md` 的 `permissions:` 里声明、并且被人批准过**，
+	 * 否则抛错（不静默降级）。
+	 *
+	 * - `system.copyText`：`{ channelId, text }`；
+	 * - `system.reveal` / `system.open`：`{ channelId, path }`，`path` 是**工作区相对路径**。
+	 *
+	 * 抛错 = 没做成（没权限 / 越界 / 软链接 / 目录 / 这个宿主做不到），错误消息里写了原因。
+	 */
+	act(input: PluginSystemAct): Promise<void>;
+};
+
+/** `api.system.act` 的入参形状。 */
+export type PluginSystemAct = {
+	readonly action: "system.reveal" | "system.copyText" | "system.open";
+	/** 哪个频道的工作区。全员频道没有工作区 → 直接拒。 */
+	readonly channelId: string;
+	/** 工作区**相对**路径（`copyText` 不用）。 */
+	readonly path?: string;
+	/** `copyText` 的正文。 */
+	readonly text?: string;
+};
+
 /** 插件拿到的那一个对象。插件源码里不 import 任何东西，全靠它。 */
 export type PluginApi = {
 	readonly slug: string;
@@ -98,6 +133,12 @@ export type PluginApi = {
 	 * 写盘、入队、成员校验与判重由 core 做。抛错只跳过这一条。
 	 */
 	flow(policy: FlowPolicy): void;
+	/**
+	 * 请宿主替它做一个系统动作。没声明 / 没批准就抛错。
+	 *
+	 * 这是唯一一个会伸到应用外面的能力，所以清单要写、人要批、每次落审计。
+	 */
+	readonly system: PluginSystem;
 	/** 这个频道的工作区；没有（全员频道）或查无此频道 → `undefined`。 */
 	scope(channelId: string): Promise<PluginScope | undefined>;
 	/** 全部没归档的频道，按 id 排。只读事实，不含消息。 */
@@ -135,6 +176,11 @@ export function createPluginApi(options: {
 	readonly scope?: (channelId: string) => Promise<PluginScope | undefined>;
 	readonly channels?: () => Promise<readonly PluginChannel[]>;
 	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
+	/**
+	 * 系统动作的执行器（`plugin/system.ts` 造的）。不给 = 这个插件一个动作都做不了，
+	 * `act` 一律抛错 —— 网页版后端没有 Electron 的 shell，就是这一种。
+	 */
+	readonly system?: (input: PluginSystemAct) => Promise<void>;
 }): PluginApi {
 	const { slug, workspace, logsRoot, sinks } = options;
 	return {
@@ -158,6 +204,13 @@ export function createPluginApi(options: {
 		},
 		flow(policy) {
 			sinks.flow.push(policy);
+		},
+		system: {
+			act:
+				options.system ??
+				(async (input) => {
+					throw new Error(`这个宿主不支持系统动作 ${String(input.action)}`);
+				}),
 		},
 		scope: options.scope ?? (async () => undefined),
 		channels: options.channels ?? (async () => []),

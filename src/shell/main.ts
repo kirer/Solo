@@ -26,6 +26,7 @@ import { setupModels, compactionSettings } from "../core/runtime/index.ts";
 import { createDiag } from "../app/diag.ts";
 import { wipeAll } from "../app/reset.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
+import { createDesktopActor } from "./wire/system.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
 import { createFsx } from "../core/fsx.ts";
 import { loadTextCatalog } from "../core/documents/base/catalog.ts";
@@ -241,6 +242,14 @@ async function main(): Promise<void> {
 			interrupted: runtime.interrupted,
 			// 排队输入却没有人来取：装配完发 continue 接上。
 			backlog: runtime.backlog,
+			// 桌面壳把 Electron 的 shell / clipboard 从父子管道递进来了（见 `wire/system.ts`）。
+			// 网页版没有这根管子 → `undefined` → 插件的系统动作一律抛「这个宿主不支持」。
+			...(process.env.SOLO_SYSTEM_BRIDGE === "1"
+				? (() => {
+						const actor = createDesktopActor();
+						return actor === undefined ? {} : { system: actor };
+					})()
+				: {}),
 		});
 		server = await serveCore({
 			shell,

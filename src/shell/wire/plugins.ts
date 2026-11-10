@@ -21,6 +21,7 @@ import { readTeam } from "../../core/documents/team/doc.ts";
 import { teamWorkspace, workspaceOf, type Layout } from "../../core/layout.ts";
 import { emptyPluginHost, loadPlugins, type PluginHost } from "../../core/plugin/index.ts";
 import type { PluginChannel, PluginScope } from "../../core/plugin/api.ts";
+import type { SystemActor } from "../../core/plugin/index.ts";
 import { coreToolNames } from "../../core/channel/tools/index.ts";
 import type { FlowReport } from "../../core/flow/ports.ts";
 
@@ -43,6 +44,11 @@ export function createPluginWire(deps: {
 	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
 	/** 运行中出错的出口（装配层接到 diag）。不给就只留 console。 */
 	readonly report?: FlowReport;
+	/**
+	 * 桌面壳：真正动手做系统动作的两个函数。网页版后端没有，不给 = 插件的
+	 * `api.system.act` 一律抛「这个宿主不支持」。
+	 */
+	readonly system?: SystemActor;
 }): PluginWire {
 	let host = emptyPluginHost(deps.layout.pluginsRoot);
 	const options = () => ({
@@ -54,6 +60,7 @@ export function createPluginWire(deps: {
 		...(deps.post === undefined ? {} : { post: deps.post }),
 		// 插件不能和核心工具重名：重名等于把 `say` 换成了别人写的同名函数。
 		reservedTools: coreToolNames(),
+		...(deps.system === undefined ? {} : { system: deps.system }),
 		log: (line: string) => console.log(line),
 		onError: (line: string) => {
 			if (deps.report === undefined) console.warn(`[plugin] ${line}`);

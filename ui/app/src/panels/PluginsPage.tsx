@@ -8,7 +8,15 @@
  */
 
 import { useEffect, useState } from "react";
-import { getPlugins, installPlugin, removePlugin, setPluginEnabled } from "../api/client.ts";
+import {
+	getPluginPermissions,
+	getPlugins,
+	grantPluginPermissions,
+	installPlugin,
+	removePlugin,
+	setPluginEnabled,
+	type PluginPermissionAsk,
+} from "../api/client.ts";
 import type { Plugin } from "../api/types.ts";
 import { setPluginSheet, setRestartOpen } from "../state/store.ts";
 
@@ -95,6 +103,33 @@ export function PluginsPage(): JSX.Element {
 
 	const list = plugins ?? [];
 	const current = list.find((plugin) => plugin.slug === selected) ?? list[0];
+
+	/**
+	 * 当前这个插件还要问人的权限。**默认全不给**：没列的、没批的，插件调了就抛错。
+	 *
+	 * 只在这个插件**声明了权限**时才去问后端（大多数插件一条都不要）。`canSystem` false
+	 * （网页版、或这一页不是从本机打开的）时不显示批准按钮 —— 批了也不会有本机效果。
+	 */
+	const [ask, setAsk] = useState<{ pending: PluginPermissionAsk[]; canSystem: boolean } | undefined>(undefined);
+	const askOf = current?.slug;
+	const declares = current?.permissions !== undefined;
+	useEffect(() => {
+		if (askOf === undefined || !declares) {
+			setAsk(undefined);
+			return;
+		}
+		let live = true;
+		getPluginPermissions(askOf)
+			.then((body) => {
+				if (live) setAsk(body);
+			})
+			.catch(() => {
+				if (live) setAsk(undefined);
+			});
+		return () => {
+			live = false;
+		};
+	}, [askOf, declares, current?.permissions?.granted.join(",")]);
 
 	// 只画「弹窗里面那一层」：外面的 `.overlay` / `.modal` 归宿主（设置那张，ADR-106）。
 	return (
@@ -237,6 +272,60 @@ export function PluginsPage(): JSX.Element {
 											<dd className="mono">plugins/{current.slug}/</dd>
 										</dl>
 										{current.error === undefined ? null : <p className="settings-problem">{current.error}</p>}
+
+										{current.permissions === undefined ? null : (
+											<div className="plugin-perms" aria-label="系统权限">
+												<div className="plugin-perms-head">
+													<span>系统权限</span>
+													<span className="note">
+														{current.permissions.pending.length === 0 ? "都批过了" : "默认全不给：没批的那几条，它调了只会报错"}
+													</span>
+												</div>
+												<ul>
+													{current.permissions.declared.map((action) => {
+														const pending = current.permissions?.pending.includes(action) === true;
+														const detail = ask?.pending.find((item) => item.action === action);
+														return (
+															<li key={action} data-pending={pending ? "true" : "false"}>
+																<span className="what">{detail?.label ?? action}</span>
+																<span className="why">{detail?.detail ?? ""}</span>
+																<span className="state">{pending ? "还没批" : "已批准"}</span>
+															</li>
+														);
+													})}
+												</ul>
+												<div className="plugin-perms-foot">
+													{ask?.canSystem === false ? (
+														<span className="note">这个宿主做不了系统动作（网页版，或者你这页不是从本机打开的）</span>
+													) : (
+														<>
+															<button
+																type="button"
+																className="plugin-perms-grant"
+																disabled={current.permissions.pending.length === 0}
+																onClick={() =>
+																	apply(
+																		grantPluginPermissions(current.slug, current.permissions?.declared ?? []),
+																	)
+																}
+															>
+																全部批准（{current.permissions.pending.length} 条待批）
+															</button>
+															<button
+																type="button"
+																className="plugin-perms-grant"
+																data-variant="quiet"
+																disabled={current.permissions.granted.length === 0}
+																onClick={() => apply(grantPluginPermissions(current.slug, []))}
+															>
+																收回全部
+															</button>
+														</>
+													)}
+												</div>
+											</div>
+										)}
+
 										<div className="plugin-foot">
 											<span className="note">
 												{current.enabled ? "后端已生效；前端入口随界面启动装载" : "关着：后端与前端入口都不干活"}

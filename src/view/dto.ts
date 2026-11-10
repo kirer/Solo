@@ -337,6 +337,17 @@ export type ViewPlugin = {
 	enabled: boolean;
 	client?: true;
 	error?: string;
+	/**
+	 * 系统动作的账：要了哪些、批了哪些、还差哪些。
+	 *
+	 * **`pending` 非空 = 那几条现在不能用**（默认全不给）。界面上的「待确认」读它。
+	 * 一个权限都没要的插件不出现这一段。
+	 */
+	permissions?: {
+		declared: readonly string[];
+		granted: readonly string[];
+		pending: readonly string[];
+	};
 	/** 它带来了什么（工具 / 提示词段 / 接口 / 听消息 / 分发策略）。没装上或这次没加载时不出现。 */
 	brings?: {
 		tools: readonly string[];

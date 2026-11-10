@@ -269,6 +269,32 @@ export const setPluginEnabled = (slug: string, enabled: boolean): Promise<{ plug
 		body: JSON.stringify({ enabled }),
 	});
 
+/**
+ * 一个插件还要问人哪几条权限（连人话）。
+ *
+ * `canSystem` 是「这台机器上、这个宿主」能不能真做系统动作：网页版后端做不了，
+ * 局域网里打开页面也批不了。它 false 的时候别显示「批准」按钮。
+ */
+export type PluginPermissionAsk = { readonly action: string; readonly label: string; readonly detail: string };
+
+export const getPluginPermissions = (
+	slug: string,
+): Promise<{ pending: PluginPermissionAsk[]; canSystem: boolean }> =>
+	call(`/api/plugins/${encodeURIComponent(slug)}/permissions`);
+
+/**
+ * 批一个插件的权限：`granted` 是**批准之后的完整名单**（不是增量）。
+ * 写回它的 `plugin.md`，当场重装 —— 不重装的话插件手里那份还是旧的。
+ */
+export const grantPluginPermissions = (
+	slug: string,
+	granted: readonly string[],
+): Promise<{ plugins: Plugin[] }> =>
+	call(`/api/plugins/${encodeURIComponent(slug)}/permissions`, {
+		method: "POST",
+		body: JSON.stringify({ granted }),
+	});
+
 /** 一条运行报告（`GET /api/diag` 的 `lastReport`）。 */
 export type LastRuntimeReport = { readonly type: string; readonly at: string; readonly text: string };
 

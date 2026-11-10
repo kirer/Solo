@@ -42,6 +42,8 @@ handler 只做「解析参数 → 调 `app/` 里的一个用例 → 序列化」
 | `DELETE` | `/api/plugins/:slug` | 删掉一个插件（整个目录，不可恢复） |
 | `GET` | `/api/plugins/:slug/client.js` | 一个插件的前端入口（浏览器 `import` 它） |
 | `POST` | `/api/plugins/:slug/enabled` | 开关一个插件（写回 `plugin.md` 的 `enabled`，下次启动生效） |
+| `GET` | `/api/plugins/:slug/permissions` | 这个插件还有哪几条系统权限待批（`{ pending, canSystem }`，每条带人话 `label` / `detail`） |
+| `POST` | `/api/plugins/:slug/permissions` | 批这个插件的系统权限（`{ granted }` 是**批准之后的完整名单**，写回 `plugin.md` 并当场重装）；**只认本机**，别处 403 |
 | `POST` | `/api/reset` | 清空所有数据并重启（设置 → 数据；确认后以退出码 75 退出） |
 | `POST` | `/api/restart` | 重启应用（装完带前端的插件；确认后以退出码 75 退出，不删数据） |
 | `*` | 其余 | 静态文件（`ui/web/`） |
@@ -721,6 +723,38 @@ export default {
   },
 };
 ```
+
+### 系统权限（ADR-124）
+
+插件要碰系统，得先在 `plugin.md` 里声明，再让人在这台机器上批一次。
+
+```yaml
+---
+name: 文件树
+permissions: system.reveal, system.open, system.copyText
+granted:
+---
+```
+
+- 动作**只有三个**：`system.reveal`（在访达 / 资源管理器里显示一个文件）、`system.copyText`
+  （往剪贴板写一段文字）、`system.open`（用系统默认程序打开一个文件）。没有 `openUrl`，没有 exec。
+- 清单里写了宿主不认识的动作：**整个插件不装**，`error` 里写清楚是哪个名字。
+- `pending = declared - granted`。没批过的调 `api.system.act` 一律抛错，**不静默降级**。
+- 插件这一层只报**工作区相对路径**：绝对路径由内核拼，`realpath` 复判、软链接不跟、只收文件、
+  出工作区就拒。所以插件手里从头到尾没有可用的绝对路径字符串。
+- 每次动作落一条审计到 `<logsRoot>/tools.jsonl`：`{ at, kind:"plugin-system", plugin, action, path?, ok, reason? }`。
+
+```http
+GET  /api/plugins/文件树/permissions
+{ "pending": [ { "action": "system.open", "label": "用你机器上的默认程序打开一个文件", "detail": "只打开当前频道工作区里的文件：不能开文件夹、不能开网址、不能执行命令。" } ], "canSystem": true }
+POST /api/plugins/文件树/permissions
+{ "granted": ["system.reveal", "system.open", "system.copyText"] }
+```
+
+`granted` 是**批准之后的完整名单**，不是增量 —— 传空数组就是全收回，和手改 `plugin.md` 那一行等价。
+`canSystem` 是「这台机器上、这个宿主」做不做得了系统动作：网页版后端没有桌面壳那条管道，
+局域网里打开页面也不是本机，两种情况都 `false`，界面据此不显示批准按钮。`POST` 只认本机
+（非 loopback 一律 403「只能从这台机器上批准」）。
 
 ### 装与删
 

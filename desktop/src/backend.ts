@@ -17,6 +17,11 @@ import { parseReadyLine } from "./ready-line.ts";
 
 export type Backend = {
 	readonly url: string;
+	/**
+	 * 后端进程本身：主进程要拿它的管道接系统动作（见 `system-bridge.ts`）。
+	 * 只用 `stdin` / `stdout`，别的别碰。
+	 */
+	readonly child: ChildProcess;
 	/** 优雅停：SIGTERM 等 5 秒，超时就 SIGKILL（Windows 上 kill 本就是强制结束）。 */
 	stop(): Promise<void>;
 };
@@ -88,8 +93,11 @@ function spawnOnce(
 			{
 				// ELECTRON_RUN_AS_NODE：让 Electron 可执行文件以 Node 身份跑，
 				// 用户机器上不用另装 node。
-				env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-				stdio: ["ignore", "pipe", "pipe"],
+				// `SOLO_SYSTEM_BRIDGE=1`：告诉后端「主进程接好了系统动作那根管子，可以装执行器」。
+				// 网页版（`npm start`）没这个变量，插件的系统动作一律抛「这个宿主不支持」。
+				env: { ...process.env, ELECTRON_RUN_AS_NODE: "1", SOLO_SYSTEM_BRIDGE: "1" },
+				// stdin 留着：主进程从这一根管子把「系统动作」交下去（见 `system-bridge.ts`）。
+				stdio: ["pipe", "pipe", "pipe"],
 				windowsHide: true,
 			},
 		);
@@ -172,6 +180,7 @@ export async function startBackend(options: BackendOptions): Promise<Backend> {
 	});
 	return {
 		url,
+		child,
 		stop: async () => {
 			stopped = true;
 			// 被杀掉的子进程 `exitCode` 是 null、`signalCode` 才有值；只看 exitCode 会让

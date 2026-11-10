@@ -15,6 +15,11 @@ import {
 	readPluginManifest,
 	removePluginFolder,
 	writePluginEnabled,
+	writePluginGrants,
+	SYSTEM_ACTION_DETAILS,
+	SYSTEM_ACTION_LABELS,
+	pendingPermissions,
+	type SystemAction,
 } from "../core/plugin/index.ts";
 import type { PluginFile } from "../core/plugin/index.ts";
 import { readTextOrUndefined } from "../core/runtime/io.ts";
@@ -32,6 +37,13 @@ export type PluginRouteInput = {
 	readonly params: Readonly<Record<string, string>>;
 	readonly query: Readonly<Record<string, string>>;
 	readonly body?: unknown;
+};
+
+/** 一条「还要问人」的权限：动作名 + 两句人话（确认弹窗直接用，界面里不再写文案）。 */
+export type PluginPermissionAsk = {
+	readonly action: string;
+	readonly label: string;
+	readonly detail: string;
 };
 
 export type AppPluginRoute = {
@@ -76,6 +88,15 @@ export function createPlugins(services: CoreServices) {
 					description: manifest.description,
 					enabled: manifest.enabled,
 					...(manifest.client === undefined ? {} : { client: true as const }),
+					...(manifest.permissions.length === 0
+						? {}
+						: {
+								permissions: {
+									declared: manifest.permissions,
+									granted: manifest.granted,
+									pending: manifest.pending,
+								},
+							}),
 					...(brings === undefined ? {} : { brings }),
 					...(error === undefined ? {} : { error }),
 				};
@@ -105,6 +126,39 @@ export function createPlugins(services: CoreServices) {
 			await services.reloadPlugins();
 			return rows();
 		},
+
+		/**
+		 * 批一个插件的权限：`granted` 是**这次批准之后**它该有的完整名单。
+		 *
+		 * 批完当场重装 —— 不重装，插件手里那份 `active` 还是旧的（权限生效靠重装，
+		 * 和工具 / 路由同一条路，ADR-026）。
+		 */
+		async grant(slug: string, granted: readonly string[]): Promise<readonly ViewPlugin[]> {
+			if (!isSafeName(slug)) throw new Error(`插件名不合法：${slug}`);
+			await writePluginGrants(pluginsRoot, slug, granted);
+			await services.reloadPlugins();
+			return rows();
+		},
+
+		/**
+		 * 一个插件**还要问人**的那几条，连人话一起。
+		 *
+		 * 安装之后界面拿它弹一次确认：不确认的那几条，插件调了也只会抛错。
+		 */
+		async pending(slug: string): Promise<readonly PluginPermissionAsk[]> {
+			if (!isSafeName(slug)) return [];
+			const read = await readPluginManifest(pluginsRoot, slug);
+			if ("error" in read) return [];
+			const manifest = read.manifest;
+			return pendingPermissions(manifest.permissions, manifest.granted).map((name) => ({
+				action: name,
+				label: SYSTEM_ACTION_LABELS[name as SystemAction] ?? name,
+				detail: SYSTEM_ACTION_DETAILS[name as SystemAction] ?? "",
+			}));
+		},
+
+		/** 这个宿主能不能真做系统动作（桌面壳才行）。界面按它决定要不要显示「批准」。 */
+		canSystem: (): boolean => services.system !== undefined,
 
 		/** 删掉一个插件，连同它的代码。**不可恢复**，界面负责二次确认。 */
 		async remove(slug: string): Promise<readonly ViewPlugin[]> {

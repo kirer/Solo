@@ -22,6 +22,8 @@ import {
 	type PluginScope,
 } from "./api.ts";
 import { listPluginSlugs, readPluginManifest } from "./manifest.ts";
+import { activePermissions, unknownPermissions, type SystemAction } from "./permissions.ts";
+import { createSystemActions, type SystemActor } from "./system.ts";
 
 /** 界面上看得见的一条插件。`client` 是浏览器要去 import 的 URL。 */
 export type PluginSummary = {
@@ -36,6 +38,17 @@ export type PluginSummary = {
 	 * 两边各写一份完整 URL 一定会漂，而「服务端发不发这个文件」只有前端一个消费者。
 	 */
 	readonly client?: true;
+	/**
+	 * 系统动作的账：要了哪些、批了哪些、还差哪些。
+	 *
+	 * **`pending` 非空 = 那几条现在不能用**（默认全不给）。界面上「待确认」就是读它，
+	 * 别在别处再算一遍。
+	 */
+	readonly permissions?: {
+		readonly declared: readonly string[];
+		readonly granted: readonly string[];
+		readonly pending: readonly string[];
+	};
 	/** 这个插件没装上的原因（清单坏 / import 失败 / apply 抛错）。 */
 	readonly error?: string;
 	/**
@@ -78,6 +91,11 @@ export type LoadOptions = {
 	/** 以我的身份发言（插件 `api.post` 的实现）。不给就抛错。 */
 	readonly post?: (input: { readonly channelId: string; readonly text: string }) => Promise<void>;
 	/**
+	 * 系统动作真正动手的那两个函数（桌面壳接 Electron 的 `shell` / `clipboard`）。
+	 * 不给 = 所有系统动作都抛「这个宿主不支持」—— 网页版后端就是这一种。
+	 */
+	readonly system?: SystemActor;
+	/**
 	 * 已经有人用的工具名（核心那八个）。插件注册同名工具 = 整个插件不装，
 	 * 不是「后者覆盖前者」—— 同名工具被静默替换，模型完全看不出来。
 	 */
@@ -110,6 +128,11 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 			continue;
 		}
 		const manifest = read.manifest;
+		const permissionSummary = {
+			declared: manifest.permissions,
+			granted: manifest.granted,
+			pending: manifest.pending,
+		};
 		if (!manifest.enabled) {
 			plugins.push({
 				slug,
@@ -117,6 +140,7 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 				description: manifest.description,
 				enabled: false,
 				...(manifest.client === undefined ? {} : { client: true as const }),
+				...(manifest.permissions.length === 0 ? {} : { permissions: permissionSummary }),
 			});
 			continue;
 		}
@@ -127,7 +151,17 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 			description: manifest.description,
 			enabled: true,
 			...(manifest.client === undefined ? {} : { client: true as const }),
+			...(manifest.permissions.length === 0 ? {} : { permissions: permissionSummary }),
 		};
+		// 权限名要先核：写错了（`system.revealFile`）当场报，不能静默变成「没有这个权限」。
+		const unknown = unknownPermissions(manifest.permissions);
+		if (unknown.length > 0) {
+			const reason = `${slug}：plugin.md 里有宿主不认识的权限 ${unknown.join("、")}`;
+			errors.push(reason);
+			plugins.push({ ...summary, error: reason });
+			continue;
+		}
+
 		if (manifest.server === undefined) {
 			plugins.push(summary);
 			continue;
@@ -145,12 +179,25 @@ export async function loadPlugins(options: LoadOptions): Promise<PluginHost> {
 			if (typeof module.apply !== "function") {
 				throw new Error(`${manifest.server} 里没有 export function apply(api)`);
 			}
+			// 生效的那几条 = 清单里声明了 **且** 人批过的。没批的一律不给（默认全不给）。
+			const active: readonly SystemAction[] = activePermissions(manifest.permissions, manifest.granted);
+			const system =
+				options.system === undefined
+					? undefined
+					: createSystemActions({
+							plugin: slug,
+							active,
+							scope: options.scope ?? (async () => undefined),
+							actor: options.system,
+							auditFile: join(options.logsRoot, "tools.jsonl"),
+						});
 			await (module.apply as (api: unknown) => unknown)(
 				createPluginApi({
 					slug,
 					workspace: options.workspace,
 					logsRoot: options.logsRoot,
 					sinks,
+					...(system === undefined ? {} : { system }),
 					...(options.scope === undefined ? {} : { scope: options.scope }),
 					...(options.channels === undefined ? {} : { channels: options.channels }),
 					...(options.post === undefined ? {} : { post: options.post }),

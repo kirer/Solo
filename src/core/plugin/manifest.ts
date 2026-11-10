@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { parseDoc, readDocFile, writeDocFile, type FrontmatterField } from "../documents/base/doc.ts";
 import { existsAt, listDirSorted, readTextOrUndefined, removeDirAt, writeBytesAt } from "../runtime/io.ts";
 import { isSafeName } from "../naming.ts";
+import { isSystemAction, parsePermissions, pendingPermissions } from "./permissions.ts";
 
 export const PLUGIN_MANIFEST = "plugin.md";
 /** 后端入口：先找 `.ts`，没有再看 `.js`（两者 Node 都直接跑，`.js` 留给不想写类型的人）。 */
@@ -32,6 +33,21 @@ export type PluginManifest = {
 	readonly server?: string;
 	/** 前端入口文件名，没有就是纯后端插件。 */
 	readonly client?: string;
+	/**
+	 * 它**要**哪些系统动作（`plugin.md` 的 `permissions:`）。全是动作名，不是目标。
+	 *
+	 * 声明了不等于能用：还要人批准（`granted`）。两样都对上，`api.system.act` 才动。
+	 */
+	readonly permissions: readonly string[];
+	/**
+	 * 人**批过**哪些（`plugin.md` 的 `granted:`）。写回文档，和 `enabled` 一个口径（ADR-018）。
+	 *
+	 * 与 `permissions` 的差集就是「还要问的那几条」：插件升级后新增的权限、以及删掉
+	 * 又要回来的旧权限，都在这里浮出来。
+	 */
+	readonly granted: readonly string[];
+	/** 还要问人的那几条（`permissions - granted`）。空 = 全都批过了。 */
+	readonly pending: readonly string[];
 	readonly dir: string;
 };
 
@@ -73,6 +89,49 @@ export async function writePluginEnabled(pluginsRoot: string, slug: string, enab
 	);
 	// 开着的插件头里通常没有这一行（缺省就是开）；点开关之后要有一条能看见的痕迹。
 	if (doc.front["enabled"] === undefined) fields.push(["enabled", enabled ? "true" : "false"]);
+	await writeDocFile(path, fields, doc.body);
+}
+
+/**
+ * 批一个插件要的权限：把批准结果写回 `plugin.md` 的 `granted:`。
+ *
+ * 两个规矩，都很抠：
+ * 1. **只写 `permissions` 里真有的那几条**。批准名单是「清单的子集」，不是自由文本 ——
+ *    否则有人手写一行 `granted: system.openUrl` 就等于凭空多一个动作。
+ * 2. **不认识的权限名直接拒**（插件作者把 `system.reveal` 写成 `system.revealFile`
+ *    时要当场炸，不能静默变成「没有这个权限」）。
+ *
+ * 头里其它字段（含 `enabled`、插件自己加的）原样保留，按原顺序写回。
+ */
+export async function writePluginGrants(pluginsRoot: string, slug: string, granted: readonly string[]): Promise<void> {
+	if (!isSafeName(slug)) throw new Error(`插件名不合法：${slug}`);
+	const path = join(pluginsRoot, slug, PLUGIN_MANIFEST);
+	const doc = await readDocFile(path);
+	if (doc === undefined) throw new Error(`插件 ${slug} 缺少 ${PLUGIN_MANIFEST}`);
+
+	const declared = parsePermissions(doc.front.permissions);
+	const unknown = granted.filter((name) => !isSystemAction(name));
+	if (unknown.length > 0) throw new Error(`不认识的权限：${unknown.join("、")}`);
+	const extra = granted.filter((name) => !declared.includes(name));
+	if (extra.length > 0) {
+		throw new Error(`这几条它没有在 permissions 里声明：${extra.join("、")}`);
+	}
+
+	const kept = declared.filter((name) => granted.includes(name));
+	const wanted = kept.join(", ");
+
+	const fields: FrontmatterField[] = [];
+	let written = false;
+	for (const [key, value] of Object.entries(doc.front)) {
+		if (key === "granted") {
+			fields.push(["granted", wanted === "" ? undefined : wanted]);
+			written = true;
+			continue;
+		}
+		fields.push([key, value]);
+	}
+	// 头里原本没有 `granted` 这一行：批完要把痕迹留下（一条都没批就不写空行）。
+	if (!written && wanted !== "") fields.push(["granted", wanted]);
 	await writeDocFile(path, fields, doc.body);
 }
 
@@ -144,6 +203,8 @@ export async function readPluginManifest(pluginsRoot: string, slug: string): Pro
 	const server = (await Promise.all(PLUGIN_SERVERS.map((name) => existsAt(join(dir, name))))).findIndex(Boolean);
 	const client = await existsAt(join(dir, PLUGIN_CLIENT));
 	const firstLine = doc.body.split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
+	const permissions = parsePermissions(doc.front.permissions);
+	const granted = parsePermissions(doc.front.granted);
 	return {
 		manifest: {
 			slug,
@@ -153,6 +214,9 @@ export async function readPluginManifest(pluginsRoot: string, slug: string): Pro
 			enabled: doc.front.enabled !== "false",
 			...(server < 0 ? {} : { server: PLUGIN_SERVERS[server] }),
 			...(client ? { client: PLUGIN_CLIENT } : {}),
+			permissions,
+			granted,
+			pending: pendingPermissions(permissions, granted),
 			dir,
 		},
 	};

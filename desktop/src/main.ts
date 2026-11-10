@@ -26,6 +26,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendLog, startBackend, type Backend } from "./backend.ts";
 import { describeLaunch } from "./backend-log.ts";
+import { serveSystemBridge } from "./system-bridge.ts";
 import { installMenu } from "./menu.ts";
 import {
 	clampOrbBounds,
@@ -53,6 +54,8 @@ const userRoot = DEV ? join(tmpdir(), "solo-desktop-dev-home") : join(homedir(),
 const logFile = join(userRoot, "logs", "core.log");
 
 let backend: Backend | undefined;
+/** 系统动作那根管子的收尾句柄（`system-bridge.ts`）。 */
+let systemBridge: { close(): void } | undefined;
 let updater: Updater | undefined;
 let win: BrowserWindow | undefined;
 let orbWin: BrowserWindow | undefined;
@@ -355,6 +358,9 @@ async function quit(): Promise<void> {
 	quitting = true;
 	tray?.destroy();
 	tray = undefined;
+	// 先收掉系统动作那根管子，再停后端：管子还开着，子进程读着 stdin 会拖到超时。
+	systemBridge?.close();
+	systemBridge = undefined;
 	await backend?.stop().catch(() => undefined);
 	app.quit();
 }
@@ -499,6 +505,10 @@ async function start(): Promise<void> {
 		app.exit(1);
 		return;
 	}
+
+	// 插件的系统动作走这根已有的父子管道交给主进程（Electron 的 shell / clipboard 只在这边）。
+	// 后端那边对应的是 `desktop/system-actor.ts`：它是被强制注册的那一份实现。
+	systemBridge = serveSystemBridge(backend.child);
 
 	win = createWindow(backend.url);
 	// 悬浮球是同一进程里的第二扇窗（不是第二个进程）：同一个 origin，SSE / 语音权限照旧。

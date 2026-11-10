@@ -16,6 +16,7 @@ import type { StreamHub } from "./sse.ts";
 import type { App, MemoryEditBody, PersonModelBody, PostBody } from "../../app/index.ts";
 import { avatarEtag, avatarSvg, clampAvatarSize } from "../../app/avatar.ts";
 import { fail, json, readJson } from "./respond.ts";
+import { fromThisMachine } from "./local-origin.ts";
 import { serveStatic } from "./static-assets.ts";
 
 /**
@@ -476,6 +477,41 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				if (typeof body?.enabled !== "boolean") return fail(response, 400, "enabled 要 true 或 false");
 				try {
 					return json(response, { plugins: await app.plugins.setEnabled(params.slug ?? "", body.enabled) });
+				} catch (error) {
+					return fail(response, 400, (error as Error).message);
+				}
+			},
+		},
+		{
+			// 一个插件还要问人哪几条权限（连人话）。装完 / 插件升级之后界面拿它弹确认。
+			pattern: "/api/plugins/:slug/permissions",
+			method: "GET",
+			handler: async ({ request, response, params }) =>
+				json(response, {
+					pending: await app.plugins.pending(params.slug ?? ""),
+					// 网页版后端做不了系统动作；局域网里打开的页面也批不了（那个请求到不了本机效果）。
+					canSystem: app.plugins.canSystem() && fromThisMachine(request),
+				}),
+		},
+		{
+			// 批权限：`granted` 是批准之后的**完整名单**（不是增量）。写回 `plugin.md` 当场重装。
+			pattern: "/api/plugins/:slug/permissions",
+			method: "POST",
+			handler: async ({ request, response, params }) => {
+				// 批准权限 = 放开一个本机效果：只认本机发起的请求，局域网里打开页面点不了。
+				if (!fromThisMachine(request)) return fail(response, 403, "只能从这台机器上批准");
+				const body = await readJson<{ granted?: unknown }>(request);
+				const granted = Array.isArray(body?.granted) ? body.granted : [];
+				if (!granted.every((name) => typeof name === "string")) {
+					return fail(response, 400, "granted 要一组权限名");
+				}
+				try {
+					return json(response, {
+						plugins: await app.plugins.grant(
+							params.slug ?? "",
+							granted.map((name) => String(name)),
+						),
+					});
 				} catch (error) {
 					return fail(response, 400, (error as Error).message);
 				}

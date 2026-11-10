@@ -2023,6 +2023,91 @@
 	border-top: 0.5px solid var(--rule);
 }
 
+/* 系统权限：默认全不给，没批的那几条标出来。 */
+.plugin-perms {
+	margin: 12px 14px 0;
+	padding: 10px 12px;
+	border-radius: 10px;
+	background: var(--fill);
+}
+
+.plugin-perms-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 10px;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.plugin-perms ul {
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.plugin-perms li {
+	display: grid;
+	grid-template-columns: 1fr auto;
+	grid-template-areas: "what state" "why why";
+	gap: 2px 8px;
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.plugin-perms .what {
+	grid-area: what;
+}
+
+.plugin-perms .why {
+	grid-area: why;
+	color: var(--ink-2);
+	font-size: 11px;
+}
+
+.plugin-perms .state {
+	grid-area: state;
+	color: var(--ink-3);
+	font-variant-numeric: tabular-nums;
+}
+
+/* 没批的那几条要一眼能看出来：这是「它现在还做不到」的意思，不是警告。 */
+.plugin-perms li[data-pending="true"] .state {
+	color: var(--warn, #b26b00);
+	font-weight: 600;
+}
+
+.plugin-perms-foot {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.plugin-perms-grant {
+	padding: 5px 10px;
+	border: 0;
+	border-radius: 7px;
+	background: var(--control);
+	color: inherit;
+	font: inherit;
+	font-size: 12px;
+	cursor: pointer;
+}
+
+.plugin-perms-grant[data-variant="quiet"] {
+	background: transparent;
+	box-shadow: inset 0 0 0 0.5px var(--rule);
+}
+
+.plugin-perms-grant:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
 .plugin-foot .note {
 	flex: 1;
 	min-width: 0;
