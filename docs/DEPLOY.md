@@ -430,6 +430,29 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
   标题带的「视图」里，或 `⌘R` / `Ctrl+R`）—— 不用重启应用。
 - **打包出来的版本号**就是根 `package.json` 的 `version`，`npm version` 改它。
 
+**打包前的检查清单**
+
+手动打包（`npm run desktop:pack` / `desktop:dist:mac` / `desktop:dist:win`）
+**不会**自动重跑界面构建，一步步都是人肉记的，漏一条就是发出去一个坏包。四条：
+
+1. **`npm run ui:build`** —— 不是可选项。它串了三件事：`ui:third-party`（把
+   `docs/THIRD-PARTY.md` 拷进界面）、**`ui:assets`**（把插件要的大块资源从
+   `node_modules` 拷进 `ui/web/`）、vite 打包。
+2. **`npm run desktop:build`** —— `desktop/dist/` **不在仓里**（`.gitignore` 里躺着），
+   是从 `desktop/src/` 现编的。忘了这步，打出来的还是上一次的壳。
+3. **确认 `ui/web/webrtcaec3.js` 在** —— 悬浮球的回声消除全靠它。`ui:assets` 那步就是
+   为它存在的：它从 `node_modules/@ennuicastr/webrtcaec3.js/dist/` 拷过去，**不进
+   `seed/`**（seed 有 500 KB 体积契约，这个文件 260 KB，塞进去直接顶爆）。
+   少了它不会报错、不会崩 —— AEC 加载失败后降级成「念的时候听不见你说话」，
+   症状和你以为已经修好的那个 bug 一模一样。**漏了就是静默失效。**
+4. **`git status` 看 `ui/web/`** —— 界面产物是进仓的（`emptyOutDir: false`，
+   换掉的旧 hash 文件不会自己消失，要手动 `git rm`）。跑完 `ui:build` 再看：
+   **有 diff 就说明源码变了产物没提交**，把它一起提交，别打着旧界面发版；
+   没 diff 才算对得上。
+
+CI（`.github/workflows/release.yml`）里这几步都在，走 Actions 不会被这条绊到；
+**本地打包才需要人记**。
+
 **发布与升级（ADR-029：自签清单 + zip 替换，不用 Squirrel / NSIS 更新）**
 
 不需要 Apple 开发者证书。发布机持有一把 Ed25519 私钥，清单由它签名；应用里只放公钥。
