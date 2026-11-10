@@ -2864,3 +2864,41 @@
 .set-action:active {
 	transform: scale(0.97);
 }
+
+/*
+ * 第三方声明（设置 → 关于）。
+ *
+ * 是一段**能滚的长文本**，不是一屏就完的东西：Apache-2.0 全文就有一百多行。
+ * 所以给它固定高度 + 自己滚，别把整个设置页撑长 —— 那样的后果是用户要翻很久
+ * 才能看到下面的「数据」。等宽字体是因为里面有大量协议原文，比例字体读起来会散。
+ */
+.set-license-body {
+	padding: 4px 14px 14px;
+}
+
+.set-license-text {
+	max-height: 280px;
+	margin: 0;
+	padding: 10px 12px;
+	overflow: auto;
+	border: 0.5px solid var(--rule);
+	border-radius: 9px;
+	background: var(--raised);
+	color: var(--ink-2);
+	font-family: var(--mono);
+	font-size: 11px;
+	line-height: 17px;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+	/* 文本里有大段以「*」开头的原文，别让它被当成列表加缩进。 */
+	tab-size: 4;
+}
+
+.set-license-text::-webkit-scrollbar {
+	width: 8px;
+}
+
+.set-license-text::-webkit-scrollbar-thumb {
+	border-radius: 4px;
+	background: var(--rule);
+}

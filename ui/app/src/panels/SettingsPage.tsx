@@ -250,6 +250,10 @@ export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.El
 									</Group>
 
 									<Group>
+										<LicenseRow />
+									</Group>
+
+									<Group>
 										<DataRow />
 									</Group>
 								</div>
@@ -420,6 +424,69 @@ function UpdateProxyRow(): JSX.Element {
 						<p className="set-note" data-error="true">
 							{error}
 						</p>
+					)}
+				</div>
+			</Fold>
+		</div>
+	);
+}
+
+/**
+ * 第三方声明：随包发出去的那些组件各自的许可。
+ *
+ * **为什么要有这一栏**：`docs/THIRD-PARTY.md` 与 `seed/legal/THIRD-PARTY.md` 都在包里，
+ * 但没人会去翻 `Resources/app/`。文件在、却看不到，等于没给。
+ *
+ * 内容由 `scripts/third-party.ts` 在 `ui:build` 之前从 `docs/THIRD-PARTY.md` 拷进来，
+ * **这里不手抄**，改声明只改那一份。
+ */
+function LicenseRow(): JSX.Element {
+	const [open, setOpen] = useState(false);
+	const [text, setText] = useState<string | null>(null);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!open || text !== null || error !== null) return;
+		let alive = true;
+		// 同源的静态文件：桌面版和网页版走的是同一条路，不用桥。
+		fetch("/THIRD-PARTY.md")
+			.then((response) => {
+				if (!response.ok) throw new Error(`取不到第三方声明（HTTP ${String(response.status)}）`);
+				return response.text();
+			})
+			.then((value) => {
+				if (alive) setText(value);
+			})
+			.catch((reason: unknown) => {
+				if (alive) setError(reason instanceof Error ? reason.message : String(reason));
+			});
+		return () => {
+			alive = false;
+		};
+	}, [open, text, error]);
+
+	return (
+		<div className="set-proxy">
+			<button type="button" className="set-row" aria-expanded={open} onClick={() => setOpen(!open)}>
+				<RowIcon>
+					<IconUpdate />
+				</RowIcon>
+				<span className="set-main">
+					<span className="set-label">第三方声明</span>
+					<span className="set-desc">用到的组件与各自的许可协议</span>
+				</span>
+				<Chevron up={open} />
+			</button>
+			<Fold open={open}>
+				<div className="set-license-body">
+					{error !== null ? (
+						<p className="set-note" data-error="true">
+							{error}
+						</p>
+					) : text === null ? (
+						<p className="set-note">正在读…</p>
+					) : (
+						<pre className="set-license-text">{text}</pre>
 					)}
 				</div>
 			</Fold>

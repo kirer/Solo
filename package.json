@@ -25,8 +25,9 @@
 		"desktop:pack": "npm run desktop:build && electron-builder --dir --publish never",
 		"desktop:dist:mac": "npm run desktop:build && electron-builder --mac --arm64 --publish never",
 		"desktop:dist:win": "npm run desktop:build && electron-builder --win --x64 --publish never",
-		"ui:build": "vite build --config ui/app/vite.config.ts",
-		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit"
+		"ui:build": "npm run ui:third-party && vite build --config ui/app/vite.config.ts",
+		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit",
+		"ui:third-party": "node --experimental-strip-types scripts/third-party.ts"
 	},
 	"dependencies": {
 		"@dicebear/collection": "^9.4.2",
