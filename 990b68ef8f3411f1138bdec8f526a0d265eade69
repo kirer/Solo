@@ -1,0 +1,1 @@
+2.9.1 未发布，别装：mac 产物已出，但 Windows 单测 test/core/run-jobs.test.ts 红（Windows 专有的进程句柄/临时目录 EBUSY，mac 与本地不复现），build-win 中止，没有任何 Release 和产物。2.9.0 里悬浮球画不出来的修复在 db1fc3f，已随 2.9.2 发出。请用 2.9.2。
