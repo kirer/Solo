@@ -223,7 +223,10 @@ describe("悬浮球", () => {
 		// 以前是 `if (!speakOn || !open) return;` —— 收着就一句不念，还没有任何痕迹。
 		// 注释里会引用这句旧代码，所以只看真正的代码行。
 		expect(await codeLines()).not.toMatch(/!speakOn\s*\|\|\s*!open/u);
-		expect(source).toMatch(/if \(!speakOn \|\| ORB_MODE === "inline"\) return;/u);
+		// 2026-11-11 老板：主界面那颗球点了「打开朗读」也不出声，因为这里还挡着
+		// `|| ORB_MODE === "inline"`。挡声音的只能是开关本身，不是「你在哪扇窗里」。
+		expect(source).not.toMatch(/ORB_MODE === "inline"\) return;/u);
+		expect(source).toMatch(/if \(!speakOn\) return;/u);
 	});
 
 	// 老板 2026-11-10：念的应该是「有人跟他说话」，不是把我们改代码的过程播给他。
