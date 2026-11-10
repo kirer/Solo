@@ -51,7 +51,18 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		}
 		return out;
 	}, [runs, currentId]);
-	const rows = useMemo(() => buildRows({ messages, running, now: Date.now() }), [messages, running]);
+	const unreadBefore = useStore((state) => state.unreadBefore);
+	const rows = useMemo(
+		() =>
+			buildRows({
+				messages,
+				running,
+				now: Date.now(),
+				// `exactOptionalPropertyTypes` 下不能显式传 undefined：没有未读就干脆不给这个字段。
+				...(unreadBefore === null ? {} : { unreadBefore }),
+			}),
+		[messages, running, unreadBefore],
+	);
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string; assistant: boolean }>();
@@ -258,6 +269,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 								onImage={props.onImage}
 								onFile={props.onFile}
 								onJump={jumpTo}
+								onJumpLatest={() => {
+									toBottom("smooth");
+								}}
 							/>
 						))}
 					</div>
@@ -357,12 +371,26 @@ function RowView(props: {
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
 	onJump: (seq: number, node: HTMLElement) => void;
+	/** 「跳到最新」：滚到底。 */
+	onJumpLatest: () => void;
 }): JSX.Element {
 	const { row } = props;
 	if (row.type === "divider") {
 		return (
 			<div className="row-divider">
 				<span>{row.label}</span>
+			</div>
+		);
+	}
+	if (row.type === "unread") {
+		// 一条横线加一句「以下是新的」，右边是「跳到最新」—— 189 条未读时人需要一个落点，
+		// 而不是从头往下翻。`data-row="unread"` 给「跳到未读」定位用。
+		return (
+			<div className="row-unread" data-row="unread">
+				<span className="row-unread-label">以下是新的 · {row.count} 条</span>
+				<button type="button" className="row-unread-jump" onClick={props.onJumpLatest}>
+					跳到最新
+				</button>
 			</div>
 		);
 	}

@@ -35,12 +35,29 @@ describe("悬浮窗的位置", () => {
 		expect(clampOrbBounds({ x: 200, y: 200 }, AREA)).toEqual({ x: 200, y: 200 });
 	});
 
-	it("换屏幕 / 分辨率变小后，位置还在屏内就留着，否则回默认", () => {
+	it("换屏幕 / 分辨率变小后，位置还在屏内就留着", () => {
 		const inside = { x: 100, y: 100 };
 		expect(fitOrbBounds(inside, AREA)).toEqual(inside);
-		// 外接屏拔掉后存的位置：不再落在可用区里，回到主屏右上。
-		expect(fitOrbBounds({ x: 2200, y: 300 }, AREA)).toEqual(defaultOrbBounds(AREA));
-		expect(fitOrbBounds({ x: 0, y: 0 }, AREA)).toEqual(defaultOrbBounds(AREA));
+	});
+
+	it("只出界一点就收回来，不整份丢回默认（这条是「存了就丢」的根因）", () => {
+		// 存的是菜单栏上方的 y=0：以前整份复位，人拖的位置一次都留不住。
+		expect(fitOrbBounds({ x: 0, y: 0 }, AREA)).toEqual({ x: 0, y: AREA.y });
+		// 右边出界：只把 x 收回来，y 原样保留。
+		expect(fitOrbBounds({ x: 2200, y: 300 }, AREA)).toEqual({
+			x: AREA.width - ORB_SIZE.width,
+			y: 300,
+		});
+		// 下边出界：只收 y。
+		expect(fitOrbBounds({ x: 120, y: 9999 }, AREA)).toEqual({
+			x: 120,
+			y: AREA.y + AREA.height - ORB_SIZE.height,
+		});
+	});
+
+	it("屏幕比窗口还小才回默认位置", () => {
+		const tiny = { x: 0, y: 0, width: 300, height: 400 };
+		expect(fitOrbBounds({ x: 50, y: 50 }, tiny)).toEqual(defaultOrbBounds(tiny));
 	});
 });
 

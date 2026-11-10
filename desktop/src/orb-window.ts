@@ -37,14 +37,19 @@ export function clampOrbBounds(bounds: OrbBounds, area: OrbArea): OrbBounds {
 	};
 }
 
-/** 窗口从屏幕上被拔掉（换了外接屏 / 分辨率变了）时回到默认位置。 */
+/**
+ * 把窗口摆回可用区里。
+ *
+ * 先夹，不整份复位：只有「整个屏幕都装不下这个窗口」时才回默认位置。
+ *
+ * 以前是「只要有一点点在框外就整份丢回默认」—— 换成外接屏、改过缩放的机器上，
+ * 存下来的位置永远差那么一点点，于是每次启动都被重置回右上角，人拖过的位置一次都留不住。
+ * 现在 x、y 各自夹进可用区：留得下就留，只把出界的那一边收回来。
+ */
 export function fitOrbBounds(bounds: OrbBounds, area: OrbArea): OrbBounds {
-	const inside =
-		bounds.x >= area.x &&
-		bounds.y >= area.y &&
-		bounds.x + ORB_SIZE.width <= area.x + area.width &&
-		bounds.y + ORB_SIZE.height <= area.y + area.height;
-	return inside ? { x: Math.round(bounds.x), y: Math.round(bounds.y) } : defaultOrbBounds(area);
+	// 屏幕比窗口还小：夹也夹不出一个合法位置，回默认（`clampOrbBounds` 会给左上角，但那不是「用户选的位置」）。
+	if (area.width < ORB_SIZE.width || area.height < ORB_SIZE.height) return defaultOrbBounds(area);
+	return clampOrbBounds(bounds, area);
 }
 
 export function orbStatePath(appRoot: string): string {

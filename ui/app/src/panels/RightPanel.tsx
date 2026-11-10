@@ -19,7 +19,7 @@ import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, closeDock, closeRightFile, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight } from "../state/store.ts";
+import { backRight, clampDockWidth, closeDock, closeRightFile, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { FilePreview } from "./FilePreview.tsx";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
@@ -156,9 +156,8 @@ function PanelGrip({ width }: { width: number | null }): JSX.Element {
 
 		const move = (ev: PointerEvent): void => {
 			if (!dragging.current) return;
-			// 左边至少给对话留 420：拖到底也不能把正文盖满。
-			const most = Math.max(320, window.innerWidth - 420);
-			setDockWidth(Math.min(most, Math.max(320, start - (ev.clientX - startX))));
+			// 左边至少给对话留 420：拖到底也不能把正文盖满。区间和读盘时同一份常量。
+			setDockWidth(clampDockWidth(start - (ev.clientX - startX), window.innerWidth));
 		};
 		const up = (): void => {
 			dragging.current = false;

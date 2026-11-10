@@ -592,6 +592,51 @@
 	letter-spacing: 0.02em;
 }
 
+/*
+ * 「以下是新的」：一条横线 + 一句「N 条」+ 右边「跳到最新」。
+ *
+ * 它和上面的时间分隔长得不一样，是故意的：时间分隔是「过了半小时」，
+ * 这条是「你没读过的东西从这里开始」——两件事混成同一种灰字就都看不清了。
+ */
+.row-unread {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin: 22px 0 10px;
+	color: var(--accent);
+	font-size: 11px;
+	line-height: 16px;
+	letter-spacing: 0.02em;
+}
+
+.row-unread::before {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: color-mix(in oklab, var(--accent) 45%, transparent);
+}
+
+.row-unread-label {
+	flex: none;
+	white-space: nowrap;
+}
+
+.row-unread-jump {
+	appearance: none;
+	flex: none;
+	border: 0;
+	background: transparent;
+	padding: 2px 6px;
+	border-radius: var(--r-control);
+	color: var(--accent);
+	font: inherit;
+	cursor: pointer;
+}
+
+.row-unread-jump:hover {
+	background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
 /* 信头（只有桌面上的 Solo 页有）：标识 + 名字 + 状态 + 今天跑了多少。 */
 .solo-hero {
 	display: flex;

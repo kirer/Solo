@@ -26,6 +26,13 @@ const DIVIDER_MS = 30 * 60 * 1000;
 
 export type Row =
 	| { type: "divider"; key: string; label: string }
+	/**
+	 * 「以下是新的」：进这一屏之前没读过的那些消息的起点。
+	 *
+	 * 它和 `divider` 分开，是因为它要能被「跳到未读」认出来（`data-row="unread"`），
+	 * 而且文案与样式都不是时间分隔。
+	 */
+	| { type: "unread"; key: string; count: number }
 	| {
 			type: "say";
 			key: string;
@@ -49,6 +56,13 @@ export type BuildInput = {
 	/** 这个频道里正在跑、还没回话的轮次（`status === "running"` 且没有 `replySeq`）。 */
 	running?: readonly Turn[];
 	now?: number;
+	/**
+	 * 进这一屏时的未读起点：`seq` 大于它的第一条消息之前插一条「以下是新的」。
+	 *
+	 * 由调用方在切频道那一刻定住（不是每帧算）—— 否则读着读着线就往下跑，
+	 * 变成「永远有新消息」。
+	 */
+	unreadBefore?: number;
 };
 
 /** 时间分隔上的字：今天只写时刻，昨天写「昨天 HH:MM」，更早写「M月D日」。 */
@@ -56,10 +70,11 @@ function dividerLabel(at: number, now: number): string {
 	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
-export function buildRows({ messages, running = [], now = Date.now() }: BuildInput): Row[] {
+export function buildRows({ messages, running = [], now = Date.now(), unreadBefore }: BuildInput): Row[] {
 	const rows: Row[] = [];
 	let previous: Message | undefined;
 	let previousSay: Message | undefined;
+	let unreadPlaced = false;
 
 	const divider = (message: Message): void => {
 		rows.push({ type: "divider", key: `d-${message.seq}`, label: dividerLabel(message.at, now) });
@@ -72,6 +87,14 @@ export function buildRows({ messages, running = [], now = Date.now() }: BuildInp
 		// 灰字，一屏对话里插五六条，读起来像日志。数据还在库里、`chats` 读得到。
 		// 后台命令跑完的留痕例外：它折成一行，点开才是输出。
 		if (message.kind === "note" && message.noteOf !== "run") continue;
+
+		// 「以下是新的」只插一次，插在第一条真正没读过的消息前面。
+		// 未读的条数按「seq 大于起点、且不是系统留痕」算，和列表里那个徽章同口径。
+		if (unreadBefore !== undefined && unreadPlaced === false && message.seq > unreadBefore) {
+			unreadPlaced = true;
+			const count = messages.filter((item) => item.seq > unreadBefore && !(item.kind === "note" && item.noteOf !== "run")).length;
+			rows.push({ type: "unread", key: `u-${message.seq}`, count });
+		}
 
 		if (previous !== undefined) {
 			const gap = message.at - previous.at;

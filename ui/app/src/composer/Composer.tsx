@@ -12,6 +12,7 @@ import type { Uploaded } from "../api/types.ts";
 import { avatarSvg } from "../lib/avatar.ts";
 import { humanBytes } from "../lib/format.ts";
 import { Slot } from "../plugin/Slot.tsx";
+import { clearDraft, readDraft, writeDraft } from "../lib/draft.ts";
 import { pendingChoice } from "./choice.ts";
 import { send, setReply, takeStaged } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
@@ -81,6 +82,61 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 	const inputRef = useRef<HTMLTextAreaElement | null>(null);
 	const fileRef = useRef<HTMLInputElement | null>(null);
 	const dragDepth = useRef(0);
+
+	// 草稿按频道落盘：切走再回来、关窗重开都还在。
+	// 装载只在「切到某条频道」时做一次，之后输入靠下面的防抖写回，不会把正在打的字冲掉。
+	const draftTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const loadedFor = useRef<string | null>(null);
+	useEffect(() => {
+		if (currentId === loadedFor.current) return;
+		loadedFor.current = currentId;
+		const draft = readDraft(currentId);
+		setText(draft.text);
+		setDrafts(
+			draft.files.map((file) => ({
+				key: `saved-${file.id}`,
+				name: file.name,
+				kind: file.kind,
+				preview: file.kind === "image" ? uploadUrl(file.id) : "",
+				state: "done" as const,
+				uploaded: file,
+			})),
+		);
+	}, [currentId]);
+
+	// 打字 / 增删附件之后防抖写回。300ms 足够挡住输入法连打，又不会在关窗时丢掉最后几个字。
+	useEffect(() => {
+		if (loadedFor.current !== currentId) return;
+		if (draftTimer.current !== null) clearTimeout(draftTimer.current);
+		draftTimer.current = setTimeout(() => {
+			writeDraft(currentId, {
+				text,
+				files: drafts.flatMap((draft) =>
+					draft.state === "done" && draft.uploaded !== undefined ? [draft.uploaded] : [],
+				),
+			});
+		}, 300);
+		return () => {
+			if (draftTimer.current !== null) clearTimeout(draftTimer.current);
+		};
+	}, [currentId, text, drafts]);
+
+	// 关窗前把还没到防抖时间的最后几个字也写下去：关窗不会等 300ms。
+	useEffect(() => {
+		const flush = (): void => {
+			if (loadedFor.current !== currentId) return;
+			writeDraft(currentId, {
+				text,
+				files: drafts.flatMap((draft) =>
+					draft.state === "done" && draft.uploaded !== undefined ? [draft.uploaded] : [],
+				),
+			});
+		};
+		window.addEventListener("pagehide", flush);
+		return () => {
+			window.removeEventListener("pagehide", flush);
+		};
+	}, [currentId, text, drafts]);
 
 	// 「在等我选」的那一条：有它的时候输入框换成选项卡（回答就是一条带 replyTo 的消息）。
 	const messages = useStore((state) => state.detail?.messages);
@@ -209,6 +265,7 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 		const ids = drafts.flatMap((draft) => (draft.state === "done" && draft.uploaded !== undefined ? [draft.uploaded.id] : []));
 		setText("");
 		clearDrafts();
+		clearDraft(currentId);
 		setMention(null);
 		setMenu(false);
 		try {
@@ -218,7 +275,7 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 			setText(body);
 			props.toast(error instanceof Error ? error.message : "发送失败", "error");
 		}
-	}, [canSend, text, drafts, clearDrafts, props]);
+	}, [canSend, text, drafts, clearDrafts, currentId, props]);
 
 	const onKeyDown = useCallback(
 		(event: React.KeyboardEvent<HTMLTextAreaElement>) => {

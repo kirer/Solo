@@ -218,6 +218,10 @@ function createOrbWindow(url: string): BrowserWindow {
 	window.on("closed", () => {
 		orbWin = undefined;
 	});
+	// 关窗 / 退出也可能是「最后一次拖完还没等到 drag-end」的场合，再兜一次。
+	window.on("close", () => {
+		persistOrbPosition();
+	});
 
 	// 和主窗口一样：外链交给系统浏览器，页面不许离开后端这一份 origin。
 	window.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -238,6 +242,24 @@ function createOrbWindow(url: string): BrowserWindow {
  * 悬浮窗的桥。来源只认这扇窗、这个后端 origin —— preload 在页面里，
  * 页面里的任何脚本都能发消息，不校验就等于把「挪窗口 / 藏起来」交给网页。
  */
+/**
+ * 把悬浮窗此刻的真实位置写进状态文件。
+ *
+ * 以 `window.getPosition()` 为准，而不是内存里的 `orbState`：drag 事件每帧只更新内存、
+ * 一次拖完才落盘，中间要是 `drag-end` 丢了（界面重载、窗口失焦、松手时正在收尾），
+ * 存下来的还是拖动前的位置 —— 表现出来就是「拖了、下次开又回去了」。
+ */
+function persistOrbPosition(): void {
+	if (orbWin === undefined || orbWin.isDestroyed()) return;
+	const state = orbState;
+	const position = orbWin.getPosition();
+	const x = position[0];
+	const y = position[1];
+	if (x === undefined || y === undefined) return;
+	orbState = { ...(state ?? { visible: true }), x, y };
+	writeOrbState(orbState);
+}
+
 function setupOrbBridge(window: BrowserWindow): void {
 	const trusted = (event: IpcMainEvent): boolean => {
 		const url = backend?.url;
@@ -266,11 +288,8 @@ function setupOrbBridge(window: BrowserWindow): void {
 	});
 
 	ipcMain.on("orb:drag-end", (event) => {
-		const state = orbState;
-		if (!trusted(event) || state === undefined) return;
-		const position = window.getPosition();
-		orbState = { ...state, x: position[0] ?? state.x, y: position[1] ?? state.y };
-		writeOrbState(orbState);
+		if (!trusted(event)) return;
+		persistOrbPosition();
 	});
 
 	ipcMain.on("orb:recenter", (event) => {

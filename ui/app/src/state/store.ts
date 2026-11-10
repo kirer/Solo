@@ -86,6 +86,13 @@ export type State = {
 	staged: { readonly path: string; readonly id: string; readonly name: string; readonly kind: "image" | "file"; readonly bytes: number } | null;
 	/** 右栏拖出来的宽度（px，资料 / 任务 / 工作台共用）；`null` = 没拖过，348。 */
 	dockWidth: number | null;
+	/**
+	 * 进这一屏时的未读起点（`seq` 比它大的算新的）。
+	 *
+	 * 在**切频道那一刻**定住，之后不再动：否则消息流里那条「以下是新的」会随着
+	 * 新消息往下跑，永远读不完。`null` = 进来时没有未读，不画那条线。
+	 */
+	unreadBefore: number | null;
 	/** 内置浏览器开着看哪个地址（`null` = 关着）。正文里点外链就开在这里。 */
 	browser: string | null;
 	/** 右侧栏的返回栈：栈底永远是当前频道。 */
@@ -115,10 +122,30 @@ function read<K extends string>(key: string, allowed: readonly K[], fallback: K)
 }
 
 /** 拖过的宽度：读得到、是正数才算数（旧值坏了就回到默认宽度，不报错）。 */
+/** 右栏最窄 320、最宽给正文留 420 —— 和 `PanelGrip` 拖拽时的夹取区间同一个数。 */
+export const DOCK_MIN = 320;
+export const DOCK_KEEP_MAIN = 420;
+
+/**
+ * 把右栏宽度夹进当前窗口可用的区间。
+ *
+ * 拖拽时 `PanelGrip` 已经夹过一次，但落盘的数是**在别的窗口尺寸下**算出来的：
+ * 从 1920 拔到 1280 再读，442 就未必还有位置。所以读的时候按当前窗口再夹一次，
+ * 不然右栏会宽过屏幕、把正文挤没（宽度为 0 的分区就是这条路的极端）。
+ */
+export function clampDockWidth(width: number, innerWidth: number): number {
+	const most = Math.max(DOCK_MIN, innerWidth - DOCK_KEEP_MAIN);
+	return Math.min(most, Math.max(DOCK_MIN, width));
+}
+
 function readDockWidth(): number | null {
 	if (typeof localStorage === "undefined") return null;
 	const value = Number(localStorage.getItem(DOCK_WIDTH_KEY));
-	return Number.isFinite(value) && value > 0 ? value : null;
+	if (!Number.isFinite(value) || value <= 0) return null;
+	// 窗口尺寸在 `localStorage` 里没有记录，只能在读的时候按当前窗口夹：
+	// 没有 `window`（测试 / SSR）就先按拖拽区间兜住下限。
+	const view = typeof window === "undefined" ? DOCK_MIN + DOCK_KEEP_MAIN + DOCK_MIN : window.innerWidth;
+	return clampDockWidth(value, view);
 }
 
 const initial: State = {
@@ -151,6 +178,7 @@ const initial: State = {
 	rightFile: null,
 	staged: null,
 	dockWidth: readDockWidth(),
+	unreadBefore: null,
 	browser: null,
 	trail: [{ kind: "channel" }],
 	nav: "fwd",
@@ -320,15 +348,29 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
+		patch({ currentId: null, unreadBefore: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
 		return;
 	}
+	// 未读起点在这一刻定住：用列表里那个未读数 + 当前最大 seq 反推「从哪条开始算新的」。
+	// 列表数据可能落后一两个 SSE 帧，差几条无所谓 —— 这条线要的是「大概从这儿开始」，
+	// 不是为了精确对账。
+	const listed = getState().channels.find((channel) => channel.id === id);
+	const unreadCount = listed?.unread ?? 0;
+	const topSeq = getState().detail?.messages.at(-1)?.seq;
+	const unreadBefore =
+		unreadCount > 0 && getState().currentId !== id && topSeq !== undefined && topSeq !== null
+			? topSeq
+			: unreadCount > 0
+				? -1
+				: null;
+
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
 	// 人物案不属于任何一个频道：换频道就退回栈底，否则右栏会停在上一个人的档案上。
 	patch({
 		currentId: id,
 		detail: null,
 		hasMore: false,
+		unreadBefore,
 		reply: null,
 		needMenu: false,
 		runs: new Map(),

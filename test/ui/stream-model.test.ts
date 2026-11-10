@@ -202,3 +202,51 @@ describe("正在跑的那一轮：live 行（派生，不是消息）", () => {
 		expect(rows.map((row) => row.type)).toEqual(["say", "live", "divider", "say"]);
 	});
 });
+
+describe("「以下是新的」那条线", () => {
+	it("插在第一条没读过的消息前面，条数按它之后的算", () => {
+		const rows = buildRows({
+			messages: [m(1, "chat", T), m(2, "chat", T + MIN), m(3, "chat", T + 2 * MIN)],
+			unreadBefore: 1,
+			now: T + 3 * MIN,
+		});
+		expect(rows.map((row) => row.type)).toEqual(["say", "unread", "say", "say"]);
+		const line = rows.find((row) => row.type === "unread");
+		expect(line?.type === "unread" ? line.count : undefined).toBe(2);
+	});
+
+	it("只画一条：中间夹着几条也不重复插", () => {
+		const rows = buildRows({
+			messages: [m(1, "chat", T), m(2, "chat", T + MIN), m(3, "chat", T + 40 * MIN)],
+			unreadBefore: 1,
+			now: T + 50 * MIN,
+		});
+		expect(rows.filter((row) => row.type === "unread")).toHaveLength(1);
+	});
+
+	it("全是新的（起点 -1）：线在最前面", () => {
+		const rows = buildRows({ messages: [m(1, "chat", T), m(2, "chat", T + MIN)], unreadBefore: -1, now: T + MIN });
+		expect(rows[0]?.type).toBe("unread");
+	});
+
+	it("没有未读（不给起点）：一条都不插", () => {
+		const rows = buildRows({ messages: [m(1, "chat", T)], now: T });
+		expect(rows.some((row) => row.type === "unread")).toBe(false);
+	});
+
+	it("起点已经是最后一条：不插（差几条就空线，不如不画）", () => {
+		const rows = buildRows({ messages: [m(1, "chat", T), m(2, "chat", T + MIN)], unreadBefore: 2, now: T + MIN });
+		expect(rows.some((row) => row.type === "unread")).toBe(false);
+	});
+
+	it("系统留痕不算未读、也不当起点", () => {
+		const rows = buildRows({
+			messages: [m(1, "chat", T), m(2, "note", T + SEC), m(3, "chat", T + 2 * SEC)],
+			unreadBefore: 1,
+			now: T + 3 * SEC,
+		});
+		// 那条 note 不是 run 留痕，不画；未读只剩 seq 3 这一条。
+		const line = rows.find((row) => row.type === "unread");
+		expect(line?.type === "unread" ? line.count : undefined).toBe(1);
+	});
+});
