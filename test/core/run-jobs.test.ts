@@ -33,8 +33,31 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-	await rm(dir, { recursive: true, force: true });
+	// Windows 上刚杀掉的后台进程还攥着 cwd / 输出管道一小会儿，`rmdir` 这时会 `EBUSY`。
+	// 重试是等它松手，不是装作删掉了：`maxRetries` 用尽会照常抛出来（`force` 只忽略
+	// 「本来就不存在」，不吞 EBUSY）。
+	await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
+
+/**
+ * 等进程真的没了。
+ *
+ * 杀掉只是把信号递出去：`killGroup` 在 Windows 上还是异步 spawn 的 `taskkill`，返回时
+ * 目标进程照样活着。以前这里写死等 200ms —— 在 mac 上够宽，在 Windows 上窄到会翻车，
+ * 而且窗口一过就 EBUSY，红在 `afterEach` 的清理上，看不出真正原因。
+ */
+async function waitGone(pid: number): Promise<void> {
+	const deadline = Date.now() + 5000;
+	while (true) {
+		try {
+			process.kill(pid, 0);
+		} catch {
+			return;
+		}
+		if (Date.now() > deadline) throw new Error(`等了 5 秒进程 ${String(pid)} 还活着`);
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+}
 
 /** 等一个结果，超时就失败（后台回调是异步的，测试不能靠 sleep 猜）。 */
 function outcomeOf(start: (onDone: (outcome: RunOutcome) => Promise<void>) => Promise<unknown>): Promise<RunOutcome> {
@@ -107,8 +130,8 @@ describe("后台命令", () => {
 		const live = stale.find((item) => item.job.id === alive.id);
 		expect(live?.killed).toBe(true);
 		expect(record.pid).toBeGreaterThan(0);
-		// 杀掉之后进程真的不在了。
-		await new Promise((resolve) => setTimeout(resolve, 200));
+		// 杀掉之后进程真的不在了：等它退，别赌一个固定时长。
+		await waitGone(record.pid);
 		expect(() => process.kill(record.pid, 0)).toThrow();
 		expect((await readdir(dir)).filter((name) => name.endsWith(".json"))).toEqual([]);
 	});
