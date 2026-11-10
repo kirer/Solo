@@ -22,6 +22,20 @@ const BALL_H = 96;
 /** 拖过右缘多近算「贴边」。 */
 const DOCK_AT = 12;
 /**
+ * 气泡（小人头顶那一句）。老板 2026-11-11：面板全砍，话只从头顶冒。
+ *
+ * 三个数是调出来的，不是拍的：
+ * - `BUBBLE_GAP` 10：再小尾巴就压到头发上；
+ * - `BUBBLE_CHROME` 34：上下内边距 + 一行「名字」+ 尾巴留白，量高度时先扣掉这么多；
+ * - `BUBBLE_HOLD` 6000：念完还留 6 秒够看完，20 个字的长句也来得及。
+ */
+const BUBBLE_GAP = 10;
+const BUBBLE_CHROME = 34;
+const BUBBLE_MIN_W = 232;
+const BUBBLE_MAX_W = 320;
+const BUBBLE_HOLD = 6000;
+const BUBBLE_FADE = 420;
+/**
  * 球长在哪（`ui/app/src/main.tsx` 写在 `<html data-orb>` 上）：
  * - `inline`：浏览器，球浮在页面里（原来的样子）；
  * - `window`：桌面壳的独立透明窗，坐标固定，拖球 = 挪整扇窗；
@@ -258,7 +272,7 @@ const VOICE_IDS = [45, 46, 47, 48, 49, 50, 51, 52];
 
 /** 位置、贴边、朗读开关与音色记在本机：换个屏幕再打开，还是你上次的那一套。 */
 function readPrefs() {
-	const fallback = { right: 18, top: null, docked: false, speak: false, wake: false, sid: DEFAULT_SID, speed: 1 };
+	const fallback = { right: 18, top: null, docked: false, speak: false, wake: false, listen: false, sid: DEFAULT_SID, speed: 1 };
 	try {
 		const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(PREF_KEY);
 		if (raw === null) return fallback;
@@ -269,6 +283,8 @@ function readPrefs() {
 			docked: value?.docked === true,
 			speak: value?.speak === true,
 			wake: value?.wake === true,
+			// 常驻听默认关：麦克风一直开着是件要用户点头的事，第一次得他自己打开（开了会记住）。
+			listen: value?.listen === true,
 			sid: VOICE_IDS.includes(value?.sid) ? value.sid : DEFAULT_SID,
 			speed: Number.isFinite(value?.speed) ? clamp(value.speed, 0.7, 1.5) : 1,
 		};
@@ -348,7 +364,6 @@ export default {
 		.orb-mark .orb-mouth, .orb-mark .orb-pupils circle { stroke: var(--orb-ink); }
 		.orb-mark .orb-mouth[data-mouth="open4"] { stroke-width: 2.4; }
 		.orb-ball:active { cursor: grabbing; }
-		.orb[data-open="true"] .orb-ball { cursor: pointer; }
 		/* 贴边：只留一条边。悬停滑出来，松手不动它就还回去 —— 和 dsh 那颗球一个意思。 */
 		.orb[data-docked="true"] .orb-ball { transform: translateX(68px); }
 		.orb[data-docked="true"] .orb-ball:hover { transform: none; }
@@ -408,120 +423,82 @@ export default {
 			font-variant-numeric: tabular-nums; text-align: center;
 		}
 
-		.orb-panel {
-			pointer-events: auto;
+		/* ── 气泡：小人头顶唯一的一张嘴 ─────────────────────────────
+		   老板 2026-11-11 拍板：面板全砍，话只从头顶冒。所以这里没有列表、没有输入框，
+		   一次只挂一句 —— 上一条被新的顶掉，头顶不是消息列表。
+		   定位（left/top/width）由 JS 算好写进 style，
+		   尾巴的水平位置走 --bubble-tail-x，始终对着小人中心。 */
+		.orb-bubble {
+			pointer-events: none;
 			position: absolute;
+			box-sizing: border-box;
 			display: flex; flex-direction: column;
-			width: min(320px, calc(100vw - 84px));
-			max-height: min(480px, calc(100dvh - 32px));
+			padding: 7px 11px 8px;
 			background: var(--ground);
 			border: 0.5px solid var(--line);
-			border-radius: 16px;
-			box-shadow: var(--shadow, 0 18px 48px rgb(0 0 0 / 0.22));
-			overflow: hidden;
-			animation: orb-in 140ms ease;
+			border-radius: 13px;
+			box-shadow: var(--shadow, 0 14px 34px rgb(0 0 0 / 0.2));
+			/* 出现在哪一侧由 JS 说：尾巴在气泡顶边（气泡在头上）还是底边（气泡在脚下）。 */
+			animation: orb-bubble-in 150ms ease;
+			will-change: opacity;
 		}
-		@keyframes orb-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
-		@media (prefers-reduced-motion: reduce) {
-			.orb-ball, .orb-panel, .orb-ring, .orb-icon[data-rec="true"],
-			.orb-mark, .orb-mark * { transition: none; animation: none; }
+		@keyframes orb-bubble-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+		/* 淡出：只掉透明度，位置不动，读到一半的文字别跳。 */
+		.orb-bubble[data-fading="true"] { opacity: 0; transition: opacity 420ms ease; }
+		/* 尾巴：一个转了 45° 的小方块，正好让边框那条线接上气泡。 */
+		.orb-bubble::after {
+			content: "";
+			position: absolute;
+			left: var(--bubble-tail-x, 50%);
+			width: 9px; height: 9px;
+			background: var(--ground);
+			border: 0.5px solid var(--line);
+			transform: translateX(-50%) rotate(45deg);
+			border-radius: 1.5px;
 		}
-
-		.orb-head {
-			display: flex; flex: none; align-items: center; gap: 8px;
-			padding: 10px 12px; border-bottom: 0.5px solid var(--rule);
+		/* 气泡在小人上边：尾巴挂气泡底边，只留左和下两条边（盖住气泡那一边的框线）。 */
+		.orb-bubble[data-side="above"]::after { bottom: -5px; border-left: 0; border-top: 0; }
+		/* 气泡在小人下边：尾巴挂气泡顶边。 */
+		.orb-bubble[data-side="below"]::after { top: -5px; border-right: 0; border-bottom: 0; }
+		.orb-bubble-who {
+			flex: none;
+			font-size: 10px; line-height: 13px; font-weight: 600;
+			color: var(--ink-3); letter-spacing: .02em;
+			margin-bottom: 1px;
 		}
-		/* 面板抬头的小标识：主题色跟着纸走（和助理头像同一份），干活时一圈微光。 */
-		.orb-face { flex: none; display: grid; place-items: center; width: 22px; height: 22px; }
-		.orb-face svg { display: block; }
-		.orb-face .orb-eye { animation: none; }
-		.orb-face[data-busy="true"] { filter: drop-shadow(0 0 5px var(--accent)); }
-		.orb-who { display: flex; flex-direction: column; min-width: 0; }
-		.orb-who b { font-size: 12.5px; line-height: 17px; font-weight: 600; color: var(--ink); }
-		.orb-who span { font-size: 11px; line-height: 15px; color: var(--ink-3); }
-		.orb-grow { flex: 1 1 auto; }
-		.orb-ghost {
-			flex: none; height: 26px; padding: 0 9px;
-			border: 0; border-radius: 8px; background: transparent;
-			color: var(--ink-3); font: inherit; font-size: 11.5px; cursor: pointer;
-		}
-		.orb-ghost:hover { background: var(--hover); color: var(--ink); }
-
-		.orb-list {
-			flex: 1 1 auto; min-height: 60px; overflow: auto;
-			display: flex; flex-direction: column; gap: 10px;
-			padding: 10px 12px;
-		}
-		.orb-msg { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-		.orb-msg[data-me="true"] { align-items: flex-end; }
-		.orb-from { font-size: 10.5px; line-height: 14px; color: var(--ink-3); }
-		.orb-text {
-			margin: 0; max-width: 100%; max-height: 132px; overflow: auto;
-			padding: 6px 9px; border-radius: 10px;
-			background: var(--field); border: 0.5px solid var(--rule);
-			color: var(--ink-2); font-size: 12.5px; line-height: 19px;
+		.orb-bubble-who[data-me="true"] { color: var(--accent); }
+		/* 正文：**压矮时自己滚，绝不截字**（老板：要能看全）。 */
+		.orb-bubble .text {
+			flex: 0 1 auto; min-height: 0;
+			overflow: auto; overscroll-behavior: contain;
+			margin: 0;
+			color: var(--ink); font-size: 12.5px; line-height: 18.5px;
 			white-space: pre-wrap; word-break: break-word;
 		}
-		.orb-msg[data-me="true"] .orb-text { background: var(--accent-dim); border-color: transparent; color: var(--ink); }
-		.orb-empty { margin: auto; padding: 18px; color: var(--ink-3); font-size: 12px; line-height: 19px; text-align: center; }
-		.orb-error { margin: 0; padding: 0 12px 8px; color: var(--danger); font-size: 11.5px; line-height: 16px; }
-		.orb-model {
-			display: flex; align-items: center; gap: 8px;
-			margin: 0 12px 8px; padding: 7px 9px;
-			background: var(--hover); border-radius: 9px;
-			color: var(--ink-2); font-size: 11.5px; line-height: 16px;
+		.orb-bubble .text::-webkit-scrollbar { width: 4px; }
+		.orb-bubble .text::-webkit-scrollbar-thumb { background: var(--control); border-radius: 2px; }
+		/* 等它开口的那一小段：三个点，够看，不喊。 */
+		.orb-bubble-wait { display: flex; align-items: center; gap: 3px; height: 18.5px; }
+		.orb-bubble-wait i {
+			width: 4px; height: 4px; border-radius: 50%;
+			background: var(--ink-3);
+			animation: orb-wait 1.15s ease-in-out infinite;
 		}
-		.orb-model span { flex: 1; min-width: 0; }
-		.orb-model button {
-			flex: none; padding: 3px 9px;
-			border: 0; border-radius: 7px; background: var(--accent); color: #fff;
-			font: inherit; font-size: 11.5px; cursor: pointer;
-		}
+		.orb-bubble-wait i:nth-child(2) { animation-delay: .16s; }
+		.orb-bubble-wait i:nth-child(3) { animation-delay: .32s; }
+		@keyframes orb-wait { 0%, 100% { opacity: .28; transform: none; } 40% { opacity: 1; transform: translateY(-1.5px); } }
+		/* 「没念出来」挂在小人身上，气泡里只说「没听清 / 没发出去」这类自己的错。 */
+		.orb-bubble[data-kind="error"] { border-color: var(--danger, #c0503c); }
+		.orb-bubble[data-kind="error"] .text { color: var(--danger, #c0503c); }
 
-		.orb-form {
-			display: flex; flex: none; align-items: flex-end; gap: 8px;
-			padding: 9px 10px; border-top: 0.5px solid var(--rule);
+		/* 在听：小人身边一圈随音量起伏的光，代替「按住麦克风」那一步的可视反馈。 */
+		.orb-listen {
+			position: absolute; inset: -6px;
+			border-radius: 18px;
+			pointer-events: none;
+			box-shadow: 0 0 0 2px var(--accent-dim);
+			transition: box-shadow 140ms linear, opacity 200ms ease;
 		}
-		.orb-input {
-			flex: 1 1 auto; min-width: 0;
-			min-height: 32px; max-height: 92px; resize: none;
-			padding: 7px 9px; box-sizing: border-box;
-			border: 0.5px solid var(--control); border-radius: 10px;
-			background: var(--field); color: var(--ink);
-			font: inherit; font-size: 12.5px; line-height: 18px;
-		}
-		.orb-input:focus { outline: none; border-color: var(--accent); }
-		.orb-send {
-			flex: none; height: 32px; padding: 0 12px;
-			border: 0; border-radius: 9px;
-			background: var(--accent-solid); color: var(--on-accent);
-			font: inherit; font-size: 12.5px; cursor: pointer;
-		}
-		.orb-send:disabled { opacity: 0.45; cursor: default; }
-		/* 语音：麦克风与朗读都是面板里的小方块，和输入框同一行高。 */
-		.orb-icon {
-			display: grid; place-items: center; flex: none;
-			width: 32px; height: 32px; padding: 0;
-			border: 0.5px solid var(--control); border-radius: 9px;
-			background: var(--field); color: var(--ink-3);
-			cursor: pointer; touch-action: manipulation;
-		}
-		.orb-icon:hover { color: var(--ink); }
-		.orb-icon:disabled { opacity: 0.45; cursor: default; }
-		.orb-icon[data-rec="true"] {
-			color: var(--on-accent); background: var(--accent-solid); border-color: transparent;
-			animation: orb-rec 1.2s ease-in-out infinite;
-		}
-		@keyframes orb-rec { 50% { box-shadow: 0 0 0 4px var(--accent-dim); } }
-		.orb-sound { display: grid; place-items: center; width: 26px; padding: 0; }
-		.orb-sound[aria-pressed="true"] { color: var(--accent); }
-		.orb-voice {
-			display: flex; flex: none; align-items: center; gap: 6px;
-			margin: 0; padding: 7px 12px 0;
-			color: var(--ink-3); font-size: 11px; line-height: 15px;
-		}
-		.orb-voice[data-live="true"] { color: var(--accent); }
-		.orb-voice b { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 		.orb-menu {
 			pointer-events: auto;
@@ -815,17 +792,16 @@ export default {
 				WINDOW_MODE ? 20 : (prefs.top ?? Math.round((typeof window === "undefined" ? 640 : window.innerHeight) * 0.36)),
 			);
 			const [docked, setDocked] = useState(WINDOW_MODE ? false : prefs.docked);
-			const [open, setOpen] = useState(false);
-			const [pinned, setPinned] = useState(false);
 			const [menu, setMenu] = useState(false);
-			const [draft, setDraft] = useState("");
 			const [detail, setDetail] = useState(null);
-			const [error, setError] = useState("");
+			/** 最近一条要告诉用户的错。**不再往面板里写**：没有面板了，它冒在头顶。 */
+			const [error, setErrorState] = useState("");
 			const [sending, setSending] = useState(false);
 			const [speakOn, setSpeakOn] = useState(prefs.speak === true);
 			const [recording, setRecording] = useState(false);
 			const [elapsed, setElapsed] = useState(0);
 			const [transcribing, setTranscribing] = useState(false);
+			/** 和 `transcribing` 同步的 ref：`onaudioprocess` 里读 state 会一直是旧值（闭包），必须走 ref。 */
 			/** 本地语音模型的状态（`GET /api/orb/voice`）：没下就显示一行下载。 */
 			const [voice, setVoice] = useState(null);
 			/**
@@ -838,12 +814,31 @@ export default {
 			 */
 			const [speechProblem, setSpeechProblem] = useState("");
 
+			/**
+			 * 头顶那一句。`kind` 三种：`it` = 它说的，`me` = 我说的，`error` = 出错要说一句。
+			 * 一次只挂一句：新的直接顶掉旧的，不留历史（头顶不是消息列表）。
+			 */
+			const [bubble, setBubble] = useState(null);
+			/** 淡出阶段：只掉透明度，位置不动，别让读到一半的字跳走。 */
+			const [bubbleFading, setBubbleFading] = useState(false);
+			/** 一次性「说话」事件：转写回来先冒我说的，等它回话再冒它的。 */
+			const [saidAt, setSaidAt] = useState(0);
+			const bubbleRef = useRef(null);
+			/** 气泡自己的流水号（DOM 上的 `id` 是字符串，不能拿来数数）。 */
+			const bubbleSeq = useRef(1);
+			/**
+			 * 冒泡的「信箱」：上面那条挑消息的 effect 跑在渲染中间，这儿只放进去，
+			 * 真正冒出来交给下面那个 effect —— 在 effect 里 setState 才不会打架。
+			 */
+			const bubblePendingRef = useRef(null);
+			const bubbleTimer = useRef(0);
+			const transcribingRef = useRef(false);
+
 			const drag = useRef(null);
 			const skipClick = useRef(false);
 			const hoverTimer = useRef(0);
 			/** 离开球 / 面板后晚一点再关命中，别在两者之间挪动时漏掉点击。 */
 			const passTimer = useRef(0);
-			const listRef = useRef(null);
 			const menuRef = useRef(null);
 			const recorderRef = useRef(null);
 			const chunksRef = useRef([]);
@@ -871,9 +866,6 @@ export default {
 			const synthesizingRef = useRef(false);
 			const pendingRef = useRef(null);
 			const voicePollRef = useRef(0);
-			/** 面板开着没有：只决定「报错往哪儿写」，不再决定「念不念」。 */
-			const openRef = useRef(false);
-
 			const fetchVoice = async () => {
 				try {
 					const response = await fetch("/api/orb/voice");
@@ -900,15 +892,15 @@ export default {
 			};
 
 			/**
-			 * 念不出来就说出来：面板开着写进面板，收着就攒着，下次打开补在显眼处。
+			 * 出问题就说一句：现在没有面板，唯一的地方就是头顶那个气泡（`kind: "error"`）。
 			 * 以前这些分支全是 `return` —— 用户只看到「开关是开的」，别的什么都没有。
 			 */
 			const reportSpeech = (why) => {
 				const line = `没念出来：${why}`;
 				speechProblemRef.current = line;
-				// 不管面板开没开都写到球上（见 `speechProblem` 那条注释）；开着时另外写进面板。
+				// 先说一句：哑了这件事必须当场看见，不能等人来打开什么东西才发现。
 				setSpeechProblem(line);
-				if (openRef.current) setError(line);
+				sayProblem(line);
 				console.warn(`[${SLUG}] ${line}`);
 			};
 
@@ -1122,8 +1114,8 @@ export default {
 							body: JSON.stringify({ text: piece, speed: prefs.speed, sid: prefs.sid }),
 						});
 						const data = await response.json().catch(() => ({}));
-						// 面板收着也照样念：以前这里 `if (!openRef.current) return`，
-						// 合成回来时面板刚收起，这一片就静默丢了 —— 老板听到的「开关开着没声音」。
+						// 合成回来的这一片**无条件**播：以前这里有一句 `if (!openRef.current) return`，
+						// 合成慢一点、面板刚收起，这一片就静默丢了 —— 老板听到的「开关开着没声音」。
 						if (typeof data?.wav === "string") {
 							queueRef.current.push(data.wav);
 							if (!speakingRef.current) playNext();
@@ -1161,8 +1153,6 @@ export default {
 				}, 1000);
 			};
 
-			openRef.current = open;
-
 			// 正在看的这条私聊：直接吃 store（SSE 在推）；别的频道才用自己拉的那份。
 			const shown = currentId === dmId ? liveDetail : detail;
 			const messages = (shown?.messages ?? []).filter((message) => message.kind === "chat").slice(-14);
@@ -1173,61 +1163,15 @@ export default {
 			// 「在听」这一版还到不了 —— 唤醒还是「按住才听」，等常驻听落地才接得上。
 			const look = speakingRef.current ? "speak" : busy ? "think" : "idle";
 
-			// 面板跟着球走，整块留在窗口里，**而且绝不压在小人身上**。
-			// 横位放不下就换方向：挪到小人的上方或下方，横位不再跟球抢。
-			// 跟窗宽无关：独立窗、手机网页、外接屏走同一套判断。
+			// 右键菜单 148 宽：右边放得下就在右边，否则换到左边 / 上下，**不压小人**。
+			// （气泡的位置不在这里算：它要量真实高度，见 `layoutBubble()`。）
 			const viewport =
 				typeof window === "undefined" ? { width: 375, height: 812 } : { width: window.innerWidth, height: window.innerHeight };
-			const panelHeight = Math.min(480, viewport.height - 32);
 			const orbLeft = viewport.width - right - BALL;
 			const orbTop = top;
-			/** 面板宽度：空间够就是 320（抬头那行要放得下头像和名字）；窄到 375 也不能低于 232。 */
-			const panelWidth = Math.min(320, Math.max(232, viewport.width - 96));
 			const gap = 8;
 			const edge = 8;
 
-			/** 面板落在哪（相对球）。优先级：右边 → 左边 → 上方 → 下方；全放不下才压矮。 */
-			const panelAt = (() => {
-				const rightOfOrb = orbLeft + BALL + gap;
-				const leftOfOrb = orbLeft - gap - panelWidth;
-				const alignedTop = clamp(orbTop, edge, Math.max(edge, viewport.height - panelHeight - edge));
-				// 横位要验矩形而不是只验宽度：顶对齐球后被窗口底部夹上来时，宽度算得下也会压到人。
-				const fitsBeside = (left) => {
-					const panelY = orbTop + (alignedTop - orbTop);
-					const panelX = orbLeft + (left - orbLeft);
-					const overlapX = Math.min(panelX + panelWidth, orbLeft + BALL) - Math.max(panelX, orbLeft);
-					const overlapY = Math.min(panelY + panelHeight, orbTop + BALL_H) - Math.max(panelY, orbTop);
-					return overlapX <= 0 || overlapY <= 0;
-				};
-				if (rightOfOrb + panelWidth <= viewport.width - edge && fitsBeside(rightOfOrb)) {
-					return { left: rightOfOrb - orbLeft, top: alignedTop - orbTop, height: panelHeight };
-				}
-				if (leftOfOrb >= edge && fitsBeside(leftOfOrb)) {
-					return { left: leftOfOrb - orbLeft, top: alignedTop - orbTop, height: panelHeight };
-				}
-				// 竖位：横向贴着球但收进窗口（抬头不会被切掉），纵向在小人上面或下面。
-				const lineLeft = clamp(orbLeft, edge, Math.max(edge, viewport.width - panelWidth - edge));
-				const above = orbTop - gap - panelHeight;
-				if (above >= edge) return { left: lineLeft - orbLeft, top: above - orbTop, height: panelHeight };
-				const below = orbTop + BALL_H + gap;
-				if (below + panelHeight <= viewport.height - edge) {
-					return { left: lineLeft - orbLeft, top: below - orbTop, height: panelHeight };
-				}
-				// 全放不下：挑上下里更大的那一块，面板自己变矮（极端尺寸才走到）。
-				const roomAbove = orbTop - gap - edge;
-				const roomBelow = viewport.height - edge - (orbTop + BALL_H + gap);
-				const room = Math.min(panelHeight, Math.max(120, Math.max(roomAbove, roomBelow)));
-				return roomAbove >= roomBelow
-					? { left: lineLeft - orbLeft, top: edge - orbTop, height: room }
-					: { left: lineLeft - orbLeft, top: orbTop + BALL_H + gap - orbTop, height: room };
-			})();
-
-			const panelPlace = {
-				left: `${String(panelAt.left)}px`,
-				top: `${String(panelAt.top)}px`,
-				maxHeight: `${String(panelAt.height)}px`,
-			};
-			/** 右键菜单 148 宽：右边放得下就在右边，否则跟着面板换到左边 / 上下，不压小人。 */
 			const menuPlace = (() => {
 				const besideOrb = orbLeft + BALL + gap + 148 <= viewport.width - edge;
 				if (besideOrb) {
@@ -1269,20 +1213,28 @@ export default {
 				}, 140);
 			};
 
+			/**
+			 * 收掉能收的：菜单、正在按的那段录音。
+			 *
+			 * **正在念的不掐**（老板 2026-11-09 定的：收着也要念完），
+			 * 气泡也不掐 —— 它是唯一的出口，提前收掉等于把话咽了。
+			 */
 			const closeAll = () => {
 				cancelHover();
-				// 收起面板：正在录的丢掉（麦克风不能让它在后台开着），
-				// 但**正在念的不掐**——面板收起也要念完（老板 2026-11-09 定的）。
 				const recorder = recorderRef.current;
 				if (recorder !== null && recorder.state !== "inactive") {
 					cancelledRef.current = true;
 					recorder.stop();
 				}
-				setOpen(false);
-				setPinned(false);
 				setMenu(false);
 			};
 
+			// **这个 effect 是头顶气泡的唯一数据源。** 主界面（inline）那颗球和单独窗口
+			// （`?orb=1`）那颗球走的是同一条：谁「新」由 `spokenRef` 里的 seq 判，不靠
+			// store 推不推。以前冒泡写在朗读那段的末尾，而网页版不后台念、在中间就
+			// `return` 了 —— 于是主界面收到回复一句气泡都不冒，单独窗口却正常。
+			// 改这块先记住：**看和听不能共用一条早退**。
+			//
 			// 补私聊消息。**不管 `currentId` 是不是这条私聊都要拉**（老板 2026-11-10）：
 			// 原先这里写着「正在看私聊时 store 已经在推，不用再拉」，可悬浮窗是独立的一扇窗，
 			// 它自己的 `store.detail` 是空的，主窗口那份不会流过来——结果是 `currentId` 正好
@@ -1308,20 +1260,6 @@ export default {
 					clearInterval(timer);
 				};
 			}, [dmId, currentId]);
-
-			// 新消息来了滚到底 —— 和聊天区同一条规矩：打开着才追。
-			useEffect(() => {
-				const node = listRef.current;
-				if (open && node !== null) node.scrollTop = node.scrollHeight;
-			}, [open, messages.length, dmId]);
-
-			// 面板收起也接着念（老板 2026-11-09：收着也要念）。念不出来时攒在
-			// `speechProblemRef` 里，下次打开面板补一句——收着的时候没人看得见，但话不能丢。
-			useEffect(() => {
-				if (!open) return;
-				const problem = speechProblemRef.current;
-				if (problem !== "") setError(problem);
-			}, [open]);
 
 			// 语音模型在不在：装一次问一次，没下的话面板里给一行下载。
 			useEffect(() => {
@@ -1375,8 +1313,21 @@ export default {
 				const fresh = tracks.filter((track) => !spokenRef.current.has(seenKey(track)));
 				for (const track of tracks) spokenRef.current.add(seenKey(track));
 				const chats = tracks.map((track) => track.message);
-				// 只看开关，不看面板开没开：以前这里是 `if (!speakOn || !open) return`，
-				// 面板收着（默认状态）就等于「朗读开着却一句都不念」，而且一点痕迹都不留。
+				// 头顶只挂最后一句：几条一起到，看完的那一句才有用（上一条被顶掉是故意的）。
+				//
+				// **这一行必须在下面那个 `return` 之前**。以前它写在最后，可网页版（inline）
+				// 在中间就 `return` 了（那里不后台念）—— 于是「主界面那颗球收到回复不冒泡」，
+				// 而单独窗口那颗会冒。看到的和听到的是两件事，不能共用一条早退。
+				const lastFresh = fresh[fresh.length - 1];
+				if (lastFresh !== undefined) {
+					bubblePendingRef.current = {
+						text: lastFresh.message.text,
+						kind: "it",
+						who: lastFresh.message.fromLabel ?? undefined,
+					};
+				}
+
+				// 只看朗读开关。以前这里还写着 `&& open`（面板开着才念），面板一没这个条件就废了。
 				// 网页版（inline）不后台念：那一屏可能根本没在看，出声会打扰；桌面独立窗才念。
 				if (!speakOn || ORB_MODE === "inline") return;
 				// 这里**不是**并发起一串合成：`speakText` 只往槽位里塞一句，真正的合成由
@@ -1388,7 +1339,7 @@ export default {
 				// `plainText` 把它 `String()` 成 "undefined"，后端照合成，老板就听见念「undefined」。
 				for (const track of fresh) speakText(track.message.text);
 				// eslint-disable-next-line react-hooks/exhaustive-deps
-			}, [shown, speakOn, open, assistant, detail, liveDetail]);
+			}, [shown, speakOn, assistant, detail, liveDetail]);
 
 			// 卸载：录音、麦克风、朗读一起收掉。
 			useEffect(
@@ -1409,24 +1360,24 @@ export default {
 				[],
 			);
 
-			// Esc 收起；菜单开着时先收菜单。
+			// Esc：有菜单收菜单，有气泡收气泡。没有面板可收了。
 			useEffect(() => {
-				if (!open && !menu) return undefined;
+				if (!menu && bubble === null) return undefined;
 				const onKey = (event) => {
 					if (event.key !== "Escape") return;
 					const recorder = recorderRef.current;
 					if (recorder !== null && recorder.state !== "inactive") {
-						// 录音中按 Esc = 取消这段，不关面板。
+						// 录音中按 Esc = 取消这段，不动别的。
 						cancelledRef.current = true;
 						recorder.stop();
 						return;
 					}
 					if (menu) setMenu(false);
-					else closeAll();
+					else bubbleHide();
 				};
 				document.addEventListener("keydown", onKey);
 				return () => document.removeEventListener("keydown", onKey);
-			}, [open, menu]);
+			}, [menu, bubble?.id]);
 
 			// 点别处收菜单。
 			useEffect(() => {
@@ -1460,22 +1411,17 @@ export default {
 				return () => window.removeEventListener("resize", onResize);
 			}, []);
 
+			// 悬停**不再展开任何东西**：没有面板可展开了。悬停只做两件小事 ——
+			// 独立窗里把命中接上（否则点不到），贴着边时滑出来。
 			const enter = () => {
 				cancelHover();
 				holdInteractive(true);
-				if (docked || drag.current !== null) return;
-				hoverTimer.current = window.setTimeout(() => setOpen(true), 160);
 			};
 
 			const leave = () => {
 				cancelHover();
 				// 拖着的时候别把命中关掉，不然拖到一半窗口就点不动了。
 				if (drag.current === null) holdInteractive(false);
-				if (pinned || drag.current !== null) return;
-				hoverTimer.current = window.setTimeout(() => {
-					setOpen(false);
-					setMenu(false);
-				}, 320);
 			};
 
 			const onPointerDown = (event) => {
@@ -1537,48 +1483,36 @@ export default {
 				if (state.window === true) {
 					// 窗口位置由壳记住；球在窗口里不动，也没有贴边。
 					bridge()?.dragEnd();
-					setOpen(false);
-					setPinned(false);
 					return;
 				}
 				const nextDocked = state.lastRight < DOCK_AT;
 				setDocked(nextDocked);
 				if (nextDocked) setRight(0);
 				savePrefs({ right: nextDocked ? 0 : state.lastRight, top: state.lastTop, docked: nextDocked });
-				setOpen(false);
-				setPinned(false);
 			};
 
+			// 点一下 = 打开那个小菜单（直接说话 / 朗读 / 贴边 / 回默认位置）。
+			//
+			// 以前点一下是「钉住面板」——面板没了，这个动作也就没意义了。说一句话不需要点，
+			// 点这里是为了调开关和挪位置。
 			const onClick = () => {
 				if (skipClick.current) {
 					skipClick.current = false;
 					return;
 				}
-				// 刚点开时别让上一轮悬停留下的「移开就收」把它合上。
 				cancelHover();
 				if (docked) {
-					// 贴着边点一下 = 把它请出来，并钉住。
+					// 贴着边点一下 = 先把它请出来，再开菜单。
 					setDocked(false);
 					savePrefs({ right: 18, top, docked: false });
 					setRight(18);
-					setOpen(true);
-					setPinned(true);
-					return;
 				}
-				if (pinned) {
-					setPinned(false);
-					setOpen(false);
-					return;
-				}
-				setPinned(true);
-				setOpen(true);
+				setMenu((value) => !value);
 			};
 
 			const onContextMenu = (event) => {
 				event.preventDefault();
 				cancelHover();
-				setOpen(true);
-				setPinned(true);
 				setMenu(true);
 			};
 
@@ -1588,10 +1522,6 @@ export default {
 				if (next) setRight(0);
 				savePrefs({ right: next ? 0 : right, top, docked: next });
 				setMenu(false);
-				if (next) {
-					setOpen(false);
-					setPinned(false);
-				}
 			};
 
 			const recenter = () => {
@@ -1616,24 +1546,20 @@ export default {
 				const value = text.trim();
 				if (value === "" || dmId === null) return;
 				setSending(true);
-				setError("");
+				sayProblem("");
+				// 我说的话也冒在头顶：不冒，等它回话那段就只剩一片空白，看不出「听见了没有」。
+				bubbleShow({ text: value, kind: "me" });
 				try {
 					await api.sendMessage(dmId, { text: value });
-					setDraft("");
 					if (currentId !== dmId) {
 						const next = await api.getChannel(dmId, 20).catch(() => null);
 						if (next !== null) setDetail(next);
 					}
 				} catch (error_) {
-					setError(`没发出去：${error_ instanceof Error ? error_.message : String(error_)}`);
+					sayProblem(`没发出去：${error_ instanceof Error ? error_.message : String(error_)}`);
 				} finally {
 					setSending(false);
 				}
-			};
-
-			const send = async () => {
-				if (sending) return;
-				await sendText(draft);
 			};
 
 			const finishRecording = async (sampleRate) => {
@@ -1650,7 +1576,7 @@ export default {
 				let total = 0;
 				for (const chunk of chunks) total += chunk.length;
 				if (total < TARGET_RATE * 0.3) {
-					setError("太短了，没听清");
+					sayProblem("太短了，没听清");
 					return;
 				}
 				const merged = new Float32Array(total);
@@ -1661,8 +1587,9 @@ export default {
 				}
 				const pcm = at16k(merged, sampleRate);
 				const wav = wavBytes(pcm, TARGET_RATE);
+				sayProblem("");
+				transcribingRef.current = true;
 				setTranscribing(true);
-				setError("");
 				try {
 					// 前端也掐一道：后端 30 秒硬超时，这里 45 秒兜底（转写 + 上传都在里面）。
 					const response = await fetch("/api/orb/transcribe", {
@@ -1678,18 +1605,19 @@ export default {
 					const data = await response.json().catch(() => ({}));
 					if (!response.ok) throw new Error(data?.error ?? `转写接口 ${String(response.status)}`);
 					if (typeof data?.error === "string") {
-						setError(data.error);
+						sayProblem(data.error);
 						return;
 					}
 					const text = typeof data?.text === "string" ? data.text.trim() : "";
 					if (text === "") {
-						setError("没听清，再说一次？");
+						sayProblem("没听清，再说一次？");
 						return;
 					}
 					await sendText(text);
 				} catch (error_) {
-					setError(`没转成：${error_ instanceof Error ? error_.message : String(error_)}`);
+					sayProblem(`没转成：${error_ instanceof Error ? error_.message : String(error_)}`);
 				} finally {
+					transcribingRef.current = false;
 					setTranscribing(false);
 				}
 			};
@@ -1702,15 +1630,15 @@ export default {
 
 			const startRecording = async () => {
 				if (dmId === null) {
-					setError("助理私聊还没建好");
+					sayProblem("助理私聊还没建好");
 					return;
 				}
 				if (recording || transcribing) return;
 				if (typeof navigator === "undefined" || navigator.mediaDevices?.getUserMedia === undefined) {
-					setError("这个环境不支持录音");
+					sayProblem("这个环境不支持录音");
 					return;
 				}
-				setError("");
+				sayProblem("");
 				try {
 					const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 					streamRef.current = stream;
@@ -1773,7 +1701,7 @@ export default {
 				} catch (error_) {
 					cleanupStream();
 					const name = error_?.name;
-					setError(
+					sayProblem(
 						name === "NotAllowedError" || name === "SecurityError"
 							? "没拿到麦克风权限：到系统设置里允许 Solo 使用麦克风"
 							: name === "NotFoundError"
@@ -1788,6 +1716,218 @@ export default {
 				setSpeakOn(next);
 				savePrefs({ speak: next });
 				if (!next) stopAudio();
+			};
+
+			// ── 常驻听：不用点，开口就说 ───────────────────────────────
+			//
+			// 老板 2026-11-11 要的就这一句：「不用点就能说话，说完冒气泡」。
+			// 所以麦克风一直开着，用能量（RMS）判有没有人在说：
+			//
+			// 1. 一直往 `ringRef` 里塞 100ms 一块的 PCM，只留最近 1.5 秒
+			//    —— 开头那半个字在「判定为说话」之前就已经发生过了，没有环形缓冲就会切掉它；
+			// 2. 连续 3 块超过 `VAD_ON` 算开口，往后接；安静 6 块（约 800ms）算说完；
+			// 3. 说完把这一段（含前面那 1.5 秒）拼成 WAV 走 `/api/orb/transcribe`，转写出来就发；
+			// 4. **它自己在念的时候整段丢掉**（`speakingRef` 一真就直接丢输入）——
+			//    上面那套 AEC 只服务唤醒词那条路，常驻听这里用最笨也最稳的办法：不听自己。
+			//
+			// 判据是能量，不是模型：说话大声、敲键盘、风扇都会误触。所以门槛定得高
+			// （见 `VAD_ON`），而且少于 0.45 秒的「嗯」直接丢，不打扰。
+			const VAD_ON = 0.045;
+			const VAD_OFF = 0.022;
+			const VAD_BLOCK = 100;
+			const VAD_OPEN_BLOCKS = 3;
+			const VAD_CLOSE_BLOCKS = 6;
+			const VAD_PREROLL = 15;
+			const VAD_MIN_MS = 450;
+			const VAD_MAX_MS = 15_000;
+			const [listenOn, setListenOn] = useState(prefs.listen === true);
+			/** 常驻听此刻的状态，给小人身边那圈光用。 */
+			const [listening, setListening] = useState(false);
+			const [sayLevel, setSayLevel] = useState(0);
+			const ringRef = useRef([]);
+			const listenRef = useRef(null);
+			const listenBusyRef = useRef(false);
+			const listenFailRef = useRef(0);
+			const levelRef = useRef(0);
+			const vadRef = useRef({ speaking: false, loud: 0, quiet: 0, kept: 0, blocks: 0 });
+
+			const stopListen = () => {
+				const state = listenRef.current;
+				listenRef.current = null;
+				setListening(false);
+				setSayLevel(0);
+				ringRef.current = [];
+				vadRef.current = { speaking: false, loud: 0, quiet: 0, kept: 0, blocks: 0 };
+				if (state === null) return;
+				try {
+					state.node.onaudioprocess = null;
+					state.node.disconnect();
+					state.source.disconnect();
+					state.mute.disconnect();
+				} catch {
+					// 已经断了就算了。
+				}
+				for (const track of state.stream.getTracks()) track.stop();
+				void state.ctx.close().catch(() => undefined);
+			};
+
+			/** 一段 PCM 交给转写，转写出来就发。和按麦克风那条路共用 `finishRecording` 的逻辑。 */
+			const sayTranscribe = async (samples, rate) => {
+				if (dmId === null) return;
+				const pcm = at16k(samples, rate);
+				const wav = wavBytes(pcm, TARGET_RATE);
+				// `transcribing` / `transcribingRef` 由**调用方**开合：两条录音路径的收尾时机
+				// 不一样（按键那条还要停录音机），放这里会在外面还没收完时就解锁。
+				sayProblem("");
+				try {
+					const response = await fetch("/api/orb/transcribe", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							audio: bytesToBase64(wav),
+							mime: "audio/wav",
+							lang: navigator.language || "zh-CN",
+						}),
+						signal: AbortSignal.timeout(45_000),
+					});
+					const data = await response.json().catch(() => ({}));
+					if (!response.ok) throw new Error(data?.error ?? `转写接口 ${String(response.status)}`);
+					if (typeof data?.error === "string") {
+						sayProblem(data.error);
+						return;
+					}
+					const text = typeof data?.text === "string" ? data.text.trim() : "";
+					// 转写出来是空的就不用报错：常驻听会一直有说话声、咳嗽声，每次都弹一句太吵。
+					if (text === "") return;
+					// 冒泡交给 `sendText`：那里一处冒，两条录音路径才长得一样。
+					await sendText(text);
+				} catch (error_) {
+					sayProblem(`没转成：${error_ instanceof Error ? error_.message : String(error_)}`);
+				}
+			};
+
+			const startListen = async () => {
+				if (listenRef.current !== null || listenBusyRef.current) return;
+				if (dmId === null) return;
+				// 失败也接着试，但别每拍都去撞权限弹窗。
+				if (Date.now() - listenFailRef.current < 8_000) return;
+				listenBusyRef.current = true;
+				try {
+					let stream;
+					try {
+						stream = await navigator.mediaDevices.getUserMedia({
+							audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+						});
+					} catch (error_) {
+						listenFailRef.current = Date.now();
+						const name = error_?.name;
+						sayProblem(
+							name === "NotAllowedError" || name === "SecurityError"
+								? "没拿到麦克风权限：就不能不点直接说了"
+								: name === "NotFoundError"
+									? "没找到麦克风"
+									: "麦克风打不开",
+						);
+						return;
+					}
+					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
+					const ctx = new AudioCtx({ sampleRate: TARGET_RATE });
+					await ctx.resume().catch(() => undefined);
+					if (ctx.state !== "running") {
+						for (const track of stream.getTracks()) track.stop();
+						void ctx.close().catch(() => undefined);
+						listenFailRef.current = Date.now();
+						sayProblem("浏览器没让后台听麦克风");
+						return;
+					}
+					const source = ctx.createMediaStreamSource(stream);
+					const node = ctx.createScriptProcessor(4096, 1, 1);
+					const mute = ctx.createGain();
+					mute.gain.value = 0;
+					const state = { stream, ctx, node, source, mute, rate: ctx.sampleRate };
+					const block = Math.round((state.rate * VAD_BLOCK) / 1000);
+					node.onaudioprocess = (event) => {
+						if (listenRef.current !== state) return;
+						const input = new Float32Array(event.inputBuffer.getChannelData(0));
+						// 它在念：整段丢掉。自己说的话进了转写，就会变成「助理自己跟自己聊」。
+						if (speakingRef.current) {
+							vadRef.current = { speaking: false, loud: 0, quiet: 0, kept: 0, blocks: 0 };
+							ringRef.current = [];
+							return;
+						}
+						// 转写 / 发送正在跑：这一波先不接，免得叠着发两条。
+						if (transcribingRef.current === true) return;
+						let sum = 0;
+						for (const value of input) sum += value * value;
+						const rms = Math.sqrt(sum / input.length);
+						levelRef.current = rms;
+						const vad = vadRef.current;
+						if (vad.speaking) {
+							vad.loud = rms >= VAD_ON ? vad.loud + 1 : 0;
+							vad.quiet = rms < VAD_OFF ? vad.quiet + 1 : 0;
+							ringRef.current.push(input);
+							while (ringRef.current.length > VAD_MAX_MS / VAD_BLOCK + VAD_PREROLL) ringRef.current.shift();
+							vad.kept += VAD_BLOCK;
+							if (vad.quiet < VAD_CLOSE_BLOCKS) return;
+							// 说完了：把这一段拼起来。
+							vad.speaking = false;
+							const chunks = ringRef.current;
+							ringRef.current = [];
+							const keep = vad.kept;
+							vad.kept = 0;
+							vad.loud = 0;
+							vad.quiet = 0;
+							setListening(false);
+							if (keep < VAD_MIN_MS) return;
+							let total = 0;
+							for (const piece of chunks) total += piece.length;
+							const merged = new Float32Array(total);
+							let offset = 0;
+							for (const piece of chunks) {
+								merged.set(piece, offset);
+								offset += piece.length;
+							}
+							// 常驻听和按键录音**共用**这个锁：两条路同时开转写会撞成一个 310MB 的模型。
+							// （`transcribing` 那个 state 给界面看，这个 ref 给回调看 —— 回调里读到的
+							// 永远是闭包里的旧 state。）
+							transcribingRef.current = true;
+							setTranscribing(true);
+							void sayTranscribe(merged, state.rate).finally(() => {
+								transcribingRef.current = false;
+								setTranscribing(false);
+							});
+							return;
+						}
+						// 还没开口：环形缓冲一直转着，等着「判定为说话」那一刻能往回捞。
+						ringRef.current.push(input);
+						while (ringRef.current.length > VAD_PREROLL + VAD_OPEN_BLOCKS) ringRef.current.shift();
+						vad.loud = rms >= VAD_ON ? vad.loud + 1 : 0;
+						if (vad.loud < VAD_OPEN_BLOCKS) return;
+						vad.speaking = true;
+						vad.quiet = 0;
+						vad.kept = vad.loud * VAD_BLOCK;
+						setListening(true);
+					};
+					source.connect(node);
+					node.connect(mute);
+					mute.connect(ctx.destination);
+					listenRef.current = state;
+					listenBusyRef.current = false;
+					setListening(true);
+					sayProblem("");
+				} catch {
+					listenFailRef.current = Date.now();
+				} finally {
+					listenBusyRef.current = false;
+				}
+			};
+
+			const toggleListen = () => {
+				const next = !listenOn;
+				setListenOn(next);
+				savePrefs({ listen: next });
+				if (!next) stopListen();
+				else void startListen();
 			};
 
 			// ── 唤醒词：面板关着的时候常听一小段，听到「你好索罗」就开面板收话 ──
@@ -1902,10 +2042,7 @@ export default {
 
 			const woke = async () => {
 				stopWake();
-				setOpen(true);
-				setPinned(true);
-				setError("");
-				await new Promise((resolve) => window.setTimeout(resolve, 160));
+				sayProblem("");
 				await startRecording();
 			};
 
@@ -1913,7 +2050,8 @@ export default {
 				const tick = () => {
 					const want = readPrefs().wake === true;
 					setWakeOn(want);
-					if (want && !open && !recording && !transcribing) void startWake();
+					// 常驻听开着就不起唤醒词：两路都要麦克风，而常驻听已经把「直接说」做完了。
+					if (want && !listenOn && !recording && !transcribing) void startWake();
 					else stopWake();
 				};
 				const timer = window.setInterval(tick, 1500);
@@ -1922,10 +2060,219 @@ export default {
 					clearInterval(timer);
 					stopWake();
 				};
-			}, [open, recording, transcribing]);
+			}, [listenOn, recording, transcribing]);
 
 			// 还没接模型时主界面在引导页；独立窗里照旧留着球，别让一扇透明窗空着。
 			if (setupStep !== null && !WINDOW_MODE) return null;
+
+			/* ── 气泡从头顶冒：说话、回话、出错，全走这一处 ────────────────
+			   老板 2026-11-11：面板全砍，头顶是唯一的嘴。所以下面没有列表、没有输入框，
+			   也没有「点开才看见」的东西 —— 有事直接冒一句，6 秒后自己淡。 */
+			const bubbleShow = (next) => {
+				if (next === null || String(next.text ?? "").trim() === "") return;
+				if (bubbleTimer.current !== 0) {
+					clearTimeout(bubbleTimer.current);
+					bubbleTimer.current = 0;
+				}
+				setBubbleFading(false);
+				setBubble({
+					text: String(next.text),
+					kind: next.kind ?? "it",
+					who: next.who ?? (next.kind === "me" ? "你" : (assistant?.label ?? "助理")),
+					wait: next.wait === true,
+					// 每条都有一个新的序号：同样一句话再来一遍也要能重新触发排版和计时。
+					id: bubbleSeq.current++,
+				});
+			};
+
+			/** 让它说一句（它自己的话也顺手念出来，念不念由朗读开关决定）。 */
+			const sayBubble = (text, kind = "it", extra = null) => {
+				bubbleShow({ text, kind, ...extra });
+				if (kind !== "error" && text !== "") speakText(text);
+			};
+
+			/**
+			 * 说一句「出问题了」：写进状态（球上那个红点读它），同时冒在头顶。
+			 *
+			 * 现在没有面板了，所有老的 `setError(...)` 调用点都走这里 —— 一处冒泡，不散在各处。
+			 * 它不念：错是自己的错，念出来只会更吵。
+			 */
+			const sayProblem = (why) => {
+				const line = String(why ?? "").trim();
+				// 传空串 = 抹掉旧错（老的 `setError("")` 全是这个意思），但不要冒一个空气泡。
+				if (line === "") {
+					setErrorState("");
+					return;
+				}
+				setErrorState(line);
+				bubbleShow({ text: line, kind: "error" });
+			};
+
+			const bubbleHide = () => {
+				if (bubbleTimer.current !== 0) {
+					clearTimeout(bubbleTimer.current);
+					bubbleTimer.current = 0;
+				}
+				setBubbleFading(true);
+				bubbleTimer.current = window.setTimeout(() => {
+					bubbleTimer.current = 0;
+					setBubble(null);
+					setBubbleFading(false);
+				}, BUBBLE_FADE);
+			};
+			/** 重新计时：新的一句冒出 / 窗口尺寸变了，都从这一刻再数 6 秒。 */
+			const bubbleHold = () => {
+				if (bubbleTimer.current !== 0) clearTimeout(bubbleTimer.current);
+				setBubbleFading(false);
+				bubbleTimer.current = window.setTimeout(() => {
+					bubbleTimer.current = 0;
+					setBubbleFading(true);
+					bubbleTimer.current = window.setTimeout(() => {
+						bubbleTimer.current = 0;
+						setBubble(null);
+						setBubbleFading(false);
+					}, BUBBLE_FADE);
+				}, BUBBLE_HOLD);
+			};
+
+			/** 尾巴对着小人中心：气泡放哪都按这个算。 */
+			const tailX = BALL / 2;
+
+			/**
+			 * 气泡放哪。
+			 *
+			 * 五级退让，跟原型里那版一致：
+			 * 1. 小人右侧（尾巴挂在气泡左边）—— 空间够宽、又不压到人；
+			 * 2. 小人左侧；
+			 * 3. **头顶**：气泡在小人上方，尾巴挂底边对着头顶（老板要的「从头顶冒」就是这一档）；
+			 * 4. 脚下：上面没地方就翻到下面；
+			 * 5. 上下都不够才压矮自己：给一个 `maxHeight`，正文自己滚，**不截字**。
+			 *
+			 * 量的顺序很要紧：先把 `maxHeight` 清掉再量自然高度，否则量到的是上一轮的约束。
+			 */
+			const layoutBubble = () => {
+				const node = bubbleRef.current;
+				if (node === null) return;
+				const edge = 8;
+				const narrow = viewport.width < BUBBLE_MIN_W + 40;
+				const width = narrow
+					? Math.max(160, viewport.width - 24)
+					: Math.min(BUBBLE_MAX_W, Math.max(BUBBLE_MIN_W, viewport.width - 96));
+				node.style.maxHeight = "";
+				node.style.width = `${String(width)}px`;
+				const natural = node.offsetHeight;
+				// 竖位：头顶优先，其次脚下。
+				const aboveTop = orbTop - BUBBLE_GAP - natural;
+				const belowTop = orbTop + BALL_H + BUBBLE_GAP;
+				const fitsAbove = aboveTop >= edge;
+				const fitsBelow = belowTop + natural <= viewport.height - edge;
+				// 横位：气泡左右贴着小人，高度随便（顶对齐球）。
+				const rightLeft = orbLeft + BALL + BUBBLE_GAP;
+				const leftLeft = orbLeft - BUBBLE_GAP - width;
+				const fitsRight = rightLeft + width <= viewport.width - edge;
+				const fitsLeft = leftLeft >= edge;
+				// 横位也要验纵向：气泡太高时贴着球会让它半截出窗。
+				const besideFits = (left) => {
+					const alignedTop = clamp(orbTop, edge, Math.max(edge, viewport.height - natural - edge));
+					return alignedTop + natural <= viewport.height - edge && alignedTop >= edge && left >= edge;
+				};
+
+				let place = null;
+				if (!narrow && fitsRight && besideFits(rightLeft)) {
+					place = { left: rightLeft, top: clamp(orbTop, edge, Math.max(edge, viewport.height - natural - edge)), side: "right" };
+				} else if (!narrow && fitsLeft && besideFits(leftLeft)) {
+					place = { left: leftLeft, top: clamp(orbTop, edge, Math.max(edge, viewport.height - natural - edge)), side: "left" };
+				} else if (fitsAbove) {
+					place = { left: clamp(orbLeft + tailX - width / 2, edge, Math.max(edge, viewport.width - width - edge)), top: aboveTop, side: "above" };
+				} else if (fitsBelow) {
+					place = {
+						left: clamp(orbLeft + tailX - width / 2, edge, Math.max(edge, viewport.width - width - edge)),
+						top: belowTop,
+						side: "below",
+					};
+				} else {
+					// 上下都塞不下：挑空间大的那边，压矮。
+					const roomAbove = orbTop - BUBBLE_GAP - edge;
+					const roomBelow = viewport.height - edge - (orbTop + BALL_H + BUBBLE_GAP);
+					const room = Math.max(96, Math.max(roomAbove, roomBelow));
+					place =
+						roomAbove >= roomBelow
+							? { left: clamp(orbLeft + tailX - width / 2, edge, Math.max(edge, viewport.width - width - edge)), top: edge, side: "above", maxHeight: room }
+							: {
+									left: clamp(orbLeft + tailX - width / 2, edge, Math.max(edge, viewport.width - width - edge)),
+									top: belowTop,
+									side: "below",
+									maxHeight: room,
+								};
+				}
+				node.style.width = `${String(width)}px`;
+				node.style.left = `${String(place.left - orbLeft)}px`;
+				node.style.top = `${String(place.top - orbTop)}px`;
+				node.setAttribute("data-side", place.side);
+				if (place.maxHeight === undefined) node.style.maxHeight = "";
+				else node.style.maxHeight = `${String(place.maxHeight)}px`;
+				// 尾巴永远对着小人中心；贴顶 / 贴底被子元素裁掉时也还留在气泡上。
+				const bubbleCenter = place.left + width / 2;
+				node.style.setProperty("--bubble-tail-x", `${String(clamp(orbLeft + tailX - bubbleCenter + width / 2, 16, width - 16))}px`);
+				node.style.visibility = "visible";
+			};
+
+			// 气泡跟着球走：球动、窗口变、文字换，都要重新摆一次。
+			// 挪球时每帧一次 `setRight`，所以 `right` / `top` 变了就重排 —— 气泡才会一路跟手。
+			useEffect(() => {
+				if (bubble === null) return undefined;
+				layoutBubble();
+				const onResize = () => layoutBubble();
+				window.addEventListener("resize", onResize);
+				return () => window.removeEventListener("resize", onResize);
+			}, [bubble?.id, bubble?.text, right, top]);
+
+			// 每条新的冒出：开始数那 6 秒。换一条就重新数。
+			useEffect(() => {
+				if (bubble === null) return undefined;
+				bubbleHold();
+				return undefined;
+			}, [bubble?.id]);
+
+			// 信箱里有一句就冒出来。挑消息的那段只往信箱里放，不直接 setState。
+			useEffect(() => {
+				const pending = bubblePendingRef.current;
+				if (pending === null) return;
+				bubblePendingRef.current = null;
+				bubbleShow(pending);
+				// eslint-disable-next-line react-hooks/exhaustive-deps
+			}, [shown, detail, liveDetail]);
+
+			// 它自己的回复一冒出来就把「我在等」那句顶掉 —— 等的那一句只在没别的话好说时才在。
+			useEffect(() => {
+				if (bubble === null || bubble.wait !== true) return;
+				if (messages.length === 0) return;
+				const last = messages[messages.length - 1];
+				if (last === undefined) return;
+				if (last.text === bubble.text) return;
+				sayBubble(last.text, "it");
+				// eslint-disable-next-line react-hooks/exhaustive-deps
+			}, [messages, bubble?.id]);
+
+			// 常驻听：开关打开就一直挂着；私聊还没建好、或者正在按键录音时先不起（两路抢麦克风）。
+			useEffect(() => {
+				const want = listenOn && dmId !== null && !recording;
+				if (want && listenRef.current === null) void startListen();
+				else if (!want && listenRef.current !== null) stopListen();
+				// eslint-disable-next-line react-hooks/exhaustive-deps
+			}, [listenOn, dmId, recording]);
+
+			// 「在听」那圈光的强弱：rms 很低很低，直接按比例放大到看得见。
+			useEffect(() => {
+				if (!listening) return undefined;
+				const timer = window.setInterval(() => {
+					setSayLevel(clamp(levelRef.current * 9, 0.12, 1));
+				}, 120);
+				return () => clearInterval(timer);
+			}, [listening]);
+
+			// 卸载：气泡的计时器也要收，别在卸掉的组件上 setState。
+			useEffect(() => () => clearTimeout(bubbleTimer.current), []);
 
 			const ball = h(
 				"button",
@@ -1934,16 +2281,20 @@ export default {
 					className: "orb-ball",
 					id: "orb-ball",
 					"aria-label": unread > 0 ? `助理（${String(unread)} 条未读）` : "助理",
-					"aria-expanded": open,
+					"aria-expanded": menu ? "true" : "false",
 					"data-tip":
 						// 哑了就先说哑了：唤醒提示再准，也比不上「刚才那句没念出来」要紧。
 						speechProblem !== ""
-							? `${speechProblem}（点开看怎么办）`
-							: wakeOn && wakeFail === ""
-								? "说「你好索罗」叫醒，或点一下"
-								: wakeOn
-									? `唤醒没开成：${wakeFail}`
-									: "跟助理说一句",
+							? speechProblem
+							: listenOn
+								? listening
+									? "在听，说完就发"
+									: "直接说话就行"
+								: wakeOn && wakeFail === ""
+									? "说「你好索罗」叫醒，或点一下"
+									: wakeOn
+										? `唤醒没开成：${wakeFail}`
+										: "跟助理说一句",
 					onClick,
 					onPointerDown,
 					onPointerMove,
@@ -1954,7 +2305,15 @@ export default {
 					onPointerLeave: leave,
 				},
 				busy ? h("span", { className: "orb-ring", "aria-hidden": "true" }) : null,
-				// 球面是一个站着的小人（同一份 SVG 也画在面板抬头）：不另画一颗渐变球。
+				// 在听：身边一圈随音量起伏的光。这是「不用点就能说」唯一需要的提示。
+				listening
+					? h("span", {
+							className: "orb-listen",
+							"aria-hidden": "true",
+							style: { opacity: String(0.35 + sayLevel * 0.65), boxShadow: `0 0 0 ${String(2 + sayLevel * 3)}px var(--accent-dim)` },
+						})
+					: null,
+				// 球面是一个站着的小人：不另画一颗渐变球。
 				h("span", {
 					className: "orb-mark",
 					"data-view": look,
@@ -1986,6 +2345,30 @@ export default {
 									},
 									"打开助理私聊",
 								),
+						h(
+							"button",
+							{
+								type: "button",
+								role: "menuitem",
+								onClick: () => {
+									setMenu(false);
+									toggleListen();
+								},
+							},
+							listenOn ? "关掉「直接说话」" : "打开「直接说话」",
+						),
+						h(
+							"button",
+							{
+								type: "button",
+								role: "menuitem",
+								onClick: () => {
+									setMenu(false);
+									toggleSpeak();
+								},
+							},
+							speakOn ? "关掉朗读" : "打开朗读",
+						),
 						WINDOW_MODE
 							? h(
 									"button",
@@ -2005,166 +2388,37 @@ export default {
 					)
 				: null;
 
-			const panel = open
-				? h(
-						"section",
-						{
-							className: "orb-panel",
-							role: "dialog",
-							"aria-label": "助理",
-							style: { ...panelPlace, width: `${String(panelWidth)}px` },
-							onPointerEnter: enter,
-							onPointerLeave: leave,
-						},
-						h(
-							"header",
-							{ className: "orb-head" },
-							h("span", {
-							className: "orb-face",
-							"data-busy": busy ? "true" : "false",
-							"aria-hidden": "true",
-							dangerouslySetInnerHTML: { __html: personSvg(22, look) },
-						}),
-							h(
-								"div",
-								{ className: "orb-who" },
-								h("b", null, assistant?.label ?? "助理"),
-								h("span", null, activity === undefined ? "待命" : activity.state === "thinking" ? "在想" : "正在干活"),
-							),
-							h("span", { className: "orb-grow" }),
-							h(
-								"button",
-								{
-									type: "button",
-									className: "orb-ghost orb-sound",
-									"aria-pressed": speakOn,
-									"aria-label": speakOn ? "关掉朗读" : "朗读回复",
-									title: speakOn ? "关掉朗读" : "朗读回复",
-									onClick: toggleSpeak,
-								},
-								speakerIcon(speakOn),
-							),
-							// 独立窗里没有「主界面」可切，这颗键留着只会点了没反应。
-							dmId === null || WINDOW_MODE
-								? null
-								: h(
-										"button",
-										{
-											type: "button",
-											className: "orb-ghost",
-											onClick: () => {
-												closeAll();
-												void store.openChannel(dmId);
-											},
-										},
-										"打开",
-									),
-						),
-						h(
+			const bubbleBox =
+				bubble === null
+					? null
+					: h(
 							"div",
-							{ className: "orb-list", ref: listRef },
-							messages.length === 0
-								? h(
-										"p",
-										{ className: "orb-empty" },
-										dmId === null
-											? "助理私聊还没建好 —— 打开一次助理就会建。"
-											: "还没说过话。想到什么，直接说。",
-									)
-								: messages.map((message) =>
-										h(
-											"div",
-											{ key: message.seq, className: "orb-msg", "data-me": message.fromSlug === "owner" ? "true" : "false" },
-											h("span", { className: "orb-from" }, `${message.fromLabel} · ${ago(message.at)}`),
-											h("p", { className: "orb-text" }, message.text),
-										),
-									),
-						),
-						recording || transcribing
-							? h(
-									"p",
-									{ className: "orb-voice", "data-live": recording ? "true" : "false" },
-									recording
-										? `在听… ${String(Math.floor(elapsed / 60))}:${String(elapsed % 60).padStart(2, "0")} · 点麦克风结束`
-										: "转写中…",
-								)
-							: null,
-						voice !== null && voice.present !== true
-							? h(
-									"div",
-									{ className: "orb-model" },
-									h(
-										"span",
-										null,
-										voice.downloading === true
-											? `正在下载语音模型 ${String(Math.round((voice.progress ?? 0) * 100))}%`
-											: typeof voice.error === "string" && voice.error !== ""
-												? `语音模型没下成：${voice.error}`
-												: `语音模型还没下载（约 ${String(Math.round((voice.bytes ?? 0) / 1_048_576))} MB）`,
-									),
-									voice.downloading === true
-										? null
-										: h(
-												"button",
-												{ type: "button", onClick: () => void downloadVoice() },
-												typeof voice.error === "string" && voice.error !== "" ? "重试" : "下载",
-											),
-								)
-							: null,
-						error === "" ? null : h("p", { className: "orb-error" }, error),
-						h(
-							"div",
-							{ className: "orb-form" },
-							h("textarea", {
-								className: "orb-input",
-								rows: 1,
-								placeholder: dmId === null ? "助理还没准备好" : "跟助理说一句…",
-								value: draft,
-								disabled: dmId === null,
-								onChange: (event) => setDraft(event.target.value),
-								onKeyDown: (event) => {
-									if (event.key === "Enter" && !event.shiftKey) {
-										event.preventDefault();
-										void send();
-									}
+							{
+								className: "orb-bubble",
+								ref: bubbleRef,
+								role: "status",
+								"aria-live": "polite",
+								"data-kind": bubble.kind,
+								"data-fading": bubbleFading ? "true" : "false",
+								onClick: () => {
+									if (bubble.kind === "error") bubbleHide();
 								},
-							}),
-							h(
-								"button",
-								{
-									type: "button",
-									className: "orb-icon",
-									"data-rec": recording ? "true" : "false",
-									disabled: dmId === null || transcribing,
-									"aria-label": recording ? "结束录音" : "语音输入",
-									title: recording ? "结束并发送" : transcribing ? "转写中…" : "点一下说话",
-									onClick: () => (recording ? stopRecording(false) : void startRecording()),
-								},
-								recording ? stopIcon() : micIcon(),
-							),
-							h(
-								"button",
-								{
-									type: "button",
-									className: "orb-send",
-									disabled: dmId === null || sending || transcribing || draft.trim() === "",
-									onClick: () => void send(),
-								},
-								sending ? "…" : "发送",
-							),
-						),
-					)
-				: null;
+								style: { visibility: "hidden", left: "0px", top: "0px" },
+							},
+							h("span", { className: "orb-bubble-who", "data-me": bubble.kind === "me" ? "true" : "false" }, bubble.who),
+							bubble.wait === true
+								? h("span", { className: "orb-bubble-wait", "aria-label": "等它回话" }, h("i"), h("i"), h("i"))
+								: h("p", { className: "text" }, bubble.text),
+						);
 
 			return h(
 				"div",
 				{
 					className: "orb",
 					"data-docked": docked ? "true" : "false",
-					"data-open": open ? "true" : "false",
 					style: { right: `${String(right)}px`, top: `${String(top)}px` },
 				},
-				panel,
+				bubbleBox,
 				menuBox,
 				ball,
 			);
