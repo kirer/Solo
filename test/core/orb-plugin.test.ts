@@ -9,11 +9,12 @@
  * 以及那条路由的地址（前端写死了 `/api/orb/transcribe`，路由必须是纯 ASCII）。
  */
 import { spawn } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { existsAt } from "../../src/core/runtime/io.ts";
 import { loadPlugins } from "../../src/core/plugin/index.ts";
 
 const boxes: string[] = [];
@@ -349,6 +350,41 @@ describe("悬浮球", () => {
 		expect(source).not.toMatch(/new MediaRecorder/u);
 		expect(source).toMatch(/createScriptProcessor/u);
 		expect(source).toMatch(/mime: "audio\/wav"/u);
+	});
+
+	/**
+	 * 2.9.0 就是这么发出去的：`client.js` 里有一行 `const startMouth = (player) => {` 被写了
+	 * 两遍，语法坏掉。插件是 `import()` 进来的，解析期就抛，连 `catch` 里的 warn 都没机会说
+	 * —— 日志一片干净，界面上一颗球都没有（采样 64260 点全透明）。
+	 *
+	 * 1105 例测试全绿，因为没有一条去看这份文件的语法。这条补上：`seed/plugins/*` 下的
+	 * 每份 `client.js` 都过一遍 `node --check`，改坏立刻红。
+	 *
+	 * 用真的 `node --check` 而不是「在 vitest 里 import 一下」：这份文件是浏览器 ESM、还引
+	 * 了 `document`，在 node 里 import 会先死在环境上，验不出语法；`--check` 只解析不执行，
+	 * 正好是插件在浏览器里加载时最先做的那一步。
+	 */
+	it("每份 client.js 都能被解析（语法坏了插件整份加载失败，界面一片空白）", async () => {
+		const root = fileURLToPath(new URL("../../seed/plugins", import.meta.url));
+		const entries = await readdir(root, { withFileTypes: true });
+		const broken: string[] = [];
+		let checked = 0;
+		for (const entry of entries) {
+			if (!entry.isDirectory()) continue;
+			const file = join(root, entry.name, "client.js");
+			if (!(await existsAt(file))) continue;
+			checked += 1;
+			const result = await new Promise<string | null>((done) => {
+				const child = spawn(process.execPath, ["--check", file], { stdio: ["ignore", "ignore", "pipe"] });
+				let err = "";
+				child.stderr.on("data", (chunk) => (err += chunk));
+				child.on("close", (code) => done(code === 0 ? null : err));
+			});
+			if (result !== null) broken.push(`${entry.name}/client.js:\n${result.trim()}`);
+		}
+		// 一个都没扫到说明路径算错了 —— 别让这条测试靠「没有插件」变绿。
+		expect(checked).toBeGreaterThan(0);
+		expect(broken).toEqual([]);
 	});
 
 	it("只放进宿主已有的插槽，不自己 import 别的模块", async () => {

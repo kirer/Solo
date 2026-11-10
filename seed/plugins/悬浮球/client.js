@@ -1013,7 +1013,7 @@ export default {
 				if (session !== null) session.release();
 			};
 
-			const startMouth = (player) => {			const startMouth = (player) => {
+			const startMouth = (player) => {
 				stopMouth();
 				const Ctx = typeof window === "undefined" ? undefined : window.AudioContext;
 				if (Ctx === undefined) return null;

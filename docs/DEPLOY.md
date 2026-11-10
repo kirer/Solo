@@ -449,6 +449,50 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
    换掉的旧 hash 文件不会自己消失，要手动 `git rm`）。跑完 `ui:build` 再看：
    **有 diff 就说明源码变了产物没提交**，把它一起提交，别打着旧界面发版；
    没 diff 才算对得上。
+5. **`seed/plugins/*/client.js` 逐个 `node --check`** —— 仓库一遍，**解包后包里再一遍**。
+   见下面两节。
+
+### 插件 JS 的语法：仓库一遍、包里一遍
+
+`v2.9.0` 就是死在这上面：`seed/plugins/悬浮球/client.js` 里 `const startMouth = (player) => {`
+被粘重了两遍，语法坏掉。`npm run check` 全绿、`npm test` 全绿、资产齐全、size 都对 ——
+因为**插件不在任何一个 tsconfig 的 include 里**，`tsc` 压根不看 `seed/`。
+
+它坏得还很安静：插件是浏览器里 `import()` 进来的，**解析期就抛**，连 `catch` 里那句
+`console.warn` 都没机会执行。日志干净、窗口在、`isVisible` 也是真，只是采样出来的
+64260 个点全透明 —— 用户看到的就是一颗球都没有。
+
+（现在 `test/core/orb-plugin.test.ts` 里有一条会 `node --check` 所有 `client.js`，改坏
+立刻红。但那拦的是仓库；打包会重新拷一遍文件，拷错了它不知道，所以下面第二条还是得跑。）
+
+**仓库里跑一遍：**
+
+```bash
+for f in seed/plugins/*/client.js; do
+  node --check "$f" > /dev/null 2>&1 && echo "OK  $f" || echo "BAD $f"
+done
+# 顺手把插件目录下别的 .js 也查了，同样零成本
+for f in seed/plugins/*/*.js; do
+  node --check "$f" > /dev/null 2>&1 || echo "BAD $f"
+done
+```
+
+**判据**：全是 `OK`，一个 `BAD` 都不许有。有 `BAD` 就单跑 `node --check 那个文件`，它会告诉你第几行。
+
+**解包后包里再跑一遍** —— 查的是真装进用户机器的那份：
+
+```bash
+cd /tmp && rm -rf solo-check && mkdir solo-check && cd solo-check
+curl -L -o s.zip "https://github.com/kirer/Solo/releases/download/v<版本>/Solo-<版本>-arm64.zip"
+unzip -q s.zip
+find . -path '*/seed/plugins/*/client.js' | while read -r f; do
+  node --check "$f" > /dev/null 2>&1 && echo "OK  $f" || echo "BAD $f"
+done
+```
+
+**判据**：全是 `OK`。包里的结构是 `Solo.app/Contents/Resources/app/seed/plugins/…`。
+网慢就后台下：`nohup curl -L -o s.zip <url> > /dev/null 2>&1 &`，或者先从
+`~/Downloads` 里翻 CI 产物。
 
 CI（`.github/workflows/release.yml`）里这几步都在，走 Actions 不会被这条绊到；
 **本地打包才需要人记**。
