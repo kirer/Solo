@@ -1,6 +1,6 @@
 {
 	"name": "solo",
-	"version": "2.9.3",
+	"version": "2.9.4",
 	"private": true,
 	"type": "module",
 	"main": "desktop/dist/main.js",
