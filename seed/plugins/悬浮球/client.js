@@ -551,6 +551,24 @@ export default {
 		.orb-menu button:hover { background: var(--hover); }
 		.orb-menu button:disabled { color: var(--ink-3); cursor: default; }
 		.orb-menu button:disabled:hover { background: transparent; }
+		/* 菜单项前面的一颗点：亮 = 现在是开的，灰 = 关的（2026-11-11）。
+		 *
+		 * 为什么要有它：语音那两项点完只改状态、屏幕上零变化，老板的结论就是「点了没反应」。
+		 * 「贴边」「回默认位置」变的是位置、看得见，所以那两项的点按**位置**亮，不按开关。
+		 * 点绝对定位占位、不参与文字排版：四种文字宽度都对齐。 */
+		.orb-menu button[data-on] { position: relative; padding-left: 19px; }
+		.orb-menu button[data-on]::before {
+			content: "";
+			position: absolute; left: 6px; top: 50%;
+			width: 5px; height: 5px; margin-top: -2.5px;
+			border-radius: 50%;
+			background: var(--line, #c9c2b4);
+			opacity: 0.55;
+		}
+		.orb-menu button[data-on="true"]::before {
+			background: var(--accent, #4b7bec);
+			opacity: 1;
+		}
 
 		/* 设置里的「悬浮球语音」一页：和 Token 用量同一套骨架（抬头 → 内容），
 		   一个容器查询管宽窄（设置那张 800 弹窗里宽、右栏 / 手机上窄）。 */
@@ -862,6 +880,17 @@ export default {
 			const bubbleRef = useRef(null);
 			/** 气泡自己的流水号（DOM 上的 `id` 是字符串，不能拿来数数）。 */
 			const bubbleSeq = useRef(1);
+			/**
+			 * `bubbleShow` 的转发口（2026-11-11）。
+			 *
+			 * 为什么要转发：菜单那几项（`toggleListen` / `toggleSpeak`）比 `bubbleShow` **先定义**，
+			 * 而 `bubbleShow` 又定义在 `if (setupStep !== null) return null;` 这句 early-return 之后，
+			 * 根本提不到前面去。直接调就是碰 `const` 的暂时性死区，运行时抛 ReferenceError。
+			 * 所以先放一个空壳，等 `bubbleShow` 真正定义出来再往里塞。
+			 */
+			const showBubbleRef = useRef(() => {});
+			/** 同上，收气泡的转发口（`onClick` 也比 `bubbleHide` 先定义）。 */
+			const hideBubbleRef = useRef(() => {});
 			/**
 			 * 冒泡的「信箱」：上面那条挑消息的 effect 跑在渲染中间，这儿只放进去，
 			 * 真正冒出来交给下面那个 effect —— 在 effect 里 setState 才不会打架。
@@ -1541,6 +1570,9 @@ export default {
 					return;
 				}
 				cancelHover();
+				// 点球 = 「我要说话了，刚才那句别挡着」。气泡立刻收，不等它自己走完那 6 秒
+				// （老板 2026-11-11 定的：气泡要能立刻消失）。
+				hideBubbleRef.current();
 				if (docked) {
 					// 贴着边点一下 = 先把它请出来，再开菜单。
 					setDocked(false);
@@ -1588,7 +1620,8 @@ export default {
 				setSending(true);
 				sayProblem("");
 				// 我说的话也冒在头顶：不冒，等它回话那段就只剩一片空白，看不出「听见了没有」。
-				bubbleShow({ text: value, kind: "me" });
+				// 走 ref：`sendText` 定义在 `bubbleShow` 之前，直接调会碰 `const` 的暂时性死区。
+				showBubbleRef.current({ text: value, kind: "me" });
 				try {
 					await api.sendMessage(dmId, { text: value });
 					if (currentId !== dmId) {
@@ -1756,6 +1789,8 @@ export default {
 				setSpeakOn(next);
 				savePrefs({ speak: next });
 				if (!next) stopAudio();
+				// 菜单点完就关，那行「关掉朗读」的字跟着没了 —— 必须另给一句，否则屏幕零变化。
+				showBubbleRef.current({ text: next ? "朗读：开" : "朗读：关", kind: "it" });
 			};
 
 			// ── 常驻听：不用点，开口就说 ───────────────────────────────
@@ -1988,12 +2023,18 @@ export default {
 					setListenOn(false);
 					savePrefs({ listen: false });
 					stopListen();
+					showBubbleRef.current({ text: "直接说话：关", kind: "it" });
 					return;
 				}
+				// **气泡先出，才去开麦**（2026-11-11）：开麦要等权限/设备，几百毫秒到几秒都有。
+				// 等它通了再冒话，等于又让老板看着一个「什么都没发生」。所以先说「正在打开…」，
+				// 结果出来再改口 —— 一句改一句，不是两句叠一起（bubbleShow 会清掉旧的计时器）。
+				showBubbleRef.current({ text: "直接说话：正在打开…", kind: "it" });
 				const ok = await startListen();
 				setListenOn(ok);
 				savePrefs({ listen: ok });
 				if (!ok) stopListen();
+				showBubbleRef.current({ text: ok ? "直接说话：开" : "直接说话：没打开", kind: ok ? "it" : "error" });
 			};
 
 			// ── 唤醒词：面板关着的时候常听一小段，听到「你好索罗」就开面板收话 ──
@@ -2150,6 +2191,8 @@ export default {
 					id: bubbleSeq.current++,
 				});
 			};
+			// 从这一刻起菜单那几项也能冒泡了（见 `showBubbleRef` 上面那段）。
+			showBubbleRef.current = bubbleShow;
 
 			/** 让它说一句（它自己的话也顺手念出来，念不念由朗读开关决定）。 */
 			const sayBubble = (text, kind = "it", extra = null) => {
@@ -2186,6 +2229,7 @@ export default {
 					setBubbleFading(false);
 				}, BUBBLE_FADE);
 			};
+			hideBubbleRef.current = bubbleHide;
 			/** 重新计时：新的一句冒出 / 窗口尺寸变了，都从这一刻再数 6 秒。 */
 			const bubbleHold = () => {
 				if (bubbleTimer.current !== 0) clearTimeout(bubbleTimer.current);
@@ -2348,19 +2392,6 @@ export default {
 					id: "orb-ball",
 					"aria-label": unread > 0 ? `助理（${String(unread)} 条未读）` : "助理",
 					"aria-expanded": menu ? "true" : "false",
-					"data-tip":
-						// 哑了就先说哑了：唤醒提示再准，也比不上「刚才那句没念出来」要紧。
-						speechProblem !== ""
-							? speechProblem
-							: listenOn
-								? listening
-									? "在听，说完就发"
-									: "直接说话就行"
-								: wakeOn && wakeFail === ""
-									? "说「你好索罗」叫醒，或点一下"
-									: wakeOn
-										? `唤醒没开成：${wakeFail}`
-										: "跟助理说一句",
 					onClick,
 					onPointerDown,
 					onPointerMove,
@@ -2402,6 +2433,9 @@ export default {
 									{
 										type: "button",
 										role: "menuitem",
+										// 和另外几项一样留一颗点占位，五条文字才左对齐；
+										// 它是一次性动作，不是开关，所以永远灰着（同「回到默认位置」）。
+										"data-on": "false",
 										disabled: dmId === null,
 										onClick: () => {
 											if (dmId === null) return;
@@ -2416,6 +2450,7 @@ export default {
 							{
 								type: "button",
 								role: "menuitem",
+								"data-on": listenOn ? "true" : "false",
 								onClick: () => {
 									setMenu(false);
 									void toggleListen();
@@ -2428,6 +2463,7 @@ export default {
 							{
 								type: "button",
 								role: "menuitem",
+								"data-on": speakOn ? "true" : "false",
 								onClick: () => {
 									setMenu(false);
 									toggleSpeak();
@@ -2449,8 +2485,28 @@ export default {
 									},
 									"隐藏悬浮球",
 								)
-							: h("button", { type: "button", role: "menuitem", onClick: toggleDock }, docked ? "从边上请出来" : "贴到右边收起"),
-						h("button", { type: "button", role: "menuitem", onClick: recenter }, "回到默认位置"),
+							: h(
+									"button",
+									{
+										type: "button",
+										role: "menuitem",
+										"data-on": docked ? "true" : "false",
+										onClick: toggleDock,
+									},
+									docked ? "从边上请出来" : "贴到右边收起",
+								),
+						// 回默认位置不是一个「开/关」，点它就是一次性动作：给一个固定灰点占位，
+						// 四条文字才对齐；它亮不亮没有意义，也永远不亮。
+						h(
+							"button",
+							{
+								type: "button",
+								role: "menuitem",
+								"data-on": "false",
+								onClick: recenter,
+							},
+							"回到默认位置",
+						),
 					)
 				: null;
 
@@ -2502,7 +2558,8 @@ export default {
 					type: "button",
 					className: "app-entry",
 					id: "rail-orb-voice",
-					"data-tip": "悬浮球语音",
+					// 这里原本还有一个 `data-tip`，但全仓没有任何 CSS / JS 读它，写进 DOM 也显示不出来；
+					// 无障碍名字由下一行的 `aria-label` 承担。删掉是别再留「看着做了其实没做」的东西。
 					"aria-label": "悬浮球语音",
 					"aria-current": active ? "true" : "false",
 					onClick: () => store.openPluginView(SLUG),
