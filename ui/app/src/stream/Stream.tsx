@@ -18,6 +18,8 @@ import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
 import { seqOfRow, VirtualFeed } from "./VirtualFeed.tsx";
+/** 「我」的 slug。服务端也用它（`OWNER`），界面上只此一处认这个字。 */
+const OWNER_SLUG = "owner";
 import type { VirtualFeedHandle } from "./VirtualFeed.tsx";
 import { Slot } from "../plugin/Slot.tsx";
 import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
@@ -42,6 +44,16 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	/** 窗口化之后，跳转得跟 `VirtualFeed` 要位置 —— 目标行多半没挂载。 */
 	const feed = useRef<VirtualFeedHandle | null>(null);
 	const pinned = useRef(true);
+	/**
+	 * 这一屏还欠一次「落到未读横幅上」。
+	 *
+	 * 两件事抢同一个结果：横幅是落点、`toBottom()` 也是落点。谁先跑谁赢 ——
+	 * 而 `toBottom()` 那拨（新消息到达、切频道的 rAF）总是比找横幅的 rAF 先到，
+	 * 于是横幅离底不到一屏时，人看到的还是底，横幅在屏幕上方够不着的地方。
+	 *
+	 * 所以落点没定下来之前，`toBottom()` 一律作废：**有未读时只认横幅。**
+	 */
+	const landing = useRef(false);
 
 	const messages = detail?.messages ?? [];
 	// 这个频道里正在跑、还没回话的那几轮 —— `live` 行只认它们（ADR-046）。
@@ -56,6 +68,13 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		return out;
 	}, [runs, currentId]);
 	const unreadBefore = useStore((state) => state.unreadBefore);
+	/**
+	 * 「我」在频道里的 slug。
+	 *
+	 * 界面上的身份只有两个来源能用：每行的 `data-owner`（气泡靠右）和频道成员表里被剔掉的
+	 * 那一个，都是 `"owner"`。不另造一个 state —— 造了就多一份会走散的口径。
+	 */
+	const me = OWNER_SLUG;
 	const rows = useMemo(
 		() =>
 			buildRows({
@@ -64,8 +83,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				now: Date.now(),
 				// `exactOptionalPropertyTypes` 下不能显式传 undefined：没有未读就干脆不给这个字段。
 				...(unreadBefore === null ? {} : { unreadBefore }),
+				me,
 			}),
-		[messages, running, unreadBefore],
+		[messages, running, unreadBefore, me],
 	);
 
 	const labels = useMemo(() => {
@@ -127,6 +147,12 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
 		const flow = flowRef.current;
 		if (flow === null) return;
+		// 还欠一次「落到横幅上」：这一脚不许踩下去，否则落点被抢到底，横幅白画。
+		if (landing.current) {
+			pinned.current = false;
+			setAtBottom(false);
+			return;
+		}
 		flow.scrollTo({ top: flow.scrollHeight, behavior });
 		pinned.current = true;
 		setAtBottom(true);
@@ -146,6 +172,11 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 
 	// 新消息到达：贴底就跟到底，否则原地不动（否则看上翻历史时会被拽回来）。
 	useLayoutEffect(() => {
+		if (landing.current) {
+			// 落点还没定：这一帧先别动，等横幅。
+			setAtBottom(false);
+			return;
+		}
 		if (pinned.current) toBottom();
 		else setAtBottom(false);
 	}, [messages, toBottom]);
@@ -192,9 +223,16 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		pinned.current = true;
 		setAtBottom(true);
 		if (unreadBefore === null) {
+			// 没未读：行为和以前一模一样，立刻到底，也不挂「欠一次落点」的牌。
+			landing.current = false;
 			requestAnimationFrame(() => toBottom());
 			return;
 		}
+		// 有未读：在落点定下来之前，所有「到底」都作废。
+		landing.current = true;
+		// 先不贴底 —— 否则第一帧先在底部闪一下，再跳回横幅，看起来像抽了一下。
+		pinned.current = false;
+		setAtBottom(false);
 		let tries = 0;
 		let frame = 0;
 		const jump = (): void => {
@@ -203,15 +241,23 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			if (flow !== null && banner !== null) {
 				// 横幅贴到视口顶上那一行：它上面留一屏上下文，人往下读就是新消息。
 				const offset = banner.getBoundingClientRect().top - flow.getBoundingClientRect().top;
-				flow.scrollTop += offset;
+				// 夹到可滚范围里：横幅离底不到一屏时，算出来的位置会超过「到底」那么多，
+				// 不夹的话浏览器自己会截到 max —— 但那一下是**先写一个假值再被纠正**，
+				// 滚动事件里读到的 `scrollTop` 会短暂对不上，`isPinned()` 于是判错。
+				const max = Math.max(0, flow.scrollHeight - flow.clientHeight);
+				flow.scrollTop = Math.min(max, Math.max(0, flow.scrollTop + offset));
 				// 落点不在底 → 不算贴底，不然下一条新消息会把人拽回底部。
 				const nowPinned = isPinned();
 				pinned.current = nowPinned;
 				setAtBottom(nowPinned);
+				// 落点定了，把牌摘掉，之后「到底」恢复正常。
+				landing.current = false;
 				return;
 			}
 			tries += 1;
 			if (tries > 20) {
+				// 等不到横幅（渲染出问题）：先摘牌再到底，不能让「到底」永远作废。
+				landing.current = false;
 				toBottom();
 				return;
 			}

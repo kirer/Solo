@@ -63,14 +63,33 @@ export type BuildInput = {
 	 * 变成「永远有新消息」。
 	 */
 	unreadBefore?: number;
+	/**
+	 * 我自己的 slug。**未读不算自己说的话** —— 未读是「别人说了什么我没看到」。
+	 *
+	 * 不传就只按「非 note」算，等于把自己发的也算进去；界面上横幅的数字和侧栏列表的数字
+	 * 必须是同一个口径（列表 3、进去也是 3），所以实际调用一律传进来。
+	 */
+	me?: string;
 };
+
+/**
+ * 一条消息算不算「未读」。
+ *
+ * 口径和侧栏的未读数**必须是同一个**（`src/core/channel/rules.ts` 的 `unreadCount`）：
+ * 别人发的、并且是说出口的话（不是系统留痕）。差一条就会「列表说 3 条、进去写 6 条」，
+ * 而多出来的正是我自己刚发的那几句 —— 人一眼就看出来，然后谁也不信这个数字。
+ */
+export function countsAsUnread(message: { readonly fromSlug: string; readonly kind: string }, me: string | undefined): boolean {
+	if (me !== undefined && message.fromSlug === me) return false;
+	return message.kind !== "note";
+}
 
 /** 时间分隔上的字：今天只写时刻，昨天写「昨天 HH:MM」，更早写「M月D日」。 */
 function dividerLabel(at: number, now: number): string {
 	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
-export function buildRows({ messages, running = [], now = Date.now(), unreadBefore }: BuildInput): Row[] {
+export function buildRows({ messages, running = [], now = Date.now(), unreadBefore, me }: BuildInput): Row[] {
 	const rows: Row[] = [];
 	let previous: Message | undefined;
 	let previousSay: Message | undefined;
@@ -92,8 +111,10 @@ export function buildRows({ messages, running = [], now = Date.now(), unreadBefo
 		// 未读的条数按「seq 大于起点、且不是系统留痕」算，和列表里那个徽章同口径。
 		if (unreadBefore !== undefined && unreadPlaced === false && message.seq > unreadBefore) {
 			unreadPlaced = true;
-			const count = messages.filter((item) => item.seq > unreadBefore && !(item.kind === "note" && item.noteOf !== "run")).length;
-			rows.push({ type: "unread", key: `u-${message.seq}`, count });
+			const count = messages.filter((item) => item.seq > unreadBefore && countsAsUnread(item, me)).length;
+			// 一条都没有（整页都是自己的话、或都是留痕）：不画横幅。画一条「以下 0 条是新的」
+			// 比不画更糊涂，而且它还会把落点抢走 —— 人进来会停在一条空线上。
+			if (count > 0) rows.push({ type: "unread", key: `u-${message.seq}`, count });
 		}
 
 		if (previous !== undefined) {

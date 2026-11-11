@@ -17,6 +17,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelDetail, Message } from "../../ui/app/src/api/types.ts";
 import { getState, loadEarlier, patch, unreadBeforeOf } from "../../ui/app/src/state/store.ts";
+import { buildRows } from "../../ui/app/src/stream/model.ts";
 
 /** 造第 `seq` 条消息。只填 store 真正读的字段。 */
 function msg(seq: number): Message {
@@ -114,5 +115,35 @@ describe("未读横幅的起点", () => {
 	it("整页都是新的（readMark 比这一页最早那条还小）也照实给，不糊成页首", () => {
 		const detail = { ...detailOf(401, 440), readMark: 400 };
 		expect(unreadBeforeOf(-1, detail)).toBe(400);
+	});
+});
+
+describe("未读条数口径（D 组）", () => {
+	const message = (seq: number, fromSlug: string, kind: string) => ({ seq, fromSlug, kind }) as never;
+
+	it("自己发的不算未读：列表 3 条，进去也是 3 条", () => {
+		// 现场：别人说 3 句，我回了 3 句，列表写 3，进去横幅写 6 —— 多出来的正是我的话。
+		const list = [
+			message(11, "lin", "chat"),
+			message(12, "lin", "chat"),
+			message(13, "owner", "chat"),
+			message(14, "lin", "chat"),
+			message(15, "owner", "chat"),
+			message(16, "owner", "chat"),
+		];
+		const rows = buildRows({ messages: list, unreadBefore: 10, me: "owner", now: 0 });
+		const banner = rows.find((row) => row.type === "unread");
+		expect(banner).toBeDefined();
+		expect((banner as { count: number }).count).toBe(3);
+	});
+
+	it("留痕不算未读；一条都没有就不画横幅", () => {
+		const rows = buildRows({
+			messages: [message(11, "owner", "chat"), message(12, "lin", "note")],
+			unreadBefore: 10,
+			me: "owner",
+			now: 0,
+		});
+		expect(rows.some((row) => row.type === "unread")).toBe(false);
 	});
 });
