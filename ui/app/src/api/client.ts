@@ -50,6 +50,18 @@ export const getChannels = (): Promise<{ channels: Channel[] }> => call("/api/ch
 export const getChannel = (id: string, limit = 40): Promise<ChannelDetail> =>
 	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}`);
 
+/**
+ * 以某条消息为中心的一页（`around` 是那条的 seq）。
+ *
+ * 给「跳到一条老消息」用：那一页根本不在手里（几百条以外、界面上也没挂），
+ * 一路 `getEarlier` 翻过去既慢、又会把几千条灌回内存 —— 正是我们特意拒掉的做法。
+ * 服务端只给目标上下各半页，条数受 `limit` 约束。
+ */
+export const getAround = (id: string, around: number, limit = 60): Promise<ChannelDetail> =>
+	call<ChannelDetail>(
+		`/api/channels/${encodeURIComponent(id)}?limit=${String(limit)}&around=${String(around)}`,
+	);
+
 /** 更早的一页（`before` 是当前最早那条的 seq）。 */
 export const getEarlier = (id: string, before: number, limit = 30): Promise<ChannelDetail> =>
 	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}&before=${before}`);

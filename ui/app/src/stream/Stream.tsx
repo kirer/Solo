@@ -22,7 +22,7 @@ import { seqOfRow, VirtualFeed } from "./VirtualFeed.tsx";
 const OWNER_SLUG = "owner";
 import type { VirtualFeedHandle } from "./VirtualFeed.tsx";
 import { Slot } from "../plugin/Slot.tsx";
-import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
+import { loadAround, loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
 
@@ -314,36 +314,74 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	/**
 	 * 点引用的那一行 → 滚到被引用的那条消息，并亮一下。
 	 *
-	 * 窗口化之后不能再靠 `querySelector`：一次只挂几十行，被引用的那条多半在几千里外、
-	 * 根本没挂载，`querySelector` 找不到就 `return`，于是「点引用永远没反应」。
-	 * 所以改成**按 seq 反查**：位置在 `VirtualFeed` 的高度表里，让它滚过去。
+	 * 三种情况，一条都不许报错、不许白屏：
+	 * 1. **在手里**（窗口化之后就是「高度表认得出它」）→ 让它滚过去，等行挂出来再闪；
+	 * 2. **不在手里**（几百条以外，根本没加载）→ 跟服务端要它为中心的一页（`around`），
+	 *    换屏之后再滚、再闪。不一路翻页：那会把中间几千条灌回内存。
+	 * 3. **根本没有**（被删了、或者服务端也没这一条）→ 静默不动，视线也不挪。
 	 *
-	 * 滚过去之后那一行要下一帧才挂出来，所以高亮要等：等到了再闪，等不到（超过一小会儿）
-	 * 就什么都不做 —— 宁可不闪，也不能报错、不能把视线挪到别处。
+	 * 滚过去之后那一行要下一帧才挂出来，所以高亮要等：等到了再闪，等不到就不闪。
 	 */
 	const jumpTo = useCallback((seq: number, _node: HTMLElement): void => {
-		const feedWindow = feed.current;
-		if (feedWindow === null) return;
-		if (!feedWindow.jumpToSeq(seq)) return;
-		// 等它挂出来（通常下一帧就到），到了再闪一下。
-		let tries = 0;
-		const flash = (): void => {
-			const flow = flowRef.current;
-			const target = flow?.querySelector<HTMLElement>(`[data-seq="${String(seq)}"]`) ?? null;
-			if (target === null) {
-				tries += 1;
-				if (tries > 10) return;
-				requestAnimationFrame(flash);
-				return;
-			}
-			target.classList.remove("row-flash");
-			// 重新触发动画：先移除再加回来，同一帧里要读一次布局
-			void target.offsetWidth;
-			target.classList.add("row-flash");
-			window.setTimeout(() => target.classList.remove("row-flash"), 1600);
+		/** 等目标行挂出来再闪一下；等不到就什么都不做。 */
+		const flashWhenReady = (): void => {
+			let tries = 0;
+			const flash = (): void => {
+				const flow = flowRef.current;
+				const target = flow?.querySelector<HTMLElement>(`[data-seq="${String(seq)}"]`) ?? null;
+				if (target === null) {
+					tries += 1;
+					if (tries > 10) return;
+					requestAnimationFrame(flash);
+					return;
+				}
+				target.classList.remove("row-flash");
+				// 重新触发动画：先移除再加回来，同一帧里要读一次布局
+				void target.offsetWidth;
+				target.classList.add("row-flash");
+				window.setTimeout(() => target.classList.remove("row-flash"), 1600);
+			};
+			requestAnimationFrame(flash);
 		};
-		requestAnimationFrame(flash);
+
+		const feedWindow = feed.current;
+		if (feedWindow !== null && feedWindow.jumpToSeq(seq)) {
+			// 在手里：位置已经对了，只等高亮。
+			flashWhenReady();
+			return;
+		}
+		// 不在手里：要一页回来换上，再滚。
+		void loadAround(seq).then((found) => {
+			if (!found) return;
+			const fresh = feed.current;
+			if (fresh === null || !fresh.jumpToSeq(seq)) return;
+			flashWhenReady();
+		});
 	}, []);
+
+	/**
+	 * 上翻自动补历史：滚到顶部就自己加载，没有按钮。
+	 *
+	 * 两个触发点：滚到离顶 120px 以内，以及「这一屏还没填满但还有更早的」——
+	 * 后者是短频道刚打开时的样子，不补的话会看到一屏空白和一句提示。
+	 * 补完内容还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
+	 */
+	useEffect(() => {
+		const flow = flowRef.current;
+		if (flow === null) return;
+		const maybeLoad = (): void => {
+			const nearTop = flow.scrollTop < 120;
+			const notFilled = flow.scrollHeight <= flow.clientHeight + 40;
+			if ((nearTop || notFilled) && hasMoreAbove && !loadingEarlier) onTop();
+		};
+		flow.addEventListener("scroll", maybeLoad, { passive: true });
+		const frame = requestAnimationFrame(maybeLoad);
+		return () => {
+			flow.removeEventListener("scroll", maybeLoad);
+			cancelAnimationFrame(frame);
+		};
+	}, [hasMoreAbove, loadingEarlier, onTop, messages]);
+
 
 	return (
 		// 换频道就重挂一次，整块消息流淡上来（`.flow-wrap` 的入场动画在 v6.css）。

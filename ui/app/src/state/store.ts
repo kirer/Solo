@@ -15,6 +15,7 @@ import {
 	getAttention,
 	getChannel,
 	getChannels,
+	getAround,
 	getEarlier,
 	getModels,
 	getOrg,
@@ -412,6 +413,41 @@ export async function openChannel(id: string | null): Promise<void> {
 		if (partner !== undefined) void loadPersonRuns(partner.slug);
 	}
 	void readToEnd(id, detail.messages);
+}
+
+/**
+ * 跳到一条**现在不在手里**的消息：跟服务端要它为中心的一页，换掉当前这一屏。
+ *
+ * 为什么不一路 `loadEarlier` 翻过去：那等于把中间几千条全灌回内存 —— 正是 E2 裁掉、
+ * 又被我们回滚过一遍的那件事，不能借跳转这个口子回去。服务端只给目标上下各半页，
+ * 到手之后目标就在本地了，`VirtualFeed` 那张高度表才认得出它。
+ *
+ * 换屏之后 `hasMoreAbove` 由服务端那一页说了算（`around` 取到的不一定到顶）；
+ * 未读起点（`unreadBefore`）**不动** —— 那是「进这个频道那一刻」的线，跳一下不该改它。
+ *
+ * 返回目标到底在不在这一页：不在（被删了、或者服务端也没这条）就 `false`，
+ * 调用方静默不跳，不报错也不白屏。
+ */
+export async function loadAround(seq: number): Promise<boolean> {
+	const { currentId } = state;
+	if (currentId === null) return false;
+	const done = mark("channel:around");
+	try {
+		const page = await getAround(currentId, seq);
+		// 换屏期间人可能已经切走了：那就别把旧频道的页盖到新频道上。
+		if (getState().currentId !== currentId) return false;
+		const found = page.messages.some((message) => message.seq === seq);
+		const current = getState().detail;
+		if (!found || current === null) return false;
+		patch({ detail: { ...current, messages: page.messages }, hasMoreAbove: page.hasMoreAbove });
+		return true;
+	} catch {
+		// 拉不到（断网、服务端说不认识这一条）：什么都不做。点引用没反应，
+		// 比跳到一个空屏、或者弹一个红框好。
+		return false;
+	} finally {
+		done();
+	}
 }
 
 export async function loadEarlier(): Promise<void> {
