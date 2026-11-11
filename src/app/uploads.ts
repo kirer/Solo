@@ -107,10 +107,13 @@ async function ensurePreview(
 			await mkdir(dir, { recursive: true });
 			// `fit: inside` + `withoutEnlargement`：只缩不放，长边封顶 1568。
 			// 透明不铺底 —— 铺白底是 JPEG 那条线的妥协，WebP 原生带 alpha，不该丢。
-			// libvips 在 Windows 上会一直握着源文件的句柄，**不调 `destroy()` 就不放**。
-			// 握着的时候别的代码去删这张图（删附件、sweep 收孤儿）会撞 `EBUSY`。
-			// 所以先显式建实例，`finally` 里收掉 —— 不靠 GC，GC 什么时候来不由我们定。
-			const pipeline = sharp(source);
+			// Windows 上 libvips 按**路径**打开源图后，那份文件在它手里是锁着的 ——
+			// 用户这时删附件（`removeUpload`）会撞 `EBUSY`，删不掉。
+			// 所以先自己把字节读出来，交给 `sharp(buffer)`：libvips 从头到尾不碰这台机器上的路径，
+			// 也就没有「攥着源图不放」这回事。附件最大也就几十 MB，读一遍完全划算。
+			const sourceBytes = await readFile(source);
+			// 另外 `destroy()` 自己收 pipeline —— 不靠 GC，GC 什么时候来不由我们定。
+			const pipeline = sharp(sourceBytes);
 			let bytes: Buffer;
 			try {
 				bytes = await pipeline
