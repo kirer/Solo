@@ -13,7 +13,6 @@
 import { describe, expect, test } from "vitest";
 import {
 	KOKORO_DEFAULT_VOICE,
-	KOKORO_OLD_VOICES,
 	KOKORO_V11_SPEAKER_BYTES,
 	KOKORO_V11_VOICES,
 	KOKORO_V11_VOICES_BIN_BYTES,
@@ -23,6 +22,21 @@ import {
 	sidOfVoice,
 	voiceOfSid,
 } from "../../seed/plugins/悬浮球/kokoro.js";
+
+/**
+ * 老版本（v1.0）的 8 个音色，sid 45–52。放在测试里而不是 seed 里：生产代码一行都不用它们，
+ * 只用来钉「同一个 sid 在 v1.1 里指向的确实是另一个人」，而 seed 有体积上限。
+ */
+const KOKORO_OLD_VOICES = [
+	{ id: 45, name: "zf_xiaobei", label: "晓北" },
+	{ id: 46, name: "zf_xiaoni", label: "晓妮" },
+	{ id: 47, name: "zf_xiaoxiao", label: "晓晓" },
+	{ id: 48, name: "zf_xiaoyi", label: "晓伊" },
+	{ id: 49, name: "zm_yunjian", label: "云健" },
+	{ id: 50, name: "zm_yunxi", label: "云希" },
+	{ id: 51, name: "zm_yunxia", label: "云夏" },
+	{ id: 52, name: "zm_yunyang", label: "云扬" },
+];
 
 describe("Kokoro v1.1-zh 音色表", () => {
 	test("表长 103：3 英文 + 55 女 + 45 男", () => {
