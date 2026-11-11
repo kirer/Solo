@@ -32,6 +32,6 @@ export const LEGACY_TEXT_KEYS: ReadonlySet<string> = new Set(LEGACY_TEXT.split("
  * 文件名和当前出厂一致 = 没改过，可以整份升到新版；有一份对不上 = 用户改过，原样保留。
  * 由 `git log --all -- seed/plugins` 生成；账本记住基线之后就不再加了。
  */
-const LEGACY_PLUGIN = "019be9ca438a943e,01faf57b148ef7a3,037d62ebc6830a61,03961e3ade045ce3,062e1d170364e9d1,2e8a36ce2075e7e4,351ab37fdde36147,416e0b60ceab84b5,42c96e2d59c9c026,477723bcaa211e3e,639d0ec5f641d52c,6860311af9a52235,6e551b1d34551420,7c217ef3938afb2e,87930d8cf4142157,8ce2edd0823cc434,8fee7696235c7081,951f6308e2e09bba,a076108b01925262,a27ab38d49abfe19,a2ae90a9dc2c7ada,af679c103f974f00,afd0531bea0913ae,be5a4522e3ed619c,c02e6d2c063c6e86,c84c2f4df89e91f7,d77505c0dca45f0d,d870592aff27cff8,f0c648eb9cd61315,f3feab6fec254e65,fc03b46cc48cc504";
+const LEGACY_PLUGIN = "01faf57b148ef7a3,0e8e2c8c8ea3fa46,0e96e3a2bb8cc40e,39e3e620cc1df4e3,4d05be5dc93f3089,4d28b6633c7cf17e,4d39830fe8008a87,4d96029e29df397e,599da12b832e40e2,653aed1e9db09954,65469e51f1d97735,6636b8781fd5c1bb,6d01e74363914f65,75f2d540b7e3db51,86e07bd03bcfd50b,a076108b01925262,abea235c5f3398a0,b7555d25751cc3e3,c9fc8c4a6651084a";
 
 export const LEGACY_PLUGIN_HASHES: ReadonlySet<string> = new Set(LEGACY_PLUGIN.split(","));
