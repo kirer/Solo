@@ -17,6 +17,7 @@ import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
+import { VirtualFeed } from "./VirtualFeed.tsx";
 import { Slot } from "../plugin/Slot.tsx";
 import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
@@ -296,21 +297,32 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 					<div className="feed" id="feed" ref={feedRef}>
 						{hero === null ? null : <SoloHero hero={hero} />}
 						{detail !== null && rows.length === 0 ? <Empty channelId={detail.channel.id} /> : null}
-						{rows.map((row) => (
-							<RowView
-								key={row.key}
-								row={row}
-								labels={labels}
-								onCopy={copy}
-								onPick={(message, name) => setPicked({ message, name })}
-								onImage={props.onImage}
-								onFile={props.onFile}
-								onJump={jumpTo}
-								onJumpLatest={() => {
-									toBottom("smooth");
-								}}
-							/>
-						))}
+						{/* 只挂视口附近的行（`VirtualFeed`）：5000 条的频道不再一次性塞满 DOM。 */}
+						<VirtualFeed
+							items={rows}
+							scroller={flowRef}
+							scope={detail?.channel.id ?? ""}
+							// `atBottom` 就是「贴底没」：滚动事件里同步过，新消息到达时 `toBottom()` 也会置真。
+							pinned={atBottom}
+							render={(index) => {
+								const row = rows[index];
+								if (row === undefined) return null;
+								return (
+									<RowView
+										row={row}
+										labels={labels}
+										onCopy={copy}
+										onPick={(message, name) => setPicked({ message, name })}
+										onImage={props.onImage}
+										onFile={props.onFile}
+										onJump={jumpTo}
+										onJumpLatest={() => {
+											toBottom("smooth");
+										}}
+									/>
+								);
+							}}
+						/>
 					</div>
 
 				</div>

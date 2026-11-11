@@ -2902,3 +2902,30 @@
 	border-radius: 4px;
 	background: var(--rule);
 }
+
+/* ── 窗口化渲染的骨架（`VirtualFeed.tsx`） ─────────────────────────
+ *
+ * 只挂视口附近的行，没挂的那些用两个空盒子把高度撑住，滚动条长度不变。
+ * 两层都必须是普通块、`width:100%`：`.feed > *` 那条 660 的收窄只该作用在行上，
+ * 撑高的空盒子一旦也被收窄，量出来的滚动长度就跟真实内容对不上了。
+ */
+.vfeed-gap {
+	width: 100%;
+	flex: none;
+	/* 高度是算出来的，跟内容无关；别让它参与 flex 的分配。 */
+	pointer-events: none;
+}
+
+.vfeed {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+
+.vfeed-item {
+	width: 100%;
+	max-width: 660px;
+	margin-left: auto;
+	margin-right: auto;
+	flex: none;
+}
