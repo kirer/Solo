@@ -107,11 +107,20 @@ async function ensurePreview(
 			await mkdir(dir, { recursive: true });
 			// `fit: inside` + `withoutEnlargement`：只缩不放，长边封顶 1568。
 			// 透明不铺底 —— 铺白底是 JPEG 那条线的妥协，WebP 原生带 alpha，不该丢。
-			const bytes = await sharp(source)
-				.rotate() // 手机照片带 EXIF 方向，不转过来缩图是歪的
-				.resize({ width: PREVIEW_MAX_EDGE, height: PREVIEW_MAX_EDGE, fit: "inside", withoutEnlargement: true })
-				.webp({ quality: PREVIEW_QUALITY })
-				.toBuffer();
+			// libvips 在 Windows 上会一直握着源文件的句柄，**不调 `destroy()` 就不放**。
+			// 握着的时候别的代码去删这张图（删附件、sweep 收孤儿）会撞 `EBUSY`。
+			// 所以先显式建实例，`finally` 里收掉 —— 不靠 GC，GC 什么时候来不由我们定。
+			const pipeline = sharp(source);
+			let bytes: Buffer;
+			try {
+				bytes = await pipeline
+					.rotate() // 手机照片带 EXIF 方向，不转过来缩图是歪的
+					.resize({ width: PREVIEW_MAX_EDGE, height: PREVIEW_MAX_EDGE, fit: "inside", withoutEnlargement: true })
+					.webp({ quality: PREVIEW_QUALITY })
+					.toBuffer();
+			} finally {
+				pipeline.destroy();
+			}
 			await writeFile(staging, bytes);
 			await rename(staging, target);
 			return { path: target, bytes: bytes.length };
@@ -161,14 +170,44 @@ async function writeStagedState(root: string, state: StagedState): Promise<void>
 	await rename(temp, join(root, STAGED_STATE_FILE));
 }
 
+/**
+ * 删一个文件，删不掉要说出来。
+ *
+ * 早先这里是 `unlink(...).catch(() => undefined)` —— 整个吞掉。Windows 上很常见：
+ * 刚生成完缩图、下游还握着句柄，`unlink` 撞 `EBUSY`，删不掉，可调用方以为删干净了，
+ * 盘上留一份指向已删附件的孤儿（还会被当成「已生成」直接发出去）。
+ * 所以：`ENOENT`（本来就没有）算成功；`EBUSY`/`EPERM` 退避重试几次；
+ * 还不行就记一条日志（带上路径和最后一次的错误），**不静默**。
+ */
+async function unlinkOrReport(path: string): Promise<void> {
+	const retries = 5;
+	for (let attempt = 0; attempt <= retries; attempt += 1) {
+		try {
+			await unlink(path);
+			return;
+		} catch (error: unknown) {
+			const code = (error as NodeJS.ErrnoException)?.code;
+			// 本来就没有：目标达成。
+			if (code === "ENOENT") return;
+			// 只有「被别人攥着」值得重试；别的错（权限、路径非法）重试也没用。
+			const held = code === "EBUSY" || code === "EPERM" || code === "EACCES";
+			if (!held || attempt === retries) {
+				console.log(`[core] 删不掉 ${path}：${(error as Error)?.message ?? "未知"}`);
+				return;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 20 * (attempt + 1)));
+		}
+	}
+}
+
 /** 顺手删掉一个附件的本体与元数据；本来就不在也算成功（`drop` 是幂等的）。 */
 async function removeUpload(root: string, id: string): Promise<void> {
 	const path = uploadPathOf(root, id);
 	if (path === undefined) return;
-	await unlink(path).catch(() => undefined);
-	await unlink(`${path}.json`).catch(() => undefined);
+	await unlinkOrReport(path);
+	await unlinkOrReport(`${path}.json`);
 	const thumb = previewPathOf(root, id);
-	if (thumb !== undefined) await unlink(thumb).catch(() => undefined);
+	if (thumb !== undefined) await unlinkOrReport(thumb);
 	// 这个 id 已经没了，生缩图失败的黑名单跟着清 —— 不然它也一直涨，而且万一以后
 	// 同一个 id 又出现（理论上不会），会带着一个莫名其妙的「失败过」标记。
 	previewFailed.delete(id);

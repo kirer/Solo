@@ -10,11 +10,11 @@
  * 真图是现编的：用 `sharp` 自己造一张 3000×2000 的和一张透明 PNG，比往仓库里塞
  * 二进制样本干净，也不会有人拿一张对不上的样本「修」出假绿。
  */
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp from "sharp";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createUploads, previewPathOf } from "../../src/app/uploads.ts";
 
 let root = "";
@@ -43,32 +43,45 @@ const ID = "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa";
 const ID_BAD = "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb";
 const ID_SMALL = "cccccccc-3333-4333-8333-cccccccccccc";
 const ID_ALPHA = "dddddddd-4444-4444-8444-dddddddddddd";
+const ID_DROP = "staged-eeeeeeee-5555-4555-8555-eeeeeeeeeeee";
+
+/**
+ * 用 `sharp` 造样本/读缩图，用完必须 `destroy()`。
+ *
+ * Windows 上 libvips 会一直握着文件句柄，不释放的话 `afterEach` 删临时目录会撞 `EBUSY`
+ * （CI 上就是这么红的）。这不是「绕开断言」，是把句柄还回去。
+ */
+async function withSharp<T>(make: () => sharp.Sharp, use: (pipeline: sharp.Sharp) => Promise<T>): Promise<T> {
+	const pipeline = make();
+	try {
+		return await use(pipeline);
+	} finally {
+		pipeline.destroy();
+	}
+}
 
 /** 3000×2000 的纯色 JPEG：一眼能看出缩没缩。 */
 async function bigJpeg(): Promise<Buffer> {
-	return sharp({
-		create: { width: 3000, height: 2000, channels: 3, background: { r: 30, g: 120, b: 200 } },
-	})
-		.jpeg({ quality: 90 })
-		.toBuffer();
+	return withSharp(
+		() => sharp({ create: { width: 3000, height: 2000, channels: 3, background: { r: 30, g: 120, b: 200 } } }),
+		(pipeline) => pipeline.jpeg({ quality: 90 }).toBuffer(),
+	);
 }
 
 /** 400×300 的小 JPEG：缩完必须还是 400 宽，不能被拉到 1568。 */
 async function smallJpeg(): Promise<Buffer> {
-	return sharp({
-		create: { width: 400, height: 300, channels: 3, background: { r: 200, g: 60, b: 60 } },
-	})
-		.jpeg({ quality: 90 })
-		.toBuffer();
+	return withSharp(
+		() => sharp({ create: { width: 400, height: 300, channels: 3, background: { r: 200, g: 60, b: 60 } } }),
+		(pipeline) => pipeline.jpeg({ quality: 90 }).toBuffer(),
+	);
 }
 
 /** 全透明的 800×600 PNG：缩完角上必须还是 alpha 0。 */
 async function transparentPng(): Promise<Buffer> {
-	return sharp({
-		create: { width: 800, height: 600, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } },
-	})
-		.png()
-		.toBuffer();
+	return withSharp(
+		() => sharp({ create: { width: 800, height: 600, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }),
+		(pipeline) => pipeline.png().toBuffer(),
+	);
 }
 
 beforeEach(async () => {
@@ -88,7 +101,7 @@ describe("缩图生成", () => {
 		expect(got.mime).toBe("image/webp");
 		expect(got.path).toBe(previewPathOf(root, ID));
 
-		const meta = await sharp(got.path).metadata();
+		const meta = await withSharp(() => sharp(got.path), (pipeline) => pipeline.metadata());
 		expect(meta.format).toBe("webp");
 		expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1568);
 		// 3000×2000 等比缩：1568 × 1045
@@ -120,7 +133,7 @@ describe("缩图生成", () => {
 		await put(ID_SMALL, "image/jpeg", await smallJpeg());
 
 		const got = await uploads.read(ID_SMALL, { preview: true });
-		const meta = await sharp(got.path).metadata();
+		const meta = await withSharp(() => sharp(got.path), (pipeline) => pipeline.metadata());
 		expect(meta.width).toBe(400);
 		expect(meta.height).toBe(300);
 	});
@@ -131,7 +144,10 @@ describe("缩图生成", () => {
 		const got = await uploads.read(ID_ALPHA, { preview: true });
 		expect(got.mime).toBe("image/webp");
 
-		const { data, info } = await sharp(got.path).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+		const { data, info } = await withSharp(
+			() => sharp(got.path),
+			(pipeline) => pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
+		);
 		expect(info.channels).toBe(4);
 		// 角上第一颗像素：完全透明，不是 255,255,255,255
 		expect([...data.subarray(0, 4)]).toEqual([0, 0, 0, 0]);
@@ -165,5 +181,48 @@ describe("缩图生成", () => {
 
 		expect(await stat(join(root, ID)).catch(() => undefined)).toBeUndefined();
 		expect(await stat(got.path).catch(() => undefined)).toBeUndefined();
+	});
+
+	it("界面丢掉待发附件时，缩图一起删干净（不是静默留孤儿）", async () => {
+		await put(ID_DROP, "image/jpeg", await bigJpeg());
+		const got = await uploads.read(ID_DROP, { preview: true });
+		expect(got.path).toBe(previewPathOf(root, ID_DROP));
+		expect((await stat(got.path)).size).toBeGreaterThan(0);
+
+		const logged: string[] = [];
+		const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+			logged.push(String(line));
+		});
+		try {
+			await uploads.drop([ID_DROP]);
+		} finally {
+			spy.mockRestore();
+		}
+
+		// 本体、元数据、缩图三样都得没；删不掉的话这回是「记一条日志」，不是吞掉。
+		expect(await stat(join(root, ID_DROP)).catch(() => undefined)).toBeUndefined();
+		expect(await stat(join(root, `${ID_DROP}.json`)).catch(() => undefined)).toBeUndefined();
+		expect(await stat(got.path).catch(() => undefined)).toBeUndefined();
+		expect(logged.filter((line) => line.includes("删不掉"))).toEqual([]);
+	});
+
+	it("缩图删不掉时不静默：记一条日志，路径写清", async () => {
+		// 让缩图那一格变成目录：unlink 一定失败（EISDIR/EPERM），删不掉。
+		const thumb = previewPathOf(root, ID_DROP);
+		expect(thumb).toBeDefined();
+		await mkdir(join(root, "previews"), { recursive: true });
+		await mkdir(thumb ?? "", { recursive: true });
+
+		const logged: string[] = [];
+		const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => {
+			logged.push(String(line));
+		});
+		try {
+			await uploads.drop([ID_DROP]);
+		} finally {
+			spy.mockRestore();
+		}
+
+		expect(logged.some((line) => line.includes("删不掉") && line.includes(thumb ?? "<none>"))).toBe(true);
 	});
 });
