@@ -412,7 +412,15 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			// 走唯一入口，`reason="user-return"`（这是人在动）。位移的记账由它在同一个同步块里做完。
 			// **不要额外 `claim()`**：那是给「浏览器自己写很多帧」的平滑滚动用的，按一次键写一次，
 			// 认领之后反而会把接下来 800ms 里人真正的滚动全当成程序在动。
+			// 已经贴顶还按 PageUp / Home：`clamped` 和当前位置相等，位置不会动 —— `sample()`
+			// 看不到这一笔（它只认「`scrollTop` 变了」），补页就不会发生。真机实测：贴顶后
+			// PageUp 三下 + Home 两下，191 条、first 9619 一动不动；同一个位置用滚轮撞是会补的
+			// （106→134→163→191），差别只在滚轮把「撞了」直接报给了仲裁者。
+			// 所以键盘撞边界也走同一个入口 `push()` —— 不另开一套补页，补页权仍只归结算。
+			const hitEdge = clamped === flow.scrollTop;
+			const direction = event.key === "PageUp" || event.key === "Home" ? "up" : "down";
 			setScrollTop(clamped, "user-return");
+			if (hitEdge) arbiter.current?.push(direction);
 			if (event.key === "End") setAtBottom(true);
 			if (event.key === "Home") setAtBottom(false);
 			// 叫醒取样循环：`settle()` 要看到这一笔位移才结算，不叫醒它就没人补页。

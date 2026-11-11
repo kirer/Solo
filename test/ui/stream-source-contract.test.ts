@@ -138,6 +138,20 @@ describe("键盘：PageUp / PageDown / Home / End（验收第 15–18 条）", (
 		expect(src()).toMatch(/tag === "INPUT" \|\| tag === "TEXTAREA" \|\| tag === "SELECT"/);
 	});
 
+	it("键盘撞顶也报给 `push()`，跟滚轮同一条路（别另开一套）", () => {
+		// 贴顶后按 PageUp：`clamped === flow.scrollTop`，位置没动 —— `sample()` 看不见，
+		// 补页就不会发生。真机实测：贴顶后 PageUp 三下 + Home 两下，191 条、first 9619 一动不动，
+		// 而同一个位置用滚轮撞是会补的（106→134→163→191），差别只在滚轮报了 `push()`。
+		const block = body();
+		expect(block).toContain("arbiter.current?.push(");
+		// 只在「这次按键没让位置动」时才算撞，动了就是正常位移，交给结算看位移。
+		expect(block).toContain("clamped === flow.scrollTop");
+		// 方向和位移方向一致：PageUp/Home 是 up，PageDown/End 是 down。
+		expect(block).toMatch(/direction\s*=\s*event\.key === "PageUp" \|\| event\.key === "Home" \? "up" : "down"/);
+		// 一条路：不许再自己开一个补页调用。
+		expect(block).not.toContain("loadEarlier(");
+	});
+
 	it("PageUp 的位移是按一屏算的，不是一整段", () => {
 		const block = body();
 		expect(block).toContain("flow.clientHeight");
