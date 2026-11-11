@@ -16,6 +16,7 @@ import {
 	getChannel,
 	getChannels,
 	getEarlier,
+	getLater,
 	getModels,
 	getOrg,
 	getPerson,
@@ -42,6 +43,25 @@ export type State = {
 	/** 上翻是否还有更早的。 */
 	hasMore: boolean;
 	loadingEarlier: boolean;
+	/**
+	 * 下翻是否还有更晚的（虚拟化重做 2026-11-11）。
+	 *
+	 * `detail.messages` 现在是一个**可移动的窗口**，不是「这个频道的全部」：进频道拿一页，
+	 * 往上翻补更早的（`loadEarlier`），往下翻补更晚的（`loadLater`）。窗口不再贴底时，
+	 * 新消息照样进 store，但**不移出窗口、也不改用户的位置** —— 那条缝由 `unseenAfter` 记着。
+	 */
+	hasLater: boolean;
+	loadingLater: boolean;
+	/** 上一次补更早的失败了（界面据此出「上面还有消息，没加载出来 · 重试」，验收第 19 条）。 */
+	earlierError: boolean;
+	/** 上一次补更晚的失败了。 */
+	laterError: boolean;
+	/**
+	 * 窗口下界之后还有几条新消息没接上（窗口不贴底时才可能 > 0）。
+	 *
+	 * 「回到最新」按钮上写「下面还有 N 条」用它；补更晚的也就补到这儿为止。`null` = 窗口就在最新。
+	 */
+	unseenAfter: number | null;
 	attention: AttentionItem[];
 	attentionUnread: number;
 	presence: Map<string, { state: Presence; at: number }>;
@@ -157,6 +177,11 @@ const initial: State = {
 	detail: null,
 	hasMore: false,
 	loadingEarlier: false,
+	hasLater: false,
+	loadingLater: false,
+	earlierError: false,
+	laterError: false,
+	unseenAfter: null,
 	attention: [],
 	attentionUnread: 0,
 	presence: new Map(),
@@ -339,7 +364,7 @@ async function reloadDetail(id: string): Promise<void> {
 	try {
 		const detail = await getChannel(id);
 		if (getState().currentId !== id) return;
-		patch({ detail, hasMore: detail.hasMore });
+		patch({ detail, hasMore: detail.hasMore, hasLater: false, unseenAfter: null });
 	} catch {
 		// 拉不到就等下一次组织推送再试，别把当前屏清空。
 	}
@@ -348,7 +373,7 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, unreadBefore: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
+		patch({ currentId: null, unreadBefore: null, detail: null, hasMore: false, hasLater: false, loadingLater: false, unseenAfter: null, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
 		return;
 	}
 	// 未读起点在这一刻定住：用列表里那个未读数 + 当前最大 seq 反推「从哪条开始算新的」。
@@ -370,6 +395,9 @@ export async function openChannel(id: string | null): Promise<void> {
 		currentId: id,
 		detail: null,
 		hasMore: false,
+		hasLater: false,
+		loadingLater: false,
+		unseenAfter: null,
 		unreadBefore,
 		reply: null,
 		needMenu: false,
@@ -391,7 +419,7 @@ export async function openChannel(id: string | null): Promise<void> {
 	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
-	patch({ detail, hasMore: detail.hasMore });
+	patch({ detail, hasMore: detail.hasMore, hasLater: false, unseenAfter: null });
 	// 右栏不跟着频道自动开：切一个频道就弹一层资料会把对话挤走（手机上直接挡住整屏）。
 	// 开不开只由顶栏那颗「资料」和插件入口决定。
 	// 助理那屏没有那颗「资料」（顶栏是设置），右栏开着就再也关不掉 —— 进这一屏时收起来。
@@ -407,7 +435,16 @@ export async function openChannel(id: string | null): Promise<void> {
 	void readToEnd(id, detail.messages);
 }
 
-export async function loadEarlier(): Promise<void> {
+/**
+ * 往上补一页（虚拟化重做 2026-11-11）。
+ *
+ * `limit` 由调用方给（一页 = 一屏，见 `stream/heights.ts` 的 `pageSizeFor`）：虚拟化之后
+ * 「补多少」必须由发起这次动作的人定，不能由屏幕状态定 —— 前三轮狂补就是把控制权交给了屏幕。
+ *
+ * 失败不吞：`loadError` 那份状态交给界面出「没加载出来 · 重试」（验收第 19–20 条）。
+ * 这里**不重试、不静默**，一次请求就是一次结局。
+ */
+export async function loadEarlier(limit = 30): Promise<void> {
 	const { currentId, detail, hasMore, loadingEarlier } = state;
 	if (currentId === null || detail === null || !hasMore || loadingEarlier) return;
 	const earliest = detail.messages[0]?.seq ?? 1;
@@ -415,18 +452,59 @@ export async function loadEarlier(): Promise<void> {
 		patch({ hasMore: false });
 		return;
 	}
-	patch({ loadingEarlier: true });
+	patch({ loadingEarlier: true, earlierError: false });
 	const done = mark("channel:earlier");
 	try {
-		const page = await getEarlier(currentId, earliest);
+		const page = await getEarlier(currentId, earliest, limit);
+		// 期间切走了就别往新频道里并旧数据。
+		if (getState().currentId !== currentId) return;
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
 		patch({
 			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
 			hasMore: page.hasMore,
 		});
+	} catch (error) {
+		void error;
+		// 补不上要有结局：标记错误，界面照这个出一行「上面还有消息，没加载出来 · 重试」。
+		if (getState().currentId === currentId) patch({ earlierError: true });
 	} finally {
 		done();
-		patch({ loadingEarlier: false });
+		if (getState().currentId === currentId) patch({ loadingEarlier: false });
+	}
+}
+
+/**
+ * 往下补一页（虚拟化重做 2026-11-11）。
+ *
+ * 什么时候会有更晚的：窗口不贴底时来了新消息 —— 我们不把它并进窗口（那会把用户
+ * 正在看的那一屏挤走），只记 `unseenAfter`。用户往下翻到窗口下界，才用这个函数接上。
+ * 接上之后 `hasLater` 归位、`unseenAfter` 清空。
+ */
+export async function loadLater(limit = 30): Promise<void> {
+	const { currentId, detail, loadingLater, unseenAfter } = state;
+	if (currentId === null || detail === null || loadingLater) return;
+	if (unseenAfter === null) return;
+	const latest = detail.messages.at(-1)?.seq ?? 0;
+	if (latest === 0) return;
+	patch({ loadingLater: true, laterError: false });
+	const done = mark("channel:later");
+	try {
+		const page = await getLater(currentId, latest, limit);
+		if (getState().currentId !== currentId) return;
+		const merged = mergeMessages(getState().detail?.messages ?? [], page.messages);
+		const newest = page.messages.at(-1)?.seq ?? latest;
+		patch({
+			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
+			// 接上之后如果这一页已经盖到最新（通道的 `lastSeq`），窗口就算贴底了。
+			unseenAfter: newest >= (getState().detail?.channel.lastSeq ?? newest) ? null : latest,
+			hasLater: newest < (getState().detail?.channel.lastSeq ?? newest),
+		});
+	} catch (error) {
+		void error;
+		if (getState().currentId === currentId) patch({ laterError: true });
+	} finally {
+		done();
+		if (getState().currentId === currentId) patch({ loadingLater: false });
 	}
 }
 
@@ -451,6 +529,16 @@ export function applyMessage(id: string, message: Message): void {
 	if (current.currentId !== id || current.detail === null) return;
 	const messages = current.detail.messages;
 	const index = messages.findIndex((candidate) => candidate.seq === message.seq);
+	if (index < 0) {
+		// 窗口不贴底时来的**新**消息（比窗口下界还晚）：不并进窗口。
+		// 并进去就会让用户在看的这一屏整体上移 —— 那正是验收第 26 条里「另一个窗口把我拽走」的形状。
+		const newestSeq = messages.at(-1)?.seq ?? 0;
+		if (current.unseenAfter !== null && message.seq > newestSeq) {
+			patch({ hasLater: true });
+			done();
+			return;
+		}
+	}
 	let next: Message[];
 	if (index < 0) {
 		// 比窗口还早的消息（服务端补历史）不能直接 push 到末尾，否则顺序错乱。

@@ -388,6 +388,7 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				const detail = await app.read.readChannelDetail(params.id ?? "", {
 					limit: numberParam(url, "limit"),
 					before: numberParam(url, "before"),
+					after: numberParam(url, "after"),
 				});
 				return json(response, detail);
 			},

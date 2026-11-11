@@ -55,6 +55,15 @@ export const getEarlier = (id: string, before: number, limit = 30): Promise<Chan
 	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}&before=${before}`);
 
 /**
+ * 补**更晚**的一页（虚拟化重做 2026-11-11）。
+ *
+ * 走同一个详情接口，`after=<已知最新 seq>`：后端已支持按 `after` 取窗口之后的那些，
+ * 与 `before` 一样把 `limit` 夹在 1..100。界面用它接上「窗口不贴底时来的新消息」。
+ */
+export const getLater = (id: string, after: number, limit = 30): Promise<ChannelDetail> =>
+	call<ChannelDetail>(`/api/channels/${encodeURIComponent(id)}?limit=${limit}&after=${after}`);
+
+/**
  * 一个人在所有频道里的轮次（后台任务面板）。
  *
  * 面板要的是「他干了什么」，不是「这个频道里发生了什么」—— 他在团队频道干活也算。

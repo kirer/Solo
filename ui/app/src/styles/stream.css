@@ -1303,3 +1303,63 @@ button.row-quote {
 		animation: none;
 	}
 }
+
+/* ── 占位行（虚拟化重做 2026-11-11，设计 §3.4） ─────────────────────
+   一页在路上时，先按「一页 = 一屏 = N 条定高」把位置占出来。
+   **必须真看得见**：`visibility:hidden` 那种看不见的占位按不通过处理。
+   高度由 `PLACEHOLDER_HEIGHT` 定值（和 `heights.ts` 里那个数一致），所以页回来
+   整批换成真行时不会跳。 */
+.row-placeholder {
+	display: flex;
+	align-items: center;
+	height: 76px;
+	padding: 0 4px;
+}
+
+.ph-loading,
+.ph-retry {
+	font: inherit;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}
+
+.ph-retry {
+	border: 0;
+	padding: 0;
+	background: none;
+	color: var(--ink-2);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	cursor: pointer;
+}
+
+.ph-bar {
+	width: 100%;
+	height: 10px;
+	border-radius: 999px;
+	background: color-mix(in oklab, var(--ink) 7%, transparent);
+	animation: ph-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes ph-breathe {
+	0%,
+	100% {
+		opacity: 0.55;
+	}
+	50% {
+		opacity: 1;
+	}
+}
+
+/* 「到最上面了」（验收第 21 条）：补不上和「已经没有更早的了」要长得不一样。
+   和占位行占同一个位置、同一套高度感 —— 所以它出现时那一屏不会整体挪。 */
+.row-ceiling {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 18px 4px;
+	font-size: 12px;
+	line-height: 16px;
+	color: var(--ink-3);
+}

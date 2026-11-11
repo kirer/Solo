@@ -224,7 +224,7 @@ export function messageView(
 	};
 }
 
-/** 频道详情。`limit` 给最近 N 条，`before` 往前翻页。 */
+/** 频道详情。`limit` 给最近 N 条，`before` 往前翻页，`after` 往后接页（虚拟化重做 2026-11-11）。 */
 export function channelDetail(
 	state: ChannelState,
 	channel: Channel,
@@ -232,6 +232,13 @@ export function channelDetail(
 	options: {
 		readonly limit?: number;
 		readonly before?: number;
+		/**
+		 * 取「seq 大于它的那些」里**最靠前的**一页。
+		 *
+		 * 和 `before` 是一对：`before` 往上翻（取它之前的最后一页），`after` 往下接（取它之后的
+		 * 第一页）。界面窗口不贴底时来了新消息，用它把那一段接上，而不是把新消息硬塞进窗口。
+		 */
+		readonly after?: number;
 		readonly viewer?: string;
 		/** 助理的 slug（身份目录在应用根下的那些人）。成员角色要靠它标「助理」。 */
 		readonly assistants?: readonly string[];
@@ -243,8 +250,10 @@ export function channelDetail(
 	const limit = Math.min(Math.max(options.limit ?? 60, 1), 200);
 	const upper = options.before === undefined ? all.length : all.findIndex((item) => item.seq >= (options.before as number));
 	const end = upper < 0 ? all.length : upper;
-	const start = Math.max(0, end - limit);
-	const page = all.slice(start, end);
+	// `after` 取「它之后的第一页」：起点是第一条 seq 大于它的，终点是起点 + limit。
+	const lower = options.after === undefined ? 0 : all.findIndex((item) => item.seq > (options.after as number));
+	const from = lower < 0 ? all.length : lower;
+	const page = options.after === undefined ? all.slice(Math.max(0, end - limit), end) : all.slice(from, Math.min(all.length, from + limit));
 	const last = page[page.length - 1];
 	const teamSlug = teamOfChannel(channel.id);
 	const assistants = new Set(options.assistants ?? []);
@@ -273,7 +282,7 @@ export function channelDetail(
 			unread: unreadCount(state, channel.id, slug),
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
-		hasMore: start > 0,
+		hasMore: options.after === undefined ? Math.max(0, (options.before === undefined ? all.length : end) - limit) > 0 : all.length > 0 && (page[0]?.seq ?? 1) > 1,
 	};
 }
 

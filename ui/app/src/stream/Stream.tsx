@@ -18,8 +18,12 @@ import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
 import { Slot } from "../plugin/Slot.tsx";
-import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
+import { getState, loadEarlier, loadLater, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
+import { DEFAULT_ROW_HEIGHT, PLACEHOLDER_HEIGHT, averageHeight, buildHeights, offsetOf, pageSizeFor } from "./heights.ts";
+import type { Heights } from "./heights.ts";
+import { SAMPLER_MAX_IDLE_MS, createArbiter } from "./scroll.ts";
+import type { Arbiter } from "./scroll.ts";
 
 
 export function Stream(props: { onImage: (src: string) => void; onFile: (file: Attachment) => void }): JSX.Element {
@@ -27,6 +31,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const detail = useStore((state) => state.detail);
 	const hasMore = useStore((state) => state.hasMore);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
+	const earlierError = useStore((state) => state.earlierError);
+	const loadingLater = useStore((state) => state.loadingLater);
+	const unseenAfter = useStore((state) => state.unseenAfter);
 	const people = useStore((state) => state.people);
 	const runs = useStore((state) => state.runs);
 	const presence = useStore((state) => state.presence);
@@ -36,8 +43,16 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 
 	const flowRef = useRef<HTMLDivElement | null>(null);
 	const feedRef = useRef<HTMLDivElement | null>(null);
-	const anchor = useRef<{ seq: number; top: number } | null>(null);
-	const pinned = useRef(true);
+	/** 滚动仲裁者：谁是「人在动」（设计 §1）。**唯一**允许写 `scrollTop` 的地方在它里面。 */
+	const arbiter = useRef<Arbiter | null>(null);
+	/** 量到过的行高（`row.key → px`）。模型里每一行都有高度，锚点被回收也算得出 `ΔH`。 */
+	const heights = useRef(new Map<string, number>());
+	/** 上一次渲染时每一行的 key 与偏移，用来在补页前后算锚点补偿（设计 §3.1）。 */
+	const layout = useRef<Heights>(buildHeights([]));
+	/** 每帧取样循环：只在有滚动兴趣时跑，空闲 500ms 就停（设计 §1.2）。 */
+	const sampler = useRef<number | null>(null);
+	/** 这一帧渲染了哪些行（给「还没量到高度」时初始化模型用）。 */
+	const rowsRef = useRef<Row[]>([]);
 
 	const messages = detail?.messages ?? [];
 	// 这个频道里正在跑、还没回话的那几轮 —— `live` 行只认它们（ADR-046）。
@@ -52,7 +67,21 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		return out;
 	}, [runs, currentId]);
 	const unreadBefore = useStore((state) => state.unreadBefore);
-	const rows = useMemo(
+	/**
+	 * 占位行要几条：一页 = 一屏 = N 条定高（设计 §3.4）。
+	 *
+	 * 一页还没回来时才画；回来了就整页换成真行 —— 高度相近，所以换的时候不跳。
+	 * 失败时同一批占位行原地变成「没加载出来 · 重试」，**不缩成一行也不消失**：
+	 * 一缩，用户眼前那屏字就会整体动一下（验收第 19–20 条）。
+	 */
+	const pending = useMemo(() => {
+		if (!loadingEarlier && !earlierError) return null;
+		const flow = flowRef.current;
+		const size = flow === null ? 12 : pageSizeFor(flow.clientHeight, averageHeight(layout.current));
+		return { count: Math.max(1, size), failed: earlierError && !loadingEarlier };
+	}, [loadingEarlier, earlierError]);
+
+	const rows = useMemo<Row[]>(
 		() =>
 			buildRows({
 				messages,
@@ -60,9 +89,15 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				now: Date.now(),
 				// `exactOptionalPropertyTypes` 下不能显式传 undefined：没有未读就干脆不给这个字段。
 				...(unreadBefore === null ? {} : { unreadBefore }),
+				...(pending === null ? {} : { pending }),
+				// 到头了才说「到最上面了」：没有更早的、也不是正在补、也没失败。
+				...(hasMore || pending !== null ? {} : { atCeiling: messages.length > 0 }),
 			}),
-		[messages, running, unreadBefore],
+		[messages, running, unreadBefore, pending, hasMore],
 	);
+
+	// 渲染时把这一屏的行交给 ref：仲裁者初始化模型时还没量到任何高度，按估算行高先摆上。
+	rowsRef.current = rows;
 
 	const labels = useMemo(() => {
 		const map = new Map<string, { label: string; role: string; assistant: boolean }>();
@@ -112,103 +147,271 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		};
 	}, [people, detail, runs, presence]);
 
-	/* ── 贴底与位置保持 ─────────────────────────────────────────── */
+	/* ── 贴底与位置保持（虚拟化重做 2026-11-11） ──────────────────── */
 
-	const isPinned = useCallback((): boolean => {
-		const flow = flowRef.current;
-		if (flow === null) return true;
-		return flow.scrollHeight - flow.scrollTop - flow.clientHeight < 120;
+	/**
+	 * 这是**唯一**给 `scrollTop` 赋值的地方。
+	 *
+	 * 它认领的两件事：① 写之前先在仲裁者里记一笔账（下一次取样会把这次跳变认领掉，
+	 * 不然我们自己的补偿会被人当成「用户在滚」，前三轮就是这么把循环接回去的）；
+	 * ② `reason` 只做日志用，不是判断依据 —— 判断只认账。
+	 */
+	const setScrollTop = useCallback((target: number, reason: "enter" | "anchor" | "user-return") => {
+		arbiter.current?.setScrollTop(target, reason);
 	}, []);
 
-	const toBottom = useCallback((behavior: ScrollBehavior = "auto") => {
-		const flow = flowRef.current;
-		if (flow === null) return;
-		flow.scrollTo({ top: flow.scrollHeight, behavior });
-		pinned.current = true;
-		setAtBottom(true);
-	}, []);
-
-	// 上翻加载之前先记住视口顶部那一行（按 seq 认，不按文本）。
-	const rememberAnchor = useCallback(() => {
-		const flow = flowRef.current;
-		const feed = feedRef.current;
-		if (flow === null || feed === null) return;
-		const top = flow.getBoundingClientRect().top;
-		for (const node of feed.querySelectorAll<HTMLElement>(".row")) {
-			const rect = node.getBoundingClientRect();
-			if (rect.bottom > top + 4) {
-				anchor.current = { seq: Number(node.dataset["seq"] ?? "0"), top: rect.top - top };
+	/** 取样循环：有滚动兴趣时每帧跑一次，空闲 500ms 停（设计 §1.2：不许长驻 rAF）。 */
+	const wake = useCallback(() => {
+		if (sampler.current !== null) return;
+		const tick = (): void => {
+			const state = arbiter.current;
+			if (state === null) {
+				sampler.current = null;
 				return;
 			}
+			state.sample();
+			// 这次动作停了 → 结算一次（贴顶就补一页，credit 只有这一处会发）。
+			const settled = state.settle();
+			if (settled !== null) settleOnce(settled);
+			if (state.idleFor() > SAMPLER_MAX_IDLE_MS) {
+				sampler.current = null;
+				return;
+			}
+			sampler.current = requestAnimationFrame(tick);
+		};
+		sampler.current = requestAnimationFrame(tick);
+	}, []);
+
+	/**
+	 * 到底。只有三处会调：进频道（`reason="enter"`）、本窗口发消息成功、用户点「回到最新」
+	 * （`reason="user-return"`）。**新消息到达不许调它** —— 那是验收第 26 条的挂点。
+	 */
+	const toBottom = useCallback(
+		(reason: "enter" | "user-return" = "user-return", behavior: ScrollBehavior = "auto") => {
+			const flow = flowRef.current;
+			if (flow === null) return;
+			if (behavior === "smooth") {
+				// `scrollTo({behavior:"smooth"})` 是一串我们没记账的写；记账之后再滚，
+				// 让中途的每一帧跳变都被认领掉，不会被当成「人在往上翻」。
+				arbiter.current?.claim();
+				flow.scrollTo({ top: flow.scrollHeight, behavior: "smooth" });
+			} else {
+				setScrollTop(flow.scrollHeight, reason);
+			}
+			setAtBottom(true);
+		},
+		[setScrollTop],
+	);
+
+	/** 一页补多少条：按屏算（Solo 已拍：一页按屏）。 */
+	const pageSize = useCallback((): number => {
+		const flow = flowRef.current;
+		if (flow === null) return pageSizeFor(0, averageHeight(layout.current));
+		return pageSizeFor(flow.clientHeight, averageHeight(layout.current));
+	}, []);
+
+	/**
+	 * 进频道后台填满（设计 §2.4）：最多补 3 页就停。
+	 *
+	 * 停的理由是「用户没动」：进频道是程序在动，不是人在动，补到一屏装不满为止就够了。
+	 * 补回来的每一页都走 3.1 补偿（上面那条 effect），这里**不碰 `scrollTop`**。
+	 */
+	const fillOnEnter = useCallback(async () => {
+		for (let round = 0; round < 3; round += 1) {
+			const flow = flowRef.current;
+			if (flow === null) return;
+			if (flow.scrollHeight > flow.clientHeight + 40) return;
+			const state = getState();
+			if (!state.hasMore || state.loadingEarlier) return;
+			const pages = Math.ceil((flow.clientHeight + 40 - flow.scrollHeight) / Math.max(1, averageHeight(layout.current) * pageSize()));
+			const before = state.detail?.messages.length ?? 0;
+			await loadEarlier(pageSize() * Math.max(1, Math.min(3, pages)));
+			const after = getState().detail?.messages.length ?? 0;
+			if (after === before) return; // 一条都没补上（到底了 / 失败了）→ 不空转
+		}
+	}, [pageSize]);
+
+	/** 屏幕最上面那一行的 key（锚点）。按 key 认，不按像素记。 */
+	const firstVisibleKey = useCallback((): string | null => {
+		const flow = flowRef.current;
+		const feed = feedRef.current;
+		if (flow === null || feed === null) return null;
+		const top = flow.getBoundingClientRect().top;
+		for (const node of feed.querySelectorAll<HTMLElement>("[data-row-key]")) {
+			const rect = node.getBoundingClientRect();
+			if (rect.bottom > top + 2) return node.dataset["rowKey"] ?? null;
+		}
+		return null;
+	}, []);
+
+	/**
+	 * 补页前后把屏幕上的字钉住（设计 §3.1 / §3.3）。
+	 *
+	 * `ΔH` **由模型算法**（`offsetOf`），不查 DOM：虚拟化下上面的行本来就会被回收，
+	 * 「找不到锚点」是常态，不是失败。模型里每一行都有高度 —— 真行的、占位行的、
+	 * 已经回收但记得高度的，所以 `ΔH` 永远算得出来。
+	 */
+	const compensate = useCallback(() => {
+		const anchorKey = firstVisibleKey();
+		const flow = flowRef.current;
+		if (anchorKey === null || flow === null) return;
+		const beforeTop = offsetOf(layout.current, anchorKey);
+		if (beforeTop === undefined) return; // 模型里还没有它（刚进来）→ 不补偿，没有位移可言
+		// 等这一帧的 DOM 落地，按新模型算同一个 key 现在距内容顶多少。
+		const apply = (): void => {
+			const now = offsetOf(layout.current, anchorKey);
+			if (now === undefined) return; // 兜底第 3 级：模型里也没有 → 不写（下一次渲染会带上）
+			const delta = now - beforeTop;
+			if (Math.abs(delta) < 1) return;
+			setScrollTop(flow.scrollTop + delta, "anchor");
+		};
+		apply();
+	}, [firstVisibleKey, setScrollTop]);
+
+	/** 量一次真行高度，交给模型吸收（误差自愈：估的 → 真的）。 */
+	const measureRows = useCallback(() => {
+		const feed = feedRef.current;
+		if (feed === null) return;
+		let changed = false;
+		for (const node of feed.querySelectorAll<HTMLElement>("[data-row-key]")) {
+			const key = node.dataset["rowKey"];
+			if (key === undefined) continue;
+			// 占位行的高度是**定的**（`PLACEHOLDER_HEIGHT`），不量：量出来的 0（还没布局、
+			// 被折叠）会把它当成「这行没高度」，占位就没占住位置，页回来时那一屏会整体往上跳。
+			const height = key.startsWith("ph-") ? PLACEHOLDER_HEIGHT : node.getBoundingClientRect().height;
+			if (!Number.isFinite(height) || height <= 0) continue;
+			const rounded = Math.round(height);
+			if (heights.current.get(key) === rounded) continue;
+			heights.current.set(key, rounded);
+			changed = true;
+		}
+		if (changed) {
+			layout.current = buildHeights(
+				layout.current.rows.map((row) => {
+					const height = heights.current.get(row.key);
+					return height === undefined ? row : { key: row.key, height };
+				}),
+			);
 		}
 	}, []);
 
-	// 新消息到达：贴底就跟到底，否则原地不动（否则看上翻历史时会被拽回来）。
-	useLayoutEffect(() => {
-		if (pinned.current) toBottom();
-		else setAtBottom(false);
-	}, [messages, toBottom]);
-
-	// 补历史之后：按锚点行补回滚动的差值，屏幕上的字不动。
-	useLayoutEffect(() => {
-		const saved = anchor.current;
-		const flow = flowRef.current;
-		const feed = feedRef.current;
-		if (saved === null || flow === null || feed === null) return;
-		const node = feed.querySelector<HTMLElement>(`[data-seq="${String(saved.seq)}"]`);
-		if (node === null) return;
-		const delta = node.getBoundingClientRect().top - flow.getBoundingClientRect().top - saved.top;
-		if (Math.abs(delta) > 1) flow.scrollTop += delta;
-		anchor.current = null;
-	}, [messages]);
-
-	useEffect(() => {
-		const flow = flowRef.current;
-		if (flow === null) return;
-		const onScroll = (): void => {
-			const pinnedNow = isPinned();
-			pinned.current = pinnedNow;
-			setAtBottom(pinnedNow);
-		};
-		flow.addEventListener("scroll", onScroll, { passive: true });
-		return () => flow.removeEventListener("scroll", onScroll);
-	}, [isPinned]);
-
-	// 切频道：到底部。
-	useEffect(() => {
-		anchor.current = null;
-		pinned.current = true;
-		requestAnimationFrame(() => toBottom());
-	}, [currentId, toBottom]);
-
-	const onTop = useCallback(() => {
-		if (!hasMore || loadingEarlier) return;
-		rememberAnchor();
-		void loadEarlier();
-	}, [hasMore, loadingEarlier, rememberAnchor]);
+	/**
+	 * 一次动作结束时的结算（设计 §1.3）。
+	 *
+	 * 补页的**唯一**自动入口：贴顶 + 还有更早的 + 这次动作是往上走的 → 补一页。
+	 * 补完还贴顶也不续补 —— 这次动作的 `credit` 已经用掉了，由仲裁者的保险丝兜住。
+	 */
+	const settleOnce = useCallback(
+		(settled: { atTop: boolean; atBottom: boolean; upTo: number }) => {
+			setAtBottom(settled.atBottom);
+			const flow = flowRef.current;
+			if (flow === null) return;
+			const atTop = flow.scrollTop <= 24;
+			if (hasMore && !loadingEarlier && atTop && settled.upTo > 0) {
+				arbiter.current?.noteFilled();
+				void loadEarlier(pageSize());
+				return;
+			}
+			// 往下翻到窗口下界、下面还压着没接上的新消息 → 接一页（不跳到底，只接上）。
+			if (unseenAfter !== null && !loadingLater && flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 24) {
+				void loadLater(pageSize());
+			}
+		},
+		[hasMore, loadingEarlier, loadingLater, unseenAfter, pageSize],
+	);
 
 	/**
-	 * 上翻自动补历史：滚到顶部就自己加载，没有按钮。
+	 * 四条 effect 的第一条（原 `if (pinned.current) toBottom()`）—— **删掉了 `toBottom` 那一支**。
 	 *
-	 * 两个触发点：滚到离顶 120px 以内，以及「这一屏还没填满但还有更早的」——
-	 * 后者是短频道刚打开时的样子，不补的话会看到一屏空白和一句提示。
-	 * 补完内容还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
+	 * 新消息到达**永不写 `scrollTop`**：那句话是验收第 26 条的挂点 —— B 停在底部时，
+	 * A 的每条新消息都让 B 重算一次位置，屏上整体挪一格。现在这条 effect 只做两件事：
+	 * ① 按 3.1 补偿（补页/更新把上面的行弄高了，把屏上的字钉住）；② 更新「回到最新」按钮。
+	 * 「跟到底」只剩三个触发点：进频道、本窗口 `send()` 成功、用户点「回到最新」。
+	 */
+	useLayoutEffect(() => {
+		const flow = flowRef.current;
+		if (flow === null) return;
+		compensate();
+		setAtBottom(flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 24);
+	}, [messages, compensate]);
+
+	/** 渲染之后量一次真行高（只做校正，不参与任何判断）。 */
+	useEffect(() => {
+		measureRows();
+	});
+
+	/**
+	 * 四条 effect 的第三条（原 `if (Math.abs(delta) > 1) flow.scrollTop += delta`）——
+	 * 补偿本身还在，但改成走 `setScrollTop(..., "anchor")` 记账。上面那条 effect 已经接管了它。
+	 *
+	 * 第二条（`requestAnimationFrame(maybeLoad)` + `scroll` 上的 `maybeLoad` + `notFilled`）
+	 * 和第四条（`scroll` 里更新 `pinned`）**整块删掉**：补页入口只剩「一次动作结算」与
+	 * 「进频道填满」，`pinned` 这个「我贴底」的开关也不再参与任何补页判断。
 	 */
 	useEffect(() => {
 		const flow = flowRef.current;
 		if (flow === null) return;
-		const maybeLoad = (): void => {
-			const nearTop = flow.scrollTop < 120;
-			const notFilled = flow.scrollHeight <= flow.clientHeight + 40;
-			if ((nearTop || notFilled) && hasMore && !loadingEarlier) onTop();
-		};
-		flow.addEventListener("scroll", maybeLoad, { passive: true });
-		const frame = requestAnimationFrame(maybeLoad);
+		// 任何会让位置动的输入都唤醒取样循环：滚轮、键盘、拖滚动条（`scroll`）、触摸。
+		const onInput = (): void => wake();
+		flow.addEventListener("scroll", onInput, { passive: true });
+		flow.addEventListener("wheel", onInput, { passive: true });
+		flow.addEventListener("touchstart", onInput, { passive: true });
+		flow.addEventListener("keydown", onInput);
 		return () => {
-			flow.removeEventListener("scroll", maybeLoad);
-			cancelAnimationFrame(frame);
+			flow.removeEventListener("scroll", onInput);
+			flow.removeEventListener("wheel", onInput);
+			flow.removeEventListener("touchstart", onInput);
+			flow.removeEventListener("keydown", onInput);
+			if (sampler.current !== null) cancelAnimationFrame(sampler.current);
+			sampler.current = null;
 		};
-	}, [hasMore, loadingEarlier, onTop, messages]);
+	}, [wake]);
+
+	/**
+	 * 仲裁者：容器换了（切频道会重挂 `.flow`）就新建一个，读数基准按新容器来。
+	 *
+	 * `read` / `write` 是它对 DOM 的唯一入口 —— 因此 `Stream.tsx` 里不许再出现第二处
+	 * 给 `scrollTop` 赋值的地方（单测 `stream-source-contract` 钉住）。
+	 */
+	useLayoutEffect(() => {
+		const flow = flowRef.current;
+		if (flow === null) {
+			arbiter.current = null;
+			return;
+		}
+		arbiter.current = createArbiter({
+			read: () => ({ top: flow.scrollTop, height: flow.scrollHeight, client: flow.clientHeight }),
+			write: (top) => {
+				flow.scrollTop = top;
+			},
+		});
+		heights.current.clear();
+		// 一条都还没量到之前，模型按估算行高算 —— `offsetOf` 立刻就有数，锚点补偿不用等第一帧。
+		layout.current = buildHeights(rowsRef.current.map((row) => ({ key: row.key, height: DEFAULT_ROW_HEIGHT })));
+		wake();
+		return () => {
+			arbiter.current = null;
+			if (sampler.current !== null) cancelAnimationFrame(sampler.current);
+			sampler.current = null;
+		};
+	}, [currentId, wake]);
+
+	/**
+	 * 进频道 / 切频道：**立刻 `toBottom()`**（用已经拿到的那一页），`fillOnEnter()` 在后台补。
+	 *
+	 * 顺序是 Solo 2026-11-11 纠的：先补再到底的话，用户会先看到一屏历史再被扔到底
+	 * （验收第 1、2 条）。`fillOnEnter` 补回来的页只走锚点补偿，全程不把视线挪走。
+	 */
+	useLayoutEffect(() => {
+		if (detail === null) return;
+		const flow = flowRef.current;
+		if (flow === null) return;
+		setScrollTop(flow.scrollHeight, "enter");
+		setAtBottom(true);
+		void fillOnEnter();
+		// 只在「进了这个频道、第一页到手」那一刻跑一次。
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [currentId, detail === null]);
 
 	/**
 	 * 双击整行复制正文。
@@ -234,6 +437,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const jumpTo = useCallback((seq: number, node: HTMLElement): void => {
 		const target = node.closest(".feed")?.querySelector(`[data-seq="${seq}"]`);
 		if (!(target instanceof HTMLElement)) return;
+		arbiter.current?.claim();
 		target.scrollIntoView({ block: "center", behavior: "smooth" });
 		target.classList.remove("row-flash");
 		// 重新触发动画：先移除再加回来，同一帧里要读一次布局
@@ -270,7 +474,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 								onFile={props.onFile}
 								onJump={jumpTo}
 								onJumpLatest={() => {
-									toBottom("smooth");
+									toBottom("user-return", "smooth");
 								}}
 							/>
 						))}
@@ -355,7 +559,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				className="to-bottom"
 				id="to-bottom"
 				hidden={atBottom}
-				onClick={() => toBottom("smooth")}
+				onClick={() => toBottom("user-return", "smooth")}
 			>
 				回到最新
 			</button>
@@ -375,9 +579,33 @@ function RowView(props: {
 	onJumpLatest: () => void;
 }): JSX.Element {
 	const { row } = props;
+	if (row.type === "placeholder") {
+		// 一页里只让第一行带文案，其余是等高的灰条 —— 画 12 句「正在加载」会晃眼。
+		return (
+			<div className="row row-placeholder" data-row-key={row.key} aria-busy="true">
+				{row.key !== "ph-0" ? (
+					<span className="ph-bar" aria-hidden="true" />
+				) : row.failed ? (
+					<button type="button" className="ph-retry" onClick={() => void loadEarlier()}>
+						没加载出来 · 重试
+					</button>
+				) : (
+					<span className="ph-loading">正在读更早的消息…</span>
+				)}
+			</div>
+		);
+	}
+	if (row.type === "ceiling") {
+		// 验收第 21 条：到头了要有一句话。没有它，用户按了半天没反应，看起来就是卡死。
+		return (
+			<div className="row row-ceiling" data-row-key={row.key}>
+				到最上面了
+			</div>
+		);
+	}
 	if (row.type === "divider") {
 		return (
-			<div className="row-divider">
+			<div className="row-divider" data-row-key={row.key}>
 				<span>{row.label}</span>
 			</div>
 		);
@@ -386,7 +614,7 @@ function RowView(props: {
 		// 一条横线加一句「以下是新的」，右边是「跳到最新」—— 189 条未读时人需要一个落点，
 		// 而不是从头往下翻。`data-row="unread"` 给「跳到未读」定位用。
 		return (
-			<div className="row-unread" data-row="unread">
+			<div className="row-unread" data-row="unread" data-row-key={row.key}>
 				<span className="row-unread-label">以下是新的 · {row.count} 条</span>
 				<button type="button" className="row-unread-jump" onClick={props.onJumpLatest}>
 					跳到最新
@@ -408,12 +636,14 @@ function RowView(props: {
 		);
 	if (row.type === "live") {
 		return (
-			<LiveRow
-				turn={row.turn}
-				role={props.labels.get(row.turn.slug)?.role ?? ""}
-				assistant={props.labels.get(row.turn.slug)?.assistant === true}
-				onOpen={openTasks}
-			/>
+			<div className="row-live-wrap" data-row-key={row.key}>
+				<LiveRow
+					turn={row.turn}
+					role={props.labels.get(row.turn.slug)?.role ?? ""}
+					assistant={props.labels.get(row.turn.slug)?.assistant === true}
+					onOpen={openTasks}
+				/>
+			</div>
 		);
 	}
 	// 后台命令跑完的留痕：正文是一坨终端输出，是给干活那个人看的。我这边收成一行，
@@ -421,7 +651,7 @@ function RowView(props: {
 	if (row.message.noteOf === "run") {
 		const [head = "", ...rest] = row.message.text.split("\n");
 		return (
-			<div className="row row-note row-note-run" data-seq={row.message.seq}>
+			<div className="row row-note row-note-run" data-seq={row.message.seq} data-row-key={row.key}>
 				<details className="note-fold">
 					<summary>
 						<span className="note-mark" aria-hidden="true">
@@ -436,7 +666,7 @@ function RowView(props: {
 		);
 	}
 	return (
-		<div className="row row-note" data-seq={row.message.seq}>
+		<div className="row row-note" data-seq={row.message.seq} data-row-key={row.key}>
 			<div className="note-mark" aria-hidden="true">
 				i
 			</div>
@@ -467,6 +697,7 @@ function SayRow(props: {
 		<div
 			className="row row-say"
 			data-seq={message.seq}
+			data-row-key={row.key}
 			data-grouped={row.grouped ? "true" : "false"}
 			data-cont={row.cont ? "true" : "false"}
 			data-owner={owner ? "true" : "false"}
