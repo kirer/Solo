@@ -31,6 +31,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 历史指纹表那条测试要遍历全部 v2.* tag；浅克隆只拿得到 1 个，会误判成硬塞的 hash。
+          fetch-depth: 0
       - name: 检查签名密钥
         env:
           SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
@@ -83,6 +86,9 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 历史指纹表那条测试要遍历全部 v2.* tag；浅克隆只拿得到 1 个，会误判成硬塞的 hash。
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
@@ -102,6 +108,9 @@ jobs:
 
   publish:
     needs: [verify, build-mac, build-win]
+    # 2.9.7：真机还没验过（季衡签字时明确说没验），只出包不发版。
+    # 要恢复发版，把下面这行删掉（删了会出现在 diff 里，看得见）。
+    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
