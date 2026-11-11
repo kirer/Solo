@@ -142,10 +142,10 @@ describe("悬浮球", () => {
 		expect(await status?.handle({ method: "GET", params: {}, query: {} })).toMatchObject({
 			present: false,
 			downloading: false,
-			bytes: 362296536,
-			default: 47,
-			// 音色要能换：八个中文 speaker id 一并给出来（设置页只负责挑）。
-			voices: [45, 46, 47, 48, 49, 50, 51, 52].map((id) => ({ id })),
+			bytes: 394009224,
+			default: "zf_001",
+			// 音色要能换：v1.1-zh 的 100 个中文音色一并给出来（设置页只负责挑）。
+			voices: expect.arrayContaining([{ id: 3, name: "zf_001", label: "女声 001", note: "默认" }]),
 		});
 		const speak = host.routes.find((item) => item.pattern === "/api/orb/speak");
 		expect(await speak?.handle({ method: "POST", params: {}, query: {}, body: { text: "你好" } })).toEqual({

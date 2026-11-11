@@ -266,15 +266,33 @@ function downsample(samples, from, to) {
 	return out;
 }
 
-/** 默认音色：Kokoro 的 `zf_xiaoxiao`；中文音色就 45–52 这八个。 */
-const DEFAULT_SID = 47;
-const VOICE_IDS = [45, 46, 47, 48, 49, 50, 51, 52];
+/**
+ * 默认音色。v1.0 的 `zf_xiaoxiao` 在 v1.1-zh 这套模型里没有，默认落在 `zf_001`。
+ *
+ * **存名字，不存 sid。** sid 是 `voices.bin` 里的下标，换一次模型就整体错位：
+ * 老版本存的 47 是晓晓，在 v1.1 里同一个 47 是 `zf_083`——另一个人，而且不报错、
+ * 不静音、不回落，用户只会觉得「声音怎么变了」。名字至少能判出「这一版认不认识」。
+ */
+const DEFAULT_VOICE = "zf_001";
+/** 名字长什么样。真正的白名单在后端（`/api/orb/voice` 会给全表）。 */
+const VOICE_NAME_RE = /^(?:zf|zm)_\d{3}$/;
 
 /** 位置、贴边、朗读开关与音色记在本机：换个屏幕再打开，还是你上次的那一套。 */
 function readPrefs() {
 	// 朗读**默认开**（老板 2026-11-11）：气泡都冒出来了、却没声音，这不合理。
 	// 以前默认关，结果升级完的人一句都听不到，还以为坏了。关掉会记住（`speak: false`）。
-	const fallback = { right: 18, top: null, docked: false, speak: true, wake: false, listen: false, sid: DEFAULT_SID, speed: 1 };
+	const fallback = {
+		right: 18,
+		top: null,
+		docked: false,
+		speak: true,
+		wake: false,
+		listen: false,
+		voice: DEFAULT_VOICE,
+		// 新用户（连 json 都没有）没有「要重选音色」这回事，直接算迁完，不弹横幅。
+		voiceMigrated: true,
+		speed: 1,
+	};
 	try {
 		const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(PREF_KEY);
 		if (raw === null) return fallback;
@@ -285,6 +303,12 @@ function readPrefs() {
 		// 迁移只认「没有这个标记的老数据 + 存的正好是旧默认值 false」这一种：
 		// 有标记的 false 是他自己的选择，不动；迁移完往后都带标记，不会迁第二次。
 		const legacy = value?.touched !== true && value?.speak === false;
+		// 音色迁移，只做一次。v1.0 的库里只有数字 sid（45–52），那 8 个名字在 v1.1 里
+		// 一个都不存在，原样透传会把人静默送到另一个人身上。所以**没有标记的老库一律
+		// 回默认**，由设置页那句横幅请他重选；重选后写名字 + 标记，之后照名字走。
+		const migrated = value?.voiceMigrated === true;
+		const voice =
+			migrated && typeof value?.voice === "string" && VOICE_NAME_RE.test(value.voice) ? value.voice : DEFAULT_VOICE;
 		return {
 			right: Number.isFinite(value?.right) ? value.right : 18,
 			top: Number.isFinite(value?.top) ? value.top : null,
@@ -295,7 +319,8 @@ function readPrefs() {
 			wake: value?.wake === true,
 			// 常驻听默认关：麦克风一直开着是件要用户点头的事，第一次得他自己打开（开了会记住）。
 			listen: value?.listen === true,
-			sid: VOICE_IDS.includes(value?.sid) ? value.sid : DEFAULT_SID,
+			voice,
+			voiceMigrated: migrated,
 			speed: Number.isFinite(value?.speed) ? clamp(value.speed, 0.7, 1.5) : 1,
 		};
 	} catch {
@@ -586,6 +611,9 @@ export default {
 		.ov-row-main b { display: block; font-size: 13px; line-height: 18px; font-weight: 500; color: var(--ink); }
 		.ov-row-main span { display: block; font-size: 11.5px; line-height: 16px; color: var(--ink-3); }
 		.ov-voices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+		.ov-voice-select { width: 100%; height: 34px; padding: 0 8px; border: 1px solid #d4d4d8; border-radius: 8px; background: #fff; color: #18181b; font-size: 13px; }
+		.ov-banner { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid #fcd34d; border-radius: 10px; background: #fffbeb; color: #78350f; font-size: 12.6px; line-height: 1.5; }
+		.ov-banner b { font-size: 13px; }
 		.ov-voice {
 			padding: 9px 12px; text-align: left;
 			border: 0.5px solid var(--rule); border-radius: 10px;
@@ -1148,7 +1176,7 @@ export default {
 						const response = await fetch("/api/orb/speak", {
 							method: "POST",
 							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify({ text: piece, speed: prefs.speed, sid: prefs.sid }),
+							body: JSON.stringify({ text: piece, speed: prefs.speed, voice: prefs.voice }),
 						});
 						const data = await response.json().catch(() => ({}));
 						// 合成回来的这一片**无条件**播：以前这里有一句 `if (!openRef.current) return`，
@@ -2574,8 +2602,8 @@ export default {
 		/**
 		 * 一整页语音设置：朗读开关、音色、语速、模型。
 		 *
-		 * 音色就是 Kokoro 的 speaker id；后端 `GET /api/orb/voice` 把八个中文音色一并给出来，
-		 * 这里只负责挑。挑完写进本机（`localStorage["solo.orb"]`），面板下一句就照新的念。
+		 * 音色列表后端 `GET /api/orb/voice` 一次给全（v1.1-zh 的 100 个中文音色），这里只负责挑。
+		 * 挑完把**名字**写进本机（`localStorage["solo.orb"]`），面板下一句就照新的念。
 		 */
 		function VoicePage() {
 			const inPanel = useStore((state) => state.rightPage === SLUG);
@@ -2733,7 +2761,7 @@ export default {
 						body: JSON.stringify({
 							text: "你好，我是 Solo 的助理。换成这个音色，听起来怎么样？",
 							speed: prefs.speed,
-							sid: prefs.sid,
+							voice: prefs.voice,
 						}),
 					});
 					const data = await response.json().catch(() => ({}));
@@ -3012,26 +3040,35 @@ export default {
 							voices.length === 0
 								? h("p", { className: "ov-note" }, "正在读音色列表…")
 								: h(
-										"div",
-										{ className: "ov-voices", role: "radiogroup", "aria-label": "音色" },
-										voices.map((item) =>
-											h(
-												"button",
-												{
-													key: item.id,
-													type: "button",
-													className: "ov-voice",
-													role: "radio",
-													"aria-checked": prefs.sid === item.id,
-													"data-on": prefs.sid === item.id ? "true" : "false",
-													onClick: () => set({ sid: item.id }),
-												},
-												h("b", null, item.label),
-												h("span", null, item.note),
-											),
+										"select",
+										{
+											className: "ov-voice-select",
+											"aria-label": "音色",
+											value: prefs.voice,
+											onChange: (event) => set({ voice: event.target.value, voiceMigrated: true }),
+										},
+										h(
+											"optgroup",
+											{ label: "女声" },
+											voices
+												.filter((item) => item.name.startsWith("zf_"))
+												.map((item) =>
+													h(
+														"option",
+														{ key: item.name, value: item.name },
+														item.note === "默认" ? item.label + "（默认）" : item.label,
+													),
+												),
+										),
+										h(
+											"optgroup",
+											{ label: "男声" },
+											voices
+												.filter((item) => item.name.startsWith("zm_"))
+												.map((item) => h("option", { key: item.name, value: item.name }, item.label)),
 										),
 									),
-							h("p", null, "Kokoro-82M 的中文音色，八个。换一个不用重新下载模型。"),
+							h("p", null, "Kokoro-82M 的中文音色，100 个。换一个不用重新下载模型，点完下一句就变；想先听就点下面的「试听」。"),
 						),
 						speech?.engine === "qwen"
 							? null
@@ -3073,6 +3110,22 @@ export default {
 							modelRow,
 							typeof voice?.error === "string" && voice.error !== ""
 								? h("p", { className: "ov-note" }, `上次没下成：${voice.error}`)
+								: null,
+							// 老用户：v1.0 存的是数字 sid，v1.1 里那 8 个名字一个都没有，不能静默换人，
+							// 所以这里请他重选一次。选完（或点「知道了」）就把 `voiceMigrated` 写进
+							// localStorage，重启也不再弹。
+							prefs.voiceMigrated === false
+								? h(
+										"div",
+										{ className: "ov-banner", role: "status" },
+										h("b", null, "音色换了一批，请重新选一次。"),
+										h("span", null, "新版有 100 个中文音色，原来那 8 个声音这套模型里没有了。选完记住了，以后升级不会再变。"),
+										h(
+											"button",
+											{ type: "button", className: "ov-btn", onClick: () => set({ voiceMigrated: true }) },
+											"知道了",
+										),
+									)
 								: null,
 						),
 						h(

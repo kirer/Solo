@@ -24,6 +24,12 @@ import {
 	isQwenVoice,
 	synthesizeQwen,
 } from "./qwen.js";
+import {
+	KOKORO_DEFAULT_VOICE,
+	KOKORO_V11_VOICES_BIN_BYTES,
+	KOKORO_V11_ZH_VOICES,
+	sidOfVoice,
+} from "./kokoro.js";
 import { access, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -253,84 +259,88 @@ async function transcribe(body) {
 
 // ── 播报：本地 Kokoro 神经音色（Apache-2.0，可商用） ─────────────────────
 //
-// sherpa-onnx + Kokoro-82M v1.0 多语种模型。系统朗读那档（speechSynthesis）不要了：
+// sherpa-onnx + Kokoro-82M v1.1-zh 多语种模型。系统朗读那档（speechSynthesis）不要了：
 // 它读中文是拼接合成，怎么挑音色都机械。这里不用 Matcha —— 那份中文模型训练自
 // Baker 数据集，数据集声明仅限非商业用途（见 ADR-118）。
 //
 // 模型不进仓库、也不进插件目录（插件目录按 hash 整份同步，ADR-097），第一次用的
-// 时候下到 `<appRoot>/voice/tts/kokoro-zh`，约 346 MB。
+// 时候下到 `<appRoot>/voice/tts/kokoro-zh`，约 376 MB。
+//
+// **目录名故意不跟着版本改**：v1.0 → v1.1 的 9 个文件里有 4 个逐字节没变
+// （三个 `.fst` 加 `lexicon-us-en.txt`，sha256 一模一样）。`downloadModel()` 本来就是
+// 逐个文件比 `size`、对得上就跳过，所以沿用同一个目录，老用户升级只补真变了的 5 个
+// （约 30 MB）。换成新目录反而会让那 4 个白下一遍。
 
 const TTS_DIR = "voice/tts/kokoro-zh";
-const KOKORO_REV = "f7b96bb6bef5c5da4d3aa4f4e0498fbbf62dc78b";
+const KOKORO_REV = "423bfb9ccd6a66115a76602a9630ffea265ae176";
 /** hf-mirror 先走（国内快），huggingface.co 兜底。 */
 const TTS_MIRRORS = ["https://hf-mirror.com", "https://huggingface.co"];
 /**
- * Kokoro v1.0 里的中文音色：八个，四女四男。`sid` 是 `voices.bin` 里的 speaker id，
- * 换音色只换这个数。默认 `zf_xiaoxiao`。
+ * v1.1-zh 里能选的中文音色：100 个（55 女 + 45 男）。表和 103 个 speaker 的 sid 顺序
+ * 一起钉在 `./kokoro.js`，配了测试守着。`sid` 是 `voices.bin` 里的 speaker id。
+ *
+ * **老版本的 45–52 这八个名字在 v1.1 里一个都没有**，所以用户存过的 sid 不能原样透传：
+ * 老的 47 在新表里是 `zf_083`，另一个人。前端因此改成存名字，见 `client.js` 的 `readPrefs`。
  */
-const VOICES = [
-	{ id: 45, name: "zf_xiaobei", label: "晓北", note: "女声 · 轻" },
-	{ id: 46, name: "zf_xiaoni", label: "晓妮", note: "女声 · 亮" },
-	{ id: 47, name: "zf_xiaoxiao", label: "晓晓", note: "女声 · 稳（默认）" },
-	{ id: 48, name: "zf_xiaoyi", label: "晓伊", note: "女声 · 软" },
-	{ id: 49, name: "zm_yunjian", label: "云健", note: "男声 · 沉" },
-	{ id: 50, name: "zm_yunxi", label: "云希", note: "男声 · 清" },
-	{ id: 51, name: "zm_yunxia", label: "云夏", note: "男声 · 温" },
-	{ id: 52, name: "zm_yunyang", label: "云扬", note: "男声 · 亮" },
-];
-const KOKORO_SID = 47;
+const VOICES = KOKORO_V11_ZH_VOICES;
+const KOKORO_SID = sidOfVoice(KOKORO_DEFAULT_VOICE) ?? 3;
 /** 全部钉在固定 revision 上：`main` 会漂，hash 就对不上了。 */
 const TTS_FILES = [
 	{
 		name: "model.onnx",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/model.onnx`,
-		bytes: 325_560_556,
-		sha256: "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/model.onnx`,
+		bytes: 325_561_476,
+		sha256: "99db0bc8fd0c5033d249fe922db16768b71b4a6b26cfd93d206fbf66c76efb5f",
 	},
 	{
 		name: "voices.bin",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/voices.bin`,
-		bytes: 28_200_960,
-		sha256: "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/voices.bin`,
+		bytes: KOKORO_V11_VOICES_BIN_BYTES,
+		sha256: "e64a5a581d8c2a350d848f51c3121657cd83aa07ed6109172177345874a7244c",
 	},
 	{
 		name: "tokens.txt",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/tokens.txt`,
-		bytes: 687,
-		sha256: "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/tokens.txt`,
+		bytes: 1_111,
+		sha256: "931ab2df2400cd65d580a22402024c2347ced8ae9ea300e545144b1aacc48e14",
 	},
 	{
 		name: "lexicon-zh.txt",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/lexicon-zh.txt`,
-		bytes: 2_365_182,
-		sha256: "902bc2d20ac7c449c5ecbbbb23c89d12119c03ed5b8ed27f114f0260c9e35229",
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/lexicon-zh.txt`,
+		bytes: 2_120_131,
+		sha256: "fea060803db3e59193987f1a3436f56917bda09f3b3595b6588e46ae60cebf93",
 	},
 	{
 		name: "lexicon-us-en.txt",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/lexicon-us-en.txt`,
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/lexicon-us-en.txt`,
 		bytes: 5_956_885,
 		sha256: "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
 	},
 	{
+		name: "lexicon-gb-en.txt",
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/lexicon-gb-en.txt`,
+		bytes: 6_366_635,
+		sha256: "c4cbb37316f62210dff52718a7afcaae24f50c032cc75ab47ae67b831d1049e7",
+	},
+	{
 		name: "date-zh.fst",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/date-zh.fst`,
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/date-zh.fst`,
 		bytes: 59_154,
 		sha256: "eb8aa079ae3cb81d8f4404992f39d61a0cb990947512b5b8d1e54d1f6980e718",
 	},
 	{
 		name: "number-zh.fst",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/number-zh.fst`,
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/number-zh.fst`,
 		bytes: 64_482,
 		sha256: "743f402181fcfebf76cc2f0546b71fa26476e626fbe4e460fb7b4c3a7a8bd5bd",
 	},
 	{
 		name: "phone-zh.fst",
-		path: `csukuangfj/kokoro-multi-lang-v1_0/resolve/${KOKORO_REV}/phone-zh.fst`,
+		path: `csukuangfj/kokoro-multi-lang-v1_1/resolve/${KOKORO_REV}/phone-zh.fst`,
 		bytes: 88_630,
 		sha256: "1ac2b6fa56b1442320c4de7db08353bab8963a2b57f365eebcdd3a2d3562f8d7",
 	},
-];
-const TTS_BYTES = TTS_FILES.reduce((sum, file) => sum + file.bytes, 0);
+];const TTS_BYTES = TTS_FILES.reduce((sum, file) => sum + file.bytes, 0);
 
 let ttsRoot = "";
 let log = () => {};
@@ -574,8 +584,13 @@ async function voiceStatus() {
 		progress: ttsState.progress,
 		error: ttsState.error,
 		bytes: TTS_BYTES,
-		default: KOKORO_SID,
-		voices: VOICES.map((voice) => ({ id: voice.id, name: voice.name, label: voice.label, note: voice.note })),
+		default: KOKORO_DEFAULT_VOICE,
+		voices: VOICES.map((voice) => ({
+			id: voice.id,
+			name: voice.name,
+			label: voice.label,
+			note: voice.name === KOKORO_DEFAULT_VOICE ? "默认" : "",
+		})),
 	};
 }
 
@@ -893,8 +908,11 @@ export function apply(api) {
 					if (text.length > 400) return { error: "这句太长了（上限 400 字）" };
 					const speedRaw = Number(request.body?.speed ?? 1);
 					const speed = Number.isFinite(speedRaw) ? Math.min(2, Math.max(0.5, speedRaw)) : 1;
-					const sidRaw = Number(request.body?.sid ?? KOKORO_SID);
-					const sid = VOICES.some((voice) => voice.id === sidRaw) ? sidRaw : KOKORO_SID;
+					// 音色按**名字**收，不再收 sid：sid 是模型内部编号，换一次模型就全变
+					// （老的 47 在 v1.1 里是另一个人）。名字认不出来就回落默认，
+					// 绝不拿一个「恰好落在范围内」的数字去合成。
+					const voiceName = request.body?.voice;
+					const sid = (typeof voiceName === "string" ? sidOfVoice(voiceName) : null) ?? KOKORO_SID;
 					return { wav: await synth(text, speed, sid), engine: "local" };
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
