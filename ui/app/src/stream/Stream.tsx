@@ -183,6 +183,21 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	}, []);
 
 	/**
+	 * 「到底」该滚到哪 —— **按模型算，不读 `scrollHeight`**。
+	 *
+	 * 进频道那一刻 DOM 里还没有这一批行，`scrollHeight` 只反映上一次渲染，拿它当目标是
+	 * 「先写错再纠正」。模型里每一行都有高度（真行的、占位行的），末行底 = 总高，所以
+	 * 这一次写就是终值；之后量到真行高，模型自己变准，位置跟着模型走（`compensate` 兜）。
+	 */
+	const bottomOf = useCallback((flow: HTMLElement): number => {
+		const rows = layout.current.rows;
+		const last = rows[rows.length - 1];
+		const total = last === undefined ? 0 : (offsetOf(layout.current, last.key) ?? 0) + last.height;
+		// 模型比屏幕还短：没得滚，回 0（否则写一个负数，`setScrollTop` 会当成一次位移记账）。
+		return Math.max(0, Math.round(total - flow.clientHeight));
+	}, []);
+
+	/**
 	 * 到底。只有三处会调：进频道（`reason="enter"`）、本窗口发消息成功、用户点「回到最新」
 	 * （`reason="user-return"`）。**新消息到达不许调它** —— 那是验收第 26 条的挂点。
 	 */
@@ -348,24 +363,91 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 * 和第四条（`scroll` 里更新 `pinned`）**整块删掉**：补页入口只剩「一次动作结算」与
 	 * 「进频道填满」，`pinned` 这个「我贴底」的开关也不再参与任何补页判断。
 	 */
+	/**
+	 * 键位：PageUp / PageDown / Home / End（验收第 15–18 条 · 2026-11-11）。
+	 *
+	 * **为什么必须自己接管**：实测过（ego 浏览器，`overflow-y:auto` + 两万 px 内容）——
+	 * 焦点在容器里的子元素上时按 PageUp，`scrollTop` 是从 4000 一步跳到 0，不是滚一屏；
+	 * 焦点在滚动容器自己身上时，三个键一动不动。给它加 `tabindex` 只让 `keydown` 进得来，
+	 * 原生滚动照样不发生。所以「按一次 PageUp 上移约一屏」在浏览器默认行为下**不成立**。
+	 *
+	 * **位移仍然只有 `setScrollTop` 一个入口**：这里是「人在动」，所以走 `reason="user-return"`，
+	 * 由仲裁者记账、下一帧认领 —— 否则这笔位移会被当成程序写的，补偿会跟它打架。
+	 * 一次按键就是一次动作，`settle()` 会在它停下来的那一帧结算，贴顶该补页就补一页。
+	 */
+	const onKey = useCallback(
+		(event: KeyboardEvent): void => {
+			const flow = flowRef.current;
+			if (flow === null) return;
+			// 输入框 / 可编辑区里的键位归它们自己（上下键选候选词之类），不许抢。
+			const target = event.target as HTMLElement | null;
+			if (target !== null && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+			if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+			const viewport = flow.clientHeight;
+			// 一屏 = 视口高度减去两行留白，这样「上一次最上面那行」还能看见，人不会迷路。
+			const step = Math.max(40, viewport - 2 * DEFAULT_ROW_HEIGHT);
+			const bottom = flow.scrollHeight - viewport;
+			let target2: number | null = null;
+			switch (event.key) {
+				case "PageUp":
+					target2 = flow.scrollTop - step;
+					break;
+				case "PageDown":
+					target2 = flow.scrollTop + step;
+					break;
+				case "Home":
+					target2 = 0;
+					break;
+				case "End":
+					target2 = bottom;
+					break;
+				default:
+					return;
+			}
+			// 认了这个键就要吃掉默认行为：不 preventDefault 的话，浏览器那套「一步跳到 0」
+			// 会在我们写完之后再写一次，等于把上面那条实测到的毛病原样带回来。
+			event.preventDefault();
+			const clamped = Math.min(bottom, Math.max(0, target2));
+			// 走唯一入口，`reason="user-return"`（这是人在动）。位移的记账由它在同一个同步块里做完。
+			// **不要额外 `claim()`**：那是给「浏览器自己写很多帧」的平滑滚动用的，按一次键写一次，
+			// 认领之后反而会把接下来 800ms 里人真正的滚动全当成程序在动。
+			setScrollTop(clamped, "user-return");
+			if (event.key === "End") setAtBottom(true);
+			if (event.key === "Home") setAtBottom(false);
+			// 叫醒取样循环：`settle()` 要看到这一笔位移才结算，不叫醒它就没人补页。
+			wake();
+		},
+		[setAtBottom, setScrollTop, wake],
+	);
+
 	useEffect(() => {
 		const flow = flowRef.current;
 		if (flow === null) return;
 		// 任何会让位置动的输入都唤醒取样循环：滚轮、键盘、拖滚动条（`scroll`）、触摸。
 		const onInput = (): void => wake();
+		/**
+		 * 滚轮要多做一件事：**贴顶还往上推、贴底还往下推时位置不会变**，`sample()` 看不见，
+		 * 而那一刻正是补页该发生的时候。7791：离开顶部再滚回来每轮都补一页，停在顶部继续撞
+		 * 就一动不动（24→30→37→43→50 之后停住）。这里把「撞」这个事实直接报给仲裁者。
+		 */
+		const onWheel = (event: WheelEvent): void => {
+			if (event.deltaY !== 0) arbiter.current?.push(event.deltaY < 0 ? "up" : "down");
+			wake();
+		};
 		flow.addEventListener("scroll", onInput, { passive: true });
-		flow.addEventListener("wheel", onInput, { passive: true });
+		flow.addEventListener("wheel", onWheel, { passive: true });
 		flow.addEventListener("touchstart", onInput, { passive: true });
-		flow.addEventListener("keydown", onInput);
+		flow.addEventListener("keydown", onKey);
 		return () => {
 			flow.removeEventListener("scroll", onInput);
-			flow.removeEventListener("wheel", onInput);
+			flow.removeEventListener("wheel", onWheel);
 			flow.removeEventListener("touchstart", onInput);
-			flow.removeEventListener("keydown", onInput);
+			flow.removeEventListener("keydown", onKey);
 			if (sampler.current !== null) cancelAnimationFrame(sampler.current);
 			sampler.current = null;
 		};
-	}, [wake]);
+	}, [onKey, wake]);
 
 	/**
 	 * 仲裁者：容器换了（切频道会重挂 `.flow`）就新建一个，读数基准按新容器来。
@@ -406,7 +488,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		if (detail === null) return;
 		const flow = flowRef.current;
 		if (flow === null) return;
-		setScrollTop(flow.scrollHeight, "enter");
+		setScrollTop(bottomOf(flow), "enter");
 		setAtBottom(true);
 		void fillOnEnter();
 		// 只在「进了这个频道、第一页到手」那一刻跑一次。

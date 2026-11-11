@@ -153,6 +153,78 @@ describe("一次动作的边界（设计 §1.3）", () => {
 		expect(arbiter.settle()).not.toBeNull();
 	});
 
+	it("真机那条卡死：人不停往上撞，每撞一次都要能结算（2026-11-11）", () => {
+		// 7791 真窗口：进 10000 条频道往上撞顶，补了**一次**页（24→33），之后再怎么撞都不动。
+		// 原因：`settle()` 结尾无条件把 `lastSettleFilled` 置 true，而复位它的只有 `noteFilled()`
+		// 和 `reset()` —— 「没人报补了」这一支没有任何复位路径，第一次结算之后保险丝永久带上记号。
+		//
+		// 真机上是**连着撞**：两次动作之间人没停够 400ms。这里照那个节奏来（间距 120ms），
+		// 而且全程不调 `noteFilled()` —— 只要第二次结算被吞，就是卡死那个形状。
+		const box = makeHost({ top: 4000, height: 9000, client: 900 });
+		const arbiter = createArbiter(box.host);
+
+		const settled: (number | null)[] = [];
+		let top = 4000;
+		for (let hit = 0; hit < 3; hit += 1) {
+			top -= 200; // 每次往上撞一屏
+			box.userScrollTo(top);
+			box.advance(16);
+			arbiter.sample();
+			box.advance(GESTURE_IDLE_MS);
+			const s1 = arbiter.settle();
+			settled.push(s1 === null ? null : s1.upTo);
+			box.advance(120); // 手没停够冷却期就接着撞下一次
+		}
+		expect(settled).toEqual([200, 200, 200]); // 卡死时是 [200, null, null]
+	});
+
+	it("保险丝只咬「真补过页」的那一次：没补页的结算不吃下一次", () => {
+		const box = makeHost({ top: 4000, height: 9000, client: 900 });
+		const arbiter = createArbiter(box.host);
+
+		box.userScrollTo(3900);
+		box.advance(16);
+		arbiter.sample();
+		box.advance(GESTURE_IDLE_MS);
+		expect(arbiter.settle()).not.toBeNull(); // 这一次没补页（没调 noteFilled）
+
+		// 紧接着（100ms 内）人又动了一下：上一次没补页，不该被咬。
+		box.userScrollTo(3890);
+		box.advance(16);
+		arbiter.sample();
+		box.advance(GESTURE_IDLE_MS);
+		expect(arbiter.settle()).not.toBeNull();
+	});
+
+	it("贴顶还往上推：位置不动也必须算一次向上动作（7791 那个「停在顶部继续撞不补页」）", () => {
+		// 真窗口的规律：离开顶部再滚回来，每轮都补一页（24→30→37→43→50）；
+		// 可是人停在顶部继续往上撞时，`scrollTop` 恒 0 —— 没有 scroll 事件、`sample()` 看到的
+		// 是「位置没动」，于是永远不结算，一个 ?before= 都不发。这条钉住出口。
+		const box = makeHost({ top: 0, height: 9000, client: 900 });
+		const arbiter = createArbiter(box.host);
+
+		arbiter.push("up"); // 贴顶 + 往上推
+		box.advance(GESTURE_IDLE_MS);
+		const settled = arbiter.settle();
+		expect(settled).not.toBeNull(); // 卡死时这里是 null
+		expect(settled?.atTop).toBe(true);
+		expect(settled!.upTo).toBeGreaterThan(0); // 语义是「往上」，结算出口才认
+	});
+
+	it("推的方向和边界不一致时不算动作（在顶部往下推、在中间往上推都不算）", () => {
+		const box = makeHost({ top: 0, height: 9000, client: 900 });
+		const arbiter = createArbiter(box.host);
+		arbiter.push("down"); // 在顶部往下推：不是撞顶
+		box.advance(GESTURE_IDLE_MS);
+		expect(arbiter.settle()).toBeNull();
+
+		const box2 = makeHost({ top: 4000, height: 9000, client: 900 });
+		const arbiter2 = createArbiter(box2.host);
+		arbiter2.push("up"); // 在中间往上推：位置本来就会动，走 sample() 那条路
+		box2.advance(GESTURE_IDLE_MS);
+		expect(arbiter2.settle()).toBeNull();
+	});
+
 	it("只往上滚的动作报出 upTo；往下滚不报", () => {
 		const box = makeHost({ top: 2000, height: 9000, client: 900 });
 		const arbiter = createArbiter(box.host);

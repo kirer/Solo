@@ -76,6 +76,17 @@ export type Arbiter = {
 	 * 不报就永不冷却；报错了会把用户下一次正常的补页吞掉，所以只在这一处报。
 	 */
 	noteFilled(): void;
+	/**
+	 * 报一次「人在往某个方向推、但位置已经推不动了」（贴顶还往上滚 / 贴底还往下滚）。
+	 *
+	 * 这一类**没有 `scrollTop` 变化**，`sample()` 永远看不见 —— 而它恰恰是补页最该发生的时刻：
+	 * 人已经到了窗口顶端，还在继续往上撞。7791 真窗口：离开顶部再滚回来每轮都补一页
+	 * （24→30→37→43→50），可是**停在顶部继续撞就一动不动**，一个 `?before=` 都不发。
+	 *
+	 * 只认**方向与边界一致**的那一次：贴顶 + 往上推 = 一次向上动作。反方向的推不算
+	 * （那是滚出界，不是撞顶）。
+	 */
+	push(direction: "up" | "down"): void;
 	/** 现在是不是「一次动作」进行中。 */
 	moving(): boolean;
 	/** 距离最后一次「人在动」过去了多久（给 rAF 循环判断要不要停）。 */
@@ -200,6 +211,24 @@ export function createArbiter(host: Host, options: { nearTop?: number; nearBotto
 			smoothBudget = 120;
 		},
 
+		push(direction: "up" | "down"): void {
+			const at = now();
+			const here = host.read();
+			last = here;
+			// 只认「推的方向正好顶在边界上」：贴顶还往上，或者贴底还往下。
+			if (direction === "up" ? here.top > nearTop : here.height - here.top - here.client > nearBottom) return;
+			if (!everMoved) {
+				everMoved = true;
+				gestureStartTop = here.top;
+				gestureMoved = 0;
+			}
+			// 位置没动，所以 `gestureMoved` 不加；但结算要知道「人是往上撞的」，
+			// 由 `upTo` 给一个非零值表示这次动作的方向（1px 即可，语义是「往上」不是「走了多少」）。
+			if (direction === "up") gestureMoved -= 1;
+			else gestureMoved += 1;
+			lastMoveAt = at;
+		},
+
 		settle(at = now()): Settle | null {
 			if (!everMoved) return null;
 			if (at - lastMoveAt < GESTURE_IDLE_MS) return null; // 还在动
@@ -216,15 +245,22 @@ export function createArbiter(host: Host, options: { nearTop?: number; nearBotto
 			const moved = gestureMoved;
 			gestureMoved = 0;
 			const nearNow = near();
+			// 「撞顶」那一次位置没动，`net()` 是 0；方向由 `push()` 记的 `moved` 说了算。
+			// 取两者里「更能说明方向」的那个：位置真动过就用位移，没动过就用推的方向。
 			const result: Settle = {
 				atTop: nearNow.atTop,
 				atBottom: nearNow.atBottom,
 				moved,
-				upTo: Math.max(0, -netMoved),
+				upTo: Math.max(0, netMoved === 0 ? -moved : -netMoved),
 			};
 			lastSettleAt = at;
-			// 这一轮先用掉保险丝：没人报「补了」就当它补了（保守，宁可少补一次也不狂补）。
-			lastSettleFilled = true;
+			// 结算先**清掉**上一次的「补过页」记号，真补了由 `noteFilled()` 再立回来。
+			//
+			// 这里原来是无条件置 true（「没人报补了就当它补了」），可复位它的只有
+			// `noteFilled()` 和 `reset()` ——「没补页」这一支没有任何复位路径。于是第一次
+			// 结算之后保险丝永久带着记号：人在 400ms 内接着往上撞就被吞掉，撞一次不动、
+			// 再撞一次又不动（7791 真窗口：补了一页 24→33 之后死死停住）。
+			lastSettleFilled = false;
 			return result;
 		},
 
