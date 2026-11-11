@@ -396,11 +396,14 @@ describe("出厂内容：体积与位置", () => {
 		expect(big).toEqual([]);
 	});
 
-	it("seed 总体积 < 500 KB", async () => {
+	it("seed 总体积 < 512 KB", async () => {
+		// 2026-11-12 从 500 KB 放到 512 KB：悬浮球 `client.js` 长到 122 KB，500 KB 只剩
+		// 两百字节余量 —— 加一个技能、几条工具文案就红，逼着人去砍真正有用的说明。
+		// 放到 512 KB 之后**余量只有 8 KB 左右**：再加东西之前先想想能不能删点什么。
 		let total = 0;
 		for (const rel of await walkCommitted()) {
 			total += byteLength(await readCommitted(rel));
 		}
-		expect(total, `现在 ${(total / 1024).toFixed(0)} KB`).toBeLessThan(500 * 1024);
+		expect(total, `现在 ${(total / 1024).toFixed(0)} KB`).toBeLessThan(512 * 1024);
 	});
 });
