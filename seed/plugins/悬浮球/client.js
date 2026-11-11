@@ -672,7 +672,7 @@ export default {
 		};
 
 		const { h, React, api, store, useStore, brandMarkSvg } = ui;
-		const { useEffect, useRef, useState } = React;
+		const { useEffect, useLayoutEffect, useRef, useState } = React;
 
 		/** 独立窗的桥（`desktop/src/orb-preload.cts`）；浏览器里没有，调用全是 no-op。 */
 		const bridge = () => (typeof window === "undefined" ? undefined : window.soloOrb);
@@ -855,6 +855,9 @@ export default {
 			/** 贴边时鼠标贴到窗口右缘：球滑出来。不放宽热区——宽了就压正文。 */
 			const [peek, setPeek] = useState(false);
 			const [menu, setMenu] = useState(false);
+			// 菜单真实高度（px）。以前硬编码 148 估高，网页模式 5 项实测 201、底部压进球 45px，
+			// 「回到默认位置」的命中被球抢走（旧版就有）。初始值按项数估（4 或 5 项 × 38 + 11）。
+			const [menuHeight, setMenuHeight] = useState((WINDOW_MODE ? 4 : 5) * 38 + 11);
 			const [detail, setDetail] = useState(null);
 			/** 最近一条要告诉用户的错。**不再往面板里写**：没有面板了，它冒在头顶。 */
 			const [error, setErrorState] = useState("");
@@ -905,6 +908,8 @@ export default {
 			/** 离开球 / 面板后晚一点再关命中，别在两者之间挪动时漏掉点击。 */
 			const passTimer = useRef(0);
 			const menuRef = useRef(null);
+			/** 指针此刻压没压在**球**上（菜单不算）；菜单卸载时按它决定要不要把命中交出去。 */
+			const overBall = useRef(false);
 			const recorderRef = useRef(null);
 			const chunksRef = useRef([]);
 			const streamRef = useRef(null);
@@ -1237,22 +1242,33 @@ export default {
 			const gap = 8;
 			const edge = 8;
 
+			const MENU_W = 148;
+
 			const menuPlace = (() => {
-				const besideOrb = orbLeft + BALL + gap + 148 <= viewport.width - edge;
+				const besideOrb = orbLeft + BALL + gap + MENU_W <= viewport.width - edge;
 				if (besideOrb) {
 					return {
 						left: `${String(BALL + gap)}px`,
-						top: `${String(clamp(orbTop, edge, Math.max(edge, viewport.height - 156)) - orbTop)}px`,
+						top: `${String(clamp(orbTop, edge, Math.max(edge, viewport.height - menuHeight - edge)) - orbTop)}px`,
 					};
 				}
-				const lineLeft = clamp(orbLeft, edge, Math.max(edge, viewport.width - 148 - edge));
-				const above = orbTop - gap - 148;
+				const lineLeft = clamp(orbLeft, edge, Math.max(edge, viewport.width - MENU_W - edge));
+				const above = orbTop - gap - menuHeight;
 				if (above >= edge) return { left: `${String(lineLeft - orbLeft)}px`, top: `${String(above - orbTop)}px` };
 				return {
 					left: `${String(lineLeft - orbLeft)}px`,
-					top: `${String(orbTop + BALL_H + gap - orbTop)}px`,
+					top: `${String(BALL_H + gap)}px`,
 				};
 			})();
+
+			// 挂上去量一次真高：估算只撑首帧，别拿它算位置。
+			useLayoutEffect(() => {
+				if (!menu) return;
+				const el = menuRef.current;
+				if (!el) return;
+				const measured = el.offsetHeight;
+				if (measured > 0) setMenuHeight(measured);
+			}, [menu, menuHeight]);
 
 			const cancelHover = () => {
 				if (hoverTimer.current !== 0) {
@@ -1501,11 +1517,20 @@ export default {
 			// 悬停**不再展开任何东西**：没有面板可展开了。悬停只做两件小事 ——
 			// 独立窗里把命中接上（否则点不到），贴着边时滑出来。
 			const enter = () => {
+				overBall.current = true;
+				cancelHover();
+				holdInteractive(true);
+			};
+
+			// 菜单自己的 `enter`：鼠标可能从外面直接进菜单、不经过球，那时窗口还穿透着。
+			// **不算「指针在球上」**——别动 `overBall`，否则点完菜单项会误判、命中不交。
+			const enterMenu = () => {
 				cancelHover();
 				holdInteractive(true);
 			};
 
 			const leave = () => {
+				overBall.current = false;
 				cancelHover();
 				// 拖着的时候别把命中关掉，不然拖到一半窗口就点不动了。
 				//
@@ -1515,6 +1540,21 @@ export default {
 				// 按钮的 `onClick` 全是对的，是根本没收到点击。
 				if (!menu && drag.current === null) holdInteractive(false);
 			};
+
+			// 菜单关掉那一刻补一次「把命中交出去」（程砚-2 2026-11-12 在 `a56dd52` 上抓到的洞）：
+			// `leave` 那条「菜单开着别关命中」只在离开球时跑，人却是先离开球去点菜单项，卸载时
+			// 没人再发 `false`，整扇窗继续吃点击。**不能无条件发**：Esc 收菜单时指针可能压在球上。
+			const menuWasOpen = useRef(false);
+			useEffect(() => {
+				if (menu) {
+					menuWasOpen.current = true;
+					return;
+				}
+				if (!menuWasOpen.current) return; // 本来就没开过，别在首次挂载时误发
+				menuWasOpen.current = false;
+				if (overBall.current) return;
+				holdInteractive(false);
+			}, [menu]);
 
 			const onPointerDown = (event) => {
 				if (event.button !== 0) return;
@@ -2448,7 +2488,7 @@ export default {
 							style: { ...menuPlace, width: "148px" },
 							// 鼠标也可能直接从外面进菜单、不经过球：那时 `enter` 一次都没跑过，
 							// 窗口还是穿透的。菜单自己再接一次命中。
-							onPointerEnter: enter,
+							onPointerEnter: enterMenu,
 						},
 						WINDOW_MODE
 							? null
@@ -3037,6 +3077,22 @@ export default {
 							"div",
 							{ className: "ov-sec" },
 							h("h3", null, "音色"),
+							// 老用户：v1.0 存的是数字 sid，v1.1 里那 8 个名字一个都没有，不能静默换人，
+							// 所以这里请他重选一次。选完（或点「知道了」）就把 `voiceMigrated` 写进
+							// localStorage，重启也不再弹。
+							prefs.voiceMigrated === false
+								? h(
+										"div",
+										{ className: "ov-banner", role: "status" },
+										h("b", null, "音色换了一批，请重新选一次。"),
+										h("span", null, "新版有 100 个中文音色，原来那 8 个声音这套模型里没有了，选完记住了，以后升级不会再变。"),
+										h(
+											"button",
+											{ type: "button", className: "ov-btn", onClick: () => set({ voiceMigrated: true }) },
+											"知道了",
+										),
+									)
+								: null,
 							voices.length === 0
 								? h("p", { className: "ov-note" }, "正在读音色列表…")
 								: h(
@@ -3110,22 +3166,6 @@ export default {
 							modelRow,
 							typeof voice?.error === "string" && voice.error !== ""
 								? h("p", { className: "ov-note" }, `上次没下成：${voice.error}`)
-								: null,
-							// 老用户：v1.0 存的是数字 sid，v1.1 里那 8 个名字一个都没有，不能静默换人，
-							// 所以这里请他重选一次。选完（或点「知道了」）就把 `voiceMigrated` 写进
-							// localStorage，重启也不再弹。
-							prefs.voiceMigrated === false
-								? h(
-										"div",
-										{ className: "ov-banner", role: "status" },
-										h("b", null, "音色换了一批，请重新选一次。"),
-										h("span", null, "新版有 100 个中文音色，原来那 8 个声音这套模型里没有了，选完记住了，以后升级不会再变。"),
-										h(
-											"button",
-											{ type: "button", className: "ov-btn", onClick: () => set({ voiceMigrated: true }) },
-											"知道了",
-										),
-									)
 								: null,
 						),
 						h(
