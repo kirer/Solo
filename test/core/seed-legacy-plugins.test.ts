@@ -72,14 +72,33 @@ function gitShow(rev: string, path: string): Buffer {
  * `core.quotepath=false`：默认中文路径会被打成 `"seed/plugins/\346\202\254..."` 带引号的转义串，
  * 后面 `git show` 一个都取不到 —— 而取不到的失败一旦被吞掉，断言就是空的绿。
  */
-function missingAt(rev: string): string[] {
+/** 所有 `v2.*` tag，按版本号排。 */
+function listTags(): string[] {
+	return execFileSync("git", ["tag", "--list", "v2.*"], { encoding: "utf8" })
+		.split("\n")
+		.filter((line) => line !== "")
+		.sort((a, b) => a.localeCompare(b, "en", { numeric: true }));
+}
+
+/**
+ * 某个修订（tag 名或 `HEAD`）里 `seed/plugins/**` 每个文件的 hash。
+ *
+ * `core.quotepath=false`：默认中文路径会被打成 `"seed/plugins/\346\202\254..."` 带引号的转义串，
+ * 后面 `git show` 一个都取不到 —— 而取不到的失败一旦被吞掉，断言就是空的绿。
+ */
+function seedPluginsAt(rev: string): { path: string; hash: string }[] {
 	const files = execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", rev, "--", "seed/plugins/"], {
 		encoding: "utf8",
 	})
 		.split("\n")
 		.filter((line) => line !== "");
-	expect(files.length, `${rev} 里没找到任何出厂插件文件`).toBeGreaterThan(0);
-	return files.filter((path) => !LEGACY_PLUGIN_HASHES.has(hashOf(gitShow(rev, path)))).map((path) => `${path} (${hashOf(gitShow(rev, path))})`);
+	return files.map((path) => ({ path, hash: hashOf(gitShow(rev, path)) }));
+}
+
+function missingAt(rev: string): string[] {
+	return seedPluginsAt(rev)
+		.filter((row) => !LEGACY_PLUGIN_HASHES.has(row.hash))
+		.map((row) => `${row.path} (${row.hash})`);
 }
 
 describe("老账本升级", () => {
@@ -91,17 +110,34 @@ describe("老账本升级", () => {
 		expect(missing, `HEAD 里这些出厂文件不在 LEGACY_PLUGIN_HASHES：老账本机器升上来会被判成「用户改过」`).toEqual([]);
 	});
 
-	// 下限：最近一个 tag 发出去的那份也必须认得。补表补晚了，已经发出去的用户就再也升不动了。
-	it("最近一个 tag 的出厂插件 hash 也在 LEGACY_PLUGIN_HASHES 里", () => {
-		let tag = "";
-		try {
-			tag = execFileSync("git", ["describe", "--tags", "--abbrev=0"], { encoding: "utf8" }).trim();
-		} catch {
-			return; // 没有 git 或没有 tag：这条在那种环境下没有意义。
+	// 下限：**每一个历史 tag** 发出去的那份都必须认得。
+	// 只看最近一个 tag 会漏掉整整一段：2.9.0–2.9.4 每一版的 `client.js` 都改过，表里却只有
+	// 2.9.5 和 2.9.6 的 —— 停在 2.9.0–2.9.4 的机器升上来照样被判「用户改过」、整份留旧，
+	// 等于修复只送到一小半人（路远 2026-11-11）。
+	it("每一个历史 tag 的出厂插件 hash 都在 LEGACY_PLUGIN_HASHES 里", () => {
+		const tags = listTags();
+		expect(tags.length, "一个 v2.* tag 都没读到").toBeGreaterThan(0);
+		const problems: string[] = [];
+		for (const tag of tags) {
+			// 很早的 tag 里还没有 seed/plugins，跳过。
+			for (const row of seedPluginsAt(tag)) {
+				if (!LEGACY_PLUGIN_HASHES.has(row.hash)) problems.push(`${tag} ${row.path} (${row.hash})`);
+			}
 		}
-		expect(tag).not.toBe("");
-		const missing = missingAt(tag);
-		expect(missing, `${tag} 里这些出厂文件不在 LEGACY_PLUGIN_HASHES：老账本机器升上来会被判成「用户改过」`).toEqual([]);
+		// 指名到「哪个 tag、哪个文件、哪个 hash」。笼统一条红等于没红，人看到还得自己猜缺哪个。
+		expect(problems, "这些历史出厂文件不在 LEGACY_PLUGIN_HASHES：停在那些版本的机器升上来会被判成「用户改过」").toEqual([]);
+	});
+
+	// 反过来也要守住：表里不许塞没人用的 hash。
+	// 不然将来为了让上面那条绿，最省事的办法就是「什么 hash 都往里塞」—— 那等于回到
+	// 「分不清谁是用户改的」，整份留旧的老毛病会以另一种方式回来（Solo 2026-11-11）。
+	it("表里每一个 hash 都对应某个真实出厂文件", () => {
+		const seen = new Set<string>();
+		for (const rev of [...listTags(), "HEAD"]) {
+			for (const row of seedPluginsAt(rev)) seen.add(row.hash);
+		}
+		const idle = [...LEGACY_PLUGIN_HASHES].filter((hash) => !seen.has(hash)).sort();
+		expect(idle, "这些 hash 在任何一个 tag / HEAD 的出厂插件里都找不到：别为了让测试绿往里塞").toEqual([]);
 	});
 
 	it("盘上就是出厂那份、只是版本旧：整份升到新版，并记下基线", async () => {
