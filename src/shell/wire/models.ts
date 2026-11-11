@@ -4,13 +4,27 @@
  * 只认「配置 + 会话表」，不认频道、插件、工具。留在装配函数里时，改模型的人
  * 要先读完整个装配顺序；拆出来之后它是装配里最独立的一段。
  */
-import type { Conversation, Context, Models } from "../../core/runtime/index.ts";
+import type { Conversation, Context, ModelThinkingLevel, Models } from "../../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT, syncModels } from "../../core/runtime/index.ts";
 import { parseModelRef, setAgentModel } from "../../core/runtime/models.ts";
 import { mtimeOrUndefined } from "../../core/runtime/io.ts";
 import type { Layout } from "../../core/layout.ts";
 
 export type ModelRef = { readonly provider: string; readonly modelId: string };
+
+/**
+ * 每个人干活时的思考档位。
+ *
+ * 底座的默认值是 `off`（`harness/agent.js`），而 `off` 时连 `reasoning` 字段都不发 ——
+ * 网关那边就按「不思考」处理。实测同一只模型：Solo 的请求 126 次里 108 次 effort=none、
+ * 平均 17 个思考 token，Claude Code 是 low/high、平均 159 个。两边拿到的是同一个模型，
+ * 差别只在档位。
+ *
+ * 取 `medium` 而不是 `high`：这是一群在频道里说话的人，多数轮次是「读一下、答一句」，
+ * 想太久既慢又贵；真要深想的轮次靠多轮工具调用补。模型不支持思考时底座会自己夹回
+ * `off`（`clampThinkingLevel`），所以这里不用按模型分支。
+ */
+export const THINKING_LEVEL: ModelThinkingLevel = "medium";
 
 export type ModelSwitchOptions = {
 	/** 模型注册表：界面改某个人的模型时要先确认那只模型真的存在。 */
@@ -98,7 +112,12 @@ export function createModelSwitcher(deps: {
 			const available = (await modelChoices(ctx)).models;
 			throw new Error(`没有这个模型：${value}（可选：${available.join("、") || "（还没有配置模型）"}）`);
 		}
-		await conversations.get(slug)?.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+		await conversations
+			.get(slug)
+			?.configure(
+				{ model: { provider: wanted.provider, modelId: wanted.modelId }, thinkingLevel: THINKING_LEVEL },
+				ctx,
+			);
 		const next = { ...(agentModels ?? {}) };
 		if (value === "") delete next[slug];
 		else next[slug] = { provider: wanted.provider, modelId: wanted.modelId };
@@ -107,16 +126,27 @@ export function createModelSwitcher(deps: {
 		return { model: value };
 	}
 
-	/** 补模型（幂等：已经是这个模型就不写，避免每次重启都产生一次提交）。 */
+	/**
+	 * 补模型与思考档位（幂等：两样都已经是想要的值就不写，避免每次重启都产生一次提交）。
+	 *
+	 * 没有配模型时**只补档位**：模型是「没有」，档位照样要设 —— 否则等哪天配了模型，
+	 * 这个人还是按 `off` 在跑。
+	 */
 	async function applyModel(conversation: Conversation, slug: string, ctx: Context): Promise<void> {
 		const wanted = modelFor(slug);
-		if (wanted === undefined) return;
 		const agent = await conversation.agent(ctx);
 		const current = agent.model;
-		if (current !== undefined && current.provider === wanted.provider && current.modelId === wanted.modelId) {
-			return;
-		}
-		await conversation.configure({ model: { provider: wanted.provider, modelId: wanted.modelId } }, ctx);
+		const sameModel =
+			wanted === undefined ||
+			(current !== undefined && current.provider === wanted.provider && current.modelId === wanted.modelId);
+		if (sameModel && agent.thinkingLevel === THINKING_LEVEL) return;
+		await conversation.configure(
+			{
+				...(wanted === undefined ? {} : { model: { provider: wanted.provider, modelId: wanted.modelId } }),
+				thinkingLevel: THINKING_LEVEL,
+			},
+			ctx,
+		);
 	}
 
 	return {

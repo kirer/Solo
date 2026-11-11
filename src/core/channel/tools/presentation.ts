@@ -92,3 +92,9 @@ export const traceHire: ToolTrace = (args) => {
 
 /** `route` 没有专门的画法：它是一条后台转交，落在通用行里。 */
 export const traceRoute: ToolTrace = () => ({ kind: "tool", title: "route" });
+
+/** `search` 也走通用行：它不是「读了一个文件」，没有现成的图标可用。 */
+export const traceSearch: ToolTrace = (args) => ({
+	kind: "tool",
+	title: `搜了 ${asString(args["pattern"]) ?? ""}`,
+});

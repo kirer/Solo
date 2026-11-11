@@ -17,7 +17,7 @@ src/
     runtime/io.ts   绝对路径的机械 IO：读 / 写 / 建目录 / 列表 / 串行闸 / 日志行
     runtime/        防腐层：唯一能 import @earendil-works/* 的地方（openCore / models / 恢复）
     channel/        说话的**领域原语**：频道规则 / 落盘 / 队列 / 唤醒记录 / 名册（roster）/
-                    附件 / 8 个工具（tools/）
+                    附件 / 9 个工具（tools/）
     flow/           一条消息的一生：`publish`（写一条）/ `forward`（转交）/ `settle`（结算收尾）/
                     策略链 / 校验 / 投递 / 两把闸
     plugin/         插件：`plugins/<slug>/` 的清单、五动作 API + `scope`、加载与隔离
@@ -92,7 +92,7 @@ shell = 装配层，唯一可以同时 import 全部
 
 装配只发生在 `shell/assemble.ts`：它按顺序把这三层接起来，本身不写业务规则。
 
-## 2. 全量文件（`src/` 下 116 个 ts：core 74 / app 21 / view 1 / interface 7 / shell 13，约 16400 行；行数会漂，以表里的职责为准）
+## 2. 全量文件（`src/` 下 117 个 ts：core 75 / app 21 / view 1 / interface 7 / shell 13，约 16400 行；行数会漂，以表里的职责为准）
 
 | 文件 | 行数 | 里面有什么 |
 | --- | --- | --- |
@@ -148,12 +148,12 @@ shell = 装配层，唯一可以同时 import 全部
 | `channel/turn/report.ts` | 116 | durable 收尾（ADR-077）：`defineTask` 的 `core.turn-report`（输入 = `slug` / `answer` / `wake`，phase 调 `finishTurn` 后提交 completed 收据，abort 提交 aborted）+ `afterRun` 钩子（从名册反查，返回 `runEndTask`）+ `turnReportInputFor`。挂进 `core-tools`，老会话不需要补选扩展 |
 | `channel/turn/index.ts` | 17 | 这一层对外的出口：唤醒记录类型 + 收尾 |
 | `channel/jobs.ts` | 214 | 后台命令：`startRunJob()` 起一条 detached 命令（stdout/stderr 收尾巴、30 分钟到点整组杀掉、跑完回调 `onDone`）、`sweepRunJobs()` 启动时清上一轮的遗留（活着的杀掉、记录删掉）、`killGroup()`（POSIX 杀进程组 / Windows `taskkill /T`；前台超时也用它）。记录 `logs/run/<id>.json`、全文 `logs/run/<id>.log`（ADR-013） |
-| `channel/tools/index.ts` | 53 | `createCoreTools` —— 组合下面 8 个 builder，并再导出 `isPass` / `monologueOpener` / `clip` / `resolveInWorkspace` / `CoreToolDeps`。**8 个工具**：`say` / `chats` / `read_history` / `remember` / `hire` / `route` / `run` / `file` |
+| `channel/tools/index.ts` | 55 | `createCoreTools` —— 组合下面 9 个 builder，并再导出 `isPass` / `monologueOpener` / `clip` / `resolveInWorkspace` / `CoreToolDeps`。**9 个工具**：`say` / `chats` / `read_history` / `remember` / `hire` / `route` / `run` / `file` / `search` |
 | `channel/tools/context.ts` | 142 | 工具的运行环境：`CoreToolDeps`、`text` / `actionOf` / `selfOf` / `selfOrError` / `mentionRoster` / `readState`。投递不在工具层组装：统一走 `wiring.flow`（`channel/post.ts`） |
 | `channel/tools/channel-choice.ts` | 99 | `defaultChannel`（显式 id 或**频道名** → 唤醒记录 `reply` → 群里最近活跃 → 私聊**报错**）/ `othersAwoken`（同一条消息还叫醒了谁）。频道名只在**自己所在的**频道里按全等找，重名报错列 id，不做模糊匹配（ADR-011） |
 | `channel/tools/recall.ts` | 59 | `recallText`（翻自己 / 团队记忆，出口脱敏）/ `renderLine`（历史一行） |
 | `channel/tools/guards.ts` | 106 | 安全闸与上限：`isPass` / `monologueOpener` / `clip` / `resolveInWorkspace`、`SAY_LIMIT` / `GROUP_SAY_LIMIT` / `sayLimitOf` / `MODEL_LIMIT` |
-| `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `route.ts` `run.ts` `file.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`route` 是助理专用：把频道里的一条消息在后台交给该看的人（`wiring.flow.forward`），写 `noteOf: "route"` 的隐藏留痕；不转给我 / 自己 / 非成员 / 已被 @ 的人（ADR-063）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），带 `options`（2–6 个）时自动 @我（ADR-035）；`defaultChannel` 兜底落到私聊**直接报错**。`hire` 是三个动作：`create`（默认）/ `fire`（只移到 `members/.retired/`）/ `models`（ADR-033）；`create` 带 `team` 而那个团队还没有 README 时，回话里点明「团队频道还不存在」（ADR-040）。`file` 写 `teams/<slug>/README.md` 或 `members/<slug>/identity.md` 后调 `syncTeam` 重投影频道（旧团队与新团队各一次）。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
+| `channel/tools/say.ts` `chats.ts` `history.ts` `remember.ts` `hire.ts` `route.ts` `run.ts` `file.ts` `search.ts` | — | 一个工具一个 builder（`createSayTool(deps)` …）。`route` 是助理专用：把频道里的一条消息在后台交给该看的人（`wiring.flow.forward`），写 `noteOf: "route"` 的隐藏留痕；不转给我 / 自己 / 非成员 / 已被 @ 的人（ADR-063）。`say` 负责「在哪儿回话、叫醒谁」（**没有 `to`**：私聊只能我开），带 `options`（2–6 个）时自动 @我（ADR-035）；`defaultChannel` 兜底落到私聊**直接报错**。`hire` 是三个动作：`create`（默认）/ `fire`（只移到 `members/.retired/`）/ `models`（ADR-033）；`create` 带 `team` 而那个团队还没有 README 时，回话里点明「团队频道还不存在」（ADR-040）。`file` 三个动作：`read` / `write`（整份）/ `edit`（`old_string` → `new_string`，命中多处要 `replace_all`，三种写法共用同一条落盘与副作用）；写 `teams/<slug>/README.md` 或 `members/<slug>/identity.md` 后调 `syncTeam` 重投影频道（旧团队与新团队各一次）。`search` 走 Node 自己遍历两个根（`grep` 内容 / `glob` 文件名），跳过依赖、日志、附件与二进制；不走 shell 是因为 Windows 上不一定有 `grep` / `rg`。`remember` / `hire` / `file` 写、`read_history`、`file` 读都过 `redact`；`.secrets.json` 对工具不开放 |
 | `channel/unanswered.ts` | 82 | 「叫了他但他这一轮没答上来」的留痕：`reasonText`（结算原因翻成人话）/ `renderUnanswered` / `watchSettled`（后台等结算，不 await、不抛） |
 | `plugin/manifest.ts` | 159 | `readPluginManifest` / `listPluginSlugs` —— `plugins/<slug>/plugin.md` 的头（`name` / `description` / `enabled`）+ 目录里有没有 `plugin.ts`（或 `plugin.js`）与 `client.js`；缺清单是一条**错误**不是异常。`writePluginEnabled` 只改 `enabled` 一行；`installPluginFiles` 把界面选中的整个文件夹（`{path, base64}[]`）校验后原样落盘、`removePluginFolder` 删整个目录（装 / 卸，见 CORE §13） |
 | `plugin/api.ts` | 173 | 插件的**五个动作** + 三个查询 / 一个说话：`PluginApi`（`tool` / `prompt` / `route` / `on("message")` / `flow(policy)`，外加 `Type` / `text` / `log` / `workspace`（= 应用根，字段名沿用旧称）/ `logsRoot`（= 用户根的 `logs/`）/ `scope(channelId)` / `channels()` / `post({channelId,text})`）+ `createPluginApi`，每个注册只往 `PluginSinks` 的一个数组里 push。`flow` 只收 `FlowPolicy`（`router` 排默认规则之前，`settle` 替换默认收尾），策略拿到的是只读事实，只能提议（ADR-080）。`scope` 只回答「这个频道的工作区根在哪」（ADR-036）；`logsRoot` 给审计账用（ADR-064）；`channels` 只给 `{id,title,kind,members}`；`post` 以我的身份说话（与界面打字同一条路，ADR-115）。路径守卫都在插件里 |

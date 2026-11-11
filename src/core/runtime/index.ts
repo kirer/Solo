@@ -77,6 +77,6 @@ export const Type = {
 	Optional: opt,
 } as const;
 
-export type { Models } from "@earendil-works/pi-ai";
+export type { ModelThinkingLevel, Models } from "@earendil-works/pi-ai";
 export { openCore, type RuntimeReport } from "./open.ts";
 export { setupModels, syncModels, setAgentModel, compactionSettings } from "./models.ts";

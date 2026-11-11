@@ -118,8 +118,8 @@ async function setup(
 	};
 }
 
-describe("工具收敛：注册表只有八个", () => {
-	it("名单是 8 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有九个", () => {
+	it("名单是 9 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
@@ -130,6 +130,7 @@ describe("工具收敛：注册表只有八个", () => {
 			"route",
 			"run",
 			"file",
+			"search",
 		]);
 	});
 });
@@ -405,6 +406,97 @@ describe("file", () => {
 		const { call } = await setup();
 		const output = await call("file", { action: "append", path: "notes.md" });
 		expect(output).toContain("action 只有 read / write");
+	});
+
+	it("action=edit 只换那一处，其余原样", async () => {
+		const { call } = await setup();
+		const output = await call("file", { path: "notes.md", old_string: "第二行", new_string: "改过的第二行" });
+		expect(output).toContain("已改 notes.md");
+		const back = await call("file", { path: "notes.md" });
+		expect(back).toContain("第一行\n改过的第二行\n第三行");
+	});
+
+	it("漏写 action 但给了 old_string：按 edit 处理", async () => {
+		const { call } = await setup();
+		const output = await call("file", { path: "notes.md", old_string: "第三行", new_string: "末行" });
+		expect(output).toContain("已改 notes.md");
+		expect(await call("file", { path: "notes.md" })).toContain("末行");
+	});
+
+	it("edit 找不到原文时让它先读，不落盘", async () => {
+		const { call, root } = await setup();
+		const output = await call("file", { path: "notes.md", old_string: "不存在的行", new_string: "x" });
+		expect(output).toContain("找不到这段原文");
+		expect(await readFile(join(root, "notes.md"), "utf8")).toBe("第一行\n第二行\n第三行\n");
+	});
+
+	it("edit 命中多处且没设 replace_all：拒绝，并说清出现了几次", async () => {
+		const { call } = await setup();
+		await call("file", { action: "write", path: "dup.md", content: "同\n同\n" });
+		const output = await call("file", { path: "dup.md", old_string: "同", new_string: "异" });
+		expect(output).toContain("出现了 2 次");
+		expect(await call("file", { path: "dup.md" })).toContain("同\n同");
+	});
+
+	it("replace_all=true 时全换掉", async () => {
+		const { call } = await setup();
+		await call("file", { action: "write", path: "dup.md", content: "同\n同\n" });
+		const output = await call("file", { path: "dup.md", old_string: "同", new_string: "异", replace_all: true });
+		expect(output).toContain("2 处");
+		expect(await call("file", { path: "dup.md" })).toContain("异\n异");
+	});
+
+	it("new_string 里的 $& 是普通文字，不被当成替换模式", async () => {
+		const { call } = await setup();
+		await call("file", { action: "write", path: "dollar.md", content: "价格是 X 元" });
+		await call("file", { path: "dollar.md", old_string: "X", new_string: "$&$1" });
+		expect(await call("file", { path: "dollar.md" })).toContain("价格是 $&$1 元");
+	});
+});
+
+describe("search", () => {
+	it("grep 按内容找，返回 路径:行号: 那一行", async () => {
+		const { call } = await setup();
+		const output = await call("search", { pattern: "第二行" });
+		expect(output).toContain("notes.md:2: 第二行");
+	});
+
+	it("不给 path 就搜整个组织目录，能搜到别人的身份文件", async () => {
+		const { call } = await setup();
+		const output = await call("search", { pattern: "前端开发" });
+		expect(output).toContain("members/沈舟/identity.md");
+	});
+
+	it("glob 按文件名找，*.md 不必写全路径", async () => {
+		const { call } = await setup();
+		const output = await call("search", { action: "glob", pattern: "*.md" });
+		expect(output).toContain("notes.md");
+		expect(output).toContain("members/沈舟/identity.md");
+	});
+
+	it("给 path 就只搜那一块", async () => {
+		const { call } = await setup();
+		const output = await call("search", { action: "glob", pattern: "*.md", path: "skills" });
+		expect(output).toContain("skills/写周报/SKILL.md");
+		expect(output).not.toContain("notes.md");
+	});
+
+	it("正则写错时按字面量找，不报错", async () => {
+		const { call } = await setup();
+		const output = await call("search", { pattern: "第一行(" });
+		expect(output).toContain("没找到");
+	});
+
+	it("找不到时说没找到，不返回空串", async () => {
+		const { call } = await setup();
+		const output = await call("search", { pattern: "这段文字哪儿都没有" });
+		expect(output).toContain("没找到");
+	});
+
+	it("路径越界被拒", async () => {
+		const { call } = await setup();
+		const output = await call("search", { pattern: "x", path: "../../etc" });
+		expect(output).toContain("工作区之外");
 	});
 });
 
