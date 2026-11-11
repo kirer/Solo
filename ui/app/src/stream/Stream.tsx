@@ -53,6 +53,16 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const sampler = useRef<number | null>(null);
 	/** 这一帧渲染了哪些行（给「还没量到高度」时初始化模型用）。 */
 	const rowsRef = useRef<Row[]>([]);
+	/**
+	 * 上一次渲染结束时屏幕最上面那一行的 key（补页补偿的锚点，设计 §3.1）。
+	 *
+	 * **为什么不在补偿那一刻现问**：补页是从上面插行，插完之后新插进来的行就占住了视口
+	 * 顶部 —— 这一帧再问「最上面的是谁」，问到的全是刚插进来的新行：它不在旧模型里，
+	 * `offsetOf` 返回 `undefined`，`ΔH` 算不出来、一次都不写 `scrollTop`，屏上的字就跟着
+	 * 往下跳（2026-11-12 真机 A4：贴顶 PageUp 首行 s-245 → s-237）。锚点在**上一帧**就该
+	 * 定好 —— 插行不影响「锚点是谁」，只影响它距内容顶多少。
+	 */
+	const anchor = useRef<{ key: string; top: number } | null>(null);
 
 	const messages = detail?.messages ?? [];
 	// 这个频道里正在跑、还没回话的那几轮 —— `live` 行只认它们（ADR-046）。
@@ -259,6 +269,19 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		return null;
 	}, []);
 
+	/** 某个 key 的行此刻距 `.flow` 顶多少 px（不在 DOM 里 = `undefined`）。 */
+	const rowTop = useCallback((key: string): number | undefined => {
+		const flow = flowRef.current;
+		const feed = feedRef.current;
+		if (flow === null || feed === null) return undefined;
+		const top = flow.getBoundingClientRect().top;
+		for (const node of feed.querySelectorAll<HTMLElement>("[data-row-key]")) {
+			if (node.dataset["rowKey"] !== key) continue;
+			return node.getBoundingClientRect().top - top;
+		}
+		return undefined;
+	}, []);
+
 	/**
 	 * 补页前后把屏幕上的字钉住（设计 §3.1 / §3.3）。
 	 *
@@ -277,8 +300,44 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 * 行是高是低仍以量到的真值为准（`heights`），量不到的按估算行高摆，所以同步之后模型永远可用。
 	 */
 	const syncModel = useCallback(() => {
+		// ① 先把这一帧 DOM 里的真行高量进来。调用点在 `useLayoutEffect` 里（还没上屏），
+		//    所以补回来的行第一次摆就已经是真高度，不靠估算、不闪第二下。
+		const feed = feedRef.current;
+		let changed = false;
+		if (feed !== null) {
+			// 量的是**行距**（相邻两行顶边的差），不是 `getBoundingClientRect().height` ——
+			// 行与行之间还有外边距（实测 4px），height **不含**它。只量 height 的结果：补 15 条时
+			// 模型算出的 ΔH 比真实矮 60px（660 vs 720），屏上照样往下挪 80px。
+			// 2026-11-12 真机第二次抓到的就是这个。
+			const nodes = [...feed.querySelectorAll<HTMLElement>("[data-row-key]")];
+			for (let index = 0; index < nodes.length; index += 1) {
+				const node = nodes[index] as HTMLElement;
+				const key = node.dataset["rowKey"];
+				if (key === undefined) continue;
+				const rect = node.getBoundingClientRect();
+				const next = nodes[index + 1];
+				// 占位行的高度是**定的**（`PLACEHOLDER_HEIGHT`），不量：量出来的 0（还没布局、
+				// 被折叠）会把它当成「这行没高度」，占位就没占住位置，页回来时那一屏会整体往上跳。
+				const height = key.startsWith("ph-")
+					? PLACEHOLDER_HEIGHT
+					: next === undefined
+						? rect.height
+						: next.getBoundingClientRect().top - rect.top;
+				if (!Number.isFinite(height) || height <= 0) continue;
+				const rounded = Math.round(height);
+				if (heights.current.get(key) === rounded) continue;
+				heights.current.set(key, rounded);
+				changed = true;
+			}
+		}
+		// ② 按**这一帧的行**摆模型（量到过的用真值，没量到的按估算行高）。行没变、高度也没变
+		//    就不重建 —— 大频道每次渲染都重建一遍没必要。
+		const rows = rowsRef.current;
+		const prev = layout.current.rows;
+		const same = !changed && prev.length === rows.length && rows.every((row, index) => prev[index]?.key === row.key);
+		if (same) return;
 		layout.current = buildHeights(
-			rowsRef.current.map((row) => {
+			rows.map((row) => {
 				const measured = heights.current.get(row.key);
 				return measured === undefined ? { key: row.key } : { key: row.key, height: measured };
 			}),
@@ -286,16 +345,33 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	}, []);
 
 	const compensate = useCallback(() => {
-		const anchorKey = firstVisibleKey();
 		const flow = flowRef.current;
-		if (anchorKey === null || flow === null) return;
+		if (flow === null) return;
+		// 锚点认「上一帧落定后最上面那一行」（`anchor`）；刚进屏还没有锚点才现问一次。
+		// 补页那一次必须用上一帧的：新插进来的行已经占住视口顶部，现问只会问到新行。
+		const anchorKey = anchor.current?.key ?? firstVisibleKey();
+		if (anchorKey === null) return;
+		const anchorTop = anchor.current?.top ?? rowTop(anchorKey);
+		if (anchorTop === undefined) return; // 刚进屏、还没有锚点位置 → 不补偿，没有位移可言
 		const beforeTop = offsetOf(layout.current, anchorKey);
-		if (beforeTop === undefined) return; // 模型里还没有它（刚进来）→ 不补偿，没有位移可言
 		// 等这一帧的 DOM 落地，按新模型算同一个 key 现在距内容顶多少。
 		const apply = (): void => {
-			// 先把这一帧的新行吃进模型，再问「同一个 key 现在距顶多少」—— 不先同步，
-			// 补页那次 ΔH 恒为 0（就是 A4 那个洞）。
+			// 先量这一帧的真行高、把新补进来的行吃进模型，再问「同一个 key 现在距顶多少」——
+			// 不先同步，补页那次 ΔH 恒为 0（就是 A4 那个洞）；不量真高，补回来的行按估算摆，
+			// ΔH 会差出十几条（估算 76px vs 实测 48px）。
 			syncModel();
+			// ① DOM 真值优先：锚点行还在 DOM 里，就直接看它这一帧在屏幕上挪了多少，原样挪回去。
+			//    模型算的是「行高的估计 + 量过的行距」，行距、外边距、字重变化都可能让它差几十 px
+			//    （2026-11-12 真机：模型算 672、真实位移 692，屏上还是挪了 20px）。
+			const domTop = rowTop(anchorKey);
+			if (domTop !== undefined) {
+				const shift = domTop - anchorTop;
+				if (Math.abs(shift) < 1) return;
+				setScrollTop(flow.scrollTop + shift, "anchor");
+				return;
+			}
+			// ② 锚点被虚拟化回收了（大频道）：退回模型算 ΔH —— 设计里那条「模型永远算得出来」。
+			if (beforeTop === undefined) return;
 			const now = offsetOf(layout.current, anchorKey);
 			if (now === undefined) return; // 兜底第 3 级：模型里也没有 → 不写（下一次渲染会带上）
 			const delta = now - beforeTop;
@@ -303,29 +379,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			setScrollTop(flow.scrollTop + delta, "anchor");
 		};
 		apply();
-	}, [firstVisibleKey, setScrollTop, syncModel]);
-
-	/** 量一次真行高度，交给模型吸收（误差自愈：估的 → 真的）。 */
-	const measureRows = useCallback(() => {
-		const feed = feedRef.current;
-		if (feed === null) return;
-		let changed = false;
-		for (const node of feed.querySelectorAll<HTMLElement>("[data-row-key]")) {
-			const key = node.dataset["rowKey"];
-			if (key === undefined) continue;
-			// 占位行的高度是**定的**（`PLACEHOLDER_HEIGHT`），不量：量出来的 0（还没布局、
-			// 被折叠）会把它当成「这行没高度」，占位就没占住位置，页回来时那一屏会整体往上跳。
-			const height = key.startsWith("ph-") ? PLACEHOLDER_HEIGHT : node.getBoundingClientRect().height;
-			if (!Number.isFinite(height) || height <= 0) continue;
-			const rounded = Math.round(height);
-			if (heights.current.get(key) === rounded) continue;
-			heights.current.set(key, rounded);
-			changed = true;
-		}
-		// 量到真值就重摆一次模型：`syncModel()` 认的是**这一帧的行**（补页会加行），
-		// 以前这里 map 的是 `layout.current.rows`（上一帧的行），新行进不来。
-		if (changed) syncModel();
-	}, [syncModel]);
+	}, [firstVisibleKey, rowTop, setScrollTop, syncModel]);
 
 	/**
 	 * 一次动作结束时的结算（设计 §1.3）。
@@ -365,12 +419,36 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		if (flow === null) return;
 		compensate();
 		setAtBottom(flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 24);
-	}, [messages, compensate]);
+		// 这一帧落定之后屏幕最上面那一行（以及它此刻在屏幕上的位置），就是下一帧
+		// （补页 / 新消息）要钉住的那个字 —— 位置也一起记，下一帧才能算「它挪了多少」。
+		const key = firstVisibleKey();
+		const top = key === null ? undefined : rowTop(key);
+		anchor.current = key === null || top === undefined ? null : { key, top };
+	}, [messages, compensate, firstVisibleKey, rowTop]);
 
-	/** 渲染之后量一次真行高（只做校正，不参与任何判断）。 */
+	/**
+	 * 锚点跟着滚动走：人自己滚、程序补位，都会落进 `scroll` 事件里。
+	 *
+	 * 不跟的话，锚点的位置会停在「上一次渲染时」的那一帧 —— 用户往上翻了两屏再来新消息，
+	 * 拿旧位置算「它挪了多少」，把人自己滚的那段也算成位移，一写就是好几屏。
+	 */
 	useEffect(() => {
-		measureRows();
-	});
+		const flow = flowRef.current;
+		if (flow === null) return;
+		const update = (): void => {
+			const key = firstVisibleKey();
+			const top = key === null ? undefined : rowTop(key);
+			anchor.current = key === null || top === undefined ? null : { key, top };
+		};
+		flow.addEventListener("scroll", update, { passive: true });
+		update();
+		return () => flow.removeEventListener("scroll", update);
+	}, [firstVisibleKey, rowTop]);
+
+	/** 渲染之后量一次真行高（只做校正，不参与任何判断；量到变值才重摆模型）。 */
+	useEffect(() => {
+		syncModel();
+	}, [syncModel]);
 
 	/**
 	 * 四条 effect 的第三条（原 `if (Math.abs(delta) > 1) flow.scrollTop += delta`）——
@@ -549,7 +627,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				// （频道开头的 `solo-hero` 164px + 40px 上边距），行与行之间还有 4px 外边距 ——
 				// `bottomOf` 只算「末行偏移 + 末行高」，这些全在模型外面，算出来 top=524 / 真实 max=1215。
 				// 所以：能读真值就用真值，模型只在布局还没落地时兜底。
-				measureRows();
+				syncModel();
 				const model = bottomOf(flow);
 				const real = Math.max(0, flow.scrollHeight - flow.clientHeight);
 				setScrollTop(Math.max(model, real), "enter");

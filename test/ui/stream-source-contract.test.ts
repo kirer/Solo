@@ -58,7 +58,8 @@ describe("狂补引擎不许长回来（设计 §1.2）", () => {
 describe("新消息到达不许把位置拽走（验收第 26 条）", () => {
 	it("`messages` 变化的那条 effect 里没有 `toBottom`", () => {
 		// 抓 `useLayoutEffect(..., [messages, ...])` 这一段的作用域。
-		const start = code.indexOf("}, [messages, compensate]);");
+		// 依赖里带着 `compensate` 就行（2026-11-12 起还多了锚点要用的 `firstVisibleKey` / `rowTop`）。
+		const start = code.indexOf("}, [messages, compensate");
 		expect(start).toBeGreaterThan(-1);
 		const body = code.slice(code.lastIndexOf("useLayoutEffect(() => {", start), start);
 		expect(body).not.toContain("toBottom");
@@ -192,8 +193,10 @@ describe("进频道那一次到底，按模型算不按 scrollHeight", () => {
 
 	it("算底之前先量一次真行高（模型这时还是 76 的估值，真行只有 68）", () => {
 		// 不先量：`bottomOf` 用估算行高算出来的底会停在半空 —— 实测 top=544 / max=1215。
+		// 2026-11-12 起「量 + 摆模型」合成了一步 `syncModel()`（补页补偿也要靠它），量真行高
+		// 这一步没有消失，只是并进去了。
 		const body = enter();
-		const measure = body.indexOf("measureRows()");
+		const measure = body.indexOf("syncModel()");
 		const write = body.indexOf('setScrollTop(Math.max(model, real), "enter")');
 		expect(measure).toBeGreaterThan(-1);
 		expect(measure).toBeLessThan(write);
