@@ -6,8 +6,9 @@
  * 传输层只负责把字节推出去。
  */
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
+import sharp from "sharp";
 import { createFiles } from "./files.ts";
 import type { CoreServices } from "./types.ts";
 import { AppError } from "./errors.ts";
@@ -40,6 +41,17 @@ const STAGED_STATE_FILE = "staged-state.json";
 /** 墓碑留多久：够跨过一个浏览器刷新（刷新时 `draftFiles` 会把引用重新写回来）。 */
 const TOMBSTONE_MS = 30 * 60_000;
 
+/**
+ * 缩图长边的上限（老板 2026-11-11：带图频道 21 张 80MB 全量下）。
+ *
+ * 1568 是 Claude 那条视觉模型管道认的边长，再大只是多传字节不多给信息。只缩不放：
+ * 一张 400px 的小图缩完还是 400px，硬拉到 1568 只会糊。
+ */
+const PREVIEW_MAX_EDGE = 1568;
+
+/** WebP 质量：图里 21 张截图这种，82 目视无差，体积是一半以下。 */
+const PREVIEW_QUALITY = 82;
+
 /** 待发附件的回收年龄：待发不会被上面那条 minAge 规则收走，它有自己的钟。 */
 const STAGED_STALE_MS = 24 * 60 * 60_000;
 
@@ -49,6 +61,72 @@ type StagedState = {
 	/** 界面上还挂在草稿里的 id（某个输入框还显示着它）。 */
 	readonly drafts: readonly string[];
 };
+
+/**
+ * 这张图正在生缩图的做法：同一个 id 同时来两次请求，只编一次，第二个等第一个的结果。
+ *
+ * 带图频道一打开，21 张图会同时请求 —— 每张编两遍等于开 42 个编码任务，
+ * 而 libvips 自己是有线程上限的，多起来的只是排队和内存峰值。
+ */
+const previewInflight = new Map<string, Promise<{ path: string; bytes: number } | undefined>>();
+
+/** 生缩图失败过的 id：一张坏图每次请求都重试一遍，等于每次打开频道都白烧一次 CPU。 */
+const previewFailed = new Set<string>();
+
+/**
+ * 要缩图：盘上有就直接用，没有就现编一张（`<uploadsRoot>/previews/<id>.webp`）。
+ *
+ * 编的时候先写 `.tmp-<id>.webp` 再 rename —— 半张图落在正式名字上，下一次请求会把它
+ * 当成「已经生成好」发出去，用户看到的是半张。rename 在同一目录里是原子的。
+ *
+ * 失败一律回 `undefined`（调用方退回原图）：
+ * 图坏了、格式 libvips 不认、磁盘满了，都不该让「看图」这件事整个失败。
+ * 失败记进 `previewFailed`，同一个 id 不再重试；本体被删/被替换（`removeUpload`）时清掉。
+ */
+async function ensurePreview(
+	root: string,
+	id: string,
+	source: string,
+): Promise<{ path: string; bytes: number } | undefined> {
+	const target = previewPathOf(root, id);
+	if (target === undefined) return undefined;
+
+	const onDisk = await stat(target).catch(() => undefined);
+	if (onDisk !== undefined && onDisk.isFile() && onDisk.size > 0) return { path: target, bytes: onDisk.size };
+	if (previewFailed.has(id)) return undefined;
+
+	const running = previewInflight.get(id);
+	if (running !== undefined) return running;
+
+	const task = (async () => {
+		const dir = join(root, PREVIEW_DIR);
+		const staging = join(dir, `.tmp-${id}.webp`);
+		try {
+			const source2 = await stat(source).catch(() => undefined);
+			if (source2 === undefined) return undefined;
+			await mkdir(dir, { recursive: true });
+			// `fit: inside` + `withoutEnlargement`：只缩不放，长边封顶 1568。
+			// 透明不铺底 —— 铺白底是 JPEG 那条线的妥协，WebP 原生带 alpha，不该丢。
+			const bytes = await sharp(source)
+				.rotate() // 手机照片带 EXIF 方向，不转过来缩图是歪的
+				.resize({ width: PREVIEW_MAX_EDGE, height: PREVIEW_MAX_EDGE, fit: "inside", withoutEnlargement: true })
+				.webp({ quality: PREVIEW_QUALITY })
+				.toBuffer();
+			await writeFile(staging, bytes);
+			await rename(staging, target);
+			return { path: target, bytes: bytes.length };
+		} catch (error: unknown) {
+			previewFailed.add(id);
+			await unlink(staging).catch(() => undefined);
+			console.log(`[core] 缩图没生出来 ${id}：${(error as Error)?.message ?? "未知"}`);
+			return undefined;
+		} finally {
+			previewInflight.delete(id);
+		}
+	})();
+	previewInflight.set(id, task);
+	return task;
+}
 
 /** 只有 `staged-` 开头的才记：别的 id 进状态文件等于给人一份能写到别处的清单。 */
 function isStagedId(value: unknown): value is string {
@@ -91,6 +169,9 @@ async function removeUpload(root: string, id: string): Promise<void> {
 	await unlink(`${path}.json`).catch(() => undefined);
 	const thumb = previewPathOf(root, id);
 	if (thumb !== undefined) await unlink(thumb).catch(() => undefined);
+	// 这个 id 已经没了，生缩图失败的黑名单跟着清 —— 不然它也一直涨，而且万一以后
+	// 同一个 id 又出现（理论上不会），会带着一个莫名其妙的「失败过」标记。
+	previewFailed.delete(id);
 }
 
 /**
@@ -144,17 +225,13 @@ export function createUploads(shell: CoreServices) {
 		//
 		// 只看「缩图在不在盘上」，**不在这里生成**：这个函数在请求路径上，还在 `app` 层，
 		// 不该在这里起编码任务；生成与回收在 `sweep` 那一轮统一做。
-		const thumb =
-			options.download !== true && options.preview === true && kindOfMime(meta.mime) === "image"
-				? previewPathOf(root, id)
-				: undefined;
-		if (thumb !== undefined) {
-			const info = await stat(thumb).catch(() => undefined);
-			if (info !== undefined && info.isFile() && info.size > 0) {
+		if (options.download !== true && options.preview === true && kindOfMime(meta.mime) === "image") {
+			const thumb = await ensurePreview(root, id, path);
+			if (thumb !== undefined) {
 				return {
-					path: thumb,
+					path: thumb.path,
 					mime: "image/webp",
-					bytes: info.size,
+					bytes: thumb.bytes,
 					name: meta.name,
 					inline: true,
 					disposition: contentDisposition(true, meta.name),
