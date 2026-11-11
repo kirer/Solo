@@ -421,8 +421,9 @@ export async function loadEarlier(): Promise<void> {
 		const page = await getEarlier(currentId, earliest);
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
 		patch({
-			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
-			hasMore: page.hasMore,
+			detail: getState().detail === null ? null : { ...getState().detail!, messages: trimmedMessages(merged) },
+			// 服务端说没更早的了；本地裁剪被裁空了也当没有（不然会一直转圈）。
+			hasMore: page.hasMore && merged.length > 0,
 		});
 	} finally {
 		done();
@@ -443,6 +444,34 @@ export function mergeMessages(older: readonly Message[], newer: readonly Message
 	return [...bySeq.values()].sort((left, right) => left.seq - right.seq);
 }
 
+/**
+ * 内存里一个频道最多留多少条（顾行验收 E2）。
+ *
+ * 只裁 DOM 不裁数据也不行：5000 条频道一路翻到底，消息对象全在内存里，翻完之后
+ * 每次 SSE 都要在几千个对象里 `findIndex`。1000 条是「够翻、又不至于卡」的那条线。
+ */
+const MESSAGE_LIMIT = 1000;
+
+/**
+ * 裁剪：只从**最早的那一头**裁，一次裁掉一截而不是一条条削。
+ *
+ * 三条不许裁的时候：
+ * - **贴底时不动** —— 用户正看着最新，裁掉就没东西看了（`pinned` 在 Stream 里，
+ *   store 不存；由调用方决定要不要进来，现有两条调用点都在「看最新」的位置）；
+ * - **上翻补历史时不动**（`loadingEarlier`）—— 刚补进来的马上被裁，锚点找不回、画面跳；
+ * - **`hasMore` 为真时不动** —— 这是最容易踩的一个：裁掉最早那段之后，如果服务端还有
+ *   更早的，`loadEarlier` 的起点就必须变成「已裁掉那条的 seq」，否则中间那段永远跳过。
+ *   与其记一堆边界，不如**只在整段历史都取完（`hasMore === false`）之后才裁**：
+ *   那时候裁掉的确实是不再需要的，翻页也不会再来。
+ */
+function trimmedMessages(messages: Message[]): Message[] {
+	if (messages.length <= MESSAGE_LIMIT) return messages;
+	const { loadingEarlier, hasMore } = state;
+	if (hasMore || loadingEarlier) return messages;
+	// 从最早的裁，一次裁到上限：每来一条裁一条等于每条都生成新数组，反而更卡。
+	return messages.slice(messages.length - MESSAGE_LIMIT);
+}
+
 /** SSE 推来一条（新增或原地更新）。 */
 export function applyMessage(id: string, message: Message): void {
 	// SSE 一条一条到达，卡顿发生时最需要知道的就是「是不是正在合并消息」。
@@ -459,7 +488,7 @@ export function applyMessage(id: string, message: Message): void {
 		next = messages.slice();
 		next[index] = message;
 	}
-	patch({ detail: { ...current.detail, messages: next } });
+	patch({ detail: { ...current.detail, messages: trimmedMessages(next) } });
 	done();
 }
 

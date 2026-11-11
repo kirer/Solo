@@ -174,12 +174,49 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		return () => flow.removeEventListener("scroll", onScroll);
 	}, [isPinned]);
 
-	// 切频道：到底部。
+	/**
+	 * 切频道：有未读就落在「以下是新的」那条横幅上，没未读才到底。
+	 *
+	 * 以前是一律到底 —— 未读横幅画在 1000 条以外的顶上，等于没人看得见。
+	 *
+	 * 两个细节：
+	 * - **没未读时行为一点都不变**：还是 `toBottom()`，连 rAF 那一拍都照旧。
+	 * - 横幅还没画出来（`detail` 刚被清空那一瞬间）就等下一帧再试，最多等 20 帧
+	 *   （约 0.3 秒）；等不到就到底 —— 宁可到底，也不能让用户停在半空。
+	 */
 	useEffect(() => {
 		anchor.current = null;
 		pinned.current = true;
-		requestAnimationFrame(() => toBottom());
-	}, [currentId, toBottom]);
+		setAtBottom(true);
+		if (unreadBefore === null) {
+			requestAnimationFrame(() => toBottom());
+			return;
+		}
+		let tries = 0;
+		let frame = 0;
+		const jump = (): void => {
+			const flow = flowRef.current;
+			const banner = flow?.querySelector<HTMLElement>('[data-row="unread"]') ?? null;
+			if (flow !== null && banner !== null) {
+				// 横幅贴到视口顶上那一行：它上面留一屏上下文，人往下读就是新消息。
+				const offset = banner.getBoundingClientRect().top - flow.getBoundingClientRect().top;
+				flow.scrollTop += offset;
+				// 落点不在底 → 不算贴底，不然下一条新消息会把人拽回底部。
+				const nowPinned = isPinned();
+				pinned.current = nowPinned;
+				setAtBottom(nowPinned);
+				return;
+			}
+			tries += 1;
+			if (tries > 20) {
+				toBottom();
+				return;
+			}
+			frame = requestAnimationFrame(jump);
+		};
+		frame = requestAnimationFrame(jump);
+		return () => cancelAnimationFrame(frame);
+	}, [currentId, toBottom, unreadBefore, isPinned]);
 
 	const onTop = useCallback(() => {
 		if (!hasMore || loadingEarlier) return;
