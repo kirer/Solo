@@ -438,16 +438,31 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		flow.addEventListener("scroll", onInput, { passive: true });
 		flow.addEventListener("wheel", onWheel, { passive: true });
 		flow.addEventListener("touchstart", onInput, { passive: true });
-		flow.addEventListener("keydown", onKey);
+		// 键必须挂在 `window` 上，不能挂在 `flow` 上：`.flow` 没有 `tabIndex`，永远不是焦点，
+		// 平时焦点在 `body`（真机实测 `tgt: BODY`）—— 挂在 `flow` 上的 `keydown` 一次都收不到，
+		// 表现就是「键到了页面、`scrollTop` 恒 0、什么都不动」。
+		// 只在「当前就在这个频道」时才认，别把它变成全局快捷键。
+		const onKeyWindow = (event: KeyboardEvent): void => {
+			if (detail === null) return;
+			if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+			const target = event.target;
+			// 输入框 / 可编辑区域里的方向键归打字，不抢。
+			if (target instanceof HTMLElement) {
+				const tag = target.tagName;
+				if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) return;
+			}
+			onKey(event);
+		};
+		window.addEventListener("keydown", onKeyWindow);
 		return () => {
 			flow.removeEventListener("scroll", onInput);
 			flow.removeEventListener("wheel", onWheel);
 			flow.removeEventListener("touchstart", onInput);
-			flow.removeEventListener("keydown", onKey);
+			window.removeEventListener("keydown", onKeyWindow);
 			if (sampler.current !== null) cancelAnimationFrame(sampler.current);
 			sampler.current = null;
 		};
-	}, [onKey, wake]);
+	}, [onKey, wake, detail]);
 
 	/**
 	 * 仲裁者：容器换了（切频道会重挂 `.flow`）就新建一个，读数基准按新容器来。
@@ -488,9 +503,43 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		if (detail === null) return;
 		const flow = flowRef.current;
 		if (flow === null) return;
-		setScrollTop(bottomOf(flow), "enter");
-		setAtBottom(true);
+		/**
+		 * 这一刻 `.flow-wrap` 的 `key` 刚从 `"none"` 变成频道 id —— 容器是**新挂上的**，
+		 * 还一次布局都没做过（实测：写下去时 `scrollHeight` / `clientHeight` 都是 0，
+		 * `getBoundingClientRect().height` 也是 0）。浏览器在零高度、不可滚动的盒子上把这次写
+		 * 夹回 0 —— 于是「到底」没发生，而界面上也看不出错：位置就是 0，跟没进去一样。
+		 *
+		 * 所以等容器真的有高度再落这一次写；那之后读到的 `scrollHeight` 是真值，用它。
+		 * 轮询用 rAF，最多几帧。
+		 */
+		let frames = 0;
+		let cancelled = false;
+		const land = (): void => {
+			if (cancelled) return;
+			if (flow.scrollHeight > 0 && flow.clientHeight > 0) {
+				// 到这一刻这一屏**已经渲染完、布局也是真的**，`scrollHeight` 就是真值 ——
+				// 用它不是 Solo 否掉的那个用法（他否的是「渲染前拿上一次的 scrollHeight 当目标」）。
+				//
+				// 模型这条路在这件事上不够用，实测差了 691px：`.feed` 里除了消息行还有不归模型管的块
+				// （频道开头的 `solo-hero` 164px + 40px 上边距），行与行之间还有 4px 外边距 ——
+				// `bottomOf` 只算「末行偏移 + 末行高」，这些全在模型外面，算出来 top=524 / 真实 max=1215。
+				// 所以：能读真值就用真值，模型只在布局还没落地时兜底。
+				measureRows();
+				const model = bottomOf(flow);
+				const real = Math.max(0, flow.scrollHeight - flow.clientHeight);
+				setScrollTop(Math.max(model, real), "enter");
+				setAtBottom(true);
+				return;
+			}
+			frames += 1;
+			if (frames > 30) return; // 半秒还没有布局：放弃写入，别把循环挂在这儿
+			requestAnimationFrame(land);
+		};
+		land();
 		void fillOnEnter();
+		return () => {
+			cancelled = true;
+		};
 		// 只在「进了这个频道、第一页到手」那一刻跑一次。
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [currentId, detail === null]);
