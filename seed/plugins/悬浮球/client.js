@@ -2871,7 +2871,7 @@ export default {
 										"div",
 										{ className: "ov-engines", role: "radiogroup", "aria-label": "播报引擎" },
 										[
-											["local", "本机 Kokoro", "离线 · 免费 · 8 个中文音色"],
+											["local", "本机 Kokoro", "离线 · 免费 · 100 个中文音色"],
 											["qwen", "千问云端", "阿里云百炼 · 自然得多"],
 										].map(([engine, label, note]) =>
 											h(
