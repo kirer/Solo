@@ -436,11 +436,13 @@ describe("悬浮球", () => {
 
 		/**
 		 * 上面两条是拿正则钉源码。这一条**真跑**：把 `holdInteractive` / `enter` / `leave`
-		 * 从源文件里原样切出来，配一个记录调用序列的桥桩，跑一遍「悬停进球 → 开菜单 →
-		 * 鼠标经空白移到菜单 → 关菜单 → 再离开球」的真实轨迹，断言穿透序列。
-		 * 正则只能证明「字面上写着」，这条能证明「跑起来真的是这个序列」。
+		 * 从源文件里原样切出来，配一个记录调用序列的桥桩，**调两次 `leave`**——
+		 * 一次菜单关着、一次菜单开着——断言穿透序列。
+		 *
+		 * 它不模拟整条悬停轨迹（进菜单、穿空白那些），只钉「离开球这一刻发不发
+		 * `false`」这一件事。菜单卸载那一半在下面「菜单卸载时」那条里单独测。
 		 */
-		it("跑一遍悬停轨迹：菜单开着时一次 `false` 都不许发", async () => {
+		it("离开球那一刻：菜单关着发一次 `false`，菜单开着一次都不许发", async () => {
 			const source = await readFile(join(SEED, "client.js"), "utf8");
 			// 切一段「`const X = ... => {` 到它自己的 `};`」，连结尾的 `};` 一起带上。
 			const slice = (from: string): string => {
@@ -460,7 +462,8 @@ describe("悬浮球", () => {
 			const calls: boolean[] = [];
 			const make = (menu: boolean): (() => void) => {
 				// 每次跑都新建一份状态：`passTimer` 是真计时器，`menu` 由调用方给。
-				const state = { passTimer: { current: 0 as number }, drag: { current: null as unknown }, menu };
+				// `overBall` 是「指针压没压在球上」，`leave` 一进来就把它清成 false。
+				const state = { passTimer: { current: 0 as number }, drag: { current: null as unknown }, overBall: { current: false }, menu };
 				const windowStub = { setTimeout: (fn: () => void, ms: number): number => setTimeout(fn, ms) as unknown as number };
 				// 源里写的是 `bridge()?.setInteractive(...)` —— 桥是个**函数**，返回带方法的对象。
 				const bridge = (): { setInteractive: (on: boolean) => void } => ({
@@ -478,8 +481,8 @@ describe("悬浮球", () => {
 					"})();",
 				].join("\n");
 				// eslint-disable-next-line no-new-func
-				const factory = new Function("WINDOW_MODE", "passTimer", "drag", "menu", "window", "bridge", "cancelHover", body);
-				const made = factory(true, state.passTimer, state.drag, state.menu, windowStub, bridge, cancelHover) as {
+				const factory = new Function("WINDOW_MODE", "passTimer", "drag", "menu", "window", "bridge", "cancelHover", "overBall", body);
+				const made = factory(true, state.passTimer, state.drag, state.menu, windowStub, bridge, cancelHover, state.overBall) as {
 					enter: () => void;
 					leave: () => void;
 				};
@@ -502,6 +505,262 @@ describe("悬浮球", () => {
 			leaveWithMenu();
 			await settle();
 			expect(calls).toEqual([]);
+		});
+
+		/**
+		 * 菜单节点必须挂 `enterMenu`，不许改回 `enter`（程砚-2 2026-11-12 点名要钉死）。
+		 *
+		 * `enter` 会把 `overBall` 置 true；菜单挂它的话，点完菜单项那一刻
+		 * `overBall` 还是 true，菜单卸载时就会跳过补发的那次 `false`，洞立刻回来。
+		 * 这条专门钉这个回退——以后谁改回去就红。
+		 */
+		it("菜单节点挂的是 `enterMenu`，不是 `enter`", async () => {
+			const source = await readFile(join(SEED, "client.js"), "utf8");
+			// 只切菜单那一块：从 `className: "orb-menu"` 到第一个菜单项之前。
+			const start = source.indexOf('className: "orb-menu"');
+			expect(start).toBeGreaterThan(-1);
+			const end = source.indexOf('role: "menuitem"', start);
+			expect(end).toBeGreaterThan(start);
+			const menuSrc = source.slice(start, end);
+
+			expect(menuSrc).toContain("onPointerEnter: enterMenu");
+			// `enterMenu,` 里不含 `enter,`（带逗号），所以这条能区分。
+			expect(menuSrc).not.toContain("onPointerEnter: enter,");
+		});
+
+		/**
+		 * `enterMenu` 不许动 `overBall`：它只负责「把命中接上」，
+		 * 「指针在不在球上」由 `enter` / `leave` 单独记。
+		 */
+		it("`enterMenu` 不碰 `overBall`", async () => {
+			const source = await readFile(join(SEED, "client.js"), "utf8");
+			const start = source.indexOf("const enterMenu = () => {");
+			expect(start).toBeGreaterThan(-1);
+			const end = source.indexOf("\n\t\t\t};", start);
+			expect(end).toBeGreaterThan(start);
+			const src = source.slice(start, end);
+			expect(src).toContain("holdInteractive(true)");
+			expect(src).not.toContain("overBall");
+		});
+
+		/**
+		 * 菜单卸载时补不补 `false`（程砚-2 2026-11-12 在 `a56dd52` 上抓到的洞）。
+		 *
+		 * `leave` 那条只管「指针离开球」那一刻。人是先离开球、去点菜单项，走了就不再回来，
+		 * 菜单卸载时没人发 `false` —— 整扇窗继续吃点击，菜单外面那一大块成死区。
+		 *
+		 * 但也不能无条件发：Esc 能收菜单，那时指针可能正压在球上，关了命中就点不到球。
+		 * 所以两条一起钉：**指针在球外必须发、在球上不许发**。
+		 *
+		 * 切的是源码里那段 `const menuWasOpen = useRef(false); useEffect(..., [menu]);`，
+		 * `useRef` 桩跨两次「渲染」返回同一个对象，`useEffect` 桩当场执行——这样
+		 * 「menu 从 true 变 false」跟真跑 React 时的顺序一致。
+		 */
+		it("菜单卸载时：指针在球外补一次 `false`，指针在球上不许发", async () => {
+			const source = await readFile(join(SEED, "client.js"), "utf8");
+			const slice = (from: string, endMarker: string): string => {
+				const start = source.indexOf(from);
+				expect(start).toBeGreaterThan(-1);
+				const end = source.indexOf(endMarker, start);
+				expect(end).toBeGreaterThan(start);
+				return source.slice(start, end + endMarker.length);
+			};
+
+			const holdSrc = slice("const holdInteractive = (on) => {", "\n\t\t\t};");
+			const closeSrc = slice("const menuWasOpen = useRef(false);", "}, [menu]);");
+
+			const calls: boolean[] = [];
+
+			/**
+			 * 造一个「组件」：refs 跨多次渲染共享（`useRef` 桩按顺序复用），
+			 * `useEffect` 桩当场跑一遍。返回一个 `render(menu, overBall)`。
+			 */
+			const makeComponent = () => {
+				const refs: { current: unknown }[] = [];
+				let refIndex = 0;
+				const useRef = (initial: unknown): { current: unknown } => {
+					const existing = refs[refIndex];
+					if (existing !== undefined) {
+						refIndex += 1;
+						return existing;
+					}
+					const made = { current: initial };
+					refs[refIndex] = made;
+					refIndex += 1;
+					return made;
+				};
+				const useEffect = (fn: () => void): void => {
+					fn();
+				};
+				const passTimer = { current: 0 as number };
+				const drag = { current: null as unknown };
+				const overBall = { current: false };
+				const windowStub = {
+					setTimeout: (fn: () => void, ms: number): number => setTimeout(fn, ms) as unknown as number,
+				};
+				const bridge = (): { setInteractive: (on: boolean) => void } => ({
+					setInteractive: (on: boolean): void => {
+						calls.push(on);
+					},
+				});
+				const cancelHover = (): void => {};
+				const body = ["return (function(){", holdSrc, closeSrc, "})();"].join("\n");
+				// eslint-disable-next-line no-new-func
+				const factory = new Function(
+					"WINDOW_MODE",
+					"passTimer",
+					"drag",
+					"menu",
+					"window",
+					"bridge",
+					"cancelHover",
+					"overBall",
+					"useRef",
+					"useEffect",
+					body,
+				);
+				return (menu: boolean, pointerOnBall: boolean): void => {
+					refIndex = 0;
+					overBall.current = pointerOnBall;
+					factory(true, passTimer, drag, menu, windowStub, bridge, cancelHover, overBall, useRef, useEffect);
+				};
+			};
+
+			const settle = async (): Promise<void> => {
+				await new Promise((resolve) => setTimeout(resolve, 200));
+			};
+
+			// ① 菜单开着 → 关掉，指针**在球外**（人是去点了菜单项）：必须补一次 false。
+			calls.length = 0;
+			const component = makeComponent();
+			component(true, false); // 打开菜单
+			component(false, false); // 菜单卸载，指针不在球上
+			await settle();
+			expect(calls).toEqual([false]);
+
+			// ② 菜单开着 → 关掉，指针**在球上**（Esc 收菜单，人马上还要点球）：一次都不许发。
+			calls.length = 0;
+			const component2 = makeComponent();
+			component2(true, true);
+			component2(false, true);
+			await settle();
+			expect(calls).toEqual([]);
+
+			// ③ 首次挂载时 menu 本来就是 false：不许发（否则一进页面窗口就穿透）。
+			calls.length = 0;
+			const component3 = makeComponent();
+			component3(false, false);
+			await settle();
+			expect(calls).toEqual([]);
+		});
+
+		/**
+		 * 菜单不许压在球身上（Solo 2026-11-12 #1764）。
+		 *
+		 * 旧版用 148 这个硬编码当菜单高度算位置。网页模式菜单有 5 项、实测 201px，
+		 * 估算偏小 → 算出「球上方放得下」，菜单底部压进球 45px，最后一项
+		 * 「回到默认位置」的命中被球抢走（`elementFromPoint` 命中的是球），真实鼠标点不到。
+		 *
+		 * 这里把 `MENU_W` / `menuHeightNow` / `menuPlace` 整段切出来，扫一遍球可能待的位置，
+		 * 断言菜单矩形和球（连 hover 放大那 5% 一起算）**一次都不相交**。
+		 */
+		it("菜单在任何位置都不压球（网页模式 5 项 / 独立窗 4 项）", async () => {
+			const source = await readFile(join(SEED, "client.js"), "utf8");
+			const start = source.indexOf("const MENU_W = 148;");
+			expect(start).toBeGreaterThan(-1);
+			const endMarker = "})();";
+			const end = source.indexOf(endMarker, start);
+			expect(end).toBeGreaterThan(start);
+			// 切「MENU_W + menuHeightNow + menuPlace」一整段。
+			const placeSrc = source.slice(start, end + endMarker.length);
+			// 球得从 `useLayoutEffect` 量，别把那段副作用切进来。
+			expect(placeSrc.includes("useLayoutEffect")).toBe(false);
+
+			const BALL = 80;
+			const BALL_H = 96;
+			const gap = 8;
+			const edge = 8;
+			const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
+			const place = (opts: {
+				orbLeft: number;
+				orbTop: number;
+				width: number;
+				height: number;
+				menuHeight: number;
+				windowMode: boolean;
+			}): { left: number; top: number } => {
+				const viewport = { width: opts.width, height: opts.height };
+				// eslint-disable-next-line no-new-func
+				const factory = new Function(
+					"orbLeft",
+					"orbTop",
+					"BALL",
+					"BALL_H",
+					"gap",
+					"edge",
+					"clamp",
+					"viewport",
+					"menuHeight",
+					"WINDOW_MODE",
+					`return (function(){ ${placeSrc} return menuPlace; })();`,
+				);
+				const raw = factory(
+					opts.orbLeft,
+					opts.orbTop,
+					BALL,
+					BALL_H,
+					gap,
+					edge,
+					clamp,
+					viewport,
+					opts.menuHeight,
+					opts.windowMode,
+				) as { left: string; top: string };
+				return { left: parseFloat(raw.left), top: parseFloat(raw.top) };
+			};
+
+			/**
+			 * 球在 `.orb` 里的真实占位：`hover` 时 `scale(1.05)` 会把它撑到 84×101，
+			 * 以中心放大。判断要用**这个**范围，不然差那几像素正好压住菜单最后一项。
+			 */
+			const ballBox = ((): { x1: number; y1: number; x2: number; y2: number } => {
+				const w = BALL * 1.05;
+				const h = BALL_H * 1.05;
+				const cx = BALL / 2;
+				const cy = BALL_H / 2;
+				return { x1: cx - w / 2, y1: cy - h / 2, x2: cx + w / 2, y2: cy + h / 2 };
+			})();
+
+			// 实测值：独立窗 4 项 164，网页模式 5 项 201。
+			const cases = [
+				{ windowMode: true, menuHeight: 164, width: 420, height: 612 },
+				{ windowMode: false, menuHeight: 201, width: 1200, height: 800 },
+				{ windowMode: false, menuHeight: 201, width: 375, height: 812 },
+			];
+
+			for (const c of cases) {
+				for (let orbTop = 0; orbTop <= c.height - BALL_H; orbTop += 4) {
+					for (const right of [18, 60, 200, 400]) {
+						const orbLeft = c.width - right - BALL;
+						if (orbLeft < -200 || orbLeft > c.width + 200) continue;
+						const box = place({ orbLeft, orbTop, width: c.width, height: c.height, menuHeight: c.menuHeight, windowMode: c.windowMode });
+						const menu = {
+							x1: box.left,
+							y1: box.top,
+							x2: box.left + 148,
+							y2: box.top + c.menuHeight,
+						};
+						const overlapX = menu.x1 < ballBox.x2 && menu.x2 > ballBox.x1;
+						const overlapY = menu.y1 < ballBox.y2 && menu.y2 > ballBox.y1;
+						// 报错时把坐标带上，不然只看到「相交了」没法定位。
+						expect(
+							overlapX && overlapY,
+							`菜单压球了：viewport=${String(c.width)}x${String(c.height)} orbLeft=${String(orbLeft)} orbTop=${String(orbTop)} menu=${JSON.stringify(menu)} ball=${JSON.stringify(ballBox)}`,
+						).toBe(false);
+					}
+				}
+			}
 		});
 
 		it("`pointerdown` 收菜单不会先把按钮卸掉", async () => {
