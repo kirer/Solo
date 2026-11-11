@@ -59,7 +59,7 @@ export type Row =
 	 */
 	| { type: "placeholder"; key: string; count: number; failed: boolean }
 	/**
-	 * 「到最上面了」：真的到第 1 条了（`hasMore === false`）。
+	 * 「到最上面了」：真的到第 1 条了（`hasMoreAbove === false`）。
 	 *
 	 * 验收第 21 条：到了底再往上滚，**不许和卡死看起来一样**。它和占位行占同一个位置
 	 * （一页的位置，也就是列表最上面），所以「补不上的那一下」和「已经没有更早的了」
@@ -135,8 +135,11 @@ export function buildRows({
 		// 未读的条数按「seq 大于起点、且不是系统留痕」算，和列表里那个徽章同口径。
 		if (unreadBefore !== undefined && unreadPlaced === false && message.seq > unreadBefore) {
 			unreadPlaced = true;
-			const count = messages.filter((item) => item.seq > unreadBefore && !(item.kind === "note" && item.noteOf !== "run")).length;
-			rows.push({ type: "unread", key: `u-${message.seq}`, count });
+			// 口径必须和侧栏徽章一致（`src/core/channel/rules.ts` 的 `unreadCount`）：
+			// 别人说的、不是留痕的。算上我自己刚发的，就会「列表说 1 条、进去写 4 条」。
+			const count = messages.filter((item) => item.seq > unreadBefore && item.fromSlug !== "owner" && item.kind !== "note").length;
+			// 一条都没有（整段都是自己的话）：不画「以下 0 条是新的」。
+			if (count > 0) rows.push({ type: "unread", key: `u-${message.seq}`, count });
 		}
 
 		if (previous !== undefined) {

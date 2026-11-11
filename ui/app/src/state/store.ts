@@ -41,7 +41,7 @@ export type State = {
 	currentId: string | null;
 	detail: ChannelDetail | null;
 	/** 上翻是否还有更早的。 */
-	hasMore: boolean;
+	hasMoreAbove: boolean;
 	loadingEarlier: boolean;
 	/**
 	 * 下翻是否还有更晚的（虚拟化重做 2026-11-11）。
@@ -175,7 +175,7 @@ const initial: State = {
 	channels: [],
 	currentId: null,
 	detail: null,
-	hasMore: false,
+	hasMoreAbove: false,
 	loadingEarlier: false,
 	hasLater: false,
 	loadingLater: false,
@@ -364,7 +364,7 @@ async function reloadDetail(id: string): Promise<void> {
 	try {
 		const detail = await getChannel(id);
 		if (getState().currentId !== id) return;
-		patch({ detail, hasMore: detail.hasMore, hasLater: false, unseenAfter: null });
+		patch({ detail, hasMoreAbove: detail.hasMoreAbove, hasLater: false, unseenAfter: null });
 	} catch {
 		// 拉不到就等下一次组织推送再试，别把当前屏清空。
 	}
@@ -373,28 +373,21 @@ async function reloadDetail(id: string): Promise<void> {
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, unreadBefore: null, detail: null, hasMore: false, hasLater: false, loadingLater: false, unseenAfter: null, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
+		patch({ currentId: null, unreadBefore: null, detail: null, hasMoreAbove: false, hasLater: false, loadingLater: false, unseenAfter: null, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
 		return;
 	}
-	// 未读起点在这一刻定住：用列表里那个未读数 + 当前最大 seq 反推「从哪条开始算新的」。
-	// 列表数据可能落后一两个 SSE 帧，差几条无所谓 —— 这条线要的是「大概从这儿开始」，
-	// 不是为了精确对账。
+	// 未读起点只能由服务端说：列表只给条数，详情里的 `readMark`（我看过的最后一条）才是线。
+	// 详情回来之前先记个占位（有未读时 -1），回来之后换成 `readMark` —— 那里 `detail`
+	// 还是**上一个频道**的，拿它的 seq 当新频道的线会把横幅插到别的频道的时间线上。
 	const listed = getState().channels.find((channel) => channel.id === id);
-	const unreadCount = listed?.unread ?? 0;
-	const topSeq = getState().detail?.messages.at(-1)?.seq;
-	const unreadBefore =
-		unreadCount > 0 && getState().currentId !== id && topSeq !== undefined && topSeq !== null
-			? topSeq
-			: unreadCount > 0
-				? -1
-				: null;
+	const unreadBefore = (listed?.unread ?? 0) > 0 && getState().currentId !== id ? -1 : null;
 
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
 	// 人物案不属于任何一个频道：换频道就退回栈底，否则右栏会停在上一个人的档案上。
 	patch({
 		currentId: id,
 		detail: null,
-		hasMore: false,
+		hasMoreAbove: false,
 		hasLater: false,
 		loadingLater: false,
 		unseenAfter: null,
@@ -419,7 +412,7 @@ export async function openChannel(id: string | null): Promise<void> {
 	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
-	patch({ detail, hasMore: detail.hasMore, hasLater: false, unseenAfter: null });
+	patch({ detail, hasMoreAbove: detail.hasMoreAbove, hasLater: false, unseenAfter: null, ...(unreadBefore === null ? {} : { unreadBefore: detail.readMark }) });
 	// 右栏不跟着频道自动开：切一个频道就弹一层资料会把对话挤走（手机上直接挡住整屏）。
 	// 开不开只由顶栏那颗「资料」和插件入口决定。
 	// 助理那屏没有那颗「资料」（顶栏是设置），右栏开着就再也关不掉 —— 进这一屏时收起来。
@@ -445,11 +438,11 @@ export async function openChannel(id: string | null): Promise<void> {
  * 这里**不重试、不静默**，一次请求就是一次结局。
  */
 export async function loadEarlier(limit = 30): Promise<void> {
-	const { currentId, detail, hasMore, loadingEarlier } = state;
-	if (currentId === null || detail === null || !hasMore || loadingEarlier) return;
+	const { currentId, detail, hasMoreAbove, loadingEarlier } = state;
+	if (currentId === null || detail === null || !hasMoreAbove || loadingEarlier) return;
 	const earliest = detail.messages[0]?.seq ?? 1;
 	if (earliest <= 1) {
-		patch({ hasMore: false });
+		patch({ hasMoreAbove: false });
 		return;
 	}
 	patch({ loadingEarlier: true, earlierError: false });
@@ -461,7 +454,8 @@ export async function loadEarlier(limit = 30): Promise<void> {
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
 		patch({
 			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
-			hasMore: page.hasMore,
+			// 空页也当「没有更早的了」：不然服务端一直说还有、回的却是空页时会在顶上无限补。
+			hasMoreAbove: page.hasMoreAbove && page.messages.length > 0,
 		});
 	} catch (error) {
 		void error;
@@ -493,11 +487,13 @@ export async function loadLater(limit = 30): Promise<void> {
 		if (getState().currentId !== currentId) return;
 		const merged = mergeMessages(getState().detail?.messages ?? [], page.messages);
 		const newest = page.messages.at(-1)?.seq ?? latest;
+		// 空页 = 服务端说「那之后没有了」：收掉标记，别让贴底时每拍都去问一次。
+		const reachedLatest = page.messages.length === 0 || newest >= (getState().detail?.channel.lastSeq ?? newest);
 		patch({
 			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
 			// 接上之后如果这一页已经盖到最新（通道的 `lastSeq`），窗口就算贴底了。
-			unseenAfter: newest >= (getState().detail?.channel.lastSeq ?? newest) ? null : latest,
-			hasLater: newest < (getState().detail?.channel.lastSeq ?? newest),
+			unseenAfter: reachedLatest ? null : newest,
+			hasLater: !reachedLatest,
 		});
 	} catch (error) {
 		void error;

@@ -29,7 +29,7 @@ import type { Arbiter } from "./scroll.ts";
 export function Stream(props: { onImage: (src: string) => void; onFile: (file: Attachment) => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const detail = useStore((state) => state.detail);
-	const hasMore = useStore((state) => state.hasMore);
+	const hasMoreAbove = useStore((state) => state.hasMoreAbove);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const earlierError = useStore((state) => state.earlierError);
 	const loadingLater = useStore((state) => state.loadingLater);
@@ -91,9 +91,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				...(unreadBefore === null ? {} : { unreadBefore }),
 				...(pending === null ? {} : { pending }),
 				// 到头了才说「到最上面了」：没有更早的、也不是正在补、也没失败。
-				...(hasMore || pending !== null ? {} : { atCeiling: messages.length > 0 }),
+				...(hasMoreAbove || pending !== null ? {} : { atCeiling: messages.length > 0 }),
 			}),
-		[messages, running, unreadBefore, pending, hasMore],
+		[messages, running, unreadBefore, pending, hasMoreAbove],
 	);
 
 	// 渲染时把这一屏的行交给 ref：仲裁者初始化模型时还没量到任何高度，按估算行高先摆上。
@@ -237,7 +237,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			if (flow === null) return;
 			if (flow.scrollHeight > flow.clientHeight + 40) return;
 			const state = getState();
-			if (!state.hasMore || state.loadingEarlier) return;
+			if (!state.hasMoreAbove || state.loadingEarlier) return;
 			const pages = Math.ceil((flow.clientHeight + 40 - flow.scrollHeight) / Math.max(1, averageHeight(layout.current) * pageSize()));
 			const before = state.detail?.messages.length ?? 0;
 			await loadEarlier(pageSize() * Math.max(1, Math.min(3, pages)));
@@ -322,7 +322,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			const flow = flowRef.current;
 			if (flow === null) return;
 			const atTop = flow.scrollTop <= 24;
-			if (hasMore && !loadingEarlier && atTop && settled.upTo > 0) {
+			if (hasMoreAbove && !loadingEarlier && atTop && settled.upTo > 0) {
 				arbiter.current?.noteFilled();
 				void loadEarlier(pageSize());
 				return;
@@ -332,7 +332,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				void loadLater(pageSize());
 			}
 		},
-		[hasMore, loadingEarlier, loadingLater, unseenAfter, pageSize],
+		[hasMoreAbove, loadingEarlier, loadingLater, unseenAfter, pageSize],
 	);
 
 	/**
