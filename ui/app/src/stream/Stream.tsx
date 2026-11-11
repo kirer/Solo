@@ -266,6 +266,25 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 * 「找不到锚点」是常态，不是失败。模型里每一行都有高度 —— 真行的、占位行的、
 	 * 已经回收但记得高度的，所以 `ΔH` 永远算得出来。
 	 */
+	/**
+	 * 把模型对齐到「这一帧真正要摆的行」。
+	 *
+	 * 2026-11-12 真机抓到的洞（验收 A4）：补页 / 新消息都会**加行**，但模型只由 `measureRows`
+	 * 从 `layout.current.rows` 自己 map 一遍 —— 那是上一帧的行，新补进来的 8 条永远进不了模型。
+	 * 于是 `offsetOf(锚点)` 前后完全一样，`compensate()` 算出 ΔH = 0、一次都不写 `scrollTop`，
+	 * 屏上的字就跟着新内容往下跳了 8 条（实测贴顶 PageUp：`scrollTop` 恒 0、首行 s-245 → s-237）。
+	 *
+	 * 行是高是低仍以量到的真值为准（`heights`），量不到的按估算行高摆，所以同步之后模型永远可用。
+	 */
+	const syncModel = useCallback(() => {
+		layout.current = buildHeights(
+			rowsRef.current.map((row) => {
+				const measured = heights.current.get(row.key);
+				return measured === undefined ? { key: row.key } : { key: row.key, height: measured };
+			}),
+		);
+	}, []);
+
 	const compensate = useCallback(() => {
 		const anchorKey = firstVisibleKey();
 		const flow = flowRef.current;
@@ -274,6 +293,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		if (beforeTop === undefined) return; // 模型里还没有它（刚进来）→ 不补偿，没有位移可言
 		// 等这一帧的 DOM 落地，按新模型算同一个 key 现在距内容顶多少。
 		const apply = (): void => {
+			// 先把这一帧的新行吃进模型，再问「同一个 key 现在距顶多少」—— 不先同步，
+			// 补页那次 ΔH 恒为 0（就是 A4 那个洞）。
+			syncModel();
 			const now = offsetOf(layout.current, anchorKey);
 			if (now === undefined) return; // 兜底第 3 级：模型里也没有 → 不写（下一次渲染会带上）
 			const delta = now - beforeTop;
@@ -281,7 +303,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			setScrollTop(flow.scrollTop + delta, "anchor");
 		};
 		apply();
-	}, [firstVisibleKey, setScrollTop]);
+	}, [firstVisibleKey, setScrollTop, syncModel]);
 
 	/** 量一次真行高度，交给模型吸收（误差自愈：估的 → 真的）。 */
 	const measureRows = useCallback(() => {
@@ -300,15 +322,10 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			heights.current.set(key, rounded);
 			changed = true;
 		}
-		if (changed) {
-			layout.current = buildHeights(
-				layout.current.rows.map((row) => {
-					const height = heights.current.get(row.key);
-					return height === undefined ? row : { key: row.key, height };
-				}),
-			);
-		}
-	}, []);
+		// 量到真值就重摆一次模型：`syncModel()` 认的是**这一帧的行**（补页会加行），
+		// 以前这里 map 的是 `layout.current.rows`（上一帧的行），新行进不来。
+		if (changed) syncModel();
+	}, [syncModel]);
 
 	/**
 	 * 一次动作结束时的结算（设计 §1.3）。
