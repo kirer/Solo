@@ -412,6 +412,106 @@ describe("悬浮球", () => {
 		expect(broken).toEqual([]);
 	});
 
+	describe("独立窗的菜单点得动（老板 2026-11-12 报四项都点不动）", () => {
+		/**
+		 * 根因：`holdInteractive(true)` 只挂在**球**的 `onPointerEnter` 上，菜单是另一个元素、
+		 * 在球外面（`menuPlace` 只会把它摆在球的左右或上下）。鼠标从球移到菜单那一段，
+		 * 球收到 `pointerleave` → 140ms 后 `setInteractive(false)` → 窗口进入穿透态，
+		 * 点击落到桌面。按钮的 `onClick` 一个都没问题，是根本没收到点击。
+		 *
+		 * 所以：菜单在的时候不许关穿透；菜单自己也接一次 `holdInteractive(true)`，
+		 * 免得鼠标直接从外面进菜单时不经过球。
+		 */
+		it("菜单打开时不关穿透，菜单自己也接命中", async () => {
+			const code = await codeLines();
+			// `leave` 里关穿透要受 `menu` 管：菜单开着就保持可交互。
+			expect(code).toMatch(/const leave = \(\) => \{[\s\S]{0,400}?if \(!menu && drag\.current === null\) holdInteractive\(false\);/u);
+			// 这里原本还钉着「`menu` 进 effect 依赖」。远端（`e62f2fe`）把那段 `docked/top`
+			// 的 effect 整段删了，`leave` 改在每次渲染时重建、天然读到当前 `menu`，
+			// 「闭包拿到旧值」这个风险随那段 effect 一起消失，断言也就没有落点了。
+			// 现在真正保证这一点的是下面那条跑起来的：「跑一遍悬停轨迹」。
+			// 菜单本身也要把命中接上。
+			expect(code).toMatch(/className: "orb-menu"[\s\S]{0,300}?onPointerEnter: enter/u);
+		});
+
+		/**
+		 * 上面两条是拿正则钉源码。这一条**真跑**：把 `holdInteractive` / `enter` / `leave`
+		 * 从源文件里原样切出来，配一个记录调用序列的桥桩，跑一遍「悬停进球 → 开菜单 →
+		 * 鼠标经空白移到菜单 → 关菜单 → 再离开球」的真实轨迹，断言穿透序列。
+		 * 正则只能证明「字面上写着」，这条能证明「跑起来真的是这个序列」。
+		 */
+		it("跑一遍悬停轨迹：菜单开着时一次 `false` 都不许发", async () => {
+			const source = await readFile(join(SEED, "client.js"), "utf8");
+			// 切一段「`const X = ... => {` 到它自己的 `};`」，连结尾的 `};` 一起带上。
+			const slice = (from: string): string => {
+				const start = source.indexOf(from);
+				expect(start).toBeGreaterThan(-1);
+				const END = "\n\t\t\t};";
+				const end = source.indexOf(END, start);
+				expect(end).toBeGreaterThan(start);
+				return source.slice(start, end + END.length);
+			};
+
+			// 三段一起切：`holdInteractive` 的定义，以及 `enter` / `leave` 两个处理器。
+			const holdSrc = slice("const holdInteractive = (on) => {");
+			const enterSrc = slice("const enter = () => {");
+			const leaveSrc = slice("const leave = () => {");
+
+			const calls: boolean[] = [];
+			const make = (menu: boolean): (() => void) => {
+				// 每次跑都新建一份状态：`passTimer` 是真计时器，`menu` 由调用方给。
+				const state = { passTimer: { current: 0 as number }, drag: { current: null as unknown }, menu };
+				const windowStub = { setTimeout: (fn: () => void, ms: number): number => setTimeout(fn, ms) as unknown as number };
+				// 源里写的是 `bridge()?.setInteractive(...)` —— 桥是个**函数**，返回带方法的对象。
+				const bridge = (): { setInteractive: (on: boolean) => void } => ({
+					setInteractive: (on: boolean): void => {
+						calls.push(on);
+					},
+				});
+				const cancelHover = (): void => {};
+				const body = [
+					"return (function(){",
+					holdSrc,
+					enterSrc,
+					leaveSrc,
+					"return { enter, leave };",
+					"})();",
+				].join("\n");
+				// eslint-disable-next-line no-new-func
+				const factory = new Function("WINDOW_MODE", "passTimer", "drag", "menu", "window", "bridge", "cancelHover", body);
+				const made = factory(true, state.passTimer, state.drag, state.menu, windowStub, bridge, cancelHover) as {
+					enter: () => void;
+					leave: () => void;
+				};
+				return made.leave;
+			};
+
+			const settle = async (): Promise<void> => {
+				await new Promise((resolve) => setTimeout(resolve, 200));
+			};
+
+			// ① 菜单关着：离开球 140ms 后确实关命中 —— 这条不能丢，不然透明区域会挡住桌面点击。
+			const leaveNoMenu = make(false);
+			leaveNoMenu();
+			await settle();
+			expect(calls).toEqual([false]);
+
+			// ② 菜单开着：离开球**一次 false 都不许发**，否则人还没点到菜单，窗口已经穿透了。
+			calls.length = 0;
+			const leaveWithMenu = make(true);
+			leaveWithMenu();
+			await settle();
+			expect(calls).toEqual([]);
+		});
+
+		it("`pointerdown` 收菜单不会先把按钮卸掉", async () => {
+			const code = await codeLines();
+			// 收菜单挂在 document 上、`pointerdown` 先于 `click` 发生 —— 只要它误判成「点了别处」，
+			// 节点在 `click` 之前就没了，表现就是「点了没反应」。`contains` 判断必须留着。
+			expect(code).toMatch(/if \(menuRef\.current !== null && !menuRef\.current\.contains\(event\.target\)\) setMenu\(false\);/u);
+		});
+	});
+
 	it("只放进宿主已有的插槽，不自己 import 别的模块", async () => {
 		const source = await readFile(join(SEED, "client.js"), "utf8");
 		// 前端入口是浏览器直接 import 的一段 ESM：它拿到的只有宿主递过来的 `ui`，

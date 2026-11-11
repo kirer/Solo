@@ -1480,7 +1480,12 @@ export default {
 			const leave = () => {
 				cancelHover();
 				// 拖着的时候别把命中关掉，不然拖到一半窗口就点不动了。
-				if (drag.current === null) holdInteractive(false);
+				//
+				// **菜单开着也别关**（老板 2026-11-12 报「菜单四项都点不动」）：菜单是球的**兄弟**
+				// 节点、摆在球外面（见 `menuPlace`），鼠标从球移到菜单那一段必定先触发球的
+				// `pointerleave` —— 140ms 后窗口进穿透态，那之后点在菜单上的每一下都落到桌面。
+				// 按钮的 `onClick` 全是对的，是根本没收到点击。
+				if (!menu && drag.current === null) holdInteractive(false);
 			};
 
 			const onPointerDown = (event) => {
@@ -2408,7 +2413,15 @@ export default {
 			const menuBox = menu
 				? h(
 						"div",
-						{ className: "orb-menu", role: "menu", ref: menuRef, style: { ...menuPlace, width: "148px" } },
+						{
+							className: "orb-menu",
+							role: "menu",
+							ref: menuRef,
+							style: { ...menuPlace, width: "148px" },
+							// 鼠标也可能直接从外面进菜单、不经过球：那时 `enter` 一次都没跑过，
+							// 窗口还是穿透的。菜单自己再接一次命中。
+							onPointerEnter: enter,
+						},
 						WINDOW_MODE
 							? null
 							: h(
