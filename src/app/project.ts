@@ -224,7 +224,13 @@ export function messageView(
 	};
 }
 
-/** 频道详情。`limit` 给最近 N 条，`before` 往前翻页。 */
+/**
+ * 频道详情。`limit` 给最近 N 条，`before` 往前翻页，`around` 从某条往两边取。
+ *
+ * `around` 是给「跳到某条老消息」用的：那一页不在内存里（界面上 1000 条以后的都裁掉了），
+ * 一路往前翻几十页既慢、又会把几千条重新灌回内存 —— 正是我们刚回滚掉的那件事。
+ * 这里只按 `seq` 定位、取它两边各半页，**不给比 `limit` 更多的条数**。
+ */
 export function channelDetail(
 	state: ChannelState,
 	channel: Channel,
@@ -238,14 +244,28 @@ export function channelDetail(
 		readonly teamDoingOf?: TeamDoingOf;
 		/** 「我看过的最后一条」的 seq。不传就按 `viewer` 自己算。 */
 		readonly readMark?: number;
+		/** 以这条 `seq` 为中心取一页（含它本身）。和 `before` 同时给时 `around` 优先。 */
+		readonly around?: number;
 	} = {},
 ): ViewChannelDetail {
 	const viewer = options.viewer ?? OWNER_SLUG;
 	const all = state.messages[channel.id] ?? [];
 	const limit = Math.min(Math.max(options.limit ?? 60, 1), 200);
-	const upper = options.before === undefined ? all.length : all.findIndex((item) => item.seq >= (options.before as number));
-	const end = upper < 0 ? all.length : upper;
-	const start = Math.max(0, end - limit);
+	let start: number;
+	let end: number;
+	if (options.around !== undefined) {
+		// 目标本身就在这一页的中间：上下各留半页，人才看得到「它是回谁的话」。
+		const at = all.findIndex((item) => item.seq >= (options.around as number));
+		// 目标比整个频道还新（几乎不会）：退化成最后一页，别把 `end` 撑到数组外面。
+		const center = at < 0 ? all.length - 1 : at;
+		const half = Math.floor(limit / 2);
+		start = Math.max(0, Math.min(center - half, all.length - limit));
+		end = Math.min(all.length, start + limit);
+	} else {
+		const upper = options.before === undefined ? all.length : all.findIndex((item) => item.seq >= (options.before as number));
+		end = upper < 0 ? all.length : upper;
+		start = Math.max(0, end - limit);
+	}
 	const page = all.slice(start, end);
 	const last = page[page.length - 1];
 	const teamSlug = teamOfChannel(channel.id);

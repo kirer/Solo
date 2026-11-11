@@ -176,17 +176,22 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	/** 一个频道的详情（首屏一页消息 + 成员 + 是否还有更早的）。 */
 	async function readChannelDetail(
 		id: string,
-		options: { readonly limit?: number | undefined; readonly before?: number | undefined } = {},
+		options: {
+			readonly limit?: number | undefined;
+			readonly before?: number | undefined;
+			readonly around?: number | undefined;
+		} = {},
 	): Promise<ViewChannelDetail> {
 		const { directory, channels, assistants, teamDoingOf } = await snapshots.snapshot();
 		const channel = channels.channels[id];
 		if (channel === undefined) throw new AppError("not-found", "频道不存在或无权查看");
-		const { limit, before } = options;
+		const { limit, before, around } = options;
 		return channelDetail(channels, channel, directory, {
 			assistants,
 			teamDoingOf,
 			...(limit !== undefined && Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 			...(before !== undefined && Number.isFinite(before) && before > 0 ? { before } : {}),
+			...(around !== undefined && Number.isFinite(around) && around > 0 ? { around } : {}),
 		});
 	}
 

@@ -388,6 +388,8 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 				const detail = await app.read.readChannelDetail(params.id ?? "", {
 					limit: numberParam(url, "limit"),
 					before: numberParam(url, "before"),
+					// `around=<seq>`：跳到某条老消息时只取它两边一页，不把整个频道拉回来。
+					around: numberParam(url, "around"),
 				});
 				return json(response, detail);
 			},
