@@ -123,6 +123,14 @@ export type ViewChannelDetail = {
 	members: ViewMember[];
 	messages: ViewMessage[];
 	hasMore: boolean;
+	/**
+	 * 我对这个频道「看过的最后一条」的 seq（没读过就是 0）。
+	 *
+	 * 界面拿它当未读横幅的落点：`seq > readMark` 的才是新的。**别用「这一页最后一条」
+	 * 去反推** —— 一页装不下全部时那是本页边界，跟看没看过没关系（原来的实现正是这么错的，
+	 * 横幅插到了首屏最顶上，条数按整屏几十条虚报）。
+	 */
+	readMark: number;
 };
 
 /**

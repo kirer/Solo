@@ -345,24 +345,31 @@ async function reloadDetail(id: string): Promise<void> {
 	}
 }
 
+/**
+ * 详情回来之后，把未读横幅的落点定成**真起点**。
+ *
+ * - 进来时列表说没未读（`null`）→ 还是 `null`，不画线，行为一点不变；
+ * - 没说没未读 → 服务端的 `readMark`（我看过的最后一条）就是线。
+ *   它比这一页最早那条还早（整页都是新的），也用不着 -1 那种糊法：`buildRows`
+ *   拿「第一个 seq 大于它」的位置插，一样插在页首，条数按**真未读**算。
+ */
+export function unreadBeforeOf(placeholder: number | null, detail: ChannelDetail): number | null {
+	if (placeholder === null) return null;
+	return detail.readMark;
+}
+
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
 		patch({ currentId: null, unreadBefore: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
 		return;
 	}
-	// 未读起点在这一刻定住：用列表里那个未读数 + 当前最大 seq 反推「从哪条开始算新的」。
-	// 列表数据可能落后一两个 SSE 帧，差几条无所谓 —— 这条线要的是「大概从这儿开始」，
-	// 不是为了精确对账。
+	// 未读起点在这一刻定住（`null` = 列表里没未读；具体 seq 等详情回来再定）。
+	// **不能在这儿反推**：下一句就把 `detail` 清成 `null` 了，拿「当前屏最后一条」当起点
+	// 永远是 undefined，只能退化成 -1 —— 横幅于是插在首屏最顶上，条数按整屏虚报。
+	// 真正的起点只有服务端知道（它手里有我的已读水位），所以详情一回来就补上，见 `unreadBeforeOf`。
 	const listed = getState().channels.find((channel) => channel.id === id);
-	const unreadCount = listed?.unread ?? 0;
-	const topSeq = getState().detail?.messages.at(-1)?.seq;
-	const unreadBefore =
-		unreadCount > 0 && getState().currentId !== id && topSeq !== undefined && topSeq !== null
-			? topSeq
-			: unreadCount > 0
-				? -1
-				: null;
+	const unreadBefore = (listed?.unread ?? 0) > 0 && getState().currentId !== id ? -1 : null;
 
 	// 切频道先清 detail：否则新频道的消息会先画到旧频道那屏上（半秒的错位）。
 	// 人物案不属于任何一个频道：换频道就退回栈底，否则右栏会停在上一个人的档案上。
@@ -391,7 +398,7 @@ export async function openChannel(id: string | null): Promise<void> {
 	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
-	patch({ detail, hasMore: detail.hasMore });
+	patch({ detail, hasMore: detail.hasMore, unreadBefore: unreadBeforeOf(unreadBefore, detail) });
 	// 右栏不跟着频道自动开：切一个频道就弹一层资料会把对话挤走（手机上直接挡住整屏）。
 	// 开不开只由顶栏那颗「资料」和插件入口决定。
 	// 助理那屏没有那颗「资料」（顶栏是设置），右栏开着就再也关不掉 —— 进这一屏时收起来。
@@ -421,7 +428,7 @@ export async function loadEarlier(): Promise<void> {
 		const page = await getEarlier(currentId, earliest);
 		const merged = mergeMessages(page.messages, getState().detail?.messages ?? []);
 		patch({
-			detail: getState().detail === null ? null : { ...getState().detail!, messages: trimmedMessages(merged) },
+			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
 			// 服务端说没更早的了；本地裁剪被裁空了也当没有（不然会一直转圈）。
 			hasMore: page.hasMore && merged.length > 0,
 		});
@@ -444,34 +451,6 @@ export function mergeMessages(older: readonly Message[], newer: readonly Message
 	return [...bySeq.values()].sort((left, right) => left.seq - right.seq);
 }
 
-/**
- * 内存里一个频道最多留多少条（顾行验收 E2）。
- *
- * 只裁 DOM 不裁数据也不行：5000 条频道一路翻到底，消息对象全在内存里，翻完之后
- * 每次 SSE 都要在几千个对象里 `findIndex`。1000 条是「够翻、又不至于卡」的那条线。
- */
-const MESSAGE_LIMIT = 1000;
-
-/**
- * 裁剪：只从**最早的那一头**裁，一次裁掉一截而不是一条条削。
- *
- * 三条不许裁的时候：
- * - **贴底时不动** —— 用户正看着最新，裁掉就没东西看了（`pinned` 在 Stream 里，
- *   store 不存；由调用方决定要不要进来，现有两条调用点都在「看最新」的位置）；
- * - **上翻补历史时不动**（`loadingEarlier`）—— 刚补进来的马上被裁，锚点找不回、画面跳；
- * - **`hasMore` 为真时不动** —— 这是最容易踩的一个：裁掉最早那段之后，如果服务端还有
- *   更早的，`loadEarlier` 的起点就必须变成「已裁掉那条的 seq」，否则中间那段永远跳过。
- *   与其记一堆边界，不如**只在整段历史都取完（`hasMore === false`）之后才裁**：
- *   那时候裁掉的确实是不再需要的，翻页也不会再来。
- */
-function trimmedMessages(messages: Message[]): Message[] {
-	if (messages.length <= MESSAGE_LIMIT) return messages;
-	const { loadingEarlier, hasMore } = state;
-	if (hasMore || loadingEarlier) return messages;
-	// 从最早的裁，一次裁到上限：每来一条裁一条等于每条都生成新数组，反而更卡。
-	return messages.slice(messages.length - MESSAGE_LIMIT);
-}
-
 /** SSE 推来一条（新增或原地更新）。 */
 export function applyMessage(id: string, message: Message): void {
 	// SSE 一条一条到达，卡顿发生时最需要知道的就是「是不是正在合并消息」。
@@ -488,7 +467,7 @@ export function applyMessage(id: string, message: Message): void {
 		next = messages.slice();
 		next[index] = message;
 	}
-	patch({ detail: { ...current.detail, messages: trimmedMessages(next) } });
+	patch({ detail: { ...current.detail, messages: next } });
 	done();
 }
 

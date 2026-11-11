@@ -236,6 +236,8 @@ export function channelDetail(
 		/** 助理的 slug（身份目录在应用根下的那些人）。成员角色要靠它标「助理」。 */
 		readonly assistants?: readonly string[];
 		readonly teamDoingOf?: TeamDoingOf;
+		/** 「我看过的最后一条」的 seq。不传就按 `viewer` 自己算。 */
+		readonly readMark?: number;
 	} = {},
 ): ViewChannelDetail {
 	const viewer = options.viewer ?? OWNER_SLUG;
@@ -274,6 +276,7 @@ export function channelDetail(
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
 		hasMore: start > 0,
+		readMark: options.readMark ?? readMarkOf(state, viewer, channel.id),
 	};
 }
 
