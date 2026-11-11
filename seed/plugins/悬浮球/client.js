@@ -3085,7 +3085,7 @@ export default {
 										"div",
 										{ className: "ov-banner", role: "status" },
 										h("b", null, "音色换了一批，请重新选一次。"),
-										h("span", null, "新版有 100 个中文音色，原来那 8 个声音这套模型里没有了，选完记住了，以后升级不会再变。"),
+										h("span", null, "新版有 100 个中文音色，原来那 8 个声音这套模型里没有了，选完会记住。"),
 										h(
 											"button",
 											{ type: "button", className: "ov-btn", onClick: () => set({ voiceMigrated: true }) },
