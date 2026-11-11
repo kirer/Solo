@@ -67,7 +67,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 
 这一条把「改我自己」和「改组织」变成同一个动作：写文件。
 
-**工具自己说的话也在这条路上。** 8 个工具的描述、每个参数说明、拒绝与成功回话、投递头、
+**工具自己说的话也在这条路上。** 9 个工具的描述、每个参数说明、拒绝与成功回话、投递头、
 附件说明，同样不住在代码里：`<appRoot>/text/*.md`（`## key` 分节），代码只留键名
 （`documents/base/catalog.ts` 的 `fill(catalog, "say.refuse.pass")`）。差别只有一点：工具描述在**装配时**
 定型，所以改 `text/tools.md` 要重启；`prompt/*.md` 仍是改完下一条消息生效。
@@ -114,7 +114,7 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 
 所有 agent 用同一套工具说话，没有「向上汇报」专用通道，也没有「管理层才能用」的工具：
 
-**八个工具，一个动词一件事**。同一件事的几种做法是一个工具的
+**九个工具，一个动词一件事**。同一件事的几种做法是一个工具的
 `action` 枚举，不是几个近义的工具名 —— 名字越多，模型选错的概率越高。
 
 | 工具 | 作用 |
@@ -126,15 +126,17 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进全员频道与团队频道） |
 | `route` | 助理专用：把频道里的一条消息在**后台**交给该看的人（默认 `seq` = 我刚被叫醒的那条）；频道里不出现「转交」 |
 | `run` | 执行一条 shell 命令；`background: true` = 丢到后台跑（最多 30 分钟），跑完结果回到起跑的那个频道并叫醒起跑的人；`&` / `nohup` 是纯脱手，永远没有回音 |
-| `file` | `action=read` / `write`：工作区里的一个文件 |
+| `file` | `action=read` / `write` / `edit`：工作区里的一个文件。`edit` 只换一处（`old_string` → `new_string`），命中多处要 `replace_all` |
+| `search` | `action=grep`（默认）按内容找、`action=glob` 按文件名找；不传 `path` 搜整个组织目录 |
 
 合并的口径一句话：`chats` 收回 `read_channel`，`read_history` 收回 `recall`（`scope`
 区分翻对话还是翻记忆），`hire` 收回建人，`file` 收回读写两个工具，`org` 直接删掉（组织架构在
-提示词的「你在组织里的位置」一节里，不在工具里）。**工具总数 17 → 11 → 7 → 8**：`teams` /
+提示词的「你在组织里的位置」一节里，不在工具里）。**工具总数 17 → 11 → 7 → 8 → 9**：`teams` /
 `write_team` / `skills` / `me` 四个是「用 `file` 读写某个固定路径 md」的包装，删掉之后
 「改自己 = 写 `members/<slug>/identity.md`」才真正成立；后来加的第八个是 `route`
 （团队频道的后台分发，ADR-063），它不是「另一种说法」，是现有工具都做不到的一件事：
-**不往频道里写第二条消息，却把已有的那条交给另一个人**。
+**不往频道里写第二条消息，却把已有的那条交给另一个人**。第九个是 `search`：找东西
+原来是「用 `run` 里的 grep」，而 Windows 上不一定有 grep / rg，模型会一路猜本机装了什么。
 
 组织里谁在哪不靠工具查：它在提示词的「你在组织里的位置」一节里，
 每次发送前从 `members/*/identity.md`（助理在 `assistant/*/`）现渲染。
@@ -526,7 +528,7 @@ src/
                      write（落盘）/ rules / mentions / queue（合并唤醒）/ delivery（投递正文）/
                      membership（成员投影）/ roster（slug ↔ 会话 + 两层唤醒记录）/
                      attachments / jobs（后台命令）/ turn（结算收尾 + durable 补发）/
-                     tools（8 个工具）/ unanswered
+                     tools（9 个工具）/ unanswered
     flow/            publish / forward / settle + runner（入队机械）/ store / policies /
                      validate / gates；入口只有 index.ts
     plugin/          清单 / 五动作 API / 加载与隔离

@@ -21,7 +21,7 @@ import {
 	type MembershipDeps,
 } from "../../core/channel/membership.ts";
 import type { DirectoryWire } from "./directory.ts";
-import type { ModelSwitcher } from "./models.ts";
+import { THINKING_LEVEL, type ModelSwitcher } from "./models.ts";
 
 export type ConversationWire = {
 	/** 给一个人开会话（已存在就直接返回）。 */
@@ -80,6 +80,8 @@ export function createConversationWire(deps: {
 					extensions: [deps.toolsExtension(), await deps.installIdentity(slug)],
 					// 模型在建会话时一次给全，不要等第一次生成才发现没有模型。
 					...(wanted === undefined ? {} : { model: { provider: wanted.provider, modelId: wanted.modelId } }),
+					// 思考档位也一样：底座缺省是 `off`，建完再补会多一次提交。
+					thinkingLevel: THINKING_LEVEL,
 				},
 			},
 			ctx,

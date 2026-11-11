@@ -351,16 +351,25 @@ $ {{command}}
 （命令没起来：{{text}}）
 
 ## file.description
-工作区里的一个文件。`action=read`（默认）读它；`action=write` 写它（大段代码、配置、文档走这个，不经过 shell 转义）。路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员。
+工作区里的一个文件。`action=read`（默认）读它；`action=write` 整份写它；`action=edit` 只改其中一处（给 `old_string` 和 `new_string`，不用重抄整个文件）。路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员。
 
 ## file.param.action
-read / write（给了 content 就是 write，不用再写 action）
+read / write / edit（给了 content 就是 write，给了 old_string 就是 edit，不用再写 action）
 
 ## file.param.path
 文件路径（相对工作区根）
 
 ## file.param.content
 write 必填：文件内容
+
+## file.param.old-string
+edit 必填：要替换掉的原文，要带足上下文，在文件里只能出现一次（多处就设 replace_all）
+
+## file.param.new-string
+edit 必填：换成什么（可以是空串，表示删掉这一段）
+
+## file.param.replace-all
+edit 可选：原文出现多次时，全部换掉
 
 ## file.param.offset
 read 从第几行开始（1 起），默认 1
@@ -376,6 +385,21 @@ read 最多几行，默认 400
 
 ## file.refuse.no-content
 write 要带 content（写什么）。只想读文件用 action=read。
+
+## file.refuse.no-old
+edit 要带 old_string（改哪一段）。只想读文件用 action=read，整份重写用 action=write。
+
+## file.refuse.no-new
+edit 要带 new_string（换成什么）。删掉这一段就传空串。
+
+## file.edit.done
+已改 {{path}}（{{count}} 处，{{length}} 字，{{sizes}}）
+
+## file.edit.no-match
+{{path}} 里找不到这段原文。先 action=read 看一眼（缩进、全半角、换行都可能和你想的不一样），照抄原文再改。
+
+## file.edit.ambiguous
+这段原文在 {{path}} 里出现了 {{count}} 次，没法确定改哪一处。把上下文带长一点，或者设 replace_all=true 全部改掉。
 
 ## file.refuse.empty-overwrite
 不写：{{path}} 现在 {{size}}，正文是空的。空正文会把整份清掉，这不是一次误操作就赔得起的事。真要清空，先写明要清到什么样，或者用 `run` 删掉重建。
@@ -417,6 +441,30 @@ write 要带 content（写什么）。只想读文件用 action=read。
 
 ## file.create.no-roster
 你还不在名册里，建不了团队。
+
+## search.description
+在工作区里找东西。`action=grep`（默认）按内容找：`pattern` 是正则（不分大小写），返回 `路径:行号: 那一行`；`action=glob` 按文件名找：`pattern` 是通配符（`*.md`、`teams/**/README.md`）。不给 `path` 就搜整个组织目录（`members/`、`teams/`、`skills/`…）；要给就给相对工作区根的路径。node_modules、日志、附件与二进制文件会跳过。
+
+## search.param.action
+grep / glob
+
+## search.param.pattern
+grep：正则（不分大小写，写错了按字面量找）；glob：文件名通配符
+
+## search.param.path
+从哪儿找（相对工作区根），默认整个组织目录
+
+## search.param.limit
+最多返回几条，默认 40，最多 200
+
+## search.outside
+路径在工作区之外：{{path}}
+
+## search.empty
+没找到：{{pattern}}
+
+## search.more
+…还有更多（扫了 {{files}} 个文件），缩小 pattern 或指定 path。
 
 ## channel.not-member
 你不在「{{title}}」里。

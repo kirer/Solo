@@ -2983,3 +2983,35 @@ API 不通时退回原来的直链（有些网络反过来），自建更新源�
 `load.ts`（不认识的权限名整插件不装）+ `app/plugins.ts` 的 `grant` + `interface/http/routes.ts` 的两条
 权限接口 + `local-origin.ts` + `shell/wire/system.ts` + `desktop/src/system-bridge.ts` + 
 `ui/app/src/panels/PluginsPage.tsx` 的权限卡 + `seed/plugins/文件树/`；`test/core/plugin-system.test.ts`。
+
+## ADR-125 agent 要真的思考；读写工具补 `edit` 与 `search`
+
+**背景**：有人问「为什么 Solo 里的 agent 显得比 Claude Code 笨」。同一只模型、同一个网关，
+把两边的请求摊开看，差别不在提示词长度，在三处：Solo 的请求 126 次里 108 次 `effort=none`
+（平均 17 个思考 token，Claude Code 是 low/high、平均 159 个）；模型手上只有 8 个工具，
+没有「只改一处」和「找一下」这两件事 —— 于是它整份重写文件、或者用 shell 去 grep。
+
+**决定**：
+
+1. **思考档位统一设成 `medium`**（`shell/wire/models.ts` 的 `THINKING_LEVEL`）。底座缺省是 `off`，
+   而 `off` 时连 `reasoning` 字段都不发 —— 这不是「省一点」，是模型根本没在推理。
+   建会话时一次给全，老会话由 `applyModel` 补一次（幂等，已经是这个值就不写）。
+   不按模型分支：不支持的模型由底座 `clampThinkingLevel` 夹回 `off`。
+2. **`file` 加第三个动作 `edit`**，不是新开一个工具。它是同一件事（写一个文件）的另一种做法，
+   而工具名越多模型选错的概率越高（CORE §4）。`old_string` 命中多处时**拒绝**并要求
+   `replace_all`：静默改第一处是最难查的一种错。三种写法共用同一条落盘路径，
+   团队频道重投影、身份换团队这些副作用不会漏做一份。
+3. **新工具 `search`**（`grep` 内容 / `glob` 文件名），Node 自己遍历两个根。不走 `run` 里的
+   shell：Windows 上不一定有 `grep` / `rg`，模型会把一轮花在猜本机装了什么上。
+   跳过依赖、日志、附件、二进制与超过 256 KB 的文件，最多走 2000 个文件。
+
+**替代方案**：只加提示词、教模型「想清楚再动手」—— 档位是 `off`，想也白想；给 shell 教它
+用 `rg` —— 跨平台不成立；把 `edit` 做成新工具 —— 与「一个动词一件事」的收敛方向相反。
+
+**代价**：思考 token 变多（medium 比 off 贵，比 high 便宜），每轮延迟略增。`search` 在大目录上
+是同步遍历，靠 2000 个文件的上限兜底。
+
+**执行**：`src/shell/wire/models.ts`（`THINKING_LEVEL` / `applyModel`）、`src/shell/wire/conversations.ts`
+（建会话时给全）、`src/core/channel/tools/file.ts`（`persist` + `edit` 分支）、
+`src/core/channel/tools/search.ts`、`seed/text/tools.md`、`seed/skills/工程做法/SKILL.md`；
+`test/core/{model-switch,tools-actions}.test.ts`。

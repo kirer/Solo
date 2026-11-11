@@ -84,7 +84,7 @@ src/
       skills.ts     三层技能；rules.ts 全员规矩；prompt.ts 九段提示词装配（同时认识 member 与 team）
     runtime/        防腐层：唯一能 import pi-durable / pi-ai / pi-schema / chord 的地方
                     （含 models/compaction/工具参数 schema 转发）
-    channel/        说话的原语：频道规则 / 写一条 / 投递与队列 / 唤醒 / 名册（roster）/ 附件 / 后台命令（jobs.ts）/ 8 个工具（tools/）
+    channel/        说话的原语：频道规则 / 写一条 / 投递与队列 / 唤醒 / 名册（roster）/ 附件 / 后台命令（jobs.ts）/ 9 个工具（tools/）
     flow/           一条消息的一生：publish（落盘→算人→扇出→钩子）/ forward（已有消息转交）/
                     settle（答完补发 / 没答上来留痕）/ runner（投递机械）/ store / policies /
                     validate / gates；入口只有 index.ts
@@ -105,14 +105,14 @@ scripts/          九个入口脚本：check-boundaries（边界）、core-live�
                   update-server（自建更新源：只读静态目录）、update-key（更新签名密钥，跑一次）、
                   update-manifest（清单 + Ed25519 签名）；
                   公共等待器与证据落盘在 live-support.ts
-test/             114 文件 / 1006 例
+test/             128 文件 / 1173 例
   ├ test/core/    91 文件（纯函数 + 装配）
   ├ test/ui/      15 文件（界面纯函数与源码约定）
   └ test/desktop/ 7 文件（更新源、就绪行与更新源地址、清单验签与版本比较、安装脚本、窗口标题栏、悬浮窗位置）
 .solo-app/ ~/.solo/  运行时数据（gitignore）
 ```
 
-（`src/` 共 116 个 ts：core 74 / app 21 / view 1 / interface 7 / shell 13；行数会漂，以 `docs/CODE.md` 的文件表为准。）
+（`src/` 共 117 个 ts：core 75 / app 21 / view 1 / interface 7 / shell 13；行数会漂，以 `docs/CODE.md` 的文件表为准。）
 
 **依赖只朝一个方向**：`interface → app → domain`；`view/` 谁都不依赖（大家都能用它）；
 `shell/` 是唯一可以同时 import 全部的装配层。
@@ -168,7 +168,7 @@ cat docs/DECISIONS.md     # 你改的地方碰不碰不可轻易动的约定
 
 ```bash
 npm run check        # tsc --noEmit + 边界检查
-npm test             # 114 文件 1006 例，<5s，必须全绿
+npm test             # 128 文件 1173 例，<5s，必须全绿
 npm run prompt:check # 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名
 npm run live         # 改了 agent 行为就必须跑：真实模型端到端 13 项，会花 token；连跑两次都要 13/13
 npm run live:scenarios -- --rounds=1 --smoke   # 多 agent 场景脚手架检查，约 5–10 分钟
@@ -260,6 +260,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 | 解散团队 / 开除成员 / 删团队目录 | `docs/CORE.md` §7 + `docs/DECISIONS.md` ADR-033 | 解散 = 团队 README 的 `status: archived`（`documents/team/doc.ts` + `syncTeam`）；团队目录被删 → 启动时 `channel/membership.ts` 的 `archiveGoneTeams` 归档频道，运行时 `shell/serve.ts` 的 `startTeamReconcile` 监听 `teams/` 立刻对账，投影时 `app/project.ts` 的 `withoutGoneTeams` 再按磁盘团队表过滤；开除 = `hire` 的 `action=fire`（移进 `members/.retired/`，不删；私聊归档，重新招回来由 `ensureOwnerDm` 的 `replace` 恢复）；都不开新工具 |
 | 一键重置（设置 → 数据）/ 清空历史 | `docs/WEB-API.md` §13.5 + `docs/DESIGN.md` §1.5 + `docs/CODE.md` + `docs/DECISIONS.md` ADR-089（取代 ADR-065） | `src/app/reset.ts` 的 `wipeAll`（**库关掉之后才删**；`settings.json` / `.secrets.json` 也删，重开进引导页）+ `interface/http/routes.ts` 的 `POST /api/reset` + `src/shell/main.ts` 的 `resetAll`（关库 → 删盘 → 退出码 75）+ `desktop/src/backend.ts` 的 `onExit` / `desktop/src/main.ts` 的 `restart` + `ui/app/src/panels/SettingsPage.tsx` 的 `DataSection`；`test/core/reset.test.ts` |
 | 装完带前端的插件问要不要重启 | `docs/WEB-API.md` §13.4 / §13.6 + `docs/DESIGN.md` §2.8 + `docs/DECISIONS.md` ADR-066 | `interface/http/routes.ts` 的 `POST /api/restart` + `shell/serve.ts` 的 `onRestart` + `shell/main.ts` 的 `restartApp`（关库 → 退出码 75）+ `ui/app/src/panels/PluginsPage.tsx`（装完按 `client` 决定弹不弹）/ `panels/Overlays.tsx` 的 `RestartSheet` / `state/store.ts` 的 `restartOpen` / `api/client.ts` 的 `restartApp`；桌面壳 `desktop/src/main.ts` 的 `restart`；`test/core/reset.test.ts` |
+| 思考档位（`THINKING_LEVEL`）/ 新加一个核心工具 | `docs/CORE.md` §4 的工具表 + `docs/CODE.md` 的工具行 + `docs/DECISIONS.md` ADR-125 | `src/shell/wire/models.ts` 的 `THINKING_LEVEL` / `applyModel` + `src/shell/wire/conversations.ts` 的建会话分支（**两处都要给，漏一处新人不生效**）+ `src/core/channel/tools/index.ts` 的 `createCoreTools` 与表头计数 + `presentation.ts` 的轨迹行 + `seed/text/tools.md` 的文案键 + `test/core/{model-switch,tools-actions}.test.ts` |
 | 本文件的表 | `AGENTS.md` |
 
 **文档里的行号会漂。** 优先写**名字**（函数名、文件名、ADR 号），少写行号；非要写行号，
@@ -293,7 +294,7 @@ npm run live:scenarios -- --rounds=3           # 正式场景：硬场景 3/3、
 
 | 我要… | 先读 | 再动 |
 |---|---|---|
-| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（8 个；同一件事加 `action`，别开新名字） |
+| 加一个工具（能力） | `docs/CODE.md` §3 | `src/core/channel/tools/`：一个工具一个 builder 文件 + 登记进 `index.ts` 的 `createCoreTools`（9 个；同一件事加 `action`，别开新名字） |
 | 教 agent 一套做法 | `seed/skills/` 里现成的技能 | **写 `seed/skills/<名字>/SKILL.md`，不要写代码** |
 | 改提示词 | `docs/CODE.md` §3 + `docs/design/SEED-CONTRACT.md` | **改文案写 `seed/prompt/NN-段名.md`**（代码只排版，`src/core/documents/base/template.ts` 只剩排版）；加插槽要先登记 §3 并在 `scripts/prompt-fixture.ts` 给样例值 |
 | 加身份字段 | `docs/CORE.md` §1 | `src/core/documents/member/identity.ts` 的 `IdentityHeader` |

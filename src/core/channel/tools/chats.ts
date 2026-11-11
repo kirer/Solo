@@ -10,6 +10,15 @@ import { defaultChannel } from "./channel-choice.ts";
 import { renderLine } from "./recall.ts";
 import { fill } from "../../documents/base/catalog.ts";
 
+/**
+ * 一次 `read` 最多带回多少字。
+ *
+ * 条数不是尺度：一条 `say` 上限 1200 字，100 条就是 12 万字，一次翻页能把上下文
+ * 吃掉一大半 —— 后面几轮都在付费读这段。超了就**从最旧的开始丢**：读历史是为了接上
+ * 刚才那句，最近的那几条才是要的。
+ */
+const READ_BUDGET = 12_000;
+
 export function createChatsTool(deps: CoreToolDeps) {
 	const t = (key: string, slots: Record<string, string | number | undefined> = {}): string =>
 		fill(deps.text, key, slots);
@@ -100,7 +109,17 @@ export function createChatsTool(deps: CoreToolDeps) {
 				);
 			}
 			const last = shown[shown.length - 1];
-			const lines = shown.map((message) => renderLine(message, deps.text));
+			const all = shown.map((message) => renderLine(message, deps.text));
+			let start = 0;
+			let used = 0;
+			for (let index = all.length - 1; index >= 0; index -= 1) {
+				used += (all[index] ?? "").length + 1;
+				if (used > READ_BUDGET) {
+					start = index + 1;
+					break;
+				}
+			}
+			const lines = all.slice(start);
 			if (last !== undefined) {
 				await deps.harness.commit(async (tx) => {
 					const doc = (await tx.doc(ChannelDoc)) as ChannelState;
@@ -112,7 +131,7 @@ export function createChatsTool(deps: CoreToolDeps) {
 			}
 			return text(
 				[
-					t("chats.read.header", { title: channel.title, shown: shown.length, total: list.length }),
+					t("chats.read.header", { title: channel.title, shown: lines.length, total: list.length }),
 					...lines,
 					"",
 					t("chats.read.footer", { seq: last?.seq ?? 0 }),

@@ -127,3 +127,32 @@ describe("改了 settings.json：每个 agent 都跟着换模型", () => {
 		}
 	});
 });
+
+describe("思考档位：每个人建会话时就设好，不用等下一次重启", () => {
+	/** 装配一次，读回 slug → 会话当前的思考档位。 */
+	async function thinkingAfterRestart(box: Sandbox, setup: ModelSetup): Promise<Record<string, string>> {
+		const runtime = await box.open({ models: setup.models });
+		try {
+			const shell = await box.assemble(runtime, { defaultModel: setup.defaultModel });
+			const seen: Record<string, string> = {};
+			for (const [slug, conversation] of shell.conversations) {
+				seen[slug] = (await conversation.agent(BACKGROUND_CONTEXT)).thinkingLevel;
+			}
+			return seen;
+		} finally {
+			await runtime.close();
+		}
+	}
+
+	it("老会话与新建的人都从 off 变成 medium", async () => {
+		const box = await pool.make("core-model-switch-");
+		await person(box, "甲");
+		await settings(box, [gateway(["m-one"])], "magpie/m-one");
+		const setup = setupModels({}, { workspace: box.root });
+		expect(await thinkingAfterRestart(box, setup)).toEqual({ 甲: "medium" });
+
+		// 换一份配置再装配：已经是 medium 的人不该再写一次（幂等），新加的人也要是 medium。
+		await person(box, "乙");
+		expect(await thinkingAfterRestart(box, setup)).toEqual({ 甲: "medium", 乙: "medium" });
+	});
+});

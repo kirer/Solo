@@ -29,7 +29,7 @@
 seed/
   rules.md                       # 15 条以内，每轮都看见
   text/                          # 机械文案：`## key` 分节，代码里只留键名
-    tools.md                     # 8 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
+    tools.md                     # 9 个工具的描述 / 参数 / 拒绝与回话（装配时读，改完重启）
     channel.md                   # 投递头 / 附件说明 / 未答留痕 / 提示词兜底句
   prompt/                        # 9 段进系统提示词 + 12 段投递时用
     00-who.md                    # 你叫 {{self.name}}（{{self.title}}）
@@ -63,6 +63,7 @@ seed/
     写技能/SKILL.md
     找现成技能/SKILL.md
     静默复现/SKILL.md             # 报障先在后台复现，复现不出来就不说话
+    工程做法/SKILL.md             # 先看再改、改动要小、报错怎么读、什么时候换方向
   plugins/                       # 出厂插件：补一次、删了不回来（账本记在 .seed-manifest.json）
     模型管理/                    # 设置里的「模型」一节：改 <appRoot>/settings.json（DEPLOY §3）
     文件树/                      # 右栏「文件」页签：当前频道那个工作区的目录树 + 预览
