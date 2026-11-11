@@ -66,30 +66,41 @@ function gitShow(rev: string, path: string): Buffer {
 	return execFileSync("git", ["-c", "core.quotepath=false", "show", `${rev}:${path}`], { maxBuffer: 8 << 20 });
 }
 
+/**
+ * 某个修订（tag 名或 `HEAD`）里 `seed/plugins/**` 每个文件的 hash 有没有都在表里。
+ *
+ * `core.quotepath=false`：默认中文路径会被打成 `"seed/plugins/\346\202\254..."` 带引号的转义串，
+ * 后面 `git show` 一个都取不到 —— 而取不到的失败一旦被吞掉，断言就是空的绿。
+ */
+function missingAt(rev: string): string[] {
+	const files = execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", rev, "--", "seed/plugins/"], {
+		encoding: "utf8",
+	})
+		.split("\n")
+		.filter((line) => line !== "");
+	expect(files.length, `${rev} 里没找到任何出厂插件文件`).toBeGreaterThan(0);
+	return files.filter((path) => !LEGACY_PLUGIN_HASHES.has(hashOf(gitShow(rev, path)))).map((path) => `${path} (${hashOf(gitShow(rev, path))})`);
+}
+
 describe("老账本升级", () => {
 	// 防以后再漏：每一次发版都会动 seed/plugins，忘了更新表就意味着「这一版的修复到不了老用户机器」。
-	// 找最近一个 tag 里的出厂插件文件，要求它们全在 `LEGACY_PLUGIN_HASHES` 里。
-	it("最近一个 tag 的出厂插件 hash 都在 LEGACY_PLUGIN_HASHES 里", () => {
+	// 盯的是 **HEAD**：真正要保护的是「即将发出去的那一版」，tag 是已经发出去的下限。
+	// 只看 tag 的话，改动提交了但还没打 tag 的那段时间，这条测试是瞎的（程砚 2026-11-11）。
+	it("HEAD 里每个出厂插件文件都在 LEGACY_PLUGIN_HASHES 里", () => {
+		const missing = missingAt("HEAD");
+		expect(missing, `HEAD 里这些出厂文件不在 LEGACY_PLUGIN_HASHES：老账本机器升上来会被判成「用户改过」`).toEqual([]);
+	});
+
+	// 下限：最近一个 tag 发出去的那份也必须认得。补表补晚了，已经发出去的用户就再也升不动了。
+	it("最近一个 tag 的出厂插件 hash 也在 LEGACY_PLUGIN_HASHES 里", () => {
 		let tag = "";
 		try {
 			tag = execFileSync("git", ["describe", "--tags", "--abbrev=0"], { encoding: "utf8" }).trim();
 		} catch {
 			return; // 没有 git 或没有 tag：这条在那种环境下没有意义。
 		}
-		// `core.quotepath=false`：默认中文路径会被打成 `"seed/plugins/\346\202\254..."` 带引号的转义串，
-		// 后面 `git show` 一个都取不到。关掉它，路径才是真的能用的路径。
-		const files = execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", tag, "seed/plugins/"], {
-			encoding: "utf8",
-		})
-			.split("\n")
-			.filter((line) => line !== "");
-		if (files.length === 0) return;
-		expect(files.length).toBeGreaterThan(0);
-		const missing: string[] = [];
-		for (const path of files) {
-			const hash = hashOf(gitShow(tag, path));
-			if (!LEGACY_PLUGIN_HASHES.has(hash)) missing.push(`${path} (${hash})`);
-		}
+		expect(tag).not.toBe("");
+		const missing = missingAt(tag);
 		expect(missing, `${tag} 里这些出厂文件不在 LEGACY_PLUGIN_HASHES：老账本机器升上来会被判成「用户改过」`).toEqual([]);
 	});
 
