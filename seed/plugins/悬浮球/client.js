@@ -351,6 +351,9 @@ export default {
 	style: `
 		/* 整块浮在最上层：只有球和面板接事件，别的地方不挡点击。 */
 		.orb { position: fixed; z-index: 70; pointer-events: none; }
+		/* .orb 自己是 pointer-events:none，伪元素的 ::before 撑不出命中目标 ——
+		   把容器改成 auto、再把球/气泡/菜单的 auto 收掉不现实（它们本来就要能点）。
+		   所以热区由**一个真元素** .orb-hit 撑，见下方样式与渲染。 */
 		/* 球面是一个站着的小人（纸片），不再是一颗抽象球或一块标识方块。
 		   选「纸上低对比 + 一颗蓝点」是因为它要在壁纸上待一整天：安静时几乎不动，
 		   不跟屏幕上别的东西抢注意力；一开口，姿态和嘴自己说话。 */
@@ -379,6 +382,27 @@ export default {
 		/* 贴边：只留一条边。悬停滑出来，松手不动它就还回去 —— 和 dsh 那颗球一个意思。 */
 		.orb[data-docked="true"] .orb-ball { transform: translateX(68px); }
 		.orb[data-docked="true"] .orb-ball:hover { transform: none; }
+		/* 贴边时的鼠标热区（2026-11-11）。
+		 *
+		 * 病根：贴边只露 12px，人手从画面中间往右扫根本进不了这条缝 —— 进不去就滑不出来，
+		 * 滑不出来就只剩 12px 能点，于是「点了没反应」。滑出的机制一直是好的，缺的是**走到能滑出**。
+		 *
+		 * 热区从球左边一路铺到窗口右边缘（left:0 right:0），是一个不画东西的真元素 .orb-hit：
+		 * - 只铺球那 68px、不往左多伸：正常速度（约 600–1000 px/s）横扫时人手在上面约 68–110ms，
+		 *   足够触发 :hover；再宽就从正文上抢，挡住右边栏的按钮、滚轮和右键菜单。
+		 * - 宽度正好等于球在窗口外的那 68px：鼠标只要扫到窗口右边界就命中，不用精确停在 12px 缝上。
+		 *   往左每多 1px 都是从正文上抢来的，所以到此为止。
+		 * - 上下跟球等高（top/bottom 由 .orb-hit 自身决定）：从球顶到球底一条都算，手腕抖一下也不掉。
+		 */
+		.orb-hit {
+			position: absolute;
+			top: 0; bottom: 0; left: 0; right: 0;
+			pointer-events: auto;
+			background: transparent;
+		}
+		/* 热区一进，球整颗滑出来。:hover 落在 .orb 容器上（热区是它的子元素），
+		 * 不是落在球上 —— 球此刻还在窗口外，鼠标根本没机会碰到它。 */
+		.orb[data-docked="true"]:hover .orb-ball { transform: none; }
 
 		/* 小人填满球面；SVG 自己带身体，按钮只负责阴影与命中。 */
 		.orb-mark { display: block; width: 80px; height: 96px; overflow: visible; }
@@ -1822,11 +1846,23 @@ export default {
 				}
 			};
 
+			/**
+			 * 开常驻听。**返回「真的听上了没有」**——调用方靠这个决定开关该不该亮。
+			 *
+			 * 2026-11-11 老板定的：开关不许先开。以前是 `setListenOn(true)` 再 `void startListen()`，
+			 * 撞上 `dmId === null` 或者麦克风没权限，就变成「开关显示打开、麦克风根本没开、也不报错」。
+			 * 现在改成先听上、再点开关；听不上就把开关按回去。
+			 */
 			const startListen = async () => {
-				if (listenRef.current !== null || listenBusyRef.current) return;
-				if (dmId === null) return;
+				if (listenRef.current !== null) return true;
+				if (listenBusyRef.current) return false;
+				// 私聊还没加载出来：现在听上了也发不出去，直接说清为什么，别装作在听。
+				if (dmId === null) {
+					sayProblem("私聊还没加载出来，等一下再开");
+					return false;
+				}
 				// 失败也接着试，但别每拍都去撞权限弹窗。
-				if (Date.now() - listenFailRef.current < 8_000) return;
+				if (Date.now() - listenFailRef.current < 8_000) return false;
 				listenBusyRef.current = true;
 				try {
 					let stream;
@@ -1844,7 +1880,7 @@ export default {
 									? "没找到麦克风"
 									: "麦克风打不开",
 						);
-						return;
+						return false;
 					}
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
 					const ctx = new AudioCtx({ sampleRate: TARGET_RATE });
@@ -1854,7 +1890,7 @@ export default {
 						void ctx.close().catch(() => undefined);
 						listenFailRef.current = Date.now();
 						sayProblem("浏览器没让后台听麦克风");
-						return;
+						return false;
 					}
 					const source = ctx.createMediaStreamSource(stream);
 					const node = ctx.createScriptProcessor(4096, 1, 1);
@@ -1931,19 +1967,33 @@ export default {
 					listenBusyRef.current = false;
 					setListening(true);
 					sayProblem("");
+					return true;
 				} catch {
 					listenFailRef.current = Date.now();
+					return false;
 				} finally {
 					listenBusyRef.current = false;
 				}
 			};
 
-			const toggleListen = () => {
-				const next = !listenOn;
-				setListenOn(next);
-				savePrefs({ listen: next });
-				if (!next) stopListen();
-				else void startListen();
+			/**
+			 * 开关「直接说话」。
+			 *
+			 * **先真听上，再点亮开关**（老板 2026-11-11 定的）：以前是先 `setListenOn(true)` 再
+			 * `void startListen()`，麦克风没开成（没权限 / 私聊还没加载）就会留下「开关亮着、其实没在听」
+			 * 的假象，最容易让人以为「点了没反应」。现在顺序反过来：听上了才亮，听不上就把开关按回去。
+			 */
+			const toggleListen = async () => {
+				if (listenOn) {
+					setListenOn(false);
+					savePrefs({ listen: false });
+					stopListen();
+					return;
+				}
+				const ok = await startListen();
+				setListenOn(ok);
+				savePrefs({ listen: ok });
+				if (!ok) stopListen();
 			};
 
 			// ── 唤醒词：面板关着的时候常听一小段，听到「你好索罗」就开面板收话 ──
@@ -2368,7 +2418,7 @@ export default {
 								role: "menuitem",
 								onClick: () => {
 									setMenu(false);
-									toggleListen();
+									void toggleListen();
 								},
 							},
 							listenOn ? "关掉「直接说话」" : "打开「直接说话」",
@@ -2434,6 +2484,9 @@ export default {
 					"data-docked": docked ? "true" : "false",
 					style: { right: `${String(right)}px`, top: `${String(top)}px` },
 				},
+				// 贴边热区：贴在球左边往窗口外那 40px，肉眼不画东西，只负责「让鼠标走得到」。
+				// 球自己此刻有 68px 在窗口外，`:hover` 永远落不到它身上 —— 这是滑不出来的根。
+				docked && !menu ? h("div", { className: "orb-hit", "aria-hidden": "true" }) : null,
 				bubbleBox,
 				menuBox,
 				ball,
