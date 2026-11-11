@@ -101,7 +101,10 @@ describe("缩图生成", () => {
 		expect(got.mime).toBe("image/webp");
 		expect(got.path).toBe(previewPathOf(root, ID));
 
-		const meta = await withSharp(() => sharp(got.path), (pipeline) => pipeline.metadata());
+		// 按字节读，不按路径交给 libvips：Windows 上按路径打开会在临时目录里留下被攥着的句柄，
+		// 后面的 rm 就撞 EBUSY。断言本身没变，只是换了个输入来源。
+		const bytes = await readFile(got.path);
+		const meta = await withSharp(() => sharp(bytes), (pipeline) => pipeline.metadata());
 		expect(meta.format).toBe("webp");
 		expect(Math.max(meta.width ?? 0, meta.height ?? 0)).toBe(1568);
 		// 3000×2000 等比缩：1568 × 1045
@@ -133,7 +136,8 @@ describe("缩图生成", () => {
 		await put(ID_SMALL, "image/jpeg", await smallJpeg());
 
 		const got = await uploads.read(ID_SMALL, { preview: true });
-		const meta = await withSharp(() => sharp(got.path), (pipeline) => pipeline.metadata());
+		const bytes = await readFile(got.path);
+		const meta = await withSharp(() => sharp(bytes), (pipeline) => pipeline.metadata());
 		expect(meta.width).toBe(400);
 		expect(meta.height).toBe(300);
 	});
@@ -144,8 +148,9 @@ describe("缩图生成", () => {
 		const got = await uploads.read(ID_ALPHA, { preview: true });
 		expect(got.mime).toBe("image/webp");
 
+		const alphaBytes = await readFile(got.path);
 		const { data, info } = await withSharp(
-			() => sharp(got.path),
+			() => sharp(alphaBytes),
 			(pipeline) => pipeline.ensureAlpha().raw().toBuffer({ resolveWithObject: true }),
 		);
 		expect(info.channels).toBe(4);
