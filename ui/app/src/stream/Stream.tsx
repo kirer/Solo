@@ -182,19 +182,75 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	}, [messages, toBottom]);
 
 	/**
-	 * 补历史之后：把锚点那一行按回原来的位置，屏幕上的字不动。
+	 * 补完历史以后，什么时候才把「字往下跑」补回来。
+	 *
+	 * **正在滚的时候不许补**：补是按内容长高的差值往大写 `scrollTop`，用户正往上滚
+	 * （`scrollTop` 在减小），这一下会把手上那一格的增量吞掉 —— 手感就是「滚上去又被拽下来」，
+	 * 季衡量到的第 7 屏回弹（`scrollTop` 1093→323→213）就是它。所以要等手停。
+	 *
+	 * 但「等手停」不能变成永远不补：一屏接一屏地滚，字就一直往下跑。所以加一条硬保证：
+	 * **欠着的高度超过 3 屏就必须补**，不管手停没停。补是用户看不见的「把字推回原处」，
+	 * 比字往下跑能忍；而字往下跑是明摆着的错。
+	 *
+	 * 补的动作**一次写到位**（`scrollTop` 直接落到终值），不分帧、不做动画 —— 分帧就是连续几帧都在拽。
+	 */
+	const ANCHOR_SLACK_PX = 3;
+
+	/**
+	 * 欠着的那一行的 seq，以及它**上一次**离视口顶多少。
+	 *
+	 * 关键是「上一次」。补之后不能拿进页面时的老值来算：用户这期间自己滚过，
+	 * `scrollTop` 早就变了，拿老值算出来的差值一大截，一写就是回弹（实测 880）。
+	 * 只补**这一帧之后新长出来的高度**，用户自己滚的那部分原样保留。
+	 */
+	const pendingAnchor = useRef<{ seq: number; top: number } | null>(null);
+
+	const settleAnchor = useCallback(
+		(force: boolean): void => {
+			const feedWindow = feed.current;
+			const flow = flowRef.current;
+			const waiting = pendingAnchor.current;
+			if (feedWindow === null || flow === null || waiting === null) return;
+			const now = feedWindow.offsetOfSeq(waiting.seq);
+			if (now === null) return;
+			// 内容长高 → 同一个 seq 往下跑了（`now` 变大）。差多少、补多少。
+			const delta = now - waiting.top;
+			// 手还在滚，且欠的还没到 3 屏：留着，等手停。
+			if (!force && scrolling.current && delta < flow.clientHeight * ANCHOR_SLACK_PX) return;
+			pendingAnchor.current = { seq: waiting.seq, top: now };
+			if (delta <= 0.5) return;
+			flow.scrollTop += delta;
+		},
+		[],
+	);
+
+	/**
+	 * 新消息/补历史落进 `messages` 之后：接过锚点，把「字往下跑」的那部分补掉。
 	 *
 	 * 早先的写法是「`querySelector` 找到那一行、量它现在离顶多少、补差值」。
-	 * 虚拟化之后 DOM 里根本没有它（在上一屏之外），只能靠高度表：让 `VirtualFeed`
-	 * 告诉我它现在离顶多少，再把 `scrollTop` 挪回来。
+	 * 虚拟化之后 DOM 里根本没有它（在上一屏之外），只能靠高度表问 `VirtualFeed`
+	 * 「这个 seq 现在离顶多少」。现在再多一层：滚着的时候不补，先攒着。
 	 */
 	useLayoutEffect(() => {
-		const saved = anchor.current;
 		const feedWindow = feed.current;
-		if (saved === null || feedWindow === null) return;
-		feedWindow.restoreAnchor(saved);
-		anchor.current = null;
-	}, [messages]);
+		const flow = flowRef.current;
+		if (feedWindow === null || flow === null) return;
+		const saved = anchor.current;
+		if (saved !== null) {
+			pendingAnchor.current = { seq: saved.seq, top: saved.top };
+			anchor.current = null;
+		}
+		// 先记下「补之前」这一行在哪儿，再让这一帧的内容落下去。
+		const waiting = pendingAnchor.current;
+		if (waiting === null) return;
+		const before = feedWindow.offsetOfSeq(waiting.seq);
+		if (before === null) return;
+		pendingAnchor.current = { seq: waiting.seq, top: before };
+		const frame = requestAnimationFrame(() => {
+			settleAnchor(false);
+		});
+		return () => cancelAnimationFrame(frame);
+	}, [messages, settleAnchor]);
 
 	useEffect(() => {
 		const flow = flowRef.current;
@@ -220,6 +276,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 */
 	useEffect(() => {
 		anchor.current = null;
+		handFull.current = false;
 		pinned.current = true;
 		setAtBottom(true);
 		if (unreadBefore === null) {
@@ -274,24 +331,84 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	}, [hasMoreAbove, loadingEarlier, rememberAnchor]);
 
 	/**
-	 * 上翻自动补历史：滚到顶部就自己加载，没有按钮。
+	 * 手上留多少屏。低于这个数就接着补历史。
 	 *
-	 * 两个触发点：滚到离顶 120px 以内，以及「这一屏还没填满但还有更早的」——
-	 * 后者是短频道刚打开时的样子，不补的话会看到一屏空白和一句提示。
-	 * 补完内容还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
+	 * 原来是「滚到离顶 120px 以内才补」。一页 40 条、行高又小的频道，手上常常只有一两屏，
+	 * 用户滚两下就到底、`scrollTop` 一步到 0 —— 那一帧里「到底」判据还没轮到补历史，
+	 * 人就看见了「消息被删光」。所以改成**按手上的高度算**：不够 8 屏就补，
+	 * 补到够了才停。8 而不是 4：4 是刚好滚得动的下限，每滚两下卡一次补一页，手感很差。
+	 */
+	const MIN_HAND_PX = 8;
+
+	/**
+	 * 这一次进频道已经补到哪儿了。
+	 *
+	 * 进频道先补到 8 屏，补完之后 `hasMoreAbove` 仍然是真（上面还有几千条），
+	 * 可「手上够不够」这个判据必须知道「8 屏这件事已经办完了」—— 否则用户往上滚、
+	 * 屏幕高度暂时矮一点，又开始补，一路补到第 1 条。所以补够那一刻记一笔，换频道才清。
+	 */
+	const handFull = useRef(false);
+	/** 正在手动滚：帧循环只在它真的时候跑，滚完就停。 */
+	const scrolling = useRef(false);
+	const stopTimer = useRef(0);
+
+	/**
+	 * 上翻自动补历史：手上不够 8 屏就自己加载，没有按钮。
+	 *
+	 * 两个触发点：手上高度不足 8 屏，以及滚到离顶 120px 以内（提前补，别等贴到顶）。
+	 * 补完还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
+	 * 补进来的内容由 `pendingAnchor` / `settleAnchor` 把「字往下跑」补回来 ——
+	 * 少了这一步，补完人还停在顶上，等于白补。
 	 */
 	useEffect(() => {
 		const flow = flowRef.current;
 		if (flow === null) return;
 		const maybeLoad = (): void => {
 			const nearTop = flow.scrollTop < 120;
-			const notFilled = flow.scrollHeight <= flow.clientHeight + 40;
-			if ((nearTop || notFilled) && hasMoreAbove && !loadingEarlier) onTop();
+			const tooSmall = flow.scrollHeight < flow.clientHeight * MIN_HAND_PX;
+			if (!tooSmall) handFull.current = true;
+			// 「手上够 8 屏」这件事办完一次就够；之后只在真贴到顶时才补。
+			const need = nearTop || (tooSmall && !handFull.current);
+			if (need && hasMoreAbove && !loadingEarlier) onTop();
 		};
 		flow.addEventListener("scroll", maybeLoad, { passive: true });
 		const frame = requestAnimationFrame(maybeLoad);
+		/**
+		 * 兜底：不靠 `scroll` 事件也照样补。
+		 *
+		 * 真窗口里量到过「`#flow` 滚得动、`scrollTop` 也在变，`scroll` 事件却一次没发」——
+		 * 事件根一断，「滚到顶才补」就永远等不到，人往上一路滚到 0，看见的像消息被删光。
+		 * 所以再挂一路 `wheel`（用户滚动一定先过它），以及一个只在「手动滚动」期间跑的
+		 * 帧循环：滚动过程中每帧看一眼，滚完就停，不吃 CPU。两路是加倍的，`onTop()` 自己有
+		 * `loadingEarlier` 拦着，不会重复请求。
+		 */
+		const tick = (): void => {
+			maybeLoad();
+			if (scrolling.current) frameLoop = requestAnimationFrame(tick);
+		};
+		let frameLoop = 0;
+		const onWheel = (): void => {
+			if (!scrolling.current) {
+				scrolling.current = true;
+				frameLoop = requestAnimationFrame(tick);
+			}
+			// 停下 200ms 就当滚完了；用户再滚会重新起。
+			if (stopTimer.current !== 0) clearTimeout(stopTimer.current);
+			stopTimer.current = window.setTimeout(() => {
+				scrolling.current = false;
+				stopTimer.current = 0;
+			}, 200);
+		};
+		const scroller = flow;
+		scroller.addEventListener("wheel", onWheel, { passive: true });
+		scroller.addEventListener("touchmove", onWheel, { passive: true });
 		return () => {
-			flow.removeEventListener("scroll", maybeLoad);
+			scroller.removeEventListener("scroll", maybeLoad);
+			scroller.removeEventListener("wheel", onWheel);
+			scroller.removeEventListener("touchmove", onWheel);
+			if (frameLoop !== 0) cancelAnimationFrame(frameLoop);
+			if (stopTimer.current !== 0) clearTimeout(stopTimer.current);
+			scrolling.current = false;
 			cancelAnimationFrame(frame);
 		};
 	}, [hasMoreAbove, loadingEarlier, onTop, messages]);
@@ -359,28 +476,6 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		});
 	}, []);
 
-	/**
-	 * 上翻自动补历史：滚到顶部就自己加载，没有按钮。
-	 *
-	 * 两个触发点：滚到离顶 120px 以内，以及「这一屏还没填满但还有更早的」——
-	 * 后者是短频道刚打开时的样子，不补的话会看到一屏空白和一句提示。
-	 * 补完内容还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
-	 */
-	useEffect(() => {
-		const flow = flowRef.current;
-		if (flow === null) return;
-		const maybeLoad = (): void => {
-			const nearTop = flow.scrollTop < 120;
-			const notFilled = flow.scrollHeight <= flow.clientHeight + 40;
-			if ((nearTop || notFilled) && hasMoreAbove && !loadingEarlier) onTop();
-		};
-		flow.addEventListener("scroll", maybeLoad, { passive: true });
-		const frame = requestAnimationFrame(maybeLoad);
-		return () => {
-			flow.removeEventListener("scroll", maybeLoad);
-			cancelAnimationFrame(frame);
-		};
-	}, [hasMoreAbove, loadingEarlier, onTop, messages]);
 
 
 	return (

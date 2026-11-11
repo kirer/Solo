@@ -93,12 +93,13 @@ export type VirtualFeedHandle = {
 	 */
 	anchorAtViewportTop: () => { seq: number; top: number } | null;
 	/**
-	 * 把某个 seq 那一行放回「离视口顶 `top` 像素」的位置。
+	 * 那一行现在离视口顶多少像素（正数在下面，负数已经滚过头）。
 	 *
-	 * 补历史之后内容长高了，`scrollTop` 不变就意味着屏幕上的字往下跑；
-	 * 这里把差值补上，读的人才不会跳。找不到那一行就什么都不做。
+	 * `anchorAtViewportTop` 返回的是「现在是哪一行、它离顶多少」，这一条反过来：
+	 * **给一个固定的 seq，问它现在离顶多少**。补历史之后内容长高了，同一个 seq 的偏移会变，
+	 * 两边一比就知道差了多少。找不到那一行就 `null`。
 	 */
-	restoreAnchor: (anchor: { seq: number; top: number }) => void;
+	offsetOfSeq: (seq: number) => number | null;
 };
 
 export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
@@ -119,6 +120,9 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	});
 
 	const [range, setRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+	/** DEBUG 临时 */
+	const rebuildCount = useRef(0);
+	const recomputeCount = useRef(0);
 	/** 位置算完了没有。第一帧不知道在哪儿，先别画，免得画在 0 然后跳一下。 */
 	const [ready, setReady] = useState(false);
 
@@ -142,6 +146,7 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	 * 跟当前挂了多少行无关。
 	 */
 	const rebuild = useCallback(() => {
+		rebuildCount.current += 1;
 		const heightOf = (index: number): number => {
 			const item = items[index];
 			if (item === undefined) return 0;
@@ -160,6 +165,7 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	}, [items]);
 
 	const recompute = useCallback(() => {
+		recomputeCount.current += 1;
 		const flow = scroller.current;
 		if (flow === null) return;
 		// 行数或估计值变了就重建；单个行量到真值也走 `measure` 那条路重建。
@@ -208,6 +214,19 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 
 		setRange((current) => (current.start === start && current.end === end ? current : { start, end }));
 		setReady(true);
+		// DEBUG
+		(globalThis as unknown as { __vf?: unknown }).__vf = {
+			scrollTop: flow.scrollTop,
+			scrollHeight: flow.scrollHeight,
+			clientHeight: flow.clientHeight,
+			items: items.length,
+			range: { start, end },
+			total: layout.current.total,
+			estimate: estimate.current,
+			measured: heights.current.size,
+			rebuilds: rebuildCount.current,
+			recomputes: recomputeCount.current,
+		};
 	}, [items, rebuild, scroller]);
 
 	// 滚动、窗口尺寸变化、行数变化都重算。
@@ -347,29 +366,25 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	}, [items, rebuild, scroller]);
 
 	/** 把某个 seq 按回「离视口顶 `top` 像素」。 */
-	const restoreAnchor = useCallback(
-		(anchor: { seq: number; top: number }): void => {
+	const offsetOfSeq = useCallback(
+		(seq: number): number | null => {
 			const flow = scroller.current;
-			const index = indexOfSeq.current.get(anchor.seq);
-			if (flow === null || index === undefined) return;
+			const index = indexOfSeq.current.get(seq);
+			if (flow === null || index === undefined) return null;
 			rebuild();
-			const rowTop = layout.current.starts[index] ?? 0;
-			const want = rowTop - anchor.top;
-			if (Math.abs(flow.scrollTop - want) <= 1) return;
-			flow.scrollTop = Math.max(0, want);
-			recompute();
+			return (layout.current.starts[index] ?? 0) - flow.scrollTop;
 		},
-		[rebuild, recompute, scroller],
+		[rebuild, scroller],
 	);
 
 	// 把这几条命令交给外面。
 	useLayoutEffect(() => {
 		if (handle === undefined) return;
-		handle.current = { jumpToSeq, anchorAtViewportTop, restoreAnchor };
+		handle.current = { jumpToSeq, anchorAtViewportTop, offsetOfSeq };
 		return () => {
 			handle.current = null;
 		};
-	}, [anchorAtViewportTop, handle, jumpToSeq, restoreAnchor]);
+	}, [anchorAtViewportTop, handle, jumpToSeq, offsetOfSeq]);
 
 	/** 某个行量到了新高度：回写、更新估计值、重算窗口。 */
 	const measure = useCallback(
