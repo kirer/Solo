@@ -32,11 +32,19 @@ export const LEGACY_TEXT_KEYS: ReadonlySet<string> = new Set(LEGACY_TEXT.split("
  * 文件名和当前出厂一致 = 没改过，可以整份升到新版；有一份对不上 = 用户改过，原样保留。
  * 由 `git log --all -- seed/plugins` 生成；账本记住基线之后就不再加了。
  *
- * **这里只许放「出厂」那份的 hash。** 塞一份用户改完的内容进来，等于给「把用户的改动冲掉」
- * 开了一个口子：那台机器会被判成「没改过」，升级时整份被换回出厂，用户自己写的东西没了，
- * 而且不留痕迹。要往里加之前先问一句：这份内容是什么版本的官方包里发出去过吗？
- * 答不上来就说明不该加。（季衡 2026-11-11）
+ * **这里只许放「已发布过、或与本次发版同一个提交首次发布」的那份内容的 hash。**
+ * 塞一份用户改完的内容进来，等于给「把用户的改动冲掉」开了一个口子：那台机器会被判成
+ * 「没改过」，升级时整份被换回出厂，用户自己写的东西没了，而且不留痕迹。要往里加之前
+ * 先问一句：这份内容是哪一版官方包里的？答不上来就说明不该加。（季衡 2026-11-11）
+ *
+ * 例外的来由：**「首次发布」的东西永远不可能先发布、后登记** —— 等发出去再登，就得等下一版
+ * 才生效，这一版修到的东西到不了老用户机器上。所以允许「和版本号同一个提交」先登，
+ * 条件是：① 这一版真的打 tag 发出去了；② 万一没发成（构建失败、回滚），**这个 hash 要跟着撤**，
+ * 别让它在表里冒充「已发布」。（Solo 2026-11-11）
+ *
+ * **加新版本时六个文件要齐。** 判据是「整份每个文件都命中」：只登改过的那个、其余几个老的
+ * 没登全，整份会被判成「用户改过」→ 静默不升级，而且不报错，最难查。
  */
-const LEGACY_PLUGIN = "011c95bcab8f3371,019be9ca438a943e,01faf57b148ef7a3,0c1ea6f062caa521,0e8e2c8c8ea3fa46,0e96e3a2bb8cc40e,1071a8b75cf03c35,1b050b050f3ce9f8,3056289e1467a856,351ab37fdde36147,39e3e620cc1df4e3,3b5b1266d7baeed2,4030ac9a314c799f,40543684d9b2dbde,416e0b60ceab84b5,4d05be5dc93f3089,4d28b6633c7cf17e,4d39830fe8008a87,4d96029e29df397e,50e1e982110cfc5d,53354ceeb0c4a8fc,599da12b832e40e2,605813b8a458bfbc,639d0ec5f641d52c,652a244889d92ad4,653aed1e9db09954,65469e51f1d97735,6636b8781fd5c1bb,6d01e74363914f65,6e551b1d34551420,7425ff7b03554c82,75f2d540b7e3db51,86e07bd03bcfd50b,8a80025224e4a593,8db473ba23fe8fc3,951f6308e2e09bba,9d75399d52005c16,a076108b01925262,a27ab38d49abfe19,a80ba06dd6654ac4,abea235c5f3398a0,ae192634f176d3cd,b7555d25751cc3e3,c9fc8c4a6651084a,cbda85fbdb432bb7,d1e98ea1bab396b9,d77505c0dca45f0d,d870592aff27cff8,e5567e0da2b6ec5e,f3feab6fec254e65";
+const LEGACY_PLUGIN = "011c95bcab8f3371,019be9ca438a943e,01faf57b148ef7a3,0c1ea6f062caa521,0e8e2c8c8ea3fa46,0e96e3a2bb8cc40e,1071a8b75cf03c35,1b050b050f3ce9f8,3056289e1467a856,351ab37fdde36147,39e3e620cc1df4e3,3b5b1266d7baeed2,4030ac9a314c799f,40543684d9b2dbde,416e0b60ceab84b5,4d05be5dc93f3089,4d28b6633c7cf17e,4d39830fe8008a87,4d96029e29df397e,50e1e982110cfc5d,53354ceeb0c4a8fc,599da12b832e40e2,87e30047bc9ba354,605813b8a458bfbc,639d0ec5f641d52c,652a244889d92ad4,653aed1e9db09954,65469e51f1d97735,6636b8781fd5c1bb,6d01e74363914f65,6e551b1d34551420,7425ff7b03554c82,75f2d540b7e3db51,86e07bd03bcfd50b,8a80025224e4a593,8db473ba23fe8fc3,951f6308e2e09bba,9d75399d52005c16,a076108b01925262,a27ab38d49abfe19,a80ba06dd6654ac4,abea235c5f3398a0,ae192634f176d3cd,b7555d25751cc3e3,c9fc8c4a6651084a,cbda85fbdb432bb7,d1e98ea1bab396b9,d77505c0dca45f0d,d870592aff27cff8,e5567e0da2b6ec5e,f3feab6fec254e65";
 
 export const LEGACY_PLUGIN_HASHES: ReadonlySet<string> = new Set(LEGACY_PLUGIN.split(","));

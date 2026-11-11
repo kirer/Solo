@@ -382,28 +382,15 @@ export default {
 		/* 贴边：只留一条边。悬停滑出来，松手不动它就还回去 —— 和 dsh 那颗球一个意思。 */
 		.orb[data-docked="true"] .orb-ball { transform: translateX(68px); }
 		.orb[data-docked="true"] .orb-ball:hover { transform: none; }
-		/* 贴边时的鼠标热区（2026-11-11）。
-		 *
-		 * 病根：贴边只露 12px，人手从画面中间往右扫根本进不了这条缝 —— 进不去就滑不出来，
-		 * 滑不出来就只剩 12px 能点，于是「点了没反应」。滑出的机制一直是好的，缺的是**走到能滑出**。
-		 *
-		 * 热区从球左边一路铺到窗口右边缘（left:0 right:0），是一个不画东西的真元素 .orb-hit：
-		 * - 只铺球那 68px、不往左多伸：正常速度（约 600–1000 px/s）横扫时人手在上面约 68–110ms，
-		 *   足够触发 :hover；再宽就从正文上抢，挡住右边栏的按钮、滚轮和右键菜单。
-		 * - 宽度正好等于球在窗口外的那 68px：鼠标只要扫到窗口右边界就命中，不用精确停在 12px 缝上。
-		 *   往左每多 1px 都是从正文上抢来的，所以到此为止。
-		 * - 上下跟球等高（top/bottom 由 .orb-hit 自身决定）：从球顶到球底一条都算，手腕抖一下也不掉。
-		 */
+		/* 贴边只露 12px 缝，人手扫不进去。滑出靠 [data-peek]：window 上 mousemove 判
+		 * 鼠标贴到右缘时点亮。热区只占窗内 12px，不往左多伸一个像素。 */
 		.orb-hit {
 			position: absolute;
-			top: 0; bottom: 0; left: 0; right: 0;
+			top: 0; bottom: 0; left: 0; width: 12px;
 			pointer-events: auto;
 			background: transparent;
 		}
-		/* 热区一进，球整颗滑出来。:hover 落在 .orb 容器上（热区是它的子元素），
-		 * 不是落在球上 —— 球此刻还在窗口外，鼠标根本没机会碰到它。 */
-		.orb[data-docked="true"]:hover .orb-ball { transform: none; }
-
+		.orb[data-docked="true"][data-peek="true"] .orb-ball { transform: none; }
 		/* 小人填满球面；SVG 自己带身体，按钮只负责阴影与命中。 */
 		.orb-mark { display: block; width: 80px; height: 96px; overflow: visible; }
 		.orb-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -551,24 +538,15 @@ export default {
 		.orb-menu button:hover { background: var(--hover); }
 		.orb-menu button:disabled { color: var(--ink-3); cursor: default; }
 		.orb-menu button:disabled:hover { background: transparent; }
-		/* 菜单项前面的一颗点：亮 = 现在是开的，灰 = 关的（2026-11-11）。
-		 *
-		 * 为什么要有它：语音那两项点完只改状态、屏幕上零变化，老板的结论就是「点了没反应」。
-		 * 「贴边」「回默认位置」变的是位置、看得见，所以那两项的点按**位置**亮，不按开关。
-		 * 点绝对定位占位、不参与文字排版：四种文字宽度都对齐。 */
+		/* 菜单项前的状态点：亮 = 开着，灰 = 关着。语音两项点完原来屏幕上零变化，
+		 * 老板的结论就是「点了没反应」。绝对定位占位、不参与排版，文字才对齐。 */
 		.orb-menu button[data-on] { position: relative; padding-left: 19px; }
 		.orb-menu button[data-on]::before {
-			content: "";
-			position: absolute; left: 6px; top: 50%;
-			width: 5px; height: 5px; margin-top: -2.5px;
-			border-radius: 50%;
-			background: var(--line, #c9c2b4);
-			opacity: 0.55;
+			content: ""; position: absolute; left: 6px; top: 50%;
+			width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%;
+			background: var(--line, #c9c2b4); opacity: 0.55;
 		}
-		.orb-menu button[data-on="true"]::before {
-			background: var(--accent, #4b7bec);
-			opacity: 1;
-		}
+		.orb-menu button[data-on="true"]::before { background: var(--accent, #4b7bec); opacity: 1; }
 
 		/* 设置里的「悬浮球语音」一页：和 Token 用量同一套骨架（抬头 → 内容），
 		   一个容器查询管宽窄（设置那张 800 弹窗里宽、右栏 / 手机上窄）。 */
@@ -846,6 +824,8 @@ export default {
 				WINDOW_MODE ? 20 : (prefs.top ?? Math.round((typeof window === "undefined" ? 640 : window.innerHeight) * 0.36)),
 			);
 			const [docked, setDocked] = useState(WINDOW_MODE ? false : prefs.docked);
+			/** 贴边时鼠标贴到窗口右缘：球滑出来。不放宽热区——宽了就压正文。 */
+			const [peek, setPeek] = useState(false);
 			const [menu, setMenu] = useState(false);
 			const [detail, setDetail] = useState(null);
 			/** 最近一条要告诉用户的错。**不再往面板里写**：没有面板了，它冒在头顶。 */
@@ -880,16 +860,8 @@ export default {
 			const bubbleRef = useRef(null);
 			/** 气泡自己的流水号（DOM 上的 `id` 是字符串，不能拿来数数）。 */
 			const bubbleSeq = useRef(1);
-			/**
-			 * `bubbleShow` 的转发口（2026-11-11）。
-			 *
-			 * 为什么要转发：菜单那几项（`toggleListen` / `toggleSpeak`）比 `bubbleShow` **先定义**，
-			 * 而 `bubbleShow` 又定义在 `if (setupStep !== null) return null;` 这句 early-return 之后，
-			 * 根本提不到前面去。直接调就是碰 `const` 的暂时性死区，运行时抛 ReferenceError。
-			 * 所以先放一个空壳，等 `bubbleShow` 真正定义出来再往里塞。
-			 */
+			/** `bubbleShow` 的转发口：它定义在 early-return 之后，前面的调用会撞 `const` 死区。 */
 			const showBubbleRef = useRef(() => {});
-			/** 同上，收气泡的转发口（`onClick` 也比 `bubbleHide` 先定义）。 */
 			const hideBubbleRef = useRef(() => {});
 			/**
 			 * 冒泡的「信箱」：上面那条挑消息的 effect 跑在渲染中间，这儿只放进去，
@@ -1480,6 +1452,24 @@ export default {
 				return () => window.removeEventListener("resize", onResize);
 			}, []);
 
+			// 贴边滑出：鼠标贴到窗口右缘就算。热区一宽就压正文，右边栏按钮就点不到。
+			useEffect(() => {
+				if (!docked || WINDOW_MODE) return undefined;
+				const onMove = (event) => {
+					const nearEdge = window.innerWidth - event.clientX <= 12;
+					const inBand = event.clientY >= top - 16 && event.clientY <= top + BALL + 16;
+					setPeek(nearEdge && inBand);
+				};
+				const off = () => setPeek(false);
+				window.addEventListener("mousemove", onMove, { passive: true });
+				window.addEventListener("blur", off);
+				return () => {
+					window.removeEventListener("mousemove", onMove);
+					window.removeEventListener("blur", off);
+					setPeek(false);
+				};
+			}, [docked, top]);
+
 			// 悬停**不再展开任何东西**：没有面板可展开了。悬停只做两件小事 ——
 			// 独立窗里把命中接上（否则点不到），贴着边时滑出来。
 			const enter = () => {
@@ -1570,8 +1560,6 @@ export default {
 					return;
 				}
 				cancelHover();
-				// 点球 = 「我要说话了，刚才那句别挡着」。气泡立刻收，不等它自己走完那 6 秒
-				// （老板 2026-11-11 定的：气泡要能立刻消失）。
 				hideBubbleRef.current();
 				if (docked) {
 					// 贴着边点一下 = 先把它请出来，再开菜单。
@@ -1789,7 +1777,6 @@ export default {
 				setSpeakOn(next);
 				savePrefs({ speak: next });
 				if (!next) stopAudio();
-				// 菜单点完就关，那行「关掉朗读」的字跟着没了 —— 必须另给一句，否则屏幕零变化。
 				showBubbleRef.current({ text: next ? "朗读：开" : "朗读：关", kind: "it" });
 			};
 
@@ -2014,9 +2001,8 @@ export default {
 			/**
 			 * 开关「直接说话」。
 			 *
-			 * **先真听上，再点亮开关**（老板 2026-11-11 定的）：以前是先 `setListenOn(true)` 再
-			 * `void startListen()`，麦克风没开成（没权限 / 私聊还没加载）就会留下「开关亮着、其实没在听」
-			 * 的假象，最容易让人以为「点了没反应」。现在顺序反过来：听上了才亮，听不上就把开关按回去。
+			 * 先真听上再点亮开关：原来先点亮再 startListen，没开成就留下「亮着却没在听」的假象。
+			 * 现在听上了才亮，听不上按回去。
 			 */
 			const toggleListen = async () => {
 				if (listenOn) {
@@ -2026,9 +2012,7 @@ export default {
 					showBubbleRef.current({ text: "直接说话：关", kind: "it" });
 					return;
 				}
-				// **气泡先出，才去开麦**（2026-11-11）：开麦要等权限/设备，几百毫秒到几秒都有。
-				// 等它通了再冒话，等于又让老板看着一个「什么都没发生」。所以先说「正在打开…」，
-				// 结果出来再改口 —— 一句改一句，不是两句叠一起（bubbleShow 会清掉旧的计时器）。
+				// 气泡先出才去开麦：等权限要几百毫秒到几秒，先说「正在打开…」再改口。
 				showBubbleRef.current({ text: "直接说话：正在打开…", kind: "it" });
 				const ok = await startListen();
 				setListenOn(ok);
@@ -2191,7 +2175,6 @@ export default {
 					id: bubbleSeq.current++,
 				});
 			};
-			// 从这一刻起菜单那几项也能冒泡了（见 `showBubbleRef` 上面那段）。
 			showBubbleRef.current = bubbleShow;
 
 			/** 让它说一句（它自己的话也顺手念出来，念不念由朗读开关决定）。 */
@@ -2433,8 +2416,6 @@ export default {
 									{
 										type: "button",
 										role: "menuitem",
-										// 和另外几项一样留一颗点占位，五条文字才左对齐；
-										// 它是一次性动作，不是开关，所以永远灰着（同「回到默认位置」）。
 										"data-on": "false",
 										disabled: dmId === null,
 										onClick: () => {
@@ -2495,8 +2476,6 @@ export default {
 									},
 									docked ? "从边上请出来" : "贴到右边收起",
 								),
-						// 回默认位置不是一个「开/关」，点它就是一次性动作：给一个固定灰点占位，
-						// 四条文字才对齐；它亮不亮没有意义，也永远不亮。
 						h(
 							"button",
 							{
@@ -2538,10 +2517,10 @@ export default {
 				{
 					className: "orb",
 					"data-docked": docked ? "true" : "false",
+					"data-peek": peek ? "true" : "false",
 					style: { right: `${String(right)}px`, top: `${String(top)}px` },
 				},
-				// 贴边热区：贴在球左边往窗口外那 40px，肉眼不画东西，只负责「让鼠标走得到」。
-				// 球自己此刻有 68px 在窗口外，`:hover` 永远落不到它身上 —— 这是滑不出来的根。
+				// 贴边热区：不画东西，只让窗口最右那 12px 点得到。
 				docked && !menu ? h("div", { className: "orb-hit", "aria-hidden": "true" }) : null,
 				bubbleBox,
 				menuBox,
@@ -2558,8 +2537,6 @@ export default {
 					type: "button",
 					className: "app-entry",
 					id: "rail-orb-voice",
-					// 这里原本还有一个 `data-tip`，但全仓没有任何 CSS / JS 读它，写进 DOM 也显示不出来；
-					// 无障碍名字由下一行的 `aria-label` 承担。删掉是别再留「看着做了其实没做」的东西。
 					"aria-label": "悬浮球语音",
 					"aria-current": active ? "true" : "false",
 					onClick: () => store.openPluginView(SLUG),
