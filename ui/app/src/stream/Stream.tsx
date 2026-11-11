@@ -17,7 +17,8 @@ import { CODE_COPY_CLASS } from "../lib/copy-code.ts";
 import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
-import { VirtualFeed } from "./VirtualFeed.tsx";
+import { seqOfRow, VirtualFeed } from "./VirtualFeed.tsx";
+import type { VirtualFeedHandle } from "./VirtualFeed.tsx";
 import { Slot } from "../plugin/Slot.tsx";
 import { loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
@@ -38,6 +39,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const flowRef = useRef<HTMLDivElement | null>(null);
 	const feedRef = useRef<HTMLDivElement | null>(null);
 	const anchor = useRef<{ seq: number; top: number } | null>(null);
+	/** 窗口化之后，跳转得跟 `VirtualFeed` 要位置 —— 目标行多半没挂载。 */
+	const feed = useRef<VirtualFeedHandle | null>(null);
 	const pinned = useRef(true);
 
 	const messages = detail?.messages ?? [];
@@ -129,19 +132,16 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		setAtBottom(true);
 	}, []);
 
-	// 上翻加载之前先记住视口顶部那一行（按 seq 认，不按文本）。
+	/**
+	 * 上翻加载之前先记住视口顶部那一行（按 seq 认，不按文本）。
+	 *
+	 * 窗口化之后不能再从 DOM 里找 `.row`：一次只挂几十行，要认的那一行可能刚好没挂。
+	 * 所以问 `VirtualFeed`「视口顶上现在是哪条消息、它离顶多少像素」，它从高度表里算。
+	 */
 	const rememberAnchor = useCallback(() => {
-		const flow = flowRef.current;
-		const feed = feedRef.current;
-		if (flow === null || feed === null) return;
-		const top = flow.getBoundingClientRect().top;
-		for (const node of feed.querySelectorAll<HTMLElement>(".row")) {
-			const rect = node.getBoundingClientRect();
-			if (rect.bottom > top + 4) {
-				anchor.current = { seq: Number(node.dataset["seq"] ?? "0"), top: rect.top - top };
-				return;
-			}
-		}
+		const feedWindow = feed.current;
+		if (feedWindow === null) return;
+		anchor.current = feedWindow.anchorAtViewportTop();
 	}, []);
 
 	// 新消息到达：贴底就跟到底，否则原地不动（否则看上翻历史时会被拽回来）。
@@ -150,16 +150,18 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		else setAtBottom(false);
 	}, [messages, toBottom]);
 
-	// 补历史之后：按锚点行补回滚动的差值，屏幕上的字不动。
+	/**
+	 * 补历史之后：把锚点那一行按回原来的位置，屏幕上的字不动。
+	 *
+	 * 早先的写法是「`querySelector` 找到那一行、量它现在离顶多少、补差值」。
+	 * 虚拟化之后 DOM 里根本没有它（在上一屏之外），只能靠高度表：让 `VirtualFeed`
+	 * 告诉我它现在离顶多少，再把 `scrollTop` 挪回来。
+	 */
 	useLayoutEffect(() => {
 		const saved = anchor.current;
-		const flow = flowRef.current;
-		const feed = feedRef.current;
-		if (saved === null || flow === null || feed === null) return;
-		const node = feed.querySelector<HTMLElement>(`[data-seq="${String(saved.seq)}"]`);
-		if (node === null) return;
-		const delta = node.getBoundingClientRect().top - flow.getBoundingClientRect().top - saved.top;
-		if (Math.abs(delta) > 1) flow.scrollTop += delta;
+		const feedWindow = feed.current;
+		if (saved === null || feedWindow === null) return;
+		feedWindow.restoreAnchor(saved);
 		anchor.current = null;
 	}, [messages]);
 
@@ -266,18 +268,35 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	/**
 	 * 点引用的那一行 → 滚到被引用的那条消息，并亮一下。
 	 *
-	 * 只在这一屏已渲染的消息里找（`data-seq`）：被引用的话要是早于已加载的历史，
-	 * 就什么都不做 —— 宁可不跳，也别把「没找到」画成一条错误。
+	 * 窗口化之后不能再靠 `querySelector`：一次只挂几十行，被引用的那条多半在几千里外、
+	 * 根本没挂载，`querySelector` 找不到就 `return`，于是「点引用永远没反应」。
+	 * 所以改成**按 seq 反查**：位置在 `VirtualFeed` 的高度表里，让它滚过去。
+	 *
+	 * 滚过去之后那一行要下一帧才挂出来，所以高亮要等：等到了再闪，等不到（超过一小会儿）
+	 * 就什么都不做 —— 宁可不闪，也不能报错、不能把视线挪到别处。
 	 */
-	const jumpTo = useCallback((seq: number, node: HTMLElement): void => {
-		const target = node.closest(".feed")?.querySelector(`[data-seq="${seq}"]`);
-		if (!(target instanceof HTMLElement)) return;
-		target.scrollIntoView({ block: "center", behavior: "smooth" });
-		target.classList.remove("row-flash");
-		// 重新触发动画：先移除再加回来，同一帧里要读一次布局
-		void target.offsetWidth;
-		target.classList.add("row-flash");
-		window.setTimeout(() => target.classList.remove("row-flash"), 1600);
+	const jumpTo = useCallback((seq: number, _node: HTMLElement): void => {
+		const feedWindow = feed.current;
+		if (feedWindow === null) return;
+		if (!feedWindow.jumpToSeq(seq)) return;
+		// 等它挂出来（通常下一帧就到），到了再闪一下。
+		let tries = 0;
+		const flash = (): void => {
+			const flow = flowRef.current;
+			const target = flow?.querySelector<HTMLElement>(`[data-seq="${String(seq)}"]`) ?? null;
+			if (target === null) {
+				tries += 1;
+				if (tries > 10) return;
+				requestAnimationFrame(flash);
+				return;
+			}
+			target.classList.remove("row-flash");
+			// 重新触发动画：先移除再加回来，同一帧里要读一次布局
+			void target.offsetWidth;
+			target.classList.add("row-flash");
+			window.setTimeout(() => target.classList.remove("row-flash"), 1600);
+		};
+		requestAnimationFrame(flash);
 	}, []);
 
 	return (
@@ -302,6 +321,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 							items={rows}
 							scroller={flowRef}
 							scope={detail?.channel.id ?? ""}
+							handle={feed}
+							seqOf={seqOfRow}
 							// `atBottom` 就是「贴底没」：滚动事件里同步过，新消息到达时 `toBottom()` 也会置真。
 							pinned={atBottom}
 							render={(index) => {

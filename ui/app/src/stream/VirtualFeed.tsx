@@ -31,9 +31,12 @@ const OVERSCAN_PX = 1200;
  */
 const DEFAULT_HEIGHT = 72;
 
+/** 一行最小该有的样子：一个稳定的 key（对高度表用）。 */
+export type VirtualFeedItem = { readonly key: string };
+
 export type VirtualFeedProps = {
 	/** 行的 key，按显示顺序给。用来对高度表。 */
-	items: readonly { readonly key: string }[];
+	items: readonly VirtualFeedItem[];
 	/** 画一行。`index` 是本行在 `items` 里的位置（第一版没用上，第二步跳转会要）。 */
 	render: (index: number) => ReactNode;
 	/** 滚动容器。窗口位置靠它的 `scrollTop` / `clientHeight` 算。 */
@@ -47,10 +50,59 @@ export type VirtualFeedProps = {
 	 * 翻着历史被拽回底部是最讨人厌的那种毛病。
 	 */
 	pinned: boolean;
+	/**
+	 * 这一行对应的消息 seq（没有就 `undefined`：时间分隔、未读横幅这类不是消息）。
+	 *
+	 * 跳转要按 seq 找人，可人常常没挂载（几千里之外的某一条）。**位置只有高度表知道**，
+	 * 所以得由外面告诉我「这个 seq 在第几行」，我再拿布局表把它换算成像素。
+	 */
+	seqOf?: ((item: VirtualFeedItem) => number | undefined) | undefined;
+	/** 外面拿它来发跳转命令。 */
+	handle?: React.MutableRefObject<VirtualFeedHandle | null> | undefined;
+};
+
+/**
+ * 一行对应的消息 seq。时间分隔和未读横幅不是消息，返回 `undefined`。
+ *
+ * 单独拿出来是因为**两边都要用**：`Stream.tsx` 传给 `VirtualFeed` 建索引，
+ * 测试里也直接拿它断言，不重复写第二份判断。
+ */
+export function seqOfRow(row: VirtualFeedItem): number | undefined {
+	const type = (row as { type?: unknown }).type;
+	if (type !== "say" && type !== "note") return undefined;
+	const message = (row as { message?: unknown }).message;
+	if (typeof message !== "object" || message === null) return undefined;
+	const seq = (message as { seq?: unknown }).seq;
+	return typeof seq === "number" ? seq : undefined;
+}
+
+/** 外面能对窗口做的事。只有一件：跳到某个 seq。 */
+export type VirtualFeedHandle = {
+	/**
+	 * 滚到某个 seq 那一行。
+	 *
+	 * 返回那一行**现在**在不在窗口里：在的话调用方直接高亮；不在的话我滚过去了，
+	 * 但要等下一帧它才挂出来。**找不到就返回 false 什么都不做** ——
+	 * 被引用的话早于已加载的历史时就是这个样子，不该报错、也不该把视线挪走。
+	 */
+	jumpToSeq: (seq: number) => boolean;
+	/**
+	 * 视口顶部现在是哪条消息，以及它离视口顶多少像素（可能为负：已经滚过去一截）。
+	 *
+	 * 没有可比对的行（空列表、或者顶部落在不是消息的行上）就返回 `null`。
+	 */
+	anchorAtViewportTop: () => { seq: number; top: number } | null;
+	/**
+	 * 把某个 seq 那一行放回「离视口顶 `top` 像素」的位置。
+	 *
+	 * 补历史之后内容长高了，`scrollTop` 不变就意味着屏幕上的字往下跑；
+	 * 这里把差值补上，读的人才不会跳。找不到那一行就什么都不做。
+	 */
+	restoreAnchor: (anchor: { seq: number; top: number }) => void;
 };
 
 export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
-	const { items, render, scroller, scope, pinned } = props;
+	const { items, render, scroller, scope, pinned, seqOf, handle } = props;
 
 	/** 量到过的高度，按行 key 存。换频道清空。 */
 	const heights = useRef(new Map<string, number>());
@@ -175,6 +227,29 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	}, [recompute, scroller]);
 
 	/**
+	 * seq → 行号。跳转要按 seq 找人，得先知道它是第几行。
+	 *
+	 * 只在 `items` 变时重建一次（一次遍历），跳转时 O(1) 查。
+	 */
+	const indexOfSeq = useRef(new Map<number, number>());
+	/** `seqOf` 每次渲染都是新函数 —— 放进 ref，索引表才只跟着 `items` 重建。 */
+	const seqOfRef = useRef(seqOf);
+	seqOfRef.current = seqOf;
+	useLayoutEffect(() => {
+		const map = new Map<number, number>();
+		const read = seqOfRef.current;
+		if (read !== undefined) {
+			for (let index = 0; index < items.length; index += 1) {
+				const item = items[index];
+				if (item === undefined) continue;
+				const seq = read(item);
+				if (seq !== undefined && !map.has(seq)) map.set(seq, index);
+			}
+		}
+		indexOfSeq.current = map;
+	}, [items]);
+
+	/**
 	 * 我有没有为这一屏定过落点。
 	 *
 	 * `scope` 一换（切频道）就重置 —— 进去得落在「最后一屏」，不是上次停的那个位置。
@@ -207,6 +282,94 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 		if (pinned) stickToEnd();
 		else recompute();
 	}, [items, recompute, scope, stickToEnd, pinned]);
+
+	/**
+	 * 跳到某个 seq 那一行。
+	 *
+	 * 三件事：
+	 * 1. **先查它在第几行**（`indexOfSeq`），查不到就直接 false 走人 —— 被引用的话早于
+	 *    已加载的历史时就是这样，宁可不跳也不报错、也不把视线挪走。
+	 * 2. **拿布局表换算成像素**滚过去。人没挂载是常态（几千行里挂着几十行），
+	 *    但位置一直在表里，所以滚得动。
+	 * 3. 滚完再问一次「现在挂出来没有」：挂出来了就是真跳到了；还没挂出来
+	 *    （下一帧才挂）也返回 true —— 位置已经对了，调用方等下一帧高亮就行。
+	 *
+	 * 目标行落在哪儿：屏幕**中间偏上**（原来 `scrollIntoView({block:"center"})` 的效果），
+	 * 上下都留出上下文，比贴到边上读得舒服。
+	 */
+	const jumpToSeq = useCallback(
+		(seq: number): boolean => {
+			const flow = scroller.current;
+			const index = indexOfSeq.current.get(seq);
+			if (flow === null || index === undefined) return false;
+			rebuild();
+			const { starts, heights: list, total } = layout.current;
+			const rowTop = starts[index] ?? 0;
+			const rowHeight = list[index] ?? estimate.current;
+			// 让行中心落在视口中心；两头夹一下，别滚出可滚范围。
+			const target = rowTop + rowHeight / 2 - flow.clientHeight / 2;
+			const max = Math.max(0, total - flow.clientHeight);
+			flow.scrollTop = Math.min(max, Math.max(0, target));
+			recompute();
+			return true;
+		},
+		[estimate, rebuild, recompute, scroller],
+	);
+
+	/**
+	 * 视口顶部是哪条消息。从高度表里反查，不碰 DOM —— 那一行可能刚好没挂载。
+	 *
+	 * 反过来找：「顶边在视口顶之上」的最后一行。它要是时间分隔或未读横幅（没有 seq），
+	 * 就往下顺延到第一条真正的消息。都没有就 `null`。
+	 */
+	const anchorAtViewportTop = useCallback((): { seq: number; top: number } | null => {
+		const flow = scroller.current;
+		if (flow === null) return null;
+		rebuild();
+		const { starts, heights: list } = layout.current;
+		const viewTop = flow.scrollTop;
+		let low = 0;
+		let high = list.length;
+		while (low < high) {
+			const mid = (low + high) >> 1;
+			if ((starts[mid] ?? 0) <= viewTop) low = mid + 1;
+			else high = mid;
+		}
+		// `low - 1` 是顶边在视口顶之上的最后一行；它可能整个已经滚出去了，从它开始往下找。
+		for (let index = Math.max(0, low - 1); index < items.length; index += 1) {
+			const item = items[index];
+			if (item === undefined) continue;
+			const seq = seqOfRef.current?.(item);
+			if (seq === undefined) continue;
+			return { seq, top: (starts[index] ?? 0) - viewTop };
+		}
+		return null;
+	}, [items, rebuild, scroller]);
+
+	/** 把某个 seq 按回「离视口顶 `top` 像素」。 */
+	const restoreAnchor = useCallback(
+		(anchor: { seq: number; top: number }): void => {
+			const flow = scroller.current;
+			const index = indexOfSeq.current.get(anchor.seq);
+			if (flow === null || index === undefined) return;
+			rebuild();
+			const rowTop = layout.current.starts[index] ?? 0;
+			const want = rowTop - anchor.top;
+			if (Math.abs(flow.scrollTop - want) <= 1) return;
+			flow.scrollTop = Math.max(0, want);
+			recompute();
+		},
+		[rebuild, recompute, scroller],
+	);
+
+	// 把这几条命令交给外面。
+	useLayoutEffect(() => {
+		if (handle === undefined) return;
+		handle.current = { jumpToSeq, anchorAtViewportTop, restoreAnchor };
+		return () => {
+			handle.current = null;
+		};
+	}, [anchorAtViewportTop, handle, jumpToSeq, restoreAnchor]);
 
 	/** 某个行量到了新高度：回写、更新估计值、重算窗口。 */
 	const measure = useCallback(
