@@ -224,11 +224,20 @@ export async function sweepOrphanUploads(
 	options: {
 		readonly minAgeMs?: number;
 		readonly staged?: { readonly staleMs?: number; readonly only?: ReadonlySet<string> };
+		/**
+		 * 缩图子目录名（`<root>/<previews>/<id>.webp`）。给了就顺手把「本体已经没了」的缩图删掉。
+		 *
+		 * 不自带年龄判断：本体刚写下去、缩图还没来得及生成的那个空档，缩图也不存在；
+		 * 反过来，本体的年纪就是该不该留的全部依据 —— 本体在，缩图就在；本体被这条规则收走，
+		 * 缩图同一轮一起走。拖到下一轮的话，本体已经删了，缩图再没有东西能判它的年纪。
+		 */
+		readonly previews?: string;
 	} = {},
 ): Promise<{ scanned: number; removed: number; keptRecent: number }> {
 	const minAgeMs = options.minAgeMs ?? 10 * 60_000;
 	const stagedStaleMs = options.staged?.staleMs ?? 24 * 60 * 60_000;
 	const stagedOnly = options.staged?.only;
+	const previews = options.previews;
 	const isStaged = (id: string): boolean => id.startsWith("staged-");
 	let scanned = 0;
 	let removed = 0;
@@ -264,7 +273,18 @@ export async function sweepOrphanUploads(
 			() => true,
 			() => false,
 		);
-		if (ok && name === id) removed += 1;
+		if (!ok) continue;
+		if (name === id) removed += 1;
+		if (previews !== undefined) {
+			// 同一趟把它的缩图带走。删不掉只是占点盘，下一轮还会再试（下一轮就没条件了，
+			// 所以这里失败也记一行，别让它静默烂在那儿）。
+			const thumb = join(root, previews, `${id}.webp`);
+			await unlink(thumb).catch((error: unknown) => {
+				if ((error as { code?: string }).code !== "ENOENT") {
+					console.log(`[core] 缩图没删掉：${thumb}`);
+				}
+			});
+		}
 	}
 	return { scanned, removed, keptRecent };
 }
