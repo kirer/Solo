@@ -39,6 +39,16 @@ files:
   - "!node_modules/@earendil-works/pi-codemode/**"
   - "!node_modules/quickjs-wasi/**"
   - "!node_modules/@silvia-odwyer/**"
+  # 缩图只留当前平台那一份（老板 2026-11-11 装 sharp）：`@img/*` 有 25 个平台的
+  # 二进制包，全打进去白扛一百多兆，而 `npm ci` 本来就只装本机那一个。
+  - "!node_modules/@img/sharp-linux-*/**"
+  - "!node_modules/@img/sharp-libvips-linux-*/**"
+  - "!node_modules/@img/sharp-linuxmusl-*/**"
+  - "!node_modules/@img/sharp-libvips-linuxmusl-*/**"
+  - "!node_modules/@img/sharp-wasm32/**"
+  - "!node_modules/@img/sharp-win32-arm64/**"
+  - "!node_modules/@img/sharp-darwin-x64/**"
+  - "!node_modules/@img/sharp-win32-ia32/**"
 
 # Electron 只带三种语言：应用界面是中文，原生菜单 / 对话框留简繁和英文兜底。
 # 55 个 .pak 是 48 MB，只留这三个是 1.7 MB。
