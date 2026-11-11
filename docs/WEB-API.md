@@ -250,7 +250,11 @@ SSE 先用 `personOfChannel()` 认出私聊，再走 `readPersonTurns`。
 
 ## 6. `GET /api/channels/:id`
 
-Query：`limit`（默认 60，夹在 1..200）、`before`（seq，往前翻页）。
+Query：`limit`（默认 60，夹在 1..200）、`before`（seq，往前翻页）、`around`（seq，以某条为中心取一页）。
+
+- `around=<seq>`：给「跳到某条老消息」用。返回目标**上下各半页**（目标落在这一页中间），
+  条数仍受 `limit` 约束，**不会把整个频道拉回来**。目标比频道还新时退化成最后一页。
+- `around` 和 `before` 同时给：**以 `around` 为准**，`before` 被忽略（不是两个都生效）。
 
 ```ts
 type ViewChannelDetail = {
@@ -260,7 +264,7 @@ type ViewChannelDetail = {
   };
   members: ViewMember[];
   messages: ViewMessage[];
-  hasMore: boolean;      // 前面还有更早的
+  hasMoreAbove: boolean; // 上面还有更早的（能往上翻页）。只回答「上面」，不是两边
 }
 
 type ViewMember = {

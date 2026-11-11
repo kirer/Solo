@@ -16,7 +16,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChannelDetail, Message } from "../../ui/app/src/api/types.ts";
-import { getState, loadEarlier, patch, unreadBeforeOf } from "../../ui/app/src/state/store.ts";
+import { getState, loadEarlier, openChannel, patch, unreadBeforeOf } from "../../ui/app/src/state/store.ts";
 import { buildRows } from "../../ui/app/src/stream/model.ts";
 
 /** 造第 `seq` 条消息。只填 store 真正读的字段。 */
@@ -145,5 +145,52 @@ describe("未读条数口径（D 组）", () => {
 			now: 0,
 		});
 		expect(rows.some((row) => row.type === "unread")).toBe(false);
+	});
+});
+
+/**
+ * 「能不能往上翻」这条判据本身。
+ *
+ * 起因：程砚-2 把 `loadEarlier` 的判据删掉、把写回改成恒 `true`、把 `openChannel` 存成取反，
+ * 三组反向测试全绿 —— 代码是对的，错在「接错了没人发现」。症状是往上翻不动、或者原地转圈。
+ * 所以这里不看「翻了多少条」，只盯这三处接线。
+ */
+describe("`hasMoreAbove` 的接线", () => {
+	it("服务端说上面没有了，就不许再发请求（不原地转圈）", async () => {
+		patch({ currentId: "c1", detail: detailOf(51, 100), hasMoreAbove: false, loadingEarlier: false });
+		fetchMock.mockClear();
+		await loadEarlier();
+		// 判据被删掉时会去要 `before=51` —— 把手里这一屏**再要一遍**（一页 30 条，
+		// 正好从自己的最早一条起），拿回来一模一样，于是「翻页」翻了个寂寞，这就是原地转圈。
+		for (const call of fetchMock.mock.calls) {
+			const url = new URL(String(call[0]), "http://local");
+			expect(url.searchParams.get("before")).not.toBe("51");
+		}
+	});
+
+	it("写回的是服务端说的那个值，不是恒真", async () => {
+		// 页里只有 1..50，服务端却回 `hasMoreAbove: false`（历史到头了）。
+		fetchMock.mockImplementationOnce(async () => {
+			const messages: Message[] = [];
+			for (let seq = 1; seq <= 50; seq += 1) messages.push(msg(seq));
+			return new Response(JSON.stringify({ channel: { id: "c1" }, members: [], messages, hasMoreAbove: false }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		});
+		patch({ currentId: "c1", detail: detailOf(51, 150), hasMoreAbove: true, loadingEarlier: false });
+		await loadEarlier();
+		expect(getState().hasMoreAbove).toBe(false);
+	});
+
+	it("`openChannel` 把详情里的值原样存进去，不取反", async () => {
+		fetchMock.mockImplementationOnce(async () =>
+			new Response(JSON.stringify({ channel: { id: "c2", title: "x", kind: "group" }, members: [], messages: [], hasMoreAbove: true, readMark: 0 }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			}),
+		);
+		await openChannel("c2");
+		expect(getState().hasMoreAbove).toBe(true);
 	});
 });
