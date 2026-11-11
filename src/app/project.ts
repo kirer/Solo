@@ -262,6 +262,7 @@ export function channelDetail(
 		start = Math.max(0, Math.min(center - half, all.length - limit));
 		end = Math.min(all.length, start + limit);
 	} else {
+		// `before` 只在没给 `around` 时用 —— 两个一起给，以 `around` 为准（见上面分支）。
 		const upper = options.before === undefined ? all.length : all.findIndex((item) => item.seq >= (options.before as number));
 		end = upper < 0 ? all.length : upper;
 		start = Math.max(0, end - limit);
@@ -295,7 +296,7 @@ export function channelDetail(
 			unread: unreadCount(state, channel.id, slug),
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
-		hasMore: start > 0,
+		hasMoreAbove: start > 0,
 		readMark: options.readMark ?? readMarkOf(state, viewer, channel.id),
 	};
 }

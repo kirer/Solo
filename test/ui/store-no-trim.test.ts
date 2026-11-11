@@ -2,10 +2,10 @@
  * 内存里不裁消息 —— 钉住这条，因为踩过一次。
  *
  * 2026-11-11 那版在 `applyMessage` / `loadEarlier` 里把 `detail.messages` 裁到 1000 条，
- * 条件是「整段历史都取完（`hasMore === false`）」。听上去安全，实际是把 4000 条永久弄丢：
+ * 条件是「整段历史都取完（`hasMoreAbove === false`）」。听上去安全，实际是把 4000 条永久弄丢：
  *
- * - 翻到第 1 条之后 `hasMore === false`，裁剪开跑，内存只剩第 4001–5000 条；
- * - 用户再往上翻 —— `loadEarlier` 第一句 `if (!hasMore) return`，直接被挡死；
+ * - 翻到第 1 条之后 `hasMoreAbove === false`，裁剪开跑，内存只剩第 4001–5000 条；
+ * - 用户再往上翻 —— `loadEarlier` 第一句 `if (!hasMoreAbove) return`，直接被挡死；
  * - 那 4000 条再也拉不回来，正是验收 E1 禁止的「明明有却说没有了」。
  *
  * 顾行当场抓出来，Solo 让回滚。这条测试就是用来挡住「下一版又有人加回去」的：
@@ -39,7 +39,7 @@ function detailOf(from: number, to: number): ChannelDetail {
 		channel: { id: "c1", title: "5000 条", kind: "group" },
 		members: [],
 		messages,
-		hasMore: true,
+		hasMoreAbove: true,
 		readMark: 0,
 	} as unknown as ChannelDetail;
 }
@@ -58,7 +58,7 @@ beforeEach(() => {
 		const messages: Message[] = [];
 		for (let seq = from; seq <= to; seq += 1) messages.push(msg(seq));
 		return new Response(
-			JSON.stringify({ channel: { id: "c1" }, members: [], messages, hasMore: from > 1 }),
+			JSON.stringify({ channel: { id: "c1" }, members: [], messages, hasMoreAbove: from > 1 }),
 			{ status: 200, headers: { "content-type": "application/json" } },
 		);
 	});
@@ -71,17 +71,17 @@ afterEach(() => {
 
 describe("messages 不裁", () => {
 	it("翻到第 1 条之后，内存里还是整整 5000 条，一条都没少", async () => {
-		// 造一段「服务端还有更早的」历史：内存 4001–5000，hasMore 为真。
-		patch({ currentId: "c1", detail: detailOf(4001, 5000), hasMore: true, loadingEarlier: false });
+		// 造一段「服务端还有更早的」历史：内存 4001–5000，hasMoreAbove 为真。
+		patch({ currentId: "c1", detail: detailOf(4001, 5000), hasMoreAbove: true, loadingEarlier: false });
 
 		// 一直往前翻，直到服务端说没有了。靠真 `loadEarlier` 翻，不自己拼数组。
-		for (let page = 0; page < 8 && getState().hasMore; page += 1) {
+		for (let page = 0; page < 8 && getState().hasMoreAbove; page += 1) {
 			await loadEarlier();
 		}
 		expect(fetchMock).toHaveBeenCalledTimes(4);
 
-		// 收尾：把 hasMore 打回「没有更早的了」—— 这就是当初触发裁剪的那一下。
-		patch({ hasMore: false });
+		// 收尾：把 hasMoreAbove 打回「没有更早的了」—— 这就是当初触发裁剪的那一下。
+		patch({ hasMoreAbove: false });
 
 		const messages = getState().detail?.messages ?? [];
 		// 关键断言：内存里还是 1..5000 全部。裁过就会少掉一大截。

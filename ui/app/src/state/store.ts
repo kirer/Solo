@@ -40,7 +40,7 @@ export type State = {
 	currentId: string | null;
 	detail: ChannelDetail | null;
 	/** 上翻是否还有更早的。 */
-	hasMore: boolean;
+	hasMoreAbove: boolean;
 	loadingEarlier: boolean;
 	attention: AttentionItem[];
 	attentionUnread: number;
@@ -155,7 +155,7 @@ const initial: State = {
 	channels: [],
 	currentId: null,
 	detail: null,
-	hasMore: false,
+	hasMoreAbove: false,
 	loadingEarlier: false,
 	attention: [],
 	attentionUnread: 0,
@@ -339,7 +339,7 @@ async function reloadDetail(id: string): Promise<void> {
 	try {
 		const detail = await getChannel(id);
 		if (getState().currentId !== id) return;
-		patch({ detail, hasMore: detail.hasMore });
+		patch({ detail, hasMoreAbove: detail.hasMoreAbove });
 	} catch {
 		// 拉不到就等下一次组织推送再试，别把当前屏清空。
 	}
@@ -361,7 +361,7 @@ export function unreadBeforeOf(placeholder: number | null, detail: ChannelDetail
 export async function openChannel(id: string | null): Promise<void> {
 	// `null` = 回到「没选频道」。手机上是返回列表，桌面上是清空中栏。
 	if (id === null) {
-		patch({ currentId: null, unreadBefore: null, detail: null, hasMore: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
+		patch({ currentId: null, unreadBefore: null, detail: null, hasMoreAbove: false, reply: null, runs: new Map(), tasks: { open: false, who: null }, pluginView: null, rightPage: null, rightFile: null, nav: "back" });
 		return;
 	}
 	// 未读起点在这一刻定住（`null` = 列表里没未读；具体 seq 等详情回来再定）。
@@ -376,7 +376,7 @@ export async function openChannel(id: string | null): Promise<void> {
 	patch({
 		currentId: id,
 		detail: null,
-		hasMore: false,
+		hasMoreAbove: false,
 		unreadBefore,
 		reply: null,
 		needMenu: false,
@@ -398,7 +398,7 @@ export async function openChannel(id: string | null): Promise<void> {
 	done();
 	// 期间又切走了就别覆盖。
 	if (getState().currentId !== id) return;
-	patch({ detail, hasMore: detail.hasMore, unreadBefore: unreadBeforeOf(unreadBefore, detail) });
+	patch({ detail, hasMoreAbove: detail.hasMoreAbove, unreadBefore: unreadBeforeOf(unreadBefore, detail) });
 	// 右栏不跟着频道自动开：切一个频道就弹一层资料会把对话挤走（手机上直接挡住整屏）。
 	// 开不开只由顶栏那颗「资料」和插件入口决定。
 	// 助理那屏没有那颗「资料」（顶栏是设置），右栏开着就再也关不掉 —— 进这一屏时收起来。
@@ -415,11 +415,11 @@ export async function openChannel(id: string | null): Promise<void> {
 }
 
 export async function loadEarlier(): Promise<void> {
-	const { currentId, detail, hasMore, loadingEarlier } = state;
-	if (currentId === null || detail === null || !hasMore || loadingEarlier) return;
+	const { currentId, detail, hasMoreAbove, loadingEarlier } = state;
+	if (currentId === null || detail === null || !hasMoreAbove || loadingEarlier) return;
 	const earliest = detail.messages[0]?.seq ?? 1;
 	if (earliest <= 1) {
-		patch({ hasMore: false });
+		patch({ hasMoreAbove: false });
 		return;
 	}
 	patch({ loadingEarlier: true });
@@ -430,7 +430,7 @@ export async function loadEarlier(): Promise<void> {
 		patch({
 			detail: getState().detail === null ? null : { ...getState().detail!, messages: merged },
 			// 服务端说没更早的了；本地裁剪被裁空了也当没有（不然会一直转圈）。
-			hasMore: page.hasMore && merged.length > 0,
+			hasMoreAbove: page.hasMoreAbove && merged.length > 0,
 		});
 	} finally {
 		done();

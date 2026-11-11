@@ -122,7 +122,14 @@ export type ViewChannelDetail = {
 	};
 	members: ViewMember[];
 	messages: ViewMessage[];
-	hasMore: boolean;
+	/**
+	 * **上面**还有没有更早的消息（能往上翻页）。
+	 *
+	 * 叫这个名是为了把话说全：它只回答「上面还有没有」。原来叫 `hasMore`，看着像
+	 * 「两边都还有」，`around` 取一页之后（目标夹在中间、上面下面都有）这个误读会让人
+	 * 以为下面翻不动，于是漏掉几千条。要「下面还有没有」再加字段，别让这一个兼职。
+	 */
+	hasMoreAbove: boolean;
 	/**
 	 * 我对这个频道「看过的最后一条」的 seq（没读过就是 0）。
 	 *

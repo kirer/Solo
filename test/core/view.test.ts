@@ -236,7 +236,7 @@ describe("按 seq 取一页（`around`）", () => {
 		const head = channelDetail(state, team, directoryOf({ lin: "林越" }), { around: 1, limit: 60 });
 		expect(head.messages[0]?.seq).toBe(1);
 		expect(head.messages).toHaveLength(60);
-		expect(head.hasMore).toBe(false);
+		expect(head.hasMoreAbove).toBe(false);
 		const tail = channelDetail(state, team, directoryOf({ lin: "林越" }), { around: 5000, limit: 60 });
 		expect(tail.messages[tail.messages.length - 1]?.seq).toBe(5000);
 		expect(tail.messages).toHaveLength(60);
@@ -253,6 +253,26 @@ describe("按 seq 取一页（`around`）", () => {
 		const state = stateOf([team], { [team.id]: many as never });
 		const detail = channelDetail(state, team, directoryOf({ lin: "林越" }), {});
 		expect(detail.messages[detail.messages.length - 1]?.seq).toBe(5000);
-		expect(detail.hasMore).toBe(true);
+		expect(detail.hasMoreAbove).toBe(true);
+	});
+});
+
+describe("`around` 和 `before` 一起给", () => {
+	it("以 `around` 为准，`before` 被忽略（不是两个都生效）", () => {
+		const many = Array.from({ length: 200 }, (_, index) => ({
+			seq: index + 1,
+			at: AT + index,
+			from: "lin",
+			kind: "chat" as const,
+			text: `第 ${String(index + 1)} 条`,
+			mentions: [],
+			read: true,
+		}));
+		const state = stateOf([team], { [team.id]: many as never });
+		const both = channelDetail(state, team, directoryOf({ lin: "林越" }), { around: 50, before: 190, limit: 20 });
+		const onlyAround = channelDetail(state, team, directoryOf({ lin: "林越" }), { around: 50, limit: 20 });
+		// 这条锁住的是「有意识的选择」：两个一起给时不许变成两个都生效的混合页。
+		expect(both.messages.map((message) => message.seq)).toEqual(onlyAround.messages.map((message) => message.seq));
+		expect(both.messages.some((message) => message.seq === 50)).toBe(true);
 	});
 });

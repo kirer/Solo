@@ -29,7 +29,7 @@ import { useStore } from "../state/useStore.ts";
 export function Stream(props: { onImage: (src: string) => void; onFile: (file: Attachment) => void }): JSX.Element {
 	const currentId = useStore((state) => state.currentId);
 	const detail = useStore((state) => state.detail);
-	const hasMore = useStore((state) => state.hasMore);
+	const hasMoreAbove = useStore((state) => state.hasMoreAbove);
 	const loadingEarlier = useStore((state) => state.loadingEarlier);
 	const people = useStore((state) => state.people);
 	const runs = useStore((state) => state.runs);
@@ -268,10 +268,10 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	}, [currentId, toBottom, unreadBefore, isPinned]);
 
 	const onTop = useCallback(() => {
-		if (!hasMore || loadingEarlier) return;
+		if (!hasMoreAbove || loadingEarlier) return;
 		rememberAnchor();
 		void loadEarlier();
-	}, [hasMore, loadingEarlier, rememberAnchor]);
+	}, [hasMoreAbove, loadingEarlier, rememberAnchor]);
 
 	/**
 	 * 上翻自动补历史：滚到顶部就自己加载，没有按钮。
@@ -286,7 +286,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		const maybeLoad = (): void => {
 			const nearTop = flow.scrollTop < 120;
 			const notFilled = flow.scrollHeight <= flow.clientHeight + 40;
-			if ((nearTop || notFilled) && hasMore && !loadingEarlier) onTop();
+			if ((nearTop || notFilled) && hasMoreAbove && !loadingEarlier) onTop();
 		};
 		flow.addEventListener("scroll", maybeLoad, { passive: true });
 		const frame = requestAnimationFrame(maybeLoad);
@@ -294,7 +294,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			flow.removeEventListener("scroll", maybeLoad);
 			cancelAnimationFrame(frame);
 		};
-	}, [hasMore, loadingEarlier, onTop, messages]);
+	}, [hasMoreAbove, loadingEarlier, onTop, messages]);
 
 	/**
 	 * 双击整行复制正文。
