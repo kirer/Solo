@@ -89,6 +89,20 @@ async function removeUpload(root: string, id: string): Promise<void> {
 	if (path === undefined) return;
 	await unlink(path).catch(() => undefined);
 	await unlink(`${path}.json`).catch(() => undefined);
+	const thumb = previewPathOf(root, id);
+	if (thumb !== undefined) await unlink(thumb).catch(() => undefined);
+}
+
+/**
+ * 缩图在盘上的位置：`<uploadsRoot>/previews/<id>.webp`。
+ *
+ * 和附件本体**同根**，是为了让清理只需要一套规矩：本体没了、或者本体被 `sweep` 当孤儿收走，
+ * 缩图跟着消失。单独开一个目录再自己维护引用，迟早会漏。
+ */
+export const PREVIEW_DIR = "previews";
+
+export function previewPathOf(root: string, id: string): string | undefined {
+	return uploadPathOf(root, id) === undefined ? undefined : join(root, PREVIEW_DIR, `${id}.webp`);
 }
 
 /** 取一个附件时要给传输层的东西。 */
@@ -124,6 +138,29 @@ export function createUploads(shell: CoreServices) {
 		if (path === undefined || meta === undefined) throw new AppError("not-found", "没有这个文件");
 		const text = meta.mime.startsWith("text/") || meta.mime === "application/pdf";
 		const inline = options.download !== true && (kindOfMime(meta.mime) === "image" || (options.preview === true && text));
+		// 列表要的是缩图，点开要的是原图 —— 分界就在这里：
+		// `preview=1` 且**没要下载**、而且是图片，才走缩图；`preview=1&download=1` 与不带
+		// `preview` 一律原图。缩图还没生成好（或生成失败）就退回原图，不能因为缩图把图看不了。
+		//
+		// 只看「缩图在不在盘上」，**不在这里生成**：这个函数在请求路径上，还在 `app` 层，
+		// 不该在这里起编码任务；生成与回收在 `sweep` 那一轮统一做。
+		const thumb =
+			options.download !== true && options.preview === true && kindOfMime(meta.mime) === "image"
+				? previewPathOf(root, id)
+				: undefined;
+		if (thumb !== undefined) {
+			const info = await stat(thumb).catch(() => undefined);
+			if (info !== undefined && info.isFile() && info.size > 0) {
+				return {
+					path: thumb,
+					mime: "image/webp",
+					bytes: info.size,
+					name: meta.name,
+					inline: true,
+					disposition: contentDisposition(true, meta.name),
+				};
+			}
+		}
 		const mime = inline && options.preview === true && meta.mime.startsWith("text/") ? `${meta.mime}; charset=utf-8` : meta.mime;
 		return {
 			path,
@@ -159,8 +196,11 @@ export function createUploads(shell: CoreServices) {
 			// 删之前再读一次：候选里已经重新被界面认领的（刷新重报 / 又拖回来了）放过。
 			const fresh = await readStagedState(root);
 			const revive = new Set<string>(fresh.drafts);
+			// 缩图跟着附件本体走同一趟：本体是孤儿要删的，缩图别再等下一轮 ——
+			// 两轮之间本体已经没了，缩图就成了永远没人认领也不够条件删的垃圾。
 			const result = await sweepOrphanUploads(root, new Set([...messageIds, ...revive]), Date.now(), {
 				staged: { staleMs: STAGED_STALE_MS, only: candidates },
+				previews: PREVIEW_DIR,
 			});
 			// 过了墓碑期、又不在草稿里的墓碑不再有用，顺手清掉。
 			const now = Date.now();
