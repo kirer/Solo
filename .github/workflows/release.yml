@@ -120,9 +120,6 @@ jobs:
 
   publish:
     needs: [verify, build-mac, build-win]
-    # 2.9.8：真机还没验过（季衡签字时明确说没验），只出包不发版。
-    # 要恢复发版，把下面这行删掉（删了会出现在 diff 里，看得见）。
-    if: ${{ false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
