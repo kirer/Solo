@@ -225,11 +225,8 @@ export function messageView(
 }
 
 /**
- * 频道详情。`limit` 给最近 N 条，`before` 往前翻页，`around` 从某条往两边取。
- *
- * `around` 是给「跳到某条老消息」用的：那一页不在内存里（界面上 1000 条以后的都裁掉了），
- * 一路往前翻几十页既慢、又会把几千条重新灌回内存 —— 正是我们刚回滚掉的那件事。
- * 这里只按 `seq` 定位、取它两边各半页，**不给比 `limit` 更多的条数**。
+ * 频道详情。`limit` 给最近 N 条，`before` 往前翻页，`after` 往后接页（虚拟化重做 2026-11-11）；
+ * `around` 从某条往两边各取半页（给「跳到某条老消息」用，和 `before` 同时给时它优先）。
  */
 export function channelDetail(
 	state: ChannelState,
@@ -238,6 +235,13 @@ export function channelDetail(
 	options: {
 		readonly limit?: number;
 		readonly before?: number;
+		/**
+		 * 取「seq 大于它的那些」里**最靠前的**一页。
+		 *
+		 * 和 `before` 是一对：`before` 往上翻（取它之前的最后一页），`after` 往下接（取它之后的
+		 * 第一页）。界面窗口不贴底时来了新消息，用它把那一段接上，而不是把新消息硬塞进窗口。
+		 */
+		readonly after?: number;
 		readonly viewer?: string;
 		/** 助理的 slug（身份目录在应用根下的那些人）。成员角色要靠它标「助理」。 */
 		readonly assistants?: readonly string[];
@@ -261,8 +265,13 @@ export function channelDetail(
 		const half = Math.floor(limit / 2);
 		start = Math.max(0, Math.min(center - half, all.length - limit));
 		end = Math.min(all.length, start + limit);
+	} else if (options.after !== undefined) {
+		// `after` 取「它之后的第一页」：起点是第一条 seq 大于它的，终点是起点 + limit。
+		const lower = all.findIndex((item) => item.seq > (options.after as number));
+		start = lower < 0 ? all.length : lower;
+		end = Math.min(all.length, start + limit);
 	} else {
-		// `before` 只在没给 `around` 时用 —— 两个一起给，以 `around` 为准（见上面分支）。
+		// `before` 只在没给 `around` 时用 —— 两个一起给，以 `around` 为准。
 		const upper = options.before === undefined ? all.length : all.findIndex((item) => item.seq >= (options.before as number));
 		end = upper < 0 ? all.length : upper;
 		start = Math.max(0, end - limit);
@@ -296,8 +305,9 @@ export function channelDetail(
 			unread: unreadCount(state, channel.id, slug),
 		})),
 		messages: page.map((message) => messageView(state, channel, message, directory, viewer)),
-		hasMoreAbove: start > 0,
+		/** 「我看过的最后一条」的 seq：界面用它决定未读横幅落在哪。不让调用方传时按 `viewer` 现算。 */
 		readMark: options.readMark ?? readMarkOf(state, viewer, channel.id),
+		hasMoreAbove: start > 0,
 	};
 }
 

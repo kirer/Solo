@@ -49,7 +49,23 @@ export type Row =
 	 *
 	 * 跑完就消失 —— 真实回复由 `create` 落进来，同一件事不画两条。
 	 */
-	| { type: "live"; key: string; turn: Turn };
+	| { type: "live"; key: string; turn: Turn }
+	/**
+	 * 占位行：这一页还在路上，先占住它在 `seq` 序列里的位置（设计 §3.4）。
+	 *
+	 * **实体，不是虚拟的**：`visibility:hidden` 那种「看不见的占位」按不通过处理
+	 * （Solo 2026-11-11）。它是真的行、真的高度、真的进 `offsetOf`，用户看得到它在那儿等着。
+	 * 一页 = 一屏 = N 条定高：`count` 就是这一页要补多少条。
+	 */
+	| { type: "placeholder"; key: string; count: number; failed: boolean }
+	/**
+	 * 「到最上面了」：真的到第 1 条了（`hasMore === false`）。
+	 *
+	 * 验收第 21 条：到了底再往上滚，**不许和卡死看起来一样**。它和占位行占同一个位置
+	 * （一页的位置，也就是列表最上面），所以「补不上的那一下」和「已经没有更早的了」
+	 * 在屏幕上长得是两句话，不是一片空白。
+	 */
+	| { type: "ceiling"; key: string };
 
 export type BuildInput = {
 	messages: readonly Message[];
@@ -57,40 +73,48 @@ export type BuildInput = {
 	running?: readonly Turn[];
 	now?: number;
 	/**
+	 * 还在路上的那一页（设计 §3.4）：给条数就在这一屏最上面插占位行。
+	 *
+	 * `null` = 没有在补的页；`failed` = 上一次补页失败了，占位行换成「没加载出来 · 重试」。
+	 */
+	pending?: { count: number; failed: boolean } | null;
+	/**
+	 * 真的到头了：不再有更早的消息了（验收第 21 条）。
+	 *
+	 * 和 `pending` 互斥 —— 一个说「正在补」，一个说「没得补了」，同时出现只会让人看不懂。
+	 */
+	atCeiling?: boolean;
+	/**
 	 * 进这一屏时的未读起点：`seq` 大于它的第一条消息之前插一条「以下是新的」。
 	 *
 	 * 由调用方在切频道那一刻定住（不是每帧算）—— 否则读着读着线就往下跑，
 	 * 变成「永远有新消息」。
 	 */
 	unreadBefore?: number;
-	/**
-	 * 我自己的 slug。**未读不算自己说的话** —— 未读是「别人说了什么我没看到」。
-	 *
-	 * 不传就只按「非 note」算，等于把自己发的也算进去；界面上横幅的数字和侧栏列表的数字
-	 * 必须是同一个口径（列表 3、进去也是 3），所以实际调用一律传进来。
-	 */
-	me?: string;
 };
-
-/**
- * 一条消息算不算「未读」。
- *
- * 口径和侧栏的未读数**必须是同一个**（`src/core/channel/rules.ts` 的 `unreadCount`）：
- * 别人发的、并且是说出口的话（不是系统留痕）。差一条就会「列表说 3 条、进去写 6 条」，
- * 而多出来的正是我自己刚发的那几句 —— 人一眼就看出来，然后谁也不信这个数字。
- */
-export function countsAsUnread(message: { readonly fromSlug: string; readonly kind: string }, me: string | undefined): boolean {
-	if (me !== undefined && message.fromSlug === me) return false;
-	return message.kind !== "note";
-}
 
 /** 时间分隔上的字：今天只写时刻，昨天写「昨天 HH:MM」，更早写「M月D日」。 */
 function dividerLabel(at: number, now: number): string {
 	return `${dayLabel(at, now)} ${clockTime(at)}`;
 }
 
-export function buildRows({ messages, running = [], now = Date.now(), unreadBefore, me }: BuildInput): Row[] {
+export function buildRows({
+	messages,
+	running = [],
+	now = Date.now(),
+	unreadBefore,
+	pending = null,
+	atCeiling = false,
+}: BuildInput): Row[] {
 	const rows: Row[] = [];
+	// 到头了：列表最上面那一句「到最上面了」。和占位行占同一个位置，二者不会同时出现。
+	if (atCeiling && pending === null) rows.push({ type: "ceiling", key: "ceiling" });
+	// 占位行在最前面：它占的是「比这一屏所有消息都早」的那段 `seq`（设计 §3.4）。
+	if (pending !== null && pending.count > 0) {
+		for (let index = 0; index < pending.count; index += 1) {
+			rows.push({ type: "placeholder", key: `ph-${String(index)}`, count: pending.count, failed: pending.failed });
+		}
+	}
 	let previous: Message | undefined;
 	let previousSay: Message | undefined;
 	let unreadPlaced = false;
@@ -111,10 +135,8 @@ export function buildRows({ messages, running = [], now = Date.now(), unreadBefo
 		// 未读的条数按「seq 大于起点、且不是系统留痕」算，和列表里那个徽章同口径。
 		if (unreadBefore !== undefined && unreadPlaced === false && message.seq > unreadBefore) {
 			unreadPlaced = true;
-			const count = messages.filter((item) => item.seq > unreadBefore && countsAsUnread(item, me)).length;
-			// 一条都没有（整页都是自己的话、或都是留痕）：不画横幅。画一条「以下 0 条是新的」
-			// 比不画更糊涂，而且它还会把落点抢走 —— 人进来会停在一条空线上。
-			if (count > 0) rows.push({ type: "unread", key: `u-${message.seq}`, count });
+			const count = messages.filter((item) => item.seq > unreadBefore && !(item.kind === "note" && item.noteOf !== "run")).length;
+			rows.push({ type: "unread", key: `u-${message.seq}`, count });
 		}
 
 		if (previous !== undefined) {

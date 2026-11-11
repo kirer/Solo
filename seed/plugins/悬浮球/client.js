@@ -351,6 +351,9 @@ export default {
 	style: `
 		/* 整块浮在最上层：只有球和面板接事件，别的地方不挡点击。 */
 		.orb { position: fixed; z-index: 70; pointer-events: none; }
+		/* .orb 自己是 pointer-events:none，伪元素的 ::before 撑不出命中目标 ——
+		   把容器改成 auto、再把球/气泡/菜单的 auto 收掉不现实（它们本来就要能点）。
+		   所以热区由**一个真元素** .orb-hit 撑，见下方样式与渲染。 */
 		/* 球面是一个站着的小人（纸片），不再是一颗抽象球或一块标识方块。
 		   选「纸上低对比 + 一颗蓝点」是因为它要在壁纸上待一整天：安静时几乎不动，
 		   不跟屏幕上别的东西抢注意力；一开口，姿态和嘴自己说话。 */
@@ -379,7 +382,15 @@ export default {
 		/* 贴边：只留一条边。悬停滑出来，松手不动它就还回去 —— 和 dsh 那颗球一个意思。 */
 		.orb[data-docked="true"] .orb-ball { transform: translateX(68px); }
 		.orb[data-docked="true"] .orb-ball:hover { transform: none; }
-
+		/* 贴边只露 12px 缝，人手扫不进去。滑出靠 [data-peek]：window 上 mousemove 判
+		 * 鼠标贴到右缘时点亮。热区只占窗内 12px，不往左多伸一个像素。 */
+		.orb-hit {
+			position: absolute;
+			top: 0; bottom: 0; left: 0; width: 12px;
+			pointer-events: auto;
+			background: transparent;
+		}
+		.orb[data-docked="true"][data-peek="true"] .orb-ball { transform: none; }
 		/* 小人填满球面；SVG 自己带身体，按钮只负责阴影与命中。 */
 		.orb-mark { display: block; width: 80px; height: 96px; overflow: visible; }
 		.orb-mark svg { display: block; width: 100%; height: 100%; overflow: visible; }
@@ -527,6 +538,15 @@ export default {
 		.orb-menu button:hover { background: var(--hover); }
 		.orb-menu button:disabled { color: var(--ink-3); cursor: default; }
 		.orb-menu button:disabled:hover { background: transparent; }
+		/* 菜单项前的状态点：亮 = 开着，灰 = 关着。语音两项点完原来屏幕上零变化，
+		 * 老板的结论就是「点了没反应」。绝对定位占位、不参与排版，文字才对齐。 */
+		.orb-menu button[data-on] { position: relative; padding-left: 19px; }
+		.orb-menu button[data-on]::before {
+			content: ""; position: absolute; left: 6px; top: 50%;
+			width: 5px; height: 5px; margin-top: -2.5px; border-radius: 50%;
+			background: var(--line, #c9c2b4); opacity: 0.55;
+		}
+		.orb-menu button[data-on="true"]::before { background: var(--accent, #4b7bec); opacity: 1; }
 
 		/* 设置里的「悬浮球语音」一页：和 Token 用量同一套骨架（抬头 → 内容），
 		   一个容器查询管宽窄（设置那张 800 弹窗里宽、右栏 / 手机上窄）。 */
@@ -804,6 +824,8 @@ export default {
 				WINDOW_MODE ? 20 : (prefs.top ?? Math.round((typeof window === "undefined" ? 640 : window.innerHeight) * 0.36)),
 			);
 			const [docked, setDocked] = useState(WINDOW_MODE ? false : prefs.docked);
+			/** 贴边时鼠标贴到窗口右缘：球滑出来。不放宽热区——宽了就压正文。 */
+			const [peek, setPeek] = useState(false);
 			const [menu, setMenu] = useState(false);
 			const [detail, setDetail] = useState(null);
 			/** 最近一条要告诉用户的错。**不再往面板里写**：没有面板了，它冒在头顶。 */
@@ -838,6 +860,9 @@ export default {
 			const bubbleRef = useRef(null);
 			/** 气泡自己的流水号（DOM 上的 `id` 是字符串，不能拿来数数）。 */
 			const bubbleSeq = useRef(1);
+			/** `bubbleShow` 的转发口：它定义在 early-return 之后，前面的调用会撞 `const` 死区。 */
+			const showBubbleRef = useRef(() => {});
+			const hideBubbleRef = useRef(() => {});
 			/**
 			 * 冒泡的「信箱」：上面那条挑消息的 effect 跑在渲染中间，这儿只放进去，
 			 * 真正冒出来交给下面那个 effect —— 在 effect 里 setState 才不会打架。
@@ -1427,6 +1452,24 @@ export default {
 				return () => window.removeEventListener("resize", onResize);
 			}, []);
 
+			// 贴边滑出：鼠标贴到窗口右缘就算。热区一宽就压正文，右边栏按钮就点不到。
+			useEffect(() => {
+				if (!docked || WINDOW_MODE) return undefined;
+				const onMove = (event) => {
+					const nearEdge = window.innerWidth - event.clientX <= 12;
+					const inBand = event.clientY >= top - 16 && event.clientY <= top + BALL + 16;
+					setPeek(nearEdge && inBand);
+				};
+				const off = () => setPeek(false);
+				window.addEventListener("mousemove", onMove, { passive: true });
+				window.addEventListener("blur", off);
+				return () => {
+					window.removeEventListener("mousemove", onMove);
+					window.removeEventListener("blur", off);
+					setPeek(false);
+				};
+			}, [docked, top]);
+
 			// 悬停**不再展开任何东西**：没有面板可展开了。悬停只做两件小事 ——
 			// 独立窗里把命中接上（否则点不到），贴着边时滑出来。
 			const enter = () => {
@@ -1517,6 +1560,7 @@ export default {
 					return;
 				}
 				cancelHover();
+				hideBubbleRef.current();
 				if (docked) {
 					// 贴着边点一下 = 先把它请出来，再开菜单。
 					setDocked(false);
@@ -1564,7 +1608,8 @@ export default {
 				setSending(true);
 				sayProblem("");
 				// 我说的话也冒在头顶：不冒，等它回话那段就只剩一片空白，看不出「听见了没有」。
-				bubbleShow({ text: value, kind: "me" });
+				// 走 ref：`sendText` 定义在 `bubbleShow` 之前，直接调会碰 `const` 的暂时性死区。
+				showBubbleRef.current({ text: value, kind: "me" });
 				try {
 					await api.sendMessage(dmId, { text: value });
 					if (currentId !== dmId) {
@@ -1732,6 +1777,7 @@ export default {
 				setSpeakOn(next);
 				savePrefs({ speak: next });
 				if (!next) stopAudio();
+				showBubbleRef.current({ text: next ? "朗读：开" : "朗读：关", kind: "it" });
 			};
 
 			// ── 常驻听：不用点，开口就说 ───────────────────────────────
@@ -1822,11 +1868,23 @@ export default {
 				}
 			};
 
+			/**
+			 * 开常驻听。**返回「真的听上了没有」**——调用方靠这个决定开关该不该亮。
+			 *
+			 * 2026-11-11 老板定的：开关不许先开。以前是 `setListenOn(true)` 再 `void startListen()`，
+			 * 撞上 `dmId === null` 或者麦克风没权限，就变成「开关显示打开、麦克风根本没开、也不报错」。
+			 * 现在改成先听上、再点开关；听不上就把开关按回去。
+			 */
 			const startListen = async () => {
-				if (listenRef.current !== null || listenBusyRef.current) return;
-				if (dmId === null) return;
+				if (listenRef.current !== null) return true;
+				if (listenBusyRef.current) return false;
+				// 私聊还没加载出来：现在听上了也发不出去，直接说清为什么，别装作在听。
+				if (dmId === null) {
+					sayProblem("私聊还没加载出来，等一下再开");
+					return false;
+				}
 				// 失败也接着试，但别每拍都去撞权限弹窗。
-				if (Date.now() - listenFailRef.current < 8_000) return;
+				if (Date.now() - listenFailRef.current < 8_000) return false;
 				listenBusyRef.current = true;
 				try {
 					let stream;
@@ -1844,7 +1902,7 @@ export default {
 									? "没找到麦克风"
 									: "麦克风打不开",
 						);
-						return;
+						return false;
 					}
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
 					const ctx = new AudioCtx({ sampleRate: TARGET_RATE });
@@ -1854,7 +1912,7 @@ export default {
 						void ctx.close().catch(() => undefined);
 						listenFailRef.current = Date.now();
 						sayProblem("浏览器没让后台听麦克风");
-						return;
+						return false;
 					}
 					const source = ctx.createMediaStreamSource(stream);
 					const node = ctx.createScriptProcessor(4096, 1, 1);
@@ -1931,19 +1989,36 @@ export default {
 					listenBusyRef.current = false;
 					setListening(true);
 					sayProblem("");
+					return true;
 				} catch {
 					listenFailRef.current = Date.now();
+					return false;
 				} finally {
 					listenBusyRef.current = false;
 				}
 			};
 
-			const toggleListen = () => {
-				const next = !listenOn;
-				setListenOn(next);
-				savePrefs({ listen: next });
-				if (!next) stopListen();
-				else void startListen();
+			/**
+			 * 开关「直接说话」。
+			 *
+			 * 先真听上再点亮开关：原来先点亮再 startListen，没开成就留下「亮着却没在听」的假象。
+			 * 现在听上了才亮，听不上按回去。
+			 */
+			const toggleListen = async () => {
+				if (listenOn) {
+					setListenOn(false);
+					savePrefs({ listen: false });
+					stopListen();
+					showBubbleRef.current({ text: "直接说话：关", kind: "it" });
+					return;
+				}
+				// 气泡先出才去开麦：等权限要几百毫秒到几秒，先说「正在打开…」再改口。
+				showBubbleRef.current({ text: "直接说话：正在打开…", kind: "it" });
+				const ok = await startListen();
+				setListenOn(ok);
+				savePrefs({ listen: ok });
+				if (!ok) stopListen();
+				showBubbleRef.current({ text: ok ? "直接说话：开" : "直接说话：没打开", kind: ok ? "it" : "error" });
 			};
 
 			// ── 唤醒词：面板关着的时候常听一小段，听到「你好索罗」就开面板收话 ──
@@ -2100,6 +2175,7 @@ export default {
 					id: bubbleSeq.current++,
 				});
 			};
+			showBubbleRef.current = bubbleShow;
 
 			/** 让它说一句（它自己的话也顺手念出来，念不念由朗读开关决定）。 */
 			const sayBubble = (text, kind = "it", extra = null) => {
@@ -2136,6 +2212,7 @@ export default {
 					setBubbleFading(false);
 				}, BUBBLE_FADE);
 			};
+			hideBubbleRef.current = bubbleHide;
 			/** 重新计时：新的一句冒出 / 窗口尺寸变了，都从这一刻再数 6 秒。 */
 			const bubbleHold = () => {
 				if (bubbleTimer.current !== 0) clearTimeout(bubbleTimer.current);
@@ -2298,19 +2375,6 @@ export default {
 					id: "orb-ball",
 					"aria-label": unread > 0 ? `助理（${String(unread)} 条未读）` : "助理",
 					"aria-expanded": menu ? "true" : "false",
-					"data-tip":
-						// 哑了就先说哑了：唤醒提示再准，也比不上「刚才那句没念出来」要紧。
-						speechProblem !== ""
-							? speechProblem
-							: listenOn
-								? listening
-									? "在听，说完就发"
-									: "直接说话就行"
-								: wakeOn && wakeFail === ""
-									? "说「你好索罗」叫醒，或点一下"
-									: wakeOn
-										? `唤醒没开成：${wakeFail}`
-										: "跟助理说一句",
 					onClick,
 					onPointerDown,
 					onPointerMove,
@@ -2352,6 +2416,7 @@ export default {
 									{
 										type: "button",
 										role: "menuitem",
+										"data-on": "false",
 										disabled: dmId === null,
 										onClick: () => {
 											if (dmId === null) return;
@@ -2366,9 +2431,10 @@ export default {
 							{
 								type: "button",
 								role: "menuitem",
+								"data-on": listenOn ? "true" : "false",
 								onClick: () => {
 									setMenu(false);
-									toggleListen();
+									void toggleListen();
 								},
 							},
 							listenOn ? "关掉「直接说话」" : "打开「直接说话」",
@@ -2378,6 +2444,7 @@ export default {
 							{
 								type: "button",
 								role: "menuitem",
+								"data-on": speakOn ? "true" : "false",
 								onClick: () => {
 									setMenu(false);
 									toggleSpeak();
@@ -2399,8 +2466,26 @@ export default {
 									},
 									"隐藏悬浮球",
 								)
-							: h("button", { type: "button", role: "menuitem", onClick: toggleDock }, docked ? "从边上请出来" : "贴到右边收起"),
-						h("button", { type: "button", role: "menuitem", onClick: recenter }, "回到默认位置"),
+							: h(
+									"button",
+									{
+										type: "button",
+										role: "menuitem",
+										"data-on": docked ? "true" : "false",
+										onClick: toggleDock,
+									},
+									docked ? "从边上请出来" : "贴到右边收起",
+								),
+						h(
+							"button",
+							{
+								type: "button",
+								role: "menuitem",
+								"data-on": "false",
+								onClick: recenter,
+							},
+							"回到默认位置",
+						),
 					)
 				: null;
 
@@ -2432,8 +2517,11 @@ export default {
 				{
 					className: "orb",
 					"data-docked": docked ? "true" : "false",
+					"data-peek": peek ? "true" : "false",
 					style: { right: `${String(right)}px`, top: `${String(top)}px` },
 				},
+				// 贴边热区：不画东西，只让窗口最右那 12px 点得到。
+				docked && !menu ? h("div", { className: "orb-hit", "aria-hidden": "true" }) : null,
 				bubbleBox,
 				menuBox,
 				ball,
@@ -2449,7 +2537,6 @@ export default {
 					type: "button",
 					className: "app-entry",
 					id: "rail-orb-voice",
-					"data-tip": "悬浮球语音",
 					"aria-label": "悬浮球语音",
 					"aria-current": active ? "true" : "false",
 					onClick: () => store.openPluginView(SLUG),

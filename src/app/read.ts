@@ -180,18 +180,20 @@ export function createRead(shell: CoreServices, snapshots: Snapshots) {
 			readonly limit?: number | undefined;
 			readonly before?: number | undefined;
 			readonly around?: number | undefined;
+			readonly after?: number | undefined;
 		} = {},
 	): Promise<ViewChannelDetail> {
 		const { directory, channels, assistants, teamDoingOf } = await snapshots.snapshot();
 		const channel = channels.channels[id];
 		if (channel === undefined) throw new AppError("not-found", "频道不存在或无权查看");
-		const { limit, before, around } = options;
+		const { limit, before, around, after } = options;
 		return channelDetail(channels, channel, directory, {
 			assistants,
 			teamDoingOf,
 			...(limit !== undefined && Number.isFinite(limit) && limit > 0 ? { limit } : {}),
 			...(before !== undefined && Number.isFinite(before) && before > 0 ? { before } : {}),
 			...(around !== undefined && Number.isFinite(around) && around > 0 ? { around } : {}),
+			...(after !== undefined && Number.isFinite(after) && after > 0 ? { after } : {}),
 		});
 	}
 

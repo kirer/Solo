@@ -1,6 +1,6 @@
 {
 	"name": "solo",
-	"version": "2.9.8",
+	"version": "2.9.12",
 	"private": true,
 	"type": "module",
 	"main": "desktop/dist/main.js",
@@ -26,6 +26,7 @@
 		"desktop:dist:mac": "npm run desktop:build && electron-builder --mac --arm64 --publish never",
 		"desktop:dist:win": "npm run desktop:build && electron-builder --win --x64 --publish never",
 		"ui:build": "npm run ui:third-party && npm run ui:assets && vite build --config ui/app/vite.config.ts",
+		"ui:prune": "node --experimental-strip-types scripts/prune-assets.ts",
 		"ui:typecheck": "tsc -p ui/app/tsconfig.json --noEmit",
 		"ui:third-party": "node --experimental-strip-types scripts/third-party.ts",
 		"ui:assets": "node --experimental-strip-types scripts/plugin-assets.ts"

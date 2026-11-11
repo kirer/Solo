@@ -390,6 +390,7 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 					before: numberParam(url, "before"),
 					// `around=<seq>`：跳到某条老消息时只取它两边一页，不把整个频道拉回来。
 					around: numberParam(url, "around"),
+					after: numberParam(url, "after"),
 				});
 				return json(response, detail);
 			},
