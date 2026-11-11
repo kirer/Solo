@@ -579,7 +579,20 @@ function Attachments(props: {
 							className="attach-thumb"
 							onClick={() => props.onImage(uploadUrl(item.id))}
 						>
-							<img src={uploadUrl(item.id)} alt={item.name} loading="lazy" />
+							{/* 列表里这一格只要看得清，不该拉原图：加 `?preview=1` 走后端缩图。
+							    点开大图那一下仍然用原图地址（上面 `onImage`）。 */}
+							<img
+								src={`${uploadUrl(item.id)}?preview=1`}
+								alt={item.name}
+								loading="lazy"
+								onError={(event) => {
+									// 缩图编不出来（后端返回坏图）时退回原图，不能留个白框。
+									const node = event.currentTarget;
+									if (node.dataset.fallback === "1") return;
+									node.dataset.fallback = "1";
+									node.src = uploadUrl(item.id);
+								}}
+							/>
 						</button>
 					))}
 				</div>
