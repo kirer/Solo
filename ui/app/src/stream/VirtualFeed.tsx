@@ -31,6 +31,15 @@ const OVERSCAN_PX = 1200;
  */
 const DEFAULT_HEIGHT = 72;
 
+/**
+ * 没量过的行估高度时的下限。
+ *
+ * 实测：一页 60 条按平均值估 4094px，真值 5716px —— 差 1600。人往上一滚，挂着的行换了一批，
+ * 被回收的那批退回平均，总高就往下掉一截；`H` 一掉，`scrollTop` 被夹小，手感是「被拽回去」。
+ * 所以估算只许高估：宁可滚动条略长，也不许总高往下掉。
+ */
+const GUARD_HEIGHT = 88;
+
 /** 一行最小该有的样子：一个稳定的 key（对高度表用）。 */
 export type VirtualFeedItem = { readonly key: string };
 
@@ -107,6 +116,21 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 
 	/** 量到过的高度，按行 key 存。换频道清空。 */
 	const heights = useRef(new Map<string, number>());
+	/**
+	 * 每个 key 量到过的每一个高度（从大到小记）。
+	 *
+	 * 为什么留这个：估算误差的根子是「**已经量过的行被回收之后，高度又变回平均值了**」——
+	 * 按平均值算，60 行估 4094、真值 5716，差 1600px；人往上滚、挂着的行换了一批，
+	 * 被回收的那批退回平均值，`scrollHeight` 就跟着掉。`H` 一掉，`scrollTop` 就被夹小，
+	 * 用户的手感是「被拽回去」。
+	 *
+	 * 所以量过的行永远保持它量到过的高度：回收之后用**最大**的那个历史值。
+	 * 只量到一次（比如图片没加载完）也不怕 —— `measure()` 拿的是 `getBoundingClientRect`
+	 * 的真值，图片加载完 `ResizeObserver` 会再报一次更大的，历史值取最大即可。
+	 */
+	const known = useRef(new Map<string, number>());
+	/** 最近一次挂出来的那些行的真值之和，除以条目数就是「现在这一屏每行平均多少」。 */
+	const liveTotal = useRef(0);
 	/** 量不到时的估计值：所有量到的高度的平均。空的时候用 `DEFAULT_HEIGHT`。 */
 	const estimate = useRef(DEFAULT_HEIGHT);
 	/** 每个挂出来的行到它的观察器；行卸掉时断开，不然观察器会攒。 */
@@ -129,6 +153,7 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	// 换频道：高度表作废，否则上一个频道的行高会套到这个频道上（图片、长文差别很大）。
 	useLayoutEffect(() => {
 		heights.current.clear();
+		known.current.clear();
 		estimate.current = DEFAULT_HEIGHT;
 		layout.current = { starts: [], heights: [], total: 0, estimate: DEFAULT_HEIGHT };
 		setReady(false);
@@ -147,10 +172,21 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 	 */
 	const rebuild = useCallback(() => {
 		rebuildCount.current += 1;
+		// 估算只往上取：没量过的行按下限估，宁高不宁低。
+		// 估矮了，人往上一滚、挂着的行换一批、被回收的那批退回平均值，总高就往下掉 ——
+		// 那就是「滚上去被拽下来」。估高一点只是滚动条略长，人不会看出来。
+		// 「宁高不宁低」写成硬的下限：不管平均收敛到多少，没量过的行至少按 88 估。
+		// 实测一页 60 条估 4094、真值 5716，差 1600px —— 平均值收敛得太低，人往上滚时
+		// 被回收的行退回平均，总高就一段段往下掉。
+		// 但反过来也不能无限高：估 88 时渲染出的行比估的高，总高还是往下掉。所以估出来的
+		// 总数一旦低于真值，就把下限抬到「真值 ÷ 没量过的行数」—— 总高只升不降。
+		const unmeasured = Math.max(1, items.length - known.current.size);
+		const live = liveTotal.current / unmeasured;
+		const guard = Math.max(estimate.current, GUARD_HEIGHT, live);
 		const heightOf = (index: number): number => {
 			const item = items[index];
 			if (item === undefined) return 0;
-			return heights.current.get(item.key) ?? estimate.current;
+			return known.current.get(item.key) ?? guard;
 		};
 		const starts: number[] = [];
 		const list: number[] = [];
@@ -394,10 +430,16 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 			const before = heights.current.get(key);
 			if (before !== undefined && Math.abs(before - height) < 1) return;
 			heights.current.set(key, height);
-			// 估计值跟着走：已经量过的那些的平均，比固定常数准得多。
-			let sum = 0;
-			for (const value of heights.current.values()) sum += value;
-			estimate.current = sum / heights.current.size;
+			const knowledge = known.current.get(key) ?? 0;
+			if (height > knowledge) known.current.set(key, height);
+			let live = 0;
+			for (const value of heights.current.values()) live += value;
+			liveTotal.current = live;
+			// 估计值跟着走：**所有量到过的行**的平均，比「当前挂着的这几行」稳得多。
+			// 只按挂着的算，换一批行平均就变一次，`scrollHeight` 跟着忽高忽低。
+			let all = 0;
+			for (const value of known.current.values()) all += value;
+			estimate.current = known.current.size === 0 ? DEFAULT_HEIGHT : all / known.current.size;
 			rebuild();
 			recompute();
 		},
@@ -452,7 +494,7 @@ export function VirtualFeed(props: VirtualFeedProps): JSX.Element {
 		for (let index = from; index < to; index += 1) {
 			const item = items[index];
 			if (item === undefined) continue;
-			sum += heights.current.get(item.key) ?? estimate.current;
+			sum += known.current.get(item.key) ?? estimate.current;
 		}
 		return sum;
 	};

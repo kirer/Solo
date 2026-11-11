@@ -22,6 +22,7 @@ import { seqOfRow, VirtualFeed } from "./VirtualFeed.tsx";
 const OWNER_SLUG = "owner";
 import type { VirtualFeedHandle } from "./VirtualFeed.tsx";
 import { Slot } from "../plugin/Slot.tsx";
+import { createLoadQueue } from "../state/load-queue.ts";
 import { loadAround, loadEarlier, openPerson, openTasks, setReply } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 
@@ -324,11 +325,28 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		return () => cancelAnimationFrame(frame);
 	}, [currentId, toBottom, unreadBefore, isPinned]);
 
+	/**
+	 * 一页一页地补历史。
+	 *
+	 * 触发点有好几个（`scroll`、`wheel`、每帧兜底、首帧），同一个动作会被看好几眼。
+	 * 全丢不行的（用户就停在那儿不动了），全发更不行（一次灌几千条、`H` 涨到 24 万）。
+	 * 所以走这个闸门：**一次只跑一页，跑完若还欠再跑一页**，永远不会并发两页。
+	 */
+	const earlierQueue = useRef<ReturnType<typeof createLoadQueue> | null>(null);
+	if (earlierQueue.current === null) {
+		// **一次用户动作最多补一页**（第二参数默认 `false`）：这一页回来之后不自动续，
+		// 要补下一页得等用户再动一次。否则贴顶那一刻几路触发点轮流转，一页接一页把
+		// 上面几千条全拉下来 —— 实测 `items` 5031、`H` 24 万 px，手感是「手指不动、字自己往上飞」。
+		earlierQueue.current = createLoadQueue(async () => {
+			await loadEarlier();
+		});
+	}
+
 	const onTop = useCallback(() => {
-		if (!hasMoreAbove || loadingEarlier) return;
+		if (!hasMoreAbove) return;
 		rememberAnchor();
-		void loadEarlier();
-	}, [hasMoreAbove, loadingEarlier, rememberAnchor]);
+		earlierQueue.current?.want();
+	}, [hasMoreAbove, rememberAnchor]);
 
 	/**
 	 * 手上留多少屏。低于这个数就接着补历史。
@@ -355,35 +373,40 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	/**
 	 * 上翻自动补历史：手上不够 8 屏就自己加载，没有按钮。
 	 *
-	 * 两个触发点：手上高度不足 8 屏，以及滚到离顶 120px 以内（提前补，别等贴到顶）。
-	 * 补完还不够高，`loadingEarlier` 落回 false 时这个 effect 会再跑一次，接着补。
+	 * 两个触发点：手上高度不足 8 屏（只办一次，首帧办完就够），以及滚到离顶 120px 以内。
+	 * **一次只补一页**：贴顶了用户再滚一下再补一页，宁可几次小的，不要一次大的。
 	 * 补进来的内容由 `pendingAnchor` / `settleAnchor` 把「字往下跑」补回来 ——
 	 * 少了这一步，补完人还停在顶上，等于白补。
 	 */
 	useEffect(() => {
 		const flow = flowRef.current;
 		if (flow === null) return;
-		const maybeLoad = (): void => {
+		/**
+		 * @param userMoving 人是不是正在动（滚轮/触摸，或刚停手）。手指不动的时候一律不补：
+		 *   补完还贴着顶，下一帧又看见贴顶，一页页连下去 —— 字就自己往上飞了。
+		 */
+		const maybeLoad = (userMoving: boolean): void => {
 			const nearTop = flow.scrollTop < 120;
 			const tooSmall = flow.scrollHeight < flow.clientHeight * MIN_HAND_PX;
 			if (!tooSmall) handFull.current = true;
-			// 「手上够 8 屏」这件事办完一次就够；之后只在真贴到顶时才补。
-			const need = nearTop || (tooSmall && !handFull.current);
-			if (need && hasMoreAbove && !loadingEarlier) onTop();
+			// 手上够 8 屏这件事只在首帧办一次；之后**只有真贴到顶、而且是人在动**才补一页。
+			const need = tooSmall && !handFull.current ? true : nearTop && userMoving;
+			if (need && hasMoreAbove) onTop();
 		};
-		flow.addEventListener("scroll", maybeLoad, { passive: true });
-		const frame = requestAnimationFrame(maybeLoad);
+		const onScroll = (): void => maybeLoad(true);
+		flow.addEventListener("scroll", onScroll, { passive: true });
+		const frame = requestAnimationFrame(() => maybeLoad(false));
 		/**
 		 * 兜底：不靠 `scroll` 事件也照样补。
 		 *
 		 * 真窗口里量到过「`#flow` 滚得动、`scrollTop` 也在变，`scroll` 事件却一次没发」——
 		 * 事件根一断，「滚到顶才补」就永远等不到，人往上一路滚到 0，看见的像消息被删光。
 		 * 所以再挂一路 `wheel`（用户滚动一定先过它），以及一个只在「手动滚动」期间跑的
-		 * 帧循环：滚动过程中每帧看一眼，滚完就停，不吃 CPU。两路是加倍的，`onTop()` 自己有
-		 * `loadingEarlier` 拦着，不会重复请求。
+		 * 帧循环：滚动过程中每帧看一眼，滚完就停，不吃 CPU。几路是加倍的，但 `onTop` 后面
+		 * 有单页闸门，最多欠一页，不会并发、也不会一次灌几千条。
 		 */
 		const tick = (): void => {
-			maybeLoad();
+			maybeLoad(scrolling.current);
 			if (scrolling.current) frameLoop = requestAnimationFrame(tick);
 		};
 		let frameLoop = 0;
@@ -396,6 +419,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			if (stopTimer.current !== 0) clearTimeout(stopTimer.current);
 			stopTimer.current = window.setTimeout(() => {
 				scrolling.current = false;
+				// 停手之后再给一次机会：人贴着顶停住，就是想接着看更早的。
+				maybeLoad(true);
 				stopTimer.current = 0;
 			}, 200);
 		};
@@ -403,7 +428,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		scroller.addEventListener("wheel", onWheel, { passive: true });
 		scroller.addEventListener("touchmove", onWheel, { passive: true });
 		return () => {
-			scroller.removeEventListener("scroll", maybeLoad);
+			scroller.removeEventListener("scroll", onScroll);
 			scroller.removeEventListener("wheel", onWheel);
 			scroller.removeEventListener("touchmove", onWheel);
 			if (frameLoop !== 0) cancelAnimationFrame(frameLoop);
@@ -411,7 +436,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			scrolling.current = false;
 			cancelAnimationFrame(frame);
 		};
-	}, [hasMoreAbove, loadingEarlier, onTop, messages]);
+	}, [hasMoreAbove, onTop, messages]);
 
 	/**
 	 * 双击整行复制正文。
