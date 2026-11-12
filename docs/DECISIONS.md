@@ -3015,3 +3015,74 @@ API 不通时退回原来的直链（有些网络反过来），自建更新源�
 （建会话时给全）、`src/core/channel/tools/file.ts`（`persist` + `edit` 分支）、
 `src/core/channel/tools/search.ts`、`seed/text/tools.md`、`seed/skills/工程做法/SKILL.md`；
 `test/core/{model-switch,tools-actions}.test.ts`。
+
+## ADR-126 额外工作目录：用户亲手加的目录，`file` / `search` 才够得到
+
+**背景**：对真实运行数据抽样（1,077 次 `run` 调用）：51% 的 shell 操作发生在
+`~/projects/ai-company` 这个仓库里，17% 在 `/tmp`，只有约 10% 落在两个根内。也就是说
+agent 大量用 `run` + `cat` / `sed -i` / heredoc 改代码，不是提示词没教，是 `file` / `search`
+**够不到**那些目录（同窗口里 `file` 只被调用 47 次、`search` 1 次）。ADR-125 补了 `edit`
+与 `search`，但路径解析仍只认两个根，工具就还是半个摆设。
+
+**决定**：
+
+1. **`settings.json` 加 `workDirs`（与 `providers` 同级），默认没有这个键**。里面是用户
+   在「设置 → 工作目录」里亲手加的**绝对路径**；`~` 在保存时展开。未配置时
+   `file` / `search` 的行为与以前逐字一样 —— **只有一处例外**：绝对路径被拒时的话术换成了
+   新的（见第 5 条）。这是**有意的行为变化**，老文案「路径在工作区之外」不再出现。
+2. **只有显式给出绝对路径才进额外目录**。默认搜的 `.` 仍然只搜组织目录 —— 配置了目录
+   不等于把它顺带扫进每次搜索结果。相对路径的规则一字不改（第一段决定落哪个根），
+   额外目录**不做**相对路径的第二个根：那样会静默换根，同一个 `members/x` 在两处都存在时
+   没人说得清落到了哪。
+3. **边界不因为多了一个根而放松**：
+   - `..` 仍然拒（`resolveToolPath` 与原来的 `resolveInOrUndefined` 同一判据：解析后的
+     `relative()`），额外目录只是多了一个允许的根；
+   - **应用私有目录永远不开放**：额外目录若包含 `<appRoot>`（把家目录加进来就会发生），
+     落在 `<appRoot>` 里的绝对路径一律按「不开放」拒 —— `settings.json` 里有 apiKey、
+     `.secrets.json`、`core.sqlite`、附件都在那儿；
+   - `.secrets.json`、`core.sqlite*`、`settings.json` 按文件名在**任何根里**都不开放。
+     `settings.json` 的理由比「里面有 apiKey」更重：`file` 能写它就能改 `workDirs` 给自己加
+     任意目录 —— 同一轮里先写配置、下一次调用边界就变了，这是提权。改配置只有一条路：
+     用户在界面上亲手改。`search` 遇到这几个名字直接跳过（不报错），否则「从一个宽目录搜
+     下来」照样能把 apiKey 那行原文捞出来；
+   - **软链按真实位置判**：两边都 `realpath` 解析（目标还不存在时按父目录解析，所以「新建
+     一个文件」走不过去；中间段是软链也解），解析后仍在允许的根里才放行。绝对路径侧真实位置
+     落在 `<appRoot>` 里就拒，所以额外目录里一条 `ln -s <appRoot> appdir` 打不开（只比字面时
+     它能读到 apiKey 和整个库）。相对路径侧用**同一个落点集合**：真实位置必须是工作区 / 组织
+     目录 / 额外目录之一，落到 `<appRoot>` 就按同一条「不开放」拒绝 —— 否则同一个文件相对
+     路径读得到、绝对路径读不到，用户只会当成坏了。第一段本来就是应用侧的（`assistant/…`、
+     `uploads/…`）不受这条影响，它词法上就在应用根里，是命名的命名空间不是绕路；
+     落点集合不能省：`members/x` 里一条 `ln -s ~/.solo-secrets/token link.txt` 词法上在
+     组织目录下面，不判真实落点就把范围外的文件读出来了；
+   - 搜索仍然跳过依赖、日志、附件与二进制。
+4. **校验只在「加进来」这一刻发生**（`app/preferences.ts`）：必须是绝对路径、必须存在、
+   必须是目录、不能是磁盘根 `/`；一条不合格整份拒绝，不写一半。读取时丢掉非法条目
+   （`workDirsOf`）—— 一份坏条目不该让服务起不来，目录后来被删也只是路径解析不命中。
+5. **两个工具走同一处解析**（`guards.ts` 的 `resolveToolPath`），`file` 的 read / write /
+   edit 与 `search` 的 grep / glob 都覆盖。拒绝理由分三种：`outside`（越界）、
+   `outside + absolute`（没配置，提示去设置里加 —— **话术是新的**：「这个目录不在工具能去的
+   范围里……在那之前用 `run`」）、`protected`（密钥 / 库 / 应用私有）。老那句「路径在工作区
+   之外」不再出现：它没告诉模型下一步怎么办，模型就回头改用 `run` 里的 `sed`。
+6. **改完立刻生效**：工具每次调用现读 `settings.json`（`CoreToolDeps.workDirs` 是函数），
+   加 / 删目录不用重启。
+7. **搜索结果按实际起点显示路径**：相对起点的命中仍是组织内相对路径；绝对起点的命中
+   显示绝对路径 —— 一眼能看出这一条不在组织里。
+
+**替代方案**：把 `~/projects` 之类默认写进提示词 —— 等于默认放开，且每台机器不一样；
+让 `run` 的沙箱管这件事 —— 沙箱是另一条路（shell），治不了 `file` / `search` 够不到的问题，
+也测不了「落盘/搜索走的是哪条解析」；给每个额外目录配别名 —— 用户要记两套名字，模型也
+要多学一层映射。
+
+**代价**：这是安全边界的开口。它靠「用户亲手加 + 绝对路径 + 应用私有目录与密钥库仍拒」
+把口子收窄，但用户把一个包含敏感内容的目录加进来时，`file` 就能读写其中的普通文件 ——
+这是用户自己的选择，ADR 的要求是**不能默认发生**。路径比对会 `realpath` 解析
+（两边都解，目标不存在时按父目录拼）：额外目录里指向敏感位置的软链打不开，指向允许范围
+内部的软链照旧可用。
+
+**执行**：`src/core/runtime/settings.ts`（`workDirs` / `expandHomePath` / `workDirsOf` /
+`readWorkDirs`）、`src/core/channel/tools/guards.ts`（`resolveToolPath`）、
+`src/core/channel/tools/{file,search,context}.ts`、`src/shell/assemble.ts`、
+`src/app/preferences.ts`、`src/interface/http/routes.ts`（`/api/preferences` 扩字段）、
+`ui/app/src/panels/SettingsPage.tsx` 的 `WorkDirsRow` + `ui/app/src/api/client.ts`、
+`seed/text/tools.md`；`test/core/{preferences,roots,tools-actions}.test.ts`、
+`docs/WEB-API.md` §13.8。

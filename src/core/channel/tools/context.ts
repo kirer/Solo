@@ -22,6 +22,13 @@ export type CoreToolDeps = {
 	 */
 	readonly layout: Layout;
 	/**
+	 * 用户在设置里加的额外工作目录（`settings.json` 的 `workDirs`，ADR-126）。
+	 *
+	 * 每次调用现读：设置里加一个目录要**立刻**生效，不能等重启。不给 = 空数组，
+	 * `file` / `search` 就只认两个根（没配置时行为和以前逐字一样）。
+	 */
+	readonly workDirs?: () => readonly string[];
+	/**
 	 * 文案目录（`<appRoot>/text/`）：工具描述、参数说明、拒绝话术全在里面。
 	 *
 	 * 必填：缺了它工具只剩键名，模型读到的全是 `hire.fire.done` 这种字符串 ——

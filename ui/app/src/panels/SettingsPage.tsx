@@ -6,7 +6,7 @@
  */
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { getPreferences, savePreferences } from "../api/client.ts";
+import { getPreferences, savePreferences, saveWorkDirs } from "../api/client.ts";
 import { Fold } from "../lib/fold.tsx";
 import { cellsOf } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
@@ -247,6 +247,7 @@ export function SettingsPage(props: { theme: Theme; leaving?: boolean }): JSX.El
 									<Group>
 										<UpdateCheckRow />
 										<UpdateProxyRow />
+										<WorkDirsRow />
 									</Group>
 
 									<Group>
@@ -420,6 +421,125 @@ function UpdateProxyRow(): JSX.Element {
 							保存
 						</button>
 					</div>
+					{error === null ? null : (
+						<p className="set-note" data-error="true">
+							{error}
+						</p>
+					)}
+				</div>
+			</Fold>
+		</div>
+	);
+}
+
+const IconFolder = (): JSX.Element => (
+	<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+		<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2.5h8A1.5 1.5 0 0 1 20.5 10v7A1.5 1.5 0 0 1 19 18.5H5A1.5 1.5 0 0 1 3.5 17z" />
+	</svg>
+);
+
+/**
+ * 工作目录：让 `file` / `search` 能去两个根以外的地方干活（我自己的代码仓库）。
+ *
+ * 这是安全边界的开口，所以入口只在这里、只认用户亲手加的绝对路径（ADR-126）。
+ * 加 / 删都**当场写盘**，下一次工具调用就生效，不用重启 —— 工具侧每次现读
+ * `settings.json` 的 `workDirs`。
+ */
+function WorkDirsRow(): JSX.Element {
+	const [open, setOpen] = useState(false);
+	const [dirs, setDirs] = useState<readonly string[]>([]);
+	const [value, setValue] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	useEffect(() => {
+		let alive = true;
+		getPreferences()
+			.then((prefs) => {
+				if (alive) setDirs(prefs.workDirs);
+			})
+			.catch(() => undefined);
+		return () => {
+			alive = false;
+		};
+	}, []);
+
+	const commit = async (next: readonly string[]): Promise<boolean> => {
+		if (busy) return false;
+		setBusy(true);
+		setError(null);
+		try {
+			const prefs = await saveWorkDirs(next);
+			setDirs(prefs.workDirs);
+			return true;
+		} catch (reason) {
+			setError(reason instanceof Error ? reason.message : String(reason));
+			return false;
+		} finally {
+			setBusy(false);
+		}
+	};
+
+	const add = async (): Promise<void> => {
+		const path = value.trim();
+		if (path === "" || busy) return;
+		if (await commit([...dirs, path])) setValue("");
+	};
+
+	return (
+		<div className="set-proxy">
+			<button type="button" className="set-row" aria-expanded={open} onClick={() => setOpen(!open)}>
+				<RowIcon>
+					<IconFolder />
+				</RowIcon>
+				<span className="set-main">
+					<span className="set-label">工作目录</span>
+					<span className="set-desc">让工具能读写两个根以外的目录，比如你的代码仓库</span>
+				</span>
+				<span className="set-proxy-value">{dirs.length === 0 ? "未设置" : `${String(dirs.length)} 个`}</span>
+				<Chevron up={open} />
+			</button>
+			<Fold open={open}>
+				<div className="set-proxy-body">
+					{dirs.length > 0 ? (
+						<ul className="set-dirs">
+							{dirs.map((dir) => (
+								<li className="set-dir" key={dir}>
+									<span className="set-dir-path" title={dir}>
+										{dir}
+									</span>
+									<button
+										type="button"
+										className="set-dir-remove"
+										aria-label={`移除 ${dir}`}
+										disabled={busy}
+										onClick={() => void commit(dirs.filter((item) => item !== dir))}
+									>
+										移除
+									</button>
+								</li>
+							))}
+						</ul>
+					) : null}
+					<div className="set-proxy-field">
+						<input
+							className="setup-input"
+							type="text"
+							autoComplete="off"
+							spellCheck={false}
+							aria-label="工作目录"
+							placeholder="/Users/你/code"
+							value={value}
+							onChange={(event) => setValue(event.target.value)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter") void add();
+							}}
+						/>
+						<button type="button" className="set-save" disabled={busy || value.trim() === ""} onClick={() => void add()}>
+							添加
+						</button>
+					</div>
+					<p className="set-note">工具只会用它收到的显式路径进这些目录；密钥文件和数据库始终不开放。</p>
 					{error === null ? null : (
 						<p className="set-note" data-error="true">
 							{error}

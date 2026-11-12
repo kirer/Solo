@@ -351,13 +351,13 @@ $ {{command}}
 （命令没起来：{{text}}）
 
 ## file.description
-工作区里的一个文件。`action=read`（默认）读它；`action=write` 整份写它；`action=edit` 只改其中一处（给 `old_string` 和 `new_string`，不用重抄整个文件）。路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。`../` 会被拒。写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员。
+工作区里的一个文件。`action=read`（默认）读它；`action=write` 整份写它；`action=edit` 只改其中一处（给 `old_string` 和 `new_string`，不用重抄整个文件）。相对路径按第一段决定落在哪：`members/…` `teams/…` `skills/…` 是用户目录，`assistant/…` `plugins/…` `prompt/…` 是应用私有目录。要在别处干活（比如我自己的代码仓库）用**绝对路径**，前提是那个目录已经在设置 → 工作目录里加过。`../` 会被拒。写 `teams/<团队>/README.md` 会顺手刷新那个团队的频道成员。
 
 ## file.param.action
 read / write / edit（给了 content 就是 write，给了 old_string 就是 edit，不用再写 action）
 
 ## file.param.path
-文件路径（相对工作区根）
+文件路径。相对工作区根，或者已加入工作目录的目录下的绝对路径
 
 ## file.param.content
 write 必填：文件内容
@@ -379,6 +379,9 @@ read 最多几行，默认 400
 
 ## file.refuse.outside
 路径在工作区之外：{{path}}
+
+## file.refuse.unconfigured
+绝对路径只能用在设置里加过的目录：{{path}} 不在其中。要用绝对路径改自己的仓库，先让人在设置 → 工作目录里把它加进来；在那之前用 `run`。
 
 ## file.refuse.secret
 这个文件不开放。
@@ -443,7 +446,7 @@ edit 要带 new_string（换成什么）。删掉这一段就传空串。
 你还不在名册里，建不了团队。
 
 ## search.description
-在工作区里找东西。`action=grep`（默认）按内容找：`pattern` 是正则（不分大小写），返回 `路径:行号: 那一行`；`action=glob` 按文件名找：`pattern` 是通配符（`*.md`、`teams/**/README.md`）。不给 `path` 就搜整个组织目录（`members/`、`teams/`、`skills/`…）；要给就给相对工作区根的路径。node_modules、日志、附件与二进制文件会跳过。
+在工作区里找东西。`action=grep`（默认）按内容找：`pattern` 是正则（不分大小写），返回 `路径:行号: 那一行`；`action=glob` 按文件名找：`pattern` 是通配符（`*.md`、`teams/**/README.md`）。不给 `path` 就搜整个组织目录（`members/`、`teams/`、`skills/`…）；要给就给相对工作区根的路径，或者已加入工作目录的目录下的绝对路径（结果按绝对路径显示）。node_modules、日志、附件与二进制文件会跳过。
 
 ## search.param.action
 grep / glob
@@ -452,13 +455,19 @@ grep / glob
 grep：正则（不分大小写，写错了按字面量找）；glob：文件名通配符
 
 ## search.param.path
-从哪儿找（相对工作区根），默认整个组织目录
+从哪儿找：相对工作区根，或已加入工作目录的目录下的绝对路径；默认整个组织目录
 
 ## search.param.limit
 最多返回几条，默认 40，最多 200
 
 ## search.outside
 路径在工作区之外：{{path}}
+
+## search.refuse.unconfigured
+绝对路径只能用在设置里加过的目录：{{path}} 不在其中。先让人在设置 → 工作目录里把它加进来；在那之前用 `run` 里的 grep。
+
+## search.refuse.secret
+这个目录不开放。
 
 ## search.empty
 没找到：{{pattern}}

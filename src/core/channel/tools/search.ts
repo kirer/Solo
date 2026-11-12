@@ -13,7 +13,7 @@ import { Type, defineTool } from "../../runtime/index.ts";
 import { listDirSorted, readTextOrUndefined } from "../../runtime/io.ts";
 import { fill } from "../../documents/base/catalog.ts";
 import { actionOf, text, type CoreToolDeps } from "./context.ts";
-import { clip, MODEL_LIMIT, resolveInRoots } from "./guards.ts";
+import { clip, hasDotDot, isProtectedName, MODEL_LIMIT, resolveToolPath } from "./guards.ts";
 
 /** 不进搜索的目录：依赖、版本库、日志、附件、模型缓存。 */
 const SKIP_DIRS = new Set(["node_modules", ".git", "logs", "uploads", "voice", "orb", "im", "release"]);
@@ -70,9 +70,15 @@ export function createSearchTool(deps: CoreToolDeps) {
 			// 不给路径就搜整个组织目录：要用的东西（身份、团队说明、技能、记忆）散在
 			// `members/` `teams/` `skills/` 里，只搜自己的工作目录多半一个都找不到。
 			const start = args.path === undefined || args.path.trim() === "" ? "." : args.path.trim();
-			const root = resolveInRoots(deps.layout, start);
-			if (root === undefined) return text(t("search.outside", { path: start }));
-			// 展示用：把绝对路径去掉，只留工作区里的相对路径。
+			const resolved = resolveToolPath(deps.layout, start, deps.workDirs?.() ?? []);
+			if (resolved.kind === "protected") return text(t("search.refuse.secret"));
+			if (resolved.kind === "outside") {
+				const unconfigured = resolved.absolute && !hasDotDot(start);
+				return text(unconfigured ? t("search.refuse.unconfigured", { path: start }) : t("search.outside", { path: start }));
+			}
+			const root = resolved.path;
+			// 展示用：相对起点的命中给工作区相对路径；绝对起点（额外目录）给绝对路径 ——
+			// 一眼能看出这一条不在组织里，也不会被当成工作区相对路径去读。
 			const base = start === "." || start === "./" ? "" : start.replace(/[\\/]+$/, "");
 
 			let matcher: RegExp | ((line: string) => boolean);
@@ -95,8 +101,10 @@ export function createSearchTool(deps: CoreToolDeps) {
 				if (exhausted || depth > MAX_DEPTH) return;
 				for (const entry of await listDirSorted(abs)) {
 					if (exhausted) return;
-					// 密钥与库对工具不存在（`file` 也是这个口径）：读出来等于把 key 装进上下文。
-					if (entry.name === ".secrets.json" || entry.name.startsWith("core.sqlite")) continue;
+					// 密钥、库、配置对工具不存在（`file` 也是这个口径）：读出来等于把 key 装进上下文，
+					// 而 `settings.json` 里除了 apiKey 还有 `workDirs` 本身。起点被拒是一条路，
+					// 「从一个宽目录搜下来」是另一条 —— 这里直接跳过，不报错（黑名单文件不该让整次搜索失败）。
+					if (isProtectedName(entry.name)) continue;
 					const entryAbs = join(abs, entry.name);
 					const entryRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
 					const shown = base === "" ? entryRel : `${base}/${entryRel}`;

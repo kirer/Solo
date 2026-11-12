@@ -143,13 +143,20 @@ export const restartApp = (): Promise<{ ok: true; restarting: true }> =>
 /** 现在生效的模型（`provider/modelId`）。settings.json 里刚加的提供商要重启才进这里。 */
 export const getModels = (): Promise<{ models: string[]; defaultModel: string }> => call("/api/models");
 
-/** 界面偏好（现在只有更新代理）：存在 settings.json，桌面壳下载新版时读它。 */
-export type Preferences = { updateProxy: string };
+/**
+ * 界面偏好：更新代理（桌面壳下载新版时读它）与额外工作目录（`file` / `search`
+ * 在两个根之外还能访问的目录）。都存在 `settings.json`。
+ */
+export type Preferences = { updateProxy: string; workDirs: readonly string[] };
 
 export const getPreferences = (): Promise<Preferences> => call("/api/preferences");
 
 export const savePreferences = (updateProxy: string): Promise<Preferences> =>
 	call("/api/preferences", { method: "POST", body: JSON.stringify({ updateProxy }) });
+
+/** 只改工作目录；保存后下一次工具调用就生效（不用重启）。 */
+export const saveWorkDirs = (workDirs: readonly string[]): Promise<Preferences> =>
+	call("/api/preferences", { method: "POST", body: JSON.stringify({ workDirs }) });
 
 /** 第一次打开时选中的那一个（和后端 `app/setup.ts` 的三种一一对应）。 */
 export type SetupChoice = "opus" | "sonnet" | "custom";

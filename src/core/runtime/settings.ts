@@ -6,7 +6,8 @@
  * 「空文件」然后整份重写，结果一个手滑的逗号就能把全部提供商抹掉。
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 export type ProviderConfig = {
 	readonly id: string;
@@ -31,7 +32,56 @@ export type Settings = {
 	readonly providers?: readonly ProviderConfig[];
 	/** slug → `provider/modelId`：这个人单独用哪只模型。 */
 	readonly agentModels?: Readonly<Record<string, string>>;
+	/**
+	 * 额外工作目录（绝对路径）：`file` / `search` 在这两个根之外还能访问的目录。
+	 *
+	 * 只有用户亲手在设置里加的才在里面（ADR-126）。空数组 / 缺省 = 跟以前完全一样：
+	 * `file` 与 `search` 只认两个根。目录不存在或不是绝对路径的条目读取时被丢掉 ——
+	 * 一份坏条目不该让整个服务起不来。
+	 */
+	readonly workDirs?: readonly string[];
 };
+
+/** `~/x` → `<home>/x`；`~` → 家目录；其它原样。 */
+export function expandHomePath(path: string): string {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/") || path.startsWith("~\\")) return join(homedir(), path.slice(2));
+	return path;
+}
+
+/**
+ * 配置里的额外工作目录，规整成可以直接比对的绝对路径。
+ *
+ * 只留下绝对路径的条目：相对路径的含义取决于进程从哪儿启动，同一份配置在两台机器上
+ * 会指向不同地方 —— 这种「静默不同」比直接不生效更难查。去重时保留第一次出现的顺序。
+ */
+export function workDirsOf(settings: Settings | undefined): readonly string[] {
+	const raw = settings?.workDirs;
+	if (raw === undefined) return [];
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const entry of raw) {
+		if (typeof entry !== "string") continue;
+		const trimmed = entry.trim();
+		if (trimmed === "") continue;
+		const expanded = expandHomePath(trimmed);
+		if (!isAbsolute(expanded)) continue;
+		const normalized = resolve(expanded);
+		if (seen.has(normalized)) continue;
+		seen.add(normalized);
+		out.push(normalized);
+	}
+	return out;
+}
+
+/** 读一份 settings 里的额外工作目录。文件坏了 / 没有 = 空数组（工具照旧只认两个根）。 */
+export function readWorkDirs(file: string): readonly string[] {
+	try {
+		return workDirsOf(readSettingsFile(file));
+	} catch {
+		return [];
+	}
+}
 
 /** 文件存在但读不懂。调用方必须把这句话交给用户，不能当成「没有配置」。 */
 export class SettingsFileError extends Error {
@@ -63,6 +113,13 @@ function shapeProblem(settings: Record<string, unknown>): string | undefined {
 		if (!isRecord(agentModels)) return "agentModels 必须是对象";
 		for (const [slug, value] of Object.entries(agentModels)) {
 			if (typeof value !== "string") return `agentModels.${slug} 必须是字符串`;
+		}
+	}
+	const workDirs = settings["workDirs"];
+	if (workDirs !== undefined) {
+		if (!Array.isArray(workDirs)) return "workDirs 必须是数组";
+		for (const [index, entry] of workDirs.entries()) {
+			if (typeof entry !== "string") return `workDirs[${String(index)}] 必须是字符串`;
 		}
 	}
 	const providers = settings["providers"];

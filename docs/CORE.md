@@ -126,8 +126,8 @@ V3 起，提示词 = **磁盘上的模板 + 磁盘上的事实**。`loadTemplate
 | `hire` | 新建一个 agent（写文件夹 + 开会话 + 拉进全员频道与团队频道） |
 | `route` | 助理专用：把频道里的一条消息在**后台**交给该看的人（默认 `seq` = 我刚被叫醒的那条）；频道里不出现「转交」 |
 | `run` | 执行一条 shell 命令；`background: true` = 丢到后台跑（最多 30 分钟），跑完结果回到起跑的那个频道并叫醒起跑的人；`&` / `nohup` 是纯脱手，永远没有回音 |
-| `file` | `action=read` / `write` / `edit`：工作区里的一个文件。`edit` 只换一处（`old_string` → `new_string`），命中多处要 `replace_all` |
-| `search` | `action=grep`（默认）按内容找、`action=glob` 按文件名找；不传 `path` 搜整个组织目录 |
+| `file` | `action=read` / `write` / `edit`：工作区里的一个文件。`edit` 只换一处（`old_string` → `new_string`），命中多处要 `replace_all`。相对路径按第一段落两个根；已加入「工作目录」的目录可用绝对路径读写（ADR-126） |
+| `search` | `action=grep`（默认）按内容找、`action=glob` 按文件名找；不传 `path` 搜整个组织目录，给了已加入「工作目录」的绝对路径才进那个目录（ADR-126） |
 
 合并的口径一句话：`chats` 收回 `read_channel`，`read_history` 收回 `recall`（`scope`
 区分翻对话还是翻记忆），`hire` 收回建人，`file` 收回读写两个工具，`org` 直接删掉（组织架构在

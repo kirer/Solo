@@ -863,23 +863,38 @@ POST /api/plugins/天气/enabled
 - 校验比探测严：`custom` 必须给 `baseUrl`（`http(s)://`）与 `model`。
 - 密钥和模型管理插件存的是同一处（`settings.json`）；界面上只显示尾号。
 
-## 13.8 `/api/preferences`（界面偏好：更新代理）
+## 13.8 `/api/preferences`（界面偏好：更新代理、额外工作目录）
 
 ```json
 // GET /api/preferences
-{ "updateProxy": "http://127.0.0.1:7890" }   // 没配就是 ""
+{
+  "updateProxy": "http://127.0.0.1:7890",   // 没配就是 ""
+  "workDirs": ["/Users/你/projects/ai-company"] // 没配就是 []
+}
 ```
 
 ```json
 // POST /api/preferences
-{ "updateProxy": "http://127.0.0.1:7890" }   // 空串 = 直连，键会被删掉
+{ "updateProxy": "http://127.0.0.1:7890" }           // 空串 = 直连，键会被删掉
+{ "workDirs": ["/Users/你/projects/ai-company"] }    // 空数组 = 删掉这个键
+{ "updateProxy": "", "workDirs": [...] }             // 两项一起
 ```
 
-- 写 `<appRoot>/settings.json` 的 `updateProxy`，**只动这一个键**（ADR-087）。
-- 校验：空串，或 `http://` / `https://` / `socks5://` 开头；否则
+- 写 `<appRoot>/settings.json`；**只动请求里给了的键**（没发的键原样保留，ADR-087 / ADR-126）。
+- `updateProxy` 校验：空串，或 `http://` / `https://` / `socks5://` 开头；否则
   `400 { "error": "代理地址要以 http:// 或 socks5:// 开头…" }`。
-- 消费者只有桌面壳的更新器（`desktop/src/update-proxy.ts`）；**模型调用不走它**。
+  消费者只有桌面壳的更新器（`desktop/src/update-proxy.ts`）；**模型调用不走它**。
   网页版里这一项存下来不生效（下载由浏览器自己走系统代理）。
+- `workDirs`（额外工作目录，ADR-126）：让 `file` / `search` 能在两个根以外的目录里工作。
+  - 必须是**绝对路径**（`~` 在保存时展开），必须存在，必须是目录；不能是 `/`；
+    最多 20 个；去重保序。
+  - 一条不合格就**整份拒绝**、不写盘：`400 { "error": "要用绝对路径（例如 /Users/你/code）：…" }`、
+    `400 { "error": "这个目录不存在或打不开：…" }`、`400 { "error": "这是一个文件，不是目录：…" }`。
+  - 存盘后**立刻生效**：工具每次调用现读 `settings.json`，不用重启。
+  - 工具只按**显式绝对路径**进这些目录；相对路径的规则不变（第一段决定落哪个根）。
+    `..` 仍拒；`<appRoot>` 里的东西（`settings.json`、`.secrets.json`、`core.sqlite*`、附件）
+    即使在已配置的目录里面也不开放。
+- 消费者：设置页的「工作目录」一行（`SettingsPage.tsx` 的 `WorkDirsRow`）。
 
 ## 13.9 `GET /api/files/preview?path=`（正文里点到的文件）
 

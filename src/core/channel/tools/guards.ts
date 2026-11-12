@@ -3,8 +3,11 @@
  *
  * 这些是「事后反馈」：模型做错了，工具回一句话让它改，而不是抛错。
  */
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { resolveInOrUndefined } from "../../fsx.ts";
 import { ASSISTANT_DIR, type Layout } from "../../layout.ts";
+import { expandHomePath } from "../../runtime/settings.ts";
 import { fill, type TextCatalog } from "../../documents/base/catalog.ts";
 
 /** 一条 `say` 的上限。不是「存不下」，是「不该在频道里说这么多」。 */
@@ -129,8 +132,129 @@ export function resolveInWorkspace(root: string, path: string): string | undefin
  */
 const APP_SIDE = new Set([ASSISTANT_DIR, "prompt", "plugins", "settings.json", "uploads"]);
 
-export function resolveInRoots(layout: Layout, path: string): string | undefined {
-	const first = path.split(/[\\/]/)[0] ?? "";
+export function resolveInRoots(layout: Layout, path: string, workDirs: readonly string[] = []): string | undefined {
+	const resolved = resolveToolPath(layout, path, workDirs);
+	return resolved.kind === "ok" ? resolved.path : undefined;
+}
+
+/**
+ * `file` / `search` 的路径解析结果。
+ *
+ * 分成三种而不是只回 `undefined`，是因为模型要看到**为什么**没成：
+ * - `outside`：`..` 越界，或者一个绝对路径不在任何已配置的目录里（后者要说「去设置里加」，
+ *   否则它只会以为工具坏了，回头改用 `run` 里的 `sed`）；
+ * - `protected`：密钥与库不开放（用户把整个家目录加进来时，应用私有目录也在里面）。
+ */
+export type ToolPath =
+	| { readonly kind: "ok"; readonly path: string }
+	| { readonly kind: "outside"; readonly absolute: boolean }
+	| { readonly kind: "protected" };
+
+/** 路径里有没有 `..` 段：有就是「往上走」，拒绝理由要说「越界」而不是「没配置」。 */
+export function hasDotDot(path: string): boolean {
+	return /(^|[\\/])\.\.([\\/]|$)/.test(path);
+}
+
+/**
+ * 无论从哪个根进来都不开放的文件名：密钥、库、配置。
+ *
+ * `settings.json` 也在这里，而且理由比「里面有 apiKey」更重：`file` 能写它就能改
+ * `workDirs` 给自己加任意目录 —— 同一轮里先写配置、下一次调用边界就变了，这是提权。
+ * 改配置只有一条路：用户在界面上亲手改。
+ */
+export function isProtectedName(path: string): boolean {
+	const name = basename(path);
+	return name === ".secrets.json" || name === "settings.json" || name.startsWith("core.sqlite");
+}
+
+/**
+ * 尽最大努力把一条路径解成**真实**路径：从它自己往上找第一个存在的祖先，realpath 那一段，
+ * 再把还不存在的尾段拼回去。
+ *
+ * 为什么不直接 `realpathSync`：新建文件的路径本来就不存在，它会抛 —— 于是「写一个新文件」
+ * 这条最常用的路就成了唯一绕过软链检查的路。也正因为要看**中间段**，不能只对末一段判：
+ * `a/link/x.txt` 里的 `link` 指向哪儿，只有整条解出来才知道。
+ */
+function realpathLoose(path: string): string {
+	const abs = resolve(path);
+	let head = abs;
+	const rest: string[] = [];
+	for (;;) {
+		try {
+			const real = realpathSync(head);
+			return rest.length === 0 ? real : resolve(real, ...rest);
+		} catch {
+			const parent = dirname(head);
+			if (parent === head) return abs;
+			rest.unshift(basename(head));
+			head = parent;
+		}
+	}
+}
+
+/** 只看字面的从属判断（不跟软链）：用来发现「词法上在 A、真实在 B」。 */
+function contains(root: string, target: string): boolean {
+	const back = relative(root, target);
+	return back === "" || (back !== ".." && !back.startsWith(`..${sep}`) && !isAbsolute(back));
+}
+
+/**
+ * `target` 是否落在 `root` 里（含根自身）。
+ *
+ * 两边都先解成**真实**路径再比。只比字面时，额外目录里一条 `ln -s <应用根> appdir` 就绕过去了：
+ * 词法上它在目录里面，真实位置却是 `settings.json`（apiKey 在那里）和整个库。软链在**中间段**
+ * （`a/link/x.txt`）同理，所以整条都要解。
+ */
+function isInside(root: string, target: string): boolean {
+	return contains(realpathLoose(root), realpathLoose(target));
+}
+
+/**
+ * 工具看到的一条路径落在哪。
+ *
+ * 相对路径的规矩不变（第一段决定哪个根）。绝对路径只认用户配置的额外工作目录：
+ * **只有显式给了绝对路径才进** —— 默认搜的 `.` 仍然是组织目录，额外目录不会因为
+ * 配置了就被顺带扫进结果里。
+ *
+ * 越界仍然拒绝：`..` 是写错层级的信号（见 `resolveInWorkspace` 的说明），额外目录
+ * 只是拓宽了「允许的根」，不是取消边界。
+ */
+export function resolveToolPath(
+	layout: Layout,
+	path: string,
+	workDirs: readonly string[] = [],
+): ToolPath {
+	// 只把「全是空白」当成默认路径；其余原样解析（文件名里的空格是文件名的一部分）。
+	const expanded = expandHomePath(path.trim() === "" ? "." : path);
+	if (isAbsolute(expanded)) {
+		const target = resolve(expanded);
+		// 绝对路径是「你显式授权过这个目录」的受限能力，只认额外工作目录。**不能**把组织根也算
+		// 进来：那等于不配任何目录也能读写整个 `~/.solo`，门就没了。相对路径不受限是因为它
+		// 词法上就落在组织目录里，本来不需要授权。
+		if (!workDirs.some((root) => isInside(root, target))) return { kind: "outside", absolute: true };
+		// 应用私有目录即使在额外目录里面也不开放：settings.json 里的 apiKey、密钥文件、
+		// 库都在那儿。用户把家目录加进来是常有的事（项目就在家目录下）。判的是**真实**位置：
+		// 目录里一条指向应用根的软链，词法上在目录里面，实际读的是 apiKey 和整个库。
+		if (isInside(layout.appRoot, target) || isProtectedName(realpathLoose(target))) return { kind: "protected" };
+		return { kind: "ok", path: target };
+	}
+	const first = expanded.split(/[\\/]/)[0] ?? "";
 	const root = APP_SIDE.has(first) ? layout.appRoot : layout.userRoot;
-	return resolveInOrUndefined(root, path);
+	const target = resolveInOrUndefined(root, expanded);
+	if (target === undefined) return { kind: "outside", absolute: false };
+	const real = realpathLoose(target);
+	// 真实位置在应用私有根里：与绝对路径同一条判据、同一句话术。两侧要是分叉，同一个文件
+	// 相对路径读得到、绝对路径读不到，用户只会当成坏了。
+	// 第一段就是应用侧（`assistant/…`、`uploads/…`）时它本来就在应用根里，照旧放行。
+	if (root !== layout.appRoot && isInside(layout.appRoot, target)) return { kind: "protected" };
+	// 落点判据本身不能省：真实位置必须还在工作区 / 组织目录 / 额外目录里。组织目录里一条
+	// `ln -s ~/.solo-secrets/token link.txt`，词法上在 `members/` 下面，实际读的是范围外的
+	// 文件 —— 只留名字黑名单，这条就漏了。
+	if (![layout.userRoot, ...workDirs].some((allowedRoot) => isInside(allowedRoot, target))) {
+		return { kind: "outside", absolute: false };
+	}
+	// 落在允许的根里，还要过名字黑名单：密钥、库、配置在任何根里都不开放。软链指向它们时
+	// `real` 的 basename 就是它们。
+	if (target === layout.secretsFile || isProtectedName(real)) return { kind: "protected" };
+	return { kind: "ok", path: target };
 }

@@ -7,7 +7,7 @@ import { ensureDir, readTextOrUndefined, sizeOrUndefined, writeTextAtomic } from
 import { teamWorkspace } from "../../layout.ts";
 import { createTeamProblem, readTeam, teamSlugOfReadmePath } from "../../documents/team/doc.ts";
 import { actionOf, selfOf, text, type CoreToolDeps } from "./context.ts";
-import { resolveInRoots } from "./guards.ts";
+import { hasDotDot, resolveToolPath } from "./guards.ts";
 import { fill } from "../../documents/base/catalog.ts";
 
 /**
@@ -54,11 +54,19 @@ export function createFileTool(deps: CoreToolDeps) {
 			const fallback = args.content !== undefined ? "write" : args.old_string !== undefined ? "edit" : "read";
 			const action = actionOf(args.action, ["read", "write", "edit"], fallback, "action", deps.text);
 			if (typeof action !== "string") return text(action);
-			const target = resolveInRoots(deps.layout, args.path);
-			if (target === undefined) return text(t("file.refuse.outside", { path: args.path }));
+			const resolved = resolveToolPath(deps.layout, args.path, deps.workDirs?.() ?? []);
 			// 密钥文件对 agent 不存在：读出来等于把 key 装进上下文，写回去会把
 			// 人配好的值覆盖成脱敏后的马赛克。它要用 key，由人在 shell 里配、`run` 里用。
-			if (target === deps.layout.secretsFile) return text(t("file.refuse.secret"));
+			if (resolved.kind === "protected") return text(t("file.refuse.secret"));
+			if (resolved.kind === "outside") {
+				// 绝对路径没命中任何已配置的目录时，要说清怎么让它成立 —— 只说「在工作区之外」，
+				// 模型会以为工具坏了，回头改用 `run` 里的 `sed` / heredoc（这正是这次要治的病）。
+				const unconfigured = resolved.absolute && !hasDotDot(args.path);
+				return text(
+					unconfigured ? t("file.refuse.unconfigured", { path: args.path }) : t("file.refuse.outside", { path: args.path }),
+				);
+			}
+			const target = resolved.path;
 
 			/**
 			 * 落盘，以及写完之后所有必须跟着做的事（脱敏 / 团队频道重算 / 身份换团队）。

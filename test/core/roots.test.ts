@@ -5,13 +5,14 @@
  * 静默降级（提示词没播种、插件没装），没有任何一处会报错。所以这里按「文件落在哪」
  * 逐项钉死，而不是只测 `resolveLayout` 拼出来的字符串。
  */
-import { readdir } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { createAgent } from "../../src/core/documents/member/identity.ts";
 import { seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, syncAllSkills } from "../../src/shell/seed.ts";
 import { existsAt } from "../../src/core/runtime/io.ts";
-import { resolveInRoots } from "../../src/core/channel/tools/guards.ts";
+import { resolveInRoots, resolveToolPath } from "../../src/core/channel/tools/guards.ts";
 import { sandboxPool } from "./support.ts";
 
 const pool = sandboxPool();
@@ -80,4 +81,120 @@ describe("两个根", () => {
 		expect(resolveInRoots(layout, "uploads/abc-123")).toBe(join(layout.uploadsRoot, "abc-123"));
 		expect(resolveInRoots(layout, "uploads/../../outside")).toBeUndefined();
 	});
+
+	it("额外工作目录：只有显式绝对路径才进，未配置时绝对路径一律不认（ADR-126）", async () => {
+		const box = await pool.make("core-roots-");
+		const { layout } = box;
+		const repo = join(box.root, "code", "solo");
+		await mkdir(repo, { recursive: true });
+
+		// 未配置：绝对路径不进（行为与以前一样）。
+		expect(resolveToolPath(layout, join(repo, "a.ts"))).toEqual({ kind: "outside", absolute: true });
+		// 默认路径也不因为配置了就被顺带扫进去。
+		expect(resolveToolPath(layout, ".", [repo])).toEqual({ kind: "ok", path: layout.userRoot });
+
+		expect(resolveToolPath(layout, join(repo, "a.ts"), [repo])).toEqual({ kind: "ok", path: join(repo, "a.ts") });
+		// 往上走仍然拒：额外目录只是多了一个根，不是取消边界。
+		expect(resolveToolPath(layout, join(repo, "..", "..", "etc", "passwd"), [repo])).toEqual({
+			kind: "outside",
+			absolute: true,
+		});
+		// 应用私有目录即使在额外目录里面也不开放（settings.json 里的 key、密钥、库）。
+		expect(resolveToolPath(layout, layout.settingsFile, [box.root])).toEqual({ kind: "protected" });
+		expect(resolveToolPath(layout, join(repo, ".secrets.json"), [repo])).toEqual({ kind: "protected" });
+		expect(resolveToolPath(layout, join(repo, "core.sqlite"), [repo])).toEqual({ kind: "protected" });
+	});
+
+	it("额外工作目录里的相对路径不生效：相对路径仍然只按第一段落两个根", async () => {
+		const box = await pool.make("core-roots-");
+		const { layout } = box;
+		const repo = join(box.root, "code", "solo");
+		await mkdir(repo, { recursive: true });
+		// `code/solo/a.ts` 相对的是用户根（成员的组织目录），不是额外目录 —— 绝不静默换根。
+		expect(resolveToolPath(layout, "code/solo/a.ts", [repo])).toEqual({
+			kind: "ok",
+			path: join(layout.userRoot, "code", "solo", "a.ts"),
+		});
+	});
+	it("额外工作目录里的软链一律拒：指向应用根/密钥/库、中间段、新建文件都拦，指向范围内的照旧放行（ADR-126）", async () => {
+		const box = await pool.make("core-roots-");
+		const { layout } = box;
+		const repo = join(box.root, "code", "solo");
+		const sub = join(repo, "pkg");
+		await mkdir(sub, { recursive: true });
+		await writeFile(join(sub, "a.ts"), "export const a = 1;\n");
+		// 真实的密钥与库位置（内容无所谓，要的是「目标真的存在」）：软链指向不存在的目标时
+		// 解不出来，也就谈不上泄漏；能泄漏的只有真存在的那种。
+		await writeFile(layout.secretsFile, '{"openai":"sk-test"}\n');
+		await writeFile(layout.databasePath, "SQLite format 3");
+
+		// 文件软链 → 密钥、库：词法上都在目录里面，真实位置在应用私有根。
+		await symlink(layout.secretsFile, join(repo, "leak.json"));
+		expect(resolveToolPath(layout, join(repo, "leak.json"), [repo])).toEqual({ kind: "outside", absolute: true });
+		await symlink(layout.databasePath, join(repo, "leakdb"));
+		expect(resolveToolPath(layout, join(repo, "leakdb"), [repo])).toEqual({ kind: "outside", absolute: true });
+
+		// 目录软链 → 应用根：里面任何一个文件都不该打开，包括新建的（目标还不存在也要拦）。
+		await symlink(layout.appRoot, join(repo, "appdir"));
+		expect(resolveToolPath(layout, join(repo, "appdir", "settings.json"), [repo])).toEqual({
+			kind: "outside",
+			absolute: true,
+		});
+		expect(resolveToolPath(layout, join(repo, "appdir", "brand-new.ts"), [repo])).toEqual({
+			kind: "outside",
+			absolute: true,
+		});
+
+		// 中间段是软链、指向范围外：一样拦（只有整条解出来才知道）。
+		const outside = await mkdtemp(join(tmpdir(), "core-outside-"));
+		await writeFile(join(outside, "x.txt"), "secret\n");
+		await symlink(outside, join(repo, "outlink"));
+		expect(resolveToolPath(layout, join(repo, "outlink", "x.txt"), [repo])).toEqual({ kind: "outside", absolute: true });
+		await rm(outside, { recursive: true, force: true });
+
+		// 指向**范围内**的软链可以留：不越界就不该被禁。
+		await symlink(sub, join(repo, "alias"));
+		expect(resolveToolPath(layout, join(repo, "alias", "a.ts"), [repo])).toEqual({
+			kind: "ok",
+			path: join(repo, "alias", "a.ts"),
+		});
+
+		// 组织目录里一条指向范围外的软链：词法上在 `members/` 下面，真实位置在外面 → 拒。
+		// 这条是落点判据本身，删掉它「软链指向 home 下的 token」就能读。
+		await mkdir(join(layout.userRoot, "members", "x"), { recursive: true });
+		const vault = await mkdtemp(join(tmpdir(), "core-vault-"));
+		await writeFile(join(vault, "github-token"), "ghp_secret\n");
+		await symlink(join(vault, "github-token"), join(layout.userRoot, "members", "x", "token.txt"));
+		expect(resolveToolPath(layout, "members/x/token.txt")).toEqual({ kind: "outside", absolute: false });
+		await symlink(vault, join(layout.userRoot, "members", "x", "vault"));
+		expect(resolveToolPath(layout, "members/x/vault/github-token")).toEqual({ kind: "outside", absolute: false });
+		await rm(vault, { recursive: true, force: true });
+
+		const extra = await mkdtemp(join(tmpdir(), "core-extra-"));
+		// 配了目录之后同一个文件相对与绝对才一致（Solo #2151）；没配时绝对路径一律拒。
+		// 判据收窄后不再要求「组织目录里的绝对路径能读」，也不再要求额外目录里的软链能读 ——
+		// 绝对路径只认显式授权过的目录，软链按真实位置判，真实位置不在那个目录里就拒。
+		await writeFile(join(layout.userRoot, "members", "x", "real.txt"), "同一份内容\n");
+		expect(resolveToolPath(layout, join(layout.userRoot, "members", "x", "real.txt"))).toEqual({
+			kind: "outside",
+			absolute: true,
+		});
+		expect(resolveToolPath(layout, "members/x/real.txt", [layout.userRoot])).toEqual(
+			resolveToolPath(layout, join(layout.userRoot, "members", "x", "real.txt"), [layout.userRoot]),
+		);
+		// 范围外的绝对路径照旧拒（放宽的是「哪些根算允许」，不是取消边界）。
+		expect(resolveToolPath(layout, join(tmpdir(), "核心之外", "x.txt"))).toEqual({ kind: "outside", absolute: true });
+		await rm(extra, { recursive: true, force: true });
+
+		// 相对路径这边同样：词法上在用户根、真实位置落到应用私有根（中间有软链）→ 落在允许的根里。
+		await mkdir(join(layout.userRoot, "members", "x"), { recursive: true });
+		await symlink(layout.appRoot, join(layout.userRoot, "members", "x", "appdir"));
+		expect(resolveToolPath(layout, "members/x/appdir/settings.json")).toEqual({ kind: "protected" });
+		// 直接写的 `assistant/…` 词法上本来就在应用根，不受这条影响。
+		expect(resolveToolPath(layout, "assistant/anything")).toEqual({
+			kind: "ok",
+			path: join(layout.assistantRoot, "anything"),
+		});
+	});
+
 });

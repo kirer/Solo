@@ -7,7 +7,8 @@
  * 1. 每个 `action` 都真的能跑通（不是只有默认那个）；
  * 2. 不认识的 `action` 要回一句能自救的话（列出合法值），而不是沉默或抛错。
  */
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
@@ -657,4 +658,101 @@ describe("file 写身份：换团队要重投影两次", () => {
 		// 旧团队 alpha 与人走了之后要重算，新团队 beta 也要重算 —— 少一次就是「加进团队了但频道里没他」。
 		expect(new Set(synced)).toEqual(new Set(["alpha", "beta"]));
 	});
+});
+
+describe("额外工作目录（file / search）", () => {
+	it("未配置时行为不变；配置后可读写、可搜索；.. 仍拒；密钥仍不开放", async () => {
+		const dirs: string[] = [];
+		const { call, root } = await setup({ workDirs: () => dirs });
+		const repo = join(root, "code", "solo");
+		await mkdir(repo, { recursive: true });
+		const target = join(repo, "a.txt");
+
+		// 没加进工作目录：绝对路径说清「它只能用在加过的目录」，而不是装作工具坏了。
+		const refused = await call("file", { action: "write", path: target, content: "一\n" });
+		expect(refused).toContain("绝对路径只能用在设置里加过的目录");
+
+		dirs.push(repo);
+		const wrote = await call("file", { action: "write", path: target, content: "一\n二\n" });
+		expect(wrote).toContain("已写入");
+		expect(await readFile(target, "utf8")).toBe("一\n二\n");
+
+		const read = await call("file", { action: "read", path: target });
+		expect(read).toContain("二");
+
+		const edited = await call("file", { action: "edit", path: target, old_string: "二", new_string: "三" });
+		expect(edited).toContain("已改");
+		expect(await readFile(target, "utf8")).toBe("一\n三\n");
+
+		// 搜索：结果按绝对路径显示，一眼看出不是组织里的相对路径。
+		const found = await call("search", { action: "grep", pattern: "三", path: repo });
+		expect(found).toContain(`${target}:2`);
+
+		// 往上走仍然拒（不管加没加目录）。
+		const escape = await call("file", { action: "read", path: `${repo}/../../members/x/identity.md` });
+		expect(escape).toContain("工作区之外");
+
+		// 密钥与库不开放：即使就在已配置的目录里。
+		await writeFile(join(repo, ".secrets.json"), "{}", "utf8");
+		expect(await call("file", { action: "read", path: join(repo, ".secrets.json") })).toContain("不开放");
+	});
+	it("settings.json 与密钥、库一样永不开放：读写都拒，搜索跳过不报错；组织目录的软链不变窄（ADR-126）", async () => {
+		const dirs: string[] = [];
+		const { call, root, layout } = await setup({ workDirs: () => dirs });
+		const repo = join(root, "code", "solo");
+		await mkdir(repo, { recursive: true });
+		dirs.push(repo);
+
+		// 相对路径这一条以前能读能写 —— 写它就是给自己改 workDirs，等于提权。
+		expect(await call("file", { action: "read", path: "settings.json" })).toContain("不开放");
+		expect(await call("file", { action: "write", path: "settings.json", content: "{}" })).toContain("不开放");
+
+		// 绝对路径、以及软链指向同一个文件，同一条路。
+		const settings = join(layout.appRoot, "settings.json");
+		await writeFile(settings, '{"providers":[{"apiKey":"sk-very-secret"}]}', "utf8");
+		dirs.push(layout.appRoot);
+		expect(await call("file", { action: "read", path: settings })).toContain("不开放");
+		await symlink(settings, join(repo, "leak.json"));
+		expect(await call("file", { action: "read", path: join(repo, "leak.json") })).toContain("不开放");
+
+		// 搜索不报错，只是结果里不该出现它（从宽目录扫下来也一样）。
+		// 从一个宽目录（组织目录，`.app` 在它下面）扫下来：`settings.json` 被跳过而不是让搜索失败。
+		dirs.push(root);
+		const swept = await call("search", { action: "grep", pattern: "sk-very-secret", path: root });
+		expect(swept).not.toContain("settings.json");
+		expect(swept).not.toContain("leak.json");
+		expect(swept).toContain("没找到");
+
+		await mkdir(join(layout.membersRoot, ME, "workspace"), { recursive: true });
+		await symlink(layout.assistantRoot, join(layout.membersRoot, ME, "workspace", "appdir"));
+
+		// 同一个文件：相对路径与绝对路径必须同一结果，否则用户以为坏了（Solo #2127）。
+		const same = join(layout.membersRoot, ME, "workspace", "same.txt");
+		await writeFile(same, "同样一行\n", "utf8");
+		const viaRelative = await call("file", { action: "read", path: `members/${ME}/workspace/same.txt` });
+		const viaAbsolute = await call("file", { action: "read", path: same });
+		expect(viaRelative).toBe(viaAbsolute);
+		expect(viaRelative).toContain("同样一行");
+
+		// 应用私有根里：两侧也一致地拒 —— 相对经软链、绝对直写读到同一句话术。
+		const viaLink = await call("file", { action: "read", path: `members/${ME}/workspace/appdir/settings.json` });
+		expect(viaLink).toContain("不开放");
+		expect(viaLink).toBe(await call("file", { action: "read", path: settings }));
+
+		// 反过来：指向范围外（home 下随便什么文件）的软链，`file` 与 `search` 都不许开。
+		// 这是落点判据本身 —— 组织目录里一条 `ln -s ~/.solo-secrets/token link.txt` 就能读。
+		const vault = await mkdtemp(join(tmpdir(), "core-vault-"));
+		await writeFile(join(vault, "github-token"), "ghp_secret\n", "utf8");
+		await symlink(join(vault, "github-token"), join(layout.membersRoot, ME, "workspace", "token.txt"));
+		expect(await call("file", { action: "read", path: `members/${ME}/workspace/token.txt` })).toContain("工作区之外");
+		await symlink(vault, join(layout.membersRoot, ME, "workspace", "vault"));
+		expect(await call("file", { action: "read", path: `members/${ME}/workspace/vault/github-token` })).toContain(
+			"工作区之外",
+		);
+		const sweptVault = await call("search", { action: "grep", pattern: "ghp_secret", path: "members" });
+		expect(sweptVault).toContain("没找到");
+		expect(sweptVault).not.toContain("github-token");
+		await rm(vault, { recursive: true, force: true });
+	});
+
 });

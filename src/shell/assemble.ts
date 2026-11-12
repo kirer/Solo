@@ -30,6 +30,7 @@ import type {
 	ToolRegistration,
 } from "../core/runtime/index.ts";
 import { BACKGROUND_CONTEXT, defineExtension, type Context } from "../core/runtime/index.ts";
+import { readWorkDirs } from "../core/runtime/settings.ts";
 import { readAllIdentities } from "../core/documents/member/identity.ts";
 import { DirectoryDoc, emptyDirectory, labelIn, type DirectoryState } from "../core/channel/roster.ts";
 import { createCoreTools, type CoreToolDeps } from "../core/channel/tools/index.ts";
@@ -222,6 +223,8 @@ export async function assembleCore(
 		harness,
 		layout,
 		text,
+		// 现读 `settings.json`：设置里加 / 删一个目录，下一次工具调用就生效（ADR-126）。
+		workDirs: () => readWorkDirs(layout.settingsFile),
 		directory: (ctx) => directoryWire.now(ctx),
 		saveDirectory: (change, ctx) => directoryWire.save(change, ctx),
 		openAgent: async (slug, ctx) => (await conversationWire.open(slug, ctx)).id as unknown as number,
