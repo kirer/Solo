@@ -3086,3 +3086,39 @@ agent 大量用 `run` + `cat` / `sed -i` / heredoc 改代码，不是提示词�
 `ui/app/src/panels/SettingsPage.tsx` 的 `WorkDirsRow` + `ui/app/src/api/client.ts`、
 `seed/text/tools.md`；`test/core/{preferences,roots,tools-actions}.test.ts`、
 `docs/WEB-API.md` §13.8。
+## ADR-127 非核心插件改成首次联网下载：清单独立、这版不推升级、出厂源不进包、下载源只认环境变量
+
+**背景**：seed 体积被插件吃掉 89.9%（`seed-体积账-叶决-2026-11-12.md`）。2.9.15 把 `Token统计`、
+`模型管理` 从包里挪出去（seed 525228 → 448739 字节）。挪出去就得有「装回来」的路，而这条路本身有
+四处能被我们自己推翻的口子：清单塞哪儿、什么时候推升级、出厂源在不在包里、下载地址谁说了算。
+
+**决定**：
+
+1. **插件清单是独立资产 `plugins.json` + `plugins.json.sig`，不与 `latest-mac.json` 混一份。**
+   一份清单一条验签链能省几十行，但更新清单是「每个装了应用的人都会被叫醒」的东西，插件清单只跟
+   插件有关：混成一份，一次插件改动就得让所有客户的更新弹窗跟着变一次；而且两份清单的增长速度差得远
+   （插件是整份 bundle、更新清单是 `sha512` 的整包），混着写谁也看不清这次到底改了哪半截。
+   **验签链可以共用（同一把钥匙、同一个 `verifySignature` 口径），文件必须分开。**
+2. **这版故意不推插件升级。** 判据只有一条：`<pluginsRoot>/<插件>/` 目录在 → 整份跳过，连清单都不取。
+   老用户盘上那两份一字节不动、零请求；用户自己改过的按 ADR-097 不覆盖；走过删除入口的不在背后装回来。
+   要能「推升级」，得先分得清「用户改过」和「版本旧」——那要靠历史出厂 hash 表。现在用一条**会自己变红**
+   的测试（`test/core/seed-legacy-plugins.test.ts` 扫 `plugins-src/` 每个文件是否都在 `LEGACY_PLUGIN_HASHES`）
+   把这份债钉住：**留债可以，静默留债不行**——悄悄欠着，等到真想推升级那天才发现所有人升级都被判成
+   「用户改过」，版本号变了、日志干净、行为还是老的。
+3. **`plugins-src/` 故意不进安装包**（`electron-builder.yml` 的 `files` 是白名单，天然不含它；另有测试
+   断言它不在 `files` 里）。进了包，体积只是从 `seed/` 挪进安装包，一个字节都没省；更麻烦的是
+   「包里有出厂源」和「目录在就跳过」会互相打脸——盘上没有、包里又有，就得临时决定听谁的。
+   这个目录只存仓库原文，是给测试和清单生成器用的。
+4. **下载源基址只能由环境变量 `SOLO_PLUGIN_FEED` 覆盖，默认线上；不做成命令行参数、不做成配置项。**
+   配置项等于「用户能改」等于「装任意插件」的后门，而插件在本机是可信代码（ADR-124：装上就能碰系统）。
+   环境变量的用途只有调试和验收一条（验断网就是把它指到 `127.0.0.1:9`）。
+
+**代价**：断网首启这两个插件不在（插件位给「重试」，主体功能不受影响）；一直离线的人永远拿不到它们，
+只能等一次联网。真到推升级那天，历史 hash 表必须是真的完整，否则老用户全被判成「改过」整份留旧。
+
+**执行**：`src/shell/plugin-download.ts`（`pluginFeed` / `downloadRemotePlugin` / `ensureDownloadablePlugins` /
+账本基线）、`src/shell/seed.ts`（`shippedPluginSources`、`restorePlugin` 走下载）、`src/core/signing.ts` +
+`src/core/update-key.ts`（服务端验签；桌面壳 `rootDir` 引不到 `src/`，公钥两边各一份、有测试钉住）、
+`scripts/update-manifest.ts`（`buildPluginManifest` / `releaseNotes`）、`.github/workflows/release.yml`
+（`fetch-depth: 0`、两份清单一起签、`prev..cur` 非空红门）、`plugins-src/`；
+`test/core/{plugin-download,seed-legacy-plugins,update-key}.test.ts`。
