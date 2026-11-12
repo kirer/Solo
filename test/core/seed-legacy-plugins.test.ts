@@ -136,6 +136,16 @@ describe("老账本升级", () => {
 		for (const rev of [...listTags(), "HEAD"]) {
 			for (const row of seedPluginsAt(rev)) seen.add(row.hash);
 		}
+		// HEAD 上「出厂源」是两处：`seed/plugins/`（随包发）和 `plugins-src/`（首启联网取）。
+		// 2.9.17 起五个插件都在后者 —— 只扫前者，会把它们的 hash 误判成「没人用的白塞」。
+		// tag 不用扫后者：历史 tag 从来没有这个目录。
+		const shipped = execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "HEAD", "--", "plugins-src/"], {
+			encoding: "utf8",
+		})
+			.split("\n")
+			.filter((line) => line !== "");
+		expect(shipped.length, "HEAD 里 plugins-src/ 一个文件都没读到").toBeGreaterThan(10);
+		for (const path of shipped) seen.add(hashOf(gitShow("HEAD", path)));
 		const idle = [...LEGACY_PLUGIN_HASHES].filter((hash) => !seen.has(hash)).sort();
 		expect(idle, "这些 hash 在任何一个 tag / HEAD 的出厂插件里都找不到：别为了让测试绿往里塞").toEqual([]);
 	});
