@@ -35,12 +35,14 @@ describe("发布公钥", () => {
 	 * 换钥匙必须同时动 `src/core/update-key.ts`、`desktop/src/update-key.ts`、这条断言，
 	 * 动常量那一下在 diff 里看得见。
 	 *
-	 * 常量口径（可复现，`node -e` 一行就能核对）：
-	 * - `PUBLISHED_KEY_SHA256` = sha256(PEM 原文，含末尾那个 `\n`)，取小写 hex；
-	 * - `PUBLISHED_KEY_BODY` = PEM 中间那行 base64，一个字不差。
+	 * 常量口径：sha256(PEM 原文，**含末尾那个换行**)，小写 hex。核对就是这一行（仓库根目录跑）：
+	 *
+	 *     node -e 'const s=require("node:fs").readFileSync("src/core/update-key.ts","utf8");const p=s.match(/-----BEGIN PUBLIC KEY-----\\n[\s\S]*?-----END PUBLIC KEY-----\\n/)[0].replace(/\\n/g,"\n");console.log(require("node:crypto").createHash("sha256").update(p).digest("hex"))'
+	 *
+	 * 把路径换成 `desktop/src/update-key.ts` 必须得到同一个值。这把钥匙自 v2.9.13 起没变过，
+	 * 所以这个常量也钉住了「发出去的是同一把」。两个人对不上号时，先对命令、再对数字。
 	 */
 	const PUBLISHED_KEY_SHA256 = "37948f5336776e30701ba21d5aca72f71b8d7afc18c320e9e443f57a368e814d";
-	const PUBLISHED_KEY_BODY = "MCowBQYDK2VwAyEAgnk+uz+e4fvO8ZvWLqh6jtYH7rY6G39PFOxeUzkrjjQ=";
 
 	it("公钥就是发出去的那把（两份一起换也会红）", async () => {
 		for (const rel of ["src/core/update-key.ts", "desktop/src/update-key.ts"]) {
