@@ -1,8 +1,9 @@
 /**
- * 首次联网下载出厂插件（`Token统计`、`模型管理`）。
+ * 首次联网下载出厂插件（`悬浮球`、`文件树`、`IM机器人`、`Token统计`、`模型管理`）。
  *
- * 为什么不在 seed 里：这两个插件合计 76 KB，占着 `seed/` 的体积上限（528384 字节），
- * 而它们不是「没有就开不了机」的东西。挪到线上让新装的机器按需取，`seed/` 就能回落到 512 KB 以下。
+ * 为什么不在 seed 里：这五个插件合计 471669 字节，占着 `seed/` 的体积上限（524288 字节），
+ * 而它们不是「没有就开不了机」的东西。挪到线上让新装的机器按需取，`seed/` 就能从 448842
+ * 掉到 53662（2.9.17 一次挪走三个，Solo 2026-11-12）。
  *
  * 三条底线（Solo 2026-11-12 拍）：
  * 1. **老用户盘上有就一个字节不动、也不发请求** —— 判据只有一条：`<pluginsRoot>/<名字>/` 在就跳过，
@@ -33,9 +34,13 @@ export const PLUGIN_MANIFEST_ASSET = "plugins.json";
  * 改成「首次联网下载」的出厂插件名（就是插件目录名）。
  *
  * 写死在代码里而不是 spread 一份文件：这样 `seed/` 一个字节都不用留，
- * 离线时界面也知道该显示哪两个「没装上」。
+ * 离线时界面也知道该显示哪几个「没装上」。
+ *
+ * **顺序就是首启串行下载的顺序**：越靠前越先下。悬浮球排第一是因为它最显眼
+ * （桌面那扇独立的窗，没装上就是空的）；五个各记各的状态，一个失败不影响后面的
+ * （`downloadRemotePlugin` 自己 catch、状态按名字记）。
  */
-export const REMOTE_PLUGINS = ["Token统计", "模型管理"] as const;
+export const REMOTE_PLUGINS = ["悬浮球", "文件树", "IM机器人", "Token统计", "模型管理"] as const;
 
 export type RemotePluginName = (typeof REMOTE_PLUGINS)[number];
 
@@ -57,7 +62,7 @@ type ManifestEntry = {
 	readonly size: number;
 };
 
-/** 这个进程里两个插件的下载状态（只在内存里：重启会按磁盘重算，不需要持久化）。 */
+/** 这个进程里每个插件的下载状态，按名字记（只在内存里：重启会按磁盘重算，不需要持久化）。 */
 const progress = new Map<string, { state: RemotePluginState; message?: string }>();
 
 export function isRemotePlugin(name: string): name is RemotePluginName {
@@ -71,7 +76,7 @@ export function pluginFeed(override?: string): string {
 }
 
 /**
- * 两个插件现在分别是什么状态。
+ * 每个插件现在分别是什么状态（按名字各记各的，不合成一个全局状态）。
  *
  * **只看磁盘**：目录在就是 `installed`，一个请求都不发 —— 老用户升级上来时这条是唯一的判据，
  * 也是「不触发下载」能拿计数服务证明的原因。
@@ -220,7 +225,14 @@ async function releaseOf(feed: string, fetcher: typeof fetch): Promise<unknown> 
 	return await response.json();
 }
 
-/** 启动时补一次：缺哪个下哪个，**不阻塞启动**，失败只留状态等界面重试。 */
+/**
+ * 启动时补一次：缺哪个下哪个，**不阻塞启动**，失败只留状态等界面重试。
+ *
+ * 五个**串行**下（并发去抢同一个 GitHub 限流额度只会更难），但彼此独立：
+ * `downloadRemotePlugin` 自己接住异常、状态按名字记，其中一个失败不会让后面的停住。
+ * 走过删除入口的不在这里装回来（`manifest.removed` 那条判据在 `downloadRemotePlugin` 里），
+ * 只有界面点重试（`explicit`）才真下。
+ */
 export async function ensureDownloadablePlugins(layout: Layout, options: DownloadOptions = {}): Promise<readonly string[]> {
 	const done: string[] = [];
 	for (const name of REMOTE_PLUGINS) {

@@ -21,7 +21,7 @@ import {
 	isKokoroVoice,
 	sidOfVoice,
 	voiceOfSid,
-} from "../../seed/plugins/悬浮球/kokoro.js";
+} from "../../plugins-src/悬浮球/kokoro.js";
 
 /**
  * 老版本（v1.0）的 8 个音色，sid 45–52。放在测试里而不是 seed 里：生产代码一行都不用它们，

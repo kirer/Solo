@@ -35,6 +35,9 @@ const PLATFORM_MANIFEST: Record<string, string> = { darwin: "latest-mac.json", w
  * `test/core/plugin-download.test.ts` 会按真文件生成一遍清单来断言两边没走散。
  */
 export const PLUGIN_ASSETS: Record<string, string> = {
+	悬浮球: "plugin-orb.json",
+	文件树: "plugin-file-tree.json",
+	IM机器人: "plugin-im-bot.json",
 	Token统计: "plugin-token-stats.json",
 	模型管理: "plugin-model-manager.json",
 };

@@ -50,7 +50,7 @@ async function writeOldLedger(layout: Layout): Promise<void> {
 /** 把当前出厂那份插件原样拷到「盘上」，模拟「用户没改过、只是版本旧」。 */
 async function copyCurrentSeed(layout: Layout): Promise<void> {
 	// 用 `fileURLToPath`，别用 `.pathname`：URL 会把中文百分号编码，`readdir` 直接 ENOENT。
-	const from = fileURLToPath(new URL(`../../seed/plugins/${ORB}/`, import.meta.url));
+	const from = fileURLToPath(new URL(`../../plugins-src/${ORB}/`, import.meta.url));
 	const { readdir, copyFile } = await import("node:fs/promises");
 	const to = join(layout.pluginsRoot, ORB);
 	await mkdir(to, { recursive: true });
@@ -180,23 +180,26 @@ describe("老账本升级", () => {
 });
 
 /**
- * 2.9.15 起 `Token统计` / `模型管理` 不随包发：出厂源搬到 `plugins-src/`，用户首次启动时联网下载。
+ * 2.9.15 起 `Token统计` / `模型管理` 不随包发，2.9.17 起 `悬浮球` / `文件树` / `IM机器人` 也搬过去：
+ * 五个出厂插件全在 `plugins-src/`，`seed/plugins/` 这个目录整个不存在了，用户首次启动时联网下载。
  *
  * **这版故意不推升级**（盘上目录在就整份跳过，老用户零请求、零字节改动）。所以这几个 hash
  * 现在只在「以后要推升级」时才用得上 —— 但那一天真到了，如果它们不在历史出厂集合里，
  * 所有老用户都会被判成「用户改过」整份留旧，版本号变了、日志干净、行为还是老的。
  * 留债可以，**静默留债不行**：这条断言会自己变红（Solo 2026-11-12）。
  */
-describe("搬到 plugins-src 的两个插件", () => {
-	const names = ["Token统计", "模型管理"];
+describe("搬到 plugins-src 的五个插件", () => {
+	const names = ["IM机器人", "Token统计", "悬浮球", "文件树", "模型管理"];
 
-	it("出厂源真搬了：plugins-src 有、seed/plugins 没有", async () => {
+	it("出厂源真搬了：五个都在 plugins-src，seed/plugins 里一个都没有", async () => {
 		const src = fileURLToPath(new URL("../../plugins-src/", import.meta.url));
-		const seed = fileURLToPath(new URL("../../seed/plugins/", import.meta.url));
+		const fromSeed = fileURLToPath(new URL("../../seed/plugins/", import.meta.url));
 		const { readdir } = await import("node:fs/promises");
+		const { existsSync } = await import("node:fs");
 		expect((await readdir(src)).sort()).toEqual([...names].sort());
-		const left = await readdir(seed);
-		for (const name of names) expect(left).not.toContain(name);
+		// `seed/plugins/` 整个目录这次跟着没了；万一哪天被人塞回来，这条会红。
+		const left = existsSync(fromSeed) ? await readdir(fromSeed) : [];
+		expect(left).toEqual([]);
 	});
 
 	it("plugins-src 里每个文件的 hash 都在历史出厂集合里", async () => {
@@ -211,7 +214,7 @@ describe("搬到 plugins-src 的两个插件", () => {
 				if (!LEGACY_PLUGIN_HASHES.has(hash)) missing.push(`${name}/${file} ${hash}`);
 			}
 		}
-		expect(seen).toBe(6);
+		expect(seen).toBe(20);
 		expect(missing).toEqual([]);
 	});
 });

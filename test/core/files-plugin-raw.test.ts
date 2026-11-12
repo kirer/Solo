@@ -49,7 +49,7 @@ async function boot(): Promise<Routes> {
 	await writeFile(join(root, "secret.png"), PNG);
 	await symlink(join(root, "secret.png"), join(area, "escape.png"));
 
-	const seed = fileURLToPath(new URL("../../seed/plugins/文件树", import.meta.url));
+	const seed = fileURLToPath(new URL("../../plugins-src/文件树", import.meta.url));
 	await cp(seed, join(workspace, "plugins", "文件树"), { recursive: true });
 
 	const host = await loadPlugins({

@@ -609,13 +609,13 @@ async function copySeedSkills(from: string, skillsRoot: string): Promise<readonl
 /**
  * 出厂插件的源目录：名字 → 目录的真实路径。
  *
- * - `seed/plugins/`：随安装包发的那些，装完就有；
+ * - `seed/plugins/`：随安装包发的那些，装完就有 —— **2.9.17 起这个目录空了**（五个出厂插件全搬走）；
  * - `plugins-src/`：**只在源码树里有，故意不进安装包**（`electron-builder.yml` 的 `files` 是白名单）。
- *   放在这里的是「改成首次联网下载」的插件（`Token统计`、`模型管理`）：老用户盘上已经有了、
- *   新装的机器由 `src/shell/plugin-download.ts` 联网取。
+ *   放在这里的是「改成首次联网下载」的插件（`悬浮球`、`文件树`、`IM机器人`、`Token统计`、`模型管理`）：
+ *   老用户盘上已经有了、新装的机器由 `src/shell/plugin-download.ts` 联网取。
  *
  * 源码树里存在就直接当出厂源用，所以 `npm start` 和测试不依赖网络；打包后的机器上这个目录
- * 不存在，`seedPlugins` 自然就不碰那两个插件了。
+ * 不存在，`seedPlugins` 自然就不碰这五个插件了。
  */
 async function shippedPluginSources(): Promise<Map<string, string>> {
 	const out = new Map<string, string>();

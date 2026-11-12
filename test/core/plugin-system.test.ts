@@ -233,7 +233,7 @@ describe("硬线④：审计查得到", () => {
 describe("硬线⑤：文件树插件接上了", () => {
 	it("刚装上：三条全在待批里，一条都没批 —— 确认卡是真的要弹", async () => {
 		const { pluginsRoot, workspace, area, logs } = await box();
-		const seed = fileURLToPath(new URL("../../seed/plugins/文件树", import.meta.url));
+		const seed = fileURLToPath(new URL("../../plugins-src/文件树", import.meta.url));
 		await cp(seed, join(pluginsRoot, "文件树"), { recursive: true });
 
 		const host = await loadPlugins({ pluginsRoot, workspace, logsRoot: logs, scope: scopeOf(area), log: () => undefined });
@@ -250,7 +250,7 @@ describe("硬线⑤：文件树插件接上了", () => {
 
 	it("批过之后：`/system` 路由真的调到宿主，路径是内核拼的绝对路径", async () => {
 		const { pluginsRoot, workspace, area, logs } = await box();
-		const seed = fileURLToPath(new URL("../../seed/plugins/文件树", import.meta.url));
+		const seed = fileURLToPath(new URL("../../plugins-src/文件树", import.meta.url));
 		await cp(seed, join(pluginsRoot, "文件树"), { recursive: true });
 		// 这一步在界面上是「全部批准」：同一件事，写回文档的那一行。
 		await writePluginGrants(pluginsRoot, "文件树", ["system.reveal", "system.open", "system.copyText"]);
@@ -287,7 +287,7 @@ describe("硬线⑤：文件树插件接上了", () => {
 
 	it("没批的那条：路由回一句人话，不是静默", async () => {
 		const { pluginsRoot, workspace, area, logs } = await box();
-		const seed = fileURLToPath(new URL("../../seed/plugins/文件树", import.meta.url));
+		const seed = fileURLToPath(new URL("../../plugins-src/文件树", import.meta.url));
 		await cp(seed, join(pluginsRoot, "文件树"), { recursive: true });
 		// 把人批的那一行抹掉 = 一条都没批。
 		const manifestPath = join(pluginsRoot, "文件树", "plugin.md");
@@ -331,7 +331,7 @@ describe("硬线⑤：文件树插件接上了", () => {
 
 	it("宿主没接执行器（网页版）：动作抛「这个宿主不支持」，不是假装做完了", async () => {
 		const { pluginsRoot, workspace, area, logs } = await box();
-		const seed = fileURLToPath(new URL("../../seed/plugins/文件树", import.meta.url));
+		const seed = fileURLToPath(new URL("../../plugins-src/文件树", import.meta.url));
 		await cp(seed, join(pluginsRoot, "文件树"), { recursive: true });
 		const host = await loadPlugins({ pluginsRoot, workspace, logsRoot: logs, scope: scopeOf(area), log: () => undefined });
 		await writeFile(join(area, "截图.png"), "x");

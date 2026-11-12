@@ -38,7 +38,7 @@ async function boot(): Promise<Routes> {
 	await writeFile(join(area, ".git", "config"), "不该出现\n");
 	await writeFile(join(root, "secret.txt"), "根外面\n");
 	await symlink(join(root, "secret.txt"), join(area, "escape.txt"));
-	const seed = fileURLToPath(new URL("../../seed/plugins/文件树", import.meta.url));
+	const seed = fileURLToPath(new URL("../../plugins-src/文件树", import.meta.url));
 	await cp(seed, join(workspace, "plugins", "文件树"), { recursive: true });
 
 	const host = await loadPlugins({

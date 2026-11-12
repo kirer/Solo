@@ -217,6 +217,7 @@ jobs:
             feed/latest-mac.json feed/latest-mac.json.sig \
             feed/latest-win.json feed/latest-win.json.sig \
             feed/plugins.json feed/plugins.json.sig \
+            feed/plugin-orb.json feed/plugin-file-tree.json feed/plugin-im-bot.json \
             feed/plugin-token-stats.json feed/plugin-model-manager.json \
             --clobber
           gh release edit "$TAG" --draft=false --latest

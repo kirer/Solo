@@ -26,7 +26,10 @@ const UI_SRC = "ui/app/src";
 async function pluginScripts(): Promise<{ rel: string; text: string }[]> {
 	const out: { rel: string; text: string }[] = [];
 	for (const root of PLUGIN_ROOTS) {
-		for (const name of await readdir(join(ROOT, root))) {
+		// `seed/plugins/` 现在整个不存在（五个出厂插件都在 `plugins-src/`，不随包发）；
+		// 目录在才扫，别为了这个 ENOENT。
+		const dirs = await readdir(join(ROOT, root)).catch(() => [] as string[]);
+		for (const name of dirs) {
 			for (const file of await readdir(join(ROOT, root, name))) {
 				if (!/\.(js|mjs)$/.test(file)) continue;
 				const rel = `${root}/${name}/${file}`;

@@ -23,7 +23,7 @@ afterEach(async () => {
 	for (const box of boxes.splice(0)) await rm(box, { recursive: true, force: true });
 });
 
-const SEED = fileURLToPath(new URL("../../seed/plugins/悬浮球", import.meta.url));
+const SEED = fileURLToPath(new URL("../../plugins-src/悬浮球", import.meta.url));
 
 /**
  * `client.js` 里**真正的代码行**：注释里会引用「以前长什么样」的旧代码，
@@ -198,7 +198,7 @@ describe("悬浮球", () => {
 	});
 
 	it("千问音色表：48 个（38 普通话 / 10 方言）、默认 Cherry、语速夹在 0.5–2", async () => {
-		const qwen = await import("../../seed/plugins/悬浮球/qwen.js");
+		const qwen = await import("../../plugins-src/悬浮球/qwen.js");
 		expect(qwen.QWEN_VOICES).toHaveLength(48);
 		expect(new Set(qwen.QWEN_VOICES.map((item) => item.voice)).size).toBe(48);
 		expect(qwen.QWEN_VOICES.filter((item) => item.group === "dialect")).toHaveLength(10);
@@ -390,7 +390,7 @@ describe("悬浮球", () => {
 	 * 正好是插件在浏览器里加载时最先做的那一步。
 	 */
 	it("每份 client.js 都能被解析（语法坏了插件整份加载失败，界面一片空白）", async () => {
-		const root = fileURLToPath(new URL("../../seed/plugins", import.meta.url));
+		const root = fileURLToPath(new URL("../../plugins-src", import.meta.url));
 		const entries = await readdir(root, { withFileTypes: true });
 		const broken: string[] = [];
 		let checked = 0;

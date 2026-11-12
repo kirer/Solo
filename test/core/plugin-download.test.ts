@@ -1,5 +1,5 @@
 /**
- * 首次联网下载出厂插件（`Token统计`、`模型管理`）。
+ * 首次联网下载出厂插件（`悬浮球`、`文件树`、`IM机器人`、`Token统计`、`模型管理`）。
  *
  * 每条底线都得有能自己变红的断言，不然「验过了」只是句说法（程砚-2 2026-11-12）：
  * 1. 有网：**走 API 资产直链**（带 `Accept: application/octet-stream`，一次都不碰
@@ -8,7 +8,9 @@
  * 3. 目录在就跳过：一个请求都不发（老用户升级上来就是这个样子）；
  * 4. 用户走过删除入口：启动时不在背后装回来；**他亲手点重试才真下**，装完从 `removed` 里摘掉；
  * 5. 更新接口拿不到就明说失败，**不静默回落**到那条不通的直链；
- * 6. 清单生成器覆盖 `plugins-src/` 里每个插件，`plugins-src/` 不进包。
+ * 6. 清单生成器覆盖 `plugins-src/` 里每个插件，`plugins-src/` 不进包；
+ * 7. 首启五个包串行下，**中间一个失败不许拖累其它四个**，状态按名字各记各的；
+ * 8. 发布工作流会把**每一个**插件包都传上去（漏传 = 客户端 404，而 CI 一片绿）。
  */
 import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
@@ -22,6 +24,7 @@ import {
 	PLUGIN_MANIFEST_ASSET,
 	REMOTE_PLUGINS,
 	downloadRemotePlugin,
+	ensureDownloadablePlugins,
 	pluginFeed,
 	remotePluginStatuses,
 } from "../../src/shell/plugin-download.ts";
@@ -275,8 +278,61 @@ describe("插件首次下载", () => {
 		const layout = resolveLayout({ appRoot: root, userRoot: root });
 		const feed = feedOf();
 		const { fetchImpl, calls } = localFeed(feed);
-		expect(await downloadRemotePlugin(layout, "IM机器人", { fetchImpl, publicKey: feed.publicKey })).toBe(false);
+		expect(await downloadRemotePlugin(layout, "随手写的插件", { fetchImpl, publicKey: feed.publicKey })).toBe(false);
 		expect(calls).toEqual([]);
+	});
+});
+
+describe("首启把五个包串行下", () => {
+	it("中间一个失败不拖累其它四个，状态各记各的", async () => {
+		const root = await appRoot();
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		const feed = feedOf();
+		// 只有「文件树」的包被换掉：清单签名是真的，但包对不上 sha256 → 只有它失败。
+		const broken = "文件树";
+		const { fetchImpl } = localFeed(feed, {
+			override: (name, body) => (name === PLUGIN_ASSETS[broken] ? JSON.stringify({ files: { "plugin.js": "// 坏包" } }) : body),
+		});
+
+		const done = await ensureDownloadablePlugins(layout, { fetchImpl, publicKey: feed.publicKey });
+
+		const others = REMOTE_PLUGINS.filter((one) => one !== broken);
+		expect([...done].sort()).toEqual([...others].sort());
+		const statuses = await remotePluginStatuses(layout);
+		for (const name of others) {
+			expect(statuses.find((one) => one.name === name)?.state, name).toBe("installed");
+			expect(existsSync(join(root, "plugins", name, "plugin.js")), name).toBe(true);
+		}
+		// 坏的那个：状态只有它自己是 failed，盘上一个文件都不落。
+		expect(statuses.find((one) => one.name === broken)?.state).toBe("failed");
+		expect(await readdirSafe(join(root, "plugins", broken))).toEqual([]);
+	});
+
+	it("删过的（含新搬的三个）：启动那一次一个请求都不发，点重试才装", async () => {
+		const root = await appRoot();
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		// 五个全删过 —— 新搬来的三个和老的走得是同一本账。
+		const fresh = [...REMOTE_PLUGINS];
+		await writeFile(
+			layout.seedManifestFile,
+			`${JSON.stringify({ version: 2, skills: {}, plugins: [], pluginFiles: {}, removed: fresh, files: {}, textKeys: {} }, null, 2)}\n`,
+		);
+		const feed = feedOf();
+
+		const startup = localFeed(feed);
+		expect(await ensureDownloadablePlugins(layout, { fetchImpl: startup.fetchImpl, publicKey: feed.publicKey })).toEqual([]);
+		expect(startup.calls).toEqual([]);
+		for (const name of fresh) expect(existsSync(join(root, "plugins", name))).toBe(false);
+
+		// 只有他亲手点的那一个会下；另外两个仍然尊重删除。
+		const retry = localFeed(feed);
+		expect(await downloadRemotePlugin(layout, "悬浮球", { fetchImpl: retry.fetchImpl, publicKey: feed.publicKey, explicit: true })).toBe(true);
+		expect(existsSync(join(root, "plugins", "悬浮球", "plugin.js"))).toBe(true);
+		expect(retry.calls.length).toBeGreaterThan(0);
+		// 账本上只剩他刚装的那个被摘掉，另外四个仍然记着「删过」。
+		const ledger = await ledgerOf(layout);
+		expect(ledger.removed).not.toContain("悬浮球");
+		expect([...ledger.removed].sort()).toEqual(["IM机器人", "文件树", "Token统计", "模型管理"].sort());
 	});
 });
 
@@ -294,8 +350,16 @@ describe("清单与出厂源对得上", () => {
 		}
 	});
 
-	it("代码里认的那两个名字，和生成器登记的一致", () => {
+	it("代码里认的那五个名字，和生成器登记的一致", () => {
 		expect(Object.keys(PLUGIN_ASSETS).sort()).toEqual([...REMOTE_PLUGINS].sort());
+		// 条数也钉住：以后加插件只改一边，这里先红。
+		expect(REMOTE_PLUGINS).toHaveLength(5);
+	});
+
+	it("发布工作流会把每一个插件包都传上去（漏传 = 客户端 404，而 CI 一片绿）", async () => {
+		const yml = await readFile(join(REPO, ".github/workflows/release.yml"), "utf8");
+		const uploaded = new Set([...yml.matchAll(/feed\/(plugin-[a-z0-9-]+\.json)/g)].map((match) => match[1] ?? ""));
+		expect([...uploaded].sort()).toEqual(Object.values(PLUGIN_ASSETS).sort());
 	});
 
 	it("插件资产名全是 ASCII（中文名在 URL 里要编码，各处都要多一层错）", () => {

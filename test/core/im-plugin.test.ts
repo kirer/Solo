@@ -45,7 +45,7 @@ async function boot(
 	boxes.push(workspace);
 	await mkdir(join(workspace, "plugins"), { recursive: true });
 	await mkdir(join(workspace, "assistant", "知言"), { recursive: true });
-	const seed = fileURLToPath(new URL("../../seed/plugins/IM机器人", import.meta.url));
+	const seed = fileURLToPath(new URL("../../plugins-src/IM机器人", import.meta.url));
 	await cp(seed, join(workspace, "plugins", "IM机器人"), { recursive: true });
 	await mkdir(join(workspace, "im"), { recursive: true });
 	await writeFile(join(workspace, "im", "bots.json"), JSON.stringify({ bots }));
