@@ -238,17 +238,32 @@ export function PluginsPage(): JSX.Element {
 												type="button"
 												key={item.name}
 												className="pl-removed-item"
-												title={item.message ?? `把「${item.name}」下载下来`}
+												title={item.state === "failed" ? (item.message ?? "还是没装上") : `把「${item.name}」下载下来`}
 												onClick={() => {
-													apply(downloadPlugin(item.name), (next) => {
-														const back = next.find((plugin) => plugin.slug === item.name);
-														if (back?.client === true && back.error === undefined) setRestartOpen(back.name);
-														setOffline((old) => old.filter((one) => one.name !== item.name));
-													});
+													// 点的这一下先把状态改成「正在下载」：后端要几十秒，不给回执像卡死。
+													setOffline((old) => old.map((one) => (one.name === item.name ? { name: one.name, state: "downloading" } : one)));
+													downloadPlugin(item.name)
+														.then((next) => {
+															setPlugins(next.plugins);
+															const back = next.plugins.find((plugin) => plugin.slug === item.name);
+															if (back?.client === true && back.error === undefined) setRestartOpen(back.name);
+															setOffline((old) => old.filter((one) => one.name !== item.name));
+														})
+														.catch((error: Error) => {
+															// **失败不抹条目**：抹掉等于「点了就消失」，用户以为装上了，其实盘上没有。
+															// 就地改成「还是没装上」，把后端那句话当说明。
+															setOffline((old) =>
+																old.map((one) =>
+																	one.name === item.name ? { name: one.name, state: "failed", message: error.message } : one,
+																),
+															);
+														});
 												}}
 											>
 												{item.name}
-												<span className="pl-removed-btn">{item.state === "downloading" ? "正在下载" : "重试"}</span>
+												<span className="pl-removed-btn">
+													{item.state === "downloading" ? "正在下载" : item.state === "failed" ? "还是没装上，再试一次" : "重试"}
+												</span>
 											</button>
 										))}
 								</div>

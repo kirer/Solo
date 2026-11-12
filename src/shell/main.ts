@@ -280,7 +280,8 @@ async function main(): Promise<void> {
 				isShipped: (name) => isShippedPlugin(layout, name),
 				// 改成首次联网下载的那两个：状态与重试都走 `plugin-download.ts`。
 				remote: () => remotePluginStatuses(layout),
-				download: (name) => downloadRemotePlugin(layout, name),
+				// 界面上点的那一下 = 用户明说要：绕过「账本见过就跳过」，装完把名字从 `removed` 里摘掉。
+				download: (name) => downloadRemotePlugin(layout, name, { explicit: true }),
 			},
 			// 重启把谁的一轮掐断了：留痕 + 交给底座重放（ADR-044 / ADR-074）。
 			interrupted: runtime.interrupted,

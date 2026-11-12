@@ -51,7 +51,32 @@ export function assetUrlOf(release: unknown, base: string, name: string): string
 			if (typeof url === "string" && url !== "") return url;
 		}
 	}
-	return `${base.endsWith("/") ? base : `${base}/`}${name}`;
+	// 名字要编码：清单和资产名将来可能带空格 / `#` / 中文，裸拼会让 `#` 之后全变成 fragment。
+	// 资产名是单个文件名（不含 `/`），所以按整段编码就够。
+	return `${base.endsWith("/") ? base : `${base}/`}${encodeURIComponent(name)}`;
+}
+
+/**
+ * 源地址归一：末尾一定带一个 `/`，拼资产名时各层不用各自判。
+ * （`SOLO_PLUGIN_FEED` / 自建源手写时经常忘了尾斜杠。）
+ */
+export function feedBase(feed: string): string {
+	return feed.endsWith("/") ? feed : `${feed}/`;
+}
+
+/** 一个资产的请求：地址 + 该带什么头（`api.github.com` 的资产要 `Accept`，直链不用）。 */
+export type AssetRequest = { readonly url: string; readonly headers: Record<string, string> | undefined };
+
+/**
+ * 「资产名 → 该请求哪儿」的**唯一**算法：有 API 返回就挑资产直链，挑不到退回 `base + 名字`。
+ *
+ * 服务端那份在 `src/core/release-assets.ts`，两份必须算出同一个地址
+ * （`test/core/release-assets.test.ts` 拿同一批输入对撞）。桌面壳的 `rootDir` 钉在 `desktop/src`，
+ * 引不到 `src/` 下任何文件，只能各存一份（ADR-127）。
+ */
+export function assetRequest(feed: string, release: unknown, name: string): AssetRequest {
+	const url = assetUrlOf(release, feedBase(feed), name);
+	return { url, headers: assetHeaders(url) };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

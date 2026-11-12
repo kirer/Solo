@@ -18,6 +18,7 @@ import { createHash } from "node:crypto";
 import { join, resolve, sep } from "node:path";
 import type { Layout } from "../core/layout.ts";
 import { existsAt, writeTextAt } from "../core/runtime/io.ts";
+import { assetRequest, latestReleaseApi } from "../core/release-assets.ts";
 import { verifySignature } from "../core/signing.ts";
 import { UPDATE_PUBLIC_KEY } from "../core/update-key.ts";
 import { hashOf, readManifest, writeManifest } from "./seed.ts";
@@ -93,6 +94,14 @@ type DownloadOptions = {
 	readonly feed?: string;
 	readonly publicKey?: string;
 	readonly fetchImpl?: typeof fetch;
+	/**
+	 * 用户亲手点了「重试」。
+	 *
+	 * 只有这一种情况绕过「账本见过就跳过」：他走过删除入口，现在又明确说要。
+	 * 启动时那一次（`ensureDownloadablePlugins`）不带这个，尊重删除。
+	 * 盘上已有目录仍然不覆盖（ADR-097）——真要从头来是「卸载再装」，这版不做。
+	 */
+	readonly explicit?: boolean;
 };
 
 /**
@@ -109,22 +118,30 @@ export async function downloadRemotePlugin(layout: Layout, name: string, options
 
 	const manifestPath = layout.seedManifestFile;
 	const manifest = await readManifest(manifestPath);
-	// 用户走过「删除」入口：尊重删除，不偷偷装回来。
-	if (manifest.removed.includes(name)) return false;
+	// 用户走过「删除」入口：尊重删除，不偷偷装回来 —— 除非他这次是亲手点的重试。
+	if (options.explicit !== true && manifest.removed.includes(name)) return false;
 
 	progress.set(name, { state: "downloading" });
 	try {
 		const feed = pluginFeed(options.feed);
 		const fetcher = options.fetchImpl ?? fetch;
-		const get = async (url: string): Promise<Response> => {
-			const response = await fetcher(url, { signal: AbortSignal.timeout(30_000) });
-			if (!response.ok) throw new Error(`${url} 回 ${response.status}`);
+		// 地址只认 `assetRequest()` 一个算法：GitHub 源问 API 要资产直链（`api.github.com/.../assets/<id>`，
+		// 带 `Accept: application/octet-stream`）。**不回落**到 `github.com/.../latest/download/`：
+		// 那条路在一些网络里就是不通，回落等于把「更新包能下、插件包下不动」这个坑留给用户。
+		const release = await releaseOf(feed, fetcher);
+		const get = async (asset: string): Promise<Response> => {
+			const request = assetRequest(feed, release, asset);
+			const response = await fetcher(request.url, {
+				signal: AbortSignal.timeout(30_000),
+				...(request.headers === undefined ? {} : { headers: request.headers }),
+			});
+			if (!response.ok) throw new Error(`${request.url} 回 ${response.status}`);
 			return response;
 		};
 
 		// 1. 清单 + 签名。签名对不上就到此为止 —— 后面那些字节一个都不信。
-		const text = await (await get(`${feed}${PLUGIN_MANIFEST_ASSET}`)).text();
-		const signature = await (await get(`${feed}${PLUGIN_MANIFEST_ASSET}.sig`)).text();
+		const text = await (await get(PLUGIN_MANIFEST_ASSET)).text();
+		const signature = await (await get(`${PLUGIN_MANIFEST_ASSET}.sig`)).text();
 		if (!verifySignature(options.publicKey ?? UPDATE_PUBLIC_KEY, text, signature)) {
 			throw new Error("插件清单签名不对：不是用发布密钥签的");
 		}
@@ -135,7 +152,7 @@ export async function downloadRemotePlugin(layout: Layout, name: string, options
 
 		// 3. 取 bundle，校 sha256（+ 字节数）。清单签名是真的也照样校：签名保护的是清单，
 		//    下载回来的文件是另一条链路，被换了只有 sha256 拦得住。
-		const bundle = Buffer.from(await (await get(`${feed}${entry.file}`)).arrayBuffer());
+		const bundle = Buffer.from(await (await get(entry.file)).arrayBuffer());
 		if (bundle.byteLength !== entry.size) throw new Error(`插件包大小不对：${bundle.byteLength} != ${entry.size}`);
 		const digest = createHash("sha256").update(bundle).digest("hex");
 		if (digest !== entry.sha256) throw new Error(`插件包 sha256 不对：${digest} != ${entry.sha256}`);
@@ -174,6 +191,29 @@ export async function downloadRemotePlugin(layout: Layout, name: string, options
 	console.warn(`[plugin] 「${name}」没下下来：${message}｜${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 		return false;
 	}
+}
+
+/**
+ * GitHub 形状的源：先问一次 `/releases/latest` 拿资产列表（一次下载只问一次）。
+ *
+ * 认得出仓库却拿不到（限流 60 次/小时、资产缺失、连不上）就**抛**，不静默回落：
+ * 回落拼的是 `github.com/.../latest/download/`，用户看不出区别，插件页就常驻「没装上」。
+ * 认不出仓库的源（`SOLO_PLUGIN_FEED` 的本机端口、自建源）本来就没有 API 这一层，直接拼地址。
+ */
+async function releaseOf(feed: string, fetcher: typeof fetch): Promise<unknown> {
+	const api = latestReleaseApi(feed);
+	if (api === undefined) return undefined;
+	let response: Response;
+	try {
+		response = await fetcher(api, {
+			signal: AbortSignal.timeout(30_000),
+			headers: { Accept: "application/vnd.github+json" },
+		});
+	} catch (error) {
+		throw new Error(`更新接口没通：${error instanceof Error ? error.message : String(error)}`);
+	}
+	if (!response.ok) throw new Error(`更新接口没通：${api} 回 ${response.status}`);
+	return await response.json();
 }
 
 /** 启动时补一次：缺哪个下哪个，**不阻塞启动**，失败只留状态等界面重试。 */
@@ -235,6 +275,7 @@ function bundleFiles(text: string): Map<string, string> {
 /** 给界面看的那句话：断网和校验失败要说得出区别，别都写成「下载失败」。 */
 function humanMessage(error: unknown): string {
 	const raw = error instanceof Error ? error.message : String(error);
+	if (raw.includes("更新接口没通")) return "插件包地址取不到（更新接口没通），稍后重试";
 	if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|timed out|aborted/i.test(raw)) return "这次没连上，稍后重试";
 	if (raw.includes("签名")) return "插件清单签名不对，已拒绝安装";
 	if (raw.includes("sha256") || raw.includes("大小")) return "下载回来的文件校验没过，已拒绝安装";

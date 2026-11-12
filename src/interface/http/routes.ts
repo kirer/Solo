@@ -461,8 +461,16 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			pattern: "/api/plugins/:slug/download",
 			method: "POST",
 			handler: async ({ response, params }) => {
+				const slug = params.slug ?? "";
 				try {
-					return json(response, { plugins: await app.plugins.download(params.slug ?? "") });
+					const plugins = await app.plugins.download(slug);
+					// 没下成必须是非 2xx：回 200 + 原清单，前端 `then` 照样跑，条目被抹掉，
+					// 用户以为装上了（Solo 2026-11-12）。判据问磁盘，不问返回值。
+					const status = (await app.plugins.remote()).find((one) => one.name === slug);
+					if (status !== undefined && status.state !== "installed") {
+						return fail(response, 502, status.message ?? "没装上，稍后重试");
+					}
+					return json(response, { plugins });
 				} catch (error) {
 					return fail(response, 400, (error as Error).message);
 				}
