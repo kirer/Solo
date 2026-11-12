@@ -443,18 +443,6 @@ export default {
 		/* 在念：轻微点头；嘴的档位由 JS 每帧写（真机跟 AnalyserNode 的音量）。 */
 		.orb-mark[data-view="speak"] { animation: orb-nod 0.5s ease-in-out infinite; }
 		@keyframes orb-nod { 0%, 100% { transform: none; } 50% { transform: translateY(-1px) rotate(0.6deg); } }
-		/* 正在跑：一圈转着的弧，圆角跟着球面走，不是圆环。只在这一轮里存在，结算即消失。 */
-		.orb-ring {
-			position: absolute; inset: -5px; border-radius: 18px; padding: 2px;
-			background: conic-gradient(from 0deg, transparent 0 190deg, var(--accent) 330deg, transparent 360deg);
-			-webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-			-webkit-mask-composite: xor;
-			mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-			mask-composite: exclude;
-			animation: orb-spin 1.5s linear infinite;
-			pointer-events: none;
-		}
-		@keyframes orb-spin { to { transform: rotate(360deg); } }
 		/* 「没念出来」的红点：跟未读角标抢同一个角会叠住，所以让到左下。 */
 		.orb-badge.orb-alert {
 			top: auto; right: auto; bottom: 2px; left: -4px;
@@ -2457,7 +2445,6 @@ export default {
 					onPointerEnter: enter,
 					onPointerLeave: leave,
 				},
-				busy ? h("span", { className: "orb-ring", "aria-hidden": "true" }) : null,
 				// 在听：身边一圈随音量起伏的光。这是「不用点就能说」唯一需要的提示。
 				listening
 					? h("span", {
