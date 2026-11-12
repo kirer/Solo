@@ -8,7 +8,7 @@
  * 也不做成 `file` 的 action：`file` 的主语是一个文件（`path` 必填），而搜索的主语
  * 是一段目录和一条模式，参数对不上。
  */
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { Type, defineTool } from "../../runtime/index.ts";
 import { listDirSorted, readTextOrUndefined } from "../../runtime/io.ts";
 import { fill } from "../../documents/base/catalog.ts";
@@ -107,8 +107,9 @@ export function createSearchTool(deps: CoreToolDeps) {
 					if (isProtectedName(entry.name)) continue;
 					const entryAbs = join(abs, entry.name);
 					const entryRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-					// 显示路径按平台拼：Windows 上 `base + "/" + rel` 会和 `join` 的口径不一致（ADR-126 的用例抓的）。
-					const shown = base === "" ? entryRel : join(base, entryRel);
+					// 显示路径分两种：绝对起点（额外目录）就是盘上真路径，按平台分隔符拼；
+					// 相对起点给的是「回到工作区的相对路径」，固定 `/`，跨平台一致（Windows 上也别出反斜杠）。
+					const shown = base === "" ? entryRel : isAbsolute(base) ? join(base, entryRel) : `${base}/${entryRel}`;
 					if (entry.kind === "dir") {
 						if (SKIP_DIRS.has(entry.name)) continue;
 						await walk(entryAbs, entryRel, depth + 1);
