@@ -15,6 +15,23 @@ export type UpdateManifest = {
 	readonly version: string;
 	/** 按平台分的安装包；`darwin` / `win32`，和 `process.platform` 一致。 */
 	readonly files: Readonly<Record<string, UpdateFile>>;
+	/**
+	 * 这一版改了什么：一条一行的人话，发版时从提交标题生成。
+	 * 老清单没有这个字段，读出来是空数组 —— 弹窗据此退回旧文案。
+	 */
+	readonly notes: readonly string[];
+};
+
+/**
+ * `notes` 读得宽松些：不是数组就当没有，数组里不是字符串的条目丢掉。
+ * 清单里多写坏一条不该让整个更新失败 —— 版本和包都还是好的。
+ */
+const readNotes = (value: unknown): string[] => {
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((item): item is string => typeof item === "string")
+		.map((item) => item.trim())
+		.filter((item) => item !== "");
 };
 
 const isFile = (value: unknown): value is UpdateFile => {
@@ -40,7 +57,7 @@ export function parseManifest(text: string): UpdateManifest | undefined {
 		if (!isFile(file)) return undefined;
 		files[platform] = file;
 	}
-	return { version: value["version"], files };
+	return { version: value["version"], files, notes: readNotes(value["notes"]) };
 }
 
 /** 清单原文的签名是不是这份公钥签的。签名文件是 base64。 */

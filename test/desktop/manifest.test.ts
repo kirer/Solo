@@ -50,3 +50,32 @@ describe("更新清单", () => {
 		expect(manifest === undefined ? undefined : fileFor(manifest, "win32")).toBeUndefined();
 	});
 });
+
+describe("清单里的 notes（这一版改了什么）", () => {
+	const base = { version: "2.9.16", files: { darwin: { file: "a.zip", sha512: "x==", size: 1 } } };
+
+	it("有 notes 就按原顺序读出来", () => {
+		const withNotes = JSON.stringify({
+			...base,
+			notes: ["去掉转圈弧", "更新弹窗显示这一版改了什么", "修一件事"],
+		});
+		expect(parseManifest(withNotes)?.notes).toEqual([
+			"去掉转圈弧",
+			"更新弹窗显示这一版改了什么",
+			"修一件事",
+		]);
+	});
+
+	it("老清单没有 notes，读出来是空数组（弹窗据此退回旧文案）", () => {
+		expect(parseManifest(text)?.notes).toEqual([]);
+	});
+
+	it("notes 写坏了不让整份清单作废", () => {
+		expect(parseManifest(JSON.stringify({ ...base, notes: "去掉转圈弧" }))?.notes).toEqual([]);
+		expect(parseManifest(JSON.stringify({ ...base, notes: [1, "真好", null, "  ", "两条"] }))?.notes).toEqual([
+			"真好",
+			"两条",
+		]);
+		expect(parseManifest(JSON.stringify({ ...base, notes: [1, null] }))?.version).toBe("2.9.16");
+	});
+});

@@ -21,6 +21,7 @@ import { app, dialog, session, type BrowserWindow, type MessageBoxOptions } from
 import { feedUrl } from "./feed.ts";
 import { scheduleInstall } from "./install.ts";
 import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
+import { versionDetail } from "./update-notes.ts";
 import { assetHeaders, assetUrlOf, latestReleaseApi } from "./release-assets.ts";
 import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
 import { readUpdateProxy } from "./update-proxy.ts";
@@ -108,7 +109,7 @@ async function download(
 	sha512: string,
 	onProgress: (ratio: number) => void,
 	proxy: string | undefined,
-): Promise<string> {
+): Promise<{ path: string; bytes: number }> {
 	const response = await requestOk(url, proxy);
 	if (response.body === null) throw new Error("下载失败：没有响应体");
 	const total = Number(response.headers.get("content-length") ?? 0);
@@ -129,9 +130,11 @@ async function download(
 	});
 	if (hash.digest("base64") !== sha512) {
 		await rm(dir, { recursive: true, force: true });
+		console.warn(`[update] 校验失败：下载的包和清单里的 sha512 对不上（${received} 字节）`);
 		throw new Error("校验失败：下载的包和清单里的 sha512 对不上");
 	}
-	return path;
+	console.log(`[update] 校验通过：${received} 字节，sha512 与清单一致`);
+	return { path, bytes: received };
 }
 
 export function createUpdater(options: UpdaterOptions): Updater {
@@ -161,6 +164,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	const check = async (): Promise<void> => {
 		if (busy) return;
 		busy = true;
+		// 用户来报「更新失败」时得说清死在哪一步，不然连查都没法查。
+		let step = "取清单";
 		try {
 			if (feed === undefined) throw new Error("更新源地址无效（要 https，本机测试可以用 http://127.0.0.1）");
 			const base = feed.endsWith("/") ? feed : `${feed}/`;
@@ -180,22 +185,26 @@ export function createUpdater(options: UpdaterOptions): Updater {
 				return;
 			}
 			console.log(`[update] 有新版本 ${manifest.version}（当前 ${app.getVersion()}）`);
+			// 清单里没有 notes 时 versionDetail 返回的就是加这一版之前的一模一样的文案。
 			const answered = await notify({
 				type: "info",
 				message: `有新版本 ${manifest.version}`,
-				detail: `当前是 ${app.getVersion()}。现在下载吗？下载完会再问一次要不要重启安装。`,
+				detail: versionDetail(app.getVersion(), manifest.notes),
 				buttons: ["下载", "稍后"],
 				defaultId: 0,
 				cancelId: 1,
 			});
 			if (answered !== 0) return;
-			const zip = await download(
+			step = "下载";
+			const { path: zip, bytes } = await download(
 				await asset(file.file),
 				file.sha512,
 				(ratio) => windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
 				proxy,
 			);
+			console.log(`[update] 下载完成：${manifest.version}，${bytes} 字节`);
 			windowNow()?.setProgressBar(-1);
+			step = "替换";
 			const install = await notify({
 				type: "info",
 				message: `新版本 ${manifest.version} 已下载`,
@@ -218,6 +227,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 					fromVersion: app.getVersion(),
 				});
 			} catch (error) {
+				console.warn(`[update] 替换失败：${(error as Error).message}`);
 				await notify({
 					type: "warning",
 					message: "更新安装器没起来",
@@ -229,7 +239,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			await options.beforeInstall();
 			app.quit();
 		} catch (error) {
-			console.warn(`[update] ${(error as Error).message}`);
+			const message = (error as Error).message;
+			console.warn(`[update] ${message.startsWith("校验失败") ? "校验" : step}失败：${message}`);
 			if (!manual) return;
 			void notify({
 				type: "warning",
