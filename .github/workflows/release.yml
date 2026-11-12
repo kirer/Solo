@@ -14,7 +14,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: release
+  # 全局只有一个 latest，publish 必须全局串行，不要改成按 tag/分支分组的名字。
+  # 只有再出现僵尸 run 占住并发组时，才把这里升一级（release-v3…），平时永远别动；
+  # 改名的提交必须在下一版打 tag 之前进 main，否则那条 publish 用的还是旧组名。
+  group: release-v2
   cancel-in-progress: false
 
 # electron-builder 的辅助包（dmgbuild、7zip、winCodeSign、nsis）平时从 github.com 的
