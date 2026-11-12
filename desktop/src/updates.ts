@@ -22,8 +22,9 @@ import { feedUrl } from "./feed.ts";
 import { scheduleInstall } from "./install.ts";
 import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
 import { versionDetail } from "./update-notes.ts";
-import { assetHeaders, latestReleaseApi } from "./release-assets.ts";
-import { upgradeAssetUrl } from "./update-asset.ts";
+import { assetHeaders } from "./release-assets.ts";
+import { upgradeAssetSource } from "./update-asset.ts";
+import { errorDetail, updateFailureMessage, type UpdateCheck } from "./update-failure.ts";
 import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
 import { readUpdateProxy } from "./update-proxy.ts";
 
@@ -42,6 +43,8 @@ export type UpdaterOptions = {
 export type Updater = {
 	start: () => void;
 	checkNow: () => void;
+	/** 上一次检查的结果（界面那行「检查更新没连上，稍后重试」读它）。没查过是 `undefined`。 */
+	status: () => UpdateCheck | undefined;
 };
 
 const manifestName = (): string => (process.platform === "darwin" ? "latest-mac.json" : "latest-win.json");
@@ -88,22 +91,13 @@ async function fetchText(url: string, proxy: string | undefined): Promise<string
 
 /**
  * 资产地址：GitHub 源优先问 `api.github.com` 要直链（`github.com/.../download/` 在
- * 有些网络里连不上，API 和资产域却能到）；API 不通就退回原地址。每个检查只问一次 API。
+ * 有些网络里连不上，API 和资产域却能到）。每个检查只问一次 API。
+ *
+ * **API 拿不到就失败，不回落**那条短链（2.9.18）：回落等于让检查更新白等到超时、
+ * 界面上一个字都没有 —— 程砚-2 报的 403 静默就是这么来的。纯逻辑在 `update-asset.ts` 里。
  */
-async function assetUrls(feed: string, proxy: string | undefined): Promise<(name: string) => Promise<string>> {
-	const base = feed.endsWith("/") ? feed : `${feed}/`;
-	const api = latestReleaseApi(base);
-	if (api === undefined) return async (name) => `${base}${name}`;
-	let release: unknown;
-	try {
-		release = JSON.parse(await fetchText(api, proxy)) as unknown;
-	} catch (error) {
-		console.warn(`[update] 取资产直链失败，退回 ${base}：${(error as Error).message}`);
-		release = undefined;
-	}
-	// 孪生那边「清单里没有这个包」是给插件下载用的硬失败；自动升级这条路径行为一个字不变，
-	// 照旧退回 `base + 名字`（这段纯逻辑在 `update-asset.ts` 里，有用例钉着）。
-	return async (name) => upgradeAssetUrl(release, base, name);
+async function assetUrls(feed: string, proxy: string | undefined): Promise<(name: string) => string> {
+	return upgradeAssetSource(feed, (url) => fetchText(url, proxy));
 }
 
 /** 下到临时目录，边下边报进度，下完核对 sha512。 */
@@ -144,6 +138,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	const feed = feedUrl();
 	let manual = false;
 	let busy = false;
+	/** 上一次检查的结果：成功就是「查过了」，失败带着一句人话（界面读它，见 `status`）。 */
+	let lastCheck: UpdateCheck | undefined;
 
 	// 下载和对话框都是异步的，窗口可能已经关了：对销毁的窗口调任何方法都会抛
 	// `Object has been destroyed`，这时退回无父窗口的对话框。
@@ -169,14 +165,16 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		busy = true;
 		// 用户来报「更新失败」时得说清死在哪一步，不然连查都没法查。
 		let step = "取清单";
+		// 这一次检查的结论先落局部：上一次留下的失败不许粘住（Solo #2409 ①）。
+		let result: UpdateCheck | undefined;
 		try {
 			if (feed === undefined) throw new Error("更新源地址无效（要 https，本机测试可以用 http://127.0.0.1）");
 			const base = feed.endsWith("/") ? feed : `${feed}/`;
 			// 每次检查都重读：用户在设置里改了代理，下一次（或手动「检查更新」）就生效。
 			const proxy = readUpdateProxy(options.settingsFile);
 			const asset = await assetUrls(base, proxy);
-			const text = await fetchText(await asset(manifestName()), proxy);
-			const signature = await fetchText(await asset(`${manifestName()}.sig`), proxy);
+			const text = await fetchText(asset(manifestName()), proxy);
+			const signature = await fetchText(asset(`${manifestName()}.sig`), proxy);
 			if (!verifyManifest(UPDATE_PUBLIC_KEY, text, signature)) throw new Error("清单签名不对：不是用发布密钥签的");
 			const manifest = parseManifest(text);
 			if (manifest === undefined) throw new Error("清单格式不对");
@@ -200,7 +198,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			if (answered !== 0) return;
 			step = "下载";
 			const { path: zip, bytes } = await download(
-				await asset(file.file),
+				asset(file.file),
 				file.sha512,
 				(ratio) => windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
 				proxy,
@@ -242,16 +240,23 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			await options.beforeInstall();
 			app.quit();
 		} catch (error) {
-			const message = (error as Error).message;
-			console.warn(`[update] ${message.startsWith("校验失败") ? "校验" : step}失败：${message}`);
+			// 界面那句人话 + 日志那句根因分开：`TypeError: fetch failed` 分不出拒绝还是超时，
+			// 排查要看 `cause` 里的 `code`（2.9.18，Solo 2026-11-12）。
+			const message = updateFailureMessage(error);
+			console.warn(`[update] ${step}失败：${message}｜${errorDetail(error)}`);
+			result = { at: Date.now(), ok: false, message };
+			lastCheck = result;
 			if (!manual) return;
 			void notify({
 				type: "warning",
 				message: "检查更新失败",
-				detail: `${(error as Error).message}${feed === undefined ? "" : `\n更新源：${feed}`}`,
+				detail: `${message}${feed === undefined ? "" : `\n更新源：${feed}`}`,
 				buttons: ["知道了"],
 			});
 		} finally {
+			// 这次没记失败 = 查通了（已是最新 / 用户选了稍后都算）。失败那次不会被这里盖掉，
+			// 上一次的失败也不会留到这一次（`result` 每次进 check 都是空的）。
+			lastCheck = result ?? { at: Date.now(), ok: true };
 			manual = false;
 			busy = false;
 		}
@@ -269,6 +274,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	};
 
 	return {
+		status: () => lastCheck,
 		start: () => {
 			setTimeout(guarded, FIRST_CHECK_DELAY).unref();
 			setInterval(guarded, CHECK_INTERVAL).unref();

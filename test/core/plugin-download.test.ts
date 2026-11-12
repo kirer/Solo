@@ -5,7 +5,7 @@
  * 1. 有网：**走 API 资产直链**（带 `Accept: application/octet-stream`，一次都不碰
  *    `github.com/.../latest/download/`）、落盘、账本基线写进去；
  * 2. 篡改分两层：改清单不重签（签名拒）、签名是真的但换掉包（sha256 拒）；
- * 3. 目录在就跳过：一个请求都不发（老用户升级上来就是这个样子）；
+ * 3. 盘上那份用户改过：不取它的包、一个字节不动（升级判据见 `plugin-upgrade.test.ts`）；
  * 4. 用户走过删除入口：启动时不在背后装回来；**他亲手点重试才真下**，装完从 `removed` 里摘掉；
  * 5. 更新接口拿不到就明说失败，**不静默回落**到那条不通的直链；
  * 6. 清单生成器覆盖 `plugins-src/` 里每个插件，`plugins-src/` 不进包；
@@ -183,7 +183,7 @@ describe("插件首次下载", () => {
 		expect((await remotePluginStatuses(layout)).find((one) => one.name === NAME)?.message).toContain("校验");
 	});
 
-	it("目录已经在盘上：一个请求都不发（老用户升级上来就是这个样子）", async () => {
+	it("盘上那份用户改过：一个请求都不发", async () => {
 		const root = await appRoot();
 		const layout = resolveLayout({ appRoot: root, userRoot: root });
 		await mkdir(join(root, "plugins", NAME), { recursive: true });

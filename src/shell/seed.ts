@@ -26,7 +26,7 @@ import { LEGACY_PLUGIN_HASHES, LEGACY_SEED_HASHES, LEGACY_TEXT_KEYS } from "./se
 /** 同步账本：记「上次从 seed 拷过去的内容是什么」，用来分辨「用户改过没有」。 */
 export const SEED_MANIFEST_FILE = ".seed-manifest.json";
 
-type SeedManifest = {
+export type SeedManifest = {
 	version: 2;
 	/** `技能名` → `技能内相对路径` → 内容 hash（sha256 前 16 位）。 */
 	skills: Record<string, Record<string, string>>;
@@ -45,6 +45,14 @@ type SeedManifest = {
 	 * 半新半旧比旧版更糟。没有这一条，出厂的插件修正永远进不来（ADR-097）。
 	 */
 	pluginFiles: Record<string, Record<string, string>>;
+	/**
+	 * 出厂插件 → 上次装下来那份**包**的 sha256（清单里那一条）。
+	 *
+	 * 和 `pluginFiles` 分工不同：那一份判「用户动过没有」，这一份判「线上有没有新版」。
+	 * 没有它，每次启动都得把整包重下一遍才知道内容变没变 —— 五个包一次几 MB，
+	 * 而首启那两个请求是唯一允许的联网动作（2.9.18）。
+	 */
+	pluginBundle: Record<string, string>;
 	/**
 	 * 用户**自己删掉**的出厂插件名。
 	 *
@@ -72,7 +80,16 @@ type SeedManifest = {
 };
 
 function emptyManifest(): SeedManifest {
-	return { version: 2, skills: {}, plugins: [], pluginFiles: {}, removed: [], files: {}, textKeys: {} };
+	return {
+		version: 2,
+		skills: {},
+		plugins: [],
+		pluginFiles: {},
+		pluginBundle: {},
+		removed: [],
+		files: {},
+		textKeys: {},
+	};
 }
 
 /** 全员层技能的同步结果。`copied` / `updated` / `kept` 都是技能名。 */
@@ -196,6 +213,7 @@ export async function readManifest(path: string): Promise<SeedManifest> {
 		skills: raw.skills ?? {},
 		plugins: raw.plugins ?? [],
 		pluginFiles: raw.pluginFiles ?? {},
+		pluginBundle: raw.pluginBundle ?? {},
 		removed: raw.removed ?? [],
 		files: raw.files ?? {},
 		textKeys: raw.textKeys ?? {},
@@ -245,6 +263,7 @@ function parseManifest(text: string): Partial<SeedManifest> {
 		skills,
 		plugins: plugins ?? [],
 		pluginFiles,
+		pluginBundle: strings(value["pluginBundle"], "pluginBundle"),
 		removed: removed ?? [],
 		files: strings(value["files"], "files"),
 		textKeys: strings(value["textKeys"], "textKeys"),
@@ -540,14 +559,36 @@ export async function restorePlugin(layout: Layout, name: string): Promise<boole
 	return true;
 }
 
-/** 一个插件目录里的文本文件：相对路径（`/` 分隔）→ 内容。读不出来的跳过。 */
+/**
+ * 目录里那种不算「用户改过」的系统垃圾：Finder 打开一次插件目录就留一个 `.DS_Store`，
+ * Windows 资源管理器会留 `Thumbs.db`。不跳过它们，用户只是在 Finder 里瞄了一眼这个插件，
+ * 它从此就永远升级不了 —— 这种坏法比普通 bug 更难发现（2.9.18，Solo #2409 ③）。
+ */
+const OS_JUNK_NAMES = new Set([".DS_Store", "Thumbs.db"]);
+
+function isOsJunk(relpath: string): boolean {
+	return OS_JUNK_NAMES.has(relpath.slice(relpath.lastIndexOf("/") + 1));
+}
+
+/** 一个插件目录里的文本文件：相对路径（`/` 分隔）→ 内容。读不出来的、系统垃圾都跳过。 */
 async function pluginFiles(root: string): Promise<Map<string, string>> {
 	const out = new Map<string, string>();
 	for (const relpath of await walkFiles(root, "")) {
+		if (isOsJunk(relpath)) continue;
 		const content = await readTextOrUndefined(join(root, ...relpath.split("/")));
 		if (content !== undefined) out.set(relpath, content);
 	}
 	return out;
+}
+
+/**
+ * 一个插件目录里每个文件的内容 hash（相对路径 → hash）。
+ *
+ * 「用户动过没有」的判据要用它：`pluginFiles` 里记的就是这份东西的形状，
+ * 盘上算一遍、逐条比，任何一个文件不同（改了 / 多了 / 少了）就算动过（ADR-097）。
+ */
+export async function pluginHashes(target: string): Promise<Record<string, string>> {
+	return hashesOf(await pluginFiles(target));
 }
 
 function hashesOf(files: Map<string, string>): Record<string, string> {

@@ -12,6 +12,7 @@ import { cellsOf } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { useStore } from "../state/useStore.ts";
 import { PluginsPage } from "./PluginsPage.tsx";
+import { updateLine, type UpdateStatus } from "./update-line.ts";
 import { setPluginSheet, setResetOpen, setSettings, setTheme } from "../state/store.ts";
 import type { Theme } from "../state/store.ts";
 
@@ -297,25 +298,57 @@ function ThemeRow(props: { theme: Theme }): JSX.Element {
 /**
  * 检查更新：真正干活的是桌面壳（清单验签 → 下载 → 进程外替换，ADR-029），
  * 这里只按一下，结果由壳弹原生对话框说（「已经是最新版本」/「有新版本 x」）。
- * 同时显示壳报上来的当前版本；浏览器里没有那段桥，这一行只说明一句。
+ *
+ * 自动检查失败壳那边不弹窗（老板不开窗口），所以那行说明必须把 `solo:update-status`
+ * 报上来的失败原因真显示出来 —— 「检查更新没连上，稍后重试」，别让失败只剩日志（2.9.18）。
+ * 浏览器里没有这段桥，这一行只说明一句。
  */
 function UpdateCheckRow(): JSX.Element {
 	const [version, setVersion] = useState("");
+	const [status, setStatus] = useState<UpdateStatus | null>(null);
+	const alive = useRef(true);
 	const desktop = typeof window !== "undefined" && window.soloDesktop !== undefined;
 
-	useEffect(() => {
-		if (!desktop) return;
-		let alive = true;
-		window.soloDesktop
-			?.version?.()
+	const readStatus = (): void => {
+		void window.soloDesktop
+			?.updateStatus?.()
 			.then((value) => {
-				if (alive) setVersion(value);
+				if (!alive.current) return;
+				const next = value ?? null;
+				setStatus((prev) => (prev?.at === next?.at && prev?.ok === next?.ok && prev?.message === next?.message ? prev : next));
 			})
 			.catch(() => undefined);
+	};
+
+	useEffect(() => {
+		alive.current = true;
+		if (desktop) {
+			window.soloDesktop
+				?.version?.()
+				.then((value) => {
+					if (alive.current) setVersion(value);
+				})
+				.catch(() => undefined);
+			// 打开设置就看一眼上次的结果（比如刚才那次自动检查失败了）。
+			readStatus();
+		}
 		return () => {
-			alive = false;
+			alive.current = false;
 		};
 	}, [desktop]);
+
+	// 壳查完一次才更新状态：点完追着看十几秒，查到就停（没网时也不会一直转）。
+	const checkNow = (): void => {
+		window.soloDesktop?.menu("check-updates");
+		let left = 20;
+		const tick = (): void => {
+			if (!alive.current || left <= 0) return;
+			left -= 1;
+			readStatus();
+			setTimeout(tick, 700);
+		};
+		setTimeout(tick, 400);
+	};
 
 	return (
 		<div className="set-row is-static">
@@ -324,12 +357,12 @@ function UpdateCheckRow(): JSX.Element {
 			</RowIcon>
 			<span className="set-main">
 				<span className="set-label">检查更新</span>
-				<span className="set-desc">
-					{desktop ? (version === "" ? "有新版本会提示下载" : `当前版本 ${version}`) : "网页版没有自动更新，桌面版才有"}
+				<span className="set-desc" data-update-failed={status !== null && !status.ok ? "true" : undefined}>
+					{updateLine({ desktop, version, status })}
 				</span>
 			</span>
 			{desktop ? (
-				<button type="button" className="set-action" onClick={() => window.soloDesktop?.menu("check-updates")}>
+				<button type="button" className="set-action" onClick={checkNow}>
 					检查
 				</button>
 			) : null}

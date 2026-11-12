@@ -141,7 +141,8 @@ async function main(): Promise<void> {
 		// 出厂插件只在缺失时整份拷进来：插件是可以执行的代码，动过就归改的人。
 		const plugins = await seedPlugins(layout);
 		if (plugins.length > 0) console.log(`[core] 装上了出厂插件：${plugins.join("、")}`);
-		// 出厂但在包外的两个插件（`Token统计`、`模型管理`）：缺了才去线上取。
+		// 出厂但在包外的五个插件（`悬浮球`、`文件树`、`IM机器人`、`Token统计`、`模型管理`）：
+		// 缺了去线上取；盘上那份是出厂原样而线上有新版，就整份升级（用户改过的不碰）。
 		// **不 await**：断网时不能拿下载拖住启动，失败只留状态，界面给「重试」。
 		void ensureDownloadablePlugins(layout)
 			.then((done) => {

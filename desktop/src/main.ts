@@ -448,6 +448,9 @@ function setupBridge(window: BrowserWindow): void {
 
 	// 设置里显示「当前版本」：只有主进程知道版本号。
 	ipcMain.handle("solo:version", (event) => (trusted(event) ? app.getVersion() : ""));
+	// 上一次检查更新的结果（2.9.18）：失败给一句人话，界面那行字读它，别让失败只剩日志。
+	// 自动检查失败不弹窗（老板不开窗口），但这里查得到 —— 设置页「检查更新」旁边那行就是它。
+	ipcMain.handle("solo:update-status", (event) => (trusted(event) ? (updater?.status() ?? null) : null));
 
 	ipcMain.on("solo:theme", (event, theme: unknown) => {
 		if (!trusted(event) || process.platform !== "win32") return;
