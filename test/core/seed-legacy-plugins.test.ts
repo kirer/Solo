@@ -143,7 +143,7 @@ describe("老账本升级", () => {
 		}
 		// 指名到「哪个 tag、哪个文件、哪个 hash」。笼统一条红等于没红，人看到还得自己猜缺哪个。
 		expect(problems, "这些历史出厂文件不在 LEGACY_PLUGIN_HASHES：停在那些版本的机器升上来会被判成「用户改过」").toEqual([]);
-	});
+	}, 180_000); // Windows 上跑全 tag 扫描超 30s（2026-11-12 build-win 红）
 
 	// 反过来也要守住：表里不许塞没人用的 hash。
 	// 不然将来为了让上面那条绿，最省事的办法就是「什么 hash 都往里塞」—— 那等于回到
@@ -160,7 +160,7 @@ describe("老账本升级", () => {
 		for (const row of shipped) seen.add(row.hash);
 		const idle = [...LEGACY_PLUGIN_HASHES].filter((hash) => !seen.has(hash)).sort();
 		expect(idle, "这些 hash 在任何一个 tag / HEAD 的出厂插件里都找不到：别为了让测试绿往里塞").toEqual([]);
-	});
+	}, 180_000); // Windows 上跑全 tag 扫描超 30s（2026-11-12 build-win 红）
 
 	it("盘上就是出厂那份、只是版本旧：整份升到新版，并记下基线", async () => {
 		const layout = await makeLayout();

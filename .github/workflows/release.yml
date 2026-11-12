@@ -123,6 +123,10 @@ jobs:
 
   publish:
     needs: [verify, build-mac, build-win]
+    # 只有「推 v* 标签」这一种触发才发版。手动运行（workflow_dispatch）落在分支上时，
+    # 下面的 publish 会照 v<包版本> 去建 Release —— 等于把没打过标签的提交当版本发出去。
+    # 手动跑只用来验打包，发布这条路必须由 tag 触发（2026-11-12 build-win 红那次发现的）。
+    if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

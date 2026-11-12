@@ -17,6 +17,7 @@ import type { AddressInfo } from "node:net";
 import { cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	PLUGIN_MANIFEST_ASSET,
@@ -241,9 +242,10 @@ async function serveAssets(feed: Feed): Promise<{ base: string; close: () => Pro
 async function childScript(): Promise<string> {
 	const path = join(await boxDir("plugin-kill-"), "child.mjs");
 	const lines = [
-		`import { setAtomicWriteFault } from ${JSON.stringify(join(REPO, "src/core/runtime/io.ts"))};`,
-		`import { downloadRemotePlugin } from ${JSON.stringify(join(REPO, "src/shell/plugin-download.ts"))};`,
-		`import { resolveLayout } from ${JSON.stringify(join(REPO, "src/core/layout.ts"))};`,
+		// 必须用 file:// —— Windows 上 `C:\...` 不是合法的 ESM 说明符（ERR_UNSUPPORTED_ESM_URL_SCHEME）。
+		`import { setAtomicWriteFault } from ${JSON.stringify(pathToFileURL(join(REPO, "src/core/runtime/io.ts")).href)};`,
+		`import { downloadRemotePlugin } from ${JSON.stringify(pathToFileURL(join(REPO, "src/shell/plugin-download.ts")).href)};`,
+		`import { resolveLayout } from ${JSON.stringify(pathToFileURL(join(REPO, "src/core/layout.ts")).href)};`,
 		`const [appRoot, feed] = process.argv.slice(2);`,
 		`let writes = 0;`,
 		`setAtomicWriteFault(async () => {`,
@@ -460,7 +462,10 @@ describe("半途没换完：启动收拾残局", () => {
 		expect(await readdirSafe(join(root, ".plugin-staging"))).toEqual([]);
 	});
 
-	it("写到第二个文件时被 SIGKILL：正式目录与账本逐字节不变，重启收拾干净后再装成功", async () => {
+	// Windows 上跳过：那边没有信号语义，`process.kill(pid, "SIGKILL")` 走 TerminateProcess，
+	// 子进程 exit 拿到的是 code、signal 是 null，这条「真被 kill」验不了（2026-11-12 build-win 红）。
+	// Windows 上「半份残局 → 启动收拾」这条路由上面「只留 new- 半成品」那条盖住。
+	it.skipIf(process.platform === "win32")("写到第二个文件时被 SIGKILL：正式目录与账本逐字节不变，重启收拾干净后再装成功", async () => {
 		const root = await appRoot();
 		const layout = resolveLayout({ appRoot: root, userRoot: root });
 		// 文件树是 2.9.16 那一份（有基线、账本里没记包）→ 一定会重下。
