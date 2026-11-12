@@ -2605,6 +2605,7 @@ export default {
 					type: "button",
 					className: "app-entry",
 					id: "rail-orb-voice",
+					"data-tip": "悬浮球语音",
 					"aria-label": "悬浮球语音",
 					"aria-current": active ? "true" : "false",
 					onClick: () => store.openPluginView(SLUG),
