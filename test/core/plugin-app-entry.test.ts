@@ -18,18 +18,22 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
-/** 出厂插件（`seed/`）和首次联网下载的插件（`plugins-src/`）都算。 */
-const PLUGIN_ROOTS = ["seed/plugins", "plugins-src"];
+/**
+ * 只扫 `plugins-src/`：2.9.17 起五个出厂插件全搬到这里（首次联网下载），`seed/plugins/` 是空目录。
+ *
+ * 原来写成 `["seed/plugins", "plugins-src"]`，搬完之后前半段恒空、等于没扫 —— 假绿比没断言更坏。
+ * 「`seed/plugins/` 里不许再冒出插件目录」由 `test/core/seed-legacy-plugins.test.ts` 那条
+ * 「出厂源真搬了：五个都在 plugins-src，seed/plugins 里一个都没有」接手。
+ * 这里不加 `.catch()`：真有一天 `plugins-src/` 也没了，宁可 ENOENT 红，也不要空手过。
+ */
+const PLUGIN_ROOTS = ["plugins-src"];
 const UI_SRC = "ui/app/src";
 
 /** 插件目录里的客户端脚本（都是手写 JS）。 */
 async function pluginScripts(): Promise<{ rel: string; text: string }[]> {
 	const out: { rel: string; text: string }[] = [];
 	for (const root of PLUGIN_ROOTS) {
-		// `seed/plugins/` 现在整个不存在（五个出厂插件都在 `plugins-src/`，不随包发）；
-		// 目录在才扫，别为了这个 ENOENT。
-		const dirs = await readdir(join(ROOT, root)).catch(() => [] as string[]);
-		for (const name of dirs) {
+		for (const name of await readdir(join(ROOT, root))) {
 			for (const file of await readdir(join(ROOT, root, name))) {
 				if (!/\.(js|mjs)$/.test(file)) continue;
 				const rel = `${root}/${name}/${file}`;

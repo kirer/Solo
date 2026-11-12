@@ -81,24 +81,35 @@ function listTags(): string[] {
 }
 
 /**
- * 某个修订（tag 名或 `HEAD`）里 `seed/plugins/**` 每个文件的 hash。
+ * 某个修订里某个目录下的所有文件（目录在那个修订里不存在 → 空数组，`ls-tree` 不报错）。
  *
  * `core.quotepath=false`：默认中文路径会被打成 `"seed/plugins/\346\202\254..."` 带引号的转义串，
  * 后面 `git show` 一个都取不到 —— 而取不到的失败一旦被吞掉，断言就是空的绿。
  */
-function seedPluginsAt(rev: string): { path: string; hash: string }[] {
-	const files = execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", rev, "--", "seed/plugins/"], {
-		encoding: "utf8",
-	})
+function treeFiles(rev: string, dir: string): string[] {
+	return execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", rev, "--", dir], { encoding: "utf8" })
 		.split("\n")
 		.filter((line) => line !== "");
-	return files.map((path) => ({ path, hash: hashOf(gitShow(rev, path)) }));
 }
 
-function missingAt(rev: string): string[] {
-	return seedPluginsAt(rev)
-		.filter((row) => !LEGACY_PLUGIN_HASHES.has(row.hash))
-		.map((row) => `${row.path} (${row.hash})`);
+/** 某个修订里 `seed/plugins/**` 每个文件的 hash（历史 tag 只认这一处）。 */
+function seedPluginsAt(rev: string): { path: string; hash: string }[] {
+	return treeFiles(rev, "seed/plugins/").map((path) => ({ path, hash: hashOf(gitShow(rev, path)) }));
+}
+
+/**
+ * 某个修订里的**出厂源**，两处都算：`seed/plugins/`（随包发）+ `plugins-src/`（首启联网取）。
+ *
+ * 2.9.17 起五个出厂插件全在后者。只看 `seed/plugins/` 的话，那条「HEAD 里每个出厂插件文件
+ * 都在表里」会恒绿 —— 假绿比没断言更坏（Solo 2026-11-12）。所以这里合起来扫，扫到的条数
+ * 由调用方兜底（不许空手通过）。
+ */
+function shippedSourcesAt(rev: string): { path: string; hash: string }[] {
+	const rows: { path: string; hash: string }[] = [];
+	for (const dir of ["seed/plugins/", "plugins-src/"]) {
+		for (const path of treeFiles(rev, dir)) rows.push({ path, hash: hashOf(gitShow(rev, path)) });
+	}
+	return rows;
 }
 
 describe("老账本升级", () => {
@@ -106,7 +117,13 @@ describe("老账本升级", () => {
 	// 盯的是 **HEAD**：真正要保护的是「即将发出去的那一版」，tag 是已经发出去的下限。
 	// 只看 tag 的话，改动提交了但还没打 tag 的那段时间，这条测试是瞎的（程砚 2026-11-11）。
 	it("HEAD 里每个出厂插件文件都在 LEGACY_PLUGIN_HASHES 里", () => {
-		const missing = missingAt("HEAD");
+		const rows = shippedSourcesAt("HEAD");
+		// 先钉「真扫到了东西」：五个出厂插件 20 个文件，全在 `plugins-src/`。
+		// 少了这一句，`seed/plugins/` 空掉之后这条会一路绿到底（假绿）。
+		expect(rows.length, "HEAD 里一个出厂插件文件都没扫到：seed/plugins 与 plugins-src 都是空的？").toBeGreaterThan(10);
+		const missing = rows
+			.filter((row) => !LEGACY_PLUGIN_HASHES.has(row.hash))
+			.map((row) => `${row.path} (${row.hash})`);
 		expect(missing, `HEAD 里这些出厂文件不在 LEGACY_PLUGIN_HASHES：老账本机器升上来会被判成「用户改过」`).toEqual([]);
 	});
 
@@ -136,16 +153,11 @@ describe("老账本升级", () => {
 		for (const rev of [...listTags(), "HEAD"]) {
 			for (const row of seedPluginsAt(rev)) seen.add(row.hash);
 		}
-		// HEAD 上「出厂源」是两处：`seed/plugins/`（随包发）和 `plugins-src/`（首启联网取）。
-		// 2.9.17 起五个插件都在后者 —— 只扫前者，会把它们的 hash 误判成「没人用的白塞」。
-		// tag 不用扫后者：历史 tag 从来没有这个目录。
-		const shipped = execFileSync("git", ["-c", "core.quotepath=false", "ls-tree", "-r", "--name-only", "HEAD", "--", "plugins-src/"], {
-			encoding: "utf8",
-		})
-			.split("\n")
-			.filter((line) => line !== "");
-		expect(shipped.length, "HEAD 里 plugins-src/ 一个文件都没读到").toBeGreaterThan(10);
-		for (const path of shipped) seen.add(hashOf(gitShow("HEAD", path)));
+		// HEAD 上「出厂源」是两处（`seed/plugins/` + `plugins-src/`），tag 上只有前者：
+		// 只扫 seed/plugins 会把搬走的五个 hash 误判成「没人用的白塞」。
+		const shipped = shippedSourcesAt("HEAD");
+		expect(shipped.length, "HEAD 里一个出厂插件文件都没读到").toBeGreaterThan(10);
+		for (const row of shipped) seen.add(row.hash);
 		const idle = [...LEGACY_PLUGIN_HASHES].filter((hash) => !seen.has(hash)).sort();
 		expect(idle, "这些 hash 在任何一个 tag / HEAD 的出厂插件里都找不到：别为了让测试绿往里塞").toEqual([]);
 	});

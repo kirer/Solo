@@ -278,7 +278,7 @@ async function main(): Promise<void> {
 				removed: () => removedPlugins(layout),
 				restore: (name) => restorePlugin(layout, name),
 				isShipped: (name) => isShippedPlugin(layout, name),
-				// 改成首次联网下载的那两个：状态与重试都走 `plugin-download.ts`。
+				// 改成首次联网下载的那五个（`plugin-download.ts` 的 `REMOTE_PLUGINS`）：状态与重试都走那边。
 				remote: () => remotePluginStatuses(layout),
 				// 界面上点的那一下 = 用户明说要：绕过「账本见过就跳过」，装完把名字从 `removed` 里摘掉。
 				download: (name) => downloadRemotePlugin(layout, name, { explicit: true }),
