@@ -199,9 +199,9 @@ export async function downloadRemotePlugin(layout: Layout, name: string, options
  * 实际有两种走向，别当成一种：
  * - **接口这层拿不到**（限流 60 次/小时、连不上、回非 2xx）→ **抛**，不静默回落。回落拼的
  *   `github.com/.../latest/download/` 正好是那些连不上的网络，出了事用户只看到「没装上」。
- * - **接口通了、但清单里没有这个资产**（发布时漏传）→ 退回 `github.com/.../latest/download/<名字>`，
- *   这条会白等到 30 秒超时，界面上那句「稍后重试」指不到真原因。**2.9.16 待办**：要么这种也抛，
- *   要么明说「包里没带这个文件」（程砚-2 2026-11-12 提出，Solo 记进待办）。
+ * - **接口通了、但清单里没有这个资产**（发布时漏传），或者名字对上了、地址却是空的 →
+ *   `assetUrlOf` 直接抛「清单里没有这个包：<名字>」，不再回落去 `github.com` 白等到超时
+ *   （2.9.16 做掉的待办；界面那句由 `humanMessage` 单独认，看得出不是网络问题）。
  * 认不出仓库的源（`SOLO_PLUGIN_FEED` 的本机端口、自建源）本来就没有 API 这一层，直接拼地址。
  */
 async function releaseOf(feed: string, fetcher: typeof fetch): Promise<unknown> {
@@ -279,6 +279,9 @@ function bundleFiles(text: string): Map<string, string> {
 /** 给界面看的那句话：断网和校验失败要说得出区别，别都写成「下载失败」。 */
 function humanMessage(error: unknown): string {
 	const raw = error instanceof Error ? error.message : String(error);
+	// 接口没通 vs 清单里没这个包：前者是网络，后者是发布时漏传，用户得看得出差别。
+	const missing = /清单里没有这个包[：:]\s*(\S+)/.exec(raw);
+	if (missing !== null) return `清单里没有这个包：「${missing[1]}」（不是网络问题，等下一版带上）`;
 	if (raw.includes("更新接口没通")) return "插件包地址取不到（更新接口没通），稍后重试";
 	if (/fetch failed|ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ETIMEDOUT|timed out|aborted/i.test(raw)) return "这次没连上，稍后重试";
 	if (raw.includes("签名")) return "插件清单签名不对，已拒绝安装";

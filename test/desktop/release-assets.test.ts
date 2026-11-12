@@ -42,13 +42,21 @@ describe("挑资产", () => {
 		);
 	});
 
-	it("挑不到 / 地址是空串就退回源地址", () => {
-		expect(assetUrlOf(release, FEED, "latest-mac.json.sig")).toBe(`${FEED}latest-mac.json.sig`);
-		expect(assetUrlOf(release, FEED, "Solo-2.3.4-arm64.zip")).toBe(`${FEED}Solo-2.3.4-arm64.zip`);
+	it("清单里没这个包 / 地址是空串：说「清单里没有这个包」，不回落 github.com", () => {
+		// 名字对上了、地址是空串：和缺包同一条路（再回落只会白等到超时）。
+		expect(() => assetUrlOf(release, FEED, "latest-mac.json.sig")).toThrow("清单里没有这个包：latest-mac.json.sig");
+		// 清单里真没有这个名字（发布时漏传）。
+		expect(() => assetUrlOf(release, FEED, "Solo-2.3.4-arm64.zip")).toThrow("清单里没有这个包：Solo-2.3.4-arm64.zip");
+		// 名字对上了、地址不是字符串：同上，别去猜。
+		expect(() => assetUrlOf({ assets: [{ name: "x.zip", url: 7 }] }, FEED, "x.zip")).toThrow("清单里没有这个包：x.zip");
+	});
+
+	it("根本没有资产列表（API 没拿到 / 自建源）：照旧退回源地址", () => {
 		expect(assetUrlOf({}, FEED, "latest-mac.json")).toBe(`${FEED}latest-mac.json`);
 		expect(assetUrlOf(undefined, "https://updates.example.com", "latest-win.json")).toBe(
 			"https://updates.example.com/latest-win.json",
 		);
+		expect(assetUrlOf({ assets: "坏了" }, "http://127.0.0.1:9/", "a b.json")).toBe("http://127.0.0.1:9/a%20b.json");
 	});
 });
 

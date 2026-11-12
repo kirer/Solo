@@ -22,7 +22,8 @@ import { feedUrl } from "./feed.ts";
 import { scheduleInstall } from "./install.ts";
 import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
 import { versionDetail } from "./update-notes.ts";
-import { assetHeaders, assetUrlOf, latestReleaseApi } from "./release-assets.ts";
+import { assetHeaders, latestReleaseApi } from "./release-assets.ts";
+import { upgradeAssetUrl } from "./update-asset.ts";
 import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
 import { readUpdateProxy } from "./update-proxy.ts";
 
@@ -100,7 +101,9 @@ async function assetUrls(feed: string, proxy: string | undefined): Promise<(name
 		console.warn(`[update] 取资产直链失败，退回 ${base}：${(error as Error).message}`);
 		release = undefined;
 	}
-	return async (name) => assetUrlOf(release, base, name);
+	// 孪生那边「清单里没有这个包」是给插件下载用的硬失败；自动升级这条路径行为一个字不变，
+	// 照旧退回 `base + 名字`（这段纯逻辑在 `update-asset.ts` 里，有用例钉着）。
+	return async (name) => upgradeAssetUrl(release, base, name);
 }
 
 /** 下到临时目录，边下边报进度，下完核对 sha512。 */

@@ -39,7 +39,15 @@ export function latestReleaseApi(feed: string): string | undefined {
 }
 
 /**
- * 从 `/releases/latest` 的返回里挑一个资产；挑不到（或格式不对）就退回 `base + name`。
+ * 从 `/releases/latest` 的返回里挑一个资产。
+ *
+ * 三种走向：
+ * - 有资产列表、名字对得上、地址可用 → 回那个地址（正常路径）。
+ * - 有资产列表、但没这个名字（发布时漏传），或者名字对上了地址却是空串 / 不是字符串 →
+ *   **抛「清单里没有这个包」**，不再回落 `github.com`：那条直链在一些网络里就是连不上，
+ *   回落等于让人白等到超时，界面上只剩「稍后重试」指不到真原因（程砚-2 2026-11-12）。
+ * - 根本没有资产列表（`release` 是 `undefined` / `{}`，即认不出仓库的自建源、本机目录、
+ *   或者 API 没拿到）→ 退回 `base + name`，这条必须留着，镜像与自建源靠它。
  *
  * 用 `url`（`api.github.com/.../releases/assets/<id>`）而不是 `browser_download_url`：
  * 前者在能连上 API 的网络里就能用（它 302 到 `objects.githubusercontent.com`），
@@ -53,12 +61,25 @@ export function assetUrlOf(release: unknown, base: string, name: string): string
 			if (!isRecord(asset)) continue;
 			if (asset["name"] !== name) continue;
 			const url = asset["url"];
+			// 名字对上了、地址却是空串或不是字符串：和「清单里没这个包」同一条路。
+			// 再回落去 `github.com` 只会白等到超时，界面上那句「稍后重试」指不到真原因。
 			if (typeof url === "string" && url !== "") return url;
+			throw new Error(missingPackageOf(name));
 		}
+		// 接口通了、清单里真没这个包（发布时漏传）：直接失败，别回落去那条连不上的直链。
+		throw new Error(missingPackageOf(name));
 	}
 	// 名字要编码：清单和资产名将来可能带空格 / `#` / 中文，裸拼会让 `#` 之后全变成 fragment。
 	// 资产名是单个文件名（不含 `/`），所以按整段编码就够。
 	return `${base.endsWith("/") ? base : `${base}/`}${encodeURIComponent(name)}`;
+}
+
+/**
+ * 「清单里没这个包」那一句话。`src/shell/plugin-download.ts` 的 `humanMessage` 认这个短语
+ * 换成人话给界面看；`desktop/src/updates.ts` 那条自动升级路径接住它、照旧回落 `base + 名字`。
+ */
+function missingPackageOf(name: string): string {
+	return `清单里没有这个包：${name}`;
 }
 
 /**

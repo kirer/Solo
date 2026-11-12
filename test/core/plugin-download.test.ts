@@ -12,6 +12,7 @@
  */
 import { execFileSync } from "node:child_process";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -68,7 +69,17 @@ type ServerOptions = {
 };
 
 /** 用真清单 + 临时密钥签一份下载源（不经过 GitHub 那层，直接给内容）。 */
-function localFeed(feed: ReturnType<typeof feedOf>, options: { api?: "ok" | "500" | "offline"; override?: (name: string, body: string) => string } = {}) {
+function localFeed(
+	feed: ReturnType<typeof feedOf>,
+	options: {
+		api?: "ok" | "500" | "offline";
+		override?: (name: string, body: string) => string;
+		/** 模拟「发布时漏传」：资产列表里干脆没这个文件。 */
+		dropFromRelease?: string;
+		/** 模拟「列表里有这个名字、地址却是空串」。 */
+		emptyUrlFor?: string;
+	} = {},
+) {
 	const calls: Call[] = [];
 	const bodies = new Map<string, string>([
 		[PLUGIN_MANIFEST_ASSET, feed.manifest],
@@ -78,10 +89,15 @@ function localFeed(feed: ReturnType<typeof feedOf>, options: { api?: "ok" | "500
 	const byId = new Map<string, string>();
 	let next = 1;
 	for (const name of bodies.keys()) byId.set(String(next++), name);
-	const assets = [...bodies.keys()].map((name) => ({
-		name,
-		url: `https://api.github.com/repos/kirer/Solo/releases/assets/${[...byId.entries()].find(([, n]) => n === name)?.[0] ?? ""}`,
-	}));
+	const assets = [...bodies.keys()]
+		.filter((name) => name !== options.dropFromRelease)
+		.map((name) => ({
+			name,
+			url:
+				name === options.emptyUrlFor
+					? ""
+					: `https://api.github.com/repos/kirer/Solo/releases/assets/${[...byId.entries()].find(([, n]) => n === name)?.[0] ?? ""}`,
+		}));
 	const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
 		const url = String(input);
 		const headers = (init?.headers ?? {}) as Record<string, string>;
@@ -225,6 +241,35 @@ describe("插件首次下载", () => {
 		}
 	});
 
+	it("清单里没这个包 / 名字对上但地址是空串：1 秒内失败，一次 github.com 都不碰", async () => {
+		for (const options of [{ dropFromRelease: PLUGIN_MANIFEST_ASSET }, { emptyUrlFor: PLUGIN_MANIFEST_ASSET }] as const) {
+			const root = await appRoot();
+			const layout = resolveLayout({ appRoot: root, userRoot: root });
+			const feed = feedOf();
+			const { fetchImpl, calls } = localFeed(feed, options);
+
+			const started = Date.now();
+			expect(await downloadRemotePlugin(layout, NAME, { fetchImpl, publicKey: feed.publicKey })).toBe(false);
+			const elapsed = Date.now() - started;
+
+			// 只问了 `/releases/latest` 那一次：`github.com` 命中 0 ⇒ 立刻返回，不是等 30 秒超时。
+			expect(calls).toHaveLength(1);
+			expect(calls.every((call) => call.url === API_LATEST)).toBe(true);
+			expect(calls.filter((call) => call.url.startsWith("https://github.com/"))).toEqual([]);
+			expect(elapsed).toBeLessThan(1000);
+
+			// 界面那句要能看出是「包里没带」，不是网络问题。
+			const status = (await remotePluginStatuses(layout)).find((one) => one.name === NAME);
+			expect(status?.state).toBe("failed");
+			expect(status?.message).toContain("清单里没有这个包");
+
+			// 失败不删条目：盘上一个文件都没有、账本没记成已装，条目还在（重试按钮还在）。
+			expect(await readdirSafe(join(root, "plugins", NAME))).toEqual([]);
+			expect(existsSync(layout.seedManifestFile)).toBe(false);
+			expect((await remotePluginStatuses(layout)).map((one) => one.name)).toContain(NAME);
+		}
+	});
+
 	it("不在白名单里的名字：直接拒，连清单都不取", async () => {
 		const root = await appRoot();
 		const layout = resolveLayout({ appRoot: root, userRoot: root });
@@ -321,3 +366,97 @@ async function readdirSafe(path: string): Promise<string[]> {
 		return [];
 	}
 }
+
+/** 一条响应的最小替身：`routes.ts` 只用到 `headersSent` / `writeHead` / `end`。 */
+function fakeResponse() {
+	let status = 0;
+	let body = "";
+	const response = {
+		headersSent: false,
+		writeHead(code: number) {
+			status = code;
+			response.headersSent = true;
+			return response;
+		},
+		end(chunk?: unknown) {
+			if (typeof chunk === "string") body += chunk;
+			return response;
+		},
+	};
+	return { response, status: () => status, body: () => body };
+}
+
+describe("界面拿到的状态（路由那两层）", () => {
+	/**
+	 * 只测 `routes.ts` 那两张皮：非 2xx 的映射和 body。真下载在 `plugin-download` 里测过，
+	 * 这里把真 `remotePluginStatuses` 接进来 —— body 里那句人话确实是从真链路上下来的。
+	 * 路由模块用动态 import：只为两条断言引一个模块，不值得把整套 `App` 搬进类型。
+	 */
+	async function routesFor(layout: Layout, feed: ReturnType<typeof feedOf>, fetchImpl: typeof fetch) {
+		const { coreRoutes } = await import("../../src/interface/http/routes.ts");
+		const app = {
+			plugins: {
+				list: async () => [],
+				remote: () => remotePluginStatuses(layout),
+				download: async (slug: string) => {
+					await downloadRemotePlugin(layout, slug, { fetchImpl, publicKey: feed.publicKey, explicit: true });
+					return [];
+				},
+			},
+		};
+		return coreRoutes({ app: app as never, hub: {} as never, uiDir: "/tmp" });
+	}
+
+	it("清单里没这个包：POST 回 502，body 里写得清「清单里没有这个包」", async () => {
+		const root = await appRoot();
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		const feed = feedOf();
+		const { fetchImpl } = localFeed(feed, { dropFromRelease: PLUGIN_MANIFEST_ASSET });
+		const route = (await routesFor(layout, feed, fetchImpl)).find(
+			(one) => one.pattern === "/api/plugins/:slug/download",
+		);
+		expect(route).toBeDefined();
+
+		const sink = fakeResponse();
+		await route?.handler({
+			response: sink.response as never,
+			params: { slug: NAME },
+			url: new URL(`http://127.0.0.1/api/plugins/${encodeURIComponent(NAME)}/download`),
+			path: "/api/plugins/:slug/download",
+			method: "POST",
+			request: {} as never,
+		});
+
+		// 非 2xx 是给前端的判据（回 200 会让条目被抹掉、用户以为装上了）。
+		expect(sink.status()).toBe(502);
+		// 不是那句含糊的「没下下来，稍后重试」：看得出来是包里没带。
+		expect(sink.body()).toContain("清单里没有这个包");
+		expect(sink.body()).not.toContain("没下下来");
+	});
+
+	it("下不回来的时候：GET 列表里条目还在（重试按钮不能消失）", async () => {
+		const root = await appRoot();
+		const layout = resolveLayout({ appRoot: root, userRoot: root });
+		const feed = feedOf();
+		const { fetchImpl } = localFeed(feed, { dropFromRelease: PLUGIN_MANIFEST_ASSET });
+		await downloadRemotePlugin(layout, NAME, { fetchImpl, publicKey: feed.publicKey });
+		const route = (await routesFor(layout, feed, fetchImpl)).find(
+			(one) => one.pattern === "/api/plugins" && one.method === "GET",
+		);
+		expect(route).toBeDefined();
+
+		const sink = fakeResponse();
+		await route?.handler({
+			response: sink.response as never,
+			params: {},
+			url: new URL("http://127.0.0.1/api/plugins"),
+			path: "/api/plugins",
+			method: "GET",
+			request: {} as never,
+		});
+		const body = JSON.parse(sink.body()) as { remote: { name: string; state: string; message?: string }[] };
+		const one = body.remote.find((item) => item.name === NAME);
+		expect(one?.state).toBe("failed");
+		expect(one?.message).toContain("清单里没有这个包");
+	});
+});
