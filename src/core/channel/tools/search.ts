@@ -107,7 +107,8 @@ export function createSearchTool(deps: CoreToolDeps) {
 					if (isProtectedName(entry.name)) continue;
 					const entryAbs = join(abs, entry.name);
 					const entryRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-					const shown = base === "" ? entryRel : `${base}/${entryRel}`;
+					// 显示路径按平台拼：Windows 上 `base + "/" + rel` 会和 `join` 的口径不一致（ADR-126 的用例抓的）。
+					const shown = base === "" ? entryRel : join(base, entryRel);
 					if (entry.kind === "dir") {
 						if (SKIP_DIRS.has(entry.name)) continue;
 						await walk(entryAbs, entryRel, depth + 1);
