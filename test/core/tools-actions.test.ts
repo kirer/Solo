@@ -9,7 +9,7 @@
  */
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { BACKGROUND_CONTEXT } from "../../src/core/runtime/index.ts";
 import { openCore, type CoreRuntime } from "../../src/core/runtime/open.ts";
@@ -480,6 +480,22 @@ describe("search", () => {
 		const output = await call("search", { action: "glob", pattern: "*.md", path: "skills" });
 		expect(output).toContain("skills/写周报/SKILL.md");
 		expect(output).not.toContain("notes.md");
+	});
+
+	it("显示路径两种起点：win32 下用 path.win32 真跑一遍（这台机器跑不出 Windows，只有把拼替换掉才验得到）", async () => {
+		const { displayPath } = await import("../../src/core/channel/tools/search.ts");
+		const win = win32 as unknown as { join: (...parts: string[]) => string; isAbsolute: (value: string) => boolean };
+		const winRepo = "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\core-tools-UInPRZ\\code\\solo";
+
+		// 相对起点（`path: "skills"`）：给的是回工作区的相对路径，固定 `/`。
+		expect(displayPath("skills", "写周报/SKILL.md", win)).toBe("skills/写周报/SKILL.md");
+		expect(displayPath("skills", "写周报/SKILL.md")).toBe("skills/写周报/SKILL.md");
+		// 绝对起点（额外工作目录）：盘上真路径，Windows 上是反斜杠，且与 `join` 一字不差。
+		expect(displayPath(winRepo, "a.txt", win)).toBe(`${winRepo}\\a.txt`);
+		expect(displayPath(winRepo, "a.txt", win)).toBe(win.join(winRepo, "a.txt"));
+		expect(displayPath("/tmp/core-tools-X/code/solo", "a.txt")).toBe(join("/tmp/core-tools-X/code/solo", "a.txt"));
+		// 不给起点（搜整个组织目录）：相对路径，原样透出。
+		expect(displayPath("", "members/沈舟/identity.md", win)).toBe("members/沈舟/identity.md");
 	});
 
 	it("正则写错时按字面量找，不报错", async () => {

@@ -8,12 +8,31 @@
  * 也不做成 `file` 的 action：`file` 的主语是一个文件（`path` 必填），而搜索的主语
  * 是一段目录和一条模式，参数对不上。
  */
-import { isAbsolute, join } from "node:path";
+import { isAbsolute as pathIsAbsolute, join as pathJoin } from "node:path";
 import { Type, defineTool } from "../../runtime/index.ts";
 import { listDirSorted, readTextOrUndefined } from "../../runtime/io.ts";
 import { fill } from "../../documents/base/catalog.ts";
 import { actionOf, text, type CoreToolDeps } from "./context.ts";
 import { clip, hasDotDot, isProtectedName, MODEL_LIMIT, resolveToolPath } from "./guards.ts";
+
+/**
+ * 命中行的显示路径。两种起点两种口径：绝对起点（额外工作目录）就是盘上真路径，按平台分隔符拼；
+ * 相对起点给的是「回到工作区的相对路径」，固定 `/`，Windows 上也不出反斜杠。
+ *
+ * 这里把路径函数做成参数，是为了能在 mac 上用 `path.win32` 把 Windows 那一侧真跑一遍：
+ * 这台机器跑不出 Windows，只有把最后这一步拼替换掉才验得到。
+ */
+export function displayPath(
+	base: string,
+	entryRel: string,
+	p: { join: (...parts: string[]) => string; isAbsolute: (value: string) => boolean } = {
+		join: pathJoin,
+		isAbsolute: pathIsAbsolute,
+	},
+): string {
+	if (base === "") return entryRel;
+	return p.isAbsolute(base) ? p.join(base, entryRel) : `${base}/${entryRel}`;
+}
 
 /** 不进搜索的目录：依赖、版本库、日志、附件、模型缓存。 */
 const SKIP_DIRS = new Set(["node_modules", ".git", "logs", "uploads", "voice", "orb", "im", "release"]);
@@ -105,11 +124,9 @@ export function createSearchTool(deps: CoreToolDeps) {
 					// 而 `settings.json` 里除了 apiKey 还有 `workDirs` 本身。起点被拒是一条路，
 					// 「从一个宽目录搜下来」是另一条 —— 这里直接跳过，不报错（黑名单文件不该让整次搜索失败）。
 					if (isProtectedName(entry.name)) continue;
-					const entryAbs = join(abs, entry.name);
+					const entryAbs = pathJoin(abs, entry.name);
 					const entryRel = rel === "" ? entry.name : `${rel}/${entry.name}`;
-					// 显示路径分两种：绝对起点（额外目录）就是盘上真路径，按平台分隔符拼；
-					// 相对起点给的是「回到工作区的相对路径」，固定 `/`，跨平台一致（Windows 上也别出反斜杠）。
-					const shown = base === "" ? entryRel : isAbsolute(base) ? join(base, entryRel) : `${base}/${entryRel}`;
+					const shown = displayPath(base, entryRel);
 					if (entry.kind === "dir") {
 						if (SKIP_DIRS.has(entry.name)) continue;
 						await walk(entryAbs, entryRel, depth + 1);
