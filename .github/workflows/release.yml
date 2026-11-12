@@ -132,7 +132,11 @@ jobs:
       VERSION: ${{ needs.verify.outputs.version }}
       SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
     steps:
+      # 全历史：本版改了什么（清单里的 notes / Release 正文）是从提交标题生成的，
+      # 浅克隆读不到「上一个 tag..本 tag」那段（Solo 2026-11-12：手抄必然忘）。
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.19.0
@@ -153,11 +157,29 @@ jobs:
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-      - name: 签两份更新清单
+      # 一条命令出四份清单：两份 latest-*.json（带 notes）、plugins.json（插件清单）+ 插件包。
+      # 格式只在 scripts/update-manifest.ts 一处改（别在这里手拼 JSON）。
+      - name: 签更新清单与插件清单
         run: |
           set -euo pipefail
           if [ -z "${SOLO_UPDATE_KEY:-}" ]; then
             echo "缺少仓库 secret SOLO_UPDATE_KEY（更新签名私钥）。"
+            exit 1
+          fi
+          # notes 是从提交标题生成的：先把「上一个 tag..本 tag」真的有提交这件事验一遍。
+          # 浅克隆下这段是空的、而且不报错，弹窗就永远退回「有新版本」那句老文案（Solo 2026-11-12）。
+          TAG="${{ steps.tag.outputs.tag }}"
+          # `--exclude` 掉当前这个 tag：tag 就打在 HEAD 上时 describe 会返回它自己，
+          # `prev..cur` 就是 0 行，这道红门每次都红（Solo 2026-11-12）。
+          PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude="${TAG}" "${TAG}^" 2>/dev/null || true)"
+          if [ -z "$PREV" ]; then
+            echo "找不到 ${TAG} 之前的 v* tag：notes 无从生成，先确认 fetch-depth 和 tag。"
+            exit 1
+          fi
+          COUNT="$(git log --oneline "${PREV}..${TAG}" | wc -l | tr -d ' ')"
+          echo "上一个 tag ${PREV} → ${TAG}：${COUNT} 个提交"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "区间里一个提交都没有：要么克隆太浅，要么 tag 打错了。notes 会是空数组，当场红。"
             exit 1
           fi
           printf '%s\n' "$SOLO_UPDATE_KEY" > "$RUNNER_TEMP/solo-update-key.pem"
@@ -167,6 +189,8 @@ jobs:
             --feed feed --version "$VERSION" \
             --file darwin="dist/Solo-${VERSION}-arm64.zip" \
             --file win32="dist/Solo-${VERSION}-x64.zip" \
+            --tag "${{ steps.tag.outputs.tag }}" \
+            --plugins-src plugins-src \
             --key "$RUNNER_TEMP/solo-update-key.pem"
           ls -l dist feed
       - name: 发版（二进制先传，清单最后传）
@@ -179,7 +203,8 @@ jobs:
             exit 1
           fi
           if [ -z "$STATE" ]; then
-            gh release create "$TAG" --draft --title "Solo $VERSION" --generate-notes --target "$GITHUB_SHA"
+            # 正文和清单里的 notes 是同一份：从提交标题生成，不手抄。
+            gh release create "$TAG" --draft --title "Solo $VERSION" --notes-file feed/release-notes.md --target "$GITHUB_SHA"
           fi
           gh release upload "$TAG" \
             "dist/Solo-${VERSION}-arm64.dmg" \
@@ -187,8 +212,11 @@ jobs:
             "dist/Solo-${VERSION}-x64.exe" \
             "dist/Solo-${VERSION}-x64.zip" \
             --clobber
+          # 插件清单和插件包最后传：客户端按 plugins.json 去取 plugin-*.json，少一个就是下不下来。
           gh release upload "$TAG" \
             feed/latest-mac.json feed/latest-mac.json.sig \
             feed/latest-win.json feed/latest-win.json.sig \
+            feed/plugins.json feed/plugins.json.sig \
+            feed/plugin-token-stats.json feed/plugin-model-manager.json \
             --clobber
           gh release edit "$TAG" --draft=false --latest

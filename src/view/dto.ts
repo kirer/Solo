@@ -345,6 +345,20 @@ export type ViewUploaded = { id: string; name: string; kind: "image" | "file"; b
  * `client` 只表示「有前端入口」：地址由界面按 slug 拼（`/api/plugins/<slug>/client.js`）。
  * 没有它就是纯后端插件。`error` 是它没装上的原因 —— 界面照列，但要让人看出这个没生效。
  */
+/**
+ * 「改成首次联网下载」的出厂插件现在什么状态。
+ *
+ * 只列盘上**没有**的那几个（`installed` 就不出现了）：界面「插件」页里那一段「没装上」用它，
+ * 断网首启时给一句人话 + 一个「重试」。
+ */
+export type ViewRemotePlugin = {
+	name: string;
+	/** `missing` 还没试过 / `downloading` 正在下 / `failed` 这次没成 / `installed` 已装上。 */
+	state: "installed" | "missing" | "downloading" | "failed";
+	/** 失败时给人看的一句话（断网和校验没过要说得出区别）。 */
+	message?: string;
+};
+
 export type ViewPlugin = {
 	slug: string;
 	name: string;

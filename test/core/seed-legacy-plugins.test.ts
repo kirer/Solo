@@ -178,3 +178,40 @@ describe("老账本升级", () => {
 		expect(manifest.pluginFiles?.[ORB]?.["client.js"]).toBe(hashOf(mine));
 	});
 });
+
+/**
+ * 2.9.15 起 `Token统计` / `模型管理` 不随包发：出厂源搬到 `plugins-src/`，用户首次启动时联网下载。
+ *
+ * **这版故意不推升级**（盘上目录在就整份跳过，老用户零请求、零字节改动）。所以这几个 hash
+ * 现在只在「以后要推升级」时才用得上 —— 但那一天真到了，如果它们不在历史出厂集合里，
+ * 所有老用户都会被判成「用户改过」整份留旧，版本号变了、日志干净、行为还是老的。
+ * 留债可以，**静默留债不行**：这条断言会自己变红（Solo 2026-11-12）。
+ */
+describe("搬到 plugins-src 的两个插件", () => {
+	const names = ["Token统计", "模型管理"];
+
+	it("出厂源真搬了：plugins-src 有、seed/plugins 没有", async () => {
+		const src = fileURLToPath(new URL("../../plugins-src/", import.meta.url));
+		const seed = fileURLToPath(new URL("../../seed/plugins/", import.meta.url));
+		const { readdir } = await import("node:fs/promises");
+		expect((await readdir(src)).sort()).toEqual([...names].sort());
+		const left = await readdir(seed);
+		for (const name of names) expect(left).not.toContain(name);
+	});
+
+	it("plugins-src 里每个文件的 hash 都在历史出厂集合里", async () => {
+		const { readdir } = await import("node:fs/promises");
+		const src = fileURLToPath(new URL("../../plugins-src/", import.meta.url));
+		const missing: string[] = [];
+		let seen = 0;
+		for (const name of names) {
+			for (const file of await readdir(join(src, name))) {
+				const hash = hashOf(await readFile(join(src, name, file), "utf8"));
+				seen += 1;
+				if (!LEGACY_PLUGIN_HASHES.has(hash)) missing.push(`${name}/${file} ${hash}`);
+			}
+		}
+		expect(seen).toBe(6);
+		expect(missing).toEqual([]);
+	});
+});

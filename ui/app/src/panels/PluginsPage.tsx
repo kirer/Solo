@@ -12,12 +12,14 @@ import {
 	getPluginPermissions,
 	getPlugins,
 	grantPluginPermissions,
+	downloadPlugin,
 	getRemovedPlugins,
 	installPlugin,
 	removePlugin,
 	restorePlugin,
 	setPluginEnabled,
 	type PluginPermissionAsk,
+	type RemotePlugin,
 } from "../api/client.ts";
 import type { Plugin } from "../api/types.ts";
 import { setPluginSheet, setRestartOpen } from "../state/store.ts";
@@ -80,10 +82,15 @@ export function PluginsPage(): JSX.Element {
 		return () => clearTimeout(timer);
 	}, [armed]);
 
+	// 「没装上」的那几个出厂插件（已经改成首次联网下载）：断网首启时它们不在盘上。
+	// 混进主列表会让人以为还装着，所以单独一段，和「已删掉」并排。
+	const [offline, setOffline] = useState<readonly RemotePlugin[]>([]);
+
 	useEffect(() => {
 		getPlugins()
 			.then((body) => {
 				setPlugins(body.plugins);
+				setOffline(body.remote ?? []);
 			})
 			.catch((error: Error) => {
 				setProblem(error.message);
@@ -220,6 +227,32 @@ export function PluginsPage(): JSX.Element {
 									</span>
 								</button>
 							))}
+							{offline.filter((item) => item.state !== "installed").length === 0 ? null : (
+								<div className="pl-removed">
+									<p className="pl-removed-head">没装上的出厂插件</p>
+									{/* 只在盘上没有时出现：首启没网就是这个样子，点一下重试。 */}
+									{offline
+										.filter((item) => item.state !== "installed")
+										.map((item) => (
+											<button
+												type="button"
+												key={item.name}
+												className="pl-removed-item"
+												title={item.message ?? `把「${item.name}」下载下来`}
+												onClick={() => {
+													apply(downloadPlugin(item.name), (next) => {
+														const back = next.find((plugin) => plugin.slug === item.name);
+														if (back?.client === true && back.error === undefined) setRestartOpen(back.name);
+														setOffline((old) => old.filter((one) => one.name !== item.name));
+													});
+												}}
+											>
+												{item.name}
+												<span className="pl-removed-btn">{item.state === "downloading" ? "正在下载" : "重试"}</span>
+											</button>
+										))}
+								</div>
+							)}
 							{removed.length === 0 ? null : (
 								<div className="pl-removed">
 									<p className="pl-removed-head">已删掉的出厂插件</p>

@@ -84,7 +84,7 @@ type SyncReport = {
 
 const EMPTY_REPORT: SyncReport = { copied: [], updated: [], kept: [] };
 
-function hashOf(content: string): string {
+export function hashOf(content: string): string {
 	return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 16);
 }
 
@@ -171,7 +171,7 @@ async function syncSkillTree(seedSkillsRoot: string, skillsRoot: string, manifes
 	return { copied, updated, kept };
 }
 
-async function readManifest(path: string): Promise<SeedManifest> {
+export async function readManifest(path: string): Promise<SeedManifest> {
 	const text = await readTextOrUndefined(path);
 	if (text === undefined) return emptyManifest();
 	let raw: Partial<SeedManifest>;
@@ -251,7 +251,7 @@ function parseManifest(text: string): Partial<SeedManifest> {
 	};
 }
 
-async function writeManifest(path: string, manifest: SeedManifest): Promise<void> {
+export async function writeManifest(path: string, manifest: SeedManifest): Promise<void> {
 	await writeTextAt(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
@@ -416,7 +416,7 @@ export async function seedTextFiles(layout: Layout): Promise<readonly string[]> 
  * 老账本没有 `pluginFiles`（不知道动没动过）：这次只记基线、不动手（ADR-097）。
  */
 export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
-	const root = seedPath("plugins");
+	const sources = await shippedPluginSources();
 	const manifestPath = layout.seedManifestFile;
 	const manifest = await readManifest(manifestPath);
 	const seen = new Set(manifest.plugins);
@@ -424,11 +424,9 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 	const written: string[] = [];
 	let changed = false;
 
-	for (const entry of await listDirSorted(root)) {
-		if (entry.kind !== "dir") continue;
-		const name = entry.name;
+	for (const [name, source] of sources) {
 		const target = join(layout.pluginsRoot, name);
-		const seed = await pluginFiles(join(root, name));
+		const seed = await pluginFiles(source);
 		const record = manifest.pluginFiles[name];
 
 		if (!(await existsAt(target))) {
@@ -484,7 +482,7 @@ export async function seedPlugins(layout: Layout): Promise<readonly string[]> {
 export async function isShippedPlugin(layout: Layout, name: string): Promise<boolean> {
 	void layout;
 	if (!isSafeName(name)) return false;
-	return existsAt(join(seedPath("plugins"), name));
+	return (await shippedPluginSources()).has(name);
 }
 
 /**
@@ -495,7 +493,7 @@ export async function isShippedPlugin(layout: Layout, name: string): Promise<boo
  */
 export async function markRemoved(layout: Layout, name: string): Promise<void> {
 	if (!isSafeName(name)) return;
-	if (!(await existsAt(join(seedPath("plugins"), name)))) return;
+	if (!(await isShippedPlugin(layout, name))) return;
 	const manifestPath = layout.seedManifestFile;
 	const manifest = await readManifest(manifestPath);
 	if (manifest.removed.includes(name)) return;
@@ -510,8 +508,7 @@ export async function markRemoved(layout: Layout, name: string): Promise<void> {
  */
 export async function removedPlugins(layout: Layout): Promise<readonly string[]> {
 	const manifest = await readManifest(layout.seedManifestFile);
-	const root = seedPath("plugins");
-	const shipped = new Set((await listDirSorted(root)).filter((entry) => entry.kind === "dir").map((entry) => entry.name));
+	const shipped = await shippedPluginSources();
 	return manifest.removed.filter((name) => shipped.has(name)).sort();
 }
 
@@ -523,8 +520,13 @@ export async function removedPlugins(layout: Layout): Promise<readonly string[]>
  */
 export async function restorePlugin(layout: Layout, name: string): Promise<boolean> {
 	if (!isSafeName(name)) return false;
-	const source = join(seedPath("plugins"), name);
-	if (!(await existsAt(source))) return false;
+	const source = (await shippedPluginSources()).get(name);
+	// 出厂那份不在仓库里（改成首次联网下载的那几个）：走下载取回，别当成「装不回来」。
+	// 动态 import 是因为 `plugin-download.ts` 反过来要用这里的账本读写，静态引会成环。
+	if (source === undefined) {
+		const { downloadRemotePlugin } = await import("./plugin-download.ts");
+		return downloadRemotePlugin(layout, name);
+	}
 	const manifestPath = layout.seedManifestFile;
 	const manifest = await readManifest(manifestPath);
 	if (!manifest.removed.includes(name)) return false;
@@ -602,6 +604,41 @@ async function copySeedSkills(from: string, skillsRoot: string): Promise<readonl
 		if (result.copied) copied.push(result.name);
 	}
 	return copied;
+}
+
+/**
+ * 出厂插件的源目录：名字 → 目录的真实路径。
+ *
+ * - `seed/plugins/`：随安装包发的那些，装完就有；
+ * - `plugins-src/`：**只在源码树里有，故意不进安装包**（`electron-builder.yml` 的 `files` 是白名单）。
+ *   放在这里的是「改成首次联网下载」的插件（`Token统计`、`模型管理`）：老用户盘上已经有了、
+ *   新装的机器由 `src/shell/plugin-download.ts` 联网取。
+ *
+ * 源码树里存在就直接当出厂源用，所以 `npm start` 和测试不依赖网络；打包后的机器上这个目录
+ * 不存在，`seedPlugins` 自然就不碰那两个插件了。
+ */
+async function shippedPluginSources(): Promise<Map<string, string>> {
+	const out = new Map<string, string>();
+	for (const root of [seedPath("plugins"), repoPath("plugins-src")]) {
+		if (!existsSync(root)) continue;
+		for (const entry of await listDirSorted(root)) {
+			if (entry.kind !== "dir") continue;
+			if (!out.has(entry.name)) out.set(entry.name, join(root, entry.name));
+		}
+	}
+	return out;
+}
+
+/** 仓库根下的某个目录（`seed/` 之外的那些，比如 `plugins-src/`）；不在就返回一个不存在的路径。 */
+function repoPath(name: string): string {
+	let dir = dirname(fileURLToPath(import.meta.url));
+	for (let index = 0; index < 6; index += 1) {
+		if (existsSync(join(dir, name))) return join(dir, name);
+		const parent = dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return join(dirname(fileURLToPath(import.meta.url)), name);
 }
 
 /**

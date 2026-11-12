@@ -30,6 +30,7 @@ import { wipeAll } from "../app/reset.ts";
 import { assembleCore, type CoreShell } from "./assemble.ts";
 import { createDesktopActor } from "./wire/system.ts";
 import { isShippedPlugin, markRemoved, removedPlugins, restorePlugin, seedOwnerAssistant, seedPlugins, seedPromptTemplates, seedRules, seedTextFiles, syncAllSkills } from "./seed.ts";
+import { downloadRemotePlugin, ensureDownloadablePlugins, remotePluginStatuses } from "./plugin-download.ts";
 import { createFsx } from "../core/fsx.ts";
 import { loadTextCatalog } from "../core/documents/base/catalog.ts";
 import { loadTemplates, PROMPT_DIR } from "../core/documents/base/template.ts";
@@ -140,6 +141,15 @@ async function main(): Promise<void> {
 		// 出厂插件只在缺失时整份拷进来：插件是可以执行的代码，动过就归改的人。
 		const plugins = await seedPlugins(layout);
 		if (plugins.length > 0) console.log(`[core] 装上了出厂插件：${plugins.join("、")}`);
+		// 出厂但在包外的两个插件（`Token统计`、`模型管理`）：缺了才去线上取。
+		// **不 await**：断网时不能拿下载拖住启动，失败只留状态，界面给「重试」。
+		void ensureDownloadablePlugins(layout)
+			.then((done) => {
+				if (done.length > 0) console.log(`[core] 联网装上了出厂插件：${done.join("、")}`);
+			})
+			.catch((error: unknown) => {
+				console.warn(`[plugin] 联网补插件失败：${error instanceof Error ? error.message : String(error)}`);
+			});
 	}
 
 	// 启动自检：提示词与技能里都写着「什么该记、什么时候整理看技能『记忆整理』」。
@@ -268,6 +278,9 @@ async function main(): Promise<void> {
 				removed: () => removedPlugins(layout),
 				restore: (name) => restorePlugin(layout, name),
 				isShipped: (name) => isShippedPlugin(layout, name),
+				// 改成首次联网下载的那两个：状态与重试都走 `plugin-download.ts`。
+				remote: () => remotePluginStatuses(layout),
+				download: (name) => downloadRemotePlugin(layout, name),
 			},
 			// 重启把谁的一轮掐断了：留痕 + 交给底座重放（ADR-044 / ADR-074）。
 			interrupted: runtime.interrupted,

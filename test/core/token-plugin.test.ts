@@ -47,7 +47,7 @@ async function boot(rows: readonly Record<string, unknown>[]): Promise<PluginRou
 	const logs = join(root, "logs");
 	await mkdir(join(workspace, "plugins"), { recursive: true });
 	await mkdir(logs, { recursive: true });
-	const seed = fileURLToPath(new URL("../../seed/plugins/Token统计", import.meta.url));
+	const seed = fileURLToPath(new URL("../../plugins-src/Token统计", import.meta.url));
 	await cp(seed, join(workspace, "plugins", "Token统计"), { recursive: true });
 	await writeFile(join(logs, "tools.jsonl"), rows.map((row) => JSON.stringify(row)).join("\n") + "\n");
 	const host = await loadPlugins({ pluginsRoot: join(workspace, "plugins"), workspace, logsRoot: logs, log: () => {} });

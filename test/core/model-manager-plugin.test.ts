@@ -26,7 +26,7 @@ async function boot(): Promise<{ workspace: string; routes: readonly PluginRoute
 	boxes.push(root);
 	const workspace = join(root, "workspace");
 	await mkdir(join(workspace, "plugins"), { recursive: true });
-	const seed = fileURLToPath(new URL("../../seed/plugins/模型管理", import.meta.url));
+	const seed = fileURLToPath(new URL("../../plugins-src/模型管理", import.meta.url));
 	await cp(seed, join(workspace, "plugins", "模型管理"), { recursive: true });
 
 	const host = await loadPlugins({ pluginsRoot: join(workspace, "plugins"), workspace, logsRoot: join(workspace, "logs"), log: () => {} });

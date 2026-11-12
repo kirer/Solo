@@ -11,6 +11,8 @@ directories:
   output: release
   buildResources: desktop
 
+# 白名单：**`plugins-src/` 故意不在这里**。那几个插件改成首次联网下载（`plugins-src/` 只是仓库原文，
+# CI 在 publish 里打成 Release 资产），进包就等于体积从 `seed/` 挪进安装包，白折腾还多一次下载。
 files:
   - package.json
   # 主进程是 .js，preload 是 .cjs（沙箱 preload 只认 CommonJS，见 desktop/src/preload.cts）。

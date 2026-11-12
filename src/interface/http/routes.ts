@@ -453,7 +453,20 @@ export function coreRoutes(deps: RouteDeps): readonly Route[] {
 			// 装上的插件。前端启动时先拉这一份，再按 `client` 去 import 各自的前端入口。
 			pattern: "/api/plugins",
 			method: "GET",
-			handler: async ({ response }) => json(response, { plugins: await app.plugins.list() }),
+			handler: async ({ response }) =>
+				json(response, { plugins: await app.plugins.list(), remote: await app.plugins.remote() }),
+		},
+		{
+			// 首启没下成的那几个出厂插件：界面上「重试」点这里。只认白名单里的名字（外壳那一侧判）。
+			pattern: "/api/plugins/:slug/download",
+			method: "POST",
+			handler: async ({ response, params }) => {
+				try {
+					return json(response, { plugins: await app.plugins.download(params.slug ?? "") });
+				} catch (error) {
+					return fail(response, 400, (error as Error).message);
+				}
+			},
 		},
 		{
 			// 装一个插件：前端把选中的文件夹整个传上来（base64），这里原样落进 `plugins/<slug>/`。

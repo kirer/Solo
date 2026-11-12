@@ -16,6 +16,7 @@ import type { Layout } from "../core/layout.ts";
 import type { TextCatalog } from "../core/documents/base/catalog.ts";
 import type { PluginHost } from "../core/plugin/index.ts";
 import type { Diag } from "./diag.ts";
+import type { ViewRemotePlugin } from "../view/dto.ts";
 
 export type CoreServices = {
 	readonly harness: Harness;
@@ -135,6 +136,14 @@ export type CoreServices = {
 		readonly restore: (name: string) => Promise<boolean>;
 		/** 这个名字在不在出厂那份里（决定「删了还能不能装回来」，也决定日志怎么写）。 */
 		readonly isShipped: (name: string) => Promise<boolean>;
+		/**
+		 * 「改成首次联网下载」的那几个插件现在什么状态（盘上没有的才出现在里面）。
+		 *
+		 * 返回 `installed` 的那条不会干扰「已装」清单：界面那段只管缺的。
+		 */
+		readonly remote?: () => Promise<readonly ViewRemotePlugin[]>;
+		/** 联网下一份（首启没下成时界面上的「重试」）。下回来了返回 true。 */
+		readonly download?: (name: string) => Promise<boolean>;
 	};
 	/** 文案目录（`<appRoot>/text/`）：用例层要回一句话给模型/界面时从这里取。 */
 	readonly text: TextCatalog;

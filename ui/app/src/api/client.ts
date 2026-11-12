@@ -273,8 +273,24 @@ export function reportJank(body: unknown): void {
 	}).catch(() => undefined);
 }
 
-/** 插件清单：名字、说明、开着没有、有没有前端入口、坏在哪。 */
-export const getPlugins = (): Promise<{ plugins: Plugin[] }> => call("/api/plugins");
+/**
+ * 「改成首次联网下载」的出厂插件现在什么状态。
+ *
+ * 盘上没有的那几个才出现在这段里：断网首启时界面给「没装上 + 重试」。
+ * `installed` 的那条会和 `plugins` 里正常的一条重叠，列表这边过滤掉。
+ */
+export type RemotePlugin = {
+	readonly name: string;
+	readonly state: "installed" | "missing" | "downloading" | "failed";
+	readonly message?: string;
+};
+
+/** 插件清单：名字、说明、开着没有、有没有前端入口、坏在哪；外加「没装上」的那几个。 */
+export const getPlugins = (): Promise<{ plugins: Plugin[]; remote: RemotePlugin[] }> => call("/api/plugins");
+
+/** 联网下一份没装上的出厂插件（首启断网之后的「重试」）。下回来当场重新加载。 */
+export const downloadPlugin = (name: string): Promise<{ plugins: Plugin[] }> =>
+	call(`/api/plugins/${encodeURIComponent(name)}/download`, { method: "POST" });
 
 /**
  * 装一个插件：把选中的那个文件夹整份传上去，服务端原样写进 `<appRoot>/plugins/<slug>/`。

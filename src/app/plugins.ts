@@ -24,7 +24,7 @@ import {
 import type { PluginFile } from "../core/plugin/index.ts";
 import { readTextOrUndefined } from "../core/runtime/io.ts";
 import type { JsonValue } from "../core/runtime/index.ts";
-import type { ViewPlugin } from "../view/dto.ts";
+import type { ViewPlugin, ViewRemotePlugin } from "../view/dto.ts";
 import type { CoreServices } from "./types.ts";
 
 /**
@@ -195,6 +195,24 @@ export function createPlugins(services: CoreServices) {
 		/** 用户删掉的出厂插件：界面上「装回来」能挑这些。没有账本时是空的。 */
 		async removed(): Promise<readonly string[]> {
 			return (await services.seededPlugins?.removed()) ?? [];
+		},
+
+		/**
+		 * 「没装上」的那几个出厂插件（改成首次联网下载的）。
+		 *
+		 * 数据只来自外壳那一侧的 `plugin-download.ts`：盘上有就是 `installed`，
+		 * 界面上那一段只显示缺的。没有账本（单测 / 精简装配）时返回空。
+		 */
+		async remote(): Promise<readonly ViewRemotePlugin[]> {
+			return (await services.seededPlugins?.remote?.()) ?? [];
+		},
+
+		/** 联网下一份（首启断网时界面上的「重试」）。下回来就重新加载插件。 */
+		async download(slug: string): Promise<readonly ViewPlugin[]> {
+			if ((await services.seededPlugins?.download?.(slug)) !== true) return rows();
+			services.diag.recordFlow("plugin", `联网装上了出厂插件「${slug}」`);
+			await services.reloadPlugins();
+			return rows();
 		},
 
 		/** 把删掉的出厂插件装回来（用出厂那份）。装上了就重新加载。 */
