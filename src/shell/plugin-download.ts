@@ -196,8 +196,12 @@ export async function downloadRemotePlugin(layout: Layout, name: string, options
 /**
  * GitHub 形状的源：先问一次 `/releases/latest` 拿资产列表（一次下载只问一次）。
  *
- * 认得出仓库却拿不到（限流 60 次/小时、资产缺失、连不上）就**抛**，不静默回落：
- * 回落拼的是 `github.com/.../latest/download/`，用户看不出区别，插件页就常驻「没装上」。
+ * 实际有两种走向，别当成一种：
+ * - **接口这层拿不到**（限流 60 次/小时、连不上、回非 2xx）→ **抛**，不静默回落。回落拼的
+ *   `github.com/.../latest/download/` 正好是那些连不上的网络，出了事用户只看到「没装上」。
+ * - **接口通了、但清单里没有这个资产**（发布时漏传）→ 退回 `github.com/.../latest/download/<名字>`，
+ *   这条会白等到 30 秒超时，界面上那句「稍后重试」指不到真原因。**2.9.16 待办**：要么这种也抛，
+ *   要么明说「包里没带这个文件」（程砚-2 2026-11-12 提出，Solo 记进待办）。
  * 认不出仓库的源（`SOLO_PLUGIN_FEED` 的本机端口、自建源）本来就没有 API 这一层，直接拼地址。
  */
 async function releaseOf(feed: string, fetcher: typeof fetch): Promise<unknown> {
