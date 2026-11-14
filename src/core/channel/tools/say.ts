@@ -7,6 +7,12 @@ import { mentionRoster, readState, selfOrError, text, type CoreToolDeps } from "
 import { defaultChannel, othersAwoken } from "./channel-choice.ts";
 import { isPass, monologueOpener, sayLimitOf } from "./guards.ts";
 import { fill } from "../../documents/base/catalog.ts";
+import { entryProblem, problemText } from "../../documents/base/memory.ts";
+import { readIdentity } from "../../documents/member/identity.ts";
+import { appendMemory } from "../../documents/member/memory.ts";
+import { readMemoryUse, recordClosing, writeMemoryUse } from "../../documents/member/memory-use.ts";
+import { redact } from "../../secrets.ts";
+import { join } from "node:path";
 import type { Slots } from "../../documents/base/slots.ts";
 
 export function createSayTool(deps: CoreToolDeps) {
@@ -24,6 +30,9 @@ export function createSayTool(deps: CoreToolDeps) {
 					description: t("say.param.options"),
 				}),
 			),
+			needs: Type.Optional(Type.String({ description: t("say.param.needs") })),
+			closing: Type.Optional(Type.Boolean({ description: t("say.param.closing") })),
+			lesson: Type.Optional(Type.String({ description: t("say.param.lesson") })),
 		}),
 		execute: async (args, api, context) => sayUnlocked(args, api, context ?? BACKGROUND_CONTEXT),
 	});
@@ -35,6 +44,9 @@ export function createSayTool(deps: CoreToolDeps) {
 			channel?: string;
 			replyTo?: number;
 			options?: readonly string[];
+			needs?: string;
+			closing?: boolean;
+			lesson?: string;
 		},
 		api: { conversationId: string | number },
 		ctx: Context,
@@ -99,10 +111,46 @@ export function createSayTool(deps: CoreToolDeps) {
 			// 拍板是助理的事（`seed/rules.md`：拍不了板的 @助理，它自己拍不了再 @我）。
 			// 成员直接带选项问，等于把原始问题甩到我面前 —— 2026-11-07 实测：祁远在团队频道
 			// 甩来四个走法让我挑，而这件事本该由助理汇总成一句话再问我（ADR-112）。
+			let assistantsCache: readonly string[] | undefined;
+			const assistantsNow = async (): Promise<readonly string[]> => {
+				assistantsCache ??= assistantsOf(deps.layout, await readAllIdentities(deps.layout.agentRoots));
+				return assistantsCache;
+			};
 			if (choosing) {
-				const assistants = assistantsOf(deps.layout, await readAllIdentities(deps.layout.agentRoots));
+				const assistants = await assistantsNow();
 				if (assistants.length > 0 && !assistants.includes(slug)) {
 					return text(t("say.refuse.options.member", { assistant: assistants.join("、") }));
+				}
+			}
+
+			// 「这条在等他拍板」：显式动作，不是靠正文口气猜。
+			//
+			// 和 `options` 分开是因为它要的答案不一样 —— `options` 等他挑一个（进选项卡），
+			// `needs` 等他一句「行 / 不行」，可能不回。所以它落库成一个待办（`Message.needs`），
+			// 由 `decisions` 列出来、一条条清掉。不清就一直在，这才挡得住「七十条没人看」。
+			const needs = args.needs?.trim();
+			const deciding = needs === "decision";
+			if (needs !== undefined && needs !== "") {
+				if (!deciding) return text(t("say.refuse.needs.value", { value: needs }));
+				if (choosing) return text(t("say.refuse.needs.options"));
+				const assistants = await assistantsNow();
+				if (assistants.length > 0 && !assistants.includes(slug)) {
+					return text(t("say.refuse.needs.member", { assistant: assistants.join("、") }));
+				}
+			}
+
+			// 收尾闸：交付、验收这类**结论句**必须回答一句「这次有什么能复用」。
+			//
+			// 为什么不新造一个 `finish` 动作：产品里没有「交付」这个显式状态，成员收工就是在
+			// 频道里说一句结论。挂在收尾这一句上，是唯一不需要模型额外记一步的位置。
+			// 拒发话术里必须明说「想不到就写 none 也算回答」—— 不写，模型会卡在那儿编一条。
+			const closing = args.closing === true;
+			const lesson = args.lesson?.trim();
+			if (closing) {
+				if (lesson === undefined || lesson === "") return text(t("say.refuse.closing.lesson"));
+				if (lesson !== "none") {
+					const problem = entryProblem(lesson);
+					if (problem !== undefined) return text(problemText(problem, lesson, deps.text));
 				}
 			}
 
@@ -147,15 +195,30 @@ export function createSayTool(deps: CoreToolDeps) {
 					text: messageText,
 					at: Date.now(),
 					...(choosing ? { options } : {}),
+					...(deciding ? { needs: "decision" } : {}),
 					...(args.replyTo === undefined ? {} : { replyTo: args.replyTo }),
 					roster,
 					...((() => {
-						const extra = wakeOwner || choosing ? [OWNER] : [];
+						const extra = wakeOwner || choosing || deciding ? [OWNER] : [];
 						return extra.length === 0 ? {} : { mention: extra };
 					})()),
 				},
 				ctx,
 			);
+			// 发出去了才写记忆：这句话的价值先在频道里，记忆丢了不该让它发不出去。
+			if (closing && lesson !== undefined) {
+				const self = await readIdentity(deps.layout.agentRoots, slug);
+				const dir = self?.dir ?? join(deps.layout.membersRoot, slug);
+				try {
+					const use = await readMemoryUse(dir);
+					if (lesson !== "none") {
+						await appendMemory(dir, redact(lesson, deps.layout.appRoot), new Date(), "closing", deps.text);
+					}
+					await writeMemoryUse(dir, recordClosing(use, lesson));
+				} catch {
+					// 记忆是旁挂账，写不进去不影响这句结论。
+				}
+			}
 			const woke = result.delivery.delivered;
 			return text(
 				t("say.done", {

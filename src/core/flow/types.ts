@@ -42,6 +42,8 @@ export type PublishInput = {
 	readonly attachments?: readonly Attachment[];
 	/** 要我选的选项（2–6 个）。落库、进界面，投递照常。 */
 	readonly options?: readonly string[];
+	/** 这条在等老板拍板（`decision`）：落库成 `Message.needs`，进 `decisions` 的清单。 */
+	readonly needs?: "decision";
 	/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
 	readonly sourceEntry?: string;
 	/** 这条是人亲手打的（入口打的标记），透传到 `Message.human`。 */

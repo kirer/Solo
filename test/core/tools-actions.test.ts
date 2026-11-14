@@ -20,6 +20,9 @@ import { appendMessage, ensureChannel } from "../../src/core/channel/rules.ts";
 import { emptyDirectory } from "../../src/core/channel/roster.ts";
 import { writeTeam } from "../../src/core/documents/team/doc.ts";
 import { existsAt } from "../../src/core/runtime/io.ts";
+import { readIdentity } from "../../src/core/documents/member/identity.ts";
+import { readMemory } from "../../src/core/documents/member/memory.ts";
+import { readMemoryUse } from "../../src/core/documents/member/memory-use.ts";
 import { sandboxPool } from "./support.ts";
 
 const pool = sandboxPool();
@@ -76,7 +79,34 @@ async function setup(
 		doc.nextSeq[TEAM] = first.message.seq + 1;
 	}, BACKGROUND_CONTEXT);
 
+	// 假 flow：这些用例只关心「发没发出去、落了什么」，真正的投递编排在 flow 自己的用例里。
+	const wiring = {
+		flow: {
+			publish: async (_state: ChannelState, input: Record<string, unknown>) => {
+				const channelId = String(input.channelId);
+				let title = "";
+				let made = { seq: 0 } as { seq: number };
+				await runtime.harness.commit(async (tx) => {
+					const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+					title = doc.channels[channelId]?.title ?? "";
+					const appended = appendMessage(doc, channelId, {
+						from: String(input.from),
+						text: String(input.text),
+						at: Number(input.at),
+						...(input.needs === undefined ? {} : { needs: "decision" as const }),
+						...(input.replyTo === undefined ? {} : { replyTo: Number(input.replyTo) }),
+					});
+					doc.messages[channelId] = [...(doc.messages[channelId] ?? []), appended.message];
+					doc.nextSeq[channelId] = appended.message.seq + 1;
+					made = appended.message;
+				}, BACKGROUND_CONTEXT);
+				return { channel: { title }, message: made, delivery: { delivered: [] } };
+			},
+		},
+	};
+
 	const tools = createCoreTools({
+		wiring,
 		harness: runtime.harness,
 		layout: box.layout,
 		text: SEED_TEXT,
@@ -119,11 +149,12 @@ async function setup(
 	};
 }
 
-describe("工具收敛：注册表只有九个", () => {
-	it("名单是 9 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有十个", () => {
+	it("名单是 10 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
+			"decisions",
 			"chats",
 			"read_history",
 			"remember",
@@ -771,4 +802,99 @@ describe("额外工作目录（file / search）", () => {
 		await rm(vault, { recursive: true, force: true });
 	});
 
+});
+
+describe("decisions：在等他拍板的", () => {
+	// 背景：他那边积压过七十条，「结论」和「可能要你定」混在一个私聊里，看完了也看不出
+	// 哪条真在等他。所以 `needs: "decision"` 是显式动作，`decisions` 给它一个能一条条清掉的位置。
+	const withAssistantChannel = async (): Promise<Awaited<ReturnType<typeof setup>>> => {
+		const box = await setup();
+		await box.runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			Object.assign(doc, ensureChannel(doc, { id: "team:beta", title: "beta", members: [OWNER, ME, "知言"], at: 3 }));
+		}, BACKGROUND_CONTEXT);
+		return box;
+	};
+
+	it("助理带上 needs 才落库：成员带被拒，理由说清找谁", async () => {
+		const { call } = await withAssistantChannel();
+		const refused = await call("say", { text: "这版要不要现在发", needs: "decision", channel: "beta" }, CONVERSATION);
+		expect(refused).toContain("只有助理能带");
+		expect(refused).toContain("知言");
+	});
+
+	it("带 needs 又带 options 被拒：一个等他挑、一个等他一个字", async () => {
+		const { call } = await withAssistantChannel();
+		const refused = await call(
+			"say",
+			{ text: "先发哪个", needs: "decision", options: ["A", "B"], channel: "beta" },
+			ASSISTANT,
+		);
+		expect(refused).toContain("不能一起带");
+	});
+
+	it("发出去就在清单里，close 之后消失", async () => {
+		const { call, runtime } = await withAssistantChannel();
+		const sent = await call("say", { text: "这版要不要现在发", needs: "decision", channel: "beta" }, ASSISTANT);
+		expect(sent).toContain("已发到「beta」#1");
+		const listed = await call("decisions", {}, ASSISTANT);
+		expect(listed).toContain("这版要不要现在发");
+		expect(listed).toContain("[beta] #1");
+		// 落库的是字段，不是靠正文口气猜出来的。
+		const doc = (await runtime.harness.snapshot(ChannelDoc)) as ChannelState | undefined;
+		expect(doc).toBeDefined();
+		expect(doc?.messages["team:beta"]?.find((item) => item.seq === 1)?.needs).toBe("decision");
+
+		expect(await call("decisions", { action: "close", seq: 1, channel: "beta" }, ASSISTANT)).toContain("关了");
+		expect(await call("decisions", {}, ASSISTANT)).toContain("没有挂着");
+	});
+
+	it("他回过了就算清掉，不用谁去点", async () => {
+		const { call, runtime } = await withAssistantChannel();
+		await call("say", { text: "这版要不要现在发", needs: "decision", channel: "beta" }, ASSISTANT);
+		await runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const beta = doc.messages["team:beta"] ?? [];
+			const replied = appendMessage(doc, "team:beta", { from: OWNER, text: "发", at: 20, replyTo: 1 });
+			doc.messages["team:beta"] = [...beta, replied.message];
+			doc.nextSeq["team:beta"] = replied.message.seq + 1;
+		}, BACKGROUND_CONTEXT);
+		expect(await call("decisions", {}, ASSISTANT)).toContain("没有挂着");
+	});
+
+	it("收尾不带 lesson 发不出去，话术里要说清「写 none 也算回答」", async () => {
+		const { call } = await withAssistantChannel();
+		const refused = await call("say", { text: "修完了", closing: true, channel: "beta" }, CONVERSATION);
+		expect(refused).toContain("收尾必须回答");
+		expect(refused).toContain("none");
+	});
+
+	it("lesson 写 none 也算回答：记进账里（Solo 一周看一次那个比例）", async () => {
+		const { call, layout } = await withAssistantChannel();
+		const dir = (await readIdentity(layout.agentRoots, ME))?.dir;
+		expect(dir).toBeDefined();
+		expect(await call("say", { text: "修完了", closing: true, lesson: "none", channel: "beta" }, CONVERSATION)).toContain(
+			"已发到",
+		);
+		const use = await readMemoryUse(dir as string);
+		expect(use.closing).toBe(1);
+		expect(use.none).toBe(1);
+	});
+
+	it("lesson 是文字就顺手记进记忆，不用再调 remember", async () => {
+		const { call, layout } = await withAssistantChannel();
+		const dir = (await readIdentity(layout.agentRoots, ME))?.dir as string;
+		await call("say", { text: "修完了", closing: true, lesson: "改共享常量前先 grep 一遍", channel: "beta" }, CONVERSATION);
+		expect(await readMemory(dir)).toContain("改共享常量前先 grep 一遍");
+		const use = await readMemoryUse(dir);
+		expect(use.closing).toBe(1);
+		expect(use.none).toBe(0);
+	});
+
+	it("关错了给能自救的话：不在清单里 / 非助理不许关", async () => {
+		const { call } = await withAssistantChannel();
+		expect(await call("decisions", { action: "close", seq: 99 }, ASSISTANT)).toContain("不在待他拍板的清单里");
+		await call("say", { text: "这版要不要现在发", needs: "decision", channel: "beta" }, ASSISTANT);
+		expect(await call("decisions", { action: "close", seq: 1, channel: "beta" }, CONVERSATION)).toContain("只有助理能关");
+	});
 });

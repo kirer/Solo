@@ -73,6 +73,18 @@ export type Message = {
 	 */
 	options?: string[];
 	/**
+	 * 这条在**等老板拍板**（`say` 的 `needs: "decision"`）。
+	 *
+	 * 和 `options` 不是一件事：`options` 是让他挑一个，选项本身就是答案；`needs` 是一条
+	 * 判断题（行 / 不行），答案可能是一句话，也可能是我按建议自己走了。所以它不进选项卡，
+	 * 只进 `decisions` 的清单 —— 不清就一直挂着，这是「待办」和「提问」的差别。
+	 */
+	needs?: "decision";
+	/** 待拍板被处理掉的时间（`decisions action=close` 写）。没有就是还挂着。 */
+	decidedAt?: number;
+	/** 谁处理的：`owner` = 老板点了，其余是助理替他关的。 */
+	decidedBy?: string;
+	/**
 	 * 这条是**人亲手打的**（界面输入框 / 我本人在桌面敲的），不是谁替他发的。
 	 *
 	 * 为什么不能靠 `from === "owner"` 判：后端所有「我说话」都写 `from: "owner"`

@@ -14,7 +14,8 @@ import { type PromptSection, type Registry, type ToolRegistration } from "../run
 import { assistantsOf, nameOf, readAllIdentities, readIdentity, type Identity } from "./member/identity.ts";
 import { listSkills } from "./skills.ts";
 import { readMemory } from "./member/memory.ts";
-import { memoryDigest } from "./base/memory.ts";
+import { planMemoryDigest } from "./base/memory.ts";
+import { markUsed, readMemoryUse, writeMemoryUse } from "./member/memory-use.ts";
 import { loadRules } from "./rules.ts";
 import { readTeam } from "./team/doc.ts";
 import { teamMemoryDigest, readTeamMemory } from "./team/memory.ts";
@@ -43,6 +44,14 @@ export type AgentPaths = {
 	 * 装一次就在每个人的提示词里出现一次。空数组 = 这一段不存在（不写「插件：无」）。
 	 */
 	readonly extraPrompt?: readonly string[];
+	/**
+	 * 这个人**手上那件活**的正文（算记忆相关性用）。
+	 *
+	 * 为什么不直接给触发消息：`PromptSection.render` 只知道会话 id，拿不到「这轮为什么被
+	 * 叫醒」。名册里的 `WakeRecord.task` 知道（那就是它的用途），所以从这里绕一下。
+	 * 不给 = 相关性算不了，退回旧取法。
+	 */
+	readonly task?: (slug: string) => Promise<string | undefined>;
 	/** 机械文案目录（`text/channel.md`）：兜底句与技能来源标签从这里取。 */
 	readonly text?: TextCatalog;
 };
@@ -252,7 +261,22 @@ async function slotsFor(
 	if (need.has("memory")) {
 		// 记忆跟着**身份目录**走：助理在 app 根，成员在用户根。目录已经在 `self` 上了。
 		const memory = await readMemory(self.dir);
-		slots["memory"] = memory === undefined ? undefined : memoryDigest(memory, paths.text);
+		if (memory === undefined) {
+			slots["memory"] = undefined;
+		} else {
+			// 三段拼要两样东西：这轮在干什么（`task`），以及哪几条最近被取到过（旁挂账）。
+			const use = await readMemoryUse(self.dir);
+			const query = paths.task === undefined ? undefined : await paths.task(slug);
+			const plan = planMemoryDigest(memory, paths.text, { ...(query === undefined ? {} : { query }), used: use.seen, round: use.round });
+			slots["memory"] = plan?.text;
+			if (plan !== undefined) {
+				try {
+					await writeMemoryUse(self.dir, markUsed(use, plan.picked));
+				} catch {
+					// 轮次账是旁挂的：写不进去最多是召回判据晚一轮生效，不该让提示词渲染失败。
+				}
+			}
+		}
 	}
 	if (need.has("skills")) {
 		const skills = await promptSkills(paths, slug, self.team);

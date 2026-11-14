@@ -159,15 +159,65 @@ export function problemText(problem: MemoryProblem, text: string, catalog?: Text
 }
 
 /**
- * 提示词里的记忆目录。
+ * 提示词里的记忆目录。三段拼：
  *
- * 标题重复很常见（同一个日期记了几条），所以带上序号让 agent 知道有几条。
- * 空记忆返回 undefined —— 提示词里出现「你还没有记忆」只是噪音。
+ * 1. **相关**：按当前任务命中（中文二元组 + 英文单词）打分，命中的给标题 + 正文首行一小段。
+ *    命中 0 的不进 —— 无关的任务不该被一堆旧经验灌满。
+ * 2. **新近保底**：最近 3 条无论如何给标题，否则「刚记的东西看不见」。
+ * 3. **强制召回**：连续 20 轮没被取到过的那条（最久没想起的，最多一条），只给一行标题。
  *
- * 取法：从最新往回拿，条数和字符各有一道上限。条数上限防「一百条一行」，字符
- * 上限防「十二条长文」—— 只有一道的活，总有一种记忆能把它打穿。
+ * `query` 拿不到时（老机器的唤醒记录里没有任务正文）退回旧取法：从新往旧最多 12 条。
+ * 这条降级路径必须有 —— 宁可按老办法给，也不要在没线索时把记忆整个关掉。
  */
-export function memoryDigest(source: string, catalog?: TextCatalog): string | undefined {
+export type MemoryDigestOptions = {
+	/** 当前任务的正文（从唤醒记录里取，见 `AgentPaths.task`）。空 = 退回旧取法。 */
+	readonly query?: string;
+	/** 标题 → 上次被取到的轮次（旁挂 `members/<slug>/.memory-use.json`）。 */
+	readonly used?: Readonly<Record<string, number>>;
+	/** 当前轮次。 */
+	readonly round?: number;
+};
+
+export type MemoryDigestPlan = {
+	readonly text: string;
+	/** 这次真的进了提示词的标题。调用方据此更新「上次被取到的轮次」。 */
+	readonly picked: readonly string[];
+};
+
+/** 最近几条保底。 */
+export const DIGEST_RECENT = 3;
+/** 连续多少轮没被取到就强制召回一条。 */
+export const DIGEST_STALE = 20;
+/** 相关命中时正文给多少字。 */
+const DIGEST_RELATED = 200;
+
+/**
+ * 任务正文切成可匹配的词：中文取连续二元组（「音色 迁移」也能对上「音色迁移」），
+ * 英文 / 数字取 3 个字符以上的词。返回空表示没有可用线索。
+ */
+export function queryTerms(query: string): readonly string[] {
+	const lower = query.toLowerCase();
+	const terms = new Set<string>();
+	for (const word of lower.match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? []) terms.add(word);
+	for (const run of lower.match(/[\u4e00-\u9fa5]+/g) ?? []) {
+		for (let index = 0; index + 2 <= run.length; index += 1) terms.add(run.slice(index, index + 2));
+	}
+	return [...terms];
+}
+
+/** 这一节能被匹配到的材料：标题 + 正文前 200 字。 */
+function materialOf(section: MemorySection): string {
+	return `${section.heading}\n${section.body.slice(0, DIGEST_RELATED)}`;
+}
+
+function termsHit(material: string, terms: readonly string[]): number {
+	let hits = 0;
+	for (const term of terms) if (material.includes(term)) hits += 1;
+	return hits;
+}
+
+/** 旧取法：从最新往回，条数和字符各有一道上限。`query` 拿不到时用它。 */
+function recentDigest(source: string, catalog?: TextCatalog): string | undefined {
 	const sections = sectionsOf(source);
 	if (sections.length === 0) return undefined;
 	const lines: string[] = [];
@@ -185,4 +235,79 @@ export function memoryDigest(source: string, catalog?: TextCatalog): string | un
 	const hidden = sections.length - lines.length;
 	if (hidden > 0) lines.unshift(fill(catalog, "org.memory.more", { count: hidden }));
 	return lines.join("\n");
+}
+
+export function planMemoryDigest(
+	source: string,
+	catalog?: TextCatalog,
+	options: MemoryDigestOptions = {},
+): MemoryDigestPlan | undefined {
+	const sections = sectionsOf(source);
+	if (sections.length === 0) return undefined;
+	const terms = queryTerms(options.query ?? "");
+	if (terms.length === 0) {
+		const fallback = recentDigest(source, catalog);
+		return fallback === undefined ? undefined : { text: fallback, picked: [] };
+	}
+
+	const round = options.round ?? 0;
+	const used = options.used ?? {};
+	const lineOf = new Map<number, string>();
+	let usedChars = 0;
+	const note = (index: number, line: string): boolean => {
+		const existing = lineOf.get(index);
+		if (existing !== undefined) return existing.length >= line.length;
+		if (lineOf.size >= DIGEST_LIMIT) return false;
+		if (lineOf.size > 0 && usedChars + line.length > MEMORY_LIMITS.main) return false;
+		lineOf.set(index, line);
+		usedChars += line.length + 1;
+		return true;
+	};
+	const lineFor = (index: number, chars: number): string | undefined => {
+		const section = sections[index];
+		if (section === undefined) return undefined;
+		const first = section.body.split("\n").find((line) => line.trim() !== "") ?? "";
+		return `${section.heading}${first === "" ? "" : ` — ${first.slice(0, chars)}`}`;
+	};
+
+	// 一、相关：命中多的先给，同分取更新的。
+	const scored = sections
+		.map((section, index) => ({ index, score: termsHit(materialOf(section), terms) }))
+		.filter((item) => item.score > 0)
+		.sort((a, b) => b.score - a.score || b.index - a.index);
+	for (const item of scored) {
+		const line = lineFor(item.index, DIGEST_RELATED);
+		if (line === undefined) continue;
+		if (!note(item.index, line)) break;
+	}
+
+	// 二、新近保底：最近 3 条。满了就停，别把保底挤掉相关命中。
+	for (let index = sections.length - 1; index >= Math.max(0, sections.length - DIGEST_RECENT); index -= 1) {
+		const line = lineFor(index, 60);
+		if (line === undefined) continue;
+		note(index, line);
+	}
+
+	// 三、强制召回：最久没被取到的一条，只给标题一行。
+	const stale = sections
+		.map((section, index) => ({ index, last: used[section.heading] ?? 0 }))
+		.filter((item) => !lineOf.has(item.index) && round - item.last >= DIGEST_STALE)
+		.sort((a, b) => a.last - b.last)[0];
+	if (stale !== undefined) {
+		const section = sections[stale.index];
+		if (section !== undefined) note(stale.index, section.heading);
+	}
+
+	const indexes = [...lineOf.keys()].sort((a, b) => a - b);
+	const lines = indexes.map((index, order) => `${order + 1}. ${lineOf.get(index) ?? ""}`);
+	const hidden = sections.length - indexes.length;
+	if (hidden > 0) lines.unshift(fill(catalog, "org.memory.more", { count: hidden }));
+	return {
+		text: lines.join("\n"),
+		picked: indexes.map((index) => sections[index]?.heading ?? "").filter((heading) => heading !== ""),
+	};
+}
+
+export function memoryDigest(source: string, catalog?: TextCatalog, options?: MemoryDigestOptions): string | undefined {
+	return planMemoryDigest(source, catalog, options)?.text;
 }

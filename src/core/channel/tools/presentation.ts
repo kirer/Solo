@@ -69,6 +69,13 @@ export const traceSay: ToolTrace = () => ({ kind: undefined, title: "" });
 
 export const traceChats: ToolTrace = () => ({ kind: "chats", title: "翻了频道记录" });
 
+// 故意用通用的 `tool` 种类：`decisions` 只是「看一眼 / 划掉一条」，界面没有必要为它
+// 多学一种画法 —— 多一种 `TraceKind` 就要动契约层和界面渲染，换不来任何信息。
+export const traceDecisions: ToolTrace = (args) =>
+	asString(args["action"]) === "close"
+		? { kind: "tool", title: "清了一条待拍板" }
+		: { kind: "tool", title: "看了待拍板" };
+
 export const traceHistory: ToolTrace = () => ({ kind: "history", title: "读了更早的消息" });
 
 export const traceRemember: ToolTrace = () => ({ kind: "remember", title: "记了一条" });

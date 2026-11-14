@@ -18,7 +18,7 @@ import { defineTool, Type, type ToolRegistration } from "../runtime/index.ts";
 import type { JsonValue } from "../runtime/index.ts";
 import type { FlowPolicy, Message } from "../channel/types.ts";
 
-/** 一个工具的形状。与核心那九个工具用的是同一个 `defineTool`。 */
+/** 一个工具的形状。与核心那十个工具用的是同一个 `defineTool`。 */
 export type PluginToolSpec = {
 	readonly name: string;
 	readonly description: string;

@@ -34,6 +34,11 @@
 别带 options，用 mention 叫醒他；带上就等于叫醒我。正文点了别人（@某个成员）又带 options
 也会被拒绝：选项卡只会画给我。
 
+## say.param.needs
+要**等他拍板**时写 `decision`：这条进「待他拍板」清单，他回一句、或用 `decisions` 关掉才消失。
+只放真需要他一个字的判断题（行 / 不行 + 你的建议），他不回就按你的建议走。
+别拿它报进度 —— 清单的意义就是「不清掉就一直在」。只有助理能带。
+
 ## say.self.missing
 你还不在名册里。先看 members/<你>/identity.md，或请助理重新登记你。
 
@@ -61,6 +66,24 @@
 ## say.refuse.options.others
 这条没发出去：带选项的消息是给我画的选项卡，可你点的是 {{names}} —— 发出去只会变成「老板，你定」。要同事做选择就别带 options：把选项写进正文、用 mention 叫醒他；要问我，正文里写 @我。
 
+## say.refuse.needs.value
+`needs` 只有一个值 `decision`，你写的是「{{value}}」。
+
+## say.refuse.needs.options
+`needs: "decision"` 和 `options` 不能一起带：一个等他挑，一个等他一句行 / 不行。要挑用 options，要一个字用 needs。
+
+## say.refuse.needs.member
+这条没发出去：`needs: "decision"` 只有助理能带。你要他定什么，先在正文里 @{{assistant}} 说清 —— 它汇总成一句再问。
+
+## say.param.closing
+这句是收尾（做完 / 验收 / 交付）时带 `true`，必须同时给 `lesson`。
+
+## say.param.lesson
+这次有什么能复用：一句话。想不到就写 `none` —— 这也算回答。写了别的会顺手记进你的记忆。
+
+## say.refuse.closing.lesson
+收尾必须回答一句：这次有什么能复用？想不到就写 `lesson: "none"` —— 这也算回答了，别空着。
+
 ## say.refuse.mention
 「{{channel}}」里没有「{{name}}」。可以 @：{{available}}
 
@@ -72,6 +95,49 @@
 
 ## say.done.nobody
 没有人被唤醒（这只是一句话）。
+
+## decisions.description
+看「在等他拍板的」有哪些、一条条清掉。`list` 列出来（默认），`close` 关掉一条（给 `seq`，跨频道撞号时再加 `channel`）。
+他回复过的那条自动算清掉；你替他关之前先确认他说过「不用管了」，别悄悄替他划掉。
+
+## decisions.param.action
+list（默认）列出来 / close 关掉一条
+
+## decisions.param.seq
+关哪一条：消息序号（消息左边那个 #号）
+
+## decisions.param.channel
+哪个频道（两个频道撞号时必给）
+
+## decisions.list.header
+他这儿还挂着 {{count}} 条等你定：
+
+## decisions.list.line
+{{n}}. [{{channel}}] #{{seq}} {{who}}：{{text}}
+
+## decisions.list.owner
+他
+
+## decisions.list.empty
+没有挂着待他拍板的事。
+
+## decisions.list.footer
+关掉哪条就用 `close` + `seq`（撞号再加 `channel`）。一次只问一件事，别攒成一张账单。
+
+## decisions.close.done
+关了 [{{channel}}] #{{seq}}，清单里不再有它。
+
+## decisions.refuse.seq
+要关哪一条？给我 `seq`（消息序号）。
+
+## decisions.refuse.missing
+#{{seq}} 不在待他拍板的清单里：他可能已经回过，或者已经关了。用 `list` 看一眼。
+
+## decisions.refuse.ambiguous
+两个频道的 #{{seq}} 都挂着，指名 `channel` 再关。
+
+## decisions.refuse.member
+只有助理能关他的待办。你要推掉什么，就在正文里说明、@{{assistant}}。
 
 ## chats.description
 看会话、建群。`action=list`（默认）列我在的会话：标题、群聊还是私聊、未读数、最后一条；`action=read` 读某个频道的历史消息（读完标已读）；`action=create` 用 title + members 拉一个群，我自动在里面。

@@ -112,6 +112,8 @@ export function appendMessage(
 		readonly attachments?: readonly Attachment[];
 		/** 要我选的选项。空数组按「没有选项」处理。 */
 		readonly options?: readonly string[];
+		/** 这条在等老板拍板（只有助理带得上，见 `say`）。 */
+		readonly needs?: Message["needs"];
 		/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
 		readonly sourceEntry?: string;
 		/** 这条是人亲手打的，原样带到 `Message.human`。 */
@@ -162,6 +164,7 @@ export function appendMessage(
 					})),
 				}),
 		...(input.options === undefined || input.options.length === 0 ? {} : { options: [...input.options] }),
+		...(input.needs === undefined ? {} : { needs: input.needs }),
 		...(input.sourceEntry === undefined ? {} : { sourceEntry: input.sourceEntry }),
 		...(input.human === true ? { human: true } : {}),
 	};

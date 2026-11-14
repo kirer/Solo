@@ -22,6 +22,8 @@ type AppendInput = {
 	readonly mention?: readonly string[];
 	readonly attachments?: readonly Attachment[];
 	readonly options?: readonly string[];
+	/** 这条在等老板拍板（`needs: "decision"`）。 */
+	readonly needs?: Message["needs"];
 	/** 替哪条会话答案补发的（判重用，见 `Message.sourceEntry`）。 */
 	readonly sourceEntry?: string;
 	/** 这条是人亲手打的，原样带到 `Message.human`。 */
@@ -78,6 +80,7 @@ export async function appendToChannel(
 			...(input.mention === undefined ? {} : { mention: input.mention }),
 			...(input.attachments === undefined ? {} : { attachments: input.attachments }),
 			...(input.options === undefined ? {} : { options: input.options }),
+			...(input.needs === undefined ? {} : { needs: input.needs }),
 			...(input.sourceEntry === undefined ? {} : { sourceEntry: input.sourceEntry }),
 			...(input.human === undefined ? {} : { human: input.human }),
 		});

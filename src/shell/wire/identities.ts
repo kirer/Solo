@@ -13,6 +13,8 @@ import { BACKGROUND_CONTEXT, defineExtension } from "../../core/runtime/index.ts
 import { agentSections, renderAgentSection, type ChatRef } from "../../core/documents/prompt.ts";
 import { ChannelDoc, chatKind } from "../../core/channel/types.ts";
 import { channelsOf } from "../../core/channel/rules.ts";
+import { DirectoryDoc } from "../../core/channel/roster.ts";
+import { parseWake } from "../../core/channel/turn/record.ts";
 import type { Layout } from "../../core/layout.ts";
 import type { TextCatalog } from "../../core/documents/base/catalog.ts";
 
@@ -35,6 +37,7 @@ export function createIdentityWire(deps: {
 	const paths = () => ({
 		layout: deps.layout,
 		chats: (slug: string) => chatRefsOf(deps.harness, slug),
+		task: (slug: string) => taskTextOf(deps.harness, slug),
 		extraPrompt: deps.prompt(),
 		...(deps.text === undefined ? {} : { text: deps.text }),
 	});
@@ -65,6 +68,25 @@ export function createIdentityWire(deps: {
  * 私聊还是群聊由成员推（`chatKind`），不靠 id 前缀 —— `all` 和 `team:x` 在这里
  * 都是“群”，没有谁特殊。
  */
+/**
+ * 某人手上那件活的正文（记忆相关性要用它）。
+ *
+ * 走名册的 `WakeRecord.task` 而不是「最后一条消息」：插话进来时最后一条是插话，
+ * 而他手上的活还在团队频道里（ADR-099 就是为了这个把 record 拆成两层）。
+ */
+async function taskTextOf(harness: Harness, slug: string): Promise<string | undefined> {
+	const directory = await harness.snapshot(DirectoryDoc, BACKGROUND_CONTEXT as Context);
+	if (directory === undefined) return undefined;
+	const conversation = directory.slugToConversation[slug];
+	if (conversation === undefined) return undefined;
+	const wake = parseWake(directory.wake[String(conversation)]);
+	const target = wake?.task;
+	if (target === undefined) return undefined;
+	const state = await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT as Context);
+	const message = (state?.messages[target.channelId] ?? []).find((item) => item.seq === target.seq);
+	return message?.text;
+}
+
 async function chatRefsOf(harness: Harness, slug: string): Promise<readonly ChatRef[]> {
 	const state = await harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT as Context);
 	if (state === undefined) return [];
