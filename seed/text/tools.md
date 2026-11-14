@@ -139,6 +139,74 @@ list（默认）列出来 / close 关掉一条
 ## decisions.refuse.member
 只有助理能关他的待办。你要推掉什么，就在正文里说明、@{{assistant}}。
 
+## task.description
+频道里的任务板。`list` 看谁在做什么（默认只列在做、卡住、待办，按负责人分组），`mine` 只看自己名下，
+`update` 改一条的状态，`add` 从一条消息补标（只有助理能建）。
+成员只在自己名下的任务上改：`doing` / `done` / `blocked` / 重新打开 `open`。`blocked` 必须给原因，
+说不清卡在哪就还留在 `doing`。**划掉（`dropped`）不是你的活**——做不完就报卡住，划不划是派活的人定。
+`done` 带一句凭据（验过什么、跑了什么），写不出就写「没验」。
+
+## task.param.action
+list（默认）看板 / mine 只看自己名下 / update 改一条 / add 从一条消息补标（只有助理）
+
+## task.param.id
+哪一条：板上的短 id（如 t7），`list` 里有
+
+## task.param.status
+改成什么：open（重新打开）/ doing / blocked / done / dropped（只有助理能划）
+
+## task.param.note
+原因或凭据：`blocked` 必写（卡在谁那、缺什么）；`done` 写验过什么。
+
+## task.param.title
+一句话说清要达成什么（不超过 80 字）
+
+## task.param.accept
+怎么算完（一句话，写得出才算）
+
+## task.param.from
+从哪条消息补标：消息序号（消息左边那个 #号）
+
+## task.param.owner
+交给谁（slug）。换负责人只有助理能改。
+
+## task.list.header
+{{doing}} 条在做 / {{blocked}} 条卡住 / {{open}} 条待办
+
+## task.list.line
+{{id}} [{{status}}] {{owner}}：{{title}}（{{silent}} 没动）
+
+## task.list.owner
+无人（负责人已不在名册，只有助理能改派）
+
+## task.list.empty
+板上没有活。要建一条得派活的人点头、由助理写进板。
+
+## task.list.footer
+先看卡住的那几条：要它动，就 `update` 给 `id`、`status`，带上为什么。
+
+## task.update.done
+{{id}} 现在是 {{status}}。频道里落了一行痕，不叫醒任何人。
+
+## task.refuse.id
+板上没有 {{id}}。用 `list` 看一眼。
+
+## task.refuse.member.add
+只有助理能建任务。你觉得该上板，就在正文里说一句，让派活的人点头。
+
+## task.refuse.member.other
+{{id}} 不是你名下的。要它动，得负责人自己改，或者 @{{assistant}} 改派。
+
+## task.refuse.member.dropped
+不能自己划掉。做不完就用 `blocked` 说清卡在哪。
+
+## task.refuse.status
+`status` 只有 open / doing / blocked / done / dropped。
+
+## task.refuse.note
+`blocked` 必须写原因：卡在谁那、缺什么。写不出就还留在 `doing`。
+
+
 ## chats.description
 看会话、建群。`action=list`（默认）列我在的会话：标题、群聊还是私聊、未读数、最后一条；`action=read` 读某个频道的历史消息（读完标已读）；`action=create` 用 title + members 拉一个群，我自动在里面。
 
@@ -634,6 +702,14 @@ slug
 
 ## route.description
 助理专用：把频道里的一条消息在后台交给该看的人。他能看到原文，频道里不会出现「转交」这条消息。
+这件事够格当目标就带 `goal`（和 `accept`），它才会进任务板；不带就只是转交。
+
+## route.param.goal
+要达成什么（一句话）。带它才建任务——先按三条念一遍：跨多步一次做不完、说得出怎么算完、做不完会挡住别人。
+占不到两条就别带：含糊的**不上板，也不问**，原话在频道里，谁想起来谁补标。
+
+## route.param.accept
+怎么算完（一句话）。带上它，被派的人 `task mine` 里直接看得到，不用再问一遍。
 
 ## route.param.to
 交给谁（名字或 slug），一个或几个。必须在这个频道里。
