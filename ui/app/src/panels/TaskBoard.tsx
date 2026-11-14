@@ -7,8 +7,8 @@
  *   点一行回起源那条消息（`channelId + originSeq`，界面不复制正文）。
  * 做完的折成「今天完成 K 条」一行，**板上只剩活的**。
  *
- * 数据由外面传进来：接口还没实现，先用 `task-board-demo.ts` 那份假的定形状；
- * 接口接上之后换的是数据源，这个文件一行都不用改。
+ * 数据由外面传进来（`task-board-source.ts` 从频道详情里翻），这个文件只管画：
+ * 换数据源不碰它。2.9.20 之前喂它的是 `task-board-demo.ts` 那份假的，已经拆了。
  */
 
 import { useEffect, useState } from "react";
