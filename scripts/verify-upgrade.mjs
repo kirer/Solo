@@ -464,19 +464,27 @@ const stageFull = async () => {
 	// （Solo 2026-11-15：先把「装了没」分清，再谈版本对不对）。
 	const before = await describeApp(app);
 	note(`旧进程退出时：${showApp(before)}`);
-	const installed = await versionOf(app);
+	// 安装脚本要等旧进程真退了才开始动手：ditto 解 133MB、再 mv 两次。刚退出那一刻读到的一定是
+	// 旧的（CI 实测：退出时 inode 3108688/0.0.0-verify，20 秒后 inode 3122832/2.9.19），所以等它，
+	// 最多 60 秒；等满还没换上来才判红。
+	const settle = Date.now() + 60_000;
+	let installed = before.version;
+	while (Date.now() < settle) {
+		try {
+			installed = await versionOf(app);
+		} catch {
+			installed = "（读不到）";
+		}
+		if (installed === newVersion) break;
+		await sleep(1000);
+	}
 	if (installed !== newVersion) {
-		// 红照旧红（不为绿灯改判据），但把「等 20 秒之后的样子」一起记下来：这一眼分的正是
-		// 「安装脚本还在解 133MB」还是「它压根没动过这个目录」（Solo 2026-11-15）。
-		await sleep(20_000);
 		const after = await describeApp(app);
-		await note(`失败后 20 秒再看：${showApp(after)}`);
+		await note(`等满 60 秒再看：${showApp(after)}`);
 		const untouched = before.ino === after.ino && before.version === after.version;
 		await fail(
-			`装完的 .app 版本还是 ${installed}，不是 ${newVersion}：${
-				untouched
-					? "20 秒后前后一模一样，安装脚本没动过这个目录（产品没装）"
-					: "20 秒后已经变了（这条断言读得太早，不是产品没装）"
+			`等了 60 秒，装完的 .app 版本还是 ${installed}，不是 ${newVersion}：${
+				untouched ? "inode 都没变，安装脚本没动过这个目录（产品没装）" : "inode 变了但版本没对上"
 			}`,
 		);
 	}
