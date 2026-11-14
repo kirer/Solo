@@ -1,0 +1,235 @@
+/* ── 任务看板（2.9.20）────────────────────────────────────────────────
+ *
+ * 顶上一条、抽屉一层、一条一行。装在右栏里（372px），手机上整屏 —— 同一份内容。
+ * 只用现有 token，不新增颜色：卡住用 `--danger`，其余都是 `--ink` / `--ink-3`。
+ *
+ * 卡住的那几行整行带一点红底：这是唯一需要人去动的东西，它掉到第 7 行就等于
+ * 没被看见，所以不光字变红，底也垫一层。
+ */
+
+.board {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	min-width: 0;
+}
+
+/* 顶上那一行：收着的时候它是全部信息，所以它自己就是按钮。 */
+.board-top {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex: none;
+	width: 100%;
+	padding: 11px 18px;
+	border: 0;
+	border-bottom: 0.5px solid var(--line);
+	background: transparent;
+	color: var(--ink);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.board-top:hover {
+	background: var(--hover);
+}
+
+.board-count {
+	flex: 1;
+	min-width: 0;
+	font-size: 12.5px;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	/* 计数里不许换行：换了行顶上就不是「一行」了。 */
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.board-count[data-blocked="true"] {
+	color: var(--danger);
+}
+
+.board-chev {
+	flex: none;
+	color: var(--ink-3);
+	transition: transform 140ms ease;
+}
+
+.board-top[aria-expanded="true"] .board-chev,
+.board-done[aria-expanded="true"] .board-chev {
+	transform: rotate(90deg);
+}
+
+.board-drawer {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 6px 0 10px;
+}
+
+.board-blank {
+	margin: 0;
+	padding: 10px 18px;
+	color: var(--ink-3);
+	font-size: 12.5px;
+}
+
+/* 一条一行：整行可点，点开回到起源那条消息。 */
+.board-row {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+	width: 100%;
+	padding: 9px 18px;
+	border: 0;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.board-row:hover {
+	background: var(--hover);
+}
+
+.board-row:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: -2px;
+}
+
+.board-row[data-status="blocked"] {
+	background: color-mix(in oklab, var(--danger) 6%, transparent);
+}
+
+.board-row[data-status="blocked"]:hover {
+	background: color-mix(in oklab, var(--danger) 10%, transparent);
+}
+
+.board-av {
+	display: block;
+	flex: none;
+	width: 26px;
+	height: 26px;
+	margin-top: 1px;
+	border-radius: 30%;
+	overflow: hidden;
+}
+
+.board-av svg,
+.board-av img {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+.board-main {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+	flex: 1;
+}
+
+.board-line {
+	display: flex;
+	align-items: baseline;
+	gap: 7px;
+	min-width: 0;
+}
+
+.board-who {
+	flex: none;
+	color: var(--ink);
+	font-size: 12.5px;
+	font-weight: 600;
+}
+
+.board-idle {
+	flex: 1;
+	min-width: 0;
+	color: var(--ink-3);
+	font-size: 11.5px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 做什么：两行封顶。一行放不下就被截成「任务实体：`state.tasks` + …」，
+   老板要的是扫一眼知道是什么活，不是读全文。 */
+.board-title {
+	color: var(--ink-2);
+	font-size: 12.5px;
+	line-height: 17px;
+	display: -webkit-box;
+	-webkit-line-clamp: 2;
+	-webkit-box-orient: vertical;
+	overflow: hidden;
+}
+
+/* 卡住的原因：红字 + 不断行。原因就是这一行存在的理由，截了等于没写。 */
+.board-why {
+	color: var(--danger);
+	font-size: 11.5px;
+	line-height: 16px;
+	overflow-wrap: anywhere;
+}
+
+.board-why[data-done="true"] {
+	color: var(--ink-3);
+}
+
+.board-origin {
+	color: var(--ink-3);
+	font-size: 11px;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* 「今天完成 K 条」：和板上那些行分开，它是收尾不是待办。 */
+.board-done {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin-top: 4px;
+	padding: 8px 18px;
+	border: 0;
+	border-top: 0.5px solid var(--rule);
+	background: transparent;
+	color: var(--ink-3);
+	font: inherit;
+	font-size: 12px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.board-done:hover {
+	background: var(--hover);
+}
+
+.board-done > span {
+	flex: 1;
+	min-width: 0;
+}
+
+.board-tick {
+	flex: none;
+	width: 26px;
+	text-align: center;
+	color: var(--ink-3);
+	font-size: 12px;
+	line-height: 26px;
+}
+
+/* 右栏那一屏的容器：抽屉长了就在这一层滚，标题条不动。 */
+.board-page {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow-y: auto;
+}

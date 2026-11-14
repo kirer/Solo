@@ -90,6 +90,11 @@ export type State = {
 	focusMiss: { seq: number; at: number } | null;
 	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
 	tasks: { open: boolean; who: string | null };
+	/**
+	 * 「任务板」：右栏的又一态（`2.9.20`）。跟后台任务互斥 —— 右栏是一叠纸，
+	 * 同一时间只铺一张。数据来自当前频道的 `tasks`，没有就是空板。
+	 */
+	board: { open: boolean };
 	/** 插件占的一整屏（插件 slug；`null` = 没有）。和任务屏互斥，也是 `app.page` 插槽的开关。 */
 	pluginView: string | null;
 	/** 右侧工作台开着看哪个插件（`null` = 没有）。`dock` 插槽的开关，占右栏那一层。 */
@@ -200,6 +205,7 @@ const initial: State = {
 	focus: null,
 	focusMiss: null,
 	tasks: { open: false, who: null },
+	board: { open: false },
 	pluginView: null,
 	dock: null,
 	rightPage: null,
@@ -800,6 +806,7 @@ export function openTasks(slug?: string): void {
 	patch({
 		nav: "fwd",
 		tasks: { open: true, who },
+		board: { open: false },
 		right: { open: true },
 		needMenu: false,
 		restartOpen: null,
@@ -808,6 +815,41 @@ export function openTasks(slug?: string): void {
 		settings: false,
 	});
 	if (who !== null) void loadPersonRuns(who);
+}
+
+/**
+ * 「任务板」：右栏的一态（跟后台任务并列，2.9.20）。
+ *
+ * 为什么在右栏而不是聊天顶上常驻：看板的宽度是给「一条一行」留的（谁、做什么、
+ * 多久没动、卡住的原因），470px 起才不折行；聊天那一列本来就窄，顶上再压一条会
+ * 把正文挤走。右栏和资料、后台任务共用一层纸，进来就该看见，退出就回聊天。
+ */
+export function openBoard(): void {
+	patch({
+		nav: "fwd",
+		board: { open: true },
+		tasks: { open: false, who: getState().tasks.who },
+		right: { open: true },
+		needMenu: false,
+		restartOpen: null,
+		pluginView: null,
+		pluginSheet: false,
+		settings: false,
+	});
+}
+
+export function closeBoard(): void {
+	// 跟 `closeTasks` 同一条规矩：手机上它是整屏那层，退出等于收起右栏；桌面回资料表。
+	const mobile =
+		typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
+	patch({
+		nav: "back",
+		board: { open: false },
+		pluginView: null,
+		settings: false,
+		pluginSheet: false,
+		...(mobile ? { right: { open: false } } : {}),
+	});
 }
 
 export function setTasksWho(slug: string): void {

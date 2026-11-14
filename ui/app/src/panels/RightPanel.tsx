@@ -19,14 +19,17 @@ import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, clampDockWidth, closeDock, closeRightFile, closeRightPage, closeTasks, openPerson, openTasks, refreshDetail, setDockWidth, setRight, getState } from "../state/store.ts";
+import { backRight, clampDockWidth, closeBoard, closeDock, closeRightFile, closeRightPage, closeTasks, focusSeq, openBoard, openPerson, openTasks, refreshDetail, setDockWidth, setRight, getState } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { FilePreview } from "./FilePreview.tsx";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
+import { TaskBoard } from "./TaskBoard.tsx";
+import { boardTasks, channelTasks } from "./task-board-source.ts";
 
 export function RightPanel(): JSX.Element {
 	const open = useStore((state) => state.right.open);
 	const tasksOpen = useStore((state) => state.tasks.open);
+	const boardOpen = useStore((state) => state.board.open);
 	const trail = useStore((state) => state.trail);
 	const dock = useStore((state) => state.dock);
 	const rightPage = useStore((state) => state.rightPage);
@@ -81,6 +84,7 @@ export function RightPanel(): JSX.Element {
 		if (dock !== null) closeDock();
 		else if (rightPage !== null) closeRightPage();
 		else if (rightFile !== null) closeRightFile();
+		else if (boardOpen) closeBoard();
 		else if (tasksOpen) closeTasks();
 		else if (trail.length > 1) backRight();
 		else setRight({ open: false });
@@ -94,9 +98,11 @@ export function RightPanel(): JSX.Element {
 				? (pageCell?.label ?? rightPage)
 				: rightFile !== null
 					? fileName
-					: tasksOpen
-						? "后台任务"
-						: "资料";
+					: boardOpen
+						? "任务板"
+						: tasksOpen
+							? "后台任务"
+							: "资料";
 	// 这一栏永远有出口：标题条那颗返回 / 关闭在每一层都在（宽窗口里顶栏那颗「资料」
 	// 常被这一栏自己盖住，不能只指望它）。
 
@@ -106,6 +112,7 @@ export function RightPanel(): JSX.Element {
 			id="detail"
 			data-open={open ? "true" : "false"}
 			data-tasks={tasksOpen ? "true" : "false"}
+			data-board={boardOpen ? "true" : "false"}
 			data-dock={dock === null ? "false" : "true"}
 			data-page={rightPage === null ? "false" : "true"}
 			aria-label={title}
@@ -143,8 +150,8 @@ export function RightPanel(): JSX.Element {
 					<FilePreview path={rightFile} />
 				</div>
 			) : (
-				<div className="detail-panel" id="detail-panel" key={tasksOpen ? "tasks" : "profile"}>
-					{tasksOpen ? <TasksView /> : <ProfileView />}
+				<div className="detail-panel" id="detail-panel" key={boardOpen ? "board" : tasksOpen ? "tasks" : "profile"}>
+					{boardOpen ? <BoardView /> : tasksOpen ? <TasksView /> : <ProfileView />}
 					<Slot name="rightPanel.bottom" />
 				</div>
 			)}
@@ -204,6 +211,30 @@ function PanelGrip({ width }: { width: number | null }): JSX.Element {
 }
 
 /* ── 资料表 ──────────────────────────────────────────────────────────── */
+
+/**
+ * 任务板那一屏（右栏的一态，跟「后台任务」并列）。
+ *
+ * 数据是**当前频道自己的** `tasks`：接口还没发回来就是空板，绝不补假任务
+ * （Solo 2026-11-15）。点一行回它起源那条消息 —— 走的是 `focusSeq`，
+ * 「找没找到」由 `Stream` 说了算，找不到它会回一句灰字，不是点了没反应。
+ */
+function BoardView(): JSX.Element {
+	const detail = useStore((state) => state.detail);
+	const miss = useStore((state) => state.focusMiss);
+	// 只取一次：这一列要的是「翻开那一刻多久没动」，之后 `TaskBoard` 自己每 30 秒往下走。
+	const [openedAt] = useState(() => Date.now());
+	const tasks = boardTasks(detail, openedAt);
+	return (
+		<div className="board-page">
+			<TaskBoard
+				tasks={tasks}
+				onJump={(task) => focusSeq(task.originSeq, task.channelId)}
+				missSeq={miss?.seq ?? null}
+			/>
+		</div>
+	);
+}
 
 function ProfileView(): JSX.Element {
 	const person = useStore((state) => state.person);
@@ -565,6 +596,8 @@ function AllPanel(props: {
 	title: string;
 }): JSX.Element {
 	const first = props.members.find((member) => member.slug !== "owner");
+	// 「任务板」那张卡的条数：跟板子里同一份数据源、同一个函数，不另算一遍。
+	const taskCount = channelTasks(useStore((state) => state.detail)).length;
 	const { profile } = useProfile(first?.slug ?? null);
 	const [openRow, setOpenRow] = useState<string | null>(null);
 	const skills = (profile?.skills ?? []).filter((skill) => skill.scope === "all");
@@ -595,6 +628,18 @@ function AllPanel(props: {
 			</div>
 
 			<MemberGrid members={props.members} />
+
+			{/* 任务板：频道级的一屏。跟「后台任务」（人的轮次）不是一回事，所以放在这张
+			    房间的资料表里，点进去换成右栏那一态。 */}
+			<div className="prof-card">
+				<Row
+					icon={<IconStar />}
+					title="任务板"
+					sub="谁在做、卡在哪，点一行回到派活那句话"
+					value={taskCount === 0 ? "空" : `${String(taskCount)} 条`}
+					onClick={openBoard}
+				/>
+			</div>
 
 			{isAll ? (
 				<div className="prof-card">
