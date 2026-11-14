@@ -1,7 +1,7 @@
 /**
  * 发布验收：真起一个 Solo，**真点一条引用**，看跳过去落在哪、以及两秒后还在不在那儿。
  *
- * 为什么必须真机点（Solo 2026-11-15 定的）：`focusTarget()` / `keepAnchor()` 单测能验算式，
+ * 为什么必须真机点（Solo 2026-11-15 定的）：`focusScrollTop()` / `keepAnchor()` 单测能验算式，
  * 验不到「补历史那一帧真把锚点换成了焦点行」—— 那条只有真窗口里补一次页才现原形，而它正是
  * 这个功能的命门（跳过去、两秒后飘走）。
  *
@@ -17,15 +17,23 @@
  *    所以第 100 条必然在窗口外 —— 点它必然要补历史，这一步就是「故意让补历史发生一次」。
  *    为什么不是第 1 条：第 1 条上面什么都没有，35% 的落点会被夹到 0（滚到最顶），
  *    验不出落点算得准不准，只能验出「它到顶了」。
+ *    发这条引用之前要先 `GET ?around=` 把服务端窗口挪到目标附近 —— `messageView()` 是在
+ *    `state.messages[频道]` 里找 `replyTo` 的，找不到就把引用整个丢掉、消息退化成普通一句。
  * 3. 点之前断言目标不在 DOM（否则这次跳转根本没跨窗口，不算验过）。
  * 4. 点 `[data-jump-seq]` 那个引用 → 等 `[data-seq="第 1 条"]` 出现。
  * 5. 落点：行顶应在 **35% 视口高**（±24px，行高按估的）。
  * 6. 每一百毫秒读一次焦点行相对视口的位置，读满 2.3 秒：2 秒那点和 2.3 秒那点差 ≤3px
  *    （慢性漂移），整段极差 ≤8px（补页落定那一跳）。
+ * 7. 再把滚动条拖到最顶，让补历史真发生一次：视口首行在**逐帧**采样里不许被推走
+ *    （固定间隔的数字不作数，会抓到中间帧误判）。补没补上认「窗口里最早那条的 seq 变小了」，
+ *    **不数 DOM 行数** —— 行是虚拟化的，视口一矮窗口条数恒定，补页发生时行数也不变。
  *
  * 原生对话框由 `SOLO_VERIFY_NO_DIALOG=1` 关掉（本脚本自己设的，runner 上没人点）。
  * 用法：node scripts/verify-focus-jump.mjs --app <二进制> --out <目录> [--project <项目路径>]
  *   `--project` 给的是**没打包**的跑法：`electron <项目路径>`（脚本会把项目路径当第一个参数传）。
+ *   **`--project` 跑之前必须先 `npm run ui:build`**：界面加载的是被 git 跟踪的 `ui/web` 产物，
+ *   不 build 就是仓库里那份旧的，上面根本没有 `data-jump-seq`，脚本只会一直说「找不到引用」
+ *   ——2026-11-15 在这上面白跑了几轮。
  */
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
@@ -57,7 +65,7 @@ const arrivalTolerance = Number(args.get("--tolerance") ?? "24");
 const driftTolerance = 3;
 /** 中途一跳（补页落定）的上限。 */
 const spreadTolerance = 8;
-/** 落点在视口高度的这个比例上（和 `focusTarget()` 对齐；实现改了这里就该红）。 */
+/** 落点在视口高度的这个比例上（和 `focusScrollTop()` 对齐；实现改了这里就该红）。 */
 const anchorRatio = 0.35;
 /**
  * 群名带时间戳：`--project` 跑法用的是 `tmpdir()/solo-desktop-dev-userdata`，
@@ -325,6 +333,11 @@ const seeded = await cdp.evaluate(`(async () => {
 		}
 	}
 	if (anchorSeq === null) throw new Error("没拿到第 " + String(targetIndex) + " 条的 seq");
+	// 引用能不能渲染出来，取决于服务端窗口里有没有那条：messageView() 是在
+	// state.messages[频道] 里找 replyTo 的（src/app/project.ts:179），找不到就把
+	// replyTo 整个丢掉，消息退化成普通一句。这里先把窗口挪到目标附近再说引用
+	// —— 少了这一步，界面上根本没有可点的引用（2026-11-15 本地就是栽在这里）。
+	await fetch("/api/channels/" + encodeURIComponent(id) + "?around=" + String(anchorSeq) + "&limit=60");
 	await post("/api/channels/" + encodeURIComponent(id) + "/messages", { text: "验收：引用第 " + String(targetIndex) + " 条", replyTo: anchorSeq });
 	return { id, anchorSeq, targetIndex, mate: mate.slug, total: ${String(count)} + 1 };
 })()`).catch(async (error) => {
@@ -369,6 +382,9 @@ while (Date.now() < readyDeadline) {
 		if (flow === null || feed === null) return { waiting: true };
 		const quote = feed.querySelector('[data-jump-seq="${String(seq1)}"]');
 		const target = feed.querySelector('[data-seq="${String(seq1)}"]');
+		// 引用是窗口里最后一条。看不到它通常是「进频道后没落到最底」—— 行是虚拟化的，
+		// 窗口停在上面时最后那条根本不在 DOM 里。这里主动滚到底再看（读到就不动，幂等）。
+		if (quote === null) flow.scrollTop = flow.scrollHeight;
 		return {
 			waiting: false,
 			rows: feed.querySelectorAll("[data-seq]").length,
@@ -546,6 +562,10 @@ await cdp.evaluate(`(() => {
 			window.__anchorLog.push({
 				top: row === undefined ? null : Math.round(row.getBoundingClientRect().top - flow.getBoundingClientRect().top),
 				rows: document.querySelectorAll("#feed [data-seq]").length,
+				minSeq: document.querySelector("#feed [data-seq]") === null
+					? null
+					: Math.min(...[...document.querySelectorAll("#feed [data-seq]")].map((one) => Number(one.getAttribute("data-seq")))),
+				scrollTop: Math.round(flow.scrollTop),
 			});
 		}
 		if (window.__anchorLog.length < 160) requestAnimationFrame(tick);
@@ -561,10 +581,21 @@ const base = seen.length === 0 ? 0 : seen[Math.floor(seen.length / 2)];
 const anchorMoved = seen.length === 0 ? 0 : Math.max(...seen.map((one) => Math.abs(one - base)));
 /** 错位超过 3px 的帧数：允许 1 帧（补页那一帧浏览器合成可能还没跟上），再多就是人眼看得见的闪。 */
 const badFrames = seen.filter((one) => Math.abs(one - base) > 3).length;
-const rowsGrew = anchorSamples.some((one) => one.rows > (anchorSamples[0]?.rows ?? 0));
+/**
+ * 「更早的历史真补进来了」不数行数：视口一矮，虚拟化的窗口也跟着窄，补回来的行不一定都进
+ * DOM —— CI 上就是行数一直 60、其实补页发生了（2026-11-15 那趟红在这）。认窗口里最早那条
+ * 的 `seq` 变小，跟虚拟化没关系。
+ */
+const firstSeq = anchorSamples[0]?.minSeq ?? null;
+const laterSeq = anchorSamples.map((one) => one.minSeq).filter((one) => one !== null);
+const earliestSeq = laterSeq.length === 0 ? null : Math.min(...laterSeq);
+const rowsGrew = firstSeq !== null && earliestSeq !== null && earliestSeq < firstSeq;
 if (!rowsGrew) {
+	const scrollTrace = anchorSamples.map((one) => one.scrollTop);
 	await fail(
-		`滚到最顶之后没补进来更早的历史（一直是 ${String(anchorSamples[0]?.rows ?? 0)} 行），锚点这半段验不到。目标要挑「上下都还有内容」的位置，把 --anchor-index 调大`,
+		`滚到最顶之后没补进来更早的历史（最早那条一直是 seq=${String(firstSeq)}，${String(anchorSamples[0]?.rows ?? 0)} 行），锚点这半段验不到。` +
+			`诊断：${String(anchorSamples.length)} 帧、scrollTop 从 ${String(scrollTrace[0])} 走到 ${String(scrollTrace.at(-1))}、` +
+			`最小值 ${String(Math.min(...scrollTrace))}、引用还在不在这屏 ${String(seen.length)} 帧有值`,
 	);
 }
 if (badFrames > 1) {
@@ -628,6 +659,7 @@ await stop();
 await writeFile(join(outDir, "result.txt"), `通过\n\n${notes.join("\n")}\n`);
 note(
 	`通过：落在 ${String(arrived.top)}px（目标 ${String(expected)}px），2 秒内极差 ${String(spread)}px，连读差 ${String(drift)}px；` +
-		`再补一页历史时 ${String(seen.length)} 帧里错位 ${String(badFrames)} 帧、最大 ${String(anchorMoved)}px（${String(anchorSamples[0]?.rows ?? 0)} → ${String(anchorSamples[anchorSamples.length - 1]?.rows ?? 0)} 行）`,
+		`再补一页历史时 ${String(seen.length)} 帧里错位 ${String(badFrames)} 帧、最大 ${String(anchorMoved)}px` +
+		`（窗口里最早那条从 seq=${String(firstSeq)} 补到 seq=${String(earliestSeq)}）`,
 );
 process.exit(0);
