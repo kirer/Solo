@@ -31,9 +31,9 @@
  * 原生对话框由 `SOLO_VERIFY_NO_DIALOG=1` 关掉（本脚本自己设的，runner 上没人点）。
  * 用法：node scripts/verify-focus-jump.mjs --app <二进制> --out <目录> [--project <项目路径>]
  *   `--project` 给的是**没打包**的跑法：`electron <项目路径>`（脚本会把项目路径当第一个参数传）。
- *   **`--project` 跑之前必须先 `npm run ui:build`**：界面加载的是被 git 跟踪的 `ui/web` 产物，
- *   不 build 就是仓库里那份旧的，上面根本没有 `data-jump-seq`，脚本只会一直说「找不到引用」
- *   ——2026-11-15 在这上面白跑了几轮。
+ *   **`--project` 跑之前必须先 `npm run ui:build`**：界面加载的是 `ui/web` 里的产物（不进仓库，
+ *   得自己构建）。不 build 就是仓库里那份旧的，上面根本没有 `data-jump-seq`，脚本只会一直说
+ *   「找不到引用」——2026-11-15 在这上面白跑了几轮。
  */
 import { spawn } from "node:child_process";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";

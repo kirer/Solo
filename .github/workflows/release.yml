@@ -62,6 +62,8 @@ jobs:
       - name: 数一下拉到了几个 v2 tag
         run: git tag -l 'v2.*' | wc -l
       - run: npm run check
+      # 界面产物不进仓库：有一条测试要摸 `ui/web/index.html`，先构建再测。
+      - run: npm run ui:build
       - run: npm test
       - id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
@@ -234,8 +236,9 @@ jobs:
           cache: npm
       - run: npm ci
       # Windows 上再跑一遍：`defaultUiDir` 这类 `URL.pathname` 的路径差异只有这里会露。
-      - run: npm test
+      # 界面产物不进仓库了，测之前先构建。
       - run: npm run ui:build
+      - run: npm test
       - run: npm run desktop:dist:win
       - uses: actions/upload-artifact@v4
         with:

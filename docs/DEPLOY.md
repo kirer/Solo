@@ -445,10 +445,9 @@ ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-
    `seed/`**（seed 有 500 KB 体积契约，这个文件 260 KB，塞进去直接顶爆）。
    少了它不会报错、不会崩 —— AEC 加载失败后降级成「念的时候听不见你说话」，
    症状和你以为已经修好的那个 bug 一模一样。**漏了就是静默失效。**
-4. **`git status` 看 `ui/web/`** —— 界面产物是进仓的（`emptyOutDir: false`，
-   换掉的旧 hash 文件不会自己消失，要手动 `git rm`）。跑完 `ui:build` 再看：
-   **有 diff 就说明源码变了产物没提交**，把它一起提交，别打着旧界面发版；
-   没 diff 才算对得上。
+4. **`ui/web/` 不进仓库**（2026-11-15 起，`.gitignore` 里躺着）—— 产物由 `npm run ui:build`
+   现生成，谁也别再把它提交回去。`emptyOutDir: false`，换掉的旧 hash 文件不会自己消失，
+   本地攒多了跑 `npm run ui:prune`；CI 每次都是从零构建，不受影响。
 5. **`seed/plugins/*/client.js` 逐个 `node --check`** —— 仓库一遍，**解包后包里再一遍**。
    见下面两节。
 

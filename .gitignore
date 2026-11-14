@@ -39,5 +39,8 @@ release/
 feed/
 desktop/dist/
 
+# 界面构建产物：`npm run ui:build` 生成，CI 每次自己构建（2026-11-15 定）
+ui/web/
+
 # `npm run check` 在某些 shell 里会留下的空文件：不该进版本库
 -c

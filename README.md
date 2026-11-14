@@ -86,7 +86,7 @@ README 里的数字会漂，别拿它当准绳。
 | `npm run prompt:check` | 提示词黄金渲染：确定性、插槽全填、每段 ≤12 行、模板里零工具名 |
 | `npm run live` | **真实模型**端到端 13 项（会花 token；改了 agent 行为要连跑两次 13/13） |
 | `npm run live:scenarios` | **真实模型**多 agent 场景（会花 token；`--list` 看场景） |
-| `npm run ui:build` | 构建界面到 `ui/web/`（改完 `ui/app/` 必跑，产物一起提交） |
+| `npm run ui:build` | 构建界面到 `ui/web/`（改完 `ui/app/` 必跑；产物不进仓库） |
 | `npm run desktop:dev` | 起桌面壳（开发态用临时两个根，不碰真实数据） |
 | `npm run desktop:dist:mac` / `:win` | 本地打 dmg+zip / exe+zip（输出到 `release/`） |
 
@@ -99,7 +99,7 @@ README 里的数字会漂，别拿它当准绳。
   `V2` / `V3` 等旧分支只作存档，不要在上面开发。
 - 小改动直接提交到 `main`；大改动可以开短分支、合回 `main` 后再删。
 - 提交信息写「改了什么、为什么」；一次改动一套提交，别把不相干的混在一起。
-- **`npm run ui:build` 同一时间只许一个人跑。** `ui/web/` 是跟着仓库走的构建产物：谁构建谁提交。
+- **`npm run ui:build` 同一时间只许一个人跑。** `ui/web/` 是本地产物、不进仓库：谁构建谁负责验。
   两个人同时构建，产物里会混进对方没写完的源码 —— 打进去的 `RightPanel` 半成品没人看得出来，
   发出去就是真事故。要构建先在频道里发一声，等对方落完再动手。
 - 文档同步是硬要求：改了行为就同步 `docs/` 与 AGENTS 那张表（见 AGENTS §3.3）。
@@ -111,7 +111,7 @@ README 里的数字会漂，别拿它当准绳。
 ```bash
 # 1. 发版前检查（缺一不可）
 npm run check && npm test
-npm run ui:build                  # 改过 ui/app/ 才需要；产物一起提交
+npm run ui:build                  # 改过 ui/app/ 才需要；产物不进仓库
 npm run live                      # 改过 agent 行为才需要；连跑两次都要 13/13
 
 # 2. 升版本并提交（两个文件一起变）

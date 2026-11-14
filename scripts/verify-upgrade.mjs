@@ -30,7 +30,7 @@
  */
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
@@ -145,6 +145,41 @@ const setVersion = async (app, version) => {
 	const pkg = JSON.parse(await readFile(file, "utf8"));
 	await writeFile(file, `${JSON.stringify({ ...pkg, version }, null, 2)}\n`);
 };
+
+/**
+ * 一个 `.app` 「到底装了没有」的硬证据。
+ *
+ * 只看版本号不够：替身只改了 `Resources/app/package.json`，`Info.plist` 那份从来没变过，
+ * 所以两版的 CFBundle 一样、目录 mtime 也可能一样（都是 zip 里的时间）。真正会变的是
+ * **`Solo.app` 的 inode**（替换是 `mv` 一份新解出来的进来）和判据文件的 mtime。
+ * `defaults read` 要几毫秒，只在两个关键点各取一次，不进轮询。
+ */
+const describeApp = async (app) => {
+	const pkg = join(app, "Contents", "Resources", "app", "package.json");
+	const out = { version: "（读不到）", ino: "（读不到）", pkgMtime: "（读不到）", bundle: "（读不到）" };
+	try {
+		out.ino = String(statSync(app).ino);
+	} catch {
+		// mv 中间那一瞬可能不在：按「读不到」记，别让判据自己崩
+	}
+	try {
+		out.version = await versionOf(app);
+		out.pkgMtime = new Date(statSync(pkg).mtimeMs).toISOString();
+	} catch {
+		// 同上
+	}
+	try {
+		out.bundle = execFileSync("defaults", ["read", join(app, "Contents", "Info.plist"), "CFBundleShortVersionString"], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+	} catch {
+		// 同上
+	}
+	return out;
+};
+const showApp = (one) =>
+	`版本 ${one.version}｜目录 inode ${one.ino}｜package.json mtime ${one.pkgMtime}｜CFBundle ${one.bundle}`;
 
 /** 占位 settings.json：一台机器上一只模型都没有时首屏是引导，updater 起来即可，这里只为跳过它。 */
 const writePlaceholder = async (userData) => {
@@ -424,8 +459,27 @@ const stageFull = async () => {
 	}
 	note(`旧进程退出码 ${String(run.child.exitCode)}`);
 
+	// 安装脚本要等旧进程真退了才开始动手：ditto 解 133MB、再 mv 两次，几秒到几十秒。
+	// 刚退出那一刻它还没开始，立刻读版本必然读到旧的 —— 所以先记一份「现在的样子」，再等
+	// （Solo 2026-11-15：先把「装了没」分清，再谈版本对不对）。
+	const before = await describeApp(app);
+	note(`旧进程退出时：${showApp(before)}`);
 	const installed = await versionOf(app);
-	if (installed !== newVersion) await fail(`装完的 .app 版本是 ${installed}，不是 ${newVersion}`);
+	if (installed !== newVersion) {
+		// 红照旧红（不为绿灯改判据），但把「等 20 秒之后的样子」一起记下来：这一眼分的正是
+		// 「安装脚本还在解 133MB」还是「它压根没动过这个目录」（Solo 2026-11-15）。
+		await sleep(20_000);
+		const after = await describeApp(app);
+		await note(`失败后 20 秒再看：${showApp(after)}`);
+		const untouched = before.ino === after.ino && before.version === after.version;
+		await fail(
+			`装完的 .app 版本还是 ${installed}，不是 ${newVersion}：${
+				untouched
+					? "20 秒后前后一模一样，安装脚本没动过这个目录（产品没装）"
+					: "20 秒后已经变了（这条断言读得太早，不是产品没装）"
+			}`,
+		);
+	}
 	if (existsSync(`${app}.old`)) await fail("Solo.app.old 还在（没清掉）");
 
 	// 新进程自己认的版本：启动日志那行里写着 `版本 x.y.z`。

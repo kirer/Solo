@@ -13,6 +13,8 @@ describe("serve：界面产物在哪", () => {
 	it("默认 uiDir 指向仓库里的 ui/web/index.html", () => {
 		// Windows 上旧实现用 `URL.pathname` 会得到 `/C:/…`，这个断言会直接红；
 		// 所以它同时是「首页不要静默 404」的跨平台守门。
-		expect(existsSync(join(defaultUiDir(), "index.html"))).toBe(true);
+		// 界面产物不进仓库（`.gitignore` 里的 `ui/web/`）：CI 在测之前跑 `npm run ui:build`。
+		// 本地看到这条红，先构建一遍，不是路径错了。
+		expect(existsSync(join(defaultUiDir(), "index.html")), "先跑 npm run ui:build 再测").toBe(true);
 	});
 });
