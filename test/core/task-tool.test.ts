@@ -140,6 +140,25 @@ describe("task：看板", () => {
 		expect(output).toContain("任务 0 条：没有卡住的");
 	});
 
+	it("撤掉的、做完的都不上板、也不进那个数：板上只数等人动手的活", async () => {
+		const { call, add } = await setup();
+		await add("把连接池调到 20", ME);
+		const done = await add("给设置页加快捷键", ME);
+		const dropped = await add("把没人看的开关删了", ME);
+		await call({ action: "update", id: done, status: "doing" }, ME_ID);
+		await call({ action: "update", id: done, status: "done", note: "跑了 12 条测试" }, ME_ID);
+		await call({ action: "update", id: dropped, status: "dropped", note: "不做了" }, ASSISTANT_ID);
+
+		const output = await call({ action: "list" });
+		expect(output).toContain("任务 1 条：没有卡住的");
+		expect(output.match(/\[/g)).toHaveLength(1);
+		// 划掉的活不在任何人眼前占一个数（Solo 2026-11-15）：连「已撤」都不该有一行。
+		expect(output).not.toContain("已撤");
+
+		const mine = await call({ action: "mine" }, ME_ID);
+		expect(mine).toContain("你手上 1 条");
+	});
+
 	it("没有验收的在行尾标出来：门槛是判断，不写出来就没人知道", async () => {
 		const { call, add } = await setup();
 		await add("把连接池调到 20", ME);
