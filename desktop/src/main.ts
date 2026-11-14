@@ -16,7 +16,9 @@ import {
 	nativeImage,
 	nativeTheme,
 	screen,
+	session,
 	shell,
+	systemPreferences,
 	Tray,
 	type IpcMainEvent,
 	type IpcMainInvokeEvent,
@@ -26,6 +28,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendLog, startBackend, type Backend } from "./backend.ts";
 import { describeLaunch } from "./backend-log.ts";
+import { decideMedia, describeMicrophone } from "./media-permission.ts";
 import { serveSystemBridge } from "./system-bridge.ts";
 import { installMenu } from "./menu.ts";
 import {
@@ -71,6 +74,52 @@ let quitting = false;
  * 重启前写，下一次启动读完就删。
  */
 const LAUNCH_REASON_FILE = join(app.getPath("userData"), "launch-reason.txt");
+
+/**
+ * 麦克风那条路的接线（判据在 `media-permission.ts`，这里只把它接上去）。
+ *
+ * 为什么要自己设 handler：不设的时候 Electron 走默认处理，一次日志都不留。设了才分得清
+ * 「Electron 这层拒了」还是「系统那层拒了」—— 这正是「点了麦克风没反应」能不能查出来的分界。
+ */
+function setupMicrophone(): void {
+	const ses = session.defaultSession;
+	ses.setPermissionRequestHandler((_contents, permission, callback, details) => {
+		// 非媒体权限保持原样（剪贴板写入、通知这些一直在用），别顺手改了别人的行为。
+		if (permission !== "media") {
+			callback(true);
+			return;
+		}
+		// `details` 是个联合类型，只有媒体那条带 mediaTypes：用 in 窄化，别硬转。
+		const mediaTypes = "mediaTypes" in details ? details.mediaTypes : undefined;
+		const decision = decideMedia(permission, mediaTypes);
+		appendLog(logFile, `[permission] ${decision.allow ? "放行" : "拒"}：${decision.reason}`);
+		callback(decision.allow);
+	});
+	// 有的 API 不弹框、直接同步查这一条：判据用同一份，别让两条路给出两个答案。
+	ses.setPermissionCheckHandler((_contents, permission, _origin, details) => {
+		if (permission !== "media") return true;
+		const mediaType = details?.mediaType;
+		// 没标或者标了 unknown 都按音频放（和 decideMedia 的空数组一个道理），只有明确 video 才拒。
+		const kinds = mediaType === undefined || mediaType === "unknown" ? [] : [mediaType];
+		return decideMedia(permission, kinds).allow;
+	});
+	if (process.platform !== "darwin") return;
+	const status = systemPreferences.getMediaAccessStatus("microphone");
+	appendLog(logFile, `[permission] ${describeMicrophone(status)}`);
+	if (status !== "not-determined") return;
+	// 还没问过就现在问：等用户真点了麦克风再问，系统框会和「球已经在录音」的假象撞在一起。
+	void systemPreferences
+		.askForMediaAccess("microphone")
+		.then((granted) => {
+			appendLog(logFile, `[permission] 申请麦克风：${granted ? "用户同意" : "用户拒绝"}`);
+		})
+		.catch((error: unknown) => {
+			appendLog(
+				logFile,
+				`[permission] 申请麦克风出错：${error instanceof Error ? error.message : String(error)}`,
+			);
+		});
+}
 
 function createWindow(url: string): BrowserWindow {
 	// 小屏幕（1280×800 那类笔记本）上别把窗口开到屏幕外面去。
@@ -504,6 +553,8 @@ async function start(): Promise<void> {
 			pid: process.pid,
 		}),
 	);
+	setupMicrophone();
+
 	try {
 		backend = await startBackend({
 			entry: join(app.getAppPath(), "src/shell/main.ts"),
