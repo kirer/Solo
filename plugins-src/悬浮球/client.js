@@ -292,6 +292,9 @@ function readPrefs() {
 		// 新用户（连 json 都没有）没有「要重选音色」这回事，直接算迁完，不弹横幅。
 		voiceMigrated: true,
 		speed: 1,
+		// 人声打断（念稿时一开口就停）**默认关**：门槛还没在真机上外放调过，万一自激就成了
+		// 「说着说着自己停」。按球停是零误判的，先用那个（Solo 2026-11-14）。
+		bargeIn: false,
 	};
 	try {
 		const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(PREF_KEY);
@@ -322,6 +325,9 @@ function readPrefs() {
 			voice,
 			voiceMigrated: migrated,
 			speed: Number.isFinite(value?.speed) ? clamp(value.speed, 0.7, 1.5) : 1,
+			// 只有明确存过 `true` 才算开。想打开就 `savePrefs({ bargeIn: true })`：
+			// 等有人真验过「五段念稿不误停」再给界面开关，别让人自己点进自激里。
+			bargeIn: value?.bargeIn === true,
 		};
 	} catch {
 		return fallback;
@@ -560,6 +566,13 @@ export default {
 			background: var(--line, #c9c2b4); opacity: 0.55;
 		}
 		.orb-menu button[data-on="true"]::before { background: var(--accent, #4b7bec); opacity: 1; }
+		/* 「念稿时点球＝停下」：这个手势没别的地方看得见，菜单里留一行字。
+		   只当提示，不可点、不高亮。 */
+		.orb-menu .orb-menu-hint {
+			display: block; margin-top: 4px; padding: 6px 9px 3px;
+			border-top: 0.5px solid var(--line); color: var(--ink-3);
+			font-size: 11px; line-height: 15px;
+		}
 
 		/* 设置里的「悬浮球语音」一页：和 Token 用量同一套骨架（抬头 → 内容），
 		   一个容器查询管宽窄（设置那张 800 弹窗里宽、右栏 / 手机上窄）。 */
@@ -997,6 +1010,8 @@ export default {
 			const mouthTimer = useRef(0);
 			/** 这一次播放的 AEC 会话（`{ ok, ensure, process, release }`），没在念就是 null。 */
 			const echoRef = useRef(null);
+			/** 常驻听自己那份 AEC：AEC3 有状态（参考信号读到哪、滤波器系数），两条麦不能共用一份。 */
+			const listenEchoRef = useRef(null);
 			/**
 			 * 回声消除的状态，给界面看：
 			 * - `off`：没开（没念 / 还没起来）
@@ -1041,10 +1056,18 @@ export default {
 					return;
 				}
 				echoRef.current = session;
+				// 常驻听那条**自己一份**：AEC3 是有状态的，两条不同的麦克风流喂同一个实例
+				// 会互相踩（参考信号读到哪、滤波器系数都是实例内的）—— 两个人都算错。
+				// 常驻听没开就不建，省一份 CPU；它开起来之后的下一次播放会带上它。
+				const listen =
+					listenRef.current === null || readPrefs().bargeIn !== true
+						? null
+						: createEchoCanceller({ ctx: wired.ctx, reference: wired.source });
+				listenEchoRef.current = listen !== null && listen.ok === true ? listen : null;
 				setEchoState("on");
 				// 先把 wasm 编译起来（几十毫秒），编译完之前来的麦克风数据走兜底降采样。
-				void session
-					.ensure()
+				void Promise.all([session, ...(listenEchoRef.current === null ? [] : [listenEchoRef.current])]
+					.map((each) => each.ensure()))
 					.then(() => {
 						// 会话可能在这中间已经换了（下一片开新会话）——只认自己还活着的那次。
 						if (echoRef.current === session) setEchoState("on");
@@ -1061,6 +1084,9 @@ export default {
 				const session = echoRef.current;
 				echoRef.current = null;
 				if (session !== null) session.release();
+				const listen = listenEchoRef.current;
+				listenEchoRef.current = null;
+				if (listen !== null) listen.release();
 			};
 
 			const startMouth = (player) => {
@@ -1110,6 +1136,8 @@ export default {
 					audioRef.current = null;
 					// 念完了：影子会话也该收 —— 下一次开口是新的环境、新的回声路径。
 					stopEcho();
+					// 这一轮念完了：打断的计数和降级一起归零，下一轮重新算。
+					bargeRef.current = { hits: 0, base: 0.01, last: 0, faults: 0, off: readPrefs().bargeIn !== true };
 					return;
 				}
 				const player = new Audio(`data:audio/wav;base64,${next}`);
@@ -1621,6 +1649,14 @@ export default {
 					return;
 				}
 				cancelHover();
+				// 它在念：点一下就是「停」。这是现在**默认开着**的打断方式 —— 人亲手点的，
+				// 没有误判这回事（人声打断要等真机验过才开，见 `prefs.bargeIn`）。
+				if (speakingRef.current === true) {
+					stopAudio();
+					stopEcho();
+					showBubbleRef.current({ text: "好，你说", kind: "it" });
+					return;
+				}
 				hideBubbleRef.current();
 				if (docked) {
 					// 贴着边点一下 = 先把它请出来，再开菜单。
@@ -1744,6 +1780,32 @@ export default {
 				}
 			};
 
+			/**
+			 * 要麦克风，但不等它一辈子。
+			 *
+			 * macOS 的授权框被别的窗口挡住、或者权限服务自己卡住时，`getUserMedia` 既不 resolve
+			 * 也不 reject —— 界面上就是「点了没反应」，日志里也没有。8 秒还不回就自己放弃，
+			 * 抛一个 `TimeoutError` 交给调用方那句 catch 去说人话。
+			 */
+			const MIC_TIMEOUT_MS = 8_000;
+			const micWithTimeout = async (constraints) => {
+				let timer = 0;
+				try {
+					return await Promise.race([
+						navigator.mediaDevices.getUserMedia(constraints),
+						new Promise((_resolve, reject) => {
+							timer = window.setTimeout(() => {
+								const error = new Error("麦克风没响应：系统可能还在等你点允许");
+								error.name = "TimeoutError";
+								reject(error);
+							}, MIC_TIMEOUT_MS);
+						}),
+					]);
+				} finally {
+					if (timer !== 0) window.clearTimeout(timer);
+				}
+			};
+
 			const stopRecording = (cancel) => {
 				const recorder = recorderRef.current;
 				cancelledRef.current = cancel === true;
@@ -1762,7 +1824,7 @@ export default {
 				}
 				sayProblem("");
 				try {
-					const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+					const stream = await micWithTimeout({ audio: true });
 					streamRef.current = stream;
 					// 一路直收 PCM：先要 16 kHz，拿不到就按设备原生采样率录，落 WAV 之前再重采样。
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
@@ -1773,6 +1835,15 @@ export default {
 						ctx = new AudioCtx();
 					}
 					await ctx.resume().catch(() => undefined);
+					// 没跑起来的 AudioContext 不出音频：`onaudioprocess` 一次都不会来。
+					// 不判这一条，球照样变红、走到 30 秒说「太短了，没听清」，日志里什么都没有。
+					// （常驻听和唤醒词那两条早判了，就缺这一条。）
+					if (ctx.state !== "running") {
+						cleanupStream();
+						void ctx.close().catch(() => undefined);
+						sayProblem("浏览器没让录音跑起来（AudioContext 停在 suspended）");
+						return;
+					}
 					const source = ctx.createMediaStreamSource(stream);
 					const node = ctx.createScriptProcessor(4096, 1, 1);
 					const mute = ctx.createGain();
@@ -1828,7 +1899,9 @@ export default {
 							? "没拿到麦克风权限：到系统设置里允许 Solo 使用麦克风"
 							: name === "NotFoundError"
 								? "没找到麦克风"
-								: `打不开麦克风：${error_ instanceof Error ? error_.message : String(error_)}`,
+								: name === "TimeoutError"
+									? "麦克风没响应：系统可能还在等你点允许"
+									: `打不开麦克风：${error_ instanceof Error ? error_.message : String(error_)}`,
 					);
 				}
 			};
@@ -1846,23 +1919,27 @@ export default {
 			// 老板 2026-11-11 要的就这一句：「不用点就能说话，说完冒气泡」。
 			// 所以麦克风一直开着，用能量（RMS）判有没有人在说：
 			//
-			// 1. 一直往 `ringRef` 里塞 100ms 一块的 PCM，只留最近 1.5 秒
+			// 1. 一直往 `ringRef` 里塞一块块的 PCM，只留最近几秒
 			//    —— 开头那半个字在「判定为说话」之前就已经发生过了，没有环形缓冲就会切掉它；
-			// 2. 连续 3 块超过 `VAD_ON` 算开口，往后接；安静 6 块（约 800ms）算说完；
-			// 3. 说完把这一段（含前面那 1.5 秒）拼成 WAV 走 `/api/orb/transcribe`，转写出来就发；
-			// 4. **它自己在念的时候整段丢掉**（`speakingRef` 一真就直接丢输入）——
-			//    上面那套 AEC 只服务唤醒词那条路，常驻听这里用最笨也最稳的办法：不听自己。
+			// 2. 连续几块超过 `VAD_ON` 算开口，往后接；安静一阵算说完（都按**毫秒**折成块数，
+			//    块多长由采样率决定，见 `blockMs`）；
+			// 3. 说完把这一段（含前面那几秒）拼成 WAV 走 `/api/orb/transcribe`，转写出来就发；
+			// 4. **它自己在念的时候不接**，但同一个信号会顺手判打断（`bargeCheck`）：麦克风 48k 收、
+			//    过自己那份 AEC3，减掉自己在说的那部分之后还剩人声，就停。
+			//    以前这里是「一真就直接丢」，所以老板开口必然被吞 —— 打断不了。
 			//
 			// 判据是能量，不是模型：说话大声、敲键盘、风扇都会误触。所以门槛定得高
 			// （见 `VAD_ON`），而且少于 0.45 秒的「嗯」直接丢，不打扰。
 			const VAD_ON = 0.045;
 			const VAD_OFF = 0.022;
-			const VAD_BLOCK = 100;
-			const VAD_OPEN_BLOCKS = 3;
-			const VAD_CLOSE_BLOCKS = 6;
-			const VAD_PREROLL = 15;
 			const VAD_MIN_MS = 450;
 			const VAD_MAX_MS = 15_000;
+			// 打断的门槛。**全都取保守值**：错停一次比少打断几次糟得多 —— 自激一次，
+			// 这功能就没人敢开了。阈值要拿老板的机器、外放、他的音量去调，这里只是默认。
+			const BARGE_ON = 0.08;
+			const BARGE_BLOCKS = 3;
+			const BARGE_COOL_MS = 1_500;
+			const BARGE_FAULTS = 3;
 			const [listenOn, setListenOn] = useState(prefs.listen === true);
 			/** 常驻听此刻的状态，给小人身边那圈光用。 */
 			const [listening, setListening] = useState(false);
@@ -1873,6 +1950,8 @@ export default {
 			const listenFailRef = useRef(0);
 			const levelRef = useRef(0);
 			const vadRef = useRef({ speaking: false, loud: 0, quiet: 0, kept: 0, blocks: 0 });
+			/** 打断：`base` 是念稿期间残留能量的基线，`faults` 是这一轮已经打断几次。 */
+			const bargeRef = useRef({ hits: 0, base: 0.01, last: 0, faults: 0, off: true });
 
 			const stopListen = () => {
 				const state = listenRef.current;
@@ -1881,6 +1960,11 @@ export default {
 				setSayLevel(0);
 				ringRef.current = [];
 				vadRef.current = { speaking: false, loud: 0, quiet: 0, kept: 0, blocks: 0 };
+				bargeRef.current = { hits: 0, base: 0.01, last: 0, faults: 0, off: readPrefs().bargeIn !== true };
+				// 常驻听关了，它那份回声消除也别留着占 wasm 堆。
+				const listen = listenEchoRef.current;
+				listenEchoRef.current = null;
+				if (listen !== null) listen.release();
 				if (state === null) return;
 				try {
 					state.node.onaudioprocess = null;
@@ -1950,7 +2034,7 @@ export default {
 				try {
 					let stream;
 					try {
-						stream = await navigator.mediaDevices.getUserMedia({
+						stream = await micWithTimeout({
 							audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
 						});
 					} catch (error_) {
@@ -1961,12 +2045,23 @@ export default {
 								? "没拿到麦克风权限：就不能不点直接说了"
 								: name === "NotFoundError"
 									? "没找到麦克风"
-									: "麦克风打不开",
+									: name === "TimeoutError"
+										? "麦克风没响应：系统可能还在等你点允许"
+										: "麦克风打不开",
 						);
 						return false;
 					}
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
-					const ctx = new AudioCtx({ sampleRate: TARGET_RATE });
+					// 人声打断默认关（`prefs.bargeIn`）：关了就跟以前一字不差地按 16k 收 ——
+					// 那是他天天在用的那条路，别在没验过的东西上动它。
+					// 开了才 48k：AEC3 只吃 32k / 48k，它吐出来是 16k（`sampleRateOut`），
+					// 所以下面那条 16k 的 VAD / 转写链路一个字不用改。不这么收就判不了
+					// 「念稿时是不是人在说」：`getUserMedia` 自带的回声消除实测只压约 2dB
+					// （文件开头那段），拿它当判据必然自激。
+					const bargeVoice = readPrefs().bargeIn === true;
+					const rate = bargeVoice ? AEC_RATE : TARGET_RATE;
+					bargeRef.current = { hits: 0, base: 0.01, last: 0, faults: 0, off: !bargeVoice };
+					const ctx = new AudioCtx({ sampleRate: rate });
 					await ctx.resume().catch(() => undefined);
 					if (ctx.state !== "running") {
 						for (const track of stream.getTracks()) track.stop();
@@ -1979,15 +2074,74 @@ export default {
 					const node = ctx.createScriptProcessor(4096, 1, 1);
 					const mute = ctx.createGain();
 					mute.gain.value = 0;
-					const state = { stream, ctx, node, source, mute, rate: ctx.sampleRate };
-					const block = Math.round((state.rate * VAD_BLOCK) / 1000);
+					// 一块多少毫秒：所有阈值都是按**时间**想的（开口几百毫秒、说完一秒多），
+					// 不是按块数想的。以前 16k 那块 4096 是 256ms，48k 下只有 85ms，
+					// 所以块数按时间重算一遍 —— 行为跟以前一样，只是粒度细了。
+					const blockMs = (4096 / rate) * 1000;
+					const openBlocks = Math.max(2, Math.round(768 / blockMs));
+					const closeBlocks = Math.max(2, Math.round(1536 / blockMs));
+					const prerollBlocks = Math.round(3840 / blockMs);
+					const maxBlocks = Math.round(VAD_MAX_MS / blockMs) + prerollBlocks;
+					const state = { stream, ctx, node, source, mute, rate: TARGET_RATE };
+					/**
+					 * 「这一块是不是人在说」。
+					 *
+					 * 判据只有一条：**把自己在说的那部分减掉之后还剩多少**。所以门槛不能是固定的：
+					 * 残留会随音量、设备、房间飘，固定门槛要么自激要么打不断 —— 取「固定下限」
+					 * 和「基线 3 倍」里大的那个，再要求连续几块（一块 85ms），一声键盘掐不掉话。
+					 */
+					const bargeCheck = (input) => {
+						const self = bargeRef.current;
+						if (self.off) return;
+						let sum = 0;
+						for (const value of input) sum += value * value;
+						const rms = Math.sqrt(sum / input.length);
+						// 基线往下跟得快、往上跟得慢，停在「安静那一侧」。
+						self.base =
+							rms < self.base ? self.base * 0.9 + rms * 0.1 : self.base * 0.995 + rms * 0.005;
+						const gate = Math.max(BARGE_ON, self.base * 3);
+						if (rms < gate) {
+							self.hits = 0;
+							return;
+						}
+						self.hits += 1;
+						if (self.hits < BARGE_BLOCKS) return;
+						self.hits = 0;
+						const now = Date.now();
+						// 冷却：刚停完这一小会儿别再停第二次。
+						if (now - self.last < BARGE_COOL_MS) return;
+						self.last = now;
+						self.faults += 1;
+						// 同一轮念稿里反复触发，多半不是人在说，是回声没压住：这一次起不再人声打断，
+						// 只留按球。**降级必须留日志**，不许悄悄地变。
+						if (self.faults > BARGE_FAULTS) {
+							self.off = true;
+							console.warn(
+								`[${SLUG}] 这一轮念稿已经打断 ${self.faults} 次，可能在自己激自己：本次只留按球`,
+							);
+							return;
+						}
+						console.warn(`[${SLUG}] 被打断：残留 ${rms.toFixed(3)}，门槛 ${gate.toFixed(3)}`);
+						stopAudio();
+						stopEcho();
+						showBubbleRef.current?.({ text: "好，你说", kind: "it" });
+					};
 					node.onaudioprocess = (event) => {
 						if (listenRef.current !== state) return;
-						const input = new Float32Array(event.inputBuffer.getChannelData(0));
-						// 它在念：整段丢掉。自己说的话进了转写，就会变成「助理自己跟自己聊」。
+						const raw = event.inputBuffer.getChannelData(0);
+						// 过一遍回声消除：把喇叭里回来的自己压掉，顺带吐 16k。
+						// 会话不在（没在念 / AEC 起不来）就是原样降采样 —— 不丢字。
+						const session = listenEchoRef.current;
+						const input =
+							session === null ? downsample(raw, rate, TARGET_RATE) : session.process(raw);
+						if (input.length === 0) return;
+						// 它在念：这一块不接（自己说的话进了转写，就成了「自己跟自己聊」），
+						// 但**可以判打断** —— 减掉回声之后剩下的就是人声。没有 AEC 参考就不判：
+						// 宁可不打断，也不能自激。
 						if (speakingRef.current) {
 							vadRef.current = { speaking: false, loud: 0, quiet: 0, kept: 0, blocks: 0 };
 							ringRef.current = [];
+							if (session !== null) bargeCheck(input);
 							return;
 						}
 						// 转写 / 发送正在跑：这一波先不接，免得叠着发两条。
@@ -2001,9 +2155,9 @@ export default {
 							vad.loud = rms >= VAD_ON ? vad.loud + 1 : 0;
 							vad.quiet = rms < VAD_OFF ? vad.quiet + 1 : 0;
 							ringRef.current.push(input);
-							while (ringRef.current.length > VAD_MAX_MS / VAD_BLOCK + VAD_PREROLL) ringRef.current.shift();
-							vad.kept += VAD_BLOCK;
-							if (vad.quiet < VAD_CLOSE_BLOCKS) return;
+							while (ringRef.current.length > maxBlocks) ringRef.current.shift();
+							vad.kept += blockMs;
+							if (vad.quiet < closeBlocks) return;
 							// 说完了：把这一段拼起来。
 							vad.speaking = false;
 							const chunks = ringRef.current;
@@ -2035,12 +2189,12 @@ export default {
 						}
 						// 还没开口：环形缓冲一直转着，等着「判定为说话」那一刻能往回捞。
 						ringRef.current.push(input);
-						while (ringRef.current.length > VAD_PREROLL + VAD_OPEN_BLOCKS) ringRef.current.shift();
+						while (ringRef.current.length > prerollBlocks + openBlocks) ringRef.current.shift();
 						vad.loud = rms >= VAD_ON ? vad.loud + 1 : 0;
-						if (vad.loud < VAD_OPEN_BLOCKS) return;
+						if (vad.loud < openBlocks) return;
 						vad.speaking = true;
 						vad.quiet = 0;
-						vad.kept = vad.loud * VAD_BLOCK;
+						vad.kept = vad.loud * blockMs;
 						setListening(true);
 					};
 					source.connect(node);
@@ -2133,7 +2287,7 @@ export default {
 					}
 					let stream;
 					try {
-						stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+						stream = await micWithTimeout({ audio: true });
 					} catch (error_) {
 						const name = error_?.name;
 						setWakeFail(
@@ -2141,7 +2295,9 @@ export default {
 								? "麦克风没权限"
 								: name === "NotFoundError"
 									? "没找到麦克风"
-									: "麦克风打不开",
+									: name === "TimeoutError"
+										? "麦克风没响应：系统可能还在等你点允许"
+										: "麦克风打不开",
 						);
 						return;
 					}
@@ -2259,6 +2415,9 @@ export default {
 				}
 				setErrorState(line);
 				bubbleShow({ text: line, kind: "error" });
+				// 气泡 6 秒就淡了，日志得留下：事后能查的第一样东西就是这一行。
+				// （同一个文件里 `reportSpeech` 一直这么打，两条路不该一个有一个没有。）
+				console.warn(`[${SLUG}] ${line}`);
 			};
 
 			const bubbleHide = () => {
@@ -2554,6 +2713,9 @@ export default {
 							},
 							"回到默认位置",
 						),
+						// 这一行不是按钮：念稿时点球是「停」，不弹这个菜单 —— 所以得在这里先说一句，
+						// 不然只有试过的人知道（老板 2026-11-14：用户不会猜）。
+						h("p", { className: "orb-menu-hint" }, "念稿时点球＝停下"),
 					)
 				: null;
 
@@ -3042,7 +3204,7 @@ export default {
 									"div",
 									{ className: "ov-row-main" },
 									h("b", null, "助理的回复自动念出来"),
-									h("span", null, "面板打开着时，新回复一到就读；面板右上角的喇叭也能随时开关"),
+									h("span", null, "面板打开着时，新回复一到就读；面板右上角的喇叭也能随时开关；念稿时点一下球就是停下"),
 								),
 								h(
 									"button",
@@ -3054,6 +3216,38 @@ export default {
 										className: "plugin-switch",
 										"data-on": prefs.speak ? "true" : "false",
 										onClick: () => set({ speak: !prefs.speak }),
+									},
+									h("span", { className: "knob" }),
+								),
+							),
+						),
+						h(
+							"div",
+							{ className: "ov-sec" },
+							h("h3", null, "实验"),
+							h(
+								"div",
+								{ className: "ov-row" },
+								h(
+									"div",
+									{ className: "ov-row-main" },
+									h("b", null, "念稿时我开口就停"),
+									h(
+										"span",
+										null,
+										"可能把你自己念的话当成你在说话：中间自己停下来，就把这个关掉，改用点球",
+									),
+								),
+								h(
+									"button",
+									{
+										type: "button",
+										role: "switch",
+										"aria-checked": prefs.bargeIn,
+										"aria-label": "念稿时我开口就停",
+										className: "plugin-switch",
+										"data-on": prefs.bargeIn ? "true" : "false",
+										onClick: () => set({ bargeIn: !prefs.bargeIn }),
 									},
 									h("span", { className: "knob" }),
 								),

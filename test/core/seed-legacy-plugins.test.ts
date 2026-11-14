@@ -92,9 +92,20 @@ function treeFiles(rev: string, dir: string): string[] {
 		.filter((line) => line !== "");
 }
 
-/** 某个修订里 `seed/plugins/**` 每个文件的 hash（历史 tag 只认这一处）。 */
+/**
+ * 某个修订里每个**出厂插件文件**的 hash，两处都扫：`seed/plugins/`（随包发）+ `plugins-src/`
+ * （2.9.17 起改成首启联网取）。
+ *
+ * 只扫前者的时候，2.9.17 之后那些 tag 的出厂内容一个都读不到：`v2.9.17` / `v2.9.18` 的
+ * `悬浮球/client.js` 明明发过，扫不到就被判成「表里这条没人用」（假红），也让「新 hash 该不该登」
+ * 判不出来。这条一直靠 HEAD 兜着，直到有人改 client.js 才露出来。（沈迟 2026-11-14）
+ */
 function seedPluginsAt(rev: string): { path: string; hash: string }[] {
-	return treeFiles(rev, "seed/plugins/").map((path) => ({ path, hash: hashOf(gitShow(rev, path)) }));
+	const rows: { path: string; hash: string }[] = [];
+	for (const dir of ["seed/plugins/", "plugins-src/"]) {
+		for (const path of treeFiles(rev, dir)) rows.push({ path, hash: hashOf(gitShow(rev, path)) });
+	}
+	return rows;
 }
 
 /**
