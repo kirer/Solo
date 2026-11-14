@@ -297,3 +297,45 @@ export function createArbiter(host: Host, options: { nearTop?: number; nearBotto
 		},
 	};
 }
+
+/* ── 跳到某条消息（Solo 2026-11-15） ──────────────────────────────── */
+
+/** 一个锚点：哪一行、那一刻距视口顶多少 px。 */
+export type Anchor = { key: string; top: number };
+
+/** 跳过去之后，那一行的行顶落在视口高度的这个比例上。 */
+export const FOCUS_ANCHOR_RATIO = 0.35;
+
+/**
+ * 跳转该写哪个 `scrollTop`：让「这一行」的行顶落在 **35% 视口高**，再夹进 `[0, max]`。
+ *
+ * 为什么不是正中（老的 `scrollIntoView({block:"center"})`）：跳过去的人要看的是「这句话
+ * 是在什么上下文里说的」，正中把上面几行顶掉了。35% 留得住「谁派的活、派活那句话」，
+ * 又不至于让人以为跳到上一段。
+ *
+ * 为什么吃的是**视口内的位置**（`rowTopInViewport`）而不是「距内容顶的偏移」：补回来的行
+ * 还没被量过，模型里是估的行高，算出来的偏移和真位置差得远（真机第一次跑就偏了 135px）。
+ * DOM 里那一行已经在，量它一次就是真的。夹上下界是必需的：最后几条消息下面没有 35% 的
+ * 余量，不夹就滚不到位、看着像没跳。
+ */
+export function focusScrollTop(
+	currentScrollTop: number,
+	rowTopInViewport: number,
+	clientHeight: number,
+	scrollHeight: number,
+): number {
+	const max = Math.max(0, scrollHeight - clientHeight);
+	const wanted = currentScrollTop + rowTopInViewport - clientHeight * FOCUS_ANCHOR_RATIO;
+	return Math.min(max, Math.max(0, Math.round(wanted)));
+}
+
+/**
+ * 布局变过之后，锚点该是谁。
+ *
+ * **顺序不能反**：跳转途中（`focus` 非空）必须继续钉焦点行。这一帧的位移是我们自己写
+ * `scrollTop` 造成的，若按「视口首行」重设锚点，下一次补偿就会把刚跳到的那一行推开 ——
+ * 用户看到的是「跳过去、两秒后飘走」。Solo 2026-11-15 点名要求这条落成用例。
+ */
+export function keepAnchor(focus: Anchor | null, firstVisible: Anchor | null): Anchor | null {
+	return focus ?? firstVisible;
+}

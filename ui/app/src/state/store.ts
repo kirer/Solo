@@ -10,22 +10,7 @@
  * 于是 SSE 一密集就出现整列重建、顺序错乱、动画被打断的一堆毛病。
  */
 
-import {
-	createGroup as createGroupApi,
-	getAttention,
-	getChannel,
-	getChannels,
-	getEarlier,
-	getLater,
-	getModels,
-	getOrg,
-	getPerson,
-	getPersonTurns,
-	getTurn,
-	markRead as markReadApi,
-	openDirectMessage,
-	sendMessage,
-} from "../api/client.ts";
+import { createGroup as createGroupApi, getAround, getAttention, getChannel, getChannels, getEarlier, getLater, getModels, getOrg, getPerson, getPersonTurns, getTurn, markRead as markReadApi, openDirectMessage, sendMessage } from "../api/client.ts";
 import type { Actor, AttentionItem, Channel, ChannelDetail, Message, Org, PersonProfile, Turn } from "../api/types.ts";
 import { assistantSlug, sortChannels } from "../lib/format.ts";
 import { mark } from "../lib/jank.ts";
@@ -87,6 +72,22 @@ export type State = {
 	restartOpen: string | null;
 	/** 正在引用的那条消息（seq + 摘要），发出去就清空。 */
 	reply: { seq: number; label: string; excerpt: string } | null;
+	/**
+	 * 「跳到这条起源消息」的请求（任务看板上点了一行；`null` = 没有请求）。
+	 *
+	 * 为什么带 `at`：同一条**再点一次**也得算一次新请求 —— 只存 `seq` 的话第二次值没变，
+	 * `Stream` 的 effect 不跑，用户会以为点坏了。
+	 * 为什么带 `channelId`：消息流只在「当前看的正是这个频道」时认领；不带就会被下一个
+	 * 打开的频道顺手认领，seq 全局唯一，那边找不到，反倒弹一句「没存到」。
+	 */
+	focus: { seq: number; at: number; channelId: string } | null;
+	/**
+	 * 上一次跳转没找着（那条消息早于本机存到的历史）。
+	 *
+	 * 界面据此在那一行写一句「这条在更早的记录里，本机没存到」，两秒多自己撤。
+	 * 点了一下**一点反应都没有**是最糟的（Solo 2026-11-15），所以宁可说一句。
+	 */
+	focusMiss: { seq: number; at: number } | null;
 	/** 「后台任务」面板：开着没有、看的是谁（`null` = 还没选人）。 */
 	tasks: { open: boolean; who: string | null };
 	/** 插件占的一整屏（插件 slug；`null` = 没有）。和任务屏互斥，也是 `app.page` 插槽的开关。 */
@@ -196,6 +197,8 @@ const initial: State = {
 	resetOpen: false,
 	restartOpen: null,
 	reply: null,
+	focus: null,
+	focusMiss: null,
 	tasks: { open: false, who: null },
 	pluginView: null,
 	dock: null,
@@ -437,6 +440,26 @@ export async function openChannel(id: string | null): Promise<void> {
  * 失败不吞：`loadError` 那份状态交给界面出「没加载出来 · 重试」（验收第 19–20 条）。
  * 这里**不重试、不静默**，一次请求就是一次结局。
  */
+/**
+ * 直接把窗口挪到某条消息跟前（「跳回起源」用）。
+ *
+ * 和 `loadEarlier` 一页页往上补不是一回事：`getAround` 一次就给出「目标上下各半页」，
+ * 补页够不着的地方它一步就到（真机验过：目标在 50 条以前，按一页 9 条补三页根本够不着，
+ * 点击后界面一点反应都没有）。
+ *
+ * 代价是窗口下面那些更新的消息会被挪出去，所以 `hasLater` 必须置 `true` —— 不然
+ * 「回到最新」的那条路会以为已经到底了。
+ */
+export async function loadAround(seq: number): Promise<boolean> {
+	const { currentId } = state;
+	if (currentId === null) return false;
+	const detail = await getAround(currentId, seq);
+	// 期间切走了就别往新频道里塞别人的窗口。
+	if (getState().currentId !== currentId) return false;
+	patch({ detail, hasMoreAbove: detail.hasMoreAbove, hasLater: true, unseenAfter: null });
+	return detail.messages.some((item) => item.seq === seq);
+}
+
 export async function loadEarlier(limit = 30): Promise<void> {
 	const { currentId, detail, hasMoreAbove, loadingEarlier } = state;
 	if (currentId === null || detail === null || !hasMoreAbove || loadingEarlier) return;
@@ -961,4 +984,37 @@ export function backRight(): void {
 	void getPerson(last.slug)
 		.then((profile) => patch({ nav: "back", trail, person: profile }))
 		.catch(() => patch({ nav: "back", trail, person: null }));
+}
+
+/* ── 跳到某条起源消息（任务看板 → 消息流） ─────────────────────────── */
+
+/** 「没找到」那句话留多久：够读完一句，又不至于一直挂在那行上。 */
+const FOCUS_MISS_MS = 2400;
+
+/**
+ * 请求消息流跳到某条消息（任务看板点一行时调）。
+ *
+ * 这里只管发请求，**认领在 `Stream`**：它得先看这条在不在这段历史里（不在就先补更早的），
+ * 补不到再回一句 `markFocusMiss` —— 「找没找到」只有那边知道。
+ */
+export function focusSeq(seq: number, channelId: string): void {
+	patch({ focus: { seq, at: Date.now(), channelId } });
+}
+
+/** 认领完了就清。不清的话下次进这个频道还会再跳一次，像鬼打墙。 */
+export function clearFocus(): void {
+	if (getState().focus === null) return;
+	patch({ focus: null });
+}
+
+/**
+ * 这条消息在本机存到的历史里没有 —— 让那一行说一句话，别让「点了没反应」发生。
+ *
+ * 定时器只清自己这一条：后来又点了别的行时，前一次的定时器不该把新提示抹掉。
+ */
+export function markFocusMiss(seq: number): void {
+	patch({ focusMiss: { seq, at: Date.now() } });
+	setTimeout(() => {
+		if (getState().focusMiss?.seq === seq) patch({ focusMiss: null });
+	}, FOCUS_MISS_MS);
 }

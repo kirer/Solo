@@ -18,12 +18,12 @@ import { buildRows } from "./model.ts";
 import type { Row } from "./model.ts";
 import { LiveRow } from "./LiveRow.tsx";
 import { Slot } from "../plugin/Slot.tsx";
-import { getState, loadEarlier, loadLater, openPerson, openTasks, setReply } from "../state/store.ts";
+import { clearFocus, getState, loadEarlier, loadLater, markFocusMiss, openPerson, openTasks, setReply, loadAround } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { DEFAULT_ROW_HEIGHT, PLACEHOLDER_HEIGHT, averageHeight, buildHeights, offsetOf, pageSizeFor } from "./heights.ts";
 import type { Heights } from "./heights.ts";
-import { SAMPLER_MAX_IDLE_MS, createArbiter } from "./scroll.ts";
-import type { Arbiter } from "./scroll.ts";
+import { SAMPLER_MAX_IDLE_MS, createArbiter, focusScrollTop, keepAnchor } from "./scroll.ts";
+import type { Anchor, Arbiter } from "./scroll.ts";
 
 
 export function Stream(props: { onImage: (src: string) => void; onFile: (file: Attachment) => void }): JSX.Element {
@@ -37,6 +37,8 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	const people = useStore((state) => state.people);
 	const runs = useStore((state) => state.runs);
 	const presence = useStore((state) => state.presence);
+	/** 「跳到某条起源消息」的请求（任务看板点了一行）。认领在下面那条 effect 里。 */
+	const focus = useStore((state) => state.focus);
 	const [atBottom, setAtBottom] = useState(true);
 	/** 点开的那条消息（复制 / 引用 / 看人）。点外面或「取消」收起。 */
 	const [picked, setPicked] = useState<{ message: Message; name: string } | null>(null);
@@ -63,6 +65,17 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 * 定好 —— 插行不影响「锚点是谁」，只影响它距内容顶多少。
 	 */
 	const anchor = useRef<{ key: string; top: number } | null>(null);
+	/**
+	 * 正在跳向的那一行（`goToSeq` 成功时记下，取消 / 换一条时换掉）。
+	 *
+	 * 它兜的是最容易漏的一条：`compensate()` 现在保「视口首行不动」，跳过去之后补历史、
+	 * 或者真行高量出来，布局一变它就把**你跳到的**那一行推走 —— 表现是「跳过去、两秒后
+	 * 飘走」（Solo 2026-11-15 点的）。所以它非空期间：两处更新 `anchor` 的地方都让路，
+	 * 锚点钉在这里。清掉的时机只有两个：人自己滚了、或者下一次跳转接手。
+	 */
+	const focusRow = useRef<{ seq: number; key: string } | null>(null);
+	/** 取样循环在 `wake()` 里，拿不到 `useCallback` 的定义顺序，经 ref 转一手。 */
+	const cancelFocusRef = useRef<() => void>(() => {});
 
 	const messages = detail?.messages ?? [];
 	// 这个频道里正在跑、还没回话的那几轮 —— `live` 行只认它们（ADR-046）。
@@ -166,7 +179,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 * 不然我们自己的补偿会被人当成「用户在滚」，前三轮就是这么把循环接回去的）；
 	 * ② `reason` 只做日志用，不是判断依据 —— 判断只认账。
 	 */
-	const setScrollTop = useCallback((target: number, reason: "enter" | "anchor" | "user-return") => {
+	const setScrollTop = useCallback((target: number, reason: "enter" | "anchor" | "focus" | "user-return") => {
 		arbiter.current?.setScrollTop(target, reason);
 	}, []);
 
@@ -179,7 +192,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				sampler.current = null;
 				return;
 			}
-			state.sample();
+			const moved = state.sample();
+			// 跳转途中人自己滚了 → 硬取消（`sample()` 说真话：不是我们写的位移才算人动）。
+			if (moved && focusRow.current !== null) cancelFocusRef.current();
 			// 这次动作停了 → 结算一次（贴顶就补一页，credit 只有这一处会发）。
 			const settled = state.settle();
 			if (settled !== null) settleOnce(settled);
@@ -281,6 +296,25 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		}
 		return undefined;
 	}, []);
+
+	/**
+	 * 重设锚点：**跳转途中钉焦点行，否则钉视口首行**（顺序由 `keepAnchor` 保证）。
+	 *
+	 * 两处调它——「消息变了」和「滚动事件」——原来各自写「视口首行」，跳过去之后会
+	 * 把锚点从焦点行换回首行，下一次补偿就把人推走。
+	 */
+	const pinAnchor = useCallback((): void => {
+		const row = focusRow.current;
+		const focusPoint = ((): Anchor | null => {
+			if (row === null) return null;
+			const top = rowTop(row.key);
+			return top === undefined ? null : { key: row.key, top };
+		})();
+		const key = firstVisibleKey();
+		const top = key === null ? undefined : rowTop(key);
+		const firstVisible = key === null || top === undefined ? null : { key, top };
+		anchor.current = keepAnchor(focusPoint, firstVisible);
+	}, [firstVisibleKey, rowTop]);
 
 	/**
 	 * 补页前后把屏幕上的字钉住（设计 §3.1 / §3.3）。
@@ -421,10 +455,10 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		setAtBottom(flow.scrollHeight - flow.scrollTop - flow.clientHeight <= 24);
 		// 这一帧落定之后屏幕最上面那一行（以及它此刻在屏幕上的位置），就是下一帧
 		// （补页 / 新消息）要钉住的那个字 —— 位置也一起记，下一帧才能算「它挪了多少」。
-		const key = firstVisibleKey();
-		const top = key === null ? undefined : rowTop(key);
-		anchor.current = key === null || top === undefined ? null : { key, top };
-	}, [messages, compensate, firstVisibleKey, rowTop]);
+		// 跳转途中锚点钉在跳过去那一行上（见 `pinAnchor`）：这里再按「视口首行」重设，
+		// 下一帧补偿就会把那一行推走 —— 就是「跳过去、两秒后飘走」的成因。
+		pinAnchor();
+	}, [messages, compensate, pinAnchor]);
 
 	/**
 	 * 锚点跟着滚动走：人自己滚、程序补位，都会落进 `scroll` 事件里。
@@ -436,14 +470,14 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		const flow = flowRef.current;
 		if (flow === null) return;
 		const update = (): void => {
-			const key = firstVisibleKey();
-			const top = key === null ? undefined : rowTop(key);
-			anchor.current = key === null || top === undefined ? null : { key, top };
+			// 这次 `scroll` 多半是我们自己写 scrollTop 引起的 —— `pinAnchor` 认焦点行，
+			// 不会把锚点从刚跳到的那一行换回视口首行。
+			pinAnchor();
 		};
 		flow.addEventListener("scroll", update, { passive: true });
 		update();
 		return () => flow.removeEventListener("scroll", update);
-	}, [firstVisibleKey, rowTop]);
+	}, [pinAnchor]);
 
 	/** 渲染之后量一次真行高（只做校正，不参与任何判断；量到变值才重摆模型）。 */
 	useEffect(() => {
@@ -620,6 +654,9 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		const land = (): void => {
 			if (cancelled) return;
 			if (flow.scrollHeight > 0 && flow.clientHeight > 0) {
+				// 有跳转请求在等（点看板跳起源，常常就是「切到那个频道 + 跳」同一次发生）：
+				// 这里落底会把视线拽到最后一条，跳转白做 —— 交给下面那条 focus effect。
+				if (getState().focus !== null) return;
 				// 到这一刻这一屏**已经渲染完、布局也是真的**，`scrollHeight` 就是真值 ——
 				// 用它不是 Solo 否掉的那个用法（他否的是「渲染前拿上一次的 scrollHeight 当目标」）。
 				//
@@ -662,23 +699,150 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		void copyText(clean?.textContent ?? "");
 	}, []);
 
-	/**
-	 * 点引用的那一行 → 滚到被引用的那条消息，并亮一下。
-	 *
-	 * 只在这一屏已渲染的消息里找（`data-seq`）：被引用的话要是早于已加载的历史，
-	 * 就什么都不做 —— 宁可不跳，也别把「没找到」画成一条错误。
-	 */
-	const jumpTo = useCallback((seq: number, node: HTMLElement): void => {
-		const target = node.closest(".feed")?.querySelector(`[data-seq="${seq}"]`);
-		if (!(target instanceof HTMLElement)) return;
-		arbiter.current?.claim();
-		target.scrollIntoView({ block: "center", behavior: "smooth" });
+	/** 让某一行闪一下（1600ms，还是原来那句反馈，这里只是抽出来给两条跳转共用）。 */
+	const flashRow = useCallback((key: string): void => {
+		const target = feedRef.current?.querySelector<HTMLElement>(`[data-row-key="${key}"]`);
+		if (target === null || target === undefined) return;
 		target.classList.remove("row-flash");
 		// 重新触发动画：先移除再加回来，同一帧里要读一次布局
 		void target.offsetWidth;
 		target.classList.add("row-flash");
 		window.setTimeout(() => target.classList.remove("row-flash"), 1600);
 	}, []);
+
+	/**
+	 * 取消正在进行的跳转（人自己滚了）。
+	 *
+	 * 硬取消：清请求、不再补页、锚点交回「视口首行」、高亮马上撤。补历史可能好几次网络
+	 * 往返，用户等不了那几秒；他一滚就说明改主意了 —— **宁可跳一半，也别把人拽回去**，
+	 * 这和「新消息永不写 `scrollTop`」是同一条纪律。
+	 */
+	const cancelFocus = useCallback((): void => {
+		if (focusRow.current === null) return;
+		focusRow.current = null;
+		anchor.current = null;
+		clearFocus();
+		for (const node of feedRef.current?.querySelectorAll<HTMLElement>(".row-flash") ?? []) {
+			node.classList.remove("row-flash");
+		}
+	}, []);
+
+	useEffect(() => {
+		cancelFocusRef.current = cancelFocus;
+	}, [cancelFocus]);
+
+	/**
+	 * 滚到某条消息并亮一下。**全应用只有这一条跳转路**（Solo 2026-11-15）：点引用、点任务
+	 * 看板上的一行，都走它 —— 两套跳转用户能感觉到一高一低，而且老那条走
+	 * `scrollIntoView`，绕开了 `setScrollTop`，将来会跟仲裁打架。
+	 *
+	 * 落在哪儿：**行顶减去 35% 视口高**。上面留着几行上下文（谁派的活、派活那句话），
+	 * 比正中更有用。找不到就返回 `false` 而且**不动视线** —— 要不要补历史、要不要说一句话，
+	 * 交给调用方（`focus` effect 就是这么做的）。
+	 */
+	const goToSeq = useCallback(
+		(seq: number): boolean => {
+			const flow = flowRef.current;
+			if (flow === null) return false;
+			const row = rowsRef.current.find(
+				(item) => (item.type === "say" || item.type === "note") && item.message.seq === seq,
+			);
+			if (row === undefined) return false;
+			// 模型还是对齐一下（后面 `compensate` 靠它），但**落点不认模型**：补回来的行
+			// 还没量过，模型里是估的行高。真机第一次跑就偏了 135px —— 量 DOM 才是真的。
+			syncModel();
+			const inViewport = rowTop(row.key);
+			if (inViewport === undefined) return false;
+			setScrollTop(focusScrollTop(flow.scrollTop, inViewport, flow.clientHeight, flow.scrollHeight), "focus");
+			// 这一帧的锚点换成它：真行高量出来的时候，钉住的是这一行。
+			focusRow.current = { seq, key: row.key };
+			requestAnimationFrame(() => {
+				if (focusRow.current?.seq !== seq) return; // 这一帧里被取消了，或者换了一条
+				const nowTop = rowTop(row.key);
+				anchor.current = nowTop === undefined ? null : { key: row.key, top: nowTop };
+				flashRow(row.key);
+				// **跳完就交回去**：焦点行只在这一帧当锚点。留着它，用户之后往上一滚、补页
+				// 插进来时，补偿会把「焦点行」钉在原位 —— 视口里那些行整体往下掉一截
+				// （真机脚本第二段抓到的：692px）。锚点该是「视口里最上面那一行」。
+				focusRow.current = null;
+			});
+			return true;
+		},
+		[flashRow, rowTop, setScrollTop, syncModel],
+	);
+
+	/**
+	 * 一路补到那条消息为止（最多 3 页），补到了就跳过去并返回 `true`。
+	 *
+	 * **引用和看板共用这一条**：以前点引用时目标要是早于已加载的历史，就什么都不做
+	 * （老 `jumpTo` 的注释就写着「宁可不跳」）；现在统一成「补得到就跳，补不到说一句」。
+	 * 两套行为用户能感觉到 —— 同样一个「跳到这条」，一条会跳、一条装死。
+	 */
+	const reachSeq = useCallback(
+		async (seq: number): Promise<boolean> => {
+			/** 等这一帧的渲染 + 布局落地：补回来的行得先挂进 DOM，`goToSeq` 才找得到它。 */
+			const nextFrame = (): Promise<void> =>
+				new Promise((resolve) => {
+					requestAnimationFrame(() => resolve());
+				});
+			if (goToSeq(seq)) return true;
+			// 一步到：`getAround` 就是为「跳到某条」造的，目标一定落在新窗口里。
+			const now = getState();
+			if (now.currentId !== null && !now.loadingEarlier) {
+				try {
+					await loadAround(seq);
+				} catch {
+					// 网络不给就算了，下面还有一页页补的兜底。
+				}
+				await nextFrame();
+				if (goToSeq(seq)) return true;
+			}
+			// 兜底：窗口没挪动（服务端不认 `around`、或者目标根本不在这台机器上）时往上补，最多 3 页。
+			for (let page = 0; page < 3; page += 1) {
+				const state = getState();
+				if (!state.hasMoreAbove || state.loadingEarlier) break;
+				const count = state.detail?.messages.length ?? 0;
+				await loadEarlier(pageSize());
+				// 一条都没补上（到底了 / 失败了）就别空转。
+				if ((getState().detail?.messages.length ?? 0) === count) break;
+				await nextFrame();
+				if (goToSeq(seq)) return true;
+			}
+			return goToSeq(seq);
+		},
+		[goToSeq],
+	);
+
+	/**
+	 * 认领「跳到某条起源消息」的请求。
+	 *
+	 * ① 先看这条在不在已经拿到的历史里；② 不在就先补更早的（最多 3 页，和进频道填满同一个
+	 * 上限）；③ 补不到就说一句话（`markFocusMiss`），**视线不动** —— 点了一下一点反应都没有
+	 * 是最糟的（Solo 2026-11-15），所以宁可说一句。
+	 *
+	 * 只认当前频道那一条请求：`seq` 是全局的，别的频道不可能有它，硬跳只会误报「没存到」。
+	 */
+	useEffect(() => {
+		if (focus === null) return;
+		if (detail === null || detail.channel.id !== focus.channelId) return;
+		let cancelled = false;
+		void (async () => {
+			let hit = false;
+			try {
+				hit = await reachSeq(focus.seq);
+			} catch {
+				hit = false;
+			}
+			if (cancelled) return;
+			clearFocus();
+			if (!hit) markFocusMiss(focus.seq);
+		})();
+		return () => {
+			cancelled = true;
+		};
+		// 只认「请求那一刻」：同一条再点一次也得重跑（`seq` 单独变不算）。
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [focus?.at]);
 
 	return (
 		// 换频道就重挂一次，整块消息流淡上来（`.flow-wrap` 的入场动画在 v6.css）。
@@ -706,7 +870,15 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 								onPick={(message, name) => setPicked({ message, name })}
 								onImage={props.onImage}
 								onFile={props.onFile}
-								onJump={jumpTo}
+								onJump={(seq) => {
+									// 和看板同一条路：先补历史再跳；真补不到才说一句「没存到」。
+									void reachSeq(seq).then(
+										(hit) => {
+											if (!hit) markFocusMiss(seq);
+										},
+										() => markFocusMiss(seq),
+									);
+								}}
 								onJumpLatest={() => {
 									toBottom("user-return", "smooth");
 								}}
@@ -808,7 +980,7 @@ function RowView(props: {
 	onPick: (message: Message, name: string) => void;
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
-	onJump: (seq: number, node: HTMLElement) => void;
+	onJump: (seq: number) => void;
 	/** 「跳到最新」：滚到底。 */
 	onJumpLatest: () => void;
 }): JSX.Element {
@@ -917,7 +1089,7 @@ function SayRow(props: {
 	onPick: (message: Message, name: string) => void;
 	onImage: (src: string) => void;
 	onFile: (file: Attachment) => void;
-	onJump: (seq: number, node: HTMLElement) => void;
+	onJump: (seq: number) => void;
 }): JSX.Element {
 	const { row } = props;
 	const message = row.message;
@@ -999,16 +1171,19 @@ function SayRow(props: {
 				</div>
 
 				{message.replyTo === undefined ? null : (
+					// `data-jump-seq`：验收脚本靠它找「引用指向的那条」，并判断那条在不在这一屏里
+					// （`scripts/verify-focus-jump.mjs`）；顺带让 DOM 说得清自己指哪儿。
 					<button
 						type="button"
 						className="row-quote"
 						title="跳到这条消息"
+						data-jump-seq={String(message.replyTo.seq)}
 						onClick={(event) => {
 							// 别冒到整行：点引用是「跳过去」，不是开动作层。
 							event.stopPropagation();
 							const reply = message.replyTo;
 							if (reply === undefined) return;
-							props.onJump(reply.seq, event.currentTarget);
+							props.onJump(reply.seq);
 						}}
 					>
 						<span className="row-quote-who">{message.replyTo.fromLabel}</span>
