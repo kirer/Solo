@@ -17,7 +17,6 @@ import { clearFocus, focusSeq, getState, markFocusMiss, patch, subscribe } from 
 import { focusScrollTop, keepAnchor } from "../../ui/app/src/stream/scroll.ts";
 
 const streamSource = readFileSync(new URL("../../ui/app/src/stream/Stream.tsx", import.meta.url), "utf8");
-const boardSource = readFileSync(new URL("../../ui/app/src/panels/TaskBoard.tsx", import.meta.url), "utf8");
 
 beforeEach(() => {
 	patch({ focus: null, focusMiss: null });
@@ -166,9 +165,5 @@ describe("Stream 里的结构（读源码，node 环境渲染不了）", () => {
 	});
 });
 
-describe("看板那一行的话（读源码）", () => {
-	test("没存到时把「点开回到原话」换成那句灰字", () => {
-		expect(boardSource).toContain("这条在更早的记录里，本机没存到");
-		expect(boardSource).toContain("missSeq");
-	});
-});
+// 看板那一半（「点开回到原话」换成那句灰字）不在这里：`TaskBoard.tsx` 还没进 main，
+// 测试读一个没落地的文件，main 上就是真红（2026-11-15 红过一次）。等它落了再加回来。
