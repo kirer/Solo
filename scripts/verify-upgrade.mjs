@@ -75,6 +75,36 @@ const note = (line) => {
 	console.log(line);
 };
 
+/** 这趟里「验不了」的那几段：跳过不等于通过，收尾要单独说一句。 */
+const skipped = [];
+
+/**
+ * 一条 notice：验不了，但**不该红**。
+ *
+ * CI 上 main 的版本号还没涨，线上最新就是本轮——这种时候比不出东西是正常的，
+ * 天天红一次就没人看红了，那比不验更糟（Solo 2026-11-15）。
+ */
+const notice = (line) => note(process.env.GITHUB_ACTIONS === "true" ? `::notice::${line}` : line);
+
+/** 版本号比较：只看 `x.y.z`，同号时带 `-` 的预发布比正式版低。 */
+const compareVersion = (left, right) => {
+	const cut = (one) => {
+		const [core, pre] = one.split("-", 2);
+		return { parts: core.split(".").map((part) => Number.parseInt(part, 10) || 0), pre: pre ?? "" };
+	};
+	const a = cut(left);
+	const b = cut(right);
+	for (let index = 0; index < Math.max(a.parts.length, b.parts.length); index += 1) {
+		const x = a.parts[index] ?? 0;
+		const y = b.parts[index] ?? 0;
+		if (x !== y) return x < y ? -1 : 1;
+	}
+	if (a.pre === b.pre) return 0;
+	if (a.pre === "") return 1;
+	if (b.pre === "") return -1;
+	return a.pre < b.pre ? -1 : 1;
+};
+
 const children = [];
 let server;
 const cleanup = async () => {
@@ -220,10 +250,16 @@ const needOldZip = async () => {
 	const dir = join(scratch, "old");
 	await mkdir(dir, { recursive: true });
 	note(`本地没有旧版包，去 Release ${oldTag} 取（${basename(oldTag)}）`);
-	execFileSync("gh", ["release", "download", oldTag, "--pattern", "Solo-*-arm64.zip", "--dir", dir], { stdio: "pipe" });
+	try {
+		execFileSync("gh", ["release", "download", oldTag, "--pattern", "Solo-*-arm64.zip", "--dir", dir], { stdio: "pipe" });
+	} catch (error) {
+		// 「连旧版都找不到」是这个验法唯一的真失败：没有旧版就没有升级这回事。
+		const why = String(error instanceof Error ? error.message : error).replace(/\s+/g, " ").trim();
+		await fail(`连旧版都找不到：Release ${oldTag} 取不下来（${why}）`);
+	}
 	const name = `Solo-${oldTag.replace(/^v/, "")}-arm64.zip`;
 	const path = join(dir, name);
-	if (!existsSync(path)) await fail(`Release ${oldTag} 上没有 ${name}`);
+	if (!existsSync(path)) await fail(`连旧版都找不到：Release ${oldTag} 上没有 ${name}`);
 	return path;
 };
 
@@ -235,12 +271,19 @@ const newVersion =
 
 const stageOldChecks = async () => {
 	note("段 1：装旧版，让它自己把清单拉下来、验签、判版本");
-	const url = await ensureCandidateFeed();
 	const home = join(scratch, "home-old");
 	const app = await installApp(await needOldZip(), home);
 	const oldVersion = await versionOf(app);
+	// 判据不动：「拿自己跟自己比」验不出东西。改的是出口 —— 相同不算失败，算这趟验不了（notice）。
+	const order = compareVersion(oldVersion, newVersion);
+	if (order === 0) {
+		await notice(`段 1 跳过：旧版就是 ${oldVersion}，与本轮版本相同，比不出东西（版本号涨上去这步自己就跑起来了）`);
+		skipped.push("1");
+		return;
+	}
+	if (order > 0) await fail(`旧版 ${oldVersion} 比本轮 ${newVersion} 还新：版本号没升，发出去没人会收到更新`);
+	const url = await ensureCandidateFeed();
 	note(`旧版 ${oldVersion}｜本轮清单 ${newVersion}｜feed ${url}`);
-	if (newVersion === oldVersion) await fail(`旧版就是 ${oldVersion}，跟本轮版本一样，这条验不出东西`);
 	const run = await startApp(app, home, { SOLO_UPDATE_URL: url });
 	const deadline = Date.now() + longWait;
 	const found = await waitFor("日志里出现「有新版本」", deadline, () => /\[update\] 有新版本 /.test(run.text()));
@@ -413,4 +456,7 @@ const stageFull = async () => {
 if (stages.includes("1")) await stageOldChecks();
 if (stages.includes("2")) await stageReplace();
 if (stages.includes("3")) await stageFull();
+if (skipped.length > 0) {
+	await pass(`段 ${stages.join("+")} 跑完：段 ${skipped.join("、")} 跳过（旧版与本轮同版本，比不出东西），其余通过`);
+}
 await pass(`段 ${stages.join("+")} 全通`);
