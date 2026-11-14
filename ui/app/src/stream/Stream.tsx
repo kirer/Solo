@@ -74,6 +74,14 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 * 锚点钉在这里。清掉的时机只有两个：人自己滚了、或者下一次跳转接手。
 	 */
 	const focusRow = useRef<{ seq: number; key: string } | null>(null);
+	/**
+	 * 「刚补过一页历史」的一次性标记。
+	 *
+	 * 补偿的第三级兜底（按模型总高差补）只在补页这一种情况下成立，不能常开：跳转时
+	 * `getAround` 也会整片换行、总高也会变，那一级会把视口推到十万八千里（439 视口实测
+	 * 落点从 154px 变成 942px）。补页由我们自己发起，所以用旗子说清楚，消费一次就清。
+	 */
+	const filling = useRef(false);
 	/** 取样循环在 `wake()` 里，拿不到 `useCallback` 的定义顺序，经 ref 转一手。 */
 	const cancelFocusRef = useRef<() => void>(() => {});
 
@@ -388,6 +396,10 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 		const anchorTop = anchor.current?.top ?? rowTop(anchorKey);
 		if (anchorTop === undefined) return; // 刚进屏、还没有锚点位置 → 不补偿，没有位移可言
 		const beforeTop = offsetOf(layout.current, anchorKey);
+		const beforeFirstKey = layout.current.rows[0]?.key;
+		const beforeTotal = layout.current.total;
+		const wasFilling = filling.current;
+		filling.current = false;
 		// 等这一帧的 DOM 落地，按新模型算同一个 key 现在距内容顶多少。
 		const apply = (): void => {
 			// 先量这一帧的真行高、把新补进来的行吃进模型，再问「同一个 key 现在距顶多少」——
@@ -404,13 +416,30 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				setScrollTop(flow.scrollTop + shift, "anchor");
 				return;
 			}
-			// ② 锚点被虚拟化回收了（大频道）：退回模型算 ΔH —— 设计里那条「模型永远算得出来」。
-			if (beforeTop === undefined) return;
-			const now = offsetOf(layout.current, anchorKey);
-			if (now === undefined) return; // 兜底第 3 级：模型里也没有 → 不写（下一次渲染会带上）
-			const delta = now - beforeTop;
-			if (Math.abs(delta) < 1) return;
-			setScrollTop(flow.scrollTop + delta, "anchor");
+			// ② 锚点不在 DOM 了（被虚拟化回收）：退回模型算 ΔH。
+			if (beforeTop !== undefined) {
+				const now = offsetOf(layout.current, anchorKey);
+				if (now !== undefined) {
+					const delta = now - beforeTop;
+					if (Math.abs(delta) >= 1) setScrollTop(flow.scrollTop + delta, "anchor");
+					return;
+				}
+			}
+			// ③ 锚点连模型里都没有：补页把上面整片换掉时会这样（旧首行连 key 都不在了）。
+			//    这时按「内容在上边长高了多少」补 —— `total` 是模型自己算的总高，不依赖任何
+			//    一行还在不在 DOM，所以这一级永远不会落空。
+			//
+			//    门：只有「第一行换了」才算上面插入。下面追加新消息也会让 `total` 长高，
+			//    那种情况绝不能补偿，否则正看着的人会被往上顶。
+			//
+			//    CI 439 视口上抓到的就是这一级缺失：9 条插到上面（684px），锚点行全被换掉，
+			//    ①② 都 return 了，于是整整一帧视口停在原地 —— 看起来就是「补页那一下闪一下」。
+			const afterFirstKey = layout.current.rows[0]?.key;
+			if (!wasFilling) return;
+			if (beforeFirstKey === undefined || afterFirstKey === undefined || beforeFirstKey === afterFirstKey) return;
+			const grown = layout.current.total - beforeTotal;
+			if (Math.abs(grown) < 1) return;
+			setScrollTop(flow.scrollTop + grown, "anchor");
 		};
 		apply();
 	}, [firstVisibleKey, rowTop, setScrollTop, syncModel]);
@@ -429,6 +458,7 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 			const atTop = flow.scrollTop <= 24;
 			if (hasMoreAbove && !loadingEarlier && atTop && settled.upTo > 0) {
 				arbiter.current?.noteFilled();
+				filling.current = true;
 				void loadEarlier(pageSize());
 				return;
 			}
@@ -764,11 +794,18 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				// **跳完就交回去**：焦点行只在这一帧当锚点。留着它，用户之后往上一滚、补页
 				// 插进来时，补偿会把「焦点行」钉在原位 —— 视口里那些行整体往下掉一截
 				// （真机脚本第二段抓到的：692px）。锚点该是「视口里最上面那一行」。
+				//
+				// 只清 `focusRow` 不够：`anchor.current` 上面刚被设成焦点行，而 `compensate()`
+				// 读的是 `anchor.current`。跳完必须把它一起交回首行 —— 否则用户滚到顶触发补页时，
+				// 补偿按「焦点行」算，把焦点行从 154px 钉回原位，视口整体往下掉一整页
+				// （CI 439 视口实测：28 → 712 → 740 → 28，9 帧；大窗口下焦点行恰好走另一条
+				// 分支，所以本地一直是绿的）。
 				focusRow.current = null;
+				pinAnchor();
 			});
 			return true;
 		},
-		[flashRow, rowTop, setScrollTop, syncModel],
+		[flashRow, pinAnchor, rowTop, setScrollTop, syncModel],
 	);
 
 	/**

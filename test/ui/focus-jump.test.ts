@@ -142,8 +142,13 @@ describe("Stream 里的结构（读源码，node 环境渲染不了）", () => {
 		expect(streamSource).not.toContain("offsetOf(layout.current, row.key)");
 	});
 
-	test("锚点两处更新都走 pinAnchor（不许再各写一遍「视口首行」）", () => {
-		expect(streamSource.match(/pinAnchor\(\);/g)?.length).toBe(2);
+	test("锚点三处更新都走 pinAnchor（不许再各写一遍「视口首行」）", () => {
+		// 三处：消息变了、滚动事件、跳完把锚点从焦点行交回首行。
+		expect(streamSource.match(/pinAnchor\(\);/g)?.length).toBe(3);
+		// 跳完只清 `focusRow` 不够：`compensate()` 读的是 `anchor.current`，它上面刚被设成
+		// 焦点行。CI 439 视口上就是不交回，补页那一刻按焦点行补偿，视口整体掉了一整页
+		// （28 → 712 → 740 → 28，9 帧）。
+		expect(streamSource).toContain("focusRow.current = null;\n\t\t\t\tpinAnchor();");
 		expect(streamSource).toContain("anchor.current = keepAnchor(focusPoint, firstVisible);");
 	});
 

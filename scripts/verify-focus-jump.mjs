@@ -293,6 +293,32 @@ if (cdp === undefined) {
 	await fail(`${String(bootTimeout)}ms 内没等到带左边栏的主窗口（见 pages.txt）`);
 }
 note("已连上渲染进程");
+/**
+ * 按参数把消息那一列改矮，本地就能照 CI 的视口跑。
+ *
+ * CI 的 macOS runner 屏幕比开发机矮（那趟实测视口 439px，开发机 662px），视口一变，
+ * 每页条数、虚拟化窗口的宽窄全变，补偿那条路就会走到 DOM 里没有的分支上 ——
+ * 「本地大窗口绿、CI 439 红」就是这么来的。
+ *
+ * 为什么改 `#flow` 的高度而不是窗口：Electron 里 `Emulation.setDeviceMetricsOverride`
+ * 不生效（`clientHeight` 还是 662），`Browser.setWindowBounds` 干脆没实现
+ * （`Browser.getWindowForTarget wasn't found`，两个都试过）。界面算每页条数、
+ * 判断贴顶贴底读的都是 `flow.clientHeight`，改它就能走到同一条分支上。
+ */
+if (args.has("--flow-height")) {
+	const want = Number(args.get("--flow-height"));
+	await cdp.evaluate(`(() => {
+		const flow = document.querySelector("#flow");
+		if (flow === null) return false;
+		flow.style.height = ${JSON.stringify(`${String(want)}px`)};
+		flow.style.maxHeight = ${JSON.stringify(`${String(want)}px`)};
+		flow.style.flex = ${JSON.stringify(`0 0 ${String(want)}px`)};
+		return true;
+	})()`);
+	await sleep(600);
+	const got = await cdp.evaluate("document.querySelector('#flow')?.clientHeight ?? null");
+	note(`消息那一列按参数改成 ${String(want)}px（实际 clientHeight 现在 ${String(got)}px）`);
+}
 
 /**
  * 在页面里造数据：建一个只有自己的频道，第 1 条 + 后续 count-1 条 + 最后一条引用第 1 条。
