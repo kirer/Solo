@@ -112,6 +112,38 @@ export type ViewChannelResponder =
 	| { kind: "mentions" }
 	| { kind: "everyone" };
 
+/**
+ * 板上的一件活（2.9.20）。
+ *
+ * **不是核心 `Task` 的镜像**：只装界面真会看的几格。显示名、频道标题这类都由界面自己
+ * 从 `members` / `channel` 现取 —— 那个人可能已经不在了，那正该让界面退到 slug，而不是
+ * 让契约里多一个会过期的副本。
+ *
+ * 为什么是按 id 的字典而不是数组：界面拿 id 当 key 合并、重绘；顺序没有意义 —— 板的
+ * 排法（卡住 → 在做 → 待办，组内最久没动的在前）是显示规则，钉在契约里只会让下一个人
+ * 以为「接口保证了这个顺序」。
+ */
+export type ViewTask = {
+	/** 频道内短 id（`t7`）。 */
+	id: string;
+	title: string;
+	/** 负责人的 slug。 */
+	owner: string;
+	/** 要达成什么。没写就不出现。 */
+	goal?: string;
+	/** 验收标准。**没有这个键 = 还没写** —— 界面据此标「缺验收」，别拿空串代替。 */
+	accept?: string;
+	status: "open" | "doing" | "blocked" | "done" | "dropped";
+	channelId: string;
+	/** 起源那条消息的 seq：点一行就跳回它。 */
+	originSeq: number;
+	/**
+	 * 变更流水，只有索引：`seq` 指的是频道里那条 note，原因和凭据都在它的正文里。
+	 * 最后一格的 `seq` 就是「最后一次动的时刻」和「卡住的原因」的出处。
+	 */
+	history: { seq: number; what: "created" | "assigned" | "status" | "interrupt" | "accept" | "dropped" }[];
+};
+
 /** 频道详情。 */
 export type ViewChannelDetail = {
 	channel: Omit<ViewChannel, "unread" | "mentions" | "preview"> & {
@@ -138,6 +170,14 @@ export type ViewChannelDetail = {
 	 * 横幅插到了首屏最顶上，条数按整屏几十条虚报）。
 	 */
 	readMark: number;
+	/**
+	 * 这个频道自己的任务板：`任务 id → 任务`。
+	 *
+	 * **没有这个键 = 一条都没有**（不补空表：空表在老文档里和「没有」是同一种意思）。
+	 * 任务跟消息一样属于频道，所以它进 detail，不另开一个「全局任务」接口 —— 界面要看的
+	 * 是「我在的这个频道里有什么活」。
+	 */
+	tasks?: Record<string, ViewTask>;
 };
 
 /**

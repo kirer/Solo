@@ -21,6 +21,7 @@ import {
 	chatKind,
 	spokenKind,
 	teamOfChannel,
+	tasksOf,
 	type Channel,
 	type ChannelState,
 	type Message,
@@ -36,6 +37,7 @@ import type {
 	ViewMemoryEntry,
 	ViewMessage,
 	ViewOrg,
+	ViewTask,
 } from "../view/dto.ts";
 
 /**
@@ -253,6 +255,7 @@ export function channelDetail(
 	} = {},
 ): ViewChannelDetail {
 	const viewer = options.viewer ?? OWNER_SLUG;
+	const tasks = tasksTable(state, channel.id);
 	const all = state.messages[channel.id] ?? [];
 	const limit = Math.min(Math.max(options.limit ?? 60, 1), 200);
 	let start: number;
@@ -308,7 +311,39 @@ export function channelDetail(
 		/** 「我看过的最后一条」的 seq：界面用它决定未读横幅落在哪。不让调用方传时按 `viewer` 现算。 */
 		readMark: options.readMark ?? readMarkOf(state, viewer, channel.id),
 		hasMoreAbove: start > 0,
+		...(tasks === undefined ? {} : { tasks }),
 	};
+}
+
+/**
+ * 任务板的投影。
+ *
+ * 两条：**一条都没有就返回 `undefined`**（detail 上干脆不出现这个键，跟老文档一样），
+ * 以及**逐格复制**。逐格复制不是洁癖：核心那份在事务里是代理，出了事务再读会报
+ * 「settled overlay」；而且界面侧拿到的任何对象都不该能反写回核心状态。
+ */
+function tasksTable(state: ChannelState, channelId: string): Record<string, ViewTask> | undefined {
+	const table = tasksOf(state, channelId);
+	const ids = Object.keys(table);
+	if (ids.length === 0) return undefined;
+	const out: Record<string, ViewTask> = {};
+	for (const id of ids) {
+		const task = table[id];
+		if (task === undefined) continue;
+		const accept = task.accept?.trim() ?? "";
+		out[id] = {
+			id: task.id,
+			title: task.title,
+			owner: task.owner,
+			status: task.status,
+			channelId: task.channelId,
+			originSeq: task.originSeq,
+			history: task.history.map((entry) => ({ seq: entry.seq, what: entry.what })),
+			...(task.goal === undefined || task.goal === "" ? {} : { goal: task.goal }),
+			...(accept === "" ? {} : { accept }),
+		};
+	}
+	return out;
 }
 
 /**
