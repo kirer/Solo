@@ -362,7 +362,9 @@ function UpdateCheckRow(): JSX.Element {
 				</span>
 			</span>
 			{desktop ? (
-				<button type="button" className="set-action" onClick={checkNow}>
+				// `aria-label` 是发布验收要按的锚点（CI 里用 CDP 找它点一下，见
+				// `scripts/verify-update-click.mjs`）：按钮上只有「检查」两个字，按文字点容易点到别的。
+				<button type="button" className="set-action" aria-label="检查更新" onClick={checkNow}>
 					检查
 				</button>
 			) : null}

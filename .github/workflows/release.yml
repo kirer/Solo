@@ -81,6 +81,29 @@ jobs:
             echo "第一次 macOS 打包失败，重试…"
             npm run desktop:dist:mac
           }
+      # 出包之后真起一次：直接跑二进制（`open -g` 不行，launchd 不带环境变量），
+      # 设置页里点一下「检查更新」，隔 20ms 以上回读 `status.at` 变大才算点通了
+      # （Solo 2026-11-12 定的口径，脚本见 `scripts/verify-update-click.mjs`）。
+      # 原生对话框由脚本自己设 `SOLO_VERIFY_NO_DIALOG=1` 关掉 —— runner 上没人点它。
+      # `HOME=` 和 `--user-data-dir=` 都由脚本指到临时目录，不碰真实库。
+      - name: 真机点一次「检查更新」
+        run: |
+          set -euo pipefail
+          APP="release/mac-arm64/Solo.app/Contents/MacOS/Solo"
+          if [ ! -x "$APP" ]; then
+            echo "没找到打包出来的二进制：$APP"
+            ls -l release || true
+            exit 1
+          fi
+          mkdir -p update-click
+          node scripts/verify-update-click.mjs --app "$APP" --out update-click
+      # 证据不跟着「通过/失败」走：红了才更需要这张图和 log。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-update-click
+          if-no-files-found: warn
+          path: update-click/
       - uses: actions/upload-artifact@v4
         with:
           name: mac-arm64

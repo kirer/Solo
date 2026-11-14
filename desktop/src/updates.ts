@@ -138,6 +138,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	const feed = feedUrl();
 	let manual = false;
 	let busy = false;
+	/** 用户来报「更新失败」时得说清死在哪一步；验证模式关框那行日志也要读它，所以放在这里。 */
+	let step = "取清单";
 	/** 上一次检查的结果：成功就是「查过了」，失败带着一句人话（界面读它，见 `status`）。 */
 	let lastCheck: UpdateCheck | undefined;
 
@@ -148,7 +150,21 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		return win === undefined || win.isDestroyed() ? undefined : win;
 	};
 
+	/**
+	 * 验证模式（真机 / CI 验收用）：真点一次「检查更新」、真读一次 `status`，但**不弹原生对话框**
+	 * —— 弹了没人点，跑测的机器就挂在那儿等。判据只认这一个环境变量，只认 `"1"`，
+	 * 别再加 `true`/`yes` 之类的宽松写法（多一种写法就多一条「没弹出来」的猜法）。
+	 */
+	const verifyMode = (): boolean => process.env["SOLO_VERIFY_NO_DIALOG"] === "1";
+
 	const notify = (body: MessageBoxOptions): Promise<number> => {
+		if (verifyMode()) {
+			// 当作「点了取消 / 稍后」：返回 `cancelId`，**不能返回 0** —— 0 是「下载」「立即重启安装」，
+			// 验证模式下一个按键就把包装上了。
+			const dismissed = typeof body.cancelId === "number" ? body.cancelId : 0;
+			console.warn(`[update] 验证模式不弹框（${step}）：${body.message}｜${body.detail ?? ""}`);
+			return Promise.resolve(dismissed);
+		}
 		const win = windowNow();
 		return (win === undefined ? dialog.showMessageBox(body) : dialog.showMessageBox(win, body)).then(
 			(result) => result.response,
@@ -164,7 +180,7 @@ export function createUpdater(options: UpdaterOptions): Updater {
 		if (busy) return;
 		busy = true;
 		// 用户来报「更新失败」时得说清死在哪一步，不然连查都没法查。
-		let step = "取清单";
+		step = "取清单";
 		// 这一次检查的结论先落局部：上一次留下的失败不许粘住（Solo #2409 ①）。
 		let result: UpdateCheck | undefined;
 		try {
