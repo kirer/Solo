@@ -817,11 +817,52 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 	 */
 	const reachSeq = useCallback(
 		async (seq: number): Promise<boolean> => {
-			/** 等这一帧的渲染 + 布局落地：补回来的行得先挂进 DOM，`goToSeq` 才找得到它。 */
+			/**
+			 * 一直等到那一行真的挂进 DOM、量得出位置（最多 1 秒）。
+			 *
+			 * 以前这里只等一帧：本机快，够；CI 的 439 视口慢机上不够 —— `loadAround` 换完窗口
+			 * 那一帧还没渲染，`goToSeq` 找不到行、返回 `false`，落点留在 `scrollTop=0`，
+			 * 目标行停在 1582px（就是那趟红在「真机点一次引用跳转」的现场）。跳转是「点一下
+			 * 必须到位」的事：宁可多等几帧，也不能点完什么都不发生。
+			 */
 			const nextFrame = (): Promise<void> =>
 				new Promise((resolve) => {
 					requestAnimationFrame(() => resolve());
 				});
+			/**
+			 * 首屏还在补更早的消息时，先等它落地（最多 2 秒）。
+			 *
+			 * 冷启动第一次点引用就撞在这上面：`loadingEarlier` 还是 true，`loadAround` 那一步
+			 * 被跳过、兜底那一页也 `break`，整条链直接返回 `false` —— 用户点了一下，界面装死，
+			 * 只多一句「没存到」（本地 439 视口冷启动实测；热机第二次跑就是绿的，
+			 * 所以一直没被抓到）。等它落地再跳，比跳不动强。
+			 */
+			const waitIdle = async (): Promise<void> => {
+				const deadline = performance.now() + 2_000;
+				while (getState().loadingEarlier && performance.now() < deadline) {
+					await nextFrame();
+				}
+			};
+			const waitForRow = (seq: number): Promise<void> =>
+				new Promise((resolve) => {
+					const deadline = performance.now() + 1_000;
+					const tick = (): void => {
+						const row = rowsRef.current.find(
+							(item) => (item.type === "say" || item.type === "note") && item.message.seq === seq,
+						);
+						if (flowRef.current !== null && row !== undefined && rowTop(row.key) !== undefined) {
+							resolve();
+							return;
+						}
+						if (performance.now() >= deadline) {
+							resolve();
+							return;
+						}
+						requestAnimationFrame(tick);
+					};
+					tick();
+				});
+			await waitIdle();
 			if (goToSeq(seq)) return true;
 			// 一步到：`getAround` 就是为「跳到某条」造的，目标一定落在新窗口里。
 			const now = getState();
@@ -831,23 +872,24 @@ export function Stream(props: { onImage: (src: string) => void; onFile: (file: A
 				} catch {
 					// 网络不给就算了，下面还有一页页补的兜底。
 				}
-				await nextFrame();
+				await waitForRow(seq);
 				if (goToSeq(seq)) return true;
 			}
 			// 兜底：窗口没挪动（服务端不认 `around`、或者目标根本不在这台机器上）时往上补，最多 3 页。
 			for (let page = 0; page < 3; page += 1) {
+				await waitIdle();
 				const state = getState();
 				if (!state.hasMoreAbove || state.loadingEarlier) break;
 				const count = state.detail?.messages.length ?? 0;
 				await loadEarlier(pageSize());
 				// 一条都没补上（到底了 / 失败了）就别空转。
 				if ((getState().detail?.messages.length ?? 0) === count) break;
-				await nextFrame();
+				await waitForRow(seq);
 				if (goToSeq(seq)) return true;
 			}
 			return goToSeq(seq);
 		},
-		[goToSeq],
+		[goToSeq, rowTop],
 	);
 
 	/**
