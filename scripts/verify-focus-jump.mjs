@@ -548,87 +548,18 @@ const drift = nearTwo.length < 2 ? 0 : Math.max(...nearTwo.map((one) => one.top)
 const stillThere = tops.length > 0 && tops[tops.length - 1] !== null;
 
 /**
- * 第二段：跳过去之后**再故意让补历史发生一次**，看锚点有没有换手。
+ * 这里原来还有第二段：滚到最顶，让补历史发生一次，逐帧看视口里那行有没有被推走。
  *
- * 做法是人真的会做的那个动作 —— 把滚动条拖到最顶，触发「加载更早」。上面的行插进来时，
- * 如果补偿没接上、锚点被换回「视口首行」，视口里那行就会往下掉一截（看着像自己跳了下）。
- * 判据：滚到顶那一刻视口里第一行记为锚点，之后它相对视口的位置不许动超过 3px。
- */
-await cdp.evaluate(`(() => {
-	const flow = document.querySelector("#flow");
-	if (flow === null) return false;
-	flow.scrollTop = 0;
-	return true;
-})()`);
-const anchorKey = await cdp.evaluate(`(() => {
-	const flow = document.querySelector("#flow");
-	if (flow === null) return null;
-	const flowTop = flow.getBoundingClientRect().top;
-	const first = [...document.querySelectorAll("#feed [data-row-key]")].find(
-		(one) => one.getBoundingClientRect().bottom > flowTop + 1,
-	);
-	return first === undefined ? null : first.getAttribute("data-row-key");
-})()`);
-if (anchorKey === null) await fail("滚到顶之后找不到视口里第一行，锚点这半段验不了");
-/**
- * 采样按**帧**来，不按 100ms。
+ * **删了**（Solo 2026-11-15 定的）：端到端只验三件 —— 点真按钮、落点对、2 秒不飘。
+ * 「补历史那一刻不飘」不在这里验，原因是它受容器高度和虚拟化窗口共同决定：CI 的容器
+ * 比开发机矮一截（439 vs 662），窗口宽窄一变，补页走的分支就变了；而且「滚到顶」用
+ * `flow.scrollTop = 0` 写下去，仲裁者不认这是人滚的，补页压根不发（CI 上 119 帧
+ * `scrollTop` 一直是 0、`seq` 一直是 70）。这条红两次都是脚本自己造成的，比没验更糟。
  *
- * 100ms 一次会漏掉「只错位一帧」的情况，也会把「一帧都没错位但采样点踩在中间」误判成跳。
- * 这里在页面里挂一个 rAF 循环，每一帧记一次，最后数「有几帧是错的」——
- * 用户看到的闪动就是帧，不是毫秒。
+ * 那件事由单元层盯：`test/ui/focus-jump.test.ts` 里三条 `keepAnchor` 的用例
+ * （跳转途中钉焦点行、跳完钉视口首行、两者都不许各写一遍）。要真机看，本地跑
+ * `--flow-height 439` 再手动滚一下顶。
  */
-await cdp.evaluate(`(() => {
-	window.__anchorLog = [];
-	const key = ${JSON.stringify(String(anchorKey))};
-	const tick = () => {
-		const flow = document.querySelector("#flow");
-		const rows = [...document.querySelectorAll("#feed [data-row-key]")];
-		const row = rows.find((one) => one.getAttribute("data-row-key") === key);
-		if (flow !== null) {
-			window.__anchorLog.push({
-				top: row === undefined ? null : Math.round(row.getBoundingClientRect().top - flow.getBoundingClientRect().top),
-				rows: document.querySelectorAll("#feed [data-seq]").length,
-				minSeq: document.querySelector("#feed [data-seq]") === null
-					? null
-					: Math.min(...[...document.querySelectorAll("#feed [data-seq]")].map((one) => Number(one.getAttribute("data-seq")))),
-				scrollTop: Math.round(flow.scrollTop),
-			});
-		}
-		if (window.__anchorLog.length < 160) requestAnimationFrame(tick);
-	};
-	requestAnimationFrame(tick);
-	return true;
-})()`);
-await sleep(3000);
-const anchorSamples = await cdp.evaluate("(() => (window.__anchorLog ?? []))()");
-if (anchorSamples.length === 0) await fail("一帧都没采到，锚点这半段验不了");
-const seen = anchorSamples.map((one) => one.top).filter((one) => one !== null);
-const base = seen.length === 0 ? 0 : seen[Math.floor(seen.length / 2)];
-const anchorMoved = seen.length === 0 ? 0 : Math.max(...seen.map((one) => Math.abs(one - base)));
-/** 错位超过 3px 的帧数：允许 1 帧（补页那一帧浏览器合成可能还没跟上），再多就是人眼看得见的闪。 */
-const badFrames = seen.filter((one) => Math.abs(one - base) > 3).length;
-/**
- * 「更早的历史真补进来了」不数行数：视口一矮，虚拟化的窗口也跟着窄，补回来的行不一定都进
- * DOM —— CI 上就是行数一直 60、其实补页发生了（2026-11-15 那趟红在这）。认窗口里最早那条
- * 的 `seq` 变小，跟虚拟化没关系。
- */
-const firstSeq = anchorSamples[0]?.minSeq ?? null;
-const laterSeq = anchorSamples.map((one) => one.minSeq).filter((one) => one !== null);
-const earliestSeq = laterSeq.length === 0 ? null : Math.min(...laterSeq);
-const rowsGrew = firstSeq !== null && earliestSeq !== null && earliestSeq < firstSeq;
-if (!rowsGrew) {
-	const scrollTrace = anchorSamples.map((one) => one.scrollTop);
-	await fail(
-		`滚到最顶之后没补进来更早的历史（最早那条一直是 seq=${String(firstSeq)}，${String(anchorSamples[0]?.rows ?? 0)} 行），锚点这半段验不到。` +
-			`诊断：${String(anchorSamples.length)} 帧、scrollTop 从 ${String(scrollTrace[0])} 走到 ${String(scrollTrace.at(-1))}、` +
-			`最小值 ${String(Math.min(...scrollTrace))}、引用还在不在这屏 ${String(seen.length)} 帧有值`,
-	);
-}
-if (badFrames > 1) {
-	await fail(
-		`补历史插到上面时，视口里原来那行有 ${String(badFrames)} 帧被推走了（最多 1 帧），最大偏 ${String(anchorMoved)}px —— 锚点换手了：${JSON.stringify(seen.slice(0, 40))}`,
-	);
-}
 
 const shot = await cdp.send("Page.captureScreenshot", { format: "png" }).catch(() => undefined);
 if (shot?.data !== undefined) {
@@ -652,11 +583,6 @@ const evidence = {
 	spreadTolerance,
 	drift,
 	driftTolerance,
-	anchorKey,
-	anchorMoved,
-	anchorFrames: seen.length,
-	anchorBadFrames: badFrames,
-	anchorRows: anchorSamples.map((one) => one.rows).slice(0, 160),
 	samples,
 	stillThere,
 	screenshot: shot?.data === undefined ? null : "focus-after.png",
@@ -684,8 +610,7 @@ cdp.close();
 await stop();
 await writeFile(join(outDir, "result.txt"), `通过\n\n${notes.join("\n")}\n`);
 note(
-	`通过：落在 ${String(arrived.top)}px（目标 ${String(expected)}px），2 秒内极差 ${String(spread)}px，连读差 ${String(drift)}px；` +
-		`再补一页历史时 ${String(seen.length)} 帧里错位 ${String(badFrames)} 帧、最大 ${String(anchorMoved)}px` +
-		`（窗口里最早那条从 seq=${String(firstSeq)} 补到 seq=${String(earliestSeq)}）`,
+	`通过：点真按钮落在 ${String(arrived.top)}px（目标 ${String(expected)}px），` +
+		`2 秒内极差 ${String(spread)}px、连读差 ${String(drift)}px`,
 );
 process.exit(0);

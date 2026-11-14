@@ -75,12 +75,20 @@ describe("请求本身", () => {
 	});
 
 	test("同一条再点一次也算新请求（只认 at，界面才会重跳）", () => {
-		focusSeq(247, "ch-1");
-		const first = getState().focus?.at;
+		// 时钟全程注入：先跑一次再 `Date.now()` 取基准，两次读表之间可能跨 1ms，
+		// 断言就成了「等不等于一个会自己动的数」—— CI 上红过一次（1794681076021 对 1794681076020）。
 		vi.useFakeTimers();
-		vi.setSystemTime(new Date(Date.now() + 1000));
-		focusSeq(247, "ch-1");
-		expect(getState().focus?.at).toBe((first ?? 0) + 1000);
+		try {
+			vi.setSystemTime(1_700_000_000_000);
+			focusSeq(247, "ch-1");
+			const first = getState().focus?.at;
+			vi.setSystemTime(1_700_000_001_000);
+			focusSeq(247, "ch-1");
+			expect(first).toBe(1_700_000_000_000);
+			expect(getState().focus?.at).toBe(1_700_000_001_000);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	test("认领完清掉，下次进这个频道不会再跳一次", () => {
