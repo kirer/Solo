@@ -157,6 +157,27 @@ export function createUpdater(options: UpdaterOptions): Updater {
 	 */
 	const verifyMode = (): boolean => process.env["SOLO_VERIFY_NO_DIALOG"] === "1";
 
+	/**
+	 * 自动安装（只有 `scripts/verify-upgrade.mjs` 在 CI 里开）：装更新等于替用户换掉他手里的程序，
+	 * 所以条件收到最紧，**两个都得成立**：
+	 * ① `SOLO_VERIFY_INSTALL === "1"` —— 跟上面 `SOLO_VERIFY_NO_DIALOG` 一样只认这一个写法；
+	 * ② feed 的 host **逐字**是 `127.0.0.1` 或 `localhost` —— 不认「内网」「本机 IP」「http 就行」。
+	 * 少收这一条，夜里改个 proxy 指到内网机就能白拿一个自动安装，整条验签链路等于白做
+	 * （Solo 2026-11-14 定的）。
+	 *
+	 * 调用点在**签名验过、版本也比过之后**，顺序不许往前挪。
+	 */
+	const installMode = (): boolean => {
+		if (process.env["SOLO_VERIFY_INSTALL"] !== "1") return false;
+		if (feed === undefined) return false;
+		try {
+			const host = new URL(feed).hostname;
+			return host === "127.0.0.1" || host === "localhost";
+		} catch {
+			return false;
+		}
+	};
+
 	const notify = (body: MessageBoxOptions): Promise<number> => {
 		if (verifyMode()) {
 			// 当作「点了取消 / 稍后」：返回 `cancelId`，**不能返回 0** —— 0 是「下载」「立即重启安装」，
@@ -203,14 +224,19 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			}
 			console.log(`[update] 有新版本 ${manifest.version}（当前 ${app.getVersion()}）`);
 			// 清单里没有 notes 时 versionDetail 返回的就是加这一版之前的一模一样的文案。
-			const answered = await notify({
-				type: "info",
-				message: `有新版本 ${manifest.version}`,
-				detail: versionDetail(app.getVersion(), manifest.notes),
-				buttons: ["下载", "稍后"],
-				defaultId: 0,
-				cancelId: 1,
-			});
+			// 自动安装：签名验过、版本也比过了才走到这里，这一步之后才可能替人点「下载」。
+			const autoInstall = installMode();
+			if (autoInstall) console.warn("[update] 自动安装模式：跳过「下载」这一次点击（签名已验过）");
+			const answered = autoInstall
+				? 0
+				: await notify({
+						type: "info",
+						message: `有新版本 ${manifest.version}`,
+						detail: versionDetail(app.getVersion(), manifest.notes),
+						buttons: ["下载", "稍后"],
+						defaultId: 0,
+						cancelId: 1,
+					});
 			if (answered !== 0) return;
 			step = "下载";
 			const { path: zip, bytes } = await download(
@@ -222,14 +248,17 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			console.log(`[update] 下载完成：${manifest.version}，${bytes} 字节`);
 			windowNow()?.setProgressBar(-1);
 			step = "替换";
-			const install = await notify({
-				type: "info",
-				message: `新版本 ${manifest.version} 已下载`,
-				detail: "应用会关闭并自动重开（可能要一两分钟），安装期间请不要手动打开。正在跑的事会中断。",
-				buttons: ["立即重启安装", "稍后"],
-				defaultId: 0,
-				cancelId: 1,
-			});
+			if (autoInstall) console.warn("[update] 自动安装模式：跳过「立即重启安装」这一次点击");
+			const install = autoInstall
+				? 0
+				: await notify({
+						type: "info",
+						message: `新版本 ${manifest.version} 已下载`,
+						detail: "应用会关闭并自动重开（可能要一两分钟），安装期间请不要手动打开。正在跑的事会中断。",
+						buttons: ["立即重启安装", "稍后"],
+						defaultId: 0,
+						cancelId: 1,
+					});
 			if (install !== 0) return;
 			const exe = app.getPath("exe");
 			try {
