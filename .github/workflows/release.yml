@@ -69,7 +69,7 @@ jobs:
   build-mac:
     needs: verify
     runs-on: macos-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -131,6 +131,80 @@ jobs:
           name: mac-focus-jump
           if-no-files-found: warn
           path: focus-jump/
+      # 旧版能不能真升到新版（Solo 2026-11-14 点名要的那条，2.9.19 之前没人验过；
+      # 三段各自验什么、为什么这么拆，见 `scripts/verify-upgrade.mjs` 开头的注释）。
+      # 清单用发布私钥现签：段 1 装的旧版里内置的公钥配得上它，验签这一环是真的。
+      # 旧版从**上一个已发布版**的 Release 取 —— 不是写死版本号，每版自己找上一个。
+      - name: 升级验收（段 1+2：旧版自查 / 替换与坏包）
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify.outputs.version }}"
+          # 排掉草稿和预发布：哪天留个草稿在那儿，取到的就不是「上一个已发布版」，
+          # 后面验出来的结论是假的（Solo 2026-11-15 点的）。
+          OLD_TAG=$(gh release list --limit 20 --exclude-drafts --exclude-pre-releases \
+            --json tagName --jq '.[0].tagName')
+          if [ -z "$OLD_TAG" ]; then
+            echo "没找到上一个已发布版"
+            exit 1
+          fi
+          echo "上一个发布版：$OLD_TAG"
+          mkdir -p old-release
+          gh release download "$OLD_TAG" --pattern 'Solo-*-arm64.zip' --dir old-release --clobber
+          OLD=$(ls old-release/*-arm64.zip | head -1)
+          NEW="release/Solo-${VERSION}-arm64.zip"
+          if [ ! -f "$NEW" ]; then
+            echo "没找到 $NEW"
+            ls -l release || true
+            exit 1
+          fi
+          # 私钥只在这一步活着：不管过没过，退出时都删掉，不留在 runner 上。
+          umask 077
+          KEY_PEM="$RUNNER_TEMP/solo-update-key.pem"
+          printf '%s' "$SOLO_UPDATE_KEY" > "$KEY_PEM"
+          trap 'rm -f "$KEY_PEM"' EXIT INT TERM
+          node --experimental-strip-types scripts/verify-upgrade.mjs \
+            --out update-upgrade --stages 1,2 \
+            --old-zip "$OLD" --new-zip "$NEW" \
+            --key "$KEY_PEM"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-update-upgrade
+          if-no-files-found: warn
+          path: update-upgrade/
+      # 段 3：整链。拿本版包当旧版（版本号降一格），本地 feed 喂本版清单，
+      # 让它自己下载、自己替换、自己重开，最后读启动日志确认新进程认的是新版。
+      # 这条只有带 `SOLO_VERIFY_INSTALL` 钩子的版本跑得起来（2.9.20 起）。
+      - name: 升级验收（段 3：整链下载替换重开）
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify.outputs.version }}"
+          NEW="release/Solo-${VERSION}-arm64.zip"
+          if [ ! -f "$NEW" ]; then
+            echo "没找到 $NEW"
+            ls -l release || true
+            exit 1
+          fi
+          # 私钥只在这一步活着：不管过没过，退出时都删掉，不留在 runner 上。
+          umask 077
+          KEY_PEM="$RUNNER_TEMP/solo-update-key.pem"
+          printf '%s' "$SOLO_UPDATE_KEY" > "$KEY_PEM"
+          trap 'rm -f "$KEY_PEM"' EXIT INT TERM
+          node --experimental-strip-types scripts/verify-upgrade.mjs \
+            --out update-upgrade-full --stages 3 \
+            --new-zip "$NEW" \
+            --key "$KEY_PEM"
+        env:
+          SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-update-upgrade-full
+          if-no-files-found: warn
+          path: update-upgrade-full/
       - uses: actions/upload-artifact@v4
         with:
           name: mac-arm64
@@ -245,7 +319,7 @@ jobs:
             --file win32="dist/Solo-${VERSION}-x64.zip" \
             --tag "${{ steps.tag.outputs.tag }}" \
             --plugins-src plugins-src \
-            --key "$RUNNER_TEMP/solo-update-key.pem"
+            --key "$KEY_PEM"
           ls -l dist feed
       # 闸：正文空着就发，等于这一版对外什么都没说。v2.9.18 就是这么出的——功能全被塞进
       # `chore(版本): 2.9.18` 那一笔里，生成器只认 feat/fix 标题，正文就成了「这一版没有
