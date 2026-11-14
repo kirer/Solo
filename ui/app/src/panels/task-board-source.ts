@@ -3,9 +3,8 @@
  *
  * 为什么不直接 `import type { Task } from "../../../../src/core/channel/types.ts"`：
  * 界面只吃 `src/view/dto.ts` 的投影（分层规矩，`npm run check` 的边界检查会拦）。
- * `ViewChannelDetail` 上**还没有** `tasks` 这一格 —— 路远那边的接口正在做。所以这里
- * 按**字段结构**收：字段名跟他定的 `Task` 一字不差，等 dto 加上 `tasks`，这个文件
- * 一行都不用改，`channelTasks()` 从「永远空表」变成「真的有值」。
+ * `ViewChannelDetail.tasks`（`ViewTask`）是 2.9.20 接上的，这里仍按**字段结构**收：
+ * 投影再加字段时，这个文件跟着补一格就够，不用去认核心那层的类型。
  *
  * 空表就是空板 —— 不塞假数据（Solo 2026-11-15：接口没落地不许挂假任务，老板看到
  * 「季衡 弹窗验收卡住 3 天」比没做更坏）。
@@ -33,7 +32,8 @@ export type BoardTaskIn = {
  */
 export type BoardSource = {
 	channel?: { title?: string | undefined } | undefined;
-	members?: readonly { slug?: string | undefined; name?: string | undefined }[] | undefined;
+	/** 成员的显示名在 `label` 上（`ViewMember.label`）—— 读 `name` 会一路退成 slug。 */
+	members?: readonly { slug?: string | undefined; label?: string | undefined }[] | undefined;
 	messages?: readonly { seq: number; at: number; text?: string | undefined }[] | undefined;
 	tasks?: Record<string, BoardTaskIn> | undefined;
 };
@@ -72,7 +72,7 @@ export function boardTasks(detail: BoardSource | null | undefined, now: number):
 	const title = detail?.channel?.title ?? "";
 	const labelOf = new Map<string, string>();
 	for (const member of detail?.members ?? []) {
-		if (member.slug !== undefined && member.name !== undefined) labelOf.set(member.slug, member.name);
+		if (member.slug !== undefined && member.label !== undefined) labelOf.set(member.slug, member.label);
 	}
 	const atOf = new Map<number, number>();
 	const textOf = new Map<number, string>();

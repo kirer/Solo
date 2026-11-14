@@ -170,8 +170,8 @@ describe("从频道数据翻成一行", () => {
 	const detail = {
 		channel: { title: "Solo" },
 		members: [
-			{ slug: "owner", name: "老板" },
-			{ slug: "luyuan", name: "路远" },
+			{ slug: "owner", label: "老板" },
+			{ slug: "luyuan", label: "路远" },
 		],
 		messages: [
 			{ seq: 70, at: 1_700_000_000_000, text: "路口那条我接了，先复现" },
