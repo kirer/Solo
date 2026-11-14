@@ -295,6 +295,8 @@ function readPrefs() {
 		// 人声打断（念稿时一开口就停）**默认关**：门槛还没在真机上外放调过，万一自激就成了
 		// 「说着说着自己停」。按球停是零误判的，先用那个（Solo 2026-11-14）。
 		bargeIn: false,
+		// 从没拿到过麦克风 → 等 30 秒（那回要等人去点系统授权框）。见 `micWithTimeout`。
+		micGranted: false,
 	};
 	try {
 		const raw = typeof localStorage === "undefined" ? null : localStorage.getItem(PREF_KEY);
@@ -328,6 +330,9 @@ function readPrefs() {
 			// 只有明确存过 `true` 才算开。想打开就 `savePrefs({ bargeIn: true })`：
 			// 等有人真验过「五段念稿不误停」再给界面开关，别让人自己点进自激里。
 			bargeIn: value?.bargeIn === true,
+			// 只认布尔 `true`：老库里压根没有这个字段，`solo.orb` 又可能被人手改过，
+			// 不是真布尔就一律当「没拿到过」—— 宁可回 30 秒上限，别拿真值判断蒙对。
+			micGranted: value?.micGranted === true,
 		};
 	} catch {
 		return fallback;
@@ -1784,23 +1789,41 @@ export default {
 			 * 要麦克风，但不等它一辈子。
 			 *
 			 * macOS 的授权框被别的窗口挡住、或者权限服务自己卡住时，`getUserMedia` 既不 resolve
-			 * 也不 reject —— 界面上就是「点了没反应」，日志里也没有。8 秒还不回就自己放弃，
+			 * 也不 reject —— 界面上就是「点了没反应」，日志里也没有。到点还不回就自己放弃，
 			 * 抛一个 `TimeoutError` 交给调用方那句 catch 去说人话。
+			 *
+			 * **等多久分两档**（Solo 2026-11-14 定，走本地记录、不加 IPC）：
+			 *   拿到过麦克风 → 8 秒。系统不再弹框，8 秒不回就是真卡住了。
+			 *   从没拿到过 → 30 秒。这回要等人去点系统授权框，实测拖到第 10 秒才点，
+			 *   8 秒那条会把「正常授权」误判成「没响应」。
+			 * 30 秒是**上限不是等待**：系统已经允许时 `getUserMedia` 几十毫秒就回来，
+			 * 所以分档不会让老用户每一次都干等。记录丢了（清缓存、换机器、端口换了都是新源）
+			 * 只影响慢不慢，不影响对不对。
+			 *
+			 * 这条记录**不是权限真相**，只是个「放宽上限」的提示：有记录但用户在系统设置里
+			 * 把麦克风关了，`getUserMedia` 会立刻 reject，走现成那句「到系统设置里允许」——
+			 * 判错也只判出「要不要多等 22 秒」，判不出「能不能录」。
 			 */
 			const MIC_TIMEOUT_MS = 8_000;
+			const MIC_TIMEOUT_FIRST_MS = 30_000;
 			const micWithTimeout = async (constraints) => {
 				let timer = 0;
+				// 读的是 `readPrefs()` 那份白名单：`micGranted` 在两处都列了，不然存了也读不回来。
+				const granted = readPrefs().micGranted;
 				try {
-					return await Promise.race([
+					const stream = await Promise.race([
 						navigator.mediaDevices.getUserMedia(constraints),
 						new Promise((_resolve, reject) => {
 							timer = window.setTimeout(() => {
-								const error = new Error("麦克风没响应：系统可能还在等你点允许");
+								const error = new Error("麦克风没响应：系统可能还在等你点允许。点完允许再按一次。");
 								error.name = "TimeoutError";
 								reject(error);
-							}, MIC_TIMEOUT_MS);
+							}, granted ? MIC_TIMEOUT_MS : MIC_TIMEOUT_FIRST_MS);
 						}),
 					]);
+					// 真拿到过才记：这一次之后系统不再弹框，8 秒档就够。
+					if (!granted) savePrefs({ micGranted: true });
+					return stream;
 				} finally {
 					if (timer !== 0) window.clearTimeout(timer);
 				}
@@ -1900,7 +1923,7 @@ export default {
 							: name === "NotFoundError"
 								? "没找到麦克风"
 								: name === "TimeoutError"
-									? "麦克风没响应：系统可能还在等你点允许"
+									? "麦克风没响应：系统可能还在等你点允许。点完允许再按一次。"
 									: `打不开麦克风：${error_ instanceof Error ? error_.message : String(error_)}`,
 					);
 				}
@@ -2046,7 +2069,7 @@ export default {
 								: name === "NotFoundError"
 									? "没找到麦克风"
 									: name === "TimeoutError"
-										? "麦克风没响应：系统可能还在等你点允许"
+										? "麦克风没响应：系统可能还在等你点允许。点完允许再按一次。"
 										: "麦克风打不开",
 						);
 						return false;
@@ -2296,7 +2319,7 @@ export default {
 								: name === "NotFoundError"
 									? "没找到麦克风"
 									: name === "TimeoutError"
-										? "麦克风没响应：系统可能还在等你点允许"
+										? "麦克风没响应：系统可能还在等你点允许。点完允许再按一次。"
 										: "麦克风打不开",
 						);
 						return;

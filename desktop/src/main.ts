@@ -103,22 +103,13 @@ function setupMicrophone(): void {
 		const kinds = mediaType === undefined || mediaType === "unknown" ? [] : [mediaType];
 		return decideMedia(permission, kinds).allow;
 	});
+	// 系统那层只读状态、**不主动申请**（Solo 2026-11-14 定）：不调 `askForMediaAccess`，
+	// 让系统在渲染侧第一次真访问麦克风时自己弹。主动申请会多造一层我们自己的时序 ——
+	// 启动就弹一个框、用户点「以后」之后日志里什么都没留下；而 `askForMediaAccess` 在有
+	// 别的媒体请求排队时是能卡住的，那比「没反应」更难查。
+	// 状态还是要读：`denied` 是**唯一**能在用户开口之前就发现的东西。
 	if (process.platform !== "darwin") return;
-	const status = systemPreferences.getMediaAccessStatus("microphone");
-	appendLog(logFile, `[permission] ${describeMicrophone(status)}`);
-	if (status !== "not-determined") return;
-	// 还没问过就现在问：等用户真点了麦克风再问，系统框会和「球已经在录音」的假象撞在一起。
-	void systemPreferences
-		.askForMediaAccess("microphone")
-		.then((granted) => {
-			appendLog(logFile, `[permission] 申请麦克风：${granted ? "用户同意" : "用户拒绝"}`);
-		})
-		.catch((error: unknown) => {
-			appendLog(
-				logFile,
-				`[permission] 申请麦克风出错：${error instanceof Error ? error.message : String(error)}`,
-			);
-		});
+	appendLog(logFile, `[permission] ${describeMicrophone(systemPreferences.getMediaAccessStatus("microphone"))}`);
 }
 
 function createWindow(url: string): BrowserWindow {

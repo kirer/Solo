@@ -2,7 +2,8 @@
  * 麦克风权限分两层，两层都得管：
  *
  *   1. macOS 的 TCC（系统设置 → 隐私与安全性 → 麦克风）。这一层由 `Info.plist` 里的
- *      `NSMicrophoneUsageDescription` 和 `systemPreferences.askForMediaAccess` 决定。
+ *      `NSMicrophoneUsageDescription` 决定，**弹框交给系统**：我们不主动
+ *      `askForMediaAccess`，渲染侧第一次真调 `getUserMedia` 时系统自己弹。
  *   2. Electron 自己的 permission handler。渲染进程调 `getUserMedia` 时，Chromium 先问
  *      Electron 放不放，Electron 再问系统。**不设 handler 时这一层什么都不记**，
  *      于是「点了麦克风没反应」变成一件只能猜的事（2026-11-12 老板就是这么报的）。
