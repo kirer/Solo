@@ -11,6 +11,10 @@
  * 3. **隔 20ms 以上**回读 `soloDesktop.updateStatus()`，`at` 变大才算点通了。
  * 4. DOM 文本 + 截图 + 应用日志一起落到 `--out`，给 CI artifact。
  *
+ * 起应用前会往临时 userData 里放一份**占位** `settings.json`（一只假模型，地址指向没人听的端口）：
+ * 一台机器上一只模型都没有时首屏是整屏引导（稿子 10/11），没有左边栏就没有设置按钮 ——
+ * 2026-11-14 第一次在 CI 上跑就是这么红的（Solo 查出来的）。
+ *
  * 壳那边的原生对话框由 `SOLO_VERIFY_NO_DIALOG=1` 关掉（本脚本自己设的）：弹了没人点，
  * 跑测的机器就一直挂着。关框时会 `console.warn` 一行「验证模式不弹框（某一步）：…」，
  * 落进 `app.log`，一并当凭据。
@@ -59,6 +63,29 @@ const home = join(scratch, "home");
 const userData = join(scratch, "userdata");
 await mkdir(home, { recursive: true });
 await mkdir(userData, { recursive: true });
+// 一台机器上一只模型都没有时，首屏是整屏的引导（「欢迎」→「接上模型」），没有左边栏、
+// 也就没有设置按钮 —— 第一次跑就是卡在这里（主窗口在、rail 不在，报「界面没起来」）。
+// 这里先放一份只写着**占位模型**的 `settings.json`：地址指向没人听的端口，永远不会真发请求，
+// 只为把引导跳过去。要验的是「设置页里点检查更新」，不是引导页。
+await writeFile(
+	join(userData, "settings.json"),
+	`${JSON.stringify(
+		{
+			defaultModel: "verify/placeholder",
+			providers: [
+				{
+					id: "verify",
+					name: "验收占位（不会真发请求）",
+					baseUrl: "http://127.0.0.1:9/v1",
+					apiKey: "verify",
+					models: [{ id: "placeholder" }],
+				},
+			],
+		},
+		null,
+		2,
+	)}\n`,
+);
 
 const logs = [];
 const notes = [];
@@ -178,22 +205,58 @@ class Cdp {
 	}
 }
 
-/** 主窗口和悬浮球是两个 page：挨个问「有没有设置那个按钮」，问到哪个算哪个。 */
-async function connectMain(list) {
+/**
+ * 主窗口和悬浮球是两个 page：挨个问「有没有设置那个按钮」，问到哪个算哪个。
+ *
+ * 顺便把每个 page 长什么样记下来（地址、readyState、有没有左边栏、是不是引导页、正文前 600 字）。
+ * 第一次跑只回了一句「界面没起来」，还得回头猜是哪种没起来 —— 证据要一次给够。
+ */
+async function probe(list) {
+	const report = [];
+	let main;
 	for (const target of list) {
 		let cdp;
 		try {
 			cdp = await Cdp.open(target.webSocketDebuggerUrl);
 			await cdp.send("Runtime.enable");
 			await cdp.send("Page.enable");
-			const has = await cdp.evaluate('document.querySelector(\'[aria-label="设置"]\') !== null');
-			if (has === true) return cdp;
-		} catch {
+			const info = await cdp.evaluate(`(() => ({
+				url: location.href,
+				ready: document.readyState,
+				title: document.title,
+				rail: document.querySelector('[aria-label="设置"]') !== null,
+				setup: document.querySelector('#page-setup') !== null,
+				text: (document.body === null ? "" : document.body.innerText).slice(0, 600),
+			}))()`);
+			report.push({ url: target.url, info });
+			if (info?.rail === true && main === undefined) {
+				main = cdp;
+				continue;
+			}
+		} catch (error) {
 			// 这个 target 不是主窗口（或者已经没了），试下一个。
+			report.push({ url: target.url, info: { error: String(error) } });
 		}
-		cdp?.close();
+		if (cdp !== undefined) cdp.close();
 	}
-	return undefined;
+	return { main, report };
+}
+
+/** 失败时把每个 page 的样子落进 artifact，别只留一句「界面没起来」。 */
+async function dumpPages(report) {
+	const blocks = report.map((one) =>
+		[
+			`url: ${String(one.url)}`,
+			`title: ${String(one.info?.title ?? "")}`,
+			`readyState: ${String(one.info?.ready ?? "")}`,
+			`有左边栏（aria-label=设置）: ${one.info?.rail === true ? "是" : "不是"}`,
+			`是引导页（#page-setup）: ${one.info?.setup === true ? "是" : "不是"}`,
+			one.info?.error === undefined ? "" : `出错: ${String(one.info.error)}`,
+			"正文：",
+			String(one.info?.text ?? ""),
+		].join("\n"),
+	);
+	await writeFile(join(outDir, "pages.txt"), `${blocks.join("\n\n----\n\n")}\n`);
 }
 
 // ---- 跑 ----
@@ -203,11 +266,22 @@ const list = await waitTargets(bootDeadline);
 if (list.length === 0) await fail(`${String(bootTimeout)}ms 内没等到调试端口 ${String(port)}`);
 
 let cdp;
+let lastReport = [];
 while (cdp === undefined && Date.now() < bootDeadline) {
-	cdp = await connectMain(await targets());
+	const probed = await probe(await targets());
+	cdp = probed.main;
+	lastReport = probed.report;
 	if (cdp === undefined) await sleep(500);
 }
-if (cdp === undefined) await fail("连上了调试端口，但没有一个页面里有设置按钮（界面没起来？）");
+if (cdp === undefined) {
+	await dumpPages(lastReport);
+	const setup = lastReport.some((one) => one.info?.setup === true);
+	await fail(
+		setup
+			? "主窗口停在首启引导页（设置 → 模型 里一只模型都没有）：占位 settings.json 没生效，见 pages.txt"
+			: `连上了调试端口，但没有一个页面里有设置按钮（${String(lastReport.length)} 个 page，见 pages.txt）`,
+	);
+}
 note(`已连上渲染进程（共 ${String(list.length)} 个 page target）`);
 
 // 打开设置页：点左边栏那颗「设置」（和用户一样点，不直接改 store）。

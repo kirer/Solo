@@ -86,6 +86,23 @@ describe("这条开关真的接到了 CI 那步上", () => {
 		expect(script).toContain("--user-data-dir=");
 	});
 
+	it("起应用之前先放占位 `settings.json`：不然首屏是引导页，没有设置按钮", () => {
+		// 2026-11-14 第一次在 CI 上跑就红在这里：一台机器上一只模型都没有时，首屏是整屏引导
+		// （稿子 10/11），没有左边栏；脚本报的是「界面没起来」，看不出真正原因。
+		const write = script.indexOf('join(userData, "settings.json")');
+		const spawn = script.indexOf("const child = spawn(");
+		expect(write).toBeGreaterThan(0);
+		expect(write).toBeLessThan(spawn);
+		expect(script).toContain("providers:");
+		// 占位模型指向没人听的端口：只是为了跳过引导，绝不能真发出请求。
+		expect(script).toContain("http://127.0.0.1:9/v1");
+	});
+
+	it("失败时把每个 page 的样子落进 `pages.txt`（别只回一句「界面没起来」）", () => {
+		expect(script).toContain('join(outDir, "pages.txt")');
+		expect(script).toContain("#page-setup");
+	});
+
 	it("按 aria-label 找按钮、隔 20ms 以上回读 `status.at`、存 DOM 和截图", () => {
 		expect(script).toContain('[aria-label="检查更新"]');
 		expect(script).toContain("updateStatus");
