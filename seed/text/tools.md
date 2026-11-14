@@ -171,10 +171,16 @@ list（默认）看板 / mine 只看自己名下 / update 改一条 / add 从一
 交给谁（slug）。换负责人只有助理能改。
 
 ## task.list.header
-{{doing}} 条在做 / {{blocked}} 条卡住 / {{open}} 条待办
+任务 {{total}} 条：卡住 {{blocked}} 条，最近的是「{{title}}」
+
+## task.list.header.calm
+任务 {{total}} 条：没有卡住的
 
 ## task.list.line
-{{id}} [{{status}}] {{owner}}：{{title}}（{{silent}} 没动）
+{{id}} [{{status}}] {{owner}}：{{title}}（{{silent}}没动）{{missing}}
+
+## task.list.no-accept
+· 缺验收
 
 ## task.list.owner
 无人（负责人已不在名册，只有助理能改派）
@@ -205,6 +211,51 @@ list（默认）看板 / mine 只看自己名下 / update 改一条 / add 从一
 
 ## task.refuse.note
 `blocked` 必须写原因：卡在谁那、缺什么。写不出就还留在 `doing`。
+
+## task.mine.header
+你手上 {{total}} 条：{{doing}} 条进行中、{{blocked}} 条卡住
+
+## task.mine.header.calm
+你手上 {{total}} 条：{{doing}} 条进行中
+
+## task.add.done
+建了 {{id}}（{{owner}}）：{{title}}。频道里落了一行痕，不叫醒任何人。
+
+## task.status.open
+待办
+
+## task.status.doing
+进行中
+
+## task.status.blocked
+卡住
+
+## task.status.done
+做完
+
+## task.status.dropped
+划掉
+
+## task.refuse.assign
+换负责人只有助理能改：{{id}} 现在是 {{owner}} 名下的。
+
+## task.refuse.move.same
+{{id}} 已经是{{status}}了。
+
+## task.refuse.move.terminal
+{{id}} 已经{{status}}，到这就是终点了。要接着做就新建一条，老的留着。
+
+## task.refuse.move.invalid
+{{id}} 现在{{from}}，不能直接到{{to}}：先改成进行中，或者带原因报卡住。
+
+## task.refuse.add
+补标要说清三样：`from`（哪条消息）、`title`（要达成什么）、`owner`（交给谁）。
+
+## task.refuse.from
+「{{channel}}」里没有 #{{seq}} 这条消息：补标要指到一条真的。
+
+## task.refuse.dup
+这条活已经在 {{id}} 上了：同一句话、同一个负责人，不重复建。
 
 
 ## chats.description
@@ -703,6 +754,9 @@ slug
 ## route.description
 助理专用：把频道里的一条消息在后台交给该看的人。他能看到原文，频道里不会出现「转交」这条消息。
 这件事够格当目标就带 `goal`（和 `accept`），它才会进任务板；不带就只是转交。
+够格的门槛是三条里占两条：跨多步、一次回复做不完；能说出「怎么算完」；做不完会挡住别人。
+占不到两条就别带 `goal` —— 板上被琐事堆满，真正在等的那几条就沉下去了。
+带 `goal` 的活只能交给一个人：一件活只有一个负责人；交给好几个人时只转交、不上板。
 
 ## route.param.goal
 要达成什么（一句话）。带它才建任务——先按三条念一遍：跨多步一次做不完、说得出怎么算完、做不完会挡住别人。
@@ -749,6 +803,18 @@ slug
 
 ## route.done
 已把 #{{seq}} 交给：{{names}}。频道里没有留下可见消息。{{failed ?? }}
+
+## route.goal.created
+顺带上板了：{{id}}（{{owner}}）{{title}}
+
+## route.goal.exists
+这条已经在板上（{{id}}），没重复建。
+
+## route.goal.shared
+一件活只有一个负责人：这次交给 {{count}} 个人，只转交、没上板。
+
+## route.goal.failed
+没上板：{{error}}。转交照旧。
 
 ## route.done.failed
 没叫醒：{{names}}。

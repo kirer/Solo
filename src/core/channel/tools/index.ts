@@ -5,7 +5,7 @@
  * 「成员不能越级」，代价是：调一个身份就要改代码重新部署，而「谁能做什么」
  * 本来该写在身份里。
  *
- * 十个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
+ * 十一个工具，按「做一件事」划分，不按「谁配用」划分。同一件事的几种做法用一个
  * 工具的 `action` 枚举，而**不是**几个近义的工具名 —— 名字越多，模型选错的概率越高。
  *
  * | 工具 | 用途 |
@@ -20,6 +20,7 @@
  * | `run` | 执行命令 |
  * | `file` | `read` / `write` / `edit` 工作区里的一个文件 |
  * | `search` | `grep` 找内容、`glob` 找文件名 |
+ * | `task` | `list` 看板、`mine` 看自己名下、`update` 改一条、`add` 助理补标 |
  *
  * 每一个工具返回**自然语言**，不是结构化数据 —— 工具的输出是给模型读的。
  */
@@ -33,6 +34,7 @@ import { createRememberTool } from "./remember.ts";
 import { createRouteTool } from "./route.ts";
 import { createRunTool } from "./run.ts";
 import { createSearchTool } from "./search.ts";
+import { createTaskTool } from "./task.ts";
 import { createSayTool } from "./say.ts";
 import type { CoreToolDeps } from "./context.ts";
 import {
@@ -47,6 +49,7 @@ import {
 	traceRun,
 	traceSay,
 	traceSearch,
+	traceTask,
 	tracesOf,
 	type ToolTrace,
 } from "./presentation.ts";
@@ -73,6 +76,7 @@ export function createCoreTools(deps: CoreToolDeps) {
 		traced(createRunTool(deps), traceRun),
 		traced(createFileTool(deps), traceFile),
 		traced(createSearchTool(deps), traceSearch),
+		traced(createTaskTool(deps), traceTask),
 	] as readonly ToolRegistration[];
 }
 
@@ -85,7 +89,7 @@ export function coreToolTraces(): ReadonlyMap<string, ToolTrace> {
  * 工具名。插件装载时拿它当保留字：插件工具和核心工具同名，就等于把 `say` 换成了
  * 别人写的一个同名函数，而模型分不出来。
  *
- * 直接问建出来的那八个，不维护第二份名单 —— 加一个工具时不会漏。
+ * 直接问建出来的那十一个，不维护第二份名单 —— 加一个工具时不会漏。
  */
 export function coreToolNames(): readonly string[] {
 	return createCoreTools({} as never).map((tool) => (tool as { name: string }).name);

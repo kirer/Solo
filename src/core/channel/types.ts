@@ -145,6 +145,60 @@ export type Channel = {
 	responder?: ChannelResponder;
 };
 
+/**
+ * 任务的状态。三条终态里 `dropped` 和「删掉」的区别是留痕：划掉的任务还在，谁划的、
+ * 为什么，都在它 `history` 指的那条消息里。
+ */
+export type TaskStatus = "open" | "doing" | "blocked" | "done" | "dropped";
+
+/**
+ * `history` 的一格：**纯索引，没有一个字的解释**。
+ *
+ * 谁改的、为什么卡住、`done` 的凭据是什么，全写在这条变更落进频道的那条消息里
+ * （`kind: "note"`、`noteOf: "task"`）。所以删掉整个 `history` 理论上能从消息重建 ——
+ * 它不可能变成第二套真相。
+ *
+ * 反过来说：**只许追加，永远不重建、不压缩**。并发检测拿「读到的长度」当凭据
+ * （见 `write.ts` 的 `commitTaskNote`），谁哪天加一次去重或截断，长度变短，冲突检测
+ * 就永远通过，静默覆盖立刻回来。真要压，先得有别的冲突检测手段（内容 hash、版本号），
+ * 不许拿长度当唯一凭据。
+ */
+export type TaskHistoryEntry = {
+	/** 这次变更写进频道的那条消息的 seq。 */
+	seq: number;
+	/**
+	 * 变更种类。**不存自由文本**：能存解释，就一定会有人往里塞解释，`history` 就长成
+	 * 第二份正文。`interrupt` 是「插话改了结论」，见设计第四节。
+	 */
+	what: "created" | "assigned" | "status" | "interrupt" | "accept" | "dropped";
+};
+
+/**
+ * 频道里的一件活：归谁、到哪一步、从哪句话来的。
+ *
+ * 不复制消息：`title` / `accept` 是给人看的两句话，`channelId` + `originSeq` 是锚点，
+ * 流水永远是「起源 + 指向它的 `replyTo` 链」现算出来的。任务一定贴在某个频道、某条
+ * 消息上，所以它跟消息住在同一个 `ChannelDoc` 里 —— 一次 commit 里既 push 消息又写
+ * 任务，天然原子。
+ */
+export type Task = {
+	/** 频道内递增的短 id（`t7`）：能手打、能在一行摘要里放下。 */
+	id: string;
+	/** 一句话说清要做什么（≤80 字）。 */
+	title: string;
+	/** 当前负责人的 slug。换人只改这里，旧人记进 `history`。 */
+	owner: string;
+	/** 要达成什么。可选。 */
+	goal?: string;
+	/** 验收标准。可选；成员在自己名下时可以补。 */
+	accept?: string;
+	status: TaskStatus;
+	/** 起源：哪个频道的哪条消息派出来的。`seq` 是唯一锚点，消息上不加反向字段。 */
+	channelId: string;
+	originSeq: number;
+	history: TaskHistoryEntry[];
+};
+
 export type ChannelState = {
 	channels: Record<string, Channel>;
 	messages: Record<string, Message[]>;
@@ -152,11 +206,47 @@ export type ChannelState = {
 	nextSeq: Record<string, number>;
 	/** `slug → 频道 id → 已读到的 seq`。只记自己读过的位置。 */
 	readMarks: Record<string, Record<string, number>>;
+	/**
+	 * 任务板：`频道 id → 任务 id → Task`。
+	 *
+	 * **可选，而且只在真建了第一条任务时才写**。老机器的文档里没有这个键，读侧一律
+	 * 走 `tasksOf()`，读不触发写 —— 升级、启动、打开界面任何一条路径都不补字段、
+	 * 不 seed 空表，所以升上来盘上一个字节都不多。也不要为它升文档版本：
+	 * 少一个键和空表是同一种意思。
+	 */
+	tasks?: Record<string, Record<string, Task>>;
 };
 
 /** 空状态。每次调用给一个新对象：它会被 `ensureChannel` 等原地改。 */
 export function emptyChannelState(): ChannelState {
-	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {} };
+	return { channels: {}, messages: {}, nextSeq: {}, readMarks: {}, tasks: {} };
+}
+
+/**
+ * 某个频道的任务表。**读侧的唯一入口**：老文档没有 `tasks`，这里给空表，
+ * 且不往 state 上补键（补了就等于「读」改了文档，下一次提交会写一份空表上盘）。
+ */
+export function tasksOf(state: ChannelState, channelId: string): Record<string, Task> {
+	return state.tasks?.[channelId] ?? {};
+}
+
+/**
+ * 这个频道下一个可用的任务 id：现有 id 里最大的编号 + 1。
+ *
+ * 不用单独的计数器字段（少一个要跟 `tasks` 对齐的键），也不填空号 —— 任务只有
+ * `dropped`、没有删除，id 一旦用过就永远在表里，所以「最大 +1」不会撞号；
+ * 填空号反倒会让一条旧消息的 `t3` 指向新任务。认不出的 id（手改过的、插件写的）
+ * 直接跳过，不参与编号。
+ */
+export function nextTaskIdOf(tasks: Record<string, Task>): string {
+	let max = 0;
+	for (const id of Object.keys(tasks)) {
+		const match = /^t(\d+)$/.exec(id);
+		if (match === null) continue;
+		const number = Number(match[1]);
+		if (Number.isSafeInteger(number) && number > max) max = number;
+	}
+	return `t${max + 1}`;
 }
 
 /**

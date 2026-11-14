@@ -149,8 +149,8 @@ async function setup(
 	};
 }
 
-describe("工具收敛：注册表只有十个", () => {
-	it("名单是 10 个，org / read_channel 这些旧名字一个不剩", async () => {
+describe("工具收敛：注册表只有十一个", () => {
+	it("名单是 11 个，org / read_channel 这些旧名字一个不剩", async () => {
 		const { tools } = await setup();
 		expect(tools.map((item) => item.name)).toEqual([
 			"say",
@@ -163,6 +163,7 @@ describe("工具收敛：注册表只有十个", () => {
 			"run",
 			"file",
 			"search",
+			"task",
 		]);
 	});
 });

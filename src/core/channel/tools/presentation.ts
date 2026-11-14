@@ -100,6 +100,16 @@ export const traceHire: ToolTrace = (args) => {
 /** `route` 没有专门的画法：它是一条后台转交，落在通用行里。 */
 export const traceRoute: ToolTrace = () => ({ kind: "tool", title: "route" });
 
+/** `task` 走通用行：一个 `task` 后面跟着改的是哪一条，界面不需要专用图标。 */
+export const traceTask: ToolTrace = (args) => {
+	const action = asString(args["action"]) ?? "list";
+	if (action === "list") return { kind: "tool", title: "看了任务板" };
+	if (action === "mine") return { kind: "tool", title: "看了手上的活" };
+	if (action === "add") return { kind: "tool", title: "补标了一条任务" };
+	const id = asString(args["id"]) ?? "";
+	return { kind: "tool", title: id === "" ? "改了任务" : `改了任务 ${id}` };
+};
+
 /** `search` 也走通用行：它不是「读了一个文件」，没有现成的图标可用。 */
 export const traceSearch: ToolTrace = (args) => ({
 	kind: "tool",
