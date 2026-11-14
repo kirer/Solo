@@ -499,10 +499,16 @@ const stageFull = async () => {
 	const log = existsSync(coreLog) ? readFileSync(coreLog, "utf8") : "";
 	await writeFile(join(outDir, "stage3-core.log"), log);
 	if (!launched) await fail("装完之后没看到新进程启动，见 stage3-core.log");
-	const launches = log.split("\n").filter((line) => line.startsWith("[shell] 启动："));
+	// 这行的真身带着时间戳前缀（`2026-11-14 20:38:23.977 [shell] 启动：…`），
+	// 以前用 startsWith 一行都捞不到，捞到空串就报「新进程认的版本是 」。
+	const launches = log.split("\n").filter((line) => line.includes("[shell] 启动："));
 	const last = launches[launches.length - 1] ?? "";
 	const lastVersion = /版本 ([^；]+)；/.exec(last)?.[1] ?? "";
-	if (lastVersion !== newVersion) await fail(`新进程认的版本是 ${lastVersion}，不是 ${newVersion}`);
+	if (lastVersion !== newVersion) {
+		await fail(
+			`新进程认的版本是 ${lastVersion || "（捞不到）"}，不是 ${newVersion}；最后一条启动行：${last ? last.slice(0, 240) : "（日志里一行都没有）"}`,
+		);
+	}
 	const childPid = existsSync(pidFile) ? Number((await readFile(pidFile, "utf8")).trim()) : 0;
 	if (childPid > 0) {
 		try {
