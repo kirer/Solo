@@ -43,7 +43,19 @@ describe("发布闸：notes 空着但真动了代码", () => {
 		expect(start).toBeLessThan(create);
 	});
 
-	it("publish 仍只由 tag 触发（手动 dispatch 只验打包）", () => {
+	it("publish 仍只由 tag 触发（推 main 只打包，不发版）", () => {
 		expect(workflow).toContain("if: github.ref_type == 'tag'");
+	});
+
+	it("推 main 就自动跑打包（平时一直在验，发版时直接打 tag）", () => {
+		// 这一条和 publish 的 tag 守卫是一对：没有它，发版前得单独等一轮 dispatch；
+		// 有它却不守 publish，推 main 就会发版本。两样必须同时成立（Solo 2026-11-14）。
+		const onset = workflow.slice(workflow.indexOf("\non:"), workflow.indexOf("\npermissions:"));
+		expect(onset).toContain("branches:");
+		expect(onset).toContain("- main");
+		expect(onset).toContain("- \"v*\"");
+		// 并发组是全局的（`release-v2`），推 main 打包和 tag 发版必须串行，不许改名。
+		expect(workflow).toContain("group: release-v2");
+		expect(workflow).not.toContain("cancel-in-progress: true");
 	});
 });

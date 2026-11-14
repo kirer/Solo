@@ -3,9 +3,15 @@ name: 打包与发版
 # 推 v* 标签（或在 Actions 页面手动运行）→ 检查 → mac arm64 / win x64 并行打包
 # → 用仓库 secret SOLO_UPDATE_KEY 签更新清单 → 发 GitHub Release。
 # 更新源就是本仓库的 Releases；发布顺序是二进制先传、清单最后传（ADR-029 / ADR-067）。
+#
+# 推 main 也跑（Solo 2026-11-14 定）：平时就在验，发版时直接打 tag，不用发版前再单独等一轮。
+# `publish` 有 `if: github.ref_type == 'tag'`，推 main 只打包、不会误发版本。
+# 代价要说清：每次推 main 都真跑一次 mac + win 打包（并发组是全局的，会排队）。
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*"
   workflow_dispatch:
