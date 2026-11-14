@@ -220,6 +220,39 @@ jobs:
             --plugins-src plugins-src \
             --key "$RUNNER_TEMP/solo-update-key.pem"
           ls -l dist feed
+      # 闸：正文空着就发，等于这一版对外什么都没说。v2.9.18 就是这么出的——功能全被塞进
+      # `chore(版本): 2.9.18` 那一笔里，生成器只认 feat/fix 标题，正文就成了「这一版没有
+      # feat / fix 提交」。这里把「notes 是空的」和「真的动了代码」对起来：两条同时成立就红。
+      # 只动了 seed / 脚本 / 文档 / 测试的版本，notes 空着是正常的，放行。
+      - name: 闸：notes 空着但真动了代码
+        run: |
+          set -euo pipefail
+          if [ ! -f feed/release-notes.md ]; then
+            echo "没有 feed/release-notes.md：清单那步没跑成？"
+            exit 1
+          fi
+          if ! grep -q "这一版没有 feat / fix 提交" feed/release-notes.md; then
+            echo "正文有内容："
+            cat feed/release-notes.md
+            exit 0
+          fi
+          TAG="${{ steps.tag.outputs.tag }}"
+          PREV="$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude="${TAG}" "${TAG}^" 2>/dev/null || true)"
+          if [ -z "$PREV" ]; then
+            echo "找不到 ${TAG} 之前的 v* tag，这道闸判不了，先红。"
+            exit 1
+          fi
+          # desktop/ 也算：2.9.18 的功能有一半在 examples 之外的那层（`desktop/src/updates.ts`），
+          # 只盯 src/ 和 ui/ 会漏掉「功能只改了壳」的那种版本。
+          CHANGED="$(git diff --name-only "${PREV}..${TAG}" -- src ui desktop | head -20)"
+          if [ -n "$CHANGED" ]; then
+            echo "正文是「这一版没有 feat / fix 提交」，但 ${PREV}..${TAG} 动了代码："
+            echo "$CHANGED"
+            echo "功能请单独一笔 feat(...) / fix(...)，标题才会进 Release 正文与更新弹窗。"
+            echo "版本号那笔只碰数字（Solo 2026-11-14 定的规矩）。"
+            exit 1
+          fi
+          echo "正文空着，但这版没动 src/ ui/ desktop/（只改了文档、脚本、seed、测试）：放行。"
       - name: 发版（二进制先传，清单最后传）
         run: |
           set -euo pipefail
