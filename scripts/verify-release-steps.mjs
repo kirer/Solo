@@ -88,12 +88,9 @@ try {
 	}
 	// 假产物：清单只算 sha512，打包物本身多大无所谓；上传那步由假 gh 检查文件在不在。
 	mkdirSync(join(root, "dist"), { recursive: true });
-	const assets = [
-		`Solo-${version}-arm64.dmg`,
-		`Solo-${version}-arm64.zip`,
-		`Solo-${version}-x64.exe`,
-		`Solo-${version}-x64.zip`,
-	];
+	// 和 CI 的 dist 一个样：Windows 那两个产物 2026-11-15 起不出了（build-win 摘掉了），
+	// 这里多造反而会掩盖「publish 还在等 win 文件」这类改动。
+	const assets = [`Solo-${version}-arm64.dmg`, `Solo-${version}-arm64.zip`];
 	for (const asset of assets) writeFileSync(join(root, "dist", asset), `假产物 ${asset}\n`.repeat(16));
 
 	// 假 gh：只记账。`release view` 按 FAKE_RELEASE_STATE 回答，其余三件（create/upload/edit）
