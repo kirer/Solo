@@ -189,6 +189,11 @@ jobs:
             --out update-upgrade --stages 1,2 \
             --old-zip "$OLD" --new-zip "$NEW" \
             --key "$KEY_PEM"
+            # 自证：脚本自己写的结论必须是「通过」。只靠退出码不行——`set -u` 撞上面那个
+            # trap，退出码会是 0（macOS 的 bash 3.2，2026-11-15 栽过）。
+            test -f update-upgrade/result.txt || { echo "::error::段 1+2 一步都没跑完（没 result.txt），这次绿不算"; exit 1; }
+            grep -qx '通过' update-upgrade/result.txt || { echo "::error::段 1+2 结论不是「通过」：$(head -2 update-upgrade/result.txt)"; exit 1; }
+            echo "段 1+2 产物：$(ls update-upgrade | tr '\n' ' ')"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
@@ -221,6 +226,9 @@ jobs:
             --out update-upgrade-full --stages 3 \
             --new-zip "$NEW" \
             --key "$KEY_PEM"
+            # 自证：同上，看 result.txt 和 core.log 在不在。
+            test -f update-upgrade-full/stage3-core.log || { echo "::error::段 3 一步都没跑完（没 stage3-core.log），这次绿不算"; exit 1; }
+            grep -qx '通过' update-upgrade-full/result.txt || { echo "::error::段 3 结论不是「通过」：$(head -2 update-upgrade-full/result.txt)"; exit 1; }
         env:
           SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
       - uses: actions/upload-artifact@v4
@@ -316,6 +324,11 @@ jobs:
             --plugins-src plugins-src \
             --key "$KEY_PEM"
           ls -l dist feed
+          # 自证：这几份是这一步该产出的，缺一份就是没跑完（同上：退出码可能被 trap 吞成 0）。
+          for f in feed/latest-mac.json feed/latest-mac.json.sig feed/plugins.json feed/plugins.json.sig feed/release-notes.md; do
+            test -s "$f" || { echo "::error::签清单没产出 $f，这次绿不算"; exit 1; }
+          done
+          node -e 'const m=require("./feed/latest-mac.json"); if(!Array.isArray(m.notes)||m.notes.length===0){console.error("::error::清单里 notes 是空的");process.exit(1);} console.log("清单 notes "+m.notes.length+" 条，version="+m.version);'
       # 闸：正文空着就发，等于这一版对外什么都没说。v2.9.18 就是这么出的——功能全被塞进
       # `chore(版本): 2.9.18` 那一笔里，生成器只认 feat/fix 标题，正文就成了「这一版没有
       # feat / fix 提交」。这里把「notes 是空的」和「真的动了代码」对起来：两条同时成立就红。
