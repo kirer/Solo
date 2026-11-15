@@ -373,6 +373,9 @@ const stageReplace = async () => {
 	note(`替换：${before} → ${after}（期望 ${newVersion}）`);
 	if (after !== newVersion) await fail(`替换后版本是 ${after}，不是 ${newVersion}`);
 	if (existsSync(`${app}.old`)) await fail("Solo.app.old 还在（没清掉）");
+	// 这里的 `open` 被替身拦下来了（见上面 fakeBin），只记一笔。**注意：`open` 命令跑完
+	// 不等于应用起来了** —— 它只是把请求交给系统。这一步只判文件状态（版本、`.old`、标记），
+	// 所以现在安全；哪天这里要判「进程起来没」，那就得轮询，别读一次（Solo 2026-11-15）。
 	const opened = existsSync(mark) ? (await readFile(mark, "utf8")).trim() : "";
 	if (!opened.includes(app)) await fail(`安装脚本没走到「打开新版本」那一步（open 标记：「${opened}」）`);
 	note(`安装脚本最后一行 open 被拦下（记录：${opened}）`);
@@ -436,7 +439,12 @@ const stageFull = async () => {
 	const env = { SOLO_UPDATE_URL: url, SOLO_VERIFY_INSTALL: "1", PATH: `${fakeBin}:${process.env.PATH ?? ""}` };
 	const run = await startApp(app, home, env);
 	const deadline = Date.now() + longWait;
-	const downloaded = await waitFor("日志里出现「下载完成」", deadline, () => /\[update\] 下载完成/.test(run.text()));
+	// 「下载完成」和「自动安装模式：跳过『立即重启安装』」是先后两行，中间还隔着一次回调。
+	// 只等前一行就取全文，后一行可能还没打出来 —— 今天栽的第三次「读太早」就是这一类。
+	const downloaded = await waitFor("日志里出现「下载完成」和「跳过立即重启安装」", deadline, () => {
+		const text = run.text();
+		return /\[update\] 下载完成/.test(text) && text.includes("[update] 自动安装模式：跳过「立即重启安装」");
+	});
 	const text1 = run.text();
 	await writeFile(join(outDir, "stage3-full.log"), text1);
 	if (!downloaded) {
@@ -488,7 +496,11 @@ const stageFull = async () => {
 			}`,
 		);
 	}
-	if (existsSync(`${app}.old`)) await fail("Solo.app.old 还在（没清掉）");
+	// `Solo.app.old` 同一个道理：安装脚本的顺序是 mv new app → xattr -dr → rm -rf old，所以
+	// 版本刚变上来那一刻 old 往往还在（CI 2026-11-15 实测：退出后 1 秒就查，报「还在（没清掉）」，
+	// 其实它正在删）。给它 60 秒，等满还在才红。
+	const oldGone = await waitFor("Solo.app.old 清掉", Date.now() + 60_000, () => !existsSync(`${app}.old`));
+	if (!oldGone) await fail("Solo.app.old 还在（没清掉）：等了 60 秒");
 
 	// 新进程自己认的版本：启动日志那行里写着 `版本 x.y.z`。
 	const coreLog = join(launchedHome, ".solo", "logs", "core.log");
@@ -509,7 +521,10 @@ const stageFull = async () => {
 			`新进程认的版本是 ${lastVersion || "（捞不到）"}，不是 ${newVersion}；最后一条启动行：${last ? last.slice(0, 240) : "（日志里一行都没有）"}`,
 		);
 	}
-	const childPid = existsSync(pidFile) ? Number((await readFile(pidFile, "utf8")).trim()) : 0;
+	// pid 文件由 `open` 替身在新进程起来之后才写，可能比启动日志晚一拍。只读一次会漏杀一个
+	// 还活着的实例，后面的步骤被它干扰，所以等它，最多 10 秒。
+	const gotPid = await waitFor("pid 文件出现", Date.now() + 10_000, () => existsSync(pidFile));
+	const childPid = gotPid ? Number((await readFile(pidFile, "utf8")).trim()) : 0;
 	if (childPid > 0) {
 		try {
 			process.kill(childPid, "SIGKILL");
