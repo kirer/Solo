@@ -313,8 +313,10 @@ jobs:
             echo "区间里一个提交都没有：要么克隆太浅，要么 tag 打错了。notes 会是空数组，当场红。"
             exit 1
           fi
-          printf '%s\n' "$SOLO_UPDATE_KEY" > "$RUNNER_TEMP/solo-update-key.pem"
-          chmod 600 "$RUNNER_TEMP/solo-update-key.pem"
+          KEY_PEM="$RUNNER_TEMP/solo-update-key.pem"
+          printf '%s\n' "$SOLO_UPDATE_KEY" > "$KEY_PEM"
+          chmod 600 "$KEY_PEM"
+          trap 'rm -f "$KEY_PEM"' EXIT INT TERM
           mkdir -p feed
           node --experimental-strip-types scripts/update-manifest.ts \
             --feed feed --version "$VERSION" \
