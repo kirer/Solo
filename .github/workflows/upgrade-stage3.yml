@@ -1,0 +1,121 @@
+# 段 3（整链：自己下载、自己替换、自己重开）的专用通道。
+#
+# 为什么单独开一个：2026-11-15 它一天栽了三次在「读太早」，连着让发版的 build-mac 红掉，红的
+# 还不是产品的问题。老板拍了把它从发版闸上摘下来 —— 连绿三次再挂回去（挂回去就是把
+# `release.yml` 里 `SOLO_VERIFY_SEGMENT3` 那段和那条 `if` 删掉）。在那之前它是一条旁路：
+# **手动跑这里，别挡发版**。
+#
+# 怎么跑：Actions → 段 3 升级验收 → Run workflow。
+#   - `tag` 留空 = 用最近一个 `v*` tag；要验别的就填。
+#   - `run_id` 填了就去捞那趟 release run 的 `mac-arm64` 产物，省掉重新打包（二十多分钟）。
+#     留空就按 tag 现打一份。
+name: 段 3 升级验收
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "验哪个 tag（留空 = 最近一个 v* tag）"
+        required: false
+      run_id:
+        description: "可选：直接捞这趟 release run 的 mac-arm64 产物，别重新打包"
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  # 和发版那趟串行：mac 打包就一台机器，别两边同时打（组名和 release.yml 一致）。
+  group: release-v2
+  cancel-in-progress: false
+
+jobs:
+  stage3:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - name: 选版本
+        id: pick
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
+            echo "没指定 tag，用最近一个：$TAG"
+          fi
+          git checkout "$TAG"
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "v$VERSION" != "$TAG" ]; then
+            echo "tag $TAG 和 package.json 的版本 $VERSION 对不上：验出来的东西对不上号"
+            exit 1
+          fi
+          echo "tag=$TAG version=$VERSION"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      # 两条路：能捞到那趟 run 的产物就不重新打包（那才是发版时真正发出去的东西）。
+      - name: 拿本版 arm64 zip
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.pick.outputs.version }}"
+          INNER="release/Solo-${VERSION}-arm64.zip"
+          mkdir -p release
+          RUN_ID="${{ inputs.run_id }}"
+          if [ -n "$RUN_ID" ]; then
+            echo "去捞 run $RUN_ID 的 mac-arm64 产物"
+            mkdir -p artifact
+            if GH_TOKEN="${{ secrets.GITHUB_TOKEN }}" gh run download "$RUN_ID" -n mac-arm64 -D artifact; then
+              FOUND=$(ls artifact/*-arm64.zip 2>/dev/null | head -1 || true)
+              if [ -n "$FOUND" ]; then
+                cp "$FOUND" "$INNER"
+                echo "用捞到的那份：$FOUND"
+              fi
+            else
+              echo "没捞到（run 太老、产物过期，或者 run_id 不对），改成现打一份"
+            fi
+          fi
+          if [ ! -f "$INNER" ]; then
+            npm run ui:build
+            # 和 release.yml 一样的理由：dmg 偶尔 hdiutil: create failed - Device not configured，
+            # 机器层面的瞬时问题，失败一次就重打一次。
+            npm run desktop:dist:mac || {
+              echo "第一次 macOS 打包失败，重试…"
+              npm run desktop:dist:mac
+            }
+          fi
+          ls -l "$INNER"
+      - name: 升级验收（段 3：整链下载替换重开）
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.pick.outputs.version }}"
+          NEW="release/Solo-${VERSION}-arm64.zip"
+          if [ ! -f "$NEW" ]; then
+            echo "没找到 $NEW"
+            ls -l release || true
+            exit 1
+          fi
+          # 私钥只在这一步活着：不管过没过，退出时都删掉，不留在 runner 上。
+          umask 077
+          KEY_PEM="$RUNNER_TEMP/solo-update-key.pem"
+          printf '%s' "$SOLO_UPDATE_KEY" > "$KEY_PEM"
+          trap 'rm -f "$KEY_PEM"' EXIT INT TERM
+          node --experimental-strip-types scripts/verify-upgrade.mjs \
+            --out update-upgrade-full --stages 3 \
+            --new-zip "$NEW" \
+            --key "$KEY_PEM"
+        env:
+          SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: stage3-verdict
+          if-no-files-found: warn
+          path: update-upgrade-full/
