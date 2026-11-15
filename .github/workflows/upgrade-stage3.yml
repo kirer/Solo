@@ -127,6 +127,9 @@ jobs:
           # 把真正拼出来的参数打到日志：2026-11-15 那趟 old_tag=v2.9.19 明明 echo 了「真实升级路径」，
           # 脚本里却走了替身分支（`--old-tag` 没到 node）。光看脚本源码看不出差在哪，就看这一行的实际值。
           echo "ARGS 实际内容（方括号是我加的边界）：$(printf '[%s] ' "${ARGS[@]}")"
+          # 同一批参数先喂给 node 自己，看它收到的 argv 到底长什么样、node 是哪个版本：
+          # 本地用同样的参数跑是走真实路径的，CI 上却走替身，只能怀疑这一段。
+          node -e 'console.log("node", process.version, "收到的 argv:", JSON.stringify(process.argv.slice(1)))' "${ARGS[@]}"
           node --experimental-strip-types scripts/verify-upgrade.mjs "${ARGS[@]}"
           # 「绿」得自己证。2026-11-15 真发生过一次假绿：上面那条 echo 里的 `$VERSION` 后面紧跟全角 `（`，
           # 当成变量名 `VERSION（`，`set -u` 报 unbound、脚本当场退出，可这一步照样标 success，
