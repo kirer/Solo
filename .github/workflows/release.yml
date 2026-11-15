@@ -454,6 +454,9 @@ jobs:
           node -e 'const m=require("./feed/latest-mac.json"); for (const n of m.notes) console.log("· "+n); console.log("version="+m.version);'
           echo "--- files 段和线上那份比："
           node -e 'const a=require("./old/latest-mac.json"), b=require("./feed/latest-mac.json"); const same=JSON.stringify(a.files)===JSON.stringify(b.files); console.log(same?"一致（下载校验照过）":"不一样！停下"); if(!same) process.exit(1);'
+          # 自证：这一步该产出两个文件，没有就是没跑完（`set -u` 撞 trap 时退出码会是 0，见技能）。
+          test -s feed/latest-mac.json || { echo "::error::没签出 feed/latest-mac.json"; exit 1; }
+          test -s feed/latest-mac.json.sig || { echo "::error::没签出 feed/latest-mac.json.sig"; exit 1; }
       - name: 只传那两个文件（dmg / zip 一个不碰）
         run: |
           set -euo pipefail
@@ -464,6 +467,21 @@ jobs:
             exit 0
           fi
           gh release upload "$TAG" feed/latest-mac.json feed/latest-mac.json.sig --clobber
+          # 自证：把线上那份拉回来，跟我手里这份逐字节比。只信「传上去的确实变了」，
+          # 不信这一步的退出码（`set -u` 撞 trap 时会假绿）。
+          rm -rf verify-up
+          mkdir -p verify-up
+          gh release download "$TAG" -p latest-mac.json -p latest-mac.json.sig --clobber -D verify-up
+          for f in latest-mac.json latest-mac.json.sig; do
+            got=$(sha256sum "verify-up/$f" | cut -d' ' -f1)
+            want=$(sha256sum "feed/$f" | cut -d' ' -f1)
+            if [ "$got" != "$want" ]; then
+              echo "::error::线上的 $f 和我传的不是同一个（线上 $got，本地 $want）"
+              exit 1
+            fi
+            echo "线上 $f = $want（一致）"
+          done
+          node -e 'const m=require("./verify-up/latest-mac.json"); console.log("线上清单 version="+m.version+"，notes "+m.notes.length+" 条");'
       - name: 核二进制没变
         run: |
           set -euo pipefail
