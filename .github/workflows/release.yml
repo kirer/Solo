@@ -22,6 +22,12 @@ on:
         description: "只打印将要做的事：不建 Release、不传资产（推 tag 触发时忽略这个输入）"
         type: boolean
         default: true
+      tag:
+        description: "给 notes_file 用：改哪一版（vX.Y.Z；留空 = 最新一版）"
+        required: false
+      notes_file:
+        description: "只改已发出去那版的更新说明：填仓库里的文案文件（如 release-notes/2.9.20.txt）。给了就只重签清单、只传那两个文件，不建 Release、不动二进制"
+        required: false
 
 permissions:
   contents: read
@@ -77,6 +83,8 @@ jobs:
 
   build-mac:
     needs: verify
+    # 只改 notes 那一趟（dispatch 给了 notes_file）不用打包：不碰二进制。
+    if: inputs.notes_file == ''
     runs-on: macos-latest
     timeout-minutes: 60
     env:
@@ -374,3 +382,106 @@ jobs:
             feed/plugin-token-stats.json feed/plugin-model-manager.json \
             --clobber
           gh_publish release edit "$TAG" --draft=false --latest
+
+  resign-notes:
+    # 只改「用户点『检查更新』看到的那段话」。它在 `latest-mac.json` 的 `notes` 数组里，
+    # **不是** Release 正文（2026-11-15 踩过：`gh release edit` 改完，用户看到的一点没变）。
+    #
+    # 这是过渡入口，**不是第二条发版路径**：正常发版的 notes 由提交标题生成，等闸收紧到
+    # 「只认 feat/fix/perf/ui」之后，根本不该需要人来改。只在「已经发出去的版本、用户看到
+    # 的文案不对」时用它。
+    #
+    # 不动 dmg/zip：读线上那份清单、只换 `notes`、`version`/`files` 原样抄过去（脚本里再比
+    # 一次），同一把私钥重签 `.sig`，只 `upload --clobber` 那两个文件。跑完用 asset digest
+    # 前后比一遍，二进制变一个字节就红。
+    if: inputs.notes_file != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # dispatch 默认 dry_run=true：只演不传。要真改，重新 dispatch 时把勾去掉。
+      DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: 选 tag
+        id: pick
+        run: |
+          set -euo pipefail
+          TAG="${{ inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --json tagName --jq .tagName)
+            echo "没指定 tag，用最新一版：$TAG"
+          fi
+          case "$TAG" in
+            v*) ;;
+            *) echo "tag 得写成 vX.Y.Z：$TAG"; exit 1 ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+      - name: 取线上那份清单，记下二进制指纹
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.pick.outputs.tag }}"
+          mkdir -p old
+          gh release download "$TAG" -p latest-mac.json -p latest-mac.json.sig --clobber -D old
+          ls -l old
+          # 传之前先记账：名字 + digest + 字节数。传完再记一次，两次必须一模一样。
+          gh release view "$TAG" --json assets \
+            --jq '.assets[]|select(.name|endswith(".zip") or endswith(".dmg") or endswith(".exe"))|"\(.name) \(.digest // "-") \(.size)"' \
+            | sort > before.txt
+          echo "--- 传之前的二进制："
+          cat before.txt
+      - name: 只换 notes，重签清单
+        env:
+          SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEY_PEM="$RUNNER_TEMP/solo-update-key.pem"
+          printf '%s\n' "$SOLO_UPDATE_KEY" > "$KEY_PEM"
+          chmod 600 "$KEY_PEM"
+          trap 'rm -f "$KEY_PEM"' EXIT INT TERM
+          node --experimental-strip-types scripts/resign-notes.ts \
+            --manifest old/latest-mac.json \
+            --notes-file "${{ inputs.notes_file }}" \
+            --key "$KEY_PEM" \
+            --out feed
+          echo "--- 新的 notes（用户会看到这几条）："
+          node -e 'const m=require("./feed/latest-mac.json"); for (const n of m.notes) console.log("· "+n); console.log("version="+m.version);'
+          echo "--- files 段和线上那份比："
+          node -e 'const a=require("./old/latest-mac.json"), b=require("./feed/latest-mac.json"); const same=JSON.stringify(a.files)===JSON.stringify(b.files); console.log(same?"一致（下载校验照过）":"不一样！停下"); if(!same) process.exit(1);'
+      - name: 只传那两个文件（dmg / zip 一个不碰）
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.pick.outputs.tag }}"
+          if [ "${DRY_RUN:-}" = "1" ]; then
+            echo "[dry-run] 这次只演，线上一个字没动。真要改，重新 dispatch 时把 dry_run 的勾去掉。"
+            echo "[dry-run] 将执行：gh release upload $TAG feed/latest-mac.json feed/latest-mac.json.sig --clobber"
+            exit 0
+          fi
+          gh release upload "$TAG" feed/latest-mac.json feed/latest-mac.json.sig --clobber
+      - name: 核二进制没变
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.pick.outputs.tag }}"
+          gh release view "$TAG" --json assets \
+            --jq '.assets[]|select(.name|endswith(".zip") or endswith(".dmg") or endswith(".exe"))|"\(.name) \(.digest // "-") \(.size)"' \
+            | sort > after.txt
+          if ! diff -u before.txt after.txt; then
+            echo "二进制被动过了：这一版用户下到的包和清单里 sha512 对不上。停下。"
+            exit 1
+          fi
+          echo "传完再看：二进制一个字节没变（$(wc -l < after.txt | tr -d ' ') 个）"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: resign-notes
+          if-no-files-found: warn
+          path: |
+            before.txt
+            after.txt
+            feed/

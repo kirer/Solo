@@ -26,8 +26,9 @@ permissions:
   actions: read
 
 concurrency:
-  # 和发版那趟串行：mac 打包就一台机器，别两边同时打（组名和 release.yml 一致）。
-  group: release-v2
+  # 旁路就该有自己的组：跟发版共用 `release-v2` 会把推 main 那趟堵在后头（Solo 2026-11-15）。
+  # 组内照样串行——一条链上同时跑两个升级验收，装来装去分不清是谁的锅。
+  group: upgrade-stage3
   cancel-in-progress: false
 
 jobs:
