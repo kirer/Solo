@@ -115,7 +115,7 @@ jobs:
           # 不给就是替身（本版包改个 0.0.0-verify）—— 那种只验稳不稳，验不出「用户那条路上有坑」。
           OLD_TAG="${{ inputs.old_tag }}"
           if [ -n "$OLD_TAG" ]; then
-            echo "真实升级路径：$OLD_TAG → v$VERSION（旧包脚本自己下）"
+            echo "真实升级路径：${OLD_TAG} → v${VERSION}（旧包脚本自己下）"
           else
             echo "替身路径：拿本版包改版本号当旧版（只验稳不稳）"
           fi
@@ -125,6 +125,14 @@ jobs:
             ARGS+=(--old-tag "$OLD_TAG")
           fi
           node --experimental-strip-types scripts/verify-upgrade.mjs "${ARGS[@]}"
+          # 「绿」得自己证。2026-11-15 真发生过一次假绿：上面那条 echo 里的 `$VERSION` 后面紧跟全角 `（`，
+          # 当成变量名 `VERSION（`，`set -u` 报 unbound、脚本当场退出，可这一步照样标 success，
+          # 日志里一行验收都没有。产物在才算跑过 —— 没有 core.log 就是一步没跑完。
+          test -f update-upgrade-full/stage3-core.log || {
+            echo "::error::段 3 一步都没跑完就退出了（没有 stage3-core.log），这次绿不算"
+            exit 1
+          }
+          echo "段 3 产物：$(ls update-upgrade-full | tr '\n' ' ')"
         env:
           SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
           # needOldZip() 在真旧版那条路上要 `gh release download`，读 Release 得带 token。
