@@ -124,6 +124,9 @@ jobs:
           if [ -n "$OLD_TAG" ]; then
             ARGS+=(--old-tag "$OLD_TAG")
           fi
+          # 把真正拼出来的参数打到日志：2026-11-15 那趟 old_tag=v2.9.19 明明 echo 了「真实升级路径」，
+          # 脚本里却走了替身分支（`--old-tag` 没到 node）。光看脚本源码看不出差在哪，就看这一行的实际值。
+          echo "ARGS 实际内容（方括号是我加的边界）：$(printf '[%s] ' "${ARGS[@]}")"
           node --experimental-strip-types scripts/verify-upgrade.mjs "${ARGS[@]}"
           # 「绿」得自己证。2026-11-15 真发生过一次假绿：上面那条 echo 里的 `$VERSION` 后面紧跟全角 `（`，
           # 当成变量名 `VERSION（`，`set -u` 报 unbound、脚本当场退出，可这一步照样标 success，
