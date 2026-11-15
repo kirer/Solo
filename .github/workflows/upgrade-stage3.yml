@@ -55,8 +55,15 @@ jobs:
             TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*')
             echo "没指定 tag，用最近一个：$TAG"
           fi
-          git checkout "$TAG"
-          VERSION=$(node -p "require('./package.json').version")
+          # 别 `git checkout "$TAG"`：一 checkout，**验收脚本**也跟着回到那个版本，老脚本的 bug 会让
+          # 结论失真。2026-11-15 就是这个坑 —— v2.9.20 里的 verify-upgrade.mjs 还没有「真实升级路径」
+          # 那段，于是每趟都填了 `old_tag=v2.9.19`、bash 也把参数拼进去了，脚本照样走替身分支，
+          # 连着三趟「绿」全是替身。**验的是那个 tag 的包，工具要用最新的**，所以只从 tag 里读版本号。
+          VERSION=$(git show "${TAG}:package.json" | sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+          if [ -z "$VERSION" ]; then
+            echo "${TAG}:package.json 里读不出 version"
+            exit 1
+          fi
           if [ "v$VERSION" != "$TAG" ]; then
             echo "tag $TAG 和 package.json 的版本 $VERSION 对不上：验出来的东西对不上号"
             exit 1
@@ -87,6 +94,11 @@ jobs:
             fi
           fi
           if [ ! -f "$INNER" ]; then
+            # 现打这条路才需要 tag 的代码（不然打出来的是 main 的包、顶着 tag 的版本号，名不副实）。
+            # 这时候连验收脚本也是 tag 里那版，日志里要能看出来。
+            echo "没捞到产物：切到 ${TAG} 的代码现打一份——这趟连验收脚本都是 ${TAG} 那版，结论只代表那个版本"
+            git checkout "$TAG"
+            npm ci
             npm run ui:build
             # 和 release.yml 一样的理由：dmg 偶尔 hdiutil: create failed - Device not configured，
             # 机器层面的瞬时问题，失败一次就重打一次。
