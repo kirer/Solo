@@ -37,8 +37,10 @@ describe("发布闸：notes 空着但真动了代码", () => {
 		expect(gate).toMatch(/-- src ui desktop/);
 	});
 
-	it("排在 `gh release create` 之前——发出去之后才红，等于已经发出去了", () => {
-		const create = workflow.indexOf("gh release create");
+	it("排在 `release create` 之前——发出去之后才红，等于已经发出去了", () => {
+		// 只认 `release create` 这段：create 那行现在经 `gh_publish` 包一层（dry_run 要在那儿拦），
+		// 写死成 `gh release create` 的话，加壳就会被判成「没有创建这一步」。
+		const create = workflow.indexOf("release create");
 		expect(create).toBeGreaterThan(0);
 		expect(start).toBeLessThan(create);
 	});

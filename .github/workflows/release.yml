@@ -15,6 +15,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只打印将要做的事：不建 Release、不传资产（推 tag 触发时忽略这个输入）"
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -262,6 +267,8 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.verify.outputs.version }}
       SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+      # 手动跑（workflow_dispatch）默认 dry_run=true；推 tag 时 inputs 是空的，这里也就空着，照常真发。
+      DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
     steps:
       # 全历史：本版改了什么（清单里的 notes / Release 正文）是从提交标题生成的，
       # 浅克隆读不到「上一个 tag..本 tag」那段（Solo 2026-11-12：手抄必然忘）。
@@ -362,6 +369,14 @@ jobs:
       - name: 发版（二进制先传，清单最后传）
         run: |
           set -euo pipefail
+          # dry-run 只记账不动手：create / upload / edit 一律走这个壳，view 这种只读的照旧真跑。
+          gh_publish() {
+            if [ -n "${DRY_RUN:-}" ]; then
+              echo "[dry-run] 将执行：gh $*"
+              return 0
+            fi
+            gh "$@"
+          }
           TAG="${{ steps.tag.outputs.tag }}"
           STATE="$(gh release view "$TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
           if [ "$STATE" = "false" ]; then
@@ -370,20 +385,20 @@ jobs:
           fi
           if [ -z "$STATE" ]; then
             # 正文和清单里的 notes 是同一份：从提交标题生成，不手抄。
-            gh release create "$TAG" --draft --title "Solo $VERSION" --notes-file feed/release-notes.md --target "$GITHUB_SHA"
+            gh_publish release create "$TAG" --draft --title "Solo $VERSION" --notes-file feed/release-notes.md --target "$GITHUB_SHA"
           fi
-          gh release upload "$TAG" \
+          gh_publish release upload "$TAG" \
             "dist/Solo-${VERSION}-arm64.dmg" \
             "dist/Solo-${VERSION}-arm64.zip" \
             "dist/Solo-${VERSION}-x64.exe" \
             "dist/Solo-${VERSION}-x64.zip" \
             --clobber
           # 插件清单和插件包最后传：客户端按 plugins.json 去取 plugin-*.json，少一个就是下不下来。
-          gh release upload "$TAG" \
+          gh_publish release upload "$TAG" \
             feed/latest-mac.json feed/latest-mac.json.sig \
             feed/latest-win.json feed/latest-win.json.sig \
             feed/plugins.json feed/plugins.json.sig \
             feed/plugin-orb.json feed/plugin-file-tree.json feed/plugin-im-bot.json \
             feed/plugin-token-stats.json feed/plugin-model-manager.json \
             --clobber
-          gh release edit "$TAG" --draft=false --latest
+          gh_publish release edit "$TAG" --draft=false --latest
