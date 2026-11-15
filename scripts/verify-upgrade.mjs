@@ -403,12 +403,34 @@ const stageReplace = async () => {
 // ---- 段 3：整链（旧版 → 新版，自己下载自己装自己重开） ----
 
 const stageFull = async () => {
-	note(`段 3：整链 ${newVersion} —— 拿本版包当旧版，让它自己升上来`);
+	// 两条路：
+	//   - 默认（替身）：拿本版包当旧版，把版本号改成 0.0.0-verify。验的是「稳不稳」，反复跑都行。
+	//   - 给了 `--old-zip` 或 `--old-tag`（真实）：装真旧版（比如 2.9.19 的包），让它自己升上来。
+	//     这才是用户真会走的路 —— 版本号、旧的代码、旧的清单全都不是替身（Solo 2026-11-15：
+	//     三次连着绿只证明稳，不证明路对）。
+	const realOld = args["old-zip"] !== undefined || args["old-tag"] !== undefined;
+	const oldZipForStage3 = realOld ? await needOldZip() : newZip;
+	const standInVersion = realOld ? (args["old-tag"] ?? oldTag).replace(/^v/, "") : "0.0.0-verify";
+	if (realOld && standInVersion === newVersion) {
+		await fail(`旧版和新版是同一个版本（${newVersion}）：这么升比不出东西，--old-tag 换个更早的`);
+	}
+	note(
+		realOld
+			? `段 3：整链 ${standInVersion} → ${newVersion}（旧版用真包 ${basename(oldZipForStage3)}）`
+			: `段 3：整链 ${newVersion} —— 拿本版包当旧版，让它自己升上来`,
+	);
 	const home = join(scratch, "home-full");
-	const app = await installApp(newZip, home);
-	const standInVersion = "0.0.0-verify";
-	await setVersion(app, standInVersion);
-	note(`替身版本号改成 ${standInVersion}（跑的是本版代码，只是它认为自己是旧的）`);
+	const app = await installApp(oldZipForStage3, home);
+	if (realOld) {
+		const installedOld = await versionOf(app);
+		if (installedOld !== standInVersion) {
+			await fail(`装上的旧版是 ${installedOld}，不是 ${standInVersion}：旧包和 --old-tag 对不上`);
+		}
+		note(`装好真旧版 ${installedOld}，不动它的版本号，等它自己升`);
+	} else {
+		await setVersion(app, standInVersion);
+		note(`替身版本号改成 ${standInVersion}（跑的是本版代码，只是它认为自己是旧的）`);
+	}
 
 	// 安装脚本最后一行是 `open <新 app>`。这一行换成转发器：让它按**我们指的 HOME** 把新版本
 	// 拉起来。不换的话 `open` 走 LaunchServices、环境不经过我们这儿，新进程会去碰真实 `~/.solo`

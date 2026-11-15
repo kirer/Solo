@@ -20,6 +20,9 @@ on:
       run_id:
         description: "可选：直接捞这趟 release run 的 mac-arm64 产物，别重新打包"
         required: false
+      old_tag:
+        description: "可选：从哪个已发布的版本升上来（如 v2.9.19，走用户真会走的那条路）。留空 = 拿本版包当替身改个版本号（只验稳不稳）"
+        required: false
 
 permissions:
   contents: read
@@ -108,12 +111,24 @@ jobs:
           KEY_PEM="$RUNNER_TEMP/solo-update-key.pem"
           printf '%s' "$SOLO_UPDATE_KEY" > "$KEY_PEM"
           trap 'rm -f "$KEY_PEM"' EXIT INT TERM
-          node --experimental-strip-types scripts/verify-upgrade.mjs \
-            --out update-upgrade-full --stages 3 \
-            --new-zip "$NEW" \
-            --key "$KEY_PEM"
+          # 给了 old_tag 就走真实升级路径：脚本自己去 Release 把那个旧包装下来当起点。
+          # 不给就是替身（本版包改个 0.0.0-verify）—— 那种只验稳不稳，验不出「用户那条路上有坑」。
+          OLD_TAG="${{ inputs.old_tag }}"
+          if [ -n "$OLD_TAG" ]; then
+            echo "真实升级路径：$OLD_TAG → v$VERSION（旧包脚本自己下）"
+          else
+            echo "替身路径：拿本版包改版本号当旧版（只验稳不稳）"
+          fi
+          # 用数组拼参数：`${VAR:+--flag "$VAR"}` 那种写法会把引号当字面字符传进去。
+          ARGS=(--out update-upgrade-full --stages 3 --new-zip "$NEW" --key "$KEY_PEM")
+          if [ -n "$OLD_TAG" ]; then
+            ARGS+=(--old-tag "$OLD_TAG")
+          fi
+          node --experimental-strip-types scripts/verify-upgrade.mjs "${ARGS[@]}"
         env:
           SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
+          # needOldZip() 在真旧版那条路上要 `gh release download`，读 Release 得带 token。
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
