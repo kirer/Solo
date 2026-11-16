@@ -307,6 +307,29 @@ function micGate() {
 }
 
 /**
+ * 这一刻该不该开麦克风。**全文件只有这一处判断。**
+ *
+ * 老板 2026-11-16 报：「打开直接说话」没开，菜单栏那颗麦克风却一直亮。查下来不是某一条路
+ * 写错了，是「什么时候该听」散在三个地方各写一遍（按键、常驻听 effect、唤醒词 tick），
+ * 谁少写一个条件都看不出来。所以判据收到这里，三处一律调它：
+ *
+ *   - 常驻听：开关开着、私聊建好了、没在按键录音、窗口没藏起来；
+ *   - 唤醒词：开关开着，**而且常驻听没开**（两路都要麦克风，常驻听已经把「直接说」做完了）、
+ *     没在录音、没在转写、窗口没藏起来。
+ *
+ * 两个开关都关的时候，无论录音/转写/窗口什么状态，返回的两个都是 false —— 这是「不按说话
+ * 就别占麦克风」这条判据的全部内容，`test/ui/orb-mic-idle.test.ts` 拿真值表和 10 秒空跑钉着它。
+ */
+function micWant({ wake, listen, recording, transcribing, hidden, dmId }) {
+	const keying = recording === true;
+	const covered = hidden === true;
+	return {
+		listen: listen === true && dmId !== null && !keying && !covered,
+		wake: wake === true && listen !== true && !keying && transcribing !== true && !covered,
+	};
+}
+
+/**
  * 默认音色。v1.0 的 `zf_xiaoxiao` 在 v1.1-zh 这套模型里没有，默认落在 `zf_001`。
  *
  * **存名字，不存 sid。** sid 是 `voices.bin` 里的下标，换一次模型就整体错位：
@@ -2439,10 +2462,11 @@ export default {
 
 			useEffect(() => {
 				const tick = () => {
-					const want = readPrefs().wake === true;
-					setWakeOn(want);
-					// 常驻听开着就不起唤醒词：两路都要麦克风，而常驻听已经把「直接说」做完了。
-					if (want && !listenOn && !recording && !transcribing && !windowHidden) void startWake();
+					const prefs = readPrefs();
+					setWakeOn(prefs.wake === true);
+					// 该不该听只问 `micWant`，别在这儿再写一遍条件（以前就是三处各写一遍才漏的）。
+					const want = micWant({ ...prefs, recording, transcribing, hidden: windowHidden, dmId }).wake;
+					if (want) void startWake();
 					else stopWake();
 				};
 				const timer = window.setInterval(tick, 1500);
@@ -2652,7 +2676,14 @@ export default {
 
 			// 常驻听：开关打开就一直挂着；私聊还没建好、或者正在按键录音时先不起（两路抢麦克风）。
 			useEffect(() => {
-				const want = listenOn && dmId !== null && !recording && !windowHidden;
+				const want = micWant({
+					listen: listenOn,
+					wake: false,
+					recording,
+					transcribing: false,
+					hidden: windowHidden,
+					dmId,
+				}).listen;
 				if (want && listenRef.current === null) void startListen();
 				else if (!want && listenRef.current !== null) stopListen();
 				// eslint-disable-next-line react-hooks/exhaustive-deps

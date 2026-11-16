@@ -142,8 +142,11 @@ describe("源码：不该有第二条申请/停止的路", () => {
 		}
 	});
 
-	it("窗口藏起来就不再听：常驻听与唤醒词的开关都看 windowHidden", () => {
-		expect(SRC).toContain("const want = listenOn && dmId !== null && !recording && !windowHidden;");
-		expect(SRC).toContain("!transcribing && !windowHidden) void startWake();");
+	it("窗口藏起来就不再听：两条路的判据都来自 `micWant`，而它看 windowHidden", () => {
+		// 判据已收到 `micWant` 一处（`test/ui/orb-mic-idle.test.ts` 拿真值表和 10 秒空跑钉着），
+		// 这里只钉「两条路真的走了它」，别让谁再就地写一份条件。
+		expect(SRC).toContain("hidden: windowHidden,");
+		expect(SRC).toContain("const want = micWant({ ...prefs, recording, transcribing, hidden: windowHidden, dmId }).wake;");
+		expect(SRC).toContain("}).listen;");
 	});
 });
