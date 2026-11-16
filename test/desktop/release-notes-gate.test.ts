@@ -57,7 +57,9 @@ describe("发布闸：notes 空着但真动了代码", () => {
 		expect(onset).toContain("branches:");
 		expect(onset).toContain("- main");
 		expect(onset).toContain("- \"v*\"");
-		for (const job of ["build-mac", "build-win"]) {
+		// Windows 打包 2026-11-15 起停着（`build-win` 摘了），这里只查 mac 那一步；
+		// 恢复 Windows 时把 "build-win" 加回来，技能 `发版` 那条一起改。
+		for (const job of ["build-mac"]) {
 			const start = workflow.indexOf(`\n  ${job}:`);
 			expect(start).toBeGreaterThan(0);
 			const guard = workflow.slice(start, workflow.indexOf("runs-on:", start));
