@@ -71,6 +71,10 @@ jobs:
           echo "tag=$TAG version=$VERSION"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          # 下一个 step 的「现打」分支要拿 $TAG 去 checkout。只写进 GITHUB_OUTPUT 的话，
+          # 那边 `set -euo pipefail` 一碰 $TAG 就是 unbound variable —— 2026-11-16 真路径
+          # 第一趟就这么红的（红在拿包那步，还没摸到升级）。
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
       - run: npm ci
       # 两条路：能捞到那趟 run 的产物就不重新打包（那才是发版时真正发出去的东西）。
       - name: 拿本版 arm64 zip

@@ -1,0 +1,92 @@
+# 无头界面验：把 ui/ 真跑起来，用 headless Chrome 点、断言、截图。
+#
+# 为什么进 CI：只在本地跑等于没闸（Solo 2026-11-16）。老板定的硬规矩两条一起守：
+# 任何人不许起可见窗口、任何人不许在他这台机器上起 Solo 实例 —— 这里起的是**完全隔离**
+# 的一份：`--app-root` / `--user-root` 都在 `$RUNNER_TEMP` 下，跑完连目录一起删。
+#
+# 判据（少一条就红，别只看「日志绿」）：
+#   ① 进了主界面（不是引导页，说明假模型装配起来了）
+#   ② 点开造出来的群，假消息真渲染在屏上
+#   ③ 截图落盘并上传成产物 —— 退出码 0 但没图 = 假绿
+name: 界面验（无头）
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 界面验不占打包机、也不改仓库，没必要串行；新的一趟直接顶掉旧的就够。
+  group: ui-smoke
+  cancel-in-progress: true
+
+jobs:
+  ui-smoke:
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      # `ui/web/` 是 gitignore 的构建产物（vite 的 outDir 是 `../web`，相对 `ui/app`），
+      # 不构建后端就没界面可 serve。
+      - name: 构建界面
+        run: npm run ui:build
+
+      - name: 起一整套、点开群、断言、截图
+        env:
+          SOLO_SHOTS: ${{ runner.temp }}/ui-shots
+        run: |
+          # 不加 -e：下面要自己判退出码再决定红不红（加了 -e 管道一出非零就断在这里）。
+          set -uo pipefail
+          mkdir -p "$SOLO_SHOTS"
+          node scripts/ui-smoke/ui-shell.mjs --shot "$SOLO_SHOTS" 2>&1 | tee smoke.log
+          code=${PIPESTATUS[0]}
+          echo "冒烟退出码：$code"
+          if [ "$code" -ne 0 ]; then
+            echo "::error::无头冒烟失败 —— 看上面那几行「这套壳没起作用：…」"
+            exit 1
+          fi
+
+          # 产物自证：图必须真落盘。脚本的断言在 DOM 里做，但图不上传就等于没证据。
+          n=$(ls "$SOLO_SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')
+          echo "截图数量：$n"
+          ls -l "$SOLO_SHOTS" || true
+          if [ "$n" -lt 1 ]; then
+            echo "::error::一张图都没出，这次不算"
+            exit 1
+          fi
+
+          # 界面上的断言也写进日志：光有退出码 0，人看日志看不出它验了什么。
+          if ! grep -q '"看得到假消息": true' smoke.log; then
+            echo "::error::日志里没有「看得到假消息: true」—— 群点开了但消息没渲染"
+            grep -E '"(进了主界面|不是引导页|看得到假消息)"' smoke.log || true
+            exit 1
+          fi
+          echo "界面验过：主界面 + 假群 + 假消息都在"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-smoke-shots
+          path: ${{ runner.temp }}/ui-shots
+          if-no-files-found: warn
+
+      - name: 收尾：确认隔离后端没留在 runner 上
+        if: always()
+        run: |
+          set -uo pipefail
+          left=$(pgrep -f "src/shell/main.ts" | wc -l | tr -d ' ')
+          echo "残留后端进程：$left"
+          if [ "$left" -ne 0 ]; then
+            echo "::error::隔离后端没退干净，runner 上留了 $left 个"
+            exit 1
+          fi
