@@ -1,6 +1,6 @@
 name: 打包与发版
 
-# 推 v* 标签（或在 Actions 页面手动运行）→ 检查 → mac arm64 打包
+# 推 v* 标签（或在 Actions 页面手动运行）→ 检查 → mac arm64 / win x64 并行打包
 # → 用仓库 secret SOLO_UPDATE_KEY 签更新清单 → 发 GitHub Release。
 # 更新源就是本仓库的 Releases；发布顺序是二进制先传、清单最后传（ADR-029 / ADR-067）。
 #
@@ -8,8 +8,6 @@ name: 打包与发版
 # `publish` 有 `if: github.ref_type == 'tag'`，推 main 只打包、不会误发版本。
 # 代价要说清：每次推 main 都真跑一次 mac + win 打包（并发组是全局的，会排队）。
 
-# Windows（build-win / x64 产物 / latest-win.json）2026-11-15 暂时摘掉了（老板拍的），
-# 需要的时候 `git revert` 这一笔就回来。现在只出 mac arm64。
 on:
   push:
     branches:
@@ -240,11 +238,44 @@ jobs:
             release/Solo-${{ needs.verify.outputs.version }}-arm64.dmg
             release/Solo-${{ needs.verify.outputs.version }}-arm64.zip
 
+  build-win:
+    needs: verify
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 历史指纹表那条测试要遍历全部 v2.* tag。
+          # fetch-depth: 0 只保证历史提交，默认还带 --no-tags，只拉当前 ref 那一个 tag；
+          # 必须再要 fetch-tags: true，否则 2.9.0-2.9.6 的历史 hash 会被判成硬塞的。
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+      - run: npm ci
+      # Windows 上再跑一遍：`defaultUiDir` 这类 `URL.pathname` 的路径差异只有这里会露。
+      # 界面产物不进仓库了，测之前先构建。
+      - run: npm run ui:build
+      - run: npm test
+      - run: npm run desktop:dist:win
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win-x64
+          if-no-files-found: error
+          path: |
+            release/Solo-${{ needs.verify.outputs.version }}-x64.exe
+            release/Solo-${{ needs.verify.outputs.version }}-x64.zip
+
   publish:
-    needs: [verify, build-mac]
+    needs: [verify, build-mac, build-win]
     # 只有「推 v* 标签」这一种触发才发版。手动运行（workflow_dispatch）落在分支上时，
     # 下面的 publish 会照 v<包版本> 去建 Release —— 等于把没打过标签的提交当版本发出去。
-    # 手动跑只用来验打包，发布这条路必须由 tag 触发（2026-11-12 windows 那趟打包红过，才发现推 main 时也把它一起跑起来了）。
+    # 手动跑只用来验打包，发布这条路必须由 tag 触发（2026-11-12 build-win 红那次发现的）。
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -315,6 +346,7 @@ jobs:
           node --experimental-strip-types scripts/update-manifest.ts \
             --feed feed --version "$VERSION" \
             --file darwin="dist/Solo-${VERSION}-arm64.zip" \
+            --file win32="dist/Solo-${VERSION}-x64.zip" \
             --tag "${{ steps.tag.outputs.tag }}" \
             --plugins-src plugins-src \
             --key "$KEY_PEM"
@@ -381,10 +413,13 @@ jobs:
           gh_publish release upload "$TAG" \
             "dist/Solo-${VERSION}-arm64.dmg" \
             "dist/Solo-${VERSION}-arm64.zip" \
+            "dist/Solo-${VERSION}-x64.exe" \
+            "dist/Solo-${VERSION}-x64.zip" \
             --clobber
           # 插件清单和插件包最后传：客户端按 plugins.json 去取 plugin-*.json，少一个就是下不下来。
           gh_publish release upload "$TAG" \
             feed/latest-mac.json feed/latest-mac.json.sig \
+            feed/latest-win.json feed/latest-win.json.sig \
             feed/plugins.json feed/plugins.json.sig \
             feed/plugin-orb.json feed/plugin-file-tree.json feed/plugin-im-bot.json \
             feed/plugin-token-stats.json feed/plugin-model-manager.json \
