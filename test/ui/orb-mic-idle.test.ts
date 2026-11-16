@@ -152,9 +152,9 @@ describe("空跑 10 秒：一次 getUserMedia 都不该发生", () => {
 });
 
 describe("源码：判断只有一处，别的路不许自己再写一遍条件", () => {
-	it("`micWant(` 只出现在定义与两个调用点里", () => {
+	it("`micWant(` 只出现在定义与三个读者里（唤醒词 tick、常驻听 effect、在听标识）", () => {
 		const hits = SRC.split("\n").filter((line) => line.includes("micWant(") && !line.trim().startsWith("*"));
-		expect(hits.length, `多出来的调用点：${hits.join(" | ")}`).toBe(3);
+		expect(hits.length, `多出来的调用点：${hits.join(" | ")}`).toBe(4);
 	});
 
 	it("申请入口只有三处 start*，且都在 `micWant` 判完之后", () => {
@@ -168,5 +168,21 @@ describe("源码：判断只有一处，别的路不许自己再写一遍条件"
 
 	it("组件卸载/窗口藏起来时，手上的麦克风全放掉", () => {
 		expect(SRC).toContain("mic.releaseAll();");
+	});
+
+	it("「在听」那个光只认麦克风真在手上，且球上给得出是在听哪一路", () => {
+		// 老板 2026-11-16：唤醒词开着就是常驻听，灯一直亮是设计，但界面上看不出来 ——
+		// 他花了半天才想明白。所以光必须挂在「真握着流」上，不是挂在开关上。
+		const light = SRC.split("\n").filter((line) => line.includes("setListening("));
+		expect(light.length, `多出来的点亮处：${light.join(" | ")}`).toBe(3);
+		expect(light.some((line) => line.includes("setListening(mic.held() > 0);"))).toBe(true);
+		// 只在「放掉流」那一处灭。
+		expect(light.some((line) => /^\s*setListening\(false\);$/.test(line))).toBe(true);
+		// 「真在手上」这件事只有总闸说得清：别处不许自己再记一份。
+		const actives = SRC.split("\n").filter((line) => line.includes("mic.held("));
+		expect(actives.length).toBe(1);
+		// 球上写清楚在听哪一路（`wake` 等口令 / `listen` 直接说话 / `false` 不在听）。
+		expect(SRC).toContain('"data-listening": listening ? (micWhy === "wake" ? "wake" : "listen") : "false",');
+		expect(SRC).toContain('title: listening ? (micWhy === "wake" ? "正在听：等「你好索罗」" : "正在听") : undefined,');
 	});
 });

@@ -301,7 +301,11 @@ function micGate() {
 		releaseAll() {
 			for (const stream of [...held]) this.release(stream);
 		},
-		/** 现在还占着几条（只有测试读它，界面不读）。 */
+		/**
+		 * 现在还占着几条。**球上「正在听」那个光只认它** —— 开关是意图，这才是事实：
+		 * 开着开关却一条流都没有，说明麦克风没打开（权限被拒、被别的程序占着），
+		 * 那就不该装出在听的样子。
+		 */
 		held: () => held.size,
 	};
 }
@@ -2038,8 +2042,14 @@ export default {
 			const BARGE_COOL_MS = 1_500;
 			const BARGE_FAULTS = 3;
 			const [listenOn, setListenOn] = useState(prefs.listen === true);
-			/** 常驻听此刻的状态，给小人身边那圈光用。 */
+			/**
+			 * 小人身边那圈光：手上真握着麦克风就亮（按着说、直接说话、唤醒词在等口令，都算）。
+			 * 以前只在「直接说话」开成那一刻置 true，唤醒词常驻听时球上什么标识都没有，
+			 * 老板只能盯着菜单栏那颗灯猜（2026-11-16）。现在只由下面那个 400ms 的读表决定。
+			 */
 			const [listening, setListening] = useState(false);
+			/** 在听的是哪一路：`wake` 等口令 / `listen` 直接说话 / 空串不在听。只给提示文案用。 */
+			const [micWhy, setMicWhy] = useState("");
 			const [sayLevel, setSayLevel] = useState(0);
 			const ringRef = useRef([]);
 			const listenRef = useRef(null);
@@ -2266,7 +2276,7 @@ export default {
 							vad.kept = 0;
 							vad.loud = 0;
 							vad.quiet = 0;
-							setListening(false);
+							// 光不在这儿灭：这一段说完不代表不在听了，交给那个读 `mic.active()` 的轮询。
 							if (keep < VAD_MIN_MS) return;
 							let total = 0;
 							for (const piece of chunks) total += piece.length;
@@ -2295,7 +2305,7 @@ export default {
 						vad.speaking = true;
 						vad.quiet = 0;
 						vad.kept = vad.loud * blockMs;
-						setListening(true);
+						// 同上：开口了不用手动点亮，光从一开始就挂着（流在手上）。
 					};
 					source.connect(node);
 					node.connect(mute);
@@ -2689,6 +2699,19 @@ export default {
 				// eslint-disable-next-line react-hooks/exhaustive-deps
 			}, [listenOn, dmId, recording, windowHidden]);
 
+			// 「在听」的唯一来源：麦克风是不是真在手上（不猜、不看开关）。两开关都关的时候
+			// 一条流都没有，球上就不会有任何「在听」的样子。
+			useEffect(() => {
+				const read = () => {
+					setListening(mic.held() > 0);
+					const want = micWant({ ...readPrefs(), recording, transcribing, hidden: windowHidden, dmId });
+					setMicWhy(want.listen ? "listen" : want.wake ? "wake" : "");
+				};
+				read();
+				const timer = window.setInterval(read, 400);
+				return () => clearInterval(timer);
+			}, [recording, transcribing, windowHidden, dmId]);
+
 			// 「在听」那圈光的强弱：rms 很低很低，直接按比例放大到看得见。
 			useEffect(() => {
 				if (!listening) return undefined;
@@ -2708,6 +2731,9 @@ export default {
 					className: "orb-ball",
 					id: "orb-ball",
 					"aria-label": unread > 0 ? `助理（${String(unread)} 条未读）` : "助理",
+					// 「在听」写进 title 和 data 属性：光能看见还不够，要能问出它在听什么。
+					title: listening ? (micWhy === "wake" ? "正在听：等「你好索罗」" : "正在听") : undefined,
+					"data-listening": listening ? (micWhy === "wake" ? "wake" : "listen") : "false",
 					"aria-expanded": menu ? "true" : "false",
 					onClick,
 					onPointerDown,

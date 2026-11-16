@@ -130,6 +130,25 @@ describe("源码：不该有第二条申请/停止的路", () => {
 		expect(cut("const cleanupStream = () => {", "\n\t\t\t};")).toContain("mic.release(streamRef.current);");
 	});
 
+	it("闸自己知道手上还有几条流（球上「正在听」就认它）", async () => {
+		const gate = buildGate();
+		const one = fakeStream("唤醒词");
+		expect(gate.held()).toBe(0);
+		const stream = await gate.open(() => Promise.resolve(one.stream));
+		expect(gate.held()).toBe(1);
+		gate.release(stream);
+		expect(gate.held(), "放掉了还说在手上：球上会亮着「正在听」而麦克风其实没开").toBe(0);
+		// 两条路同时开着（直接说话 + 按着说），放掉一条还剩一条。
+		const a = fakeStream("直接说话");
+		const b = fakeStream("按键录音");
+		const sa = await gate.open(() => Promise.resolve(a.stream));
+		await gate.open(() => Promise.resolve(b.stream));
+		gate.release(sa);
+		expect(gate.held()).toBe(1);
+		gate.releaseAll();
+		expect(gate.held()).toBe(0);
+	});
+
 	it("申请一律经闸：三条路里没有裸的 micWithTimeout 调用", () => {
 		for (const [from, to] of [
 			["const startRecording = async () => {", "const toggleSpeak"],
