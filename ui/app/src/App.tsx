@@ -6,6 +6,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import type { CSSProperties } from "react";
 import type { Attachment } from "./api/types.ts";
 import { Browser } from "./panels/Browser.tsx";
 import { Composer } from "./composer/Composer.tsx";
@@ -25,6 +26,7 @@ import { Stream } from "./stream/Stream.tsx";
 import { Titlebar } from "./titlebar/Titlebar.tsx";
 import {
 	closeBoard,
+	clampDockWidth,
 	closeBrowser,
 	closeDock,
 	closePluginView,
@@ -57,6 +59,7 @@ export function App(): JSX.Element {
 	const theme = useStore((state) => state.theme);
 	const right = useStore((state) => state.right);
 	const conn = useStore((state) => state.conn);
+	const dockWidth = useStore((state) => state.dockWidth);
 	const attentionUnread = useStore((state) => state.attentionUnread);
 	const needMenu = useStore((state) => state.needMenu);
 	const settings = useStore((state) => state.settings);
@@ -222,6 +225,8 @@ export function App(): JSX.Element {
 		channel !== null && channel.kind === "dm" && assistant !== undefined && channel.title === assistant.label;
 
 	const listOpen = detail === null || !assistantChat;
+	const panelWidth =
+		dockWidth === null ? null : clampDockWidth(dockWidth, typeof window === "undefined" ? dockWidth : window.innerWidth);
 
 	// 任务板那颗按钮只此一份：群聊抬头用它，Solo 信纸页（私聊）也用它 ——
 	// 老板 2026-11-16 在私聊里找不到板，入口不能靠翻右栏。
@@ -251,7 +256,23 @@ export function App(): JSX.Element {
 	);
 
 	return (
-		<div className="frame" data-view={view} data-dock={dock === null ? "false" : "true"} data-letter={assistantChat ? "true" : "false"} data-nav={nav}>
+		<div
+			className="frame"
+			data-view={view}
+			data-dock={dock === null ? "false" : "true"}
+			// 右栏开没开：`.detail` 是覆盖式的，它盖住纸的右端，顶栏右上角那组按钮要按这个让位。
+			// `data-dock` 只管工作台（资料 / 任务 / 板走的不是同一个字段），别拿它判。
+			data-panel={right.open ? "true" : "false"}
+			data-letter={assistantChat ? "true" : "false"}
+			data-nav={nav}
+			// 右栏宽度挂在这里（右栏自己也设一份，两处同一个算法）：右栏是覆盖式的，
+			// 顶栏右上角那组按钮得按这个数让位，不然被右栏盖住、真人点不动。
+			style={
+				panelWidth === null
+					? undefined
+					: ({ "--panel-w": `${String(panelWidth)}px` } as CSSProperties)
+			}
+		>
 			{/* Windows 桌面壳的标题带（菜单 + 拖拽把手）；别的平台这里是空的。 */}
 			{windowsShell ? <Titlebar /> : null}
 

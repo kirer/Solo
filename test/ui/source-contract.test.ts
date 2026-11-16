@@ -24,6 +24,26 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
  *    画那颗勾，而按钮写的是 `aria-pressed` —— 选择器永远匹配不上，勾一直不出现。
  *    同样只能读源码断言：属性名两边必须一致。
  */
+describe("右栏是覆盖式的：被它盖住的按钮要让位", () => {
+	// 老板 2026-11-16：任务板按钮点不开。无头里在按钮中心点做命中测试，命中的是右栏自己的
+	// `.detail-bar` —— 右栏 `position: absolute; z-index: 45` 铺在纸的右端 348px 上，
+	// 顶上那组按钮正好在右端，真人拿鼠标点下去等于点不动（`el.click()` 却能过）。
+	// 修法是右栏开着时把这一组让到右栏左边；宽度和右栏同源（`--panel-w`）。
+	it("顶栏按钮组按右栏宽度让位", () => {
+		const css = read("../../ui/app/src/styles/v6.css");
+		expect(css).toMatch(/\.frame\[data-panel="true"\] \.letter-board \{\s*right: calc\(var\(--panel-w, 348px\) \+ 54px\)/);
+		expect(css).toMatch(/\.frame\[data-panel="true"\] \.sheet-head \{\s*padding-right: calc\(var\(--panel-w, 348px\) \+ 12px\)/);
+	});
+
+	it("`.frame` 上真的有 `data-panel`，且宽度和右栏同一个算法", () => {
+		const app = read("../../ui/app/src/App.tsx");
+		expect(app).toContain('data-panel={right.open ? "true" : "false"}');
+		// `--panel-w` 必须挂到 `.frame` 上：右栏自己那份在 `.detail` 上，兄弟读不到。
+		expect(app).toContain('"--panel-w": `${String(panelWidth)}px`');
+		expect(app).toContain("clampDockWidth(dockWidth");
+	});
+});
+
 describe("@ 列表：人多的时候不能截断", () => {
 	it("候选全部渲染，不写死只画前几条", () => {
 		// 老板 2026-11-16：14 个成员的群，@ 出来的列表只显示 6 个。

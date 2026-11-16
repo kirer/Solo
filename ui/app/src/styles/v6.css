@@ -400,6 +400,27 @@
 	}
 }
 
+/* 右栏是覆盖式的（「覆盖，不是拓展」是要的效果），它盖住纸的右端 —— 顶上那两颗按钮
+   （任务板 / 资料）正好在右端，右栏一开就被盖住：无头里在按钮中心点做命中测试，
+   命中的是右栏自己的 `.detail-bar`，真人拿鼠标点下去等于点不动。
+   右栏开着的时候把这一组让到右栏左边，关掉自己滑回去。
+   宽度和右栏同源：`--panel-w` 由 `.frame` 和 `.detail` 用同一个 `clampDockWidth` 算出。
+   `data-panel` 就是右栏的开关（`right.open`）；`data-dock` 只管工作台，别拿它判。 */
+@media (min-width: 901px) {
+	.frame[data-panel="true"] .letter-board {
+		right: calc(var(--panel-w, 348px) + 54px);
+	}
+
+	.frame[data-panel="true"] .icon-btn.letter-detail {
+		right: calc(var(--panel-w, 348px) + 16px);
+	}
+
+	/* 群聊抬头的按钮组也整个让开：那颗任务板按钮就在 `.sheet-head-right` 里。 */
+	.frame[data-panel="true"] .sheet-head {
+		padding-right: calc(var(--panel-w, 348px) + 12px);
+	}
+}
+
 @media (min-width: 901px) {
 	/* 带上 `.icon-btn`：文件末尾那条触控热区的 `position: relative` 会盖掉绝对定位。 */
 	.icon-btn.letter-detail {
