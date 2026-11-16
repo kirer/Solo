@@ -35,6 +35,7 @@ import type {
 	ViewChannel,
 	ViewChannelDetail,
 	ViewMemoryEntry,
+	ViewGlobalTask,
 	ViewMessage,
 	ViewOrg,
 	ViewTask,
@@ -355,17 +356,48 @@ function tasksTable(state: ChannelState, channelId: string): Record<string, View
  * 顺序固定：按频道在 `channels` 里的顺序，频道内按任务编号升序（`t2` 在 `t10` 前，
  * 不许字典序）。界面照着摆就行 —— 再让界面排一次，就是第二份口径，早晚跟这里对不上。
  */
-export function workspaceTasks(state: ChannelState): ViewTask[] | undefined {
-	const out: ViewTask[] = [];
+export function workspaceTasks(state: ChannelState): ViewGlobalTask[] | undefined {
+	const out: ViewGlobalTask[] = [];
 	for (const channelId of Object.keys(state.channels)) {
 		const table = tasksTable(state, channelId);
 		if (table === undefined) continue;
 		for (const id of Object.keys(table).sort(byTaskNumber)) {
 			const task = table[id];
-			if (task !== undefined) out.push(task);
+			if (task === undefined) continue;
+			out.push({ ...task, ...lastNoteOf(state, channelId, task) });
 		}
 	}
 	return out.length === 0 ? undefined : out;
+}
+
+/** note 正文压成一行时最多留几个字（板上就一行，再长界面也摆不开）。 */
+const NOTE_LIMIT = 160;
+
+/**
+ * 一个任务「最后那句 note」的时间与正文。
+ *
+ * 出处只有消息：`history` 里存的是 `{seq, what}`，正文在频道消息里、`seq` 指过去。
+ * 从最后一句往前翻，翻到第一条还在消息里的就用它 —— 历史被裁过（老消息滚掉了）时
+ * 也不能编一个时间出来，取不到就两个键都不给，界面显示「没说」。
+ *
+ * 正文开头的 `id：` 去掉：行上已经有 id 了，重复一遍只是噪声。
+ */
+function lastNoteOf(
+	state: ChannelState,
+	channelId: string,
+	task: ViewTask,
+): { readonly changedAt?: number; readonly note?: string } {
+	const messages = state.messages[channelId] ?? [];
+	for (let index = task.history.length - 1; index >= 0; index -= 1) {
+		const entry = task.history[index];
+		if (entry === undefined) continue;
+		const message = messages.find((item) => item.seq === entry.seq);
+		if (message === undefined) continue;
+		const prefix = `${task.id}：`;
+		const body = message.text.startsWith(prefix) ? message.text.slice(prefix.length) : message.text;
+		return { changedAt: message.at, note: excerptOf(body, NOTE_LIMIT) };
+	}
+	return {};
 }
 
 /** 任务 id 的编号比较：`t2` < `t10`。认不出的 id 排在后面、按字面比。 */

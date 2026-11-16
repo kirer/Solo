@@ -200,7 +200,21 @@ export type ViewOrg = {
 	 * 核心替界面筛，下一个人想加「已完成的」就得再来改核心（Solo 2026-11-15 定的口径）。
 	 * 频道名界面拿 `channelId` 去 `channels` 里查，这里不复制一份 `channelTitle`。
 	 */
-	tasks?: ViewTask[];
+	tasks?: ViewGlobalTask[];
+};
+
+/**
+ * 全局板上的一行：频道那份的字段 + 最后一句 note。
+ *
+ * 为什么多两格：板上要回答「多久没动」「卡在谁那」，那两样的出处是 `history` 最后一句
+ * note 的**正文**，正文存在频道消息里（`seq` 指过去）。全局这份不带任何消息，界面自己
+ * 查不到 —— 查不到就只能编「刚动过」「没写原因」，那是假数不是降级。
+ */
+export type ViewGlobalTask = ViewTask & {
+	/** 最后那句 note 落在哪一刻（毫秒）。**找不到那句消息就没有这个键**。 */
+	changedAt?: number;
+	/** 最后那句 note 的正文，去掉开头的 `id：`、压成一行。取不到就没有这个键。 */
+	note?: string;
 };
 
 /** 组织图上的一个人。 */

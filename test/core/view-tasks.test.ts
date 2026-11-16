@@ -186,9 +186,16 @@ describe("频道详情里的任务板", () => {
  */
 describe("全局板：所有频道的活一处看全", () => {
 	/** 走真写入层把一条任务改成某个状态。 */
-	async function moveTo(box: Box, channelId: string, id: string, status: "doing" | "done" | "dropped") {
+	async function moveTo(
+		box: Box,
+		channelId: string,
+		id: string,
+		status: "doing" | "done" | "dropped" | "blocked",
+		said = "",
+	) {
 		const state = (await box.runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
 		const length = state.tasks?.[channelId]?.[id]?.history.length ?? 0;
+		const why = said !== "" ? said : status === "dropped" ? "不做了" : "";
 		const result = await commitTaskNote(
 			{ harness: box.runtime.harness },
 			{
@@ -199,7 +206,7 @@ describe("全局板：所有频道的活一处看全", () => {
 				plan: (current) => ({
 					task: { ...(current as NonNullable<typeof current>), status },
 					what: "status",
-					text: `${id}：${status}${status === "dropped" ? "：不做了" : ""}`,
+					text: `${id}：${status}${why === "" ? "" : `：${why}`}`,
 				}),
 			},
 			BACKGROUND_CONTEXT,
@@ -245,6 +252,41 @@ describe("全局板：所有频道的活一处看全", () => {
 		}
 		expect(state.tasks?.[TEAM]?.t1.title).toBe("把连接池调到 20");
 		expect(state.tasks?.[TEAM]?.t1.history).toHaveLength(1);
+	});
+
+	test("全局板上每行带「最后那句 note」：时间 + 正文（开头的 id 去掉）", async () => {
+		const box = await setup();
+		await addTask(box, { title: "把连接池调到 20" });
+		await moveTo(box, TEAM, "t1", "blocked", "等界面那边定形状");
+
+		const tasks = workspaceTasks(await stateOf(box));
+		expect(tasks).toHaveLength(1);
+		const task = tasks?.[0];
+		expect(task?.status).toBe("blocked");
+		expect(task?.changedAt).toBe(300);
+		expect(task?.note).toBe("blocked：等界面那边定形状");
+	});
+
+	test("note 那句消息已经不在了（历史被裁）时，两格都不出现，不编时间也不编原因", async () => {
+		const box = await setup();
+		await addTask(box, { title: "把连接池调到 20" });
+		const state = await stateOf(box);
+		// 只把消息挪走，任务与 history 原样留着 —— 模拟老消息滚掉之后的样子。
+		const tasks = workspaceTasks({ ...state, messages: { ...state.messages, [TEAM]: [] } });
+		const task = tasks?.[0];
+		expect(task).toBeDefined();
+		expect(task !== undefined && "changedAt" in task).toBe(false);
+		expect(task !== undefined && "note" in task).toBe(false);
+	});
+
+	test("频道那份不带这两个键（它能自己从 messages 里查，不重复给）", async () => {
+		const box = await setup();
+		await addTask(box, { title: "把连接池调到 20" });
+		const { detail } = await detailOf(box);
+		const task = detail.tasks?.t1;
+		expect(task).toBeDefined();
+		expect(task !== undefined && "changedAt" in task).toBe(false);
+		expect(task !== undefined && "note" in task).toBe(false);
 	});
 
 	test("组织快照真的接上了这一格：readOrg 返回的 tasks 就是盘上那些活", async () => {
