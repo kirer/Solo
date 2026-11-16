@@ -375,6 +375,31 @@
 	display: none;
 }
 
+/* Solo 信纸页（私聊）右上角那颗任务板：跟「资料」并排 —— 私聊里也得看得见板。 */
+.letter-board {
+	display: none;
+}
+
+@media (min-width: 901px) {
+	.letter-board {
+		position: absolute;
+		top: 14px;
+		right: 54px;
+		z-index: 2;
+		display: block;
+	}
+
+	.letter-board .board-btn {
+		color: var(--ink-3);
+	}
+
+	.letter-board .board-btn:hover,
+	.letter-board .board-btn[aria-pressed="true"] {
+		background: var(--hover);
+		color: var(--ink);
+	}
+}
+
 @media (min-width: 901px) {
 	/* 带上 `.icon-btn`：文件末尾那条触控热区的 `position: relative` 会盖掉绝对定位。 */
 	.icon-btn.letter-detail {
