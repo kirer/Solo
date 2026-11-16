@@ -47,6 +47,12 @@ export function installBrokenImages(open: (path: string) => void): void {
 			const holder = target.closest(".md-img");
 			if (holder === null) return;
 			const path = target.getAttribute("title") ?? target.getAttribute("alt") ?? "";
+			// 机器上绝对路径的图取不到（后端拒了、或者文件没了）：退成纯文本。
+			// 老板 2026-11-16 的判据 —— 点了要么真打开东西，要么就没有这个链接。
+			if (holder.classList.contains("md-img-abs")) {
+				holder.replaceChildren(document.createTextNode(path === "" ? "（这张图看不了）" : path));
+				return;
+			}
 			const label = path === "" ? "这张图看不了，点这里" : `${path} 看不了，点这里`;
 			const button = document.createElement("button");
 			button.type = "button";

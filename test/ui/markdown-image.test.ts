@@ -50,15 +50,36 @@ describe("正文里的本地图", () => {
 		expect(link).not.toContain("data-path");
 	});
 
-	it("绝对路径也不点亮：认得出，但没有能打开它的路子之前就是纯文本", () => {
+	it("绝对路径的图直接画出来，走同一个预览接口", () => {
+		// 老板 2026-11-16：点了要在 Solo 里看见图，不是跳到访达。
+		const abs = "/Users/kirer/.solo/teams/Solo/workspace/2.9.21-看板真机/1-topbar.png";
+		const html = renderMarkdown(`图在 \`${abs}\``);
+		expect(html).toContain('class="md-img md-img-abs"');
+		// 2026-11-16 实测：`/api/files/preview` 本来就认绝对路径的图（200 image/png），
+		// 不需要另加一个读图接口。
+		expect(html).toContain(`src="/api/files/preview?path=${encodeURIComponent(abs)}"`);
+		// 不是可点的文件入口
+		expect(html).not.toContain("data-path");
+
+		const bare = renderMarkdown(`图在 ${abs} 这里`);
+		expect(bare).toContain('class="md-img md-img-abs"');
+	});
+
+	it("绝对路径但不是图片、或者带 .. 的，还是纯文本", () => {
+		expect(renderMarkdown("看 `/Users/kirer/.solo/rules.md`")).not.toContain("md-img");
+		expect(renderMarkdown("看 `/Users/kirer/../etc/a.png`")).not.toContain("md-img");
+		expect(renderMarkdown("看 `~/Desktop/a.png`")).not.toContain("md-img");
+	});
+
+	it("绝对路径但不是图：纯文本，不做任何入口", () => {
 		// 老板 2026-11-16：点了要么真打开，要么就没有这个链接，中间态不许有。
-		// 读图接口（叶决那条）落地之前，绝对路径一律不点亮。
-		const abs = renderMarkdown("图在 /Users/kirer/.solo/teams/Solo/workspace/1-topbar.png 这里");
+		const abs = renderMarkdown("看 /Users/kirer/.solo/rules.md 这份");
 		expect(abs).not.toContain("data-path");
 		expect(abs).not.toContain("md-img");
 
-		const code = renderMarkdown("`/Users/kirer/Downloads/a.png`");
+		const code = renderMarkdown("`/Users/kirer/Library/core.sqlite`");
 		expect(code).not.toContain("data-path");
+		expect(code).not.toContain("md-img");
 	});
 
 	it("非图片后缀不变：`.md` 仍然只是可点的路径", () => {

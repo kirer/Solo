@@ -76,6 +76,24 @@ function filePreviewUrl(path: string): string {
 	return `/api/files/preview?path=${encodeURIComponent(path)}`;
 }
 
+/**
+ * 机器上的绝对路径 + 图片后缀（老板 2026-11-16）：正文里写「图在 /Users/…/1-topbar.png」，
+ * 点了就在原位看到那张图。
+ *
+ * 只用它**画图**，不拿它做可点的文件入口 —— 取不到时
+ * 界面退成纯文本，绝不留一个点了报错的链接。`~` 不在这里展开：后端只认已经展开的
+ * 绝对路径，前端多猜一次就是把「取不到」变成「以为能取到」。
+ */
+const ABS_IMAGE = /^\/[^\s`'"：:*?<>|]+\.(?:png|jpe?g|gif|webp|bmp|avif)$/i;
+
+function absImageOf(raw: string): string {
+	const value = raw.trim();
+	if (value === "" || value.length > 400) return "";
+	if (value.includes("..") || /\s/.test(value)) return "";
+	return ABS_IMAGE.test(value) ? value : "";
+}
+
+
 function emphasis(text: string): string {
 	return text
 		.replace(/~~([^~\n]+?)~~/g, "<del>$1</del>")
@@ -92,6 +110,13 @@ function renderInline(raw: unknown): string {
 
 	// 1. 行内代码（代码里的一切都不再解释）
 	text = text.replace(/`([^`\n]+)`/g, (_whole: string, code: string) => {
+		const absolute = absImageOf(code);
+		if (absolute !== "") {
+			slots.push(
+				`<span class="md-img md-img-abs"><img src="${escapeAttr(filePreviewUrl(absolute))}" alt="${escapeAttr(absolute)}" title="${escapeAttr(absolute)}" loading="lazy" decoding="async"></span>`,
+			);
+			return `${SLOT}${slots.length - 1}${SLOT}`;
+		}
 		const image = imagePathOf(code);
 		// 图片路径直接画成图（老板 2026-11-10）：`\`a/b.png\`` 就是那张图，不再只是可点的一行字。
 		if (image !== "") {
@@ -168,12 +193,33 @@ function renderInline(raw: unknown): string {
 		return `${lead}${SLOT}${slots.length - 1}${SLOT}${trailing}`;
 	});
 
+	// 3.55 裸的绝对图片路径（`图在 /Users/…/1-topbar.png 这里`，没包反引号）：同上，画成图。
+	//      只认图片后缀 —— 别的绝对路径一律留成纯文本。
+	text = text.replace(
+		/(^|[\s(（\[【：:，,、])(\/[^\s`'"：:*?<>|()（）\[\]【】]+?\.(?:png|jpe?g|gif|webp|bmp|avif))(?![A-Za-z0-9_./-])/gi,
+		(_whole: string, lead: string, raw: string) => {
+			const absolute = absImageOf(raw);
+			if (absolute === "") return `${lead}${raw}`;
+			slots.push(
+				`<span class="md-img md-img-abs"><img src="${escapeAttr(filePreviewUrl(absolute))}" alt="${escapeAttr(absolute)}" title="${escapeAttr(absolute)}" loading="lazy" decoding="async"></span>`,
+			);
+			return `${lead}${SLOT}${slots.length - 1}${SLOT}`;
+		},
+	);
+
 	// 3.6 裸路径：模型写「第一份周报在 teams/x/workspace/report.md，约…」时并不包反引号。
 	//     只认空格 / 左括号后、带斜杠、以 1–6 位扩展名结尾的一段；后面紧跟着路径字符的不算
 	//     （`a/b/c.ts:42` 的行号留在外面）。宁可少点亮一个，也别把正文变成一片死链接。
 	text = text.replace(
 		/(^|[\s(（\[【：:，,、])((?:[A-Za-z0-9_.@+\-一-龥]+\/)+[A-Za-z0-9_.@+\-一-龥]*\.[a-z]{1,6})(?![A-Za-z0-9_./-])/g,
 		(_whole: string, lead: string, raw: string) => {
+			const absolute = absImageOf(raw);
+			if (absolute !== "") {
+				slots.push(
+					`<span class="md-img md-img-abs"><img src="${escapeAttr(filePreviewUrl(absolute))}" alt="${escapeAttr(absolute)}" title="${escapeAttr(absolute)}" loading="lazy" decoding="async"></span>`,
+				);
+				return `${lead}${SLOT}${slots.length - 1}${SLOT}`;
+			}
 			const image = imagePathOf(raw);
 			// 一段独占的图片路径（`teams/x/workspace/shot.png`）就画成图；其余照旧是可点的路径。
 			if (image !== "") {
