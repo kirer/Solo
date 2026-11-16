@@ -408,9 +408,6 @@ const stageFull = async () => {
 	//   - 给了 `--old-zip` 或 `--old-tag`（真实）：装真旧版（比如 2.9.19 的包），让它自己升上来。
 	//     这才是用户真会走的路 —— 版本号、旧的代码、旧的清单全都不是替身（Solo 2026-11-15：
 	//     三次连着绿只证明稳，不证明路对）。
-	// 2026-11-15：CI 上 bash 明明传了 `--old-tag v2.9.19`（ARGS 回显看得见），这里却算成替身。
-	// 光看两头的代码对不出来，就把这行打出来 —— args 里有没有 old-tag，看一眼日志就知道。
-	note(`脚本收到的参数：${JSON.stringify(args)}`);
 	const realOld = args["old-zip"] !== undefined || args["old-tag"] !== undefined;
 	const oldZipForStage3 = realOld ? await needOldZip() : newZip;
 	const standInVersion = realOld ? (args["old-tag"] ?? oldTag).replace(/^v/, "") : "0.0.0-verify";
