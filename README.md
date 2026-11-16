@@ -42,8 +42,13 @@ npm start                 # http://127.0.0.1:7788
 或写 `<appRoot>/settings.json`，或走环境变量（`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`）。
 见 [docs/DEPLOY](docs/DEPLOY.md) §3。
 
-桌面安装包在 [Releases](https://github.com/kirer/Solo/releases)：macOS arm64 出 dmg + zip，
-Windows x64 出 NSIS 安装包 + zip；应用里「设置 → 检查更新」和 macOS 菜单栏的「检查更新…」都读这里。
+桌面安装包在 [Releases](https://github.com/kirer/Solo/releases)：目前只出 macOS arm64（dmg + zip）；
+应用里「设置 → 检查更新」和 macOS 菜单栏的「检查更新…」都读这里。
+
+**Windows 暂时不出**（2026-11-15 定的）。要加回来不是改这一句就行，得四处一起接回：`release.yml` 的
+`build-win` job、`publish` 的 `needs` 里加上它、签清单的 `--file win32="dist/Solo-${VERSION}-x64.zip"`、
+上传的 x64 两个包（`.exe` / `.zip`）和 `latest-win.json` 与 `.sig`。照 `31f581e` 那笔倒回去最快。
+
 桌面端由 `desktop/`（Electron 壳）拉起同一个后端，壳与后端只靠 `[core] http://…` 一行说话。
 
 > 做实验别动真实数据：`npm start -- --app-root /tmp/x-app --user-root /tmp/x-home`。
@@ -129,9 +134,10 @@ git push origin vX.Y.Z
 推上去之后 GitHub Actions 的「打包与发版」（[.github/workflows/release.yml](.github/workflows/release.yml)）会：
 
 1. `verify`：`npm ci` → `npm run check` → `npm test` → 读出版本号；
-2. `build-mac` / `build-win` 并行：各跑界面构建与 electron-builder，产出 dmg / zip / exe 与 zip；
-3. `publish`：用仓库 secret `SOLO_UPDATE_KEY` 签两份更新清单（`latest-mac.json` / `latest-win.json`
-   及 `.sig`）→ **先传二进制、最后传清单** → 把 Release 从 draft 改成正式发布并标 latest。
+2. `build-mac`：跑界面构建与 electron-builder，产出 dmg + zip
+   （Windows 那趟摘掉了，见上面「Windows 暂时不出」）；
+3. `publish`：用仓库 secret `SOLO_UPDATE_KEY` 签更新清单（`latest-mac.json` 及 `.sig`）
+   → **先传二进制、最后传清单** → 把 Release 从 draft 改成正式发布并标 latest。
 
 更新源就是这个仓库的 Releases（ADR-029 / ADR-067）。客户端检查更新时先问
 `api.github.com` 要资产地址、再下载（ADR-123），所以弱网也能更新；「更新代理」只影响更新，
@@ -139,7 +145,7 @@ git push origin vX.Y.Z
 
 **打包失败怎么办**
 
-- 先在 Actions 页面看是哪个 job 红：`verify` 红是代码问题；`build-mac` / `build-win` 红多半是
+- 先在 Actions 页面看是哪个 job 红：`verify` 红是代码问题；`build-mac` 红多半是
   下载 Electron / electron-builder 辅助包时网络 504（workflow 已经用 npmmirror 的只读镜像取辅助包）；
   `publish` 红看日志里的清单签名与版本一致性检查。
 - 重跑：`gh run rerun <run-id> --failed`（token 没权限时）删掉标签重建再推：
