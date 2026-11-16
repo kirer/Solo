@@ -5,7 +5,13 @@ name: 窗口开关验收
 # 判据不是「人去看日志」——每一趟自己断言自己那行，缺了就 `exit 1`。
 # 为什么不用 `set -e` + `trap`：macOS runner 的 bash 3.2 里，带 `trap EXIT` 的脚本撞
 # `set -u` 未定义变量时**退出码是 0**，CI 照样标 success（2026-11-15 栽过一次）。
-# 所以这里一律「跑完 → grep -qF → 不中就 `::error::` + exit 1」，二进制文件与日志都当产物核。
+# 所以这里一律「跑完 → grep -qF → 不中就 `::error::` + exit 1」。
+#
+# 三个坑（2026-11-16 第一趟红的）：
+# ① 桌面壳开发模式（未打包）自己把两个根定到 `$TMPDIR/solo-desktop-dev-home` 和
+#    `solo-desktop-dev-userdata`，不是 `$HOME/.solo` —— 日志得从那儿取；
+# ② 那两个目录是**固定路径**，每趟不清干净就会读到上一趟的日志，直接假绿；
+# ③ `npx electron` 第一次要现下二进制（3 分钟起），所以先跑一遍预热，再开始计时。
 on:
   workflow_dispatch:
 
@@ -27,16 +33,20 @@ jobs:
 
       - run: npm run ui:build
 
+      - name: 预热：把 electron 二进制下下来（不计入窗口等待）
+        run: npx electron --version
+
       - name: 隐藏那趟（SOLO_WINDOW_HIDDEN=1）：日志必须是「不显示」
         run: |
           set -uo pipefail
-          home="$RUNNER_TEMP/home-hidden"
-          mkdir -p "$home"
-          log="$home/.solo/logs/core.log"
-          HOME="$home" SOLO_WINDOW_HIDDEN=1 npx electron . --user-data-dir="$home/ud" >"$RUNNER_TEMP/hidden-stdout.log" 2>&1 &
+          dev_home="$TMPDIR/solo-desktop-dev-home"
+          dev_data="$TMPDIR/solo-desktop-dev-userdata"
+          rm -rf "$dev_home" "$dev_data"
+          log="$dev_home/logs/core.log"
+          SOLO_WINDOW_HIDDEN=1 npx electron . >"$RUNNER_TEMP/hidden-stdout.log" 2>&1 &
           app_pid=$!
           found=""
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 120); do
             if [ -f "$log" ] && grep -qF "[window]" "$log"; then found=1; break; fi
             if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
             sleep 2
@@ -65,13 +75,14 @@ jobs:
       - name: 不设那趟：日志必须是「窗口已显示」（老行为还在）
         run: |
           set -uo pipefail
-          home="$RUNNER_TEMP/home-visible"
-          mkdir -p "$home"
-          log="$home/.solo/logs/core.log"
-          HOME="$home" npx electron . --user-data-dir="$home/ud" >"$RUNNER_TEMP/visible-stdout.log" 2>&1 &
+          dev_home="$TMPDIR/solo-desktop-dev-home"
+          dev_data="$TMPDIR/solo-desktop-dev-userdata"
+          rm -rf "$dev_home" "$dev_data"
+          log="$dev_home/logs/core.log"
+          npx electron . >"$RUNNER_TEMP/visible-stdout.log" 2>&1 &
           app_pid=$!
           found=""
-          for _ in $(seq 1 90); do
+          for _ in $(seq 1 120); do
             if [ -f "$log" ] && grep -qF "[window]" "$log"; then found=1; break; fi
             if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
             sleep 2
