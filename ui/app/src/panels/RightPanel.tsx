@@ -468,6 +468,30 @@ function turnsLine(turns: readonly Turn[]): string {
 }
 
 /** 团队频道：身份 → 统计 → 成员 → 团队介绍 / 记忆 / 技能。 */
+/**
+ * 资料表里那张「任务板」卡：频道级的一屏，跟「后台任务」（人的轮次）不是一回事，
+ * 点进去换成右栏那一态（`openBoard`）。
+ *
+ * 抽成一件是因为这张表按频道分三路（`TeamPanel` / `AllPanel` / `dm` 走 `PersonPanel`）：
+ * 2.9.20 只把它写进了 `AllPanel`，**团队频道整条路没有入口** —— 老板在 Solo 群翻不到板
+ * 就是这么漏的（Solo 2026-11-16）。所以两处共用这一个组件、同一个数据源，谁也不许再抄一份。
+ */
+function BoardCard(): JSX.Element {
+	// 条数：跟板子里同一份数据源、同一个函数，不另算一遍。
+	const taskCount = channelTasks(useStore((state) => state.detail)).length;
+	return (
+		<div className="prof-card">
+			<Row
+				icon={<IconStar />}
+				title="任务板"
+				sub="谁在做、卡在哪，点一行回到派活那句话"
+				value={taskCount === 0 ? "空" : `${String(taskCount)} 条`}
+				onClick={openBoard}
+			/>
+		</div>
+	);
+}
+
 function TeamPanel(props: {
 	slug: string;
 	channel: ChannelDetail["channel"];
@@ -511,6 +535,8 @@ function TeamPanel(props: {
 			{error === "" ? null : <p className="prof-note">{error}</p>}
 
 			<MemberGrid members={members} />
+
+			<BoardCard />
 
 			<div className="prof-card">
 				<Row
@@ -596,8 +622,6 @@ function AllPanel(props: {
 	title: string;
 }): JSX.Element {
 	const first = props.members.find((member) => member.slug !== "owner");
-	// 「任务板」那张卡的条数：跟板子里同一份数据源、同一个函数，不另算一遍。
-	const taskCount = channelTasks(useStore((state) => state.detail)).length;
 	const { profile } = useProfile(first?.slug ?? null);
 	const [openRow, setOpenRow] = useState<string | null>(null);
 	const skills = (profile?.skills ?? []).filter((skill) => skill.scope === "all");
@@ -629,17 +653,7 @@ function AllPanel(props: {
 
 			<MemberGrid members={props.members} />
 
-			{/* 任务板：频道级的一屏。跟「后台任务」（人的轮次）不是一回事，所以放在这张
-			    房间的资料表里，点进去换成右栏那一态。 */}
-			<div className="prof-card">
-				<Row
-					icon={<IconStar />}
-					title="任务板"
-					sub="谁在做、卡在哪，点一行回到派活那句话"
-					value={taskCount === 0 ? "空" : `${String(taskCount)} 条`}
-					onClick={openBoard}
-				/>
-			</div>
+			<BoardCard />
 
 			{isAll ? (
 				<div className="prof-card">

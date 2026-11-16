@@ -359,3 +359,34 @@ function fixtureTasks(now: number): BoardTask[] {
 		},
 	];
 }
+
+/**
+ * 资料表里「任务板」的入口。这一份锁的是**漏验**：那张表按频道分三路
+ * （`TeamPanel` / `AllPanel` / `dm` 走 `PersonPanel`），2.9.20 只把卡片写进了
+ * `AllPanel`，团队频道整条路没有入口 —— 老板在 Solo 群里翻不到板（Solo 2026-11-16）。
+ */
+describe("任务板入口：三条路别只写一条", () => {
+	const src = readFileSync(new URL("../../ui/app/src/panels/RightPanel.tsx", import.meta.url), "utf8");
+	/** 取一个组件的函数体：从 `function X(` 走到下一个顶层函数或块注释之前。 */
+	const bodyOf = (name: string): string => {
+		const start = src.indexOf(`function ${name}(`);
+		expect(start, `${name} 不见了`).toBeGreaterThan(-1);
+		const rest = src.slice(start + 1);
+		const next = rest.search(/\n(?:function |\/\*\*)/);
+		return next === -1 ? rest : rest.slice(0, next);
+	};
+
+	it("团队频道和全员/群聊两条路挂的是同一件 BoardCard", () => {
+		for (const name of ["TeamPanel", "AllPanel"]) {
+			expect(bodyOf(name), `${name} 里没有任务板卡`).toContain("<BoardCard />");
+		}
+	});
+
+	it("只有一份，不是抄了两份", () => {
+		expect(src.split('title="任务板"').length - 1).toBe(1);
+	});
+
+	it("那张卡还是走 openBoard，没有另造一态", () => {
+		expect(bodyOf("BoardCard")).toContain("onClick={openBoard}");
+	});
+});
