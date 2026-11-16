@@ -175,7 +175,9 @@ describe("正文里的链接与路径", () => {
 
 	it("像文件的 code 带 data-path，普通 code 不带", () => {
 		expect(renderMarkdown("`teams/weekly/workspace/report.md`")).toContain('data-path="teams/weekly/workspace/report.md"');
-		expect(renderMarkdown("`company.sqlite`")).toContain('data-path="company.sqlite"');
+		// 裸文件名不再点亮（2026-11-16）：老板正文里写「图在 2-board.png」，被当成附件
+		// 去取，取不到就弹一个「找不到这个文件」的空面板。要点开就带上目录。
+		expect(renderMarkdown("`company.sqlite`")).not.toContain("data-path");
 		expect(renderMarkdown("`npm run check`")).not.toContain("data-path");
 		expect(renderMarkdown("`@林越`")).not.toContain("data-path");
 		// 版本号不是文件

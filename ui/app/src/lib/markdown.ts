@@ -34,9 +34,11 @@ function safeUrl(raw: unknown): string {
 /**
  * 一段文字像不像「这个仓库里的一个文件」。
  *
- * 命中的才变成可点的路径：带斜杠的相对路径（`teams/x/workspace/a.md`），或者一个
- * `名字.扩展名`。协议 / 绝对路径 / 带空格的一律不算 —— 宁可少点一个，也别让
- * `v2.1.0`、`node:fs` 这种东西变成死链接。
+ * 命中的才变成可点的路径：带斜杠的相对路径（`teams/x/workspace/a.md`）。光一个
+ * `名字.扩展名` 不算 —— 正文里到处都是文件名（「图在 1-topbar.png」），点亮它们
+ * 等于每句话都挂一个点了报错的入口；真挂上来的附件有附件位，走不到这里。
+ * 协议 / 绝对路径 / 带空格的一律不算 —— 宁可少点一个，也别让 `v2.1.0`、
+ * `node:fs` 这种东西变成死链接。
  */
 function pathOf(raw: string): string {
 	const value = raw.trim();
@@ -44,9 +46,7 @@ function pathOf(raw: string): string {
 	if (value.startsWith("/") || value.startsWith("~")) return "";
 	if (value.includes("..") || /\s/.test(value)) return "";
 	if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return "";
-	const slashy = /^[^/`'"：:]+(?:\/[^/`'"：:]+)+$/.test(value);
-	const filey = /^[A-Za-z0-9_.@-]+\.[a-z]{1,6}$/.test(value);
-	return slashy || filey ? value : "";
+	return /^[^/`'"：:]+(?:\/[^/`'"：:]+)+$/.test(value) ? value : "";
 }
 
 /**
