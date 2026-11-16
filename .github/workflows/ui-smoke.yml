@@ -45,7 +45,9 @@ jobs:
         env:
           SOLO_SHOTS: ${{ runner.temp }}/ui-shots
         run: |
-          # 不加 -e：下面要自己判退出码再决定红不红（加了 -e 管道一出非零就断在这里）。
+          # `run:` 默认就是 `/bin/bash -e`，光写 `set -uo pipefail` 关不掉它 —— 先明确关掉。
+          # 下面要自己判退出码再决定红不红，被 -e 提前断在这里的话诊断信息全丢。
+          set +e
           set -uo pipefail
           mkdir -p "$SOLO_SHOTS"
           node scripts/ui-smoke/ui-shell.mjs --shot "$SOLO_SHOTS" 2>&1 | tee smoke.log
@@ -83,8 +85,11 @@ jobs:
       - name: 收尾：确认隔离后端没留在 runner 上
         if: always()
         run: |
+          set +e
           set -uo pipefail
-          left=$(pgrep -f "src/shell/main.ts" | wc -l | tr -d ' ')
+          # pgrep 一个都没匹配到返回 1，`-e` 下这一行直接把 step 干掉（2026-11-16 头一趟就红在
+          # 这，连 echo 都没跑到）。所以 `|| true`：没匹配 = 0 个残留，正是要的结论。
+          left=$(pgrep -f "src/shell/main.ts" | wc -l | tr -d ' ' || true)
           echo "残留后端进程：$left"
           if [ "$left" -ne 0 ]; then
             echo "::error::隔离后端没退干净，runner 上留了 $left 个"
