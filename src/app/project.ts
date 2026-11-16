@@ -347,6 +347,38 @@ function tasksTable(state: ChannelState, channelId: string): Record<string, View
 }
 
 /**
+ * 全局板：所有频道、所有状态的活摊成一条数组（顶栏那个常驻入口吃它）。
+ *
+ * 跟 `tasksTable()` 是同一份逐格复制（代理出事务再读会报 settled overlay，界面拿到的
+ * 也不该能反写回核心状态）。**一条都没有就 `undefined`**，跟 detail 上那条一个规矩。
+ *
+ * 顺序固定：按频道在 `channels` 里的顺序，频道内按任务编号升序（`t2` 在 `t10` 前，
+ * 不许字典序）。界面照着摆就行 —— 再让界面排一次，就是第二份口径，早晚跟这里对不上。
+ */
+export function workspaceTasks(state: ChannelState): ViewTask[] | undefined {
+	const out: ViewTask[] = [];
+	for (const channelId of Object.keys(state.channels)) {
+		const table = tasksTable(state, channelId);
+		if (table === undefined) continue;
+		for (const id of Object.keys(table).sort(byTaskNumber)) {
+			const task = table[id];
+			if (task !== undefined) out.push(task);
+		}
+	}
+	return out.length === 0 ? undefined : out;
+}
+
+/** 任务 id 的编号比较：`t2` < `t10`。认不出的 id 排在后面、按字面比。 */
+function byTaskNumber(left: string, right: string): number {
+	const a = /^t(\d+)$/.exec(left);
+	const b = /^t(\d+)$/.exec(right);
+	if (a !== null && b !== null) return Number(a[1]) - Number(b[1]);
+	if (a !== null) return -1;
+	if (b !== null) return 1;
+	return left.localeCompare(right);
+}
+
+/**
  * 组织快照：有谁、谁在哪个团队。
  *
  * 助理排最前（界面左侧成员列表直接用这个顺序），其余按名册顺序。谁是助理由传进来的

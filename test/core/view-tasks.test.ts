@@ -14,7 +14,8 @@ import type { CoreRuntime } from "../../src/core/runtime/open.ts";
 import { ChannelDoc, type ChannelState } from "../../src/core/channel/types.ts";
 import { ensureChannel } from "../../src/core/channel/rules.ts";
 import { commitTaskNote, type TaskNotePlan } from "../../src/core/channel/write.ts";
-import { channelDetail } from "../../src/app/project.ts";
+import { createRead } from "../../src/app/read.ts";
+import { channelDetail, workspaceTasks } from "../../src/app/project.ts";
 import type { DirectoryState } from "../../src/core/channel/roster.ts";
 import { sandboxPool } from "./support.ts";
 
@@ -170,5 +171,113 @@ describe("频道详情里的任务板", () => {
 		}
 		expect(state.tasks?.[TEAM]?.t1.title).toBe("把连接池调到 20");
 		expect(state.tasks?.[TEAM]?.t1.history).toHaveLength(1);
+	});
+});
+
+/**
+ * 全局板（2.9.21 补的一格）。
+ *
+ * 病根：板按频道分，老板得挨个频道翻才看得全 —— 「做了但等于没做」。这一格把
+ * 所有频道的活摊成一条数组，顶栏那个常驻入口吃它。
+ *
+ * 两条规矩跟 detail 那条一致：**一条都没有就没有这个键**、**逐格复制**（代理出事务
+ * 再读会报 settled overlay）。另外一条是这次单独定的：**不筛状态** —— `done` / `dropped`
+ * 也给，筛不筛是界面的事，核心替界面筛等于逼下一个人来改核心。
+ */
+describe("全局板：所有频道的活一处看全", () => {
+	/** 走真写入层把一条任务改成某个状态。 */
+	async function moveTo(box: Box, channelId: string, id: string, status: "doing" | "done" | "dropped") {
+		const state = (await box.runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+		const length = state.tasks?.[channelId]?.[id]?.history.length ?? 0;
+		const result = await commitTaskNote(
+			{ harness: box.runtime.harness },
+			{
+				channelId,
+				at: 300,
+				id,
+				expectHistoryLength: length,
+				plan: (current) => ({
+					task: { ...(current as NonNullable<typeof current>), status },
+					what: "status",
+					text: `${id}：${status}${status === "dropped" ? "：不做了" : ""}`,
+				}),
+			},
+			BACKGROUND_CONTEXT,
+		);
+		if (!result.ok) throw new Error(`改状态失败：${result.message}`);
+	}
+
+	async function stateOf(box: Box): Promise<ChannelState> {
+		return (await box.runtime.harness.snapshot(ChannelDoc, BACKGROUND_CONTEXT)) as ChannelState;
+	}
+
+	test("两个频道的活都在一处，done 和 dropped 也不筛掉", async () => {
+		const box = await setup();
+		await addTask(box, { title: "alpha 的活" });
+		await addTask(box, { title: "beta 的活", channelId: OTHER_TEAM });
+		await moveTo(box, TEAM, "t1", "dropped");
+		await moveTo(box, OTHER_TEAM, "t1", "doing");
+		await moveTo(box, OTHER_TEAM, "t1", "done");
+
+		const tasks = workspaceTasks(await stateOf(box));
+		expect(tasks).toHaveLength(2);
+		expect(tasks?.map((task) => [task.channelId, task.title, task.status])).toEqual([
+			[TEAM, "alpha 的活", "dropped"],
+			[OTHER_TEAM, "beta 的活", "done"],
+		]);
+	});
+
+	test("一条活都没有时，不补空数组（跟 detail 上那条一个规矩）", async () => {
+		const box = await setup();
+		expect(workspaceTasks(await stateOf(box))).toBeUndefined();
+	});
+
+	test("投影是抄出来的：改全局板里那份，盘上的任务不动", async () => {
+		const box = await setup();
+		await addTask(box, { title: "把连接池调到 20" });
+		const state = await stateOf(box);
+		const tasks = workspaceTasks(state);
+		expect(tasks).toHaveLength(1);
+		const first = tasks?.[0];
+		if (first !== undefined) {
+			first.title = "被界面改掉的名字";
+			first.history.push({ seq: 999, what: "status" });
+		}
+		expect(state.tasks?.[TEAM]?.t1.title).toBe("把连接池调到 20");
+		expect(state.tasks?.[TEAM]?.t1.history).toHaveLength(1);
+	});
+
+	test("组织快照真的接上了这一格：readOrg 返回的 tasks 就是盘上那些活", async () => {
+		const box = await setup();
+		await addTask(box, { title: "alpha 的活" });
+		await addTask(box, { title: "beta 的活", channelId: OTHER_TEAM });
+		const state = await stateOf(box);
+
+		// 假外壳：会话里没人跑（liveMaps 两个 Map 都空），只喂真实那份频道状态。
+		const shell = {
+			harness: { snapshot: async () => undefined, conversation: async () => ({ entries: async () => ({ items: [] }) }) },
+			registry: { snapshot: () => ({ tools: () => [] }) },
+			labelOf: (slug: string) => slug,
+		};
+		const snapshots = {
+			snapshot: async () => ({ identities: [], directory, channels: state, assistants: [] }),
+		};
+		const org = await createRead(shell as never, snapshots as never).readOrg();
+		expect(org.tasks?.map((task) => task.title)).toEqual(["alpha 的活", "beta 的活"]);
+	});
+
+	test("组织快照里一条活都没有时，org 上干脆没有 tasks 这个键", async () => {
+		const box = await setup();
+		const state = await stateOf(box);
+		const shell = {
+			harness: { snapshot: async () => undefined, conversation: async () => ({ entries: async () => ({ items: [] }) }) },
+			registry: { snapshot: () => ({ tools: () => [] }) },
+			labelOf: (slug: string) => slug,
+		};
+		const snapshots = {
+			snapshot: async () => ({ identities: [], directory, channels: state, assistants: [] }),
+		};
+		const org = await createRead(shell as never, snapshots as never).readOrg();
+		expect("tasks" in org).toBe(false);
 	});
 });

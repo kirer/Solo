@@ -28,7 +28,7 @@ import type {
 	ViewTurn,
 } from "../view/dto.ts";
 import { AppError } from "./errors.ts";
-import { attentionItems, channelDetail, channelList, idOf, orgView } from "./project.ts";
+import { attentionItems, channelDetail, channelList, idOf, orgView, workspaceTasks } from "./project.ts";
 import type { Snapshots } from "./snapshot.ts";
 import { buildTurn, groupsOf, triggerOf, withoutSteps } from "./trace.ts";
 import type { CoreServices } from "./types.ts";
@@ -76,8 +76,12 @@ async function recentEntries(conversation: Conversation): Promise<EntryRecord[]>
 export function createRead(shell: CoreServices, snapshots: Snapshots) {
 	/** 组织快照。界面的组织图与顶栏都吃这一份。 */
 	async function readOrg(): Promise<ViewOrg> {
-		const { identities, directory, assistants } = await snapshots.snapshot();
-		const org = orgView(identities, "Solo", assistants);
+		const { identities, directory, assistants, channels } = await snapshots.snapshot();
+		const tasks = workspaceTasks(channels);
+		const org: ViewOrg = {
+			...orgView(identities, "Solo", assistants),
+			...(tasks === undefined ? {} : { tasks }),
+		};
 		const { activity, failure } = await liveMaps(directory);
 		if (activity.size === 0 && failure.size === 0) return org;
 		return {
