@@ -87,12 +87,6 @@ jobs:
     if: inputs.notes_file == ''
     runs-on: macos-latest
     timeout-minutes: 60
-    env:
-      # 段 3（整链下载替换重开）暂时**不是发版闸**（老板 2026-11-15 拍的）：
-      # 它一整天在修「读太早」，连着让 build-mac 红了好几趟，红的还不是产品的问题。
-      # 发版路径上默认 0 —— 想临时开就在这儿改成 "1"。要跑它用 `.github/workflows/upgrade-stage3.yml`。
-      # 连绿三次再挂回闸上（挂回就是把这段和那条 if 删掉），在那之前它是一条旁路。
-      SOLO_VERIFY_SEGMENT3: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -206,8 +200,9 @@ jobs:
       # 段 3：整链。拿本版包当旧版（版本号降一格），本地 feed 喂本版清单，
       # 让它自己下载、自己替换、自己重开，最后读启动日志确认新进程认的是新版。
       # 这条只有带 `SOLO_VERIFY_INSTALL` 钩子的版本跑得起来（2.9.20 起）。
+      # **是发版闸**：2026-11-15 摘下来修「读太早」，2026-11-16 真路径连绿三次（43800915097 /
+      # 43801347109 / 43801379796）后挂回。每趟发版多十几分钟，这是该付的价（Solo 2026-11-16）。
       - name: 升级验收（段 3：整链下载替换重开）
-        if: env.SOLO_VERIFY_SEGMENT3 == '1'
         run: |
           set -euo pipefail
           VERSION="${{ needs.verify.outputs.version }}"
@@ -232,7 +227,7 @@ jobs:
         env:
           SOLO_UPDATE_KEY: ${{ secrets.SOLO_UPDATE_KEY }}
       - uses: actions/upload-artifact@v4
-        if: always() && env.SOLO_VERIFY_SEGMENT3 == '1'
+        if: always()
         with:
           name: mac-update-upgrade-full
           if-no-files-found: warn

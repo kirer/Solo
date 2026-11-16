@@ -10,7 +10,8 @@
  * - `latest-mac.json` / `latest-win.json` + 各自的 `.sig`：更新清单（`files` 里是 sha512）；
  * - `plugins.json` + `.sig`：**插件清单**（独立一份，`plugins` 数组里是每个插件 bundle 的 sha256）；
  * - `plugin-*.json`：插件包（纯文本 bundle，见 `src/shell/plugin-download.ts` 的说明）；
- * - `release-notes.md`：本版 `feat`/`fix` 的标题，给 Release 正文和界面弹窗共用。
+ * - `release-notes.md`：本版改了什么，给 Release 正文和界面弹窗共用。内容优先取
+ *   `release-notes/<版本>.txt`（一行一件用户看得到的事），没有才退回 `feat`/`fix` 标题。
  *
  * 为什么清单里要带 `notes`：更新弹窗以前只写「有新版本」，用户不知道改了什么（闻舒 2026-11-12）。
  * `notes` 由**提交标题生成**、不手抄 —— 手抄必然忘，一忘就是「弹窗说改了 A、实际改了 B」。
@@ -21,7 +22,7 @@
  */
 import { createHash, createPrivateKey, sign } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { basename, join, relative, sep } from "node:path";
 import { homedir } from "node:os";
 import { parseArgs } from "node:util";
@@ -124,6 +125,21 @@ export function releaseNotes(subjects: readonly string[]): readonly string[] {
 	return out;
 }
 
+/**
+ * `release-notes/<版本>.txt` 里那几行：一行一件用户看得到的事，人话。
+ * **不套 `feat`/`fix` 那层过滤** —— 那些行本来就是写好的文案，再过一遍正则会被全部丢掉。
+ * 只去掉空行和完全重复的行（顺序照文件）。
+ */
+export function notesFromLines(lines: readonly string[]): readonly string[] {
+	const out: string[] = [];
+	for (const line of lines) {
+		const text = line.trim();
+		if (text === "" || out.includes(text)) continue;
+		out.push(text);
+	}
+	return out;
+}
+
 /** 上一个 tag → 这个 tag 之间的提交标题。git 读不出来（浅克隆、还没 tag）就返回空。 */
 function subjectsBetween(prev: string | undefined, tag: string): readonly string[] {
 	try {
@@ -185,12 +201,21 @@ function main(): void {
 		};
 	}
 
-	// 本版改了什么：从提交标题生成，一份给清单（界面弹窗读）、一份给 Release 正文。
+	// 本版改了什么：一份给清单（界面弹窗读）、一份给 Release 正文。
+	// 优先级（2026-11-16 定，为的是不再靠人手动重签）：`--notes` > `release-notes/<版本>.txt`
+	// > 提交标题。有文件就先用文件 —— 那是人写的一句一件用户看得到的事，比 feat/fix 标题准；
+	// 没有才退回标题，免得哪天忘了写文件就发不出版本。
 	const tag = values.tag;
+	const notesFile = join("release-notes", `${values.version}.txt`);
+	const fileLines =
+		values.notes === undefined && existsSync(notesFile) ? readFileSync(notesFile, "utf8").split("\n") : undefined;
 	const notes =
-		values.notes === undefined
-			? releaseNotes(tag === undefined ? [] : subjectsBetween(previousTag(tag), tag))
-			: releaseNotes(values.notes.split("\n"));
+		values.notes !== undefined
+			? notesFromLines(values.notes.split("\n"))
+			: fileLines !== undefined
+				? notesFromLines(fileLines)
+				: releaseNotes(tag === undefined ? [] : subjectsBetween(previousTag(tag), tag));
+	if (fileLines !== undefined) console.log(`notes 用的是 ${notesFile}（${String(notes.length)} 行）`);
 	if (notes.length === 0) console.warn("这一版没有 feat/fix 提交标题，清单里的 notes 是空的");
 
 	for (const spec of values.file) {
