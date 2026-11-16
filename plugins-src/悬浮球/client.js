@@ -267,6 +267,46 @@ function downsample(samples, from, to) {
 }
 
 /**
+ * 麦克风的唯一出入口。**要麦克风只有这一条路。**
+ *
+ * 以前三条路（按键录音、直接说话、唤醒词）各自 `getUserMedia`、各自 `track.stop()`：
+ * 拿到手之后中间哪一步抛错，那条 stream 就留在手里 —— `listenRef` 还是 null、`stopListen`
+ * 当场早退，界面上「直接说话」是关的，菜单栏那颗麦克风却一直亮着（2026-11-16 老板报的就是这个）。
+ *
+ * 所以规矩收成两条，写死在这一处：
+ *   1. 申请只能走 `open()`：拿到手就记账，没人收养的话调用方必须 `release()`。
+ *   2. 放也只能走 `release()`：`track.stop()` 只在这里调，别处不再自己停。
+ * `releaseAll()` 给「窗口藏起来 / 组件卸载」用 —— 不在用的态，一条麦克风都不该留着。
+ */
+function micGate() {
+	const held = new Set();
+	/** 放过的 stream 记一笔：重放不算错，但也别把同一批轨道 stop 第二遍。 */
+	const released = new WeakSet();
+	return {
+		/** 申请一次麦克风。拿到手就算「占着」，用完必须 `release`。 */
+		async open(acquire) {
+			const stream = await acquire();
+			held.add(stream);
+			return stream;
+		},
+		/** 放掉。已经放过的再放一次不算错（各处收尾都会顺手调一遍）。 */
+		release(stream) {
+			if (stream === null || stream === undefined) return;
+			if (released.has(stream)) return;
+			released.add(stream);
+			held.delete(stream);
+			for (const track of stream.getTracks?.() ?? []) track.stop();
+		},
+		/** 全放掉：窗口藏起来、组件卸载时用。 */
+		releaseAll() {
+			for (const stream of [...held]) this.release(stream);
+		},
+		/** 现在还占着几条（只有测试读它，界面不读）。 */
+		held: () => held.size,
+	};
+}
+
+/**
  * 默认音色。v1.0 的 `zf_xiaoxiao` 在 v1.1-zh 这套模型里没有，默认落在 `zf_001`。
  *
  * **存名字，不存 sid。** sid 是 `voices.bin` 里的下标，换一次模型就整体错位：
@@ -919,6 +959,10 @@ export default {
 			const recorderRef = useRef(null);
 			const chunksRef = useRef([]);
 			const streamRef = useRef(null);
+			/** 麦克风的总闸：三条路（按键录音 / 直接说话 / 唤醒词）都从这儿开、从这儿关。 */
+			const micRef = useRef(null);
+			if (micRef.current === null) micRef.current = micGate();
+			const mic = micRef.current;
 			const tickRef = useRef(0);
 			const cancelledRef = useRef(false);
 			/** 已经念过的消息序号：轮询与 SSE 会重复给同一条，别念两遍。 */
@@ -1457,7 +1501,7 @@ export default {
 						cancelledRef.current = true;
 						recorder.stop();
 					}
-					for (const track of streamRef.current?.getTracks() ?? []) track.stop();
+					mic.releaseAll();
 					streamRef.current = null;
 					stopAudio();
 					clearInterval(voicePollRef.current);
@@ -1496,10 +1540,17 @@ export default {
 			}, [menu]);
 
 			// 独立窗被菜单栏图标藏起来时页面变成 hidden：录音、朗读一起收掉。
+			//
+			// **藏起来就不再听**（2026-11-16 老板：不打开直接说话时别占系统麦克风）：
+			// 球都不在屏幕上了还在收音，就是背着人录音，菜单栏那颗麦克风指示灯亮着没法解释。
+			// 用 state 而不是就地 stop：亮回来的时候挂在两个 effect 的 deps 上，自己会恢复。
+			const [windowHidden, setWindowHidden] = useState(false);
 			useEffect(() => {
 				if (!WINDOW_MODE) return undefined;
 				const onVisibility = () => {
-					if (document.visibilityState === "hidden") closeAll();
+					const hidden = document.visibilityState === "hidden";
+					setWindowHidden(hidden);
+					if (hidden) closeAll();
 				};
 				document.addEventListener("visibilitychange", onVisibility);
 				return () => document.removeEventListener("visibilitychange", onVisibility);
@@ -1700,7 +1751,7 @@ export default {
 			};
 
 			const cleanupStream = () => {
-				for (const track of streamRef.current?.getTracks() ?? []) track.stop();
+				mic.release(streamRef.current);
 				streamRef.current = null;
 			};
 
@@ -1847,7 +1898,7 @@ export default {
 				}
 				sayProblem("");
 				try {
-					const stream = await micWithTimeout({ audio: true });
+					const stream = await mic.open(() => micWithTimeout({ audio: true }));
 					streamRef.current = stream;
 					// 一路直收 PCM：先要 16 kHz，拿不到就按设备原生采样率录，落 WAV 之前再重采样。
 					const AudioCtx = window.AudioContext ?? window.webkitAudioContext;
@@ -1997,7 +2048,7 @@ export default {
 				} catch {
 					// 已经断了就算了。
 				}
-				for (const track of state.stream.getTracks()) track.stop();
+				mic.release(state.stream);
 				void state.ctx.close().catch(() => undefined);
 			};
 
@@ -2054,12 +2105,15 @@ export default {
 				// 失败也接着试，但别每拍都去撞权限弹窗。
 				if (Date.now() - listenFailRef.current < 8_000) return false;
 				listenBusyRef.current = true;
+				// 声明在 try 外：半路抛错时 catch 里要看得见它，才放得掉（见下）。
+				let stream;
 				try {
-					let stream;
 					try {
-						stream = await micWithTimeout({
-							audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-						});
+						stream = await mic.open(() =>
+							micWithTimeout({
+								audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+							}),
+						);
 					} catch (error_) {
 						listenFailRef.current = Date.now();
 						const name = error_?.name;
@@ -2087,7 +2141,7 @@ export default {
 					const ctx = new AudioCtx({ sampleRate: rate });
 					await ctx.resume().catch(() => undefined);
 					if (ctx.state !== "running") {
-						for (const track of stream.getTracks()) track.stop();
+						mic.release(stream);
 						void ctx.close().catch(() => undefined);
 						listenFailRef.current = Date.now();
 						sayProblem("浏览器没让后台听麦克风");
@@ -2229,6 +2283,9 @@ export default {
 					sayProblem("");
 					return true;
 				} catch {
+					// 半路抛错（AudioContext 起不来、设备中途掉了）：这条 stream 没人收养，当场放掉。
+					// 不放就是「开关是关的、麦克风一直亮着」—— 老板 2026-11-16 报的那条。
+					mic.release(stream);
 					listenFailRef.current = Date.now();
 					return false;
 				} finally {
@@ -2283,7 +2340,7 @@ export default {
 				} catch {
 					// 已经断了就算了。
 				}
-				for (const track of state.stream.getTracks()) track.stop();
+				mic.release(state.stream);
 				void state.ctx.close().catch(() => {});
 				void postKws(null, true).catch(() => {});
 			};
@@ -2294,6 +2351,8 @@ export default {
 				if (Date.now() - wakeCheckedRef.current < 5_000) return;
 				wakeBusyRef.current = true;
 				wakeCheckedRef.current = Date.now();
+				// 声明在 try 外：半路抛错时 catch 里要看得见它，才放得掉。
+				let stream;
 				try {
 					const status = await fetch("/api/orb/wake")
 						.then((response) => response.json())
@@ -2308,9 +2367,8 @@ export default {
 						setWakeFail("这个环境没有麦克风");
 						return;
 					}
-					let stream;
 					try {
-						stream = await micWithTimeout({ audio: true });
+						stream = await mic.open(() => micWithTimeout({ audio: true }));
 					} catch (error_) {
 						const name = error_?.name;
 						setWakeFail(
@@ -2331,7 +2389,7 @@ export default {
 					await ctx.resume().catch(() => undefined);
 					// 没跑起来的 AudioContext 不会出声，也就永远收不到音频：说清楚，别假装在听。
 					if (ctx.state !== "running") {
-						for (const track of stream.getTracks()) track.stop();
+						mic.release(stream);
 						void ctx.close().catch(() => undefined);
 						setWakeFail("浏览器没让后台听麦克风");
 						return;
@@ -2365,6 +2423,8 @@ export default {
 					wakeRef.current = state;
 					setWakeFail("");
 				} catch {
+					// 同上：半路抛错的 stream 没人收养，当场放掉。
+					mic.release(stream);
 					setWakeFail("唤醒没开成");
 				} finally {
 					wakeBusyRef.current = false;
@@ -2382,7 +2442,7 @@ export default {
 					const want = readPrefs().wake === true;
 					setWakeOn(want);
 					// 常驻听开着就不起唤醒词：两路都要麦克风，而常驻听已经把「直接说」做完了。
-					if (want && !listenOn && !recording && !transcribing) void startWake();
+					if (want && !listenOn && !recording && !transcribing && !windowHidden) void startWake();
 					else stopWake();
 				};
 				const timer = window.setInterval(tick, 1500);
@@ -2391,7 +2451,7 @@ export default {
 					clearInterval(timer);
 					stopWake();
 				};
-			}, [listenOn, recording, transcribing]);
+			}, [listenOn, recording, transcribing, windowHidden]);
 
 			// 还没接模型时主界面在引导页；独立窗里照旧留着球，别让一扇透明窗空着。
 			if (setupStep !== null && !WINDOW_MODE) return null;
@@ -2592,11 +2652,11 @@ export default {
 
 			// 常驻听：开关打开就一直挂着；私聊还没建好、或者正在按键录音时先不起（两路抢麦克风）。
 			useEffect(() => {
-				const want = listenOn && dmId !== null && !recording;
+				const want = listenOn && dmId !== null && !recording && !windowHidden;
 				if (want && listenRef.current === null) void startListen();
 				else if (!want && listenRef.current !== null) stopListen();
 				// eslint-disable-next-line react-hooks/exhaustive-deps
-			}, [listenOn, dmId, recording]);
+			}, [listenOn, dmId, recording, windowHidden]);
 
 			// 「在听」那圈光的强弱：rms 很低很低，直接按比例放大到看得见。
 			useEffect(() => {
