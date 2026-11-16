@@ -115,6 +115,8 @@ npm run ui:build                  # 改过 ui/app/ 才需要；产物不进仓�
 npm run live                      # 改过 agent 行为才需要；连跑两次都要 13/13
 
 # 2. 升版本并提交（两个文件一起变）
+#    提交信息里别写 [skip ci]：GitHub 的 skip 指令对打在它上面的 tag 也一样生效，
+#    带上它 `git push origin vX.Y.Z` 那趟一条 run 都不起，发版静默没跑（2.9.20 / 2.9.23 撞过）。
 npm version patch --no-git-tag-version     # 或 minor / major
 git add -A && git commit -m "chore: 发版 X.Y.Z——一句话"
 

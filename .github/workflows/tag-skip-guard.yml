@@ -1,0 +1,55 @@
+name: 发版闸（tag 不许被 skip 指令静默跳过）
+
+# 为什么不用 `push` 事件：commit message 里带 `[skip ci]`（或 `[ci skip]` / `[no ci]` /
+# `[skip actions]` / `[actions skip]`）时，GitHub **根本不会为这次 push 建 run** ——
+# 写在 release.yml 里的检查永远没机会执行，等于没有闸。2026-11-16 就是这样：文档全改成
+# 「不许带」了，2.9.23 自己还是带着它发出去，tag 推上去两分钟没有任何 run，只能 dispatch 补。
+# `create` 事件不受这个指令影响：tag 一建就起，才拦得住「推了 tag 却什么都没跑」。
+on:
+  create:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tag-skip-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    # create 事件对新建分支也触发，这里只管 tag。
+    if: github.event_name == 'workflow_dispatch' || github.event.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 要拿到 tag 本身和它指向的提交，浅克隆不够。
+          fetch-depth: 0
+          fetch-tags: true
+      - name: 查这个 tag 指向的提交信息
+        env:
+          # create 事件里是 tag 名（不带 refs/tags/）；手动跑时用当前 ref。
+          EVENT_REF: ${{ github.event.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          TAG="${EVENT_REF:-${REF_NAME}}"
+          echo "查 tag：${TAG}"
+          if ! git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::找不到 tag ${TAG}，没法查"
+            exit 1
+          fi
+          {
+            echo "--- 提交信息 ---"
+            git log -1 --format=%B "refs/tags/${TAG}"
+            echo "--- 标签说明 ---"
+            git tag -l --format='%(contents)' "${TAG}"
+          } > /tmp/msg.txt
+          cat /tmp/msg.txt
+          if ! bash scripts/tag-skip-guard.sh --stdin < /tmp/msg.txt; then
+            echo "::error::tag ${TAG} 的提交信息里带 skip 指令：这次 push GitHub 不会给发版建 run（就是静默没跑）。改掉提交信息再打 tag。"
+            exit 1
+          fi
+          echo "OK：${TAG} 没带 skip 指令，发版那趟会正常起。"
