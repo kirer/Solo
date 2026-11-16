@@ -9,7 +9,12 @@
  *   时照旧回落 `base + 名字` —— 老版本用户装不上更新比撞一个坏地址更糟。这条钉子留着。
  */
 import { describe, expect, it } from "vitest";
-import { upgradeAssetSource, upgradeAssetUrl } from "../../desktop/src/update-asset.ts";
+import {
+	directAssetUrl,
+	fetchAssetText,
+	upgradeAssetSource,
+	upgradeAssetUrl,
+} from "../../desktop/src/update-asset.ts";
 import { errorDetail, updateFailureMessage } from "../../desktop/src/update-failure.ts";
 
 const FEED = "https://github.com/kirer/Solo/releases/latest/download/";
@@ -104,5 +109,58 @@ describe("失败那句话：限流 / 连不上 / 签名 三种分得开", () => 
 			"Error: 更新接口没通：fetch failed ← TypeError: fetch failed ← Error: connect ECONNREFUSED 127.0.0.1:9 [ECONNREFUSED]",
 		);
 		expect(errorDetail(undefined)).toBe("");
+	});
+});
+
+describe("取清单：先直链，直链不通才问 API（2026-11-16 翻的）", () => {
+	const asked: string[] = [];
+	/** 只在 `ok` 里有正文的地址取得到，其余按 404 抛。 */
+	const fake = (ok: Record<string, string>) => async (url: string): Promise<string> => {
+		asked.push(url);
+		const body = ok[url];
+		if (body === undefined) throw new Error(`404（${url}）`);
+		return body;
+	};
+
+	it("直链通了：一次 API 都不问（额度和检查更新彻底脱钩）", async () => {
+		asked.length = 0;
+		const direct = `${FEED}latest-mac.json`;
+		const got = await fetchAssetText(FEED, "latest-mac.json", fake({ [direct]: '{"version":"2.9.23"}' }));
+		expect(got.via).toBe("direct");
+		expect(got.text).toBe('{"version":"2.9.23"}');
+		expect(asked).toEqual([direct]);
+	});
+
+	it("直链不通（到不了 github.com 的网络）：回落问 API，用资产直链取到", async () => {
+		asked.length = 0;
+		const api = "https://api.github.com/repos/kirer/Solo/releases/latest";
+		const assetUrl = "https://api.github.com/repos/kirer/Solo/releases/assets/42";
+		const got = await fetchAssetText(
+			FEED,
+			"Solo-2.9.15-arm64.zip",
+			fake({ [api]: JSON.stringify(release), [assetUrl]: "包本体" }),
+		);
+		expect(got.via).toBe("api");
+		expect(got.text).toBe("包本体");
+		// 顺序也要钉：先直链那一下，再 API，再资产直链。
+		expect(asked).toEqual([`${FEED}Solo-2.9.15-arm64.zip`, api, assetUrl]);
+	});
+
+	it("API 额度打满（一律 403 rate limit）：直链照样拿到版本号", async () => {
+		const direct = `${FEED}latest-mac.json`;
+		const cased = async (url: string): Promise<string> => {
+			if (url.includes("api.github.com")) throw new Error(`403 rate limit（${url}）`);
+			if (url === direct) return '{"version":"2.9.23"}';
+			throw new Error(`404（${url}）`);
+		};
+		const got = await fetchAssetText(FEED, "latest-mac.json", cased);
+		expect(got).toEqual({ text: '{"version":"2.9.23"}', via: "direct" });
+	});
+
+	it("直链怎么拼：尾斜杠补上、名字照旧编码", () => {
+		expect(directAssetUrl(FEED, "latest-mac.json")).toBe(`${FEED}latest-mac.json`);
+		expect(directAssetUrl("https://updates.example.com", "更新 包.zip")).toBe(
+			"https://updates.example.com/%E6%9B%B4%E6%96%B0%20%E5%8C%85.zip",
+		);
 	});
 });

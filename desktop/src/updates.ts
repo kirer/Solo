@@ -23,7 +23,7 @@ import { scheduleInstall } from "./install.ts";
 import { fileFor, isNewer, parseManifest, verifyManifest } from "./manifest.ts";
 import { versionDetail } from "./update-notes.ts";
 import { assetHeaders } from "./release-assets.ts";
-import { upgradeAssetSource } from "./update-asset.ts";
+import { directAssetUrl, fetchAssetText, upgradeAssetSource } from "./update-asset.ts";
 import { errorDetail, updateFailureMessage, type UpdateCheck } from "./update-failure.ts";
 import { UPDATE_PUBLIC_KEY } from "./update-key.ts";
 import { readUpdateProxy } from "./update-proxy.ts";
@@ -90,14 +90,25 @@ async function fetchText(url: string, proxy: string | undefined): Promise<string
 }
 
 /**
- * 资产地址：GitHub 源优先问 `api.github.com` 要直链（`github.com/.../download/` 在
- * 有些网络里连不上，API 和资产域却能到）。每个检查只问一次 API。
+ * 取一个资产（清单 / 签名）：**先直链，直链不通才问 `api.github.com`**（2026-11-16 翻的）。
  *
- * **API 拿不到就失败，不回落**那条短链（2.9.18）：回落等于让检查更新白等到超时、
- * 界面上一个字都没有 —— 程砚-2 报的 403 静默就是这么来的。纯逻辑在 `update-asset.ts` 里。
+ * 原来反着来：每查一次更新先问一次 API，而未认证额度只有 60 次/小时、按出口 IP 算 ——
+ * 同一个出口上 CI、真机验收、冒烟轮着刷就见底，界面上只剩「没连上（GitHub 限流）」。
+ * 直链走 release 资产，不占那个额度。API 留着兜「到不了 `github.com`」的网络（ADR-123）。
+ * 纯逻辑在 `update-asset.ts` 的 `fetchAssetText` 里。
  */
-async function assetUrls(feed: string, proxy: string | undefined): Promise<(name: string) => string> {
-	return upgradeAssetSource(feed, (url) => fetchText(url, proxy));
+async function assetText(
+	base: string,
+	name: string,
+	proxy: string | undefined,
+): Promise<{ readonly text: string; readonly via: "direct" | "api" }> {
+	return fetchAssetText(base, name, (url) => fetchText(url, proxy));
+}
+
+/** 只在清单是走 API 取到的那条路上用：问一次 API，换出包的资产直链。 */
+async function apiAssetUrl(base: string, name: string, proxy: string | undefined): Promise<string> {
+	const source = await upgradeAssetSource(base, (url) => fetchText(url, proxy));
+	return source(name);
 }
 
 /** 下到临时目录，边下边报进度，下完核对 sha512。 */
@@ -209,9 +220,9 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			const base = feed.endsWith("/") ? feed : `${feed}/`;
 			// 每次检查都重读：用户在设置里改了代理，下一次（或手动「检查更新」）就生效。
 			const proxy = readUpdateProxy(options.settingsFile);
-			const asset = await assetUrls(base, proxy);
-			const text = await fetchText(asset(manifestName()), proxy);
-			const signature = await fetchText(asset(`${manifestName()}.sig`), proxy);
+			const manifestAsset = await assetText(base, manifestName(), proxy);
+			const text = manifestAsset.text;
+			const signature = (await assetText(base, `${manifestName()}.sig`, proxy)).text;
 			if (!verifyManifest(UPDATE_PUBLIC_KEY, text, signature)) throw new Error("清单签名不对：不是用发布密钥签的");
 			const manifest = parseManifest(text);
 			if (manifest === undefined) throw new Error("清单格式不对");
@@ -240,7 +251,9 @@ export function createUpdater(options: UpdaterOptions): Updater {
 			if (answered !== 0) return;
 			step = "下载";
 			const { path: zip, bytes } = await download(
-				asset(file.file),
+				manifestAsset.via === "direct"
+					? directAssetUrl(base, file.file)
+					: await apiAssetUrl(base, file.file, proxy),
 				file.sha512,
 				(ratio) => windowNow()?.setProgressBar(Math.max(0, Math.min(1, ratio))),
 				proxy,
