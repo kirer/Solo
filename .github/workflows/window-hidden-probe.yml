@@ -1,0 +1,98 @@
+name: 窗口开关验收
+
+# `SOLO_WINDOW_HIDDEN` 的正反两趟：设了不显示、不设照常显示（老行为还在）。
+#
+# 判据不是「人去看日志」——每一趟自己断言自己那行，缺了就 `exit 1`。
+# 为什么不用 `set -e` + `trap`：macOS runner 的 bash 3.2 里，带 `trap EXIT` 的脚本撞
+# `set -u` 未定义变量时**退出码是 0**，CI 照样标 success（2026-11-15 栽过一次）。
+# 所以这里一律「跑完 → grep -qF → 不中就 `::error::` + exit 1」，二进制文件与日志都当产物核。
+on:
+  workflow_dispatch:
+
+jobs:
+  window-hidden:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run desktop:build
+
+      - run: npm run ui:build
+
+      - name: 隐藏那趟（SOLO_WINDOW_HIDDEN=1）：日志必须是「不显示」
+        run: |
+          set -uo pipefail
+          home="$RUNNER_TEMP/home-hidden"
+          mkdir -p "$home"
+          log="$home/.solo/logs/core.log"
+          HOME="$home" SOLO_WINDOW_HIDDEN=1 npx electron . --user-data-dir="$home/ud" >"$RUNNER_TEMP/hidden-stdout.log" 2>&1 &
+          app_pid=$!
+          found=""
+          for _ in $(seq 1 90); do
+            if [ -f "$log" ] && grep -qF "[window]" "$log"; then found=1; break; fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          kill "$app_pid" 2>/dev/null || true
+          sleep 3
+          if [ -z "$found" ]; then
+            echo "::error::隐藏那趟没等到 [window] 那行日志（窗口没渲染完就退出了？），这次不算"
+            tail -40 "$RUNNER_TEMP/hidden-stdout.log" 2>/dev/null || true
+            [ -f "$log" ] && tail -40 "$log" || true
+            exit 1
+          fi
+          if ! grep -qF "SOLO_WINDOW_HIDDEN=1：窗口不显示" "$log"; then
+            echo "::error::设了 SOLO_WINDOW_HIDDEN=1，日志里却不是「窗口不显示」——开关没生效"
+            grep -F "[window]" "$log" || true
+            exit 1
+          fi
+          if grep -qF "窗口已显示" "$log"; then
+            echo "::error::设了 SOLO_WINDOW_HIDDEN=1，却出现了「窗口已显示」——窗口被亮出来了"
+            grep -F "[window]" "$log" || true
+            exit 1
+          fi
+          echo "隐藏那趟过：只有「窗口不显示」"
+          grep -F "[window]" "$log" || true
+
+      - name: 不设那趟：日志必须是「窗口已显示」（老行为还在）
+        run: |
+          set -uo pipefail
+          home="$RUNNER_TEMP/home-visible"
+          mkdir -p "$home"
+          log="$home/.solo/logs/core.log"
+          HOME="$home" npx electron . --user-data-dir="$home/ud" >"$RUNNER_TEMP/visible-stdout.log" 2>&1 &
+          app_pid=$!
+          found=""
+          for _ in $(seq 1 90); do
+            if [ -f "$log" ] && grep -qF "[window]" "$log"; then found=1; break; fi
+            if ! kill -0 "$app_pid" 2>/dev/null; then break; fi
+            sleep 2
+          done
+          kill "$app_pid" 2>/dev/null || true
+          sleep 3
+          if [ -z "$found" ]; then
+            echo "::error::不设那趟没等到 [window] 那行日志，这次不算"
+            tail -40 "$RUNNER_TEMP/visible-stdout.log" 2>/dev/null || true
+            [ -f "$log" ] && tail -40 "$log" || true
+            exit 1
+          fi
+          if ! grep -qF "窗口已显示" "$log"; then
+            echo "::error::没设 SOLO_WINDOW_HIDDEN，日志里却没有「窗口已显示」——老行为被改坏了"
+            grep -F "[window]" "$log" || true
+            exit 1
+          fi
+          if grep -qF "窗口不显示" "$log"; then
+            echo "::error::没设变量却走了隐藏分支——两边都没弹"
+            grep -F "[window]" "$log" || true
+            exit 1
+          fi
+          echo "不设那趟过：只有「窗口已显示」"
+          grep -F "[window]" "$log" || true

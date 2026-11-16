@@ -43,6 +43,7 @@ import {
 } from "./orb-window.ts";
 import { createUpdater, type Updater } from "./updates.ts";
 import { TITLEBAR_COLORS, TITLEBAR_HEIGHT, windowChrome } from "./window-chrome.ts";
+import { mayShowWindow } from "./window-hidden.ts";
 
 const DEV = !app.isPackaged;
 /** 和后端 `src/shell/main.ts` 的 `RELAUNCH_EXIT_CODE` 对齐：重置 / 重启完后端以 75 退出（壳不 import 内核）。 */
@@ -112,6 +113,12 @@ function setupMicrophone(): void {
 	appendLog(logFile, `[permission] ${describeMicrophone(systemPreferences.getMediaAccessStatus("microphone"))}`);
 }
 
+/**
+ * 这趟要不要把窗口亮出来。`SOLO_WINDOW_HIDDEN=1` 时为假：窗口建出来、渲染照跑，但一次都不显示
+ * —— 下面所有 `show` / `showInactive` / `app.focus` 都看这一个开关。
+ */
+const MAY_SHOW_WINDOW = mayShowWindow();
+
 function createWindow(url: string): BrowserWindow {
 	// 小屏幕（1280×800 那类笔记本）上别把窗口开到屏幕外面去。
 	const area = screen.getPrimaryDisplay().workAreaSize;
@@ -149,7 +156,13 @@ function createWindow(url: string): BrowserWindow {
 		if (!/^https?:\/\//i.test(params.src ?? "")) event.preventDefault();
 	});
 	window.once("ready-to-show", () => {
+		if (!MAY_SHOW_WINDOW) {
+			// 这一行是无人值守验证的唯一凭据：CI 上正反各跑一趟，日志里没有对应的那行就 `exit 1`。
+			appendLog(logFile, "[window] SOLO_WINDOW_HIDDEN=1：窗口不显示（渲染照常）");
+			return;
+		}
 		window.show();
+		appendLog(logFile, "[window] 窗口已显示");
 		// macOS 上 `show()` 不一定把应用叫到前台：悬浮球那扇 `showInactive` 的窗子一开，
 		// 主窗口虽然看得见，菜单栏（左上角）却还留在上一个应用那儿。启动时显式激活一次。
 		if (process.platform === "darwin") app.focus({ steal: true });
@@ -253,7 +266,7 @@ function createOrbWindow(url: string): BrowserWindow {
 	window.setIgnoreMouseEvents(true, { forward: true });
 
 	window.once("ready-to-show", () => {
-		if (orbState?.visible !== false) window.showInactive();
+		if (MAY_SHOW_WINDOW && orbState?.visible !== false) window.showInactive();
 	});
 	window.on("closed", () => {
 		orbWin = undefined;
@@ -394,6 +407,7 @@ function trayMenu(): Menu {
 			label: "打开 Solo",
 			click: () => {
 				if (win === undefined || win.isDestroyed()) return;
+				if (!MAY_SHOW_WINDOW) return;
 				win.show();
 				win.focus();
 			},
@@ -515,6 +529,7 @@ async function start(): Promise<void> {
 		// 退出途中窗口已经销毁，但进程还没走完：这时再碰 `win` 会抛
 		// `Object has been destroyed`（Windows 更新后手动重开的那个报错）。
 		if (quitting || win === undefined || win.isDestroyed()) return;
+		if (!MAY_SHOW_WINDOW) return;
 		if (win.isMinimized()) win.restore();
 		win.show();
 		win.focus();
@@ -523,7 +538,7 @@ async function start(): Promise<void> {
 		if (process.platform !== "darwin") void quit();
 	});
 	app.on("activate", () => {
-		if (!quitting && win !== undefined && !win.isDestroyed()) win.show();
+		if (!quitting && MAY_SHOW_WINDOW && win !== undefined && !win.isDestroyed()) win.show();
 	});
 	// 锁尽量留到真退出：放早了，安装更新期间手动重开的新实例会和进程外安装器抢文件。
 	app.on("will-quit", () => app.releaseSingleInstanceLock());
