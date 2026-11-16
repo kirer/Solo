@@ -166,7 +166,8 @@ describe("整屏页：桌面上是弹窗，窄窗口里铺满", () => {
 	it("插件页也能推到右栏里（不弹窗）：同一格，右栏自己那一层", () => {
 		expect(rightPanelSource).toContain('<Slot name="app.page" page={rightPage} />');
 		expect(rightPanelSource).toContain('data-page={rightPage === null ? "false" : "true"}');
-		expect(rightPanelSource).toContain("closeRightPage()");
+		// 退出走栈（`backRight`）：谁在顶层只有 store 知道，渲染层不再按开关分叉。
+		expect(rightPanelSource).toContain("const back = (): void => backRight()");
 	});
 
 	it("后台任务是右栏的一态，不是另一屏", () => {
@@ -175,6 +176,47 @@ describe("整屏页：桌面上是弹窗，窄窗口里铺满", () => {
 		expect(rightPanelSource).toContain('data-tasks={tasksOpen ? "true" : "false"}');
 		expect(tasksCss).toContain(".tasks-row");
 		expect(tasksCss).not.toContain(".tasks-list-head");
+	});
+});
+
+describe("右栏是一叠纸：推一页、返回退一张，退到底整栏收起", () => {
+	/** 取一个函数的函数体（源码里 `export function X(` 到配对的 `}`），只看它自己那几行。 */
+	const bodyOf = (name: string): string => {
+		const start = storeSource.indexOf(`export function ${name}(`);
+		expect(start, `找不到 ${name}`).toBeGreaterThan(-1);
+		const from = storeSource.indexOf("{", start);
+		let depth = 0;
+		for (let i = from; i < storeSource.length; i += 1) {
+			if (storeSource[i] === "{") depth += 1;
+			if (storeSource[i] === "}") {
+				depth -= 1;
+				if (depth === 0) return storeSource.slice(from, i + 1);
+			}
+		}
+		throw new Error(`${name} 没有闭合`);
+	};
+
+	it("板 / 任务 / 工作台 / 插件页 / 文件预览的退出都是退一层，不各关各的开关", () => {
+		for (const name of ["closeBoard", "closeTasks", "closeDock", "closeRightPage", "closeRightFile"]) {
+			expect(bodyOf(name).trim(), `${name} 没有走 backRight`).toContain("backRight()");
+		}
+	});
+
+	it("退到底（栈空了）整栏收起，不回资料页", () => {
+		const body = bodyOf("backRight");
+		expect(body).toContain("right: { open: false }");
+		expect(body).not.toContain('{ kind: "channel" }');
+	});
+
+	it("推一页：右栏关着就落成栈底，开着就叠一层", () => {
+		const body = bodyOf("pushRight");
+		expect(body).toContain("state.right.open === false ? [entry] :");
+		expect(body).toContain("...state.trail, entry");
+	});
+
+	it("板上不该带资料页最底下那一格（Token 用量跟着资料页，不跟着板）", () => {
+		expect(rightPanelSource).toContain("<Slot name=\"rightPanel.bottom\" />");
+		expect(rightPanelSource).toContain("{boardOpen || tasksOpen ? null : <Slot name=\"rightPanel.bottom\" />}");
 	});
 });
 

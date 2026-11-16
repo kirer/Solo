@@ -19,7 +19,7 @@ import { cellsOf, type SlotCell } from "../plugin/registry.ts";
 import { SLOT_MARK, Slot } from "../plugin/Slot.tsx";
 import { clockTime, dayLabel, humanDuration, relTime } from "../lib/format.ts";
 import { renderMarkdown } from "../lib/markdown.ts";
-import { backRight, clampDockWidth, closeBoard, closeDock, closeRightFile, closeRightPage, closeTasks, focusSeq, openBoard, openPerson, openTasks, refreshDetail, setDockWidth, setRight, getState } from "../state/store.ts";
+import { backRight, clampDockWidth, closeRight, focusSeq, openBoard, openPerson, openTasks, refreshDetail, setDockWidth, getState } from "../state/store.ts";
 import { useStore } from "../state/useStore.ts";
 import { FilePreview } from "./FilePreview.tsx";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
@@ -30,7 +30,6 @@ export function RightPanel(): JSX.Element {
 	const open = useStore((state) => state.right.open);
 	const tasksOpen = useStore((state) => state.tasks.open);
 	const boardOpen = useStore((state) => state.board.open);
-	const trail = useStore((state) => state.trail);
 	const dock = useStore((state) => state.dock);
 	const rightPage = useStore((state) => state.rightPage);
 	const rightFile = useStore((state) => state.rightFile);
@@ -72,7 +71,7 @@ export function RightPanel(): JSX.Element {
 			if (target.closest("aside.detail") !== null) return;
 			// 顶栏那几颗自己负责开合，不然按下先被这里关掉、抬手又被它重新打开。
 			if (target.closest('[aria-label="资料与后台任务"], [aria-label="资料"], #board-btn') !== null) return;
-			setRight({ open: false });
+			closeRight();
 		};
 		document.addEventListener("pointerdown", onDown, true);
 		return () => document.removeEventListener("pointerdown", onDown, true);
@@ -80,16 +79,8 @@ export function RightPanel(): JSX.Element {
 
 	if (!open && !mounted) return <aside className="detail" hidden />;
 
-	// 这一栏是一叠纸：工作台 / 后台任务 / 资料页各有上一层，返回就退一张。
-	const back = (): void => {
-		if (dock !== null) closeDock();
-		else if (rightPage !== null) closeRightPage();
-		else if (rightFile !== null) closeRightFile();
-		else if (boardOpen) closeBoard();
-		else if (tasksOpen) closeTasks();
-		else if (trail.length > 1) backRight();
-		else setRight({ open: false });
-	};
+	// 这一栏是一叠纸：推一页、返回退一张，退到底整栏收起。谁在顶层只有 store 的栈知道。
+	const back = (): void => backRight();
 	const pageCell = rightPage === null ? undefined : cellsOf("app.page").find((cell) => cell.plugin === rightPage);
 	const fileName = rightFile === null ? "" : (rightFile.split("/").pop() ?? rightFile);
 	const title =
@@ -153,7 +144,7 @@ export function RightPanel(): JSX.Element {
 			) : (
 				<div className="detail-panel" id="detail-panel" key={boardOpen ? "board" : tasksOpen ? "tasks" : "profile"}>
 					{boardOpen ? <BoardView /> : tasksOpen ? <TasksView /> : <ProfileView />}
-					<Slot name="rightPanel.bottom" />
+					{boardOpen || tasksOpen ? null : <Slot name="rightPanel.bottom" />}
 				</div>
 			)}
 		</aside>

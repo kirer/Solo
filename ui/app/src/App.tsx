@@ -25,14 +25,12 @@ import { Starters } from "./stream/Starters.tsx";
 import { Stream } from "./stream/Stream.tsx";
 import { Titlebar } from "./titlebar/Titlebar.tsx";
 import {
+	backRight,
 	closeBoard,
 	clampDockWidth,
 	closeBrowser,
-	closeDock,
 	closePluginView,
-	closeRightFile,
-	closeRightPage,
-	closeTasks,
+	closeRight,
 	openBoard,
 	openChannel,
 	openChannelInfo,
@@ -42,7 +40,6 @@ import {
 	setPluginSheet,
 	setResetOpen,
 	setRestartOpen,
-	setRight,
 	setSettings,
 } from "./state/store.ts";
 import { useStore } from "./state/useStore.ts";
@@ -67,14 +64,11 @@ export function App(): JSX.Element {
 	const newGroup = useStore((state) => state.newGroup);
 	const resetOpen = useStore((state) => state.resetOpen);
 	const restartOpen = useStore((state) => state.restartOpen);
-	const tasksOpen = useStore((state) => state.tasks.open);
 	const boardOpen = useStore((state) => state.board.open);
 	const orgTasks = useStore((state) => state.orgTasks);
 	const pluginView = useStore((state) => state.pluginView);
 	const browser = useStore((state) => state.browser);
 	const dock = useStore((state) => state.dock);
-	const rightPage = useStore((state) => state.rightPage);
-	const rightFile = useStore((state) => state.rightFile);
 	const setupStep = useStore((state) => state.setupStep);
 	const nav = useStore((state) => state.nav);
 	/** 顶栏那颗「任务板」上的数：跟板上同一口径，只数活的。 */
@@ -111,19 +105,16 @@ export function App(): JSX.Element {
 		if (resetOpen) return setResetOpen(false), true;
 		if (restartOpen !== null) return setRestartOpen(null), true;
 		if (browser !== null && dock === null) return closeBrowser(), true;
-		if (dock !== null) return closeDock(), true;
-		if (rightPage !== null) return closeRightPage(), true;
-		if (rightFile !== null) return closeRightFile(), true;
 		// 插件页 / 插件清单是设置里的下一层：先退一层，再关设置。
 		if (pluginView !== null) return closePluginView(), true;
 		if (pluginSheet) return setPluginSheet(false), true;
-		if (tasksOpen) return closeTasks(), true;
 		if (settings) return setSettings(false), true;
 		if (newGroup) return setNewGroup(false), true;
 		if (needMenu) return setNeedMenu(false), true;
-		if (right.open) return setRight({ open: false }), true;
+		// 右栏（含工作台 / 板 / 任务 / 文件）统一按栈退一层，Esc 退到底才收起。
+		if (right.open) return backRight(), true;
 		return false;
-	}, [resetOpen, restartOpen, browser, dock, rightPage, rightFile, pluginView, tasksOpen, settings, newGroup, pluginSheet, needMenu, right.open]);
+	}, [resetOpen, restartOpen, browser, dock, pluginView, settings, newGroup, pluginSheet, needMenu, right.open]);
 
 	useEffect(() => {
 		const onKey = (event: KeyboardEvent): void => {
@@ -334,7 +325,7 @@ export function App(): JSX.Element {
 							data-on={right.open ? "true" : "false"}
 							aria-label="资料"
 							title="资料"
-							onClick={() => setRight({ open: !right.open })}
+							onClick={() => (right.open ? closeRight() : openChannelInfo())}
 						>
 							<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 								<circle cx="12" cy="8.2" r="3.6" />
@@ -436,7 +427,7 @@ export function App(): JSX.Element {
 										aria-label="资料与后台任务"
 										title="资料与后台任务"
 										aria-pressed={right.open}
-										onClick={() => (right.open ? setRight({ open: false }) : openChannelInfo())}
+										onClick={() => (right.open ? closeRight() : openChannelInfo())}
 									>
 										<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
 											<circle cx="12" cy="8.2" r="3.6" />

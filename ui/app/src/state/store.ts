@@ -810,19 +810,8 @@ export function openTasks(slug?: string): void {
 		// 还没人跑过、也不在私聊里：挑第一个人，让这一屏一打开就有一列东西可看。
 		state.people.find((actor) => actor.slug !== "owner")?.slug ??
 		null;
-	// 后台任务是右栏的一态（桌面）或那一层整屏浮层（手机）：右栏必须打开，
-	// 其余整屏让路（§13.3）。
-	patch({
-		nav: "fwd",
-		tasks: { open: true, who },
-		board: { open: false },
-		right: { open: true },
-		needMenu: false,
-		restartOpen: null,
-		pluginView: null,
-		pluginSheet: false,
-		settings: false,
-	});
+	// 后台任务是右栏里推的一页（§13.3 的「整屏让路」在 `pushRight` 里）。
+	pushRight({ kind: "tasks", who });
 	if (who !== null) void loadPersonRuns(who);
 }
 
@@ -834,51 +823,27 @@ export function openTasks(slug?: string): void {
  * 把正文挤走。右栏和资料、后台任务共用一层纸，进来就该看见，退出就回聊天。
  */
 export function openBoard(): void {
-	patch({
-		nav: "fwd",
-		board: { open: true },
-		tasks: { open: false, who: getState().tasks.who },
-		right: { open: true },
-		needMenu: false,
-		restartOpen: null,
-		pluginView: null,
-		pluginSheet: false,
-		settings: false,
-	});
+	pushRight({ kind: "board" });
 }
 
+/** 退出任务板 = 退一层：板本来就是这一层的根时，整栏收起（老板 2026-11-16）。 */
 export function closeBoard(): void {
-	// 跟 `closeTasks` 同一条规矩：手机上它是整屏那层，退出等于收起右栏；桌面回资料表。
-	const mobile =
-		typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
-	patch({
-		nav: "back",
-		board: { open: false },
-		pluginView: null,
-		settings: false,
-		pluginSheet: false,
-		...(mobile ? { right: { open: false } } : {}),
-	});
+	backRight();
 }
 
+/** 换看谁：栈顶那一页跟着换人，退出去仍然回它的上一层。 */
 export function setTasksWho(slug: string): void {
-	patch({ tasks: { open: true, who: slug } });
+	const state = getState();
+	const trail = state.trail.map((entry, index) =>
+		index === state.trail.length - 1 && entry.kind === "tasks" ? { kind: "tasks" as const, who: slug } : entry,
+	);
+	patch({ tasks: { open: true, who: slug }, trail });
 	void loadPersonRuns(slug);
 }
 
+/** 退出后台任务 = 退一层，退到底整栏收起。 */
 export function closeTasks(): void {
-	// 「聊天」那格也走这里：它同时是「离开任何第二屏，回到聊天」。
-	// 手机：任务就是整屏那层浮层，退出它等于收起右栏；桌面：回到资料表，右栏不动。
-	const mobile =
-		typeof window !== "undefined" && window.matchMedia("(max-width: 640px)").matches;
-	patch({
-		nav: "back",
-		tasks: { open: false, who: getState().tasks.who },
-		pluginView: null,
-		settings: false,
-		pluginSheet: false,
-		...(mobile ? { right: { open: false } } : {}),
-	});
+	backRight();
 }
 
 /** 打开一个插件页（`app.page` 插槽里 slug 对得上的那一格）。 */
@@ -895,7 +860,9 @@ export function openPluginView(slug: string): void {
 		// 插件页开在设置弹窗里（同一个容器）：返回落回设置的清单。
 		settings: true,
 		needMenu: false,
+		// 整屏盖住右栏：栈一起清，不然下次开右栏会接着上一轮那一页。
 		right: { open: false },
+		trail: [],
 	});
 }
 
@@ -906,27 +873,27 @@ export function closePluginView(): void {
 
 /** 打开右侧工作台：占右栏那一层（不是另开一列，也不占正文宽度）。 */
 export function openDock(slug: string): void {
-	patch({ nav: "fwd", dock: slug, rightPage: null, rightFile: null, tasks: { open: false, who: getState().tasks.who }, right: { open: true }, settings: false, pluginSheet: false, pluginView: null });
+	pushRight({ kind: "dock", slug });
 }
 
-/** 收起工作台：回右栏的上一层（资料页），右栏本身不关。 */
+/** 收起工作台：退一层（上一层是资料页就回资料页，没有就整栏收起）。 */
 export function closeDock(): void {
-	patch({ dock: null, nav: "back" });
+	backRight();
 }
 
-/** 在右栏里推入一个插件页（不弹窗）：占右栏那一层，返回退回资料页。 */
+/** 在右栏里推入一个插件页（不弹窗）：占右栏那一层，返回退一层。 */
 export function openRightPage(slug: string): void {
-	patch({ nav: "fwd", rightPage: slug, dock: null, pluginView: null, rightFile: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+	pushRight({ kind: "page", slug });
 }
 
-/** 收起右栏里的插件页：回资料页，右栏本身不关。 */
+/** 收起右栏里的插件页：退一层。 */
 export function closeRightPage(): void {
-	patch({ rightPage: null, nav: "back" });
+	backRight();
 }
 
-/** 在右栏里推入一份文件预览（正文里点到的相对路径）：和插件页同一层，返回退回资料页。 */
+/** 在右栏里推入一份文件预览（正文里点到的相对路径）：和插件页同一层，返回退一层。 */
 export function openRightFile(path: string): void {
-	patch({ nav: "fwd", rightFile: path, rightPage: null, dock: null, pluginView: null, settings: false, pluginSheet: false, tasks: { open: false, who: getState().tasks.who }, right: { open: true } });
+	pushRight({ kind: "file", path });
 }
 
 /**
@@ -935,7 +902,8 @@ export function openRightFile(path: string): void {
  * 交接完顺手收起预览层 —— 附件已经进了输入卡的队列，原地留着一层纸只会挡住要发的话。
  */
 export function stageToComposer(file: { readonly path: string; readonly id: string; readonly name: string; readonly kind: "image" | "file"; readonly bytes: number }): void {
-	patch({ staged: file, rightFile: null, nav: "back" });
+	patch({ staged: file });
+	backRight();
 }
 
 /** 输入卡取走交接（取一次就清）：返回 `null` 表示没有待接的。 */
@@ -945,9 +913,9 @@ export function takeStaged(): State["staged"] {
 	return pending;
 }
 
-/** 收起右栏里的文件预览：回资料页，右栏本身不关。 */
+/** 收起右栏里的文件预览：退一层。 */
 export function closeRightFile(): void {
-	patch({ rightFile: null, nav: "back" });
+	backRight();
 }
 
 /** 拖右栏的左边线：宽度记进偏好，换页 / 下次打开还是这么宽。`null` 回到默认 348。 */
@@ -986,8 +954,92 @@ function dmPartner(state: State): string | undefined {
 
 /* ── 右侧栏：详情可以往里钻（频道 → 人 → 再点频道里的人） ────────────── */
 
-/** 栈底永远是「当前频道」，所以「返回」总是能退出一个人物案。 */
-export type RightEntry = { kind: "channel" } | { kind: "person"; slug: string };
+/**
+ * 右栏是一叠纸：推进去一页、返回退一页，退到底这一栏整个收起来（**不是**退回资料页）。
+ *
+ * 老板 2026-11-16：任务板看完按返回，露出的是资料页 —— 因为那几页原先各是一个开关，
+ * `closeXxx` 只把自己那一格关掉，右栏还开着。现在所有页都是这一栈里的一张。
+ */
+export type RightEntry =
+	| { kind: "channel" }
+	| { kind: "person"; slug: string }
+	| { kind: "board" }
+	| { kind: "tasks"; who: string | null }
+	| { kind: "file"; path: string }
+	| { kind: "page"; slug: string }
+	| { kind: "dock"; slug: string };
+
+/** 同一页（重复点同一个入口不叠第二张）。 */
+function sameLayer(left: RightEntry, right: RightEntry): boolean {
+	if (left.kind !== right.kind) return false;
+	if (left.kind === "person" && right.kind === "person") return left.slug === right.slug;
+	if (left.kind === "file" && right.kind === "file") return left.path === right.path;
+	if (left.kind === "page" && right.kind === "page") return left.slug === right.slug;
+	if (left.kind === "dock" && right.kind === "dock") return left.slug === right.slug;
+	if (left.kind === "tasks" && right.kind === "tasks") return left.who === right.who;
+	return true;
+}
+
+/**
+ * 把栈顶那一页投影成右栏那几个开关 —— 渲染层照旧读它们，不用改成读栈。
+ *
+ * `undefined` = 栈空了（右栏要关）：所有开关归位，不留上一页的残影。
+ */
+function layerOf(
+	entry: RightEntry | undefined,
+	who: string | null,
+): Pick<State, "person" | "board" | "tasks" | "rightFile" | "rightPage" | "dock"> {
+	const clear = {
+		person: null,
+		board: { open: false },
+		tasks: { open: false, who },
+		rightFile: null,
+		rightPage: null,
+		dock: null,
+	};
+	if (entry === undefined) return clear;
+	switch (entry.kind) {
+		case "board":
+			return { ...clear, board: { open: true } };
+		case "tasks":
+			return { ...clear, tasks: { open: true, who: entry.who } };
+		case "file":
+			return { ...clear, rightFile: entry.path };
+		case "page":
+			return { ...clear, rightPage: entry.slug };
+		case "dock":
+			return { ...clear, dock: entry.slug };
+		default:
+			return clear;
+	}
+}
+
+/** 往右栏推一页：右栏本来关着就当栈底（返回即收起），开着就叠一层。 */
+export function pushRight(entry: RightEntry, person: PersonProfile | null = null): void {
+	const state = getState();
+	const top = state.trail[state.trail.length - 1];
+	const same = state.right.open && top !== undefined && sameLayer(top, entry);
+	const trail = state.right.open === false ? [entry] : same ? state.trail : [...state.trail, entry];
+	patch({
+		nav: "fwd",
+		trail,
+		right: { open: true },
+		...layerOf(entry, state.tasks.who),
+		...(entry.kind === "person" && person !== null ? { person } : {}),
+		// 右栏是整屏那一层的邻居：开它就把设置 / 插件那些整屏让开（§13.3）。
+		needMenu: false,
+		restartOpen: null,
+		pluginView: null,
+		pluginSheet: false,
+		settings: false,
+	});
+}
+
+/** 收起右栏，连栈一起清 —— 下次打开从一张白纸开始，不是接着上一轮的那页。 */
+export function closeRight(): void {
+	const state = getState();
+	patch({ nav: "back", trail: [], right: { open: false }, ...layerOf(undefined, state.tasks.who) });
+}
 
 /** 进一个人的人物案。拉不到就抛（由调用方 toast），并把栈恢复原样。 */
 export async function openPerson(slug: string): Promise<void> {
@@ -1000,14 +1052,16 @@ export async function openPerson(slug: string): Promise<void> {
 			state.detail.channel.kind === "dm" &&
 			state.detail.members.some((member) => member.slug === slug && member.slug !== "owner");
 		if (peer) {
-			patch({ nav: "fwd", right: { open: true } });
+			// 这一屏本来就讲他：栈底放资料页，返回即收起。
+			patch({
+				nav: "fwd",
+				right: { open: true },
+				...(state.right.open === false ? { trail: [{ kind: "channel" } as RightEntry] } : {}),
+			});
 			return;
 		}
-		// 右栏本来关着（群里点头像）：人物案就是这一层的根，「返回」直接收起，
-		// 不该先退到「群的资料页」再退一次。
-		const trail: RightEntry[] =
-			state.right.open === false ? [{ kind: "person", slug }] : [...state.trail, { kind: "person", slug }];
-		patch({ nav: "fwd", person: profile, trail, right: { open: true } });
+		// 右栏本来关着（群里点头像）：人物案就是这一层的根，「返回」直接收起。
+		pushRight({ kind: "person", slug }, profile);
 	} catch (error) {
 		throw error;
 	}
@@ -1020,21 +1074,30 @@ export async function openPerson(slug: string): Promise<void> {
  * 不重置的话，再点「资料」看到的还是那个人的档案，像开错了页。
  */
 export function openChannelInfo(): void {
-	patch({ nav: "fwd", person: null, trail: [{ kind: "channel" }], right: { open: true } });
+	pushRight({ kind: "channel" });
 }
 
-/** 退一层。栈底是频道，再退就只剩频道本身（仍然显示，不打空）。 */
+/**
+ * 退一层：这叠纸退回上一张；退到底（栈空了）右栏整个收起，回聊天。
+ *
+ * 老规矩是「栈底永远是频道，退到底还显示资料页」—— 老板 2026-11-16 说那是错的：
+ * 从板上按返回，露出来的不该是一张没人要的资料表。
+ */
 export function backRight(): void {
-	if (state.trail.length <= 1) return;
-	const trail = state.trail.slice(0, -1);
-	const last = trail[trail.length - 1];
-	if (last === undefined || last.kind === "channel") {
-		patch({ nav: "back", trail, person: null });
+	const current = getState();
+	const trail = current.trail.slice(0, -1);
+	const top = trail[trail.length - 1];
+	if (top === undefined) {
+		patch({ nav: "back", trail, right: { open: false }, ...layerOf(undefined, current.tasks.who) });
 		return;
 	}
-	void getPerson(last.slug)
-		.then((profile) => patch({ nav: "back", trail, person: profile }))
-		.catch(() => patch({ nav: "back", trail, person: null }));
+	if (top.kind === "person") {
+		void getPerson(top.slug)
+			.then((profile) => patch({ nav: "back", trail, ...layerOf(top, current.tasks.who), person: profile }))
+			.catch(() => patch({ nav: "back", trail, ...layerOf(top, current.tasks.who), person: null }));
+		return;
+	}
+	patch({ nav: "back", trail, ...layerOf(top, current.tasks.who) });
 }
 
 /* ── 跳到某条起源消息（任务看板 → 消息流） ─────────────────────────── */
