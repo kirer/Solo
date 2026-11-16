@@ -49,15 +49,28 @@ describe("发布闸：notes 空着但真动了代码", () => {
 		expect(workflow).toContain("if: github.ref_type == 'tag'");
 	});
 
-	it("推 main 就自动跑打包（平时一直在验，发版时直接打 tag）", () => {
-		// 这一条和 publish 的 tag 守卫是一对：没有它，发版前得单独等一轮 dispatch；
-		// 有它却不守 publish，推 main 就会发版本。两样必须同时成立（Solo 2026-11-14）。
+	it("推 main 只跑测试，打包只在推 tag / dispatch 时跑", () => {
+		// 老板 2026-11-16 抱怨「每次推送后 git 都要折腾半天」：原来每笔 push 都跑 mac + win
+		// 全套打包（十几分钟），还因为同组只留一个 pending，连推两笔就顶掉一轮。
+		// 现在推 main 只出 `verify` 的结论；打包两步都守 tag / dispatch，publish 仍只认 tag。
 		const onset = workflow.slice(workflow.indexOf("\non:"), workflow.indexOf("\npermissions:"));
 		expect(onset).toContain("branches:");
 		expect(onset).toContain("- main");
 		expect(onset).toContain("- \"v*\"");
-		// 并发组是全局的（`release-v2`），推 main 打包和 tag 发版必须串行，不许改名。
-		expect(workflow).toContain("group: release-v2");
+		for (const job of ["build-mac", "build-win"]) {
+			const start = workflow.indexOf(`\n  ${job}:`);
+			expect(start).toBeGreaterThan(0);
+			const guard = workflow.slice(start, workflow.indexOf("runs-on:", start));
+			expect(guard).toContain("github.ref_type == 'tag'");
+			expect(guard).toContain("github.event_name == 'workflow_dispatch'");
+		}
+	});
+
+	it("并发组：tag 一组、推 main 每笔一组，谁都不顶掉谁", () => {
+		// 共用一个组 + 同组只留一个 pending = 连推两笔，前一轮白跑。拆成两组：
+		// tag 之间仍串行（publish 要全局串行），main 每笔独立（带 sha）各自跑完。
+		expect(workflow).toContain("'release-tag'");
+		expect(workflow).toContain("format('push-{0}', github.sha)");
 		expect(workflow).not.toContain("cancel-in-progress: true");
 	});
 });

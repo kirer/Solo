@@ -4,9 +4,10 @@ name: 打包与发版
 # → 用仓库 secret SOLO_UPDATE_KEY 签更新清单 → 发 GitHub Release。
 # 更新源就是本仓库的 Releases；发布顺序是二进制先传、清单最后传（ADR-029 / ADR-067）。
 #
-# 推 main 也跑（Solo 2026-11-14 定）：平时就在验，发版时直接打 tag，不用发版前再单独等一轮。
-# `publish` 有 `if: github.ref_type == 'tag'`，推 main 只打包、不会误发版本。
-# 代价要说清：每次推 main 都真跑一次 mac + win 打包（并发组是全局的，会排队）。
+# 推 main 只跑 `verify`（检查 + 单测 + 界面构建，几分钟出结果）；mac / win 打包和各段升级
+# 验证只在推 tag 或手动 dispatch 时跑（老板 2026-11-16：「每次推送后 git 都要折腾半天」——
+# 原来每笔 push 都跑 mac + win 全套，还要排队互相顶掉）。
+# `publish` 有 `if: github.ref_type == 'tag'`，推 main 永远不会误发版本。
 
 on:
   push:
@@ -31,10 +32,14 @@ permissions:
   contents: read
 
 concurrency:
-  # 全局只有一个 latest，publish 必须全局串行，不要改成按 tag/分支分组的名字。
-  # 只有再出现僵尸 run 占住并发组时，才把这里升一级（release-v3…），平时永远别动；
-  # 改名的提交必须在下一版打 tag 之前进 main，否则那条 publish 用的还是旧组名。
-  group: release-v2
+  # 两组分开，别共用一个名字（老板 2026-11-16）：
+  # - 推 tag：固定组 `release-tag`，所有 tag 之间照样串行 —— `publish` 要全局串行，
+  #   两个版本同时发会互抢 `latest`。
+  # - 推 main：**每笔一个组**（带 commit sha）。同组只留一个 running + 一个 pending，
+  #   第二笔 push 会把第一笔的 pending 顶掉，连推两笔就白跑一轮 —— 这正是「折腾半天」的来源。
+  #   每笔独立分组后两笔各跑各的，谁都不会被 cancelled。
+  # 只有再出现僵尸 run 占住并发组时，才把名字升一级，平时别动。
+  group: ${{ github.ref_type == 'tag' && 'release-tag' || format('push-{0}', github.sha) }}
   cancel-in-progress: false
 
 # electron-builder 的辅助包（dmgbuild、7zip、winCodeSign、nsis）平时从 github.com 的
@@ -81,8 +86,9 @@ jobs:
 
   build-mac:
     needs: verify
-    # 只改 notes 那一趟（dispatch 给了 notes_file）不用打包：不碰二进制。
-    if: inputs.notes_file == ''
+    # 推 main 只跑 verify（测试几分钟出结果），打包只在推 tag 或手动 dispatch 时跑；
+    # 只改 notes 那一趟（dispatch 给了 notes_file）也不用打包：不碰二进制。
+    if: inputs.notes_file == '' && (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch')
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -240,6 +246,8 @@ jobs:
 
   build-win:
     needs: verify
+    # 同 build-mac：推 main 不打包，只在推 tag / dispatch 时跑。
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 40
     defaults:
