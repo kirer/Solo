@@ -17,18 +17,21 @@ import { RightPanel } from "./panels/RightPanel.tsx";
 import { SetupPage } from "./panels/SetupPage.tsx";
 import { Sidebar } from "./sidebar/Sidebar.tsx";
 import { Slot } from "./plugin/Slot.tsx";
+import { liveCount } from "./panels/task-board-source.ts";
 import { cellsOf } from "./plugin/registry.ts";
 import { AttachmentPreview } from "./stream/AttachmentPreview.tsx";
 import { Starters } from "./stream/Starters.tsx";
 import { Stream } from "./stream/Stream.tsx";
 import { Titlebar } from "./titlebar/Titlebar.tsx";
 import {
+	closeBoard,
 	closeBrowser,
 	closeDock,
 	closePluginView,
 	closeRightFile,
 	closeRightPage,
 	closeTasks,
+	openBoard,
 	openChannel,
 	openChannelInfo,
 	openWithPerson,
@@ -62,6 +65,8 @@ export function App(): JSX.Element {
 	const resetOpen = useStore((state) => state.resetOpen);
 	const restartOpen = useStore((state) => state.restartOpen);
 	const tasksOpen = useStore((state) => state.tasks.open);
+	const boardOpen = useStore((state) => state.board.open);
+	const orgTasks = useStore((state) => state.orgTasks);
 	const pluginView = useStore((state) => state.pluginView);
 	const browser = useStore((state) => state.browser);
 	const dock = useStore((state) => state.dock);
@@ -69,6 +74,10 @@ export function App(): JSX.Element {
 	const rightFile = useStore((state) => state.rightFile);
 	const setupStep = useStore((state) => state.setupStep);
 	const nav = useStore((state) => state.nav);
+	/** 顶栏那颗「任务板」上的数：跟板上同一口径，只数活的。 */
+	const liveTasks = liveCount(orgTasks);
+	/** 有活卡着的时候那个数变红 —— 「有事卡着」是这一颗按钮上最该抢眼的信息。 */
+	const hasBlocked = (orgTasks ?? []).some((task) => task.status === "blocked");
 
 	const { toasts, toast } = useToasts();
 	const [image, setImage] = useState<string | null>(null);
@@ -346,6 +355,33 @@ export function App(): JSX.Element {
 							) : null}
 							{/* 插槽：顶栏右侧按钮之前。 */}
 							<Slot name="topbar.actions" />
+							{/* 任务板：常驻入口。老板 2026-11-16 在私聊里找不到板，翻遍右栏资料表
+							    那张卡片才发现 —— 入口不能靠探索。这颗按钮开的是**全局板**
+							    （所有频道一处看全），私聊里也在；资料表那张卡开的是同一屏。 */}
+							{channel === null ? null : (
+								<button
+									type="button"
+									className="icon-btn board-btn"
+									id="board-btn"
+									data-count={liveTasks === 0 ? "0" : String(liveTasks)}
+									data-blocked={hasBlocked ? "true" : "false"}
+									aria-label={liveTasks === 0 ? "任务板，板上没有活" : `任务板，${String(liveTasks)} 条活的`}
+									title={liveTasks === 0 ? "任务板：板上没有活" : `任务板：${String(liveTasks)} 条活的`}
+									aria-pressed={boardOpen}
+									onClick={() => (boardOpen ? closeBoard() : openBoard())}
+								>
+									<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+										<rect x="3.5" y="4.8" width="17" height="4" rx="1.4" />
+										<rect x="3.5" y="10.4" width="17" height="4" rx="1.4" />
+										<rect x="3.5" y="16" width="11" height="4" rx="1.4" />
+									</svg>
+									{liveTasks === 0 ? null : (
+										<span className="board-btn-count" aria-hidden="true">
+											{liveTasks}
+										</span>
+									)}
+								</button>
+							)}
 							{conn.ok ? null : (
 								<span className="conn" id="conn" data-ok="false">
 									连不上，{clockTime(conn.lastOkAt)} 最后一次成功

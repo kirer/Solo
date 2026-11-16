@@ -233,3 +233,39 @@
 	min-height: 0;
 	overflow-y: auto;
 }
+
+/* ── 顶栏那颗常驻「任务板」（2.9.21）──────────────────────────────────
+ *
+ * 老板在私聊里翻不到板，最后是在群聊右栏资料表那张卡片里找到的 —— 入口不能靠探索，
+ * 所以顶栏常驻一颗：图标 + 角上一个数（板上活的条数），一条都没有时不画数
+ * （画个 0 会让人以为坏了）。有活卡着时变成红的：那是这颗按钮上最该抢眼的信息。
+ *
+ * `.icon-btn` 末尾那条「触控热区」已经给了 `position: relative`，徽标直接绝对定位。
+ */
+
+.board-btn {
+	position: relative;
+}
+
+.board-btn-count {
+	position: absolute;
+	top: -1px;
+	right: -2px;
+	min-width: 14px;
+	height: 14px;
+	padding: 0 3.5px;
+	border-radius: 7px;
+	background: var(--ink);
+	color: var(--paper);
+	font-size: 9.5px;
+	font-weight: 600;
+	line-height: 14px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+	pointer-events: none;
+}
+
+.board-btn[data-blocked="true"] .board-btn-count {
+	background: var(--danger);
+	color: #fff;
+}

@@ -22,6 +22,12 @@ export type BoardTaskIn = {
 	originSeq: number;
 	accept?: string | undefined;
 	history: readonly { seq: number; what: string }[];
+	/**
+	 * 全局那份（`ViewOrg.tasks`）多带的两个：最后一次变更的时间、那句正文压成一行。
+	 * 频道自己那份不带（它从 `messages` 里现查）。缺 = 这份数据里没有。
+	 */
+	changedAt?: number | undefined;
+	note?: string | undefined;
 };
 
 /**
@@ -100,4 +106,63 @@ export function boardTasks(detail: BoardSource | null | undefined, now: number):
 			changedAt: at ?? now,
 		};
 	});
+}
+
+/** 全局板（顶栏那个常驻入口）的输入：跨频道的活 + 频道名与人名怎么查。 */
+export type GlobalBoardSource = {
+	/** `ViewOrg.tasks`：所有频道、所有状态一次给全。`undefined` = 这一份还没到。 */
+	tasks: readonly BoardTaskIn[] | undefined;
+	/** 频道 id → 标题。查不到就退回 id（`team:Solo` 这种），比留空强。 */
+	channelTitleOf: (channelId: string) => string;
+	labelOf: (slug: string) => string;
+};
+
+/**
+ * 把跨频道那份翻成板上一行。
+ *
+ * 跟 `boardTasks` 的区别只有一处：**没有 `messages` 可查**，所以「多久没动」「卡住的原因」
+ * 只能靠核心在那份数据上直接带（`changedAt` / `note`）。没带就不编：时间写「不知道多久
+ * 没动」、原因写「原因在频道里」，别拿 `now` 顶成「刚动过」、也别把「没拿到」说成
+ * 「没写」（Solo 2026-11-16：全局板上每一行都得是真话，否则不如不给看）。
+ *
+ * 顺序不排：核心给的就是「按频道顺序、频道内按编号升序」，那是有意义的稳定序；
+ * 组内谁先谁后是 `boardOf` 的显示规则，不在这儿再排一次。
+ */
+/**
+ * 全局那份 `note` 是「动作 + 原因」拼成的一句（`改成卡住：等路远把投影推上来`），
+ * 板上那一栏要的是后半句。剥不干净就原样留着 —— 宁可多几个字，也别把原因弄丢。
+ */
+function stripAction(note: string): string {
+	const cut = note.replace(/^(?:建了一条|改成[^：:]*|转给[^：:]*|验收[^：:]*|撤了|打断[^：:]*)[：:]\s*/, "").trim();
+	return cut === "" ? note : cut;
+}
+
+export function globalBoardTasks(source: GlobalBoardSource): BoardTask[] {
+	const tasks = source.tasks;
+	if (tasks === undefined || tasks.length === 0) return [];
+	return tasks.map((task) => ({
+		id: task.id,
+		title: task.title,
+		owner: task.owner,
+		ownerLabel: source.labelOf(task.owner),
+		status: task.status,
+		channelId: task.channelId,
+		channelTitle: source.channelTitleOf(task.channelId),
+		originSeq: task.originSeq,
+		accept: task.accept,
+		note: task.note === undefined ? undefined : stripAction(task.note),
+		// 带没带正文：`note` 这个键在不在这份数据里。带了我就不该说「没写」。
+		noteKnown: task.note !== undefined,
+		changedAt: task.changedAt ?? undefined,
+	}));
+}
+
+/**
+ * 顶栏那颗按钮上的数：板上**活的**条数。
+ *
+ * 跟 `boardOf` 同一个口径 —— `done` / `dropped` 都不算（划掉的活不该在任何人眼前占一个数，
+ * 更不该在顶栏上亮着）。数据没到（`undefined`）就是 0，按钮照样在，只是不出数字。
+ */
+export function liveCount(tasks: readonly BoardTaskIn[] | undefined): number {
+	return (tasks ?? []).filter((task) => task.status !== "done" && task.status !== "dropped").length;
 }

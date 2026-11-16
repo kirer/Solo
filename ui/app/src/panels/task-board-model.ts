@@ -31,8 +31,21 @@ export type BoardTask = {
 	accept?: string | undefined;
 	/** `blocked` 的原因 / `done` 的凭据。一行，不带换行。 */
 	note?: string | undefined;
-	/** 最后一次状态变更的时刻。「多久没动」按它算，不按创建时间。 */
-	changedAt: number;
+	/**
+	 * 这一份数据里**到底带没带正文**。
+	 *
+	 * 只有全局板会写 `false`：跨频道那一份只给 `history` 的 `seq`，note 的正文在频道里，
+	 * 界面上不去查。这时「没写原因」是句假话（人家可能写了），得说「原因在频道里」。
+	 * 缺省当 `true` —— 频道自己那份始终能查到。
+	 */
+	noteKnown?: boolean | undefined;
+	/**
+	 * 最后一次状态变更的时刻。「多久没动」按它算，不按创建时间。
+	 *
+	 * `undefined` = 这份数据没带时间（全局板要等核心补上那格）：界面上写「不知道多久
+	 * 没动」，不拿 `now` 顶成「刚动过」—— 那会让三天没动的活看着像刚有人碰过。
+	 */
+	changedAt?: number | undefined;
 };
 
 export type Board = {
@@ -56,16 +69,18 @@ function startOfDay(now: number): number {
 	return date.getTime();
 }
 
-export function idleMs(task: BoardTask, now: number): number {
+export function idleMs(task: BoardTask, now: number): number | undefined {
+	if (task.changedAt === undefined) return undefined;
 	const ms = now - task.changedAt;
 	// 时钟偏了（或者服务端给的是未来时刻）就按「刚动过」算，不显示「-3 分钟没动」。
 	if (!Number.isFinite(ms) || ms < 0) return 0;
 	return ms;
 }
 
-/** 「多久没动」：刚动过 / 12 分钟没动 / 3 小时没动 / 2 天没动。 */
+/** 「多久没动」：刚动过 / 12 分钟没动 / 3 小时没动 / 2 天没动；没带时间就说不知道。 */
 export function idleLabel(task: BoardTask, now: number): string {
 	const ms = idleMs(task, now);
+	if (ms === undefined) return "没说多久没动";
 	if (ms < 60_000) return "刚动过";
 	if (ms < 3_600_000) return `${String(Math.floor(ms / 60_000))} 分钟没动`;
 	if (ms < DAY_MS) return `${String(Math.floor(ms / 3_600_000))} 小时没动`;
@@ -75,13 +90,16 @@ export function idleLabel(task: BoardTask, now: number): string {
 /** 卡住的原因。空的说明数据坏了 —— 工具层不许 `blocked` 不带原因（设计文档第七节）。 */
 export function blockedReason(task: BoardTask): string {
 	const note = (task.note ?? "").trim();
-	return note === "" ? "没写原因" : note;
+	if (note !== "") return note;
+	// 全局那份不带正文：不能说「没写原因」，人家可能写了，只是这一份数据里没有。
+	return task.noteKnown === false ? "原因在频道里，点开回到原话" : "没写原因";
 }
 
 /** 完成项的凭据。`done` 允许留空，界面上就明说没写，不替它编一句。 */
 export function doneProof(task: BoardTask): string {
 	const note = (task.note ?? "").trim();
-	return note === "" ? "没写凭据" : note;
+	if (note !== "") return note;
+	return task.noteKnown === false ? "凭据在频道里，点开回到原话" : "没写凭据";
 }
 
 const RANK: Record<"blocked" | "doing" | "open", number> = { blocked: 0, doing: 1, open: 2 };
@@ -100,7 +118,7 @@ export function boardOf(tasks: readonly BoardTask[], now: number): Board {
 
 	for (const task of tasks) {
 		if (task.status === "done") {
-			if (task.changedAt >= today) doneToday.push(task);
+			if ((task.changedAt ?? now) >= today) doneToday.push(task);
 			continue;
 		}
 		// `dropped` 是终态、且是「不做了」：不进板、不计数（设计文档第十二节：划掉留痕
@@ -111,9 +129,10 @@ export function boardOf(tasks: readonly BoardTask[], now: number): Board {
 
 	live.sort((left, right) => {
 		const diff = RANK[left.status as "blocked" | "doing" | "open"] - RANK[right.status as "blocked" | "doing" | "open"];
-		return diff !== 0 ? diff : left.changedAt - right.changedAt;
+		// 没带时间的当「刚动过」排后面：不知道多久没动的，不该插到「卡了三天」前面去。
+		return diff !== 0 ? diff : (left.changedAt ?? now) - (right.changedAt ?? now);
 	});
-	doneToday.sort((left, right) => right.changedAt - left.changedAt);
+	doneToday.sort((left, right) => (right.changedAt ?? now) - (left.changedAt ?? now));
 
 	const count = (status: TaskStatus): number => live.filter((task) => task.status === status).length;
 	return {

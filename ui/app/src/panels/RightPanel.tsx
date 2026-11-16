@@ -24,7 +24,7 @@ import { useStore } from "../state/useStore.ts";
 import { FilePreview } from "./FilePreview.tsx";
 import { TasksView, workTurns } from "./TasksPanel.tsx";
 import { TaskBoard } from "./TaskBoard.tsx";
-import { boardTasks, channelTasks } from "./task-board-source.ts";
+import { channelTasks, globalBoardTasks, liveCount } from "./task-board-source.ts";
 
 export function RightPanel(): JSX.Element {
 	const open = useStore((state) => state.right.open);
@@ -70,7 +70,8 @@ export function RightPanel(): JSX.Element {
 			const target = event.target;
 			if (!(target instanceof Element)) return;
 			if (target.closest("aside.detail") !== null) return;
-			if (target.closest('[aria-label="资料与后台任务"], [aria-label="资料"]') !== null) return;
+			// 顶栏那几颗自己负责开合，不然按下先被这里关掉、抬手又被它重新打开。
+			if (target.closest('[aria-label="资料与后台任务"], [aria-label="资料"], #board-btn') !== null) return;
 			setRight({ open: false });
 		};
 		document.addEventListener("pointerdown", onDown, true);
@@ -99,7 +100,7 @@ export function RightPanel(): JSX.Element {
 				: rightFile !== null
 					? fileName
 					: boardOpen
-						? "任务板"
+						? "任务板（全部频道）"
 						: tasksOpen
 							? "后台任务"
 							: "资料";
@@ -112,7 +113,7 @@ export function RightPanel(): JSX.Element {
 			id="detail"
 			data-open={open ? "true" : "false"}
 			data-tasks={tasksOpen ? "true" : "false"}
-			data-board={boardOpen ? "true" : "false"}
+			data-board={boardOpen ? "global" : "false"}
 			data-dock={dock === null ? "false" : "true"}
 			data-page={rightPage === null ? "false" : "true"}
 			aria-label={title}
@@ -215,16 +216,23 @@ function PanelGrip({ width }: { width: number | null }): JSX.Element {
 /**
  * 任务板那一屏（右栏的一态，跟「后台任务」并列）。
  *
- * 数据是**当前频道自己的** `tasks`：接口还没发回来就是空板，绝不补假任务
- * （Solo 2026-11-15）。点一行回它起源那条消息 —— 走的是 `focusSeq`，
- * 「找没找到」由 `Stream` 说了算，找不到它会回一句灰字，不是点了没反应。
+ * 数据是**全频道的** `orgTasks`（`ViewOrg.tasks`）：老板要的是「一处看全」，不是挨个
+ * 频道翻（Solo 2026-11-15 改的口径）。顶栏那个常驻入口和资料表里那张卡打开的都是这一屏，
+ * 私聊也一样 —— 板是全局的，房间里有没有活跟它没关系。
+ *
+ * 数据没到就是空板，绝不补假任务（Solo 2026-11-15）。点一行回它起源那条消息 ——
+ * 走 `focusSeq`，「找没找到」由 `Stream` 说了算，找不到它会回一句灰字。
  */
 function BoardView(): JSX.Element {
-	const detail = useStore((state) => state.detail);
+	const orgTasks = useStore((state) => state.orgTasks);
+	const people = useStore((state) => state.people);
+	const channels = useStore((state) => state.channels);
 	const miss = useStore((state) => state.focusMiss);
-	// 只取一次：这一列要的是「翻开那一刻多久没动」，之后 `TaskBoard` 自己每 30 秒往下走。
-	const [openedAt] = useState(() => Date.now());
-	const tasks = boardTasks(detail, openedAt);
+	const tasks = globalBoardTasks({
+		tasks: orgTasks,
+		channelTitleOf: (id) => channels.find((one) => one.id === id)?.title ?? id,
+		labelOf: (slug) => people.find((one) => one.slug === slug)?.label ?? slug,
+	});
 	return (
 		<div className="board-page">
 			<TaskBoard
@@ -477,8 +485,9 @@ function turnsLine(turns: readonly Turn[]): string {
  * 就是这么漏的（Solo 2026-11-16）。所以两处共用这一个组件、同一个数据源，谁也不许再抄一份。
  */
 function BoardCard(): JSX.Element {
-	// 条数：跟板子里同一份数据源、同一个函数，不另算一遍。
-	const taskCount = channelTasks(useStore((state) => state.detail)).length;
+	// 条数只数活着的（done / dropped 不算）：这个数曾经把「做完了」也数进去，
+	// 于是资料表说 4 条、板上 3 条 —— 数字对不上，板就没人信了（2.9.20 的账）。
+	const taskCount = liveCount(channelTasks(useStore((state) => state.detail)));
 	return (
 		<div className="prof-card">
 			<Row

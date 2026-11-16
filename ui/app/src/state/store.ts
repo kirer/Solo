@@ -22,6 +22,14 @@ export type State = {
 	ready: boolean;
 	workspaceName: string;
 	people: Actor[];
+	/**
+	 * 全局板：所有频道、所有状态的活（`ViewOrg.tasks`）。
+	 *
+	 * `undefined` = 这一份还没到（老服务端 / 首屏还没拉回来），`[]` 不存在 ——
+	 * 核心那侧「一条活都没有就没有这个键」，所以这里只用一个可能与空的区别。
+	 * 当前频道自己那份仍在 `detail.tasks`，右栏资料表那张卡吃它。
+	 */
+	orgTasks: Org["tasks"];
 	channels: Channel[];
 	currentId: string | null;
 	detail: ChannelDetail | null;
@@ -178,6 +186,7 @@ const initial: State = {
 	ready: false,
 	workspaceName: "Solo",
 	people: [],
+	orgTasks: undefined,
 	channels: [],
 	currentId: null,
 	detail: null,
@@ -304,7 +313,7 @@ export function applyOrg(org: Org): void {
 		if (found === undefined) continue;
 		presence.set(actor.slug, { state: found.state, at: found.since });
 	}
-	patch({ workspaceName: org.workspace.name, people: org.people, presence });
+	patch({ workspaceName: org.workspace.name, people: org.people, orgTasks: org.tasks, presence });
 }
 
 /** 引导的两步进出（稿子 10 / 11）。接上模型之后由 `bootstrap` 清掉。 */

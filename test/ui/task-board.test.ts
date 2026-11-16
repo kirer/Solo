@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { BoardTask } from "../../ui/app/src/panels/task-board-model.ts";
-import { boardTasks, channelTasks } from "../../ui/app/src/panels/task-board-source.ts";
+import { boardTasks, channelTasks, globalBoardTasks, liveCount } from "../../ui/app/src/panels/task-board-source.ts";
 import {
 	blockedReason,
 	boardOf,
@@ -130,9 +130,11 @@ describe("缺字段时界面说什么", () => {
  */
 describe("类名和样式对得上", () => {
 	const read = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
+	// 三处：板本体、装它的右栏、以及顶栏那颗常驻入口（`board-btn` 在 `App.tsx` 上）。
 	const tsx = [
 		read("../../ui/app/src/panels/TaskBoard.tsx"),
 		read("../../ui/app/src/panels/RightPanel.tsx"),
+		read("../../ui/app/src/App.tsx"),
 	].join("\n");
 	const css = read("../../ui/app/src/styles/board.css");
 
@@ -388,5 +390,85 @@ describe("任务板入口：三条路别只写一条", () => {
 
 	it("那张卡还是走 openBoard，没有另造一态", () => {
 		expect(bodyOf("BoardCard")).toContain("onClick={openBoard}");
+	});
+});
+
+/**
+ * 全局板（`ViewOrg.tasks`，2.9.21）：所有频道一处看全。
+ *
+ * 这一份锁两件事：**顺序不重排**（核心给的是按频道、频道内按编号）、
+ * 以及**没有的那两格不许编**（时间没带就说「没说」，正文没带就说「在频道里」）。
+ */
+describe("全局板", () => {
+	it("资料表那张卡的条数只数活的，别把做完了的算进去", () => {
+		// 2.9.20 的账：卡上写「4 条」，板上只有 3 条 —— 差的就是 done / dropped。
+		const src = readFileSync(new URL("../../ui/app/src/panels/RightPanel.tsx", import.meta.url), "utf8");
+		expect(src).not.toMatch(/channelTasks\([^)]*\)\.length/);
+		expect(src).toMatch(/liveCount\(channelTasks\(/);
+	});
+
+
+	const global = (patch: Record<string, unknown> = {}) => ({
+		id: "t1",
+		title: "一件事",
+		owner: "owner",
+		status: "blocked" as const,
+		channelId: "team:Solo",
+		originSeq: 3,
+		history: [{ seq: 3, what: "status" }],
+		...patch,
+	});
+	const source = (tasks: readonly unknown[]) => ({
+		tasks: tasks as never,
+		channelTitleOf: (id: string) => (id === "team:Solo" ? "Solo" : id),
+		labelOf: (slug: string) => (slug === "owner" ? "我" : slug),
+	});
+
+	it("频道名和人名由界面现查，不复制进数据", () => {
+		const rows = globalBoardTasks(source([global()]));
+		expect(rows[0]!.channelTitle).toBe("Solo");
+		expect(rows[0]!.ownerLabel).toBe("我");
+	});
+
+	it("核心给的顺序原样摆，不在这儿再排一次", () => {
+		const rows = globalBoardTasks(
+			source([global({ id: "t2" }), global({ id: "t10" }), global({ id: "t1", channelId: "dm:x" })]),
+		);
+		expect(rows.map((row) => row.id)).toEqual(["t2", "t10", "t1"]);
+		expect(rows[2]!.channelTitle).toBe("dm:x");
+	});
+
+	it("带时间和正文时：时间照用，正文剥掉动作词只留原因", () => {
+		const rows = globalBoardTasks(
+			source([global({ changedAt: now - 3 * 3_600_000, note: "改成卡住：等路远把投影推上来" })]),
+		);
+		expect(rows[0]!.changedAt).toBe(now - 3 * 3_600_000);
+		expect(blockedReason(rows[0]!)).toBe("等路远把投影推上来");
+		expect(idleLabel(rows[0]!, now)).toBe("3 小时没动");
+	});
+
+	it("核心没带那两格：时间说「没说」，原因说「在频道里」——不许编", () => {
+		const rows = globalBoardTasks(source([global()]));
+		expect(rows[0]!.changedAt).toBeUndefined();
+		expect(idleLabel(rows[0]!, now)).toBe("没说多久没动");
+		expect(blockedReason(rows[0]!)).toBe("原因在频道里，点开回到原话");
+	});
+
+	it("没带正文和「写了空的」不是一回事", () => {
+		const blank = globalBoardTasks(source([global({ note: "" })]));
+		expect(blockedReason(blank[0]!)).toBe("没写原因");
+	});
+
+	it("顶上那个数只数活的：done / dropped 都不算", () => {
+		expect(
+			liveCount([
+				{ ...global(), id: "a", status: "doing" },
+				{ ...global(), id: "b", status: "blocked" },
+				{ ...global(), id: "c", status: "open" },
+				{ ...global(), id: "d", status: "done" },
+				{ ...global(), id: "e", status: "dropped" },
+			] as never),
+		).toBe(3);
+		expect(liveCount(undefined)).toBe(0);
 	});
 });
