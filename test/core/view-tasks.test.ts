@@ -239,6 +239,22 @@ describe("全局板：所有频道的活一处看全", () => {
 		expect(workspaceTasks(await stateOf(box))).toBeUndefined();
 	});
 
+	test("归档频道里的活不上板：跟侧栏一个口径，免得留一行点不开的", async () => {
+		const box = await setup();
+		await addTask(box, { title: "alpha 的活" });
+		await addTask(box, { title: "beta 的活", channelId: OTHER_TEAM });
+		// 归档一个：真改盘上的频道，不手搓 state。
+		await box.runtime.harness.commit(async (tx) => {
+			const doc = (await tx.doc(ChannelDoc)) as ChannelState;
+			const channel = doc.channels[OTHER_TEAM];
+			if (channel === undefined) throw new Error("没有那个频道");
+			channel.archived = true;
+		}, BACKGROUND_CONTEXT);
+
+		const tasks = workspaceTasks(await stateOf(box));
+		expect(tasks?.map((task) => task.channelId)).toEqual([TEAM]);
+	});
+
 	test("投影是抄出来的：改全局板里那份，盘上的任务不动", async () => {
 		const box = await setup();
 		await addTask(box, { title: "把连接池调到 20" });

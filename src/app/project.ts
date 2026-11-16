@@ -355,10 +355,17 @@ function tasksTable(state: ChannelState, channelId: string): Record<string, View
  *
  * 顺序固定：按频道在 `channels` 里的顺序，频道内按任务编号升序（`t2` 在 `t10` 前，
  * 不许字典序）。界面照着摆就行 —— 再让界面排一次，就是第二份口径，早晚跟这里对不上。
+ *
+ * 口径跟侧栏一致：**归档频道里的活不上板**（见下面的 `continue`）。顶栏那颗数也吃这一份，
+ * 所以「顶栏 4、板上 3」这种两把尺子不会出现。
  */
 export function workspaceTasks(state: ChannelState): ViewGlobalTask[] | undefined {
 	const out: ViewGlobalTask[] = [];
 	for (const channelId of Object.keys(state.channels)) {
+		// 归档频道不上板：侧栏已经不看它了（`channelList` 跳过 `archived`），留着就是一行
+		// 点不开的噪音 —— 板的价值是「点一行跳回派活那句话」，回不去就不该在板上。
+		// 任务本身照旧留在 `tasks` 里（只有 `dropped`、没有删除），团队恢复归档也就回来了。
+		if (state.channels[channelId]?.archived === true) continue;
 		const table = tasksTable(state, channelId);
 		if (table === undefined) continue;
 		for (const id of Object.keys(table).sort(byTaskNumber)) {
