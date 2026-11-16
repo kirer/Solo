@@ -626,7 +626,7 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 						<div className="mention-none">这个频道里没有叫「{mention.query}」的人</div>
 					) : (
 						<div className="mention-list" id="mention-list">
-							{candidates.slice(0, 6).map((candidate, index) => (
+							{candidates.map((candidate, index) => (
 								<button
 									type="button"
 									key={candidate.slug}
@@ -634,6 +634,12 @@ export function Composer(props: { toast: (text: string, tone?: "info" | "error")
 									aria-selected={index === pick}
 									className="mention-item"
 									data-slug={candidate.slug}
+									ref={(node) => {
+										// 一个群可能有十几个人：列表要能滚，键盘走到看不见的那一行时把它带进视野。
+										// 以前这里只渲染前 6 个（`slice(0, 6)`），第 7 个开始根本不在 DOM 里，
+										// 方向键选得到、眼睛看不到 —— 老板 2026-11-16 报的「列表显示不全」。
+										if (node !== null && index === pick) node.scrollIntoView({ block: "nearest" });
+									}}
 									onMouseEnter={() => setPick(index)}
 									onMouseDown={(event) => {
 										event.preventDefault();

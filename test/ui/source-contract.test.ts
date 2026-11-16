@@ -24,6 +24,25 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
  *    画那颗勾，而按钮写的是 `aria-pressed` —— 选择器永远匹配不上，勾一直不出现。
  *    同样只能读源码断言：属性名两边必须一致。
  */
+describe("@ 列表：人多的时候不能截断", () => {
+	it("候选全部渲染，不写死只画前几条", () => {
+		// 老板 2026-11-16：14 个成员的群，@ 出来的列表只显示 6 个。
+		// 当时是 `candidates.slice(0, 6)`：第 7 个开始根本不在 DOM 里，方向键选得到、眼睛看不到。
+		const source = read("../../ui/app/src/composer/Composer.tsx");
+		expect(source).not.toMatch(/candidates\.slice\(\s*0\s*,\s*\d+\s*\)/);
+		expect(source).toContain("{candidates.map((candidate, index) => (");
+	});
+
+	it("键盘走到看不见的那一行会把它带进视野", () => {
+		// 光是全部渲染不够：列表本身要能滚（CSS 的 max-height + overflow），
+		// 选中项还得自己滚进来，否则按 ↓ 到第 7 个，屏幕上一动不动。
+		const source = read("../../ui/app/src/composer/Composer.tsx");
+		expect(source).toContain("scrollIntoView({ block: \"nearest\" })");
+		const css = read("../../ui/app/src/styles/composer.css");
+		expect(css).toMatch(/\.mention \{[^}]*overflow-y: auto/s);
+	});
+});
+
 describe("代码块的复制按钮", () => {
 	it("生成的 HTML 里有复制按钮，类名来自同一个常量", () => {
 		const html = renderMarkdown("```ts\nconst a = 1;\n```");
