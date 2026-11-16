@@ -133,7 +133,30 @@ function orgSignature(org: ViewOrg): string {
 		return `${actor.slug}\u0001${actor.label}\u0001${actor.title ?? ""}\u0001${actor.assistant === true ? "1" : ""}\u0001${activity}\u0001${failure}`;
 	});
 	// 前缀不能省：一个空的 org 拼出来也是空串，会和「还没推过」撞成同一个指纹。
-	return `org:${String(rows.length)}|${rows.join("\u0002")}`;
+	//
+	// 任务那一格必须进指纹：起一条、改状态、划掉，改的都是频道文档里的 `tasks`，名册
+	// 一格不动 —— 只算 `people` 的话这一整类变化一次 org 推送都不触发，顶栏数字和全局板
+	// 就停在第一份快照上、非刷新不动（真出过）。`changedAt` 也得算：只补一句 note 那种
+	// 不换状态的变化，只有它会变。
+	return `org:${String(rows.length)}|${rows.join("\u0002")}|${taskSignature(org)}`;
+}
+
+/**
+ * 任务那一格：全局板上每一行怎么认、怎么变。
+ *
+ * 装 `id / status / owner / changedAt` 四样：状态变了要重画、换人了要重画、只在 note 里
+ * 补一句话（只有 `changedAt` 跟着走）也要重画。标题和验收标准不进指纹 —— 任务没有改名
+ * 这一步，写进去只会让指纹凭空调一次。
+ */
+function taskSignature(org: ViewOrg): string {
+	const rows = (org.tasks ?? [])
+		.map((task) =>
+			[task.channelId, task.id, task.status, task.owner, task.changedAt === undefined ? "" : String(task.changedAt)].join(
+				"\u0001",
+			),
+		)
+		.sort();
+	return `tasks:${String(rows.length)}|${rows.join("\u0002")}`;
 }
 
 /** 一次最多推多少条：首屏补齐，以及增量积压时的上界。更早的靠 `/api/channels/:id?before=`。 */

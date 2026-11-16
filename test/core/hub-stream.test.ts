@@ -49,7 +49,7 @@ function stateOf(): ChannelState {
 	return state;
 }
 
-function hubFor(state: ChannelState) {
+function hubFor(state: ChannelState, read?: unknown) {
 	const snapshot: ChannelSnapshot = { identities: [], directory: emptyDirectory(), channels: state };
 	const snapshots = {
 		channelSnapshot: async () => snapshot,
@@ -58,14 +58,17 @@ function hubFor(state: ChannelState) {
 	let commits: () => void = () => undefined;
 	const shell = {
 		harness: {
-			subscribeCommits: (listener: () => void) => {
-				commits = listener;
-				return () => undefined;
+			// 提交总线是**同步观察者**（1.5.0 起），不是返回取消函数的 `subscribeCommits`：
+			// 写成后者的话 `start()` 挂不上，`commit()` 变成空调用，测试全绿但什么也没验。
+			observeCommits: (observer: { advance: () => void }) => {
+				commits = observer.advance;
+				return { detach: () => undefined };
 			},
 		},
 		directory: emptyDirectory(),
 	};
-	const hub = createStreamHub(shell as never, snapshots as never);
+	const hub = createStreamHub(shell as never, snapshots as never, read as never);
+	hub.start();
 	return Object.assign(hub, { commit: () => commits() });
 }
 
@@ -191,6 +194,81 @@ describe("组织流", () => {
 		hub.close();
 	});
 
+	/**
+	 * 任务那一格：全局板靠 org 推送活着。
+	 *
+	 * 病根是「改了板上的东西、指纹没变」—— 起一条、改状态、划掉动的是频道文档里的
+	 * `tasks`，名册一格不动；指纹只算 `people` 的话一次推送都不触发，界面冻在第一份快照上。
+	 * 这一组直接看**推了几帧、帧里的值是什么**，不看指纹函数内部。
+	 */
+	function boardTask(): Record<string, unknown> {
+		return {
+			id: "t1",
+			title: "把全局板做出来",
+			owner: OWNER_SLUG,
+			status: "open",
+			channelId: ALL,
+			originSeq: 1,
+			history: [{ seq: 1, what: "created" }],
+			changedAt: 100,
+			note: "建了一条：把全局板做出来",
+		};
+	}
+
+	function boardFor(task: Record<string, unknown>) {
+		const org = { workspace: { name: "Solo" }, people: [], tasks: [task] };
+		return { readOrg: async () => org, personOfChannel: async () => undefined, readTurns: async () => ({ turns: [] }) };
+	}
+
+	async function waitFlush(): Promise<void> {
+		await new Promise((resolve) => setTimeout(resolve, 200));
+	}
+
+	test("任务改了状态：再推一帧，帧里是新状态", async () => {
+		const task = boardTask();
+		const hub = hubFor(stateOf(), boardFor(task));
+		const client = fakeResponse();
+		hub.streamOrg(client.response);
+		await settle();
+		expect(framesOf(client.chunks)).toHaveLength(1);
+
+		task.status = "doing";
+		hub.commit();
+		await waitFlush();
+		const frames = framesOf(client.chunks);
+		expect(frames).toHaveLength(2);
+		expect(frames[1]).toContain('"status":"doing"');
+		client.close();
+		hub.close();
+	});
+
+	test("只补了一句 note（状态没变、changedAt 变了）：也再推一帧", async () => {
+		const task = boardTask();
+		const hub = hubFor(stateOf(), boardFor(task));
+		const client = fakeResponse();
+		hub.streamOrg(client.response);
+		await settle();
+		expect(framesOf(client.chunks)).toHaveLength(1);
+
+		task.changedAt = 900;
+		hub.commit();
+		await waitFlush();
+		expect(framesOf(client.chunks)).toHaveLength(2);
+		client.close();
+		hub.close();
+	});
+
+	test("任务一格没动就不重推（指纹不能因为装了 tasks 就每次提交都推）", async () => {
+		const hub = hubFor(stateOf(), boardFor(boardTask()));
+		const client = fakeResponse();
+		hub.streamOrg(client.response);
+		await settle();
+		hub.commit();
+		await waitFlush();
+		expect(framesOf(client.chunks)).toHaveLength(1);
+		client.close();
+		hub.close();
+	});
 	test("内容没变就不重推：提交总线响了也一样", async () => {
 		const hub = hubFor(stateOf());
 		const client = fakeResponse();
